@@ -1155,18 +1155,24 @@ let TOKEN     = null;
 let TOKEN_EXP = 0;
 
 window.addEventListener('load', function() {
-  var sid = localStorage.getItem('xf_sheet_id');
-  var cr  = localStorage.getItem('xf_creds');
-  if (sid && cr) {
-    try {
-      SHEET_ID = sid;
-      CREDS    = JSON.parse(cr);
-      document.getElementById('inp-sheet-id').value = sid;
-      document.getElementById('inp-creds').value    = cr;
-      var n = document.getElementById('saved-notice');
-      if (n) n.style.display = 'flex';
-      connect(true);
-    } catch(e) { console.error('Auto-connect failed:', e); }
+  // Credentials are hardcoded — skip setup screen and connect immediately
+  if (SHEET_ID && CREDS) {
+    document.getElementById('setup-screen').style.display = 'none';
+    document.getElementById('app').style.display = 'flex';
+    loadAllSheets();
+  } else {
+    // Fallback: try localStorage
+    var sid = localStorage.getItem('xf_sheet_id');
+    var cr  = localStorage.getItem('xf_creds');
+    if (sid && cr) {
+      try {
+        SHEET_ID = sid;
+        CREDS    = JSON.parse(cr);
+        document.getElementById('setup-screen').style.display = 'none';
+        document.getElementById('app').style.display = 'flex';
+        loadAllSheets();
+      } catch(e) { console.error('Auto-connect failed:', e); }
+    }
   }
 });
 
