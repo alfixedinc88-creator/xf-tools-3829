@@ -1058,7 +1058,7 @@ body {
 // ═══════════════════════════════════════════════════════
 // PIN LOCK
 // ═══════════════════════════════════════════════════════
-const PIN_HASH = '209cbd7df48248f976f6dd4817b07c208e0730a2'; // SHA1 of '1314'
+var PIN_CORRECT = '1314';
 var pinEntry = '';
 
 // Check if already unlocked this session
@@ -1093,21 +1093,14 @@ function updatePinDots() {
   }
 }
 
-async function checkPin() {
-  // SHA-1 hash the entry and compare
-  var msgBuffer = new TextEncoder().encode(pinEntry);
-  var hashBuffer = await crypto.subtle.digest('SHA-1', msgBuffer);
-  var hashArray  = Array.from(new Uint8Array(hashBuffer));
-  var hashHex    = hashArray.map(function(b) { return b.toString(16).padStart(2,'0'); }).join('');
-
-  if (hashHex === PIN_HASH) {
+function checkPin() {
+  if (pinEntry === PIN_CORRECT) {
     sessionStorage.setItem('xf_unlocked', '1');
     var ps = document.getElementById('pin-screen');
     ps.style.transition = 'opacity .3s';
     ps.style.opacity = '0';
     setTimeout(function() { ps.style.display = 'none'; }, 300);
   } else {
-    // Wrong PIN — shake and reset
     var dots = document.getElementById('pin-dots');
     for (var i = 0; i < 4; i++) {
       var dot = document.getElementById('pd' + i);
