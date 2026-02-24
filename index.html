@@ -990,6 +990,7 @@ body {
     <div class="topbar-right">
       <div class="file-pill" id="sync-pill"><div class="dot"></div><span class="fname">Connected</span></div>
       <button class="btn-new" onclick="refreshAllSheets()">&#8635; Refresh</button>
+      <button class="btn-disconnect" onclick="reenterCreds()">Re-enter Credentials</button>
       <button class="btn-disconnect" onclick="disconnect()">Disconnect</button>
     </div>
   </div>
@@ -1156,25 +1157,23 @@ SHEET_ID = '1fBi_KGzhYD_rcG5s2Wv9ff5IeeBwtqU5Ytgm9Sn5-dE';
 CREDS    = {"type":"service_account","project_id":"xfitting-search","private_key_id":"0f0f94818b0db9319260454ceab2f9e0b088fc44","private_key":"-----BEGIN PRIVATE KEY-----\nMIIEvwIBADANBgkqhkiG9w0BAQEFAASCBKkwggSlAgEAAoIBAQCzIl7mSzggzUr2\ndQ53fqCZRYrTRM5BdvXhKO0k7smBBMQJStIO1KinqzzwT29DSRV3IpHZTBDYyJAc\nBH662p+594WSaM3YWVV6/tSlmTkHd4qheoOVhl2rdI6dXuF4MC7QM4oQQUe7Up9E\nX1H9hUNOne9+84Koq80PzXIcNXxTUpMuAsgee4Dnnb0N3IPfovULD1jcVHquBc/F\nYf4tLa2lMhQYnxwavLFoWqQPijVnqKB1+cAj2isD5RUYKwoqYVxljGIuroyqdkR8\n4niPkADYjbrjA04dwlPXhBH9RZRZhoGbSe0U/DHESAEIN/IYIW0360je7WDBkxCI\nTZRbsHOBAgMBAAECggEAK/7lD+qpfmTtZFqbkv2ms/5AemMLxUhSW1qR4+BB3U4u\nV5novXu9cHC+JsdbrErm2rvC1nu4J4Ya3sa72WiYkjQYujzDUb+fHvY3g/R97TeO\n9NoCN1co6lNWM5B6D+rFlJ0T66oc1AUW2NQQbxOr1EM17xgfnw2S766luAfq4Qud\nYze8XSgAPtMYI+hB+6IqReQq6+PPE1PUC4gGIguBv1/0avPgdJIjpzfyEtz+f22M\nXU+i4OS4Hu5kaV+WjcGnAmHdwiFdHljyfVKAdDwxcKg5xG4HKgd/15BDajBthrB0\np4iQqrr4Bzw/peZw+aMQNTYDo335czUFGpewcPbqAQKBgQDmL3jUVgQWqKGGRn1d\nL4W9K5Y16wuDcJFvo9U+mOC8ExJEIPoxV0JlIeMgJjAyb8+YFXBFkT3EHei8ltLB\npqwHltD87iSvWayZuUJQv/jFrAjnWq4DJca+zEjy2FfWG2WipZhFqnId7To2EaDT\n5G9uJ8k3P3hznhKxWHpkxcaixQKBgQDHOT2d8qO8E+0W27kkFNHM3bd4MKtFwj5P\nWJQaAvhl8km9eMje7GgZfHwz1cWh0PntOvBIbt0mNEKG80kEGnr7KzgVyvxjrpeF\nxA4fj4RPU873d2n5qeF4DIBrEMOh4gqNJZRCVoFhrH0kgO1GaE6YYPTi5zFI/BUb\nP6c9ss5pjQKBgQClfEOWBDD0SU+2xT6jm+K+WXOoV87zNB6a8GICms4W6G8dY8f7\naQxmwLIVDt9fo1rPr7oDiaOqNwZ3bsceScErw5WEAYGGPyYDbljqzNkA4+mSynKH\n+MSlryBS1o5vc0riX8LVcvCP61kKPiotq/EgdKIIgi0Kkf5GWaHEiRuBMQKBgQCM\nzbD15BrC/9ZOlIa6sJhDUeSs5sD2Mb32OGWcKMNE0kQ5zJczryQ39xqVTB49KsSp\nXUGb//b/XGo0lNfjNY/72uTtyiQtk6T13sYYmkdqBZK+pkBZOy7muPc+NH//9xF8\nBrZNWHRjAxUDarfITkpWOhh6EepsafXE520dFzX5tQKBgQCH+LPvrgWGyll4l8kL\nYo+XrHKa9PjUgNSGlAJJab+VKfq596RAU17HEIulFRTHiR/Opr4oWKDCC8zFnkDy\nxFilFBu0q343OQvwqTq5lZmijb1b7D5l32z3oDlIE5ykhMdUZMr+yLEuiv7926g0\nTInYA8HFx7LahrBjSoPkkWYecg==\n-----END PRIVATE KEY-----\n","client_email":"xfitting-lookup@xfitting-search.iam.gserviceaccount.com","client_id":"114879934447691319593","auth_uri":"https://accounts.google.com/o/oauth2/auth","token_uri":"https://oauth2.googleapis.com/token","auth_provider_x509_cert_url":"https://www.googleapis.com/oauth2/v1/certs","client_x509_cert_url":"https://www.googleapis.com/robot/v1/metadata/x509/xfitting-lookup%40xfitting-search.iam.gserviceaccount.com","universe_domain":"googleapis.com"};
 
 window.addEventListener('load', function() {
-  // Credentials are hardcoded — skip setup screen and connect immediately
-  if (SHEET_ID && CREDS) {
+  // Try hardcoded creds first, then localStorage
+  var sid = SHEET_ID;
+  var cr  = CREDS;
+  if (!sid || !cr) {
+    var lsid = localStorage.getItem('xf_sheet_id');
+    var lcr  = localStorage.getItem('xf_creds');
+    if (lsid && lcr) {
+      try { sid = lsid; cr = JSON.parse(lcr); } catch(e) {}
+    }
+  }
+  if (sid && cr) {
+    SHEET_ID = sid; CREDS = cr;
     document.getElementById('setup-screen').style.display = 'none';
     document.getElementById('app').style.display = 'flex';
     loadAllSheets();
-  } else {
-    // Fallback: try localStorage
-    var sid = localStorage.getItem('xf_sheet_id');
-    var cr  = localStorage.getItem('xf_creds');
-    if (sid && cr) {
-      try {
-        SHEET_ID = sid;
-        CREDS    = JSON.parse(cr);
-        document.getElementById('setup-screen').style.display = 'none';
-        document.getElementById('app').style.display = 'flex';
-        loadAllSheets();
-      } catch(e) { console.error('Auto-connect failed:', e); }
-    }
   }
+  // else: show setup screen so user can enter manually
 });
 
 function showSetupErr(msg) {
@@ -1209,6 +1208,8 @@ async function connect(silent) {
     await getToken();
     localStorage.setItem('xf_sheet_id', sheetId);
     localStorage.setItem('xf_creds', credsRaw);
+    SHEET_ID = sheetId;
+    CREDS    = creds;
     document.getElementById('setup-screen').style.display = 'none';
     document.getElementById('app').style.display = 'flex';
     await loadAllSheets();
@@ -1217,6 +1218,17 @@ async function connect(silent) {
     btn.textContent = 'Connect to Sheet';
     showSetupErr('Connection failed: ' + e.message + '\n\nCheck:\n• Sheet ID is correct\n• Sheet is shared with the service account email\n• Google Sheets API is enabled in your project');
   }
+}
+
+function reenterCreds() {
+  // Show setup screen without clearing anything — just let them re-enter
+  document.getElementById('app').style.display = 'none';
+  document.getElementById('setup-screen').style.display = 'flex';
+  if (SHEET_ID) document.getElementById('inp-sheet-id').value = SHEET_ID;
+  document.getElementById('setup-error').style.display = 'none';
+  var btn = document.getElementById('btn-connect');
+  btn.disabled = false;
+  btn.textContent = 'Connect to Sheet';
 }
 
 function disconnect() {
@@ -1402,20 +1414,16 @@ async function loadAllSheets() {
     showToast('Loaded - ' + DB.master.length.toLocaleString() + ' master, ' + DB.products.length.toLocaleString() + ' products, ' + DB.awdMaster.length.toLocaleString() + ' AWD');
     renderOOS();
   } catch(e) {
-    setSyncLabel('Error', false);
     console.error('[XFITTING] loadAllSheets error:', e);
-    document.getElementById('tb-sub').textContent = 'Error: ' + e.message;
-    // Show error prominently in every tab pane
-    var msg = '<div style="background:#fdf0ee;border:1px solid #f5bdb7;color:#c52a1a;padding:16px 20px;font-size:13px;line-height:1.8;border-radius:8px;margin-bottom:16px;">'
-            + '<strong>Connection error:</strong> ' + e.message
-            + '<br>Check: Sheet ID is correct · Sheet is shared with xfitting-lookup@xfitting-search.iam.gserviceaccount.com · Google Sheets API enabled'
-            + '</div>';
-    ['locator','search','awd','oos'].forEach(function(t) {
-      var el = document.getElementById('res-' + t) || document.getElementById('pane-' + t);
-      if (el) el.innerHTML = msg;
-    });
-    var content = document.querySelector('.content');
-    if (content) content.insertAdjacentHTML('afterbegin', msg);
+    showLoading(false);
+    // On any auth error kick back to setup screen with the error shown
+    document.getElementById('app').style.display = 'none';
+    document.getElementById('setup-screen').style.display = 'flex';
+    var errEl = document.getElementById('setup-error');
+    errEl.textContent = 'Connection failed: ' + e.message + '\n\nPlease re-enter your Sheet ID and credentials below.';
+    errEl.style.display = 'block';
+    // Pre-fill sheet id if we have it
+    if (SHEET_ID) document.getElementById('inp-sheet-id').value = SHEET_ID;
   }
   showLoading(false);
 }
