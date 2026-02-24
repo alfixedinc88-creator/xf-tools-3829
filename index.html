@@ -1254,7 +1254,9 @@ async function getToken() {
   }
 
   var unsigned  = b64url(header) + '.' + b64url(payload);
-  var pem       = CREDS.private_key.replace(/-----BEGIN PRIVATE KEY-----|-----END PRIVATE KEY-----/g,'').replace(/\s/g,'');
+  // Handle both real newlines and escaped \n (happens when JSON is pasted into HTML)
+  var rawKey = CREDS.private_key.replace(/\\n/g,'\n');
+  var pem    = rawKey.replace(/-----BEGIN PRIVATE KEY-----|-----END PRIVATE KEY-----/g,'').replace(/\s/g,'');
   var keyData   = Uint8Array.from(atob(pem), function(c) { return c.charCodeAt(0); });
   var cryptoKey = await crypto.subtle.importKey(
     'pkcs8', keyData,
