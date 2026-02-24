@@ -1254,8 +1254,11 @@ async function getToken() {
     false, ['sign']
   );
   var sig    = await crypto.subtle.sign('RSASSA-PKCS1-v1_5', cryptoKey, new TextEncoder().encode(unsigned));
-  var sigB64 = btoa(String.fromCharCode.apply(null, new Uint8Array(sig)))
-    .replace(/=/g,'').replace(/\+/g,'-').replace(/\//g,'_');
+  // Safe base64url encode — avoid apply() stack overflow on large arrays
+  var sigBytes = new Uint8Array(sig);
+  var sigStr = '';
+  for (var i = 0; i < sigBytes.length; i++) sigStr += String.fromCharCode(sigBytes[i]);
+  var sigB64 = btoa(sigStr).replace(/=/g,'').replace(/\+/g,'-').replace(/\//g,'_');
   var jwt = unsigned + '.' + sigB64;
 
   var res  = await fetch('https://oauth2.googleapis.com/token', {
@@ -1400,12 +1403,18 @@ async function loadAllSheets() {
   } catch(e) {
     setSyncLabel('Error', false);
     console.error('[XFITTING] loadAllSheets error:', e);
-    document.getElementById('tb-sub').textContent = 'Load error';
-    var errDiv = document.createElement('div');
-    errDiv.style.cssText = 'background:#fdf0ee;border:1px solid #f5bdb7;color:#c52a1a;padding:14px 20px;font-size:13px;line-height:1.6;margin-bottom:16px;border-radius:8px;';
-    errDiv.innerHTML = '<strong>Failed to load:</strong> ' + e.message + '<br><small>Open DevTools (F12 -> Console) for details.</small>';
+    document.getElementById('tb-sub').textContent = 'Error: ' + e.message;
+    // Show error prominently in every tab pane
+    var msg = '<div style="background:#fdf0ee;border:1px solid #f5bdb7;color:#c52a1a;padding:16px 20px;font-size:13px;line-height:1.8;border-radius:8px;margin-bottom:16px;">'
+            + '<strong>Connection error:</strong> ' + e.message
+            + '<br>Check: Sheet ID is correct · Sheet is shared with xfitting-lookup@xfitting-search.iam.gserviceaccount.com · Google Sheets API enabled'
+            + '</div>';
+    ['locator','search','awd','oos'].forEach(function(t) {
+      var el = document.getElementById('res-' + t) || document.getElementById('pane-' + t);
+      if (el) el.innerHTML = msg;
+    });
     var content = document.querySelector('.content');
-    if (content) content.prepend(errDiv);
+    if (content) content.insertAdjacentHTML('afterbegin', msg);
   }
   showLoading(false);
 }
