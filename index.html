@@ -998,7 +998,7 @@ body {
     <div class="tabitem active" onclick="switchTab('locator')">&#128205; Item Locator <span class="tab-cnt" id="tc-locator">&mdash;</span></div>
     <div class="tabitem" onclick="switchTab('search')">&#128269; Item Search <span class="tab-cnt" id="tc-search">&mdash;</span></div>
     <div class="tabitem" onclick="switchTab('awd')">&#128666; AWD Lookup <span class="tab-cnt" id="tc-awd">&mdash;</span></div>
-    <div class="tabitem" onclick="switchTab('oos')">&#9888;&#65039; Out of Stock <span class="tab-cnt" id="tc-oos">&mdash;</span></div>
+    <div class="tabitem" onclick="switchTab('oos')">&#128202; Stock Levels <span class="tab-cnt" id="tc-oos">&mdash;</span></div>
   </div>
   <div class="content">
     <div id="pane-locator">
@@ -1044,7 +1044,7 @@ body {
     <div id="pane-oos" style="display:none">
       <div class="oos-header">
         <div class="oos-stat">
-          <div class="oos-stat-lbl">Out of Stock Items</div>
+          <div class="oos-stat-lbl">Stock Level Items</div>
           <div class="oos-stat-num" id="oos-num">&mdash;</div>
         </div>
         <div class="oos-filter"><input type="text" id="inp-oos" placeholder="Filter by SKU or name&hellip;" oninput="renderOOS()" /></div>
@@ -1610,7 +1610,7 @@ function cardLocator(r) {
         <div class="field-lbl">Total Units</div>
         <div class="field-val">${r.totalQty || '—'}</div>
       </div>
-      ${r.brand ? `<div class="field"><div class="field-lbl">Brand</div><div class="field-val muted">${r.brand}</div></div>` : ''}
+
       ${upcStr ? `<div class="field wide"><div class="field-lbl">UPC — Individual / Case</div><div class="field-val muted">${upcStr}</div></div>` : ''}
     </div>
   </div>`;
@@ -1699,7 +1699,7 @@ function renderOOS() {
   const items  = filter ? DB.oos.filter(r => r.sku.toLowerCase().includes(filter) || r.name.toLowerCase().includes(filter)) : DB.oos;
   document.getElementById('oos-num').textContent = items.length.toLocaleString();
   if (!items.length) {
-    document.getElementById('res-oos').innerHTML = `<div class="placeholder"><span class="placeholder-icon">✅</span><h3>All in stock</h3><p>No out-of-stock items found.</p></div>`;
+    document.getElementById('res-oos').innerHTML = `<div class="placeholder"><span class="placeholder-icon">✅</span><h3>No items found.</h3><p>No stock level items found.</p></div>`;
     return;
   }
   let html = `<div class="table-wrap"><table class="data-table">
