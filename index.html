@@ -1429,7 +1429,7 @@ input[type=checkbox]{width:15px;height:15px;cursor:pointer;accent-color:var(--bl
         <th><input type="checkbox" id="rec-all" onchange="toggleAllVis(this.checked)"></th>
         <th>SKU</th><th>Product</th><th>ASIN</th>
         <th class="r">Net Days</th><th class="r">Sold 90d</th><th class="r">Daily Sales</th><th class="r">Rec Send Qty</th>
-        <th class="r">FBA Fulfillable</th><th class="r">AWD Available</th><th class="r">Total Network</th><th></th>
+        <th class="r">FBA Fulfillable</th><th class="r">AWD Available</th><th class="r">Total Network</th><th>WH Stock</th><th></th>
       </tr></thead><tbody id="rec-tbody"></tbody></table></div></div>
     </div>
 
@@ -1446,9 +1446,9 @@ input[type=checkbox]{width:15px;height:15px;cursor:pointer;accent-color:var(--bl
             <div class="card">
               <div class="card-hdr"><div><div class="card-title">Shipment Contents</div><div class="card-sub" id="cpack-note"></div></div><span style="font-size:13px;color:var(--gray-500)" id="bld-units-lbl"></span></div>
               <div class="tw"><table><thead><tr>
-                <th>SKU</th><th>Product</th><th>ASIN</th>
-                <th class="r">Net Days</th><th class="r">Sold 90d</th><th class="r">Rec Qty</th><th class="r">Send Qty</th>
-                <th class="r"><span class="tt">Case Pack<span class="tt-ico">?</span><span class="tt-box">Units/box from AWD_Data. Boxes = CEIL(Send Qty ÷ Units/box). Pre-filled on export.</span></span></th>
+                <th>SKU</th><th>Product</th>
+                <th class="r">Net Days</th><th class="r">Rec Qty</th><th class="r">Send Qty</th>
+                <th class="r">Case Pack / Export Qty</th><th>Label</th>
                 <th></th>
               </tr></thead><tbody id="bld-tbody"></tbody></table></div>
             </div>
@@ -2349,7 +2349,7 @@ function processData(){
     const pill=ge('data-pill');
     pill.textContent=S.joined.length+' SKUs loaded';
     pill.style.background='var(--green-light)';pill.style.color='var(--green)';
-    awd_planner_toast('Processed '+S.joined.length+' SKUs — saving to sheet…','success');
+    awd_planner_toast('Processed '+S.joined.length+' SKUs — saving…','success');
     awd_switchTab('dashboard');
     saveReportsToSheet();
   }catch(e){ge('up-err').style.display='flex';ge('up-err').textContent='Error: '+e.message;console.error(e);}
@@ -2420,24 +2420,7 @@ function db(d){
 }
 
 // ── DASHBOARD ──
-function renderDashboard(){
-  if(!S.loaded){ge('dash-empty').style.display='';ge('dash-body').style.display='none';return;}
-  ge('dash-empty').style.display='none';ge('dash-body').style.display='block';
-  const d=S.joined;
-  const crit=d.filter(r=>r.netDays<999&&r.netDays<=30);
-  const warn=d.filter(r=>r.netDays<999&&r.netDays>30&&r.netDays<=60);
-  ge('stats-grid').innerHTML=`
-    <div class="stat red"><div class="stat-lbl">Critical ≤30d</div><div class="stat-val">${crit.length}</div><div class="stat-sub">Immediate action</div></div>
-    <div class="stat orange"><div class="stat-lbl">Warning 31–60d</div><div class="stat-val">${warn.length}</div><div class="stat-sub">Plan soon</div></div>
-    <div class="stat blue"><div class="stat-lbl">FBA Fulfillable</div><div class="stat-val">${fn(d.reduce((s,r)=>s+r.fbaFul,0))}</div><div class="stat-sub">Available at Amazon</div></div>
-    <div class="stat"><div class="stat-lbl">Total Network</div><div class="stat-val">${fn(d.reduce((s,r)=>s+r.totalNetwork,0))}</div><div class="stat-sub">All channels combined</div></div>
-    <div class="stat green"><div class="stat-lbl">Total Rec Send</div><div class="stat-val">${fn(d.reduce((s,r)=>s+r.recSend,0))}</div><div class="stat-sub">Across all SKUs</div></div>
-    <div class="stat"><div class="stat-lbl">SKUs Staged</div><div class="stat-val">${Object.keys(S.shipment).length}</div><div class="stat-sub">In builder</div></div>`;
-  const nm=(r)=>`<td style="font-size:12px;color:var(--gray-600);max-width:130px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="${r.name}">${r.name||'—'}</td>`;
-  ge('crit-tbody').innerHTML=crit.slice(0,10).map(r=>`<tr><td class="sku">${r.sku}</td>${nm(r)}<td>${db(r.netDays)}</td><td class="r">${fn(r.fbaFul)}</td><td class="r">${fn(r.awdAvail)}</td><td><button class="btn btn-sm btn-primary" onclick="addSku('${esc(r.sku)}')">+Add</button></td></tr>`).join('')||'<tr><td colspan="6" style="text-align:center;padding:24px;color:var(--gray-400)">No critical SKUs 🎉</td></tr>';
-  const recs=d.filter(r=>r.recSend>0&&r.netDays<999).sort((a,b)=>a.netDays-b.netDays).slice(0,10);
-  ge('rec-top-tbody').innerHTML=recs.map(r=>`<tr><td class="sku">${r.sku}</td>${nm(r)}<td>${db(r.netDays)}</td><td class="r"><strong style="color:var(--blue)">${fn(r.recSend)}</strong></td><td><button class="btn btn-sm btn-secondary" onclick="addSku('${esc(r.sku)}')">+Add</button></td></tr>`).join('')||'<tr><td colspan="5" style="text-align:center;padding:24px;color:var(--gray-400)">No recommendations</td></tr>';
-}
+
 
 // ── INVENTORY ──
 let invDir='asc';
@@ -2451,6 +2434,7 @@ function renderInv(){
     if(f==='warning'&&(r.netDays<=30||r.netDays>60||r.netDays>=999))return false;
     if(f==='ok'&&(r.netDays<=60||r.netDays>120||r.netDays>=999))return false;
     if(f==='good'&&r.netDays<=120)return false;
+    if(f==='awaiting'){if(r.recSend<=0)return false;if(DISC.skus.has(r.sku.toUpperCase()))return false;if(checkWarehouseStock(r.sku).status!=='awaiting')return false;}
     return true;
   });
   data.sort((a,b)=>invDir==='asc'?a.netDays-b.netDays:b.netDays-a.netDays);
@@ -2491,28 +2475,7 @@ function visRecs(){
     return true;
   }).sort((a,b)=>a.netDays-b.netDays);
 }
-function renderRecs(){
-  if(!S.loaded)return;
-  const data=visRecs();
-  ge('rec-count').textContent=data.length+' SKU'+(data.length!==1?'s':'');
-  const tb=ge('rec-tbody');
-  if(!data.length){tb.innerHTML='<tr><td colspan="12"><div class="empty" style="padding:30px"><div class="ico">📋</div><h3>No recommendations</h3></div></td></tr>';return;}
-  tb.innerHTML=data.map(r=>{
-    const inB=!!S.shipment[r.sku];
-    return`<tr>
-      <td><input type="checkbox" ${inB?'checked':''} onchange="togRec('${esc(r.sku)}',this.checked)"></td>
-      <td class="sku">${r.sku}</td>
-      <td style="font-size:12px;max-width:120px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:var(--gray-600)" title="${r.name}">${r.name||'—'}</td>
-      <td class="asin">${r.asin||'—'}</td>
-      <td class="r">${db(r.netDays)}</td>
-      <td class="r">${fn(r.sold90)}</td>
-      <td class="r">${r.dailySales>0?r.dailySales.toFixed(1):'—'}</td>
-      <td class="r"><strong style="color:var(--blue)">${fn(r.recSend)}</strong></td>
-      <td class="r">${fn(r.fbaFul)}</td><td class="r">${fn(r.awdAvail)}</td><td class="r">${fn(r.totalNetwork)}</td>
-      <td>${inB?'<button class="btn btn-sm btn-secondary" onclick="removeSku(\''+esc(r.sku)+'\')">Remove</button>':'<button class="btn btn-sm btn-primary" onclick="addSku(\''+esc(r.sku)+'\')">+Add</button>'}</td>
-    </tr>`;
-  }).join('');
-}
+
 function togRec(sku,c){if(c)addSku(sku);else removeSku(sku);}
 function toggleAllVis(c){visRecs().forEach(r=>{if(c)stage(r);else delete S.shipment[r.sku];});updateBadges();renderRecs();renderBuilder();}
 function addAllVisible(){ge('rec-all').checked=true;toggleAllVis(true);awd_planner_toast('Added to builder','success');}
@@ -2520,16 +2483,11 @@ function addAllVisible(){ge('rec-all').checked=true;toggleAllVis(true);awd_plann
 // ── BUILDER ──
 function findRow(sku){return S.joined.find(r=>r.sku===sku);}
 function stage(row){if(S.shipment[row.sku])return;S.shipment[row.sku]={row,qty:row.recSend||0};}
-function addSku(sku){const r=findRow(sku);if(!r)return;stage(r);updateBadges();renderRecs();renderBuilder();}
+
 function removeSku(sku){delete S.shipment[sku];updateBadges();renderRecs();renderBuilder();}
 function clearBuilder(){if(!Object.keys(S.shipment).length)return;S.shipment={};updateBadges();renderRecs();renderBuilder();awd_planner_toast('Cleared');}
 function updQty(sku,v){if(!S.shipment[sku])return;S.shipment[sku].qty=Math.max(0,parseInt(v)||0);updateSummary();}
-function updateBadges(){
-  const n=Object.keys(S.shipment).length;
-  const bb=ge('bld-badge');bb.textContent=n;bb.style.display=n?'':'none';
-  const rt=S.joined.filter(r=>r.recSend>0).length;
-  const rb=ge('rec-badge');rb.textContent=rt;rb.style.display=rt?'':'none';
-}
+
 function renderBuilder(){
   const items=Object.entries(S.shipment);
   ge('bld-empty').style.display=items.length?'none':'';
@@ -2544,15 +2502,24 @@ function renderBuilder(){
   ge('bld-tbody').innerHTML=filt.map(([sku,item])=>{
     const r=item.row,cp=S.cpackMap[sku.toUpperCase()],hasCP=cp&&cp.unitsPerBox>0;
     const boxes=hasCP?Math.ceil(item.qty/cp.unitsPerBox):null;
+    const ws = checkWarehouseStock(sku);
+    const exportQty = hasCP ? boxes * cp.unitsPerBox : item.qty;
+    const labelPrefix = exportBoxes => exportBoxes !== null
+      ? (ws.status === 'exact' ? String(exportBoxes) : String(exportBoxes) + '$')
+      : null;
+    const lPrefix = hasCP ? labelPrefix(boxes) : null;
     return`<tr>
       <td class="sku">${sku}</td>
-      <td style="font-size:12px;color:var(--gray-600);max-width:130px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="${r.name}">${r.name||'—'}</td>
-      <td class="asin">${r.asin||'—'}</td>
+      <td style="font-size:12px;color:var(--gray-600);max-width:120px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="${r.name}">${r.name||'—'}</td>
       <td class="r">${db(r.netDays)}</td>
-      <td class="r">${fn(r.sold90)}</td>
       <td class="r">${fn(r.recSend)}</td>
       <td><input type="number" class="qty-inp" value="${item.qty}" min="0" oninput="updQty('${esc(sku)}',this.value)"></td>
-      <td class="r">${hasCP?'<span class="cp-pill found">'+cp.unitsPerBox+'/box · '+boxes+' box'+(boxes!==1?'es':'')+'</span>':'<span class="cp-pill missing">No template</span>'}</td>
+      <td class="r">${hasCP
+        ? `<span class="cp-pill found">${cp.unitsPerBox}/box · ${exportQty} units · ${boxes} box${boxes!==1?'es':''}</span>`
+        : '<span class="cp-pill missing">No template</span>'}</td>
+      <td>${lPrefix
+        ? `<button class="btn btn-sm btn-secondary" style="font-size:11px" onclick="copyLabelFromBuilder('${esc(sku)}','${esc(lPrefix)}')">📋 ${lPrefix}</button>`
+        : '<span style="color:var(--gray-400);font-size:11px">—</span>'}</td>
       <td><button class="btn btn-sm btn-secondary" style="padding:4px 8px" onclick="removeSku('${esc(sku)}')">✕</button></td>
     </tr>`;
   }).join('');
@@ -2871,165 +2838,9 @@ window.addEventListener('load', function() {
 // OVERRIDE AWD RENDERERS — add warehouse stock + discontinued
 // ═══════════════════════════════════════════════════════
 
-// Override renderRecs to add warehouse status + discontinued
-var _orig_renderRecs = renderRecs;
-function renderRecs() {
-  if (!S.loaded) return;
-  var q = document.getElementById('rec-q') ? document.getElementById('rec-q').value.toLowerCase() : '';
-  var f = document.getElementById('rec-f') ? document.getElementById('rec-f').value : '';
 
-  var data = S.joined.filter(function(r) {
-    // Filter out discontinued
-    if (DISC.skus.has(r.sku.toUpperCase())) return false;
-    if (r.netDays >= 999 && r.recSend === 0) return false;
-    if (q && !r.sku.toLowerCase().includes(q) && !(r.asin||'').toLowerCase().includes(q) && !(r.name||'').toLowerCase().includes(q)) return false;
-    if (f === 'critical' && r.netDays > 30) return false;
-    if (f === 'warning' && (r.netDays <= 30 || r.netDays > 60)) return false;
-    if (f === 'ok' && (r.netDays <= 60 || r.netDays > 120)) return false;
-    return true;
-  }).sort(function(a,b) { return a.netDays - b.netDays; });
 
-  var cntEl = document.getElementById('rec-count');
-  if (cntEl) cntEl.textContent = data.length + ' SKU' + (data.length !== 1 ? 's' : '');
-  var tb = document.getElementById('rec-tbody');
-  if (!tb) return;
-  if (!data.length) {
-    tb.innerHTML = '<tr><td colspan="13"><div class="empty" style="padding:30px"><div class="ico">📋</div><h3>No recommendations</h3></div></td></tr>';
-    return;
-  }
 
-  tb.innerHTML = data.map(function(r) {
-    var inB = !!S.shipment[r.sku];
-    var whStatus = checkWarehouseStock(r.sku);
-    var statusBadge = '';
-    if (whStatus.status === 'exact')    statusBadge = '<span class="badge-labeled">✓ Pre-labeled</span>';
-    else if (whStatus.status === 'bulk') statusBadge = '<span class="badge-needslabel">$ Needs label</span>';
-    else if (whStatus.status === 'awaiting') statusBadge = '<span class="badge-await">⏳ Awaiting stock</span>';
-
-    var discBtn = '<button onclick="toggleDiscontinued(\'' + esc(r.sku) + '\')" class="badge-disc" title="Mark as discontinued">✕ Discontinue</button>';
-
-    return '<tr' + (whStatus.status === 'awaiting' ? ' style="opacity:.65"' : '') + '>' +
-      '<td><input type="checkbox" ' + (inB ? 'checked' : '') + ' onchange="togRec(\'' + esc(r.sku) + '\',this.checked)" ' + (whStatus.status === 'awaiting' ? 'disabled title="No warehouse stock"' : '') + '></td>' +
-      '<td class="sku">' + r.sku + '</td>' +
-      '<td style="font-size:12px;max-width:120px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:var(--gray-600)" title="' + (r.name||'') + '">' + (r.name||'—') + '</td>' +
-      '<td class="asin">' + (r.asin||'—') + '</td>' +
-      '<td>' + db(r.netDays) + '</td>' +
-      '<td class="r">' + fn(r.sold90) + '</td>' +
-      '<td class="r">' + (r.dailySales > 0 ? r.dailySales.toFixed(1) : '—') + '</td>' +
-      '<td class="r"><strong style="color:var(--blue)">' + fn(r.recSend) + '</strong></td>' +
-      '<td class="r">' + fn(r.fbaFul) + '</td>' +
-      '<td class="r">' + fn(r.awdAvail) + '</td>' +
-      '<td class="r">' + fn(r.totalNetwork) + '</td>' +
-      '<td>' + statusBadge + '</td>' +
-      '<td style="white-space:nowrap;display:flex;gap:4px;align-items:center">' +
-        (inB ? '<button class="btn btn-sm btn-secondary" onclick="removeSku(\'' + esc(r.sku) + '\')">Remove</button>' :
-               '<button class="btn btn-sm btn-primary" onclick="addSku(\'' + esc(r.sku) + '\')" ' + (whStatus.status === 'awaiting' ? 'style="background:#9CA3AF;border-color:#9CA3AF" title=\'No stock\'' : '') + '>+Add</button>') +
-        discBtn +
-      '</td>' +
-    '</tr>';
-  }).join('');
-}
-
-// Override renderDashboard to add awaiting stock section + warehouse column
-var _orig_renderDashboard = renderDashboard;
-function renderDashboard() {
-  if (!S.loaded) {
-    var de = document.getElementById('dash-empty');
-    var db2 = document.getElementById('dash-body');
-    if (de) de.style.display = '';
-    if (db2) db2.style.display = 'none';
-    return;
-  }
-  var de = document.getElementById('dash-empty');
-  var dbody = document.getElementById('dash-body');
-  if (de) de.style.display = 'none';
-  if (dbody) dbody.style.display = 'block';
-
-  var d = S.joined.filter(function(r) { return !DISC.skus.has(r.sku.toUpperCase()); });
-  var crit = d.filter(function(r) { return r.netDays < 999 && r.netDays <= 30; });
-  var warn = d.filter(function(r) { return r.netDays < 999 && r.netDays > 30 && r.netDays <= 60; });
-
-  // Awaiting stock: recommended but no warehouse stock
-  var awaiting = d.filter(function(r) {
-    if (r.recSend <= 0) return false;
-    return checkWarehouseStock(r.sku).status === 'awaiting';
-  });
-
-  var sg = document.getElementById('stats-grid');
-  if (sg) sg.innerHTML =
-    '<div class="stat red"><div class="stat-lbl">Critical ≤30d</div><div class="stat-val">' + crit.length + '</div><div class="stat-sub">Immediate action</div></div>' +
-    '<div class="stat orange"><div class="stat-lbl">Warning 31–60d</div><div class="stat-val">' + warn.length + '</div><div class="stat-sub">Plan soon</div></div>' +
-    '<div class="stat" style="--s-color:var(--orange)"><div class="stat-lbl">Awaiting Stock</div><div class="stat-val" style="color:var(--orange)">' + awaiting.length + '</div><div class="stat-sub">Recommended, no WH stock</div></div>' +
-    '<div class="stat blue"><div class="stat-lbl">FBA Fulfillable</div><div class="stat-val">' + fn(d.reduce(function(s,r){return s+r.fbaFul;},0)) + '</div><div class="stat-sub">Available at Amazon</div></div>' +
-    '<div class="stat green"><div class="stat-lbl">Total Rec Send</div><div class="stat-val">' + fn(d.reduce(function(s,r){return s+r.recSend;},0)) + '</div><div class="stat-sub">Across all SKUs</div></div>' +
-    '<div class="stat"><div class="stat-lbl">SKUs Staged</div><div class="stat-val">' + Object.keys(S.shipment).length + '</div><div class="stat-sub">In builder</div></div>';
-
-  // Awaiting stock section
-  var awaitHtml = '';
-  if (awaiting.length > 0) {
-    awaitHtml = '<div class="await-section">' +
-      '<div class="await-section-title" style="justify-content:space-between">' +
-        '<span>⏳ Awaiting Warehouse Stock</span>' +
-        '<button class="btn btn-sm" style="background:#EA580C;color:#fff;border-color:#EA580C;font-size:12px" onclick="showAwaitingInInventory()">View ' + awaiting.length + ' SKUs →</button>' +
-      '</div>' +
-      '<div style="font-size:12px;color:#92400e;margin-top:4px">Recommended to send but no warehouse stock. Add to next AWD shipment when inventory arrives.</div>' +
-    '</div>';
-  }
-
-  var nm = function(r) {
-    return '<td style="font-size:12px;color:var(--gray-600);max-width:130px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="' + (r.name||'') + '">' + (r.name||'—') + '</td>';
-  };
-
-  var ct = document.getElementById('crit-tbody');
-  if (ct) ct.innerHTML = crit.slice(0,10).map(function(r) {
-    var ws = checkWarehouseStock(r.sku);
-    var wsBadge = ws.status === 'exact' ? '<span class="badge-labeled">✓ Pre-labeled</span>' :
-                  ws.status === 'bulk'  ? '<span class="badge-needslabel">$ Needs label</span>' :
-                                          '<span class="badge-await">⏳ No stock</span>';
-    return '<tr><td class="sku">' + r.sku + '</td>' + nm(r) + '<td>' + db(r.netDays) + '</td><td class="r">' + fn(r.fbaFul) + '</td><td class="r">' + fn(r.awdAvail) + '</td><td>' + wsBadge + '</td><td><button class="btn btn-sm btn-primary" onclick="addSku(\'' + esc(r.sku) + '\')">+Add</button></td></tr>';
-  }).join('') || '<tr><td colspan="7" style="text-align:center;padding:24px;color:var(--gray-400)">No critical SKUs 🎉</td></tr>';
-
-  var recs = d.filter(function(r) { return r.recSend > 0 && r.netDays < 999; }).sort(function(a,b){return a.netDays-b.netDays;}).slice(0,10);
-  var rt = document.getElementById('rec-top-tbody');
-  if (rt) rt.innerHTML = recs.map(function(r) {
-    return '<tr><td class="sku">' + r.sku + '</td>' + nm(r) + '<td>' + db(r.netDays) + '</td><td class="r"><strong style="color:var(--blue)">' + fn(r.recSend) + '</strong></td><td><button class="btn btn-sm btn-secondary" onclick="addSku(\'' + esc(r.sku) + '\')">+Add</button></td></tr>';
-  }).join('') || '<tr><td colspan="5" style="text-align:center;padding:24px;color:var(--gray-400)">No recommendations</td></tr>';
-
-  // Inject awaiting stock section before dash-body tables
-  var existing = document.getElementById('awd-await-section');
-  if (existing) existing.remove();
-  if (awaitHtml) {
-    var dbEl = document.getElementById('dash-body');
-    if (dbEl) {
-      var div = document.createElement('div');
-      div.id = 'awd-await-section';
-      div.innerHTML = awaitHtml;
-      dbEl.insertBefore(div, dbEl.firstChild);
-    }
-  }
-}
-
-// Override updateBadges to account for discontinued
-var _orig_updateBadges = updateBadges;
-function updateBadges() {
-  var n = Object.keys(S.shipment).length;
-  var bb = document.getElementById('bld-badge');
-  if (bb) { bb.textContent = n; bb.style.display = n ? '' : 'none'; }
-  var rt = S.joined.filter(function(r) { return r.recSend > 0 && !DISC.skus.has(r.sku.toUpperCase()); }).length;
-  var rb = document.getElementById('rec-badge');
-  if (rb) { rb.textContent = rt; rb.style.display = rt ? '' : 'none'; }
-}
-
-// Override addSku to check stock
-var _orig_addSku = addSku;
-function addSku(sku) {
-  var ws = checkWarehouseStock(sku);
-  if (ws.status === 'awaiting') {
-    awd_planner_toast('No warehouse stock for ' + sku + ' — marked as awaiting', 'error');
-    return;
-  }
-  _orig_addSku(sku);
-}
 
 
 
@@ -3056,218 +2867,288 @@ function renderDiscontinuedPanel() {
 
 
 // ═══════════════════════════════════════════════════════
-// REPORT PERSISTENCE — save/load via Google Sheet
+// CORE FUNCTIONS — warehouse status + discontinued baked in, zero overrides
 // ═══════════════════════════════════════════════════════
 
-function rowsToValues(rows, keyOrder) {
-  if (!rows || !rows.length) return [keyOrder];
-  return [keyOrder, ...rows.map(function(r) {
-    return keyOrder.map(function(k) { return r[k] !== undefined ? String(r[k]) : ''; });
-  })];
-}
-
-function valuesToRows(values) {
-  if (!values || values.length < 2) return [];
-  var headers = values[0].map(function(h) { return String(h||'').trim(); });
-  return values.slice(1).map(function(row) {
-    var obj = {};
-    headers.forEach(function(h, i) { obj[h] = String(row[i] || '').trim(); });
-    return obj;
-  }).filter(function(r) { return Object.values(r).some(function(v) { return v; }); });
-}
-
-async function saveReportsToSheet() {
-  try {
-    var saves = [];
-    if (S.fba.length) {
-      saves.push(fetch('https://xfitting-lookup.alfixedinc88.workers.dev?sheet=FBA_Inventory', {
-        method: 'PUT', headers: {'Content-Type':'application/json'},
-        body: JSON.stringify({ values: rowsToValues(S.fba, Object.keys(S.fba[0])) })
-      }));
-    }
-    if (S.live.length) {
-      saves.push(fetch('https://xfitting-lookup.alfixedinc88.workers.dev?sheet=FBA_Live', {
-        method: 'PUT', headers: {'Content-Type':'application/json'},
-        body: JSON.stringify({ values: rowsToValues(S.live, Object.keys(S.live[0])) })
-      }));
-    }
-    if (S.awd.length) {
-      saves.push(fetch('https://xfitting-lookup.alfixedinc88.workers.dev?sheet=AWD_Inventory', {
-        method: 'PUT', headers: {'Content-Type':'application/json'},
-        body: JSON.stringify({ values: rowsToValues(S.awd, Object.keys(S.awd[0])) })
-      }));
-    }
-    if (S.res.length) {
-      saves.push(fetch('https://xfitting-lookup.alfixedinc88.workers.dev?sheet=FBA_Reserve', {
-        method: 'PUT', headers: {'Content-Type':'application/json'},
-        body: JSON.stringify({ values: rowsToValues(S.res, Object.keys(S.res[0])) })
-      }));
-    }
-    await Promise.all(saves);
-    awd_planner_toast('Reports saved to sheet ✓', 'success');
-    console.log('[XFITTING] Reports saved to Google Sheet');
-  } catch(e) {
-    console.error('[XFITTING] saveReportsToSheet error:', e);
-    awd_planner_toast('Sheet sync failed — data processed locally', 'error');
+function addSku(sku) {
+  const r = findRow(sku);
+  if (!r) return;
+  const ws = checkWarehouseStock(sku);
+  if (ws.status === 'awaiting') {
+    awd_planner_toast('⚠ No warehouse stock for ' + sku, 'error');
   }
+  stage(r);
+  updateBadges();
+  renderRecs();
+  renderBuilder();
 }
 
-async function loadReportsFromSheet() {
-  try {
-    var pill = ge('data-pill');
-    if (pill) { pill.textContent = 'Loading saved data…'; pill.style.background='var(--blue-light)'; pill.style.color='var(--blue)'; }
+function updateBadges() {
+  const n = Object.keys(S.shipment).length;
+  const bb = ge('bld-badge');
+  if (bb) { bb.textContent = n; bb.style.display = n ? '' : 'none'; }
+  const rt = S.joined.filter(r => r.recSend > 0 && !DISC.skus.has(r.sku.toUpperCase())).length;
+  const rb = ge('rec-badge');
+  if (rb) { rb.textContent = rt; rb.style.display = rt ? '' : 'none'; }
+}
 
-    var results = await Promise.all([
-      fetch('https://xfitting-lookup.alfixedinc88.workers.dev?sheet=FBA_Inventory').then(function(r){return r.json();}),
-      fetch('https://xfitting-lookup.alfixedinc88.workers.dev?sheet=FBA_Live').then(function(r){return r.json();}),
-      fetch('https://xfitting-lookup.alfixedinc88.workers.dev?sheet=AWD_Inventory').then(function(r){return r.json();}),
-      fetch('https://xfitting-lookup.alfixedinc88.workers.dev?sheet=FBA_Reserve').then(function(r){return r.json();})
-    ]);
+function renderRecs() {
+  if (!S.loaded) return;
+  const q = ge('rec-q') ? ge('rec-q').value.toLowerCase() : '';
+  const f = ge('rec-f') ? ge('rec-f').value : '';
 
-    var fbaData  = valuesToRows(results[0].values || []);
-    var liveData = valuesToRows(results[1].values || []);
-    var awdData  = valuesToRows(results[2].values || []);
-    var resData  = valuesToRows(results[3].values || []);
+  const data = S.joined.filter(r => {
+    if (DISC.skus.has(r.sku.toUpperCase())) return false;
+    if (r.netDays >= 999 && r.recSend === 0) return false;
+    if (q && !r.sku.toLowerCase().includes(q) && !(r.asin||'').toLowerCase().includes(q) && !(r.name||'').toLowerCase().includes(q)) return false;
+    if (f === 'critical' && r.netDays > 30) return false;
+    if (f === 'warning' && (r.netDays <= 30 || r.netDays > 60)) return false;
+    if (f === 'ok' && (r.netDays <= 60 || r.netDays > 120)) return false;
+    return true;
+  }).sort((a, b) => a.netDays - b.netDays);
 
-    if (!fbaData.length) {
-      if (pill) { pill.textContent = 'No data loaded'; pill.style.background='var(--gray-100)'; pill.style.color='var(--gray-500)'; }
-      return;
-    }
-
-    S.fba = fbaData; S.live = liveData; S.awd = awdData; S.res = resData;
-
-    // Update upload zone indicators
-    [['fba',fbaData,'📊'],['live',liveData,'📦'],['awd',awdData,'🏭'],['res',resData,'🔒']].forEach(function(item) {
-      var k=item[0], data=item[1], ico=item[2];
-      if (!data.length) return;
-      var stEl=ge('st-'+k); if(stEl){stEl.textContent=data.length+' rows (saved)';stEl.className='ust ok';}
-      var icoEl=ge('ico-'+k); if(icoEl) icoEl.textContent='✅';
-      var zone=ge('zone-'+k); if(zone) zone.classList.add('loaded');
-    });
-
-    if (ge('proc-btn')) ge('proc-btn').disabled = false;
-    processData();
-  } catch(e) {
-    console.error('[XFITTING] loadReportsFromSheet error:', e);
-    var pill = ge('data-pill');
-    if (pill) { pill.textContent = 'No data loaded'; pill.style.background='var(--gray-100)'; pill.style.color='var(--gray-500)'; }
+  const cntEl = ge('rec-count');
+  if (cntEl) cntEl.textContent = data.length + ' SKU' + (data.length !== 1 ? 's' : '');
+  const tb = ge('rec-tbody');
+  if (!tb) return;
+  if (!data.length) {
+    tb.innerHTML = '<tr><td colspan="13"><div class="empty" style="padding:30px"><div class="ico">📋</div><h3>No recommendations</h3></div></td></tr>';
+    return;
   }
+  tb.innerHTML = data.map(r => {
+    const inB = !!S.shipment[r.sku];
+    const ws = checkWarehouseStock(r.sku);
+    const statusBadge =
+      ws.status === 'exact'    ? '<span class="badge-labeled">✓ Pre-labeled</span>' :
+      ws.status === 'bulk'     ? '<span class="badge-needslabel">$ Needs label</span>' :
+      ws.status === 'awaiting' ? '<span class="badge-await">⏳ Awaiting stock</span>' : '';
+    const discBtn = `<button onclick="toggleDiscontinued('${esc(r.sku)}')" class="badge-disc" title="Mark as discontinued">✕</button>`;
+    return `<tr${ws.status === 'awaiting' ? ' style="opacity:.75"' : ''}>
+      <td><input type="checkbox" ${inB ? 'checked' : ''} onchange="togRec('${esc(r.sku)}',this.checked)"></td>
+      <td class="sku">${r.sku}</td>
+      <td style="font-size:12px;max-width:120px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:var(--gray-600)" title="${r.name||''}">${r.name||'—'}</td>
+      <td class="asin">${r.asin||'—'}</td>
+      <td>${db(r.netDays)}</td>
+      <td class="r">${fn(r.sold90)}</td>
+      <td class="r">${r.dailySales > 0 ? r.dailySales.toFixed(1) : '—'}</td>
+      <td class="r"><strong style="color:var(--blue)">${fn(r.recSend)}</strong></td>
+      <td class="r">${fn(r.fbaFul)}</td>
+      <td class="r">${fn(r.awdAvail)}</td>
+      <td class="r">${fn(r.totalNetwork)}</td>
+      <td>${statusBadge}</td>
+      <td style="display:flex;gap:4px;align-items:center">
+        ${inB
+          ? `<button class="btn btn-sm btn-secondary" onclick="removeSku('${esc(r.sku)}')">Remove</button>`
+          : `<button class="btn btn-sm btn-primary" onclick="addSku('${esc(r.sku)}')">+Add</button>`}
+        ${discBtn}
+      </td>
+    </tr>`;
+  }).join('');
 }
 
-function clearReportData() {
-  if (!confirm('Clear all saved report data from the sheet?')) return;
-  S.fba=[]; S.live=[]; S.awd=[]; S.res=[]; S.joined=[]; S.loaded=false;
-  [['fba','📊'],['live','📦'],['awd','🏭'],['res','🔒']].forEach(function(item) {
-    var k=item[0], ico=item[1];
-    var icoEl=ge('ico-'+k); if(icoEl) icoEl.textContent=ico;
-    var zone=ge('zone-'+k); if(zone) zone.classList.remove('loaded');
-    var st=ge('st-'+k); if(st){st.textContent='';st.className='ust';}
-  });
-  if(ge('proc-btn')) ge('proc-btn').disabled=true;
-  var pill=ge('data-pill'); if(pill){pill.textContent='No data loaded';pill.style.background='var(--gray-100)';pill.style.color='var(--gray-500)';}
-  ['FBA_Inventory','FBA_Live','AWD_Inventory','FBA_Reserve'].forEach(function(sheet) {
-    fetch('https://xfitting-lookup.alfixedinc88.workers.dev?sheet='+sheet, {
-      method:'PUT', headers:{'Content-Type':'application/json'},
-      body: JSON.stringify({values:[['cleared']]})
-    });
-  });
-  renderDashboard(); renderInv(); renderRecs(); updateBadges();
-  awd_planner_toast('Report data cleared', 'success');
+function renderDashboard() {
+  if (!S.loaded) {
+    const de = ge('dash-empty'), db2 = ge('dash-body');
+    if (de) de.style.display = ''; if (db2) db2.style.display = 'none';
+    return;
+  }
+  const de = ge('dash-empty'), dbody = ge('dash-body');
+  if (de) de.style.display = 'none'; if (dbody) dbody.style.display = 'block';
+
+  const d        = S.joined.filter(r => !DISC.skus.has(r.sku.toUpperCase()));
+  const crit     = d.filter(r => r.netDays < 999 && r.netDays <= 30);
+  const warn     = d.filter(r => r.netDays < 999 && r.netDays > 30 && r.netDays <= 60);
+  const awaiting = d.filter(r => r.recSend > 0 && checkWarehouseStock(r.sku).status === 'awaiting');
+
+  const sg = ge('stats-grid');
+  if (sg) sg.innerHTML = `
+    <div class="stat red"><div class="stat-lbl">Critical ≤30d</div><div class="stat-val">${crit.length}</div><div class="stat-sub">Immediate action</div></div>
+    <div class="stat orange"><div class="stat-lbl">Warning 31–60d</div><div class="stat-val">${warn.length}</div><div class="stat-sub">Plan soon</div></div>
+    <div class="stat" style="border-top:3px solid #EA580C"><div class="stat-lbl">Awaiting Stock</div>
+      <div class="stat-val" style="color:#EA580C">${awaiting.length}</div>
+      <div class="stat-sub">${awaiting.length > 0 ? `<button class="btn btn-sm" style="font-size:11px;padding:2px 8px;margin-top:2px;background:#EA580C;color:#fff;border-color:#EA580C" onclick="showAwaitingInInventory()">View SKUs →</button>` : 'No stock needed'}</div>
+    </div>
+    <div class="stat blue"><div class="stat-lbl">FBA Fulfillable</div><div class="stat-val">${fn(d.reduce((s,r)=>s+r.fbaFul,0))}</div><div class="stat-sub">Available at Amazon</div></div>
+    <div class="stat green"><div class="stat-lbl">Total Rec Send</div><div class="stat-val">${fn(d.reduce((s,r)=>s+r.recSend,0))}</div><div class="stat-sub">Across all SKUs</div></div>
+    <div class="stat"><div class="stat-lbl">SKUs Staged</div><div class="stat-val">${Object.keys(S.shipment).length}</div><div class="stat-sub">In builder</div></div>`;
+
+  const nm = r => `<td style="font-size:12px;color:var(--gray-600);max-width:130px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="${r.name||''}">${r.name||'—'}</td>`;
+  const ct = ge('crit-tbody');
+  if (ct) ct.innerHTML = crit.slice(0,10).map(r => {
+    const ws = checkWarehouseStock(r.sku);
+    const wsBadge = ws.status==='exact' ? '<span class="badge-labeled">✓ Pre-labeled</span>' :
+                    ws.status==='bulk'  ? '<span class="badge-needslabel">$ Needs label</span>' :
+                                          '<span class="badge-await">⏳ No stock</span>';
+    return `<tr><td class="sku">${r.sku}</td>${nm(r)}<td>${db(r.netDays)}</td><td class="r">${fn(r.fbaFul)}</td><td class="r">${fn(r.awdAvail)}</td><td>${wsBadge}</td><td><button class="btn btn-sm btn-primary" onclick="addSku('${esc(r.sku)}')">+Add</button></td></tr>`;
+  }).join('') || '<tr><td colspan="7" style="text-align:center;padding:24px;color:var(--gray-400)">No critical SKUs 🎉</td></tr>';
+
+  const recs = d.filter(r => r.recSend > 0 && r.netDays < 999).sort((a,b) => a.netDays-b.netDays).slice(0,10);
+  const rt = ge('rec-top-tbody');
+  if (rt) rt.innerHTML = recs.map(r =>
+    `<tr><td class="sku">${r.sku}</td>${nm(r)}<td>${db(r.netDays)}</td><td class="r"><strong style="color:var(--blue)">${fn(r.recSend)}</strong></td><td><button class="btn btn-sm btn-secondary" onclick="addSku('${esc(r.sku)}')">+Add</button></td></tr>`
+  ).join('') || '<tr><td colspan="5" style="text-align:center;padding:24px;color:var(--gray-400)">No recommendations</td></tr>';
 }
 
-
-// ── AWAITING STOCK — view in inventory tab ──
+// ── AWAITING STOCK — jump to inventory tab with filter ──
 function showAwaitingInInventory() {
   awd_switchTab('inventory');
-  var fsel = ge('inv-f');
+  const fsel = ge('inv-f');
   if (fsel) fsel.value = 'awaiting';
   renderInv();
 }
 
-// Patch renderInv to support 'awaiting' filter
-var _orig_renderInv = renderInv;
-function renderInv() {
-  var fsel = ge('inv-f');
-  if (!fsel || fsel.value !== 'awaiting') { _orig_renderInv(); return; }
-  if (!S.loaded) return;
-  var q = ge('inv-q') ? ge('inv-q').value.toLowerCase() : '';
-  var data = S.joined.filter(function(r) {
-    if (r.recSend <= 0) return false;
-    if (DISC.skus.has(r.sku.toUpperCase())) return false;
-    if (checkWarehouseStock(r.sku).status !== 'awaiting') return false;
-    if (q && !r.sku.toLowerCase().includes(q) && !(r.asin||'').toLowerCase().includes(q) && !(r.name||'').toLowerCase().includes(q)) return false;
-    return true;
-  }).sort(function(a,b) { return a.netDays - b.netDays; });
-
-  var cntEl = ge('inv-count'); if(cntEl) cntEl.textContent = data.length + ' SKU' + (data.length!==1?'s':'') + ' awaiting stock';
-  var tb = ge('inv-tbody'); if(!tb) return;
-  if (!data.length) { tb.innerHTML = '<tr><td colspan="15"><div class="empty" style="padding:30px"><div class="ico">📭</div><h3>No SKUs awaiting stock</h3></div></td></tr>'; return; }
-  tb.innerHTML = data.map(function(r) {
-    return '<tr style="background:#FFF7ED">' +
-      '<td class="sku">' + r.sku + '</td>' +
-      '<td style="font-size:12px;color:var(--gray-600);max-width:150px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">' + (r.name||'—') + '</td>' +
-      '<td class="asin">' + (r.asin||'—') + '</td>' +
-      '<td class="r"><span class="badge-await">⏳ No WH stock</span></td>' +
-      '<td class="r">' + fn(r.fbaFul) + '</td><td class="r">—</td><td class="r">—</td>' +
-      '<td class="r">—</td><td class="r">—</td><td class="r">—</td>' +
-      '<td class="r"><strong>' + fn(r.totalNetwork) + '</strong></td>' +
-      '<td class="r">' + fn(r.sold90) + '</td>' +
-      '<td class="r">' + (r.dailySales>0?r.dailySales.toFixed(1):'—') + '</td>' +
-      '<td class="r">' + fn(r.target) + '</td>' +
-      '<td class="r"><strong style="color:var(--orange)">' + fn(r.recSend) + '</strong></td>' +
-    '</tr>';
-  }).join('');
+// ── EXPORT CSV — round qty up to full boxes ──
+function exportCSV() {
+  const items = Object.entries(S.shipment).filter(([,i]) => i.qty > 0);
+  if (!items.length) { awd_planner_toast('No units staged', 'error'); return; }
+  const h = ['Merchant SKU','Quantity','Expiration date (MM/DD/YYYY)','Units per box','Number of boxes','Box length (in)','Box width (in)','Box height (in)','Box weight (lb)','Palletized?','Boxes Per Pallet','Number of pallets'];
+  const rows = items.map(([sku, i]) => {
+    const cp = S.cpackMap[sku.toUpperCase()];
+    const hasCP = cp && cp.unitsPerBox > 0;
+    const boxes = hasCP ? Math.ceil(i.qty / cp.unitsPerBox) : '';
+    const exportQty = hasCP ? boxes * cp.unitsPerBox : i.qty;  // round up to full boxes
+    return [sku, exportQty, '', hasCP?cp.unitsPerBox:'', boxes, hasCP?cp.lengthIn:'', hasCP?cp.widthIn:'', hasCP?cp.heightIn:'', hasCP?cp.weightLb:'', '','',''];
+  });
+  const name = ge('ship-name').value.trim() || 'AWD_Shipment';
+  dlCSV([h, ...rows], name + '.csv');
+  const tot = rows.reduce((s, r) => s + (Number(r[1])||0), 0);
+  awd_planner_toast('Exported ' + items.length + ' SKUs · ' + fn(tot) + ' units', 'success');
 }
 
 // ── LABEL COPY FROM BUILDER ──
 function buildLabelCopyText(amazonSku, casePrefix) {
   if (!DB || !DB.awd || !DB.awd.length) return null;
-  var norm = normalizeAmazonSKU(amazonSku);
-  var matches = DB.awd.filter(function(row) {
-    return String(row[6]||'').trim().toLowerCase() === norm;
-  });
+  const norm = normalizeAmazonSKU(amazonSku);
+  let matches = DB.awd.filter(row => String(row[6]||'').trim().toLowerCase() === norm);
   if (!matches.length) {
-    var base = norm.split('=')[0];
-    matches = DB.awd.filter(function(row) {
-      return String(row[6]||'').trim().toLowerCase().split('=')[0] === base;
-    });
+    const base = norm.split('=')[0];
+    matches = DB.awd.filter(row => String(row[6]||'').trim().toLowerCase().split('=')[0] === base);
   }
   if (!matches.length) return null;
-  var row     = matches[0];
-  var partNum = String(row[6]||'').trim();
-  var upc     = String(row[2]||'').trim();
-  var loc     = String(row[3]||'').trim();
-  var base2   = partNum.includes('=') ? partNum.split('=')[0] : partNum;
-  var suffix  = partNum.includes('=') ? partNum.split('=')[1] : partNum;
-  var whName  = getWarehouseName(base2);
-  var label   = whName ? (suffix + '=' + whName) : partNum;
-  var lines = [];
+  const row     = matches[0];
+  const partNum = String(row[6]||'').trim();
+  const upc     = String(row[2]||'').trim();
+  const loc     = String(row[3]||'').trim();
+  const suffix  = partNum.includes('=') ? partNum.split('=')[1] : partNum;
+  const base2   = partNum.includes('=') ? partNum.split('=')[0] : partNum;
+  const whName  = getWarehouseName ? getWarehouseName(base2) : '';
+  const label   = whName ? (suffix + '=' + whName) : partNum;
+  const lines   = [];
   if (casePrefix) lines.push(casePrefix);
   lines.push(label);
   if (upc) lines.push(upc);
   if (loc) lines.push(loc);
-  var normKey = normalizeAmazonSKU(amazonSku);
+  const normKey = norm;
   if (WH.stock[normKey]) {
-    WH.stock[normKey].forEach(function(r) {
-      var locLine = r.location + (r.cases ? ' · ' + r.cases + ' cases' : '');
-      if (lines.indexOf(locLine) === -1) lines.push(locLine);
+    WH.stock[normKey].forEach(r => {
+      const locLine = r.location + (r.cases ? ' · ' + r.cases + ' cases' : '');
+      if (!lines.includes(locLine)) lines.push(locLine);
     });
   }
   return lines.join('\n');
 }
 
 function copyLabelFromBuilder(sku, prefix) {
-  var text = buildLabelCopyText(sku, prefix);
+  const text = buildLabelCopyText(sku, prefix);
   if (!text) { awd_planner_toast('No AWD data found for ' + sku, 'error'); return; }
-  navigator.clipboard.writeText(text).then(function() {
+  navigator.clipboard.writeText(text).then(() => {
     awd_planner_toast('Label copied: ' + sku, 'success');
-  }).catch(function() {
-    var ta = document.createElement('textarea');
-    ta.value = text; ta.style.position='fixed'; ta.style.opacity='0';
+  }).catch(() => {
+    const ta = document.createElement('textarea');
+    ta.value = text; ta.style.position = 'fixed'; ta.style.opacity = '0';
     document.body.appendChild(ta); ta.select(); document.execCommand('copy');
     document.body.removeChild(ta);
     awd_planner_toast('Label copied: ' + sku, 'success');
   });
+}
+
+// ── REPORT PERSISTENCE ──
+function rowsToValues(rows, keyOrder) {
+  if (!rows || !rows.length) return [keyOrder];
+  return [keyOrder, ...rows.map(r => keyOrder.map(k => r[k] !== undefined ? String(r[k]) : ''))];
+}
+
+function valuesToRows(values) {
+  if (!values || values.length < 2) return [];
+  const headers = values[0].map(h => String(h||'').trim());
+  return values.slice(1).map(row => {
+    const obj = {};
+    headers.forEach((h, i) => { obj[h] = String(row[i]||'').trim(); });
+    return obj;
+  }).filter(r => Object.values(r).some(v => v));
+}
+
+async function saveReportsToSheet() {
+  try {
+    const saves = [];
+    if (S.fba.length)  saves.push(fetch('https://xfitting-lookup.alfixedinc88.workers.dev?sheet=FBA_Inventory',  {method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify({values:rowsToValues(S.fba,  Object.keys(S.fba[0]))})}));
+    if (S.live.length) saves.push(fetch('https://xfitting-lookup.alfixedinc88.workers.dev?sheet=FBA_Live',        {method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify({values:rowsToValues(S.live, Object.keys(S.live[0]))})}));
+    if (S.awd.length)  saves.push(fetch('https://xfitting-lookup.alfixedinc88.workers.dev?sheet=AWD_Inventory',   {method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify({values:rowsToValues(S.awd,  Object.keys(S.awd[0]))})}));
+    if (S.res.length)  saves.push(fetch('https://xfitting-lookup.alfixedinc88.workers.dev?sheet=FBA_Reserve',     {method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify({values:rowsToValues(S.res,  Object.keys(S.res[0]))})}));
+    await Promise.all(saves);
+    awd_planner_toast('Reports saved ✓', 'success');
+  } catch(e) { console.error('[XFITTING] saveReportsToSheet:', e); }
+}
+
+async function loadReportsFromSheet() {
+  try {
+    const pill = ge('data-pill');
+    if (pill) { pill.textContent = 'Loading saved data…'; pill.style.background='var(--blue-light)'; pill.style.color='var(--blue)'; }
+    const [r1,r2,r3,r4] = await Promise.all([
+      fetch('https://xfitting-lookup.alfixedinc88.workers.dev?sheet=FBA_Inventory').then(r=>r.json()),
+      fetch('https://xfitting-lookup.alfixedinc88.workers.dev?sheet=FBA_Live').then(r=>r.json()),
+      fetch('https://xfitting-lookup.alfixedinc88.workers.dev?sheet=AWD_Inventory').then(r=>r.json()),
+      fetch('https://xfitting-lookup.alfixedinc88.workers.dev?sheet=FBA_Reserve').then(r=>r.json()),
+    ]);
+    const fbaData=valuesToRows(r1.values||[]), liveData=valuesToRows(r2.values||[]),
+          awdData=valuesToRows(r3.values||[]), resData =valuesToRows(r4.values||[]);
+    if (!fbaData.length) {
+      if (pill) { pill.textContent='No data loaded'; pill.style.background='var(--gray-100)'; pill.style.color='var(--gray-500)'; }
+      return;
+    }
+    S.fba=fbaData; S.live=liveData; S.awd=awdData; S.res=resData;
+    [['fba',fbaData,'📊'],['live',liveData,'📦'],['awd',awdData,'🏭'],['res',resData,'🔒']].forEach(([k,data,ico]) => {
+      if (!data.length) return;
+      const st=ge('st-'+k); if(st){st.textContent=data.length+' rows (saved)';st.className='ust ok';}
+      const icoEl=ge('ico-'+k); if(icoEl) icoEl.textContent='✅';
+      const zone=ge('zone-'+k); if(zone) zone.classList.add('loaded');
+    });
+    if (ge('proc-btn')) ge('proc-btn').disabled = false;
+    processData();
+  } catch(e) {
+    console.error('[XFITTING] loadReportsFromSheet:', e);
+    const pill = ge('data-pill');
+    if (pill) { pill.textContent='No data loaded'; pill.style.background='var(--gray-100)'; pill.style.color='var(--gray-500)'; }
+  }
+}
+
+function clearReportData() {
+  if (!confirm('Clear all saved report data?')) return;
+  S.fba=[]; S.live=[]; S.awd=[]; S.res=[]; S.joined=[]; S.loaded=false;
+  [['fba','📊'],['live','📦'],['awd','🏭'],['res','🔒']].forEach(([k,ico]) => {
+    const icoEl=ge('ico-'+k); if(icoEl) icoEl.textContent=ico;
+    const zone=ge('zone-'+k); if(zone) zone.classList.remove('loaded');
+    const st=ge('st-'+k); if(st){st.textContent='';st.className='ust';}
+  });
+  if(ge('proc-btn')) ge('proc-btn').disabled=true;
+  const pill=ge('data-pill'); if(pill){pill.textContent='No data loaded';pill.style.background='var(--gray-100)';pill.style.color='var(--gray-500)';}
+  ['FBA_Inventory','FBA_Live','AWD_Inventory','FBA_Reserve'].forEach(sheet =>
+    fetch('https://xfitting-lookup.alfixedinc88.workers.dev?sheet='+sheet,{method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify({values:[['cleared']]})})
+  );
+  renderDashboard(); renderInv(); renderRecs(); updateBadges();
+  awd_planner_toast('Report data cleared', 'success');
+}
+
+// ── DISCONTINUED SETTINGS PANEL ──
+function renderDiscontinuedPanel() {
+  const panel = ge('disc-panel'); if (!panel) return;
+  const all = S.joined.filter(r => DISC.skus.has(r.sku.toUpperCase()));
+  if (!all.length) { panel.innerHTML='<div style="color:var(--gray-400);font-size:13px">No discontinued SKUs.</div>'; return; }
+  panel.innerHTML = '<div style="display:flex;flex-wrap:wrap;gap:8px">' +
+    all.map(r => `<div style="background:var(--gray-100);border:1px solid var(--gray-200);border-radius:8px;padding:6px 12px;font-size:12px;display:flex;align-items:center;gap:8px">
+      <span class="sku">${r.sku}</span>
+      <button onclick="toggleDiscontinued('${esc(r.sku)}')" style="background:none;border:none;color:var(--green);cursor:pointer;font-size:12px;font-weight:600">↩ Restore</button>
+    </div>`).join('') + '</div>';
 }
 
 </script>
