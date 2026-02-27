@@ -2727,14 +2727,13 @@ async function saveDiscontinuedSKU(sku, remove) {
 }
 
 // ── TOGGLE DISCONTINUED ──
-async function toggleDiscontinued(sku) {
+async async function toggleDiscontinued(sku) {
   var upper = sku.toUpperCase();
   var removing = DISC.skus.has(upper);
   if (removing) { DISC.skus.delete(upper); } else { DISC.skus.add(upper); }
   awd_planner_toast(removing ? 'SKU restored: ' + sku : 'SKU marked discontinued: ' + sku, 'success');
   renderRecs();
   renderDashboard();
-  // Save async
   await saveDiscontinuedSKU(sku, removing);
 }
 
