@@ -1396,7 +1396,7 @@ input[type=checkbox]{width:15px;height:15px;cursor:pointer;accent-color:var(--bl
     <div class="page" id="page-inventory">
       <div class="fbar">
         <div class="sw"><svg class="sic" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.35-4.35"/></svg><input type="text" class="si" id="inv-q" placeholder="Search SKU, ASIN, product…" oninput="renderInv()"></div>
-        <select class="fsel" id="inv-f" onchange="renderInv()"><option value="all">All SKUs</option><option value="critical">🔴 Critical (≤30d)</option><option value="warning">🟠 Warning (31–60d)</option><option value="ok">🟡 OK (61–120d)</option><option value="good">🟢 Good (&gt;120d)</option></select>
+        <select class="fsel" id="inv-f" onchange="renderInv()"><option value="all">All SKUs</option><option value="critical">🔴 Critical (≤30d)</option><option value="warning">🟠 Warning (31–60d)</option><option value="ok">🟡 OK (61–120d)</option><option value="good">🟢 Good (&gt;120d)</option><option value="awaiting">⏳ Awaiting WH Stock</option></select>
         <span style="font-size:12px;color:var(--gray-500)" id="inv-count"></span>
         <div class="mla" style="display:flex;gap:8px"><button class="btn btn-secondary btn-sm" onclick="exportInvCSV()">Export CSV</button></div>
       </div>
@@ -2968,12 +2968,12 @@ function renderDashboard() {
   var awaitHtml = '';
   if (awaiting.length > 0) {
     awaitHtml = '<div class="await-section">' +
-      '<div class="await-section-title">⏳ Awaiting Warehouse Stock (' + awaiting.length + ' SKUs) — add to next AWD shipment when inventory arrives</div>' +
-      '<div class="await-grid">' +
-      awaiting.map(function(r) {
-        return '<div class="await-pill">' + r.sku + ' <span style="font-weight:400;color:#92400e">· ' + fn(r.recSend) + ' units</span></div>';
-      }).join('') +
-      '</div></div>';
+      '<div class="await-section-title" style="justify-content:space-between">' +
+        '<span>⏳ Awaiting Warehouse Stock</span>' +
+        '<button class="btn btn-sm" style="background:#EA580C;color:#fff;border-color:#EA580C;font-size:12px" onclick="showAwaitingInInventory()">View ' + awaiting.length + ' SKUs →</button>' +
+      '</div>' +
+      '<div style="font-size:12px;color:#92400e;margin-top:4px">Recommended to send but no warehouse stock. Add to next AWD shipment when inventory arrives.</div>' +
+    '</div>';
   }
 
   var nm = function(r) {
@@ -3173,6 +3173,101 @@ function clearReportData() {
   });
   renderDashboard(); renderInv(); renderRecs(); updateBadges();
   awd_planner_toast('Report data cleared', 'success');
+}
+
+
+// ── AWAITING STOCK — view in inventory tab ──
+function showAwaitingInInventory() {
+  awd_switchTab('inventory');
+  var fsel = ge('inv-f');
+  if (fsel) fsel.value = 'awaiting';
+  renderInv();
+}
+
+// Patch renderInv to support 'awaiting' filter
+var _orig_renderInv = renderInv;
+function renderInv() {
+  var fsel = ge('inv-f');
+  if (!fsel || fsel.value !== 'awaiting') { _orig_renderInv(); return; }
+  if (!S.loaded) return;
+  var q = ge('inv-q') ? ge('inv-q').value.toLowerCase() : '';
+  var data = S.joined.filter(function(r) {
+    if (r.recSend <= 0) return false;
+    if (DISC.skus.has(r.sku.toUpperCase())) return false;
+    if (checkWarehouseStock(r.sku).status !== 'awaiting') return false;
+    if (q && !r.sku.toLowerCase().includes(q) && !(r.asin||'').toLowerCase().includes(q) && !(r.name||'').toLowerCase().includes(q)) return false;
+    return true;
+  }).sort(function(a,b) { return a.netDays - b.netDays; });
+
+  var cntEl = ge('inv-count'); if(cntEl) cntEl.textContent = data.length + ' SKU' + (data.length!==1?'s':'') + ' awaiting stock';
+  var tb = ge('inv-tbody'); if(!tb) return;
+  if (!data.length) { tb.innerHTML = '<tr><td colspan="15"><div class="empty" style="padding:30px"><div class="ico">📭</div><h3>No SKUs awaiting stock</h3></div></td></tr>'; return; }
+  tb.innerHTML = data.map(function(r) {
+    return '<tr style="background:#FFF7ED">' +
+      '<td class="sku">' + r.sku + '</td>' +
+      '<td style="font-size:12px;color:var(--gray-600);max-width:150px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">' + (r.name||'—') + '</td>' +
+      '<td class="asin">' + (r.asin||'—') + '</td>' +
+      '<td class="r"><span class="badge-await">⏳ No WH stock</span></td>' +
+      '<td class="r">' + fn(r.fbaFul) + '</td><td class="r">—</td><td class="r">—</td>' +
+      '<td class="r">—</td><td class="r">—</td><td class="r">—</td>' +
+      '<td class="r"><strong>' + fn(r.totalNetwork) + '</strong></td>' +
+      '<td class="r">' + fn(r.sold90) + '</td>' +
+      '<td class="r">' + (r.dailySales>0?r.dailySales.toFixed(1):'—') + '</td>' +
+      '<td class="r">' + fn(r.target) + '</td>' +
+      '<td class="r"><strong style="color:var(--orange)">' + fn(r.recSend) + '</strong></td>' +
+    '</tr>';
+  }).join('');
+}
+
+// ── LABEL COPY FROM BUILDER ──
+function buildLabelCopyText(amazonSku, casePrefix) {
+  if (!DB || !DB.awd || !DB.awd.length) return null;
+  var norm = normalizeAmazonSKU(amazonSku);
+  var matches = DB.awd.filter(function(row) {
+    return String(row[6]||'').trim().toLowerCase() === norm;
+  });
+  if (!matches.length) {
+    var base = norm.split('=')[0];
+    matches = DB.awd.filter(function(row) {
+      return String(row[6]||'').trim().toLowerCase().split('=')[0] === base;
+    });
+  }
+  if (!matches.length) return null;
+  var row     = matches[0];
+  var partNum = String(row[6]||'').trim();
+  var upc     = String(row[2]||'').trim();
+  var loc     = String(row[3]||'').trim();
+  var base2   = partNum.includes('=') ? partNum.split('=')[0] : partNum;
+  var suffix  = partNum.includes('=') ? partNum.split('=')[1] : partNum;
+  var whName  = getWarehouseName(base2);
+  var label   = whName ? (suffix + '=' + whName) : partNum;
+  var lines = [];
+  if (casePrefix) lines.push(casePrefix);
+  lines.push(label);
+  if (upc) lines.push(upc);
+  if (loc) lines.push(loc);
+  var normKey = normalizeAmazonSKU(amazonSku);
+  if (WH.stock[normKey]) {
+    WH.stock[normKey].forEach(function(r) {
+      var locLine = r.location + (r.cases ? ' · ' + r.cases + ' cases' : '');
+      if (lines.indexOf(locLine) === -1) lines.push(locLine);
+    });
+  }
+  return lines.join('\n');
+}
+
+function copyLabelFromBuilder(sku, prefix) {
+  var text = buildLabelCopyText(sku, prefix);
+  if (!text) { awd_planner_toast('No AWD data found for ' + sku, 'error'); return; }
+  navigator.clipboard.writeText(text).then(function() {
+    awd_planner_toast('Label copied: ' + sku, 'success');
+  }).catch(function() {
+    var ta = document.createElement('textarea');
+    ta.value = text; ta.style.position='fixed'; ta.style.opacity='0';
+    document.body.appendChild(ta); ta.select(); document.execCommand('copy');
+    document.body.removeChild(ta);
+    awd_planner_toast('Label copied: ' + sku, 'success');
+  });
 }
 
 </script>
