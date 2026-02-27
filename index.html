@@ -3,8 +3,10 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>XFITTING - Warehouse Lookup</title>
+<title>XFITTING — Internal Tools</title>
+<link href="https://fonts.googleapis.com/css2?family=DM+Mono:wght@400;500&family=DM+Sans:wght@300;400;500;600;700&display=swap" rel="stylesheet">
 <style>
+
 @import url('https://fonts.googleapis.com/css2?family=DM+Mono:wght@400;500&family=DM+Sans:wght@400;500;600;700&display=swap');
 
 @import url('https://fonts.googleapis.com/css2?family=DM+Mono:wght@400;500&family=DM+Sans:wght@400;500;600;700&display=swap');
@@ -912,12 +914,221 @@ body {
 }
 .pin-dots.shake { animation:pinShake .4s ease; }
 
+
+
+:root{
+  --blue:#2563EB;--blue-light:#EFF6FF;--blue-mid:#DBEAFE;
+  --green:#16A34A;--green-light:#F0FDF4;
+  --orange:#EA580C;--orange-light:#FFF7ED;
+  --red:#DC2626;--red-light:#FEF2F2;
+  --yellow:#CA8A04;--yellow-light:#FEFCE8;
+  --gray-50:#F9FAFB;--gray-100:#F3F4F6;--gray-200:#E5E7EB;
+  --gray-300:#D1D5DB;--gray-400:#9CA3AF;--gray-500:#6B7280;
+  --gray-600:#4B5563;--gray-700:#374151;--gray-800:#1F2937;--gray-900:#111827;
+  --white:#fff;--shadow-sm:0 1px 2px rgba(0,0,0,.05);--shadow-lg:0 10px 15px rgba(0,0,0,.1),0 4px 6px rgba(0,0,0,.05);
+  --r:10px;--rs:6px;--rl:14px;
+}
+*{box-sizing:border-box;margin:0;padding:0}
+body{font-family:'DM Sans',sans-serif;background:var(--gray-50);color:var(--gray-800);min-height:100vh;font-size:14px;line-height:1.5}
+#pin-screen{position:fixed;inset:0;background:var(--white);display:flex;align-items:center;justify-content:center;z-index:9999;flex-direction:column;gap:32px}
+#pin-screen.hidden{display:none}
+.pin-logo{display:flex;align-items:center;gap:10px}
+.pin-mark{width:44px;height:44px;background:var(--blue);border-radius:10px;display:flex;align-items:center;justify-content:center;color:white;font-weight:700;font-size:18px;letter-spacing:-1px}
+.pin-wordmark{font-size:22px;font-weight:700;letter-spacing:-.5px;color:var(--gray-900)}
+.pin-wordmark span{color:var(--blue)}
+.pin-card{background:var(--white);border:1px solid var(--gray-200);border-radius:var(--rl);padding:36px 40px;box-shadow:var(--shadow-lg);text-align:center;width:340px}
+.pin-card h2{font-size:18px;font-weight:600;color:var(--gray-900);margin-bottom:6px}
+.pin-card p{font-size:13px;color:var(--gray-500);margin-bottom:24px}
+.pin-dots{display:flex;gap:12px;justify-content:center;margin-bottom:24px}
+.pin-dot{width:14px;height:14px;border-radius:50%;border:2px solid var(--gray-300);background:transparent;transition:all .15s}
+.pin-dot.filled{background:var(--blue);border-color:var(--blue)}
+.pin-keypad{display:grid;grid-template-columns:repeat(3,1fr);gap:10px}
+.pin-key{height:52px;border:1px solid var(--gray-200);background:var(--white);border-radius:var(--rs);font-size:20px;font-weight:500;cursor:pointer;font-family:'DM Sans',sans-serif;color:var(--gray-800);transition:all .1s}
+.pin-key:hover{background:var(--gray-50)}.pin-key:active{background:var(--blue-mid);border-color:var(--blue)}
+.pin-key.del{font-size:16px;color:var(--gray-500)}
+.pin-err{color:var(--red);font-size:13px;font-weight:500;min-height:18px}
+#app{display:none;flex-direction:column;min-height:100vh}
+#app.visible{display:flex}
+#awd-app-inner{display:flex!important;flex-direction:column;min-height:100vh}
+.hdr{background:var(--white);border-bottom:1px solid var(--gray-200);padding:0 24px;height:60px;display:flex;align-items:center;justify-content:space-between;position:sticky;top:0;z-index:100;box-shadow:var(--shadow-sm)}
+.hdr-l{display:flex;align-items:center;gap:16px}
+.logo{display:flex;align-items:center;gap:9px;text-decoration:none}
+.logo-mark{width:32px;height:32px;background:var(--blue);border-radius:7px;display:flex;align-items:center;justify-content:center;color:white;font-weight:700;font-size:13px;letter-spacing:-1px}
+.logo-text{font-size:16px;font-weight:700;color:var(--gray-900);letter-spacing:-.3px}
+.logo-text span{color:var(--blue)}
+.hdiv{width:1px;height:20px;background:var(--gray-200)}
+.hdr-title{font-size:14px;font-weight:500;color:var(--gray-600)}
+.hdr-r{display:flex;align-items:center;gap:10px}
+.tabs{background:var(--white);border-bottom:1px solid var(--gray-200);padding:0 24px;display:flex;overflow-x:auto}
+.tab{padding:14px 18px;font-size:13px;font-weight:500;color:var(--gray-500);cursor:pointer;border-bottom:2px solid transparent;transition:all .15s;white-space:nowrap;display:flex;align-items:center;gap:7px}
+.tab:hover{color:var(--gray-700)}.tab.active{color:var(--blue);border-bottom-color:var(--blue)}
+.tbadge{background:var(--blue);color:white;font-size:10px;font-weight:700;min-width:18px;height:18px;border-radius:9px;display:flex;align-items:center;justify-content:center;padding:0 5px}
+.main{flex:1;padding:24px;max-width:1600px;width:100%;margin:0 auto}
+.page{display:none}.page.active{display:block}
+.btn{display:inline-flex;align-items:center;gap:6px;padding:8px 16px;border-radius:var(--rs);font-size:13px;font-weight:500;cursor:pointer;font-family:'DM Sans',sans-serif;border:1px solid transparent;transition:all .15s;line-height:1}
+.btn-primary{background:var(--blue);color:white;border-color:var(--blue)}.btn-primary:hover{background:#1D4ED8}
+.btn-secondary{background:var(--white);color:var(--gray-700);border-color:var(--gray-200)}.btn-secondary:hover{background:var(--gray-50);border-color:var(--gray-300)}
+.btn-success{background:var(--green);color:white;border-color:var(--green)}.btn-success:hover{background:#15803D}
+.btn-sm{padding:5px 11px;font-size:12px}.btn:disabled{opacity:.45;cursor:not-allowed;pointer-events:none}
+.card{background:var(--white);border:1px solid var(--gray-200);border-radius:var(--r);box-shadow:var(--shadow-sm)}
+.card-hdr{padding:16px 20px;border-bottom:1px solid var(--gray-100);display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap}
+.card-title{font-size:14px;font-weight:600;color:var(--gray-800)}
+.card-sub{font-size:12px;color:var(--gray-500);margin-top:2px}
+.card-body{padding:20px}
+.stats-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(160px,1fr));gap:14px;margin-bottom:22px}
+.stat{background:var(--white);border:1px solid var(--gray-200);border-radius:var(--r);padding:16px 18px;box-shadow:var(--shadow-sm)}
+.stat-lbl{font-size:11px;font-weight:500;color:var(--gray-500);text-transform:uppercase;letter-spacing:.5px;margin-bottom:6px}
+.stat-val{font-size:26px;font-weight:700;color:var(--gray-900);letter-spacing:-.5px;line-height:1}
+.stat-sub{font-size:12px;color:var(--gray-500);margin-top:4px}
+.stat.blue .stat-val{color:var(--blue)}.stat.green .stat-val{color:var(--green)}.stat.orange .stat-val{color:var(--orange)}.stat.red .stat-val{color:var(--red)}
+.tw{overflow-x:auto}
+table{width:100%;border-collapse:collapse}
+th{text-align:left;font-size:11px;font-weight:600;color:var(--gray-500);text-transform:uppercase;letter-spacing:.4px;padding:10px 12px;background:var(--gray-50);border-bottom:1px solid var(--gray-200);white-space:nowrap}
+th.sort{cursor:pointer;user-select:none}th.sort:hover{color:var(--gray-700);background:var(--gray-100)}
+.sa{margin-left:3px;opacity:.3;font-size:9px}
+th.asc .sa{opacity:1;color:var(--blue)}th.asc .sa::after{content:'▲'}
+th.desc .sa{opacity:1;color:var(--blue)}th.desc .sa::after{content:'▼'}
+td{padding:10px 12px;border-bottom:1px solid var(--gray-100);vertical-align:middle}
+tr:last-child td{border-bottom:none}tr:hover td{background:var(--gray-50)}
+.sku{font-family:monospace;font-size:12px;color:var(--gray-700);font-weight:500}
+.asin{font-family:monospace;font-size:11px;color:var(--gray-500)}
+.r{text-align:right;font-variant-numeric:tabular-nums}
+.badge{display:inline-flex;align-items:center;padding:2px 8px;border-radius:999px;font-size:11px;font-weight:600;white-space:nowrap}
+.bg{background:var(--green-light);color:var(--green)}.by{background:var(--yellow-light);color:var(--yellow)}
+.bo{background:var(--orange-light);color:var(--orange)}.br{background:var(--red-light);color:var(--red)}.bgr{background:var(--gray-100);color:var(--gray-600)}
+.fbar{display:flex;gap:10px;flex-wrap:wrap;margin-bottom:16px;align-items:center}
+.sw{position:relative}
+.si{border:1px solid var(--gray-200);border-radius:var(--rs);padding:7px 10px 7px 32px;font-size:13px;font-family:'DM Sans',sans-serif;color:var(--gray-800);width:215px}
+.si:focus{outline:none;border-color:var(--blue);box-shadow:0 0 0 3px rgba(37,99,235,.1)}
+.sic{position:absolute;left:9px;top:50%;transform:translateY(-50%);color:var(--gray-400);pointer-events:none}
+select.fsel{border:1px solid var(--gray-200);border-radius:var(--rs);padding:7px 10px;font-size:13px;font-family:'DM Sans',sans-serif;color:var(--gray-700);background:white;cursor:pointer}
+select.fsel:focus{outline:none;border-color:var(--blue)}.mla{margin-left:auto}
+.upload-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(200px,1fr));gap:12px;margin-bottom:20px}
+.uzone{border:2px dashed var(--gray-300);border-radius:var(--r);text-align:center;transition:all .2s;background:var(--white);display:flex;flex-direction:column}
+.uzone.drag{border-color:var(--blue)}.uzone.loaded{border-color:var(--green);border-style:solid;background:var(--green-light)}
+.udrop{position:relative;padding:20px 14px 14px;cursor:pointer;flex:1}
+.udrop:hover{background:rgba(37,99,235,.04);border-radius:calc(var(--r) - 2px) calc(var(--r) - 2px) 0 0}
+.uzone.loaded .udrop:hover{background:rgba(22,163,74,.05)}
+.udrop input[type=file]{position:absolute;inset:0;opacity:0;cursor:pointer;width:100%;height:100%}
+.uico{font-size:24px;margin-bottom:7px}.ulbl{font-size:12px;font-weight:600;color:var(--gray-700);margin-bottom:3px}
+.uhint{font-size:11px;color:var(--gray-500);line-height:1.4}
+.ust{font-size:11px;font-weight:600;margin-top:6px}.ust.ok{color:var(--green)}.ust.err{color:var(--red)}
+.ulink-row{padding:9px 14px;border-top:1px solid var(--gray-100);background:var(--gray-50);border-radius:0 0 calc(var(--r) - 2px) calc(var(--r) - 2px)}
+.uzone.loaded .ulink-row{background:rgba(22,163,74,.06);border-top-color:rgba(22,163,74,.15)}
+.report-link{display:inline-flex;align-items:center;gap:5px;font-size:11px;color:var(--blue);text-decoration:none;font-weight:500;padding:2px 4px;border-radius:3px}
+.report-link:hover{background:var(--blue-mid)}
+.cpack-card{border:1px solid var(--gray-200);border-radius:var(--r);background:var(--white);overflow:hidden;margin-bottom:20px}
+.cpack-card.has-data{border-color:var(--green)}
+.cpack-header{display:flex;align-items:center;gap:12px;padding:14px 18px;background:var(--gray-50);border-bottom:1px solid var(--gray-200)}
+.cpack-card.has-data .cpack-header{background:var(--green-light);border-bottom-color:rgba(22,163,74,.2)}
+.cpack-body{padding:12px 18px;display:flex;align-items:center;gap:14px;flex-wrap:wrap}
+.cpack-drop{position:relative;display:inline-flex}
+.cpack-drop input[type=file]{position:absolute;inset:0;opacity:0;cursor:pointer;width:100%;height:100%}
+.empty{text-align:center;padding:50px 20px;color:var(--gray-400)}
+.empty .ico{font-size:34px;margin-bottom:10px}
+.empty h3{font-size:15px;font-weight:600;color:var(--gray-600);margin-bottom:5px}.empty p{font-size:13px}
+.alert{border-radius:var(--rs);padding:11px 14px;font-size:13px;display:flex;gap:8px;align-items:flex-start;margin-bottom:14px}
+.alert-warn{background:var(--yellow-light);border:1px solid #FDE68A;color:#92400E}
+.alert-info{background:var(--blue-light);border:1px solid var(--blue-mid);color:#1E40AF}
+.alert-err{background:var(--red-light);border:1px solid #FECACA;color:#991B1B}
+.bld-layout{display:grid;grid-template-columns:1fr 340px;gap:20px;align-items:start}
+@media(max-width:1100px){.bld-layout{grid-template-columns:1fr}}
+.qty-inp{width:72px;text-align:center;border:1px solid var(--gray-200);border-radius:var(--rs);padding:5px 8px;font-size:13px;font-family:'DM Sans',sans-serif;color:var(--gray-800)}
+.qty-inp:focus{outline:none;border-color:var(--blue)}
+.sum-card{position:sticky;top:88px}
+.sum-item{display:flex;justify-content:space-between;align-items:center;padding:7px 0;border-bottom:1px solid var(--gray-100)}
+.sum-item:last-child{border-bottom:none}
+.sum-sku{font-size:12px;font-family:monospace;color:var(--gray-600)}.sum-qty{font-size:13px;font-weight:600;color:var(--gray-800)}
+.sum-total{display:flex;justify-content:space-between;padding-top:10px;margin-top:6px;border-top:2px solid var(--gray-200)}
+.tt{position:relative;display:inline-flex;align-items:center;gap:3px;cursor:help}
+.tt-ico{width:13px;height:13px;border-radius:50%;background:var(--gray-300);color:var(--gray-600);font-size:8px;font-weight:700;display:inline-flex;align-items:center;justify-content:center;flex-shrink:0}
+.tt-box{display:none;position:absolute;bottom:calc(100% + 6px);left:50%;transform:translateX(-50%);background:var(--gray-900);color:white;font-size:11px;font-weight:400;padding:7px 10px;border-radius:5px;z-index:500;line-height:1.45;text-transform:none;letter-spacing:0;pointer-events:none;width:210px;white-space:normal}
+.tt-box::after{content:'';position:absolute;top:100%;left:50%;transform:translateX(-50%);border:5px solid transparent;border-top-color:var(--gray-900)}
+.tt:hover .tt-box{display:block}
+.cfg-inp{border:1px solid var(--gray-200);border-radius:var(--rs);padding:7px 10px;font-size:13px;font-family:'DM Sans',sans-serif;color:var(--gray-800)}
+.cfg-inp:focus{outline:none;border-color:var(--blue);box-shadow:0 0 0 3px rgba(37,99,235,.1)}
+input[type=checkbox]{width:15px;height:15px;cursor:pointer;accent-color:var(--blue)}
+.cp-pill{display:inline-flex;align-items:center;gap:4px;font-size:11px;font-weight:500;padding:2px 8px;border-radius:999px}
+.cp-pill.found{background:var(--green-light);color:var(--green)}.cp-pill.missing{background:var(--gray-100);color:var(--gray-500)}
+#toast{position:fixed;bottom:24px;right:24px;z-index:9999;background:var(--gray-900);color:white;padding:11px 16px;border-radius:var(--rs);font-size:13px;font-weight:500;box-shadow:var(--shadow-lg);transform:translateY(80px);opacity:0;transition:all .3s cubic-bezier(.16,1,.3,1);pointer-events:none}
+#toast.show{transform:translateY(0);opacity:1}#toast.success{background:var(--green)}#toast.error{background:var(--red)}
+
+
+/* ── LAUNCHER ── */
+#launcher {
+  min-height:100vh;display:flex;align-items:center;justify-content:center;
+  background:linear-gradient(135deg,#eef2fd 0%,#f4f5f7 60%,#fff8f0 100%);
+  padding:24px;
+}
+.launcher-inner { text-align:center;max-width:560px;width:100%; }
+.launcher-logo {
+  display:inline-flex;align-items:center;gap:12px;margin-bottom:32px;
+}
+.launcher-mark {
+  width:48px;height:48px;background:var(--accent);border-radius:12px;
+  display:flex;align-items:center;justify-content:center;
+  color:#fff;font-weight:700;font-size:16px;font-family:var(--mono);
+}
+.launcher-name { font-size:24px;font-weight:700;color:var(--text);letter-spacing:-.5px; }
+.launcher-sub  { font-size:14px;color:var(--text3);margin-bottom:40px; }
+.launcher-grid { display:grid;grid-template-columns:1fr 1fr;gap:16px; }
+.launcher-card {
+  background:var(--bg2);border:1.5px solid var(--border);border-radius:16px;
+  padding:32px 24px;cursor:pointer;transition:all .2s;text-align:center;
+  text-decoration:none;
+}
+.launcher-card:hover {
+  border-color:var(--accent);box-shadow:0 8px 24px rgba(26,86,219,.12);
+  transform:translateY(-2px);
+}
+.launcher-card-icon { font-size:36px;margin-bottom:14px; }
+.launcher-card-title { font-size:16px;font-weight:700;color:var(--text);margin-bottom:6px; }
+.launcher-card-desc  { font-size:12px;color:var(--text3);line-height:1.5; }
+#wh-app, #awd-app { display:none;flex-direction:column;min-height:100vh; }
+#wh-app.visible, #awd-app.visible { display:flex; }
+
+
+/* ── AWD PLANNER SCOPED ── */
+#awd-app-inner { display: flex; flex-direction: column; min-height: 100vh; }
+#awd-app {
+  --blue:#2563EB;--blue-light:#EFF6FF;--blue-mid:#DBEAFE;
+  --green:#16A34A;--green-light:#F0FDF4;
+  --orange:#EA580C;--orange-light:#FFF7ED;
+  --red:#DC2626;--red-light:#FEF2F2;
+  --yellow:#CA8A04;--yellow-light:#FEFCE8;
+  --gray-50:#F9FAFB;--gray-100:#F3F4F6;--gray-200:#E5E7EB;
+  --gray-300:#D1D5DB;--gray-400:#9CA3AF;--gray-500:#6B7280;
+  --gray-600:#4B5563;--gray-700:#374151;--gray-800:#1F2937;
+  --gray-900:#111827;--white:#fff;
+  font-family:'DM Sans',sans-serif;
+}
+/* Back button for both apps */
+.back-btn {
+  background:none;border:1px solid var(--border2,#E5E7EB);color:var(--text3,#6B7280);
+  font-size:12px;padding:5px 12px;border-radius:8px;cursor:pointer;
+  font-family:'DM Sans',sans-serif;display:flex;align-items:center;gap:5px;
+  transition:all .15s;
+}
+.back-btn:hover { color:var(--accent,#2563EB);border-color:var(--accent,#2563EB); }
+
+/* Awaiting stock badge */
+.badge-await { background:#FFF7ED;color:#EA580C;border:1px solid #FDBA74;border-radius:4px;font-size:10px;font-weight:700;padding:2px 7px;white-space:nowrap; }
+.badge-labeled { background:#F0FDF4;color:#16A34A;border:1px solid #86EFAC;border-radius:4px;font-size:10px;font-weight:700;padding:2px 7px; }
+.badge-needslabel { background:#EFF6FF;color:#2563EB;border:1px solid #93C5FD;border-radius:4px;font-size:10px;font-weight:700;padding:2px 7px; }
+.badge-disc { background:#F3F4F6;color:#9CA3AF;border:1px solid #E5E7EB;border-radius:4px;font-size:10px;font-weight:600;padding:2px 7px;cursor:pointer;user-select:none; }
+.badge-disc:hover { background:#FEF2F2;color:#DC2626;border-color:#FCA5A5; }
+
+/* Awaiting stock dashboard section */
+.await-section { background:#FFF7ED;border:1px solid #FDBA74;border-radius:10px;padding:16px 20px;margin-bottom:20px; }
+.await-section-title { font-size:13px;font-weight:700;color:#EA580C;margin-bottom:10px;display:flex;align-items:center;gap:8px; }
+.await-grid { display:flex;flex-wrap:wrap;gap:8px; }
+.await-pill { background:#fff;border:1px solid #FDBA74;border-radius:8px;padding:6px 12px;font-size:12px;font-weight:600;color:#EA580C; }
+
 </style>
 </head>
 <body>
-<div class="loading-bar" id="loading-bar"></div>
 
-
+<!-- ═══ SHARED PIN ═══ -->
 <div id="pin-screen">
   <div class="pin-card">
     <div class="pin-logo">XFITTING</div>
@@ -947,39 +1158,33 @@ body {
   </div>
 </div>
 
-<div id="setup-screen">
-  <div class="setup-card">
-    <div class="brand-row">
-      <div class="brand-logo">XFITTING</div>
-      <div>
-        <div class="brand-title">Warehouse Lookup</div>
-        <div class="brand-sub">Google Sheets API &middot; Live data</div>
+
+<!-- ═══ LAUNCHER ═══ -->
+<div id="launcher">
+  <div class="launcher-inner">
+    <div class="launcher-logo">
+      <div class="launcher-mark">XF</div>
+      <div class="launcher-name">XFITTING</div>
+    </div>
+    <div class="launcher-sub">Internal Tools &mdash; Choose an app to continue</div>
+    <div class="launcher-grid">
+      <div class="launcher-card" onclick="launchApp('warehouse')">
+        <div class="launcher-card-icon">&#128205;</div>
+        <div class="launcher-card-title">Warehouse Lookup</div>
+        <div class="launcher-card-desc">Find item locations, AWD labels, stock levels, and UPC codes</div>
+      </div>
+      <div class="launcher-card" onclick="launchApp('awd')">
+        <div class="launcher-card-icon">&#128666;</div>
+        <div class="launcher-card-title">AWD Planner</div>
+        <div class="launcher-card-desc">Amazon inventory analysis, shipment recommendations and builder</div>
       </div>
     </div>
-    <div id="saved-notice" class="saved-notice" style="display:none">&#10003; Credentials saved &mdash; reconnecting&hellip;</div>
-    <p style="font-size:14px;color:var(--text2);line-height:1.6;margin-bottom:4px;">Connect your Google Sheet. Credentials are stored only in this browser.</p>
-    <div class="setup-steps">
-      <div class="step"><div class="step-num">1</div><div class="step-body">Go to <a href="https://console.cloud.google.com" target="_blank">console.cloud.google.com</a> &rarr; your project &rarr; <strong>APIs &amp; Services &rarr; Library</strong> &rarr; search <strong>Google Sheets API</strong> &rarr; Enable</div></div>
-      <div class="step"><div class="step-num">2</div><div class="step-body">Left menu &rarr; <strong>IAM &amp; Admin &rarr; Service Accounts &rarr; Create Service Account</strong> &rarr; give it any name &rarr; skip role steps &rarr; <strong>Done</strong></div></div>
-      <div class="step"><div class="step-num">3</div><div class="step-body">Click the service account &rarr; <strong>Keys</strong> tab &rarr; <strong>Add Key &rarr; Create new key &rarr; JSON</strong> &rarr; file downloads &rarr; open in Notepad &rarr; <strong>Select All &rarr; Copy &rarr; paste below</strong></div></div>
-      <div class="step"><div class="step-num">4</div><div class="step-body">Open your Google Sheet &rarr; <strong>Share</strong> &rarr; paste the <code>client_email</code> from the JSON &rarr; <strong>Viewer</strong> &rarr; Share</div></div>
-      <div class="step"><div class="step-num">5</div><div class="step-body">Copy your Sheet ID from the URL: <code>docs.google.com/spreadsheets/d/<strong style="color:var(--accent)">SHEET_ID</strong>/edit</code></div></div>
-    </div>
-    <div class="setup-divider"></div>
-    <div class="field-group">
-      <label>Google Sheet ID</label>
-      <input type="text" id="inp-sheet-id" placeholder="1BxiMVs0XRA5nFMdKvBdBZjgmUUqptlbs74OgVE2upms" />
-    </div>
-    <div class="field-group">
-      <label>Service Account JSON Key (paste full file contents)</label>
-      <textarea id="inp-creds" placeholder='{"type":"service_account","project_id":"...","private_key":"-----BEGIN PRIVATE KEY-----\n...","client_email":"name@project.iam.gserviceaccount.com",...}'></textarea>
-    </div>
-    <button class="btn-load" id="btn-connect" onclick="connect(false)">Connect to Sheet</button>
-    <div class="setup-error" id="setup-error"></div>
   </div>
 </div>
 
-<div id="app" style="display:none;flex-direction:column;min-height:100vh;">
+<!-- ═══ WAREHOUSE LOOKUP APP ═══ -->
+<div id="wh-app">
+
   <div class="topbar">
     <div class="topbar-left">
       <div class="tb-logo">XFITTING</div>
@@ -987,7 +1192,7 @@ body {
       <div class="tb-divider"></div>
       <div class="tb-sub" id="tb-sub">Live</div>
     </div>
-    <div class="topbar-right">
+    <div class="topbar-right"><button class="back-btn" onclick="backToLauncher()">&#8592; Apps</button>
       <div class="file-pill" id="sync-pill"><div class="dot"></div><span class="fname">Connected</span></div>
       <button class="btn-new" onclick="refreshAllSheets()">&#8635; Refresh</button>
       <button class="btn-disconnect" onclick="reenterCreds()">Re-enter Credentials</button>
@@ -1054,7 +1259,248 @@ body {
   </div>
 </div>
 
+<!-- ═══ AWD PLANNER APP ═══ -->
+<div id="awd-app">
+
+<div id="awd-app-inner">
+  <header class="hdr">
+    <div class="hdr-l">
+      <a class="logo" href="#"><div class="logo-mark">XF</div><div class="logo-text">X<span>FITTING</span></div></a>
+      <div class="hdiv"></div><span class="hdr-title">AWD Shipment Planner</span>
+    </div>
+    <div class="hdr-r"><button class="back-btn" onclick="backToLauncher()">&#8592; Apps</button>
+      <span id="data-pill" style="font-size:12px;color:var(--gray-500);padding:4px 12px;background:var(--gray-100);border-radius:999px;cursor:pointer" onclick="awd_switchTab('upload')">No data loaded</span>
+      
+    </div>
+  </header>
+  <nav class="tabs">
+    <div class="tab active" onclick="awd_switchTab('upload')" id="tab-upload">
+      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>Import Reports
+    </div>
+    <div class="tab" onclick="awd_switchTab('dashboard')" id="tab-dashboard">
+      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="7" height="7"/><rect x="14" y="3" width="7" height="7"/><rect x="14" y="14" width="7" height="7"/><rect x="3" y="14" width="7" height="7"/></svg>Dashboard
+    </div>
+    <div class="tab" onclick="awd_switchTab('inventory')" id="tab-inventory">
+      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z"/></svg>Inventory
+    </div>
+    <div class="tab" onclick="awd_switchTab('recommendations')" id="tab-recommendations">
+      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M9 11l3 3L22 4"/><path d="M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11"/></svg>Recommendations
+      <span class="tbadge" id="rec-badge" style="display:none">0</span>
+    </div>
+    <div class="tab" onclick="awd_switchTab('builder')" id="tab-builder">
+      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 9l9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/><polyline points="9 22 9 12 15 12 15 22"/></svg>Shipment Builder
+      <span class="tbadge" id="bld-badge" style="display:none">0</span>
+    </div>
+    <div class="tab" onclick="awd_switchTab('settings')" id="tab-settings">
+      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="3"/><path d="M2 12h2m16 0h2M12 2v2m0 16v2M4.93 4.93l1.41 1.41m11.32 11.32 1.41 1.41M4.93 19.07l1.41-1.41m11.32-11.32 1.41-1.41"/></svg>Settings
+    </div>
+  </nav>
+  <main class="main">
+
+    <div class="page active" id="page-upload">
+      <div style="max-width:980px">
+        <div style="margin-bottom:20px">
+          <h2 style="font-size:18px;font-weight:700;color:var(--gray-900);margin-bottom:4px">Import Amazon Reports</h2>
+          <p style="font-size:13px;color:var(--gray-500)">Click a link to open the report in Seller Central, download it, then drag &amp; drop or click the card to upload.</p>
+        </div>
+        <div class="upload-grid">
+          <div class="uzone" id="zone-fba" ondragover="dov(event,'fba')" ondragleave="dlv('fba')" ondrop="drp(event,'fba')">
+            <div class="udrop"><input type="file" accept=".csv,.txt,.tsv" onchange="fch(event,'fba')">
+              <div class="uico" id="ico-fba">📊</div><div class="ulbl">FBA Inventory Health</div>
+              <div class="uhint">Inventory → Inventory Health · Tab-delimited TXT · <em>Required</em></div>
+              <div class="ust" id="st-fba"></div>
+            </div>
+            <div class="ulink-row"><a class="report-link" href="https://sellercentral.amazon.com/reportcentral/MANAGE_INVENTORY_HEALTH/1" target="_blank"><svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/><polyline points="15 3 21 3 21 9"/><line x1="10" y1="14" x2="21" y2="3"/></svg>Open in Seller Central ↗</a></div>
+          </div>
+          <div class="uzone" id="zone-live" ondragover="dov(event,'live')" ondragleave="dlv('live')" ondrop="drp(event,'live')">
+            <div class="udrop"><input type="file" accept=".csv,.txt,.tsv" onchange="fch(event,'live')">
+              <div class="uico" id="ico-live">📦</div><div class="ulbl">FBA Live Inventory</div>
+              <div class="uhint">Reports → Fulfillment → All Inventory · Tab-delimited TXT</div>
+              <div class="ust" id="st-live"></div>
+            </div>
+            <div class="ulink-row"><a class="report-link" href="https://sellercentral.amazon.com/reportcentral/FBA_MYI_ALL_INVENTORY/1" target="_blank"><svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/><polyline points="15 3 21 3 21 9"/><line x1="10" y1="14" x2="21" y2="3"/></svg>Open in Seller Central ↗</a></div>
+          </div>
+          <div class="uzone" id="zone-awd" ondragover="dov(event,'awd')" ondragleave="dlv('awd')" ondrop="drp(event,'awd')">
+            <div class="udrop"><input type="file" accept=".csv,.txt,.tsv" onchange="fch(event,'awd')">
+              <div class="uico" id="ico-awd">🏭</div><div class="ulbl">AWD Inventory</div>
+              <div class="uhint">Supply Chain → AWD → Inventory · CSV · headers row 4</div>
+              <div class="ust" id="st-awd"></div>
+            </div>
+            <div class="ulink-row"><a class="report-link" href="https://sellercentral.amazon.com/fba-inventory/gim/inventory-list?ref=asdn_about" target="_blank"><svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/><polyline points="15 3 21 3 21 9"/><line x1="10" y1="14" x2="21" y2="3"/></svg>Open in Seller Central ↗</a></div>
+          </div>
+          <div class="uzone" id="zone-res" ondragover="dov(event,'res')" ondragleave="dlv('res')" ondrop="drp(event,'res')">
+            <div class="udrop"><input type="file" accept=".csv,.txt,.tsv" onchange="fch(event,'res')">
+              <div class="uico" id="ico-res">🔒</div><div class="ulbl">FBA Reserved Inventory</div>
+              <div class="uhint">Reports → Fulfillment → Reserved Inventory</div>
+              <div class="ust" id="st-res"></div>
+            </div>
+            <div class="ulink-row"><a class="report-link" href="https://sellercentral.amazon.com/reportcentral/ReserveBreakdown/1" target="_blank"><svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/><polyline points="15 3 21 3 21 9"/><line x1="10" y1="14" x2="21" y2="3"/></svg>Open in Seller Central ↗</a></div>
+          </div>
+        </div>
+
+        <div class="cpack-card" id="cpack-card">
+          <div class="cpack-header">
+            <div style="font-size:22px">📐</div>
+            <div style="flex:1">
+              <div style="font-size:13px;font-weight:600;color:var(--gray-800)">Case Pack Templates (AWD_Data)</div>
+              <div style="font-size:12px;color:var(--gray-500)" id="cpack-sub">Not loaded — upload once, saved permanently in your browser</div>
+            </div>
+            <div class="cpack-drop">
+              <input type="file" accept=".csv,.txt,.tsv" onchange="loadCpackFile(event)">
+              <button class="btn btn-secondary btn-sm">
+                <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>
+                Upload / Update
+              </button>
+            </div>
+          </div>
+          <div class="cpack-body" id="cpack-body" style="display:none">
+            <span style="font-size:12px;color:var(--gray-600)">Pre-fills box dims, weight &amp; units/box in exported AWD CSV for matched SKUs.</span>
+            <span style="font-size:12px;color:var(--gray-500)" id="cpack-detail"></span>
+            <button class="btn btn-sm" style="color:var(--red);border-color:var(--red-light);background:var(--red-light);margin-left:auto" onclick="clearCpack()">Clear</button>
+          </div>
+        </div>
+
+        <div id="up-err" class="alert alert-err" style="display:none"></div>
+        <div style="display:flex;align-items:center;gap:12px;flex-wrap:wrap;margin-bottom:20px">
+          <button class="btn btn-primary" id="proc-btn" onclick="processData()" disabled>
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polyline points="22 12 18 12 15 21 9 3 6 12 2 12"/></svg>Process Reports
+          </button>
+          <button class="btn btn-secondary" onclick="loadDemo()">Load Demo Data</button>
+          <span style="font-size:12px;color:var(--gray-400)">FBA Inventory is required minimum.</span>
+        </div>
+        <div class="alert alert-info" style="font-size:12px">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" style="flex-shrink:0;margin-top:1px"><circle cx="12" cy="12" r="10"/><path d="M12 16v-4M12 8h.01"/></svg>
+          <div><strong>Expected formats:</strong> FBA Inventory / FBA Live / FBA Reserve → tab-delimited TXT (headers row 1) · AWD Inventory → CSV (headers row 4) · AWD_Data case packs → CSV (headers row 10)</div>
+        </div>
+      </div>
+    </div>
+
+    <div class="page" id="page-dashboard">
+      <div id="dash-empty" class="empty"><div class="ico">📥</div><h3>No data loaded</h3><p>Upload your Amazon reports to get started.</p><br><button class="btn btn-primary" onclick="awd_switchTab('upload')">Go to Import</button></div>
+      <div id="dash-body" style="display:none">
+        <div class="stats-grid" id="stats-grid"></div>
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:18px">
+          <div class="card">
+            <div class="card-hdr"><div><div class="card-title">🚨 Critical SKUs — ≤30 Days</div><div class="card-sub">Needs immediate replenishment</div></div><button class="btn btn-sm btn-primary" onclick="awd_switchTab('recommendations')">View All →</button></div>
+            <div class="tw"><table><thead><tr><th>SKU</th><th>Product</th><th>Net Days</th><th>FBA Fulfillable</th><th>AWD Available</th><th>WH Status</th><th></th></tr></thead><tbody id="crit-tbody"></tbody></table></div>
+          </div>
+          <div class="card">
+            <div class="card-hdr"><div><div class="card-title">📋 Top Recommendations</div><div class="card-sub">Sorted by urgency</div></div></div>
+            <div class="tw"><table><thead><tr><th>SKU</th><th>Product</th><th>Net Days</th><th>Rec Send Qty</th><th></th></tr></thead><tbody id="rec-top-tbody"></tbody></table></div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <div class="page" id="page-inventory">
+      <div class="fbar">
+        <div class="sw"><svg class="sic" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.35-4.35"/></svg><input type="text" class="si" id="inv-q" placeholder="Search SKU, ASIN, product…" oninput="renderInv()"></div>
+        <select class="fsel" id="inv-f" onchange="renderInv()"><option value="all">All SKUs</option><option value="critical">🔴 Critical (≤30d)</option><option value="warning">🟠 Warning (31–60d)</option><option value="ok">🟡 OK (61–120d)</option><option value="good">🟢 Good (&gt;120d)</option></select>
+        <span style="font-size:12px;color:var(--gray-500)" id="inv-count"></span>
+        <div class="mla" style="display:flex;gap:8px"><button class="btn btn-secondary btn-sm" onclick="exportInvCSV()">Export CSV</button></div>
+      </div>
+      <div class="card"><div class="tw"><table id="inv-tbl"><thead><tr>
+        <th>SKU</th><th>Product</th><th>ASIN</th>
+        <th id="th-days" class="sort r" onclick="sortInv()">Net Days<span class="sa"></span></th>
+        <th class="r">FBA Fulfillable</th>
+        <th class="r"><span class="tt">FC Processing<span class="tt-ico">?</span><span class="tt-box">From FBA_Reserve: reserved_fc-processing</span></span></th>
+        <th class="r"><span class="tt">FC Transfer<span class="tt-ico">?</span><span class="tt-box">From FBA_Reserve: reserved_fc-transfers</span></span></th>
+        <th class="r"><span class="tt">AWD Available<span class="tt-ico">?</span><span class="tt-box">Available in AWD (units) + Inbound to AWD (units)</span></span></th>
+        <th class="r"><span class="tt">AWD Reserved<span class="tt-ico">?</span><span class="tt-box">Reserved in AWD (units)</span></span></th>
+        <th class="r"><span class="tt">AWD Outbound<span class="tt-ico">?</span><span class="tt-box">Outbound to FBA (units)</span></span></th>
+        <th class="r">Total Network</th>
+        <th class="r">Sold 90d</th><th class="r">Daily Sales</th><th class="r">Target 120d</th><th class="r">Rec Send</th>
+      </tr></thead><tbody id="inv-tbody"></tbody></table></div></div>
+    </div>
+
+    <div class="page" id="page-recommendations">
+      <div class="alert alert-info">
+        <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" style="flex-shrink:0;margin-top:1px"><circle cx="12" cy="12" r="10"/><path d="M12 16v-4M12 8h.01"/></svg>
+        <span><strong>Rec Send Qty</strong> = MAX(0, Target <strong id="tgt-lbl">120</strong>d − Total Network). Matches your AWD_Planner formula exactly.</span>
+      </div>
+      <div class="fbar">
+        <div class="sw"><svg class="sic" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.35-4.35"/></svg><input type="text" class="si" id="rec-q" placeholder="Search SKU, ASIN, product…" oninput="renderRecs()"></div>
+        <select class="fsel" id="rec-f" onchange="renderRecs()"><option value="all">All</option><option value="critical">🔴 Critical (≤30d)</option><option value="warning">🟠 Warning (31–60d)</option><option value="ok">🟡 OK (61–120d)</option></select>
+        <span style="font-size:12px;color:var(--gray-500)" id="rec-count"></span>
+        <div class="mla" style="display:flex;gap:8px"><button class="btn btn-secondary btn-sm" onclick="addAllVisible()">Add All Visible</button><button class="btn btn-primary btn-sm" onclick="awd_switchTab('builder')">Shipment Builder →</button></div>
+      </div>
+      <div class="card"><div class="tw"><table><thead><tr>
+        <th><input type="checkbox" id="rec-all" onchange="toggleAllVis(this.checked)"></th>
+        <th>SKU</th><th>Product</th><th>ASIN</th>
+        <th class="r">Net Days</th><th class="r">Sold 90d</th><th class="r">Daily Sales</th><th class="r">Rec Send Qty</th>
+        <th class="r">FBA Fulfillable</th><th class="r">AWD Available</th><th class="r">Total Network</th><th></th>
+      </tr></thead><tbody id="rec-tbody"></tbody></table></div></div>
+    </div>
+
+    <div class="page" id="page-builder">
+      <div id="bld-empty" class="empty"><div class="ico">📦</div><h3>No SKUs staged</h3><p>Go to Recommendations and select SKUs to add them here.</p><br><button class="btn btn-primary" onclick="awd_switchTab('recommendations')">Browse Recommendations</button></div>
+      <div id="bld-body" style="display:none">
+        <div class="bld-layout">
+          <div>
+            <div class="fbar">
+              <div class="sw"><svg class="sic" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.35-4.35"/></svg><input type="text" class="si" id="bld-q" placeholder="Filter SKUs…" oninput="renderBuilder()"></div>
+              <span style="font-size:12px;color:var(--gray-500)" id="bld-count"></span>
+              <div class="mla" style="display:flex;gap:8px"><button class="btn btn-secondary btn-sm" onclick="awd_switchTab('recommendations')">← Add More</button><button class="btn btn-secondary btn-sm" onclick="clearBuilder()">Clear All</button></div>
+            </div>
+            <div class="card">
+              <div class="card-hdr"><div><div class="card-title">Shipment Contents</div><div class="card-sub" id="cpack-note"></div></div><span style="font-size:13px;color:var(--gray-500)" id="bld-units-lbl"></span></div>
+              <div class="tw"><table><thead><tr>
+                <th>SKU</th><th>Product</th><th>ASIN</th>
+                <th class="r">Net Days</th><th class="r">Sold 90d</th><th class="r">Rec Qty</th><th class="r">Send Qty</th>
+                <th class="r"><span class="tt">Case Pack<span class="tt-ico">?</span><span class="tt-box">Units/box from AWD_Data. Boxes = CEIL(Send Qty ÷ Units/box). Pre-filled on export.</span></span></th>
+                <th></th>
+              </tr></thead><tbody id="bld-tbody"></tbody></table></div>
+            </div>
+          </div>
+          <div class="sum-card">
+            <div class="card" style="margin-bottom:14px">
+              <div class="card-hdr"><div class="card-title">Shipment Summary</div></div>
+              <div style="padding:14px 18px"><div id="sum-items"></div>
+                <div class="sum-total"><span style="font-weight:600;color:var(--gray-700)">Total Units</span><span style="font-size:18px;font-weight:700;color:var(--blue)" id="sum-total">0</span></div>
+              </div>
+            </div>
+            <div class="card"><div class="card-body">
+              <div style="margin-bottom:12px"><div style="font-size:12px;font-weight:600;color:var(--gray-600);margin-bottom:5px">Shipment Name</div><input type="text" id="ship-name" class="cfg-inp" style="width:100%" placeholder="e.g. AWD-2025-01"></div>
+              <button class="btn btn-success" style="width:100%;justify-content:center" onclick="exportCSV()">
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>Export AWD CSV
+              </button>
+              <p style="font-size:11px;color:var(--gray-400);text-align:center;margin-top:7px">Amazon AWD shipment upload format</p>
+            </div></div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <div class="page" id="page-settings">
+      <div style="max-width:460px"><div class="card">
+        <div class="card-hdr"><div class="card-title">Planner Settings</div></div>
+        <div class="card-body"><div style="display:flex;flex-direction:column;gap:18px">
+          <div><div style="font-size:12px;font-weight:600;color:var(--gray-600);margin-bottom:5px">Stock Target (Days)</div><input type="number" id="cfg-tgt" class="cfg-inp" style="width:110px" value="120" min="1"><div style="font-size:12px;color:var(--gray-500);margin-top:4px">Rec Send fills inventory to this many days of supply. Default: 120.</div></div>
+          <div><div style="font-size:12px;font-weight:600;color:var(--gray-600);margin-bottom:5px">App PIN (4 digits)</div><input type="password" id="cfg-pin" class="cfg-inp" style="width:150px" maxlength="4" placeholder="New PIN"><div style="font-size:12px;color:var(--gray-500);margin-top:4px">Takes effect after saving and re-locking.</div></div>
+        </div></div>
+        <div style="padding:14px 20px;border-top:1px solid var(--gray-100)"><button class="btn btn-primary" onclick="saveSettings()">Save Settings</button></div>
+      
+          <div class="card" style="margin-top:16px">
+            <div class="card-hdr"><div class="card-title">Discontinued SKUs</div><div class="card-sub">Hidden from all recommendations. Saved to Google Sheet.</div></div>
+            <div class="card-body">
+              <div id="disc-panel"><div style="color:var(--gray-400);font-size:13px">Loading…</div></div>
+            </div>
+          </div>
+</div></div>
+    </div>
+
+  </main>
+</div>
+</div>
+
+<div id="xf-toast"></div>
+<div id="awd-toast" class="toast"></div>
+
+<div class="loading-bar" id="loading-bar"></div>
+
+<!-- ═══ PIN SCRIPT (isolated) ═══ -->
 <script>
+
 // ═══════════════════════════════════════════════════════
 // PIN LOCK — own block so credentials errors never break it
 // ═══════════════════════════════════════════════════════
@@ -1064,6 +1510,11 @@ var pinEntry    = '';
 if (sessionStorage.getItem('xf_unlocked') === '1') {
   var _ps = document.getElementById('pin-screen');
   if (_ps) _ps.style.display = 'none';
+  // launcher shown by window.load handler
+} else {
+  document.addEventListener('DOMContentLoaded', function() {
+    document.getElementById('launcher').style.display = 'none';
+  });
 }
 
 document.addEventListener('keydown', function(e) {
@@ -1103,7 +1554,10 @@ function checkPin() {
     var ps = document.getElementById('pin-screen');
     ps.style.transition = 'opacity .3s';
     ps.style.opacity = '0';
-    setTimeout(function() { ps.style.display = 'none'; }, 300);
+    setTimeout(function() {
+      ps.style.display = 'none';
+      document.getElementById('launcher').style.display = 'flex';
+    }, 300);
   } else {
     var dots = document.getElementById('pin-dots');
     for (var i = 0; i < 4; i++) {
@@ -1123,9 +1577,12 @@ function checkPin() {
     }, 600);
   }
 }
+
 </script>
 
+<!-- ═══ MAIN APP SCRIPTS ═══ -->
 <script>
+
 const SHEET_NAMES = {
   master:   'Master_List',
   products: 'Products',
@@ -1154,12 +1611,9 @@ let TOKEN_EXP = 0;
 
 // Credentials handled by Cloudflare Worker
 
-window.addEventListener('load', function() {
-  // Worker handles all auth — skip setup screen and load data directly
-  document.getElementById('setup-screen').style.display = 'none';
-  document.getElementById('app').style.display = 'flex';
-  loadAllSheets();
-});
+// WH app load handled by launcher
+// Auto-load on first launch is triggered from launchApp()
+
 
 
 function showSetupErr(msg) {
@@ -1727,6 +2181,867 @@ function switchTab(tab) {
     el.classList.toggle('active', ['locator','search','awd','oos'][i] === tab);
   });
 }
+
+
+
+// ═══ AWD PLANNER JS ═══
+
+// ── CONFIG ──
+const DFLT={pin:'1234',targetDays:120};
+let C={...DFLT};
+function loadCfg(){
+  try{const s=JSON.parse(localStorage.getItem('awdcfg3')||'{}');C={...DFLT,...s};}catch(e){C={...DFLT};}
+  if(ge('cfg-tgt'))ge('cfg-tgt').value=C.targetDays;if(ge('tgt-lbl'))ge('tgt-lbl').textContent=C.targetDays;
+}
+function saveSettings(){
+  C.targetDays=parseInt(ge('cfg-tgt').value)||120;ge('tgt-lbl').textContent=C.targetDays;
+  localStorage.setItem('awdcfg3',JSON.stringify(C));awd_planner_toast('Settings saved','success');
+}
+
+// ── STATE ──
+const S={fba:[],live:[],awd:[],res:[],joined:[],cpackMap:{},cpackDate:null,cpackCount:0,shipment:{},loaded:false};
+
+// ── FILE UPLOAD ──
+function dov(e,k){e.preventDefault();ge('zone-'+k).classList.add('drag');}
+function dlv(k){ge('zone-'+k).classList.remove('drag');}
+function drp(e,k){e.preventDefault();dlv(k);const f=e.dataTransfer.files[0];if(f)hf(f,k);}
+function fch(e,k){const f=e.target.files[0];if(f)hf(f,k);}
+function hf(file,k){
+  const st=ge('st-'+k);st.textContent='Reading…';st.className='ust';
+  readTxt(file).then(txt=>{
+    const rows=k==='awd'?parseCSV(txt,3):parseCSV(txt,0);
+    if(!rows||!rows.length){st.textContent='Could not parse';st.className='ust err';return;}
+    ge('ico-'+k).textContent='✅';ge('zone-'+k).classList.add('loaded');
+    st.textContent=rows.length+' rows';st.className='ust ok';
+    if(k==='fba')S.fba=rows;else if(k==='live')S.live=rows;else if(k==='awd')S.awd=rows;else S.res=rows;
+    ge('proc-btn').disabled=S.fba.length===0;
+  }).catch(e=>{st.textContent='Error: '+e.message;st.className='ust err';});
+}
+
+// ── CASE PACK (persistent, headers on row 10 = skip 9 rows) ──
+function loadCpackFile(e){
+  const f=e.target.files[0];if(!f)return;
+  readTxt(f).then(txt=>{
+    const rows=parseCSV(txt,9);
+    if(!rows||!rows.length){awd_planner_toast('Could not parse case pack file','error');return;}
+    buildCpackMap(rows);
+    localStorage.setItem('awdCpack',JSON.stringify({rows,date:new Date().toISOString()}));
+    updateCpackUI();awd_planner_toast('Case pack data saved — '+S.cpackCount+' SKUs','success');
+  }).catch(e=>awd_planner_toast('Error: '+e.message,'error'));
+}
+function buildCpackMap(rows){
+  S.cpackMap={};
+  rows.forEach(r=>{
+    const sku=(gf(r,'SKU')||gf(r,'sku')||'').trim().toUpperCase();
+    if(!sku)return;
+    S.cpackMap[sku]={
+      unitsPerBox:pn(gf(r,'Units per box')),
+      weightLb:pn(gf(r,'Box weight (lb)')),
+      lengthIn:pn(gf(r,'Box length (inch)')||gf(r,'Box length (in)')),
+      widthIn:pn(gf(r,'Box width (inch)')||gf(r,'Box width (in)')),
+      heightIn:pn(gf(r,'Box height (inch)')||gf(r,'Box height (in)'))
+    };
+  });
+  S.cpackCount=Object.keys(S.cpackMap).length;
+}
+function loadCpackFromStorage(){
+  try{
+    const saved=localStorage.getItem('awdCpack');if(!saved)return;
+    const {rows,date}=JSON.parse(saved);
+    buildCpackMap(rows);S.cpackDate=date?new Date(date):null;updateCpackUI();
+  }catch(e){}
+}
+function updateCpackUI(){
+  const has=S.cpackCount>0;
+  const card=ge('cpack-card'),body=ge('cpack-body'),sub=ge('cpack-sub');
+  if(has){
+    card.classList.add('has-data');
+    const ds=S.cpackDate?S.cpackDate.toLocaleDateString('en-US',{month:'short',day:'numeric',year:'numeric'}):'unknown date';
+    sub.textContent=S.cpackCount+' SKUs loaded · Last updated '+ds;
+    ge('cpack-detail').textContent='Box weight, L×W×H, units/box pre-filled on export.';
+    body.style.display='flex';
+  }else{
+    card.classList.remove('has-data');
+    sub.textContent='Not loaded — upload once, saved permanently in your browser';
+    body.style.display='none';
+  }
+}
+function clearCpack(){S.cpackMap={};S.cpackCount=0;S.cpackDate=null;localStorage.removeItem('awdCpack');updateCpackUI();renderBuilder();awd_planner_toast('Case pack data cleared');}
+
+// ── CSV PARSER ──
+function parseCSV(txt,skipRows=0){
+  if(!txt||!txt.trim())return[];
+  const lines=txt.split(/\r?\n/).filter(l=>l.trim());
+  if(lines.length<skipRows+2)return[];
+  const hl=lines[skipRows];
+  const delim=hl.split('\t').length>hl.split(',').length?'\t':',';
+  const hdrs=splitL(hl,delim).map(h=>h.trim().replace(/^\uFEFF/,'').replace(/^"|"$/g,''));
+  const rows=[];
+  for(let i=skipRows+1;i<lines.length;i++){
+    if(!lines[i].trim())continue;
+    const vals=splitL(lines[i],delim);
+    const row={};hdrs.forEach((h,j)=>{row[h]=(vals[j]||'').trim().replace(/^"|"$/g,'');});
+    if(Object.values(row).some(v=>v))rows.push(row);
+  }
+  return rows;
+}
+function splitL(line,delim){
+  if(delim==='\t')return line.split('\t');
+  const out=[];let cur='';let q=false;
+  for(let i=0;i<line.length;i++){
+    const c=line[i];
+    if(c==='"'&&!q){q=true;continue;}
+    if(c==='"'&&q){if(line[i+1]==='"'){cur+='"';i++;}else q=false;continue;}
+    if(c===','&&!q){out.push(cur);cur='';continue;}
+    cur+=c;
+  }
+  out.push(cur);return out;
+}
+function readTxt(f){return new Promise((res,rej)=>{const r=new FileReader();r.onload=e=>res(e.target.result);r.onerror=()=>rej(new Error('Read failed'));r.readAsText(f);});}
+
+// ── PROCESS DATA (mirrors AWD_Planner formulas exactly) ──
+// G  FBA Fulfillable      = FBA_Live: afn-fulfillable-quantity
+// H  FC Processing        = FBA_Reserve: reserved_fc-processing
+// I  FC Transfer          = FBA_Reserve: reserved_fc-transfers
+// J  AWD Available        = AWD_Inventory: Available in AWD (units) + Inbound to AWD (units)
+// K  AWD Reserved         = AWD_Inventory: Reserved in AWD (units)
+// L  AWD Outbound to FBA  = AWD_Inventory: Outbound to FBA (units)
+// D  90d Sold             = FBA_Inventory: units-shipped-t90
+// E  Daily Sales          = D / 90
+// F  Target               = E * targetDays
+// M  Total Network        = G+H+I+J+K+L
+// N  Rec Send             = MAX(0, F-M)
+// O  Net Days             = M/E
+function processData(){
+  ge('up-err').style.display='none';
+  try{
+    // AWD map
+    const awdMap={};
+    S.awd.forEach(r=>{
+      const sku=(gf(r,'SKU')||'').trim().toUpperCase();if(!sku)return;
+      awdMap[sku]={
+        avail:pn(gf(r,'Available in AWD (units)'))+pn(gf(r,'Inbound to AWD (units)')),
+        reserved:pn(gf(r,'Reserved in AWD (units)')),
+        outbound:pn(gf(r,'Outbound to FBA (units)'))
+      };
+    });
+    // Reserve map
+    const resMap={};
+    S.res.forEach(r=>{
+      const sku=(gf(r,'sku')||'').trim().toUpperCase();if(!sku)return;
+      resMap[sku]={fcProc:pn(gf(r,'reserved_fc-processing')),fcTrans:pn(gf(r,'reserved_fc-transfers'))};
+    });
+    // FBA Inventory 90d map
+    const invMap={};
+    S.fba.forEach(r=>{
+      const sku=(gf(r,'sku')||'').trim().toUpperCase();if(!sku)return;
+      invMap[sku]=pn(gf(r,'units-shipped-t90'));
+    });
+    // Primary SKU list from FBA_Live (mirrors FILTER on FBA_Live!A)
+    const source=S.live.length?S.live:S.fba;
+    const seen=new Set();
+    S.joined=source
+      .filter(r=>{const s=skuOf(r);if(!s||seen.has(s))return false;seen.add(s);return true;})
+      .map(r=>buildRow(r,invMap,awdMap,resMap));
+    S.loaded=true;
+    renderDashboard();renderInv();renderRecs();updateBadges();
+    const pill=ge('data-pill');
+    pill.textContent=S.joined.length+' SKUs loaded';
+    pill.style.background='var(--green-light)';pill.style.color='var(--green)';
+    awd_planner_toast('Processed '+S.joined.length+' SKUs','success');
+    awd_switchTab('dashboard');
+  }catch(e){ge('up-err').style.display='flex';ge('up-err').textContent='Error: '+e.message;console.error(e);}
+}
+function buildRow(r,invMap,awdMap,resMap){
+  const sku=skuOf(r),skuU=sku.toUpperCase();
+  const asin=(gf(r,'asin')||gf(r,'ASIN')||'').trim();
+  const name=gf(r,'product-name')||'';
+  const fbaFul=pn(gf(r,'afn-fulfillable-quantity'));
+  const res=resMap[skuU]||{};
+  const fcProc=res.fcProc||0,fcTrans=res.fcTrans||0;
+  const awd=awdMap[skuU]||{};
+  const awdAvail=awd.avail||0,awdReserved=awd.reserved||0,awdOutbound=awd.outbound||0;
+  const sold90=invMap[skuU]||pn(gf(r,'units-shipped-t90'));
+  const dailySales=sold90>0?sold90/90:0;
+  const target=dailySales>0?Math.ceil(dailySales*C.targetDays):0;
+  const totalNetwork=fbaFul+fcProc+fcTrans+awdAvail+awdReserved+awdOutbound;
+  const recSend=Math.max(0,target-totalNetwork);
+  const netDays=dailySales>0?totalNetwork/dailySales:999;
+  return{sku,asin,name,fbaFul,fcProc,fcTrans,awdAvail,awdReserved,awdOutbound,sold90,dailySales,target,totalNetwork,recSend,netDays};
+}
+function skuOf(r){return(gf(r,'sku')||gf(r,'SKU')||gf(r,'MSKU')||'').trim();}
+
+// ── DEMO DATA ──
+function loadDemo(){
+  const items=[
+    {sku:'XF-COMP-BLK-S',asin:'B08A0001',name:'Compression Tights Black S',fba:45,fcP:0,fcT:0,awdA:0,awdR:0,awdO:0,s90:320},
+    {sku:'XF-COMP-BLK-M',asin:'B08A0002',name:'Compression Tights Black M',fba:80,fcP:5,fcT:3,awdA:20,awdR:2,awdO:0,s90:250},
+    {sku:'XF-COMP-BLK-L',asin:'B08A0003',name:'Compression Tights Black L',fba:200,fcP:10,fcT:5,awdA:50,awdR:5,awdO:8,s90:265},
+    {sku:'XF-COMP-WHT-S',asin:'B08A0004',name:'Compression Tights White S',fba:30,fcP:0,fcT:0,awdA:0,awdR:0,awdO:0,s90:145},
+    {sku:'XF-COMP-WHT-M',asin:'B08A0005',name:'Compression Tights White M',fba:350,fcP:20,fcT:10,awdA:100,awdR:5,awdO:10,s90:220},
+    {sku:'XF-VEST-BLK-M',asin:'B09B0006',name:'Training Vest Black M',fba:90,fcP:0,fcT:2,awdA:30,awdR:0,awdO:0,s90:175},
+    {sku:'XF-VEST-BLK-L',asin:'B09B0007',name:'Training Vest Black L',fba:120,fcP:5,fcT:3,awdA:60,awdR:0,awdO:5,s90:165},
+    {sku:'XF-SHORT-BLK-S',asin:'B09C0008',name:'Training Shorts Black S',fba:15,fcP:0,fcT:0,awdA:0,awdR:0,awdO:0,s90:160},
+    {sku:'XF-SHORT-BLK-M',asin:'B09C0009',name:'Training Shorts Black M',fba:180,fcP:15,fcT:8,awdA:80,awdR:5,awdO:0,s90:195},
+    {sku:'XF-SHORT-GRY-M',asin:'B09C0010',name:'Training Shorts Grey M',fba:60,fcP:0,fcT:2,awdA:10,awdR:0,awdO:0,s90:145},
+    {sku:'XF-TANK-BLK-M',asin:'B09D0011',name:'Tank Top Black M',fba:8,fcP:0,fcT:0,awdA:0,awdR:0,awdO:0,s90:125},
+    {sku:'XF-TANK-WHT-L',asin:'B09D0012',name:'Tank Top White L',fba:500,fcP:30,fcT:15,awdA:200,awdR:10,awdO:20,s90:240},
+  ];
+  S.joined=items.map(i=>{
+    const dailySales=i.s90/90,target=Math.ceil(dailySales*C.targetDays);
+    const totalNetwork=i.fba+i.fcP+i.fcT+i.awdA+i.awdR+i.awdO;
+    return{sku:i.sku,asin:i.asin,name:i.name,fbaFul:i.fba,fcProc:i.fcP,fcTrans:i.fcT,awdAvail:i.awdA,awdReserved:i.awdR,awdOutbound:i.awdO,sold90:i.s90,dailySales,target,totalNetwork,recSend:Math.max(0,target-totalNetwork),netDays:totalNetwork/dailySales};
+  });
+  if(S.cpackCount===0){
+    const demo={'XF-COMP-BLK-S':{unitsPerBox:6,weightLb:4.2,lengthIn:12,widthIn:8,heightIn:6},'XF-COMP-BLK-M':{unitsPerBox:6,weightLb:4.4,lengthIn:12,widthIn:8,heightIn:6},'XF-SHORT-BLK-S':{unitsPerBox:8,weightLb:3.8,lengthIn:10,widthIn:8,heightIn:5},'XF-TANK-BLK-M':{unitsPerBox:10,weightLb:3.2,lengthIn:10,widthIn:7,heightIn:5}};
+    Object.entries(demo).forEach(([k,v])=>S.cpackMap[k]=v);
+    S.cpackCount=Object.keys(S.cpackMap).length;S.cpackDate=new Date();updateCpackUI();
+  }
+  S.loaded=true;
+  ['fba','live','awd','res'].forEach(k=>{ge('ico-'+k).textContent='✅';ge('zone-'+k).classList.add('loaded');const st=ge('st-'+k);st.textContent='Demo';st.className='ust ok';});
+  ge('proc-btn').disabled=false;
+  renderDashboard();renderInv();renderRecs();updateBadges();
+  const pill=ge('data-pill');pill.textContent='Demo · '+S.joined.length+' SKUs';
+  pill.style.background='var(--blue-light)';pill.style.color='var(--blue)';
+  awd_planner_toast('Demo data loaded','success');awd_switchTab('dashboard');
+}
+
+// ── DAYS BADGE ──
+function db(d){
+  const n=Math.round(d);
+  if(d>=999)return'<span class="badge bgr">No velocity</span>';
+  if(d<=0)return'<span class="badge br">OOS</span>';
+  if(d<=30)return'<span class="badge br">'+n+'d</span>';
+  if(d<=60)return'<span class="badge bo">'+n+'d</span>';
+  if(d<=120)return'<span class="badge by">'+n+'d</span>';
+  return'<span class="badge bg">'+n+'d</span>';
+}
+
+// ── DASHBOARD ──
+function renderDashboard(){
+  if(!S.loaded){ge('dash-empty').style.display='';ge('dash-body').style.display='none';return;}
+  ge('dash-empty').style.display='none';ge('dash-body').style.display='block';
+  const d=S.joined;
+  const crit=d.filter(r=>r.netDays<999&&r.netDays<=30);
+  const warn=d.filter(r=>r.netDays<999&&r.netDays>30&&r.netDays<=60);
+  ge('stats-grid').innerHTML=`
+    <div class="stat red"><div class="stat-lbl">Critical ≤30d</div><div class="stat-val">${crit.length}</div><div class="stat-sub">Immediate action</div></div>
+    <div class="stat orange"><div class="stat-lbl">Warning 31–60d</div><div class="stat-val">${warn.length}</div><div class="stat-sub">Plan soon</div></div>
+    <div class="stat blue"><div class="stat-lbl">FBA Fulfillable</div><div class="stat-val">${fn(d.reduce((s,r)=>s+r.fbaFul,0))}</div><div class="stat-sub">Available at Amazon</div></div>
+    <div class="stat"><div class="stat-lbl">Total Network</div><div class="stat-val">${fn(d.reduce((s,r)=>s+r.totalNetwork,0))}</div><div class="stat-sub">All channels combined</div></div>
+    <div class="stat green"><div class="stat-lbl">Total Rec Send</div><div class="stat-val">${fn(d.reduce((s,r)=>s+r.recSend,0))}</div><div class="stat-sub">Across all SKUs</div></div>
+    <div class="stat"><div class="stat-lbl">SKUs Staged</div><div class="stat-val">${Object.keys(S.shipment).length}</div><div class="stat-sub">In builder</div></div>`;
+  const nm=(r)=>`<td style="font-size:12px;color:var(--gray-600);max-width:130px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="${r.name}">${r.name||'—'}</td>`;
+  ge('crit-tbody').innerHTML=crit.slice(0,10).map(r=>`<tr><td class="sku">${r.sku}</td>${nm(r)}<td>${db(r.netDays)}</td><td class="r">${fn(r.fbaFul)}</td><td class="r">${fn(r.awdAvail)}</td><td><button class="btn btn-sm btn-primary" onclick="addSku('${esc(r.sku)}')">+Add</button></td></tr>`).join('')||'<tr><td colspan="6" style="text-align:center;padding:24px;color:var(--gray-400)">No critical SKUs 🎉</td></tr>';
+  const recs=d.filter(r=>r.recSend>0&&r.netDays<999).sort((a,b)=>a.netDays-b.netDays).slice(0,10);
+  ge('rec-top-tbody').innerHTML=recs.map(r=>`<tr><td class="sku">${r.sku}</td>${nm(r)}<td>${db(r.netDays)}</td><td class="r"><strong style="color:var(--blue)">${fn(r.recSend)}</strong></td><td><button class="btn btn-sm btn-secondary" onclick="addSku('${esc(r.sku)}')">+Add</button></td></tr>`).join('')||'<tr><td colspan="5" style="text-align:center;padding:24px;color:var(--gray-400)">No recommendations</td></tr>';
+}
+
+// ── INVENTORY ──
+let invDir='asc';
+function sortInv(){invDir=invDir==='asc'?'desc':'asc';renderInv();}
+function renderInv(){
+  if(!S.loaded)return;
+  const q=ge('inv-q').value.toLowerCase(),f=ge('inv-f').value;
+  let data=[...S.joined].filter(r=>{
+    if(q&&!r.sku.toLowerCase().includes(q)&&!r.asin.toLowerCase().includes(q)&&!r.name.toLowerCase().includes(q))return false;
+    if(f==='critical'&&(r.netDays>30||r.netDays>=999))return false;
+    if(f==='warning'&&(r.netDays<=30||r.netDays>60||r.netDays>=999))return false;
+    if(f==='ok'&&(r.netDays<=60||r.netDays>120||r.netDays>=999))return false;
+    if(f==='good'&&r.netDays<=120)return false;
+    return true;
+  });
+  data.sort((a,b)=>invDir==='asc'?a.netDays-b.netDays:b.netDays-a.netDays);
+  const th=ge('th-days');th.className='sort r '+(invDir==='asc'?'asc':'desc');
+  ge('inv-count').textContent=data.length+' SKU'+(data.length!==1?'s':'');
+  const tb=ge('inv-tbody');
+  if(!data.length){tb.innerHTML='<tr><td colspan="15"><div class="empty" style="padding:30px"><div class="ico">🔍</div><h3>No matches</h3></div></td></tr>';return;}
+  tb.innerHTML=data.map(r=>`<tr>
+    <td class="sku">${r.sku}</td>
+    <td style="font-size:12px;color:var(--gray-600);max-width:150px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="${r.name}">${r.name||'—'}</td>
+    <td class="asin">${r.asin||'—'}</td>
+    <td class="r">${db(r.netDays)}</td>
+    <td class="r">${fn(r.fbaFul)}</td><td class="r">${fn(r.fcProc)}</td><td class="r">${fn(r.fcTrans)}</td>
+    <td class="r">${fn(r.awdAvail)}</td><td class="r">${fn(r.awdReserved)}</td><td class="r">${fn(r.awdOutbound)}</td>
+    <td class="r"><strong>${fn(r.totalNetwork)}</strong></td>
+    <td class="r">${fn(r.sold90)}</td>
+    <td class="r">${r.dailySales>0?r.dailySales.toFixed(1):'—'}</td>
+    <td class="r">${fn(r.target)}</td>
+    <td class="r">${r.recSend>0?'<strong style="color:var(--blue)">'+fn(r.recSend)+'</strong>':'<span style="color:var(--gray-300)">—</span>'}</td>
+  </tr>`).join('');
+}
+function exportInvCSV(){
+  if(!S.joined.length){awd_planner_toast('No data','error');return;}
+  const h=['SKU','ASIN','Product Name','Net Days','FBA Fulfillable','FC Processing','FC Transfer','AWD Available','AWD Reserved','AWD Outbound','Total Network','Sold 90d','Daily Sales','Target 120d','Rec Send Qty'];
+  const rows=S.joined.map(r=>[r.sku,r.asin,r.name,r.netDays>=999?'':Math.round(r.netDays),r.fbaFul,r.fcProc,r.fcTrans,r.awdAvail,r.awdReserved,r.awdOutbound,r.totalNetwork,r.sold90,r.dailySales.toFixed(2),r.target,r.recSend]);
+  dlCSV([h,...rows],'inventory.csv');awd_planner_toast('Exported','success');
+}
+
+// ── RECOMMENDATIONS ──
+function visRecs(){
+  const q=ge('rec-q').value.toLowerCase(),f=ge('rec-f').value;
+  return S.joined.filter(r=>{
+    if(r.netDays>=999&&r.recSend===0)return false;
+    if(q&&!r.sku.toLowerCase().includes(q)&&!r.asin.toLowerCase().includes(q)&&!r.name.toLowerCase().includes(q))return false;
+    if(f==='critical'&&r.netDays>30)return false;
+    if(f==='warning'&&(r.netDays<=30||r.netDays>60))return false;
+    if(f==='ok'&&(r.netDays<=60||r.netDays>120))return false;
+    return true;
+  }).sort((a,b)=>a.netDays-b.netDays);
+}
+function renderRecs(){
+  if(!S.loaded)return;
+  const data=visRecs();
+  ge('rec-count').textContent=data.length+' SKU'+(data.length!==1?'s':'');
+  const tb=ge('rec-tbody');
+  if(!data.length){tb.innerHTML='<tr><td colspan="12"><div class="empty" style="padding:30px"><div class="ico">📋</div><h3>No recommendations</h3></div></td></tr>';return;}
+  tb.innerHTML=data.map(r=>{
+    const inB=!!S.shipment[r.sku];
+    return`<tr>
+      <td><input type="checkbox" ${inB?'checked':''} onchange="togRec('${esc(r.sku)}',this.checked)"></td>
+      <td class="sku">${r.sku}</td>
+      <td style="font-size:12px;max-width:120px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:var(--gray-600)" title="${r.name}">${r.name||'—'}</td>
+      <td class="asin">${r.asin||'—'}</td>
+      <td class="r">${db(r.netDays)}</td>
+      <td class="r">${fn(r.sold90)}</td>
+      <td class="r">${r.dailySales>0?r.dailySales.toFixed(1):'—'}</td>
+      <td class="r"><strong style="color:var(--blue)">${fn(r.recSend)}</strong></td>
+      <td class="r">${fn(r.fbaFul)}</td><td class="r">${fn(r.awdAvail)}</td><td class="r">${fn(r.totalNetwork)}</td>
+      <td>${inB?'<button class="btn btn-sm btn-secondary" onclick="removeSku(\''+esc(r.sku)+'\')">Remove</button>':'<button class="btn btn-sm btn-primary" onclick="addSku(\''+esc(r.sku)+'\')">+Add</button>'}</td>
+    </tr>`;
+  }).join('');
+}
+function togRec(sku,c){if(c)addSku(sku);else removeSku(sku);}
+function toggleAllVis(c){visRecs().forEach(r=>{if(c)stage(r);else delete S.shipment[r.sku];});updateBadges();renderRecs();renderBuilder();}
+function addAllVisible(){ge('rec-all').checked=true;toggleAllVis(true);awd_planner_toast('Added to builder','success');}
+
+// ── BUILDER ──
+function findRow(sku){return S.joined.find(r=>r.sku===sku);}
+function stage(row){if(S.shipment[row.sku])return;S.shipment[row.sku]={row,qty:row.recSend||0};}
+function addSku(sku){const r=findRow(sku);if(!r)return;stage(r);updateBadges();renderRecs();renderBuilder();}
+function removeSku(sku){delete S.shipment[sku];updateBadges();renderRecs();renderBuilder();}
+function clearBuilder(){if(!Object.keys(S.shipment).length)return;S.shipment={};updateBadges();renderRecs();renderBuilder();awd_planner_toast('Cleared');}
+function updQty(sku,v){if(!S.shipment[sku])return;S.shipment[sku].qty=Math.max(0,parseInt(v)||0);updateSummary();}
+function updateBadges(){
+  const n=Object.keys(S.shipment).length;
+  const bb=ge('bld-badge');bb.textContent=n;bb.style.display=n?'':'none';
+  const rt=S.joined.filter(r=>r.recSend>0).length;
+  const rb=ge('rec-badge');rb.textContent=rt;rb.style.display=rt?'':'none';
+}
+function renderBuilder(){
+  const items=Object.entries(S.shipment);
+  ge('bld-empty').style.display=items.length?'none':'';
+  ge('bld-body').style.display=items.length?'block':'none';
+  if(!items.length){updateSummary();return;}
+  const q=ge('bld-q').value.toLowerCase();
+  const filt=items.filter(([sku])=>!q||sku.toLowerCase().includes(q));
+  ge('bld-count').textContent=items.length+' SKU'+(items.length!==1?'s':'');
+  const matched=items.filter(([sku])=>{const cp=S.cpackMap[sku.toUpperCase()];return cp&&cp.unitsPerBox>0;}).length;
+  const note=ge('cpack-note');
+  if(note)note.textContent=S.cpackCount>0?'📐 '+matched+' of '+items.length+' SKUs have case pack templates':'📐 No case pack data loaded — box dims will be blank on export';
+  ge('bld-tbody').innerHTML=filt.map(([sku,item])=>{
+    const r=item.row,cp=S.cpackMap[sku.toUpperCase()],hasCP=cp&&cp.unitsPerBox>0;
+    const boxes=hasCP?Math.ceil(item.qty/cp.unitsPerBox):null;
+    return`<tr>
+      <td class="sku">${sku}</td>
+      <td style="font-size:12px;color:var(--gray-600);max-width:130px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="${r.name}">${r.name||'—'}</td>
+      <td class="asin">${r.asin||'—'}</td>
+      <td class="r">${db(r.netDays)}</td>
+      <td class="r">${fn(r.sold90)}</td>
+      <td class="r">${fn(r.recSend)}</td>
+      <td><input type="number" class="qty-inp" value="${item.qty}" min="0" oninput="updQty('${esc(sku)}',this.value)"></td>
+      <td class="r">${hasCP?'<span class="cp-pill found">'+cp.unitsPerBox+'/box · '+boxes+' box'+(boxes!==1?'es':'')+'</span>':'<span class="cp-pill missing">No template</span>'}</td>
+      <td><button class="btn btn-sm btn-secondary" style="padding:4px 8px" onclick="removeSku('${esc(sku)}')">✕</button></td>
+    </tr>`;
+  }).join('');
+  updateSummary();
+}
+function updateSummary(){
+  const items=Object.entries(S.shipment);let tot=0;
+  ge('sum-items').innerHTML=items.slice(0,16).map(([sku,i])=>{tot+=i.qty;return'<div class="sum-item"><span class="sum-sku">'+sku+'</span><span class="sum-qty">'+fn(i.qty)+'</span></div>';}).join('')
+    +(items.length>16?'<div style="font-size:11px;color:var(--gray-400);text-align:center;padding:6px 0">+' +(items.length-16)+' more</div>':'');
+  if(!items.length)ge('sum-items').innerHTML='<div style="text-align:center;color:var(--gray-400);font-size:13px;padding:10px 0">No SKUs added</div>';
+  ge('sum-total').textContent=fn(tot);ge('bld-units-lbl').textContent=fn(tot)+' total units';
+}
+
+// ── EXPORT AWD CSV (Amazon AWD Template format) ──
+function exportCSV(){
+  const items=Object.entries(S.shipment).filter(([,i])=>i.qty>0);
+  if(!items.length){awd_planner_toast('No units staged','error');return;}
+  const h=['Merchant SKU','Quantity','Expiration date (MM/DD/YYYY)','Units per box','Number of boxes','Box length (in)','Box width (in)','Box height (in)','Box weight (lb)','Palletized?','Boxes Per Pallet','Number of pallets'];
+  const rows=items.map(([sku,i])=>{
+    const cp=S.cpackMap[sku.toUpperCase()];
+    const hasCP=cp&&cp.unitsPerBox>0;
+    const boxes=hasCP?Math.ceil(i.qty/cp.unitsPerBox):'';
+    return[
+      sku,i.qty,'',
+      hasCP?cp.unitsPerBox:'',
+      boxes,
+      hasCP?cp.lengthIn:'',
+      hasCP?cp.widthIn:'',
+      hasCP?cp.heightIn:'',
+      hasCP?cp.weightLb:'',
+      '','',''
+    ];
+  });
+  const name=ge('ship-name').value.trim()||'AWD_Shipment';
+  dlCSV([h,...rows],name+'.csv');
+  const tot=items.reduce((s,[,i])=>s+i.qty,0);
+  awd_planner_toast('Exported '+items.length+' SKUs · '+fn(tot)+' units','success');
+}
+
+// ── UTILITIES ──
+function ge(id){return document.getElementById(id);}
+function gf(row,col){if(!row||!col)return'';return(row[col]??row[col.toLowerCase()]??row[col.toUpperCase()]??'').toString().trim();}
+function pn(v){const n=parseFloat((v||'').toString().replace(/,/g,''));return isNaN(n)||n<0?0:n;}
+function fn(n,d=0){if(n===null||n===undefined||isNaN(n))return'—';return Number(n.toFixed(d)).toLocaleString();}
+function esc(s){return(s||'').replace(/\\/g,'\\\\').replace(/'/g,'\\x27');}
+function dlCSV(rows,fname){
+  const csv=rows.map(r=>r.map(c=>{const s=String(c??'');return s.includes(',')||s.includes('"')||s.includes('\n')?'"'+s.replace(/"/g,'""')+'"':s;}).join(',')).join('\n');
+  const a=document.createElement('a');a.href=URL.createObjectURL(new Blob([csv],{type:'text/csv'}));a.download=fname;a.click();
+}
+function awd_switchTab(n){
+  document.querySelectorAll('.tab').forEach(t=>t.classList.remove('active'));
+  document.querySelectorAll('.page').forEach(p=>p.classList.remove('active'));
+  ge('tab-'+n).classList.add('active');ge('page-'+n).classList.add('active');
+}
+let _tt;
+// (toast replaced with awd_planner_toast)
+
+// ── INIT ──
+// Init handled by launchApp()
+
+
+
+// ═══════════════════════════════════════════════════════
+// WAREHOUSE STOCK INTEGRATION + AWD PLANNER FEATURES
+// ═══════════════════════════════════════════════════════
+
+// Warehouse stock: partNum.lower -> [{location, cases, casesNum}]
+// Loaded from Google Sheet Master_List via Worker
+const WH = {
+  stock: {},      // partNum.lower -> [{location, cases, casesNum}]
+  loaded: false,
+};
+
+// Discontinued SKUs: loaded from Google Sheet Discontinued_SKUs tab
+const DISC = {
+  skus: new Set(),   // Set of uppercase SKUs
+  loaded: false,
+  saving: false,
+};
+
+// ── LOAD WAREHOUSE STOCK ──
+async function loadWarehouseStock() {
+  try {
+    var url  = 'https://xfitting-lookup.alfixedinc88.workers.dev?sheet=Master_List';
+    var res  = await fetch(url);
+    var json = await res.json();
+    if (json.error) throw new Error(json.error);
+    var rows = (json.values || []).map(function(r) {
+      while (r.length < 16) r.push(''); return r;
+    });
+    // Parse same as warehouse app: col7=partNum, col8=location, col9=cases
+    var SKIP = new Set(['push fit','name','location','case','each case quantity','date arrive','total quantity','brand','uint price','total','type','sku','']);
+    WH.stock = {};
+    for (var i = 1; i < rows.length; i++) {
+      var r = rows[i];
+      var partNum = String(r[6] || '').trim();
+      if (!partNum || partNum.length < 2) continue;
+      if (SKIP.has(partNum.toLowerCase())) continue;
+      var casesRaw = r[8];
+      var casesNum = (casesRaw !== '' && casesRaw !== null && casesRaw !== undefined) ? parseFloat(casesRaw) : null;
+      if (!casesNum || casesNum <= 0) continue;  // only in-stock rows
+      var key = partNum.toLowerCase();
+      if (!WH.stock[key]) WH.stock[key] = [];
+      WH.stock[key].push({ partNum: partNum, location: String(r[7]||'').trim(), cases: String(casesRaw), casesNum: casesNum });
+    }
+    WH.loaded = true;
+    console.log('[XFITTING] WH stock loaded:', Object.keys(WH.stock).length, 'unique partNums');
+  } catch(e) {
+    console.error('[XFITTING] WH stock load failed:', e);
+  }
+}
+
+// ── LOAD DISCONTINUED SKUS ──
+async function loadDiscontinuedSKUs() {
+  try {
+    var url = 'https://xfitting-lookup.alfixedinc88.workers.dev?sheet=Discontinued_SKUs';
+    var res  = await fetch(url);
+    var json = await res.json();
+    if (json.error) {
+      console.warn('[XFITTING] Discontinued_SKUs sheet not found yet — checking localStorage');
+      var lsSaved = JSON.parse(localStorage.getItem('xf_disc') || '[]');
+      DISC.skus = new Set(lsSaved);
+      DISC.loaded = true;
+      return;
+    }
+    var rows = json.values || [];
+    DISC.skus = new Set();
+    for (var i = 1; i < rows.length; i++) {
+      var sku = String(rows[i][0] || '').trim().toUpperCase();
+      if (sku) DISC.skus.add(sku);
+    }
+    DISC.loaded = true;
+    console.log('[XFITTING] Discontinued SKUs loaded:', DISC.skus.size);
+  } catch(e) {
+    console.warn('[XFITTING] Could not load discontinued SKUs:', e.message);
+  }
+}
+
+// ── SAVE DISCONTINUED SKU TO SHEET (via Cloudflare Worker PUT) ──
+async function saveDiscontinuedSKU(sku, remove) {
+  try {
+    // 1. Fetch current sheet data via Worker GET
+    var getRes  = await fetch('https://xfitting-lookup.alfixedinc88.workers.dev?sheet=Discontinued_SKUs');
+    var getData = await getRes.json();
+
+    var rows;
+    if (getData.error) {
+      // Sheet tab doesn't exist yet — start fresh with header row
+      rows = [['SKU', 'Reason', 'Date']];
+    } else {
+      rows = (getData.values || []).filter(function(r) { return r.some(function(c) { return String(c).trim(); }); });
+      if (!rows.length) rows = [['SKU', 'Reason', 'Date']];
+    }
+
+    // 2. Add or remove SKU
+    if (remove) {
+      rows = rows.filter(function(r, i) {
+        return i === 0 || String(r[0]||'').toUpperCase() !== sku.toUpperCase();
+      });
+    } else {
+      var exists = rows.some(function(r, i) {
+        return i > 0 && String(r[0]||'').toUpperCase() === sku.toUpperCase();
+      });
+      if (!exists) {
+        rows.push([sku.toUpperCase(), 'Phased out', new Date().toLocaleDateString()]);
+      }
+    }
+
+    // 3. Write back via Worker PUT
+    var putRes = await fetch('https://xfitting-lookup.alfixedinc88.workers.dev?sheet=Discontinued_SKUs', {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ values: rows })
+    });
+    var putData = await putRes.json();
+    if (putData.error) throw new Error(putData.error);
+    console.log('[XFITTING] Discontinued_SKUs saved, rows:', rows.length);
+
+    // Also mirror to localStorage as backup
+    var skus = rows.slice(1).map(function(r) { return String(r[0]||'').toUpperCase(); }).filter(Boolean);
+    localStorage.setItem('xf_disc', JSON.stringify(skus));
+
+  } catch(e) {
+    console.error('[XFITTING] saveDiscontinuedSKU error:', e.message);
+    // Fallback: localStorage only
+    var saved = JSON.parse(localStorage.getItem('xf_disc') || '[]');
+    if (remove) { saved = saved.filter(function(s) { return s !== sku.toUpperCase(); }); }
+    else if (!saved.includes(sku.toUpperCase())) { saved.push(sku.toUpperCase()); }
+    localStorage.setItem('xf_disc', JSON.stringify(saved));
+    awd_planner_toast('Saved locally (sheet sync failed)', 'error');
+  }
+}
+
+// ── TOGGLE DISCONTINUED ──
+async function toggleDiscontinued(sku) {
+  var upper = sku.toUpperCase();
+  var removing = DISC.skus.has(upper);
+  if (removing) { DISC.skus.delete(upper); } else { DISC.skus.add(upper); }
+  awd_planner_toast(removing ? 'SKU restored: ' + sku : 'SKU marked discontinued: ' + sku, 'success');
+  renderRecs();
+  renderDashboard();
+  // Save async
+  await saveDiscontinuedSKU(sku, removing);
+}
+
+// ── SKU MATCH LOGIC ──
+// Strip trailing dash from Amazon SKU for comparison
+function normalizeAmazonSKU(sku) {
+  return String(sku || '').trim().replace(/-+$/, '').toLowerCase();
+}
+
+function baseSKU_awd(partNum) {
+  return String(partNum || '').split('=')[0].toLowerCase();
+}
+
+// Check warehouse stock status for an Amazon SKU
+// Returns: { status: 'exact'|'bulk'|'awaiting'|'unknown', whPartNum, cases, casesNum, location }
+function checkWarehouseStock(amazonSKU) {
+  if (!WH.loaded) return { status: 'unknown' };
+  var norm = normalizeAmazonSKU(amazonSKU);   // e.g. "23-2-1=1xx"
+
+  // 1. Exact match (ignore trailing dash)
+  var exactRows = WH.stock[norm];
+  if (exactRows && exactRows.length > 0) {
+    return { status: 'exact', rows: exactRows, whPartNum: exactRows[0].partNum };
+  }
+
+  // 2. No exact match — check if base SKU has ANY stock (bulk/needs labels)
+  var base = baseSKU_awd(norm);  // e.g. "23-2-1"
+  var bulkRows = [];
+  Object.keys(WH.stock).forEach(function(key) {
+    if (baseSKU_awd(key) === base) {
+      WH.stock[key].forEach(function(r) { bulkRows.push(r); });
+    }
+  });
+  if (bulkRows.length > 0) {
+    return { status: 'bulk', rows: bulkRows };
+  }
+
+  // 3. Nothing in warehouse
+  return { status: 'awaiting' };
+}
+
+// ── BOX COUNT FROM SHIPMENT BUILDER ──
+function getBoxCount(sku) {
+  if (!S.shipment[sku]) return null;
+  var item = S.shipment[sku];
+  var cp = S.cpackMap[sku.toUpperCase()];
+  if (!cp || !cp.unitsPerBox) return null;
+  return Math.ceil(item.qty / cp.unitsPerBox);
+}
+
+// ── AWD PLANNER TOAST (scoped to avoid conflict with WH toast) ──
+var _awd_tt;
+function awd_planner_toast(msg, type) {
+  type = type || '';
+  var el = document.getElementById('awd-toast');
+  if (!el) return;
+  el.textContent = msg;
+  el.className = 'show' + (type ? ' ' + type : '');
+  clearTimeout(_awd_tt);
+  _awd_tt = setTimeout(function() { el.classList.remove('show'); }, 2800);
+}
+
+
+
+// ═══════════════════════════════════════════════════════
+// LAUNCHER
+// ═══════════════════════════════════════════════════════
+function launchApp(which) {
+  document.getElementById('launcher').style.display = 'none';
+  if (which === 'warehouse') {
+    document.getElementById('wh-app').style.display = 'flex';
+    // Trigger warehouse data load if not already loaded
+    if (DB.master.length === 0) loadAllSheets();
+  } else {
+    document.getElementById('awd-app').style.display = 'flex';
+    // Load warehouse stock for AWD planner cross-reference
+    if (!WH.loaded) loadWarehouseStock();
+    if (!DISC.loaded) loadDiscontinuedSKUs();
+    loadCfg();
+    loadCpackFromStorage();
+  }
+
+}
+
+function backToLauncher() {
+  document.getElementById('wh-app').style.display = 'none';
+  document.getElementById('awd-app').style.display = 'none';
+  document.getElementById('launcher').style.display = 'flex';
+
+}
+
+// After PIN always shows launcher
+window.addEventListener('load', function() {
+  // Nothing to do — PIN unlock shows launcher, launcher shows apps
+});
+
+
+
+// ═══════════════════════════════════════════════════════
+// OVERRIDE AWD RENDERERS — add warehouse stock + discontinued
+// ═══════════════════════════════════════════════════════
+
+// Override renderRecs to add warehouse status + discontinued
+var _orig_renderRecs = renderRecs;
+function renderRecs() {
+  if (!S.loaded) return;
+  var q = document.getElementById('rec-q') ? document.getElementById('rec-q').value.toLowerCase() : '';
+  var f = document.getElementById('rec-f') ? document.getElementById('rec-f').value : '';
+
+  var data = S.joined.filter(function(r) {
+    // Filter out discontinued
+    if (DISC.skus.has(r.sku.toUpperCase())) return false;
+    if (r.netDays >= 999 && r.recSend === 0) return false;
+    if (q && !r.sku.toLowerCase().includes(q) && !(r.asin||'').toLowerCase().includes(q) && !(r.name||'').toLowerCase().includes(q)) return false;
+    if (f === 'critical' && r.netDays > 30) return false;
+    if (f === 'warning' && (r.netDays <= 30 || r.netDays > 60)) return false;
+    if (f === 'ok' && (r.netDays <= 60 || r.netDays > 120)) return false;
+    return true;
+  }).sort(function(a,b) { return a.netDays - b.netDays; });
+
+  var cntEl = document.getElementById('rec-count');
+  if (cntEl) cntEl.textContent = data.length + ' SKU' + (data.length !== 1 ? 's' : '');
+  var tb = document.getElementById('rec-tbody');
+  if (!tb) return;
+  if (!data.length) {
+    tb.innerHTML = '<tr><td colspan="13"><div class="empty" style="padding:30px"><div class="ico">📋</div><h3>No recommendations</h3></div></td></tr>';
+    return;
+  }
+
+  tb.innerHTML = data.map(function(r) {
+    var inB = !!S.shipment[r.sku];
+    var whStatus = checkWarehouseStock(r.sku);
+    var statusBadge = '';
+    if (whStatus.status === 'exact')    statusBadge = '<span class="badge-labeled">✓ Pre-labeled</span>';
+    else if (whStatus.status === 'bulk') statusBadge = '<span class="badge-needslabel">$ Needs label</span>';
+    else if (whStatus.status === 'awaiting') statusBadge = '<span class="badge-await">⏳ Awaiting stock</span>';
+
+    var discBtn = '<button onclick="toggleDiscontinued(\'' + esc(r.sku) + '\')" class="badge-disc" title="Mark as discontinued">✕ Discontinue</button>';
+
+    return '<tr' + (whStatus.status === 'awaiting' ? ' style="opacity:.65"' : '') + '>' +
+      '<td><input type="checkbox" ' + (inB ? 'checked' : '') + ' onchange="togRec(\'' + esc(r.sku) + '\',this.checked)" ' + (whStatus.status === 'awaiting' ? 'disabled title="No warehouse stock"' : '') + '></td>' +
+      '<td class="sku">' + r.sku + '</td>' +
+      '<td style="font-size:12px;max-width:120px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:var(--gray-600)" title="' + (r.name||'') + '">' + (r.name||'—') + '</td>' +
+      '<td class="asin">' + (r.asin||'—') + '</td>' +
+      '<td>' + db(r.netDays) + '</td>' +
+      '<td class="r">' + fn(r.sold90) + '</td>' +
+      '<td class="r">' + (r.dailySales > 0 ? r.dailySales.toFixed(1) : '—') + '</td>' +
+      '<td class="r"><strong style="color:var(--blue)">' + fn(r.recSend) + '</strong></td>' +
+      '<td class="r">' + fn(r.fbaFul) + '</td>' +
+      '<td class="r">' + fn(r.awdAvail) + '</td>' +
+      '<td class="r">' + fn(r.totalNetwork) + '</td>' +
+      '<td>' + statusBadge + '</td>' +
+      '<td style="white-space:nowrap;display:flex;gap:4px;align-items:center">' +
+        (inB ? '<button class="btn btn-sm btn-secondary" onclick="removeSku(\'' + esc(r.sku) + '\')">Remove</button>' :
+               '<button class="btn btn-sm btn-primary" onclick="addSku(\'' + esc(r.sku) + '\')" ' + (whStatus.status === 'awaiting' ? 'style="background:#9CA3AF;border-color:#9CA3AF" title=\'No stock\'' : '') + '>+Add</button>') +
+        discBtn +
+      '</td>' +
+    '</tr>';
+  }).join('');
+}
+
+// Override renderDashboard to add awaiting stock section + warehouse column
+var _orig_renderDashboard = renderDashboard;
+function renderDashboard() {
+  if (!S.loaded) {
+    var de = document.getElementById('dash-empty');
+    var db2 = document.getElementById('dash-body');
+    if (de) de.style.display = '';
+    if (db2) db2.style.display = 'none';
+    return;
+  }
+  var de = document.getElementById('dash-empty');
+  var dbody = document.getElementById('dash-body');
+  if (de) de.style.display = 'none';
+  if (dbody) dbody.style.display = 'block';
+
+  var d = S.joined.filter(function(r) { return !DISC.skus.has(r.sku.toUpperCase()); });
+  var crit = d.filter(function(r) { return r.netDays < 999 && r.netDays <= 30; });
+  var warn = d.filter(function(r) { return r.netDays < 999 && r.netDays > 30 && r.netDays <= 60; });
+
+  // Awaiting stock: recommended but no warehouse stock
+  var awaiting = d.filter(function(r) {
+    if (r.recSend <= 0) return false;
+    return checkWarehouseStock(r.sku).status === 'awaiting';
+  });
+
+  var sg = document.getElementById('stats-grid');
+  if (sg) sg.innerHTML =
+    '<div class="stat red"><div class="stat-lbl">Critical ≤30d</div><div class="stat-val">' + crit.length + '</div><div class="stat-sub">Immediate action</div></div>' +
+    '<div class="stat orange"><div class="stat-lbl">Warning 31–60d</div><div class="stat-val">' + warn.length + '</div><div class="stat-sub">Plan soon</div></div>' +
+    '<div class="stat" style="--s-color:var(--orange)"><div class="stat-lbl">Awaiting Stock</div><div class="stat-val" style="color:var(--orange)">' + awaiting.length + '</div><div class="stat-sub">Recommended, no WH stock</div></div>' +
+    '<div class="stat blue"><div class="stat-lbl">FBA Fulfillable</div><div class="stat-val">' + fn(d.reduce(function(s,r){return s+r.fbaFul;},0)) + '</div><div class="stat-sub">Available at Amazon</div></div>' +
+    '<div class="stat green"><div class="stat-lbl">Total Rec Send</div><div class="stat-val">' + fn(d.reduce(function(s,r){return s+r.recSend;},0)) + '</div><div class="stat-sub">Across all SKUs</div></div>' +
+    '<div class="stat"><div class="stat-lbl">SKUs Staged</div><div class="stat-val">' + Object.keys(S.shipment).length + '</div><div class="stat-sub">In builder</div></div>';
+
+  // Awaiting stock section
+  var awaitHtml = '';
+  if (awaiting.length > 0) {
+    awaitHtml = '<div class="await-section">' +
+      '<div class="await-section-title">⏳ Awaiting Warehouse Stock (' + awaiting.length + ' SKUs) — add to next AWD shipment when inventory arrives</div>' +
+      '<div class="await-grid">' +
+      awaiting.map(function(r) {
+        return '<div class="await-pill">' + r.sku + ' <span style="font-weight:400;color:#92400e">· ' + fn(r.recSend) + ' units</span></div>';
+      }).join('') +
+      '</div></div>';
+  }
+
+  var nm = function(r) {
+    return '<td style="font-size:12px;color:var(--gray-600);max-width:130px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="' + (r.name||'') + '">' + (r.name||'—') + '</td>';
+  };
+
+  var ct = document.getElementById('crit-tbody');
+  if (ct) ct.innerHTML = crit.slice(0,10).map(function(r) {
+    var ws = checkWarehouseStock(r.sku);
+    var wsBadge = ws.status === 'exact' ? '<span class="badge-labeled">✓ Pre-labeled</span>' :
+                  ws.status === 'bulk'  ? '<span class="badge-needslabel">$ Needs label</span>' :
+                                          '<span class="badge-await">⏳ No stock</span>';
+    return '<tr><td class="sku">' + r.sku + '</td>' + nm(r) + '<td>' + db(r.netDays) + '</td><td class="r">' + fn(r.fbaFul) + '</td><td class="r">' + fn(r.awdAvail) + '</td><td>' + wsBadge + '</td><td><button class="btn btn-sm btn-primary" onclick="addSku(\'' + esc(r.sku) + '\')">+Add</button></td></tr>';
+  }).join('') || '<tr><td colspan="7" style="text-align:center;padding:24px;color:var(--gray-400)">No critical SKUs 🎉</td></tr>';
+
+  var recs = d.filter(function(r) { return r.recSend > 0 && r.netDays < 999; }).sort(function(a,b){return a.netDays-b.netDays;}).slice(0,10);
+  var rt = document.getElementById('rec-top-tbody');
+  if (rt) rt.innerHTML = recs.map(function(r) {
+    return '<tr><td class="sku">' + r.sku + '</td>' + nm(r) + '<td>' + db(r.netDays) + '</td><td class="r"><strong style="color:var(--blue)">' + fn(r.recSend) + '</strong></td><td><button class="btn btn-sm btn-secondary" onclick="addSku(\'' + esc(r.sku) + '\')">+Add</button></td></tr>';
+  }).join('') || '<tr><td colspan="5" style="text-align:center;padding:24px;color:var(--gray-400)">No recommendations</td></tr>';
+
+  // Inject awaiting stock section before dash-body tables
+  var existing = document.getElementById('awd-await-section');
+  if (existing) existing.remove();
+  if (awaitHtml) {
+    var dbEl = document.getElementById('dash-body');
+    if (dbEl) {
+      var div = document.createElement('div');
+      div.id = 'awd-await-section';
+      div.innerHTML = awaitHtml;
+      dbEl.insertBefore(div, dbEl.firstChild);
+    }
+  }
+}
+
+// Override updateBadges to account for discontinued
+var _orig_updateBadges = updateBadges;
+function updateBadges() {
+  var n = Object.keys(S.shipment).length;
+  var bb = document.getElementById('bld-badge');
+  if (bb) { bb.textContent = n; bb.style.display = n ? '' : 'none'; }
+  var rt = S.joined.filter(function(r) { return r.recSend > 0 && !DISC.skus.has(r.sku.toUpperCase()); }).length;
+  var rb = document.getElementById('rec-badge');
+  if (rb) { rb.textContent = rt; rb.style.display = rt ? '' : 'none'; }
+}
+
+// Override addSku to check stock
+var _orig_addSku = addSku;
+function addSku(sku) {
+  var ws = checkWarehouseStock(sku);
+  if (ws.status === 'awaiting') {
+    awd_planner_toast('No warehouse stock for ' + sku + ' — marked as awaiting', 'error');
+    return;
+  }
+  _orig_addSku(sku);
+}
+
+
+
+// ── DISCONTINUED SETTINGS PANEL ──
+function renderDiscontinuedPanel() {
+  var panel = document.getElementById('disc-panel');
+  if (!panel) return;
+  var all = S.joined.filter(function(r) { return DISC.skus.has(r.sku.toUpperCase()); });
+  if (!all.length) {
+    panel.innerHTML = '<div style="color:var(--gray-400);font-size:13px;padding:8px 0">No discontinued SKUs marked.</div>';
+    return;
+  }
+  panel.innerHTML = '<div style="display:flex;flex-wrap:wrap;gap:8px">' +
+    all.map(function(r) {
+      return '<div style="background:var(--gray-100);border:1px solid var(--gray-200);border-radius:8px;padding:6px 12px;font-size:12px;display:flex;align-items:center;gap:8px">' +
+        '<span class="sku">' + r.sku + '</span>' +
+        '<button onclick="toggleDiscontinued(\'' + esc(r.sku) + '\')" style="background:none;border:none;color:var(--green);cursor:pointer;font-size:12px;font-weight:600;padding:0">↩ Restore</button>' +
+        '</div>';
+    }).join('') + '</div>';
+}
+
+// Show disc panel when settings tab opens
+var _orig_awd_switchTab = awd_switchTab;
+function awd_switchTab(n) {
+  _orig_awd_switchTab(n);
+  if (n === 'settings') renderDiscontinuedPanel();
+}
+
 
 </script>
 </body>
