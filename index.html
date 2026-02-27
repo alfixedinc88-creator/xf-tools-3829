@@ -2600,11 +2600,24 @@ function dlCSV(rows,fname){
   const csv=rows.map(r=>r.map(c=>{const s=String(c??'');return s.includes(',')||s.includes('"')||s.includes('\n')?'"'+s.replace(/"/g,'""')+'"':s;}).join(',')).join('\n');
   const a=document.createElement('a');a.href=URL.createObjectURL(new Blob([csv],{type:'text/csv'}));a.download=fname;a.click();
 }
-function awd_switchTab(n){
-  document.querySelectorAll('.tab').forEach(t=>t.classList.remove('active'));
-  document.querySelectorAll('.page').forEach(p=>p.classList.remove('active'));
-  ge('tab-'+n).classList.add('active');ge('page-'+n).classList.add('active');
+function awd_switchTab(n) {
+  // Remove active state from all tabs and pages
+  document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
+  document.querySelectorAll('.page').forEach(p => p.classList.remove('active'));
+
+  // Activate selected tab/page safely
+  const tabEl = ge('tab-' + n);
+  const pageEl = ge('page-' + n);
+
+  if (tabEl) tabEl.classList.add('active');
+  if (pageEl) pageEl.classList.add('active');
+
+  // Render discontinued panel only when opening settings
+  if (n === 'settings' && typeof renderDiscontinuedPanel === 'function') {
+    renderDiscontinuedPanel();
+  }
 }
+
 let _tt;
 // (toast replaced with awd_planner_toast)
 
@@ -3035,12 +3048,7 @@ function renderDiscontinuedPanel() {
     }).join('') + '</div>';
 }
 
-// Show disc panel when settings tab opens
-var _orig_awd_switchTab = awd_switchTab;
-function awd_switchTab(n) {
-  _orig_awd_switchTab(n);
-  if (n === 'settings') renderDiscontinuedPanel();
-}
+
 
 
 </script>
