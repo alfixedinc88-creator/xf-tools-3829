@@ -1366,6 +1366,7 @@ input[type=checkbox]{width:15px;height:15px;cursor:pointer;accent-color:var(--bl
             <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polyline points="22 12 18 12 15 21 9 3 6 12 2 12"/></svg>Process Reports
           </button>
           <button class="btn btn-secondary" onclick="loadDemo()">Load Demo Data</button>
+          <button class="btn btn-secondary" onclick="clearReportData()" style="color:var(--red);border-color:#fca5a5">Clear Saved Data</button>
           <span style="font-size:12px;color:var(--gray-400)">FBA Inventory is required minimum.</span>
         </div>
         <div class="alert alert-info" style="font-size:12px">
@@ -2348,8 +2349,9 @@ function processData(){
     const pill=ge('data-pill');
     pill.textContent=S.joined.length+' SKUs loaded';
     pill.style.background='var(--green-light)';pill.style.color='var(--green)';
-    awd_planner_toast('Processed '+S.joined.length+' SKUs','success');
+    awd_planner_toast('Processed '+S.joined.length+' SKUs — saving to sheet…','success');
     awd_switchTab('dashboard');
+    saveReportsToSheet();
   }catch(e){ge('up-err').style.display='flex';ge('up-err').textContent='Error: '+e.message;console.error(e);}
 }
 function buildRow(r,invMap,awdMap,resMap){
@@ -2846,6 +2848,7 @@ function launchApp(which) {
     if (!DISC.loaded) loadDiscontinuedSKUs();
     loadCfg();
     loadCpackFromStorage();
+    if (!S.loaded) loadReportsFromSheet();
   }
 
 }
@@ -3050,6 +3053,127 @@ function renderDiscontinuedPanel() {
 
 
 
+
+
+// ═══════════════════════════════════════════════════════
+// REPORT PERSISTENCE — save/load via Google Sheet
+// ═══════════════════════════════════════════════════════
+
+function rowsToValues(rows, keyOrder) {
+  if (!rows || !rows.length) return [keyOrder];
+  return [keyOrder, ...rows.map(function(r) {
+    return keyOrder.map(function(k) { return r[k] !== undefined ? String(r[k]) : ''; });
+  })];
+}
+
+function valuesToRows(values) {
+  if (!values || values.length < 2) return [];
+  var headers = values[0].map(function(h) { return String(h||'').trim(); });
+  return values.slice(1).map(function(row) {
+    var obj = {};
+    headers.forEach(function(h, i) { obj[h] = String(row[i] || '').trim(); });
+    return obj;
+  }).filter(function(r) { return Object.values(r).some(function(v) { return v; }); });
+}
+
+async function saveReportsToSheet() {
+  try {
+    var saves = [];
+    if (S.fba.length) {
+      saves.push(fetch('https://xfitting-lookup.alfixedinc88.workers.dev?sheet=FBA_Inventory', {
+        method: 'PUT', headers: {'Content-Type':'application/json'},
+        body: JSON.stringify({ values: rowsToValues(S.fba, Object.keys(S.fba[0])) })
+      }));
+    }
+    if (S.live.length) {
+      saves.push(fetch('https://xfitting-lookup.alfixedinc88.workers.dev?sheet=FBA_Live', {
+        method: 'PUT', headers: {'Content-Type':'application/json'},
+        body: JSON.stringify({ values: rowsToValues(S.live, Object.keys(S.live[0])) })
+      }));
+    }
+    if (S.awd.length) {
+      saves.push(fetch('https://xfitting-lookup.alfixedinc88.workers.dev?sheet=AWD_Inventory', {
+        method: 'PUT', headers: {'Content-Type':'application/json'},
+        body: JSON.stringify({ values: rowsToValues(S.awd, Object.keys(S.awd[0])) })
+      }));
+    }
+    if (S.res.length) {
+      saves.push(fetch('https://xfitting-lookup.alfixedinc88.workers.dev?sheet=FBA_Reserve', {
+        method: 'PUT', headers: {'Content-Type':'application/json'},
+        body: JSON.stringify({ values: rowsToValues(S.res, Object.keys(S.res[0])) })
+      }));
+    }
+    await Promise.all(saves);
+    awd_planner_toast('Reports saved to sheet ✓', 'success');
+    console.log('[XFITTING] Reports saved to Google Sheet');
+  } catch(e) {
+    console.error('[XFITTING] saveReportsToSheet error:', e);
+    awd_planner_toast('Sheet sync failed — data processed locally', 'error');
+  }
+}
+
+async function loadReportsFromSheet() {
+  try {
+    var pill = ge('data-pill');
+    if (pill) { pill.textContent = 'Loading saved data…'; pill.style.background='var(--blue-light)'; pill.style.color='var(--blue)'; }
+
+    var results = await Promise.all([
+      fetch('https://xfitting-lookup.alfixedinc88.workers.dev?sheet=FBA_Inventory').then(function(r){return r.json();}),
+      fetch('https://xfitting-lookup.alfixedinc88.workers.dev?sheet=FBA_Live').then(function(r){return r.json();}),
+      fetch('https://xfitting-lookup.alfixedinc88.workers.dev?sheet=AWD_Inventory').then(function(r){return r.json();}),
+      fetch('https://xfitting-lookup.alfixedinc88.workers.dev?sheet=FBA_Reserve').then(function(r){return r.json();})
+    ]);
+
+    var fbaData  = valuesToRows(results[0].values || []);
+    var liveData = valuesToRows(results[1].values || []);
+    var awdData  = valuesToRows(results[2].values || []);
+    var resData  = valuesToRows(results[3].values || []);
+
+    if (!fbaData.length) {
+      if (pill) { pill.textContent = 'No data loaded'; pill.style.background='var(--gray-100)'; pill.style.color='var(--gray-500)'; }
+      return;
+    }
+
+    S.fba = fbaData; S.live = liveData; S.awd = awdData; S.res = resData;
+
+    // Update upload zone indicators
+    [['fba',fbaData,'📊'],['live',liveData,'📦'],['awd',awdData,'🏭'],['res',resData,'🔒']].forEach(function(item) {
+      var k=item[0], data=item[1], ico=item[2];
+      if (!data.length) return;
+      var stEl=ge('st-'+k); if(stEl){stEl.textContent=data.length+' rows (saved)';stEl.className='ust ok';}
+      var icoEl=ge('ico-'+k); if(icoEl) icoEl.textContent='✅';
+      var zone=ge('zone-'+k); if(zone) zone.classList.add('loaded');
+    });
+
+    if (ge('proc-btn')) ge('proc-btn').disabled = false;
+    processData();
+  } catch(e) {
+    console.error('[XFITTING] loadReportsFromSheet error:', e);
+    var pill = ge('data-pill');
+    if (pill) { pill.textContent = 'No data loaded'; pill.style.background='var(--gray-100)'; pill.style.color='var(--gray-500)'; }
+  }
+}
+
+function clearReportData() {
+  if (!confirm('Clear all saved report data from the sheet?')) return;
+  S.fba=[]; S.live=[]; S.awd=[]; S.res=[]; S.joined=[]; S.loaded=false;
+  [['fba','📊'],['live','📦'],['awd','🏭'],['res','🔒']].forEach(function(item) {
+    var k=item[0], ico=item[1];
+    var icoEl=ge('ico-'+k); if(icoEl) icoEl.textContent=ico;
+    var zone=ge('zone-'+k); if(zone) zone.classList.remove('loaded');
+    var st=ge('st-'+k); if(st){st.textContent='';st.className='ust';}
+  });
+  if(ge('proc-btn')) ge('proc-btn').disabled=true;
+  var pill=ge('data-pill'); if(pill){pill.textContent='No data loaded';pill.style.background='var(--gray-100)';pill.style.color='var(--gray-500)';}
+  ['FBA_Inventory','FBA_Live','AWD_Inventory','FBA_Reserve'].forEach(function(sheet) {
+    fetch('https://xfitting-lookup.alfixedinc88.workers.dev?sheet='+sheet, {
+      method:'PUT', headers:{'Content-Type':'application/json'},
+      body: JSON.stringify({values:[['cleared']]})
+    });
+  });
+  renderDashboard(); renderInv(); renderRecs(); updateBadges();
+  awd_planner_toast('Report data cleared', 'success');
+}
 
 </script>
 </body>
