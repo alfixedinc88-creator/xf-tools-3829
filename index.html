@@ -1075,7 +1075,7 @@ input[type=checkbox]{width:15px;height:15px;cursor:pointer;accent-color:var(--bl
 }
 .launcher-name { font-size:24px;font-weight:700;color:var(--text);letter-spacing:-.5px; }
 .launcher-sub  { font-size:14px;color:var(--text3);margin-bottom:40px; }
-.launcher-grid { display:grid;grid-template-columns:1fr 1fr;gap:16px; }
+.launcher-grid { display:grid;grid-template-columns:1fr 1fr 1fr;gap:16px; }
 .launcher-card {
   background:var(--bg2);border:1.5px solid var(--border);border-radius:16px;
   padding:32px 24px;cursor:pointer;transition:all .2s;text-align:center;
@@ -1181,6 +1181,11 @@ input[type=checkbox]{width:15px;height:15px;cursor:pointer;accent-color:var(--bl
         <div class="launcher-card-icon">&#128666;</div>
         <div class="launcher-card-title">AWD Planner</div>
         <div class="launcher-card-desc">Amazon inventory analysis, shipment recommendations and builder</div>
+      </div>
+      <div class="launcher-card" onclick="launchApp('upc')">
+        <div class="launcher-card-icon">&#127991;</div>
+        <div class="launcher-card-title">UPC Barcodes</div>
+        <div class="launcher-card-desc">Print Zebra barcode labels by SKU, UPC, or AWD shipment</div>
       </div>
     </div>
   </div>
@@ -2512,14 +2517,47 @@ function renderBuilder(){
     const ws = checkWarehouseStock(sku);
     const exportQty = hasCP ? boxes * cp.unitsPerBox : item.qty;
 
-    // Label prefix: number = pre-labeled, number$ = needs labels
+    // ── SPLIT LABEL PREFIX LOGIC ──
+    // exactRows = warehouse rows with matching variant (pre-labeled)
+    // bulkRows  = warehouse rows with different variant (needs relabeling)
+    // For exact rows: packagesAvailable = casesNum × unitsPerCase (packages per case)
+    // preLabeled_boxes = FLOOR(packagesAvailable ÷ unitsPerBox), capped at total boxes
+    // bulk_boxes = total boxes - preLabeled_boxes
+    // Bulk rows can NEVER be pre-labeled (wrong variant = repackage needed, not just relabel)
     let lPrefix = null;
     if (hasCP && boxes > 0) {
-      if (ws.status === 'exact' || ws.status === 'split') {
-        lPrefix = String(boxes);
+      const exactRows = ws.exactRows || [];
+      const hasExact = exactRows.length > 0;
+
+      if (hasExact) {
+        // Sum labeled packages available across all exact-variant warehouse locations
+        let labeledPkgs = 0;
+        exactRows.forEach(function(row) {
+          const upc_pkgs = getUnitsPerCase(row.partNum);
+          if (upc_pkgs > 0) {
+            labeledPkgs += row.casesNum * upc_pkgs;
+          } else {
+            // unitsPerCase unknown — treat all exact cases as labeled (conservative)
+            labeledPkgs = Infinity;
+          }
+        });
+
+        const preLabeledBoxes = labeledPkgs === Infinity
+          ? boxes  // assume all pre-labeled if we can't calculate
+          : Math.min(boxes, Math.floor(labeledPkgs / cp.unitsPerBox));
+        const bulkBoxes = boxes - preLabeledBoxes;
+
+        if (preLabeledBoxes > 0 && bulkBoxes > 0) {
+          lPrefix = preLabeledBoxes + '/' + bulkBoxes + '$';  // true split
+        } else if (preLabeledBoxes > 0) {
+          lPrefix = String(boxes);  // all pre-labeled
+        } else {
+          lPrefix = String(boxes) + '$';  // exact rows exist but not enough packages
+        }
       } else if (ws.status === 'bulk') {
-        lPrefix = String(boxes) + '$';
+        lPrefix = String(boxes) + '$';  // only different variant — all need labels
       }
+      // awaiting/unknown: lPrefix stays null → shows — in table
     }
 
     return`<tr>
@@ -2532,7 +2570,7 @@ function renderBuilder(){
         ? `<span class="cp-pill found">${cp.unitsPerBox}/box · ${exportQty} units · ${boxes} box${boxes!==1?'es':''}</span>`
         : '<span class="cp-pill missing">No template</span>'}</td>
       <td>${lPrefix
-        ? `<button class="btn btn-sm btn-secondary" style="font-size:11px" onclick="copyLabelFromBuilder('${esc(sku)}','${esc(lPrefix)}')">📋 ${lPrefix}</button>`
+        ? `<button class="btn btn-sm btn-secondary" style="font-size:11px${lPrefix && lPrefix.includes('/') ? ';color:#EA580C;border-color:#FDBA74' : ''}" onclick="copyLabelFromBuilder('${esc(sku)}','${esc(lPrefix)}')">📋 ${lPrefix}</button>`
         : '<span style="color:var(--gray-400);font-size:11px">—</span>'}</td>
       <td><button class="btn btn-sm btn-secondary" style="padding:4px 8px" onclick="removeSku('${esc(sku)}')">✕</button></td>
     </tr>`;
@@ -2809,26 +2847,30 @@ function launchApp(which) {
   document.getElementById('launcher').style.display = 'none';
   if (which === 'warehouse') {
     document.getElementById('wh-app').style.display = 'flex';
-    // Trigger warehouse data load if not already loaded
     if (DB.master.length === 0) loadAllSheets();
-  } else {
+  } else if (which === 'awd') {
     document.getElementById('awd-app').style.display = 'flex';
-    // Load warehouse stock for AWD planner cross-reference
     if (!WH.loaded) loadWarehouseStock();
     if (!AWD_DB.loaded) loadAWDPlannerDB();
     if (!DISC.loaded) loadDiscontinuedSKUs();
     loadCfg();
     loadCpackFromStorage();
     if (!S.loaded) loadReportsFromSheet();
+  } else if (which === 'upc') {
+    document.getElementById('upc-app').style.display = 'flex';
+    // Load warehouse data if not already loaded (needs DB.upc)
+    if (DB.master.length === 0) loadAllSheets();
+    // Load AWD_DB for SKU-to-UPC lookup from planner side
+    if (!AWD_DB.loaded) loadAWDPlannerDB();
+    upcOnLaunch();
   }
-
 }
 
 function backToLauncher() {
   document.getElementById('wh-app').style.display = 'none';
   document.getElementById('awd-app').style.display = 'none';
+  document.getElementById('upc-app').style.display = 'none';
   document.getElementById('launcher').style.display = 'flex';
-
 }
 
 // After PIN always shows launcher
@@ -2909,7 +2951,7 @@ function renderRecs() {
     const ws = checkWarehouseStock(r.sku);
     const statusBadge =
       ws.status === 'exact'    ? '<span class="badge-labeled">✓ Pre-labeled</span>' :
-      ws.status === 'split'    ? '<span class="badge-labeled">✓ Pre-labeled</span>' :
+      ws.status === 'split'    ? '<span class="badge-needslabel" style="background:#FFF7ED;color:#EA580C;border-color:#FDBA74">⚡ Split stock</span>' :
       ws.status === 'bulk'     ? '<span class="badge-needslabel">$ Needs label</span>' :
       ws.status === 'awaiting' ? '<span class="badge-await">⏳ Awaiting stock</span>' :
       ws.status === 'unknown'  ? '<span style="color:var(--gray-400);font-size:11px">Loading…</span>' : '';
@@ -3172,11 +3214,12 @@ async function loadAWDPlannerDB() {
       const partNum = String(r[6]||'').trim();
       if (!partNum) return;
       AWD_DB.awdMaster.push({
-        partNum: partNum,
-        upc:     String(r[2]||'').trim(),
-        location:String(r[3]||'').trim(),
-        label:   String(r[1]||'').trim(),
-        sku:     String(r[7]||'').trim(),
+        partNum:      partNum,
+        upc:          String(r[2]||'').trim(),
+        location:     String(r[3]||'').trim(),
+        label:        String(r[1]||'').trim(),
+        unitsPerCase: parseFloat(String(r[5]||'').trim()) || 0,  // col6 = packages per case
+        sku:          String(r[7]||'').trim(),
       });
     });
 
@@ -3185,6 +3228,20 @@ async function loadAWDPlannerDB() {
   } catch(e) {
     console.error('[XFITTING] loadAWDPlannerDB failed:', e);
   }
+}
+
+// ── GET UNITS PER CASE for a specific partNum (packages per warehouse case) ──
+function getUnitsPerCase(partNum) {
+  const norm = String(partNum || '').trim().toLowerCase();
+  // Try AWD_DB first (always loaded by planner on launch)
+  const r1 = AWD_DB.awdMaster.find(r => r.partNum.toLowerCase() === norm);
+  if (r1 && r1.unitsPerCase > 0) return r1.unitsPerCase;
+  // Fall back to DB.awdMaster (loaded if warehouse app opened this session)
+  if (DB && DB.awdMaster && DB.awdMaster.length) {
+    const r2 = DB.awdMaster.find(r => String(r.partNum||'').toLowerCase() === norm);
+    if (r2 && parseFloat(r2.unitsPerCase) > 0) return parseFloat(r2.unitsPerCase);
+  }
+  return 0; // unknown
 }
 
 // ── GET WAREHOUSE NAME (uses AWD_DB.products, falls back to DB.products) ──
@@ -3325,6 +3382,405 @@ function doExportXLSX(allRows, name, skuCount, tot) {
   }
 }
 
+
+// ═══════════════════════════════════════════════════════
+// UPC BARCODE APP FUNCTIONS
+// ═══════════════════════════════════════════════════════
+
+// Load JsBarcode from CDN (same lib as existing BARCODE.html app)
+var _jsbarcodeLoaded = false;
+function loadJsBarcode(cb) {
+  if (_jsbarcodeLoaded || typeof JsBarcode !== 'undefined') { _jsbarcodeLoaded = true; if(cb) cb(); return; }
+  var s = document.createElement('script');
+  s.src = 'https://cdn.jsdelivr.net/npm/jsbarcode@3.11.5/dist/JsBarcode.all.min.js';
+  s.onload = function() { _jsbarcodeLoaded = true; if(cb) cb(); };
+  document.head.appendChild(s);
+}
+
+// UPC-A checksum validation (same logic as existing BARCODE.html)
+function upcValidateChecksum(digits12) {
+  if (!/^\d{12}$/.test(digits12)) return false;
+  var first11 = digits12.substring(0, 11);
+  var provided = parseInt(digits12[11], 10);
+  var sumOdd = 0, sumEven = 0;
+  for (var i = 0; i < 11; i++) {
+    if (i % 2 === 0) sumOdd += parseInt(first11[i], 10);
+    else sumEven += parseInt(first11[i], 10);
+  }
+  var remainder = ((sumOdd * 3) + sumEven) % 10;
+  var correct = remainder === 0 ? 0 : 10 - remainder;
+  return provided === correct;
+}
+
+// Called when UPC app launches
+function upcOnLaunch() {
+  document.getElementById('upc-results').innerHTML = '';
+  document.getElementById('upc-empty').style.display = 'block';
+  document.getElementById('upc-search-inp').value = '';
+  document.getElementById('upc-file-status').textContent = '';
+  upcCheckShipment();
+}
+
+function upcClear() {
+  document.getElementById('upc-results').innerHTML = '';
+  document.getElementById('upc-empty').style.display = 'block';
+}
+
+// Show live shipment banner if AWD planner has staged SKUs
+function upcCheckShipment() {
+  var banner = document.getElementById('upc-shipment-banner');
+  var countEl = document.getElementById('upc-shipment-count');
+  if (!S || !S.shipment) { banner.style.display = 'none'; return; }
+  var items = Object.keys(S.shipment).filter(function(k) { return S.shipment[k].qty > 0; });
+  if (items.length > 0) {
+    banner.style.display = 'flex';
+    countEl.textContent = items.length + ' SKU' + (items.length !== 1 ? 's' : '') + ' currently staged in AWD Planner';
+  } else {
+    banner.style.display = 'none';
+  }
+}
+
+// Look up inside UPC(s) for a SKU/partNum/UPC query
+// Returns array of {partNum, upc} — only valid UPC-A (12-digit) entries
+function upcLookup(query) {
+  var q = String(query || '').trim().toLowerCase().replace(/-+$/,'');
+  if (!q) return [];
+  var results = [];
+  var seen = new Set();
+  var isNum = /^\d{8,14}$/.test(q.replace(/\s/g,''));
+
+  function add(partNum, upc) {
+    var key = partNum.toLowerCase() + '|' + upc;
+    if (seen.has(key)) return;
+    seen.add(key);
+    results.push({ partNum: partNum, upc: upc });
+  }
+
+  if (isNum) {
+    // Search by UPC number
+    DB.upc.forEach(function(r) {
+      if (r.inside && r.inside.replace(/\s/g,'') === q.replace(/\s/g,'')) add(r.variant, r.inside);
+    });
+    AWD_DB.awdMaster.forEach(function(r) {
+      if (r.upc && r.upc.replace(/\s/g,'') === q.replace(/\s/g,'')) add(r.partNum, r.upc);
+    });
+  } else {
+    // Search by SKU/partNum — exact first, then partial
+    var exactFn = function(variant) { return variant.toLowerCase() === q || variant.toLowerCase().replace(/-+$/,'') === q; };
+    var partialFn = function(variant) { return variant.toLowerCase().includes(q); };
+
+    [exactFn, partialFn].forEach(function(fn, pass) {
+      if (pass === 1 && results.length) return; // skip partial if exact found
+      DB.upc.forEach(function(r) { if (fn(r.variant) && r.inside) add(r.variant, r.inside); });
+      AWD_DB.awdMaster.forEach(function(r) { if (fn(r.partNum) && r.upc) add(r.partNum, r.upc); });
+    });
+  }
+
+  // Filter to valid UPC-A (12-digit) only — with checksum validation
+  return results.filter(function(r) { return /^\d{12}$/.test(r.upc.replace(/\s/g,'')); });
+}
+
+// Search input handler
+function upcSearch(query) {
+  var q = String(query || '').trim();
+  if (!q) { upcClear(); return; }
+  if (!DB.upc.length && !AWD_DB.awdMaster.length) {
+    document.getElementById('upc-results').innerHTML = '<div style="text-align:center;padding:40px;color:var(--text3)">Loading data, please wait...</div>';
+    document.getElementById('upc-empty').style.display = 'none';
+    return;
+  }
+  var matches = upcLookup(q);
+  document.getElementById('upc-empty').style.display = 'none';
+  if (!matches.length) {
+    document.getElementById('upc-results').innerHTML = '<div style="text-align:center;padding:40px;color:var(--text3)"><div style="font-size:32px;margin-bottom:12px">&#128269;</div><div style="font-size:14px;font-weight:600">No valid UPC-A found for <code style="color:var(--accent)">' + q + '</code></div><div style="font-size:12px;margin-top:8px">Try the full part number with variant suffix (e.g. 27-3-1=10X)</div></div>';
+    return;
+  }
+  loadJsBarcode(function() {
+    document.getElementById('upc-results').innerHTML = upcRenderCards(matches);
+    upcDrawBarcodes();
+  });
+}
+
+// Load live shipment from AWD Planner builder
+function upcLoadShipment() {
+  if (!S || !S.shipment || !Object.keys(S.shipment).length) {
+    document.getElementById('upc-results').innerHTML = '<div style="text-align:center;padding:40px;color:var(--text3)">No SKUs staged in AWD Planner.</div>';
+    document.getElementById('upc-empty').style.display = 'none';
+    return;
+  }
+  var skus = Object.keys(S.shipment).filter(function(k) { return S.shipment[k].qty > 0; });
+  upcRenderFromSkuList(skus, 'Live AWD Shipment');
+}
+
+// Handle file drop
+function upcHandleDrop(e) {
+  e.preventDefault();
+  document.getElementById('upc-drop-zone').style.borderColor = 'var(--border)';
+  var f = e.dataTransfer.files[0];
+  if (f) upcHandleFile(f);
+}
+
+// Handle file input — supports .txt (tab-delimited) and .xlsx
+function upcHandleFile(file) {
+  if (!file) return;
+  var status = document.getElementById('upc-file-status');
+  status.textContent = 'Reading ' + file.name + '...';
+  status.style.color = 'var(--text3)';
+
+  var ext = file.name.split('.').pop().toLowerCase();
+
+  if (ext === 'txt') {
+    var reader = new FileReader();
+    reader.onload = function(e) {
+      var text = e.target.result;
+      var skus = upcParseShipmentTxt(text);
+      if (!skus.length) {
+        status.textContent = 'No SKUs found in file.';
+        status.style.color = 'var(--red)';
+        return;
+      }
+      status.textContent = 'Loaded ' + skus.length + ' SKUs from ' + file.name;
+      status.style.color = '#0E9F6E';
+      upcRenderFromSkuList(skus, file.name);
+    };
+    reader.readAsText(file);
+
+  } else if (ext === 'xlsx') {
+    // Load SheetJS if needed
+    if (typeof XLSX === 'undefined') {
+      var s = document.createElement('script');
+      s.src = 'https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js';
+      s.onload = function() { upcReadXlsx(file, status); };
+      document.head.appendChild(s);
+    } else {
+      upcReadXlsx(file, status);
+    }
+  } else {
+    status.textContent = 'Unsupported file type. Use .txt or .xlsx.';
+    status.style.color = 'var(--red)';
+  }
+}
+
+// Parse tab-delimited TXT export — SKUs are in first data column after 5 header rows
+function upcParseShipmentTxt(text) {
+  var lines = text.split(/\r?\n/);
+  var skus = [];
+  // Skip first 5 rows (header rows matching Amazon template)
+  // Row 6+ = data rows, col 0 = Merchant SKU
+  for (var i = 5; i < lines.length; i++) {
+    var cols = lines[i].split('\t');
+    var sku = String(cols[0] || '').trim();
+    if (sku && sku.toLowerCase() !== 'merchant sku') skus.push(sku);
+  }
+  return skus;
+}
+
+// Read XLSX file and extract SKUs
+function upcReadXlsx(file, status) {
+  var reader = new FileReader();
+  reader.onload = function(e) {
+    try {
+      var wb = XLSX.read(e.target.result, { type: 'array' });
+      var ws = wb.Sheets[wb.SheetNames[0]];
+      var rows = XLSX.utils.sheet_to_json(ws, { header: 1, defval: '' });
+      // Same structure: 5 header rows, then data. Col 0 = Merchant SKU
+      var skus = [];
+      for (var i = 5; i < rows.length; i++) {
+        var sku = String(rows[i][0] || '').trim();
+        if (sku && sku.toLowerCase() !== 'merchant sku') skus.push(sku);
+      }
+      if (!skus.length) {
+        status.textContent = 'No SKUs found in file.';
+        status.style.color = 'var(--red)';
+        return;
+      }
+      status.textContent = 'Loaded ' + skus.length + ' SKUs from ' + file.name;
+      status.style.color = '#0E9F6E';
+      upcRenderFromSkuList(skus, file.name);
+    } catch(err) {
+      status.textContent = 'Error reading file: ' + err.message;
+      status.style.color = 'var(--red)';
+    }
+  };
+  reader.readAsArrayBuffer(file);
+}
+
+// Given a list of SKUs, look up UPCs and render all barcode cards
+function upcRenderFromSkuList(skus, sourceName) {
+  document.getElementById('upc-empty').style.display = 'none';
+  var allMatches = [];
+  var seen = new Set();
+  skus.forEach(function(sku) {
+    var matches = upcLookup(sku);
+    if (matches.length) {
+      matches.forEach(function(m) {
+        var key = m.partNum + '|' + m.upc;
+        if (!seen.has(key)) { seen.add(key); allMatches.push(m); }
+      });
+    } else {
+      // Show SKU card with no UPC found
+      var key = sku + '|none';
+      if (!seen.has(key)) { seen.add(key); allMatches.push({ partNum: sku, upc: null }); }
+    }
+  });
+
+  if (!allMatches.length) {
+    document.getElementById('upc-results').innerHTML = '<div style="text-align:center;padding:40px;color:var(--text3)">No UPCs found for any SKUs in this shipment.</div>';
+    return;
+  }
+
+  var found = allMatches.filter(function(m) { return m.upc; }).length;
+  var missing = allMatches.length - found;
+  var header = '<div style="background:#F9FAFB;border:1px solid var(--border);border-radius:10px;padding:12px 16px;margin-bottom:16px;font-size:12px;color:var(--text3)">';
+  header += '<strong style="color:var(--text)">' + sourceName + '</strong> &nbsp;·&nbsp; ';
+  header += found + ' barcode' + (found !== 1 ? 's' : '') + ' ready to print';
+  if (missing) header += ' &nbsp;·&nbsp; <span style="color:#C52A1A">' + missing + ' SKU' + (missing !== 1 ? 's' : '') + ' missing UPC</span>';
+  header += '</div>';
+
+  loadJsBarcode(function() {
+    document.getElementById('upc-results').innerHTML = header + upcRenderCards(allMatches);
+    upcDrawBarcodes();
+  });
+}
+
+// Build barcode card HTML
+function upcRenderCards(matches) {
+  var out = '<div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(260px,1fr));gap:16px;">';
+  matches.forEach(function(m, i) {
+    var bcId = 'bc-' + i + '-' + Math.random().toString(36).slice(2,6);
+    out += '<div style="background:#fff;border:1.5px solid var(--border);border-radius:12px;padding:20px;text-align:center;">';
+    out += '<div style="font-size:11px;font-weight:700;color:var(--accent);font-family:var(--mono);margin-bottom:4px">' + m.partNum + '</div>';
+    if (m.upc) {
+      out += '<svg id="' + bcId + '" data-upc="' + m.upc + '" style="width:100%;margin:10px 0"></svg>';
+      out += '<div style="font-size:11px;font-family:var(--mono);color:var(--text3);margin-bottom:14px">' + m.upc + '</div>';
+      out += '<button class="btn btn-primary" style="width:100%;font-size:12px" onclick="upcPrint(\'' + bcId + '\',\'' + m.partNum.replace(/\\/g,'\\\\').replace(/'/g,"\\'") + '\',\'' + m.upc + '\')">&#128424; Print Label</button>';
+    } else {
+      out += '<div style="padding:24px 0;color:var(--text3);font-size:12px">&#128683; No UPC-A on file</div>';
+    }
+    out += '</div>';
+  });
+  out += '</div>';
+  return out;
+}
+
+// Draw UPC-A barcodes (validates checksum before rendering)
+function upcDrawBarcodes() {
+  document.querySelectorAll('svg[data-upc]').forEach(function(el) {
+    var upc = el.getAttribute('data-upc').replace(/\s/g,'');
+    if (!upc) return;
+    if (!upcValidateChecksum(upc)) {
+      el.parentNode.querySelector('div[style*="font-family:var(--mono)"]').textContent = upc + ' (invalid checksum)';
+      return;
+    }
+    try {
+      JsBarcode(el, upc, {
+        format: 'UPC',
+        width: 2,
+        height: 60,
+        displayValue: true,
+        fontSize: 12,
+        margin: 6,
+      });
+    } catch(e) { console.warn('[UPC] Render failed:', upc, e.message); }
+  });
+}
+
+// Print single label in Zebra 1x2" format
+function upcPrint(bcId, partNum, upc) {
+  var svgEl = document.getElementById(bcId);
+  if (!svgEl) return;
+  var win = window.open('', '_blank', 'width=400,height=300');
+  win.document.write('<!DOCTYPE html><html><head><title>Print</title>');
+  win.document.write('<style>');
+  win.document.write('@page{size:2in 1in;margin:0}');
+  win.document.write('body{margin:0;padding:0;display:flex;flex-direction:column;align-items:center;justify-content:center;width:2in;height:1in;font-family:monospace;overflow:hidden}');
+  win.document.write('svg{width:1.9in;height:auto}');
+  win.document.write('.pn{font-size:6.5pt;font-weight:bold;margin-bottom:1px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:1.9in}');
+  win.document.write('</style></head><body>');
+  win.document.write('<div class="pn">' + partNum + '</div>');
+  win.document.write(svgEl.outerHTML);
+  win.document.write('</body></html>');
+  win.document.close();
+  win.focus();
+  setTimeout(function() { win.print(); win.close(); }, 400);
+}
 </script>
+
+<!-- ═══════════════════════════════════════════════════════ -->
+<!-- UPC BARCODE APP                                          -->
+<!-- ═══════════════════════════════════════════════════════ -->
+<div id="upc-app" style="display:none;flex-direction:column;min-height:100vh;background:var(--bg);">
+
+  <div class="topbar">
+    <div class="topbar-left">
+      <div class="tb-logo">XFITTING</div>
+      <div class="tb-name">UPC Barcodes</div>
+    </div>
+    <div class="topbar-right">
+      <button class="btn btn-secondary" onclick="backToLauncher()" style="font-size:12px;padding:6px 14px">← Apps</button>
+    </div>
+  </div>
+
+  <div style="max-width:960px;margin:0 auto;padding:24px 20px;width:100%">
+
+    <!-- Two input methods side by side -->
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:16px;margin-bottom:20px">
+
+      <!-- Search by SKU or UPC -->
+      <div style="background:#fff;border:1.5px solid var(--border);border-radius:12px;padding:20px 24px;">
+        <div style="font-size:13px;font-weight:700;color:var(--text);margin-bottom:12px">🔍 Search by SKU or UPC</div>
+        <div style="display:flex;gap:8px">
+          <input id="upc-search-inp" type="text" placeholder="e.g. 27-3-1=10X or 012345678901"
+            style="flex:1;padding:10px 12px;border:1.5px solid var(--border);border-radius:8px;font-size:13px;font-family:var(--mono);outline:none"
+            oninput="upcSearch(this.value)" onkeydown="if(event.key==='Escape'){this.value='';upcClear()}">
+          <button class="btn btn-secondary" onclick="document.getElementById('upc-search-inp').value='';upcClear()" style="font-size:12px;padding:8px 12px">✕</button>
+        </div>
+        <div style="font-size:11px;color:var(--text3);margin-top:8px">Searches UPC sheet and AWD Master for matching inside UPC</div>
+      </div>
+
+      <!-- Upload exported shipment file -->
+      <div style="background:#fff;border:1.5px solid var(--border);border-radius:12px;padding:20px 24px;">
+        <div style="font-size:13px;font-weight:700;color:var(--text);margin-bottom:12px">📂 Upload Exported Shipment</div>
+        <div id="upc-drop-zone"
+          ondragover="event.preventDefault();this.style.borderColor='var(--accent)'"
+          ondragleave="this.style.borderColor='var(--border)'"
+          ondrop="upcHandleDrop(event)"
+          style="border:2px dashed var(--border);border-radius:8px;padding:16px;text-align:center;cursor:pointer;transition:border-color .2s"
+          onclick="document.getElementById('upc-file-inp').click()">
+          <div style="font-size:22px;margin-bottom:6px">📄</div>
+          <div style="font-size:12px;font-weight:600;color:var(--text)">Drop file here or click to browse</div>
+          <div style="font-size:11px;color:var(--text3);margin-top:4px">Accepts .txt or .xlsx exported from AWD Planner</div>
+          <input id="upc-file-inp" type="file" accept=".txt,.xlsx" style="display:none" onchange="upcHandleFile(this.files[0])">
+        </div>
+        <div id="upc-file-status" style="font-size:11px;color:var(--text3);margin-top:8px;text-align:center"></div>
+      </div>
+
+    </div>
+
+    <!-- Live shipment banner (only if SKUs are in current builder) -->
+    <div id="upc-shipment-banner" style="background:#EEF2FD;border:1.5px solid #C7D7FD;border-radius:12px;padding:14px 20px;margin-bottom:20px;display:none;">
+      <div style="display:flex;align-items:center;justify-content:space-between;gap:10px">
+        <div>
+          <div style="font-size:13px;font-weight:700;color:var(--accent)">📦 Live AWD Shipment</div>
+          <div id="upc-shipment-count" style="font-size:12px;color:var(--text3);margin-top:2px"></div>
+        </div>
+        <button class="btn btn-primary" style="font-size:12px" onclick="upcLoadShipment()">Load Live Barcodes</button>
+      </div>
+    </div>
+
+    <!-- Results -->
+    <div id="upc-results"></div>
+
+    <!-- Empty state -->
+    <div id="upc-empty" style="text-align:center;padding:60px 20px;color:var(--text3)">
+      <div style="font-size:48px;margin-bottom:16px">🏷️</div>
+      <div style="font-size:16px;font-weight:600;color:var(--text);margin-bottom:8px">UPC Barcode Printer</div>
+      <div style="font-size:13px">Search by SKU or UPC, upload your exported shipment file, or load the live AWD shipment</div>
+    </div>
+
+  </div>
+
+</div>
+
 </body>
 </html>
