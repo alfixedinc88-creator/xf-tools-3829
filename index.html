@@ -1466,8 +1466,11 @@ input[type=checkbox]{width:15px;height:15px;cursor:pointer;accent-color:var(--bl
             </div>
             <div class="card"><div class="card-body">
               <div style="margin-bottom:12px"><div style="font-size:12px;font-weight:600;color:var(--gray-600);margin-bottom:5px">Shipment Name</div><input type="text" id="ship-name" class="cfg-inp" style="width:100%" placeholder="e.g. AWD-2025-01"></div>
-              <button class="btn btn-success" style="width:100%;justify-content:center" onclick="exportCSV()">
-                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>Export AWD CSV
+              <button class="btn btn-success" style="width:100%;justify-content:center;margin-bottom:6px" onclick="exportShipment('txt')">
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>Export as .txt
+              </button>
+              <button class="btn btn-success" style="width:100%;justify-content:center;background:#16A34A;border-color:#16A34A" onclick="exportShipment('xlsx')">
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>Export as .xlsx
               </button>
               <p style="font-size:11px;color:var(--gray-400);text-align:center;margin-top:7px">Amazon AWD shipment upload format</p>
             </div></div>
@@ -2508,10 +2511,32 @@ function renderBuilder(){
     const boxes=hasCP?Math.ceil(item.qty/cp.unitsPerBox):null;
     const ws = checkWarehouseStock(sku);
     const exportQty = hasCP ? boxes * cp.unitsPerBox : item.qty;
-    const labelPrefix = exportBoxes => exportBoxes !== null
-      ? (ws.status === 'exact' ? String(exportBoxes) : String(exportBoxes) + '$')
-      : null;
-    const lPrefix = hasCP ? labelPrefix(boxes) : null;
+
+    // Split prefix logic: exactBoxes/bulkBoxes$
+    // e.g. "2/1$" = 2 boxes pre-labeled, 1 box needs labels
+    // e.g. "3"    = 3 boxes all pre-labeled
+    // e.g. "3$"   = 3 boxes all need labels
+    let lPrefix = null;
+    if (hasCP && boxes > 0) {
+      if (ws.status === 'split') {
+        const upb = cp.unitsPerBox;
+        const exactUnits = ws.exactCases * (cp.unitsPerBox || 1); // approx: cases × units/box
+        const exactBoxes = Math.min(boxes, Math.floor(ws.exactCases));
+        const bulkBoxes  = boxes - exactBoxes;
+        if (exactBoxes > 0 && bulkBoxes > 0) {
+          lPrefix = exactBoxes + '/' + bulkBoxes + '$';
+        } else if (exactBoxes > 0) {
+          lPrefix = String(boxes);
+        } else {
+          lPrefix = String(boxes) + '$';
+        }
+      } else if (ws.status === 'exact') {
+        lPrefix = String(boxes);
+      } else if (ws.status === 'bulk') {
+        lPrefix = String(boxes) + '$';
+      }
+    }
+
     return`<tr>
       <td class="sku">${sku}</td>
       <td style="font-size:12px;color:var(--gray-600);max-width:120px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="${r.name}">${r.name||'—'}</td>
@@ -2522,7 +2547,7 @@ function renderBuilder(){
         ? `<span class="cp-pill found">${cp.unitsPerBox}/box · ${exportQty} units · ${boxes} box${boxes!==1?'es':''}</span>`
         : '<span class="cp-pill missing">No template</span>'}</td>
       <td>${lPrefix
-        ? `<button class="btn btn-sm btn-secondary" style="font-size:11px" onclick="copyLabelFromBuilder('${esc(sku)}','${esc(lPrefix)}')">📋 ${lPrefix}</button>`
+        ? `<button class="btn btn-sm btn-secondary" style="font-size:11px;${ws.status==='split'?'color:#EA580C;border-color:#EA580C':''}" onclick="copyLabelFromBuilder('${esc(sku)}','${esc(lPrefix)}')">📋 ${lPrefix}</button>`
         : '<span style="color:var(--gray-400);font-size:11px">—</span>'}</td>
       <td><button class="btn btn-sm btn-secondary" style="padding:4px 8px" onclick="removeSku('${esc(sku)}')">✕</button></td>
     </tr>`;
@@ -2584,6 +2609,13 @@ let _tt;
 // Loaded from Google Sheet Master_List via Worker
 const WH = {
   stock: {},      // partNum.lower -> [{location, cases, casesNum}]
+  loaded: false,
+};
+
+// AWD Planner own copy of Products + AWD_Master (loaded independently of warehouse app)
+const AWD_DB = {
+  products:  [],   // {sku, warehouseName}
+  awdMaster: [],   // {partNum, upc, location, label}
   loaded: false,
 };
 
@@ -2731,29 +2763,33 @@ function baseSKU_awd(partNum) {
 // Check warehouse stock status for an Amazon SKU
 // Returns: { status: 'exact'|'bulk'|'awaiting'|'unknown', whPartNum, cases, casesNum, location }
 function checkWarehouseStock(amazonSKU) {
-  if (!WH.loaded) return { status: 'unknown' };
-  var norm = normalizeAmazonSKU(amazonSKU);   // e.g. "23-2-1=1xx"
+  if (!WH.loaded) return { status: 'unknown', exactCases: 0, bulkCases: 0 };
+  var norm = normalizeAmazonSKU(amazonSKU);
+  var base = baseSKU_awd(norm);
 
-  // 1. Exact match (ignore trailing dash)
-  var exactRows = WH.stock[norm];
-  if (exactRows && exactRows.length > 0) {
-    return { status: 'exact', rows: exactRows, whPartNum: exactRows[0].partNum };
-  }
+  // Collect exact rows (pre-labeled — variant matches exactly)
+  var exactRows = WH.stock[norm] || [];
+  var exactCases = exactRows.reduce(function(s,r){ return s + (r.casesNum||0); }, 0);
 
-  // 2. No exact match — check if base SKU has ANY stock (bulk/needs labels)
-  var base = baseSKU_awd(norm);  // e.g. "23-2-1"
+  // Collect bulk rows (needs labels — same base SKU, different or no variant)
   var bulkRows = [];
   Object.keys(WH.stock).forEach(function(key) {
-    if (baseSKU_awd(key) === base) {
+    if (key !== norm && baseSKU_awd(key) === base) {
       WH.stock[key].forEach(function(r) { bulkRows.push(r); });
     }
   });
-  if (bulkRows.length > 0) {
-    return { status: 'bulk', rows: bulkRows };
-  }
+  var bulkCases = bulkRows.reduce(function(s,r){ return s + (r.casesNum||0); }, 0);
 
-  // 3. Nothing in warehouse
-  return { status: 'awaiting' };
+  // Determine overall status
+  var status;
+  if (exactCases > 0 && bulkCases > 0) status = 'split';
+  else if (exactCases > 0) status = 'exact';
+  else if (bulkCases > 0) status = 'bulk';
+  else status = 'awaiting';
+
+  return { status: status, exactRows: exactRows, bulkRows: bulkRows,
+           exactCases: exactCases, bulkCases: bulkCases,
+           rows: exactRows.concat(bulkRows) };
 }
 
 // ── BOX COUNT FROM SHIPMENT BUILDER ──
@@ -2792,6 +2828,7 @@ function launchApp(which) {
     document.getElementById('awd-app').style.display = 'flex';
     // Load warehouse stock for AWD planner cross-reference
     if (!WH.loaded) loadWarehouseStock();
+    if (!AWD_DB.loaded) loadAWDPlannerDB();
     if (!DISC.loaded) loadDiscontinuedSKUs();
     loadCfg();
     loadCpackFromStorage();
@@ -2886,6 +2923,7 @@ function renderRecs() {
     const statusBadge =
       ws.status === 'exact'    ? '<span class="badge-labeled">✓ Pre-labeled</span>' :
       ws.status === 'bulk'     ? '<span class="badge-needslabel">$ Needs label</span>' :
+      ws.status === 'split'    ? '<span class="badge-needslabel" style="background:#FFF7ED;color:#EA580C;border-color:#FDBA74">⚡ Split stock</span>' :
       ws.status === 'awaiting' ? '<span class="badge-await">⏳ Awaiting stock</span>' : '';
     const discBtn = `<button onclick="toggleDiscontinued('${esc(r.sku)}')" class="badge-disc" title="Mark as discontinued">✕</button>`;
     return `<tr${ws.status === 'awaiting' ? ' style="opacity:.75"' : ''}>
@@ -2963,89 +3001,10 @@ function showAwaitingInInventory() {
 }
 
 // ── EXPORT CSV — round qty up to full boxes ──
-function exportCSV() {
-  const items = Object.entries(S.shipment).filter(([,i]) => i.qty > 0);
-  if (!items.length) { awd_planner_toast('No units staged', 'error'); return; }
-  const cols = ['Merchant SKU','Quantity','Expiration date (MM/DD/YYYY)','Units per box ','Number of boxes','Box length (in)','Box width (in)','Box height (in)','Box weight (lb)','Palletized?','Boxes Per Pallet','Number of pallets\xa0'];
-  const mandatory = ['Mandatory','','Optional','Mandatory','','','','','','','Mandatory if palletized',''];
-  const dataRows = items.map(([sku, i]) => {
-    const cp = S.cpackMap[sku.toUpperCase()];
-    const hasCP = cp && cp.unitsPerBox > 0;
-    const boxes = hasCP ? Math.ceil(i.qty / cp.unitsPerBox) : '';
-    const exportQty = hasCP ? boxes * cp.unitsPerBox : i.qty;
-    return [sku, exportQty, '', hasCP?cp.unitsPerBox:'', boxes, hasCP?cp.lengthIn:'', hasCP?cp.widthIn:'', hasCP?cp.heightIn:'', hasCP?cp.weightLb:'', '','',''];
-  });
-  const name = ge('ship-name').value.trim() || 'AWD_Shipment';
 
-  // Format as tab-delimited TXT matching Amazon AWD template exactly
-  const pad = (arr) => arr.map(v => String(v === undefined || v === null ? '' : v));
-  const toTSV = rows => rows.map(r => pad(r).join('\t')).join('\r\n');
-  const headerRows = [
-    ['Please review the Example tab before you complete this sheet','','','','','','','','','','',''],
-    ['','','','','','','','','','','',''],
-    ['','','','','','','','','','','',''],
-    mandatory,
-    cols,
-  ];
-  const tsv = toTSV([...headerRows, ...dataRows]);
-  const blob = new Blob([tsv], {type: 'text/plain;charset=utf-8'});
-  const url = URL.createObjectURL(blob);
-  const a = document.createElement('a');
-  a.href = url; a.download = name + '.txt'; a.click();
-  URL.revokeObjectURL(url);
-  const tot = dataRows.reduce((s,r) => s + (Number(r[1])||0), 0);
-  awd_planner_toast('Exported ' + items.length + ' SKUs · ' + fn(tot) + ' units as .txt', 'success');
-}
 
 // ── LABEL COPY FROM BUILDER ──
-function buildLabelCopyText(amazonSku, casePrefix) {
-  const norm = normalizeAmazonSKU(amazonSku);
-  const base = norm.split('=')[0];
 
-  // Try to find AWD master data (available if warehouse app has been loaded this session)
-  let partNum = '', upc = '', label = '';
-  if (DB && DB.awdMaster && DB.awdMaster.length) {
-    // Match exact partNum first, then base SKU
-    let awd = DB.awdMaster.find(r => String(r[6]||'').trim().toLowerCase() === norm);
-    if (!awd) awd = DB.awdMaster.find(r => String(r[6]||'').trim().toLowerCase().split('=')[0] === base);
-    if (awd) {
-      partNum = String(awd[6]||'').trim();
-      upc     = String(awd[2]||'').trim();
-      // Rebuild label: suffix=warehouseName from Products (same logic as cardAWD)
-      const suffix = partNum.includes('=') ? partNum.split('=')[1] : partNum;
-      const basePart = partNum.includes('=') ? partNum.split('=')[0] : partNum;
-      const whName = getWarehouseName ? getWarehouseName(basePart) : '';
-      label = whName ? (suffix + '=' + whName) : partNum;
-    }
-  }
-
-  // If no AWD master data, build label from WH.stock key (best we can do)
-  if (!label) {
-    // Try to find in WH.stock — key is normalized SKU
-    const stockKey = Object.keys(WH.stock).find(k => k === norm || k.split('=')[0] === base);
-    if (stockKey) {
-      // Build a basic label from the SKU itself
-      const suffix = stockKey.includes('=') ? stockKey.split('=')[1] : stockKey;
-      label = suffix.toUpperCase();
-    }
-  }
-
-  if (!label && !upc && (!WH.stock[norm] || !WH.stock[norm].length)) return null;
-
-  // Build copy stack: [casePrefix], label, upc, location1, location2...
-  const lines = [];
-  if (casePrefix) lines.push(casePrefix);
-  if (label) lines.push(label);
-  if (upc) lines.push(upc);
-
-  // Locations from WH.stock (loaded by loadWarehouseStock when AWD planner opens)
-  const stockLocs = WH.stock[norm] || WH.stock[base] || [];
-  stockLocs.forEach(r => {
-    if (r.location) lines.push(r.location);
-  });
-
-  return lines.length > (casePrefix ? 1 : 0) ? lines.join('\n') : null;
-}
 
 function copyLabelFromBuilder(sku, prefix) {
   const text = buildLabelCopyText(sku, prefix);
@@ -3200,6 +3159,180 @@ async function loadShipmentFromSheet() {
       console.log('[XFITTING] Shipment loaded:', loaded, 'SKUs');
     }
   } catch(e) { console.error('[XFITTING] loadShipmentFromSheet:', e); }
+}
+
+
+// ── LOAD AWD PLANNER DB (Products + AWD_Master for label building) ──
+async function loadAWDPlannerDB() {
+  try {
+    const [r1, r2] = await Promise.all([
+      fetch('https://xfitting-lookup.alfixedinc88.workers.dev?sheet=Products').then(r => r.json()),
+      fetch('https://xfitting-lookup.alfixedinc88.workers.dev?sheet=AWD_Master').then(r => r.json()),
+    ]);
+
+    // Parse Products: col2=base SKU, col4=warehouseName
+    AWD_DB.products = [];
+    (r1.values || []).slice(1).forEach(function(r) {
+      const sku = String(r[1]||'').trim();
+      if (!sku || sku.toLowerCase() === 'sku') return;
+      AWD_DB.products.push({ sku: sku.toLowerCase(), warehouseName: String(r[3]||'').trim() });
+    });
+
+    // Parse AWD_Master: col3=UPC, col7=partNum
+    AWD_DB.awdMaster = [];
+    (r2.values || []).slice(1).forEach(function(r) {
+      const partNum = String(r[6]||'').trim();
+      if (!partNum) return;
+      AWD_DB.awdMaster.push({
+        partNum: partNum,
+        upc:     String(r[2]||'').trim(),
+        location:String(r[3]||'').trim(),
+        label:   String(r[1]||'').trim(),
+        sku:     String(r[7]||'').trim(),
+      });
+    });
+
+    AWD_DB.loaded = true;
+    console.log('[XFITTING] AWD_DB loaded:', AWD_DB.products.length, 'products,', AWD_DB.awdMaster.length, 'AWD rows');
+  } catch(e) {
+    console.error('[XFITTING] loadAWDPlannerDB failed:', e);
+  }
+}
+
+// ── GET WAREHOUSE NAME (uses AWD_DB.products, falls back to DB.products) ──
+function getAWDWarehouseName(baseSkuStr) {
+  const key = baseSkuStr.toLowerCase();
+  // Try AWD_DB first (loaded by AWD planner independently)
+  const p = AWD_DB.products.find(r => r.sku === key);
+  if (p && p.warehouseName) return p.warehouseName;
+  // Fall back to DB.products (loaded if warehouse app opened this session)
+  if (DB && DB.products && DB.products.length) {
+    const p2 = DB.products.find(r => r.sku && r.sku.toLowerCase() === key);
+    if (p2 && p2.warehouseName) return p2.warehouseName;
+  }
+  return '';
+}
+
+// ── BUILD LABEL COPY TEXT (AWD Planner version) ──
+// Mirrors warehouse cardAWD logic: label\nupc\nloc1\nloc2...
+// Prepends casePrefix (e.g. "2/1$") as first line
+function buildLabelCopyText(amazonSku, casePrefix) {
+  const norm = normalizeAmazonSKU(amazonSku);
+  const base = baseSKU_awd(norm);
+
+  // Find AWD master record — try AWD_DB first, then DB.awdMaster
+  let awdRec = null;
+  const searchAWD = arr => {
+    if (!arr || !arr.length) return null;
+    // exact match on partNum
+    let m = arr.find(r => String(r.partNum||r[6]||'').trim().toLowerCase() === norm);
+    if (!m) m = arr.find(r => baseSKU_awd(String(r.partNum||r[6]||'').trim().toLowerCase()) === base);
+    return m;
+  };
+  awdRec = searchAWD(AWD_DB.awdMaster);
+  if (!awdRec && DB && DB.awdMaster) awdRec = searchAWD(DB.awdMaster);
+
+  let label = '', upc = '';
+  if (awdRec) {
+    const partNum = String(awdRec.partNum || awdRec[6] || '').trim();
+    upc = String(awdRec.upc || awdRec[2] || '').trim();
+    // Rebuild label: suffix=warehouseName (same as cardAWD in warehouse app)
+    const suffix = partNum.includes('=') ? partNum.split('=')[1] : partNum;
+    const basePart = partNum.includes('=') ? partNum.split('=')[0] : partNum;
+    const whName = getAWDWarehouseName(basePart);
+    label = whName ? (suffix + '=' + whName) : suffix;
+  }
+
+  // Collect locations from WH.stock
+  const ws = checkWarehouseStock(amazonSku);
+  const allRows = (ws.exactRows || []).concat(ws.bulkRows || []);
+
+  if (!label && !upc && !allRows.length) return null;
+
+  const lines = [];
+  if (casePrefix) lines.push(casePrefix);
+  if (label)      lines.push(label);
+  if (upc)        lines.push(upc);
+  allRows.forEach(function(r) {
+    if (r.location) lines.push(r.location);
+  });
+
+  return lines.length > (casePrefix ? 1 : 0) ? lines.join('\n') : null;
+}
+
+// ── EXPORT SHIPMENT (.txt or .xlsx) ──
+function exportShipment(format) {
+  const items = Object.entries(S.shipment).filter(([,i]) => i.qty > 0);
+  if (!items.length) { awd_planner_toast('No units staged', 'error'); return; }
+
+  const cols = ['Merchant SKU','Quantity','Expiration date (MM/DD/YYYY)','Units per box ','Number of boxes','Box length (in)','Box width (in)','Box height (in)','Box weight (lb)','Palletized?','Boxes Per Pallet','Number of pallets\xa0'];
+  const mandatory = ['Mandatory','','Optional','Mandatory','','','','','','','Mandatory if palletized',''];
+  const headerRows = [
+    ['Please review the Example tab before you complete this sheet','','','','','','','','','','',''],
+    ['','','','','','','','','','','',''],
+    ['','','','','','','','','','','',''],
+    mandatory,
+    cols,
+  ];
+
+  const dataRows = items.map(([sku, i]) => {
+    const cp = S.cpackMap[sku.toUpperCase()];
+    const hasCP = cp && cp.unitsPerBox > 0;
+    const boxes = hasCP ? Math.ceil(i.qty / cp.unitsPerBox) : '';
+    const exportQty = hasCP ? boxes * cp.unitsPerBox : i.qty;
+    return [sku, exportQty, '', hasCP?cp.unitsPerBox:'', boxes,
+            hasCP?cp.lengthIn:'', hasCP?cp.widthIn:'', hasCP?cp.heightIn:'',
+            hasCP?cp.weightLb:'', '','',''];
+  });
+
+  const name = (ge('ship-name') ? ge('ship-name').value.trim() : '') || 'AWD_Shipment';
+  const allRows = [...headerRows, ...dataRows];
+  const tot = dataRows.reduce((s,r) => s + (Number(r[1])||0), 0);
+
+  if (format === 'txt') {
+    // Tab-delimited, matching Amazon AWD template exactly
+    const tsv = allRows.map(r => r.map(v => String(v===undefined||v===null?'':v)).join('\t')).join('\r\n');
+    const blob = new Blob([tsv], {type: 'text/plain;charset=utf-8'});
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a'); a.href=url; a.download=name+'.txt'; a.click();
+    URL.revokeObjectURL(url);
+    awd_planner_toast('Exported ' + items.length + ' SKUs · ' + fn(tot) + ' units (.txt)', 'success');
+
+  } else if (format === 'xlsx') {
+    // Build XLSX using SheetJS (loaded from CDN)
+    if (typeof XLSX === 'undefined') {
+      // Load SheetJS dynamically if not present
+      const script = document.createElement('script');
+      script.src = 'https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js';
+      script.onload = function() { doExportXLSX(allRows, name, items.length, tot); };
+      document.head.appendChild(script);
+    } else {
+      doExportXLSX(allRows, name, items.length, tot);
+    }
+  }
+}
+
+function doExportXLSX(allRows, name, skuCount, tot) {
+  try {
+    const wb = XLSX.utils.book_new();
+    const ws = XLSX.utils.aoa_to_sheet(allRows);
+
+    // Set column widths
+    ws['!cols'] = [
+      {wch:25},{wch:10},{wch:22},{wch:14},{wch:14},
+      {wch:14},{wch:14},{wch:14},{wch:14},{wch:12},{wch:16},{wch:16}
+    ];
+
+    // Freeze row 6 (first data row, after 5 header rows)
+    ws['!freeze'] = {xSplit:0, ySplit:5};
+
+    XLSX.utils.book_append_sheet(wb, ws, 'AWD Shipment');
+    XLSX.writeFile(wb, name + '.xlsx');
+    awd_planner_toast('Exported ' + skuCount + ' SKUs · ' + fn(tot) + ' units (.xlsx)', 'success');
+  } catch(e) {
+    console.error('[XFITTING] XLSX export failed:', e);
+    awd_planner_toast('XLSX export failed: ' + e.message, 'error');
+  }
 }
 
 </script>
