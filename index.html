@@ -1467,7 +1467,7 @@ input[type=checkbox]{width:15px;height:15px;cursor:pointer;accent-color:var(--bl
             <div class="card"><div class="card-body">
               <div style="margin-bottom:12px"><div style="font-size:12px;font-weight:600;color:var(--gray-600);margin-bottom:5px">Shipment Name</div><input type="text" id="ship-name" class="cfg-inp" style="width:100%" placeholder="e.g. AWD-2025-01"></div>
               <button class="btn btn-success" style="width:100%;justify-content:center;margin-bottom:6px" onclick="exportShipment('txt')">
-                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>Export as .csv
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>Export as .txt
               </button>
               <button class="btn btn-success" style="width:100%;justify-content:center;background:#16A34A;border-color:#16A34A" onclick="exportShipment('xlsx')">
                 <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>Export as .xlsx
@@ -2512,25 +2512,10 @@ function renderBuilder(){
     const ws = checkWarehouseStock(sku);
     const exportQty = hasCP ? boxes * cp.unitsPerBox : item.qty;
 
-    // Split prefix logic: exactBoxes/bulkBoxes$
-    // e.g. "2/1$" = 2 boxes pre-labeled, 1 box needs labels
-    // e.g. "3"    = 3 boxes all pre-labeled
-    // e.g. "3$"   = 3 boxes all need labels
+    // Label prefix: number = pre-labeled, number$ = needs labels
     let lPrefix = null;
     if (hasCP && boxes > 0) {
-      if (ws.status === 'split') {
-        const upb = cp.unitsPerBox;
-        const exactUnits = ws.exactCases * (cp.unitsPerBox || 1); // approx: cases × units/box
-        const exactBoxes = Math.min(boxes, Math.floor(ws.exactCases));
-        const bulkBoxes  = boxes - exactBoxes;
-        if (exactBoxes > 0 && bulkBoxes > 0) {
-          lPrefix = exactBoxes + '/' + bulkBoxes + '$';
-        } else if (exactBoxes > 0) {
-          lPrefix = String(boxes);
-        } else {
-          lPrefix = String(boxes) + '$';
-        }
-      } else if (ws.status === 'exact') {
+      if (ws.status === 'exact' || ws.status === 'split') {
         lPrefix = String(boxes);
       } else if (ws.status === 'bulk') {
         lPrefix = String(boxes) + '$';
@@ -2547,7 +2532,7 @@ function renderBuilder(){
         ? `<span class="cp-pill found">${cp.unitsPerBox}/box · ${exportQty} units · ${boxes} box${boxes!==1?'es':''}</span>`
         : '<span class="cp-pill missing">No template</span>'}</td>
       <td>${lPrefix
-        ? `<button class="btn btn-sm btn-secondary" style="font-size:11px;${ws.status==='split'?'color:#EA580C;border-color:#EA580C':''}" onclick="copyLabelFromBuilder('${esc(sku)}','${esc(lPrefix)}')">📋 ${lPrefix}</button>`
+        ? `<button class="btn btn-sm btn-secondary" style="font-size:11px" onclick="copyLabelFromBuilder('${esc(sku)}','${esc(lPrefix)}')">📋 ${lPrefix}</button>`
         : '<span style="color:var(--gray-400);font-size:11px">—</span>'}</td>
       <td><button class="btn btn-sm btn-secondary" style="padding:4px 8px" onclick="removeSku('${esc(sku)}')">✕</button></td>
     </tr>`;
@@ -2923,7 +2908,7 @@ function renderRecs() {
     const statusBadge =
       ws.status === 'exact'    ? '<span class="badge-labeled">✓ Pre-labeled</span>' :
       ws.status === 'bulk'     ? '<span class="badge-needslabel">$ Needs label</span>' :
-      ws.status === 'split'    ? '<span class="badge-needslabel" style="background:#FFF7ED;color:#EA580C;border-color:#FDBA74">⚡ Split stock</span>' :
+
       ws.status === 'awaiting' ? '<span class="badge-await">⏳ Awaiting stock</span>' : '';
     const discBtn = `<button onclick="toggleDiscontinued('${esc(r.sku)}')" class="badge-disc" title="Mark as discontinued">✕</button>`;
     return `<tr${ws.status === 'awaiting' ? ' style="opacity:.75"' : ''}>
@@ -3292,17 +3277,13 @@ function exportShipment(format) {
   const tot = dataRows.reduce((s,r) => s + (Number(r[1])||0), 0);
 
   if (format === 'txt') {
-    // Comma-delimited CSV matching Amazon AWD template exactly
-    const csv = allRows.map(r => r.map(v => {
-      const s = String(v===undefined||v===null?'':v);
-      // Quote fields that contain commas or quotes
-      return (s.includes(',') || s.includes('"')) ? '"' + s.replace(/"/g,'""') + '"' : s;
-    }).join(',')).join('\r\n');
-    const blob = new Blob([csv], {type: 'text/csv;charset=utf-8'});
+    // Tab-delimited TXT matching Amazon AWD template format
+    const tsv = allRows.map(r => r.map(v => String(v===undefined||v===null?'':v)).join('\t')).join('\r\n');
+    const blob = new Blob([tsv], {type: 'text/plain;charset=utf-8'});
     const url = URL.createObjectURL(blob);
-    const a = document.createElement('a'); a.href=url; a.download='Create workflow – template.csv'; a.click();
+    const a = document.createElement('a'); a.href=url; a.download='Create workflow – template.txt'; a.click();
     URL.revokeObjectURL(url);
-    awd_planner_toast('Exported ' + items.length + ' SKUs · ' + fn(tot) + ' units', 'success');
+    awd_planner_toast('Exported ' + items.length + ' SKUs · ' + fn(tot) + ' units (.txt)', 'success');
 
   } else if (format === 'xlsx') {
     // Build XLSX using SheetJS (loaded from CDN)
@@ -3332,7 +3313,7 @@ function doExportXLSX(allRows, name, skuCount, tot) {
     // Freeze row 6 (first data row, after 5 header rows)
     ws['!freeze'] = {xSplit:0, ySplit:5};
 
-    XLSX.utils.book_append_sheet(wb, ws, 'AWD Shipment');
+    XLSX.utils.book_append_sheet(wb, ws, 'Create workflow – template');
     XLSX.writeFile(wb, 'Create workflow – template.xlsx');
     awd_planner_toast('Exported ' + skuCount + ' SKUs · ' + fn(tot) + ' units (.xlsx)', 'success');
   } catch(e) {
