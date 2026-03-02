@@ -1056,10 +1056,11 @@ input[type=checkbox]{width:15px;height:15px;cursor:pointer;accent-color:var(--bl
 
 /* ── LAUNCHER ── */
 #launcher {
-  min-height:100vh;display:flex;align-items:center;justify-content:center;
+  min-height:100vh;display:none;align-items:center;justify-content:center;
   background:linear-gradient(135deg,#eef2fd 0%,#f4f5f7 60%,#fff8f0 100%);
   padding:24px;
 }
+#wh-app { display:none;flex-direction:column;min-height:100vh; }
 .launcher-inner { text-align:center;max-width:560px;width:100%; }
 .launcher-logo {
   display:inline-flex;align-items:center;gap:12px;margin-bottom:32px;
@@ -1511,10 +1512,8 @@ var pinEntry    = '';
 if (sessionStorage.getItem('xf_unlocked') === '1') {
   var _ps = document.getElementById('pin-screen');
   if (_ps) _ps.style.display = 'none';
-  // launcher shown by window.load handler
-} else {
   document.addEventListener('DOMContentLoaded', function() {
-    document.getElementById('launcher').style.display = 'none';
+    document.getElementById('launcher').style.display = 'flex';
   });
 }
 
