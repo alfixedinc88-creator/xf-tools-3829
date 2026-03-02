@@ -1130,7 +1130,7 @@ input[type=checkbox]{width:15px;height:15px;cursor:pointer;accent-color:var(--bl
 <body>
 
 <!-- ═══ SHARED PIN ═══ -->
-<div id="pin-screen">
+<div id="pin-screen" style="display:flex;position:fixed;inset:0;z-index:9999;background:#f4f5f7;align-items:center;justify-content:center;">
   <div class="pin-card">
     <div class="pin-logo">XFITTING</div>
     <div class="pin-title">Warehouse Lookup</div>
@@ -1161,7 +1161,7 @@ input[type=checkbox]{width:15px;height:15px;cursor:pointer;accent-color:var(--bl
 
 
 <!-- ═══ LAUNCHER ═══ -->
-<div id="launcher">
+<div id="launcher" style="display:none;">
   <div class="launcher-inner">
     <div class="launcher-logo">
       <div class="launcher-mark">XF</div>
@@ -1184,7 +1184,7 @@ input[type=checkbox]{width:15px;height:15px;cursor:pointer;accent-color:var(--bl
 </div>
 
 <!-- ═══ WAREHOUSE LOOKUP APP ═══ -->
-<div id="wh-app">
+<div id="wh-app" style="display:none;">
 
   <div class="topbar">
     <div class="topbar-left">
@@ -1261,7 +1261,7 @@ input[type=checkbox]{width:15px;height:15px;cursor:pointer;accent-color:var(--bl
 </div>
 
 <!-- ═══ AWD PLANNER APP ═══ -->
-<div id="awd-app">
+<div id="awd-app" style="display:none;">
 
 <div id="awd-app-inner">
   <header class="hdr">
@@ -1510,9 +1510,9 @@ var PIN_CORRECT = '2589';
 var pinEntry    = '';
 
 if (sessionStorage.getItem('xf_unlocked') === '1') {
-  var _ps = document.getElementById('pin-screen');
-  if (_ps) _ps.style.display = 'none';
   document.addEventListener('DOMContentLoaded', function() {
+    var ps = document.getElementById('pin-screen');
+    if (ps) { ps.style.display = 'none'; ps.style.visibility = 'hidden'; }
     document.getElementById('launcher').style.display = 'flex';
   });
 }
@@ -1556,6 +1556,7 @@ function checkPin() {
     ps.style.opacity = '0';
     setTimeout(function() {
       ps.style.display = 'none';
+      ps.style.visibility = 'hidden';
       document.getElementById('launcher').style.display = 'flex';
     }, 300);
   } else {
