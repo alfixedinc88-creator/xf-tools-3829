@@ -1056,10 +1056,11 @@ input[type=checkbox]{width:15px;height:15px;cursor:pointer;accent-color:var(--bl
 
 /* ── LAUNCHER ── */
 #launcher {
-  min-height:100vh;display:flex;align-items:center;justify-content:center;
+  min-height:100vh;display:none;align-items:center;justify-content:center;
   background:linear-gradient(135deg,#eef2fd 0%,#f4f5f7 60%,#fff8f0 100%);
   padding:24px;
 }
+#wh-app { display:none;flex-direction:column;min-height:100vh; }
 .launcher-inner { text-align:center;max-width:560px;width:100%; }
 .launcher-logo {
   display:inline-flex;align-items:center;gap:12px;margin-bottom:32px;
@@ -1129,7 +1130,7 @@ input[type=checkbox]{width:15px;height:15px;cursor:pointer;accent-color:var(--bl
 <body>
 
 <!-- ═══ SHARED PIN ═══ -->
-<div id="pin-screen">
+<div id="pin-screen" style="display:flex;position:fixed;inset:0;z-index:9999;background:#f4f5f7;align-items:center;justify-content:center;">
   <div class="pin-card">
     <div class="pin-logo">XFITTING</div>
     <div class="pin-title">Warehouse Lookup</div>
@@ -1160,7 +1161,7 @@ input[type=checkbox]{width:15px;height:15px;cursor:pointer;accent-color:var(--bl
 
 
 <!-- ═══ LAUNCHER ═══ -->
-<div id="launcher">
+<div id="launcher" style="display:none;">
   <div class="launcher-inner">
     <div class="launcher-logo">
       <div class="launcher-mark">XF</div>
@@ -1183,7 +1184,7 @@ input[type=checkbox]{width:15px;height:15px;cursor:pointer;accent-color:var(--bl
 </div>
 
 <!-- ═══ WAREHOUSE LOOKUP APP ═══ -->
-<div id="wh-app">
+<div id="wh-app" style="display:none;">
 
   <div class="topbar">
     <div class="topbar-left">
@@ -1260,7 +1261,7 @@ input[type=checkbox]{width:15px;height:15px;cursor:pointer;accent-color:var(--bl
 </div>
 
 <!-- ═══ AWD PLANNER APP ═══ -->
-<div id="awd-app">
+<div id="awd-app" style="display:none;">
 
 <div id="awd-app-inner">
   <header class="hdr">
@@ -1509,12 +1510,10 @@ var PIN_CORRECT = '2589';
 var pinEntry    = '';
 
 if (sessionStorage.getItem('xf_unlocked') === '1') {
-  var _ps = document.getElementById('pin-screen');
-  if (_ps) _ps.style.display = 'none';
-  // launcher shown by window.load handler
-} else {
   document.addEventListener('DOMContentLoaded', function() {
-    document.getElementById('launcher').style.display = 'none';
+    var ps = document.getElementById('pin-screen');
+    if (ps) { ps.style.display = 'none'; ps.style.visibility = 'hidden'; }
+    document.getElementById('launcher').style.display = 'flex';
   });
 }
 
@@ -1557,6 +1556,7 @@ function checkPin() {
     ps.style.opacity = '0';
     setTimeout(function() {
       ps.style.display = 'none';
+      ps.style.visibility = 'hidden';
       document.getElementById('launcher').style.display = 'flex';
     }, 300);
   } else {
@@ -2534,30 +2534,7 @@ function updateSummary(){
 }
 
 // ── EXPORT AWD CSV (Amazon AWD Template format) ──
-function exportCSV(){
-  const items=Object.entries(S.shipment).filter(([,i])=>i.qty>0);
-  if(!items.length){awd_planner_toast('No units staged','error');return;}
-  const h=['Merchant SKU','Quantity','Expiration date (MM/DD/YYYY)','Units per box','Number of boxes','Box length (in)','Box width (in)','Box height (in)','Box weight (lb)','Palletized?','Boxes Per Pallet','Number of pallets'];
-  const rows=items.map(([sku,i])=>{
-    const cp=S.cpackMap[sku.toUpperCase()];
-    const hasCP=cp&&cp.unitsPerBox>0;
-    const boxes=hasCP?Math.ceil(i.qty/cp.unitsPerBox):'';
-    return[
-      sku,i.qty,'',
-      hasCP?cp.unitsPerBox:'',
-      boxes,
-      hasCP?cp.lengthIn:'',
-      hasCP?cp.widthIn:'',
-      hasCP?cp.heightIn:'',
-      hasCP?cp.weightLb:'',
-      '','',''
-    ];
-  });
-  const name=ge('ship-name').value.trim()||'AWD_Shipment';
-  dlCSV([h,...rows],name+'.csv');
-  const tot=items.reduce((s,[,i])=>s+i.qty,0);
-  awd_planner_toast('Exported '+items.length+' SKUs · '+fn(tot)+' units','success');
-}
+
 
 // ── UTILITIES ──
 function ge(id){return document.getElementById(id);}
@@ -2727,7 +2704,7 @@ async function saveDiscontinuedSKU(sku, remove) {
 }
 
 // ── TOGGLE DISCONTINUED ──
-async async function toggleDiscontinued(sku) {
+async function toggleDiscontinued(sku) {
   var upper = sku.toUpperCase();
   var removing = DISC.skus.has(upper);
   if (removing) { DISC.skus.delete(upper); } else { DISC.skus.add(upper); }
@@ -2844,22 +2821,7 @@ window.addEventListener('load', function() {
 
 
 // ── DISCONTINUED SETTINGS PANEL ──
-function renderDiscontinuedPanel() {
-  var panel = document.getElementById('disc-panel');
-  if (!panel) return;
-  var all = S.joined.filter(function(r) { return DISC.skus.has(r.sku.toUpperCase()); });
-  if (!all.length) {
-    panel.innerHTML = '<div style="color:var(--gray-400);font-size:13px;padding:8px 0">No discontinued SKUs marked.</div>';
-    return;
-  }
-  panel.innerHTML = '<div style="display:flex;flex-wrap:wrap;gap:8px">' +
-    all.map(function(r) {
-      return '<div style="background:var(--gray-100);border:1px solid var(--gray-200);border-radius:8px;padding:6px 12px;font-size:12px;display:flex;align-items:center;gap:8px">' +
-        '<span class="sku">' + r.sku + '</span>' +
-        '<button onclick="toggleDiscontinued(\'' + esc(r.sku) + '\')" style="background:none;border:none;color:var(--green);cursor:pointer;font-size:12px;font-weight:600;padding:0">↩ Restore</button>' +
-        '</div>';
-    }).join('') + '</div>';
-}
+
 
 
 
