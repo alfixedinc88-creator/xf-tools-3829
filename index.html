@@ -1467,7 +1467,7 @@ input[type=checkbox]{width:15px;height:15px;cursor:pointer;accent-color:var(--bl
             <div class="card"><div class="card-body">
               <div style="margin-bottom:12px"><div style="font-size:12px;font-weight:600;color:var(--gray-600);margin-bottom:5px">Shipment Name</div><input type="text" id="ship-name" class="cfg-inp" style="width:100%" placeholder="e.g. AWD-2025-01"></div>
               <button class="btn btn-success" style="width:100%;justify-content:center;margin-bottom:6px" onclick="exportShipment('txt')">
-                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>Export as .txt
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>Export as .csv
               </button>
               <button class="btn btn-success" style="width:100%;justify-content:center;background:#16A34A;border-color:#16A34A" onclick="exportShipment('xlsx')">
                 <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>Export as .xlsx
@@ -3253,8 +3253,10 @@ function buildLabelCopyText(amazonSku, casePrefix) {
   if (casePrefix) lines.push(casePrefix);
   if (label)      lines.push(label);
   if (upc)        lines.push(upc);
+  // Max 2 locations
+  let locCount = 0;
   allRows.forEach(function(r) {
-    if (r.location) lines.push(r.location);
+    if (r.location && locCount < 2) { lines.push(r.location); locCount++; }
   });
 
   return lines.length > (casePrefix ? 1 : 0) ? lines.join('\n') : null;
@@ -3290,13 +3292,17 @@ function exportShipment(format) {
   const tot = dataRows.reduce((s,r) => s + (Number(r[1])||0), 0);
 
   if (format === 'txt') {
-    // Tab-delimited, matching Amazon AWD template exactly
-    const tsv = allRows.map(r => r.map(v => String(v===undefined||v===null?'':v)).join('\t')).join('\r\n');
-    const blob = new Blob([tsv], {type: 'text/plain;charset=utf-8'});
+    // Comma-delimited CSV matching Amazon AWD template exactly
+    const csv = allRows.map(r => r.map(v => {
+      const s = String(v===undefined||v===null?'':v);
+      // Quote fields that contain commas or quotes
+      return (s.includes(',') || s.includes('"')) ? '"' + s.replace(/"/g,'""') + '"' : s;
+    }).join(',')).join('\r\n');
+    const blob = new Blob([csv], {type: 'text/csv;charset=utf-8'});
     const url = URL.createObjectURL(blob);
-    const a = document.createElement('a'); a.href=url; a.download=name+'.txt'; a.click();
+    const a = document.createElement('a'); a.href=url; a.download='Create workflow – template.csv'; a.click();
     URL.revokeObjectURL(url);
-    awd_planner_toast('Exported ' + items.length + ' SKUs · ' + fn(tot) + ' units (.txt)', 'success');
+    awd_planner_toast('Exported ' + items.length + ' SKUs · ' + fn(tot) + ' units', 'success');
 
   } else if (format === 'xlsx') {
     // Build XLSX using SheetJS (loaded from CDN)
@@ -3327,7 +3333,7 @@ function doExportXLSX(allRows, name, skuCount, tot) {
     ws['!freeze'] = {xSplit:0, ySplit:5};
 
     XLSX.utils.book_append_sheet(wb, ws, 'AWD Shipment');
-    XLSX.writeFile(wb, name + '.xlsx');
+    XLSX.writeFile(wb, 'Create workflow – template.xlsx');
     awd_planner_toast('Exported ' + skuCount + ' SKUs · ' + fn(tot) + ' units (.xlsx)', 'success');
   } catch(e) {
     console.error('[XFITTING] XLSX export failed:', e);
