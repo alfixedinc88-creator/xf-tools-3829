@@ -2638,6 +2638,8 @@ async function loadWarehouseStock() {
     }
     WH.loaded = true;
     console.log('[XFITTING] WH stock loaded:', Object.keys(WH.stock).length, 'unique partNums');
+    // Re-render now that WH stock is available so badges show
+    if (S.loaded) { renderRecs(); renderDashboard(); renderBuilder(); }
   } catch(e) {
     console.error('[XFITTING] WH stock load failed:', e);
   }
@@ -2907,9 +2909,10 @@ function renderRecs() {
     const ws = checkWarehouseStock(r.sku);
     const statusBadge =
       ws.status === 'exact'    ? '<span class="badge-labeled">✓ Pre-labeled</span>' :
+      ws.status === 'split'    ? '<span class="badge-labeled">✓ Pre-labeled</span>' :
       ws.status === 'bulk'     ? '<span class="badge-needslabel">$ Needs label</span>' :
-
-      ws.status === 'awaiting' ? '<span class="badge-await">⏳ Awaiting stock</span>' : '';
+      ws.status === 'awaiting' ? '<span class="badge-await">⏳ Awaiting stock</span>' :
+      ws.status === 'unknown'  ? '<span style="color:var(--gray-400);font-size:11px">Loading…</span>' : '';
     const discBtn = `<button onclick="toggleDiscontinued('${esc(r.sku)}')" class="badge-disc" title="Mark as discontinued">✕</button>`;
     return `<tr${ws.status === 'awaiting' ? ' style="opacity:.75"' : ''}>
       <td><input type="checkbox" ${inB ? 'checked' : ''} onchange="togRec('${esc(r.sku)}',this.checked)"></td>
