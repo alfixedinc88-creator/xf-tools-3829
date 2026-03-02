@@ -1056,11 +1056,10 @@ input[type=checkbox]{width:15px;height:15px;cursor:pointer;accent-color:var(--bl
 
 /* ── LAUNCHER ── */
 #launcher {
-  min-height:100vh;display:none;align-items:center;justify-content:center;
+  min-height:100vh;display:flex;align-items:center;justify-content:center;
   background:linear-gradient(135deg,#eef2fd 0%,#f4f5f7 60%,#fff8f0 100%);
   padding:24px;
 }
-#wh-app { display:none;flex-direction:column;min-height:100vh; }
 .launcher-inner { text-align:center;max-width:560px;width:100%; }
 .launcher-logo {
   display:inline-flex;align-items:center;gap:12px;margin-bottom:32px;
@@ -1130,7 +1129,7 @@ input[type=checkbox]{width:15px;height:15px;cursor:pointer;accent-color:var(--bl
 <body>
 
 <!-- ═══ SHARED PIN ═══ -->
-<div id="pin-screen" style="display:flex;position:fixed;inset:0;z-index:9999;background:#f4f5f7;align-items:center;justify-content:center;">
+<div id="pin-screen">
   <div class="pin-card">
     <div class="pin-logo">XFITTING</div>
     <div class="pin-title">Warehouse Lookup</div>
@@ -1161,7 +1160,7 @@ input[type=checkbox]{width:15px;height:15px;cursor:pointer;accent-color:var(--bl
 
 
 <!-- ═══ LAUNCHER ═══ -->
-<div id="launcher" style="display:none;">
+<div id="launcher">
   <div class="launcher-inner">
     <div class="launcher-logo">
       <div class="launcher-mark">XF</div>
@@ -1184,7 +1183,7 @@ input[type=checkbox]{width:15px;height:15px;cursor:pointer;accent-color:var(--bl
 </div>
 
 <!-- ═══ WAREHOUSE LOOKUP APP ═══ -->
-<div id="wh-app" style="display:none;">
+<div id="wh-app">
 
   <div class="topbar">
     <div class="topbar-left">
@@ -1261,7 +1260,7 @@ input[type=checkbox]{width:15px;height:15px;cursor:pointer;accent-color:var(--bl
 </div>
 
 <!-- ═══ AWD PLANNER APP ═══ -->
-<div id="awd-app" style="display:none;">
+<div id="awd-app">
 
 <div id="awd-app-inner">
   <header class="hdr">
@@ -1510,10 +1509,12 @@ var PIN_CORRECT = '2589';
 var pinEntry    = '';
 
 if (sessionStorage.getItem('xf_unlocked') === '1') {
+  var _ps = document.getElementById('pin-screen');
+  if (_ps) _ps.style.display = 'none';
+  // launcher shown by window.load handler
+} else {
   document.addEventListener('DOMContentLoaded', function() {
-    var ps = document.getElementById('pin-screen');
-    if (ps) { ps.style.display = 'none'; ps.style.visibility = 'hidden'; }
-    document.getElementById('launcher').style.display = 'flex';
+    document.getElementById('launcher').style.display = 'none';
   });
 }
 
@@ -1556,7 +1557,6 @@ function checkPin() {
     ps.style.opacity = '0';
     setTimeout(function() {
       ps.style.display = 'none';
-      ps.style.visibility = 'hidden';
       document.getElementById('launcher').style.display = 'flex';
     }, 300);
   } else {
