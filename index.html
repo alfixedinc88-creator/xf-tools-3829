@@ -1128,7 +1128,30 @@ input[type=checkbox]{width:15px;height:15px;cursor:pointer;accent-color:var(--bl
 .await-grid { display:flex;flex-wrap:wrap;gap:8px; }
 .await-pill { background:#fff;border:1px solid #FDBA74;border-radius:8px;padding:6px 12px;font-size:12px;font-weight:600;color:#EA580C; }
 
-</style>
+
+    /* ── UPC BARCODE PRINT STYLES ── */
+    @media print {
+      /* Hide entire page when printing a UPC label */
+      body > *:not(#upc-print-container) {
+        display: none !important;
+      }
+      #upc-print-container {
+        display: flex !important;
+        position: fixed !important;
+        top: 0; left: 0;
+        width: 100%; height: 100%;
+        justify-content: center;
+        align-items: center;
+        flex-direction: column;
+        background: #fff;
+        padding: 0; margin: 0;
+      }
+      #upc-print-svg {
+        max-width: 100%;
+        height: auto;
+      }
+    }
+  </style>
 </head>
 <body>
 
@@ -3419,6 +3442,32 @@ function upcOnLaunch() {
   document.getElementById('upc-search-inp').value = '';
   document.getElementById('upc-file-status').textContent = '';
   upcCheckShipment();
+  // Auto-load last saved shipment from sheet (so workers see it without uploading)
+  upcAutoLoadSavedShipment();
+}
+
+async function upcAutoLoadSavedShipment() {
+  try {
+    var res = await fetch('https://xfitting-lookup.alfixedinc88.workers.dev?sheet=UPC_Shipment');
+    var data = await res.json();
+    if (!data.values || data.values.length < 2) return;
+    var rows = data.values.slice(1); // skip header row
+    var skus = rows.map(function(r) { return String(r[0]||'').trim(); }).filter(Boolean);
+    if (!skus.length) return;
+    var label = data.values[0][1] ? String(data.values[0][1]) : 'Saved Shipment';
+    // Show the saved shipment banner
+    var banner = document.getElementById('upc-saved-banner');
+    var info = document.getElementById('upc-saved-info');
+    if (banner) {
+      banner.style.display = 'flex';
+      info.textContent = skus.length + ' SKUs · uploaded as: ' + label;
+    }
+    // Store for use when worker clicks load
+    window._upcSavedSkus = skus;
+    window._upcSavedLabel = label;
+  } catch(e) {
+    console.log('[UPC] No saved shipment:', e.message);
+  }
 }
 
 function upcClear() {
@@ -3509,7 +3558,7 @@ function upcLoadShipment() {
     return;
   }
   var skus = Object.keys(S.shipment).filter(function(k) { return S.shipment[k].qty > 0; });
-  upcRenderFromSkuList(skus, 'Live AWD Shipment');
+  upcRenderFromSkuList(skus, 'Live AWD Shipment', 'card');
 }
 
 // Handle file drop
@@ -3541,7 +3590,8 @@ function upcHandleFile(file) {
       }
       status.textContent = 'Loaded ' + skus.length + ' SKUs from ' + file.name;
       status.style.color = '#0E9F6E';
-      upcRenderFromSkuList(skus, file.name);
+      upcSaveShipmentToSheet(skus, file.name);
+      upcRenderFromSkuList(skus, file.name, 'sheet');
     };
     reader.readAsText(file);
 
@@ -3596,7 +3646,8 @@ function upcReadXlsx(file, status) {
       }
       status.textContent = 'Loaded ' + skus.length + ' SKUs from ' + file.name;
       status.style.color = '#0E9F6E';
-      upcRenderFromSkuList(skus, file.name);
+      upcSaveShipmentToSheet(skus, file.name);
+      upcRenderFromSkuList(skus, file.name, 'sheet');
     } catch(err) {
       status.textContent = 'Error reading file: ' + err.message;
       status.style.color = 'var(--red)';
@@ -3605,8 +3656,9 @@ function upcReadXlsx(file, status) {
   reader.readAsArrayBuffer(file);
 }
 
-// Given a list of SKUs, look up UPCs and render all barcode cards
-function upcRenderFromSkuList(skus, sourceName) {
+// Given a list of SKUs, look up UPCs and render barcodes
+// mode: 'sheet' = compact table view, 'card' = large card stack
+function upcRenderFromSkuList(skus, sourceName, mode) {
   document.getElementById('upc-empty').style.display = 'none';
   var allMatches = [];
   var seen = new Set();
@@ -3638,7 +3690,8 @@ function upcRenderFromSkuList(skus, sourceName) {
   header += '</div>';
 
   loadJsBarcode(function() {
-    document.getElementById('upc-results').innerHTML = header + upcRenderCards(allMatches);
+    var body = (mode === 'sheet') ? upcRenderSheet(allMatches) : upcRenderCards(allMatches);
+    document.getElementById('upc-results').innerHTML = header + body;
     upcDrawBarcodes();
   });
 }
@@ -3685,25 +3738,126 @@ function upcDrawBarcodes() {
   });
 }
 
-// Print single label in Zebra 1x2" format
-function upcPrint(bcId, partNum, upc) {
-  var svgEl = document.getElementById(bcId);
-  if (!svgEl) return;
-  var win = window.open('', '_blank', 'width=400,height=300');
-  win.document.write('<!DOCTYPE html><html><head><title>Print</title>');
-  win.document.write('<style>');
-  win.document.write('@page{size:2in 1in;margin:0}');
-  win.document.write('body{margin:0;padding:0;display:flex;flex-direction:column;align-items:center;justify-content:center;width:2in;height:1in;font-family:monospace;overflow:hidden}');
-  win.document.write('svg{width:1.9in;height:auto}');
-  win.document.write('.pn{font-size:6.5pt;font-weight:bold;margin-bottom:1px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:1.9in}');
-  win.document.write('</style></head><body>');
-  win.document.write('<div class="pn">' + partNum + '</div>');
-  win.document.write(svgEl.outerHTML);
-  win.document.write('</body></html>');
-  win.document.close();
-  win.focus();
-  setTimeout(function() { win.print(); win.close(); }, 400);
+// Helper for sheet view print buttons (avoids quote escaping issues)
+function upcPrintFromBtn(btn) {
+  var bcId = btn.getAttribute('data-bcid');
+  var upc  = btn.getAttribute('data-upc');
+  var pn   = btn.getAttribute('data-pn');
+  upcPrint(bcId, pn, upc);
 }
+
+// Print single label — same approach as BARCODE.html:
+// Render barcode into a fixed print container on the SAME page,
+// then call window.print(). CSS @media print hides everything else.
+function upcPrint(bcId, partNum, upc) {
+  // Remove any existing print container
+  var existing = document.getElementById('upc-print-container');
+  if (existing) existing.parentNode.removeChild(existing);
+
+  // Build print container
+  var container = document.createElement('div');
+  container.id = 'upc-print-container';
+  container.style.cssText = 'display:none;position:fixed;top:0;left:0;width:100%;height:100%;background:#fff;z-index:99999;justify-content:center;align-items:center;flex-direction:column';
+
+  var svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
+  svg.id = 'upc-print-svg';
+  container.appendChild(svg);
+  document.body.appendChild(container);
+
+  // Generate fresh UPC-A barcode into the print SVG
+  try {
+    JsBarcode(svg, upc, {
+      format: 'UPC',
+      width: 2,
+      height: 100,
+      displayValue: true,
+      fontSize: 14,
+      margin: 10,
+    });
+  } catch(e) {
+    console.error('[UPC] Print barcode render failed:', e);
+    return;
+  }
+
+  // Trigger print after brief render delay (same as BARCODE.html)
+  setTimeout(function() {
+    window.print();
+    // Clean up after print dialog closes
+    setTimeout(function() {
+      var c = document.getElementById('upc-print-container');
+      if (c) c.parentNode.removeChild(c);
+    }, 1000);
+  }, 100);
+}
+
+// Save uploaded shipment SKUs to Google Sheet so workers can access them
+async function upcSaveShipmentToSheet(skus, filename) {
+  try {
+    var values = [['sku', filename]];
+    skus.forEach(function(s) { values.push([s, '']); });
+    await fetch('https://xfitting-lookup.alfixedinc88.workers.dev?sheet=UPC_Shipment', {
+      method: 'PUT',
+      headers: {'Content-Type':'application/json'},
+      body: JSON.stringify({values: values})
+    });
+    console.log('[UPC] Shipment saved to sheet:', skus.length, 'SKUs');
+    // Update saved banner
+    window._upcSavedSkus = skus;
+    window._upcSavedLabel = filename;
+    var banner = document.getElementById('upc-saved-banner');
+    var info = document.getElementById('upc-saved-info');
+    if (banner) {
+      banner.style.display = 'flex';
+      info.textContent = skus.length + ' SKUs · uploaded as: ' + filename;
+    }
+  } catch(e) {
+    console.error('[UPC] Failed to save shipment to sheet:', e);
+  }
+}
+
+// Load the saved shipment (workers click this)
+function upcLoadSaved() {
+  if (!window._upcSavedSkus || !window._upcSavedSkus.length) return;
+  upcRenderFromSkuList(window._upcSavedSkus, window._upcSavedLabel || 'Saved Shipment', 'sheet');
+}
+
+// ── SHEET VIEW — compact table for uploaded shipments ──
+function upcRenderSheet(matches) {
+  var withUPC = matches.filter(function(m) { return m.upc; });
+  var noUPC   = matches.filter(function(m) { return !m.upc; });
+
+  var out = '<div style="background:#fff;border:1.5px solid var(--border);border-radius:12px;overflow:hidden;">';
+  out += '<table style="width:100%;border-collapse:collapse;">';
+  out += '<thead><tr style="background:#F9FAFB;border-bottom:1.5px solid var(--border)">';
+  out += '<th style="padding:10px 16px;text-align:left;font-size:11px;font-weight:700;color:var(--text3);width:180px">SKU</th>';
+  out += '<th style="padding:10px 16px;text-align:center;font-size:11px;font-weight:700;color:var(--text3)">BARCODE</th>';
+  out += '<th style="padding:10px 16px;text-align:left;font-size:11px;font-weight:700;color:var(--text3);width:140px">UPC</th>';
+  out += '<th style="padding:10px 8px;text-align:center;font-size:11px;font-weight:700;color:var(--text3);width:80px">PRINT</th>';
+  out += '</tr></thead><tbody>';
+
+  withUPC.forEach(function(m, i) {
+    var bcId = 'bc-sh-' + i + '-' + Math.random().toString(36).slice(2,5);
+    out += '<tr style="border-bottom:1px solid #F3F4F6">';
+    out += '<td style="padding:8px 16px;font-size:12px;font-family:var(--mono);color:var(--accent);font-weight:600">' + m.partNum + '</td>';
+    out += '<td style="padding:4px 16px;text-align:center"><svg id="' + bcId + '" data-upc="' + m.upc + '" style="height:40px;width:auto;max-width:180px"></svg></td>';
+    out += '<td style="padding:8px 16px;font-size:11px;font-family:var(--mono);color:var(--text3)">' + m.upc + '</td>';
+    out += '<td style="padding:8px;text-align:center"><button class="btn btn-sm btn-primary" data-bcid="' + bcId + '" data-upc="' + m.upc + '" data-pn="' + m.partNum + '" onclick="upcPrintFromBtn(this)">&#128424;</button></td>';
+    out += '</tr>';
+  });
+
+  if (noUPC.length) {
+    noUPC.forEach(function(m) {
+      out += '<tr style="border-bottom:1px solid #F3F4F6;opacity:.5">';
+      out += '<td style="padding:8px 16px;font-size:12px;font-family:var(--mono);color:var(--text)">' + m.partNum + '</td>';
+      out += '<td style="padding:8px 16px;text-align:center;font-size:11px;color:var(--text3)" colspan="3">No UPC-A on file</td>';
+      out += '</tr>';
+    });
+  }
+
+  out += '</tbody></table></div>';
+  return out;
+}
+
 </script>
 
 <!-- ═══════════════════════════════════════════════════════ -->
@@ -3755,6 +3909,17 @@ function upcPrint(bcId, partNum, upc) {
         <div id="upc-file-status" style="font-size:11px;color:var(--text3);margin-top:8px;text-align:center"></div>
       </div>
 
+    </div>
+
+    <!-- Saved shipment banner (auto-loaded from sheet — for workers) -->
+    <div id="upc-saved-banner" style="background:#ECFDF5;border:1.5px solid #6EE7B7;border-radius:12px;padding:14px 20px;margin-bottom:12px;display:none;">
+      <div style="display:flex;align-items:center;justify-content:space-between;gap:10px;flex-wrap:wrap">
+        <div>
+          <div style="font-size:13px;font-weight:700;color:#065F46">📋 Saved Shipment</div>
+          <div id="upc-saved-info" style="font-size:12px;color:#065F46;opacity:.8;margin-top:2px"></div>
+        </div>
+        <button class="btn btn-success" style="font-size:12px" onclick="upcLoadSaved()">Load Barcodes</button>
+      </div>
     </div>
 
     <!-- Live shipment banner (only if SKUs are in current builder) -->
