@@ -3410,6 +3410,14 @@ function doExportXLSX(allRows, name, skuCount, tot) {
 // UPC BARCODE APP FUNCTIONS
 // ═══════════════════════════════════════════════════════
 
+// Debounce timer for UPC search — waits 350ms after user stops typing
+var _upcSearchTimer = null;
+function upcDebounce(val) {
+  clearTimeout(_upcSearchTimer);
+  if (!val.trim()) { upcClear(); return; }
+  _upcSearchTimer = setTimeout(function() { upcSearch(val); }, 350);
+}
+
 // Load JsBarcode from CDN (same lib as existing BARCODE.html app)
 var _jsbarcodeLoaded = false;
 function loadJsBarcode(cb) {
@@ -3886,7 +3894,7 @@ function upcRenderSheet(matches) {
         <div style="display:flex;gap:8px">
           <input id="upc-search-inp" type="text" placeholder="e.g. 27-3-1=10X or 012345678901"
             style="flex:1;padding:10px 12px;border:1.5px solid var(--border);border-radius:8px;font-size:13px;font-family:var(--mono);outline:none"
-            oninput="upcSearch(this.value)" onkeydown="if(event.key==='Escape'){this.value='';upcClear()}">
+            oninput="upcDebounce(this.value)" onkeydown="if(event.key==='Enter'){upcSearch(this.value)}else if(event.key==='Escape'){this.value='';upcClear()}">
           <button class="btn btn-secondary" onclick="document.getElementById('upc-search-inp').value='';upcClear()" style="font-size:12px;padding:8px 12px">✕</button>
         </div>
         <div style="font-size:11px;color:var(--text3);margin-top:8px">Searches UPC sheet and AWD Master for matching inside UPC</div>
