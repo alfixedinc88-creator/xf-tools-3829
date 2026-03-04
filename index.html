@@ -1558,9 +1558,12 @@ input[type=checkbox]{width:15px;height:15px;cursor:pointer;accent-color:var(--bl
 .sales-section-sub { font-size: 12px; color: var(--text2); margin-top: 2px; }
 
 /* AI TAB */
-.sales-ai-card { background: var(--bg2); border: 1.5px solid var(--border); border-radius: 12px; margin-bottom: 20px; overflow: hidden; }
+.sales-ai-card { background: var(--bg2); border: 1.5px solid var(--border); border-radius: 12px; margin-bottom: 16px; overflow: hidden; }
+.sales-ai-layout { display: flex; flex-direction: column; gap: 16px; max-width: 900px; }
+#ro-ai-auto, #db-ai-auto { margin-bottom: 0; }
+.sales-ai-body { padding: 20px 22px; font-size: 14px; line-height: 1.75; color: var(--text); max-height: 340px; overflow-y: auto; }
 .sales-ai-header { display: flex; align-items: center; justify-content: space-between; padding: 14px 18px; border-bottom: 1.5px solid var(--border); background: var(--bg3); }
-.sales-ai-label { font-family: 'IBM Plex Mono', monospace; font-size: 12px; font-weight: 600; color: var(--accent); letter-spacing: 1px; }
+.sales-ai-label { font-family: 'IBM Plex Mono', monospace; font-size: 12px; font-weight: 600; color: var(--accent); letter-spacing: 1px; display: flex; align-items: center; gap: 6px; }
 .sales-ai-refresh { background: none; border: 1.5px solid var(--border); color: var(--text2); padding: 5px 12px; border-radius: 7px; font-size: 12px; cursor: pointer; font-family: 'IBM Plex Mono', monospace; transition: all .15s; }
 .sales-ai-refresh:hover { border-color: var(--accent); color: var(--accent); }
 .sales-ai-body { padding: 20px 22px; min-height: 80px; font-size: 14px; line-height: 1.75; color: var(--text); }
@@ -4451,27 +4454,34 @@ var toastTimer = null;
 function salesLoadWarehouseStock() {
   if (!SALES_WORKER_URL) return;
   setStatus('ro', 'loading', 'Loading warehouse...');
-  workerGet('Master_List').then(function(rows) {
-    CALC.whStock = {};
-    if (!rows || rows.length < 2) { setStatus('ro','ok','Warehouse loaded (empty)'); return; }
-    var h = rows[0];
-    var ci  = findCol(h, ['part#','partnum','part number','part']);
-    var cl  = findCol(h, ['location']);
-    var cn  = findCol(h, ['casesnum','cases num']);          // cases count
-    var ctq = findCol(h, ['totalqty','total qty','total units','totalunits']); // total units (pre-calculated)
-    for (var i=1;i<rows.length;i++) {
-      var r = rows[i];
-      // Use totalQty if available, otherwise fall back to casesNum
-      var units = ctq > -1 ? (parseFloat(r[ctq])||0) : (parseFloat(r[cn])||0);
-      if (units <= 0) continue;
-      var key = (r[ci]||'').toString().trim().toLowerCase();
-      if (!key) continue;
-      if (!CALC.whStock[key]) CALC.whStock[key] = [];
-      CALC.whStock[key].push({ location: r[cl]||'', units: units });
-    }
-    setStatus('ro','ok','Warehouse loaded');
-    if (RO.jq.length||RO.eff.length) { renderVendor('jq'); renderVendor('eff'); }
-  }).catch(function(){ setStatus('ro','err','WH load failed'); });
+  // Same col indices as AWD planner: col6=partNum, col7=location, col8=cases
+  var SKIP = new Set(['push fit','name','location','case','each case quantity','date arrive','total quantity','brand','uint price','total','type','sku','']);
+  fetch(SALES_WORKER_URL + '?sheet=Master_List')
+    .then(function(r){ return r.json(); })
+    .then(function(json) {
+      if (json.error) throw new Error(json.error);
+      var rows = (json.values || []).map(function(r){ while(r.length < 16) r.push(''); return r; });
+      CALC.whStock = {};
+      for (var i = 1; i < rows.length; i++) {
+        var r = rows[i];
+        var partNum = String(r[6] || '').trim();
+        if (!partNum || partNum.length < 2) continue;
+        if (SKIP.has(partNum.toLowerCase())) continue;
+        var casesRaw = r[8];
+        var casesNum = (casesRaw !== '' && casesRaw !== null && casesRaw !== undefined) ? parseFloat(casesRaw) : null;
+        if (!casesNum || casesNum <= 0) continue;
+        var key = partNum.toLowerCase();
+        if (!CALC.whStock[key]) CALC.whStock[key] = [];
+        CALC.whStock[key].push({ location: String(r[7]||'').trim(), units: casesNum });
+      }
+      var count = Object.keys(CALC.whStock).length;
+      setStatus('ro', 'ok', 'WH: ' + count + ' parts loaded');
+      if (RO.jq.length || RO.eff.length) { renderVendor('jq'); renderVendor('eff'); }
+    })
+    .catch(function(e) {
+      setStatus('ro', 'err', 'WH load failed');
+      console.error('[Sales WH load]', e);
+    });
 }
 function findCol(headers, keys) {
   for (var k=0;k<keys.length;k++) {
@@ -4834,14 +4844,14 @@ function exportPO(vendor) {
     return r.reorderQty>0 && (!trs[i] || (trs[i].querySelector('.po-cb')&&trs[i].querySelector('.po-cb').checked));
   });
   if (!out.length) { salesToast('No items to export (all zero qty or unchecked)', 'error'); return; }
-  var lines = ['Part Number\tBase SKU\tReorder Qty\tDaily Velocity\t30d Units\t90d Units\tCOGS\tEst. Cost'];
+  var lines = ['Part Number,Base SKU,Reorder Qty,Daily Velocity,30d Units,90d Units,COGS,Est. Cost'];
   out.forEach(function(r){
     lines.push([r.pn, r.sku, r.reorderQty, r.daily.toFixed(2), r.u30, r.u90,
-      r.cogs?r.cogs.toFixed(2):'', r.estCost?fmt0(r.estCost):''].join('\t'));
+      r.cogs?r.cogs.toFixed(2):'', r.estCost?fmt0(r.estCost):''].join(','));
   });
-  var blob = new Blob([lines.join('\n')],{type:'text/plain'});
+  var blob = new Blob([lines.join('\n')],{type:'text/csv'});
   var a = document.createElement('a'); a.href=URL.createObjectURL(blob);
-  a.download = vendor.toUpperCase()+'_PO_'+new Date().toISOString().slice(0,10)+'.txt';
+  a.download = vendor.toUpperCase()+'_PO_'+new Date().toISOString().slice(0,10)+'.csv';
   a.click();
   salesToast('PO exported — '+out.length+' lines', 'success');
 }
@@ -4883,33 +4893,81 @@ function buildDashboardData() {
 }
 
 function renderKPIs() {
-  var amzU30=0,ebayU30=0,xfU30=0,amzS30=0,ebayS30=0,xfS30=0,u90=0;
+  var amzU30=0,ebayU30=0,xfU30=0,amzS30=0,ebayS30=0,xfS30=0,u90=0,s90=0;
   DB_PARTS.forEach(function(r){
     amzU30+=r.amzU30; ebayU30+=r.ebayU30; xfU30+=r.xfU30;
     amzS30+=r.amzS30; ebayS30+=r.ebayS30; xfS30+=r.xfS30;
-    u90+=r.u90;
+    u90+=r.u90; s90+=(r.s90||0);
   });
   var u30=amzU30+ebayU30+xfU30, s30=amzS30+ebayS30+xfS30;
-  var trend = u90>0?((u30/30)-(u90/90))/(u90/90)*100:0;
-  var tH = trend>2?'<div class="kpi-trend up">▲ +'+trend.toFixed(1)+'% vs 90d avg</div>'
-           :trend<-2?'<div class="kpi-trend down">▼ '+trend.toFixed(1)+'% vs 90d avg</div>':'';
   var active = DB_PARTS.filter(function(r){ return r.u30>0; }).length;
+  var totU = Math.max(u30,1), totS = Math.max(s30,1);
+  var unitTrend = u90>0 ? ((u30/30)-(u90/90))/(u90/90)*100 : 0;
+  var revTrend  = s90>0 ? ((s30/30)-(s90/90))/(s90/90)*100 : 0;
 
-  var cards = [
-    {label:'Total Units (30d)', val:u30.toLocaleString(), sub:Math.round(u30/30)+' / day', extra:tH, color:'var(--accent)'},
-    {label:'Total Revenue (30d)', val:'$'+fmt0(s30), sub:'$'+Math.round(s30/30)+'/day avg', color:'var(--accent)'},
-    {label:'Amazon (30d)', val:amzU30.toLocaleString()+' units', sub:'$'+fmt0(amzS30), color:'#ff9900'},
-    {label:'eBay (30d)', val:ebayU30.toLocaleString()+' units', sub:'$'+fmt0(ebayS30), color:'#4db3ff'},
-    {label:'Shopify / XF (30d)', val:xfU30.toLocaleString()+' units', sub:'$'+fmt0(xfS30), color:'var(--green)'},
-    {label:'Active Part Numbers', val:active, sub:'with 30d sales', color:'var(--text2)'},
+  function badge(t) {
+    if (t > 2)  return '<span style="font-size:10px;font-family:var(--mono);color:var(--green);background:var(--green-bg);border-radius:20px;padding:2px 8px">&#9650; +'+t.toFixed(1)+'%</span>';
+    if (t < -2) return '<span style="font-size:10px;font-family:var(--mono);color:var(--red);background:var(--red-bg);border-radius:20px;padding:2px 8px">&#9660; '+t.toFixed(1)+'%</span>';
+    return '<span style="font-size:10px;font-family:var(--mono);color:var(--text3);background:var(--bg3);border-radius:20px;padding:2px 8px">&#9679; Stable</span>';
+  }
+
+  var plats = [
+    {name:'Amazon',  u:amzU30, s:amzS30, c:'#f59e0b', ct:'#b45309'},
+    {name:'eBay',    u:ebayU30,s:ebayS30,c:'var(--accent)', ct:'var(--accent2)'},
+    {name:'Shopify', u:xfU30,  s:xfS30,  c:'var(--green)',  ct:'var(--green)'}
   ];
-  document.getElementById('db-kpis').innerHTML = cards.map(function(c){
-    return '<div class="kpi-card" style="border-top:3px solid '+c.color+'">'
-      +'<div class="kpi-label">'+c.label+'</div>'
-      +'<div class="kpi-value" style="color:'+c.color+'">'+c.val+'</div>'
-      +'<div class="kpi-sub">'+c.sub+'</div>'
-      +(c.extra||'')+'</div>';
-  }).join('');
+
+  var o = '';
+
+  // Row 1: 3 headline KPI cards
+  o += '<div style="display:grid;grid-template-columns:repeat(3,1fr);gap:12px;margin-bottom:16px">';
+
+  o += '<div class="sales-kpi-card" style="border-top:3px solid var(--accent)">'
+     +  '<div class="sales-kpi-label">Total Units · 30d</div>'
+     +  '<div class="sales-kpi-value" style="color:var(--accent)">'+u30.toLocaleString()+'</div>'
+     +  '<div style="display:flex;align-items:center;gap:8px;margin-top:6px">'
+     +    '<span style="font-size:12px;color:var(--text2);font-family:var(--mono)">'+Math.round(u30/30)+'/day</span>'
+     +    badge(unitTrend)
+     +  '</div>'
+     + '</div>';
+
+  o += '<div class="sales-kpi-card" style="border-top:3px solid var(--green)">'
+     +  '<div class="sales-kpi-label">Total Revenue · 30d</div>'
+     +  '<div class="sales-kpi-value" style="color:var(--green)">$'+fmt0(s30)+'</div>'
+     +  '<div style="display:flex;align-items:center;gap:8px;margin-top:6px">'
+     +    '<span style="font-size:12px;color:var(--text2);font-family:var(--mono)">$'+Math.round(s30/30)+'/day</span>'
+     +    badge(revTrend)
+     +  '</div>'
+     + '</div>';
+
+  o += '<div class="sales-kpi-card" style="border-top:3px solid var(--orange)">'
+     +  '<div class="sales-kpi-label">Active Parts</div>'
+     +  '<div class="sales-kpi-value" style="color:var(--orange)">'+active+'</div>'
+     +  '<div style="font-size:12px;color:var(--text2);margin-top:6px;font-family:var(--mono)">of '+DB_PARTS.length+' tracked</div>'
+     + '</div>';
+
+  o += '</div>';
+
+  // Row 2: platform breakdown cards (3 columns)
+  o += '<div style="display:grid;grid-template-columns:repeat(3,1fr);gap:12px;margin-bottom:16px">';
+  plats.forEach(function(p) {
+    var uPct = (p.u/totU*100), sPct = (p.s/totS*100);
+    o += '<div class="sales-kpi-card">'
+       +  '<div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:10px">'
+       +    '<div class="sales-kpi-label" style="margin:0">'+p.name+'</div>'
+       +    '<div style="width:8px;height:8px;border-radius:50%;background:'+p.c+'"></div>'
+       +  '</div>'
+       +  '<div style="font-size:22px;font-weight:700;font-family:var(--mono);color:'+p.ct+';margin-bottom:2px">'+p.u.toLocaleString()+'</div>'
+       +  '<div style="font-size:11px;color:var(--text2);font-family:var(--mono);margin-bottom:10px">units &nbsp;·&nbsp; $'+fmt0(p.s)+'</div>'
+       +  '<div style="height:5px;background:var(--bg3);border-radius:3px;overflow:hidden;margin-bottom:4px">'
+       +    '<div style="height:100%;border-radius:3px;background:'+p.c+';width:'+uPct.toFixed(1)+'%"></div>'
+       +  '</div>'
+       +  '<div style="font-size:10px;color:var(--text3);font-family:var(--mono)">'+uPct.toFixed(0)+'% of units &nbsp;·&nbsp; '+sPct.toFixed(0)+'% of rev</div>'
+       + '</div>';
+  });
+  o += '</div>';
+
+  document.getElementById('db-kpis').innerHTML = o;
 }
 
 function renderLeaderboards() {
@@ -4924,11 +4982,62 @@ function renderLeaderboards() {
       +'<div class="lb-bar-wrap"><div class="lb-bar" style="width:'+pct+'%"></div></div>'
       +'<div class="lb-val">'+fmtFn(r[key])+'</div></div>';
   }
+  var DL={'amz':'<span style="font-size:9px;padding:2px 5px;border-radius:3px;background:rgba(245,158,11,.12);color:#b45309;font-family:var(--mono);font-weight:700">AMZ</span>',          'ebay':'<span style="font-size:9px;padding:2px 5px;border-radius:3px;background:var(--accent-bg);color:var(--accent);font-family:var(--mono);font-weight:700">eBay</span>',          'xf':'<span style="font-size:9px;padding:2px 5px;border-radius:3px;background:var(--green-bg);color:var(--green);font-family:var(--mono);font-weight:700">XF</span>',          'tie':'<span style="font-size:9px;padding:2px 5px;border-radius:3px;background:var(--bg4);color:var(--text3);font-family:var(--mono);font-weight:700">TIE</span>'};
+  var TR={'up':'<span style="font-size:10px;color:var(--green)">▲</span>','down':'<span style="font-size:10px;color:var(--red)">▼</span>','flat':'<span style="font-size:10px;color:var(--text3)">●</span>'};
+  function lbRowFull(r,i,key,maxV,fmtFn){
+    var pct=maxV?((r[key]/maxV)*100).toFixed(1):0;
+    var rank=i===0?'🥇':i===1?'🥈':i===2?'🥉':'<span style="font-family:var(--mono);font-size:11px;color:var(--text3)">'+(i+1)+'</span>';
+    return '<div class="sales-lb-row">'      +'<div class="sales-lb-rank'+(i<3?' top':'')+'">'+rank+'</div>'      +'<div class="sales-lb-name" style="display:flex;align-items:center;gap:6px">'+r.pn+' '+(DL[r.dom]||'')+' '+(TR[r.trend]||'')+'</div>'      +'<div class="sales-lb-bar-wrap"><div class="sales-lb-bar" style="width:'+pct+'%"></div></div>'      +'<div class="sales-lb-val">'+fmtFn(r[key])+'</div></div>';
+  }
   document.getElementById('db-lb').innerHTML =
-    '<div class="leaderboard"><div class="lb-header">🏆 Top Units (30d)</div>'
-    +byU.map(function(r,i){return lbRow(r,i,'u30',maxU,function(v){return v.toLocaleString()+' units';});}).join('')+'</div>'
-    +'<div class="leaderboard"><div class="lb-header">💰 Top Revenue (30d)</div>'
-    +byS.map(function(r,i){return lbRow(r,i,'s30',maxS,function(v){return '$'+fmt0(v);});}).join('')+'</div>';
+    '<div style="display:grid;grid-template-columns:1fr 1fr;gap:12px">'    +'<div class="sales-leaderboard"><div class="sales-lb-header">🏆 Top by Units · 30d</div>'    +byU.map(function(r,i){return lbRowFull(r,i,'u30',maxU,function(v){return v.toLocaleString()});}).join('')+'</div>'    +'<div class="sales-leaderboard"><div class="sales-lb-header">💰 Top by Revenue · 30d</div>'    +byS.map(function(r,i){return lbRowFull(r,i,'s30',maxS,function(v){return '$'+fmt0(v)});}).join('')+'</div>'    +'</div>';
+}
+
+function renderLeaderboards() {
+  var byU = DB_PARTS.slice().sort(function(a,b){return b.u30-a.u30;}).slice(0,10);
+  var byS = DB_PARTS.slice().sort(function(a,b){return b.s30-a.s30;}).slice(0,10);
+  var maxU = byU[0]?byU[0].u30:1, maxS=byS[0]?byS[0].s30:1;
+
+  var DL = {
+    amz:  '<span style="font-size:9px;padding:1px 5px;border-radius:3px;background:rgba(245,158,11,.12);color:#b45309;font-family:var(--mono);font-weight:700">AMZ</span>',
+    ebay: '<span style="font-size:9px;padding:1px 5px;border-radius:3px;background:var(--accent-bg);color:var(--accent);font-family:var(--mono);font-weight:700">eBay</span>',
+    xf:   '<span style="font-size:9px;padding:1px 5px;border-radius:3px;background:var(--green-bg);color:var(--green);font-family:var(--mono);font-weight:700">XF</span>',
+    tie:  '<span style="font-size:9px;padding:1px 5px;border-radius:3px;background:var(--bg4);color:var(--text3);font-family:var(--mono);font-weight:700">TIE</span>'
+  };
+  var TR = {
+    up:   '<span style="font-size:11px;color:var(--green)">&#9650;</span>',
+    down: '<span style="font-size:11px;color:var(--red)">&#9660;</span>',
+    flat: '<span style="font-size:11px;color:var(--text3)">&#9679;</span>'
+  };
+
+  function row(r, i, key, maxV, fmtFn) {
+    var pct = maxV ? (r[key]/maxV*100).toFixed(1) : 0;
+    var rank = i===0?'&#127945;' : i===1?'&#127946;' : i===2?'&#127947;'
+             : '<span style="font-size:11px;font-family:var(--mono);color:var(--text3)">'+(i+1)+'</span>';
+    return '<div class="sales-lb-row">'
+         +   '<div class="sales-lb-rank'+(i<3?' top':'')+'" style="font-size:16px">'+rank+'</div>'
+         +   '<div class="sales-lb-name" style="display:flex;align-items:center;gap:5px">'
+         +     '<span style="font-family:var(--mono);font-size:12px">'+r.pn+'</span>'
+         +     (DL[r.dom]||'') + (TR[r.trend]||'')
+         +   '</div>'
+         +   '<div class="sales-lb-bar-wrap" style="width:80px">'
+         +     '<div class="sales-lb-bar" style="width:'+pct+'%"></div>'
+         +   '</div>'
+         +   '<div class="sales-lb-val">'+fmtFn(r[key])+'</div>'
+         + '</div>';
+  }
+
+  document.getElementById('db-lb').innerHTML =
+    '<div style="display:grid;grid-template-columns:1fr 1fr;gap:12px">'
+    + '<div class="sales-leaderboard">'
+    +   '<div class="sales-lb-header">&#127942; Top by Units &middot; 30d</div>'
+    +   byU.map(function(r,i){return row(r,i,'u30',maxU,function(v){return v.toLocaleString()+' u';});}).join('')
+    + '</div>'
+    + '<div class="sales-leaderboard">'
+    +   '<div class="sales-lb-header">&#128176; Top by Revenue &middot; 30d</div>'
+    +   byS.map(function(r,i){return row(r,i,'s30',maxS,function(v){return '$'+fmt0(v);});}).join('')
+    + '</div>'
+    + '</div>';
 }
 
 function renderParts() {
@@ -4941,7 +5050,7 @@ function renderParts() {
   rows.sort(sf[partsSort]);
   var wrap = document.getElementById('parts-wrap');
   if (!rows.length){ wrap.innerHTML='<div class="sales-empty"><div class="sales-empty-icon">🔍</div><div class="sales-empty-title">No results</div></div>'; return; }
-  var h='<table><thead><tr><th>Part #</th><th>Best Platform</th><th>Trend</th>'
+  var h='<table style="width:100%"><thead><tr><th style="width:1px;white-space:nowrap">Part #</th><th>Best Platform</th><th>Trend</th>'
     +'<th class="s-num">AMZ 30d</th><th class="s-num">AMZ 90d</th>'
     +'<th class="s-num">eBay 30d</th><th class="s-num">eBay 90d</th>'
     +'<th class="s-num">XF 30d</th><th class="s-num">XF 90d</th>'
@@ -5610,6 +5719,7 @@ function salesToast(msg, type) {
     <!-- AI Tab - Reorder -->
     <div class="sales-panel" id="ro-panel-ai">
       <div id="ro-ai-container">
+        <div class="sales-ai-layout">
         <div class="sales-ai-card" id="ro-ai-auto">
           <div class="sales-ai-header">
             <span class="sales-ai-label">✦ AI Analysis</span>
@@ -5630,6 +5740,7 @@ function salesToast(msg, type) {
             <button class="sales-ai-send" onclick="aiChat('ro')">Send</button>
           </div>
         </div>
+        </div><!-- /sales-ai-layout -->
       </div>
     </div>
 
@@ -5788,6 +5899,7 @@ function salesToast(msg, type) {
     <!-- AI Tab - Dashboard -->
     <div class="sales-panel" id="db-panel-ai">
       <div id="db-ai-container">
+        <div class="sales-ai-layout">
         <div class="sales-ai-card" id="db-ai-auto">
           <div class="sales-ai-header">
             <span class="sales-ai-label">✦ AI Analysis</span>
@@ -5808,6 +5920,7 @@ function salesToast(msg, type) {
             <button class="sales-ai-send" onclick="aiChat('db')">Send</button>
           </div>
         </div>
+        </div><!-- /sales-ai-layout -->
       </div>
     </div>
 
