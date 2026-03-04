@@ -2032,6 +2032,7 @@ if (sessionStorage.getItem('xf_unlocked') === '1') {
     var ps = document.getElementById('pin-screen');
     if (ps) { ps.style.display = 'none'; ps.style.visibility = 'hidden'; }
     document.getElementById('launcher').style.display = 'flex';
+    if (typeof silentLoadSaved === 'function' && SALES_WORKER_URL) silentLoadSaved();
   });
 }
 
@@ -2076,6 +2077,7 @@ function checkPin() {
       ps.style.display = 'none';
       ps.style.visibility = 'hidden';
       document.getElementById('launcher').style.display = 'flex';
+      if (typeof silentLoadSaved === 'function' && SALES_WORKER_URL) silentLoadSaved();
     }, 300);
   } else {
     var dots = document.getElementById('pin-dots');
@@ -4415,6 +4417,7 @@ function salesLaunchApp(name) {
     else { buildReorderRows(); updateLastUpdatedLabels(); }
   } else {
     document.getElementById('dashboard-app').style.display = 'flex'; document.getElementById('dashboard-app').style.flexDirection = 'column';
+    salesLoadWarehouseStock();
     if (!CALC.partSales.length) autoLoadOnLaunch('db');
     else { buildDashboardData(); updateLastUpdatedLabels(); }
   }
@@ -4429,7 +4432,21 @@ function salesGoBack() {
 
 // ─── SALES APP JS ────────────────────────────────────────────────────────────
 
-// ─── LAUNCHER ───────────────────────────────────────────────────────────────
+// ─── SALES STATE VARS ───────────────────────────────────────────────────────
+var SALES_WORKER_URL = "https://xfitting-lookup.alfixedinc88.workers.dev";
+// Staged files: { Amz30: [[row,...]], Amz90: [...], ... }
+var staged = {};
+// Calculated data read back from sheet
+var CALC = { partSales:[], skuSales:[], jqVendor:[], effVendor:[], cogs:{}, whStock:{} };
+// Processed reorder rows
+var RO = { jq:[], eff:[] };
+// Dashboard data
+var DB_PARTS = [], DB_SKUS = [];
+var partsSort = 'units', skusSort = 'units';
+var lastUpdated = null;
+var aiHistory = { ro: [], db: [] };
+var toastTimer = null;
+
 // ─── WAREHOUSE STOCK ─────────────────────────────────────────────────────────
 function salesLoadWarehouseStock() {
   if (!SALES_WORKER_URL) return;
@@ -4690,7 +4707,7 @@ function buildReorderRows() {
 function buildVendorRows(vendorData, partCol, vendor) {
   var target = parseInt(document.getElementById(vendor+'-target').value)||180;
   var lead   = parseInt(document.getElementById(vendor+'-lead').value)||90;
-  var hasWH  = WORKER_URL && Object.keys(CALC.whStock).length > 0;
+  var hasWH  = SALES_WORKER_URL && Object.keys(CALC.whStock).length > 0;
 
   return vendorData.map(function(r) {
     var pn = (r[partCol]||'').toString().trim();
@@ -4758,7 +4775,7 @@ function renderVendor(vendor) {
     return;
   }
 
-  var hasWH   = WORKER_URL && Object.keys(CALC.whStock).length>0;
+  var hasWH   = SALES_WORKER_URL && Object.keys(CALC.whStock).length>0;
   var hasCOGS = Object.keys(CALC.cogs).length>0;
 
   var h = '<table><thead><tr>'
