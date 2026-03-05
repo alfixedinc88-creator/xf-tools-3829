@@ -1,7 +1,8 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-  <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate">
+  <!-- XFITTING-BUILD-V106-COLJ-1772732724 -->
+<meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate">
 <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&family=IBM+Plex+Sans:wght@300;400;500;600&display=swap" rel="stylesheet">
   <meta http-equiv="Pragma" content="no-cache">
   <meta http-equiv="Expires" content="0">
@@ -4489,7 +4490,7 @@ async function salesLoadWarehouseStock() {
       var unitsPerCaseVal = upcDirect > 0 ? upcDirect : (totalUnits > 0 && casesNum > 0 ? Math.round(totalUnits / casesNum) : 0);
       if (unitsPerCaseVal > 0 && !CALC.upc[key]) {
         var packSize = 1;
-        var suffixMatch = partNum.match(/=(\d+)[xX]/);
+        var suffixMatch = partNum.match(/=(\d+)[xX]?$/);
         if (suffixMatch) packSize = parseInt(suffixMatch[1]) || 1;
         CALC.upc[key] = { unitsPerCase: unitsPerCaseVal, packSize: packSize };
       }
@@ -4768,8 +4769,20 @@ function buildVendorRows(vendorData, partCol, vendor) {
 
     var whUnits  = hasWH ? getWH(pn) : null;
     var upcData  = getUPC(pn); // { unitsPerCase, packSize, packsPerCase } or null
-    // DOH: convert WH cases to units using unitsPerCase for accuracy
-    var whUnitsTotal = (whUnits !== null && upcData) ? whUnits * upcData.unitsPerCase : whUnits;
+    // Convert WH cases to sellable packs — daily velocity is in packs sold, not raw units
+    // packsPerCase = unitsPerCase ÷ packSize (e.g. 500 units ÷ 10 = 50 packs of 10)
+    // whUnitsTotal = cases × packsPerCase
+    var whUnitsTotal = null;
+    if (whUnits !== null) {
+      if (upcData && upcData.unitsPerCase > 0) {
+        var packsPerCase = upcData.packSize > 1
+          ? Math.floor(upcData.unitsPerCase / upcData.packSize)
+          : upcData.unitsPerCase;
+        whUnitsTotal = whUnits * packsPerCase;
+      } else {
+        whUnitsTotal = whUnits; // fallback — no conversion data
+      }
+    }
     var targetStock = Math.ceil(daily * target);
     var reorderQty  = Math.max(0, Math.ceil(targetStock - (whUnitsTotal!==null ? whUnitsTotal : 0)));
     var doh = (whUnitsTotal!==null && daily>0) ? whUnitsTotal/daily : null;
@@ -4837,19 +4850,21 @@ function renderVendor(vendor) {
         +'<span class="dbar-wrap"><span class="sales-dbar" style="width:'+barPct+'%;background:'+barClr+'"></span></span></td>';
     }
 
-    // WH Stock cell — show units with cases as secondary info
+    // WH Stock cell — packages (primary), cases + total units (subtext)
     var whCell = '—';
     if (hasWH && r.whUnits !== null) {
       if (r.upcData) {
-        // Have conversion data — show units prominently, cases as subtext
-        var packNote = r.upcData.packSize > 1
-          ? r.whUnits + ' cases × ' + r.upcData.unitsPerCase + 'u = ' + r.whUnitsTotal + ' units (' + r.upcData.packsPerCase + ' packs/' + r.upcData.packSize + ')'
-          : r.whUnits + ' cases × ' + r.upcData.unitsPerCase + 'u = ' + r.whUnitsTotal + ' units';
-        whCell = '<span style="font-weight:600">' + fmt0(r.whUnitsTotal) + '</span>'
+        var packsPerCase = r.upcData.packSize > 1
+          ? Math.floor(r.upcData.unitsPerCase / r.upcData.packSize)
+          : r.upcData.unitsPerCase;
+        var totalRawUnits = r.whUnits * r.upcData.unitsPerCase;
+        var pkgLabel = r.upcData.packSize > 1 ? r.upcData.packSize + '-pk' : 'units';
+        whCell = '<span style="font-weight:600;font-size:13px">' + fmt0(r.whUnitsTotal) + ' pkgs</span>'
           + '<span style="display:block;font-size:10px;color:var(--text3);font-family:var(--mono)">'
-          + r.whUnits + ' cases</span>';
+          + r.whUnits + ' cases · ' + fmt0(totalRawUnits) + ' units</span>'
+          + '<span style="display:block;font-size:10px;color:var(--text3);font-family:var(--mono)">'
+          + packsPerCase + ' ' + pkgLabel + '/case</span>';
       } else {
-        // No UPC data — show raw cases with warning
         whCell = '<span style="color:var(--orange)">' + r.whUnits + '</span>'
           + '<span style="display:block;font-size:10px;color:var(--orange);font-family:var(--mono)">cases*</span>';
       }
@@ -5700,7 +5715,7 @@ function salesToast(msg, type) {
       <div style="font-size:10px;background:var(--accent);color:#fff;padding:2px 7px;border-radius:20px;font-weight:600;opacity:.85">v1.0.6</div>
     </div>
     <div class="topbar-right">
-      <div class="sales-status-pill" id="ro-status-pill" style="display:none">
+      <div class="sales-status-pill" id="ro-status-pill" style="display:flex">
         <div class="sales-sdot" id="ro-sdot"></div>
         <span id="ro-status-text">Loading...</span>
       </div>
