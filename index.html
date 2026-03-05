@@ -5188,6 +5188,7 @@ function buildReorderContext() {
   var allRows   = RO.jq.concat(RO.eff);
   var crit      = allRows.filter(function(r){ return r.urgency==='critical'; });
   var watch     = allRows.filter(function(r){ return r.urgency==='watch'; });
+  var ok        = allRows.filter(function(r){ return r.urgency==='ok'; });
   var totalCost = allRows.reduce(function(s,r){ return s+r.estCost; }, 0);
   var whTotal   = Object.values(CALC.whStock).reduce(function(s,arr){
     return s + arr.reduce(function(ss,e){ return ss+e.units; }, 0);
@@ -5195,33 +5196,61 @@ function buildReorderContext() {
   var whParts   = Object.keys(CALC.whStock).length;
   var cogsCount = Object.keys(CALC.cogs).length;
 
-  function fmtRow(r) {
+  // Full detail row — used for critical and watch
+  function fmtFull(r) {
     return r.pn
-      + '|daily:'    + r.daily.toFixed(2)
-      + '|30d:'      + r.u30
-      + '|90d:'      + r.u90
-      + '|wh_cases:' + (r.whUnits !== null ? r.whUnits : 'N/A')
-      + '|doh:'      + (r.doh !== null ? Math.round(r.doh) + 'd' : 'N/A')
-      + '|reorder:'  + r.reorderQty
-      + '|status:'   + r.urgency
-      + (r.cogs    ? '|cogs:$'    + r.cogs.toFixed(2)    : '')
-      + (r.estCost ? '|estCost:$' + r.estCost.toFixed(0) : '');
+      + '|d:' + r.daily.toFixed(2)
+      + '|30d:' + r.u30
+      + '|90d:' + r.u90
+      + '|wh:' + (r.whUnits !== null ? r.whUnits : 'N/A')
+      + '|doh:' + (r.doh !== null ? Math.round(r.doh) + 'd' : 'N/A')
+      + '|reorder:' + r.reorderQty
+      + (r.estCost ? '|cost:$' + r.estCost.toFixed(0) : '');
   }
 
-  var ctx = 'REORDER PLANNER — FULL DATA SNAPSHOT\n'
-    + 'Vendor A: ' + RO.jq.length  + ' parts | Vendor B: ' + RO.eff.length + ' parts\n'
-    + 'CRITICAL: ' + crit.length   + ' parts | WATCH: '    + watch.length  + ' parts\n'
-    + 'Est. total PO value: $' + fmt0(totalCost) + '\n'
-    + 'Target days: ' + document.getElementById('jq-target').value
+  // Short row — used for OK parts summary (top 40 by daily, no WH detail)
+  function fmtShort(r) {
+    return r.pn + '|d:' + r.daily.toFixed(2) + '|30d:' + r.u30;
+  }
+
+  function vendorSection(rows, label) {
+    var vCrit  = rows.filter(function(r){ return r.urgency==='critical'; });
+    var vWatch = rows.filter(function(r){ return r.urgency==='watch'; });
+    var vOk    = rows.filter(function(r){ return r.urgency==='ok'; });
+    var s = label + ': ' + rows.length + ' parts | '
+      + vCrit.length + ' critical | ' + vWatch.length + ' watch | ' + vOk.length + ' ok\n';
+    if (vCrit.length) {
+      s += 'CRITICAL (pn|daily|30d|90d|wh_cases|doh|reorder|estCost):\n';
+      s += vCrit.map(fmtFull).join('\n') + '\n';
+    }
+    if (vWatch.length) {
+      // Top 30 watch by daily velocity
+      s += 'WATCH (top 30 by velocity):\n';
+      s += vWatch.slice(0, 30).map(fmtFull).join('\n') + '\n';
+      if (vWatch.length > 30) s += '...+' + (vWatch.length - 30) + ' more watch parts\n';
+    }
+    if (vOk.length) {
+      // Top 40 OK by daily, short format
+      s += 'OK — top 40 by daily (pn|daily|30d):\n';
+      s += vOk.slice().sort(function(a,b){ return b.daily-a.daily; })
+               .slice(0, 40).map(fmtShort).join('\n') + '\n';
+      if (vOk.length > 40) s += '...+' + (vOk.length - 40) + ' more ok parts omitted\n';
+    }
+    return s;
+  }
+
+  var ctx = 'REORDER PLANNER SNAPSHOT\n'
+    + 'Vendor A: ' + RO.jq.length + ' parts | Vendor B: ' + RO.eff.length + ' parts\n'
+    + 'CRITICAL: ' + crit.length + ' | WATCH: ' + watch.length + ' | OK: ' + ok.length + '\n'
+    + 'Est. PO value: $' + fmt0(totalCost) + '\n'
+    + 'Target: ' + document.getElementById('jq-target').value
     + 'd | Lead time: ' + document.getElementById('jq-lead').value + 'd\n'
-    + 'Warehouse stock: ' + whParts + ' unique part#s | ' + whTotal + ' total cases on hand\n'
-    + (cogsCount ? 'COGS loaded for ' + cogsCount + ' SKUs\n' : '')
+    + 'Warehouse: ' + whParts + ' parts | ' + whTotal + ' total cases\n'
+    + (cogsCount ? 'COGS: ' + cogsCount + ' SKUs\n' : '')
     + '\n'
-    + 'VENDOR A — ALL ' + RO.jq.length + ' PARTS'
-    + ' (pn|daily|30d|90d|wh_cases|doh|reorder|status|cogs|estCost):\n'
-    + RO.jq.map(fmtRow).join('\n')
-    + '\n\nVENDOR B — ALL ' + RO.eff.length + ' PARTS:\n'
-    + RO.eff.map(fmtRow).join('\n');
+    + vendorSection(RO.jq, 'VENDOR A')
+    + '\n'
+    + vendorSection(RO.eff, 'VENDOR B');
 
   return ctx;
 }
@@ -5242,70 +5271,54 @@ function buildDashboardContext() {
   var xfPct     = u30>0 ? Math.round(xfU30/u30*100)   : 0;
   var unitTrend = u90>0 ? ((u30/30)-(u90/90))/(u90/90)*100 : 0;
 
-  // Parts with significant velocity change vs 90d avg
+  var sorted = DB_PARTS.slice().sort(function(a,b){ return b.u30-a.u30; });
+
+  // Top 60 full detail, rest short (pn+30d only)
+  var top60 = sorted.slice(0,60).map(function(r){
+    return r.pn+'|amz:'+r.amzU30+'|ebay:'+r.ebayU30+'|xf:'+r.xfU30
+      +'|t30:'+r.u30+'|t90:'+r.u90+'|rev:$'+fmt0(r.s30)+'|'+r.dom+'|'+r.trend;
+  }).join('\n');
+
+  var rest = sorted.slice(60);
+  var restCtx = rest.length
+    ? 'REMAINING '+rest.length+' PARTS (pn|t30):\n'
+      + rest.map(function(r){ return r.pn+'|'+r.u30; }).join('\n')
+    : '';
+
+  // Anomalies and stalled — compact
   var anomalies = DB_PARTS.filter(function(r){
     var d30=r.u30/30, d90=r.u90/90;
-    return d90>0 && Math.abs(d30-d90)/d90 > 0.4 && r.u30>3;
+    return d90>0 && Math.abs(d30-d90)/d90>0.4 && r.u30>3;
   }).map(function(r){
-    var chg = ((r.u30/30 - r.u90/90)/(r.u90/90)*100).toFixed(0);
-    return r.pn + ' ' + (chg>0?'+':'') + chg + '% vs 90d (best:' + r.dom + ')';
+    var chg=((r.u30/30-r.u90/90)/(r.u90/90)*100).toFixed(0);
+    return r.pn+(chg>0?'+':'')+chg+'%';
   });
 
-  // Parts that had 90d sales but zero in last 30d
-  var stalled = DB_PARTS.filter(function(r){ return r.u30===0 && r.u90>0; })
-    .map(function(r){ return r.pn + '(had ' + r.u90 + 'u in 90d)'; });
+  var stalled = DB_PARTS.filter(function(r){ return r.u30===0 && r.u90>5; })
+    .map(function(r){ return r.pn+'('+r.u90+'u/90d)'; });
 
-  // All parts by 30d volume
-  var partsCtx = DB_PARTS.slice().sort(function(a,b){ return b.u30-a.u30; })
-    .map(function(r){
-      return r.pn
-        + '|amz:'     + r.amzU30
-        + '|ebay:'    + r.ebayU30
-        + '|xf:'      + r.xfU30
-        + '|total30:' + r.u30
-        + '|total90:' + r.u90
-        + '|rev30:$'  + fmt0(r.s30)
-        + '|best:'    + r.dom
-        + '|trend:'   + r.trend;
-    }).join('\n');
-
-  // Top 40 base SKUs
-  var skuCtx = DB_SKUS.slice().sort(function(a,b){ return b.u30-a.u30; }).slice(0,40)
-    .map(function(r){
-      return r.sku
-        + '|30d:'    + r.u30
-        + '|90d:'    + r.u90
-        + '|rev30:$' + fmt0(r.s30)
-        + '|daily:'  + r.daily.toFixed(2)
-        + '|trend:'  + r.trend;
-    }).join('\n');
-
-  var ctx = 'SALES DASHBOARD — FULL DATA SNAPSHOT\n'
-    + '30d totals: ' + u30.toLocaleString() + ' units | $' + fmt0(s30) + ' revenue\n'
-    + 'Trend vs 90d avg: ' + (unitTrend>0?'+':'') + unitTrend.toFixed(1) + '%\n'
-    + 'Platform: Amazon ' + amzPct  + '% (' + amzU30  + 'u, $' + fmt0(amzS30)  + ')'
-    + ' | eBay '    + ebayPct + '% (' + ebayU30 + 'u, $' + fmt0(ebayS30) + ')'
-    + ' | Shopify ' + xfPct   + '% (' + xfU30   + 'u, $' + fmt0(xfS30)  + ')\n'
-    + 'Active parts: ' + active + ' of ' + DB_PARTS.length + ' total tracked\n'
-    + (anomalies.length ? 'Velocity changes >40% vs 90d: ' + anomalies.join(', ') + '\n' : '')
-    + (stalled.length   ? 'Stalled (0 in 30d, had 90d activity): ' + stalled.join(', ') + '\n' : '')
-    + '\nALL PARTS BY 30D UNITS (pn|amz|ebay|xf|total30|total90|rev30|best|trend):\n' + partsCtx
-    + '\n\nTOP 40 BASE SKUs (sku|30d|90d|rev30|daily|trend):\n' + skuCtx;
+  var ctx = 'SALES SNAPSHOT\n'
+    +'30d: '+u30.toLocaleString()+' units | $'+fmt0(s30)+' rev\n'
+    +'Trend vs 90d: '+(unitTrend>0?'+':'')+unitTrend.toFixed(1)+'%\n'
+    +'AMZ '+amzPct+'% ('+amzU30+'u $'+fmt0(amzS30)+')'
+    +' | eBay '+ebayPct+'% ('+ebayU30+'u $'+fmt0(ebayS30)+')'
+    +' | XF '+xfPct+'% ('+xfU30+'u $'+fmt0(xfS30)+')\n'
+    +'Active: '+active+' of '+DB_PARTS.length+' parts | '+DB_SKUS.length+' SKUs\n'
+    +(anomalies.length?'Velocity shifts >40%: '+anomalies.join(', ')+'\n':'')
+    +(stalled.length?'Stalled: '+stalled.join(', ')+'\n':'')
+    +'\nTOP 60 PARTS (pn|amz|ebay|xf|t30|t90|rev|best|trend):\n'+top60
+    +(restCtx?'\n\n'+restCtx:'');
 
   return ctx;
 }
 
 function getSystemPrompt(app) {
-  return 'You are an AI business analyst for XFitting, a plumbing fittings company that sells on Amazon, eBay, and Shopify. '
-    +'You have deep expertise in e-commerce inventory management, sales analysis, and purchasing strategy. '
-    +'Be concise, direct, and specific. Use the exact part numbers and figures from the data provided. '
-    +'Format your responses with clear sections using ### headers when covering multiple topics. '
-    +'Use bullet points for lists. Highlight critical issues first. '
-    +(app==='ro'
-      ? 'Focus on inventory reorder priorities, vendor purchase decisions, days-on-hand risk, and cash flow impact of reorders. '
-        +'Flag any parts that will stock out before the lead time window.'
-      : 'Focus on sales performance, platform strategy, revenue trends, and growth opportunities. '
-        +'Identify what is working, what is declining, and where to focus selling efforts.');
+  var base = 'You are a business analyst for XFitting, a plumbing fittings company selling on Amazon, eBay, and Shopify. '
+    +'Be concise and specific. Use exact part numbers from the data. '
+    +'Use ### headers and bullet points. Lead with critical issues.';
+  return base + (app==='ro'
+    ? ' Focus on reorder priorities, days-on-hand risk, and PO cash flow. Flag stockout risk within lead time.'
+    : ' Focus on sales trends, platform performance, and growth opportunities. Flag declines and wins.');
 }
 
 async function runAutoInsights(app) {
@@ -5427,6 +5440,11 @@ async function callAI(app, userMessage, isAuto) {
 
   var text = (data.content||[]).filter(function(b){ return b.type==='text'; }).map(function(b){ return b.text; }).join('');
   if (!text) throw new Error('Empty response from AI');
+
+  // Warn if response was cut off by token limit
+  if (data.stop_reason === 'max_tokens') {
+    text += '\n\n_(Response was cut off — ask a more specific question for a complete answer.)_';
+  }
 
   // Save assistant reply to history for follow-ups
   if (!isAuto) aiHistory[app].push({ role:'assistant', content: text });
