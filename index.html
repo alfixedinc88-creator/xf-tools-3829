@@ -4740,6 +4740,10 @@ function buildReorderRows() {
   if (document.getElementById('reorder-app').style.display !== 'none') {
     roTab('jq');
   }
+  if (document.getElementById('ro-panel-po') &&
+      document.getElementById('ro-panel-po').className.includes('active')) {
+    renderPOCases();
+  }
 }
 
 function buildVendorRows(vendorData, partCol, vendor) {
@@ -4898,6 +4902,93 @@ function renderVendor(vendor) {
       +'</div>';
   }
   wrap.innerHTML = h;
+}
+
+function renderPOCases() {
+  var allRows = RO.jq.concat(RO.eff).filter(function(r){ return r.reorderQty > 0; });
+  allRows.sort(function(a,b){
+    var o={critical:0,watch:1,ok:2};
+    return o[a.urgency]-o[b.urgency] || b.daily-a.daily;
+  });
+
+  var totalCases = 0, totalCost = 0;
+  allRows.forEach(function(r){
+    var packsPerCase = r.upcData
+      ? (r.upcData.packSize > 1 ? Math.floor(r.upcData.unitsPerCase / r.upcData.packSize) : r.upcData.unitsPerCase)
+      : 1;
+    r._packsPerCase = packsPerCase;
+    r._casesToOrder = packsPerCase > 0 ? Math.ceil(r.reorderQty / packsPerCase) : '?';
+    r._casesCost    = (typeof r._casesToOrder === 'number' && r.cogs)
+      ? r._casesToOrder * packsPerCase * r.cogs : 0;
+    if (typeof r._casesToOrder === 'number') totalCases += r._casesToOrder;
+    totalCost += r._casesCost;
+  });
+
+  var wrap    = document.getElementById('po-wrap');
+  var summary = document.getElementById('po-summary');
+  summary.textContent = allRows.length + ' parts · ' + totalCases + ' total cases · Est. $' + fmt0(totalCost);
+
+  if (!allRows.length) {
+    wrap.innerHTML = '<div class="sales-empty"><div class="sales-empty-icon">✅</div><div class="sales-empty-title">No reorders needed</div></div>';
+    return;
+  }
+
+  var h = '<table style="width:100%"><thead><tr>'
+    + '<th>Part #</th>'
+    + '<th>Base SKU</th>'
+    + '<th class="s-num">Cases to Order</th>'
+    + '<th class="s-num">Packs/Case</th>'
+    + '<th class="s-num">Reorder Qty (Pkgs)</th>'
+    + '<th class="s-num">Daily</th>'
+    + '<th class="s-num">DOH</th>'
+    + '<th class="s-num">Est. Cost</th>'
+    + '<th>Urgency</th>'
+    + '</tr></thead><tbody>';
+
+  allRows.forEach(function(r){
+    h += '<tr data-u="'+r.urgency+'">'
+      + '<td class="s-mono" style="font-weight:600">'+r.pn+'</td>'
+      + '<td class="s-mono" style="color:var(--text2)">'+r.sku+'</td>'
+      + '<td class="num mono" style="font-weight:700;font-size:14px;color:var(--accent)">'+r._casesToOrder+'</td>'
+      + '<td class="num mono">'+r._packsPerCase+'</td>'
+      + '<td class="num mono">'+r.reorderQty+'</td>'
+      + '<td class="num mono">'+(r.daily>0?r.daily.toFixed(2):'—')+'</td>'
+      + '<td class="num mono">'+(r.doh!==null?Math.round(r.doh)+'d':'—')+'</td>'
+      + '<td class="num mono">'+(r._casesCost>0?'$'+fmt0(r._casesCost):'—')+'</td>'
+      + '<td><span class="badge '+r.urgency+'">'+r.urgency.toUpperCase()+'</span></td>'
+      + '</tr>';
+  });
+  h += '</tbody></table>';
+  wrap.innerHTML = h;
+}
+
+function exportPOCases() {
+  var allRows = RO.jq.concat(RO.eff).filter(function(r){ return r.reorderQty > 0; });
+  if (!allRows.length) { salesToast('No items to export', 'error'); return; }
+  allRows.sort(function(a,b){
+    var o={critical:0,watch:1,ok:2};
+    return o[a.urgency]-o[b.urgency] || b.daily-a.daily;
+  });
+  var lines = ['Part Number,Base SKU,Cases to Order,Packs per Case,Reorder Qty (Pkgs),Daily Velocity,Days on Hand,Est. Cost,Urgency'];
+  allRows.forEach(function(r){
+    var packsPerCase = r.upcData
+      ? (r.upcData.packSize > 1 ? Math.floor(r.upcData.unitsPerCase / r.upcData.packSize) : r.upcData.unitsPerCase)
+      : 1;
+    var casesToOrder = packsPerCase > 0 ? Math.ceil(r.reorderQty / packsPerCase) : '';
+    var casesCost    = (casesToOrder && r.cogs) ? casesToOrder * packsPerCase * r.cogs : '';
+    lines.push([
+      r.pn, r.sku, casesToOrder, packsPerCase, r.reorderQty,
+      r.daily.toFixed(2),
+      r.doh !== null ? Math.round(r.doh) : '',
+      casesCost ? fmt0(casesCost) : '',
+      r.urgency
+    ].join(','));
+  });
+  var blob = new Blob([lines.join('\n')], {type:'text/csv'});
+  var a = document.createElement('a'); a.href = URL.createObjectURL(blob);
+  a.download = 'PO_Cases_'+new Date().toISOString().slice(0,10)+'.csv';
+  a.click();
+  salesToast('PO Cases exported — '+allRows.length+' lines', 'success');
 }
 
 function filterVendor(vendor) {
@@ -5173,10 +5264,11 @@ function renderSkus() {
 
 // ─── TAB SWITCHERS ───────────────────────────────────────────────────────────
 function roTab(name) {
-  ['upload','jq','eff','ai'].forEach(function(t){
+  ['upload','jq','eff','po','ai'].forEach(function(t){
     document.getElementById('ro-tab-'+t).className='sales-tab-btn'+(t===name?' active':'');
     document.getElementById('ro-panel-'+t).className='sales-panel'+(t===name?' active':'');
   });
+  if (name==='po') renderPOCases();
   if (name==='ai' && CALC.jqVendor.length && !document.getElementById('ro-ai-auto-body').dataset.loaded) {
     runAutoInsights('ro');
   }
@@ -5883,6 +5975,18 @@ function salesToast(msg, type) {
       <div class="sales-table-wrap" id="eff-wrap">
         <div class="sales-empty"><div class="sales-empty-icon">📋</div><div class="sales-empty-title">No data yet</div><div class="sales-empty-sub">Upload reports and click "Upload All &amp; Build Plan"</div></div>
       </div>
+    </div>
+
+    <!-- PO Cases Tab -->
+    <div class="sales-panel" id="ro-panel-po">
+      <div class="sales-section-header">
+        <div>
+          <div class="sales-section-title">Purchase Order — Cases to Order</div>
+          <div class="sales-section-sub" id="po-summary">Load data to see recommendations</div>
+        </div>
+        <button class="btn btn-primary" style="font-size:12px" onclick="exportPOCases()">⬇ Export CSV</button>
+      </div>
+      <div id="po-wrap" style="overflow-x:auto"></div>
     </div>
 
     <!-- AI Tab - Reorder -->
