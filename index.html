@@ -4448,7 +4448,8 @@ var SALES_WORKER_URL = "https://xfitting-lookup.alfixedinc88.workers.dev";
 // Staged files: { Amz30: [[row,...]], Amz90: [...], ... }
 var staged = {};
 // Calculated data read back from sheet
-var CALC = { partSales:[], skuSales:[], jqVendor:[], effVendor:[], cogs:{}, whStock:{} };
+var CALC = { partSales:[], skuSales:[], jqVendor:[], effVendor:[], cogs:{}, whStock:{}, upc:{} };
+// upc: { partNum.toLowerCase() -> { unitsPerCase, packSize } }
 // Processed reorder rows
 var RO = { jq:[], eff:[] };
 // Dashboard data
@@ -4461,27 +4462,51 @@ var toastTimer = null;
 // ─── WAREHOUSE STOCK ─────────────────────────────────────────────────────────
 async function salesLoadWarehouseStock() {
   if (!SALES_WORKER_URL) return;
-  // Same col indices as AWD planner: col6=partNum, col7=location, col8=cases
+  // Fetch Master_List (WH cases) and AWD_Master (unitsPerCase) in parallel
   var SKIP = new Set(['push fit','name','location','case','each case quantity','date arrive','total quantity','brand','uint price','total','type','sku','']);
   try {
-    var res  = await fetch(SALES_WORKER_URL + '?sheet=Master_List');
-    var json = await res.json();
-    if (json.error) throw new Error(json.error);
-    var rows = (json.values || []).map(function(r){ while(r.length < 16) r.push(''); return r; });
-    CALC.whStock = {};
-    for (var i = 1; i < rows.length; i++) {
-      var r = rows[i];
-      var partNum = String(r[6] || '').trim();
-      if (!partNum || partNum.length < 2) continue;
-      if (SKIP.has(partNum.toLowerCase())) continue;
-      var casesRaw = r[8];
-      var casesNum = (casesRaw !== '' && casesRaw !== null && casesRaw !== undefined) ? parseFloat(casesRaw) : null;
-      if (!casesNum || casesNum <= 0) continue;
-      var key = partNum.toLowerCase();
-      if (!CALC.whStock[key]) CALC.whStock[key] = [];
-      CALC.whStock[key].push({ location: String(r[7]||'').trim(), units: casesNum });
+    var [wh, awd] = await Promise.all([
+      fetch(SALES_WORKER_URL + '?sheet=Master_List').then(function(r){ return r.json(); }),
+      fetch(SALES_WORKER_URL + '?sheet=AWD_Master').then(function(r){ return r.json(); })
+    ]);
+
+    // Build whStock from Master_List
+    if (!wh.error) {
+      var rows = (wh.values || []).map(function(r){ while(r.length < 16) r.push(''); return r; });
+      CALC.whStock = {};
+      for (var i = 1; i < rows.length; i++) {
+        var r = rows[i];
+        var partNum = String(r[6] || '').trim();
+        if (!partNum || partNum.length < 2) continue;
+        if (SKIP.has(partNum.toLowerCase())) continue;
+        var casesRaw = r[8];
+        var casesNum = (casesRaw !== '' && casesRaw !== null && casesRaw !== undefined) ? parseFloat(casesRaw) : null;
+        if (!casesNum || casesNum <= 0) continue;
+        var key = partNum.toLowerCase();
+        if (!CALC.whStock[key]) CALC.whStock[key] = [];
+        CALC.whStock[key].push({ location: String(r[7]||'').trim(), units: casesNum });
+      }
     }
-    console.log('[Sales WH] loaded', Object.keys(CALC.whStock).length, 'parts');
+
+    // Build upc lookup from AWD_Master — col5=unitsPerCase, col7=partNum, col8=sku
+    // Part suffix =10X means 10-piece pack; unitsPerCase / packSize = packs per case
+    if (!awd.error) {
+      var awdRows = (awd.values || []).slice(1);
+      CALC.upc = {};
+      awdRows.forEach(function(r) {
+        var partNum = String(r[7] || '').trim();
+        if (!partNum || partNum.length < 2) return;
+        var upcVal = parseFloat(r[5]) || 0;
+        if (upcVal <= 0) return;
+        // Parse pack size from suffix: XX-123=10X → packSize=10
+        var packSize = 1;
+        var suffixMatch = partNum.match(/=(\d+)[xX]/);
+        if (suffixMatch) packSize = parseInt(suffixMatch[1]) || 1;
+        CALC.upc[partNum.toLowerCase()] = { unitsPerCase: upcVal, packSize: packSize };
+      });
+    }
+
+    console.log('[Sales WH] loaded', Object.keys(CALC.whStock).length, 'parts,', Object.keys(CALC.upc).length, 'with UPC data');
   } catch(e) {
     console.error('[Sales WH load]', e);
   }
@@ -4704,6 +4729,14 @@ function getWH(partNum) {
   var rows = CALC.whStock[(partNum||'').toLowerCase()] || [];
   return rows.reduce(function(s,r){ return s + (r.units||r.casesNum||0); }, 0);
 }
+function getUPC(partNum) {
+  // Returns { unitsPerCase, packSize, packsPerCase } or null
+  var key = (partNum||'').toLowerCase();
+  var d = CALC.upc[key];
+  if (!d) return null;
+  var packsPerCase = d.packSize > 1 ? Math.floor(d.unitsPerCase / d.packSize) : null;
+  return { unitsPerCase: d.unitsPerCase, packSize: d.packSize, packsPerCase: packsPerCase };
+}
 function getPartSales(partNum) {
   var pn = (partNum||'').toUpperCase();
   return CALC.partSales.find(function(r){ return (r['Part#']||'').toString().toUpperCase()===pn; }) || null;
@@ -4745,9 +4778,12 @@ function buildVendorRows(vendorData, partCol, vendor) {
     var s30  = ps ? (n(ps['AMZ 30 sales'])+n(ps['eBay 30 sales'])+n(ps['XF 30 sales'])) : 0;
 
     var whUnits  = hasWH ? getWH(pn) : null;
+    var upcData  = getUPC(pn); // { unitsPerCase, packSize, packsPerCase } or null
+    // DOH: convert WH cases to units using unitsPerCase for accuracy
+    var whUnitsTotal = (whUnits !== null && upcData) ? whUnits * upcData.unitsPerCase : whUnits;
     var targetStock = Math.ceil(daily * target);
-    var reorderQty  = Math.max(0, Math.ceil(targetStock - (whUnits!==null ? whUnits : 0)));
-    var doh = (whUnits!==null && daily>0) ? whUnits/daily : null;
+    var reorderQty  = Math.max(0, Math.ceil(targetStock - (whUnitsTotal!==null ? whUnitsTotal : 0)));
+    var doh = (whUnitsTotal!==null && daily>0) ? whUnitsTotal/daily : null;
 
     var urgency = 'ok';
     if (doh!==null) {
@@ -4762,7 +4798,7 @@ function buildVendorRows(vendorData, partCol, vendor) {
     var vAmzU30 = n(r['AMZ 30 Units']||r['AMZ 30 units']||'');
     var vAmzU90 = n(r['AMZ 90 Units']||r['AMZ 90 units']||'');
 
-    return { pn, sku, daily, u30, u90, s30, whUnits, doh, targetStock, reorderQty, urgency, cogs,
+    return { pn, sku, daily, u30, u90, s30, whUnits, whUnitsTotal, upcData, doh, targetStock, reorderQty, urgency, cogs,
              estCost:reorderQty*cogs, vAmzU30, vAmzU90 };
   }).filter(Boolean).sort(function(a,b){
     var o={critical:0,watch:1,ok:2};
@@ -5198,11 +5234,17 @@ function buildReorderContext() {
 
   // Full detail row — used for critical and watch
   function fmtFull(r) {
+    var packInfo = r.upcData
+      ? '|upc:' + r.upcData.unitsPerCase
+        + (r.upcData.packSize > 1 ? '|pack:' + r.upcData.packSize + 'x|packs/case:' + r.upcData.packsPerCase : '')
+        + '|wh_units:' + (r.whUnitsTotal !== null ? r.whUnitsTotal : 'N/A')
+      : '';
     return r.pn
       + '|d:' + r.daily.toFixed(2)
       + '|30d:' + r.u30
       + '|90d:' + r.u90
-      + '|wh:' + (r.whUnits !== null ? r.whUnits : 'N/A')
+      + '|wh_cases:' + (r.whUnits !== null ? r.whUnits : 'N/A')
+      + packInfo
       + '|doh:' + (r.doh !== null ? Math.round(r.doh) + 'd' : 'N/A')
       + '|reorder:' + r.reorderQty
       + (r.estCost ? '|cost:$' + r.estCost.toFixed(0) : '');
@@ -5315,10 +5357,19 @@ function buildDashboardContext() {
 function getSystemPrompt(app) {
   var base = 'You are a business analyst for XFitting, a plumbing fittings company selling on Amazon, eBay, and Shopify. '
     +'Be concise and specific. Use exact part numbers from the data. '
-    +'Use ### headers and bullet points. Lead with critical issues.';
+    +'Use ### headers and bullet points. Lead with critical issues.\n\n'
+    +'BUSINESS RULES — read carefully before analyzing:\n'
+    +'- WH stock (wh_cases) is measured in CASES, not individual units\n'
+    +'- Each case holds a fixed number of units (unitsPerCase) specific to each part\n'
+    +'- Part number suffixes indicate retail pack size: =10X means sold as 10-piece packs, =5X means 5-piece packs, etc. No suffix = single unit\n'
+    +'- packsPerCase = unitsPerCase ÷ packSize. Example: part XX=10X with 200 units/case = 20 packs of 10 per case\n'
+    +'- wh_units = wh_cases × unitsPerCase (total individual units in warehouse). This is what doh is calculated from\n'
+    +'- Daily velocity and all sales figures are in INDIVIDUAL UNITS, not cases or packs\n'
+    +'- doh (days on hand) = wh_units ÷ daily velocity — already converted, do not divide again\n'
+    +'- When recommending reorder quantities, think in cases (what you order from vendor) not units';
   return base + (app==='ro'
-    ? ' Focus on reorder priorities, days-on-hand risk, and PO cash flow. Flag stockout risk within lead time.'
-    : ' Focus on sales trends, platform performance, and growth opportunities. Flag declines and wins.');
+    ? '\n\nFocus on reorder priorities, days-on-hand risk, and PO cash flow. Flag stockout risk within lead time.'
+    : '\n\nFocus on sales trends, platform performance, and growth opportunities. Flag declines and wins.');
 }
 
 async function runAutoInsights(app) {
