@@ -4749,6 +4749,9 @@ function getPartSales(partNum) {
 }
 
 function buildReorderRows() {
+  console.log('[buildReorderRows] jqVendor:', CALC.jqVendor.length, '| upc keys:', Object.keys(CALC.upc).length, '| whStock keys:', Object.keys(CALC.whStock).length);
+  if (CALC.jqVendor.length > 0) console.log('[buildReorderRows] first jq pn:', JSON.stringify((CALC.jqVendor[0]['X Part #']||'').toString().trim()));
+  if (Object.keys(CALC.upc).length > 0) console.log('[buildReorderRows] first upc key:', JSON.stringify(Object.keys(CALC.upc)[0]));
   RO.jq = buildVendorRows(CALC.jqVendor, 'X Part #', 'jq');
   RO.eff = buildVendorRows(CALC.effVendor, 'Part Number', 'eff');
   renderVendor('jq');
