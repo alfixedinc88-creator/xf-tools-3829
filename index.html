@@ -5291,7 +5291,9 @@ function renderParts() {
   var wrap = document.getElementById('parts-wrap');
   if (!rows.length){ wrap.innerHTML='<div class="sales-empty"><div class="sales-empty-icon">🔍</div><div class="sales-empty-title">No results</div></div>'; return; }
   function ppth(label, col, style) {
-    return '<th class="sortable-th" style="'+(style||'')+'" onclick="partsTableSortBy(\''+col+'\')">'+label+sortArrow(partsTableSort,col)+'</th>';
+    var isNum = style && style.indexOf('right') > -1;
+    var cls = 'sortable-th' + (isNum ? ' s-num' : '');
+    return '<th class="'+cls+'" style="'+(style||'')+'" onclick="partsTableSortBy(\''+col+'\')">'+label+sortArrow(partsTableSort,col)+'</th>';
   }
   var h='<table style="width:100%"><thead><tr>'
     +ppth('Part #','pn','width:120px;min-width:120px;max-width:160px')
@@ -5309,13 +5311,19 @@ function renderParts() {
   var DL={'amz':'<span class="sales-plat-badge sales-plat-amz">AMZ</span>','ebay':'<span class="sales-plat-badge sales-plat-ebay">eBay</span>','xf':'<span class="sales-plat-badge sales-plat-xf">XF</span>','tie':'<span class="sales-plat-badge sales-plat-tie">TIE</span>'};
   var TL={'up':'<span style="font-size:11px;color:var(--green);font-family:var(--mono)">▲ Growing</span>','down':'<span style="font-size:11px;color:var(--red);font-family:var(--mono)">▼ Slowing</span>','flat':'<span style="font-size:11px;color:var(--text3);font-family:var(--mono)">● Stable</span>'};
   rows.forEach(function(r){
-    h+='<tr><td class="s-mono" style="font-weight:600;max-width:160px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">'+r.pn+'</td>'
-      +'<td>'+(DL[r.dom]||'')+'</td><td>'+(TL[r.trend]||'')+'</td>'
-      +'<td class="num mono">'+r.amzU30+'</td><td class="num mono" style="color:var(--text3)">'+r.amzU90+'</td>'
-      +'<td class="num mono">'+r.ebayU30+'</td><td class="num mono" style="color:var(--text3)">'+r.ebayU90+'</td>'
-      +'<td class="num mono">'+r.xfU30+'</td><td class="num mono" style="color:var(--text3)">'+r.xfU90+'</td>'
-      +'<td class="num mono" style="font-weight:600">'+r.u30+'</td>'
-      +'<td class="num mono" style="color:var(--green)">$'+fmt0(r.s30)+'</td></tr>';
+    h+='<tr>'
+      +'<td class="s-mono" style="font-weight:600;max-width:160px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">'+r.pn+'</td>'
+      +'<td style="text-align:left">'+(DL[r.dom]||'')+'</td>'
+      +'<td style="text-align:left">'+(TL[r.trend]||'')+'</td>'
+      +'<td class="s-num num mono">'+r.amzU30+'</td>'
+      +'<td class="s-num num mono" style="color:var(--text3)">'+r.amzU90+'</td>'
+      +'<td class="s-num num mono">'+r.ebayU30+'</td>'
+      +'<td class="s-num num mono" style="color:var(--text3)">'+r.ebayU90+'</td>'
+      +'<td class="s-num num mono">'+r.xfU30+'</td>'
+      +'<td class="s-num num mono" style="color:var(--text3)">'+r.xfU90+'</td>'
+      +'<td class="s-num num mono" style="font-weight:600">'+r.u30+'</td>'
+      +'<td class="s-num num mono" style="color:var(--green)">$'+fmt0(r.s30)+'</td>'
+      +'</tr>';
   });
   wrap.innerHTML=h+'</tbody></table>';
 }
@@ -5382,8 +5390,18 @@ function dbTab(name) {
   }
 }
 function setSort(type, s) {
-  if (type==='parts') { partsSort=s; renderParts(); }
-  else { skusSort=s; renderSkus(); }
+  // Map toggle option names to actual column keys
+  var colMap = { units: type==='parts'?'u30':'u30', sales: type==='parts'?'s30':'s30', alpha: type==='parts'?'pn':'sku' };
+  var col = colMap[s] || s;
+  if (type==='parts') {
+    partsTableSort.col = col;
+    partsTableSort.dir = (s==='alpha') ? 1 : -1;
+    renderParts();
+  } else {
+    skusTableSort.col = col;
+    skusTableSort.dir = (s==='alpha') ? 1 : -1;
+    renderSkus();
+  }
   var id = type==='parts'?'parts-toggle':'skus-toggle';
   var opts=['units','sales','alpha'];
   document.querySelectorAll('#'+id+' .toggle-opt').forEach(function(b,i){
@@ -6020,7 +6038,7 @@ function salesToast(msg, type) {
         <span class="sales-config-label">LEAD TIME</span>
         <input type="number" class="sales-config-input" id="jq-lead" value="90" min="1" max="180">
         <div class="sales-config-div"></div>
-        <button class="sales-apply-btn" onclick="renderVendor('jq')">Recalculate</button>
+        <button class="sales-apply-btn" onclick="buildReorderRows()">Recalculate</button>
       </div>
       <div class="sales-po-bar">
         <div class="sales-po-summary">
@@ -6028,7 +6046,7 @@ function salesToast(msg, type) {
           <strong id="jq-watch">0</strong> watch &nbsp;·&nbsp;
           <strong id="jq-cost">$0</strong> est. PO value
         </div>
-        <button class="sales-export-btn" onclick="exportPO('jq')">⬇ Export JQ PO (.csv)</button>
+        <button class="sales-export-btn" onclick="exportPO('jq')">⬇ Export JQ PO (.txt)</button>
       </div>
       <div class="sales-search-bar">
         <input type="text" class="sales-search-input" id="jq-search" placeholder="Search part number..." oninput="filterVendor('jq')">
@@ -6053,7 +6071,7 @@ function salesToast(msg, type) {
         <span class="sales-config-label">LEAD TIME</span>
         <input type="number" class="sales-config-input" id="eff-lead" value="90" min="1" max="180">
         <div class="sales-config-div"></div>
-        <button class="sales-apply-btn" onclick="renderVendor('eff')">Recalculate</button>
+        <button class="sales-apply-btn" onclick="buildReorderRows()">Recalculate</button>
       </div>
       <div class="sales-po-bar">
         <div class="sales-po-summary">
@@ -6061,7 +6079,7 @@ function salesToast(msg, type) {
           <strong id="eff-watch">0</strong> watch &nbsp;·&nbsp;
           <strong id="eff-cost">$0</strong> est. PO value
         </div>
-        <button class="sales-export-btn" onclick="exportPO('eff')">⬇ Export EFF PO (.csv)</button>
+        <button class="sales-export-btn" onclick="exportPO('eff')">⬇ Export EFF PO (.txt)</button>
       </div>
       <div class="sales-search-bar">
         <input type="text" class="sales-search-input" id="eff-search" placeholder="Search part number..." oninput="filterVendor('eff')">
