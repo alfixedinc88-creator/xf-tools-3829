@@ -4506,6 +4506,10 @@ async function salesLoadWarehouseStock() {
     }
 
     console.log('[Sales WH] loaded', Object.keys(CALC.whStock).length, 'parts,', Object.keys(CALC.upc).length, 'with UPC data');
+    if (Object.keys(CALC.upc).length === 0) {
+      console.warn('[Sales WH] CALC.upc is empty — awd.error:', awd && awd.error, '| awd rows:', awd && awd.values && awd.values.length);
+      salesToast('⚠ UPC data empty — check console for AWD_Master error', 'error');
+    }
   } catch(e) {
     console.error('[Sales WH load]', e);
   }
