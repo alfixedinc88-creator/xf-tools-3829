@@ -4476,24 +4476,24 @@ async function salesLoadWarehouseStock() {
       var partNum = String(r[6] || '').trim();
       if (!partNum || partNum.length < 2) continue;
       if (SKIP.has(partNum.toLowerCase())) continue;
-      var casesRaw = r[8];
-      var casesNum = (casesRaw !== '' && casesRaw !== null && casesRaw !== undefined) ? parseFloat(casesRaw) : null;
-      if (!casesNum || casesNum <= 0) continue;
       var key = partNum.toLowerCase();
+
+      // Always collect unitsPerCase from col J — even if no inventory
+      if (!CALC.upc[key]) {
+        var upcDirect = parseFloat(String(r[9]||'').replace(/,/g,'')) || 0;
+        if (upcDirect > 0) {
+          var packSize = 1;
+          var suffixMatch = partNum.match(/=(\d+)[xX]?$/);
+          if (suffixMatch) packSize = parseInt(suffixMatch[1]) || 1;
+          CALC.upc[key] = { unitsPerCase: upcDirect, packSize: packSize };
+        }
+      }
+
+      // Only add to whStock if cases > 0
+      var casesNum = parseFloat(r[8]) || 0;
+      if (casesNum <= 0) continue;
       if (!CALC.whStock[key]) CALC.whStock[key] = [];
       CALC.whStock[key].push({ location: String(r[7]||'').trim(), units: casesNum });
-      // Col L (index 11) = total unit count for this row
-      // unitsPerCase = totalUnits / cases
-      var totalUnits = parseFloat(String(r[11]||'').replace(/,/g,'')) || 0;
-      var upcDirect  = parseFloat(String(r[9]||'').replace(/,/g,'')) || 0;
-      // Use col J (units per case) directly if available, else derive from col L ÷ col I
-      var unitsPerCaseVal = upcDirect > 0 ? upcDirect : (totalUnits > 0 && casesNum > 0 ? Math.round(totalUnits / casesNum) : 0);
-      if (unitsPerCaseVal > 0 && !CALC.upc[key]) {
-        var packSize = 1;
-        var suffixMatch = partNum.match(/=(\d+)[xX]?$/);
-        if (suffixMatch) packSize = parseInt(suffixMatch[1]) || 1;
-        CALC.upc[key] = { unitsPerCase: unitsPerCaseVal, packSize: packSize };
-      }
     }
     console.log('[Sales WH] loaded', Object.keys(CALC.whStock).length, 'parts,', Object.keys(CALC.upc).length, 'with UPC data');
   } catch(e) {
