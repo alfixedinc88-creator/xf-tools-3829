@@ -1620,6 +1620,15 @@ input[type=checkbox]{width:15px;height:15px;cursor:pointer;accent-color:var(--bl
 
 
 
+
+.sortable-th {
+  cursor: pointer;
+  user-select: none;
+  white-space: nowrap;
+}
+.sortable-th:hover { background: var(--bg3); }
+.sort-arrow { font-size: 10px; margin-left: 3px; color: var(--text3); }
+.sort-arrow.active { color: var(--accent); }
 </style>
 </head>
 <body>
@@ -4457,6 +4466,11 @@ var RO = { jq:[], eff:[] };
 // Dashboard data
 var DB_PARTS = [], DB_SKUS = [];
 var partsSort = 'units', skusSort = 'units';
+// Sort state for each table: { col: 'fieldName', dir: 1 (asc) or -1 (desc) }
+var vendorSort = { jq: { col: 'urgency', dir: 1 }, eff: { col: 'urgency', dir: 1 } };
+var poSort     = { col: 'urgency', dir: 1 };
+var partsTableSort = { col: 'u30', dir: -1 };
+var skusTableSort  = { col: 'u30', dir: -1 };
 var lastUpdated = null;
 var aiHistory = { ro: [], db: [] };
 var toastTimer = null;
@@ -4837,13 +4851,23 @@ function renderVendor(vendor) {
   var hasCOGS = Object.keys(CALC.cogs).length>0;
   var hasUPC  = Object.keys(CALC.upc).length>0;
 
+  var vs = vendorSort[vendor];
+  function vth(label, col, align) {
+    var cls = (align||'') + ' sortable-th';
+    return '<th class="'+cls+'" onclick="vendorSortBy(\''+vendor+'\',\''+col+'\')">'+label+sortArrow(vs,col)+'</th>';
+  }
   var h = '<table><thead><tr>'
-    +'<th></th><th>Part #</th><th>Base SKU</th>'
-    +'<th class="s-num">Daily</th><th class="s-num">30d Units</th><th class="s-num">90d Units</th>';
-  if (hasWH) h += '<th style="text-align:center;white-space:nowrap">WH Stock</th><th style="text-align:center;white-space:nowrap">Days On Hand</th>';
-  h += '<th class="s-num">Cases to Order</th><th class="s-num">Reorder Qty (Pkgs)</th>';
-  if (hasCOGS) h += '<th class="s-num">COGS</th><th class="s-num">Est. Cost</th>';
-  h += '<th>Status</th></tr></thead><tbody>';
+    +'<th></th>'
+    +vth('Part #','pn')
+    +vth('Base SKU','sku')
+    +vth('Daily','daily','s-num')
+    +vth('30d Units','u30','s-num')
+    +vth('90d Units','u90','s-num');
+  if (hasWH) h += vth('WH Stock','whUnitsTotal','s-num') + vth('Days On Hand','doh','s-num');
+  h += vth('Cases to Order','_casesToOrder','s-num')
+    +  vth('Reorder Qty (Pkgs)','reorderQty','s-num');
+  if (hasCOGS) h += vth('COGS','cogs','s-num') + vth('Est. Cost','estCost','s-num');
+  h += vth('Status','urgency') + '</tr></thead><tbody>';
 
   rows.forEach(function(r) {
     var dohCell = '';
@@ -4911,10 +4935,7 @@ function renderVendor(vendor) {
 
 function renderPOCases() {
   var allRows = RO.jq.concat(RO.eff).filter(function(r){ return r.reorderQty > 0; });
-  allRows.sort(function(a,b){
-    var o={critical:0,watch:1,ok:2};
-    return o[a.urgency]-o[b.urgency] || b.daily-a.daily;
-  });
+  allRows = sortRows(allRows, poSort.col, poSort.dir);
 
   var totalCases = 0, totalCost = 0;
   allRows.forEach(function(r){
@@ -4938,16 +4959,20 @@ function renderPOCases() {
     return;
   }
 
+  function poth(label, col, align) {
+    var cls = (align||'') + ' sortable-th';
+    return '<th class="'+cls+'" onclick="poSortBy(\''+col+'\')">'+label+sortArrow(poSort,col)+'</th>';
+  }
   var h = '<table style="width:100%"><thead><tr>'
-    + '<th>Part #</th>'
-    + '<th>Base SKU</th>'
-    + '<th class="s-num">Cases to Order</th>'
-    + '<th class="s-num">Packs/Case</th>'
-    + '<th class="s-num">Reorder Qty (Pkgs)</th>'
-    + '<th class="s-num">Daily</th>'
-    + '<th class="s-num">DOH</th>'
-    + '<th class="s-num">Est. Cost</th>'
-    + '<th>Urgency</th>'
+    + poth('Part #','pn')
+    + poth('Base SKU','sku')
+    + poth('Cases to Order','_casesToOrder','s-num')
+    + poth('Packs/Case','_packsPerCase','s-num')
+    + poth('Reorder Qty (Pkgs)','reorderQty','s-num')
+    + poth('Daily','daily','s-num')
+    + poth('DOH','doh','s-num')
+    + poth('Est. Cost','_casesCost','s-num')
+    + poth('Urgency','urgency')
     + '</tr></thead><tbody>';
 
   allRows.forEach(function(r){
@@ -4965,6 +4990,11 @@ function renderPOCases() {
   });
   h += '</tbody></table>';
   wrap.innerHTML = h;
+}
+
+function poSortBy(col) {
+  toggleSort(poSort, col);
+  renderPOCases();
 }
 
 function exportPOCases() {
@@ -4994,6 +5024,44 @@ function exportPOCases() {
   a.download = 'PO_Cases_'+new Date().toISOString().slice(0,10)+'.csv';
   a.click();
   salesToast('PO Cases exported — '+allRows.length+' lines', 'success');
+}
+
+
+// ─── SORT HELPERS ────────────────────────────────────────────────────────────
+function sortArrow(state, col) {
+  if (state.col !== col) return '<span class="sort-arrow">⇅</span>';
+  return '<span class="sort-arrow active">' + (state.dir === 1 ? '↑' : '↓') + '</span>';
+}
+function toggleSort(state, col) {
+  if (state.col === col) state.dir *= -1;
+  else { state.col = col; state.dir = -1; } // default desc on new col
+}
+function sortRows(rows, col, dir) {
+  return rows.slice().sort(function(a, b) {
+    var av = a[col], bv = b[col];
+    // urgency special sort
+    if (col === 'urgency') { var o={critical:0,watch:1,ok:2}; av=o[av]||0; bv=o[bv]||0; }
+    if (av === null || av === undefined) av = -Infinity;
+    if (bv === null || bv === undefined) bv = -Infinity;
+    if (typeof av === 'string') return dir * av.localeCompare(bv);
+    return dir * (av - bv);
+  });
+}
+
+function vendorSortBy(vendor, col) {
+  toggleSort(vendorSort[vendor], col);
+  // re-sort the rows array in place
+  var state = vendorSort[vendor];
+  var rows = RO[vendor];
+  // compute _casesToOrder on rows that don't have it yet
+  rows.forEach(function(r) {
+    if (r._casesToOrder === undefined) {
+      var ppc = r.upcData ? (r.upcData.packSize > 1 ? Math.floor(r.upcData.unitsPerCase/r.upcData.packSize) : r.upcData.unitsPerCase) : 1;
+      r._casesToOrder = ppc > 0 ? Math.ceil(r.reorderQty / ppc) : 0;
+    }
+  });
+  RO[vendor] = sortRows(rows, state.col, state.dir);
+  renderVendor(vendor);
 }
 
 function filterVendor(vendor) {
@@ -5219,15 +5287,24 @@ function renderParts() {
   var rows = DB_PARTS.filter(function(r){
     return (!q||r.pn.toLowerCase().includes(q)) && (pf==='all'||r.dom===pf);
   });
-  var sf = {units:function(a,b){return b.u30-a.u30;},sales:function(a,b){return b.s30-a.s30;},alpha:function(a,b){return a.pn.localeCompare(b.pn);}};
-  rows.sort(sf[partsSort]);
+  rows = sortRows(rows, partsTableSort.col, partsTableSort.dir);
   var wrap = document.getElementById('parts-wrap');
   if (!rows.length){ wrap.innerHTML='<div class="sales-empty"><div class="sales-empty-icon">🔍</div><div class="sales-empty-title">No results</div></div>'; return; }
-  var h='<table style="width:100%"><thead><tr><th style="width:120px;min-width:120px;max-width:160px">Part #</th><th style="width:100px">Best Platform</th><th style="width:80px">Trend</th>'
-    +'<th class="s-num">AMZ 30d</th><th class="s-num">AMZ 90d</th>'
-    +'<th class="s-num">eBay 30d</th><th class="s-num">eBay 90d</th>'
-    +'<th class="s-num">XF 30d</th><th class="s-num">XF 90d</th>'
-    +'<th class="s-num">Total 30d</th><th class="s-num">Rev 30d</th>'
+  function ppth(label, col, style) {
+    return '<th class="sortable-th" style="'+(style||'')+'" onclick="partsTableSortBy(\''+col+'\')">'+label+sortArrow(partsTableSort,col)+'</th>';
+  }
+  var h='<table style="width:100%"><thead><tr>'
+    +ppth('Part #','pn','width:120px;min-width:120px;max-width:160px')
+    +ppth('Best Platform','dom','width:100px')
+    +ppth('Trend','trend','width:80px')
+    +ppth('AMZ 30d','amzU30','text-align:right')
+    +ppth('AMZ 90d','amzU90','text-align:right')
+    +ppth('eBay 30d','ebayU30','text-align:right')
+    +ppth('eBay 90d','ebayU90','text-align:right')
+    +ppth('XF 30d','xfU30','text-align:right')
+    +ppth('XF 90d','xfU90','text-align:right')
+    +ppth('Total 30d','u30','text-align:right')
+    +ppth('Rev 30d','s30','text-align:right')
     +'</tr></thead><tbody>';
   var DL={'amz':'<span class="sales-plat-badge sales-plat-amz">AMZ</span>','ebay':'<span class="sales-plat-badge sales-plat-ebay">eBay</span>','xf':'<span class="sales-plat-badge sales-plat-xf">XF</span>','tie':'<span class="sales-plat-badge sales-plat-tie">TIE</span>'};
   var TL={'up':'<span style="font-size:11px;color:var(--green);font-family:var(--mono)">▲ Growing</span>','down':'<span style="font-size:11px;color:var(--red);font-family:var(--mono)">▼ Slowing</span>','flat':'<span style="font-size:11px;color:var(--text3);font-family:var(--mono)">● Stable</span>'};
@@ -5243,17 +5320,29 @@ function renderParts() {
   wrap.innerHTML=h+'</tbody></table>';
 }
 
+function partsTableSortBy(col) {
+  toggleSort(partsTableSort, col);
+  renderParts();
+}
+
 function renderSkus() {
   var q = (document.getElementById('skus-search').value||'').toLowerCase();
   var rows = DB_SKUS.filter(function(r){ return !q||r.sku.toLowerCase().includes(q); });
-  var sf={units:function(a,b){return b.u30-a.u30;},sales:function(a,b){return b.s30-a.s30;},alpha:function(a,b){return a.sku.localeCompare(b.sku);}};
-  rows.sort(sf[skusSort]);
+  rows = sortRows(rows, skusTableSort.col, skusTableSort.dir);
   var wrap=document.getElementById('skus-wrap');
   if (!rows.length){ wrap.innerHTML='<div class="sales-empty"><div class="sales-empty-icon">🔍</div><div class="sales-empty-title">No results</div></div>'; return; }
   var TL={'up':'<span style="font-size:11px;color:var(--green);font-family:var(--mono)">▲ Growing</span>','down':'<span style="font-size:11px;color:var(--red);font-family:var(--mono)">▼ Slowing</span>','flat':'<span style="font-size:11px;color:var(--text3);font-family:var(--mono)">● Stable</span>'};
-  var h='<table><thead><tr><th>Base SKU</th><th>Trend</th>'
-    +'<th class="s-num">30d Units</th><th class="s-num">90d Units</th>'
-    +'<th class="s-num">Daily Avg</th><th class="s-num">30d Sales</th><th class="s-num">90d Sales</th>'
+  function skth(label, col) {
+    return '<th class="sortable-th" onclick="skusTableSortBy(\''+col+'\')">'+label+sortArrow(skusTableSort,col)+'</th>';
+  }
+  var h='<table><thead><tr>'
+    +skth('Base SKU','sku')
+    +skth('Trend','trend')
+    +skth('30d Units','u30')
+    +skth('90d Units','u90')
+    +skth('Daily Avg','daily')
+    +skth('30d Sales','s30')
+    +skth('90d Sales','s90')
     +'</tr></thead><tbody>';
   rows.forEach(function(r){
     h+='<tr><td class="s-mono" style="font-weight:600">'+r.sku+'</td>'
@@ -5265,6 +5354,11 @@ function renderSkus() {
       +'<td class="num mono" style="color:var(--text3)">$'+fmt0(r.s90)+'</td></tr>';
   });
   wrap.innerHTML=h+'</tbody></table>';
+}
+
+function skusTableSortBy(col) {
+  toggleSort(skusTableSort, col);
+  renderSkus();
 }
 
 // ─── TAB SWITCHERS ───────────────────────────────────────────────────────────
