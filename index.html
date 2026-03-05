@@ -4683,9 +4683,12 @@ async function silentLoadSaved() {
   try {
     await Promise.all([ salesLoadWarehouseStock(), readCalcTabs() ]);
     lastUpdated = new Date();
+    console.log('[silentLoadSaved] jqVendor:', CALC.jqVendor.length, '| upc:', Object.keys(CALC.upc).length);
     buildReorderRows();
     buildDashboardData();
-  } catch(e) { /* silent — sheet may be empty on first use */ }
+  } catch(e) {
+    console.error('[silentLoadSaved] error:', e.message, e.stack);
+  }
 }
 
 async function readCalcTabs() {
