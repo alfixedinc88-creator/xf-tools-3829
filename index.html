@@ -4459,7 +4459,7 @@ var SALES_WORKER_URL = "https://xfitting-lookup.alfixedinc88.workers.dev";
 // Staged files: { Amz30: [[row,...]], Amz90: [...], ... }
 var staged = {};
 // Calculated data read back from sheet
-var CALC = { partSales:[], skuSales:[], jqVendor:[], effVendor:[], cogs:{}, whStock:{}, upc:{} };
+var CALC = { partSales:[], skuSales:[], jqVendor:[], effVendor:[], cogs:{}, whStock:{}, upc:{}, itemNames:{} };
 // upc: { partNum.toLowerCase() -> { unitsPerCase, packSize } }
 // Processed reorder rows
 var RO = { jq:[], eff:[] };
@@ -4486,6 +4486,7 @@ async function salesLoadWarehouseStock() {
     var rows = (json.values || []).map(function(r){ while(r.length < 16) r.push(''); return r; });
     CALC.whStock = {};
     CALC.upc = {};
+    CALC.itemNames = {};
     for (var i = 1; i < rows.length; i++) {
       var r = rows[i];
       var partNum = String(r[6] || '').trim();
@@ -4493,6 +4494,11 @@ async function salesLoadWarehouseStock() {
       if (SKIP.has(partNum.toLowerCase())) continue;
       var key = partNum.toLowerCase();
 
+      // Store item name from col E
+      if (!CALC.itemNames[key]) {
+        var itemName = String(r[4] || '').trim();
+        if (itemName) CALC.itemNames[key] = itemName;
+      }
       // Always collect unitsPerCase from col J — even if no inventory
       if (!CALC.upc[key]) {
         var upcDirect = parseFloat(String(r[9]||'').replace(/,/g,'')) || 0;
@@ -5081,14 +5087,12 @@ function exportPO(vendor) {
     return r.reorderQty>0 && (!trs[i] || (trs[i].querySelector('.po-cb')&&trs[i].querySelector('.po-cb').checked));
   });
   if (!out.length) { salesToast('No items to export (all zero qty or unchecked)', 'error'); return; }
-  var lines = ['Part Number,Base SKU,Reorder Qty (Pkgs),Cases to Order,Daily Velocity,30d Units,90d Units,Est. Cost'];
+  var lines = ['Part Number,Item Name,Total Qty (Units)'];
   out.forEach(function(r){
-    var packsPerCase = (r.upcData && r.upcData.packSize > 1)
-      ? Math.floor(r.upcData.unitsPerCase / r.upcData.packSize)
-      : (r.upcData ? r.upcData.unitsPerCase : 1);
-    var casesToOrder = packsPerCase > 0 ? Math.ceil(r.reorderQty / packsPerCase) : '';
-    lines.push([r.pn, r.sku, r.reorderQty, casesToOrder, r.daily.toFixed(2), r.u30, r.u90,
-      r.estCost?fmt0(r.estCost):''].join(','));
+    var itemName = CALC.itemNames[r.pn.toLowerCase()] || '';
+    var totalUnits = r.upcData ? r.reorderQty * r.upcData.packSize : r.reorderQty;
+    // Wrap item name in quotes in case it contains commas
+    lines.push([r.pn, '"'+(itemName||'')+'"', totalUnits].join(','));
   });
   var blob = new Blob([lines.join('\n')],{type:'text/csv'});
   var a = document.createElement('a'); a.href=URL.createObjectURL(blob);
