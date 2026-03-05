@@ -4828,6 +4828,7 @@ function buildVendorRows(vendorData, partCol, vendor) {
 
 function renderVendor(vendor) {
   var rows = RO[vendor];
+  console.log('[renderVendor '+vendor+'] rows:', rows.length, '| upc keys:', Object.keys(CALC.upc).length, '| first upcData:', rows.length ? JSON.stringify(rows[0].upcData) : 'n/a', '| first whUnits:', rows.length ? rows[0].whUnits : 'n/a', '| first whUnitsTotal:', rows.length ? rows[0].whUnitsTotal : 'n/a');
   var crit  = rows.filter(function(r){ return r.urgency==='critical'; }).length;
   var watch = rows.filter(function(r){ return r.urgency==='watch'; }).length;
   var cost  = rows.reduce(function(s,r){ return s+r.estCost; },0);
