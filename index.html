@@ -4494,10 +4494,11 @@ async function salesLoadWarehouseStock() {
       if (SKIP.has(partNum.toLowerCase())) continue;
       var key = partNum.toLowerCase();
 
-      // Store item name from col E
-      if (!CALC.itemNames[key]) {
+      // Store item name: key by col D (base SKU, index 3), value from col E (index 4)
+      var baseSKUKey = String(r[3] || '').trim().toLowerCase();
+      if (baseSKUKey && !CALC.itemNames[baseSKUKey]) {
         var itemName = String(r[4] || '').trim();
-        if (itemName) CALC.itemNames[key] = itemName;
+        if (itemName) CALC.itemNames[baseSKUKey] = itemName;
       }
       // Always collect unitsPerCase from col J — even if no inventory
       if (!CALC.upc[key]) {
@@ -5089,7 +5090,7 @@ function exportPO(vendor) {
   if (!out.length) { salesToast('No items to export (all zero qty or unchecked)', 'error'); return; }
   var lines = ['Part Number,Item Name,Total Qty (Units)'];
   out.forEach(function(r){
-    var itemName = CALC.itemNames[r.pn.toLowerCase()] || '';
+    var itemName = CALC.itemNames[r.sku.toLowerCase()] || CALC.itemNames[r.pn.toLowerCase()] || '';
     var totalUnits = r.upcData ? r.reorderQty * r.upcData.packSize : r.reorderQty;
     // Wrap item name in quotes in case it contains commas
     lines.push([r.pn, '"'+(itemName||'')+'"', totalUnits].join(','));
