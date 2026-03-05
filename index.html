@@ -4497,12 +4497,14 @@ async function salesLoadWarehouseStock() {
         if (!partNum || partNum.length < 2) return;
         var upcVal = parseFloat(r[5]) || 0;
         if (upcVal <= 0) return;
-        // Parse pack size from suffix: XX-123=10X → packSize=10
         var packSize = 1;
         var suffixMatch = partNum.match(/=(\d+)[xX]/);
         if (suffixMatch) packSize = parseInt(suffixMatch[1]) || 1;
         CALC.upc[partNum.toLowerCase()] = { unitsPerCase: upcVal, packSize: packSize };
       });
+      // Debug: log sample keys so we can verify format matches vendor tab
+      var upcKeys = Object.keys(CALC.upc);
+      console.log('[Sales UPC] sample keys:', upcKeys.slice(0,5));
     }
 
     console.log('[Sales WH] loaded', Object.keys(CALC.whStock).length, 'parts,', Object.keys(CALC.upc).length, 'with UPC data');
@@ -4760,9 +4762,15 @@ function buildVendorRows(vendorData, partCol, vendor) {
   var lead   = parseInt(document.getElementById(vendor+'-lead').value)||90;
   var hasWH  = SALES_WORKER_URL && Object.keys(CALC.whStock).length > 0;
 
+  var debugLogged = false;
   return vendorData.map(function(r) {
     var pn = (r[partCol]||'').toString().trim();
     if (!pn) return null;
+    // Debug: log first 3 part numbers and their UPC lookup result
+    if (!debugLogged && pn) {
+      console.log('[Vendor '+vendor+'] sample pn:', JSON.stringify(pn), '| upc lookup:', CALC.upc[pn.toLowerCase()] || 'NOT FOUND');
+      debugLogged = true;
+    }
 
     var ps = getPartSales(pn);
     var amzD  = ps ? n(ps['AMZ daily units sold'])  : 0;
