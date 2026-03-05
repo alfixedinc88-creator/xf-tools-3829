@@ -4828,12 +4828,13 @@ function renderVendor(vendor) {
 
   var hasWH   = SALES_WORKER_URL && Object.keys(CALC.whStock).length>0;
   var hasCOGS = Object.keys(CALC.cogs).length>0;
+  var hasUPC  = Object.keys(CALC.upc).length>0;
 
   var h = '<table><thead><tr>'
     +'<th></th><th>Part #</th><th>Base SKU</th>'
     +'<th class="s-num">Daily</th><th class="s-num">30d Units</th><th class="s-num">90d Units</th>';
-  if (hasWH) h += '<th class="s-num">WH Units</th><th class="s-num">Days On Hand</th>';
-  h += '<th class="s-num">Target</th><th class="s-num">Reorder Qty</th>';
+  if (hasWH) h += '<th class="s-num">WH Stock</th><th class="s-num">Days On Hand</th>';
+  h += '<th class="s-num">Target Units</th><th class="s-num">Reorder Qty</th>';
   if (hasCOGS) h += '<th class="s-num">COGS</th><th class="s-num">Est. Cost</th>';
   h += '<th>Status</th></tr></thead><tbody>';
 
@@ -4846,6 +4847,25 @@ function renderVendor(vendor) {
       dohCell = '<td class="s-num">' + dohStr
         +'<span class="dbar-wrap"><span class="sales-dbar" style="width:'+barPct+'%;background:'+barClr+'"></span></span></td>';
     }
+
+    // WH Stock cell — show units with cases as secondary info
+    var whCell = '—';
+    if (hasWH && r.whUnits !== null) {
+      if (r.upcData) {
+        // Have conversion data — show units prominently, cases as subtext
+        var packNote = r.upcData.packSize > 1
+          ? r.whUnits + ' cases × ' + r.upcData.unitsPerCase + 'u = ' + r.whUnitsTotal + ' units (' + r.upcData.packsPerCase + ' packs/' + r.upcData.packSize + ')'
+          : r.whUnits + ' cases × ' + r.upcData.unitsPerCase + 'u = ' + r.whUnitsTotal + ' units';
+        whCell = '<span style="font-weight:600">' + fmt0(r.whUnitsTotal) + '</span>'
+          + '<span style="display:block;font-size:10px;color:var(--text3);font-family:var(--mono)">'
+          + r.whUnits + ' cases</span>';
+      } else {
+        // No UPC data — show raw cases with warning
+        whCell = '<span style="color:var(--orange)">' + r.whUnits + '</span>'
+          + '<span style="display:block;font-size:10px;color:var(--orange);font-family:var(--mono)">cases*</span>';
+      }
+    }
+
     h += '<tr data-u="'+r.urgency+'" data-p="'+(r.pn||'').toLowerCase()+'">'
       +'<td><input type="checkbox" class="po-cb" checked></td>'
       +'<td class="s-mono" style="font-weight:600">'+r.pn+'</td>'
@@ -4854,7 +4874,7 @@ function renderVendor(vendor) {
       +'<td class="num mono">'+r.u30+'</td>'
       +'<td class="num mono" style="color:var(--text2)">'+r.u90+'</td>';
     if (hasWH) {
-      h += '<td class="num mono">'+(r.whUnits!==null?r.whUnits:'—')+'</td>' + dohCell;
+      h += '<td class="s-num">'+whCell+'</td>' + dohCell;
     }
     h += '<td class="num mono">'+r.targetStock+'</td>'
       +'<td class="num mono" style="font-weight:600;color:'+(r.reorderQty>0?'var(--text)':'var(--text3)')+'">'+r.reorderQty+'</td>';
@@ -4864,7 +4884,15 @@ function renderVendor(vendor) {
     }
     h += '<td><span class="badge '+r.urgency+'">'+r.urgency.toUpperCase()+'</span></td></tr>';
   });
+
+  // Show footnote if any parts are missing UPC data
+  var missingUPC = hasWH ? rows.filter(function(r){ return r.whUnits!==null && !r.upcData; }).length : 0;
   h += '</tbody></table>';
+  if (missingUPC > 0) {
+    h += '<div style="font-size:11px;color:var(--orange);padding:8px 4px;font-family:var(--mono)">'
+      +'* '+missingUPC+' part(s) not found in AWD_Master — WH stock shown in cases, not units. Days on hand and reorder qty may be understated.'
+      +'</div>';
+  }
   wrap.innerHTML = h;
 }
 
