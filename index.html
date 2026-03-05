@@ -4430,7 +4430,8 @@ async function salesLaunchApp(name) {
     setStatus(appKey, 'ok', 'WH: ' + whCount + ' parts · ' + upcCount + ' UPC');
     salesToast('Loaded · WH: ' + whCount + ' parts', 'success');
   } catch(e) {
-    setStatus(appKey, 'err', 'Load failed');
+    console.error('[salesLaunchApp] error:', e.message, e.stack);
+    setStatus(appKey, 'err', 'Error: ' + e.message);
     salesToast('Load error: ' + e.message, 'error');
   }
 }
@@ -4483,7 +4484,7 @@ async function salesLoadWarehouseStock() {
         var upcDirect = parseFloat(String(r[9]||'').replace(/,/g,'')) || 0;
         if (upcDirect > 0) {
           var packSize = 1;
-          var suffixMatch = partNum.match(/=(\d+)[xX]?$/);
+          var suffixMatch = partNum.match(/=(\d+)[xX]*$/);
           if (suffixMatch) packSize = parseInt(suffixMatch[1]) || 1;
           CALC.upc[key] = { unitsPerCase: upcDirect, packSize: packSize };
         }
