@@ -1662,7 +1662,7 @@ input[type=checkbox]{width:15px;height:15px;cursor:pointer;accent-color:var(--bl
       <div class="launcher-name">XFITTING</div>
     </div>
     <div class="launcher-sub">Internal Tools &mdash; Choose an app to continue</div>
-    <div style="font-size:11px;color:var(--text3);margin-top:6px;opacity:.7">v1.0.5</div>
+    <div style="font-size:11px;color:var(--text3);margin-top:6px;opacity:.7">v1.0.6</div>
     <div class="launcher-grid">
       <div class="launcher-card" onclick="launchApp('warehouse')">
         <div class="launcher-card-icon">&#128205;</div>
@@ -1687,8 +1687,8 @@ input[type=checkbox]{width:15px;height:15px;cursor:pointer;accent-color:var(--bl
       <div class="launcher-card" onclick="launchMgmtApp('reorder')" style="border-color:var(--accent-bg)">
         <div class="launcher-card-icon">📦</div>
         <div class="launcher-card-title">Reorder Planner</div>
-        <div class="launcher-card-desc">Upload platform reports to see which vendor parts need reordering. Build POs for JQ and EFF vendors.</div>
-        <div style="display:inline-block;margin-top:10px;font-size:10px;font-family:var(--mono);padding:3px 8px;border-radius:4px;background:var(--accent-bg);color:var(--accent);font-weight:600;letter-spacing:1px">JQ &amp; EFF · Management</div>
+        <div class="launcher-card-desc">Upload platform sales reports to see which parts need reordering. Build and export purchase orders by vendor.</div>
+        <div style="display:inline-block;margin-top:10px;font-size:10px;font-family:var(--mono);padding:3px 8px;border-radius:4px;background:var(--accent-bg);color:var(--accent);font-weight:600;letter-spacing:1px">Purchase Orders · Management</div>
       </div>
       <div class="launcher-card" onclick="launchMgmtApp('dashboard')" style="border-color:var(--orange-bg)">
         <div class="launcher-card-icon">📊</div>
@@ -1707,7 +1707,7 @@ input[type=checkbox]{width:15px;height:15px;cursor:pointer;accent-color:var(--bl
     <div class="topbar-left">
       <div class="tb-logo">XFITTING</div>
       <div class="tb-name">Warehouse Lookup</div>
-      <div style="font-size:10px;background:var(--accent);color:#fff;padding:2px 7px;border-radius:20px;font-weight:600;opacity:.85">v1.0.5</div>
+      <div style="font-size:10px;background:var(--accent);color:#fff;padding:2px 7px;border-radius:20px;font-weight:600;opacity:.85">v1.0.6</div>
       <div class="tb-divider"></div>
       <div class="tb-sub" id="tb-sub">Live</div>
     </div>
@@ -1785,7 +1785,7 @@ input[type=checkbox]{width:15px;height:15px;cursor:pointer;accent-color:var(--bl
   <header class="hdr">
     <div class="hdr-l">
       <a class="logo" href="#"><div class="logo-mark">XF</div><div class="logo-text">X<span>FITTING</span></div></a>
-      <div class="hdiv"></div><span class="hdr-title">AWD Shipment Planner</span> <span style="font-size:10px;background:#1A56DB;color:#fff;padding:2px 7px;border-radius:20px;font-weight:600;opacity:.85">v1.0.5</span>
+      <div class="hdiv"></div><span class="hdr-title">AWD Shipment Planner</span> <span style="font-size:10px;background:#1A56DB;color:#fff;padding:2px 7px;border-radius:20px;font-weight:600;opacity:.85">v1.0.6</span>
     </div>
     <div class="hdr-r"><button class="back-btn" onclick="backToLauncher()">&#8592; Apps</button>
       <span id="data-pill" style="font-size:12px;color:var(--gray-500);padding:4px 12px;background:var(--gray-100);border-radius:999px;cursor:pointer" onclick="awd_switchTab('upload')">No data loaded</span>
@@ -4411,18 +4411,26 @@ function mgmtPinCancel() {
   mgmtPinTarget = null;
 }
 
-function salesLaunchApp(name) {
+async function salesLaunchApp(name) {
   document.getElementById('launcher').style.display = 'none';
   if (name === 'reorder') {
     document.getElementById('reorder-app').style.display = 'flex'; document.getElementById('reorder-app').style.flexDirection = 'column';
-    salesLoadWarehouseStock();
-    if (!CALC.partSales.length) autoLoadOnLaunch('ro');
-    else { buildReorderRows(); updateLastUpdatedLabels(); }
+    if (!CALC.partSales.length) {
+      autoLoadOnLaunch('ro'); // handles WH + calc in parallel
+    } else {
+      setStatus('ro','loading','Refreshing warehouse...');
+      await salesLoadWarehouseStock();
+      buildReorderRows(); updateLastUpdatedLabels();
+      setStatus('ro','ok','WH: '+Object.keys(CALC.whStock).length+' parts');
+    }
   } else {
     document.getElementById('dashboard-app').style.display = 'flex'; document.getElementById('dashboard-app').style.flexDirection = 'column';
-    salesLoadWarehouseStock();
-    if (!CALC.partSales.length) autoLoadOnLaunch('db');
-    else { buildDashboardData(); updateLastUpdatedLabels(); }
+    if (!CALC.partSales.length) {
+      autoLoadOnLaunch('db'); // handles WH + calc in parallel
+    } else {
+      await salesLoadWarehouseStock();
+      buildDashboardData(); updateLastUpdatedLabels();
+    }
   }
 }
 
@@ -4451,37 +4459,32 @@ var aiHistory = { ro: [], db: [] };
 var toastTimer = null;
 
 // ─── WAREHOUSE STOCK ─────────────────────────────────────────────────────────
-function salesLoadWarehouseStock() {
+async function salesLoadWarehouseStock() {
   if (!SALES_WORKER_URL) return;
-  setStatus('ro', 'loading', 'Loading warehouse...');
   // Same col indices as AWD planner: col6=partNum, col7=location, col8=cases
   var SKIP = new Set(['push fit','name','location','case','each case quantity','date arrive','total quantity','brand','uint price','total','type','sku','']);
-  fetch(SALES_WORKER_URL + '?sheet=Master_List')
-    .then(function(r){ return r.json(); })
-    .then(function(json) {
-      if (json.error) throw new Error(json.error);
-      var rows = (json.values || []).map(function(r){ while(r.length < 16) r.push(''); return r; });
-      CALC.whStock = {};
-      for (var i = 1; i < rows.length; i++) {
-        var r = rows[i];
-        var partNum = String(r[6] || '').trim();
-        if (!partNum || partNum.length < 2) continue;
-        if (SKIP.has(partNum.toLowerCase())) continue;
-        var casesRaw = r[8];
-        var casesNum = (casesRaw !== '' && casesRaw !== null && casesRaw !== undefined) ? parseFloat(casesRaw) : null;
-        if (!casesNum || casesNum <= 0) continue;
-        var key = partNum.toLowerCase();
-        if (!CALC.whStock[key]) CALC.whStock[key] = [];
-        CALC.whStock[key].push({ location: String(r[7]||'').trim(), units: casesNum });
-      }
-      var count = Object.keys(CALC.whStock).length;
-      setStatus('ro', 'ok', 'WH: ' + count + ' parts loaded');
-      if (RO.jq.length || RO.eff.length) { renderVendor('jq'); renderVendor('eff'); }
-    })
-    .catch(function(e) {
-      setStatus('ro', 'err', 'WH load failed');
-      console.error('[Sales WH load]', e);
-    });
+  try {
+    var res  = await fetch(SALES_WORKER_URL + '?sheet=Master_List');
+    var json = await res.json();
+    if (json.error) throw new Error(json.error);
+    var rows = (json.values || []).map(function(r){ while(r.length < 16) r.push(''); return r; });
+    CALC.whStock = {};
+    for (var i = 1; i < rows.length; i++) {
+      var r = rows[i];
+      var partNum = String(r[6] || '').trim();
+      if (!partNum || partNum.length < 2) continue;
+      if (SKIP.has(partNum.toLowerCase())) continue;
+      var casesRaw = r[8];
+      var casesNum = (casesRaw !== '' && casesRaw !== null && casesRaw !== undefined) ? parseFloat(casesRaw) : null;
+      if (!casesNum || casesNum <= 0) continue;
+      var key = partNum.toLowerCase();
+      if (!CALC.whStock[key]) CALC.whStock[key] = [];
+      CALC.whStock[key].push({ location: String(r[7]||'').trim(), units: casesNum });
+    }
+    console.log('[Sales WH] loaded', Object.keys(CALC.whStock).length, 'parts');
+  } catch(e) {
+    console.error('[Sales WH load]', e);
+  }
 }
 function findCol(headers, keys) {
   for (var k=0;k<keys.length;k++) {
@@ -4604,18 +4607,19 @@ async function processAllReports() {
 
 async function loadSavedData() {
   if (!SALES_WORKER_URL) { salesToast('WORKER_URL not set', 'error'); return; }
-  setStatus('ro','loading','Loading saved data...');
-  setStatus('db','loading','Loading saved data...');
-  salesToast('<span class="sales-spinner"></span>Loading saved data from sheet...', 'info');
+  setStatus('ro','loading','Loading...');
+  setStatus('db','loading','Loading...');
+  salesToast('<span class="sales-spinner"></span>Loading data from sheets...', 'info');
   try {
-    await readCalcTabs();
+    await Promise.all([ salesLoadWarehouseStock(), readCalcTabs() ]);
     lastUpdated = new Date();
     updateLastUpdatedLabels();
     buildReorderRows();
     buildDashboardData();
-    setStatus('ro','ok','Up to date');
+    var whCount = Object.keys(CALC.whStock).length;
+    setStatus('ro','ok','WH: ' + whCount + ' parts');
     setStatus('db','ok','Up to date');
-    salesToast('✓ Saved data loaded', 'success');
+    salesToast('✓ Loaded · WH: ' + whCount + ' parts', 'success');
   } catch(e) {
     setStatus('ro','err','Load failed');
     setStatus('db','err','Load failed');
@@ -4624,17 +4628,18 @@ async function loadSavedData() {
 }
 
 async function autoLoadOnLaunch(app) {
-  // Called when opening an app with no data yet — shows status, loads from sheet
+  // Load WH stock and calc tabs in parallel — both must finish before building rows
   if (!SALES_WORKER_URL) return;
-  setStatus(app, 'loading', 'Loading data from sheet...');
+  setStatus(app, 'loading', 'Loading data...');
   try {
-    await readCalcTabs();
+    await Promise.all([ salesLoadWarehouseStock(), readCalcTabs() ]);
     lastUpdated = new Date();
     updateLastUpdatedLabels();
     buildReorderRows();
     buildDashboardData();
-    setStatus(app, 'ok', 'Data loaded');
-    salesToast('Data loaded from sheet', 'success');
+    var whCount = Object.keys(CALC.whStock).length;
+    setStatus(app, 'ok', 'Loaded · WH: ' + whCount + ' parts');
+    salesToast('Data loaded — ' + whCount + ' WH parts', 'success');
   } catch(e) {
     setStatus(app, 'err', 'Load failed');
     salesToast('Load error: ' + e.message, 'error');
@@ -5179,72 +5184,115 @@ var aiHistory = { ro: [], db: [] };
 
 function buildReorderContext() {
   if (!CALC.jqVendor.length && !CALC.effVendor.length) return null;
-  var jqCrit  = RO.jq.filter(function(r){ return r.urgency==='critical'; });
-  var jqWatch = RO.jq.filter(function(r){ return r.urgency==='watch'; });
-  var effCrit  = RO.eff.filter(function(r){ return r.urgency==='critical'; });
-  var effWatch = RO.eff.filter(function(r){ return r.urgency==='watch'; });
-  var totalCost = RO.jq.concat(RO.eff).reduce(function(s,r){ return s+r.estCost; },0);
 
-  var topJQ  = RO.jq.slice(0,15).map(function(r){
-    return r.pn+'|daily:'+r.daily.toFixed(2)+'|30d:'+r.u30+'|90d:'+r.u90
-      +'|wh:'+(r.whUnits!==null?r.whUnits:'N/A')
-      +'|doh:'+(r.doh!==null?Math.round(r.doh)+'d':'N/A')
-      +'|reorder:'+r.reorderQty+'|status:'+r.urgency
-      +(r.estCost?'|estCost:$'+r.estCost.toFixed(0):'');
-  }).join('\n');
+  var allRows   = RO.jq.concat(RO.eff);
+  var crit      = allRows.filter(function(r){ return r.urgency==='critical'; });
+  var watch     = allRows.filter(function(r){ return r.urgency==='watch'; });
+  var totalCost = allRows.reduce(function(s,r){ return s+r.estCost; }, 0);
+  var whTotal   = Object.values(CALC.whStock).reduce(function(s,arr){
+    return s + arr.reduce(function(ss,e){ return ss+e.units; }, 0);
+  }, 0);
+  var whParts   = Object.keys(CALC.whStock).length;
+  var cogsCount = Object.keys(CALC.cogs).length;
 
-  var topEFF = RO.eff.slice(0,15).map(function(r){
-    return r.pn+'|daily:'+r.daily.toFixed(2)+'|30d:'+r.u30+'|90d:'+r.u90
-      +'|wh:'+(r.whUnits!==null?r.whUnits:'N/A')
-      +'|doh:'+(r.doh!==null?Math.round(r.doh)+'d':'N/A')
-      +'|reorder:'+r.reorderQty+'|status:'+r.urgency
-      +(r.estCost?'|estCost:$'+r.estCost.toFixed(0):'');
-  }).join('\n');
+  function fmtRow(r) {
+    return r.pn
+      + '|daily:'    + r.daily.toFixed(2)
+      + '|30d:'      + r.u30
+      + '|90d:'      + r.u90
+      + '|wh_cases:' + (r.whUnits !== null ? r.whUnits : 'N/A')
+      + '|doh:'      + (r.doh !== null ? Math.round(r.doh) + 'd' : 'N/A')
+      + '|reorder:'  + r.reorderQty
+      + '|status:'   + r.urgency
+      + (r.cogs    ? '|cogs:$'    + r.cogs.toFixed(2)    : '')
+      + (r.estCost ? '|estCost:$' + r.estCost.toFixed(0) : '');
+  }
 
-  return 'REORDER PLANNER SUMMARY\n'
-    +'JQ Vendor: '+RO.jq.length+' parts | '+jqCrit.length+' critical | '+jqWatch.length+' watch\n'
-    +'EFF Vendor: '+RO.eff.length+' parts | '+effCrit.length+' critical | '+effWatch.length+' watch\n'
-    +'Total estimated PO value: $'+fmt0(totalCost)+'\n'
-    +'Target stock days setting: '+document.getElementById('jq-target').value+'d | Lead time: '+document.getElementById('jq-lead').value+'d\n\n'
-    +'JQ VENDOR TOP PARTS (part|daily|30d units|90d units|wh units|days on hand|reorder qty|status):\n'+topJQ
-    +'\n\nEFF VENDOR TOP PARTS:\n'+topEFF;
+  var ctx = 'REORDER PLANNER — FULL DATA SNAPSHOT\n'
+    + 'Vendor A: ' + RO.jq.length  + ' parts | Vendor B: ' + RO.eff.length + ' parts\n'
+    + 'CRITICAL: ' + crit.length   + ' parts | WATCH: '    + watch.length  + ' parts\n'
+    + 'Est. total PO value: $' + fmt0(totalCost) + '\n'
+    + 'Target days: ' + document.getElementById('jq-target').value
+    + 'd | Lead time: ' + document.getElementById('jq-lead').value + 'd\n'
+    + 'Warehouse stock: ' + whParts + ' unique part#s | ' + whTotal + ' total cases on hand\n'
+    + (cogsCount ? 'COGS loaded for ' + cogsCount + ' SKUs\n' : '')
+    + '\n'
+    + 'VENDOR A — ALL ' + RO.jq.length + ' PARTS'
+    + ' (pn|daily|30d|90d|wh_cases|doh|reorder|status|cogs|estCost):\n'
+    + RO.jq.map(fmtRow).join('\n')
+    + '\n\nVENDOR B — ALL ' + RO.eff.length + ' PARTS:\n'
+    + RO.eff.map(fmtRow).join('\n');
+
+  return ctx;
 }
 
 function buildDashboardContext() {
   if (!CALC.partSales.length) return null;
-  var amzU30=0,ebayU30=0,xfU30=0,amzS30=0,ebayS30=0,xfS30=0;
+
+  var amzU30=0,ebayU30=0,xfU30=0,amzS30=0,ebayS30=0,xfS30=0,u90=0,s90=0;
   DB_PARTS.forEach(function(r){
     amzU30+=r.amzU30; ebayU30+=r.ebayU30; xfU30+=r.xfU30;
     amzS30+=r.amzS30; ebayS30+=r.ebayS30; xfS30+=r.xfS30;
+    u90+=r.u90; s90+=(r.s90||0);
   });
   var u30=amzU30+ebayU30+xfU30, s30=amzS30+ebayS30+xfS30;
+  var active    = DB_PARTS.filter(function(r){ return r.u30>0; }).length;
+  var amzPct    = u30>0 ? Math.round(amzU30/u30*100)  : 0;
+  var ebayPct   = u30>0 ? Math.round(ebayU30/u30*100) : 0;
+  var xfPct     = u30>0 ? Math.round(xfU30/u30*100)   : 0;
+  var unitTrend = u90>0 ? ((u30/30)-(u90/90))/(u90/90)*100 : 0;
 
-  var topParts = DB_PARTS.slice().sort(function(a,b){ return b.u30-a.u30; }).slice(0,20)
-    .map(function(r){
-      return r.pn+'|amz30:'+r.amzU30+'|ebay30:'+r.ebayU30+'|xf30:'+r.xfU30
-        +'|total30:'+r.u30+'|total90:'+r.u90+'|rev30:$'+fmt0(r.s30)
-        +'|best:'+r.dom+'|trend:'+r.trend;
-    }).join('\n');
-
-  var amzPct = u30>0?Math.round(amzU30/u30*100):0;
-  var ebayPct= u30>0?Math.round(ebayU30/u30*100):0;
-  var xfPct  = u30>0?Math.round(xfU30/u30*100):0;
-
-  // Anomalies: parts where 30d daily is >50% different from 90d daily
+  // Parts with significant velocity change vs 90d avg
   var anomalies = DB_PARTS.filter(function(r){
     var d30=r.u30/30, d90=r.u90/90;
-    return d90>0 && Math.abs(d30-d90)/d90 > 0.5 && r.u30>5;
-  }).slice(0,8).map(function(r){
+    return d90>0 && Math.abs(d30-d90)/d90 > 0.4 && r.u30>3;
+  }).map(function(r){
     var chg = ((r.u30/30 - r.u90/90)/(r.u90/90)*100).toFixed(0);
-    return r.pn+' '+(chg>0?'+':'')+chg+'% vs 90d avg';
-  }).join(', ');
+    return r.pn + ' ' + (chg>0?'+':'') + chg + '% vs 90d (best:' + r.dom + ')';
+  });
 
-  return 'SALES DASHBOARD SUMMARY\n'
-    +'30-Day totals: '+u30.toLocaleString()+' units | $'+fmt0(s30)+' revenue\n'
-    +'Platform split: AMZ '+amzPct+'% ('+amzU30+' units, $'+fmt0(amzS30)+') | eBay '+ebayPct+'% ('+ebayU30+' units, $'+fmt0(ebayS30)+') | Shopify '+xfPct+'% ('+xfU30+' units, $'+fmt0(xfS30)+')\n'
-    +'Active part numbers: '+DB_PARTS.filter(function(r){return r.u30>0;}).length+'\n'
-    +(anomalies?'Significant velocity changes (vs 90d avg): '+anomalies+'\n':'')
-    +'\nTOP 20 PARTS BY 30D UNITS (part|amz30|ebay30|xf30|total30|total90|rev30|best platform|trend):\n'+topParts;
+  // Parts that had 90d sales but zero in last 30d
+  var stalled = DB_PARTS.filter(function(r){ return r.u30===0 && r.u90>0; })
+    .map(function(r){ return r.pn + '(had ' + r.u90 + 'u in 90d)'; });
+
+  // All parts by 30d volume
+  var partsCtx = DB_PARTS.slice().sort(function(a,b){ return b.u30-a.u30; })
+    .map(function(r){
+      return r.pn
+        + '|amz:'     + r.amzU30
+        + '|ebay:'    + r.ebayU30
+        + '|xf:'      + r.xfU30
+        + '|total30:' + r.u30
+        + '|total90:' + r.u90
+        + '|rev30:$'  + fmt0(r.s30)
+        + '|best:'    + r.dom
+        + '|trend:'   + r.trend;
+    }).join('\n');
+
+  // Top 40 base SKUs
+  var skuCtx = DB_SKUS.slice().sort(function(a,b){ return b.u30-a.u30; }).slice(0,40)
+    .map(function(r){
+      return r.sku
+        + '|30d:'    + r.u30
+        + '|90d:'    + r.u90
+        + '|rev30:$' + fmt0(r.s30)
+        + '|daily:'  + r.daily.toFixed(2)
+        + '|trend:'  + r.trend;
+    }).join('\n');
+
+  var ctx = 'SALES DASHBOARD — FULL DATA SNAPSHOT\n'
+    + '30d totals: ' + u30.toLocaleString() + ' units | $' + fmt0(s30) + ' revenue\n'
+    + 'Trend vs 90d avg: ' + (unitTrend>0?'+':'') + unitTrend.toFixed(1) + '%\n'
+    + 'Platform: Amazon ' + amzPct  + '% (' + amzU30  + 'u, $' + fmt0(amzS30)  + ')'
+    + ' | eBay '    + ebayPct + '% (' + ebayU30 + 'u, $' + fmt0(ebayS30) + ')'
+    + ' | Shopify ' + xfPct   + '% (' + xfU30   + 'u, $' + fmt0(xfS30)  + ')\n'
+    + 'Active parts: ' + active + ' of ' + DB_PARTS.length + ' total tracked\n'
+    + (anomalies.length ? 'Velocity changes >40% vs 90d: ' + anomalies.join(', ') + '\n' : '')
+    + (stalled.length   ? 'Stalled (0 in 30d, had 90d activity): ' + stalled.join(', ') + '\n' : '')
+    + '\nALL PARTS BY 30D UNITS (pn|amz|ebay|xf|total30|total90|rev30|best|trend):\n' + partsCtx
+    + '\n\nTOP 40 BASE SKUs (sku|30d|90d|rev30|daily|trend):\n' + skuCtx;
+
+  return ctx;
 }
 
 function getSystemPrompt(app) {
@@ -5427,7 +5475,7 @@ function salesToast(msg, type) {
     <div class="topbar-left">
       <div class="tb-logo">XFITTING</div>
       <div class="tb-name">UPC Barcodes</div>
-      <div style="font-size:10px;background:var(--accent);color:#fff;padding:2px 7px;border-radius:20px;font-weight:600;opacity:.85">v1.0.5</div>
+      <div style="font-size:10px;background:var(--accent);color:#fff;padding:2px 7px;border-radius:20px;font-weight:600;opacity:.85">v1.0.6</div>
     </div>
     <div class="topbar-right">
       <button class="btn btn-secondary" onclick="backToLauncher()" style="font-size:12px;padding:6px 14px">← Apps</button>
@@ -5547,7 +5595,7 @@ function salesToast(msg, type) {
     <div class="topbar-left">
       <div class="tb-logo">XFITTING</div>
       <div class="tb-name">Reorder Planner</div>
-      <div style="font-size:10px;background:var(--accent);color:#fff;padding:2px 7px;border-radius:20px;font-weight:600;opacity:.85">v1.0.5</div>
+      <div style="font-size:10px;background:var(--accent);color:#fff;padding:2px 7px;border-radius:20px;font-weight:600;opacity:.85">v1.0.6</div>
     </div>
     <div class="topbar-right">
       <div class="sales-status-pill" id="ro-status-pill" style="display:none">
@@ -5756,7 +5804,7 @@ function salesToast(msg, type) {
     <div class="topbar-left">
       <div class="tb-logo">XFITTING</div>
       <div class="tb-name">Sales Dashboard</div>
-      <div style="font-size:10px;background:var(--accent);color:#fff;padding:2px 7px;border-radius:20px;font-weight:600;opacity:.85">v1.0.5</div>
+      <div style="font-size:10px;background:var(--accent);color:#fff;padding:2px 7px;border-radius:20px;font-weight:600;opacity:.85">v1.0.6</div>
     </div>
     <div class="topbar-right">
       <div class="sales-status-pill" id="db-status-pill" style="display:none">
