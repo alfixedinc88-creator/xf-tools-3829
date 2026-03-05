@@ -4616,16 +4616,17 @@ async function processAllReports() {
     return;
   }
 
-  // Now read back all calculated tabs
+  // Now read back all calculated tabs + warehouse stock in parallel
   salesToast('<span class="sales-spinner"></span>Reading calculated data from sheet...', 'info');
   setStatus('ro','loading','Reading back...');
   try {
-    await readCalcTabs();
+    await Promise.all([ salesLoadWarehouseStock(), readCalcTabs() ]);
     lastUpdated = new Date();
     updateLastUpdatedLabels();
     buildReorderRows();
     buildDashboardData();
-    setStatus('ro','ok','Up to date');
+    var whCount = Object.keys(CALC.whStock).length;
+    setStatus('ro','ok','WH: ' + whCount + ' parts');
     setStatus('db','ok','Up to date');
     salesToast('✓ Data loaded — ' + CALC.partSales.length + ' parts, ' + CALC.jqVendor.length + ' JQ, ' + CALC.effVendor.length + ' EFF parts', 'success');
   } catch(e) {
