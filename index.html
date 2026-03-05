@@ -4413,24 +4413,24 @@ function mgmtPinCancel() {
 
 async function salesLaunchApp(name) {
   document.getElementById('launcher').style.display = 'none';
-  if (name === 'reorder') {
-    document.getElementById('reorder-app').style.display = 'flex'; document.getElementById('reorder-app').style.flexDirection = 'column';
-    if (!CALC.partSales.length) {
-      autoLoadOnLaunch('ro'); // handles WH + calc in parallel
-    } else {
-      setStatus('ro','loading','Refreshing warehouse...');
-      await salesLoadWarehouseStock();
-      buildReorderRows(); updateLastUpdatedLabels();
-      setStatus('ro','ok','WH: '+Object.keys(CALC.whStock).length+' parts');
-    }
-  } else {
-    document.getElementById('dashboard-app').style.display = 'flex'; document.getElementById('dashboard-app').style.flexDirection = 'column';
-    if (!CALC.partSales.length) {
-      autoLoadOnLaunch('db'); // handles WH + calc in parallel
-    } else {
-      await salesLoadWarehouseStock();
-      buildDashboardData(); updateLastUpdatedLabels();
-    }
+  var appId = name === 'reorder' ? 'reorder-app' : 'dashboard-app';
+  var appKey = name === 'reorder' ? 'ro' : 'db';
+  document.getElementById(appId).style.display = 'flex';
+  document.getElementById(appId).style.flexDirection = 'column';
+  setStatus(appKey, 'loading', 'Loading...');
+  try {
+    await Promise.all([ salesLoadWarehouseStock(), readCalcTabs() ]);
+    lastUpdated = new Date();
+    updateLastUpdatedLabels();
+    buildReorderRows();
+    buildDashboardData();
+    var whCount = Object.keys(CALC.whStock).length;
+    var upcCount = Object.keys(CALC.upc).length;
+    setStatus(appKey, 'ok', 'WH: ' + whCount + ' parts · ' + upcCount + ' UPC');
+    salesToast('Loaded · WH: ' + whCount + ' parts', 'success');
+  } catch(e) {
+    setStatus(appKey, 'err', 'Load failed');
+    salesToast('Load error: ' + e.message, 'error');
   }
 }
 
@@ -4678,17 +4678,12 @@ async function autoLoadOnLaunch(app) {
 }
 
 async function silentLoadSaved() {
-  // Called on launcher show — silent pre-fetch so data is ready when app opens
+  // Pre-fetch in background after PIN — salesLaunchApp will rebuild rows on open
   if (!SALES_WORKER_URL) return;
   try {
     await Promise.all([ salesLoadWarehouseStock(), readCalcTabs() ]);
     lastUpdated = new Date();
-    console.log('[silentLoadSaved] jqVendor:', CALC.jqVendor.length, '| upc:', Object.keys(CALC.upc).length);
-    buildReorderRows();
-    buildDashboardData();
-  } catch(e) {
-    console.error('[silentLoadSaved] error:', e.message, e.stack);
-  }
+  } catch(e) { /* silent */ }
 }
 
 async function readCalcTabs() {
