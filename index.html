@@ -4462,56 +4462,37 @@ var toastTimer = null;
 // ─── WAREHOUSE STOCK ─────────────────────────────────────────────────────────
 async function salesLoadWarehouseStock() {
   if (!SALES_WORKER_URL) return;
-  // Fetch Master_List (WH cases) and AWD_Master (unitsPerCase) in parallel
   var SKIP = new Set(['push fit','name','location','case','each case quantity','date arrive','total quantity','brand','uint price','total','type','sku','']);
   try {
-    var [wh, awd] = await Promise.all([
-      fetch(SALES_WORKER_URL + '?sheet=Master_List').then(function(r){ return r.json(); }),
-      fetch(SALES_WORKER_URL + '?sheet=AWD_Master').then(function(r){ return r.json(); })
-    ]);
-
-    // Build whStock from Master_List
-    if (!wh.error) {
-      var rows = (wh.values || []).map(function(r){ while(r.length < 16) r.push(''); return r; });
-      CALC.whStock = {};
-      for (var i = 1; i < rows.length; i++) {
-        var r = rows[i];
-        var partNum = String(r[6] || '').trim();
-        if (!partNum || partNum.length < 2) continue;
-        if (SKIP.has(partNum.toLowerCase())) continue;
-        var casesRaw = r[8];
-        var casesNum = (casesRaw !== '' && casesRaw !== null && casesRaw !== undefined) ? parseFloat(casesRaw) : null;
-        if (!casesNum || casesNum <= 0) continue;
-        var key = partNum.toLowerCase();
-        if (!CALC.whStock[key]) CALC.whStock[key] = [];
-        CALC.whStock[key].push({ location: String(r[7]||'').trim(), units: casesNum });
-      }
-    }
-
-    // Build upc lookup from AWD_Master — col6=partNum, col5=unitsPerCase (matches AWD planner)
-    if (!awd.error) {
-      var awdRows = (awd.values || []).slice(1);
-      CALC.upc = {};
-      awdRows.forEach(function(r) {
-        var partNum = String(r[6] || '').trim();
-        if (!partNum || partNum.length < 2) return;
-        var upcVal = parseFloat(r[5]) || 0;
-        if (upcVal <= 0) return;
+    var res  = await fetch(SALES_WORKER_URL + '?sheet=Master_List');
+    var json = await res.json();
+    if (json.error) throw new Error(json.error);
+    var rows = (json.values || []).map(function(r){ while(r.length < 16) r.push(''); return r; });
+    CALC.whStock = {};
+    CALC.upc = {};
+    for (var i = 1; i < rows.length; i++) {
+      var r = rows[i];
+      var partNum = String(r[6] || '').trim();
+      if (!partNum || partNum.length < 2) continue;
+      if (SKIP.has(partNum.toLowerCase())) continue;
+      var casesRaw = r[8];
+      var casesNum = (casesRaw !== '' && casesRaw !== null && casesRaw !== undefined) ? parseFloat(casesRaw) : null;
+      if (!casesNum || casesNum <= 0) continue;
+      var key = partNum.toLowerCase();
+      if (!CALC.whStock[key]) CALC.whStock[key] = [];
+      CALC.whStock[key].push({ location: String(r[7]||'').trim(), units: casesNum });
+      // Col L (index 11) = total unit count for this row
+      // unitsPerCase = totalUnits / cases
+      var totalUnits = parseFloat(r[11]) || 0;
+      if (totalUnits > 0 && casesNum > 0 && !CALC.upc[key]) {
+        var unitsPerCase = totalUnits / casesNum;
         var packSize = 1;
         var suffixMatch = partNum.match(/=(\d+)[xX]/);
         if (suffixMatch) packSize = parseInt(suffixMatch[1]) || 1;
-        CALC.upc[partNum.toLowerCase()] = { unitsPerCase: upcVal, packSize: packSize };
-      });
-      // Debug: log sample keys so we can verify format matches vendor tab
-      var upcKeys = Object.keys(CALC.upc);
-      console.log('[Sales UPC] sample keys:', upcKeys.slice(0,5));
+        CALC.upc[key] = { unitsPerCase: unitsPerCase, packSize: packSize };
+      }
     }
-
     console.log('[Sales WH] loaded', Object.keys(CALC.whStock).length, 'parts,', Object.keys(CALC.upc).length, 'with UPC data');
-    if (Object.keys(CALC.upc).length === 0) {
-      console.warn('[Sales WH] CALC.upc is empty — awd.error:', awd && awd.error, '| awd rows:', awd && awd.values && awd.values.length);
-      salesToast('⚠ UPC data empty — check console for AWD_Master error', 'error');
-    }
   } catch(e) {
     console.error('[Sales WH load]', e);
   }
@@ -4749,9 +4730,6 @@ function getPartSales(partNum) {
 }
 
 function buildReorderRows() {
-  console.log('[buildReorderRows] jqVendor:', CALC.jqVendor.length, '| upc keys:', Object.keys(CALC.upc).length, '| whStock keys:', Object.keys(CALC.whStock).length);
-  if (CALC.jqVendor.length > 0) console.log('[buildReorderRows] first jq pn:', JSON.stringify((CALC.jqVendor[0]['X Part #']||'').toString().trim()));
-  if (Object.keys(CALC.upc).length > 0) console.log('[buildReorderRows] first upc key:', JSON.stringify(Object.keys(CALC.upc)[0]));
   RO.jq = buildVendorRows(CALC.jqVendor, 'X Part #', 'jq');
   RO.eff = buildVendorRows(CALC.effVendor, 'Part Number', 'eff');
   renderVendor('jq');
@@ -4766,15 +4744,9 @@ function buildVendorRows(vendorData, partCol, vendor) {
   var lead   = parseInt(document.getElementById(vendor+'-lead').value)||90;
   var hasWH  = SALES_WORKER_URL && Object.keys(CALC.whStock).length > 0;
 
-  var debugLogged = false;
   return vendorData.map(function(r) {
     var pn = (r[partCol]||'').toString().trim();
     if (!pn) return null;
-    // Debug: log first 3 part numbers and their UPC lookup result
-    if (!debugLogged && pn) {
-      console.log('[Vendor '+vendor+'] sample pn:', JSON.stringify(pn), '| upc lookup:', CALC.upc[pn.toLowerCase()] || 'NOT FOUND');
-      debugLogged = true;
-    }
 
     var ps = getPartSales(pn);
     var amzD  = ps ? n(ps['AMZ daily units sold'])  : 0;
@@ -4823,7 +4795,6 @@ function buildVendorRows(vendorData, partCol, vendor) {
 
 function renderVendor(vendor) {
   var rows = RO[vendor];
-  console.log('[renderVendor '+vendor+'] rows:', rows.length, '| upc keys:', Object.keys(CALC.upc).length, '| first upcData:', rows.length ? JSON.stringify(rows[0].upcData) : 'n/a', '| first whUnits:', rows.length ? rows[0].whUnits : 'n/a', '| first whUnitsTotal:', rows.length ? rows[0].whUnitsTotal : 'n/a');
   var crit  = rows.filter(function(r){ return r.urgency==='critical'; }).length;
   var watch = rows.filter(function(r){ return r.urgency==='watch'; }).length;
   var cost  = rows.reduce(function(s,r){ return s+r.estCost; },0);
