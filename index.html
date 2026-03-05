@@ -4488,13 +4488,12 @@ async function salesLoadWarehouseStock() {
       }
     }
 
-    // Build upc lookup from AWD_Master — col5=unitsPerCase, col7=partNum, col8=sku
-    // Part suffix =10X means 10-piece pack; unitsPerCase / packSize = packs per case
+    // Build upc lookup from AWD_Master — col6=partNum, col5=unitsPerCase (matches AWD planner)
     if (!awd.error) {
       var awdRows = (awd.values || []).slice(1);
       CALC.upc = {};
       awdRows.forEach(function(r) {
-        var partNum = String(r[7] || '').trim();
+        var partNum = String(r[6] || '').trim();
         if (!partNum || partNum.length < 2) return;
         var upcVal = parseFloat(r[5]) || 0;
         if (upcVal <= 0) return;
