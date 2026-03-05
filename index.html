@@ -4483,13 +4483,15 @@ async function salesLoadWarehouseStock() {
       CALC.whStock[key].push({ location: String(r[7]||'').trim(), units: casesNum });
       // Col L (index 11) = total unit count for this row
       // unitsPerCase = totalUnits / cases
-      var totalUnits = parseFloat(r[11]) || 0;
-      if (totalUnits > 0 && casesNum > 0 && !CALC.upc[key]) {
-        var unitsPerCase = totalUnits / casesNum;
+      var totalUnits = parseFloat(String(r[11]||'').replace(/,/g,'')) || 0;
+      var upcDirect  = parseFloat(String(r[9]||'').replace(/,/g,'')) || 0;
+      // Use col J (units per case) directly if available, else derive from col L ÷ col I
+      var unitsPerCaseVal = upcDirect > 0 ? upcDirect : (totalUnits > 0 && casesNum > 0 ? Math.round(totalUnits / casesNum) : 0);
+      if (unitsPerCaseVal > 0 && !CALC.upc[key]) {
         var packSize = 1;
         var suffixMatch = partNum.match(/=(\d+)[xX]/);
         if (suffixMatch) packSize = parseInt(suffixMatch[1]) || 1;
-        CALC.upc[key] = { unitsPerCase: unitsPerCase, packSize: packSize };
+        CALC.upc[key] = { unitsPerCase: unitsPerCaseVal, packSize: packSize };
       }
     }
     console.log('[Sales WH] loaded', Object.keys(CALC.whStock).length, 'parts,', Object.keys(CALC.upc).length, 'with UPC data');
