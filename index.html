@@ -4681,8 +4681,10 @@ async function silentLoadSaved() {
   // Called on launcher show — silent pre-fetch so data is ready when app opens
   if (!SALES_WORKER_URL) return;
   try {
-    await readCalcTabs();
+    await Promise.all([ salesLoadWarehouseStock(), readCalcTabs() ]);
     lastUpdated = new Date();
+    buildReorderRows();
+    buildDashboardData();
   } catch(e) { /* silent — sheet may be empty on first use */ }
 }
 
