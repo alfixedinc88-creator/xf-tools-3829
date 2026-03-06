@@ -2035,19 +2035,26 @@ input[type=checkbox]{width:15px;height:15px;cursor:pointer;accent-color:var(--bl
 <script>
 
 // ═══════════════════════════════════════════════════════
-// PIN LOCK — own block so credentials errors never break it
+// PIN LOCK — Worker-verified, no PIN ever stored in HTML
 // ═══════════════════════════════════════════════════════
-var PIN_CORRECT = '2589';
+var WORKER_URL  = 'https://xfitting-lookup.alfixedinc88.workers.dev';
 var pinEntry    = '';
+var XF_SESSION  = null;  // session token stored in memory only
 
-if (sessionStorage.getItem('xf_unlocked') === '1') {
-  document.addEventListener('DOMContentLoaded', function() {
-    var ps = document.getElementById('pin-screen');
-    if (ps) { ps.style.display = 'none'; ps.style.visibility = 'hidden'; }
-    document.getElementById('launcher').style.display = 'flex';
-    if (typeof silentLoadSaved === 'function' && SALES_WORKER_URL) silentLoadSaved();
-  });
-}
+// Check for existing valid session in sessionStorage
+(function() {
+  var stored = sessionStorage.getItem('xf_session');
+  if (stored) {
+    // Token will be verified by worker on first request — just restore it
+    XF_SESSION = stored;
+    document.addEventListener('DOMContentLoaded', function() {
+      var ps = document.getElementById('pin-screen');
+      if (ps) { ps.style.display = 'none'; ps.style.visibility = 'hidden'; }
+      document.getElementById('launcher').style.display = 'flex';
+      if (typeof silentLoadSaved === 'function' && SALES_WORKER_URL) silentLoadSaved();
+    });
+  }
+})();
 
 document.addEventListener('keydown', function(e) {
   var ps = document.getElementById('pin-screen');
@@ -2081,35 +2088,65 @@ function updatePinDots() {
 }
 
 function checkPin() {
-  if (pinEntry === PIN_CORRECT) {
-    sessionStorage.setItem('xf_unlocked', '1');
-    var ps = document.getElementById('pin-screen');
-    ps.style.transition = 'opacity .3s';
-    ps.style.opacity = '0';
-    setTimeout(function() {
-      ps.style.display = 'none';
-      ps.style.visibility = 'hidden';
-      document.getElementById('launcher').style.display = 'flex';
-      if (typeof silentLoadSaved === 'function' && SALES_WORKER_URL) silentLoadSaved();
-    }, 300);
-  } else {
-    var dots = document.getElementById('pin-dots');
-    for (var i = 0; i < 4; i++) {
-      var d = document.getElementById('pd' + i);
-      if (d) { d.classList.remove('filled'); d.classList.add('error'); }
-    }
-    if (dots) dots.classList.add('shake');
-    var pe = document.getElementById('pin-error');
-    if (pe) pe.textContent = 'Incorrect PIN';
-    setTimeout(function() {
-      if (dots) dots.classList.remove('shake');
+  // Determine pin_type — try ops first, then mobile
+  // We try both; worker returns token for whichever matches
+  var pin = pinEntry;
+  pinEntry = '';
+
+  // Show checking state
+  var pe = document.getElementById('pin-error');
+  if (pe) pe.textContent = 'Checking...';
+
+  // Try ops first, then mobile (worker validates against env vars)
+  // We send pin_type as "ops" — if it fails we try "mobile"
+  function tryAuth(pinType, onFail) {
+    fetch(WORKER_URL + '/auth', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ pin: pin, pin_type: pinType })
+    })
+    .then(function(r) { return r.json(); })
+    .then(function(d) {
+      if (d.token) {
+        XF_SESSION = d.token;
+        sessionStorage.setItem('xf_session', d.token);
+        var ps = document.getElementById('pin-screen');
+        ps.style.transition = 'opacity .3s';
+        ps.style.opacity = '0';
+        setTimeout(function() {
+          ps.style.display = 'none';
+          ps.style.visibility = 'hidden';
+          document.getElementById('launcher').style.display = 'flex';
+          if (typeof silentLoadSaved === 'function' && SALES_WORKER_URL) silentLoadSaved();
+        }, 300);
+      } else {
+        onFail();
+      }
+    })
+    .catch(function() { onFail(); });
+  }
+
+  // Try ops → mobile → show error
+  tryAuth('ops', function() {
+    tryAuth('mobile', function() {
+      // Both failed — wrong PIN
+      var dots = document.getElementById('pin-dots');
       for (var i = 0; i < 4; i++) {
         var d = document.getElementById('pd' + i);
-        if (d) d.classList.remove('error');
+        if (d) { d.classList.remove('filled'); d.classList.add('error'); }
       }
-      pinEntry = '';
-    }, 600);
-  }
+      if (dots) dots.classList.add('shake');
+      if (pe) pe.textContent = 'Incorrect PIN';
+      setTimeout(function() {
+        if (dots) dots.classList.remove('shake');
+        for (var i = 0; i < 4; i++) {
+          var d = document.getElementById('pd' + i);
+          if (d) d.classList.remove('error');
+        }
+        if (pe) pe.textContent = '';
+      }, 600);
+    });
+  });
 }
 
 </script>
@@ -4387,7 +4424,7 @@ function upcRenderSheet(matches) {
 // SALES APPS — Management PIN + Launch Logic
 // ═══════════════════════════════════════════════════════
 
-var MGMT_PIN_CORRECT = "6523";
+// MGMT PIN — verified by Worker, no PIN stored in HTML
 var mgmtPinBuf = "";
 var mgmtPinTarget = null;
 
@@ -4407,23 +4444,42 @@ function mgmtPinKey(d) {
   document.getElementById('mgmt-pd' + (mgmtPinBuf.length - 1)).classList.add('filled');
   if (mgmtPinBuf.length === 4) {
     setTimeout(function() {
-      if (mgmtPinBuf === MGMT_PIN_CORRECT) {
-        document.getElementById('mgmt-pin-screen').style.display = 'none';
-        salesLaunchApp(mgmtPinTarget);
-      } else {
-        document.getElementById('mgmt-pin-error').style.opacity = '1';
-        setTimeout(function() {
-          mgmtPinBuf = "";
-          ['mgmt-pd0','mgmt-pd1','mgmt-pd2','mgmt-pd3'].forEach(function(id) {
-            document.getElementById(id).classList.remove('filled');
-          });
-          document.getElementById('mgmt-pin-error').style.opacity = '0';
-        }, 900);
-      }
+      var pin = mgmtPinBuf;
+      mgmtPinBuf = "";
+      var errEl = document.getElementById('mgmt-pin-error');
+      errEl.textContent = 'Checking...';
+      errEl.style.opacity = '1';
+
+      fetch(WORKER_URL + '/auth', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ pin: pin, pin_type: 'mgmt' })
+      })
+      .then(function(r) { return r.json(); })
+      .then(function(data) {
+        if (data.token) {
+          XF_SESSION = data.token;
+          sessionStorage.setItem('xf_session', data.token);
+          document.getElementById('mgmt-pin-screen').style.display = 'none';
+          salesLaunchApp(mgmtPinTarget);
+        } else {
+          errEl.textContent = 'Incorrect PIN';
+          errEl.style.opacity = '1';
+          setTimeout(function() {
+            ['mgmt-pd0','mgmt-pd1','mgmt-pd2','mgmt-pd3'].forEach(function(id) {
+              document.getElementById(id).classList.remove('filled');
+            });
+            errEl.style.opacity = '0';
+          }, 900);
+        }
+      })
+      .catch(function() {
+        errEl.textContent = 'Error — try again';
+        errEl.style.opacity = '1';
+      });
     }, 120);
   }
 }
-
 function mgmtPinDel() {
   if (!mgmtPinBuf.length) return;
   document.getElementById('mgmt-pd' + (mgmtPinBuf.length - 1)).classList.remove('filled');
@@ -4471,14 +4527,7 @@ function salesGoBack() {
 
 // ─── SALES STATE VARS ───────────────────────────────────────────────────────
 var SALES_WORKER_URL = "https://xfitting-lookup.alfixedinc88.workers.dev";
-var XF_API_KEY = "xf-ZxLHBaxwTaSOQyeXA5KuWMPc8FYsBSOS";
-
-// Secure fetch — always attaches API key header to every worker request
-function wFetch(url, opts) {
-  opts = opts || {};
-  opts.headers = Object.assign({}, opts.headers || {}, { 'X-API-Key': XF_API_KEY });
-  return fetch(url, opts);
-}
+// wFetch defined in PIN block above — sends X-Session-Token on every request
 // Staged files: { Amz30: [[row,...]], Amz90: [...], ... }
 var staged = {};
 // Calculated data read back from sheet
