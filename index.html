@@ -2218,7 +2218,7 @@ async function getToken() { return null; }
 
 async function fetchSheet(name) {
   var url = 'https://xfitting-lookup.alfixedinc88.workers.dev?sheet=' + encodeURIComponent(name);
-  var res  = await fetch(url);
+  var res  = await wFetch(url);
   var json = await res.json();
   if (json.error) throw new Error('Sheet "' + name + '": ' + json.error);
   var rows = (json.values || []).map(function(r) {
@@ -3235,7 +3235,7 @@ async function loadDiscontinuedSKUs() {
 async function saveDiscontinuedSKU(sku, remove) {
   try {
     // 1. Fetch current sheet data via Worker GET
-    var getRes  = await fetch('https://xfitting-lookup.alfixedinc88.workers.dev?sheet=Discontinued_SKUs');
+    var getRes  = await wFetch('https://xfitting-lookup.alfixedinc88.workers.dev?sheet=Discontinued_SKUs');
     var getData = await getRes.json();
 
     var rows;
@@ -3262,7 +3262,7 @@ async function saveDiscontinuedSKU(sku, remove) {
     }
 
     // 3. Write back via Worker PUT
-    var putRes = await fetch('https://xfitting-lookup.alfixedinc88.workers.dev?sheet=Discontinued_SKUs', {
+    var putRes = await wFetch('https://xfitting-lookup.alfixedinc88.workers.dev?sheet=Discontinued_SKUs', {
       method: 'PUT',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ values: rows })
@@ -3593,10 +3593,10 @@ function valuesToRows(values) {
 async function saveReportsToSheet() {
   try {
     const saves = [];
-    if (S.fba.length)  saves.push(fetch('https://xfitting-lookup.alfixedinc88.workers.dev?sheet=FBA_Inventory',  {method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify({values:rowsToValues(S.fba,  Object.keys(S.fba[0]))})}));
-    if (S.live.length) saves.push(fetch('https://xfitting-lookup.alfixedinc88.workers.dev?sheet=FBA_Live',        {method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify({values:rowsToValues(S.live, Object.keys(S.live[0]))})}));
-    if (S.awd.length)  saves.push(fetch('https://xfitting-lookup.alfixedinc88.workers.dev?sheet=AWD_Inventory',   {method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify({values:rowsToValues(S.awd,  Object.keys(S.awd[0]))})}));
-    if (S.res.length)  saves.push(fetch('https://xfitting-lookup.alfixedinc88.workers.dev?sheet=FBA_Reserve',     {method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify({values:rowsToValues(S.res,  Object.keys(S.res[0]))})}));
+    if (S.fba.length)  saves.push(wFetch('https://xfitting-lookup.alfixedinc88.workers.dev?sheet=FBA_Inventory',  {method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify({values:rowsToValues(S.fba,  Object.keys(S.fba[0]))})}));
+    if (S.live.length) saves.push(wFetch('https://xfitting-lookup.alfixedinc88.workers.dev?sheet=FBA_Live',        {method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify({values:rowsToValues(S.live, Object.keys(S.live[0]))})}));
+    if (S.awd.length)  saves.push(wFetch('https://xfitting-lookup.alfixedinc88.workers.dev?sheet=AWD_Inventory',   {method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify({values:rowsToValues(S.awd,  Object.keys(S.awd[0]))})}));
+    if (S.res.length)  saves.push(wFetch('https://xfitting-lookup.alfixedinc88.workers.dev?sheet=FBA_Reserve',     {method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify({values:rowsToValues(S.res,  Object.keys(S.res[0]))})}));
     await Promise.all(saves);
     awd_planner_toast('Reports saved ✓', 'success');
   } catch(e) { console.error('[XFITTING] saveReportsToSheet:', e); }
@@ -3607,10 +3607,10 @@ async function loadReportsFromSheet() {
     const pill = ge('data-pill');
     if (pill) { pill.textContent = 'Loading saved data…'; pill.style.background='var(--blue-light)'; pill.style.color='var(--blue)'; }
     const [r1,r2,r3,r4] = await Promise.all([
-      fetch('https://xfitting-lookup.alfixedinc88.workers.dev?sheet=FBA_Inventory').then(r=>r.json()),
-      fetch('https://xfitting-lookup.alfixedinc88.workers.dev?sheet=FBA_Live').then(r=>r.json()),
-      fetch('https://xfitting-lookup.alfixedinc88.workers.dev?sheet=AWD_Inventory').then(r=>r.json()),
-      fetch('https://xfitting-lookup.alfixedinc88.workers.dev?sheet=FBA_Reserve').then(r=>r.json()),
+      wFetch('https://xfitting-lookup.alfixedinc88.workers.dev?sheet=FBA_Inventory').then(r=>r.json()),
+      wFetch('https://xfitting-lookup.alfixedinc88.workers.dev?sheet=FBA_Live').then(r=>r.json()),
+      wFetch('https://xfitting-lookup.alfixedinc88.workers.dev?sheet=AWD_Inventory').then(r=>r.json()),
+      wFetch('https://xfitting-lookup.alfixedinc88.workers.dev?sheet=FBA_Reserve').then(r=>r.json()),
     ]);
     const fbaData=valuesToRows(r1.values||[]), liveData=valuesToRows(r2.values||[]),
           awdData=valuesToRows(r3.values||[]), resData =valuesToRows(r4.values||[]);
@@ -3646,7 +3646,7 @@ function clearReportData() {
   if(ge('proc-btn')) ge('proc-btn').disabled=true;
   const pill=ge('data-pill'); if(pill){pill.textContent='No data loaded';pill.style.background='var(--gray-100)';pill.style.color='var(--gray-500)';}
   ['FBA_Inventory','FBA_Live','AWD_Inventory','FBA_Reserve'].forEach(sheet =>
-    fetch('https://xfitting-lookup.alfixedinc88.workers.dev?sheet='+sheet,{method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify({values:[['cleared']]})})
+    wFetch('https://xfitting-lookup.alfixedinc88.workers.dev?sheet='+sheet,{method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify({values:[['cleared']]})})
   );
   renderDashboard(); renderInv(); renderRecs(); updateBadges();
   awd_planner_toast('Report data cleared', 'success');
@@ -3675,14 +3675,14 @@ function saveShipmentToSheet() {
       const items = Object.entries(S.shipment);
       if (!items.length) {
         // Clear the sheet
-        await fetch('https://xfitting-lookup.alfixedinc88.workers.dev?sheet=AWD_Shipment', {
+        await wFetch('https://xfitting-lookup.alfixedinc88.workers.dev?sheet=AWD_Shipment', {
           method: 'PUT', headers: {'Content-Type':'application/json'},
           body: JSON.stringify({values: [['sku','qty']]})
         });
         return;
       }
       const values = [['sku','qty'], ...items.map(([sku,i]) => [sku, i.qty])];
-      await fetch('https://xfitting-lookup.alfixedinc88.workers.dev?sheet=AWD_Shipment', {
+      await wFetch('https://xfitting-lookup.alfixedinc88.workers.dev?sheet=AWD_Shipment', {
         method: 'PUT', headers: {'Content-Type':'application/json'},
         body: JSON.stringify({values})
       });
@@ -3693,7 +3693,7 @@ function saveShipmentToSheet() {
 
 async function loadShipmentFromSheet() {
   try {
-    const res = await fetch('https://xfitting-lookup.alfixedinc88.workers.dev?sheet=AWD_Shipment');
+    const res = await wFetch('https://xfitting-lookup.alfixedinc88.workers.dev?sheet=AWD_Shipment');
     const data = await res.json();
     if (!data.values || data.values.length < 2) return;
     const rows = data.values.slice(1); // skip header
@@ -3720,8 +3720,8 @@ async function loadShipmentFromSheet() {
 async function loadAWDPlannerDB() {
   try {
     const [r1, r2] = await Promise.all([
-      fetch('https://xfitting-lookup.alfixedinc88.workers.dev?sheet=Products').then(r => r.json()),
-      fetch('https://xfitting-lookup.alfixedinc88.workers.dev?sheet=AWD_Master').then(r => r.json()),
+      wFetch('https://xfitting-lookup.alfixedinc88.workers.dev?sheet=Products').then(r => r.json()),
+      wFetch('https://xfitting-lookup.alfixedinc88.workers.dev?sheet=AWD_Master').then(r => r.json()),
     ]);
 
     // Parse Products: col2=base SKU, col4=warehouseName
@@ -3957,7 +3957,7 @@ function upcOnLaunch() {
 
 async function upcAutoLoadSavedShipment() {
   try {
-    var res = await fetch('https://xfitting-lookup.alfixedinc88.workers.dev?sheet=UPC_Shipment');
+    var res = await wFetch('https://xfitting-lookup.alfixedinc88.workers.dev?sheet=UPC_Shipment');
     var data = await res.json();
     if (!data.values || data.values.length < 2) return;
     var rows = data.values.slice(1); // skip header row
@@ -4304,7 +4304,7 @@ async function upcSaveShipmentToSheet(skus, filename) {
   try {
     var values = [['sku', filename]];
     skus.forEach(function(s) { values.push([s, '']); });
-    await fetch('https://xfitting-lookup.alfixedinc88.workers.dev?sheet=UPC_Shipment', {
+    await wFetch('https://xfitting-lookup.alfixedinc88.workers.dev?sheet=UPC_Shipment', {
       method: 'PUT',
       headers: {'Content-Type':'application/json'},
       body: JSON.stringify({values: values})
