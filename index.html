@@ -4600,14 +4600,6 @@ function salesGoBack() {
 
 // ─── SALES STATE VARS ───────────────────────────────────────────────────────
 var SALES_WORKER_URL = "https://xfitting-lookup.alfixedinc88.workers.dev";
-var XF_API_KEY = "xf-2025-secure-k9m4p";  // Must match Worker API_KEY env var
-
-// Secure fetch — always attaches API key header
-function wFetch(url, opts) {
-  opts = opts || {};
-  opts.headers = Object.assign({}, opts.headers || {}, { 'X-API-Key': XF_API_KEY });
-  return fetch(url, opts);
-}
 // Staged files: { Amz30: [[row,...]], Amz90: [...], ... }
 var staged = {};
 // Calculated data read back from sheet
@@ -4632,7 +4624,7 @@ async function salesLoadWarehouseStock() {
   if (!SALES_WORKER_URL) return;
   var SKIP = new Set(['push fit','name','location','case','each case quantity','date arrive','total quantity','brand','uint price','total','type','sku','']);
   try {
-    var res  = await wFetch(SALES_WORKER_URL + '?sheet=Master_List');
+    var res  = await fetch(SALES_WORKER_URL + '?sheet=Master_List');
     var json = await res.json();
     if (json.error) throw new Error(json.error);
     var rows = (json.values || []).map(function(r){ while(r.length < 16) r.push(''); return r; });
@@ -4745,52 +4737,6 @@ function setUploadCard(tabName, state, msg) {
 }
 
 // ─── PROCESS ALL: UPLOAD → SHEET → READ BACK ────────────────────────────────
-async 
-// ─── CLEAR UPLOADED FILES & RELOAD FROM SHEETS ──────────────────────────────
-async function clearAndReload() {
-  if (!confirm('Clear all uploaded files and reload data from Google Sheets?')) return;
-
-  // Reset staged files
-  staged = {};
-
-  // Reset all upload cards visually
-  var tabNames = ['Amz30','Amz90','Ebay30','Ebay90','XF30','XF90'];
-  tabNames.forEach(function(t) {
-    setUploadCard(t, '', 'No file selected');
-    // Clear file inputs
-    ['ro-file-'+t, 'db-file-'+t].forEach(function(id) {
-      var el = document.getElementById(id);
-      if (el) el.value = '';
-    });
-  });
-
-  // Reset CALC state
-  CALC.partSales = []; CALC.skuSales = [];
-  CALC.jqVendor = []; CALC.effVendor = [];
-  CALC.cogs = {};
-
-  if (!SALES_WORKER_URL) { salesToast('No worker URL set', 'error'); return; }
-
-  setStatus('ro','loading','Reloading from sheets...');
-  setStatus('db','loading','Reloading from sheets...');
-  salesToast('<span class="sales-spinner"></span>Reloading data from Google Sheets...', 'info');
-
-  try {
-    await Promise.all([ salesLoadWarehouseStock(), readCalcTabs() ]);
-    lastUpdated = new Date();
-    updateLastUpdatedLabels();
-    buildReorderRows();
-    buildDashboardData();
-    setStatus('ro','ok','Loaded from sheets');
-    setStatus('db','ok','Loaded from sheets');
-    salesToast('✓ Cleared and reloaded from Google Sheets', 'success');
-  } catch(e) {
-    setStatus('ro','err','Load failed');
-    setStatus('db','err','Load failed');
-    salesToast('Error: ' + e.message, 'error');
-  }
-}
-
 async function processAllReports() {
   if (!SALES_WORKER_URL) { salesToast('WORKER_URL not set in app config', 'error'); return; }
   var tabs = Object.keys(staged);
@@ -5625,7 +5571,7 @@ function setStatus(app, state, label) {
 
 // ─── WORKER HELPERS ──────────────────────────────────────────────────────────
 function workerGet(tab) {
-  return wFetch(SALES_WORKER_URL+'?sheet='+encodeURIComponent(tab))
+  return fetch(SALES_WORKER_URL+'?sheet='+encodeURIComponent(tab))
     .then(function(r) {
       var status = r.status;
       return r.text().then(function(txt) {
@@ -5642,7 +5588,7 @@ function workerGet(tab) {
     });
 }
 function workerPut(tab, rows) {
-  return wFetch(SALES_WORKER_URL+'?sheet='+encodeURIComponent(tab), {
+  return fetch(SALES_WORKER_URL+'?sheet='+encodeURIComponent(tab), {
     method:'PUT',
     headers:{'Content-Type':'application/json'},
     body:JSON.stringify({values:rows})
@@ -5910,7 +5856,7 @@ async function callAI(app, userMessage, isAuto) {
     messages = aiHistory[app].slice(); // send full history
   }
 
-  var res = await wFetch(SALES_WORKER_URL+'/ai', {
+  var res = await fetch(SALES_WORKER_URL+'/ai', {
     method: 'POST',
     headers: { 'Content-Type':'application/json' },
     body: JSON.stringify({
@@ -6063,7 +6009,7 @@ async function mwhInit() {
 }
 
 async function mwhFetchSheet(tab) {
-  var res  = await wFetch(MWH_WORKER_URL + '?sheet=' + encodeURIComponent(tab));
+  var res  = await fetch(MWH_WORKER_URL + '?sheet=' + encodeURIComponent(tab));
   var json = await res.json();
   if (json.error) throw new Error(json.error);
   return json.values || [];
@@ -6420,7 +6366,6 @@ function mwhCardStock(r) {
 
       <div class="sales-action-row">
         <button class="sales-primary-btn" id="process-btn" onclick="processAllReports()">▶ Upload All &amp; Build Plan</button>
-        <button class="sales-secondary-btn" onclick="clearAndReload()" style="margin-left:8px">↺ Clear &amp; Reload from Sheets</button>
         <button class="sales-ghost-btn" onclick="loadSavedData()">↻ Load Last Saved Data</button>
         <span class="sales-load-note" id="last-updated"></span>
       </div>
@@ -6635,7 +6580,6 @@ function mwhCardStock(r) {
 
       <div class="sales-action-row">
         <button class="sales-primary-btn" onclick="processAllReports()">▶ Upload All &amp; Build Dashboard</button>
-        <button class="sales-secondary-btn" onclick="clearAndReload()" style="margin-left:8px">↺ Clear &amp; Reload from Sheets</button>
         <button class="sales-ghost-btn" onclick="loadSavedData()">↻ Load Last Saved Data</button>
         <span class="sales-load-note" id="db-last-updated"></span>
       </div>
