@@ -4592,6 +4592,51 @@ function setUploadCard(tabName, state, msg) {
   });
 }
 
+
+// ─── CLEAR UPLOADED FILES & RELOAD FROM SHEETS ──────────────────────────────
+async function clearAndReload() {
+  if (!confirm('Clear all uploaded files and reload data from Google Sheets?')) return;
+
+  // Reset staged files
+  staged = {};
+
+  // Reset all upload cards visually
+  var tabNames = ['Amz30','Amz90','Ebay30','Ebay90','XF30','XF90'];
+  tabNames.forEach(function(t) {
+    setUploadCard(t, '', 'No file selected');
+    ['ro-file-'+t, 'db-file-'+t].forEach(function(id) {
+      var el = document.getElementById(id);
+      if (el) el.value = '';
+    });
+  });
+
+  // Reset CALC sales state
+  CALC.partSales = []; CALC.skuSales = [];
+  CALC.jqVendor = []; CALC.effVendor = [];
+  CALC.cogs = {};
+
+  if (!SALES_WORKER_URL) { salesToast('No worker URL set', 'error'); return; }
+
+  setStatus('ro','loading','Reloading from sheets...');
+  setStatus('db','loading','Reloading from sheets...');
+  salesToast('<span class="sales-spinner"></span>Reloading data from Google Sheets...', 'info');
+
+  try {
+    await Promise.all([ salesLoadWarehouseStock(), readCalcTabs() ]);
+    lastUpdated = new Date();
+    updateLastUpdatedLabels();
+    buildReorderRows();
+    buildDashboardData();
+    setStatus('ro','ok','Loaded from sheets');
+    setStatus('db','ok','Loaded from sheets');
+    salesToast('✓ Cleared and reloaded from Google Sheets', 'success');
+  } catch(e) {
+    setStatus('ro','err','Load failed');
+    setStatus('db','err','Load failed');
+    salesToast('Error: ' + e.message, 'error');
+  }
+}
+
 // ─── PROCESS ALL: UPLOAD → SHEET → READ BACK ────────────────────────────────
 async function processAllReports() {
   if (!SALES_WORKER_URL) { salesToast('WORKER_URL not set in app config', 'error'); return; }
@@ -6029,6 +6074,7 @@ function salesToast(msg, type) {
 
       <div class="sales-action-row">
         <button class="sales-primary-btn" id="process-btn" onclick="processAllReports()">▶ Upload All &amp; Build Plan</button>
+        <button class="sales-secondary-btn" style="margin-left:8px" onclick="clearAndReload()">↺ Clear &amp; Reload from Sheets</button>
         <button class="sales-ghost-btn" onclick="loadSavedData()">↻ Load Last Saved Data</button>
         <span class="sales-load-note" id="last-updated"></span>
       </div>
@@ -6243,6 +6289,7 @@ function salesToast(msg, type) {
 
       <div class="sales-action-row">
         <button class="sales-primary-btn" onclick="processAllReports()">▶ Upload All &amp; Build Dashboard</button>
+        <button class="sales-secondary-btn" style="margin-left:8px" onclick="clearAndReload()">↺ Clear &amp; Reload from Sheets</button>
         <button class="sales-ghost-btn" onclick="loadSavedData()">↻ Load Last Saved Data</button>
         <span class="sales-load-note" id="db-last-updated"></span>
       </div>
