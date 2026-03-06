@@ -2739,7 +2739,22 @@ const S={fba:[],live:[],awd:[],res:[],joined:[],cpackMap:{},cpackDate:null,cpack
 function dov(e,k){e.preventDefault();ge('zone-'+k).classList.add('drag');}
 function dlv(k){ge('zone-'+k).classList.remove('drag');}
 function drp(e,k){e.preventDefault();dlv(k);const f=e.dataTransfer.files[0];if(f)hf(f,k);}
-function fch(e,k){const f=e.target.files[0];if(f)hf(f,k);}
+function fch(e,k){
+  const f=e.target.files[0];
+  if(!f) return;
+  const ext=f.name.split('.').pop().toLowerCase();
+  const allowedTypes=['csv','txt','tsv'];
+  if(allowedTypes.indexOf(ext)===-1){
+    const st=ge('st-'+k); if(st){st.textContent='Invalid file type (use CSV or TXT)';st.className='ust err';}
+    e.target.value=''; return;
+  }
+  const maxMB=20;
+  if(f.size/(1024*1024)>maxMB){
+    const st=ge('st-'+k); if(st){st.textContent='File too large (max '+maxMB+'MB)';st.className='ust err';}
+    e.target.value=''; return;
+  }
+  hf(f,k);
+}
 function hf(file,k){
   const st=ge('st-'+k);st.textContent='Reading…';st.className='ust';
   readTxt(file).then(txt=>{
@@ -4540,9 +4555,65 @@ function findCol(headers, keys) {
 }
 
 // ─── FILE UPLOAD & CSV PARSING ───────────────────────────────────────────────
+// ─── UPLOAD VALIDATION ───────────────────────────────────────────────────────
+var UPLOAD_RULES = {
+  Amz30:  { types: ['csv'], maxMB: 10, cols: ['order-id','sku','quantity'] },
+  Amz90:  { types: ['csv'], maxMB: 10, cols: ['order-id','sku','quantity'] },
+  Ebay30: { types: ['csv'], maxMB: 10, cols: ['sales record number','item number','sold for'] },
+  Ebay90: { types: ['csv'], maxMB: 10, cols: ['sales record number','item number','sold for'] },
+  XF30:   { types: ['csv'], maxMB: 10, cols: ['sku','quantity'] },
+  XF90:   { types: ['csv'], maxMB: 10, cols: ['sku','quantity'] }
+};
+
+function validateUpload(file, tabName) {
+  var rule = UPLOAD_RULES[tabName];
+  if (!rule) return null; // no rule = allow
+
+  // Check file type by extension
+  var ext = file.name.split('.').pop().toLowerCase();
+  if (rule.types.indexOf(ext) === -1) {
+    return 'Invalid file type. Expected: ' + rule.types.join(', ').toUpperCase();
+  }
+
+  // Check file size
+  var mb = file.size / (1024 * 1024);
+  if (mb > rule.maxMB) {
+    return 'File too large (' + mb.toFixed(1) + ' MB). Max: ' + rule.maxMB + ' MB';
+  }
+
+  return null; // valid
+}
+
+function validateColumns(rows, tabName) {
+  var rule = UPLOAD_RULES[tabName];
+  if (!rule || !rule.cols || !rows || rows.length < 1) return null;
+
+  // Header row is first row — lowercase all for comparison
+  var headers = rows[0].map(function(h) { return (h || '').toLowerCase().trim(); });
+
+  var missing = rule.cols.filter(function(col) {
+    return headers.indexOf(col.toLowerCase()) === -1;
+  });
+
+  if (missing.length > 0) {
+    return 'Wrong file? Missing columns: ' + missing.join(', ');
+  }
+  return null;
+}
+
 function handleUpload(evt, tabName) {
   var file = evt.target.files[0];
   if (!file) return;
+
+  // Validate file type and size before reading
+  var fileErr = validateUpload(file, tabName);
+  if (fileErr) {
+    setUploadCard(tabName, 'error', fileErr);
+    salesToast(tabName + ': ' + fileErr, 'error');
+    evt.target.value = ''; // clear input
+    return;
+  }
+
   setUploadCard(tabName, 'uploading', 'Reading ' + file.name + '...');
   var reader = new FileReader();
   reader.onload = function(e) {
@@ -4552,6 +4623,16 @@ function handleUpload(evt, tabName) {
       setUploadCard(tabName, 'error', 'Could not parse — check file format');
       return;
     }
+
+    // Validate expected columns
+    var colErr = validateColumns(rows, tabName);
+    if (colErr) {
+      setUploadCard(tabName, 'error', colErr);
+      salesToast(tabName + ': ' + colErr, 'error');
+      evt.target.value = '';
+      return;
+    }
+
     staged[tabName] = rows;
     setUploadCard(tabName, 'has-data', '✓ ' + file.name + ' (' + (rows.length-1) + ' rows)');
     salesToast('Loaded ' + tabName + ': ' + (rows.length-1) + ' rows', 'success');
