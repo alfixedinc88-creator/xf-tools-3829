@@ -4564,20 +4564,57 @@ function salesParseCSV(text, tabName) {
   }
 
   var dataLines = lines.slice(startLine).filter(function(l){ return l.trim(); });
-  return dataLines.map(function(line){ return csvRowToArray(line); });
+  return dataLines.map(function(line){ return csvRowToArray(line, tabName); });
 }
 
-function csvRowToArray(line) {
+function csvRowToArray(line, tabName) {
   // Handles quoted fields with commas inside
+  // tabName used to apply column-specific formatting for eBay reports
   var result = [], cur = '', inQ = false;
   for (var i=0;i<line.length;i++) {
     var c = line[i];
     if (c==='"') { inQ=!inQ; }
-    else if (c===',' && !inQ) { result.push(cur.trim()); cur=''; }
+    else if (c===',' && !inQ) { result.push(cleanCsvVal(cur.trim(), tabName, result.length)); cur=''; }
     else { cur+=c; }
   }
-  result.push(cur.trim());
+  result.push(cleanCsvVal(cur.trim(), tabName, result.length));
   return result;
+}
+
+function cleanCsvVal(v, tabName, colIndex) {
+  // Remove surrounding quotes
+  if (v.length >= 2 && v[0] === '"' && v[v.length-1] === '"') {
+    v = v.slice(1, -1).trim();
+  }
+
+  // eBay report column-specific formatting:
+  // Col B (index 1) = plain text — return as-is
+  // Col C (index 2) = number — strip commas
+  // Col D (index 3) = currency — strip $ and commas
+  // Col E (index 4) = currency — strip $ and commas
+  if (tabName === 'Ebay30' || tabName === 'Ebay90') {
+    if (colIndex === 1) {
+      // Plain text — return as-is, no conversion
+      return v;
+    }
+    if (colIndex === 2) {
+      // Number — strip commas only
+      var num = v.replace(/,/g, '');
+      return isNaN(num) || num === '' ? v : num;
+    }
+    if (colIndex === 3 || colIndex === 4) {
+      // Currency — strip $ and commas
+      var curr = v.replace(/[$£€]/g, '').replace(/,/g, '');
+      return isNaN(curr) || curr === '' ? v : curr;
+    }
+  }
+
+  // Default for all other tabs: strip currency symbols, commas from numbers
+  var cleaned = v.replace(/^[$£€]/, '').replace(/%$/, '');
+  if (/^-?[\d,]+\.?\d*$/.test(cleaned)) {
+    cleaned = cleaned.replace(/,/g, '');
+  }
+  return cleaned || v;
 }
 
 function setUploadCard(tabName, state, msg) {
