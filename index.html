@@ -4527,7 +4527,34 @@ function salesGoBack() {
 
 // ─── SALES STATE VARS ───────────────────────────────────────────────────────
 var SALES_WORKER_URL = "https://xfitting-lookup.alfixedinc88.workers.dev";
-// wFetch defined in PIN block above — sends X-Session-Token on every request
+// ─── SECURE FETCH ────────────────────────────────────────────────────────────
+// Attaches session token to every worker request
+// XF_SESSION set after PIN verification — never stored in source
+function wFetch(url, opts) {
+  opts = opts || {};
+  var headers = Object.assign({}, opts.headers || {});
+  if (typeof XF_SESSION !== 'undefined' && XF_SESSION) {
+    headers['X-Session-Token'] = XF_SESSION;
+  }
+  opts.headers = headers;
+  return fetch(url, opts).then(function(r) {
+    if (r.status === 401) {
+      if (typeof XF_SESSION !== 'undefined') XF_SESSION = null;
+      sessionStorage.removeItem('xf_session');
+      var ps = document.getElementById('pin-screen');
+      if (ps) {
+        ps.style.display = 'flex';
+        ps.style.visibility = 'visible';
+        ps.style.opacity = '1';
+        var launcher = document.getElementById('launcher');
+        if (launcher) launcher.style.display = 'none';
+        var pe = document.getElementById('pin-error');
+        if (pe) pe.textContent = 'Session expired — please re-enter PIN';
+      }
+    }
+    return r;
+  });
+}
 // Staged files: { Amz30: [[row,...]], Amz90: [...], ... }
 var staged = {};
 // Calculated data read back from sheet
