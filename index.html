@@ -4456,6 +4456,14 @@ function salesGoBack() {
 
 // ─── SALES STATE VARS ───────────────────────────────────────────────────────
 var SALES_WORKER_URL = "https://xfitting-lookup.alfixedinc88.workers.dev";
+var XF_API_KEY = "xf-ZxLHBaxwTaSOQyeXA5KuWMPc8FYsBSOS";
+
+// Secure fetch — always attaches API key header to every worker request
+function wFetch(url, opts) {
+  opts = opts || {};
+  opts.headers = Object.assign({}, opts.headers || {}, { 'X-API-Key': XF_API_KEY });
+  return fetch(url, opts);
+}
 // Staged files: { Amz30: [[row,...]], Amz90: [...], ... }
 var staged = {};
 // Calculated data read back from sheet
@@ -4480,7 +4488,7 @@ async function salesLoadWarehouseStock() {
   if (!SALES_WORKER_URL) return;
   var SKIP = new Set(['push fit','name','location','case','each case quantity','date arrive','total quantity','brand','uint price','total','type','sku','']);
   try {
-    var res  = await fetch(SALES_WORKER_URL + '?sheet=Master_List');
+    var res  = await wFetch(SALES_WORKER_URL + '?sheet=Master_List');
     var json = await res.json();
     if (json.error) throw new Error(json.error);
     var rows = (json.values || []).map(function(r){ while(r.length < 16) r.push(''); return r; });
@@ -5509,7 +5517,7 @@ function setStatus(app, state, label) {
 
 // ─── WORKER HELPERS ──────────────────────────────────────────────────────────
 function workerGet(tab) {
-  return fetch(SALES_WORKER_URL+'?sheet='+encodeURIComponent(tab))
+  return wFetch(SALES_WORKER_URL+'?sheet='+encodeURIComponent(tab))
     .then(function(r) {
       var status = r.status;
       return r.text().then(function(txt) {
@@ -5526,7 +5534,7 @@ function workerGet(tab) {
     });
 }
 function workerPut(tab, rows) {
-  return fetch(SALES_WORKER_URL+'?sheet='+encodeURIComponent(tab), {
+  return wFetch(SALES_WORKER_URL+'?sheet='+encodeURIComponent(tab), {
     method:'PUT',
     headers:{'Content-Type':'application/json'},
     body:JSON.stringify({values:rows})
@@ -5794,7 +5802,7 @@ async function callAI(app, userMessage, isAuto) {
     messages = aiHistory[app].slice(); // send full history
   }
 
-  var res = await fetch(SALES_WORKER_URL+'/ai', {
+  var res = await wFetch(SALES_WORKER_URL+'/ai', {
     method: 'POST',
     headers: { 'Content-Type':'application/json' },
     body: JSON.stringify({
