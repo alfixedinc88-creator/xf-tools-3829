@@ -7,12 +7,7 @@
   <meta http-equiv="Pragma" content="no-cache">
   <meta http-equiv="Expires" content="0">
 <meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1, user-scalable=no">
-<meta name="mobile-web-app-capable" content="yes">
-<meta name="apple-mobile-web-app-capable" content="yes">
-<meta name="apple-mobile-web-app-status-bar-style" content="default">
-<meta name="apple-mobile-web-app-title" content="XFitting WH">
-<meta name="theme-color" content="#1a56db">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>XFITTING — Internal Tools</title>
 <link href="https://fonts.googleapis.com/css2?family=DM+Mono:wght@400;500&family=DM+Sans:wght@300;400;500;600;700&display=swap" rel="stylesheet">
 <style>
@@ -1634,72 +1629,6 @@ input[type=checkbox]{width:15px;height:15px;cursor:pointer;accent-color:var(--bl
 .sortable-th:hover { background: var(--bg3); }
 .sort-arrow { font-size: 10px; margin-left: 3px; color: var(--text3); }
 .sort-arrow.active { color: var(--accent); }
-
-/* ── MOBILE WAREHOUSE UI ──────────────────────────────────────── */
-#mobile-wh { display:none; flex-direction:column; height:100dvh; background:var(--bg); overflow:hidden; }
-.mwh-header {
-  background:var(--accent); color:#fff; padding:16px 20px 12px;
-  display:flex; align-items:center; justify-content:space-between;
-  flex-shrink:0;
-}
-.mwh-header-title { font-size:17px; font-weight:700; font-family:var(--mono); letter-spacing:.5px; }
-.mwh-header-sub   { font-size:11px; opacity:.8; margin-top:1px; }
-.mwh-tabs {
-  display:flex; background:var(--bg2); border-bottom:1px solid var(--border);
-  flex-shrink:0;
-}
-.mwh-tab {
-  flex:1; padding:12px 4px; text-align:center; font-size:12px; font-weight:600;
-  color:var(--text3); border-bottom:3px solid transparent; cursor:pointer;
-  font-family:var(--mono); transition:all .15s; -webkit-tap-highlight-color:transparent;
-}
-.mwh-tab.active { color:var(--accent); border-bottom-color:var(--accent); background:var(--accent-bg); }
-.mwh-body { flex:1; overflow-y:auto; padding:16px; -webkit-overflow-scrolling:touch; }
-.mwh-search-wrap { position:relative; margin-bottom:14px; }
-.mwh-search {
-  width:100%; padding:14px 16px 14px 44px; font-size:16px;
-  border:1.5px solid var(--border); border-radius:12px;
-  background:var(--bg2); color:var(--text); box-sizing:border-box;
-  -webkit-appearance:none; outline:none; font-family:var(--mono);
-}
-.mwh-search:focus { border-color:var(--accent); box-shadow:0 0 0 3px rgba(26,86,219,.1); }
-.mwh-search-icon { position:absolute; left:14px; top:50%; transform:translateY(-50%); font-size:18px; pointer-events:none; }
-.mwh-card {
-  background:var(--bg2); border:1px solid var(--border); border-radius:12px;
-  padding:14px 16px; margin-bottom:10px; transition:border-color .15s;
-}
-.mwh-card:active { border-color:var(--accent); }
-.mwh-card-pn   { font-family:var(--mono); font-size:15px; font-weight:700; color:var(--accent); margin-bottom:4px; }
-.mwh-card-name { font-size:13px; color:var(--text2); margin-bottom:10px; line-height:1.4; }
-.mwh-card-row  { display:flex; justify-content:space-between; align-items:center; font-size:12px; padding:3px 0; border-bottom:1px solid var(--border); }
-.mwh-card-row:last-child { border-bottom:none; }
-.mwh-card-label { color:var(--text3); font-family:var(--mono); }
-.mwh-card-value { font-weight:600; color:var(--text); }
-.mwh-loc { display:inline-block; background:var(--accent-bg); color:var(--accent); font-family:var(--mono); font-size:11px; font-weight:700; padding:3px 8px; border-radius:6px; margin:2px 2px 0 0; }
-.mwh-empty { text-align:center; padding:56px 20px; color:var(--text3); }
-.mwh-empty-icon { font-size:44px; margin-bottom:12px; }
-.mwh-empty-title { font-size:15px; font-weight:600; color:var(--text2); margin-bottom:6px; }
-.mwh-empty-sub { font-size:12px; line-height:1.5; }
-.mwh-badge { display:inline-flex; align-items:center; gap:4px; font-size:11px; font-weight:700; padding:3px 8px; border-radius:20px; font-family:var(--mono); }
-.mwh-badge-green { background:var(--green-bg); color:var(--green); }
-.mwh-badge-red    { background:#fef2f2; color:#dc2626; }
-.mwh-badge-orange { background:#fff7ed; color:#c2410c; }
-.mwh-badge-purple { background:#f5f3ff; color:#7c3aed; }
-.mwh-badge-gray  { background:var(--bg3); color:var(--text3); }
-@media (max-width: 640px) {
-  #launcher, #wh-app, #awd-app, #reorder-app, #dashboard-app { display:none !important; }
-  #mobile-wh { display:flex !important; }
-}
-@media (min-width: 641px) {
-  #mobile-wh { display:none !important; }
-}
-
-.mwh-filter-btn {
-  flex:1; padding:8px 4px; border-radius:8px; border:1.5px solid var(--border);
-  background:var(--bg2); color:var(--text3); font-size:11px; font-family:var(--mono);
-  cursor:pointer; font-weight:600; transition:all .15s; -webkit-tap-highlight-color:transparent;
-}
-.mwh-filter-btn.active { border-color:var(--accent); color:var(--accent); background:var(--accent-bg); }
 </style>
 </head>
 <body>
@@ -1777,67 +1706,6 @@ input[type=checkbox]{width:15px;height:15px;cursor:pointer;accent-color:var(--bl
         <div class="launcher-card-desc">Sales KPIs, leaderboards, and AI-powered insights across Amazon, eBay, and XFitting.</div>
         <div style="display:inline-block;margin-top:10px;font-size:10px;font-family:var(--mono);padding:3px 8px;border-radius:4px;background:var(--orange-bg);color:var(--orange);font-weight:600;letter-spacing:1px">All Platforms · Management</div>
       </div>
-    </div>
-  </div>
-</div>
-
-<!-- ═══ MOBILE WAREHOUSE APP ═══ -->
-<div id="mobile-wh">
-  <div class="mwh-header">
-    <div>
-      <div class="mwh-header-title">XF WAREHOUSE</div>
-      <div class="mwh-header-sub" id="mwh-status">Loading...</div>
-    </div>
-    <div style="font-family:var(--mono);font-size:11px;opacity:.7">v1.0.6</div>
-  </div>
-  <div class="mwh-tabs">
-    <div class="mwh-tab active" id="mwh-tab-locator" onclick="mwhTab('locator')">📍 Locator</div>
-    <div class="mwh-tab" id="mwh-tab-search" onclick="mwhTab('search')">🔍 Search</div>
-    <div class="mwh-tab" id="mwh-tab-stock" onclick="mwhTab('stock')">📦 Stock</div>
-  </div>
-  <div class="mwh-body">
-    <!-- Locator Panel -->
-    <div id="mwh-panel-locator">
-      <div class="mwh-search-wrap">
-        <span class="mwh-search-icon">📍</span>
-        <input class="mwh-search" id="mwh-locator-input" type="text"
-          placeholder="Part # or SKU..." autocomplete="off" autocorrect="off"
-          autocapitalize="off" spellcheck="false" oninput="mwhLocatorSearch(this.value)">
-      </div>
-      <div id="mwh-locator-results">
-        <div class="mwh-empty"><div class="mwh-empty-icon">📍</div>
-          <div class="mwh-empty-title">Find a part</div>
-          <div class="mwh-empty-sub">Type a part number or SKU to see its warehouse location</div></div>
-      </div>
-    </div>
-    <!-- Search Panel -->
-    <div id="mwh-panel-search" style="display:none">
-      <div class="mwh-search-wrap">
-        <span class="mwh-search-icon">🔍</span>
-        <input class="mwh-search" id="mwh-search-input" type="text"
-          placeholder="Name or part #..." autocomplete="off" autocorrect="off"
-          autocapitalize="off" spellcheck="false" oninput="mwhSearchItems(this.value)">
-      </div>
-      <div id="mwh-search-results">
-        <div class="mwh-empty"><div class="mwh-empty-icon">🔍</div>
-          <div class="mwh-empty-title">Search inventory</div>
-          <div class="mwh-empty-sub">Search by item name, part number, or SKU</div></div>
-      </div>
-    </div>
-    <!-- Stock Panel -->
-    <div id="mwh-panel-stock" style="display:none">
-      <div class="mwh-search-wrap">
-        <span class="mwh-search-icon">📦</span>
-        <input class="mwh-search" id="mwh-stock-input" type="text"
-          placeholder="Filter..." autocomplete="off" autocorrect="off"
-          autocapitalize="off" spellcheck="false" oninput="mwhRenderStock()">
-      </div>
-      <div style="display:flex;gap:8px;margin-bottom:12px">
-        <button class="mwh-filter-btn active" id="mwh-sf-all"  onclick="mwhStockView('all')">All</button>
-        <button class="mwh-filter-btn"        id="mwh-sf-in"   onclick="mwhStockView('in')">In Stock</button>
-        <button class="mwh-filter-btn"        id="mwh-sf-out"  onclick="mwhStockView('out')">Out of Stock</button>
-      </div>
-      <div id="mwh-stock-results"><div class="mwh-loading">⏳ Loading...</div></div>
     </div>
   </div>
 </div>
@@ -2176,14 +2044,8 @@ if (sessionStorage.getItem('xf_unlocked') === '1') {
   document.addEventListener('DOMContentLoaded', function() {
     var ps = document.getElementById('pin-screen');
     if (ps) { ps.style.display = 'none'; ps.style.visibility = 'hidden'; }
-    var isMobile = window.innerWidth <= 640;
-    if (isMobile) {
-      document.getElementById('mobile-wh').style.display = 'flex';
-      if (typeof mwhInit === 'function') mwhInit();
-    } else {
-      document.getElementById('launcher').style.display = 'flex';
-      if (typeof silentLoadSaved === 'function' && SALES_WORKER_URL) silentLoadSaved();
-    }
+    document.getElementById('launcher').style.display = 'flex';
+    if (typeof silentLoadSaved === 'function' && SALES_WORKER_URL) silentLoadSaved();
   });
 }
 
@@ -2227,14 +2089,8 @@ function checkPin() {
     setTimeout(function() {
       ps.style.display = 'none';
       ps.style.visibility = 'hidden';
-      var isMobile = window.innerWidth <= 640;
-      if (isMobile) {
-        document.getElementById('mobile-wh').style.display = 'flex';
-        mwhInit();
-      } else {
-        document.getElementById('launcher').style.display = 'flex';
-        if (typeof silentLoadSaved === 'function' && SALES_WORKER_URL) silentLoadSaved();
-      }
+      document.getElementById('launcher').style.display = 'flex';
+      if (typeof silentLoadSaved === 'function' && SALES_WORKER_URL) silentLoadSaved();
     }, 300);
   } else {
     var dots = document.getElementById('pin-dots');
@@ -4600,14 +4456,6 @@ function salesGoBack() {
 
 // ─── SALES STATE VARS ───────────────────────────────────────────────────────
 var SALES_WORKER_URL = "https://xfitting-lookup.alfixedinc88.workers.dev";
-var XF_API_KEY = "xf-2025-secure-k9m4p";  // Must match Worker API_KEY env var
-
-// Secure fetch — always attaches API key header
-function wFetch(url, opts) {
-  opts = opts || {};
-  opts.headers = Object.assign({}, opts.headers || {}, { 'X-API-Key': XF_API_KEY });
-  return fetch(url, opts);
-}
 // Staged files: { Amz30: [[row,...]], Amz90: [...], ... }
 var staged = {};
 // Calculated data read back from sheet
@@ -4632,7 +4480,7 @@ async function salesLoadWarehouseStock() {
   if (!SALES_WORKER_URL) return;
   var SKIP = new Set(['push fit','name','location','case','each case quantity','date arrive','total quantity','brand','uint price','total','type','sku','']);
   try {
-    var res  = await wFetch(SALES_WORKER_URL + '?sheet=Master_List');
+    var res  = await fetch(SALES_WORKER_URL + '?sheet=Master_List');
     var json = await res.json();
     if (json.error) throw new Error(json.error);
     var rows = (json.values || []).map(function(r){ while(r.length < 16) r.push(''); return r; });
@@ -4745,52 +4593,6 @@ function setUploadCard(tabName, state, msg) {
 }
 
 // ─── PROCESS ALL: UPLOAD → SHEET → READ BACK ────────────────────────────────
-async 
-// ─── CLEAR UPLOADED FILES & RELOAD FROM SHEETS ──────────────────────────────
-async function clearAndReload() {
-  if (!confirm('Clear all uploaded files and reload data from Google Sheets?')) return;
-
-  // Reset staged files
-  staged = {};
-
-  // Reset all upload cards visually
-  var tabNames = ['Amz30','Amz90','Ebay30','Ebay90','XF30','XF90'];
-  tabNames.forEach(function(t) {
-    setUploadCard(t, '', 'No file selected');
-    // Clear file inputs
-    ['ro-file-'+t, 'db-file-'+t].forEach(function(id) {
-      var el = document.getElementById(id);
-      if (el) el.value = '';
-    });
-  });
-
-  // Reset CALC state
-  CALC.partSales = []; CALC.skuSales = [];
-  CALC.jqVendor = []; CALC.effVendor = [];
-  CALC.cogs = {};
-
-  if (!SALES_WORKER_URL) { salesToast('No worker URL set', 'error'); return; }
-
-  setStatus('ro','loading','Reloading from sheets...');
-  setStatus('db','loading','Reloading from sheets...');
-  salesToast('<span class="sales-spinner"></span>Reloading data from Google Sheets...', 'info');
-
-  try {
-    await Promise.all([ salesLoadWarehouseStock(), readCalcTabs() ]);
-    lastUpdated = new Date();
-    updateLastUpdatedLabels();
-    buildReorderRows();
-    buildDashboardData();
-    setStatus('ro','ok','Loaded from sheets');
-    setStatus('db','ok','Loaded from sheets');
-    salesToast('✓ Cleared and reloaded from Google Sheets', 'success');
-  } catch(e) {
-    setStatus('ro','err','Load failed');
-    setStatus('db','err','Load failed');
-    salesToast('Error: ' + e.message, 'error');
-  }
-}
-
 async function processAllReports() {
   if (!SALES_WORKER_URL) { salesToast('WORKER_URL not set in app config', 'error'); return; }
   var tabs = Object.keys(staged);
@@ -5625,7 +5427,7 @@ function setStatus(app, state, label) {
 
 // ─── WORKER HELPERS ──────────────────────────────────────────────────────────
 function workerGet(tab) {
-  return wFetch(SALES_WORKER_URL+'?sheet='+encodeURIComponent(tab))
+  return fetch(SALES_WORKER_URL+'?sheet='+encodeURIComponent(tab))
     .then(function(r) {
       var status = r.status;
       return r.text().then(function(txt) {
@@ -5642,7 +5444,7 @@ function workerGet(tab) {
     });
 }
 function workerPut(tab, rows) {
-  return wFetch(SALES_WORKER_URL+'?sheet='+encodeURIComponent(tab), {
+  return fetch(SALES_WORKER_URL+'?sheet='+encodeURIComponent(tab), {
     method:'PUT',
     headers:{'Content-Type':'application/json'},
     body:JSON.stringify({values:rows})
@@ -5910,7 +5712,7 @@ async function callAI(app, userMessage, isAuto) {
     messages = aiHistory[app].slice(); // send full history
   }
 
-  var res = await wFetch(SALES_WORKER_URL+'/ai', {
+  var res = await fetch(SALES_WORKER_URL+'/ai', {
     method: 'POST',
     headers: { 'Content-Type':'application/json' },
     body: JSON.stringify({
@@ -5997,199 +5799,6 @@ function salesToast(msg, type) {
 }
 
 
-
-
-// ═══════════════════════════════════════════════════════
-// MOBILE WAREHOUSE APP
-// ═══════════════════════════════════════════════════════
-var MWH = {
-  master:   [],
-  products: [],
-  oos:      [],
-  loaded:   false,
-  stockView: 'all'
-};
-
-var MWH_WORKER_URL = '';
-
-async function mwhInit() {
-  var statusEl = document.getElementById('mwh-status');
-  MWH_WORKER_URL = (typeof SALES_WORKER_URL !== 'undefined' && SALES_WORKER_URL) ? SALES_WORKER_URL : '';
-  if (!MWH_WORKER_URL) { if (statusEl) statusEl.textContent = 'No worker URL'; return; }
-  if (statusEl) statusEl.textContent = 'Loading...';
-  try {
-    var results = await Promise.all([
-      mwhFetchSheet('Master_List'),
-      mwhFetchSheet('Products'),
-      mwhFetchSheet('Out_of_Stock')
-    ]);
-    var SKIP = new Set(['push fit','name','location','case','each case quantity','date arrive','total quantity','brand','uint price','total','type','sku','']);
-    MWH.master = [];
-    var rows = results[0];
-    for (var i = 1; i < rows.length; i++) {
-      var r = rows[i];
-      while (r.length < 13) r.push('');
-      var partNum = String(r[6]||'').trim();
-      if (!partNum || partNum.length < 2 || SKIP.has(partNum.toLowerCase())) continue;
-      var casesRaw = r[8];
-      var casesNum = (casesRaw !== '' && casesRaw !== null) ? parseFloat(casesRaw) : null;
-      MWH.master.push({ sku: String(r[3]||'').trim(), name: String(r[4]||'').trim(), partNum: partNum,
-        location: String(r[7]||'').trim(), cases: casesNum !== null ? String(casesRaw) : '',
-        casesNum: casesNum, eachQty: String(r[9]||'').trim(), totalQty: String(r[11]||'').trim() });
-    }
-    MWH.products = [];
-    var prows = results[1];
-    for (var i = 1; i < prows.length; i++) {
-      var r = prows[i];
-      var sku = String(r[1]||'').trim();
-      if (!sku || sku === 'sku') continue;
-      MWH.products.push({ sku: sku, name: String(r[2]||'').trim(), warehouseName: String(r[3]||'').trim(), weight: String(r[4]||'').trim() });
-    }
-    MWH.oos = [];
-    var orows = results[2];
-    for (var i = 1; i < orows.length; i++) {
-      var r = orows[i];
-      var sku = String(r[0]||'').trim();
-      if (!sku) continue;
-      MWH.oos.push({ sku: sku, name: String(r[1]||'').trim(), cases: String(r[2]||'0').trim(), status: String(r[3]||'Out of Stock').trim() });
-    }
-    MWH.loaded = true;
-    if (statusEl) statusEl.textContent = MWH.master.length.toLocaleString() + ' rows loaded';
-    mwhRenderStock();
-  } catch(e) {
-    console.error('[MWH] init error:', e);
-    if (statusEl) statusEl.textContent = 'Error: ' + e.message;
-  }
-}
-
-async function mwhFetchSheet(tab) {
-  var res  = await wFetch(MWH_WORKER_URL + '?sheet=' + encodeURIComponent(tab));
-  var json = await res.json();
-  if (json.error) throw new Error(json.error);
-  return json.values || [];
-}
-
-function mwhBuildRe(q) {
-  var escaped = q.trim().replace(/[.*+?^${}()|[\]\\]/g, '\\$&').replace(/\s+/g, '.*');
-  try { return new RegExp(escaped, 'i'); } catch(e) { return new RegExp(q.trim(), 'i'); }
-}
-
-function mwhTab(name) {
-  ['locator','search','stock'].forEach(function(t) {
-    document.getElementById('mwh-tab-'+t).className = 'mwh-tab' + (t===name?' active':'');
-    document.getElementById('mwh-panel-'+t).style.display = t===name ? 'block' : 'none';
-  });
-  if (name === 'locator') document.getElementById('mwh-locator-input').focus();
-  if (name === 'search')  document.getElementById('mwh-search-input').focus();
-}
-
-// ── LOCATOR: Master_List, rows where casesNum > 0 ──
-var mwhLocatorTimer;
-function mwhLocatorSearch(q) {
-  clearTimeout(mwhLocatorTimer);
-  mwhLocatorTimer = setTimeout(function() {
-    var el = document.getElementById('mwh-locator-results');
-    q = q.trim();
-    if (!q || q.length < 2) {
-      el.innerHTML = '<div class="mwh-empty"><div class="mwh-empty-icon">📍</div><div class="mwh-empty-title">Find a part</div><div class="mwh-empty-sub">Type a part number or SKU</div></div>';
-      return;
-    }
-    if (!MWH.loaded) { el.innerHTML = '<div class="mwh-loading">⏳ Loading...</div>'; return; }
-    var re = mwhBuildRe(q);
-    var results = MWH.master.filter(function(r) {
-      return (r.casesNum || 0) > 0 && re.test(r.name + ' ' + r.partNum + ' ' + r.sku);
-    }).slice(0, 30);
-    el.innerHTML = results.length ? results.map(mwhCardLocator).join('')
-      : '<div class="mwh-empty"><div class="mwh-empty-icon">🔍</div><div class="mwh-empty-title">No results</div><div class="mwh-empty-sub">Try a different part number</div></div>';
-  }, 250);
-}
-
-function mwhCardLocator(r) {
-  var cases = r.casesNum || 0;
-  var badgeCls = cases > 10 ? 'mwh-badge-green' : cases > 0 ? 'mwh-badge-orange' : 'mwh-badge-red';
-  return '<div class="mwh-card">'
-    + '<div style="display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:4px">'
-    +   '<div class="mwh-card-pn">'+r.partNum+'</div>'
-    +   '<span class="mwh-badge '+badgeCls+'">'+r.cases+' cases</span>'
-    + '</div>'
-    + (r.name ? '<div class="mwh-card-name">'+r.name+'</div>' : '')
-    + '<div class="mwh-card-row"><span class="mwh-card-label">Location</span>'
-    +   '<span class="mwh-card-value" style="color:var(--accent);font-size:15px;font-family:var(--mono)">'+r.location+'</span></div>'
-    + (r.eachQty ? '<div class="mwh-card-row"><span class="mwh-card-label">Units/Case</span><span class="mwh-card-value">'+r.eachQty+'</span></div>' : '')
-    + (r.totalQty ? '<div class="mwh-card-row"><span class="mwh-card-label">Total Units</span><span class="mwh-card-value">'+r.totalQty+'</span></div>' : '')
-    + '</div>';
-}
-
-// ── SEARCH: Products sheet, base SKUs ──
-var mwhSearchTimer;
-function mwhSearchItems(q) {
-  clearTimeout(mwhSearchTimer);
-  mwhSearchTimer = setTimeout(function() {
-    var el = document.getElementById('mwh-search-results');
-    q = q.trim();
-    if (!q || q.length < 2) {
-      el.innerHTML = '<div class="mwh-empty"><div class="mwh-empty-icon">🔍</div><div class="mwh-empty-title">Search inventory</div><div class="mwh-empty-sub">Search by name, part #, or SKU</div></div>';
-      return;
-    }
-    if (!MWH.loaded) { el.innerHTML = '<div class="mwh-loading">⏳ Loading...</div>'; return; }
-    var re = mwhBuildRe(q);
-    var results = MWH.products.filter(function(r) {
-      return re.test(r.name + ' ' + r.sku + ' ' + r.warehouseName);
-    }).slice(0, 30);
-    el.innerHTML = results.length ? results.map(mwhCardSearch).join('')
-      : '<div class="mwh-empty"><div class="mwh-empty-icon">🔍</div><div class="mwh-empty-title">No results</div><div class="mwh-empty-sub">Try a different search term</div></div>';
-  }, 250);
-}
-
-function mwhCardSearch(r) {
-  return '<div class="mwh-card">'
-    + '<div style="display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:4px">'
-    +   '<div class="mwh-card-pn">'+r.sku+'</div>'
-    +   (r.warehouseName ? '<span class="mwh-badge mwh-badge-purple">'+r.warehouseName+'</span>' : '')
-    + '</div>'
-    + (r.name ? '<div class="mwh-card-name">'+r.name+'</div>' : '')
-    + (r.weight ? '<div class="mwh-card-row"><span class="mwh-card-label">Unit Weight (lbs)</span><span class="mwh-card-value">'+r.weight+'</span></div>' : '')
-    + '</div>';
-}
-
-// ── STOCK LEVELS: Out_of_Stock sheet ──
-function mwhStockView(view) {
-  MWH.stockView = view;
-  ['all','in','out'].forEach(function(v) {
-    var btn = document.getElementById('mwh-sf-'+v);
-    if (btn) btn.className = 'mwh-filter-btn' + (v===view?' active':'');
-  });
-  mwhRenderStock();
-}
-
-function mwhRenderStock() {
-  var el = document.getElementById('mwh-stock-results');
-  if (!MWH.loaded) { el.innerHTML = '<div class="mwh-loading">⏳ Loading...</div>'; return; }
-  var q = (document.getElementById('mwh-stock-input').value||'').trim().toLowerCase();
-  var rows = MWH.oos.filter(function(r) {
-    var matchQ = !q || r.sku.toLowerCase().includes(q) || r.name.toLowerCase().includes(q);
-    var cases  = parseFloat(r.cases) || 0;
-    var matchV = MWH.stockView === 'all' ? true : MWH.stockView === 'in' ? cases > 0 : cases === 0;
-    return matchQ && matchV;
-  });
-  el.innerHTML = rows.length ? rows.map(mwhCardStock).join('')
-    : '<div class="mwh-empty"><div class="mwh-empty-icon">📦</div><div class="mwh-empty-title">No results</div></div>';
-}
-
-function mwhCardStock(r) {
-  var cases  = parseFloat(r.cases) || 0;
-  var status = r.status || 'Out of Stock';
-  var badgeCls = (status.toLowerCase().includes('in stock') || cases > 0) ? 'mwh-badge-green'
-    : status.toLowerCase().includes('low') ? 'mwh-badge-orange' : 'mwh-badge-red';
-  return '<div class="mwh-card">'
-    + '<div style="display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:4px">'
-    +   '<div class="mwh-card-pn">'+r.sku+'</div>'
-    +   '<span class="mwh-badge '+badgeCls+'">'+status+'</span>'
-    + '</div>'
-    + (r.name ? '<div class="mwh-card-name">'+r.name+'</div>' : '')
-    + '<div class="mwh-card-row"><span class="mwh-card-label">Cases</span><span class="mwh-card-value">'+r.cases+'</span></div>'
-    + '</div>';
-}
 </script>
 
 <!-- ═══════════════════════════════════════════════════════ -->
@@ -6420,7 +6029,6 @@ function mwhCardStock(r) {
 
       <div class="sales-action-row">
         <button class="sales-primary-btn" id="process-btn" onclick="processAllReports()">▶ Upload All &amp; Build Plan</button>
-        <button class="sales-secondary-btn" onclick="clearAndReload()" style="margin-left:8px">↺ Clear &amp; Reload from Sheets</button>
         <button class="sales-ghost-btn" onclick="loadSavedData()">↻ Load Last Saved Data</button>
         <span class="sales-load-note" id="last-updated"></span>
       </div>
@@ -6635,7 +6243,6 @@ function mwhCardStock(r) {
 
       <div class="sales-action-row">
         <button class="sales-primary-btn" onclick="processAllReports()">▶ Upload All &amp; Build Dashboard</button>
-        <button class="sales-secondary-btn" onclick="clearAndReload()" style="margin-left:8px">↺ Clear &amp; Reload from Sheets</button>
         <button class="sales-ghost-btn" onclick="loadSavedData()">↻ Load Last Saved Data</button>
         <span class="sales-load-note" id="db-last-updated"></span>
       </div>
