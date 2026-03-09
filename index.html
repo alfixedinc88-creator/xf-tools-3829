@@ -3227,7 +3227,7 @@ const DISC = {
 async function loadWarehouseStock() {
   try {
     var url  = 'https://xfitting-lookup.alfixedinc88.workers.dev?sheet=Master_List';
-    var res  = await fetch(url);
+    var res  = await wFetch(url);
     var json = await res.json();
     if (json.error) throw new Error(json.error);
     var rows = (json.values || []).map(function(r) {
@@ -3261,7 +3261,7 @@ async function loadWarehouseStock() {
 async function loadDiscontinuedSKUs() {
   try {
     var url = 'https://xfitting-lookup.alfixedinc88.workers.dev?sheet=Discontinued_SKUs';
-    var res  = await fetch(url);
+    var res  = await wFetch(url);
     var json = await res.json();
     if (json.error) {
       console.warn('[XFITTING] Discontinued_SKUs sheet not found yet — checking localStorage');
