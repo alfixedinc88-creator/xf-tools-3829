@@ -7074,16 +7074,16 @@ function setSyncStatus(live) {
 const SHIPPING = 5.25; // flat shipping added to all price calculations
 
 function calcTierUnitPrice(cog1pc, qty) {
-  const base = cog1pc * 1.75;
-  if (qty >= 50) return base * 0.75;
-  if (qty >= 25) return base * 0.80;
-  if (qty >= 10) return base * 0.85;
-  if (qty >= 5)  return base * 0.875;
-  if (qty >= 2)  return base * 0.90;
-  return base;
+  // Tier multipliers match SKU_MASTER sheet formula exactly
+  if (qty >= 50) return cog1pc * 1.50;
+  if (qty >= 25) return cog1pc * 1.55;
+  if (qty >= 10) return cog1pc * 1.60;
+  if (qty >= 5)  return cog1pc * 1.65;
+  if (qty >= 2)  return cog1pc * 1.675;
+  return cog1pc * 1.75;
 }
-// All prices include $5.25 shipping
-function getMinPrice(cog1pc, qty)    { return (cog1pc * qty * 1.35) + SHIPPING; }
+// All prices include $5.25 shipping. Min = 40% markup (matches sheet formula)
+function getMinPrice(cog1pc, qty)    { return (cog1pc * qty * 1.40) + SHIPPING; }
 function getMaxPrice(cog1pc, qty)    { return (cog1pc * qty * 2.0)  + SHIPPING; }
 function getTargetPrice(cog1pc, qty) { return (calcTierUnitPrice(cog1pc, qty) * qty) + SHIPPING; }
 function fmt$(n)   { return (n == null || isNaN(n)) ? '—' : '$' + Number(n).toFixed(2); }
@@ -7195,7 +7195,7 @@ function openPriceModal(listing) {
       <div class="info-cell"><div class="info-cell-label">COGS (1pc)</div><div class="info-cell-value">${listing.cog1pc ? fmt$(listing.cog1pc) : 'Not in SKU_MASTER'}</div></div>
     </div>
     ${floor ? `<div class="info-grid" style="margin-bottom:16px">
-      <div class="info-cell"><div class="info-cell-label">Floor (35%)</div><div class="info-cell-value" style="color:var(--red)">${fmt$(floor)}</div></div>
+      <div class="info-cell"><div class="info-cell-label">Floor (40%)</div><div class="info-cell-value" style="color:var(--red)">${fmt$(floor)}</div></div>
       <div class="info-cell"><div class="info-cell-label">Target (75%)</div><div class="info-cell-value" style="color:var(--accent)">${fmt$(target)}</div></div>
       <div class="info-cell"><div class="info-cell-label">Max (100%)</div><div class="info-cell-value" style="color:var(--green)">${fmt$(max)}</div></div>
     </div>` : ''}
@@ -7680,10 +7680,10 @@ function enrichDecision(d) {
   });
   const cog1pc = match?.cog1pc || 0;
 
-  // Calculate prices from COGS if sheet values are 0
-  const floor  = (d.minPrice && d.minPrice > 0) ? d.minPrice  : (cog1pc ? getMinPrice(cog1pc, pack)    : 0);
-  const target = (d.target   && d.target > 0)   ? d.target    : (cog1pc ? getTargetPrice(cog1pc, pack) : 0);
-  const max    = (d.maxPrice && d.maxPrice > 0)  ? d.maxPrice  : (cog1pc ? getMaxPrice(cog1pc, pack)   : 0);
+  // Always calculate floor/target/max fresh from COGS — never use stale sheet values
+  const floor  = cog1pc ? getMinPrice(cog1pc, pack)    : 0;
+  const target = cog1pc ? getTargetPrice(cog1pc, pack) : 0;
+  const max    = cog1pc ? getMaxPrice(cog1pc, pack)    : 0;
 
   // Suggest: if lowestComp exists, suggest min(lowestComp - 0.01, target) but above floor
   const lowestCompNum = parseFloat(String(d.lowestComp).replace(/[^0-9.]/g,'')) || 0;
