@@ -2735,7 +2735,7 @@ function fch(e,k){const f=e.target.files[0];if(f)hf(f,k);}
 function hf(file,k){
   const st=ge('st-'+k);st.textContent='Reading…';st.className='ust';
   readTxt(file).then(txt=>{
-    const rows=k==='awd'?parseCSV(txt,3):parseCSV(txt,0);
+    const rows=k==='awd'?parseCSV(txt.split(/\r?\n/).slice(3).join('\n'),0):parseCSV(txt,0);
     if(!rows||!rows.length){st.textContent='Could not parse';st.className='ust err';return;}
     ge('ico-'+k).textContent='✅';ge('zone-'+k).classList.add('loaded');
     st.textContent=rows.length+' rows';st.className='ust ok';
@@ -2838,7 +2838,7 @@ function readTxt(f){return new Promise((res,rej)=>{const r=new FileReader();r.on
 // M  Total Network        = G+H+I+J+K+L
 // N  Rec Send             = MAX(0, F-M)
 // O  Net Days             = M/E
-function processData(){
+async function processData(){
   ge('up-err').style.display='none';
   try{
     // AWD map
@@ -2876,7 +2876,7 @@ function processData(){
     pill.style.background='var(--green-light)';pill.style.color='var(--green)';
     awd_planner_toast('Processed '+S.joined.length+' SKUs — saving…','success');
     awd_switchTab('dashboard');
-    saveReportsToSheet();
+    await saveReportsToSheet();
     loadShipmentFromSheet();
   }catch(e){ge('up-err').style.display='flex';ge('up-err').textContent='Error: '+e.message;console.error(e);}
 }
@@ -3581,6 +3581,8 @@ function valuesToRows(values) {
     return obj;
   }).filter(r => Object.values(r).some(v => v));
 }
+
+
 
 async function saveReportsToSheet() {
   try {
