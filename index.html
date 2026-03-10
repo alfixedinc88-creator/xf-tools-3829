@@ -7637,35 +7637,183 @@ function openDecisionFromResearch(itemId, sku) {
 // ════════════════════════════════════════════
 // TAB 3 — PRICE DECISION
 // ════════════════════════════════════════════
+let decisionListing = null; // currently loaded listing for decision
+
 async function lookupDecision() {
   const q = document.getElementById('decision-item-input').value.trim();
   if (!q) return;
-  document.getElementById('decision-content').innerHTML = `<div class="loading"><div class="spinner"></div> Looking up…</div>`;
-  try {
-    const isItemId = /^\d+$/.test(q);
-    const params   = isItemId ? `?itemId=${q}` : `?sku=${encodeURIComponent(q)}`;
-    const data     = await apiCall('/repricer/decisions' + params);
-    const list     = data.decisions || [];
-    document.getElementById('cnt-decision').textContent = list.length;
-    list.length ? renderDecisionCards(list)
-      : document.getElementById('decision-content').innerHTML =
-          `<div class="empty-state"><div class="icon">🔍</div><div class="msg">No decision found for "${q}"</div></div>`;
-  } catch(e) {
-    document.getElementById('decision-content').innerHTML =
-      `<div class="empty-state"><div class="icon">⚠️</div><div class="msg">${e.message}</div></div>`;
+  const content = document.getElementById('decision-content');
+  content.innerHTML = `<div class="loading"><div class="spinner"></div> Looking up listing…</div>`;
+
+  // Find in cached listings first
+  let listing = rprAllListings.find(l => l.itemId === q || l.offerId === q || l.sku === q);
+  if (!listing && rprAllListings.length === 0) {
+    try {
+      const data = await apiCall('/ebay/listings');
+      rprAllListings = data.listings || [];
+      listing = rprAllListings.find(l => l.itemId === q || l.offerId === q || l.sku === q);
+    } catch(e) {}
   }
+
+  if (!listing) {
+    content.innerHTML = `<div class="empty-state"><div class="icon">🔍</div><div class="msg">Item "${q}" not found in active listings.<br><small>Make sure Active Listings tab has been synced.</small></div></div>`;
+    return;
+  }
+
+  decisionListing = listing;
+  renderDecisionForm(listing);
 }
 
-async function loadAllDecisions() {
-  document.getElementById('decision-content').innerHTML = `<div class="loading"><div class="spinner"></div> Loading PRICE_DECISION…</div>`;
+function renderDecisionForm(listing) {
+  const floor  = listing.cog1pc ? getMinPrice(listing.cog1pc, listing.packQty)    : 0;
+  const target = listing.cog1pc ? getTargetPrice(listing.cog1pc, listing.packQty) : 0;
+  const max    = listing.cog1pc ? getMaxPrice(listing.cog1pc, listing.packQty)    : 0;
+  const hardFloor = floor * 0.95; // 5% grace
+
+  document.getElementById('decision-content').innerHTML = `
+    <div style="background:var(--surface2);border-radius:12px;padding:20px;margin-bottom:20px">
+      <div style="font-size:13px;font-weight:700;margin-bottom:12px;color:var(--text2)">LISTING</div>
+      <div class="info-grid">
+        <div class="info-cell"><div class="info-cell-label">SKU</div><div class="info-cell-value">${listing.sku}</div></div>
+        <div class="info-cell"><div class="info-cell-label">Item #</div><div class="info-cell-value" style="font-family:var(--mono)">${listing.itemId}</div></div>
+        <div class="info-cell"><div class="info-cell-label">Pack</div><div class="info-cell-value">${listing.packQty}pc</div></div>
+        <div class="info-cell"><div class="info-cell-label">Current Price</div><div class="info-cell-value bold">${fmt$(listing.price)}</div></div>
+        ${floor ? `
+        <div class="info-cell"><div class="info-cell-label">Floor (40%)</div><div class="info-cell-value" style="color:var(--red)">${fmt$(floor)}</div></div>
+        <div class="info-cell"><div class="info-cell-label">Target (75%)</div><div class="info-cell-value" style="color:var(--accent)">${fmt$(target)}</div></div>
+        <div class="info-cell"><div class="info-cell-label">Max (100%)</div><div class="info-cell-value" style="color:var(--green)">${fmt$(max)}</div></div>
+        <div class="info-cell"><div class="info-cell-label">Hard Floor (−5%)</div><div class="info-cell-value" style="color:var(--red);font-size:11px">${fmt$(hardFloor)}</div></div>
+        ` : `<div class="info-cell"><div class="info-cell-label">COGS</div><div class="info-cell-value" style="color:var(--red)">Not in SKU Master</div></div>`}
+      </div>
+    </div>
+
+    <div style="background:var(--surface2);border-radius:12px;padding:20px;margin-bottom:20px">
+      <div style="font-size:13px;font-weight:700;margin-bottom:12px;color:var(--text2)">MARKET RESEARCH</div>
+      <div class="info-grid">
+        <div class="info-cell">
+          <div class="info-cell-label">Lowest Competitor Price</div>
+          <input class="form-input" type="number" id="dec-comp-price" placeholder="e.g. 24.99" step="0.01" oninput="updateDecisionPreview()">
+        </div>
+        <div class="info-cell">
+          <div class="info-cell-label">Notes (optional)</div>
+          <input class="form-input" type="text" id="dec-notes" placeholder="Reason for change…">
+        </div>
+      </div>
+    </div>
+
+    <div style="background:var(--surface2);border-radius:12px;padding:20px;margin-bottom:20px">
+      <div style="font-size:13px;font-weight:700;margin-bottom:12px;color:var(--text2)">PROPOSED PRICE</div>
+      <div class="form-group">
+        <input class="form-input price-input-large" type="number" id="dec-new-price"
+          placeholder="Enter new price…" step="0.01"
+          value="${listing.price ? listing.price.toFixed(2) : ''}"
+          oninput="updateDecisionPreview()">
+      </div>
+      <div id="dec-preview" style="margin-top:12px"></div>
+    </div>
+
+    <div style="background:var(--surface2);border-radius:12px;padding:20px;margin-bottom:20px">
+      <div class="form-group">
+        <label class="form-label">Your Initials</label>
+        <input class="form-input" type="text" id="dec-initials" maxlength="4" placeholder="e.g. JD" style="width:100px">
+      </div>
+      <div class="form-group">
+        <label class="form-label">Price Change PIN</label>
+        <input class="form-input" type="password" id="dec-pin" maxlength="4" placeholder="••••" autocomplete="off" style="width:120px">
+      </div>
+    </div>
+
+    <div id="dec-alert"></div>
+    <button class="btn btn-primary" style="width:100%" onclick="submitDecision()">Submit Price Change</button>
+  `;
+
+  updateDecisionPreview();
+}
+
+function updateDecisionPreview() {
+  if (!decisionListing) return;
+  const newPrice = parseFloat(document.getElementById('dec-new-price')?.value) || 0;
+  const el = document.getElementById('dec-preview');
+  if (!el || !newPrice) return;
+
+  const old_   = decisionListing.price || 0;
+  const pct    = old_ > 0 ? (newPrice - old_) / old_ : 0;
+  const floor  = decisionListing.cog1pc ? getMinPrice(decisionListing.cog1pc, decisionListing.packQty) : 0;
+  const hardFloor = floor * 0.95;
+
+  let tag = '', color = 'var(--accent)';
+  if (floor && newPrice < hardFloor) {
+    tag = '⛔ BLOCKED — below hard floor (floor −5%)'; color = 'var(--red)';
+  } else if (floor && newPrice < floor) {
+    tag = '⚠ In competitive window (below floor, within 5%)'; color = 'orange';
+  } else if (Math.abs(pct) > 0.10) {
+    tag = '🔍 >10% change — AI will review'; color = 'orange';
+  } else {
+    tag = '✓ Within 10% — auto-approved'; color = 'var(--green)';
+  }
+
+  el.innerHTML = `
+    <div style="display:flex;gap:16px;align-items:center;flex-wrap:wrap">
+      <div style="font-size:22px;font-weight:700;color:${pct>=0?'var(--green)':'var(--red)'}">${fmt$(newPrice)}</div>
+      <div style="font-size:13px;color:var(--text3)">${pct>=0?'+':''}${(pct*100).toFixed(1)}% from ${fmt$(old_)}</div>
+      <div style="font-size:12px;font-weight:600;color:${color}">${tag}</div>
+    </div>`;
+}
+
+async function submitDecision() {
+  if (!decisionListing) return;
+  const newPrice = parseFloat(document.getElementById('dec-new-price').value);
+  const compPrice = parseFloat(document.getElementById('dec-comp-price').value) || 0;
+  const notes    = document.getElementById('dec-notes').value.trim();
+  const initials = document.getElementById('dec-initials').value.trim();
+  const pin      = document.getElementById('dec-pin').value.trim();
+  const alertEl  = document.getElementById('dec-alert');
+
+  if (!newPrice) { alertEl.innerHTML = `<div class="alert alert-error">Enter a valid price</div>`; return; }
+  if (!initials) { alertEl.innerHTML = `<div class="alert alert-error">Enter your initials</div>`; return; }
+  if (!pin)      { alertEl.innerHTML = `<div class="alert alert-error">Enter your PIN</div>`; return; }
+
+  const floor = decisionListing.cog1pc ? getMinPrice(decisionListing.cog1pc, decisionListing.packQty) : 0;
+  const hardFloor = floor * 0.95;
+  if (floor && newPrice < hardFloor) {
+    alertEl.innerHTML = `<div class="alert alert-error">⛔ Price is below hard floor (${fmt$(hardFloor)}). Cannot proceed.</div>`;
+    return;
+  }
+
+  const target = decisionListing.cog1pc ? getTargetPrice(decisionListing.cog1pc, decisionListing.packQty) : 0;
+  alertEl.innerHTML = `<div class="loading"><div class="spinner"></div> Submitting…</div>`;
+
   try {
-    const data = await apiCall('/repricer/decisions');
-    allDecisions = data.decisions || [];
-    document.getElementById('cnt-decision').textContent = allDecisions.length;
-    renderDecisionCards(allDecisions);
+    const result = await apiCall('/repricer/price-change', {
+      method: 'POST',
+      body: JSON.stringify({
+        sku:        decisionListing.sku,
+        itemId:     decisionListing.itemId || decisionListing.offerId,
+        packQty:    decisionListing.packQty,
+        cog1pc:     decisionListing.cog1pc || 0,
+        floor, target,
+        oldPrice:   decisionListing.price,
+        newPrice,
+        lowestComp: compPrice,
+        notes, user: initials, pricePin: pin
+      })
+    });
+
+    if (result.status === 'Applied') {
+      alertEl.innerHTML = `<div class="alert alert-success">✅ Price updated to ${fmt$(newPrice)} on eBay.</div>`;
+      decisionListing = { ...decisionListing, price: newPrice };
+    } else if (result.status === 'Queued') {
+      alertEl.innerHTML = `<div class="alert alert-warning">
+        🔍 <strong>Sent to approval queue.</strong><br>
+        <small style="color:var(--text3)">${result.reason}</small>
+      </div>`;
+    } else if (result.status === 'Blocked') {
+      alertEl.innerHTML = `<div class="alert alert-error">⛔ ${result.reason}</div>`;
+    } else {
+      alertEl.innerHTML = `<div class="alert alert-error">Failed: ${result.result || 'Unknown error'}</div>`;
+    }
   } catch(e) {
-    document.getElementById('decision-content').innerHTML =
-      `<div class="empty-state"><div class="icon">⚠️</div><div class="msg">${e.message}</div></div>`;
+    alertEl.innerHTML = `<div class="alert alert-error">${e.message}</div>`;
   }
 }
 
@@ -8185,43 +8333,77 @@ function renderVelocity(data) {
 // ════════════════════════════════════════════
 // TAB 5 — APPROVAL QUEUE
 // ════════════════════════════════════════════
-function renderApprovals() {
-  const pending = approvalQueue.filter(a => a.status === 'pending');
-  document.getElementById('cnt-approval').textContent = pending.length || '0';
-  if (!pending.length) {
-    document.getElementById('approval-content').innerHTML =
-      `<div class="empty-state"><div class="icon">✅</div><div class="msg">No pending items</div>
-       <div class="sub">Price changes over 10% will appear here for manager review</div></div>`;
-    return;
-  }
-  document.getElementById('approval-content').innerHTML = pending.map(a => `
-    <div class="approval-item ${a.type==='auto'?'auto':''}">
-      <div style="display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:12px;flex-wrap:wrap;gap:8px">
-        <div>
-          <div style="font-size:14px;font-weight:700">${a.sku} — ${a.packQty}pc</div>
-          <div style="font-family:var(--mono);font-size:11px;color:var(--text3)">${a.itemId}</div>
+let queueData = []; // live queue from sheet
+
+async function renderApprovals() {
+  document.getElementById('approval-content').innerHTML =
+    `<div class="loading"><div class="spinner"></div> Loading queue…</div>`;
+  try {
+    const data = await apiCall('/repricer/queue');
+    queueData  = data.queue || [];
+    document.getElementById('cnt-approval').textContent = queueData.length || '0';
+
+    if (!queueData.length) {
+      document.getElementById('approval-content').innerHTML =
+        `<div class="empty-state"><div class="icon">✅</div><div class="msg">No pending approvals</div>
+         <div class="sub">Price changes that need manager review will appear here</div></div>`;
+      return;
+    }
+
+    document.getElementById('approval-content').innerHTML = queueData.map(a => `
+      <div class="approval-item" style="background:var(--surface2);border-radius:12px;padding:20px;margin-bottom:16px;border:1px solid var(--border)">
+        <div style="display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:14px;flex-wrap:wrap;gap:8px">
+          <div>
+            <div style="font-size:14px;font-weight:700">${a.sku} — ${a.packQty}pc</div>
+            <div style="font-family:var(--mono);font-size:11px;color:var(--text3)">${a.itemId}</div>
+            <div style="font-size:11px;color:var(--text3);margin-top:2px">Submitted by ${a.user} · ${a.timestamp}</div>
+          </div>
+          <span class="badge badge-orange">⚠ Needs Approval</span>
         </div>
-        ${a.type==='auto'
-          ? `<span class="auto-approve-flag">✓ Applied to eBay</span>`
-          : `<span class="approval-flag">⚠ Manager Review Needed</span>`}
-      </div>
-      <div class="info-grid" style="margin-bottom:12px">
-        <div class="info-cell"><div class="info-cell-label">Old Price</div><div class="info-cell-value">${fmt$(a.oldPrice)}</div></div>
-        <div class="info-cell"><div class="info-cell-label">New Price</div><div class="info-cell-value ${a.newPrice>a.oldPrice?'green':'red'}">${fmt$(a.newPrice)}</div></div>
-        <div class="info-cell"><div class="info-cell-label">Change</div><div class="info-cell-value ${a.pct>=0?'green':'red'}">${fmtPct(a.pct)}</div></div>
-        <div class="info-cell"><div class="info-cell-label">Time</div><div class="info-cell-value" style="font-size:11px">${new Date(a.submittedAt).toLocaleString()}</div></div>
-      </div>
-      ${a.type==='approval'
-        ? `<div class="alert alert-warning" style="margin-bottom:12px">Review in <strong>PRICE_DECISION</strong> sheet, then apply manually in eBay Seller Hub.</div>`
-        : `<div class="alert alert-success" style="margin-bottom:12px">Logged to <strong>Price_History</strong> and pushed to eBay automatically.</div>`}
-      <button class="btn btn-secondary btn-sm" onclick="dismissApproval(${a.id})">✕ Dismiss</button>
-    </div>`).join('');
+
+        <div class="info-grid" style="margin-bottom:12px">
+          <div class="info-cell"><div class="info-cell-label">Current</div><div class="info-cell-value">${fmt$(a.oldPrice)}</div></div>
+          <div class="info-cell"><div class="info-cell-label">Proposed</div><div class="info-cell-value ${a.newPrice<a.oldPrice?'red':'green'}">${fmt$(a.newPrice)}</div></div>
+          <div class="info-cell"><div class="info-cell-label">Change</div><div class="info-cell-value ${a.newPrice<a.oldPrice?'red':'green'}">${a.pct}</div></div>
+          <div class="info-cell"><div class="info-cell-label">90d Sales</div><div class="info-cell-value">${a.sales90 || '—'} units</div></div>
+          ${a.lowestComp ? `<div class="info-cell"><div class="info-cell-label">Lowest Comp</div><div class="info-cell-value">${fmt$(parseFloat(a.lowestComp))}</div></div>` : ''}
+        </div>
+
+        <div style="background:var(--surface);border-radius:8px;padding:10px 14px;margin-bottom:14px;font-size:12px;color:var(--text2)">
+          <strong>AI Reason:</strong> ${a.reason}
+        </div>
+
+        <div style="display:flex;gap:10px">
+          <button class="btn btn-primary" style="flex:1" onclick="queueAction(${a.rowIndex},'approve','${a.itemId}',${a.newPrice})">
+            ✅ Approve &amp; Apply
+          </button>
+          <button class="btn btn-secondary" style="flex:1;border-color:var(--red);color:var(--red)" onclick="queueAction(${a.rowIndex},'deny','${a.itemId}',${a.newPrice})">
+            ❌ Deny
+          </button>
+        </div>
+      </div>`).join('');
+  } catch(e) {
+    document.getElementById('approval-content').innerHTML =
+      `<div class="empty-state"><div class="icon">⚠️</div><div class="msg">${e.message}</div></div>`;
+  }
 }
 
-function dismissApproval(id) {
-  const item = approvalQueue.find(a => a.id === id);
-  if (item) item.status = 'done';
-  renderApprovals();
+async function queueAction(rowIndex, action, itemId, newPrice) {
+  const initials = prompt('Enter your manager initials to confirm:');
+  if (!initials) return;
+  try {
+    const result = await apiCall('/repricer/queue-action', {
+      method: 'POST',
+      body: JSON.stringify({ rowIndex, action, itemId, newPrice, user: initials })
+    });
+    const msg = action === 'approve'
+      ? (result.applied ? `✅ Price updated to ${fmt$(newPrice)} on eBay.` : `⚠ Approved but eBay update failed — apply manually.`)
+      : '❌ Change denied and logged.';
+    rprToast(msg, action === 'approve' ? 'success' : '');
+    renderApprovals(); // refresh queue
+  } catch(e) {
+    rprToast(e.message, 'error');
+  }
 }
 
 // ════════════════════════════════════════════
