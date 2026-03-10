@@ -1667,31 +1667,39 @@ input[type=checkbox]{width:15px;height:15px;cursor:pointer;accent-color:var(--bl
 <!-- ═══ LAUNCHER ═══ -->
 <div id="launcher" style="display:none;">
   <div class="launcher-inner">
-    <div class="launcher-logo">
-      <div class="launcher-mark">XF</div>
-      <div class="launcher-name">XFITTING</div>
-    </div>
-    <div class="launcher-sub">Internal Tools &mdash; Choose an app to continue</div>
-    <div style="font-size:11px;color:var(--text3);margin-top:6px;opacity:.7">v1.0.6</div>
+    <div class="launcher-logo"><div class="launcher-mark">XF</div><div class="launcher-name">XFITTING</div></div>
+    <div class="launcher-sub">Internal Tools — Choose an app to continue</div>
+    <div style="font-size:11px;color:var(--text3);margin-top:6px;opacity:.7">v1.0.8</div>
+
+    <div class="launcher-section-label">🏭 Warehouse</div>
     <div class="launcher-grid">
       <div class="launcher-card" onclick="launchApp('warehouse')">
-        <div class="launcher-card-icon">&#128205;</div>
+        <div class="launcher-card-icon">📍</div>
         <div class="launcher-card-title">Warehouse Lookup</div>
-        <div class="launcher-card-desc">Find item locations, AWD labels, stock levels, and UPC codes</div>
+        <div class="launcher-card-desc">Find item locations, AWD labels, stock levels and UPC codes</div>
       </div>
       <div class="launcher-card" onclick="launchApp('awd')">
-        <div class="launcher-card-icon">&#128666;</div>
+        <div class="launcher-card-icon">🚛</div>
         <div class="launcher-card-title">AWD Planner</div>
         <div class="launcher-card-desc">Amazon inventory analysis, shipment recommendations and builder</div>
       </div>
       <div class="launcher-card" onclick="launchApp('upc')">
-        <div class="launcher-card-icon">&#127991;</div>
+        <div class="launcher-card-icon">🏷️</div>
         <div class="launcher-card-title">UPC Barcodes</div>
         <div class="launcher-card-desc">Print Zebra barcode labels by SKU, UPC, or AWD shipment</div>
       </div>
     </div>
 
-    <!-- Management Apps Row -->
+    <div class="launcher-section-label">⚡ Operator</div>
+    <div class="launcher-mgmt-row">
+      <div class="launcher-card" onclick="launchMgmtApp('repricer')" style="border-color:#e8f5e9">
+        <div class="launcher-card-icon">💰</div>
+        <div class="launcher-card-title">eBay Repricer</div>
+        <div class="launcher-card-desc">Live eBay listings, price research, velocity charts and approval queue.</div>
+        <div style="display:inline-block;margin-top:10px;font-size:10px;font-family:var(--mono);padding:3px 8px;border-radius:4px;background:#e8f5e9;color:#2e7d32;font-weight:600;letter-spacing:1px">eBay · Operator</div>
+      </div>
+    </div>
+
     <div class="launcher-section-label">⚙ Management</div>
     <div class="launcher-mgmt-row">
       <div class="launcher-card" onclick="launchMgmtApp('reorder')" style="border-color:var(--accent-bg)">
@@ -1703,7 +1711,7 @@ input[type=checkbox]{width:15px;height:15px;cursor:pointer;accent-color:var(--bl
       <div class="launcher-card" onclick="launchMgmtApp('dashboard')" style="border-color:var(--orange-bg)">
         <div class="launcher-card-icon">📊</div>
         <div class="launcher-card-title">Sales Dashboard</div>
-        <div class="launcher-card-desc">Sales KPIs, leaderboards, and AI-powered insights across Amazon, eBay, and XFitting.</div>
+        <div class="launcher-card-desc">Sales KPIs, leaderboards and AI-powered insights across Amazon, eBay, and XFitting.</div>
         <div style="display:inline-block;margin-top:10px;font-size:10px;font-family:var(--mono);padding:3px 8px;border-radius:4px;background:var(--orange-bg);color:var(--orange);font-weight:600;letter-spacing:1px">All Platforms · Management</div>
       </div>
     </div>
@@ -1717,7 +1725,7 @@ input[type=checkbox]{width:15px;height:15px;cursor:pointer;accent-color:var(--bl
     <div class="topbar-left">
       <div class="tb-logo">XFITTING</div>
       <div class="tb-name">Warehouse Lookup</div>
-      <div style="font-size:10px;background:var(--accent);color:#fff;padding:2px 7px;border-radius:20px;font-weight:600;opacity:.85">v1.0.6</div>
+      <div style="font-size:10px;background:var(--accent);color:#fff;padding:2px 7px;border-radius:20px;font-weight:600;opacity:.85">v1.0.8</div>
       <div class="tb-divider"></div>
       <div class="tb-sub" id="tb-sub">Live</div>
     </div>
@@ -1795,7 +1803,7 @@ input[type=checkbox]{width:15px;height:15px;cursor:pointer;accent-color:var(--bl
   <header class="hdr">
     <div class="hdr-l">
       <a class="logo" href="#"><div class="logo-mark">XF</div><div class="logo-text">X<span>FITTING</span></div></a>
-      <div class="hdiv"></div><span class="hdr-title">AWD Shipment Planner</span> <span style="font-size:10px;background:#1A56DB;color:#fff;padding:2px 7px;border-radius:20px;font-weight:600;opacity:.85">v1.0.6</span>
+      <div class="hdiv"></div><span class="hdr-title">AWD Shipment Planner</span> <span style="font-size:10px;background:#1A56DB;color:#fff;padding:2px 7px;border-radius:20px;font-weight:600;opacity:.85">v1.0.8</span>
     </div>
     <div class="hdr-r"><button class="back-btn" onclick="backToLauncher()">&#8592; Apps</button>
       <span id="data-pill" style="font-size:12px;color:var(--gray-500);padding:4px 12px;background:var(--gray-100);border-radius:999px;cursor:pointer" onclick="awd_switchTab('upload')">No data loaded</span>
@@ -2035,26 +2043,40 @@ input[type=checkbox]{width:15px;height:15px;cursor:pointer;accent-color:var(--bl
 <script>
 
 // ═══════════════════════════════════════════════════════
-// PIN LOCK — Worker-verified, no PIN ever stored in HTML
+// PIN LOCK — own block so credentials errors never break it
 // ═══════════════════════════════════════════════════════
-var WORKER_URL  = 'https://xfitting-lookup.alfixedinc88.workers.dev';
-var pinEntry    = '';
-var XF_SESSION  = null;  // session token stored in memory only
+var XF_SESSION = sessionStorage.getItem('xf_session') || null;
+var pinEntry   = '';
+var WORKER_URL = 'https://xfitting-lookup.alfixedinc88.workers.dev';
 
-// Check for existing valid session in sessionStorage
-(function() {
-  var stored = sessionStorage.getItem('xf_session');
-  if (stored) {
-    // Token will be verified by worker on first request — just restore it
-    XF_SESSION = stored;
-    document.addEventListener('DOMContentLoaded', function() {
-      var ps = document.getElementById('pin-screen');
-      if (ps) { ps.style.display = 'none'; ps.style.visibility = 'hidden'; }
-      document.getElementById('launcher').style.display = 'flex';
-      if (typeof silentLoadSaved === 'function' && SALES_WORKER_URL) silentLoadSaved();
-    });
+// ── Authenticated fetch wrapper ──
+async function wFetch(url, opts) {
+  opts = opts || {};
+  opts.headers = Object.assign({}, opts.headers || {}, {
+    'X-Session-Token': XF_SESSION || ''
+  });
+  var r = await fetch(url, opts);
+  if (r.status === 401) {
+    XF_SESSION = null;
+    sessionStorage.removeItem('xf_session');
+    var ps = document.getElementById('pin-screen');
+    if (ps) { ps.style.display = 'flex'; ps.style.opacity = '1'; ps.style.visibility = 'visible'; }
+    var la = document.getElementById('launcher');
+    if (la) la.style.display = 'none';
+    throw new Error('Unauthorized');
   }
-})();
+  return r;
+}
+
+
+if (XF_SESSION) {
+  document.addEventListener('DOMContentLoaded', function() {
+    var ps = document.getElementById('pin-screen');
+    if (ps) { ps.style.display = 'none'; ps.style.visibility = 'hidden'; }
+    document.getElementById('launcher').style.display = 'flex';
+    if (typeof silentLoadSaved === 'function') silentLoadSaved();
+  });
+}
 
 document.addEventListener('keydown', function(e) {
   var ps = document.getElementById('pin-screen');
@@ -2088,104 +2110,37 @@ function updatePinDots() {
 }
 
 function checkPin() {
-  // Determine pin_type — try ops first, then mobile
-  // We try both; worker returns token for whichever matches
   var pin = pinEntry;
-  pinEntry = '';
-
-  // Show checking state
-  var pe = document.getElementById('pin-error');
-  if (pe) pe.textContent = 'Checking...';
-
-  // Try ops first, then mobile (worker validates against env vars)
-  // We send pin_type as "ops" — if it fails we try "mobile"
-  function tryAuth(pinType, onFail) {
+  function tryAuth(type, fallback) {
     fetch(WORKER_URL + '/auth', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ pin: pin, pin_type: pinType })
-    })
-    .then(function(r) { return r.json(); })
-    .then(function(d) {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ pin: pin, pin_type: type })
+    }).then(function(r){ return r.json(); }).then(function(d){
       if (d.token) {
         XF_SESSION = d.token;
         sessionStorage.setItem('xf_session', d.token);
         var ps = document.getElementById('pin-screen');
-        ps.style.transition = 'opacity .3s';
-        ps.style.opacity = '0';
+        ps.style.transition = 'opacity .3s'; ps.style.opacity = '0';
         setTimeout(function() {
-          ps.style.display = 'none';
-          ps.style.visibility = 'hidden';
+          ps.style.display = 'none'; ps.style.visibility = 'hidden';
           document.getElementById('launcher').style.display = 'flex';
-          if (typeof silentLoadSaved === 'function' && SALES_WORKER_URL) silentLoadSaved();
+          if (typeof silentLoadSaved === 'function') silentLoadSaved();
         }, 300);
-      } else {
-        onFail();
-      }
-    })
-    .catch(function() { onFail(); });
+      } else if (fallback) {
+        tryAuth(fallback, null);
+      } else { pinFail(); }
+    }).catch(function(){ pinFail(); });
   }
-
-  // Try ops → mobile → show error
-  tryAuth('ops', function() {
-    tryAuth('mobile', function() {
-      // Both failed — wrong PIN
-      var dots = document.getElementById('pin-dots');
-      for (var i = 0; i < 4; i++) {
-        var d = document.getElementById('pd' + i);
-        if (d) { d.classList.remove('filled'); d.classList.add('error'); }
-      }
-      if (dots) dots.classList.add('shake');
-      if (pe) pe.textContent = 'Incorrect PIN';
-      setTimeout(function() {
-        if (dots) dots.classList.remove('shake');
-        for (var i = 0; i < 4; i++) {
-          var d = document.getElementById('pd' + i);
-          if (d) d.classList.remove('error');
-        }
-        if (pe) pe.textContent = '';
-      }, 600);
-    });
-  });
+  tryAuth('ops', 'mobile');
 }
 
-</script>
-
-<!-- ═══ MAIN APP SCRIPTS ═══ -->
-<script>
-
-const SHEET_NAMES = {
-  master:   'Master_List',
-  products: 'Products',
-  awd:      'AWD_Master',
-  upc:      'UPC',
-  oos:      'Out_of_Stock',
-};
-
-const DB = {
-  master:   [],
-  products: [],
-  awdMaster:[],
-  upc:      [],
-  oos:      [],
-};
-
-let countAmt  = 1;
+// ── Main app globals ──
+const SHEET_NAMES = { master:'Master_List', products:'Products', awd:'AWD_Master', upc:'UPC', oos:'Out_of_Stock' };
+const DB = { master:[], products:[], awdMaster:[], upc:[], oos:[] };
+let countAmt = 1;
 let activeTab = 'locator';
-let pages     = { locator:1, search:1, awd:1 };
+let pages = { locator:1, search:1, awd:1 };
 const PER_PAGE = 30;
-
-let SHEET_ID  = '';
-let CREDS     = null;
-let TOKEN     = null;
-let TOKEN_EXP = 0;
-
-// Credentials handled by Cloudflare Worker
-
-// WH app load handled by launcher
-// Auto-load on first launch is triggered from launchApp()
-
-
 
 function showSetupErr(msg) {
   var el = document.getElementById('setup-error');
@@ -2776,22 +2731,7 @@ const S={fba:[],live:[],awd:[],res:[],joined:[],cpackMap:{},cpackDate:null,cpack
 function dov(e,k){e.preventDefault();ge('zone-'+k).classList.add('drag');}
 function dlv(k){ge('zone-'+k).classList.remove('drag');}
 function drp(e,k){e.preventDefault();dlv(k);const f=e.dataTransfer.files[0];if(f)hf(f,k);}
-function fch(e,k){
-  const f=e.target.files[0];
-  if(!f) return;
-  const ext=f.name.split('.').pop().toLowerCase();
-  const allowedTypes=['csv','txt','tsv'];
-  if(allowedTypes.indexOf(ext)===-1){
-    const st=ge('st-'+k); if(st){st.textContent='Invalid file type (use CSV or TXT)';st.className='ust err';}
-    e.target.value=''; return;
-  }
-  const maxMB=20;
-  if(f.size/(1024*1024)>maxMB){
-    const st=ge('st-'+k); if(st){st.textContent='File too large (max '+maxMB+'MB)';st.className='ust err';}
-    e.target.value=''; return;
-  }
-  hf(f,k);
-}
+function fch(e,k){const f=e.target.files[0];if(f)hf(f,k);}
 function hf(file,k){
   const st=ge('st-'+k);st.textContent='Reading…';st.className='ust';
   readTxt(file).then(txt=>{
@@ -4424,7 +4364,7 @@ function upcRenderSheet(matches) {
 // SALES APPS — Management PIN + Launch Logic
 // ═══════════════════════════════════════════════════════
 
-// MGMT PIN — verified by Worker, no PIN stored in HTML
+// mgmt PIN via worker /auth
 var mgmtPinBuf = "";
 var mgmtPinTarget = null;
 
@@ -4444,42 +4384,41 @@ function mgmtPinKey(d) {
   document.getElementById('mgmt-pd' + (mgmtPinBuf.length - 1)).classList.add('filled');
   if (mgmtPinBuf.length === 4) {
     setTimeout(function() {
-      var pin = mgmtPinBuf;
-      mgmtPinBuf = "";
-      var errEl = document.getElementById('mgmt-pin-error');
-      errEl.textContent = 'Checking...';
-      errEl.style.opacity = '1';
-
       fetch(WORKER_URL + '/auth', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ pin: pin, pin_type: 'mgmt' })
-      })
-      .then(function(r) { return r.json(); })
-      .then(function(data) {
-        if (data.token) {
-          XF_SESSION = data.token;
-          sessionStorage.setItem('xf_session', data.token);
+        method: 'POST', headers: {'Content-Type':'application/json'},
+        body: JSON.stringify({ pin: mgmtPinBuf, pin_type: 'mgmt' })
+      }).then(function(r){ return r.json(); }).then(function(d){
+        if (d.token) {
+          XF_SESSION = d.token;
+          sessionStorage.setItem('xf_session', d.token);
           document.getElementById('mgmt-pin-screen').style.display = 'none';
-          salesLaunchApp(mgmtPinTarget);
+          if (mgmtPinTarget === 'repricer') {
+            document.getElementById('launcher').style.display = 'none';
+            document.getElementById('repricer-root').style.display = 'block';
+            document.getElementById('rpr-pin-screen').style.display = 'none';
+            document.getElementById('rpr-app').style.display = 'flex';
+            rprToken = d.token;
+            if (typeof rprLoad === 'function') rprLoad();
+          } else {
+            salesLaunchApp(mgmtPinTarget);
+          }
         } else {
-          errEl.textContent = 'Incorrect PIN';
-          errEl.style.opacity = '1';
+          document.getElementById('mgmt-pin-error').style.opacity = '1';
           setTimeout(function() {
-            ['mgmt-pd0','mgmt-pd1','mgmt-pd2','mgmt-pd3'].forEach(function(id) {
+            mgmtPinBuf = "";
+            ['mgmt-pd0','mgmt-pd1','mgmt-pd2','mgmt-pd3'].forEach(function(id){
               document.getElementById(id).classList.remove('filled');
             });
-            errEl.style.opacity = '0';
+            document.getElementById('mgmt-pin-error').style.opacity = '0';
           }, 900);
         }
-      })
-      .catch(function() {
-        errEl.textContent = 'Error — try again';
-        errEl.style.opacity = '1';
+      }).catch(function(){
+        document.getElementById('mgmt-pin-error').style.opacity = '1';
       });
     }, 120);
   }
 }
+
 function mgmtPinDel() {
   if (!mgmtPinBuf.length) return;
   document.getElementById('mgmt-pd' + (mgmtPinBuf.length - 1)).classList.remove('filled');
@@ -4527,38 +4466,10 @@ function salesGoBack() {
 
 // ─── SALES STATE VARS ───────────────────────────────────────────────────────
 var SALES_WORKER_URL = "https://xfitting-lookup.alfixedinc88.workers.dev";
-// ─── SECURE FETCH ────────────────────────────────────────────────────────────
-// Attaches session token to every worker request
-// XF_SESSION set after PIN verification — never stored in source
-function wFetch(url, opts) {
-  opts = opts || {};
-  var headers = Object.assign({}, opts.headers || {});
-  if (typeof XF_SESSION !== 'undefined' && XF_SESSION) {
-    headers['X-Session-Token'] = XF_SESSION;
-  }
-  opts.headers = headers;
-  return fetch(url, opts).then(function(r) {
-    if (r.status === 401) {
-      if (typeof XF_SESSION !== 'undefined') XF_SESSION = null;
-      sessionStorage.removeItem('xf_session');
-      var ps = document.getElementById('pin-screen');
-      if (ps) {
-        ps.style.display = 'flex';
-        ps.style.visibility = 'visible';
-        ps.style.opacity = '1';
-        var launcher = document.getElementById('launcher');
-        if (launcher) launcher.style.display = 'none';
-        var pe = document.getElementById('pin-error');
-        if (pe) pe.textContent = 'Session expired — please re-enter PIN';
-      }
-    }
-    return r;
-  });
-}
 // Staged files: { Amz30: [[row,...]], Amz90: [...], ... }
 var staged = {};
 // Calculated data read back from sheet
-var CALC = { partSales:[], skuSales:[], jqVendor:[], effVendor:[], cogs:{}, whStock:{}, upc:{}, itemNames:{} };
+var CALC = { partSales:[], skuSales:[], jqVendor:[], effVendor:[], cogs:{}, whStock:{}, upc:{} };
 // upc: { partNum.toLowerCase() -> { unitsPerCase, packSize } }
 // Processed reorder rows
 var RO = { jq:[], eff:[] };
@@ -4585,7 +4496,6 @@ async function salesLoadWarehouseStock() {
     var rows = (json.values || []).map(function(r){ while(r.length < 16) r.push(''); return r; });
     CALC.whStock = {};
     CALC.upc = {};
-    CALC.itemNames = {};
     for (var i = 1; i < rows.length; i++) {
       var r = rows[i];
       var partNum = String(r[6] || '').trim();
@@ -4593,12 +4503,6 @@ async function salesLoadWarehouseStock() {
       if (SKIP.has(partNum.toLowerCase())) continue;
       var key = partNum.toLowerCase();
 
-      // Store item name: key by col D (base SKU, index 3), value from col E (index 4)
-      var baseSKUKey = String(r[3] || '').trim().toLowerCase();
-      if (baseSKUKey && !CALC.itemNames[baseSKUKey]) {
-        var itemName = String(r[4] || '').trim();
-        if (itemName) CALC.itemNames[baseSKUKey] = itemName;
-      }
       // Always collect unitsPerCase from col J — even if no inventory
       if (!CALC.upc[key]) {
         var upcDirect = parseFloat(String(r[9]||'').replace(/,/g,'')) || 0;
@@ -4631,65 +4535,9 @@ function findCol(headers, keys) {
 }
 
 // ─── FILE UPLOAD & CSV PARSING ───────────────────────────────────────────────
-// ─── UPLOAD VALIDATION ───────────────────────────────────────────────────────
-var UPLOAD_RULES = {
-  Amz30:  { types: ['csv'], maxMB: 10, cols: ['order-id','sku','quantity'] },
-  Amz90:  { types: ['csv'], maxMB: 10, cols: ['order-id','sku','quantity'] },
-  Ebay30: { types: ['csv'], maxMB: 10, cols: ['sales record number','item number','sold for'] },
-  Ebay90: { types: ['csv'], maxMB: 10, cols: ['sales record number','item number','sold for'] },
-  XF30:   { types: ['csv'], maxMB: 10, cols: ['sku','quantity'] },
-  XF90:   { types: ['csv'], maxMB: 10, cols: ['sku','quantity'] }
-};
-
-function validateUpload(file, tabName) {
-  var rule = UPLOAD_RULES[tabName];
-  if (!rule) return null; // no rule = allow
-
-  // Check file type by extension
-  var ext = file.name.split('.').pop().toLowerCase();
-  if (rule.types.indexOf(ext) === -1) {
-    return 'Invalid file type. Expected: ' + rule.types.join(', ').toUpperCase();
-  }
-
-  // Check file size
-  var mb = file.size / (1024 * 1024);
-  if (mb > rule.maxMB) {
-    return 'File too large (' + mb.toFixed(1) + ' MB). Max: ' + rule.maxMB + ' MB';
-  }
-
-  return null; // valid
-}
-
-function validateColumns(rows, tabName) {
-  var rule = UPLOAD_RULES[tabName];
-  if (!rule || !rule.cols || !rows || rows.length < 1) return null;
-
-  // Header row is first row — lowercase all for comparison
-  var headers = rows[0].map(function(h) { return (h || '').toLowerCase().trim(); });
-
-  var missing = rule.cols.filter(function(col) {
-    return headers.indexOf(col.toLowerCase()) === -1;
-  });
-
-  if (missing.length > 0) {
-    return 'Wrong file? Missing columns: ' + missing.join(', ');
-  }
-  return null;
-}
-
 function handleUpload(evt, tabName) {
   var file = evt.target.files[0];
   if (!file) return;
-
-  // Validate file type and size before reading
-  var fileErr = validateUpload(file, tabName);
-  if (fileErr) {
-    setUploadCard(tabName, 'error', fileErr);
-    salesToast(tabName + ': ' + fileErr, 'error');
-    evt.target.value = ''; // clear input
-    return;
-  }
-
   setUploadCard(tabName, 'uploading', 'Reading ' + file.name + '...');
   var reader = new FileReader();
   reader.onload = function(e) {
@@ -4699,16 +4547,6 @@ function handleUpload(evt, tabName) {
       setUploadCard(tabName, 'error', 'Could not parse — check file format');
       return;
     }
-
-    // Validate expected columns
-    var colErr = validateColumns(rows, tabName);
-    if (colErr) {
-      setUploadCard(tabName, 'error', colErr);
-      salesToast(tabName + ': ' + colErr, 'error');
-      evt.target.value = '';
-      return;
-    }
-
     staged[tabName] = rows;
     setUploadCard(tabName, 'has-data', '✓ ' + file.name + ' (' + (rows.length-1) + ' rows)');
     salesToast('Loaded ' + tabName + ': ' + (rows.length-1) + ' rows', 'success');
@@ -4729,57 +4567,20 @@ function salesParseCSV(text, tabName) {
   }
 
   var dataLines = lines.slice(startLine).filter(function(l){ return l.trim(); });
-  return dataLines.map(function(line){ return csvRowToArray(line, tabName); });
+  return dataLines.map(function(line){ return csvRowToArray(line); });
 }
 
-function csvRowToArray(line, tabName) {
+function csvRowToArray(line) {
   // Handles quoted fields with commas inside
-  // tabName used to apply column-specific formatting for eBay reports
   var result = [], cur = '', inQ = false;
   for (var i=0;i<line.length;i++) {
     var c = line[i];
     if (c==='"') { inQ=!inQ; }
-    else if (c===',' && !inQ) { result.push(cleanCsvVal(cur.trim(), tabName, result.length)); cur=''; }
+    else if (c===',' && !inQ) { result.push(cur.trim()); cur=''; }
     else { cur+=c; }
   }
-  result.push(cleanCsvVal(cur.trim(), tabName, result.length));
+  result.push(cur.trim());
   return result;
-}
-
-function cleanCsvVal(v, tabName, colIndex) {
-  // Remove surrounding quotes
-  if (v.length >= 2 && v[0] === '"' && v[v.length-1] === '"') {
-    v = v.slice(1, -1).trim();
-  }
-
-  // eBay report column-specific formatting:
-  // Col B (index 1) = plain text — return as-is
-  // Col C (index 2) = number — strip commas
-  // Col D (index 3) = currency — strip $ and commas
-  // Col E (index 4) = currency — strip $ and commas
-  if (tabName === 'Ebay30' || tabName === 'Ebay90') {
-    if (colIndex === 1) {
-      // Plain text — return as-is, no conversion
-      return v;
-    }
-    if (colIndex === 2) {
-      // Number — strip commas only
-      var num = v.replace(/,/g, '');
-      return isNaN(num) || num === '' ? v : num;
-    }
-    if (colIndex === 3 || colIndex === 4) {
-      // Currency — strip $ and commas
-      var curr = v.replace(/[$£€]/g, '').replace(/,/g, '');
-      return isNaN(curr) || curr === '' ? v : curr;
-    }
-  }
-
-  // Default for all other tabs: strip currency symbols, commas from numbers
-  var cleaned = v.replace(/^[$£€]/, '').replace(/%$/, '');
-  if (/^-?[\d,]+\.?\d*$/.test(cleaned)) {
-    cleaned = cleaned.replace(/,/g, '');
-  }
-  return cleaned || v;
 }
 
 function setUploadCard(tabName, state, msg) {
@@ -4792,51 +4593,6 @@ function setUploadCard(tabName, state, msg) {
     var el = document.getElementById(id);
     if (el) el.textContent = msg;
   });
-}
-
-
-// ─── CLEAR UPLOADED FILES & RELOAD FROM SHEETS ──────────────────────────────
-async function clearAndReload() {
-  if (!confirm('Clear all uploaded files and reload data from Google Sheets?')) return;
-
-  // Reset staged files
-  staged = {};
-
-  // Reset all upload cards visually
-  var tabNames = ['Amz30','Amz90','Ebay30','Ebay90','XF30','XF90'];
-  tabNames.forEach(function(t) {
-    setUploadCard(t, '', 'No file selected');
-    ['ro-file-'+t, 'db-file-'+t].forEach(function(id) {
-      var el = document.getElementById(id);
-      if (el) el.value = '';
-    });
-  });
-
-  // Reset CALC sales state
-  CALC.partSales = []; CALC.skuSales = [];
-  CALC.jqVendor = []; CALC.effVendor = [];
-  CALC.cogs = {};
-
-  if (!SALES_WORKER_URL) { salesToast('No worker URL set', 'error'); return; }
-
-  setStatus('ro','loading','Reloading from sheets...');
-  setStatus('db','loading','Reloading from sheets...');
-  salesToast('<span class="sales-spinner"></span>Reloading data from Google Sheets...', 'info');
-
-  try {
-    await Promise.all([ salesLoadWarehouseStock(), readCalcTabs() ]);
-    lastUpdated = new Date();
-    updateLastUpdatedLabels();
-    buildReorderRows();
-    buildDashboardData();
-    setStatus('ro','ok','Loaded from sheets');
-    setStatus('db','ok','Loaded from sheets');
-    salesToast('✓ Cleared and reloaded from Google Sheets', 'success');
-  } catch(e) {
-    setStatus('ro','err','Load failed');
-    setStatus('db','err','Load failed');
-    salesToast('Error: ' + e.message, 'error');
-  }
 }
 
 // ─── PROCESS ALL: UPLOAD → SHEET → READ BACK ────────────────────────────────
@@ -5335,12 +5091,14 @@ function exportPO(vendor) {
     return r.reorderQty>0 && (!trs[i] || (trs[i].querySelector('.po-cb')&&trs[i].querySelector('.po-cb').checked));
   });
   if (!out.length) { salesToast('No items to export (all zero qty or unchecked)', 'error'); return; }
-  var lines = ['Part Number,Item Name,Total Qty (Units)'];
+  var lines = ['Part Number,Base SKU,Reorder Qty (Pkgs),Cases to Order,Daily Velocity,30d Units,90d Units,Est. Cost'];
   out.forEach(function(r){
-    var itemName = CALC.itemNames[r.sku.toLowerCase()] || CALC.itemNames[r.pn.toLowerCase()] || '';
-    var totalUnits = r.upcData ? r.reorderQty * r.upcData.packSize : r.reorderQty;
-    // Wrap item name in quotes in case it contains commas
-    lines.push([r.pn, '"'+(itemName||'')+'"', totalUnits].join(','));
+    var packsPerCase = (r.upcData && r.upcData.packSize > 1)
+      ? Math.floor(r.upcData.unitsPerCase / r.upcData.packSize)
+      : (r.upcData ? r.upcData.unitsPerCase : 1);
+    var casesToOrder = packsPerCase > 0 ? Math.ceil(r.reorderQty / packsPerCase) : '';
+    lines.push([r.pn, r.sku, r.reorderQty, casesToOrder, r.daily.toFixed(2), r.u30, r.u90,
+      r.estCost?fmt0(r.estCost):''].join(','));
   });
   var blob = new Blob([lines.join('\n')],{type:'text/csv'});
   var a = document.createElement('a'); a.href=URL.createObjectURL(blob);
@@ -6036,13 +5794,13 @@ document.addEventListener('DOMContentLoaded', function() {
 // ─── UTILS ───────────────────────────────────────────────────────────────────
 function fmt0(v){ return (v||0).toLocaleString('en-US',{minimumFractionDigits:0,maximumFractionDigits:0}); }
 
-var toastTimer;
+var salesTimer;
 function salesToast(msg, type) {
   var el=document.getElementById('sales-toast');
   el.innerHTML=msg;
   el.className='show '+(type||'');
-  clearTimeout(toastTimer);
-  toastTimer=setTimeout(function(){ el.className=''; },3500);
+  clearTimeout(salesTimer);
+  salesTimer=setTimeout(function(){ el.className=''; },3500);
 }
 
 
@@ -6057,7 +5815,7 @@ function salesToast(msg, type) {
     <div class="topbar-left">
       <div class="tb-logo">XFITTING</div>
       <div class="tb-name">UPC Barcodes</div>
-      <div style="font-size:10px;background:var(--accent);color:#fff;padding:2px 7px;border-radius:20px;font-weight:600;opacity:.85">v1.0.6</div>
+      <div style="font-size:10px;background:var(--accent);color:#fff;padding:2px 7px;border-radius:20px;font-weight:600;opacity:.85">v1.0.8</div>
     </div>
     <div class="topbar-right">
       <button class="btn btn-secondary" onclick="backToLauncher()" style="font-size:12px;padding:6px 14px">← Apps</button>
@@ -6177,7 +5935,7 @@ function salesToast(msg, type) {
     <div class="topbar-left">
       <div class="tb-logo">XFITTING</div>
       <div class="tb-name">Reorder Planner</div>
-      <div style="font-size:10px;background:var(--accent);color:#fff;padding:2px 7px;border-radius:20px;font-weight:600;opacity:.85">v1.0.6</div>
+      <div style="font-size:10px;background:var(--accent);color:#fff;padding:2px 7px;border-radius:20px;font-weight:600;opacity:.85">v1.0.8</div>
     </div>
     <div class="topbar-right">
       <div class="sales-status-pill" id="ro-status-pill" style="display:flex">
@@ -6276,7 +6034,6 @@ function salesToast(msg, type) {
 
       <div class="sales-action-row">
         <button class="sales-primary-btn" id="process-btn" onclick="processAllReports()">▶ Upload All &amp; Build Plan</button>
-        <button class="sales-secondary-btn" style="margin-left:8px" onclick="clearAndReload()">↺ Clear &amp; Reload from Sheets</button>
         <button class="sales-ghost-btn" onclick="loadSavedData()">↻ Load Last Saved Data</button>
         <span class="sales-load-note" id="last-updated"></span>
       </div>
@@ -6400,7 +6157,7 @@ function salesToast(msg, type) {
     <div class="topbar-left">
       <div class="tb-logo">XFITTING</div>
       <div class="tb-name">Sales Dashboard</div>
-      <div style="font-size:10px;background:var(--accent);color:#fff;padding:2px 7px;border-radius:20px;font-weight:600;opacity:.85">v1.0.6</div>
+      <div style="font-size:10px;background:var(--accent);color:#fff;padding:2px 7px;border-radius:20px;font-weight:600;opacity:.85">v1.0.8</div>
     </div>
     <div class="topbar-right">
       <div class="sales-status-pill" id="db-status-pill" style="display:none">
@@ -6491,7 +6248,6 @@ function salesToast(msg, type) {
 
       <div class="sales-action-row">
         <button class="sales-primary-btn" onclick="processAllReports()">▶ Upload All &amp; Build Dashboard</button>
-        <button class="sales-secondary-btn" style="margin-left:8px" onclick="clearAndReload()">↺ Clear &amp; Reload from Sheets</button>
         <button class="sales-ghost-btn" onclick="loadSavedData()">↻ Load Last Saved Data</button>
         <span class="sales-load-note" id="db-last-updated"></span>
       </div>
@@ -6577,5 +6333,1905 @@ function salesToast(msg, type) {
 
 
 <div id="sales-toast"></div>
+
+<!-- ═══ EBAY REPRICER ═══ -->
+<div id="repricer-root" style="display:none;position:fixed;inset:0;z-index:200;overflow-y:auto;font-family:'Inter','Segoe UI',sans-serif;">
+<style>
+#repricer-root{
+  --bg:        #f4f5f7;
+  --bg2:       #ffffff;
+  --bg3:       #f0f1f3;
+  --bg4:       #e8eaed;
+  --border:    #dde0e6;
+  --border2:   #c8cbd4;
+  --text:      #1a1d23;
+  --text2:     #4a5060;
+  --text3:     #8a90a0;
+  --accent:    #1a56db;
+  --accent-bg: #eef2fd;
+  --accent2:   #1246c0;
+  --green:     #0e7f3e;
+  --green-bg:  #e8f7ee;
+  --red:       #c52a1a;
+  --red-bg:    #fdf0ee;
+  --orange:    #b45309;
+  --orange-bg: #fef3e2;
+  --purple:    #6d28d9;
+  --purple-bg: #f2effe;
+  --yellow:    #92400e;
+  --yellow-bg: #fffbeb;
+  --mono:      'DM Mono', monospace;
+  --sans:      'DM Sans', sans-serif;
+  --shadow:    0 1px 3px rgba(0,0,0,0.08), 0 1px 2px rgba(0,0,0,0.04);
+  --shadow2:   0 4px 12px rgba(0,0,0,0.08), 0 2px 4px rgba(0,0,0,0.04);
+  --r:         10px;
+  --rl:        14px;
+}#repricer-root *, #repricer-root *::before, #repricer-root *::after{ box-sizing: border-box; margin: 0; padding: 0; }/* body via repricer-root */#repricer-root /* ═══════════════ PIN SCREEN ═══════════════ */
+#rpr-pin-screen{
+  position: fixed; inset: 0;
+  background: linear-gradient(135deg, #eef2fd 0%, #f4f5f7 50%, #fff8f0 100%);
+  display: flex; align-items: center; justify-content: center;
+  z-index: 99999;
+}#repricer-root #rpr-pin-screen.hidden{ display: none; }#repricer-root .pin-card{
+  background: var(--bg2); border: 1px solid var(--border);
+  border-radius: var(--rl); padding: 44px 40px;
+  max-width: 360px; width: 100%;
+  box-shadow: var(--shadow2); text-align: center;
+}#repricer-root .pin-logo{
+  background: var(--accent); color: #fff; font-family: var(--mono);
+  font-size: 13px; font-weight: 500; padding: 7px 14px;
+  border-radius: 8px; letter-spacing: .5px;
+  display: inline-block; margin-bottom: 20px;
+}#repricer-root .pin-title{ font-size: 18px; font-weight: 700; color: var(--text); margin-bottom: 6px; }#repricer-root .pin-sub{ font-size: 13px; color: var(--text3); margin-bottom: 28px; }#repricer-root .pin-dots{ display: flex; justify-content: center; gap: 12px; margin-bottom: 28px; }#repricer-root .pin-dot{
+  width: 14px; height: 14px; border-radius: 50%;
+  background: var(--bg4); border: 2px solid var(--border2); transition: all .15s;
+}#repricer-root .pin-dot.filled{ background: var(--accent); border-color: var(--accent); }#repricer-root .pin-dot.error{ background: var(--red); border-color: var(--red); }#repricer-root .pin-pad{ display: grid; grid-template-columns: repeat(3,1fr); gap: 10px; max-width: 240px; margin: 0 auto; }#repricer-root .pin-btn{
+  background: var(--bg3); border: 1.5px solid var(--border2); border-radius: 10px;
+  font-size: 20px; font-weight: 600; font-family: var(--sans); color: var(--text);
+  padding: 16px; cursor: pointer; transition: all .12s; user-select: none;
+}#repricer-root .pin-btn:hover{ background: var(--accent-bg); border-color: var(--accent); color: var(--accent); }#repricer-root .pin-btn:active{ transform: scale(.94); }#repricer-root .pin-btn.del{ font-size: 16px; color: var(--text3); }#repricer-root .pin-btn.del:hover{ color: var(--red); border-color: var(--red); background: var(--red-bg); }#repricer-root .pin-error{ margin-top: 16px; font-size: 12px; color: var(--red); font-weight: 600; min-height: 18px; }
+@keyframes pinShake {
+  0%,100%{transform:translateX(0)} 20%{transform:translateX(-8px)}
+  40%{transform:translateX(8px)} 60%{transform:translateX(-5px)} 80%{transform:translateX(5px)}
+}#repricer-root .pin-dots.shake{ animation: pinShake .4s ease; }#repricer-root /* ═══════════════ APP SHELL ═══════════════ */
+#rpr-app{ display: none; flex-direction: column; min-height: 100vh; width: 100%; }#repricer-root #rpr-app.visible{ display: flex; }#repricer-root /* Header */
+.app-header{
+  background: var(--bg2); border-bottom: 1px solid var(--border);
+  padding: 0 24px; display: flex; align-items: center;
+  justify-content: space-between; height: 56px; flex-shrink: 0;
+  position: sticky; top: 0; z-index: 100;
+}#repricer-root .header-left{ display: flex; align-items: center; gap: 12px; }#repricer-root .header-logo{
+  background: var(--accent); color: #fff; font-family: var(--mono);
+  font-size: 11px; font-weight: 500; padding: 5px 10px;
+  border-radius: 6px; letter-spacing: .4px;
+}#repricer-root .header-title{ font-size: 15px; font-weight: 700; color: var(--text); letter-spacing: -.2px; }#repricer-root .header-badge{
+  font-size: 10px; font-weight: 700; text-transform: uppercase;
+  letter-spacing: 1px; color: var(--text3); background: var(--bg3);
+  border: 1px solid var(--border); padding: 3px 8px; border-radius: 20px;
+}#repricer-root .header-right{ display: flex; align-items: center; gap: 10px; }#repricer-root .sync-status{
+  display: flex; align-items: center; gap: 6px;
+  font-size: 11px; color: var(--text3); font-family: var(--mono);
+}#repricer-root .sync-dot{
+  width: 7px; height: 7px; border-radius: 50%; background: var(--green);
+  animation: pulse 2s infinite;
+}#repricer-root .sync-dot.stale{ background: var(--orange); animation: none; }
+@keyframes pulse {
+  0%,100% { opacity: 1; } 50% { opacity: .4; }
+}#repricer-root /* Tabs */
+.tabbar{
+  background: var(--bg2); border-bottom: 1px solid var(--border);
+  display: flex; overflow-x: auto; flex-shrink: 0;
+  -ms-overflow-style: none; scrollbar-width: none;
+}#repricer-root .tabbar::-webkit-scrollbar{ display: none; }#repricer-root .tabitem{
+  padding: 14px 20px; font-size: 13px; font-weight: 500;
+  color: var(--text3); cursor: pointer; white-space: nowrap;
+  border-bottom: 2px solid transparent; transition: all .15s;
+  display: flex; align-items: center; gap: 7px;
+}#repricer-root .tabitem:hover{ color: var(--text2); }#repricer-root .tabitem.active{ color: var(--accent); border-bottom-color: var(--accent); }#repricer-root .tab-cnt{
+  font-size: 10px; font-weight: 700; padding: 2px 6px;
+  border-radius: 10px; background: var(--bg4); color: var(--text3);
+}#repricer-root .tabitem.active .tab-cnt{ background: var(--accent-bg); color: var(--accent); }#repricer-root /* Tab panels */
+.tab-panel{ display: none; flex: 1; flex-direction: column; }#repricer-root .tab-panel.active{ display: flex; }#repricer-root .panel-body{ flex: 1; padding: 24px; overflow-y: auto; }#repricer-root /* Back button */
+.back-btn{
+  background: none; border: 1px solid var(--border2); color: var(--text3);
+  font-size: 12px; padding: 5px 12px; border-radius: 8px; cursor: pointer;
+  font-family: var(--sans); display: flex; align-items: center; gap: 5px;
+  transition: all .15s;
+}#repricer-root .back-btn:hover{ color: var(--accent); border-color: var(--accent); }#repricer-root /* ═══════════════ SHARED COMPONENTS ═══════════════ */
+.btn{
+  display: inline-flex; align-items: center; gap: 6px;
+  padding: 8px 16px; border-radius: var(--r); font-size: 13px;
+  font-weight: 500; cursor: pointer; font-family: var(--sans);
+  border: 1px solid transparent; transition: all .15s; line-height: 1;
+}#repricer-root .btn-primary{ background: var(--accent); color: #fff; border-color: var(--accent); }#repricer-root .btn-primary:hover{ background: var(--accent2); }#repricer-root .btn-secondary{ background: var(--bg2); color: var(--text2); border-color: var(--border2); }#repricer-root .btn-secondary:hover{ border-color: var(--accent); color: var(--accent); background: var(--accent-bg); }#repricer-root .btn-success{ background: var(--green); color: #fff; }#repricer-root .btn-success:hover{ background: #0a6030; }#repricer-root .btn-danger{ background: var(--red); color: #fff; }#repricer-root .btn-danger:hover{ background: #a82215; }#repricer-root .btn-sm{ padding: 5px 11px; font-size: 12px; }#repricer-root .btn:disabled{ opacity: .45; cursor: not-allowed; }#repricer-root .card{
+  background: var(--bg2); border: 1px solid var(--border);
+  border-radius: var(--rl); box-shadow: var(--shadow);
+}#repricer-root .section-label{
+  font-size: 11px; font-weight: 700; text-transform: uppercase;
+  letter-spacing: 1.2px; color: var(--text3); margin-bottom: 12px;
+}#repricer-root /* Search / filter bar */
+.filter-bar{
+  display: flex; gap: 10px; align-items: center;
+  margin-bottom: 16px; flex-wrap: wrap;
+}#repricer-root .search-input{
+  flex: 1; min-width: 200px; padding: 9px 14px;
+  border: 1.5px solid var(--border2); border-radius: var(--r);
+  font-family: var(--sans); font-size: 13px; color: var(--text);
+  background: var(--bg2); transition: border-color .15s;
+}#repricer-root .search-input:focus{ outline: none; border-color: var(--accent); }#repricer-root .filter-select{
+  padding: 9px 14px; border: 1.5px solid var(--border2); border-radius: var(--r);
+  font-family: var(--sans); font-size: 13px; color: var(--text2);
+  background: var(--bg2); cursor: pointer; transition: border-color .15s;
+}#repricer-root .filter-select:focus{ outline: none; border-color: var(--accent); }#repricer-root /* Data table */
+.table-wrap{
+  background: var(--bg2); border: 1px solid var(--border);
+  border-radius: var(--rl); overflow: hidden; box-shadow: var(--shadow);
+}#repricer-root .data-table{ width: 100%; border-collapse: collapse; }#repricer-root .data-table th{
+  background: var(--bg3); padding: 10px 14px;
+  font-size: 11px; font-weight: 700; text-transform: uppercase;
+  letter-spacing: .8px; color: var(--text3); text-align: left;
+  border-bottom: 1px solid var(--border); white-space: nowrap;
+}#repricer-root .data-table td{
+  padding: 11px 14px; font-size: 13px; border-bottom: 1px solid var(--bg3);
+  color: var(--text2); vertical-align: middle;
+}#repricer-root .data-table tr:last-child td{ border-bottom: none; }#repricer-root .data-table tbody tr:hover td{ background: var(--bg3); }#repricer-root .data-table td.sku{ font-family: var(--mono); font-size: 12px; color: var(--accent); font-weight: 500; }#repricer-root .data-table td.num{ font-family: var(--mono); font-size: 12px; text-align: right; }#repricer-root .data-table th.num{ text-align: right; }#repricer-root .data-table td.bold{ font-weight: 600; color: var(--text); }#repricer-root /* Badges */
+.badge{
+  display: inline-flex; align-items: center; gap: 4px;
+  font-size: 10px; font-weight: 700; padding: 2px 8px;
+  border-radius: 20px; white-space: nowrap;
+}#repricer-root .badge-green{ background: var(--green-bg); color: var(--green); }#repricer-root .badge-red{ background: var(--red-bg); color: var(--red); }#repricer-root .badge-orange{ background: var(--orange-bg); color: var(--orange); }#repricer-root .badge-blue{ background: var(--accent-bg); color: var(--accent); }#repricer-root .badge-gray{ background: var(--bg4); color: var(--text3); }#repricer-root .badge-purple{ background: var(--purple-bg); color: var(--purple); }#repricer-root /* Empty state */
+.empty-state{
+  padding: 60px 24px; text-align: center; color: var(--text3);
+}#repricer-root .empty-state .icon{ font-size: 40px; margin-bottom: 12px; }#repricer-root .empty-state .msg{ font-size: 14px; font-weight: 500; color: var(--text2); margin-bottom: 6px; }#repricer-root .empty-state .sub{ font-size: 12px; }#repricer-root /* Loading */
+.loading{
+  display: flex; align-items: center; justify-content: center;
+  gap: 10px; padding: 48px; color: var(--text3); font-size: 13px;
+}#repricer-root .spinner{
+  width: 20px; height: 20px; border: 2px solid var(--border);
+  border-top-color: var(--accent); border-radius: 50%;
+  animation: spin .6s linear infinite;
+}
+@keyframes spin { to { transform: rotate(360deg); } }#repricer-root /* Toast */
+#toast{
+  position: fixed; bottom: 24px; left: 50%; transform: translateX(-50%) translateY(80px);
+  background: var(--text); color: #fff; padding: 12px 20px;
+  border-radius: 10px; font-size: 13px; font-weight: 500;
+  box-shadow: 0 8px 24px rgba(0,0,0,.2); z-index: 9999;
+  transition: transform .3s ease; pointer-events: none;
+  white-space: nowrap;
+}#repricer-root #toast.show{ transform: translateX(-50%) translateY(0); }#repricer-root #toast.success{ background: var(--green); }#repricer-root #toast.error{ background: var(--red); }#repricer-root /* Modal */
+.modal-overlay{
+  position: fixed; inset: 0; background: rgba(0,0,0,.4);
+  display: flex; align-items: center; justify-content: center;
+  z-index: 9000; padding: 24px;
+}#repricer-root .modal-overlay.hidden{ display: none; }#repricer-root .modal{
+  background: var(--bg2); border-radius: var(--rl);
+  box-shadow: 0 20px 60px rgba(0,0,0,.2);
+  width: 100%; max-width: 520px; max-height: 90vh;
+  overflow-y: auto;
+}#repricer-root .modal-header{
+  padding: 20px 24px 0; display: flex; align-items: center;
+  justify-content: space-between;
+}#repricer-root .modal-title{ font-size: 16px; font-weight: 700; color: var(--text); }#repricer-root .modal-close{
+  background: none; border: none; font-size: 20px; color: var(--text3);
+  cursor: pointer; padding: 4px; line-height: 1;
+}#repricer-root .modal-close:hover{ color: var(--text); }#repricer-root .modal-body{ padding: 20px 24px; }#repricer-root .modal-footer{
+  padding: 16px 24px; border-top: 1px solid var(--border);
+  display: flex; gap: 10px; justify-content: flex-end;
+}#repricer-root /* Form */
+.form-group{ margin-bottom: 16px; }#repricer-root .form-label{
+  display: block; font-size: 11px; font-weight: 700;
+  text-transform: uppercase; letter-spacing: .8px;
+  color: var(--text3); margin-bottom: 6px;
+}#repricer-root .form-input{
+  width: 100%; padding: 10px 14px; border: 1.5px solid var(--border2);
+  border-radius: var(--r); font-family: var(--sans); font-size: 14px;
+  color: var(--text); background: var(--bg2); transition: border-color .15s;
+}#repricer-root .form-input:focus{ outline: none; border-color: var(--accent); }#repricer-root .form-input:read-only{ background: var(--bg3); color: var(--text2); cursor: default; }#repricer-root .form-hint{ font-size: 11px; color: var(--text3); margin-top: 4px; }#repricer-root /* Info grid */
+.info-grid{
+  display: grid; grid-template-columns: 1fr 1fr; gap: 12px; margin-bottom: 16px;
+}#repricer-root .info-cell{
+  background: var(--bg3); border: 1px solid var(--border);
+  border-radius: var(--r); padding: 12px 14px;
+}#repricer-root .info-cell-label{ font-size: 10px; font-weight: 700; text-transform: uppercase; letter-spacing: .8px; color: var(--text3); margin-bottom: 4px; }#repricer-root .info-cell-value{ font-size: 15px; font-weight: 700; color: var(--text); font-family: var(--mono); }#repricer-root .info-cell-value.green{ color: var(--green); }#repricer-root .info-cell-value.red{ color: var(--red); }#repricer-root .info-cell-value.orange{ color: var(--orange); }#repricer-root /* Alert box */
+.alert{
+  display: flex; gap: 10px; padding: 12px 16px; border-radius: var(--r);
+  font-size: 13px; margin-bottom: 16px;
+}#repricer-root .alert-warning{ background: var(--orange-bg); border: 1px solid #fcd34d; color: var(--orange); }#repricer-root .alert-info{ background: var(--accent-bg); border: 1px solid #93c5fd; color: var(--accent); }#repricer-root .alert-success{ background: var(--green-bg); border: 1px solid #86efac; color: var(--green); }#repricer-root .alert-error{ background: var(--red-bg); border: 1px solid #fca5a5; color: var(--red); }#repricer-root /* Stat cards row */
+.stats-row{
+  display: grid; grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
+  gap: 12px; margin-bottom: 20px;
+}#repricer-root .stat-card{
+  background: var(--bg2); border: 1px solid var(--border);
+  border-radius: var(--rl); padding: 16px 18px; box-shadow: var(--shadow);
+}#repricer-root .stat-card-label{ font-size: 11px; font-weight: 600; text-transform: uppercase; letter-spacing: .8px; color: var(--text3); margin-bottom: 6px; }#repricer-root .stat-card-value{ font-size: 22px; font-weight: 700; color: var(--text); font-family: var(--mono); line-height: 1; }#repricer-root .stat-card-sub{ font-size: 11px; color: var(--text3); margin-top: 4px; }#repricer-root /* Price input large */
+.price-input-large{
+  font-size: 28px; font-weight: 700; font-family: var(--mono);
+  text-align: center; letter-spacing: -1px;
+}#repricer-root /* Trend indicators */
+.trend-up{ color: var(--green); }#repricer-root .trend-down{ color: var(--red); }#repricer-root .trend-flat{ color: var(--text3); }#repricer-root /* Approval flag */
+.approval-flag{
+  display: inline-flex; align-items: center; gap: 5px;
+  font-size: 11px; font-weight: 700; padding: 3px 10px;
+  border-radius: 20px; background: var(--red-bg);
+  color: var(--red); border: 1px solid #fca5a5;
+}#repricer-root .auto-approve-flag{
+  display: inline-flex; align-items: center; gap: 5px;
+  font-size: 11px; font-weight: 700; padding: 3px 10px;
+  border-radius: 20px; background: var(--green-bg);
+  color: var(--green); border: 1px solid #86efac;
+}#repricer-root /* Sub-view toggle */
+.sub-tog-btn{
+  padding: 8px 20px; font-size: 13px; font-weight: 600;
+  background: var(--bg2); color: var(--text3); border: none;
+  cursor: pointer; transition: all .2s;
+}#repricer-root .sub-tog-btn:hover{ background: var(--bg3); color: var(--text); }#repricer-root .sub-tog-btn.active{ background: var(--accent); color: #fff; }#repricer-root .subtog{
+  padding: 7px 16px; border: 1px solid var(--border); border-radius: 6px;
+  background: var(--bg2); color: var(--text2); font-size: 13px; font-weight: 500;
+  cursor: pointer; transition: all .15s;
+}#repricer-root .subtog:hover{ background: var(--bg3); color: var(--text); }#repricer-root .subtog.active{ background: var(--accent); color: #fff; border-color: var(--accent); }#repricer-root .subtoggle{ display: flex; gap: 8px; flex-wrap: wrap; }#repricer-root /* Competitor card */
+.comp-card{
+  background: var(--bg2); border: 1px solid var(--border);
+  border-radius: 10px; padding: 12px 14px;
+  display: flex; align-items: center; gap: 12px; flex-wrap: wrap;
+}#repricer-root .comp-card.ours{ border-color: var(--accent); background: rgba(26,86,219,.06); }#repricer-root .comp-card .comp-rank{
+  font-size: 20px; font-weight: 800; font-family: var(--mono);
+  color: var(--accent); min-width: 32px; text-align: center;
+}#repricer-root .comp-card .comp-info{ flex: 1; min-width: 0; }#repricer-root .comp-card .comp-title{
+  font-size: 12px; font-weight: 600; color: var(--text);
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+  max-width: 300px;
+}#repricer-root .comp-card .comp-meta{ font-size: 11px; color: var(--text3); margin-top: 2px; }#repricer-root .comp-card .comp-price{
+  font-size: 16px; font-weight: 800; font-family: var(--mono); color: var(--text);
+  white-space: nowrap;
+}#repricer-root /* Velocity chart */
+.chart-container{
+  background: var(--bg2); border: 1px solid var(--border);
+  border-radius: var(--rl); padding: 20px; box-shadow: var(--shadow);
+  margin-bottom: 16px;
+}#repricer-root .chart-title{ font-size: 13px; font-weight: 700; color: var(--text); margin-bottom: 12px; }#repricer-root .line-chart-wrap{ position: relative; width: 100%; }#repricer-root .line-chart-wrap svg{ display: block; width: 100%; overflow: visible; }#repricer-root .lc-dot{ transition: r .15s; cursor: pointer; }#repricer-root .lc-dot:hover{ r: 6; }#repricer-root .lc-label{ font-size: 10px; fill: var(--text3, #8a90a0); font-family: 'DM Mono', monospace; }#repricer-root .lc-val{ font-size: 11px; font-weight: 700; fill: var(--text, #1a1d23); font-family: 'DM Mono', monospace; }#repricer-root /* Velocity table */
+.vel-table{ width: 100%; border-collapse: collapse; }#repricer-root .vel-table td{ padding: 8px 12px; font-size: 13px; border-bottom: 1px solid var(--bg3); }#repricer-root .vel-table td:first-child{ font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: .7px; color: var(--text3); }#repricer-root .vel-table td:last-child{ font-family: var(--mono); font-weight: 700; color: var(--text); text-align: right; }#repricer-root /* Research row detail */
+.research-card{
+  background: var(--bg2); border: 1px solid var(--border);
+  border-radius: var(--rl); padding: 20px; box-shadow: var(--shadow);
+  margin-bottom: 12px;
+}#repricer-root .research-card-header{
+  display: flex; justify-content: space-between; align-items: flex-start;
+  margin-bottom: 16px; gap: 12px; flex-wrap: wrap;
+}#repricer-root .research-pricing-grid{
+  display: grid; grid-template-columns: 1fr 1fr; gap: 1px;
+  background: var(--border); border: 1px solid var(--border);
+  border-radius: var(--r); overflow: hidden; margin-bottom: 16px;
+}#repricer-root .rp-cell{
+  background: var(--bg2); padding: 12px 16px;
+}#repricer-root .rp-cell.ours{ background: var(--accent-bg); }#repricer-root .rp-cell.comp{ background: var(--bg3); }#repricer-root .rp-cell-label{ font-size: 10px; font-weight: 700; text-transform: uppercase; letter-spacing: .8px; color: var(--text3); margin-bottom: 4px; }#repricer-root .rp-cell-price{ font-size: 20px; font-weight: 700; color: var(--text); font-family: var(--mono); }#repricer-root .rp-cell-unit{ font-size: 11px; color: var(--text3); margin-top: 2px; }#repricer-root .sales-history-row{
+  display: flex; gap: 8px; flex-wrap: wrap;
+}#repricer-root .sales-pill{
+  background: var(--bg3); border: 1px solid var(--border);
+  border-radius: 8px; padding: 8px 12px; text-align: center; min-width: 60px;
+}#repricer-root .sales-pill-label{ font-size: 9px; font-weight: 700; text-transform: uppercase; letter-spacing: .7px; color: var(--text3); margin-bottom: 3px; }#repricer-root .sales-pill-val{ font-size: 16px; font-weight: 700; font-family: var(--mono); color: var(--text); }#repricer-root /* Approval queue item */
+.approval-item{
+  background: var(--bg2); border: 1px solid var(--border);
+  border-radius: var(--rl); padding: 20px; box-shadow: var(--shadow);
+  margin-bottom: 12px; border-left: 4px solid var(--orange);
+}#repricer-root .approval-item.auto{ border-left-color: var(--green); }#repricer-root /* Responsive */
+@media (max-width: 640px){
+  .panel-body { padding: 16px; }
+  .app-header { padding: 0 16px; }
+  .info-grid { grid-template-columns: 1fr 1fr; }
+  .stats-row { grid-template-columns: 1fr 1fr; }
+  .research-pricing-grid { grid-template-columns: 1fr; }
+}
+
+</style>
+<!-- PIN SCREEN -->
+<div id="rpr-pin-screen" style="display:none;">
+  <div class="pin-card">
+    <div class="pin-logo">XF · REPRICER</div>
+    <div class="pin-title">Management Access</div>
+    <div class="pin-sub">Enter your PIN to continue</div>
+    <div class="pin-dots" id="rpr-pin-dots">
+      <div class="pin-dot"></div>
+      <div class="pin-dot"></div>
+      <div class="pin-dot"></div>
+      <div class="pin-dot"></div>
+    </div>
+    <div class="pin-pad">
+      <button class="pin-btn" onclick="rprPinPress('1')">1</button>
+      <button class="pin-btn" onclick="rprPinPress('2')">2</button>
+      <button class="pin-btn" onclick="rprPinPress('3')">3</button>
+      <button class="pin-btn" onclick="rprPinPress('4')">4</button>
+      <button class="pin-btn" onclick="rprPinPress('5')">5</button>
+      <button class="pin-btn" onclick="rprPinPress('6')">6</button>
+      <button class="pin-btn" onclick="rprPinPress('7')">7</button>
+      <button class="pin-btn" onclick="rprPinPress('8')">8</button>
+      <button class="pin-btn" onclick="rprPinPress('9')">9</button>
+      <button class="pin-btn" onclick="rprPinPress('')"></button>
+      <button class="pin-btn" onclick="rprPinPress('0')">0</button>
+      <button class="pin-btn del" onclick="rprPinDel()">⌫</button>
+    </div>
+    <div class="pin-error" id="rpr-pin-error"></div>
+  </div>
+</div>
+
+<!-- MAIN APP -->
+<div id="rpr-app" style="display:none;">
+
+  <!-- Header -->
+  <div class="app-header">
+    <div class="header-left">
+      <div class="header-logo">XF</div>
+      <div class="header-title">Repricer</div>
+      <div class="header-badge">eBay</div>
+    </div>
+    <div class="header-right">
+      <div class="sync-status">
+        <div class="sync-dot" id="sync-dot"></div>
+        <span id="sync-label">Live</span>
+      </div>
+      <button class="btn btn-secondary btn-sm" onclick="rprSyncAll()">↻ Sync</button>
+      <button class="back-btn" onclick="rprBack()">← Launcher</button>
+    </div>
+  </div>
+
+  <!-- Tab bar -->
+  <div class="tabbar">
+    <div class="tabitem active" id="tab-listings"    onclick="rprTab('listings')">📦 Active Listings <span class="tab-cnt" id="cnt-listings">—</span></div>
+    <div class="tabitem"        id="tab-research"    onclick="rprTab('research')">🔍 Price Research   <span class="tab-cnt" id="cnt-research">—</span></div>
+    <div class="tabitem"        id="tab-decision"    onclick="rprTab('decision')">💰 Price Decision   <span class="tab-cnt" id="cnt-decision">—</span></div>
+    <div class="tabitem"        id="tab-velocity"    onclick="rprTab('velocity')">📈 Velocity</div>
+    <div class="tabitem"        id="tab-approval"    onclick="rprTab('approval')">⚠️ Approval Queue  <span class="tab-cnt" id="cnt-approval" style="background:#fdf0ee;color:#c52a1a">—</span></div>
+  </div>
+
+  <!-- ═══ TAB: ACTIVE LISTINGS ═══ -->
+  <div class="tab-panel active" id="panel-listings">
+    <div class="panel-body">
+      <div class="stats-row" id="listings-stats">
+        <div class="stat-card"><div class="stat-card-label">Total Listings</div><div class="stat-card-value" id="stat-total">—</div><div class="stat-card-sub">Active on eBay</div></div>
+        <div class="stat-card"><div class="stat-card-label">Below Floor</div><div class="stat-card-value" id="stat-below" style="color:var(--red)">—</div><div class="stat-card-sub">Under min price</div></div>
+        <div class="stat-card"><div class="stat-card-label">Above Target</div><div class="stat-card-value" id="stat-above" style="color:var(--green)">—</div><div class="stat-card-sub">At or above target</div></div>
+        <div class="stat-card"><div class="stat-card-label">Need Review</div><div class="stat-card-value" id="stat-review" style="color:var(--orange)">—</div><div class="stat-card-sub">Price action needed</div></div>
+      </div>
+
+      <div class="filter-bar">
+        <input class="search-input" id="listing-search" placeholder="Search SKU, title, or item number…" oninput="filterListings()">
+        <select class="filter-select" id="listing-filter" onchange="filterListings()">
+          <option value="all">All Listings</option>
+          <option value="below">Below Floor Price</option>
+          <option value="review">Needs Review</option>
+          <option value="ok">Priced OK</option>
+        </select>
+        <button class="btn btn-primary btn-sm" onclick="rprLoad()">↻ Sync Listings</button>
+      </div>
+
+      <div id="listings-content">
+        <div class="empty-state">
+          <div class="icon">📦</div>
+          <div class="msg">No listings loaded</div>
+          <div class="sub">Click "Sync Listings" to pull live eBay data</div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ═══ TAB: PRICE RESEARCH ═══ -->
+  <div class="tab-panel" id="panel-research">
+    <div class="panel-body">
+
+      <!-- Sub-view toggle -->
+      <div class="sub-toggle" style="display:flex;gap:0;margin-bottom:20px;border:1px solid var(--border);border-radius:10px;overflow:hidden;width:fit-content">
+        <button id="subtog-view" class="sub-tog-btn active" onclick="switchResearchView('view')">📋 Past Research</button>
+        <button id="subtog-new"  class="sub-tog-btn"        onclick="switchResearchView('new')">➕ New Research</button>
+      </div>
+
+      <!-- ── VIEW: Past Research ── -->
+      <div id="research-view-past">
+        <div class="filter-bar">
+          <input class="search-input" id="research-search" placeholder="Search by SKU or item number…" oninput="filterResearch()">
+          <select class="filter-select" id="research-trend" onchange="filterResearch()">
+            <option value="all">All Trends</option>
+            <option value="up">📈 Increasing</option>
+            <option value="flat">➡️ Flat</option>
+            <option value="down">📉 Declining</option>
+          </select>
+          <button class="btn btn-primary btn-sm" onclick="loadResearch()">↻ Sync</button>
+        </div>
+        <div id="research-content">
+          <div class="empty-state">
+            <div class="icon">🔍</div>
+            <div class="msg">No research data loaded</div>
+            <div class="sub">Click Sync to pull from MARKET_RESEARCH sheet</div>
+          </div>
+        </div>
+      </div>
+
+      <!-- ── VIEW: New Research ── -->
+      <div id="research-view-new" style="display:none">
+
+        <!-- Step 1: Item lookup -->
+        <div class="card" id="nr-step1" style="padding:20px;margin-bottom:16px">
+          <div class="section-label" style="margin-bottom:10px">Step 1 — Load Your Listing</div>
+          <div style="display:flex;gap:10px;flex-wrap:wrap">
+            <input class="search-input" id="nr-item-input" placeholder="Enter eBay Item Number…"
+              style="flex:1;min-width:200px" onkeydown="if(event.key==='Enter')nrLoadItem()">
+            <button class="btn btn-primary" onclick="nrLoadItem()">Load Listing</button>
+          </div>
+          <div id="nr-item-result" style="margin-top:14px"></div>
+        </div>
+
+        <!-- Step 2: eBay search (shown after item loads) -->
+        <div class="card" id="nr-step2" style="padding:20px;margin-bottom:16px;display:none">
+          <div class="section-label" style="margin-bottom:10px">Step 2 — Search eBay Market</div>
+          <div style="display:flex;gap:10px;flex-wrap:wrap">
+            <input class="search-input" id="nr-keywords" placeholder="Search keywords…"
+              style="flex:1;min-width:200px" onkeydown="if(event.key==='Enter')nrSearchEbay()">
+            <button class="btn btn-primary" onclick="nrSearchEbay()">Search eBay</button>
+          </div>
+          <div id="nr-search-results" style="margin-top:14px"></div>
+        </div>
+
+        <!-- Step 3: Research summary (shown after search) -->
+        <div class="card" id="nr-step3" style="padding:20px;margin-bottom:16px;display:none">
+          <div class="section-label" style="margin-bottom:12px">Step 3 — Record Findings</div>
+          <div class="info-grid" style="margin-bottom:14px">
+            <div class="info-cell"><div class="info-cell-label">Our Rank</div>
+              <input class="form-input" type="number" id="nr-our-rank" placeholder="e.g. 3" min="1" style="margin-top:4px;width:80px"></div>
+            <div class="info-cell"><div class="info-cell-label">Lowest Comp Price</div>
+              <input class="form-input" type="number" id="nr-lowest-comp" placeholder="$0.00" step="0.01" style="margin-top:4px;width:120px"></div>
+          </div>
+          <div style="margin-bottom:12px">
+            <div class="info-cell-label" style="margin-bottom:6px">Selected Competitors <span id="nr-comp-count" style="color:var(--text3)">(0)</span></div>
+            <div id="nr-comp-list" style="display:flex;flex-direction:column;gap:6px"></div>
+          </div>
+          <div class="form-group">
+            <label class="form-label">Notes</label>
+            <textarea class="form-input" id="nr-notes" rows="2" placeholder="Any observations about pricing, demand, competition…" style="resize:vertical"></textarea>
+          </div>
+          <div class="form-group">
+            <label class="form-label">Your Initials</label>
+            <input class="form-input" id="nr-initials" placeholder="e.g. JD" style="width:80px">
+          </div>
+          <div id="nr-save-alert"></div>
+          <div style="display:flex;gap:10px;margin-top:4px">
+            <button class="btn btn-success" onclick="nrSaveResearch()">💾 Save Research</button>
+            <button class="btn btn-secondary" onclick="nrReset()">↺ Start Over</button>
+          </div>
+        </div>
+
+      </div><!-- /research-view-new -->
+    </div>
+  </div>
+
+  <!-- ═══ TAB: PRICE DECISION ═══ -->
+  <div class="tab-panel" id="panel-decision">
+    <div class="panel-body">
+      <!-- Item lookup -->
+      <div class="card" style="padding:20px;margin-bottom:20px">
+        <div class="section-label">Look Up Listing</div>
+        <div style="display:flex;gap:10px;flex-wrap:wrap">
+          <input class="search-input" id="decision-item-input" placeholder="Enter eBay Item Number or SKU…" style="flex:1;min-width:200px" onkeydown="if(event.key==='Enter')lookupDecision()">
+          <button class="btn btn-primary" onclick="lookupDecision()">Look Up</button>
+          <button class="btn btn-secondary" onclick="loadAllDecisions()">Load All Decisions</button>
+        </div>
+      </div>
+
+      <!-- Decision form (hidden until lookup) -->
+      <div id="decision-form" class="hidden" style="display:none"></div>
+
+      <!-- All decisions table -->
+      <div id="decision-content">
+        <div class="empty-state">
+          <div class="icon">💰</div>
+          <div class="msg">Enter an item number above or load all decisions</div>
+          <div class="sub">Data pulls from your PRICE_DECISION sheet</div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ═══ TAB: VELOCITY ═══ -->
+  <div class="tab-panel" id="panel-velocity">
+    <div class="panel-body">
+
+      <!-- Sub-view toggle -->
+      <div class="subtoggle" style="margin-bottom:20px">
+        <button class="subtog active" id="vel-tog-charts" onclick="switchVelocityView('charts')">📈 Charts</button>
+        <button class="subtog" id="vel-tog-history" onclick="switchVelocityView('history')">📋 Sales History</button>
+      </div>
+
+      <!-- ── CHARTS sub-view ── -->
+      <div id="vel-view-charts">
+        <div class="card" style="padding:20px;margin-bottom:16px">
+          <div style="display:flex;justify-content:space-between;align-items:flex-start;flex-wrap:wrap;gap:12px">
+            <div>
+              <div class="section-label">Velocity Lookup</div>
+              <div style="font-size:12px;color:var(--text3);margin-top:3px">Sales data is refreshed automatically every day at 6am</div>
+            </div>
+            <div style="display:flex;gap:8px;flex-wrap:wrap" id="cron-btns">
+              <button class="btn btn-secondary btn-sm" onclick="runCron('30d')" title="Fetch last 30 days now">⟳ Sync 30d</button>
+              <button class="btn btn-secondary btn-sm" onclick="runCron('90d')" title="Fetch last 90 days now">⟳ Sync 90d</button>
+              <button class="btn btn-secondary btn-sm" onclick="runCron('6mo')" title="Fetch last 6 months now">⟳ Sync 6mo</button>
+              <button class="btn btn-secondary btn-sm" onclick="runCron('1yr')" title="Fetch last 1 year now">⟳ Sync 1yr</button>
+              <button class="btn btn-secondary btn-sm" onclick="runCron('2yr')" title="Fetch last 2 years now (eBay max)">⟳ Sync 2yr</button>
+            </div>
+          </div>
+          <div style="display:flex;gap:10px;margin-top:14px;flex-wrap:wrap">
+            <input class="search-input" id="vel-input" placeholder="Enter eBay Item Number or SKU…" style="flex:1;min-width:200px" onkeydown="if(event.key==='Enter')loadVelocity()">
+            <button class="btn btn-primary" onclick="loadVelocity()">Load Charts</button>
+          </div>
+        </div>
+        <div id="cron-status" style="display:none" class="card" style="padding:12px 20px;margin-bottom:16px;background:var(--green-bg);border:1px solid var(--green)"></div>
+        <div id="velocity-content">
+          <div class="empty-state">
+            <div class="icon">📈</div>
+            <div class="msg">Enter an item number to view velocity</div>
+            <div class="sub">First time? Click "⟳ Sync 30d" above to populate sales data, then search</div>
+          </div>
+        </div>
+      </div>
+
+      <!-- ── SALES HISTORY sub-view ── -->
+      <div id="vel-view-history" style="display:none">
+        <div class="card" style="padding:20px;margin-bottom:16px">
+          <div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:10px">
+            <div>
+              <div class="section-label">Sales History — All Items</div>
+              <div style="font-size:12px;color:var(--text3);margin-top:4px">Units sold per item number across time periods</div>
+            </div>
+            <button class="btn btn-primary" onclick="buildSalesHistory()" id="build-history-btn">⟳ Rebuild from eBay</button>
+          </div>
+          <div style="display:flex;gap:10px;margin-top:14px;flex-wrap:wrap">
+            <input class="search-input" id="history-search" placeholder="Search by Item # or SKU…"
+              style="flex:1;min-width:200px" oninput="filterSalesHistory()">
+            <select class="filter-select" id="history-sort" onchange="filterSalesHistory()">
+              <option value="s30">Sort: 30-Day</option>
+              <option value="s90">Sort: 90-Day</option>
+              <option value="s6m">Sort: 6-Month</option>
+              <option value="s1y">Sort: 1-Year</option>
+              <option value="s2y">Sort: 2-Year</option>
+            </select>
+          </div>
+        </div>
+        <div id="history-content">
+          <div class="empty-state">
+            <div class="icon">📋</div>
+            <div class="msg">No sales history loaded</div>
+            <div class="sub">Click "Rebuild from eBay" to fetch 1 year of order history, or sync if already built</div>
+          </div>
+        </div>
+      </div>
+
+    </div>
+  </div>
+
+  <!-- ═══ TAB: APPROVAL QUEUE ═══ -->
+  <div class="tab-panel" id="panel-approval">
+    <div class="panel-body">
+      <div class="alert alert-info" style="margin-bottom:20px">
+        <span>ℹ️</span>
+        <span><strong>Auto-approved changes (≤10%)</strong> appear here ready to apply. <strong>Changes over 10%</strong> are flagged from your PRICE_DECISION sheet for manager review.</span>
+      </div>
+      <div class="filter-bar">
+        <button class="btn btn-secondary btn-sm" onclick="loadApprovals()">↻ Refresh Queue</button>
+      </div>
+      <div id="approval-content">
+        <div class="empty-state">
+          <div class="icon">⚠️</div>
+          <div class="msg">No pending approvals</div>
+          <div class="sub">Price decisions needing action will appear here</div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+</div><!-- /app -->
+
+<!-- PRICE CHANGE MODAL -->
+<div class="modal-overlay hidden" id="price-modal">
+  <div class="modal">
+    <div class="modal-header">
+      <div class="modal-title" id="modal-title">Update Price</div>
+      <button class="modal-close" onclick="closeModal()">✕</button>
+    </div>
+    <div class="modal-body" id="modal-body"></div>
+    <div class="modal-footer" id="modal-footer"></div>
+  </div>
+</div>
+
+<!-- TOAST -->
+<div id="toast"></div>
+
+
+</div>
+<script>
+// ═══ REPRICER SCRIPT ═══
+
+// ════════════════════════════════════════════
+// CONFIG
+// ════════════════════════════════════════════
+const CFG = {
+  WORKER: 'https://xfitting-lookup.alfixedinc88.workers.dev',
+};
+
+// ════════════════════════════════════════════
+// STATE
+// ════════════════════════════════════════════
+let rprToken  = null;
+let rprAllListings   = [];
+let allResearch   = [];
+let allDecisions  = [];
+let approvalQueue = [];
+let lastSync      = null;
+let currentListing = null;
+
+// ════════════════════════════════════════════
+// PIN SCREEN → get session token from worker
+// ════════════════════════════════════════════
+
+
+let rprPinEntry = '';
+function rprPinPress(d) {
+  if (!d || rprPinEntry.length >= 4) return;
+  rprPinEntry += d;
+  rprDots();
+  if (rprPinEntry.length === 4) setTimeout(rprCheckPin, 120);
+}
+function rprPinDel() {
+  rprPinEntry = rprPinEntry.slice(0, -1);
+  rprDots();
+  document.getElementById('rpr-pin-error').textContent = '';
+}
+function rprDots() {
+  document.querySelectorAll('#rpr-pin-screen .pin-dot').forEach((d, i) => {
+    d.classList.toggle('filled', i < rprPinEntry.length);
+    d.classList.remove('error');
+  });
+}
+async function rprCheckPin() {
+  try {
+    const r = await fetch(CFG.WORKER + '/auth', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ pin: rprPinEntry, pin_type: 'mgmt' })
+    });
+    const data = await r.json();
+    if (r.ok && data.token) {
+      rprToken = data.token;
+      document.getElementById('rpr-pin-screen').style.display = 'none';
+      document.getElementById('rpr-app').style.display = 'flex';
+      rprLoad();
+    } else {
+      rprPinFail();
+    }
+  } catch(e) { rprPinFail(); }
+}
+function rprPinFail() {
+  document.querySelectorAll('#rpr-pin-screen .pin-dot').forEach(d => d.classList.add('error'));
+  const dots = document.getElementById('rpr-pin-dots');
+  dots.classList.add('shake');
+  document.getElementById('rpr-pin-error').textContent = 'Incorrect PIN';
+  setTimeout(() => { dots.classList.remove('shake'); rprPinEntry = ''; rprDots(); }, 600);
+}
+
+// ════════════════════════════════════════════
+// NAVIGATION
+// ════════════════════════════════════════════
+function rprTab(tab) {
+  document.querySelectorAll('#rpr-app .tabitem').forEach(t => t.classList.remove('active'));
+  document.querySelectorAll('#rpr-app .tab-panel').forEach(p => p.classList.remove('active'));
+  document.getElementById('tab-' + tab).classList.add('active');
+  document.getElementById('panel-' + tab).classList.add('active');
+  if (tab === 'approval') renderApprovals();
+}
+function rprBack() {
+  document.getElementById('repricer-root').style.display = 'none';
+  document.getElementById('launcher').style.display = 'flex';
+  rprToken = null;
+}
+
+// ════════════════════════════════════════════
+// API — X-Session-Token (matches worker v7)
+// ════════════════════════════════════════════
+async function apiCall(path, opts = {}) {
+  const headers = { 'Content-Type': 'application/json', 'X-Session-Token': rprToken, ...opts.headers };
+  const r = await fetch(CFG.WORKER + path, { ...opts, headers });
+  if (r.status === 401) {
+    rprToken = null;
+    document.getElementById('rpr-app').classList.remove('visible');
+    document.getElementById('rpr-pin-screen').classList.remove('hidden');
+    rprPinEntry = ''; rprDots();
+    throw new Error('Session expired — please re-enter PIN');
+  }
+  if (!r.ok) {
+    const err = await r.json().catch(() => ({}));
+    throw new Error(err.error || `HTTP ${r.status}`);
+  }
+  return r.json();
+}
+
+// ════════════════════════════════════════════
+// SYNC BUTTON
+// ════════════════════════════════════════════
+function rprSyncAll() {
+  const tab = document.querySelector('.tabitem.active')?.id.replace('tab-','') || 'listings';
+  if (tab === 'listings') rprLoad();
+  if (tab === 'research') loadResearch();
+  if (tab === 'decision') loadAllDecisions();
+  if (tab === 'approval') renderApprovals();
+}
+function setSyncStatus(live) {
+  document.getElementById('sync-dot').className   = 'sync-dot' + (live ? '' : ' stale');
+  document.getElementById('sync-label').textContent = live ? 'Live' : 'Error';
+}
+
+// ════════════════════════════════════════════
+// PRICING HELPERS (mirrors SKU_MASTER logic)
+// ════════════════════════════════════════════
+const SHIPPING = 5.25; // flat shipping added to all price calculations
+
+function calcTierUnitPrice(cog1pc, qty) {
+  const base = cog1pc * 1.75;
+  if (qty >= 50) return base * 0.75;
+  if (qty >= 25) return base * 0.80;
+  if (qty >= 10) return base * 0.85;
+  if (qty >= 5)  return base * 0.875;
+  if (qty >= 2)  return base * 0.90;
+  return base;
+}
+// All prices include $5.25 shipping
+function getMinPrice(cog1pc, qty)    { return (cog1pc * qty * 1.35) + SHIPPING; }
+function getMaxPrice(cog1pc, qty)    { return (cog1pc * qty * 2.0)  + SHIPPING; }
+function getTargetPrice(cog1pc, qty) { return (calcTierUnitPrice(cog1pc, qty) * qty) + SHIPPING; }
+function fmt$(n)   { return (n == null || isNaN(n)) ? '—' : '$' + Number(n).toFixed(2); }
+function fmtPct(n) { return (n == null || isNaN(n)) ? '—' : (n >= 0 ? '+' : '') + (n * 100).toFixed(1) + '%'; }
+function isPriceBelow(l) {
+  if (!l.cog1pc || !l.packQty || !l.price) return false;
+  return l.price < getMinPrice(l.cog1pc, l.packQty);
+}
+
+// ════════════════════════════════════════════
+// TAB 1 — ACTIVE LISTINGS
+// ════════════════════════════════════════════
+async function rprLoad() {
+  document.getElementById('listings-content').innerHTML = `<div class="loading"><div class="spinner"></div> Pulling live eBay listings…</div>`;
+  try {
+    const data = await apiCall('/ebay/listings');
+    rprAllListings = data.listings || [];
+    setSyncStatus(true);
+    renderListings(rprAllListings);
+    rprToast(`✓ ${rprAllListings.length} listings loaded`, 'success');
+  } catch(e) {
+    setSyncStatus(false);
+    document.getElementById('listings-content').innerHTML =
+      `<div class="empty-state"><div class="icon">⚠️</div><div class="msg">${e.message}</div>
+       <div class="sub">Check Worker is deployed and eBay credentials are set in Cloudflare</div></div>`;
+  }
+}
+
+function renderListings(data) {
+  const belowCount  = data.filter(l => isPriceBelow(l)).length;
+  const reviewCount = data.filter(l => !isPriceBelow(l) && l.cog1pc && l.price < getTargetPrice(l.cog1pc, l.packQty)).length;
+  const okCount     = data.filter(l => !isPriceBelow(l) && (!l.cog1pc || l.price >= getTargetPrice(l.cog1pc, l.packQty))).length;
+
+  document.getElementById('stat-total').textContent  = data.length;
+  document.getElementById('stat-below').textContent  = belowCount;
+  document.getElementById('stat-above').textContent  = okCount;
+  document.getElementById('stat-review').textContent = reviewCount;
+  document.getElementById('cnt-listings').textContent = data.length;
+
+  if (!data.length) {
+    document.getElementById('listings-content').innerHTML =
+      `<div class="empty-state"><div class="icon">📦</div><div class="msg">No listings found</div></div>`;
+    return;
+  }
+
+  const rows = data.map(l => {
+    const floor  = l.cog1pc ? getMinPrice(l.cog1pc, l.packQty)    : 0;
+    const target = l.cog1pc ? getTargetPrice(l.cog1pc, l.packQty) : 0;
+    const below  = isPriceBelow(l);
+    const badge  = below
+      ? `<span class="badge badge-red">⬇ Below Floor</span>`
+      : (l.cog1pc && l.price < target)
+        ? `<span class="badge badge-orange">⚠ Under Target</span>`
+        : `<span class="badge badge-green">✓ OK</span>`;
+    return `<tr>
+      <td class="sku">${l.sku}</td>
+      <td class="bold">${l.title || l.sku}</td>
+      <td style="font-family:var(--mono);font-size:11px;color:var(--text3)">${l.itemId || l.offerId || '—'}</td>
+      <td class="num">${l.packQty}pc</td>
+      <td class="num bold" style="color:${below ? 'var(--red)' : 'var(--text)'}">${fmt$(l.price)}</td>
+      <td class="num" style="color:var(--text3)">${floor ? fmt$(floor) : '—'}</td>
+      <td class="num" style="color:var(--accent)">${target ? fmt$(target) : '—'}</td>
+      <td class="num">${l.qty}</td>
+      <td>${badge}</td>
+      <td><button class="btn btn-primary btn-sm" onclick='openPriceModal(${JSON.stringify(l).replace(/'/g,"&#39;")})'>Edit Price</button></td>
+    </tr>`;
+  }).join('');
+
+  document.getElementById('listings-content').innerHTML = `
+    <div class="table-wrap"><table class="data-table">
+      <thead><tr>
+        <th>SKU</th><th>Title</th><th>Item #</th><th class="num">Pack</th>
+        <th class="num">Current</th><th class="num">Floor</th><th class="num">Target</th>
+        <th class="num">Qty</th><th>Status</th><th></th>
+      </tr></thead>
+      <tbody>${rows}</tbody>
+    </table></div>`;
+}
+
+function filterListings() {
+  const q = document.getElementById('listing-search').value.toLowerCase();
+  const f = document.getElementById('listing-filter').value;
+  const filtered = rprAllListings.filter(l => {
+    const mq = !q || l.sku.toLowerCase().includes(q) || (l.title||'').toLowerCase().includes(q) || String(l.itemId||'').includes(q);
+    const mf = f === 'all'    ? true
+             : f === 'below'  ? isPriceBelow(l)
+             : f === 'review' ? (!isPriceBelow(l) && l.cog1pc && l.price < getTargetPrice(l.cog1pc, l.packQty))
+             : (!isPriceBelow(l) && (!l.cog1pc || l.price >= getTargetPrice(l.cog1pc, l.packQty)));
+    return mq && mf;
+  });
+  renderListings(filtered);
+}
+
+// ════════════════════════════════════════════
+// PRICE MODAL
+// ════════════════════════════════════════════
+function openPriceModal(listing) {
+  currentListing = listing;
+  const floor  = listing.cog1pc ? getMinPrice(listing.cog1pc, listing.packQty)    : 0;
+  const target = listing.cog1pc ? getTargetPrice(listing.cog1pc, listing.packQty) : 0;
+  const max    = listing.cog1pc ? getMaxPrice(listing.cog1pc, listing.packQty)    : 0;
+
+  document.getElementById('modal-title').textContent = `Update Price — ${listing.sku}`;
+  document.getElementById('modal-body').innerHTML = `
+    <div class="info-grid" style="margin-bottom:16px">
+      <div class="info-cell"><div class="info-cell-label">Offer ID</div><div class="info-cell-value" style="font-size:11px;font-family:var(--mono)">${listing.offerId || listing.itemId || '—'}</div></div>
+      <div class="info-cell"><div class="info-cell-label">Pack Size</div><div class="info-cell-value">${listing.packQty}pc</div></div>
+      <div class="info-cell"><div class="info-cell-label">Current Price</div><div class="info-cell-value">${fmt$(listing.price)}</div></div>
+      <div class="info-cell"><div class="info-cell-label">COGS (1pc)</div><div class="info-cell-value">${listing.cog1pc ? fmt$(listing.cog1pc) : 'Not in SKU_MASTER'}</div></div>
+    </div>
+    ${floor ? `<div class="info-grid" style="margin-bottom:16px">
+      <div class="info-cell"><div class="info-cell-label">Floor (35%)</div><div class="info-cell-value" style="color:var(--red)">${fmt$(floor)}</div></div>
+      <div class="info-cell"><div class="info-cell-label">Target (75%)</div><div class="info-cell-value" style="color:var(--accent)">${fmt$(target)}</div></div>
+      <div class="info-cell"><div class="info-cell-label">Max (100%)</div><div class="info-cell-value" style="color:var(--green)">${fmt$(max)}</div></div>
+    </div>` : ''}
+    <div class="form-group">
+      <label class="form-label">New Price</label>
+      <input class="form-input price-input-large" type="number" id="new-price-input"
+        step="0.01" value="${listing.price ? listing.price.toFixed(2) : ''}" oninput="updatePricePreview()">
+      ${floor ? `<div class="form-hint">Floor: ${fmt$(floor)} · Target: ${fmt$(target)} · Max: ${fmt$(max)}</div>` : ''}
+    </div>
+    <div id="price-change-preview"></div>
+    <div class="form-group">
+      <label class="form-label">Price Change PIN</label>
+      <input class="form-input" type="password" id="price-pin-input" maxlength="4" placeholder="••••" autocomplete="off">
+    </div>
+    <div id="modal-alert"></div>`;
+  document.getElementById('modal-footer').innerHTML = `
+    <button class="btn btn-secondary" onclick="closeModal()">Cancel</button>
+    <button class="btn btn-primary" onclick="submitPriceChange()">Submit Change</button>`;
+  document.getElementById('price-modal').classList.remove('hidden');
+  updatePricePreview();
+}
+
+function updatePricePreview() {
+  if (!currentListing) return;
+  const newPrice = parseFloat(document.getElementById('new-price-input')?.value) || 0;
+  const old = currentListing.price;
+  const el  = document.getElementById('price-change-preview');
+  if (!el) return;
+  if (!newPrice || !old) { el.innerHTML = ''; return; }
+  const pct   = (newPrice - old) / old;
+  const floor = currentListing.cog1pc ? getMinPrice(currentListing.cog1pc, currentListing.packQty) : 0;
+  if (floor && newPrice < floor)
+    el.innerHTML = `<div class="alert alert-error" style="margin-bottom:12px">⛔ Below minimum floor of ${fmt$(floor)}</div>`;
+  else if (Math.abs(pct) >= 0.10)
+    el.innerHTML = `<div class="alert alert-warning" style="margin-bottom:12px">⚠️ <strong>${fmtPct(pct)}</strong> change — requires manager review (>10%)</div>`;
+  else
+    el.innerHTML = `<div class="alert alert-success" style="margin-bottom:12px">✓ <strong>${fmtPct(pct)}</strong> change — auto-approved, applies immediately</div>`;
+}
+
+async function submitPriceChange() {
+  const newPrice = parseFloat(document.getElementById('new-price-input').value);
+  const pin      = document.getElementById('price-pin-input').value;
+  const alertEl  = document.getElementById('modal-alert');
+  if (!newPrice || newPrice <= 0) { alertEl.innerHTML = `<div class="alert alert-error">Enter a valid price</div>`; return; }
+  const floor = currentListing.cog1pc ? getMinPrice(currentListing.cog1pc, currentListing.packQty) : 0;
+  if (floor && newPrice < floor) { alertEl.innerHTML = `<div class="alert alert-error">Price is below floor (${fmt$(floor)})</div>`; return; }
+  try {
+    const result = await apiCall('/repricer/price-change', {
+      method: 'POST',
+      body: JSON.stringify({
+        sku:      currentListing.sku,
+        itemId:   currentListing.offerId || currentListing.itemId,
+        packQty:  currentListing.packQty,
+        oldPrice: currentListing.price,
+        newPrice, pin, user: 'REPRICER'
+      })
+    });
+    const pct = currentListing.price ? (newPrice - currentListing.price) / currentListing.price : 0;
+    approvalQueue.unshift({
+      id: Date.now(), sku: currentListing.sku, itemId: currentListing.offerId || currentListing.itemId,
+      packQty: currentListing.packQty, oldPrice: currentListing.price, newPrice, pct,
+      type: result.needsApproval ? 'approval' : 'auto', submittedAt: new Date().toISOString(), status: 'pending'
+    });
+    document.getElementById('cnt-approval').textContent = approvalQueue.filter(a => a.status === 'pending').length;
+    closeModal();
+    if (result.status === 'APPLIED') {
+      rprToast('✓ Price updated on eBay!', 'success');
+      const idx = rprAllListings.findIndex(l => (l.offerId || l.itemId) === (currentListing?.offerId || currentListing?.itemId));
+      if (idx > -1) { rprAllListings[idx].price = newPrice; filterListings(); }
+    } else if (result.needsApproval) {
+      rprToast('⚠ Flagged for manager review (>10%)', 'error');
+    } else {
+      rprToast('✓ Logged to Price_History', 'success');
+    }
+  } catch(e) {
+    alertEl.innerHTML = `<div class="alert alert-error">${e.message}</div>`;
+  }
+}
+
+function closeModal() {
+  document.getElementById('price-modal').classList.add('hidden');
+  currentListing = null;
+}
+
+// ════════════════════════════════════════════
+// ════════════════════════════════════════════
+// RESEARCH SUB-VIEW TOGGLE
+// ════════════════════════════════════════════
+function switchResearchView(view) {
+  document.getElementById('research-view-past').style.display = view === 'view' ? '' : 'none';
+  document.getElementById('research-view-new').style.display  = view === 'new'  ? '' : 'none';
+  document.getElementById('subtog-view').classList.toggle('active', view === 'view');
+  document.getElementById('subtog-new').classList.toggle('active',  view === 'new');
+  if (view === 'view' && !allResearch.length) loadResearch();
+}
+
+// ════════════════════════════════════════════
+// NEW RESEARCH FLOW
+// ════════════════════════════════════════════
+let nrListing    = null; // current listing being researched
+let nrCompetitors = [];  // selected competitor listings
+
+async function nrLoadItem() {
+  const itemId = document.getElementById('nr-item-input').value.trim();
+  if (!itemId) return;
+  document.getElementById('nr-item-result').innerHTML =
+    `<div class="loading"><div class="spinner"></div> Loading listing…</div>`;
+
+  // Find listing in already-loaded rprAllListings or re-fetch
+  let listing = rprAllListings.find(l => l.itemId === itemId || l.offerId === itemId);
+  if (!listing) {
+    // Try to load from eBay listings if not already loaded
+    try {
+      if (!rprAllListings.length) {
+        const data = await apiCall('/ebay/listings');
+        rprAllListings = data.listings || [];
+      }
+      listing = rprAllListings.find(l => l.itemId === itemId || l.offerId === itemId);
+    } catch(e) {}
+  }
+
+  if (!listing) {
+    document.getElementById('nr-item-result').innerHTML =
+      `<div class="alert alert-error">Item ${itemId} not found in your active listings</div>`;
+    return;
+  }
+
+  nrListing     = listing;
+  nrCompetitors = [];
+  const floor   = listing.cog1pc ? getMinPrice(listing.cog1pc, listing.packQty)    : 0;
+  const target  = listing.cog1pc ? getTargetPrice(listing.cog1pc, listing.packQty) : 0;
+  const max     = listing.cog1pc ? getMaxPrice(listing.cog1pc, listing.packQty)    : 0;
+
+  document.getElementById('nr-item-result').innerHTML = `
+    <div class="info-grid">
+      <div class="info-cell"><div class="info-cell-label">SKU</div><div class="info-cell-value">${listing.sku}</div></div>
+      <div class="info-cell"><div class="info-cell-label">Pack Size</div><div class="info-cell-value">${listing.packQty}pc</div></div>
+      <div class="info-cell"><div class="info-cell-label">Current Price</div><div class="info-cell-value bold">${fmt$(listing.price)}</div></div>
+      ${floor ? `<div class="info-cell"><div class="info-cell-label">Floor / Target / Max</div>
+        <div class="info-cell-value" style="font-size:11px">
+          <span style="color:var(--red)">${fmt$(floor)}</span> /
+          <span style="color:var(--accent)">${fmt$(target)}</span> /
+          <span style="color:var(--green)">${fmt$(max)}</span>
+        </div></div>` : ''}
+    </div>`;
+
+  // Pre-fill keywords from title
+  const keywords = (listing.title || listing.sku || '')
+    .replace(/[^a-zA-Z0-9 ]/g, ' ').replace(/\s+/g, ' ').trim().split(' ').slice(0, 6).join(' ');
+  document.getElementById('nr-keywords').value = keywords;
+  document.getElementById('nr-step2').style.display = '';
+  document.getElementById('nr-step2').scrollIntoView({ behavior: 'smooth', block: 'start' });
+}
+
+async function nrSearchEbay() {
+  const keywords = document.getElementById('nr-keywords').value.trim();
+  if (!keywords) return;
+  document.getElementById('nr-search-results').innerHTML =
+    `<div class="loading"><div class="spinner"></div> Searching eBay…</div>`;
+  try {
+    const data = await apiCall(`/ebay/browse-search?q=${encodeURIComponent(keywords)}&limit=25`);
+    nrRenderSearchResults(data.results || []);
+  } catch(e) {
+    document.getElementById('nr-search-results').innerHTML =
+      `<div class="alert alert-error">${e.message}</div>`;
+  }
+}
+
+function nrRenderSearchResults(results) {
+  if (!results.length) {
+    document.getElementById('nr-search-results').innerHTML =
+      `<div class="empty-state"><div class="icon">🔍</div><div class="msg">No results found</div></div>`;
+    return;
+  }
+
+  const ourItemId  = nrListing?.itemId;
+  const ourPackQty = nrListing?.packQty || 1;
+
+  const cards = results.map((r, i) => {
+    const rank         = i + 1;
+    const isOurs       = ourItemId && (r.itemId === ourItemId || r.itemId?.includes(ourItemId));
+    const samePackSize = r.packQty === ourPackQty;
+    const alreadyAdded = nrCompetitors.some(c => c.itemId === r.itemId);
+
+    // Pack size badge
+    const packBadge = r.packQty > 1
+      ? `<span class="badge ${samePackSize ? 'badge-green' : 'badge-gray'}" style="font-size:10px">${r.packQty}pc${samePackSize ? ' ✓ match' : ''}</span>`
+      : `<span class="badge badge-gray" style="font-size:10px">1pc</span>`;
+
+    // Unit price hint
+    const unitHint = r.packQty > 1
+      ? `<span style="font-size:10px;color:var(--text3);font-family:var(--mono)">${fmt$(r.unitPrice)}/pc</span>`
+      : '';
+
+    const safeId = ('sr-' + r.itemId).replace(/[^a-zA-Z0-9_-]/g, '_');
+    return `<div class="comp-card ${isOurs ? 'ours' : ''}" id="${safeId}"
+      style="margin-bottom:8px;${samePackSize && !isOurs ? 'border-color:var(--accent);' : ''}">
+      <div class="comp-rank" style="min-width:28px">#${rank}</div>
+      <div class="comp-info" style="flex:1;min-width:0">
+        <div class="comp-title" style="margin-bottom:4px">${r.title}</div>
+        <div class="comp-meta" style="display:flex;gap:6px;align-items:center;flex-wrap:wrap">
+          ${packBadge}
+          <span style="color:var(--text3);font-size:11px">${r.seller}</span>
+          <a href="${r.url}" target="_blank" style="color:var(--accent);font-size:11px">View ↗</a>
+        </div>
+      </div>
+      <div style="display:flex;flex-direction:column;align-items:flex-end;gap:4px;min-width:90px">
+        <div class="comp-price">${fmt$(r.price)}</div>
+        ${unitHint}
+        ${isOurs
+          ? `<button class="btn btn-primary btn-sm" onclick="nrMarkOurRank(${rank})">✓ That's Us (#${rank})</button>`
+          : alreadyAdded
+            ? `<span class="badge badge-green" style="font-size:10px">✓ Added</span>`
+            : `<button class="btn btn-secondary btn-sm" onclick='nrAddCompetitor(${JSON.stringify(r).replace(/'/g,"&#39;")},${rank})'>+ Add Comp</button>`}
+      </div>
+    </div>`;
+  }).join('');
+
+  // Summary line showing price range for same pack size
+  const samePackResults = results.filter(r => r.packQty === ourPackQty && !r.itemId?.includes(ourItemId));
+  const samePackPrices  = samePackResults.map(r => r.price);
+  const priceRangeLine  = samePackPrices.length
+    ? `<span style="color:var(--accent)">Same pack size (${ourPackQty}pc): ${fmt$(Math.min(...samePackPrices))} – ${fmt$(Math.max(...samePackPrices))}</span> · `
+    : '';
+
+  document.getElementById('nr-search-results').innerHTML = `
+    <div style="font-size:11px;color:var(--text3);margin-bottom:10px">
+      ${results.length} results · ${priceRangeLine}sorted by Best Match
+    </div>
+    ${cards}`;
+
+  document.getElementById('nr-step3').style.display = '';
+  document.getElementById('nr-step3').scrollIntoView({ behavior: 'smooth', block: 'start' });
+}
+
+function nrMarkOurRank(rank) {
+  document.getElementById('nr-our-rank').value = rank;
+  rprToast(`✓ Marked as rank #${rank}`, 'success');
+}
+
+function nrAddCompetitor(result, rank) {
+  if (nrCompetitors.some(c => c.itemId === result.itemId)) return;
+  nrCompetitors.push({ ...result, rank });
+  nrRenderCompList();
+  // Update button in search results
+  const safeId = ('sr-' + result.itemId).replace(/[^a-zA-Z0-9_-]/g, '_');
+  const btn = document.querySelector(`#${safeId} .btn-secondary`);
+  if (btn) btn.outerHTML = `<span class="badge badge-green">✓ Added</span>`;
+  // Auto-update lowest comp price
+  const prices = nrCompetitors.map(c => c.price).filter(Boolean);
+  if (prices.length) {
+    document.getElementById('nr-lowest-comp').value = Math.min(...prices).toFixed(2);
+  }
+}
+
+function nrRemoveCompetitor(itemId) {
+  nrCompetitors = nrCompetitors.filter(c => c.itemId !== itemId);
+  nrRenderCompList();
+}
+
+function nrRenderCompList() {
+  document.getElementById('nr-comp-count').textContent = `(${nrCompetitors.length})`;
+  if (!nrCompetitors.length) {
+    document.getElementById('nr-comp-list').innerHTML =
+      `<div style="font-size:12px;color:var(--text3)">No competitors added yet — click "+ Add Comp" on search results above</div>`;
+    return;
+  }
+  document.getElementById('nr-comp-list').innerHTML = nrCompetitors.map(c => `
+    <div style="display:flex;align-items:center;gap:10px;padding:8px 12px;background:var(--bg2);border:1px solid var(--border);border-radius:8px;flex-wrap:wrap">
+      <span style="font-family:var(--mono);font-size:13px;font-weight:700;color:var(--text)">${fmt$(c.price)}</span>
+      <span style="flex:1;font-size:12px;color:var(--text);min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${c.title}</span>
+      <a href="${c.url}" target="_blank" class="btn btn-secondary btn-sm">↗</a>
+      <button class="btn btn-secondary btn-sm" onclick="nrRemoveCompetitor('${c.itemId}')">✕</button>
+    </div>`).join('');
+}
+
+async function nrSaveResearch() {
+  if (!nrListing) return;
+  const rank       = parseInt(document.getElementById('nr-our-rank').value) || 0;
+  const lowestComp = parseFloat(document.getElementById('nr-lowest-comp').value) || 0;
+  const notes      = document.getElementById('nr-notes').value.trim();
+  const initials   = document.getElementById('nr-initials').value.trim();
+  const alertEl    = document.getElementById('nr-save-alert');
+
+  if (!initials) { alertEl.innerHTML = `<div class="alert alert-error">Please enter your initials</div>`; return; }
+
+  alertEl.innerHTML = `<div class="loading"><div class="spinner"></div> Fetching sales history & saving…</div>`;
+
+  // Build the best competitor info (lowest priced)
+  const bestComp     = nrCompetitors.sort((a,b) => a.price - b.price)[0] || null;
+  const ourUnitPrice  = nrListing.price / nrListing.packQty;
+  const compUnitPrice = bestComp ? bestComp.price / (bestComp.packQty || nrListing.packQty) : 0;
+
+  // Pull velocity data (sales history) to log alongside research
+  let salesData = {};
+  try {
+    const vel = await apiCall(`/repricer/velocity?itemId=${nrListing.itemId}`);
+    const src  = vel.sku || vel.item || {};   // prefer base SKU rollup
+    salesData  = {
+      trend: src.trend || '',
+      s30:   src.s30  || 0,
+      s90:   src.s90  || 0,
+      s6m:   src.s6m  || 0,
+      s1y:   src.s1y  || 0,
+    };
+  } catch(_) { /* velocity optional — save still proceeds */ }
+
+  try {
+    await apiCall('/repricer/save-research', {
+      method: 'POST',
+      body: JSON.stringify({
+        itemId:        nrListing.itemId,
+        sku:           nrListing.baseSKU || (nrListing.sku.includes('=') ? nrListing.sku.split('=')[0].trim() : nrListing.sku),
+        packQty:       nrListing.packQty,
+        ourPrice:      nrListing.price,
+        ourUnitPrice,
+        ourRank:       rank,
+        lowestComp,
+        compUnitPrice,
+        competitors:   nrCompetitors,
+        bestCompLink:  bestComp?.url || '',
+        notes,
+        initials,
+        ...salesData,   // spreads trend, s30, s90, s6m, s1y, s2y, s3y
+      })
+    });
+    alertEl.innerHTML = `<div class="alert alert-success">✓ Saved to MARKET_RESEARCH and Price_Research_Log</div>`;
+    rprToast('✓ Research saved!', 'success');
+    // Reload past research
+    allResearch = [];
+    setTimeout(() => loadResearch(), 1000);
+  } catch(e) {
+    alertEl.innerHTML = `<div class="alert alert-error">${e.message}</div>`;
+  }
+}
+
+function nrReset() {
+  nrListing = null;
+  nrCompetitors = [];
+  document.getElementById('nr-item-input').value = '';
+  document.getElementById('nr-keywords').value = '';
+  document.getElementById('nr-item-result').innerHTML = '';
+  document.getElementById('nr-search-results').innerHTML = '';
+  document.getElementById('nr-step2').style.display = 'none';
+  document.getElementById('nr-step3').style.display = 'none';
+  document.getElementById('nr-our-rank').value = '';
+  document.getElementById('nr-lowest-comp').value = '';
+  document.getElementById('nr-notes').value = '';
+  document.getElementById('nr-initials').value = '';
+  document.getElementById('nr-save-alert').innerHTML = '';
+  nrRenderCompList();
+}
+
+// TAB 2 — PRICE RESEARCH
+// ════════════════════════════════════════════
+async function loadResearch() {
+  document.getElementById('research-content').innerHTML = `<div class="loading"><div class="spinner"></div> Loading MARKET_RESEARCH…</div>`;
+  try {
+    const data = await apiCall('/repricer/research');
+    allResearch = data.research || [];
+    document.getElementById('cnt-research').textContent = allResearch.length;
+    renderResearch(allResearch);
+    setSyncStatus(true);
+  } catch(e) {
+    document.getElementById('research-content').innerHTML =
+      `<div class="empty-state"><div class="icon">⚠️</div><div class="msg">${e.message}</div></div>`;
+  }
+}
+
+function renderResearch(data) {
+  if (!data.length) {
+    document.getElementById('research-content').innerHTML =
+      `<div class="empty-state"><div class="icon">🔍</div><div class="msg">No research data found</div>
+       <div class="sub">Add rows to MARKET_RESEARCH in your repricer sheet</div></div>`;
+    return;
+  }
+  const cards = data.map(r => {
+    const trendClass = (r.trend||'').includes('Increasing') ? 'badge-green' : (r.trend||'').includes('Declining') ? 'badge-red' : 'badge-gray';
+    const priceDiff  = r.ourUnit && r.compUnit ? (r.ourUnit - r.compUnit) / r.compUnit : null;
+    const priceComp  = priceDiff != null
+      ? `<span class="badge ${priceDiff > 0.01 ? 'badge-red' : priceDiff < -0.01 ? 'badge-green' : 'badge-gray'}">${priceDiff > 0 ? '▲' : '▼'} ${Math.abs(priceDiff*100).toFixed(1)}% vs comp</span>`
+      : '';
+    return `<div class="research-card">
+      <div class="research-card-header">
+        <div>
+          <div style="font-size:13px;font-weight:700;color:var(--text);margin-bottom:4px">
+            ${r.sku} <span style="font-family:var(--mono);font-size:11px;color:var(--text3);font-weight:400">· ${r.itemId}</span>
+          </div>
+          <div style="display:flex;gap:6px;flex-wrap:wrap">
+            ${r.trend ? `<span class="badge ${trendClass}">${r.trend}</span>` : ''}
+            ${r.rank  ? `<span class="badge badge-blue">Rank #${r.rank}</span>` : ''}
+            ${priceComp}
+          </div>
+        </div>
+        <div style="display:flex;gap:8px;flex-wrap:wrap">
+          ${r.compLink ? `<a href="${r.compLink}" target="_blank" class="btn btn-secondary btn-sm">🔗 Comp</a>` : ''}
+          <button class="btn btn-primary btn-sm" onclick="openDecisionFromResearch('${r.itemId}','${r.sku}')">Price Decision →</button>
+        </div>
+      </div>
+      <div class="research-pricing-grid">
+        <div class="rp-cell ours">
+          <div class="rp-cell-label">Our Price (${r.ourPack}pc)</div>
+          <div class="rp-cell-price">${r.ourPrice || '—'}</div>
+          <div class="rp-cell-unit">${fmt$(r.ourUnit)} / unit</div>
+        </div>
+        <div class="rp-cell comp">
+          <div class="rp-cell-label">Competitor (${r.compPack}pc)</div>
+          <div class="rp-cell-price">${r.compPrice || '—'}</div>
+          <div class="rp-cell-unit">${fmt$(r.compUnit)} / unit</div>
+        </div>
+      </div>
+      <div class="sales-history-row">
+        ${[['30d',r.s30],['90d',r.s90],['6mo',r.s6m],['1yr',r.s1y],['2yr',r.s2y]].map(([l,v])=>
+          `<div class="sales-pill"><div class="sales-pill-label">${l}</div><div class="sales-pill-val">${v||0}</div></div>`).join('')}
+      </div>
+      ${r.notes ? `<div style="font-size:12px;color:var(--text3);padding-top:8px;border-top:1px solid var(--border)">📝 ${r.notes}${r.initials ? ` — <em>${r.initials}</em>` : ''}</div>` : ''}
+    </div>`;
+  }).join('');
+  document.getElementById('research-content').innerHTML = cards;
+}
+
+function filterResearch() {
+  const q = document.getElementById('research-search').value.toLowerCase();
+  const t = document.getElementById('research-trend').value;
+  const filtered = allResearch.filter(r => {
+    const mq = !q || (r.sku||'').toLowerCase().includes(q) || String(r.itemId||'').includes(q);
+    const mt = t === 'all' ? true : t === 'up' ? (r.trend||'').includes('Increasing') : t === 'flat' ? (r.trend||'').includes('Flat') : (r.trend||'').includes('Declining');
+    return mq && mt;
+  });
+  renderResearch(filtered);
+}
+
+function openDecisionFromResearch(itemId, sku) {
+  rprTab('decision');
+  document.getElementById('decision-item-input').value = itemId;
+  lookupDecision();
+}
+
+// ════════════════════════════════════════════
+// TAB 3 — PRICE DECISION
+// ════════════════════════════════════════════
+async function lookupDecision() {
+  const q = document.getElementById('decision-item-input').value.trim();
+  if (!q) return;
+  document.getElementById('decision-content').innerHTML = `<div class="loading"><div class="spinner"></div> Looking up…</div>`;
+  try {
+    const isItemId = /^\d+$/.test(q);
+    const params   = isItemId ? `?itemId=${q}` : `?sku=${encodeURIComponent(q)}`;
+    const data     = await apiCall('/repricer/decisions' + params);
+    const list     = data.decisions || [];
+    document.getElementById('cnt-decision').textContent = list.length;
+    list.length ? renderDecisionCards(list)
+      : document.getElementById('decision-content').innerHTML =
+          `<div class="empty-state"><div class="icon">🔍</div><div class="msg">No decision found for "${q}"</div></div>`;
+  } catch(e) {
+    document.getElementById('decision-content').innerHTML =
+      `<div class="empty-state"><div class="icon">⚠️</div><div class="msg">${e.message}</div></div>`;
+  }
+}
+
+async function loadAllDecisions() {
+  document.getElementById('decision-content').innerHTML = `<div class="loading"><div class="spinner"></div> Loading PRICE_DECISION…</div>`;
+  try {
+    const data = await apiCall('/repricer/decisions');
+    allDecisions = data.decisions || [];
+    document.getElementById('cnt-decision').textContent = allDecisions.length;
+    renderDecisionCards(allDecisions);
+  } catch(e) {
+    document.getElementById('decision-content').innerHTML =
+      `<div class="empty-state"><div class="icon">⚠️</div><div class="msg">${e.message}</div></div>`;
+  }
+}
+
+function enrichDecision(d) {
+  // Find COGS from rprAllListings cache using SKU
+  const pack    = d.pack || 1;
+  const baseSku = (d.sku || '').includes('=') ? d.sku.split('=')[0].trim() : d.sku;
+  // Look for a listing that shares this base SKU to get cog1pc
+  const match   = rprAllListings.find(l => {
+    const lb = (l.sku || '').includes('=') ? l.sku.split('=')[0].trim() : l.sku;
+    return lb === baseSku;
+  });
+  const cog1pc = match?.cog1pc || 0;
+
+  // Calculate prices from COGS if sheet values are 0
+  const floor  = (d.minPrice && d.minPrice > 0) ? d.minPrice  : (cog1pc ? getMinPrice(cog1pc, pack)    : 0);
+  const target = (d.target   && d.target > 0)   ? d.target    : (cog1pc ? getTargetPrice(cog1pc, pack) : 0);
+  const max    = (d.maxPrice && d.maxPrice > 0)  ? d.maxPrice  : (cog1pc ? getMaxPrice(cog1pc, pack)   : 0);
+
+  // Suggest: if lowestComp exists, suggest min(lowestComp - 0.01, target) but above floor
+  const lowestCompNum = parseFloat(String(d.lowestComp).replace(/[^0-9.]/g,'')) || 0;
+  let suggest = (d.suggest && d.suggest > 0) ? d.suggest : 0;
+  if (!suggest && lowestCompNum > 0 && floor > 0) {
+    const compBased = lowestCompNum - 0.01;
+    suggest = Math.max(Math.min(compBased, target), floor);
+    suggest = +suggest.toFixed(2);
+  } else if (!suggest && target > 0) {
+    suggest = target; // default to target if no comp data
+  }
+
+  const currentNum = parseFloat(String(d.current).replace(/[^0-9.]/g,'')) || 0;
+  const pctChange  = currentNum > 0 && suggest > 0
+    ? +((suggest - currentNum) / currentNum * 100).toFixed(2)
+    : d.pctChange || 0;
+
+  return { ...d, floor, target, max, suggest, pctChange, cog1pc, currentNum };
+}
+
+function renderDecisionCards(data) {
+  if (!data.length) {
+    document.getElementById('decision-content').innerHTML =
+      `<div class="empty-state"><div class="icon">💰</div><div class="msg">No decisions found</div></div>`;
+    return;
+  }
+  const cards = data.map(raw => {
+    const d = enrichDecision(raw);
+    const needsApproval = Math.abs(d.pctChange) >= 10 || (d.approval||'').includes('APPROVAL');
+    return `<div class="research-card" style="border-left:4px solid ${needsApproval ? 'var(--orange)' : 'var(--green)'}">
+      <div style="display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:14px;flex-wrap:wrap;gap:8px">
+        <div>
+          <div style="font-size:13px;font-weight:700;margin-bottom:6px">
+            ${d.sku} — ${d.pack}pc
+            <span style="font-family:var(--mono);font-size:11px;color:var(--text3);font-weight:400;margin-left:8px">${d.itemId}</span>
+          </div>
+          ${needsApproval
+            ? `<span class="approval-flag">⚠ Approval Required</span>`
+            : `<span class="auto-approve-flag">✓ Auto-Approve</span>`}
+        </div>
+        <button class="btn ${needsApproval ? 'btn-secondary' : 'btn-primary'} btn-sm"
+          onclick='openDecisionApply(${JSON.stringify(d).replace(/'/g,"&#39;")})'>
+          ${needsApproval ? '⚠ Submit for Review' : '✓ Apply Price'}
+        </button>
+      </div>
+      <div class="info-grid" style="margin-bottom:10px">
+        <div class="info-cell"><div class="info-cell-label">Current</div><div class="info-cell-value">${fmt$(d.currentNum)}</div></div>
+        <div class="info-cell"><div class="info-cell-label">Suggested</div>
+          <div class="info-cell-value ${d.suggest > d.currentNum ? 'green' : d.suggest < d.currentNum ? 'red' : ''}">${d.suggest ? fmt$(d.suggest) : '—'}</div></div>
+        <div class="info-cell"><div class="info-cell-label">Floor</div><div class="info-cell-value" style="color:var(--red)">${d.floor ? fmt$(d.floor) : '—'}</div></div>
+        <div class="info-cell"><div class="info-cell-label">Target</div><div class="info-cell-value" style="color:var(--accent)">${d.target ? fmt$(d.target) : '—'}</div></div>
+        <div class="info-cell"><div class="info-cell-label">Max</div><div class="info-cell-value" style="color:var(--green)">${d.max ? fmt$(d.max) : '—'}</div></div>
+        <div class="info-cell"><div class="info-cell-label">Lowest Comp</div><div class="info-cell-value" style="color:var(--orange)">${d.lowestComp || '—'}</div></div>
+        <div class="info-cell"><div class="info-cell-label">% Change</div><div class="info-cell-value ${d.pctChange >= 0 ? 'green' : 'red'}">${d.pctChange ? d.pctChange.toFixed(1)+'%' : '—'}</div></div>
+        ${d.cog1pc ? `<div class="info-cell"><div class="info-cell-label">COGS (1pc)</div><div class="info-cell-value" style="color:var(--text3)">${fmt$(d.cog1pc)}</div></div>` : ''}
+      </div>
+      ${d.reason ? `<div style="font-size:12px;color:var(--text3);margin-bottom:8px">${d.reason}</div>` : ''}
+      ${d.notes  ? `<div style="font-size:12px;color:var(--text3);padding:8px 12px;background:var(--bg3);border-radius:8px">${d.notes}</div>` : ''}
+    </div>`;
+  }).join('');
+  document.getElementById('decision-content').innerHTML = cards;
+}
+
+function openDecisionApply(rawD) {
+  const d = rawD.floor > 0 ? rawD : enrichDecision(rawD); // ensure enriched
+  const currentNum    = d.currentNum || parseFloat(String(d.current).replace(/[^0-9.]/g,'')) || 0;
+  const needsApproval = Math.abs(d.pctChange) >= 10 || (d.approval||'').includes('APPROVAL');
+  currentListing = { sku: d.sku, offerId: d.itemId, itemId: d.itemId, packQty: d.pack, price: currentNum, cog1pc: d.cog1pc || 0 };
+  document.getElementById('modal-title').textContent = needsApproval ? 'Submit for Manager Approval' : 'Apply Price Change';
+  document.getElementById('modal-body').innerHTML = `
+    <div class="alert ${needsApproval ? 'alert-warning' : 'alert-success'}" style="margin-bottom:16px">
+      ${needsApproval
+        ? `⚠️ Change of ${d.pctChange.toFixed(1)}% exceeds 10% — will be logged for manager review`
+        : `✓ Change within 10% — will apply to eBay immediately`}
+    </div>
+    <div class="info-grid" style="margin-bottom:16px">
+      <div class="info-cell"><div class="info-cell-label">Current</div><div class="info-cell-value">${d.current}</div></div>
+      <div class="info-cell"><div class="info-cell-label">Suggested</div><div class="info-cell-value ${d.suggest > currentNum ? 'green' : 'red'}">${fmt$(d.suggest)}</div></div>
+    </div>
+    <div class="form-group">
+      <label class="form-label">Confirm New Price</label>
+      <input class="form-input price-input-large" type="number" id="new-price-input" value="${d.suggest.toFixed(2)}" step="0.01" oninput="updatePricePreview()">
+    </div>
+    <div id="price-change-preview"></div>
+    <div class="form-group">
+      <label class="form-label">Price Change PIN</label>
+      <input class="form-input" type="password" id="price-pin-input" maxlength="4" placeholder="••••" autocomplete="off">
+    </div>
+    <div id="modal-alert"></div>`;
+  document.getElementById('modal-footer').innerHTML = `
+    <button class="btn btn-secondary" onclick="closeModal()">Cancel</button>
+    <button class="btn ${needsApproval ? 'btn-danger' : 'btn-success'}" onclick="submitPriceChange()">
+      ${needsApproval ? '⚠ Submit for Approval' : '✓ Apply Now'}
+    </button>`;
+  document.getElementById('price-modal').classList.remove('hidden');
+}
+
+// ════════════════════════════════════════════
+// TAB 4 — VELOCITY
+// ════════════════════════════════════════════
+
+let allSalesHistory = [];
+
+async function runCron(window) {
+  const btns = document.querySelectorAll('#cron-btns button');
+  btns.forEach(b => b.disabled = true);
+  const statusEl = document.getElementById('cron-status');
+  statusEl.style.display = 'block';
+  statusEl.style.background = 'var(--accent-bg)';
+  statusEl.style.border = '1px solid var(--accent)';
+  statusEl.innerHTML = `<span style="color:var(--accent);font-size:13px">⟳ Fetching ${window} sales from eBay… (this takes ~5–10 seconds)</span>`;
+  try {
+    const data = await apiCall('/cron/sales-' + window);
+    const capWarn = data.hitCap ? ` <span style="color:var(--orange)">⚠️ Hit 9400 order cap</span>` : '';
+    const errWarn = data.error  ? ` <span style="color:var(--red)">✗ ${data.error}</span>` : '';
+    const sc = data.statusCounts || {};
+    const cancelledCount = Object.entries(sc).filter(([k]) => k.includes('CANCEL')).reduce((a,[,v]) => a+v, 0);
+    const cancelNote = cancelledCount > 0 ? ` <span style="color:var(--text3);font-weight:400">· ${cancelledCount} cancelled excluded</span>` : '';
+    statusEl.style.background = data.error ? 'var(--red-bg)'   : 'var(--green-bg)';
+    statusEl.style.border     = data.error ? '1px solid var(--red)' : '1px solid var(--green)';
+    statusEl.innerHTML = `<span style="color:${data.error ? 'var(--red)' : 'var(--green)'};font-size:13px;font-weight:600">
+      ${data.error ? '✗' : '✓'} ${window} synced — ${data.itemsWritten || 0} items from ${data.ordersProcessed || 0} orders · ${data.pages || 0} pages
+      <span style="font-weight:400;color:var(--text3)"> · from ${(data.fromDate||'').slice(0,10)} · ${data.date || ''}</span>${cancelNote}${capWarn}${errWarn}
+    </span>`;
+    // auto-reload sales history if that sub-view is visible
+    if (document.getElementById('vel-view-history').style.display !== 'none') {
+      allSalesHistory = [];
+      loadSalesHistory();
+    }
+  } catch(e) {
+    statusEl.style.background = 'var(--red-bg)';
+    statusEl.style.border = '1px solid var(--red)';
+    statusEl.innerHTML = `<span style="color:var(--red);font-size:13px">✗ ${e.message}</span>`;
+  } finally {
+    btns.forEach(b => b.disabled = false);
+  }
+}
+
+function switchVelocityView(view) {
+  document.getElementById('vel-view-charts').style.display  = view === 'charts'  ? '' : 'none';
+  document.getElementById('vel-view-history').style.display = view === 'history' ? '' : 'none';
+  document.getElementById('vel-tog-charts').classList.toggle('active',  view === 'charts');
+  document.getElementById('vel-tog-history').classList.toggle('active', view === 'history');
+  if (view === 'history' && !allSalesHistory.length) loadSalesHistory();
+}
+
+async function loadSalesHistory() {
+  document.getElementById('history-content').innerHTML =
+    `<div class="loading"><div class="spinner"></div> Loading sales history…</div>`;
+  try {
+    const data = await apiCall('/repricer/sales-history');
+    allSalesHistory = data.rows || [];
+    renderSalesHistory(allSalesHistory);
+  } catch(e) {
+    document.getElementById('history-content').innerHTML =
+      `<div class="empty-state"><div class="icon">⚠️</div><div class="msg">${e.message}</div>
+       <div class="sub">Click "Rebuild from eBay" to generate the sales history table for the first time</div></div>`;
+  }
+}
+
+async function buildSalesHistory() {
+  const btn = document.getElementById('build-history-btn');
+  btn.disabled = true;
+  btn.textContent = '⟳ Building… (may take 15–20s)';
+  document.getElementById('history-content').innerHTML =
+    `<div class="loading"><div class="spinner"></div> Fetching 1 year of eBay orders and building history table…</div>`;
+  try {
+    const data = await apiCall('/repricer/build-sales-history', { method: 'POST' });
+    rprToast(`✓ Built — ${data.itemsWritten} items from ${data.ordersScanned} orders`, 'success');
+    await loadSalesHistory();
+  } catch(e) {
+    document.getElementById('history-content').innerHTML =
+      `<div class="alert alert-error">${e.message}</div>`;
+  } finally {
+    btn.disabled = false;
+    btn.textContent = '⟳ Rebuild from eBay';
+  }
+}
+
+function filterSalesHistory() {
+  const q    = (document.getElementById('history-search').value || '').toLowerCase();
+  const sort = document.getElementById('history-sort').value || 's30';
+  let rows = allSalesHistory;
+  if (q) rows = rows.filter(r =>
+    String(r.itemId).includes(q) ||
+    (r.sku || '').toLowerCase().includes(q) ||
+    (r.baseSku || '').toLowerCase().includes(q) ||
+    (r.title || '').toLowerCase().includes(q)
+  );
+  rows = [...rows].sort((a, b) => (b[sort] || 0) - (a[sort] || 0));
+  renderSalesHistory(rows);
+}
+
+function renderSalesHistory(rows) {
+  if (!rows.length) {
+    document.getElementById('history-content').innerHTML =
+      `<div class="empty-state"><div class="icon">📋</div><div class="msg">No items found</div></div>`;
+    return;
+  }
+
+  const max30 = Math.max(...rows.map(r => r.s30 || 0), 1);
+
+  const tableRows = rows.map((r, i) => {
+    const pct30 = Math.round(((r.s30 || 0) / max30) * 100);
+    const cog   = (() => {
+      const match = rprAllListings.find(l => {
+        const lb = (l.sku || '').includes('=') ? l.sku.split('=')[0].trim() : l.sku;
+        return lb === r.baseSku;
+      });
+      return match?.cog1pc || 0;
+    })();
+    return `<tr>
+      <td style="font-family:var(--mono);font-size:11px;white-space:nowrap">${r.itemId}</td>
+      <td class="sku" style="font-size:11px">${r.baseSku}</td>
+      <td style="font-size:11px;max-width:220px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="${r.title}">${r.title}</td>
+      <td class="num">
+        <div style="display:flex;align-items:center;gap:6px">
+          <span style="font-weight:700;color:${r.s30 > 0 ? 'var(--green)' : 'var(--text3)'}">${r.s30 || 0}</span>
+          <div style="width:40px;height:6px;background:var(--bg3);border-radius:3px;overflow:hidden">
+            <div style="width:${pct30}%;height:100%;background:var(--accent);border-radius:3px"></div>
+          </div>
+        </div>
+      </td>
+      <td class="num">${r.s90 || 0}</td>
+      <td class="num">${r.s6m || 0}</td>
+      <td class="num">${r.s1y || 0}</td>
+      <td class="num" style="color:var(--text3);font-size:11px">${r.s1y > 0 ? (r.s1y / 12).toFixed(1) : '—'}</td>
+      ${cog ? `<td class="num" style="color:var(--text3);font-size:11px">${fmt$(cog)}</td>` : '<td class="num" style="color:var(--text3)">—</td>'}
+      <td style="font-size:10px;color:var(--text3)">${r.updated || ''}</td>
+    </tr>`;
+  }).join('');
+
+  document.getElementById('history-content').innerHTML = `
+    <div style="font-size:11px;color:var(--text3);margin-bottom:8px;text-align:right">
+      ${rows.length} listings · sorted by ${document.getElementById('history-sort').value}
+    </div>
+    <div class="table-wrap">
+      <table class="data-table">
+        <thead><tr>
+          <th>Item #</th>
+          <th>Base SKU</th>
+          <th>Title</th>
+          <th class="num">30-Day</th>
+          <th class="num">90-Day</th>
+          <th class="num">6-Month</th>
+          <th class="num">1-Year</th>
+          <th class="num">2-Year</th>
+          <th class="num">Avg/Mo</th>
+          <th class="num">COGS</th>
+          <th>Updated</th>
+        </tr></thead>
+        <tbody>${tableRows}</tbody>
+      </table>
+    </div>`;
+}
+
+async function loadVelocity() {
+  const q = document.getElementById('vel-input').value.trim();
+  if (!q) { rprToast('Enter an Item Number or SKU', 'error'); return; }
+  const isItemId = /^\d+$/.test(q);
+  document.getElementById('velocity-content').innerHTML = `
+    <div class="loading"><div class="spinner"></div>
+    Loading velocity from Google Sheets…</div>`;
+  try {
+    let params = isItemId ? `?itemId=${q}` : `?sku=${encodeURIComponent(q)}`;
+    // If we have the listing cached locally, pass baseSKU directly so worker
+    // doesn't need to hit eBay_Listings sheet (which may be empty)
+    if (isItemId && rprAllListings.length) {
+      const cached = rprAllListings.find(l => String(l.itemId) === String(q));
+      if (cached?.baseSKU) params += `&sku=${encodeURIComponent(cached.baseSKU + '=')}`;
+    }
+    const data   = await apiCall('/repricer/velocity' + params);
+    renderVelocity(data);
+  } catch(e) {
+    document.getElementById('velocity-content').innerHTML =
+      `<div class="empty-state"><div class="icon">⚠️</div><div class="msg">${e.message}</div></div>`;
+  }
+}
+
+function lineChart(periods, color = 'var(--accent)', fillColor = null) {
+  const vals   = periods.map(p => p.val);
+  const maxVal = Math.max(...vals, 1);
+  const n      = periods.length;
+  const W = 460, H = 110, padL = 36, padR = 12, padT = 20, padB = 28;
+  const cW = W - padL - padR;
+  const cH = H - padT - padB;
+
+  // X positions evenly spaced
+  const xs = periods.map((_, i) => padL + (i / (n - 1)) * cW);
+  // Y positions (0 = bottom)
+  const ys = vals.map(v => padT + cH - (v / maxVal) * cH);
+
+  // Smooth bezier path
+  function bezierPath(pts) {
+    if (pts.length < 2) return '';
+    let d = `M ${pts[0][0]} ${pts[0][1]}`;
+    for (let i = 0; i < pts.length - 1; i++) {
+      const cp1x = (pts[i][0] + pts[i+1][0]) / 2;
+      d += ` C ${cp1x} ${pts[i][1]}, ${cp1x} ${pts[i+1][1]}, ${pts[i+1][0]} ${pts[i+1][1]}`;
+    }
+    return d;
+  }
+
+  const pts  = xs.map((x, i) => [x, ys[i]]);
+  const path = bezierPath(pts);
+
+  // Fill area under line
+  const fillPath = path
+    + ` L ${xs[n-1]} ${padT + cH} L ${xs[0]} ${padT + cH} Z`;
+
+  // Y axis gridlines (3 lines)
+  const gridLines = [0.25, 0.5, 0.75, 1].map(pct => {
+    const y    = padT + cH - pct * cH;
+    const val  = Math.round(maxVal * pct);
+    return `<line x1="${padL}" y1="${y}" x2="${W - padR}" y2="${y}"
+              stroke="var(--border,#dde0e6)" stroke-width="1" stroke-dasharray="3,3"/>
+            <text x="${padL - 4}" y="${y + 4}" class="lc-label" text-anchor="end">${val}</text>`;
+  }).join('');
+
+  // Dots + labels
+  const dots = periods.map((p, i) => {
+    const fmtVal = typeof p.val === 'number' && p.val % 1 !== 0 ? p.val.toFixed(1) : p.val;
+    // Show value above dot, unless near top (then below)
+    const valY   = ys[i] < padT + 16 ? ys[i] + 16 : ys[i] - 8;
+    return `<circle cx="${xs[i]}" cy="${ys[i]}" r="4" fill="${color}" class="lc-dot">
+              <title>${p.label}: ${fmtVal}</title>
+            </circle>
+            <text x="${xs[i]}" y="${valY}" class="lc-val" text-anchor="middle">${fmtVal}</text>
+            <text x="${xs[i]}" y="${padT + cH + 16}" class="lc-label" text-anchor="middle">${p.label}</text>`;
+  }).join('');
+
+  const fc = fillColor || color;
+  return `<div class="line-chart-wrap">
+    <svg viewBox="0 0 ${W} ${H}" preserveAspectRatio="xMidYMid meet">
+      ${gridLines}
+      <path d="${fillPath}" fill="${fc}" opacity="0.08"/>
+      <path d="${path}" fill="none" stroke="${color}" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"/>
+      ${dots}
+    </svg>
+  </div>`;
+}
+
+function velocityChart1(item, label) {
+  // Chart 1: Monthly average units sold per time window for THIS listing
+  if (!item) return '';
+  const trend    = item.trend || 'Stable';
+  const tc       = trend === 'Increasing' ? 'badge-green' : trend === 'Declining' ? 'badge-red' : 'badge-gray';
+  const pct      = item.pctVs6m;
+  const pctColor = pct >= 0 ? 'var(--green)' : 'var(--red)';
+  const monthly  = [
+    { label:'30d avg', val: item.m30 || 0 },
+    { label:'90d avg', val: item.m90 || 0 },
+    { label:'6mo avg', val: item.m6m || 0 },
+    { label:'1yr avg', val: item.m1y || 0 },
+    ...(item.m2y ? [{ label:'2yr avg', val: item.m2y }] : []),
+  ];
+  return `
+    <div class="research-card">
+      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:14px;flex-wrap:wrap;gap:8px">
+        <div>
+          <div style="font-size:13px;font-weight:700;color:var(--text);margin-bottom:4px">${label}</div>
+          <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
+            <span class="badge ${tc}">${trend}</span>
+            ${pct != null ? `<span style="font-family:var(--mono);font-size:12px;color:${pctColor};font-weight:600">${pct >= 0 ? '+' : ''}${pct}% vs 6mo avg</span>` : ''}
+          </div>
+        </div>
+        <div class="info-grid" style="gap:12px">
+          <div class="info-cell"><div class="info-cell-label">30-Day Units</div><div class="info-cell-value">${item.s30 || 0}</div></div>
+          <div class="info-cell"><div class="info-cell-label">Monthly Avg (1yr)</div><div class="info-cell-value">${(item.m1y || 0).toFixed(1)}</div></div>
+        </div>
+      </div>
+      <div class="chart-container">
+        <div class="chart-title">Avg Units / Month — This Listing</div>
+        ${lineChart(monthly, 'var(--accent)')}
+      </div>
+    </div>`;
+}
+
+function velocityChart2(sku, resolvedBase) {
+  // Chart 2: Base SKU total units sold across ALL pack sizes per window
+  if (!sku) return `
+    <div class="research-card">
+      <div style="font-size:13px;font-weight:700;color:var(--text);margin-bottom:8px">All Pack Sizes — Base SKU ${resolvedBase || '—'}</div>
+      <div class="empty-state" style="padding:24px 0">
+        <div class="icon" style="font-size:24px">📦</div>
+        <div class="msg" style="font-size:13px">Base SKU rollup unavailable</div>
+        <div class="sub">Could not resolve base SKU from this item number.<br>Make sure the eBay_Listings sheet is synced and the SKU format includes <code>=</code> (e.g. 31-1-1=5).</div>
+      </div>
+    </div>`;
+  const trend    = sku.trend || 'Stable';
+  const tc       = trend === 'Increasing' ? 'badge-green' : trend === 'Declining' ? 'badge-red' : 'badge-gray';
+  const totals   = [
+    { label:'30d', val: sku.s30 || 0 },
+    { label:'90d', val: sku.s90 || 0 },
+    { label:'6mo', val: sku.s6m || 0 },
+    { label:'1yr', val: sku.s1y || 0 },
+    ...(sku.s2y ? [{ label:'2yr', val: sku.s2y }] : []),
+  ];
+  return `
+    <div class="research-card">
+      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:14px;flex-wrap:wrap;gap:8px">
+        <div>
+          <div style="font-size:13px;font-weight:700;color:var(--text);margin-bottom:4px">All Pack Sizes — Base SKU ${resolvedBase}</div>
+          <div style="display:flex;gap:8px;align-items:center">
+            <span class="badge ${tc}">${trend}</span>
+          </div>
+        </div>
+        <div class="info-grid" style="gap:12px">
+          <div class="info-cell"><div class="info-cell-label">30-Day Total</div><div class="info-cell-value">${sku.s30 || 0}</div></div>
+          <div class="info-cell"><div class="info-cell-label">1-Year Total</div><div class="info-cell-value">${sku.s1y || 0}</div></div>
+        </div>
+      </div>
+      <div class="chart-container">
+        <div class="chart-title">Total Units Sold (All Pack Sizes) — Base SKU ${resolvedBase}</div>
+        ${lineChart(totals, 'var(--purple, #8b5cf6)')}
+      </div>
+    </div>`;
+}
+
+function renderVelocityCharts(item, sku, resolvedBase, targetItemSku) {
+  if (!item && !sku) return '';
+  const itemLabel = item ? `This Listing — ${targetItemSku || item.sku || item.itemId}` : '';
+  return `
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:16px;align-items:start">
+      ${velocityChart1(item, itemLabel)}
+      ${velocityChart2(sku, resolvedBase)}
+    </div>
+  `;
+}
+
+function renderVelocity(data) {
+  const { item, sku, resolvedBase, targetItemSku, debug } = data;
+  const ordersScanned = debug?.ordersScanned || data.ordersScanned || 0;
+
+  if (!item && !sku) {
+    const dbg = debug || {};
+    const sl  = dbg.sampleLine;
+    const slHtml = sl
+      ? `<div style="margin-top:12px;padding:10px;background:var(--bg2);border-radius:6px;text-align:left;font-size:11px;font-family:var(--mono)">
+           <strong>Sample line item from eBay:</strong><br>
+           legacyItemId: <b>${sl.legacyItemId ?? '⚠️ MISSING'}</b><br>
+           lineItemId: ${sl.lineItemId ?? '—'}<br>
+           sku: ${sl.sku ?? '—'}<br>
+           quantity: ${sl.quantity ?? '—'}<br>
+           title: ${sl.title ?? '—'}<br>
+           all keys: ${(sl.keys||[]).join(', ')}
+         </div>`
+      : `<div style="margin-top:8px;color:var(--red);font-size:12px">⚠️ No orders scanned at all — check eBay Fulfillment API token</div>`;
+    document.getElementById('velocity-content').innerHTML =
+      `<div class="empty-state"><div class="icon">📈</div>
+       <div class="msg">No order history found for this item</div>
+       <div class="sub" style="max-width:560px">
+         <b>Orders scanned:</b> ${ordersScanned.toLocaleString()}<br>
+         <b>normItemId looked up:</b> ${dbg.normItemId || '—'}<br>
+         <b>Resolved base SKU:</b> ${dbg.resolvedBase || '—'}<br>
+         <b>itemStats keys (first 8):</b> ${(dbg.itemStatsKeys||[]).join(', ')||'none'}<br>
+         <b>skuStats keys (first 8):</b> ${(dbg.skuStatsKeys||[]).join(', ')||'none'}<br>
+         <b>hint:</b> ${data.hint || '—'}
+         ${slHtml}
+       </div></div>`;
+    return;
+  }
+
+  // Related listings table (other pack sizes of same base SKU)
+  let relatedHtml = '';
+  if (sku?.relatedItems?.length > 1) {
+    const rows = sku.relatedItems.map(r => `<tr>
+      <td style="font-family:var(--mono);font-size:11px">${r.itemId}</td>
+      <td class="sku">${r.sku}</td>
+      <td class="num">${r.s30}</td>
+      <td class="num">${r.s90}</td>
+      <td class="num">${r.s6m}</td>
+      <td class="num">${r.s1y}</td>
+      <td><span class="badge ${r.trend === 'Increasing' ? 'badge-green' : r.trend === 'Declining' ? 'badge-red' : 'badge-gray'}">${r.trend}</span></td>
+    </tr>`).join('');
+    relatedHtml = `
+      <div class="research-card" style="margin-bottom:20px">
+        <div class="chart-title" style="margin-bottom:10px">All Listings — Base SKU: ${resolvedBase}</div>
+        <div class="table-wrap"><table class="data-table">
+          <thead><tr><th>Item #</th><th>SKU</th><th class="num">30d</th><th class="num">90d</th>
+            <th class="num">6mo</th><th class="num">1yr</th><th>Trend</th></tr></thead>
+          <tbody>${rows}</tbody>
+        </table></div>
+      </div>`;
+  }
+
+  const skuLabel  = sku  ? `Base SKU Rollup — ${resolvedBase} (all pack sizes)` : '';
+  const itemLabel = item ? `This Listing — ${targetItemSku || item.sku || item.itemId}` : '';
+
+  document.getElementById('velocity-content').innerHTML = `
+    <div style="font-size:11px;color:var(--text3);margin-bottom:16px;text-align:right">
+      Data from Google Sheets · ${ordersScanned ? ordersScanned.toLocaleString() + ' orders' : 'all synced windows'}
+    </div>
+    ${relatedHtml}
+    ${renderVelocityCharts(item, sku, resolvedBase, targetItemSku)}
+  `;
+}
+
+// ════════════════════════════════════════════
+// TAB 5 — APPROVAL QUEUE
+// ════════════════════════════════════════════
+function renderApprovals() {
+  const pending = approvalQueue.filter(a => a.status === 'pending');
+  document.getElementById('cnt-approval').textContent = pending.length || '0';
+  if (!pending.length) {
+    document.getElementById('approval-content').innerHTML =
+      `<div class="empty-state"><div class="icon">✅</div><div class="msg">No pending items</div>
+       <div class="sub">Price changes over 10% will appear here for manager review</div></div>`;
+    return;
+  }
+  document.getElementById('approval-content').innerHTML = pending.map(a => `
+    <div class="approval-item ${a.type==='auto'?'auto':''}">
+      <div style="display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:12px;flex-wrap:wrap;gap:8px">
+        <div>
+          <div style="font-size:14px;font-weight:700">${a.sku} — ${a.packQty}pc</div>
+          <div style="font-family:var(--mono);font-size:11px;color:var(--text3)">${a.itemId}</div>
+        </div>
+        ${a.type==='auto'
+          ? `<span class="auto-approve-flag">✓ Applied to eBay</span>`
+          : `<span class="approval-flag">⚠ Manager Review Needed</span>`}
+      </div>
+      <div class="info-grid" style="margin-bottom:12px">
+        <div class="info-cell"><div class="info-cell-label">Old Price</div><div class="info-cell-value">${fmt$(a.oldPrice)}</div></div>
+        <div class="info-cell"><div class="info-cell-label">New Price</div><div class="info-cell-value ${a.newPrice>a.oldPrice?'green':'red'}">${fmt$(a.newPrice)}</div></div>
+        <div class="info-cell"><div class="info-cell-label">Change</div><div class="info-cell-value ${a.pct>=0?'green':'red'}">${fmtPct(a.pct)}</div></div>
+        <div class="info-cell"><div class="info-cell-label">Time</div><div class="info-cell-value" style="font-size:11px">${new Date(a.submittedAt).toLocaleString()}</div></div>
+      </div>
+      ${a.type==='approval'
+        ? `<div class="alert alert-warning" style="margin-bottom:12px">Review in <strong>PRICE_DECISION</strong> sheet, then apply manually in eBay Seller Hub.</div>`
+        : `<div class="alert alert-success" style="margin-bottom:12px">Logged to <strong>Price_History</strong> and pushed to eBay automatically.</div>`}
+      <button class="btn btn-secondary btn-sm" onclick="dismissApproval(${a.id})">✕ Dismiss</button>
+    </div>`).join('');
+}
+
+function dismissApproval(id) {
+  const item = approvalQueue.find(a => a.id === id);
+  if (item) item.status = 'done';
+  renderApprovals();
+}
+
+// ════════════════════════════════════════════
+// TOAST
+// ════════════════════════════════════════════
+let rprTimer;
+function rprToast(msg, type = '') {
+  const t = document.getElementById('toast');
+  t.textContent = msg;
+  t.className = 'show' + (type ? ' ' + type : '');
+  clearTimeout(rprTimer);
+  rprTimer = setTimeout(() => { t.className = ''; }, 3500);
+}
+
+</script>
 </body>
 </html>
