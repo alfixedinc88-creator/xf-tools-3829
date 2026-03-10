@@ -4386,9 +4386,10 @@ function mgmtPinKey(d) {
   document.getElementById('mgmt-pd' + (mgmtPinBuf.length - 1)).classList.add('filled');
   if (mgmtPinBuf.length === 4) {
     setTimeout(function() {
+      var pinType = mgmtPinTarget === 'repricer' ? 'price' : 'mgmt';
       fetch(WORKER_URL + '/auth', {
         method: 'POST', headers: {'Content-Type':'application/json'},
-        body: JSON.stringify({ pin: mgmtPinBuf, pin_type: 'mgmt' })
+        body: JSON.stringify({ pin: mgmtPinBuf, pin_type: pinType })
       }).then(function(r){ return r.json(); }).then(function(d){
         if (d.token) {
           XF_SESSION = d.token;
