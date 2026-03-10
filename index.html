@@ -2124,7 +2124,8 @@ function checkPin() {
         setTimeout(function() {
           ps.style.display = 'none'; ps.style.visibility = 'hidden';
           document.getElementById('launcher').style.display = 'flex';
-          if (typeof silentLoadSaved === 'function') silentLoadSaved();
+          // Only pre-load mgmt calc tabs if this is a mgmt-level token
+          if (typeof silentLoadSaved === 'function' && type === 'mgmt') silentLoadSaved();
         }, 300);
       } else if (fallback) {
         tryAuth(fallback, null);
