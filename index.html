@@ -7249,7 +7249,7 @@ async function submitPriceChange() {
         itemId:   currentListing.offerId || currentListing.itemId,
         packQty:  currentListing.packQty,
         oldPrice: currentListing.price,
-        newPrice, pin, user: 'REPRICER'
+        newPrice, pricePin: pin, user: 'REPRICER'
       })
     });
     const pct = currentListing.price ? (newPrice - currentListing.price) / currentListing.price : 0;
