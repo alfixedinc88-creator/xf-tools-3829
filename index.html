@@ -7027,6 +7027,15 @@ function rprTab(tab) {
   document.getElementById('panel-' + tab).classList.add('active');
   if (tab === 'approval') renderApprovals();
 }
+
+async function refreshQueueCount() {
+  try {
+    const data = await apiCall('/repricer/queue');
+    const cnt  = (data.queue || []).length;
+    document.getElementById('cnt-approval').textContent = cnt || '0';
+    queueData = data.queue || [];
+  } catch(_) {}
+}
 function rprBack() {
   document.getElementById('repricer-root').style.display = 'none';
   document.getElementById('launcher').style.display = 'flex';
@@ -7104,6 +7113,7 @@ async function rprLoad() {
     setSyncStatus(true);
     renderListings(rprAllListings);
     rprToast(`✓ ${rprAllListings.length} listings loaded`, 'success');
+    refreshQueueCount(); // update approval badge
   } catch(e) {
     setSyncStatus(false);
     document.getElementById('listings-content').innerHTML =
@@ -7129,38 +7139,90 @@ function renderListings(data) {
     return;
   }
 
-  const rows = data.map(l => {
+  // Sort state
+  if (!renderListings._sort) renderListings._sort = { col: null, dir: 1 };
+  const S = renderListings._sort;
+
+  const sortData = [...data].sort((a, b) => {
+    if (!S.col) return 0;
+    let av, bv;
+    if (S.col === 'pack')    { av = a.packQty;  bv = b.packQty; }
+    else if (S.col === 'price')  { av = a.price||0; bv = b.price||0; }
+    else if (S.col === 'floor')  { av = a.cog1pc ? getMinPrice(a.cog1pc,a.packQty) : 0; bv = b.cog1pc ? getMinPrice(b.cog1pc,b.packQty) : 0; }
+    else if (S.col === 'target') { av = a.cog1pc ? getTargetPrice(a.cog1pc,a.packQty) : 0; bv = b.cog1pc ? getTargetPrice(b.cog1pc,b.packQty) : 0; }
+    else if (S.col === 'qty')    { av = a.qty||0;   bv = b.qty||0; }
+    else if (S.col === 'sku')    { av = a.sku||'';  bv = b.sku||''; return av.localeCompare(bv) * S.dir; }
+    else if (S.col === 'status') {
+      const rank = l => isPriceBelow(l) ? 0 : (l.cog1pc && l.price < getTargetPrice(l.cog1pc,l.packQty)) ? 1 : 2;
+      av = rank(a); bv = rank(b);
+    }
+    else return 0;
+    return (av - bv) * S.dir;
+  });
+
+  function sortTh(col, label) {
+    const active = S.col === col;
+    const arrow  = active ? (S.dir === 1 ? ' ▲' : ' ▼') : '';
+    return `<th class="num sortable${active?' sort-active':''}" onclick="listingsSort('${col}')" style="cursor:pointer;user-select:none">${label}${arrow}</th>`;
+  }
+
+  const rows = sortData.map(l => {
     const floor  = l.cog1pc ? getMinPrice(l.cog1pc, l.packQty)    : 0;
     const target = l.cog1pc ? getTargetPrice(l.cog1pc, l.packQty) : 0;
     const below  = isPriceBelow(l);
+    // 1pc listings: shipping is separate so floor note shown
+    const floorDisplay = floor
+      ? `<span style="color:var(--text3)">${fmt$(floor)}</span>${l.packQty===1 ? '<span style="font-size:9px;color:var(--text3);display:block">+ship</span>' : ''}`
+      : '—';
     const badge  = below
       ? `<span class="badge badge-red">⬇ Below Floor</span>`
       : (l.cog1pc && l.price < target)
         ? `<span class="badge badge-orange">⚠ Under Target</span>`
         : `<span class="badge badge-green">✓ OK</span>`;
     return `<tr>
-      <td class="sku">${l.sku}</td>
+      <td class="sku" style="cursor:pointer" onclick="listingsSort('sku')">${l.sku}</td>
       <td class="bold">${l.title || l.sku}</td>
       <td style="font-family:var(--mono);font-size:11px;color:var(--text3)">${l.itemId || l.offerId || '—'}</td>
       <td class="num">${l.packQty}pc</td>
       <td class="num bold" style="color:${below ? 'var(--red)' : 'var(--text)'}">${fmt$(l.price)}</td>
-      <td class="num" style="color:var(--text3)">${floor ? fmt$(floor) : '—'}</td>
+      <td class="num">${floorDisplay}</td>
       <td class="num" style="color:var(--accent)">${target ? fmt$(target) : '—'}</td>
       <td class="num">${l.qty}</td>
       <td>${badge}</td>
-      <td><button class="btn btn-primary btn-sm" onclick='openPriceModal(${JSON.stringify(l).replace(/'/g,"&#39;")})'>Edit Price</button></td>
+      <td><button class="btn btn-primary btn-sm" onclick='openPriceModal(${JSON.stringify(l).replace(/'/g,"&#39;")})'>Edit</button></td>
     </tr>`;
   }).join('');
 
   document.getElementById('listings-content').innerHTML = `
     <div class="table-wrap"><table class="data-table">
       <thead><tr>
-        <th>SKU</th><th>Title</th><th>Item #</th><th class="num">Pack</th>
-        <th class="num">Current</th><th class="num">Floor</th><th class="num">Target</th>
-        <th class="num">Qty</th><th>Status</th><th></th>
+        <th onclick="listingsSort('sku')" style="cursor:pointer;user-select:none">SKU${S.col==='sku'?(S.dir===1?' ▲':' ▼'):''}</th>
+        <th>Title</th><th>Item #</th>
+        ${sortTh('pack','Pack')}
+        ${sortTh('price','Current')}
+        ${sortTh('floor','Floor')}
+        ${sortTh('target','Target')}
+        ${sortTh('qty','Qty')}
+        ${sortTh('status','Status')}
+        <th></th>
       </tr></thead>
       <tbody>${rows}</tbody>
     </table></div>`;
+}
+
+function listingsSort(col) {
+  const S = renderListings._sort;
+  if (S.col === col) S.dir *= -1; else { S.col = col; S.dir = 1; }
+  const q = document.getElementById('listing-search').value.toLowerCase();
+  const f = document.getElementById('listing-filter').value;
+  const filtered = rprAllListings.filter(l => {
+    const mq = !q || l.sku.toLowerCase().includes(q) || (l.title||'').toLowerCase().includes(q) || String(l.itemId||'').includes(q);
+    const mf = f==='all' ? true : f==='below' ? isPriceBelow(l)
+             : f==='review' ? (!isPriceBelow(l) && l.cog1pc && l.price < getTargetPrice(l.cog1pc,l.packQty))
+             : (!isPriceBelow(l) && (!l.cog1pc || l.price >= getTargetPrice(l.cog1pc,l.packQty)));
+    return mq && mf;
+  });
+  renderListings(filtered);
 }
 
 function filterListings() {
@@ -7203,12 +7265,18 @@ function openPriceModal(listing) {
       <label class="form-label">New Price</label>
       <input class="form-input price-input-large" type="number" id="new-price-input"
         step="0.01" value="${listing.price ? listing.price.toFixed(2) : ''}" oninput="updatePricePreview()">
-      ${floor ? `<div class="form-hint">Floor: ${fmt$(floor)} · Target: ${fmt$(target)} · Max: ${fmt$(max)}</div>` : ''}
+      ${floor ? `<div class="form-hint">Floor: ${fmt$(floor)} · Target: ${fmt$(target)} · Max: ${fmt$(max)}${listing.packQty===1 ? ' · shipping charged separately' : ''}</div>` : ''}
     </div>
     <div id="price-change-preview"></div>
-    <div class="form-group">
-      <label class="form-label">Price Change PIN</label>
-      <input class="form-input" type="password" id="price-pin-input" maxlength="4" placeholder="••••" autocomplete="off">
+    <div style="display:flex;gap:12px">
+      <div class="form-group" style="flex:1">
+        <label class="form-label">Your Initials</label>
+        <input class="form-input" type="text" id="price-initials-input" maxlength="4" placeholder="e.g. JD" autocomplete="off">
+      </div>
+      <div class="form-group" style="flex:1">
+        <label class="form-label">Price Change PIN</label>
+        <input class="form-input" type="password" id="price-pin-input" maxlength="4" placeholder="••••" autocomplete="off">
+      </div>
     </div>
     <div id="modal-alert"></div>`;
   document.getElementById('modal-footer').innerHTML = `
@@ -7236,12 +7304,23 @@ function updatePricePreview() {
 }
 
 async function submitPriceChange() {
-  const newPrice = parseFloat(document.getElementById('new-price-input').value);
-  const pin      = document.getElementById('price-pin-input').value;
-  const alertEl  = document.getElementById('modal-alert');
+  const newPrice  = parseFloat(document.getElementById('new-price-input').value);
+  const pin       = document.getElementById('price-pin-input').value;
+  const initials  = (document.getElementById('price-initials-input')?.value || '').trim() || 'OPS';
+  const alertEl   = document.getElementById('modal-alert');
   if (!newPrice || newPrice <= 0) { alertEl.innerHTML = `<div class="alert alert-error">Enter a valid price</div>`; return; }
-  const floor = currentListing.cog1pc ? getMinPrice(currentListing.cog1pc, currentListing.packQty) : 0;
-  if (floor && newPrice < floor) { alertEl.innerHTML = `<div class="alert alert-error">Price is below floor (${fmt$(floor)})</div>`; return; }
+  const floor     = currentListing.cog1pc ? getMinPrice(currentListing.cog1pc, currentListing.packQty) : 0;
+  const hardFloor = floor * 0.95;
+  const pct       = currentListing.price > 0 ? Math.abs((newPrice - currentListing.price) / currentListing.price) : 1;
+  // Block only if below hard floor (floor - 5%) — below-floor is allowed if change is <10%
+  if (floor && newPrice < hardFloor) {
+    alertEl.innerHTML = `<div class="alert alert-error">⛔ Price is more than 5% below floor (${fmt$(hardFloor)}). Cannot proceed.</div>`;
+    return;
+  }
+  if (floor && newPrice < floor && pct >= 0.10) {
+    alertEl.innerHTML = `<div class="alert alert-error">Price is below floor (${fmt$(floor)}) and change is ≥10%. Use Price Decision tab for manager review.</div>`;
+    return;
+  }
   try {
     const result = await apiCall('/repricer/price-change', {
       method: 'POST',
@@ -7249,8 +7328,10 @@ async function submitPriceChange() {
         sku:      currentListing.sku,
         itemId:   currentListing.offerId || currentListing.itemId,
         packQty:  currentListing.packQty,
+        cog1pc:   currentListing.cog1pc || 0,
+        floor, target: currentListing.cog1pc ? getTargetPrice(currentListing.cog1pc, currentListing.packQty) : 0,
         oldPrice: currentListing.price,
-        newPrice, pricePin: pin, user: 'REPRICER'
+        newPrice, pricePin: pin, user: initials
       })
     });
     const pct = currentListing.price ? (newPrice - currentListing.price) / currentListing.price : 0;
@@ -7662,6 +7743,22 @@ async function lookupDecision() {
 
   decisionListing = listing;
   renderDecisionForm(listing);
+  // After render, pre-fill comp price from research if available
+  const itemIdStr = listing.itemId || listing.offerId || '';
+  const baseSku   = (listing.sku||'').includes('=') ? listing.sku.split('=')[0].trim() : listing.sku;
+  const resMatch  = allResearch.find(r =>
+    String(r.itemId) === String(itemIdStr) ||
+    (r.sku||'').replace(/=.*$/,'').trim() === baseSku
+  );
+  if (resMatch?.lowestComp) {
+    const compEl = document.getElementById('dec-comp-price');
+    if (compEl && !compEl.value) {
+      compEl.value = parseFloat(resMatch.lowestComp).toFixed(2);
+      document.getElementById('dec-research-hint').textContent =
+        `✓ Pre-filled from Price Research (${resMatch.date || 'recent'})`;
+      updateDecisionPreview();
+    }
+  }
 }
 
 function renderDecisionForm(listing) {
@@ -7689,6 +7786,7 @@ function renderDecisionForm(listing) {
 
     <div style="background:var(--surface2);border-radius:12px;padding:20px;margin-bottom:20px">
       <div style="font-size:13px;font-weight:700;margin-bottom:12px;color:var(--text2)">MARKET RESEARCH</div>
+      <div id="dec-research-hint" style="font-size:11px;color:var(--accent);margin-bottom:10px"></div>
       <div class="info-grid">
         <div class="info-cell">
           <div class="info-cell-label">Lowest Competitor Price</div>
@@ -7732,15 +7830,47 @@ function renderDecisionForm(listing) {
 
 function updateDecisionPreview() {
   if (!decisionListing) return;
-  const newPrice = parseFloat(document.getElementById('dec-new-price')?.value) || 0;
+  const newPrice  = parseFloat(document.getElementById('dec-new-price')?.value) || 0;
+  const compPrice = parseFloat(document.getElementById('dec-comp-price')?.value) || 0;
   const el = document.getElementById('dec-preview');
-  if (!el || !newPrice) return;
+  if (!el) return;
 
-  const old_   = decisionListing.price || 0;
-  const pct    = old_ > 0 ? (newPrice - old_) / old_ : 0;
-  const floor  = decisionListing.cog1pc ? getMinPrice(decisionListing.cog1pc, decisionListing.packQty) : 0;
+  const old_      = decisionListing.price || 0;
+  const floor     = decisionListing.cog1pc ? getMinPrice(decisionListing.cog1pc, decisionListing.packQty) : 0;
+  const target    = decisionListing.cog1pc ? getTargetPrice(decisionListing.cog1pc, decisionListing.packQty) : 0;
   const hardFloor = floor * 0.95;
 
+  // ── Recommended price logic ──────────────────────────────────────
+  let recommended = 0, recReason = '';
+  if (floor > 0) {
+    if (compPrice > 0 && compPrice >= hardFloor) {
+      // Comp exists: suggest $0.01 below comp, clamped to floor..target
+      const compBased = compPrice - 0.01;
+      recommended = Math.max(Math.min(compBased, target), floor);
+      recReason = compBased < floor ? `Comp (${fmt$(compPrice)}) is below floor — suggesting floor` : `$0.01 below lowest comp`;
+    } else if (!compPrice) {
+      recommended = target; // no comp data — suggest target
+      recReason = 'No competitor data — suggesting target price';
+    } else {
+      recommended = hardFloor;
+      recReason = `Comp is below hard floor — minimum competitive price`;
+    }
+    recommended = +recommended.toFixed(2);
+  }
+
+  const recHtml = recommended ? `
+    <div style="background:var(--surface);border:1px solid var(--accent);border-radius:8px;padding:10px 14px;margin-bottom:12px;display:flex;align-items:center;gap:12px;flex-wrap:wrap">
+      <div>
+        <div style="font-size:10px;font-weight:700;color:var(--accent);text-transform:uppercase;letter-spacing:.5px">Recommended Price</div>
+        <div style="font-size:20px;font-weight:700;color:var(--accent)">${fmt$(recommended)}</div>
+        <div style="font-size:11px;color:var(--text3)">${recReason}</div>
+      </div>
+      <button class="btn btn-secondary btn-sm" onclick="document.getElementById('dec-new-price').value='${recommended.toFixed(2)}';updateDecisionPreview()">Use this →</button>
+    </div>` : '';
+
+  if (!newPrice) { el.innerHTML = recHtml; return; }
+
+  const pct       = old_ > 0 ? (newPrice - old_) / old_ : 0;
   let tag = '', color = 'var(--accent)';
   if (floor && newPrice < hardFloor) {
     tag = '⛔ BLOCKED — below hard floor (floor −5%)'; color = 'var(--red)';
@@ -7752,7 +7882,7 @@ function updateDecisionPreview() {
     tag = '✓ Within 10% — auto-approved'; color = 'var(--green)';
   }
 
-  el.innerHTML = `
+  el.innerHTML = recHtml + `
     <div style="display:flex;gap:16px;align-items:center;flex-wrap:wrap">
       <div style="font-size:22px;font-weight:700;color:${pct>=0?'var(--green)':'var(--red)'}">${fmt$(newPrice)}</div>
       <div style="font-size:13px;color:var(--text3)">${pct>=0?'+':''}${(pct*100).toFixed(1)}% from ${fmt$(old_)}</div>
@@ -7975,7 +8105,19 @@ function switchVelocityView(view) {
   document.getElementById('vel-view-history').style.display = view === 'history' ? '' : 'none';
   document.getElementById('vel-tog-charts').classList.toggle('active',  view === 'charts');
   document.getElementById('vel-tog-history').classList.toggle('active', view === 'history');
-  if (view === 'history' && !allSalesHistory.length) loadSalesHistory();
+  // Sync search input between views
+  const velVal  = document.getElementById('vel-input')?.value.trim();
+  const shInput = document.getElementById('sh-filter-input');
+  if (view === 'history') {
+    if (shInput && velVal) shInput.value = velVal;
+    if (!allSalesHistory.length) loadSalesHistory();
+    else if (velVal && shInput) filterSalesHistory();
+  } else {
+    if (velVal && !velVal) {} // charts already has value
+    const shVal = shInput?.value.trim();
+    const velInput = document.getElementById('vel-input');
+    if (shVal && velInput && !velInput.value) velInput.value = shVal;
+  }
 }
 
 async function loadSalesHistory() {
@@ -8253,8 +8395,15 @@ function velocityChart2(sku, resolvedBase) {
 
 function renderVelocityCharts(item, sku, resolvedBase, targetItemSku) {
   if (!item && !sku) return '';
-  const itemLabel = item ? `This Listing — ${targetItemSku || item.sku || item.itemId}` : '';
+  const cachedListing = rprAllListings.find(l =>
+    (item && (String(l.itemId) === String(item.itemId) || l.sku === item.sku)) ||
+    (targetItemSku && l.sku === targetItemSku)
+  );
+  const itemTitle = cachedListing?.title || '';
+  const itemLabel = item ? `${targetItemSku || item.sku || item.itemId}` : '';
+  const titleHtml = itemTitle ? `<div style="font-size:13px;font-weight:600;color:var(--text);margin-bottom:16px;padding:12px;background:var(--surface2);border-radius:8px">📦 ${itemTitle}</div>` : '';
   return `
+    ${titleHtml}
     <div style="display:grid;grid-template-columns:1fr 1fr;gap:16px;align-items:start">
       ${velocityChart1(item, itemLabel)}
       ${velocityChart2(sku, resolvedBase)}
