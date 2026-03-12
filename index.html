@@ -1071,7 +1071,7 @@ input[type=checkbox]{width:15px;height:15px;cursor:pointer;accent-color:var(--bl
   padding:24px;
 }
 #wh-app { display:none;flex-direction:column;min-height:100vh; }
-.launcher-inner { text-align:center;max-width:560px;width:100%; }
+.launcher-inner { max-width:480px; margin:0 auto; text-align:center;max-width:560px;width:100%; }
 .launcher-logo {
   display:inline-flex;align-items:center;gap:12px;margin-bottom:32px;
 }
@@ -1082,8 +1082,8 @@ input[type=checkbox]{width:15px;height:15px;cursor:pointer;accent-color:var(--bl
 }
 .launcher-name { font-size:24px;font-weight:700;color:var(--text);letter-spacing:-.5px; }
 .launcher-sub  { font-size:14px;color:var(--text3);margin-bottom:40px; }
-.launcher-grid { display:grid;grid-template-columns:1fr 1fr 1fr;gap:16px; }
-.launcher-mgmt-row { display:grid;grid-template-columns:1fr 1fr;gap:16px;max-width:700px;margin:0 auto;width:100%; }
+.launcher-grid { display:grid;grid-template-columns:repeat(2,1fr);gap:14px; } @media(min-width:600px){.launcher-grid{grid-template-columns:repeat(3,1fr);}}
+.launcher-mgmt-row { display:grid;grid-template-columns:1fr;gap:14px;max-width:480px;margin:0 auto;width:100%; } @media(min-width:500px){.launcher-mgmt-row{grid-template-columns:1fr 1fr;}}
 .launcher-section-label { font-size:11px;font-weight:700;letter-spacing:2px;text-transform:uppercase;color:var(--text3);margin:28px 0 12px;width:100%;text-align:center; }
 .launcher-card {
   background:var(--bg2);border:1.5px solid var(--border);border-radius:16px;
@@ -1692,6 +1692,11 @@ input[type=checkbox]{width:15px;height:15px;cursor:pointer;accent-color:var(--bl
         <div class="launcher-card-icon">🏷️</div>
         <div class="launcher-card-title">UPC Barcodes</div>
         <div class="launcher-card-desc">Print Zebra barcode labels by SKU, UPC, or AWD shipment</div>
+      </div>
+      <div class="launcher-card" onclick="launchApp('inventory')">
+        <div class="launcher-card-icon">📋</div>
+        <div class="launcher-card-title">Inventory</div>
+        <div class="launcher-card-desc">Scan cases in/out, log locations, approve with management PIN</div>
       </div>
     </div>
 
@@ -3376,6 +3381,9 @@ function launchApp(which) {
     loadCfg();
     loadCpackFromStorage();
     if (!S.loaded) loadReportsFromSheet();
+  } else if (which === 'inventory') {
+    document.getElementById('inv-app').style.display = 'flex';
+    invFetchPendingCount();
   } else if (which === 'upc') {
     document.getElementById('upc-app').style.display = 'flex';
     // Load warehouse data if not already loaded (needs DB.upc)
@@ -3388,6 +3396,7 @@ function launchApp(which) {
 
 function backToLauncher() {
   document.getElementById('wh-app').style.display = 'none';
+  document.getElementById('inv-app').style.display = 'none';
   document.getElementById('awd-app').style.display = 'none';
   document.getElementById('upc-app').style.display = 'none';
   document.getElementById('reorder-app').style.display = 'none';
@@ -7505,6 +7514,100 @@ function rprSyncAll() {
   if (tab === 'decision') loadAllDecisions();
   if (tab === 'approval') renderApprovals();
 }
+async function loadAllDecisions() {
+  const content = document.getElementById('decision-content');
+  content.innerHTML = `<div class="loading"><div class="spinner"></div> Loading all decisions…</div>`;
+  try {
+    const data = await apiCall('/repricer/price-history');
+    const rows  = data.rows || [];
+    if (!rows.length) {
+      content.innerHTML = `<div class="empty-state"><div class="icon">💰</div><div class="msg">No decisions recorded yet</div></div>`;
+      return;
+    }
+    // rows: [Timestamp, User, SKU, Item#, Pack, OldPrice, NewPrice, %Change, Status, Result, Notes]
+    let html = `<div style="overflow-x:auto"><table style="width:100%;border-collapse:collapse;font-size:12px">
+      <thead><tr style="background:var(--surface2);text-align:left">
+        <th style="padding:8px 10px">Date</th>
+        <th style="padding:8px 10px">SKU</th>
+        <th style="padding:8px 10px">Item#</th>
+        <th style="padding:8px 10px">Pack</th>
+        <th style="padding:8px 10px">Old</th>
+        <th style="padding:8px 10px">New</th>
+        <th style="padding:8px 10px">%</th>
+        <th style="padding:8px 10px">Status</th>
+        <th style="padding:8px 10px">User</th>
+      </tr></thead><tbody>`;
+    rows.slice().reverse().forEach((r, i) => {
+      const bg = i % 2 === 0 ? '' : 'background:var(--surface2)';
+      const statusColor = r[8]==='Applied' ? 'var(--green)' : r[8]==='Denied' ? 'var(--red)' : 'var(--text3)';
+      html += `<tr style="${bg}">
+        <td style="padding:6px 10px;color:var(--text3)">${(r[0]||'').slice(0,10)}</td>
+        <td style="padding:6px 10px;font-family:var(--mono)">${r[2]||''}</td>
+        <td style="padding:6px 10px;font-family:var(--mono)">${r[3]||''}</td>
+        <td style="padding:6px 10px;text-align:center">${r[4]||''}</td>
+        <td style="padding:6px 10px;font-family:var(--mono)">$${parseFloat(r[5]||0).toFixed(2)}</td>
+        <td style="padding:6px 10px;font-family:var(--mono);font-weight:700">$${parseFloat(r[6]||0).toFixed(2)}</td>
+        <td style="padding:6px 10px;color:${parseFloat(r[7])>0?'var(--green)':'var(--red)'}">${r[7]||''}</td>
+        <td style="padding:6px 10px;color:${statusColor};font-weight:600">${r[8]||''}</td>
+        <td style="padding:6px 10px;color:var(--text3)">${r[1]||''}</td>
+      </tr>`;
+    });
+    html += `</tbody></table></div>`;
+    html += `<div style="font-size:11px;color:var(--text3);margin-top:8px;text-align:right">${rows.length} records</div>`;
+    content.innerHTML = html;
+  } catch(e) {
+    content.innerHTML = `<div class="empty-state"><div class="icon">⚠️</div><div class="msg">${e.message}</div></div>`;
+  }
+}
+
+
+// 1-year sync chunked into 3-month slices (avoids 50 subrequest limit)
+async function syncSalesYearChunked() {
+  const btn = document.querySelector('[onclick*="syncSalesYearChunked"]') ||
+              document.querySelector('[onclick*="1yr"]');
+  const statusEl = document.getElementById('sales-sync-status') ||
+                   document.getElementById('rpr-sync-status');
+  const setStatus = (msg) => { if (statusEl) statusEl.textContent = msg; };
+
+  if (btn) { btn.disabled = true; btn.textContent = '⏳ Syncing 1yr…'; }
+  setStatus('Starting 1-year sync (chunked)…');
+
+  // Split 1 year into 3-month chunks — each chunk stays under 50 subrequest limit
+  const now    = new Date();
+  const chunks = [];
+  for (let i = 0; i < 4; i++) {
+    const toDate   = new Date(now.getTime() - i * 91 * 86400000);
+    const fromDate = new Date(now.getTime() - (i + 1) * 91 * 86400000);
+    chunks.push({ from: fromDate.toISOString(), to: toDate.toISOString(), label: `Q${4-i}` });
+  }
+  chunks.reverse(); // oldest first
+
+  let totalOrders = 0, errors = [];
+  for (let ci = 0; ci < chunks.length; ci++) {
+    const c = chunks[ci];
+    setStatus(`Syncing ${c.label} (${ci+1} of ${chunks.length})…`);
+    if (btn) btn.textContent = `⏳ ${c.label} (${ci+1}/4)…`;
+    try {
+      const data = await apiCall('/cron/sales-chunk', {
+        method: 'POST',
+        body: JSON.stringify({ from: c.from, to: c.to, window: '1yr' })
+      });
+      totalOrders += data.ordersProcessed || 0;
+      if (data.error) errors.push(`${c.label}: ${data.error}`);
+    } catch(e) {
+      errors.push(`${c.label}: ${e.message}`);
+    }
+  }
+
+  if (btn) { btn.disabled = false; btn.textContent = '🔄 Sync 1 Year'; }
+  if (errors.length) {
+    setStatus(`Done with errors: ${errors.join(' | ')}`);
+  } else {
+    setStatus(`✓ 1-year sync complete — ${totalOrders} orders processed`);
+    setTimeout(() => setStatus(''), 5000);
+  }
+}
+
 function setSyncStatus(live) {
   document.getElementById('sync-dot').className   = 'sync-dot' + (live ? '' : ' stale');
   document.getElementById('sync-label').textContent = live ? 'Live' : 'Error';
@@ -8498,39 +8601,103 @@ function openDecisionApply(rawD) {
 
 let allSalesHistory = [];
 
-async function runCron(window) {
+async function runCron(win) {
   const btns = document.querySelectorAll('#cron-btns button');
   btns.forEach(b => b.disabled = true);
   const statusEl = document.getElementById('cron-status');
-  statusEl.style.display = 'block';
+  statusEl.style.display    = 'block';
   statusEl.style.background = 'var(--accent-bg)';
-  statusEl.style.border = '1px solid var(--accent)';
-  statusEl.innerHTML = `<span style="color:var(--accent);font-size:13px">⟳ Fetching ${window} sales from eBay… (this takes ~5–10 seconds)</span>`;
-  try {
-    const data = await apiCall('/cron/sales-' + window);
-    const capWarn = data.hitCap ? ` <span style="color:var(--orange)">⚠️ Hit 9400 order cap</span>` : '';
-    const errWarn = data.error  ? ` <span style="color:var(--red)">✗ ${data.error}</span>` : '';
-    const sc = data.statusCounts || {};
-    const cancelledCount = Object.entries(sc).filter(([k]) => k.includes('CANCEL')).reduce((a,[,v]) => a+v, 0);
-    const cancelNote = cancelledCount > 0 ? ` <span style="color:var(--text3);font-weight:400">· ${cancelledCount} cancelled excluded</span>` : '';
-    statusEl.style.background = data.error ? 'var(--red-bg)'   : 'var(--green-bg)';
-    statusEl.style.border     = data.error ? '1px solid var(--red)' : '1px solid var(--green)';
-    statusEl.innerHTML = `<span style="color:${data.error ? 'var(--red)' : 'var(--green)'};font-size:13px;font-weight:600">
-      ${data.error ? '✗' : '✓'} ${window} synced — ${data.itemsWritten || 0} items from ${data.ordersProcessed || 0} orders · ${data.pages || 0} pages
-      <span style="font-weight:400;color:var(--text3)"> · from ${(data.fromDate||'').slice(0,10)} · ${data.date || ''}</span>${cancelNote}${capWarn}${errWarn}
-    </span>`;
-    // auto-reload sales history if that sub-view is visible
-    if (document.getElementById('vel-view-history').style.display !== 'none') {
-      allSalesHistory = [];
-      loadSalesHistory();
+  statusEl.style.border     = '1px solid var(--accent)';
+
+  // 1yr and 2yr exceed Cloudflare's 50 subrequest limit in a single call.
+  // Split into quarterly chunks — each chunk calls /cron/sales-chunk with explicit from/to dates.
+  const needsChunking = (win === '1yr' || win === '2yr');
+
+  if (!needsChunking) {
+    // 30d / 90d / 6mo — single call as before
+    statusEl.innerHTML = `<span style="color:var(--accent);font-size:13px">⟳ Fetching ${win} sales… (5–10 sec)</span>`;
+    try {
+      const data = await apiCall('/cron/sales-' + win);
+      cronShowResult(statusEl, win, [data]);
+    } catch(e) {
+      cronShowError(statusEl, e.message);
+    } finally {
+      btns.forEach(b => b.disabled = false);
     }
-  } catch(e) {
-    statusEl.style.background = 'var(--red-bg)';
-    statusEl.style.border = '1px solid var(--red)';
-    statusEl.innerHTML = `<span style="color:var(--red);font-size:13px">✗ ${e.message}</span>`;
-  } finally {
-    btns.forEach(b => b.disabled = false);
+    return;
   }
+
+  // Chunked: split into 90-day quarters
+  const totalDays  = win === '2yr' ? 730 : 365;
+  const chunkDays  = 90;
+  const now        = Date.now();
+  const chunks     = [];
+  for (let d = 0; d < totalDays; d += chunkDays) {
+    const toMs   = now - d * 86400000;
+    const fromMs = now - Math.min(d + chunkDays, totalDays) * 86400000;
+    chunks.push({ from: new Date(fromMs).toISOString(), to: new Date(toMs).toISOString() });
+  }
+
+  const total   = chunks.length;
+  const results = [];
+  let   failed  = 0;
+
+  for (let i = 0; i < total; i++) {
+    const { from, to } = chunks[i];
+    const label = from.slice(0,10) + ' → ' + to.slice(0,10);
+    statusEl.innerHTML = `<span style="color:var(--accent);font-size:13px">
+      ⟳ Syncing ${win} — chunk ${i+1} of ${total}: ${label}
+      <div style="margin-top:6px;background:var(--border);border-radius:4px;height:6px;overflow:hidden">
+        <div style="height:100%;background:var(--accent);width:${Math.round(i/total*100)}%;transition:width .3s"></div>
+      </div>
+    </span>`;
+
+    try {
+      const data = await apiCall('/cron/sales-chunk', {
+        method: 'POST',
+        body: JSON.stringify({ from, to, window: win })
+      });
+      results.push(data);
+    } catch(e) {
+      results.push({ error: e.message, fromDate: from });
+      failed++;
+    }
+  }
+
+  cronShowResult(statusEl, win, results, failed);
+  btns.forEach(b => b.disabled = false);
+
+  if (document.getElementById('vel-view-history').style.display !== 'none') {
+    allSalesHistory = [];
+    loadSalesHistory();
+  }
+}
+
+function cronShowResult(statusEl, win, results, failed=0) {
+  const totalOrders  = results.reduce((s,d) => s + (d.ordersProcessed||0), 0);
+  const totalItems   = results.reduce((s,d) => s + (d.itemsWritten||0), 0);
+  const totalPages   = results.reduce((s,d) => s + (d.pages||0), 0);
+  const errors       = results.filter(d => d.error).map(d => d.error);
+  const firstFrom    = results[results.length-1]?.fromDate || '';
+  const hasErr       = errors.length > 0;
+  const capWarn      = results.some(d=>d.hitCap) ? ` <span style="color:var(--orange)">⚠ Hit order cap on some chunks</span>` : '';
+  const errWarn      = hasErr ? ` <span style="color:var(--red)">✗ ${errors[0]}</span>` : '';
+  statusEl.style.background = hasErr ? 'var(--red-bg)'  : 'var(--green-bg)';
+  statusEl.style.border     = hasErr ? '1px solid var(--red)' : '1px solid var(--green)';
+  statusEl.innerHTML = `<span style="color:${hasErr?'var(--red)':'var(--green)'};font-size:13px;font-weight:600">
+    ${hasErr?'⚠':'✓'} ${win} synced — ${totalItems} items from ${totalOrders} orders · ${totalPages} pages
+    <span style="font-weight:400;color:var(--text3)"> · from ${firstFrom.slice(0,10)}</span>${capWarn}${errWarn}
+  </span>`;
+  if (document.getElementById('vel-view-history')?.style.display !== 'none') {
+    allSalesHistory = [];
+    loadSalesHistory();
+  }
+}
+
+function cronShowError(statusEl, msg) {
+  statusEl.style.background = 'var(--red-bg)';
+  statusEl.style.border = '1px solid var(--red)';
+  statusEl.innerHTML = `<span style="color:var(--red);font-size:13px">✗ ${msg}</span>`;
 }
 
 function switchVelocityView(view) {
@@ -9000,6 +9167,568 @@ function rprToast(msg, type = '') {
   rprTimer = setTimeout(() => { t.className = ''; }, 3500);
 }
 
+</script>
+
+<!-- ═══════════════════════════════════════════════════════
+     INVENTORY APP
+     ═══════════════════════════════════════════════════════ -->
+<div id="inv-app" style="display:none;flex-direction:column;min-height:100vh;font-family:'DM Sans',sans-serif;background:var(--bg)">
+
+<style>
+#inv-app .itopbar{display:flex;align-items:center;justify-content:space-between;padding:12px 16px;background:var(--bg2);border-bottom:1px solid var(--border);position:sticky;top:0;z-index:100}
+#inv-app .itopbar-title{font-size:15px;font-weight:700;color:var(--text)}
+#inv-app .iback{background:none;border:1px solid var(--border);color:var(--text3);font-size:12px;padding:6px 13px;border-radius:8px;cursor:pointer;font-family:'DM Sans',sans-serif}
+#inv-app .itabs{display:flex;gap:8px;padding:12px 16px;background:var(--bg2);border-bottom:1px solid var(--border)}
+#inv-app .itab{padding:7px 18px;border-radius:20px;border:1.5px solid var(--border);background:none;color:var(--text3);font-size:13px;font-weight:600;cursor:pointer;font-family:'DM Sans',sans-serif;transition:all .15s}
+#inv-app .itab.active{background:var(--accent);border-color:var(--accent);color:#fff}
+#inv-app .ibadge{display:inline-flex;align-items:center;justify-content:center;min-width:16px;height:16px;background:#c52a1a;color:#fff;font-size:10px;font-weight:700;border-radius:8px;padding:0 4px;margin-left:4px}
+#inv-app .ipanel{display:none;padding:16px;flex-direction:column;gap:12px}
+#inv-app .ipanel.active{display:flex}
+#inv-app .icard{background:var(--bg2);border:1px solid var(--border);border-radius:12px;padding:16px}
+#inv-app .icard-label{font-size:11px;font-weight:700;letter-spacing:1px;text-transform:uppercase;color:var(--text3);margin-bottom:10px}
+#inv-app .imode-row{display:grid;grid-template-columns:1fr 1fr;gap:10px}
+#inv-app .imode-btn{padding:14px;border-radius:10px;border:2px solid var(--border);background:var(--bg3);font-size:14px;font-weight:700;color:var(--text3);cursor:pointer;text-align:center;font-family:'DM Sans',sans-serif;transition:all .2s}
+#inv-app .imode-btn.active-in{border-color:var(--green);background:var(--green-bg);color:var(--green)}
+#inv-app .imode-btn.active-out{border-color:var(--red);background:var(--red-bg);color:var(--red)}
+#inv-app .isearch-row{display:flex;gap:8px}
+#inv-app .isearch-inp{flex:1;padding:10px 12px;border:1.5px solid var(--border);border-radius:8px;font-size:14px;font-family:'DM Sans',sans-serif;background:var(--bg);color:var(--text);outline:none;transition:border-color .15s}
+#inv-app .isearch-inp:focus{border-color:var(--accent)}
+#inv-app .isearch-btn{padding:10px 16px;border-radius:8px;background:var(--accent);color:#fff;border:none;font-size:14px;font-weight:700;cursor:pointer;font-family:'DM Sans',sans-serif}
+#inv-app .icam-btn{width:100%;padding:13px;border-radius:8px;background:var(--accent);color:#fff;border:none;font-size:14px;font-weight:700;cursor:pointer;font-family:'DM Sans',sans-serif;transition:background .2s}
+#inv-app .icam-btn.scanning{background:var(--red)}
+#inv-app #inv-reader-wrap{display:none;border-radius:10px;overflow:hidden;background:#000;min-height:160px;margin-top:10px}
+#inv-app #inv-reader-wrap video{width:100%!important}
+#inv-app .iresult{padding:12px 14px;border-radius:8px;background:var(--green-bg);border:1px solid var(--green);display:none}
+#inv-app .iresult-part{font-size:16px;font-weight:700;font-family:var(--mono);color:var(--text)}
+#inv-app .iresult-name{font-size:12px;color:var(--text3);margin-top:2px}
+#inv-app .iloc-opt{padding:12px 14px;border-radius:8px;border:2px solid var(--border);background:var(--bg3);cursor:pointer;margin-bottom:8px;transition:all .15s;display:flex;justify-content:space-between;align-items:center;font-family:'DM Sans',sans-serif}
+#inv-app .iloc-opt:hover{border-color:var(--accent)}
+#inv-app .iloc-opt.selected{border-color:var(--accent);background:var(--accent-bg,#eff6ff)}
+#inv-app .iloc-name{font-size:14px;font-weight:600;color:var(--text)}
+#inv-app .iloc-cases{font-size:12px;color:var(--text3)}
+#inv-app .iloc-badge{font-size:10px;font-weight:700;padding:2px 7px;border-radius:4px}
+#inv-app .iloc-badge.ph{background:var(--orange-bg);color:var(--orange)}
+#inv-app .iloc-badge.ex{background:var(--accent-bg,#eff6ff);color:var(--accent)}
+#inv-app .iloc-badge.nw{background:var(--green-bg);color:var(--green)}
+#inv-app .ifield{display:flex;flex-direction:column;gap:5px;margin-bottom:10px}
+#inv-app .ifield label{font-size:12px;font-weight:600;color:var(--text2)}
+#inv-app .ifield input{padding:10px 12px;border:1.5px solid var(--border);border-radius:8px;font-size:14px;font-family:'DM Sans',sans-serif;background:var(--bg);color:var(--text);outline:none;transition:border-color .15s}
+#inv-app .ifield input:focus{border-color:var(--accent)}
+#inv-app .ifield-row{display:grid;grid-template-columns:1fr 1fr;gap:10px}
+#inv-app .isubmit{width:100%;padding:14px;border-radius:10px;font-size:15px;font-weight:700;color:#fff;border:none;cursor:pointer;font-family:'DM Sans',sans-serif;margin-top:4px;transition:background .2s}
+#inv-app .isubmit.in{background:var(--green)}
+#inv-app .isubmit.out{background:var(--red)}
+#inv-app .isubmit:disabled{opacity:.35;cursor:not-allowed}
+#inv-app .iwarn{padding:10px 12px;background:var(--orange-bg);border:1px solid #fde68a;border-radius:8px;font-size:12px;color:var(--orange);font-weight:600;margin-bottom:8px;display:none}
+#inv-app .ipin-wrap{display:flex;flex-direction:column;align-items:center;padding:32px 16px;gap:14px}
+#inv-app .ipin-dots{display:flex;gap:10px}
+#inv-app .ipin-dot{width:14px;height:14px;border-radius:50%;background:var(--border2);border:2px solid var(--border);transition:background .15s}
+#inv-app .ipin-dot.filled{background:var(--accent);border-color:var(--accent)}
+#inv-app .ipin-pad{display:grid;grid-template-columns:repeat(3,1fr);gap:10px;width:220px}
+#inv-app .ipin-key{padding:15px;border-radius:8px;background:var(--bg2);border:1.5px solid var(--border);font-size:18px;font-weight:700;color:var(--text);cursor:pointer;font-family:'DM Sans',sans-serif;transition:all .15s}
+#inv-app .ipin-key:hover{border-color:var(--accent);color:var(--accent)}
+#inv-app .ipin-err{color:var(--red);font-size:13px;display:none}
+#inv-app .ientry{background:var(--bg2);border:1px solid var(--border);border-radius:12px;padding:14px;margin-bottom:10px}
+#inv-app .ientry-head{display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:8px}
+#inv-app .ientry-part{font-size:16px;font-weight:700;font-family:var(--mono)}
+#inv-app .ientry-type{font-size:11px;font-weight:700;padding:3px 8px;border-radius:4px}
+#inv-app .ientry-type.in{background:var(--green-bg);color:var(--green)}
+#inv-app .ientry-type.out{background:var(--red-bg);color:var(--red)}
+#inv-app .ientry-meta{font-size:12px;color:var(--text3);margin-bottom:10px}
+#inv-app .ientry-btns{display:flex;gap:8px}
+#inv-app .iapprove{flex:1;padding:9px;border-radius:8px;background:var(--green);color:#fff;font-size:13px;font-weight:700;border:none;cursor:pointer;font-family:'DM Sans',sans-serif}
+#inv-app .ireject{flex:1;padding:9px;border-radius:8px;background:var(--bg3);border:1.5px solid var(--border);color:var(--text3);font-size:13px;font-weight:700;cursor:pointer;font-family:'DM Sans',sans-serif}
+#inv-app .ireject:hover{border-color:var(--red);color:var(--red)}
+#inv-app .iempty{text-align:center;color:var(--text3);padding:30px 20px;font-size:13px}
+#inv-app .isec-title{font-size:12px;font-weight:700;letter-spacing:.5px;text-transform:uppercase;margin-bottom:10px}
+#inv-app .isec-title.in{color:var(--green)}
+#inv-app .isec-title.out{color:var(--red)}
+#inv-app .iflash{position:fixed;inset:0;z-index:9999;display:flex;align-items:center;justify-content:center;pointer-events:none;opacity:0;transition:opacity .3s}
+#inv-app .iflash.show{opacity:1}
+#inv-app .iflash-inner{padding:20px 32px;border-radius:14px;font-size:17px;font-weight:700;color:#fff;box-shadow:0 4px 24px rgba(0,0,0,.15)}
+#inv-app .iflash.success .iflash-inner{background:var(--green)}
+#inv-app .iflash.error .iflash-inner{background:var(--red)}
+</style>
+
+<div id="inv-flash" class="iflash"><div class="iflash-inner" id="inv-flash-msg"></div></div>
+
+<!-- Top bar -->
+<div class="itopbar">
+  <div class="itopbar-title">📋 Inventory</div>
+  <button class="iback" onclick="backToLauncher()">← Apps</button>
+</div>
+
+<!-- Tabs -->
+<div class="itabs">
+  <button class="itab active" id="inv-tab-scan" onclick="invSwitchTab('scan')">Scan</button>
+  <button class="itab" id="inv-tab-review" onclick="invSwitchTab('review')">Review<span class="ibadge" id="inv-pending-badge" style="display:none">0</span></button>
+</div>
+
+<!-- ── SCAN PANEL ── -->
+<div class="ipanel active" id="inv-panel-scan">
+
+  <!-- Mode -->
+  <div class="icard">
+    <div class="icard-label">Mode</div>
+    <div class="imode-row">
+      <button class="imode-btn active-in" id="inv-mode-in" onclick="invSetMode('in')">📦 Stock In</button>
+      <button class="imode-btn" id="inv-mode-out" onclick="invSetMode('out')">📤 Stock Out</button>
+    </div>
+  </div>
+
+  <!-- Scan -->
+  <div class="icard">
+    <div class="icard-label">Scan or Search</div>
+    <div class="isearch-row">
+      <input class="isearch-inp" id="inv-search-inp" type="text" placeholder="Part# or barcode…" onkeydown="if(event.key==='Enter')invLookup(this.value.trim())">
+      <button class="isearch-btn" onclick="invLookup(document.getElementById('inv-search-inp').value.trim())">Go</button>
+    </div>
+    <button class="icam-btn" id="inv-cam-btn" onclick="invToggleCam()" style="margin-top:10px">📷 Start Camera</button>
+    <div id="inv-reader-wrap"><div id="inv-qr-reader"></div></div>
+  </div>
+
+  <!-- Result -->
+  <div class="iresult icard" id="inv-result" style="display:none">
+    <div class="iresult-part" id="inv-result-part"></div>
+    <div class="iresult-name" id="inv-result-name"></div>
+  </div>
+
+  <!-- Locations -->
+  <div class="icard" id="inv-loc-card" style="display:none">
+    <div class="icard-label" id="inv-loc-label">Select Location</div>
+    <div id="inv-loc-list"></div>
+    <div id="inv-newloc-wrap" style="display:none;margin-top:8px">
+      <div class="ifield"><label>New Location Name</label><input id="inv-newloc-inp" type="text" placeholder="e.g. A-Shelf-3"></div>
+    </div>
+  </div>
+
+  <!-- Details -->
+  <div class="icard" id="inv-detail-card" style="display:none">
+    <div class="icard-label">Entry Details</div>
+    <div class="iwarn" id="inv-warn"></div>
+    <div class="ifield-row">
+      <div class="ifield"><label>Cases</label><input id="inv-cases" type="number" min="1" placeholder="0"></div>
+      <div class="ifield"><label>Initials</label><input id="inv-initials" type="text" maxlength="4" placeholder="e.g. DJ"></div>
+    </div>
+    <div class="ifield"><label>Notes (optional)</label><input id="inv-notes" type="text" placeholder=""></div>
+    <button class="isubmit in" id="inv-submit-btn" onclick="invSubmit()">Submit Stock In</button>
+  </div>
+
+</div><!-- /scan panel -->
+
+<!-- ── REVIEW PANEL ── -->
+<div class="ipanel" id="inv-panel-review">
+
+  <!-- PIN gate -->
+  <div id="inv-pin-gate">
+    <div class="ipin-wrap">
+      <div style="font-size:14px;font-weight:700;color:var(--text)">Management PIN Required</div>
+      <div class="ipin-dots">
+        <div class="ipin-dot" id="inv-pd0"></div>
+        <div class="ipin-dot" id="inv-pd1"></div>
+        <div class="ipin-dot" id="inv-pd2"></div>
+        <div class="ipin-dot" id="inv-pd3"></div>
+      </div>
+      <div class="ipin-pad">
+        <button class="ipin-key" onclick="invPinKey('1')">1</button>
+        <button class="ipin-key" onclick="invPinKey('2')">2</button>
+        <button class="ipin-key" onclick="invPinKey('3')">3</button>
+        <button class="ipin-key" onclick="invPinKey('4')">4</button>
+        <button class="ipin-key" onclick="invPinKey('5')">5</button>
+        <button class="ipin-key" onclick="invPinKey('6')">6</button>
+        <button class="ipin-key" onclick="invPinKey('7')">7</button>
+        <button class="ipin-key" onclick="invPinKey('8')">8</button>
+        <button class="ipin-key" onclick="invPinKey('9')">9</button>
+        <button class="ipin-key" onclick="invPinKey('back')" style="font-size:14px">⌫</button>
+        <button class="ipin-key" onclick="invPinKey('0')">0</button>
+        <button class="ipin-key" onclick="invPinKey('clear')" style="font-size:12px">CLR</button>
+      </div>
+      <div class="ipin-err" id="inv-pin-err">Incorrect PIN</div>
+    </div>
+  </div>
+
+  <!-- Review content (hidden until unlocked) -->
+  <div id="inv-review-content" style="display:none">
+    <div style="margin-bottom:16px">
+      <div class="isec-title in">📦 Pending Stock In</div>
+      <div id="inv-pending-in"></div>
+    </div>
+    <div>
+      <div class="isec-title out">📤 Pending Stock Out</div>
+      <div id="inv-pending-out"></div>
+    </div>
+  </div>
+
+</div><!-- /review panel -->
+</div><!-- /inv-app -->
+
+<script>
+// ═══════════════════════════════════════════════════════
+// INVENTORY APP
+// ═══════════════════════════════════════════════════════
+(function() {
+  var INV_WORKER = 'https://xfitting-lookup.alfixedinc88.workers.dev';
+  var INV_MGMT_PIN = '6523';
+
+  // State
+  var invMode = 'in';
+  var invPart = null;       // { partNum, name, sku, locations: [{location,cases,rowIndex,isPlaceholder}] }
+  var invSelLoc = null;     // selected loc object, or {isNew:true}, or {isPlaceholder:true,...}
+  var invCamRunning = false;
+  var invQrScanner = null;
+  var invLastScan = 0;
+  var invPinEntry = '';
+  var invReviewUnlocked = false;
+  var invPendingItems = [];
+  var invFlashTimer = null;
+
+  // ── Helpers ──
+  function invEl(id) { return document.getElementById(id); }
+
+  function invFlash(msg, type) {
+    clearTimeout(invFlashTimer);
+    var el = invEl('inv-flash');
+    invEl('inv-flash-msg').textContent = msg;
+    el.className = 'iflash ' + type + ' show';
+    invFlashTimer = setTimeout(function() { el.className = 'iflash'; }, 2500);
+  }
+
+  // ── Tab switching ──
+  window.invSwitchTab = function(tab) {
+    invEl('inv-panel-scan').className = 'ipanel' + (tab === 'scan' ? ' active' : '');
+    invEl('inv-panel-review').className = 'ipanel' + (tab === 'review' ? ' active' : '');
+    invEl('inv-tab-scan').className = 'itab' + (tab === 'scan' ? ' active' : '');
+    invEl('inv-tab-review').className = 'itab' + (tab === 'review' ? ' active' : '');
+    if (tab === 'review' && invReviewUnlocked) invLoadPending();
+  };
+
+  // ── Mode ──
+  window.invSetMode = function(mode) {
+    invMode = mode;
+    invEl('inv-mode-in').className = 'imode-btn' + (mode === 'in' ? ' active-in' : '');
+    invEl('inv-mode-out').className = 'imode-btn' + (mode === 'out' ? ' active-out' : '');
+    invEl('inv-submit-btn').className = 'isubmit ' + mode;
+    invEl('inv-submit-btn').textContent = mode === 'in' ? 'Submit Stock In' : 'Submit Stock Out';
+    invReset();
+  };
+
+  // ── Camera ──
+  function invLoadQR() {
+    if (typeof Html5Qrcode !== 'undefined') return Promise.resolve();
+    return new Promise(function(res, rej) {
+      var s = document.createElement('script');
+      s.src = 'https://unpkg.com/html5-qrcode@2.3.8/html5-qrcode.min.js';
+      s.onload = res; s.onerror = rej;
+      document.head.appendChild(s);
+    });
+  }
+
+  window.invToggleCam = function() {
+    if (invCamRunning) { invStopCam(); return; }
+    invEl('inv-cam-btn').textContent = 'Starting…';
+    invEl('inv-cam-btn').disabled = true;
+    invLoadQR().then(function() {
+      invEl('inv-reader-wrap').style.display = 'block';
+      if (invQrScanner) { try { invQrScanner.clear(); } catch(e){} }
+      invQrScanner = new Html5Qrcode('inv-qr-reader');
+      invQrScanner.start(
+        { facingMode: 'environment' },
+        { fps: 10, qrbox: { width: 260, height: 90 },
+          formatsToSupport: [
+            Html5QrcodeSupportedFormats.UPC_A,
+            Html5QrcodeSupportedFormats.UPC_E,
+            Html5QrcodeSupportedFormats.EAN_13,
+            Html5QrcodeSupportedFormats.CODE_128
+          ]
+        },
+        function(code) {
+          var now = Date.now();
+          if (now - invLastScan < 2000) return;
+          invLastScan = now;
+          invStopCam();
+          invLookup(code);
+        },
+        function() {}
+      ).then(function() {
+        invCamRunning = true;
+        invEl('inv-cam-btn').textContent = '⏹ Stop Camera';
+        invEl('inv-cam-btn').className = 'icam-btn scanning';
+        invEl('inv-cam-btn').disabled = false;
+      }).catch(function(err) {
+        invFlash('Camera error: ' + err, 'error');
+        invEl('inv-cam-btn').textContent = '📷 Start Camera';
+        invEl('inv-cam-btn').className = 'icam-btn';
+        invEl('inv-cam-btn').disabled = false;
+        invEl('inv-reader-wrap').style.display = 'none';
+      });
+    }).catch(function(err) {
+      invFlash('Could not load scanner library', 'error');
+      invEl('inv-cam-btn').textContent = '📷 Start Camera';
+      invEl('inv-cam-btn').disabled = false;
+    });
+  };
+
+  function invStopCam() {
+    if (invQrScanner && invCamRunning) {
+      invQrScanner.stop().catch(function(){});
+      invQrScanner = null;
+    }
+    invCamRunning = false;
+    invEl('inv-reader-wrap').style.display = 'none';
+    invEl('inv-cam-btn').textContent = '📷 Start Camera';
+    invEl('inv-cam-btn').className = 'icam-btn';
+    invEl('inv-cam-btn').disabled = false;
+  }
+
+  // ── Lookup ──
+  window.invLookup = function(code) {
+    if (!code) return;
+    invEl('inv-result').style.display = 'none';
+    invEl('inv-loc-card').style.display = 'none';
+    invEl('inv-detail-card').style.display = 'none';
+    fetch(INV_WORKER + '/inventory/lookup?code=' + encodeURIComponent(code))
+      .then(function(r) { return r.json(); })
+      .then(function(d) {
+        if (d.error || !d.partNum) { invFlash('Not found: ' + code, 'error'); return; }
+        invPart = d;
+        invEl('inv-result-part').textContent = d.partNum;
+        invEl('inv-result-name').textContent = d.name || '';
+        invEl('inv-result').style.display = 'block';
+        invShowLocs();
+      })
+      .catch(function() { invFlash('Lookup failed', 'error'); });
+  };
+
+  function invShowLocs() {
+    if (!invPart) return;
+    var locs = invPart.locations || [];
+    invSelLoc = null;
+    var html = '';
+
+    if (invMode === 'in') {
+      // Show existing locations + placeholder option + new location option
+      locs.forEach(function(loc, i) {
+        var badge = loc.isPlaceholder
+          ? '<span class="iloc-badge ph">Placeholder</span>'
+          : '<span class="iloc-badge ex">Existing</span>';
+        html += '<div class="iloc-opt" onclick="invPickLoc(' + i + ')">'
+              + '<div><div class="iloc-name">' + loc.location + '</div>'
+              + '<div class="iloc-cases">' + loc.cases + ' cases</div></div>'
+              + badge + '</div>';
+      });
+      html += '<div class="iloc-opt" onclick="invPickNew()" id="inv-new-opt">'
+            + '<div class="iloc-name">+ Add New Location</div>'
+            + '<span class="iloc-badge nw">New</span></div>';
+    } else {
+      // Stock Out — only show existing locations with cases
+      if (locs.length === 0) { invFlash('No locations found for ' + invPart.partNum, 'error'); return; }
+      locs.forEach(function(loc, i) {
+        html += '<div class="iloc-opt" onclick="invPickLoc(' + i + ')">'
+              + '<div><div class="iloc-name">' + loc.location + '</div>'
+              + '<div class="iloc-cases">' + loc.cases + ' cases</div></div>'
+              + '<span class="iloc-badge ex">Select</span></div>';
+      });
+    }
+
+    invEl('inv-loc-list').innerHTML = html;
+    invEl('inv-newloc-wrap').style.display = 'none';
+    invEl('inv-loc-label').textContent = invMode === 'in' ? 'Stock In — Choose Location' : 'Stock Out — Choose Location';
+    invEl('inv-loc-card').style.display = 'block';
+    invEl('inv-detail-card').style.display = 'none';
+  }
+
+  window.invPickLoc = function(i) {
+    invSelLoc = invPart.locations[i];
+    // Highlight
+    document.querySelectorAll('#inv-app .iloc-opt').forEach(function(el) { el.classList.remove('selected'); });
+    document.querySelectorAll('#inv-app .iloc-opt')[i].classList.add('selected');
+    invEl('inv-newloc-wrap').style.display = 'none';
+    invShowDetails();
+  };
+
+  window.invPickNew = function() {
+    invSelLoc = { isNew: true };
+    document.querySelectorAll('#inv-app .iloc-opt').forEach(function(el) { el.classList.remove('selected'); });
+    var newOpt = invEl('inv-new-opt');
+    if (newOpt) newOpt.classList.add('selected');
+    invEl('inv-newloc-wrap').style.display = 'block';
+    invShowDetails();
+  };
+
+  function invShowDetails() {
+    var warn = invEl('inv-warn');
+    warn.style.display = 'none';
+    if (invSelLoc && invSelLoc.isPlaceholder) {
+      warn.textContent = '⚠ This is a placeholder location. Approving will set the real location.';
+      warn.style.display = 'block';
+    }
+    if (invMode === 'out' && invSelLoc && !invSelLoc.isNew) {
+      warn.textContent = '⚠ Removing cases — current stock: ' + invSelLoc.cases;
+      warn.style.display = 'block';
+    }
+    invEl('inv-detail-card').style.display = 'block';
+  }
+
+  // ── Submit ──
+  window.invSubmit = function() {
+    var cases = parseInt(invEl('inv-cases').value, 10);
+    var initials = invEl('inv-initials').value.trim();
+    var notes = invEl('inv-notes').value.trim();
+    var newLoc = invEl('inv-newloc-inp').value.trim();
+
+    if (!invPart) { invFlash('No item selected', 'error'); return; }
+    if (!invSelLoc) { invFlash('Select a location first', 'error'); return; }
+    if (!cases || cases < 1) { invFlash('Enter number of cases', 'error'); return; }
+    if (!initials) { invFlash('Enter your initials', 'error'); return; }
+    if (invSelLoc.isNew && !newLoc) { invFlash('Enter new location name', 'error'); return; }
+
+    var location = invSelLoc.isNew ? newLoc : invSelLoc.location;
+    var btn = invEl('inv-submit-btn');
+    btn.disabled = true;
+    btn.textContent = 'Saving…';
+
+    fetch(INV_WORKER + '/inventory/log', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        type: invMode.toUpperCase(),
+        partNum: invPart.partNum,
+        sku: invPart.sku,
+        location: location,
+        cases: cases,
+        initials: initials,
+        notes: notes,
+        isNew: !!invSelLoc.isNew,
+        isPlaceholder: !!invSelLoc.isPlaceholder,
+        masterRowIndex: invSelLoc.rowIndex || null
+      })
+    })
+    .then(function(r) { return r.json(); })
+    .then(function(d) {
+      if (d.ok) {
+        invFlash(invMode === 'in' ? 'Logged — pending approval' : 'Logged — pending approval', 'success');
+        invReset();
+        invFetchPendingCount();
+      } else {
+        invFlash('Error: ' + (d.error || 'unknown'), 'error');
+      }
+    })
+    .catch(function() { invFlash('Submit failed', 'error'); })
+    .finally(function() { btn.disabled = false; btn.textContent = invMode === 'in' ? 'Submit Stock In' : 'Submit Stock Out'; });
+  };
+
+  // ── Reset scan state ──
+  function invReset() {
+    invPart = null; invSelLoc = null;
+    invEl('inv-search-inp').value = '';
+    invEl('inv-result').style.display = 'none';
+    invEl('inv-loc-card').style.display = 'none';
+    invEl('inv-detail-card').style.display = 'none';
+    invEl('inv-cases').value = '';
+    invEl('inv-initials').value = '';
+    invEl('inv-notes').value = '';
+    invEl('inv-newloc-inp').value = '';
+    invEl('inv-newloc-wrap').style.display = 'none';
+    invEl('inv-warn').style.display = 'none';
+    invStopCam();
+  }
+
+  // ── Pending badge ──
+  window.invFetchPendingCount = function() {
+    fetch(INV_WORKER + '/inventory/pending')
+      .then(function(r) { return r.json(); })
+      .then(function(d) {
+        var n = (d.items || []).filter(function(x) { return x.status === 'Pending'; }).length;
+        var badge = invEl('inv-pending-badge');
+        if (n > 0) { badge.textContent = n; badge.style.display = 'inline-flex'; }
+        else { badge.style.display = 'none'; }
+        invPendingItems = d.items || [];
+      })
+      .catch(function() {});
+  };
+
+  // ── PIN ──
+  window.invPinKey = function(k) {
+    if (k === 'clear') { invPinEntry = ''; }
+    else if (k === 'back') { invPinEntry = invPinEntry.slice(0, -1); }
+    else if (invPinEntry.length < 4) { invPinEntry += k; }
+
+    for (var i = 0; i < 4; i++) {
+      invEl('inv-pd' + i).className = 'ipin-dot' + (i < invPinEntry.length ? ' filled' : '');
+    }
+    invEl('inv-pin-err').style.display = 'none';
+
+    if (invPinEntry.length === 4) {
+      if (invPinEntry === INV_MGMT_PIN) {
+        invReviewUnlocked = true;
+        invEl('inv-pin-gate').style.display = 'none';
+        invEl('inv-review-content').style.display = 'block';
+        invLoadPending();
+      } else {
+        invEl('inv-pin-err').style.display = 'block';
+        invPinEntry = '';
+        for (var j = 0; j < 4; j++) invEl('inv-pd' + j).className = 'ipin-dot';
+      }
+    }
+  };
+
+  // ── Load pending for review ──
+  function invLoadPending() {
+    invEl('inv-pending-in').innerHTML = '<div class="iempty">Loading…</div>';
+    invEl('inv-pending-out').innerHTML = '<div class="iempty">Loading…</div>';
+    fetch(INV_WORKER + '/inventory/pending')
+      .then(function(r) { return r.json(); })
+      .then(function(d) {
+        var items = (d.items || []).filter(function(x) { return x.status === 'Pending'; });
+        var ins  = items.filter(function(x) { return x.type === 'IN'; });
+        var outs = items.filter(function(x) { return x.type === 'OUT'; });
+        invEl('inv-pending-in').innerHTML  = ins.length  ? ins.map(invEntryCard).join('')  : '<div class="iempty">No pending IN entries</div>';
+        invEl('inv-pending-out').innerHTML = outs.length ? outs.map(invEntryCard).join('') : '<div class="iempty">No pending OUT entries</div>';
+      })
+      .catch(function() {
+        invEl('inv-pending-in').innerHTML = invEl('inv-pending-out').innerHTML = '<div class="iempty">Load failed</div>';
+      });
+  }
+
+  function invEntryCard(item) {
+    return '<div class="ientry" id="inv-entry-' + item.rowIndex + '">'
+      + '<div class="ientry-head"><span class="ientry-part">' + (item.partNum||'') + '</span>'
+      + '<span class="ientry-type ' + item.type.toLowerCase() + '">' + item.type + '</span></div>'
+      + '<div class="ientry-meta">📍 ' + (item.location||'') + ' &nbsp;|&nbsp; '
+      + '📦 ' + (item.cases||0) + ' cases &nbsp;|&nbsp; 🧑 ' + (item.initials||'')
+      + (item.notes ? '<br>📝 ' + item.notes : '') + '</div>'
+      + '<div class="ientry-btns">'
+      + '<button class="iapprove" onclick="invVerify(' + item.rowIndex + ','Approved')">✓ Approve</button>'
+      + '<button class="ireject" onclick="invVerify(' + item.rowIndex + ','Rejected')">✕ Reject</button>'
+      + '</div></div>';
+  }
+
+  window.invVerify = function(rowIndex, action) {
+    var card = invEl('inv-entry-' + rowIndex);
+    if (card) { card.style.opacity = '0.5'; card.style.pointerEvents = 'none'; }
+    fetch(INV_WORKER + '/inventory/verify', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ rowIndex: rowIndex, action: action })
+    })
+    .then(function(r) { return r.json(); })
+    .then(function(d) {
+      if (d.ok) {
+        invFlash(action === 'Approved' ? 'Approved ✓' : 'Rejected', action === 'Approved' ? 'success' : 'error');
+        if (card) card.remove();
+        invFetchPendingCount();
+      } else {
+        invFlash('Error: ' + (d.error||'unknown'), 'error');
+        if (card) { card.style.opacity = '1'; card.style.pointerEvents = 'auto'; }
+      }
+    })
+    .catch(function() {
+      invFlash('Verify failed', 'error');
+      if (card) { card.style.opacity = '1'; card.style.pointerEvents = 'auto'; }
+    });
+  };
+
+})(); // end IIFE
 </script>
 </body>
 </html>
