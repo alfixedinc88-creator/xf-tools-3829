@@ -8,6 +8,11 @@
   <meta http-equiv="Expires" content="0">
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+  <meta name="apple-mobile-web-app-title" content="XFitting">
+  <meta name="mobile-web-app-capable" content="yes">
+  <meta name="theme-color" content="#0f1117">
 <title>XFITTING — Internal Tools</title>
 <link href="https://fonts.googleapis.com/css2?family=DM+Mono:wght@400;500&family=DM+Sans:wght@300;400;500;600;700&display=swap" rel="stylesheet">
 <style>
@@ -4068,180 +4073,92 @@ function upcResetVerify() {
   document.getElementById('upc-scan-result').style.color = 'rgba(255,255,255,.4)';
 }
 
-// Detect iOS Safari
-var _isIOS = /iPhone|iPad|iPod/i.test(navigator.userAgent);
+// Html5-QRCode instance
+var _html5QrScanner = null;
+var _html5QrLib     = false;
+
+function upcLoadHtml5QR() {
+  if (_html5QrLib) return Promise.resolve();
+  return new Promise(function(res, rej) {
+    var s = document.createElement('script');
+    s.src = 'https://unpkg.com/html5-qrcode@2.3.8/html5-qrcode.min.js';
+    s.onload  = function() { _html5QrLib = true; res(); };
+    s.onerror = rej;
+    document.head.appendChild(s);
+  });
+}
 
 async function upcStartScan() {
-  var overlay = document.getElementById('upc-camera-overlay');
+  var overlay  = document.getElementById('upc-camera-overlay');
+  var resultEl = document.getElementById('upc-scan-result');
   overlay.style.display = 'flex';
   document.getElementById('upc-tally-ok').textContent   = Object.keys(_upcVerifiedOk).length;
   document.getElementById('upc-tally-fail').textContent = Object.keys(_upcVerifiedFail).length;
-  var resultEl = document.getElementById('upc-scan-result');
+  resultEl.textContent  = 'Starting camera…';
+  resultEl.style.background = 'rgba(255,255,255,.08)';
+  resultEl.style.color  = 'rgba(255,255,255,.5)';
 
-  if (_isIOS || !('BarcodeDetector' in window)) {
-    // iOS Safari: photo-based scanning (most reliable on iPhone)
-    document.getElementById('upc-ios-mode').style.display       = 'block';
-    document.getElementById('upc-viewfinder-wrap').style.display = 'none';
-    resultEl.textContent = 'Tap "Take Photo of Barcode" below';
-    resultEl.style.background = 'rgba(255,255,255,.08)';
-    resultEl.style.color = 'rgba(255,255,255,.5)';
-    return;
-  }
-
-  // Chrome / Android / Desktop — live video with BarcodeDetector
-  document.getElementById('upc-viewfinder-wrap').style.display = 'block';
-  document.getElementById('upc-ios-mode').style.display        = 'none';
-  resultEl.textContent = 'Starting camera…';
+  // Use Html5-QRCode for all platforms — handles iOS PWA live scanning reliably
+  document.getElementById('upc-ios-mode').style.display        = 'block';
+  document.getElementById('upc-viewfinder-wrap').style.display = 'none';
 
   try {
-    _upcScanStream = await navigator.mediaDevices.getUserMedia({
-      video: { facingMode: 'environment', width: { ideal: 1280 }, height: { ideal: 720 } }
-    });
-    var video = document.getElementById('upc-video');
-    video.srcObject = _upcScanStream;
-    await video.play();
+    await upcLoadHtml5QR();
+
+    // Stop any existing instance first
+    if (_html5QrScanner) {
+      try { await _html5QrScanner.stop(); } catch(_) {}
+      _html5QrScanner = null;
+    }
+    // Clear container
+    var container = document.getElementById('upc-html5qr-reader');
+    container.innerHTML = '';
+
+    _html5QrScanner = new Html5Qrcode('upc-html5qr-reader');
+
+    var config = {
+      fps: 15,
+      qrbox: { width: 280, height: 100 },  // wide box for UPC barcodes
+      aspectRatio: 1.7,
+      formatsToSupport: [
+        Html5QrcodeSupportedFormats.UPC_A,
+        Html5QrcodeSupportedFormats.UPC_E,
+        Html5QrcodeSupportedFormats.EAN_13,
+        Html5QrcodeSupportedFormats.CODE_128
+      ]
+    };
+
+    await _html5QrScanner.start(
+      { facingMode: 'environment' },
+      config,
+      function(code) { upcHandleScan(code); },  // success
+      function(err)  { /* ignore decode misses */ }
+    );
+
     resultEl.textContent = 'Point camera at case barcode';
-    resultEl.style.background = 'rgba(255,255,255,.08)';
     resultEl.style.color = 'rgba(255,255,255,.4)';
-    upcScanFrame(video);
+
   } catch(e) {
-    resultEl.innerHTML = '⚠ Camera access denied<br><span style="font-size:11px">Allow camera in browser settings</span>';
+    resultEl.innerHTML = '⚠ Camera error: ' + (e.message || e) +
+      '<br><span style="font-size:11px">Make sure camera permission is allowed in Settings → Safari</span>';
     resultEl.style.background = 'rgba(220,38,38,.3)';
     resultEl.style.color = '#fca5a5';
   }
 }
 
-function upcStopScan() {
+async function upcStopScan() {
+  if (_html5QrScanner) {
+    try { await _html5QrScanner.stop(); } catch(_) {}
+    _html5QrScanner = null;
+    document.getElementById('upc-html5qr-reader').innerHTML = '';
+  }
   if (_upcScanStream) {
     _upcScanStream.getTracks().forEach(function(t) { t.stop(); });
     _upcScanStream = null;
   }
   cancelAnimationFrame(_upcScanTimer);
-  // Reset photo input so same barcode can be scanned again
-  var inp = document.getElementById('upc-photo-input');
-  if (inp) inp.value = '';
   document.getElementById('upc-camera-overlay').style.display = 'none';
   upcUpdateTally();
-}
-
-// Load ZXing JS for still-image decoding (iOS Safari compatible)
-var _zxingLibLoaded = false;
-function upcLoadZxingLib() {
-  if (_zxingLibLoaded) return Promise.resolve();
-  return new Promise(function(res, rej) {
-    var s = document.createElement('script');
-    s.src = 'https://cdn.jsdelivr.net/npm/zxing-js@0.20.0/umd/index.min.js';
-    s.onload  = function() { _zxingLibLoaded = true; res(); };
-    s.onerror = function() {
-      // fallback to older CDN path
-      var s2 = document.createElement('script');
-      s2.src = 'https://unpkg.com/@zxing/library@latest/umd/index.min.js';
-      s2.onload  = function() { _zxingLibLoaded = true; res(); };
-      s2.onerror = rej;
-      document.head.appendChild(s2);
-    };
-    document.head.appendChild(s);
-  });
-}
-
-// iOS: decode a photo taken by the camera
-async function upcDecodePhoto(input) {
-  if (!input.files || !input.files[0]) return;
-  var resultEl = document.getElementById('upc-scan-result');
-  resultEl.textContent = 'Reading barcode…';
-  resultEl.style.background = 'rgba(255,255,255,.08)';
-  resultEl.style.color = 'rgba(255,255,255,.5)';
-
-  var file = input.files[0];
-  // Reset input immediately so user can retake without tapping again
-  setTimeout(function() { input.value = ''; }, 500);
-
-  try {
-    // Draw image onto canvas
-    var img = await new Promise(function(res, rej) {
-      var i = new Image();
-      i.onload = function() { res(i); };
-      i.onerror = rej;
-      i.src = URL.createObjectURL(file);
-    });
-
-    var canvas = document.getElementById('upc-decode-canvas');
-    // Scale down large photos — ZXing works best under 1200px wide
-    var scale  = Math.min(1, 1200 / img.width);
-    canvas.width  = Math.floor(img.width  * scale);
-    canvas.height = Math.floor(img.height * scale);
-    var ctx = canvas.getContext('2d');
-    ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
-    URL.revokeObjectURL(img.src);
-
-    // Try native BarcodeDetector first (fast, some iOS 17+)
-    if ('BarcodeDetector' in window) {
-      try {
-        var det   = new BarcodeDetector({ formats: ['upc_a','upc_e','ean_13','code_128'] });
-        var codes = await det.detect(canvas);
-        if (codes.length) { upcHandleScan(codes[0].rawValue); return; }
-      } catch(_) {}
-    }
-
-    // ZXing fallback — works on all iOS/Safari versions
-    await upcLoadZxingLib();
-
-    // Try ZXing namespace (works with both zxing-js and @zxing/library UMD)
-    var ZX = window.ZXing || window.ZXingLibrary;
-    if (!ZX) throw new Error('ZXing not loaded');
-
-    var hints = new Map();
-    hints.set(ZX.DecodeHintType.TRY_HARDER, true);
-    hints.set(ZX.DecodeHintType.POSSIBLE_FORMATS, [
-      ZX.BarcodeFormat.UPC_A,
-      ZX.BarcodeFormat.UPC_E,
-      ZX.BarcodeFormat.EAN_13,
-      ZX.BarcodeFormat.CODE_128
-    ]);
-
-    var reader  = new ZX.MultiFormatReader();
-    reader.setHints(hints);
-
-    // Scan multiple horizontal crops to improve hit rate
-    var decoded = null;
-    var crops   = [
-      [0,    0,    1,    1   ],  // full image
-      [0,    0.3,  1,    0.7 ],  // middle third
-      [0.1,  0.4,  0.9,  0.6 ],  // centre strip
-      [0,    0.25, 1,    0.75],  // broad middle
-    ];
-
-    for (var ci = 0; ci < crops.length && !decoded; ci++) {
-      var c  = crops[ci];
-      var cx = Math.floor(c[0] * canvas.width);
-      var cy = Math.floor(c[1] * canvas.height);
-      var cw = Math.floor((c[2] - c[0]) * canvas.width);
-      var ch = Math.floor((c[3] - c[1]) * canvas.height);
-      if (cw < 50 || ch < 20) continue;
-
-      try {
-        var imgData  = ctx.getImageData(cx, cy, cw, ch);
-        var luminance = new ZX.RGBLuminanceSource(imgData.data, cw, ch);
-        var binary   = new ZX.HybridBinarizer(luminance);
-        var bitmap   = new ZX.BinaryBitmap(binary);
-        var result   = reader.decode(bitmap);
-        if (result) decoded = result.getText();
-      } catch(_) {}
-    }
-
-    if (decoded) {
-      upcHandleScan(decoded);
-    } else {
-      resultEl.innerHTML = '⚠ Could not read barcode<br><span style="font-size:11px;opacity:.8">Try again — hold steady, 6-12 inches away, good light</span>';
-      resultEl.style.background = 'rgba(220,38,38,.2)';
-      resultEl.style.color = '#fca5a5';
-    }
-
-  } catch(e) {
-    resultEl.innerHTML = '⚠ Error: ' + e.message + '<br><span style="font-size:11px">Try again</span>';
-    resultEl.style.background = 'rgba(220,38,38,.2)';
-    resultEl.style.color = '#fca5a5';
-  }
 }
 
 // Live video decode (Chrome/Android only — BarcodeDetector)
@@ -6240,18 +6157,9 @@ function salesToast(msg, type) {
           </div>
         </div>
 
-        <!-- iOS mode: tap to photograph barcode -->
-        <div id="upc-ios-mode" style="display:none;text-align:center;margin-bottom:16px">
-          <div style="color:rgba(255,255,255,.6);font-size:13px;margin-bottom:16px;line-height:1.5">
-            Tap the button below, point your camera<br>at the case barcode and take a photo
-          </div>
-          <!-- Hidden file input — triggers iOS camera -->
-          <input type="file" id="upc-photo-input" accept="image/*" capture="environment"
-            style="display:none" onchange="upcDecodePhoto(this)">
-          <button onclick="document.getElementById('upc-photo-input').click()"
-            style="background:var(--accent);color:#fff;border:none;border-radius:12px;padding:16px 32px;font-size:16px;font-weight:700;cursor:pointer;width:100%">
-            📸 Take Photo of Barcode
-          </button>
+        <!-- Live scanner container (Html5-QRCode) -->
+        <div id="upc-ios-mode" style="display:none;margin-bottom:16px">
+          <div id="upc-html5qr-reader" style="border-radius:12px;overflow:hidden"></div>
           <!-- Canvas used for decoding — hidden -->
           <canvas id="upc-decode-canvas" style="display:none"></canvas>
         </div>
