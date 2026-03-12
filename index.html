@@ -3993,6 +3993,203 @@ function upcCheckShipment() {
   }
 }
 
+// Build outside-UPC → {partNum, inside} lookup map from loaded shipment
+// Called after shipment is rendered — used by scanner
+function upcBuildOutsideMap(skuList) {
+  var map = {};
+  (skuList || []).forEach(function(sku) {
+    // Find all DB.upc rows for this SKU
+    var q = String(sku || '').trim().toLowerCase().replace(/-+$/, '');
+    DB.upc.forEach(function(r) {
+      if (!r.outside) return;
+      var outside = r.outside.replace(/\s/g, '');
+      if (!/^\d{12}$/.test(outside)) return; // must be valid UPC-A
+      var matches = r.variant.toLowerCase() === q ||
+                    r.variant.toLowerCase().replace(/-+$/, '') === q ||
+                    r.variant.toLowerCase().includes(q);
+      if (matches) map[outside] = { partNum: r.variant, inside: r.inside };
+    });
+    // Also check AWD_DB
+    AWD_DB.awdMaster.forEach(function(r) {
+      if (!r.outside) return;
+      var outside = String(r.outside || '').replace(/\s/g, '');
+      if (!/^\d{12}$/.test(outside)) return;
+      if (String(r.partNum || '').toLowerCase().includes(q)) {
+        map[outside] = { partNum: r.partNum, inside: r.upc };
+      }
+    });
+  });
+  return map;
+}
+
+// Global verify state
+var _upcVerifyMap    = {};  // outsideUPC → {partNum, inside}
+var _upcVerifiedOk   = {};  // outsideUPC → true (found)
+var _upcVerifiedFail = {};  // outsideUPC → true (not found)
+var _upcScanStream   = null;
+var _upcScanTimer    = null;
+var _upcLastScanned  = '';
+var _upcLastScannedAt = 0;
+
+// Show scan bar when barcodes are loaded
+function upcShowScanBar(skuList) {
+  _upcVerifyMap = upcBuildOutsideMap(skuList);
+  var bar = document.getElementById('upc-scan-bar');
+  if (bar) {
+    bar.style.display = Object.keys(_upcVerifyMap).length > 0 ? 'flex' : 'none';
+  }
+  upcUpdateTally();
+}
+
+function upcUpdateTally() {
+  var ok   = Object.keys(_upcVerifiedOk).length;
+  var fail = Object.keys(_upcVerifiedFail).length;
+  var tot  = Object.keys(_upcVerifyMap).length;
+  var el   = document.getElementById('upc-verify-tally');
+  if (el) el.textContent = ok + ' of ' + tot + ' verified · ' + fail + ' not found';
+  var prog = document.getElementById('upc-verify-progress');
+  if (prog && tot > 0) {
+    prog.style.display = 'block';
+    var pct = Math.round(ok / tot * 100);
+    prog.style.background = pct === 100 ? 'var(--green)' : 'var(--accent)';
+    prog.style.color = '#fff';
+    prog.textContent = pct + '% (' + ok + '/' + tot + ')';
+  }
+}
+
+function upcResetVerify() {
+  _upcVerifiedOk   = {};
+  _upcVerifiedFail = {};
+  _upcLastScanned  = '';
+  upcUpdateTally();
+  document.getElementById('upc-scan-result').textContent = 'Point camera at case barcode';
+  document.getElementById('upc-scan-result').style.background = 'rgba(255,255,255,.08)';
+  document.getElementById('upc-scan-result').style.color = 'rgba(255,255,255,.4)';
+}
+
+async function upcStartScan() {
+  var overlay = document.getElementById('upc-camera-overlay');
+  overlay.style.display = 'flex';
+  document.getElementById('upc-tally-ok').textContent   = Object.keys(_upcVerifiedOk).length;
+  document.getElementById('upc-tally-fail').textContent = Object.keys(_upcVerifiedFail).length;
+
+  try {
+    _upcScanStream = await navigator.mediaDevices.getUserMedia({
+      video: { facingMode: 'environment', width: { ideal: 1280 }, height: { ideal: 720 } }
+    });
+    var video = document.getElementById('upc-video');
+    video.srcObject = _upcScanStream;
+    await video.play();
+    upcScanFrame(video);
+  } catch(e) {
+    document.getElementById('upc-scan-result').textContent = '⚠ Camera access denied — allow camera in browser settings';
+    document.getElementById('upc-scan-result').style.background = 'rgba(220,38,38,.3)';
+    document.getElementById('upc-scan-result').style.color = '#fca5a5';
+  }
+}
+
+function upcStopScan() {
+  if (_upcScanStream) {
+    _upcScanStream.getTracks().forEach(function(t) { t.stop(); });
+    _upcScanStream = null;
+  }
+  cancelAnimationFrame(_upcScanTimer);
+  document.getElementById('upc-camera-overlay').style.display = 'none';
+  upcUpdateTally();
+}
+
+// Decode barcode from video frame using BarcodeDetector API (native browser)
+// Falls back to ZXing if BarcodeDetector unavailable
+var _zxingReader = null;
+async function upcScanFrame(video) {
+  if (!_upcScanStream) return;
+
+  // Try native BarcodeDetector first (Chrome/Android, very fast)
+  if ('BarcodeDetector' in window) {
+    var detector = new BarcodeDetector({ formats: ['upc_a', 'upc_e', 'ean_13', 'code_128'] });
+    var scan = async function() {
+      if (!_upcScanStream) return;
+      try {
+        var codes = await detector.detect(video);
+        if (codes.length) upcHandleScan(codes[0].rawValue);
+      } catch(_) {}
+      _upcScanTimer = requestAnimationFrame(scan);
+    };
+    scan();
+  } else {
+    // Load ZXing as fallback
+    if (!_zxingReader) {
+      await new Promise(function(res) {
+        var s = document.createElement('script');
+        s.src = 'https://unpkg.com/@zxing/browser@latest/umd/index.min.js';
+        s.onload = res;
+        document.head.appendChild(s);
+      });
+      _zxingReader = new ZXingBrowser.BrowserMultiFormatReader();
+    }
+    _zxingReader.decodeFromVideoElement(video, function(result, err) {
+      if (result) upcHandleScan(result.getText());
+    });
+  }
+}
+
+function upcHandleScan(raw) {
+  var code = String(raw || '').replace(/\s/g, '');
+  if (!code) return;
+
+  // Debounce — ignore same code within 2 seconds
+  var now = Date.now();
+  if (code === _upcLastScanned && now - _upcLastScannedAt < 2000) return;
+  _upcLastScanned   = code;
+  _upcLastScannedAt = now;
+
+  var resultEl  = document.getElementById('upc-scan-result');
+  var tallyOk   = document.getElementById('upc-tally-ok');
+  var tallyFail = document.getElementById('upc-tally-fail');
+
+  var match = _upcVerifyMap[code];
+  if (match) {
+    _upcVerifiedOk[code] = true;
+    delete _upcVerifiedFail[code];
+    resultEl.style.background = 'rgba(74,222,128,.25)';
+    resultEl.style.color       = '#4ade80';
+    resultEl.innerHTML         = '✅ ' + match.partNum;
+    upcBeep(true);
+  } else {
+    // Not in shipment
+    _upcVerifiedFail[code] = true;
+    resultEl.style.background  = 'rgba(248,113,113,.25)';
+    resultEl.style.color        = '#f87171';
+    resultEl.innerHTML          = '❌ Not in shipment<br><span style="font-size:11px;opacity:.7">' + code + '</span>';
+    upcBeep(false);
+  }
+
+  tallyOk.textContent   = Object.keys(_upcVerifiedOk).length;
+  tallyFail.textContent = Object.keys(_upcVerifiedFail).length;
+
+  // Flash effect
+  resultEl.style.transform = 'scale(1.03)';
+  setTimeout(function() { resultEl.style.transform = 'scale(1)'; }, 150);
+}
+
+// Beep using Web Audio API
+var _upcAudioCtx = null;
+function upcBeep(success) {
+  try {
+    if (!_upcAudioCtx) _upcAudioCtx = new (window.AudioContext || window.webkitAudioContext)();
+    var osc  = _upcAudioCtx.createOscillator();
+    var gain = _upcAudioCtx.createGain();
+    osc.connect(gain);
+    gain.connect(_upcAudioCtx.destination);
+    osc.frequency.value = success ? 1046 : 300; // high = good, low = bad
+    osc.type            = success ? 'sine' : 'square';
+    gain.gain.setValueAtTime(0.3, _upcAudioCtx.currentTime);
+    gain.gain.exponentialRampToValueAtTime(0.001, _upcAudioCtx.currentTime + (success ? 0.15 : 0.4));
+    osc.start(_upcAudioCtx.currentTime);
+    osc.stop(_upcAudioCtx.currentTime + (success ? 0.15 : 0.4));
+  } catch(_) {}
+}
+
 // Look up inside UPC(s) for a SKU/partNum/UPC query
 // Returns array of {partNum, upc} — only valid UPC-A (12-digit) entries
 function upcLookup(query) {
@@ -4184,6 +4381,9 @@ function upcRenderFromSkuList(skus, sourceName, mode) {
     document.getElementById('upc-results').innerHTML = '<div style="text-align:center;padding:40px;color:var(--text3)">No UPCs found for any SKUs in this shipment.</div>';
     return;
   }
+
+  // Show scan bar with outside UPCs for this shipment
+  upcShowScanBar(skus);
 
   var found = allMatches.filter(function(m) { return m.upc; }).length;
   var missing = allMatches.length - found;
@@ -5881,6 +6081,47 @@ function salesToast(msg, type) {
           <div id="upc-shipment-count" style="font-size:12px;color:var(--text3);margin-top:2px"></div>
         </div>
         <button class="btn btn-primary" style="font-size:12px" onclick="upcLoadShipment()">Load Live Barcodes</button>
+      </div>
+    </div>
+
+    <!-- Scan & Verify bar — only shown when shipment is loaded -->
+    <div id="upc-scan-bar" style="display:none;align-items:center;justify-content:space-between;gap:12px;background:var(--surface2);border:1.5px solid var(--border);border-radius:12px;padding:14px 20px;margin-bottom:16px;flex-wrap:wrap">
+      <div>
+        <div style="font-size:13px;font-weight:700">📷 Scan &amp; Verify Cases</div>
+        <div id="upc-verify-tally" style="font-size:12px;color:var(--text3);margin-top:2px">0 verified · 0 not found</div>
+      </div>
+      <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
+        <div id="upc-verify-progress" style="display:none;font-size:12px;font-weight:700;padding:4px 12px;border-radius:20px;background:var(--surface)"></div>
+        <button class="btn btn-primary" id="upc-scan-btn" onclick="upcStartScan()">📷 Start Scanning</button>
+        <button class="btn btn-secondary" id="upc-scan-reset" onclick="upcResetVerify()" style="font-size:12px">Reset</button>
+      </div>
+    </div>
+
+    <!-- Camera overlay -->
+    <div id="upc-camera-overlay" style="display:none;position:fixed;inset:0;z-index:500;background:rgba(0,0,0,.92);flex-direction:column;align-items:center;justify-content:center">
+      <div style="width:100%;max-width:480px;padding:0 16px">
+        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:16px">
+          <div style="color:#fff;font-size:16px;font-weight:700">📷 Scan Case Barcode</div>
+          <button onclick="upcStopScan()" style="background:rgba(255,255,255,.15);border:none;color:#fff;font-size:20px;width:36px;height:36px;border-radius:50%;cursor:pointer">✕</button>
+        </div>
+        <!-- Viewfinder -->
+        <div style="position:relative;border-radius:12px;overflow:hidden;background:#000">
+          <video id="upc-video" autoplay playsinline muted style="width:100%;display:block;max-height:60vh;object-fit:cover"></video>
+          <!-- Aim guide -->
+          <div style="position:absolute;inset:0;pointer-events:none;display:flex;align-items:center;justify-content:center">
+            <div style="width:80%;height:80px;border:2px solid rgba(255,255,255,.6);border-radius:6px;box-shadow:0 0 0 2000px rgba(0,0,0,.3)"></div>
+          </div>
+        </div>
+        <!-- Result flash -->
+        <div id="upc-scan-result" style="margin-top:16px;border-radius:10px;padding:14px 20px;text-align:center;font-size:15px;font-weight:700;min-height:52px;transition:all .2s;background:rgba(255,255,255,.08);color:rgba(255,255,255,.4)">
+          Point camera at case barcode
+        </div>
+        <!-- Tally -->
+        <div id="upc-scan-tally" style="margin-top:12px;display:flex;gap:12px;justify-content:center">
+          <div style="color:#4ade80;font-size:13px">✅ <span id="upc-tally-ok">0</span> verified</div>
+          <div style="color:rgba(255,255,255,.4);font-size:13px">·</div>
+          <div style="color:#f87171;font-size:13px">❌ <span id="upc-tally-fail">0</span> not found</div>
+        </div>
       </div>
     </div>
 
