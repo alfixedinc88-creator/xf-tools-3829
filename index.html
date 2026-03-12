@@ -4037,6 +4037,7 @@ function upcShowScanBar(skuList) {
   var bar = document.getElementById('upc-scan-bar');
   if (bar) {
     bar.style.display = Object.keys(_upcVerifyMap).length > 0 ? 'flex' : 'none';
+    if (Object.keys(_upcVerifyMap).length > 0) upcPreloadZxing(); // preload for iOS
   }
   upcUpdateTally();
 }
@@ -4067,11 +4068,30 @@ function upcResetVerify() {
   document.getElementById('upc-scan-result').style.color = 'rgba(255,255,255,.4)';
 }
 
+// Detect iOS Safari
+var _isIOS = /iPhone|iPad|iPod/i.test(navigator.userAgent);
+
 async function upcStartScan() {
   var overlay = document.getElementById('upc-camera-overlay');
   overlay.style.display = 'flex';
   document.getElementById('upc-tally-ok').textContent   = Object.keys(_upcVerifiedOk).length;
   document.getElementById('upc-tally-fail').textContent = Object.keys(_upcVerifiedFail).length;
+  var resultEl = document.getElementById('upc-scan-result');
+
+  if (_isIOS || !('BarcodeDetector' in window)) {
+    // iOS Safari: photo-based scanning (most reliable on iPhone)
+    document.getElementById('upc-ios-mode').style.display       = 'block';
+    document.getElementById('upc-viewfinder-wrap').style.display = 'none';
+    resultEl.textContent = 'Tap "Take Photo of Barcode" below';
+    resultEl.style.background = 'rgba(255,255,255,.08)';
+    resultEl.style.color = 'rgba(255,255,255,.5)';
+    return;
+  }
+
+  // Chrome / Android / Desktop — live video with BarcodeDetector
+  document.getElementById('upc-viewfinder-wrap').style.display = 'block';
+  document.getElementById('upc-ios-mode').style.display        = 'none';
+  resultEl.textContent = 'Starting camera…';
 
   try {
     _upcScanStream = await navigator.mediaDevices.getUserMedia({
@@ -4080,11 +4100,14 @@ async function upcStartScan() {
     var video = document.getElementById('upc-video');
     video.srcObject = _upcScanStream;
     await video.play();
+    resultEl.textContent = 'Point camera at case barcode';
+    resultEl.style.background = 'rgba(255,255,255,.08)';
+    resultEl.style.color = 'rgba(255,255,255,.4)';
     upcScanFrame(video);
   } catch(e) {
-    document.getElementById('upc-scan-result').textContent = '⚠ Camera access denied — allow camera in browser settings';
-    document.getElementById('upc-scan-result').style.background = 'rgba(220,38,38,.3)';
-    document.getElementById('upc-scan-result').style.color = '#fca5a5';
+    resultEl.innerHTML = '⚠ Camera access denied<br><span style="font-size:11px">Allow camera in browser settings</span>';
+    resultEl.style.background = 'rgba(220,38,38,.3)';
+    resultEl.style.color = '#fca5a5';
   }
 }
 
@@ -4094,44 +4117,149 @@ function upcStopScan() {
     _upcScanStream = null;
   }
   cancelAnimationFrame(_upcScanTimer);
+  // Reset photo input so same barcode can be scanned again
+  var inp = document.getElementById('upc-photo-input');
+  if (inp) inp.value = '';
   document.getElementById('upc-camera-overlay').style.display = 'none';
   upcUpdateTally();
 }
 
-// Decode barcode from video frame using BarcodeDetector API (native browser)
-// Falls back to ZXing if BarcodeDetector unavailable
-var _zxingReader = null;
-async function upcScanFrame(video) {
-  if (!_upcScanStream) return;
+// iOS: decode a photo taken by the camera
+async function upcDecodePhoto(input) {
+  if (!input.files || !input.files[0]) return;
+  var resultEl = document.getElementById('upc-scan-result');
+  resultEl.textContent = 'Reading barcode…';
+  resultEl.style.background = 'rgba(255,255,255,.08)';
+  resultEl.style.color = 'rgba(255,255,255,.5)';
 
-  // Try native BarcodeDetector first (Chrome/Android, very fast)
-  if ('BarcodeDetector' in window) {
-    var detector = new BarcodeDetector({ formats: ['upc_a', 'upc_e', 'ean_13', 'code_128'] });
-    var scan = async function() {
-      if (!_upcScanStream) return;
-      try {
-        var codes = await detector.detect(video);
-        if (codes.length) upcHandleScan(codes[0].rawValue);
-      } catch(_) {}
-      _upcScanTimer = requestAnimationFrame(scan);
-    };
-    scan();
-  } else {
-    // Load ZXing as fallback
-    if (!_zxingReader) {
-      await new Promise(function(res) {
-        var s = document.createElement('script');
-        s.src = 'https://unpkg.com/@zxing/browser@latest/umd/index.min.js';
-        s.onload = res;
-        document.head.appendChild(s);
-      });
-      _zxingReader = new ZXingBrowser.BrowserMultiFormatReader();
+  var file = input.files[0];
+  var img  = new Image();
+  var url  = URL.createObjectURL(file);
+
+  img.onload = function() {
+    var canvas = document.getElementById('upc-decode-canvas');
+    canvas.width  = img.width;
+    canvas.height = img.height;
+    var ctx = canvas.getContext('2d');
+    ctx.drawImage(img, 0, 0);
+    URL.revokeObjectURL(url);
+
+    // Try native BarcodeDetector on still image (works on some iOS 17+)
+    if ('BarcodeDetector' in window) {
+      var det = new BarcodeDetector({ formats: ['upc_a','upc_e','ean_13','code_128'] });
+      det.detect(canvas).then(function(codes) {
+        if (codes.length) {
+          upcHandleScan(codes[0].rawValue);
+        } else {
+          upcTryZbarDecode(ctx, canvas, resultEl);
+        }
+      }).catch(function() { upcTryZbarDecode(ctx, canvas, resultEl); });
+    } else {
+      upcTryZbarDecode(ctx, canvas, resultEl);
     }
-    _zxingReader.decodeFromVideoElement(video, function(result, err) {
-      if (result) upcHandleScan(result.getText());
-    });
+    // Reset input so user can scan again immediately
+    input.value = '';
+  };
+  img.src = url;
+}
+
+// Manual UPC-A decode from canvas pixels — scans horizontal lines for barcode pattern
+function upcTryZbarDecode(ctx, canvas, resultEl) {
+  var w = canvas.width, h = canvas.height;
+  // Sample multiple horizontal strips across middle third of image
+  var results = [];
+  var strips = [0.35, 0.40, 0.45, 0.50, 0.55, 0.60, 0.65];
+  for (var si = 0; si < strips.length; si++) {
+    var y   = Math.floor(h * strips[si]);
+    var row = ctx.getImageData(0, y, w, 1).data;
+    // Convert to binary (dark/light) with adaptive threshold
+    var pixels = [];
+    var sum = 0;
+    for (var x = 0; x < w; x++) sum += (row[x*4] + row[x*4+1] + row[x*4+2]) / 3;
+    var thresh = (sum / w) * 0.6;
+    for (var x = 0; x < w; x++) {
+      var lum = (row[x*4] + row[x*4+1] + row[x*4+2]) / 3;
+      pixels.push(lum < thresh ? 1 : 0);
+    }
+    var code = upcDecodeRow(pixels);
+    if (code) results.push(code);
+  }
+  // Pick most common result
+  if (results.length) {
+    var freq = {};
+    results.forEach(function(c) { freq[c] = (freq[c]||0)+1; });
+    var best = Object.keys(freq).sort(function(a,b){return freq[b]-freq[a];})[0];
+    upcHandleScan(best);
+  } else {
+    resultEl.innerHTML = '⚠ Could not read barcode<br><span style="font-size:11px">Try again — get closer, better light</span>';
+    resultEl.style.background = 'rgba(220,38,38,.2)';
+    resultEl.style.color = '#fca5a5';
   }
 }
+
+// Decode a single row of binary pixels into a UPC-A code
+function upcDecodeRow(pixels) {
+  // UPC-A: 95 modules. Find runs of dark/light
+  var runs = [];
+  var cur  = pixels[0], cnt = 1;
+  for (var i = 1; i < pixels.length; i++) {
+    if (pixels[i] === cur) { cnt++; }
+    else { runs.push({ v: cur, n: cnt }); cur = pixels[i]; cnt = 1; }
+  }
+  runs.push({ v: cur, n: cnt });
+
+  // Find start guard (dark-light-dark) and try to decode from each position
+  for (var r = 0; r < runs.length - 60; r++) {
+    if (runs[r].v !== 1) continue; // must start dark
+    var unit = runs[r].n;
+    if (unit < 1) continue;
+    // Rough UPC pattern check: need ~95 modules total
+    var totalMods = 0;
+    for (var j = r; j < runs.length && totalMods < 100; j++) {
+      totalMods += runs[j].n;
+    }
+    if (totalMods < 85 || totalMods > 115) continue;
+
+    // Try decoding digits using L-code table
+    var Lcodes = {
+      '3211': '0','2221': '1','2122': '2','1411': '3','1132': '4',
+      '1231': '5','1114': '6','1312': '7','1213': '8','3112': '9'
+    };
+    // Simplified: extract 12 digits by splitting runs proportionally
+    // Build digit string from run widths
+    var u = unit;
+    var ri = r + 3; // skip start guard
+    var digits = '';
+    for (var d = 0; d < 12; d++) {
+      if (d === 6) ri += 5; // skip middle guard (5 modules)
+      var w1 = runs[ri]   ? Math.round(runs[ri].n / u)   : 0;
+      var w2 = runs[ri+1] ? Math.round(runs[ri+1].n / u) : 0;
+      var w3 = runs[ri+2] ? Math.round(runs[ri+2].n / u) : 0;
+      var w4 = runs[ri+3] ? Math.round(runs[ri+3].n / u) : 0;
+      var key = '' + w1 + w2 + w3 + w4;
+      if (Lcodes[key] !== undefined) { digits += Lcodes[key]; ri += 4; }
+      else break;
+    }
+    if (digits.length === 12 && upcValidateChecksum(digits)) return digits;
+  }
+  return null;
+}
+
+// Live video decode (Chrome/Android only — BarcodeDetector)
+async function upcScanFrame(video) {
+  if (!_upcScanStream || !('BarcodeDetector' in window)) return;
+  var detector = new BarcodeDetector({ formats: ['upc_a','upc_e','ean_13','code_128'] });
+  var scan = async function() {
+    if (!_upcScanStream) return;
+    try {
+      var codes = await detector.detect(video);
+      if (codes.length) upcHandleScan(codes[0].rawValue);
+    } catch(_) {}
+    _upcScanTimer = requestAnimationFrame(scan);
+  };
+  scan();
+}
+
 
 function upcHandleScan(raw) {
   var code = String(raw || '').replace(/\s/g, '');
@@ -6098,26 +6226,43 @@ function salesToast(msg, type) {
     </div>
 
     <!-- Camera overlay -->
-    <div id="upc-camera-overlay" style="display:none;position:fixed;inset:0;z-index:500;background:rgba(0,0,0,.92);flex-direction:column;align-items:center;justify-content:center">
-      <div style="width:100%;max-width:480px;padding:0 16px">
-        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:16px">
+    <div id="upc-camera-overlay" style="display:none;position:fixed;inset:0;z-index:500;background:rgba(0,0,0,.95);flex-direction:column;align-items:center;justify-content:center">
+      <div style="width:100%;max-width:480px;padding:0 20px;box-sizing:border-box">
+        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:20px">
           <div style="color:#fff;font-size:16px;font-weight:700">📷 Scan Case Barcode</div>
-          <button onclick="upcStopScan()" style="background:rgba(255,255,255,.15);border:none;color:#fff;font-size:20px;width:36px;height:36px;border-radius:50%;cursor:pointer">✕</button>
+          <button onclick="upcStopScan()" style="background:rgba(255,255,255,.15);border:none;color:#fff;font-size:20px;width:36px;height:36px;border-radius:50%;cursor:pointer;line-height:1">✕</button>
         </div>
-        <!-- Viewfinder -->
-        <div style="position:relative;border-radius:12px;overflow:hidden;background:#000">
-          <video id="upc-video" autoplay playsinline muted style="width:100%;display:block;max-height:60vh;object-fit:cover"></video>
-          <!-- Aim guide -->
+
+        <!-- Video viewfinder (used on Android/desktop with BarcodeDetector) -->
+        <div id="upc-viewfinder-wrap" style="display:none;position:relative;border-radius:12px;overflow:hidden;background:#000;margin-bottom:16px">
+          <video id="upc-video" autoplay playsinline muted style="width:100%;display:block;max-height:55vh;object-fit:cover"></video>
           <div style="position:absolute;inset:0;pointer-events:none;display:flex;align-items:center;justify-content:center">
-            <div style="width:80%;height:80px;border:2px solid rgba(255,255,255,.6);border-radius:6px;box-shadow:0 0 0 2000px rgba(0,0,0,.3)"></div>
+            <div style="width:85%;height:90px;border:2px solid rgba(255,255,255,.7);border-radius:8px"></div>
           </div>
         </div>
+
+        <!-- iOS mode: tap to photograph barcode -->
+        <div id="upc-ios-mode" style="display:none;text-align:center;margin-bottom:16px">
+          <div style="color:rgba(255,255,255,.6);font-size:13px;margin-bottom:16px;line-height:1.5">
+            Tap the button below, point your camera<br>at the case barcode and take a photo
+          </div>
+          <!-- Hidden file input — triggers iOS camera -->
+          <input type="file" id="upc-photo-input" accept="image/*" capture="environment"
+            style="display:none" onchange="upcDecodePhoto(this)">
+          <button onclick="document.getElementById('upc-photo-input').click()"
+            style="background:var(--accent);color:#fff;border:none;border-radius:12px;padding:16px 32px;font-size:16px;font-weight:700;cursor:pointer;width:100%">
+            📸 Take Photo of Barcode
+          </button>
+          <!-- Canvas used for decoding — hidden -->
+          <canvas id="upc-decode-canvas" style="display:none"></canvas>
+        </div>
+
         <!-- Result flash -->
-        <div id="upc-scan-result" style="margin-top:16px;border-radius:10px;padding:14px 20px;text-align:center;font-size:15px;font-weight:700;min-height:52px;transition:all .2s;background:rgba(255,255,255,.08);color:rgba(255,255,255,.4)">
-          Point camera at case barcode
+        <div id="upc-scan-result" style="border-radius:10px;padding:16px 20px;text-align:center;font-size:15px;font-weight:700;min-height:56px;transition:all .2s;background:rgba(255,255,255,.08);color:rgba(255,255,255,.4);line-height:1.4">
+          Initializing…
         </div>
         <!-- Tally -->
-        <div id="upc-scan-tally" style="margin-top:12px;display:flex;gap:12px;justify-content:center">
+        <div style="margin-top:14px;display:flex;gap:12px;justify-content:center">
           <div style="color:#4ade80;font-size:13px">✅ <span id="upc-tally-ok">0</span> verified</div>
           <div style="color:rgba(255,255,255,.4);font-size:13px">·</div>
           <div style="color:#f87171;font-size:13px">❌ <span id="upc-tally-fail">0</span> not found</div>
