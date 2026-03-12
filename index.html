@@ -1635,6 +1635,7 @@ input[type=checkbox]{width:15px;height:15px;cursor:pointer;accent-color:var(--bl
 .sort-arrow { font-size: 10px; margin-left: 3px; color: var(--text3); }
 .sort-arrow.active { color: var(--accent); }
 </style>
+<script src="https://unpkg.com/html5-qrcode@2.3.8/html5-qrcode.min.js"></script>
 </head>
 <body>
 <script>document.body.style.visibility="visible";</script>
@@ -1692,6 +1693,12 @@ input[type=checkbox]{width:15px;height:15px;cursor:pointer;accent-color:var(--bl
         <div class="launcher-card-icon">🏷️</div>
         <div class="launcher-card-title">UPC Barcodes</div>
         <div class="launcher-card-desc">Print Zebra barcode labels by SKU, UPC, or AWD shipment</div>
+      </div>
+    
+      <div class="launcher-card" onclick="launchApp('inventory')">
+        <div class="launcher-card-icon">📋</div>
+        <div class="launcher-card-title">Inventory</div>
+        <div class="launcher-card-desc">Scan cases in and out, log locations, and manage stock with management approval</div>
       </div>
     </div>
 
@@ -3378,6 +3385,9 @@ function launchApp(which) {
     if (!S.loaded) loadReportsFromSheet();
   } else if (which === 'upc') {
     document.getElementById('upc-app').style.display = 'flex';
+  } else if (which === 'inventory') {
+    document.getElementById('inv-app').style.display = 'flex';
+    invFetchPendingCount();
     // Load warehouse data if not already loaded (needs DB.upc)
     if (DB.master.length === 0) loadAllSheets();
     // Load AWD_DB for SKU-to-UPC lookup from planner side
@@ -3391,6 +3401,7 @@ function backToLauncher() {
   document.getElementById('awd-app').style.display = 'none';
   document.getElementById('upc-app').style.display = 'none';
   document.getElementById('reorder-app').style.display = 'none';
+  document.getElementById('inv-app').style.display = 'none';
   document.getElementById('dashboard-app').style.display = 'none';
   document.getElementById('launcher').style.display = 'flex';
 }
@@ -7505,6 +7516,100 @@ function rprSyncAll() {
   if (tab === 'decision') loadAllDecisions();
   if (tab === 'approval') renderApprovals();
 }
+async function loadAllDecisions() {
+  const content = document.getElementById('decision-content');
+  content.innerHTML = `<div class="loading"><div class="spinner"></div> Loading all decisions…</div>`;
+  try {
+    const data = await apiCall('/repricer/price-history');
+    const rows  = data.rows || [];
+    if (!rows.length) {
+      content.innerHTML = `<div class="empty-state"><div class="icon">💰</div><div class="msg">No decisions recorded yet</div></div>`;
+      return;
+    }
+    // rows: [Timestamp, User, SKU, Item#, Pack, OldPrice, NewPrice, %Change, Status, Result, Notes]
+    let html = `<div style="overflow-x:auto"><table style="width:100%;border-collapse:collapse;font-size:12px">
+      <thead><tr style="background:var(--surface2);text-align:left">
+        <th style="padding:8px 10px">Date</th>
+        <th style="padding:8px 10px">SKU</th>
+        <th style="padding:8px 10px">Item#</th>
+        <th style="padding:8px 10px">Pack</th>
+        <th style="padding:8px 10px">Old</th>
+        <th style="padding:8px 10px">New</th>
+        <th style="padding:8px 10px">%</th>
+        <th style="padding:8px 10px">Status</th>
+        <th style="padding:8px 10px">User</th>
+      </tr></thead><tbody>`;
+    rows.slice().reverse().forEach((r, i) => {
+      const bg = i % 2 === 0 ? '' : 'background:var(--surface2)';
+      const statusColor = r[8]==='Applied' ? 'var(--green)' : r[8]==='Denied' ? 'var(--red)' : 'var(--text3)';
+      html += `<tr style="${bg}">
+        <td style="padding:6px 10px;color:var(--text3)">${(r[0]||'').slice(0,10)}</td>
+        <td style="padding:6px 10px;font-family:var(--mono)">${r[2]||''}</td>
+        <td style="padding:6px 10px;font-family:var(--mono)">${r[3]||''}</td>
+        <td style="padding:6px 10px;text-align:center">${r[4]||''}</td>
+        <td style="padding:6px 10px;font-family:var(--mono)">$${parseFloat(r[5]||0).toFixed(2)}</td>
+        <td style="padding:6px 10px;font-family:var(--mono);font-weight:700">$${parseFloat(r[6]||0).toFixed(2)}</td>
+        <td style="padding:6px 10px;color:${parseFloat(r[7])>0?'var(--green)':'var(--red)'}">${r[7]||''}</td>
+        <td style="padding:6px 10px;color:${statusColor};font-weight:600">${r[8]||''}</td>
+        <td style="padding:6px 10px;color:var(--text3)">${r[1]||''}</td>
+      </tr>`;
+    });
+    html += `</tbody></table></div>`;
+    html += `<div style="font-size:11px;color:var(--text3);margin-top:8px;text-align:right">${rows.length} records</div>`;
+    content.innerHTML = html;
+  } catch(e) {
+    content.innerHTML = `<div class="empty-state"><div class="icon">⚠️</div><div class="msg">${e.message}</div></div>`;
+  }
+}
+
+
+// 1-year sync chunked into 3-month slices (avoids 50 subrequest limit)
+async function syncSalesYearChunked() {
+  const btn = document.querySelector('[onclick*="syncSalesYearChunked"]') ||
+              document.querySelector('[onclick*="1yr"]');
+  const statusEl = document.getElementById('sales-sync-status') ||
+                   document.getElementById('rpr-sync-status');
+  const setStatus = (msg) => { if (statusEl) statusEl.textContent = msg; };
+
+  if (btn) { btn.disabled = true; btn.textContent = '⏳ Syncing 1yr…'; }
+  setStatus('Starting 1-year sync (chunked)…');
+
+  // Split 1 year into 3-month chunks — each chunk stays under 50 subrequest limit
+  const now    = new Date();
+  const chunks = [];
+  for (let i = 0; i < 4; i++) {
+    const toDate   = new Date(now.getTime() - i * 91 * 86400000);
+    const fromDate = new Date(now.getTime() - (i + 1) * 91 * 86400000);
+    chunks.push({ from: fromDate.toISOString(), to: toDate.toISOString(), label: `Q${4-i}` });
+  }
+  chunks.reverse(); // oldest first
+
+  let totalOrders = 0, errors = [];
+  for (let ci = 0; ci < chunks.length; ci++) {
+    const c = chunks[ci];
+    setStatus(`Syncing ${c.label} (${ci+1} of ${chunks.length})…`);
+    if (btn) btn.textContent = `⏳ ${c.label} (${ci+1}/4)…`;
+    try {
+      const data = await apiCall('/cron/sales-chunk', {
+        method: 'POST',
+        body: JSON.stringify({ from: c.from, to: c.to, window: '1yr' })
+      });
+      totalOrders += data.ordersProcessed || 0;
+      if (data.error) errors.push(`${c.label}: ${data.error}`);
+    } catch(e) {
+      errors.push(`${c.label}: ${e.message}`);
+    }
+  }
+
+  if (btn) { btn.disabled = false; btn.textContent = '🔄 Sync 1 Year'; }
+  if (errors.length) {
+    setStatus(`Done with errors: ${errors.join(' | ')}`);
+  } else {
+    setStatus(`✓ 1-year sync complete — ${totalOrders} orders processed`);
+    setTimeout(() => setStatus(''), 5000);
+  }
+}
+
 function setSyncStatus(live) {
   document.getElementById('sync-dot').className   = 'sync-dot' + (live ? '' : ' stale');
   document.getElementById('sync-label').textContent = live ? 'Live' : 'Error';
@@ -8498,39 +8603,103 @@ function openDecisionApply(rawD) {
 
 let allSalesHistory = [];
 
-async function runCron(window) {
+async function runCron(win) {
   const btns = document.querySelectorAll('#cron-btns button');
   btns.forEach(b => b.disabled = true);
   const statusEl = document.getElementById('cron-status');
-  statusEl.style.display = 'block';
+  statusEl.style.display    = 'block';
   statusEl.style.background = 'var(--accent-bg)';
-  statusEl.style.border = '1px solid var(--accent)';
-  statusEl.innerHTML = `<span style="color:var(--accent);font-size:13px">⟳ Fetching ${window} sales from eBay… (this takes ~5–10 seconds)</span>`;
-  try {
-    const data = await apiCall('/cron/sales-' + window);
-    const capWarn = data.hitCap ? ` <span style="color:var(--orange)">⚠️ Hit 9400 order cap</span>` : '';
-    const errWarn = data.error  ? ` <span style="color:var(--red)">✗ ${data.error}</span>` : '';
-    const sc = data.statusCounts || {};
-    const cancelledCount = Object.entries(sc).filter(([k]) => k.includes('CANCEL')).reduce((a,[,v]) => a+v, 0);
-    const cancelNote = cancelledCount > 0 ? ` <span style="color:var(--text3);font-weight:400">· ${cancelledCount} cancelled excluded</span>` : '';
-    statusEl.style.background = data.error ? 'var(--red-bg)'   : 'var(--green-bg)';
-    statusEl.style.border     = data.error ? '1px solid var(--red)' : '1px solid var(--green)';
-    statusEl.innerHTML = `<span style="color:${data.error ? 'var(--red)' : 'var(--green)'};font-size:13px;font-weight:600">
-      ${data.error ? '✗' : '✓'} ${window} synced — ${data.itemsWritten || 0} items from ${data.ordersProcessed || 0} orders · ${data.pages || 0} pages
-      <span style="font-weight:400;color:var(--text3)"> · from ${(data.fromDate||'').slice(0,10)} · ${data.date || ''}</span>${cancelNote}${capWarn}${errWarn}
-    </span>`;
-    // auto-reload sales history if that sub-view is visible
-    if (document.getElementById('vel-view-history').style.display !== 'none') {
-      allSalesHistory = [];
-      loadSalesHistory();
+  statusEl.style.border     = '1px solid var(--accent)';
+
+  // 1yr and 2yr exceed Cloudflare's 50 subrequest limit in a single call.
+  // Split into quarterly chunks — each chunk calls /cron/sales-chunk with explicit from/to dates.
+  const needsChunking = (win === '1yr' || win === '2yr');
+
+  if (!needsChunking) {
+    // 30d / 90d / 6mo — single call as before
+    statusEl.innerHTML = `<span style="color:var(--accent);font-size:13px">⟳ Fetching ${win} sales… (5–10 sec)</span>`;
+    try {
+      const data = await apiCall('/cron/sales-' + win);
+      cronShowResult(statusEl, win, [data]);
+    } catch(e) {
+      cronShowError(statusEl, e.message);
+    } finally {
+      btns.forEach(b => b.disabled = false);
     }
-  } catch(e) {
-    statusEl.style.background = 'var(--red-bg)';
-    statusEl.style.border = '1px solid var(--red)';
-    statusEl.innerHTML = `<span style="color:var(--red);font-size:13px">✗ ${e.message}</span>`;
-  } finally {
-    btns.forEach(b => b.disabled = false);
+    return;
   }
+
+  // Chunked: split into 90-day quarters
+  const totalDays  = win === '2yr' ? 730 : 365;
+  const chunkDays  = 90;
+  const now        = Date.now();
+  const chunks     = [];
+  for (let d = 0; d < totalDays; d += chunkDays) {
+    const toMs   = now - d * 86400000;
+    const fromMs = now - Math.min(d + chunkDays, totalDays) * 86400000;
+    chunks.push({ from: new Date(fromMs).toISOString(), to: new Date(toMs).toISOString() });
+  }
+
+  const total   = chunks.length;
+  const results = [];
+  let   failed  = 0;
+
+  for (let i = 0; i < total; i++) {
+    const { from, to } = chunks[i];
+    const label = from.slice(0,10) + ' → ' + to.slice(0,10);
+    statusEl.innerHTML = `<span style="color:var(--accent);font-size:13px">
+      ⟳ Syncing ${win} — chunk ${i+1} of ${total}: ${label}
+      <div style="margin-top:6px;background:var(--border);border-radius:4px;height:6px;overflow:hidden">
+        <div style="height:100%;background:var(--accent);width:${Math.round(i/total*100)}%;transition:width .3s"></div>
+      </div>
+    </span>`;
+
+    try {
+      const data = await apiCall('/cron/sales-chunk', {
+        method: 'POST',
+        body: JSON.stringify({ from, to, window: win })
+      });
+      results.push(data);
+    } catch(e) {
+      results.push({ error: e.message, fromDate: from });
+      failed++;
+    }
+  }
+
+  cronShowResult(statusEl, win, results, failed);
+  btns.forEach(b => b.disabled = false);
+
+  if (document.getElementById('vel-view-history').style.display !== 'none') {
+    allSalesHistory = [];
+    loadSalesHistory();
+  }
+}
+
+function cronShowResult(statusEl, win, results, failed=0) {
+  const totalOrders  = results.reduce((s,d) => s + (d.ordersProcessed||0), 0);
+  const totalItems   = results.reduce((s,d) => s + (d.itemsWritten||0), 0);
+  const totalPages   = results.reduce((s,d) => s + (d.pages||0), 0);
+  const errors       = results.filter(d => d.error).map(d => d.error);
+  const firstFrom    = results[results.length-1]?.fromDate || '';
+  const hasErr       = errors.length > 0;
+  const capWarn      = results.some(d=>d.hitCap) ? ` <span style="color:var(--orange)">⚠ Hit order cap on some chunks</span>` : '';
+  const errWarn      = hasErr ? ` <span style="color:var(--red)">✗ ${errors[0]}</span>` : '';
+  statusEl.style.background = hasErr ? 'var(--red-bg)'  : 'var(--green-bg)';
+  statusEl.style.border     = hasErr ? '1px solid var(--red)' : '1px solid var(--green)';
+  statusEl.innerHTML = `<span style="color:${hasErr?'var(--red)':'var(--green)'};font-size:13px;font-weight:600">
+    ${hasErr?'⚠':'✓'} ${win} synced — ${totalItems} items from ${totalOrders} orders · ${totalPages} pages
+    <span style="font-weight:400;color:var(--text3)"> · from ${firstFrom.slice(0,10)}</span>${capWarn}${errWarn}
+  </span>`;
+  if (document.getElementById('vel-view-history')?.style.display !== 'none') {
+    allSalesHistory = [];
+    loadSalesHistory();
+  }
+}
+
+function cronShowError(statusEl, msg) {
+  statusEl.style.background = 'var(--red-bg)';
+  statusEl.style.border = '1px solid var(--red)';
+  statusEl.innerHTML = `<span style="color:var(--red);font-size:13px">✗ ${msg}</span>`;
 }
 
 function switchVelocityView(view) {
@@ -8999,6 +9168,1187 @@ function rprToast(msg, type = '') {
   clearTimeout(rprTimer);
   rprTimer = setTimeout(() => { t.className = ''; }, 3500);
 }
+
+</script>
+
+<!-- ═══ INVENTORY APP ═══ -->
+<div id="inv-app" style="display:none;flex-direction:column;min-height:100vh">
+<style>
+#inv-app {
+  font-family:'DM Sans',sans-serif;
+}
+#inv-app .topbar{display:flex;align-items:center;justify-content:space-between;padding:14px 16px;background:var(--bg2);border-bottom:1px solid var(--border);position:sticky;top:0;z-index:100}
+#inv-app .topbar-left{display:flex;align-items:center;gap:10px}
+#inv-app .topbar-logo{font-size:13px;font-weight:800;letter-spacing:1px;color:var(--accent)}
+#inv-app .topbar-title{font-size:15px;font-weight:700;color:var(--text)}
+#inv-app .topbar-right{display:flex;gap:8px}
+#inv-app .btn-tab{padding:7px 16px;border-radius:20px;font-size:13px;font-weight:600;border:1.5px solid var(--border);background:transparent;color:var(--text3);transition:all .2s;cursor:pointer}
+#inv-app .btn-tab.active{background:var(--accent);border-color:var(--accent);color:#fff}
+#inv-app .badge{display:inline-flex;align-items:center;justify-content:center;min-width:18px;height:18px;border-radius:9px;font-size:10px;font-weight:700;padding:0 5px;margin-left:5px;background:#ef4444;color:#fff}
+#inv-app .panel{display:none;flex-direction:column;min-height:calc(100vh - 57px)}
+#inv-app .panel.active{display:flex}
+#inv-app .mode-bar{display:flex;gap:10px;padding:16px;background:var(--bg2);border-bottom:1px solid var(--border)}
+#inv-app .mode-btn{flex:1;padding:14px 10px;border-radius:12px;border:2px solid var(--border);background:var(--bg3);font-size:14px;font-weight:700;color:var(--text3);transition:all .2s;text-align:center;cursor:pointer}
+#inv-app .mode-btn.active.in{border-color:var(--green);background:var(--green-bg);color:var(--green)}
+#inv-app .mode-btn.active.out{border-color:var(--red);background:var(--red-bg);color:var(--red)}
+#inv-app .mode-icon{font-size:22px;display:block;margin-bottom:4px}
+#inv-app .scan-body{flex:1;padding:16px;display:flex;flex-direction:column;gap:14px}
+#inv-app .card{background:var(--bg2);border:1px solid var(--border);border-radius:12px;padding:16px;box-shadow:var(--shadow)}
+#inv-app .card-label{font-size:11px;font-weight:700;letter-spacing:1px;text-transform:uppercase;color:var(--text3);margin-bottom:10px}
+#inv-app .scanner-wrap{border-radius:12px;overflow:hidden;background:#000;position:relative;min-height:180px}
+#inv-app #inv-reader{width:100%}
+#inv-app #inv-reader video{width:100%!important;border-radius:0}
+#inv-app .scan-result{display:flex;align-items:center;gap:10px;padding:12px 14px;border-radius:8px;background:var(--accent-bg);border:1px solid var(--accent-bg);margin-top:10px}
+#inv-app .scan-result .part{font-size:15px;font-weight:700;color:var(--accent);font-family:var(--mono)}
+#inv-app .scan-result .sub{font-size:12px;color:var(--text3);margin-top:2px}
+#inv-app .scan-manual{display:flex;gap:8px;margin-top:8px}
+#inv-app .scan-manual input{flex:1;padding:10px 12px;border:1.5px solid var(--border);border-radius:8px;font-size:14px;font-family:'DM Sans',sans-serif;background:var(--bg)}
+#inv-app .scan-manual input:focus{border-color:var(--accent);outline:none}
+#inv-app .btn-camera{width:100%;padding:13px;border-radius:8px;background:var(--accent);color:#fff;font-size:14px;font-weight:700;display:flex;align-items:center;justify-content:center;gap:8px;transition:all .2s;cursor:pointer;border:none}
+#inv-app .btn-camera.scanning{background:var(--red)}
+#inv-app .loc-options{display:flex;flex-direction:column;gap:8px}
+#inv-app .loc-opt{padding:12px 14px;border-radius:8px;border:2px solid var(--border);background:var(--bg3);cursor:pointer;transition:all .2s;display:flex;align-items:center;justify-content:space-between}
+#inv-app .loc-opt:hover{border-color:var(--accent);background:var(--accent-bg)}
+#inv-app .loc-opt.selected{border-color:var(--accent);background:var(--accent-bg)}
+#inv-app .loc-opt.placeholder{border-color:var(--orange);background:var(--orange-bg)}
+#inv-app .loc-name{font-size:14px;font-weight:600;color:var(--text)}
+#inv-app .loc-cases{font-size:12px;color:var(--text3)}
+#inv-app .loc-badge{font-size:10px;font-weight:700;padding:2px 8px;border-radius:4px}
+#inv-app .loc-badge.existing{background:var(--accent-bg);color:var(--accent)}
+#inv-app .loc-badge.placeholder{background:var(--orange-bg);color:var(--orange)}
+#inv-app .loc-badge.new{background:var(--green-bg);color:var(--green)}
+#inv-app .field{display:flex;flex-direction:column;gap:6px}
+#inv-app .field label{font-size:12px;font-weight:600;color:var(--text2)}
+#inv-app .field input{padding:11px 13px;border:1.5px solid var(--border);border-radius:8px;font-size:14px;font-family:'DM Sans',sans-serif;background:var(--bg);color:var(--text);transition:border-color .15s}
+#inv-app .field input:focus{border-color:var(--accent);outline:none}
+#inv-app .field-row{display:flex;gap:10px}
+#inv-app .field-row .field{flex:1}
+#inv-app .btn-submit{width:100%;padding:15px;border-radius:12px;font-size:15px;font-weight:700;color:#fff;transition:all .2s;margin-top:4px;cursor:pointer;border:none}
+#inv-app .btn-submit.in{background:var(--green)}
+#inv-app .btn-submit.out{background:var(--red)}
+#inv-app .btn-submit:disabled{opacity:.4;cursor:not-allowed}
+#inv-app .inv-flash{position:fixed;inset:0;z-index:9999;display:flex;align-items:center;justify-content:center;pointer-events:none;opacity:0;transition:opacity .3s}
+#inv-app .inv-flash.show{opacity:1}
+#inv-app .inv-flash-inner{padding:24px 32px;border-radius:16px;font-size:18px;font-weight:700;color:#fff;text-align:center;box-shadow:0 4px 24px rgba(0,0,0,.12)}
+#inv-app .inv-flash.success .inv-flash-inner{background:var(--green)}
+#inv-app .inv-flash.error .inv-flash-inner{background:var(--red)}
+#inv-app .review-body{flex:1;padding:16px;display:flex;flex-direction:column;gap:14px}
+#inv-app .pin-gate{display:flex;flex-direction:column;align-items:center;justify-content:center;flex:1;gap:16px;padding:32px 16px}
+#inv-app .pin-dots-row{display:flex;gap:10px;margin:4px 0}
+#inv-app .pin-dot-sm{width:14px;height:14px;border-radius:50%;background:var(--border2);transition:background .15s}
+#inv-app .pin-dot-sm.filled{background:var(--accent)}
+#inv-app .pin-pad{display:grid;grid-template-columns:repeat(3,1fr);gap:10px;width:240px}
+#inv-app .pin-key{padding:16px;border-radius:8px;background:var(--bg2);border:1.5px solid var(--border);font-size:18px;font-weight:700;color:var(--text);transition:all .15s;cursor:pointer}
+#inv-app .pin-key:hover{border-color:var(--accent);color:var(--accent)}
+#inv-app .section-head{display:flex;align-items:center;justify-content:space-between;margin-bottom:10px}
+#inv-app .section-title{font-size:13px;font-weight:700;letter-spacing:.5px;text-transform:uppercase}
+#inv-app .section-title.in{color:var(--green)}
+#inv-app .section-title.out{color:var(--red)}
+#inv-app .entry-card{background:var(--bg2);border:1px solid var(--border);border-radius:12px;padding:14px;margin-bottom:10px;box-shadow:var(--shadow)}
+#inv-app .entry-head{display:flex;align-items:flex-start;justify-content:space-between;margin-bottom:8px}
+#inv-app .entry-part{font-size:16px;font-weight:700;font-family:var(--mono)}
+#inv-app .entry-type{font-size:11px;font-weight:700;padding:3px 8px;border-radius:4px}
+#inv-app .entry-type.in{background:var(--green-bg);color:var(--green)}
+#inv-app .entry-type.out{background:var(--red-bg);color:var(--red)}
+#inv-app .entry-meta{display:flex;flex-wrap:wrap;gap:8px;font-size:12px;color:var(--text3);margin-bottom:10px}
+#inv-app .entry-note{font-size:12px;color:var(--text3);font-style:italic;margin-bottom:10px;padding:8px;background:var(--orange-bg);border-radius:6px;border:1px solid #fde68a}
+#inv-app .entry-actions{display:flex;gap:8px}
+#inv-app .btn-approve{flex:1;padding:10px;border-radius:8px;background:var(--green);color:#fff;font-size:13px;font-weight:700;cursor:pointer;border:none}
+#inv-app .btn-reject{flex:1;padding:10px;border-radius:8px;background:var(--bg3);border:1.5px solid var(--border);color:var(--text3);font-size:13px;font-weight:700;cursor:pointer}
+#inv-app .btn-reject:hover{border-color:var(--red);color:var(--red)}
+#inv-app .empty-review{text-align:center;padding:40px 20px;color:var(--text3)}
+#inv-app .warn-box{padding:10px 12px;background:var(--orange-bg);border:1px solid #fde68a;border-radius:8px;font-size:12px;color:var(--orange);font-weight:600;margin-bottom:8px}
+#inv-app .spinner{display:inline-block;width:20px;height:20px;border:2px solid var(--border);border-top-color:var(--accent);border-radius:50%;animation:spin .7s linear infinite}
+#inv-app .loading-row{display:flex;justify-content:center;padding:30px}
+</style>
+
+<!-- FLASH -->
+<div class="inv-flash" id="inv-flash"><div class="inv-flash-inner" id="inv-flash-msg"></div></div>
+
+<!-- TOPBAR -->
+<div class="topbar">
+  <div class="topbar-left">
+    <div class="topbar-logo">XF</div>
+    <div class="topbar-title">Inventory</div>
+  </div>
+  <div class="topbar-left-back" style="margin-right:8px"><button style="background:none;border:1px solid var(--border);color:var(--text3);font-size:12px;padding:5px 12px;border-radius:8px;cursor:pointer;font-family:'DM Sans',sans-serif" onclick="backToLauncher()">← Apps</button></div>
+    <div class="topbar-right">
+    <button class="btn-tab active" onclick="invSwitchTab('scan')" id="tab-scan">📷 Scan</button>
+    <button class="btn-tab" onclick="invSwitchTab('review')" id="tab-review">✅ Review <span class="badge" id="pending-badge" style="display:none">0</span></button>
+  </div>
+</div>
+
+<!-- ══════════════════════════════════════════
+     SCAN PANEL
+═══════════════════════════════════════════ -->
+<div class="panel active" id="panel-scan">
+
+  <!-- Mode selector -->
+  <div class="mode-bar">
+    <button class="mode-btn active in" id="mode-in" onclick="invSetMode('in')">
+      <span class="mode-icon">📦</span>Stock In
+    </button>
+    <button class="mode-btn out" id="mode-out" onclick="invSetMode('out')">
+      <span class="mode-icon">🚚</span>Stock Out
+    </button>
+  </div>
+
+  <div class="scan-body">
+
+    <!-- Scanner card -->
+    <div class="card">
+      <div class="card-label">Scan Case Barcode</div>
+      <div class="scanner-wrap" id="scanner-wrap" style="display:none">
+        <div id="inv-reader"></div>
+      </div>
+      <button class="btn-camera" id="btn-camera" onclick="invToggleCamera()">
+        📷 Start Camera
+      </button>
+      <div class="scan-manual">
+        <input type="text" id="manual-upc" placeholder="Or enter UPC / part number…" autocomplete="off">
+        <button class="btn-camera" style="width:auto;padding:10px 14px" onclick="invManualLookup()">→</button>
+      </div>
+      <div id="scan-result" style="display:none" class="scan-result">
+        <div>
+          <div class="part" id="result-part">—</div>
+          <div class="sub" id="result-name">—</div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Location card (shown after scan) -->
+    <div class="card" id="loc-card" style="display:none">
+      <div class="card-label">Select Location</div>
+      <div class="loc-options" id="loc-options"></div>
+      <!-- New location input for Stock In -->
+      <div id="new-loc-wrap" style="display:none;margin-top:10px">
+        <div class="field">
+          <label>New Location</label>
+          <input type="text" id="new-loc-input" placeholder="e.g. Aisle 3B, Shelf 2">
+        </div>
+      </div>
+    </div>
+
+    <!-- Details card (shown after location selected) -->
+    <div class="card" id="details-card" style="display:none">
+      <div class="card-label">Entry Details</div>
+      <div class="field-row">
+        <div class="field">
+          <label>Cases</label>
+          <input type="number" id="input-cases" min="1" value="1" placeholder="# cases">
+        </div>
+        <div class="field">
+          <label>Your Initials</label>
+          <input type="text" id="input-initials" placeholder="e.g. JD" maxlength="5" autocomplete="off">
+        </div>
+      </div>
+      <!-- Overwrite location input (for placeholder rows) -->
+      <div id="overwrite-loc-wrap" style="display:none;margin-top:10px">
+        <div class="field">
+          <label>✏️ Enter real location (replaces placeholder)</label>
+          <input type="text" id="overwrite-loc-input" placeholder="e.g. Aisle 3B, Shelf 2">
+        </div>
+      </div>
+      <div class="field" style="margin-top:10px">
+        <label>Notes (optional)</label>
+        <input type="text" id="input-notes" placeholder="Transfer from warehouse, etc.">
+      </div>
+      <div id="warn-box" class="warn-box" style="display:none"></div>
+      <button class="btn-submit in" id="btn-submit" onclick="invSubmitEntry()">Submit Stock In</button>
+    </div>
+
+  </div>
+</div>
+
+<!-- ══════════════════════════════════════════
+     REVIEW PANEL
+═══════════════════════════════════════════ -->
+<div class="panel" id="panel-review">
+
+  <!-- PIN gate -->
+  <div id="review-pin-gate" class="pin-gate">
+    <div style="font-size:40px">🔐</div>
+    <div class="pin-gate-title">Management Access</div>
+    <div class="pin-gate-sub">Enter your management PIN to review inventory entries</div>
+    <div class="pin-dots-row">
+      <div class="pin-dot-sm" id="rpd0"></div>
+      <div class="pin-dot-sm" id="rpd1"></div>
+      <div class="pin-dot-sm" id="rpd2"></div>
+      <div class="pin-dot-sm" id="rpd3"></div>
+    </div>
+    <div id="review-pin-error" style="font-size:12px;color:var(--red);min-height:16px"></div>
+    <div class="pin-pad">
+      <button class="pin-key" onclick="invReviewPinKey('1')">1</button>
+      <button class="pin-key" onclick="invReviewPinKey('2')">2</button>
+      <button class="pin-key" onclick="invReviewPinKey('3')">3</button>
+      <button class="pin-key" onclick="invReviewPinKey('4')">4</button>
+      <button class="pin-key" onclick="invReviewPinKey('5')">5</button>
+      <button class="pin-key" onclick="invReviewPinKey('6')">6</button>
+      <button class="pin-key" onclick="invReviewPinKey('7')">7</button>
+      <button class="pin-key" onclick="invReviewPinKey('8')">8</button>
+      <button class="pin-key" onclick="invReviewPinKey('9')">9</button>
+      <button class="pin-key del" onclick="invReviewPinKey('del')">⌫</button>
+      <button class="pin-key" onclick="invReviewPinKey('0')">0</button>
+      <button class="pin-key del" onclick="invReviewPinKey('clear')">✕</button>
+    </div>
+  </div>
+
+  <!-- Review content (shown after PIN) -->
+  <div id="review-content" class="review-body" style="display:none">
+    <div id="review-loading" class="loading-row" style="display:none"><div class="spinner"></div></div>
+
+    <!-- Stock In pending -->
+    <div>
+      <div class="section-head">
+        <div class="section-title in">📦 Pending Stock In</div>
+        <span id="in-count" style="font-size:12px;color:var(--text3)"></span>
+      </div>
+      <div id="pending-in-list"></div>
+    </div>
+
+    <!-- Stock Out pending -->
+    <div>
+      <div class="section-head">
+        <div class="section-title out">🚚 Pending Stock Out</div>
+        <span id="out-count" style="font-size:12px;color:var(--text3)"></span>
+      </div>
+      <div id="pending-out-list"></div>
+    </div>
+  </div>
+
+</div>
+
+<script>
+// ═══════════════════════════════════════════
+// CONFIG
+// ═══════════════════════════════════════════
+const WORKER = 'https://xfitting-lookup.alfixedinc88.workers.dev';
+const MGMT_PIN = '6523';
+
+// ═══════════════════════════════════════════
+// STATE
+// ═══════════════════════════════════════════
+let currentMode    = 'in';
+let currentPart    = null;   // { partNum, name, sku, locations: [{location, cases, rowIndex, isPlaceholder}] }
+let selectedLoc    = null;   // selected location object or {isNew:true} or {isPlaceholder:true,...}
+let scanner        = null;
+let scannerRunning = false;
+let reviewUnlocked = false;
+let reviewPinEntry = '';
+let pendingItems   = [];
+
+// ═══════════════════════════════════════════
+// TAB
+// ═══════════════════════════════════════════
+function switchTab(tab) {
+  document.getElementById('panel-scan').classList.toggle('active', tab === 'scan');
+  document.getElementById('panel-review').classList.toggle('active', tab === 'review');
+  document.getElementById('tab-scan').classList.toggle('active', tab === 'scan');
+  document.getElementById('tab-review').classList.toggle('active', tab === 'review');
+  if (tab === 'review' && reviewUnlocked) loadPending();
+}
+
+// ═══════════════════════════════════════════
+// MODE
+// ═══════════════════════════════════════════
+function setMode(mode) {
+  currentMode = mode;
+  document.getElementById('mode-in').classList.toggle('active', mode === 'in');
+  document.getElementById('mode-in').classList.toggle('in', mode === 'in');
+  document.getElementById('mode-out').classList.toggle('active', mode === 'out');
+  document.getElementById('mode-out').classList.toggle('out', mode === 'out');
+  document.getElementById('btn-submit').className = `btn-submit ${mode}`;
+  document.getElementById('btn-submit').textContent = mode === 'in' ? 'Submit Stock In' : 'Submit Stock Out';
+  resetScan();
+}
+
+// ═══════════════════════════════════════════
+// CAMERA
+// ═══════════════════════════════════════════
+function toggleCamera() {
+  if (scannerRunning) stopCamera();
+  else startCamera();
+}
+
+function startCamera() {
+  document.getElementById('scanner-wrap').style.display = 'block';
+  document.getElementById('btn-camera').className = 'btn-camera scanning';
+  document.getElementById('btn-camera').textContent = '⏹ Stop Camera';
+  scanner = new Html5Qrcode('reader');
+  scanner.start(
+    { facingMode: 'environment' },
+    { fps: 10, qrbox: { width: 280, height: 100 },
+      formatsToSupport: [
+        Html5QrcodeSupportedFormats.UPC_A,
+        Html5QrcodeSupportedFormats.UPC_E,
+        Html5QrcodeSupportedFormats.EAN_13,
+        Html5QrcodeSupportedFormats.CODE_128
+      ]
+    },
+    onScanSuccess,
+    () => {}
+  ).catch(err => { showFlash('Camera error: ' + err, 'error'); stopCamera(); });
+  scannerRunning = true;
+}
+
+function stopCamera() {
+  if (scanner && scannerRunning) {
+    scanner.stop().catch(() => {});
+    scanner = null;
+  }
+  scannerRunning = false;
+  document.getElementById('scanner-wrap').style.display = 'none';
+  document.getElementById('btn-camera').className = 'btn-camera';
+  document.getElementById('btn-camera').textContent = '📷 Start Camera';
+}
+
+let lastScan = 0;
+async function onScanSuccess(code) {
+  const now = Date.now();
+  if (now - lastScan < 2000) return;
+  lastScan = now;
+  stopCamera();
+  await lookupBarcode(code.trim());
+}
+
+async function manualLookup() {
+  const val = document.getElementById('manual-upc').value.trim();
+  if (!val) return;
+  await lookupBarcode(val);
+}
+
+// ═══════════════════════════════════════════
+// LOOKUP
+// ═══════════════════════════════════════════
+async function lookupBarcode(code) {
+  try {
+    const r = await fetch(`${WORKER}/inventory/lookup?code=${encodeURIComponent(code)}`);
+    const d = await r.json();
+    if (d.error || !d.partNum) {
+      showFlash('Part not found: ' + code, 'error');
+      return;
+    }
+    currentPart = d;
+    showScanResult(d);
+    showLocations(d);
+  } catch(e) {
+    showFlash('Lookup failed: ' + e.message, 'error');
+  }
+}
+
+function showScanResult(d) {
+  document.getElementById('result-part').textContent = d.partNum;
+  document.getElementById('result-name').textContent = d.name || d.sku || '';
+  document.getElementById('scan-result').style.display = 'flex';
+}
+
+// ═══════════════════════════════════════════
+// LOCATIONS
+// ═══════════════════════════════════════════
+function showLocations(d) {
+  const wrap = document.getElementById('loc-card');
+  const list = document.getElementById('loc-options');
+  wrap.style.display = 'block';
+  selectedLoc = null;
+  document.getElementById('details-card').style.display = 'none';
+
+  let html = '';
+  const locs = d.locations || [];
+
+  locs.forEach((loc, i) => {
+    const isPlaceholder = /will be here/i.test(loc.location);
+    const cls = isPlaceholder ? 'loc-opt placeholder' : 'loc-opt';
+    const badge = isPlaceholder
+      ? '<span class="loc-badge placeholder">🕐 Placeholder</span>'
+      : '<span class="loc-badge existing">Existing</span>';
+    html += `<div class="${cls}" onclick="invSelectLocation(${i})" id="loc-opt-${i}">
+      <div>
+        <div class="loc-name">${loc.location}</div>
+        <div class="loc-cases">${loc.cases !== '' ? loc.cases + ' cases' : 'unknown'}</div>
+      </div>
+      ${badge}
+    </div>`;
+  });
+
+  // For Stock In — always show "New Location" option
+  if (currentMode === 'in') {
+    html += `<div class="loc-opt" onclick="invSelectLocation('new')" id="loc-opt-new">
+      <div>
+        <div class="loc-name">+ Add New Location</div>
+        <div class="loc-cases">Insert new row in Master List</div>
+      </div>
+      <span class="loc-badge new">New</span>
+    </div>`;
+  }
+
+  if (!html) {
+    html = '<div style="font-size:13px;color:var(--text3);padding:8px">No existing locations found.</div>';
+    if (currentMode === 'in') {
+      // auto-show new location
+      setTimeout(() => selectLocation('new'), 100);
+    }
+  }
+
+  list.innerHTML = html;
+}
+
+function selectLocation(idx) {
+  // Deselect all
+  document.querySelectorAll('.loc-opt').forEach(el => el.classList.remove('selected'));
+
+  const newLocWrap = document.getElementById('new-loc-wrap');
+  const overwriteWrap = document.getElementById('overwrite-loc-wrap');
+  newLocWrap.style.display = 'none';
+  overwriteWrap.style.display = 'none';
+
+  if (idx === 'new') {
+    document.getElementById('loc-opt-new').classList.add('selected');
+    selectedLoc = { isNew: true };
+    newLocWrap.style.display = 'block';
+  } else {
+    const loc = currentPart.locations[idx];
+    document.getElementById(`loc-opt-${idx}`).classList.add('selected');
+    selectedLoc = { ...loc, index: idx };
+    const isPlaceholder = /will be here/i.test(loc.location);
+    if (isPlaceholder && currentMode === 'in') {
+      overwriteWrap.style.display = 'block';
+      document.getElementById('overwrite-loc-input').placeholder = 'Replace "' + loc.location + '" with real location';
+    }
+  }
+
+  // Show details
+  document.getElementById('details-card').style.display = 'block';
+  document.getElementById('warn-box').style.display = 'none';
+  checkWarning();
+}
+
+function checkWarning() {
+  const warnBox = document.getElementById('warn-box');
+  if (!selectedLoc || currentMode === 'in') { warnBox.style.display = 'none'; return; }
+  // Stock Out warning — check if removing more than available
+  const cases = parseInt(document.getElementById('input-cases').value) || 0;
+  if (!selectedLoc.isNew && selectedLoc.cases !== '' && cases > parseFloat(selectedLoc.cases)) {
+    warnBox.textContent = `⚠️ Removing ${cases} cases but only ${selectedLoc.cases} on record at this location. Management will be alerted on review.`;
+    warnBox.style.display = 'block';
+  } else {
+    warnBox.style.display = 'none';
+  }
+}
+
+// ═══════════════════════════════════════════
+// SUBMIT
+// ═══════════════════════════════════════════
+async function submitEntry() {
+  if (!currentPart) return showFlash('Scan a barcode first', 'error');
+  if (!selectedLoc) return showFlash('Select a location', 'error');
+
+  const cases = parseInt(document.getElementById('input-cases').value);
+  const initials = document.getElementById('input-initials').value.trim();
+  const notes = document.getElementById('input-notes').value.trim();
+
+  if (!cases || cases < 1) return showFlash('Enter number of cases', 'error');
+  if (!initials) return showFlash('Enter your initials', 'error');
+
+  let location = '';
+  let overwriteLocation = '';
+  let isPlaceholder = false;
+  let rowIndex = null;
+  let isNew = false;
+
+  if (selectedLoc.isNew) {
+    location = document.getElementById('new-loc-input').value.trim();
+    if (!location) return showFlash('Enter a location', 'error');
+    isNew = true;
+  } else {
+    location = selectedLoc.location;
+    rowIndex = selectedLoc.rowIndex;
+    isPlaceholder = /will be here/i.test(location);
+    if (isPlaceholder && currentMode === 'in') {
+      overwriteLocation = document.getElementById('overwrite-loc-input').value.trim();
+      if (!overwriteLocation) return showFlash('Enter the real location to replace placeholder', 'error');
+    }
+  }
+
+  const payload = {
+    type: currentMode.toUpperCase(),
+    partNum: currentPart.partNum,
+    sku: currentPart.sku,
+    name: currentPart.name,
+    location,
+    overwriteLocation,
+    isPlaceholder,
+    isNew,
+    rowIndex,
+    cases,
+    initials,
+    notes
+  };
+
+  const btn = document.getElementById('btn-submit');
+  btn.disabled = true;
+  btn.textContent = 'Submitting…';
+
+  try {
+    const r = await fetch(`${WORKER}/inventory/log`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload)
+    });
+    const d = await r.json();
+    if (d.error) throw new Error(d.error);
+    showFlash(currentMode === 'in' ? '✓ Stock In logged!' : '✓ Stock Out logged!', 'success');
+    // Update badge
+    fetchPendingCount();
+    // Reset after short delay
+    setTimeout(() => { resetScan(); }, 1500);
+  } catch(e) {
+    showFlash('Error: ' + e.message, 'error');
+  } finally {
+    btn.disabled = false;
+    btn.textContent = currentMode === 'in' ? 'Submit Stock In' : 'Submit Stock Out';
+  }
+}
+
+function resetScan() {
+  currentPart = null;
+  selectedLoc = null;
+  document.getElementById('scan-result').style.display = 'none';
+  document.getElementById('loc-card').style.display = 'none';
+  document.getElementById('details-card').style.display = 'none';
+  document.getElementById('manual-upc').value = '';
+  document.getElementById('input-cases').value = '1';
+  document.getElementById('input-notes').value = '';
+  document.getElementById('new-loc-input').value = '';
+  document.getElementById('overwrite-loc-input').value = '';
+  document.getElementById('warn-box').style.display = 'none';
+}
+
+// ═══════════════════════════════════════════
+// REVIEW PIN
+// ═══════════════════════════════════════════
+function reviewPinKey(k) {
+  if (k === 'del') reviewPinEntry = reviewPinEntry.slice(0,-1);
+  else if (k === 'clear') reviewPinEntry = '';
+  else if (reviewPinEntry.length < 4) reviewPinEntry += k;
+
+  // Update dots
+  for (let i = 0; i < 4; i++) {
+    document.getElementById(`rpd${i}`).classList.toggle('filled', i < reviewPinEntry.length);
+  }
+  document.getElementById('review-pin-error').textContent = '';
+
+  if (reviewPinEntry.length === 4) {
+    if (reviewPinEntry === MGMT_PIN) {
+      reviewUnlocked = true;
+      document.getElementById('review-pin-gate').style.display = 'none';
+      document.getElementById('review-content').style.display = 'flex';
+      loadPending();
+    } else {
+      document.getElementById('review-pin-error').textContent = 'Incorrect PIN';
+      reviewPinEntry = '';
+      for (let i = 0; i < 4; i++) document.getElementById(`rpd${i}`).classList.remove('filled');
+    }
+  }
+}
+
+// ═══════════════════════════════════════════
+// LOAD PENDING
+// ═══════════════════════════════════════════
+async function loadPending() {
+  document.getElementById('review-loading').style.display = 'flex';
+  document.getElementById('pending-in-list').innerHTML = '';
+  document.getElementById('pending-out-list').innerHTML = '';
+  try {
+    const r = await fetch(`${WORKER}/inventory/pending`);
+    const d = await r.json();
+    pendingItems = d.items || [];
+    renderPending();
+  } catch(e) {
+    document.getElementById('pending-in-list').innerHTML = `<div class="empty-review"><div class="icon">⚠️</div>${e.message}</div>`;
+  } finally {
+    document.getElementById('review-loading').style.display = 'none';
+  }
+}
+
+function renderPending() {
+  const ins  = pendingItems.filter(p => p.type === 'IN');
+  const outs = pendingItems.filter(p => p.type === 'OUT');
+
+  document.getElementById('in-count').textContent  = ins.length  ? `${ins.length} pending`  : 'none';
+  document.getElementById('out-count').textContent = outs.length ? `${outs.length} pending` : 'none';
+
+  document.getElementById('pending-in-list').innerHTML  = ins.length  ? ins.map(entryCard).join('')  : emptyCard('No pending stock-in entries');
+  document.getElementById('pending-out-list').innerHTML = outs.length ? outs.map(entryCard).join('') : emptyCard('No pending stock-out entries');
+
+  // Update badge
+  const total = pendingItems.length;
+  const badge = document.getElementById('pending-badge');
+  badge.textContent = total;
+  badge.style.display = total ? 'inline-flex' : 'none';
+}
+
+function entryCard(item) {
+  const ts = item.timestamp ? new Date(item.timestamp).toLocaleString() : '—';
+  const isPlaceholder = item.isPlaceholder === 'TRUE' || item.isPlaceholder === true;
+  const overwrite = item.overwriteLocation;
+  let noteHtml = '';
+  if (isPlaceholder && overwrite) {
+    noteHtml = `<div class="entry-note">📍 Placeholder detected — will overwrite "<b>${item.location}</b>" with "<b>${overwrite}</b>"</div>`;
+  } else if (item.isNew === 'TRUE' || item.isNew === true) {
+    noteHtml = `<div class="entry-note">✨ New row will be inserted into Master List under base SKU</div>`;
+  }
+  if (item.notes) {
+    noteHtml += `<div class="entry-note" style="background:var(--bg3);border-color:var(--border)">💬 ${item.notes}</div>`;
+  }
+  return `<div class="entry-card" id="entry-${item.rowIndex}">
+    <div class="entry-head">
+      <div class="entry-part">${item.partNum}</div>
+      <span class="entry-type ${item.type.toLowerCase()}">${item.type}</span>
+    </div>
+    <div class="entry-meta">
+      <span>📍 ${item.location}</span>
+      <span>📦 ${item.cases} cases</span>
+      <span>👤 ${item.initials}</span>
+      <span>🕐 ${ts}</span>
+    </div>
+    ${noteHtml}
+    <div class="entry-actions">
+      <button class="btn-approve" onclick="invVerifyEntry(${item.rowIndex},'approve')">✓ Approve</button>
+      <button class="btn-reject" onclick="invVerifyEntry(${item.rowIndex},'reject')">✕ Reject</button>
+    </div>
+  </div>`;
+}
+
+function emptyCard(msg) {
+  return `<div class="empty-review"><div class="icon">✓</div>${msg}</div>`;
+}
+
+// ═══════════════════════════════════════════
+// VERIFY
+// ═══════════════════════════════════════════
+async function verifyEntry(rowIndex, action) {
+  const item = pendingItems.find(p => p.rowIndex === rowIndex);
+  if (!item) return;
+
+  const card = document.getElementById(`entry-${rowIndex}`);
+  if (card) card.style.opacity = '0.5';
+
+  try {
+    const r = await fetch(`${WORKER}/inventory/verify`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ rowIndex, action, item })
+    });
+    const d = await r.json();
+    if (d.error) throw new Error(d.error);
+    showFlash(action === 'approve' ? '✓ Approved & Applied' : '✕ Rejected', action === 'approve' ? 'success' : 'error');
+    // Remove from local list and re-render
+    pendingItems = pendingItems.filter(p => p.rowIndex !== rowIndex);
+    renderPending();
+  } catch(e) {
+    showFlash('Error: ' + e.message, 'error');
+    if (card) card.style.opacity = '1';
+  }
+}
+
+// ═══════════════════════════════════════════
+// PENDING COUNT (for badge without full load)
+// ═══════════════════════════════════════════
+async function fetchPendingCount() {
+  try {
+    const r = await fetch(`${WORKER}/inventory/pending`);
+    const d = await r.json();
+    const total = (d.items || []).length;
+    const badge = document.getElementById('pending-badge');
+    badge.textContent = total;
+    badge.style.display = total ? 'inline-flex' : 'none';
+  } catch(_) {}
+}
+
+// ═══════════════════════════════════════════
+// FLASH
+// ═══════════════════════════════════════════
+function showFlash(msg, type) {
+  const el = document.getElementById('inv-flash');
+  const inner = document.getElementById('inv-flash-msg');
+  el.className = `flash ${type} show`;
+  inner.textContent = msg;
+  setTimeout(() => { el.classList.remove('show'); }, 2200);
+}
+
+// ═══════════════════════════════════════════
+// INIT
+// ═══════════════════════════════════════════
+document.getElementById('input-cases').addEventListener('input', checkWarning);
+fetchPendingCount();
+</script>
+
+</div>
+
+<script>
+
+// ═══════════════════════════════════════════
+// CONFIG
+// ═══════════════════════════════════════════
+const WORKER = 'https://xfitting-lookup.alfixedinc88.workers.dev';
+const MGMT_PIN = '6523';
+
+// ═══════════════════════════════════════════
+// STATE
+// ═══════════════════════════════════════════
+let currentMode    = 'in';
+let currentPart    = null;   // { partNum, name, sku, locations: [{location, cases, rowIndex, isPlaceholder}] }
+let selectedLoc    = null;   // selected location object or {isNew:true} or {isPlaceholder:true,...}
+let scanner        = null;
+let scannerRunning = false;
+let reviewUnlocked = false;
+let reviewPinEntry = '';
+let pendingItems   = [];
+
+// ═══════════════════════════════════════════
+// TAB
+// ═══════════════════════════════════════════
+function invSwitchTab(tab) {
+  document.getElementById('panel-scan').classList.toggle('active', tab === 'scan');
+  document.getElementById('panel-review').classList.toggle('active', tab === 'review');
+  document.getElementById('tab-scan').classList.toggle('active', tab === 'scan');
+  document.getElementById('tab-review').classList.toggle('active', tab === 'review');
+  if (tab === 'review' && reviewUnlocked) invLoadPending();
+}
+
+// ═══════════════════════════════════════════
+// MODE
+// ═══════════════════════════════════════════
+function invSetMode(mode) {
+  currentMode = mode;
+  document.getElementById('mode-in').classList.toggle('active', mode === 'in');
+  document.getElementById('mode-in').classList.toggle('in', mode === 'in');
+  document.getElementById('mode-out').classList.toggle('active', mode === 'out');
+  document.getElementById('mode-out').classList.toggle('out', mode === 'out');
+  document.getElementById('btn-submit').className = `btn-submit ${mode}`;
+  document.getElementById('btn-submit').textContent = mode === 'in' ? 'Submit Stock In' : 'Submit Stock Out';
+  resetScan();
+}
+
+// ═══════════════════════════════════════════
+// CAMERA
+// ═══════════════════════════════════════════
+function invToggleCamera() {
+  if (scannerRunning) stopCamera();
+  else startCamera();
+}
+
+function invStartCamera() {
+  document.getElementById('scanner-wrap').style.display = 'block';
+  document.getElementById('btn-camera').className = 'btn-camera scanning';
+  document.getElementById('btn-camera').textContent = '⏹ Stop Camera';
+  scanner = new Html5Qrcode('inv-reader');
+  scanner.start(
+    { facingMode: 'environment' },
+    { fps: 10, qrbox: { width: 280, height: 100 },
+      formatsToSupport: [
+        Html5QrcodeSupportedFormats.UPC_A,
+        Html5QrcodeSupportedFormats.UPC_E,
+        Html5QrcodeSupportedFormats.EAN_13,
+        Html5QrcodeSupportedFormats.CODE_128
+      ]
+    },
+    onScanSuccess,
+    () => {}
+  ).catch(err => { invShowFlash('Camera error: ' + err, 'error'); stopCamera(); });
+  scannerRunning = true;
+}
+
+function invStopCamera() {
+  if (scanner && scannerRunning) {
+    scanner.stop().catch(() => {});
+    scanner = null;
+  }
+  scannerRunning = false;
+  document.getElementById('scanner-wrap').style.display = 'none';
+  document.getElementById('btn-camera').className = 'btn-camera';
+  document.getElementById('btn-camera').textContent = '📷 Start Camera';
+}
+
+let lastScan = 0;
+async function invOnScanSuccess(code) {
+  const now = Date.now();
+  if (now - lastScan < 2000) return;
+  lastScan = now;
+  stopCamera();
+  await lookupBarcode(code.trim());
+}
+
+async function invManualLookup() {
+  const val = document.getElementById('manual-upc').value.trim();
+  if (!val) return;
+  await lookupBarcode(val);
+}
+
+// ═══════════════════════════════════════════
+// LOOKUP
+// ═══════════════════════════════════════════
+async function invLookupBarcode(code) {
+  try {
+    const r = await fetch(`${WORKER}/inventory/lookup?code=${encodeURIComponent(code)}`);
+    const d = await r.json();
+    if (d.error || !d.partNum) {
+      invShowFlash('Part not found: ' + code, 'error');
+      return;
+    }
+    currentPart = d;
+    showScanResult(d);
+    showLocations(d);
+  } catch(e) {
+    invShowFlash('Lookup failed: ' + e.message, 'error');
+  }
+}
+
+function invShowScanResult(d) {
+  document.getElementById('result-part').textContent = d.partNum;
+  document.getElementById('result-name').textContent = d.name || d.sku || '';
+  document.getElementById('scan-result').style.display = 'flex';
+}
+
+// ═══════════════════════════════════════════
+// LOCATIONS
+// ═══════════════════════════════════════════
+function invShowLocations(d) {
+  const wrap = document.getElementById('loc-card');
+  const list = document.getElementById('loc-options');
+  wrap.style.display = 'block';
+  selectedLoc = null;
+  document.getElementById('details-card').style.display = 'none';
+
+  let html = '';
+  const locs = d.locations || [];
+
+  locs.forEach((loc, i) => {
+    const isPlaceholder = /will be here/i.test(loc.location);
+    const cls = isPlaceholder ? 'loc-opt placeholder' : 'loc-opt';
+    const badge = isPlaceholder
+      ? '<span class="loc-badge placeholder">🕐 Placeholder</span>'
+      : '<span class="loc-badge existing">Existing</span>';
+    html += `<div class="${cls}" onclick="invSelectLocation(${i})" id="loc-opt-${i}">
+      <div>
+        <div class="loc-name">${loc.location}</div>
+        <div class="loc-cases">${loc.cases !== '' ? loc.cases + ' cases' : 'unknown'}</div>
+      </div>
+      ${badge}
+    </div>`;
+  });
+
+  // For Stock In — always show "New Location" option
+  if (currentMode === 'in') {
+    html += `<div class="loc-opt" onclick="invSelectLocation('new')" id="loc-opt-new">
+      <div>
+        <div class="loc-name">+ Add New Location</div>
+        <div class="loc-cases">Insert new row in Master List</div>
+      </div>
+      <span class="loc-badge new">New</span>
+    </div>`;
+  }
+
+  if (!html) {
+    html = '<div style="font-size:13px;color:var(--text3);padding:8px">No existing locations found.</div>';
+    if (currentMode === 'in') {
+      // auto-show new location
+      setTimeout(() => invSelectLocation('new'), 100);
+    }
+  }
+
+  list.innerHTML = html;
+}
+
+function invSelectLocation(idx) {
+  // Deselect all
+  document.querySelectorAll('.loc-opt').forEach(el => el.classList.remove('selected'));
+
+  const newLocWrap = document.getElementById('new-loc-wrap');
+  const overwriteWrap = document.getElementById('overwrite-loc-wrap');
+  newLocWrap.style.display = 'none';
+  overwriteWrap.style.display = 'none';
+
+  if (idx === 'new') {
+    document.getElementById('loc-opt-new').classList.add('selected');
+    selectedLoc = { isNew: true };
+    newLocWrap.style.display = 'block';
+  } else {
+    const loc = currentPart.locations[idx];
+    document.getElementById(`loc-opt-${idx}`).classList.add('selected');
+    selectedLoc = { ...loc, index: idx };
+    const isPlaceholder = /will be here/i.test(loc.location);
+    if (isPlaceholder && currentMode === 'in') {
+      overwriteWrap.style.display = 'block';
+      document.getElementById('overwrite-loc-input').placeholder = 'Replace "' + loc.location + '" with real location';
+    }
+  }
+
+  // Show details
+  document.getElementById('details-card').style.display = 'block';
+  document.getElementById('warn-box').style.display = 'none';
+  invCheckWarning();
+}
+
+function invCheckWarning() {
+  const warnBox = document.getElementById('warn-box');
+  if (!selectedLoc || currentMode === 'in') { warnBox.style.display = 'none'; return; }
+  // Stock Out warning — check if removing more than available
+  const cases = parseInt(document.getElementById('input-cases').value) || 0;
+  if (!selectedLoc.isNew && selectedLoc.cases !== '' && cases > parseFloat(selectedLoc.cases)) {
+    warnBox.textContent = `⚠️ Removing ${cases} cases but only ${selectedLoc.cases} on record at this location. Management will be alerted on review.`;
+    warnBox.style.display = 'block';
+  } else {
+    warnBox.style.display = 'none';
+  }
+}
+
+// ═══════════════════════════════════════════
+// SUBMIT
+// ═══════════════════════════════════════════
+async function invSubmitEntry() {
+  if (!currentPart) return invShowFlash('Scan a barcode first', 'error');
+  if (!selectedLoc) return invShowFlash('Select a location', 'error');
+
+  const cases = parseInt(document.getElementById('input-cases').value);
+  const initials = document.getElementById('input-initials').value.trim();
+  const notes = document.getElementById('input-notes').value.trim();
+
+  if (!cases || cases < 1) return invShowFlash('Enter number of cases', 'error');
+  if (!initials) return invShowFlash('Enter your initials', 'error');
+
+  let location = '';
+  let overwriteLocation = '';
+  let isPlaceholder = false;
+  let rowIndex = null;
+  let isNew = false;
+
+  if (selectedLoc.isNew) {
+    location = document.getElementById('new-loc-input').value.trim();
+    if (!location) return invShowFlash('Enter a location', 'error');
+    isNew = true;
+  } else {
+    location = selectedLoc.location;
+    rowIndex = selectedLoc.rowIndex;
+    isPlaceholder = /will be here/i.test(location);
+    if (isPlaceholder && currentMode === 'in') {
+      overwriteLocation = document.getElementById('overwrite-loc-input').value.trim();
+      if (!overwriteLocation) return invShowFlash('Enter the real location to replace placeholder', 'error');
+    }
+  }
+
+  const payload = {
+    type: currentMode.toUpperCase(),
+    partNum: currentPart.partNum,
+    sku: currentPart.sku,
+    name: currentPart.name,
+    location,
+    overwriteLocation,
+    isPlaceholder,
+    isNew,
+    rowIndex,
+    cases,
+    initials,
+    notes
+  };
+
+  const btn = document.getElementById('btn-submit');
+  btn.disabled = true;
+  btn.textContent = 'Submitting…';
+
+  try {
+    const r = await fetch(`${WORKER}/inventory/log`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload)
+    });
+    const d = await r.json();
+    if (d.error) throw new Error(d.error);
+    invShowFlash(currentMode === 'in' ? '✓ Stock In logged!' : '✓ Stock Out logged!', 'success');
+    // Update badge
+    invFetchPendingCount();
+    // Reset after short delay
+    setTimeout(() => { resetScan(); }, 1500);
+  } catch(e) {
+    invShowFlash('Error: ' + e.message, 'error');
+  } finally {
+    btn.disabled = false;
+    btn.textContent = currentMode === 'in' ? 'Submit Stock In' : 'Submit Stock Out';
+  }
+}
+
+function invResetScan() {
+  currentPart = null;
+  selectedLoc = null;
+  document.getElementById('scan-result').style.display = 'none';
+  document.getElementById('loc-card').style.display = 'none';
+  document.getElementById('details-card').style.display = 'none';
+  document.getElementById('manual-upc').value = '';
+  document.getElementById('input-cases').value = '1';
+  document.getElementById('input-notes').value = '';
+  document.getElementById('new-loc-input').value = '';
+  document.getElementById('overwrite-loc-input').value = '';
+  document.getElementById('warn-box').style.display = 'none';
+}
+
+// ═══════════════════════════════════════════
+// REVIEW PIN
+// ═══════════════════════════════════════════
+function invReviewPinKey(k) {
+  if (k === 'del') reviewPinEntry = reviewPinEntry.slice(0,-1);
+  else if (k === 'clear') reviewPinEntry = '';
+  else if (reviewPinEntry.length < 4) reviewPinEntry += k;
+
+  // Update dots
+  for (let i = 0; i < 4; i++) {
+    document.getElementById(`rpd${i}`).classList.toggle('filled', i < reviewPinEntry.length);
+  }
+  document.getElementById('review-pin-error').textContent = '';
+
+  if (reviewPinEntry.length === 4) {
+    if (reviewPinEntry === MGMT_PIN) {
+      reviewUnlocked = true;
+      document.getElementById('review-pin-gate').style.display = 'none';
+      document.getElementById('review-content').style.display = 'flex';
+      invLoadPending();
+    } else {
+      document.getElementById('review-pin-error').textContent = 'Incorrect PIN';
+      reviewPinEntry = '';
+      for (let i = 0; i < 4; i++) document.getElementById(`rpd${i}`).classList.remove('filled');
+    }
+  }
+}
+
+// ═══════════════════════════════════════════
+// LOAD PENDING
+// ═══════════════════════════════════════════
+async function invLoadPending() {
+  document.getElementById('review-loading').style.display = 'flex';
+  document.getElementById('pending-in-list').innerHTML = '';
+  document.getElementById('pending-out-list').innerHTML = '';
+  try {
+    const r = await fetch(`${WORKER}/inventory/pending`);
+    const d = await r.json();
+    pendingItems = d.items || [];
+    renderPending();
+  } catch(e) {
+    document.getElementById('pending-in-list').innerHTML = `<div class="empty-review"><div class="icon">⚠️</div>${e.message}</div>`;
+  } finally {
+    document.getElementById('review-loading').style.display = 'none';
+  }
+}
+
+function invRenderPending() {
+  const ins  = pendingItems.filter(p => p.type === 'IN');
+  const outs = pendingItems.filter(p => p.type === 'OUT');
+
+  document.getElementById('in-count').textContent  = ins.length  ? `${ins.length} pending`  : 'none';
+  document.getElementById('out-count').textContent = outs.length ? `${outs.length} pending` : 'none';
+
+  document.getElementById('pending-in-list').innerHTML  = ins.length  ? ins.map(entryCard).join('')  : invEmptyCard('No pending stock-in entries');
+  document.getElementById('pending-out-list').innerHTML = outs.length ? outs.map(entryCard).join('') : invEmptyCard('No pending stock-out entries');
+
+  // Update badge
+  const total = pendingItems.length;
+  const badge = document.getElementById('pending-badge');
+  badge.textContent = total;
+  badge.style.display = total ? 'inline-flex' : 'none';
+}
+
+function invEntryCard(item) {
+  const ts = item.timestamp ? new Date(item.timestamp).toLocaleString() : '—';
+  const isPlaceholder = item.isPlaceholder === 'TRUE' || item.isPlaceholder === true;
+  const overwrite = item.overwriteLocation;
+  let noteHtml = '';
+  if (isPlaceholder && overwrite) {
+    noteHtml = `<div class="entry-note">📍 Placeholder detected — will overwrite "<b>${item.location}</b>" with "<b>${overwrite}</b>"</div>`;
+  } else if (item.isNew === 'TRUE' || item.isNew === true) {
+    noteHtml = `<div class="entry-note">✨ New row will be inserted into Master List under base SKU</div>`;
+  }
+  if (item.notes) {
+    noteHtml += `<div class="entry-note" style="background:var(--bg3);border-color:var(--border)">💬 ${item.notes}</div>`;
+  }
+  return `<div class="entry-card" id="entry-${item.rowIndex}">
+    <div class="entry-head">
+      <div class="entry-part">${item.partNum}</div>
+      <span class="entry-type ${item.type.toLowerCase()}">${item.type}</span>
+    </div>
+    <div class="entry-meta">
+      <span>📍 ${item.location}</span>
+      <span>📦 ${item.cases} cases</span>
+      <span>👤 ${item.initials}</span>
+      <span>🕐 ${ts}</span>
+    </div>
+    ${noteHtml}
+    <div class="entry-actions">
+      <button class="btn-approve" onclick="invVerifyEntry(${item.rowIndex},'approve')">✓ Approve</button>
+      <button class="btn-reject" onclick="invVerifyEntry(${item.rowIndex},'reject')">✕ Reject</button>
+    </div>
+  </div>`;
+}
+
+function invEmptyCard(msg) {
+  return `<div class="empty-review"><div class="icon">✓</div>${msg}</div>`;
+}
+
+// ═══════════════════════════════════════════
+// VERIFY
+// ═══════════════════════════════════════════
+async function invVerifyEntry(rowIndex, action) {
+  const item = pendingItems.find(p => p.rowIndex === rowIndex);
+  if (!item) return;
+
+  const card = document.getElementById(`entry-${rowIndex}`);
+  if (card) card.style.opacity = '0.5';
+
+  try {
+    const r = await fetch(`${WORKER}/inventory/verify`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ rowIndex, action, item })
+    });
+    const d = await r.json();
+    if (d.error) throw new Error(d.error);
+    invShowFlash(action === 'approve' ? '✓ Approved & Applied' : '✕ Rejected', action === 'approve' ? 'success' : 'error');
+    // Remove from local list and re-render
+    pendingItems = pendingItems.filter(p => p.rowIndex !== rowIndex);
+    renderPending();
+  } catch(e) {
+    invShowFlash('Error: ' + e.message, 'error');
+    if (card) card.style.opacity = '1';
+  }
+}
+
+// ═══════════════════════════════════════════
+// PENDING COUNT (for badge without full load)
+// ═══════════════════════════════════════════
+async function invFetchPendingCount() {
+  try {
+    const r = await fetch(`${WORKER}/inventory/pending`);
+    const d = await r.json();
+    const total = (d.items || []).length;
+    const badge = document.getElementById('pending-badge');
+    badge.textContent = total;
+    badge.style.display = total ? 'inline-flex' : 'none';
+  } catch(_) {}
+}
+
+// ═══════════════════════════════════════════
+// FLASH
+// ═══════════════════════════════════════════
+function invShowFlash(msg, type) {
+  const el = document.getElementById('inv-flash');
+  const inner = document.getElementById('inv-flash-msg');
+  el.className = `inv-flash ${type} show`;
+  inner.textContent = msg;
+  setTimeout(() => { el.className = 'inv-flash'; }, 2200);
+}
+
+// ═══════════════════════════════════════════
+// INIT
+// ═══════════════════════════════════════════
+document.getElementById('input-cases').addEventListener('input', checkWarning);
+invFetchPendingCount();
 
 </script>
 </body>
