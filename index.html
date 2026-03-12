@@ -4042,7 +4042,6 @@ function upcShowScanBar(skuList) {
   var bar = document.getElementById('upc-scan-bar');
   if (bar) {
     bar.style.display = Object.keys(_upcVerifyMap).length > 0 ? 'flex' : 'none';
-    if (Object.keys(_upcVerifyMap).length > 0) upcPreloadZxing(); // preload for iOS
   }
   upcUpdateTally();
 }
