@@ -9338,6 +9338,7 @@ function rprToast(msg, type = '') {
   var invUnlocked = false;
   var invFlashTimer = null;
   var _invQrLib = false;
+  var invItemMap = {};  // rowIndex -> item for verify
 
   function g(id) { return document.getElementById(id); }
 
@@ -9618,6 +9619,7 @@ function rprToast(msg, type = '') {
   }
 
   function invMakeCard(item) {
+    invItemMap[item.rowIndex] = item;  // store for verify
     var el = document.createElement("div");
     el.className = "ientry";
     el.id = "inv-entry-" + item.rowIndex;
@@ -9638,7 +9640,7 @@ function rprToast(msg, type = '') {
     wFetch(W + "/inventory/verify", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ rowIndex: rowIndex, action: action })
+      body: JSON.stringify({ rowIndex: rowIndex, action: action, item: invItemMap[rowIndex] || null })
     }).then(function(r) { return r.json(); })
       .then(function(d) {
         if (d.ok) {
