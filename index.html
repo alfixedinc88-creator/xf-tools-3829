@@ -4124,6 +4124,26 @@ function upcStopScan() {
   upcUpdateTally();
 }
 
+// Load ZXing JS for still-image decoding (iOS Safari compatible)
+var _zxingLibLoaded = false;
+function upcLoadZxingLib() {
+  if (_zxingLibLoaded) return Promise.resolve();
+  return new Promise(function(res, rej) {
+    var s = document.createElement('script');
+    s.src = 'https://cdn.jsdelivr.net/npm/zxing-js@0.20.0/umd/index.min.js';
+    s.onload  = function() { _zxingLibLoaded = true; res(); };
+    s.onerror = function() {
+      // fallback to older CDN path
+      var s2 = document.createElement('script');
+      s2.src = 'https://unpkg.com/@zxing/library@latest/umd/index.min.js';
+      s2.onload  = function() { _zxingLibLoaded = true; res(); };
+      s2.onerror = rej;
+      document.head.appendChild(s2);
+    };
+    document.head.appendChild(s);
+  });
+}
+
 // iOS: decode a photo taken by the camera
 async function upcDecodePhoto(input) {
   if (!input.files || !input.files[0]) return;
@@ -4133,116 +4153,95 @@ async function upcDecodePhoto(input) {
   resultEl.style.color = 'rgba(255,255,255,.5)';
 
   var file = input.files[0];
-  var img  = new Image();
-  var url  = URL.createObjectURL(file);
+  // Reset input immediately so user can retake without tapping again
+  setTimeout(function() { input.value = ''; }, 500);
 
-  img.onload = function() {
+  try {
+    // Draw image onto canvas
+    var img = await new Promise(function(res, rej) {
+      var i = new Image();
+      i.onload = function() { res(i); };
+      i.onerror = rej;
+      i.src = URL.createObjectURL(file);
+    });
+
     var canvas = document.getElementById('upc-decode-canvas');
-    canvas.width  = img.width;
-    canvas.height = img.height;
+    // Scale down large photos — ZXing works best under 1200px wide
+    var scale  = Math.min(1, 1200 / img.width);
+    canvas.width  = Math.floor(img.width  * scale);
+    canvas.height = Math.floor(img.height * scale);
     var ctx = canvas.getContext('2d');
-    ctx.drawImage(img, 0, 0);
-    URL.revokeObjectURL(url);
+    ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
+    URL.revokeObjectURL(img.src);
 
-    // Try native BarcodeDetector on still image (works on some iOS 17+)
+    // Try native BarcodeDetector first (fast, some iOS 17+)
     if ('BarcodeDetector' in window) {
-      var det = new BarcodeDetector({ formats: ['upc_a','upc_e','ean_13','code_128'] });
-      det.detect(canvas).then(function(codes) {
-        if (codes.length) {
-          upcHandleScan(codes[0].rawValue);
-        } else {
-          upcTryZbarDecode(ctx, canvas, resultEl);
-        }
-      }).catch(function() { upcTryZbarDecode(ctx, canvas, resultEl); });
-    } else {
-      upcTryZbarDecode(ctx, canvas, resultEl);
+      try {
+        var det   = new BarcodeDetector({ formats: ['upc_a','upc_e','ean_13','code_128'] });
+        var codes = await det.detect(canvas);
+        if (codes.length) { upcHandleScan(codes[0].rawValue); return; }
+      } catch(_) {}
     }
-    // Reset input so user can scan again immediately
-    input.value = '';
-  };
-  img.src = url;
-}
 
-// Manual UPC-A decode from canvas pixels — scans horizontal lines for barcode pattern
-function upcTryZbarDecode(ctx, canvas, resultEl) {
-  var w = canvas.width, h = canvas.height;
-  // Sample multiple horizontal strips across middle third of image
-  var results = [];
-  var strips = [0.35, 0.40, 0.45, 0.50, 0.55, 0.60, 0.65];
-  for (var si = 0; si < strips.length; si++) {
-    var y   = Math.floor(h * strips[si]);
-    var row = ctx.getImageData(0, y, w, 1).data;
-    // Convert to binary (dark/light) with adaptive threshold
-    var pixels = [];
-    var sum = 0;
-    for (var x = 0; x < w; x++) sum += (row[x*4] + row[x*4+1] + row[x*4+2]) / 3;
-    var thresh = (sum / w) * 0.6;
-    for (var x = 0; x < w; x++) {
-      var lum = (row[x*4] + row[x*4+1] + row[x*4+2]) / 3;
-      pixels.push(lum < thresh ? 1 : 0);
+    // ZXing fallback — works on all iOS/Safari versions
+    await upcLoadZxingLib();
+
+    // Try ZXing namespace (works with both zxing-js and @zxing/library UMD)
+    var ZX = window.ZXing || window.ZXingLibrary;
+    if (!ZX) throw new Error('ZXing not loaded');
+
+    var hints = new Map();
+    hints.set(ZX.DecodeHintType.TRY_HARDER, true);
+    hints.set(ZX.DecodeHintType.POSSIBLE_FORMATS, [
+      ZX.BarcodeFormat.UPC_A,
+      ZX.BarcodeFormat.UPC_E,
+      ZX.BarcodeFormat.EAN_13,
+      ZX.BarcodeFormat.CODE_128
+    ]);
+
+    var reader  = new ZX.MultiFormatReader();
+    reader.setHints(hints);
+
+    // Scan multiple horizontal crops to improve hit rate
+    var decoded = null;
+    var crops   = [
+      [0,    0,    1,    1   ],  // full image
+      [0,    0.3,  1,    0.7 ],  // middle third
+      [0.1,  0.4,  0.9,  0.6 ],  // centre strip
+      [0,    0.25, 1,    0.75],  // broad middle
+    ];
+
+    for (var ci = 0; ci < crops.length && !decoded; ci++) {
+      var c  = crops[ci];
+      var cx = Math.floor(c[0] * canvas.width);
+      var cy = Math.floor(c[1] * canvas.height);
+      var cw = Math.floor((c[2] - c[0]) * canvas.width);
+      var ch = Math.floor((c[3] - c[1]) * canvas.height);
+      if (cw < 50 || ch < 20) continue;
+
+      try {
+        var imgData  = ctx.getImageData(cx, cy, cw, ch);
+        var luminance = new ZX.RGBLuminanceSource(imgData.data, cw, ch);
+        var binary   = new ZX.HybridBinarizer(luminance);
+        var bitmap   = new ZX.BinaryBitmap(binary);
+        var result   = reader.decode(bitmap);
+        if (result) decoded = result.getText();
+      } catch(_) {}
     }
-    var code = upcDecodeRow(pixels);
-    if (code) results.push(code);
-  }
-  // Pick most common result
-  if (results.length) {
-    var freq = {};
-    results.forEach(function(c) { freq[c] = (freq[c]||0)+1; });
-    var best = Object.keys(freq).sort(function(a,b){return freq[b]-freq[a];})[0];
-    upcHandleScan(best);
-  } else {
-    resultEl.innerHTML = '⚠ Could not read barcode<br><span style="font-size:11px">Try again — get closer, better light</span>';
+
+    if (decoded) {
+      upcHandleScan(decoded);
+    } else {
+      resultEl.innerHTML = '⚠ Could not read barcode<br><span style="font-size:11px;opacity:.8">Try again — hold steady, 6-12 inches away, good light</span>';
+      resultEl.style.background = 'rgba(220,38,38,.2)';
+      resultEl.style.color = '#fca5a5';
+    }
+
+  } catch(e) {
+    resultEl.innerHTML = '⚠ Error: ' + e.message + '<br><span style="font-size:11px">Try again</span>';
     resultEl.style.background = 'rgba(220,38,38,.2)';
     resultEl.style.color = '#fca5a5';
   }
-}
-
-// Decode a single row of binary pixels into a UPC-A code
-function upcDecodeRow(pixels) {
-  // UPC-A: 95 modules. Find runs of dark/light
-  var runs = [];
-  var cur  = pixels[0], cnt = 1;
-  for (var i = 1; i < pixels.length; i++) {
-    if (pixels[i] === cur) { cnt++; }
-    else { runs.push({ v: cur, n: cnt }); cur = pixels[i]; cnt = 1; }
-  }
-  runs.push({ v: cur, n: cnt });
-
-  // Find start guard (dark-light-dark) and try to decode from each position
-  for (var r = 0; r < runs.length - 60; r++) {
-    if (runs[r].v !== 1) continue; // must start dark
-    var unit = runs[r].n;
-    if (unit < 1) continue;
-    // Rough UPC pattern check: need ~95 modules total
-    var totalMods = 0;
-    for (var j = r; j < runs.length && totalMods < 100; j++) {
-      totalMods += runs[j].n;
-    }
-    if (totalMods < 85 || totalMods > 115) continue;
-
-    // Try decoding digits using L-code table
-    var Lcodes = {
-      '3211': '0','2221': '1','2122': '2','1411': '3','1132': '4',
-      '1231': '5','1114': '6','1312': '7','1213': '8','3112': '9'
-    };
-    // Simplified: extract 12 digits by splitting runs proportionally
-    // Build digit string from run widths
-    var u = unit;
-    var ri = r + 3; // skip start guard
-    var digits = '';
-    for (var d = 0; d < 12; d++) {
-      if (d === 6) ri += 5; // skip middle guard (5 modules)
-      var w1 = runs[ri]   ? Math.round(runs[ri].n / u)   : 0;
-      var w2 = runs[ri+1] ? Math.round(runs[ri+1].n / u) : 0;
-      var w3 = runs[ri+2] ? Math.round(runs[ri+2].n / u) : 0;
-      var w4 = runs[ri+3] ? Math.round(runs[ri+3].n / u) : 0;
-      var key = '' + w1 + w2 + w3 + w4;
-      if (Lcodes[key] !== undefined) { digits += Lcodes[key]; ri += 4; }
-      else break;
-    }
-    if (digits.length === 12 && upcValidateChecksum(digits)) return digits;
-  }
-  return null;
 }
 
 // Live video decode (Chrome/Android only — BarcodeDetector)
