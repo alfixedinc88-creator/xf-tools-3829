@@ -1071,7 +1071,7 @@ input[type=checkbox]{width:15px;height:15px;cursor:pointer;accent-color:var(--bl
   padding:24px;
 }
 #wh-app { display:none;flex-direction:column;min-height:100vh; }
-.launcher-inner { text-align:center;max-width:560px;width:100%; }
+.launcher-inner { max-width:480px;margin:0 auto; text-align:center;max-width:560px;width:100%; }
 .launcher-logo {
   display:inline-flex;align-items:center;gap:12px;margin-bottom:32px;
 }
@@ -1082,8 +1082,8 @@ input[type=checkbox]{width:15px;height:15px;cursor:pointer;accent-color:var(--bl
 }
 .launcher-name { font-size:24px;font-weight:700;color:var(--text);letter-spacing:-.5px; }
 .launcher-sub  { font-size:14px;color:var(--text3);margin-bottom:40px; }
-.launcher-grid { display:grid;grid-template-columns:1fr 1fr 1fr;gap:16px; }
-.launcher-mgmt-row { display:grid;grid-template-columns:1fr 1fr;gap:16px;max-width:700px;margin:0 auto;width:100%; }
+.launcher-grid { display:grid;grid-template-columns:repeat(2,1fr);gap:14px; } @media(min-width:600px){.launcher-grid{grid-template-columns:repeat(3,1fr);}}
+.launcher-mgmt-row { display:grid;grid-template-columns:1fr;gap:14px;max-width:480px;margin:0 auto;width:100%; } @media(min-width:500px){.launcher-mgmt-row{grid-template-columns:1fr 1fr;}}
 .launcher-section-label { font-size:11px;font-weight:700;letter-spacing:2px;text-transform:uppercase;color:var(--text3);margin:28px 0 12px;width:100%;text-align:center; }
 .launcher-card {
   background:var(--bg2);border:1.5px solid var(--border);border-radius:16px;
@@ -1675,7 +1675,6 @@ input[type=checkbox]{width:15px;height:15px;cursor:pointer;accent-color:var(--bl
 (function() {
   if (!('serviceWorker' in navigator)) return;
 
-  // Banner helpers
   function getBanner() { return document.getElementById('xf-offline-banner'); }
   function showBanner(msg, mode) {
     const b = getBanner();
@@ -1694,17 +1693,13 @@ input[type=checkbox]{width:15px;height:15px;cursor:pointer;accent-color:var(--bl
 
   let syncTimer;
 
-  // Register SW
   navigator.serviceWorker.register('/sw.js').then(reg => {
     console.log('[XF SW] registered', reg.scope);
-
-    // Ask SW for current queue count on load
     if (navigator.serviceWorker.controller) {
       navigator.serviceWorker.controller.postMessage({ type: 'QUEUE_STATUS' });
     }
   }).catch(err => console.warn('[XF SW] registration failed', err));
 
-  // Listen for messages from SW
   navigator.serviceWorker.addEventListener('message', e => {
     if (e.data?.type === 'SYNC_COMPLETE') {
       const { synced, remaining } = e.data;
@@ -1721,47 +1716,39 @@ input[type=checkbox]{width:15px;height:15px;cursor:pointer;accent-color:var(--bl
       setPill(n);
       if (n > 0 && !navigator.onLine) {
         showBanner('📶 Offline — ' + n + ' entr' + (n===1?'y':'ies') + ' queued', '');
-        setPill(n);
       }
     }
   });
 
-  // Online / offline events
   window.addEventListener('offline', () => {
     showBanner('📶 Offline — stock entries will be queued automatically', '');
   });
 
   window.addEventListener('online', () => {
     showBanner('↑ Back online — syncing queued entries…', 'syncing');
-    // Tell SW to replay queue
     if (navigator.serviceWorker.controller) {
       navigator.serviceWorker.controller.postMessage({ type: 'ONLINE' });
     }
-    // Try background sync API if available
     navigator.serviceWorker.ready.then(reg => {
       if (reg.sync) reg.sync.register('xfitting-sync').catch(() => {});
     });
   });
 
-  // If already offline on load, show banner immediately
   if (!navigator.onLine) {
     document.addEventListener('DOMContentLoaded', () => {
       showBanner('📶 Offline — stock entries will be queued automatically', '');
     });
   }
 
-  // Patch window.fetch to tag queued responses visually (inventory log only)
   const _origFetch = window.fetch;
   window.fetch = async function(...args) {
     const res = await _origFetch.apply(this, args);
-    // Clone to read body without consuming it
     try {
       const url = typeof args[0] === 'string' ? args[0] : args[0]?.url || '';
       if (url.includes('/inventory/log') && res.status === 202) {
         const clone = res.clone();
         const json  = await clone.json();
         if (json.queued) {
-          // Update pill count
           if (navigator.serviceWorker.controller) {
             navigator.serviceWorker.controller.postMessage({ type: 'QUEUE_STATUS' });
           }
@@ -1838,6 +1825,11 @@ input[type=checkbox]{width:15px;height:15px;cursor:pointer;accent-color:var(--bl
         <div class="launcher-card-icon">🏷️</div>
         <div class="launcher-card-title">UPC Barcodes</div>
         <div class="launcher-card-desc">Print Zebra barcode labels by SKU, UPC, or AWD shipment</div>
+      </div>
+      <div class="launcher-card" onclick="launchApp('inventory')">
+        <div class="launcher-card-icon">📋</div>
+        <div class="launcher-card-title">Inventory</div>
+        <div class="launcher-card-desc">Scan cases in/out, log locations, approve with management PIN</div>
       </div>
     </div>
 
@@ -3522,6 +3514,14 @@ function launchApp(which) {
     loadCfg();
     loadCpackFromStorage();
     if (!S.loaded) loadReportsFromSheet();
+  } else if (which === 'inventory') {
+    document.getElementById('inv-app').style.display = 'flex';
+    console.log('[INV] invSetMode defined:', typeof window.invSetMode);
+    console.log('[INV] invToggleCam defined:', typeof window.invToggleCam);
+    console.log('[INV] invLookup defined:', typeof window.invLookup);
+    invFetchPendingCount();
+    // Init pull list on launch (renders persisted list if in out mode)
+    if (typeof invRenderPullList === 'function') invRenderPullList();
   } else if (which === 'upc') {
     document.getElementById('upc-app').style.display = 'flex';
     // Load warehouse data if not already loaded (needs DB.upc)
@@ -3533,6 +3533,7 @@ function launchApp(which) {
 }
 
 function backToLauncher() {
+  document.getElementById('inv-app').style.display = 'none';
   document.getElementById('wh-app').style.display = 'none';
   document.getElementById('awd-app').style.display = 'none';
   document.getElementById('upc-app').style.display = 'none';
@@ -9303,6 +9304,757 @@ function rprToast(msg, type = '') {
   clearTimeout(rprTimer);
   rprTimer = setTimeout(() => { t.className = ''; }, 3500);
 }
+
+</script>
+
+<div id="inv-app" style="display:none;flex-direction:column;min-height:100vh;font-family:'DM Sans',sans-serif;background:var(--bg)">
+<style>
+#inv-app .itopbar{display:flex;align-items:center;justify-content:space-between;padding:12px 16px;background:var(--bg2);border-bottom:1px solid var(--border);position:sticky;top:0;z-index:100}
+#inv-app .itopbar-title{font-size:15px;font-weight:700;color:var(--text)}
+#inv-app .iback{background:none;border:1px solid var(--border);color:var(--text3);font-size:12px;padding:6px 13px;border-radius:8px;cursor:pointer;font-family:'DM Sans',sans-serif}
+#inv-app .itabs{display:flex;gap:8px;padding:12px 16px;background:var(--bg2);border-bottom:1px solid var(--border)}
+#inv-app .itab{padding:7px 18px;border-radius:20px;border:1.5px solid var(--border);background:none;color:var(--text3);font-size:13px;font-weight:600;cursor:pointer;font-family:'DM Sans',sans-serif;transition:all .15s}
+#inv-app .itab.active,#inv-app .itab.iactive{background:var(--accent);border-color:var(--accent);color:#fff}
+#inv-app .ibadge{display:inline-flex;align-items:center;justify-content:center;min-width:16px;height:16px;background:#c52a1a;color:#fff;font-size:10px;font-weight:700;border-radius:8px;padding:0 4px;margin-left:4px}
+#inv-app .ipanel{display:none;padding:16px;flex-direction:column;gap:12px}
+#inv-app .ipanel.iactive{display:flex}
+#inv-app .icard{background:var(--bg2);border:1px solid var(--border);border-radius:12px;padding:16px}
+#inv-app .icard-label{font-size:11px;font-weight:700;letter-spacing:1px;text-transform:uppercase;color:var(--text3);margin-bottom:10px}
+#inv-app .imode-row{display:grid;grid-template-columns:1fr 1fr;gap:10px}
+#inv-app .imode-btn{padding:14px;border-radius:10px;border:2.5px solid var(--border);background:var(--bg3);font-size:14px;font-weight:700;color:var(--text3);cursor:pointer;text-align:center;font-family:'DM Sans',sans-serif;transition:all .2s;width:100%}
+#inv-app .imode-btn.min{border-color:var(--green);background:var(--green-bg);color:var(--green)}
+#inv-app .imode-btn.mout{border-color:var(--red);background:var(--red-bg);color:var(--red)}
+#inv-app .isearch-row{display:flex;gap:8px}
+#inv-app .isearch-inp{flex:1;padding:10px 12px;border:1.5px solid var(--border);border-radius:8px;font-size:14px;font-family:'DM Sans',sans-serif;background:var(--bg);color:var(--text);outline:none}
+#inv-app .isearch-inp:focus{border-color:var(--accent)}
+#inv-app .isearch-btn{padding:10px 16px;border-radius:8px;background:var(--accent);color:#fff;border:none;font-size:14px;font-weight:700;cursor:pointer;font-family:'DM Sans',sans-serif}
+#inv-app .icam-btn{width:100%;padding:13px;border-radius:8px;background:var(--accent);color:#fff;border:none;font-size:14px;font-weight:700;cursor:pointer;font-family:'DM Sans',sans-serif;transition:background .2s;margin-top:10px}
+#inv-app .icam-btn.scanning{background:var(--red)}
+#inv-app #inv-reader-wrap{display:none;border-radius:10px;overflow:hidden;background:#000;min-height:160px;margin-top:10px}
+#inv-app .iresult{padding:12px 14px;border-radius:8px;background:var(--green-bg);border:1px solid var(--green)}
+#inv-app .iresult-part{font-size:16px;font-weight:700;font-family:var(--mono);color:var(--text)}
+#inv-app .iresult-name{font-size:12px;color:var(--text3);margin-top:2px}
+#inv-app .iloc-opt{padding:12px 14px;border-radius:8px;border:2px solid var(--border);background:var(--bg3);cursor:pointer;margin-bottom:8px;transition:all .15s;display:flex;justify-content:space-between;align-items:center}
+#inv-app .iloc-opt:hover{border-color:var(--accent)}
+#inv-app .iloc-opt.isel{border-color:var(--accent);background:var(--accent-bg)}
+#inv-app .iloc-name{font-size:14px;font-weight:600;color:var(--text)}
+#inv-app .iloc-cases{font-size:12px;color:var(--text3)}
+#inv-app .iloc-badge{font-size:10px;font-weight:700;padding:2px 7px;border-radius:4px}
+#inv-app .iloc-badge.ph{background:var(--orange-bg);color:var(--orange)}
+#inv-app .iloc-badge.ex{background:var(--accent-bg);color:var(--accent)}
+#inv-app .iloc-badge.nw{background:var(--green-bg);color:var(--green)}
+#inv-app .ifield{display:flex;flex-direction:column;gap:5px;margin-bottom:10px}
+#inv-app .ifield label{font-size:12px;font-weight:600;color:var(--text2)}
+#inv-app .ifield input{padding:10px 12px;border:1.5px solid var(--border);border-radius:8px;font-size:14px;font-family:'DM Sans',sans-serif;background:var(--bg);color:var(--text);outline:none}
+#inv-app .ifield input:focus{border-color:var(--accent)}
+#inv-app .ifield-row{display:grid;grid-template-columns:1fr 1fr;gap:10px}
+#inv-app .isubmit{width:100%;padding:14px;border-radius:10px;font-size:15px;font-weight:700;color:#fff;border:none;cursor:pointer;font-family:'DM Sans',sans-serif;margin-top:4px}
+#inv-app .isubmit.sin{background:var(--green)}
+#inv-app .isubmit.sout{background:var(--red)}
+#inv-app .isubmit:disabled{opacity:.35;cursor:not-allowed}
+#inv-app .iwarn{padding:10px 12px;background:var(--orange-bg);border:1px solid #fde68a;border-radius:8px;font-size:12px;color:var(--orange);font-weight:600;margin-bottom:8px}
+#inv-app .ipin-wrap{display:flex;flex-direction:column;align-items:center;padding:32px 16px;gap:14px}
+#inv-app .ipin-dots{display:flex;gap:10px}
+#inv-app .ipin-dot{width:14px;height:14px;border-radius:50%;background:var(--border2);border:2px solid var(--border)}
+#inv-app .ipin-dot.filled{background:var(--accent);border-color:var(--accent)}
+#inv-app .ipin-pad{display:grid;grid-template-columns:repeat(3,1fr);gap:10px;width:220px}
+#inv-app .ipin-key{padding:15px;border-radius:8px;background:var(--bg2);border:1.5px solid var(--border);font-size:18px;font-weight:700;color:var(--text);cursor:pointer;font-family:'DM Sans',sans-serif}
+#inv-app .ipin-key:hover{border-color:var(--accent);color:var(--accent)}
+#inv-app .ipin-err{color:var(--red);font-size:13px}
+#inv-app .ientry{background:var(--bg2);border:1px solid var(--border);border-radius:12px;padding:14px;margin-bottom:10px}
+#inv-app .ientry-head{display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:8px}
+#inv-app .ientry-part{font-size:16px;font-weight:700;font-family:var(--mono)}
+#inv-app .ientry-type{font-size:11px;font-weight:700;padding:3px 8px;border-radius:4px}
+#inv-app .ientry-type.in{background:var(--green-bg);color:var(--green)}
+#inv-app .ientry-type.out{background:var(--red-bg);color:var(--red)}
+#inv-app .ientry-meta{font-size:12px;color:var(--text3);margin-bottom:10px}
+#inv-app .ientry-btns{display:flex;gap:8px}
+#inv-app .iapprove{flex:1;padding:9px;border-radius:8px;background:var(--green);color:#fff;font-size:13px;font-weight:700;border:none;cursor:pointer;font-family:'DM Sans',sans-serif}
+#inv-app .ireject{flex:1;padding:9px;border-radius:8px;background:var(--bg3);border:1.5px solid var(--border);color:var(--text3);font-size:13px;font-weight:700;cursor:pointer;font-family:'DM Sans',sans-serif}
+#inv-app .iempty{text-align:center;color:var(--text3);padding:30px 20px;font-size:13px}
+#inv-app .isec-title{font-size:12px;font-weight:700;letter-spacing:.5px;text-transform:uppercase;margin-bottom:10px}
+#inv-app .isec-title.in{color:var(--green)}
+#inv-app .isec-title.out{color:var(--red)}
+#inv-app .iflash{position:fixed;inset:0;z-index:9999;display:flex;align-items:center;justify-content:center;pointer-events:none;opacity:0;transition:opacity .3s}
+#inv-app .iflash.show{opacity:1}
+#inv-app .iflash-inner{padding:20px 32px;border-radius:14px;font-size:17px;font-weight:700;color:#fff;box-shadow:0 4px 24px rgba(0,0,0,.15)}
+#inv-app .iflash.success .iflash-inner{background:var(--green)}
+#inv-app .iflash.error .iflash-inner{background:var(--red)}
+</style>
+
+<div id="inv-flash" class="iflash"><div class="iflash-inner" id="inv-flash-msg"></div></div>
+
+<div class="itopbar">
+  <div class="itopbar-title">📋 Inventory</div>
+  <button class="iback" onclick="backToLauncher()">← Apps</button>
+</div>
+
+<div class="itabs">
+  <button class="itab iactive" id="inv-tab-scan" onclick="invSwitchTab('scan')">Scan</button>
+  <button class="itab" id="inv-tab-review" onclick="invSwitchTab('review')">Review<span class="ibadge" id="inv-pending-badge" style="display:none">0</span></button>
+</div>
+
+<div class="ipanel iactive" id="inv-panel-scan">
+  <div class="icard">
+    <div class="icard-label">Mode</div>
+    <div class="imode-row">
+      <button class="imode-btn min" id="inv-mode-in" onclick="invSetMode('in')">📦 Stock In</button>
+      <button class="imode-btn" id="inv-mode-out" onclick="invSetMode('out')">📤 Stock Out</button>
+    </div>
+  </div>
+  <div class="icard">
+    <div class="icard-label">Scan or Search</div>
+    <div class="isearch-row">
+      <input class="isearch-inp" id="inv-search-inp" type="text" placeholder="Part# or barcode…" onkeydown="if(event.key==='Enter')invLookup(this.value.trim())">
+      <button class="isearch-btn" onclick="invLookup(document.getElementById('inv-search-inp').value.trim())">Go</button>
+    </div>
+    <button class="icam-btn" id="inv-cam-btn" onclick="invToggleCam()">📷 Start Camera</button>
+    <div id="inv-reader-wrap"><div id="inv-qr-reader"></div></div>
+  </div>
+  <div class="icard" id="inv-result-card" style="display:none">
+    <div style="display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:6px">
+      <div class="iresult-part" id="inv-result-part"></div>
+      <div id="inv-result-sku" style="font-size:11px;font-weight:600;font-family:var(--mono);color:var(--text3);padding-top:3px"></div>
+    </div>
+    <div class="iresult-name" id="inv-result-name" style="margin-bottom:8px"></div>
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:6px" id="inv-result-upcs">
+      <div style="background:var(--bg3);border-radius:6px;padding:8px 10px">
+        <div style="font-size:10px;font-weight:700;letter-spacing:.5px;text-transform:uppercase;color:var(--text3);margin-bottom:3px">Inside UPC</div>
+        <div id="inv-result-inside" style="font-size:13px;font-family:var(--mono);color:var(--text)">—</div>
+      </div>
+      <div style="background:var(--bg3);border-radius:6px;padding:8px 10px">
+        <div style="font-size:10px;font-weight:700;letter-spacing:.5px;text-transform:uppercase;color:var(--text3);margin-bottom:3px">Outside UPC</div>
+        <div id="inv-result-outside" style="font-size:13px;font-family:var(--mono);color:var(--text)">—</div>
+      </div>
+    </div>
+  </div>
+  <div class="icard" id="inv-loc-card" style="display:none">
+    <div class="icard-label" id="inv-loc-label">Select Location</div>
+    <div id="inv-loc-list"></div>
+    <div id="inv-newloc-wrap" style="display:none;margin-top:8px">
+      <div class="ifield"><label>New Location Name</label><input id="inv-newloc-inp" type="text" placeholder="e.g. A-Shelf-3"></div>
+    </div>
+  </div>
+  <div class="icard" id="inv-detail-card" style="display:none">
+    <div class="icard-label">Details</div>
+    <div class="iwarn" id="inv-warn" style="display:none"></div>
+    <div class="ifield-row">
+      <div class="ifield"><label>Cases</label><input id="inv-cases" type="number" min="1" placeholder="0"></div>
+      <div class="ifield"><label>Initials</label><input id="inv-initials" type="text" maxlength="4" placeholder="e.g. DJ"></div>
+    </div>
+    <div class="ifield"><label>Notes (optional)</label><input id="inv-notes" type="text" placeholder=""></div>
+    <button class="isubmit sin" id="inv-submit-btn" onclick="invSubmit()">Submit Stock In</button>
+  </div>
+
+  <!-- Pull List (Stock Out only) -->
+  <div class="icard" id="inv-pulllist-card" style="display:none">
+    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px">
+      <div class="icard-label" style="margin:0">Pull List</div>
+      <button onclick="invClearPullList()" style="background:none;border:none;color:var(--text3);font-size:12px;cursor:pointer;padding:4px 8px">Clear All</button>
+    </div>
+    <div id="inv-pulllist-items"></div>
+    <div style="margin-top:12px;display:flex;gap:8px;align-items:center">
+      <div class="ifield" style="flex:1;margin:0"><label style="font-size:10px">Initials</label><input id="inv-pull-initials" type="text" maxlength="4" placeholder="e.g. DJ"></div>
+      <div class="ifield" style="flex:2;margin:0"><label style="font-size:10px">Notes (optional)</label><input id="inv-pull-notes" type="text" placeholder=""></div>
+    </div>
+    <button class="isubmit sout" style="margin-top:10px" onclick="invSubmitPullList()">📤 Submit Pull List</button>
+  </div>
+</div>
+
+<div class="ipanel" id="inv-panel-review">
+  <div id="inv-pin-gate">
+    <div class="ipin-wrap">
+      <div style="font-size:14px;font-weight:700;color:var(--text)">Management PIN Required</div>
+      <div class="ipin-dots">
+        <div class="ipin-dot" id="inv-pd0"></div><div class="ipin-dot" id="inv-pd1"></div>
+        <div class="ipin-dot" id="inv-pd2"></div><div class="ipin-dot" id="inv-pd3"></div>
+      </div>
+      <div class="ipin-pad">
+        <button class="ipin-key" onclick="invPinKey('1')">1</button><button class="ipin-key" onclick="invPinKey('2')">2</button><button class="ipin-key" onclick="invPinKey('3')">3</button>
+        <button class="ipin-key" onclick="invPinKey('4')">4</button><button class="ipin-key" onclick="invPinKey('5')">5</button><button class="ipin-key" onclick="invPinKey('6')">6</button>
+        <button class="ipin-key" onclick="invPinKey('7')">7</button><button class="ipin-key" onclick="invPinKey('8')">8</button><button class="ipin-key" onclick="invPinKey('9')">9</button>
+        <button class="ipin-key" onclick="invPinKey('back')">⌫</button><button class="ipin-key" onclick="invPinKey('0')">0</button><button class="ipin-key" onclick="invPinKey('clear')" style="font-size:12px">CLR</button>
+      </div>
+      <div class="ipin-err" id="inv-pin-err" style="display:none">Incorrect PIN</div>
+    </div>
+  </div>
+  <div id="inv-review-content" style="display:none;padding:16px">
+    <div style="margin-bottom:20px"><div class="isec-title in">📦 Pending Stock In</div><div id="inv-pending-in"></div></div>
+    <div><div class="isec-title out">📤 Pending Stock Out</div><div id="inv-pending-out"></div></div>
+  </div>
+</div>
+</div>
+
+<script>
+
+(function() {
+  var W = "https://xfitting-lookup.alfixedinc88.workers.dev";
+  var MPIN = "6523";
+  var invMode = "in";
+  var invPart = null;
+  var invSelLoc = null;
+  var invCamRunning = false;
+  var invQrScanner = null;
+  var invLastScan = 0;
+  var invPinEntry = "";
+  var invUnlocked = false;
+  var invFlashTimer = null;
+  var _invQrLib = false;
+  var invItemMap = {};  // rowIndex -> item for verify
+  var invPullList = JSON.parse(localStorage.getItem('xfitting_pulllist') || '[]');
+
+  function g(id) { return document.getElementById(id); }
+
+  function invFlash(msg, type) {
+    clearTimeout(invFlashTimer);
+    g("inv-flash-msg").textContent = msg;
+    g("inv-flash").className = "iflash " + type + " show";
+    invFlashTimer = setTimeout(function() { g("inv-flash").className = "iflash"; }, 2500);
+  }
+
+  window.invSwitchTab = function(tab) {
+    g("inv-panel-scan").className    = "ipanel" + (tab === "scan"   ? " iactive" : "");
+    g("inv-panel-review").className  = "ipanel" + (tab === "review" ? " iactive" : "");
+    g("inv-tab-scan").className      = "itab"   + (tab === "scan"   ? " iactive" : "");
+    g("inv-tab-review").className    = "itab"   + (tab === "review" ? " iactive" : "");
+    if (tab === "review" && invUnlocked) invLoadPending();
+  };
+
+  window.invSetMode = function(mode) {
+    console.log('[INV] invSetMode called with mode:', mode);
+    invMode = mode;
+    g("inv-mode-in").className  = "imode-btn" + (mode === "in"  ? " min"  : "");
+    g("inv-mode-out").className = "imode-btn" + (mode === "out" ? " mout" : "");
+    g("inv-submit-btn").className   = "isubmit " + (mode === "in" ? "sin" : "sout");
+    // Pull list card: show in out mode, hide in in mode
+    g("inv-pulllist-card").style.display = mode === "out" ? "block" : "none";
+    if (mode === "out") invRenderPullList();
+    // Hide scan result cards when switching mode
+    g("inv-result-card").style.display = "none";
+    g("inv-loc-card").style.display    = "none";
+    g("inv-detail-card").style.display = "none";
+    g("inv-submit-btn").textContent = mode === "in" ? "Submit Stock In" : "Submit Stock Out";
+    invReset(true);
+  };
+
+  function invLoadQR() {
+    if (_invQrLib) return Promise.resolve();
+    return new Promise(function(res, rej) {
+      var s = document.createElement("script");
+      s.src = "https://unpkg.com/html5-qrcode@2.3.8/html5-qrcode.min.js";
+      s.onload = function() { _invQrLib = true; res(); };
+      s.onerror = rej;
+      document.head.appendChild(s);
+    });
+  }
+
+  window.invToggleCam = function() {
+    console.log('[INV] invToggleCam called, invCamRunning:', invCamRunning);
+    if (invCamRunning) { invStopCam(); return; }
+    var btn = g("inv-cam-btn");
+    btn.textContent = "Starting\u2026";
+    btn.disabled = true;
+    invLoadQR().then(function() {
+      g("inv-reader-wrap").style.display = "block";
+      if (invQrScanner) { try { invQrScanner.clear(); } catch(e) {} invQrScanner = null; }
+      invQrScanner = new Html5Qrcode("inv-qr-reader");
+      invQrScanner.start(
+        { facingMode: "environment" },
+        { fps: 10, qrbox: { width: 260, height: 90 } },
+        function(code) {
+          var now = Date.now();
+          if (now - invLastScan < 2000) return;
+          invLastScan = now;
+          invStopCam();
+          g("inv-search-inp").value = code;
+          invLookup(code);
+        },
+        function() {}
+      ).then(function() {
+        invCamRunning = true;
+        btn.textContent = "\u23f9 Stop Camera";
+        btn.className = "icam-btn scanning";
+        btn.disabled = false;
+      }).catch(function(err) {
+        invFlash("Camera error \u2014 check permissions", "error");
+        btn.textContent = "\ud83d\udcf7 Start Camera";
+        btn.className = "icam-btn";
+        btn.disabled = false;
+        g("inv-reader-wrap").style.display = "none";
+      });
+    }).catch(function() {
+      invFlash("Could not load scanner", "error");
+      btn.textContent = "\ud83d\udcf7 Start Camera";
+      btn.disabled = false;
+    });
+  };
+
+  function invStopCam() {
+    if (invQrScanner && invCamRunning) {
+      invQrScanner.stop().catch(function() {});
+      invQrScanner = null;
+    }
+    invCamRunning = false;
+    g("inv-reader-wrap").style.display = "none";
+    g("inv-cam-btn").textContent = "\ud83d\udcf7 Start Camera";
+    g("inv-cam-btn").className = "icam-btn";
+    g("inv-cam-btn").disabled = false;
+  }
+
+  window.invLookup = function(code) {
+    if (!code) return;
+    g("inv-result-card").style.display = "none";
+    g("inv-loc-card").style.display    = "none";
+    g("inv-detail-card").style.display = "none";
+    wFetch(W + "/inventory/lookup?code=" + encodeURIComponent(code))
+      .then(function(r) { return r.json(); })
+      .then(function(d) {
+        if (!d.partNum) { invFlash("Not found: " + code, "error"); return; }
+        invPart = d;
+        g("inv-result-part").textContent = d.isMultiVariant ? d.baseSku : d.partNum;
+        g("inv-result-sku").textContent   = d.sku && d.sku !== d.partNum ? d.sku : "";
+        g("inv-result-name").textContent  = d.name || "";
+        g("inv-result-inside").textContent  = d.insideUpc  || "—";
+        g("inv-result-outside").textContent = d.outsideUpc || "—";
+        g("inv-result-upcs").style.display  = (d.insideUpc || d.outsideUpc) ? "grid" : "none";
+        g("inv-result-card").style.display = "block";
+        if (d.isMultiVariant && d.variants && d.variants.length > 1) {
+          invShowVariantPicker(d.variants);
+        } else {
+          invShowLocs();
+        }
+      })
+      .catch(function() { invFlash("Lookup failed", "error"); });
+  };
+
+  function invShowVariantPicker(variants) {
+    var list = g("inv-loc-list");
+    list.innerHTML = "";
+    g("inv-loc-label").textContent = "Select Part Number";
+    g("inv-loc-card").style.display = "block";
+    g("inv-detail-card").style.display = "none";
+    // Stock out: filter to only variants that have locations with cases
+    var filteredVariants = invMode === "out"
+      ? variants.filter(function(v) {
+          return (invPart.locations || []).some(function(l) {
+            return l.partNum && l.partNum.toUpperCase() === v.toUpperCase() && parseFloat(l.cases) > 0;
+          });
+        })
+      : variants;
+    if (invMode === "out" && filteredVariants.length === 0) {
+      invFlash("No stock found for any variant", "error");
+      g("inv-loc-card").style.display = "none";
+      return;
+    }
+    var variants = filteredVariants;
+    variants.forEach(function(v) {
+      var el = document.createElement("div");
+      el.className = "iloc-opt";
+      // Total cases across all locations for this variant
+      var totalCases = (invPart.locations || [])
+        .filter(function(l) { return l.partNum && l.partNum.toUpperCase() === v.toUpperCase() && parseFloat(l.cases) > 0; })
+        .reduce(function(sum, l) { return sum + (parseFloat(l.cases) || 0); }, 0);
+      var locCount = (invPart.locations || [])
+        .filter(function(l) { return l.partNum && l.partNum.toUpperCase() === v.toUpperCase() && parseFloat(l.cases) > 0; }).length;
+      el.innerHTML = "<div style='flex:1'>"
+        + "<div class='iloc-name' style='font-family:var(--mono);font-size:14px'>" + v + "</div>"
+        + "<div style='font-size:11px;color:var(--text3);margin-top:2px'>" + totalCases + " cases · " + locCount + " location" + (locCount !== 1 ? "s" : "") + "</div>"
+        + "</div>"
+        + "<span class='iloc-badge ex'>Select</span>";
+      el.style.display = "flex";
+      el.style.alignItems = "center";
+      el.onclick = function() {
+        // Filter locations to this variant only
+        var varLocs = (invPart.locations || []).filter(function(l) {
+          return !l.partNum || l.partNum.toUpperCase() === v.toUpperCase();
+        });
+        // Stock out: only variants that have stock
+        if (invMode === "out") {
+          varLocs = varLocs.filter(function(l) { return parseFloat(l.cases) > 0; });
+          if (varLocs.length === 0) { invFlash("No stock for " + v, "error"); return; }
+        }
+        invPart = Object.assign({}, invPart, { partNum: v, locations: varLocs });
+        g("inv-result-part").textContent = v;
+        invShowLocs();
+      };
+      list.appendChild(el);
+    });
+  }
+
+  function invShowLocs() {
+    var allLocs = (invPart && invPart.locations) ? invPart.locations : [];
+    // Stock out: only show locations with cases > 0
+    var locs = invMode === "out"
+      ? allLocs.filter(function(l) { return parseFloat(l.cases) > 0; })
+      : allLocs;
+    invSelLoc = null;
+    var list = g("inv-loc-list");
+    list.innerHTML = "";
+
+    if (invMode === "out" && locs.length === 0) {
+      invFlash("No stock at any location for " + invPart.partNum, "error");
+      return;
+    }
+
+    locs.forEach(function(loc, i) {
+      var el = document.createElement("div");
+      el.className = "iloc-opt";
+      var badge = loc.isPlaceholder
+        ? "<span class='iloc-badge ph'>Placeholder</span>"
+        : "<span class='iloc-badge ex'>" + (invMode === "out" ? "Select" : "Existing") + "</span>";
+      var partLabel = loc.partNum && loc.partNum !== invPart.partNum
+        ? "<div class='iloc-pn' style='font-size:10px;font-family:var(--mono);color:var(--accent);margin-bottom:2px'>" + loc.partNum + "</div>" : "";
+      var casesStyle = invMode === "out" ? "font-weight:700;color:var(--text)" : "";
+      el.innerHTML = "<div>" + partLabel + "<div class='iloc-name'>" + loc.location + "</div>"
+        + "<div class='iloc-cases' style='" + casesStyle + "'>" + loc.cases + " cases available</div></div>" + badge;
+      el.onclick = (function(idx) { return function() { invPickLoc(idx); }; })(i);
+      list.appendChild(el);
+    });
+
+    if (invMode === "in") {
+      var newEl = document.createElement("div");
+      newEl.className = "iloc-opt";
+      newEl.id = "inv-new-opt";
+      newEl.innerHTML = "<div class='iloc-name'>+ Add New Location</div><span class='iloc-badge nw'>New</span>";
+      newEl.onclick = invPickNew;
+      list.appendChild(newEl);
+    }
+
+    g("inv-newloc-wrap").style.display = "none";
+    g("inv-loc-label").textContent = invMode === "in" ? "Stock In \u2014 Choose Location" : "Stock Out \u2014 Choose Location";
+    g("inv-loc-card").style.display = "block";
+    g("inv-detail-card").style.display = "none";
+  }
+
+  function invPickLoc(i) {
+    invSelLoc = invPart.locations[i];
+    document.querySelectorAll("#inv-app .iloc-opt").forEach(function(el) { el.classList.remove("isel"); });
+    g("inv-loc-list").children[i].classList.add("isel");
+    g("inv-newloc-wrap").style.display = "none";
+    if (invMode === "out") {
+      invAddToPullList(invPart, invSelLoc);
+    } else {
+      invShowDetails();
+    }
+  }
+
+  function invPickNew() {
+    invSelLoc = { isNew: true };
+    document.querySelectorAll("#inv-app .iloc-opt").forEach(function(el) { el.classList.remove("isel"); });
+    var newOpt = g("inv-new-opt");
+    if (newOpt) newOpt.classList.add("isel");
+    g("inv-newloc-wrap").style.display = "block";
+    invShowDetails();
+  }
+
+  function invShowDetails() {
+    var warn = g("inv-warn");
+    warn.style.display = "none";
+    if (invSelLoc && invSelLoc.isPlaceholder) {
+      warn.textContent = "\u26a0 Placeholder location \u2014 approving will set real location.";
+      warn.style.display = "block";
+    } else if (invMode === "out" && invSelLoc && !invSelLoc.isNew) {
+      warn.textContent = "\u26a0 Removing cases \u2014 current stock: " + invSelLoc.cases;
+      warn.style.display = "block";
+    }
+    g("inv-detail-card").style.display = "block";
+  }
+
+  window.invSubmit = function() {
+    var cases    = parseInt(g("inv-cases").value, 10);
+    var initials = g("inv-initials").value.trim();
+    var notes    = g("inv-notes").value.trim();
+    var newLoc   = g("inv-newloc-inp").value.trim();
+    if (!invPart)   { invFlash("No item selected", "error"); return; }
+    if (!invSelLoc) { invFlash("Select a location first", "error"); return; }
+    if (!cases || cases < 1) { invFlash("Enter number of cases", "error"); return; }
+    if (!initials)  { invFlash("Enter your initials", "error"); return; }
+    if (invSelLoc.isNew && !newLoc) { invFlash("Enter new location name", "error"); return; }
+    var location = invSelLoc.isNew ? newLoc : invSelLoc.location;
+    var btn = g("inv-submit-btn");
+    btn.disabled = true;
+    btn.textContent = "Saving\u2026";
+    wFetch(W + "/inventory/log", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        type: invMode.toUpperCase(), partNum: invPart.partNum, sku: invPart.sku,
+        location: location, cases: cases, initials: initials, notes: notes,
+        isNew: !!invSelLoc.isNew, isPlaceholder: !!invSelLoc.isPlaceholder,
+        masterRowIndex: invSelLoc.rowIndex || null
+      })
+    }).then(function(r) { return r.json(); })
+      .then(function(d) {
+        if (d.ok) { invFlash("Logged \u2014 pending approval", "success"); invReset(false); invFetchPendingCount(); }
+        else { invFlash("Error: " + (d.error || "unknown"), "error"); }
+      })
+      .catch(function() { invFlash("Submit failed", "error"); })
+      .finally(function() {
+        btn.disabled = false;
+        btn.textContent = invMode === "in" ? "Submit Stock In" : "Submit Stock Out";
+      });
+  };
+
+  function invReset(keepMode) {
+    invPart = null; invSelLoc = null;
+    g("inv-search-inp").value = "";
+    g("inv-result-card").style.display  = "none";
+    g("inv-loc-card").style.display     = "none";
+    g("inv-detail-card").style.display  = "none";
+    g("inv-cases").value = ""; g("inv-initials").value = ""; g("inv-notes").value = "";
+    g("inv-newloc-inp").value = "";
+    g("inv-newloc-wrap").style.display = "none";
+    g("inv-warn").style.display = "none";
+    if (!keepMode) invStopCam();
+  }
+
+  window.invFetchPendingCount = function() {
+    wFetch(W + "/inventory/pending")
+      .then(function(r) { return r.json(); })
+      .then(function(d) {
+        var n = (d.items || []).filter(function(x) { return x.status === "Pending"; }).length;
+        var b = g("inv-pending-badge");
+        b.textContent = n; b.style.display = n > 0 ? "inline-flex" : "none";
+      }).catch(function() {});
+  };
+
+  window.invPinKey = function(k) {
+    if (k === "clear") invPinEntry = "";
+    else if (k === "back") invPinEntry = invPinEntry.slice(0, -1);
+    else if (invPinEntry.length < 4) invPinEntry += k;
+    for (var i = 0; i < 4; i++) {
+      g("inv-pd" + i).className = "ipin-dot" + (i < invPinEntry.length ? " filled" : "");
+    }
+    g("inv-pin-err").style.display = "none";
+    if (invPinEntry.length === 4) {
+      if (invPinEntry === MPIN) {
+        invUnlocked = true;
+        // Upgrade session to mgmt level so /inventory/pending works
+        fetch(W + "/auth", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ pin: MPIN, pin_type: "mgmt" })
+        }).then(function(r){ return r.json(); }).then(function(d){
+          if (d.token) { XF_SESSION = d.token; sessionStorage.setItem("xf_session", d.token); }
+          g("inv-pin-gate").style.display = "none";
+          g("inv-review-content").style.display = "block";
+          invLoadPending();
+        }).catch(function(){
+          g("inv-pin-gate").style.display = "none";
+          g("inv-review-content").style.display = "block";
+          invLoadPending();
+        });
+      } else {
+        g("inv-pin-err").style.display = "block";
+        invPinEntry = "";
+        for (var j = 0; j < 4; j++) g("inv-pd" + j).className = "ipin-dot";
+      }
+    }
+  };
+
+  function invLoadPending() {
+    g("inv-pending-in").innerHTML  = "<div class='iempty'>Loading\u2026</div>";
+    g("inv-pending-out").innerHTML = "<div class='iempty'>Loading\u2026</div>";
+    wFetch(W + "/inventory/pending")
+      .then(function(r) { return r.json(); })
+      .then(function(d) {
+        var items = (d.items || []).filter(function(x) { return x.status === "Pending"; });
+        var ins   = items.filter(function(x) { return x.type === "IN"; });
+        var outs  = items.filter(function(x) { return x.type === "OUT"; });
+        var inEl  = g("inv-pending-in");
+        var outEl = g("inv-pending-out");
+        inEl.innerHTML  = ins.length  ? "" : "<div class='iempty'>No pending IN</div>";
+        outEl.innerHTML = outs.length ? "" : "<div class='iempty'>No pending OUT</div>";
+        ins.forEach(function(x)  { inEl.appendChild(invMakeCard(x)); });
+        outs.forEach(function(x) { outEl.appendChild(invMakeCard(x)); });
+      })
+      .catch(function() {
+        g("inv-pending-in").innerHTML = g("inv-pending-out").innerHTML = "<div class='iempty'>Load failed</div>";
+      });
+  }
+
+
+  // ── PULL LIST FUNCTIONS ──────────────────────────────────────────
+  function invSavePullList() {
+    localStorage.setItem('xfitting_pulllist', JSON.stringify(invPullList));
+  }
+
+  function invAddToPullList(part, loc) {
+    // Check for duplicate
+    var key = part.partNum + '|' + loc.location;
+    var exists = invPullList.some(function(x) { return x.key === key; });
+    if (exists) { invFlash("Already in pull list", "warn"); return; }
+    invPullList.push({
+      key:          key,
+      partNum:      part.partNum,
+      sku:          part.sku || part.partNum,
+      name:         part.name || '',
+      location:     loc.location,
+      cases:        '',   // fill in at location
+      rowIndex:     loc.rowIndex,
+      isPlaceholder: loc.isPlaceholder || false,
+      masterRowIndex: loc.rowIndex
+    });
+    // Sort numerically by location
+    invPullList.sort(function(a, b) {
+      return invLocSort(a.location) - invLocSort(b.location) ||
+             a.location.localeCompare(b.location) ||
+             a.partNum.localeCompare(b.partNum);
+    });
+    invSavePullList();
+    invRenderPullList();
+    invFlash("Added: " + part.partNum + " @ " + loc.location, "ok");
+    // Reset lookup for next scan
+    g("inv-result-card").style.display = "none";
+    g("inv-loc-card").style.display    = "none";
+    g("inv-search-inp").value = "";
+    invPart = null;
+    invSelLoc = null;
+  }
+
+  function invLocSort(loc) {
+    // Extract leading numbers for numeric sort e.g. "A12-3" -> try to get numeric part
+    var m = loc.match(/(\d+)/);
+    return m ? parseInt(m[1]) : 9999;
+  }
+
+  function invRenderPullList() {
+    var el = g("inv-pulllist-items");
+    if (!el) return;
+    if (invPullList.length === 0) {
+      el.innerHTML = "<div class='iempty'>No items yet — scan or search to add</div>";
+      return;
+    }
+    el.innerHTML = "";
+    invPullList.forEach(function(item, i) {
+      var row = document.createElement("div");
+      row.style.cssText = "display:grid;grid-template-columns:1fr auto;gap:8px;align-items:start;padding:8px 0;border-bottom:1px solid var(--border)";
+      row.innerHTML =
+        "<div>" +
+          "<div style='font-size:11px;font-weight:700;color:var(--accent);font-family:var(--mono);letter-spacing:.3px'>" + item.location + "</div>" +
+          "<div style='font-size:13px;font-weight:600;color:var(--text);font-family:var(--mono)'>" + item.partNum + "</div>" +
+          "<div style='font-size:11px;color:var(--text3)'>" + item.name + "</div>" +
+          "<div style='margin-top:6px;display:flex;gap:6px;align-items:center'>" +
+            "<input type='number' min='0' placeholder='Cases' value='" + (item.cases || '') + "' " +
+              "style='width:70px;padding:4px 8px;border-radius:6px;border:1px solid var(--border);background:var(--bg3);color:var(--text);font-size:13px' " +
+              "onchange='invUpdatePullCases(" + i + ", this.value)'>" +
+            "<span style='font-size:11px;color:var(--text3)'>cases</span>" +
+          "</div>" +
+        "</div>" +
+        "<button onclick='invRemoveFromPullList(" + i + ")' " +
+          "style='background:none;border:none;color:var(--text3);font-size:18px;cursor:pointer;padding:4px;line-height:1'>×</button>";
+      el.appendChild(row);
+    });
+  }
+
+  window.invUpdatePullCases = function(i, val) {
+    if (invPullList[i]) {
+      invPullList[i].cases = val ? parseInt(val) : '';
+      invSavePullList();
+    }
+  };
+
+  window.invRemoveFromPullList = function(i) {
+    invPullList.splice(i, 1);
+    invSavePullList();
+    invRenderPullList();
+  };
+
+  window.invClearPullList = function() {
+    if (invPullList.length === 0) return;
+    if (!confirm("Clear entire pull list?")) return;
+    invPullList = [];
+    invSavePullList();
+    invRenderPullList();
+  };
+
+  window.invSubmitPullList = function() {
+    var initials = g("inv-pull-initials").value.trim();
+    var notes    = g("inv-pull-notes").value.trim();
+    if (invPullList.length === 0) { invFlash("Pull list is empty", "error"); return; }
+    if (!initials) { invFlash("Enter your initials", "error"); return; }
+    // Validate all have cases
+    var missing = invPullList.filter(function(x) { return !x.cases || x.cases < 1; });
+    if (missing.length > 0) {
+      invFlash(missing.length + " item(s) missing case count", "error"); return;
+    }
+    var btn = document.querySelector("#inv-pulllist-card .isubmit");
+    btn.disabled = true; btn.textContent = "Submitting…";
+    // Submit each as a separate log entry sequentially
+    var items = invPullList.slice();
+    var idx = 0;
+    function submitNext() {
+      if (idx >= items.length) {
+        invFlash("Pull list submitted ✓", "ok");
+        invPullList = [];
+        invSavePullList();
+        invRenderPullList();
+        btn.disabled = false; btn.textContent = "📤 Submit Pull List";
+        g("inv-pull-initials").value = "";
+        g("inv-pull-notes").value = "";
+        return;
+      }
+      var item = items[idx++];
+      wFetch(W + "/inventory/log", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          type: "OUT", partNum: item.partNum, sku: item.sku, name: item.name,
+          location: item.location, cases: item.cases, initials: initials,
+          notes: notes, rowIndex: item.rowIndex, masterRowIndex: item.masterRowIndex,
+          isPlaceholder: false, isNew: false, overwriteLocation: ""
+        })
+      }).then(function(r){ return r.json(); })
+        .then(function(d) {
+          if (d.ok) { submitNext(); }
+          else { invFlash("Submit failed: " + (d.error || "unknown"), "error"); btn.disabled = false; btn.textContent = "📤 Submit Pull List"; }
+        })
+        .catch(function() { invFlash("Submit failed", "error"); btn.disabled = false; btn.textContent = "📤 Submit Pull List"; });
+    }
+    submitNext();
+  };
+  // ─────────────────────────────────────────────────────────────────
+
+  function invMakeCard(item) {
+    invItemMap[item.rowIndex] = item;  // store for verify
+    var el = document.createElement("div");
+    el.className = "ientry";
+    el.id = "inv-entry-" + item.rowIndex;
+    var typeHtml = "<span class='ientry-type " + item.type.toLowerCase() + "'>" + item.type + "</span>";
+    el.innerHTML = "<div class='ientry-head'><span class='ientry-part'>" + (item.partNum || "") + "</span>" + typeHtml + "</div>"
+      + "<div class='ientry-meta'>\ud83d\udccd " + (item.location || "") + " &nbsp;|\u00a0 \ud83d\udce6 " + (item.cases || 0) + " cases &nbsp;|\u00a0 \ud83e\uddd1 " + (item.initials || "")
+      + (item.notes ? "<br>\ud83d\udcdd " + item.notes : "") + "</div>"
+      + "<div class='ientry-btns'><button class='iapprove'>\u2713 Approve</button><button class='ireject'>\u2715 Reject</button></div>";
+    var ri = item.rowIndex;
+    el.querySelector(".iapprove").onclick = function() { invVerify(ri, "Approved"); };
+    el.querySelector(".ireject").onclick  = function() { invVerify(ri, "Rejected"); };
+    return el;
+  }
+
+  window.invVerify = function(rowIndex, action) {
+    var card = g("inv-entry-" + rowIndex);
+    if (card) { card.style.opacity = "0.5"; card.style.pointerEvents = "none"; }
+    wFetch(W + "/inventory/verify", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ rowIndex: rowIndex, action: action, item: invItemMap[rowIndex] || null })
+    }).then(function(r) { return r.json(); })
+      .then(function(d) {
+        if (d.ok) {
+          invFlash(action === "Approved" ? "Approved \u2713" : "Rejected", action === "Approved" ? "success" : "error");
+          if (card) card.remove();
+          invFetchPendingCount();
+        } else {
+          invFlash("Error: " + (d.error || "unknown"), "error");
+          if (card) { card.style.opacity = "1"; card.style.pointerEvents = "auto"; }
+        }
+      }).catch(function() {
+        invFlash("Verify failed", "error");
+        if (card) { card.style.opacity = "1"; card.style.pointerEvents = "auto"; }
+      });
+  };
+
+})();
 
 </script>
 </body>
