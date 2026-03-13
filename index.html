@@ -9454,17 +9454,47 @@ function rprToast(msg, type = '') {
       .then(function(d) {
         if (!d.partNum) { invFlash("Not found: " + code, "error"); return; }
         invPart = d;
-        g("inv-result-part").textContent = d.partNum;
+        g("inv-result-part").textContent = d.isMultiVariant ? d.baseSku : d.partNum;
         g("inv-result-sku").textContent   = d.sku && d.sku !== d.partNum ? d.sku : "";
         g("inv-result-name").textContent  = d.name || "";
         g("inv-result-inside").textContent  = d.insideUpc  || "—";
         g("inv-result-outside").textContent = d.outsideUpc || "—";
         g("inv-result-upcs").style.display  = (d.insideUpc || d.outsideUpc) ? "grid" : "none";
         g("inv-result-card").style.display = "block";
-        invShowLocs();
+        if (d.isMultiVariant && d.variants && d.variants.length > 1) {
+          invShowVariantPicker(d.variants);
+        } else {
+          invShowLocs();
+        }
       })
       .catch(function() { invFlash("Lookup failed", "error"); });
   };
+
+  function invShowVariantPicker(variants) {
+    var list = g("inv-loc-list");
+    list.innerHTML = "";
+    g("inv-loc-label").textContent = "Select Part Number";
+    g("inv-loc-card").style.display = "block";
+    g("inv-detail-card").style.display = "none";
+    variants.forEach(function(v) {
+      var el = document.createElement("div");
+      el.className = "iloc-opt";
+      el.innerHTML = "<div class='iloc-name' style='font-family:var(--mono);font-size:14px'>" + v + "</div>"
+        + "<span class='iloc-badge ex'>Select</span>";
+      el.onclick = function() {
+        // Filter locations to this variant only
+        invPart = Object.assign({}, invPart, {
+          partNum: v,
+          locations: (invPart.locations || []).filter(function(l) {
+            return !l.partNum || l.partNum.toUpperCase() === v.toUpperCase();
+          })
+        });
+        g("inv-result-part").textContent = v;
+        invShowLocs();
+      };
+      list.appendChild(el);
+    });
+  }
 
   function invShowLocs() {
     var locs = (invPart && invPart.locations) ? invPart.locations : [];
@@ -9483,7 +9513,9 @@ function rprToast(msg, type = '') {
       var badge = loc.isPlaceholder
         ? "<span class='iloc-badge ph'>Placeholder</span>"
         : "<span class='iloc-badge ex'>" + (invMode === "out" ? "Select" : "Existing") + "</span>";
-      el.innerHTML = "<div><div class='iloc-name'>" + loc.location + "</div>"
+      var partLabel = loc.partNum && loc.partNum !== invPart.partNum
+        ? "<div class='iloc-pn' style='font-size:10px;font-family:var(--mono);color:var(--accent);margin-bottom:2px'>" + loc.partNum + "</div>" : "";
+      el.innerHTML = "<div>" + partLabel + "<div class='iloc-name'>" + loc.location + "</div>"
         + "<div class='iloc-cases'>" + loc.cases + " cases</div></div>" + badge;
       el.onclick = (function(idx) { return function() { invPickLoc(idx); }; })(i);
       list.appendChild(el);
@@ -9603,9 +9635,21 @@ function rprToast(msg, type = '') {
     if (invPinEntry.length === 4) {
       if (invPinEntry === MPIN) {
         invUnlocked = true;
-        g("inv-pin-gate").style.display = "none";
-        g("inv-review-content").style.display = "block";
-        invLoadPending();
+        // Upgrade session to mgmt level so /inventory/pending works
+        fetch(W + "/auth", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ pin: MPIN, pin_type: "mgmt" })
+        }).then(function(r){ return r.json(); }).then(function(d){
+          if (d.token) { XF_SESSION = d.token; sessionStorage.setItem("xf_session", d.token); }
+          g("inv-pin-gate").style.display = "none";
+          g("inv-review-content").style.display = "block";
+          invLoadPending();
+        }).catch(function(){
+          g("inv-pin-gate").style.display = "none";
+          g("inv-review-content").style.display = "block";
+          invLoadPending();
+        });
       } else {
         g("inv-pin-err").style.display = "block";
         invPinEntry = "";
