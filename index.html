@@ -3387,6 +3387,8 @@ function launchApp(which) {
     console.log('[INV] invToggleCam defined:', typeof window.invToggleCam);
     console.log('[INV] invLookup defined:', typeof window.invLookup);
     invFetchPendingCount();
+    // Init pull list on launch (renders persisted list if in out mode)
+    if (typeof invRenderPullList === 'function') invRenderPullList();
   } else if (which === 'upc') {
     document.getElementById('upc-app').style.display = 'flex';
     // Load warehouse data if not already loaded (needs DB.upc)
@@ -9310,6 +9312,20 @@ function rprToast(msg, type = '') {
     <div class="ifield"><label>Notes (optional)</label><input id="inv-notes" type="text" placeholder=""></div>
     <button class="isubmit sin" id="inv-submit-btn" onclick="invSubmit()">Submit Stock In</button>
   </div>
+
+  <!-- Pull List (Stock Out only) -->
+  <div class="icard" id="inv-pulllist-card" style="display:none">
+    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px">
+      <div class="icard-label" style="margin:0">Pull List</div>
+      <button onclick="invClearPullList()" style="background:none;border:none;color:var(--text3);font-size:12px;cursor:pointer;padding:4px 8px">Clear All</button>
+    </div>
+    <div id="inv-pulllist-items"></div>
+    <div style="margin-top:12px;display:flex;gap:8px;align-items:center">
+      <div class="ifield" style="flex:1;margin:0"><label style="font-size:10px">Initials</label><input id="inv-pull-initials" type="text" maxlength="4" placeholder="e.g. DJ"></div>
+      <div class="ifield" style="flex:2;margin:0"><label style="font-size:10px">Notes (optional)</label><input id="inv-pull-notes" type="text" placeholder=""></div>
+    </div>
+    <button class="isubmit sout" style="margin-top:10px" onclick="invSubmitPullList()">📤 Submit Pull List</button>
+  </div>
 </div>
 
 <div class="ipanel" id="inv-panel-review">
@@ -9352,6 +9368,7 @@ function rprToast(msg, type = '') {
   var invFlashTimer = null;
   var _invQrLib = false;
   var invItemMap = {};  // rowIndex -> item for verify
+  var invPullList = JSON.parse(localStorage.getItem('xfitting_pulllist') || '[]');
 
   function g(id) { return document.getElementById(id); }
 
@@ -9376,6 +9393,13 @@ function rprToast(msg, type = '') {
     g("inv-mode-in").className  = "imode-btn" + (mode === "in"  ? " min"  : "");
     g("inv-mode-out").className = "imode-btn" + (mode === "out" ? " mout" : "");
     g("inv-submit-btn").className   = "isubmit " + (mode === "in" ? "sin" : "sout");
+    // Pull list card: show in out mode, hide in in mode
+    g("inv-pulllist-card").style.display = mode === "out" ? "block" : "none";
+    if (mode === "out") invRenderPullList();
+    // Hide scan result cards when switching mode
+    g("inv-result-card").style.display = "none";
+    g("inv-loc-card").style.display    = "none";
+    g("inv-detail-card").style.display = "none";
     g("inv-submit-btn").textContent = mode === "in" ? "Submit Stock In" : "Submit Stock Out";
     invReset(true);
   };
@@ -9541,7 +9565,11 @@ function rprToast(msg, type = '') {
     document.querySelectorAll("#inv-app .iloc-opt").forEach(function(el) { el.classList.remove("isel"); });
     g("inv-loc-list").children[i].classList.add("isel");
     g("inv-newloc-wrap").style.display = "none";
-    invShowDetails();
+    if (invMode === "out") {
+      invAddToPullList(invPart, invSelLoc);
+    } else {
+      invShowDetails();
+    }
   }
 
   function invPickNew() {
@@ -9678,6 +9706,148 @@ function rprToast(msg, type = '') {
         g("inv-pending-in").innerHTML = g("inv-pending-out").innerHTML = "<div class='iempty'>Load failed</div>";
       });
   }
+
+
+  // ── PULL LIST FUNCTIONS ──────────────────────────────────────────
+  function invSavePullList() {
+    localStorage.setItem('xfitting_pulllist', JSON.stringify(invPullList));
+  }
+
+  function invAddToPullList(part, loc) {
+    // Check for duplicate
+    var key = part.partNum + '|' + loc.location;
+    var exists = invPullList.some(function(x) { return x.key === key; });
+    if (exists) { invFlash("Already in pull list", "warn"); return; }
+    invPullList.push({
+      key:          key,
+      partNum:      part.partNum,
+      sku:          part.sku || part.partNum,
+      name:         part.name || '',
+      location:     loc.location,
+      cases:        '',   // fill in at location
+      rowIndex:     loc.rowIndex,
+      isPlaceholder: loc.isPlaceholder || false,
+      masterRowIndex: loc.rowIndex
+    });
+    // Sort numerically by location
+    invPullList.sort(function(a, b) {
+      return invLocSort(a.location) - invLocSort(b.location) ||
+             a.location.localeCompare(b.location) ||
+             a.partNum.localeCompare(b.partNum);
+    });
+    invSavePullList();
+    invRenderPullList();
+    invFlash("Added: " + part.partNum + " @ " + loc.location, "ok");
+    // Reset lookup for next scan
+    g("inv-result-card").style.display = "none";
+    g("inv-loc-card").style.display    = "none";
+    g("inv-search-inp").value = "";
+    invPart = null;
+    invSelLoc = null;
+  }
+
+  function invLocSort(loc) {
+    // Extract leading numbers for numeric sort e.g. "A12-3" -> try to get numeric part
+    var m = loc.match(/(\d+)/);
+    return m ? parseInt(m[1]) : 9999;
+  }
+
+  function invRenderPullList() {
+    var el = g("inv-pulllist-items");
+    if (!el) return;
+    if (invPullList.length === 0) {
+      el.innerHTML = "<div class='iempty'>No items yet — scan or search to add</div>";
+      return;
+    }
+    el.innerHTML = "";
+    invPullList.forEach(function(item, i) {
+      var row = document.createElement("div");
+      row.style.cssText = "display:grid;grid-template-columns:1fr auto;gap:8px;align-items:start;padding:8px 0;border-bottom:1px solid var(--border)";
+      row.innerHTML =
+        "<div>" +
+          "<div style='font-size:11px;font-weight:700;color:var(--accent);font-family:var(--mono);letter-spacing:.3px'>" + item.location + "</div>" +
+          "<div style='font-size:13px;font-weight:600;color:var(--text);font-family:var(--mono)'>" + item.partNum + "</div>" +
+          "<div style='font-size:11px;color:var(--text3)'>" + item.name + "</div>" +
+          "<div style='margin-top:6px;display:flex;gap:6px;align-items:center'>" +
+            "<input type='number' min='0' placeholder='Cases' value='" + (item.cases || '') + "' " +
+              "style='width:70px;padding:4px 8px;border-radius:6px;border:1px solid var(--border);background:var(--bg3);color:var(--text);font-size:13px' " +
+              "onchange='invUpdatePullCases(" + i + ", this.value)'>" +
+            "<span style='font-size:11px;color:var(--text3)'>cases</span>" +
+          "</div>" +
+        "</div>" +
+        "<button onclick='invRemoveFromPullList(" + i + ")' " +
+          "style='background:none;border:none;color:var(--text3);font-size:18px;cursor:pointer;padding:4px;line-height:1'>×</button>";
+      el.appendChild(row);
+    });
+  }
+
+  window.invUpdatePullCases = function(i, val) {
+    if (invPullList[i]) {
+      invPullList[i].cases = val ? parseInt(val) : '';
+      invSavePullList();
+    }
+  };
+
+  window.invRemoveFromPullList = function(i) {
+    invPullList.splice(i, 1);
+    invSavePullList();
+    invRenderPullList();
+  };
+
+  window.invClearPullList = function() {
+    if (invPullList.length === 0) return;
+    if (!confirm("Clear entire pull list?")) return;
+    invPullList = [];
+    invSavePullList();
+    invRenderPullList();
+  };
+
+  window.invSubmitPullList = function() {
+    var initials = g("inv-pull-initials").value.trim();
+    var notes    = g("inv-pull-notes").value.trim();
+    if (invPullList.length === 0) { invFlash("Pull list is empty", "error"); return; }
+    if (!initials) { invFlash("Enter your initials", "error"); return; }
+    // Validate all have cases
+    var missing = invPullList.filter(function(x) { return !x.cases || x.cases < 1; });
+    if (missing.length > 0) {
+      invFlash(missing.length + " item(s) missing case count", "error"); return;
+    }
+    var btn = document.querySelector("#inv-pulllist-card .isubmit");
+    btn.disabled = true; btn.textContent = "Submitting…";
+    // Submit each as a separate log entry sequentially
+    var items = invPullList.slice();
+    var idx = 0;
+    function submitNext() {
+      if (idx >= items.length) {
+        invFlash("Pull list submitted ✓", "ok");
+        invPullList = [];
+        invSavePullList();
+        invRenderPullList();
+        btn.disabled = false; btn.textContent = "📤 Submit Pull List";
+        g("inv-pull-initials").value = "";
+        g("inv-pull-notes").value = "";
+        return;
+      }
+      var item = items[idx++];
+      wFetch(W + "/inventory/log", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          type: "OUT", partNum: item.partNum, sku: item.sku, name: item.name,
+          location: item.location, cases: item.cases, initials: initials,
+          notes: notes, rowIndex: item.rowIndex, masterRowIndex: item.masterRowIndex,
+          isPlaceholder: false, isNew: false, overwriteLocation: ""
+        })
+      }).then(function(r){ return r.json(); })
+        .then(function(d) {
+          if (d.ok) { submitNext(); }
+          else { invFlash("Submit failed: " + (d.error || "unknown"), "error"); btn.disabled = false; btn.textContent = "📤 Submit Pull List"; }
+        })
+        .catch(function() { invFlash("Submit failed", "error"); btn.disabled = false; btn.textContent = "📤 Submit Pull List"; });
+    }
+    submitNext();
+  };
+  // ─────────────────────────────────────────────────────────────────
 
   function invMakeCard(item) {
     invItemMap[item.rowIndex] = item;  // store for verify
