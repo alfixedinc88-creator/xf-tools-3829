@@ -9517,8 +9517,19 @@ function rprToast(msg, type = '') {
     variants.forEach(function(v) {
       var el = document.createElement("div");
       el.className = "iloc-opt";
-      el.innerHTML = "<div class='iloc-name' style='font-family:var(--mono);font-size:14px'>" + v + "</div>"
+      // Total cases across all locations for this variant
+      var totalCases = (invPart.locations || [])
+        .filter(function(l) { return l.partNum && l.partNum.toUpperCase() === v.toUpperCase() && parseFloat(l.cases) > 0; })
+        .reduce(function(sum, l) { return sum + (parseFloat(l.cases) || 0); }, 0);
+      var locCount = (invPart.locations || [])
+        .filter(function(l) { return l.partNum && l.partNum.toUpperCase() === v.toUpperCase() && parseFloat(l.cases) > 0; }).length;
+      el.innerHTML = "<div style='flex:1'>"
+        + "<div class='iloc-name' style='font-family:var(--mono);font-size:14px'>" + v + "</div>"
+        + "<div style='font-size:11px;color:var(--text3);margin-top:2px'>" + totalCases + " cases · " + locCount + " location" + (locCount !== 1 ? "s" : "") + "</div>"
+        + "</div>"
         + "<span class='iloc-badge ex'>Select</span>";
+      el.style.display = "flex";
+      el.style.alignItems = "center";
       el.onclick = function() {
         // Filter locations to this variant only
         var varLocs = (invPart.locations || []).filter(function(l) {
@@ -9560,8 +9571,9 @@ function rprToast(msg, type = '') {
         : "<span class='iloc-badge ex'>" + (invMode === "out" ? "Select" : "Existing") + "</span>";
       var partLabel = loc.partNum && loc.partNum !== invPart.partNum
         ? "<div class='iloc-pn' style='font-size:10px;font-family:var(--mono);color:var(--accent);margin-bottom:2px'>" + loc.partNum + "</div>" : "";
+      var casesStyle = invMode === "out" ? "font-weight:700;color:var(--text)" : "";
       el.innerHTML = "<div>" + partLabel + "<div class='iloc-name'>" + loc.location + "</div>"
-        + "<div class='iloc-cases'>" + loc.cases + " cases</div></div>" + badge;
+        + "<div class='iloc-cases' style='" + casesStyle + "'>" + loc.cases + " cases available</div></div>" + badge;
       el.onclick = (function(idx) { return function() { invPickLoc(idx); }; })(i);
       list.appendChild(el);
     });
