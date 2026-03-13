@@ -7,7 +7,7 @@ const CACHE_NAME   = 'xfitting-shell-v1';
 const WORKER_URL   = 'https://xfitting-lookup.alfixedinc88.workers.dev';
 const QUEUE_KEY    = 'xfitting-sync-queue';
 
-// ── App shell: cache on install ──────────────────────────────────────────────
+// ── App shell: cache on install  ──────────────────────────────────────────────
 const SHELL_ASSETS = [
   '/',
   '/index.html',
