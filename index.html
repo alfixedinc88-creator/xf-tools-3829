@@ -1693,7 +1693,7 @@ input[type=checkbox]{width:15px;height:15px;cursor:pointer;accent-color:var(--bl
 
   let syncTimer;
 
-  navigator.serviceWorker.register('/sw.js').then(reg => {
+  navigator.serviceWorker.register('/xf-tools-3829/sw.js').then(reg => {
     console.log('[XF SW] registered', reg.scope);
     if (navigator.serviceWorker.controller) {
       navigator.serviceWorker.controller.postMessage({ type: 'QUEUE_STATUS' });
@@ -4929,6 +4929,81 @@ function findCol(headers, keys) {
 }
 
 // ─── FILE UPLOAD & CSV PARSING ───────────────────────────────────────────────
+
+// ── fetchEbaySales — Fetch eBay orders via API and write to sheet ─────────────
+async function fetchEbaySales(ctx) {
+  // ctx = 'ro' (reorder) or 'db' (dashboard)
+  const btnId = ctx + '-ebay-fetch-btn';
+  const btn = document.getElementById(btnId);
+  if (btn) { btn.disabled = true; btn.textContent = '⟳ Fetching...'; }
+
+  function setStatus30(msg, ok) {
+    const el30 = document.getElementById(ctx + '-ebay30-status');
+    if (el30) { el30.textContent = msg; el30.style.color = ok ? 'var(--green)' : ok === false ? 'var(--red)' : 'var(--text3)'; }
+  }
+  function setStatus90(msg, ok) {
+    const el90 = document.getElementById(ctx + '-ebay90-status');
+    if (el90) { el90.textContent = msg; el90.style.color = ok ? 'var(--green)' : ok === false ? 'var(--red)' : 'var(--text3)'; }
+  }
+
+  setStatus30('Fetching from eBay...', null);
+  setStatus90('Fetching from eBay...', null);
+  setStatus('ro', 'loading', 'Fetching eBay...');
+  setStatus('db', 'loading', 'Fetching eBay...');
+  salesToast('<span class="sales-spinner"></span>Fetching eBay orders (30d + 90d)...', 'info');
+
+  try {
+    const res  = await wFetch(SALES_WORKER_URL + '/ebay/sales-fetch', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ window: 'both' })
+    });
+    const data = await res.json();
+    if (!data.ok) throw new Error(data.error || 'Fetch failed');
+
+    const ts = new Date().toLocaleString();
+    const skuLabel = data.skus + ' SKUs · ' + data.orders + ' orders';
+
+    setStatus30('✓ ' + skuLabel, true);
+    setStatus90('✓ ' + skuLabel, true);
+
+    // Update last-fetch label
+    ['ro-ebay-last-fetch', 'db-ebay-last-fetch'].forEach(function(id) {
+      var el = document.getElementById(id);
+      if (el) el.textContent = 'Last fetched: ' + ts;
+    });
+
+    salesToast('✓ eBay sales fetched — ' + data.orders + ' orders, ' + data.skus + ' SKUs', 'success');
+
+    // Now read back calculated tabs so the data flows through the pipeline
+    salesToast('<span class="sales-spinner"></span>Recalculating...', 'info');
+    try {
+      await Promise.all([ salesLoadWarehouseStock(), readCalcTabs() ]);
+      lastUpdated = new Date();
+      updateLastUpdatedLabels();
+      buildReorderRows();
+      buildDashboardData();
+      var whCount = Object.keys(CALC.whStock).length;
+      setStatus('ro', 'ok', 'WH: ' + whCount + ' parts');
+      setStatus('db', 'ok', 'Up to date');
+      salesToast('✓ eBay data loaded — ' + CALC.partSales.length + ' parts', 'success');
+    } catch(calcErr) {
+      setStatus('ro', 'err', 'Calc error');
+      setStatus('db', 'err', 'Calc error');
+      salesToast('Calc error after fetch: ' + calcErr.message, 'error');
+    }
+
+  } catch(e) {
+    setStatus30('✗ ' + e.message, false);
+    setStatus90('✗ ' + e.message, false);
+    setStatus('ro', 'err', 'eBay fetch failed');
+    setStatus('db', 'err', 'eBay fetch failed');
+    salesToast('eBay fetch error: ' + e.message, 'error');
+  } finally {
+    if (btn) { btn.disabled = false; btn.textContent = '↓ Fetch eBay Sales'; }
+  }
+}
+
 function handleUpload(evt, tabName) {
   var file = evt.target.files[0];
   if (!file) return;
@@ -6431,23 +6506,30 @@ function salesToast(msg, type) {
 
       <div class="sales-upload-section">
         
-        <div style="margin-bottom:12px;padding:10px 14px;background:var(--accent-bg);border:1.5px solid var(--accent);border-radius:8px;font-size:12px;color:var(--text2)">
-          📋 <strong style="color:var(--accent)">eBay Reports</strong> — Download from <a href="https://www.ebay.com/sh/performance/sales" target="_blank" style="color:var(--accent);text-decoration:none;font-weight:600">eBay Seller Hub → Performance → Sales</a><br>
-          <span style="color:var(--red);font-weight:600">⚠</span> Set the date range before downloading — 30-day for Ebay30, 90-day for Ebay90.
-        </div>
         <div class="sales-upload-title">eBay Reports</div>
-        <div class="sales-upload-grid">
-          <div class="sales-upload-card" id="uc-Ebay30">
-            <input type="file" class="sales-upload-input" accept=".csv" onchange="handleUpload(event,'Ebay30')">
-            <div class="s-uc-label">Ebay30</div>
-            <div class="s-uc-sub">eBay 30-Day Sales Report (.csv)</div>
-            <div class="s-uc-status" id="uc-status-Ebay30">Click to select file</div>
+        <div style="background:var(--bg2);border:1.5px solid var(--border);border-radius:12px;padding:18px 20px;margin-bottom:0;">
+          <div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:12px;margin-bottom:14px;">
+            <div>
+              <div style="font-size:14px;font-weight:600;color:var(--text);margin-bottom:3px;">📡 Fetch from eBay API</div>
+              <div style="font-size:12px;color:var(--text2);">Pulls your last 30 and 90 days of orders directly — no CSV download needed</div>
+            </div>
+            <button onclick="fetchEbaySales('ro')" id="ro-ebay-fetch-btn" class="sales-primary-btn" style="white-space:nowrap;">
+              ↓ Fetch eBay Sales
+            </button>
           </div>
-          <div class="sales-upload-card" id="uc-Ebay90">
-            <input type="file" class="sales-upload-input" accept=".csv" onchange="handleUpload(event,'Ebay90')">
-            <div class="s-uc-label">Ebay90</div>
-            <div class="s-uc-sub">eBay 90-Day Sales Report (.csv)</div>
-            <div class="s-uc-status" id="uc-status-Ebay90">Click to select file</div>
+          <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;">
+            <div style="background:var(--bg3);border:1px solid var(--border);border-radius:8px;padding:10px 14px;" id="ro-ebay30-status-card">
+              <div style="font-family:var(--mono);font-size:11px;font-weight:600;color:var(--accent);margin-bottom:4px;">Ebay30</div>
+              <div style="font-size:12px;color:var(--text3);" id="ro-ebay30-status">Not fetched yet</div>
+            </div>
+            <div style="background:var(--bg3);border:1px solid var(--border);border-radius:8px;padding:10px 14px;" id="ro-ebay90-status-card">
+              <div style="font-family:var(--mono);font-size:11px;font-weight:600;color:var(--accent);margin-bottom:4px;">Ebay90</div>
+              <div style="font-size:12px;color:var(--text3);" id="ro-ebay90-status">Not fetched yet</div>
+            </div>
+          </div>
+          <div style="margin-top:10px;font-size:11px;color:var(--text3);display:flex;align-items:center;gap:6px;">
+            <span>📦 Shows both units sold and order count per SKU</span>
+            <span style="margin-left:auto;font-family:var(--mono);" id="ro-ebay-last-fetch"></span>
           </div>
         </div>
       </div>
@@ -6650,21 +6732,30 @@ function salesToast(msg, type) {
       </div>
       <div class="sales-upload-section">
         
-        <div style="margin-bottom:12px;padding:10px 14px;background:var(--accent-bg);border:1.5px solid var(--accent);border-radius:8px;font-size:12px;color:var(--text2)">
-          📋 <strong style="color:var(--accent)">eBay Reports</strong> — Download from <a href="https://www.ebay.com/sh/performance/sales" target="_blank" style="color:var(--accent);text-decoration:none;font-weight:600">eBay Seller Hub → Performance → Sales</a><br>
-          <span style="color:var(--red);font-weight:600">⚠</span> Set the date range before downloading — 30-day for Ebay30, 90-day for Ebay90.
-        </div>
         <div class="sales-upload-title">eBay Reports</div>
-        <div class="sales-upload-grid">
-          <div class="sales-upload-card" id="db-uc-Ebay30">
-            <input type="file" class="sales-upload-input" accept=".csv" onchange="handleUpload(event,'Ebay30')">
-            <div class="s-uc-label">Ebay30</div><div class="s-uc-sub">eBay 30-Day Sales Report (.csv)</div>
-            <div class="s-uc-status" id="db-uc-status-Ebay30">Click to select file</div>
+        <div style="background:var(--bg2);border:1.5px solid var(--border);border-radius:12px;padding:18px 20px;margin-bottom:0;">
+          <div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:12px;margin-bottom:14px;">
+            <div>
+              <div style="font-size:14px;font-weight:600;color:var(--text);margin-bottom:3px;">📡 Fetch from eBay API</div>
+              <div style="font-size:12px;color:var(--text2);">Pulls your last 30 and 90 days of orders directly — no CSV download needed</div>
+            </div>
+            <button onclick="fetchEbaySales('db')" id="db-ebay-fetch-btn" class="sales-primary-btn" style="white-space:nowrap;">
+              ↓ Fetch eBay Sales
+            </button>
           </div>
-          <div class="sales-upload-card" id="db-uc-Ebay90">
-            <input type="file" class="sales-upload-input" accept=".csv" onchange="handleUpload(event,'Ebay90')">
-            <div class="s-uc-label">Ebay90</div><div class="s-uc-sub">eBay 90-Day Sales Report (.csv)</div>
-            <div class="s-uc-status" id="db-uc-status-Ebay90">Click to select file</div>
+          <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;">
+            <div style="background:var(--bg3);border:1px solid var(--border);border-radius:8px;padding:10px 14px;">
+              <div style="font-family:var(--mono);font-size:11px;font-weight:600;color:var(--accent);margin-bottom:4px;">Ebay30</div>
+              <div style="font-size:12px;color:var(--text3);" id="db-ebay30-status">Not fetched yet</div>
+            </div>
+            <div style="background:var(--bg3);border:1px solid var(--border);border-radius:8px;padding:10px 14px;">
+              <div style="font-family:var(--mono);font-size:11px;font-weight:600;color:var(--accent);margin-bottom:4px;">Ebay90</div>
+              <div style="font-size:12px;color:var(--text3);" id="db-ebay90-status">Not fetched yet</div>
+            </div>
+          </div>
+          <div style="margin-top:10px;font-size:11px;color:var(--text3);display:flex;align-items:center;gap:6px;">
+            <span>📦 Shows both units sold and order count per SKU</span>
+            <span style="margin-left:auto;font-family:var(--mono);" id="db-ebay-last-fetch"></span>
           </div>
         </div>
       </div>
