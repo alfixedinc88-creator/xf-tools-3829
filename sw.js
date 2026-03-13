@@ -9,8 +9,8 @@ const QUEUE_KEY    = 'xfitting-sync-queue';
 
 // ── App shell: cache on install ──────────────────────────────────────────────
 const SHELL_ASSETS = [
-  '/',
-  '/index.html',
+  '/xf-tools-3829/',
+  '/xf-tools-3829/index.html',
 ];
 
 self.addEventListener('install', e => {
@@ -64,7 +64,7 @@ self.addEventListener('fetch', e => {
       }).catch(() => {
         // Offline — serve cached index for navigation requests
         if (e.request.mode === 'navigate') {
-          return caches.match('/index.html') || caches.match('/');
+          return caches.match('/xf-tools-3829/index.html') || caches.match('/xf-tools-3829/');
         }
       });
     })
