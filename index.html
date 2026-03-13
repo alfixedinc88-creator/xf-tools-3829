@@ -9500,6 +9500,20 @@ function rprToast(msg, type = '') {
     g("inv-loc-label").textContent = "Select Part Number";
     g("inv-loc-card").style.display = "block";
     g("inv-detail-card").style.display = "none";
+    // Stock out: filter to only variants that have locations with cases
+    var filteredVariants = invMode === "out"
+      ? variants.filter(function(v) {
+          return (invPart.locations || []).some(function(l) {
+            return l.partNum && l.partNum.toUpperCase() === v.toUpperCase() && parseFloat(l.cases) > 0;
+          });
+        })
+      : variants;
+    if (invMode === "out" && filteredVariants.length === 0) {
+      invFlash("No stock found for any variant", "error");
+      g("inv-loc-card").style.display = "none";
+      return;
+    }
+    var variants = filteredVariants;
     variants.forEach(function(v) {
       var el = document.createElement("div");
       el.className = "iloc-opt";
@@ -9507,12 +9521,15 @@ function rprToast(msg, type = '') {
         + "<span class='iloc-badge ex'>Select</span>";
       el.onclick = function() {
         // Filter locations to this variant only
-        invPart = Object.assign({}, invPart, {
-          partNum: v,
-          locations: (invPart.locations || []).filter(function(l) {
-            return !l.partNum || l.partNum.toUpperCase() === v.toUpperCase();
-          })
+        var varLocs = (invPart.locations || []).filter(function(l) {
+          return !l.partNum || l.partNum.toUpperCase() === v.toUpperCase();
         });
+        // Stock out: only variants that have stock
+        if (invMode === "out") {
+          varLocs = varLocs.filter(function(l) { return parseFloat(l.cases) > 0; });
+          if (varLocs.length === 0) { invFlash("No stock for " + v, "error"); return; }
+        }
+        invPart = Object.assign({}, invPart, { partNum: v, locations: varLocs });
         g("inv-result-part").textContent = v;
         invShowLocs();
       };
@@ -9521,13 +9538,17 @@ function rprToast(msg, type = '') {
   }
 
   function invShowLocs() {
-    var locs = (invPart && invPart.locations) ? invPart.locations : [];
+    var allLocs = (invPart && invPart.locations) ? invPart.locations : [];
+    // Stock out: only show locations with cases > 0
+    var locs = invMode === "out"
+      ? allLocs.filter(function(l) { return parseFloat(l.cases) > 0; })
+      : allLocs;
     invSelLoc = null;
     var list = g("inv-loc-list");
     list.innerHTML = "";
 
     if (invMode === "out" && locs.length === 0) {
-      invFlash("No locations for " + invPart.partNum, "error");
+      invFlash("No stock at any location for " + invPart.partNum, "error");
       return;
     }
 
