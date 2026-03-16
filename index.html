@@ -1,7 +1,7 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-  <!-- XFITTING-BUILD-V109-TKEY-20260319 -->
+  <!-- XFITTING-BUILD-V109-MVUP-20260316 -->
 <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate">
 <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&family=IBM+Plex+Sans:wght@300;400;500;600&display=swap" rel="stylesheet">
   <meta http-equiv="Pragma" content="no-cache">
@@ -9493,7 +9493,6 @@ function rprToast(msg, type = '') {
 
 <div class="itabs">
   <button class="itab iactive" id="inv-tab-scan" onclick="invSwitchTab('scan')">Scan</button>
-  <button class="itab" id="inv-tab-transfer" onclick="invSwitchTab('transfer')">Transfer</button>
   <button class="itab" id="inv-tab-review" onclick="invSwitchTab('review')">Review<span class="ibadge" id="inv-pending-badge" style="display:none">0</span></button>
 </div>
 
@@ -9564,66 +9563,6 @@ function rprToast(msg, type = '') {
   </div>
 </div>
 
-<!-- ── Transfer Panel ── -->
-<div class="ipanel" id="inv-panel-transfer">
-  <div class="icard">
-    <div class="icard-label">Transfer Stock Between Locations</div>
-    <div style="font-size:12px;color:var(--text3);margin-bottom:10px;line-height:1.5">Move cases from one shelf location to another. Both sides are logged and require management approval.</div>
-    <div class="icard-label" style="margin-top:4px">Scan or Search Part</div>
-    <div class="isearch-row">
-      <input class="isearch-inp" id="xfr-search-inp" type="text" placeholder="Part# or barcode…" onkeydown="if(event.key==='Enter')xfrLookup(this.value.trim())">
-      <button class="isearch-btn" onclick="xfrLookup(document.getElementById('xfr-search-inp').value.trim())">Go</button>
-    </div>
-    <button class="icam-btn" id="xfr-cam-btn" onclick="xfrToggleCam()">📷 Start Camera</button>
-    <div id="xfr-reader-wrap" style="display:none"><div id="xfr-qr-reader"></div></div>
-  </div>
-
-  <!-- Part result card -->
-  <div class="icard" id="xfr-result-card" style="display:none">
-    <div style="display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:4px">
-      <div class="iresult-part" id="xfr-result-part"></div>
-      <div id="xfr-result-sku" style="font-size:11px;font-weight:600;font-family:var(--mono);color:var(--text3);padding-top:3px"></div>
-    </div>
-    <div class="iresult-name" id="xfr-result-name"></div>
-  </div>
-
-  <!-- Step 1: Pick From Location -->
-  <div class="icard" id="xfr-from-card" style="display:none">
-    <div class="icard-label">Step 1 — From Location</div>
-    <div style="font-size:11px;color:var(--text3);margin-bottom:8px">Select the location you are moving stock OUT of.</div>
-    <div id="xfr-from-list"></div>
-  </div>
-
-  <!-- Step 2: Pick To Location -->
-  <div class="icard" id="xfr-to-card" style="display:none">
-    <div style="display:flex;align-items:center;gap:8px;margin-bottom:4px">
-      <div class="icard-label" style="margin:0">Step 2 — To Location</div>
-      <span style="font-size:10px;font-weight:700;font-family:var(--mono);color:var(--orange);background:var(--orange-bg);padding:2px 7px;border-radius:4px" id="xfr-from-badge"></span>
-    </div>
-    <div style="font-size:11px;color:var(--text3);margin-bottom:8px">Select the destination location or add a new one.</div>
-    <div id="xfr-to-list"></div>
-    <div id="xfr-newloc-wrap" style="display:none;margin-top:8px">
-      <div class="ifield"><label>New Location Name</label><input id="xfr-newloc-inp" type="text" placeholder="e.g. A-Shelf-3"></div>
-    </div>
-  </div>
-
-  <!-- Step 3: Cases + Details -->
-  <div class="icard" id="xfr-detail-card" style="display:none">
-    <div class="icard-label">Step 3 — Confirm Transfer</div>
-    <div id="xfr-summary" style="background:var(--purple-bg);border:1px solid #c4b5fd;border-radius:8px;padding:10px 12px;font-size:13px;margin-bottom:12px;line-height:1.7">
-      <div><span style="font-weight:700;color:var(--purple)">FROM:</span> <span id="xfr-sum-from" style="font-family:var(--mono);color:var(--text)"></span></div>
-      <div><span style="font-weight:700;color:var(--purple)">TO:</span> &nbsp;&nbsp;&nbsp;<span id="xfr-sum-to" style="font-family:var(--mono);color:var(--text)"></span></div>
-    </div>
-    <div class="iwarn" id="xfr-warn" style="display:none"></div>
-    <div class="ifield-row">
-      <div class="ifield"><label>Cases to Transfer</label><input id="xfr-cases" type="number" min="1" placeholder="0"></div>
-      <div class="ifield"><label>Initials</label><input id="xfr-initials" type="text" maxlength="4" placeholder="e.g. DJ"></div>
-    </div>
-    <div class="ifield"><label>Notes (optional)</label><input id="xfr-notes" type="text" placeholder="Reason for transfer…"></div>
-    <button class="isubmit" id="xfr-submit-btn" onclick="xfrSubmit()" style="background:var(--purple);border-color:var(--purple)">🔁 Submit Transfer</button>
-  </div>
-</div>
-
 <div class="ipanel" id="inv-panel-review">
   <div id="inv-pin-gate">
     <div class="ipin-wrap">
@@ -9643,8 +9582,7 @@ function rprToast(msg, type = '') {
   </div>
   <div id="inv-review-content" style="display:none;padding:16px">
     <div style="margin-bottom:20px"><div class="isec-title in">📦 Pending Stock In</div><div id="inv-pending-in"></div></div>
-    <div style="margin-bottom:20px"><div class="isec-title out">📤 Pending Stock Out</div><div id="inv-pending-out"></div></div>
-    <div><div class="isec-title" style="color:var(--purple);border-left-color:var(--purple)">🔁 Pending Transfers</div><div id="inv-pending-xfr"></div></div>
+    <div><div class="isec-title out">📤 Pending Stock Out</div><div id="inv-pending-out"></div></div>
   </div>
 </div>
 </div>
@@ -9677,12 +9615,10 @@ function rprToast(msg, type = '') {
   }
 
   window.invSwitchTab = function(tab) {
-    g("inv-panel-scan").className      = "ipanel" + (tab === "scan"     ? " iactive" : "");
-    g("inv-panel-transfer").className  = "ipanel" + (tab === "transfer" ? " iactive" : "");
-    g("inv-panel-review").className    = "ipanel" + (tab === "review"   ? " iactive" : "");
-    g("inv-tab-scan").className        = "itab"   + (tab === "scan"     ? " iactive" : "");
-    g("inv-tab-transfer").className    = "itab"   + (tab === "transfer" ? " iactive" : "");
-    g("inv-tab-review").className      = "itab"   + (tab === "review"   ? " iactive" : "");
+    g("inv-panel-scan").className    = "ipanel" + (tab === "scan"   ? " iactive" : "");
+    g("inv-panel-review").className  = "ipanel" + (tab === "review" ? " iactive" : "");
+    g("inv-tab-scan").className      = "itab"   + (tab === "scan"   ? " iactive" : "");
+    g("inv-tab-review").className    = "itab"   + (tab === "review" ? " iactive" : "");
     if (tab === "review" && invUnlocked) invLoadPending();
   };
 
@@ -9978,10 +9914,7 @@ function rprToast(msg, type = '') {
     wFetch(W + "/inventory/pending")
       .then(function(r) { return r.json(); })
       .then(function(d) {
-        // Count each TRANSFER pair as one pending item (only count TRANSFER_OUT)
-        var n = (d.items || []).filter(function(x) {
-          return x.status === "Pending" && x.type !== "TRANSFER_IN";
-        }).length;
+        var n = (d.items || []).filter(function(x) { return x.status === "Pending"; }).length;
         var b = g("inv-pending-badge");
         b.textContent = n; b.style.display = n > 0 ? "inline-flex" : "none";
       }).catch(function() {});
@@ -10024,31 +9957,21 @@ function rprToast(msg, type = '') {
   function invLoadPending() {
     g("inv-pending-in").innerHTML  = "<div class='iempty'>Loading\u2026</div>";
     g("inv-pending-out").innerHTML = "<div class='iempty'>Loading\u2026</div>";
-    g("inv-pending-xfr").innerHTML = "<div class='iempty'>Loading\u2026</div>";
     wFetch(W + "/inventory/pending")
       .then(function(r) { return r.json(); })
       .then(function(d) {
-        var allItems = d.items || [];
-        var items = allItems.filter(function(x) { return x.status === "Pending"; });
+        var items = (d.items || []).filter(function(x) { return x.status === "Pending"; });
         var ins   = items.filter(function(x) { return x.type === "IN"; });
         var outs  = items.filter(function(x) { return x.type === "OUT"; });
-        var xfrOuts = items.filter(function(x) { return x.type === "TRANSFER_OUT"; });
-        var xfrIns  = items.filter(function(x) { return x.type === "TRANSFER_IN"; });
         var inEl  = g("inv-pending-in");
         var outEl = g("inv-pending-out");
-        var xfrEl = g("inv-pending-xfr");
-        inEl.innerHTML  = ins.length    ? "" : "<div class='iempty'>No pending IN</div>";
-        outEl.innerHTML = outs.length   ? "" : "<div class='iempty'>No pending OUT</div>";
-        xfrEl.innerHTML = xfrOuts.length ? "" : "<div class='iempty'>No pending transfers</div>";
+        inEl.innerHTML  = ins.length  ? "" : "<div class='iempty'>No pending IN</div>";
+        outEl.innerHTML = outs.length ? "" : "<div class='iempty'>No pending OUT</div>";
         ins.forEach(function(x)  { inEl.appendChild(invMakeCard(x)); });
         outs.forEach(function(x) { outEl.appendChild(invMakeCard(x)); });
-        xfrOuts.forEach(function(xOut) {
-          var xIn = xfrIns.find(function(y) { return y.transferId && y.transferId === xOut.transferId; }) || null;
-          xfrEl.appendChild(invMakeTransferCard(xOut, xIn));
-        });
       })
       .catch(function() {
-        g("inv-pending-in").innerHTML = g("inv-pending-out").innerHTML = g("inv-pending-xfr").innerHTML = "<div class='iempty'>Load failed</div>";
+        g("inv-pending-in").innerHTML = g("inv-pending-out").innerHTML = "<div class='iempty'>Load failed</div>";
       });
   }
 
@@ -10232,300 +10155,6 @@ function rprToast(msg, type = '') {
         if (card) { card.style.opacity = "1"; card.style.pointerEvents = "auto"; }
       });
   };
-
-  // ── Transfer card for Review tab ──────────────────────────────────
-  function invMakeTransferCard(outItem, inItem) {
-    invItemMap[outItem.rowIndex] = outItem;
-    if (inItem) invItemMap[inItem.rowIndex] = inItem;
-    var el = document.createElement("div");
-    el.className = "ientry";
-    el.id = "inv-entry-xfr-" + outItem.rowIndex;
-    var fromLoc = outItem.location || "?";
-    var toLoc   = inItem ? (inItem.location || "?") : (outItem.toLocation || "?");
-    el.innerHTML =
-      "<div class='ientry-head'><span class='ientry-part'>" + (outItem.partNum || "") + "</span>"
-      + "<span class='ientry-type' style='background:var(--purple-bg);color:var(--purple)'>TRANSFER</span></div>"
-      + "<div class='ientry-meta'>"
-      + "\ud83d\udd01 <strong>" + fromLoc + "</strong> \u2192 <strong>" + toLoc + "</strong>"
-      + " &nbsp;|&nbsp; \ud83d\udce6 " + (outItem.cases || 0) + " cases"
-      + " &nbsp;|&nbsp; \ud83e\uddd1 " + (outItem.initials || "")
-      + (outItem.notes ? "<br>\ud83d\udcdd " + outItem.notes : "") + "</div>"
-      + "<div class='ientry-btns'><button class='iapprove'>\u2713 Approve</button><button class='ireject'>\u2715 Reject</button></div>";
-    el.querySelector(".iapprove").onclick = function() { invVerifyTransfer(outItem, inItem, "Approved"); };
-    el.querySelector(".ireject").onclick  = function() { invVerifyTransfer(outItem, inItem, "Rejected"); };
-    return el;
-  }
-
-  window.invVerifyTransfer = function(outItem, inItem, action) {
-    var cardId = "inv-entry-xfr-" + outItem.rowIndex;
-    var card = g(cardId);
-    if (card) { card.style.opacity = "0.5"; card.style.pointerEvents = "none"; }
-    wFetch(W + "/inventory/transfer/verify", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ action: action, outItem: outItem, inItem: inItem || null })
-    }).then(function(r) { return r.json(); })
-      .then(function(d) {
-        if (d.ok) {
-          invFlash(action === "Approved" ? "Transfer approved \u2713" : "Transfer rejected", action === "Approved" ? "success" : "error");
-          if (card) card.remove();
-          invFetchPendingCount();
-        } else {
-          invFlash("Error: " + (d.error || "unknown"), "error");
-          if (card) { card.style.opacity = "1"; card.style.pointerEvents = "auto"; }
-        }
-      }).catch(function() {
-        invFlash("Verify failed", "error");
-        if (card) { card.style.opacity = "1"; card.style.pointerEvents = "auto"; }
-      });
-  };
-
-  // ── TRANSFER TAB LOGIC ────────────────────────────────────────────
-  var xfrPart      = null;
-  var xfrFromLoc   = null;
-  var xfrToLoc     = null;
-  var xfrCamRunning = false;
-  var xfrQrScanner  = null;
-  var xfrLastScan   = 0;
-
-  function xfrReset() {
-    xfrPart = null; xfrFromLoc = null; xfrToLoc = null;
-    var si = g("xfr-search-inp"); if (si) si.value = "";
-    ["xfr-result-card","xfr-from-card","xfr-to-card","xfr-detail-card","xfr-newloc-wrap","xfr-warn"]
-      .forEach(function(id) { var el = g(id); if (el) el.style.display = "none"; });
-    ["xfr-newloc-inp","xfr-cases","xfr-initials","xfr-notes"]
-      .forEach(function(id) { var el = g(id); if (el) el.value = ""; });
-    if (xfrCamRunning) xfrStopCam();
-  }
-
-  window.xfrToggleCam = function() {
-    if (xfrCamRunning) { xfrStopCam(); return; }
-    var btn = g("xfr-cam-btn");
-    btn.textContent = "Starting\u2026"; btn.disabled = true;
-    invLoadQR().then(function() {
-      g("xfr-reader-wrap").style.display = "block";
-      if (xfrQrScanner) { try { xfrQrScanner.clear(); } catch(e){} xfrQrScanner = null; }
-      xfrQrScanner = new Html5Qrcode("xfr-qr-reader");
-      xfrQrScanner.start(
-        { facingMode: "environment" },
-        { fps: 10, qrbox: { width: 260, height: 90 } },
-        function(code) {
-          var now = Date.now();
-          if (now - xfrLastScan < 2000) return;
-          xfrLastScan = now;
-          xfrStopCam();
-          g("xfr-search-inp").value = code;
-          xfrLookup(code);
-        },
-        function() {}
-      ).then(function() {
-        xfrCamRunning = true;
-        btn.textContent = "\u23f9 Stop Camera"; btn.className = "icam-btn scanning"; btn.disabled = false;
-      }).catch(function() {
-        invFlash("Camera error \u2014 check permissions", "error");
-        btn.textContent = "\ud83d\udcf7 Start Camera"; btn.className = "icam-btn"; btn.disabled = false;
-        g("xfr-reader-wrap").style.display = "none";
-      });
-    }).catch(function() { invFlash("Could not load scanner", "error"); btn.textContent = "\ud83d\udcf7 Start Camera"; btn.disabled = false; });
-  };
-
-  function xfrStopCam() {
-    if (xfrQrScanner && xfrCamRunning) { try { xfrQrScanner.stop().catch(function(){}); } catch(e){} xfrQrScanner = null; }
-    xfrCamRunning = false;
-    var wrap = g("xfr-reader-wrap"); if (wrap) wrap.style.display = "none";
-    var btn = g("xfr-cam-btn");
-    if (btn) { btn.textContent = "\ud83d\udcf7 Start Camera"; btn.className = "icam-btn"; btn.disabled = false; }
-  }
-
-  window.xfrLookup = function(code) {
-    if (!code) return;
-    ["xfr-result-card","xfr-from-card","xfr-to-card","xfr-detail-card"]
-      .forEach(function(id) { var el = g(id); if (el) el.style.display = "none"; });
-    wFetch(W + "/inventory/lookup?code=" + encodeURIComponent(code))
-      .then(function(r) { return r.json(); })
-      .then(function(d) {
-        if (!d.partNum) { invFlash("Not found: " + code, "error"); return; }
-        xfrPart = d;
-        g("xfr-result-part").textContent = d.isMultiVariant ? d.baseSku : d.partNum;
-        g("xfr-result-sku").textContent  = d.sku && d.sku !== d.partNum ? d.sku : "";
-        g("xfr-result-name").textContent = d.name || "";
-        g("xfr-result-card").style.display = "block";
-        if (d.isMultiVariant && d.variants && d.variants.length > 1) {
-          xfrShowVariantPicker(d.variants);
-        } else {
-          xfrShowFromLocs();
-        }
-      })
-      .catch(function() { invFlash("Lookup failed", "error"); });
-  };
-
-  function xfrShowVariantPicker(variants) {
-    var list = g("xfr-from-list");
-    list.innerHTML = "";
-    var label = g("xfr-from-card").querySelector(".icard-label");
-    if (label) label.textContent = "Select Part Number";
-    g("xfr-from-card").style.display = "block";
-    var filtered = variants.filter(function(v) {
-      return (xfrPart.locations || []).some(function(l) {
-        return l.partNum && l.partNum.toUpperCase() === v.toUpperCase() && parseFloat(l.cases) > 0;
-      });
-    });
-    if (filtered.length === 0) { invFlash("No stock found for any variant", "error"); g("xfr-from-card").style.display = "none"; return; }
-    filtered.forEach(function(v) {
-      var el = document.createElement("div");
-      el.className = "iloc-opt";
-      var totalCases = (xfrPart.locations || [])
-        .filter(function(l) { return l.partNum && l.partNum.toUpperCase() === v.toUpperCase() && parseFloat(l.cases) > 0; })
-        .reduce(function(sum, l) { return sum + (parseFloat(l.cases) || 0); }, 0);
-      var locCount = (xfrPart.locations || [])
-        .filter(function(l) { return l.partNum && l.partNum.toUpperCase() === v.toUpperCase() && parseFloat(l.cases) > 0; }).length;
-      el.innerHTML = "<div style='flex:1'><div class='iloc-name' style='font-family:var(--mono);font-size:14px'>" + v + "</div>"
-        + "<div style='font-size:11px;color:var(--text3);margin-top:2px'>" + totalCases + " cases \u00b7 " + locCount + " location" + (locCount !== 1 ? "s" : "") + "</div></div>"
-        + "<span class='iloc-badge ex'>Select</span>";
-      el.style.display = "flex"; el.style.alignItems = "center";
-      el.onclick = function() {
-        var varLocs = (xfrPart.locations || []).filter(function(l) {
-          return (!l.partNum || l.partNum.toUpperCase() === v.toUpperCase()) && parseFloat(l.cases) > 0;
-        });
-        if (varLocs.length === 0) { invFlash("No stock for " + v, "error"); return; }
-        xfrPart = Object.assign({}, xfrPart, { partNum: v, locations: varLocs });
-        g("xfr-result-part").textContent = v;
-        var lbl = g("xfr-from-card").querySelector(".icard-label");
-        if (lbl) lbl.textContent = "Step 1 \u2014 From Location";
-        xfrShowFromLocs();
-      };
-      list.appendChild(el);
-    });
-  }
-
-  function xfrShowFromLocs() {
-    var locs = (xfrPart.locations || []).filter(function(l) { return parseFloat(l.cases) > 0; });
-    if (locs.length === 0) { invFlash("No stock at any location", "error"); return; }
-    var list = g("xfr-from-list");
-    list.innerHTML = "";
-    var lbl = g("xfr-from-card").querySelector(".icard-label");
-    if (lbl) lbl.textContent = "Step 1 \u2014 From Location";
-    locs.forEach(function(loc, i) {
-      var el = document.createElement("div");
-      el.className = "iloc-opt";
-      el.innerHTML = "<div><div class='iloc-name'>" + loc.location + "</div>"
-        + "<div class='iloc-cases' style='font-weight:700;color:var(--text)'>" + loc.cases + " cases available</div></div>"
-        + "<span class='iloc-badge ex'>Select</span>";
-      el.onclick = (function(idx) { return function() {
-        xfrFromLoc = locs[idx];
-        list.querySelectorAll(".iloc-opt").forEach(function(e) { e.classList.remove("isel"); });
-        list.children[idx].classList.add("isel");
-        var badge = g("xfr-from-badge"); if (badge) badge.textContent = "FROM: " + xfrFromLoc.location;
-        xfrShowToLocs();
-      }; })(i);
-      list.appendChild(el);
-    });
-    g("xfr-from-card").style.display    = "block";
-    g("xfr-to-card").style.display      = "none";
-    g("xfr-detail-card").style.display  = "none";
-  }
-
-  function xfrShowToLocs() {
-    var allLocs = (xfrPart.locations || []);
-    var list = g("xfr-to-list");
-    list.innerHTML = "";
-    g("xfr-newloc-wrap").style.display = "none";
-    var newlocInp = g("xfr-newloc-inp"); if (newlocInp) newlocInp.value = "";
-    allLocs.forEach(function(loc, i) {
-      var isSame = loc.location === xfrFromLoc.location;
-      var el = document.createElement("div");
-      el.className = "iloc-opt" + (isSame ? " disabled" : "");
-      el.style.opacity = isSame ? "0.4" : "1";
-      el.style.pointerEvents = isSame ? "none" : "auto";
-      el.innerHTML = "<div><div class='iloc-name'>" + loc.location + (isSame ? " <em style='font-size:10px;color:var(--text3)'>(source)</em>" : "") + "</div>"
-        + "<div class='iloc-cases'>" + loc.cases + " cases</div></div>"
-        + "<span class='iloc-badge ex'>" + (isSame ? "\u2014" : "Select") + "</span>";
-      if (!isSame) {
-        el.onclick = (function(idx) { return function() {
-          xfrToLoc = allLocs[idx];
-          g("xfr-newloc-wrap").style.display = "none";
-          list.querySelectorAll(".iloc-opt").forEach(function(e) { e.classList.remove("isel"); });
-          list.children[idx].classList.add("isel");
-          xfrShowDetails();
-        }; })(i);
-      }
-      list.appendChild(el);
-    });
-    // New location option
-    var newEl = document.createElement("div");
-    newEl.className = "iloc-opt";
-    newEl.innerHTML = "<div class='iloc-name'>+ Add New Location</div><span class='iloc-badge nw'>New</span>";
-    newEl.onclick = function() {
-      xfrToLoc = { isNew: true };
-      list.querySelectorAll(".iloc-opt").forEach(function(e) { e.classList.remove("isel"); });
-      newEl.classList.add("isel");
-      g("xfr-newloc-wrap").style.display = "block";
-      xfrShowDetails();
-    };
-    list.appendChild(newEl);
-    g("xfr-to-card").style.display     = "block";
-    g("xfr-detail-card").style.display = "none";
-  }
-
-  function xfrShowDetails() {
-    var fromName = xfrFromLoc ? xfrFromLoc.location : "?";
-    var toName   = (xfrToLoc && xfrToLoc.isNew) ? "(new location)" : (xfrToLoc ? xfrToLoc.location : "?");
-    var sf = g("xfr-sum-from"); if (sf) sf.textContent = fromName;
-    var st = g("xfr-sum-to");   if (st) st.textContent = toName;
-    var warn = g("xfr-warn");
-    if (warn && xfrFromLoc) {
-      warn.textContent = "\u26a0 Max transferable: " + xfrFromLoc.cases + " cases from " + xfrFromLoc.location;
-      warn.style.display = "block";
-    }
-    g("xfr-detail-card").style.display = "block";
-  }
-
-  window.xfrSubmit = function() {
-    var casesEl    = g("xfr-cases");
-    var initialsEl = g("xfr-initials");
-    var notesEl    = g("xfr-notes");
-    var newlocEl   = g("xfr-newloc-inp");
-    var cases    = parseInt(casesEl ? casesEl.value : 0, 10);
-    var initials = initialsEl ? initialsEl.value.trim() : "";
-    var notes    = notesEl    ? notesEl.value.trim()    : "";
-    var newLoc   = newlocEl   ? newlocEl.value.trim()   : "";
-    if (!xfrPart)    { invFlash("No item selected", "error"); return; }
-    if (!xfrFromLoc) { invFlash("Select a From location", "error"); return; }
-    if (!xfrToLoc)   { invFlash("Select a To location", "error"); return; }
-    if (!cases || cases < 1) { invFlash("Enter number of cases", "error"); return; }
-    if (!initials)           { invFlash("Enter your initials", "error"); return; }
-    if (xfrToLoc.isNew && !newLoc) { invFlash("Enter new location name", "error"); return; }
-    if (cases > parseFloat(xfrFromLoc.cases || 0)) { invFlash("Cases exceed available stock (" + xfrFromLoc.cases + ")", "error"); return; }
-    var toLoc = xfrToLoc.isNew ? newLoc : xfrToLoc.location;
-    var btn = g("xfr-submit-btn");
-    if (btn) { btn.disabled = true; btn.textContent = "Submitting\u2026"; }
-    wFetch(W + "/inventory/transfer", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        partNum: xfrPart.partNum, sku: xfrPart.sku || xfrPart.partNum,
-        fromLocation: xfrFromLoc.location, fromRowIndex: xfrFromLoc.rowIndex,
-        toLocation: toLoc, toRowIndex: xfrToLoc.isNew ? null : xfrToLoc.rowIndex,
-        isNewLocation: !!xfrToLoc.isNew,
-        cases: cases, initials: initials, notes: notes
-      })
-    }).then(function(r) { return r.json(); })
-      .then(function(d) {
-        if (d.ok) {
-          invFlash("Transfer logged \u2014 pending approval \u2713", "success");
-          xfrReset();
-          invFetchPendingCount();
-        } else {
-          invFlash("Error: " + (d.error || "unknown"), "error");
-          if (btn) { btn.disabled = false; btn.textContent = "\ud83d\udd01 Submit Transfer"; }
-        }
-      })
-      .catch(function() {
-        invFlash("Submit failed", "error");
-        if (btn) { btn.disabled = false; btn.textContent = "\ud83d\udd01 Submit Transfer"; }
-      });
-  };
-  // ─────────────────────────────────────────────────────────────────
 
 })();
 
@@ -10737,12 +10366,21 @@ function rprToast(msg, type = '') {
 #packship-app .ps-info-box { background:var(--accent-bg); border:1px solid #aec6fb; border-radius:10px; padding:12px 16px; font-size:13px; color:var(--accent); margin-bottom:16px; line-height:1.5; }
 #packship-app .ps-warn-box { background:var(--orange-bg); border:1px solid #fcd34d; border-radius:10px; padding:12px 16px; font-size:13px; color:var(--orange); margin-bottom:16px; line-height:1.5; }
 
-/* Switch Packer modal */
+/* ── Switch Packer modal ── */
 #ps-switch-modal { position:fixed; inset:0; background:rgba(0,0,0,0.4); z-index:600; display:none; align-items:center; justify-content:center; padding:24px; }
 #ps-switch-modal.show { display:flex; }
 #packship-app .ps-switch-card { background:var(--bg2); border:1px solid var(--border); border-radius:16px; padding:28px 28px 24px; max-width:340px; width:100%; box-shadow:0 20px 60px rgba(0,0,0,.18); }
 #packship-app .ps-switch-title { font-size:17px; font-weight:700; color:var(--text); margin-bottom:6px; }
 #packship-app .ps-switch-sub { font-size:13px; color:var(--text2); margin-bottom:18px; line-height:1.5; }
+
+/* ── Mgmt PIN gate (inline in protected panels) ── */
+#packship-app .ps-mgmt-gate { background:var(--bg2); border:1px solid var(--border); border-radius:12px; padding:36px 28px; max-width:380px; margin:40px auto 0; box-shadow:var(--shadow2); text-align:center; }
+#packship-app .ps-mgmt-gate-icon { font-size:32px; margin-bottom:12px; }
+#packship-app .ps-mgmt-gate-title { font-size:16px; font-weight:700; color:var(--text); margin-bottom:6px; }
+#packship-app .ps-mgmt-gate-sub { font-size:13px; color:var(--text2); margin-bottom:20px; line-height:1.5; }
+#packship-app .ps-mgmt-gate-row { display:flex; gap:8px; }
+#packship-app .ps-mgmt-gate-input { flex:1; background:var(--bg3); border:1.5px solid var(--border2); border-radius:10px; color:var(--text); font-family:var(--mono); font-size:18px; font-weight:500; padding:11px 14px; outline:none; transition:border-color .15s; text-align:center; letter-spacing:6px; }
+#packship-app .ps-mgmt-gate-input:focus { border-color:var(--accent); box-shadow:0 0 0 3px rgba(26,86,219,.1); background:var(--bg2); }
 
 @media(max-width:480px){
   #packship-app .ps-content { padding:14px; }
@@ -10816,10 +10454,8 @@ function rprToast(msg, type = '') {
   <div class="ps-tabitem active" id="ps-tab-scan"     onclick="psSwitchTab('scan')">📦 Scan</div>
   <div class="ps-tabitem"        id="ps-tab-progress" onclick="psSwitchTab('progress')">📊 Progress</div>
   <div class="ps-tabitem"        id="ps-tab-lookup"   onclick="psSwitchTab('lookup')">🔍 Lookup</div>
-  <div class="ps-tabitem"        id="ps-tab-status"   onclick="psSwitchTab('status')" style="display:none">📡 Status Check</div>
-  <div class="ps-tabitem"        id="ps-tab-gaps"     onclick="psSwitchTab('gaps')" style="display:none">
-    ⚠️ Gap Report <span class="ps-tab-badge" id="ps-gap-badge">0</span>
-  </div>
+  <div class="ps-tabitem"        id="ps-tab-status"   onclick="psSwitchTab('status')">📡 Status Check</div>
+  <div class="ps-tabitem"        id="ps-tab-gaps"     onclick="psSwitchTab('gaps')">⚠️ Gap Report <span class="ps-tab-badge" id="ps-gap-badge" style="display:none">0</span></div>
 </div>
 
 <!-- Content panels -->
@@ -10853,6 +10489,29 @@ function rprToast(msg, type = '') {
       <button class="ps-btn-batch" id="ps-btn-close-batch" onclick="psCloseBatch()">📦 Close Batch</button>
     </div>
     <div id="ps-closed-banners"></div>
+
+    <!-- Daily Veeqo CSV upload — available to all roles -->
+    <div class="ps-upload-area" id="ps-daily-upload-area">
+      <div class="ps-upload-area-header">
+        <div class="ps-upload-area-title">📄 End of Day — Upload Veeqo Report</div>
+        <div class="ps-manifest-loaded-pill" id="ps-manifest-pill" style="display:none">
+          ✓ <span id="ps-manifest-count">0</span> orders loaded
+        </div>
+      </div>
+      <div class="ps-drop-zone" id="ps-drop-zone">
+        <input type="file" accept=".csv" onchange="psHandleCSV(this)">
+        <span class="ps-drop-icon">📂</span>
+        <div class="ps-drop-title">Drop today's Veeqo CSV here</div>
+        <div class="ps-drop-hint">or <b>click to browse</b> · FBA auto-removed · saves to Manifest_Log sheet</div>
+      </div>
+      <div class="ps-upload-msg" id="ps-upload-msg"></div>
+      <div class="ps-reconcile-bar" id="ps-reconcile-bar" style="display:none;margin-top:12px">
+        <div class="ps-reconcile-label">
+          Manifest uploaded. <strong>Run Gap Analysis</strong> to see what wasn't scanned today.
+        </div>
+        <button class="ps-btn-reconcile" id="ps-btn-reconcile" onclick="psRunReconcile()">Run Gap Analysis</button>
+      </div>
+    </div>
     <div class="ps-section-header" style="margin-top:4px">
       <div class="ps-section-title">Today's Scans</div>
       <div class="ps-section-cnt" id="ps-scan-cnt-label">0 scans</div>
@@ -10925,31 +10584,7 @@ function rprToast(msg, type = '') {
 
   <!-- LOOKUP panel -->
   <div class="ps-panel" id="ps-panel-lookup">
-    <!-- Mgmt only: CSV upload + reconcile -->
-    <div id="ps-mgmt-upload-section" style="display:none">
-      <div class="ps-upload-area">
-        <div class="ps-upload-area-header">
-          <div class="ps-upload-area-title">📄 Upload Veeqo CSV (End of Day)</div>
-          <div class="ps-manifest-loaded-pill" id="ps-manifest-pill" style="display:none">
-            ✓ <span id="ps-manifest-count">0</span> orders loaded
-          </div>
-        </div>
-        <div class="ps-drop-zone" id="ps-drop-zone">
-          <input type="file" accept=".csv" onchange="psHandleCSV(this)">
-          <span class="ps-drop-icon">📂</span>
-          <div class="ps-drop-title">Drop Veeqo CSV here</div>
-          <div class="ps-drop-hint">or <b>click to browse</b> · FBA orders auto-removed</div>
-        </div>
-        <div class="ps-upload-msg" id="ps-upload-msg"></div>
-      </div>
-      <div class="ps-reconcile-bar" id="ps-reconcile-bar" style="display:none">
-        <div class="ps-reconcile-label">
-          Manifest uploaded. <strong>Run reconciliation</strong> to compare against today's scans and mark gaps in the sheet.
-        </div>
-        <button class="ps-btn-reconcile" id="ps-btn-reconcile" onclick="psRunReconcile()">Run Gap Analysis</button>
-      </div>
-    </div>
-    <!-- Tracking lookup -->
+    <!-- Tracking lookup — all roles -->
     <div class="ps-lookup-wrap">
       <div class="ps-lookup-title">🔍 Tracking Number Lookup</div>
       <div class="ps-lookup-row">
@@ -10981,112 +10616,117 @@ function rprToast(msg, type = '') {
     <div id="ps-log-list"></div>
   </div>
 
-  <!-- STATUS CHECKER panel -->
+  <!-- STATUS CHECK panel -->
   <div class="ps-panel" id="ps-panel-status">
-    <!-- Upload area -->
-    <div class="ps-upload-area">
-      <div class="ps-upload-area-header">
-        <div class="ps-upload-area-title">📡 Tracking Status Check</div>
-        <div class="ps-manifest-loaded-pill" id="ps-status-pill" style="display:none">
-          ✓ <span id="ps-status-count">0</span> shipments loaded
-        </div>
+    <!-- PIN gate -->
+    <div id="ps-status-gate" class="ps-mgmt-gate">
+      <div class="ps-mgmt-gate-icon">🔒</div>
+      <div class="ps-mgmt-gate-title">Management Access Required</div>
+      <div class="ps-mgmt-gate-sub">Enter the management PIN to access the Status Checker.</div>
+      <div class="ps-mgmt-gate-row">
+        <input class="ps-mgmt-gate-input" id="ps-status-pin" type="password" inputmode="numeric" maxlength="6" placeholder="••••">
+        <button class="ps-btn-go" onclick="psUnlockTab('status')">Unlock</button>
       </div>
-      <div style="font-size:13px;color:var(--text2);margin-bottom:14px;line-height:1.6;">
-        Export a <strong>45-day Veeqo shipping report</strong> and upload it here. The app reads the Tracking Status column and flags anything that isn't delivered. Run this on the 1st and 15th of each month.
-      </div>
-      <div class="ps-drop-zone" id="ps-status-drop-zone">
-        <input type="file" accept=".csv" onchange="psHandleStatusCSV(this)">
-        <span class="ps-drop-icon">📂</span>
-        <div class="ps-drop-title">Drop 45-day Veeqo CSV here</div>
-        <div class="ps-drop-hint">or <b>click to browse</b> · FBA orders auto-removed</div>
-      </div>
-      <div class="ps-upload-msg" id="ps-status-upload-msg"></div>
+      <div class="ps-pin-err" id="ps-status-pin-err" style="margin-top:10px"></div>
     </div>
-
-    <!-- Summary stat bar -->
-    <div class="ps-stat-bar" id="ps-status-stat-bar" style="display:none">
-      <div class="ps-stat-card">
-        <div class="ps-stat-label">Total Shipments</div>
-        <div class="ps-stat-val" id="ps-st-total">0</div>
-        <div class="ps-stat-sub">in report</div>
-      </div>
-      <div class="ps-stat-card">
-        <div class="ps-stat-label">Delivered</div>
-        <div class="ps-stat-val green" id="ps-st-delivered">0</div>
-        <div class="ps-stat-sub">no action needed</div>
-      </div>
-      <div class="ps-stat-card">
-        <div class="ps-stat-label">Needs Attention</div>
-        <div class="ps-stat-val red" id="ps-st-flagged">0</div>
-        <div class="ps-stat-sub">review below</div>
-      </div>
-      <div class="ps-stat-card">
-        <div class="ps-stat-label">In Transit</div>
-        <div class="ps-stat-val orange" id="ps-st-transit">0</div>
-        <div class="ps-stat-sub">moving normally</div>
-      </div>
-    </div>
-
-    <!-- Flagged section -->
-    <div id="ps-status-results" style="display:none">
-      <div class="ps-section-header">
-        <div>
-          <div class="ps-section-title" style="font-size:15px;text-transform:none;letter-spacing:0">🚨 Flagged Shipments</div>
-          <div style="font-size:13px;color:var(--text2);margin-top:4px">Requires action — open a case with the carrier</div>
+    <!-- Content (hidden until unlocked) -->
+    <div id="ps-status-content" style="display:none">
+      <div class="ps-upload-area">
+        <div class="ps-upload-area-header">
+          <div class="ps-upload-area-title">📡 Tracking Status Check</div>
+          <div class="ps-manifest-loaded-pill" id="ps-status-pill" style="display:none">
+            ✓ <span id="ps-status-count">0</span> shipments loaded
+          </div>
         </div>
-        <button class="ps-btn-export" onclick="psExportStatusFlags()">⬇ Export Flagged CSV</button>
+        <div style="font-size:13px;color:var(--text2);margin-bottom:14px;line-height:1.6">
+          Export a <strong>45-day Veeqo shipping report</strong> and upload it here. The app reads the Tracking Status column and flags anything that needs attention. Run on the 1st and 15th of each month.
+        </div>
+        <div class="ps-drop-zone" id="ps-status-drop-zone">
+          <input type="file" accept=".csv" onchange="psHandleStatusCSV(this)">
+          <span class="ps-drop-icon">📂</span>
+          <div class="ps-drop-title">Drop 45-day Veeqo CSV here</div>
+          <div class="ps-drop-hint">or <b>click to browse</b> · FBA orders auto-removed · reads Tracking Status column</div>
+        </div>
+        <div class="ps-upload-msg" id="ps-status-upload-msg"></div>
       </div>
-      <div class="ps-filter-row" id="ps-status-filter-row">
-        <button class="ps-filter-btn active" onclick="psFilterStatus('all',this)">All Flags</button>
-        <button class="ps-filter-btn" onclick="psFilterStatus('created',this)">🔴 Never Shipped</button>
-        <button class="ps-filter-btn" onclick="psFilterStatus('awaiting_collection',this)">🟠 Scan Form Only</button>
-        <button class="ps-filter-btn" onclick="psFilterStatus('in_transit',this)">🔵 In Transit</button>
-        <button class="ps-filter-btn" onclick="psFilterStatus('returned',this)">↩ Returned</button>
-        <button class="ps-filter-btn" onclick="psFilterStatus('exception',this)">⚡ Exception</button>
+      <div class="ps-stat-bar" id="ps-status-stat-bar" style="display:none">
+        <div class="ps-stat-card"><div class="ps-stat-label">Total</div><div class="ps-stat-val" id="ps-st-total">0</div><div class="ps-stat-sub">in report</div></div>
+        <div class="ps-stat-card"><div class="ps-stat-label">Delivered</div><div class="ps-stat-val green" id="ps-st-delivered">0</div><div class="ps-stat-sub">no action</div></div>
+        <div class="ps-stat-card"><div class="ps-stat-label">Needs Action</div><div class="ps-stat-val red" id="ps-st-flagged">0</div><div class="ps-stat-sub">open a case</div></div>
+        <div class="ps-stat-card"><div class="ps-stat-label">In Transit</div><div class="ps-stat-val orange" id="ps-st-transit">0</div><div class="ps-stat-sub">moving</div></div>
       </div>
-      <div id="ps-status-list"></div>
-
-      <!-- Delivered toggle -->
-      <div style="margin-top:20px">
+      <div id="ps-status-results" style="display:none">
         <div class="ps-section-header">
-          <div class="ps-section-title">✅ Delivered</div>
-          <button class="ps-btn-sm" onclick="psToggleDelivered(this)">Show</button>
+          <div>
+            <div class="ps-section-title" style="font-size:15px;text-transform:none;letter-spacing:0">🚨 Flagged Shipments</div>
+            <div style="font-size:13px;color:var(--text2);margin-top:4px">Requires action — open a case with the carrier</div>
+          </div>
+          <button class="ps-btn-export" onclick="psExportStatusFlags()">⬇ Export CSV</button>
         </div>
-        <div id="ps-status-delivered-list" style="display:none"></div>
+        <div class="ps-filter-row" id="ps-status-filter-row">
+          <button class="ps-filter-btn active" onclick="psFilterStatus('all',this)">All Flags</button>
+          <button class="ps-filter-btn" onclick="psFilterStatus('created',this)">🔴 Never Shipped</button>
+          <button class="ps-filter-btn" onclick="psFilterStatus('awaiting',this)">🟠 Scan Form Only</button>
+          <button class="ps-filter-btn" onclick="psFilterStatus('transit',this)">🔵 In Transit</button>
+          <button class="ps-filter-btn" onclick="psFilterStatus('returned',this)">↩ Returned</button>
+          <button class="ps-filter-btn" onclick="psFilterStatus('exception',this)">⚡ Exception</button>
+        </div>
+        <div id="ps-status-list"></div>
+        <div style="margin-top:20px">
+          <div class="ps-section-header">
+            <div class="ps-section-title">✅ Delivered</div>
+            <button class="ps-btn-sm" onclick="psToggleDelivered(this)">Show</button>
+          </div>
+          <div id="ps-status-delivered-list" style="display:none"></div>
+        </div>
       </div>
     </div>
   </div>
 
   <!-- GAP REPORT panel -->
   <div class="ps-panel" id="ps-panel-gaps">
-    <div class="ps-section-header">
-      <div>
-        <div class="ps-section-title" style="font-size:15px;text-transform:none;letter-spacing:0">⚠️ Gap Report</div>
-        <div style="font-size:13px;color:var(--text2);margin-top:4px">In Veeqo manifest · no pack scan recorded · investigate before end of day</div>
+    <!-- PIN gate -->
+    <div id="ps-gaps-gate" class="ps-mgmt-gate">
+      <div class="ps-mgmt-gate-icon">🔒</div>
+      <div class="ps-mgmt-gate-title">Management Access Required</div>
+      <div class="ps-mgmt-gate-sub">Enter the management PIN to view the Gap Report.</div>
+      <div class="ps-mgmt-gate-row">
+        <input class="ps-mgmt-gate-input" id="ps-gaps-pin" type="password" inputmode="numeric" maxlength="6" placeholder="••••">
+        <button class="ps-btn-go" onclick="psUnlockTab('gaps')">Unlock</button>
       </div>
-      <button class="ps-btn-export" onclick="psExportGaps()">⬇ Export CSV</button>
+      <div class="ps-pin-err" id="ps-gaps-pin-err" style="margin-top:10px"></div>
     </div>
-    <div class="ps-filter-row">
-      <button class="ps-filter-btn active" onclick="psFilterGaps('all',this)">All</button>
-      <button class="ps-filter-btn" onclick="psFilterGaps('UPS',this)">UPS</button>
-      <button class="ps-filter-btn" onclick="psFilterGaps('USPS',this)">USPS</button>
-    </div>
-    <div id="ps-gap-list">
-      <div class="ps-empty-state">
-        <div class="ps-empty-icon">📄</div>
-        <div class="ps-empty-title">Run reconciliation first</div>
-        <div class="ps-empty-sub">Upload the Veeqo CSV and click Run Gap Analysis to see gaps.</div>
+    <!-- Content (hidden until unlocked) -->
+    <div id="ps-gaps-content" style="display:none">
+      <div class="ps-section-header">
+        <div>
+          <div class="ps-section-title" style="font-size:15px;text-transform:none;letter-spacing:0">⚠️ Gap Report</div>
+          <div style="font-size:13px;color:var(--text2);margin-top:4px">In Veeqo manifest · no pack scan recorded · investigate before end of day</div>
+        </div>
+        <button class="ps-btn-export" onclick="psExportGaps()">⬇ Export CSV</button>
+      </div>
+      <div class="ps-filter-row">
+        <button class="ps-filter-btn active" onclick="psFilterGaps('all',this)">All</button>
+        <button class="ps-filter-btn" onclick="psFilterGaps('UPS',this)">UPS</button>
+        <button class="ps-filter-btn" onclick="psFilterGaps('USPS',this)">USPS</button>
+      </div>
+      <div id="ps-gap-list">
+        <div class="ps-empty-state">
+          <div class="ps-empty-icon">📄</div>
+          <div class="ps-empty-title">Run reconciliation first</div>
+          <div class="ps-empty-sub">Upload the Veeqo CSV in the Lookup tab and click Run Gap Analysis.</div>
+        </div>
       </div>
     </div>
   </div>
 
 </div><!-- /ps-content -->
 
-<!-- Switch Packer modal (outside ps-content, inside packship-app) -->
+<!-- Switch Packer modal -->
 <div id="ps-switch-modal">
   <div class="ps-switch-card">
     <div class="ps-switch-title">Switch Packer</div>
-    <div class="ps-switch-sub">Enter the new packer's initials. All future scans will be tagged with these initials.</div>
+    <div class="ps-switch-sub">Enter the new packer's initials. All future scans will be tagged with these initials. No sign-out needed.</div>
     <div class="ps-field-wrap">
       <label class="ps-field-lbl">New Initials</label>
       <input class="ps-field-input" id="ps-switch-initials" type="text" maxlength="4" placeholder="e.g. MK" autocomplete="off" style="text-transform:uppercase">
@@ -11098,6 +10738,7 @@ function rprToast(msg, type = '') {
     <div class="ps-pin-err" id="ps-switch-err"></div>
   </div>
 </div>
+
 </div><!-- /packship-app -->
 
 <script>
@@ -11195,19 +10836,12 @@ function _psLaunchInner() {
   document.getElementById('ps-session-label').textContent = psRole === 'mgmt' ? 'Manager' : psInitials;
   var switchBtn = document.getElementById('ps-switch-btn');
   if (psRole === 'mgmt') {
-    document.getElementById('ps-mgmt-upload-section').style.display = 'block';
-    document.getElementById('ps-tab-gaps').style.display   = 'flex';
-    document.getElementById('ps-tab-status').style.display = 'flex';
     if (switchBtn) switchBtn.style.display = 'none';
   } else {
-    document.getElementById('ps-mgmt-upload-section').style.display = 'none';
-    document.getElementById('ps-tab-gaps').style.display   = 'none';
-    document.getElementById('ps-tab-status').style.display = 'none';
     if (switchBtn) switchBtn.style.display = 'inline-block';
   }
   var saved = localStorage.getItem('ps_batch_' + psTodayKey());
   if (saved) psBatchClosed = JSON.parse(saved);
-  // Reset to scan tab
   psSwitchTab('scan');
   psLoadScans();
   psFocusScan();
@@ -11239,7 +10873,6 @@ window.psSwitchTab = function(name) {
   if (name === 'progress') { psLoadScans(); }
   if (name === 'lookup')   { psRenderLog(); }
   if (name === 'gaps')     { psRenderGaps(); }
-  if (name === 'status')   { /* status tab — no auto-action, user uploads CSV */ }
 };
 
 // ── Focus ─────────────────────────────────────────────
@@ -11645,11 +11278,8 @@ window.psFmtTime = function(iso) {
 };
 
 window.psTodayKey = function() {
-  // Use UTC to match the Cloudflare Worker's shipTodayKey() which uses getUTC*
-  // Without this, scans made after 7 PM EST (midnight UTC) write to tomorrow's date
-  // in the sheet but the frontend queries today's date — scans appear to vanish.
   var d = new Date();
-  return d.getUTCFullYear() + '-' + String(d.getUTCMonth()+1).padStart(2,'0') + '-' + String(d.getUTCDate()).padStart(2,'0');
+  return d.getFullYear() + '-' + String(d.getMonth()+1).padStart(2,'0') + '-' + String(d.getDate()).padStart(2,'0');
 };
 
 var _psToastTimer;
@@ -11689,10 +11319,83 @@ function _psWireEvents() {
   document.getElementById('ps-inp-initials').addEventListener('keydown', function(e){ if (e.key === 'Enter') psSignInOps(); });
   document.getElementById('ps-inp-initials').addEventListener('input',   function(e){ e.target.value = e.target.value.toUpperCase(); });
   document.getElementById('ps-inp-mgmt-pin').addEventListener('keydown', function(e){ if (e.key === 'Enter') psSignInMgmt(); });
-  _psWireSwitchModal();
+
+  // Switch Packer modal
+  var swInp = document.getElementById('ps-switch-initials');
+  if (swInp) {
+    swInp.addEventListener('keydown', function(e){ if (e.key === 'Enter') psConfirmSwitch(); });
+    swInp.addEventListener('input',   function(e){ e.target.value = e.target.value.toUpperCase(); });
+  }
+  // PIN gate Enter keys
+  var stPin = document.getElementById('ps-status-pin');
+  if (stPin) stPin.addEventListener('keydown', function(e){ if (e.key === 'Enter') psUnlockTab('status'); });
+  var gpPin = document.getElementById('ps-gaps-pin');
+  if (gpPin) gpPin.addEventListener('keydown', function(e){ if (e.key === 'Enter') psUnlockTab('gaps'); });
+
+  // Status drop zone drag-and-drop
+  var sdz = document.getElementById('ps-status-drop-zone');
+  if (sdz) {
+    sdz.addEventListener('dragover',  function(e){ e.preventDefault(); sdz.classList.add('drag-over'); });
+    sdz.addEventListener('dragleave', function(){ sdz.classList.remove('drag-over'); });
+    sdz.addEventListener('drop', function(e){
+      e.preventDefault(); sdz.classList.remove('drag-over');
+      var file = e.dataTransfer.files[0];
+      if (file && file.name.endsWith('.csv')) {
+        var r = new FileReader();
+        r.onload = function(ev){ _psParseStatusCSV(ev.target.result); };
+        r.readAsText(file);
+      }
+    });
+  }
 }
 
-// ── Switch Packer ─────────────────────────────────────
+// ── Mgmt PIN gate for protected tabs ─────────────────────────────────────────
+// Tracks which tabs have been unlocked this session
+var _psUnlockedTabs = {};
+
+window.psUnlockTab = function(tab) {
+  var pinEl  = document.getElementById('ps-' + tab + '-pin');
+  var errEl  = document.getElementById('ps-' + tab + '-pin-err');
+  var pin    = pinEl ? pinEl.value.trim() : '';
+  if (pin !== PS_PIN_MGMT) {
+    if (errEl) errEl.textContent = 'Incorrect PIN.';
+    return;
+  }
+  // Correct — hide gate, show content
+  _psUnlockedTabs[tab] = true;
+  var gate    = document.getElementById('ps-' + tab + '-gate');
+  var content = document.getElementById('ps-' + tab + '-content');
+  if (gate)    gate.style.display    = 'none';
+  if (content) content.style.display = 'block';
+  if (pinEl)   pinEl.value           = '';
+  if (errEl)   errEl.textContent     = '';
+  // For gaps tab — if gap data already exists, render it
+  if (tab === 'gaps') psRenderGaps();
+};
+
+// Override psSwitchTab to re-show gate if tab not yet unlocked
+window.psSwitchTab = function(name) {
+  document.querySelectorAll('#packship-app .ps-tabitem').forEach(function(t){ t.classList.remove('active'); });
+  document.querySelectorAll('#packship-app .ps-panel').forEach(function(p){ p.classList.remove('active'); });
+  document.getElementById('ps-tab-' + name).classList.add('active');
+  document.getElementById('ps-panel-' + name).classList.add('active');
+  // Show gate if protected tab not yet unlocked this session
+  if ((name === 'status' || name === 'gaps') && !_psUnlockedTabs[name]) {
+    var gate    = document.getElementById('ps-' + name + '-gate');
+    var content = document.getElementById('ps-' + name + '-content');
+    if (gate)    gate.style.display    = 'block';
+    if (content) content.style.display = 'none';
+    // Focus PIN input
+    var pinEl = document.getElementById('ps-' + name + '-pin');
+    if (pinEl) setTimeout(function(){ pinEl.focus(); }, 100);
+  }
+  if (name === 'scan')     { psFocusScan(); psRenderScanList(); }
+  if (name === 'progress') { psLoadScans(); }
+  if (name === 'lookup')   { psRenderLog(); }
+  if (name === 'gaps'  && _psUnlockedTabs['gaps'])   { psRenderGaps(); }
+};
+
+// ── Switch Packer ─────────────────────────────────────────────────────────────
 window.psSwitchPacker = function() {
   document.getElementById('ps-switch-initials').value = '';
   document.getElementById('ps-switch-err').textContent = '';
@@ -11711,11 +11414,11 @@ window.psConfirmSwitch = function() {
   psInitials = newInitials;
   document.getElementById('ps-session-label').textContent = newInitials;
   psCloseSwitchModal();
-  _psToast('Switched from ' + prev + ' to ' + newInitials);
+  _psToast('Packer switched from ' + prev + ' to ' + newInitials);
   psFocusScan();
 };
 
-// ── Status Checker ─────────────────────────────────────
+// ── Status Checker ────────────────────────────────────────────────────────────
 var PS_STATUS_MAP = {
   'created':             { label:'Never Shipped',       color:'red',    icon:'🔴', priority:1, flag:true  },
   'exception':           { label:'Exception / Problem', color:'red',    icon:'⚡', priority:2, flag:true  },
@@ -11735,78 +11438,59 @@ function _psClassifyStatus(raw) {
   return PS_STATUS_MAP[key] || { label: raw || 'Unknown', color:'gray', icon:'❓', priority:8, flag:true };
 }
 
-var psStatusRows    = [];
-var psStatusFilter  = 'all';
+var psStatusRows     = [];
+var psStatusFilter   = 'all';
 var psDeliveredShown = false;
 
 window.psHandleStatusCSV = function(input) {
   var file = input.files[0]; if (!file) return;
-  var reader = new FileReader();
-  reader.onload = function(e){ _psParseStatusCSV(e.target.result); };
-  reader.readAsText(file);
+  var r = new FileReader();
+  r.onload = function(e){ _psParseStatusCSV(e.target.result); };
+  r.readAsText(file);
 };
 
 function _psParseStatusCSV(text) {
   var msg = document.getElementById('ps-status-upload-msg');
   msg.className = 'ps-upload-msg'; msg.textContent = 'Parsing…';
-
   var lines = text.split(/\r?\n/).filter(function(l){ return l.trim(); });
   if (lines.length < 2) { msg.className = 'ps-upload-msg err'; msg.textContent = '⚠ No data rows found.'; return; }
-
   var headers = _psParseLine(lines[0]).map(function(h){ return h.trim().toLowerCase(); });
   var col = function(name){ return headers.findIndex(function(h){ return h.includes(name.toLowerCase().replace(/ /g,'')); }); };
-
-  var iTracking = col('tracking id');
-  var iStatus   = col('tracking status');
-  var iOrder    = col('order id');
-  var iStore    = col('store');
-  var iCarrier  = col('carrier');
-  var iService  = col('service');
-  var iShipDate = col('shipped date');
-  var iShipTo   = col('ship to state');
-
+  var iTracking = col('tracking id'), iStatus = col('tracking status'), iOrder = col('order id'),
+      iStore = col('store'), iCarrier = col('carrier'), iService = col('service'),
+      iShipDate = col('shipped date'), iShipTo = col('ship to state');
   if (iTracking === -1) { msg.className = 'ps-upload-msg err'; msg.textContent = '⚠ "Tracking ID" column not found.'; return; }
   if (iStatus   === -1) { msg.className = 'ps-upload-msg err'; msg.textContent = '⚠ "Tracking Status" column not found.'; return; }
-
   var rows = [], skippedFBA = 0;
   for (var i = 1; i < lines.length; i++) {
-    var cols  = _psParseLine(lines[i]);
+    var cols = _psParseLine(lines[i]);
     var store = (iStore !== -1 ? cols[iStore] : '').trim();
     var rawTrk = (iTracking !== -1 ? cols[iTracking] : '').trim();
     if (PS_IGNORED_FBA.includes(store.toLowerCase())) { skippedFBA++; continue; }
     if (!rawTrk) continue;
-    rawTrk.split(/[;,]/).map(function(t){ return psNormalizeTracking(t); }).filter(Boolean).forEach(function(tn) {
+    rawTrk.split(/[;,]/).map(function(t){ return psNormalizeTracking(t); }).filter(Boolean).forEach(function(tn){
       var rawStatus = (iStatus !== -1 ? cols[iStatus] : '').trim();
       rows.push({
-        tracking:   tn.toUpperCase(),
-        status:     rawStatus,
-        classified: _psClassifyStatus(rawStatus),
-        orderNum:   (iOrder    !== -1 ? cols[iOrder]    : '').trim(),
-        channel:    store,
-        carrier:    (iCarrier  !== -1 ? cols[iCarrier]  : '').trim() || psDetectCarrier(tn),
-        service:    (iService  !== -1 ? cols[iService]  : '').trim(),
-        shipDate:   (iShipDate !== -1 ? cols[iShipDate] : '').trim(),
-        shipToState:(iShipTo   !== -1 ? cols[iShipTo]   : '').trim(),
+        tracking: tn.toUpperCase(), status: rawStatus, classified: _psClassifyStatus(rawStatus),
+        orderNum: (iOrder !== -1 ? cols[iOrder] : '').trim(), channel: store,
+        carrier: (iCarrier !== -1 ? cols[iCarrier] : '').trim() || psDetectCarrier(tn),
+        service: (iService !== -1 ? cols[iService] : '').trim(),
+        shipDate: (iShipDate !== -1 ? cols[iShipDate] : '').trim(),
+        shipToState: (iShipTo !== -1 ? cols[iShipTo] : '').trim(),
       });
     });
   }
-
   rows.sort(function(a,b){ return a.classified.priority - b.classified.priority; });
-  psStatusRows    = rows;
-  psStatusFilter  = 'all';
-  psDeliveredShown = false;
-
+  psStatusRows = rows; psStatusFilter = 'all'; psDeliveredShown = false;
   document.getElementById('ps-status-pill').style.display = 'flex';
   document.getElementById('ps-status-count').textContent  = rows.length;
   document.getElementById('ps-status-drop-zone').querySelector('.ps-drop-title').textContent = 'Replace CSV (drop new file)';
   msg.className = 'ps-upload-msg ok';
   msg.textContent = '✓ ' + rows.length + ' shipments loaded' + (skippedFBA ? ' · ' + skippedFBA + ' FBA skipped' : '');
-
   _psRenderStatusStats();
   _psRenderStatusList();
   document.getElementById('ps-status-stat-bar').style.display = 'grid';
   document.getElementById('ps-status-results').style.display  = 'block';
-
   if (psToken) _psUploadStatusToSheet(rows);
 }
 
@@ -11834,25 +11518,21 @@ function _psStatusBadgeCls(color) {
 
 function _psRenderStatusList() {
   var list = document.getElementById('ps-status-list');
-  var flagged = psStatusRows.filter(function(r){ return r.classified.flag; });
-
-  var filtered;
-  var f = psStatusFilter;
-  if      (f === 'all')                filtered = flagged;
-  else if (f === 'created')            filtered = psStatusRows.filter(function(r){ return r.status.toLowerCase() === 'created'; });
-  else if (f === 'awaiting_collection')filtered = psStatusRows.filter(function(r){ var k=r.status.toLowerCase(); return k==='awaiting_collection'||k==='awaiting collection'; });
-  else if (f === 'in_transit')         filtered = psStatusRows.filter(function(r){ var k=r.status.toLowerCase(); return k==='in_transit'||k==='in transit'; });
-  else if (f === 'returned')           filtered = psStatusRows.filter(function(r){ return r.status.toLowerCase().includes('return'); });
-  else if (f === 'exception')          filtered = psStatusRows.filter(function(r){ return r.status.toLowerCase().includes('exception'); });
-  else filtered = flagged;
-
+  var f = psStatusFilter, all = psStatusRows, filtered;
+  if      (f === 'all')       filtered = all.filter(function(r){ return r.classified.flag; });
+  else if (f === 'created')   filtered = all.filter(function(r){ return r.status.toLowerCase() === 'created'; });
+  else if (f === 'awaiting')  filtered = all.filter(function(r){ var k=r.status.toLowerCase(); return k==='awaiting_collection'||k==='awaiting collection'; });
+  else if (f === 'transit')   filtered = all.filter(function(r){ var k=r.status.toLowerCase(); return k==='in_transit'||k==='in transit'; });
+  else if (f === 'returned')  filtered = all.filter(function(r){ return r.status.toLowerCase().includes('return'); });
+  else if (f === 'exception') filtered = all.filter(function(r){ return r.status.toLowerCase().includes('exception'); });
+  else filtered = all.filter(function(r){ return r.classified.flag; });
   if (!filtered.length) {
-    list.innerHTML = '<div class="ps-empty-state"><div class="ps-empty-icon">✅</div><div class="ps-empty-title">No issues found</div><div class="ps-empty-sub">Nothing flagged for this filter.</div></div>';
+    list.innerHTML = '<div class="ps-empty-state"><div class="ps-empty-icon">✅</div><div class="ps-empty-title">No issues for this filter</div></div>';
   } else {
-    list.innerHTML = filtered.map(function(r) {
+    list.innerHTML = filtered.map(function(r){
       var c = r.classified;
       return '<div class="ps-card"><div class="ps-card-row">' +
-        '<div style="font-size:16px;flex-shrink:0;line-height:1">' + c.icon + '</div>' +
+        '<div style="font-size:16px;flex-shrink:0;line-height:1;margin-right:4px">' + c.icon + '</div>' +
         '<div class="ps-card-tracking">' + r.tracking + '</div>' +
         '<div class="ps-card-meta">' +
           '<span class="ps-badge ' + _psStatusBadgeCls(c.color) + '">' + c.label + '</span>' +
@@ -11865,16 +11545,14 @@ function _psRenderStatusList() {
       '</div></div>';
     }).join('');
   }
-
-  // Delivered list (only when toggled on)
   if (psDeliveredShown) {
-    var delivered = psStatusRows.filter(function(r){ return !r.classified.flag; });
-    document.getElementById('ps-status-delivered-list').innerHTML = delivered.map(function(r){
+    var dl = document.getElementById('ps-status-delivered-list');
+    var delivered = all.filter(function(r){ return !r.classified.flag; });
+    dl.innerHTML = delivered.map(function(r){
       return '<div class="ps-card"><div class="ps-card-row">' +
-        '<div style="font-size:16px;flex-shrink:0;line-height:1">✅</div>' +
+        '<div style="font-size:16px;flex-shrink:0;line-height:1;margin-right:4px">✅</div>' +
         '<div class="ps-card-tracking">' + r.tracking + '</div>' +
-        '<div class="ps-card-meta">' +
-          _psCarrierBadge(r.carrier) +
+        '<div class="ps-card-meta">' + _psCarrierBadge(r.carrier) +
           (r.orderNum ? '<span class="ps-badge ps-badge-blue">#' + r.orderNum + '</span>' : '') +
           (r.channel  ? '<span class="ps-badge ps-badge-gray">' + r.channel + '</span>' : '') +
         '</div>' +
@@ -11912,36 +11590,17 @@ function _psUploadStatusToSheet(rows) {
   var sheetRows = [['Date','Tracking','Status','StatusLabel','Carrier','OrderNum','Channel','Service','ShipDate','ShipToState']];
   var today = psTodayKey();
   rows.forEach(function(r){
-    sheetRows.push([today, r.tracking, r.status, r.classified.label, r.carrier, r.orderNum, r.channel, r.service, r.shipDate, r.shipToState]);
+    sheetRows.push([today,r.tracking,r.status,r.classified.label,r.carrier,r.orderNum,r.channel,r.service,r.shipDate,r.shipToState]);
   });
   fetch(PS_WORKER + '/ship/status-upload', {
-    method:'POST',
-    headers:{'Content-Type':'application/json','X-Session-Token':psToken},
+    method:'POST', headers:{'Content-Type':'application/json','X-Session-Token':psToken},
     body: JSON.stringify({ rows: sheetRows })
   }).then(function(r){ return r.json(); }).then(function(d){
     if (d.ok) _psToast('Status data saved to sheet');
   }).catch(function(e){ console.error('[PS] status-upload error:',e); });
 }
 
-function _psWireSwitchModal() {
-  var inp = document.getElementById('ps-switch-initials');
-  if (inp) {
-    inp.addEventListener('keydown', function(e){ if (e.key==='Enter') psConfirmSwitch(); });
-    inp.addEventListener('input',   function(e){ e.target.value = e.target.value.toUpperCase(); });
-  }
-  var sdz = document.getElementById('ps-status-drop-zone');
-  if (sdz) {
-    sdz.addEventListener('dragover',  function(e){ e.preventDefault(); sdz.classList.add('drag-over'); });
-    sdz.addEventListener('dragleave', function(){ sdz.classList.remove('drag-over'); });
-    sdz.addEventListener('drop', function(e){
-      e.preventDefault(); sdz.classList.remove('drag-over');
-      var file = e.dataTransfer.files[0];
-      if (file && file.name.endsWith('.csv')) {
-        var r = new FileReader(); r.onload = function(ev){ _psParseStatusCSV(ev.target.result); }; r.readAsText(file);
-      }
-    });
-  }
-}
-
 })();
 </script>
+</body>
+</html>
