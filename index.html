@@ -1,7 +1,7 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-  <!-- XFITTING-BUILD-V106-COLJ-1772732724 -->
+  <!-- XFITTING-BUILD-V109-XFRT-20260316 -->
 <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate">
 <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&family=IBM+Plex+Sans:wght@300;400;500;600&display=swap" rel="stylesheet">
   <meta http-equiv="Pragma" content="no-cache">
@@ -9493,6 +9493,7 @@ function rprToast(msg, type = '') {
 
 <div class="itabs">
   <button class="itab iactive" id="inv-tab-scan" onclick="invSwitchTab('scan')">Scan</button>
+  <button class="itab" id="inv-tab-transfer" onclick="invSwitchTab('transfer')">Transfer</button>
   <button class="itab" id="inv-tab-review" onclick="invSwitchTab('review')">Review<span class="ibadge" id="inv-pending-badge" style="display:none">0</span></button>
 </div>
 
@@ -9563,6 +9564,66 @@ function rprToast(msg, type = '') {
   </div>
 </div>
 
+<!-- ── Transfer Panel ── -->
+<div class="ipanel" id="inv-panel-transfer">
+  <div class="icard">
+    <div class="icard-label">Transfer Stock Between Locations</div>
+    <div style="font-size:12px;color:var(--text3);margin-bottom:10px;line-height:1.5">Move cases from one shelf location to another. Both sides are logged and require management approval.</div>
+    <div class="icard-label" style="margin-top:4px">Scan or Search Part</div>
+    <div class="isearch-row">
+      <input class="isearch-inp" id="xfr-search-inp" type="text" placeholder="Part# or barcode…" onkeydown="if(event.key==='Enter')xfrLookup(this.value.trim())">
+      <button class="isearch-btn" onclick="xfrLookup(document.getElementById('xfr-search-inp').value.trim())">Go</button>
+    </div>
+    <button class="icam-btn" id="xfr-cam-btn" onclick="xfrToggleCam()">📷 Start Camera</button>
+    <div id="xfr-reader-wrap" style="display:none"><div id="xfr-qr-reader"></div></div>
+  </div>
+
+  <!-- Part result card -->
+  <div class="icard" id="xfr-result-card" style="display:none">
+    <div style="display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:4px">
+      <div class="iresult-part" id="xfr-result-part"></div>
+      <div id="xfr-result-sku" style="font-size:11px;font-weight:600;font-family:var(--mono);color:var(--text3);padding-top:3px"></div>
+    </div>
+    <div class="iresult-name" id="xfr-result-name"></div>
+  </div>
+
+  <!-- Step 1: Pick From Location -->
+  <div class="icard" id="xfr-from-card" style="display:none">
+    <div class="icard-label">Step 1 — From Location</div>
+    <div style="font-size:11px;color:var(--text3);margin-bottom:8px">Select the location you are moving stock OUT of.</div>
+    <div id="xfr-from-list"></div>
+  </div>
+
+  <!-- Step 2: Pick To Location -->
+  <div class="icard" id="xfr-to-card" style="display:none">
+    <div style="display:flex;align-items:center;gap:8px;margin-bottom:4px">
+      <div class="icard-label" style="margin:0">Step 2 — To Location</div>
+      <span style="font-size:10px;font-weight:700;font-family:var(--mono);color:var(--orange);background:var(--orange-bg);padding:2px 7px;border-radius:4px" id="xfr-from-badge"></span>
+    </div>
+    <div style="font-size:11px;color:var(--text3);margin-bottom:8px">Select the destination location or add a new one.</div>
+    <div id="xfr-to-list"></div>
+    <div id="xfr-newloc-wrap" style="display:none;margin-top:8px">
+      <div class="ifield"><label>New Location Name</label><input id="xfr-newloc-inp" type="text" placeholder="e.g. A-Shelf-3"></div>
+    </div>
+  </div>
+
+  <!-- Step 3: Cases + Details -->
+  <div class="icard" id="xfr-detail-card" style="display:none">
+    <div class="icard-label">Step 3 — Confirm Transfer</div>
+    <div id="xfr-summary" style="background:var(--purple-bg);border:1px solid #c4b5fd;border-radius:8px;padding:10px 12px;font-size:13px;margin-bottom:12px;line-height:1.7">
+      <div><span style="font-weight:700;color:var(--purple)">FROM:</span> <span id="xfr-sum-from" style="font-family:var(--mono);color:var(--text)"></span></div>
+      <div><span style="font-weight:700;color:var(--purple)">TO:</span> &nbsp;&nbsp;&nbsp;<span id="xfr-sum-to" style="font-family:var(--mono);color:var(--text)"></span></div>
+    </div>
+    <div class="iwarn" id="xfr-warn" style="display:none"></div>
+    <div class="ifield-row">
+      <div class="ifield"><label>Cases to Transfer</label><input id="xfr-cases" type="number" min="1" placeholder="0"></div>
+      <div class="ifield"><label>Initials</label><input id="xfr-initials" type="text" maxlength="4" placeholder="e.g. DJ"></div>
+    </div>
+    <div class="ifield"><label>Notes (optional)</label><input id="xfr-notes" type="text" placeholder="Reason for transfer…"></div>
+    <button class="isubmit" id="xfr-submit-btn" onclick="xfrSubmit()" style="background:var(--purple);border-color:var(--purple)">🔁 Submit Transfer</button>
+  </div>
+</div>
+
 <div class="ipanel" id="inv-panel-review">
   <div id="inv-pin-gate">
     <div class="ipin-wrap">
@@ -9582,7 +9643,8 @@ function rprToast(msg, type = '') {
   </div>
   <div id="inv-review-content" style="display:none;padding:16px">
     <div style="margin-bottom:20px"><div class="isec-title in">📦 Pending Stock In</div><div id="inv-pending-in"></div></div>
-    <div><div class="isec-title out">📤 Pending Stock Out</div><div id="inv-pending-out"></div></div>
+    <div style="margin-bottom:20px"><div class="isec-title out">📤 Pending Stock Out</div><div id="inv-pending-out"></div></div>
+    <div><div class="isec-title" style="color:var(--purple);border-left-color:var(--purple)">🔁 Pending Transfers</div><div id="inv-pending-xfr"></div></div>
   </div>
 </div>
 </div>
@@ -9615,10 +9677,12 @@ function rprToast(msg, type = '') {
   }
 
   window.invSwitchTab = function(tab) {
-    g("inv-panel-scan").className    = "ipanel" + (tab === "scan"   ? " iactive" : "");
-    g("inv-panel-review").className  = "ipanel" + (tab === "review" ? " iactive" : "");
-    g("inv-tab-scan").className      = "itab"   + (tab === "scan"   ? " iactive" : "");
-    g("inv-tab-review").className    = "itab"   + (tab === "review" ? " iactive" : "");
+    g("inv-panel-scan").className      = "ipanel" + (tab === "scan"     ? " iactive" : "");
+    g("inv-panel-transfer").className  = "ipanel" + (tab === "transfer" ? " iactive" : "");
+    g("inv-panel-review").className    = "ipanel" + (tab === "review"   ? " iactive" : "");
+    g("inv-tab-scan").className        = "itab"   + (tab === "scan"     ? " iactive" : "");
+    g("inv-tab-transfer").className    = "itab"   + (tab === "transfer" ? " iactive" : "");
+    g("inv-tab-review").className      = "itab"   + (tab === "review"   ? " iactive" : "");
     if (tab === "review" && invUnlocked) invLoadPending();
   };
 
@@ -9914,7 +9978,10 @@ function rprToast(msg, type = '') {
     wFetch(W + "/inventory/pending")
       .then(function(r) { return r.json(); })
       .then(function(d) {
-        var n = (d.items || []).filter(function(x) { return x.status === "Pending"; }).length;
+        // Count each TRANSFER pair as one pending item (only count TRANSFER_OUT)
+        var n = (d.items || []).filter(function(x) {
+          return x.status === "Pending" && x.type !== "TRANSFER_IN";
+        }).length;
         var b = g("inv-pending-badge");
         b.textContent = n; b.style.display = n > 0 ? "inline-flex" : "none";
       }).catch(function() {});
@@ -9957,21 +10024,31 @@ function rprToast(msg, type = '') {
   function invLoadPending() {
     g("inv-pending-in").innerHTML  = "<div class='iempty'>Loading\u2026</div>";
     g("inv-pending-out").innerHTML = "<div class='iempty'>Loading\u2026</div>";
+    g("inv-pending-xfr").innerHTML = "<div class='iempty'>Loading\u2026</div>";
     wFetch(W + "/inventory/pending")
       .then(function(r) { return r.json(); })
       .then(function(d) {
-        var items = (d.items || []).filter(function(x) { return x.status === "Pending"; });
+        var allItems = d.items || [];
+        var items = allItems.filter(function(x) { return x.status === "Pending"; });
         var ins   = items.filter(function(x) { return x.type === "IN"; });
         var outs  = items.filter(function(x) { return x.type === "OUT"; });
+        var xfrOuts = items.filter(function(x) { return x.type === "TRANSFER_OUT"; });
+        var xfrIns  = items.filter(function(x) { return x.type === "TRANSFER_IN"; });
         var inEl  = g("inv-pending-in");
         var outEl = g("inv-pending-out");
-        inEl.innerHTML  = ins.length  ? "" : "<div class='iempty'>No pending IN</div>";
-        outEl.innerHTML = outs.length ? "" : "<div class='iempty'>No pending OUT</div>";
+        var xfrEl = g("inv-pending-xfr");
+        inEl.innerHTML  = ins.length    ? "" : "<div class='iempty'>No pending IN</div>";
+        outEl.innerHTML = outs.length   ? "" : "<div class='iempty'>No pending OUT</div>";
+        xfrEl.innerHTML = xfrOuts.length ? "" : "<div class='iempty'>No pending transfers</div>";
         ins.forEach(function(x)  { inEl.appendChild(invMakeCard(x)); });
         outs.forEach(function(x) { outEl.appendChild(invMakeCard(x)); });
+        xfrOuts.forEach(function(xOut) {
+          var xIn = xfrIns.find(function(y) { return y.transferId && y.transferId === xOut.transferId; }) || null;
+          xfrEl.appendChild(invMakeTransferCard(xOut, xIn));
+        });
       })
       .catch(function() {
-        g("inv-pending-in").innerHTML = g("inv-pending-out").innerHTML = "<div class='iempty'>Load failed</div>";
+        g("inv-pending-in").innerHTML = g("inv-pending-out").innerHTML = g("inv-pending-xfr").innerHTML = "<div class='iempty'>Load failed</div>";
       });
   }
 
@@ -10155,6 +10232,300 @@ function rprToast(msg, type = '') {
         if (card) { card.style.opacity = "1"; card.style.pointerEvents = "auto"; }
       });
   };
+
+  // ── Transfer card for Review tab ──────────────────────────────────
+  function invMakeTransferCard(outItem, inItem) {
+    invItemMap[outItem.rowIndex] = outItem;
+    if (inItem) invItemMap[inItem.rowIndex] = inItem;
+    var el = document.createElement("div");
+    el.className = "ientry";
+    el.id = "inv-entry-xfr-" + outItem.rowIndex;
+    var fromLoc = outItem.location || "?";
+    var toLoc   = inItem ? (inItem.location || "?") : (outItem.toLocation || "?");
+    el.innerHTML =
+      "<div class='ientry-head'><span class='ientry-part'>" + (outItem.partNum || "") + "</span>"
+      + "<span class='ientry-type' style='background:var(--purple-bg);color:var(--purple)'>TRANSFER</span></div>"
+      + "<div class='ientry-meta'>"
+      + "\ud83d\udd01 <strong>" + fromLoc + "</strong> \u2192 <strong>" + toLoc + "</strong>"
+      + " &nbsp;|&nbsp; \ud83d\udce6 " + (outItem.cases || 0) + " cases"
+      + " &nbsp;|&nbsp; \ud83e\uddd1 " + (outItem.initials || "")
+      + (outItem.notes ? "<br>\ud83d\udcdd " + outItem.notes : "") + "</div>"
+      + "<div class='ientry-btns'><button class='iapprove'>\u2713 Approve</button><button class='ireject'>\u2715 Reject</button></div>";
+    el.querySelector(".iapprove").onclick = function() { invVerifyTransfer(outItem, inItem, "Approved"); };
+    el.querySelector(".ireject").onclick  = function() { invVerifyTransfer(outItem, inItem, "Rejected"); };
+    return el;
+  }
+
+  window.invVerifyTransfer = function(outItem, inItem, action) {
+    var cardId = "inv-entry-xfr-" + outItem.rowIndex;
+    var card = g(cardId);
+    if (card) { card.style.opacity = "0.5"; card.style.pointerEvents = "none"; }
+    wFetch(W + "/inventory/transfer/verify", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ action: action, outItem: outItem, inItem: inItem || null })
+    }).then(function(r) { return r.json(); })
+      .then(function(d) {
+        if (d.ok) {
+          invFlash(action === "Approved" ? "Transfer approved \u2713" : "Transfer rejected", action === "Approved" ? "success" : "error");
+          if (card) card.remove();
+          invFetchPendingCount();
+        } else {
+          invFlash("Error: " + (d.error || "unknown"), "error");
+          if (card) { card.style.opacity = "1"; card.style.pointerEvents = "auto"; }
+        }
+      }).catch(function() {
+        invFlash("Verify failed", "error");
+        if (card) { card.style.opacity = "1"; card.style.pointerEvents = "auto"; }
+      });
+  };
+
+  // ── TRANSFER TAB LOGIC ────────────────────────────────────────────
+  var xfrPart      = null;
+  var xfrFromLoc   = null;
+  var xfrToLoc     = null;
+  var xfrCamRunning = false;
+  var xfrQrScanner  = null;
+  var xfrLastScan   = 0;
+
+  function xfrReset() {
+    xfrPart = null; xfrFromLoc = null; xfrToLoc = null;
+    var si = g("xfr-search-inp"); if (si) si.value = "";
+    ["xfr-result-card","xfr-from-card","xfr-to-card","xfr-detail-card","xfr-newloc-wrap","xfr-warn"]
+      .forEach(function(id) { var el = g(id); if (el) el.style.display = "none"; });
+    ["xfr-newloc-inp","xfr-cases","xfr-initials","xfr-notes"]
+      .forEach(function(id) { var el = g(id); if (el) el.value = ""; });
+    if (xfrCamRunning) xfrStopCam();
+  }
+
+  window.xfrToggleCam = function() {
+    if (xfrCamRunning) { xfrStopCam(); return; }
+    var btn = g("xfr-cam-btn");
+    btn.textContent = "Starting\u2026"; btn.disabled = true;
+    invLoadQR().then(function() {
+      g("xfr-reader-wrap").style.display = "block";
+      if (xfrQrScanner) { try { xfrQrScanner.clear(); } catch(e){} xfrQrScanner = null; }
+      xfrQrScanner = new Html5Qrcode("xfr-qr-reader");
+      xfrQrScanner.start(
+        { facingMode: "environment" },
+        { fps: 10, qrbox: { width: 260, height: 90 } },
+        function(code) {
+          var now = Date.now();
+          if (now - xfrLastScan < 2000) return;
+          xfrLastScan = now;
+          xfrStopCam();
+          g("xfr-search-inp").value = code;
+          xfrLookup(code);
+        },
+        function() {}
+      ).then(function() {
+        xfrCamRunning = true;
+        btn.textContent = "\u23f9 Stop Camera"; btn.className = "icam-btn scanning"; btn.disabled = false;
+      }).catch(function() {
+        invFlash("Camera error \u2014 check permissions", "error");
+        btn.textContent = "\ud83d\udcf7 Start Camera"; btn.className = "icam-btn"; btn.disabled = false;
+        g("xfr-reader-wrap").style.display = "none";
+      });
+    }).catch(function() { invFlash("Could not load scanner", "error"); btn.textContent = "\ud83d\udcf7 Start Camera"; btn.disabled = false; });
+  };
+
+  function xfrStopCam() {
+    if (xfrQrScanner && xfrCamRunning) { try { xfrQrScanner.stop().catch(function(){}); } catch(e){} xfrQrScanner = null; }
+    xfrCamRunning = false;
+    var wrap = g("xfr-reader-wrap"); if (wrap) wrap.style.display = "none";
+    var btn = g("xfr-cam-btn");
+    if (btn) { btn.textContent = "\ud83d\udcf7 Start Camera"; btn.className = "icam-btn"; btn.disabled = false; }
+  }
+
+  window.xfrLookup = function(code) {
+    if (!code) return;
+    ["xfr-result-card","xfr-from-card","xfr-to-card","xfr-detail-card"]
+      .forEach(function(id) { var el = g(id); if (el) el.style.display = "none"; });
+    wFetch(W + "/inventory/lookup?code=" + encodeURIComponent(code))
+      .then(function(r) { return r.json(); })
+      .then(function(d) {
+        if (!d.partNum) { invFlash("Not found: " + code, "error"); return; }
+        xfrPart = d;
+        g("xfr-result-part").textContent = d.isMultiVariant ? d.baseSku : d.partNum;
+        g("xfr-result-sku").textContent  = d.sku && d.sku !== d.partNum ? d.sku : "";
+        g("xfr-result-name").textContent = d.name || "";
+        g("xfr-result-card").style.display = "block";
+        if (d.isMultiVariant && d.variants && d.variants.length > 1) {
+          xfrShowVariantPicker(d.variants);
+        } else {
+          xfrShowFromLocs();
+        }
+      })
+      .catch(function() { invFlash("Lookup failed", "error"); });
+  };
+
+  function xfrShowVariantPicker(variants) {
+    var list = g("xfr-from-list");
+    list.innerHTML = "";
+    var label = g("xfr-from-card").querySelector(".icard-label");
+    if (label) label.textContent = "Select Part Number";
+    g("xfr-from-card").style.display = "block";
+    var filtered = variants.filter(function(v) {
+      return (xfrPart.locations || []).some(function(l) {
+        return l.partNum && l.partNum.toUpperCase() === v.toUpperCase() && parseFloat(l.cases) > 0;
+      });
+    });
+    if (filtered.length === 0) { invFlash("No stock found for any variant", "error"); g("xfr-from-card").style.display = "none"; return; }
+    filtered.forEach(function(v) {
+      var el = document.createElement("div");
+      el.className = "iloc-opt";
+      var totalCases = (xfrPart.locations || [])
+        .filter(function(l) { return l.partNum && l.partNum.toUpperCase() === v.toUpperCase() && parseFloat(l.cases) > 0; })
+        .reduce(function(sum, l) { return sum + (parseFloat(l.cases) || 0); }, 0);
+      var locCount = (xfrPart.locations || [])
+        .filter(function(l) { return l.partNum && l.partNum.toUpperCase() === v.toUpperCase() && parseFloat(l.cases) > 0; }).length;
+      el.innerHTML = "<div style='flex:1'><div class='iloc-name' style='font-family:var(--mono);font-size:14px'>" + v + "</div>"
+        + "<div style='font-size:11px;color:var(--text3);margin-top:2px'>" + totalCases + " cases \u00b7 " + locCount + " location" + (locCount !== 1 ? "s" : "") + "</div></div>"
+        + "<span class='iloc-badge ex'>Select</span>";
+      el.style.display = "flex"; el.style.alignItems = "center";
+      el.onclick = function() {
+        var varLocs = (xfrPart.locations || []).filter(function(l) {
+          return (!l.partNum || l.partNum.toUpperCase() === v.toUpperCase()) && parseFloat(l.cases) > 0;
+        });
+        if (varLocs.length === 0) { invFlash("No stock for " + v, "error"); return; }
+        xfrPart = Object.assign({}, xfrPart, { partNum: v, locations: varLocs });
+        g("xfr-result-part").textContent = v;
+        var lbl = g("xfr-from-card").querySelector(".icard-label");
+        if (lbl) lbl.textContent = "Step 1 \u2014 From Location";
+        xfrShowFromLocs();
+      };
+      list.appendChild(el);
+    });
+  }
+
+  function xfrShowFromLocs() {
+    var locs = (xfrPart.locations || []).filter(function(l) { return parseFloat(l.cases) > 0; });
+    if (locs.length === 0) { invFlash("No stock at any location", "error"); return; }
+    var list = g("xfr-from-list");
+    list.innerHTML = "";
+    var lbl = g("xfr-from-card").querySelector(".icard-label");
+    if (lbl) lbl.textContent = "Step 1 \u2014 From Location";
+    locs.forEach(function(loc, i) {
+      var el = document.createElement("div");
+      el.className = "iloc-opt";
+      el.innerHTML = "<div><div class='iloc-name'>" + loc.location + "</div>"
+        + "<div class='iloc-cases' style='font-weight:700;color:var(--text)'>" + loc.cases + " cases available</div></div>"
+        + "<span class='iloc-badge ex'>Select</span>";
+      el.onclick = (function(idx) { return function() {
+        xfrFromLoc = locs[idx];
+        list.querySelectorAll(".iloc-opt").forEach(function(e) { e.classList.remove("isel"); });
+        list.children[idx].classList.add("isel");
+        var badge = g("xfr-from-badge"); if (badge) badge.textContent = "FROM: " + xfrFromLoc.location;
+        xfrShowToLocs();
+      }; })(i);
+      list.appendChild(el);
+    });
+    g("xfr-from-card").style.display    = "block";
+    g("xfr-to-card").style.display      = "none";
+    g("xfr-detail-card").style.display  = "none";
+  }
+
+  function xfrShowToLocs() {
+    var allLocs = (xfrPart.locations || []);
+    var list = g("xfr-to-list");
+    list.innerHTML = "";
+    g("xfr-newloc-wrap").style.display = "none";
+    var newlocInp = g("xfr-newloc-inp"); if (newlocInp) newlocInp.value = "";
+    allLocs.forEach(function(loc, i) {
+      var isSame = loc.location === xfrFromLoc.location;
+      var el = document.createElement("div");
+      el.className = "iloc-opt" + (isSame ? " disabled" : "");
+      el.style.opacity = isSame ? "0.4" : "1";
+      el.style.pointerEvents = isSame ? "none" : "auto";
+      el.innerHTML = "<div><div class='iloc-name'>" + loc.location + (isSame ? " <em style='font-size:10px;color:var(--text3)'>(source)</em>" : "") + "</div>"
+        + "<div class='iloc-cases'>" + loc.cases + " cases</div></div>"
+        + "<span class='iloc-badge ex'>" + (isSame ? "\u2014" : "Select") + "</span>";
+      if (!isSame) {
+        el.onclick = (function(idx) { return function() {
+          xfrToLoc = allLocs[idx];
+          g("xfr-newloc-wrap").style.display = "none";
+          list.querySelectorAll(".iloc-opt").forEach(function(e) { e.classList.remove("isel"); });
+          list.children[idx].classList.add("isel");
+          xfrShowDetails();
+        }; })(i);
+      }
+      list.appendChild(el);
+    });
+    // New location option
+    var newEl = document.createElement("div");
+    newEl.className = "iloc-opt";
+    newEl.innerHTML = "<div class='iloc-name'>+ Add New Location</div><span class='iloc-badge nw'>New</span>";
+    newEl.onclick = function() {
+      xfrToLoc = { isNew: true };
+      list.querySelectorAll(".iloc-opt").forEach(function(e) { e.classList.remove("isel"); });
+      newEl.classList.add("isel");
+      g("xfr-newloc-wrap").style.display = "block";
+      xfrShowDetails();
+    };
+    list.appendChild(newEl);
+    g("xfr-to-card").style.display     = "block";
+    g("xfr-detail-card").style.display = "none";
+  }
+
+  function xfrShowDetails() {
+    var fromName = xfrFromLoc ? xfrFromLoc.location : "?";
+    var toName   = (xfrToLoc && xfrToLoc.isNew) ? "(new location)" : (xfrToLoc ? xfrToLoc.location : "?");
+    var sf = g("xfr-sum-from"); if (sf) sf.textContent = fromName;
+    var st = g("xfr-sum-to");   if (st) st.textContent = toName;
+    var warn = g("xfr-warn");
+    if (warn && xfrFromLoc) {
+      warn.textContent = "\u26a0 Max transferable: " + xfrFromLoc.cases + " cases from " + xfrFromLoc.location;
+      warn.style.display = "block";
+    }
+    g("xfr-detail-card").style.display = "block";
+  }
+
+  window.xfrSubmit = function() {
+    var casesEl    = g("xfr-cases");
+    var initialsEl = g("xfr-initials");
+    var notesEl    = g("xfr-notes");
+    var newlocEl   = g("xfr-newloc-inp");
+    var cases    = parseInt(casesEl ? casesEl.value : 0, 10);
+    var initials = initialsEl ? initialsEl.value.trim() : "";
+    var notes    = notesEl    ? notesEl.value.trim()    : "";
+    var newLoc   = newlocEl   ? newlocEl.value.trim()   : "";
+    if (!xfrPart)    { invFlash("No item selected", "error"); return; }
+    if (!xfrFromLoc) { invFlash("Select a From location", "error"); return; }
+    if (!xfrToLoc)   { invFlash("Select a To location", "error"); return; }
+    if (!cases || cases < 1) { invFlash("Enter number of cases", "error"); return; }
+    if (!initials)           { invFlash("Enter your initials", "error"); return; }
+    if (xfrToLoc.isNew && !newLoc) { invFlash("Enter new location name", "error"); return; }
+    if (cases > parseFloat(xfrFromLoc.cases || 0)) { invFlash("Cases exceed available stock (" + xfrFromLoc.cases + ")", "error"); return; }
+    var toLoc = xfrToLoc.isNew ? newLoc : xfrToLoc.location;
+    var btn = g("xfr-submit-btn");
+    if (btn) { btn.disabled = true; btn.textContent = "Submitting\u2026"; }
+    wFetch(W + "/inventory/transfer", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        partNum: xfrPart.partNum, sku: xfrPart.sku || xfrPart.partNum,
+        fromLocation: xfrFromLoc.location, fromRowIndex: xfrFromLoc.rowIndex,
+        toLocation: toLoc, toRowIndex: xfrToLoc.isNew ? null : xfrToLoc.rowIndex,
+        isNewLocation: !!xfrToLoc.isNew,
+        cases: cases, initials: initials, notes: notes
+      })
+    }).then(function(r) { return r.json(); })
+      .then(function(d) {
+        if (d.ok) {
+          invFlash("Transfer logged \u2014 pending approval \u2713", "success");
+          xfrReset();
+          invFetchPendingCount();
+        } else {
+          invFlash("Error: " + (d.error || "unknown"), "error");
+          if (btn) { btn.disabled = false; btn.textContent = "\ud83d\udd01 Submit Transfer"; }
+        }
+      })
+      .catch(function() {
+        invFlash("Submit failed", "error");
+        if (btn) { btn.disabled = false; btn.textContent = "\ud83d\udd01 Submit Transfer"; }
+      });
+  };
+  // ─────────────────────────────────────────────────────────────────
 
 })();
 
