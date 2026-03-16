@@ -1831,6 +1831,12 @@ input[type=checkbox]{width:15px;height:15px;cursor:pointer;accent-color:var(--bl
         <div class="launcher-card-title">Inventory</div>
         <div class="launcher-card-desc">Scan cases in/out, log locations, approve with management PIN</div>
       </div>
+      <div class="launcher-card" onclick="launchApp('packship')" style="border-color:#e8f7ee">
+        <div class="launcher-card-icon">📦</div>
+        <div class="launcher-card-title">Pack &amp; Ship</div>
+        <div class="launcher-card-desc">Scan tracking barcodes, batch close, gap analysis and carrier claims</div>
+        <div style="display:inline-block;margin-top:10px;font-size:10px;font-family:var(--mono);padding:3px 8px;border-radius:4px;background:var(--green-bg);color:var(--green);font-weight:600;letter-spacing:1px">No PIN · Scan Only</div>
+      </div>
     </div>
 
     <div class="launcher-section-label">⚡ Operator</div>
@@ -3529,6 +3535,10 @@ function launchApp(which) {
     // Load AWD_DB for SKU-to-UPC lookup from planner side
     if (!AWD_DB.loaded) loadAWDPlannerDB();
     upcOnLaunch();
+  } else if (which === 'packship') {
+    // Pack & Ship: no PIN required — show directly
+    document.getElementById('packship-app').style.display = 'flex';
+    psOnLaunch();
   }
 }
 
@@ -3539,6 +3549,7 @@ function backToLauncher() {
   document.getElementById('upc-app').style.display = 'none';
   document.getElementById('reorder-app').style.display = 'none';
   document.getElementById('dashboard-app').style.display = 'none';
+  document.getElementById('packship-app').style.display = 'none';
   document.getElementById('launcher').style.display = 'flex';
 }
 
@@ -10147,6 +10158,1055 @@ function rprToast(msg, type = '') {
 
 })();
 
+</script>
+
+<!-- ═══ PACK & SHIP APP ═══ -->
+<div id="packship-app" style="display:none;flex-direction:column;min-height:100vh;">
+<style>
+/* ── Pack & Ship scoped styles ───────────────────────────────────── */
+#packship-app .ps-topbar { background:var(--bg2); border-bottom:1px solid var(--border); height:56px; display:flex; align-items:center; justify-content:space-between; padding:0 20px; position:sticky; top:0; z-index:200; }
+#packship-app .ps-topbar-left { display:flex; align-items:center; gap:12px; }
+#packship-app .ps-topbar-right { display:flex; align-items:center; gap:10px; }
+#packship-app .ps-tb-logo { background:var(--accent); color:#fff; font-family:var(--mono); font-size:12px; font-weight:500; padding:5px 10px; border-radius:6px; }
+#packship-app .ps-tb-name { font-size:15px; font-weight:700; color:var(--text); letter-spacing:-0.2px; }
+#packship-app .ps-tb-divider { width:1px; height:20px; background:var(--border2); }
+#packship-app .ps-tb-sub { font-size:13px; color:var(--text3); }
+#packship-app .ps-session-pill { display:flex; align-items:center; gap:7px; background:var(--green-bg); border:1px solid #6ee7a8; border-radius:100px; padding:5px 12px; font-size:12px; color:var(--green); font-weight:600; }
+#packship-app .ps-session-pill .ps-dot { width:7px; height:7px; border-radius:50%; background:var(--green); animation:ps-pulse 2.5s ease-in-out infinite; }
+@keyframes ps-pulse { 0%,100%{opacity:1} 50%{opacity:.35} }
+#packship-app .ps-btn-sm { background:none; border:1px solid var(--border2); color:var(--text2); font-size:12px; font-weight:600; padding:6px 14px; border-radius:8px; cursor:pointer; transition:all .15s; font-family:var(--sans); }
+#packship-app .ps-btn-sm:hover { border-color:var(--accent); color:var(--accent); background:var(--accent-bg); }
+#packship-app .ps-back-btn { background:none; border:1px solid var(--border2); color:var(--text2); font-size:12px; font-weight:600; padding:6px 14px; border-radius:8px; cursor:pointer; font-family:var(--sans); transition:all .15s; }
+#packship-app .ps-back-btn:hover { border-color:var(--accent); color:var(--accent); background:var(--accent-bg); }
+
+/* Sign-in overlay */
+#packship-app #ps-signin-overlay { position:absolute; inset:0; background:linear-gradient(135deg,#eef2fd 0%,#f4f5f7 60%,#e8f7ee 100%); display:flex; align-items:center; justify-content:center; padding:24px; z-index:300; min-height:100vh; }
+#packship-app .ps-pin-card { background:var(--bg2); border:1px solid var(--border); border-radius:16px; padding:44px 40px; max-width:400px; width:100%; box-shadow:var(--shadow2); }
+#packship-app .ps-pin-h { font-size:20px; font-weight:700; color:var(--text); margin-bottom:6px; }
+#packship-app .ps-pin-sub { font-size:14px; color:var(--text2); margin-bottom:24px; line-height:1.5; }
+#packship-app .ps-field-lbl { font-size:11px; font-weight:600; text-transform:uppercase; letter-spacing:0.8px; color:var(--text3); margin-bottom:6px; display:block; }
+#packship-app .ps-field-wrap { margin-bottom:14px; }
+#packship-app .ps-field-input { width:100%; background:var(--bg3); border:1.5px solid var(--border2); border-radius:10px; color:var(--text); font-family:var(--sans); font-size:15px; font-weight:500; padding:11px 14px; outline:none; transition:border-color .15s,box-shadow .15s; }
+#packship-app .ps-field-input:focus { border-color:var(--accent); box-shadow:0 0 0 3px rgba(26,86,219,.1); background:var(--bg2); }
+#packship-app .ps-field-input::placeholder { color:var(--text3); font-weight:400; }
+#packship-app .ps-btn-primary { width:100%; background:var(--accent); color:#fff; border:none; padding:13px; font-family:var(--sans); font-size:15px; font-weight:700; border-radius:10px; cursor:pointer; transition:background .15s; margin-top:4px; }
+#packship-app .ps-btn-primary:hover { background:var(--accent2); }
+#packship-app .ps-btn-primary:disabled { opacity:.4; cursor:not-allowed; }
+#packship-app .ps-pin-err { margin-top:10px; font-size:13px; font-family:var(--mono); color:var(--red); text-align:center; min-height:20px; }
+#packship-app .ps-pin-divider { height:1px; background:var(--border); margin:24px 0; }
+#packship-app .ps-mgmt-toggle { text-align:center; font-size:13px; color:var(--text3); }
+#packship-app .ps-mgmt-toggle a { color:var(--accent); cursor:pointer; font-weight:600; }
+
+/* Tabs */
+#packship-app .ps-tabbar { background:var(--bg2); border-bottom:2px solid var(--border); display:flex; padding:0 20px; overflow-x:auto; scrollbar-width:none; }
+#packship-app .ps-tabbar::-webkit-scrollbar { display:none; }
+#packship-app .ps-tabitem { padding:14px 20px; font-size:13px; font-weight:600; color:var(--text3); cursor:pointer; border-bottom:2px solid transparent; margin-bottom:-2px; white-space:nowrap; transition:all .15s; display:flex; align-items:center; gap:7px; user-select:none; }
+#packship-app .ps-tabitem:hover { color:var(--text2); }
+#packship-app .ps-tabitem.active { color:var(--accent); border-bottom-color:var(--accent); }
+#packship-app .ps-tab-badge { background:var(--red); color:#fff; border-radius:100px; font-size:10px; font-family:var(--mono); padding:1px 6px; min-width:18px; text-align:center; }
+#packship-app .ps-tabitem.active .ps-tab-badge { background:var(--accent); }
+
+/* Content */
+#packship-app .ps-content { flex:1; padding:20px; max-width:960px; margin:0 auto; width:100%; }
+#packship-app .ps-panel { display:none; }
+#packship-app .ps-panel.active { display:block; }
+
+/* Cards */
+#packship-app .ps-card { background:var(--bg2); border:1px solid var(--border); border-radius:12px; padding:16px 18px; box-shadow:var(--shadow); margin-bottom:10px; }
+#packship-app .ps-card-row { display:flex; align-items:center; gap:12px; }
+#packship-app .ps-card-dot { width:8px; height:8px; border-radius:50%; flex-shrink:0; }
+#packship-app .ps-card-dot.green  { background:var(--green); }
+#packship-app .ps-card-dot.orange { background:var(--orange); }
+#packship-app .ps-card-dot.red    { background:var(--red); }
+#packship-app .ps-card-tracking { font-family:var(--mono); font-size:13px; font-weight:500; color:var(--text); flex:1; min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+#packship-app .ps-card-meta { display:flex; gap:6px; align-items:center; flex-shrink:0; flex-wrap:wrap; }
+#packship-app .ps-card-time { font-size:11px; color:var(--text3); font-family:var(--mono); flex-shrink:0; }
+
+/* Badges */
+#packship-app .ps-badge { font-family:var(--mono); font-size:10px; font-weight:500; padding:2px 8px; border-radius:100px; white-space:nowrap; }
+#packship-app .ps-badge-ups    { background:#fef3e2; color:var(--orange); border:1px solid #fcd34d; }
+#packship-app .ps-badge-usps   { background:var(--purple-bg); color:var(--purple); border:1px solid #c4b5fd; }
+#packship-app .ps-badge-green  { background:var(--green-bg); color:var(--green); border:1px solid #6ee7a8; }
+#packship-app .ps-badge-orange { background:var(--orange-bg); color:var(--orange); border:1px solid #fcd34d; }
+#packship-app .ps-badge-red    { background:var(--red-bg); color:var(--red); border:1px solid #f5a89e; }
+#packship-app .ps-badge-blue   { background:var(--accent-bg); color:var(--accent); border:1px solid #aec6fb; }
+#packship-app .ps-badge-gray   { background:var(--bg4); color:var(--text3); border:1px solid var(--border2); }
+
+/* Stat bar */
+#packship-app .ps-stat-bar { display:grid; grid-template-columns:repeat(4,1fr); gap:12px; margin-bottom:20px; }
+@media(max-width:600px){ #packship-app .ps-stat-bar{grid-template-columns:repeat(2,1fr);} }
+#packship-app .ps-stat-card { background:var(--bg2); border:1px solid var(--border); border-radius:12px; padding:16px; box-shadow:var(--shadow); }
+#packship-app .ps-stat-label { font-size:11px; font-weight:600; text-transform:uppercase; letter-spacing:0.8px; color:var(--text3); margin-bottom:6px; }
+#packship-app .ps-stat-val { font-size:28px; font-weight:700; font-family:var(--mono); color:var(--text); letter-spacing:-1px; }
+#packship-app .ps-stat-val.green  { color:var(--green); }
+#packship-app .ps-stat-val.orange { color:var(--orange); }
+#packship-app .ps-stat-val.red    { color:var(--red); }
+#packship-app .ps-stat-sub { font-size:11px; color:var(--text3); margin-top:2px; }
+
+/* Progress */
+#packship-app .ps-progress-wrap { background:var(--bg2); border:1px solid var(--border); border-radius:12px; padding:16px 20px; margin-bottom:16px; box-shadow:var(--shadow); }
+#packship-app .ps-progress-header { display:flex; justify-content:space-between; align-items:center; margin-bottom:10px; }
+#packship-app .ps-progress-label { font-size:13px; font-weight:600; color:var(--text2); }
+#packship-app .ps-progress-pct { font-size:13px; font-family:var(--mono); font-weight:500; color:var(--accent); }
+#packship-app .ps-progress-track { height:8px; background:var(--bg3); border-radius:100px; overflow:hidden; }
+#packship-app .ps-progress-fill { height:100%; background:var(--accent); border-radius:100px; transition:width .4s ease; }
+#packship-app .ps-progress-fill.complete { background:var(--green); }
+
+/* Scan box */
+#packship-app .ps-scan-box { background:var(--bg2); border:1px solid var(--border); border-radius:12px; padding:20px; margin-bottom:20px; box-shadow:var(--shadow); cursor:pointer; }
+#packship-app .ps-scan-box-header { display:flex; align-items:center; gap:10px; margin-bottom:14px; }
+#packship-app .ps-scan-icon { width:36px; height:36px; background:var(--accent-bg); border-radius:8px; display:flex; align-items:center; justify-content:center; color:var(--accent); font-size:20px; flex-shrink:0; }
+#packship-app .ps-scan-title { font-size:15px; font-weight:700; color:var(--text); }
+#packship-app .ps-scan-hint { font-size:12px; color:var(--text3); margin-top:1px; }
+#packship-app .ps-scan-input { width:100%; background:var(--bg3); border:2px solid var(--border2); border-radius:10px; color:var(--text); font-family:var(--mono); font-size:16px; font-weight:500; padding:12px 16px; outline:none; transition:border-color .15s,box-shadow .15s; letter-spacing:.5px; }
+#packship-app .ps-scan-input:focus { border-color:var(--accent); box-shadow:0 0 0 3px rgba(26,86,219,.12); background:var(--bg2); }
+#packship-app .ps-scan-input.flash-green  { border-color:var(--green)!important; background:var(--green-bg)!important; box-shadow:0 0 0 3px rgba(14,127,62,.15)!important; }
+#packship-app .ps-scan-input.flash-red    { border-color:var(--red)!important;   background:var(--red-bg)!important;   box-shadow:0 0 0 3px rgba(197,42,26,.15)!important; }
+#packship-app .ps-scan-input.flash-orange { border-color:var(--orange)!important;background:var(--orange-bg)!important;box-shadow:0 0 0 3px rgba(180,83,9,.15)!important; }
+
+/* Last scan */
+#packship-app .ps-last-scan { display:none; margin-top:12px; padding:12px 14px; border-radius:10px; border:1px solid var(--border); background:var(--bg3); font-size:13px; }
+#packship-app .ps-last-scan.show { display:flex; align-items:flex-start; gap:12px; }
+#packship-app .ps-last-scan.ok   { background:var(--green-bg);  border-color:#6ee7a8; }
+#packship-app .ps-last-scan.warn { background:var(--orange-bg); border-color:#fcd34d; }
+#packship-app .ps-last-scan.err  { background:var(--red-bg);    border-color:#f5a89e; }
+#packship-app .ps-ls-icon { font-size:18px; flex-shrink:0; line-height:1; }
+#packship-app .ps-ls-tracking { font-family:var(--mono); font-size:13px; font-weight:500; color:var(--text); margin-bottom:2px; }
+#packship-app .ps-ls-meta { font-size:12px; color:var(--text2); }
+#packship-app .ps-refocus-hint { text-align:center; font-size:12px; color:var(--text3); margin-top:8px; cursor:pointer; padding:8px; }
+#packship-app .ps-refocus-hint:hover { color:var(--accent); }
+
+/* Batch close */
+#packship-app .ps-batch-close-bar { background:var(--bg2); border:1px solid var(--border); border-radius:12px; padding:16px 18px; margin-bottom:16px; box-shadow:var(--shadow); display:flex; align-items:center; gap:12px; flex-wrap:wrap; }
+#packship-app .ps-batch-close-label { flex:1; font-size:13px; color:var(--text2); min-width:180px; }
+#packship-app .ps-batch-close-label strong { color:var(--text); }
+#packship-app .ps-btn-batch { background:var(--orange-bg); border:1.5px solid #fcd34d; color:var(--orange); font-weight:700; font-size:13px; padding:9px 18px; border-radius:9px; cursor:pointer; transition:all .15s; font-family:var(--sans); }
+#packship-app .ps-btn-batch:hover { border-color:var(--orange); }
+#packship-app .ps-btn-batch:disabled { opacity:.6; cursor:not-allowed; }
+#packship-app .ps-closed-banner { background:var(--green-bg); border:1px solid #6ee7a8; border-radius:10px; padding:12px 16px; font-size:13px; color:var(--green); font-weight:600; display:flex; align-items:center; gap:8px; margin-bottom:8px; }
+
+/* Upload */
+#packship-app .ps-upload-area { background:var(--bg2); border:1px solid var(--border); border-radius:12px; padding:20px; margin-bottom:20px; box-shadow:var(--shadow); }
+#packship-app .ps-upload-area-header { display:flex; align-items:center; justify-content:space-between; margin-bottom:14px; flex-wrap:wrap; gap:10px; }
+#packship-app .ps-upload-area-title { font-size:14px; font-weight:700; color:var(--text); }
+#packship-app .ps-manifest-loaded-pill { display:flex; align-items:center; gap:6px; background:var(--green-bg); border:1px solid #6ee7a8; border-radius:100px; padding:4px 12px; font-size:12px; color:var(--green); font-weight:600; font-family:var(--mono); }
+#packship-app .ps-drop-zone { border:2px dashed var(--border2); border-radius:10px; padding:28px 20px; text-align:center; cursor:pointer; transition:all .2s; position:relative; background:var(--bg3); }
+#packship-app .ps-drop-zone:hover, #packship-app .ps-drop-zone.drag-over { border-color:var(--accent); background:var(--accent-bg); }
+#packship-app .ps-drop-zone input[type=file] { position:absolute; inset:0; opacity:0; cursor:pointer; width:100%; height:100%; }
+#packship-app .ps-drop-icon { font-size:28px; margin-bottom:8px; display:block; }
+#packship-app .ps-drop-title { font-size:14px; font-weight:600; color:var(--text); margin-bottom:3px; }
+#packship-app .ps-drop-hint { font-size:11px; color:var(--text3); font-family:var(--mono); }
+#packship-app .ps-drop-hint b { color:var(--accent); }
+#packship-app .ps-upload-msg { font-size:12px; color:var(--text3); margin-top:8px; font-family:var(--mono); min-height:18px; }
+#packship-app .ps-upload-msg.err { color:var(--red); }
+#packship-app .ps-upload-msg.ok  { color:var(--green); }
+
+/* Section */
+#packship-app .ps-section-header { display:flex; align-items:center; justify-content:space-between; margin-bottom:12px; flex-wrap:wrap; gap:8px; }
+#packship-app .ps-section-title { font-size:13px; font-weight:700; color:var(--text2); text-transform:uppercase; letter-spacing:.6px; }
+#packship-app .ps-section-cnt { font-size:12px; font-family:var(--mono); color:var(--text3); }
+
+/* Filter row */
+#packship-app .ps-filter-row { display:flex; gap:6px; margin-bottom:14px; flex-wrap:wrap; }
+#packship-app .ps-filter-btn { font-size:12px; font-weight:600; padding:6px 14px; border-radius:8px; border:1.5px solid var(--border2); background:var(--bg2); color:var(--text2); cursor:pointer; transition:all .15s; font-family:var(--sans); }
+#packship-app .ps-filter-btn:hover, #packship-app .ps-filter-btn.active { border-color:var(--accent); color:var(--accent); background:var(--accent-bg); }
+
+/* Search */
+#packship-app .ps-search-row { display:flex; gap:8px; margin-bottom:14px; }
+#packship-app .ps-search-wrap { position:relative; flex:1; }
+#packship-app .ps-search-wrap svg { position:absolute; left:12px; top:50%; transform:translateY(-50%); pointer-events:none; color:var(--text3); }
+#packship-app .ps-search-input { width:100%; background:var(--bg2); border:1.5px solid var(--border2); border-radius:10px; color:var(--text); font-family:var(--sans); font-size:14px; font-weight:500; padding:10px 14px 10px 40px; outline:none; transition:border-color .15s; box-shadow:var(--shadow); }
+#packship-app .ps-search-input:focus { border-color:var(--accent); box-shadow:0 0 0 3px rgba(26,86,219,.1); }
+#packship-app .ps-search-input::placeholder { color:var(--text3); font-weight:400; }
+
+/* Lookup */
+#packship-app .ps-lookup-wrap { background:var(--bg2); border:1px solid var(--border); border-radius:12px; padding:20px; margin-bottom:20px; box-shadow:var(--shadow); }
+#packship-app .ps-lookup-title { font-size:15px; font-weight:700; color:var(--text); margin-bottom:14px; }
+#packship-app .ps-lookup-row { display:flex; gap:8px; }
+#packship-app .ps-lookup-input { flex:1; background:var(--bg3); border:1.5px solid var(--border2); border-radius:10px; color:var(--text); font-family:var(--mono); font-size:14px; padding:11px 14px; outline:none; transition:border-color .15s; }
+#packship-app .ps-lookup-input:focus { border-color:var(--accent); box-shadow:0 0 0 3px rgba(26,86,219,.1); background:var(--bg2); }
+#packship-app .ps-btn-go { background:var(--accent); color:#fff; border:none; padding:0 22px; height:44px; font-family:var(--sans); font-size:14px; font-weight:700; border-radius:10px; cursor:pointer; transition:background .15s; }
+#packship-app .ps-btn-go:hover { background:var(--accent2); }
+
+/* Lookup result */
+#packship-app .ps-lookup-result { background:var(--bg2); border:1px solid var(--border); border-radius:12px; padding:20px; margin-bottom:20px; box-shadow:var(--shadow); display:none; }
+#packship-app .ps-lookup-result.show { display:block; }
+#packship-app .ps-lr-top { display:flex; align-items:center; gap:12px; margin-bottom:16px; padding-bottom:16px; border-bottom:1px solid var(--border); }
+#packship-app .ps-lr-icon { font-size:32px; line-height:1; }
+#packship-app .ps-lr-status { font-size:16px; font-weight:700; }
+#packship-app .ps-lr-status.ok   { color:var(--green); }
+#packship-app .ps-lr-status.warn { color:var(--orange); }
+#packship-app .ps-lr-status.err  { color:var(--red); }
+#packship-app .ps-lr-sub { font-size:13px; color:var(--text2); margin-top:3px; }
+#packship-app .ps-lr-grid { display:grid; grid-template-columns:repeat(auto-fill,minmax(180px,1fr)); gap:14px; }
+#packship-app .ps-lr-field-label { font-size:11px; font-weight:600; text-transform:uppercase; letter-spacing:.7px; color:var(--text3); margin-bottom:3px; }
+#packship-app .ps-lr-field-val { font-size:14px; font-weight:500; color:var(--text); font-family:var(--mono); }
+
+/* Reconcile */
+#packship-app .ps-reconcile-bar { background:var(--bg2); border:1px solid var(--border); border-radius:12px; padding:18px 20px; margin-bottom:20px; box-shadow:var(--shadow); display:flex; align-items:center; justify-content:space-between; gap:12px; flex-wrap:wrap; }
+#packship-app .ps-reconcile-label { font-size:14px; color:var(--text2); }
+#packship-app .ps-reconcile-label strong { color:var(--text); }
+#packship-app .ps-btn-reconcile { background:var(--accent); color:#fff; border:none; padding:10px 22px; font-family:var(--sans); font-size:14px; font-weight:700; border-radius:10px; cursor:pointer; transition:background .15s; }
+#packship-app .ps-btn-reconcile:hover { background:var(--accent2); }
+#packship-app .ps-btn-reconcile:disabled { opacity:.5; cursor:not-allowed; }
+#packship-app .ps-btn-export { background:var(--bg2); border:1.5px solid var(--border2); color:var(--text2); font-size:12px; font-weight:600; padding:7px 16px; border-radius:8px; cursor:pointer; transition:all .15s; font-family:var(--sans); }
+#packship-app .ps-btn-export:hover { border-color:var(--green); color:var(--green); background:var(--green-bg); }
+
+/* Empty state */
+#packship-app .ps-empty-state { text-align:center; padding:48px 20px; color:var(--text3); }
+#packship-app .ps-empty-icon { font-size:36px; margin-bottom:12px; }
+#packship-app .ps-empty-title { font-size:15px; font-weight:600; color:var(--text2); margin-bottom:6px; }
+#packship-app .ps-empty-sub { font-size:13px; line-height:1.6; }
+
+/* Spinner */
+#packship-app .ps-spinner { display:inline-block; width:16px; height:16px; border:2px solid rgba(255,255,255,.3); border-top-color:#fff; border-radius:50%; animation:ps-spin .7s linear infinite; vertical-align:middle; margin-right:6px; }
+@keyframes ps-spin { to{transform:rotate(360deg)} }
+
+/* Info / warn box */
+#packship-app .ps-info-box { background:var(--accent-bg); border:1px solid #aec6fb; border-radius:10px; padding:12px 16px; font-size:13px; color:var(--accent); margin-bottom:16px; line-height:1.5; }
+#packship-app .ps-warn-box { background:var(--orange-bg); border:1px solid #fcd34d; border-radius:10px; padding:12px 16px; font-size:13px; color:var(--orange); margin-bottom:16px; line-height:1.5; }
+
+@media(max-width:480px){
+  #packship-app .ps-content { padding:14px; }
+  #packship-app .ps-topbar  { padding:0 14px; }
+  #packship-app .ps-tabbar  { padding:0 14px; }
+  #packship-app .ps-stat-bar { grid-template-columns:repeat(2,1fr); gap:8px; }
+  #packship-app .ps-stat-val { font-size:22px; }
+  #packship-app .ps-batch-close-bar { flex-direction:column; align-items:stretch; }
+}
+</style>
+
+<!-- Sign-in overlay (initials / mgmt PIN) -->
+<div id="ps-signin-overlay" style="position:fixed;inset:0;background:linear-gradient(135deg,#eef2fd 0%,#f4f5f7 60%,#e8f7ee 100%);display:flex;align-items:center;justify-content:center;padding:24px;z-index:300;">
+  <div class="ps-pin-card">
+    <div class="brand-row">
+      <div class="brand-logo">XF</div>
+      <div>
+        <div class="brand-title">Pack &amp; Ship</div>
+        <div class="brand-sub">Shipment Scan Verification · v3.0</div>
+      </div>
+    </div>
+    <div id="ps-form-ops">
+      <div class="ps-pin-h">Pack &amp; Ship</div>
+      <div class="ps-pin-sub">Enter your initials to start scanning. Each scan saves directly to the sheet.</div>
+      <div class="ps-field-wrap">
+        <label class="ps-field-lbl">Your Initials</label>
+        <input class="ps-field-input" id="ps-inp-initials" type="text" maxlength="4" placeholder="e.g. JR" autocomplete="off" style="text-transform:uppercase">
+      </div>
+      <button class="ps-btn-primary" id="ps-btn-ops-signin" onclick="psSignInOps()">Start Scanning</button>
+      <div class="ps-pin-err" id="ps-err-ops"></div>
+      <div class="ps-pin-divider"></div>
+      <div class="ps-mgmt-toggle">Manager? <a onclick="psShowForm('mgmt')">Sign in for review &amp; reports</a></div>
+    </div>
+    <div id="ps-form-mgmt" style="display:none">
+      <div class="ps-pin-h">Management Sign-In</div>
+      <div class="ps-pin-sub">Upload Veeqo CSV and run gap reports.</div>
+      <div class="ps-field-wrap">
+        <label class="ps-field-lbl">Management PIN</label>
+        <input class="ps-field-input" id="ps-inp-mgmt-pin" type="password" inputmode="numeric" maxlength="6" placeholder="••••" autocomplete="off">
+      </div>
+      <button class="ps-btn-primary" id="ps-btn-mgmt-signin" onclick="psSignInMgmt()">Sign In — Review Mode</button>
+      <div class="ps-pin-err" id="ps-err-mgmt"></div>
+      <div class="ps-pin-divider"></div>
+      <div class="ps-mgmt-toggle">Packer? <a onclick="psShowForm('ops')">Sign in as Warehouse</a></div>
+    </div>
+  </div>
+</div>
+
+<!-- Top bar -->
+<div class="ps-topbar">
+  <div class="ps-topbar-left">
+    <button class="ps-back-btn" onclick="psGoBack()">&#8592; Apps</button>
+    <div class="ps-tb-divider"></div>
+    <div class="ps-tb-logo">XF</div>
+    <div class="ps-tb-name">Pack &amp; Ship</div>
+    <div class="ps-tb-divider"></div>
+    <div class="ps-tb-sub" id="ps-tb-date"></div>
+  </div>
+  <div class="ps-topbar-right">
+    <div class="ps-session-pill" id="ps-session-pill">
+      <div class="ps-dot"></div>
+      <span id="ps-session-label">—</span>
+    </div>
+    <button class="ps-btn-sm" onclick="psSignOut()">Sign Out</button>
+  </div>
+</div>
+
+<!-- Tab bar -->
+<div class="ps-tabbar">
+  <div class="ps-tabitem active" id="ps-tab-scan"     onclick="psSwitchTab('scan')">📦 Scan</div>
+  <div class="ps-tabitem"        id="ps-tab-progress" onclick="psSwitchTab('progress')">📊 Progress</div>
+  <div class="ps-tabitem"        id="ps-tab-lookup"   onclick="psSwitchTab('lookup')">🔍 Lookup</div>
+  <div class="ps-tabitem"        id="ps-tab-gaps"     onclick="psSwitchTab('gaps')" style="display:none">
+    ⚠️ Gap Report <span class="ps-tab-badge" id="ps-gap-badge">0</span>
+  </div>
+</div>
+
+<!-- Content panels -->
+<div class="ps-content">
+
+  <!-- SCAN panel -->
+  <div class="ps-panel active" id="ps-panel-scan">
+    <div class="ps-info-box" id="ps-scanner-hint">
+      📡 <strong>Scanner ready.</strong> Your Bluetooth scanner acts like a keyboard — just point and scan. The field below auto-captures every scan. Tap anywhere on this page to refocus if needed.
+    </div>
+    <div class="ps-scan-box" onclick="psFocusScan()">
+      <div class="ps-scan-box-header">
+        <div class="ps-scan-icon">⌖</div>
+        <div>
+          <div class="ps-scan-title">Scan Tracking Barcode</div>
+          <div class="ps-scan-hint">Bluetooth scanner or type + Enter · carrier auto-detected · saves to Google Sheet</div>
+        </div>
+      </div>
+      <input class="ps-scan-input" id="ps-scan-input" type="text" placeholder="Focus here — scan or type tracking number…" autocomplete="off" autocorrect="off" autocapitalize="off" spellcheck="false">
+      <div class="ps-last-scan" id="ps-last-scan">
+        <div class="ps-ls-icon" id="ps-ls-icon">✓</div>
+        <div>
+          <div class="ps-ls-tracking" id="ps-ls-tracking">—</div>
+          <div class="ps-ls-meta" id="ps-ls-meta">—</div>
+        </div>
+      </div>
+      <div class="ps-refocus-hint" id="ps-refocus-hint" style="display:none">⚠️ Scanner lost focus — tap here to refocus</div>
+    </div>
+    <div class="ps-batch-close-bar" id="ps-batch-close-bar" style="display:none">
+      <div class="ps-batch-close-label"><strong>Ready to drop off?</strong> Close the batch to record the handoff time for all packages.</div>
+      <button class="ps-btn-batch" id="ps-btn-close-batch" onclick="psCloseBatch()">📦 Close Batch</button>
+    </div>
+    <div id="ps-closed-banners"></div>
+    <div class="ps-section-header" style="margin-top:4px">
+      <div class="ps-section-title">Today's Scans</div>
+      <div class="ps-section-cnt" id="ps-scan-cnt-label">0 scans</div>
+    </div>
+    <div class="ps-filter-row">
+      <button class="ps-filter-btn active" onclick="psFilterScans('all',this)">All</button>
+      <button class="ps-filter-btn" onclick="psFilterScans('UPS',this)">UPS</button>
+      <button class="ps-filter-btn" onclick="psFilterScans('USPS',this)">USPS</button>
+    </div>
+    <div id="ps-scan-list">
+      <div class="ps-empty-state">
+        <div class="ps-empty-icon">📭</div>
+        <div class="ps-empty-title">No scans yet today</div>
+        <div class="ps-empty-sub">Start scanning labels — each scan saves directly to the sheet.</div>
+      </div>
+    </div>
+  </div>
+
+  <!-- PROGRESS panel -->
+  <div class="ps-panel" id="ps-panel-progress">
+    <div class="ps-stat-bar">
+      <div class="ps-stat-card">
+        <div class="ps-stat-label">Scanned Today</div>
+        <div class="ps-stat-val green" id="ps-stat-scanned">—</div>
+        <div class="ps-stat-sub">in Google Sheet</div>
+      </div>
+      <div class="ps-stat-card">
+        <div class="ps-stat-label">UPS</div>
+        <div class="ps-stat-val orange" id="ps-stat-ups">—</div>
+        <div class="ps-stat-sub">packages scanned</div>
+      </div>
+      <div class="ps-stat-card">
+        <div class="ps-stat-label">USPS</div>
+        <div class="ps-stat-val" style="color:var(--purple)" id="ps-stat-usps">—</div>
+        <div class="ps-stat-sub">packages scanned</div>
+      </div>
+      <div class="ps-stat-card">
+        <div class="ps-stat-label">Unknown</div>
+        <div class="ps-stat-val red" id="ps-stat-unknown">—</div>
+        <div class="ps-stat-sub">carrier undetected</div>
+      </div>
+    </div>
+    <div class="ps-progress-wrap">
+      <div class="ps-progress-header">
+        <div class="ps-progress-label">🟤 UPS Progress</div>
+        <div class="ps-progress-pct" id="ps-ups-pct">— scanned</div>
+      </div>
+      <div class="ps-progress-track">
+        <div class="ps-progress-fill" id="ps-ups-fill" style="width:0%;background:var(--orange)"></div>
+      </div>
+    </div>
+    <div class="ps-progress-wrap">
+      <div class="ps-progress-header">
+        <div class="ps-progress-label">🔵 USPS Progress</div>
+        <div class="ps-progress-pct" id="ps-usps-pct">— scanned</div>
+      </div>
+      <div class="ps-progress-track">
+        <div class="ps-progress-fill" id="ps-usps-fill" style="width:0%;background:var(--purple)"></div>
+      </div>
+    </div>
+    <div class="ps-info-box" style="margin-top:8px">
+      Progress bars show scanned vs. manifest totals <strong>only after the Veeqo CSV is uploaded</strong> by management at end of day.
+    </div>
+    <div class="ps-section-header" style="margin-top:4px">
+      <div class="ps-section-title">Recent Scans</div>
+      <button class="ps-btn-sm" onclick="psLoadScans()">↻ Refresh</button>
+    </div>
+    <div id="ps-progress-scan-list"></div>
+  </div>
+
+  <!-- LOOKUP panel -->
+  <div class="ps-panel" id="ps-panel-lookup">
+    <!-- Mgmt only: CSV upload + reconcile -->
+    <div id="ps-mgmt-upload-section" style="display:none">
+      <div class="ps-upload-area">
+        <div class="ps-upload-area-header">
+          <div class="ps-upload-area-title">📄 Upload Veeqo CSV (End of Day)</div>
+          <div class="ps-manifest-loaded-pill" id="ps-manifest-pill" style="display:none">
+            ✓ <span id="ps-manifest-count">0</span> orders loaded
+          </div>
+        </div>
+        <div class="ps-drop-zone" id="ps-drop-zone">
+          <input type="file" accept=".csv" onchange="psHandleCSV(this)">
+          <span class="ps-drop-icon">📂</span>
+          <div class="ps-drop-title">Drop Veeqo CSV here</div>
+          <div class="ps-drop-hint">or <b>click to browse</b> · FBA orders auto-removed</div>
+        </div>
+        <div class="ps-upload-msg" id="ps-upload-msg"></div>
+      </div>
+      <div class="ps-reconcile-bar" id="ps-reconcile-bar" style="display:none">
+        <div class="ps-reconcile-label">
+          Manifest uploaded. <strong>Run reconciliation</strong> to compare against today's scans and mark gaps in the sheet.
+        </div>
+        <button class="ps-btn-reconcile" id="ps-btn-reconcile" onclick="psRunReconcile()">Run Gap Analysis</button>
+      </div>
+    </div>
+    <!-- Tracking lookup -->
+    <div class="ps-lookup-wrap">
+      <div class="ps-lookup-title">🔍 Tracking Number Lookup</div>
+      <div class="ps-lookup-row">
+        <input class="ps-lookup-input" id="ps-lookup-input" type="text" placeholder="Enter or paste tracking number…" autocomplete="off">
+        <button class="ps-btn-go" onclick="psDoLookup()">Look Up</button>
+      </div>
+    </div>
+    <div class="ps-lookup-result" id="ps-lookup-result">
+      <div class="ps-lr-top">
+        <div class="ps-lr-icon" id="ps-lr-icon">—</div>
+        <div>
+          <div class="ps-lr-status" id="ps-lr-status">—</div>
+          <div class="ps-lr-sub" id="ps-lr-sub">—</div>
+        </div>
+      </div>
+      <div class="ps-lr-grid" id="ps-lr-grid"></div>
+    </div>
+    <!-- Full log -->
+    <div class="ps-section-header">
+      <div class="ps-section-title">📋 Today's Full Scan Log</div>
+      <div class="ps-section-cnt" id="ps-log-cnt"></div>
+    </div>
+    <div class="ps-search-row">
+      <div class="ps-search-wrap">
+        <svg width="16" height="16" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.35-4.35"/></svg>
+        <input class="ps-search-input" id="ps-log-search" placeholder="Search tracking, initials, carrier…" oninput="psRenderLog()">
+      </div>
+    </div>
+    <div id="ps-log-list"></div>
+  </div>
+
+  <!-- GAP REPORT panel -->
+  <div class="ps-panel" id="ps-panel-gaps">
+    <div class="ps-section-header">
+      <div>
+        <div class="ps-section-title" style="font-size:15px;text-transform:none;letter-spacing:0">⚠️ Gap Report</div>
+        <div style="font-size:13px;color:var(--text2);margin-top:4px">In Veeqo manifest · no pack scan recorded · investigate before end of day</div>
+      </div>
+      <button class="ps-btn-export" onclick="psExportGaps()">⬇ Export CSV</button>
+    </div>
+    <div class="ps-filter-row">
+      <button class="ps-filter-btn active" onclick="psFilterGaps('all',this)">All</button>
+      <button class="ps-filter-btn" onclick="psFilterGaps('UPS',this)">UPS</button>
+      <button class="ps-filter-btn" onclick="psFilterGaps('USPS',this)">USPS</button>
+    </div>
+    <div id="ps-gap-list">
+      <div class="ps-empty-state">
+        <div class="ps-empty-icon">📄</div>
+        <div class="ps-empty-title">Run reconciliation first</div>
+        <div class="ps-empty-sub">Upload the Veeqo CSV and click Run Gap Analysis to see gaps.</div>
+      </div>
+    </div>
+  </div>
+
+</div><!-- /ps-content -->
+</div><!-- /packship-app -->
+
+<script>
+// ═══════════════════════════════════════════════════════
+//  PACK & SHIP — Integrated into XFitting v1.0.9
+//  All identifiers prefixed with ps_ to avoid collisions
+// ═══════════════════════════════════════════════════════
+(function() {
+
+var PS_WORKER     = 'https://xfitting-lookup.alfixedinc88.workers.dev';
+var PS_PIN_MOBILE = '2589';
+var PS_PIN_MGMT   = '6523';
+var PS_IGNORED_FBA = ['amazon channel fba'];
+
+// State
+var psToken      = null;
+var psRole       = null;   // 'mobile' | 'mgmt'
+var psInitials   = '';
+var psTodayScans = [];
+var psManifest   = [];
+var psGapRows    = [];
+var psScanFilter = 'all';
+var psGapFilter  = 'all';
+var psBatchClosed = { ALL: null };
+
+// Called by main app launchApp('packship')
+window.psOnLaunch = function() {
+  // Show overlay every time app opens (fresh sign-in)
+  document.getElementById('ps-signin-overlay').style.display = 'flex';
+  document.getElementById('ps-tb-date').textContent = new Date().toLocaleDateString('en-US', { weekday:'short', month:'short', day:'numeric' });
+  // Wire up events only once
+  if (!window._psEventsWired) {
+    _psWireEvents();
+    window._psEventsWired = true;
+  }
+};
+
+// ── Auth ──────────────────────────────────────────────
+window.psShowForm = function(which) {
+  document.getElementById('ps-form-ops').style.display  = which === 'ops'  ? 'block' : 'none';
+  document.getElementById('ps-form-mgmt').style.display = which === 'mgmt' ? 'block' : 'none';
+};
+
+window.psSignInOps = async function() {
+  var initials = document.getElementById('ps-inp-initials').value.trim().toUpperCase();
+  var err = document.getElementById('ps-err-ops');
+  var btn = document.getElementById('ps-btn-ops-signin');
+  if (!initials) { err.textContent = 'Enter your initials first.'; return; }
+  btn.disabled = true; btn.textContent = 'Starting…';
+  try {
+    var res  = await fetch(PS_WORKER + '/auth', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ pin: PS_PIN_MOBILE, pin_type: 'mobile' })
+    });
+    var data = await res.json();
+    if (!data.token) throw new Error(data.error || 'Auth failed');
+    psToken    = data.token;
+    psRole     = 'mobile';
+    psInitials = initials;
+    err.textContent = '';
+    _psLaunchInner();
+  } catch(e) {
+    err.textContent = 'Connection error: ' + e.message;
+  } finally {
+    btn.disabled = false; btn.textContent = 'Start Scanning';
+  }
+};
+
+window.psSignInMgmt = async function() {
+  var pin = document.getElementById('ps-inp-mgmt-pin').value.trim();
+  var err = document.getElementById('ps-err-mgmt');
+  var btn = document.getElementById('ps-btn-mgmt-signin');
+  btn.disabled = true; btn.textContent = 'Signing in…';
+  try {
+    var res  = await fetch(PS_WORKER + '/auth', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ pin: pin, pin_type: 'mgmt' })
+    });
+    var data = await res.json();
+    if (!data.token) throw new Error(data.error || 'Incorrect PIN');
+    psToken    = data.token;
+    psRole     = 'mgmt';
+    psInitials = 'MGR';
+    err.textContent = '';
+    _psLaunchInner();
+  } catch(e) {
+    err.textContent = 'Sign-in error: ' + e.message;
+  } finally {
+    btn.disabled = false; btn.textContent = 'Sign In — Review Mode';
+  }
+};
+
+function _psLaunchInner() {
+  document.getElementById('ps-signin-overlay').style.display = 'none';
+  document.getElementById('ps-session-label').textContent = psRole === 'mgmt' ? 'Manager' : psInitials;
+  if (psRole === 'mgmt') {
+    document.getElementById('ps-mgmt-upload-section').style.display = 'block';
+    document.getElementById('ps-tab-gaps').style.display = 'flex';
+  } else {
+    document.getElementById('ps-mgmt-upload-section').style.display = 'none';
+    document.getElementById('ps-tab-gaps').style.display = 'none';
+  }
+  var saved = localStorage.getItem('ps_batch_' + psTodayKey());
+  if (saved) psBatchClosed = JSON.parse(saved);
+  // Reset to scan tab
+  psSwitchTab('scan');
+  psLoadScans();
+  psFocusScan();
+}
+
+window.psSignOut = function() {
+  psToken = null; psRole = null; psInitials = '';
+  psTodayScans = []; psManifest = []; psGapRows = [];
+  psBatchClosed = { ALL: null };
+  document.getElementById('ps-inp-initials').value  = '';
+  document.getElementById('ps-inp-mgmt-pin').value  = '';
+  document.getElementById('ps-err-ops').textContent  = '';
+  document.getElementById('ps-err-mgmt').textContent = '';
+  psShowForm('ops');
+  document.getElementById('ps-signin-overlay').style.display = 'flex';
+};
+
+window.psGoBack = function() {
+  backToLauncher();
+};
+
+// ── Tabs ──────────────────────────────────────────────
+window.psSwitchTab = function(name) {
+  document.querySelectorAll('#packship-app .ps-tabitem').forEach(function(t){ t.classList.remove('active'); });
+  document.querySelectorAll('#packship-app .ps-panel').forEach(function(p){ p.classList.remove('active'); });
+  document.getElementById('ps-tab-' + name).classList.add('active');
+  document.getElementById('ps-panel-' + name).classList.add('active');
+  if (name === 'scan')     { psFocusScan(); psRenderScanList(); }
+  if (name === 'progress') { psLoadScans(); }
+  if (name === 'lookup')   { psRenderLog(); }
+  if (name === 'gaps')     { psRenderGaps(); }
+};
+
+// ── Focus ─────────────────────────────────────────────
+window.psFocusScan = function() {
+  var inp = document.getElementById('ps-scan-input');
+  if (inp) inp.focus();
+};
+
+// ── Load scans ────────────────────────────────────────
+window.psLoadScans = async function() {
+  if (!psToken) return;
+  try {
+    var res  = await fetch(PS_WORKER + '/ship/scans?date=' + psTodayKey(), {
+      headers: { 'X-Session-Token': psToken }
+    });
+    var data = await res.json();
+    if (data.scans) {
+      psTodayScans = data.scans;
+      psRenderScanList();
+      psRenderProgress();
+      psRenderLog();
+      _psUpdateBatchBar();
+    }
+  } catch(e) { console.error('[PS] loadScans error:', e); }
+};
+
+// ── Scan processing ───────────────────────────────────
+function _psProcessScan(raw) {
+  var inp      = document.getElementById('ps-scan-input');
+  var tracking = psNormalizeTracking(raw);
+  inp.value = '';
+  if (!tracking || tracking.length < 5) return;
+
+  var dupe = psTodayScans.find(function(s){ return s.tracking.toUpperCase() === tracking; });
+  if (dupe) {
+    _psFlash('orange');
+    _psBeep(440, 100);
+    _psShowLastScan({ icon:'⚠️', cls:'warn', tracking: tracking, meta:'Already scanned at ' + psFmtTime(dupe.timestamp) + ' · ' + dupe.carrier });
+    _psToast('Duplicate — scanned at ' + psFmtTime(dupe.timestamp), 'warn');
+    inp.focus(); return;
+  }
+
+  var carrier = psDetectCarrier(tracking);
+  var optimistic = { tracking: tracking, carrier: carrier, initials: psInitials, timestamp: new Date().toISOString(), status:'Scanned', batchClosedAt:'' };
+  psTodayScans.unshift(optimistic);
+  _psFlash('green');
+  _psBeep(880, 80);
+  _psShowLastScan({ icon:'✅', cls:'ok', tracking: tracking, meta: carrier + ' · Saving to sheet…' });
+  psRenderScanList();
+  _psUpdateBatchBar();
+  inp.focus();
+
+  fetch(PS_WORKER + '/ship/scan', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', 'X-Session-Token': psToken },
+    body: JSON.stringify({ tracking: tracking, initials: psInitials })
+  }).then(function(r){ return r.json(); }).then(function(data) {
+    if (data.duplicate) {
+      psTodayScans = psTodayScans.filter(function(s){ return s !== optimistic; });
+      _psFlash('orange'); _psBeep(440, 100);
+      _psShowLastScan({ icon:'⚠️', cls:'warn', tracking: tracking, meta:'Already scanned at ' + psFmtTime(data.scannedAt) + ' · ' + data.carrier });
+      _psToast('Duplicate — already in sheet', 'warn');
+      psRenderScanList(); _psUpdateBatchBar();
+    } else if (data.ok) {
+      Object.assign(optimistic, { carrier: data.carrier, timestamp: data.timestamp });
+      _psShowLastScan({ icon:'✅', cls:'ok', tracking: tracking, meta: data.carrier + ' · Saved ✓' });
+      psRenderScanList();
+    } else {
+      throw new Error(data.error || 'Scan write failed');
+    }
+  }).catch(function(e) {
+    _psShowLastScan({ icon:'❌', cls:'err', tracking: tracking, meta:'Sheet write failed — ' + e.message });
+    _psToast('Sheet error — ' + e.message, 'err');
+  });
+}
+
+// ── Normalize / detect carrier ────────────────────────
+window.psNormalizeTracking = function(raw) {
+  var t = raw.trim().toUpperCase().replace(/\s+/g,'');
+  if (/^420\d{5}\d{22}$/.test(t)) return t.slice(8);
+  if (/^420\d{5}\d{21}$/.test(t)) return t.slice(8);
+  return t;
+};
+
+window.psDetectCarrier = function(t) {
+  if (!t) return 'Unknown';
+  var s = psNormalizeTracking(t);
+  if (/^1Z/i.test(s)) return 'UPS';
+  if (/^(94|93|92|95|9[0-9])\d{18,}$/.test(s)) return 'USPS';
+  if (/^\d{22}$/.test(s)) return 'USPS';
+  if (/^[A-Z]{2}\d{9}[A-Z]{2}$/.test(s)) return 'USPS';
+  return 'Unknown';
+};
+
+// ── Flash + beep ──────────────────────────────────────
+function _psFlash(type) {
+  var inp = document.getElementById('ps-scan-input');
+  inp.classList.remove('flash-green','flash-red','flash-orange');
+  void inp.offsetWidth;
+  inp.classList.add('flash-' + type);
+  setTimeout(function(){ inp.classList.remove('flash-green','flash-red','flash-orange'); }, 900);
+}
+
+function _psShowLastScan(o) {
+  var el = document.getElementById('ps-last-scan');
+  el.className = 'ps-last-scan show ' + o.cls;
+  document.getElementById('ps-ls-icon').textContent     = o.icon;
+  document.getElementById('ps-ls-tracking').textContent = o.tracking;
+  document.getElementById('ps-ls-meta').textContent     = o.meta;
+}
+
+function _psBeep(freq, dur) {
+  try {
+    var ctx  = new (window.AudioContext || window.webkitAudioContext)();
+    var osc  = ctx.createOscillator();
+    var gain = ctx.createGain();
+    osc.connect(gain); gain.connect(ctx.destination);
+    osc.frequency.value = freq; osc.type = 'sine';
+    gain.gain.setValueAtTime(0.15, ctx.currentTime);
+    gain.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + dur/1000);
+    osc.start(ctx.currentTime); osc.stop(ctx.currentTime + dur/1000);
+  } catch(e) {}
+}
+
+// ── Batch close ───────────────────────────────────────
+function _psUpdateBatchBar() {
+  var bar = document.getElementById('ps-batch-close-bar');
+  var btn = document.getElementById('ps-btn-close-batch');
+  if (psTodayScans.length > 0) {
+    bar.style.display = 'flex';
+    if (psBatchClosed.ALL) {
+      btn.disabled = true; btn.textContent = '✓ Batch Closed';
+    } else {
+      btn.disabled = false; btn.textContent = '📦 Close Batch';
+    }
+  } else {
+    bar.style.display = 'none';
+  }
+  var cb = document.getElementById('ps-closed-banners');
+  cb.innerHTML = '';
+  if (psBatchClosed.ALL) {
+    cb.innerHTML = '<div class="ps-closed-banner">✅ Batch closed at ' + psFmtTime(psBatchClosed.ALL) + ' — all packages handed off to carrier</div>';
+  }
+}
+
+window.psCloseBatch = async function() {
+  if (psBatchClosed.ALL) return;
+  var ts = new Date().toISOString();
+  psBatchClosed.ALL = ts;
+  localStorage.setItem('ps_batch_' + psTodayKey(), JSON.stringify(psBatchClosed));
+  _psUpdateBatchBar();
+  _psToast('Batch closed at ' + psFmtTime(ts));
+  var carriers = ['UPS','USPS','Unknown'];
+  for (var i = 0; i < carriers.length; i++) {
+    var carrier = carriers[i];
+    if (!psTodayScans.some(function(s){ return s.carrier === carrier; })) continue;
+    try {
+      await fetch(PS_WORKER + '/ship/batch-close', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'X-Session-Token': psToken },
+        body: JSON.stringify({ carrier: carrier, initials: psInitials })
+      });
+    } catch(e) { console.error('[PS] batch-close error for ' + carrier + ':', e); }
+  }
+};
+
+// ── Render scan list ──────────────────────────────────
+window.psFilterScans = function(f, btn) {
+  psScanFilter = f;
+  document.querySelectorAll('#ps-panel-scan .ps-filter-btn').forEach(function(b){ b.classList.remove('active'); });
+  btn.classList.add('active');
+  psRenderScanList();
+};
+
+window.psRenderScanList = function() {
+  var list = document.getElementById('ps-scan-list');
+  document.getElementById('ps-scan-cnt-label').textContent = psTodayScans.length + ' scan' + (psTodayScans.length !== 1 ? 's' : '');
+  var items = psScanFilter === 'all' ? psTodayScans : psTodayScans.filter(function(s){ return s.carrier === psScanFilter; });
+  if (!items.length) {
+    list.innerHTML = '<div class="ps-empty-state"><div class="ps-empty-icon">📭</div><div class="ps-empty-title">No scans yet' + (psScanFilter !== 'all' ? ' for ' + psScanFilter : '') + '</div><div class="ps-empty-sub">Each scan saves instantly to Google Sheets.</div></div>';
+    return;
+  }
+  list.innerHTML = items.slice(0,150).map(function(s){
+    return '<div class="ps-card"><div class="ps-card-row"><div class="ps-card-dot green"></div><div class="ps-card-tracking">' + s.tracking + '</div><div class="ps-card-meta">' + _psCarrierBadge(s.carrier) + '<span class="ps-badge ps-badge-gray">' + (s.initials||'—') + '</span>' + (s.batchClosedAt ? '<span class="ps-badge ps-badge-green">Closed</span>' : '') + '</div><div class="ps-card-time">' + psFmtTime(s.timestamp) + '</div></div></div>';
+  }).join('');
+  if (items.length > 150) list.innerHTML += '<div style="text-align:center;padding:12px;font-size:12px;color:var(--text3)">Showing 150 of ' + items.length + ' — see Progress tab for full list</div>';
+};
+
+// ── Render progress ───────────────────────────────────
+window.psRenderProgress = function() {
+  var ups     = psTodayScans.filter(function(s){ return s.carrier === 'UPS'; }).length;
+  var usps    = psTodayScans.filter(function(s){ return s.carrier === 'USPS'; }).length;
+  var unknown = psTodayScans.filter(function(s){ return s.carrier !== 'UPS' && s.carrier !== 'USPS'; }).length;
+  document.getElementById('ps-stat-scanned').textContent = psTodayScans.length;
+  document.getElementById('ps-stat-ups').textContent     = ups;
+  document.getElementById('ps-stat-usps').textContent    = usps;
+  document.getElementById('ps-stat-unknown').textContent = unknown;
+
+  var mUPS  = psManifest.filter(function(m){ return m.carrier === 'UPS'; }).length;
+  var mUSPS = psManifest.filter(function(m){ return m.carrier === 'USPS'; }).length;
+  document.getElementById('ps-ups-pct').textContent    = mUPS  > 0 ? (ups  + ' / ' + mUPS  + ' scanned') : (ups  + ' scanned');
+  document.getElementById('ps-ups-fill').style.width   = mUPS  > 0 ? Math.min(100, Math.round(ups  / mUPS  * 100)) + '%' : '0%';
+  document.getElementById('ps-usps-pct').textContent   = mUSPS > 0 ? (usps + ' / ' + mUSPS + ' scanned') : (usps + ' scanned');
+  document.getElementById('ps-usps-fill').style.width  = mUSPS > 0 ? Math.min(100, Math.round(usps / mUSPS * 100)) + '%' : '0%';
+
+  var plist = document.getElementById('ps-progress-scan-list');
+  if (!psTodayScans.length) { plist.innerHTML = '<div class="ps-empty-state"><div class="ps-empty-icon">📭</div><div class="ps-empty-title">No scans yet</div></div>'; return; }
+  plist.innerHTML = psTodayScans.slice(0,100).map(function(s){
+    return '<div class="ps-card"><div class="ps-card-row"><div class="ps-card-dot green"></div><div class="ps-card-tracking">' + s.tracking + '</div><div class="ps-card-meta">' + _psCarrierBadge(s.carrier) + '<span class="ps-badge ps-badge-gray">' + (s.initials||'—') + '</span></div><div class="ps-card-time">' + psFmtTime(s.timestamp) + '</div></div></div>';
+  }).join('');
+};
+
+// ── CSV upload ────────────────────────────────────────
+window.psHandleCSV = function(input) {
+  var file = input.files[0]; if (!file) return;
+  var reader = new FileReader();
+  reader.onload = function(e){ _psParseCSV(e.target.result); };
+  reader.readAsText(file);
+};
+
+function _psParseCSV(text) {
+  var msg = document.getElementById('ps-upload-msg');
+  msg.className = 'ps-upload-msg'; msg.textContent = 'Parsing…';
+  var lines = text.split(/\r?\n/).filter(function(l){ return l.trim(); });
+  if (lines.length < 2) { msg.className = 'ps-upload-msg err'; msg.textContent = '⚠ No data rows found.'; return; }
+  var headers = _psParseLine(lines[0]).map(function(h){ return h.trim().toLowerCase(); });
+  var col = function(name){ return headers.findIndex(function(h){ return h.includes(name.toLowerCase().replace(/ /g,'')); }); };
+  var iTracking = col('tracking id'), iOrder = col('order id'), iStore = col('store'), iCarrier = col('carrier'), iService = col('service'), iShipTo = col('ship to state');
+  if (iTracking === -1) { msg.className = 'ps-upload-msg err'; msg.textContent = '⚠ "Tracking ID" column not found.'; return; }
+  var loaded = 0, skippedFBA = 0, rows = [];
+  for (var i = 1; i < lines.length; i++) {
+    var cols  = _psParseLine(lines[i]);
+    var store = (iStore !== -1 ? cols[iStore] : '').trim();
+    var rawTrk = (iTracking !== -1 ? cols[iTracking] : '').trim();
+    if (PS_IGNORED_FBA.includes(store.toLowerCase())) { skippedFBA++; continue; }
+    if (!rawTrk) continue;
+    rawTrk.split(/[;,]/).map(function(t){ return psNormalizeTracking(t); }).filter(Boolean).forEach(function(tn){
+      rows.push({ tracking: tn.toUpperCase(), orderNum: (iOrder !== -1 ? cols[iOrder] : '').trim(), channel: store, carrier: psDetectCarrier(tn), service: (iService !== -1 ? cols[iService] : '').trim(), shipToState: (iShipTo !== -1 ? cols[iShipTo] : '').trim() });
+      loaded++;
+    });
+  }
+  psManifest = rows;
+  document.getElementById('ps-manifest-pill').style.display = 'flex';
+  document.getElementById('ps-manifest-count').textContent  = loaded;
+  document.getElementById('ps-reconcile-bar').style.display = 'flex';
+  document.getElementById('ps-drop-zone').querySelector('.ps-drop-title').textContent = 'Replace CSV (drop new file)';
+  msg.className = 'ps-upload-msg ok';
+  msg.textContent = '✓ ' + loaded + ' tracking numbers ready' + (skippedFBA ? ' · ' + skippedFBA + ' FBA skipped' : '');
+  psRenderProgress();
+}
+
+function _psParseLine(line) {
+  var result = [], cur = '', inQ = false;
+  for (var i = 0; i < line.length; i++) {
+    var c = line[i];
+    if (c === '"') { if (inQ && line[i+1] === '"') { cur += '"'; i++; } else inQ = !inQ; }
+    else if (c === ',' && !inQ) { result.push(cur); cur = ''; }
+    else { cur += c; }
+  }
+  result.push(cur); return result;
+}
+
+// ── Reconcile ─────────────────────────────────────────
+window.psRunReconcile = async function() {
+  var btn = document.getElementById('ps-btn-reconcile');
+  btn.disabled = true; btn.innerHTML = '<span class="ps-spinner"></span>Uploading manifest…';
+  try {
+    var upRes  = await fetch(PS_WORKER + '/ship/manifest', {
+      method: 'POST', headers: { 'Content-Type': 'application/json', 'X-Session-Token': psToken },
+      body: JSON.stringify({ rows: psManifest, uploadedBy: psInitials })
+    });
+    var upData = await upRes.json();
+    if (upData.duplicate) { _psToast('⚠ Manifest already uploaded today — re-running analysis', 'warn'); }
+    else if (!upData.ok) throw new Error(upData.error || 'Manifest upload failed');
+
+    btn.innerHTML = '<span class="ps-spinner"></span>Analysing gaps…';
+    var recRes  = await fetch(PS_WORKER + '/ship/reconcile', {
+      method: 'POST', headers: { 'Content-Type': 'application/json', 'X-Session-Token': psToken },
+      body: JSON.stringify({ date: psTodayKey() })
+    });
+    var recData = await recRes.json();
+    if (!recData.ok) throw new Error(recData.error || 'Reconcile failed');
+    psGapRows = recData.gaps || [];
+    document.getElementById('ps-tab-gaps').style.display = 'flex';
+    _psUpdateGapBadge(); psRenderGaps(); psSwitchTab('gaps');
+    _psToast('Gap analysis done — ' + recData.results.gap + ' gaps found', recData.results.gap > 0 ? 'warn' : 'ok');
+  } catch(e) {
+    _psToast('Error: ' + e.message, 'err');
+  } finally {
+    btn.disabled = false; btn.textContent = 'Run Gap Analysis';
+  }
+};
+
+// ── Lookup ────────────────────────────────────────────
+window.psDoLookup = async function() {
+  var q   = document.getElementById('ps-lookup-input').value.trim().toUpperCase();
+  var res = document.getElementById('ps-lookup-result');
+  if (!q) return;
+  res.classList.add('show');
+  document.getElementById('ps-lr-status').textContent = 'Looking up…';
+  document.getElementById('ps-lr-icon').textContent   = '⏳';
+  document.getElementById('ps-lr-sub').textContent    = '';
+  document.getElementById('ps-lr-grid').innerHTML     = '';
+  try {
+    var r    = await fetch(PS_WORKER + '/ship/lookup?tracking=' + encodeURIComponent(q), { headers: { 'X-Session-Token': psToken } });
+    var data = await r.json();
+    var vmap = {
+      scanned_in_manifest:     { icon:'✅', text:'Scanned — In Manifest',       cls:'ok',   sub:'Scan record found and matched in the Veeqo manifest.' },
+      scanned_not_in_manifest: { icon:'❓', text:'Scanned — Not In Manifest',   cls:'warn', sub:'Scanned but not in the uploaded Veeqo manifest. May be a reshipment or prior day order.' },
+      gap:                     { icon:'⚠️', text:'In Manifest — NOT Scanned',   cls:'warn', sub:'Appeared in Veeqo manifest but has no pack scan. Investigate before claiming.' },
+      not_found:               { icon:'❌', text:'Not Found',                   cls:'err',  sub:'Not in today\'s scans or manifest. Check the tracking number.' },
+    };
+    var v = vmap[data.verdict] || { icon:'❓', text:'Unknown', cls:'warn', sub:'' };
+    document.getElementById('ps-lr-icon').textContent   = v.icon;
+    document.getElementById('ps-lr-status').textContent = v.text;
+    document.getElementById('ps-lr-status').className   = 'ps-lr-status ' + v.cls;
+    document.getElementById('ps-lr-sub').textContent    = v.sub;
+    var fields = [];
+    if (data.scan) {
+      fields.push({ label:'Scanned At',  val: psFmtTime(data.scan.timestamp) });
+      fields.push({ label:'Packed By',   val: data.scan.initials || '—' });
+      fields.push({ label:'Carrier',     val: data.scan.carrier });
+      if (data.scan.batchClosedAt) fields.push({ label:'Batch Closed', val: psFmtTime(data.scan.batchClosedAt) });
+    }
+    if (data.manifest) {
+      if (data.manifest.orderNum)    fields.push({ label:'Order #',       val: data.manifest.orderNum });
+      if (data.manifest.channel)     fields.push({ label:'Channel',       val: data.manifest.channel });
+      if (data.manifest.service)     fields.push({ label:'Service',       val: data.manifest.service });
+      if (data.manifest.shipToState) fields.push({ label:'Ship To State', val: data.manifest.shipToState });
+    }
+    document.getElementById('ps-lr-grid').innerHTML = fields.map(function(f){ return '<div><div class="ps-lr-field-label">' + f.label + '</div><div class="ps-lr-field-val">' + f.val + '</div></div>'; }).join('');
+  } catch(e) {
+    document.getElementById('ps-lr-icon').textContent   = '❌';
+    document.getElementById('ps-lr-status').textContent = 'Lookup error';
+    document.getElementById('ps-lr-sub').textContent    = e.message;
+  }
+};
+
+// ── Scan log ──────────────────────────────────────────
+window.psRenderLog = function() {
+  var q    = (document.getElementById('ps-log-search').value || '').toLowerCase();
+  var list = document.getElementById('ps-log-list');
+  document.getElementById('ps-log-cnt').textContent = psTodayScans.length + ' total';
+  var items = psTodayScans;
+  if (q) items = items.filter(function(s){ return s.tracking.toLowerCase().includes(q) || (s.carrier||'').toLowerCase().includes(q) || (s.initials||'').toLowerCase().includes(q); });
+  if (!items.length) { list.innerHTML = '<div class="ps-empty-state"><div class="ps-empty-icon">🔍</div><div class="ps-empty-title">No results</div></div>'; return; }
+  list.innerHTML = items.slice(0,200).map(function(s){
+    return '<div class="ps-card"><div class="ps-card-row"><div class="ps-card-dot green"></div><div class="ps-card-tracking">' + s.tracking + '</div><div class="ps-card-meta">' + _psCarrierBadge(s.carrier) + '<span class="ps-badge ps-badge-gray">' + (s.initials||'—') + '</span>' + (s.batchClosedAt ? '<span class="ps-badge ps-badge-green">Closed</span>' : '') + '</div><div class="ps-card-time">' + psFmtTime(s.timestamp) + '</div></div></div>';
+  }).join('');
+};
+
+// ── Gap report ────────────────────────────────────────
+window.psFilterGaps = function(f, btn) {
+  psGapFilter = f;
+  document.querySelectorAll('#ps-panel-gaps .ps-filter-btn').forEach(function(b){ b.classList.remove('active'); });
+  btn.classList.add('active');
+  psRenderGaps();
+};
+
+window.psRenderGaps = function() {
+  var list  = document.getElementById('ps-gap-list');
+  var items = psGapFilter === 'all' ? psGapRows : psGapRows.filter(function(g){ return g.carrier === psGapFilter; });
+  if (!psGapRows.length) { list.innerHTML = '<div class="ps-empty-state"><div class="ps-empty-icon">📄</div><div class="ps-empty-title">No gap data yet</div><div class="ps-empty-sub">Upload the Veeqo CSV and run Gap Analysis first.</div></div>'; return; }
+  if (!items.length) { list.innerHTML = '<div class="ps-empty-state"><div class="ps-empty-icon">✓</div><div class="ps-empty-title">No gaps for this carrier</div></div>'; return; }
+  list.innerHTML = items.map(function(g){
+    return '<div class="ps-card"><div class="ps-card-row"><div class="ps-card-dot orange"></div><div class="ps-card-tracking">' + g.tracking + '</div><div class="ps-card-meta">' + _psCarrierBadge(g.carrier) + (g.orderNum ? '<span class="ps-badge ps-badge-blue">#' + g.orderNum + '</span>' : '') + (g.channel ? '<span class="ps-badge ps-badge-gray">' + g.channel + '</span>' : '') + (g.shipToState ? '<span class="ps-badge ps-badge-gray">' + g.shipToState + '</span>' : '') + '</div></div></div>';
+  }).join('');
+};
+
+function _psUpdateGapBadge() {
+  var badge = document.getElementById('ps-gap-badge');
+  badge.textContent   = psGapRows.length;
+  badge.style.display = psGapRows.length > 0 ? 'inline-block' : 'none';
+}
+
+window.psExportGaps = function() {
+  if (!psGapRows.length) { _psToast('No gaps to export'); return; }
+  var header = 'TrackingNumber,Carrier,OrderNum,Channel,Service,ShipToState';
+  var rows   = psGapRows.map(function(g){
+    return [g.tracking,g.carrier,g.orderNum,g.channel,g.service,g.shipToState].map(function(v){ return '"' + (v||'').replace(/"/g,'""') + '"'; }).join(',');
+  });
+  var blob = new Blob([[header].concat(rows).join('\n')], { type:'text/csv' });
+  var url  = URL.createObjectURL(blob);
+  var a    = document.createElement('a');
+  a.href = url; a.download = 'gap-report-' + psTodayKey() + '.csv'; a.click();
+  URL.revokeObjectURL(url);
+  _psToast('Gap report exported');
+};
+
+// ── Helpers ───────────────────────────────────────────
+function _psCarrierBadge(c) {
+  if (c === 'UPS')  return '<span class="ps-badge ps-badge-ups">UPS</span>';
+  if (c === 'USPS') return '<span class="ps-badge ps-badge-usps">USPS</span>';
+  return '<span class="ps-badge ps-badge-gray">' + (c||'Unknown') + '</span>';
+}
+
+window.psFmtTime = function(iso) {
+  if (!iso) return '—';
+  return new Date(iso).toLocaleTimeString('en-US',{hour:'numeric',minute:'2-digit',hour12:true});
+};
+
+window.psTodayKey = function() {
+  var d = new Date();
+  return d.getFullYear() + '-' + String(d.getMonth()+1).padStart(2,'0') + '-' + String(d.getDate()).padStart(2,'0');
+};
+
+var _psToastTimer;
+function _psToast(msg, type) {
+  // Re-use the main app's toast if it exists, else use a fallback
+  if (typeof showToast === 'function') { showToast(msg); return; }
+  var t = document.getElementById('toast');
+  if (!t) return;
+  t.textContent = msg;
+  t.className   = 'show' + (type ? ' ' + type : '');
+  clearTimeout(_psToastTimer);
+  _psToastTimer = setTimeout(function(){ t.className = ''; }, 3000);
+}
+
+// ── Wire DOM events (once) ────────────────────────────
+function _psWireEvents() {
+  var scanInp = document.getElementById('ps-scan-input');
+  scanInp.addEventListener('keydown', function(e){
+    if (e.key === 'Enter') { var v = scanInp.value.trim(); if (v) _psProcessScan(v); }
+  });
+  scanInp.addEventListener('paste', function(){
+    setTimeout(function(){ var v = scanInp.value.trim(); if (v.length > 8) _psProcessScan(v); }, 60);
+  });
+  scanInp.addEventListener('blur',  function(){ document.getElementById('ps-refocus-hint').style.display = 'block'; });
+  scanInp.addEventListener('focus', function(){ document.getElementById('ps-refocus-hint').style.display = 'none'; });
+
+  var dz = document.getElementById('ps-drop-zone');
+  dz.addEventListener('dragover',  function(e){ e.preventDefault(); dz.classList.add('drag-over'); });
+  dz.addEventListener('dragleave', function(){ dz.classList.remove('drag-over'); });
+  dz.addEventListener('drop', function(e){
+    e.preventDefault(); dz.classList.remove('drag-over');
+    var file = e.dataTransfer.files[0];
+    if (file && file.name.endsWith('.csv')) { var r = new FileReader(); r.onload = function(ev){ _psParseCSV(ev.target.result); }; r.readAsText(file); }
+  });
+
+  document.getElementById('ps-lookup-input').addEventListener('keydown', function(e){ if (e.key === 'Enter') psDoLookup(); });
+  document.getElementById('ps-inp-initials').addEventListener('keydown', function(e){ if (e.key === 'Enter') psSignInOps(); });
+  document.getElementById('ps-inp-initials').addEventListener('input',   function(e){ e.target.value = e.target.value.toUpperCase(); });
+  document.getElementById('ps-inp-mgmt-pin').addEventListener('keydown', function(e){ if (e.key === 'Enter') psSignInMgmt(); });
+}
+
+})();
 </script>
 </body>
 </html>
