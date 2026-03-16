@@ -1,7 +1,7 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-  <!-- XFITTING-BUILD-V109-XFRT-20260317 -->
+  <!-- XFITTING-BUILD-V109-TKEY-20260319 -->
 <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate">
 <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&family=IBM+Plex+Sans:wght@300;400;500;600&display=swap" rel="stylesheet">
   <meta http-equiv="Pragma" content="no-cache">
@@ -11645,8 +11645,11 @@ window.psFmtTime = function(iso) {
 };
 
 window.psTodayKey = function() {
+  // Use UTC to match the Cloudflare Worker's shipTodayKey() which uses getUTC*
+  // Without this, scans made after 7 PM EST (midnight UTC) write to tomorrow's date
+  // in the sheet but the frontend queries today's date — scans appear to vanish.
   var d = new Date();
-  return d.getFullYear() + '-' + String(d.getMonth()+1).padStart(2,'0') + '-' + String(d.getDate()).padStart(2,'0');
+  return d.getUTCFullYear() + '-' + String(d.getUTCMonth()+1).padStart(2,'0') + '-' + String(d.getUTCDate()).padStart(2,'0');
 };
 
 var _psToastTimer;
