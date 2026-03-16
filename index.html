@@ -10366,6 +10366,13 @@ function rprToast(msg, type = '') {
 #packship-app .ps-info-box { background:var(--accent-bg); border:1px solid #aec6fb; border-radius:10px; padding:12px 16px; font-size:13px; color:var(--accent); margin-bottom:16px; line-height:1.5; }
 #packship-app .ps-warn-box { background:var(--orange-bg); border:1px solid #fcd34d; border-radius:10px; padding:12px 16px; font-size:13px; color:var(--orange); margin-bottom:16px; line-height:1.5; }
 
+/* Switch Packer modal */
+#ps-switch-modal { position:fixed; inset:0; background:rgba(0,0,0,0.4); z-index:600; display:none; align-items:center; justify-content:center; padding:24px; }
+#ps-switch-modal.show { display:flex; }
+#packship-app .ps-switch-card { background:var(--bg2); border:1px solid var(--border); border-radius:16px; padding:28px 28px 24px; max-width:340px; width:100%; box-shadow:0 20px 60px rgba(0,0,0,.18); }
+#packship-app .ps-switch-title { font-size:17px; font-weight:700; color:var(--text); margin-bottom:6px; }
+#packship-app .ps-switch-sub { font-size:13px; color:var(--text2); margin-bottom:18px; line-height:1.5; }
+
 @media(max-width:480px){
   #packship-app .ps-content { padding:14px; }
   #packship-app .ps-topbar  { padding:0 14px; }
@@ -10428,6 +10435,7 @@ function rprToast(msg, type = '') {
       <div class="ps-dot"></div>
       <span id="ps-session-label">—</span>
     </div>
+    <button class="ps-btn-sm" id="ps-switch-btn" onclick="psSwitchPacker()" style="display:none">Switch Packer</button>
     <button class="ps-btn-sm" onclick="psSignOut()">Sign Out</button>
   </div>
 </div>
@@ -10437,6 +10445,7 @@ function rprToast(msg, type = '') {
   <div class="ps-tabitem active" id="ps-tab-scan"     onclick="psSwitchTab('scan')">📦 Scan</div>
   <div class="ps-tabitem"        id="ps-tab-progress" onclick="psSwitchTab('progress')">📊 Progress</div>
   <div class="ps-tabitem"        id="ps-tab-lookup"   onclick="psSwitchTab('lookup')">🔍 Lookup</div>
+  <div class="ps-tabitem"        id="ps-tab-status"   onclick="psSwitchTab('status')" style="display:none">📡 Status Check</div>
   <div class="ps-tabitem"        id="ps-tab-gaps"     onclick="psSwitchTab('gaps')" style="display:none">
     ⚠️ Gap Report <span class="ps-tab-badge" id="ps-gap-badge">0</span>
   </div>
@@ -10601,6 +10610,82 @@ function rprToast(msg, type = '') {
     <div id="ps-log-list"></div>
   </div>
 
+  <!-- STATUS CHECKER panel -->
+  <div class="ps-panel" id="ps-panel-status">
+    <!-- Upload area -->
+    <div class="ps-upload-area">
+      <div class="ps-upload-area-header">
+        <div class="ps-upload-area-title">📡 Tracking Status Check</div>
+        <div class="ps-manifest-loaded-pill" id="ps-status-pill" style="display:none">
+          ✓ <span id="ps-status-count">0</span> shipments loaded
+        </div>
+      </div>
+      <div style="font-size:13px;color:var(--text2);margin-bottom:14px;line-height:1.6;">
+        Export a <strong>45-day Veeqo shipping report</strong> and upload it here. The app reads the Tracking Status column and flags anything that isn't delivered. Run this on the 1st and 15th of each month.
+      </div>
+      <div class="ps-drop-zone" id="ps-status-drop-zone">
+        <input type="file" accept=".csv" onchange="psHandleStatusCSV(this)">
+        <span class="ps-drop-icon">📂</span>
+        <div class="ps-drop-title">Drop 45-day Veeqo CSV here</div>
+        <div class="ps-drop-hint">or <b>click to browse</b> · FBA orders auto-removed</div>
+      </div>
+      <div class="ps-upload-msg" id="ps-status-upload-msg"></div>
+    </div>
+
+    <!-- Summary stat bar -->
+    <div class="ps-stat-bar" id="ps-status-stat-bar" style="display:none">
+      <div class="ps-stat-card">
+        <div class="ps-stat-label">Total Shipments</div>
+        <div class="ps-stat-val" id="ps-st-total">0</div>
+        <div class="ps-stat-sub">in report</div>
+      </div>
+      <div class="ps-stat-card">
+        <div class="ps-stat-label">Delivered</div>
+        <div class="ps-stat-val green" id="ps-st-delivered">0</div>
+        <div class="ps-stat-sub">no action needed</div>
+      </div>
+      <div class="ps-stat-card">
+        <div class="ps-stat-label">Needs Attention</div>
+        <div class="ps-stat-val red" id="ps-st-flagged">0</div>
+        <div class="ps-stat-sub">review below</div>
+      </div>
+      <div class="ps-stat-card">
+        <div class="ps-stat-label">In Transit</div>
+        <div class="ps-stat-val orange" id="ps-st-transit">0</div>
+        <div class="ps-stat-sub">moving normally</div>
+      </div>
+    </div>
+
+    <!-- Flagged section -->
+    <div id="ps-status-results" style="display:none">
+      <div class="ps-section-header">
+        <div>
+          <div class="ps-section-title" style="font-size:15px;text-transform:none;letter-spacing:0">🚨 Flagged Shipments</div>
+          <div style="font-size:13px;color:var(--text2);margin-top:4px">Requires action — open a case with the carrier</div>
+        </div>
+        <button class="ps-btn-export" onclick="psExportStatusFlags()">⬇ Export Flagged CSV</button>
+      </div>
+      <div class="ps-filter-row" id="ps-status-filter-row">
+        <button class="ps-filter-btn active" onclick="psFilterStatus('all',this)">All Flags</button>
+        <button class="ps-filter-btn" onclick="psFilterStatus('created',this)">🔴 Never Shipped</button>
+        <button class="ps-filter-btn" onclick="psFilterStatus('awaiting_collection',this)">🟠 Scan Form Only</button>
+        <button class="ps-filter-btn" onclick="psFilterStatus('in_transit',this)">🔵 In Transit</button>
+        <button class="ps-filter-btn" onclick="psFilterStatus('returned',this)">↩ Returned</button>
+        <button class="ps-filter-btn" onclick="psFilterStatus('exception',this)">⚡ Exception</button>
+      </div>
+      <div id="ps-status-list"></div>
+
+      <!-- Delivered toggle -->
+      <div style="margin-top:20px">
+        <div class="ps-section-header">
+          <div class="ps-section-title">✅ Delivered</div>
+          <button class="ps-btn-sm" onclick="psToggleDelivered(this)">Show</button>
+        </div>
+        <div id="ps-status-delivered-list" style="display:none"></div>
+      </div>
+    </div>
+  </div>
+
   <!-- GAP REPORT panel -->
   <div class="ps-panel" id="ps-panel-gaps">
     <div class="ps-section-header">
@@ -10625,6 +10710,23 @@ function rprToast(msg, type = '') {
   </div>
 
 </div><!-- /ps-content -->
+
+<!-- Switch Packer modal (outside ps-content, inside packship-app) -->
+<div id="ps-switch-modal">
+  <div class="ps-switch-card">
+    <div class="ps-switch-title">Switch Packer</div>
+    <div class="ps-switch-sub">Enter the new packer's initials. All future scans will be tagged with these initials.</div>
+    <div class="ps-field-wrap">
+      <label class="ps-field-lbl">New Initials</label>
+      <input class="ps-field-input" id="ps-switch-initials" type="text" maxlength="4" placeholder="e.g. MK" autocomplete="off" style="text-transform:uppercase">
+    </div>
+    <div style="display:flex;gap:8px;margin-top:4px">
+      <button class="ps-btn-primary" onclick="psConfirmSwitch()" style="flex:1">Switch</button>
+      <button class="ps-btn-sm" onclick="psCloseSwitchModal()" style="flex:0 0 auto;padding:13px 18px">Cancel</button>
+    </div>
+    <div class="ps-pin-err" id="ps-switch-err"></div>
+  </div>
+</div>
 </div><!-- /packship-app -->
 
 <script>
@@ -10720,12 +10822,17 @@ window.psSignInMgmt = async function() {
 function _psLaunchInner() {
   document.getElementById('ps-signin-overlay').style.display = 'none';
   document.getElementById('ps-session-label').textContent = psRole === 'mgmt' ? 'Manager' : psInitials;
+  var switchBtn = document.getElementById('ps-switch-btn');
   if (psRole === 'mgmt') {
     document.getElementById('ps-mgmt-upload-section').style.display = 'block';
-    document.getElementById('ps-tab-gaps').style.display = 'flex';
+    document.getElementById('ps-tab-gaps').style.display   = 'flex';
+    document.getElementById('ps-tab-status').style.display = 'flex';
+    if (switchBtn) switchBtn.style.display = 'none';
   } else {
     document.getElementById('ps-mgmt-upload-section').style.display = 'none';
-    document.getElementById('ps-tab-gaps').style.display = 'none';
+    document.getElementById('ps-tab-gaps').style.display   = 'none';
+    document.getElementById('ps-tab-status').style.display = 'none';
+    if (switchBtn) switchBtn.style.display = 'inline-block';
   }
   var saved = localStorage.getItem('ps_batch_' + psTodayKey());
   if (saved) psBatchClosed = JSON.parse(saved);
@@ -10761,6 +10868,7 @@ window.psSwitchTab = function(name) {
   if (name === 'progress') { psLoadScans(); }
   if (name === 'lookup')   { psRenderLog(); }
   if (name === 'gaps')     { psRenderGaps(); }
+  if (name === 'status')   { /* status tab — no auto-action, user uploads CSV */ }
 };
 
 // ── Focus ─────────────────────────────────────────────
@@ -11159,7 +11267,10 @@ function _psCarrierBadge(c) {
 
 window.psFmtTime = function(iso) {
   if (!iso) return '—';
-  return new Date(iso).toLocaleTimeString('en-US',{hour:'numeric',minute:'2-digit',hour12:true});
+  return new Date(iso).toLocaleTimeString('en-US',{
+    hour:'numeric', minute:'2-digit', second:'2-digit',
+    hour12:true, timeZone:'America/New_York'
+  });
 };
 
 window.psTodayKey = function() {
@@ -11204,9 +11315,259 @@ function _psWireEvents() {
   document.getElementById('ps-inp-initials').addEventListener('keydown', function(e){ if (e.key === 'Enter') psSignInOps(); });
   document.getElementById('ps-inp-initials').addEventListener('input',   function(e){ e.target.value = e.target.value.toUpperCase(); });
   document.getElementById('ps-inp-mgmt-pin').addEventListener('keydown', function(e){ if (e.key === 'Enter') psSignInMgmt(); });
+  _psWireSwitchModal();
+}
+
+// ── Switch Packer ─────────────────────────────────────
+window.psSwitchPacker = function() {
+  document.getElementById('ps-switch-initials').value = '';
+  document.getElementById('ps-switch-err').textContent = '';
+  document.getElementById('ps-switch-modal').classList.add('show');
+  setTimeout(function(){ document.getElementById('ps-switch-initials').focus(); }, 100);
+};
+
+window.psCloseSwitchModal = function() {
+  document.getElementById('ps-switch-modal').classList.remove('show');
+};
+
+window.psConfirmSwitch = function() {
+  var newInitials = document.getElementById('ps-switch-initials').value.trim().toUpperCase();
+  if (!newInitials) { document.getElementById('ps-switch-err').textContent = 'Enter initials.'; return; }
+  var prev = psInitials;
+  psInitials = newInitials;
+  document.getElementById('ps-session-label').textContent = newInitials;
+  psCloseSwitchModal();
+  _psToast('Switched from ' + prev + ' to ' + newInitials);
+  psFocusScan();
+};
+
+// ── Status Checker ─────────────────────────────────────
+var PS_STATUS_MAP = {
+  'created':             { label:'Never Shipped',       color:'red',    icon:'🔴', priority:1, flag:true  },
+  'exception':           { label:'Exception / Problem', color:'red',    icon:'⚡', priority:2, flag:true  },
+  'returned to sender':  { label:'Returned to Sender',  color:'red',    icon:'↩',  priority:3, flag:true  },
+  'return to sender':    { label:'Returned to Sender',  color:'red',    icon:'↩',  priority:3, flag:true  },
+  'awaiting_collection': { label:'Scan Form Only',      color:'orange', icon:'🟠', priority:4, flag:true  },
+  'awaiting collection': { label:'Scan Form Only',      color:'orange', icon:'🟠', priority:4, flag:true  },
+  'in_transit':          { label:'In Transit',          color:'blue',   icon:'🔵', priority:5, flag:true  },
+  'in transit':          { label:'In Transit',          color:'blue',   icon:'🔵', priority:5, flag:true  },
+  'out_for_delivery':    { label:'Out for Delivery',    color:'green',  icon:'🟢', priority:6, flag:false },
+  'out for delivery':    { label:'Out for Delivery',    color:'green',  icon:'🟢', priority:6, flag:false },
+  'delivered':           { label:'Delivered',           color:'green',  icon:'✅', priority:7, flag:false },
+};
+
+function _psClassifyStatus(raw) {
+  var key = (raw || '').trim().toLowerCase();
+  return PS_STATUS_MAP[key] || { label: raw || 'Unknown', color:'gray', icon:'❓', priority:8, flag:true };
+}
+
+var psStatusRows    = [];
+var psStatusFilter  = 'all';
+var psDeliveredShown = false;
+
+window.psHandleStatusCSV = function(input) {
+  var file = input.files[0]; if (!file) return;
+  var reader = new FileReader();
+  reader.onload = function(e){ _psParseStatusCSV(e.target.result); };
+  reader.readAsText(file);
+};
+
+function _psParseStatusCSV(text) {
+  var msg = document.getElementById('ps-status-upload-msg');
+  msg.className = 'ps-upload-msg'; msg.textContent = 'Parsing…';
+
+  var lines = text.split(/\r?\n/).filter(function(l){ return l.trim(); });
+  if (lines.length < 2) { msg.className = 'ps-upload-msg err'; msg.textContent = '⚠ No data rows found.'; return; }
+
+  var headers = _psParseLine(lines[0]).map(function(h){ return h.trim().toLowerCase(); });
+  var col = function(name){ return headers.findIndex(function(h){ return h.includes(name.toLowerCase().replace(/ /g,'')); }); };
+
+  var iTracking = col('tracking id');
+  var iStatus   = col('tracking status');
+  var iOrder    = col('order id');
+  var iStore    = col('store');
+  var iCarrier  = col('carrier');
+  var iService  = col('service');
+  var iShipDate = col('shipped date');
+  var iShipTo   = col('ship to state');
+
+  if (iTracking === -1) { msg.className = 'ps-upload-msg err'; msg.textContent = '⚠ "Tracking ID" column not found.'; return; }
+  if (iStatus   === -1) { msg.className = 'ps-upload-msg err'; msg.textContent = '⚠ "Tracking Status" column not found.'; return; }
+
+  var rows = [], skippedFBA = 0;
+  for (var i = 1; i < lines.length; i++) {
+    var cols  = _psParseLine(lines[i]);
+    var store = (iStore !== -1 ? cols[iStore] : '').trim();
+    var rawTrk = (iTracking !== -1 ? cols[iTracking] : '').trim();
+    if (PS_IGNORED_FBA.includes(store.toLowerCase())) { skippedFBA++; continue; }
+    if (!rawTrk) continue;
+    rawTrk.split(/[;,]/).map(function(t){ return psNormalizeTracking(t); }).filter(Boolean).forEach(function(tn) {
+      var rawStatus = (iStatus !== -1 ? cols[iStatus] : '').trim();
+      rows.push({
+        tracking:   tn.toUpperCase(),
+        status:     rawStatus,
+        classified: _psClassifyStatus(rawStatus),
+        orderNum:   (iOrder    !== -1 ? cols[iOrder]    : '').trim(),
+        channel:    store,
+        carrier:    (iCarrier  !== -1 ? cols[iCarrier]  : '').trim() || psDetectCarrier(tn),
+        service:    (iService  !== -1 ? cols[iService]  : '').trim(),
+        shipDate:   (iShipDate !== -1 ? cols[iShipDate] : '').trim(),
+        shipToState:(iShipTo   !== -1 ? cols[iShipTo]   : '').trim(),
+      });
+    });
+  }
+
+  rows.sort(function(a,b){ return a.classified.priority - b.classified.priority; });
+  psStatusRows    = rows;
+  psStatusFilter  = 'all';
+  psDeliveredShown = false;
+
+  document.getElementById('ps-status-pill').style.display = 'flex';
+  document.getElementById('ps-status-count').textContent  = rows.length;
+  document.getElementById('ps-status-drop-zone').querySelector('.ps-drop-title').textContent = 'Replace CSV (drop new file)';
+  msg.className = 'ps-upload-msg ok';
+  msg.textContent = '✓ ' + rows.length + ' shipments loaded' + (skippedFBA ? ' · ' + skippedFBA + ' FBA skipped' : '');
+
+  _psRenderStatusStats();
+  _psRenderStatusList();
+  document.getElementById('ps-status-stat-bar').style.display = 'grid';
+  document.getElementById('ps-status-results').style.display  = 'block';
+
+  if (psToken) _psUploadStatusToSheet(rows);
+}
+
+function _psRenderStatusStats() {
+  document.getElementById('ps-st-total').textContent     = psStatusRows.length;
+  document.getElementById('ps-st-delivered').textContent = psStatusRows.filter(function(r){ return r.status.toLowerCase() === 'delivered'; }).length;
+  document.getElementById('ps-st-flagged').textContent   = psStatusRows.filter(function(r){ return r.classified.flag && r.classified.priority < 5; }).length;
+  document.getElementById('ps-st-transit').textContent   = psStatusRows.filter(function(r){ return r.classified.priority === 5; }).length;
+}
+
+window.psFilterStatus = function(f, btn) {
+  psStatusFilter = f;
+  document.querySelectorAll('#ps-status-filter-row .ps-filter-btn').forEach(function(b){ b.classList.remove('active'); });
+  btn.classList.add('active');
+  _psRenderStatusList();
+};
+
+function _psStatusBadgeCls(color) {
+  if (color === 'red')    return 'ps-badge-red';
+  if (color === 'orange') return 'ps-badge-orange';
+  if (color === 'blue')   return 'ps-badge-blue';
+  if (color === 'green')  return 'ps-badge-green';
+  return 'ps-badge-gray';
+}
+
+function _psRenderStatusList() {
+  var list = document.getElementById('ps-status-list');
+  var flagged = psStatusRows.filter(function(r){ return r.classified.flag; });
+
+  var filtered;
+  var f = psStatusFilter;
+  if      (f === 'all')                filtered = flagged;
+  else if (f === 'created')            filtered = psStatusRows.filter(function(r){ return r.status.toLowerCase() === 'created'; });
+  else if (f === 'awaiting_collection')filtered = psStatusRows.filter(function(r){ var k=r.status.toLowerCase(); return k==='awaiting_collection'||k==='awaiting collection'; });
+  else if (f === 'in_transit')         filtered = psStatusRows.filter(function(r){ var k=r.status.toLowerCase(); return k==='in_transit'||k==='in transit'; });
+  else if (f === 'returned')           filtered = psStatusRows.filter(function(r){ return r.status.toLowerCase().includes('return'); });
+  else if (f === 'exception')          filtered = psStatusRows.filter(function(r){ return r.status.toLowerCase().includes('exception'); });
+  else filtered = flagged;
+
+  if (!filtered.length) {
+    list.innerHTML = '<div class="ps-empty-state"><div class="ps-empty-icon">✅</div><div class="ps-empty-title">No issues found</div><div class="ps-empty-sub">Nothing flagged for this filter.</div></div>';
+  } else {
+    list.innerHTML = filtered.map(function(r) {
+      var c = r.classified;
+      return '<div class="ps-card"><div class="ps-card-row">' +
+        '<div style="font-size:16px;flex-shrink:0;line-height:1">' + c.icon + '</div>' +
+        '<div class="ps-card-tracking">' + r.tracking + '</div>' +
+        '<div class="ps-card-meta">' +
+          '<span class="ps-badge ' + _psStatusBadgeCls(c.color) + '">' + c.label + '</span>' +
+          _psCarrierBadge(r.carrier) +
+          (r.orderNum    ? '<span class="ps-badge ps-badge-blue">#' + r.orderNum + '</span>' : '') +
+          (r.channel     ? '<span class="ps-badge ps-badge-gray">' + r.channel + '</span>' : '') +
+          (r.shipToState ? '<span class="ps-badge ps-badge-gray">' + r.shipToState + '</span>' : '') +
+        '</div>' +
+        (r.shipDate ? '<div class="ps-card-time">' + r.shipDate + '</div>' : '') +
+      '</div></div>';
+    }).join('');
+  }
+
+  // Delivered list (only when toggled on)
+  if (psDeliveredShown) {
+    var delivered = psStatusRows.filter(function(r){ return !r.classified.flag; });
+    document.getElementById('ps-status-delivered-list').innerHTML = delivered.map(function(r){
+      return '<div class="ps-card"><div class="ps-card-row">' +
+        '<div style="font-size:16px;flex-shrink:0;line-height:1">✅</div>' +
+        '<div class="ps-card-tracking">' + r.tracking + '</div>' +
+        '<div class="ps-card-meta">' +
+          _psCarrierBadge(r.carrier) +
+          (r.orderNum ? '<span class="ps-badge ps-badge-blue">#' + r.orderNum + '</span>' : '') +
+          (r.channel  ? '<span class="ps-badge ps-badge-gray">' + r.channel + '</span>' : '') +
+        '</div>' +
+        (r.shipDate ? '<div class="ps-card-time">' + r.shipDate + '</div>' : '') +
+      '</div></div>';
+    }).join('');
+  }
+}
+
+window.psToggleDelivered = function(btn) {
+  psDeliveredShown = !psDeliveredShown;
+  btn.textContent = psDeliveredShown ? 'Hide' : 'Show';
+  document.getElementById('ps-status-delivered-list').style.display = psDeliveredShown ? 'block' : 'none';
+  if (psDeliveredShown) _psRenderStatusList();
+};
+
+window.psExportStatusFlags = function() {
+  var flagged = psStatusRows.filter(function(r){ return r.classified.flag; });
+  if (!flagged.length) { _psToast('No flagged shipments to export'); return; }
+  var header = 'Tracking,Status,Carrier,OrderNum,Channel,Service,ShipDate,ShipToState';
+  var rows = flagged.map(function(r){
+    return [r.tracking,r.status,r.carrier,r.orderNum,r.channel,r.service,r.shipDate,r.shipToState]
+      .map(function(v){ return '"'+(v||'').replace(/"/g,'""')+'"'; }).join(',');
+  });
+  var blob = new Blob([[header].concat(rows).join('\n')], {type:'text/csv'});
+  var url  = URL.createObjectURL(blob);
+  var a    = document.createElement('a');
+  a.href = url; a.download = 'status-flags-' + psTodayKey() + '.csv'; a.click();
+  URL.revokeObjectURL(url);
+  _psToast('Exported ' + flagged.length + ' flagged shipments');
+};
+
+function _psUploadStatusToSheet(rows) {
+  if (!psToken || !rows.length) return;
+  var sheetRows = [['Date','Tracking','Status','StatusLabel','Carrier','OrderNum','Channel','Service','ShipDate','ShipToState']];
+  var today = psTodayKey();
+  rows.forEach(function(r){
+    sheetRows.push([today, r.tracking, r.status, r.classified.label, r.carrier, r.orderNum, r.channel, r.service, r.shipDate, r.shipToState]);
+  });
+  fetch(PS_WORKER + '/ship/status-upload', {
+    method:'POST',
+    headers:{'Content-Type':'application/json','X-Session-Token':psToken},
+    body: JSON.stringify({ rows: sheetRows })
+  }).then(function(r){ return r.json(); }).then(function(d){
+    if (d.ok) _psToast('Status data saved to sheet');
+  }).catch(function(e){ console.error('[PS] status-upload error:',e); });
+}
+
+function _psWireSwitchModal() {
+  var inp = document.getElementById('ps-switch-initials');
+  if (inp) {
+    inp.addEventListener('keydown', function(e){ if (e.key==='Enter') psConfirmSwitch(); });
+    inp.addEventListener('input',   function(e){ e.target.value = e.target.value.toUpperCase(); });
+  }
+  var sdz = document.getElementById('ps-status-drop-zone');
+  if (sdz) {
+    sdz.addEventListener('dragover',  function(e){ e.preventDefault(); sdz.classList.add('drag-over'); });
+    sdz.addEventListener('dragleave', function(){ sdz.classList.remove('drag-over'); });
+    sdz.addEventListener('drop', function(e){
+      e.preventDefault(); sdz.classList.remove('drag-over');
+      var file = e.dataTransfer.files[0];
+      if (file && file.name.endsWith('.csv')) {
+        var r = new FileReader(); r.onload = function(ev){ _psParseStatusCSV(ev.target.result); }; r.readAsText(file);
+      }
+    });
+  }
 }
 
 })();
 </script>
-</body>
-</html>
