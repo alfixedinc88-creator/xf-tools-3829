@@ -1,7 +1,7 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-  <!-- XFITTING-BUILD-V109-MVUP-20260316 -->
+  <!-- XFITTING-BUILD-V109-CSVF-20260316 -->
 <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate">
 <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&family=IBM+Plex+Sans:wght@300;400;500;600&display=swap" rel="stylesheet">
   <meta http-equiv="Pragma" content="no-cache">
@@ -11098,8 +11098,10 @@ function _psParseCSV(text) {
   msg.className = 'ps-upload-msg'; msg.textContent = 'Parsing…';
   var lines = text.split(/\r?\n/).filter(function(l){ return l.trim(); });
   if (lines.length < 2) { msg.className = 'ps-upload-msg err'; msg.textContent = '⚠ No data rows found.'; return; }
-  var headers = _psParseLine(lines[0]).map(function(h){ return h.trim().toLowerCase(); });
-  var col = function(name){ return headers.findIndex(function(h){ return h.includes(name.toLowerCase().replace(/ /g,'')); }); };
+  // Normalize headers: lowercase + strip spaces so "Tracking ID" matches "trackingid"
+  var rawHeaders = _psParseLine(lines[0]);
+  var headers = rawHeaders.map(function(h){ return h.trim().toLowerCase().replace(/\s+/g,''); });
+  var col = function(name){ return headers.indexOf(name.toLowerCase().replace(/\s+/g,'')); };
   var iTracking = col('tracking id'), iOrder = col('order id'), iStore = col('store'), iCarrier = col('carrier'), iService = col('service'), iShipTo = col('ship to state');
   if (iTracking === -1) { msg.className = 'ps-upload-msg err'; msg.textContent = '⚠ "Tracking ID" column not found.'; return; }
   var loaded = 0, skippedFBA = 0, rows = [];
@@ -11454,8 +11456,9 @@ function _psParseStatusCSV(text) {
   msg.className = 'ps-upload-msg'; msg.textContent = 'Parsing…';
   var lines = text.split(/\r?\n/).filter(function(l){ return l.trim(); });
   if (lines.length < 2) { msg.className = 'ps-upload-msg err'; msg.textContent = '⚠ No data rows found.'; return; }
-  var headers = _psParseLine(lines[0]).map(function(h){ return h.trim().toLowerCase(); });
-  var col = function(name){ return headers.findIndex(function(h){ return h.includes(name.toLowerCase().replace(/ /g,'')); }); };
+  var rawHeaders = _psParseLine(lines[0]);
+  var headers = rawHeaders.map(function(h){ return h.trim().toLowerCase().replace(/\s+/g,''); });
+  var col = function(name){ return headers.indexOf(name.toLowerCase().replace(/\s+/g,'')); };
   var iTracking = col('tracking id'), iStatus = col('tracking status'), iOrder = col('order id'),
       iStore = col('store'), iCarrier = col('carrier'), iService = col('service'),
       iShipDate = col('shipped date'), iShipTo = col('ship to state');
