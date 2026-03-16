@@ -1,11 +1,16 @@
-/* XFitting Service Worker — v1
-   Caches the app shell for offline access.
+/* XFitting Service Worker — v2
+   Cache name is versioned — change CACHE_VERSION every deploy to bust cache.
    Queues failed Worker API calls when offline and replays them on reconnect.
 */
 
-const CACHE_NAME   = 'xfitting-shell-v1';
+// ── BUMP THIS every time you deploy a new index.html ─────────────────────────
+// Match it to the build ID in the HTML comment on line 4.
+// Example: if HTML says XFITTING-BUILD-V109-PACK-20260316, use 'v109-pack-20260316'
+const CACHE_VERSION = 'V109-XFRT-20260317';
+// ─────────────────────────────────────────────────────────────────────────────
+
+const CACHE_NAME   = 'xfitting-shell-' + CACHE_VERSION;
 const WORKER_URL   = 'https://xfitting-lookup.alfixedinc88.workers.dev';
-const QUEUE_KEY    = 'xfitting-sync-queue';
 
 // ── App shell: cache on install ──────────────────────────────────────────────
 const SHELL_ASSETS = [
@@ -15,19 +20,26 @@ const SHELL_ASSETS = [
 
 self.addEventListener('install', e => {
   e.waitUntil(
-    caches.open(CACHE_NAME).then(cache => cache.addAll(SHELL_ASSETS))
+    caches.open(CACHE_NAME)
+      .then(cache => cache.addAll(SHELL_ASSETS))
+      .then(() => self.skipWaiting()) // activate immediately, don't wait for tabs to close
   );
-  self.skipWaiting();
 });
 
 self.addEventListener('activate', e => {
-  // Remove old caches
+  // Delete ALL old caches (any name that isn't the current one)
   e.waitUntil(
     caches.keys().then(keys =>
-      Promise.all(keys.filter(k => k !== CACHE_NAME).map(k => caches.delete(k)))
-    )
+      Promise.all(
+        keys
+          .filter(k => k !== CACHE_NAME)  // keep only current cache
+          .map(k => {
+            console.log('[XF SW] Deleting old cache:', k);
+            return caches.delete(k);
+          })
+      )
+    ).then(() => self.clients.claim()) // take control of all open pages immediately
   );
-  self.clients.claim();
 });
 
 // ── Fetch handler ─────────────────────────────────────────────────────────────
@@ -39,35 +51,40 @@ self.addEventListener('fetch', e => {
     if (e.request.method === 'POST') {
       e.respondWith(handleWorkerPost(e.request.clone()));
     }
-    // GETs just pass through — no caching of API responses
+    // GETs pass through — no caching of API responses
     return;
   }
 
-  // 2. Google Fonts / external — network only, no caching
-  if (!url.origin.includes(self.location.hostname) && !url.pathname.startsWith('/')) {
+  // 2. External resources (Google Fonts etc.) — network only
+  if (!url.hostname.includes(self.location.hostname.split('.')[0])) {
     return;
   }
 
-  // 3. App shell — cache first, fall back to network
+  // 3. App shell — network first, fall back to cache
+  // Network-first means a fresh deploy always gets picked up on next load.
+  // Cache is only used when truly offline.
   e.respondWith(
-    caches.match(e.request).then(cached => {
-      if (cached) return cached;
-      return fetch(e.request).then(res => {
-        // Cache successful HTML/JS/CSS responses
-        if (res.ok && ['text/html','text/css','application/javascript'].some(t =>
+    fetch(e.request)
+      .then(res => {
+        // Only cache successful HTML/JS/CSS
+        if (res.ok && ['text/html', 'text/css', 'application/javascript'].some(t =>
           res.headers.get('content-type')?.includes(t)
         )) {
           const clone = res.clone();
           caches.open(CACHE_NAME).then(c => c.put(e.request, clone));
         }
         return res;
-      }).catch(() => {
-        // Offline — serve cached index for navigation requests
-        if (e.request.mode === 'navigate') {
-          return caches.match('/xf-tools-3829/index.html') || caches.match('/xf-tools-3829/');
-        }
-      });
-    })
+      })
+      .catch(() => {
+        // Offline — serve from cache
+        return caches.match(e.request).then(cached => {
+          if (cached) return cached;
+          if (e.request.mode === 'navigate') {
+            return caches.match('/xf-tools-3829/index.html')
+                || caches.match('/xf-tools-3829/');
+          }
+        });
+      })
   );
 });
 
@@ -77,11 +94,9 @@ async function handleWorkerPost(request) {
     const res = await fetch(request);
     return res;
   } catch {
-    // Network failure — only queue /inventory/log POSTs
     const url = new URL(request.url);
     if (url.pathname === '/inventory/log') {
       await queueRequest(request);
-      // Return a fake success so the UI shows "queued" state
       return new Response(JSON.stringify({
         ok: true,
         queued: true,
@@ -91,13 +106,12 @@ async function handleWorkerPost(request) {
         headers: { 'Content-Type': 'application/json' }
       });
     }
-    // All other POSTs — let the error propagate normally
     throw new Error('Network unavailable');
   }
 }
 
 async function queueRequest(request) {
-  const body = await request.text();
+  const body  = await request.text();
   const queue = await getQueue();
   queue.push({
     url:     request.url,
@@ -116,10 +130,9 @@ self.addEventListener('sync', e => {
   }
 });
 
-// Also replay when the SW receives an online message from the page
 self.addEventListener('message', e => {
-  if (e.data?.type === 'ONLINE') replayQueue();
-  if (e.data?.type === 'QUEUE_STATUS') sendQueueStatus(e.source);
+  if (e.data?.type === 'ONLINE')        replayQueue();
+  if (e.data?.type === 'QUEUE_STATUS')  sendQueueStatus(e.source);
 });
 
 async function replayQueue() {
@@ -134,16 +147,15 @@ async function replayQueue() {
         headers: item.headers,
         body:    item.body
       });
-      if (!res.ok) remaining.push(item); // keep if server error
+      if (!res.ok) remaining.push(item);
     } catch {
-      remaining.push(item); // keep if still offline
+      remaining.push(item);
     }
   }
   await setQueue(remaining);
 
-  // Notify all open tabs
   const clients = await self.clients.matchAll();
-  const synced = queue.length - remaining.length;
+  const synced  = queue.length - remaining.length;
   clients.forEach(c => c.postMessage({
     type: 'SYNC_COMPLETE',
     synced,
@@ -156,8 +168,8 @@ async function sendQueueStatus(client) {
   client.postMessage({ type: 'QUEUE_STATUS', count: queue.length });
 }
 
-// ── Simple queue storage via Cache API (no IndexedDB needed) ─────────────────
-const META_CACHE = 'xfitting-meta-v1';
+// ── Queue storage via Cache API ───────────────────────────────────────────────
+const META_CACHE = 'xfitting-meta-' + CACHE_VERSION;
 
 async function getQueue() {
   try {
