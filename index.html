@@ -1,7 +1,7 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-  <!-- XFITTING-BUILD-V109-CSVF-20260316 -->
+  <!-- XFITTING-BUILD-V109-SHTS-20260316 -->
 <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate">
 <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&family=IBM+Plex+Sans:wght@300;400;500;600&display=swap" rel="stylesheet">
   <meta http-equiv="Pragma" content="no-cache">
@@ -10502,7 +10502,7 @@ function rprToast(msg, type = '') {
         <input type="file" accept=".csv" onchange="psHandleCSV(this)">
         <span class="ps-drop-icon">📂</span>
         <div class="ps-drop-title">Drop today's Veeqo CSV here</div>
-        <div class="ps-drop-hint">or <b>click to browse</b> · FBA auto-removed · saves to Manifest_Log sheet</div>
+        <div class="ps-drop-hint">or <b>click to browse</b> · FBA auto-removed · appends to Manifest_Log sheet</div>
       </div>
       <div class="ps-upload-msg" id="ps-upload-msg"></div>
       <div class="ps-reconcile-bar" id="ps-reconcile-bar" style="display:none;margin-top:12px">
@@ -11119,11 +11119,37 @@ function _psParseCSV(text) {
   psManifest = rows;
   document.getElementById('ps-manifest-pill').style.display = 'flex';
   document.getElementById('ps-manifest-count').textContent  = loaded;
-  document.getElementById('ps-reconcile-bar').style.display = 'flex';
   document.getElementById('ps-drop-zone').querySelector('.ps-drop-title').textContent = 'Replace CSV (drop new file)';
   msg.className = 'ps-upload-msg ok';
-  msg.textContent = '✓ ' + loaded + ' tracking numbers ready' + (skippedFBA ? ' · ' + skippedFBA + ' FBA skipped' : '');
+  msg.textContent = '✓ ' + loaded + ' tracking numbers parsed' + (skippedFBA ? ' · ' + skippedFBA + ' FBA skipped' : '') + ' · Saving to sheet…';
   psRenderProgress();
+
+  // Write to Manifest_Log sheet immediately — worker overwrites today's rows if they exist
+  if (psToken && rows.length > 0) {
+    fetch(PS_WORKER + '/ship/manifest', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'X-Session-Token': psToken },
+      body: JSON.stringify({ rows: rows, uploadedBy: psInitials })
+    }).then(function(r){ return r.json(); }).then(function(d){
+      if (d.ok) {
+        msg.textContent = '✓ ' + loaded + ' orders saved to sheet' + (skippedFBA ? ' · ' + skippedFBA + ' FBA skipped' : '') + (d.replaced ? ' · Previous upload replaced' : '');
+        // Show Gap Analysis button
+        document.getElementById('ps-reconcile-bar').style.display = 'flex';
+      } else {
+        msg.className = 'ps-upload-msg err';
+        msg.textContent = '⚠ Parsed OK but sheet write failed: ' + (d.error || d.message || 'unknown error');
+        // Still show gap analysis button — data is in memory
+        document.getElementById('ps-reconcile-bar').style.display = 'flex';
+      }
+    }).catch(function(e){
+      msg.className = 'ps-upload-msg err';
+      msg.textContent = '⚠ Parsed OK but sheet write failed: ' + e.message;
+      document.getElementById('ps-reconcile-bar').style.display = 'flex';
+    });
+  } else {
+    // No token yet (shouldn't happen) — just show the reconcile button
+    document.getElementById('ps-reconcile-bar').style.display = 'flex';
+  }
 }
 
 function _psParseLine(line) {
@@ -11140,17 +11166,9 @@ function _psParseLine(line) {
 // ── Reconcile ─────────────────────────────────────────
 window.psRunReconcile = async function() {
   var btn = document.getElementById('ps-btn-reconcile');
-  btn.disabled = true; btn.innerHTML = '<span class="ps-spinner"></span>Uploading manifest…';
+  btn.disabled = true; btn.innerHTML = '<span class="ps-spinner"></span>Analysing gaps…';
   try {
-    var upRes  = await fetch(PS_WORKER + '/ship/manifest', {
-      method: 'POST', headers: { 'Content-Type': 'application/json', 'X-Session-Token': psToken },
-      body: JSON.stringify({ rows: psManifest, uploadedBy: psInitials })
-    });
-    var upData = await upRes.json();
-    if (upData.duplicate) { _psToast('⚠ Manifest already uploaded today — re-running analysis', 'warn'); }
-    else if (!upData.ok) throw new Error(upData.error || 'Manifest upload failed');
-
-    btn.innerHTML = '<span class="ps-spinner"></span>Analysing gaps…';
+    // Manifest is already written to sheet on CSV upload — just run the comparison
     var recRes  = await fetch(PS_WORKER + '/ship/reconcile', {
       method: 'POST', headers: { 'Content-Type': 'application/json', 'X-Session-Token': psToken },
       body: JSON.stringify({ date: psTodayKey() })
