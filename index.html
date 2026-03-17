@@ -1,7 +1,7 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-  <!-- XFITTING-BUILD-V109-MOBL-20260317 -->
+  <!-- XFITTING-BUILD-V109-AUTH-20260317 -->
 <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate">
 <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&family=IBM+Plex+Sans:wght@300;400;500;600&display=swap" rel="stylesheet">
   <meta http-equiv="Pragma" content="no-cache">
@@ -9510,9 +9510,39 @@ function rprToast(msg, type = '') {
 #inv-app .ipull-pn{font-size:14px;font-weight:600;color:var(--text);font-family:var(--mono)}
 #inv-app .ipull-name{font-size:11px;color:var(--text3)}
 #inv-app .ipull-progress{font-size:12px;color:var(--text3);font-weight:600;margin-bottom:8px}
+#inv-app .ireauth-overlay{position:fixed;inset:0;z-index:9000;background:rgba(0,0,0,.55);display:flex;align-items:center;justify-content:center;padding:20px}
+#inv-app .ireauth-card{background:var(--bg2);border-radius:16px;padding:28px 24px;max-width:320px;width:100%;box-shadow:var(--shadow2);text-align:center}
+#inv-app .ireauth-title{font-size:16px;font-weight:700;color:var(--text);margin-bottom:4px}
+#inv-app .ireauth-sub{font-size:13px;color:var(--text3);margin-bottom:20px;line-height:1.4}
+#inv-app .ireauth-dots{display:flex;gap:10px;justify-content:center;margin-bottom:16px}
+#inv-app .ireauth-pad{display:grid;grid-template-columns:repeat(3,1fr);gap:8px;max-width:240px;margin:0 auto}
+#inv-app .ireauth-key{padding:16px;border-radius:10px;background:var(--bg3);border:1.5px solid var(--border);font-size:20px;font-weight:700;color:var(--text);cursor:pointer;font-family:'DM Sans',sans-serif;min-height:56px}
+#inv-app .ireauth-key:active{border-color:var(--accent);background:var(--accent-bg)}
+#inv-app .ireauth-err{color:var(--red);font-size:13px;min-height:18px;margin-top:10px}
+#inv-app .ireauth-cancel{margin-top:14px;background:none;border:none;color:var(--text3);font-size:13px;cursor:pointer;font-family:'DM Sans',sans-serif;padding:8px}
 </style>
 
 <div id="inv-flash" class="iflash"><div class="iflash-inner" id="inv-flash-msg"></div></div>
+
+<!-- Session reauth modal — shown inline when a submit gets a 401 -->
+<div id="inv-reauth-overlay" class="ireauth-overlay" style="display:none">
+  <div class="ireauth-card">
+    <div class="ireauth-title">🔒 Session Expired</div>
+    <div class="ireauth-sub">Enter your OPS PIN to continue.<br>Your list is safe.</div>
+    <div class="ireauth-dots" id="inv-reauth-dots">
+      <div class="ipin-dot" id="inv-rd0"></div><div class="ipin-dot" id="inv-rd1"></div>
+      <div class="ipin-dot" id="inv-rd2"></div><div class="ipin-dot" id="inv-rd3"></div>
+    </div>
+    <div class="ireauth-pad">
+      <button class="ireauth-key" onclick="invReauthKey('1')">1</button><button class="ireauth-key" onclick="invReauthKey('2')">2</button><button class="ireauth-key" onclick="invReauthKey('3')">3</button>
+      <button class="ireauth-key" onclick="invReauthKey('4')">4</button><button class="ireauth-key" onclick="invReauthKey('5')">5</button><button class="ireauth-key" onclick="invReauthKey('6')">6</button>
+      <button class="ireauth-key" onclick="invReauthKey('7')">7</button><button class="ireauth-key" onclick="invReauthKey('8')">8</button><button class="ireauth-key" onclick="invReauthKey('9')">9</button>
+      <button class="ireauth-key" onclick="invReauthKey('back')">⌫</button><button class="ireauth-key" onclick="invReauthKey('0')">0</button><button class="ireauth-key" onclick="invReauthKey('clear')" style="font-size:12px">CLR</button>
+    </div>
+    <div class="ireauth-err" id="inv-reauth-err"></div>
+    <button class="ireauth-cancel" onclick="invReauthCancel()">Cancel</button>
+  </div>
+</div>
 
 <div class="itopbar">
   <div class="itopbar-title">📋 Inventory</div>
@@ -9708,6 +9738,67 @@ function rprToast(msg, type = '') {
     g("inv-flash").className = "iflash " + type + " show";
     invFlashTimer = setTimeout(function() { g("inv-flash").className = "iflash"; }, 2500);
   }
+
+  // ── Session reauth ────────────────────────────────────────────────
+  // When a submit gets a 401 (session expired), show an inline PIN prompt,
+  // re-authenticate silently, then call the retry function automatically.
+  var _reauthPin      = "";
+  var _reauthCallback = null;
+  var _reauthCancelFn = null;
+  var OPS_PIN = "1314";
+
+  function invReauth(retryFn, cancelFn) {
+    _reauthPin      = "";
+    _reauthCallback = retryFn;
+    _reauthCancelFn = cancelFn || null;
+    g("inv-reauth-err").textContent = "";
+    for (var i = 0; i < 4; i++) g("inv-rd" + i).className = "ipin-dot";
+    g("inv-reauth-overlay").style.display = "flex";
+  }
+
+  window.invReauthKey = function(k) {
+    if (k === "clear") _reauthPin = "";
+    else if (k === "back") _reauthPin = _reauthPin.slice(0, -1);
+    else if (_reauthPin.length < 4) _reauthPin += k;
+    for (var i = 0; i < 4; i++) g("inv-rd" + i).className = "ipin-dot" + (i < _reauthPin.length ? " filled" : "");
+    g("inv-reauth-err").textContent = "";
+    if (_reauthPin.length === 4) {
+      fetch(W + "/auth", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ pin: _reauthPin, pin_type: "ops" })
+      }).then(function(r) { return r.json(); })
+        .then(function(d) {
+          if (d.token) {
+            XF_SESSION = d.token;
+            sessionStorage.setItem("xf_session", d.token);
+            g("inv-reauth-overlay").style.display = "none";
+            _reauthPin = "";
+            if (_reauthCallback) { var fn = _reauthCallback; _reauthCallback = null; fn(); }
+          } else {
+            g("inv-reauth-err").textContent = "Incorrect PIN";
+            _reauthPin = "";
+            for (var j = 0; j < 4; j++) g("inv-rd" + j).className = "ipin-dot";
+          }
+        })
+        .catch(function() {
+          g("inv-reauth-err").textContent = "Auth failed — check connection";
+          _reauthPin = "";
+          for (var j = 0; j < 4; j++) g("inv-rd" + j).className = "ipin-dot";
+        });
+    }
+  };
+
+  window.invReauthCancel = function() {
+    g("inv-reauth-overlay").style.display = "none";
+    _reauthPin = ""; _reauthCallback = null;
+    if (_reauthCancelFn) { var fn = _reauthCancelFn; _reauthCancelFn = null; fn(); }
+  };
+
+  function isUnauthorized(err) {
+    return err && (err.message === "Unauthorized" || (err.status && err.status === 401));
+  }
+  // ─────────────────────────────────────────────────────────────────
 
   window.invSwitchTab = function(tab) {
     g("inv-panel-scan").className      = "ipanel" + (tab === "scan"     ? " iactive" : "");
@@ -9992,25 +10083,34 @@ function rprToast(msg, type = '') {
     var btn = g("inv-submit-btn");
     btn.disabled = true;
     btn.textContent = "Saving\u2026";
-    wFetch(W + "/inventory/log", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        type: invMode.toUpperCase(), partNum: invPart.partNum, sku: invPart.sku,
-        location: location, cases: cases, initials: initials, notes: notes,
-        isNew: !!invSelLoc.isNew, isPlaceholder: !!invSelLoc.isPlaceholder,
-        masterRowIndex: invSelLoc.rowIndex || null
-      })
-    }).then(function(r) { return r.json(); })
-      .then(function(d) {
-        if (d.ok) { invFlash("Logged \u2014 pending approval", "success"); invReset(false); invFetchPendingCount(); }
-        else { invFlash("Error: " + (d.error || "unknown"), "error"); }
-      })
-      .catch(function() { invFlash("Submit failed", "error"); })
-      .finally(function() {
-        btn.disabled = false;
-        btn.textContent = invMode === "in" ? "Submit Stock In" : "Submit Stock Out";
-      });
+    function doSubmit() {
+      wFetch(W + "/inventory/log", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          type: invMode.toUpperCase(), partNum: invPart.partNum, sku: invPart.sku,
+          location: location, cases: cases, initials: initials, notes: notes,
+          isNew: !!invSelLoc.isNew, isPlaceholder: !!invSelLoc.isPlaceholder,
+          masterRowIndex: invSelLoc.rowIndex || null
+        })
+      }).then(function(r) { return r.json(); })
+        .then(function(d) {
+          if (d.ok) { invFlash("Logged \u2014 pending approval", "success"); invReset(false); invFetchPendingCount(); }
+          else { invFlash("Error: " + (d.error || "unknown"), "error"); }
+        })
+        .catch(function(err) {
+          if (isUnauthorized(err)) {
+            invReauth(doSubmit, function() { btn.disabled = false; btn.textContent = invMode === "in" ? "Submit Stock In" : "Submit Stock Out"; });
+          } else {
+            invFlash("Submit failed", "error");
+          }
+        })
+        .finally(function() {
+          btn.disabled = false;
+          btn.textContent = invMode === "in" ? "Submit Stock In" : "Submit Stock Out";
+        });
+    }
+    doSubmit();
   };
 
   function invReset(keepMode) {
@@ -10232,25 +10332,18 @@ function rprToast(msg, type = '') {
     var notes    = g("inv-pull-notes").value.trim();
     if (invPullList.length === 0) { invFlash("Pull list is empty", "error"); return; }
     if (!initials) { invFlash("Enter your initials", "error"); return; }
-    // Validate all have cases
     var missing = invPullList.filter(function(x) { return !x.cases || x.cases < 1; });
-    if (missing.length > 0) {
-      invFlash(missing.length + " item(s) missing case count", "error"); return;
-    }
+    if (missing.length > 0) { invFlash(missing.length + " item(s) missing case count", "error"); return; }
     var btn = document.querySelector("#inv-pulllist-card .isubmit");
-    btn.disabled = true; btn.textContent = "Submitting…";
-    // Submit each as a separate log entry sequentially
+    btn.disabled = true; btn.textContent = "Submitting\u2026";
     var items = invPullList.slice();
     var idx = 0;
     function submitNext() {
       if (idx >= items.length) {
-        invFlash("Pull list submitted ✓", "ok");
-        invPullList = [];
-        invSavePullList();
-        invRenderPullList();
-        btn.disabled = false; btn.textContent = "📤 Submit Pull List";
-        g("inv-pull-initials").value = "";
-        g("inv-pull-notes").value = "";
+        invFlash("Pull list submitted \u2713", "success");
+        invPullList = []; invSavePullList(); invRenderPullList();
+        btn.disabled = false; btn.textContent = "\ud83d\udce4 Submit Pull List";
+        g("inv-pull-initials").value = ""; g("inv-pull-notes").value = "";
         return;
       }
       var item = items[idx++];
@@ -10263,12 +10356,19 @@ function rprToast(msg, type = '') {
           notes: notes, rowIndex: item.rowIndex, masterRowIndex: item.masterRowIndex,
           isPlaceholder: false, isNew: false, overwriteLocation: ""
         })
-      }).then(function(r){ return r.json(); })
+      }).then(function(r) { return r.json(); })
         .then(function(d) {
           if (d.ok) { submitNext(); }
-          else { invFlash("Submit failed: " + (d.error || "unknown"), "error"); btn.disabled = false; btn.textContent = "📤 Submit Pull List"; }
+          else { invFlash("Submit failed: " + (d.error || "unknown"), "error"); btn.disabled = false; btn.textContent = "\ud83d\udce4 Submit Pull List"; }
         })
-        .catch(function() { invFlash("Submit failed", "error"); btn.disabled = false; btn.textContent = "📤 Submit Pull List"; });
+        .catch(function(err) {
+          if (isUnauthorized(err)) {
+            idx--;  // rewind so this item retries after reauth
+            invReauth(submitNext, function() { btn.disabled = false; btn.textContent = "\ud83d\udce4 Submit Pull List"; });
+          } else {
+            invFlash("Submit failed", "error"); btn.disabled = false; btn.textContent = "\ud83d\udce4 Submit Pull List";
+          }
+        });
     }
     submitNext();
   };
@@ -10761,9 +10861,16 @@ function rprToast(msg, type = '') {
             if (btn) { btn.disabled = false; btn.textContent = '\ud83d\udd01 Submit All Transfers'; }
           }
         })
-        .catch(function() {
-          invFlash('Submit failed', 'error');
-          if (btn) { btn.disabled = false; btn.textContent = '\ud83d\udd01 Submit All Transfers'; }
+        .catch(function(err) {
+          if (isUnauthorized(err)) {
+            idx--;  // rewind so this item retries after reauth
+            invReauth(submitNext, function() {
+              if (btn) { btn.disabled = false; btn.textContent = '\ud83d\udd01 Submit All Transfers'; }
+            });
+          } else {
+            invFlash('Submit failed', 'error');
+            if (btn) { btn.disabled = false; btn.textContent = '\ud83d\udd01 Submit All Transfers'; }
+          }
         });
     }
     submitNext();
