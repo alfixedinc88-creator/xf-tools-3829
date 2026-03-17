@@ -1,7 +1,7 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-  <!-- XFITTING-BUILD-V109-AUTH-20260317 -->
+  <!-- XFITTING-BUILD-V109-NSRH-20260317 -->
 <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate">
 <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&family=IBM+Plex+Sans:wght@300;400;500;600&display=swap" rel="stylesheet">
   <meta http-equiv="Pragma" content="no-cache">
@@ -9565,12 +9565,17 @@ function rprToast(msg, type = '') {
   </div>
   <div class="icard">
     <div class="icard-label">Scan or Search</div>
+    <div style="display:flex;gap:6px;margin-bottom:10px">
+      <button class="ixfr-mode-btn ixfr-active" id="inv-smode-code" onclick="invSetScanMode('code')">SKU / Part# / UPC</button>
+      <button class="ixfr-mode-btn" id="inv-smode-name" onclick="invSetScanMode('name')">Product Name</button>
+    </div>
     <div class="isearch-row">
-      <input class="isearch-inp" id="inv-search-inp" type="text" placeholder="Part# or barcode…" onkeydown="if(event.key==='Enter')invLookup(this.value.trim())">
-      <button class="isearch-btn" onclick="invLookup(document.getElementById('inv-search-inp').value.trim())">Go</button>
+      <input class="isearch-inp" id="inv-search-inp" type="text" placeholder="Part# or barcode…" onkeydown="if(event.key==='Enter')invScanSearch()">
+      <button class="isearch-btn" onclick="invScanSearch()">Go</button>
     </div>
     <button class="icam-btn" id="inv-cam-btn" onclick="invToggleCam()">📷 Start Camera</button>
     <div id="inv-reader-wrap"><div id="inv-qr-reader"></div></div>
+    <div id="inv-name-results" style="display:none;margin-top:10px"></div>
   </div>
   <div class="icard" id="inv-result-card" style="display:none">
     <div style="display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:6px">
@@ -9721,6 +9726,7 @@ function rprToast(msg, type = '') {
   var invPart = null;
   var invSelLoc = null;
   var invCamRunning = false;
+  var invScanSearchMode = "code";
   var invQrScanner = null;
   var invLastScan = 0;
   var invPinEntry = "";
@@ -9857,6 +9863,7 @@ function rprToast(msg, type = '') {
           invLastScan = now;
           invStopCam();
           g("inv-search-inp").value = code;
+          invSetScanMode("code");
           invLookup(code);
         },
         function() {}
@@ -9889,6 +9896,68 @@ function rprToast(msg, type = '') {
     g("inv-cam-btn").textContent = "\ud83d\udcf7 Start Camera";
     g("inv-cam-btn").className = "icam-btn";
     g("inv-cam-btn").disabled = false;
+  }
+
+  window.invSetScanMode = function(mode) {
+    invScanSearchMode = mode;
+    g("inv-smode-code").className = "ixfr-mode-btn" + (mode === "code" ? " ixfr-active" : "");
+    g("inv-smode-name").className = "ixfr-mode-btn" + (mode === "name" ? " ixfr-active" : "");
+    var inp = g("inv-search-inp");
+    if (inp) inp.placeholder = mode === "name" ? "Type product name\u2026" : "Part# or barcode\u2026";
+    var nr = g("inv-name-results"); if (nr) nr.style.display = "none";
+    // Reset lookup cards when switching mode
+    g("inv-result-card").style.display = "none";
+    g("inv-loc-card").style.display    = "none";
+    g("inv-detail-card").style.display = "none";
+  };
+
+  window.invScanSearch = function() {
+    var val = (g("inv-search-inp").value || "").trim();
+    if (!val) return;
+    if (invScanSearchMode === "name") { invScanNameSearch(val); }
+    else { invLookup(val); }
+  };
+
+  function invScanNameSearch(query) {
+    if (!query || query.length < 2) { invFlash("Enter at least 2 characters", "error"); return; }
+    var nr = g("inv-name-results");
+    nr.style.display = "block";
+    nr.innerHTML = "<div class='iempty'>Searching\u2026</div>";
+    g("inv-result-card").style.display = "none";
+    g("inv-loc-card").style.display    = "none";
+    g("inv-detail-card").style.display = "none";
+    wFetch(W + "/inventory/search?name=" + encodeURIComponent(query))
+      .then(function(r) { return r.json(); })
+      .then(function(d) {
+        var results = d.results || [];
+        if (results.length === 0) {
+          nr.innerHTML = "<div class='iempty'>No items found matching \"" + query + "\"</div>";
+          return;
+        }
+        nr.innerHTML = "";
+        results.forEach(function(item) {
+          var el = document.createElement("div");
+          el.className = "iloc-opt";
+          el.innerHTML = "<div style='flex:1'>"
+            + "<div style='font-size:12px;font-family:var(--mono);color:var(--accent);margin-bottom:2px'>" + item.baseSku + "</div>"
+            + "<div style='font-size:14px;font-weight:600;color:var(--text)'>" + item.name + "</div>"
+            + "<div style='font-size:11px;color:var(--text3);margin-top:2px'>" + item.totalCases + " cases \u00b7 " + item.locCount + " location" + (item.locCount !== 1 ? "s" : "") + (item.variantCount > 1 ? " \u00b7 " + item.variantCount + " variants" : "") + "</div>"
+            + "</div><span class='iloc-badge ex'>Select</span>";
+          el.onclick = function() {
+            nr.style.display = "none";
+            g("inv-search-inp").value = item.baseSku;
+            invLookup(item.baseSku);
+          };
+          nr.appendChild(el);
+        });
+      })
+      .catch(function(err) {
+        if (isUnauthorized(err)) {
+          invReauth(function() { invScanNameSearch(query); });
+        } else {
+          nr.innerHTML = "<div class='iempty'>Search failed</div>";
+        }
+      });
   }
 
   window.invLookup = function(code) {
@@ -10123,6 +10192,7 @@ function rprToast(msg, type = '') {
     g("inv-newloc-inp").value = "";
     g("inv-newloc-wrap").style.display = "none";
     g("inv-warn").style.display = "none";
+    var nr = g("inv-name-results"); if (nr) nr.style.display = "none";
     if (!keepMode) invStopCam();
   }
 
