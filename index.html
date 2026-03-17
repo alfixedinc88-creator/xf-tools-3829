@@ -1,7 +1,7 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-  <!-- XFITTING-BUILD-V109-RCPO-20260318D -->
+  <!-- XFITTING-BUILD-V109-RCPO-20260318E -->
 <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate">
 <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&family=IBM+Plex+Sans:wght@300;400;500;600&display=swap" rel="stylesheet">
   <meta http-equiv="Pragma" content="no-cache">
@@ -12802,22 +12802,25 @@ function _psUploadStatusToSheet(rows) {
     }
 
     rpoMatches = [];
-    rpoData.forEach(function(item) {
-      // Check if base SKU exists anywhere in Master_List
-      var baseExists  = !!mlBaseExistsSet[item.baseSku];
-      var candidates  = mlBlankMap[item.partNum] || [];
-      var mlRow       = (baseExists && candidates.length > 0) ? pickBestRow(candidates) : null;
-      var priceInfo   = rpoPrices[item.baseSku] || null;
-      var needsNewRow = baseExists && !mlRow;   // base exists but no blank row → insert
-      var notInCatalog = !baseExists;            // base SKU not found anywhere → flag
+    // Build today's date string to append to pallet names (matches worker format)
+    var _td = new Date();
+    var _todayStr = (_td.getMonth()+1) + '/' + _td.getDate() + '/' + String(_td.getFullYear()).slice(-2);
 
-      var insertAfter = mlBaseMap[item.baseSku] || (mlRows.length > 0 ? mlRows[mlRows.length - 1].rowIndex : 2);
+    rpoData.forEach(function(item) {
+      var baseExists   = !!mlBaseExistsSet[item.baseSku];
+      var candidates   = mlBlankMap[item.partNum] || [];
+      var mlRow        = (baseExists && candidates.length > 0) ? pickBestRow(candidates) : null;
+      var priceInfo    = rpoPrices[item.baseSku] || null;
+      var needsNewRow  = baseExists && !mlRow;
+      var notInCatalog = !baseExists;
+      var insertAfter  = mlBaseMap[item.baseSku] || (mlRows.length > 0 ? mlRows[mlRows.length - 1].rowIndex : 2);
+      var palletWithDate = item.pallet + ' ' + _todayStr;
 
       rpoMatches.push({
         partNum:       item.partNum,
         baseSku:       item.baseSku,
         desc:          item.desc || (mlRow ? mlRow.name : ''),
-        pallet:        item.pallet,
+        pallet:        palletWithDate,
         vendor:        item.vendor,
         cases:         item.cases,
         upc:           item.upc,
