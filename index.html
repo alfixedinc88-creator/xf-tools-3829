@@ -1,7 +1,7 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-  <!-- XFITTING-BUILD-V109-RCPO-20260318 -->
+  <!-- XFITTING-BUILD-V109-RCPO-20260318B -->
 <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate">
 <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&family=IBM+Plex+Sans:wght@300;400;500;600&display=swap" rel="stylesheet">
   <meta http-equiv="Pragma" content="no-cache">
@@ -12754,30 +12754,59 @@ function _psUploadStatusToSheet(rows) {
   }
 
   function rpoBuildPreview(mlRows, status) {
-    // Build map: partNum -> master row, AND baseSku -> array of master rows (for insert position)
-    var mlMap     = {};  // partNum -> row
-    var mlBaseMap = {};  // baseSku -> last rowIndex seen (for insert-after)
+    // Build two maps:
+    // mlBlankMap: partNum -> array of rows where col I (cases) is blank/empty
+    // mlBaseMap:  baseSku -> last rowIndex seen (for insert-after positioning)
+    var mlBlankMap = {};  // partNum -> [rows with blank cases]
+    var mlBaseMap  = {};  // baseSku -> highest rowIndex
     mlRows.forEach(function(r) {
       var pn = r.partNum.toUpperCase();
       var bs = pn.split('=')[0].trim();
-      mlMap[pn] = r;
       if (!mlBaseMap[bs] || r.rowIndex > mlBaseMap[bs]) mlBaseMap[bs] = r.rowIndex;
+      var casesBlank = (r.cases === '' || r.cases === null || r.cases === undefined);
+      if (casesBlank) {
+        if (!mlBlankMap[pn]) mlBlankMap[pn] = [];
+        mlBlankMap[pn].push(r);
+      }
     });
+
+    // Helper: parse a date from location text (e.g. "will be here 3/3/26", "1/13/2026")
+    // Returns a Date or null
+    function parseDateFromLocation(loc) {
+      var m = (loc || '').match(/(\d{1,2})\/(\d{1,2})\/(\d{2,4})/);
+      if (!m) return null;
+      var yr = parseInt(m[3]);
+      if (yr < 100) yr += 2000;
+      return new Date(yr, parseInt(m[1]) - 1, parseInt(m[2]));
+    }
+
+    // For a list of blank-cases rows, pick the one with the oldest date in col H.
+    // If no dates found, pick the first row (lowest rowIndex).
+    function pickBestRow(rows) {
+      if (rows.length === 1) return rows[0];
+      var withDate = rows.map(function(r) {
+        return { row: r, date: parseDateFromLocation(r.location) };
+      }).filter(function(x) { return x.date !== null; });
+      if (withDate.length > 0) {
+        // Sort ascending — oldest date first
+        withDate.sort(function(a, b) { return a.date - b.date; });
+        return withDate[0].row;
+      }
+      // No dates — pick lowest rowIndex
+      rows.sort(function(a, b) { return a.rowIndex - b.rowIndex; });
+      return rows[0];
+    }
 
     rpoMatches = [];
     rpoData.forEach(function(item) {
-      var mlRow     = mlMap[item.partNum];
-      var priceInfo = rpoPrices[item.baseSku] || null;
+      var candidates = mlBlankMap[item.partNum] || [];
+      var mlRow      = candidates.length > 0 ? pickBestRow(candidates) : null;
+      var priceInfo  = rpoPrices[item.baseSku] || null;
 
-      // isPlaceholder = existing row AND location contains a date pattern (1/13/26 etc.)
-      var isPlaceholder = mlRow && /\d{1,2}\/\d{1,2}\/\d{2,4}/.test(mlRow.location || '');
+      // needsNewRow: no blank-cases row found for this partNum
+      var needsNewRow = !mlRow;
 
-      // needsNewRow = no existing row, OR existing row has no date placeholder
-      // In both cases we INSERT a new row. Col K gets user input (default '1/13/26').
-      // isPlaceholder = true → UPDATE existing row, K gets old H value
-      var needsNewRow = !mlRow || !isPlaceholder;
-
-      // Insert position: after last row with same base SKU, or after last row if none
+      // Insert position: after last row with same base SKU
       var insertAfter = mlBaseMap[item.baseSku] || (mlRows.length > 0 ? mlRows[mlRows.length - 1].rowIndex : 2);
 
       rpoMatches.push({
@@ -12792,12 +12821,12 @@ function _psUploadStatusToSheet(rows) {
         pricePerUnit:  priceInfo ? priceInfo.price : null,
         mlRow:         mlRow || null,
         oldLocation:   mlRow ? (mlRow.location || '') : '',
-        isPlaceholder: isPlaceholder,
+        isPlaceholder: !needsNewRow,   // true = updating existing blank row
         needsNewRow:   needsNewRow,
-        matched:       !!mlRow,
-        rowIndex:      (!needsNewRow && mlRow) ? mlRow.rowIndex : null,
+        matched:       !needsNewRow,
+        rowIndex:      mlRow ? mlRow.rowIndex : null,
         insertAfter:   needsNewRow ? insertAfter : null,
-        colKValue:     isPlaceholder ? (mlRow.location || '') : '1/13/26'  // default editable
+        colKValue:     mlRow ? (mlRow.location || '') : '1/13/26'
       });
     });
 
