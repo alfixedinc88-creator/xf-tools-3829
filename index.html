@@ -1,7 +1,7 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-  <!-- XFITTING-BUILD-V109-RCPO-20260317 -->
+  <!-- XFITTING-BUILD-V109-RCPO-20260318 -->
 <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate">
 <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&family=IBM+Plex+Sans:wght@300;400;500;600&display=swap" rel="stylesheet">
   <meta http-equiv="Pragma" content="no-cache">
@@ -12523,11 +12523,12 @@ function _psUploadStatusToSheet(rows) {
             <tr>
               <th>Part #</th>
               <th>Description</th>
-              <th>Pallet</th>
+              <th>Pallet (Col H)</th>
               <th>Vendor</th>
               <th>Cases</th>
               <th>Units/Case</th>
-              <th>Location Change</th>
+              <th>New Location</th>
+              <th>Col K</th>
               <th>Price/Unit</th>
               <th>Status</th>
             </tr>
@@ -12753,18 +12754,31 @@ function _psUploadStatusToSheet(rows) {
   }
 
   function rpoBuildPreview(mlRows, status) {
-    // mlRows: array of { rowIndex, partNum, location, cases, upc, sku }
-    // Build a map: partNum -> master row
-    var mlMap = {};
-    mlRows.forEach(function(r) { mlMap[r.partNum.toUpperCase()] = r; });
+    // Build map: partNum -> master row, AND baseSku -> array of master rows (for insert position)
+    var mlMap     = {};  // partNum -> row
+    var mlBaseMap = {};  // baseSku -> last rowIndex seen (for insert-after)
+    mlRows.forEach(function(r) {
+      var pn = r.partNum.toUpperCase();
+      var bs = pn.split('=')[0].trim();
+      mlMap[pn] = r;
+      if (!mlBaseMap[bs] || r.rowIndex > mlBaseMap[bs]) mlBaseMap[bs] = r.rowIndex;
+    });
 
     rpoMatches = [];
     rpoData.forEach(function(item) {
-      var mlRow = mlMap[item.partNum];
+      var mlRow     = mlMap[item.partNum];
       var priceInfo = rpoPrices[item.baseSku] || null;
 
-      // Check if this row has a "will be here" / date placeholder containing date pattern
+      // isPlaceholder = existing row AND location contains a date pattern (1/13/26 etc.)
       var isPlaceholder = mlRow && /\d{1,2}\/\d{1,2}\/\d{2,4}/.test(mlRow.location || '');
+
+      // needsNewRow = no existing row, OR existing row has no date placeholder
+      // In both cases we INSERT a new row. Col K gets user input (default '1/13/26').
+      // isPlaceholder = true → UPDATE existing row, K gets old H value
+      var needsNewRow = !mlRow || !isPlaceholder;
+
+      // Insert position: after last row with same base SKU, or after last row if none
+      var insertAfter = mlBaseMap[item.baseSku] || (mlRows.length > 0 ? mlRows[mlRows.length - 1].rowIndex : 2);
 
       rpoMatches.push({
         partNum:       item.partNum,
@@ -12779,8 +12793,11 @@ function _psUploadStatusToSheet(rows) {
         mlRow:         mlRow || null,
         oldLocation:   mlRow ? (mlRow.location || '') : '',
         isPlaceholder: isPlaceholder,
+        needsNewRow:   needsNewRow,
         matched:       !!mlRow,
-        rowIndex:      mlRow ? mlRow.rowIndex : null
+        rowIndex:      (!needsNewRow && mlRow) ? mlRow.rowIndex : null,
+        insertAfter:   needsNewRow ? insertAfter : null,
+        colKValue:     isPlaceholder ? (mlRow.location || '') : '1/13/26'  // default editable
       });
     });
 
@@ -12788,18 +12805,23 @@ function _psUploadStatusToSheet(rows) {
     rpoRenderPreview();
   }
 
+  // Called from inline col-K inputs in the table
+  window.rpoSetColK = function(i, val) {
+    if (rpoMatches[i]) rpoMatches[i].colKValue = val;
+  };
+
   function rpoRenderPreview() {
-    var matched   = rpoMatches.filter(function(x) { return x.matched; });
-    var unmatched = rpoMatches.filter(function(x) { return !x.matched; });
-    var withPrice = rpoMatches.filter(function(x) { return x.pricePerUnit; });
+    var willUpdate = rpoMatches.filter(function(x) { return x.isPlaceholder; });
+    var willInsert = rpoMatches.filter(function(x) { return x.needsNewRow; });
+    var withPrice  = rpoMatches.filter(function(x) { return x.pricePerUnit; });
 
     // Stats
     var statsEl = document.getElementById('rpo-stats-row');
     statsEl.innerHTML = [
-      { val: rpoMatches.length, lbl: 'Total Parts' },
-      { val: matched.length,   lbl: 'Matched', color: 'var(--green)' },
-      { val: unmatched.length, lbl: 'Unmatched', color: unmatched.length > 0 ? 'var(--orange)' : 'var(--text)' },
-      { val: withPrice.length, lbl: 'With Pricing' },
+      { val: rpoMatches.length,  lbl: 'Total Parts' },
+      { val: willUpdate.length,  lbl: 'Update Existing', color: 'var(--green)' },
+      { val: willInsert.length,  lbl: 'Insert New Row',  color: 'var(--purple)' },
+      { val: withPrice.length,   lbl: 'With Pricing' },
       { val: rpoMatches.reduce(function(s,x){return s+(x.cases||0);},0), lbl: 'Total Cases' }
     ].map(function(s) {
       return '<div class="rpo-stat"><div class="rpo-stat-val" style="color:' + (s.color||'var(--text)') + '">' + s.val + '</div><div class="rpo-stat-lbl">' + s.lbl + '</div></div>';
@@ -12807,9 +12829,9 @@ function _psUploadStatusToSheet(rows) {
 
     // Warnings
     var warns = [];
-    if (unmatched.length > 0) warns.push('<strong>' + unmatched.length + ' part(s) not found</strong> in Master List — they will be skipped. Check part numbers.');
-    var noPrice = rpoMatches.filter(function(x) { return x.matched && !x.pricePerUnit; });
-    if (noPrice.length > 0) warns.push('<strong>' + noPrice.length + ' matched part(s)</strong> have no vendor pricing. Price/Unit and Total Price columns will be left blank.');
+    var noPrice = rpoMatches.filter(function(x) { return !x.pricePerUnit; });
+    if (noPrice.length > 0) warns.push('<strong>' + noPrice.length + ' part(s)</strong> have no vendor pricing — Price/Unit and Total Price will be left blank.');
+    if (willInsert.length > 0) warns.push('<strong>' + willInsert.length + ' part(s)</strong> have no date placeholder in Master List — new rows will be inserted. Verify the Col K date/text below before confirming.');
     var wCard = document.getElementById('rpo-warnings-card');
     if (warns.length > 0) {
       wCard.style.display = 'block';
@@ -12820,40 +12842,54 @@ function _psUploadStatusToSheet(rows) {
       wCard.style.display = 'none';
     }
 
-    // Table
+    // Update toggle button label
+    var toggleBtn = document.querySelector('#receivepo-app button[onclick="rpoToggleUnmatched()"]');
+    if (toggleBtn) toggleBtn.textContent = rpoShowUnmatched ? 'Show All' : 'Show New Rows Only';
+
+    // Table rows
     var rows = rpoShowUnmatched
-      ? rpoMatches.filter(function(x) { return !x.matched; })
+      ? rpoMatches.filter(function(x) { return x.needsNewRow; })
       : rpoMatches;
 
     var tbody = document.getElementById('rpo-preview-body');
     tbody.innerHTML = '';
-    rows.forEach(function(item) {
+    rows.forEach(function(item, visIdx) {
+      // Find actual index in rpoMatches for colK binding
+      var realIdx = rpoMatches.indexOf(item);
       var tr = document.createElement('tr');
-      if (!item.matched) tr.style.opacity = '0.5';
 
-      var statusBadge = item.matched
-        ? (item.isPlaceholder
-            ? '<span class="rpo-badge rpo-badge-ok">✓ Match</span>'
-            : '<span class="rpo-badge rpo-badge-warn">⚠ No placeholder</span>')
-        : '<span class="rpo-badge rpo-badge-err">✗ Not found</span>';
+      var statusBadge = item.isPlaceholder
+        ? '<span class="rpo-badge rpo-badge-ok">✓ Update</span>'
+        : (item.matched
+            ? '<span class="rpo-badge rpo-badge-new">+ Insert (no date)</span>'
+            : '<span class="rpo-badge rpo-badge-new">+ Insert (new)</span>');
 
-      var locChange = item.matched
-        ? ('<span class="rpo-old-loc rpo-mono">' + (item.oldLocation || '—') + '</span>'
-           + '<span class="rpo-arrow">→</span>'
-           + '<span class="rpo-new-loc rpo-mono">' + item.pallet + '</span>')
-        : '<span style="color:var(--text3)">—</span>';
+      var locHtml = '<span class="rpo-new-loc rpo-mono">' + item.pallet + '</span>';
+
+      // Col K cell — editable if needsNewRow, read-only (shows old location) if updating
+      var colKHtml;
+      if (item.isPlaceholder) {
+        // Update path: K gets old H value, shown as read-only
+        colKHtml = '<span class="rpo-mono" style="color:var(--text3);font-size:11px">' + (item.oldLocation || '—') + '</span>';
+      } else {
+        // Insert path: user can edit the K value
+        colKHtml = '<input type="text" value="' + (item.colKValue || '1/13/26') + '" '
+          + 'style="width:90px;padding:4px 6px;border:1.5px solid var(--border);border-radius:5px;font-size:12px;font-family:var(--mono);background:var(--bg);color:var(--text)" '
+          + 'onchange="rpoSetColK(' + realIdx + ', this.value)" oninput="rpoSetColK(' + realIdx + ', this.value)">';
+      }
 
       var price = item.pricePerUnit != null
         ? '$' + item.pricePerUnit.toFixed(4)
         : '<span style="color:var(--text3)">—</span>';
 
       tr.innerHTML = '<td class="rpo-mono">' + item.partNum + '</td>'
-        + '<td style="font-size:12px;color:var(--text2);max-width:200px">' + (item.desc || '—') + '</td>'
-        + '<td class="rpo-mono">' + item.pallet + '</td>'
+        + '<td style="font-size:12px;color:var(--text2);max-width:180px">' + (item.desc || '—') + '</td>'
+        + '<td class="rpo-mono" style="font-size:11px">' + item.pallet + '</td>'
         + '<td><span style="font-size:11px;font-weight:700;color:' + (item.vendor==='JQ'?'var(--accent)':'var(--orange)') + '">' + item.vendor + '</span></td>'
         + '<td class="rpo-mono" style="text-align:right">' + (item.cases || '—') + '</td>'
         + '<td class="rpo-mono" style="text-align:right">' + (item.upc || '—') + '</td>'
-        + '<td style="font-size:12px">' + locChange + '</td>'
+        + '<td>' + locHtml + '</td>'
+        + '<td>' + colKHtml + '</td>'
         + '<td class="rpo-mono" style="text-align:right">' + price + '</td>'
         + '<td>' + statusBadge + '</td>';
       tbody.appendChild(tr);
@@ -12867,14 +12903,13 @@ function _psUploadStatusToSheet(rows) {
 
   window.rpoToggleUnmatched = function() {
     rpoShowUnmatched = !rpoShowUnmatched;
-    var btn = document.querySelector('#receivepo-app button[onclick="rpoToggleUnmatched()"]');
-    if (btn) btn.textContent = rpoShowUnmatched ? 'Show All' : 'Show Unmatched Only';
     rpoRenderPreview();
   };
 
   window.rpoConfirm = function() {
-    var toApply = rpoMatches.filter(function(x) { return x.matched && x.rowIndex; });
-    if (toApply.length === 0) { rpoToast('No matched rows to apply', 'error'); return; }
+    // All rows apply — update existing placeholders + insert new rows
+    var toApply = rpoMatches.slice();
+    if (toApply.length === 0) { rpoToast('Nothing to apply', 'error'); return; }
 
     document.getElementById('rpo-step-preview').style.display = 'none';
     document.getElementById('rpo-step-applying').style.display = 'block';
@@ -12886,36 +12921,50 @@ function _psUploadStatusToSheet(rows) {
 
     function applyNext() {
       if (idx >= toApply.length) {
-        // Done
         bar.style.width = '100%';
         document.getElementById('rpo-step-applying').style.display = 'none';
         document.getElementById('rpo-step-done').style.display = 'block';
         document.getElementById('rpo-done-summary').textContent =
-          applied + ' of ' + toApply.length + ' parts received. Master List updated. Workers can now do transfers from pallet locations to shelves.';
+          applied + ' of ' + toApply.length + ' parts received. Master List updated. Workers can now transfer from pallet locations to shelves.';
         return;
       }
       var item = toApply[idx++];
-      var pct  = Math.round((idx / toApply.length) * 100);
+      var pct = Math.round((idx / toApply.length) * 100);
       bar.style.width = pct + '%';
-      applyStatus.textContent = 'Updating ' + item.partNum + '… (' + idx + '/' + toApply.length + ')';
+      applyStatus.textContent = (item.needsNewRow ? 'Inserting' : 'Updating') + ' ' + item.partNum + '… (' + idx + '/' + toApply.length + ')';
 
       wFetch(W + '/inventory/receive-apply', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          rowIndex:    item.rowIndex,
-          partNum:     item.partNum,
-          pallet:      item.pallet,
-          vendor:      item.vendor,
-          cases:       item.cases,
-          upc:         item.upc,
+          rowIndex:     item.rowIndex,       // null if needsNewRow
+          insertAfter:  item.insertAfter,    // used when rowIndex is null
+          needsNewRow:  item.needsNewRow,
+          partNum:      item.partNum,
+          baseSku:      item.baseSku,
+          pallet:       item.pallet,
+          vendor:       item.vendor,
+          cases:        item.cases,
+          upc:          item.upc,
           pricePerUnit: item.pricePerUnit,
-          oldLocation: item.oldLocation
+          colKValue:    item.colKValue       // old location (update) or user date (insert)
         })
       }).then(function(r) { return r.json(); })
         .then(function(d) {
-          if (d.ok) applied++;
-          else console.warn('rpo apply failed:', item.partNum, d.error);
+          if (d.ok) {
+            applied++;
+            // Update insertAfter for subsequent inserts — new row was inserted at insertAfter+1
+            // so bump all remaining items that share the same base SKU or higher insertAfter
+            if (item.needsNewRow && d.insertedAt) {
+              toApply.forEach(function(x) {
+                if (x.needsNewRow && x.insertAfter >= item.insertAfter) {
+                  x.insertAfter++;  // shift down past the new row
+                }
+              });
+            }
+          } else {
+            console.warn('rpo apply failed:', item.partNum, d.error);
+          }
           applyNext();
         })
         .catch(function(err) {
@@ -12926,7 +12975,6 @@ function _psUploadStatusToSheet(rows) {
             rpoToast('Session expired', 'error');
             return;
           }
-          // Non-auth error — skip and continue
           console.warn('rpo apply error:', item.partNum, err.message);
           applyNext();
         });
