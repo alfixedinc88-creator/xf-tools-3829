@@ -1,7 +1,7 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-  <!-- XFITTING-BUILD-V109-SCAN-20260317B -->
+  <!-- XFITTING-BUILD-V109-XFRC-20260317 -->
 <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate">
 <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&family=IBM+Plex+Sans:wght@300;400;500;600&display=swap" rel="stylesheet">
   <meta http-equiv="Pragma" content="no-cache">
@@ -9482,6 +9482,20 @@ function rprToast(msg, type = '') {
 #inv-app .iflash-inner{padding:20px 32px;border-radius:14px;font-size:17px;font-weight:700;color:#fff;box-shadow:0 4px 24px rgba(0,0,0,.15)}
 #inv-app .iflash.success .iflash-inner{background:var(--green)}
 #inv-app .iflash.error .iflash-inner{background:var(--red)}
+#inv-app .ixfr-mode-btn{flex:1;padding:8px;border-radius:8px;border:1.5px solid var(--border);background:var(--bg3);color:var(--text3);font-size:12px;font-weight:600;cursor:pointer;font-family:'DM Sans',sans-serif;transition:all .15s}
+#inv-app .ixfr-mode-btn.ixfr-active{border-color:var(--purple);background:var(--purple-bg);color:var(--purple)}
+#inv-app .xfr-cart-item{background:var(--bg3);border:1.5px solid var(--border);border-radius:10px;padding:12px;margin-bottom:8px}
+#inv-app .xfr-cart-item-head{display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:6px}
+#inv-app .xfr-cart-item-part{font-size:14px;font-weight:700;font-family:var(--mono);color:var(--text)}
+#inv-app .xfr-cart-item-meta{font-size:11px;color:var(--text3);margin-bottom:8px;line-height:1.5}
+#inv-app .xfr-cart-item-dest{display:flex;gap:6px;align-items:center;position:relative}
+#inv-app .xfr-cart-item-dest input{flex:1;padding:7px 10px;border:1.5px solid var(--border);border-radius:7px;font-size:13px;font-family:'DM Sans',sans-serif;background:var(--bg2);color:var(--text);outline:none}
+#inv-app .xfr-cart-item-dest input:focus{border-color:var(--purple)}
+#inv-app .xfr-cart-item-dest input.dest-set{border-color:var(--green);background:var(--green-bg)}
+#inv-app .xfr-dest-drop{position:absolute;top:100%;left:0;right:30px;z-index:50;background:var(--bg2);border:1px solid var(--border);border-radius:8px;box-shadow:var(--shadow2);max-height:130px;overflow-y:auto;margin-top:2px}
+#inv-app .xfr-dest-opt{padding:9px 12px;font-size:13px;cursor:pointer;border-bottom:1px solid var(--border)}
+#inv-app .xfr-dest-opt:last-child{border-bottom:none}
+#inv-app .xfr-dest-opt:hover{background:var(--accent-bg);color:var(--accent)}
 #inv-app .ipull-row{display:grid;grid-template-columns:auto 1fr auto;gap:10px;align-items:start;padding:10px 0;border-bottom:1px solid var(--border);transition:opacity .2s}
 #inv-app .ipull-row.ipl-checked{opacity:.45}
 #inv-app .ipull-row.ipl-checked .ipull-loc{text-decoration:line-through;color:var(--text3)}
@@ -9579,15 +9593,19 @@ function rprToast(msg, type = '') {
 <!-- ── Transfer Panel ── -->
 <div class="ipanel" id="inv-panel-transfer">
   <div class="icard">
-    <div class="icard-label">Transfer Stock Between Locations</div>
-    <div style="font-size:12px;color:var(--text3);margin-bottom:10px;line-height:1.5">Move cases from one shelf location to another. Both sides are logged and require management approval.</div>
-    <div class="icard-label" style="margin-top:4px">Scan or Search Part</div>
-    <div class="isearch-row">
-      <input class="isearch-inp" id="xfr-search-inp" type="text" placeholder="Part# or barcode…" onkeydown="if(event.key==='Enter')xfrLookup(this.value.trim())">
-      <button class="isearch-btn" onclick="xfrLookup(document.getElementById('xfr-search-inp').value.trim())">Go</button>
+    <div class="icard-label">Transfer Stock</div>
+    <div style="font-size:12px;color:var(--text3);margin-bottom:10px;line-height:1.5">Grab items from locations and add to cart. Set the destination when you arrive at the shelf.</div>
+    <div style="display:flex;gap:6px;margin-bottom:10px">
+      <button class="ixfr-mode-btn ixfr-active" id="xfr-mode-code" onclick="xfrSetSearchMode('code')">SKU / Part# / UPC</button>
+      <button class="ixfr-mode-btn" id="xfr-mode-name" onclick="xfrSetSearchMode('name')">Product Name</button>
     </div>
-    <button class="icam-btn" id="xfr-cam-btn" onclick="xfrToggleCam()">📷 Start Camera</button>
+    <div class="isearch-row">
+      <input class="isearch-inp" id="xfr-search-inp" type="text" placeholder="Part#, UPC, or name…" onkeydown="if(event.key==='Enter')xfrSearch()">
+      <button class="isearch-btn" onclick="xfrSearch()">Go</button>
+    </div>
+    <button class="icam-btn" id="xfr-cam-btn" onclick="xfrToggleCam()">📷 Scan Barcode</button>
     <div id="xfr-reader-wrap" style="display:none"><div id="xfr-qr-reader"></div></div>
+    <div id="xfr-name-results" style="display:none;margin-top:10px"></div>
   </div>
   <div class="icard" id="xfr-result-card" style="display:none">
     <div style="display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:4px">
@@ -9597,34 +9615,42 @@ function rprToast(msg, type = '') {
     <div class="iresult-name" id="xfr-result-name"></div>
   </div>
   <div class="icard" id="xfr-from-card" style="display:none">
-    <div class="icard-label">Step 1 — From Location</div>
-    <div style="font-size:11px;color:var(--text3);margin-bottom:8px">Select the location you are moving stock OUT of.</div>
+    <div class="icard-label" id="xfr-from-label">From Location</div>
+    <div style="font-size:11px;color:var(--text3);margin-bottom:8px">Select the location you are moving stock out of.</div>
     <div id="xfr-from-list"></div>
   </div>
-  <div class="icard" id="xfr-to-card" style="display:none">
-    <div style="display:flex;align-items:center;gap:8px;margin-bottom:4px">
-      <div class="icard-label" style="margin:0">Step 2 — To Location</div>
-      <span style="font-size:10px;font-weight:700;font-family:var(--mono);color:var(--orange);background:var(--orange-bg);padding:2px 7px;border-radius:4px" id="xfr-from-badge"></span>
+  <div class="icard" id="xfr-addcart-card" style="display:none">
+    <div class="icard-label">Add to Transfer Cart</div>
+    <div style="background:var(--bg3);border-radius:8px;padding:10px 12px;font-size:13px;margin-bottom:12px;line-height:1.6">
+      <div><span style="font-weight:700;color:var(--text)">Part:</span> <span id="xfr-addcart-part" style="font-family:var(--mono);color:var(--text)"></span></div>
+      <div><span style="font-weight:700;color:var(--text)">From:</span> <span id="xfr-addcart-from" style="font-family:var(--mono);color:var(--accent)"></span></div>
     </div>
-    <div style="font-size:11px;color:var(--text3);margin-bottom:8px">Select the destination location or add a new one.</div>
-    <div id="xfr-to-list"></div>
-    <div id="xfr-newloc-wrap" style="display:none;margin-top:8px">
-      <div class="ifield"><label>New Location Name</label><input id="xfr-newloc-inp" type="text" placeholder="e.g. A-Shelf-3"></div>
-    </div>
-  </div>
-  <div class="icard" id="xfr-detail-card" style="display:none">
-    <div class="icard-label">Step 3 — Confirm Transfer</div>
-    <div id="xfr-summary" style="background:var(--purple-bg);border:1px solid #c4b5fd;border-radius:8px;padding:10px 12px;font-size:13px;margin-bottom:12px;line-height:1.7">
-      <div><span style="font-weight:700;color:var(--purple)">FROM:</span> <span id="xfr-sum-from" style="font-family:var(--mono);color:var(--text)"></span></div>
-      <div><span style="font-weight:700;color:var(--purple)">TO:</span> &nbsp;&nbsp;&nbsp;<span id="xfr-sum-to" style="font-family:var(--mono);color:var(--text)"></span></div>
-    </div>
-    <div class="iwarn" id="xfr-warn" style="display:none"></div>
+    <div class="iwarn" id="xfr-addcart-warn" style="display:none"></div>
     <div class="ifield-row">
-      <div class="ifield"><label>Cases to Transfer</label><input id="xfr-cases" type="number" min="1" placeholder="0"></div>
-      <div class="ifield"><label>Initials</label><input id="xfr-initials" type="text" maxlength="4" placeholder="e.g. DJ"></div>
+      <div class="ifield"><label>Cases</label><input id="xfr-addcart-cases" type="number" min="1" placeholder="0"></div>
+      <div class="ifield"><label>Initials</label><input id="xfr-cart-initials" type="text" maxlength="4" placeholder="e.g. DJ"></div>
     </div>
-    <div class="ifield"><label>Notes (optional)</label><input id="xfr-notes" type="text" placeholder="Reason for transfer…"></div>
-    <button class="isubmit" id="xfr-submit-btn" onclick="xfrSubmit()" style="background:var(--purple);border-color:var(--purple)">🔁 Submit Transfer</button>
+    <button class="isubmit" onclick="xfrAddToCart()" style="background:var(--purple);border-color:var(--purple)">+ Add to Cart</button>
+  </div>
+  <div class="icard" id="xfr-cart-card" style="display:none">
+    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px">
+      <div class="icard-label" style="margin:0">🛒 Transfer Cart <span id="xfr-cart-count" style="font-size:11px;font-weight:700;background:var(--purple-bg);color:var(--purple);padding:1px 7px;border-radius:10px;margin-left:4px"></span></div>
+      <button onclick="xfrClearCart()" style="background:none;border:none;color:var(--text3);font-size:12px;cursor:pointer;padding:4px 8px">Clear All</button>
+    </div>
+    <div style="margin-bottom:12px">
+      <div style="font-size:11px;font-weight:600;color:var(--text2);margin-bottom:6px">Set Destination for All Items</div>
+      <div style="display:flex;gap:8px;margin-bottom:4px">
+        <input class="isearch-inp" id="xfr-dest-inp" type="text" placeholder="Type destination location…" style="flex:1;font-size:13px;padding:8px 10px" oninput="xfrFilterDest(this.value)">
+        <button class="isearch-btn" style="font-size:12px;padding:8px 12px" onclick="xfrApplyDestAll()">Apply All</button>
+      </div>
+      <div id="xfr-dest-suggestions" style="display:none;max-height:120px;overflow-y:auto;border:1px solid var(--border);border-radius:8px;background:var(--bg2);margin-bottom:6px"></div>
+      <div style="font-size:10px;color:var(--text3)">Or set the destination on each item individually below.</div>
+    </div>
+    <div id="xfr-cart-items"></div>
+    <div style="margin-top:10px">
+      <div class="ifield"><label style="font-size:10px">Notes (optional)</label><input id="xfr-cart-notes" type="text" placeholder="e.g. Reorganizing shelf B3"></div>
+    </div>
+    <button class="isubmit" id="xfr-cart-submit-btn" onclick="xfrSubmitCart()" style="background:var(--purple);border-color:var(--purple)">🔁 Submit All Transfers</button>
   </div>
 </div>
 
@@ -10331,117 +10357,168 @@ function rprToast(msg, type = '') {
   };
 
   // ── TRANSFER TAB ─────────────────────────────────────────────────
-  var xfrPart       = null;
-  var xfrFromLoc    = null;
-  var xfrToLoc      = null;
-  var xfrCamRunning = false;
-  var xfrQrScanner  = null;
-  var xfrLastScan   = 0;
+  var xfrCart        = JSON.parse(localStorage.getItem('xfitting_xfrcart') || '[]');
+  var xfrPart        = null;
+  var xfrFromLoc     = null;
+  var xfrSearchMode  = 'code';
+  var xfrCamRunning  = false;
+  var xfrQrScanner   = null;
+  var xfrLastScan    = 0;
+  var xfrKnownLocs   = [];  // cached list of all known location names for dest suggestions
 
-  function xfrReset() {
-    xfrPart = null; xfrFromLoc = null; xfrToLoc = null;
-    var si = g("xfr-search-inp"); if (si) si.value = "";
-    ["xfr-result-card","xfr-from-card","xfr-to-card","xfr-detail-card","xfr-newloc-wrap","xfr-warn"]
-      .forEach(function(id) { var el = g(id); if (el) el.style.display = "none"; });
-    ["xfr-newloc-inp","xfr-cases","xfr-initials","xfr-notes"]
-      .forEach(function(id) { var el = g(id); if (el) el.value = ""; });
+  function xfrSaveCart() { localStorage.setItem('xfitting_xfrcart', JSON.stringify(xfrCart)); }
+
+  function xfrResetLookup() {
+    xfrPart = null; xfrFromLoc = null;
+    var si = g('xfr-search-inp'); if (si) si.value = '';
+    ['xfr-result-card','xfr-from-card','xfr-addcart-card','xfr-name-results']
+      .forEach(function(id) { var el = g(id); if (el) el.style.display = 'none'; });
+    ['xfr-addcart-cases'].forEach(function(id) { var el = g(id); if (el) el.value = ''; });
     if (xfrCamRunning) xfrStopCam();
   }
 
+  window.xfrSetSearchMode = function(mode) {
+    xfrSearchMode = mode;
+    g('xfr-mode-code').className = 'ixfr-mode-btn' + (mode === 'code' ? ' ixfr-active' : '');
+    g('xfr-mode-name').className = 'ixfr-mode-btn' + (mode === 'name' ? ' ixfr-active' : '');
+    var inp = g('xfr-search-inp');
+    if (inp) inp.placeholder = mode === 'name' ? 'Type product name...' : 'Part#, UPC, or barcode\u2026';
+    var nr = g('xfr-name-results'); if (nr) nr.style.display = 'none';
+  };
+
+  window.xfrSearch = function() {
+    var val = (g('xfr-search-inp').value || '').trim();
+    if (!val) return;
+    if (xfrSearchMode === 'name') { xfrNameSearch(val); }
+    else { xfrLookup(val); }
+  };
+
   window.xfrToggleCam = function() {
     if (xfrCamRunning) { xfrStopCam(); return; }
-    var btn = g("xfr-cam-btn");
-    btn.textContent = "Starting\u2026"; btn.disabled = true;
+    var btn = g('xfr-cam-btn');
+    btn.textContent = 'Starting\u2026'; btn.disabled = true;
     invLoadQR().then(function() {
-      g("xfr-reader-wrap").style.display = "block";
+      g('xfr-reader-wrap').style.display = 'block';
       if (xfrQrScanner) { try { xfrQrScanner.clear(); } catch(e){} xfrQrScanner = null; }
-      xfrQrScanner = new Html5Qrcode("xfr-qr-reader");
+      xfrQrScanner = new Html5Qrcode('xfr-qr-reader');
       xfrQrScanner.start(
-        { facingMode: "environment" },
+        { facingMode: 'environment' },
         { fps: 10, qrbox: { width: 260, height: 90 } },
         function(code) {
           var now = Date.now();
           if (now - xfrLastScan < 2000) return;
           xfrLastScan = now;
           xfrStopCam();
-          g("xfr-search-inp").value = code;
+          g('xfr-search-inp').value = code;
+          xfrSetSearchMode('code');
           xfrLookup(code);
         },
         function() {}
       ).then(function() {
         xfrCamRunning = true;
-        btn.textContent = "\u23f9 Stop Camera"; btn.className = "icam-btn scanning"; btn.disabled = false;
+        btn.textContent = '\u23f9 Stop Camera'; btn.className = 'icam-btn scanning'; btn.disabled = false;
       }).catch(function() {
-        invFlash("Camera error \u2014 check permissions", "error");
-        btn.textContent = "\ud83d\udcf7 Start Camera"; btn.className = "icam-btn"; btn.disabled = false;
-        g("xfr-reader-wrap").style.display = "none";
+        invFlash('Camera error \u2014 check permissions', 'error');
+        btn.textContent = '\ud83d\udcf7 Scan Barcode'; btn.className = 'icam-btn'; btn.disabled = false;
+        g('xfr-reader-wrap').style.display = 'none';
       });
-    }).catch(function() { invFlash("Could not load scanner", "error"); btn.textContent = "\ud83d\udcf7 Start Camera"; btn.disabled = false; });
+    }).catch(function() { invFlash('Could not load scanner', 'error'); btn.textContent = '\ud83d\udcf7 Scan Barcode'; btn.disabled = false; });
   };
 
   function xfrStopCam() {
     if (xfrQrScanner && xfrCamRunning) { try { xfrQrScanner.stop().catch(function(){}); } catch(e){} xfrQrScanner = null; }
     xfrCamRunning = false;
-    var wrap = g("xfr-reader-wrap"); if (wrap) wrap.style.display = "none";
-    var btn = g("xfr-cam-btn");
-    if (btn) { btn.textContent = "\ud83d\udcf7 Start Camera"; btn.className = "icam-btn"; btn.disabled = false; }
+    var wrap = g('xfr-reader-wrap'); if (wrap) wrap.style.display = 'none';
+    var btn = g('xfr-cam-btn');
+    if (btn) { btn.textContent = '\ud83d\udcf7 Scan Barcode'; btn.className = 'icam-btn'; btn.disabled = false; }
+  }
+
+  function xfrNameSearch(query) {
+    if (!query || query.length < 2) { invFlash('Enter at least 2 characters', 'error'); return; }
+    var nr = g('xfr-name-results');
+    nr.style.display = 'block';
+    nr.innerHTML = "<div class='iempty'>Searching\u2026</div>";
+    ['xfr-result-card','xfr-from-card','xfr-addcart-card'].forEach(function(id) { var el = g(id); if (el) el.style.display = 'none'; });
+    wFetch(W + '/inventory/search?name=' + encodeURIComponent(query))
+      .then(function(r) { return r.json(); })
+      .then(function(d) {
+        var results = d.results || [];
+        if (results.length === 0) { nr.innerHTML = "<div class='iempty'>No items found matching \"" + query + "\"</div>"; return; }
+        nr.innerHTML = '';
+        results.forEach(function(item) {
+          var el = document.createElement('div');
+          el.className = 'iloc-opt';
+          el.innerHTML = '<div style="flex:1">'
+            + '<div style="font-size:12px;font-family:var(--mono);color:var(--accent);margin-bottom:2px">' + item.baseSku + '</div>'
+            + '<div style="font-size:13px;font-weight:600;color:var(--text)">' + item.name + '</div>'
+            + '<div style="font-size:11px;color:var(--text3);margin-top:2px">' + item.totalCases + ' cases \u00b7 ' + item.locCount + ' location' + (item.locCount !== 1 ? 's' : '') + (item.variantCount > 1 ? ' \u00b7 ' + item.variantCount + ' variants' : '') + '</div>'
+            + '</div><span class="iloc-badge ex">Select</span>';
+          el.onclick = function() {
+            nr.style.display = 'none';
+            g('xfr-search-inp').value = item.baseSku;
+            xfrLookup(item.baseSku);
+          };
+          nr.appendChild(el);
+        });
+      })
+      .catch(function() { nr.innerHTML = "<div class='iempty'>Search failed</div>"; });
   }
 
   window.xfrLookup = function(code) {
     if (!code) return;
-    ["xfr-result-card","xfr-from-card","xfr-to-card","xfr-detail-card"]
-      .forEach(function(id) { var el = g(id); if (el) el.style.display = "none"; });
-    wFetch(W + "/inventory/lookup?code=" + encodeURIComponent(code))
+    ['xfr-result-card','xfr-from-card','xfr-addcart-card','xfr-name-results']
+      .forEach(function(id) { var el = g(id); if (el) el.style.display = 'none'; });
+    wFetch(W + '/inventory/lookup?code=' + encodeURIComponent(code))
       .then(function(r) { return r.json(); })
       .then(function(d) {
-        if (!d.partNum) { invFlash("Not found: " + code, "error"); return; }
+        if (!d.partNum) { invFlash('Not found: ' + code, 'error'); return; }
         xfrPart = d;
-        g("xfr-result-part").textContent = d.isMultiVariant ? d.baseSku : d.partNum;
-        g("xfr-result-sku").textContent  = d.sku && d.sku !== d.partNum ? d.sku : "";
-        g("xfr-result-name").textContent = d.name || "";
-        g("xfr-result-card").style.display = "block";
+        // Collect known locations for destination suggestions
+        xfrKnownLocs = (d.locations || []).map(function(l) { return l.location; }).filter(Boolean);
+        g('xfr-result-part').textContent = d.isMultiVariant ? d.baseSku : d.partNum;
+        g('xfr-result-sku').textContent  = d.sku && d.sku !== d.partNum ? d.sku : '';
+        g('xfr-result-name').textContent = d.name || '';
+        g('xfr-result-card').style.display = 'block';
         if (d.isMultiVariant && d.variants && d.variants.length > 1) {
           xfrShowVariantPicker(d.variants);
         } else {
           xfrShowFromLocs();
         }
       })
-      .catch(function() { invFlash("Lookup failed", "error"); });
+      .catch(function() { invFlash('Lookup failed', 'error'); });
   };
 
   function xfrShowVariantPicker(variants) {
-    var list = g("xfr-from-list");
-    list.innerHTML = "";
-    var lbl = g("xfr-from-card").querySelector(".icard-label");
-    if (lbl) lbl.textContent = "Select Part Number";
-    g("xfr-from-card").style.display = "block";
+    var list = g('xfr-from-list');
+    list.innerHTML = '';
+    var lbl = g('xfr-from-label'); if (lbl) lbl.textContent = 'Select Part Number';
+    g('xfr-from-card').style.display = 'block';
     var filtered = variants.filter(function(v) {
       return (xfrPart.locations || []).some(function(l) {
         return l.partNum && l.partNum.toUpperCase() === v.toUpperCase() && parseFloat(l.cases) > 0;
       });
     });
-    if (filtered.length === 0) { invFlash("No stock found for any variant", "error"); g("xfr-from-card").style.display = "none"; return; }
+    if (filtered.length === 0) { invFlash('No stock found for any variant', 'error'); g('xfr-from-card').style.display = 'none'; return; }
     filtered.forEach(function(v) {
-      var el = document.createElement("div");
-      el.className = "iloc-opt";
+      var el = document.createElement('div');
+      el.className = 'iloc-opt';
       var totalCases = (xfrPart.locations || [])
         .filter(function(l) { return l.partNum && l.partNum.toUpperCase() === v.toUpperCase() && parseFloat(l.cases) > 0; })
         .reduce(function(sum, l) { return sum + (parseFloat(l.cases) || 0); }, 0);
       var locCount = (xfrPart.locations || [])
         .filter(function(l) { return l.partNum && l.partNum.toUpperCase() === v.toUpperCase() && parseFloat(l.cases) > 0; }).length;
-      el.innerHTML = "<div style='flex:1'><div class='iloc-name' style='font-family:var(--mono);font-size:14px'>" + v + "</div>"
-        + "<div style='font-size:11px;color:var(--text3);margin-top:2px'>" + totalCases + " cases \u00b7 " + locCount + " location" + (locCount !== 1 ? "s" : "") + "</div></div>"
-        + "<span class='iloc-badge ex'>Select</span>";
-      el.style.display = "flex"; el.style.alignItems = "center";
+      el.innerHTML = '<div style="flex:1"><div class="iloc-name" style="font-family:var(--mono);font-size:14px">' + v + '</div>'
+        + '<div style="font-size:11px;color:var(--text3);margin-top:2px">' + totalCases + ' cases \u00b7 ' + locCount + ' location' + (locCount !== 1 ? 's' : '') + '</div></div>'
+        + '<span class="iloc-badge ex">Select</span>';
+      el.style.display = 'flex'; el.style.alignItems = 'center';
       el.onclick = function() {
         var varLocs = (xfrPart.locations || []).filter(function(l) {
           return (!l.partNum || l.partNum.toUpperCase() === v.toUpperCase()) && parseFloat(l.cases) > 0;
         });
-        if (varLocs.length === 0) { invFlash("No stock for " + v, "error"); return; }
+        if (varLocs.length === 0) { invFlash('No stock for ' + v, 'error'); return; }
         xfrPart = Object.assign({}, xfrPart, { partNum: v, locations: varLocs });
-        g("xfr-result-part").textContent = v;
-        var lbl2 = g("xfr-from-card").querySelector(".icard-label");
-        if (lbl2) lbl2.textContent = "Step 1 \u2014 From Location";
+        g('xfr-result-part').textContent = v;
+        var lbl2 = g('xfr-from-label'); if (lbl2) lbl2.textContent = 'From Location';
         xfrShowFromLocs();
       };
       list.appendChild(el);
@@ -10450,129 +10527,243 @@ function rprToast(msg, type = '') {
 
   function xfrShowFromLocs() {
     var locs = (xfrPart.locations || []).filter(function(l) { return parseFloat(l.cases) > 0; });
-    if (locs.length === 0) { invFlash("No stock at any location", "error"); return; }
-    var list = g("xfr-from-list");
-    list.innerHTML = "";
-    var lbl = g("xfr-from-card").querySelector(".icard-label");
-    if (lbl) lbl.textContent = "Step 1 \u2014 From Location";
+    if (locs.length === 0) { invFlash('No stock at any location', 'error'); return; }
+    var list = g('xfr-from-list');
+    list.innerHTML = '';
+    var lbl = g('xfr-from-label'); if (lbl) lbl.textContent = 'From Location';
     locs.forEach(function(loc, i) {
-      var el = document.createElement("div");
-      el.className = "iloc-opt";
-      el.innerHTML = "<div><div class='iloc-name'>" + loc.location + "</div>"
-        + "<div class='iloc-cases' style='font-weight:700;color:var(--text)'>" + loc.cases + " cases available</div></div>"
-        + "<span class='iloc-badge ex'>Select</span>";
+      var el = document.createElement('div');
+      el.className = 'iloc-opt';
+      var partLabel = (loc.partNum && loc.partNum !== xfrPart.partNum)
+        ? '<div style="font-size:11px;font-family:var(--mono);color:var(--accent);margin-bottom:2px">' + loc.partNum + '</div>' : '';
+      el.innerHTML = '<div>' + partLabel + '<div class="iloc-name">' + loc.location + '</div>'
+        + '<div class="iloc-cases" style="font-weight:700;color:var(--text)">' + loc.cases + ' cases</div></div>'
+        + '<span class="iloc-badge ex">Select</span>';
       el.onclick = (function(idx) { return function() {
         xfrFromLoc = locs[idx];
-        list.querySelectorAll(".iloc-opt").forEach(function(e) { e.classList.remove("isel"); });
-        list.children[idx].classList.add("isel");
-        var badge = g("xfr-from-badge"); if (badge) badge.textContent = "FROM: " + xfrFromLoc.location;
-        xfrShowToLocs();
+        if (xfrFromLoc.partNum) xfrPart = Object.assign({}, xfrPart, { partNum: xfrFromLoc.partNum });
+        list.querySelectorAll('.iloc-opt').forEach(function(e) { e.classList.remove('isel'); });
+        list.children[idx].classList.add('isel');
+        xfrShowAddCart();
       }; })(i);
       list.appendChild(el);
     });
-    g("xfr-from-card").style.display    = "block";
-    g("xfr-to-card").style.display      = "none";
-    g("xfr-detail-card").style.display  = "none";
+    g('xfr-from-card').style.display   = 'block';
+    g('xfr-addcart-card').style.display = 'none';
   }
 
-  function xfrShowToLocs() {
-    var allLocs = (xfrPart.locations || []);
-    var list = g("xfr-to-list");
-    list.innerHTML = "";
-    g("xfr-newloc-wrap").style.display = "none";
-    var newlocInp = g("xfr-newloc-inp"); if (newlocInp) newlocInp.value = "";
-    allLocs.forEach(function(loc, i) {
-      var isSame = loc.location === xfrFromLoc.location;
-      var el = document.createElement("div");
-      el.className = "iloc-opt";
-      el.style.opacity = isSame ? "0.4" : "1";
-      el.style.pointerEvents = isSame ? "none" : "auto";
-      el.innerHTML = "<div><div class='iloc-name'>" + loc.location
-        + (isSame ? " <em style='font-size:10px;color:var(--text3)'>(source)</em>" : "") + "</div>"
-        + "<div class='iloc-cases'>" + loc.cases + " cases</div></div>"
-        + "<span class='iloc-badge ex'>" + (isSame ? "\u2014" : "Select") + "</span>";
-      if (!isSame) {
-        el.onclick = (function(idx) { return function() {
-          xfrToLoc = allLocs[idx];
-          g("xfr-newloc-wrap").style.display = "none";
-          list.querySelectorAll(".iloc-opt").forEach(function(e) { e.classList.remove("isel"); });
-          list.children[idx].classList.add("isel");
-          xfrShowDetails();
-        }; })(i);
-      }
-      list.appendChild(el);
+  function xfrShowAddCart() {
+    var ap = g('xfr-addcart-part'); if (ap) ap.textContent = xfrPart.partNum || '';
+    var af = g('xfr-addcart-from'); if (af) af.textContent = xfrFromLoc.location;
+    var warn = g('xfr-addcart-warn');
+    if (warn) { warn.textContent = '\u26a0 Max: ' + xfrFromLoc.cases + ' cases available'; warn.style.display = 'block'; }
+    var ci = g('xfr-addcart-cases'); if (ci) ci.value = '';
+    // Pre-fill initials if already in cart
+    var ii = g('xfr-cart-initials');
+    if (ii && !ii.value && xfrCart.length > 0 && xfrCart[0].initials) ii.value = xfrCart[0].initials;
+    g('xfr-addcart-card').style.display = 'block';
+  }
+
+  window.xfrAddToCart = function() {
+    var cases    = parseInt((g('xfr-addcart-cases') || {}).value || 0, 10);
+    var initials = ((g('xfr-cart-initials') || {}).value || '').trim();
+    if (!xfrPart)    { invFlash('No item selected', 'error'); return; }
+    if (!xfrFromLoc) { invFlash('Select a From location', 'error'); return; }
+    if (!cases || cases < 1) { invFlash('Enter number of cases', 'error'); return; }
+    if (!initials)           { invFlash('Enter your initials', 'error'); return; }
+    if (cases > parseFloat(xfrFromLoc.cases || 0)) { invFlash('Exceeds available cases (' + xfrFromLoc.cases + ')', 'error'); return; }
+    xfrCart.push({
+      partNum:      xfrPart.partNum,
+      sku:          xfrPart.sku || xfrPart.partNum,
+      name:         xfrPart.name || '',
+      fromLocation: xfrFromLoc.location,
+      fromRowIndex: xfrFromLoc.rowIndex,
+      cases:        cases,
+      initials:     initials,
+      toLocation:   '',
+      toRowIndex:   null,
+      isNewLocation: false
     });
-    var newEl = document.createElement("div");
-    newEl.className = "iloc-opt";
-    newEl.innerHTML = "<div class='iloc-name'>+ Add New Location</div><span class='iloc-badge nw'>New</span>";
-    newEl.onclick = function() {
-      xfrToLoc = { isNew: true };
-      list.querySelectorAll(".iloc-opt").forEach(function(e) { e.classList.remove("isel"); });
-      newEl.classList.add("isel");
-      g("xfr-newloc-wrap").style.display = "block";
-      xfrShowDetails();
-    };
-    list.appendChild(newEl);
-    g("xfr-to-card").style.display     = "block";
-    g("xfr-detail-card").style.display = "none";
-  }
-
-  function xfrShowDetails() {
-    var fromName = xfrFromLoc ? xfrFromLoc.location : "?";
-    var toName   = (xfrToLoc && xfrToLoc.isNew) ? "(new location)" : (xfrToLoc ? xfrToLoc.location : "?");
-    var sf = g("xfr-sum-from"); if (sf) sf.textContent = fromName;
-    var st = g("xfr-sum-to");   if (st) st.textContent = toName;
-    var warn = g("xfr-warn");
-    if (warn && xfrFromLoc) {
-      warn.textContent = "\u26a0 Max transferable: " + xfrFromLoc.cases + " cases from " + xfrFromLoc.location;
-      warn.style.display = "block";
-    }
-    g("xfr-detail-card").style.display = "block";
-  }
-
-  window.xfrSubmit = function() {
-    var cases    = parseInt((g("xfr-cases")    || {}).value || 0, 10);
-    var initials = ((g("xfr-initials") || {}).value || "").trim();
-    var notes    = ((g("xfr-notes")    || {}).value || "").trim();
-    var newLoc   = ((g("xfr-newloc-inp") || {}).value || "").trim();
-    if (!xfrPart)    { invFlash("No item selected", "error"); return; }
-    if (!xfrFromLoc) { invFlash("Select a From location", "error"); return; }
-    if (!xfrToLoc)   { invFlash("Select a To location", "error"); return; }
-    if (!cases || cases < 1) { invFlash("Enter number of cases", "error"); return; }
-    if (!initials)           { invFlash("Enter your initials", "error"); return; }
-    if (xfrToLoc.isNew && !newLoc) { invFlash("Enter new location name", "error"); return; }
-    if (cases > parseFloat(xfrFromLoc.cases || 0)) {
-      invFlash("Cases exceed available stock (" + xfrFromLoc.cases + ")", "error"); return;
-    }
-    var toLoc = xfrToLoc.isNew ? newLoc : xfrToLoc.location;
-    var btn = g("xfr-submit-btn");
-    if (btn) { btn.disabled = true; btn.textContent = "Submitting\u2026"; }
-    wFetch(W + "/inventory/transfer", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        partNum: xfrPart.partNum, sku: xfrPart.sku || xfrPart.partNum,
-        fromLocation: xfrFromLoc.location, fromRowIndex: xfrFromLoc.rowIndex,
-        toLocation: toLoc, toRowIndex: xfrToLoc.isNew ? null : xfrToLoc.rowIndex,
-        isNewLocation: !!xfrToLoc.isNew,
-        cases: cases, initials: initials, notes: notes
-      })
-    }).then(function(r) { return r.json(); })
-      .then(function(d) {
-        if (d.ok) {
-          invFlash("Transfer logged \u2014 pending approval \u2713", "success");
-          xfrReset();
-          invFetchPendingCount();
-        } else {
-          invFlash("Error: " + (d.error || "unknown"), "error");
-          if (btn) { btn.disabled = false; btn.textContent = "\ud83d\udd01 Submit Transfer"; }
-        }
-      })
-      .catch(function() {
-        invFlash("Submit failed", "error");
-        if (btn) { btn.disabled = false; btn.textContent = "\ud83d\udd01 Submit Transfer"; }
-      });
+    xfrSaveCart();
+    xfrRenderCart();
+    invFlash('Added to cart: ' + xfrPart.partNum + ' \u00d7' + cases, 'success');
+    xfrResetLookup();
   };
+
+  function xfrRenderCart() {
+    var cartCard = g('xfr-cart-card');
+    if (xfrCart.length === 0) { if (cartCard) cartCard.style.display = 'none'; return; }
+    if (cartCard) cartCard.style.display = 'block';
+    var cnt = g('xfr-cart-count'); if (cnt) cnt.textContent = xfrCart.length;
+    var el = g('xfr-cart-items'); if (!el) return;
+    el.innerHTML = '';
+    xfrCart.forEach(function(item, i) {
+      var row = document.createElement('div');
+      row.className = 'xfr-cart-item';
+      var destSet = item.toLocation ? ' dest-set' : '';
+      row.innerHTML =
+        '<div class="xfr-cart-item-head">'
+          + '<span class="xfr-cart-item-part">' + item.partNum + '</span>'
+          + '<button onclick="xfrRemoveCartItem(' + i + ')" style="background:none;border:none;color:var(--text3);font-size:18px;cursor:pointer;padding:0;line-height:1">&times;</button>'
+        + '</div>'
+        + '<div class="xfr-cart-item-meta">'
+          + '\ud83d\udccd From: <strong>' + item.fromLocation + '</strong>'
+          + ' &nbsp;\u00b7\u00a0 \ud83d\udce6 ' + item.cases + ' cases'
+          + (item.name ? '<br><span style="color:var(--text3)">' + item.name + '</span>' : '')
+        + '</div>'
+        + '<div style="font-size:11px;font-weight:600;color:var(--text2);margin-bottom:5px">To Location:</div>'
+        + '<div class="xfr-cart-item-dest" id="xfr-dest-wrap-' + i + '">'
+          + '<input type="text" value="' + (item.toLocation || '') + '" placeholder="Set destination\u2026" class="' + destSet.trim() + '" '
+            + 'oninput="xfrItemDestInput(' + i + ', this)" onblur="xfrItemDestBlur(' + i + ', this)">'
+          + '<div class="xfr-dest-drop" id="xfr-item-drop-' + i + '" style="display:none"></div>'
+        + '</div>';
+      el.appendChild(row);
+    });
+  }
+
+  // Destination input — show suggestions from known locations
+  window.xfrItemDestInput = function(i, inp) {
+    var val = inp.value.trim().toLowerCase();
+    var drop = g('xfr-item-drop-' + i); if (!drop) return;
+    xfrCart[i].toLocation = inp.value.trim();
+    xfrCart[i].toRowIndex = null; xfrCart[i].isNewLocation = false;
+    xfrSaveCart();
+    inp.className = inp.value.trim() ? 'dest-set' : '';
+    if (!val || val.length < 1) { drop.style.display = 'none'; return; }
+    var matches = xfrKnownLocs.filter(function(l) { return l.toLowerCase().includes(val); }).slice(0, 8);
+    if (matches.length === 0) {
+      // offer to create new
+      drop.innerHTML = '<div class="xfr-dest-opt" style="color:var(--green)" onclick="xfrSetItemDest(' + i + ', \'' + inp.value.trim().replace(/'/g,"&#39;") + '\', true)">+ New location: ' + inp.value.trim() + '</div>';
+      drop.style.display = 'block'; return;
+    }
+    drop.innerHTML = '';
+    matches.forEach(function(loc) {
+      var opt = document.createElement('div');
+      opt.className = 'xfr-dest-opt';
+      opt.textContent = loc;
+      opt.onmousedown = function(e) { e.preventDefault(); xfrSetItemDest(i, loc, false); };
+      drop.appendChild(opt);
+    });
+    drop.style.display = 'block';
+  };
+
+  window.xfrItemDestBlur = function(i, inp) {
+    setTimeout(function() {
+      var drop = g('xfr-item-drop-' + i); if (drop) drop.style.display = 'none';
+    }, 150);
+  };
+
+  window.xfrSetItemDest = function(i, loc, isNew) {
+    if (!xfrCart[i]) return;
+    xfrCart[i].toLocation   = loc;
+    xfrCart[i].isNewLocation = isNew;
+    xfrCart[i].toRowIndex   = null;
+    xfrSaveCart();
+    xfrRenderCart();
+  };
+
+  // "Apply All" destination
+  window.xfrFilterDest = function(val) {
+    var drop = g('xfr-dest-suggestions'); if (!drop) return;
+    var q = val.trim().toLowerCase();
+    if (!q) { drop.style.display = 'none'; return; }
+    var matches = xfrKnownLocs.filter(function(l) { return l.toLowerCase().includes(q); }).slice(0, 8);
+    if (matches.length === 0) {
+      drop.innerHTML = '<div class="xfr-dest-opt" style="color:var(--green)">+ New location: ' + val.trim() + '</div>';
+      drop.querySelector('.xfr-dest-opt').onmousedown = function(e) { e.preventDefault(); xfrApplyDestAllValue(val.trim(), true); };
+    } else {
+      drop.innerHTML = '';
+      matches.forEach(function(loc) {
+        var opt = document.createElement('div');
+        opt.className = 'xfr-dest-opt';
+        opt.textContent = loc;
+        opt.onmousedown = function(e) { e.preventDefault(); xfrApplyDestAllValue(loc, false); };
+        drop.appendChild(opt);
+      });
+    }
+    drop.style.display = 'block';
+  };
+
+  window.xfrApplyDestAll = function() {
+    var val = ((g('xfr-dest-inp') || {}).value || '').trim();
+    if (!val) { invFlash('Enter a destination location', 'error'); return; }
+    xfrApplyDestAllValue(val, !xfrKnownLocs.includes(val));
+  };
+
+  function xfrApplyDestAllValue(loc, isNew) {
+    xfrCart.forEach(function(item) {
+      item.toLocation   = loc;
+      item.isNewLocation = isNew;
+      item.toRowIndex   = null;
+    });
+    xfrSaveCart();
+    var di = g('xfr-dest-inp'); if (di) di.value = loc;
+    var drop = g('xfr-dest-suggestions'); if (drop) drop.style.display = 'none';
+    xfrRenderCart();
+    invFlash('Destination set: ' + loc, 'success');
+  }
+
+  window.xfrRemoveCartItem = function(i) {
+    xfrCart.splice(i, 1);
+    xfrSaveCart();
+    xfrRenderCart();
+  };
+
+  window.xfrClearCart = function() {
+    if (xfrCart.length === 0) return;
+    if (!confirm('Clear entire transfer cart?')) return;
+    xfrCart = [];
+    xfrSaveCart();
+    xfrRenderCart();
+  };
+
+  window.xfrSubmitCart = function() {
+    if (xfrCart.length === 0) { invFlash('Cart is empty', 'error'); return; }
+    var missing = xfrCart.filter(function(x) { return !x.toLocation; });
+    if (missing.length > 0) { invFlash(missing.length + ' item(s) missing destination', 'error'); return; }
+    var notes = ((g('xfr-cart-notes') || {}).value || '').trim();
+    var btn = g('xfr-cart-submit-btn');
+    if (btn) { btn.disabled = true; btn.textContent = 'Submitting\u2026'; }
+    var items = xfrCart.slice();
+    var idx = 0;
+    function submitNext() {
+      if (idx >= items.length) {
+        invFlash('All ' + items.length + ' transfer(s) logged \u2713', 'success');
+        xfrCart = []; xfrSaveCart(); xfrRenderCart();
+        var cn = g('xfr-cart-notes'); if (cn) cn.value = '';
+        if (btn) { btn.disabled = false; btn.textContent = '\ud83d\udd01 Submit All Transfers'; }
+        invFetchPendingCount();
+        return;
+      }
+      var item = items[idx++];
+      wFetch(W + '/inventory/transfer', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          partNum: item.partNum, sku: item.sku,
+          fromLocation: item.fromLocation, fromRowIndex: item.fromRowIndex,
+          toLocation: item.toLocation, toRowIndex: item.toRowIndex,
+          isNewLocation: !!item.isNewLocation,
+          cases: item.cases, initials: item.initials, notes: notes
+        })
+      }).then(function(r) { return r.json(); })
+        .then(function(d) {
+          if (d.ok) { submitNext(); }
+          else {
+            invFlash('Failed on ' + item.partNum + ': ' + (d.error || 'unknown'), 'error');
+            if (btn) { btn.disabled = false; btn.textContent = '\ud83d\udd01 Submit All Transfers'; }
+          }
+        })
+        .catch(function() {
+          invFlash('Submit failed', 'error');
+          if (btn) { btn.disabled = false; btn.textContent = '\ud83d\udd01 Submit All Transfers'; }
+        });
+    }
+    submitNext();
+  };
+
+  // Render cart on tab open
+  (function() { if (xfrCart.length > 0) xfrRenderCart(); })();
   // ─────────────────────────────────────────────────────────────────
 
 })();
