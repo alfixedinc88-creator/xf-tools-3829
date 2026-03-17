@@ -1,7 +1,7 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-  <!-- XFITTING-BUILD-V109-RCPO-20260318C -->
+  <!-- XFITTING-BUILD-V109-RCPO-20260318D -->
 <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate">
 <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&family=IBM+Plex+Sans:wght@300;400;500;600&display=swap" rel="stylesheet">
   <meta http-equiv="Pragma" content="no-cache">
@@ -12959,6 +12959,8 @@ function _psUploadStatusToSheet(rows) {
     var skipped = 0;
     var bar = document.getElementById('rpo-apply-bar');
     var applyStatus = document.getElementById('rpo-apply-status');
+    // Track which base SKUs we've already sent a price log request for
+    var loggedBaseSkus = {};
 
     function applyNext() {
       if (idx >= toApply.length) {
@@ -12977,21 +12979,26 @@ function _psUploadStatusToSheet(rows) {
       bar.style.width = pct + '%';
       applyStatus.textContent = (item.needsNewRow ? 'Inserting' : 'Updating') + ' ' + item.partNum + '\u2026 (' + idx + '/' + toApply.length + ')';
 
+      // Only log price once per base SKU — on the first variant we encounter
+      var isFirstVariant = item.pricePerUnit && !loggedBaseSkus[item.baseSku];
+      if (isFirstVariant) loggedBaseSkus[item.baseSku] = true;
+
       wFetch(W + '/inventory/receive-apply', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          rowIndex:     item.rowIndex,
-          insertAfter:  item.insertAfter,
-          needsNewRow:  item.needsNewRow,
-          partNum:      item.partNum,
-          baseSku:      item.baseSku,
-          pallet:       item.pallet,
-          vendor:       item.vendor,
-          cases:        item.cases,
-          upc:          item.upc,
-          pricePerUnit: item.pricePerUnit,
-          colKValue:    item.colKValue
+          rowIndex:       item.rowIndex,
+          insertAfter:    item.insertAfter,
+          needsNewRow:    item.needsNewRow,
+          partNum:        item.partNum,
+          baseSku:        item.baseSku,
+          pallet:         item.pallet,
+          vendor:         item.vendor,
+          cases:          item.cases,
+          upc:            item.upc,
+          pricePerUnit:   item.pricePerUnit,
+          colKValue:      item.colKValue,
+          logPrice:       !!isFirstVariant   // worker logs price change only when true
         })
       }).then(function(r) { return r.json(); })
         .then(function(d) {
