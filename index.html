@@ -1,7 +1,7 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-  <!-- XFITTING-BUILD-V109-NSRH-20260317 -->
+  <!-- XFITTING-BUILD-V109-RCPO-20260317 -->
 <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate">
 <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&family=IBM+Plex+Sans:wght@300;400;500;600&display=swap" rel="stylesheet">
   <meta http-equiv="Pragma" content="no-cache">
@@ -1863,6 +1863,12 @@ input[type=checkbox]{width:15px;height:15px;cursor:pointer;accent-color:var(--bl
         <div class="launcher-card-desc">Sales KPIs, leaderboards and AI-powered insights across Amazon, eBay, and XFitting.</div>
         <div style="display:inline-block;margin-top:10px;font-size:10px;font-family:var(--mono);padding:3px 8px;border-radius:4px;background:var(--orange-bg);color:var(--orange);font-weight:600;letter-spacing:1px">All Platforms · Management</div>
       </div>
+      <div class="launcher-card" onclick="launchMgmtApp('receivepo')" style="border-color:var(--green-bg)">
+        <div class="launcher-card-icon">🚚</div>
+        <div class="launcher-card-title">Receive PO</div>
+        <div class="launcher-card-desc">Upload a pallet manifest to receive a purchase order. Matches parts to Master List, sets pallet locations, and updates cases, pricing, and vendor automatically.</div>
+        <div style="display:inline-block;margin-top:10px;font-size:10px;font-family:var(--mono);padding:3px 8px;border-radius:4px;background:var(--green-bg);color:var(--green);font-weight:600;letter-spacing:1px">Receiving · Management</div>
+      </div>
     </div>
   </div>
 </div>
@@ -3550,6 +3556,7 @@ function backToLauncher() {
   document.getElementById('reorder-app').style.display = 'none';
   document.getElementById('dashboard-app').style.display = 'none';
   document.getElementById('packship-app').style.display = 'none';
+  document.getElementById('receivepo-app').style.display = 'none';
   document.getElementById('launcher').style.display = 'flex';
 }
 
@@ -4838,6 +4845,12 @@ function mgmtPinCancel() {
 
 async function salesLaunchApp(name) {
   document.getElementById('launcher').style.display = 'none';
+  if (name === 'receivepo') {
+    document.getElementById('receivepo-app').style.display = 'flex';
+    document.getElementById('receivepo-app').style.flexDirection = 'column';
+    rpoReset();
+    return;
+  }
   var appId = name === 'reorder' ? 'reorder-app' : 'dashboard-app';
   var appKey = name === 'reorder' ? 'ro' : 'db';
   document.getElementById(appId).style.display = 'flex';
@@ -4863,6 +4876,7 @@ async function salesLaunchApp(name) {
 function salesGoBack() {
   document.getElementById('reorder-app').style.display = 'none';
   document.getElementById('dashboard-app').style.display = 'none';
+  document.getElementById('receivepo-app').style.display = 'none';
   document.getElementById('launcher').style.display = 'flex';
   if (SALES_WORKER_URL) silentLoadSaved();
 }
@@ -12417,5 +12431,512 @@ function _psUploadStatusToSheet(rows) {
 
 })();
 </script>
+
+<!-- ═══ RECEIVE PO APP ═══ -->
+<div id="receivepo-app" style="display:none;flex-direction:column;min-height:100vh;background:var(--bg);">
+<style>
+#receivepo-app .rpo-topbar{display:flex;align-items:center;justify-content:space-between;padding:12px 16px;background:var(--bg2);border-bottom:1px solid var(--border);position:sticky;top:0;z-index:100}
+#receivepo-app .rpo-title{font-size:15px;font-weight:700;color:var(--text)}
+#receivepo-app .rpo-back{background:none;border:1px solid var(--border);color:var(--text3);font-size:12px;padding:8px 14px;border-radius:8px;cursor:pointer;font-family:var(--sans);min-height:36px}
+#receivepo-app .rpo-body{padding:16px;max-width:900px;margin:0 auto;width:100%}
+#receivepo-app .rpo-card{background:var(--bg2);border:1px solid var(--border);border-radius:12px;padding:16px;margin-bottom:14px}
+#receivepo-app .rpo-label{font-size:11px;font-weight:700;letter-spacing:1px;text-transform:uppercase;color:var(--text3);margin-bottom:10px}
+#receivepo-app .rpo-drop{border:2px dashed var(--border);border-radius:10px;padding:32px;text-align:center;cursor:pointer;transition:all .2s;background:var(--bg3)}
+#receivepo-app .rpo-drop.dragover{border-color:var(--green);background:var(--green-bg)}
+#receivepo-app .rpo-drop-icon{font-size:32px;margin-bottom:8px}
+#receivepo-app .rpo-drop-text{font-size:14px;font-weight:600;color:var(--text2)}
+#receivepo-app .rpo-drop-sub{font-size:12px;color:var(--text3);margin-top:4px}
+#receivepo-app .rpo-btn{padding:12px 20px;border-radius:9px;font-size:14px;font-weight:700;cursor:pointer;font-family:var(--sans);border:none;min-height:44px;transition:all .15s}
+#receivepo-app .rpo-btn-green{background:var(--green);color:#fff}
+#receivepo-app .rpo-btn-green:hover{opacity:.9}
+#receivepo-app .rpo-btn-green:disabled{opacity:.35;cursor:not-allowed}
+#receivepo-app .rpo-btn-outline{background:none;border:1.5px solid var(--border);color:var(--text2)}
+#receivepo-app .rpo-btn-outline:hover{border-color:var(--accent);color:var(--accent)}
+#receivepo-app .rpo-stats{display:flex;gap:10px;flex-wrap:wrap;margin-bottom:14px}
+#receivepo-app .rpo-stat{background:var(--bg3);border:1px solid var(--border);border-radius:8px;padding:10px 14px;flex:1;min-width:120px}
+#receivepo-app .rpo-stat-val{font-size:22px;font-weight:700;font-family:var(--mono);color:var(--text)}
+#receivepo-app .rpo-stat-lbl{font-size:11px;color:var(--text3);margin-top:2px}
+#receivepo-app .rpo-table-wrap{overflow-x:auto;-webkit-overflow-scrolling:touch}
+#receivepo-app table{width:100%;border-collapse:collapse;font-size:13px}
+#receivepo-app th{text-align:left;padding:8px 10px;background:var(--bg3);border-bottom:2px solid var(--border);font-size:11px;font-weight:700;letter-spacing:.5px;text-transform:uppercase;color:var(--text3);white-space:nowrap}
+#receivepo-app td{padding:8px 10px;border-bottom:1px solid var(--border);vertical-align:top}
+#receivepo-app tr:last-child td{border-bottom:none}
+#receivepo-app .rpo-badge{display:inline-block;font-size:10px;font-weight:700;padding:2px 7px;border-radius:4px}
+#receivepo-app .rpo-badge-ok{background:var(--green-bg);color:var(--green)}
+#receivepo-app .rpo-badge-warn{background:var(--orange-bg);color:var(--orange)}
+#receivepo-app .rpo-badge-err{background:var(--red-bg);color:var(--red)}
+#receivepo-app .rpo-badge-new{background:var(--purple-bg);color:var(--purple)}
+#receivepo-app .rpo-progress{height:4px;background:var(--border);border-radius:2px;margin-top:10px;overflow:hidden}
+#receivepo-app .rpo-progress-bar{height:100%;background:var(--green);border-radius:2px;transition:width .3s}
+#receivepo-app .rpo-toast{position:fixed;bottom:24px;left:50%;transform:translateX(-50%);background:var(--text);color:var(--bg2);padding:12px 20px;border-radius:10px;font-size:14px;font-weight:600;z-index:9999;opacity:0;transition:opacity .3s;pointer-events:none;white-space:nowrap}
+#receivepo-app .rpo-toast.show{opacity:1}
+#receivepo-app .rpo-mono{font-family:var(--mono);font-size:12px}
+#receivepo-app .rpo-arrow{color:var(--text3);margin:0 4px}
+#receivepo-app .rpo-new-loc{color:var(--green);font-weight:600}
+#receivepo-app .rpo-old-loc{color:var(--text3);text-decoration:line-through}
+</style>
+
+<div id="rpo-toast" class="rpo-toast"></div>
+
+<div class="rpo-topbar">
+  <div class="rpo-title">🚚 Receive PO</div>
+  <button class="rpo-back" onclick="salesGoBack()">← Back</button>
+</div>
+
+<div class="rpo-body">
+
+  <!-- Step 1: Upload -->
+  <div class="rpo-card" id="rpo-step-upload">
+    <div class="rpo-label">Step 1 — Upload Pallet Manifest</div>
+    <p style="font-size:13px;color:var(--text2);margin-bottom:14px;line-height:1.5">Upload the Excel file with a <strong>Pallet</strong> sheet and optionally <strong>EFF1</strong> / <strong>JQ1</strong> sheets for vendor pricing. The app will match each part number to Master List and preview all changes before anything is written.</p>
+    <div class="rpo-drop" id="rpo-dropzone" onclick="document.getElementById('rpo-file-inp').click()">
+      <div class="rpo-drop-icon">📂</div>
+      <div class="rpo-drop-text">Click to choose or drag &amp; drop</div>
+      <div class="rpo-drop-sub">Excel .xlsx file with Pallet sheet</div>
+    </div>
+    <input type="file" id="rpo-file-inp" accept=".xlsx" style="display:none" onchange="rpoHandleFile(this.files[0])">
+    <div id="rpo-parse-status" style="margin-top:10px;font-size:13px;color:var(--text3);display:none"></div>
+  </div>
+
+  <!-- Step 2: Preview -->
+  <div id="rpo-step-preview" style="display:none">
+    <div class="rpo-stats" id="rpo-stats-row"></div>
+
+    <!-- Warnings -->
+    <div class="rpo-card" id="rpo-warnings-card" style="display:none">
+      <div class="rpo-label" style="color:var(--orange)">⚠ Warnings — Review Before Confirming</div>
+      <div id="rpo-warnings-list"></div>
+    </div>
+
+    <!-- Preview table -->
+    <div class="rpo-card">
+      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px;flex-wrap:wrap;gap:8px">
+        <div class="rpo-label" style="margin:0">Changes Preview</div>
+        <div style="display:flex;gap:8px">
+          <button class="rpo-btn rpo-btn-outline" style="font-size:12px;padding:8px 14px" onclick="rpoToggleUnmatched()">Show Unmatched Only</button>
+          <button class="rpo-btn rpo-btn-green" onclick="rpoConfirm()" id="rpo-confirm-btn">✓ Confirm &amp; Receive PO</button>
+        </div>
+      </div>
+      <div class="rpo-table-wrap">
+        <table id="rpo-preview-table">
+          <thead>
+            <tr>
+              <th>Part #</th>
+              <th>Description</th>
+              <th>Pallet</th>
+              <th>Vendor</th>
+              <th>Cases</th>
+              <th>Units/Case</th>
+              <th>Location Change</th>
+              <th>Price/Unit</th>
+              <th>Status</th>
+            </tr>
+          </thead>
+          <tbody id="rpo-preview-body"></tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+
+  <!-- Step 3: Applying -->
+  <div id="rpo-step-applying" style="display:none">
+    <div class="rpo-card" style="text-align:center;padding:32px">
+      <div style="font-size:32px;margin-bottom:12px">⚙️</div>
+      <div style="font-size:16px;font-weight:700;color:var(--text);margin-bottom:6px">Applying to Master List…</div>
+      <div style="font-size:13px;color:var(--text3);margin-bottom:16px" id="rpo-apply-status">Preparing…</div>
+      <div class="rpo-progress"><div class="rpo-progress-bar" id="rpo-apply-bar" style="width:0%"></div></div>
+    </div>
+  </div>
+
+  <!-- Step 4: Done -->
+  <div id="rpo-step-done" style="display:none">
+    <div class="rpo-card" style="text-align:center;padding:32px">
+      <div style="font-size:48px;margin-bottom:12px">✅</div>
+      <div style="font-size:18px;font-weight:700;color:var(--green);margin-bottom:8px">PO Received Successfully</div>
+      <div style="font-size:13px;color:var(--text3);margin-bottom:20px" id="rpo-done-summary"></div>
+      <div style="display:flex;gap:10px;justify-content:center;flex-wrap:wrap">
+        <button class="rpo-btn rpo-btn-outline" onclick="rpoReset()">Receive Another PO</button>
+        <button class="rpo-btn rpo-btn-green" onclick="salesGoBack()">← Back to Launcher</button>
+      </div>
+    </div>
+  </div>
+
+</div>
+</div>
+
+<script>
+(function() {
+  var W = 'https://xfitting-lookup.alfixedinc88.workers.dev';
+  var rpoData   = [];   // parsed rows from Pallet sheet
+  var rpoPrices = {};   // baseSku -> { price, vendor }
+  var rpoMatches = [];  // matched rows ready for preview
+  var rpoShowUnmatched = false;
+  var rpoToastTimer = null;
+
+  function rpoToast(msg, type) {
+    clearTimeout(rpoToastTimer);
+    var t = document.getElementById('rpo-toast');
+    t.textContent = msg;
+    t.style.background = type === 'error' ? 'var(--red)' : type === 'ok' ? 'var(--green)' : 'var(--text)';
+    t.className = 'rpo-toast show';
+    rpoToastTimer = setTimeout(function() { t.className = 'rpo-toast'; }, 3000);
+  }
+
+  window.rpoReset = function() {
+    rpoData = []; rpoPrices = {}; rpoMatches = []; rpoShowUnmatched = false;
+    document.getElementById('rpo-step-upload').style.display = 'block';
+    document.getElementById('rpo-step-preview').style.display = 'none';
+    document.getElementById('rpo-step-applying').style.display = 'none';
+    document.getElementById('rpo-step-done').style.display = 'none';
+    document.getElementById('rpo-parse-status').style.display = 'none';
+    document.getElementById('rpo-file-inp').value = '';
+    var dz = document.getElementById('rpo-dropzone');
+    dz.querySelector('.rpo-drop-text').textContent = 'Click to choose or drag & drop';
+    dz.querySelector('.rpo-drop-sub').textContent = 'Excel .xlsx file with Pallet sheet';
+  };
+
+  // ── Drag & drop ──
+  (function() {
+    var dz = document.getElementById('rpo-dropzone');
+    dz.addEventListener('dragover', function(e) { e.preventDefault(); dz.classList.add('dragover'); });
+    dz.addEventListener('dragleave', function() { dz.classList.remove('dragover'); });
+    dz.addEventListener('drop', function(e) {
+      e.preventDefault(); dz.classList.remove('dragover');
+      var f = e.dataTransfer.files[0];
+      if (f) rpoHandleFile(f);
+    });
+  })();
+
+  window.rpoHandleFile = function(file) {
+    if (!file) return;
+    var status = document.getElementById('rpo-parse-status');
+    status.style.display = 'block';
+    status.textContent = 'Reading file…';
+    var dz = document.getElementById('rpo-dropzone');
+    dz.querySelector('.rpo-drop-text').textContent = file.name;
+    dz.querySelector('.rpo-drop-sub').textContent = 'Processing…';
+
+    // Load SheetJS
+    if (typeof XLSX === 'undefined') {
+      var s = document.createElement('script');
+      s.src = 'https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js';
+      s.onload = function() { rpoParseFile(file, status); };
+      s.onerror = function() { status.textContent = 'Failed to load Excel reader'; };
+      document.head.appendChild(s);
+    } else {
+      rpoParseFile(file, status);
+    }
+  };
+
+  function rpoParseFile(file, status) {
+    var reader = new FileReader();
+    reader.onload = function(e) {
+      try {
+        var wb = XLSX.read(e.target.result, { type: 'array' });
+
+        // ── Parse Pallet sheet ──
+        var palletSheet = wb.Sheets['Pallet'];
+        if (!palletSheet) { status.textContent = 'Error: No "Pallet" sheet found.'; return; }
+        var raw = XLSX.utils.sheet_to_json(palletSheet, { header: 1, defval: '' });
+
+        // Find header row (row 0 = Pallet, Description, PartNum...)
+        // Data starts at row 2 (0-indexed)
+        var lastPallet = '';
+        rpoData = [];
+        for (var i = 2; i < raw.length; i++) {
+          var r = raw[i];
+          var palletRaw = String(r[0] || '').trim();
+          var desc      = String(r[1] || '').trim();
+          var partNum   = String(r[2] || '').trim();
+          var totalUnits= parseFloat(r[3]) || 0;
+          var upc       = parseFloat(r[4]) || 0;
+          var cases     = parseFloat(r[5]) || 0;
+
+          if (!partNum && !desc) continue; // blank row
+
+          // Forward-fill pallet
+          if (palletRaw) lastPallet = palletRaw;
+
+          // Normalize pallet name:
+          // "ALFIXED JQ2512A-1" → "JQ2512A-1"
+          // "1" → "EFF Pallet 1"
+          var palletName = lastPallet;
+          if (/^ALFIXED\s+/i.test(palletName)) {
+            palletName = palletName.replace(/^ALFIXED\s+/i, '').trim();
+          } else if (/^\d+$/.test(palletName)) {
+            palletName = 'EFF Pallet ' + palletName;
+          }
+
+          // Determine vendor from pallet
+          var vendor = /^JQ/i.test(palletName) ? 'JQ' : 'EFF';
+
+          if (partNum) {
+            rpoData.push({
+              partNum:    partNum.toUpperCase(),
+              baseSku:    partNum.toUpperCase().split('=')[0].trim(),
+              desc:       desc,
+              pallet:     palletName,
+              vendor:     vendor,
+              cases:      cases,
+              upc:        upc,
+              totalUnits: totalUnits
+            });
+          }
+        }
+
+        // ── Parse EFF1 price sheet ──
+        if (wb.Sheets['EFF1']) {
+          var effRaw = XLSX.utils.sheet_to_json(wb.Sheets['EFF1'], { header: 1, defval: '' });
+          for (var j = 1; j < effRaw.length; j++) {
+            var er = effRaw[j];
+            // Col D = Part Number (may be slash-delimited), Col F = Unit Price
+            var partCell  = String(er[3] || '').trim();
+            var unitPrice = parseFloat(er[5]) || 0;
+            if (!partCell || !unitPrice) continue;
+            // Split multi-part-number cells
+            var parts = partCell.split('/');
+            parts.forEach(function(p) {
+              var bs = p.trim().toUpperCase().split('=')[0].trim();
+              if (bs && !rpoPrices[bs]) { // EFF goes in first, JQ will overwrite
+                rpoPrices[bs] = { price: unitPrice, vendor: 'EFF' };
+              }
+            });
+          }
+        }
+
+        // ── Parse JQ1 price sheet (JQ wins — overwrites EFF) ──
+        if (wb.Sheets['JQ1']) {
+          var jqRaw = XLSX.utils.sheet_to_json(wb.Sheets['JQ1'], { header: 1, defval: '' });
+          var lastDesc = '';
+          var lastPrice = 0;
+          for (var k = 1; k < jqRaw.length; k++) {
+            var jr = jqRaw[k];
+            // Col B = XF code (part num), Col C = Description, Col E = Unit Price
+            var xfCode = String(jr[1] || '').trim().toUpperCase();
+            var jDesc  = String(jr[2] || '').trim();
+            var jPrice = parseFloat(jr[4]) || 0;
+            if (jDesc)  lastDesc  = jDesc;
+            if (jPrice) lastPrice = jPrice;
+            if (!xfCode) continue;
+            var jBase = xfCode.split('=')[0].trim();
+            if (jBase && lastPrice) {
+              rpoPrices[jBase] = { price: lastPrice, vendor: 'JQ' }; // JQ always wins
+            }
+          }
+        }
+
+        status.textContent = 'Parsed ' + rpoData.length + ' part rows. Matching to Master List…';
+        rpoFetchAndMatch(status);
+
+      } catch(err) {
+        status.textContent = 'Parse error: ' + err.message;
+      }
+    };
+    reader.readAsArrayBuffer(file);
+  }
+
+  function rpoFetchAndMatch(status) {
+    // Fetch Master List cols G,H,I,J (PartNum, Location, Cases, UPC) up to 15000 rows
+    wFetch(W + '/inventory/receive-preview')
+      .then(function(r) { return r.json(); })
+      .then(function(d) {
+        if (!d.rows) { status.textContent = 'Failed to load Master List'; return; }
+        rpoBuildPreview(d.rows, status);
+      })
+      .catch(function(err) {
+        if (err.message === 'Unauthorized') {
+          status.textContent = 'Session expired — please re-authenticate';
+        } else {
+          status.textContent = 'Load failed: ' + (err.message || 'network error');
+        }
+      });
+  }
+
+  function rpoBuildPreview(mlRows, status) {
+    // mlRows: array of { rowIndex, partNum, location, cases, upc, sku }
+    // Build a map: partNum -> master row
+    var mlMap = {};
+    mlRows.forEach(function(r) { mlMap[r.partNum.toUpperCase()] = r; });
+
+    rpoMatches = [];
+    rpoData.forEach(function(item) {
+      var mlRow = mlMap[item.partNum];
+      var priceInfo = rpoPrices[item.baseSku] || null;
+
+      // Check if this row has a "will be here" / date placeholder containing date pattern
+      var isPlaceholder = mlRow && /\d{1,2}\/\d{1,2}\/\d{2,4}/.test(mlRow.location || '');
+
+      rpoMatches.push({
+        partNum:       item.partNum,
+        baseSku:       item.baseSku,
+        desc:          item.desc || (mlRow ? mlRow.name : ''),
+        pallet:        item.pallet,
+        vendor:        item.vendor,
+        cases:         item.cases,
+        upc:           item.upc,
+        totalUnits:    item.totalUnits,
+        pricePerUnit:  priceInfo ? priceInfo.price : null,
+        mlRow:         mlRow || null,
+        oldLocation:   mlRow ? (mlRow.location || '') : '',
+        isPlaceholder: isPlaceholder,
+        matched:       !!mlRow,
+        rowIndex:      mlRow ? mlRow.rowIndex : null
+      });
+    });
+
+    status.textContent = '';
+    rpoRenderPreview();
+  }
+
+  function rpoRenderPreview() {
+    var matched   = rpoMatches.filter(function(x) { return x.matched; });
+    var unmatched = rpoMatches.filter(function(x) { return !x.matched; });
+    var withPrice = rpoMatches.filter(function(x) { return x.pricePerUnit; });
+
+    // Stats
+    var statsEl = document.getElementById('rpo-stats-row');
+    statsEl.innerHTML = [
+      { val: rpoMatches.length, lbl: 'Total Parts' },
+      { val: matched.length,   lbl: 'Matched', color: 'var(--green)' },
+      { val: unmatched.length, lbl: 'Unmatched', color: unmatched.length > 0 ? 'var(--orange)' : 'var(--text)' },
+      { val: withPrice.length, lbl: 'With Pricing' },
+      { val: rpoMatches.reduce(function(s,x){return s+(x.cases||0);},0), lbl: 'Total Cases' }
+    ].map(function(s) {
+      return '<div class="rpo-stat"><div class="rpo-stat-val" style="color:' + (s.color||'var(--text)') + '">' + s.val + '</div><div class="rpo-stat-lbl">' + s.lbl + '</div></div>';
+    }).join('');
+
+    // Warnings
+    var warns = [];
+    if (unmatched.length > 0) warns.push('<strong>' + unmatched.length + ' part(s) not found</strong> in Master List — they will be skipped. Check part numbers.');
+    var noPrice = rpoMatches.filter(function(x) { return x.matched && !x.pricePerUnit; });
+    if (noPrice.length > 0) warns.push('<strong>' + noPrice.length + ' matched part(s)</strong> have no vendor pricing. Price/Unit and Total Price columns will be left blank.');
+    var wCard = document.getElementById('rpo-warnings-card');
+    if (warns.length > 0) {
+      wCard.style.display = 'block';
+      document.getElementById('rpo-warnings-list').innerHTML = warns.map(function(w) {
+        return '<div style="font-size:13px;color:var(--orange);padding:6px 0;border-bottom:1px solid var(--border)">' + w + '</div>';
+      }).join('');
+    } else {
+      wCard.style.display = 'none';
+    }
+
+    // Table
+    var rows = rpoShowUnmatched
+      ? rpoMatches.filter(function(x) { return !x.matched; })
+      : rpoMatches;
+
+    var tbody = document.getElementById('rpo-preview-body');
+    tbody.innerHTML = '';
+    rows.forEach(function(item) {
+      var tr = document.createElement('tr');
+      if (!item.matched) tr.style.opacity = '0.5';
+
+      var statusBadge = item.matched
+        ? (item.isPlaceholder
+            ? '<span class="rpo-badge rpo-badge-ok">✓ Match</span>'
+            : '<span class="rpo-badge rpo-badge-warn">⚠ No placeholder</span>')
+        : '<span class="rpo-badge rpo-badge-err">✗ Not found</span>';
+
+      var locChange = item.matched
+        ? ('<span class="rpo-old-loc rpo-mono">' + (item.oldLocation || '—') + '</span>'
+           + '<span class="rpo-arrow">→</span>'
+           + '<span class="rpo-new-loc rpo-mono">' + item.pallet + '</span>')
+        : '<span style="color:var(--text3)">—</span>';
+
+      var price = item.pricePerUnit != null
+        ? '$' + item.pricePerUnit.toFixed(4)
+        : '<span style="color:var(--text3)">—</span>';
+
+      tr.innerHTML = '<td class="rpo-mono">' + item.partNum + '</td>'
+        + '<td style="font-size:12px;color:var(--text2);max-width:200px">' + (item.desc || '—') + '</td>'
+        + '<td class="rpo-mono">' + item.pallet + '</td>'
+        + '<td><span style="font-size:11px;font-weight:700;color:' + (item.vendor==='JQ'?'var(--accent)':'var(--orange)') + '">' + item.vendor + '</span></td>'
+        + '<td class="rpo-mono" style="text-align:right">' + (item.cases || '—') + '</td>'
+        + '<td class="rpo-mono" style="text-align:right">' + (item.upc || '—') + '</td>'
+        + '<td style="font-size:12px">' + locChange + '</td>'
+        + '<td class="rpo-mono" style="text-align:right">' + price + '</td>'
+        + '<td>' + statusBadge + '</td>';
+      tbody.appendChild(tr);
+    });
+
+    document.getElementById('rpo-step-upload').style.display = 'none';
+    document.getElementById('rpo-step-preview').style.display = 'block';
+    document.getElementById('rpo-step-applying').style.display = 'none';
+    document.getElementById('rpo-step-done').style.display = 'none';
+  }
+
+  window.rpoToggleUnmatched = function() {
+    rpoShowUnmatched = !rpoShowUnmatched;
+    var btn = document.querySelector('#receivepo-app button[onclick="rpoToggleUnmatched()"]');
+    if (btn) btn.textContent = rpoShowUnmatched ? 'Show All' : 'Show Unmatched Only';
+    rpoRenderPreview();
+  };
+
+  window.rpoConfirm = function() {
+    var toApply = rpoMatches.filter(function(x) { return x.matched && x.rowIndex; });
+    if (toApply.length === 0) { rpoToast('No matched rows to apply', 'error'); return; }
+
+    document.getElementById('rpo-step-preview').style.display = 'none';
+    document.getElementById('rpo-step-applying').style.display = 'block';
+
+    var idx = 0;
+    var applied = 0;
+    var bar = document.getElementById('rpo-apply-bar');
+    var applyStatus = document.getElementById('rpo-apply-status');
+
+    function applyNext() {
+      if (idx >= toApply.length) {
+        // Done
+        bar.style.width = '100%';
+        document.getElementById('rpo-step-applying').style.display = 'none';
+        document.getElementById('rpo-step-done').style.display = 'block';
+        document.getElementById('rpo-done-summary').textContent =
+          applied + ' of ' + toApply.length + ' parts received. Master List updated. Workers can now do transfers from pallet locations to shelves.';
+        return;
+      }
+      var item = toApply[idx++];
+      var pct  = Math.round((idx / toApply.length) * 100);
+      bar.style.width = pct + '%';
+      applyStatus.textContent = 'Updating ' + item.partNum + '… (' + idx + '/' + toApply.length + ')';
+
+      wFetch(W + '/inventory/receive-apply', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          rowIndex:    item.rowIndex,
+          partNum:     item.partNum,
+          pallet:      item.pallet,
+          vendor:      item.vendor,
+          cases:       item.cases,
+          upc:         item.upc,
+          pricePerUnit: item.pricePerUnit,
+          oldLocation: item.oldLocation
+        })
+      }).then(function(r) { return r.json(); })
+        .then(function(d) {
+          if (d.ok) applied++;
+          else console.warn('rpo apply failed:', item.partNum, d.error);
+          applyNext();
+        })
+        .catch(function(err) {
+          if (err.message === 'Unauthorized') {
+            applyStatus.textContent = 'Session expired — re-authenticate and try again';
+            document.getElementById('rpo-step-applying').style.display = 'none';
+            document.getElementById('rpo-step-preview').style.display = 'block';
+            rpoToast('Session expired', 'error');
+            return;
+          }
+          // Non-auth error — skip and continue
+          console.warn('rpo apply error:', item.partNum, err.message);
+          applyNext();
+        });
+    }
+    applyNext();
+  };
+
+})();
+</script>
+
+
 </body>
 </html>
