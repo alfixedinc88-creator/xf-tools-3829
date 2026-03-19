@@ -1,7 +1,7 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-  <!-- XFITTING-BUILD-V110-FIXD-20260319c -->
+  <!-- XFITTING-BUILD-V111-TKEY-20260319c -->
 <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate">
 <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&family=IBM+Plex+Sans:wght@300;400;500;600&display=swap" rel="stylesheet">
   <meta http-equiv="Pragma" content="no-cache">
@@ -1807,7 +1807,7 @@ input[type=checkbox]{width:15px;height:15px;cursor:pointer;accent-color:var(--bl
   <div class="launcher-inner">
     <div class="launcher-logo"><div class="launcher-mark">XF</div><div class="launcher-name">XFITTING</div></div>
     <div class="launcher-sub">Internal Tools — Choose an app to continue</div>
-    <div style="font-size:11px;color:var(--text3);margin-top:6px;opacity:.7">v1.0.8</div>
+    <div style="font-size:11px;color:var(--text3);margin-top:6px;opacity:.7">v1.1.1</div>
 
     <div class="launcher-section-label">🏭 Warehouse</div>
     <div class="launcher-grid">
@@ -1880,6 +1880,12 @@ input[type=checkbox]{width:15px;height:15px;cursor:pointer;accent-color:var(--bl
         <div class="launcher-card-title">Message Inbox <span id="msg-inbox-badge" style="display:none;background:var(--red);color:#fff;font-size:10px;font-family:var(--mono);font-weight:700;padding:2px 6px;border-radius:10px;margin-left:6px;vertical-align:middle"></span></div>
         <div class="launcher-card-desc">View and reply to messages from warehouse staff. Manage requests for resources, materials and alerts.</div>
         <div style="display:inline-block;margin-top:10px;font-size:10px;font-family:var(--mono);padding:3px 8px;border-radius:4px;background:#ede9fe;color:var(--purple);font-weight:600;letter-spacing:1px">Inbox · Management</div>
+      </div>
+      <div class="launcher-card" onclick="launchMgmtApp('ebaymsgs')" style="border-color:#e8f5e9" id="ebaymsgs-launcher-card">
+        <div class="launcher-card-icon">🤖</div>
+        <div class="launcher-card-title">eBay AI Messages <span id="ebaymsgs-badge" style="display:none;background:var(--accent);color:#fff;font-size:10px;font-family:var(--mono);font-weight:700;padding:2px 6px;border-radius:10px;margin-left:6px;vertical-align:middle"></span></div>
+        <div class="launcher-card-desc">AI-drafted replies to buyer questions. Review, edit, and send directly from XFitting.</div>
+        <div style="display:inline-block;margin-top:10px;font-size:10px;font-family:var(--mono);padding:3px 8px;border-radius:4px;background:#e8f5e9;color:#2e7d32;font-weight:600;letter-spacing:1px">eBay · AI · Management</div>
       </div>
     </div>
   </div>
@@ -3575,6 +3581,7 @@ function backToLauncher() {
   document.getElementById('receivepo-app').style.display = 'none';
   document.getElementById('messenger-app').style.display = 'none';
   document.getElementById('msginbox-app').style.display = 'none';
+  document.getElementById('ebaymsgs-app').style.display = 'none';
   document.getElementById('launcher').style.display = 'flex';
 }
 
@@ -4873,6 +4880,12 @@ async function salesLaunchApp(name) {
     document.getElementById('msginbox-app').style.display = 'flex';
     document.getElementById('msginbox-app').style.flexDirection = 'column';
     msgInboxOnLaunch();
+    return;
+  }
+  if (name === 'ebaymsgs') {
+    document.getElementById('ebaymsgs-app').style.display = 'flex';
+    document.getElementById('ebaymsgs-app').style.flexDirection = 'column';
+    ebayMsgsOnLaunch();
     return;
   }
   var appId = name === 'reorder' ? 'reorder-app' : 'dashboard-app';
@@ -13671,6 +13684,820 @@ function _psUploadStatusToSheet(rows) {
   }
   // initial poll on page load
   setTimeout(msgPollBadge, 2000);
+
+})();
+</script>
+
+<!-- ═══ EBAY AI MESSAGES APP ═══ -->
+<div id="ebaymsgs-app" style="display:none;">
+
+<style>
+/* ── eBay AI Messages — scoped CSS ── */
+#ebaymsgs-app {
+  background: var(--bg);
+  min-height: 100vh;
+  flex-direction: column;
+}
+
+#ebaymsgs-app .em-header {
+  background: var(--bg2);
+  border-bottom: 1.5px solid var(--border);
+  height: 56px;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 0 20px;
+  position: sticky;
+  top: 0;
+  z-index: 100;
+}
+
+#ebaymsgs-app .em-logo {
+  background: #2e7d32;
+  color: #fff;
+  font-family: var(--mono);
+  font-size: 12px;
+  font-weight: 700;
+  padding: 4px 9px;
+  border-radius: 6px;
+  letter-spacing: 0.5px;
+}
+
+#ebaymsgs-app .em-title {
+  font-size: 15px;
+  font-weight: 700;
+  color: var(--text);
+}
+
+#ebaymsgs-app .em-spacer { flex: 1; }
+
+#ebaymsgs-app .em-status-dot {
+  width: 8px; height: 8px;
+  border-radius: 50%;
+  background: var(--text3);
+  display: inline-block;
+  margin-right: 5px;
+}
+#ebaymsgs-app .em-status-dot.ok { background: var(--green); }
+#ebaymsgs-app .em-status-dot.loading { background: var(--orange); animation: pulse 1s infinite; }
+#ebaymsgs-app .em-status-dot.err { background: var(--red); }
+
+#ebaymsgs-app .em-content {
+  padding: 20px;
+  max-width: 1000px;
+  margin: 0 auto;
+  width: 100%;
+}
+
+/* Toolbar */
+#ebaymsgs-app .em-toolbar {
+  display: flex;
+  gap: 10px;
+  align-items: center;
+  flex-wrap: wrap;
+  margin-bottom: 18px;
+}
+
+#ebaymsgs-app .em-btn {
+  font-family: var(--sans);
+  font-size: 13px;
+  font-weight: 600;
+  padding: 8px 16px;
+  border-radius: 8px;
+  border: 1.5px solid var(--border2);
+  background: var(--bg2);
+  color: var(--text2);
+  cursor: pointer;
+  transition: all .15s;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+#ebaymsgs-app .em-btn:hover { border-color: var(--accent); color: var(--accent); background: var(--accent-bg); }
+#ebaymsgs-app .em-btn.primary { background: var(--accent); color: #fff; border-color: var(--accent); }
+#ebaymsgs-app .em-btn.primary:hover { background: var(--accent2); border-color: var(--accent2); color: #fff; }
+#ebaymsgs-app .em-btn.green { background: #2e7d32; color: #fff; border-color: #2e7d32; }
+#ebaymsgs-app .em-btn.green:hover { background: #1b5e20; border-color: #1b5e20; color: #fff; }
+#ebaymsgs-app .em-btn:disabled { opacity: .45; cursor: not-allowed; }
+
+#ebaymsgs-app select.em-select {
+  font-family: var(--sans);
+  font-size: 13px;
+  padding: 8px 10px;
+  border-radius: 8px;
+  border: 1.5px solid var(--border2);
+  background: var(--bg2);
+  color: var(--text2);
+  cursor: pointer;
+}
+
+/* Stats row */
+#ebaymsgs-app .em-stats {
+  display: flex;
+  gap: 10px;
+  flex-wrap: wrap;
+  margin-bottom: 18px;
+}
+#ebaymsgs-app .em-stat-pill {
+  background: var(--bg2);
+  border: 1.5px solid var(--border);
+  border-radius: 10px;
+  padding: 8px 14px;
+  font-size: 12px;
+  color: var(--text2);
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+#ebaymsgs-app .em-stat-pill strong { color: var(--text); font-family: var(--mono); font-size: 14px; }
+
+/* Tabs */
+#ebaymsgs-app .em-tabs {
+  display: flex;
+  gap: 0;
+  border-bottom: 2px solid var(--border);
+  margin-bottom: 18px;
+}
+#ebaymsgs-app .em-tab {
+  padding: 10px 18px;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text3);
+  cursor: pointer;
+  border-bottom: 2px solid transparent;
+  margin-bottom: -2px;
+  transition: all .15s;
+  display: flex;
+  align-items: center;
+  gap: 7px;
+}
+#ebaymsgs-app .em-tab:hover { color: var(--text2); }
+#ebaymsgs-app .em-tab.active { color: #2e7d32; border-bottom-color: #2e7d32; }
+#ebaymsgs-app .em-tab-badge {
+  background: var(--accent);
+  color: #fff;
+  font-size: 10px;
+  font-family: var(--mono);
+  font-weight: 700;
+  padding: 1px 6px;
+  border-radius: 10px;
+  min-width: 18px;
+  text-align: center;
+}
+
+/* Message card */
+#ebaymsgs-app .em-card {
+  background: var(--bg2);
+  border: 1.5px solid var(--border);
+  border-radius: 14px;
+  padding: 18px 20px 14px;
+  margin-bottom: 14px;
+  box-shadow: var(--shadow);
+  transition: border-color .15s;
+  animation: cardIn .18s ease both;
+}
+#ebaymsgs-app .em-card:hover { border-color: var(--border2); }
+#ebaymsgs-app .em-card.drafted { border-left: 4px solid var(--accent); }
+#ebaymsgs-app .em-card.sent { border-left: 4px solid var(--green); opacity: .75; }
+
+#ebaymsgs-app .em-card-top {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  flex-wrap: wrap;
+  margin-bottom: 10px;
+}
+#ebaymsgs-app .em-badge {
+  font-size: 10px;
+  font-family: var(--mono);
+  font-weight: 700;
+  padding: 2px 8px;
+  border-radius: 6px;
+}
+#ebaymsgs-app .em-badge.new   { background: var(--accent-bg); color: var(--accent); }
+#ebaymsgs-app .em-badge.sent  { background: var(--green-bg);  color: var(--green); }
+#ebaymsgs-app .em-badge.draft { background: var(--orange-bg); color: var(--orange); }
+
+#ebaymsgs-app .em-card-meta {
+  font-size: 11px;
+  color: var(--text3);
+  font-family: var(--mono);
+  margin-left: auto;
+  white-space: nowrap;
+}
+
+#ebaymsgs-app .em-listing-title {
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--text);
+  margin-bottom: 4px;
+  line-height: 1.4;
+}
+#ebaymsgs-app .em-listing-meta {
+  font-size: 11px;
+  color: var(--text3);
+  font-family: var(--mono);
+  margin-bottom: 10px;
+  display: flex;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+
+#ebaymsgs-app .em-question-box {
+  background: var(--bg3);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 12px 14px;
+  font-size: 13px;
+  color: var(--text);
+  line-height: 1.6;
+  margin-bottom: 12px;
+  position: relative;
+}
+#ebaymsgs-app .em-question-box::before {
+  content: 'BUYER';
+  font-size: 10px;
+  font-family: var(--mono);
+  font-weight: 700;
+  color: var(--text3);
+  position: absolute;
+  top: -8px;
+  left: 12px;
+  background: var(--bg3);
+  padding: 0 4px;
+}
+
+#ebaymsgs-app .em-draft-section {
+  margin-top: 10px;
+}
+#ebaymsgs-app .em-draft-label {
+  font-size: 11px;
+  font-weight: 700;
+  color: var(--accent);
+  font-family: var(--mono);
+  margin-bottom: 6px;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+#ebaymsgs-app .em-draft-area {
+  width: 100%;
+  background: var(--accent-bg);
+  border: 1.5px solid #aec6fb;
+  border-radius: 10px;
+  padding: 10px 12px;
+  font-family: var(--sans);
+  font-size: 13px;
+  color: var(--text);
+  line-height: 1.6;
+  resize: vertical;
+  min-height: 80px;
+  outline: none;
+  transition: border-color .15s;
+  box-sizing: border-box;
+}
+#ebaymsgs-app .em-draft-area:focus { border-color: var(--accent); }
+
+#ebaymsgs-app .em-card-actions {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+  margin-top: 12px;
+  align-items: center;
+}
+#ebaymsgs-app .em-send-btn {
+  font-family: var(--sans);
+  font-size: 13px;
+  font-weight: 700;
+  padding: 8px 18px;
+  border-radius: 8px;
+  border: none;
+  background: #2e7d32;
+  color: #fff;
+  cursor: pointer;
+  transition: background .15s;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+#ebaymsgs-app .em-send-btn:hover { background: #1b5e20; }
+#ebaymsgs-app .em-send-btn:disabled { opacity: .45; cursor: not-allowed; }
+
+#ebaymsgs-app .em-regen-btn {
+  font-family: var(--sans);
+  font-size: 12px;
+  font-weight: 600;
+  padding: 7px 14px;
+  border-radius: 8px;
+  border: 1.5px solid var(--border2);
+  background: var(--bg);
+  color: var(--text2);
+  cursor: pointer;
+  transition: all .15s;
+}
+#ebaymsgs-app .em-regen-btn:hover { border-color: var(--accent); color: var(--accent); }
+#ebaymsgs-app .em-skip-btn {
+  font-family: var(--sans);
+  font-size: 12px;
+  font-weight: 600;
+  padding: 7px 14px;
+  border-radius: 8px;
+  border: 1.5px solid var(--border);
+  background: var(--bg);
+  color: var(--text3);
+  cursor: pointer;
+  transition: all .15s;
+}
+#ebaymsgs-app .em-skip-btn:hover { border-color: var(--red); color: var(--red); background: var(--red-bg); }
+
+/* Log tab */
+#ebaymsgs-app .em-log-row {
+  background: var(--bg2);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 12px 16px;
+  margin-bottom: 10px;
+  font-size: 12px;
+  display: grid;
+  grid-template-columns: auto 1fr auto;
+  gap: 10px;
+  align-items: start;
+}
+#ebaymsgs-app .em-log-status {
+  font-family: var(--mono);
+  font-weight: 700;
+  font-size: 10px;
+  padding: 2px 7px;
+  border-radius: 5px;
+}
+#ebaymsgs-app .em-log-status.sent { background: var(--green-bg); color: var(--green); }
+#ebaymsgs-app .em-log-status.failed { background: var(--red-bg); color: var(--red); }
+
+/* Empty state */
+#ebaymsgs-app .em-empty {
+  text-align: center;
+  padding: 60px 20px;
+  color: var(--text3);
+}
+#ebaymsgs-app .em-empty .em-empty-icon { font-size: 40px; margin-bottom: 12px; }
+#ebaymsgs-app .em-empty h3 { font-size: 16px; font-weight: 600; color: var(--text2); margin-bottom: 6px; }
+#ebaymsgs-app .em-empty p { font-size: 13px; }
+
+/* Loading spinner */
+#ebaymsgs-app .em-loading {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  color: var(--text3);
+  font-size: 13px;
+  padding: 40px 0;
+  justify-content: center;
+}
+</style>
+
+<!-- ── Header ── -->
+<div class="em-header">
+  <div class="em-logo">eBay</div>
+  <div class="em-title">AI Messages</div>
+  <span class="em-spacer"></span>
+  <span style="font-size:12px;color:var(--text3);display:flex;align-items:center;gap:4px;">
+    <span class="em-status-dot" id="em-dot"></span>
+    <span id="em-status-txt" style="font-family:var(--mono);">Ready</span>
+  </span>
+  <button class="em-btn" onclick="backToLauncher()" style="margin-left:8px;">← Apps</button>
+</div>
+
+<!-- ── Content ── -->
+<div class="em-content">
+
+  <!-- Toolbar -->
+  <div class="em-toolbar">
+    <button class="em-btn primary" id="em-fetch-btn" onclick="emFetchMessages()">
+      📨 Fetch Messages
+    </button>
+    <button class="em-btn" id="em-draft-all-btn" onclick="emDraftAll()" style="display:none;">
+      🤖 Draft All with AI
+    </button>
+    <select class="em-select" id="em-days-sel">
+      <option value="3">Last 3 days</option>
+      <option value="7" selected>Last 7 days</option>
+      <option value="14">Last 14 days</option>
+      <option value="30">Last 30 days</option>
+    </select>
+    <select class="em-select" id="em-status-sel">
+      <option value="Unanswered">Unanswered only</option>
+      <option value="All">All messages</option>
+    </select>
+    <div style="display:flex;align-items:center;gap:7px;background:var(--bg2);border:1.5px solid var(--border2);border-radius:8px;padding:0 12px;height:36px;">
+      <span style="font-size:11px;font-weight:700;color:var(--text3);font-family:var(--mono);white-space:nowrap;">AGENT</span>
+      <input type="text" id="em-agent-name" placeholder="Your name" maxlength="30"
+        style="border:none;background:none;font-family:var(--sans);font-size:13px;font-weight:600;color:var(--text);outline:none;width:90px;"
+        oninput="emSaveAgentName(this.value)">
+    </div>
+  </div>
+
+  <!-- Stats -->
+  <div class="em-stats" id="em-stats" style="display:none;">
+    <div class="em-stat-pill">📨 <strong id="em-stat-total">0</strong> messages fetched</div>
+    <div class="em-stat-pill">🤖 <strong id="em-stat-drafted">0</strong> drafted</div>
+    <div class="em-stat-pill">✅ <strong id="em-stat-sent">0</strong> sent this session</div>
+  </div>
+
+  <!-- Tabs -->
+  <div class="em-tabs" id="em-tabs" style="display:none;">
+    <div class="em-tab active" id="em-tab-queue" onclick="emSwitchTab('queue')">
+      Review Queue <span class="em-tab-badge" id="em-queue-badge">0</span>
+    </div>
+    <div class="em-tab" id="em-tab-log" onclick="emSwitchTab('log')">
+      Sent Log
+    </div>
+  </div>
+
+  <!-- Queue pane -->
+  <div id="em-pane-queue">
+    <div class="em-empty" id="em-empty-state">
+      <div class="em-empty-icon">📭</div>
+      <h3>No messages loaded</h3>
+      <p>Click "Fetch Messages" to pull unanswered buyer questions from eBay.</p>
+    </div>
+    <div id="em-msg-list"></div>
+  </div>
+
+  <!-- Log pane -->
+  <div id="em-pane-log" style="display:none;">
+    <div style="margin-bottom:12px;display:flex;align-items:center;gap:10px;">
+      <span style="font-size:13px;color:var(--text2);">Reply history from this session + prior sends</span>
+      <button class="em-btn" onclick="emLoadLog()" style="margin-left:auto;">↻ Refresh</button>
+    </div>
+    <div id="em-log-list">
+      <div class="em-empty"><div class="em-empty-icon">📋</div><h3>No log entries</h3><p>Sent replies will appear here.</p></div>
+    </div>
+  </div>
+
+</div><!-- /em-content -->
+</div><!-- /ebaymsgs-app -->
+
+<script>
+/* ═══════════════════════════════════════════════════════
+   EBAY AI MESSAGES  —  XFitting v1.1.1
+   Management-only; launched via launchMgmtApp('ebaymsgs')
+   No global pollution — all vars/funcs prefixed em* / ebayMsgs*
+   Worker: /ebay-msg/list  /ebay-msg/ai-draft  /ebay-msg/send  /ebay-msg/log
+═══════════════════════════════════════════════════════ */
+(function() {
+  'use strict';
+
+  var EM_WORKER   = WORKER_URL;
+  var emMessages  = [];       // fetched messages
+  var emSentCount = 0;
+  var emCurrentTab = 'queue';
+  var emAgentName = localStorage.getItem('xf_em_agent') || '';
+
+  window.emSaveAgentName = function(val) {
+    emAgentName = (val || '').trim();
+    localStorage.setItem('xf_em_agent', emAgentName);
+  };
+
+  /* ── Helpers ─────────────────────────────────────── */
+  function emFmtTime(iso) {
+    if (!iso) return '';
+    return new Date(iso).toLocaleString('en-US', {
+      timeZone: 'America/New_York', hour12: true,
+      month: 'short', day: 'numeric',
+      hour: 'numeric', minute: '2-digit'
+    });
+  }
+
+  function emEsc(s) {
+    return String(s || '').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+  }
+
+  function emSetStatus(msg, mode) {
+    var dot = document.getElementById('em-dot');
+    var txt = document.getElementById('em-status-txt');
+    if (dot) dot.className = 'em-status-dot' + (mode ? ' ' + mode : '');
+    if (txt) txt.textContent = msg;
+  }
+
+  function emUpdateStats() {
+    var drafted = emMessages.filter(function(m) { return m.aiDraft; }).length;
+    var total   = emMessages.length;
+    var statTotal   = document.getElementById('em-stat-total');
+    var statDrafted = document.getElementById('em-stat-drafted');
+    var statSent    = document.getElementById('em-stat-sent');
+    var qBadge      = document.getElementById('em-queue-badge');
+    if (statTotal)   statTotal.textContent   = total;
+    if (statDrafted) statDrafted.textContent = drafted;
+    if (statSent)    statSent.textContent    = emSentCount;
+    var pending = emMessages.filter(function(m) { return !m._sent; }).length;
+    if (qBadge) qBadge.textContent = pending;
+    // Show draft-all button only if we have messages without drafts
+    var draftAllBtn = document.getElementById('em-draft-all-btn');
+    if (draftAllBtn) draftAllBtn.style.display = (total > 0 && drafted < total) ? 'inline-flex' : 'none';
+  }
+
+  /* ── Launch hook ─────────────────────────────────── */
+  window.ebayMsgsOnLaunch = function() {
+    emMessages  = [];
+    emSentCount = 0;
+    emCurrentTab = 'queue';
+    emSetStatus('Ready', '');
+    document.getElementById('em-empty-state').style.display = 'block';
+    document.getElementById('em-msg-list').innerHTML = '';
+    document.getElementById('em-stats').style.display = 'none';
+    document.getElementById('em-tabs').style.display = 'none';
+    document.getElementById('em-pane-queue').style.display = 'block';
+    document.getElementById('em-pane-log').style.display = 'none';
+    document.getElementById('em-draft-all-btn').style.display = 'none';
+    // Restore saved agent name
+    var nameInp = document.getElementById('em-agent-name');
+    if (nameInp) nameInp.value = emAgentName;
+    emSetActiveTab('queue');
+  };
+
+  /* ── Tab switching ───────────────────────────────── */
+  function emSetActiveTab(name) {
+    emCurrentTab = name;
+    ['queue','log'].forEach(function(t) {
+      var tab = document.getElementById('em-tab-' + t);
+      var pane = document.getElementById('em-pane-' + t);
+      if (tab)  tab.classList.toggle('active', t === name);
+      if (pane) pane.style.display = (t === name) ? 'block' : 'none';
+    });
+    if (name === 'log') emLoadLog();
+  }
+
+  window.emSwitchTab = function(name) { emSetActiveTab(name); };
+
+  /* ── Fetch messages from worker ──────────────────── */
+  window.emFetchMessages = function() {
+    var days    = document.getElementById('em-days-sel').value;
+    var status  = document.getElementById('em-status-sel').value;
+    var btn     = document.getElementById('em-fetch-btn');
+    btn.disabled = true;
+    btn.textContent = '⏳ Fetching…';
+    emSetStatus('Fetching from eBay…', 'loading');
+    document.getElementById('em-msg-list').innerHTML = '<div class="em-loading">⏳ Pulling messages from eBay Trading API…</div>';
+    document.getElementById('em-empty-state').style.display = 'none';
+    document.getElementById('em-stats').style.display = 'flex';
+    document.getElementById('em-tabs').style.display = 'flex';
+
+    var token = sessionStorage.getItem('xf_session') || '';
+    fetch(EM_WORKER + '/ebay-msg/list?days=' + days + '&status=' + status, {
+      headers: { 'X-Session-Token': token }
+    }).then(function(r) { return r.json(); }).then(function(d) {
+      btn.disabled = false;
+      btn.innerHTML = '📨 Fetch Messages';
+      if (d.error) {
+        emSetStatus('Error: ' + d.error, 'err');
+        document.getElementById('em-msg-list').innerHTML =
+          '<div style="color:var(--red);font-size:13px;padding:20px;background:var(--red-bg);border-radius:10px;border:1px solid #f5a89e;">'
+          + '❌ ' + emEsc(d.error) + '</div>';
+        return;
+      }
+      emMessages = d.messages || [];
+      emMessages.forEach(function(m) { m._sent = false; m.aiDraft = ''; });
+      emSetStatus('Loaded ' + emMessages.length + ' message' + (emMessages.length !== 1 ? 's' : ''), 'ok');
+      emUpdateStats();
+      emRenderQueue();
+    }).catch(function(e) {
+      btn.disabled = false;
+      btn.innerHTML = '📨 Fetch Messages';
+      emSetStatus('Network error', 'err');
+      document.getElementById('em-msg-list').innerHTML =
+        '<div style="color:var(--red);font-size:13px;padding:20px;">Network error — check connection.</div>';
+    });
+  };
+
+  /* ── Render queue ────────────────────────────────── */
+  function emRenderQueue() {
+    var list = document.getElementById('em-msg-list');
+    if (!emMessages.length) {
+      list.innerHTML = '';
+      document.getElementById('em-empty-state').style.display = 'block';
+      return;
+    }
+    document.getElementById('em-empty-state').style.display = 'none';
+    list.innerHTML = emMessages.map(function(m, idx) {
+      var sentClass = m._sent ? ' sent' : (m.aiDraft ? ' drafted' : '');
+      var badge = m._sent
+        ? '<span class="em-badge sent">SENT</span>'
+        : (m.aiDraft
+            ? '<span class="em-badge draft">DRAFTED</span>'
+            : '<span class="em-badge new">NEW</span>');
+      var draftSection = '';
+      if (!m._sent) {
+        if (m.aiDraft) {
+          draftSection = '<div class="em-draft-section">'
+            + '<div class="em-draft-label">🤖 AI Draft <span style="font-size:10px;color:var(--text3);font-weight:400;">(edit before sending)</span></div>'
+            + '<textarea class="em-draft-area" id="em-draft-' + idx + '">' + emEsc(m.aiDraft) + '</textarea>'
+            + '</div>';
+        } else {
+          var errNote = m.draftError
+            ? '<div style="font-size:11px;color:var(--red);font-family:var(--mono);margin-bottom:6px;padding:6px 10px;background:var(--red-bg);border-radius:6px;border:1px solid #f5a89e;">⚠ AI error: ' + emEsc(m.draftError.slice(0,200)) + '</div>'
+            : '';
+          draftSection = '<div class="em-draft-section">'
+            + '<div class="em-draft-label">✏️ Your Reply</div>'
+            + errNote
+            + '<textarea class="em-draft-area" id="em-draft-' + idx + '" placeholder="Type your reply here, or click \'Draft with AI\'…"></textarea>'
+            + '</div>';
+        }
+      } else {
+        draftSection = '<div style="background:var(--green-bg);border:1px solid #6ee7a8;border-radius:10px;padding:10px 14px;font-size:13px;color:var(--green);margin-top:10px;">'
+          + '✅ Reply sent to ' + emEsc(m.senderId) + '</div>';
+      }
+      var actions = m._sent ? '' :
+        '<div class="em-card-actions">'
+        + '<button class="em-send-btn" id="em-send-btn-' + idx + '" onclick="emSendReply(' + idx + ')">✈️ Send Reply</button>'
+        + '<button class="em-regen-btn" onclick="emDraftOne(' + idx + ')">🤖 ' + (m.aiDraft ? 'Re-draft' : 'Draft with AI') + '</button>'
+        + '<button class="em-skip-btn" onclick="emSkip(' + idx + ')">Skip</button>'
+        + '</div>';
+      return '<div class="em-card' + sentClass + '" id="em-card-' + idx + '">'
+        + '<div class="em-card-top">'
+        + badge
+        + '<span class="em-card-meta">' + emFmtTime(m.createdAt) + '</span>'
+        + '</div>'
+        + '<div class="em-listing-title">' + emEsc(m.title || 'Listing #' + m.itemId) + '</div>'
+        + '<div class="em-listing-meta">'
+        + '<span>Buyer: <strong style="color:var(--text);">' + emEsc(m.senderId) + '</strong></span>'
+        + '<span>Item: <span style="color:var(--accent);font-family:var(--mono);">' + emEsc(m.itemId) + '</span></span>'
+        + (m.currentPrice ? '<span>Price: <strong>$' + m.currentPrice.toFixed(2) + '</strong></span>' : '')
+        + '</div>'
+        + '<div class="em-question-box">' + emEsc(m.body || '(no message body)') + '</div>'
+        + draftSection
+        + actions
+        + '</div>';
+    }).join('');
+  }
+
+  /* ── Draft all with AI ───────────────────────────── */
+  window.emDraftAll = function() {
+    var undrafted = emMessages.filter(function(m) { return !m.aiDraft && !m._sent; });
+    if (!undrafted.length) { showToast('All messages already drafted'); return; }
+    var btn = document.getElementById('em-draft-all-btn');
+    btn.disabled = true;
+    btn.textContent = '⏳ Drafting…';
+    emSetStatus('Generating AI drafts…', 'loading');
+    var token = sessionStorage.getItem('xf_session') || '';
+    fetch(EM_WORKER + '/ebay-msg/ai-draft', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'X-Session-Token': token },
+      body: JSON.stringify({ messages: undrafted, agentName: emAgentName })
+    }).then(function(r) { return r.json(); }).then(function(d) {
+      btn.disabled = false;
+      btn.innerHTML = '🤖 Draft All with AI';
+      if (d.error) { emSetStatus('Draft error: ' + d.error, 'err'); return; }
+      // Merge drafts back by index (order preserved), messageId/body as fallback
+      var returnedMsgs = d.messages || [];
+      returnedMsgs.forEach(function(dm, i) {
+        var orig = null;
+        // Index match: undrafted[i] is the same object reference in emMessages
+        if (undrafted[i]) {
+          orig = emMessages.find(function(m) { return m === undrafted[i]; });
+        }
+        // Fallback: match by messageId
+        if (!orig && dm.messageId) {
+          orig = emMessages.find(function(m) { return m.messageId === dm.messageId; });
+        }
+        // Last resort: match by body text
+        if (!orig && dm.body) {
+          orig = emMessages.find(function(m) { return m.body === dm.body; });
+        }
+        if (orig) {
+          if (dm.draftOk) { orig.aiDraft = dm.aiDraft; orig.draftError = ''; }
+          else { orig.draftError = dm.draftError || 'AI returned empty'; }
+        }
+      });
+      var okCount   = (d.messages || []).filter(function(m){return m.draftOk;}).length;
+      var failCount = (d.messages || []).filter(function(m){return !m.draftOk;}).length;
+      emSetStatus(okCount > 0 ? 'Drafts ready' : 'Draft failed', okCount > 0 ? 'ok' : 'err');
+      emUpdateStats();
+      emRenderQueue();
+      if (okCount > 0) { showToast('AI drafted ' + okCount + ' repl' + (okCount === 1 ? 'y' : 'ies')); }
+      if (failCount > 0) {
+        var firstErr = (d.messages || []).find(function(m){return !m.draftOk;});
+        showToast('Draft error: ' + (firstErr && firstErr.draftError ? firstErr.draftError.slice(0,120) : 'AI returned empty'));
+      }
+    }).catch(function(e) {
+      btn.disabled = false;
+      btn.innerHTML = '🤖 Draft All with AI';
+      emSetStatus('Draft failed', 'err');
+      showToast('Draft error: ' + e.message);
+    });
+  };
+
+  /* ── Draft single message ────────────────────────── */
+  window.emDraftOne = function(idx) {
+    var msg = emMessages[idx];
+    if (!msg) return;
+    var btn = document.getElementById('em-send-btn-' + idx);
+    var regenBtn = document.querySelector('#em-card-' + idx + ' .em-regen-btn');
+    if (regenBtn) { regenBtn.disabled = true; regenBtn.textContent = '⏳ Drafting…'; }
+    var token = sessionStorage.getItem('xf_session') || '';
+    fetch(EM_WORKER + '/ebay-msg/ai-draft', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'X-Session-Token': token },
+      body: JSON.stringify({ messages: [msg], agentName: emAgentName })
+    }).then(function(r) { return r.json(); }).then(function(d) {
+      if (d.messages && d.messages[0] && d.messages[0].draftOk) {
+        msg.aiDraft = d.messages[0].aiDraft;
+        emUpdateStats();
+        emRenderQueue();
+        // Focus the textarea
+        setTimeout(function() {
+          var ta = document.getElementById('em-draft-' + idx);
+          if (ta) { ta.focus(); ta.select(); }
+        }, 50);
+      } else {
+        showToast('AI draft failed for this message');
+        if (regenBtn) { regenBtn.disabled = false; regenBtn.textContent = 'Draft with AI'; }
+      }
+    }).catch(function() {
+      showToast('Network error drafting message');
+      if (regenBtn) { regenBtn.disabled = false; regenBtn.textContent = 'Draft with AI'; }
+    });
+  };
+
+  /* ── Send reply ──────────────────────────────────── */
+  window.emSendReply = function(idx) {
+    var msg   = emMessages[idx];
+    if (!msg) return;
+    var ta    = document.getElementById('em-draft-' + idx);
+    var reply = (ta ? ta.value : '').trim();
+    if (!reply) { showToast('Reply cannot be empty'); return; }
+    var btn   = document.getElementById('em-send-btn-' + idx);
+    if (btn) { btn.disabled = true; btn.textContent = '⏳ Sending…'; }
+    emSetStatus('Sending reply…', 'loading');
+    var token = sessionStorage.getItem('xf_session') || '';
+    fetch(EM_WORKER + '/ebay-msg/send', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'X-Session-Token': token },
+      body: JSON.stringify({
+        messageId:    msg.messageId,
+        itemId:       msg.itemId,
+        senderId:     msg.senderId,
+        reply:        reply,
+        subject:      msg.subject,
+        originalBody: (msg.body || '').slice(0, 300)
+      })
+    }).then(function(r) { return r.json(); }).then(function(d) {
+      if (d.ok) {
+        msg._sent     = true;
+        msg.aiDraft   = reply; // store what was actually sent
+        emSentCount++;
+        emSetStatus('Reply sent ✓', 'ok');
+        emUpdateStats();
+        emRenderQueue();
+        showToast('✅ Reply sent to ' + msg.senderId);
+      } else {
+        emSetStatus('Send failed', 'err');
+        if (btn) { btn.disabled = false; btn.textContent = '✈️ Send Reply'; }
+        showToast('Send failed: ' + (d.error || 'eBay API error'));
+      }
+    }).catch(function(e) {
+      emSetStatus('Network error', 'err');
+      if (btn) { btn.disabled = false; btn.textContent = '✈️ Send Reply'; }
+      showToast('Network error: ' + e.message);
+    });
+  };
+
+  /* ── Skip message ────────────────────────────────── */
+  window.emSkip = function(idx) {
+    emMessages.splice(idx, 1);
+    emUpdateStats();
+    emRenderQueue();
+  };
+
+  /* ── Load sent log ───────────────────────────────── */
+  window.emLoadLog = function() {
+    var list  = document.getElementById('em-log-list');
+    list.innerHTML = '<div class="em-loading">⏳ Loading log…</div>';
+    var token = sessionStorage.getItem('xf_session') || '';
+    fetch(EM_WORKER + '/ebay-msg/log?limit=50', {
+      headers: { 'X-Session-Token': token }
+    }).then(function(r) { return r.json(); }).then(function(d) {
+      var entries = d.log || [];
+      if (!entries.length) {
+        list.innerHTML = '<div class="em-empty"><div class="em-empty-icon">📋</div><h3>No log entries yet</h3><p>Sent replies will appear here.</p></div>';
+        return;
+      }
+      list.innerHTML = entries.map(function(e) {
+        var statusClass = e.status === 'Sent' ? 'sent' : 'failed';
+        return '<div class="em-log-row">'
+          + '<span class="em-log-status ' + statusClass + '">' + emEsc(e.status) + '</span>'
+          + '<div>'
+          + '<div style="font-weight:600;color:var(--text);font-size:12px;margin-bottom:3px;">' + emEsc(e.subject || 'Item ' + e.itemId) + '</div>'
+          + '<div style="color:var(--text3);font-size:11px;">Buyer: ' + emEsc(e.buyerId) + ' · Item: ' + emEsc(e.itemId) + '</div>'
+          + (e.finalReply ? '<div style="margin-top:6px;font-size:12px;color:var(--text2);line-height:1.5;border-left:3px solid var(--border2);padding-left:8px;">' + emEsc(e.finalReply.slice(0, 200)) + (e.finalReply.length > 200 ? '…' : '') + '</div>' : '')
+          + (e.error ? '<div style="color:var(--red);font-size:11px;margin-top:4px;">Error: ' + emEsc(e.error) + '</div>' : '')
+          + '</div>'
+          + '<div style="font-size:11px;color:var(--text3);font-family:var(--mono);white-space:nowrap;">' + emFmtTime(e.sentAt || e.timestamp) + '</div>'
+          + '</div>';
+      }).join('');
+    }).catch(function() {
+      list.innerHTML = '<div style="color:var(--red);font-size:13px;">Failed to load log.</div>';
+    });
+  };
 
 })();
 </script>
