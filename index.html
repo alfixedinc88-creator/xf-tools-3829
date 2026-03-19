@@ -1,7 +1,7 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-  <!-- XFITTING-BUILD-V109-BUGF-20260319 -->
+  <!-- XFITTING-BUILD-V109-RNAM-20260319 -->
 <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate">
 <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&family=IBM+Plex+Sans:wght@300;400;500;600&display=swap" rel="stylesheet">
   <meta http-equiv="Pragma" content="no-cache">
@@ -11034,7 +11034,7 @@ function rprToast(msg, type = '') {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          partNum: item.partNum, sku: item.sku,
+          partNum: item.partNum, sku: item.sku, name: item.name || '',
           fromLocation: item.fromLocation, fromRowIndex: item.fromRowIndex,
           toLocation: item.toLocation, toRowIndex: item.toRowIndex,
           isNewLocation: !!item.isNewLocation,
