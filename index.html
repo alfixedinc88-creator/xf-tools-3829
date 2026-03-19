@@ -1,7 +1,7 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-  <!-- XFITTING-BUILD-V111-TKEY-20260319c -->
+  <!-- XFITTING-BUILD-V111-FEAT-20260319d -->
 <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate">
 <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&family=IBM+Plex+Sans:wght@300;400;500;600&display=swap" rel="stylesheet">
   <meta http-equiv="Pragma" content="no-cache">
@@ -14257,7 +14257,12 @@ function _psUploadStatusToSheet(rows) {
       }
       emMessages = d.messages || [];
       emMessages.forEach(function(m) { m._sent = false; m.aiDraft = ''; });
-      emSetStatus('Loaded ' + emMessages.length + ' message' + (emMessages.length !== 1 ? 's' : ''), 'ok');
+      var breakdown = d.sourceBreakdown || {};
+      var bkStr = breakdown.listing !== undefined
+        ? ' (' + breakdown.listing + ' listing, ' + breakdown.inbox + ' order)'
+        : '';
+      if (d.warnings && d.warnings.length) console.warn('[eBay Msg]', d.warnings);
+      emSetStatus('Loaded ' + emMessages.length + ' message' + (emMessages.length !== 1 ? 's' : '') + bkStr, 'ok');
       emUpdateStats();
       emRenderQueue();
     }).catch(function(e) {
@@ -14285,6 +14290,9 @@ function _psUploadStatusToSheet(rows) {
         : (m.aiDraft
             ? '<span class="em-badge draft">DRAFTED</span>'
             : '<span class="em-badge new">NEW</span>');
+      var sourceBadge = m.source === 'inbox'
+        ? '<span style="font-size:10px;font-family:var(--mono);font-weight:700;padding:2px 8px;border-radius:6px;background:var(--purple-bg);color:var(--purple);">ORDER MSG</span>'
+        : '<span style="font-size:10px;font-family:var(--mono);font-weight:700;padding:2px 8px;border-radius:6px;background:var(--green-bg);color:var(--green);">LISTING Q</span>';
       var draftSection = '';
       if (!m._sent) {
         if (m.aiDraft) {
@@ -14315,6 +14323,7 @@ function _psUploadStatusToSheet(rows) {
       return '<div class="em-card' + sentClass + '" id="em-card-' + idx + '">'
         + '<div class="em-card-top">'
         + badge
+        + sourceBadge
         + '<span class="em-card-meta">' + emFmtTime(m.createdAt) + '</span>'
         + '</div>'
         + '<div class="em-listing-title">' + emEsc(m.title || 'Listing #' + m.itemId) + '</div>'
@@ -14437,6 +14446,8 @@ function _psUploadStatusToSheet(rows) {
         itemId:       msg.itemId,
         senderId:     msg.senderId,
         reply:        reply,
+        replyType:    msg.replyType || 'RTQ',
+        externalMsgId: msg.externalMsgId || '',
         subject:      msg.subject,
         originalBody: (msg.body || '').slice(0, 300)
       })
