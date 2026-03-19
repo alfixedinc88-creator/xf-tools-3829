@@ -1,7 +1,7 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-  <!--  XFITTING-BUILD-V109-RNAM-20260319 -->
+  <!-- XFITTING-BUILD-V110-FIXD-20260319c -->
 <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate">
 <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&family=IBM+Plex+Sans:wght@300;400;500;600&display=swap" rel="stylesheet">
   <meta http-equiv="Pragma" content="no-cache">
@@ -1837,6 +1837,12 @@ input[type=checkbox]{width:15px;height:15px;cursor:pointer;accent-color:var(--bl
         <div class="launcher-card-desc">Scan tracking barcodes, batch close, gap analysis and carrier claims</div>
         <div style="display:inline-block;margin-top:10px;font-size:10px;font-family:var(--mono);padding:3px 8px;border-radius:4px;background:var(--green-bg);color:var(--green);font-weight:600;letter-spacing:1px">No PIN · Scan Only</div>
       </div>
+      <div class="launcher-card" onclick="launchApp('messenger')" style="border-color:#ede9fe">
+        <div class="launcher-card-icon">💬</div>
+        <div class="launcher-card-title">Messenger</div>
+        <div class="launcher-card-desc">Send messages to management — request resources, materials, or flag issues</div>
+        <div style="display:inline-block;margin-top:10px;font-size:10px;font-family:var(--mono);padding:3px 8px;border-radius:4px;background:#ede9fe;color:var(--purple);font-weight:600;letter-spacing:1px">No PIN · Initials Only</div>
+      </div>
     </div>
 
     <div class="launcher-section-label">⚡ Operator</div>
@@ -1868,6 +1874,12 @@ input[type=checkbox]{width:15px;height:15px;cursor:pointer;accent-color:var(--bl
         <div class="launcher-card-title">Receive PO</div>
         <div class="launcher-card-desc">Upload a pallet manifest to receive a purchase order. Matches parts to Master List, sets pallet locations, and updates cases, pricing, and vendor automatically.</div>
         <div style="display:inline-block;margin-top:10px;font-size:10px;font-family:var(--mono);padding:3px 8px;border-radius:4px;background:var(--green-bg);color:var(--green);font-weight:600;letter-spacing:1px">Receiving · Management</div>
+      </div>
+      <div class="launcher-card" onclick="launchMgmtApp('msginbox')" style="border-color:#ede9fe" id="msg-inbox-launcher-card">
+        <div class="launcher-card-icon">📥</div>
+        <div class="launcher-card-title">Message Inbox <span id="msg-inbox-badge" style="display:none;background:var(--red);color:#fff;font-size:10px;font-family:var(--mono);font-weight:700;padding:2px 6px;border-radius:10px;margin-left:6px;vertical-align:middle"></span></div>
+        <div class="launcher-card-desc">View and reply to messages from warehouse staff. Manage requests for resources, materials and alerts.</div>
+        <div style="display:inline-block;margin-top:10px;font-size:10px;font-family:var(--mono);padding:3px 8px;border-radius:4px;background:#ede9fe;color:var(--purple);font-weight:600;letter-spacing:1px">Inbox · Management</div>
       </div>
     </div>
   </div>
@@ -3545,6 +3557,10 @@ function launchApp(which) {
     // Pack & Ship: no PIN required — show directly
     document.getElementById('packship-app').style.display = 'flex';
     psOnLaunch();
+  } else if (which === 'messenger') {
+    // Messenger: no PIN required — initials only
+    document.getElementById('messenger-app').style.display = 'flex';
+    msgOnLaunch();
   }
 }
 
@@ -3557,6 +3573,8 @@ function backToLauncher() {
   document.getElementById('dashboard-app').style.display = 'none';
   document.getElementById('packship-app').style.display = 'none';
   document.getElementById('receivepo-app').style.display = 'none';
+  document.getElementById('messenger-app').style.display = 'none';
+  document.getElementById('msginbox-app').style.display = 'none';
   document.getElementById('launcher').style.display = 'flex';
 }
 
@@ -4849,6 +4867,12 @@ async function salesLaunchApp(name) {
     document.getElementById('receivepo-app').style.display = 'flex';
     document.getElementById('receivepo-app').style.flexDirection = 'column';
     rpoReset();
+    return;
+  }
+  if (name === 'msginbox') {
+    document.getElementById('msginbox-app').style.display = 'flex';
+    document.getElementById('msginbox-app').style.flexDirection = 'column';
+    msgInboxOnLaunch();
     return;
   }
   var appId = name === 'reorder' ? 'reorder-app' : 'dashboard-app';
@@ -13140,6 +13164,516 @@ function _psUploadStatusToSheet(rows) {
 })();
 </script>
 
+<!-- ═══ WAREHOUSE MESSENGER APP ═══ -->
+<div id="messenger-app" style="display:none;flex-direction:column;min-height:100vh;background:var(--bg);">
+  <!-- topbar -->
+  <div style="background:#fff;border-bottom:1px solid var(--border);padding:0 16px;height:52px;display:flex;align-items:center;justify-content:space-between;flex-shrink:0;position:sticky;top:0;z-index:10;">
+    <button class="back-btn" onclick="backToLauncher()">&#8592; Apps</button>
+    <span style="font-weight:700;font-size:15px;color:var(--text);">💬 Messenger</span>
+    <span id="msg-sender-label" style="font-size:12px;font-family:var(--mono);color:var(--text3);"></span>
+  </div>
+  <!-- sign-in screen -->
+  <div id="msg-signin-screen" style="flex:1;display:flex;flex-direction:column;align-items:center;justify-content:center;padding:32px 24px;">
+    <div style="background:#fff;border:1px solid var(--border);border-radius:14px;padding:32px 28px;max-width:360px;width:100%;box-shadow:var(--shadow);">
+      <div style="font-size:36px;text-align:center;margin-bottom:10px;">💬</div>
+      <div style="font-weight:700;font-size:18px;text-align:center;margin-bottom:6px;color:var(--text);">Warehouse Messenger</div>
+      <div style="font-size:13px;color:var(--text3);text-align:center;margin-bottom:24px;">Enter your initials to send a message to management</div>
+      <label style="font-size:12px;font-weight:600;color:var(--text2);text-transform:uppercase;letter-spacing:.5px;display:block;margin-bottom:6px;">Your Initials</label>
+      <input id="msg-initials-input" maxlength="4" autocomplete="off" autocapitalize="characters"
+        style="width:100%;box-sizing:border-box;border:1.5px solid var(--border);border-radius:8px;padding:11px 14px;font-size:18px;font-family:var(--mono);font-weight:700;text-transform:uppercase;text-align:center;letter-spacing:4px;outline:none;background:var(--bg);"
+        placeholder="JD" oninput="this.value=this.value.toUpperCase();"
+        onkeydown="if(event.key==='Enter')msgSignIn();">
+      <button onclick="msgSignIn()" style="margin-top:16px;width:100%;background:var(--purple);color:#fff;border:none;border-radius:8px;padding:13px;font-size:15px;font-weight:700;cursor:pointer;font-family:var(--sans);">Continue</button>
+      <div id="msg-signin-err" style="color:var(--red);font-size:12px;text-align:center;margin-top:10px;display:none;">Enter your initials (2–4 letters)</div>
+    </div>
+  </div>
+  <!-- compose screen -->
+  <div id="msg-compose-screen" style="flex:1;display:none;flex-direction:column;padding:20px 16px;max-width:560px;width:100%;margin:0 auto;box-sizing:border-box;">
+    <!-- sent confirmation banner -->
+    <div id="msg-sent-banner" style="display:none;background:var(--green-bg);border:1px solid var(--green);border-radius:10px;padding:14px 16px;margin-bottom:16px;text-align:center;">
+      <div style="font-size:20px;margin-bottom:4px;">✅</div>
+      <div style="font-weight:700;color:var(--green);font-size:14px;">Message sent to management!</div>
+      <div id="msg-sent-preview" style="font-size:12px;color:var(--text2);margin-top:4px;"></div>
+    </div>
+    <!-- compose card -->
+    <div style="background:#fff;border:1px solid var(--border);border-radius:14px;padding:22px 20px;box-shadow:var(--shadow);">
+      <div style="font-size:13px;font-weight:700;color:var(--text2);margin-bottom:14px;text-transform:uppercase;letter-spacing:.5px;">New Message</div>
+      <!-- Category -->
+      <div style="margin-bottom:16px;">
+        <label style="font-size:12px;font-weight:600;color:var(--text2);display:block;margin-bottom:8px;">Category</label>
+        <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:8px;" id="msg-cat-grid">
+          <div class="msg-cat-btn" data-cat="Resources" onclick="msgSelectCat(this)" style="border:1.5px solid var(--border);border-radius:8px;padding:10px 6px;text-align:center;cursor:pointer;transition:.15s;">
+            <div style="font-size:20px;margin-bottom:4px;">🔧</div><div style="font-size:11px;font-weight:600;color:var(--text2);">Resources</div>
+          </div>
+          <div class="msg-cat-btn" data-cat="Materials" onclick="msgSelectCat(this)" style="border:1.5px solid var(--border);border-radius:8px;padding:10px 6px;text-align:center;cursor:pointer;transition:.15s;">
+            <div style="font-size:20px;margin-bottom:4px;">📦</div><div style="font-size:11px;font-weight:600;color:var(--text2);">Materials</div>
+          </div>
+          <div class="msg-cat-btn" data-cat="Alert" onclick="msgSelectCat(this)" style="border:1.5px solid var(--border);border-radius:8px;padding:10px 6px;text-align:center;cursor:pointer;transition:.15s;">
+            <div style="font-size:20px;margin-bottom:4px;">⚠️</div><div style="font-size:11px;font-weight:600;color:var(--text2);">Alert</div>
+          </div>
+          <div class="msg-cat-btn" data-cat="Question" onclick="msgSelectCat(this)" style="border:1.5px solid var(--border);border-radius:8px;padding:10px 6px;text-align:center;cursor:pointer;transition:.15s;">
+            <div style="font-size:20px;margin-bottom:4px;">❓</div><div style="font-size:11px;font-weight:600;color:var(--text2);">Question</div>
+          </div>
+          <div class="msg-cat-btn" data-cat="Safety" onclick="msgSelectCat(this)" style="border:1.5px solid var(--border);border-radius:8px;padding:10px 6px;text-align:center;cursor:pointer;transition:.15s;">
+            <div style="font-size:20px;margin-bottom:4px;">🦺</div><div style="font-size:11px;font-weight:600;color:var(--text2);">Safety</div>
+          </div>
+          <div class="msg-cat-btn" data-cat="Other" onclick="msgSelectCat(this)" style="border:1.5px solid var(--border);border-radius:8px;padding:10px 6px;text-align:center;cursor:pointer;transition:.15s;">
+            <div style="font-size:20px;margin-bottom:4px;">💡</div><div style="font-size:11px;font-weight:600;color:var(--text2);">Other</div>
+          </div>
+        </div>
+      </div>
+      <!-- Priority -->
+      <div style="margin-bottom:16px;">
+        <label style="font-size:12px;font-weight:600;color:var(--text2);display:block;margin-bottom:8px;">Priority</label>
+        <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:8px;" id="msg-pri-grid">
+          <div class="msg-pri-btn" data-pri="Normal" onclick="msgSelectPri(this)" style="border:1.5px solid var(--border);border-radius:8px;padding:9px 6px;text-align:center;cursor:pointer;transition:.15s;">
+            <div style="font-size:14px;font-weight:700;color:var(--green);">●</div><div style="font-size:11px;font-weight:600;color:var(--text2);margin-top:2px;">Normal</div>
+          </div>
+          <div class="msg-pri-btn" data-pri="Urgent" onclick="msgSelectPri(this)" style="border:1.5px solid var(--border);border-radius:8px;padding:9px 6px;text-align:center;cursor:pointer;transition:.15s;">
+            <div style="font-size:14px;font-weight:700;color:var(--orange);">●</div><div style="font-size:11px;font-weight:600;color:var(--text2);margin-top:2px;">Urgent</div>
+          </div>
+          <div class="msg-pri-btn" data-pri="Critical" onclick="msgSelectPri(this)" style="border:1.5px solid var(--border);border-radius:8px;padding:9px 6px;text-align:center;cursor:pointer;transition:.15s;">
+            <div style="font-size:14px;font-weight:700;color:var(--red);">●</div><div style="font-size:11px;font-weight:600;color:var(--text2);margin-top:2px;">Critical</div>
+          </div>
+        </div>
+      </div>
+      <!-- Message body -->
+      <div style="margin-bottom:16px;">
+        <label style="font-size:12px;font-weight:600;color:var(--text2);display:block;margin-bottom:6px;">Message</label>
+        <textarea id="msg-body-input" rows="4" maxlength="500"
+          style="width:100%;box-sizing:border-box;border:1.5px solid var(--border);border-radius:8px;padding:11px 14px;font-size:14px;font-family:var(--sans);resize:vertical;outline:none;background:var(--bg);color:var(--text);"
+          placeholder="Describe what you need or want management to know…"></textarea>
+        <div style="text-align:right;font-size:11px;color:var(--text3);margin-top:4px;"><span id="msg-char-count">0</span>/500</div>
+      </div>
+      <div id="msg-compose-err" style="color:var(--red);font-size:12px;margin-bottom:10px;display:none;"></div>
+      <button id="msg-send-btn" onclick="msgSend()" style="width:100%;background:var(--purple);color:#fff;border:none;border-radius:8px;padding:13px;font-size:15px;font-weight:700;cursor:pointer;font-family:var(--sans);">Send Message</button>
+    </div>
+    <!-- recent sent by this user -->
+    <div style="margin-top:22px;">
+      <div style="font-size:12px;font-weight:700;color:var(--text3);text-transform:uppercase;letter-spacing:.5px;margin-bottom:10px;">Your Recent Messages</div>
+      <div id="msg-my-history" style="display:flex;flex-direction:column;gap:10px;"></div>
+    </div>
+  </div>
+</div>
+
+<!-- ═══ MANAGEMENT MESSAGE INBOX APP ═══ -->
+<div id="msginbox-app" style="display:none;flex-direction:column;min-height:100vh;background:var(--bg);">
+  <div style="background:#fff;border-bottom:1px solid var(--border);padding:0 16px;height:52px;display:flex;align-items:center;justify-content:space-between;flex-shrink:0;position:sticky;top:0;z-index:10;">
+    <button class="back-btn" onclick="backToLauncher()">&#8592; Apps</button>
+    <span style="font-weight:700;font-size:15px;color:var(--text);">📥 Message Inbox</span>
+    <button onclick="msgInboxRefresh()" style="border:none;background:none;cursor:pointer;font-size:18px;padding:6px;" title="Refresh">🔄</button>
+  </div>
+  <!-- filter bar -->
+  <div style="background:#fff;border-bottom:1px solid var(--border);padding:10px 16px;display:flex;gap:8px;flex-wrap:wrap;align-items:center;">
+    <div style="display:flex;gap:6px;flex-wrap:wrap;">
+      <button class="msg-filter-btn active" data-filter="open" onclick="msgInboxFilter('open',this)" style="font-size:12px;font-family:var(--mono);font-weight:600;padding:5px 12px;border-radius:20px;border:1.5px solid var(--purple);background:#ede9fe;color:var(--purple);cursor:pointer;">Open</button>
+      <button class="msg-filter-btn" data-filter="all" onclick="msgInboxFilter('all',this)" style="font-size:12px;font-family:var(--mono);font-weight:600;padding:5px 12px;border-radius:20px;border:1.5px solid var(--border);background:var(--bg);color:var(--text2);cursor:pointer;">All</button>
+      <button class="msg-filter-btn" data-filter="urgent" onclick="msgInboxFilter('urgent',this)" style="font-size:12px;font-family:var(--mono);font-weight:600;padding:5px 12px;border-radius:20px;border:1.5px solid var(--border);background:var(--bg);color:var(--text2);cursor:pointer;">🔶 Urgent+</button>
+      <button class="msg-filter-btn" data-filter="archived" onclick="msgInboxFilter('archived',this)" style="font-size:12px;font-family:var(--mono);font-weight:600;padding:5px 12px;border-radius:20px;border:1.5px solid var(--border);background:var(--bg);color:var(--text2);cursor:pointer;">Archived</button>
+    </div>
+    <div style="margin-left:auto;font-size:12px;font-family:var(--mono);color:var(--text3);" id="msgi-count-label"></div>
+  </div>
+  <div id="msgi-list" style="flex:1;padding:16px;max-width:640px;width:100%;margin:0 auto;box-sizing:border-box;display:flex;flex-direction:column;gap:12px;"></div>
+  <!-- reply modal -->
+  <div id="msg-reply-modal" style="display:none;position:fixed;inset:0;z-index:300;background:rgba(0,0,0,.45);align-items:center;justify-content:center;padding:20px;">
+    <div style="background:#fff;border-radius:16px;padding:28px 24px;max-width:480px;width:100%;max-height:85vh;overflow-y:auto;box-shadow:0 8px 40px rgba(0,0,0,.18);">
+      <div style="font-weight:700;font-size:16px;margin-bottom:4px;color:var(--text);">Reply to Message</div>
+      <div id="msg-reply-context" style="font-size:13px;color:var(--text2);margin-bottom:16px;padding:10px 12px;background:var(--bg);border-radius:8px;border:1px solid var(--border);"></div>
+      <textarea id="msg-reply-input" rows="3" maxlength="400" style="width:100%;box-sizing:border-box;border:1.5px solid var(--border);border-radius:8px;padding:11px 14px;font-size:14px;font-family:var(--sans);resize:vertical;outline:none;background:var(--bg);color:var(--text);" placeholder="Type your reply…"></textarea>
+      <div style="display:flex;gap:10px;margin-top:14px;flex-wrap:wrap;">
+        <button onclick="msgInboxSendReply()" style="flex:1;background:var(--purple);color:#fff;border:none;border-radius:8px;padding:12px;font-size:14px;font-weight:700;cursor:pointer;font-family:var(--sans);">Send Reply</button>
+        <button onclick="document.getElementById('msg-reply-modal').style.display='none';" style="flex:1;background:var(--bg);color:var(--text2);border:1.5px solid var(--border);border-radius:8px;padding:12px;font-size:14px;font-weight:600;cursor:pointer;font-family:var(--sans);">Cancel</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<style>
+/* ── Messenger scoped styles ── */
+#messenger-app .msg-cat-btn.selected,
+#msginbox-app .msg-cat-btn.selected {
+  border-color: var(--purple) !important;
+  background: #ede9fe !important;
+}
+#messenger-app .msg-pri-btn.selected {
+  border-color: var(--purple) !important;
+  background: #ede9fe !important;
+}
+#messenger-app .msg-cat-btn:hover,
+#messenger-app .msg-pri-btn:hover { background: var(--bg2) !important; }
+.msg-inbox-card {
+  background: #fff;
+  border: 1.5px solid var(--border);
+  border-radius: 12px;
+  padding: 16px 16px 12px;
+  box-shadow: var(--shadow);
+  transition: border-color .15s;
+}
+.msg-inbox-card.unread { border-left: 4px solid var(--purple); }
+.msg-inbox-card.pri-urgent { border-left: 4px solid var(--orange); }
+.msg-inbox-card.pri-critical { border-left: 4px solid var(--red); }
+.msg-inbox-card.archived { opacity: .6; }
+.msg-inbox-card .msg-actions { display:flex;gap:8px;flex-wrap:wrap;margin-top:12px; }
+.msg-inbox-card .msg-actions button {
+  font-size:12px;font-family:var(--mono);font-weight:600;padding:5px 12px;
+  border-radius:6px;border:1.5px solid var(--border);background:var(--bg);
+  color:var(--text2);cursor:pointer;transition:.12s;
+}
+.msg-inbox-card .msg-actions button:hover { background:var(--bg2); }
+.msg-inbox-card .msg-actions .btn-reply { border-color:var(--purple);color:var(--purple); }
+.msg-inbox-card .msg-actions .btn-archive { border-color:var(--text3);color:var(--text3); }
+.msg-inbox-card .msg-actions .btn-unarchive { border-color:var(--green);color:var(--green); }
+.msg-inbox-card .msg-reply-thread { margin-top:10px;padding:10px 12px;background:var(--bg);border-radius:8px;border:1px solid var(--border); }
+</style>
+
+<script>
+/* ═══════════════════════════════════════════════════════
+   WAREHOUSE MESSENGER  —  XFitting v1.1.0
+   No global pollution — all vars prefixed msg* / msgi*
+   Warehouse send: no PIN, initials only
+   Mgmt inbox: MGMT PIN (handled by launchMgmtApp)
+   Worker: /msg/send  /msg/list  /msg/reply  /msg/status
+   Sheet:  MSG_SHEET_ID env var, tab "Messages"
+═══════════════════════════════════════════════════════ */
+(function() {
+  'use strict';
+
+  var MSG_WORKER = WORKER_URL; // inherits global from main app
+  var msgInitials = '';
+  var msgSelCat = '';
+  var msgSelPri = 'Normal';
+  var msgAllMessages = [];
+  var msgCurrentFilter = 'open';
+  var msgReplyTargetId = null;
+
+  /* ── helpers ─────────────────────────────────────── */
+  function msgFmtTime(iso) {
+    if (!iso) return '';
+    return new Date(iso).toLocaleString('en-US', {
+      timeZone: 'America/New_York', hour12: true,
+      month: 'short', day: 'numeric',
+      hour: 'numeric', minute: '2-digit'
+    });
+  }
+
+  function msgCatColor(cat) {
+    var m = { Resources:'var(--accent)', Materials:'var(--orange)', Alert:'var(--red)', Question:'var(--text2)', Safety:'#d97706', Other:'var(--purple)' };
+    return m[cat] || 'var(--text2)';
+  }
+
+  function msgPriBadge(pri) {
+    if (pri === 'Urgent')   return '<span style="background:var(--orange-bg);color:var(--orange);font-size:10px;font-family:var(--mono);font-weight:700;padding:2px 7px;border-radius:6px;">URGENT</span>';
+    if (pri === 'Critical') return '<span style="background:#fdf0ee;color:var(--red);font-size:10px;font-family:var(--mono);font-weight:700;padding:2px 7px;border-radius:6px;">CRITICAL</span>';
+    return '';
+  }
+
+  function msgStatusBadge(status) {
+    if (status === 'archived') return '<span style="background:var(--bg2);color:var(--text3);font-size:10px;font-family:var(--mono);font-weight:600;padding:2px 7px;border-radius:6px;">ARCHIVED</span>';
+    if (status === 'replied')  return '<span style="background:var(--green-bg);color:var(--green);font-size:10px;font-family:var(--mono);font-weight:600;padding:2px 7px;border-radius:6px;">REPLIED</span>';
+    return '<span style="background:#ede9fe;color:var(--purple);font-size:10px;font-family:var(--mono);font-weight:600;padding:2px 7px;border-radius:6px;">OPEN</span>';
+  }
+
+  /* ── Launcher hook ───────────────────────────────── */
+  window.msgOnLaunch = function() {
+    document.getElementById('msg-signin-screen').style.display = 'flex';
+    document.getElementById('msg-compose-screen').style.display = 'none';
+    document.getElementById('msg-initials-input').value = '';
+    document.getElementById('msg-signin-err').style.display = 'none';
+    msgInitials = '';
+    msgSelCat = '';
+    msgSelPri = 'Normal';
+    // reset category / priority selections
+    document.querySelectorAll('#msg-cat-grid .msg-cat-btn').forEach(function(b) { b.classList.remove('selected'); });
+    document.querySelectorAll('#msg-pri-grid .msg-pri-btn').forEach(function(b) { b.classList.remove('selected'); });
+    var normalBtn = document.querySelector('#msg-pri-grid .msg-pri-btn[data-pri="Normal"]');
+    if (normalBtn) { normalBtn.classList.add('selected'); }
+    document.getElementById('msg-body-input').value = '';
+    document.getElementById('msg-char-count').textContent = '0';
+    document.getElementById('msg-compose-err').style.display = 'none';
+    document.getElementById('msg-sent-banner').style.display = 'none';
+    document.getElementById('msg-my-history').innerHTML = '';
+    // wire char counter
+    var ta = document.getElementById('msg-body-input');
+    ta.oninput = function() { document.getElementById('msg-char-count').textContent = ta.value.length; };
+  };
+
+  window.msgSignIn = function() {
+    var val = (document.getElementById('msg-initials-input').value || '').trim().toUpperCase();
+    if (!val || val.length < 2) {
+      document.getElementById('msg-signin-err').style.display = 'block';
+      return;
+    }
+    msgInitials = val;
+    document.getElementById('msg-signin-err').style.display = 'none';
+    document.getElementById('msg-signin-screen').style.display = 'none';
+    document.getElementById('msg-compose-screen').style.display = 'flex';
+    document.getElementById('msg-sender-label').textContent = val;
+    msgLoadMyHistory();
+  };
+
+  window.msgSelectCat = function(el) {
+    document.querySelectorAll('#msg-cat-grid .msg-cat-btn').forEach(function(b) { b.classList.remove('selected'); });
+    el.classList.add('selected');
+    msgSelCat = el.dataset.cat;
+    document.getElementById('msg-compose-err').style.display = 'none';
+  };
+
+  window.msgSelectPri = function(el) {
+    document.querySelectorAll('#msg-pri-grid .msg-pri-btn').forEach(function(b) { b.classList.remove('selected'); });
+    el.classList.add('selected');
+    msgSelPri = el.dataset.pri;
+  };
+
+  window.msgSend = function() {
+    var body = (document.getElementById('msg-body-input').value || '').trim();
+    var errEl = document.getElementById('msg-compose-err');
+    if (!msgSelCat) { errEl.textContent = 'Please select a category.'; errEl.style.display = 'block'; return; }
+    if (!body) { errEl.textContent = 'Please enter a message.'; errEl.style.display = 'block'; return; }
+    errEl.style.display = 'none';
+    var btn = document.getElementById('msg-send-btn');
+    btn.disabled = true; btn.textContent = 'Sending…';
+    fetch(MSG_WORKER + '/msg/send', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ initials: msgInitials, category: msgSelCat, priority: msgSelPri, body: body })
+    }).then(function(r) { return r.json(); }).then(function(d) {
+      btn.disabled = false; btn.textContent = 'Send Message';
+      if (d.ok) {
+        var banner = document.getElementById('msg-sent-banner');
+        document.getElementById('msg-sent-preview').textContent = '[' + msgSelCat + '] ' + body.slice(0, 60) + (body.length > 60 ? '…' : '');
+        banner.style.display = 'block';
+        document.getElementById('msg-body-input').value = '';
+        document.getElementById('msg-char-count').textContent = '0';
+        msgSelCat = '';
+        document.querySelectorAll('#msg-cat-grid .msg-cat-btn').forEach(function(b) { b.classList.remove('selected'); });
+        msgLoadMyHistory();
+        // auto-hide banner after 5s
+        setTimeout(function() { banner.style.display = 'none'; }, 5000);
+      } else {
+        errEl.textContent = d.error || 'Send failed — try again.';
+        errEl.style.display = 'block';
+      }
+    }).catch(function() {
+      btn.disabled = false; btn.textContent = 'Send Message';
+      errEl.textContent = 'Network error — check connection.';
+      errEl.style.display = 'block';
+    });
+  };
+
+  function msgLoadMyHistory() {
+    var el = document.getElementById('msg-my-history');
+    el.innerHTML = '<div style="color:var(--text3);font-size:13px;">Loading…</div>';
+    fetch(MSG_WORKER + '/msg/list?initials=' + encodeURIComponent(msgInitials))
+      .then(function(r) { return r.json(); })
+      .then(function(d) {
+        if (!d.messages || !d.messages.length) {
+          el.innerHTML = '<div style="color:var(--text3);font-size:13px;">No messages sent yet.</div>';
+          return;
+        }
+        el.innerHTML = d.messages.slice(0, 10).map(function(m) {
+          return '<div style="background:#fff;border:1px solid var(--border);border-radius:10px;padding:12px 14px;box-shadow:var(--shadow);">'
+            + '<div style="display:flex;align-items:center;gap:8px;margin-bottom:6px;flex-wrap:wrap;">'
+            + '<span style="font-family:var(--mono);font-weight:700;font-size:12px;color:var(--purple);">' + (m.category||'') + '</span>'
+            + msgPriBadge(m.priority)
+            + msgStatusBadge(m.status)
+            + '<span style="margin-left:auto;font-size:11px;color:var(--text3);font-family:var(--mono);">' + msgFmtTime(m.timestamp) + '</span>'
+            + '</div>'
+            + '<div style="font-size:13px;color:var(--text);">' + escHtml(m.body||'') + '</div>'
+            + (m.reply ? '<div style="margin-top:8px;padding:8px 10px;background:var(--green-bg);border-radius:6px;font-size:12px;color:var(--green);"><strong>Reply:</strong> ' + escHtml(m.reply) + '</div>' : '')
+            + '</div>';
+        }).join('');
+      }).catch(function() {
+        el.innerHTML = '<div style="color:var(--text3);font-size:13px;">Could not load history.</div>';
+      });
+  }
+
+  function escHtml(s) {
+    return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+  }
+
+  /* ── Management Inbox ────────────────────────────── */
+  window.msgInboxOnLaunch = function() {
+    msgCurrentFilter = 'open';
+    // reset filter buttons
+    document.querySelectorAll('.msg-filter-btn').forEach(function(b) {
+      b.classList.toggle('active', b.dataset.filter === 'open');
+      if (b.dataset.filter === 'open') {
+        b.style.background = '#ede9fe'; b.style.borderColor = 'var(--purple)'; b.style.color = 'var(--purple)';
+      } else {
+        b.style.background = 'var(--bg)'; b.style.borderColor = 'var(--border)'; b.style.color = 'var(--text2)';
+      }
+    });
+    msgInboxLoad();
+  };
+
+  window.msgInboxRefresh = function() { msgInboxLoad(); };
+
+  window.msgInboxFilter = function(filter, btn) {
+    msgCurrentFilter = filter;
+    document.querySelectorAll('.msg-filter-btn').forEach(function(b) {
+      var active = b === btn;
+      b.classList.toggle('active', active);
+      b.style.background = active ? '#ede9fe' : 'var(--bg)';
+      b.style.borderColor = active ? 'var(--purple)' : 'var(--border)';
+      b.style.color = active ? 'var(--purple)' : 'var(--text2)';
+    });
+    msgInboxRender();
+  };
+
+  function msgInboxLoad() {
+    var list = document.getElementById('msgi-list');
+    list.innerHTML = '<div style="color:var(--text3);font-size:13px;padding:16px 0;">Loading messages…</div>';
+    var token = sessionStorage.getItem('xf_session') || '';
+    fetch(MSG_WORKER + '/msg/list?all=1', {
+      headers: token ? { 'X-Session-Token': token } : {}
+    }).then(function(r) { return r.json(); })
+      .then(function(d) {
+        msgAllMessages = (d.messages || []).reverse(); // newest first
+        msgInboxRender();
+        msgUpdateLauncherBadge();
+      }).catch(function() {
+        list.innerHTML = '<div style="color:var(--red);font-size:13px;padding:16px 0;">Failed to load — check connection.</div>';
+      });
+  }
+
+  function msgInboxRender() {
+    var filtered = msgAllMessages.filter(function(m) {
+      if (msgCurrentFilter === 'open')     return m.status !== 'archived';
+      if (msgCurrentFilter === 'archived') return m.status === 'archived';
+      if (msgCurrentFilter === 'urgent')   return (m.priority === 'Urgent' || m.priority === 'Critical') && m.status !== 'archived';
+      return true; // 'all'
+    });
+    var label = document.getElementById('msgi-count-label');
+    label.textContent = filtered.length + ' message' + (filtered.length !== 1 ? 's' : '');
+    var list = document.getElementById('msgi-list');
+    if (!filtered.length) {
+      list.innerHTML = '<div style="color:var(--text3);font-size:13px;padding:24px 0;text-align:center;">No messages in this view.</div>';
+      return;
+    }
+    list.innerHTML = filtered.map(function(m) {
+      var isUnread = m.status === 'open';
+      var priClass = m.priority === 'Critical' ? 'pri-critical' : (m.priority === 'Urgent' ? 'pri-urgent' : '');
+      var archClass = m.status === 'archived' ? 'archived' : '';
+      return '<div class="msg-inbox-card ' + (isUnread?'unread ':'') + priClass + ' ' + archClass + '" id="msgcard-' + m.id + '">'
+        + '<div style="display:flex;align-items:flex-start;gap:8px;flex-wrap:wrap;margin-bottom:8px;">'
+        + '<span style="font-family:var(--mono);font-weight:700;font-size:11px;padding:3px 8px;border-radius:6px;background:#ede9fe;color:var(--purple);">' + escHtml(m.category||'') + '</span>'
+        + msgPriBadge(m.priority)
+        + msgStatusBadge(m.status)
+        + '<span style="margin-left:auto;font-size:11px;color:var(--text3);font-family:var(--mono);white-space:nowrap;">' + msgFmtTime(m.timestamp) + '</span>'
+        + '</div>'
+        + '<div style="display:flex;align-items:center;gap:8px;margin-bottom:6px;">'
+        + '<span style="font-family:var(--mono);font-weight:700;font-size:13px;background:var(--bg2);border-radius:6px;padding:2px 8px;color:var(--text);">' + escHtml(m.initials||'?') + '</span>'
+        + '</div>'
+        + '<div style="font-size:14px;color:var(--text);line-height:1.5;">' + escHtml(m.body||'') + '</div>'
+        + (m.reply ? '<div class="msg-reply-thread"><span style="font-size:11px;font-weight:700;color:var(--green);font-family:var(--mono);">REPLY</span><div style="font-size:13px;color:var(--text);margin-top:4px;">' + escHtml(m.reply) + '</div></div>' : '')
+        + '<div class="msg-actions">'
+        + (m.status !== 'archived' ? '<button class="btn-reply" onclick="msgInboxOpenReply(\'' + m.id + '\')">💬 Reply</button>' : '')
+        + (m.status !== 'archived' ? '<button class="btn-archive" onclick="msgInboxSetStatus(\'' + m.id + '\',\'archived\')">Archive</button>' : '')
+        + (m.status === 'archived' ? '<button class="btn-unarchive" onclick="msgInboxSetStatus(\'' + m.id + '\',\'open\')">Unarchive</button>' : '')
+        + '</div>'
+        + '</div>';
+    }).join('');
+  }
+
+  window.msgInboxOpenReply = function(id) {
+    msgReplyTargetId = id;
+    var m = msgAllMessages.find(function(x) { return x.id === id; });
+    if (!m) return;
+    document.getElementById('msg-reply-context').innerHTML =
+      '<strong>' + escHtml(m.initials) + '</strong> · ' + escHtml(m.category) + ' · ' + msgFmtTime(m.timestamp)
+      + '<div style="margin-top:6px;font-size:13px;color:var(--text);">' + escHtml(m.body) + '</div>';
+    document.getElementById('msg-reply-input').value = '';
+    document.getElementById('msg-reply-modal').style.display = 'flex';
+  };
+
+  window.msgInboxSendReply = function() {
+    var replyText = (document.getElementById('msg-reply-input').value || '').trim();
+    if (!replyText || !msgReplyTargetId) return;
+    var token = sessionStorage.getItem('xf_session') || '';
+    fetch(MSG_WORKER + '/msg/reply', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'X-Session-Token': token },
+      body: JSON.stringify({ id: msgReplyTargetId, reply: replyText })
+    }).then(function(r) { return r.json(); }).then(function(d) {
+      document.getElementById('msg-reply-modal').style.display = 'none';
+      if (d.ok) {
+        // update local state
+        var m = msgAllMessages.find(function(x) { return x.id === msgReplyTargetId; });
+        if (m) { m.reply = replyText; m.status = 'replied'; }
+        msgInboxRender();
+        msgUpdateLauncherBadge();
+        showToast('Reply sent');
+      } else {
+        showToast('Reply failed: ' + (d.error || 'unknown error'));
+      }
+    }).catch(function() { showToast('Network error sending reply'); });
+  };
+
+  window.msgInboxSetStatus = function(id, status) {
+    var token = sessionStorage.getItem('xf_session') || '';
+    fetch(MSG_WORKER + '/msg/status', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'X-Session-Token': token },
+      body: JSON.stringify({ id: id, status: status })
+    }).then(function(r) { return r.json(); }).then(function(d) {
+      if (d.ok) {
+        var m = msgAllMessages.find(function(x) { return x.id === id; });
+        if (m) m.status = status;
+        msgInboxRender();
+        msgUpdateLauncherBadge();
+      } else {
+        showToast('Update failed: ' + (d.error||''));
+      }
+    }).catch(function() { showToast('Network error'); });
+  };
+
+  function msgUpdateLauncherBadge() {
+    var openCount = msgAllMessages.filter(function(m) { return m.status === 'open'; }).length;
+    var badge = document.getElementById('msg-inbox-badge');
+    if (!badge) return;
+    if (openCount > 0) {
+      badge.style.display = 'inline-block';
+      badge.textContent = openCount;
+    } else {
+      badge.style.display = 'none';
+    }
+  }
+
+  /* ── Poll for unread badge on launcher load ──────── */
+  function msgPollBadge() {
+    fetch(MSG_WORKER + '/msg/list?all=1&limit=200')
+      .then(function(r) { return r.json(); })
+      .then(function(d) {
+        var msgs = d.messages || [];
+        var openCount = msgs.filter(function(m) { return m.status === 'open'; }).length;
+        var badge = document.getElementById('msg-inbox-badge');
+        if (!badge) return;
+        badge.style.display = openCount > 0 ? 'inline-block' : 'none';
+        badge.textContent = openCount;
+      }).catch(function() {});
+  }
+
+  // Poll badge when launcher is visible
+  var _msgBadgeInterval = null;
+  var _msgLauncherEl = document.getElementById('launcher');
+  if (_msgLauncherEl) {
+    var _msgObserver = new MutationObserver(function() {
+      if (_msgLauncherEl.style.display !== 'none') {
+        msgPollBadge();
+        if (!_msgBadgeInterval) {
+          _msgBadgeInterval = setInterval(msgPollBadge, 60000);
+        }
+      } else {
+        if (_msgBadgeInterval) { clearInterval(_msgBadgeInterval); _msgBadgeInterval = null; }
+      }
+    });
+    _msgObserver.observe(_msgLauncherEl, { attributes: true, attributeFilter: ['style'] });
+  }
+  // initial poll on page load
+  setTimeout(msgPollBadge, 2000);
+
+})();
+</script>
 
 </body>
 </html>
