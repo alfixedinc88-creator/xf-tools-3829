@@ -1,7 +1,7 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-  <!-- XFITTING-BUILD-V109-RCPO-20260318E -->
+  <!-- XFITTING-BUILD-V109-BUGF-20260319 -->
 <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate">
 <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&family=IBM+Plex+Sans:wght@300;400;500;600&display=swap" rel="stylesheet">
   <meta http-equiv="Pragma" content="no-cache">
@@ -10056,14 +10056,17 @@ function rprToast(msg, type = '') {
 
   function invShowLocs() {
     var allLocs = (invPart && invPart.locations) ? invPart.locations : [];
-    // Stock out: only show locations with cases > 0
-    // Stock in: also only show locations with cases > 0 (skip empty/placeholder rows)
+    // Both Stock In and Stock Out: only show locations with cases > 0 normally
     var locs = allLocs.filter(function(l) { return parseFloat(l.cases) > 0; });
+    // For Stock Out: also collect zero-case locations to show as override option
+    var zeroLocs = invMode === "out"
+      ? allLocs.filter(function(l) { return parseFloat(l.cases) <= 0 && !l.isPlaceholder; })
+      : [];
     invSelLoc = null;
     var list = g("inv-loc-list");
     list.innerHTML = "";
 
-    if (locs.length === 0 && invMode === "out") {
+    if (locs.length === 0 && invMode === "out" && zeroLocs.length === 0) {
       invFlash("No stock at any location for " + invPart.partNum, "error");
       return;
     }
@@ -10075,11 +10078,9 @@ function rprToast(msg, type = '') {
         ? "<span class='iloc-badge ph'>Placeholder</span>"
         : "<span class='iloc-badge ex'>" + (invMode === "out" ? "Pull" : "Select") + "</span>";
 
-      // Stock In: always show part number label so worker knows exactly which variant they're adding to
-      // Stock Out: only show if it differs from the selected partNum
       var showPartLabel = invMode === "in"
-        ? (loc.partNum || invPart.partNum)  // always show in IN
-        : (loc.partNum && loc.partNum !== invPart.partNum ? loc.partNum : null); // only if differs in OUT
+        ? (loc.partNum || invPart.partNum)
+        : (loc.partNum && loc.partNum !== invPart.partNum ? loc.partNum : null);
 
       var partLabelHtml = showPartLabel
         ? "<div style='font-size:11px;font-family:var(--mono);font-weight:700;color:var(--accent);margin-bottom:3px'>" + showPartLabel + "</div>"
@@ -10092,9 +10093,45 @@ function rprToast(msg, type = '') {
         + "<div class='iloc-name'>" + loc.location + "</div>"
         + "<div class='iloc-cases' style='" + casesStyle + "'>" + casesLabel + "</div></div>"
         + badge;
-      el.onclick = (function(idx) { return function() { invPickLoc(idx); }; })(i);
+      el.onclick = (function(l) { return function() { invPickLocDirect(l); }; })(loc);
       list.appendChild(el);
     });
+
+    // Stock Out: show zero-case locations with "Found on Shelf?" override
+    if (invMode === "out" && zeroLocs.length > 0) {
+      var divider = document.createElement("div");
+      divider.style.cssText = "font-size:11px;font-weight:700;letter-spacing:.5px;text-transform:uppercase;color:var(--orange);margin:12px 0 6px;padding-top:10px;border-top:1px solid var(--border)";
+      divider.textContent = "System shows 0 cases — Found on shelf?";
+      list.appendChild(divider);
+
+      zeroLocs.forEach(function(loc) {
+        var el = document.createElement("div");
+        el.className = "iloc-opt";
+        el.style.borderColor = "var(--orange)";
+        el.style.background = "var(--orange-bg)";
+        var partLabelHtml = (loc.partNum && loc.partNum !== invPart.partNum)
+          ? "<div style='font-size:11px;font-family:var(--mono);font-weight:700;color:var(--accent);margin-bottom:3px'>" + loc.partNum + "</div>"
+          : "";
+        el.innerHTML = "<div>" + partLabelHtml
+          + "<div class='iloc-name'>" + loc.location + "</div>"
+          + "<div style='font-size:12px;color:var(--orange);font-weight:600'>0 cases on record</div></div>"
+          + "<span class='iloc-badge' style='background:var(--orange-bg);color:var(--orange);border:1px solid var(--orange)'>Found?</span>";
+        el.onclick = (function(l) { return function() { invFoundOnShelf(l); }; })(loc);
+        list.appendChild(el);
+      });
+    }
+
+    // Stock Out: if ALL locations are zero (none in the locs array), still show override option
+    if (invMode === "out" && locs.length === 0 && zeroLocs.length === 0) {
+      // already handled above
+    } else if (invMode === "out" && locs.length === 0) {
+      // Show no normal stock message but override section is visible
+      var noStock = document.createElement("div");
+      noStock.className = "iempty";
+      noStock.style.paddingBottom = "4px";
+      noStock.textContent = "No stock on record — see below if found on shelf";
+      list.insertBefore(noStock, list.firstChild);
+    }
 
     if (invMode === "in") {
       var newEl = document.createElement("div");
@@ -10107,11 +10144,42 @@ function rprToast(msg, type = '') {
 
     g("inv-newloc-wrap").style.display = "none";
     g("inv-loc-label").textContent = invMode === "in"
-      ? "All Locations — Select to Stock In"
+      ? "All Locations \u2014 Select to Stock In"
       : "Stock Out \u2014 Choose Location";
     g("inv-loc-card").style.display = "block";
     g("inv-detail-card").style.display = "none";
   }
+
+  // Called when worker taps "Found on Shelf?" for a 0-case location
+  window.invFoundOnShelf = function(loc) {
+    if (!invPart) return;
+    // Set the location's partNum if available
+    var partNum = (loc.partNum && loc.partNum !== invPart.partNum) ? loc.partNum : invPart.partNum;
+    var partForList = Object.assign({}, invPart, { partNum: partNum });
+    // Add to pull list with foundOnShelf flag — cases left blank for worker to fill at location
+    invPullList.push({
+      key:           partNum + '|' + loc.location + '|found',
+      partNum:       partNum,
+      sku:           invPart.sku || partNum,
+      name:          invPart.name || '',
+      location:      loc.location,
+      cases:         '',
+      rowIndex:      loc.rowIndex,
+      masterRowIndex: loc.rowIndex,
+      foundOnShelf:  true
+    });
+    invPullList.sort(function(a, b) {
+      return invLocSort(a.location) - invLocSort(b.location) ||
+             a.location.localeCompare(b.location);
+    });
+    invSavePullList();
+    invRenderPullList();
+    invFlash("\u26a0 Added to pull list — mark as FOUND ON SHELF", "success");
+    g("inv-result-card").style.display = "none";
+    g("inv-loc-card").style.display    = "none";
+    g("inv-search-inp").value = "";
+    invPart = null; invSelLoc = null;
+  };
 
   function invPickLoc(i) {
     invSelLoc = invPart.locations[i];
@@ -10122,6 +10190,27 @@ function rprToast(msg, type = '') {
     }
     document.querySelectorAll("#inv-app .iloc-opt").forEach(function(el) { el.classList.remove("isel"); });
     g("inv-loc-list").children[i].classList.add("isel");
+    g("inv-newloc-wrap").style.display = "none";
+    if (invMode === "out") {
+      invAddToPullList(invPart, invSelLoc);
+    } else {
+      invShowDetails();
+    }
+  }
+
+  // Direct object-based picker — avoids index mismatch between filtered display
+  // array and full invPart.locations array. Always use this from invShowLocs.
+  function invPickLocDirect(loc) {
+    invSelLoc = loc;
+    if (invMode === "in" && loc.partNum) {
+      invPart = Object.assign({}, invPart, { partNum: loc.partNum });
+      g("inv-result-part").textContent = loc.partNum;
+    }
+    // Highlight by matching location name — no index dependency
+    document.querySelectorAll("#inv-app .iloc-opt").forEach(function(el) {
+      var nameEl = el.querySelector(".iloc-name");
+      el.classList.toggle("isel", !!(nameEl && nameEl.textContent === loc.location));
+    });
     g("inv-newloc-wrap").style.display = "none";
     if (invMode === "out") {
       invAddToPullList(invPart, invSelLoc);
@@ -10362,7 +10451,7 @@ function rprToast(msg, type = '') {
       var infoDiv = document.createElement("div");
       infoDiv.innerHTML =
         "<div class='ipull-loc'>" + item.location + "</div>" +
-        "<div class='ipull-pn'>" + item.partNum + "</div>" +
+        "<div class='ipull-pn'>" + item.partNum + (item.foundOnShelf ? " <span style='background:var(--orange-bg);color:var(--orange);font-size:10px;font-weight:700;padding:1px 6px;border-radius:4px;border:1px solid var(--orange);font-family:var(--sans)'>FOUND ON SHELF</span>" : "") + "</div>" +
         "<div class='ipull-name'>" + (item.name || '') + "</div>" +
         "<div style='margin-top:6px;display:flex;gap:6px;align-items:center'>" +
           "<input type='number' min='0' placeholder='Cases' value='" + (item.cases || '') + "' " +
@@ -10431,13 +10520,16 @@ function rprToast(msg, type = '') {
         return;
       }
       var item = items[idx++];
+      var itemNotes = item.foundOnShelf
+        ? ('[FOUND ON SHELF] ' + notes).trim()
+        : notes;
       wFetch(W + "/inventory/log", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           type: "OUT", partNum: item.partNum, sku: item.sku, name: item.name,
           location: item.location, cases: item.cases, initials: initials,
-          notes: notes, rowIndex: item.rowIndex, masterRowIndex: item.masterRowIndex,
+          notes: itemNotes, rowIndex: item.rowIndex, masterRowIndex: item.masterRowIndex,
           isPlaceholder: false, isNew: false, overwriteLocation: ""
         })
       }).then(function(r) { return r.json(); })
@@ -10463,10 +10555,17 @@ function rprToast(msg, type = '') {
     var el = document.createElement("div");
     el.className = "ientry";
     el.id = "inv-entry-" + item.rowIndex;
+    var isFound = item.notes && item.notes.indexOf('[FOUND ON SHELF]') === 0;
     var typeHtml = "<span class='ientry-type " + item.type.toLowerCase() + "'>" + item.type + "</span>";
-    el.innerHTML = "<div class='ientry-head'><span class='ientry-part'>" + (item.partNum || "") + "</span>" + typeHtml + "</div>"
+    var foundBadge = isFound ? "<span style='background:var(--orange-bg);color:var(--orange);font-size:10px;font-weight:700;padding:2px 8px;border-radius:4px;border:1px solid var(--orange);margin-left:6px'>\u26a0 FOUND ON SHELF</span>" : "";
+    var nameHtml = item.name ? "<div style='font-size:12px;color:var(--text2);margin-top:2px;margin-bottom:6px'>" + item.name + "</div>" : "";
+    var skuHtml  = (item.sku && item.sku !== item.partNum)
+      ? "<div style='font-size:11px;font-family:var(--mono);color:var(--text3);margin-top:1px'>" + item.sku + "</div>" : "";
+    var displayNotes = isFound ? item.notes.replace('[FOUND ON SHELF] ', '').trim() : item.notes;
+    el.innerHTML = "<div class='ientry-head'><div><span class='ientry-part'>" + (item.partNum || "") + "</span>" + skuHtml + "</div><div style='display:flex;align-items:center;gap:4px'>" + foundBadge + typeHtml + "</div></div>"
+      + nameHtml
       + "<div class='ientry-meta'>\ud83d\udccd " + (item.location || "") + " &nbsp;|\u00a0 \ud83d\udce6 " + (item.cases || 0) + " cases &nbsp;|\u00a0 \ud83e\uddd1 " + (item.initials || "")
-      + (item.notes ? "<br>\ud83d\udcdd " + item.notes : "") + "</div>"
+      + (displayNotes ? "<br>\ud83d\udcdd " + displayNotes : "") + "</div>"
       + "<div class='ientry-btns'><button class='iapprove'>\u2713 Approve</button><button class='ireject'>\u2715 Reject</button></div>";
     var ri = item.rowIndex;
     el.querySelector(".iapprove").onclick = function() { invVerify(ri, "Approved"); };
@@ -10506,9 +10605,13 @@ function rprToast(msg, type = '') {
     el.id = "inv-entry-xfr-" + outItem.rowIndex;
     var fromLoc = outItem.location || "?";
     var toLoc   = inItem ? (inItem.location || "?") : (outItem.pairedLocation || "?");
+    var nameHtml = outItem.name ? "<div style='font-size:12px;color:var(--text2);margin-top:2px;margin-bottom:6px'>" + outItem.name + "</div>" : "";
+    var skuHtml  = (outItem.sku && outItem.sku !== outItem.partNum)
+      ? "<div style='font-size:11px;font-family:var(--mono);color:var(--text3);margin-top:1px'>" + outItem.sku + "</div>" : "";
     el.innerHTML =
-      "<div class='ientry-head'><span class='ientry-part'>" + (outItem.partNum || "") + "</span>"
+      "<div class='ientry-head'><div><span class='ientry-part'>" + (outItem.partNum || "") + "</span>" + skuHtml + "</div>"
       + "<span class='ientry-type' style='background:var(--purple-bg);color:var(--purple)'>TRANSFER</span></div>"
+      + nameHtml
       + "<div class='ientry-meta'>"
       + "\ud83d\udd01 <strong>" + fromLoc + "</strong> \u2192 <strong>" + toLoc + "</strong>"
       + " &nbsp;|&nbsp; \ud83d\udce6 " + (outItem.cases || 0) + " cases"
