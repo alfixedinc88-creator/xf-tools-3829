@@ -1,7 +1,7 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-  <!-- XFITTING-BUILD-V111-FEAT-20260319d -->
+  <!-- XFITTING-BUILD-V111-FEAT-20260319e -->
 <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate">
 <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&family=IBM+Plex+Sans:wght@300;400;500;600&display=swap" rel="stylesheet">
   <meta http-equiv="Pragma" content="no-cache">
@@ -14033,6 +14033,44 @@ function _psUploadStatusToSheet(rows) {
 #ebaymsgs-app .em-log-status.sent { background: var(--green-bg); color: var(--green); }
 #ebaymsgs-app .em-log-status.failed { background: var(--red-bg); color: var(--red); }
 
+/* Thread panel */
+#ebaymsgs-app .em-thread-toggle {
+  font-size:11px;font-family:var(--mono);font-weight:700;
+  color:var(--accent);background:none;border:none;cursor:pointer;
+  padding:0;margin-top:8px;display:inline-flex;align-items:center;gap:4px;
+  transition:opacity .15s;
+}
+#ebaymsgs-app .em-thread-toggle:hover { opacity:.7; }
+#ebaymsgs-app .em-thread-panel {
+  margin-top:12px;border-top:1.5px dashed var(--border2);
+  padding-top:12px;display:none;
+}
+#ebaymsgs-app .em-thread-panel.open { display:block; }
+#ebaymsgs-app .em-thread-msg {
+  display:flex;gap:10px;margin-bottom:10px;animation:cardIn .15s ease both;
+}
+#ebaymsgs-app .em-thread-msg.buyer  { flex-direction:row; }
+#ebaymsgs-app .em-thread-msg.seller { flex-direction:row-reverse; }
+#ebaymsgs-app .em-thread-avatar {
+  width:28px;height:28px;border-radius:50%;
+  display:flex;align-items:center;justify-content:center;
+  font-size:11px;font-weight:700;font-family:var(--mono);flex-shrink:0;margin-top:2px;
+}
+#ebaymsgs-app .em-thread-msg.buyer  .em-thread-avatar { background:var(--bg4);color:var(--text2); }
+#ebaymsgs-app .em-thread-msg.seller .em-thread-avatar { background:var(--accent);color:#fff; }
+#ebaymsgs-app .em-thread-bubble {
+  max-width:82%;padding:9px 12px;border-radius:12px;
+  font-size:13px;line-height:1.55;color:var(--text);
+}
+#ebaymsgs-app .em-thread-msg.buyer  .em-thread-bubble {
+  background:var(--bg3);border:1px solid var(--border);border-radius:4px 12px 12px 12px;
+}
+#ebaymsgs-app .em-thread-msg.seller .em-thread-bubble {
+  background:var(--accent-bg);border:1px solid #aec6fb;border-radius:12px 4px 12px 12px;text-align:right;
+}
+#ebaymsgs-app .em-thread-time { font-size:10px;font-family:var(--mono);color:var(--text3);margin-top:3px;display:block; }
+#ebaymsgs-app .em-thread-loading { font-size:12px;color:var(--text3);padding:8px 0;font-family:var(--mono); }
+
 /* Empty state */
 #ebaymsgs-app .em-empty {
   text-align: center;
@@ -14209,6 +14247,7 @@ function _psUploadStatusToSheet(rows) {
     document.getElementById('em-pane-queue').style.display = 'block';
     document.getElementById('em-pane-log').style.display = 'none';
     document.getElementById('em-draft-all-btn').style.display = 'none';
+    setTimeout(emRunCleanup, 3000);
     // Restore saved agent name
     var nameInp = document.getElementById('em-agent-name');
     if (nameInp) nameInp.value = emAgentName;
@@ -14257,6 +14296,7 @@ function _psUploadStatusToSheet(rows) {
       }
       emMessages = d.messages || [];
       emMessages.forEach(function(m) { m._sent = false; m.aiDraft = ''; });
+      emSaveBuyerMessages(emMessages);
       var breakdown = d.sourceBreakdown || {};
       var bkStr = breakdown.listing !== undefined
         ? ' (' + breakdown.listing + ' listing, ' + breakdown.inbox + ' order)'
@@ -14334,6 +14374,8 @@ function _psUploadStatusToSheet(rows) {
         + '</div>'
         + '<div class="em-question-box">' + emEsc(m.body || '(no message body)') + '</div>'
         + draftSection
+        + threadToggle
+        + threadPanel
         + actions
         + '</div>';
     }).join('');
@@ -14480,6 +14522,89 @@ function _psUploadStatusToSheet(rows) {
   };
 
   /* ── Load sent log ───────────────────────────────── */
+  /* ---- Thread history ---- */
+  window.emToggleThread = function(idx) {
+    var panel  = document.getElementById('em-thread-panel-' + idx);
+    var toggle = document.getElementById('em-thread-toggle-' + idx);
+    if (!panel) return;
+    var isOpen = panel.classList.contains('open');
+    if (isOpen) {
+      panel.classList.remove('open');
+      if (toggle) toggle.textContent = '+ View thread history';
+      return;
+    }
+    panel.classList.add('open');
+    if (toggle) toggle.textContent = '- Hide thread';
+    if (panel.dataset.loaded !== '1') { emLoadThread(idx, panel); }
+  };
+
+  function emLoadThread(idx, panel) {
+    var msg = emMessages[idx];
+    if (!msg) return;
+    var threadId = msg.externalMsgId || msg.messageId || '';
+    if (!threadId) { panel.innerHTML = '<div class="em-thread-loading">No thread ID available.</div>'; return; }
+    panel.innerHTML = '<div class="em-thread-loading">Loading thread...</div>';
+    var token = sessionStorage.getItem('xf_session') || '';
+    fetch(EM_WORKER + '/ebay-msg/threads?threadId=' + encodeURIComponent(threadId), {
+      headers: { 'X-Session-Token': token }
+    }).then(function(r) { return r.json(); }).then(function(d) {
+      panel.dataset.loaded = '1';
+      var thread = d.thread || [];
+      if (!thread.length) {
+        panel.innerHTML = '<div class="em-thread-loading">No history yet -- replies will appear here after sending.</div>';
+        return;
+      }
+      panel.innerHTML = thread.map(function(t) {
+        var dir = (t.direction || 'BUYER').toUpperCase();
+        var avatar = dir === 'SELLER' ? 'XF' : (t.buyerId || 'B').slice(0,2).toUpperCase();
+        var ts = t.sentAt || t.timestamp;
+        var timeStr = ts ? new Date(ts).toLocaleString('en-US', {
+          timeZone:'America/New_York',hour12:true,month:'short',day:'numeric',hour:'numeric',minute:'2-digit'
+        }) : '';
+        return '<div class="em-thread-msg ' + dir.toLowerCase() + '">'
+          + '<div class="em-thread-avatar">' + emEsc(avatar) + '</div>'
+          + '<div><div class="em-thread-bubble">' + emEsc(t.body || '') + '</div>'
+          + '<span class="em-thread-time">' + emEsc(timeStr) + '</span></div></div>';
+      }).join('');
+    }).catch(function() {
+      panel.innerHTML = '<div class="em-thread-loading" style="color:var(--red);">Failed to load thread.</div>';
+    });
+  }
+
+  function emSaveBuyerMessages(messages) {
+    if (!messages || !messages.length) return;
+    var token = sessionStorage.getItem('xf_session') || '';
+    var toSave = messages.map(function(m) {
+      return {
+        threadId:  m.externalMsgId || m.messageId || '',
+        messageId: m.messageId || '',
+        timestamp: m.createdAt || new Date().toISOString(),
+        itemId:    m.itemId    || '',
+        buyerId:   m.senderId  || '',
+        subject:   m.subject   || '',
+        direction: 'BUYER',
+        body:      m.body      || '',
+        replyType: m.replyType || 'RTQ',
+        sentAt:    '',
+      };
+    }).filter(function(m) { return m.messageId || m.body; });
+    if (!toSave.length) return;
+    fetch(EM_WORKER + '/ebay-msg/threads/save', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'X-Session-Token': token },
+      body: JSON.stringify({ messages: toSave })
+    }).catch(function() {});
+  }
+
+  function emRunCleanup() {
+    var token = sessionStorage.getItem('xf_session') || '';
+    fetch(EM_WORKER + '/ebay-msg/cleanup', {
+      method: 'POST', headers: { 'X-Session-Token': token }
+    }).then(function(r){ return r.json(); }).then(function(d){
+      if (d.deleted > 0) console.log('[eBay Msgs] Cleaned ' + d.deleted + ' old rows');
+    }).catch(function() {});
+  }
+
   window.emLoadLog = function() {
     var list  = document.getElementById('em-log-list');
     list.innerHTML = '<div class="em-loading">⏳ Loading log…</div>';
