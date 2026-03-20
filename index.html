@@ -1,7 +1,7 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-  <!-- XFITTING-BUILD-V111-BUGF-20260319f -->
+  <!-- XFITTING-BUILD-V111-FEAT-20260319g -->
 <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate">
 <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&family=IBM+Plex+Sans:wght@300;400;500;600&display=swap" rel="stylesheet">
   <meta http-equiv="Pragma" content="no-cache">
@@ -13957,6 +13957,38 @@ function _psUploadStatusToSheet(rows) {
   box-sizing: border-box;
 }
 #ebaymsgs-app .em-draft-area:focus { border-color: var(--accent); }
+#ebaymsgs-app .em-note-row {
+  margin-bottom: 10px;
+  display: flex;
+  gap: 8px;
+  align-items: flex-start;
+}
+#ebaymsgs-app .em-note-label {
+  font-size: 11px;
+  font-weight: 700;
+  font-family: var(--mono);
+  color: var(--orange);
+  white-space: nowrap;
+  padding-top: 9px;
+  flex-shrink: 0;
+}
+#ebaymsgs-app .em-note-input {
+  flex: 1;
+  background: var(--orange-bg);
+  border: 1.5px solid #fcd34d;
+  border-radius: 8px;
+  padding: 7px 10px;
+  font-family: var(--sans);
+  font-size: 12px;
+  color: var(--text);
+  outline: none;
+  transition: border-color .15s;
+  resize: none;
+  min-height: 36px;
+  line-height: 1.5;
+}
+#ebaymsgs-app .em-note-input:focus { border-color: var(--orange); }
+#ebaymsgs-app .em-note-input::placeholder { color: var(--text3); font-style: italic; }
 
 #ebaymsgs-app .em-card-actions {
   display: flex;
@@ -14333,6 +14365,14 @@ function _psUploadStatusToSheet(rows) {
       var sourceBadge = m.source === 'inbox'
         ? '<span style="font-size:10px;font-family:var(--mono);font-weight:700;padding:2px 8px;border-radius:6px;background:var(--purple-bg);color:var(--purple);">ORDER MSG</span>'
         : '<span style="font-size:10px;font-family:var(--mono);font-weight:700;padding:2px 8px;border-radius:6px;background:var(--green-bg);color:var(--green);">LISTING Q</span>';
+      var noteField = !m._sent
+        ? '<div class="em-note-row">'
+          + '<span class="em-note-label">📝 NOTE</span>'
+          + '<textarea class="em-note-input" id="em-note-' + idx + '" rows="1" '
+          + 'placeholder="Optional: add context for AI (e.g. buyer seems frustrated, wrong size ordered...)" '
+          + 'oninput="emSaveNote(' + idx + ', this.value)"></textarea>'
+          + '</div>'
+        : '';
       var draftSection = '';
       if (!m._sent) {
         if (m.aiDraft) {
@@ -14375,12 +14415,14 @@ function _psUploadStatusToSheet(rows) {
         + (m.currentPrice ? '<span>Price: <strong>$' + m.currentPrice.toFixed(2) + '</strong></span>' : '')
         + '</div>'
         + '<div class="em-question-box">' + emEsc(m.body || '(no message body)') + '</div>'
+        + noteField
         + draftSection
         + threadToggle
         + threadPanel
         + actions
         + '</div>';
     }).join('');
+    emRestoreNotes();
   }
 
   /* ── Draft all with AI ───────────────────────────── */
@@ -14395,7 +14437,9 @@ function _psUploadStatusToSheet(rows) {
     fetch(EM_WORKER + '/ebay-msg/ai-draft', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', 'X-Session-Token': token },
-      body: JSON.stringify({ messages: undrafted, agentName: emAgentName })
+      body: JSON.stringify({ messages: undrafted.map(function(m) {
+        return Object.assign({}, m, { _note: m._note || '' });
+      }), agentName: emAgentName })
     }).then(function(r) { return r.json(); }).then(function(d) {
       btn.disabled = false;
       btn.innerHTML = '🤖 Draft All with AI';
@@ -14450,7 +14494,7 @@ function _psUploadStatusToSheet(rows) {
     fetch(EM_WORKER + '/ebay-msg/ai-draft', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', 'X-Session-Token': token },
-      body: JSON.stringify({ messages: [msg], agentName: emAgentName })
+      body: JSON.stringify({ messages: [Object.assign({}, msg, { _note: msg._note || '' })], agentName: emAgentName })
     }).then(function(r) { return r.json(); }).then(function(d) {
       if (d.messages && d.messages[0] && d.messages[0].draftOk) {
         msg.aiDraft = d.messages[0].aiDraft;
@@ -14522,6 +14566,21 @@ function _psUploadStatusToSheet(rows) {
     emUpdateStats();
     emRenderQueue();
   };
+
+  // Save note to message object so it persists across re-renders
+  window.emSaveNote = function(idx, val) {
+    if (emMessages[idx]) emMessages[idx]._note = val;
+  };
+
+  // Restore note value after re-render (called at end of emRenderQueue)
+  function emRestoreNotes() {
+    emMessages.forEach(function(m, idx) {
+      if (m._note) {
+        var inp = document.getElementById('em-note-' + idx);
+        if (inp) inp.value = m._note;
+      }
+    });
+  }
 
   /* ── Load sent log ───────────────────────────────── */
   /* ---- Thread history ---- */
