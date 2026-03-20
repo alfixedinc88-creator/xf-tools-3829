@@ -1,7 +1,7 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-  <!-- XFITTING-BUILD-V111-FEAT-20260319g -->
+  <!-- XFITTING-BUILD-V112-FEAT-20260319c -->
 <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate">
 <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&family=IBM+Plex+Sans:wght@300;400;500;600&display=swap" rel="stylesheet">
   <meta http-equiv="Pragma" content="no-cache">
@@ -1883,9 +1883,9 @@ input[type=checkbox]{width:15px;height:15px;cursor:pointer;accent-color:var(--bl
       </div>
       <div class="launcher-card" onclick="launchMgmtApp('ebaymsgs')" style="border-color:#e8f5e9" id="ebaymsgs-launcher-card">
         <div class="launcher-card-icon">🤖</div>
-        <div class="launcher-card-title">eBay AI Messages <span id="ebaymsgs-badge" style="display:none;background:var(--accent);color:#fff;font-size:10px;font-family:var(--mono);font-weight:700;padding:2px 6px;border-radius:10px;margin-left:6px;vertical-align:middle"></span></div>
-        <div class="launcher-card-desc">AI-drafted replies to buyer questions. Review, edit, and send directly from XFitting.</div>
-        <div style="display:inline-block;margin-top:10px;font-size:10px;font-family:var(--mono);padding:3px 8px;border-radius:4px;background:#e8f5e9;color:#2e7d32;font-weight:600;letter-spacing:1px">eBay · AI · Management</div>
+        <div class="launcher-card-title">AI Customer Support <span id="ebaymsgs-badge" style="display:none;background:var(--accent);color:#fff;font-size:10px;font-family:var(--mono);font-weight:700;padding:2px 6px;border-radius:10px;margin-left:6px;vertical-align:middle"></span></div>
+        <div class="launcher-card-desc">AI replies for eBay, Amazon, Walmart, Shopify &amp; Email. Review queue, CS tool, analytics.</div>
+        <div style="display:inline-block;margin-top:10px;font-size:10px;font-family:var(--mono);padding:3px 8px;border-radius:4px;background:#e8f5e9;color:#2e7d32;font-weight:600;letter-spacing:1px">All Platforms · AI · Management</div>
       </div>
     </div>
   </div>
@@ -13337,6 +13337,34 @@ function _psUploadStatusToSheet(rows) {
 .msg-inbox-card .msg-actions .btn-archive { border-color:var(--text3);color:var(--text3); }
 .msg-inbox-card .msg-actions .btn-unarchive { border-color:var(--green);color:var(--green); }
 .msg-inbox-card .msg-reply-thread { margin-top:10px;padding:10px 12px;background:var(--bg);border-radius:8px;border:1px solid var(--border); }
+
+/* CS Tool scoped */
+#ebaymsgs-app .cs-card{background:var(--bg2);border:1.5px solid var(--border);border-radius:14px;padding:20px 22px;box-shadow:var(--shadow);margin-bottom:16px;}
+#ebaymsgs-app .cs-card-title{font-size:12px;font-weight:700;text-transform:uppercase;letter-spacing:1px;color:var(--text3);margin-bottom:14px;font-family:var(--mono);}
+#ebaymsgs-app .cs-field-row{display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-bottom:12px;}
+@media(max-width:600px){#ebaymsgs-app .cs-field-row{grid-template-columns:1fr;}}
+#ebaymsgs-app .cs-field{display:flex;flex-direction:column;gap:5px;}
+#ebaymsgs-app .cs-label{font-size:11px;font-weight:700;color:var(--text2);font-family:var(--mono);text-transform:uppercase;letter-spacing:.5px;}
+#ebaymsgs-app .cs-input,#ebaymsgs-app .cs-textarea{background:var(--bg3);border:1.5px solid var(--border2);border-radius:8px;padding:9px 12px;font-family:var(--sans);font-size:13px;color:var(--text);outline:none;transition:border-color .15s;width:100%;box-sizing:border-box;}
+#ebaymsgs-app .cs-input:focus,#ebaymsgs-app .cs-textarea:focus{border-color:var(--accent);}
+#ebaymsgs-app .cs-textarea{resize:vertical;line-height:1.6;}
+#ebaymsgs-app .cs-note-textarea{background:var(--orange-bg);border-color:#fcd34d;}
+#ebaymsgs-app .cs-note-textarea:focus{border-color:var(--orange);}
+#ebaymsgs-app .cs-platform-grid{display:grid;grid-template-columns:repeat(5,1fr);gap:8px;margin-bottom:0;}
+#ebaymsgs-app .cs-platform-btn{padding:10px 6px;border-radius:10px;border:1.5px solid var(--border2);background:var(--bg3);cursor:pointer;font-size:11px;font-weight:700;font-family:var(--mono);color:var(--text2);text-align:center;transition:all .15s;}
+#ebaymsgs-app .cs-platform-btn:hover{border-color:var(--accent);color:var(--accent);background:var(--accent-bg);}
+#ebaymsgs-app .cs-platform-btn.selected{border-color:var(--purple);color:var(--purple);background:var(--purple-bg);}
+#ebaymsgs-app .cs-platform-btn .cs-pb-icon{font-size:20px;display:block;margin-bottom:4px;}
+#ebaymsgs-app .cs-draft-box{background:var(--accent-bg);border:1.5px solid #aec6fb;border-radius:12px;padding:16px 18px;font-size:13px;color:var(--text);line-height:1.7;white-space:pre-wrap;min-height:80px;}
+#ebaymsgs-app .cs-conf-badge{display:inline-flex;align-items:center;gap:5px;font-size:11px;font-family:var(--mono);font-weight:700;padding:3px 10px;border-radius:20px;margin-bottom:10px;}
+#ebaymsgs-app .cs-btn{font-family:var(--sans);font-size:13px;font-weight:700;padding:10px 20px;border-radius:9px;border:none;cursor:pointer;transition:all .15s;}
+#ebaymsgs-app .cs-btn-primary{background:var(--purple);color:#fff;}
+#ebaymsgs-app .cs-btn-primary:hover{background:#5b21b6;}
+#ebaymsgs-app .cs-btn-secondary{background:var(--bg3);color:var(--text2);border:1.5px solid var(--border2);}
+#ebaymsgs-app .cs-btn-secondary:hover{border-color:var(--accent);color:var(--accent);}
+#ebaymsgs-app .cs-btn:disabled{opacity:.45;cursor:not-allowed;}
+#ebaymsgs-app .cs-action-row{display:flex;gap:10px;align-items:center;flex-wrap:wrap;margin-top:14px;}
+#ebaymsgs-app .cs-copy-feedback{font-size:12px;color:var(--green);font-family:var(--mono);font-weight:600;display:none;}
 </style>
 
 <script>
@@ -14127,8 +14155,8 @@ function _psUploadStatusToSheet(rows) {
 
 <!-- ── Header ── -->
 <div class="em-header">
-  <div class="em-logo">eBay</div>
-  <div class="em-title">AI Messages</div>
+  <div class="em-logo">AI CS</div>
+  <div class="em-title">AI Customer Support</div>
   <span class="em-spacer"></span>
   <span style="font-size:12px;color:var(--text3);display:flex;align-items:center;gap:4px;">
     <span class="em-status-dot" id="em-dot"></span>
@@ -14174,12 +14202,18 @@ function _psUploadStatusToSheet(rows) {
   </div>
 
   <!-- Tabs -->
-  <div class="em-tabs" id="em-tabs" style="display:none;">
+  <div class="em-tabs" id="em-tabs" style="display:flex;">
     <div class="em-tab active" id="em-tab-queue" onclick="emSwitchTab('queue')">
       Review Queue <span class="em-tab-badge" id="em-queue-badge">0</span>
     </div>
     <div class="em-tab" id="em-tab-log" onclick="emSwitchTab('log')">
       Sent Log
+    </div>
+    <div class="em-tab" id="em-tab-analytics" onclick="emSwitchTab('analytics')">
+      📊 Analytics
+    </div>
+    <div class="em-tab" id="em-tab-cstool" onclick="emSwitchTab('cstool')">
+      🎧 CS Tool
     </div>
   </div>
 
@@ -14204,6 +14238,59 @@ function _psUploadStatusToSheet(rows) {
     </div>
   </div>
 
+  <!-- Analytics pane -->
+  <div id="em-pane-analytics" style="display:none;">
+    <div style="display:flex;align-items:center;gap:10px;margin-bottom:16px;flex-wrap:wrap;">
+      <span style="font-size:13px;color:var(--text2);">Message stats from eBay_Threads sheet</span>
+      <select id="em-analytics-days" class="em-select" style="margin-left:auto;" onchange="emLoadAnalytics()">
+        <option value="7">Last 7 days</option>
+        <option value="30" selected>Last 30 days</option>
+        <option value="90">Last 90 days</option>
+      </select>
+      <button class="em-btn" onclick="emLoadAnalytics()">&#x21BB; Refresh</button>
+    </div>
+    <div id="em-analytics-body"><div class="em-empty"><div class="em-empty-icon">📊</div><h3>No data yet</h3><p>Analytics pulls from your eBay_Threads sheet. Data builds up as messages come in.</p></div></div>
+  </div>
+
+
+  <!-- CS Tool pane -->
+  <div id="em-pane-cstool" style="display:none;">
+    <div class="cs-card"><div class="cs-card-title">1. Select Platform</div>
+      <div class="cs-platform-grid">
+        <button class="cs-platform-btn" id="cs-pb-Amazon"  onclick="csToolSelectPlatform('Amazon')"><span class="cs-pb-icon">📦</span>Amazon</button>
+        <button class="cs-platform-btn" id="cs-pb-Walmart" onclick="csToolSelectPlatform('Walmart')"><span class="cs-pb-icon">🏪</span>Walmart</button>
+        <button class="cs-platform-btn" id="cs-pb-Shopify" onclick="csToolSelectPlatform('Shopify')"><span class="cs-pb-icon">🛍</span>Shopify</button>
+        <button class="cs-platform-btn" id="cs-pb-Email"   onclick="csToolSelectPlatform('Email')"><span class="cs-pb-icon">✉️</span>Email</button>
+        <button class="cs-platform-btn" id="cs-pb-Other"   onclick="csToolSelectPlatform('Other')"><span class="cs-pb-icon">🌐</span>Other</button>
+      </div></div>
+    <div class="cs-card"><div class="cs-card-title">2. Order Details (optional)</div>
+      <div class="cs-field-row">
+        <div class="cs-field"><label class="cs-label">Order Number</label><input type="text" class="cs-input" id="cs-order-num" placeholder="e.g. 113-1234567-8901234"></div>
+        <div class="cs-field"><label class="cs-label">SKU / ASIN</label><input type="text" class="cs-input" id="cs-sku" placeholder="e.g. B08XYZ or XF-1234"></div>
+      </div>
+      <div class="cs-field"><label class="cs-label">Product / Listing Title</label><input type="text" class="cs-input" id="cs-product" placeholder="e.g. 1/2 inch PEX Push Fit Elbow (10 Pack)"></div>
+    </div>
+    <div class="cs-card"><div class="cs-card-title">3. Customer Message</div>
+      <textarea class="cs-textarea" id="cs-buyer-msg" rows="5" placeholder="Paste the customer message here..."></textarea>
+    </div>
+    <div class="cs-card"><div class="cs-card-title">📝 Agent Note (optional)</div>
+      <textarea class="cs-textarea cs-note-textarea" id="cs-agent-note" rows="2" placeholder="e.g. buyer frustrated, item shows delivered, repeat customer..."></textarea>
+    </div>
+    <div style="text-align:center;margin-bottom:20px;">
+      <button class="cs-btn cs-btn-primary" id="cs-draft-btn" onclick="csToolGenerate()" style="padding:13px 36px;font-size:15px;">🤖 Generate AI Reply</button>
+      <div id="cs-status" style="font-size:12px;color:var(--text3);margin-top:8px;font-family:var(--mono);"></div>
+    </div>
+    <div class="cs-card" id="cs-output-card" style="display:none;">
+      <div class="cs-card-title">AI Draft Reply</div>
+      <div id="cs-conf-row" style="margin-bottom:10px;"></div>
+      <div class="cs-draft-box" id="cs-draft-text"></div>
+      <div class="cs-action-row">
+        <button class="cs-btn cs-btn-primary" onclick="csToolCopy()">📋 Copy Reply</button>
+        <button class="cs-btn cs-btn-secondary" onclick="csToolRegenerate()">🔄 Re-draft</button>
+        <button class="cs-btn cs-btn-secondary" onclick="csToolReset()">✕ Clear All</button>
+        <span class="cs-copy-feedback" id="cs-copy-feedback">✅ Copied!</span>
+      </div></div>
+  </div>
 </div><!-- /em-content -->
 </div><!-- /ebaymsgs-app -->
 
@@ -14275,9 +14362,11 @@ function _psUploadStatusToSheet(rows) {
     document.getElementById('em-empty-state').style.display = 'block';
     document.getElementById('em-msg-list').innerHTML = '';
     document.getElementById('em-stats').style.display = 'none';
-    document.getElementById('em-tabs').style.display = 'none';
+    // tabs always visible
     document.getElementById('em-pane-queue').style.display = 'block';
     document.getElementById('em-pane-log').style.display = 'none';
+    if (document.getElementById('em-pane-analytics')) document.getElementById('em-pane-analytics').style.display = 'none';
+    if (document.getElementById('em-pane-cstool')) document.getElementById('em-pane-cstool').style.display = 'none';
     document.getElementById('em-draft-all-btn').style.display = 'none';
     setTimeout(emRunCleanup, 3000);
     // Restore saved agent name
@@ -14289,13 +14378,15 @@ function _psUploadStatusToSheet(rows) {
   /* ── Tab switching ───────────────────────────────── */
   function emSetActiveTab(name) {
     emCurrentTab = name;
-    ['queue','log'].forEach(function(t) {
+    ['queue','log','analytics','cstool'].forEach(function(t) {
       var tab = document.getElementById('em-tab-' + t);
       var pane = document.getElementById('em-pane-' + t);
       if (tab)  tab.classList.toggle('active', t === name);
       if (pane) pane.style.display = (t === name) ? 'block' : 'none';
     });
     if (name === 'log') emLoadLog();
+    if (name === 'analytics') emLoadAnalytics();
+    if (name === 'cstool') { var _m=document.getElementById('cs-buyer-msg'); if(_m&&!_m.value){csPlatform='';document.querySelectorAll('.cs-platform-btn').forEach(function(b){b.classList.remove('selected');});} }
   }
 
   window.emSwitchTab = function(name) { emSetActiveTab(name); };
@@ -14311,7 +14402,7 @@ function _psUploadStatusToSheet(rows) {
     document.getElementById('em-msg-list').innerHTML = '<div class="em-loading">⏳ Pulling messages from eBay Trading API…</div>';
     document.getElementById('em-empty-state').style.display = 'none';
     document.getElementById('em-stats').style.display = 'flex';
-    document.getElementById('em-tabs').style.display = 'flex';
+    // tabs already visible
 
     var token = sessionStorage.getItem('xf_session') || '';
     fetch(EM_WORKER + '/ebay-msg/list?days=' + days + '&status=' + status, {
@@ -14362,6 +14453,13 @@ function _psUploadStatusToSheet(rows) {
         : (m.aiDraft
             ? '<span class="em-badge draft">DRAFTED</span>'
             : '<span class="em-badge new">NEW</span>');
+      var confBadge = '';
+      if (m.aiDraft && typeof m.confidence === 'number') {
+        var cp = Math.round(m.confidence * 100);
+        var cc = m.confidence >= 0.75 ? 'var(--green)' : m.confidence >= 0.5 ? 'var(--orange)' : 'var(--red)';
+        var cb = m.confidence >= 0.75 ? 'var(--green-bg)' : m.confidence >= 0.5 ? 'var(--orange-bg)' : 'var(--red-bg)';
+        confBadge = '<span style="font-size:10px;font-family:var(--mono);font-weight:700;padding:2px 8px;border-radius:6px;background:' + cb + ';color:' + cc + ';">AI ' + cp + '%</span>';
+      }
       var sourceBadge = m.source === 'inbox'
         ? '<span style="font-size:10px;font-family:var(--mono);font-weight:700;padding:2px 8px;border-radius:6px;background:var(--purple-bg);color:var(--purple);">ORDER MSG</span>'
         : '<span style="font-size:10px;font-family:var(--mono);font-weight:700;padding:2px 8px;border-radius:6px;background:var(--green-bg);color:var(--green);">LISTING Q</span>';
@@ -14406,6 +14504,7 @@ function _psUploadStatusToSheet(rows) {
         + '<div class="em-card-top">'
         + badge
         + sourceBadge
+        + confBadge
         + '<span class="em-card-meta">' + emFmtTime(m.createdAt) + '</span>'
         + '</div>'
         + '<div class="em-listing-title">' + emEsc(m.title || 'Listing #' + m.itemId) + '</div>'
@@ -14461,7 +14560,7 @@ function _psUploadStatusToSheet(rows) {
           orig = emMessages.find(function(m) { return m.body === dm.body; });
         }
         if (orig) {
-          if (dm.draftOk) { orig.aiDraft = dm.aiDraft; orig.draftError = ''; }
+          if (dm.draftOk) { orig.aiDraft = dm.aiDraft; orig.draftError = ''; orig.confidence = dm.confidence; }
           else { orig.draftError = dm.draftError || 'AI returned empty'; }
         }
       });
@@ -14498,6 +14597,7 @@ function _psUploadStatusToSheet(rows) {
     }).then(function(r) { return r.json(); }).then(function(d) {
       if (d.messages && d.messages[0] && d.messages[0].draftOk) {
         msg.aiDraft = d.messages[0].aiDraft;
+        msg.confidence = d.messages[0].confidence;
         emUpdateStats();
         emRenderQueue();
         // Focus the textarea
@@ -14693,6 +14793,158 @@ function _psUploadStatusToSheet(rows) {
       }).join('');
     }).catch(function() {
       list.innerHTML = '<div style="color:var(--red);font-size:13px;">Failed to load log.</div>';
+    });
+  };
+
+})();
+</script>
+
+
+<!-- \u2554\u2557\u2557 CS TOOL APP \u2554\u2557\u2557 -->
+
+<script>
+(function() {
+  'use strict';
+  var CS_WORKER   = WORKER_URL;
+  var csPlatform  = '';
+  var csAgentName = localStorage.getItem('xf_cs_agent') || '';
+
+  window.csToolOnLaunch = function() {
+    csPlatform = '';
+    document.querySelectorAll('.cs-platform-btn').forEach(function(b) { b.classList.remove('selected'); });
+    ['cs-order-num','cs-sku','cs-product','cs-buyer-msg','cs-agent-note'].forEach(function(id) {
+      var el = document.getElementById(id); if (el) el.value = '';
+    });
+    document.getElementById('cs-output-card').style.display = 'none';
+    document.getElementById('cs-status').textContent = '';
+    var ni = document.getElementById('cs-agent-name');
+    if (ni) ni.value = csAgentName;
+  };
+
+  window.csToolSaveAgent = function(v) {
+    csAgentName = (v||'').trim();
+    localStorage.setItem('xf_cs_agent', csAgentName);
+  };
+
+  window.csToolSelectPlatform = function(p) {
+    csPlatform = p;
+    document.querySelectorAll('.cs-platform-btn').forEach(function(b) { b.classList.remove('selected'); });
+    var btn = document.getElementById('cs-pb-' + p);
+    if (btn) btn.classList.add('selected');
+  };
+
+  window.csToolGenerate = function() {
+    var msg = (document.getElementById('cs-buyer-msg').value || '').trim();
+    if (!msg) { showToast('Paste the customer message first'); return; }
+    if (!csPlatform) { showToast('Select a platform first'); return; }
+    var btn = document.getElementById('cs-draft-btn');
+    btn.disabled = true; btn.textContent = '\u23f3 Generating\u2026';
+    document.getElementById('cs-status').textContent = 'Sending to Claude Haiku\u2026';
+    document.getElementById('cs-output-card').style.display = 'none';
+    var token = sessionStorage.getItem('xf_session') || '';
+    fetch(CS_WORKER + '/cs-tool/draft', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'X-Session-Token': token },
+      body: JSON.stringify({
+        platform:     csPlatform,
+        orderNumber:  (document.getElementById('cs-order-num').value  || '').trim(),
+        productTitle: (document.getElementById('cs-product').value    || '').trim(),
+        sku:          (document.getElementById('cs-sku').value        || '').trim(),
+        buyerMessage: msg,
+        agentNote:    (document.getElementById('cs-agent-note').value || '').trim(),
+        agentName:    csAgentName,
+      })
+    }).then(function(r) { return r.json(); }).then(function(d) {
+      btn.disabled = false; btn.textContent = '🤖 Generate AI Reply';
+      document.getElementById('cs-status').textContent = '';
+      if (!d.ok) {
+        document.getElementById('cs-status').textContent = '\u26a0 Error: ' + (d.error || 'AI failed');
+        showToast('Draft error: ' + (d.error || 'unknown'));
+        return;
+      }
+      // Render draft
+      document.getElementById('cs-draft-text').textContent = d.draft || '';
+      // Confidence badge
+      var confRow = document.getElementById('cs-conf-row');
+      if (typeof d.confidence === 'number') {
+        var cp = Math.round(d.confidence * 100);
+        var cc = d.confidence >= 0.75 ? 'var(--green)' : d.confidence >= 0.5 ? 'var(--orange)' : 'var(--red)';
+        var cb = d.confidence >= 0.75 ? 'var(--green-bg)' : d.confidence >= 0.5 ? 'var(--orange-bg)' : 'var(--red-bg)';
+        var label = d.confidence >= 0.75 ? 'High confidence' : d.confidence >= 0.5 ? 'Review carefully' : 'Low confidence \u2014 edit before sending';
+        confRow.innerHTML = '<span class="cs-conf-badge" style="background:' + cb + ';color:' + cc + ';">AI ' + cp + '% \u2014 ' + label + '</span>';
+      } else { confRow.innerHTML = ''; }
+      document.getElementById('cs-output-card').style.display = 'block';
+      document.getElementById('cs-copy-feedback').style.display = 'none';
+    }).catch(function(e) {
+      btn.disabled = false; btn.textContent = '🤖 Generate AI Reply';
+      document.getElementById('cs-status').textContent = '\u26a0 Network error';
+      showToast('Network error: ' + e.message);
+    });
+  };
+
+  window.csToolCopy = function() {
+    var txt = (document.getElementById('cs-draft-text').textContent || '').trim();
+    if (!txt) return;
+    navigator.clipboard.writeText(txt).then(function() {
+      var fb = document.getElementById('cs-copy-feedback');
+      fb.style.display = 'inline';
+      setTimeout(function() { fb.style.display = 'none'; }, 2500);
+    }).catch(function() { showToast('Copy failed \u2014 select text manually'); });
+  };
+
+  window.csToolRegenerate = function() {
+    document.getElementById('cs-output-card').style.display = 'none';
+    csToolGenerate();
+  };
+
+  window.csToolReset = function() {
+    csToolOnLaunch();
+  };
+
+  /* ---- Analytics JS ---- */
+  window.emLoadAnalytics = function() {
+    var daysEl = document.getElementById('em-analytics-days');
+    var days   = daysEl ? daysEl.value : '30';
+    var body   = document.getElementById('em-analytics-body');
+    if (!body) return;
+    body.innerHTML = '<div class="em-loading">\u23f3 Loading\u2026</div>';
+    var token = sessionStorage.getItem('xf_session') || '';
+    fetch(WORKER_URL + '/ebay-msg/analytics?days=' + days, {
+      headers: { 'X-Session-Token': token }
+    }).then(function(r) { return r.json(); }).then(function(d) {
+      if (!d.ok) { body.innerHTML = '<div style="color:var(--red);font-size:13px;">Failed to load analytics.</div>'; return; }
+      var avgR = d.avgResponseMin !== null
+        ? (d.avgResponseMin < 60 ? d.avgResponseMin + ' min' : Math.round(d.avgResponseMin/60) + ' hr')
+        : 'N/A';
+      var maxDay = Math.max.apply(null, (d.byDay||[]).map(function(x){return x[1];})) || 1;
+      var chart  = (d.byDay||[]).map(function(p) {
+        var pct = Math.round((p[1]/maxDay)*100);
+        return '<div style="display:flex;align-items:center;gap:8px;margin-bottom:5px;">'
+          + '<span style="font-size:10px;font-family:var(--mono);color:var(--text3);width:36px;text-align:right;">' + p[0].slice(5) + '</span>'
+          + '<div style="flex:1;background:var(--bg3);border-radius:4px;height:18px;overflow:hidden;">'
+          + '<div style="width:' + pct + '%;background:var(--accent);height:100%;border-radius:4px;"></div></div>'
+          + '<span style="font-size:11px;font-family:var(--mono);color:var(--text2);width:20px;">' + p[1] + '</span></div>';
+      }).join('');
+      function sc(icon,lbl,val,sub) {
+        return '<div style="background:var(--bg2);border:1.5px solid var(--border);border-radius:12px;padding:14px 16px;box-shadow:var(--shadow);">'
+          + '<div style="font-size:22px;margin-bottom:6px;">' + icon + '</div>'
+          + '<div style="font-size:22px;font-weight:700;color:var(--text);font-family:var(--mono);">' + val + '</div>'
+          + '<div style="font-size:12px;font-weight:600;color:var(--text2);margin-top:2px;">' + lbl + '</div>'
+          + '<div style="font-size:11px;color:var(--text3);margin-top:2px;">' + sub + '</div></div>';
+      }
+      body.innerHTML = '<div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(155px,1fr));gap:12px;margin-bottom:20px;">'
+        + sc('📨','Buyer Messages',  d.totalMessages,   'last '+d.days+' days')
+        + sc('✅','Replies Sent',      d.totalReplies,    'sent by team')
+        + sc('📋','Conversations',  d.totalThreads,    'unique threads')
+        + sc('❓','Unanswered',        d.unanswered,      'awaiting reply')
+        + sc('⏱️','Avg Response',     avgR,              'message to reply')
+        + sc('📅','Busiest Day',    d.busiestDay||'N/A','most messages')
+        + '</div>'
+        + (chart ? '<div style="background:var(--bg2);border:1.5px solid var(--border);border-radius:12px;padding:16px 18px;box-shadow:var(--shadow);">'
+          + '<div style="font-size:12px;font-weight:700;color:var(--text2);margin-bottom:12px;">📈 Messages per day</div>'
+          + chart + '</div>' : '');
+    }).catch(function() {
+      body.innerHTML = '<div style="color:var(--red);font-size:13px;">Failed to load analytics.</div>';
     });
   };
 
