@@ -1,7 +1,7 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-  <!-- XFITTING-BUILD-V112-FEAT-20260319c -->
+  <!-- XFITTING-BUILD-V112-FEAT-20260319d -->
 <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate">
 <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&family=IBM+Plex+Sans:wght@300;400;500;600&display=swap" rel="stylesheet">
   <meta http-equiv="Pragma" content="no-cache">
@@ -14215,6 +14215,9 @@ function _psUploadStatusToSheet(rows) {
     <div class="em-tab" id="em-tab-cstool" onclick="emSwitchTab('cstool')">
       🎧 CS Tool
     </div>
+    <div class="em-tab" id="em-tab-cslog" onclick="emSwitchTab('cslog')">
+      🗂 CS Log
+    </div>
   </div>
 
   <!-- Queue pane -->
@@ -14286,10 +14289,31 @@ function _psUploadStatusToSheet(rows) {
       <div class="cs-draft-box" id="cs-draft-text"></div>
       <div class="cs-action-row">
         <button class="cs-btn cs-btn-primary" onclick="csToolCopy()">📋 Copy Reply</button>
+        <button class="cs-btn" id="cs-save-btn" onclick="csToolSaveLog()" style="background:var(--green);color:#fff;">🗂 Save to Log</button>
         <button class="cs-btn cs-btn-secondary" onclick="csToolRegenerate()">🔄 Re-draft</button>
         <button class="cs-btn cs-btn-secondary" onclick="csToolReset()">✕ Clear All</button>
         <span class="cs-copy-feedback" id="cs-copy-feedback">✅ Copied!</span>
+        <span id="cs-save-feedback" style="font-size:12px;color:var(--green);font-family:var(--mono);font-weight:600;display:none;">✅ Saved!</span>
       </div></div>
+  </div>
+
+  <!-- CS Log pane -->
+  <div id="em-pane-cslog" style="display:none;">
+    <div style="display:flex;align-items:center;gap:10px;margin-bottom:16px;flex-wrap:wrap;">
+      <span style="font-size:13px;color:var(--text2);">Saved multi-platform CS messages</span>
+      <select id="cs-log-filter" class="em-select" style="margin-left:auto;" onchange="csLogLoad()">
+        <option value="">All Platforms</option>
+        <option value="Amazon">Amazon</option>
+        <option value="Walmart">Walmart</option>
+        <option value="Shopify">Shopify</option>
+        <option value="Email">Email</option>
+        <option value="Other">Other</option>
+      </select>
+      <button class="em-btn" onclick="csLogLoad()">&#x21BB; Refresh</button>
+    </div>
+    <div id="cs-log-list">
+      <div class="em-empty"><div class="em-empty-icon">🗂</div><h3>No saved messages yet</h3><p>Click "Save to Log" after generating a CS Tool reply to store it here.</p></div>
+    </div>
   </div>
 </div><!-- /em-content -->
 </div><!-- /ebaymsgs-app -->
@@ -14367,6 +14391,7 @@ function _psUploadStatusToSheet(rows) {
     document.getElementById('em-pane-log').style.display = 'none';
     if (document.getElementById('em-pane-analytics')) document.getElementById('em-pane-analytics').style.display = 'none';
     if (document.getElementById('em-pane-cstool')) document.getElementById('em-pane-cstool').style.display = 'none';
+    if (document.getElementById('em-pane-cslog')) document.getElementById('em-pane-cslog').style.display = 'none';
     document.getElementById('em-draft-all-btn').style.display = 'none';
     setTimeout(emRunCleanup, 3000);
     // Restore saved agent name
@@ -14378,7 +14403,7 @@ function _psUploadStatusToSheet(rows) {
   /* ── Tab switching ───────────────────────────────── */
   function emSetActiveTab(name) {
     emCurrentTab = name;
-    ['queue','log','analytics','cstool'].forEach(function(t) {
+    ['queue','log','analytics','cstool','cslog'].forEach(function(t) {
       var tab = document.getElementById('em-tab-' + t);
       var pane = document.getElementById('em-pane-' + t);
       if (tab)  tab.classList.toggle('active', t === name);
@@ -14387,6 +14412,7 @@ function _psUploadStatusToSheet(rows) {
     if (name === 'log') emLoadLog();
     if (name === 'analytics') emLoadAnalytics();
     if (name === 'cstool') { var _m=document.getElementById('cs-buyer-msg'); if(_m&&!_m.value){csPlatform='';document.querySelectorAll('.cs-platform-btn').forEach(function(b){b.classList.remove('selected');});} }
+    if (name === 'cslog') csLogLoad();
   }
 
   window.emSwitchTab = function(name) { emSetActiveTab(name); };
@@ -14946,6 +14972,92 @@ function _psUploadStatusToSheet(rows) {
     }).catch(function() {
       body.innerHTML = '<div style="color:var(--red);font-size:13px;">Failed to load analytics.</div>';
     });
+  };
+
+
+  /* ---- CS Tool Save to Log ---- */
+  window.csToolSaveLog = function() {
+    var draft = (document.getElementById('cs-draft-text').textContent || '').trim();
+    if (!draft) { showToast('Generate a reply first'); return; }
+    var btn = document.getElementById('cs-save-btn');
+    if (btn) { btn.disabled = true; btn.textContent = '...'; }
+    var token = sessionStorage.getItem('xf_session') || '';
+    fetch(WORKER_URL + '/cs-tool/log-save', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'X-Session-Token': token },
+      body: JSON.stringify({
+        platform:        csPlatform || 'Unknown',
+        orderNumber:     (document.getElementById('cs-order-num') ? document.getElementById('cs-order-num').value : '').trim(),
+        sku:             (document.getElementById('cs-sku')       ? document.getElementById('cs-sku').value       : '').trim(),
+        productTitle:    (document.getElementById('cs-product')   ? document.getElementById('cs-product').value   : '').trim(),
+        customerMessage: (document.getElementById('cs-buyer-msg') ? document.getElementById('cs-buyer-msg').value : '').trim(),
+        aiDraft:         draft,
+        agentNote:       (document.getElementById('cs-agent-note')? document.getElementById('cs-agent-note').value: '').trim(),
+        agentName:       csAgentName || '',
+      })
+    }).then(function(r) { return r.json(); }).then(function(d) {
+      if (btn) { btn.disabled = false; btn.textContent = '🗂 Save to Log'; }
+      if (d.ok) {
+        var fb = document.getElementById('cs-save-feedback');
+        if (fb) { fb.style.display = 'inline'; setTimeout(function(){ fb.style.display='none'; }, 2500); }
+        showToast('🗂 Saved to CS Log');
+      } else {
+        showToast('Save failed: ' + (d.error || 'unknown'));
+      }
+    }).catch(function(e) {
+      if (btn) { btn.disabled = false; btn.textContent = '🗂 Save to Log'; }
+      showToast('Network error: ' + e.message);
+    });
+  };
+
+  /* ---- CS Log tab ---- */
+  window.csLogLoad = function() {
+    var listEl   = document.getElementById('cs-log-list');
+    var platform = (document.getElementById('cs-log-filter') || {}).value || '';
+    if (!listEl) return;
+    listEl.innerHTML = '<div class="em-loading">⏳ Loading CS Log...</div>';
+    var token = sessionStorage.getItem('xf_session') || '';
+    var qs = '/cs-tool/log?limit=100' + (platform ? '&platform=' + encodeURIComponent(platform) : '');
+    fetch(WORKER_URL + qs, { headers: { 'X-Session-Token': token } })
+      .then(function(r) { return r.json(); })
+      .then(function(d) {
+        var entries = d.log || [];
+        if (!entries.length) {
+          listEl.innerHTML = '<div class="em-empty"><div class="em-empty-icon">🗂</div>'
+            + '<h3>No entries' + (platform ? ' for ' + platform : '') + '</h3>'
+            + '<p>Click "Save to Log" after generating a CS reply to store it here.</p></div>';
+          return;
+        }
+        listEl.innerHTML = entries.map(function(e) {
+          var platColor = {Amazon:'var(--orange)',Walmart:'#0071ce',Shopify:'#96bf48',Email:'var(--accent)',Other:'var(--text3)'}[e.platform] || 'var(--text3)';
+          var platBg    = {Amazon:'var(--orange-bg)',Walmart:'#e8f4ff',Shopify:'#f0f8e8',Email:'var(--accent-bg)',Other:'var(--bg3)'}[e.platform] || 'var(--bg3)';
+          var timeStr   = e.timestamp ? new Date(e.timestamp).toLocaleString('en-US', {
+            timeZone:'America/New_York', hour12:true, month:'short', day:'numeric',
+            hour:'numeric', minute:'2-digit'
+          }) : '';
+          return '<div style="background:var(--bg2);border:1.5px solid var(--border);border-radius:12px;padding:16px 18px;margin-bottom:12px;box-shadow:var(--shadow);">'
+            + '<div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin-bottom:10px;">'
+            + '<span style="font-size:10px;font-family:var(--mono);font-weight:700;padding:2px 9px;border-radius:6px;background:' + platBg + ';color:' + platColor + ';">' + emEsc(e.platform) + '</span>'
+            + (e.agentName ? '<span style="font-size:11px;font-family:var(--mono);font-weight:600;color:var(--text2);">' + emEsc(e.agentName) + '</span>' : '')
+            + (e.orderNumber ? '<span style="font-size:11px;font-family:var(--mono);color:var(--text3);">Order: ' + emEsc(e.orderNumber) + '</span>' : '')
+            + (e.sku ? '<span style="font-size:11px;font-family:var(--mono);color:var(--text3);">SKU: ' + emEsc(e.sku) + '</span>' : '')
+            + '<span style="margin-left:auto;font-size:11px;color:var(--text3);font-family:var(--mono);white-space:nowrap;">' + emEsc(timeStr) + '</span>'
+            + '</div>'
+            + (e.productTitle ? '<div style="font-size:12px;font-weight:600;color:var(--text);margin-bottom:8px;">' + emEsc(e.productTitle) + '</div>' : '')
+            + '<div style="background:var(--bg3);border:1px solid var(--border);border-radius:8px;padding:10px 12px;font-size:13px;color:var(--text);line-height:1.55;margin-bottom:8px;position:relative;">'
+            + '<span style="position:absolute;top:-7px;left:10px;background:var(--bg3);padding:0 4px;font-size:10px;font-family:var(--mono);font-weight:700;color:var(--text3);">CUSTOMER</span>'
+            + emEsc((e.customerMessage||'').slice(0, 300)) + (e.customerMessage.length > 300 ? '...' : '')
+            + '</div>'
+            + '<div style="background:var(--accent-bg);border:1px solid #aec6fb;border-radius:8px;padding:10px 12px;font-size:13px;color:var(--text);line-height:1.55;white-space:pre-wrap;position:relative;">'
+            + '<span style="position:absolute;top:-7px;left:10px;background:var(--accent-bg);padding:0 4px;font-size:10px;font-family:var(--mono);font-weight:700;color:var(--accent);">AI REPLY</span>'
+            + emEsc(e.aiDraft || '')
+            + '</div>'
+            + (e.agentNote ? '<div style="margin-top:8px;font-size:11px;color:var(--orange);font-family:var(--mono);">📝 ' + emEsc(e.agentNote) + '</div>' : '')
+            + '</div>';
+        }).join('');
+      }).catch(function() {
+        listEl.innerHTML = '<div style="color:var(--red);font-size:13px;">Failed to load CS Log.</div>';
+      });
   };
 
 })();
