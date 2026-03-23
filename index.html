@@ -1,7 +1,7 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-  <!-- XFITTING-BUILD-V112-FEAT-20260319f -->
+  <!-- XFITTING-BUILD-V112-FEAT-20260320 -->
 <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate">
 <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&family=IBM+Plex+Sans:wght@300;400;500;600&display=swap" rel="stylesheet">
   <meta http-equiv="Pragma" content="no-cache">
@@ -11404,6 +11404,8 @@ function rprToast(msg, type = '') {
   <div class="ps-tabitem"        id="ps-tab-lookup"   onclick="psSwitchTab('lookup')">🔍 Lookup</div>
   <div class="ps-tabitem"        id="ps-tab-status"   onclick="psSwitchTab('status')">📡 Status Check</div>
   <div class="ps-tabitem"        id="ps-tab-gaps"     onclick="psSwitchTab('gaps')">⚠️ Gap Report <span class="ps-tab-badge" id="ps-gap-badge" style="display:none">0</span></div>
+  <div class="ps-tabitem"        id="ps-tab-vsync"    onclick="psSwitchTab('vsync')">🔄 Veeqo Sync</div>
+  <div class="ps-tabitem"        id="ps-tab-valerts"  onclick="psSwitchTab('valerts')">🚨 Alerts <span class="ps-tab-badge" id="ps-valerts-badge" style="display:none">0</span></div>
 </div>
 
 <!-- Content panels -->
@@ -11663,6 +11665,123 @@ function rprToast(msg, type = '') {
           <div class="ps-empty-icon">📄</div>
           <div class="ps-empty-title">Run reconciliation first</div>
           <div class="ps-empty-sub">Upload the Veeqo CSV in the Lookup tab and click Run Gap Analysis.</div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ══ VEEQO SYNC panel ══ -->
+  <div class="ps-panel" id="ps-panel-vsync">
+    <div id="ps-vsync-gate" class="ps-mgmt-gate">
+      <div class="ps-mgmt-gate-icon">🔒</div>
+      <div class="ps-mgmt-gate-title">Management Access Required</div>
+      <div class="ps-mgmt-gate-sub">Enter the management PIN to access Veeqo Sync.</div>
+      <div class="ps-mgmt-gate-row">
+        <input class="ps-mgmt-gate-input" id="ps-vsync-pin" type="password" inputmode="numeric" maxlength="6" placeholder="••••">
+        <button class="ps-btn-primary" style="width:auto;padding:11px 20px" onclick="psUnlockTab('vsync')">Unlock</button>
+      </div>
+      <div id="ps-vsync-pin-err" style="color:var(--red);font-size:13px;margin-top:8px;font-family:var(--mono);text-align:center;min-height:18px"></div>
+    </div>
+    <div id="ps-vsync-content" style="display:none">
+      <!-- Connection status card -->
+      <div class="ps-card" style="margin-bottom:16px">
+        <div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:10px">
+          <div>
+            <div style="font-size:13px;font-weight:700;color:var(--text);margin-bottom:4px">Veeqo Connection</div>
+            <div id="ps-veeqo-status-text" style="font-size:12px;color:var(--text3)">Checking…</div>
+          </div>
+          <div id="ps-veeqo-status-pill" style="font-family:var(--mono);font-size:11px;font-weight:600;padding:5px 14px;border-radius:100px;background:var(--bg3);color:var(--text3);border:1px solid var(--border2)">—</div>
+        </div>
+      </div>
+      <!-- Labels today stat bar -->
+      <div class="ps-stat-bar" id="ps-vlabels-bar" style="display:none;margin-bottom:16px">
+        <div class="ps-stat-card">
+          <div class="ps-stat-label">Labels Today</div>
+          <div class="ps-stat-val" id="ps-vl-total">—</div>
+          <div class="ps-stat-sub">All carriers</div>
+        </div>
+        <div class="ps-stat-card">
+          <div class="ps-stat-label">UPS</div>
+          <div class="ps-stat-val orange" id="ps-vl-ups">—</div>
+        </div>
+        <div class="ps-stat-card">
+          <div class="ps-stat-label">USPS</div>
+          <div class="ps-stat-val" style="color:var(--purple)" id="ps-vl-usps">—</div>
+        </div>
+        <div class="ps-stat-card">
+          <div class="ps-stat-label">Last Refreshed</div>
+          <div class="ps-stat-val" style="font-size:13px;letter-spacing:0" id="ps-vl-synctime">—</div>
+        </div>
+      </div>
+      <!-- Manifest sync card -->
+      <div class="ps-card" style="margin-bottom:12px">
+        <div style="font-size:13px;font-weight:700;color:var(--text);margin-bottom:4px">Today's Manifest</div>
+        <div style="font-size:12px;color:var(--text2);margin-bottom:14px;line-height:1.5">Pulls today's shipped orders from Veeqo directly into Manifest_Log. FBA orders are automatically excluded. Manual CSV upload in the Lookup tab still works as a fallback and takes priority if used.</div>
+        <div style="display:flex;gap:10px;flex-wrap:wrap;align-items:center">
+          <button class="ps-btn-primary" style="width:auto;padding:10px 22px" id="ps-vsync-manifest-btn" onclick="psVeeqoSyncManifest()">🔄 Sync from Veeqo</button>
+          <div id="ps-vsync-manifest-result" style="font-size:12px;color:var(--text2);font-family:var(--mono)"></div>
+        </div>
+      </div>
+      <!-- Tracking scan card -->
+      <div class="ps-card">
+        <div style="font-size:13px;font-weight:700;color:var(--text);margin-bottom:4px">Tracking Monitor</div>
+        <div style="font-size:12px;color:var(--text2);margin-bottom:14px;line-height:1.5">Scans the last 45 days of shipments for exceptions, returns, packages stuck in transit 7+ days, and labels never scanned by the carrier after 2 days. Runs automatically at 8am &amp; 4pm EST daily.</div>
+        <div style="display:flex;gap:10px;flex-wrap:wrap;align-items:center">
+          <button class="ps-btn-primary" style="width:auto;padding:10px 22px;background:var(--orange)" id="ps-vsync-tracking-btn" onclick="psVeeqoSyncTracking()">🔍 Run Tracking Scan Now</button>
+          <div id="ps-vsync-tracking-result" style="font-size:12px;color:var(--text2);font-family:var(--mono)"></div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ══ TRACKING ALERTS panel ══ -->
+  <div class="ps-panel" id="ps-panel-valerts">
+    <div id="ps-valerts-gate" class="ps-mgmt-gate">
+      <div class="ps-mgmt-gate-icon">🔒</div>
+      <div class="ps-mgmt-gate-title">Management Access Required</div>
+      <div class="ps-mgmt-gate-sub">Enter the management PIN to view Tracking Alerts.</div>
+      <div class="ps-mgmt-gate-row">
+        <input class="ps-mgmt-gate-input" id="ps-valerts-pin" type="password" inputmode="numeric" maxlength="6" placeholder="••••">
+        <button class="ps-btn-primary" style="width:auto;padding:11px 20px" onclick="psUnlockTab('valerts')">Unlock</button>
+      </div>
+      <div id="ps-valerts-pin-err" style="color:var(--red);font-size:13px;margin-top:8px;font-family:var(--mono);text-align:center;min-height:18px"></div>
+    </div>
+    <div id="ps-valerts-content" style="display:none">
+      <!-- Summary stat bar -->
+      <div class="ps-stat-bar" id="ps-va-stat-bar" style="display:none;margin-bottom:16px">
+        <div class="ps-stat-card">
+          <div class="ps-stat-label">Exceptions</div>
+          <div class="ps-stat-val red" id="ps-va-cnt-exception">0</div>
+        </div>
+        <div class="ps-stat-card">
+          <div class="ps-stat-label">Returned</div>
+          <div class="ps-stat-val red" id="ps-va-cnt-returned">0</div>
+        </div>
+        <div class="ps-stat-card">
+          <div class="ps-stat-label">Stuck 7d+</div>
+          <div class="ps-stat-val orange" id="ps-va-cnt-stuck">0</div>
+        </div>
+        <div class="ps-stat-card">
+          <div class="ps-stat-label">Never Scanned</div>
+          <div class="ps-stat-val orange" id="ps-va-cnt-noscanned">0</div>
+        </div>
+      </div>
+      <!-- Filter bar -->
+      <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin-bottom:14px">
+        <button class="ps-filter-btn active" onclick="psVaSetFilter('ALL',this)">All</button>
+        <button class="ps-filter-btn"        onclick="psVaSetFilter('EXCEPTION',this)">🔴 Exception</button>
+        <button class="ps-filter-btn"        onclick="psVaSetFilter('RETURNED',this)">↩ Returned</button>
+        <button class="ps-filter-btn"        onclick="psVaSetFilter('STUCK_7D',this)">🟠 Stuck 7d+</button>
+        <button class="ps-filter-btn"        onclick="psVaSetFilter('NEVER_SCANNED_2D',this)">🟡 Never Scanned</button>
+        <button class="ps-filter-btn"        onclick="psVaSetFilter('DELIVERED',this)">✅ Delivered</button>
+        <button class="ps-btn-sm" style="margin-left:auto" onclick="psVaExport()">⬇ Export CSV</button>
+      </div>
+      <!-- Alert list -->
+      <div id="ps-va-list">
+        <div class="ps-empty-state">
+          <div class="ps-empty-icon">📡</div>
+          <div class="ps-empty-title">No alerts loaded</div>
+          <div class="ps-empty-sub">Go to Veeqo Sync and run a tracking scan, or wait for the auto-sync at 8am / 4pm EST.</div>
         </div>
       </div>
     </div>
@@ -12299,6 +12418,10 @@ function _psWireEvents() {
   if (stPin) stPin.addEventListener('keydown', function(e){ if (e.key === 'Enter') psUnlockTab('status'); });
   var gpPin = document.getElementById('ps-gaps-pin');
   if (gpPin) gpPin.addEventListener('keydown', function(e){ if (e.key === 'Enter') psUnlockTab('gaps'); });
+  var vsPin = document.getElementById('ps-vsync-pin');
+  if (vsPin) vsPin.addEventListener('keydown', function(e){ if (e.key === 'Enter') psUnlockTab('vsync'); });
+  var vaPin = document.getElementById('ps-valerts-pin');
+  if (vaPin) vaPin.addEventListener('keydown', function(e){ if (e.key === 'Enter') psUnlockTab('valerts'); });
 
   // Status drop zone drag-and-drop
   var sdz = document.getElementById('ps-status-drop-zone');
@@ -12338,7 +12461,10 @@ window.psUnlockTab = function(tab) {
   if (pinEl)   pinEl.value           = '';
   if (errEl)   errEl.textContent     = '';
   // For gaps tab — if gap data already exists, render it
-  if (tab === 'gaps') psRenderGaps();
+  if (tab === 'gaps')    psRenderGaps();
+  // Veeqo tabs — fire on-unlock loaders
+  if (tab === 'vsync')   psVeeqoOnUnlock();
+  if (tab === 'valerts') psVaOnUnlock();
 };
 
 // Override psSwitchTab to re-show gate if tab not yet unlocked
@@ -12348,19 +12474,20 @@ window.psSwitchTab = function(name) {
   document.getElementById('ps-tab-' + name).classList.add('active');
   document.getElementById('ps-panel-' + name).classList.add('active');
   // Show gate if protected tab not yet unlocked this session
-  if ((name === 'status' || name === 'gaps') && !_psUnlockedTabs[name]) {
+  if ((name === 'status' || name === 'gaps' || name === 'vsync' || name === 'valerts') && !_psUnlockedTabs[name]) {
     var gate    = document.getElementById('ps-' + name + '-gate');
     var content = document.getElementById('ps-' + name + '-content');
     if (gate)    gate.style.display    = 'block';
     if (content) content.style.display = 'none';
-    // Focus PIN input
     var pinEl = document.getElementById('ps-' + name + '-pin');
     if (pinEl) setTimeout(function(){ pinEl.focus(); }, 100);
   }
   if (name === 'scan')     { psFocusScan(); psRenderScanList(); }
   if (name === 'progress') { psLoadScans(); }
   if (name === 'lookup')   { psRenderLog(); }
-  if (name === 'gaps'  && _psUnlockedTabs['gaps'])   { psRenderGaps(); }
+  if (name === 'gaps'    && _psUnlockedTabs['gaps'])    { psRenderGaps(); }
+  if (name === 'vsync'   && _psUnlockedTabs['vsync'])   { psVeeqoOnUnlock(); }
+  if (name === 'valerts' && _psUnlockedTabs['valerts']) { psVaOnUnlock(); }
 };
 
 // ── Switch Packer ─────────────────────────────────────────────────────────────
@@ -12568,6 +12695,215 @@ function _psUploadStatusToSheet(rows) {
     if (d.ok) _psToast('Status data saved to sheet');
   }).catch(function(e){ console.error('[PS] status-upload error:',e); });
 }
+
+// ══════════════════════════════════════════════════════════════════════════════
+// ── VEEQO SYNC TAB (v16) ──────────────────────────────────────────────────────
+// ══════════════════════════════════════════════════════════════════════════════
+
+function psVeeqoOnUnlock() {
+  psVeeqoCheckStatus();
+  psVeeqoLoadLabels();
+}
+
+async function psVeeqoCheckStatus() {
+  var pill = document.getElementById('ps-veeqo-status-pill');
+  var text = document.getElementById('ps-veeqo-status-text');
+  if (!pill || !text) return;
+  pill.textContent = 'Checking…';
+  try {
+    var res  = await fetch(PS_WORKER + '/veeqo/status', { headers: { 'X-Session-Token': psToken || '' } });
+    var data = await res.json();
+    if (data.connected) {
+      pill.textContent = '✓ Connected';
+      pill.style.cssText = 'font-family:var(--mono);font-size:11px;font-weight:600;padding:5px 14px;border-radius:100px;background:var(--green-bg);color:var(--green);border:1px solid #6ee7a8';
+      text.textContent = 'Veeqo API key is valid' + (data.company ? ' · ' + data.company : '');
+    } else {
+      pill.textContent = '✗ Not Connected';
+      pill.style.cssText = 'font-family:var(--mono);font-size:11px;font-weight:600;padding:5px 14px;border-radius:100px;background:var(--red-bg);color:var(--red);border:1px solid #f5a89e';
+      text.textContent = data.error || 'API key missing or invalid';
+    }
+  } catch (e) {
+    pill.textContent = '✗ Error';
+    text.textContent = e.message;
+  }
+}
+
+async function psVeeqoLoadLabels() {
+  if (!psToken) return;
+  try {
+    var res  = await fetch(PS_WORKER + '/veeqo/labels-today', { headers: { 'X-Session-Token': psToken } });
+    var data = await res.json();
+    if (typeof data.total !== 'undefined') {
+      var bar = document.getElementById('ps-vlabels-bar');
+      if (bar) bar.style.display = 'grid';
+      document.getElementById('ps-vl-total').textContent    = data.total;
+      document.getElementById('ps-vl-ups').textContent      = data.ups;
+      document.getElementById('ps-vl-usps').textContent     = data.usps;
+      document.getElementById('ps-vl-synctime').textContent = new Date().toLocaleTimeString('en-US', { timeZone:'America/New_York', hour:'numeric', minute:'2-digit', hour12:true });
+    }
+  } catch (e) { console.error('[PS] veeqo labels-today:', e); }
+}
+
+window.psVeeqoSyncManifest = async function() {
+  var btn = document.getElementById('ps-vsync-manifest-btn');
+  var out = document.getElementById('ps-vsync-manifest-result');
+  if (!psToken) { _psToast('Management session required', 'error'); return; }
+  btn.disabled = true; btn.textContent = '⏳ Syncing…'; out.textContent = '';
+  try {
+    var r    = await fetch(PS_WORKER + '/veeqo/sync-manifest', { method:'POST', headers:{ 'X-Session-Token': psToken } });
+    var data = await r.json();
+    if (data.skipped) {
+      out.textContent = '⚠ Manual upload exists for today — skipped.';
+      _psToast('Manual CSV upload takes priority today', 'warn');
+    } else if (data.ok) {
+      out.textContent = '✓ ' + data.synced + ' orders synced for ' + data.date;
+      _psToast('Manifest synced: ' + data.synced + ' orders from Veeqo');
+    } else {
+      out.textContent = '✗ ' + (data.error || 'Sync failed');
+      _psToast('Sync error: ' + (data.error || 'Unknown'), 'error');
+    }
+  } catch (e) {
+    out.textContent = '✗ ' + e.message;
+    _psToast('Sync error: ' + e.message, 'error');
+  } finally {
+    btn.disabled = false; btn.textContent = '🔄 Sync from Veeqo';
+  }
+};
+
+window.psVeeqoSyncTracking = async function() {
+  var btn = document.getElementById('ps-vsync-tracking-btn');
+  var out = document.getElementById('ps-vsync-tracking-result');
+  if (!psToken) { _psToast('Management session required', 'error'); return; }
+  btn.disabled = true; btn.textContent = '⏳ Scanning — this may take up to 60s…'; out.textContent = '';
+  try {
+    var r    = await fetch(PS_WORKER + '/veeqo/sync-tracking', { method:'POST', headers:{ 'X-Session-Token': psToken } });
+    var data = await r.json();
+    if (data.ok) {
+      var msg = '✓ Scanned ' + data.synced + ' shipments · ' + data.flagged + ' alerts found';
+      out.textContent = msg;
+      _psToast(msg);
+      if (data.flagged > 0) {
+        var badge = document.getElementById('ps-valerts-badge');
+        if (badge) { badge.textContent = data.flagged; badge.style.display = 'inline-block'; }
+      }
+    } else {
+      out.textContent = '✗ ' + (data.error || 'Scan failed');
+      _psToast('Tracking scan error: ' + (data.error || 'Unknown'), 'error');
+    }
+  } catch (e) {
+    out.textContent = '✗ ' + e.message;
+    _psToast('Tracking scan error: ' + e.message, 'error');
+  } finally {
+    btn.disabled = false; btn.textContent = '🔍 Run Tracking Scan Now';
+    btn.style.background = 'var(--orange)';
+  }
+};
+
+// ══════════════════════════════════════════════════════════════════════════════
+// ── TRACKING ALERTS TAB (v16) ─────────────────────────────────────────────────
+// ══════════════════════════════════════════════════════════════════════════════
+
+var psVaRows      = [];
+var psVaActiveFilter = 'ALL';
+
+function psVaOnUnlock() { psVaLoad(); }
+
+async function psVaLoad() {
+  if (!psToken) return;
+  var list = document.getElementById('ps-va-list');
+  if (list) list.innerHTML = '<div style="text-align:center;padding:40px;color:var(--text3);font-size:13px">Loading alerts…</div>';
+  try {
+    var res  = await fetch(PS_WORKER + '/veeqo/alerts', { headers: { 'X-Session-Token': psToken } });
+    var data = await res.json();
+    psVaRows = data.alerts || [];
+    psVaUpdateStats();
+    psVaRender();
+    var flagged = psVaRows.filter(function(r){ return r.alertLevel !== 'DELIVERED' && r.alertLevel !== 'OK' && r.alertLevel !== ''; }).length;
+    var badge = document.getElementById('ps-valerts-badge');
+    if (badge && flagged > 0) { badge.textContent = flagged; badge.style.display = 'inline-block'; }
+  } catch (e) {
+    if (list) list.innerHTML = '<div class="ps-empty-state"><div class="ps-empty-icon">⚠️</div><div class="ps-empty-title">Load error</div><div class="ps-empty-sub">' + e.message + '</div></div>';
+  }
+}
+
+function psVaUpdateStats() {
+  var bar = document.getElementById('ps-va-stat-bar');
+  if (!bar || !psVaRows.length) return;
+  bar.style.display = 'grid';
+  document.getElementById('ps-va-cnt-exception').textContent  = psVaRows.filter(function(r){ return r.alertLevel === 'EXCEPTION'; }).length;
+  document.getElementById('ps-va-cnt-returned').textContent   = psVaRows.filter(function(r){ return r.alertLevel === 'RETURNED'; }).length;
+  document.getElementById('ps-va-cnt-stuck').textContent      = psVaRows.filter(function(r){ return r.alertLevel === 'STUCK_7D'; }).length;
+  document.getElementById('ps-va-cnt-noscanned').textContent  = psVaRows.filter(function(r){ return r.alertLevel === 'NEVER_SCANNED_2D'; }).length;
+}
+
+window.psVaSetFilter = function(level, btn) {
+  psVaActiveFilter = level;
+  document.querySelectorAll('#ps-panel-valerts .ps-filter-btn').forEach(function(b){ b.classList.remove('active'); });
+  if (btn) btn.classList.add('active');
+  psVaRender();
+};
+
+function psVaRender() {
+  var list = document.getElementById('ps-va-list');
+  if (!list) return;
+  var rows = psVaActiveFilter === 'ALL' ? psVaRows : psVaRows.filter(function(r){ return r.alertLevel === psVaActiveFilter; });
+  if (!rows.length) {
+    list.innerHTML = psVaRows.length === 0
+      ? '<div class="ps-empty-state"><div class="ps-empty-icon">📡</div><div class="ps-empty-title">No alerts loaded</div><div class="ps-empty-sub">Go to Veeqo Sync and run a tracking scan, or wait for the 8am / 4pm auto-sync.</div></div>'
+      : '<div class="ps-empty-state"><div class="ps-empty-icon">✅</div><div class="ps-empty-title">No alerts for this filter</div><div class="ps-empty-sub">All shipments in this category look clear.</div></div>';
+    return;
+  }
+  var alertCfg = {
+    EXCEPTION:        { icon:'🔴', dotCls:'red',    badgeCls:'ps-badge-red',    label:'Exception'       },
+    RETURNED:         { icon:'↩️',  dotCls:'red',    badgeCls:'ps-badge-red',    label:'Returned'        },
+    STUCK_7D:         { icon:'🟠', dotCls:'orange', badgeCls:'ps-badge-orange', label:'Stuck 7d+'       },
+    NEVER_SCANNED_2D: { icon:'🟡', dotCls:'orange', badgeCls:'ps-badge-orange', label:'Never Scanned'   },
+    DELIVERED:        { icon:'✅', dotCls:'green',  badgeCls:'ps-badge-green',  label:'Delivered'       },
+  };
+  var channelBadge = function(ch) {
+    var c = (ch || '').toLowerCase();
+    if (c.includes('ebay'))    return 'ps-badge-blue';
+    if (c.includes('amazon'))  return 'ps-badge-orange';
+    if (c.includes('shopify')) return 'ps-badge-green';
+    if (c.includes('walmart')) return 'ps-badge-blue';
+    return 'ps-badge-gray';
+  };
+  list.innerHTML = rows.map(function(r) {
+    var cfg  = alertCfg[r.alertLevel] || { icon:'❓', dotCls:'', badgeCls:'ps-badge-gray', label: r.alertLevel || 'Unknown' };
+    var cCls = r.carrier === 'UPS' ? 'ps-badge-ups' : r.carrier === 'USPS' ? 'ps-badge-usps' : 'ps-badge-gray';
+    var days = r.daysSinceShip ? r.daysSinceShip + 'd ago' : '';
+    return '<div class="ps-card" style="margin-bottom:8px">' +
+      '<div class="ps-card-row">' +
+        '<div class="ps-card-dot ' + cfg.dotCls + '"></div>' +
+        '<div class="ps-card-tracking">' + (r.tracking || '—') + '</div>' +
+        '<div class="ps-card-meta">' +
+          '<span class="ps-badge ' + cfg.badgeCls + '">' + cfg.icon + ' ' + cfg.label + '</span>' +
+          (r.carrier ? '<span class="ps-badge ' + cCls + '">' + r.carrier + '</span>' : '') +
+          (r.channel ? '<span class="ps-badge ' + channelBadge(r.channel) + '">' + r.channel + '</span>' : '') +
+        '</div>' +
+      '</div>' +
+      '<div style="display:flex;gap:16px;margin-top:7px;flex-wrap:wrap">' +
+        (r.orderNum  ? '<span style="font-size:11px;color:var(--text3)">Order: <span style="color:var(--text2);font-family:var(--mono)">' + r.orderNum + '</span></span>' : '') +
+        (r.shipDate  ? '<span style="font-size:11px;color:var(--text3)">Shipped: <span style="color:var(--text2)">' + r.shipDate + '</span></span>' : '') +
+        (days        ? '<span style="font-size:11px;color:var(--text3)">' + days + '</span>' : '') +
+      '</div>' +
+      (r.lastEvent ? '<div style="margin-top:6px;font-size:12px;color:var(--text2);background:var(--bg3);border-radius:6px;padding:6px 10px">' + r.lastEvent + (r.lastEventDate ? ' <span style="color:var(--text3)">· ' + r.lastEventDate + '</span>' : '') + '</div>' : '') +
+    '</div>';
+  }).join('');
+}
+
+window.psVaExport = function() {
+  if (!psVaRows.length) { _psToast('No alert data to export', 'warn'); return; }
+  var rows = psVaActiveFilter === 'ALL' ? psVaRows : psVaRows.filter(function(r){ return r.alertLevel === psVaActiveFilter; });
+  var csv  = 'Tracking,Carrier,Channel,OrderNum,ShipDate,DaysSinceShip,AlertLevel,Status,LastEvent,LastEventDate\n';
+  rows.forEach(function(r) {
+    csv += [r.tracking, r.carrier, r.channel, r.orderNum, r.shipDate, r.daysSinceShip, r.alertLevel, r.status, '"' + (r.lastEvent || '').replace(/"/g, '""') + '"', r.lastEventDate].join(',') + '\n';
+  });
+  var a = document.createElement('a');
+  a.href = 'data:text/csv;charset=utf-8,' + encodeURIComponent(csv);
+  a.download = 'tracking-alerts-' + new Date().toISOString().split('T')[0] + '.csv';
+  a.click();
+};
 
 })();
 </script>
