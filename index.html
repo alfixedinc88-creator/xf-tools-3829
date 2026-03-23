@@ -1,7 +1,7 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-  <!-- XFITTING-BUILD-V112-FEAT-20260323 -->
+  <!-- XFITTING-BUILD-V112-FEAT-20260323b -->
 <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate">
 <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&family=IBM+Plex+Sans:wght@300;400;500;600&display=swap" rel="stylesheet">
   <meta http-equiv="Pragma" content="no-cache">
@@ -11725,15 +11725,11 @@ function rprToast(msg, type = '') {
       <!-- Tracking scan card -->
       <div class="ps-card">
         <div style="font-size:13px;font-weight:700;color:var(--text);margin-bottom:4px">Tracking Monitor</div>
-        <div style="font-size:12px;color:var(--text2);margin-bottom:14px;line-height:1.5">Scans shipments for exceptions, returns, packages stuck in transit 7+ days, and labels never scanned by the carrier after 2 days. Amazon FBA orders excluded. Runs automatically at 8am &amp; 4pm EST daily.</div>
+        <div style="font-size:12px;color:var(--text2);margin-bottom:14px;line-height:1.5">
+          Checks two things: <strong>labels not scanned by carrier within 2 days</strong> of shipping, and <strong>packages not delivered after 10 business days</strong>. Reads directly from your Scan Log — no mass order fetching. Runs automatically at 8am &amp; 4pm EST. For a full 30-day audit, use the Status Check tab with a Veeqo CSV export.
+        </div>
         <div style="display:flex;gap:10px;flex-wrap:wrap;align-items:center">
-          <select id="ps-vsync-days" style="background:var(--bg3);border:1.5px solid var(--border2);border-radius:8px;color:var(--text);font-family:var(--sans);font-size:13px;font-weight:500;padding:9px 12px;outline:none;cursor:pointer">
-            <option value="14">Last 2 weeks</option>
-            <option value="21">Last 3 weeks</option>
-            <option value="30" selected>Last 30 days</option>
-            <option value="45">Last 45 days</option>
-          </select>
-          <button class="ps-btn-primary" style="width:auto;padding:10px 22px;background:var(--orange)" id="ps-vsync-tracking-btn" onclick="psVeeqoSyncTracking()">🔍 Run Tracking Scan Now</button>
+          <button class="ps-btn-primary" style="width:auto;padding:10px 22px;background:var(--orange)" id="ps-vsync-tracking-btn" onclick="psVeeqoSyncTracking()">🔍 Run Check Now</button>
           <div id="ps-vsync-tracking-result" style="font-size:12px;color:var(--text2);font-family:var(--mono)"></div>
         </div>
       </div>
@@ -12777,21 +12773,19 @@ window.psVeeqoSyncManifest = async function() {
 };
 
 window.psVeeqoSyncTracking = async function() {
-  var btn  = document.getElementById('ps-vsync-tracking-btn');
-  var out  = document.getElementById('ps-vsync-tracking-result');
-  var days = parseInt(document.getElementById('ps-vsync-days').value, 10) || 30;
-  var dayLabel = { 14:'2 weeks', 21:'3 weeks', 30:'30 days', 45:'45 days' }[days] || days + ' days';
+  var btn = document.getElementById('ps-vsync-tracking-btn');
+  var out = document.getElementById('ps-vsync-tracking-result');
   if (!psToken) { _psToast('Management session required', 'error'); return; }
-  btn.disabled = true; btn.textContent = '⏳ Scanning ' + dayLabel + '…'; out.textContent = '';
+  btn.disabled = true; btn.textContent = '⏳ Checking…'; out.textContent = '';
   try {
     var r    = await fetch(PS_WORKER + '/veeqo/sync-tracking', {
       method: 'POST',
       headers: { 'X-Session-Token': psToken, 'Content-Type': 'application/json' },
-      body: JSON.stringify({ days: days }),
+      body: JSON.stringify({}),
     });
     var data = await r.json();
     if (data.ok) {
-      var msg = '✓ Scanned ' + data.synced + ' shipments (' + dayLabel + ') · ' + data.flagged + ' alerts found';
+      var msg = '✓ Checked ' + ((data.checked_no_scan || 0) + (data.checked_delivery || 0)) + ' shipments · ' + (data.flagged || 0) + ' alerts found';
       out.textContent = msg;
       _psToast(msg);
       if (data.flagged > 0) {
@@ -12799,14 +12793,14 @@ window.psVeeqoSyncTracking = async function() {
         if (badge) { badge.textContent = data.flagged; badge.style.display = 'inline-block'; }
       }
     } else {
-      out.textContent = '✗ ' + (data.error || 'Scan failed');
-      _psToast('Tracking scan error: ' + (data.error || 'Unknown'), 'error');
+      out.textContent = '✗ ' + (data.error || 'Check failed');
+      _psToast('Check error: ' + (data.error || 'Unknown'), 'error');
     }
   } catch (e) {
     out.textContent = '✗ ' + e.message;
-    _psToast('Tracking scan error: ' + e.message, 'error');
+    _psToast('Check error: ' + e.message, 'error');
   } finally {
-    btn.disabled = false; btn.textContent = '🔍 Run Tracking Scan Now';
+    btn.disabled = false; btn.textContent = '🔍 Run Check Now';
     btn.style.background = 'var(--orange)';
   }
 };
