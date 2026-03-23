@@ -6,7 +6,7 @@
 // ── BUMP THIS every time you deploy a new index.html ─────────────────────────
 // Match it to the build ID in the HTML comment on line 4.
 // Example: if HTML says XFITTING-BUILD-V109-PACK-20260316, use 'v109-pack-20260316'
-const CACHE_VERSION = 'v112-feat-20260323';
+const CACHE_VERSION = 'v112-feat-20260323b';
 // ─────────────────────────────────────────────────────────────────────────────
 
 const CACHE_NAME   = 'xfitting-shell-' + CACHE_VERSION;
