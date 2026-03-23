@@ -1,7 +1,7 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-  <!-- XFITTING-BUILD-V112-FEAT-20260323c -->
+  <!-- XFITTING-BUILD-V112-FEAT-20260323d -->
 <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate">
 <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&family=IBM+Plex+Sans:wght@300;400;500;600&display=swap" rel="stylesheet">
   <meta http-equiv="Pragma" content="no-cache">
@@ -11523,7 +11523,7 @@ function rprToast(msg, type = '') {
       </div>
     </div>
     <div class="ps-info-box" style="margin-top:8px">
-      Progress bars show scanned vs. manifest totals <strong>only after the Veeqo CSV is uploaded</strong> by management at end of day.
+      Progress bars show scanned vs. manifest totals. Manifest updates automatically every hour during business hours.
     </div>
     <div class="ps-section-header" style="margin-top:4px">
       <div class="ps-section-title">Recent Scans</div>
@@ -11716,7 +11716,7 @@ function rprToast(msg, type = '') {
       <!-- Manifest sync card -->
       <div class="ps-card" style="margin-bottom:12px">
         <div style="font-size:13px;font-weight:700;color:var(--text);margin-bottom:4px">Today's Manifest</div>
-        <div style="font-size:12px;color:var(--text2);margin-bottom:14px;line-height:1.5">Pulls today's shipped orders from Veeqo directly into Manifest_Log. FBA orders are automatically excluded. Manual CSV upload in the Lookup tab still works as a fallback and takes priority if used.</div>
+        <div style="font-size:12px;color:var(--text2);margin-bottom:14px;line-height:1.5">Adds any new shipped orders from Veeqo to today's manifest. Already-scanned orders are not duplicated. This runs automatically every hour — use this button to force an immediate refresh.</div>
         <div style="display:flex;gap:10px;flex-wrap:wrap;align-items:center">
           <button class="ps-btn-primary" style="width:auto;padding:10px 22px" id="ps-vsync-manifest-btn" onclick="psVeeqoSyncManifest()">🔄 Sync from Veeqo</button>
           <div id="ps-vsync-manifest-result" style="font-size:12px;color:var(--text2);font-family:var(--mono)"></div>
@@ -11906,6 +11906,11 @@ function _psLaunchInner() {
   var switchBtn = document.getElementById('ps-switch-btn');
   if (psRole === 'mgmt') {
     if (switchBtn) switchBtn.style.display = 'none';
+    // Gap report always available for managers — show tab and reconcile bar
+    var gapTab = document.getElementById('ps-tab-gaps');
+    if (gapTab) gapTab.style.display = 'flex';
+    var recBar = document.getElementById('ps-reconcile-bar');
+    if (recBar) recBar.style.display = 'flex';
   } else {
     if (switchBtn) switchBtn.style.display = 'inline-block';
   }
@@ -11913,6 +11918,7 @@ function _psLaunchInner() {
   if (saved) psBatchClosed = JSON.parse(saved);
   psSwitchTab('scan');
   psLoadScans();
+  psLoadManifestFromSheet();  // load today's manifest so gap report is always ready
   psFocusScan();
 }
 
@@ -11951,6 +11957,28 @@ window.psFocusScan = function() {
 };
 
 // ── Load scans ────────────────────────────────────────
+// Load today's manifest from sheet on launch — keeps gap report live without CSV upload
+window.psLoadManifestFromSheet = async function() {
+  if (!psToken) return;
+  try {
+    var res  = await fetch(PS_WORKER + '/ship/manifest?date=' + psTodayKey(), {
+      headers: { 'X-Session-Token': psToken }
+    });
+    var data = await res.json();
+    if (data.manifest && data.manifest.length > 0) {
+      psManifest = data.manifest.map(function(r) {
+        return { tracking: r.tracking, orderNum: r.orderNum, channel: r.channel,
+                 carrier: r.carrier, service: r.service, shipToState: r.shipToState };
+      });
+      var pill = document.getElementById('ps-manifest-pill');
+      var cnt  = document.getElementById('ps-manifest-count');
+      if (pill) pill.style.display = 'flex';
+      if (cnt)  cnt.textContent = psManifest.length;
+      psRenderProgress();
+    }
+  } catch(e) { console.error('[PS] loadManifest error:', e); }
+};
+
 window.psLoadScans = async function() {
   if (!psToken) return;
   try {
@@ -12754,12 +12782,11 @@ window.psVeeqoSyncManifest = async function() {
   try {
     var r    = await fetch(PS_WORKER + '/veeqo/sync-manifest', { method:'POST', headers:{ 'X-Session-Token': psToken } });
     var data = await r.json();
-    if (data.skipped) {
-      out.textContent = '⚠ Manual upload exists for today — skipped.';
-      _psToast('Manual CSV upload takes priority today', 'warn');
-    } else if (data.ok) {
-      out.textContent = '✓ ' + data.synced + ' orders synced for ' + data.date;
-      _psToast('Manifest synced: ' + data.synced + ' orders from Veeqo');
+    if (data.ok) {
+      var added = data.added !== undefined ? data.added : (data.synced || 0);
+      out.textContent = '✓ ' + added + ' new orders added · ' + (data.total || added) + ' total today';
+      _psToast('Manifest refreshed: ' + added + ' new orders added');
+      psLoadManifestFromSheet(); // refresh progress bars
     } else {
       out.textContent = '✗ ' + (data.error || 'Sync failed');
       _psToast('Sync error: ' + (data.error || 'Unknown'), 'error');
