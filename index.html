@@ -1,7 +1,7 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-  <!-- XFITTING-BUILD-V112-FEAT-20260323b -->
+  <!-- XFITTING-BUILD-V112-FEAT-20260323c -->
 <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate">
 <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&family=IBM+Plex+Sans:wght@300;400;500;600&display=swap" rel="stylesheet">
   <meta http-equiv="Pragma" content="no-cache">
@@ -11760,7 +11760,7 @@ function rprToast(msg, type = '') {
           <div class="ps-stat-val red" id="ps-va-cnt-returned">0</div>
         </div>
         <div class="ps-stat-card">
-          <div class="ps-stat-label">Stuck 7d+</div>
+          <div class="ps-stat-label">Not Delivered 10d+</div>
           <div class="ps-stat-val orange" id="ps-va-cnt-stuck">0</div>
         </div>
         <div class="ps-stat-card">
@@ -11773,7 +11773,7 @@ function rprToast(msg, type = '') {
         <button class="ps-filter-btn active" onclick="psVaSetFilter('ALL',this)">All</button>
         <button class="ps-filter-btn"        onclick="psVaSetFilter('EXCEPTION',this)">🔴 Exception</button>
         <button class="ps-filter-btn"        onclick="psVaSetFilter('RETURNED',this)">↩ Returned</button>
-        <button class="ps-filter-btn"        onclick="psVaSetFilter('STUCK_7D',this)">🟠 Stuck 7d+</button>
+        <button class="ps-filter-btn"        onclick="psVaSetFilter('STUCK_10D',this)">🟠 Not Delivered 10d+</button>
         <button class="ps-filter-btn"        onclick="psVaSetFilter('NEVER_SCANNED_2D',this)">🟡 Never Scanned</button>
         <button class="ps-filter-btn"        onclick="psVaSetFilter('DELIVERED',this)">✅ Delivered</button>
         <button class="ps-btn-sm" style="margin-left:auto" onclick="psVaExport()">⬇ Export CSV</button>
@@ -12838,7 +12838,7 @@ function psVaUpdateStats() {
   bar.style.display = 'grid';
   document.getElementById('ps-va-cnt-exception').textContent  = psVaRows.filter(function(r){ return r.alertLevel === 'EXCEPTION'; }).length;
   document.getElementById('ps-va-cnt-returned').textContent   = psVaRows.filter(function(r){ return r.alertLevel === 'RETURNED'; }).length;
-  document.getElementById('ps-va-cnt-stuck').textContent      = psVaRows.filter(function(r){ return r.alertLevel === 'STUCK_7D'; }).length;
+  document.getElementById('ps-va-cnt-stuck').textContent      = psVaRows.filter(function(r){ return r.alertLevel === 'STUCK_10D'; }).length;
   document.getElementById('ps-va-cnt-noscanned').textContent  = psVaRows.filter(function(r){ return r.alertLevel === 'NEVER_SCANNED_2D'; }).length;
 }
 
@@ -12855,16 +12855,15 @@ function psVaRender() {
   var rows = psVaActiveFilter === 'ALL' ? psVaRows : psVaRows.filter(function(r){ return r.alertLevel === psVaActiveFilter; });
   if (!rows.length) {
     list.innerHTML = psVaRows.length === 0
-      ? '<div class="ps-empty-state"><div class="ps-empty-icon">📡</div><div class="ps-empty-title">No alerts loaded</div><div class="ps-empty-sub">Go to Veeqo Sync and run a tracking scan, or wait for the 8am / 4pm auto-sync.</div></div>'
-      : '<div class="ps-empty-state"><div class="ps-empty-icon">✅</div><div class="ps-empty-title">No alerts for this filter</div><div class="ps-empty-sub">All shipments in this category look clear.</div></div>';
+      ? '<div class="ps-empty-state"><div class="ps-empty-icon">&#128225;</div><div class="ps-empty-title">No alerts loaded</div><div class="ps-empty-sub">Go to Veeqo Sync and run a check, or wait for the 8am / 4pm auto-sync.</div></div>'
+      : '<div class="ps-empty-state"><div class="ps-empty-icon">&#9989;</div><div class="ps-empty-title">No alerts for this filter</div><div class="ps-empty-sub">All shipments in this category look clear.</div></div>';
     return;
   }
   var alertCfg = {
-    EXCEPTION:        { icon:'🔴', dotCls:'red',    badgeCls:'ps-badge-red',    label:'Exception'       },
-    RETURNED:         { icon:'↩️',  dotCls:'red',    badgeCls:'ps-badge-red',    label:'Returned'        },
-    STUCK_7D:         { icon:'🟠', dotCls:'orange', badgeCls:'ps-badge-orange', label:'Stuck 7d+'       },
-    NEVER_SCANNED_2D: { icon:'🟡', dotCls:'orange', badgeCls:'ps-badge-orange', label:'Never Scanned'   },
-    DELIVERED:        { icon:'✅', dotCls:'green',  badgeCls:'ps-badge-green',  label:'Delivered'       },
+    EXCEPTION:        { icon:'&#128308;', dotCls:'red',    badgeCls:'ps-badge-red',    label:'Exception'            },
+    RETURNED:         { icon:'&#8617;',   dotCls:'red',    badgeCls:'ps-badge-red',    label:'Returned'             },
+    STUCK_10D:        { icon:'&#128992;', dotCls:'orange', badgeCls:'ps-badge-orange', label:'Not Delivered (10d+)' },
+    NEVER_SCANNED_2D: { icon:'&#128993;', dotCls:'orange', badgeCls:'ps-badge-orange', label:'Never Scanned'        },
   };
   var channelBadge = function(ch) {
     var c = (ch || '').toLowerCase();
@@ -12875,13 +12874,18 @@ function psVaRender() {
     return 'ps-badge-gray';
   };
   list.innerHTML = rows.map(function(r) {
-    var cfg  = alertCfg[r.alertLevel] || { icon:'❓', dotCls:'', badgeCls:'ps-badge-gray', label: r.alertLevel || 'Unknown' };
+    var cfg  = alertCfg[r.alertLevel] || { icon:'&#10067;', dotCls:'', badgeCls:'ps-badge-gray', label: r.alertLevel || 'Unknown' };
     var cCls = r.carrier === 'UPS' ? 'ps-badge-ups' : r.carrier === 'USPS' ? 'ps-badge-usps' : 'ps-badge-gray';
-    var days = r.daysSinceShip ? r.daysSinceShip + 'd ago' : '';
+    var days = r.daysSince ? r.daysSince + (r.alertLevel === 'STUCK_10D' ? ' biz days' : 'd') : '';
+    var eventLine = r.lastEvent
+      ? r.lastEvent +
+        (r.lastEventDate ? ' <span style="color:var(--text3)">&#183; ' + r.lastEventDate + '</span>' : '') +
+        (r.lastLocation  ? ' <span style="color:var(--text3)">&#183; ' + r.lastLocation  + '</span>' : '')
+      : '';
     return '<div class="ps-card" style="margin-bottom:8px">' +
       '<div class="ps-card-row">' +
         '<div class="ps-card-dot ' + cfg.dotCls + '"></div>' +
-        '<div class="ps-card-tracking">' + (r.tracking || '—') + '</div>' +
+        '<div class="ps-card-tracking">' + (r.tracking || '&#8212;') + '</div>' +
         '<div class="ps-card-meta">' +
           '<span class="ps-badge ' + cfg.badgeCls + '">' + cfg.icon + ' ' + cfg.label + '</span>' +
           (r.carrier ? '<span class="ps-badge ' + cCls + '">' + r.carrier + '</span>' : '') +
@@ -12889,11 +12893,12 @@ function psVaRender() {
         '</div>' +
       '</div>' +
       '<div style="display:flex;gap:16px;margin-top:7px;flex-wrap:wrap">' +
-        (r.orderNum  ? '<span style="font-size:11px;color:var(--text3)">Order: <span style="color:var(--text2);font-family:var(--mono)">' + r.orderNum + '</span></span>' : '') +
-        (r.shipDate  ? '<span style="font-size:11px;color:var(--text3)">Shipped: <span style="color:var(--text2)">' + r.shipDate + '</span></span>' : '') +
-        (days        ? '<span style="font-size:11px;color:var(--text3)">' + days + '</span>' : '') +
+        (r.orderNum ? '<span style="font-size:11px;color:var(--text3)">Order: <span style="color:var(--text2);font-family:var(--mono)">' + r.orderNum + '</span></span>' : '') +
+        (r.orderId  ? '<span style="font-size:11px;color:var(--text3)">ID: <span style="color:var(--text2);font-family:var(--mono)">'    + r.orderId  + '</span></span>' : '') +
+        (r.scanDate ? '<span style="font-size:11px;color:var(--text3)">Scanned: <span style="color:var(--text2)">'                       + r.scanDate + '</span></span>' : '') +
+        (days       ? '<span style="font-size:11px;color:var(--orange);font-weight:600">' + days + '</span>' : '') +
       '</div>' +
-      (r.lastEvent ? '<div style="margin-top:6px;font-size:12px;color:var(--text2);background:var(--bg3);border-radius:6px;padding:6px 10px">' + r.lastEvent + (r.lastEventDate ? ' <span style="color:var(--text3)">· ' + r.lastEventDate + '</span>' : '') + '</div>' : '') +
+      (eventLine ? '<div style="margin-top:6px;font-size:12px;color:var(--text2);background:var(--bg3);border-radius:6px;padding:6px 10px">' + eventLine + '</div>' : '') +
     '</div>';
   }).join('');
 }
@@ -12901,9 +12906,14 @@ function psVaRender() {
 window.psVaExport = function() {
   if (!psVaRows.length) { _psToast('No alert data to export', 'warn'); return; }
   var rows = psVaActiveFilter === 'ALL' ? psVaRows : psVaRows.filter(function(r){ return r.alertLevel === psVaActiveFilter; });
-  var csv  = 'Tracking,Carrier,Channel,OrderNum,ShipDate,DaysSinceShip,AlertLevel,Status,LastEvent,LastEventDate\n';
+  var csv  = 'Tracking,Carrier,Channel,OrderNum,OrderID,ScanDate,DaysSince,AlertLevel,Status,LastEvent,LastEventDate,LastLocation\n';
   rows.forEach(function(r) {
-    csv += [r.tracking, r.carrier, r.channel, r.orderNum, r.shipDate, r.daysSinceShip, r.alertLevel, r.status, '"' + (r.lastEvent || '').replace(/"/g, '""') + '"', r.lastEventDate].join(',') + '\n';
+    csv += [
+      r.tracking, r.carrier, r.channel, r.orderNum, r.orderId,
+      r.scanDate, r.daysSince, r.alertLevel, r.status,
+      '"' + (r.lastEvent || '').replace(/"/g, '""') + '"',
+      r.lastEventDate, r.lastLocation
+    ].join(',') + '\n';
   });
   var a = document.createElement('a');
   a.href = 'data:text/csv;charset=utf-8,' + encodeURIComponent(csv);
