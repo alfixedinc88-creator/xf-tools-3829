@@ -1,7 +1,7 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-  <!-- XFITTING-BUILD-V112-FEAT-20260323d -->
+  <!-- XFITTING-BUILD-V112-FEAT-20260323f -->
 <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate">
 <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&family=IBM+Plex+Sans:wght@300;400;500;600&display=swap" rel="stylesheet">
   <meta http-equiv="Pragma" content="no-cache">
@@ -11364,7 +11364,7 @@ function rprToast(msg, type = '') {
     </div>
     <div id="ps-form-mgmt" style="display:none">
       <div class="ps-pin-h">Management Sign-In</div>
-      <div class="ps-pin-sub">Upload Veeqo CSV and run gap reports.</div>
+      <div class="ps-pin-sub">View gap reports and track shipments.</div>
       <div class="ps-field-wrap">
         <label class="ps-field-lbl">Management PIN</label>
         <input class="ps-field-input" id="ps-inp-mgmt-pin" type="password" inputmode="numeric" maxlength="6" placeholder="••••" autocomplete="off">
@@ -11457,7 +11457,7 @@ function rprToast(msg, type = '') {
       <div class="ps-upload-msg" id="ps-upload-msg"></div>
       <div class="ps-reconcile-bar" id="ps-reconcile-bar" style="display:none;margin-top:12px">
         <div class="ps-reconcile-label">
-          Manifest uploaded. <strong>Run Gap Analysis</strong> to see what wasn't scanned today.
+          Manifest ready. <strong>Run Gap Analysis</strong> to see what wasn't scanned today.
         </div>
         <button class="ps-btn-reconcile" id="ps-btn-reconcile" onclick="psRunReconcile()">Run Gap Analysis</button>
       </div>
@@ -11664,7 +11664,7 @@ function rprToast(msg, type = '') {
         <div class="ps-empty-state">
           <div class="ps-empty-icon">📄</div>
           <div class="ps-empty-title">Run reconciliation first</div>
-          <div class="ps-empty-sub">Upload the Veeqo CSV in the Lookup tab and click Run Gap Analysis.</div>
+          <div class="ps-empty-sub">Manifest syncs automatically every hour. Click Run Gap Analysis to check now.</div>
         </div>
       </div>
     </div>
@@ -12263,7 +12263,8 @@ function _psParseLine(line) {
 // ── Reconcile ─────────────────────────────────────────
 window.psRunReconcile = async function() {
   var btn = document.getElementById('ps-btn-reconcile');
-  btn.disabled = true; btn.innerHTML = '<span class="ps-spinner"></span>Analysing gaps…';
+  if (btn && btn.disabled) return; // already running
+  if (btn) { btn.disabled = true; btn.innerHTML = '<span class="ps-spinner"></span>Analysing gaps…'; }
   try {
     // Manifest is already written to sheet on CSV upload — just run the comparison
     var recRes  = await fetch(PS_WORKER + '/ship/reconcile', {
@@ -12352,7 +12353,7 @@ window.psFilterGaps = function(f, btn) {
 window.psRenderGaps = function() {
   var list  = document.getElementById('ps-gap-list');
   var items = psGapFilter === 'all' ? psGapRows : psGapRows.filter(function(g){ return g.carrier === psGapFilter; });
-  if (!psGapRows.length) { list.innerHTML = '<div class="ps-empty-state"><div class="ps-empty-icon">📄</div><div class="ps-empty-title">No gap data yet</div><div class="ps-empty-sub">Upload the Veeqo CSV and run Gap Analysis first.</div></div>'; return; }
+  if (!psGapRows.length) { list.innerHTML = '<div class="ps-empty-state"><div class="ps-empty-icon">📄</div><div class="ps-empty-title">No gap data yet</div><div class="ps-empty-sub">Manifest is loading — check back shortly, or click Run Gap Analysis.</div></div>'; return; }
   if (!items.length) { list.innerHTML = '<div class="ps-empty-state"><div class="ps-empty-icon">✓</div><div class="ps-empty-title">No gaps for this carrier</div></div>'; return; }
   list.innerHTML = items.map(function(g){
     return '<div class="ps-card"><div class="ps-card-row"><div class="ps-card-dot orange"></div><div class="ps-card-tracking">' + g.tracking + '</div><div class="ps-card-meta">' + _psCarrierBadge(g.carrier) + (g.orderNum ? '<span class="ps-badge ps-badge-blue">#' + g.orderNum + '</span>' : '') + (g.channel ? '<span class="ps-badge ps-badge-gray">' + g.channel + '</span>' : '') + (g.shipToState ? '<span class="ps-badge ps-badge-gray">' + g.shipToState + '</span>' : '') + '</div></div></div>';
@@ -12491,7 +12492,7 @@ window.psUnlockTab = function(tab) {
   if (pinEl)   pinEl.value           = '';
   if (errEl)   errEl.textContent     = '';
   // For gaps tab — if gap data already exists, render it
-  if (tab === 'gaps')    psRenderGaps();
+  if (tab === 'gaps')    psRunReconcile();
   // Veeqo tabs — fire on-unlock loaders
   if (tab === 'vsync')   psVeeqoOnUnlock();
   if (tab === 'valerts') psVaOnUnlock();
@@ -12515,7 +12516,7 @@ window.psSwitchTab = function(name) {
   if (name === 'scan')     { psFocusScan(); psRenderScanList(); }
   if (name === 'progress') { psLoadScans(); }
   if (name === 'lookup')   { psRenderLog(); }
-  if (name === 'gaps'    && _psUnlockedTabs['gaps'])    { psRenderGaps(); }
+  if (name === 'gaps'    && _psUnlockedTabs['gaps'])    { psRunReconcile(); }
   if (name === 'vsync'   && _psUnlockedTabs['vsync'])   { psVeeqoOnUnlock(); }
   if (name === 'valerts' && _psUnlockedTabs['valerts']) { psVaOnUnlock(); }
 };
