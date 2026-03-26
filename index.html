@@ -1,7 +1,7 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-  <!-- XFITTING-BUILD-V112-FEAT-20260326 -->
+  <!-- XFITTING-BUILD-V112-FEAT-20260326b -->
 <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate">
 <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&family=IBM+Plex+Sans:wght@300;400;500;600&display=swap" rel="stylesheet">
   <meta http-equiv="Pragma" content="no-cache">
@@ -11540,7 +11540,7 @@ function rprToast(msg, type = '') {
         <div style="font-size:13px;font-weight:700;color:var(--text);margin-bottom:4px">Scan Shipping Label</div>
         <div style="font-size:12px;color:var(--text3);margin-bottom:12px">Point your phone camera at the tracking barcode on the label</div>
         <button id="ol-scan-btn" onclick="olStartScan()" style="width:100%;padding:14px;background:var(--accent);color:#fff;border:none;border-radius:10px;font-size:15px;font-weight:700;cursor:pointer;font-family:var(--sans)">&#128247; Open Camera</button>
-        <div id="ol-html5qr-reader" style="margin-top:12px;border-radius:8px;overflow:hidden;display:none"></div>
+        <div id="ol-html5qr-reader" style="margin-top:12px;border-radius:8px;overflow:hidden;display:none;min-height:240px"></div>
         <div id="ol-cam-error" style="display:none;margin-top:10px;font-size:12px;color:var(--red);background:rgba(197,42,26,.1);border-radius:8px;padding:10px"></div>
       </div>
       <div style="background:var(--bg2);border:1px solid var(--border);border-radius:12px;padding:14px;margin-bottom:14px">
@@ -12599,18 +12599,23 @@ window.olStartScan = async function() {
     reader.style.display = 'block';
     reader.innerHTML = '';
 
-    _olQrScanner = new Html5Qrcode('ol-html5qr-reader');
+    _olQrScanner = new Html5Qrcode('ol-html5qr-reader', {
+      experimentalFeatures: { useBarCodeDetectorIfSupported: true }
+    });
 
+    // Config tuned for shipping label barcodes (Code 128, often low quality prints)
+    // - No format restrictions: let the decoder try everything
+    // - Wide short scan box: matches the shape of 1D barcodes
+    // - High fps + verbose for best detection rate on poor prints
     var config = {
-      fps: 15,
-      qrbox: { width: 280, height: 100 },
-      aspectRatio: 1.7,
-      formatsToSupport: [
-        Html5QrcodeSupportedFormats.CODE_128,
-        Html5QrcodeSupportedFormats.CODE_39,
-        Html5QrcodeSupportedFormats.EAN_13,
-        Html5QrcodeSupportedFormats.UPC_A,
-      ]
+      fps: 30,
+      qrbox: function(w, h) {
+        // Scan box = 90% width, fixed 120px height — ideal for long 1D barcodes
+        return { width: Math.floor(w * 0.9), height: 120 };
+      },
+      aspectRatio: 1.5,
+      rememberLastUsedCamera: true,
+      showTorchButtonIfSupported: true,
     };
 
     await _olQrScanner.start(
