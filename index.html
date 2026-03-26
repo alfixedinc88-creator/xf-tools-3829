@@ -1,7 +1,7 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-  <!-- XFITTING-BUILD-V113-FEAT-20260326 -->
+  <!-- XFITTING-BUILD-V112-FEAT-20260326 -->
 <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate">
 <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&family=IBM+Plex+Sans:wght@300;400;500;600&display=swap" rel="stylesheet">
   <meta http-equiv="Pragma" content="no-cache">
@@ -2121,7 +2121,6 @@ input[type=checkbox]{width:15px;height:15px;cursor:pointer;accent-color:var(--bl
         <th class="r"><span class="tt">AWD Outbound<span class="tt-ico">?</span><span class="tt-box">Outbound to FBA (units)</span></span></th>
         <th class="r">Total Network</th>
         <th class="r">Sold 90d</th><th class="r">Daily Sales</th><th class="r">Target 120d</th><th class="r">Rec Send</th>
-        <th></th>
       </tr></thead><tbody id="inv-tbody"></tbody></table></div></div>
     </div>
 
@@ -2145,35 +2144,14 @@ input[type=checkbox]{width:15px;height:15px;cursor:pointer;accent-color:var(--bl
     </div>
 
     <div class="page" id="page-builder">
-      <div id="bld-empty" class="empty"><div class="ico">📦</div><h3>No SKUs staged</h3><p>Go to Recommendations and select SKUs to add them here, or add one manually.</p><br><div style="display:flex;gap:8px;justify-content:center;flex-wrap:wrap"><button class="btn btn-primary" onclick="awd_switchTab('recommendations')">Browse Recommendations</button><button class="btn btn-secondary" onclick="bldShowManualAdd()">&#65291; Add SKU Manually</button></div></div>
+      <div id="bld-empty" class="empty"><div class="ico">📦</div><h3>No SKUs staged</h3><p>Go to Recommendations and select SKUs to add them here.</p><br><button class="btn btn-primary" onclick="awd_switchTab('recommendations')">Browse Recommendations</button></div>
       <div id="bld-body" style="display:none">
         <div class="bld-layout">
           <div>
             <div class="fbar">
               <div class="sw"><svg class="sic" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.35-4.35"/></svg><input type="text" class="si" id="bld-q" placeholder="Filter SKUs…" oninput="renderBuilder()"></div>
               <span style="font-size:12px;color:var(--gray-500)" id="bld-count"></span>
-              <div class="mla" style="display:flex;gap:8px"><button class="btn btn-secondary btn-sm" onclick="awd_switchTab('recommendations')">&#8592; Add More</button><button class="btn btn-secondary btn-sm" onclick="bldShowManualAdd()">&#65291; Add SKU</button><button class="btn btn-secondary btn-sm" onclick="clearBuilder()">Clear All</button></div>
-            </div>
-            <!-- ── MANUAL ADD PANEL ── -->
-            <div id="bld-manual-panel" style="display:none;background:var(--bg2,#F4F5F7);border:1px solid var(--border,#DDE0E6);border-radius:10px;padding:14px 16px;margin-bottom:12px">
-              <div style="font-size:13px;font-weight:600;color:var(--text,#111827);margin-bottom:10px">Add SKU Manually</div>
-              <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:flex-end">
-                <div style="flex:1;min-width:160px">
-                  <div style="font-size:11px;font-weight:600;color:var(--gray-600);margin-bottom:4px">SKU <span style="color:var(--red,#C52A1A)">*</span></div>
-                  <input type="text" id="bld-manual-sku" class="si" style="width:100%;text-transform:uppercase" placeholder="e.g. XF-COMP-BLK-M" oninput="this.value=this.value.toUpperCase()" onkeydown="if(event.key==='Enter')bldManualAdd()">
-                </div>
-                <div style="flex:2;min-width:180px">
-                  <div style="font-size:11px;font-weight:600;color:var(--gray-600);margin-bottom:4px">Product Name <span style="color:var(--gray-400);font-weight:400">(optional)</span></div>
-                  <input type="text" id="bld-manual-name" class="si" style="width:100%" placeholder="e.g. Compression Fitting 1/2&quot;" onkeydown="if(event.key==='Enter')bldManualAdd()">
-                </div>
-                <div style="min-width:90px">
-                  <div style="font-size:11px;font-weight:600;color:var(--gray-600);margin-bottom:4px">Qty</div>
-                  <input type="number" id="bld-manual-qty" class="qty-inp" style="width:90px" value="0" min="0" onkeydown="if(event.key==='Enter')bldManualAdd()">
-                </div>
-                <button class="btn btn-primary btn-sm" onclick="bldManualAdd()" style="white-space:nowrap">Add to Shipment</button>
-                <button class="btn btn-secondary btn-sm" onclick="bldHideManualAdd()" style="white-space:nowrap">Cancel</button>
-              </div>
-              <div id="bld-manual-err" style="display:none;font-size:12px;color:var(--red,#C52A1A);margin-top:8px"></div>
+              <div class="mla" style="display:flex;gap:8px"><button class="btn btn-secondary btn-sm" onclick="awd_switchTab('recommendations')">← Add More</button><button class="btn btn-secondary btn-sm" onclick="clearBuilder()">Clear All</button></div>
             </div>
             <div class="card">
               <div class="card-hdr"><div><div class="card-title">Shipment Contents</div><div class="card-sub" id="cpack-note"></div></div><span style="font-size:13px;color:var(--gray-500)" id="bld-units-lbl"></span></div>
@@ -3163,13 +3141,8 @@ function renderInv(){
   const th=ge('th-days');th.className='sort r '+(invDir==='asc'?'asc':'desc');
   ge('inv-count').textContent=data.length+' SKU'+(data.length!==1?'s':'');
   const tb=ge('inv-tbody');
-  if(!data.length){tb.innerHTML='<tr><td colspan="16"><div class="empty" style="padding:30px"><div class="ico">🔍</div><h3>No matches</h3></div></td></tr>';return;}
-  tb.innerHTML=data.map(r=>{
-    const staged=!!S.shipment[r.sku];
-    const actionBtn=staged
-      ?'<span style="font-size:11px;color:var(--green,#0E7F3E);font-weight:600;white-space:nowrap">&#10003; In Shipment</span>'
-      :`<button class="btn btn-sm btn-secondary" style="white-space:nowrap;font-size:11px" onclick="invStageRow('${esc(r.sku)}')">+ Add</button>`;
-    return`<tr>
+  if(!data.length){tb.innerHTML='<tr><td colspan="15"><div class="empty" style="padding:30px"><div class="ico">🔍</div><h3>No matches</h3></div></td></tr>';return;}
+  tb.innerHTML=data.map(r=>`<tr>
     <td class="sku">${r.sku}</td>
     <td style="font-size:12px;color:var(--gray-600);max-width:150px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="${r.name}">${r.name||'—'}</td>
     <td class="asin">${r.asin||'—'}</td>
@@ -3181,22 +3154,13 @@ function renderInv(){
     <td class="r">${r.dailySales>0?r.dailySales.toFixed(1):'—'}</td>
     <td class="r">${fn(r.target)}</td>
     <td class="r">${r.recSend>0?'<strong style="color:var(--blue)">'+fn(r.recSend)+'</strong>':'<span style="color:var(--gray-300)">—</span>'}</td>
-    <td>${actionBtn}</td>
-  </tr>`;}).join('');
+  </tr>`).join('');
 }
 function exportInvCSV(){
   if(!S.joined.length){awd_planner_toast('No data','error');return;}
   const h=['SKU','ASIN','Product Name','Net Days','FBA Fulfillable','FC Processing','FC Transfer','AWD Available','AWD Reserved','AWD Outbound','Total Network','Sold 90d','Daily Sales','Target 120d','Rec Send Qty'];
   const rows=S.joined.map(r=>[r.sku,r.asin,r.name,r.netDays>=999?'':Math.round(r.netDays),r.fbaFul,r.fcProc,r.fcTrans,r.awdAvail,r.awdReserved,r.awdOutbound,r.totalNetwork,r.sold90,r.dailySales.toFixed(2),r.target,r.recSend]);
   dlCSV([h,...rows],'inventory.csv');awd_planner_toast('Exported','success');
-}
-function invStageRow(sku){
-  const row=S.joined.find(r=>r.sku===sku);
-  if(!row)return;
-  if(S.shipment[sku]){awd_planner_toast(sku+' already in shipment','error');return;}
-  stage(row);
-  updateBadges();renderRecs();renderInv();renderBuilder();
-  awd_planner_toast('Added: '+sku,'success');
 }
 
 // ── RECOMMENDATIONS ──
@@ -3224,54 +3188,10 @@ function removeSku(sku){delete S.shipment[sku];updateBadges();renderRecs();rende
 function clearBuilder(){if(!Object.keys(S.shipment).length)return;S.shipment={};updateBadges();renderRecs();renderBuilder();awd_planner_toast('Cleared');}
 function updQty(sku,v){if(!S.shipment[sku])return;S.shipment[sku].qty=Math.max(0,parseInt(v)||0);updateSummary();saveShipmentToSheet();}
 
-// ── MANUAL ADD ──
-function bldShowManualAdd(){
-  // If currently in empty state, switch to body to show the panel
-  ge('bld-empty').style.display='none';
-  ge('bld-body').style.display='block';
-  const panel=ge('bld-manual-panel');
-  panel.style.display='block';
-  ge('bld-manual-sku').value='';
-  ge('bld-manual-name').value='';
-  ge('bld-manual-qty').value='0';
-  ge('bld-manual-err').style.display='none';
-  setTimeout(function(){ge('bld-manual-sku').focus();},50);
-}
-function bldHideManualAdd(){
-  ge('bld-manual-panel').style.display='none';
-  // If no items staged, go back to empty state
-  if(!Object.keys(S.shipment).length){
-    ge('bld-empty').style.display='';
-    ge('bld-body').style.display='none';
-  }
-}
-function bldManualAdd(){
-  const sku=(ge('bld-manual-sku').value||'').trim().toUpperCase();
-  const name=(ge('bld-manual-name').value||'').trim();
-  const qty=Math.max(0,parseInt(ge('bld-manual-qty').value)||0);
-  const errEl=ge('bld-manual-err');
-  if(!sku){errEl.textContent='SKU is required.';errEl.style.display='block';ge('bld-manual-sku').focus();return;}
-  if(S.shipment[sku]){errEl.textContent=sku+' is already in the shipment — update the qty in the table below.';errEl.style.display='block';return;}
-  errEl.style.display='none';
-  // Look up in S.joined first; if not found, build a manual stub row
-  const existing=S.joined.find(function(r){return r.sku.toUpperCase()===sku;});
-  const row=existing||{sku,asin:'',name:name||sku,fbaFul:0,fcProc:0,fcTrans:0,awdAvail:0,awdReserved:0,awdOutbound:0,sold90:0,dailySales:0,target:0,totalNetwork:0,recSend:0,netDays:999,_manual:true};
-  if(existing&&name)row.name=name; // allow override if user typed a name
-  S.shipment[sku]={row,qty};
-  updateBadges();renderRecs();renderBuilder();saveShipmentToSheet();
-  awd_planner_toast('Added: '+sku,'success');
-  // Reset for next entry
-  ge('bld-manual-sku').value='';
-  ge('bld-manual-name').value='';
-  ge('bld-manual-qty').value='0';
-  ge('bld-manual-sku').focus();
-}
-
 function renderBuilder(){
   const items=Object.entries(S.shipment);
-  const manualOpen=ge('bld-manual-panel')&&ge('bld-manual-panel').style.display!=='none';
-  ge('bld-empty').style.display=(items.length||manualOpen)?'none':'';
-  ge('bld-body').style.display=(items.length||manualOpen)?'block':'none';
+  ge('bld-empty').style.display=items.length?'none':'';
+  ge('bld-body').style.display=items.length?'block':'none';
   if(!items.length){updateSummary();return;}
   const q=ge('bld-q').value.toLowerCase();
   const filt=items.filter(([sku])=>!q||sku.toLowerCase().includes(q));
@@ -10069,13 +9989,10 @@ function rprToast(msg, type = '') {
         results.forEach(function(item) {
           var el = document.createElement("div");
           el.className = "iloc-opt";
-          var stockLine = item.totalCases > 0
-            ? item.totalCases + " cases \u00b7 " + item.locCount + " location" + (item.locCount !== 1 ? "s" : "") + (item.variantCount > 1 ? " \u00b7 " + item.variantCount + " variants" : "")
-            : (item.lastLocation ? "<span style='color:var(--orange)'>No stock \u00b7 last seen: " + item.lastLocation + "</span>" : "<span style='color:var(--red)'>No stock on record</span>");
           el.innerHTML = "<div style='flex:1'>"
             + "<div style='font-size:12px;font-family:var(--mono);color:var(--accent);margin-bottom:2px'>" + item.baseSku + "</div>"
             + "<div style='font-size:14px;font-weight:600;color:var(--text)'>" + item.name + "</div>"
-            + "<div style='font-size:11px;color:var(--text3);margin-top:2px'>" + stockLine + "</div>"
+            + "<div style='font-size:11px;color:var(--text3);margin-top:2px'>" + item.totalCases + " cases \u00b7 " + item.locCount + " location" + (item.locCount !== 1 ? "s" : "") + (item.variantCount > 1 ? " \u00b7 " + item.variantCount + " variants" : "") + "</div>"
             + "</div><span class='iloc-badge ex'>Select</span>";
           el.onclick = function() {
             nr.style.display = "none";
@@ -10858,13 +10775,10 @@ function rprToast(msg, type = '') {
         results.forEach(function(item) {
           var el = document.createElement('div');
           el.className = 'iloc-opt';
-          var stockLine = item.totalCases > 0
-            ? item.totalCases + ' cases \u00b7 ' + item.locCount + ' location' + (item.locCount !== 1 ? 's' : '') + (item.variantCount > 1 ? ' \u00b7 ' + item.variantCount + ' variants' : '')
-            : (item.lastLocation ? "<span style='color:var(--orange)'>No stock \u00b7 last seen: " + item.lastLocation + '</span>' : "<span style='color:var(--red)'>No stock on record</span>");
           el.innerHTML = '<div style="flex:1">'
             + '<div style="font-size:12px;font-family:var(--mono);color:var(--accent);margin-bottom:2px">' + item.baseSku + '</div>'
             + '<div style="font-size:13px;font-weight:600;color:var(--text)">' + item.name + '</div>'
-            + '<div style="font-size:11px;color:var(--text3);margin-top:2px">' + stockLine + '</div>'
+            + '<div style="font-size:11px;color:var(--text3);margin-top:2px">' + item.totalCases + ' cases \u00b7 ' + item.locCount + ' location' + (item.locCount !== 1 ? 's' : '') + (item.variantCount > 1 ? ' \u00b7 ' + item.variantCount + ' variants' : '') + '</div>'
             + '</div><span class="iloc-badge ex">Select</span>';
           el.onclick = function() {
             nr.style.display = 'none';
@@ -11486,6 +11400,7 @@ function rprToast(msg, type = '') {
 <!-- Tab bar -->
 <div class="ps-tabbar">
   <div class="ps-tabitem active" id="ps-tab-scan"     onclick="psSwitchTab('scan')">📦 Scan</div>
+  <div class="ps-tabitem"        id="ps-tab-orderlookup" onclick="psSwitchTab('orderlookup')">📷 Order</div>
   <div class="ps-tabitem"        id="ps-tab-progress" onclick="psSwitchTab('progress')">📊 Progress</div>
   <div class="ps-tabitem"        id="ps-tab-lookup"   onclick="psSwitchTab('lookup')">🔍 Lookup</div>
   <div class="ps-tabitem"        id="ps-tab-status"   onclick="psSwitchTab('status')">📡 Status Check</div>
@@ -11619,6 +11534,29 @@ function rprToast(msg, type = '') {
   </div>
 
   <!-- LOOKUP panel -->
+  <div class="ps-panel" id="ps-panel-orderlookup">
+    <div style="padding:16px;max-width:520px;margin:0 auto;width:100%">
+      <div style="background:var(--bg2);border:1px solid var(--border);border-radius:12px;padding:16px;margin-bottom:14px">
+        <div style="font-size:13px;font-weight:700;color:var(--text);margin-bottom:4px">Scan Shipping Label</div>
+        <div style="font-size:12px;color:var(--text3);margin-bottom:12px">Point your phone camera at the tracking barcode on the label</div>
+        <button id="ol-scan-btn" onclick="olStartScan()" style="width:100%;padding:14px;background:var(--accent);color:#fff;border:none;border-radius:10px;font-size:15px;font-weight:700;cursor:pointer;font-family:var(--sans)">&#128247; Open Camera</button>
+        <div id="ol-html5qr-reader" style="margin-top:12px;border-radius:8px;overflow:hidden;display:none"></div>
+        <div id="ol-cam-error" style="display:none;margin-top:10px;font-size:12px;color:var(--red);background:rgba(197,42,26,.1);border-radius:8px;padding:10px"></div>
+      </div>
+      <div style="background:var(--bg2);border:1px solid var(--border);border-radius:12px;padding:14px;margin-bottom:14px">
+        <div style="font-size:12px;color:var(--text3);margin-bottom:8px">Or enter tracking number manually</div>
+        <div style="display:flex;gap:8px">
+          <input id="ol-manual-input" type="text" placeholder="Enter tracking number…"
+            style="flex:1;background:var(--bg3);border:1.5px solid var(--border2);border-radius:8px;color:var(--text);font-family:var(--mono);font-size:13px;padding:10px 12px;outline:none"
+            onkeydown="if(event.key==='Enter') olLookupTracking(this.value)">
+          <button onclick="olLookupTracking(document.getElementById('ol-manual-input').value)"
+            style="padding:10px 18px;background:var(--accent);color:#fff;border:none;border-radius:8px;font-size:13px;font-weight:700;cursor:pointer;font-family:var(--sans)">Go</button>
+        </div>
+      </div>
+      <div id="ol-result" style="display:none"></div>
+    </div>
+  </div>
+
   <div class="ps-panel" id="ps-panel-lookup">
     <!-- Tracking lookup — all roles -->
     <div class="ps-lookup-wrap">
@@ -12030,7 +11968,8 @@ window.psSwitchTab = function(name) {
   document.querySelectorAll('#packship-app .ps-panel').forEach(function(p){ p.classList.remove('active'); });
   document.getElementById('ps-tab-' + name).classList.add('active');
   document.getElementById('ps-panel-' + name).classList.add('active');
-  if (name === 'scan')     { psFocusScan(); psRenderScanList(); }
+  if (name === 'scan')        { psFocusScan(); psRenderScanList(); }
+  if (name === 'orderlookup') { olOnTabOpen(); }
   if (name === 'progress') { psLoadScans(); }
   if (name === 'lookup')   { psRenderLog(); }
   if (name === 'gaps')     { psRenderGaps(); }
@@ -12599,12 +12538,191 @@ window.psSwitchTab = function(name) {
     var pinEl = document.getElementById('ps-' + name + '-pin');
     if (pinEl) setTimeout(function(){ pinEl.focus(); }, 100);
   }
-  if (name === 'scan')     { psFocusScan(); psRenderScanList(); }
+  if (name === 'scan')        { psFocusScan(); psRenderScanList(); }
+  if (name === 'orderlookup') { olOnTabOpen(); }
   if (name === 'progress') { psLoadScans(); }
   if (name === 'lookup')   { psRenderLog(); }
   if (name === 'gaps'    && _psUnlockedTabs['gaps'])    { psRunReconcile(); }
   if (name === 'vsync'   && _psUnlockedTabs['vsync'])   { psVeeqoOnUnlock(); }
   if (name === 'valerts' && _psUnlockedTabs['valerts']) { psVaOnUnlock(); }
+};
+
+// ═════════════════════════════════════════════════════════════════════════════
+// ── ORDER LOOKUP TAB ─────────────────────────────────────────────────────────
+// Camera scan → Veeqo order details (items + quantities)
+// No PIN required — available to all workers
+// ═════════════════════════════════════════════════════════════════════════════
+
+var _olQrLib    = false;
+var _olQrScanner = null;
+
+function olLoadHtml5QR() {
+  if (_olQrLib) return Promise.resolve();
+  return new Promise(function(res, rej) {
+    var s = document.createElement('script');
+    s.src = 'https://unpkg.com/html5-qrcode@2.3.8/html5-qrcode.min.js';
+    s.onload  = function() { _olQrLib = true; res(); };
+    s.onerror = rej;
+    document.head.appendChild(s);
+  });
+}
+
+window.olOnTabOpen = function() {
+  // Reset result area when switching to tab
+  document.getElementById('ol-result').style.display = 'none';
+  document.getElementById('ol-result').innerHTML = '';
+  document.getElementById('ol-manual-input').value = '';
+};
+
+window.olStartScan = async function() {
+  var btn      = document.getElementById('ol-scan-btn');
+  var reader   = document.getElementById('ol-html5qr-reader');
+  var errEl    = document.getElementById('ol-cam-error');
+  errEl.style.display = 'none';
+
+  // If already scanning, stop
+  if (_olQrScanner) {
+    try { await _olQrScanner.stop(); } catch(_) {}
+    _olQrScanner = null;
+    reader.innerHTML = '';
+    reader.style.display = 'none';
+    btn.textContent = '&#128247; Open Camera';
+    btn.style.background = 'var(--accent)';
+    return;
+  }
+
+  btn.textContent = '&#9203; Starting…';
+  btn.style.background = 'var(--text3)';
+
+  try {
+    await olLoadHtml5QR();
+    reader.style.display = 'block';
+    reader.innerHTML = '';
+
+    _olQrScanner = new Html5Qrcode('ol-html5qr-reader');
+
+    var config = {
+      fps: 15,
+      qrbox: { width: 280, height: 100 },
+      aspectRatio: 1.7,
+      formatsToSupport: [
+        Html5QrcodeSupportedFormats.CODE_128,
+        Html5QrcodeSupportedFormats.CODE_39,
+        Html5QrcodeSupportedFormats.EAN_13,
+        Html5QrcodeSupportedFormats.UPC_A,
+      ]
+    };
+
+    await _olQrScanner.start(
+      { facingMode: 'environment' },
+      config,
+      function(code) {
+        // Success — stop camera and look up order
+        olStopScan();
+        document.getElementById('ol-manual-input').value = code;
+        olLookupTracking(code);
+      },
+      function() { /* ignore decode misses */ }
+    );
+
+    btn.textContent = '&#10060; Stop Camera';
+    btn.style.background = 'var(--red)';
+
+  } catch(e) {
+    reader.style.display = 'none';
+    reader.innerHTML = '';
+    _olQrScanner = null;
+    btn.textContent = '&#128247; Open Camera';
+    btn.style.background = 'var(--accent)';
+    errEl.style.display = 'block';
+    errEl.innerHTML = '&#9888; Camera error: ' + (e.message || e) +
+      '<br><span style="font-size:11px">Allow camera access in your browser settings.</span>';
+  }
+};
+
+async function olStopScan() {
+  var btn    = document.getElementById('ol-scan-btn');
+  var reader = document.getElementById('ol-html5qr-reader');
+  if (_olQrScanner) {
+    try { await _olQrScanner.stop(); } catch(_) {}
+    _olQrScanner = null;
+  }
+  reader.innerHTML = '';
+  reader.style.display = 'none';
+  btn.textContent = '&#128247; Open Camera';
+  btn.style.background = 'var(--accent)';
+}
+
+window.olLookupTracking = async function(rawTracking) {
+  var tracking = (rawTracking || '').trim().toUpperCase();
+  if (!tracking || tracking.length < 5) return;
+
+  var result = document.getElementById('ol-result');
+  result.style.display = 'block';
+  result.innerHTML = '<div style="text-align:center;padding:24px;color:var(--text3);font-size:13px">&#9203; Looking up order…</div>';
+
+  try {
+    var url = PS_WORKER + '/veeqo/order-lookup?tracking=' + encodeURIComponent(tracking);
+    var res  = await fetch(url);
+    var data = await res.json();
+
+    if (!data.ok || !data.order) {
+      result.innerHTML =
+        '<div style="background:var(--bg2);border:1px solid var(--border);border-radius:12px;padding:20px;text-align:center">' +
+          '<div style="font-size:22px;margin-bottom:8px">&#10067;</div>' +
+          '<div style="font-size:14px;font-weight:700;color:var(--text);margin-bottom:4px">Order Not Found</div>' +
+          '<div style="font-size:12px;color:var(--text3)">' + tracking + '</div>' +
+          '<div style="font-size:11px;color:var(--text3);margin-top:8px">' + (data.error || 'Not found in Veeqo') + '</div>' +
+        '</div>';
+      return;
+    }
+
+    var o = data.order;
+    var channelColor = (o.channel||'').toLowerCase().includes('ebay') ? 'var(--accent)' :
+                       (o.channel||'').toLowerCase().includes('amazon') ? 'var(--orange)' : 'var(--text3)';
+
+    // Build items HTML
+    var itemsHtml = '';
+    if (o.items && o.items.length) {
+      itemsHtml = o.items.map(function(item) {
+        return '<div style="display:flex;justify-content:space-between;align-items:center;padding:10px 0;border-bottom:1px solid var(--border)">' +
+          '<div>' +
+            '<div style="font-size:13px;font-weight:700;color:var(--text);font-family:var(--mono)">' + (item.sku || '—') + '</div>' +
+            (item.title ? '<div style="font-size:11px;color:var(--text3);margin-top:2px">' + item.title.slice(0,60) + '</div>' : '') +
+          '</div>' +
+          '<div style="font-size:18px;font-weight:800;color:var(--accent);font-family:var(--mono);min-width:36px;text-align:right">×' + item.qty + '</div>' +
+        '</div>';
+      }).join('');
+    } else {
+      itemsHtml = '<div style="color:var(--text3);font-size:12px;padding:10px 0">No items found</div>';
+    }
+
+    result.innerHTML =
+      '<div style="background:var(--bg2);border:1px solid var(--border);border-radius:12px;overflow:hidden">' +
+        // Header
+        '<div style="background:var(--bg3);padding:12px 16px;border-bottom:1px solid var(--border);display:flex;justify-content:space-between;align-items:center">' +
+          '<div>' +
+            '<div style="font-size:11px;color:var(--text3);margin-bottom:2px">ORDER</div>' +
+            '<div style="font-size:14px;font-weight:700;color:var(--text);font-family:var(--mono)">' + (o.orderNum || '—') + '</div>' +
+          '</div>' +
+          '<div style="text-align:right">' +
+            '<div style="font-size:11px;font-weight:700;color:' + channelColor + ';text-transform:uppercase">' + (o.channel || '') + '</div>' +
+            '<div style="font-size:11px;color:var(--text3);margin-top:2px">' + (o.carrier || '') + '</div>' +
+          '</div>' +
+        '</div>' +
+        // Items
+        '<div style="padding:0 16px">' + itemsHtml + '</div>' +
+        // Tracking footer
+        '<div style="padding:10px 16px;background:var(--bg3);border-top:1px solid var(--border)">' +
+          '<div style="font-size:10px;color:var(--text3);font-family:var(--mono)">' + tracking + '</div>' +
+        '</div>' +
+      '</div>' +
+      '<button onclick="olOnTabOpen()" style="width:100%;margin-top:10px;padding:12px;background:var(--bg3);border:1.5px solid var(--border);border-radius:10px;color:var(--text2);font-size:13px;font-weight:600;cursor:pointer;font-family:var(--sans)">&#128247; Scan Another</button>';
+
+  } catch(e) {
+    result.innerHTML =
+      '<div style="background:var(--bg2);border:1px solid var(--red);border-radius:12px;padding:16px;text-align:center;color:var(--red);font-size:13px">&#9888; Error: ' + e.message + '</div>';
+  }
 };
 
 // ── Switch Packer ─────────────────────────────────────────────────────────────
