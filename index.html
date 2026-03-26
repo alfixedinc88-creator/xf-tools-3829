@@ -11538,13 +11538,12 @@ function rprToast(msg, type = '') {
     <div style="padding:16px;max-width:520px;margin:0 auto;width:100%">
       <div style="background:var(--bg2);border:1px solid var(--border);border-radius:12px;padding:16px;margin-bottom:14px">
         <div style="font-size:13px;font-weight:700;color:var(--text);margin-bottom:4px">Scan Shipping Label</div>
-        <div style="font-size:12px;color:var(--text3);margin-bottom:12px">Point your phone camera at the tracking barcode on the label</div>
-        <!-- Hidden file input — capture="environment" opens rear camera on mobile -->
-        <input type="file" id="ol-file-input" accept="image/*" capture="environment"
-          style="display:none" onchange="olHandlePhoto(this)">
-        <!-- Scratch div for html5-qrcode (must be in DOM, kept hidden) -->
+        <div style="font-size:12px;color:var(--text3);margin-bottom:12px">Take a photo of the barcode — hold close so it fills the frame</div>
+        <!-- capture="environment" opens rear camera in PHOTO mode on iOS/Android -->
+        <input type="file" id="ol-file-input" accept="image/*" capture="environment" style="display:none" onchange="olHandlePhoto(this)">
+        <!-- Scratch div required by html5-qrcode scanFile — must exist in DOM -->
         <div id="ol-qr-scratch" style="display:none"></div>
-        <button id="ol-scan-btn" onclick="olStartScan()" style="width:100%;padding:14px;background:var(--accent);color:#fff;border:none;border-radius:10px;font-size:15px;font-weight:700;cursor:pointer;font-family:var(--sans)">&#128247; Take Photo</button>
+        <button id="ol-scan-btn" onclick="document.getElementById('ol-file-input').click()" style="width:100%;padding:14px;background:var(--accent);color:#fff;border:none;border-radius:10px;font-size:15px;font-weight:700;cursor:pointer;font-family:var(--sans)">&#128247; Take Photo of Barcode</button>
         <div id="ol-preview-wrap" style="display:none;margin-top:10px;border-radius:8px;overflow:hidden;background:#000;text-align:center">
           <img id="ol-preview-img" style="max-width:100%;max-height:200px;object-fit:contain">
         </div>
@@ -12556,9 +12555,8 @@ window.psSwitchTab = function(name) {
 
 // ═════════════════════════════════════════════════════════════════════════════
 // ── ORDER LOOKUP TAB ─────────────────────────────────────────────────────────
-// Photo-based barcode scan — worker takes a photo, we decode it.
-// Much more reliable than live video for low-quality printed barcodes.
-// Uses html5-qrcode scanFile() which decodes a static image — very accurate.
+// Photo-based: worker takes a photo, html5-qrcode.scanFile() decodes it.
+// No live video — far more reliable for thermal-printed shipping barcodes.
 // ═════════════════════════════════════════════════════════════════════════════
 
 var _olQrLib = false;
@@ -12580,38 +12578,22 @@ window.olOnTabOpen = function() {
   document.getElementById('ol-manual-input').value = '';
   document.getElementById('ol-cam-error').style.display = 'none';
   document.getElementById('ol-preview-wrap').style.display = 'none';
-};
-
-// Hidden file input triggers native camera on mobile
-window.olStartScan = async function() {
-  document.getElementById('ol-cam-error').style.display = 'none';
-  try {
-    await olLoadHtml5QR();
-  } catch(e) {
-    var errEl = document.getElementById('ol-cam-error');
-    errEl.style.display = 'block';
-    errEl.textContent = 'Failed to load scanner library. Check connection.';
-    return;
-  }
-  // Trigger the hidden file input — on mobile this opens the camera
-  document.getElementById('ol-file-input').click();
+  document.getElementById('ol-file-input').value = '';
 };
 
 window.olHandlePhoto = async function(input) {
   if (!input.files || !input.files[0]) return;
-  var file   = input.files[0];
-  var btn    = document.getElementById('ol-scan-btn');
-  var errEl  = document.getElementById('ol-cam-error');
-  var prev   = document.getElementById('ol-preview-wrap');
+  var file    = input.files[0];
+  var btn     = document.getElementById('ol-scan-btn');
+  var errEl   = document.getElementById('ol-cam-error');
+  var prev    = document.getElementById('ol-preview-wrap');
   var prevImg = document.getElementById('ol-preview-img');
   errEl.style.display = 'none';
 
-  // Show preview of the photo taken
   var objectUrl = URL.createObjectURL(file);
   prevImg.src = objectUrl;
   prev.style.display = 'block';
-
-  btn.textContent = '&#9203; Scanning…';
+  btn.textContent = '\u29f3 Reading barcode\u2026';
   btn.disabled = true;
 
   try {
@@ -12619,100 +12601,27 @@ window.olHandlePhoto = async function(input) {
     var scanner = new Html5Qrcode('ol-qr-scratch');
     var result  = await scanner.scanFile(file, false);
     var code    = (result || '').trim().toUpperCase();
+    URL.revokeObjectURL(objectUrl);
+    prev.style.display = 'none';
     if (code && code.length > 4) {
       document.getElementById('ol-manual-input').value = code;
-      prev.style.display = 'none';
-      URL.revokeObjectURL(objectUrl);
       olLookupTracking(code);
     } else {
       throw new Error('No barcode detected');
     }
   } catch(e) {
+    URL.revokeObjectURL(objectUrl);
     errEl.style.display = 'block';
-    errEl.innerHTML = '&#9888; Could not read barcode from this photo.<br>' +
-      '<span style="font-size:11px">Try again — hold the camera closer and make sure the barcode fills the frame. ' +
-      'You can also type the tracking number manually below.</span>';
+    errEl.innerHTML = '&#9888; Could not read barcode — try again.<br>' +
+      '<span style="font-size:11px">Hold camera 6-8 inches from the label so the barcode fills the frame. Or type tracking number below.</span>';
   } finally {
-    btn.textContent = '&#128247; Take Photo';
+    btn.textContent = '&#128247; Take Photo of Barcode';
     btn.disabled = false;
-    // Reset file input so same photo can be retried
     input.value = '';
   }
 };
 
-function olStopScan() { /* no-op for photo mode */ }
-
-window.olLookupTracking = async function(rawTracking) {
-  var tracking = (rawTracking || '').trim().toUpperCase();
-  if (!tracking || tracking.length < 5) return;
-
-  var result = document.getElementById('ol-result');
-  result.style.display = 'block';
-  result.innerHTML = '<div style="text-align:center;padding:24px;color:var(--text3);font-size:13px">&#9203; Looking up order…</div>';
-
-  try {
-    var url = PS_WORKER + '/veeqo/order-lookup?tracking=' + encodeURIComponent(tracking);
-    var res  = await fetch(url);
-    var data = await res.json();
-
-    if (!data.ok || !data.order) {
-      result.innerHTML =
-        '<div style="background:var(--bg2);border:1px solid var(--border);border-radius:12px;padding:20px;text-align:center">' +
-          '<div style="font-size:22px;margin-bottom:8px">&#10067;</div>' +
-          '<div style="font-size:14px;font-weight:700;color:var(--text);margin-bottom:4px">Order Not Found</div>' +
-          '<div style="font-size:12px;color:var(--text3)">' + tracking + '</div>' +
-          '<div style="font-size:11px;color:var(--text3);margin-top:8px">' + (data.error || 'Not found in Veeqo') + '</div>' +
-        '</div>';
-      return;
-    }
-
-    var o = data.order;
-    var channelColor = (o.channel||'').toLowerCase().includes('ebay') ? 'var(--accent)' :
-                       (o.channel||'').toLowerCase().includes('amazon') ? 'var(--orange)' : 'var(--text3)';
-
-    // Build items HTML
-    var itemsHtml = '';
-    if (o.items && o.items.length) {
-      itemsHtml = o.items.map(function(item) {
-        return '<div style="display:flex;justify-content:space-between;align-items:center;padding:10px 0;border-bottom:1px solid var(--border)">' +
-          '<div>' +
-            '<div style="font-size:13px;font-weight:700;color:var(--text);font-family:var(--mono)">' + (item.sku || '—') + '</div>' +
-            (item.title ? '<div style="font-size:11px;color:var(--text3);margin-top:2px">' + item.title.slice(0,60) + '</div>' : '') +
-          '</div>' +
-          '<div style="font-size:18px;font-weight:800;color:var(--accent);font-family:var(--mono);min-width:36px;text-align:right">×' + item.qty + '</div>' +
-        '</div>';
-      }).join('');
-    } else {
-      itemsHtml = '<div style="color:var(--text3);font-size:12px;padding:10px 0">No items found</div>';
-    }
-
-    result.innerHTML =
-      '<div style="background:var(--bg2);border:1px solid var(--border);border-radius:12px;overflow:hidden">' +
-        // Header
-        '<div style="background:var(--bg3);padding:12px 16px;border-bottom:1px solid var(--border);display:flex;justify-content:space-between;align-items:center">' +
-          '<div>' +
-            '<div style="font-size:11px;color:var(--text3);margin-bottom:2px">ORDER</div>' +
-            '<div style="font-size:14px;font-weight:700;color:var(--text);font-family:var(--mono)">' + (o.orderNum || '—') + '</div>' +
-          '</div>' +
-          '<div style="text-align:right">' +
-            '<div style="font-size:11px;font-weight:700;color:' + channelColor + ';text-transform:uppercase">' + (o.channel || '') + '</div>' +
-            '<div style="font-size:11px;color:var(--text3);margin-top:2px">' + (o.carrier || '') + '</div>' +
-          '</div>' +
-        '</div>' +
-        // Items
-        '<div style="padding:0 16px">' + itemsHtml + '</div>' +
-        // Tracking footer
-        '<div style="padding:10px 16px;background:var(--bg3);border-top:1px solid var(--border)">' +
-          '<div style="font-size:10px;color:var(--text3);font-family:var(--mono)">' + tracking + '</div>' +
-        '</div>' +
-      '</div>' +
-      '<button onclick="olOnTabOpen()" style="width:100%;margin-top:10px;padding:12px;background:var(--bg3);border:1.5px solid var(--border);border-radius:10px;color:var(--text2);font-size:13px;font-weight:600;cursor:pointer;font-family:var(--sans)">&#128247; Scan Another</button>';
-
-  } catch(e) {
-    result.innerHTML =
-      '<div style="background:var(--bg2);border:1px solid var(--red);border-radius:12px;padding:16px;text-align:center;color:var(--red);font-size:13px">&#9888; Error: ' + e.message + '</div>';
-  }
-};
+function olStopScan() {}
 
 // ── Switch Packer ─────────────────────────────────────────────────────────────
 window.psSwitchPacker = function() {
