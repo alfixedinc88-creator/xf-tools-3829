@@ -1,7 +1,7 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-  <!-- XFITTING-BUILD-V112-FEAT-20260326b -->
+  <!-- XFITTING-BUILD-V112-FEAT-20260326c -->
 <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate">
 <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&family=IBM+Plex+Sans:wght@300;400;500;600&display=swap" rel="stylesheet">
   <meta http-equiv="Pragma" content="no-cache">
@@ -11539,8 +11539,15 @@ function rprToast(msg, type = '') {
       <div style="background:var(--bg2);border:1px solid var(--border);border-radius:12px;padding:16px;margin-bottom:14px">
         <div style="font-size:13px;font-weight:700;color:var(--text);margin-bottom:4px">Scan Shipping Label</div>
         <div style="font-size:12px;color:var(--text3);margin-bottom:12px">Point your phone camera at the tracking barcode on the label</div>
-        <button id="ol-scan-btn" onclick="olStartScan()" style="width:100%;padding:14px;background:var(--accent);color:#fff;border:none;border-radius:10px;font-size:15px;font-weight:700;cursor:pointer;font-family:var(--sans)">&#128247; Open Camera</button>
-        <div id="ol-html5qr-reader" style="margin-top:12px;border-radius:8px;overflow:hidden;display:none"></div>
+        <!-- Hidden file input — capture="environment" opens rear camera on mobile -->
+        <input type="file" id="ol-file-input" accept="image/*" capture="environment"
+          style="display:none" onchange="olHandlePhoto(this)">
+        <!-- Scratch div for html5-qrcode (must be in DOM, kept hidden) -->
+        <div id="ol-qr-scratch" style="display:none"></div>
+        <button id="ol-scan-btn" onclick="olStartScan()" style="width:100%;padding:14px;background:var(--accent);color:#fff;border:none;border-radius:10px;font-size:15px;font-weight:700;cursor:pointer;font-family:var(--sans)">&#128247; Take Photo</button>
+        <div id="ol-preview-wrap" style="display:none;margin-top:10px;border-radius:8px;overflow:hidden;background:#000;text-align:center">
+          <img id="ol-preview-img" style="max-width:100%;max-height:200px;object-fit:contain">
+        </div>
         <div id="ol-cam-error" style="display:none;margin-top:10px;font-size:12px;color:var(--red);background:rgba(197,42,26,.1);border-radius:8px;padding:10px"></div>
       </div>
       <div style="background:var(--bg2);border:1px solid var(--border);border-radius:12px;padding:14px;margin-bottom:14px">
@@ -12549,166 +12556,91 @@ window.psSwitchTab = function(name) {
 
 // ═════════════════════════════════════════════════════════════════════════════
 // ── ORDER LOOKUP TAB ─────────────────────────────────────────────────────────
-// Camera scan → Veeqo order details (items + quantities)
-// No PIN required — available to all workers
+// Photo-based barcode scan — worker takes a photo, we decode it.
+// Much more reliable than live video for low-quality printed barcodes.
+// Uses html5-qrcode scanFile() which decodes a static image — very accurate.
 // ═════════════════════════════════════════════════════════════════════════════
 
-// ZXing-based scanner — significantly better at Code 128 shipping barcodes
-// than html5-qrcode. Uses continuous video stream + per-frame decoding.
-var _olZxingLib    = false;
-var _olVideoStream = null;
-var _olScanTimer   = null;
-var _olScanning    = false;
+var _olQrLib = false;
 
-function olLoadZXing() {
-  if (_olZxingLib || typeof ZXing !== 'undefined') { _olZxingLib = true; return Promise.resolve(); }
+function olLoadHtml5QR() {
+  if (_olQrLib || typeof Html5Qrcode !== 'undefined') { _olQrLib = true; return Promise.resolve(); }
   return new Promise(function(res, rej) {
     var s = document.createElement('script');
-    s.src = 'https://unpkg.com/@zxing/library@0.19.1/umd/index.min.js';
-    s.onload  = function() { _olZxingLib = true; res(); };
-    s.onerror = function() {
-      // Fallback to CDN mirror
-      var s2 = document.createElement('script');
-      s2.src = 'https://cdn.jsdelivr.net/npm/@zxing/library@0.19.1/umd/index.min.js';
-      s2.onload = function() { _olZxingLib = true; res(); };
-      s2.onerror = rej;
-      document.head.appendChild(s2);
-    };
+    s.src = 'https://unpkg.com/html5-qrcode@2.3.8/html5-qrcode.min.js';
+    s.onload  = function() { _olQrLib = true; res(); };
+    s.onerror = rej;
     document.head.appendChild(s);
   });
 }
 
 window.olOnTabOpen = function() {
-  olStopScan();
   document.getElementById('ol-result').style.display = 'none';
   document.getElementById('ol-result').innerHTML = '';
   document.getElementById('ol-manual-input').value = '';
+  document.getElementById('ol-cam-error').style.display = 'none';
+  document.getElementById('ol-preview-wrap').style.display = 'none';
 };
 
+// Hidden file input triggers native camera on mobile
 window.olStartScan = async function() {
+  document.getElementById('ol-cam-error').style.display = 'none';
+  try {
+    await olLoadHtml5QR();
+  } catch(e) {
+    var errEl = document.getElementById('ol-cam-error');
+    errEl.style.display = 'block';
+    errEl.textContent = 'Failed to load scanner library. Check connection.';
+    return;
+  }
+  // Trigger the hidden file input — on mobile this opens the camera
+  document.getElementById('ol-file-input').click();
+};
+
+window.olHandlePhoto = async function(input) {
+  if (!input.files || !input.files[0]) return;
+  var file   = input.files[0];
   var btn    = document.getElementById('ol-scan-btn');
-  var reader = document.getElementById('ol-html5qr-reader');
   var errEl  = document.getElementById('ol-cam-error');
+  var prev   = document.getElementById('ol-preview-wrap');
+  var prevImg = document.getElementById('ol-preview-img');
   errEl.style.display = 'none';
 
-  if (_olScanning) { olStopScan(); return; }
+  // Show preview of the photo taken
+  var objectUrl = URL.createObjectURL(file);
+  prevImg.src = objectUrl;
+  prev.style.display = 'block';
 
-  btn.textContent = '&#9203; Starting…';
-  btn.style.background = 'var(--text3)';
+  btn.textContent = '&#9203; Scanning…';
   btn.disabled = true;
 
   try {
-    await olLoadZXing();
-
-    // Build video element inside reader div
-    reader.style.display = 'block';
-    reader.innerHTML =
-      '<div style="position:relative;background:#000;border-radius:8px;overflow:hidden">' +
-        '<video id="ol-video" autoplay playsinline muted style="width:100%;display:block;max-height:280px;object-fit:cover"></video>' +
-        '<div style="position:absolute;top:50%;left:50%;transform:translate(-50%,-50%);' +
-             'width:85%;height:80px;border:2px solid rgba(26,86,219,.8);border-radius:6px;' +
-             'box-shadow:0 0 0 2000px rgba(0,0,0,.45)">' +
-          '<div style="position:absolute;top:-1px;left:-1px;width:16px;height:16px;border-top:3px solid #1A56DB;border-left:3px solid #1A56DB;border-radius:2px 0 0 0"></div>' +
-          '<div style="position:absolute;top:-1px;right:-1px;width:16px;height:16px;border-top:3px solid #1A56DB;border-right:3px solid #1A56DB;border-radius:0 2px 0 0"></div>' +
-          '<div style="position:absolute;bottom:-1px;left:-1px;width:16px;height:16px;border-bottom:3px solid #1A56DB;border-left:3px solid #1A56DB;border-radius:0 0 0 2px"></div>' +
-          '<div style="position:absolute;bottom:-1px;right:-1px;width:16px;height:16px;border-bottom:3px solid #1A56DB;border-right:3px solid #1A56DB;border-radius:0 0 2px 0"></div>' +
-        '</div>' +
-        '<div style="position:absolute;bottom:8px;left:0;right:0;text-align:center;color:rgba(255,255,255,.6);font-size:11px">Align barcode within the box</div>' +
-      '</div>';
-
-    var video = document.getElementById('ol-video');
-
-    // Get camera stream — rear camera preferred
-    _olVideoStream = await navigator.mediaDevices.getUserMedia({
-      video: { facingMode: { ideal: 'environment' }, width: { ideal: 1280 }, height: { ideal: 720 } }
-    });
-    video.srcObject = _olVideoStream;
-    await new Promise(function(r) { video.onloadedmetadata = r; });
-    await video.play();
-
-    _olScanning = true;
-    btn.textContent = '&#10060; Stop Camera';
-    btn.style.background = 'var(--red)';
-    btn.disabled = false;
-
-    // ZXing multi-format reader — Code 128 is highest priority
-    var hints = new Map();
-    var formats = [
-      ZXing.BarcodeFormat.CODE_128,
-      ZXing.BarcodeFormat.CODE_39,
-      ZXing.BarcodeFormat.ITF,
-      ZXing.BarcodeFormat.EAN_13,
-      ZXing.BarcodeFormat.UPC_A,
-    ];
-    hints.set(ZXing.DecodeHintType.POSSIBLE_FORMATS, formats);
-    hints.set(ZXing.DecodeHintType.TRY_HARDER, true);
-    var zxReader = new ZXing.MultiFormatReader();
-    zxReader.setHints(hints);
-
-    // Canvas for frame capture
-    var canvas  = document.createElement('canvas');
-    var ctx     = canvas.getContext('2d');
-    var lastCode = '';
-    var sameCount = 0;
-
-    function scanFrame() {
-      if (!_olScanning || !video || video.paused || video.ended) return;
-      try {
-        canvas.width  = video.videoWidth;
-        canvas.height = video.videoHeight;
-        ctx.drawImage(video, 0, 0);
-        var imgData = ctx.getImageData(0, 0, canvas.width, canvas.height);
-        var lum = new ZXing.RGBLuminanceSource(imgData.data, canvas.width, canvas.height);
-        var bmp = new ZXing.BinaryBitmap(new ZXing.HybridBinarizer(lum));
-        var result = zxReader.decode(bmp);
-        if (result && result.getText()) {
-          var code = result.getText().trim().toUpperCase();
-          // Require 2 consecutive matching reads to avoid spurious decodes
-          if (code === lastCode) {
-            sameCount++;
-            if (sameCount >= 2) {
-              olStopScan();
-              document.getElementById('ol-manual-input').value = code;
-              olLookupTracking(code);
-              return;
-            }
-          } else {
-            lastCode  = code;
-            sameCount = 1;
-          }
-        }
-      } catch(_) { /* no barcode in frame — normal */ }
-      _olScanTimer = requestAnimationFrame(scanFrame);
-    }
-
-    _olScanTimer = requestAnimationFrame(scanFrame);
-
-  } catch(e) {
-    olStopScan();
-    errEl.style.display = 'block';
-    var msg = e.message || String(e);
-    if (msg.toLowerCase().includes('permission') || msg.toLowerCase().includes('denied')) {
-      errEl.innerHTML = '&#9888; Camera permission denied.<br><span style="font-size:11px">Go to Settings and allow camera access for your browser.</span>';
-    } else if (msg.toLowerCase().includes('notfound') || msg.toLowerCase().includes('no camera')) {
-      errEl.innerHTML = '&#9888; No camera found on this device.';
+    await olLoadHtml5QR();
+    var scanner = new Html5Qrcode('ol-qr-scratch');
+    var result  = await scanner.scanFile(file, false);
+    var code    = (result || '').trim().toUpperCase();
+    if (code && code.length > 4) {
+      document.getElementById('ol-manual-input').value = code;
+      prev.style.display = 'none';
+      URL.revokeObjectURL(objectUrl);
+      olLookupTracking(code);
     } else {
-      errEl.innerHTML = '&#9888; Camera error: ' + msg + '<br><span style="font-size:11px">Try refreshing the page.</span>';
+      throw new Error('No barcode detected');
     }
+  } catch(e) {
+    errEl.style.display = 'block';
+    errEl.innerHTML = '&#9888; Could not read barcode from this photo.<br>' +
+      '<span style="font-size:11px">Try again — hold the camera closer and make sure the barcode fills the frame. ' +
+      'You can also type the tracking number manually below.</span>';
+  } finally {
+    btn.textContent = '&#128247; Take Photo';
+    btn.disabled = false;
+    // Reset file input so same photo can be retried
+    input.value = '';
   }
 };
 
-function olStopScan() {
-  _olScanning = false;
-  if (_olScanTimer) { cancelAnimationFrame(_olScanTimer); _olScanTimer = null; }
-  if (_olVideoStream) {
-    _olVideoStream.getTracks().forEach(function(t) { t.stop(); });
-    _olVideoStream = null;
-  }
-  var reader = document.getElementById('ol-html5qr-reader');
-  if (reader) { reader.innerHTML = ''; reader.style.display = 'none'; }
-  var btn = document.getElementById('ol-scan-btn');
-  if (btn) { btn.textContent = '&#128247; Open Camera'; btn.style.background = 'var(--accent)'; btn.disabled = false; }
-}
+function olStopScan() { /* no-op for photo mode */ }
 
 window.olLookupTracking = async function(rawTracking) {
   var tracking = (rawTracking || '').trim().toUpperCase();
