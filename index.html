@@ -1,7 +1,7 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-  <!-- XFITTING-BUILD-V112-FEAT-20260323f -->
+  <!-- XFITTING-BUILD-V112-SRCH-20260326 -->
 <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate">
 <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&family=IBM+Plex+Sans:wght@300;400;500;600&display=swap" rel="stylesheet">
   <meta http-equiv="Pragma" content="no-cache">
@@ -9989,10 +9989,13 @@ function rprToast(msg, type = '') {
         results.forEach(function(item) {
           var el = document.createElement("div");
           el.className = "iloc-opt";
+          var stockLine = item.totalCases > 0
+            ? item.totalCases + " cases \u00b7 " + item.locCount + " location" + (item.locCount !== 1 ? "s" : "") + (item.variantCount > 1 ? " \u00b7 " + item.variantCount + " variants" : "")
+            : (item.lastLocation ? "<span style='color:var(--orange)'>No stock \u00b7 last seen: " + item.lastLocation + "</span>" : "<span style='color:var(--red)'>No stock on record</span>");
           el.innerHTML = "<div style='flex:1'>"
             + "<div style='font-size:12px;font-family:var(--mono);color:var(--accent);margin-bottom:2px'>" + item.baseSku + "</div>"
             + "<div style='font-size:14px;font-weight:600;color:var(--text)'>" + item.name + "</div>"
-            + "<div style='font-size:11px;color:var(--text3);margin-top:2px'>" + item.totalCases + " cases \u00b7 " + item.locCount + " location" + (item.locCount !== 1 ? "s" : "") + (item.variantCount > 1 ? " \u00b7 " + item.variantCount + " variants" : "") + "</div>"
+            + "<div style='font-size:11px;color:var(--text3);margin-top:2px'>" + stockLine + "</div>"
             + "</div><span class='iloc-badge ex'>Select</span>";
           el.onclick = function() {
             nr.style.display = "none";
@@ -10775,10 +10778,13 @@ function rprToast(msg, type = '') {
         results.forEach(function(item) {
           var el = document.createElement('div');
           el.className = 'iloc-opt';
+          var stockLine = item.totalCases > 0
+            ? item.totalCases + ' cases \u00b7 ' + item.locCount + ' location' + (item.locCount !== 1 ? 's' : '') + (item.variantCount > 1 ? ' \u00b7 ' + item.variantCount + ' variants' : '')
+            : (item.lastLocation ? "<span style='color:var(--orange)'>No stock \u00b7 last seen: " + item.lastLocation + '</span>' : "<span style='color:var(--red)'>No stock on record</span>");
           el.innerHTML = '<div style="flex:1">'
             + '<div style="font-size:12px;font-family:var(--mono);color:var(--accent);margin-bottom:2px">' + item.baseSku + '</div>'
             + '<div style="font-size:13px;font-weight:600;color:var(--text)">' + item.name + '</div>'
-            + '<div style="font-size:11px;color:var(--text3);margin-top:2px">' + item.totalCases + ' cases \u00b7 ' + item.locCount + ' location' + (item.locCount !== 1 ? 's' : '') + (item.variantCount > 1 ? ' \u00b7 ' + item.variantCount + ' variants' : '') + '</div>'
+            + '<div style="font-size:11px;color:var(--text3);margin-top:2px">' + stockLine + '</div>'
             + '</div><span class="iloc-badge ex">Select</span>';
           el.onclick = function() {
             nr.style.display = 'none';
