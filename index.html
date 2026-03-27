@@ -1,7 +1,7 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-  <!-- XFITTING-BUILD-V112-BUGF-20260327 -->
+  <!-- XFITTING-BUILD-V112-FEAT-20260327 -->
 <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate">
 <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&family=IBM+Plex+Sans:wght@300;400;500;600&display=swap" rel="stylesheet">
   <meta http-equiv="Pragma" content="no-cache">
@@ -13017,7 +13017,7 @@ window.psVeeqoSyncTracking = async function() {
     });
     var data = await r.json();
     if (data.ok) {
-      var msg = '✓ Checked ' + ((data.checked_no_scan || 0) + (data.checked_delivery || 0)) + ' shipments · ' + (data.flagged || 0) + ' alerts found';
+      var msg = '✓ Pulled ' + (data.pulled || 0) + ' orders (' + (data.pages || 0) + ' pages) · ' + (data.flagged || 0) + ' alerts flagged';
       out.textContent = msg;
       _psToast(msg);
       if (data.flagged > 0) {
@@ -13108,11 +13108,12 @@ function psVaRender() {
   list.innerHTML = rows.map(function(r) {
     var cfg  = alertCfg[r.alertLevel] || { icon:'&#10067;', dotCls:'', badgeCls:'ps-badge-gray', label: r.alertLevel || 'Unknown' };
     var cCls = r.carrier === 'UPS' ? 'ps-badge-ups' : r.carrier === 'USPS' ? 'ps-badge-usps' : 'ps-badge-gray';
-    var days = r.daysSince ? r.daysSince + (r.alertLevel === 'STUCK_10D' ? ' biz days' : 'd') : '';
-    var eventLine = r.lastEvent
-      ? r.lastEvent +
-        (r.lastEventDate ? ' <span style="color:var(--text3)">&#183; ' + r.lastEventDate + '</span>' : '') +
-        (r.lastLocation  ? ' <span style="color:var(--text3)">&#183; ' + r.lastLocation  + '</span>' : '')
+    // New fields: shippedAt, calDays, tnStatus, bizDays
+    var days = r.alertLevel === 'STUCK_10D'
+      ? (r.bizDays  ? r.bizDays  + ' biz days' : '')
+      : (r.calDays  ? r.calDays  + 'd'         : (r.daysSince ? r.daysSince + 'd' : ''));
+    var eventLine = r.tnStatus && r.tnStatus !== 'created'
+      ? r.tnStatus.replace(/_/g, ' ')
       : '';
     return '<div class="ps-card" style="margin-bottom:8px">' +
       '<div class="ps-card-row">' +
@@ -13125,10 +13126,9 @@ function psVaRender() {
         '</div>' +
       '</div>' +
       '<div style="display:flex;gap:16px;margin-top:7px;flex-wrap:wrap">' +
-        (r.orderNum ? '<span style="font-size:11px;color:var(--text3)">Order: <span style="color:var(--text2);font-family:var(--mono)">' + r.orderNum + '</span></span>' : '') +
-        (r.orderId  ? '<span style="font-size:11px;color:var(--text3)">ID: <span style="color:var(--text2);font-family:var(--mono)">'    + r.orderId  + '</span></span>' : '') +
-        (r.scanDate ? '<span style="font-size:11px;color:var(--text3)">Scanned: <span style="color:var(--text2)">'                       + r.scanDate + '</span></span>' : '') +
-        (days       ? '<span style="font-size:11px;color:var(--orange);font-weight:600">' + days + '</span>' : '') +
+        (r.orderNum  ? '<span style="font-size:11px;color:var(--text3)">Order: <span style="color:var(--text2);font-family:var(--mono)">' + r.orderNum + '</span></span>' : '') +
+        (r.shippedAt ? '<span style="font-size:11px;color:var(--text3)">Shipped: <span style="color:var(--text2)">' + r.shippedAt + '</span></span>' : '') +
+        (days        ? '<span style="font-size:11px;color:var(--orange);font-weight:600">' + days + '</span>' : '') +
       '</div>' +
       (eventLine ? '<div style="margin-top:6px;font-size:12px;color:var(--text2);background:var(--bg3);border-radius:6px;padding:6px 10px">' + eventLine + '</div>' : '') +
     '</div>';
@@ -13138,13 +13138,12 @@ function psVaRender() {
 window.psVaExport = function() {
   if (!psVaRows.length) { _psToast('No alert data to export', 'warn'); return; }
   var rows = psVaActiveFilter === 'ALL' ? psVaRows : psVaRows.filter(function(r){ return r.alertLevel === psVaActiveFilter; });
-  var csv  = 'Tracking,Carrier,Channel,OrderNum,OrderID,ScanDate,DaysSince,AlertLevel,Status,LastEvent,LastEventDate,LastLocation\n';
+  var csv  = 'Tracking,Carrier,Channel,OrderNum,ShippedAt,CalDays,BizDays,TnStatus,AlertLevel,AlertStatus\n';
   rows.forEach(function(r) {
     csv += [
-      r.tracking, r.carrier, r.channel, r.orderNum, r.orderId,
-      r.scanDate, r.daysSince, r.alertLevel, r.status,
-      '"' + (r.lastEvent || '').replace(/"/g, '""') + '"',
-      r.lastEventDate, r.lastLocation
+      r.tracking, r.carrier, r.channel, r.orderNum,
+      r.shippedAt || '', r.calDays || '', r.bizDays || '',
+      r.tnStatus  || '', r.alertLevel, r.status || ''
     ].join(',') + '\n';
   });
   var a = document.createElement('a');
@@ -15423,11 +15422,11 @@ window.psVaExport = function() {
 (function() {
   'use strict';
   var CS_WORKER   = WORKER_URL;
-  window.csPlatform = '';  // window scope — readable by eBay AI Messages IIFE
+  var csPlatform  = '';
   var csAgentName = localStorage.getItem('xf_cs_agent') || '';
 
   window.csToolOnLaunch = function() {
-    csPlatform = window.csPlatform = '';
+    csPlatform = '';
     document.querySelectorAll('.cs-platform-btn').forEach(function(b) { b.classList.remove('selected'); });
     ['cs-order-num','cs-sku','cs-product','cs-buyer-msg','cs-agent-note'].forEach(function(id) {
       var el = document.getElementById(id); if (el) el.value = '';
@@ -15444,7 +15443,7 @@ window.psVaExport = function() {
   };
 
   window.csToolSelectPlatform = function(p) {
-    csPlatform = window.csPlatform = p;
+    csPlatform = p;
     document.querySelectorAll('.cs-platform-btn').forEach(function(b) { b.classList.remove('selected'); });
     var btn = document.getElementById('cs-pb-' + p);
     if (btn) btn.classList.add('selected');
