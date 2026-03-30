@@ -1,7 +1,7 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-  <!-- XFITTING-BUILD-V112-FEAT-20260327 -->
+  <!-- XFITTING-BUILD-V112-SRCH-20260326b -->
 <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate">
 <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&family=IBM+Plex+Sans:wght@300;400;500;600&display=swap" rel="stylesheet">
   <meta http-equiv="Pragma" content="no-cache">
@@ -9989,10 +9989,13 @@ function rprToast(msg, type = '') {
         results.forEach(function(item) {
           var el = document.createElement("div");
           el.className = "iloc-opt";
+          var stockLine = item.totalCases > 0
+            ? item.totalCases + " cases \u00b7 " + item.locCount + " location" + (item.locCount !== 1 ? "s" : "") + (item.variantCount > 1 ? " \u00b7 " + item.variantCount + " variants" : "")
+            : (item.lastLocation ? "<span style='color:var(--orange)'>No stock \u00b7 last seen: " + item.lastLocation + "</span>" : "<span style='color:var(--red)'>No stock on record</span>");
           el.innerHTML = "<div style='flex:1'>"
             + "<div style='font-size:12px;font-family:var(--mono);color:var(--accent);margin-bottom:2px'>" + item.baseSku + "</div>"
             + "<div style='font-size:14px;font-weight:600;color:var(--text)'>" + item.name + "</div>"
-            + "<div style='font-size:11px;color:var(--text3);margin-top:2px'>" + item.totalCases + " cases \u00b7 " + item.locCount + " location" + (item.locCount !== 1 ? "s" : "") + (item.variantCount > 1 ? " \u00b7 " + item.variantCount + " variants" : "") + "</div>"
+            + "<div style='font-size:11px;color:var(--text3);margin-top:2px'>" + stockLine + "</div>"
             + "</div><span class='iloc-badge ex'>Select</span>";
           el.onclick = function() {
             nr.style.display = "none";
@@ -10775,10 +10778,13 @@ function rprToast(msg, type = '') {
         results.forEach(function(item) {
           var el = document.createElement('div');
           el.className = 'iloc-opt';
+          var stockLine = item.totalCases > 0
+            ? item.totalCases + ' cases \u00b7 ' + item.locCount + ' location' + (item.locCount !== 1 ? 's' : '') + (item.variantCount > 1 ? ' \u00b7 ' + item.variantCount + ' variants' : '')
+            : (item.lastLocation ? "<span style='color:var(--orange)'>No stock \u00b7 last seen: " + item.lastLocation + '</span>' : "<span style='color:var(--red)'>No stock on record</span>");
           el.innerHTML = '<div style="flex:1">'
             + '<div style="font-size:12px;font-family:var(--mono);color:var(--accent);margin-bottom:2px">' + item.baseSku + '</div>'
             + '<div style="font-size:13px;font-weight:600;color:var(--text)">' + item.name + '</div>'
-            + '<div style="font-size:11px;color:var(--text3);margin-top:2px">' + item.totalCases + ' cases \u00b7 ' + item.locCount + ' location' + (item.locCount !== 1 ? 's' : '') + (item.variantCount > 1 ? ' \u00b7 ' + item.variantCount + ' variants' : '') + '</div>'
+            + '<div style="font-size:11px;color:var(--text3);margin-top:2px">' + stockLine + '</div>'
             + '</div><span class="iloc-badge ex">Select</span>';
           el.onclick = function() {
             nr.style.display = 'none';
@@ -11400,7 +11406,6 @@ function rprToast(msg, type = '') {
 <!-- Tab bar -->
 <div class="ps-tabbar">
   <div class="ps-tabitem active" id="ps-tab-scan"     onclick="psSwitchTab('scan')">📦 Scan</div>
-  <div class="ps-tabitem"        id="ps-tab-orderlookup" onclick="psSwitchTab('orderlookup')">📷 Order</div>
   <div class="ps-tabitem"        id="ps-tab-progress" onclick="psSwitchTab('progress')">📊 Progress</div>
   <div class="ps-tabitem"        id="ps-tab-lookup"   onclick="psSwitchTab('lookup')">🔍 Lookup</div>
   <div class="ps-tabitem"        id="ps-tab-status"   onclick="psSwitchTab('status')">📡 Status Check</div>
@@ -11534,29 +11539,6 @@ function rprToast(msg, type = '') {
   </div>
 
   <!-- LOOKUP panel -->
-  <div class="ps-panel" id="ps-panel-orderlookup">
-    <div style="padding:16px;max-width:520px;margin:0 auto;width:100%">
-      <div style="background:var(--bg2);border:1px solid var(--border);border-radius:12px;padding:16px;margin-bottom:14px">
-        <div style="font-size:13px;font-weight:700;color:var(--text);margin-bottom:4px">Scan Shipping Label</div>
-        <div style="font-size:12px;color:var(--text3);margin-bottom:12px">Point your phone camera at the tracking barcode on the label</div>
-        <button id="ol-scan-btn" onclick="olStartScan()" style="width:100%;padding:14px;background:var(--accent);color:#fff;border:none;border-radius:10px;font-size:15px;font-weight:700;cursor:pointer;font-family:var(--sans)">&#128247; Open Camera</button>
-        <div id="ol-html5qr-reader" style="margin-top:12px;border-radius:8px;overflow:hidden;display:none"></div>
-        <div id="ol-cam-error" style="display:none;margin-top:10px;font-size:12px;color:var(--red);background:rgba(197,42,26,.1);border-radius:8px;padding:10px"></div>
-      </div>
-      <div style="background:var(--bg2);border:1px solid var(--border);border-radius:12px;padding:14px;margin-bottom:14px">
-        <div style="font-size:12px;color:var(--text3);margin-bottom:8px">Or enter tracking number manually</div>
-        <div style="display:flex;gap:8px">
-          <input id="ol-manual-input" type="text" placeholder="Enter tracking number…"
-            style="flex:1;background:var(--bg3);border:1.5px solid var(--border2);border-radius:8px;color:var(--text);font-family:var(--mono);font-size:13px;padding:10px 12px;outline:none"
-            onkeydown="if(event.key==='Enter') olLookupTracking(this.value)">
-          <button onclick="olLookupTracking(document.getElementById('ol-manual-input').value)"
-            style="padding:10px 18px;background:var(--accent);color:#fff;border:none;border-radius:8px;font-size:13px;font-weight:700;cursor:pointer;font-family:var(--sans)">Go</button>
-        </div>
-      </div>
-      <div id="ol-result" style="display:none"></div>
-    </div>
-  </div>
-
   <div class="ps-panel" id="ps-panel-lookup">
     <!-- Tracking lookup — all roles -->
     <div class="ps-lookup-wrap">
@@ -11968,8 +11950,7 @@ window.psSwitchTab = function(name) {
   document.querySelectorAll('#packship-app .ps-panel').forEach(function(p){ p.classList.remove('active'); });
   document.getElementById('ps-tab-' + name).classList.add('active');
   document.getElementById('ps-panel-' + name).classList.add('active');
-  if (name === 'scan')        { psFocusScan(); psRenderScanList(); }
-  if (name === 'orderlookup') { olOnTabOpen(); }
+  if (name === 'scan')     { psFocusScan(); psRenderScanList(); }
   if (name === 'progress') { psLoadScans(); }
   if (name === 'lookup')   { psRenderLog(); }
   if (name === 'gaps')     { psRenderGaps(); }
@@ -12538,191 +12519,12 @@ window.psSwitchTab = function(name) {
     var pinEl = document.getElementById('ps-' + name + '-pin');
     if (pinEl) setTimeout(function(){ pinEl.focus(); }, 100);
   }
-  if (name === 'scan')        { psFocusScan(); psRenderScanList(); }
-  if (name === 'orderlookup') { olOnTabOpen(); }
+  if (name === 'scan')     { psFocusScan(); psRenderScanList(); }
   if (name === 'progress') { psLoadScans(); }
   if (name === 'lookup')   { psRenderLog(); }
   if (name === 'gaps'    && _psUnlockedTabs['gaps'])    { psRunReconcile(); }
   if (name === 'vsync'   && _psUnlockedTabs['vsync'])   { psVeeqoOnUnlock(); }
   if (name === 'valerts' && _psUnlockedTabs['valerts']) { psVaOnUnlock(); }
-};
-
-// ═════════════════════════════════════════════════════════════════════════════
-// ── ORDER LOOKUP TAB ─────────────────────────────────────────────────────────
-// Camera scan → Veeqo order details (items + quantities)
-// No PIN required — available to all workers
-// ═════════════════════════════════════════════════════════════════════════════
-
-var _olQrLib    = false;
-var _olQrScanner = null;
-
-function olLoadHtml5QR() {
-  if (_olQrLib) return Promise.resolve();
-  return new Promise(function(res, rej) {
-    var s = document.createElement('script');
-    s.src = 'https://unpkg.com/html5-qrcode@2.3.8/html5-qrcode.min.js';
-    s.onload  = function() { _olQrLib = true; res(); };
-    s.onerror = rej;
-    document.head.appendChild(s);
-  });
-}
-
-window.olOnTabOpen = function() {
-  // Reset result area when switching to tab
-  document.getElementById('ol-result').style.display = 'none';
-  document.getElementById('ol-result').innerHTML = '';
-  document.getElementById('ol-manual-input').value = '';
-};
-
-window.olStartScan = async function() {
-  var btn      = document.getElementById('ol-scan-btn');
-  var reader   = document.getElementById('ol-html5qr-reader');
-  var errEl    = document.getElementById('ol-cam-error');
-  errEl.style.display = 'none';
-
-  // If already scanning, stop
-  if (_olQrScanner) {
-    try { await _olQrScanner.stop(); } catch(_) {}
-    _olQrScanner = null;
-    reader.innerHTML = '';
-    reader.style.display = 'none';
-    btn.textContent = '&#128247; Open Camera';
-    btn.style.background = 'var(--accent)';
-    return;
-  }
-
-  btn.textContent = '&#9203; Starting…';
-  btn.style.background = 'var(--text3)';
-
-  try {
-    await olLoadHtml5QR();
-    reader.style.display = 'block';
-    reader.innerHTML = '';
-
-    _olQrScanner = new Html5Qrcode('ol-html5qr-reader');
-
-    var config = {
-      fps: 15,
-      qrbox: { width: 280, height: 100 },
-      aspectRatio: 1.7,
-      formatsToSupport: [
-        Html5QrcodeSupportedFormats.CODE_128,
-        Html5QrcodeSupportedFormats.CODE_39,
-        Html5QrcodeSupportedFormats.EAN_13,
-        Html5QrcodeSupportedFormats.UPC_A,
-      ]
-    };
-
-    await _olQrScanner.start(
-      { facingMode: 'environment' },
-      config,
-      function(code) {
-        // Success — stop camera and look up order
-        olStopScan();
-        document.getElementById('ol-manual-input').value = code;
-        olLookupTracking(code);
-      },
-      function() { /* ignore decode misses */ }
-    );
-
-    btn.textContent = '&#10060; Stop Camera';
-    btn.style.background = 'var(--red)';
-
-  } catch(e) {
-    reader.style.display = 'none';
-    reader.innerHTML = '';
-    _olQrScanner = null;
-    btn.textContent = '&#128247; Open Camera';
-    btn.style.background = 'var(--accent)';
-    errEl.style.display = 'block';
-    errEl.innerHTML = '&#9888; Camera error: ' + (e.message || e) +
-      '<br><span style="font-size:11px">Allow camera access in your browser settings.</span>';
-  }
-};
-
-async function olStopScan() {
-  var btn    = document.getElementById('ol-scan-btn');
-  var reader = document.getElementById('ol-html5qr-reader');
-  if (_olQrScanner) {
-    try { await _olQrScanner.stop(); } catch(_) {}
-    _olQrScanner = null;
-  }
-  reader.innerHTML = '';
-  reader.style.display = 'none';
-  btn.textContent = '&#128247; Open Camera';
-  btn.style.background = 'var(--accent)';
-}
-
-window.olLookupTracking = async function(rawTracking) {
-  var tracking = (rawTracking || '').trim().toUpperCase();
-  if (!tracking || tracking.length < 5) return;
-
-  var result = document.getElementById('ol-result');
-  result.style.display = 'block';
-  result.innerHTML = '<div style="text-align:center;padding:24px;color:var(--text3);font-size:13px">&#9203; Looking up order…</div>';
-
-  try {
-    var url = PS_WORKER + '/veeqo/order-lookup?tracking=' + encodeURIComponent(tracking);
-    var res  = await fetch(url);
-    var data = await res.json();
-
-    if (!data.ok || !data.order) {
-      result.innerHTML =
-        '<div style="background:var(--bg2);border:1px solid var(--border);border-radius:12px;padding:20px;text-align:center">' +
-          '<div style="font-size:22px;margin-bottom:8px">&#10067;</div>' +
-          '<div style="font-size:14px;font-weight:700;color:var(--text);margin-bottom:4px">Order Not Found</div>' +
-          '<div style="font-size:12px;color:var(--text3)">' + tracking + '</div>' +
-          '<div style="font-size:11px;color:var(--text3);margin-top:8px">' + (data.error || 'Not found in Veeqo') + '</div>' +
-        '</div>';
-      return;
-    }
-
-    var o = data.order;
-    var channelColor = (o.channel||'').toLowerCase().includes('ebay') ? 'var(--accent)' :
-                       (o.channel||'').toLowerCase().includes('amazon') ? 'var(--orange)' : 'var(--text3)';
-
-    // Build items HTML
-    var itemsHtml = '';
-    if (o.items && o.items.length) {
-      itemsHtml = o.items.map(function(item) {
-        return '<div style="display:flex;justify-content:space-between;align-items:center;padding:10px 0;border-bottom:1px solid var(--border)">' +
-          '<div>' +
-            '<div style="font-size:13px;font-weight:700;color:var(--text);font-family:var(--mono)">' + (item.sku || '—') + '</div>' +
-            (item.title ? '<div style="font-size:11px;color:var(--text3);margin-top:2px">' + item.title.slice(0,60) + '</div>' : '') +
-          '</div>' +
-          '<div style="font-size:18px;font-weight:800;color:var(--accent);font-family:var(--mono);min-width:36px;text-align:right">×' + item.qty + '</div>' +
-        '</div>';
-      }).join('');
-    } else {
-      itemsHtml = '<div style="color:var(--text3);font-size:12px;padding:10px 0">No items found</div>';
-    }
-
-    result.innerHTML =
-      '<div style="background:var(--bg2);border:1px solid var(--border);border-radius:12px;overflow:hidden">' +
-        // Header
-        '<div style="background:var(--bg3);padding:12px 16px;border-bottom:1px solid var(--border);display:flex;justify-content:space-between;align-items:center">' +
-          '<div>' +
-            '<div style="font-size:11px;color:var(--text3);margin-bottom:2px">ORDER</div>' +
-            '<div style="font-size:14px;font-weight:700;color:var(--text);font-family:var(--mono)">' + (o.orderNum || '—') + '</div>' +
-          '</div>' +
-          '<div style="text-align:right">' +
-            '<div style="font-size:11px;font-weight:700;color:' + channelColor + ';text-transform:uppercase">' + (o.channel || '') + '</div>' +
-            '<div style="font-size:11px;color:var(--text3);margin-top:2px">' + (o.carrier || '') + '</div>' +
-          '</div>' +
-        '</div>' +
-        // Items
-        '<div style="padding:0 16px">' + itemsHtml + '</div>' +
-        // Tracking footer
-        '<div style="padding:10px 16px;background:var(--bg3);border-top:1px solid var(--border)">' +
-          '<div style="font-size:10px;color:var(--text3);font-family:var(--mono)">' + tracking + '</div>' +
-        '</div>' +
-      '</div>' +
-      '<button onclick="olOnTabOpen()" style="width:100%;margin-top:10px;padding:12px;background:var(--bg3);border:1.5px solid var(--border);border-radius:10px;color:var(--text2);font-size:13px;font-weight:600;cursor:pointer;font-family:var(--sans)">&#128247; Scan Another</button>';
-
-  } catch(e) {
-    result.innerHTML =
-      '<div style="background:var(--bg2);border:1px solid var(--red);border-radius:12px;padding:16px;text-align:center;color:var(--red);font-size:13px">&#9888; Error: ' + e.message + '</div>';
-  }
 };
 
 // ── Switch Packer ─────────────────────────────────────────────────────────────
@@ -13017,7 +12819,7 @@ window.psVeeqoSyncTracking = async function() {
     });
     var data = await r.json();
     if (data.ok) {
-      var msg = '✓ Pulled ' + (data.pulled || 0) + ' orders (' + (data.pages || 0) + ' pages) · ' + (data.flagged || 0) + ' alerts flagged';
+      var msg = '✓ Checked ' + ((data.checked_no_scan || 0) + (data.checked_delivery || 0)) + ' shipments · ' + (data.flagged || 0) + ' alerts found';
       out.textContent = msg;
       _psToast(msg);
       if (data.flagged > 0) {
@@ -13108,12 +12910,11 @@ function psVaRender() {
   list.innerHTML = rows.map(function(r) {
     var cfg  = alertCfg[r.alertLevel] || { icon:'&#10067;', dotCls:'', badgeCls:'ps-badge-gray', label: r.alertLevel || 'Unknown' };
     var cCls = r.carrier === 'UPS' ? 'ps-badge-ups' : r.carrier === 'USPS' ? 'ps-badge-usps' : 'ps-badge-gray';
-    // New fields: shippedAt, calDays, tnStatus, bizDays
-    var days = r.alertLevel === 'STUCK_10D'
-      ? (r.bizDays  ? r.bizDays  + ' biz days' : '')
-      : (r.calDays  ? r.calDays  + 'd'         : (r.daysSince ? r.daysSince + 'd' : ''));
-    var eventLine = r.tnStatus && r.tnStatus !== 'created'
-      ? r.tnStatus.replace(/_/g, ' ')
+    var days = r.daysSince ? r.daysSince + (r.alertLevel === 'STUCK_10D' ? ' biz days' : 'd') : '';
+    var eventLine = r.lastEvent
+      ? r.lastEvent +
+        (r.lastEventDate ? ' <span style="color:var(--text3)">&#183; ' + r.lastEventDate + '</span>' : '') +
+        (r.lastLocation  ? ' <span style="color:var(--text3)">&#183; ' + r.lastLocation  + '</span>' : '')
       : '';
     return '<div class="ps-card" style="margin-bottom:8px">' +
       '<div class="ps-card-row">' +
@@ -13126,9 +12927,10 @@ function psVaRender() {
         '</div>' +
       '</div>' +
       '<div style="display:flex;gap:16px;margin-top:7px;flex-wrap:wrap">' +
-        (r.orderNum  ? '<span style="font-size:11px;color:var(--text3)">Order: <span style="color:var(--text2);font-family:var(--mono)">' + r.orderNum + '</span></span>' : '') +
-        (r.shippedAt ? '<span style="font-size:11px;color:var(--text3)">Shipped: <span style="color:var(--text2)">' + r.shippedAt + '</span></span>' : '') +
-        (days        ? '<span style="font-size:11px;color:var(--orange);font-weight:600">' + days + '</span>' : '') +
+        (r.orderNum ? '<span style="font-size:11px;color:var(--text3)">Order: <span style="color:var(--text2);font-family:var(--mono)">' + r.orderNum + '</span></span>' : '') +
+        (r.orderId  ? '<span style="font-size:11px;color:var(--text3)">ID: <span style="color:var(--text2);font-family:var(--mono)">'    + r.orderId  + '</span></span>' : '') +
+        (r.scanDate ? '<span style="font-size:11px;color:var(--text3)">Scanned: <span style="color:var(--text2)">'                       + r.scanDate + '</span></span>' : '') +
+        (days       ? '<span style="font-size:11px;color:var(--orange);font-weight:600">' + days + '</span>' : '') +
       '</div>' +
       (eventLine ? '<div style="margin-top:6px;font-size:12px;color:var(--text2);background:var(--bg3);border-radius:6px;padding:6px 10px">' + eventLine + '</div>' : '') +
     '</div>';
@@ -13138,12 +12940,13 @@ function psVaRender() {
 window.psVaExport = function() {
   if (!psVaRows.length) { _psToast('No alert data to export', 'warn'); return; }
   var rows = psVaActiveFilter === 'ALL' ? psVaRows : psVaRows.filter(function(r){ return r.alertLevel === psVaActiveFilter; });
-  var csv  = 'Tracking,Carrier,Channel,OrderNum,ShippedAt,CalDays,BizDays,TnStatus,AlertLevel,AlertStatus\n';
+  var csv  = 'Tracking,Carrier,Channel,OrderNum,OrderID,ScanDate,DaysSince,AlertLevel,Status,LastEvent,LastEventDate,LastLocation\n';
   rows.forEach(function(r) {
     csv += [
-      r.tracking, r.carrier, r.channel, r.orderNum,
-      r.shippedAt || '', r.calDays || '', r.bizDays || '',
-      r.tnStatus  || '', r.alertLevel, r.status || ''
+      r.tracking, r.carrier, r.channel, r.orderNum, r.orderId,
+      r.scanDate, r.daysSince, r.alertLevel, r.status,
+      '"' + (r.lastEvent || '').replace(/"/g, '""') + '"',
+      r.lastEventDate, r.lastLocation
     ].join(',') + '\n';
   });
   var a = document.createElement('a');
