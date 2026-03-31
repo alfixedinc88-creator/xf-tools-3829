@@ -1,7 +1,7 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-  <!-- XFITTING-BUILD-V112-BUGF-20260331f -->
+  <!-- XFITTING-BUILD-V112-FEAT-20260331g -->
 <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate">
 <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&family=IBM+Plex+Sans:wght@300;400;500;600&display=swap" rel="stylesheet">
   <meta http-equiv="Pragma" content="no-cache">
@@ -5105,8 +5105,19 @@ async function fetchEbaySales(ctx) {
     });
     salesToast('✓ eBay fetched — ' + totalOrders + ' orders · ' + totalRows + ' rows written', 'success');
 
-    // Give Sheets formulas time to recalculate — BYROW/ARRAYFORMULA on thousands of rows is slow
-    await new Promise(function(r) { setTimeout(r, 6000); });
+    // Compute Part#_Sales + SKU_Sales in the worker — eliminates slow Sheets formula recalc
+    salesToast('<span class="sales-spinner"></span>Computing sales totals...', 'info');
+    try {
+      var compRes  = await wFetch(SALES_WORKER_URL + '/sales/compute-tabs', { method: 'POST', headers: { 'Content-Type': 'application/json' } });
+      var compData = await compRes.json();
+      if (compData.ok) {
+        salesToast('✓ Computed — ' + compData.parts + ' parts, ' + compData.skus + ' SKUs', 'success');
+      } else {
+        salesToast('⚠ Compute warning: ' + (compData.error || 'unknown'), 'error');
+      }
+    } catch(compErr) {
+      salesToast('⚠ Compute error: ' + compErr.message, 'error');
+    }
 
     salesToast('<span class="sales-spinner"></span>Reading calc tabs...', 'info');
     try {
@@ -5228,7 +5239,16 @@ async function processAllReports() {
     return;
   }
 
-  // Now read back all calculated tabs + warehouse stock in parallel
+  // Compute Part#_Sales + SKU_Sales in worker (no Sheets formula dependency)
+  salesToast('<span class="sales-spinner"></span>Computing sales totals...', 'info');
+  try {
+    var cRes  = await wFetch(SALES_WORKER_URL + '/sales/compute-tabs', { method: 'POST', headers: { 'Content-Type': 'application/json' } });
+    var cData = await cRes.json();
+    if (cData.ok) salesToast('✓ Computed — ' + cData.parts + ' parts, ' + cData.skus + ' SKUs', 'success');
+    else salesToast('⚠ Compute: ' + (cData.error||'error'), 'error');
+  } catch(ce) { salesToast('⚠ Compute error: ' + ce.message, 'error'); }
+
+  // Now read back all calculated tabs + warehouse stock
   salesToast('<span class="sales-spinner"></span>Reading calculated data from sheet...', 'info');
   setStatus('ro','loading','Reading back...');
   try {
@@ -6166,6 +6186,40 @@ function workerPut(tab, rows) {
 
 
 
+
+// ── recomputeTabs — standalone trigger for /sales/compute-tabs ───────────────
+async function recomputeTabs() {
+  if (salesFetchLock) { salesToast('Fetch in progress — wait for it to finish', 'error'); return; }
+  salesFetchLock = true;
+  setStatus('ro', 'loading', 'Recomputing...');
+  setStatus('db', 'loading', 'Recomputing...');
+  salesToast('<span class="sales-spinner"></span>Recomputing sales totals from raw data...', 'info');
+  try {
+    var res  = await wFetch(SALES_WORKER_URL + '/sales/compute-tabs', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' }
+    });
+    var data = await res.json();
+    if (!data.ok) throw new Error(data.error || 'Compute failed');
+    salesToast('✓ Computed — ' + data.parts + ' parts · ' + data.skus + ' SKUs · reading back...', 'success');
+    await salesLoadWarehouseStock();
+    await readCalcTabs();
+    lastUpdated = new Date();
+    updateLastUpdatedLabels();
+    buildReorderRows();
+    buildDashboardData();
+    var whCount = Object.keys(CALC.whStock).length;
+    setStatus('ro', 'ok', 'WH: ' + whCount + ' parts');
+    setStatus('db', 'ok', 'Up to date');
+    salesToast('✓ Done — ' + CALC.partSales.length + ' parts loaded', 'success');
+  } catch(e) {
+    setStatus('ro', 'err', 'Recompute failed');
+    setStatus('db', 'err', 'Recompute failed');
+    salesToast('Recompute error: ' + e.message, 'error');
+  } finally {
+    salesFetchLock = false;
+  }
+}
+
 // ─── SKU MAP ─────────────────────────────────────────────────────────────────
 var skuMapRows = [];  // [{ sku, units, suggestion, masterPart, confirmed }]
 
@@ -6920,6 +6974,7 @@ function salesToast(msg, type) {
       <div class="sales-action-row">
         <button class="sales-primary-btn" id="process-btn" onclick="processAllReports()">▶ Upload All &amp; Build Plan</button>
         <button class="sales-ghost-btn" onclick="loadSavedData()">↻ Load Last Saved Data</button>
+        <button class="sales-ghost-btn" onclick="recomputeTabs()">⚡ Recompute Totals</button>
         <span class="sales-load-note" id="last-updated"></span>
       </div>
     </div>
@@ -7160,6 +7215,7 @@ function salesToast(msg, type) {
       <div class="sales-action-row">
         <button class="sales-primary-btn" onclick="processAllReports()">▶ Upload All &amp; Build Dashboard</button>
         <button class="sales-ghost-btn" onclick="loadSavedData()">↻ Load Last Saved Data</button>
+        <button class="sales-ghost-btn" onclick="recomputeTabs()">⚡ Recompute Totals</button>
         <span class="sales-load-note" id="db-last-updated"></span>
       </div>
     </div>
