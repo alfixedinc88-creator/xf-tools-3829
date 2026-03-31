@@ -1,7 +1,7 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-  <!-- XFITTING-BUILD-V112-SRCH-20260326b -->
+  <!-- XFITTING-BUILD-V112-BUGF-20260331 -->
 <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate">
 <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&family=IBM+Plex+Sans:wght@300;400;500;600&display=swap" rel="stylesheet">
   <meta http-equiv="Pragma" content="no-cache">
@@ -2231,7 +2231,9 @@ async function wFetch(url, opts) {
   var r = await fetch(url, opts);
   if (r.status === 401) {
     XF_SESSION = null;
+    XF_ROLE = null;
     sessionStorage.removeItem('xf_session');
+    sessionStorage.removeItem('xf_role');
     var ps = document.getElementById('pin-screen');
     if (ps) { ps.style.display = 'flex'; ps.style.opacity = '1'; ps.style.visibility = 'visible'; }
     var la = document.getElementById('launcher');
@@ -2242,12 +2244,14 @@ async function wFetch(url, opts) {
 }
 
 
+var XF_ROLE = sessionStorage.getItem('xf_role') || null;
 if (XF_SESSION) {
   document.addEventListener('DOMContentLoaded', function() {
     var ps = document.getElementById('pin-screen');
     if (ps) { ps.style.display = 'none'; ps.style.visibility = 'hidden'; }
     document.getElementById('launcher').style.display = 'flex';
-    if (typeof silentLoadSaved === 'function') silentLoadSaved();
+    // Only pre-load mgmt tabs if role was mgmt — avoids 401 noise on OPS session restore
+    if (typeof silentLoadSaved === 'function' && XF_ROLE === 'mgmt') silentLoadSaved();
   });
 }
 
@@ -2291,7 +2295,9 @@ function checkPin() {
     }).then(function(r){ return r.json(); }).then(function(d){
       if (d.token) {
         XF_SESSION = d.token;
+        XF_ROLE = type;
         sessionStorage.setItem('xf_session', d.token);
+        sessionStorage.setItem('xf_role', type);
         var ps = document.getElementById('pin-screen');
         ps.style.transition = 'opacity .3s'; ps.style.opacity = '0';
         setTimeout(function() {
@@ -5024,10 +5030,11 @@ async function fetchEbaySales(ctx) {
     if (!data.ok) throw new Error(data.error || 'Fetch failed');
 
     const ts = new Date().toLocaleString();
-    const skuLabel = data.skus + ' SKUs · ' + data.orders + ' orders';
-
-    setStatus30('✓ ' + skuLabel, true);
-    setStatus90('✓ ' + skuLabel, true);
+    // Show per-window breakdown from new response format
+    var w30 = data.windows && data.windows['30d'];
+    var w90 = data.windows && data.windows['90d'];
+    setStatus30(w30 ? ('✓ ' + w30.ordersProcessed + ' orders → ' + w30.itemsWritten + ' rows') : ('✓ ' + data.orders + ' orders'), true);
+    setStatus90(w90 ? ('✓ ' + w90.ordersProcessed + ' orders → ' + w90.itemsWritten + ' rows') : ('✓ ' + data.orders + ' orders'), true);
 
     // Update last-fetch label
     ['ro-ebay-last-fetch', 'db-ebay-last-fetch'].forEach(function(id) {
@@ -5035,7 +5042,10 @@ async function fetchEbaySales(ctx) {
       if (el) el.textContent = 'Last fetched: ' + ts;
     });
 
-    salesToast('✓ eBay sales fetched — ' + data.orders + ' orders, ' + data.skus + ' SKUs', 'success');
+    salesToast('✓ eBay sales fetched — ' + data.orders + ' orders · ' + data.skus + ' line items', 'success');
+
+    // Give Sheets formulas a moment to recalculate before reading back
+    await new Promise(function(res) { setTimeout(res, 1500); });
 
     // Now read back calculated tabs so the data flows through the pipeline
     salesToast('<span class="sales-spinner"></span>Recalculating...', 'info');
