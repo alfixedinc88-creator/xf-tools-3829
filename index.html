@@ -1,7 +1,7 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-  <!-- XFITTING-BUILD-V112-BUGF-20260331c -->
+  <!-- XFITTING-BUILD-V112-BUGF-20260331d -->
 <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate">
 <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&family=IBM+Plex+Sans:wght@300;400;500;600&display=swap" rel="stylesheet">
   <meta http-equiv="Pragma" content="no-cache">
@@ -4900,7 +4900,8 @@ async function salesLaunchApp(name) {
   document.getElementById(appId).style.flexDirection = 'column';
   setStatus(appKey, 'loading', 'Loading...');
   try {
-    await Promise.all([ salesLoadWarehouseStock(), readCalcTabs() ]);
+    await salesLoadWarehouseStock();
+    await readCalcTabs();
     lastUpdated = new Date();
     updateLastUpdatedLabels();
     buildReorderRows();
@@ -5231,7 +5232,8 @@ async function processAllReports() {
   salesToast('<span class="sales-spinner"></span>Reading calculated data from sheet...', 'info');
   setStatus('ro','loading','Reading back...');
   try {
-    await Promise.all([ salesLoadWarehouseStock(), readCalcTabs() ]);
+    await salesLoadWarehouseStock();
+    await readCalcTabs();
     lastUpdated = new Date();
     updateLastUpdatedLabels();
     buildReorderRows();
@@ -5253,7 +5255,8 @@ async function loadSavedData() {
   setStatus('db','loading','Loading...');
   salesToast('<span class="sales-spinner"></span>Loading data from sheets...', 'info');
   try {
-    await Promise.all([ salesLoadWarehouseStock(), readCalcTabs() ]);
+    await salesLoadWarehouseStock();
+    await readCalcTabs();
     lastUpdated = new Date();
     updateLastUpdatedLabels();
     buildReorderRows();
@@ -5274,7 +5277,8 @@ async function autoLoadOnLaunch(app) {
   if (!SALES_WORKER_URL) return;
   setStatus(app, 'loading', 'Loading data...');
   try {
-    await Promise.all([ salesLoadWarehouseStock(), readCalcTabs() ]);
+    await salesLoadWarehouseStock();
+    await readCalcTabs();
     lastUpdated = new Date();
     updateLastUpdatedLabels();
     buildReorderRows();
