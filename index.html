@@ -1,7 +1,7 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-  <!-- XFITTING-BUILD-V112-BUGF-20260331 -->
+  <!-- XFITTING-BUILD-V112-FEAT-20260331 -->
 <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate">
 <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&family=IBM+Plex+Sans:wght@300;400;500;600&display=swap" rel="stylesheet">
   <meta http-equiv="Pragma" content="no-cache">
@@ -4931,7 +4931,7 @@ var SALES_WORKER_URL = "https://xfitting-lookup.alfixedinc88.workers.dev";
 // Staged files: { Amz30: [[row,...]], Amz90: [...], ... }
 var staged = {};
 // Calculated data read back from sheet
-var CALC = { partSales:[], skuSales:[], jqVendor:[], effVendor:[], cogs:{}, whStock:{}, upc:{} };
+var CALC = { partSales:[], skuSales:[], jqVendor:[], effVendor:[], cogs:{}, whStock:{}, upc:{}, itemNames:{}, upcCodes:{}, skuNames:{} };
 // upc: { partNum.toLowerCase() -> { unitsPerCase, packSize } }
 // Processed reorder rows
 var RO = { jq:[], eff:[] };
@@ -4952,18 +4952,59 @@ async function salesLoadWarehouseStock() {
   if (!SALES_WORKER_URL) return;
   var SKIP = new Set(['push fit','name','location','case','each case quantity','date arrive','total quantity','brand','uint price','total','type','sku','']);
   try {
-    var res  = await wFetch(SALES_WORKER_URL + '?sheet=Master_List');
-    var json = await res.json();
-    if (json.error) throw new Error(json.error);
-    var rows = (json.values || []).map(function(r){ while(r.length < 16) r.push(''); return r; });
+    // Load Master_List, UPC sheet, and Products in parallel
+    var [mlRes, upcRes, prodRes] = await Promise.all([
+      wFetch(SALES_WORKER_URL + '?sheet=Master_List'),
+      wFetch(SALES_WORKER_URL + '?sheet=UPC').catch(function(){ return null; }),
+      wFetch(SALES_WORKER_URL + '?sheet=Products').catch(function(){ return null; })
+    ]);
+    var mlJson = await mlRes.json();
+    if (mlJson.error) throw new Error(mlJson.error);
+    var rows = (mlJson.values || []).map(function(r){ while(r.length < 16) r.push(''); return r; });
+
+    // Parse UPC sheet: col A=SKU, col B=PartNum, col C=insideUpc, col D=outsideUpc
+    CALC.upcCodes = {};  // partNum.toLowerCase() -> { insideUpc, outsideUpc }
+    if (upcRes) {
+      try {
+        var upcJson = await upcRes.json();
+        (upcJson.values || []).slice(1).forEach(function(u) {
+          var pn = String(u[1] || u[0] || '').trim().toLowerCase();
+          if (!pn) return;
+          CALC.upcCodes[pn] = {
+            insideUpc:  String(u[2] || '').trim(),
+            outsideUpc: String(u[3] || '').trim()
+          };
+        });
+      } catch(e) { /* UPC sheet optional */ }
+    }
+
+    // Parse Products sheet: col B=baseSKU, col C=name — use as fallback item name by SKU
+    CALC.skuNames = {};  // baseSKU.toLowerCase() -> item name
+    if (prodRes) {
+      try {
+        var prodJson = await prodRes.json();
+        (prodJson.values || []).slice(1).forEach(function(p) {
+          var sku  = String(p[1] || '').trim().toLowerCase();
+          var name = String(p[2] || '').trim();
+          if (sku && name) CALC.skuNames[sku] = name;
+        });
+      } catch(e) { /* Products sheet optional */ }
+    }
+
     CALC.whStock = {};
     CALC.upc = {};
+    CALC.itemNames = {};  // partNum.toLowerCase() -> item name string
     for (var i = 1; i < rows.length; i++) {
       var r = rows[i];
       var partNum = String(r[6] || '').trim();
       if (!partNum || partNum.length < 2) continue;
       if (SKIP.has(partNum.toLowerCase())) continue;
       var key = partNum.toLowerCase();
+
+      // Collect item name from col E (r[4])
+      if (!CALC.itemNames[key] && r[4]) {
+        CALC.itemNames[key] = String(r[4]).trim();
+      }
 
       // Always collect unitsPerCase from col J — even if no inventory
       if (!CALC.upc[key]) {
@@ -4982,7 +5023,7 @@ async function salesLoadWarehouseStock() {
       if (!CALC.whStock[key]) CALC.whStock[key] = [];
       CALC.whStock[key].push({ location: String(r[7]||'').trim(), units: casesNum });
     }
-    console.log('[Sales WH] loaded', Object.keys(CALC.whStock).length, 'parts,', Object.keys(CALC.upc).length, 'with UPC data');
+    console.log('[Sales WH] loaded', Object.keys(CALC.whStock).length, 'parts,', Object.keys(CALC.upc).length, 'UPC,', Object.keys(CALC.upcCodes).length, 'UPC codes');
   } catch(e) {
     console.error('[Sales WH load]', e);
   }
@@ -5297,6 +5338,18 @@ function getPartSales(partNum) {
   var pn = (partNum||'').toUpperCase();
   return CALC.partSales.find(function(r){ return (r['Part#']||'').toString().toUpperCase()===pn; }) || null;
 }
+function getItemName(partNum) {
+  // Try variant-level name first (Master_List col E), fall back to base SKU name (Products)
+  var key = (partNum||'').toLowerCase();
+  if (CALC.itemNames[key]) return CALC.itemNames[key];
+  var baseSku = salesBaseSKU(partNum).toLowerCase();
+  return CALC.skuNames[baseSku] || '';
+}
+function getUPCCodes(partNum) {
+  // Returns { insideUpc, outsideUpc } or null
+  var key = (partNum||'').toLowerCase();
+  return CALC.upcCodes[key] || null;
+}
 
 function buildReorderRows() {
   RO.jq = buildVendorRows(CALC.jqVendor, 'X Part #', 'jq');
@@ -5370,7 +5423,9 @@ function buildVendorRows(vendorData, partCol, vendor) {
     var vAmzU30 = n(r['AMZ 30 Units']||r['AMZ 30 units']||'');
     var vAmzU90 = n(r['AMZ 90 Units']||r['AMZ 90 units']||'');
 
-    return { pn, sku, daily, u30, u90, s30, whUnits, whUnitsTotal, upcData, doh, targetStock, reorderQty, urgency, cogs,
+    var itemName = getItemName(pn);
+    var upcCodes = getUPCCodes(pn);
+    return { pn, sku, itemName, upcCodes, daily, u30, u90, s30, whUnits, whUnitsTotal, upcData, doh, targetStock, reorderQty, urgency, cogs,
              estCost:reorderQty*cogs, vAmzU30, vAmzU90 };
   }).filter(Boolean).sort(function(a,b){
     var o={critical:0,watch:1,ok:2};
@@ -5407,11 +5462,15 @@ function renderVendor(vendor) {
     var cls = (align||'') + ' sortable-th';
     return '<th class="'+cls+'" onclick="vendorSortBy(\''+vendor+'\',\''+col+'\')">'+label+sortArrow(vs,col)+'</th>';
   }
+  var hasNames = Object.keys(CALC.itemNames).length > 0 || Object.keys(CALC.skuNames).length > 0;
+  var hasUPCCodes = Object.keys(CALC.upcCodes).length > 0;
   var h = '<table><thead><tr>'
     +'<th></th>'
     +vth('Part #','pn')
-    +vth('Base SKU','sku')
-    +vth('Daily','daily','s-num')
+    +vth('Base SKU','sku');
+  if (hasNames) h += '<th style="min-width:140px">Item Name</th>';
+  if (hasUPCCodes) h += '<th style="min-width:120px">Inside UPC</th><th style="min-width:120px">Outside UPC</th>';
+  h += vth('Daily','daily','s-num')
     +vth('30d Units','u30','s-num')
     +vth('90d Units','u90','s-num');
   if (hasWH) h += vth('WH Stock','whUnitsTotal','s-num') + vth('Days On Hand','doh','s-num');
@@ -5453,8 +5512,17 @@ function renderVendor(vendor) {
     h += '<tr data-u="'+r.urgency+'" data-p="'+(r.pn||'').toLowerCase()+'">'
       +'<td><input type="checkbox" class="po-cb" checked></td>'
       +'<td class="s-mono" style="font-weight:600">'+r.pn+'</td>'
-      +'<td class="s-mono" style="color:var(--text2)">'+r.sku+'</td>'
-      +'<td class="num mono">'+(r.daily>0?r.daily.toFixed(2):'—')+'</td>'
+      +'<td class="s-mono" style="color:var(--text2)">'+r.sku+'</td>';
+    if (hasNames) {
+      h += '<td style="font-size:11px;max-width:160px;white-space:normal;line-height:1.3;color:var(--text2)">'+(r.itemName||'<span style="color:var(--text3)">—</span>')+'</td>';
+    }
+    if (hasUPCCodes) {
+      var ins  = (r.upcCodes && r.upcCodes.insideUpc)  || '';
+      var out2 = (r.upcCodes && r.upcCodes.outsideUpc) || '';
+      h += '<td class="s-mono" style="font-size:11px;color:var(--text2)">'+(ins||'<span style="color:var(--text3)">—</span>')+'</td>'
+        +  '<td class="s-mono" style="font-size:11px;color:var(--text2)">'+(out2||'<span style="color:var(--text3)">—</span>')+'</td>';
+    }
+    h += '<td class="num mono">'+(r.daily>0?r.daily.toFixed(2):'—')+'</td>'
       +'<td class="num mono">'+r.u30+'</td>'
       +'<td class="num mono" style="color:var(--text2)">'+r.u90+'</td>';
     if (hasWH) {
@@ -5514,10 +5582,14 @@ function renderPOCases() {
     var cls = (align||'') + ' sortable-th';
     return '<th class="'+cls+'" onclick="poSortBy(\''+col+'\')">'+label+sortArrow(poSort,col)+'</th>';
   }
+  var poHasNames    = Object.keys(CALC.itemNames).length > 0 || Object.keys(CALC.skuNames).length > 0;
+  var poHasUPCCodes = Object.keys(CALC.upcCodes).length > 0;
   var h = '<table style="width:100%"><thead><tr>'
     + poth('Part #','pn')
-    + poth('Base SKU','sku')
-    + poth('Cases to Order','_casesToOrder','s-num')
+    + poth('Base SKU','sku');
+  if (poHasNames)    h += '<th style="min-width:140px">Item Name</th>';
+  if (poHasUPCCodes) h += '<th style="min-width:110px">Inside UPC</th><th style="min-width:110px">Outside UPC</th>';
+  h += poth('Cases to Order','_casesToOrder','s-num')
     + poth('Packs/Case','_packsPerCase','s-num')
     + poth('Reorder Qty (Pkgs)','reorderQty','s-num')
     + poth('Daily','daily','s-num')
@@ -5529,8 +5601,17 @@ function renderPOCases() {
   allRows.forEach(function(r){
     h += '<tr data-u="'+r.urgency+'">'
       + '<td class="s-mono" style="font-weight:600">'+r.pn+'</td>'
-      + '<td class="s-mono" style="color:var(--text2)">'+r.sku+'</td>'
-      + '<td class="num mono" style="font-weight:700;font-size:14px;color:var(--accent)">'+r._casesToOrder+'</td>'
+      + '<td class="s-mono" style="color:var(--text2)">'+r.sku+'</td>';
+    if (poHasNames) {
+      h += '<td style="font-size:11px;max-width:160px;white-space:normal;line-height:1.3;color:var(--text2)">'+(r.itemName||'<span style="color:var(--text3)">—</span>')+'</td>';
+    }
+    if (poHasUPCCodes) {
+      var ins  = (r.upcCodes && r.upcCodes.insideUpc)  || '';
+      var out2 = (r.upcCodes && r.upcCodes.outsideUpc) || '';
+      h += '<td class="s-mono" style="font-size:11px;color:var(--text2)">'+(ins||'<span style="color:var(--text3)">—</span>')+'</td>'
+        +  '<td class="s-mono" style="font-size:11px;color:var(--text2)">'+(out2||'<span style="color:var(--text3)">—</span>')+'</td>';
+    }
+    h += '<td class="num mono" style="font-weight:700;font-size:14px;color:var(--accent)">'+r._casesToOrder+'</td>'
       + '<td class="num mono">'+r._packsPerCase+'</td>'
       + '<td class="num mono">'+r.reorderQty+'</td>'
       + '<td class="num mono">'+(r.daily>0?r.daily.toFixed(2):'—')+'</td>'
@@ -5555,15 +5636,24 @@ function exportPOCases() {
     var o={critical:0,watch:1,ok:2};
     return o[a.urgency]-o[b.urgency] || b.daily-a.daily;
   });
-  var lines = ['Part Number,Base SKU,Cases to Order,Packs per Case,Reorder Qty (Pkgs),Daily Velocity,Days on Hand,Est. Cost,Urgency'];
+  var lines = ['Part Number,Base SKU,Item Name,Inside UPC,Outside UPC,Cases to Order,Packs per Case,Reorder Qty (Pkgs),Daily Velocity,Days on Hand,Est. Cost,Urgency'];
   allRows.forEach(function(r){
     var packsPerCase = r.upcData
       ? (r.upcData.packSize > 1 ? Math.floor(r.upcData.unitsPerCase / r.upcData.packSize) : r.upcData.unitsPerCase)
       : 1;
     var casesToOrder = packsPerCase > 0 ? Math.ceil(r.reorderQty / packsPerCase) : '';
     var casesCost    = (casesToOrder && r.cogs) ? casesToOrder * packsPerCase * r.cogs : '';
+    var ins  = (r.upcCodes && r.upcCodes.insideUpc)  || '';
+    var out2 = (r.upcCodes && r.upcCodes.outsideUpc) || '';
     lines.push([
-      r.pn, r.sku, casesToOrder, packsPerCase, r.reorderQty,
+      r.pn,
+      r.sku,
+      '"'+(r.itemName||'').replace(/"/g,"''")+'"',
+      ins,
+      out2,
+      casesToOrder,
+      packsPerCase,
+      r.reorderQty,
       r.daily.toFixed(2),
       r.doh !== null ? Math.round(r.doh) : '',
       casesCost ? fmt0(casesCost) : '',
@@ -5632,14 +5722,27 @@ function exportPO(vendor) {
     return r.reorderQty>0 && (!trs[i] || (trs[i].querySelector('.po-cb')&&trs[i].querySelector('.po-cb').checked));
   });
   if (!out.length) { salesToast('No items to export (all zero qty or unchecked)', 'error'); return; }
-  var lines = ['Part Number,Base SKU,Reorder Qty (Pkgs),Cases to Order,Daily Velocity,30d Units,90d Units,Est. Cost'];
+  var lines = ['Part Number,Base SKU,Item Name,Inside UPC,Outside UPC,Reorder Qty (Pkgs),Cases to Order,Daily Velocity,30d Units,90d Units,Est. Cost'];
   out.forEach(function(r){
     var packsPerCase = (r.upcData && r.upcData.packSize > 1)
       ? Math.floor(r.upcData.unitsPerCase / r.upcData.packSize)
       : (r.upcData ? r.upcData.unitsPerCase : 1);
     var casesToOrder = packsPerCase > 0 ? Math.ceil(r.reorderQty / packsPerCase) : '';
-    lines.push([r.pn, r.sku, r.reorderQty, casesToOrder, r.daily.toFixed(2), r.u30, r.u90,
-      r.estCost?fmt0(r.estCost):''].join(','));
+    var ins  = (r.upcCodes && r.upcCodes.insideUpc)  || '';
+    var out2 = (r.upcCodes && r.upcCodes.outsideUpc) || '';
+    lines.push([
+      r.pn,
+      r.sku,
+      '"'+(r.itemName||'').replace(/"/g,"''")+'"',
+      ins,
+      out2,
+      r.reorderQty,
+      casesToOrder,
+      r.daily.toFixed(2),
+      r.u30,
+      r.u90,
+      r.estCost?fmt0(r.estCost):''
+    ].join(','));
   });
   var blob = new Blob([lines.join('\n')],{type:'text/csv'});
   var a = document.createElement('a'); a.href=URL.createObjectURL(blob);
