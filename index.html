@@ -1,7 +1,7 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-  <!-- XFITTING-BUILD-V112-BUGF-20260331i -->
+  <!-- XFITTING-BUILD-V112-BUGF-20260331j -->
 <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate">
 <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&family=IBM+Plex+Sans:wght@300;400;500;600&display=swap" rel="stylesheet">
   <meta http-equiv="Pragma" content="no-cache">
@@ -5105,19 +5105,9 @@ async function fetchEbaySales(ctx) {
     });
     salesToast('✓ eBay fetched — ' + totalOrders + ' orders · ' + totalRows + ' rows written', 'success');
 
-    // Compute Part#_Sales + SKU_Sales in the worker — eliminates slow Sheets formula recalc
-    salesToast('<span class="sales-spinner"></span>Computing sales totals...', 'info');
-    try {
-      var compRes  = await wFetch(SALES_WORKER_URL + '/sales/compute-tabs', { method: 'POST', headers: { 'Content-Type': 'application/json' } });
-      var compData = await compRes.json();
-      if (compData.ok) {
-        salesToast('✓ Computed — ' + compData.parts + ' parts, ' + compData.skus + ' SKUs', 'success');
-      } else {
-        salesToast('⚠ Compute warning: ' + (compData.error || 'unknown'), 'error');
-      }
-    } catch(compErr) {
-      salesToast('⚠ Compute error: ' + compErr.message, 'error');
-    }
+    // Compute Part#_Sales + SKU_Sales via 4-step chunked approach
+    salesToast('<span class="sales-spinner"></span>Computing sales totals (4 steps)...', 'info');
+    try { await recomputeTabsSilent(); } catch(compErr) { salesToast('⚠ Compute error: ' + compErr.message, 'error'); }
 
     salesToast('<span class="sales-spinner"></span>Reading calc tabs...', 'info');
     try {
@@ -5239,14 +5229,9 @@ async function processAllReports() {
     return;
   }
 
-  // Compute Part#_Sales + SKU_Sales in worker (no Sheets formula dependency)
-  salesToast('<span class="sales-spinner"></span>Computing sales totals...', 'info');
-  try {
-    var cRes  = await wFetch(SALES_WORKER_URL + '/sales/compute-tabs', { method: 'POST', headers: { 'Content-Type': 'application/json' } });
-    var cData = await cRes.json();
-    if (cData.ok) salesToast('✓ Computed — ' + cData.parts + ' parts, ' + cData.skus + ' SKUs', 'success');
-    else salesToast('⚠ Compute: ' + (cData.error||'error'), 'error');
-  } catch(ce) { salesToast('⚠ Compute error: ' + ce.message, 'error'); }
+  // Compute Part#_Sales + SKU_Sales via 4-step chunked approach
+  salesToast('<span class="sales-spinner"></span>Computing sales totals (4 steps)...', 'info');
+  try { await recomputeTabsSilent(); } catch(ce) { salesToast('⚠ Compute error: ' + ce.message, 'error'); }
 
   // Now read back all calculated tabs + warehouse stock
   salesToast('<span class="sales-spinner"></span>Reading calculated data from sheet...', 'info');
@@ -6178,20 +6163,56 @@ function workerPut(tab, rows) {
 
 
 
-// ── recomputeTabs — standalone trigger for /sales/compute-tabs ───────────────
+// ── recomputeTabs — 4-step chunked compute to stay under 30s worker limit ───
+// Each step is a separate worker invocation with its own budget.
+// Browser merges the accumulators and sends merged data to the write step.
 async function recomputeTabs() {
   if (salesFetchLock) { salesToast('Fetch in progress — wait for it to finish', 'error'); return; }
   salesFetchLock = true;
   setStatus('ro', 'loading', 'Recomputing...');
   setStatus('db', 'loading', 'Recomputing...');
-  salesToast('<span class="sales-spinner"></span>Recomputing sales totals from raw data...', 'info');
-  try {
-    var res  = await wFetch(SALES_WORKER_URL + '/sales/compute-tabs', {
-      method: 'POST', headers: { 'Content-Type': 'application/json' }
+
+  async function computeStep(step, body) {
+    var url = SALES_WORKER_URL + '/sales/compute-tabs?step=' + step;
+    var res  = await wFetch(url, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body || {})
     });
     var data = await res.json();
-    if (!data.ok) throw new Error(data.error || 'Compute failed');
-    salesToast('✓ Computed — ' + data.parts + ' parts · ' + data.skus + ' SKUs · reading back...', 'success');
+    if (!data.ok) throw new Error('Step ' + step + ' failed: ' + (data.error || 'unknown'));
+    return data;
+  }
+
+  function mergeAcc(target, source) {
+    for (var pn in source) {
+      if (!target[pn]) target[pn] = {};
+      for (var k in source[pn]) {
+        target[pn][k] = (target[pn][k] || 0) + (source[pn][k] || 0);
+      }
+    }
+  }
+
+  try {
+    salesToast('<span class="sales-spinner"></span>Step 1/4 — Computing eBay sales...', 'info');
+    var ebayData = await computeStep('ebay');
+    salesToast('✓ eBay: ' + (ebayData.rows30||0) + ' / ' + (ebayData.rows90||0) + ' rows · Step 2/4 Amazon...', 'success');
+
+    var amzData = await computeStep('amz');
+    salesToast('✓ Amazon: ' + (amzData.rows30||0) + ' / ' + (amzData.rows90||0) + ' rows · Step 3/4 Shopify...', 'success');
+
+    var xfData = await computeStep('xf');
+    salesToast('✓ Shopify: ' + (xfData.rows30||0) + ' / ' + (xfData.rows90||0) + ' rows · Step 4/4 Writing...', 'success');
+
+    // Merge all accumulators in the browser
+    var merged = {};
+    mergeAcc(merged, ebayData.acc || {});
+    mergeAcc(merged, amzData.acc  || {});
+    mergeAcc(merged, xfData.acc   || {});
+
+    var writeData = await computeStep('write', { acc: merged });
+    salesToast('✓ Written — ' + writeData.parts + ' parts · ' + writeData.skus + ' SKUs · reading back...', 'success');
+
     await salesLoadWarehouseStock();
     await readCalcTabs();
     lastUpdated = new Date();
@@ -6209,6 +6230,39 @@ async function recomputeTabs() {
   } finally {
     salesFetchLock = false;
   }
+}
+
+
+// ── recomputeTabsSilent — same as recomputeTabs but no status/lock updates ───
+// Used internally after eBay fetch and CSV upload — caller manages the lock.
+async function recomputeTabsSilent() {
+  async function computeStep(step, body) {
+    var res  = await wFetch(SALES_WORKER_URL + '/sales/compute-tabs?step=' + step, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body || {})
+    });
+    var data = await res.json();
+    if (!data.ok) throw new Error('Step ' + step + ': ' + (data.error || 'unknown'));
+    return data;
+  }
+  function mergeAcc(target, source) {
+    for (var pn in source) {
+      if (!target[pn]) target[pn] = {};
+      for (var k in source[pn]) target[pn][k] = (target[pn][k]||0) + (source[pn][k]||0);
+    }
+  }
+  var ebayData = await computeStep('ebay');
+  salesToast('✓ eBay computed · Amazon next...', 'success');
+  var amzData  = await computeStep('amz');
+  salesToast('✓ Amazon computed · Shopify next...', 'success');
+  var xfData   = await computeStep('xf');
+  salesToast('✓ Shopify computed · Writing...', 'success');
+  var merged = {};
+  mergeAcc(merged, ebayData.acc||{});
+  mergeAcc(merged, amzData.acc||{});
+  mergeAcc(merged, xfData.acc||{});
+  var writeData = await computeStep('write', { acc: merged });
+  salesToast('✓ Computed — ' + writeData.parts + ' parts · ' + writeData.skus + ' SKUs', 'success');
 }
 
 // ─── SKU MAP ─────────────────────────────────────────────────────────────────
