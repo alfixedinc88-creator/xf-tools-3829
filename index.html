@@ -1,7 +1,7 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-  <!-- XFITTING-BUILD-V112-BUGF-20260331b -->
+  <!-- XFITTING-BUILD-V112-BUGF-20260331c -->
 <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate">
 <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&family=IBM+Plex+Sans:wght@300;400;500;600&display=swap" rel="stylesheet">
   <meta http-equiv="Pragma" content="no-cache">
@@ -5040,60 +5040,77 @@ function findCol(headers, keys) {
 
 // ─── FILE UPLOAD & CSV PARSING ───────────────────────────────────────────────
 
-// ── fetchEbaySales — Fetch eBay orders via API and write to sheet ─────────────
+// ── fetchEbaySales — Fetch eBay orders in TWO separate worker calls ─────────────
+// Each call gets its own 1000-subrequest budget — sending both in one call exceeds the limit.
 async function fetchEbaySales(ctx) {
-  // ctx = 'ro' (reorder) or 'db' (dashboard)
   const btnId = ctx + '-ebay-fetch-btn';
   const btn = document.getElementById(btnId);
   if (btn) { btn.disabled = true; btn.textContent = '⟳ Fetching...'; }
 
   function setStatus30(msg, ok) {
-    const el30 = document.getElementById(ctx + '-ebay30-status');
-    if (el30) { el30.textContent = msg; el30.style.color = ok ? 'var(--green)' : ok === false ? 'var(--red)' : 'var(--text3)'; }
+    const el = document.getElementById(ctx + '-ebay30-status');
+    if (el) { el.textContent = msg; el.style.color = ok ? 'var(--green)' : ok === false ? 'var(--red)' : 'var(--text3)'; }
   }
   function setStatus90(msg, ok) {
-    const el90 = document.getElementById(ctx + '-ebay90-status');
-    if (el90) { el90.textContent = msg; el90.style.color = ok ? 'var(--green)' : ok === false ? 'var(--red)' : 'var(--text3)'; }
+    const el = document.getElementById(ctx + '-ebay90-status');
+    if (el) { el.textContent = msg; el.style.color = ok ? 'var(--green)' : ok === false ? 'var(--red)' : 'var(--text3)'; }
   }
 
-  setStatus30('Fetching from eBay...', null);
-  setStatus90('Fetching from eBay...', null);
-  setStatus('ro', 'loading', 'Fetching eBay...');
-  setStatus('db', 'loading', 'Fetching eBay...');
-  salesToast('<span class="sales-spinner"></span>Fetching eBay orders (30d + 90d)...', 'info');
+  setStatus30('Fetching 30d...', null);
+  setStatus90('Waiting...', null);
+  setStatus('ro', 'loading', 'Fetching eBay 30d...');
+  setStatus('db', 'loading', 'Fetching eBay 30d...');
+  salesToast('<span class="sales-spinner"></span>Fetching eBay 30d orders...', 'info');
 
-  salesFetchLock = true;  // block readCalcTabs while fetch+write is in progress
+  salesFetchLock = true;
+  var totalOrders = 0, totalRows = 0;
   try {
-    const res  = await wFetch(SALES_WORKER_URL + '/ebay/sales-fetch', {
+    // ── Call 1: 30d — separate invocation = fresh 1000-subrequest budget ──
+    const res30 = await wFetch(SALES_WORKER_URL + '/ebay/sales-fetch', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ window: 'both' })
+      body: JSON.stringify({ window: '30d' })
     });
-    const data = await res.json();
-    if (!data.ok) throw new Error(data.error || 'Fetch failed');
+    const data30 = await res30.json();
+    if (!data30.ok) throw new Error('30d: ' + (data30.error || 'Fetch failed'));
+    var w30 = data30.windows && data30.windows['30d'];
+    var orders30 = w30 ? w30.ordersProcessed : (data30.orders || 0);
+    var rows30   = w30 ? w30.itemsWritten    : (data30.skus   || 0);
+    totalOrders += orders30; totalRows += rows30;
+    setStatus30('✓ ' + orders30 + ' orders → ' + rows30 + ' rows', true);
+    salesToast('✓ 30d done — ' + orders30 + ' orders. Fetching 90d...', 'success');
+
+    // ── Call 2: 90d — new invocation = fresh budget ──
+    setStatus90('Fetching 90d...', null);
+    setStatus('ro', 'loading', 'Fetching eBay 90d...');
+    setStatus('db', 'loading', 'Fetching eBay 90d...');
+    const res90 = await wFetch(SALES_WORKER_URL + '/ebay/sales-fetch', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ window: '90d' })
+    });
+    const data90 = await res90.json();
+    if (!data90.ok) throw new Error('90d: ' + (data90.error || 'Fetch failed'));
+    var w90 = data90.windows && data90.windows['90d'];
+    var orders90 = w90 ? w90.ordersProcessed : (data90.orders || 0);
+    var rows90   = w90 ? w90.itemsWritten    : (data90.skus   || 0);
+    totalOrders += orders90; totalRows += rows90;
+    setStatus90('✓ ' + orders90 + ' orders → ' + rows90 + ' rows', true);
 
     const ts = new Date().toLocaleString();
-    // Show per-window breakdown from new response format
-    var w30 = data.windows && data.windows['30d'];
-    var w90 = data.windows && data.windows['90d'];
-    setStatus30(w30 ? ('✓ ' + w30.ordersProcessed + ' orders → ' + w30.itemsWritten + ' rows') : ('✓ ' + data.orders + ' orders'), true);
-    setStatus90(w90 ? ('✓ ' + w90.ordersProcessed + ' orders → ' + w90.itemsWritten + ' rows') : ('✓ ' + data.orders + ' orders'), true);
-
-    // Update last-fetch label
     ['ro-ebay-last-fetch', 'db-ebay-last-fetch'].forEach(function(id) {
       var el = document.getElementById(id);
       if (el) el.textContent = 'Last fetched: ' + ts;
     });
-
-    salesToast('✓ eBay sales fetched — ' + data.orders + ' orders · ' + data.skus + ' line items', 'success');
+    salesToast('✓ eBay fetched — ' + totalOrders + ' orders · ' + totalRows + ' rows written', 'success');
 
     // Give Sheets formulas a moment to recalculate before reading back
-    await new Promise(function(res) { setTimeout(res, 1500); });
+    await new Promise(function(r) { setTimeout(r, 2000); });
 
-    // Now read back calculated tabs so the data flows through the pipeline
-    salesToast('<span class="sales-spinner"></span>Recalculating...', 'info');
+    salesToast('<span class="sales-spinner"></span>Reading calc tabs...', 'info');
     try {
-      await Promise.all([ salesLoadWarehouseStock(), readCalcTabs() ]);
+      await salesLoadWarehouseStock();
+      await readCalcTabs();
       lastUpdated = new Date();
       updateLastUpdatedLabels();
       buildReorderRows();
@@ -5101,11 +5118,11 @@ async function fetchEbaySales(ctx) {
       var whCount = Object.keys(CALC.whStock).length;
       setStatus('ro', 'ok', 'WH: ' + whCount + ' parts');
       setStatus('db', 'ok', 'Up to date');
-      salesToast('✓ eBay data loaded — ' + CALC.partSales.length + ' parts', 'success');
+      salesToast('✓ Data loaded — ' + CALC.partSales.length + ' parts', 'success');
     } catch(calcErr) {
-      setStatus('ro', 'err', 'Calc error');
-      setStatus('db', 'err', 'Calc error');
-      salesToast('Calc error after fetch: ' + calcErr.message, 'error');
+      setStatus('ro', 'err', 'Calc read error');
+      setStatus('db', 'err', 'Calc read error');
+      salesToast('Calc error: ' + calcErr.message, 'error');
     }
 
   } catch(e) {
@@ -5115,7 +5132,7 @@ async function fetchEbaySales(ctx) {
     setStatus('db', 'err', 'eBay fetch failed');
     salesToast('eBay fetch error: ' + e.message, 'error');
   } finally {
-    salesFetchLock = false;  // release lock so readCalcTabs can run again
+    salesFetchLock = false;
     if (btn) { btn.disabled = false; btn.textContent = '↓ Fetch eBay Sales'; }
   }
 }
