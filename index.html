@@ -1,7 +1,7 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-  <!-- XFITTING-BUILD-V112-BUGF-20260331k -->
+  <!-- XFITTING-BUILD-V112-FEAT-20260331l -->
 <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate">
 <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&family=IBM+Plex+Sans:wght@300;400;500;600&display=swap" rel="stylesheet">
   <meta http-equiv="Pragma" content="no-cache">
@@ -6212,15 +6212,19 @@ async function recomputeTabs() {
   }
 
   try {
-    salesToast('<span class="sales-spinner"></span>Step 1/4 — Computing eBay sales...', 'info');
+    salesToast('<span class="sales-spinner"></span>Step 1/5 — Loading UPC master list...', 'info');
+    var upcData = await computeStep('upc');
+    salesToast('✓ UPC: ' + (upcData.totalParts||0) + ' parts · ' + (upcData.oosCount||0) + ' OOS · Step 2/5 eBay...', 'success');
+
+    salesToast('<span class="sales-spinner"></span>Step 2/5 — Computing eBay sales...', 'info');
     var ebayData = await computeStep('ebay');
-    salesToast('✓ eBay: ' + (ebayData.rows30||0) + ' / ' + (ebayData.rows90||0) + ' rows · Step 2/4 Amazon...', 'success');
+    salesToast('✓ eBay: ' + (ebayData.rows30||0) + ' / ' + (ebayData.rows90||0) + ' rows · Step 3/5 Amazon...', 'success');
 
     var amzData = await computeStep('amz');
-    salesToast('✓ Amazon: ' + (amzData.rows30||0) + ' / ' + (amzData.rows90||0) + ' rows · Step 3/4 Shopify...', 'success');
+    salesToast('✓ Amazon: ' + (amzData.rows30||0) + ' / ' + (amzData.rows90||0) + ' rows · Step 4/5 Shopify...', 'success');
 
     var xfData = await computeStep('xf');
-    salesToast('✓ Shopify: ' + (xfData.rows30||0) + ' / ' + (xfData.rows90||0) + ' rows · Step 4/4 Writing...', 'success');
+    salesToast('✓ Shopify: ' + (xfData.rows30||0) + ' / ' + (xfData.rows90||0) + ' rows · Step 5/5 Writing...', 'success');
 
     // Merge all accumulators in the browser
     var merged = {};
@@ -6228,7 +6232,11 @@ async function recomputeTabs() {
     mergeAcc(merged, amzData.acc  || {});
     mergeAcc(merged, xfData.acc   || {});
 
-    var writeData = await computeStep('write', { acc: merged });
+    var writeData = await computeStep('write', {
+      acc:      merged,
+      upcParts: upcData.upcParts || [],
+      oosParts: upcData.oosParts || []
+    });
     salesToast('✓ Written — ' + writeData.parts + ' parts · ' + writeData.skus + ' SKUs · reading back...', 'success');
 
     await salesLoadWarehouseStock();
@@ -6269,6 +6277,8 @@ async function recomputeTabsSilent() {
       for (var k in source[pn]) target[pn][k] = (target[pn][k]||0) + (source[pn][k]||0);
     }
   }
+  var upcData  = await computeStep('upc');
+  salesToast('✓ UPC: ' + (upcData.totalParts||0) + ' parts · eBay next...', 'success');
   var ebayData = await computeStep('ebay');
   salesToast('✓ eBay computed · Amazon next...', 'success');
   var amzData  = await computeStep('amz');
@@ -6279,7 +6289,11 @@ async function recomputeTabsSilent() {
   mergeAcc(merged, ebayData.acc||{});
   mergeAcc(merged, amzData.acc||{});
   mergeAcc(merged, xfData.acc||{});
-  var writeData = await computeStep('write', { acc: merged });
+  var writeData = await computeStep('write', {
+    acc: merged,
+    upcParts: upcData.upcParts || [],
+    oosParts: upcData.oosParts || []
+  });
   salesToast('✓ Computed — ' + writeData.parts + ' parts · ' + writeData.skus + ' SKUs', 'success');
 }
 
