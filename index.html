@@ -1,7 +1,7 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-  <!-- XFITTING-BUILD-V112-FEAT-20260331g -->
+  <!-- XFITTING-BUILD-V112-BUGF-20260331h -->
 <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate">
 <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&family=IBM+Plex+Sans:wght@300;400;500;600&display=swap" rel="stylesheet">
   <meta http-equiv="Pragma" content="no-cache">
@@ -5325,30 +5325,21 @@ async function silentLoadSaved() {
 async function readCalcTabs() {
   if (salesFetchLock) { console.log('[readCalcTabs] skipped — fetch in progress'); return; }
 
-  // Read each tab individually with fault tolerance + one retry on 524.
-  // SKU_Sales / Part#_Sales have heavy BYROW formulas that can timeout on first read
-  // after a fresh data write — retry after 3s gives Sheets time to finish recalculating.
+  // Read each tab with a 25s timeout — fails fast instead of hanging forever.
+  // No retry loop since Recompute writes plain values (no formula recalc needed).
   async function readTabSafe(tab) {
-    for (var attempt = 1; attempt <= 2; attempt++) {
-      try {
-        var rows = await workerGet(tab);
-        console.log('[readCalcTabs]', tab, rows.length, 'rows');
-        return rows;
-      } catch(e) {
-        var is524 = e.message && e.message.includes('524');
-        console.warn('[readCalcTabs]', tab, 'attempt', attempt, 'failed:', e.message.slice(0,60));
-        if (attempt === 1 && is524) {
-          // Sheets formula still recalculating — wait 4s and retry once
-          salesToast('<span class="sales-spinner"></span>' + tab + ' recalculating, retrying...', 'info');
-          await new Promise(function(r){ setTimeout(r, 4000); });
-        } else {
-          // Second failure or non-524 error — return empty, don't crash
-          salesToast('⚠ ' + tab + ' unavailable — ' + e.message.slice(0,50), 'error');
-          return [];
-        }
-      }
+    try {
+      var timeoutPromise = new Promise(function(_, reject) {
+        setTimeout(function() { reject(new Error('Timeout reading ' + tab + ' (25s)')); }, 25000);
+      });
+      var rows = await Promise.race([ workerGet(tab), timeoutPromise ]);
+      console.log('[readCalcTabs]', tab, rows.length, 'rows');
+      return rows;
+    } catch(e) {
+      console.warn('[readCalcTabs]', tab, 'failed:', e.message.slice(0, 80));
+      salesToast('⚠ ' + tab + ' — ' + e.message.slice(0, 60), 'error');
+      return [];
     }
-    return [];
   }
 
   var tabs = ['Part#_Sales', 'SKU_Sales', 'JQ_Vendor', 'EFF_Vendor', 'COGS'];
