@@ -1,7 +1,7 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-  <!-- XFITTING-BUILD-V112-BUGF-20260331j -->
+  <!-- XFITTING-BUILD-V112-BUGF-20260331k -->
 <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate">
 <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&family=IBM+Plex+Sans:wght@300;400;500;600&display=swap" rel="stylesheet">
   <meta http-equiv="Pragma" content="no-cache">
@@ -5327,24 +5327,42 @@ async function readCalcTabs() {
     }
   }
 
-  var tabs = ['Part#_Sales', 'SKU_Sales', 'JQ_Vendor', 'EFF_Vendor', 'COGS'];
-  var results = [];
-  for (var i = 0; i < tabs.length; i++) {
-    results.push(await readTabSafe(tabs[i]));
+  // Read static vendor/COGS tabs first — always small and fast
+  var staticTabs = ['JQ_Vendor', 'EFF_Vendor', 'COGS'];
+  var staticResults = [];
+  for (var i = 0; i < staticTabs.length; i++) {
+    staticResults.push(await readTabSafe(staticTabs[i]));
   }
-
-  CALC.partSales  = sheetToObjs(results[0]);
-  CALC.skuSales   = sheetToObjs(results[1]);
-  CALC.jqVendor   = sheetToObjs(results[2]);
-  CALC.effVendor  = sheetToObjs(results[3]);
-
-  // COGS → map { SKU: price }
+  CALC.jqVendor = sheetToObjs(staticResults[0]);
+  CALC.effVendor = sheetToObjs(staticResults[1]);
   CALC.cogs = {};
-  sheetToObjs(results[4]).forEach(function(r) {
+  sheetToObjs(staticResults[2]).forEach(function(r) {
     var sku = (r['SKU'] || r['sku'] || '').toString().trim().toUpperCase();
     var price = n(r['Unit Price'] || r['unit price'] || r['Price'] || '');
     if (sku) CALC.cogs[sku] = price;
   });
+
+  // Read Part#_Sales + SKU_Sales — these are populated by Recompute (plain values, no formulas)
+  // Use a short 10s timeout since these should return fast once formulas are removed
+  async function readTabFast(tab) {
+    try {
+      var timeoutP = new Promise(function(_, rej){ setTimeout(function(){ rej(new Error('Timeout ' + tab)); }, 10000); });
+      return await Promise.race([ workerGet(tab), timeoutP ]);
+    } catch(e) {
+      console.log('[readCalcTabs]', tab, 'skipped:', e.message.slice(0,50));
+      return [];
+    }
+  }
+  var partRows = await readTabFast('Part#_Sales');
+  if (partRows.length > 1) {
+    CALC.partSales = sheetToObjs(partRows);
+    var skuRows = await readTabFast('SKU_Sales');
+    CALC.skuSales = sheetToObjs(skuRows);
+    console.log('[readCalcTabs] Part#_Sales:', CALC.partSales.length, 'SKU_Sales:', CALC.skuSales.length);
+  } else {
+    console.log('[readCalcTabs] Part#_Sales empty — run ⚡ Recompute to populate');
+    salesToast('No sales data yet — hit ⚡ Recompute Totals to build from raw data', 'info');
+  }
 }
 
 function sheetToObjs(rows) {
