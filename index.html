@@ -1,7 +1,7 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-  <!-- XFITTING-BUILD-V112-FEAT-20260331 -->
+  <!-- XFITTING-BUILD-V112-BUGF-20260331b -->
 <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate">
 <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&family=IBM+Plex+Sans:wght@300;400;500;600&display=swap" rel="stylesheet">
   <meta http-equiv="Pragma" content="no-cache">
@@ -4946,6 +4946,7 @@ var skusTableSort  = { col: 'u30', dir: -1 };
 var lastUpdated = null;
 var aiHistory = { ro: [], db: [] };
 var toastTimer = null;
+var salesFetchLock = false;  // prevents overlapping sheet reads during eBay fetch
 
 // ─── WAREHOUSE STOCK ─────────────────────────────────────────────────────────
 async function salesLoadWarehouseStock() {
@@ -5061,6 +5062,7 @@ async function fetchEbaySales(ctx) {
   setStatus('db', 'loading', 'Fetching eBay...');
   salesToast('<span class="sales-spinner"></span>Fetching eBay orders (30d + 90d)...', 'info');
 
+  salesFetchLock = true;  // block readCalcTabs while fetch+write is in progress
   try {
     const res  = await wFetch(SALES_WORKER_URL + '/ebay/sales-fetch', {
       method: 'POST',
@@ -5113,6 +5115,7 @@ async function fetchEbaySales(ctx) {
     setStatus('db', 'err', 'eBay fetch failed');
     salesToast('eBay fetch error: ' + e.message, 'error');
   } finally {
+    salesFetchLock = false;  // release lock so readCalcTabs can run again
     if (btn) { btn.disabled = false; btn.textContent = '↓ Fetch eBay Sales'; }
   }
 }
@@ -5270,21 +5273,24 @@ async function autoLoadOnLaunch(app) {
 
 async function silentLoadSaved() {
   // Pre-fetch in background after PIN — salesLaunchApp will rebuild rows on open
-  if (!SALES_WORKER_URL) return;
+  if (!SALES_WORKER_URL || salesFetchLock) return;
   try {
-    await Promise.all([ salesLoadWarehouseStock(), readCalcTabs() ]);
+    await salesLoadWarehouseStock();
+    await readCalcTabs();  // sequential — not parallel with WH load
     lastUpdated = new Date();
   } catch(e) { /* silent */ }
 }
 
 async function readCalcTabs() {
-  var results = await Promise.all([
-    workerGet('Part#_Sales'),
-    workerGet('SKU_Sales'),
-    workerGet('JQ_Vendor'),
-    workerGet('EFF_Vendor'),
-    workerGet('COGS')
-  ]);
+  // Sequential reads — parallel Sheet API calls inside the worker share the subrequest budget
+  // and cause 524s when multiple readCalcTabs calls overlap with a fetch in progress.
+  if (salesFetchLock) { console.log('[readCalcTabs] skipped — fetch in progress'); return; }
+
+  var tabs = ['Part#_Sales', 'SKU_Sales', 'JQ_Vendor', 'EFF_Vendor', 'COGS'];
+  var results = [];
+  for (var i = 0; i < tabs.length; i++) {
+    results.push(await workerGet(tabs[i]));
+  }
 
   CALC.partSales  = sheetToObjs(results[0]);
   CALC.skuSales   = sheetToObjs(results[1]);
