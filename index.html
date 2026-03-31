@@ -1,7 +1,7 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-  <!-- XFITTING-BUILD-V112-BUGF-20260331d -->
+  <!-- XFITTING-BUILD-V112-FEAT-20260331e -->
 <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate">
 <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&family=IBM+Plex+Sans:wght@300;400;500;600&display=swap" rel="stylesheet">
   <meta http-equiv="Pragma" content="no-cache">
@@ -6052,11 +6052,12 @@ function skusTableSortBy(col) {
 
 // ─── TAB SWITCHERS ───────────────────────────────────────────────────────────
 function roTab(name) {
-  ['upload','jq','eff','po','ai'].forEach(function(t){
+  ['upload','jq','eff','po','ai','skumap'].forEach(function(t){
     document.getElementById('ro-tab-'+t).className='sales-tab-btn'+(t===name?' active':'');
     document.getElementById('ro-panel-'+t).className='sales-panel'+(t===name?' active':'');
   });
   if (name==='po') renderPOCases();
+  if (name==='skumap') loadUnmappedSkus();
   if (name==='ai' && CALC.jqVendor.length && !document.getElementById('ro-ai-auto-body').dataset.loaded) {
     runAutoInsights('ro');
   }
@@ -6139,6 +6140,138 @@ function workerPut(tab, rows) {
   });
 }
 
+
+
+// ─── SKU MAP ─────────────────────────────────────────────────────────────────
+var skuMapRows = [];  // [{ sku, units, suggestion, masterPart, confirmed }]
+
+async function loadUnmappedSkus() {
+  var wrap   = document.getElementById('skumap-wrap');
+  var status = document.getElementById('skumap-status');
+  var summary = document.getElementById('skumap-summary');
+  wrap.innerHTML = '<div style="padding:24px;text-align:center;color:var(--text3)"><span class="sales-spinner"></span> Loading unmapped SKUs...</div>';
+  status.textContent = '';
+  try {
+    var res  = await wFetch(SALES_WORKER_URL + '/sales/unmapped-skus');
+    var data = await res.json();
+    if (!data.ok) throw new Error(data.error || 'Failed');
+
+    summary.textContent = data.unmapped.length + ' unmapped · ' + data.matchedCount + ' auto-matched · ' + data.mappedCount + ' in map · ' + data.totalSkus + ' total eBay SKUs';
+
+    if (!data.unmapped.length) {
+      wrap.innerHTML = '<div class="sales-empty"><div class="sales-empty-icon">✅</div><div class="sales-empty-title">All eBay SKUs matched</div><div class="sales-empty-sub">No unmapped SKUs found</div></div>';
+      skuMapRows = [];
+      return;
+    }
+
+    // Pre-load existing map to preserve confirmed mappings
+    try {
+      var mapRes  = await wFetch(SALES_WORKER_URL + '/sales/sku-map');
+      var mapData = await mapRes.json();
+      var existingMap = {};
+      (mapData.values || []).slice(1).forEach(function(r) {
+        if (r[0] && r[1]) existingMap[r[0].toUpperCase()] = r[1];
+      });
+      data.unmapped.forEach(function(r) {
+        var ex = existingMap[r.sku.toUpperCase()];
+        r.masterPart = ex || r.suggestion || '';
+        r.confirmed  = !!ex;
+      });
+    } catch(e) {
+      data.unmapped.forEach(function(r) {
+        r.masterPart = r.suggestion || '';
+        r.confirmed  = false;
+      });
+    }
+
+    skuMapRows = data.unmapped;
+    renderSkuMap();
+    status.textContent = 'Edit the Master Part# column, then click Save Map to write to sheet.';
+  } catch(e) {
+    wrap.innerHTML = '<div style="padding:24px;color:var(--red)">Error: ' + e.message + '</div>';
+  }
+}
+
+function renderSkuMap() {
+  var wrap = document.getElementById('skumap-wrap');
+  if (!skuMapRows.length) {
+    wrap.innerHTML = '<div class="sales-empty"><div class="sales-empty-icon">✅</div><div class="sales-empty-title">All SKUs matched</div></div>';
+    return;
+  }
+  var h = '<table style="width:100%"><thead><tr>'
+    + '<th>eBay SKU</th>'
+    + '<th style="min-width:160px">Master Part # <span style="font-weight:400;font-size:10px;color:var(--text3)">(edit to override)</span></th>'
+    + '<th class="s-num">Units Sold</th>'
+    + '<th>Suggested</th>'
+    + '<th style="text-align:center">Status</th>'
+    + '</tr></thead><tbody>';
+
+  skuMapRows.forEach(function(r, i) {
+    var statusBadge = r.confirmed
+      ? '<span style="font-size:10px;padding:2px 8px;border-radius:20px;background:var(--green-bg);color:var(--green);font-family:var(--mono)">SAVED</span>'
+      : (r.masterPart
+        ? '<span style="font-size:10px;padding:2px 8px;border-radius:20px;background:var(--orange-bg);color:var(--orange);font-family:var(--mono)">PENDING</span>'
+        : '<span style="font-size:10px;padding:2px 8px;border-radius:20px;background:var(--red-bg);color:var(--red);font-family:var(--mono)">UNMAPPED</span>');
+    h += '<tr>'
+      + '<td class="s-mono" style="font-weight:600">' + r.sku + '</td>'
+      + '<td><input type="text" class="skumap-input" data-idx="'+i+'" value="'+(r.masterPart||'')+'" placeholder="Enter part number..." onchange="skuMapEdit('+i+', this.value)" style="width:100%;font-family:var(--mono);font-size:12px;padding:4px 8px;border:1px solid var(--border);border-radius:6px;background:var(--bg);color:var(--text)"></td>'
+      + '<td class="num mono">' + r.units.toLocaleString() + '</td>'
+      + '<td class="s-mono" style="color:var(--text3);font-size:11px">'+(r.suggestion||'—')+'</td>'
+      + '<td style="text-align:center">' + statusBadge + '</td>'
+      + '</tr>';
+  });
+  h += '</tbody></table>';
+  wrap.innerHTML = h;
+}
+
+function skuMapEdit(idx, val) {
+  if (!skuMapRows[idx]) return;
+  skuMapRows[idx].masterPart = val.trim();
+  skuMapRows[idx].confirmed  = false;
+  // Update status badge inline
+  var rows = document.querySelectorAll('#skumap-wrap tbody tr');
+  if (rows[idx]) {
+    var badge = rows[idx].querySelector('td:last-child');
+    if (badge) badge.innerHTML = val.trim()
+      ? '<span style="font-size:10px;padding:2px 8px;border-radius:20px;background:var(--orange-bg);color:var(--orange);font-family:var(--mono)">PENDING</span>'
+      : '<span style="font-size:10px;padding:2px 8px;border-radius:20px;background:var(--red-bg);color:var(--red);font-family:var(--mono)">UNMAPPED</span>';
+  }
+}
+
+async function saveSkuMap() {
+  var toSave = skuMapRows.filter(function(r){ return r.masterPart && r.masterPart.trim(); });
+  if (!toSave.length) { salesToast('No mappings to save — fill in Master Part# values first', 'error'); return; }
+  salesToast('<span class="sales-spinner"></span>Saving ' + toSave.length + ' mappings...', 'info');
+  try {
+    var rows = toSave.map(function(r){ return [r.sku, r.masterPart.trim()]; });
+    var res  = await wFetch(SALES_WORKER_URL + '/sales/sku-map', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ rows: rows })
+    });
+    var data = await res.json();
+    if (!data.ok) throw new Error(data.error || 'Save failed');
+    toSave.forEach(function(r){ r.confirmed = true; });
+    renderSkuMap();
+    salesToast('✓ Saved ' + data.saved + ' SKU mappings to sheet', 'success');
+  } catch(e) {
+    salesToast('Save error: ' + e.message, 'error');
+  }
+}
+
+function exportSkuMap() {
+  var toExport = skuMapRows.filter(function(r){ return r.masterPart; });
+  if (!toExport.length) { salesToast('No mappings to export', 'error'); return; }
+  var lines = ['eBay SKU,Master Part#,Units Sold,Suggested'];
+  toExport.forEach(function(r){
+    lines.push([r.sku, r.masterPart, r.units, r.suggestion||''].join(','));
+  });
+  var blob = new Blob([lines.join('\n')], {type:'text/csv'});
+  var a = document.createElement('a'); a.href = URL.createObjectURL(blob);
+  a.download = 'SKU_Map_'+new Date().toISOString().slice(0,10)+'.csv';
+  a.click();
+  salesToast('SKU Map exported — '+toExport.length+' rows', 'success');
+}
 
 // ─── AI AGENT ────────────────────────────────────────────────────────────────
 // Conversation history per app context
@@ -6671,6 +6804,7 @@ function salesToast(msg, type) {
     <button class="sales-tab-btn" id="ro-tab-eff" onclick="roTab('eff')">EFF Vendor <span class="sales-tab-badge" id="eff-badge" style="display:none">0</span></button>
     <button class="sales-tab-btn" id="ro-tab-po" onclick="roTab('po')">📦 PO Cases</button>
     <button class="sales-tab-btn" id="ro-tab-ai" onclick="roTab('ai')">✦ AI Insights</button>
+    <button class="sales-tab-btn" id="ro-tab-skumap" onclick="roTab('skumap')">🔗 SKU Map</button>
   </div>
   <div class="sales-body">
 
@@ -6870,6 +7004,23 @@ function salesToast(msg, type) {
         </div>
         </div><!-- /sales-ai-layout -->
       </div>
+    </div>
+
+  <!-- SKU Map Tab -->
+    <div class="sales-panel" id="ro-panel-skumap">
+      <div class="sales-section-header">
+        <div>
+          <div class="sales-section-title">🔗 eBay SKU Mapping</div>
+          <div class="sales-section-sub" id="skumap-summary">Maps eBay SKUs with trailing characters to canonical part numbers</div>
+        </div>
+        <div style="display:flex;gap:8px;align-items:center">
+          <button class="btn btn-secondary" style="font-size:12px" onclick="loadUnmappedSkus()">↻ Refresh</button>
+          <button class="btn btn-primary" style="font-size:12px" onclick="saveSkuMap()">💾 Save Map</button>
+          <button class="btn btn-secondary" style="font-size:12px" onclick="exportSkuMap()">⬇ Export CSV</button>
+        </div>
+      </div>
+      <div id="skumap-status" style="padding:8px 0;font-size:12px;color:var(--text3)"></div>
+      <div id="skumap-wrap" style="overflow-x:auto"></div>
     </div>
 
   </div>
