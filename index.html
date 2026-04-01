@@ -1,7 +1,7 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-  <!-- XFITTING-BUILD-V112-FEAT-20260401b -->
+  <!-- XFITTING-BUILD-V112-FEAT-20260401c -->
 <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate">
 <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&family=IBM+Plex+Sans:wght@300;400;500;600&display=swap" rel="stylesheet">
   <meta http-equiv="Pragma" content="no-cache">
@@ -5539,8 +5539,7 @@ function renderVendor(vendor) {
     +vth('30d Units','u30','s-num')
     +vth('90d Units','u90','s-num');
   if (hasWH) h += vth('WH Stock','whUnitsTotal','s-num') + vth('Days On Hand','doh','s-num');
-  h += vth('Cases to Order','_casesToOrder','s-num')
-    +  vth('Reorder Qty (Pkgs)','reorderQty','s-num');
+  h += vth('Order Qty (pcs)','reorderQty','s-num');
   if (hasCOGS) h += vth('COGS','cogs','s-num') + vth('Est. Cost','estCost','s-num');
   h += vth('Status','urgency') + '</tr></thead><tbody>';
 
@@ -5593,26 +5592,13 @@ function renderVendor(vendor) {
     if (hasWH) {
       h += '<td style="text-align:center;vertical-align:middle">'+whCell+'</td>' + dohCell;
     }
-    var packsPerCase = r.upcData
-      ? (r.upcData.packSize > 1 ? Math.floor(r.upcData.unitsPerCase / r.upcData.packSize) : r.upcData.unitsPerCase)
-      : null;
-    // When no case data: suggest individual pieces to order using pack size from SKU suffix
+    // Order qty in individual pieces: reorderQty (packs) × pack size from SKU suffix
     var packSizeFromSku = (function(){
       var m = (r.pn||'').match(/=(\d+)/);
       return m ? (parseInt(m[1])||1) : 1;
     })();
-    var casesToOrder, casesLabel;
-    if (packsPerCase) {
-      casesToOrder = Math.ceil(r.reorderQty / packsPerCase);
-      casesLabel   = String(casesToOrder);
-    } else {
-      // No case data — show individual pieces needed (reorderQty × pack size)
-      casesToOrder = r.reorderQty * packSizeFromSku;
-      casesLabel   = '<span style="color:var(--orange)" title="No case data — showing individual pieces">'
-        + casesToOrder + ' pcs</span>';
-    }
-    h += '<td class="num mono" style="font-weight:700;color:var(--accent)">'+casesLabel+'</td>'
-      +'<td class="num mono" style="font-weight:600;color:'+(r.reorderQty>0?'var(--text)':'var(--text3)')+'">'+r.reorderQty+'</td>';
+    var orderPcs = r.reorderQty * packSizeFromSku;
+    h += '<td class="num mono" style="font-weight:700;color:'+(orderPcs>0?'var(--accent)':'var(--text3)')+'">'+orderPcs+'</td>';
     if (hasCOGS) {
       h += '<td class="num mono">'+(r.cogs?'$'+r.cogs.toFixed(2):'—')+'</td>'
         +'<td class="num mono">'+(r.estCost>0?'$'+fmt0(r.estCost):'—')+'</td>';
@@ -5637,20 +5623,17 @@ function renderPOCases() {
 
   var totalCases = 0, totalCost = 0;
   allRows.forEach(function(r){
-    var packsPerCase = r.upcData
-      ? (r.upcData.packSize > 1 ? Math.floor(r.upcData.unitsPerCase / r.upcData.packSize) : r.upcData.unitsPerCase)
-      : 1;
-    r._packsPerCase = packsPerCase;
-    r._casesToOrder = packsPerCase > 0 ? Math.ceil(r.reorderQty / packsPerCase) : '?';
-    r._casesCost    = (typeof r._casesToOrder === 'number' && r.cogs)
-      ? r._casesToOrder * packsPerCase * r.cogs : 0;
-    if (typeof r._casesToOrder === 'number') totalCases += r._casesToOrder;
-    totalCost += r._casesCost;
+    // Individual pieces = reorderQty (packs) × pack size from SKU suffix
+    var piecesPackSize = (function(){ var m=(r.pn||'').match(/=(\d+)/); return m?(parseInt(m[1])||1):1; })();
+    r._orderPcs  = r.reorderQty * piecesPackSize;
+    r._casesCost = r.cogs ? r._orderPcs * r.cogs : 0;
+    totalCases  += r._orderPcs;
+    totalCost   += r._casesCost;
   });
 
   var wrap    = document.getElementById('po-wrap');
   var summary = document.getElementById('po-summary');
-  summary.textContent = allRows.length + ' parts · ' + totalCases + ' total cases · Est. $' + fmt0(totalCost);
+  summary.textContent = allRows.length + ' parts · ' + fmt0(totalCases) + ' total pcs to order · Est. $' + fmt0(totalCost);
 
   if (!allRows.length) {
     wrap.innerHTML = '<div class="sales-empty"><div class="sales-empty-icon">✅</div><div class="sales-empty-title">No reorders needed</div></div>';
@@ -5668,9 +5651,7 @@ function renderPOCases() {
     + poth('Base SKU','sku');
   if (poHasNames)    h += '<th style="min-width:140px">Item Name</th>';
   if (poHasUPCCodes) h += '<th style="min-width:110px">Inside UPC</th><th style="min-width:110px">Outside UPC</th>';
-  h += poth('Cases to Order','_casesToOrder','s-num')
-    + poth('Packs/Case','_packsPerCase','s-num')
-    + poth('Reorder Qty (Pkgs)','reorderQty','s-num')
+  h += poth('Order Qty (pcs)','reorderQty','s-num')
     + poth('Daily','daily','s-num')
     + poth('DOH','doh','s-num')
     + poth('Est. Cost','_casesCost','s-num')
@@ -5690,15 +5671,11 @@ function renderPOCases() {
       h += '<td class="s-mono" style="font-size:11px;color:var(--text2)">'+(ins||'<span style="color:var(--text3)">—</span>')+'</td>'
         +  '<td class="s-mono" style="font-size:11px;color:var(--text2)">'+(out2||'<span style="color:var(--text3)">—</span>')+'</td>';
     }
-    // When no case data, _casesToOrder was set to '?' — override with individual pieces
-    var poOrderDisplay = r._casesToOrder;
-    if (!r.upcData) {
-      var poPackSize = (function(){ var m=(r.pn||'').match(/=(\d+)/); return m?(parseInt(m[1])||1):1; })();
-      poOrderDisplay = '<span style="color:var(--orange)" title="No case data — individual pieces">'+(r.reorderQty*poPackSize)+' pcs</span>';
-    }
-    h += '<td class="num mono" style="font-weight:700;font-size:14px;color:var(--accent)">'+poOrderDisplay+'</td>'
-      + '<td class="num mono">'+r._packsPerCase+'</td>'
-      + '<td class="num mono">'+r.reorderQty+'</td>'
+    var poPcs = (function(){
+      var m=(r.pn||'').match(/=(\d+)/); var ps=m?(parseInt(m[1])||1):1;
+      return r.reorderQty * ps;
+    })();
+    h += '<td class="num mono" style="font-weight:700;font-size:14px;color:'+(poPcs>0?'var(--accent)':'var(--text3)')+'">'+poPcs+'</td>'
       + '<td class="num mono">'+(r.daily>0?r.daily.toFixed(2):'—')+'</td>'
       + '<td class="num mono">'+(r.doh!==null?Math.round(r.doh)+'d':'—')+'</td>'
       + '<td class="num mono">'+(r._casesCost>0?'$'+fmt0(r._casesCost):'—')+'</td>'
@@ -5721,16 +5698,11 @@ function exportPOCases() {
     var o={critical:0,watch:1,ok:2};
     return o[a.urgency]-o[b.urgency] || b.daily-a.daily;
   });
-  var lines = ['Part Number,Base SKU,Item Name,Inside UPC,Outside UPC,Cases to Order,Packs per Case,Reorder Qty (Pkgs),Daily Velocity,Days on Hand,Est. Cost,Urgency'];
+  var lines = ['Part Number,Base SKU,Item Name,Inside UPC,Outside UPC,Order Qty (pcs),Daily Velocity,Days on Hand,Est. Cost,Urgency'];
   allRows.forEach(function(r){
-    var packsPerCase = r.upcData
-      ? (r.upcData.packSize > 1 ? Math.floor(r.upcData.unitsPerCase / r.upcData.packSize) : r.upcData.unitsPerCase)
-      : 0;
-    var csvPackSize = (function(){ var m=(r.pn||'').match(/=(\d+)/); return m?(parseInt(m[1])||1):1; })();
-    var casesToOrder = packsPerCase > 0
-      ? Math.ceil(r.reorderQty / packsPerCase)
-      : (r.reorderQty * csvPackSize) + ' pcs';
-    var casesCost    = (packsPerCase > 0 && r.cogs) ? Math.ceil(r.reorderQty/packsPerCase) * packsPerCase * r.cogs : '';
+    var packSz = (function(){ var m=(r.pn||'').match(/=(\d+)/); return m?(parseInt(m[1])||1):1; })();
+    var orderPcs = r.reorderQty * packSz;
+    var estCost  = r.cogs ? orderPcs * r.cogs : '';
     var ins  = (r.upcCodes && r.upcCodes.insideUpc)  || '';
     var out2 = (r.upcCodes && r.upcCodes.outsideUpc) || '';
     lines.push([
@@ -5739,12 +5711,10 @@ function exportPOCases() {
       '"'+(r.itemName||'').replace(/"/g,"''")+'"',
       ins,
       out2,
-      casesToOrder,
-      packsPerCase,
-      r.reorderQty,
+      orderPcs,
       r.daily.toFixed(2),
       r.doh !== null ? Math.round(r.doh) : '',
-      casesCost ? fmt0(casesCost) : '',
+      estCost ? fmt0(estCost) : '',
       r.urgency
     ].join(','));
   });
@@ -5782,11 +5752,11 @@ function vendorSortBy(vendor, col) {
   // re-sort the rows array in place
   var state = vendorSort[vendor];
   var rows = RO[vendor];
-  // compute _casesToOrder on rows that don't have it yet
+  // ensure _orderPcs is set for sorting
   rows.forEach(function(r) {
-    if (r._casesToOrder === undefined) {
-      var ppc = r.upcData ? (r.upcData.packSize > 1 ? Math.floor(r.upcData.unitsPerCase/r.upcData.packSize) : r.upcData.unitsPerCase) : 1;
-      r._casesToOrder = ppc > 0 ? Math.ceil(r.reorderQty / ppc) : 0;
+    if (r._orderPcs === undefined) {
+      var ps = (r.pn||'').match(/=(\d+)/); var packSz = ps?(parseInt(ps[1])||1):1;
+      r._orderPcs = r.reorderQty * packSz;
     }
   });
   RO[vendor] = sortRows(rows, state.col, state.dir);
@@ -5810,15 +5780,10 @@ function exportPO(vendor) {
     return r.reorderQty>0 && (!trs[i] || (trs[i].querySelector('.po-cb')&&trs[i].querySelector('.po-cb').checked));
   });
   if (!out.length) { salesToast('No items to export (all zero qty or unchecked)', 'error'); return; }
-  var lines = ['Part Number,Base SKU,Item Name,Inside UPC,Outside UPC,Reorder Qty (Pkgs),Cases to Order,Daily Velocity,30d Units,90d Units,Est. Cost'];
+  var lines = ['Part Number,Base SKU,Item Name,Inside UPC,Outside UPC,Order Qty (pcs),Daily Velocity,30d Units,90d Units,Est. Cost'];
   out.forEach(function(r){
-    var packsPerCase = r.upcData
-      ? (r.upcData.packSize > 1 ? Math.floor(r.upcData.unitsPerCase / r.upcData.packSize) : r.upcData.unitsPerCase)
-      : 0;
-    var expPackSize = (function(){ var m=(r.pn||'').match(/=(\d+)/); return m?(parseInt(m[1])||1):1; })();
-    var casesToOrder = packsPerCase > 0
-      ? Math.ceil(r.reorderQty / packsPerCase)
-      : (r.reorderQty * expPackSize) + ' pcs';  // no case data — individual pieces
+    var packSz = (function(){ var m=(r.pn||'').match(/=(\d+)/); return m?(parseInt(m[1])||1):1; })();
+    var orderPcs = r.reorderQty * packSz;
     var ins  = (r.upcCodes && r.upcCodes.insideUpc)  || '';
     var out2 = (r.upcCodes && r.upcCodes.outsideUpc) || '';
     lines.push([
@@ -5827,8 +5792,7 @@ function exportPO(vendor) {
       '"'+(r.itemName||'').replace(/"/g,"''")+'"',
       ins,
       out2,
-      r.reorderQty,
-      casesToOrder,
+      orderPcs,
       r.daily.toFixed(2),
       r.u30,
       r.u90,
