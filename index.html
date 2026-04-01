@@ -1,7 +1,7 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-  <!-- XFITTING-BUILD-V112-FEAT-20260401 -->
+  <!-- XFITTING-BUILD-V112-FEAT-20260401b -->
 <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate">
 <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&family=IBM+Plex+Sans:wght@300;400;500;600&display=swap" rel="stylesheet">
   <meta http-equiv="Pragma" content="no-cache">
@@ -5596,8 +5596,22 @@ function renderVendor(vendor) {
     var packsPerCase = r.upcData
       ? (r.upcData.packSize > 1 ? Math.floor(r.upcData.unitsPerCase / r.upcData.packSize) : r.upcData.unitsPerCase)
       : null;
-    var casesToOrder = packsPerCase ? Math.ceil(r.reorderQty / packsPerCase) : '?';
-    h += '<td class="num mono" style="font-weight:700;color:var(--accent)">'+casesToOrder+'</td>'
+    // When no case data: suggest individual pieces to order using pack size from SKU suffix
+    var packSizeFromSku = (function(){
+      var m = (r.pn||'').match(/=(\d+)/);
+      return m ? (parseInt(m[1])||1) : 1;
+    })();
+    var casesToOrder, casesLabel;
+    if (packsPerCase) {
+      casesToOrder = Math.ceil(r.reorderQty / packsPerCase);
+      casesLabel   = String(casesToOrder);
+    } else {
+      // No case data — show individual pieces needed (reorderQty × pack size)
+      casesToOrder = r.reorderQty * packSizeFromSku;
+      casesLabel   = '<span style="color:var(--orange)" title="No case data — showing individual pieces">'
+        + casesToOrder + ' pcs</span>';
+    }
+    h += '<td class="num mono" style="font-weight:700;color:var(--accent)">'+casesLabel+'</td>'
       +'<td class="num mono" style="font-weight:600;color:'+(r.reorderQty>0?'var(--text)':'var(--text3)')+'">'+r.reorderQty+'</td>';
     if (hasCOGS) {
       h += '<td class="num mono">'+(r.cogs?'$'+r.cogs.toFixed(2):'—')+'</td>'
@@ -5676,7 +5690,13 @@ function renderPOCases() {
       h += '<td class="s-mono" style="font-size:11px;color:var(--text2)">'+(ins||'<span style="color:var(--text3)">—</span>')+'</td>'
         +  '<td class="s-mono" style="font-size:11px;color:var(--text2)">'+(out2||'<span style="color:var(--text3)">—</span>')+'</td>';
     }
-    h += '<td class="num mono" style="font-weight:700;font-size:14px;color:var(--accent)">'+r._casesToOrder+'</td>'
+    // When no case data, _casesToOrder was set to '?' — override with individual pieces
+    var poOrderDisplay = r._casesToOrder;
+    if (!r.upcData) {
+      var poPackSize = (function(){ var m=(r.pn||'').match(/=(\d+)/); return m?(parseInt(m[1])||1):1; })();
+      poOrderDisplay = '<span style="color:var(--orange)" title="No case data — individual pieces">'+(r.reorderQty*poPackSize)+' pcs</span>';
+    }
+    h += '<td class="num mono" style="font-weight:700;font-size:14px;color:var(--accent)">'+poOrderDisplay+'</td>'
       + '<td class="num mono">'+r._packsPerCase+'</td>'
       + '<td class="num mono">'+r.reorderQty+'</td>'
       + '<td class="num mono">'+(r.daily>0?r.daily.toFixed(2):'—')+'</td>'
@@ -5705,9 +5725,12 @@ function exportPOCases() {
   allRows.forEach(function(r){
     var packsPerCase = r.upcData
       ? (r.upcData.packSize > 1 ? Math.floor(r.upcData.unitsPerCase / r.upcData.packSize) : r.upcData.unitsPerCase)
-      : 1;
-    var casesToOrder = packsPerCase > 0 ? Math.ceil(r.reorderQty / packsPerCase) : '';
-    var casesCost    = (casesToOrder && r.cogs) ? casesToOrder * packsPerCase * r.cogs : '';
+      : 0;
+    var csvPackSize = (function(){ var m=(r.pn||'').match(/=(\d+)/); return m?(parseInt(m[1])||1):1; })();
+    var casesToOrder = packsPerCase > 0
+      ? Math.ceil(r.reorderQty / packsPerCase)
+      : (r.reorderQty * csvPackSize) + ' pcs';
+    var casesCost    = (packsPerCase > 0 && r.cogs) ? Math.ceil(r.reorderQty/packsPerCase) * packsPerCase * r.cogs : '';
     var ins  = (r.upcCodes && r.upcCodes.insideUpc)  || '';
     var out2 = (r.upcCodes && r.upcCodes.outsideUpc) || '';
     lines.push([
@@ -5789,10 +5812,13 @@ function exportPO(vendor) {
   if (!out.length) { salesToast('No items to export (all zero qty or unchecked)', 'error'); return; }
   var lines = ['Part Number,Base SKU,Item Name,Inside UPC,Outside UPC,Reorder Qty (Pkgs),Cases to Order,Daily Velocity,30d Units,90d Units,Est. Cost'];
   out.forEach(function(r){
-    var packsPerCase = (r.upcData && r.upcData.packSize > 1)
-      ? Math.floor(r.upcData.unitsPerCase / r.upcData.packSize)
-      : (r.upcData ? r.upcData.unitsPerCase : 1);
-    var casesToOrder = packsPerCase > 0 ? Math.ceil(r.reorderQty / packsPerCase) : '';
+    var packsPerCase = r.upcData
+      ? (r.upcData.packSize > 1 ? Math.floor(r.upcData.unitsPerCase / r.upcData.packSize) : r.upcData.unitsPerCase)
+      : 0;
+    var expPackSize = (function(){ var m=(r.pn||'').match(/=(\d+)/); return m?(parseInt(m[1])||1):1; })();
+    var casesToOrder = packsPerCase > 0
+      ? Math.ceil(r.reorderQty / packsPerCase)
+      : (r.reorderQty * expPackSize) + ' pcs';  // no case data — individual pieces
     var ins  = (r.upcCodes && r.upcCodes.insideUpc)  || '';
     var out2 = (r.upcCodes && r.upcCodes.outsideUpc) || '';
     lines.push([
