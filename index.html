@@ -1,7 +1,7 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-  <!-- XFITTING-BUILD-V112-FEAT-20260331l -->
+  <!-- XFITTING-BUILD-V112-FEAT-20260401 -->
 <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate">
 <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&family=IBM+Plex+Sans:wght@300;400;500;600&display=swap" rel="stylesheet">
   <meta http-equiv="Pragma" content="no-cache">
@@ -6237,7 +6237,15 @@ async function recomputeTabs() {
       upcParts: upcData.upcParts || [],
       oosParts: upcData.oosParts || []
     });
-    salesToast('✓ Written — ' + writeData.parts + ' parts · ' + writeData.skus + ' SKUs · reading back...', 'success');
+    salesToast('✓ Written — ' + writeData.parts + ' parts · ' + writeData.skus + ' SKUs · updating vendors...', 'success');
+
+    // Step 5b: update JQ_Vendor + EFF_Vendor with sales totals
+    try {
+      var vendorData = await computeStep('vendors', { acc: merged });
+      salesToast('✓ Vendors updated — JQ: ' + (vendorData.jqUpdated||0) + ' · EFF: ' + (vendorData.effUpdated||0) + ' parts with sales', 'success');
+    } catch(ve) {
+      salesToast('⚠ Vendor update: ' + ve.message, 'error');
+    }
 
     await salesLoadWarehouseStock();
     await readCalcTabs();
@@ -6294,6 +6302,8 @@ async function recomputeTabsSilent() {
     upcParts: upcData.upcParts || [],
     oosParts: upcData.oosParts || []
   });
+  salesToast('✓ Written — ' + writeData.parts + ' parts · updating vendors...', 'success');
+  try { await computeStep('vendors', { acc: merged }); } catch(_) {}
   salesToast('✓ Computed — ' + writeData.parts + ' parts · ' + writeData.skus + ' SKUs', 'success');
 }
 
