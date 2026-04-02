@@ -1,7 +1,7 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-  <!-- XFITTING-BUILD-V112-FEAT-20260401c -->
+  <!-- XFITTING-BUILD-V112-XFRD-20260402 -->
 <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate">
 <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&family=IBM+Plex+Sans:wght@300;400;500;600&display=swap" rel="stylesheet">
   <meta http-equiv="Pragma" content="no-cache">
@@ -11254,8 +11254,15 @@ function rprToast(msg, type = '') {
       .then(function(d) {
         if (!d.partNum) { invFlash('Not found: ' + code, 'error'); return; }
         xfrPart = d;
-        // Collect known locations for destination suggestions
-        xfrKnownLocs = (d.locations || []).map(function(l) { return l.location; }).filter(Boolean);
+        // Build known locations from ALL variants of this base SKU, with labels
+        // so worker can choose to place transfer alongside existing family stock
+        var locMap = {};
+        (d.locations || []).forEach(function(l) {
+          if (!l.location) return;
+          if (!locMap[l.location]) locMap[l.location] = { location: l.location, variants: [] };
+          locMap[l.location].variants.push({ partNum: l.partNum || d.partNum, cases: l.cases || '0' });
+        });
+        xfrKnownLocs = Object.values(locMap);
         g('xfr-result-part').textContent = d.isMultiVariant ? d.baseSku : d.partNum;
         g('xfr-result-sku').textContent  = d.sku && d.sku !== d.partNum ? d.sku : '';
         g('xfr-result-name').textContent = d.name || '';
@@ -11415,7 +11422,7 @@ function rprToast(msg, type = '') {
     drop.style.top  = (rect.bottom + 2) + 'px';
     drop.style.left = '12px'; drop.style.right = '12px';
     if (!val || val.length < 1) { drop.style.display = 'none'; return; }
-    var matches = xfrKnownLocs.filter(function(l) { return l.toLowerCase().includes(val); }).slice(0, 8);
+    var matches = xfrKnownLocs.filter(function(l) { return l.location.toLowerCase().includes(val); }).slice(0, 8);
     if (matches.length === 0) {
       drop.innerHTML = '<div class="xfr-dest-opt" style="color:var(--green)">+ New location: ' + inp.value.trim() + '</div>';
       drop.querySelector('.xfr-dest-opt').onmousedown = function(e) { e.preventDefault(); xfrSetItemDest(i, inp.value.trim(), true); };
@@ -11425,8 +11432,12 @@ function rprToast(msg, type = '') {
     matches.forEach(function(loc) {
       var opt = document.createElement('div');
       opt.className = 'xfr-dest-opt';
-      opt.textContent = loc;
-      opt.onmousedown = function(e) { e.preventDefault(); xfrSetItemDest(i, loc, false); };
+      var variantLabel = loc.variants.map(function(v) {
+        return '<span style="font-size:11px;font-family:var(--mono);color:var(--text3)">' + v.partNum + ' · ' + v.cases + ' cases</span>';
+      }).join(' &nbsp;');
+      opt.innerHTML = '<div style="font-weight:600;color:var(--text)">' + loc.location + '</div>'
+        + (variantLabel ? '<div style="margin-top:2px">' + variantLabel + '</div>' : '');
+      opt.onmousedown = function(e) { e.preventDefault(); xfrSetItemDest(i, loc.location, false); };
       drop.appendChild(opt);
     });
     drop.style.display = 'block';
@@ -11452,7 +11463,7 @@ function rprToast(msg, type = '') {
     var drop = g('xfr-dest-suggestions'); if (!drop) return;
     var q = val.trim().toLowerCase();
     if (!q) { drop.style.display = 'none'; return; }
-    var matches = xfrKnownLocs.filter(function(l) { return l.toLowerCase().includes(q); }).slice(0, 8);
+    var matches = xfrKnownLocs.filter(function(l) { return l.location.toLowerCase().includes(q); }).slice(0, 8);
     if (matches.length === 0) {
       drop.innerHTML = '<div class="xfr-dest-opt" style="color:var(--green)">+ New location: ' + val.trim() + '</div>';
       drop.querySelector('.xfr-dest-opt').onmousedown = function(e) { e.preventDefault(); xfrApplyDestAllValue(val.trim(), true); };
@@ -11461,8 +11472,12 @@ function rprToast(msg, type = '') {
       matches.forEach(function(loc) {
         var opt = document.createElement('div');
         opt.className = 'xfr-dest-opt';
-        opt.textContent = loc;
-        opt.onmousedown = function(e) { e.preventDefault(); xfrApplyDestAllValue(loc, false); };
+        var variantLabel = loc.variants.map(function(v) {
+          return '<span style="font-size:11px;font-family:var(--mono);color:var(--text3)">' + v.partNum + ' · ' + v.cases + ' cases</span>';
+        }).join(' &nbsp;');
+        opt.innerHTML = '<div style="font-weight:600;color:var(--text)">' + loc.location + '</div>'
+          + (variantLabel ? '<div style="margin-top:2px">' + variantLabel + '</div>' : '');
+        opt.onmousedown = function(e) { e.preventDefault(); xfrApplyDestAllValue(loc.location, false); };
         drop.appendChild(opt);
       });
     }
@@ -11472,7 +11487,8 @@ function rprToast(msg, type = '') {
   window.xfrApplyDestAll = function() {
     var val = ((g('xfr-dest-inp') || {}).value || '').trim();
     if (!val) { invFlash('Enter a destination location', 'error'); return; }
-    xfrApplyDestAllValue(val, !xfrKnownLocs.includes(val));
+    var isNew = !xfrKnownLocs.some(function(l) { return l.location === val; });
+    xfrApplyDestAllValue(val, isNew);
   };
 
   function xfrApplyDestAllValue(loc, isNew) {
