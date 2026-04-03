@@ -1,7 +1,7 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-  <!-- XFITTING-BUILD-V112-SRCH-20260326 -->
+  <!-- XFITTING-BUILD-V112-PRTL-20260402 -->
 <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate">
 <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&family=IBM+Plex+Sans:wght@300;400;500;600&display=swap" rel="stylesheet">
   <meta http-equiv="Pragma" content="no-cache">
@@ -2231,7 +2231,9 @@ async function wFetch(url, opts) {
   var r = await fetch(url, opts);
   if (r.status === 401) {
     XF_SESSION = null;
+    XF_ROLE = null;
     sessionStorage.removeItem('xf_session');
+    sessionStorage.removeItem('xf_role');
     var ps = document.getElementById('pin-screen');
     if (ps) { ps.style.display = 'flex'; ps.style.opacity = '1'; ps.style.visibility = 'visible'; }
     var la = document.getElementById('launcher');
@@ -2242,12 +2244,14 @@ async function wFetch(url, opts) {
 }
 
 
+var XF_ROLE = sessionStorage.getItem('xf_role') || null;
 if (XF_SESSION) {
   document.addEventListener('DOMContentLoaded', function() {
     var ps = document.getElementById('pin-screen');
     if (ps) { ps.style.display = 'none'; ps.style.visibility = 'hidden'; }
     document.getElementById('launcher').style.display = 'flex';
-    if (typeof silentLoadSaved === 'function') silentLoadSaved();
+    // Only pre-load mgmt tabs if role was mgmt — avoids 401 noise on OPS session restore
+    if (typeof silentLoadSaved === 'function' && XF_ROLE === 'mgmt') silentLoadSaved();
   });
 }
 
@@ -2291,7 +2295,9 @@ function checkPin() {
     }).then(function(r){ return r.json(); }).then(function(d){
       if (d.token) {
         XF_SESSION = d.token;
+        XF_ROLE = type;
         sessionStorage.setItem('xf_session', d.token);
+        sessionStorage.setItem('xf_role', type);
         var ps = document.getElementById('pin-screen');
         ps.style.transition = 'opacity .3s'; ps.style.opacity = '0';
         setTimeout(function() {
@@ -4894,7 +4900,8 @@ async function salesLaunchApp(name) {
   document.getElementById(appId).style.flexDirection = 'column';
   setStatus(appKey, 'loading', 'Loading...');
   try {
-    await Promise.all([ salesLoadWarehouseStock(), readCalcTabs() ]);
+    await salesLoadWarehouseStock();
+    await readCalcTabs();
     lastUpdated = new Date();
     updateLastUpdatedLabels();
     buildReorderRows();
@@ -4925,7 +4932,7 @@ var SALES_WORKER_URL = "https://xfitting-lookup.alfixedinc88.workers.dev";
 // Staged files: { Amz30: [[row,...]], Amz90: [...], ... }
 var staged = {};
 // Calculated data read back from sheet
-var CALC = { partSales:[], skuSales:[], jqVendor:[], effVendor:[], cogs:{}, whStock:{}, upc:{} };
+var CALC = { partSales:[], skuSales:[], jqVendor:[], effVendor:[], cogs:{}, whStock:{}, upc:{}, itemNames:{}, upcCodes:{}, skuNames:{} };
 // upc: { partNum.toLowerCase() -> { unitsPerCase, packSize } }
 // Processed reorder rows
 var RO = { jq:[], eff:[] };
@@ -4940,24 +4947,66 @@ var skusTableSort  = { col: 'u30', dir: -1 };
 var lastUpdated = null;
 var aiHistory = { ro: [], db: [] };
 var toastTimer = null;
+var salesFetchLock = false;  // prevents overlapping sheet reads during eBay fetch
 
 // ─── WAREHOUSE STOCK ─────────────────────────────────────────────────────────
 async function salesLoadWarehouseStock() {
   if (!SALES_WORKER_URL) return;
   var SKIP = new Set(['push fit','name','location','case','each case quantity','date arrive','total quantity','brand','uint price','total','type','sku','']);
   try {
-    var res  = await wFetch(SALES_WORKER_URL + '?sheet=Master_List');
-    var json = await res.json();
-    if (json.error) throw new Error(json.error);
-    var rows = (json.values || []).map(function(r){ while(r.length < 16) r.push(''); return r; });
+    // Load Master_List, UPC sheet, and Products in parallel
+    var [mlRes, upcRes, prodRes] = await Promise.all([
+      wFetch(SALES_WORKER_URL + '?sheet=Master_List'),
+      wFetch(SALES_WORKER_URL + '?sheet=UPC').catch(function(){ return null; }),
+      wFetch(SALES_WORKER_URL + '?sheet=Products').catch(function(){ return null; })
+    ]);
+    var mlJson = await mlRes.json();
+    if (mlJson.error) throw new Error(mlJson.error);
+    var rows = (mlJson.values || []).map(function(r){ while(r.length < 16) r.push(''); return r; });
+
+    // Parse UPC sheet: col A=SKU, col B=PartNum, col C=insideUpc, col D=outsideUpc
+    CALC.upcCodes = {};  // partNum.toLowerCase() -> { insideUpc, outsideUpc }
+    if (upcRes) {
+      try {
+        var upcJson = await upcRes.json();
+        (upcJson.values || []).slice(1).forEach(function(u) {
+          var pn = String(u[1] || u[0] || '').trim().toLowerCase();
+          if (!pn) return;
+          CALC.upcCodes[pn] = {
+            insideUpc:  String(u[2] || '').trim(),
+            outsideUpc: String(u[3] || '').trim()
+          };
+        });
+      } catch(e) { /* UPC sheet optional */ }
+    }
+
+    // Parse Products sheet: col B=baseSKU, col C=name — use as fallback item name by SKU
+    CALC.skuNames = {};  // baseSKU.toLowerCase() -> item name
+    if (prodRes) {
+      try {
+        var prodJson = await prodRes.json();
+        (prodJson.values || []).slice(1).forEach(function(p) {
+          var sku  = String(p[1] || '').trim().toLowerCase();
+          var name = String(p[2] || '').trim();
+          if (sku && name) CALC.skuNames[sku] = name;
+        });
+      } catch(e) { /* Products sheet optional */ }
+    }
+
     CALC.whStock = {};
     CALC.upc = {};
+    CALC.itemNames = {};  // partNum.toLowerCase() -> item name string
     for (var i = 1; i < rows.length; i++) {
       var r = rows[i];
       var partNum = String(r[6] || '').trim();
       if (!partNum || partNum.length < 2) continue;
       if (SKIP.has(partNum.toLowerCase())) continue;
       var key = partNum.toLowerCase();
+
+      // Collect item name from col E (r[4])
+      if (!CALC.itemNames[key] && r[4]) {
+        CALC.itemNames[key] = String(r[4]).trim();
+      }
 
       // Always collect unitsPerCase from col J — even if no inventory
       if (!CALC.upc[key]) {
@@ -4976,7 +5025,7 @@ async function salesLoadWarehouseStock() {
       if (!CALC.whStock[key]) CALC.whStock[key] = [];
       CALC.whStock[key].push({ location: String(r[7]||'').trim(), units: casesNum });
     }
-    console.log('[Sales WH] loaded', Object.keys(CALC.whStock).length, 'parts,', Object.keys(CALC.upc).length, 'with UPC data');
+    console.log('[Sales WH] loaded', Object.keys(CALC.whStock).length, 'parts,', Object.keys(CALC.upc).length, 'UPC,', Object.keys(CALC.upcCodes).length, 'UPC codes');
   } catch(e) {
     console.error('[Sales WH load]', e);
   }
@@ -4992,55 +5041,78 @@ function findCol(headers, keys) {
 
 // ─── FILE UPLOAD & CSV PARSING ───────────────────────────────────────────────
 
-// ── fetchEbaySales — Fetch eBay orders via API and write to sheet ─────────────
+// ── fetchEbaySales — Fetch eBay orders in TWO separate worker calls ─────────────
+// Each call gets its own 1000-subrequest budget — sending both in one call exceeds the limit.
 async function fetchEbaySales(ctx) {
-  // ctx = 'ro' (reorder) or 'db' (dashboard)
   const btnId = ctx + '-ebay-fetch-btn';
   const btn = document.getElementById(btnId);
   if (btn) { btn.disabled = true; btn.textContent = '⟳ Fetching...'; }
 
   function setStatus30(msg, ok) {
-    const el30 = document.getElementById(ctx + '-ebay30-status');
-    if (el30) { el30.textContent = msg; el30.style.color = ok ? 'var(--green)' : ok === false ? 'var(--red)' : 'var(--text3)'; }
+    const el = document.getElementById(ctx + '-ebay30-status');
+    if (el) { el.textContent = msg; el.style.color = ok ? 'var(--green)' : ok === false ? 'var(--red)' : 'var(--text3)'; }
   }
   function setStatus90(msg, ok) {
-    const el90 = document.getElementById(ctx + '-ebay90-status');
-    if (el90) { el90.textContent = msg; el90.style.color = ok ? 'var(--green)' : ok === false ? 'var(--red)' : 'var(--text3)'; }
+    const el = document.getElementById(ctx + '-ebay90-status');
+    if (el) { el.textContent = msg; el.style.color = ok ? 'var(--green)' : ok === false ? 'var(--red)' : 'var(--text3)'; }
   }
 
-  setStatus30('Fetching from eBay...', null);
-  setStatus90('Fetching from eBay...', null);
-  setStatus('ro', 'loading', 'Fetching eBay...');
-  setStatus('db', 'loading', 'Fetching eBay...');
-  salesToast('<span class="sales-spinner"></span>Fetching eBay orders (30d + 90d)...', 'info');
+  setStatus30('Fetching 30d...', null);
+  setStatus90('Waiting...', null);
+  setStatus('ro', 'loading', 'Fetching eBay 30d...');
+  setStatus('db', 'loading', 'Fetching eBay 30d...');
+  salesToast('<span class="sales-spinner"></span>Fetching eBay 30d orders...', 'info');
 
+  salesFetchLock = true;
+  var totalOrders = 0, totalRows = 0;
   try {
-    const res  = await wFetch(SALES_WORKER_URL + '/ebay/sales-fetch', {
+    // ── Call 1: 30d — separate invocation = fresh 1000-subrequest budget ──
+    const res30 = await wFetch(SALES_WORKER_URL + '/ebay/sales-fetch', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ window: 'both' })
+      body: JSON.stringify({ window: '30d' })
     });
-    const data = await res.json();
-    if (!data.ok) throw new Error(data.error || 'Fetch failed');
+    const data30 = await res30.json();
+    if (!data30.ok) throw new Error('30d: ' + (data30.error || 'Fetch failed'));
+    var w30 = data30.windows && data30.windows['30d'];
+    var orders30 = w30 ? w30.ordersProcessed : (data30.orders || 0);
+    var rows30   = w30 ? w30.itemsWritten    : (data30.skus   || 0);
+    totalOrders += orders30; totalRows += rows30;
+    setStatus30('✓ ' + orders30 + ' orders → ' + rows30 + ' rows', true);
+    salesToast('✓ 30d done — ' + orders30 + ' orders. Fetching 90d...', 'success');
+
+    // ── Call 2: 90d — new invocation = fresh budget ──
+    setStatus90('Fetching 90d...', null);
+    setStatus('ro', 'loading', 'Fetching eBay 90d...');
+    setStatus('db', 'loading', 'Fetching eBay 90d...');
+    const res90 = await wFetch(SALES_WORKER_URL + '/ebay/sales-fetch', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ window: '90d' })
+    });
+    const data90 = await res90.json();
+    if (!data90.ok) throw new Error('90d: ' + (data90.error || 'Fetch failed'));
+    var w90 = data90.windows && data90.windows['90d'];
+    var orders90 = w90 ? w90.ordersProcessed : (data90.orders || 0);
+    var rows90   = w90 ? w90.itemsWritten    : (data90.skus   || 0);
+    totalOrders += orders90; totalRows += rows90;
+    setStatus90('✓ ' + orders90 + ' orders → ' + rows90 + ' rows', true);
 
     const ts = new Date().toLocaleString();
-    const skuLabel = data.skus + ' SKUs · ' + data.orders + ' orders';
-
-    setStatus30('✓ ' + skuLabel, true);
-    setStatus90('✓ ' + skuLabel, true);
-
-    // Update last-fetch label
     ['ro-ebay-last-fetch', 'db-ebay-last-fetch'].forEach(function(id) {
       var el = document.getElementById(id);
       if (el) el.textContent = 'Last fetched: ' + ts;
     });
+    salesToast('✓ eBay fetched — ' + totalOrders + ' orders · ' + totalRows + ' rows written', 'success');
 
-    salesToast('✓ eBay sales fetched — ' + data.orders + ' orders, ' + data.skus + ' SKUs', 'success');
+    // Compute Part#_Sales + SKU_Sales via 4-step chunked approach
+    salesToast('<span class="sales-spinner"></span>Computing sales totals (4 steps)...', 'info');
+    try { await recomputeTabsSilent(); } catch(compErr) { salesToast('⚠ Compute error: ' + compErr.message, 'error'); }
 
-    // Now read back calculated tabs so the data flows through the pipeline
-    salesToast('<span class="sales-spinner"></span>Recalculating...', 'info');
+    salesToast('<span class="sales-spinner"></span>Reading calc tabs...', 'info');
     try {
-      await Promise.all([ salesLoadWarehouseStock(), readCalcTabs() ]);
+      await salesLoadWarehouseStock();
+      await readCalcTabs();
       lastUpdated = new Date();
       updateLastUpdatedLabels();
       buildReorderRows();
@@ -5048,11 +5120,11 @@ async function fetchEbaySales(ctx) {
       var whCount = Object.keys(CALC.whStock).length;
       setStatus('ro', 'ok', 'WH: ' + whCount + ' parts');
       setStatus('db', 'ok', 'Up to date');
-      salesToast('✓ eBay data loaded — ' + CALC.partSales.length + ' parts', 'success');
+      salesToast('✓ Data loaded — ' + CALC.partSales.length + ' parts', 'success');
     } catch(calcErr) {
-      setStatus('ro', 'err', 'Calc error');
-      setStatus('db', 'err', 'Calc error');
-      salesToast('Calc error after fetch: ' + calcErr.message, 'error');
+      setStatus('ro', 'err', 'Calc read error');
+      setStatus('db', 'err', 'Calc read error');
+      salesToast('Calc error: ' + calcErr.message, 'error');
     }
 
   } catch(e) {
@@ -5062,6 +5134,7 @@ async function fetchEbaySales(ctx) {
     setStatus('db', 'err', 'eBay fetch failed');
     salesToast('eBay fetch error: ' + e.message, 'error');
   } finally {
+    salesFetchLock = false;
     if (btn) { btn.disabled = false; btn.textContent = '↓ Fetch eBay Sales'; }
   }
 }
@@ -5156,11 +5229,16 @@ async function processAllReports() {
     return;
   }
 
-  // Now read back all calculated tabs + warehouse stock in parallel
+  // Compute Part#_Sales + SKU_Sales via 4-step chunked approach
+  salesToast('<span class="sales-spinner"></span>Computing sales totals (4 steps)...', 'info');
+  try { await recomputeTabsSilent(); } catch(ce) { salesToast('⚠ Compute error: ' + ce.message, 'error'); }
+
+  // Now read back all calculated tabs + warehouse stock
   salesToast('<span class="sales-spinner"></span>Reading calculated data from sheet...', 'info');
   setStatus('ro','loading','Reading back...');
   try {
-    await Promise.all([ salesLoadWarehouseStock(), readCalcTabs() ]);
+    await salesLoadWarehouseStock();
+    await readCalcTabs();
     lastUpdated = new Date();
     updateLastUpdatedLabels();
     buildReorderRows();
@@ -5182,7 +5260,8 @@ async function loadSavedData() {
   setStatus('db','loading','Loading...');
   salesToast('<span class="sales-spinner"></span>Loading data from sheets...', 'info');
   try {
-    await Promise.all([ salesLoadWarehouseStock(), readCalcTabs() ]);
+    await salesLoadWarehouseStock();
+    await readCalcTabs();
     lastUpdated = new Date();
     updateLastUpdatedLabels();
     buildReorderRows();
@@ -5203,7 +5282,8 @@ async function autoLoadOnLaunch(app) {
   if (!SALES_WORKER_URL) return;
   setStatus(app, 'loading', 'Loading data...');
   try {
-    await Promise.all([ salesLoadWarehouseStock(), readCalcTabs() ]);
+    await salesLoadWarehouseStock();
+    await readCalcTabs();
     lastUpdated = new Date();
     updateLastUpdatedLabels();
     buildReorderRows();
@@ -5219,34 +5299,70 @@ async function autoLoadOnLaunch(app) {
 
 async function silentLoadSaved() {
   // Pre-fetch in background after PIN — salesLaunchApp will rebuild rows on open
-  if (!SALES_WORKER_URL) return;
+  if (!SALES_WORKER_URL || salesFetchLock) return;
   try {
-    await Promise.all([ salesLoadWarehouseStock(), readCalcTabs() ]);
+    await salesLoadWarehouseStock();
+    await readCalcTabs();  // sequential — not parallel with WH load
     lastUpdated = new Date();
   } catch(e) { /* silent */ }
 }
 
 async function readCalcTabs() {
-  var results = await Promise.all([
-    workerGet('Part#_Sales'),
-    workerGet('SKU_Sales'),
-    workerGet('JQ_Vendor'),
-    workerGet('EFF_Vendor'),
-    workerGet('COGS')
-  ]);
+  if (salesFetchLock) { console.log('[readCalcTabs] skipped — fetch in progress'); return; }
 
-  CALC.partSales  = sheetToObjs(results[0]);
-  CALC.skuSales   = sheetToObjs(results[1]);
-  CALC.jqVendor   = sheetToObjs(results[2]);
-  CALC.effVendor  = sheetToObjs(results[3]);
+  // Read each tab with a 25s timeout — fails fast instead of hanging forever.
+  // No retry loop since Recompute writes plain values (no formula recalc needed).
+  async function readTabSafe(tab) {
+    try {
+      var timeoutPromise = new Promise(function(_, reject) {
+        setTimeout(function() { reject(new Error('Timeout reading ' + tab + ' (45s)')); }, 45000);
+      });
+      var rows = await Promise.race([ workerGet(tab), timeoutPromise ]);
+      console.log('[readCalcTabs]', tab, rows.length, 'rows');
+      return rows;
+    } catch(e) {
+      console.warn('[readCalcTabs]', tab, 'failed:', e.message.slice(0, 80));
+      salesToast('⚠ ' + tab + ' — ' + e.message.slice(0, 60), 'error');
+      return [];
+    }
+  }
 
-  // COGS → map { SKU: price }
+  // Read static vendor/COGS tabs first — always small and fast
+  var staticTabs = ['JQ_Vendor', 'EFF_Vendor', 'COGS'];
+  var staticResults = [];
+  for (var i = 0; i < staticTabs.length; i++) {
+    staticResults.push(await readTabSafe(staticTabs[i]));
+  }
+  CALC.jqVendor = sheetToObjs(staticResults[0]);
+  CALC.effVendor = sheetToObjs(staticResults[1]);
   CALC.cogs = {};
-  sheetToObjs(results[4]).forEach(function(r) {
+  sheetToObjs(staticResults[2]).forEach(function(r) {
     var sku = (r['SKU'] || r['sku'] || '').toString().trim().toUpperCase();
     var price = n(r['Unit Price'] || r['unit price'] || r['Price'] || '');
     if (sku) CALC.cogs[sku] = price;
   });
+
+  // Read Part#_Sales + SKU_Sales — these are populated by Recompute (plain values, no formulas)
+  // Use a short 10s timeout since these should return fast once formulas are removed
+  async function readTabFast(tab) {
+    try {
+      var timeoutP = new Promise(function(_, rej){ setTimeout(function(){ rej(new Error('Timeout ' + tab)); }, 10000); });
+      return await Promise.race([ workerGet(tab), timeoutP ]);
+    } catch(e) {
+      console.log('[readCalcTabs]', tab, 'skipped:', e.message.slice(0,50));
+      return [];
+    }
+  }
+  var partRows = await readTabFast('Part#_Sales');
+  if (partRows.length > 1) {
+    CALC.partSales = sheetToObjs(partRows);
+    var skuRows = await readTabFast('SKU_Sales');
+    CALC.skuSales = sheetToObjs(skuRows);
+    console.log('[readCalcTabs] Part#_Sales:', CALC.partSales.length, 'SKU_Sales:', CALC.skuSales.length);
+  } else {
+    console.log('[readCalcTabs] Part#_Sales empty — run ⚡ Recompute to populate');
+    salesToast('No sales data yet — hit ⚡ Recompute Totals to build from raw data', 'info');
+  }
 }
 
 function sheetToObjs(rows) {
@@ -5286,6 +5402,18 @@ function getUPC(partNum) {
 function getPartSales(partNum) {
   var pn = (partNum||'').toUpperCase();
   return CALC.partSales.find(function(r){ return (r['Part#']||'').toString().toUpperCase()===pn; }) || null;
+}
+function getItemName(partNum) {
+  // Try variant-level name first (Master_List col E), fall back to base SKU name (Products)
+  var key = (partNum||'').toLowerCase();
+  if (CALC.itemNames[key]) return CALC.itemNames[key];
+  var baseSku = salesBaseSKU(partNum).toLowerCase();
+  return CALC.skuNames[baseSku] || '';
+}
+function getUPCCodes(partNum) {
+  // Returns { insideUpc, outsideUpc } or null
+  var key = (partNum||'').toLowerCase();
+  return CALC.upcCodes[key] || null;
 }
 
 function buildReorderRows() {
@@ -5360,7 +5488,9 @@ function buildVendorRows(vendorData, partCol, vendor) {
     var vAmzU30 = n(r['AMZ 30 Units']||r['AMZ 30 units']||'');
     var vAmzU90 = n(r['AMZ 90 Units']||r['AMZ 90 units']||'');
 
-    return { pn, sku, daily, u30, u90, s30, whUnits, whUnitsTotal, upcData, doh, targetStock, reorderQty, urgency, cogs,
+    var itemName = getItemName(pn);
+    var upcCodes = getUPCCodes(pn);
+    return { pn, sku, itemName, upcCodes, daily, u30, u90, s30, whUnits, whUnitsTotal, upcData, doh, targetStock, reorderQty, urgency, cogs,
              estCost:reorderQty*cogs, vAmzU30, vAmzU90 };
   }).filter(Boolean).sort(function(a,b){
     var o={critical:0,watch:1,ok:2};
@@ -5397,16 +5527,19 @@ function renderVendor(vendor) {
     var cls = (align||'') + ' sortable-th';
     return '<th class="'+cls+'" onclick="vendorSortBy(\''+vendor+'\',\''+col+'\')">'+label+sortArrow(vs,col)+'</th>';
   }
+  var hasNames = Object.keys(CALC.itemNames).length > 0 || Object.keys(CALC.skuNames).length > 0;
+  var hasUPCCodes = Object.keys(CALC.upcCodes).length > 0;
   var h = '<table><thead><tr>'
     +'<th></th>'
     +vth('Part #','pn')
-    +vth('Base SKU','sku')
-    +vth('Daily','daily','s-num')
+    +vth('Base SKU','sku');
+  if (hasNames) h += '<th style="min-width:140px">Item Name</th>';
+  if (hasUPCCodes) h += '<th style="min-width:120px">Inside UPC</th><th style="min-width:120px">Outside UPC</th>';
+  h += vth('Daily','daily','s-num')
     +vth('30d Units','u30','s-num')
     +vth('90d Units','u90','s-num');
   if (hasWH) h += vth('WH Stock','whUnitsTotal','s-num') + vth('Days On Hand','doh','s-num');
-  h += vth('Cases to Order','_casesToOrder','s-num')
-    +  vth('Reorder Qty (Pkgs)','reorderQty','s-num');
+  h += vth('Order Qty (pcs)','reorderQty','s-num');
   if (hasCOGS) h += vth('COGS','cogs','s-num') + vth('Est. Cost','estCost','s-num');
   h += vth('Status','urgency') + '</tr></thead><tbody>';
 
@@ -5443,19 +5576,29 @@ function renderVendor(vendor) {
     h += '<tr data-u="'+r.urgency+'" data-p="'+(r.pn||'').toLowerCase()+'">'
       +'<td><input type="checkbox" class="po-cb" checked></td>'
       +'<td class="s-mono" style="font-weight:600">'+r.pn+'</td>'
-      +'<td class="s-mono" style="color:var(--text2)">'+r.sku+'</td>'
-      +'<td class="num mono">'+(r.daily>0?r.daily.toFixed(2):'—')+'</td>'
+      +'<td class="s-mono" style="color:var(--text2)">'+r.sku+'</td>';
+    if (hasNames) {
+      h += '<td style="font-size:11px;max-width:160px;white-space:normal;line-height:1.3;color:var(--text2)">'+(r.itemName||'<span style="color:var(--text3)">—</span>')+'</td>';
+    }
+    if (hasUPCCodes) {
+      var ins  = (r.upcCodes && r.upcCodes.insideUpc)  || '';
+      var out2 = (r.upcCodes && r.upcCodes.outsideUpc) || '';
+      h += '<td class="s-mono" style="font-size:11px;color:var(--text2)">'+(ins||'<span style="color:var(--text3)">—</span>')+'</td>'
+        +  '<td class="s-mono" style="font-size:11px;color:var(--text2)">'+(out2||'<span style="color:var(--text3)">—</span>')+'</td>';
+    }
+    h += '<td class="num mono">'+(r.daily>0?r.daily.toFixed(2):'—')+'</td>'
       +'<td class="num mono">'+r.u30+'</td>'
       +'<td class="num mono" style="color:var(--text2)">'+r.u90+'</td>';
     if (hasWH) {
       h += '<td style="text-align:center;vertical-align:middle">'+whCell+'</td>' + dohCell;
     }
-    var packsPerCase = r.upcData
-      ? (r.upcData.packSize > 1 ? Math.floor(r.upcData.unitsPerCase / r.upcData.packSize) : r.upcData.unitsPerCase)
-      : null;
-    var casesToOrder = packsPerCase ? Math.ceil(r.reorderQty / packsPerCase) : '?';
-    h += '<td class="num mono" style="font-weight:700;color:var(--accent)">'+casesToOrder+'</td>'
-      +'<td class="num mono" style="font-weight:600;color:'+(r.reorderQty>0?'var(--text)':'var(--text3)')+'">'+r.reorderQty+'</td>';
+    // Order qty in individual pieces: reorderQty (packs) × pack size from SKU suffix
+    var packSizeFromSku = (function(){
+      var m = (r.pn||'').match(/=(\d+)/);
+      return m ? (parseInt(m[1])||1) : 1;
+    })();
+    var orderPcs = r.reorderQty * packSizeFromSku;
+    h += '<td class="num mono" style="font-weight:700;color:'+(orderPcs>0?'var(--accent)':'var(--text3)')+'">'+orderPcs+'</td>';
     if (hasCOGS) {
       h += '<td class="num mono">'+(r.cogs?'$'+r.cogs.toFixed(2):'—')+'</td>'
         +'<td class="num mono">'+(r.estCost>0?'$'+fmt0(r.estCost):'—')+'</td>';
@@ -5480,20 +5623,17 @@ function renderPOCases() {
 
   var totalCases = 0, totalCost = 0;
   allRows.forEach(function(r){
-    var packsPerCase = r.upcData
-      ? (r.upcData.packSize > 1 ? Math.floor(r.upcData.unitsPerCase / r.upcData.packSize) : r.upcData.unitsPerCase)
-      : 1;
-    r._packsPerCase = packsPerCase;
-    r._casesToOrder = packsPerCase > 0 ? Math.ceil(r.reorderQty / packsPerCase) : '?';
-    r._casesCost    = (typeof r._casesToOrder === 'number' && r.cogs)
-      ? r._casesToOrder * packsPerCase * r.cogs : 0;
-    if (typeof r._casesToOrder === 'number') totalCases += r._casesToOrder;
-    totalCost += r._casesCost;
+    // Individual pieces = reorderQty (packs) × pack size from SKU suffix
+    var piecesPackSize = (function(){ var m=(r.pn||'').match(/=(\d+)/); return m?(parseInt(m[1])||1):1; })();
+    r._orderPcs  = r.reorderQty * piecesPackSize;
+    r._casesCost = r.cogs ? r._orderPcs * r.cogs : 0;
+    totalCases  += r._orderPcs;
+    totalCost   += r._casesCost;
   });
 
   var wrap    = document.getElementById('po-wrap');
   var summary = document.getElementById('po-summary');
-  summary.textContent = allRows.length + ' parts · ' + totalCases + ' total cases · Est. $' + fmt0(totalCost);
+  summary.textContent = allRows.length + ' parts · ' + fmt0(totalCases) + ' total pcs to order · Est. $' + fmt0(totalCost);
 
   if (!allRows.length) {
     wrap.innerHTML = '<div class="sales-empty"><div class="sales-empty-icon">✅</div><div class="sales-empty-title">No reorders needed</div></div>';
@@ -5504,12 +5644,14 @@ function renderPOCases() {
     var cls = (align||'') + ' sortable-th';
     return '<th class="'+cls+'" onclick="poSortBy(\''+col+'\')">'+label+sortArrow(poSort,col)+'</th>';
   }
+  var poHasNames    = Object.keys(CALC.itemNames).length > 0 || Object.keys(CALC.skuNames).length > 0;
+  var poHasUPCCodes = Object.keys(CALC.upcCodes).length > 0;
   var h = '<table style="width:100%"><thead><tr>'
     + poth('Part #','pn')
-    + poth('Base SKU','sku')
-    + poth('Cases to Order','_casesToOrder','s-num')
-    + poth('Packs/Case','_packsPerCase','s-num')
-    + poth('Reorder Qty (Pkgs)','reorderQty','s-num')
+    + poth('Base SKU','sku');
+  if (poHasNames)    h += '<th style="min-width:140px">Item Name</th>';
+  if (poHasUPCCodes) h += '<th style="min-width:110px">Inside UPC</th><th style="min-width:110px">Outside UPC</th>';
+  h += poth('Order Qty (pcs)','reorderQty','s-num')
     + poth('Daily','daily','s-num')
     + poth('DOH','doh','s-num')
     + poth('Est. Cost','_casesCost','s-num')
@@ -5519,10 +5661,21 @@ function renderPOCases() {
   allRows.forEach(function(r){
     h += '<tr data-u="'+r.urgency+'">'
       + '<td class="s-mono" style="font-weight:600">'+r.pn+'</td>'
-      + '<td class="s-mono" style="color:var(--text2)">'+r.sku+'</td>'
-      + '<td class="num mono" style="font-weight:700;font-size:14px;color:var(--accent)">'+r._casesToOrder+'</td>'
-      + '<td class="num mono">'+r._packsPerCase+'</td>'
-      + '<td class="num mono">'+r.reorderQty+'</td>'
+      + '<td class="s-mono" style="color:var(--text2)">'+r.sku+'</td>';
+    if (poHasNames) {
+      h += '<td style="font-size:11px;max-width:160px;white-space:normal;line-height:1.3;color:var(--text2)">'+(r.itemName||'<span style="color:var(--text3)">—</span>')+'</td>';
+    }
+    if (poHasUPCCodes) {
+      var ins  = (r.upcCodes && r.upcCodes.insideUpc)  || '';
+      var out2 = (r.upcCodes && r.upcCodes.outsideUpc) || '';
+      h += '<td class="s-mono" style="font-size:11px;color:var(--text2)">'+(ins||'<span style="color:var(--text3)">—</span>')+'</td>'
+        +  '<td class="s-mono" style="font-size:11px;color:var(--text2)">'+(out2||'<span style="color:var(--text3)">—</span>')+'</td>';
+    }
+    var poPcs = (function(){
+      var m=(r.pn||'').match(/=(\d+)/); var ps=m?(parseInt(m[1])||1):1;
+      return r.reorderQty * ps;
+    })();
+    h += '<td class="num mono" style="font-weight:700;font-size:14px;color:'+(poPcs>0?'var(--accent)':'var(--text3)')+'">'+poPcs+'</td>'
       + '<td class="num mono">'+(r.daily>0?r.daily.toFixed(2):'—')+'</td>'
       + '<td class="num mono">'+(r.doh!==null?Math.round(r.doh)+'d':'—')+'</td>'
       + '<td class="num mono">'+(r._casesCost>0?'$'+fmt0(r._casesCost):'—')+'</td>'
@@ -5545,18 +5698,23 @@ function exportPOCases() {
     var o={critical:0,watch:1,ok:2};
     return o[a.urgency]-o[b.urgency] || b.daily-a.daily;
   });
-  var lines = ['Part Number,Base SKU,Cases to Order,Packs per Case,Reorder Qty (Pkgs),Daily Velocity,Days on Hand,Est. Cost,Urgency'];
+  var lines = ['Part Number,Base SKU,Item Name,Inside UPC,Outside UPC,Order Qty (pcs),Daily Velocity,Days on Hand,Est. Cost,Urgency'];
   allRows.forEach(function(r){
-    var packsPerCase = r.upcData
-      ? (r.upcData.packSize > 1 ? Math.floor(r.upcData.unitsPerCase / r.upcData.packSize) : r.upcData.unitsPerCase)
-      : 1;
-    var casesToOrder = packsPerCase > 0 ? Math.ceil(r.reorderQty / packsPerCase) : '';
-    var casesCost    = (casesToOrder && r.cogs) ? casesToOrder * packsPerCase * r.cogs : '';
+    var packSz = (function(){ var m=(r.pn||'').match(/=(\d+)/); return m?(parseInt(m[1])||1):1; })();
+    var orderPcs = r.reorderQty * packSz;
+    var estCost  = r.cogs ? orderPcs * r.cogs : '';
+    var ins  = (r.upcCodes && r.upcCodes.insideUpc)  || '';
+    var out2 = (r.upcCodes && r.upcCodes.outsideUpc) || '';
     lines.push([
-      r.pn, r.sku, casesToOrder, packsPerCase, r.reorderQty,
+      r.pn,
+      r.sku,
+      '"'+(r.itemName||'').replace(/"/g,"''")+'"',
+      ins,
+      out2,
+      orderPcs,
       r.daily.toFixed(2),
       r.doh !== null ? Math.round(r.doh) : '',
-      casesCost ? fmt0(casesCost) : '',
+      estCost ? fmt0(estCost) : '',
       r.urgency
     ].join(','));
   });
@@ -5594,11 +5752,11 @@ function vendorSortBy(vendor, col) {
   // re-sort the rows array in place
   var state = vendorSort[vendor];
   var rows = RO[vendor];
-  // compute _casesToOrder on rows that don't have it yet
+  // ensure _orderPcs is set for sorting
   rows.forEach(function(r) {
-    if (r._casesToOrder === undefined) {
-      var ppc = r.upcData ? (r.upcData.packSize > 1 ? Math.floor(r.upcData.unitsPerCase/r.upcData.packSize) : r.upcData.unitsPerCase) : 1;
-      r._casesToOrder = ppc > 0 ? Math.ceil(r.reorderQty / ppc) : 0;
+    if (r._orderPcs === undefined) {
+      var ps = (r.pn||'').match(/=(\d+)/); var packSz = ps?(parseInt(ps[1])||1):1;
+      r._orderPcs = r.reorderQty * packSz;
     }
   });
   RO[vendor] = sortRows(rows, state.col, state.dir);
@@ -5622,14 +5780,24 @@ function exportPO(vendor) {
     return r.reorderQty>0 && (!trs[i] || (trs[i].querySelector('.po-cb')&&trs[i].querySelector('.po-cb').checked));
   });
   if (!out.length) { salesToast('No items to export (all zero qty or unchecked)', 'error'); return; }
-  var lines = ['Part Number,Base SKU,Reorder Qty (Pkgs),Cases to Order,Daily Velocity,30d Units,90d Units,Est. Cost'];
+  var lines = ['Part Number,Base SKU,Item Name,Inside UPC,Outside UPC,Order Qty (pcs),Daily Velocity,30d Units,90d Units,Est. Cost'];
   out.forEach(function(r){
-    var packsPerCase = (r.upcData && r.upcData.packSize > 1)
-      ? Math.floor(r.upcData.unitsPerCase / r.upcData.packSize)
-      : (r.upcData ? r.upcData.unitsPerCase : 1);
-    var casesToOrder = packsPerCase > 0 ? Math.ceil(r.reorderQty / packsPerCase) : '';
-    lines.push([r.pn, r.sku, r.reorderQty, casesToOrder, r.daily.toFixed(2), r.u30, r.u90,
-      r.estCost?fmt0(r.estCost):''].join(','));
+    var packSz = (function(){ var m=(r.pn||'').match(/=(\d+)/); return m?(parseInt(m[1])||1):1; })();
+    var orderPcs = r.reorderQty * packSz;
+    var ins  = (r.upcCodes && r.upcCodes.insideUpc)  || '';
+    var out2 = (r.upcCodes && r.upcCodes.outsideUpc) || '';
+    lines.push([
+      r.pn,
+      r.sku,
+      '"'+(r.itemName||'').replace(/"/g,"''")+'"',
+      ins,
+      out2,
+      orderPcs,
+      r.daily.toFixed(2),
+      r.u30,
+      r.u90,
+      r.estCost?fmt0(r.estCost):''
+    ].join(','));
   });
   var blob = new Blob([lines.join('\n')],{type:'text/csv'});
   var a = document.createElement('a'); a.href=URL.createObjectURL(blob);
@@ -5912,11 +6080,12 @@ function skusTableSortBy(col) {
 
 // ─── TAB SWITCHERS ───────────────────────────────────────────────────────────
 function roTab(name) {
-  ['upload','jq','eff','po','ai'].forEach(function(t){
+  ['upload','jq','eff','po','ai','skumap'].forEach(function(t){
     document.getElementById('ro-tab-'+t).className='sales-tab-btn'+(t===name?' active':'');
     document.getElementById('ro-panel-'+t).className='sales-panel'+(t===name?' active':'');
   });
   if (name==='po') renderPOCases();
+  if (name==='skumap') loadUnmappedSkus();
   if (name==='ai' && CALC.jqVendor.length && !document.getElementById('ro-ai-auto-body').dataset.loaded) {
     runAutoInsights('ro');
   }
@@ -5999,6 +6168,265 @@ function workerPut(tab, rows) {
   });
 }
 
+
+
+
+// ── recomputeTabs — 4-step chunked compute to stay under 30s worker limit ───
+// Each step is a separate worker invocation with its own budget.
+// Browser merges the accumulators and sends merged data to the write step.
+async function recomputeTabs() {
+  if (salesFetchLock) { salesToast('Fetch in progress — wait for it to finish', 'error'); return; }
+  salesFetchLock = true;
+  setStatus('ro', 'loading', 'Recomputing...');
+  setStatus('db', 'loading', 'Recomputing...');
+
+  async function computeStep(step, body) {
+    var url = SALES_WORKER_URL + '/sales/compute-tabs?step=' + step;
+    var res  = await wFetch(url, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body || {})
+    });
+    var data = await res.json();
+    if (!data.ok) throw new Error('Step ' + step + ' failed: ' + (data.error || 'unknown'));
+    return data;
+  }
+
+  function mergeAcc(target, source) {
+    for (var pn in source) {
+      if (!target[pn]) target[pn] = {};
+      for (var k in source[pn]) {
+        target[pn][k] = (target[pn][k] || 0) + (source[pn][k] || 0);
+      }
+    }
+  }
+
+  try {
+    salesToast('<span class="sales-spinner"></span>Step 1/5 — Loading UPC master list...', 'info');
+    var upcData = await computeStep('upc');
+    salesToast('✓ UPC: ' + (upcData.totalParts||0) + ' parts · ' + (upcData.oosCount||0) + ' OOS · Step 2/5 eBay...', 'success');
+
+    salesToast('<span class="sales-spinner"></span>Step 2/5 — Computing eBay sales...', 'info');
+    var ebayData = await computeStep('ebay');
+    salesToast('✓ eBay: ' + (ebayData.rows30||0) + ' / ' + (ebayData.rows90||0) + ' rows · Step 3/5 Amazon...', 'success');
+
+    var amzData = await computeStep('amz');
+    salesToast('✓ Amazon: ' + (amzData.rows30||0) + ' / ' + (amzData.rows90||0) + ' rows · Step 4/5 Shopify...', 'success');
+
+    var xfData = await computeStep('xf');
+    salesToast('✓ Shopify: ' + (xfData.rows30||0) + ' / ' + (xfData.rows90||0) + ' rows · Step 5/5 Writing...', 'success');
+
+    // Merge all accumulators in the browser
+    var merged = {};
+    mergeAcc(merged, ebayData.acc || {});
+    mergeAcc(merged, amzData.acc  || {});
+    mergeAcc(merged, xfData.acc   || {});
+
+    var writeData = await computeStep('write', {
+      acc:      merged,
+      upcParts: upcData.upcParts || [],
+      oosParts: upcData.oosParts || []
+    });
+    salesToast('✓ Written — ' + writeData.parts + ' parts · ' + writeData.skus + ' SKUs · updating vendors...', 'success');
+
+    // Step 5b: update JQ_Vendor + EFF_Vendor with sales totals
+    try {
+      var vendorData = await computeStep('vendors', { acc: merged });
+      salesToast('✓ Vendors updated — JQ: ' + (vendorData.jqUpdated||0) + ' · EFF: ' + (vendorData.effUpdated||0) + ' parts with sales', 'success');
+    } catch(ve) {
+      salesToast('⚠ Vendor update: ' + ve.message, 'error');
+    }
+
+    await salesLoadWarehouseStock();
+    await readCalcTabs();
+    lastUpdated = new Date();
+    updateLastUpdatedLabels();
+    buildReorderRows();
+    buildDashboardData();
+    var whCount = Object.keys(CALC.whStock).length;
+    setStatus('ro', 'ok', 'WH: ' + whCount + ' parts');
+    setStatus('db', 'ok', 'Up to date');
+    salesToast('✓ Done — ' + CALC.partSales.length + ' parts loaded', 'success');
+  } catch(e) {
+    setStatus('ro', 'err', 'Recompute failed');
+    setStatus('db', 'err', 'Recompute failed');
+    salesToast('Recompute error: ' + e.message, 'error');
+  } finally {
+    salesFetchLock = false;
+  }
+}
+
+
+// ── recomputeTabsSilent — same as recomputeTabs but no status/lock updates ───
+// Used internally after eBay fetch and CSV upload — caller manages the lock.
+async function recomputeTabsSilent() {
+  async function computeStep(step, body) {
+    var res  = await wFetch(SALES_WORKER_URL + '/sales/compute-tabs?step=' + step, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body || {})
+    });
+    var data = await res.json();
+    if (!data.ok) throw new Error('Step ' + step + ': ' + (data.error || 'unknown'));
+    return data;
+  }
+  function mergeAcc(target, source) {
+    for (var pn in source) {
+      if (!target[pn]) target[pn] = {};
+      for (var k in source[pn]) target[pn][k] = (target[pn][k]||0) + (source[pn][k]||0);
+    }
+  }
+  var upcData  = await computeStep('upc');
+  salesToast('✓ UPC: ' + (upcData.totalParts||0) + ' parts · eBay next...', 'success');
+  var ebayData = await computeStep('ebay');
+  salesToast('✓ eBay computed · Amazon next...', 'success');
+  var amzData  = await computeStep('amz');
+  salesToast('✓ Amazon computed · Shopify next...', 'success');
+  var xfData   = await computeStep('xf');
+  salesToast('✓ Shopify computed · Writing...', 'success');
+  var merged = {};
+  mergeAcc(merged, ebayData.acc||{});
+  mergeAcc(merged, amzData.acc||{});
+  mergeAcc(merged, xfData.acc||{});
+  var writeData = await computeStep('write', {
+    acc: merged,
+    upcParts: upcData.upcParts || [],
+    oosParts: upcData.oosParts || []
+  });
+  salesToast('✓ Written — ' + writeData.parts + ' parts · updating vendors...', 'success');
+  try { await computeStep('vendors', { acc: merged }); } catch(_) {}
+  salesToast('✓ Computed — ' + writeData.parts + ' parts · ' + writeData.skus + ' SKUs', 'success');
+}
+
+// ─── SKU MAP ─────────────────────────────────────────────────────────────────
+var skuMapRows = [];  // [{ sku, units, suggestion, masterPart, confirmed }]
+
+async function loadUnmappedSkus() {
+  var wrap   = document.getElementById('skumap-wrap');
+  var status = document.getElementById('skumap-status');
+  var summary = document.getElementById('skumap-summary');
+  wrap.innerHTML = '<div style="padding:24px;text-align:center;color:var(--text3)"><span class="sales-spinner"></span> Loading unmapped SKUs...</div>';
+  status.textContent = '';
+  try {
+    var res  = await wFetch(SALES_WORKER_URL + '/sales/unmapped-skus');
+    var data = await res.json();
+    if (!data.ok) throw new Error(data.error || 'Failed');
+
+    summary.textContent = data.unmapped.length + ' unmapped · ' + data.matchedCount + ' auto-matched · ' + data.mappedCount + ' in map · ' + data.totalSkus + ' total eBay SKUs';
+
+    if (!data.unmapped.length) {
+      wrap.innerHTML = '<div class="sales-empty"><div class="sales-empty-icon">✅</div><div class="sales-empty-title">All eBay SKUs matched</div><div class="sales-empty-sub">No unmapped SKUs found</div></div>';
+      skuMapRows = [];
+      return;
+    }
+
+    // Pre-load existing map to preserve confirmed mappings
+    try {
+      var mapRes  = await wFetch(SALES_WORKER_URL + '/sales/sku-map');
+      var mapData = await mapRes.json();
+      var existingMap = {};
+      (mapData.values || []).slice(1).forEach(function(r) {
+        if (r[0] && r[1]) existingMap[r[0].toUpperCase()] = r[1];
+      });
+      data.unmapped.forEach(function(r) {
+        var ex = existingMap[r.sku.toUpperCase()];
+        r.masterPart = ex || r.suggestion || '';
+        r.confirmed  = !!ex;
+      });
+    } catch(e) {
+      data.unmapped.forEach(function(r) {
+        r.masterPart = r.suggestion || '';
+        r.confirmed  = false;
+      });
+    }
+
+    skuMapRows = data.unmapped;
+    renderSkuMap();
+    status.textContent = 'Edit the Master Part# column, then click Save Map to write to sheet.';
+  } catch(e) {
+    wrap.innerHTML = '<div style="padding:24px;color:var(--red)">Error: ' + e.message + '</div>';
+  }
+}
+
+function renderSkuMap() {
+  var wrap = document.getElementById('skumap-wrap');
+  if (!skuMapRows.length) {
+    wrap.innerHTML = '<div class="sales-empty"><div class="sales-empty-icon">✅</div><div class="sales-empty-title">All SKUs matched</div></div>';
+    return;
+  }
+  var h = '<table style="width:100%"><thead><tr>'
+    + '<th>eBay SKU</th>'
+    + '<th style="min-width:160px">Master Part # <span style="font-weight:400;font-size:10px;color:var(--text3)">(edit to override)</span></th>'
+    + '<th class="s-num">Units Sold</th>'
+    + '<th>Suggested</th>'
+    + '<th style="text-align:center">Status</th>'
+    + '</tr></thead><tbody>';
+
+  skuMapRows.forEach(function(r, i) {
+    var statusBadge = r.confirmed
+      ? '<span style="font-size:10px;padding:2px 8px;border-radius:20px;background:var(--green-bg);color:var(--green);font-family:var(--mono)">SAVED</span>'
+      : (r.masterPart
+        ? '<span style="font-size:10px;padding:2px 8px;border-radius:20px;background:var(--orange-bg);color:var(--orange);font-family:var(--mono)">PENDING</span>'
+        : '<span style="font-size:10px;padding:2px 8px;border-radius:20px;background:var(--red-bg);color:var(--red);font-family:var(--mono)">UNMAPPED</span>');
+    h += '<tr>'
+      + '<td class="s-mono" style="font-weight:600">' + r.sku + '</td>'
+      + '<td><input type="text" class="skumap-input" data-idx="'+i+'" value="'+(r.masterPart||'')+'" placeholder="Enter part number..." onchange="skuMapEdit('+i+', this.value)" style="width:100%;font-family:var(--mono);font-size:12px;padding:4px 8px;border:1px solid var(--border);border-radius:6px;background:var(--bg);color:var(--text)"></td>'
+      + '<td class="num mono">' + r.units.toLocaleString() + '</td>'
+      + '<td class="s-mono" style="color:var(--text3);font-size:11px">'+(r.suggestion||'—')+'</td>'
+      + '<td style="text-align:center">' + statusBadge + '</td>'
+      + '</tr>';
+  });
+  h += '</tbody></table>';
+  wrap.innerHTML = h;
+}
+
+function skuMapEdit(idx, val) {
+  if (!skuMapRows[idx]) return;
+  skuMapRows[idx].masterPart = val.trim();
+  skuMapRows[idx].confirmed  = false;
+  // Update status badge inline
+  var rows = document.querySelectorAll('#skumap-wrap tbody tr');
+  if (rows[idx]) {
+    var badge = rows[idx].querySelector('td:last-child');
+    if (badge) badge.innerHTML = val.trim()
+      ? '<span style="font-size:10px;padding:2px 8px;border-radius:20px;background:var(--orange-bg);color:var(--orange);font-family:var(--mono)">PENDING</span>'
+      : '<span style="font-size:10px;padding:2px 8px;border-radius:20px;background:var(--red-bg);color:var(--red);font-family:var(--mono)">UNMAPPED</span>';
+  }
+}
+
+async function saveSkuMap() {
+  var toSave = skuMapRows.filter(function(r){ return r.masterPart && r.masterPart.trim(); });
+  if (!toSave.length) { salesToast('No mappings to save — fill in Master Part# values first', 'error'); return; }
+  salesToast('<span class="sales-spinner"></span>Saving ' + toSave.length + ' mappings...', 'info');
+  try {
+    var rows = toSave.map(function(r){ return [r.sku, r.masterPart.trim()]; });
+    var res  = await wFetch(SALES_WORKER_URL + '/sales/sku-map', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ rows: rows })
+    });
+    var data = await res.json();
+    if (!data.ok) throw new Error(data.error || 'Save failed');
+    toSave.forEach(function(r){ r.confirmed = true; });
+    renderSkuMap();
+    salesToast('✓ Saved ' + data.saved + ' SKU mappings to sheet', 'success');
+  } catch(e) {
+    salesToast('Save error: ' + e.message, 'error');
+  }
+}
+
+function exportSkuMap() {
+  var toExport = skuMapRows.filter(function(r){ return r.masterPart; });
+  if (!toExport.length) { salesToast('No mappings to export', 'error'); return; }
+  var lines = ['eBay SKU,Master Part#,Units Sold,Suggested'];
+  toExport.forEach(function(r){
+    lines.push([r.sku, r.masterPart, r.units, r.suggestion||''].join(','));
+  });
+  var blob = new Blob([lines.join('\n')], {type:'text/csv'});
+  var a = document.createElement('a'); a.href = URL.createObjectURL(blob);
+  a.download = 'SKU_Map_'+new Date().toISOString().slice(0,10)+'.csv';
+  a.click();
+  salesToast('SKU Map exported — '+toExport.length+' rows', 'success');
+}
 
 // ─── AI AGENT ────────────────────────────────────────────────────────────────
 // Conversation history per app context
@@ -6531,6 +6959,7 @@ function salesToast(msg, type) {
     <button class="sales-tab-btn" id="ro-tab-eff" onclick="roTab('eff')">EFF Vendor <span class="sales-tab-badge" id="eff-badge" style="display:none">0</span></button>
     <button class="sales-tab-btn" id="ro-tab-po" onclick="roTab('po')">📦 PO Cases</button>
     <button class="sales-tab-btn" id="ro-tab-ai" onclick="roTab('ai')">✦ AI Insights</button>
+    <button class="sales-tab-btn" id="ro-tab-skumap" onclick="roTab('skumap')">🔗 SKU Map</button>
   </div>
   <div class="sales-body">
 
@@ -6622,6 +7051,7 @@ function salesToast(msg, type) {
       <div class="sales-action-row">
         <button class="sales-primary-btn" id="process-btn" onclick="processAllReports()">▶ Upload All &amp; Build Plan</button>
         <button class="sales-ghost-btn" onclick="loadSavedData()">↻ Load Last Saved Data</button>
+        <button class="sales-ghost-btn" onclick="recomputeTabs()">⚡ Recompute Totals</button>
         <span class="sales-load-note" id="last-updated"></span>
       </div>
     </div>
@@ -6730,6 +7160,23 @@ function salesToast(msg, type) {
         </div>
         </div><!-- /sales-ai-layout -->
       </div>
+    </div>
+
+  <!-- SKU Map Tab -->
+    <div class="sales-panel" id="ro-panel-skumap">
+      <div class="sales-section-header">
+        <div>
+          <div class="sales-section-title">🔗 eBay SKU Mapping</div>
+          <div class="sales-section-sub" id="skumap-summary">Maps eBay SKUs with trailing characters to canonical part numbers</div>
+        </div>
+        <div style="display:flex;gap:8px;align-items:center">
+          <button class="btn btn-secondary" style="font-size:12px" onclick="loadUnmappedSkus()">↻ Refresh</button>
+          <button class="btn btn-primary" style="font-size:12px" onclick="saveSkuMap()">💾 Save Map</button>
+          <button class="btn btn-secondary" style="font-size:12px" onclick="exportSkuMap()">⬇ Export CSV</button>
+        </div>
+      </div>
+      <div id="skumap-status" style="padding:8px 0;font-size:12px;color:var(--text3)"></div>
+      <div id="skumap-wrap" style="overflow-x:auto"></div>
     </div>
 
   </div>
@@ -6845,6 +7292,7 @@ function salesToast(msg, type) {
       <div class="sales-action-row">
         <button class="sales-primary-btn" onclick="processAllReports()">▶ Upload All &amp; Build Dashboard</button>
         <button class="sales-ghost-btn" onclick="loadSavedData()">↻ Load Last Saved Data</button>
+        <button class="sales-ghost-btn" onclick="recomputeTabs()">⚡ Recompute Totals</button>
         <span class="sales-load-note" id="db-last-updated"></span>
       </div>
     </div>
@@ -9656,11 +10104,30 @@ function rprToast(msg, type = '') {
     <div class="icard-label">Details</div>
     <div class="iwarn" id="inv-warn" style="display:none"></div>
     <div class="ifield-row">
-      <div class="ifield"><label>Cases</label><input id="inv-cases" type="number" min="1" placeholder="0"></div>
+      <div class="ifield"><label>Cases</label><input id="inv-cases" type="number" min="0.1" step="0.5" placeholder="0"></div>
       <div class="ifield"><label>Initials</label><input id="inv-initials" type="text" maxlength="4" placeholder="e.g. DJ"></div>
     </div>
     <div class="ifield"><label>Notes (optional)</label><input id="inv-notes" type="text" placeholder=""></div>
     <button class="isubmit sin" id="inv-submit-btn" onclick="invSubmit()">Submit Stock In</button>
+  </div>
+
+  <!-- Found on Shelf confirmation panel -->
+  <div class="icard" id="inv-found-panel" style="display:none;border-color:var(--orange)">
+    <div class="icard-label" style="color:var(--orange)">⚠ Found on Shelf</div>
+    <div id="inv-found-known-label" style="display:none;font-size:13px;font-weight:600;color:var(--text);margin-bottom:10px;font-family:var(--mono)"></div>
+    <div id="inv-found-loc-row" style="display:none;margin-bottom:10px">
+      <div class="icard-label">Where did you find it?</div>
+      <input id="inv-found-loc-inp" type="text" class="isearch-inp" placeholder="e.g. Shelf-B4 or Pallet-3" style="width:100%">
+    </div>
+    <div class="ifield">
+      <label>How many cases did you pull?</label>
+      <input id="inv-found-cases-inp" type="number" min="0.1" step="0.5" placeholder="0" style="width:80px">
+    </div>
+    <p style="font-size:12px;color:var(--text3);margin:8px 0 12px;line-height:1.5">This will be logged as <strong>FOUND ON SHELF</strong>. Management will see the discrepancy and can reconcile the inventory count.</p>
+    <div style="display:flex;gap:8px">
+      <button class="isubmit" style="background:var(--orange);border-color:var(--orange);flex:1" onclick="invFoundOnShelfConfirm()">✓ Add to Pull List</button>
+      <button class="isubmit" style="background:none;color:var(--text2);border:1.5px solid var(--border)" onclick="invFoundOnShelfCancel()">Cancel</button>
+    </div>
   </div>
 
   <!-- Pull List (Stock Out only) -->
@@ -9716,7 +10183,7 @@ function rprToast(msg, type = '') {
     </div>
     <div class="iwarn" id="xfr-addcart-warn" style="display:none"></div>
     <div class="ifield-row">
-      <div class="ifield"><label>Cases</label><input id="xfr-addcart-cases" type="number" min="1" placeholder="0"></div>
+      <div class="ifield"><label>Cases</label><input id="xfr-addcart-cases" type="number" min="0.1" step="0.5" placeholder="0"></div>
       <div class="ifield"><label>Initials</label><input id="xfr-cart-initials" type="text" maxlength="4" placeholder="e.g. DJ"></div>
     </div>
     <button class="isubmit" onclick="xfrAddToCart()" style="background:var(--purple);border-color:var(--purple)">+ Add to Cart</button>
@@ -10156,9 +10623,26 @@ function rprToast(msg, type = '') {
           + "<div class='iloc-name'>" + loc.location + "</div>"
           + "<div style='font-size:12px;color:var(--orange);font-weight:600'>0 cases on record</div></div>"
           + "<span class='iloc-badge' style='background:var(--orange-bg);color:var(--orange);border:1px solid var(--orange)'>Found?</span>";
-        el.onclick = (function(l) { return function() { invFoundOnShelf(l); }; })(loc);
+        el.onclick = (function(l) { return function() { invFoundOnShelf(l, false); }; })(loc);
         list.appendChild(el);
       });
+    }
+
+    // Stock Out: "Found somewhere else?" — new location not in system
+    if (invMode === "out") {
+      var elseDivider = document.createElement("div");
+      elseDivider.style.cssText = "font-size:11px;font-weight:700;letter-spacing:.5px;text-transform:uppercase;color:var(--text3);margin:12px 0 6px;padding-top:10px;border-top:1px solid var(--border)";
+      elseDivider.textContent = "Found somewhere else?";
+      list.appendChild(elseDivider);
+
+      var elseEl = document.createElement("div");
+      elseEl.className = "iloc-opt";
+      elseEl.style.borderColor = "var(--border)";
+      elseEl.innerHTML = "<div><div class='iloc-name'>New location not in system</div>"
+        + "<div style='font-size:12px;color:var(--text3)'>Enter where you found it</div></div>"
+        + "<span class='iloc-badge nw'>New</span>";
+      elseEl.onclick = function() { invFoundOnShelf(null, true); };
+      list.appendChild(elseEl);
     }
 
     // Stock Out: if ALL locations are zero (none in the locs array), still show override option
@@ -10190,23 +10674,58 @@ function rprToast(msg, type = '') {
     g("inv-detail-card").style.display = "none";
   }
 
-  // Called when worker taps "Found on Shelf?" for a 0-case location
-  window.invFoundOnShelf = function(loc) {
+  // Called when worker taps "Found on Shelf?" (known 0-case loc) or "Found somewhere else?" (new loc)
+  // loc = existing location object (known) or null (completely new)
+  // isNewLoc = true when worker found it at a location not in system
+  window.invFoundOnShelf = function(loc, isNewLoc) {
     if (!invPart) return;
-    // Set the location's partNum if available
-    var partNum = (loc.partNum && loc.partNum !== invPart.partNum) ? loc.partNum : invPart.partNum;
-    var partForList = Object.assign({}, invPart, { partNum: partNum });
-    // Add to pull list with foundOnShelf flag — cases left blank for worker to fill at location
+    // Show the found-on-shelf input panel instead of immediately adding to pull list
+    var panel = g("inv-found-panel");
+    if (!panel) return;
+    // Pre-fill location if known
+    var locInp = g("inv-found-loc-inp");
+    if (locInp) locInp.value = (loc && !isNewLoc) ? loc.location : '';
+    var locRow = g("inv-found-loc-row");
+    if (locRow) locRow.style.display = isNewLoc ? "block" : "none";
+    var knownLocLabel = g("inv-found-known-label");
+    if (knownLocLabel) {
+      knownLocLabel.style.display = (loc && !isNewLoc) ? "block" : "none";
+      if (loc && !isNewLoc) knownLocLabel.textContent = "Location: " + loc.location;
+    }
+    // Store context for when worker confirms
+    panel._loc    = loc;
+    panel._isNew  = isNewLoc;
+    g("inv-found-cases-inp").value = "";
+    g("inv-loc-card").style.display  = "none";
+    g("inv-result-card").style.display = "none";
+    panel.style.display = "block";
+  };
+
+  window.invFoundOnShelfConfirm = function() {
+    var panel    = g("inv-found-panel");
+    var loc      = panel ? panel._loc    : null;
+    var isNewLoc = panel ? panel._isNew  : false;
+    var casesVal = parseFloat((g("inv-found-cases-inp") || {}).value || 0);
+    var locInp   = (g("inv-found-loc-inp") || {}).value || '';
+    var location = isNewLoc ? locInp.trim() : (loc ? loc.location : '');
+
+    if (!casesVal || casesVal < 0.1) { invFlash("Enter cases pulled", "error"); return; }
+    if (isNewLoc && !location) { invFlash("Enter the location where you found it", "error"); return; }
+    if (!invPart) { invFlash("No item selected", "error"); return; }
+
+    var partNum = (loc && loc.partNum && loc.partNum !== invPart.partNum) ? loc.partNum : invPart.partNum;
+
     invPullList.push({
-      key:           partNum + '|' + loc.location + '|found',
-      partNum:       partNum,
-      sku:           invPart.sku || partNum,
-      name:          invPart.name || '',
-      location:      loc.location,
-      cases:         '',
-      rowIndex:      loc.rowIndex,
-      masterRowIndex: loc.rowIndex,
-      foundOnShelf:  true
+      key:            partNum + '|' + location + '|found',
+      partNum:        partNum,
+      sku:            invPart.sku || partNum,
+      name:           invPart.name || '',
+      location:       location,
+      cases:          casesVal,
+      rowIndex:       loc ? loc.rowIndex : null,
+      masterRowIndex: loc ? loc.rowIndex : null,
+      foundOnShelf:   true,
+      foundNewLoc:    isNewLoc   // new location — worker creates row at negative cases
     });
     invPullList.sort(function(a, b) {
       return invLocSort(a.location) - invLocSort(b.location) ||
@@ -10214,11 +10733,17 @@ function rprToast(msg, type = '') {
     });
     invSavePullList();
     invRenderPullList();
-    invFlash("\u26a0 Added to pull list — mark as FOUND ON SHELF", "success");
-    g("inv-result-card").style.display = "none";
-    g("inv-loc-card").style.display    = "none";
+    panel.style.display = "none";
+    invFlash("\u26a0 Added — FOUND ON SHELF" + (isNewLoc ? " (new location)" : ""), "success");
     g("inv-search-inp").value = "";
     invPart = null; invSelLoc = null;
+  };
+
+  window.invFoundOnShelfCancel = function() {
+    var panel = g("inv-found-panel");
+    if (panel) panel.style.display = "none";
+    invShowLocs();
+    g("inv-loc-card").style.display = "block";
   };
 
   function invPickLoc(i) {
@@ -10282,13 +10807,13 @@ function rprToast(msg, type = '') {
   }
 
   window.invSubmit = function() {
-    var cases    = parseInt(g("inv-cases").value, 10);
+    var cases    = parseFloat(g("inv-cases").value);
     var initials = g("inv-initials").value.trim();
     var notes    = g("inv-notes").value.trim();
     var newLoc   = g("inv-newloc-inp").value.trim();
     if (!invPart)   { invFlash("No item selected", "error"); return; }
     if (!invSelLoc) { invFlash("Select a location first", "error"); return; }
-    if (!cases || cases < 1) { invFlash("Enter number of cases", "error"); return; }
+    if (!cases || cases < 0.1) { invFlash("Enter number of cases", "error"); return; }
     if (!initials)  { invFlash("Enter your initials", "error"); return; }
     if (invSelLoc.isNew && !newLoc) { invFlash("Enter new location name", "error"); return; }
     var location = invSelLoc.isNew ? newLoc : invSelLoc.location;
@@ -10336,6 +10861,7 @@ function rprToast(msg, type = '') {
     g("inv-newloc-wrap").style.display = "none";
     g("inv-warn").style.display = "none";
     var nr = g("inv-name-results"); if (nr) nr.style.display = "none";
+    var fp = g("inv-found-panel"); if (fp) fp.style.display = "none";
     if (!keepMode) invStopCam();
   }
 
@@ -10494,7 +11020,7 @@ function rprToast(msg, type = '') {
         "<div class='ipull-pn'>" + item.partNum + (item.foundOnShelf ? " <span style='background:var(--orange-bg);color:var(--orange);font-size:10px;font-weight:700;padding:1px 6px;border-radius:4px;border:1px solid var(--orange);font-family:var(--sans)'>FOUND ON SHELF</span>" : "") + "</div>" +
         "<div class='ipull-name'>" + (item.name || '') + "</div>" +
         "<div style='margin-top:6px;display:flex;gap:6px;align-items:center'>" +
-          "<input type='number' min='0' placeholder='Cases' value='" + (item.cases || '') + "' " +
+          "<input type='number' min='0.1' step='0.5' placeholder='Cases' value='" + (item.cases || '') + "' " +
             "style='width:70px;padding:4px 8px;border-radius:6px;border:1px solid var(--border);background:var(--bg3);color:var(--text);font-size:13px' " +
             "onchange='invUpdatePullCases(" + i + ", this.value)'>" +
           "<span style='font-size:11px;color:var(--text3)'>cases</span>" +
@@ -10521,7 +11047,7 @@ function rprToast(msg, type = '') {
 
   window.invUpdatePullCases = function(i, val) {
     if (invPullList[i]) {
-      invPullList[i].cases = val ? parseInt(val) : '';
+      invPullList[i].cases = val ? parseFloat(val) : '';
       invSavePullList();
     }
   };
@@ -10545,7 +11071,7 @@ function rprToast(msg, type = '') {
     var notes    = g("inv-pull-notes").value.trim();
     if (invPullList.length === 0) { invFlash("Pull list is empty", "error"); return; }
     if (!initials) { invFlash("Enter your initials", "error"); return; }
-    var missing = invPullList.filter(function(x) { return !x.cases || x.cases < 1; });
+    var missing = invPullList.filter(function(x) { return !x.cases || parseFloat(x.cases) < 0.1; });
     if (missing.length > 0) { invFlash(missing.length + " item(s) missing case count", "error"); return; }
     var btn = document.querySelector("#inv-pulllist-card .isubmit");
     btn.disabled = true; btn.textContent = "Submitting\u2026";
@@ -10561,7 +11087,7 @@ function rprToast(msg, type = '') {
       }
       var item = items[idx++];
       var itemNotes = item.foundOnShelf
-        ? ('[FOUND ON SHELF] ' + notes).trim()
+        ? ('[FOUND ON SHELF' + (item.foundNewLoc ? ' - NEW LOCATION' : '') + '] ' + notes).trim()
         : notes;
       wFetch(W + "/inventory/log", {
         method: "POST",
@@ -10570,7 +11096,7 @@ function rprToast(msg, type = '') {
           type: "OUT", partNum: item.partNum, sku: item.sku, name: item.name,
           location: item.location, cases: item.cases, initials: initials,
           notes: itemNotes, rowIndex: item.rowIndex, masterRowIndex: item.masterRowIndex,
-          isPlaceholder: false, isNew: false, overwriteLocation: ""
+          isPlaceholder: false, isNew: !!item.foundNewLoc, overwriteLocation: ""
         })
       }).then(function(r) { return r.json(); })
         .then(function(d) {
@@ -10595,13 +11121,22 @@ function rprToast(msg, type = '') {
     var el = document.createElement("div");
     el.className = "ientry";
     el.id = "inv-entry-" + item.rowIndex;
-    var isFound = item.notes && item.notes.indexOf('[FOUND ON SHELF]') === 0;
+    var isFoundNew  = item.notes && item.notes.indexOf('[FOUND ON SHELF - NEW LOCATION]') === 0;
+    var isFound     = !isFoundNew && item.notes && item.notes.indexOf('[FOUND ON SHELF]') === 0;
     var typeHtml = "<span class='ientry-type " + item.type.toLowerCase() + "'>" + item.type + "</span>";
-    var foundBadge = isFound ? "<span style='background:var(--orange-bg);color:var(--orange);font-size:10px;font-weight:700;padding:2px 8px;border-radius:4px;border:1px solid var(--orange);margin-left:6px'>\u26a0 FOUND ON SHELF</span>" : "";
+    var foundBadge = isFoundNew
+      ? "<span style='background:var(--red-bg);color:var(--red);font-size:10px;font-weight:700;padding:2px 8px;border-radius:4px;border:1px solid var(--red);margin-left:6px'>\u26a0 FOUND \u2014 NEW LOCATION</span>"
+      : isFound
+        ? "<span style='background:var(--orange-bg);color:var(--orange);font-size:10px;font-weight:700;padding:2px 8px;border-radius:4px;border:1px solid var(--orange);margin-left:6px'>\u26a0 FOUND ON SHELF</span>"
+        : "";
     var nameHtml = item.name ? "<div style='font-size:12px;color:var(--text2);margin-top:2px;margin-bottom:6px'>" + item.name + "</div>" : "";
     var skuHtml  = (item.sku && item.sku !== item.partNum)
       ? "<div style='font-size:11px;font-family:var(--mono);color:var(--text3);margin-top:1px'>" + item.sku + "</div>" : "";
-    var displayNotes = isFound ? item.notes.replace('[FOUND ON SHELF] ', '').trim() : item.notes;
+    var displayNotes = isFoundNew
+      ? item.notes.replace('[FOUND ON SHELF - NEW LOCATION] ', '').trim()
+      : isFound
+        ? item.notes.replace('[FOUND ON SHELF] ', '').trim()
+        : item.notes;
     el.innerHTML = "<div class='ientry-head'><div><span class='ientry-part'>" + (item.partNum || "") + "</span>" + skuHtml + "</div><div style='display:flex;align-items:center;gap:4px'>" + foundBadge + typeHtml + "</div></div>"
       + nameHtml
       + "<div class='ientry-meta'>\ud83d\udccd " + (item.location || "") + " &nbsp;|\u00a0 \ud83d\udce6 " + (item.cases || 0) + " cases &nbsp;|\u00a0 \ud83e\uddd1 " + (item.initials || "")
@@ -10898,12 +11433,12 @@ function rprToast(msg, type = '') {
   }
 
   window.xfrAddToCart = function() {
-    var cases    = parseInt((g('xfr-addcart-cases') || {}).value || 0, 10);
+    var cases    = parseFloat((g('xfr-addcart-cases') || {}).value || 0);
     var initials = ((g('xfr-cart-initials') || {}).value || '').trim();
     if (!xfrPart)    { invFlash('No item selected', 'error'); return; }
     if (!xfrFromLoc) { invFlash('Select a From location', 'error'); return; }
-    if (!cases || cases < 1) { invFlash('Enter number of cases', 'error'); return; }
-    if (!initials)           { invFlash('Enter your initials', 'error'); return; }
+    if (!cases || cases < 0.1) { invFlash('Enter number of cases', 'error'); return; }
+    if (!initials)             { invFlash('Enter your initials', 'error'); return; }
     if (cases > parseFloat(xfrFromLoc.cases || 0)) { invFlash('Exceeds available cases (' + xfrFromLoc.cases + ')', 'error'); return; }
     xfrCart.push({
       partNum:      xfrPart.partNum,
