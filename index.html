@@ -1,7 +1,7 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-  <!-- XFITTING-BUILD-V112-XDST-20260403 -->
+  <!-- XFITTING-BUILD-V112-XDST-20260402 -->
 <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate">
 <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&family=IBM+Plex+Sans:wght@300;400;500;600&display=swap" rel="stylesheet">
   <meta http-equiv="Pragma" content="no-cache">
@@ -10110,30 +10110,11 @@ function rprToast(msg, type = '') {
     <div class="icard-label">Details</div>
     <div class="iwarn" id="inv-warn" style="display:none"></div>
     <div class="ifield-row">
-      <div class="ifield"><label>Cases</label><input id="inv-cases" type="number" min="0.1" step="0.5" placeholder="0"></div>
+      <div class="ifield"><label>Cases</label><input id="inv-cases" type="number" min="1" placeholder="0"></div>
       <div class="ifield"><label>Initials</label><input id="inv-initials" type="text" maxlength="4" placeholder="e.g. DJ"></div>
     </div>
     <div class="ifield"><label>Notes (optional)</label><input id="inv-notes" type="text" placeholder=""></div>
     <button class="isubmit sin" id="inv-submit-btn" onclick="invSubmit()">Submit Stock In</button>
-  </div>
-
-  <!-- Found on Shelf confirmation panel -->
-  <div class="icard" id="inv-found-panel" style="display:none;border-color:var(--orange)">
-    <div class="icard-label" style="color:var(--orange)">⚠ Found on Shelf</div>
-    <div id="inv-found-known-label" style="display:none;font-size:13px;font-weight:600;color:var(--text);margin-bottom:10px;font-family:var(--mono)"></div>
-    <div id="inv-found-loc-row" style="display:none;margin-bottom:10px">
-      <div class="icard-label">Where did you find it?</div>
-      <input id="inv-found-loc-inp" type="text" class="isearch-inp" placeholder="e.g. Shelf-B4 or Pallet-3" style="width:100%">
-    </div>
-    <div class="ifield">
-      <label>How many cases did you pull?</label>
-      <input id="inv-found-cases-inp" type="number" min="0.1" step="0.5" placeholder="0" style="width:80px">
-    </div>
-    <p style="font-size:12px;color:var(--text3);margin:8px 0 12px;line-height:1.5">This will be logged as <strong>FOUND ON SHELF</strong>. Management will see the discrepancy and can reconcile the inventory count.</p>
-    <div style="display:flex;gap:8px">
-      <button class="isubmit" style="background:var(--orange);border-color:var(--orange);flex:1" onclick="invFoundOnShelfConfirm()">✓ Add to Pull List</button>
-      <button class="isubmit" style="background:none;color:var(--text2);border:1.5px solid var(--border)" onclick="invFoundOnShelfCancel()">Cancel</button>
-    </div>
   </div>
 
   <!-- Pull List (Stock Out only) -->
@@ -10153,7 +10134,7 @@ function rprToast(msg, type = '') {
 </div>
 
 <!-- ── Transfer Panel ── -->
-<!-- Destination picker overlay -->
+<!-- Destination picker overlay (shared, shown on top when selecting cart item dest) -->
 <div id="xfr-dest-picker" class="xfr-dest-picker" style="display:none">
   <div class="xfr-dest-picker-head">
     <div class="xfr-dest-picker-title">🔁 Select Destination</div>
@@ -10198,7 +10179,7 @@ function rprToast(msg, type = '') {
     </div>
     <div class="iwarn" id="xfr-addcart-warn" style="display:none"></div>
     <div class="ifield-row">
-      <div class="ifield"><label>Cases</label><input id="xfr-addcart-cases" type="number" min="0.1" step="0.5" placeholder="0"></div>
+      <div class="ifield"><label>Cases</label><input id="xfr-addcart-cases" type="number" min="1" placeholder="0"></div>
       <div class="ifield"><label>Initials</label><input id="xfr-cart-initials" type="text" maxlength="4" placeholder="e.g. DJ"></div>
     </div>
     <button class="isubmit" onclick="xfrAddToCart()" style="background:var(--purple);border-color:var(--purple)">+ Add to Cart</button>
@@ -10629,26 +10610,9 @@ function rprToast(msg, type = '') {
           + "<div class='iloc-name'>" + loc.location + "</div>"
           + "<div style='font-size:12px;color:var(--orange);font-weight:600'>0 cases on record</div></div>"
           + "<span class='iloc-badge' style='background:var(--orange-bg);color:var(--orange);border:1px solid var(--orange)'>Found?</span>";
-        el.onclick = (function(l) { return function() { invFoundOnShelf(l, false); }; })(loc);
+        el.onclick = (function(l) { return function() { invFoundOnShelf(l); }; })(loc);
         list.appendChild(el);
       });
-    }
-
-    // Stock Out: "Found somewhere else?" — new location not in system
-    if (invMode === "out") {
-      var elseDivider = document.createElement("div");
-      elseDivider.style.cssText = "font-size:11px;font-weight:700;letter-spacing:.5px;text-transform:uppercase;color:var(--text3);margin:12px 0 6px;padding-top:10px;border-top:1px solid var(--border)";
-      elseDivider.textContent = "Found somewhere else?";
-      list.appendChild(elseDivider);
-
-      var elseEl = document.createElement("div");
-      elseEl.className = "iloc-opt";
-      elseEl.style.borderColor = "var(--border)";
-      elseEl.innerHTML = "<div><div class='iloc-name'>New location not in system</div>"
-        + "<div style='font-size:12px;color:var(--text3)'>Enter where you found it</div></div>"
-        + "<span class='iloc-badge nw'>New</span>";
-      elseEl.onclick = function() { invFoundOnShelf(null, true); };
-      list.appendChild(elseEl);
     }
 
     // Stock Out: if ALL locations are zero (none in the locs array), still show override option
@@ -10680,58 +10644,23 @@ function rprToast(msg, type = '') {
     g("inv-detail-card").style.display = "none";
   }
 
-  // Called when worker taps "Found on Shelf?" (known 0-case loc) or "Found somewhere else?" (new loc)
-  // loc = existing location object (known) or null (completely new)
-  // isNewLoc = true when worker found it at a location not in system
-  window.invFoundOnShelf = function(loc, isNewLoc) {
+  // Called when worker taps "Found on Shelf?" for a 0-case location
+  window.invFoundOnShelf = function(loc) {
     if (!invPart) return;
-    // Show the found-on-shelf input panel instead of immediately adding to pull list
-    var panel = g("inv-found-panel");
-    if (!panel) return;
-    // Pre-fill location if known
-    var locInp = g("inv-found-loc-inp");
-    if (locInp) locInp.value = (loc && !isNewLoc) ? loc.location : '';
-    var locRow = g("inv-found-loc-row");
-    if (locRow) locRow.style.display = isNewLoc ? "block" : "none";
-    var knownLocLabel = g("inv-found-known-label");
-    if (knownLocLabel) {
-      knownLocLabel.style.display = (loc && !isNewLoc) ? "block" : "none";
-      if (loc && !isNewLoc) knownLocLabel.textContent = "Location: " + loc.location;
-    }
-    // Store context for when worker confirms
-    panel._loc    = loc;
-    panel._isNew  = isNewLoc;
-    g("inv-found-cases-inp").value = "";
-    g("inv-loc-card").style.display  = "none";
-    g("inv-result-card").style.display = "none";
-    panel.style.display = "block";
-  };
-
-  window.invFoundOnShelfConfirm = function() {
-    var panel    = g("inv-found-panel");
-    var loc      = panel ? panel._loc    : null;
-    var isNewLoc = panel ? panel._isNew  : false;
-    var casesVal = parseFloat((g("inv-found-cases-inp") || {}).value || 0);
-    var locInp   = (g("inv-found-loc-inp") || {}).value || '';
-    var location = isNewLoc ? locInp.trim() : (loc ? loc.location : '');
-
-    if (!casesVal || casesVal < 0.1) { invFlash("Enter cases pulled", "error"); return; }
-    if (isNewLoc && !location) { invFlash("Enter the location where you found it", "error"); return; }
-    if (!invPart) { invFlash("No item selected", "error"); return; }
-
-    var partNum = (loc && loc.partNum && loc.partNum !== invPart.partNum) ? loc.partNum : invPart.partNum;
-
+    // Set the location's partNum if available
+    var partNum = (loc.partNum && loc.partNum !== invPart.partNum) ? loc.partNum : invPart.partNum;
+    var partForList = Object.assign({}, invPart, { partNum: partNum });
+    // Add to pull list with foundOnShelf flag — cases left blank for worker to fill at location
     invPullList.push({
-      key:            partNum + '|' + location + '|found',
-      partNum:        partNum,
-      sku:            invPart.sku || partNum,
-      name:           invPart.name || '',
-      location:       location,
-      cases:          casesVal,
-      rowIndex:       loc ? loc.rowIndex : null,
-      masterRowIndex: loc ? loc.rowIndex : null,
-      foundOnShelf:   true,
-      foundNewLoc:    isNewLoc   // new location — worker creates row at negative cases
+      key:           partNum + '|' + loc.location + '|found',
+      partNum:       partNum,
+      sku:           invPart.sku || partNum,
+      name:          invPart.name || '',
+      location:      loc.location,
+      cases:         '',
+      rowIndex:      loc.rowIndex,
+      masterRowIndex: loc.rowIndex,
+      foundOnShelf:  true
     });
     invPullList.sort(function(a, b) {
       return invLocSort(a.location) - invLocSort(b.location) ||
@@ -10739,17 +10668,11 @@ function rprToast(msg, type = '') {
     });
     invSavePullList();
     invRenderPullList();
-    panel.style.display = "none";
-    invFlash("\u26a0 Added — FOUND ON SHELF" + (isNewLoc ? " (new location)" : ""), "success");
+    invFlash("\u26a0 Added to pull list — mark as FOUND ON SHELF", "success");
+    g("inv-result-card").style.display = "none";
+    g("inv-loc-card").style.display    = "none";
     g("inv-search-inp").value = "";
     invPart = null; invSelLoc = null;
-  };
-
-  window.invFoundOnShelfCancel = function() {
-    var panel = g("inv-found-panel");
-    if (panel) panel.style.display = "none";
-    invShowLocs();
-    g("inv-loc-card").style.display = "block";
   };
 
   function invPickLoc(i) {
@@ -10813,13 +10736,13 @@ function rprToast(msg, type = '') {
   }
 
   window.invSubmit = function() {
-    var cases    = parseFloat(g("inv-cases").value);
+    var cases    = parseInt(g("inv-cases").value, 10);
     var initials = g("inv-initials").value.trim();
     var notes    = g("inv-notes").value.trim();
     var newLoc   = g("inv-newloc-inp").value.trim();
     if (!invPart)   { invFlash("No item selected", "error"); return; }
     if (!invSelLoc) { invFlash("Select a location first", "error"); return; }
-    if (!cases || cases < 0.1) { invFlash("Enter number of cases", "error"); return; }
+    if (!cases || cases < 1) { invFlash("Enter number of cases", "error"); return; }
     if (!initials)  { invFlash("Enter your initials", "error"); return; }
     if (invSelLoc.isNew && !newLoc) { invFlash("Enter new location name", "error"); return; }
     var location = invSelLoc.isNew ? newLoc : invSelLoc.location;
@@ -10867,7 +10790,6 @@ function rprToast(msg, type = '') {
     g("inv-newloc-wrap").style.display = "none";
     g("inv-warn").style.display = "none";
     var nr = g("inv-name-results"); if (nr) nr.style.display = "none";
-    var fp = g("inv-found-panel"); if (fp) fp.style.display = "none";
     if (!keepMode) invStopCam();
   }
 
@@ -11026,7 +10948,7 @@ function rprToast(msg, type = '') {
         "<div class='ipull-pn'>" + item.partNum + (item.foundOnShelf ? " <span style='background:var(--orange-bg);color:var(--orange);font-size:10px;font-weight:700;padding:1px 6px;border-radius:4px;border:1px solid var(--orange);font-family:var(--sans)'>FOUND ON SHELF</span>" : "") + "</div>" +
         "<div class='ipull-name'>" + (item.name || '') + "</div>" +
         "<div style='margin-top:6px;display:flex;gap:6px;align-items:center'>" +
-          "<input type='number' min='0.1' step='0.5' placeholder='Cases' value='" + (item.cases || '') + "' " +
+          "<input type='number' min='0' placeholder='Cases' value='" + (item.cases || '') + "' " +
             "style='width:70px;padding:4px 8px;border-radius:6px;border:1px solid var(--border);background:var(--bg3);color:var(--text);font-size:13px' " +
             "onchange='invUpdatePullCases(" + i + ", this.value)'>" +
           "<span style='font-size:11px;color:var(--text3)'>cases</span>" +
@@ -11053,7 +10975,7 @@ function rprToast(msg, type = '') {
 
   window.invUpdatePullCases = function(i, val) {
     if (invPullList[i]) {
-      invPullList[i].cases = val ? parseFloat(val) : '';
+      invPullList[i].cases = val ? parseInt(val) : '';
       invSavePullList();
     }
   };
@@ -11077,7 +10999,7 @@ function rprToast(msg, type = '') {
     var notes    = g("inv-pull-notes").value.trim();
     if (invPullList.length === 0) { invFlash("Pull list is empty", "error"); return; }
     if (!initials) { invFlash("Enter your initials", "error"); return; }
-    var missing = invPullList.filter(function(x) { return !x.cases || parseFloat(x.cases) < 0.1; });
+    var missing = invPullList.filter(function(x) { return !x.cases || x.cases < 1; });
     if (missing.length > 0) { invFlash(missing.length + " item(s) missing case count", "error"); return; }
     var btn = document.querySelector("#inv-pulllist-card .isubmit");
     btn.disabled = true; btn.textContent = "Submitting\u2026";
@@ -11093,7 +11015,7 @@ function rprToast(msg, type = '') {
       }
       var item = items[idx++];
       var itemNotes = item.foundOnShelf
-        ? ('[FOUND ON SHELF' + (item.foundNewLoc ? ' - NEW LOCATION' : '') + '] ' + notes).trim()
+        ? ('[FOUND ON SHELF] ' + notes).trim()
         : notes;
       wFetch(W + "/inventory/log", {
         method: "POST",
@@ -11102,7 +11024,7 @@ function rprToast(msg, type = '') {
           type: "OUT", partNum: item.partNum, sku: item.sku, name: item.name,
           location: item.location, cases: item.cases, initials: initials,
           notes: itemNotes, rowIndex: item.rowIndex, masterRowIndex: item.masterRowIndex,
-          isPlaceholder: false, isNew: !!item.foundNewLoc, overwriteLocation: ""
+          isPlaceholder: false, isNew: false, overwriteLocation: ""
         })
       }).then(function(r) { return r.json(); })
         .then(function(d) {
@@ -11127,22 +11049,13 @@ function rprToast(msg, type = '') {
     var el = document.createElement("div");
     el.className = "ientry";
     el.id = "inv-entry-" + item.rowIndex;
-    var isFoundNew  = item.notes && item.notes.indexOf('[FOUND ON SHELF - NEW LOCATION]') === 0;
-    var isFound     = !isFoundNew && item.notes && item.notes.indexOf('[FOUND ON SHELF]') === 0;
+    var isFound = item.notes && item.notes.indexOf('[FOUND ON SHELF]') === 0;
     var typeHtml = "<span class='ientry-type " + item.type.toLowerCase() + "'>" + item.type + "</span>";
-    var foundBadge = isFoundNew
-      ? "<span style='background:var(--red-bg);color:var(--red);font-size:10px;font-weight:700;padding:2px 8px;border-radius:4px;border:1px solid var(--red);margin-left:6px'>\u26a0 FOUND \u2014 NEW LOCATION</span>"
-      : isFound
-        ? "<span style='background:var(--orange-bg);color:var(--orange);font-size:10px;font-weight:700;padding:2px 8px;border-radius:4px;border:1px solid var(--orange);margin-left:6px'>\u26a0 FOUND ON SHELF</span>"
-        : "";
+    var foundBadge = isFound ? "<span style='background:var(--orange-bg);color:var(--orange);font-size:10px;font-weight:700;padding:2px 8px;border-radius:4px;border:1px solid var(--orange);margin-left:6px'>\u26a0 FOUND ON SHELF</span>" : "";
     var nameHtml = item.name ? "<div style='font-size:12px;color:var(--text2);margin-top:2px;margin-bottom:6px'>" + item.name + "</div>" : "";
     var skuHtml  = (item.sku && item.sku !== item.partNum)
       ? "<div style='font-size:11px;font-family:var(--mono);color:var(--text3);margin-top:1px'>" + item.sku + "</div>" : "";
-    var displayNotes = isFoundNew
-      ? item.notes.replace('[FOUND ON SHELF - NEW LOCATION] ', '').trim()
-      : isFound
-        ? item.notes.replace('[FOUND ON SHELF] ', '').trim()
-        : item.notes;
+    var displayNotes = isFound ? item.notes.replace('[FOUND ON SHELF] ', '').trim() : item.notes;
     el.innerHTML = "<div class='ientry-head'><div><span class='ientry-part'>" + (item.partNum || "") + "</span>" + skuHtml + "</div><div style='display:flex;align-items:center;gap:4px'>" + foundBadge + typeHtml + "</div></div>"
       + nameHtml
       + "<div class='ientry-meta'>\ud83d\udccd " + (item.location || "") + " &nbsp;|\u00a0 \ud83d\udce6 " + (item.cases || 0) + " cases &nbsp;|\u00a0 \ud83e\uddd1 " + (item.initials || "")
@@ -11347,14 +11260,8 @@ function rprToast(msg, type = '') {
       .then(function(d) {
         if (!d.partNum) { invFlash('Not found: ' + code, 'error'); return; }
         xfrPart = d;
-        // Build known locations as objects with variants for the destination picker
-        var locMap = {};
-        (d.locations || []).forEach(function(l) {
-          if (!l.location) return;
-          if (!locMap[l.location]) locMap[l.location] = { location: l.location, variants: [] };
-          locMap[l.location].variants.push({ partNum: l.partNum || d.partNum, cases: l.cases || 0 });
-        });
-        xfrKnownLocs = Object.values(locMap);
+        // Collect known locations for destination suggestions
+        xfrKnownLocs = (d.locations || []).map(function(l) { return l.location; }).filter(Boolean);
         g('xfr-result-part').textContent = d.isMultiVariant ? d.baseSku : d.partNum;
         g('xfr-result-sku').textContent  = d.sku && d.sku !== d.partNum ? d.sku : '';
         g('xfr-result-name').textContent = d.name || '';
@@ -11445,12 +11352,12 @@ function rprToast(msg, type = '') {
   }
 
   window.xfrAddToCart = function() {
-    var cases    = parseFloat((g('xfr-addcart-cases') || {}).value || 0);
+    var cases    = parseInt((g('xfr-addcart-cases') || {}).value || 0, 10);
     var initials = ((g('xfr-cart-initials') || {}).value || '').trim();
     if (!xfrPart)    { invFlash('No item selected', 'error'); return; }
     if (!xfrFromLoc) { invFlash('Select a From location', 'error'); return; }
-    if (!cases || cases < 0.1) { invFlash('Enter number of cases', 'error'); return; }
-    if (!initials)             { invFlash('Enter your initials', 'error'); return; }
+    if (!cases || cases < 1) { invFlash('Enter number of cases', 'error'); return; }
+    if (!initials)           { invFlash('Enter your initials', 'error'); return; }
     if (cases > parseFloat(xfrFromLoc.cases || 0)) { invFlash('Exceeds available cases (' + xfrFromLoc.cases + ')', 'error'); return; }
     xfrCart.push({
       partNum:      xfrPart.partNum,
@@ -11497,14 +11404,13 @@ function rprToast(msg, type = '') {
         + '<div class="xfr-cart-item-dest">'
           + '<button class="xfr-dest-btn' + (item.toLocation ? ' dest-set' : '') + '" onclick="xfrOpenPicker(' + i + ')">'
             + '<span>' + destLabel + '</span>'
-            + '<span class="xfr-dest-arrow">' + (item.toLocation ? '\u2713' : '\u25be') + '</span>'
+            + '<span class="xfr-dest-arrow">' + (item.toLocation ? '✓' : '▾') + '</span>'
           + '</button>'
         + '</div>';
       el.appendChild(row);
     });
   }
 
-  // Destination input — show suggestions from known locations
   // ── Destination picker ──────────────────────────────────────────
   var xfrPickerActiveIdx = -1;
 
@@ -11523,13 +11429,13 @@ function rprToast(msg, type = '') {
         var el = document.createElement('div');
         el.className = 'xfr-dest-picker-item';
         var varHtml = loc.variants.map(function(v) {
-          return '<span style="font-size:11px;font-family:var(--mono);color:var(--text3)">' + v.partNum + ' &nbsp;\u00b7&nbsp; ' + v.cases + ' cases</span>';
+          return '<span style="font-size:11px;font-family:var(--mono);color:var(--text3)">' + v.partNum + ' &nbsp;·&nbsp; ' + v.cases + ' cases</span>';
         }).join('<br>');
         el.innerHTML = '<div>'
           + '<div style="font-size:15px;font-weight:600;color:var(--text)">' + loc.location + '</div>'
           + (varHtml ? '<div style="margin-top:3px">' + varHtml + '</div>' : '')
-          + '</div><span style="color:var(--purple);font-size:13px;font-weight:700">Select \u203a</span>';
-        el.onclick = (function(l) { return function() { xfrPickerSelect(l.location, false); }; })(loc);
+          + '</div><span style="color:var(--purple);font-size:13px;font-weight:700">Select ›</span>';
+        el.onclick = function() { xfrPickerSelect(loc.location, false); };
         list.appendChild(el);
       });
     }
@@ -11544,7 +11450,7 @@ function rprToast(msg, type = '') {
     newEl.innerHTML = '<div>'
       + '<div style="font-size:15px;font-weight:600;color:var(--green)">+ New Location</div>'
       + '<div style="font-size:12px;color:var(--text3);margin-top:2px">Enter a location not in the system</div>'
-      + '</div><span style="color:var(--green);font-size:13px;font-weight:700">Enter \u203a</span>';
+      + '</div><span style="color:var(--green);font-size:13px;font-weight:700">Enter ›</span>';
     list.appendChild(newEl);
 
     var newInputWrap = document.createElement('div');
