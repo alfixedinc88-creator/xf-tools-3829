@@ -1,7 +1,7 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-  <!-- XFITTING-BUILD-V112-PRTL-20260402 -->
+  <!-- XFITTING-BUILD-V112-XDST-20260403 -->
 <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate">
 <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&family=IBM+Plex+Sans:wght@300;400;500;600&display=swap" rel="stylesheet">
   <meta http-equiv="Pragma" content="no-cache">
@@ -9990,14 +9990,20 @@ function rprToast(msg, type = '') {
 #inv-app .xfr-cart-item-head{display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:6px}
 #inv-app .xfr-cart-item-part{font-size:14px;font-weight:700;font-family:var(--mono);color:var(--text)}
 #inv-app .xfr-cart-item-meta{font-size:12px;color:var(--text3);margin-bottom:8px;line-height:1.5}
-#inv-app .xfr-cart-item-dest{display:flex;gap:6px;align-items:center;position:relative}
-#inv-app .xfr-cart-item-dest input{flex:1;padding:10px 12px;border:1.5px solid var(--border);border-radius:7px;font-size:16px;font-family:'DM Sans',sans-serif;background:var(--bg2);color:var(--text);outline:none;min-height:44px}
-#inv-app .xfr-cart-item-dest input:focus{border-color:var(--purple)}
-#inv-app .xfr-cart-item-dest input.dest-set{border-color:var(--green);background:var(--green-bg)}
-#inv-app .xfr-dest-drop{position:fixed;z-index:200;background:var(--bg2);border:1px solid var(--border);border-radius:8px;box-shadow:var(--shadow2);max-height:200px;overflow-y:auto;left:12px;right:12px}
-#inv-app .xfr-dest-opt{padding:13px 14px;font-size:15px;cursor:pointer;border-bottom:1px solid var(--border)}
-#inv-app .xfr-dest-opt:last-child{border-bottom:none}
-#inv-app .xfr-dest-opt:active{background:var(--accent-bg);color:var(--accent)}
+#inv-app .xfr-cart-item-dest{position:relative}
+#inv-app .xfr-dest-btn{width:100%;padding:11px 14px;border:1.5px solid var(--border);border-radius:8px;font-size:14px;font-family:var(--sans);background:var(--bg2);color:var(--text3);cursor:pointer;text-align:left;min-height:44px;display:flex;align-items:center;justify-content:space-between}
+#inv-app .xfr-dest-btn.dest-set{border-color:var(--purple);background:var(--purple-bg);color:var(--text);font-weight:600}
+#inv-app .xfr-dest-btn .xfr-dest-arrow{font-size:12px;color:var(--text3)}
+#inv-app .xfr-dest-picker{position:fixed;inset:0;z-index:300;display:flex;flex-direction:column;background:var(--bg)}
+#inv-app .xfr-dest-picker-head{display:flex;align-items:center;justify-content:space-between;padding:14px 16px;background:var(--bg2);border-bottom:1px solid var(--border);position:sticky;top:0}
+#inv-app .xfr-dest-picker-title{font-size:15px;font-weight:700;color:var(--text)}
+#inv-app .xfr-dest-picker-close{background:none;border:1px solid var(--border);color:var(--text3);font-size:12px;padding:6px 12px;border-radius:7px;cursor:pointer;font-family:var(--sans)}
+#inv-app .xfr-dest-picker-list{flex:1;overflow-y:auto;padding:10px 12px}
+#inv-app .xfr-dest-picker-item{padding:13px 14px;border:1px solid var(--border);border-radius:9px;margin-bottom:8px;cursor:pointer;background:var(--bg2);display:flex;align-items:center;justify-content:space-between;gap:10px}
+#inv-app .xfr-dest-picker-item:active{background:var(--accent-bg);border-color:var(--accent)}
+#inv-app .xfr-dest-picker-item.new-loc-item{border-color:var(--green);background:var(--green-bg)}
+#inv-app .xfr-dest-new-inp{width:100%;padding:10px 12px;border:1.5px solid var(--green);border-radius:8px;font-size:16px;font-family:var(--sans);background:var(--bg2);color:var(--text);margin-top:8px;box-sizing:border-box}
+#inv-app .xfr-dest-new-confirm{width:100%;margin-top:8px;padding:11px;background:var(--purple);color:#fff;border:none;border-radius:8px;font-size:14px;font-weight:700;cursor:pointer;font-family:var(--sans);min-height:44px}
 #inv-app .ipull-row{display:grid;grid-template-columns:44px 1fr auto;gap:8px;align-items:start;padding:10px 0;border-bottom:1px solid var(--border);transition:opacity .2s}
 #inv-app .ipull-row.ipl-checked{opacity:.45}
 #inv-app .ipull-row.ipl-checked .ipull-loc{text-decoration:line-through;color:var(--text3)}
@@ -10147,6 +10153,15 @@ function rprToast(msg, type = '') {
 </div>
 
 <!-- ── Transfer Panel ── -->
+<!-- Destination picker overlay -->
+<div id="xfr-dest-picker" class="xfr-dest-picker" style="display:none">
+  <div class="xfr-dest-picker-head">
+    <div class="xfr-dest-picker-title">🔁 Select Destination</div>
+    <button class="xfr-dest-picker-close" onclick="xfrClosePicker()">✕ Cancel</button>
+  </div>
+  <div class="xfr-dest-picker-list" id="xfr-dest-picker-list"></div>
+</div>
+
 <div class="ipanel" id="inv-panel-transfer">
   <div class="icard">
     <div class="icard-label">Transfer Stock</div>
@@ -10192,15 +10207,6 @@ function rprToast(msg, type = '') {
     <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px">
       <div class="icard-label" style="margin:0">🛒 Transfer Cart <span id="xfr-cart-count" style="font-size:11px;font-weight:700;background:var(--purple-bg);color:var(--purple);padding:1px 7px;border-radius:10px;margin-left:4px"></span></div>
       <button onclick="xfrClearCart()" style="background:none;border:none;color:var(--text3);font-size:12px;cursor:pointer;padding:4px 8px">Clear All</button>
-    </div>
-    <div style="margin-bottom:12px">
-      <div style="font-size:11px;font-weight:600;color:var(--text2);margin-bottom:6px">Set Destination for All Items</div>
-      <div style="display:flex;gap:8px;margin-bottom:4px">
-        <input class="isearch-inp" id="xfr-dest-inp" type="text" placeholder="Type destination location…" style="flex:1;font-size:13px;padding:8px 10px" oninput="xfrFilterDest(this.value)">
-        <button class="isearch-btn" style="font-size:12px;padding:8px 12px" onclick="xfrApplyDestAll()">Apply All</button>
-      </div>
-      <div id="xfr-dest-suggestions" style="display:none;max-height:120px;overflow-y:auto;border:1px solid var(--border);border-radius:8px;background:var(--bg2);margin-bottom:6px"></div>
-      <div style="font-size:10px;color:var(--text3)">Or set the destination on each item individually below.</div>
     </div>
     <div id="xfr-cart-items"></div>
     <div style="margin-top:10px">
@@ -11341,8 +11347,14 @@ function rprToast(msg, type = '') {
       .then(function(d) {
         if (!d.partNum) { invFlash('Not found: ' + code, 'error'); return; }
         xfrPart = d;
-        // Collect known locations for destination suggestions
-        xfrKnownLocs = (d.locations || []).map(function(l) { return l.location; }).filter(Boolean);
+        // Build known locations as objects with variants for the destination picker
+        var locMap = {};
+        (d.locations || []).forEach(function(l) {
+          if (!l.location) return;
+          if (!locMap[l.location]) locMap[l.location] = { location: l.location, variants: [] };
+          locMap[l.location].variants.push({ partNum: l.partNum || d.partNum, cases: l.cases || 0 });
+        });
+        xfrKnownLocs = Object.values(locMap);
         g('xfr-result-part').textContent = d.isMultiVariant ? d.baseSku : d.partNum;
         g('xfr-result-sku').textContent  = d.sku && d.sku !== d.partNum ? d.sku : '';
         g('xfr-result-name').textContent = d.name || '';
@@ -11468,7 +11480,9 @@ function rprToast(msg, type = '') {
     xfrCart.forEach(function(item, i) {
       var row = document.createElement('div');
       row.className = 'xfr-cart-item';
-      var destSet = item.toLocation ? ' dest-set' : '';
+      var destLabel = item.toLocation
+        ? item.toLocation + (item.isNewLocation ? ' (new)' : '')
+        : 'Set destination\u2026';
       row.innerHTML =
         '<div class="xfr-cart-item-head">'
           + '<span class="xfr-cart-item-part">' + item.partNum + '</span>'
@@ -11480,100 +11494,97 @@ function rprToast(msg, type = '') {
           + (item.name ? '<br><span style="color:var(--text3)">' + item.name + '</span>' : '')
         + '</div>'
         + '<div style="font-size:11px;font-weight:600;color:var(--text2);margin-bottom:5px">To Location:</div>'
-        + '<div class="xfr-cart-item-dest" id="xfr-dest-wrap-' + i + '">'
-          + '<input type="text" value="' + (item.toLocation || '') + '" placeholder="Set destination\u2026" class="' + destSet.trim() + '" '
-            + 'oninput="xfrItemDestInput(' + i + ', this)" onblur="xfrItemDestBlur(' + i + ', this)">'
-          + '<div class="xfr-dest-drop" id="xfr-item-drop-' + i + '" style="display:none"></div>'
+        + '<div class="xfr-cart-item-dest">'
+          + '<button class="xfr-dest-btn' + (item.toLocation ? ' dest-set' : '') + '" onclick="xfrOpenPicker(' + i + ')">'
+            + '<span>' + destLabel + '</span>'
+            + '<span class="xfr-dest-arrow">' + (item.toLocation ? '\u2713' : '\u25be') + '</span>'
+          + '</button>'
         + '</div>';
       el.appendChild(row);
     });
   }
 
   // Destination input — show suggestions from known locations
-  window.xfrItemDestInput = function(i, inp) {
-    var val = inp.value.trim().toLowerCase();
-    var drop = g('xfr-item-drop-' + i); if (!drop) return;
-    xfrCart[i].toLocation = inp.value.trim();
-    xfrCart[i].toRowIndex = null; xfrCart[i].isNewLocation = false;
-    xfrSaveCart();
-    inp.className = inp.value.trim() ? 'dest-set' : '';
-    // Position dropdown using fixed coords so it never clips on mobile
-    var rect = inp.getBoundingClientRect();
-    drop.style.top  = (rect.bottom + 2) + 'px';
-    drop.style.left = '12px'; drop.style.right = '12px';
-    if (!val || val.length < 1) { drop.style.display = 'none'; return; }
-    var matches = xfrKnownLocs.filter(function(l) { return l.toLowerCase().includes(val); }).slice(0, 8);
-    if (matches.length === 0) {
-      drop.innerHTML = '<div class="xfr-dest-opt" style="color:var(--green)">+ New location: ' + inp.value.trim() + '</div>';
-      drop.querySelector('.xfr-dest-opt').onmousedown = function(e) { e.preventDefault(); xfrSetItemDest(i, inp.value.trim(), true); };
-      drop.style.display = 'block'; return;
-    }
-    drop.innerHTML = '';
-    matches.forEach(function(loc) {
-      var opt = document.createElement('div');
-      opt.className = 'xfr-dest-opt';
-      opt.textContent = loc;
-      opt.onmousedown = function(e) { e.preventDefault(); xfrSetItemDest(i, loc, false); };
-      drop.appendChild(opt);
-    });
-    drop.style.display = 'block';
-  };
+  // ── Destination picker ──────────────────────────────────────────
+  var xfrPickerActiveIdx = -1;
 
-  window.xfrItemDestBlur = function(i, inp) {
-    setTimeout(function() {
-      var drop = g('xfr-item-drop-' + i); if (drop) drop.style.display = 'none';
-    }, 150);
-  };
+  window.xfrOpenPicker = function(i) {
+    xfrPickerActiveIdx = i;
+    var list = g('xfr-dest-picker-list');
+    list.innerHTML = '';
 
-  window.xfrSetItemDest = function(i, loc, isNew) {
-    if (!xfrCart[i]) return;
-    xfrCart[i].toLocation   = loc;
-    xfrCart[i].isNewLocation = isNew;
-    xfrCart[i].toRowIndex   = null;
-    xfrSaveCart();
-    xfrRenderCart();
-  };
+    if (xfrKnownLocs.length > 0) {
+      var hdr = document.createElement('div');
+      hdr.style.cssText = 'font-size:11px;font-weight:700;letter-spacing:.5px;text-transform:uppercase;color:var(--text3);padding:4px 2px 10px';
+      hdr.textContent = 'Known locations for this SKU';
+      list.appendChild(hdr);
 
-  // "Apply All" destination
-  window.xfrFilterDest = function(val) {
-    var drop = g('xfr-dest-suggestions'); if (!drop) return;
-    var q = val.trim().toLowerCase();
-    if (!q) { drop.style.display = 'none'; return; }
-    var matches = xfrKnownLocs.filter(function(l) { return l.toLowerCase().includes(q); }).slice(0, 8);
-    if (matches.length === 0) {
-      drop.innerHTML = '<div class="xfr-dest-opt" style="color:var(--green)">+ New location: ' + val.trim() + '</div>';
-      drop.querySelector('.xfr-dest-opt').onmousedown = function(e) { e.preventDefault(); xfrApplyDestAllValue(val.trim(), true); };
-    } else {
-      drop.innerHTML = '';
-      matches.forEach(function(loc) {
-        var opt = document.createElement('div');
-        opt.className = 'xfr-dest-opt';
-        opt.textContent = loc;
-        opt.onmousedown = function(e) { e.preventDefault(); xfrApplyDestAllValue(loc, false); };
-        drop.appendChild(opt);
+      xfrKnownLocs.forEach(function(loc) {
+        var el = document.createElement('div');
+        el.className = 'xfr-dest-picker-item';
+        var varHtml = loc.variants.map(function(v) {
+          return '<span style="font-size:11px;font-family:var(--mono);color:var(--text3)">' + v.partNum + ' &nbsp;\u00b7&nbsp; ' + v.cases + ' cases</span>';
+        }).join('<br>');
+        el.innerHTML = '<div>'
+          + '<div style="font-size:15px;font-weight:600;color:var(--text)">' + loc.location + '</div>'
+          + (varHtml ? '<div style="margin-top:3px">' + varHtml + '</div>' : '')
+          + '</div><span style="color:var(--purple);font-size:13px;font-weight:700">Select \u203a</span>';
+        el.onclick = (function(l) { return function() { xfrPickerSelect(l.location, false); }; })(loc);
+        list.appendChild(el);
       });
     }
-    drop.style.display = 'block';
+
+    var newHdr = document.createElement('div');
+    newHdr.style.cssText = 'font-size:11px;font-weight:700;letter-spacing:.5px;text-transform:uppercase;color:var(--text3);padding:14px 2px 10px' + (xfrKnownLocs.length > 0 ? ';border-top:1px solid var(--border);margin-top:6px' : '');
+    newHdr.textContent = 'New location';
+    list.appendChild(newHdr);
+
+    var newEl = document.createElement('div');
+    newEl.className = 'xfr-dest-picker-item new-loc-item';
+    newEl.innerHTML = '<div>'
+      + '<div style="font-size:15px;font-weight:600;color:var(--green)">+ New Location</div>'
+      + '<div style="font-size:12px;color:var(--text3);margin-top:2px">Enter a location not in the system</div>'
+      + '</div><span style="color:var(--green);font-size:13px;font-weight:700">Enter \u203a</span>';
+    list.appendChild(newEl);
+
+    var newInputWrap = document.createElement('div');
+    newInputWrap.id = 'xfr-picker-new-wrap';
+    newInputWrap.style.cssText = 'display:none;padding:0 0 12px';
+    newInputWrap.innerHTML = '<input id="xfr-picker-new-inp" class="xfr-dest-new-inp" type="text" placeholder="e.g. Shelf-B4 or Pallet-2">'
+      + '<button class="xfr-dest-new-confirm" onclick="xfrPickerConfirmNew()">Confirm New Location</button>';
+    list.appendChild(newInputWrap);
+
+    newEl.onclick = function() {
+      newInputWrap.style.display = 'block';
+      newEl.style.display = 'none';
+      var inp = g('xfr-picker-new-inp');
+      if (inp) { inp.value = ''; setTimeout(function() { inp.focus(); }, 50); }
+    };
+
+    g('xfr-dest-picker').style.display = 'flex';
   };
 
-  window.xfrApplyDestAll = function() {
-    var val = ((g('xfr-dest-inp') || {}).value || '').trim();
-    if (!val) { invFlash('Enter a destination location', 'error'); return; }
-    xfrApplyDestAllValue(val, !xfrKnownLocs.includes(val));
+  window.xfrClosePicker = function() {
+    g('xfr-dest-picker').style.display = 'none';
+    xfrPickerActiveIdx = -1;
   };
 
-  function xfrApplyDestAllValue(loc, isNew) {
-    xfrCart.forEach(function(item) {
-      item.toLocation   = loc;
-      item.isNewLocation = isNew;
-      item.toRowIndex   = null;
-    });
+  window.xfrPickerSelect = function(loc, isNew) {
+    if (xfrPickerActiveIdx < 0 || !xfrCart[xfrPickerActiveIdx]) return;
+    xfrCart[xfrPickerActiveIdx].toLocation   = loc;
+    xfrCart[xfrPickerActiveIdx].isNewLocation = isNew;
+    xfrCart[xfrPickerActiveIdx].toRowIndex   = null;
     xfrSaveCart();
-    var di = g('xfr-dest-inp'); if (di) di.value = loc;
-    var drop = g('xfr-dest-suggestions'); if (drop) drop.style.display = 'none';
     xfrRenderCart();
-    invFlash('Destination set: ' + loc, 'success');
-  }
+    xfrClosePicker();
+  };
+
+  window.xfrPickerConfirmNew = function() {
+    var val = (g('xfr-picker-new-inp') || {}).value || '';
+    var loc = val.trim();
+    if (!loc) { invFlash('Enter a location name', 'error'); return; }
+    xfrPickerSelect(loc, true);
+  };
 
   window.xfrRemoveCartItem = function(i) {
     xfrCart.splice(i, 1);
