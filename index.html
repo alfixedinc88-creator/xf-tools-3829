@@ -1,7 +1,7 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-  <!-- XFITTING-BUILD-V112-PRTL-20260407 -->
+  <!-- XFITTING-BUILD-V113-FEAT-20260407 -->
 <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate">
 <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&family=IBM+Plex+Sans:wght@300;400;500;600&display=swap" rel="stylesheet">
   <meta http-equiv="Pragma" content="no-cache">
@@ -2121,6 +2121,7 @@ input[type=checkbox]{width:15px;height:15px;cursor:pointer;accent-color:var(--bl
         <th class="r"><span class="tt">AWD Outbound<span class="tt-ico">?</span><span class="tt-box">Outbound to FBA (units)</span></span></th>
         <th class="r">Total Network</th>
         <th class="r">Sold 90d</th><th class="r">Daily Sales</th><th class="r">Target 120d</th><th class="r">Rec Send</th>
+        <th></th>
       </tr></thead><tbody id="inv-tbody"></tbody></table></div></div>
     </div>
 
@@ -2144,14 +2145,35 @@ input[type=checkbox]{width:15px;height:15px;cursor:pointer;accent-color:var(--bl
     </div>
 
     <div class="page" id="page-builder">
-      <div id="bld-empty" class="empty"><div class="ico">📦</div><h3>No SKUs staged</h3><p>Go to Recommendations and select SKUs to add them here.</p><br><button class="btn btn-primary" onclick="awd_switchTab('recommendations')">Browse Recommendations</button></div>
+      <div id="bld-empty" class="empty"><div class="ico">📦</div><h3>No SKUs staged</h3><p>Go to Recommendations and select SKUs to add them here, or add one manually.</p><br><div style="display:flex;gap:8px;justify-content:center;flex-wrap:wrap"><button class="btn btn-primary" onclick="awd_switchTab('recommendations')">Browse Recommendations</button><button class="btn btn-secondary" onclick="bldShowManualAdd()">&#65291; Add SKU Manually</button></div></div>
       <div id="bld-body" style="display:none">
         <div class="bld-layout">
           <div>
             <div class="fbar">
               <div class="sw"><svg class="sic" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.35-4.35"/></svg><input type="text" class="si" id="bld-q" placeholder="Filter SKUs…" oninput="renderBuilder()"></div>
               <span style="font-size:12px;color:var(--gray-500)" id="bld-count"></span>
-              <div class="mla" style="display:flex;gap:8px"><button class="btn btn-secondary btn-sm" onclick="awd_switchTab('recommendations')">← Add More</button><button class="btn btn-secondary btn-sm" onclick="clearBuilder()">Clear All</button></div>
+              <div class="mla" style="display:flex;gap:8px"><button class="btn btn-secondary btn-sm" onclick="awd_switchTab('recommendations')">← Add More</button><button class="btn btn-secondary btn-sm" onclick="bldShowManualAdd()">&#65291; Add SKU</button><button class="btn btn-secondary btn-sm" onclick="clearBuilder()">Clear All</button></div>
+            </div>
+            <!-- ── MANUAL ADD PANEL ── -->
+            <div id="bld-manual-panel" style="display:none;background:var(--bg2,#F4F5F7);border:1px solid var(--border,#DDE0E6);border-radius:10px;padding:14px 16px;margin-bottom:12px">
+              <div style="font-size:13px;font-weight:600;color:var(--text,#111827);margin-bottom:10px">Add SKU Manually</div>
+              <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:flex-end">
+                <div style="flex:1;min-width:160px">
+                  <div style="font-size:11px;font-weight:600;color:var(--gray-600);margin-bottom:4px">SKU <span style="color:var(--red,#C52A1A)">*</span></div>
+                  <input type="text" id="bld-manual-sku" class="si" style="width:100%;text-transform:uppercase" placeholder="e.g. XF-COMP-BLK-M" oninput="this.value=this.value.toUpperCase()" onkeydown="if(event.key==='Enter')bldManualAdd()">
+                </div>
+                <div style="flex:2;min-width:180px">
+                  <div style="font-size:11px;font-weight:600;color:var(--gray-600);margin-bottom:4px">Product Name <span style="color:var(--gray-400);font-weight:400">(optional)</span></div>
+                  <input type="text" id="bld-manual-name" class="si" style="width:100%" placeholder="e.g. Compression Fitting 1/2&quot;" onkeydown="if(event.key==='Enter')bldManualAdd()">
+                </div>
+                <div style="min-width:90px">
+                  <div style="font-size:11px;font-weight:600;color:var(--gray-600);margin-bottom:4px">Qty</div>
+                  <input type="number" id="bld-manual-qty" class="qty-inp" style="width:90px" value="0" min="0" onkeydown="if(event.key==='Enter')bldManualAdd()">
+                </div>
+                <button class="btn btn-primary btn-sm" onclick="bldManualAdd()" style="white-space:nowrap">Add to Shipment</button>
+                <button class="btn btn-secondary btn-sm" onclick="bldHideManualAdd()" style="white-space:nowrap">Cancel</button>
+              </div>
+              <div id="bld-manual-err" style="display:none;font-size:12px;color:var(--red,#C52A1A);margin-top:8px"></div>
             </div>
             <div class="card">
               <div class="card-hdr"><div><div class="card-title">Shipment Contents</div><div class="card-sub" id="cpack-note"></div></div><span style="font-size:13px;color:var(--gray-500)" id="bld-units-lbl"></span></div>
@@ -3147,8 +3169,13 @@ function renderInv(){
   const th=ge('th-days');th.className='sort r '+(invDir==='asc'?'asc':'desc');
   ge('inv-count').textContent=data.length+' SKU'+(data.length!==1?'s':'');
   const tb=ge('inv-tbody');
-  if(!data.length){tb.innerHTML='<tr><td colspan="15"><div class="empty" style="padding:30px"><div class="ico">🔍</div><h3>No matches</h3></div></td></tr>';return;}
-  tb.innerHTML=data.map(r=>`<tr>
+  if(!data.length){tb.innerHTML='<tr><td colspan="16"><div class="empty" style="padding:30px"><div class="ico">🔍</div><h3>No matches</h3></div></td></tr>';return;}
+  tb.innerHTML=data.map(r=>{
+    const staged=!!S.shipment[r.sku];
+    const actionBtn=staged
+      ?'<span style="font-size:11px;color:var(--green,#0E7F3E);font-weight:600;white-space:nowrap">&#10003; In Shipment</span>'
+      :`<button class="btn btn-sm btn-secondary" style="white-space:nowrap;font-size:11px" onclick="invAddToBuilder('${esc(r.sku)}')">+ Add</button>`;
+    return`<tr>
     <td class="sku">${r.sku}</td>
     <td style="font-size:12px;color:var(--gray-600);max-width:150px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="${r.name}">${r.name||'—'}</td>
     <td class="asin">${r.asin||'—'}</td>
@@ -3160,7 +3187,8 @@ function renderInv(){
     <td class="r">${r.dailySales>0?r.dailySales.toFixed(1):'—'}</td>
     <td class="r">${fn(r.target)}</td>
     <td class="r">${r.recSend>0?'<strong style="color:var(--blue)">'+fn(r.recSend)+'</strong>':'<span style="color:var(--gray-300)">—</span>'}</td>
-  </tr>`).join('');
+    <td>${actionBtn}</td>
+  </tr>`;}).join('');
 }
 function exportInvCSV(){
   if(!S.joined.length){awd_planner_toast('No data','error');return;}
@@ -3194,10 +3222,58 @@ function removeSku(sku){delete S.shipment[sku];updateBadges();renderRecs();rende
 function clearBuilder(){if(!Object.keys(S.shipment).length)return;S.shipment={};updateBadges();renderRecs();renderBuilder();awd_planner_toast('Cleared');}
 function updQty(sku,v){if(!S.shipment[sku])return;S.shipment[sku].qty=Math.max(0,parseInt(v)||0);updateSummary();saveShipmentToSheet();}
 
-function renderBuilder(){
+// ── MANUAL ADD TO BUILDER ──
+function bldShowManualAdd(){
+  ge('bld-empty').style.display='none';
+  ge('bld-body').style.display='block';
+  const panel=ge('bld-manual-panel');
+  panel.style.display='block';
+  ge('bld-manual-sku').value='';
+  ge('bld-manual-name').value='';
+  ge('bld-manual-qty').value='0';
+  ge('bld-manual-err').style.display='none';
+  setTimeout(function(){ge('bld-manual-sku').focus();},50);
+}
+function bldHideManualAdd(){
+  ge('bld-manual-panel').style.display='none';
+  if(!Object.keys(S.shipment).length){
+    ge('bld-empty').style.display='';
+    ge('bld-body').style.display='none';
+  }
+}
+function bldManualAdd(){
+  const sku=(ge('bld-manual-sku').value||'').trim().toUpperCase();
+  const name=(ge('bld-manual-name').value||'').trim();
+  const qty=Math.max(0,parseInt(ge('bld-manual-qty').value)||0);
+  const errEl=ge('bld-manual-err');
+  if(!sku){errEl.textContent='SKU is required.';errEl.style.display='block';ge('bld-manual-sku').focus();return;}
+  if(S.shipment[sku]){errEl.textContent=sku+' is already in the shipment — update the qty in the table below.';errEl.style.display='block';return;}
+  errEl.style.display='none';
+  // Use existing S.joined row if available; otherwise build a stub
+  const existing=S.joined.find(function(r){return r.sku.toUpperCase()===sku;});
+  const row=existing||{sku,asin:'',name:name||sku,fbaFul:0,fcProc:0,fcTrans:0,awdAvail:0,awdReserved:0,awdOutbound:0,sold90:0,dailySales:0,target:0,totalNetwork:0,recSend:0,netDays:999,_manual:true};
+  if(existing&&name)row.name=name;
+  S.shipment[sku]={row,qty};
+  updateBadges();renderRecs();renderInv();renderBuilder();saveShipmentToSheet();
+  awd_planner_toast('Added: '+sku,'success');
+  ge('bld-manual-sku').value='';ge('bld-manual-name').value='';ge('bld-manual-qty').value='0';
+  ge('bld-manual-sku').focus();
+}
+// ── ADD TO BUILDER FROM INVENTORY TAB ──
+function invAddToBuilder(sku){
+  const row=S.joined.find(r=>r.sku===sku);
+  if(!row)return;
+  if(S.shipment[sku]){awd_planner_toast(sku+' already in shipment','error');return;}
+  stage(row);
+  updateBadges();renderRecs();renderInv();renderBuilder();
+  awd_planner_toast('Added: '+sku,'success');
+}
+
+
   const items=Object.entries(S.shipment);
-  ge('bld-empty').style.display=items.length?'none':'';
-  ge('bld-body').style.display=items.length?'block':'none';
+  const manualOpen=ge('bld-manual-panel')&&ge('bld-manual-panel').style.display!=='none';
+  ge('bld-empty').style.display=(items.length||manualOpen)?'none':'';
+  ge('bld-body').style.display=(items.length||manualOpen)?'block':'none';
   if(!items.length){updateSummary();return;}
   const q=ge('bld-q').value.toLowerCase();
   const filt=items.filter(([sku])=>!q||sku.toLowerCase().includes(q));
