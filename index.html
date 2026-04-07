@@ -3270,6 +3270,7 @@ function invAddToBuilder(sku){
 }
 
 
+function renderBuilder(){
   const items=Object.entries(S.shipment);
   const manualOpen=ge('bld-manual-panel')&&ge('bld-manual-panel').style.display!=='none';
   ge('bld-empty').style.display=(items.length||manualOpen)?'none':'';
