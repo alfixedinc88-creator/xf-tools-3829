@@ -1,7 +1,7 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-  <!-- XFITTING-BUILD-V112-XDST-20260402 -->
+  <!-- XFITTING-BUILD-V112-PRTL-20260407 -->
 <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate">
 <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&family=IBM+Plex+Sans:wght@300;400;500;600&display=swap" rel="stylesheet">
   <meta http-equiv="Pragma" content="no-cache">
@@ -10110,7 +10110,7 @@ function rprToast(msg, type = '') {
     <div class="icard-label">Details</div>
     <div class="iwarn" id="inv-warn" style="display:none"></div>
     <div class="ifield-row">
-      <div class="ifield"><label>Cases</label><input id="inv-cases" type="number" min="1" placeholder="0"></div>
+      <div class="ifield"><label>Cases</label><input id="inv-cases" type="number" min="0.1" step="0.5" placeholder="0"></div>
       <div class="ifield"><label>Initials</label><input id="inv-initials" type="text" maxlength="4" placeholder="e.g. DJ"></div>
     </div>
     <div class="ifield"><label>Notes (optional)</label><input id="inv-notes" type="text" placeholder=""></div>
@@ -10179,7 +10179,7 @@ function rprToast(msg, type = '') {
     </div>
     <div class="iwarn" id="xfr-addcart-warn" style="display:none"></div>
     <div class="ifield-row">
-      <div class="ifield"><label>Cases</label><input id="xfr-addcart-cases" type="number" min="1" placeholder="0"></div>
+      <div class="ifield"><label>Cases</label><input id="xfr-addcart-cases" type="number" min="0.1" step="0.5" placeholder="0"></div>
       <div class="ifield"><label>Initials</label><input id="xfr-cart-initials" type="text" maxlength="4" placeholder="e.g. DJ"></div>
     </div>
     <button class="isubmit" onclick="xfrAddToCart()" style="background:var(--purple);border-color:var(--purple)">+ Add to Cart</button>
@@ -10736,13 +10736,13 @@ function rprToast(msg, type = '') {
   }
 
   window.invSubmit = function() {
-    var cases    = parseInt(g("inv-cases").value, 10);
+    var cases    = parseFloat(g("inv-cases").value);
     var initials = g("inv-initials").value.trim();
     var notes    = g("inv-notes").value.trim();
     var newLoc   = g("inv-newloc-inp").value.trim();
     if (!invPart)   { invFlash("No item selected", "error"); return; }
     if (!invSelLoc) { invFlash("Select a location first", "error"); return; }
-    if (!cases || cases < 1) { invFlash("Enter number of cases", "error"); return; }
+    if (!cases || cases < 0.1) { invFlash("Enter number of cases", "error"); return; }
     if (!initials)  { invFlash("Enter your initials", "error"); return; }
     if (invSelLoc.isNew && !newLoc) { invFlash("Enter new location name", "error"); return; }
     var location = invSelLoc.isNew ? newLoc : invSelLoc.location;
@@ -10948,7 +10948,7 @@ function rprToast(msg, type = '') {
         "<div class='ipull-pn'>" + item.partNum + (item.foundOnShelf ? " <span style='background:var(--orange-bg);color:var(--orange);font-size:10px;font-weight:700;padding:1px 6px;border-radius:4px;border:1px solid var(--orange);font-family:var(--sans)'>FOUND ON SHELF</span>" : "") + "</div>" +
         "<div class='ipull-name'>" + (item.name || '') + "</div>" +
         "<div style='margin-top:6px;display:flex;gap:6px;align-items:center'>" +
-          "<input type='number' min='0' placeholder='Cases' value='" + (item.cases || '') + "' " +
+          "<input type='number' min='0.1' step='0.5' placeholder='Cases' value='" + (item.cases || '') + "' " +
             "style='width:70px;padding:4px 8px;border-radius:6px;border:1px solid var(--border);background:var(--bg3);color:var(--text);font-size:13px' " +
             "onchange='invUpdatePullCases(" + i + ", this.value)'>" +
           "<span style='font-size:11px;color:var(--text3)'>cases</span>" +
@@ -10975,7 +10975,7 @@ function rprToast(msg, type = '') {
 
   window.invUpdatePullCases = function(i, val) {
     if (invPullList[i]) {
-      invPullList[i].cases = val ? parseInt(val) : '';
+      invPullList[i].cases = val ? parseFloat(val) : '';
       invSavePullList();
     }
   };
@@ -10999,7 +10999,7 @@ function rprToast(msg, type = '') {
     var notes    = g("inv-pull-notes").value.trim();
     if (invPullList.length === 0) { invFlash("Pull list is empty", "error"); return; }
     if (!initials) { invFlash("Enter your initials", "error"); return; }
-    var missing = invPullList.filter(function(x) { return !x.cases || x.cases < 1; });
+    var missing = invPullList.filter(function(x) { return !x.cases || parseFloat(x.cases) < 0.1; });
     if (missing.length > 0) { invFlash(missing.length + " item(s) missing case count", "error"); return; }
     var btn = document.querySelector("#inv-pulllist-card .isubmit");
     btn.disabled = true; btn.textContent = "Submitting\u2026";
@@ -11352,11 +11352,11 @@ function rprToast(msg, type = '') {
   }
 
   window.xfrAddToCart = function() {
-    var cases    = parseInt((g('xfr-addcart-cases') || {}).value || 0, 10);
+    var cases    = parseFloat((g('xfr-addcart-cases') || {}).value || 0);
     var initials = ((g('xfr-cart-initials') || {}).value || '').trim();
     if (!xfrPart)    { invFlash('No item selected', 'error'); return; }
     if (!xfrFromLoc) { invFlash('Select a From location', 'error'); return; }
-    if (!cases || cases < 1) { invFlash('Enter number of cases', 'error'); return; }
+    if (!cases || cases < 0.1) { invFlash('Enter number of cases', 'error'); return; }
     if (!initials)           { invFlash('Enter your initials', 'error'); return; }
     if (cases > parseFloat(xfrFromLoc.cases || 0)) { invFlash('Exceeds available cases (' + xfrFromLoc.cases + ')', 'error'); return; }
     xfrCart.push({
