@@ -1,7 +1,7 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-  <!-- XFITTING-BUILD-V113-PERF-20260408 -->
+  <!-- XFITTING-BUILD-V113-FEAT-20260408b -->
 <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate">
 <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&family=IBM+Plex+Sans:wght@300;400;500;600&display=swap" rel="stylesheet">
   <meta http-equiv="Pragma" content="no-cache">
@@ -1887,9 +1887,514 @@ input[type=checkbox]{width:15px;height:15px;cursor:pointer;accent-color:var(--bl
         <div class="launcher-card-desc">AI replies for eBay, Amazon, Walmart, Shopify &amp; Email. Review queue, CS tool, analytics.</div>
         <div style="display:inline-block;margin-top:10px;font-size:10px;font-family:var(--mono);padding:3px 8px;border-radius:4px;background:#e8f5e9;color:#2e7d32;font-weight:600;letter-spacing:1px">All Platforms · AI · Management</div>
       </div>
+      <div class="launcher-card" onclick="launchMgmtApp('ldash')" style="border-color:#fdf0ff">
+        <div class="launcher-card-icon">🏢</div>
+        <div class="launcher-card-title">Leadership Dashboard</div>
+        <div class="launcher-card-desc">Live operations overview — action queue, shipping status, reorder urgency, sales snapshot and inventory health.</div>
+        <div style="display:inline-block;margin-top:10px;font-size:10px;font-family:var(--mono);padding:3px 8px;border-radius:4px;background:#fdf0ff;color:#7c3aed;font-weight:600;letter-spacing:1px">Operations · Leadership</div>
+      </div>
     </div>
   </div>
 </div>
+
+<!-- ═══ LEADERSHIP DASHBOARD APP ═══ -->
+<div id="ldash-app" style="display:none;flex-direction:column;min-height:100vh;background:var(--bg);">
+
+  <!-- Topbar -->
+  <div class="topbar">
+    <div class="topbar-left">
+      <div class="tb-logo">XFITTING</div>
+      <div class="tb-name">Leadership Dashboard</div>
+      <div style="font-size:10px;background:#7c3aed;color:#fff;padding:2px 7px;border-radius:20px;font-weight:600;opacity:.85">Live</div>
+      <div class="tb-divider"></div>
+      <div class="tb-sub" id="ldash-last-updated">Loading…</div>
+    </div>
+    <div class="topbar-right">
+      <button class="back-btn" id="ldash-refresh-btn" onclick="ldashRefresh()" style="margin-right:8px">↻ Refresh</button>
+      <button class="back-btn" onclick="backToLauncher()">← Apps</button>
+    </div>
+  </div>
+
+  <div style="max-width:1200px;margin:0 auto;padding:20px 16px;width:100%;box-sizing:border-box;">
+
+    <!-- Zone 1: Action Queue -->
+    <div style="margin-bottom:24px;">
+      <div style="font-size:11px;font-weight:700;letter-spacing:2px;text-transform:uppercase;color:var(--text3);margin-bottom:12px;">⚡ Action Queue — Needs Attention</div>
+      <div id="ldash-action-queue" style="display:grid;grid-template-columns:repeat(auto-fill,minmax(180px,1fr));gap:12px;"></div>
+    </div>
+
+    <!-- Zone 2 + 3: Shipping + Sales -->
+    <div style="display:grid;grid-template-columns:1fr 1.4fr;gap:16px;margin-bottom:16px;" id="ldash-mid-row">
+
+      <!-- Zone 2: Shipping Today -->
+      <div style="background:var(--bg2);border:1.5px solid var(--border);border-radius:14px;padding:18px 20px;">
+        <div style="font-size:13px;font-weight:700;color:var(--text);margin-bottom:14px;">📦 Shipping Today</div>
+        <div id="ldash-ship-content"><div style="color:var(--text3);font-size:12px;">Loading…</div></div>
+      </div>
+
+      <!-- Zone 3: Sales Snapshot -->
+      <div style="background:var(--bg2);border:1.5px solid var(--border);border-radius:14px;padding:18px 20px;">
+        <div style="font-size:13px;font-weight:700;color:var(--text);margin-bottom:14px;">💰 Sales Snapshot — Last 30 Days</div>
+        <div id="ldash-sales-content"><div style="color:var(--text3);font-size:12px;">Loading…</div></div>
+      </div>
+    </div>
+
+    <!-- Zone 4: Inventory Health -->
+    <div style="background:var(--bg2);border:1.5px solid var(--border);border-radius:14px;padding:18px 20px;">
+      <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:14px;flex-wrap:wrap;gap:10px;">
+        <div style="font-size:13px;font-weight:700;color:var(--text);">📋 Inventory Health</div>
+        <div style="display:flex;gap:6px;">
+          <button id="ldash-ih-btn-critical" class="ldash-tab-btn active" onclick="ldashIHTab('critical')">🔴 Critical Stock</button>
+          <button id="ldash-ih-btn-discrepancy" class="ldash-tab-btn" onclick="ldashIHTab('discrepancy')">⚠️ Discrepancies</button>
+          <button id="ldash-ih-btn-pending" class="ldash-tab-btn" onclick="ldashIHTab('pending')">🕐 Pending Reviews</button>
+        </div>
+      </div>
+      <div id="ldash-ih-content"><div style="color:var(--text3);font-size:12px;">Loading…</div></div>
+    </div>
+
+  </div>
+</div>
+
+<style>
+#ldash-app .ldash-action-card {
+  background:var(--bg2);border:1.5px solid var(--border);border-radius:12px;
+  padding:16px;cursor:pointer;transition:all .15s;
+}
+#ldash-app .ldash-action-card:hover { transform:translateY(-2px);box-shadow:var(--shadow2); }
+#ldash-app .ldash-action-card.red   { border-color:#fca5a5;background:#fff5f5; }
+#ldash-app .ldash-action-card.orange{ border-color:#fed7aa;background:#fffbf5; }
+#ldash-app .ldash-action-card.green { border-color:#bbf7d0;background:#f0fdf4; }
+#ldash-app .ldash-ac-num  { font-size:32px;font-weight:700;font-family:var(--mono);line-height:1;margin-bottom:6px; }
+#ldash-app .ldash-ac-label{ font-size:12px;font-weight:600;color:var(--text);margin-bottom:3px; }
+#ldash-app .ldash-ac-sub  { font-size:10px;color:var(--text3); }
+#ldash-app .ldash-stat-row { display:flex;gap:16px;margin-bottom:12px;flex-wrap:wrap; }
+#ldash-app .ldash-stat     { flex:1;min-width:70px;text-align:center;background:var(--bg3);border-radius:8px;padding:10px 8px; }
+#ldash-app .ldash-stat-val { font-size:22px;font-weight:700;font-family:var(--mono);color:var(--text); }
+#ldash-app .ldash-stat-lbl { font-size:10px;color:var(--text3);margin-top:2px; }
+#ldash-app .ldash-progress { background:var(--bg3);border-radius:100px;height:8px;margin:6px 0 12px;overflow:hidden; }
+#ldash-app .ldash-progress-fill { height:100%;border-radius:100px;background:var(--accent);transition:width .4s; }
+#ldash-app .ldash-table { width:100%;border-collapse:collapse;font-size:12px; }
+#ldash-app .ldash-table th { text-align:left;padding:7px 10px;background:var(--bg3);color:var(--text3);font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.5px; }
+#ldash-app .ldash-table td { padding:8px 10px;border-bottom:1px solid var(--border);color:var(--text); }
+#ldash-app .ldash-table tr:last-child td { border-bottom:none; }
+#ldash-app .ldash-table tr:hover td { background:var(--bg3); }
+#ldash-app .ldash-badge { display:inline-block;padding:2px 7px;border-radius:100px;font-size:10px;font-weight:700;font-family:var(--mono); }
+#ldash-app .ldash-badge.red    { background:var(--red-bg);color:var(--red); }
+#ldash-app .ldash-badge.orange { background:var(--orange-bg);color:var(--orange); }
+#ldash-app .ldash-badge.green  { background:var(--green-bg);color:var(--green); }
+#ldash-app .ldash-badge.blue   { background:var(--accent-bg);color:var(--accent); }
+#ldash-app .ldash-tab-btn {
+  font-size:11px;font-family:var(--mono);font-weight:600;padding:5px 12px;
+  border-radius:7px;border:1.5px solid var(--border2);background:var(--bg3);
+  color:var(--text3);cursor:pointer;transition:all .15s;
+}
+#ldash-app .ldash-tab-btn:hover { border-color:var(--accent);color:var(--accent); }
+#ldash-app .ldash-tab-btn.active { border-color:var(--accent);color:var(--accent);background:var(--accent-bg); }
+#ldash-app .ldash-packer-row { display:flex;align-items:center;gap:10px;padding:6px 0;border-bottom:1px solid var(--border); }
+#ldash-app .ldash-packer-row:last-child { border-bottom:none; }
+@media(max-width:700px){
+  #ldash-mid-row { grid-template-columns:1fr !important; }
+}
+</style>
+
+<script>
+(function() {
+  'use strict';
+
+  var LD_WORKER = 'https://xfitting-lookup.alfixedinc88.workers.dev';
+  var ldIHTab = 'critical';
+  var ldData = {
+    pendingInv: [], scans: [], manifest: [], alerts: [],
+    messages: [], roRows: [], salesData: null
+  };
+
+  // ── UTC today key (matches worker) ──────────────────────────────────────
+  function ldTodayKey() {
+    var d = new Date();
+    return d.getUTCFullYear() + '-'
+      + String(d.getUTCMonth()+1).padStart(2,'0') + '-'
+      + String(d.getUTCDate()).padStart(2,'0');
+  }
+
+  // ── Launch ───────────────────────────────────────────────────────────────
+  window.ldashOnLaunch = function() {
+    ldashRefresh();
+  };
+
+  window.ldashRefresh = async function() {
+    var btn = document.getElementById('ldash-refresh-btn');
+    if (btn) { btn.disabled = true; btn.textContent = '↻ Loading…'; }
+    document.getElementById('ldash-last-updated').textContent = 'Loading…';
+
+    try {
+      await Promise.all([
+        ldFetchInventoryPending(),
+        ldFetchScans(),
+        ldFetchManifest(),
+        ldFetchAlerts(),
+        ldFetchMessages(),
+      ]);
+      // Sales + reorder from CALC (already loaded if Reorder/Sales was opened)
+      ldLoadSalesFromCalc();
+    } catch(e) {
+      console.error('[LDASH] refresh error:', e);
+    }
+
+    ldRenderAll();
+    var now = new Date().toLocaleTimeString('en-US', {timeZone:'America/New_York',hour:'2-digit',minute:'2-digit',hour12:true});
+    document.getElementById('ldash-last-updated').textContent = 'Updated ' + now + ' EST';
+    if (btn) { btn.disabled = false; btn.textContent = '↻ Refresh'; }
+  };
+
+  // ── Data fetchers ────────────────────────────────────────────────────────
+  async function ldFetchInventoryPending() {
+    try {
+      var r = await fetch(LD_WORKER + '/inventory/pending', {
+        headers: {'X-Session-Token': XF_SESSION || ''}
+      });
+      var d = await r.json();
+      ldData.pendingInv = d.pending || [];
+    } catch(e) { ldData.pendingInv = []; }
+  }
+
+  async function ldFetchScans() {
+    try {
+      var r = await fetch(LD_WORKER + '/ship/scans?date=' + ldTodayKey(), {
+        headers: {'X-Session-Token': XF_SESSION || ''}
+      });
+      var d = await r.json();
+      ldData.scans = d.scans || [];
+    } catch(e) { ldData.scans = []; }
+  }
+
+  async function ldFetchManifest() {
+    try {
+      var r = await fetch(LD_WORKER + '/ship/manifest?date=' + ldTodayKey(), {
+        headers: {'X-Session-Token': XF_SESSION || ''}
+      });
+      var d = await r.json();
+      ldData.manifest = d.manifest || [];
+    } catch(e) { ldData.manifest = []; }
+  }
+
+  async function ldFetchAlerts() {
+    try {
+      var r = await fetch(LD_WORKER + '/veeqo/alerts', {
+        headers: {'X-Session-Token': XF_SESSION || ''}
+      });
+      var d = await r.json();
+      ldData.alerts = d.alerts || [];
+    } catch(e) { ldData.alerts = []; }
+  }
+
+  async function ldFetchMessages() {
+    try {
+      var r = await fetch(LD_WORKER + '/msg/list?all=1&limit=200', {
+        headers: {'X-Session-Token': XF_SESSION || ''}
+      });
+      var d = await r.json();
+      ldData.messages = (d.messages || []).filter(function(m) { return m.status === 'open'; });
+    } catch(e) { ldData.messages = []; }
+  }
+
+  function ldLoadSalesFromCalc() {
+    // Pull from CALC if Reorder/Sales data has been loaded this session
+    if (CALC && CALC.partSales && CALC.partSales.length > 0) {
+      ldData.salesData = CALC.partSales;
+      ldData.roRows    = (RO.jq || []).concat(RO.eff || []);
+    } else {
+      ldData.salesData = null;
+      ldData.roRows    = [];
+    }
+  }
+
+  // ── Master render ────────────────────────────────────────────────────────
+  function ldRenderAll() {
+    ldRenderActionQueue();
+    ldRenderShipping();
+    ldRenderSales();
+    ldRenderIH();
+  }
+
+  // ── Zone 1: Action Queue ─────────────────────────────────────────────────
+  function ldRenderActionQueue() {
+    var pending   = ldData.pendingInv.length;
+    var exceptions = ldData.alerts.filter(function(a) { return a.alertLevel === 'EXCEPTION'; }).length;
+    var returned   = ldData.alerts.filter(function(a) { return a.alertLevel === 'RETURNED'; }).length;
+    var neverScan  = ldData.alerts.filter(function(a) { return a.alertLevel === 'NEVER_SCANNED_2D'; }).length;
+    var stuck      = ldData.alerts.filter(function(a) { return a.alertLevel === 'STUCK_10D'; }).length;
+    var messages   = ldData.messages.length;
+    var scanned    = ldData.scans.length;
+    var manifest   = ldData.manifest.length;
+    var gap        = Math.max(0, manifest - scanned);
+
+    // Critical stock from RO rows
+    var critStock  = ldData.roRows.filter(function(r) { return r.urgency === 'critical'; }).length;
+    var watchStock = ldData.roRows.filter(function(r) { return r.urgency === 'watch'; }).length;
+
+    var cards = [
+      {
+        num: pending, label: 'Pending Reviews', sub: 'Inventory approvals waiting',
+        color: pending > 0 ? 'red' : 'green',
+        onclick: "backToLauncher();launchMgmtApp('inventory');"
+      },
+      {
+        num: exceptions + returned, label: 'Shipping Issues', sub: exceptions + ' exceptions · ' + returned + ' returned',
+        color: (exceptions + returned) > 0 ? 'red' : 'green',
+        onclick: "backToLauncher();launchApp('packship');"
+      },
+      {
+        num: neverScan, label: 'Never Scanned 2d+', sub: 'Labels with no carrier scan',
+        color: neverScan > 0 ? 'orange' : 'green',
+        onclick: "backToLauncher();launchApp('packship');"
+      },
+      {
+        num: stuck, label: 'Not Delivered 10d+', sub: 'Packages overdue',
+        color: stuck > 0 ? 'orange' : 'green',
+        onclick: "backToLauncher();launchApp('packship');"
+      },
+      {
+        num: critStock, label: 'Critical Stock', sub: watchStock + ' more on watch',
+        color: critStock > 0 ? 'red' : (watchStock > 0 ? 'orange' : 'green'),
+        onclick: ldData.roRows.length > 0 ? "backToLauncher();launchMgmtApp('reorder');" : null
+      },
+      {
+        num: gap, label: 'Gap Report', sub: scanned + ' scanned · ' + manifest + ' in manifest',
+        color: gap > 0 ? 'orange' : 'green',
+        onclick: "backToLauncher();launchApp('packship');"
+      },
+      {
+        num: messages, label: 'Open Messages', sub: 'From warehouse floor',
+        color: messages > 0 ? 'orange' : 'green',
+        onclick: "backToLauncher();launchMgmtApp('msginbox');"
+      },
+    ];
+
+    var html = '';
+    cards.forEach(function(c) {
+      var numColor = c.color === 'red' ? 'color:var(--red)' : c.color === 'orange' ? 'color:var(--orange)' : 'color:var(--green)';
+      var clickAttr = c.onclick ? ' onclick="' + c.onclick + '"' : '';
+      var cursor = c.onclick ? 'cursor:pointer' : '';
+      html += '<div class="ldash-action-card ' + c.color + '" ' + clickAttr + ' style="' + cursor + '">'
+        + '<div class="ldash-ac-num" style="' + numColor + '">' + c.num + '</div>'
+        + '<div class="ldash-ac-label">' + c.label + '</div>'
+        + '<div class="ldash-ac-sub">' + c.sub + '</div>'
+        + '</div>';
+    });
+    document.getElementById('ldash-action-queue').innerHTML = html;
+  }
+
+  // ── Zone 2: Shipping Today ────────────────────────────────────────────────
+  function ldRenderShipping() {
+    var scans    = ldData.scans;
+    var manifest = ldData.manifest;
+    var total    = scans.length;
+    var ups      = scans.filter(function(s) { return (s.carrier||'').toUpperCase() === 'UPS'; }).length;
+    var usps     = scans.filter(function(s) { return (s.carrier||'').toUpperCase() === 'USPS'; }).length;
+    var other    = total - ups - usps;
+
+    // Packer breakdown
+    var packerMap = {};
+    scans.forEach(function(s) {
+      var init = (s.initials || '?').toUpperCase();
+      packerMap[init] = (packerMap[init] || 0) + 1;
+    });
+    var packers = Object.entries(packerMap).sort(function(a,b){ return b[1]-a[1]; });
+
+    // Progress vs manifest
+    var pct = manifest.length > 0 ? Math.min(100, Math.round(total / manifest.length * 100)) : 0;
+
+    // Last scan time
+    var lastScan = '';
+    if (scans.length > 0) {
+      var sorted = scans.slice().sort(function(a,b){ return (b.timestamp||'').localeCompare(a.timestamp||''); });
+      if (sorted[0].timestamp) {
+        lastScan = new Date(sorted[0].timestamp).toLocaleTimeString('en-US',{timeZone:'America/New_York',hour:'2-digit',minute:'2-digit',hour12:true});
+      }
+    }
+
+    var html = '<div class="ldash-stat-row">'
+      + '<div class="ldash-stat"><div class="ldash-stat-val">' + total + '</div><div class="ldash-stat-lbl">Scanned</div></div>'
+      + '<div class="ldash-stat"><div class="ldash-stat-val" style="color:var(--orange)">' + ups + '</div><div class="ldash-stat-lbl">UPS</div></div>'
+      + '<div class="ldash-stat"><div class="ldash-stat-val" style="color:var(--purple)">' + usps + '</div><div class="ldash-stat-lbl">USPS</div></div>'
+      + '<div class="ldash-stat"><div class="ldash-stat-val">' + manifest.length + '</div><div class="ldash-stat-lbl">Manifest</div></div>'
+      + '</div>';
+
+    if (manifest.length > 0) {
+      html += '<div style="font-size:11px;color:var(--text3);margin-bottom:4px">'
+        + pct + '% complete vs manifest</div>'
+        + '<div class="ldash-progress"><div class="ldash-progress-fill" style="width:' + pct + '%"></div></div>';
+    }
+
+    if (lastScan) {
+      html += '<div style="font-size:11px;color:var(--text3);margin-bottom:10px">Last scan: ' + lastScan + ' EST</div>';
+    }
+
+    if (packers.length > 0) {
+      html += '<div style="font-size:11px;font-weight:700;color:var(--text2);margin-bottom:6px">Packers Today</div>';
+      packers.forEach(function(p) {
+        html += '<div class="ldash-packer-row">'
+          + '<div style="font-family:var(--mono);font-size:13px;font-weight:700;color:var(--accent);min-width:36px">' + p[0] + '</div>'
+          + '<div style="flex:1;background:var(--bg3);border-radius:4px;height:6px;overflow:hidden">'
+          + '<div style="height:100%;background:var(--accent);width:' + Math.round(p[1]/total*100) + '%"></div></div>'
+          + '<div style="font-family:var(--mono);font-size:12px;color:var(--text);min-width:28px;text-align:right">' + p[1] + '</div>'
+          + '</div>';
+      });
+    } else {
+      html += '<div style="color:var(--text3);font-size:12px;padding:8px 0">No scans yet today</div>';
+    }
+
+    document.getElementById('ldash-ship-content').innerHTML = html;
+  }
+
+  // ── Zone 3: Sales Snapshot ────────────────────────────────────────────────
+  function ldRenderSales() {
+    var sd = ldData.salesData;
+    if (!sd || sd.length === 0) {
+      document.getElementById('ldash-sales-content').innerHTML =
+        '<div style="color:var(--text3);font-size:12px;padding:8px 0">No sales data — open Reorder Planner or Sales Dashboard and run ⚡ Recompute first.</div>';
+      return;
+    }
+
+    function n(v) { return parseFloat((v||'').toString().replace(/[$,]/g,'')) || 0; }
+
+    var totals = { amzU:0, ebayU:0, xfU:0, amzS:0, ebayS:0, xfS:0 };
+    sd.forEach(function(r) {
+      totals.amzU  += n(r['AMZ 30 units sold']  || r['amzU30'] || 0);
+      totals.ebayU += n(r['eBay 30 units sold']  || r['ebayU30'] || 0);
+      totals.xfU   += n(r['XF 30 units sold']    || r['xfU30'] || 0);
+      totals.amzS  += n(r['AMZ 30 sales']  || r['amzS30'] || 0);
+      totals.ebayS += n(r['eBay 30 sales']  || r['ebayS30'] || 0);
+      totals.xfS   += n(r['XF 30 sales']    || r['xfS30'] || 0);
+    });
+
+    var totalRev = totals.amzS + totals.ebayS + totals.xfS;
+    var totalUnits = totals.amzU + totals.ebayU + totals.xfU;
+
+    function fmt(n) { return n >= 1000 ? '$' + (n/1000).toFixed(1) + 'k' : '$' + Math.round(n); }
+    function bar(val, total, color) {
+      var pct = total > 0 ? Math.round(val/total*100) : 0;
+      return '<div style="display:flex;align-items:center;gap:8px;margin-bottom:6px">'
+        + '<div style="width:60px;font-size:11px;color:var(--text3)">' + pct + '%</div>'
+        + '<div style="flex:1;background:var(--bg3);border-radius:4px;height:8px;overflow:hidden">'
+        + '<div style="height:100%;border-radius:4px;background:' + color + ';width:' + pct + '%"></div></div>'
+        + '<div style="width:44px;font-size:11px;font-family:var(--mono);text-align:right;color:var(--text)">' + fmt(val) + '</div>'
+        + '</div>';
+    }
+
+    var html = '<div class="ldash-stat-row">'
+      + '<div class="ldash-stat"><div class="ldash-stat-val">' + fmt(totalRev) + '</div><div class="ldash-stat-lbl">Total Revenue</div></div>'
+      + '<div class="ldash-stat"><div class="ldash-stat-val">' + totalUnits.toLocaleString() + '</div><div class="ldash-stat-lbl">Units Sold</div></div>'
+      + '</div>';
+
+    html += '<div style="font-size:11px;font-weight:700;color:var(--text2);margin-bottom:8px">Revenue by Platform</div>';
+    html += '<div style="font-size:10px;color:var(--text3);margin-bottom:4px">Amazon</div>' + bar(totals.amzS, totalRev, '#FF9900');
+    html += '<div style="font-size:10px;color:var(--text3);margin-bottom:4px">eBay</div>'    + bar(totals.ebayS, totalRev, '#e53238');
+    html += '<div style="font-size:10px;color:var(--text3);margin-bottom:4px">Shopify</div>'+ bar(totals.xfS, totalRev, '#96bf48');
+
+    // Top 5 SKUs by units
+    var top5 = sd.slice().sort(function(a,b){
+      return (n(b['eBay 30 units sold']||0)+n(b['AMZ 30 units sold']||0)+n(b['XF 30 units sold']||0))
+           - (n(a['eBay 30 units sold']||0)+n(a['AMZ 30 units sold']||0)+n(a['XF 30 units sold']||0));
+    }).slice(0,5);
+
+    html += '<div style="font-size:11px;font-weight:700;color:var(--text2);margin:12px 0 6px">Top 5 Parts by Units</div>';
+    html += '<table class="ldash-table"><thead><tr><th>Part#</th><th>AMZ</th><th>eBay</th><th>XF</th></tr></thead><tbody>';
+    top5.forEach(function(r) {
+      html += '<tr><td style="font-family:var(--mono);font-size:11px">' + (r['Part#']||r.pn||'') + '</td>'
+        + '<td style="font-family:var(--mono)">' + Math.round(n(r['AMZ 30 units sold']||0)) + '</td>'
+        + '<td style="font-family:var(--mono)">' + Math.round(n(r['eBay 30 units sold']||0)) + '</td>'
+        + '<td style="font-family:var(--mono)">' + Math.round(n(r['XF 30 units sold']||0)) + '</td>'
+        + '</tr>';
+    });
+    html += '</tbody></table>';
+
+    document.getElementById('ldash-sales-content').innerHTML = html;
+  }
+
+  // ── Zone 4: Inventory Health ──────────────────────────────────────────────
+  window.ldashIHTab = function(tab) {
+    ldIHTab = tab;
+    ['critical','discrepancy','pending'].forEach(function(t) {
+      var btn = document.getElementById('ldash-ih-btn-' + t);
+      if (btn) btn.className = 'ldash-tab-btn' + (t === tab ? ' active' : '');
+    });
+    ldRenderIH();
+  };
+
+  function ldRenderIH() {
+    var el = document.getElementById('ldash-ih-content');
+
+    if (ldIHTab === 'critical') {
+      var rows = ldData.roRows.filter(function(r) { return r.urgency === 'critical' || r.urgency === 'watch'; });
+      if (rows.length === 0) {
+        el.innerHTML = '<div style="color:var(--green);font-size:13px;padding:8px 0">✓ No critical or watch items' + (ldData.roRows.length === 0 ? ' — load Reorder Planner data first' : '') + '</div>';
+        return;
+      }
+      var html = '<table class="ldash-table"><thead><tr><th>Part#</th><th>Name</th><th>WH Units</th><th>Daily Vel</th><th>Days Left</th><th>Status</th></tr></thead><tbody>';
+      rows.slice(0,20).forEach(function(r) {
+        var dohStr = r.doh !== null ? Math.round(r.doh) + 'd' : '—';
+        var badge  = r.urgency === 'critical'
+          ? '<span class="ldash-badge red">CRITICAL</span>'
+          : '<span class="ldash-badge orange">WATCH</span>';
+        html += '<tr><td style="font-family:var(--mono);font-size:11px">' + (r.pn||'') + '</td>'
+          + '<td style="max-width:160px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:11px">' + (r.itemName||'') + '</td>'
+          + '<td style="font-family:var(--mono)">' + (r.whUnitsTotal !== null ? Math.round(r.whUnitsTotal) : '—') + '</td>'
+          + '<td style="font-family:var(--mono)">' + (r.daily > 0 ? r.daily.toFixed(1) : '—') + '</td>'
+          + '<td style="font-family:var(--mono);font-weight:700">' + dohStr + '</td>'
+          + '<td>' + badge + '</td></tr>';
+      });
+      html += '</tbody></table>';
+      if (rows.length > 20) html += '<div style="font-size:11px;color:var(--text3);padding:8px 0">Showing 20 of ' + rows.length + ' — open Reorder Planner for full list</div>';
+      el.innerHTML = html;
+
+    } else if (ldIHTab === 'discrepancy') {
+      // Find negative cases from DB.master
+      var negRows = (DB.master || []).filter(function(r) { return r.casesNum !== null && r.casesNum < 0; });
+      if (negRows.length === 0) {
+        el.innerHTML = '<div style="color:var(--green);font-size:13px;padding:8px 0">✓ No discrepancies found in Master List</div>';
+        return;
+      }
+      var html = '<table class="ldash-table"><thead><tr><th>Part#</th><th>Location</th><th>Cases</th><th>SKU</th></tr></thead><tbody>';
+      negRows.forEach(function(r) {
+        html += '<tr><td style="font-family:var(--mono);font-size:11px">' + (r.partNum||'') + '</td>'
+          + '<td style="font-family:var(--mono);font-size:11px">' + (r.location||'') + '</td>'
+          + '<td style="font-family:var(--mono);color:var(--red);font-weight:700">' + r.casesNum + '</td>'
+          + '<td style="font-family:var(--mono);font-size:11px;color:var(--text3)">' + (r.sku||'') + '</td>'
+          + '</tr>';
+      });
+      html += '</tbody></table>';
+      el.innerHTML = html;
+
+    } else if (ldIHTab === 'pending') {
+      var pending = ldData.pendingInv;
+      if (pending.length === 0) {
+        el.innerHTML = '<div style="color:var(--green);font-size:13px;padding:8px 0">✓ No pending inventory reviews</div>';
+        return;
+      }
+      var html = '<table class="ldash-table"><thead><tr><th>Type</th><th>Part#</th><th>Location</th><th>Cases</th><th>By</th><th>When</th></tr></thead><tbody>';
+      pending.slice(0,30).forEach(function(r) {
+        var type = (r.type||'').replace('TRANSFER_','XFR ');
+        var when = r.timestamp ? new Date(r.timestamp).toLocaleString('en-US',{timeZone:'America/New_York',month:'short',day:'numeric',hour:'2-digit',minute:'2-digit',hour12:true}) : '';
+        var typeBadge = type.includes('IN') ? '<span class="ldash-badge green">' + type + '</span>'
+          : type.includes('OUT') ? '<span class="ldash-badge orange">' + type + '</span>'
+          : '<span class="ldash-badge blue">' + type + '</span>';
+        html += '<tr><td>' + typeBadge + '</td>'
+          + '<td style="font-family:var(--mono);font-size:11px">' + (r.partNum||'') + '</td>'
+          + '<td style="font-family:var(--mono);font-size:11px">' + (r.location||'') + '</td>'
+          + '<td style="font-family:var(--mono);font-weight:700">' + (r.cases||'') + '</td>'
+          + '<td style="font-family:var(--mono);font-size:11px">' + (r.initials||'') + '</td>'
+          + '<td style="font-size:10px;color:var(--text3)">' + when + '</td>'
+          + '</tr>';
+      });
+      html += '</tbody></table>';
+      if (pending.length > 30) html += '<div style="font-size:11px;color:var(--text3);padding:8px 0">Showing 30 of ' + pending.length + '</div>';
+      el.innerHTML = html;
+    }
+  }
+
+})();
+</script>
 
 <!-- ═══ WAREHOUSE LOOKUP APP ═══ -->
 <div id="wh-app" style="display:none;">
@@ -3687,6 +4192,7 @@ function backToLauncher() {
   document.getElementById('messenger-app').style.display = 'none';
   document.getElementById('msginbox-app').style.display = 'none';
   document.getElementById('ebaymsgs-app').style.display = 'none';
+  document.getElementById('ldash-app').style.display = 'none';
   document.getElementById('launcher').style.display = 'flex';
 }
 
@@ -4991,6 +5497,12 @@ async function salesLaunchApp(name) {
     document.getElementById('ebaymsgs-app').style.display = 'flex';
     document.getElementById('ebaymsgs-app').style.flexDirection = 'column';
     ebayMsgsOnLaunch();
+    return;
+  }
+  if (name === 'ldash') {
+    document.getElementById('ldash-app').style.display = 'flex';
+    document.getElementById('ldash-app').style.flexDirection = 'column';
+    ldashOnLaunch();
     return;
   }
   var appId = name === 'reorder' ? 'reorder-app' : 'dashboard-app';
