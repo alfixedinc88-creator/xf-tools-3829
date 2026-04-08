@@ -1,7 +1,7 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-  <!-- XFITTING-BUILD-V113-FEAT-20260408b -->
+  <!-- XFITTING-BUILD-V113-FEAT-20260408d -->
 <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate">
 <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&family=IBM+Plex+Sans:wght@300;400;500;600&display=swap" rel="stylesheet">
   <meta http-equiv="Pragma" content="no-cache">
@@ -969,7 +969,7 @@ body{font-family:'DM Sans',sans-serif;background:var(--gray-50);color:var(--gray
 .hdiv{width:1px;height:20px;background:var(--gray-200)}
 .hdr-title{font-size:14px;font-weight:500;color:var(--gray-600)}
 .hdr-r{display:flex;align-items:center;gap:10px}
-.tabs{background:var(--white);border-bottom:1px solid var(--gray-200);padding:0 24px;display:flex;overflow-x:auto}
+.tabs{background:var(--white);border-bottom:1px solid var(--gray-200);padding:0 24px;display:flex;overflow-x:auto;position:sticky;top:56px;z-index:90;}
 .tab{padding:14px 18px;font-size:13px;font-weight:500;color:var(--gray-500);cursor:pointer;border-bottom:2px solid transparent;transition:all .15s;white-space:nowrap;display:flex;align-items:center;gap:7px}
 .tab:hover{color:var(--gray-700)}.tab.active{color:var(--blue);border-bottom-color:var(--blue)}
 .tbadge{background:var(--blue);color:white;font-size:10px;font-weight:700;min-width:18px;height:18px;border-radius:9px;display:flex;align-items:center;justify-content:center;padding:0 5px}
@@ -1307,7 +1307,7 @@ input[type=checkbox]{width:15px;height:15px;cursor:pointer;accent-color:var(--bl
 }
 
 /* BODY & PANELS */
-.sales-body { flex: 1; padding: 24px 20px; background: var(--bg); overflow-y: auto; }
+.sales-body { flex: 1; padding: 24px 20px; background: var(--bg); }
 .sales-panel { display: none; }
 .sales-panel.active { display: block; }
 
@@ -1940,16 +1940,16 @@ input[type=checkbox]{width:15px;height:15px;cursor:pointer;accent-color:var(--bl
     </div>
 
     <!-- Zone 4: Inventory Health -->
-    <div style="background:var(--bg2);border:1.5px solid var(--border);border-radius:14px;padding:18px 20px;">
-      <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:14px;flex-wrap:wrap;gap:10px;">
+    <div style="background:var(--bg2);border:1.5px solid var(--border);border-radius:14px;overflow:hidden;">
+      <div style="display:flex;align-items:center;justify-content:space-between;padding:18px 20px 14px;flex-wrap:wrap;gap:10px;position:sticky;top:56px;z-index:100;background:var(--bg2);border-bottom:1px solid var(--border);">
         <div style="font-size:13px;font-weight:700;color:var(--text);">📋 Inventory Health</div>
-        <div style="display:flex;gap:6px;">
+        <div style="display:flex;gap:6px;flex-wrap:wrap;">
           <button id="ldash-ih-btn-critical" class="ldash-tab-btn active" onclick="ldashIHTab('critical')">🔴 Critical Stock</button>
           <button id="ldash-ih-btn-discrepancy" class="ldash-tab-btn" onclick="ldashIHTab('discrepancy')">⚠️ Discrepancies</button>
           <button id="ldash-ih-btn-pending" class="ldash-tab-btn" onclick="ldashIHTab('pending')">🕐 Pending Reviews</button>
         </div>
       </div>
-      <div id="ldash-ih-content"><div style="color:var(--text3);font-size:12px;">Loading…</div></div>
+      <div id="ldash-ih-content" style="padding:14px 20px;"><div style="color:var(--text3);font-size:12px;">Loading…</div></div>
     </div>
 
   </div>
@@ -2053,7 +2053,7 @@ input[type=checkbox]{width:15px;height:15px;cursor:pointer;accent-color:var(--bl
         headers: {'X-Session-Token': XF_SESSION || ''}
       });
       var d = await r.json();
-      ldData.pendingInv = d.pending || [];
+      ldData.pendingInv = d.items || [];
     } catch(e) { ldData.pendingInv = []; }
   }
 
@@ -2136,7 +2136,7 @@ input[type=checkbox]{width:15px;height:15px;cursor:pointer;accent-color:var(--bl
       {
         num: pending, label: 'Pending Reviews', sub: 'Inventory approvals waiting',
         color: pending > 0 ? 'red' : 'green',
-        onclick: "backToLauncher();launchMgmtApp('inventory');"
+        onclick: "backToLauncher();launchApp('inventory');"
       },
       {
         num: exceptions + returned, label: 'Shipping Issues', sub: exceptions + ' exceptions · ' + returned + ' returned',
@@ -4142,6 +4142,7 @@ function awd_planner_toast(msg, type) {
 // LAUNCHER
 // ═══════════════════════════════════════════════════════
 function launchApp(which) {
+  history.pushState({ xfApp: which }, '', '');
   document.getElementById('launcher').style.display = 'none';
   if (which === 'warehouse') {
     document.getElementById('wh-app').style.display = 'flex';
@@ -4200,6 +4201,15 @@ function backToLauncher() {
 window.addEventListener('load', function() {
   // Nothing to do — PIN unlock shows launcher, launcher shows apps
 });
+
+// ── Browser back button → go to launcher, not previous website ──────────────
+window.addEventListener('popstate', function(e) {
+  // If a state was pushed (user opened an app), intercept and go to launcher
+  if (!e.state || !e.state.xfApp) {
+    backToLauncher();
+  }
+});
+// ─────────────────────────────────────────────────────────────────────────────
 
 
 
@@ -5416,6 +5426,7 @@ var mgmtPinBuf = "";
 var mgmtPinTarget = null;
 
 function launchMgmtApp(name) {
+  history.pushState({ xfApp: name }, '', '');
   mgmtPinTarget = name;
   mgmtPinBuf = "";
   ['mgmt-pd0','mgmt-pd1','mgmt-pd2','mgmt-pd3'].forEach(function(id) {
@@ -12281,7 +12292,7 @@ function rprToast(msg, type = '') {
 #packship-app .ps-mgmt-toggle a { color:var(--accent); cursor:pointer; font-weight:600; }
 
 /* Tabs */
-#packship-app .ps-tabbar { background:var(--bg2); border-bottom:2px solid var(--border); display:flex; padding:0 20px; overflow-x:auto; scrollbar-width:none; }
+#packship-app .ps-tabbar { background:var(--bg2); border-bottom:2px solid var(--border); display:flex; padding:0 20px; overflow-x:auto; scrollbar-width:none; position:sticky; top:56px; z-index:190; }
 #packship-app .ps-tabbar::-webkit-scrollbar { display:none; }
 #packship-app .ps-tabitem { padding:14px 20px; font-size:13px; font-weight:600; color:var(--text3); cursor:pointer; border-bottom:2px solid transparent; margin-bottom:-2px; white-space:nowrap; transition:all .15s; display:flex; align-items:center; gap:7px; user-select:none; }
 #packship-app .ps-tabitem:hover { color:var(--text2); }
