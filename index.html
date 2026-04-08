@@ -2558,6 +2558,28 @@ async function refreshAllSheets() {
   });
 }
 
+// ── Silent background refresh every 20 minutes ───────────────────────────────
+// Keeps DB.master and DB.products current for inventory name search results.
+// Runs silently — no spinner, no toast, never interrupts the user.
+// The full loadAllSheets() on launch already populated everything; this just
+// refreshes the two sheets used by client-side search so case counts stay fresh.
+setInterval(function() {
+  if (!XF_SESSION) return; // don't run if not signed in
+  Promise.all([
+    fetchSheet(SHEET_NAMES.master),
+    fetchSheet(SHEET_NAMES.products)
+  ]).then(function(results) {
+    DB.master   = parseMasterListRows(results[0]);
+    DB.products = parseProductsRows(results[1]);
+    var now = new Date().toLocaleTimeString([], { hour:'2-digit', minute:'2-digit' });
+    setSyncLabel('Synced ' + now, false);
+    console.log('[XFITTING] Background refresh complete — ' + DB.master.length + ' master rows');
+  }).catch(function() {
+    // Silent fail — never interrupt the user
+  });
+}, 20 * 60 * 1000); // 20 minutes
+// ─────────────────────────────────────────────────────────────────────────────
+
 function showLoading(on) { document.getElementById('loading-bar').style.display = on ? 'block' : 'none'; }
 
 function setSyncLabel(text, syncing) {
