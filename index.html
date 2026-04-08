@@ -1,7 +1,7 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-  <!-- XFITTING-BUILD-V113-FEAT-20260407 -->
+  <!-- XFITTING-BUILD-V113-PERF-20260408 -->
 <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate">
 <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&family=IBM+Plex+Sans:wght@300;400;500;600&display=swap" rel="stylesheet">
   <meta http-equiv="Pragma" content="no-cache">
@@ -2457,7 +2457,7 @@ function parseProductsRows(rows) {
     var r   = rows[i];
     var sku = String(r[1] || '').trim();
     if (!sku || sku === 'sku') continue;
-    out.push({ sku: sku, name: String(r[2]||'').trim(), warehouseName: String(r[3]||'').trim(), weight: String(r[4]||'').trim() });
+    out.push({ sku: sku, name: String(r[2]||'').trim(), warehouseName: String(r[3]||'').trim(), weight: String(r[4]||'').trim(), keywords: String(r[6]||'').trim() });
   }
   console.log('[XFITTING] parseProducts -> ' + out.length + ' rows');
   return out;
@@ -3270,7 +3270,6 @@ function invAddToBuilder(sku){
 }
 
 
-function renderBuilder(){
   const items=Object.entries(S.shipment);
   const manualOpen=ge('bld-manual-panel')&&ge('bld-manual-panel').style.display!=='none';
   ge('bld-empty').style.display=(items.length||manualOpen)?'none':'';
@@ -10501,48 +10500,79 @@ function rprToast(msg, type = '') {
   };
 
   function invScanNameSearch(query) {
-    if (!query || query.length < 2) { invFlash("Enter at least 2 characters", "error"); return; }
-    var nr = g("inv-name-results");
-    nr.style.display = "block";
-    nr.innerHTML = "<div class='iempty'>Searching\u2026</div>";
-    g("inv-result-card").style.display = "none";
-    g("inv-loc-card").style.display    = "none";
-    g("inv-detail-card").style.display = "none";
-    wFetch(W + "/inventory/search?name=" + encodeURIComponent(query))
-      .then(function(r) { return r.json(); })
-      .then(function(d) {
-        var results = d.results || [];
-        if (results.length === 0) {
-          nr.innerHTML = "<div class='iempty'>No items found matching \"" + query + "\"</div>";
-          return;
-        }
-        nr.innerHTML = "";
-        results.forEach(function(item) {
-          var el = document.createElement("div");
-          el.className = "iloc-opt";
-          var stockLine = item.totalCases > 0
-            ? item.totalCases + " cases \u00b7 " + item.locCount + " location" + (item.locCount !== 1 ? "s" : "") + (item.variantCount > 1 ? " \u00b7 " + item.variantCount + " variants" : "")
-            : (item.lastLocation ? "<span style='color:var(--orange)'>No stock \u00b7 last seen: " + item.lastLocation + "</span>" : "<span style='color:var(--red)'>No stock on record</span>");
-          el.innerHTML = "<div style='flex:1'>"
-            + "<div style='font-size:12px;font-family:var(--mono);color:var(--accent);margin-bottom:2px'>" + item.baseSku + "</div>"
-            + "<div style='font-size:14px;font-weight:600;color:var(--text)'>" + item.name + "</div>"
-            + "<div style='font-size:11px;color:var(--text3);margin-top:2px'>" + stockLine + "</div>"
-            + "</div><span class='iloc-badge ex'>Select</span>";
-          el.onclick = function() {
-            nr.style.display = "none";
-            g("inv-search-inp").value = item.baseSku;
-            invLookup(item.baseSku);
-          };
-          nr.appendChild(el);
-        });
-      })
-      .catch(function(err) {
-        if (isUnauthorized(err)) {
-          invReauth(function() { invScanNameSearch(query); });
-        } else {
-          nr.innerHTML = "<div class='iempty'>Search failed</div>";
+    if (!query || query.length < 2) { invFlash('Enter at least 2 characters', 'error'); return; }
+    var nr = g('inv-name-results');
+    nr.style.display = 'block';
+    g('inv-result-card').style.display = 'none';
+    g('inv-loc-card').style.display    = 'none';
+    g('inv-detail-card').style.display = 'none';
+
+    // ── Client-side search — no server call needed ────────────────────────
+    var q = query.toLowerCase().trim();
+    var skuMap = {};
+
+    // Step 1: scan DB.master col E (name) — already in memory
+    (DB.master || []).forEach(function(r) {
+      if (!r.name.toLowerCase().includes(q)) return;
+      var baseSku = (r.sku || r.partNum || '').split('=')[0].trim().toUpperCase();
+      if (!baseSku) return;
+      if (!skuMap[baseSku]) skuMap[baseSku] = { baseSku: baseSku, name: r.name, totalCases: 0, locCount: 0, lastLocation: '', variantCount: 0, partNums: {} };
+      skuMap[baseSku].partNums[r.partNum] = true;
+      if (r.location) {
+        if ((r.casesNum || 0) > 0) { skuMap[baseSku].totalCases += (r.casesNum || 0); skuMap[baseSku].locCount++; }
+        skuMap[baseSku].lastLocation = r.location;
+      }
+    });
+
+    // Step 2: scan DB.products col C (name) + col G (keywords)
+    (DB.products || []).forEach(function(prod) {
+      var nameMatch = prod.name && prod.name.toLowerCase().includes(q);
+      var kwTokens  = (prod.keywords || '').toLowerCase().split(/[\/,]/).map(function(s){return s.trim();}).filter(Boolean);
+      var kwMatch   = (prod.keywords || '').toLowerCase().includes(q) || kwTokens.some(function(t){return t.includes(q);});
+      if (!nameMatch && !kwMatch) return;
+      var prodSku = (prod.sku || '').toUpperCase();
+      // Find all Master_List rows for this base SKU
+      (DB.master || []).forEach(function(r) {
+        var baseSku = (r.sku || r.partNum || '').split('=')[0].trim().toUpperCase();
+        if (baseSku !== prodSku) return;
+        if (!skuMap[baseSku]) skuMap[baseSku] = { baseSku: baseSku, name: prod.name || r.name, totalCases: 0, locCount: 0, lastLocation: '', variantCount: 0, partNums: {} };
+        skuMap[baseSku].name = skuMap[baseSku].name || prod.name || r.name;
+        skuMap[baseSku].partNums[r.partNum] = true;
+        if (r.location) {
+          if ((r.casesNum || 0) > 0) { skuMap[baseSku].totalCases += (r.casesNum || 0); skuMap[baseSku].locCount++; }
+          skuMap[baseSku].lastLocation = r.location;
         }
       });
+    });
+
+    var results = Object.values(skuMap).map(function(s) {
+      s.variantCount = Object.keys(s.partNums).length;
+      return s;
+    });
+
+    if (results.length === 0) {
+      nr.innerHTML = '<div class=\'iempty\'>No items found matching "' + query + '"</div>';
+      return;
+    }
+    nr.innerHTML = '';
+    results.forEach(function(item) {
+      var el = document.createElement('div');
+      el.className = 'iloc-opt';
+      var stockLine = item.totalCases > 0
+        ? item.totalCases + ' cases \u00b7 ' + item.locCount + ' location' + (item.locCount !== 1 ? 's' : '') + (item.variantCount > 1 ? ' \u00b7 ' + item.variantCount + ' variants' : '')
+        : (item.lastLocation ? '<span style=\'color:var(--orange)\'>No stock \u00b7 last seen: ' + item.lastLocation + '</span>' : '<span style=\'color:var(--red)\'>No stock on record</span>');
+      el.innerHTML = '<div style=\'flex:1\'>'
+        + '<div style=\'font-size:12px;font-family:var(--mono);color:var(--accent);margin-bottom:2px\'>' + item.baseSku + '</div>'
+        + '<div style=\'font-size:14px;font-weight:600;color:var(--text)\'>' + item.name + '</div>'
+        + '<div style=\'font-size:11px;color:var(--text3);margin-top:2px\'>' + stockLine + '</div>'
+        + '</div><span class=\'iloc-badge ex\'>Select</span>';
+      el.onclick = function() {
+        nr.style.display = 'none';
+        g('inv-search-inp').value = item.baseSku;
+        invLookup(item.baseSku);
+      };
+      nr.appendChild(el);
+    });
   }
 
   window.invLookup = function(code) {
@@ -11298,34 +11328,70 @@ function rprToast(msg, type = '') {
     if (!query || query.length < 2) { invFlash('Enter at least 2 characters', 'error'); return; }
     var nr = g('xfr-name-results');
     nr.style.display = 'block';
-    nr.innerHTML = "<div class='iempty'>Searching\u2026</div>";
     ['xfr-result-card','xfr-from-card','xfr-addcart-card'].forEach(function(id) { var el = g(id); if (el) el.style.display = 'none'; });
-    wFetch(W + '/inventory/search?name=' + encodeURIComponent(query))
-      .then(function(r) { return r.json(); })
-      .then(function(d) {
-        var results = d.results || [];
-        if (results.length === 0) { nr.innerHTML = "<div class='iempty'>No items found matching \"" + query + "\"</div>"; return; }
-        nr.innerHTML = '';
-        results.forEach(function(item) {
-          var el = document.createElement('div');
-          el.className = 'iloc-opt';
-          var stockLine = item.totalCases > 0
-            ? item.totalCases + ' cases \u00b7 ' + item.locCount + ' location' + (item.locCount !== 1 ? 's' : '') + (item.variantCount > 1 ? ' \u00b7 ' + item.variantCount + ' variants' : '')
-            : (item.lastLocation ? "<span style='color:var(--orange)'>No stock \u00b7 last seen: " + item.lastLocation + '</span>' : "<span style='color:var(--red)'>No stock on record</span>");
-          el.innerHTML = '<div style="flex:1">'
-            + '<div style="font-size:12px;font-family:var(--mono);color:var(--accent);margin-bottom:2px">' + item.baseSku + '</div>'
-            + '<div style="font-size:13px;font-weight:600;color:var(--text)">' + item.name + '</div>'
-            + '<div style="font-size:11px;color:var(--text3);margin-top:2px">' + stockLine + '</div>'
-            + '</div><span class="iloc-badge ex">Select</span>';
-          el.onclick = function() {
-            nr.style.display = 'none';
-            g('xfr-search-inp').value = item.baseSku;
-            xfrLookup(item.baseSku);
-          };
-          nr.appendChild(el);
-        });
-      })
-      .catch(function() { nr.innerHTML = "<div class='iempty'>Search failed</div>"; });
+
+    // ── Client-side search — no server call needed ────────────────────────
+    var q = query.toLowerCase().trim();
+    var skuMap = {};
+
+    // Step 1: scan DB.master col E (name)
+    (DB.master || []).forEach(function(r) {
+      if (!r.name.toLowerCase().includes(q)) return;
+      var baseSku = (r.sku || r.partNum || '').split('=')[0].trim().toUpperCase();
+      if (!baseSku) return;
+      if (!skuMap[baseSku]) skuMap[baseSku] = { baseSku: baseSku, name: r.name, totalCases: 0, locCount: 0, lastLocation: '', variantCount: 0, partNums: {} };
+      skuMap[baseSku].partNums[r.partNum] = true;
+      if (r.location) {
+        if ((r.casesNum || 0) > 0) { skuMap[baseSku].totalCases += (r.casesNum || 0); skuMap[baseSku].locCount++; }
+        skuMap[baseSku].lastLocation = r.location;
+      }
+    });
+
+    // Step 2: scan DB.products col C (name) + col G (keywords)
+    (DB.products || []).forEach(function(prod) {
+      var nameMatch = prod.name && prod.name.toLowerCase().includes(q);
+      var kwTokens  = (prod.keywords || '').toLowerCase().split(/[\/,]/).map(function(s){return s.trim();}).filter(Boolean);
+      var kwMatch   = (prod.keywords || '').toLowerCase().includes(q) || kwTokens.some(function(t){return t.includes(q);});
+      if (!nameMatch && !kwMatch) return;
+      var prodSku = (prod.sku || '').toUpperCase();
+      (DB.master || []).forEach(function(r) {
+        var baseSku = (r.sku || r.partNum || '').split('=')[0].trim().toUpperCase();
+        if (baseSku !== prodSku) return;
+        if (!skuMap[baseSku]) skuMap[baseSku] = { baseSku: baseSku, name: prod.name || r.name, totalCases: 0, locCount: 0, lastLocation: '', variantCount: 0, partNums: {} };
+        skuMap[baseSku].name = skuMap[baseSku].name || prod.name || r.name;
+        skuMap[baseSku].partNums[r.partNum] = true;
+        if (r.location) {
+          if ((r.casesNum || 0) > 0) { skuMap[baseSku].totalCases += (r.casesNum || 0); skuMap[baseSku].locCount++; }
+          skuMap[baseSku].lastLocation = r.location;
+        }
+      });
+    });
+
+    var results = Object.values(skuMap).map(function(s) {
+      s.variantCount = Object.keys(s.partNums).length;
+      return s;
+    });
+
+    if (results.length === 0) { nr.innerHTML = '<div class=\'iempty\'>No items found matching "' + query + '"</div>'; return; }
+    nr.innerHTML = '';
+    results.forEach(function(item) {
+      var el = document.createElement('div');
+      el.className = 'iloc-opt';
+      var stockLine = item.totalCases > 0
+        ? item.totalCases + ' cases \u00b7 ' + item.locCount + ' location' + (item.locCount !== 1 ? 's' : '') + (item.variantCount > 1 ? ' \u00b7 ' + item.variantCount + ' variants' : '')
+        : (item.lastLocation ? '<span style=\'color:var(--orange)\'>No stock \u00b7 last seen: ' + item.lastLocation + '</span>' : '<span style=\'color:var(--red)\'>No stock on record</span>');
+      el.innerHTML = '<div style=\'flex:1\'>'
+        + '<div style=\'font-size:12px;font-family:var(--mono);color:var(--accent);margin-bottom:2px\'>' + item.baseSku + '</div>'
+        + '<div style=\'font-size:13px;font-weight:600;color:var(--text)\'>' + item.name + '</div>'
+        + '<div style=\'font-size:11px;color:var(--text3);margin-top:2px\'>' + stockLine + '</div>'
+        + '</div><span class=\'iloc-badge ex\'>Select</span>';
+      el.onclick = function() {
+        nr.style.display = 'none';
+        g('xfr-search-inp').value = item.baseSku;
+        xfrLookup(item.baseSku);
+      };
+      nr.appendChild(el);
+    });
   }
 
   window.xfrLookup = function(code) {
