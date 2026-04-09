@@ -1,7 +1,7 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-  <!-- XFITTING-BUILD-V113-FSHF-20260409 -->
+  <!-- XFITTING-BUILD-V113-FSHF-20260409b -->
 <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate">
 <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&family=IBM+Plex+Sans:wght@300;400;500;600&display=swap" rel="stylesheet">
   <meta http-equiv="Pragma" content="no-cache">
@@ -11232,8 +11232,11 @@ function rprToast(msg, type = '') {
     list.innerHTML = "";
 
     if (locs.length === 0 && invMode === "out" && zeroLocs.length === 0) {
-      invFlash("No stock at any location for " + invPart.partNum, "error");
-      return;
+      // Don't return early — still show "Found somewhere else?" below
+      var noStock = document.createElement("div");
+      noStock.className = "iempty";
+      noStock.textContent = "No stock on record for this item";
+      list.appendChild(noStock);
     }
 
     locs.forEach(function(loc, i) {
