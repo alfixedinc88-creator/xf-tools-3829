@@ -10747,11 +10747,17 @@ function rprToast(msg, type = '') {
       <div class="icard-label" style="margin-bottom:6px">Where did you find it?</div>
       <input id="inv-found-loc-inp" type="text" class="isearch-inp" placeholder="e.g. Shelf-B4 or Pallet-3" style="width:100%;box-sizing:border-box">
     </div>
-    <div class="ifield">
-      <label>How many cases did you pull?</label>
-      <input id="inv-found-cases-inp" type="number" min="0.1" step="0.5" placeholder="0" style="width:80px">
+    <div style="display:flex;gap:12px;margin-bottom:4px">
+      <div class="ifield" style="flex:1;margin:0">
+        <label>Total cases found here</label>
+        <input id="inv-found-total-inp" type="number" min="0.1" step="0.5" placeholder="0" style="width:100%">
+      </div>
+      <div class="ifield" style="flex:1;margin:0">
+        <label>Cases you're pulling</label>
+        <input id="inv-found-cases-inp" type="number" min="0.1" step="0.5" placeholder="0" style="width:100%">
+      </div>
     </div>
-    <p style="font-size:12px;color:var(--text3);margin:8px 0 12px;line-height:1.5">This will be logged as <strong>FOUND ON SHELF</strong>. Management will see the discrepancy and can reconcile the inventory count.</p>
+    <p style="font-size:12px;color:var(--text3);margin:8px 0 12px;line-height:1.5">The new location will be created with <strong>found − pulled</strong> cases. Management will see the discrepancy and can reconcile.</p>
     <div style="display:flex;gap:8px">
       <button class="isubmit" style="background:var(--orange);border-color:var(--orange);flex:1" onclick="invFoundOnShelfConfirm()">✓ Add to Pull List</button>
       <button class="isubmit" style="background:none;color:var(--text2);border:1.5px solid var(--border)" onclick="invFoundOnShelfCancel()">Cancel</button>
@@ -11353,6 +11359,8 @@ function rprToast(msg, type = '') {
     }
     var casesInp = g("inv-found-cases-inp");
     if (casesInp) casesInp.value = "";
+    var totalInp = g("inv-found-total-inp");
+    if (totalInp) totalInp.value = "";
     // Store context on the panel element for confirm handler
     panel._loc   = loc;
     panel._isNew = isNewLoc;
@@ -11363,30 +11371,34 @@ function rprToast(msg, type = '') {
   };
 
   window.invFoundOnShelfConfirm = function() {
-    var panel    = g("inv-found-panel");
-    var loc      = panel ? panel._loc    : null;
-    var isNewLoc = panel ? panel._isNew  : false;
-    var casesVal = parseFloat((g("inv-found-cases-inp") || {}).value || 0);
-    var locName  = ((g("inv-found-loc-inp") || {}).value || "").trim();
-    var location = isNewLoc ? locName : (loc ? loc.location : "");
+    var panel      = g("inv-found-panel");
+    var loc        = panel ? panel._loc    : null;
+    var isNewLoc   = panel ? panel._isNew  : false;
+    var casesVal   = parseFloat((g("inv-found-cases-inp") || {}).value || 0);
+    var totalFound = parseFloat((g("inv-found-total-inp") || {}).value || 0);
+    var locName    = ((g("inv-found-loc-inp") || {}).value || "").trim();
+    var location   = isNewLoc ? locName : (loc ? loc.location : "");
 
-    if (!casesVal || casesVal < 0.1) { invFlash("Enter cases pulled", "error"); return; }
-    if (isNewLoc && !location)       { invFlash("Enter the location where you found it", "error"); return; }
+    if (!totalFound || totalFound < 0.1)   { invFlash("Enter total cases found at this location", "error"); return; }
+    if (!casesVal  || casesVal  < 0.1)     { invFlash("Enter cases you are pulling", "error"); return; }
+    if (casesVal > totalFound)             { invFlash("Cases pulled can't exceed total found", "error"); return; }
+    if (isNewLoc && !location)             { invFlash("Enter the location where you found it", "error"); return; }
     if (!invPart) { invFlash("No item selected", "error"); return; }
 
     var partNum = (loc && loc.partNum && loc.partNum !== invPart.partNum) ? loc.partNum : invPart.partNum;
 
     invPullList.push({
-      key:            partNum + "|" + location + "|found",
-      partNum:        partNum,
-      sku:            invPart.sku || partNum,
-      name:           invPart.name || "",
-      location:       location,
-      cases:          casesVal,
-      rowIndex:       loc ? loc.rowIndex : null,
-      masterRowIndex: loc ? loc.rowIndex : null,
-      foundOnShelf:   true,
-      foundNewLoc:    isNewLoc
+      key:             partNum + "|" + location + "|found",
+      partNum:         partNum,
+      sku:             invPart.sku || partNum,
+      name:            invPart.name || "",
+      location:        location,
+      cases:           casesVal,
+      foundTotalCases: totalFound,
+      rowIndex:        loc ? loc.rowIndex : null,
+      masterRowIndex:  loc ? loc.rowIndex : null,
+      foundOnShelf:    true,
+      foundNewLoc:     isNewLoc
     });
     invPullList.sort(function(a, b) {
       return invLocSort(a.location) - invLocSort(b.location) ||
@@ -11756,7 +11768,8 @@ function rprToast(msg, type = '') {
           type: "OUT", partNum: item.partNum, sku: item.sku, name: item.name,
           location: item.location, cases: item.cases, initials: initials,
           notes: itemNotes, rowIndex: item.rowIndex, masterRowIndex: item.masterRowIndex,
-          isPlaceholder: false, isNew: !!item.foundNewLoc, overwriteLocation: ""
+          isPlaceholder: false, isNew: !!item.foundNewLoc, overwriteLocation: "",
+          foundTotalCases: item.foundTotalCases || null
         })
       }).then(function(r) { return r.json(); })
         .then(function(d) {
