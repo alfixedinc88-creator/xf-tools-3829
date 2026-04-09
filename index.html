@@ -1,7 +1,7 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-  <!-- XFITTING-BUILD-V113-FSHF-20260409b -->
+  <!-- XFITTING-BUILD-V113-BUGF-20260409 -->
 <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate">
 <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&family=IBM+Plex+Sans:wght@300;400;500;600&display=swap" rel="stylesheet">
   <meta http-equiv="Pragma" content="no-cache">
@@ -2748,6 +2748,7 @@ input[type=checkbox]{width:15px;height:15px;cursor:pointer;accent-color:var(--bl
 var XF_SESSION = sessionStorage.getItem('xf_session') || null;
 var pinEntry   = '';
 var WORKER_URL = 'https://xfitting-lookup.alfixedinc88.workers.dev';
+var _whFetchLock = false; // prevents concurrent warehouse sheet reads (rate limit guard)
 
 // ── Authenticated fetch wrapper ──
 async function wFetch(url, opts) {
@@ -3070,6 +3071,8 @@ async function refreshAllSheets() {
 // refreshes the two sheets used by client-side search so case counts stay fresh.
 setInterval(function() {
   if (!XF_SESSION) return; // don't run if not signed in
+  if (_whFetchLock) return; // skip if warehouse fetch already in progress
+  _whFetchLock = true;
   Promise.all([
     fetchSheet(SHEET_NAMES.master),
     fetchSheet(SHEET_NAMES.products)
@@ -3081,6 +3084,8 @@ setInterval(function() {
     console.log('[XFITTING] Background refresh complete — ' + DB.master.length + ' master rows');
   }).catch(function() {
     // Silent fail — never interrupt the user
+  }).finally(function() {
+    _whFetchLock = false;
   });
 }, 20 * 60 * 1000); // 20 minutes
 // ─────────────────────────────────────────────────────────────────────────────
@@ -5570,10 +5575,22 @@ var lastUpdated = null;
 var aiHistory = { ro: [], db: [] };
 var toastTimer = null;
 var salesFetchLock = false;  // prevents overlapping sheet reads during eBay fetch
+// _whFetchLock declared in main script block (shared with background refresh)
 
 // ─── WAREHOUSE STOCK ─────────────────────────────────────────────────────────
 async function salesLoadWarehouseStock() {
   if (!SALES_WORKER_URL) return;
+  // If a warehouse fetch is already in progress (e.g. background refresh),
+  // wait up to 8 seconds for it to finish rather than firing duplicate requests
+  if (_whFetchLock) {
+    var waited = 0;
+    while (_whFetchLock && waited < 8000) {
+      await new Promise(function(r){ setTimeout(r, 500); });
+      waited += 500;
+    }
+    if (_whFetchLock) return; // still locked after 8s — skip this call
+  }
+  _whFetchLock = true;
   var SKIP = new Set(['push fit','name','location','case','each case quantity','date arrive','total quantity','brand','uint price','total','type','sku','']);
   try {
     // Load Master_List, UPC sheet, and Products in parallel
@@ -5650,6 +5667,8 @@ async function salesLoadWarehouseStock() {
     console.log('[Sales WH] loaded', Object.keys(CALC.whStock).length, 'parts,', Object.keys(CALC.upc).length, 'UPC,', Object.keys(CALC.upcCodes).length, 'UPC codes');
   } catch(e) {
     console.error('[Sales WH load]', e);
+  } finally {
+    _whFetchLock = false;
   }
 }
 function findCol(headers, keys) {
@@ -10739,31 +10758,6 @@ function rprToast(msg, type = '') {
     <button class="isubmit sin" id="inv-submit-btn" onclick="invSubmit()">Submit Stock In</button>
   </div>
 
-  <!-- Found on Shelf confirmation panel -->
-  <div class="icard" id="inv-found-panel" style="display:none;border-color:var(--orange)">
-    <div class="icard-label" style="color:var(--orange)">⚠ Found on Shelf</div>
-    <div id="inv-found-known-label" style="display:none;font-size:13px;font-weight:600;color:var(--text);margin-bottom:10px;font-family:var(--mono)"></div>
-    <div id="inv-found-loc-row" style="display:none;margin-bottom:10px">
-      <div class="icard-label" style="margin-bottom:6px">Where did you find it?</div>
-      <input id="inv-found-loc-inp" type="text" class="isearch-inp" placeholder="e.g. Shelf-B4 or Pallet-3" style="width:100%;box-sizing:border-box">
-    </div>
-    <div style="display:flex;gap:12px;margin-bottom:4px">
-      <div class="ifield" style="flex:1;margin:0">
-        <label>Total cases found here</label>
-        <input id="inv-found-total-inp" type="number" min="0.1" step="0.5" placeholder="0" style="width:100%">
-      </div>
-      <div class="ifield" style="flex:1;margin:0">
-        <label>Cases you're pulling</label>
-        <input id="inv-found-cases-inp" type="number" min="0.1" step="0.5" placeholder="0" style="width:100%">
-      </div>
-    </div>
-    <p style="font-size:12px;color:var(--text3);margin:8px 0 12px;line-height:1.5">The new location will be created with <strong>found − pulled</strong> cases. Management will see the discrepancy and can reconcile.</p>
-    <div style="display:flex;gap:8px">
-      <button class="isubmit" style="background:var(--orange);border-color:var(--orange);flex:1" onclick="invFoundOnShelfConfirm()">✓ Add to Pull List</button>
-      <button class="isubmit" style="background:none;color:var(--text2);border:1.5px solid var(--border)" onclick="invFoundOnShelfCancel()">Cancel</button>
-    </div>
-  </div>
-
   <!-- Pull List (Stock Out only) -->
   <div class="icard" id="inv-pulllist-card" style="display:none">
     <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px">
@@ -11238,11 +11232,8 @@ function rprToast(msg, type = '') {
     list.innerHTML = "";
 
     if (locs.length === 0 && invMode === "out" && zeroLocs.length === 0) {
-      // Don't return early — still show "Found somewhere else?" below
-      var noStock = document.createElement("div");
-      noStock.className = "iempty";
-      noStock.textContent = "No stock on record for this item";
-      list.appendChild(noStock);
+      invFlash("No stock at any location for " + invPart.partNum, "error");
+      return;
     }
 
     locs.forEach(function(loc, i) {
@@ -11290,26 +11281,9 @@ function rprToast(msg, type = '') {
           + "<div class='iloc-name'>" + loc.location + "</div>"
           + "<div style='font-size:12px;color:var(--orange);font-weight:600'>0 cases on record</div></div>"
           + "<span class='iloc-badge' style='background:var(--orange-bg);color:var(--orange);border:1px solid var(--orange)'>Found?</span>";
-        el.onclick = (function(l) { return function() { invFoundOnShelf(l, false); }; })(loc);
+        el.onclick = (function(l) { return function() { invFoundOnShelf(l); }; })(loc);
         list.appendChild(el);
       });
-    }
-
-    // Stock Out: "Found somewhere else?" — new location not in system (always visible)
-    if (invMode === "out") {
-      var elseDivider = document.createElement("div");
-      elseDivider.style.cssText = "font-size:11px;font-weight:700;letter-spacing:.5px;text-transform:uppercase;color:var(--text3);margin:12px 0 6px;padding-top:10px;border-top:1px solid var(--border)";
-      elseDivider.textContent = "Found somewhere else?";
-      list.appendChild(elseDivider);
-
-      var elseEl = document.createElement("div");
-      elseEl.className = "iloc-opt";
-      elseEl.style.borderColor = "var(--border)";
-      elseEl.innerHTML = "<div><div class='iloc-name'>New location not in system</div>"
-        + "<div style='font-size:12px;color:var(--text3)'>Enter where you found it</div></div>"
-        + "<span class='iloc-badge nw'>New</span>";
-      elseEl.onclick = function() { invFoundOnShelf(null, true); };
-      list.appendChild(elseEl);
     }
 
     // Stock Out: if ALL locations are zero (none in the locs array), still show override option
@@ -11341,64 +11315,23 @@ function rprToast(msg, type = '') {
     g("inv-detail-card").style.display = "none";
   }
 
-  // Called when worker taps "Found on Shelf?" (known 0-case loc) or "Found somewhere else?" (new loc)
-  window.invFoundOnShelf = function(loc, isNewLoc) {
+  // Called when worker taps "Found on Shelf?" for a 0-case location
+  window.invFoundOnShelf = function(loc) {
     if (!invPart) return;
-    var panel = g("inv-found-panel");
-    if (!panel) return;
-    // Show/hide location name input depending on flow
-    var locInp = g("inv-found-loc-inp");
-    if (locInp) locInp.value = "";
-    var locRow = g("inv-found-loc-row");
-    if (locRow) locRow.style.display = isNewLoc ? "block" : "none";
-    // Show known location label for flow 1
-    var knownLabel = g("inv-found-known-label");
-    if (knownLabel) {
-      knownLabel.style.display = (loc && !isNewLoc) ? "block" : "none";
-      if (loc && !isNewLoc) knownLabel.textContent = "Location: " + loc.location;
-    }
-    var casesInp = g("inv-found-cases-inp");
-    if (casesInp) casesInp.value = "";
-    var totalInp = g("inv-found-total-inp");
-    if (totalInp) totalInp.value = "";
-    // Store context on the panel element for confirm handler
-    panel._loc   = loc;
-    panel._isNew = isNewLoc;
-    // Hide location list and result, show panel
-    g("inv-loc-card").style.display    = "none";
-    g("inv-result-card").style.display = "none";
-    panel.style.display = "block";
-  };
-
-  window.invFoundOnShelfConfirm = function() {
-    var panel      = g("inv-found-panel");
-    var loc        = panel ? panel._loc    : null;
-    var isNewLoc   = panel ? panel._isNew  : false;
-    var casesVal   = parseFloat((g("inv-found-cases-inp") || {}).value || 0);
-    var totalFound = parseFloat((g("inv-found-total-inp") || {}).value || 0);
-    var locName    = ((g("inv-found-loc-inp") || {}).value || "").trim();
-    var location   = isNewLoc ? locName : (loc ? loc.location : "");
-
-    if (!totalFound || totalFound < 0.1)   { invFlash("Enter total cases found at this location", "error"); return; }
-    if (!casesVal  || casesVal  < 0.1)     { invFlash("Enter cases you are pulling", "error"); return; }
-    if (casesVal > totalFound)             { invFlash("Cases pulled can't exceed total found", "error"); return; }
-    if (isNewLoc && !location)             { invFlash("Enter the location where you found it", "error"); return; }
-    if (!invPart) { invFlash("No item selected", "error"); return; }
-
-    var partNum = (loc && loc.partNum && loc.partNum !== invPart.partNum) ? loc.partNum : invPart.partNum;
-
+    // Set the location's partNum if available
+    var partNum = (loc.partNum && loc.partNum !== invPart.partNum) ? loc.partNum : invPart.partNum;
+    var partForList = Object.assign({}, invPart, { partNum: partNum });
+    // Add to pull list with foundOnShelf flag — cases left blank for worker to fill at location
     invPullList.push({
-      key:             partNum + "|" + location + "|found",
-      partNum:         partNum,
-      sku:             invPart.sku || partNum,
-      name:            invPart.name || "",
-      location:        location,
-      cases:           casesVal,
-      foundTotalCases: totalFound,
-      rowIndex:        loc ? loc.rowIndex : null,
-      masterRowIndex:  loc ? loc.rowIndex : null,
-      foundOnShelf:    true,
-      foundNewLoc:     isNewLoc
+      key:           partNum + '|' + loc.location + '|found',
+      partNum:       partNum,
+      sku:           invPart.sku || partNum,
+      name:          invPart.name || '',
+      location:      loc.location,
+      cases:         '',
+      rowIndex:      loc.rowIndex,
+      masterRowIndex: loc.rowIndex,
+      foundOnShelf:  true
     });
     invPullList.sort(function(a, b) {
       return invLocSort(a.location) - invLocSort(b.location) ||
@@ -11406,16 +11339,11 @@ function rprToast(msg, type = '') {
     });
     invSavePullList();
     invRenderPullList();
-    if (panel) panel.style.display = "none";
-    invFlash("\u26a0 Added — FOUND ON SHELF" + (isNewLoc ? " (new location)" : ""), "success");
+    invFlash("\u26a0 Added to pull list — mark as FOUND ON SHELF", "success");
+    g("inv-result-card").style.display = "none";
+    g("inv-loc-card").style.display    = "none";
     g("inv-search-inp").value = "";
     invPart = null; invSelLoc = null;
-  };
-
-  window.invFoundOnShelfCancel = function() {
-    var panel = g("inv-found-panel");
-    if (panel) panel.style.display = "none";
-    g("inv-loc-card").style.display = "block";
   };
 
   function invPickLoc(i) {
@@ -11533,7 +11461,6 @@ function rprToast(msg, type = '') {
     g("inv-newloc-wrap").style.display = "none";
     g("inv-warn").style.display = "none";
     var nr = g("inv-name-results"); if (nr) nr.style.display = "none";
-    var fp = g("inv-found-panel"); if (fp) fp.style.display = "none";
     if (!keepMode) invStopCam();
   }
 
@@ -11759,7 +11686,7 @@ function rprToast(msg, type = '') {
       }
       var item = items[idx++];
       var itemNotes = item.foundOnShelf
-        ? ('[FOUND ON SHELF' + (item.foundNewLoc ? ' - NEW LOCATION' : '') + '] ' + notes).trim()
+        ? ('[FOUND ON SHELF] ' + notes).trim()
         : notes;
       wFetch(W + "/inventory/log", {
         method: "POST",
@@ -11768,8 +11695,7 @@ function rprToast(msg, type = '') {
           type: "OUT", partNum: item.partNum, sku: item.sku, name: item.name,
           location: item.location, cases: item.cases, initials: initials,
           notes: itemNotes, rowIndex: item.rowIndex, masterRowIndex: item.masterRowIndex,
-          isPlaceholder: false, isNew: !!item.foundNewLoc, overwriteLocation: "",
-          foundTotalCases: item.foundTotalCases || null
+          isPlaceholder: false, isNew: false, overwriteLocation: ""
         })
       }).then(function(r) { return r.json(); })
         .then(function(d) {
@@ -11794,22 +11720,13 @@ function rprToast(msg, type = '') {
     var el = document.createElement("div");
     el.className = "ientry";
     el.id = "inv-entry-" + item.rowIndex;
-    var isFoundNew  = item.notes && item.notes.indexOf('[FOUND ON SHELF - NEW LOCATION]') === 0;
-    var isFound     = !isFoundNew && item.notes && item.notes.indexOf('[FOUND ON SHELF]') === 0;
+    var isFound = item.notes && item.notes.indexOf('[FOUND ON SHELF]') === 0;
     var typeHtml = "<span class='ientry-type " + item.type.toLowerCase() + "'>" + item.type + "</span>";
-    var foundBadge = isFoundNew
-      ? "<span style='background:#FDF0EE;color:var(--red);font-size:10px;font-weight:700;padding:2px 8px;border-radius:4px;border:1px solid var(--red);margin-left:6px'>\u26a0 FOUND \u2014 NEW LOCATION</span>"
-      : isFound
-        ? "<span style='background:var(--orange-bg);color:var(--orange);font-size:10px;font-weight:700;padding:2px 8px;border-radius:4px;border:1px solid var(--orange);margin-left:6px'>\u26a0 FOUND ON SHELF</span>"
-        : "";
+    var foundBadge = isFound ? "<span style='background:var(--orange-bg);color:var(--orange);font-size:10px;font-weight:700;padding:2px 8px;border-radius:4px;border:1px solid var(--orange);margin-left:6px'>\u26a0 FOUND ON SHELF</span>" : "";
     var nameHtml = item.name ? "<div style='font-size:12px;color:var(--text2);margin-top:2px;margin-bottom:6px'>" + item.name + "</div>" : "";
     var skuHtml  = (item.sku && item.sku !== item.partNum)
       ? "<div style='font-size:11px;font-family:var(--mono);color:var(--text3);margin-top:1px'>" + item.sku + "</div>" : "";
-    var displayNotes = isFoundNew
-      ? item.notes.replace('[FOUND ON SHELF - NEW LOCATION] ', '').trim()
-      : isFound
-        ? item.notes.replace('[FOUND ON SHELF] ', '').trim()
-        : item.notes;
+    var displayNotes = isFound ? item.notes.replace('[FOUND ON SHELF] ', '').trim() : item.notes;
     el.innerHTML = "<div class='ientry-head'><div><span class='ientry-part'>" + (item.partNum || "") + "</span>" + skuHtml + "</div><div style='display:flex;align-items:center;gap:4px'>" + foundBadge + typeHtml + "</div></div>"
       + nameHtml
       + "<div class='ientry-meta'>\ud83d\udccd " + (item.location || "") + " &nbsp;|\u00a0 \ud83d\udce6 " + (item.cases || 0) + " cases &nbsp;|\u00a0 \ud83e\uddd1 " + (item.initials || "")
