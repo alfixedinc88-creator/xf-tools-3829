@@ -1,7 +1,7 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-  <!-- XFITTING-BUILD-V113-FEAT-20260410b -->
+  <!-- XFITTING-BUILD-V113-FEAT-20260410c -->
 <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate">
 <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&family=IBM+Plex+Sans:wght@300;400;500;600&display=swap" rel="stylesheet">
   <meta http-equiv="Pragma" content="no-cache">
@@ -11232,7 +11232,28 @@ function rprToast(msg, type = '') {
     list.innerHTML = "";
 
     if (locs.length === 0 && invMode === "out" && zeroLocs.length === 0) {
-      invFlash("No stock at any location for " + invPart.partNum, "error");
+      // No location rows at all — show Found Somewhere Else option instead of dead-end error
+      var list2 = g("inv-loc-list");
+      list2.innerHTML = "";
+      var noStockMsg = document.createElement("div");
+      noStockMsg.className = "iempty";
+      noStockMsg.style.paddingBottom = "4px";
+      noStockMsg.textContent = "No stock on record for " + invPart.partNum;
+      list2.appendChild(noStockMsg);
+
+      var foundElse = document.createElement("div");
+      foundElse.className = "iloc-opt";
+      foundElse.style.borderColor = "var(--orange)";
+      foundElse.style.background = "var(--orange-bg)";
+      foundElse.innerHTML = "<div><div class='iloc-name' style='color:var(--orange)'>Found somewhere in warehouse?</div>"
+        + "<div style='font-size:12px;color:var(--text2)'>Tap to log a new location + cases found</div></div>"
+        + "<span class='iloc-badge' style='background:var(--orange-bg);color:var(--orange);border:1px solid var(--orange)'>Log</span>";
+      foundElse.onclick = function() { invPickNew(); };
+      list2.appendChild(foundElse);
+
+      g("inv-loc-label").textContent = "Stock Out — No Locations on Record";
+      g("inv-loc-card").style.display = "block";
+      g("inv-detail-card").style.display = "none";
       return;
     }
 
