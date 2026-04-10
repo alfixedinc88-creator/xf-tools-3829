@@ -1,7 +1,7 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-  <!-- XFITTING-BUILD-V113-BUGF-20260409 -->
+  <!-- XFITTING-BUILD-V113-FEAT-20260410 -->
 <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate">
 <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&family=IBM+Plex+Sans:wght@300;400;500;600&display=swap" rel="stylesheet">
   <meta http-equiv="Pragma" content="no-cache">
@@ -12566,8 +12566,9 @@ function rprToast(msg, type = '') {
 <div class="ps-tabbar">
   <div class="ps-tabitem active" id="ps-tab-scan"     onclick="psSwitchTab('scan')">📦 Scan</div>
   <div class="ps-tabitem"        id="ps-tab-progress" onclick="psSwitchTab('progress')">📊 Progress</div>
-  <div class="ps-tabitem"        id="ps-tab-lookup"   onclick="psSwitchTab('lookup')">🔍 Lookup</div>
-  <div class="ps-tabitem"        id="ps-tab-status"   onclick="psSwitchTab('status')">📡 Status Check</div>
+  <div class="ps-tabitem"        id="ps-tab-lookup"      onclick="psSwitchTab('lookup')">🔍 Lookup</div>
+  <div class="ps-tabitem"        id="ps-tab-orderlookup" onclick="psSwitchTab('orderlookup')">📋 Order Lookup</div>
+  <div class="ps-tabitem"        id="ps-tab-status"      onclick="psSwitchTab('status')">📡 Status Check</div>
   <div class="ps-tabitem"        id="ps-tab-gaps"     onclick="psSwitchTab('gaps')">⚠️ Gap Report <span class="ps-tab-badge" id="ps-gap-badge" style="display:none">0</span></div>
   <div class="ps-tabitem"        id="ps-tab-vsync"    onclick="psSwitchTab('vsync')">🔄 Veeqo Sync</div>
   <div class="ps-tabitem"        id="ps-tab-valerts"  onclick="psSwitchTab('valerts')">🚨 Alerts <span class="ps-tab-badge" id="ps-valerts-badge" style="display:none">0</span></div>
@@ -12729,6 +12730,32 @@ function rprToast(msg, type = '') {
       </div>
     </div>
     <div id="ps-log-list"></div>
+  </div>
+
+  <!-- ORDER LOOKUP panel -->
+  <div class="ps-panel" id="ps-panel-orderlookup">
+    <div class="ps-lookup-wrap">
+      <div class="ps-lookup-title">📋 Order Lookup</div>
+      <div style="font-size:12px;color:var(--text3);margin-bottom:14px;">Search by tracking number or customer name. Shows order items, customer, and channel.</div>
+      <div class="ps-lookup-row" style="margin-bottom:8px;">
+        <input class="ps-lookup-input" id="ps-ol-input" type="text"
+          placeholder="Tracking number or customer name…"
+          autocomplete="off" autocorrect="off" autocapitalize="off"
+          onkeydown="if(event.key==='Enter')psOrderLookup()">
+        <button class="ps-btn-go" onclick="psOrderLookup()">Search</button>
+      </div>
+      <div style="display:flex;gap:8px;align-items:center;">
+        <span style="font-size:11px;color:var(--text3);">Last</span>
+        <select id="ps-ol-days" style="font-size:12px;border:1.5px solid var(--border2);border-radius:7px;padding:4px 8px;background:var(--bg3);color:var(--text2);cursor:pointer;">
+          <option value="7">7 days</option>
+          <option value="14">14 days</option>
+          <option value="30">30 days</option>
+          <option value="60">60 days</option>
+        </select>
+      </div>
+    </div>
+    <div id="ps-ol-status" style="font-size:12px;color:var(--text3);font-family:var(--mono);min-height:18px;padding:0 0 10px;"></div>
+    <div id="ps-ol-results"></div>
   </div>
 
   <!-- STATUS CHECK panel -->
@@ -13494,6 +13521,94 @@ window.psDoLookup = async function() {
   }
 };
 
+    document.getElementById('ps-lr-sub').textContent    = e.message;
+  }
+};
+
+// ── Order Lookup ───────────────────────────────────────
+window.psOrderLookup = async function() {
+  var q      = (document.getElementById('ps-ol-input').value || '').trim();
+  var days   = document.getElementById('ps-ol-days').value || '7';
+  var status = document.getElementById('ps-ol-status');
+  var results= document.getElementById('ps-ol-results');
+  if (!q || q.length < 2) { status.textContent = 'Enter a tracking number or customer name.'; return; }
+
+  status.textContent = 'Searching…';
+  results.innerHTML  = '';
+
+  try {
+    var r = await fetch(PS_WORKER + '/ship/order-lookup?q=' + encodeURIComponent(q) + '&days=' + days, {
+      headers: { 'X-Session-Token': psToken }
+    });
+    var d = await r.json();
+    if (!d.ok) { status.textContent = 'Error: ' + (d.error || 'Unknown error'); return; }
+
+    var list = d.results || [];
+    status.textContent = list.length === 0
+      ? 'No orders found for "' + q + '" in last ' + days + ' days.'
+      : list.length + ' order' + (list.length !== 1 ? 's' : '') + ' found';
+
+    if (list.length === 0) return;
+
+    results.innerHTML = list.map(function(o) {
+      var channelColor = o.channel.toLowerCase().includes('amazon') ? '#FF9900'
+        : o.channel.toLowerCase().includes('ebay') ? '#e53238'
+        : o.channel.toLowerCase().includes('shopify') ? '#96bf48' : 'var(--accent)';
+
+      var carrierBadge = o.carrier === 'UPS'
+        ? '<span class="ps-badge ps-badge-ups">UPS</span>'
+        : o.carrier === 'USPS'
+        ? '<span class="ps-badge ps-badge-usps">USPS</span>'
+        : (o.carrier ? '<span class="ps-badge ps-badge-gray">' + o.carrier + '</span>' : '');
+
+      var statusBadge = o.reconcileStatus === 'Scanned'
+        ? '<span class="ps-badge ps-badge-green">Scanned</span>'
+        : o.reconcileStatus === 'Gap'
+        ? '<span class="ps-badge ps-badge-red">Gap</span>'
+        : '<span class="ps-badge ps-badge-gray">' + (o.reconcileStatus || 'Pending') + '</span>';
+
+      var itemsHtml = '';
+      if (o.lineItems && o.lineItems.length > 0) {
+        itemsHtml = '<table style="width:100%;border-collapse:collapse;margin-top:10px;">'
+          + '<thead><tr>'
+          + '<th style="text-align:left;font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.5px;color:var(--text3);padding:4px 8px 6px 0;border-bottom:1px solid var(--border);">SKU</th>'
+          + '<th style="text-align:left;font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.5px;color:var(--text3);padding:4px 8px 6px;border-bottom:1px solid var(--border);">Description</th>'
+          + '<th style="text-align:right;font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.5px;color:var(--text3);padding:4px 0 6px 8px;border-bottom:1px solid var(--border);">Qty</th>'
+          + '</tr></thead><tbody>'
+          + o.lineItems.map(function(li) {
+              return '<tr>'
+                + '<td style="font-family:var(--mono);font-size:11px;color:var(--accent);padding:5px 8px 5px 0;border-bottom:1px solid var(--border);">' + (li.s || '—') + '</td>'
+                + '<td style="font-size:12px;color:var(--text);padding:5px 8px;border-bottom:1px solid var(--border);max-width:220px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;" title="' + (li.t||'') + '">' + (li.t || '—') + '</td>'
+                + '<td style="font-family:var(--mono);font-size:13px;font-weight:700;color:var(--text);text-align:right;padding:5px 0 5px 8px;border-bottom:1px solid var(--border);">×' + (li.q || 1) + '</td>'
+                + '</tr>';
+            }).join('')
+          + '</tbody></table>';
+      } else {
+        itemsHtml = '<div style="font-size:12px;color:var(--text3);margin-top:8px;font-style:italic;">No item data — run Veeqo Sync to populate order details</div>';
+      }
+
+      var location = [o.city, o.shipToState, o.zip].filter(Boolean).join(', ');
+
+      return '<div class="ps-card" style="margin-bottom:12px;">'
+        + '<div style="display:flex;align-items:flex-start;justify-content:space-between;gap:12px;flex-wrap:wrap;margin-bottom:8px;">'
+        +   '<div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;">'
+        +     '<span style="font-family:var(--mono);font-size:13px;font-weight:700;color:var(--text);">#' + (o.orderNum || '—') + '</span>'
+        +     '<span style="font-size:11px;font-weight:700;padding:2px 8px;border-radius:100px;background:' + channelColor + '22;color:' + channelColor + ';">' + o.channel + '</span>'
+        +     carrierBadge + statusBadge
+        +   '</div>'
+        +   '<div style="font-size:11px;color:var(--text3);font-family:var(--mono);">' + o.date + '</div>'
+        + '</div>'
+        + (o.customerName ? '<div style="font-size:13px;font-weight:600;color:var(--text);margin-bottom:2px;">👤 ' + o.customerName + '</div>' : '')
+        + (location ? '<div style="font-size:12px;color:var(--text3);margin-bottom:4px;">📍 ' + location + '</div>' : '')
+        + '<div style="font-size:11px;font-family:var(--mono);color:var(--text3);word-break:break-all;">' + (o.tracking || '') + '</div>'
+        + itemsHtml
+        + '</div>';
+    }).join('');
+  } catch(e) {
+    status.textContent = 'Request failed: ' + e.message;
+  }
+};
+
 // ── Scan log ──────────────────────────────────────────
 window.psRenderLog = function() {
   var q    = (document.getElementById('ps-log-search').value || '').toLowerCase();
@@ -13678,9 +13793,10 @@ window.psSwitchTab = function(name) {
     var pinEl = document.getElementById('ps-' + name + '-pin');
     if (pinEl) setTimeout(function(){ pinEl.focus(); }, 100);
   }
-  if (name === 'scan')     { psFocusScan(); psRenderScanList(); }
-  if (name === 'progress') { psLoadScans(); }
-  if (name === 'lookup')   { psRenderLog(); }
+  if (name === 'scan')        { psFocusScan(); psRenderScanList(); }
+  if (name === 'progress')    { psLoadScans(); }
+  if (name === 'lookup')      { psRenderLog(); }
+  if (name === 'orderlookup') { document.getElementById('ps-ol-input').focus(); }
   if (name === 'gaps'    && _psUnlockedTabs['gaps'])    { psRunReconcile(); }
   if (name === 'vsync'   && _psUnlockedTabs['vsync'])   { psVeeqoOnUnlock(); }
   if (name === 'valerts' && _psUnlockedTabs['valerts']) { psVaOnUnlock(); }
