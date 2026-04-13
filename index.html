@@ -1,7 +1,7 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-  <!-- XFITTING-BUILD-V113-FEAT-20260413b -->
+  <!-- XFITTING-BUILD-V113-FEAT-20260413c -->
 <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate">
 <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&family=IBM+Plex+Sans:wght@300;400;500;600&display=swap" rel="stylesheet">
   <meta http-equiv="Pragma" content="no-cache">
@@ -7539,6 +7539,58 @@ function salesToast(msg, type) {
       <div style="font-size:13px">Search by SKU or UPC, upload your exported shipment file, or load the live AWD shipment</div>
     </div>
 
+    <!-- AWD Label Match — FNSKU ↔ Box UPC QC Scanner -->
+    <div style="margin-top:24px;background:#fff;border:1.5px solid var(--border);border-radius:12px;padding:20px 24px;">
+      <div style="font-size:13px;font-weight:700;color:var(--text);margin-bottom:4px">🔁 AWD Label ↔ Box UPC Check</div>
+      <div style="font-size:11px;color:var(--text3);margin-bottom:14px">Scan the AWD label barcode (FNSKU), then scan the box UPC to confirm they match the same item.</div>
+
+      <!-- Step indicator -->
+      <div style="display:flex;gap:8px;align-items:center;margin-bottom:14px">
+        <div id="awd-step1-pill" style="font-size:11px;font-weight:700;padding:3px 10px;border-radius:20px;background:var(--accent);color:#fff">Step 1: Scan AWD Label</div>
+        <div style="font-size:11px;color:var(--text3)">→</div>
+        <div id="awd-step2-pill" style="font-size:11px;font-weight:700;padding:3px 10px;border-radius:20px;background:var(--bg3);color:var(--text3)">Step 2: Scan Box UPC</div>
+      </div>
+
+      <!-- Status display -->
+      <div id="awd-match-status" style="min-height:48px;border-radius:8px;padding:10px 14px;font-size:13px;font-weight:600;background:var(--bg3);color:var(--text3);margin-bottom:14px;display:flex;align-items:center;gap:8px">
+        <span style="font-size:18px">📷</span> Ready — tap Scan to begin
+      </div>
+
+      <!-- Scanned values -->
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-bottom:14px">
+        <div style="background:var(--bg3);border-radius:8px;padding:10px 12px">
+          <div style="font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.5px;color:var(--text3);margin-bottom:4px">AWD Label (FNSKU)</div>
+          <div id="awd-fnsku-val" style="font-family:var(--mono);font-size:12px;color:var(--text);word-break:break-all">—</div>
+          <div id="awd-fnsku-pn" style="font-size:11px;color:var(--accent);margin-top:3px"></div>
+        </div>
+        <div style="background:var(--bg3);border-radius:8px;padding:10px 12px">
+          <div style="font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.5px;color:var(--text3);margin-bottom:4px">Box UPC</div>
+          <div id="awd-upc-val" style="font-family:var(--mono);font-size:12px;color:var(--text);word-break:break-all">—</div>
+          <div id="awd-upc-pn" style="font-size:11px;color:var(--accent);margin-top:3px"></div>
+        </div>
+      </div>
+
+      <!-- Buttons -->
+      <div style="display:flex;gap:8px;flex-wrap:wrap">
+        <button class="btn btn-primary" id="awd-scan-btn" onclick="awdStartScan()" style="font-size:12px">📷 Scan</button>
+        <button class="btn btn-secondary" onclick="awdReset()" style="font-size:12px">↺ Reset</button>
+      </div>
+    </div>
+
+    <!-- AWD scan camera overlay (reuses UPC overlay style but separate) -->
+    <div id="awd-camera-overlay" style="display:none;position:fixed;inset:0;z-index:500;background:rgba(0,0,0,.95);flex-direction:column;align-items:center;justify-content:center">
+      <div style="width:100%;max-width:480px;padding:0 20px;box-sizing:border-box">
+        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:20px">
+          <div id="awd-scan-prompt" style="color:#fff;font-size:15px;font-weight:700">📷 Scan AWD Label Barcode</div>
+          <button onclick="awdStopScan()" style="background:rgba(255,255,255,.15);border:none;color:#fff;font-size:20px;width:36px;height:36px;border-radius:50%;cursor:pointer;line-height:1">✕</button>
+        </div>
+        <div id="awd-qr-reader" style="border-radius:12px;overflow:hidden"></div>
+        <div id="awd-scan-result" style="margin-top:16px;border-radius:10px;padding:16px 20px;text-align:center;font-size:15px;font-weight:700;min-height:56px;background:rgba(255,255,255,.08);color:rgba(255,255,255,.4)">
+          Point camera at barcode
+        </div>
+      </div>
+    </div>
+
   </div>
 
 </div>
@@ -10547,6 +10599,176 @@ function rprToast(msg, type = '') {
   rprTimer = setTimeout(() => { t.className = ''; }, 3500);
 }
 
+// ── AWD Label ↔ Box UPC Match ─────────────────────────────────────────────────
+// Two-step scan: Step 1 = AWD label (FNSKU / Code128), Step 2 = Box UPC (UPC-A)
+// Looks up both in DB.upc (inside=FNSKU, outside=box UPC, variant=partNum)
+// Shows MATCH ✅ or MISMATCH ❌
+
+var _awdStep       = 1;   // 1 = waiting for FNSKU, 2 = waiting for box UPC
+var _awdFnsku      = '';  // scanned FNSKU
+var _awdFnskuPn    = '';  // resolved partNum from FNSKU
+var _awdExpectedUpc = ''; // expected outside UPC for this partNum
+var _awdQrScanner  = null;
+
+function awdReset() {
+  _awdStep = 1; _awdFnsku = ''; _awdFnskuPn = ''; _awdExpectedUpc = '';
+  document.getElementById('awd-fnsku-val').textContent = '—';
+  document.getElementById('awd-fnsku-pn').textContent  = '';
+  document.getElementById('awd-upc-val').textContent   = '—';
+  document.getElementById('awd-upc-pn').textContent    = '';
+  _awdSetStatus('📷 Ready — tap Scan to begin', 'var(--bg3)', 'var(--text3)');
+  _awdSetStep(1);
+}
+
+function _awdSetStep(n) {
+  var s1 = document.getElementById('awd-step1-pill');
+  var s2 = document.getElementById('awd-step2-pill');
+  s1.style.background = n === 1 ? 'var(--accent)' : 'var(--green)';
+  s1.style.color = '#fff';
+  s2.style.background = n === 2 ? 'var(--accent)' : 'var(--bg3)';
+  s2.style.color = n === 2 ? '#fff' : 'var(--text3)';
+  var prompt = document.getElementById('awd-scan-prompt');
+  if (prompt) prompt.textContent = n === 1 ? '📷 Scan AWD Label Barcode (FNSKU)' : '📷 Scan Box UPC Barcode';
+}
+
+function _awdSetStatus(msg, bg, color) {
+  var el = document.getElementById('awd-match-status');
+  el.style.background = bg; el.style.color = color;
+  el.innerHTML = msg;
+}
+
+async function awdStartScan() {
+  var overlay = document.getElementById('awd-camera-overlay');
+  overlay.style.display = 'flex';
+  _awdSetStep(_awdStep);
+  var resultEl = document.getElementById('awd-scan-result');
+  resultEl.textContent = 'Starting camera…';
+  resultEl.style.background = 'rgba(255,255,255,.08)';
+  resultEl.style.color = 'rgba(255,255,255,.4)';
+
+  try {
+    await upcLoadHtml5QR(); // reuse existing loader
+    if (_awdQrScanner) {
+      try { await _awdQrScanner.stop(); } catch(_) {}
+      _awdQrScanner = null;
+    }
+    var container = document.getElementById('awd-qr-reader');
+    container.innerHTML = '';
+    _awdQrScanner = new Html5Qrcode('awd-qr-reader');
+    var config = {
+      fps: 15,
+      qrbox: { width: 280, height: 100 },
+      aspectRatio: 1.7,
+      formatsToSupport: [
+        Html5QrcodeSupportedFormats.UPC_A,
+        Html5QrcodeSupportedFormats.UPC_E,
+        Html5QrcodeSupportedFormats.EAN_13,
+        Html5QrcodeSupportedFormats.CODE_128
+      ]
+    };
+    await _awdQrScanner.start(
+      { facingMode: 'environment' },
+      config,
+      function(code) { awdHandleScan(code); },
+      function() {}
+    );
+    resultEl.textContent = 'Point camera at barcode';
+  } catch(e) {
+    resultEl.innerHTML = '⚠ Camera error: ' + (e.message || e);
+    resultEl.style.background = 'rgba(220,38,38,.3)';
+    resultEl.style.color = '#fca5a5';
+  }
+}
+
+async function awdStopScan() {
+  if (_awdQrScanner) {
+    try { await _awdQrScanner.stop(); } catch(_) {}
+    _awdQrScanner = null;
+  }
+  document.getElementById('awd-camera-overlay').style.display = 'none';
+}
+
+var _awdLastCode = ''; var _awdLastAt = 0;
+function awdHandleScan(raw) {
+  var code = String(raw || '').replace(/\s/g, '');
+  if (!code) return;
+  var now = Date.now();
+  if (code === _awdLastCode && now - _awdLastAt < 2000) return;
+  _awdLastCode = code; _awdLastAt = now;
+
+  var resultEl = document.getElementById('awd-scan-result');
+
+  if (_awdStep === 1) {
+    // Step 1: expecting FNSKU (inside UPC / Code128 from AWD label)
+    // Look up in DB.upc by inside field
+    var rec = null;
+    if (typeof DB !== 'undefined' && DB.upc) {
+      rec = DB.upc.find(function(r) {
+        return r.inside && r.inside.replace(/\s/g,'') === code;
+      });
+    }
+    if (rec) {
+      _awdFnsku       = code;
+      _awdFnskuPn     = rec.variant;
+      _awdExpectedUpc = (rec.outside || '').replace(/\s/g,'');
+      document.getElementById('awd-fnsku-val').textContent = code;
+      document.getElementById('awd-fnsku-pn').textContent  = rec.variant;
+      _awdStep = 2;
+      _awdSetStep(2);
+      resultEl.style.background = 'rgba(74,222,128,.2)';
+      resultEl.style.color = '#4ade80';
+      resultEl.textContent = '✅ AWD label found: ' + rec.variant + ' — now scan box UPC';
+      upcBeep(true);
+    } else {
+      // Not found as FNSKU — might be scanning in wrong order, try as UPC
+      resultEl.style.background = 'rgba(248,113,113,.2)';
+      resultEl.style.color = '#f87171';
+      resultEl.textContent = '❌ FNSKU not found: ' + code + ' — scan the AWD label barcode';
+      upcBeep(false);
+    }
+
+  } else {
+    // Step 2: expecting box UPC (outside UPC)
+    var scannedUpc = code.replace(/\s/g,'');
+    document.getElementById('awd-upc-val').textContent = scannedUpc;
+
+    // Look up scanned UPC in DB.upc
+    var upcRec = null;
+    if (typeof DB !== 'undefined' && DB.upc) {
+      upcRec = DB.upc.find(function(r) {
+        return r.outside && r.outside.replace(/\s/g,'') === scannedUpc;
+      });
+    }
+    if (upcRec) document.getElementById('awd-upc-pn').textContent = upcRec.variant;
+
+    awdStopScan();
+    if (_awdExpectedUpc && scannedUpc === _awdExpectedUpc) {
+      // MATCH
+      _awdSetStatus(
+        '<span style="font-size:20px">✅</span> MATCH — ' + _awdFnskuPn + ' (' + scannedUpc + ')',
+        'rgba(74,222,128,.15)', '#166534'
+      );
+      upcBeep(true);
+    } else if (_awdExpectedUpc) {
+      // MISMATCH
+      _awdSetStatus(
+        '<span style="font-size:20px">❌</span> MISMATCH — AWD: ' + _awdFnskuPn + ' | Box UPC resolves to: ' + (upcRec ? upcRec.variant : 'unknown') + '<br><span style="font-size:11px;font-weight:400">Expected UPC: ' + _awdExpectedUpc + ' · Got: ' + scannedUpc + '</span>',
+        'rgba(248,113,113,.15)', '#991b1b'
+      );
+      upcBeep(false);
+    } else {
+      // No expected UPC on record
+      _awdSetStatus(
+        '<span style="font-size:20px">⚠️</span> No box UPC on record for ' + _awdFnskuPn + ' — scanned ' + scannedUpc,
+        'rgba(251,191,36,.15)', '#92400e'
+      );
+    }
+    // Reset step for next scan pair
+    _awdStep = 1;
+    _awdSetStep(1);
+  }
+}
+
 </script>
 
 <div id="inv-app" style="display:none;flex-direction:column;min-height:100vh;font-family:'DM Sans',sans-serif;background:var(--bg)">
@@ -10754,6 +10976,16 @@ function rprToast(msg, type = '') {
         <div class="ifield" id="inv-fel-pull-wrap"><label id="inv-fel-pull-label">Cases to Pull</label><input id="inv-fel-pull" type="number" min="0" step="0.5" placeholder="0"></div>
       </div>
       <button class="isubmit" id="inv-fel-btn" onclick="invSubmitFoundElsewhere()" style="background:var(--purple);border-color:var(--purple);margin-top:4px">Log Found Location</button>
+    </div>
+    <!-- Found on Shelf panel — shown when tapping "Found?" on a 0-case known location -->
+    <div id="inv-fos-wrap" style="display:none;margin-top:12px;padding:12px;background:var(--orange-bg);border:1.5px solid var(--orange);border-radius:10px">
+      <div style="font-size:13px;font-weight:700;color:var(--orange);margin-bottom:4px">⚠️ Found on shelf</div>
+      <div id="inv-fos-loc-label" style="font-size:12px;color:var(--text2);font-family:var(--mono);margin-bottom:10px"></div>
+      <div class="ifield-row">
+        <div class="ifield"><label>Cases Found</label><input id="inv-fos-found" type="number" min="0.1" step="0.5" placeholder="0"></div>
+        <div class="ifield"><label>Cases to Pull</label><input id="inv-fos-pull" type="number" min="0" step="0.5" placeholder="0"></div>
+      </div>
+      <button class="isubmit sout" id="inv-fos-btn" onclick="invSubmitFoundOnShelf()" style="margin-top:4px">Log Found + Pull</button>
     </div>
   </div>
   <div class="icard" id="inv-detail-card" style="display:none">
@@ -11359,34 +11591,87 @@ function rprToast(msg, type = '') {
   }
 
   // Called when worker taps "Found on Shelf?" for a 0-case location
+  // _invFosLoc holds the location being confirmed as "found on shelf"
+  var _invFosLoc = null;
+
   window.invFoundOnShelf = function(loc) {
     if (!invPart) return;
-    // Set the location's partNum if available
+    _invFosLoc = loc;
     var partNum = (loc.partNum && loc.partNum !== invPart.partNum) ? loc.partNum : invPart.partNum;
-    var partForList = Object.assign({}, invPart, { partNum: partNum });
-    // Add to pull list with foundOnShelf flag — cases left blank for worker to fill at location
-    invPullList.push({
-      key:           partNum + '|' + loc.location + '|found',
-      partNum:       partNum,
-      sku:           invPart.sku || partNum,
-      name:          invPart.name || '',
-      location:      loc.location,
-      cases:         '',
-      rowIndex:      loc.rowIndex,
-      masterRowIndex: loc.rowIndex,
-      foundOnShelf:  true
+    var lbl = g('inv-fos-loc-label');
+    if (lbl) lbl.textContent = partNum + ' @ ' + loc.location;
+    g('inv-fos-found').value = '';
+    g('inv-fos-pull').value  = '';
+    g('inv-fos-wrap').style.display = 'block';
+    g('inv-loc-card').style.display = 'block';
+    g('inv-fos-found').focus();
+  };
+
+  window.invSubmitFoundOnShelf = function() {
+    if (!invPart || !_invFosLoc) { invFlash('No location selected', 'error'); return; }
+    var found = parseFloat(g('inv-fos-found').value || 0);
+    var pull  = parseFloat(g('inv-fos-pull').value  || 0);
+    if (!found || found < 0.1) { invFlash('Enter cases found', 'error'); return; }
+    if (pull < 0)              { invFlash('Cases to pull cannot be negative', 'error'); return; }
+
+    var loc     = _invFosLoc;
+    var partNum = (loc.partNum && loc.partNum !== invPart.partNum) ? loc.partNum : invPart.partNum;
+    var btn     = g('inv-fos-btn');
+    btn.disabled = true; btn.textContent = 'Saving\u2026';
+
+    var initials = (g('inv-pull-initials') && g('inv-pull-initials').value.trim()) || '';
+
+    var submitEntry = function(type, cases, notes, cb) {
+      wFetch(W + '/inventory/log', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          type: type, partNum: partNum, sku: invPart.sku || partNum,
+          location: loc.location, cases: cases, initials: initials || '?',
+          notes: notes, isNew: false, isPlaceholder: false,
+          masterRowIndex: loc.rowIndex || null
+        })
+      }).then(function(r){ return r.json(); }).then(cb)
+        .catch(function(){ cb({ ok: false, error: 'Network error' }); });
+    };
+
+    // Log IN (cases found), then OUT (cases pulled) if pull > 0
+    submitEntry('IN', found, '[FOUND ON SHELF]', function(dIn) {
+      if (!dIn.ok) {
+        btn.disabled = false; btn.textContent = 'Log Found + Pull';
+        invFlash('Error: ' + (dIn.error || 'unknown'), 'error'); return;
+      }
+      if (pull <= 0) {
+        btn.disabled = false; btn.textContent = 'Log Found + Pull';
+        invFlash('\u2713 Logged ' + found + ' cases found at ' + loc.location + ' \u2014 pending approval', 'success');
+        g('inv-fos-wrap').style.display = 'none';
+        _invFosLoc = null;
+        invReset(true); invFetchPendingCount(); return;
+      }
+      submitEntry('OUT', pull, '[FOUND ON SHELF \u2014 pulling ' + pull + ' of ' + found + ' found]', function(dOut) {
+        btn.disabled = false; btn.textContent = 'Log Found + Pull';
+        if (dOut.ok) {
+          // Add to pull list
+          invPullList.push({
+            key: partNum + '|' + loc.location + '|fos',
+            partNum: partNum, sku: invPart.sku || partNum,
+            name: invPart.name || '', location: loc.location,
+            cases: pull, rowIndex: loc.rowIndex,
+            masterRowIndex: loc.rowIndex, foundOnShelf: true
+          });
+          invPullList.sort(function(a,b){
+            return invLocSort(a.location)-invLocSort(b.location)||a.location.localeCompare(b.location);
+          });
+          invSavePullList(); invRenderPullList();
+          invFlash('\u2713 Found ' + found + ' @ ' + loc.location + ' \u2014 pulling ' + pull + ' \u2014 pending approval', 'success');
+          g('inv-fos-wrap').style.display = 'none';
+          _invFosLoc = null;
+          invReset(true); invFetchPendingCount();
+        } else {
+          invFlash('IN logged but OUT failed: ' + (dOut.error || 'unknown'), 'error');
+        }
+      });
     });
-    invPullList.sort(function(a, b) {
-      return invLocSort(a.location) - invLocSort(b.location) ||
-             a.location.localeCompare(b.location);
-    });
-    invSavePullList();
-    invRenderPullList();
-    invFlash("\u26a0 Added to pull list — mark as FOUND ON SHELF", "success");
-    g("inv-result-card").style.display = "none";
-    g("inv-loc-card").style.display    = "none";
-    g("inv-search-inp").value = "";
-    invPart = null; invSelLoc = null;
   };
 
   // Show the Found at Unlisted Location panel inside inv-loc-card
@@ -11607,6 +11892,7 @@ function rprToast(msg, type = '') {
     g("inv-newloc-inp").value = "";
     g("inv-newloc-wrap").style.display = "none";
     g("inv-found-elsewhere-wrap").style.display = "none";
+    g("inv-fos-wrap").style.display = "none";
     g("inv-fel-loc").value = "";
     g("inv-fel-found").value = "";
     var pi = g("inv-fel-pull"); if (pi) pi.value = "";
@@ -12951,7 +13237,9 @@ function rprToast(msg, type = '') {
       <div style="display:flex;gap:8px;align-items:center;">
         <span style="font-size:11px;color:var(--text3);">Last</span>
         <select id="ps-ol-days" style="font-size:12px;border:1.5px solid var(--border2);border-radius:7px;padding:4px 8px;background:var(--bg3);color:var(--text2);cursor:pointer;">
-          <option value="7">7 days</option>
+          <option value="today">Today</option>
+          <option value="1">Last 24 hrs</option>
+          <option value="7" selected>7 days</option>
           <option value="14">14 days</option>
           <option value="30">30 days</option>
           <option value="60">60 days</option>
@@ -13771,12 +14059,17 @@ window.psOrderLookup = async function() {
       if (o.lineItems && o.lineItems.length > 0) {
         itemsHtml = '<table style="width:100%;border-collapse:collapse;margin-top:10px;">'
           + '<thead><tr>'
+          + '<th style="text-align:left;font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.5px;color:var(--text3);padding:4px 4px 6px 0;border-bottom:1px solid var(--border);">Img</th>'
           + '<th style="text-align:left;font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.5px;color:var(--text3);padding:4px 8px 6px 0;border-bottom:1px solid var(--border);">SKU</th>'
           + '<th style="text-align:left;font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.5px;color:var(--text3);padding:4px 8px 6px;border-bottom:1px solid var(--border);">Bin</th>'
           + '<th style="text-align:right;font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.5px;color:var(--text3);padding:4px 0 6px 8px;border-bottom:1px solid var(--border);">Qty</th>'
           + '</tr></thead><tbody>'
           + o.lineItems.map(function(li) {
+              var imgHtml = li.i
+                ? '<img src="' + li.i + '" style="width:40px;height:40px;object-fit:cover;border-radius:4px;border:1px solid var(--border);" onerror="this.style.display=\'none\'">'
+                : '<div style="width:40px;height:40px;background:var(--bg3);border-radius:4px;border:1px solid var(--border);display:flex;align-items:center;justify-content:center;font-size:16px;">📦</div>';
               return '<tr>'
+                + '<td style="padding:5px 4px 5px 0;border-bottom:1px solid var(--border);">' + imgHtml + '</td>'
                 + '<td style="font-family:var(--mono);font-size:11px;color:var(--accent);padding:5px 8px 5px 0;border-bottom:1px solid var(--border);">' + (li.s || '—') + '</td>'
                 + '<td style="font-family:var(--mono);font-size:11px;color:var(--text2);padding:5px 8px;border-bottom:1px solid var(--border);">' + (li.b || '—') + '</td>'
                 + '<td style="font-family:var(--mono);font-size:13px;font-weight:700;color:var(--text);text-align:right;padding:5px 0 5px 8px;border-bottom:1px solid var(--border);">×' + (li.q || 1) + '</td>'
