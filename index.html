@@ -1,7 +1,7 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-  <!-- XFITTING-BUILD-V113-FEAT-20260410c -->
+  <!-- XFITTING-BUILD-V113-FEAT-20260413 -->
 <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate">
 <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&family=IBM+Plex+Sans:wght@300;400;500;600&display=swap" rel="stylesheet">
   <meta http-equiv="Pragma" content="no-cache">
@@ -10746,6 +10746,15 @@ function rprToast(msg, type = '') {
     <div id="inv-newloc-wrap" style="display:none;margin-top:8px">
       <div class="ifield"><label>New Location Name</label><input id="inv-newloc-inp" type="text" placeholder="e.g. A-Shelf-3"></div>
     </div>
+    <div id="inv-found-elsewhere-wrap" style="display:none;margin-top:12px;padding:12px;background:var(--purple-bg);border:1.5px solid var(--purple);border-radius:10px">
+      <div style="font-size:13px;font-weight:700;color:var(--purple);margin-bottom:10px">📦 Found at unlisted location</div>
+      <div class="ifield"><label>Location Name</label><input id="inv-fel-loc" type="text" placeholder="e.g. B-Shelf-4" autocomplete="off"></div>
+      <div class="ifield-row">
+        <div class="ifield"><label>Cases Found</label><input id="inv-fel-found" type="number" min="0.1" step="0.5" placeholder="0"></div>
+        <div class="ifield" id="inv-fel-pull-wrap"><label id="inv-fel-pull-label">Cases to Pull</label><input id="inv-fel-pull" type="number" min="0" step="0.5" placeholder="0"></div>
+      </div>
+      <button class="isubmit" id="inv-fel-btn" onclick="invSubmitFoundElsewhere()" style="background:var(--purple);border-color:var(--purple);margin-top:4px">Log Found Location</button>
+    </div>
   </div>
   <div class="icard" id="inv-detail-card" style="display:none">
     <div class="icard-label">Details</div>
@@ -10811,6 +10820,12 @@ function rprToast(msg, type = '') {
     <div class="icard-label" id="xfr-from-label">From Location</div>
     <div style="font-size:11px;color:var(--text3);margin-bottom:8px">Select the location you are moving stock out of.</div>
     <div id="xfr-from-list"></div>
+    <div id="xfr-found-elsewhere-wrap" style="display:none;margin-top:12px;padding:12px;background:var(--purple-bg);border:1.5px solid var(--purple);border-radius:10px">
+      <div style="font-size:13px;font-weight:700;color:var(--purple);margin-bottom:10px">📦 Found at unlisted location</div>
+      <div class="ifield"><label>Location Name</label><input id="xfr-fel-loc" type="text" placeholder="e.g. B-Shelf-4" autocomplete="off"></div>
+      <div class="ifield"><label>Cases Found at Location</label><input id="xfr-fel-found" type="number" min="0.1" step="0.5" placeholder="0"></div>
+      <button class="isubmit" onclick="xfrSubmitFoundElsewhere()" style="background:var(--purple);border-color:var(--purple);margin-top:4px">Use This Location</button>
+    </div>
   </div>
   <div class="icard" id="xfr-addcart-card" style="display:none">
     <div class="icard-label">Add to Transfer Cart</div>
@@ -11232,7 +11247,7 @@ function rprToast(msg, type = '') {
     list.innerHTML = "";
 
     if (locs.length === 0 && invMode === "out" && zeroLocs.length === 0) {
-      // No location rows at all — show Found Somewhere Else option instead of dead-end error
+      // No location rows at all — show Found Somewhere Else panel
       var list2 = g("inv-loc-list");
       list2.innerHTML = "";
       var noStockMsg = document.createElement("div");
@@ -11240,20 +11255,11 @@ function rprToast(msg, type = '') {
       noStockMsg.style.paddingBottom = "4px";
       noStockMsg.textContent = "No stock on record for " + invPart.partNum;
       list2.appendChild(noStockMsg);
-
-      var foundElse = document.createElement("div");
-      foundElse.className = "iloc-opt";
-      foundElse.style.borderColor = "var(--orange)";
-      foundElse.style.background = "var(--orange-bg)";
-      foundElse.innerHTML = "<div><div class='iloc-name' style='color:var(--orange)'>Found somewhere in warehouse?</div>"
-        + "<div style='font-size:12px;color:var(--text2)'>Tap to log a new location + cases found</div></div>"
-        + "<span class='iloc-badge' style='background:var(--orange-bg);color:var(--orange);border:1px solid var(--orange)'>Log</span>";
-      foundElse.onclick = function() { invPickNew(); };
-      list2.appendChild(foundElse);
-
       g("inv-loc-label").textContent = "Stock Out — No Locations on Record";
       g("inv-loc-card").style.display = "block";
       g("inv-detail-card").style.display = "none";
+      g("inv-found-elsewhere-wrap").style.display = "none";
+      invShowFoundElsePanel();
       return;
     }
 
@@ -11328,7 +11334,23 @@ function rprToast(msg, type = '') {
       list.appendChild(newEl);
     }
 
+    // ALL modes: "Found at a location not listed?" — always visible at bottom
+    var foundDivider = document.createElement("div");
+    foundDivider.style.cssText = "font-size:11px;font-weight:700;letter-spacing:.5px;text-transform:uppercase;color:var(--purple);margin:12px 0 6px;padding-top:10px;border-top:1px solid var(--border)";
+    foundDivider.textContent = "Found at a location not listed?";
+    list.appendChild(foundDivider);
+
+    var foundElseBtn = document.createElement("div");
+    foundElseBtn.className = "iloc-opt";
+    foundElseBtn.style.cssText = "border-color:var(--purple);background:#f2effe";
+    foundElseBtn.innerHTML = "<div><div class='iloc-name' style='color:var(--purple)'>Log found at new location</div>"
+      + "<div style='font-size:12px;color:var(--text2)'>Enter location name, cases found" + (invMode === "out" ? " and cases to pull" : "") + "</div></div>"
+      + "<span class='iloc-badge' style='background:#f2effe;color:var(--purple);border:1px solid var(--purple)'>Found</span>";
+    foundElseBtn.onclick = function() { invShowFoundElsePanel(); };
+    list.appendChild(foundElseBtn);
+
     g("inv-newloc-wrap").style.display = "none";
+    g("inv-found-elsewhere-wrap").style.display = "none";
     g("inv-loc-label").textContent = invMode === "in"
       ? "All Locations \u2014 Select to Stock In"
       : "Stock Out \u2014 Choose Location";
@@ -11366,6 +11388,110 @@ function rprToast(msg, type = '') {
     g("inv-search-inp").value = "";
     invPart = null; invSelLoc = null;
   };
+
+  // Show the Found at Unlisted Location panel inside inv-loc-card
+  // Works for Stock In and Stock Out modes only
+  // Transfer uses xfr-found-elsewhere-wrap + xfrSubmitFoundElsewhere
+  window.invShowFoundElsePanel = function() {
+    var pullWrap = g("inv-fel-pull-wrap");
+    var pullLbl  = g("inv-fel-pull-label");
+    if (pullWrap) pullWrap.style.display = invMode === "out" ? "block" : "none";
+    if (pullLbl)  pullLbl.textContent = "Cases to Pull";
+    g("inv-fel-loc").value   = "";
+    g("inv-fel-found").value = "";
+    var pi = g("inv-fel-pull"); if (pi) pi.value = "";
+    g("inv-loc-card").style.display = "block";
+    g("inv-found-elsewhere-wrap").style.display = "block";
+    g("inv-fel-loc").focus();
+  };
+
+  // Submit Found at Unlisted Location — Stock In and Stock Out only
+  window.invSubmitFoundElsewhere = function() {
+    var loc     = (g("inv-fel-loc").value   || "").trim();
+    var found   = parseFloat(g("inv-fel-found").value || 0);
+    var pullInp = g("inv-fel-pull");
+    var pull    = invMode === "in" ? 0 : parseFloat((pullInp && pullInp.value) || 0);
+
+    if (!loc)                  { invFlash("Enter a location name", "error"); return; }
+    if (!found || found < 0.1) { invFlash("Enter cases found", "error"); return; }
+    if (invMode === "out" && pull < 0) { invFlash("Cases to pull cannot be negative", "error"); return; }
+    if (!invPart)              { invFlash("No item selected", "error"); return; }
+
+    var initials = (g("inv-initials") && g("inv-initials").value.trim()) || "";
+    if (!initials) initials = (g("inv-pull-initials") && g("inv-pull-initials").value.trim()) || "";
+
+    var btn = g("inv-fel-btn");
+    btn.disabled = true;
+    btn.textContent = "Saving\u2026";
+
+    var submitEntry = function(type, cases, notes, cb) {
+      wFetch(W + "/inventory/log", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          type: type, partNum: invPart.partNum, sku: invPart.sku || invPart.partNum,
+          location: loc, cases: cases, initials: initials || "?",
+          notes: notes, isNew: true, isPlaceholder: false, masterRowIndex: null
+        })
+      }).then(function(r){ return r.json(); }).then(cb)
+        .catch(function(){ cb({ ok: false, error: "Network error" }); });
+    };
+
+    if (invMode === "in") {
+      submitEntry("IN", found, "[FOUND AT UNLISTED LOCATION]", function(d) {
+        btn.disabled = false; btn.textContent = "Log Found Location";
+        if (d.ok) {
+          invFlash("\u2713 Logged " + found + " cases IN at " + loc + " \u2014 pending approval", "success");
+          g("inv-found-elsewhere-wrap").style.display = "none";
+          invReset(true);
+          invFetchPendingCount();
+        } else {
+          invFlash("Error: " + (d.error || "unknown"), "error");
+        }
+      });
+    } else {
+      // Stock Out: log IN (cases found), then OUT (cases pulled) if pull > 0
+      submitEntry("IN", found, "[FOUND AT UNLISTED LOCATION]", function(dIn) {
+        if (!dIn.ok) {
+          btn.disabled = false; btn.textContent = "Log Found Location";
+          invFlash("Error logging found cases: " + (dIn.error || "unknown"), "error");
+          return;
+        }
+        if (pull <= 0) {
+          btn.disabled = false; btn.textContent = "Log Found Location";
+          invFlash("\u2713 Logged " + found + " cases found at " + loc + " \u2014 pending approval", "success");
+          g("inv-found-elsewhere-wrap").style.display = "none";
+          invReset(true);
+          invFetchPendingCount();
+          return;
+        }
+        submitEntry("OUT", pull, "[FOUND AT UNLISTED LOCATION \u2014 pulling " + pull + " of " + found + " found]", function(dOut) {
+          btn.disabled = false; btn.textContent = "Log Found Location";
+          if (dOut.ok) {
+            invPullList.push({
+              key: invPart.partNum + "|" + loc + "|found-new",
+              partNum: invPart.partNum, sku: invPart.sku || invPart.partNum,
+              name: invPart.name || "", location: loc, cases: pull,
+              rowIndex: null, masterRowIndex: null, foundOnShelf: true, isNew: true
+            });
+            invPullList.sort(function(a, b) {
+              return invLocSort(a.location) - invLocSort(b.location) ||
+                     a.location.localeCompare(b.location);
+            });
+            invSavePullList();
+            invRenderPullList();
+            invFlash("\u2713 Found " + found + " at " + loc + " \u2014 pulling " + pull + " \u2014 pending approval", "success");
+            g("inv-found-elsewhere-wrap").style.display = "none";
+            invReset(true);
+            invFetchPendingCount();
+          } else {
+            invFlash("IN logged but OUT failed: " + (dOut.error || "unknown"), "error");
+          }
+        });
+      });
+    }
+  };
+
 
   function invPickLoc(i) {
     invSelLoc = invPart.locations[i];
@@ -11480,6 +11606,10 @@ function rprToast(msg, type = '') {
     g("inv-cases").value = ""; g("inv-initials").value = ""; g("inv-notes").value = "";
     g("inv-newloc-inp").value = "";
     g("inv-newloc-wrap").style.display = "none";
+    g("inv-found-elsewhere-wrap").style.display = "none";
+    g("inv-fel-loc").value = "";
+    g("inv-fel-found").value = "";
+    var pi = g("inv-fel-pull"); if (pi) pi.value = "";
     g("inv-warn").style.display = "none";
     var nr = g("inv-name-results"); if (nr) nr.style.display = "none";
     if (!keepMode) invStopCam();
@@ -11850,6 +11980,9 @@ function rprToast(msg, type = '') {
     ['xfr-result-card','xfr-from-card','xfr-addcart-card','xfr-name-results']
       .forEach(function(id) { var el = g(id); if (el) el.style.display = 'none'; });
     ['xfr-addcart-cases'].forEach(function(id) { var el = g(id); if (el) el.value = ''; });
+    var fw = g('xfr-found-elsewhere-wrap'); if (fw) fw.style.display = 'none';
+    var fl = g('xfr-fel-loc'); if (fl) fl.value = '';
+    var ff = g('xfr-fel-found'); if (ff) ff.value = '';
     if (xfrCamRunning) xfrStopCam();
   }
 
@@ -12042,10 +12175,19 @@ function rprToast(msg, type = '') {
 
   function xfrShowFromLocs() {
     var locs = (xfrPart.locations || []).filter(function(l) { return parseFloat(l.cases) > 0; });
-    if (locs.length === 0) { invFlash('No stock at any location', 'error'); return; }
     var list = g('xfr-from-list');
     list.innerHTML = '';
     var lbl = g('xfr-from-label'); if (lbl) lbl.textContent = 'From Location';
+    g('xfr-found-elsewhere-wrap').style.display = 'none';
+
+    if (locs.length === 0) {
+      var noMsg = document.createElement('div');
+      noMsg.className = 'iempty';
+      noMsg.style.paddingBottom = '4px';
+      noMsg.textContent = 'No stock on record — use Found at unlisted location below';
+      list.appendChild(noMsg);
+    }
+
     locs.forEach(function(loc, i) {
       var el = document.createElement('div');
       el.className = 'iloc-opt';
@@ -12058,26 +12200,67 @@ function rprToast(msg, type = '') {
         xfrFromLoc = locs[idx];
         if (xfrFromLoc.partNum) xfrPart = Object.assign({}, xfrPart, { partNum: xfrFromLoc.partNum });
         list.querySelectorAll('.iloc-opt').forEach(function(e) { e.classList.remove('isel'); });
-        list.children[idx].classList.add('isel');
+        el.classList.add('isel');
+        g('xfr-found-elsewhere-wrap').style.display = 'none';
         xfrShowAddCart();
       }; })(i);
       list.appendChild(el);
     });
+
+    // Always show Found at unlisted location at bottom
+    var fdivider = document.createElement('div');
+    fdivider.style.cssText = 'font-size:11px;font-weight:700;letter-spacing:.5px;text-transform:uppercase;color:var(--purple);margin:12px 0 6px;padding-top:10px;border-top:1px solid var(--border)';
+    fdivider.textContent = 'Found at a location not listed?';
+    list.appendChild(fdivider);
+    var fBtn = document.createElement('div');
+    fBtn.className = 'iloc-opt';
+    fBtn.style.cssText = 'border-color:var(--purple);background:var(--purple-bg)';
+    fBtn.innerHTML = '<div><div class="iloc-name" style="color:var(--purple)">Log found at new location</div>'
+      + '<div style="font-size:12px;color:var(--text2)">Enter location name and cases found, then set transfer amount</div></div>'
+      + '<span class="iloc-badge" style="background:var(--purple-bg);color:var(--purple);border:1px solid var(--purple)">Found</span>';
+    fBtn.onclick = function() {
+      list.querySelectorAll('.iloc-opt').forEach(function(e) { e.classList.remove('isel'); });
+      fBtn.classList.add('isel');
+      g('xfr-found-elsewhere-wrap').style.display = 'block';
+      g('xfr-addcart-card').style.display = 'none';
+      g('xfr-fel-loc').focus();
+    };
+    list.appendChild(fBtn);
+
     g('xfr-from-card').style.display   = 'block';
     g('xfr-addcart-card').style.display = 'none';
   }
 
   function xfrShowAddCart() {
     var ap = g('xfr-addcart-part'); if (ap) ap.textContent = xfrPart.partNum || '';
-    var af = g('xfr-addcart-from'); if (af) af.textContent = xfrFromLoc.location;
+    var af = g('xfr-addcart-from'); if (af) af.textContent = xfrFromLoc.location + (xfrFromLoc.isNew ? ' (new)' : '');
     var warn = g('xfr-addcart-warn');
-    if (warn) { warn.textContent = '\u26a0 Max: ' + xfrFromLoc.cases + ' cases available'; warn.style.display = 'block'; }
+    if (warn) {
+      if (xfrFromLoc.isNew) {
+        warn.textContent = '\u26a0 Found location — ' + xfrFromLoc.cases + ' cases found. Negative result if you pull more.';
+      } else {
+        warn.textContent = '\u26a0 Max: ' + xfrFromLoc.cases + ' cases available';
+      }
+      warn.style.display = 'block';
+    }
     var ci = g('xfr-addcart-cases'); if (ci) ci.value = '';
     // Pre-fill initials if already in cart
     var ii = g('xfr-cart-initials');
     if (ii && !ii.value && xfrCart.length > 0 && xfrCart[0].initials) ii.value = xfrCart[0].initials;
     g('xfr-addcart-card').style.display = 'block';
   }
+
+  // Submit Found at Unlisted Location for Transfer — sets xfrFromLoc then opens add-to-cart
+  window.xfrSubmitFoundElsewhere = function() {
+    var loc   = (g('xfr-fel-loc').value   || '').trim();
+    var found = parseFloat(g('xfr-fel-found').value || 0);
+    if (!loc)             { invFlash('Enter a location name', 'error'); return; }
+    if (!found || found < 0.1) { invFlash('Enter cases found', 'error'); return; }
+    xfrFromLoc = { location: loc, cases: found, isNew: true, rowIndex: null };
+    if (xfrPart) xfrFromLoc.partNum = xfrPart.partNum;
+    g('xfr-found-elsewhere-wrap').style.display = 'none';
+    xfrShowAddCart();
+  };
 
   window.xfrAddToCart = function() {
     var cases    = parseFloat((g('xfr-addcart-cases') || {}).value || 0);
@@ -12086,7 +12269,7 @@ function rprToast(msg, type = '') {
     if (!xfrFromLoc) { invFlash('Select a From location', 'error'); return; }
     if (!cases || cases < 0.1) { invFlash('Enter number of cases', 'error'); return; }
     if (!initials)           { invFlash('Enter your initials', 'error'); return; }
-    if (cases > parseFloat(xfrFromLoc.cases || 0)) { invFlash('Exceeds available cases (' + xfrFromLoc.cases + ')', 'error'); return; }
+    if (!xfrFromLoc.isNew && cases > parseFloat(xfrFromLoc.cases || 0)) { invFlash('Exceeds available cases (' + xfrFromLoc.cases + ')', 'error'); return; }
     xfrCart.push({
       partNum:      xfrPart.partNum,
       sku:          xfrPart.sku || xfrPart.partNum,
