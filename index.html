@@ -1,7 +1,7 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-  <!-- XFITTING-BUILD-V113-FEAT-20260413c -->
+  <!-- XFITTING-BUILD-V113-FEAT-20260413d -->
 <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate">
 <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&family=IBM+Plex+Sans:wght@300;400;500;600&display=swap" rel="stylesheet">
   <meta http-equiv="Pragma" content="no-cache">
@@ -3940,8 +3940,10 @@ const WH = {
 
 // AWD Planner own copy of Products + AWD_Master (loaded independently of warehouse app)
 const AWD_DB = {
-  products:  [],   // {sku, warehouseName}
-  awdMaster: [],   // {partNum, upc, location, label}
+  products:       [],   // {sku, warehouseName}
+  awdMaster:      [],   // {partNum, upc, location, label}
+  fnskuToPartNum: {},   // FNSKU → partNum  (from FBA_Live col A+B)
+  partNumToFnsku: {},   // partNum → FNSKU
   loaded: false,
 };
 
@@ -4535,9 +4537,10 @@ async function loadShipmentFromSheet() {
 // ── LOAD AWD PLANNER DB (Products + AWD_Master for label building) ──
 async function loadAWDPlannerDB() {
   try {
-    const [r1, r2] = await Promise.all([
+    const [r1, r2, r3] = await Promise.all([
       wFetch('https://xfitting-lookup.alfixedinc88.workers.dev?sheet=Products').then(r => r.json()),
       wFetch('https://xfitting-lookup.alfixedinc88.workers.dev?sheet=AWD_Master').then(r => r.json()),
+      wFetch('https://xfitting-lookup.alfixedinc88.workers.dev?sheet=FBA_Live').then(r => r.json()),
     ]);
 
     // Parse Products: col2=base SKU, col4=warehouseName
@@ -4563,8 +4566,20 @@ async function loadAWDPlannerDB() {
       });
     });
 
+    // Parse FBA_Live: col A (idx 0) = part#, col B (idx 1) = FNSKU
+    // Build fnsku → partNum and partNum → fnsku maps for AWD label match
+    AWD_DB.fnskuToPartNum = {};  // fnsku → partNum
+    AWD_DB.partNumToFnsku = {};  // partNum → fnsku
+    (r3.values || []).slice(1).forEach(function(r) {
+      const partNum = String(r[0]||'').trim();
+      const fnsku   = String(r[1]||'').trim();
+      if (!partNum || !fnsku) return;
+      AWD_DB.fnskuToPartNum[fnsku.toUpperCase()]       = partNum;
+      AWD_DB.partNumToFnsku[partNum.toUpperCase()]     = fnsku;
+    });
+
     AWD_DB.loaded = true;
-    console.log('[XFITTING] AWD_DB loaded:', AWD_DB.products.length, 'products,', AWD_DB.awdMaster.length, 'AWD rows');
+    console.log('[XFITTING] AWD_DB loaded:', AWD_DB.products.length, 'products,', AWD_DB.awdMaster.length, 'AWD rows,', Object.keys(AWD_DB.fnskuToPartNum).length, 'FNSKUs');
   } catch(e) {
     console.error('[XFITTING] loadAWDPlannerDB failed:', e);
   }
@@ -4769,6 +4784,8 @@ function upcOnLaunch() {
   upcCheckShipment();
   // Auto-load last saved shipment from sheet (so workers see it without uploading)
   upcAutoLoadSavedShipment();
+  // Ensure FNSKU map is loaded for AWD Label Match feature
+  if (!AWD_DB.loaded) loadAWDPlannerDB();
 }
 
 async function upcAutoLoadSavedShipment() {
@@ -10699,31 +10716,41 @@ function awdHandleScan(raw) {
   var resultEl = document.getElementById('awd-scan-result');
 
   if (_awdStep === 1) {
-    // Step 1: expecting FNSKU (inside UPC / Code128 from AWD label)
-    // Look up in DB.upc by inside field
-    var rec = null;
-    if (typeof DB !== 'undefined' && DB.upc) {
-      rec = DB.upc.find(function(r) {
-        return r.inside && r.inside.replace(/\s/g,'') === code;
-      });
+    // Step 1: expecting FNSKU (Code128 barcode on AWD label)
+    // Look up in AWD_DB.fnskuToPartNum (built from FBA_Live col A=partNum, col B=FNSKU)
+    // Ensure AWD_DB is loaded
+    if (!AWD_DB.loaded) {
+      resultEl.style.background = 'rgba(251,191,36,.2)';
+      resultEl.style.color = '#92400e';
+      resultEl.textContent = '⏳ Loading FNSKU data… tap Scan again in a moment';
+      loadAWDPlannerDB();
+      return;
     }
-    if (rec) {
-      _awdFnsku       = code;
-      _awdFnskuPn     = rec.variant;
-      _awdExpectedUpc = (rec.outside || '').replace(/\s/g,'');
+
+    var partNum = AWD_DB.fnskuToPartNum[code.toUpperCase()];
+    if (partNum) {
+      // Found part# via FNSKU — now find expected box UPC from DB.upc
+      var upcRec = null;
+      if (typeof DB !== 'undefined' && DB.upc) {
+        upcRec = DB.upc.find(function(r) {
+          return r.variant && r.variant.toUpperCase() === partNum.toUpperCase();
+        });
+      }
+      _awdFnsku        = code;
+      _awdFnskuPn      = partNum;
+      _awdExpectedUpc  = upcRec ? (upcRec.outside || '').replace(/\s/g,'') : '';
       document.getElementById('awd-fnsku-val').textContent = code;
-      document.getElementById('awd-fnsku-pn').textContent  = rec.variant;
+      document.getElementById('awd-fnsku-pn').textContent  = partNum;
       _awdStep = 2;
       _awdSetStep(2);
       resultEl.style.background = 'rgba(74,222,128,.2)';
       resultEl.style.color = '#4ade80';
-      resultEl.textContent = '✅ AWD label found: ' + rec.variant + ' — now scan box UPC';
+      resultEl.textContent = '✅ AWD label: ' + partNum + (_awdExpectedUpc ? ' — now scan box UPC' : ' — no box UPC on record, scan anyway');
       upcBeep(true);
     } else {
-      // Not found as FNSKU — might be scanning in wrong order, try as UPC
       resultEl.style.background = 'rgba(248,113,113,.2)';
       resultEl.style.color = '#f87171';
-      resultEl.textContent = '❌ FNSKU not found: ' + code + ' — scan the AWD label barcode';
+      resultEl.textContent = '❌ FNSKU not found: ' + code + ' — make sure FBA_Live sheet is up to date';
       upcBeep(false);
     }
 
