@@ -1,7 +1,7 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-  <!-- XFITTING-BUILD-V113-FEAT-20260414 -->
+  <!-- XFITTING-BUILD-V113-FEAT-20260414b -->
 <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate">
 <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&family=IBM+Plex+Sans:wght@300;400;500;600&display=swap" rel="stylesheet">
   <meta http-equiv="Pragma" content="no-cache">
@@ -11346,7 +11346,21 @@ function awdHandleScan(raw) {
     g("inv-loc-card").style.display    = "none";
     g("inv-detail-card").style.display = "none";
 
-    // Client-side search — no server call, uses DB already loaded at launch
+    // If DB.master is empty (mobile workers who haven't opened Warehouse app),
+    // fall back to the worker route which searches live from the sheet.
+    if (!DB.master || DB.master.length === 0) {
+      nr.innerHTML = "<div class='iempty' style='padding:12px;color:var(--text3);font-size:13px'>Searching…</div>";
+      wFetch(W + "/inventory/search?name=" + encodeURIComponent(query))
+        .then(function(r) { return r.json(); })
+        .then(function(data) {
+          var results = data.results || [];
+          invRenderNameResults(nr, results, query);
+        })
+        .catch(function() { invFlash("Search failed", "error"); nr.style.display = "none"; });
+      return;
+    }
+
+    // Client-side search — DB.master already loaded (desktop / warehouse app open)
     var q = query.toLowerCase().trim();
     var skuMap = {};
 
@@ -11387,7 +11401,11 @@ function awdHandleScan(raw) {
       s.variantCount = Object.keys(s.partNums).length;
       return s;
     });
+    invRenderNameResults(nr, results, query);
+  }
 
+  // Shared renderer for both client-side and server-side name search results
+  function invRenderNameResults(nr, results, query) {
     if (results.length === 0) {
       nr.innerHTML = "<div class='iempty'>No items found matching \"" + query + "\"</div>";
       return;
