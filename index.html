@@ -1,7 +1,7 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-  <!-- XFITTING-BUILD-V113-FEAT-20260414c -->
+  <!-- XFITTING-BUILD-V113-FEAT-20260414d -->
 <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate">
 <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&family=IBM+Plex+Sans:wght@300;400;500;600&display=swap" rel="stylesheet">
   <meta http-equiv="Pragma" content="no-cache">
@@ -12452,8 +12452,14 @@ function awdHandleScan(raw) {
       .then(function(d) {
         if (!d.partNum) { invFlash('Not found: ' + code, 'error'); return; }
         xfrPart = d;
-        // Collect known locations for destination suggestions
-        xfrKnownLocs = (d.locations || []).map(function(l) { return l.location; }).filter(Boolean);
+        // Build xfrKnownLocs grouped by location — picker expects { location, variants:[{partNum,cases}] }
+        var locMap = {};
+        (d.locations || []).forEach(function(l) {
+          if (!l.location) return;
+          if (!locMap[l.location]) locMap[l.location] = { location: l.location, variants: [] };
+          locMap[l.location].variants.push({ partNum: l.partNum || d.partNum, cases: l.cases || '' });
+        });
+        xfrKnownLocs = Object.values(locMap);
         g('xfr-result-part').textContent = d.isMultiVariant ? d.baseSku : d.partNum;
         g('xfr-result-sku').textContent  = d.sku && d.sku !== d.partNum ? d.sku : '';
         g('xfr-result-name').textContent = d.name || '';
