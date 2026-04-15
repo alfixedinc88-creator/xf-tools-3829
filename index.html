@@ -1,7 +1,7 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-  <!-- XFITTING-BUILD-V113-BUGF-20260415 -->
+  <!-- XFITTING-BUILD-V113-BUGF-20260415b -->
 <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate">
 <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&family=IBM+Plex+Sans:wght@300;400;500;600&display=swap" rel="stylesheet">
   <meta http-equiv="Pragma" content="no-cache">
@@ -11844,7 +11844,7 @@ function awdHandleScan(raw) {
   // array and full invPart.locations array. Always use this from invShowLocs.
   function invPickLocDirect(loc) {
     invSelLoc = loc;
-    if (invMode === "in" && loc.partNum) {
+    if (loc.partNum) {
       invPart = Object.assign({}, invPart, { partNum: loc.partNum });
       g("inv-result-part").textContent = loc.partNum;
     }
