@@ -1,7 +1,7 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-  <!-- XFITTING-BUILD-V113-FEAT-20260417b -->
+  <!-- XFITTING-BUILD-V113-FEAT-20260417c -->
 <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate">
 <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&family=IBM+Plex+Sans:wght@300;400;500;600&display=swap" rel="stylesheet">
   <meta http-equiv="Pragma" content="no-cache">
@@ -10933,6 +10933,9 @@ function awdHandleScan(raw) {
 #inv-app .ipull-row.ipl-checked{opacity:.45}
 #inv-app .ipull-row.ipl-checked .ipull-loc{text-decoration:line-through;color:var(--text3)}
 #inv-app .ipull-row.ipl-checked .ipull-pn{text-decoration:line-through;color:var(--text3)}
+#inv-app .ipull-row.ipl-nonefound{opacity:.6}
+#inv-app .ipull-row.ipl-nonefound .ipull-loc{color:var(--red)}
+#inv-app .ipull-row.ipl-nonefound .ipull-pn{color:var(--red)}
 #inv-app .ipull-check{width:44px;height:44px;border-radius:8px;border:2px solid var(--border);background:var(--bg3);display:flex;align-items:center;justify-content:center;cursor:pointer;flex-shrink:0;transition:all .15s}
 #inv-app .ipull-check.checked{background:var(--green);border-color:var(--green)}
 #inv-app .ipull-check.checked::after{content:'\2713';color:#fff;font-size:18px;font-weight:700}
@@ -12130,17 +12133,24 @@ function awdHandleScan(raw) {
       checkDiv.title = item.grabbed ? "Mark not grabbed" : "Mark as grabbed";
       checkDiv.onclick = (function(idx) { return function() { invTogglePullCheck(idx); }; })(i);
 
+      row.className = "ipull-row" + (item.noneFound ? " ipl-nonefound" : item.grabbed ? " ipl-checked" : "");
+
       var infoDiv = document.createElement("div");
+      var noneBadge = item.noneFound ? " <span style='background:var(--red-bg);color:var(--red);font-size:10px;font-weight:700;padding:1px 6px;border-radius:4px;border:1px solid var(--red);font-family:var(--sans)'>NONE FOUND</span>" : "";
+      var fossBadge = item.foundOnShelf ? " <span style='background:var(--orange-bg);color:var(--orange);font-size:10px;font-weight:700;padding:1px 6px;border-radius:4px;border:1px solid var(--orange);font-family:var(--sans)'>FOUND ON SHELF</span>" : "";
       infoDiv.innerHTML =
         "<div class='ipull-loc'>" + item.location + "</div>" +
-        "<div class='ipull-pn'>" + item.partNum + (item.foundOnShelf ? " <span style='background:var(--orange-bg);color:var(--orange);font-size:10px;font-weight:700;padding:1px 6px;border-radius:4px;border:1px solid var(--orange);font-family:var(--sans)'>FOUND ON SHELF</span>" : "") + "</div>" +
+        "<div class='ipull-pn'>" + item.partNum + fossBadge + noneBadge + "</div>" +
         "<div class='ipull-name'>" + (item.name || '') + "</div>" +
-        "<div style='margin-top:6px;display:flex;gap:6px;align-items:center'>" +
-          "<input type='number' min='0.1' step='0.5' placeholder='Cases' value='" + (item.cases || '') + "' " +
-            "style='width:70px;padding:4px 8px;border-radius:6px;border:1px solid var(--border);background:var(--bg3);color:var(--text);font-size:13px' " +
-            "onchange='invUpdatePullCases(" + i + ", this.value)'>" +
-          "<span style='font-size:11px;color:var(--text3)'>cases</span>" +
-        "</div>";
+        (item.noneFound
+          ? "<div style='font-size:11px;color:var(--red);margin-top:4px;font-weight:600'>Will log 0 cases — management review required</div>"
+          : "<div style='margin-top:6px;display:flex;gap:6px;align-items:center'>" +
+              "<input type='number' min='0.1' step='0.5' placeholder='Cases' value='" + (item.cases || '') + "' " +
+                "style='width:70px;padding:4px 8px;border-radius:6px;border:1px solid var(--border);background:var(--bg3);color:var(--text);font-size:13px' " +
+                "onchange='invUpdatePullCases(" + i + ", this.value)'>" +
+              "<span style='font-size:11px;color:var(--text3)'>cases</span>" +
+              "<button onclick='invMarkNoneFound(" + i + ")' style='margin-left:4px;font-size:11px;font-weight:700;padding:4px 10px;border-radius:6px;border:1.5px solid var(--red);background:var(--red-bg);color:var(--red);cursor:pointer;font-family:var(--sans)'>None Found</button>" +
+            "</div>");
 
       var removeBtn = document.createElement("button");
       removeBtn.innerHTML = "&times;";
@@ -12174,6 +12184,16 @@ function awdHandleScan(raw) {
     invRenderPullList();
   };
 
+  window.invMarkNoneFound = function(i) {
+    if (!invPullList[i]) return;
+    invPullList[i].noneFound = true;
+    invPullList[i].cases = 0;
+    invPullList[i].grabbed = true;
+    invSavePullList();
+    invRenderPullList();
+    invFlash('None Found logged — submit to send for review', 'warn');
+  };
+
   window.invClearPullList = function() {
     if (invPullList.length === 0) return;
     if (!confirm("Clear entire pull list?")) return;
@@ -12187,7 +12207,7 @@ function awdHandleScan(raw) {
     var notes    = g("inv-pull-notes").value.trim();
     if (invPullList.length === 0) { invFlash("Pull list is empty", "error"); return; }
     if (!initials) { invFlash("Enter your initials", "error"); return; }
-    var missing = invPullList.filter(function(x) { return !x.cases || parseFloat(x.cases) < 0.1; });
+    var missing = invPullList.filter(function(x) { return !x.noneFound && (!x.cases || parseFloat(x.cases) < 0.1); });
     if (missing.length > 0) { invFlash(missing.length + " item(s) missing case count", "error"); return; }
     var btn = document.querySelector("#inv-pulllist-card .isubmit");
     btn.disabled = true; btn.textContent = "Submitting\u2026";
@@ -12202,9 +12222,11 @@ function awdHandleScan(raw) {
         return;
       }
       var item = items[idx++];
-      var itemNotes = item.foundOnShelf
-        ? ('[FOUND ON SHELF] ' + notes).trim()
-        : notes;
+      var itemNotes = item.noneFound
+        ? ('[NONE FOUND ON SHELF] ' + notes).trim()
+        : item.foundOnShelf
+          ? ('[FOUND ON SHELF] ' + notes).trim()
+          : notes;
       wFetch(W + "/inventory/log", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -17235,7 +17257,7 @@ window.psVaExport = function() {
   };
 
 
-  /* ---- CS Tool Save to Log  ---- */
+  /* ---- CS Tool Save to Log ---- */
   window.csToolSaveLog = function() {
     var draft = (document.getElementById('cs-draft-text').textContent || '').trim();
     if (!draft) { showToast('Generate a reply first'); return; }
