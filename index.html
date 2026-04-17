@@ -1,7 +1,7 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-  <!-- XFITTING-BUILD-V113-FEAT-20260417 -->
+  <!-- XFITTING-BUILD-V113-FEAT-20260417b -->
 <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate">
 <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&family=IBM+Plex+Sans:wght@300;400;500;600&display=swap" rel="stylesheet">
   <meta http-equiv="Pragma" content="no-cache">
@@ -2689,7 +2689,7 @@ input[type=checkbox]{width:15px;height:15px;cursor:pointer;accent-color:var(--bl
             <div class="card">
               <div class="card-hdr"><div><div class="card-title">Shipment Contents</div><div class="card-sub" id="cpack-note"></div></div><span style="font-size:13px;color:var(--gray-500)" id="bld-units-lbl"></span></div>
               <div class="tw"><table><thead><tr>
-                <th>SKU</th><th>Product</th>
+                <th style="cursor:pointer;user-select:none" onclick="bldToggleSort()">SKU <span id="bld-sort-arrow" style="font-size:10px;color:var(--gray-400)">&#8645;</span></th><th>Product</th>
                 <th class="r">Net Days</th><th class="r">Rec Qty</th><th class="r">Send Qty</th>
                 <th class="r">Case Pack / Export Qty</th><th>Label</th>
                 <th></th>
@@ -3829,6 +3829,13 @@ function invAddToBuilder(sku){
 }
 
 
+var _bldSortDir = 0; // 0=none, 1=asc, -1=desc
+function bldToggleSort(){
+  _bldSortDir = _bldSortDir === 1 ? -1 : 1;
+  var arrow = ge('bld-sort-arrow');
+  if(arrow) arrow.innerHTML = _bldSortDir === 1 ? '&#9650;' : '&#9660;';
+  renderBuilder();
+}
 function renderBuilder(){
   const items=Object.entries(S.shipment);
   const manualOpen=ge('bld-manual-panel')&&ge('bld-manual-panel').style.display!=='none';
@@ -3836,7 +3843,8 @@ function renderBuilder(){
   ge('bld-body').style.display=(items.length||manualOpen)?'block':'none';
   if(!items.length){updateSummary();return;}
   const q=ge('bld-q').value.toLowerCase();
-  const filt=items.filter(([sku])=>!q||sku.toLowerCase().includes(q));
+  let filt=items.filter(([sku])=>!q||sku.toLowerCase().includes(q));
+  if(_bldSortDir!==0) filt=filt.slice().sort(([a],[b])=>_bldSortDir*a.localeCompare(b));
   ge('bld-count').textContent=items.length+' SKU'+(items.length!==1?'s':'');
   const matched=items.filter(([sku])=>{const cp=S.cpackMap[sku.toUpperCase()];return cp&&cp.unitsPerBox>0;}).length;
   const note=ge('cpack-note');
