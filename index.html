@@ -1,7 +1,7 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-  <!-- XFITTING-BUILD-V113-BUGF-20260415b -->
+  <!-- XFITTING-BUILD-V113-FEAT-20260417 -->
 <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate">
 <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&family=IBM+Plex+Sans:wght@300;400;500;600&display=swap" rel="stylesheet">
   <meta http-equiv="Pragma" content="no-cache">
@@ -2560,11 +2560,17 @@ input[type=checkbox]{width:15px;height:15px;cursor:pointer;accent-color:var(--bl
               <div style="font-size:13px;font-weight:600;color:var(--gray-800)">Case Pack Templates (AWD_Data)</div>
               <div style="font-size:12px;color:var(--gray-500)" id="cpack-sub">Not loaded — upload once, saved permanently in your browser</div>
             </div>
-            <div class="cpack-drop">
-              <input type="file" accept=".csv,.txt,.tsv" onchange="loadCpackFile(event)">
-              <button class="btn btn-secondary btn-sm">
-                <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>
-                Upload / Update
+            <div style="display:flex;gap:8px;align-items:center;">
+              <div class="cpack-drop">
+                <input type="file" accept=".csv,.txt,.tsv" onchange="loadCpackFile(event)">
+                <button class="btn btn-secondary btn-sm">
+                  <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>
+                  Upload / Update
+                </button>
+              </div>
+              <button class="btn btn-secondary btn-sm" id="cpack-sync-btn" onclick="syncCpackFromSheet()">
+                <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polyline points="1 4 1 10 7 10"/><path d="M3.51 15a9 9 0 1 0 .49-3"/></svg>
+                Sync from Sheet
               </button>
             </div>
           </div>
@@ -3510,6 +3516,27 @@ function loadCpackFromStorage(){
     const {rows,date}=JSON.parse(saved);
     buildCpackMap(rows);S.cpackDate=date?new Date(date):null;updateCpackUI();
   }catch(e){}
+}
+async function syncCpackFromSheet(){
+  const btn=ge('cpack-sync-btn');
+  if(btn){btn.disabled=true;btn.textContent='Syncing\u2026';}
+  try{
+    const res=await wFetch('https://xfitting-lookup.alfixedinc88.workers.dev/awd/cpack');
+    const data=await res.json();
+    if(!data.ok||!data.rows||!data.rows.length){
+      awd_planner_toast('Sync failed: '+(data.error||'No rows returned'),'error');return;
+    }
+    buildCpackMap(data.rows);
+    localStorage.setItem('awdCpack',JSON.stringify({rows:data.rows,date:new Date().toISOString()}));
+    S.cpackDate=new Date();
+    updateCpackUI();
+    renderBuilder();
+    awd_planner_toast('Synced from sheet \u2014 '+S.cpackCount+' SKUs','success');
+  }catch(e){
+    awd_planner_toast('Sync error: '+e.message,'error');
+  }finally{
+    if(btn){btn.disabled=false;btn.textContent='Sync from Sheet';}
+  }
 }
 function updateCpackUI(){
   const has=S.cpackCount>0;
