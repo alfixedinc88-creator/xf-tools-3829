@@ -1,7 +1,7 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-  <!-- XFITTING-BUILD-V113-FEAT-20260420b -->
+  <!-- XFITTING-BUILD-V113-FEAT-20260420c -->
 <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate">
 <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&family=IBM+Plex+Sans:wght@300;400;500;600&display=swap" rel="stylesheet">
   <meta http-equiv="Pragma" content="no-cache">
@@ -8471,6 +8471,7 @@ function salesToast(msg, type) {
     <div class="tabitem"        id="tab-velocity"    onclick="rprTab('velocity')">📈 Velocity</div>
     <div class="tabitem"        id="tab-approval"    onclick="rprTab('approval')">⚠️ Approval Queue  <span class="tab-cnt" id="cnt-approval" style="background:#fdf0ee;color:#c52a1a">—</span></div>
     <div class="tabitem"        id="tab-pricealerts" onclick="rprTab('pricealerts')">🏷️ Price Alerts  <span class="tab-cnt" id="cnt-pricealerts" style="background:#fdf0ee;color:#c52a1a">—</span></div>
+    <div class="tabitem"        id="tab-skulookup"   onclick="rprTab('skulookup')">🔎 SKU Lookup</div>
   </div>
 
   <!-- ═══ TAB: ACTIVE LISTINGS ═══ -->
@@ -8748,6 +8749,24 @@ function salesToast(msg, type) {
     </div>
   </div>
 
+  <!-- ═══ TAB: SKU LOOKUP ═══ -->
+  <div class="tab-panel" id="panel-skulookup">
+    <div class="panel-body">
+      <div class="alert alert-info" style="margin-bottom:20px">
+        <span>🔎</span>
+        <span>Type a base SKU to find all linked listings across every platform. Use this to quickly locate item numbers when updating stock.</span>
+      </div>
+      <div style="display:flex;gap:10px;margin-bottom:20px;align-items:center">
+        <input type="text" id="sku-lookup-inp" placeholder="e.g. 25-2-3" autocomplete="off" autocorrect="off" autocapitalize="off"
+          style="flex:1;padding:10px 14px;border:1.5px solid var(--border);border-radius:8px;font-size:15px;font-family:var(--mono);background:var(--bg);color:var(--text);max-width:300px"
+          onkeydown="if(event.key==='Enter')doSkuLookup()">
+        <button class="btn btn-primary" onclick="doSkuLookup()">Search</button>
+        <button class="btn btn-secondary" onclick="clearSkuLookup()">Clear</button>
+      </div>
+      <div id="sku-lookup-content"></div>
+    </div>
+  </div>
+
 </div><!-- /app -->
 
 <!-- PRICE CHANGE MODAL -->
@@ -8795,6 +8814,7 @@ let priceAlertsData = [];
 
 
 let rprPinEntry = '';
+let rprPinLevel = 'ops';
 function rprPinPress(d) {
   if (!d || rprPinEntry.length >= 4) return;
   rprPinEntry += d;
@@ -8814,16 +8834,26 @@ function rprDots() {
 }
 async function rprCheckPin() {
   try {
-    const r = await fetch(CFG.WORKER + '/auth', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+    // Try mgmt first, fall back to ops — ops can access SKU Lookup only
+    let r = await fetch(CFG.WORKER + '/auth', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ pin: rprPinEntry, pin_type: 'mgmt' })
     });
-    const data = await r.json();
+    let data = await r.json();
+    if (!r.ok || !data.token) {
+      // Try ops pin
+      r = await fetch(CFG.WORKER + '/auth', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ pin: rprPinEntry, pin_type: 'ops' })
+      });
+      data = await r.json();
+    }
     if (r.ok && data.token) {
       rprToken = data.token;
+      rprPinLevel = data.pin_level || 'ops';
       document.getElementById('rpr-pin-screen').style.display = 'none';
       document.getElementById('rpr-app').style.display = 'flex';
+      rprApplyPinLevel();
       rprLoad();
     } else {
       rprPinFail();
@@ -9093,6 +9123,78 @@ async function resolvePriceAlert(encodedRow) {
   }
 }
 
+// ════════════════════════════════════════════
+// SKU LOOKUP
+// ════════════════════════════════════════════
+function rprApplyPinLevel() {
+  // If ops pin: hide all mgmt-only tabs, show only SKU Lookup and switch to it
+  const mgmtOnlyTabs = ['listings','research','decision','velocity','approval','pricealerts'];
+  if (rprPinLevel === 'ops') {
+    mgmtOnlyTabs.forEach(t => {
+      const el = document.getElementById('tab-' + t);
+      if (el) el.style.display = 'none';
+    });
+    // Switch to skulookup tab
+    document.querySelectorAll('#rpr-app .tabitem').forEach(t => t.classList.remove('active'));
+    document.querySelectorAll('#rpr-app .tab-panel').forEach(p => p.classList.remove('active'));
+    const skuTab = document.getElementById('tab-skulookup');
+    const skuPanel = document.getElementById('panel-skulookup');
+    if (skuTab) skuTab.classList.add('active');
+    if (skuPanel) skuPanel.classList.add('active');
+  } else {
+    // mgmt: show all tabs
+    mgmtOnlyTabs.forEach(t => {
+      const el = document.getElementById('tab-' + t);
+      if (el) el.style.display = '';
+    });
+  }
+}
+
+async function doSkuLookup() {
+  const q = (document.getElementById('sku-lookup-inp').value || '').trim();
+  if (!q || q.length < 2) { return; }
+  const el = document.getElementById('sku-lookup-content');
+  el.innerHTML = '<div class="empty-state"><div class="msg">Searching…</div></div>';
+  try {
+    const data = await apiCall('/repricer/sku-lookup?q=' + encodeURIComponent(q));
+    if (!data.ok) { el.innerHTML = '<div class="empty-state"><div class="msg">Error: ' + (data.error||'unknown') + '</div></div>'; return; }
+    if (!data.results || !data.results.length) {
+      el.innerHTML = '<div class="empty-state"><div class="icon">🔎</div><div class="msg">No listings found for <strong>' + q + '</strong></div><div class="sub">Check the SKU sheets have data for this base SKU</div></div>';
+      return;
+    }
+    // Group by platform
+    const grouped = {};
+    data.results.forEach(r => { if (!grouped[r.platform]) grouped[r.platform] = []; grouped[r.platform].push(r); });
+    const platOrder = ['eBay','Amazon','Walmart','Shopify'];
+    const platColors = { eBay: '#c52a1a', Amazon: '#b45309', Walmart: '#1A56DB', Shopify: '#0E7F3E' };
+    let html = '<div style="margin-bottom:8px;font-size:12px;color:var(--text3)">' + data.count + ' listing' + (data.count!==1?'s':'') + ' found across ' + Object.keys(grouped).length + ' platform' + (Object.keys(grouped).length!==1?'s':'') + '</div>';
+    for (const plat of platOrder) {
+      if (!grouped[plat]) continue;
+      const color = platColors[plat] || 'var(--accent)';
+      html += '<div style="margin-bottom:24px">';
+      html += '<div style="font-size:13px;font-weight:700;color:' + color + ';margin-bottom:8px;padding-bottom:6px;border-bottom:2px solid var(--border)">' + plat + ' <span style="font-size:11px;font-weight:400;color:var(--text3)">(' + grouped[plat].length + ')</span></div>';
+      html += '<table class="data-table"><thead><tr><th>Listing ID / ASIN</th><th>Title</th><th>SKU</th><th></th></tr></thead><tbody>';
+      grouped[plat].forEach(r => {
+        html += '<tr>';
+        html += '<td class="sku" style="font-size:13px">' + r.listingId + '</td>';
+        html += '<td style="font-size:12px;color:var(--text2);max-width:260px">' + (r.title||'—') + '</td>';
+        html += '<td class="sku" style="font-size:11px;color:var(--text3)">' + (r.sku||'—') + '</td>';
+        html += '<td><button class="btn btn-sm" style="font-size:11px;padding:3px 8px" onclick="navigator.clipboard.writeText(\'' + r.listingId.replace(/'/g,"\\'") + '\').then(()=>rprToast(\'Copied!\',\'success\'))">Copy</button></td>';
+        html += '</tr>';
+      });
+      html += '</tbody></table></div>';
+    }
+    el.innerHTML = html;
+  } catch(e) {
+    el.innerHTML = '<div class="empty-state"><div class="msg">Failed: ' + e.message + '</div></div>';
+  }
+}
+
+function clearSkuLookup() {
+  document.getElementById('sku-lookup-inp').value = '';
+  document.getElementById('sku-lookup-content').innerHTML = '';
+}
+
 function rprBack() {
   document.getElementById('repricer-root').style.display = 'none';
   document.getElementById('launcher').style.display = 'flex';
@@ -9258,6 +9360,8 @@ function isPriceBelow(l) {
 // TAB 1 — ACTIVE LISTINGS
 // ════════════════════════════════════════════
 async function rprLoad() {
+  // OPS pin can only use SKU Lookup — skip the mgmt-only load
+  if (rprPinLevel === 'ops') return;
   document.getElementById('listings-content').innerHTML = `<div class="loading"><div class="spinner"></div> Pulling live eBay listings…</div>`;
   try {
     const data = await apiCall('/ebay/listings');
