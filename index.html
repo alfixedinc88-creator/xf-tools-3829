@@ -1,7 +1,7 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-  <!-- XFITTING-BUILD-V113-FEAT-20260420c -->
+  <!-- XFITTING-BUILD-V113-FEAT-20260420d -->
 <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate">
 <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&family=IBM+Plex+Sans:wght@300;400;500;600&display=swap" rel="stylesheet">
   <meta http-equiv="Pragma" content="no-cache">
@@ -5514,6 +5514,8 @@ function mgmtPinKey(d) {
             document.getElementById('rpr-pin-screen').style.display = 'none';
             document.getElementById('rpr-app').style.display = 'flex';
             rprToken = d.token;
+            rprPinLevel = 'mgmt';
+            if (typeof rprApplyPinLevel === 'function') rprApplyPinLevel();
             if (typeof rprLoad === 'function') rprLoad();
           } else {
             salesLaunchApp(mgmtPinTarget);
