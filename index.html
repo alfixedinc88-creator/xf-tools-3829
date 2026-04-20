@@ -1,7 +1,7 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-  <!-- XFITTING-BUILD-V113-FEAT-20260420 -->
+  <!-- XFITTING-BUILD-V113-FEAT-20260420b -->
 <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate">
 <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&family=IBM+Plex+Sans:wght@300;400;500;600&display=swap" rel="stylesheet">
   <meta http-equiv="Pragma" content="no-cache">
@@ -8470,6 +8470,7 @@ function salesToast(msg, type) {
     <div class="tabitem"        id="tab-decision"    onclick="rprTab('decision')">💰 Price Decision   <span class="tab-cnt" id="cnt-decision">—</span></div>
     <div class="tabitem"        id="tab-velocity"    onclick="rprTab('velocity')">📈 Velocity</div>
     <div class="tabitem"        id="tab-approval"    onclick="rprTab('approval')">⚠️ Approval Queue  <span class="tab-cnt" id="cnt-approval" style="background:#fdf0ee;color:#c52a1a">—</span></div>
+    <div class="tabitem"        id="tab-pricealerts" onclick="rprTab('pricealerts')">🏷️ Price Alerts  <span class="tab-cnt" id="cnt-pricealerts" style="background:#fdf0ee;color:#c52a1a">—</span></div>
   </div>
 
   <!-- ═══ TAB: ACTIVE LISTINGS ═══ -->
@@ -8715,6 +8716,38 @@ function salesToast(msg, type) {
     </div>
   </div>
 
+  <!-- ═══ TAB: PRICE ALERTS ═══ -->
+  <div class="tab-panel" id="panel-pricealerts">
+    <div class="panel-body">
+      <div class="alert alert-info" style="margin-bottom:20px">
+        <span>🏷️</span>
+        <span><strong>Price Alerts</strong> — listings flagged due to manufacturer price changes. Update the price on the platform then mark resolved.</span>
+      </div>
+      <div class="filter-bar" style="gap:10px;flex-wrap:wrap">
+        <button class="btn btn-secondary btn-sm" onclick="loadPriceAlerts()">↻ Refresh</button>
+        <select class="filter-select" id="pa-platform-filter" onchange="renderPriceAlerts()">
+          <option value="">All Platforms</option>
+          <option value="eBay">eBay</option>
+          <option value="Amazon">Amazon</option>
+          <option value="Walmart">Walmart</option>
+          <option value="Shopify">Shopify</option>
+        </select>
+        <select class="filter-select" id="pa-status-filter" onchange="renderPriceAlerts()">
+          <option value="Open">Open</option>
+          <option value="">All</option>
+          <option value="Resolved">Resolved</option>
+        </select>
+      </div>
+      <div id="pa-content">
+        <div class="empty-state">
+          <div class="icon">🏷️</div>
+          <div class="msg">No price alerts</div>
+          <div class="sub">Alerts appear here when a PO receive detects a manufacturer price change</div>
+        </div>
+      </div>
+    </div>
+  </div>
+
 </div><!-- /app -->
 
 <!-- PRICE CHANGE MODAL -->
@@ -8754,6 +8787,7 @@ let allDecisions  = [];
 let approvalQueue = [];
 let lastSync      = null;
 let currentListing = null;
+let priceAlertsData = [];
 
 // ════════════════════════════════════════════
 // PIN SCREEN → get session token from worker
@@ -8962,6 +8996,103 @@ async function refreshQueueCount() {
     queueData = data.queue || [];
   } catch(_) {}
 }
+async function refreshPriceAlertsBadge() {
+  try {
+    const data = await apiCall('/repricer/price-flags');
+    priceAlertsData = data.flags || [];
+    const openCount = priceAlertsData.filter(f => f.status === 'Open').length;
+    const badge = document.getElementById('cnt-pricealerts');
+    if (badge) badge.textContent = openCount || '0';
+  } catch(_) {}
+}
+// ════════════════════════════════════════════
+// PRICE ALERTS
+// ════════════════════════════════════════════
+async function loadPriceAlerts() {
+  const el = document.getElementById('pa-content');
+  el.innerHTML = '<div class="empty-state"><div class="msg">Loading…</div></div>';
+  try {
+    const data = await apiCall('/repricer/price-flags');
+    priceAlertsData = data.flags || [];
+    // Update badge count — open flags only
+    const openCount = priceAlertsData.filter(f => f.status === 'Open').length;
+    const badge = document.getElementById('cnt-pricealerts');
+    if (badge) badge.textContent = openCount || '0';
+    renderPriceAlerts();
+  } catch(e) {
+    el.innerHTML = '<div class="empty-state"><div class="msg">Failed to load alerts</div><div class="sub">' + e.message + '</div></div>';
+  }
+}
+
+function renderPriceAlerts() {
+  const el = document.getElementById('pa-content');
+  const platFilter   = (document.getElementById('pa-platform-filter') || {}).value || '';
+  const statusFilter = (document.getElementById('pa-status-filter')   || {}).value || '';
+  let rows = priceAlertsData;
+  if (platFilter)   rows = rows.filter(r => r.platform === platFilter);
+  if (statusFilter) rows = rows.filter(r => r.status === statusFilter);
+  if (!rows.length) {
+    el.innerHTML = '<div class="empty-state"><div class="icon">🏷️</div><div class="msg">No alerts match filters</div></div>';
+    return;
+  }
+  // Group by platform
+  const grouped = {};
+  rows.forEach(r => { if (!grouped[r.platform]) grouped[r.platform] = []; grouped[r.platform].push(r); });
+  const platOrder = ['eBay','Amazon','Walmart','Shopify'];
+  let html = '';
+  for (const plat of platOrder) {
+    if (!grouped[plat]) continue;
+    const platRows = grouped[plat];
+    html += '<div style="margin-bottom:28px">';
+    html += '<div style="font-size:13px;font-weight:700;color:var(--text);margin-bottom:10px;padding-bottom:6px;border-bottom:2px solid var(--border)">' + plat + ' <span style="font-size:11px;font-weight:400;color:var(--text3)">(' + platRows.length + ' listing' + (platRows.length !== 1 ? 's' : '') + ')</span></div>';
+    html += '<table class="data-table"><thead><tr>';
+    html += '<th>Listing ID / Title</th><th>Base SKU</th><th>Old COGS</th><th>New COGS</th><th>Change</th><th>Suggested Price</th><th>Status</th><th></th>';
+    html += '</tr></thead><tbody>';
+    platRows.forEach((r, i) => {
+      const changed = parseFloat(r.newCogs) > parseFloat(r.oldCogs) + 0.0001;
+      const cheaper = parseFloat(r.newCogs) < parseFloat(r.oldCogs) - 0.0001;
+      const pctColor = changed ? 'var(--red)' : cheaper ? 'var(--green)' : 'var(--text)';
+      const isOpen = r.status === 'Open';
+      html += '<tr style="opacity:' + (isOpen ? '1' : '0.5') + '">';
+      html += '<td class="sku" style="max-width:200px;word-break:break-all">' + (r.listingId || '—') + '</td>';
+      html += '<td class="sku">' + (r.baseSku || '—') + '</td>';
+      html += '<td class="num">' + (r.oldCogs ? '$' + parseFloat(r.oldCogs).toFixed(4) : '—') + '</td>';
+      html += '<td class="num" style="font-weight:700">' + (r.newCogs ? '$' + parseFloat(r.newCogs).toFixed(4) : '—') + '</td>';
+      html += '<td class="num" style="color:' + pctColor + ';font-weight:700">' + (r.pctChange || '—') + '</td>';
+      html += '<td class="num" style="font-weight:700;color:var(--accent)">' + (r.suggestedPrice || '—') + '</td>';
+      html += '<td><span class="badge ' + (isOpen ? 'badge-warn' : 'badge-ok') + '">' + r.status + '</span></td>';
+      html += '<td>' + (isOpen ? '<button class="btn btn-sm" style="font-size:11px;padding:4px 10px" onclick="resolvePriceAlert(\'' + encodeURIComponent(JSON.stringify(r)) + '\')">✓ Resolved</button>' : '') + '</td>';
+      html += '</tr>';
+    });
+    html += '</tbody></table></div>';
+  }
+  el.innerHTML = html;
+}
+
+async function resolvePriceAlert(encodedRow) {
+  const r = JSON.parse(decodeURIComponent(encodedRow));
+  try {
+    const res = await apiCall('/repricer/price-flags/resolve', {
+      method: 'POST',
+      body: JSON.stringify({ rowIndex: r.rowIndex })
+    });
+    if (res.ok) {
+      // Update local state immediately
+      const idx = priceAlertsData.findIndex(x => x.rowIndex === r.rowIndex);
+      if (idx >= 0) priceAlertsData[idx].status = 'Resolved';
+      // Update badge
+      const openCount = priceAlertsData.filter(f => f.status === 'Open').length;
+      const badge = document.getElementById('cnt-pricealerts');
+      if (badge) badge.textContent = openCount || '0';
+      renderPriceAlerts();
+    } else {
+      alert('Failed to resolve: ' + (res.error || 'unknown error'));
+    }
+  } catch(e) {
+    alert('Error: ' + e.message);
+  }
+}
+
 function rprBack() {
   document.getElementById('repricer-root').style.display = 'none';
   document.getElementById('launcher').style.display = 'flex';
@@ -8997,6 +9128,7 @@ function rprSyncAll() {
   if (tab === 'research') loadResearch();
   if (tab === 'decision') loadAllDecisions();
   if (tab === 'approval') renderApprovals();
+  if (tab === 'pricealerts') loadPriceAlerts();
 }
 async function loadAllDecisions() {
   const content = document.getElementById('decision-content');
@@ -9134,6 +9266,7 @@ async function rprLoad() {
     renderListings(rprAllListings);
     rprToast(`✓ ${rprAllListings.length} listings loaded`, 'success');
     refreshQueueCount(); // update approval badge
+    refreshPriceAlertsBadge(); // update price alerts badge
   } catch(e) {
     setSyncStatus(false);
     document.getElementById('listings-content').innerHTML =
