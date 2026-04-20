@@ -1,7 +1,7 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-  <!-- XFITTING-BUILD-V113-FEAT-20260417c -->
+  <!-- XFITTING-BUILD-V113-FEAT-20260420 -->
 <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate">
 <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&family=IBM+Plex+Sans:wght@300;400;500;600&display=swap" rel="stylesheet">
   <meta http-equiv="Pragma" content="no-cache">
@@ -14951,7 +14951,8 @@ window.psVaExport = function() {
               <th>Units/Case</th>
               <th>New Location</th>
               <th>Col K</th>
-              <th>Price/Unit</th>
+              <th>Old Price</th>
+              <th>New Price</th>
               <th>Status</th>
             </tr>
           </thead>
@@ -15164,7 +15165,7 @@ window.psVaExport = function() {
       .then(function(r) { return r.json(); })
       .then(function(d) {
         if (!d.rows) { status.textContent = 'Failed to load Master List'; return; }
-        rpoBuildPreview(d.rows, status);
+        rpoBuildPreview(d.rows, d.cogsMap || {}, status);
       })
       .catch(function(err) {
         if (err.message === 'Unauthorized') {
@@ -15175,7 +15176,7 @@ window.psVaExport = function() {
       });
   }
 
-  function rpoBuildPreview(mlRows, status) {
+  function rpoBuildPreview(mlRows, cogsMap, status) {
     // Three maps built from Master_List:
     // mlBlankMap:      partNum -> [rows where col I is blank]
     // mlBaseMap:       baseSku -> highest rowIndex (insert-after position)
@@ -15231,6 +15232,7 @@ window.psVaExport = function() {
       var insertAfter  = mlBaseMap[item.baseSku] || (mlRows.length > 0 ? mlRows[mlRows.length - 1].rowIndex : 2);
       var palletWithDate = item.pallet + ' ' + _todayStr;
 
+      var oldPrice = cogsMap[item.baseSku] || null;
       rpoMatches.push({
         partNum:       item.partNum,
         baseSku:       item.baseSku,
@@ -15241,6 +15243,7 @@ window.psVaExport = function() {
         upc:           item.upc,
         totalUnits:    item.totalUnits,
         pricePerUnit:  priceInfo ? priceInfo.price : null,
+        oldPrice:      oldPrice,
         mlRow:         mlRow || null,
         oldLocation:   mlRow ? (mlRow.location || '') : '',
         isPlaceholder: !needsNewRow && !notInCatalog,
@@ -15336,8 +15339,16 @@ window.psVaExport = function() {
           + 'style="width:90px;padding:4px 6px;border:1.5px solid var(--border);border-radius:5px;font-size:12px;font-family:var(--mono);background:var(--bg);color:var(--text)" '
           + 'onchange="rpoSetColK(' + realIdx + ', this.value)" oninput="rpoSetColK(' + realIdx + ', this.value)">';
 
-      var price = item.pricePerUnit != null
-        ? '$' + item.pricePerUnit.toFixed(4)
+      var oldPriceHtml = item.oldPrice != null
+        ? '<span class="rpo-mono" style="font-size:12px">$' + item.oldPrice.toFixed(4) + '</span>'
+        : '<span style="color:var(--text3)">\u2014</span>';
+      var newPriceVal = item.pricePerUnit;
+      var priceUp = newPriceVal != null && item.oldPrice != null && newPriceVal > item.oldPrice + 0.00001;
+      var priceDn = newPriceVal != null && item.oldPrice != null && newPriceVal < item.oldPrice - 0.00001;
+      var npColor = priceUp ? 'var(--red)' : priceDn ? 'var(--green)' : 'var(--text)';
+      var npArrow = priceUp ? '\u2191 ' : priceDn ? '\u2193 ' : '';
+      var newPriceHtml = newPriceVal != null
+        ? '<span class="rpo-mono" style="font-size:12px;font-weight:700;color:' + npColor + '">' + npArrow + '$' + newPriceVal.toFixed(4) + '</span>'
         : '<span style="color:var(--text3)">\u2014</span>';
 
       tr.innerHTML = '<td class="rpo-mono">' + item.partNum + '</td>'
@@ -15348,7 +15359,8 @@ window.psVaExport = function() {
         + '<td class="rpo-mono" style="text-align:right">' + (item.upc || '\u2014') + '</td>'
         + '<td><span class="rpo-new-loc rpo-mono">' + item.pallet + '</span></td>'
         + '<td>' + colKHtml + '</td>'
-        + '<td class="rpo-mono" style="text-align:right">' + price + '</td>'
+        + '<td style="text-align:right">' + oldPriceHtml + '</td>'
+        + '<td style="text-align:right">' + newPriceHtml + '</td>'
         + '<td>' + statusBadge + '</td>';
       tbody.appendChild(tr);
     });
