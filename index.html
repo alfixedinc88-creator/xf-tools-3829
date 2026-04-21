@@ -1,7 +1,7 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-  <!-- XFITTING-BUILD-V113-FEAT-20260420d -->
+  <!-- XFITTING-BUILD-V113-FEAT-20260421 -->
 <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate">
 <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&family=IBM+Plex+Sans:wght@300;400;500;600&display=swap" rel="stylesheet">
   <meta http-equiv="Pragma" content="no-cache">
@@ -11270,11 +11270,15 @@ function awdHandleScan(raw) {
     <div class="icard-label" id="inv-loc-label">Select Location</div>
     <div id="inv-loc-list"></div>
     <div id="inv-newloc-wrap" style="display:none;margin-top:8px">
-      <div class="ifield"><label>New Location Name</label><input id="inv-newloc-inp" type="text" placeholder="e.g. A-Shelf-3"></div>
+      <div class="ifield"><label>New Location Name</label>
+        <div style="display:flex;gap:6px;margin-top:6px;align-items:center"><select id="inv-newloc-prefix" style="padding:6px 8px;border:1.5px solid var(--border);border-radius:7px;background:var(--bg);color:var(--text);font-size:13px;font-family:var(--mono)"><option value="2FL=">2FL=</option><option value="BARN=">BARN=</option><option value="BASEMENT=">BASEMENT=</option><option value="BH OFFICE=">BH OFFICE=</option><option value="C1=">C1=</option><option value="C2=">C2=</option><option value="C3=">C3=</option><option value="C4=">C4=</option><option value="C5=">C5=</option><option value="FRONT=">FRONT=</option></select><input id="inv-newloc-shelf" type="text" placeholder="e.g. 5-1-3" autocomplete="off" style="flex:1;padding:6px 10px;border:1.5px solid var(--border);border-radius:7px;background:var(--bg);color:var(--text);font-size:13px;font-family:var(--mono)"></div>
+      </div>
     </div>
     <div id="inv-found-elsewhere-wrap" style="display:none;margin-top:12px;padding:12px;background:var(--purple-bg);border:1.5px solid var(--purple);border-radius:10px">
       <div style="font-size:13px;font-weight:700;color:var(--purple);margin-bottom:10px">📦 Found at unlisted location</div>
-      <div class="ifield"><label>Location Name</label><input id="inv-fel-loc" type="text" placeholder="e.g. B-Shelf-4" autocomplete="off"></div>
+      <div class="ifield"><label>Location Name</label>
+        <div style="display:flex;gap:6px;margin-top:6px;align-items:center"><select id="inv-fel-prefix" style="padding:6px 8px;border:1.5px solid var(--border);border-radius:7px;background:var(--bg);color:var(--text);font-size:13px;font-family:var(--mono)"><option value="2FL=">2FL=</option><option value="BARN=">BARN=</option><option value="BASEMENT=">BASEMENT=</option><option value="BH OFFICE=">BH OFFICE=</option><option value="C1=">C1=</option><option value="C2=">C2=</option><option value="C3=">C3=</option><option value="C4=">C4=</option><option value="C5=">C5=</option><option value="FRONT=">FRONT=</option></select><input id="inv-fel-loc" type="text" placeholder="e.g. 5-1-3" autocomplete="off" style="flex:1;padding:6px 10px;border:1.5px solid var(--border);border-radius:7px;background:var(--bg);color:var(--text);font-size:13px;font-family:var(--mono)"></div>
+      </div>
       <div class="ifield-row">
         <div class="ifield"><label>Cases Found</label><input id="inv-fel-found" type="number" min="0.1" step="0.5" placeholder="0"></div>
         <div class="ifield" id="inv-fel-pull-wrap"><label id="inv-fel-pull-label">Cases to Pull</label><input id="inv-fel-pull" type="number" min="0" step="0.5" placeholder="0"></div>
@@ -11358,7 +11362,9 @@ function awdHandleScan(raw) {
     <div id="xfr-from-list"></div>
     <div id="xfr-found-elsewhere-wrap" style="display:none;margin-top:12px;padding:12px;background:var(--purple-bg);border:1.5px solid var(--purple);border-radius:10px">
       <div style="font-size:13px;font-weight:700;color:var(--purple);margin-bottom:10px">📦 Found at unlisted location</div>
-      <div class="ifield"><label>Location Name</label><input id="xfr-fel-loc" type="text" placeholder="e.g. B-Shelf-4" autocomplete="off"></div>
+      <div class="ifield"><label>Location Name</label>
+        <div style="display:flex;gap:6px;margin-top:6px;align-items:center"><select id="xfr-fel-prefix" style="padding:6px 8px;border:1.5px solid var(--border);border-radius:7px;background:var(--bg);color:var(--text);font-size:13px;font-family:var(--mono)"><option value="2FL=">2FL=</option><option value="BARN=">BARN=</option><option value="BASEMENT=">BASEMENT=</option><option value="BH OFFICE=">BH OFFICE=</option><option value="C1=">C1=</option><option value="C2=">C2=</option><option value="C3=">C3=</option><option value="C4=">C4=</option><option value="C5=">C5=</option><option value="FRONT=">FRONT=</option></select><input id="xfr-fel-loc" type="text" placeholder="e.g. 5-1-3" autocomplete="off" style="flex:1;padding:6px 10px;border:1.5px solid var(--border);border-radius:7px;background:var(--bg);color:var(--text);font-size:13px;font-family:var(--mono)"></div>
+      </div>
       <div class="ifield"><label>Cases Found at Location</label><input id="xfr-fel-found" type="number" min="0.1" step="0.5" placeholder="0"></div>
       <button class="isubmit" onclick="xfrSubmitFoundElsewhere()" style="background:var(--purple);border-color:var(--purple);margin-top:4px">Use This Location</button>
     </div>
@@ -11373,6 +11379,13 @@ function awdHandleScan(raw) {
     <div class="ifield-row">
       <div class="ifield"><label>Cases</label><input id="xfr-addcart-cases" type="number" min="0.1" step="0.5" placeholder="0"></div>
       <div class="ifield"><label>Initials</label><input id="xfr-cart-initials" type="text" maxlength="4" placeholder="e.g. DJ"></div>
+    </div>
+    <div class="ifield" style="margin-top:10px">
+      <label>To Location (optional — set now or later in cart)</label>
+      <div style="display:flex;gap:6px;margin-top:4px;align-items:center">
+        <select id="xfr-addcart-dest-prefix" style="padding:6px 8px;border:1.5px solid var(--border);border-radius:7px;background:var(--bg);color:var(--text);font-size:13px;font-family:var(--mono)"><option value="">-- prefix --</option><option value="2FL=">2FL=</option><option value="BARN=">BARN=</option><option value="BASEMENT=">BASEMENT=</option><option value="BH OFFICE=">BH OFFICE=</option><option value="C1=">C1=</option><option value="C2=">C2=</option><option value="C3=">C3=</option><option value="C4=">C4=</option><option value="C5=">C5=</option><option value="FRONT=">FRONT=</option></select>
+        <input id="xfr-addcart-dest-shelf" type="text" placeholder="e.g. 5-1-3" autocomplete="off" style="flex:1;padding:6px 10px;border:1.5px solid var(--border);border-radius:7px;background:var(--bg);color:var(--text);font-size:13px;font-family:var(--mono)">
+      </div>
     </div>
     <button class="isubmit" onclick="xfrAddToCart()" style="background:var(--purple);border-color:var(--purple)">+ Add to Cart</button>
   </div>
@@ -12014,7 +12027,9 @@ function awdHandleScan(raw) {
 
   // Submit Found at Unlisted Location — Stock In and Stock Out only
   window.invSubmitFoundElsewhere = function() {
-    var loc     = (g("inv-fel-loc").value   || "").trim();
+    var felPrefix = (g("inv-fel-prefix") || {value:""}).value || "";
+    var felShelf  = (g("inv-fel-loc").value || "").trim();
+    var loc = felPrefix && felShelf ? felPrefix + felShelf : felShelf;
     var found   = parseFloat(g("inv-fel-found").value || 0);
     var pullInp = g("inv-fel-pull");
     var pull    = invMode === "in" ? 0 : parseFloat((pullInp && pullInp.value) || 0);
@@ -12164,7 +12179,9 @@ function awdHandleScan(raw) {
     var cases    = parseFloat(g("inv-cases").value);
     var initials = g("inv-initials").value.trim();
     var notes    = g("inv-notes").value.trim();
-    var newLoc   = g("inv-newloc-inp").value.trim();
+    var newLocPrefix = (g("inv-newloc-prefix") || {value:""}).value || "";
+    var newLocShelf  = (g("inv-newloc-shelf")  || {value:""}).value.trim();
+    var newLoc = newLocPrefix && newLocShelf ? newLocPrefix + newLocShelf : newLocShelf;
     if (!invPart)   { invFlash("No item selected", "error"); return; }
     if (!invSelLoc) { invFlash("Select a location first", "error"); return; }
     if (!cases || cases < 0.1) { invFlash("Enter number of cases", "error"); return; }
@@ -12211,7 +12228,8 @@ function awdHandleScan(raw) {
     g("inv-loc-card").style.display     = "none";
     g("inv-detail-card").style.display  = "none";
     g("inv-cases").value = ""; g("inv-initials").value = ""; g("inv-notes").value = "";
-    g("inv-newloc-inp").value = "";
+    g("inv-newloc-inp") && (g("inv-newloc-inp").value = "");
+    g("inv-newloc-shelf") && (g("inv-newloc-shelf").value = "");
     g("inv-newloc-wrap").style.display = "none";
     g("inv-found-elsewhere-wrap").style.display = "none";
     g("inv-fos-wrap").style.display = "none";
@@ -12508,7 +12526,8 @@ function awdHandleScan(raw) {
     el.innerHTML = "<div class='ientry-head'><div><span class='ientry-part'>" + (item.partNum || "") + "</span>" + skuHtml + "</div><div style='display:flex;align-items:center;gap:4px'>" + foundBadge + typeHtml + "</div></div>"
       + nameHtml
       + "<div class='ientry-meta'>\ud83d\udccd " + (item.location || "") + " &nbsp;|\u00a0 \ud83d\udce6 " + (item.cases || 0) + " cases &nbsp;|\u00a0 \ud83e\uddd1 " + (item.initials || "")
-      + (displayNotes ? "<br>\ud83d\udcdd " + displayNotes : "") + "</div>"
+      + (displayNotes ? "<br>\ud83d\udcdd " + displayNotes : "")
+      + (item.timestamp ? "<br>\ud83d\udd52 " + new Date(item.timestamp).toLocaleString('en-US',{timeZone:'America/New_York',month:'short',day:'numeric',hour:'numeric',minute:'2-digit',hour12:true}) : "") + "</div>"
       + "<div class='ientry-btns'><button class='iapprove'>\u2713 Approve</button><button class='ireject'>\u2715 Reject</button></div>";
     var ri = item.rowIndex;
     el.querySelector(".iapprove").onclick = function() { invVerify(ri, "Approved"); };
@@ -12559,7 +12578,8 @@ function awdHandleScan(raw) {
       + "\ud83d\udd01 <strong>" + fromLoc + "</strong> \u2192 <strong>" + toLoc + "</strong>"
       + " &nbsp;|&nbsp; \ud83d\udce6 " + (outItem.cases || 0) + " cases"
       + " &nbsp;|&nbsp; \ud83e\uddd1 " + (outItem.initials || "")
-      + (outItem.notes ? "<br>\ud83d\udcdd " + outItem.notes : "") + "</div>"
+      + (outItem.notes ? "<br>\ud83d\udcdd " + outItem.notes : "")
+      + (outItem.timestamp ? "<br>\ud83d\udd52 " + new Date(outItem.timestamp).toLocaleString('en-US',{timeZone:'America/New_York',month:'short',day:'numeric',hour:'numeric',minute:'2-digit',hour12:true}) : "") + "</div>"
       + "<div class='ientry-btns'><button class='iapprove'>\u2713 Approve</button><button class='ireject'>\u2715 Reject</button></div>";
     el.querySelector(".iapprove").onclick = function() { invVerifyTransfer(outItem, inItem, "Approved"); };
     el.querySelector(".ireject").onclick  = function() { invVerifyTransfer(outItem, inItem, "Rejected"); };
@@ -12606,6 +12626,8 @@ function awdHandleScan(raw) {
     var si = g('xfr-search-inp'); if (si) si.value = '';
     ['xfr-result-card','xfr-from-card','xfr-addcart-card','xfr-name-results']
       .forEach(function(id) { var el = g(id); if (el) el.style.display = 'none'; });
+    var dps = g('xfr-addcart-dest-prefix'); if (dps) dps.value = '';
+    var dsh = g('xfr-addcart-dest-shelf');  if (dsh) dsh.value = '';
     ['xfr-addcart-cases'].forEach(function(id) { var el = g(id); if (el) el.value = ''; });
     var fw = g('xfr-found-elsewhere-wrap'); if (fw) fw.style.display = 'none';
     var fl = g('xfr-fel-loc'); if (fl) fl.value = '';
@@ -12743,6 +12765,8 @@ function awdHandleScan(raw) {
     if (!code) return;
     ['xfr-result-card','xfr-from-card','xfr-addcart-card','xfr-name-results']
       .forEach(function(id) { var el = g(id); if (el) el.style.display = 'none'; });
+    var dps = g('xfr-addcart-dest-prefix'); if (dps) dps.value = '';
+    var dsh = g('xfr-addcart-dest-shelf');  if (dsh) dsh.value = '';
     wFetch(W + '/inventory/lookup?code=' + encodeURIComponent(code))
       .then(function(r) { return r.json(); })
       .then(function(d) {
@@ -12885,7 +12909,9 @@ function awdHandleScan(raw) {
 
   // Submit Found at Unlisted Location for Transfer — sets xfrFromLoc then opens add-to-cart
   window.xfrSubmitFoundElsewhere = function() {
-    var loc   = (g('xfr-fel-loc').value   || '').trim();
+    var xfrFelPfx   = (g('xfr-fel-prefix') || {value:''}).value || '';
+    var xfrFelShelf = (g('xfr-fel-loc').value || '').trim();
+    var loc = xfrFelPfx && xfrFelShelf ? xfrFelPfx + xfrFelShelf : xfrFelShelf;
     var found = parseFloat(g('xfr-fel-found').value || 0);
     if (!loc)             { invFlash('Enter a location name', 'error'); return; }
     if (!found || found < 0.1) { invFlash('Enter cases found', 'error'); return; }
@@ -12898,6 +12924,9 @@ function awdHandleScan(raw) {
   window.xfrAddToCart = function() {
     var cases    = parseFloat((g('xfr-addcart-cases') || {}).value || 0);
     var initials = ((g('xfr-cart-initials') || {}).value || '').trim();
+    var destPfx   = (g('xfr-addcart-dest-prefix') || {value:''}).value || '';
+    var destShelf = ((g('xfr-addcart-dest-shelf') || {value:''}).value || '').trim();
+    var toLocation = destPfx && destShelf ? destPfx + destShelf : '';
     if (!xfrPart)    { invFlash('No item selected', 'error'); return; }
     if (!xfrFromLoc) { invFlash('Select a From location', 'error'); return; }
     if (!cases || cases < 0.1) { invFlash('Enter number of cases', 'error'); return; }
@@ -12911,9 +12940,9 @@ function awdHandleScan(raw) {
       fromRowIndex: xfrFromLoc.rowIndex,
       cases:        cases,
       initials:     initials,
-      toLocation:   '',
+      toLocation:   toLocation,
       toRowIndex:   null,
-      isNewLocation: false
+      isNewLocation: toLocation ? true : false
     });
     xfrSaveCart();
     xfrRenderCart();
@@ -13000,7 +13029,12 @@ function awdHandleScan(raw) {
     var newInputWrap = document.createElement('div');
     newInputWrap.id = 'xfr-picker-new-wrap';
     newInputWrap.style.cssText = 'display:none;padding:0 0 12px';
-    newInputWrap.innerHTML = '<input id="xfr-picker-new-inp" class="xfr-dest-new-inp" type="text" placeholder="e.g. Shelf-B4 or Pallet-2">'
+    newInputWrap.innerHTML = '<div style="display:flex;gap:6px;margin-top:6px;align-items:center">'
+      + '<select id="xfr-picker-new-prefix" style="padding:6px 8px;border:1.5px solid var(--border);border-radius:7px;background:var(--bg);color:var(--text);font-size:13px;font-family:var(--mono)">'
+      + '<option value=\\"2FL=\\">2FL=</option><option value=\\"BARN=\\">BARN=</option><option value=\\"BASEMENT=\\">BASEMENT=</option><option value=\\"BH OFFICE=\\">BH OFFICE=</option><option value=\\"C1=\\">C1=</option><option value=\\"C2=\\">C2=</option><option value=\\"C3=\\">C3=</option><option value=\\"C4=\\">C4=</option><option value=\\"C5=\\">C5=</option><option value=\\"FRONT=\\">FRONT=</option>'
+      + '</select>'
+      + '<input id="xfr-picker-new-inp" type="text" placeholder="e.g. 5-1-3" autocomplete="off" style="flex:1;padding:6px 10px;border:1.5px solid var(--border);border-radius:7px;background:var(--bg);color:var(--text);font-size:13px;font-family:var(--mono)">'
+      + '</div>'
       + '<button class="xfr-dest-new-confirm" onclick="xfrPickerConfirmNew()">Confirm New Location</button>';
     list.appendChild(newInputWrap);
 
@@ -13030,8 +13064,9 @@ function awdHandleScan(raw) {
   };
 
   window.xfrPickerConfirmNew = function() {
-    var val = (g('xfr-picker-new-inp') || {}).value || '';
-    var loc = val.trim();
+    var pfx   = (g('xfr-picker-new-prefix') || {value:''}).value || '';
+    var shelf = ((g('xfr-picker-new-inp') || {}).value || '').trim();
+    var loc   = pfx && shelf ? pfx + shelf : shelf;
     if (!loc) { invFlash('Enter a location name', 'error'); return; }
     xfrPickerSelect(loc, true);
   };
