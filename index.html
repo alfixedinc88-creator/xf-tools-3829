@@ -1,7 +1,7 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-  <!-- XFITTING-BUILD-V114-CALC-20260422b -->
+  <!-- XFITTING-BUILD-V113-FEAT-20260421b -->
 <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate">
 <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&family=IBM+Plex+Sans:wght@300;400;500;600&display=swap" rel="stylesheet">
   <meta http-equiv="Pragma" content="no-cache">
@@ -8474,7 +8474,6 @@ function salesToast(msg, type) {
     <div class="tabitem"        id="tab-approval"    onclick="rprTab('approval')">⚠️ Approval Queue  <span class="tab-cnt" id="cnt-approval" style="background:#fdf0ee;color:#c52a1a">—</span></div>
     <div class="tabitem"        id="tab-pricealerts" onclick="rprTab('pricealerts')">🏷️ Price Alerts  <span class="tab-cnt" id="cnt-pricealerts" style="background:#fdf0ee;color:#c52a1a">—</span></div>
     <div class="tabitem"        id="tab-skulookup"   onclick="rprTab('skulookup')">🔎 SKU Lookup</div>
-    <div class="tabitem" id="tab-calculator" onclick="rprTab('calculator')">🧮 Price Calculator</div>
   </div>
 
   <!-- ═══ TAB: ACTIVE LISTINGS ═══ -->
@@ -8768,82 +8767,6 @@ function salesToast(msg, type) {
       </div>
       <div id="sku-lookup-content"></div>
     </div>
-  <!-- ═══ TAB: PRICE CALCULATOR ═══ -->
-  <div class="tab-panel" id="panel-calculator">
-    <div class="panel-body">
-      <style>
-        #panel-calculator .pc-card{background:var(--surface2);border:1px solid var(--border);border-radius:12px;padding:20px;margin-bottom:16px}
-        #panel-calculator .pc-inputs{display:grid;grid-template-columns:1fr 1fr auto;gap:12px;align-items:flex-end}
-        @media(max-width:540px){#panel-calculator .pc-inputs{grid-template-columns:1fr 1fr} #panel-calculator .pc-lookup-btn{grid-column:1/-1}}
-        #panel-calculator .pc-field{display:flex;flex-direction:column;gap:5px}
-        #panel-calculator .pc-field label{font-size:11px;font-weight:700;letter-spacing:.6px;text-transform:uppercase;color:var(--text-muted)}
-        #panel-calculator .pc-field input{padding:10px 12px;border:1.5px solid var(--border);border-radius:8px;font-size:14px;font-family:inherit;background:var(--surface);color:var(--text);outline:none;transition:border-color .15s;width:100%;box-sizing:border-box}
-        #panel-calculator .pc-field input:focus{border-color:var(--accent)}
-        #panel-calculator .pc-lookup-btn{padding:11px 24px;border-radius:8px;background:var(--accent);color:#fff;border:none;font-size:14px;font-weight:600;cursor:pointer;font-family:inherit;white-space:nowrap;height:42px}
-        #panel-calculator .pc-lookup-btn:disabled{opacity:.4;cursor:not-allowed}
-        #panel-calculator .pc-result-card{background:var(--surface2);border:1px solid var(--border);border-radius:12px;overflow:hidden;margin-bottom:16px}
-        #panel-calculator .pc-result-header{padding:14px 18px;border-bottom:1px solid var(--border);display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:8px}
-        #panel-calculator .pc-result-title{font-size:13px;font-weight:700;color:var(--text)}
-        #panel-calculator .pc-result-sub{font-size:11px;color:var(--text-muted)}
-        #panel-calculator .pc-table{width:100%;border-collapse:collapse}
-        #panel-calculator .pc-table th{padding:10px 16px;text-align:left;font-size:11px;font-weight:700;letter-spacing:.5px;text-transform:uppercase;color:var(--text-muted);background:var(--surface);border-bottom:2px solid var(--border)}
-        #panel-calculator .pc-table th.num{text-align:right}
-        #panel-calculator .pc-table td{padding:13px 16px;border-bottom:1px solid var(--border);vertical-align:middle}
-        #panel-calculator .pc-table tr:last-child td{border-bottom:none}
-        #panel-calculator .pc-mkt{font-size:13px;font-weight:700;color:var(--text)}
-        #panel-calculator .num{text-align:right;font-family:var(--mono,monospace)}
-        #panel-calculator .pc-unit{font-size:13px;color:var(--text-muted)}
-        #panel-calculator .pc-floor{font-size:14px;font-weight:600;color:#b45309}
-        #panel-calculator .pc-suggested{font-size:16px;font-weight:700;color:var(--accent)}
-        #panel-calculator .pc-max{font-size:14px;font-weight:600;color:var(--text-muted)}
-        #panel-calculator .pc-copy{padding:4px 10px;border-radius:5px;border:1px solid var(--border);background:var(--surface);color:var(--text-muted);font-size:11px;cursor:pointer;font-family:inherit;transition:all .15s}
-        #panel-calculator .pc-copy:hover{border-color:var(--accent);color:var(--accent)}
-        #panel-calculator .pc-disclaimer{font-size:11px;color:var(--text-muted);padding:10px 18px;border-top:1px solid var(--border);font-style:italic}
-        #panel-calculator .pc-badge{display:inline-flex;align-items:center;gap:6px;padding:4px 11px;border-radius:6px;font-size:12px;font-weight:600;border:1px solid}
-        #panel-calculator .pc-badge.found{background:#ecfdf5;color:#0e7f3e;border-color:#0e7f3e}
-        #panel-calculator .pc-badge.missing{background:#fdf0ee;color:#c52a1a;border-color:#c52a1a}
-      </style>
-
-      <div class="pc-card">
-        <div class="pc-inputs">
-          <div class="pc-field">
-            <label>Base SKU</label>
-            <input id="pc-sku" type="text" placeholder="e.g. 3-3-2"
-              onkeydown="if(event.key==='Enter')rprCalcFetch()">
-          </div>
-          <div class="pc-field">
-            <label>Pack Qty</label>
-            <input id="pc-qty" type="number" min="1" placeholder="e.g. 10"
-              onkeydown="if(event.key==='Enter')rprCalcFetch()">
-          </div>
-          <button class="pc-lookup-btn" id="pc-lookup-btn" onclick="rprCalcFetch()">Calculate</button>
-        </div>
-        <div id="pc-cog-status" style="margin-top:10px"></div>
-      </div>
-
-      <div class="pc-result-card" id="pc-results-card" style="display:none">
-        <div class="pc-result-header">
-          <div class="pc-result-title" id="pc-result-title">—</div>
-          <div class="pc-result-sub" id="pc-result-sub">—</div>
-        </div>
-        <table class="pc-table">
-          <thead>
-            <tr>
-              <th>Marketplace</th>
-              <th class="num">Per Unit</th>
-              <th class="num">Floor</th>
-              <th class="num">&#11088; Suggested</th>
-              <th class="num">Max</th>
-              <th></th>
-            </tr>
-          </thead>
-          <tbody id="pc-tbody"></tbody>
-        </table>
-        <div class="pc-disclaimer">* All prices include $5.25 shipping fee</div>
-      </div>
-
-    </div>
-  </div>
   </div>
 
 </div><!-- /app -->
@@ -9095,7 +9018,6 @@ function rprTab(tab) {
   document.getElementById('tab-' + tab).classList.add('active');
   document.getElementById('panel-' + tab).classList.add('active');
   if (tab === 'approval') renderApprovals();
-  if (tab === 'calculator') rprCalcReset();
 }
 
 async function refreshQueueCount() {
@@ -11147,143 +11069,6 @@ function awdHandleScan(raw) {
     _awdSetStep(1);
   }
 }
-
-
-// ════════════════════════════════════════════════════════
-// PRICE CALCULATOR
-// ════════════════════════════════════════════════════════
-(function() {
-  var _pcCogCache = {};
-  var _pcLastCog  = null;
-  var _pcLastSku  = '';
-
-  var SHIPPING    = 5.25;
-  var LANDED_MULT = 1.50;
-
-  var MKTS = [
-    { key: 'ebay',    label: 'eBay'               },
-    { key: 'amazon',  label: 'Amazon'             },
-    { key: 'walmart', label: 'Walmart'            },
-    { key: 'shopify', label: 'Shopify / XFITTING' },
-  ];
-
-  var TIER_BREAKS = [1, 2, 5, 10, 25, 50];
-
-  var MULTS = {
-    //        1pc    2-4    5-9    10-24  25-49  50+
-    ebay:    [1.770, 1.695, 1.670, 1.620, 1.570, 1.520],
-    amazon:  [1.800, 1.725, 1.700, 1.650, 1.600, 1.550],
-    walmart: [1.770, 1.695, 1.670, 1.620, 1.570, 1.520],
-    shopify: [1.750, 1.675, 1.650, 1.600, 1.550, 1.500],
-  };
-
-  var TIER_LABELS = ['1 pc', '2–4 pc', '5–9 pc', '10–24 pc', '25–49 pc', '50+ pc'];
-
-  function g(id) { return document.getElementById(id); }
-  function fmt$(n) { return '$' + Number(n).toFixed(2); }
-
-  function tierIdx(qty) {
-    var idx = 0;
-    for (var i = 0; i < TIER_BREAKS.length; i++) {
-      if (qty >= TIER_BREAKS[i]) idx = i;
-    }
-    return idx;
-  }
-
-  function calcPrices(landedCog1pc, qty, mkt) {
-    var mult     = MULTS[mkt][tierIdx(qty)];
-    var cogTotal = +(landedCog1pc * qty).toFixed(4);
-    var floor    = +(cogTotal * 1.40 + SHIPPING).toFixed(2);
-    var suggested= +Math.max(landedCog1pc * mult * qty + SHIPPING, floor).toFixed(2);
-    var max      = +(cogTotal * 2.00 + SHIPPING).toFixed(2);
-    var perUnit  = +(suggested / qty).toFixed(2);
-    return { floor: floor, suggested: suggested, max: max, perUnit: perUnit };
-  }
-
-  function renderResults(landedCog1pc, qty) {
-    var rows = '';
-    MKTS.forEach(function(mkt) {
-      var p = calcPrices(landedCog1pc, qty, mkt.key);
-      rows += '<tr>'
-        + '<td><span class="pc-mkt">' + mkt.label + '</span></td>'
-        + '<td class="num pc-unit">' + fmt$(p.perUnit) + '</td>'
-        + '<td class="num pc-floor">' + fmt$(p.floor) + '</td>'
-        + '<td class="num pc-suggested">' + fmt$(p.suggested) + '</td>'
-        + '<td class="num pc-max">' + fmt$(p.max) + '</td>'
-        + '<td><button class="pc-copy" onclick="rprCalcCopy(' + p.suggested + ',this)">Copy</button></td>'
-        + '</tr>';
-    });
-    g('pc-tbody').innerHTML = rows;
-  }
-
-  window.rprCalcFetch = async function() {
-    var sku = (g('pc-sku').value || '').trim().toUpperCase();
-    var qty = parseInt(g('pc-qty').value) || 0;
-
-    if (!sku) { rprToast('Enter a base SKU', 'warn'); g('pc-sku').focus(); return; }
-    if (qty < 1) { rprToast('Enter a pack qty', 'warn'); g('pc-qty').focus(); return; }
-
-    var btn = g('pc-lookup-btn');
-    btn.disabled = true;
-    btn.textContent = 'Looking up…';
-    g('pc-cog-status').innerHTML = '';
-    g('pc-results-card').style.display = 'none';
-
-    try {
-      var unitPrice;
-      if (_pcCogCache.hasOwnProperty(sku)) {
-        unitPrice = _pcCogCache[sku];
-      } else {
-        var data = await wFetch(WORKER_URL + '/repricer/cogs-lookup?sku=' + encodeURIComponent(sku));
-        unitPrice = (data.ok && data.unitPrice > 0) ? data.unitPrice : null;
-        _pcCogCache[sku] = unitPrice;
-      }
-
-      if (!unitPrice || unitPrice <= 0) {
-        g('pc-cog-status').innerHTML = '<span class="pc-badge missing">⚠️ ' + sku + ' not found in COGS sheet</span>';
-        rprToast('SKU not found in COGS sheet', 'warn');
-        return;
-      }
-
-      _pcLastCog = unitPrice;
-      _pcLastSku = sku;
-      var landed = +(unitPrice * LANDED_MULT).toFixed(4);
-
-      g('pc-cog-status').innerHTML = '<span class="pc-badge found">✓ ' + sku + ' found</span>';
-      g('pc-result-title').textContent = sku + ' — Qty ' + qty;
-      g('pc-result-sub').textContent = 'Tier: ' + TIER_LABELS[tierIdx(qty)];
-      renderResults(landed, qty);
-      g('pc-results-card').style.display = 'block';
-
-    } catch(e) {
-      rprToast('Lookup failed: ' + (e.message || 'unknown error'), 'error');
-    } finally {
-      btn.disabled = false;
-      btn.textContent = 'Calculate';
-    }
-  };
-
-  window.rprCalcReset = function() {
-    if (_pcLastCog !== null) {
-      var qty = parseInt(g('pc-qty') ? g('pc-qty').value : '') || 0;
-      if (qty > 0) {
-        var landed = +(_pcLastCog * LANDED_MULT).toFixed(4);
-        renderResults(landed, qty);
-        g('pc-results-card').style.display = 'block';
-      }
-    }
-  };
-
-  window.rprCalcCopy = function(price, btn) {
-    navigator.clipboard.writeText(Number(price).toFixed(2)).then(function() {
-      var orig = btn.textContent;
-      btn.textContent = '✓ Copied';
-      btn.style.color = '#0e7f3e';
-      setTimeout(function() { btn.textContent = orig; btn.style.color = ''; }, 1800);
-    }).catch(function() { rprToast('Copy failed', 'error'); });
-  };
-
-})();
 
 </script>
 
@@ -17516,7 +17301,7 @@ window.psVaExport = function() {
     });
   };
 
-  /* ── Skip message ────────────────────────────────── */
+  /* ── Skip message  ────────────────────────────────── */
   window.emSkip = function(idx) {
     emMessages.splice(idx, 1);
     emUpdateStats();
