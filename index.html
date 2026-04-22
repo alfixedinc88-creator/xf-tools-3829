@@ -1,7 +1,7 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-  <!-- XFITTING-BUILD-V114-CALC-DEBUG -->
+  <!-- XFITTING-BUILD-V114-CALC-20260422 -->
 <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate">
 <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&family=IBM+Plex+Sans:wght@300;400;500;600&display=swap" rel="stylesheet">
   <meta http-equiv="Pragma" content="no-cache">
@@ -11235,19 +11235,8 @@ function awdHandleScan(raw) {
       if (_pcCogCache.hasOwnProperty(sku)) {
         unitPrice = _pcCogCache[sku];
       } else {
-        var data = await wFetch(WORKER_URL + '/sheets?sheet=COGS');
-        var rows = data.values || [];
-        unitPrice = null;
-        console.log('[CALC] COGS sheet rows:', rows.length, '| looking for:', sku);
-        if (rows.length > 1) console.log('[CALC] First 3 col-A values:', rows.slice(1,4).map(function(r){return JSON.stringify(r[0]);}));
-        for (var i = 1; i < rows.length; i++) {
-          var r = rows[i];
-          if (r[0] && r[0].trim().toUpperCase() === sku) {
-            unitPrice = parseFloat(r[1]) || null;
-            break;
-          }
-        }
-        console.log('[CALC] unitPrice found:', unitPrice);
+        var data = await wFetch(WORKER_URL + '/repricer/cogs-lookup?sku=' + encodeURIComponent(sku));
+        unitPrice = (data.ok && data.unitPrice > 0) ? data.unitPrice : null;
         _pcCogCache[sku] = unitPrice;
       }
 
