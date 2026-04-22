@@ -1,7 +1,7 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-  <!-- XFITTING-BUILD-V114-CALC-20260422d -->
+  <!-- XFITTING-BUILD-V114-CALC-20260422e -->
 <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate">
 <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&family=IBM+Plex+Sans:wght@300;400;500;600&display=swap" rel="stylesheet">
   <meta http-equiv="Pragma" content="no-cache">
@@ -11235,13 +11235,26 @@ function awdHandleScan(raw) {
       if (_pcCogCache.hasOwnProperty(sku)) {
         unitPrice = _pcCogCache[sku];
       } else {
-        var data = await wFetch(WORKER_URL + '/repricer/cogs-lookup?sku=' + encodeURIComponent(sku));
-        unitPrice = (data.ok && data.unitPrice > 0) ? data.unitPrice : null;
+        var data = await wFetch(WORKER_URL + '/sheets?sheet=COGS');
+        var rows = data.values || [];
+        // Row 0 = headers (BaseSKU, Unit Price, LastUpdated, Vendor)
+        // Start at row 1 for data
+        unitPrice = null;
+        for (var i = 1; i < rows.length; i++) {
+          var r = rows[i];
+          var rowSku = (r[0] || '').toString().trim().toUpperCase();
+          if (rowSku === sku) {
+            // Strip $, commas, spaces before parsing
+            var raw = (r[1] || '').toString().replace(/[$,\s]/g, '');
+            unitPrice = parseFloat(raw) || null;
+            break;
+          }
+        }
+        console.log('[CALC] rows:', rows.length, '| match for', sku, ':', unitPrice, '| sample:', rows.slice(1,4).map(function(r){return r[0];}));
         _pcCogCache[sku] = unitPrice;
       }
 
       if (!unitPrice || unitPrice <= 0) {
-        console.log('[CALC] SKU not found. debug:', JSON.stringify(data));
         g('pc-cog-status').innerHTML = '<span class="pc-badge missing">⚠️ ' + sku + ' not found in COGS sheet</span>';
         rprToast('SKU not found in COGS sheet', 'warn');
         return;
