@@ -1,7 +1,7 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-  <!-- XFITTING-BUILD-V114-FEAT-20260428b -->
+  <!-- XFITTING-BUILD-V114-FEAT-20260428c -->
 <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate">
 <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&family=IBM+Plex+Sans:wght@300;400;500;600&display=swap" rel="stylesheet">
   <meta http-equiv="Pragma" content="no-cache">
@@ -12064,11 +12064,63 @@ function awdHandleScan(raw) {
       var casesStyle = invMode === "out" ? "font-weight:700;color:var(--text)" : "color:var(--text3)";
       var casesLabel = loc.cases + " cases" + (invMode === "out" ? " available" : " on hand");
 
-      el.innerHTML = "<div>" + partLabelHtml
-        + "<div class='iloc-name'>" + loc.location + "</div>"
-        + "<div class='iloc-cases' style='" + casesStyle + "'>" + casesLabel + "</div></div>"
-        + badge;
-      el.onclick = (function(l) { return function() { invPickLocDirect(l); }; })(loc);
+      if (invMode === "out") {
+        // Stock Out: expand inline to enter cases before adding to pull list
+        var formId = "inv-out-form-" + i;
+        var caseId = "inv-out-cases-" + i;
+        var badgeId = "inv-out-badge-" + i;
+        el.innerHTML = "<div style='display:flex;justify-content:space-between;align-items:center'>"
+          + "<div>" + partLabelHtml
+          + "<div class='iloc-name'>" + loc.location + "</div>"
+          + "<div class='iloc-cases' style='" + casesStyle + "'>" + casesLabel + "</div></div>"
+          + "<span class='iloc-badge ex' id='" + badgeId + "'>Pull</span></div>"
+          + "<div id='" + formId + "' style='display:none;margin-top:10px;padding-top:10px;border-top:1px solid var(--border)'>"
+          + "<div style='font-size:11px;font-weight:700;color:var(--text3);margin-bottom:4px'>CASES TO PULL</div>"
+          + "<div style='display:flex;gap:8px;align-items:center'>"
+          + "<input id='" + caseId + "' type='number' min='0.1' step='0.5' placeholder='0' "
+          + "style='width:90px;padding:7px 10px;border:1.5px solid var(--border);border-radius:7px;background:var(--bg);color:var(--text);font-size:14px;font-family:var(--mono)' "
+          + "onkeydown='if(event.key===\"Enter\"){event.preventDefault();invPickLocFromInline(" + i + ")}'>"
+          + "<button onclick='invPickLocFromInline(" + i + ")' "
+          + "style='padding:7px 16px;border-radius:7px;border:none;background:var(--accent);color:#fff;font-size:13px;font-weight:700;font-family:var(--sans);cursor:pointer'>Add to List</button>"
+          + "</div></div>";
+        el.style.display = "block";
+        el.style.padding = "10px 12px";
+        el.onclick = null;
+        el.querySelector("div").onclick = (function(idx, locEl, loc) { return function(e) {
+          // Collapse all other rows
+          list.querySelectorAll(".iloc-opt").forEach(function(other) {
+            if (other !== locEl) {
+              other.classList.remove("isel");
+              var f = document.getElementById("inv-out-form-" + idx);
+            }
+          });
+          // Collapse all other expanded forms
+          var allForms = list.querySelectorAll("[id^='inv-out-form-']");
+          var allBadges = list.querySelectorAll("[id^='inv-out-badge-']");
+          allForms.forEach(function(f) { if (f.id !== formId) f.style.display = 'none'; });
+          allBadges.forEach(function(b) { if (b.id !== badgeId) b.textContent = 'Pull'; });
+          var form = document.getElementById(formId);
+          var badge2 = document.getElementById(badgeId);
+          var isOpen = form && form.style.display !== 'none';
+          if (isOpen) {
+            form.style.display = 'none';
+            locEl.classList.remove('isel');
+            if (badge2) badge2.textContent = 'Pull';
+          } else {
+            locEl.classList.add('isel');
+            form.style.display = 'block';
+            if (badge2) badge2.textContent = '▾';
+            var ci = document.getElementById(caseId);
+            if (ci) setTimeout(function(){ ci.focus(); }, 50);
+          }
+        }; })(i, el, loc);
+      } else {
+        el.innerHTML = "<div>" + partLabelHtml
+          + "<div class='iloc-name'>" + loc.location + "</div>"
+          + "<div class='iloc-cases' style='" + casesStyle + "'>" + casesLabel + "</div></div>"
+          + badge;
+        el.onclick = (function(l) { return function() { invPickLocDirect(l); }; })(loc);
+      }
       list.appendChild(el);
     });
 
@@ -12350,6 +12402,23 @@ function awdHandleScan(raw) {
 
   // Direct object-based picker — avoids index mismatch between filtered display
   // array and full invPart.locations array. Always use this from invShowLocs.
+  window.invPickLocFromInline = function(idx) {
+    var caseId = "inv-out-cases-" + idx;
+    var ci = document.getElementById(caseId);
+    var cases = ci ? parseFloat(ci.value) : 0;
+    if (!cases || cases < 0.1) { invFlash("Enter number of cases", "error"); if (ci) ci.focus(); return; }
+    // Store cases on the selected loc object then fire the normal pick flow
+    if (!invSelLoc) { invFlash("No location selected", "error"); return; }
+    if (cases > parseFloat(invSelLoc.cases || 0)) {
+      invFlash("Exceeds available cases (" + invSelLoc.cases + ")", "error"); return;
+    }
+    invPullListPendingCases = cases;
+    invPickLocDirect(invSelLoc);
+    invPullListPendingCases = null;
+  };
+
+  var invPullListPendingCases = null;
+
   function invPickLocDirect(loc) {
     invSelLoc = loc;
     if (loc.partNum) {
@@ -12545,13 +12614,14 @@ function awdHandleScan(raw) {
     var key = part.partNum + '|' + loc.location;
     var exists = invPullList.some(function(x) { return x.key === key; });
     if (exists) { invFlash("Already in pull list", "warn"); return; }
+    var preFilled = invPullListPendingCases ? String(invPullListPendingCases) : '';
     invPullList.push({
       key:          key,
       partNum:      part.partNum,
       sku:          part.sku || part.partNum,
       name:         part.name || '',
       location:     loc.location,
-      cases:        '',   // fill in at location
+      cases:        preFilled,
       rowIndex:     loc.rowIndex,
       isPlaceholder: loc.isPlaceholder || false,
       masterRowIndex: loc.rowIndex
