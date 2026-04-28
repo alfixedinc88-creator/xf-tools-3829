@@ -1,7 +1,7 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-  <!-- XFITTING-BUILD-V114-CALC-20260422e -->
+  <!-- XFITTING-BUILD-V114-CALC-20260422f -->
 <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate">
 <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&family=IBM+Plex+Sans:wght@300;400;500;600&display=swap" rel="stylesheet">
   <meta http-equiv="Pragma" content="no-cache">
@@ -11235,7 +11235,7 @@ function awdHandleScan(raw) {
       if (_pcCogCache.hasOwnProperty(sku)) {
         unitPrice = _pcCogCache[sku];
       } else {
-        var data = await wFetch(WORKER_URL + '/sheets?sheet=COGS');
+        var data = await apiCall('/sheets?sheet=COGS');
         var rows = data.values || [];
         // Row 0 = headers (BaseSKU, Unit Price, LastUpdated, Vendor)
         // Start at row 1 for data
