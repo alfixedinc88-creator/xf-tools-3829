@@ -1,7 +1,7 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-  <!-- XFITTING-BUILD-V114-CALC-20260422f -->
+  <!-- XFITTING-BUILD-V114-FEAT-20260428b -->
 <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate">
 <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&family=IBM+Plex+Sans:wght@300;400;500;600&display=swap" rel="stylesheet">
   <meta http-equiv="Pragma" content="no-cache">
@@ -14477,6 +14477,21 @@ window.psCloseBatch = async function() {
       });
     } catch(e) { console.error('[PS] batch-close error for ' + carrier + ':', e); }
   }
+  // Auto Veeqo sync after batch close — any valid session (mobile/ops/mgmt)
+  if (psToken) {
+    try {
+      var vr = await fetch(PS_WORKER + '/veeqo/sync-manifest', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'X-Session-Token': psToken }
+      });
+      var vdata = await vr.json();
+      if (vdata.ok) {
+        var added = vdata.added !== undefined ? vdata.added : (vdata.synced || 0);
+        _psToast('Veeqo synced — ' + added + ' new orders added');
+        psLoadManifestFromSheet();
+      }
+    } catch(e) { console.error('[PS] auto veeqo sync error:', e); }
+  }
 };
 
 // ── Render scan list ──────────────────────────────────
@@ -14653,7 +14668,7 @@ window.psDoLookup = async function() {
     document.getElementById('ps-lr-sub').textContent    = v.sub;
     var fields = [];
     if (data.scan) {
-      fields.push({ label:'Scanned At',  val: psFmtTime(data.scan.timestamp) });
+      fields.push({ label:'Scanned At',  val: psFmtDateTime(data.scan.timestamp) });
       fields.push({ label:'Packed By',   val: data.scan.initials || '—' });
       fields.push({ label:'Carrier',     val: data.scan.carrier });
       if (data.scan.batchClosedAt) fields.push({ label:'Batch Closed', val: psFmtTime(data.scan.batchClosedAt) });
@@ -14827,6 +14842,12 @@ window.psFmtTime = function(iso) {
     hour:'numeric', minute:'2-digit', second:'2-digit',
     hour12:true, timeZone:'America/New_York'
   });
+};
+window.psFmtDateTime = function(iso) {
+  if (!iso) return '—';
+  var d = new Date(iso);
+  return d.toLocaleDateString('en-US',{ month:'short', day:'numeric', year:'numeric', timeZone:'America/New_York' })
+    + ' ' + d.toLocaleTimeString('en-US',{ hour:'numeric', minute:'2-digit', hour12:true, timeZone:'America/New_York' });
 };
 
 window.psTodayKey = function() {
