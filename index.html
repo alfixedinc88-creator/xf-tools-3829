@@ -1,7 +1,7 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-  <!-- XFITTING-BUILD-V114-FEAT-20260428d -->
+  <!-- XFITTING-BUILD-V114-FEAT-20260430 -->
 <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate">
 <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&family=IBM+Plex+Sans:wght@300;400;500;600&display=swap" rel="stylesheet">
   <meta http-equiv="Pragma" content="no-cache">
@@ -12020,10 +12020,19 @@ function awdHandleScan(raw) {
   function invShowLocs() {
     var allLocs = (invPart && invPart.locations) ? invPart.locations : [];
     // Both Stock In and Stock Out: only show locations with cases > 0 normally
-    var locs = allLocs.filter(function(l) { return parseFloat(l.cases) > 0; });
-    // For Stock Out: also collect zero-case locations to show as override option
+    // For Stock Out: use adjustedCases (after pending escrow) to determine availability
+    var locs = allLocs.filter(function(l) {
+      var avail = invMode === "out"
+        ? (l.adjustedCases !== undefined ? l.adjustedCases : parseFloat(l.cases) || 0)
+        : (parseFloat(l.cases) || 0);
+      return avail > 0;
+    });
+    // For Stock Out: zero-case locations = adjustedCases <= 0 (includes escrowed-out locations)
     var zeroLocs = invMode === "out"
-      ? allLocs.filter(function(l) { return parseFloat(l.cases) <= 0 && !l.isPlaceholder; })
+      ? allLocs.filter(function(l) {
+          var avail = l.adjustedCases !== undefined ? l.adjustedCases : parseFloat(l.cases) || 0;
+          return avail <= 0 && !l.isPlaceholder;
+        })
       : [];
     invSelLoc = null;
     var list = g("inv-loc-list");
@@ -12062,7 +12071,11 @@ function awdHandleScan(raw) {
         : "";
 
       var casesStyle = invMode === "out" ? "font-weight:700;color:var(--text)" : "color:var(--text3)";
-      var casesLabel = loc.cases + " cases" + (invMode === "out" ? " available" : " on hand");
+      var displayCases = invMode === "out" && loc.adjustedCases !== undefined ? loc.adjustedCases : parseFloat(loc.cases) || 0;
+      var pendingBadge = (invMode === "out" && loc.pendingCases > 0)
+        ? " <span style='font-size:11px;font-weight:600;color:var(--orange);background:var(--orange-bg);border:1px solid var(--orange);border-radius:4px;padding:1px 6px'>" + loc.pendingCases + " pending</span>"
+        : "";
+      var casesLabel = displayCases + " cases" + (invMode === "out" ? " available" : " on hand") + pendingBadge;
 
       if (invMode === "out") {
         // Stock Out: expand inline to enter cases before adding to pull list
@@ -12414,8 +12427,9 @@ function awdHandleScan(raw) {
     if (!cases || cases < 0.1) { invFlash("Enter number of cases", "error"); if (ci) ci.focus(); return; }
     // Store cases on the selected loc object then fire the normal pick flow
     if (!invSelLoc) { invFlash("No location selected", "error"); return; }
-    if (cases > parseFloat(invSelLoc.cases || 0)) {
-      invFlash("Exceeds available cases (" + invSelLoc.cases + ")", "error"); return;
+    var availCases = invSelLoc.adjustedCases !== undefined ? invSelLoc.adjustedCases : parseFloat(invSelLoc.cases || 0);
+    if (cases > availCases) {
+      invFlash("Exceeds available cases (" + availCases + ")", "error"); return;
     }
     invPullListPendingCases = cases;
     invPickLocDirect(invSelLoc);
