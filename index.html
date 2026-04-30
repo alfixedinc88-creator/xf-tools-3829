@@ -1,7 +1,7 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-  <!-- XFITTING-BUILD-V114-FEAT-20260430 -->
+  <!-- XFITTING-BUILD-V114-FEAT-20260430c -->
 <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate">
 <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&family=IBM+Plex+Sans:wght@300;400;500;600&display=swap" rel="stylesheet">
   <meta http-equiv="Pragma" content="no-cache">
@@ -14548,12 +14548,18 @@ function _psUpdateBatchBar() {
 }
 
 window.psCloseBatch = async function() {
-  if (psBatchClosed.ALL) return;
+  // If batch already closed, still run Veeqo sync in case it didn't fire last time
+  if (psBatchClosed.ALL) {
+    if (psToken) psAutoVeeqoSync();
+    return;
+  }
   var ts = new Date().toISOString();
   psBatchClosed.ALL = ts;
   localStorage.setItem('ps_batch_' + psTodayKey(), JSON.stringify(psBatchClosed));
   _psUpdateBatchBar();
   _psToast('Batch closed at ' + psFmtTime(ts));
+  // Veeqo sync first — capture all shipped orders before marking batch closed
+  if (psToken) await psAutoVeeqoSync();
   var carriers = ['UPS','USPS','Unknown'];
   for (var i = 0; i < carriers.length; i++) {
     var carrier = carriers[i];
@@ -14566,22 +14572,24 @@ window.psCloseBatch = async function() {
       });
     } catch(e) { console.error('[PS] batch-close error for ' + carrier + ':', e); }
   }
-  // Auto Veeqo sync after batch close — any valid session (mobile/ops/mgmt)
-  if (psToken) {
-    try {
-      var vr = await fetch(PS_WORKER + '/veeqo/sync-manifest', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json', 'X-Session-Token': psToken }
-      });
-      var vdata = await vr.json();
-      if (vdata.ok) {
-        var added = vdata.added !== undefined ? vdata.added : (vdata.synced || 0);
-        _psToast('Veeqo synced — ' + added + ' new orders added');
-        psLoadManifestFromSheet();
-      }
-    } catch(e) { console.error('[PS] auto veeqo sync error:', e); }
-  }
 };
+
+async function psAutoVeeqoSync() {
+  try {
+    var vr = await fetch(PS_WORKER + '/veeqo/sync-manifest', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'X-Session-Token': psToken }
+    });
+    var vdata = await vr.json();
+    if (vdata.ok) {
+      var added = vdata.added !== undefined ? vdata.added : (vdata.synced || 0);
+      _psToast('Veeqo synced — ' + added + ' new orders added');
+      psLoadManifestFromSheet();
+    } else {
+      console.error('[PS] Veeqo sync failed:', vdata.error);
+    }
+  } catch(e) { console.error('[PS] auto veeqo sync error:', e); }
+}
 
 // ── Render scan list ──────────────────────────────────
 window.psFilterScans = function(f, btn) {
