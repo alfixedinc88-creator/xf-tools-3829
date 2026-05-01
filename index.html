@@ -1,7 +1,7 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-  <!-- XFITTING-BUILD-V114-FEAT-20260430d -->
+  <!-- XFITTING-BUILD-V114-FEAT-20260430e -->
 <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate">
 <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&family=IBM+Plex+Sans:wght@300;400;500;600&display=swap" rel="stylesheet">
   <meta http-equiv="Pragma" content="no-cache">
@@ -4010,7 +4010,8 @@ async function loadWarehouseStock() {
       var casesRaw = r[8];
       var casesNum = (casesRaw !== '' && casesRaw !== null && casesRaw !== undefined) ? parseFloat(casesRaw) : null;
       if (!casesNum || casesNum <= 0) continue;  // only in-stock rows
-      var key = partNum.toLowerCase();
+      // Normalize key: strip spaces around '=' so "26-2-1 =2" matches "26-2-1=2"
+      var key = partNum.toLowerCase().replace(/\s*=\s*/g, '=').replace(/-+$/, '');
       if (!WH.stock[key]) WH.stock[key] = [];
       WH.stock[key].push({ partNum: partNum, location: String(r[7]||'').trim(), cases: String(casesRaw), casesNum: casesNum });
     }
@@ -4118,11 +4119,12 @@ async function toggleDiscontinued(sku) {
 // ── SKU MATCH LOGIC ──
 // Strip trailing dash from Amazon SKU for comparison
 function normalizeAmazonSKU(sku) {
-  return String(sku || '').trim().replace(/-+$/, '').toLowerCase();
+  // Strip spaces around '=' (e.g. "26-2-1 =2" → "26-2-1=2") and trailing dashes
+  return String(sku || '').trim().replace(/\s*=\s*/g, '=').replace(/-+$/, '').toLowerCase();
 }
 
 function baseSKU_awd(partNum) {
-  return String(partNum || '').split('=')[0].toLowerCase();
+  return String(partNum || '').trim().replace(/\s*=\s*/g, '=').split('=')[0].trim().toLowerCase();
 }
 
 // Check warehouse stock status for an Amazon SKU
