@@ -1,7 +1,7 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-  <!-- XFITTING-BUILD-V114-FEAT-20260430c -->
+  <!-- XFITTING-BUILD-V114-FEAT-20260430d -->
 <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate">
 <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&family=IBM+Plex+Sans:wght@300;400;500;600&display=swap" rel="stylesheet">
   <meta http-equiv="Pragma" content="no-cache">
@@ -3132,7 +3132,7 @@ function lookupUPC(partNum) {
   return u.inside || u.outside || '';
 }
 
-function baseSKU(partNum) { return partNum ? partNum.split('=')[0] : ''; }
+function baseSKU(partNum) { return partNum ? partNum.split('=')[0].trim() : ''; }
 
 // Look up warehouse short code from Products by base SKU
 function getWarehouseName(baseSkuStr) {
@@ -3205,7 +3205,7 @@ function doSearch(tab) {
         if (seen.has(key)) return;
         seen.add(key);
         const base     = baseSKU(r.partNum);
-        const suffix   = r.partNum.split('=')[1] || '';
+        const suffix   = (r.partNum.split('=')[1] || '').trim();
         const whName   = getWarehouseName(base);
         const label    = whName ? `${suffix}=${whName}` : suffix;
         const upcRec   = DB.upc.find(u => u.variant.toLowerCase() === r.partNum.toLowerCase());
@@ -3221,7 +3221,7 @@ function doSearch(tab) {
       // Rebuild label as suffix=warehouseName (Products col D short code)
       // Col B of AWD_Master has full product name — we want the short warehouse code
       const base    = baseSKU(awd.partNum);
-      const suffix  = awd.partNum.includes('=') ? awd.partNum.split('=')[1] : awd.partNum;
+      const suffix  = awd.partNum.includes('=') ? awd.partNum.split('=')[1].trim() : awd.partNum.trim();
       const whName  = getWarehouseName(base);
       const label   = whName ? (suffix + '=' + whName) : awd.label;
 
@@ -4672,8 +4672,8 @@ function buildLabelCopyText(amazonSku, casePrefix) {
     const partNum = String(awdRec.partNum || awdRec[6] || '').trim();
     upc = String(awdRec.upc || awdRec[2] || '').trim();
     // Rebuild label: suffix=warehouseName (same as cardAWD in warehouse app)
-    const suffix = partNum.includes('=') ? partNum.split('=')[1] : partNum;
-    const basePart = partNum.includes('=') ? partNum.split('=')[0] : partNum;
+    const suffix = partNum.includes('=') ? partNum.split('=')[1].trim() : partNum.trim();
+    const basePart = partNum.includes('=') ? partNum.split('=')[0].trim() : partNum.trim();
     const whName = getAWDWarehouseName(basePart);
     label = whName ? (suffix + '=' + whName) : suffix;
   }
