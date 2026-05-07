@@ -1,7 +1,7 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-  <!-- XFITTING-BUILD-V114-FEAT-20260430e -->
+  <!-- XFITTING-BUILD-V114-FEAT-20260501b -->
 <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate">
 <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&family=IBM+Plex+Sans:wght@300;400;500;600&display=swap" rel="stylesheet">
   <meta http-equiv="Pragma" content="no-cache">
@@ -14085,14 +14085,26 @@ function awdHandleScan(raw) {
       <div class="ps-section-header">
         <div>
           <div class="ps-section-title" style="font-size:15px;text-transform:none;letter-spacing:0">⚠️ Gap Report</div>
-          <div style="font-size:13px;color:var(--text2);margin-top:4px">In Veeqo manifest · no pack scan recorded · investigate before end of day</div>
+          <div style="font-size:13px;color:var(--text2);margin-top:4px">Three-way check: Veeqo manifest · Print Log · Pack Scan</div>
         </div>
         <button class="ps-btn-export" onclick="psExportGaps()">⬇ Export CSV</button>
+      </div>
+      <!-- Summary bar -->
+      <div id="ps-gap-summary" style="display:none;margin-bottom:14px;padding:14px 16px;background:var(--bg3);border-radius:10px;border:1px solid var(--border)">
+        <div style="display:flex;gap:20px;flex-wrap:wrap;align-items:center">
+          <div style="text-align:center"><div id="ps-gs-printed" style="font-size:22px;font-weight:700;font-family:var(--mono);color:var(--accent)">—</div><div style="font-size:11px;font-weight:700;color:var(--text3);text-transform:uppercase;letter-spacing:.6px">Printed</div></div>
+          <div style="text-align:center"><div id="ps-gs-scanned" style="font-size:22px;font-weight:700;font-family:var(--mono);color:var(--green)">—</div><div style="font-size:11px;font-weight:700;color:var(--text3);text-transform:uppercase;letter-spacing:.6px">Scanned</div></div>
+          <div style="text-align:center"><div id="ps-gs-missing" style="font-size:22px;font-weight:700;font-family:var(--mono);color:var(--red)">—</div><div style="font-size:11px;font-weight:700;color:var(--text3);text-transform:uppercase;letter-spacing:.6px">Missing</div></div>
+          <div style="text-align:center"><div id="ps-gs-unprinted" style="font-size:22px;font-weight:700;font-family:var(--mono);color:var(--orange)">—</div><div style="font-size:11px;font-weight:700;color:var(--text3);text-transform:uppercase;letter-spacing:.6px">Not Printed</div></div>
+        </div>
       </div>
       <div class="ps-filter-row">
         <button class="ps-filter-btn active" onclick="psFilterGaps('all',this)">All</button>
         <button class="ps-filter-btn" onclick="psFilterGaps('UPS',this)">UPS</button>
         <button class="ps-filter-btn" onclick="psFilterGaps('USPS',this)">USPS</button>
+        <button class="ps-filter-btn" style="border-color:var(--red);color:var(--red)" onclick="psFilterGaps('missing',this)">🔴 Missing</button>
+        <button class="ps-filter-btn" style="border-color:var(--orange);color:var(--orange)" onclick="psFilterGaps('unprinted',this)">🟡 Not Printed</button>
+        <button class="ps-filter-btn" style="border-color:var(--green);color:var(--green)" onclick="psFilterGaps('ok',this)">✅ OK</button>
       </div>
       <div id="ps-gap-list">
         <div class="ps-empty-state">
@@ -14381,7 +14393,7 @@ window.psSwitchTab = function(name) {
   if (name === 'scan')     { psFocusScan(); psRenderScanList(); }
   if (name === 'progress') { psLoadScans(); }
   if (name === 'lookup')   { psRenderLog(); }
-  if (name === 'gaps')     { psRenderGaps(); }
+  if (name === 'gaps')     { psLoadPrintLog().then(function(){ psRenderGaps(); }); }
 };
 
 // ── Focus ─────────────────────────────────────────────
@@ -14435,7 +14447,7 @@ function _psProcessScan(raw) {
   var inp      = document.getElementById('ps-scan-input');
   var tracking = psNormalizeTracking(raw);
   inp.value = '';
-  if (!tracking || tracking.length < 5) return;
+  if (!tracking) return; // rejected by format validation (DataMatrix garbage etc)
 
   var dupe = psTodayScans.find(function(s){ return s.tracking.toUpperCase() === tracking; });
   if (dupe) {
@@ -14483,8 +14495,26 @@ function _psProcessScan(raw) {
 // ── Normalize / detect carrier ────────────────────────
 window.psNormalizeTracking = function(raw) {
   var t = raw.trim().toUpperCase().replace(/\s+/g,'');
+
+  // Strip DataMatrix garbage prefixes from UPS Ground Saver 2D barcodes
+  // e.g. "AAA1Z..." -> "1Z...", "ZZ420..." -> "420..."
+  t = t.replace(/^A{2,}/, '');      // strip leading AAA, AA etc
+  t = t.replace(/^ZZ/, '');         // strip ZZ prefix
+  t = t.replace(/^A(?=420)/, '');   // strip single A before 420 routing code
+
+  // Strip USPS routing prefix 420XXXXX (5-digit zip)
   if (/^420\d{5}\d{22}$/.test(t)) return t.slice(8);
   if (/^420\d{5}\d{21}$/.test(t)) return t.slice(8);
+  if (/^420\d{5}/.test(t)) t = t.slice(8); // strip even if length varies
+
+  // After normalization validate it's a known tracking format
+  // UPS: 1Z + 16 chars = 18 total
+  // USPS: 20-22 digits
+  // Reject anything too long (DataMatrix garbage) or too short
+  var isUPS  = /^1Z[A-Z0-9]{16}$/.test(t);
+  var isUSPS = /^(94|93|92|95|9[0-9])\d{18,20}$/.test(t) || /^\d{20,22}$/.test(t) || /^[A-Z]{2}\d{9}[A-Z]{2}$/.test(t);
+  if (!isUPS && !isUSPS) return null; // reject non-tracking barcodes including DataMatrix garbage
+
   return t;
 };
 
@@ -14894,17 +14924,73 @@ window.psRenderLog = function() {
 window.psFilterGaps = function(f, btn) {
   psGapFilter = f;
   document.querySelectorAll('#ps-panel-gaps .ps-filter-btn').forEach(function(b){ b.classList.remove('active'); });
-  btn.classList.add('active');
+  if (btn) btn.classList.add('active');
   psRenderGaps();
 };
 
+// Load today's print log from worker
+window.psLoadPrintLog = async function() {
+  try {
+    var res  = await fetch(PS_WORKER + '/ship/print-log?date=' + psTodayKey(), {
+      headers: { 'X-Session-Token': psToken }
+    });
+    var data = await res.json();
+    if (data.ok && data.scans) { psPrintLog = data.scans; }
+  } catch(e) { console.log('[PS] could not load print log:', e.message); }
+};
+
 window.psRenderGaps = function() {
-  var list  = document.getElementById('ps-gap-list');
-  var items = psGapFilter === 'all' ? psGapRows : psGapRows.filter(function(g){ return g.carrier === psGapFilter; });
-  if (!psGapRows.length) { list.innerHTML = '<div class="ps-empty-state"><div class="ps-empty-icon">📄</div><div class="ps-empty-title">No gap data yet</div><div class="ps-empty-sub">Manifest is loading — check back shortly, or click Run Gap Analysis.</div></div>'; return; }
-  if (!items.length) { list.innerHTML = '<div class="ps-empty-state"><div class="ps-empty-icon">✓</div><div class="ps-empty-title">No gaps for this carrier</div></div>'; return; }
-  list.innerHTML = items.map(function(g){
-    return '<div class="ps-card"><div class="ps-card-row"><div class="ps-card-dot orange"></div><div class="ps-card-tracking">' + g.tracking + '</div><div class="ps-card-meta">' + _psCarrierBadge(g.carrier) + (g.orderNum ? '<span class="ps-badge ps-badge-blue">#' + g.orderNum + '</span>' : '') + (g.channel ? '<span class="ps-badge ps-badge-gray">' + g.channel + '</span>' : '') + (g.shipToState ? '<span class="ps-badge ps-badge-gray">' + g.shipToState + '</span>' : '') + '</div></div></div>';
+  var list = document.getElementById('ps-gap-list');
+  if (!psGapRows.length) {
+    list.innerHTML = '<div class="ps-empty-state"><div class="ps-empty-icon">📄</div><div class="ps-empty-title">No gap data yet</div><div class="ps-empty-sub">Manifest is loading — check back shortly, or click Run Gap Analysis.</div></div>';
+    document.getElementById('ps-gap-summary').style.display = 'none';
+    return;
+  }
+  // Build lookup sets
+  var printSet = new Set(psPrintLog.map(function(p){ return (p.tracking||'').toUpperCase(); }));
+  var scanSet  = new Set(psTodayScans.map(function(s){ return (s.tracking||'').toUpperCase(); }));
+  // Enrich with three-way status
+  var enriched = psGapRows.map(function(g) {
+    var t = (g.tracking||'').toUpperCase();
+    var printed = printSet.has(t);
+    var scanned = scanSet.has(t);
+    var status = (printed && scanned) ? 'ok' : printed ? 'missing' : scanned ? 'ok' : 'unprinted';
+    return Object.assign({}, g, { printed: printed, scanned: scanned, status: status });
+  });
+  // Summary
+  var nPrinted   = enriched.filter(function(r){ return r.printed; }).length;
+  var nScanned   = enriched.filter(function(r){ return r.scanned; }).length;
+  var nMissing   = enriched.filter(function(r){ return r.status === 'missing'; }).length;
+  var nUnprinted = enriched.filter(function(r){ return r.status === 'unprinted'; }).length;
+  document.getElementById('ps-gs-printed').textContent   = nPrinted;
+  document.getElementById('ps-gs-scanned').textContent   = nScanned;
+  document.getElementById('ps-gs-missing').textContent   = nMissing;
+  document.getElementById('ps-gs-unprinted').textContent = nUnprinted;
+  document.getElementById('ps-gap-summary').style.display = 'block';
+  // Filter
+  var items = enriched;
+  if      (psGapFilter === 'UPS')       items = enriched.filter(function(r){ return r.carrier === 'UPS'; });
+  else if (psGapFilter === 'USPS')      items = enriched.filter(function(r){ return r.carrier === 'USPS'; });
+  else if (psGapFilter === 'missing')   items = enriched.filter(function(r){ return r.status === 'missing'; });
+  else if (psGapFilter === 'unprinted') items = enriched.filter(function(r){ return r.status === 'unprinted'; });
+  else if (psGapFilter === 'ok')        items = enriched.filter(function(r){ return r.status === 'ok'; });
+  if (!items.length) { list.innerHTML = '<div class="ps-empty-state"><div class="ps-empty-icon">✅</div><div class="ps-empty-title">No items match this filter</div></div>'; return; }
+  list.innerHTML = items.map(function(g) {
+    var dotColor = g.status === 'ok' ? 'var(--green)' : g.status === 'missing' ? 'var(--red)' : 'var(--orange)';
+    var statusBadge = g.status === 'ok'
+      ? '<span class="ps-badge" style="background:var(--green-bg);color:var(--green);border:1px solid var(--green)">✅ Printed + Scanned</span>'
+      : g.status === 'missing'
+      ? '<span class="ps-badge" style="background:var(--red-bg);color:var(--red);border:1px solid var(--red)">🔴 Printed · Not Scanned</span>'
+      : '<span class="ps-badge" style="background:var(--orange-bg);color:var(--orange);border:1px solid var(--orange)">🟡 Not Printed</span>';
+    return '<div class="ps-card"><div class="ps-card-row">'
+      + '<div class="ps-card-dot" style="background:' + dotColor + '"></div>'
+      + '<div class="ps-card-tracking">' + g.tracking + '</div>'
+      + '<div class="ps-card-meta">'
+      + _psCarrierBadge(g.carrier) + statusBadge
+      + (g.orderNum ? '<span class="ps-badge ps-badge-blue">#' + g.orderNum + '</span>' : '')
+      + (g.channel  ? '<span class="ps-badge ps-badge-gray">' + g.channel + '</span>' : '')
+      + (g.shipToState ? '<span class="ps-badge ps-badge-gray">' + g.shipToState + '</span>' : '')
+      + '</div></div></div>';
   }).join('');
 };
 
