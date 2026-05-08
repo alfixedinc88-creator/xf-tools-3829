@@ -1,7 +1,7 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-  <!-- XFITTING-BUILD-V114-FEAT-20260501c -->
+  <!-- XFITTING-BUILD-V114-FEAT-20260501d -->
 <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate">
 <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&family=IBM+Plex+Sans:wght@300;400;500;600&display=swap" rel="stylesheet">
   <meta http-equiv="Pragma" content="no-cache">
@@ -3618,18 +3618,21 @@ async function processData(){
       const sku=(gf(r,'sku')||'').trim().toUpperCase();if(!sku)return;
       resMap[sku]={fcProc:pn(gf(r,'reserved_fc-processing')),fcTrans:pn(gf(r,'reserved_fc-transfers'))};
     });
-    // FBA Inventory 90d map
+    // FBA Inventory 90d map + FC Transfer map (col "Reserved FC Transfer")
     const invMap={};
+    const fcTransMap={};
     S.fba.forEach(r=>{
       const sku=(gf(r,'sku')||'').trim().toUpperCase();if(!sku)return;
       invMap[sku]=pn(gf(r,'units-shipped-t90'));
+      const fct=pn(gf(r,'Reserved FC Transfer'));
+      if(fct>0) fcTransMap[sku]=fct;
     });
     // Primary SKU list from FBA_Live (mirrors FILTER on FBA_Live!A)
     const source=S.live.length?S.live:S.fba;
     const seen=new Set();
     S.joined=source
       .filter(r=>{const s=skuOf(r);if(!s||seen.has(s))return false;seen.add(s);return true;})
-      .map(r=>buildRow(r,invMap,awdMap,resMap));
+      .map(r=>buildRow(r,invMap,awdMap,resMap,fcTransMap));
     S.loaded=true;
     renderDashboard();renderInv();renderRecs();updateBadges();
     const pill=ge('data-pill');
@@ -3641,15 +3644,15 @@ async function processData(){
     loadShipmentFromSheet();
   }catch(e){ge('up-err').style.display='flex';ge('up-err').textContent='Error: '+e.message;console.error(e);}
 }
-function buildRow(r,invMap,awdMap,resMap){
+function buildRow(r,invMap,awdMap,resMap,fcTransMap){
   const sku=skuOf(r),skuU=sku.toUpperCase();
   const asin=(gf(r,'asin')||gf(r,'ASIN')||'').trim();
   const name=gf(r,'product-name')||'';
   const fbaFul=pn(gf(r,'afn-fulfillable-quantity'));
   const res=resMap[skuU]||{};
   const fcProc=res.fcProc||0;
-  // FC Transfer: FBA_Inventory col "Reserved FC Transfer" is more accurate than FBA_Reserve
-  const fcTrans=pn(gf(r,'Reserved FC Transfer'))||res.fcTrans||0;
+  // FC Transfer: use FBA_Inventory "Reserved FC Transfer" (most accurate), fall back to FBA_Reserve
+  const fcTrans=(fcTransMap&&fcTransMap[skuU])||res.fcTrans||0;
   const awd=awdMap[skuU]||{};
   const awdAvail=awd.avail||0,awdReserved=awd.reserved||0,awdOutbound=awd.outbound||0;
   const sold90=invMap[skuU]||pn(gf(r,'units-shipped-t90'));
