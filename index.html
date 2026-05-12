@@ -1,7 +1,7 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-  <!-- XFITTING-BUILD-V114-FEAT-20260501h -->
+  <!-- XFITTING-BUILD-V114-FEAT-20260501j -->
 <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate">
 <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&family=IBM+Plex+Sans:wght@300;400;500;600&display=swap" rel="stylesheet">
   <meta http-equiv="Pragma" content="no-cache">
@@ -11652,61 +11652,82 @@ function awdHandleScan(raw) {
 </div>
 
 <div class="ipanel" id="inv-panel-audit">
-  <div id="inv-audit-content" style="padding:16px">
-    <!-- Approval mode toggle -->
-    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:16px;padding:12px 14px;background:var(--bg3);border-radius:10px;border:1px solid var(--border)">
-      <div>
-        <div style="font-size:13px;font-weight:700;color:var(--text)">Approval Mode</div>
-        <div style="font-size:12px;color:var(--text3);margin-top:2px" id="inv-audit-mode-desc">Manual — corrections go to Review queue</div>
+
+  <!-- PIN modal for mode toggle — fixed overlay -->
+  <div id="inv-audit-pin-modal" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,.45);z-index:999;align-items:center;justify-content:center">
+    <div style="background:var(--bg2);border-radius:14px;padding:24px;width:280px;box-shadow:0 8px 32px rgba(0,0,0,.18)">
+      <div style="font-size:14px;font-weight:700;color:var(--text);margin-bottom:4px">Management PIN</div>
+      <div style="font-size:12px;color:var(--text3);margin-bottom:14px">Required to change approval mode</div>
+      <div class="ipin-dots" style="margin-bottom:12px">
+        <div class="ipin-dot" id="inv-apd0"></div><div class="ipin-dot" id="inv-apd1"></div>
+        <div class="ipin-dot" id="inv-apd2"></div><div class="ipin-dot" id="inv-apd3"></div>
       </div>
+      <div class="ipin-pad">
+        <button class="ipin-key" onclick="invAuditPinKey('1')">1</button><button class="ipin-key" onclick="invAuditPinKey('2')">2</button><button class="ipin-key" onclick="invAuditPinKey('3')">3</button>
+        <button class="ipin-key" onclick="invAuditPinKey('4')">4</button><button class="ipin-key" onclick="invAuditPinKey('5')">5</button><button class="ipin-key" onclick="invAuditPinKey('6')">6</button>
+        <button class="ipin-key" onclick="invAuditPinKey('7')">7</button><button class="ipin-key" onclick="invAuditPinKey('8')">8</button><button class="ipin-key" onclick="invAuditPinKey('9')">9</button>
+        <button class="ipin-key" onclick="invAuditPinKey('back')">&#x232B;</button><button class="ipin-key" onclick="invAuditPinKey('0')">0</button><button class="ipin-key" onclick="invAuditPinKey('clear')" style="font-size:12px">CLR</button>
+      </div>
+      <div class="ipin-err" id="inv-audit-pin-err" style="display:none;margin-top:8px">Incorrect PIN</div>
+      <button onclick="invAuditCancelPin()" style="margin-top:14px;width:100%;padding:8px;border-radius:8px;border:1px solid var(--border);background:var(--bg3);color:var(--text2);font-size:13px;cursor:pointer">Cancel</button>
+    </div>
+  </div>
+
+  <!-- Approval mode card -->
+  <div class="icard">
+    <div class="icard-label">Approval Mode</div>
+    <div style="display:flex;justify-content:space-between;align-items:center">
+      <div style="font-size:12px;color:var(--text3)" id="inv-audit-mode-desc">Manual &#x2014; corrections go to Review queue</div>
       <div style="display:flex;gap:6px">
         <button id="inv-audit-mode-manual" class="btn btn-sm" style="font-size:12px;font-weight:700;background:var(--accent);color:#fff;border-color:var(--accent)" onclick="invAuditRequestMode('manual')">Manual</button>
         <button id="inv-audit-mode-auto" class="btn btn-sm" style="font-size:12px" onclick="invAuditRequestMode('auto')">Auto</button>
       </div>
     </div>
-    <!-- PIN modal for mode toggle -->
-    <div id="inv-audit-pin-modal" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,.45);z-index:999;align-items:center;justify-content:center">
-      <div style="background:var(--bg2);border-radius:14px;padding:24px;width:280px;box-shadow:0 8px 32px rgba(0,0,0,.18)">
-        <div style="font-size:14px;font-weight:700;color:var(--text);margin-bottom:4px">Management PIN</div>
-        <div style="font-size:12px;color:var(--text3);margin-bottom:14px">Required to change approval mode</div>
-        <div class="ipin-dots" style="margin-bottom:12px">
-          <div class="ipin-dot" id="inv-apd0"></div><div class="ipin-dot" id="inv-apd1"></div>
-          <div class="ipin-dot" id="inv-apd2"></div><div class="ipin-dot" id="inv-apd3"></div>
-        </div>
-        <div class="ipin-pad">
-          <button class="ipin-key" onclick="invAuditPinKey('1')">1</button><button class="ipin-key" onclick="invAuditPinKey('2')">2</button><button class="ipin-key" onclick="invAuditPinKey('3')">3</button>
-          <button class="ipin-key" onclick="invAuditPinKey('4')">4</button><button class="ipin-key" onclick="invAuditPinKey('5')">5</button><button class="ipin-key" onclick="invAuditPinKey('6')">6</button>
-          <button class="ipin-key" onclick="invAuditPinKey('7')">7</button><button class="ipin-key" onclick="invAuditPinKey('8')">8</button><button class="ipin-key" onclick="invAuditPinKey('9')">9</button>
-          <button class="ipin-key" onclick="invAuditPinKey('back')">&#x232B;</button><button class="ipin-key" onclick="invAuditPinKey('0')">0</button><button class="ipin-key" onclick="invAuditPinKey('clear')" style="font-size:12px">CLR</button>
-        </div>
-        <div class="ipin-err" id="inv-audit-pin-err" style="display:none;margin-top:8px">Incorrect PIN</div>
-        <button onclick="invAuditCancelPin()" style="margin-top:14px;width:100%;padding:8px;border-radius:8px;border:1px solid var(--border);background:var(--bg3);color:var(--text2);font-size:13px;cursor:pointer">Cancel</button>
-      </div>
-    </div>
-
-    <!-- Search -->
-    <div class="icard" id="inv-audit-search-card">
-      <div class="icard-label">Search Item to Audit</div>
-      <div class="isearch-row">
-        <input class="isearch-inp" id="inv-audit-search-inp" type="text" placeholder="Part# or name&#x2026;" onkeydown="if(event.key==='Enter')invAuditSearch()">
-        <button class="isearch-btn" onclick="invAuditSearch()">Go</button>
-      </div>
-      <div id="inv-audit-name-results"></div>
-    </div>
-    <!-- Results -->
-    <div class="icard" id="inv-audit-result-card" style="display:none">
-      <div class="icard-label">Audit Locations</div>
-      <div id="inv-audit-part-info" style="font-family:var(--mono);font-size:14px;font-weight:700;color:var(--text);margin-bottom:10px"></div>
-      <div id="inv-audit-loc-list"></div>
-      <button class="btn btn-secondary btn-sm" style="margin-top:10px" onclick="invAuditReset()">&#x2190; Search Again</button>
-    </div>
-    <!-- Initials -->
-    <div style="margin-top:12px;display:flex;align-items:center;gap:8px">
-      <label style="font-size:11px;font-weight:700;color:var(--text3)">INITIALS</label>
-      <input id="inv-audit-initials" type="text" maxlength="4" placeholder="e.g. DJ" autocomplete="off"
-        style="width:70px;padding:6px 10px;border:1.5px solid var(--border);border-radius:7px;background:var(--bg);color:var(--text);font-size:13px;font-family:var(--mono);text-transform:uppercase">
-    </div>
   </div>
+
+  <!-- Initials card -->
+  <div class="icard">
+    <div class="icard-label">Initials</div>
+    <input id="inv-audit-initials" type="text" maxlength="4" placeholder="e.g. DJ" autocomplete="off"
+      style="width:80px;padding:8px 10px;border:1.5px solid var(--border);border-radius:7px;background:var(--bg);color:var(--text);font-size:15px;font-family:var(--mono);text-transform:uppercase">
+  </div>
+
+  <!-- Search card -->
+  <div class="icard" id="inv-audit-search-card">
+    <div class="icard-label">Search Item to Audit</div>
+    <div class="isearch-row">
+      <input class="isearch-inp" id="inv-audit-search-inp" type="text" placeholder="Part# or name&#x2026;" onkeydown="if(event.key==='Enter')invAuditSearch()">
+      <button class="isearch-btn" onclick="invAuditSearch()">Go</button>
+    </div>
+    <div id="inv-audit-name-results"></div>
+  </div>
+
+  <!-- Results card -->
+  <div class="icard" id="inv-audit-result-card" style="display:none">
+    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px">
+      <div class="icard-label" style="margin:0">Audit Locations</div>
+      <button class="btn btn-secondary btn-sm" onclick="invAuditReset()">&#x2190; Search Again</button>
+    </div>
+    <div id="inv-audit-part-info" style="font-family:var(--mono);font-size:14px;font-weight:700;color:var(--text);margin-bottom:10px"></div>
+    <div id="inv-audit-loc-list"></div>
+  </div>
+
+  <!-- Location Rename card — management PIN required -->
+  <div class="icard" id="inv-rename-card">
+    <div class="icard-label">&#x1F4CD; Rename Locations</div>
+    <div style="font-size:12px;color:var(--text3);margin-bottom:12px">Fix non-standard location prefixes across all of Master List. Scan all prefixes first, then rename.</div>
+    <button class="btn btn-secondary btn-sm" onclick="invRenameScanPrefixes()" id="inv-rename-scan-btn">&#x1F50D; Scan All Location Prefixes</button>
+    <div id="inv-rename-prefix-list" style="margin-top:10px"></div>
+    <div id="inv-rename-confirm" style="display:none;margin-top:12px;padding:12px;background:var(--red-bg);border:1.5px solid var(--red);border-radius:10px">
+      <div style="font-size:13px;font-weight:700;color:var(--red);margin-bottom:6px" id="inv-rename-confirm-msg"></div>
+      <div style="display:flex;gap:8px">
+        <button class="btn btn-sm" style="background:var(--red);color:#fff;border-color:var(--red);font-weight:700" onclick="invRenameConfirm()" id="inv-rename-confirm-btn">Rename All</button>
+        <button class="btn btn-secondary btn-sm" onclick="invRenameCancel()">Cancel</button>
+      </div>
+    </div>
+    <div id="inv-rename-result" style="margin-top:10px"></div>
+  </div>
+
 </div>
 
 <script>
@@ -13649,11 +13670,17 @@ function awdHandleScan(raw) {
     });
     if (invAuditPinEntry.length === 4) {
       if (invAuditPinEntry === MPIN) {
-        // PIN correct — apply pending mode change
+        // PIN correct — apply pending action (mode change or rename)
         var modal = g('inv-audit-pin-modal');
         if (modal) modal.style.display = 'none';
-        if (invAuditPendingMode) invAuditSetMode(invAuditPendingMode);
-        invAuditPendingMode = null;
+        if (invAuditPendingMode) { invAuditSetMode(invAuditPendingMode); invAuditPendingMode = null; }
+        if (invRenamePending) {
+          // Show rename confirmation
+          var msg = g('inv-rename-confirm-msg');
+          if (msg) msg.textContent = 'Rename "' + invRenamePending.oldPrefix + '" → "' + invRenamePending.newPrefix + '" in all Master List rows?';
+          var conf = g('inv-rename-confirm');
+          if (conf) conf.style.display = 'block';
+        }
         invAuditPinEntry = '';
       } else {
         var err = g('inv-audit-pin-err');
@@ -13768,6 +13795,85 @@ function awdHandleScan(raw) {
     g('inv-audit-result-card').style.display = 'none';
     g('inv-audit-search-inp').value = '';
     g('inv-audit-name-results').innerHTML = '';
+  };
+
+  // ── LOCATION RENAME ──────────────────────────────────────────────────────────
+  var invRenamePending = null; // { oldPrefix, newPrefix, count }
+
+  window.invRenameScanPrefixes = function() {
+    var btn = g('inv-rename-scan-btn');
+    var list = g('inv-rename-prefix-list');
+    if (btn) btn.disabled = true;
+    list.innerHTML = '<div style="color:var(--text3);font-size:13px;padding:6px 0">Scanning Master List…</div>';
+    wFetch(W + '/inventory/location-prefixes')
+      .then(function(d) {
+        if (btn) btn.disabled = false;
+        if (!d || !d.prefixes) { list.innerHTML = '<div style="color:var(--red);font-size:13px">Failed to load prefixes</div>'; return; }
+        var prefixes = d.prefixes; // [{prefix, count, sample}]
+        if (!prefixes.length) { list.innerHTML = '<div style="color:var(--text3);font-size:13px">No locations found</div>'; return; }
+        list.innerHTML = '<div style="font-size:11px;font-weight:700;color:var(--text3);margin-bottom:8px;text-transform:uppercase;letter-spacing:.5px">Found ' + prefixes.length + ' prefixes</div>'
+          + prefixes.map(function(p) {
+            return '<div style="display:flex;align-items:center;gap:8px;padding:8px 10px;background:var(--bg3);border-radius:8px;margin-bottom:6px;border:1px solid var(--border)">'
+              + '<div style="flex:1">'
+              + '<div style="font-family:var(--mono);font-size:13px;font-weight:700">' + p.prefix + '</div>'
+              + '<div style="font-size:11px;color:var(--text3)">' + p.count + ' row' + (p.count!==1?'s':'') + ' · e.g. ' + p.sample + '</div>'
+              + '</div>'
+              + '<input placeholder="New prefix…" id="inv-rename-new-' + encodeURIComponent(p.prefix) + '"'
+              + ' style="width:120px;padding:5px 8px;border:1.5px solid var(--border);border-radius:6px;background:var(--bg);color:var(--text);font-size:12px;font-family:var(--mono)">'
+              + '<button onclick="invRenameRequest('' + p.prefix.replace(/'/g,"\'") + '')" '
+              + 'style="padding:5px 10px;border-radius:6px;border:none;background:var(--accent);color:#fff;font-size:12px;font-weight:700;cursor:pointer">Rename</button>'
+              + '</div>';
+          }).join('');
+      })
+      .catch(function(e) {
+        if (btn) btn.disabled = false;
+        list.innerHTML = '<div style="color:var(--red);font-size:13px">Error: ' + e.message + '</div>';
+      });
+  };
+
+  window.invRenameRequest = function(oldPrefix) {
+    var newInput = g('inv-rename-new-' + encodeURIComponent(oldPrefix));
+    var newPrefix = newInput ? newInput.value.trim() : '';
+    if (!newPrefix) { invFlash('Enter a new prefix', 'error'); return; }
+    if (newPrefix === oldPrefix) { invFlash('Same prefix — no change needed', 'warn'); return; }
+    // Require management PIN
+    invAuditPendingMode = null; // reuse PIN modal for rename
+    invRenamePending = { oldPrefix: oldPrefix, newPrefix: newPrefix };
+    invAuditPinEntry = '';
+    ['inv-apd0','inv-apd1','inv-apd2','inv-apd3'].forEach(function(id){ var d=g(id); if(d) d.classList.remove('filled'); });
+    var modal = g('inv-audit-pin-modal');
+    if (modal) modal.style.display = 'flex';
+  };
+
+  window.invRenameConfirm = function() {
+    if (!invRenamePending) return;
+    var btn = g('inv-rename-confirm-btn');
+    if (btn) btn.disabled = true;
+    wFetch(W + '/inventory/rename-locations', {
+      method: 'POST',
+      body: JSON.stringify({ oldPrefix: invRenamePending.oldPrefix, newPrefix: invRenamePending.newPrefix })
+    })
+    .then(function(d) {
+      if (btn) btn.disabled = false;
+      g('inv-rename-confirm').style.display = 'none';
+      if (d.ok) {
+        g('inv-rename-result').innerHTML = '<div style="padding:10px 12px;background:var(--green-bg);border:1px solid var(--green);border-radius:8px;font-size:13px;color:var(--green);font-weight:600">'
+          + '✓ Renamed ' + d.updated + ' row' + (d.updated!==1?'s':'') + ': ' + invRenamePending.oldPrefix + ' → ' + invRenamePending.newPrefix + '</div>';
+        invRenamePending = null;
+        setTimeout(function(){ invRenameScanPrefixes(); }, 1500);
+      } else {
+        g('inv-rename-result').innerHTML = '<div style="color:var(--red);font-size:13px">Error: ' + (d.error||'unknown') + '</div>';
+      }
+    })
+    .catch(function(e) {
+      if (btn) btn.disabled = false;
+      g('inv-rename-result').innerHTML = '<div style="color:var(--red);font-size:13px">Error: ' + e.message + '</div>';
+    });
+  };
+
+  window.invRenameCancel = function() {
+    g('inv-rename-confirm').style.display = 'none';
+    invRenamePending = null;
   };
 
 })();
