@@ -1,7 +1,7 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-  <!-- XFITTING-BUILD-V114-FEAT-20260501o -->
+  <!-- XFITTING-BUILD-V114-FEAT-20260501p -->
 <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate">
 <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&family=IBM+Plex+Sans:wght@300;400;500;600&display=swap" rel="stylesheet">
   <meta http-equiv="Pragma" content="no-cache">
@@ -13887,8 +13887,25 @@ function awdHandleScan(raw) {
       if (d.ok) {
         g('inv-rename-result').innerHTML = '<div style="padding:10px 12px;background:var(--green-bg);border:1px solid var(--green);border-radius:8px;font-size:13px;color:var(--green);font-weight:600">'
           + '✓ Renamed ' + d.updated + ' row' + (d.updated!==1?'s':'') + ': ' + invRenamePending.oldPrefix + ' → ' + invRenamePending.newPrefix + '</div>';
+        // Mark renamed row green in place — don't rebuild the whole list
+        var oldPfx = invRenamePending.oldPrefix;
+        var ridx = -1;
+        for (var ri=0; ri<invPrefixList.length; ri++) { if (invPrefixList[ri].prefix === oldPfx) { ridx = ri; break; } }
+        if (ridx >= 0) {
+          invPrefixList[ridx].prefix = invRenamePending.newPrefix;
+          var rowInp = g('inv-rename-new-' + ridx);
+          if (rowInp) {
+            var rowDiv = rowInp.parentElement;
+            if (rowDiv) {
+              var nameDiv = rowDiv.querySelector('div div:first-child');
+              if (nameDiv) nameDiv.textContent = invRenamePending.newPrefix;
+              rowDiv.style.borderColor = 'var(--green)';
+              rowDiv.style.background = 'var(--green-bg)';
+              rowInp.value = '';
+            }
+          }
+        }
         invRenamePending = null;
-        setTimeout(function(){ invRenameScanPrefixes(); }, 1500);
       } else {
         g('inv-rename-result').innerHTML = '<div style="color:var(--red);font-size:13px">Error: ' + (d.error||'unknown') + '</div>';
       }
