@@ -1,7 +1,7 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-  <!-- XFITTING-BUILD-V114-FEAT-20260501l -->
+  <!-- XFITTING-BUILD-V114-FEAT-20260501m -->
 <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate">
 <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&family=IBM+Plex+Sans:wght@300;400;500;600&display=swap" rel="stylesheet">
   <meta http-equiv="Pragma" content="no-cache">
@@ -13623,6 +13623,7 @@ function awdHandleScan(raw) {
   // Load audit mode from Config sheet (shared across all devices)
   window.invAuditLoadMode = function() {
     wFetch(W + '/inventory/audit-mode')
+      .then(function(r) { return r.json(); })
       .then(function(d) {
         if (d && d.mode) {
           invAuditAutoMode = (d.mode === 'auto');
@@ -13654,6 +13655,7 @@ function awdHandleScan(raw) {
     invAuditUpdateModeUI();
     invFlash('Saving approval mode…', 'success');
     wFetch(W + '/inventory/audit-mode', { method: 'POST', body: JSON.stringify({ mode: mode }) })
+      .then(function(r) { return r.json(); })
       .then(function(d) {
         invFlash('Approval mode: ' + (invAuditAutoMode ? 'Auto' : 'Manual') + ' (saved)', 'success');
       })
@@ -13699,6 +13701,7 @@ function awdHandleScan(raw) {
     if (!code) { invFlash('Enter a part number', 'error'); return; }
     g('inv-audit-name-results').innerHTML = '<div style="color:var(--text3);font-size:13px;padding:8px 0">Searching…</div>';
     wFetch(W + '/inventory/lookup?code=' + encodeURIComponent(code))
+      .then(function(r) { return r.json(); })
       .then(function(d) {
         g('inv-audit-name-results').innerHTML = '';
         if (!d || !d.partNum) { invFlash('Not found', 'error'); return; }
@@ -13766,12 +13769,13 @@ function awdHandleScan(raw) {
     };
     if (invAuditAutoMode) {
       wFetch(W + '/inventory/log', { method: 'POST', body: JSON.stringify(body) })
+        .then(function(r) { return r.json(); })
         .then(function(d) {
           if (!d || !d.rowIndex) { invFlash('Log failed', 'error'); return null; }
           return wFetch(W + '/inventory/verify', {
             method: 'POST',
             body: JSON.stringify({ rowIndex: d.rowIndex, action: 'Approved', verifiedBy: initials })
-          });
+          }).then(function(r) { return r.json(); });
         })
         .then(function(v) {
           if (!v) return;
@@ -13782,6 +13786,7 @@ function awdHandleScan(raw) {
         .catch(function(e) { invFlash('Error: ' + e.message, 'error'); });
     } else {
       wFetch(W + '/inventory/log', { method: 'POST', body: JSON.stringify(body) })
+        .then(function(r) { return r.json(); })
         .then(function() {
           invFlash('Queued for review: ' + loc.location, 'success');
           var rowEl = g('inv-audit-loc-' + idx);
@@ -13807,6 +13812,7 @@ function awdHandleScan(raw) {
     if (btn) btn.disabled = true;
     list.innerHTML = '<div style="color:var(--text3);font-size:13px;padding:6px 0">Scanning Master List…</div>';
     wFetch(W + '/inventory/location-prefixes')
+      .then(function(r) { return r.json(); })
       .then(function(d) {
         if (btn) btn.disabled = false;
         if (!d || !d.prefixes) { list.innerHTML = '<div style="color:var(--red);font-size:13px">Failed to load prefixes</div>'; return; }
@@ -13854,6 +13860,7 @@ function awdHandleScan(raw) {
       method: 'POST',
       body: JSON.stringify({ oldPrefix: invRenamePending.oldPrefix, newPrefix: invRenamePending.newPrefix })
     })
+    .then(function(r) { return r.json(); })
     .then(function(d) {
       if (btn) btn.disabled = false;
       g('inv-rename-confirm').style.display = 'none';
