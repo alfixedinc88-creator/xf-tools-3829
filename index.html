@@ -1,7 +1,7 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-  <!-- XFITTING-BUILD-V114-FEAT-20260501m -->
+  <!-- XFITTING-BUILD-V114-FEAT-20260501o -->
 <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate">
 <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&family=IBM+Plex+Sans:wght@300;400;500;600&display=swap" rel="stylesheet">
   <meta http-equiv="Pragma" content="no-cache">
@@ -13682,7 +13682,7 @@ function awdHandleScan(raw) {
           var msg = g('inv-rename-confirm-msg');
           if (msg) msg.textContent = 'Rename "' + invRenamePending.oldPrefix + '" → "' + invRenamePending.newPrefix + '" in all Master List rows?';
           var conf = g('inv-rename-confirm');
-          if (conf) conf.style.display = 'block';
+          if (conf) { conf.style.display = 'block'; conf.scrollIntoView({ behavior: 'smooth', block: 'center' }); }
         }
         invAuditPinEntry = '';
       } else {
@@ -13806,46 +13806,66 @@ function awdHandleScan(raw) {
   // ── LOCATION RENAME ──────────────────────────────────────────────────────────
   var invRenamePending = null; // { oldPrefix, newPrefix, count }
 
+  var invPrefixList = []; // stored so invRenameRequest can find by index
+
   window.invRenameScanPrefixes = function() {
     var btn = g('inv-rename-scan-btn');
     var list = g('inv-rename-prefix-list');
     if (btn) btn.disabled = true;
-    list.innerHTML = '<div style="color:var(--text3);font-size:13px;padding:6px 0">Scanning Master List…</div>';
+    list.innerHTML = '<div style="color:var(--text3);font-size:13px;padding:6px 0">Scanning Master List...</div>';
     wFetch(W + '/inventory/location-prefixes')
       .then(function(r) { return r.json(); })
       .then(function(d) {
         if (btn) btn.disabled = false;
         if (!d || !d.prefixes) { list.innerHTML = '<div style="color:var(--red);font-size:13px">Failed to load prefixes</div>'; return; }
-        var prefixes = d.prefixes; // [{prefix, count, sample}]
-        if (!prefixes.length) { list.innerHTML = '<div style="color:var(--text3);font-size:13px">No locations found</div>'; return; }
-        list.innerHTML = '<div style="font-size:11px;font-weight:700;color:var(--text3);margin-bottom:8px;text-transform:uppercase;letter-spacing:.5px">Found ' + prefixes.length + ' prefixes</div>'
-          + prefixes.map(function(p) {
-            return '<div style="display:flex;align-items:center;gap:8px;padding:8px 10px;background:var(--bg3);border-radius:8px;margin-bottom:6px;border:1px solid var(--border)">'
-              + '<div style="flex:1">'
-              + '<div style="font-family:var(--mono);font-size:13px;font-weight:700">' + p.prefix + '</div>'
-              + '<div style="font-size:11px;color:var(--text3)">' + p.count + ' row' + (p.count!==1?'s':'') + ' · e.g. ' + p.sample + '</div>'
-              + '</div>'
-              + '<input placeholder="New prefix…" id="inv-rename-new-' + encodeURIComponent(p.prefix) + '"'
-              + ' style="width:120px;padding:5px 8px;border:1.5px solid var(--border);border-radius:6px;background:var(--bg);color:var(--text);font-size:12px;font-family:var(--mono)">'
-              + '<button data-prefix="' + encodeURIComponent(p.prefix) + '" onclick="invRenameRequest(decodeURIComponent(this.dataset.prefix))" '
-              + 'style="padding:5px 10px;border-radius:6px;border:none;background:var(--accent);color:#fff;font-size:12px;font-weight:700;cursor:pointer">Rename</button>'
-              + '</div>';
-          }).join('');
+        invPrefixList = d.prefixes;
+        if (!invPrefixList.length) { list.innerHTML = '<div style="color:var(--text3);font-size:13px">No locations found</div>'; return; }
+        list.innerHTML = '';
+        var hdr = document.createElement('div');
+        hdr.style.cssText = 'font-size:11px;font-weight:700;color:var(--text3);margin-bottom:8px;text-transform:uppercase;letter-spacing:.5px';
+        hdr.textContent = 'Found ' + invPrefixList.length + ' prefixes';
+        list.appendChild(hdr);
+        invPrefixList.forEach(function(p, idx) {
+          var row = document.createElement('div');
+          row.style.cssText = 'display:flex;align-items:center;gap:8px;padding:8px 10px;background:var(--bg3);border-radius:8px;margin-bottom:6px;border:1px solid var(--border)';
+          var info = document.createElement('div');
+          info.style.flex = '1';
+          var name = document.createElement('div');
+          name.style.cssText = 'font-family:var(--mono);font-size:13px;font-weight:700';
+          name.textContent = p.prefix;
+          var sub = document.createElement('div');
+          sub.style.cssText = 'font-size:11px;color:var(--text3)';
+          sub.textContent = p.count + ' row' + (p.count!==1?'s':'') + ' · e.g. ' + p.sample;
+          info.appendChild(name); info.appendChild(sub);
+          var inp = document.createElement('input');
+          inp.id = 'inv-rename-new-' + idx;
+          inp.placeholder = 'New prefix...';
+          inp.style.cssText = 'width:120px;padding:5px 8px;border:1.5px solid var(--border);border-radius:6px;background:var(--bg);color:var(--text);font-size:12px;font-family:var(--mono)';
+          var renBtn = document.createElement('button');
+          renBtn.textContent = 'Rename';
+          renBtn.style.cssText = 'padding:5px 10px;border-radius:6px;border:none;background:var(--accent);color:#fff;font-size:12px;font-weight:700;cursor:pointer';
+          renBtn.onclick = (function(i) { return function() { invRenameRequest(i); }; })(idx);
+          row.appendChild(info); row.appendChild(inp); row.appendChild(renBtn);
+          list.appendChild(row);
+        });
       })
       .catch(function(e) {
         if (btn) btn.disabled = false;
         list.innerHTML = '<div style="color:var(--red);font-size:13px">Error: ' + e.message + '</div>';
       });
+
   };
 
-  window.invRenameRequest = function(oldPrefix) {
-    var newInput = g('inv-rename-new-' + encodeURIComponent(oldPrefix));
+  window.invRenameRequest = function(idx) {
+    var p = invPrefixList[idx];
+    if (!p) { invFlash('Prefix not found', 'error'); return; }
+    var newInput = g('inv-rename-new-' + idx);
     var newPrefix = newInput ? newInput.value.trim() : '';
     if (!newPrefix) { invFlash('Enter a new prefix', 'error'); return; }
-    if (newPrefix === oldPrefix) { invFlash('Same prefix — no change needed', 'warn'); return; }
+    if (newPrefix === p.prefix) { invFlash('Same prefix — no change needed', 'warn'); return; }
     // Require management PIN
     invAuditPendingMode = null; // reuse PIN modal for rename
-    invRenamePending = { oldPrefix: oldPrefix, newPrefix: newPrefix };
+    invRenamePending = { oldPrefix: p.prefix, newPrefix: newPrefix };
     invAuditPinEntry = '';
     ['inv-apd0','inv-apd1','inv-apd2','inv-apd3'].forEach(function(id){ var d=g(id); if(d) d.classList.remove('filled'); });
     var modal = g('inv-audit-pin-modal');
