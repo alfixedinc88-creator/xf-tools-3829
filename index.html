@@ -1,7 +1,7 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-  <!-- XFITTING-BUILD-V114-FEAT-20260501p -->
+  <!-- XFITTING-BUILD-V114-FEAT-20260501q -->
 <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate">
 <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&family=IBM+Plex+Sans:wght@300;400;500;600&display=swap" rel="stylesheet">
   <meta http-equiv="Pragma" content="no-cache">
@@ -13648,6 +13648,8 @@ function awdHandleScan(raw) {
     if (modal) modal.style.display = 'none';
     invAuditPendingMode = null;
     invAuditPinEntry = '';
+    // Re-enable any disabled rename buttons on cancel
+    document.querySelectorAll('#inv-rename-prefix-list button').forEach(function(b){ b.disabled=false; b.style.opacity=''; });
   };
 
   window.invAuditSetMode = function(mode) {
@@ -13844,7 +13846,10 @@ function awdHandleScan(raw) {
           var renBtn = document.createElement('button');
           renBtn.textContent = 'Rename';
           renBtn.style.cssText = 'padding:5px 10px;border-radius:6px;border:none;background:var(--accent);color:#fff;font-size:12px;font-weight:700;cursor:pointer';
-          renBtn.onclick = (function(i) { return function() { invRenameRequest(i); }; })(idx);
+          renBtn.onclick = (function(i, btn, inp) { return function() {
+            btn.disabled = true; // prevent double-fire
+            invRenameRequest(i);
+          }; })(idx, renBtn, inp);
           row.appendChild(info); row.appendChild(inp); row.appendChild(renBtn);
           list.appendChild(row);
         });
@@ -13901,7 +13906,10 @@ function awdHandleScan(raw) {
               if (nameDiv) nameDiv.textContent = invRenamePending.newPrefix;
               rowDiv.style.borderColor = 'var(--green)';
               rowDiv.style.background = 'var(--green-bg)';
-              rowInp.value = '';
+            rowInp.value = '';
+            // Disable rename button on this row to prevent re-rename
+            var rowBtns = rowDiv.querySelectorAll('button');
+            rowBtns.forEach(function(b){ b.disabled = true; b.style.opacity='0.4'; });
             }
           }
         }
