@@ -1,7 +1,7 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-  <!-- XFITTING-BUILD-V114-FEAT-20260501j -->
+  <!-- XFITTING-BUILD-V114-FEAT-20260501k -->
 <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate">
 <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&family=IBM+Plex+Sans:wght@300;400;500;600&display=swap" rel="stylesheet">
   <meta http-equiv="Pragma" content="no-cache">
@@ -13820,7 +13820,7 @@ function awdHandleScan(raw) {
               + '</div>'
               + '<input placeholder="New prefix…" id="inv-rename-new-' + encodeURIComponent(p.prefix) + '"'
               + ' style="width:120px;padding:5px 8px;border:1.5px solid var(--border);border-radius:6px;background:var(--bg);color:var(--text);font-size:12px;font-family:var(--mono)">'
-              + '<button onclick="invRenameRequest('' + p.prefix.replace(/'/g,"\'") + '')" '
+              + '<button data-prefix="' + encodeURIComponent(p.prefix) + '" onclick="invRenameRequest(decodeURIComponent(this.dataset.prefix))" '
               + 'style="padding:5px 10px;border-radius:6px;border:none;background:var(--accent);color:#fff;font-size:12px;font-weight:700;cursor:pointer">Rename</button>'
               + '</div>';
           }).join('');
