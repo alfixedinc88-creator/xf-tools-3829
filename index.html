@@ -1,7 +1,7 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-  <!-- XFITTING-BUILD-V114-FEAT-20260501r -->
+  <!-- XFITTING-BUILD-V114-FEAT-20260501s -->
 <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate">
 <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&family=IBM+Plex+Sans:wght@300;400;500;600&display=swap" rel="stylesheet">
   <meta http-equiv="Pragma" content="no-cache">
@@ -13879,7 +13879,30 @@ function awdHandleScan(raw) {
           });
           html += '</div>';
         });
+        // Add unlisted item section as HTML string at bottom
+        html += '<div style="margin-top:16px;padding:12px;background:var(--purple-bg);border:1.5px solid var(--purple);border-radius:10px">';
+        html += '<div style="font-size:13px;font-weight:700;color:var(--purple);margin-bottom:8px">&#x1F4E6; Found item not in system at this location?</div>';
+        html += '<div style="display:flex;gap:6px;margin-bottom:6px;align-items:center">';
+        html += '<input id="audloc-add-part" type="text" placeholder="Part# e.g. 27-3-1=5XX" autocomplete="off" ';
+        html += 'style="flex:2;padding:6px 10px;border:1.5px solid var(--border);border-radius:7px;background:var(--bg);color:var(--text);font-size:12px;font-family:var(--mono)">';
+        html += '<input id="audloc-add-cases" type="number" min="0.1" step="0.5" placeholder="Cases" ';
+        html += 'style="width:80px;padding:6px 8px;border:1.5px solid var(--border);border-radius:7px;background:var(--bg);color:var(--text);font-size:12px;font-family:var(--mono)"></div>';
+        html += '<div style="font-size:11px;font-weight:700;color:var(--text3);margin-bottom:4px">LOCATION</div>';
+        html += '<div style="display:flex;gap:6px;align-items:center;margin-bottom:8px">';
+        html += '<select id="audloc-add-loc-prefix" style="padding:5px 7px;border:1.5px solid var(--border);border-radius:7px;background:var(--bg);color:var(--text);font-size:12px;font-family:var(--mono)">';
+        html += '<option value="2FL=">2FL=</option><option value="BARN=">BARN=</option><option value="BASEMENT=">BASEMENT=</option>';
+        html += '<option value="BH OFFICE=">BH OFFICE=</option><option value="C1=">C1=</option><option value="C2=">C2=</option>';
+        html += '<option value="C3=">C3=</option><option value="C4=">C4=</option><option value="C5=">C5=</option><option value="FRONT=">FRONT=</option></select>';
+        html += '<input id="audloc-add-loc-shelf" type="text" placeholder="e.g. 5-1-3" autocomplete="off" ';
+        html += 'style="flex:1;padding:5px 8px;border:1.5px solid var(--border);border-radius:7px;background:var(--bg);color:var(--text);font-size:12px;font-family:var(--mono)"></div>';
+        html += '<button onclick="invAuditAddUnlisted()" style="padding:7px 14px;border-radius:7px;border:none;background:var(--purple);color:#fff;font-size:13px;font-weight:700;cursor:pointer">&#x2B; Log Found Item</button>';
+        html += '<div id="audloc-add-result" style="margin-top:6px"></div></div>';
         resEl.innerHTML = html;
+        // Store last search info for unlisted item default location
+        invAuditLastLocSearch = { prefix: prefix, shelf: shelf };
+        // Set default location in add form to match current search
+        var addPfx = g('audloc-add-loc-prefix'); if (addPfx) addPfx.value = prefix;
+        var addShf = g('audloc-add-loc-shelf'); if (addShf) addShf.value = shelf;
         // Override submit for loc mode to read from correct input
         d.results.forEach(function(item) {
           var btn = document.querySelector('#audloc-' + item.rowIndex + ' button');
@@ -13924,6 +13947,8 @@ function awdHandleScan(raw) {
           if (!v) return;
           invFlash('Corrected: ' + item.location + ' → ' + actualCases + ' cases', 'success');
           if (rowEl) { rowEl.style.borderColor='var(--green)'; rowEl.style.background='var(--green-bg)'; if(inp) inp.disabled=true; rowEl.querySelector('button').disabled=true; }
+          // "Where's the rest?" — if count was lower, offer to log missing cases at another location
+          if (diff < 0) { invAuditShowWhereRest(item, Math.abs(diff), rowEl); }
         })
         .catch(function(e) { invFlash('Error: ' + e.message, 'error'); });
     } else {
@@ -13932,10 +13957,104 @@ function awdHandleScan(raw) {
         .then(function() {
           invFlash('Queued for review: ' + item.location, 'success');
           if (rowEl) { rowEl.style.borderColor='var(--orange)'; rowEl.style.background='var(--orange-bg)'; rowEl.style.opacity='0.75'; rowEl.querySelector('button').disabled=true; if(inp) inp.disabled=true; }
+          // "Where's the rest?" — if count was lower, offer to log missing cases at another location
+          if (diff < 0) { invAuditShowWhereRest(item, Math.abs(diff), rowEl); }
         })
         .catch(function(e) { invFlash('Error: ' + e.message, 'error'); });
     }
   };
+
+  var invAuditLastLocSearch = {}; // {prefix, shelf} from last location search
+
+  // Log an item found on shelf that isn't in the system at that location
+  window.invAuditAddUnlisted = function() {
+    var partNum  = ((g('audloc-add-part') || {value:''}).value || '').trim().toUpperCase();
+    var cases    = parseFloat((g('audloc-add-cases') || {value:''}).value || 0);
+    var locPfx   = (g('audloc-add-loc-prefix') || {value:''}).value || '';
+    var locShelf = ((g('audloc-add-loc-shelf') || {value:''}).value || '').trim();
+    var location = locPfx + locShelf;
+    var initials = ((g('inv-audit-initials') || {value:''}).value || '').trim().toUpperCase();
+    var resEl    = g('audloc-add-result');
+    if (!partNum) { invFlash('Enter a part number', 'error'); return; }
+    if (!cases || cases < 0.1) { invFlash('Enter case count', 'error'); return; }
+    if (!location || locShelf.length < 2) { invFlash('Enter a location', 'error'); return; }
+    if (!initials) { invFlash('Enter your initials', 'error'); return; }
+    var note = '[AUDIT] Found on shelf — not previously listed at ' + location;
+    var body = { type: 'IN', partNum: partNum, sku: partNum.split('=')[0].trim(), name: '',
+      location: location, cases: cases, initials: initials, notes: note,
+      rowIndex: null, isNew: true, overwriteLocation: false };
+    if (resEl) resEl.innerHTML = '<div style="color:var(--text3);font-size:12px">Logging…</div>';
+    wFetch(W + '/inventory/log', { method: 'POST', body: JSON.stringify(body) })
+      .then(function(r) { return r.json(); })
+      .then(function(d) {
+        if (invAuditAutoMode && d && d.rowIndex) {
+          return wFetch(W + '/inventory/verify', { method: 'POST',
+            body: JSON.stringify({ rowIndex: d.rowIndex, action: 'Approved', verifiedBy: initials })
+          }).then(function(r) { return r.json(); });
+        }
+        return d;
+      })
+      .then(function() {
+        if (resEl) resEl.innerHTML = '<div style="color:var(--green);font-size:12px;font-weight:600">✓ Logged: ' + partNum + ' ×' + cases + ' at ' + location + (invAuditAutoMode ? '' : ' (pending review)') + '</div>';
+        var partInp = g('audloc-add-part'); if (partInp) partInp.value = '';
+        var casInp  = g('audloc-add-cases'); if (casInp) casInp.value = '';
+      })
+      .catch(function(e) { if (resEl) resEl.innerHTML = '<div style="color:var(--red);font-size:12px">Error: ' + e.message + '</div>'; });
+  };
+
+  // Show "Where's the rest?" prompt after a count-down audit
+  function invAuditShowWhereRest(item, missingCases, rowEl) {
+    var prompt = document.createElement('div');
+    prompt.style.cssText = 'margin-top:8px;padding:10px 12px;background:var(--orange-bg);border:1.5px solid var(--orange);border-radius:8px';
+    var opts = '<option value="">-- prefix --</option>' + '<option value="2FL=">2FL=</option><option value="BARN=">BARN=</option><option value="BASEMENT=">BASEMENT=</option><option value="BH OFFICE=">BH OFFICE=</option><option value="C1=">C1=</option><option value="C2=">C2=</option><option value="C3=">C3=</option><option value="C4=">C4=</option><option value="C5=">C5=</option><option value="FRONT=">FRONT=</option>';
+    prompt.innerHTML = '<div style="font-size:12px;font-weight:700;color:var(--orange);margin-bottom:6px">Where are the remaining ' + missingCases.toFixed(1) + ' cases?</div>'
+      + '<div style="font-size:11px;color:var(--text2);margin-bottom:6px">Log them at another location or skip if truly missing.</div>'
+      + '<div style="display:flex;gap:6px;align-items:center;margin-bottom:6px">'
+      + '<select class="wtr-pfx" style="padding:5px 7px;border:1.5px solid var(--border);border-radius:7px;background:var(--bg);color:var(--text);font-size:12px;font-family:var(--mono)">' + opts + '</select>'
+      + '<input class="wtr-shelf" type="text" placeholder="Shelf e.g. 5-1-4" autocomplete="off" style="flex:1;padding:5px 8px;border:1.5px solid var(--border);border-radius:7px;background:var(--bg);color:var(--text);font-size:12px;font-family:var(--mono)">'
+      + '<input class="wtr-cases" type="number" min="0.1" step="0.5" value="' + missingCases.toFixed(1) + '" style="width:70px;padding:5px 8px;border:1.5px solid var(--border);border-radius:7px;background:var(--bg);color:var(--text);font-size:12px;font-family:var(--mono)">'
+      + '</div>'
+      + '<div style="display:flex;gap:6px">'
+      + '<button class="wtr-log-btn" style="padding:5px 12px;border-radius:6px;border:none;background:var(--orange);color:#fff;font-size:12px;font-weight:700;cursor:pointer">Log at this location</button>'
+      + '<button onclick="this.parentElement.parentElement.remove()" style="padding:5px 10px;border-radius:6px;border:1px solid var(--border);background:var(--bg3);color:var(--text2);font-size:12px;cursor:pointer">Skip</button>'
+      + '</div>'
+      + '<div class="wtr-result" style="margin-top:4px"></div>';
+    if (rowEl) rowEl.after(prompt);
+    // Wire up log button
+    var logBtn = prompt.querySelector('.wtr-log-btn');
+    logBtn.onclick = function() {
+      var pfx    = (prompt.querySelector('.wtr-pfx').value || '').trim();
+      var shelf  = (prompt.querySelector('.wtr-shelf').value || '').trim();
+      var cases2 = parseFloat(prompt.querySelector('.wtr-cases').value || 0);
+      var loc2   = pfx + shelf;
+      var init2  = ((g('inv-audit-initials') || {value:''}).value || '').trim().toUpperCase();
+      var resEl2 = prompt.querySelector('.wtr-result');
+      if (!pfx || !shelf || shelf.length < 2) { resEl2.innerHTML = '<div style="color:var(--red);font-size:11px">Enter a location</div>'; return; }
+      if (!cases2 || cases2 < 0.1) { resEl2.innerHTML = '<div style="color:var(--red);font-size:11px">Enter cases</div>'; return; }
+      if (!init2) { resEl2.innerHTML = '<div style="color:var(--red);font-size:11px">Enter initials</div>'; return; }
+      var note2 = '[AUDIT] Found ' + cases2 + ' cases of ' + item.partNum + ' here (split from ' + item.location + ')';
+      var body2 = { type: 'IN', partNum: item.partNum, sku: item.partNum.split('=')[0].trim(), name: item.name||'',
+        location: loc2, cases: cases2, initials: init2, notes: note2,
+        rowIndex: null, isNew: true, overwriteLocation: false };
+      logBtn.disabled = true;
+      wFetch(W + '/inventory/log', { method: 'POST', body: JSON.stringify(body2) })
+        .then(function(r) { return r.json(); })
+        .then(function(d) {
+          if (invAuditAutoMode && d && d.rowIndex) {
+            return wFetch(W + '/inventory/verify', { method: 'POST',
+              body: JSON.stringify({ rowIndex: d.rowIndex, action: 'Approved', verifiedBy: init2 })
+            }).then(function(r) { return r.json(); });
+          }
+          return d;
+        })
+        .then(function() {
+          resEl2.innerHTML = '<div style="color:var(--green);font-size:11px;font-weight:600">✓ Logged ' + cases2 + ' at ' + loc2 + (invAuditAutoMode ? '' : ' — pending review') + '</div>';
+          prompt.querySelector('.wtr-log-btn').style.display = 'none';
+          prompt.querySelector('button:last-of-type').style.display = 'none';
+        })
+        .catch(function(e) { resEl2.innerHTML = '<div style="color:var(--red);font-size:11px">Error: ' + e.message + '</div>'; logBtn.disabled = false; });
+    };
+  }
 
   window.invAuditReset = function() {
     g('inv-audit-search-card').style.display = 'block';
