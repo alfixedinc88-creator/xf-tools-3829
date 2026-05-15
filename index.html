@@ -1,7 +1,7 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-  <!-- XFITTING-BUILD-V114-FEAT-20260501u -->
+  <!-- XFITTING-BUILD-V114-FEAT-20260501v -->
 <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate">
 <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&family=IBM+Plex+Sans:wght@300;400;500;600&display=swap" rel="stylesheet">
   <meta http-equiv="Pragma" content="no-cache">
@@ -14913,6 +14913,43 @@ function awdHandleScan(raw) {
     </div>
   </div>
 
+  <!-- ── Print Log Panel ── -->
+  <div class="ps-panel" id="ps-panel-printlog">
+    <div class="ps-info-box">
+      🖨️ <strong>Print Station Log.</strong> The DS9308 fixed-mount scanner at the Zebra printer logs each label automatically as it prints. Keep this tab open on the print station computer.
+    </div>
+    <div class="ps-scan-box" onclick="psFocusPrintLog()">
+      <div class="ps-scan-box-header">
+        <div class="ps-scan-icon">🖨️</div>
+        <div>
+          <div class="ps-scan-title">Print Station Scanner</div>
+          <div class="ps-scan-hint">Fixed DS9308 scanner logs labels automatically · field must stay focused</div>
+        </div>
+      </div>
+      <input class="ps-scan-input" id="ps-printlog-input" type="text" placeholder="Waiting for print scanner…"
+        autocomplete="off" autocorrect="off" autocapitalize="off" spellcheck="false"
+        onkeydown="psPrintLogHandleKey(event)">
+      <div class="ps-last-scan" id="ps-printlog-last-scan">
+        <div class="ps-ls-icon" id="ps-pl-ls-icon">⌖</div>
+        <div>
+          <div class="ps-ls-tracking" id="ps-pl-ls-tracking">No prints yet today</div>
+          <div class="ps-ls-meta" id="ps-pl-ls-meta">Waiting for first label…</div>
+        </div>
+      </div>
+    </div>
+    <div style="display:flex;gap:12px;margin-top:12px;flex-wrap:wrap">
+      <div class="ps-stat-card"><div class="ps-stat-num" id="ps-pl-count">0</div><div class="ps-stat-label">Printed Today</div></div>
+      <div class="ps-stat-card"><div class="ps-stat-num" id="ps-pl-ups-count">0</div><div class="ps-stat-label">UPS</div></div>
+      <div class="ps-stat-card"><div class="ps-stat-num" id="ps-pl-usps-count">0</div><div class="ps-stat-label">USPS</div></div>
+    </div>
+    <div class="ps-filter-row" style="margin-top:12px">
+      <button class="ps-filter-btn active" id="ps-pl-filter-all" onclick="psPrintLogFilter('all',this)">All</button>
+      <button class="ps-filter-btn" onclick="psPrintLogFilter('UPS',this)">UPS</button>
+      <button class="ps-filter-btn" onclick="psPrintLogFilter('USPS',this)">USPS</button>
+    </div>
+    <div id="ps-printlog-list" style="margin-top:8px"></div>
+  </div>
+
 </div><!-- /ps-content -->
 
 <!-- Switch Packer modal -->
@@ -15103,6 +15140,7 @@ window.psSwitchTab = function(name) {
   if (name === 'progress') { psLoadScans(); }
   if (name === 'lookup')   { psRenderLog(); }
   if (name === 'gaps')     { psLoadPrintLog().then(function(){ psRenderGaps(); }); }
+  if (name === 'printlog') { psPlLoadToday(); setTimeout(psFocusPrintLog, 100); }
 };
 
 // ── Focus ─────────────────────────────────────────────
@@ -15334,6 +15372,135 @@ async function psAutoVeeqoSync() {
 }
 
 // ── Render scan list ──────────────────────────────────
+// ════════════════════════════════════════════
+// PRINT LOG TAB
+// ════════════════════════════════════════════
+var psPlScans     = [];
+var psPlFilter    = 'all';
+var psPlLastScan  = {}; // tracking -> timestamp for 2s dedup
+var psPlDeupMs    = 2000;
+var psPlRefocusInterval = null;
+
+window.psFocusPrintLog = function() {
+  var inp = document.getElementById('ps-printlog-input');
+  if (inp) inp.focus();
+};
+
+// Auto-refocus every 2s when on printlog tab
+function psPlStartRefocus() {
+  if (psPlRefocusInterval) return;
+  psPlRefocusInterval = setInterval(function() {
+    var panel = document.getElementById('ps-panel-printlog');
+    if (panel && panel.classList.contains('active')) {
+      var inp = document.getElementById('ps-printlog-input');
+      if (inp && document.activeElement !== inp) inp.focus();
+    } else {
+      clearInterval(psPlRefocusInterval);
+      psPlRefocusInterval = null;
+    }
+  }, 2000);
+}
+
+window.psPrintLogHandleKey = function(e) {
+  if (e.key !== 'Enter') return;
+  var inp = document.getElementById('ps-printlog-input');
+  var raw = inp ? inp.value.trim() : '';
+  if (inp) inp.value = '';
+  if (!raw) return;
+  psPlProcessScan(raw);
+};
+
+function psPlProcessScan(raw) {
+  var clean   = psNormalizeTracking(raw);
+  if (!clean) return; // rejected by format filter
+  var carrier = psPlGetCarrier(clean);
+  if (!carrier) return; // not a tracking number
+  // 2-second dedup
+  var now = Date.now();
+  if (psPlLastScan[clean] && (now - psPlLastScan[clean]) < psPlDeupMs) return;
+  psPlLastScan[clean] = now;
+  var ts   = new Date().toISOString();
+  var entry = { timestamp: ts, tracking: clean, carrier: carrier };
+  psPlScans.unshift(entry);
+  psPlUpdateLastScan(entry);
+  psPlRenderList();
+  // Update badge
+  var badge = document.getElementById('ps-printlog-badge');
+  if (badge) { badge.textContent = psPlScans.length; badge.style.display = 'inline'; }
+  // Send to worker (non-blocking)
+  fetch(PS_WORKER + '/ship/print-log', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', 'X-Session-Token': psToken },
+    body: JSON.stringify({ tracking: clean })
+  }).catch(function(e) { console.error('[PL] log error:', e); });
+}
+
+function psPlGetCarrier(t) {
+  if (/^1Z[A-Z0-9]{16}$/.test(t)) return 'UPS';
+  if (/^(94|93|92|95|9[0-9])\d{18,20}$/.test(t) || /^\d{20,22}$/.test(t)) return 'USPS';
+  return null;
+}
+
+function psPlUpdateLastScan(entry) {
+  var icon = document.getElementById('ps-pl-ls-icon');
+  var trk  = document.getElementById('ps-pl-ls-tracking');
+  var meta = document.getElementById('ps-pl-ls-meta');
+  if (icon) { icon.textContent = '✓'; icon.style.color = 'var(--green)'; }
+  if (trk)  trk.textContent = entry.tracking;
+  if (meta) meta.textContent = entry.carrier + ' · ' + psFmtTime(entry.timestamp);
+}
+
+window.psPrintLogFilter = function(f, btn) {
+  psPlFilter = f;
+  document.querySelectorAll('#ps-panel-printlog .ps-filter-btn').forEach(function(b){ b.classList.remove('active'); });
+  if (btn) btn.classList.add('active');
+  psPlRenderList();
+};
+
+function psPlRenderList() {
+  var ups  = psPlScans.filter(function(s){ return s.carrier === 'UPS'; }).length;
+  var usps = psPlScans.filter(function(s){ return s.carrier === 'USPS'; }).length;
+  var cnt  = document.getElementById('ps-pl-count');
+  var upc  = document.getElementById('ps-pl-ups-count');
+  var uspc = document.getElementById('ps-pl-usps-count');
+  if (cnt)  cnt.textContent  = psPlScans.length;
+  if (upc)  upc.textContent  = ups;
+  if (uspc) uspc.textContent = usps;
+  var list   = document.getElementById('ps-printlog-list');
+  if (!list) return;
+  var items  = psPlFilter === 'all' ? psPlScans : psPlScans.filter(function(s){ return s.carrier === psPlFilter; });
+  if (!items.length) {
+    list.innerHTML = '<div class="ps-empty-state"><div class="ps-empty-icon">🖨️</div><div class="ps-empty-title">No ' + (psPlFilter === 'all' ? '' : psPlFilter + ' ') + 'prints yet today</div></div>';
+    return;
+  }
+  list.innerHTML = items.slice(0, 100).map(function(s) {
+    var cls = s.carrier === 'UPS' ? 'ps-badge-ups' : 'ps-badge-usps';
+    return '<div class="ps-card"><div class="ps-card-row">'
+      + '<div class="ps-card-dot green"></div>'
+      + '<div class="ps-card-tracking">' + s.tracking + '</div>'
+      + '<div class="ps-card-meta"><span class="ps-badge ' + cls + '">' + s.carrier + '</span>'
+      + '<span style="font-size:11px;color:var(--text3)">' + psFmtTime(s.timestamp) + '</span>'
+      + '</div></div></div>';
+  }).join('');
+}
+
+// Load today's print log from sheet on tab open
+window.psPlLoadToday = async function() {
+  try {
+    var res  = await fetch(PS_WORKER + '/ship/print-log?date=' + psTodayKey(), {
+      headers: { 'X-Session-Token': psToken }
+    });
+    var data = await res.json();
+    if (data.ok && data.scans) {
+      psPlScans = data.scans.slice().reverse(); // newest first
+      psPlRenderList();
+      var badge = document.getElementById('ps-printlog-badge');
+      if (badge && psPlScans.length) { badge.textContent = psPlScans.length; badge.style.display = 'inline'; }
+    }
+  } catch(e) { console.log('[PL] load error:', e.message); }
+  psPlStartRefocus();
+};
+
 window.psFilterScans = function(f, btn) {
   psScanFilter = f;
   document.querySelectorAll('#ps-panel-scan .ps-filter-btn').forEach(function(b){ b.classList.remove('active'); });
