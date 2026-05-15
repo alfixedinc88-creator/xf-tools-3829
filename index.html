@@ -15093,8 +15093,9 @@ function _psLaunchInner() {
 }
 
 // ── Auto-detect new day — runs every 60s ──────────────────────────────
-var _psLastDateKey = psTodayKey();
+var _psLastDateKey = null; // set on first interval tick after psTodayKey is defined
 setInterval(function() {
+  if (!_psLastDateKey) { _psLastDateKey = psTodayKey(); return; }
   var nowKey = psTodayKey();
   if (nowKey !== _psLastDateKey && psToken) {
     _psLastDateKey = nowKey;
