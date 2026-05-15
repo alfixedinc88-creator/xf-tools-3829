@@ -1,7 +1,7 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-  <!-- XFITTING-BUILD-V114-FEAT-20260501w -->
+  <!-- XFITTING-BUILD-V114-FEAT-20260501x -->
 <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate">
 <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&family=IBM+Plex+Sans:wght@300;400;500;600&display=swap" rel="stylesheet">
   <meta http-equiv="Pragma" content="no-cache">
@@ -15143,6 +15143,11 @@ window.psSwitchTab = function(name) {
   if (name === 'lookup')   { psRenderLog(); }
   if (name === 'gaps')     { psLoadPrintLog().then(function(){ psRenderGaps(); }); }
   if (name === 'printlog') { psPlLoadToday(); setTimeout(psFocusPrintLog, 100); }
+  if (name === 'scan')     { psLoadScans(); }
+  // Clear any existing refresh interval and start new one for active tab
+  if (window._psRefreshInterval) { clearInterval(window._psRefreshInterval); window._psRefreshInterval = null; }
+  if (name === 'scan')     { window._psRefreshInterval = setInterval(psLoadScans,     30000); }
+  if (name === 'printlog') { window._psRefreshInterval = setInterval(psPlLoadToday,   30000); }
 };
 
 // ── Focus ─────────────────────────────────────────────
