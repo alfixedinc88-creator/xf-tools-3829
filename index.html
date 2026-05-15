@@ -1,7 +1,7 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-  <!-- XFITTING-BUILD-V114-FEAT-20260501s -->
+  <!-- XFITTING-BUILD-V114-FEAT-20260501u -->
 <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate">
 <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&family=IBM+Plex+Sans:wght@300;400;500;600&display=swap" rel="stylesheet">
   <meta http-equiv="Pragma" content="no-cache">
@@ -14947,8 +14947,8 @@ var PS_PIN_MGMT   = '6523';
 var PS_IGNORED_FBA = ['amazon channel fba'];
 
 // State
-var psToken      = null;
-var psRole       = null;   // 'mobile' | 'mgmt'
+var psToken      = sessionStorage.getItem('ps_token') || null;
+var psRole       = sessionStorage.getItem('ps_role') || null;   // 'mobile' | 'mgmt'
 var psInitials   = '';
 var psTodayScans = [];
 var psManifest   = [];
@@ -14956,6 +14956,8 @@ var psGapRows    = [];
 var psScanFilter = 'all';
 var psGapFilter  = 'all';
 var psBatchClosed = { ALL: null };
+// Restore initials from session
+if (!psInitials) psInitials = sessionStorage.getItem('ps_initials') || '';
 
 // Called by main app launchApp('packship')
 window.psOnLaunch = function() {
@@ -14991,6 +14993,9 @@ window.psSignInOps = async function() {
     psToken    = data.token;
     psRole     = 'mobile';
     psInitials = initials;
+    sessionStorage.setItem('ps_token', psToken);
+    sessionStorage.setItem('ps_role', psRole);
+    sessionStorage.setItem('ps_initials', psInitials);
     err.textContent = '';
     _psLaunchInner();
   } catch(e) {
@@ -15015,6 +15020,9 @@ window.psSignInMgmt = async function() {
     psToken    = data.token;
     psRole     = 'mgmt';
     psInitials = 'MGR';
+    sessionStorage.setItem('ps_token', psToken);
+    sessionStorage.setItem('ps_role', psRole);
+    sessionStorage.setItem('ps_initials', psInitials);
     err.textContent = '';
     _psLaunchInner();
   } catch(e) {
@@ -15046,10 +15054,33 @@ function _psLaunchInner() {
   psFocusScan();
 }
 
+// ── Auto-detect new day — runs every 60s ──────────────────────────────
+var _psLastDateKey = psTodayKey();
+setInterval(function() {
+  var nowKey = psTodayKey();
+  if (nowKey !== _psLastDateKey && psToken) {
+    _psLastDateKey = nowKey;
+    // New day — reset batch state and reload data
+    psBatchClosed = { ALL: null };
+    psTodayScans  = [];
+    psManifest    = [];
+    psGapRows     = [];
+    var saved = localStorage.getItem('ps_batch_' + nowKey);
+    if (saved) psBatchClosed = JSON.parse(saved);
+    _psUpdateBatchBar();
+    psLoadScans();
+    psLoadManifestFromSheet();
+    _psToast('New day detected — scan data refreshed');
+  }
+}, 60000);
+
 window.psSignOut = function() {
   psToken = null; psRole = null; psInitials = '';
   psTodayScans = []; psManifest = []; psGapRows = [];
   psBatchClosed = { ALL: null };
+  sessionStorage.removeItem('ps_token');
+  sessionStorage.removeItem('ps_role');
+  sessionStorage.removeItem('ps_initials');
   document.getElementById('ps-inp-initials').value  = '';
   document.getElementById('ps-inp-mgmt-pin').value  = '';
   document.getElementById('ps-err-ops').textContent  = '';
@@ -15275,12 +15306,13 @@ window.psCloseBatch = async function() {
     var carrier = carriers[i];
     if (!psTodayScans.some(function(s){ return s.carrier === carrier; })) continue;
     try {
-      await fetch(PS_WORKER + '/ship/batch-close', {
+      var bcRes = await fetch(PS_WORKER + '/ship/batch-close', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', 'X-Session-Token': psToken },
         body: JSON.stringify({ carrier: carrier, initials: psInitials })
       });
-    } catch(e) { console.error('[PS] batch-close error for ' + carrier + ':', e); }
+      if (!bcRes.ok) { _psToast('Batch close error for ' + carrier + ' (' + bcRes.status + ')', 'error'); }
+    } catch(e) { _psToast('Batch close failed: ' + e.message, 'error'); console.error('[PS] batch-close error:', e); }
   }
 };
 
