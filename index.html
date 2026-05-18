@@ -4116,7 +4116,7 @@ function awdShowUnmappedAsins(unmapped, totalCount) {
       + '<div style="font-size:11px;color:#9CA3AF;min-width:80px">t90: ' + (item.velocity ? item.velocity.t90 : 0) + ' units</div>'
       + '<input id="awd-sku-' + item.asin + '" type="text" placeholder="e.g. 23-2-1=2" value="' + (item.currentSku||'') + '"'
       + ' style="flex:1;min-width:140px;padding:5px 8px;border:1.5px solid #DDE0E6;border-radius:6px;font-size:12px;font-family:var(--mono,monospace)">'
-      + '<button onclick="awdSaveAsinMapping('' + item.asin + '')"'
+      + '<button data-asin="' + item.asin + '" onclick="awdSaveAsinMapping(this.dataset.asin)"'
       + ' style="padding:5px 12px;border-radius:6px;border:none;background:#1A56DB;color:#fff;font-size:12px;font-weight:700;cursor:pointer;white-space:nowrap">Save</button>';
     list.appendChild(row);
   });
