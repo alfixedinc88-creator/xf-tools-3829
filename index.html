@@ -1,7 +1,7 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-  <!-- XFITTING-BUILD-V114-FEAT-20260501z -->
+  <!-- XFITTING-BUILD-V114-FEAT-20260501z2 -->
 <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate">
 <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&family=IBM+Plex+Sans:wght@300;400;500;600&display=swap" rel="stylesheet">
   <meta http-equiv="Pragma" content="no-cache">
@@ -2525,6 +2525,7 @@ input[type=checkbox]{width:15px;height:15px;cursor:pointer;accent-color:var(--bl
             <div style="font-size:14px;font-weight:700;color:#1A56DB;margin-bottom:3px">&#x26A1; Sync from Amazon SP-API</div>
             <div style="font-size:12px;color:#4B5563">Pulls live FBA inventory, AWD inventory &amp; reserves directly. No CSV downloads needed.</div>
             <div id="awd-sync-status" style="font-size:11px;color:#9CA3AF;margin-top:4px;font-family:'DM Mono',monospace"></div>
+            <div id="awd-velocity-status" style="font-size:11px;color:#9CA3AF;margin-top:2px;font-family:'DM Mono',monospace;display:none"></div>
           </div>
           <button id="awd-amazon-sync-btn" onclick="awdAmazonSync()"
             style="padding:10px 22px;border-radius:8px;border:none;background:#1A56DB;color:#fff;font-size:13px;font-weight:700;cursor:pointer;white-space:nowrap">
@@ -3957,40 +3958,136 @@ function dlCSV(rows,fname){
   const a=document.createElement('a');a.href=URL.createObjectURL(new Blob([csv],{type:'text/csv'}));a.download=fname;a.click();
 }
 // ── SYNC FROM AMAZON ─────────────────────────────────────────────────────────
+var AWD_VELOCITY_POLL_KEY = 'awd_velocity_report';
+var _awdVelocityPollTimer = null;
+
+// On planner load — resume polling if a report was in progress
+function awdCheckPendingVelocity() {
+  var saved = localStorage.getItem(AWD_VELOCITY_POLL_KEY);
+  if (!saved) return;
+  try {
+    var info = JSON.parse(saved);
+    if (info.reportId && info.status !== 'DONE') {
+      var vstatus = ge('awd-velocity-status');
+      if (vstatus) { vstatus.style.display = 'block'; vstatus.textContent = '⏳ Velocity report resuming… (requested ' + new Date(info.requestedAt).toLocaleTimeString('en-US',{hour:'numeric',minute:'2-digit',hour12:true,timeZone:'America/New_York'}) + ')'; }
+      awdStartVelocityPolling(info.reportId);
+    }
+  } catch(e) {}
+}
+
 async function awdAmazonSync() {
   var btn    = ge('awd-amazon-sync-btn');
   var status = ge('awd-sync-status');
-  if (btn) { btn.disabled = true; btn.textContent = '⏳ Syncing…'; }
+  var vstatus = ge('awd-velocity-status');
+  if (btn) { btn.disabled = true; btn.textContent = '⏳ Syncing inventory…'; }
   if (status) status.textContent = 'Calling Amazon SP-API…';
+  if (vstatus) vstatus.style.display = 'none';
+
+  // Step 1: Sync inventory quantities
   try {
     var res  = await wFetch('https://xfitting-lookup.alfixedinc88.workers.dev/awd/amazon-sync', { method: 'POST' });
     var data = await res.json();
     if (data.ok) {
       var ts = new Date(data.syncedAt).toLocaleString('en-US',{ month:'short', day:'numeric', hour:'numeric', minute:'2-digit', hour12:true, timeZone:'America/New_York' });
-      if (status) status.textContent = '✓ Synced at ' + ts + ' · ' + data.fbaCount + ' FBA SKUs · ' + data.awdCount + ' AWD SKUs';
-      if (btn) { btn.textContent = '✓ Synced'; btn.style.background = 'var(--green)'; }
+      if (status) status.textContent = '✓ Inventory synced at ' + ts + ' · ' + data.fbaCount + ' FBA · ' + data.awdCount + ' AWD SKUs';
+      if (btn) { btn.textContent = '⏳ Requesting velocity…'; }
       [['fba', data.fbaCount+' SKUs'],['live', data.fbaCount+' SKUs'],['awd', data.awdCount+' SKUs'],['res', data.fbaCount+' SKUs']].forEach(function(x){
         var ico=ge('ico-'+x[0]); if(ico) ico.textContent='✅';
         var st=ge('st-'+x[0]); if(st){ st.textContent=x[1]+' (from API)'; st.className='ust ok'; }
         var zone=ge('zone-'+x[0]); if(zone) zone.classList.add('loaded');
       });
       if(ge('proc-btn')) ge('proc-btn').disabled=false;
-      awd_planner_toast('Amazon sync complete — ' + data.fbaCount + ' FBA + ' + data.awdCount + ' AWD SKUs', 'success');
       setTimeout(function(){ if(typeof loadAWDPlannerDB === 'function') loadAWDPlannerDB(); }, 800);
     } else {
       if (status) status.textContent = 'Error: ' + (data.error || 'unknown');
-      if (btn) { btn.style.background = 'var(--red)'; btn.textContent = '⚠ Failed — retry'; }
-      awd_planner_toast('Sync failed: ' + (data.error || 'unknown'), 'error');
+      if (btn) { btn.disabled=false; btn.style.background='var(--red)'; btn.textContent='⚠ Failed — retry'; }
+      return;
     }
   } catch(e) {
     if (status) status.textContent = 'Error: ' + e.message;
-    if (btn) { btn.style.background = 'var(--red)'; btn.textContent = '⚠ Failed — retry'; }
-  } finally {
-    setTimeout(function(){
-      if (btn && btn.textContent.includes('Syncing')) { btn.disabled=false; btn.textContent='⚡ Sync from Amazon'; }
-    }, 3000);
+    if (btn) { btn.disabled=false; btn.style.background='var(--red)'; btn.textContent='⚠ Failed — retry'; }
+    return;
+  }
+
+  // Step 2: Request velocity report
+  try {
+    var vres  = await wFetch('https://xfitting-lookup.alfixedinc88.workers.dev/awd/amazon-velocity-request', { method: 'POST' });
+    var vdata = await vres.json();
+    if (vdata.ok && vdata.reportId) {
+      localStorage.setItem(AWD_VELOCITY_POLL_KEY, JSON.stringify({ reportId: vdata.reportId, requestedAt: vdata.requestedAt, status: 'IN_QUEUE' }));
+      if (vstatus) { vstatus.style.display = 'block'; vstatus.textContent = '⏳ Velocity report requested — processing (est. 2–30 min)…'; }
+      if (btn) { btn.disabled=false; btn.style.background=''; btn.textContent='⚡ Sync from Amazon'; }
+      awd_planner_toast('Inventory synced — velocity report processing in background', 'success');
+      awdStartVelocityPolling(vdata.reportId);
+    } else {
+      if (vstatus) { vstatus.style.display='block'; vstatus.textContent = 'Velocity request failed: ' + (vdata.error||'unknown'); }
+      if (btn) { btn.disabled=false; btn.textContent='⚡ Sync from Amazon'; }
+    }
+  } catch(e) {
+    if (vstatus) { vstatus.style.display='block'; vstatus.textContent = 'Velocity request error: ' + e.message; }
+    if (btn) { btn.disabled=false; btn.textContent='⚡ Sync from Amazon'; }
   }
 }
+
+function awdStartVelocityPolling(reportId) {
+  if (_awdVelocityPollTimer) clearInterval(_awdVelocityPollTimer);
+  _awdVelocityPollTimer = setInterval(function() { awdPollVelocity(reportId); }, 30000);
+  // Also poll immediately after 5 seconds
+  setTimeout(function() { awdPollVelocity(reportId); }, 5000);
+}
+
+async function awdPollVelocity(reportId) {
+  var vstatus = ge('awd-velocity-status');
+  try {
+    var res  = await wFetch('https://xfitting-lookup.alfixedinc88.workers.dev/awd/amazon-velocity-status?reportId=' + encodeURIComponent(reportId));
+    var data = await res.json();
+    if (!data.ok) { if (vstatus) vstatus.textContent = 'Status check error: ' + (data.error||'unknown'); return; }
+    var s = data.status;
+    // Update localStorage
+    var saved = localStorage.getItem(AWD_VELOCITY_POLL_KEY);
+    if (saved) { try { var info=JSON.parse(saved); info.status=s; localStorage.setItem(AWD_VELOCITY_POLL_KEY, JSON.stringify(info)); } catch(e){} }
+    if (s === 'DONE' && data.reportDocumentId) {
+      if (vstatus) vstatus.textContent = '⏳ Velocity report ready — downloading and writing to sheet…';
+      clearInterval(_awdVelocityPollTimer);
+      _awdVelocityPollTimer = null;
+      awdDownloadVelocity(data.reportDocumentId);
+    } else if (s === 'FATAL' || s === 'CANCELLED') {
+      if (vstatus) vstatus.textContent = '⚠ Velocity report ' + s.toLowerCase() + ' — try sync again';
+      localStorage.removeItem(AWD_VELOCITY_POLL_KEY);
+      clearInterval(_awdVelocityPollTimer); _awdVelocityPollTimer = null;
+    } else {
+      var elapsed = '';
+      try { var info=JSON.parse(localStorage.getItem(AWD_VELOCITY_POLL_KEY)||'{}'); if(info.requestedAt){ var mins=Math.floor((Date.now()-new Date(info.requestedAt).getTime())/60000); elapsed=' ('+mins+'m elapsed)'; } } catch(e){}
+      if (vstatus) vstatus.textContent = '⏳ Velocity report ' + s.toLowerCase().replace('_',' ') + elapsed + ' — checking every 30s…';
+    }
+  } catch(e) { if (vstatus) vstatus.textContent = 'Poll error: ' + e.message; }
+}
+
+async function awdDownloadVelocity(reportDocumentId) {
+  var vstatus = ge('awd-velocity-status');
+  try {
+    var res  = await wFetch('https://xfitting-lookup.alfixedinc88.workers.dev/awd/amazon-velocity-download', {
+      method: 'POST',
+      body: JSON.stringify({ reportDocumentId: reportDocumentId })
+    });
+    var data = await res.json();
+    if (data.ok) {
+      localStorage.removeItem(AWD_VELOCITY_POLL_KEY);
+      if (vstatus) vstatus.textContent = '✓ Velocity data written — ' + data.skusMatched + ' SKUs matched · reloading planner…';
+      awd_planner_toast('Velocity data ready — ' + data.skusMatched + ' SKUs updated', 'success');
+      // Mark velocity upload zone as loaded
+      var st=ge('st-fba'); if(st){ st.textContent='Velocity data loaded (from API)'; st.className='ust ok'; }
+      setTimeout(function(){ if(typeof loadAWDPlannerDB === 'function') loadAWDPlannerDB(); }, 1000);
+    } else {
+      if (vstatus) vstatus.textContent = '⚠ Velocity download failed: ' + (data.error||'unknown');
+    }
+  } catch(e) {
+    if (vstatus) vstatus.textContent = 'Download error: ' + e.message;
+  }
+}
+
+// Check for pending velocity report on load
+(function() { if (document.readyState === 'loading') { document.addEventListener('DOMContentLoaded', awdCheckPendingVelocity); } else { setTimeout(awdCheckPendingVelocity, 2000); } })();
 
 function awd_switchTab(n) {
   // Remove active state from all tabs and pages
