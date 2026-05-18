@@ -1,7 +1,7 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-  <!-- XFITTING-BUILD-V114-FEAT-20260501y -->
+  <!-- XFITTING-BUILD-V114-FEAT-20260501z -->
 <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate">
 <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&family=IBM+Plex+Sans:wght@300;400;500;600&display=swap" rel="stylesheet">
   <meta http-equiv="Pragma" content="no-cache">
@@ -3941,6 +3941,42 @@ function dlCSV(rows,fname){
   const csv=rows.map(r=>r.map(c=>{const s=String(c??'');return s.includes(',')||s.includes('"')||s.includes('\n')?'"'+s.replace(/"/g,'""')+'"':s;}).join(',')).join('\n');
   const a=document.createElement('a');a.href=URL.createObjectURL(new Blob([csv],{type:'text/csv'}));a.download=fname;a.click();
 }
+// ── SYNC FROM AMAZON ─────────────────────────────────────────────────────────
+async function awdAmazonSync() {
+  var btn    = ge('awd-amazon-sync-btn');
+  var status = ge('awd-sync-status');
+  if (btn) { btn.disabled = true; btn.textContent = '⏳ Syncing…'; }
+  if (status) status.textContent = 'Calling Amazon SP-API…';
+  try {
+    var res  = await wFetch('https://xfitting-lookup.alfixedinc88.workers.dev/awd/amazon-sync', { method: 'POST' });
+    var data = await res.json();
+    if (data.ok) {
+      var ts = new Date(data.syncedAt).toLocaleString('en-US',{ month:'short', day:'numeric', hour:'numeric', minute:'2-digit', hour12:true, timeZone:'America/New_York' });
+      if (status) status.textContent = '✓ Synced at ' + ts + ' · ' + data.fbaCount + ' FBA SKUs · ' + data.awdCount + ' AWD SKUs';
+      if (btn) { btn.textContent = '✓ Synced'; btn.style.background = 'var(--green)'; }
+      [['fba', data.fbaCount+' SKUs'],['live', data.fbaCount+' SKUs'],['awd', data.awdCount+' SKUs'],['res', data.fbaCount+' SKUs']].forEach(function(x){
+        var ico=ge('ico-'+x[0]); if(ico) ico.textContent='✅';
+        var st=ge('st-'+x[0]); if(st){ st.textContent=x[1]+' (from API)'; st.className='ust ok'; }
+        var zone=ge('zone-'+x[0]); if(zone) zone.classList.add('loaded');
+      });
+      if(ge('proc-btn')) ge('proc-btn').disabled=false;
+      awd_planner_toast('Amazon sync complete — ' + data.fbaCount + ' FBA + ' + data.awdCount + ' AWD SKUs', 'success');
+      setTimeout(function(){ if(typeof loadAWDPlannerDB === 'function') loadAWDPlannerDB(); }, 800);
+    } else {
+      if (status) status.textContent = 'Error: ' + (data.error || 'unknown');
+      if (btn) { btn.style.background = 'var(--red)'; btn.textContent = '⚠ Failed — retry'; }
+      awd_planner_toast('Sync failed: ' + (data.error || 'unknown'), 'error');
+    }
+  } catch(e) {
+    if (status) status.textContent = 'Error: ' + e.message;
+    if (btn) { btn.style.background = 'var(--red)'; btn.textContent = '⚠ Failed — retry'; }
+  } finally {
+    setTimeout(function(){
+      if (btn && btn.textContent.includes('Syncing')) { btn.disabled=false; btn.textContent='⚡ Sync from Amazon'; }
+    }, 3000);
+  }
+}
+
 function awd_switchTab(n) {
   // Remove active state from all tabs and pages
   document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
