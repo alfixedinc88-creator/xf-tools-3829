@@ -1,7 +1,7 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-  <!-- XFITTING-BUILD-V114-FEAT-20260501z2 -->
+  <!-- XFITTING-BUILD-V114-FEAT-20260501z3 -->
 <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate">
 <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&family=IBM+Plex+Sans:wght@300;400;500;600&display=swap" rel="stylesheet">
   <meta http-equiv="Pragma" content="no-cache">
@@ -4073,10 +4073,15 @@ async function awdDownloadVelocity(reportDocumentId) {
     var data = await res.json();
     if (data.ok) {
       localStorage.removeItem(AWD_VELOCITY_POLL_KEY);
-      if (vstatus) vstatus.textContent = '✓ Velocity data written — ' + data.skusMatched + ' SKUs matched · reloading planner…';
+      var msg = '✓ Velocity written — ' + data.skusMatched + ' SKUs matched';
+      if (data.unmappedCount > 0) msg += ' · ' + data.unmappedCount + ' ASINs unmapped';
+      if (vstatus) vstatus.textContent = msg;
       awd_planner_toast('Velocity data ready — ' + data.skusMatched + ' SKUs updated', 'success');
-      // Mark velocity upload zone as loaded
-      var st=ge('st-fba'); if(st){ st.textContent='Velocity data loaded (from API)'; st.className='ust ok'; }
+      var st=ge('st-fba'); if(st){ st.textContent='Velocity loaded (from API)'; st.className='ust ok'; }
+      // Show unmapped ASINs if any
+      if (data.unmapped && data.unmapped.length > 0) {
+        awdShowUnmappedAsins(data.unmapped, data.unmappedCount);
+      }
       setTimeout(function(){ if(typeof loadAWDPlannerDB === 'function') loadAWDPlannerDB(); }, 1000);
     } else {
       if (vstatus) vstatus.textContent = '⚠ Velocity download failed: ' + (data.error||'unknown');
@@ -4085,6 +4090,63 @@ async function awdDownloadVelocity(reportDocumentId) {
     if (vstatus) vstatus.textContent = 'Download error: ' + e.message;
   }
 }
+
+function awdShowUnmappedAsins(unmapped, totalCount) {
+  // Remove existing unmapped section if any
+  var existing = ge('awd-unmapped-section');
+  if (existing) existing.remove();
+  var container = ge('awd-sync-status');
+  if (!container) return;
+  var section = document.createElement('div');
+  section.id = 'awd-unmapped-section';
+  section.style.cssText = 'margin-top:12px;padding:12px 14px;background:var(--orange-bg,#FEF3E2);border:1.5px solid var(--orange,#B45309);border-radius:10px';
+  var title = totalCount > unmapped.length
+    ? '⚠ ' + totalCount + ' unmapped ASINs (showing first ' + unmapped.length + ')'
+    : '⚠ ' + totalCount + ' unmapped ASIN' + (totalCount!==1?'s':'');
+  section.innerHTML = '<div style="font-size:13px;font-weight:700;color:var(--orange,#B45309);margin-bottom:6px">' + title + '</div>'
+    + '<div style="font-size:12px;color:#4B5563;margin-bottom:10px">These ASINs have no valid SKU mapping. Enter the correct SKU to include their velocity data.</div>'
+    + '<div id="awd-unmapped-list"></div>';
+  container.parentElement.appendChild(section);
+  var list = ge('awd-unmapped-list');
+  unmapped.forEach(function(item) {
+    var row = document.createElement('div');
+    row.style.cssText = 'display:flex;gap:8px;align-items:center;margin-bottom:6px;flex-wrap:wrap';
+    row.id = 'awd-unmap-row-' + item.asin;
+    row.innerHTML = '<div style="font-family:var(--mono,monospace);font-size:12px;font-weight:700;min-width:120px">' + item.asin + '</div>'
+      + '<div style="font-size:11px;color:#9CA3AF;min-width:80px">t90: ' + (item.velocity ? item.velocity.t90 : 0) + ' units</div>'
+      + '<input id="awd-sku-' + item.asin + '" type="text" placeholder="e.g. 23-2-1=2" value="' + (item.currentSku||'') + '"'
+      + ' style="flex:1;min-width:140px;padding:5px 8px;border:1.5px solid #DDE0E6;border-radius:6px;font-size:12px;font-family:var(--mono,monospace)">'
+      + '<button onclick="awdSaveAsinMapping('' + item.asin + '')"'
+      + ' style="padding:5px 12px;border-radius:6px;border:none;background:#1A56DB;color:#fff;font-size:12px;font-weight:700;cursor:pointer;white-space:nowrap">Save</button>';
+    list.appendChild(row);
+  });
+}
+
+window.awdSaveAsinMapping = async function(asin) {
+  var inp = ge('awd-sku-' + asin);
+  var sku = inp ? inp.value.trim() : '';
+  if (!sku) { awd_planner_toast('Enter a SKU first', 'error'); return; }
+  var btn = inp ? inp.nextElementSibling : null;
+  if (btn) btn.disabled = true;
+  try {
+    var res  = await wFetch('https://xfitting-lookup.alfixedinc88.workers.dev/awd/amazon-map-asin', {
+      method: 'POST',
+      body: JSON.stringify({ asin: asin, sku: sku })
+    });
+    var data = await res.json();
+    if (data.ok) {
+      var row = ge('awd-unmap-row-' + asin);
+      if (row) { row.style.opacity='0.5'; row.style.pointerEvents='none'; }
+      awd_planner_toast('Mapped: ' + asin + ' → ' + sku, 'success');
+    } else {
+      if (btn) btn.disabled = false;
+      awd_planner_toast('Save failed: ' + (data.error||'unknown'), 'error');
+    }
+  } catch(e) {
+    if (btn) btn.disabled = false;
+    awd_planner_toast('Error: ' + e.message, 'error');
+  }
+};
 
 // Check for pending velocity report on load
 (function() { if (document.readyState === 'loading') { document.addEventListener('DOMContentLoaded', awdCheckPendingVelocity); } else { setTimeout(awdCheckPendingVelocity, 2000); } })();
