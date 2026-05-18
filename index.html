@@ -2516,8 +2516,23 @@ input[type=checkbox]{width:15px;height:15px;cursor:pointer;accent-color:var(--bl
       <div style="max-width:980px">
         <div style="margin-bottom:20px">
           <h2 style="font-size:18px;font-weight:700;color:var(--gray-900);margin-bottom:4px">Import Amazon Reports</h2>
-          <p style="font-size:13px;color:var(--gray-500)">Click a link to open the report in Seller Central, download it, then drag &amp; drop or click the card to upload.</p>
+          <p style="font-size:13px;color:var(--gray-500)">Use <strong>Sync from Amazon</strong> to pull live data instantly, or upload CSVs manually below as a fallback.</p>
         </div>
+
+        <!-- Sync from Amazon card -->
+        <div style="background:linear-gradient(135deg,#EEF2FD,#E8F7EE);border:1.5px solid #1A56DB;border-radius:12px;padding:16px 20px;margin-bottom:20px;display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:12px">
+          <div>
+            <div style="font-size:14px;font-weight:700;color:#1A56DB;margin-bottom:3px">&#x26A1; Sync from Amazon SP-API</div>
+            <div style="font-size:12px;color:#4B5563">Pulls live FBA inventory, AWD inventory &amp; reserves directly. No CSV downloads needed.</div>
+            <div id="awd-sync-status" style="font-size:11px;color:#9CA3AF;margin-top:4px;font-family:'DM Mono',monospace"></div>
+          </div>
+          <button id="awd-amazon-sync-btn" onclick="awdAmazonSync()"
+            style="padding:10px 22px;border-radius:8px;border:none;background:#1A56DB;color:#fff;font-size:13px;font-weight:700;cursor:pointer;white-space:nowrap">
+            &#x26A1; Sync from Amazon
+          </button>
+        </div>
+
+        <div style="font-size:12px;font-weight:700;color:#9CA3AF;text-transform:uppercase;letter-spacing:.6px;margin-bottom:10px">Manual CSV Upload (fallback)</div>
         <div class="upload-grid">
           <div class="uzone" id="zone-fba" ondragover="dov(event,'fba')" ondragleave="dlv('fba')" ondrop="drp(event,'fba')">
             <div class="udrop"><input type="file" accept=".csv,.txt,.tsv" onchange="fch(event,'fba')">
