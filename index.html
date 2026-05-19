@@ -1,7 +1,7 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-  <!-- XFITTING-BUILD-V114-FEAT-20260501z3 -->
+  <!-- XFITTING-BUILD-V114-FEAT-20260501z4 -->
 <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate">
 <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&family=IBM+Plex+Sans:wght@300;400;500;600&display=swap" rel="stylesheet">
   <meta http-equiv="Pragma" content="no-cache">
@@ -3997,7 +3997,7 @@ async function awdAmazonSync() {
         var zone=ge('zone-'+x[0]); if(zone) zone.classList.add('loaded');
       });
       if(ge('proc-btn')) ge('proc-btn').disabled=false;
-      setTimeout(function(){ if(typeof loadAWDPlannerDB === 'function') loadAWDPlannerDB(); }, 800);
+      setTimeout(function(){ if(typeof loadReportsFromSheet === 'function') loadReportsFromSheet(); }, 800);
     } else {
       if (status) status.textContent = 'Error: ' + (data.error || 'unknown');
       if (btn) { btn.disabled=false; btn.style.background='var(--red)'; btn.textContent='⚠ Failed — retry'; }
@@ -4082,7 +4082,8 @@ async function awdDownloadVelocity(reportDocumentId) {
       if (data.unmapped && data.unmapped.length > 0) {
         awdShowUnmappedAsins(data.unmapped, data.unmappedCount);
       }
-      setTimeout(function(){ if(typeof loadAWDPlannerDB === 'function') loadAWDPlannerDB(); }, 1000);
+      // Reload FBA_Inventory sheet data to pick up freshly written velocity columns
+      setTimeout(function(){ if(typeof loadReportsFromSheet === 'function') loadReportsFromSheet(); }, 1000);
     } else {
       if (vstatus) vstatus.textContent = '⚠ Velocity download failed: ' + (data.error||'unknown');
     }
