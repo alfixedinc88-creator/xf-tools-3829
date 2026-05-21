@@ -4076,10 +4076,12 @@ async function awdDownloadVelocity(reportDocumentId) {
       var msg = '✓ Velocity written — ' + data.skusMatched + ' SKUs matched';
       if (data.unmappedCount > 0) msg += ' · ' + data.unmappedCount + ' ASINs unmapped';
       if (data.debug) {
-        msg += ' | debug: t90col=' + data.debug.st90ColLetter + ' idx=' + data.debug.st90Idx
+        msg += ' | t90col=' + data.debug.st90ColLetter
           + ' updates=' + data.debug.totalUpdates
-          + ' velKeys=[' + (data.debug.sampleVelocityKeys||[]).slice(0,2).join(',') + ']'
-          + ' fbaSkus=[' + (data.debug.sampleFbaSheetSkus||[]).slice(0,2).join(',') + ']';
+          + ' asinMapSize=' + data.debug.asinDailyMapSize
+          + ' velAsins=[' + (data.debug.sampleVelocityAsins||[]).slice(0,2).join(',') + ']'
+          + ' fbaAsins=[' + (data.debug.sampleFbaSheetAsins||[]).slice(0,2).join(',') + ']'
+          + ' reportEntry=' + (data.debug.reportFirstEntryKeys||[]).join(',');
       }
       if (vstatus) vstatus.textContent = msg;
       awd_planner_toast('Velocity data ready — ' + data.skusMatched + ' SKUs updated', 'success');
