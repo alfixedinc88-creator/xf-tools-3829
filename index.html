@@ -1,7 +1,7 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-  <!-- XFITTING-BUILD-V114-FEAT-20260501z6 -->
+  <!-- XFITTING-BUILD-V114-FEAT-20260501z7 -->
 <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate">
 <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&family=IBM+Plex+Sans:wght@300;400;500;600&display=swap" rel="stylesheet">
   <meta http-equiv="Pragma" content="no-cache">
@@ -12927,7 +12927,7 @@ function awdHandleScan(raw) {
       .then(function(d) {
         var items    = (d.items || []).filter(function(x) { return x.status === "Pending"; });
         var ins      = items.filter(function(x) { return x.type === "IN"; });
-        var outs     = items.filter(function(x) { return x.type === "OUT"; });
+        var outs     = items.filter(function(x) { return x.type === "OUT" || x.type === "MOVE"; });
         var xfrOuts  = items.filter(function(x) { return x.type === "TRANSFER_OUT"; });
         var xfrIns   = items.filter(function(x) { return x.type === "TRANSFER_IN"; });
         var inEl     = g("inv-pending-in");
@@ -13154,6 +13154,10 @@ function awdHandleScan(raw) {
     var skuHtml  = (item.sku && item.sku !== item.partNum)
       ? "<div style='font-size:11px;font-family:var(--mono);color:var(--text3);margin-top:1px'>" + item.sku + "</div>" : "";
     var displayNotes = isFound ? item.notes.replace('[FOUND ON SHELF] ', '').trim() : item.notes;
+    var isMoveCard = item.type === 'MOVE';
+    var locationDisplay = isMoveCard && item.overwriteLocation
+      ? (item.location + ' → ' + item.overwriteLocation)
+      : (item.location || '');
     el.innerHTML = "<div class='ientry-head'><div><span class='ientry-part'>" + (item.partNum || "") + "</span>" + skuHtml + "</div><div style='display:flex;align-items:center;gap:4px'>" + foundBadge + typeHtml + "</div></div>"
       + nameHtml
       + "<div class='ientry-meta'>\ud83d\udccd " + (item.location || "") + " &nbsp;|\u00a0 \ud83d\udce6 " + (item.cases || 0) + " cases &nbsp;|\u00a0 \ud83e\uddd1 " + (item.initials || "")
