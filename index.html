@@ -1,7 +1,7 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-  <!-- XFITTING-BUILD-V114-FEAT-20260501z4 -->
+  <!-- XFITTING-BUILD-V114-FEAT-20260501z5 -->
 <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate">
 <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&family=IBM+Plex+Sans:wght@300;400;500;600&display=swap" rel="stylesheet">
   <meta http-equiv="Pragma" content="no-cache">
@@ -4075,6 +4075,12 @@ async function awdDownloadVelocity(reportDocumentId) {
       localStorage.removeItem(AWD_VELOCITY_POLL_KEY);
       var msg = '✓ Velocity written — ' + data.skusMatched + ' SKUs matched';
       if (data.unmappedCount > 0) msg += ' · ' + data.unmappedCount + ' ASINs unmapped';
+      if (data.debug) {
+        msg += ' | debug: t90col=' + data.debug.st90ColLetter + ' idx=' + data.debug.st90Idx
+          + ' updates=' + data.debug.totalUpdates
+          + ' velKeys=[' + (data.debug.sampleVelocityKeys||[]).slice(0,2).join(',') + ']'
+          + ' fbaSkus=[' + (data.debug.sampleFbaSheetSkus||[]).slice(0,2).join(',') + ']';
+      }
       if (vstatus) vstatus.textContent = msg;
       awd_planner_toast('Velocity data ready — ' + data.skusMatched + ' SKUs updated', 'success');
       var st=ge('st-fba'); if(st){ st.textContent='Velocity loaded (from API)'; st.className='ust ok'; }
