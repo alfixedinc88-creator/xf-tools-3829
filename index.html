@@ -1,7 +1,7 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-  <!-- XFITTING-BUILD-V114-FEAT-20260501z5 -->
+  <!-- XFITTING-BUILD-V114-FEAT-20260501z6 -->
 <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate">
 <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&family=IBM+Plex+Sans:wght@300;400;500;600&display=swap" rel="stylesheet">
   <meta http-equiv="Pragma" content="no-cache">
@@ -13947,16 +13947,63 @@ function awdHandleScan(raw) {
       .catch(function(e) { invFlash('Search failed: ' + e.message, 'error'); });
   };
 
+  var invAuditCurrentLocs = [];
+
   function invAuditShowLocations(data) {
     var locs = (data.locations || []);
-    g('inv-audit-part-info').textContent = data.partNum + (data.name ? ' — ' + data.name : '');
+    invAuditCurrentLocs = locs;
+    g('inv-audit-part-info').textContent = data.partNum + (data.name ? ' \u2014 ' + data.name : '');
     g('inv-audit-result-card').style.display = 'block';
     g('inv-audit-search-card').style.display = 'none';
     var list = g('inv-audit-loc-list');
+    list.innerHTML = '';
     if (!locs.length) {
       list.innerHTML = '<div style="color:var(--text3);font-size:13px;padding:8px">No locations found in Master List</div>';
       return;
     }
+    locs.forEach(function(loc, i) {
+      var adj     = loc.adjustedCases !== undefined ? loc.adjustedCases : parseFloat(loc.cases) || 0;
+      var pending = loc.pendingCases || 0;
+      var pendBadge = pending > 0 ? ' <span style="font-size:11px;color:var(--orange);font-weight:600">(' + pending + ' pending)</span>' : '';
+      var row = document.createElement('div');
+      row.id = 'inv-audit-loc-' + i;
+      row.style.cssText = 'border:1.5px solid var(--border);border-radius:10px;padding:12px;margin-bottom:8px;background:var(--bg3)';
+      row.innerHTML = '<div style="display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:8px">'
+        + '<div><div style="font-family:var(--mono);font-size:14px;font-weight:700">' + loc.location + '</div>'
+        + '<div style="font-size:12px;color:var(--text2);margin-top:2px">System: <strong>' + adj + ' cases</strong>' + pendBadge + '</div>'
+        + '<div style="font-size:11px;color:var(--text3)">Part: ' + loc.partNum + '</div></div>'
+        + '<span style="font-size:11px;font-weight:700;padding:3px 8px;border-radius:5px;background:var(--bg);border:1px solid var(--border);color:var(--text3)">Row ' + loc.rowIndex + '</span>'
+        + '</div>'
+        + '<div style="display:flex;gap:8px;align-items:center;margin-bottom:8px">'
+        + '<div style="font-size:11px;font-weight:700;color:var(--text3);white-space:nowrap">ACTUAL COUNT</div>'
+        + '<input id="inv-audit-count-' + i + '" type="number" min="0" step="0.5" placeholder="Cases counted"'
+        + ' style="flex:1;padding:7px 10px;border:1.5px solid var(--border);border-radius:7px;background:var(--bg);color:var(--text);font-size:14px;font-family:var(--mono)">'
+        + '<button id="inv-audit-submit-' + i + '" style="padding:7px 14px;border-radius:7px;border:none;background:#0891B2;color:#fff;font-size:13px;font-weight:700;cursor:pointer">Submit</button>'
+        + '</div>'
+        + '<button id="inv-audit-movebtn-' + i + '" style="font-size:11px;padding:4px 10px;border-radius:6px;border:1px solid var(--border);background:var(--bg);color:var(--text2);cursor:pointer;margin-bottom:4px">&#x1F4CD; Wrong location? Move it</button>'
+        + '<div id="inv-audit-moveform-' + i + '" style="display:none;padding:8px;background:var(--bg);border-radius:8px;border:1px solid var(--border)">'
+        + '<div style="font-size:11px;font-weight:700;color:var(--text3);margin-bottom:4px">CORRECT LOCATION</div>'
+        + '<div style="display:flex;gap:6px;align-items:center;flex-wrap:wrap">'
+        + '<select id="inv-audit-movepfx-' + i + '" style="padding:5px 8px;border:1.5px solid var(--border);border-radius:7px;background:var(--bg);color:var(--text);font-size:12px;font-family:var(--mono)">'
+        + '<option value="2FL=">2FL=</option><option value="BARN=">BARN=</option><option value="BASEMENT=">BASEMENT=</option>'
+        + '<option value="BH OFFICE=">BH OFFICE=</option><option value="C1=">C1=</option><option value="C2=">C2=</option>'
+        + '<option value="C3=">C3=</option><option value="C4=">C4=</option><option value="C5=">C5=</option><option value="FRONT=">FRONT=</option>'
+        + '</select>'
+        + '<input id="inv-audit-moveshelf-' + i + '" type="text" placeholder="e.g. 1-1-1-2" style="flex:1;padding:5px 8px;border:1.5px solid var(--border);border-radius:7px;background:var(--bg);color:var(--text);font-size:12px;font-family:var(--mono)">'
+        + '<button id="inv-audit-movesave-' + i + '" style="padding:5px 12px;border-radius:7px;border:none;background:var(--orange);color:#fff;font-size:12px;font-weight:700;cursor:pointer">Move</button>'
+        + '</div></div>';
+      (function(idx) {
+        row.querySelector('#inv-audit-count-' + idx).onkeydown = function(e) { if(e.key==='Enter'){ e.preventDefault(); invAuditSubmitRow(idx); } };
+        row.querySelector('#inv-audit-submit-' + idx).onclick  = function() { invAuditSubmitRow(idx); };
+        row.querySelector('#inv-audit-movebtn-' + idx).onclick = function() {
+          var mf = g('inv-audit-moveform-' + idx);
+          if (mf) mf.style.display = mf.style.display === 'none' ? 'block' : 'none';
+        };
+        row.querySelector('#inv-audit-movesave-' + idx).onclick = function() { invAuditMoveLocation(idx); };
+      })(i);
+      list.appendChild(row);
+    });
+  }
     list.innerHTML = locs.map(function(loc, i) {
       var adj = loc.adjustedCases !== undefined ? loc.adjustedCases : parseFloat(loc.cases) || 0;
       var pending = loc.pendingCases || 0;
@@ -13981,44 +14028,45 @@ function awdHandleScan(raw) {
     }).join('');
   }
 
-  window.invAuditSubmitRow = function(idx, loc) {
-    var countInp = g('inv-audit-count-' + idx);
+
+  window.invAuditSubmitRow = function(idx) {
+    var loc = invAuditCurrentLocs[idx];
+    if (!loc) { invFlash('Location not found', 'error'); return; }
+    var countInp    = g('inv-audit-count-' + idx);
     var actualCases = parseFloat(countInp ? countInp.value : '');
-    var initials = ((g('inv-audit-initials') || {value:''}).value || '').trim().toUpperCase();
+    var initials    = ((g('inv-audit-initials') || {value:''}).value || '').trim().toUpperCase();
     if (isNaN(actualCases) || actualCases < 0) { invFlash('Enter a valid count (0 or more)', 'error'); return; }
     if (!initials) { invFlash('Enter your initials', 'error'); return; }
     var currentCases = loc.adjustedCases !== undefined ? loc.adjustedCases : parseFloat(loc.cases) || 0;
     var diff = actualCases - currentCases;
+    var rowEl = g('inv-audit-loc-' + idx);
     if (diff === 0) {
-      invFlash('Count matches system — no correction needed', 'success');
-      var rowEl = g('inv-audit-loc-' + idx);
+      invFlash('Count matches system \u2014 no correction needed', 'success');
       if (rowEl) { rowEl.style.borderColor = 'var(--green)'; rowEl.style.background = 'var(--green-bg)'; }
       return;
     }
     var type = diff > 0 ? 'IN' : 'OUT';
-    var note = '[AUDIT] System: ' + currentCases + ' → Actual: ' + actualCases + ' (diff: ' + (diff > 0 ? '+' : '') + diff.toFixed(1) + ')';
-    var body = {
-      type: type, partNum: loc.partNum,
+    var note = '[AUDIT] System: ' + currentCases + ' \u2192 Actual: ' + actualCases + ' (diff: ' + (diff > 0 ? '+' : '') + diff.toFixed(1) + ')';
+    var body = { type: type, partNum: loc.partNum,
       sku: loc.partNum.split('=')[0].trim(), name: '',
       location: loc.location, cases: Math.abs(diff),
       initials: initials, notes: note,
-      rowIndex: loc.rowIndex, isNew: false, overwriteLocation: false
-    };
+      rowIndex: loc.rowIndex, isNew: false, overwriteLocation: false };
     if (invAuditAutoMode) {
       wFetch(W + '/inventory/log', { method: 'POST', body: JSON.stringify(body) })
         .then(function(r) { return r.json(); })
         .then(function(d) {
           if (!d || !d.rowIndex) { invFlash('Log failed', 'error'); return null; }
-          return wFetch(W + '/inventory/verify', {
-            method: 'POST',
+          return wFetch(W + '/inventory/verify', { method: 'POST',
             body: JSON.stringify({ rowIndex: d.rowIndex, action: 'Approved', verifiedBy: initials })
           }).then(function(r) { return r.json(); });
         })
         .then(function(v) {
           if (!v) return;
-          invFlash('Corrected: ' + loc.location + ' → ' + actualCases + ' cases', 'success');
-          var rowEl = g('inv-audit-loc-' + idx);
-          if (rowEl) { rowEl.style.borderColor = 'var(--green)'; rowEl.style.background = 'var(--green-bg)'; if (countInp) countInp.disabled = true; rowEl.querySelector('button').disabled = true; }
+          invFlash('Corrected: ' + loc.location + ' \u2192 ' + actualCases + ' cases', 'success');
+          if (rowEl) { rowEl.style.borderColor = '#0891B2'; rowEl.style.background = '#E0F2FE';
+            if (countInp) countInp.disabled = true;
+            var sb = g('inv-audit-submit-' + idx); if(sb) sb.disabled = true; }
         })
         .catch(function(e) { invFlash('Error: ' + e.message, 'error'); });
     } else {
@@ -14026,11 +14074,56 @@ function awdHandleScan(raw) {
         .then(function(r) { return r.json(); })
         .then(function() {
           invFlash('Queued for review: ' + loc.location, 'success');
-          var rowEl = g('inv-audit-loc-' + idx);
-          if (rowEl) { rowEl.style.borderColor = 'var(--orange)'; rowEl.style.background = 'var(--orange-bg)'; rowEl.style.opacity = '0.75'; rowEl.querySelector('button').disabled = true; if (countInp) countInp.disabled = true; }
+          if (rowEl) { rowEl.style.borderColor = 'var(--orange)'; rowEl.style.background = 'var(--orange-bg)';
+            rowEl.style.opacity = '0.75';
+            var sb = g('inv-audit-submit-' + idx); if(sb) sb.disabled = true;
+            if (countInp) countInp.disabled = true; }
         })
         .catch(function(e) { invFlash('Error: ' + e.message, 'error'); });
     }
+  };
+
+  window.invAuditMoveLocation = function(idx) {
+    var loc      = invAuditCurrentLocs[idx];
+    if (!loc) { invFlash('Location not found', 'error'); return; }
+    var pfx      = (g('inv-audit-movepfx-' + idx) || {value:''}).value || '';
+    var shelf    = ((g('inv-audit-moveshelf-' + idx) || {value:''}).value || '').trim();
+    var newLoc   = pfx + shelf;
+    var initials = ((g('inv-audit-initials') || {value:''}).value || '').trim().toUpperCase();
+    if (!shelf || shelf.length < 2) { invFlash('Enter the correct shelf location', 'error'); return; }
+    if (!initials) { invFlash('Enter your initials', 'error'); return; }
+    if (newLoc.toUpperCase() === loc.location.toUpperCase()) { invFlash('Same location \u2014 no change needed', 'warn'); return; }
+    var countInp = g('inv-audit-count-' + idx);
+    var newCases = countInp && countInp.value !== '' ? parseFloat(countInp.value) : null;
+    var note = '[AUDIT] Location moved: ' + loc.location + ' \u2192 ' + newLoc + (newCases !== null ? ' | cases: ' + loc.cases + ' \u2192 ' + newCases : '');
+    var body = { type: 'MOVE', partNum: loc.partNum,
+      sku: loc.partNum.split('=')[0].trim(), name: '',
+      location: loc.location, newLocation: newLoc,
+      cases: newCases !== null ? newCases : parseFloat(loc.cases) || 0,
+      initials: initials, notes: note,
+      rowIndex: loc.rowIndex, isNew: false, overwriteLocation: true };
+    var rowEl   = g('inv-audit-loc-' + idx);
+    var saveBtn = g('inv-audit-movesave-' + idx);
+    if (saveBtn) saveBtn.disabled = true;
+    wFetch(W + '/inventory/log', { method: 'POST', body: JSON.stringify(body) })
+      .then(function(r) { return r.json(); })
+      .then(function(d) {
+        if (!d || !d.rowIndex) { invFlash('Log failed', 'error'); if(saveBtn) saveBtn.disabled=false; return null; }
+        if (invAuditAutoMode) {
+          return wFetch(W + '/inventory/verify', { method: 'POST',
+            body: JSON.stringify({ rowIndex: d.rowIndex, action: 'Approved', verifiedBy: initials })
+          }).then(function(r) { return r.json(); });
+        }
+        return d;
+      })
+      .then(function(v) {
+        if (!v) return;
+        var msg = invAuditAutoMode ? 'Moved to ' + newLoc : 'Move queued: ' + loc.location + ' \u2192 ' + newLoc;
+        invFlash(msg, 'success');
+        if (rowEl) { rowEl.style.borderColor = '#0891B2'; rowEl.style.background = '#E0F2FE'; }
+        var mf = g('inv-audit-moveform-' + idx); if(mf) mf.style.display = 'none';
+      })
+      .catch(function(e) { invFlash('Error: ' + e.message, 'error'); if(saveBtn) saveBtn.disabled=false; });
   };
 
   var invAuditSearchMode = 'part';
@@ -14053,6 +14146,17 @@ function awdHandleScan(raw) {
       locDiv.style.display  = '';
       setTimeout(function(){ var s = g('inv-audit-loc-shelf'); if(s) s.focus(); }, 50);
     }
+  };
+
+  var invAuditLocItemMap = {}; // rowIndex -> item for location search results
+
+  window.invAuditSubmitLocByRow = function(rowIndexStr) {
+    var item = invAuditLocItemMap[rowIndexStr];
+    if (!item) { invFlash('Item not found', 'error'); return; }
+    // Reuse invAuditSubmitLocRow which is already defined
+    var inp   = document.getElementById('audloc-count-' + rowIndexStr);
+    var rowEl = document.getElementById('audloc-' + rowIndexStr);
+    invAuditSubmitLocRow(item, inp, rowEl);
   };
 
   window.invAuditLocSearch = function() {
@@ -14092,7 +14196,7 @@ function awdHandleScan(raw) {
             html += '<div style="font-size:11px;font-weight:700;color:var(--text3);white-space:nowrap">ACTUAL COUNT</div>';
             html += '<input id="audloc-count-' + item.rowIndex + '" type="number" min="0" step="0.5" placeholder="Cases counted"';
             html += ' style="flex:1;padding:7px 10px;border:1.5px solid var(--border);border-radius:7px;background:var(--bg);color:var(--text);font-size:14px;font-family:var(--mono)">';
-            html += '<button onclick="invAuditSubmitRow(-1,' + JSON.stringify(item) + ')"';
+            html += '<button data-rowindex="' + item.rowIndex + '" onclick="invAuditSubmitLocByRow(this.dataset.rowindex)"'
             html += ' style="padding:7px 14px;border-radius:7px;border:none;background:var(--accent);color:#fff;font-size:13px;font-weight:700;cursor:pointer">Submit</button>';
             html += '</div></div>';
           });
@@ -14117,6 +14221,8 @@ function awdHandleScan(raw) {
         html += '<button onclick="invAuditAddUnlisted()" style="padding:7px 14px;border-radius:7px;border:none;background:var(--purple);color:#fff;font-size:13px;font-weight:700;cursor:pointer">&#x2B; Log Found Item</button>';
         html += '<div id="audloc-add-result" style="margin-top:6px"></div></div>';
         resEl.innerHTML = html;
+        // Store items in map for rowIndex-based access
+        d.results.forEach(function(item) { invAuditLocItemMap[String(item.rowIndex)] = item; });
         // Store last search info for unlisted item default location
         invAuditLastLocSearch = { prefix: prefix, shelf: shelf };
         // Set default location in add form to match current search
