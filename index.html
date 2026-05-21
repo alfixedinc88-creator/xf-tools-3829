@@ -14004,29 +14004,6 @@ function awdHandleScan(raw) {
       list.appendChild(row);
     });
   }
-    list.innerHTML = locs.map(function(loc, i) {
-      var adj = loc.adjustedCases !== undefined ? loc.adjustedCases : parseFloat(loc.cases) || 0;
-      var pending = loc.pendingCases || 0;
-      var pendingBadge = pending > 0 ? ' <span style="font-size:11px;color:var(--orange);font-weight:600">(' + pending + ' pending)</span>' : '';
-      return '<div style="border:1.5px solid var(--border);border-radius:10px;padding:12px;margin-bottom:8px;background:var(--bg3)" id="inv-audit-loc-' + i + '">'
-        + '<div style="display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:8px">'
-        + '<div>'
-        + '<div style="font-family:var(--mono);font-size:14px;font-weight:700">' + loc.location + '</div>'
-        + '<div style="font-size:12px;color:var(--text2);margin-top:2px">System: <strong>' + adj + ' cases</strong>' + pendingBadge + '</div>'
-        + '<div style="font-size:11px;color:var(--text3)">Part: ' + loc.partNum + '</div>'
-        + '</div>'
-        + '<span style="font-size:11px;font-weight:700;padding:3px 8px;border-radius:5px;background:var(--bg);border:1px solid var(--border);color:var(--text3)">Row ' + loc.rowIndex + '</span>'
-        + '</div>'
-        + '<div style="display:flex;gap:8px;align-items:center">'
-        + '<div style="font-size:11px;font-weight:700;color:var(--text3);white-space:nowrap">ACTUAL COUNT</div>'
-        + '<input id="inv-audit-count-' + i + '" type="number" min="0" step="0.5" placeholder="Cases counted"'
-        + ' style="flex:1;padding:7px 10px;border:1.5px solid var(--border);border-radius:7px;background:var(--bg);color:var(--text);font-size:14px;font-family:var(--mono)"'
-        + ' onkeydown="if(event.key===\'Enter\')invAuditSubmitRow(' + i + ',' + JSON.stringify(loc) + ')">'
-        + '<button onclick="invAuditSubmitRow(' + i + ',' + JSON.stringify(loc) + ')"'
-        + ' style="padding:7px 14px;border-radius:7px;border:none;background:var(--accent);color:#fff;font-size:13px;font-weight:700;cursor:pointer">Submit</button>'
-        + '</div></div>';
-    }).join('');
-  }
 
 
   window.invAuditSubmitRow = function(idx) {
