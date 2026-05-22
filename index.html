@@ -14180,7 +14180,8 @@ function awdHandleScan(raw) {
       })
       .then(function(v) {
         if (!v) return;
-        invFlash('✓ Moved: ' + loc.location + ' → ' + newLoc, 'success');
+        console.log('[MOVE] result:', JSON.stringify(v));
+        invFlash('✓ Moved: ' + loc.location + ' → ' + newLoc + (v.masterRow ? ' (row ' + v.masterRow + ')' : ''), 'success');
         if (rowEl) { rowEl.style.borderColor = '#0891B2'; rowEl.style.background = '#E0F2FE'; }
         var mf = g('inv-audit-moveform-' + idx); if(mf) mf.style.display = 'none';
         setTimeout(invAuditAutoReturn, 1500);
