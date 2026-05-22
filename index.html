@@ -1,7 +1,7 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-  <!-- XFITTING-BUILD-V114-FEAT-20260501z10 -->
+  <!-- XFITTING-BUILD-V114-FEAT-20260501z11 -->
 <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate">
 <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&family=IBM+Plex+Sans:wght@300;400;500;600&display=swap" rel="stylesheet">
   <meta http-equiv="Pragma" content="no-cache">
@@ -11950,6 +11950,14 @@ function awdHandleScan(raw) {
     <div id="inv-audit-loc-list"></div>
   </div>
 
+  <!-- Export Locations card -->
+  <div class="icard" id="inv-export-card" style="margin-bottom:12px">
+    <div class="icard-label">&#x1F4CB; Export Location List</div>
+    <div style="font-size:12px;color:var(--text3);margin-bottom:10px">Downloads all active locations (cases &gt; 0) as CSV. Import into ZebraDesigner for barcode label printing.</div>
+    <button class="btn btn-primary btn-sm" onclick="invExportLocations()">&#x2B07; Export Locations CSV</button>
+    <span id="inv-export-status" style="font-size:12px;color:var(--text3);margin-left:8px"></span>
+  </div>
+
   <!-- Location Rename card — management PIN required -->
   <div class="icard" id="inv-rename-card">
     <div class="icard-label">&#x1F4CD; Rename Locations</div>
@@ -14054,7 +14062,11 @@ function awdHandleScan(raw) {
         + '<option value="BH OFFICE=">BH OFFICE=</option><option value="C1=">C1=</option><option value="C2=">C2=</option>'
         + '<option value="C3=">C3=</option><option value="C4=">C4=</option><option value="C5=">C5=</option><option value="FRONT=">FRONT=</option>'
         + '</select>'
-        + '<input id="inv-audit-moveshelf-' + i + '" type="text" placeholder="e.g. 1-1-1-2" style="flex:1;padding:5px 8px;border:1.5px solid var(--border);border-radius:7px;background:var(--bg);color:var(--text);font-size:12px;font-family:var(--mono)">'
+        + '<input id="inv-audit-moveshelf-' + i + '" type="text" placeholder="e.g. 1-1-1-2" style="flex:1;min-width:80px;padding:5px 8px;border:1.5px solid var(--border);border-radius:7px;background:var(--bg);color:var(--text);font-size:12px;font-family:var(--mono)">'
+        + '</div>'
+        + '<div style="display:flex;gap:6px;align-items:center;margin-top:6px">'
+        + '<div style="font-size:11px;font-weight:700;color:var(--text3);white-space:nowrap">CASES AT NEW LOCATION</div>'
+        + '<input id="inv-audit-movecases-' + i + '" type="number" min="0" step="0.5" placeholder="Leave blank = same count" style="flex:1;padding:5px 8px;border:1.5px solid var(--border);border-radius:7px;background:var(--bg);color:var(--text);font-size:12px;font-family:var(--mono)">'
         + '<button id="inv-audit-movesave-' + i + '" style="padding:5px 12px;border-radius:7px;border:none;background:var(--orange);color:#fff;font-size:12px;font-weight:700;cursor:pointer">Move</button>'
         + '</div></div>';
       (function(idx) {
@@ -14139,8 +14151,12 @@ function awdHandleScan(raw) {
     if (!shelf || shelf.length < 2) { invFlash('Enter the correct shelf location', 'error'); return; }
     if (!initials) { invFlash('Enter your initials', 'error'); return; }
     if (newLoc.toUpperCase() === loc.location.toUpperCase()) { invFlash('Same location \u2014 no change needed', 'warn'); return; }
-    var countInp = g('inv-audit-count-' + idx);
-    var newCases = countInp && countInp.value !== '' ? parseFloat(countInp.value) : null;
+    var casesMoveInp = g('inv-audit-movecases-' + idx);
+    var countInp     = g('inv-audit-count-' + idx);
+    // Use move cases input first, then count input, then original cases
+    var newCases = (casesMoveInp && casesMoveInp.value !== '') ? parseFloat(casesMoveInp.value)
+                 : (countInp && countInp.value !== '') ? parseFloat(countInp.value)
+                 : null;
     var note = '[AUDIT] Location moved: ' + loc.location + ' \u2192 ' + newLoc + (newCases !== null ? ' | cases: ' + loc.cases + ' \u2192 ' + newCases : '');
     var body = { type: 'MOVE', partNum: loc.partNum,
       sku: loc.partNum.split('=')[0].trim(), name: '',
