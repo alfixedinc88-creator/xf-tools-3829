@@ -1,7 +1,7 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-  <!-- XFITTING-BUILD-V114-FEAT-20260501z8 -->
+  <!-- XFITTING-BUILD-V114-FEAT-20260501z9 -->
 <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate">
 <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&family=IBM+Plex+Sans:wght@300;400;500;600&display=swap" rel="stylesheet">
   <meta http-equiv="Pragma" content="no-cache">
@@ -14039,7 +14039,9 @@ function awdHandleScan(raw) {
         .then(function(d) {
           if (!d || !d.rowIndex) { invFlash('Log failed', 'error'); return null; }
           return wFetch(W + '/inventory/verify', { method: 'POST',
-            body: JSON.stringify({ rowIndex: d.rowIndex, action: 'Approved', verifiedBy: initials })
+            body: JSON.stringify({ rowIndex: d.rowIndex, action: 'Approved', verifiedBy: initials,
+              item: { type: type, partNum: loc.partNum, location: loc.location,
+                      cases: Math.abs(diff), rowIndex: loc.rowIndex } })
           }).then(function(r) { return r.json(); });
         })
         .then(function(v) {
@@ -14094,7 +14096,9 @@ function awdHandleScan(raw) {
       .then(function(d) {
         if (!d || !d.rowIndex) { invFlash('Log failed', 'error'); if(saveBtn) saveBtn.disabled=false; return null; }
         return wFetch(W + '/inventory/verify', { method: 'POST',
-          body: JSON.stringify({ rowIndex: d.rowIndex, action: 'Approved', verifiedBy: initials })
+          body: JSON.stringify({ rowIndex: d.rowIndex, action: 'Approved', verifiedBy: initials,
+            item: { type: 'MOVE', partNum: loc.partNum, location: loc.location,
+                    overwriteLocation: newLoc, cases: body.cases, rowIndex: loc.rowIndex } })
         }).then(function(r) { return r.json(); });
       })
       .then(function(v) {
@@ -14246,7 +14250,9 @@ function awdHandleScan(raw) {
         .then(function(d) {
           if (!d || !d.rowIndex) { invFlash('Log failed', 'error'); return null; }
           return wFetch(W + '/inventory/verify', { method: 'POST',
-            body: JSON.stringify({ rowIndex: d.rowIndex, action: 'Approved', verifiedBy: initials })
+            body: JSON.stringify({ rowIndex: d.rowIndex, action: 'Approved', verifiedBy: initials,
+              item: { type: type, partNum: loc.partNum, location: loc.location,
+                      cases: Math.abs(diff), rowIndex: loc.rowIndex } })
           }).then(function(r) { return r.json(); });
         })
         .then(function(v) {
@@ -14297,7 +14303,9 @@ function awdHandleScan(raw) {
       .then(function(d) {
         if (invAuditAutoMode && d && d.rowIndex) {
           return wFetch(W + '/inventory/verify', { method: 'POST',
-            body: JSON.stringify({ rowIndex: d.rowIndex, action: 'Approved', verifiedBy: initials })
+            body: JSON.stringify({ rowIndex: d.rowIndex, action: 'Approved', verifiedBy: initials,
+              item: { type: type, partNum: loc.partNum, location: loc.location,
+                      cases: Math.abs(diff), rowIndex: loc.rowIndex } })
           }).then(function(r) { return r.json(); });
         }
         return d;
@@ -14364,7 +14372,35 @@ function awdHandleScan(raw) {
     };
   }
 
+  function invAuditAutoReturn() {
+    var nextBtn = g('inv-audit-next-btn');
+    if (!nextBtn) {
+      var resultCard = g('inv-audit-result-card');
+      if (resultCard) {
+        nextBtn = document.createElement('button');
+        nextBtn.id = 'inv-audit-next-btn';
+        nextBtn.textContent = '→ Search next SKU';
+        nextBtn.style.cssText = 'width:100%;margin-top:10px;padding:10px;border-radius:8px;border:none;background:#0891B2;color:#fff;font-size:14px;font-weight:700;cursor:pointer';
+        nextBtn.onclick = invAuditGoBack;
+        resultCard.appendChild(nextBtn);
+      }
+    }
+    setTimeout(invAuditGoBack, 1500);
+  }
+
+  function invAuditGoBack() {
+    var resultCard = g('inv-audit-result-card');
+    var searchCard = g('inv-audit-search-card');
+    if (resultCard) resultCard.style.display = 'none';
+    if (searchCard) searchCard.style.display = 'block';
+    var inp = g('inv-audit-search-inp');
+    if (inp) { inp.value = ''; inp.focus(); }
+    var nb = g('inv-audit-next-btn'); if (nb) nb.remove();
+    invAuditCurrentLocs = [];
+  }
+
   window.invAuditGoBack = invAuditGoBack;
+
 
   window.invAuditReset = function() {
     g('inv-audit-search-card').style.display = 'block';
