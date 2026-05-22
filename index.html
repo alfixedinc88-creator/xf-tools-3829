@@ -1,7 +1,7 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-  <!-- XFITTING-BUILD-V114-FEAT-20260501z7 -->
+  <!-- XFITTING-BUILD-V114-FEAT-20260501z8 -->
 <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate">
 <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&family=IBM+Plex+Sans:wght@300;400;500;600&display=swap" rel="stylesheet">
   <meta http-equiv="Pragma" content="no-cache">
@@ -14045,6 +14045,7 @@ function awdHandleScan(raw) {
         .then(function(v) {
           if (!v) return;
           invFlash('Corrected: ' + loc.location + ' \u2192 ' + actualCases + ' cases', 'success');
+          setTimeout(invAuditAutoReturn, 1500);
           if (rowEl) { rowEl.style.borderColor = '#0891B2'; rowEl.style.background = '#E0F2FE';
             if (countInp) countInp.disabled = true;
             var sb = g('inv-audit-submit-' + idx); if(sb) sb.disabled = true; }
@@ -14056,6 +14057,7 @@ function awdHandleScan(raw) {
         .then(function() {
           invFlash('Queued for review: ' + loc.location, 'success');
           if (rowEl) { rowEl.style.borderColor = 'var(--orange)'; rowEl.style.background = 'var(--orange-bg)';
+          setTimeout(invAuditAutoReturn, 1500);
             rowEl.style.opacity = '0.75';
             var sb = g('inv-audit-submit-' + idx); if(sb) sb.disabled = true;
             if (countInp) countInp.disabled = true; }
@@ -14086,23 +14088,21 @@ function awdHandleScan(raw) {
     var rowEl   = g('inv-audit-loc-' + idx);
     var saveBtn = g('inv-audit-movesave-' + idx);
     if (saveBtn) saveBtn.disabled = true;
+    // MOVE always auto-approves — no review queue needed for location corrections
     wFetch(W + '/inventory/log', { method: 'POST', body: JSON.stringify(body) })
       .then(function(r) { return r.json(); })
       .then(function(d) {
         if (!d || !d.rowIndex) { invFlash('Log failed', 'error'); if(saveBtn) saveBtn.disabled=false; return null; }
-        if (invAuditAutoMode) {
-          return wFetch(W + '/inventory/verify', { method: 'POST',
-            body: JSON.stringify({ rowIndex: d.rowIndex, action: 'Approved', verifiedBy: initials })
-          }).then(function(r) { return r.json(); });
-        }
-        return d;
+        return wFetch(W + '/inventory/verify', { method: 'POST',
+          body: JSON.stringify({ rowIndex: d.rowIndex, action: 'Approved', verifiedBy: initials })
+        }).then(function(r) { return r.json(); });
       })
       .then(function(v) {
         if (!v) return;
-        var msg = invAuditAutoMode ? 'Moved to ' + newLoc : 'Move queued: ' + loc.location + ' \u2192 ' + newLoc;
-        invFlash(msg, 'success');
+        invFlash('✓ Moved: ' + loc.location + ' → ' + newLoc, 'success');
         if (rowEl) { rowEl.style.borderColor = '#0891B2'; rowEl.style.background = '#E0F2FE'; }
         var mf = g('inv-audit-moveform-' + idx); if(mf) mf.style.display = 'none';
+        setTimeout(invAuditAutoReturn, 1500);
       })
       .catch(function(e) { invFlash('Error: ' + e.message, 'error'); if(saveBtn) saveBtn.disabled=false; });
   };
@@ -14252,6 +14252,7 @@ function awdHandleScan(raw) {
         .then(function(v) {
           if (!v) return;
           invFlash('Corrected: ' + item.location + ' → ' + actualCases + ' cases', 'success');
+          setTimeout(invAuditAutoReturn, 1500);
           if (rowEl) { rowEl.style.borderColor='var(--green)'; rowEl.style.background='var(--green-bg)'; if(inp) inp.disabled=true; rowEl.querySelector('button').disabled=true; }
           // "Where's the rest?" — if count was lower, offer to log missing cases at another location
           if (diff < 0) { invAuditShowWhereRest(item, Math.abs(diff), rowEl); }
@@ -14262,6 +14263,7 @@ function awdHandleScan(raw) {
         .then(function(r) { return r.json(); })
         .then(function() {
           invFlash('Queued for review: ' + item.location, 'success');
+          setTimeout(invAuditAutoReturn, 1500);
           if (rowEl) { rowEl.style.borderColor='var(--orange)'; rowEl.style.background='var(--orange-bg)'; rowEl.style.opacity='0.75'; rowEl.querySelector('button').disabled=true; if(inp) inp.disabled=true; }
           // "Where's the rest?" — if count was lower, offer to log missing cases at another location
           if (diff < 0) { invAuditShowWhereRest(item, Math.abs(diff), rowEl); }
@@ -14361,6 +14363,8 @@ function awdHandleScan(raw) {
         .catch(function(e) { resEl2.innerHTML = '<div style="color:var(--red);font-size:11px">Error: ' + e.message + '</div>'; logBtn.disabled = false; });
     };
   }
+
+  window.invAuditGoBack = invAuditGoBack;
 
   window.invAuditReset = function() {
     g('inv-audit-search-card').style.display = 'block';
