@@ -11920,8 +11920,12 @@ function awdHandleScan(raw) {
     <!-- Part# search -->
     <div id="inv-audit-search-part">
       <div class="isearch-row">
-        <input class="isearch-inp" id="inv-audit-search-inp" type="text" placeholder="Part# or name&#x2026;" onkeydown="if(event.key==='Enter')invAuditSearch()">
+        <input class="isearch-inp" id="inv-audit-search-inp" type="text" placeholder="Part# or scan barcode…" onkeydown="if(event.key==='Enter')invAuditSearch()">
+        <button class="icam-btn" id="inv-audit-cam-btn" onclick="invAuditToggleCam()" style="white-space:nowrap">&#x1F4F7; Scan</button>
         <button class="isearch-btn" onclick="invAuditSearch()">Go</button>
+      </div>
+      <div id="inv-audit-reader-wrap" style="display:none;border-radius:10px;overflow:hidden;background:#000;min-height:160px;margin-top:8px">
+        <div id="inv-audit-qr-reader"></div>
       </div>
       <div id="inv-audit-name-results"></div>
     </div>
@@ -13937,8 +13941,65 @@ function awdHandleScan(raw) {
 
   // Mode UI initialized when tab opens via invAuditLoadMode()
 
-  window.invAuditSearch = function() {
-    var code = (g('inv-audit-search-inp').value || '').trim();
+  var invAuditCamRunning = false;
+  var invAuditQrScanner  = null;
+  var invAuditLastScan   = 0;
+
+  window.invAuditToggleCam = function() {
+    if (invAuditCamRunning) { invAuditStopCam(); return; }
+    var btn = g('inv-audit-cam-btn');
+    btn.textContent = 'Starting…';
+    btn.disabled = true;
+    invLoadQR().then(function() {
+      g('inv-audit-reader-wrap').style.display = 'block';
+      if (invAuditQrScanner) { try { invAuditQrScanner.clear(); } catch(e){} invAuditQrScanner = null; }
+      invAuditQrScanner = new Html5Qrcode('inv-audit-qr-reader');
+      invAuditQrScanner.start(
+        { facingMode: 'environment' },
+        { fps: 10, qrbox: { width: 260, height: 90 } },
+        function(code) {
+          var now = Date.now();
+          if (now - invAuditLastScan < 2000) return;
+          invAuditLastScan = now;
+          invAuditStopCam();
+          var inp = g('inv-audit-search-inp');
+          if (inp) inp.value = code;
+          invAuditSearch(code);
+        },
+        function() {}
+      ).then(function() {
+        invAuditCamRunning = true;
+        btn.textContent = '⏹ Stop';
+        btn.className = 'icam-btn scanning';
+        btn.disabled = false;
+      }).catch(function() {
+        invFlash('Camera error — check permissions', 'error');
+        btn.textContent = '&#x1F4F7; Scan';
+        btn.className = 'icam-btn';
+        btn.disabled = false;
+        g('inv-audit-reader-wrap').style.display = 'none';
+      });
+    }).catch(function() {
+      invFlash('Could not load scanner', 'error');
+      btn.textContent = '&#x1F4F7; Scan';
+      btn.disabled = false;
+    });
+  };
+
+  function invAuditStopCam() {
+    if (invAuditQrScanner && invAuditCamRunning) {
+      invAuditQrScanner.stop().catch(function(){});
+      invAuditQrScanner = null;
+    }
+    invAuditCamRunning = false;
+    var wrap = g('inv-audit-reader-wrap');
+    if (wrap) wrap.style.display = 'none';
+    var btn = g('inv-audit-cam-btn');
+    if (btn) { btn.textContent = '&#x1F4F7; Scan'; btn.className = 'icam-btn'; btn.disabled = false; }
+  }
+
+  window.invAuditSearch = function(codeOverride) {
+    var code = codeOverride || (g('inv-audit-search-inp').value || '').trim();
     if (!code) { invFlash('Enter a part number', 'error'); return; }
     g('inv-audit-name-results').innerHTML = '<div style="color:var(--text3);font-size:13px;padding:8px 0">Searching…</div>';
     wFetch(W + '/inventory/lookup?code=' + encodeURIComponent(code))
@@ -14155,28 +14216,7 @@ function awdHandleScan(raw) {
       .then(function(r) { return r.json(); })
       .then(function(d) {
         if (!d || !d.results) { resEl.innerHTML = '<div style="color:var(--red);font-size:13px">Search failed</div>'; return; }
-        if (!d.results.length) {
-          // Empty location — show add form immediately so worker can log found items
-          var emptyHtml = '<div style="color:var(--text3);font-size:13px;padding:6px 0;margin-bottom:8px">No items recorded at <strong>' + q + '</strong></div>';
-          emptyHtml += '<div style="padding:12px;background:var(--purple-bg);border:1.5px solid var(--purple);border-radius:10px">';
-          emptyHtml += '<div style="font-size:13px;font-weight:700;color:var(--purple);margin-bottom:8px">&#x1F4E6; Add item found at this location</div>';
-          emptyHtml += '<div style="display:flex;gap:6px;margin-bottom:6px;align-items:center">';
-          emptyHtml += '<input id="audloc-add-part" type="text" placeholder="Part# e.g. 27-3-1=5XX" autocomplete="off" style="flex:2;padding:6px 10px;border:1.5px solid var(--border);border-radius:7px;background:var(--bg);color:var(--text);font-size:12px;font-family:var(--mono)">';
-          emptyHtml += '<input id="audloc-add-cases" type="number" min="0.1" step="0.5" placeholder="Cases" style="width:80px;padding:6px 8px;border:1.5px solid var(--border);border-radius:7px;background:var(--bg);color:var(--text);font-size:12px;font-family:var(--mono)"></div>';
-          emptyHtml += '<div style="font-size:11px;font-weight:700;color:var(--text3);margin-bottom:4px">LOCATION</div>';
-          emptyHtml += '<div style="display:flex;gap:6px;align-items:center;margin-bottom:8px">';
-          emptyHtml += '<select id="audloc-add-loc-prefix" style="padding:5px 7px;border:1.5px solid var(--border);border-radius:7px;background:var(--bg);color:var(--text);font-size:12px;font-family:var(--mono)">' + '<option value="2FL=">2FL=</option><option value="BARN=">BARN=</option><option value="BASEMENT=">BASEMENT=</option><option value="BH OFFICE=">BH OFFICE=</option><option value="C1=">C1=</option><option value="C2=">C2=</option><option value="C3=">C3=</option><option value="C4=">C4=</option><option value="C5=">C5=</option><option value="FRONT=">FRONT=</option>' + '</select>';
-          emptyHtml += '<input id="audloc-add-loc-shelf" type="text" placeholder="e.g. 5-1-3" autocomplete="off" style="flex:1;padding:5px 8px;border:1.5px solid var(--border);border-radius:7px;background:var(--bg);color:var(--text);font-size:12px;font-family:var(--mono)"></div>';
-          emptyHtml += '<button onclick="invAuditAddUnlisted()" style="padding:7px 14px;border-radius:7px;border:none;background:var(--purple);color:#fff;font-size:13px;font-weight:700;cursor:pointer">&#x2B; Log Found Item</button>';
-          emptyHtml += '<div id="audloc-add-result" style="margin-top:6px"></div></div>';
-          resEl.innerHTML = emptyHtml;
-          // Pre-fill location from search
-          var addPfx = g('audloc-add-loc-prefix'); if (addPfx) addPfx.value = prefix;
-          var addShf = g('audloc-add-loc-shelf');  if (addShf) addShf.value = shelf;
-          // Focus part# input
-          var partInp = g('audloc-add-part'); if (partInp) setTimeout(function(){ partInp.focus(); }, 100);
-          return;
-        }
+        if (!d.results.length) { resEl.innerHTML = '<div style="color:var(--text3);font-size:13px;padding:6px 0">No items found at ' + q + '</div>'; return; }
         // Group by location
         var grouped = {};
         d.results.forEach(function(r) {
