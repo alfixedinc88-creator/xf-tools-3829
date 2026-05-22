@@ -14188,7 +14188,29 @@ function awdHandleScan(raw) {
       .catch(function(e) { invFlash('Error: ' + e.message, 'error'); if(saveBtn) saveBtn.disabled=false; });
   };
 
+  window.invExportLocations = function() {
+    var status = g('inv-export-status');
+    if (status) status.textContent = 'Loading…';
+    wFetch(W + '/inventory/location-list')
+      .then(function(r) { return r.json(); })
+      .then(function(d) {
+        if (!d || !d.locations) { if(status) status.textContent = 'Failed'; return; }
+        var csv = 'Location,BarcodeID,TotalCases,PartCount\n';
+        d.locations.forEach(function(l) {
+          csv += '"' + l.location + '","' + l.barcodeId + '",' + l.totalCases + ',' + l.partCount + '\n';
+        });
+        var blob = new Blob([csv], { type: 'text/csv' });
+        var url  = URL.createObjectURL(blob);
+        var a    = document.createElement('a');
+        a.href = url; a.download = 'xfitting-locations.csv'; a.click();
+        URL.revokeObjectURL(url);
+        if (status) status.textContent = '✓ ' + d.count + ' locations exported';
+      })
+      .catch(function(e) { if(status) status.textContent = 'Error: ' + e.message; });
+  };
+
   var invAuditSearchMode = 'part';
+
 
   window.invAuditSetSearchMode = function(mode) {
     invAuditSearchMode = mode;
