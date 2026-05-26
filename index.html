@@ -19819,13 +19819,21 @@ window.psVaExport = function() {
     if (list) list.style.display = 'block';
     if (selectBar) selectBar.style.display = 'flex';
     if (!list) return;
-    list.innerHTML = lpFiltered.map(function(l) {
-      var chk = lpSelected.has(l.location) ? 'checked' : '';
-      return '<div class="lp-loc-row">'
-        + '<input type="checkbox" ' + chk + ' data-loc="' + l.location.replace(/"/g, '&quot;') + '" onchange="lpToggleLoc(this.dataset.loc,this.checked)">'
-        + '<div class="lp-loc-name">' + l.location + '</div>'
-        + '</div>';
-    }).join('');
+    list.innerHTML = '';
+    lpFiltered.forEach(function(l, i) {
+      var row  = document.createElement('div');
+      row.className = 'lp-loc-row';
+      var chk  = document.createElement('input');
+      chk.type = 'checkbox';
+      chk.checked = lpSelected.has(l.location);
+      chk.onchange = (function(loc){ return function(){ lpToggleLoc(loc, this.checked); }; })(l.location);
+      var name = document.createElement('div');
+      name.className = 'lp-loc-name';
+      name.textContent = l.location;
+      row.appendChild(chk);
+      row.appendChild(name);
+      list.appendChild(row);
+    });
     lpUpdateSelectedCount();
   }
 
@@ -19884,10 +19892,33 @@ window.psVaExport = function() {
       .catch(function(e) { if(status) status.textContent = '⚠ ' + e.message; });
   };
 
+  var LP_SETTINGS_KEY = 'lp_settings';
+  var LP_DEFAULTS = {'lp-set-width':'406','lp-set-height':'203','lp-set-textsize':'24',
+    'lp-set-texty':'6','lp-set-barheight':'100','lp-set-bary':'36','lp-set-barx':'20','lp-set-dark':'10'};
+
+  function lpSaveSettings() {
+    var vals = {};
+    Object.keys(LP_DEFAULTS).forEach(function(id){ var el=g(id); if(el) vals[id]=el.value; });
+    localStorage.setItem(LP_SETTINGS_KEY, JSON.stringify(vals));
+  }
+
+  function lpLoadSettings() {
+    var saved = {};
+    try { saved = JSON.parse(localStorage.getItem(LP_SETTINGS_KEY) || '{}'); } catch(e){}
+    Object.keys(LP_DEFAULTS).forEach(function(id){
+      var el = g(id);
+      if (el) el.value = saved[id] || LP_DEFAULTS[id];
+    });
+    // Auto-save on any change
+    Object.keys(LP_DEFAULTS).forEach(function(id){
+      var el = g(id);
+      if (el) el.addEventListener('change', lpSaveSettings);
+    });
+  }
+
   window.lpResetSettings = function() {
-    var d = {'lp-set-width':'406','lp-set-height':'203','lp-set-textsize':'24',
-      'lp-set-texty':'6','lp-set-barheight':'100','lp-set-bary':'36','lp-set-barx':'20','lp-set-dark':'10'};
-    Object.keys(d).forEach(function(id){ var el=g(id); if(el) el.value=d[id]; });
+    Object.keys(LP_DEFAULTS).forEach(function(id){ var el=g(id); if(el) el.value=LP_DEFAULTS[id]; });
+    localStorage.removeItem(LP_SETTINGS_KEY);
   };
 
   window.lpTestPrint = function() {
@@ -20006,7 +20037,7 @@ window.psVaExport = function() {
   };
 
   window.lpLaunch = function() {
-    // Auto-connect on launch
+    lpLoadSettings(); // restore saved settings
     setTimeout(lpConnect, 300);
   };
 
