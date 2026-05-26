@@ -19616,7 +19616,7 @@ window.psVaExport = function() {
     </div>
 
     <!-- Select all / none -->
-    <div id="lp-select-bar" style="display:none;margin-bottom:6px;display:flex;gap:8px;align-items:center">
+    <div id="lp-select-bar" style="display:none;margin-bottom:6px;align-items:center;gap:8px">
       <button class="lp-btn lp-btn-secondary" style="padding:4px 10px;font-size:11px" onclick="lpSelectAll(true)">Select All</button>
       <button class="lp-btn lp-btn-secondary" style="padding:4px 10px;font-size:11px" onclick="lpSelectAll(false)">Select None</button>
       <span id="lp-selected-count" style="font-size:12px;color:var(--text3)"></span>
@@ -19769,19 +19769,16 @@ window.psVaExport = function() {
   };
 
   function lpRenderList() {
-    var list = g('lp-loc-list');
+    var list      = g('lp-loc-list');
     var selectBar = g('lp-select-bar');
-    list.style.display = 'block';
-    selectBar.style.display = 'flex';
+    if (list) list.style.display = 'block';
+    if (selectBar) selectBar.style.display = 'flex';
+    if (!list) return;
     list.innerHTML = lpFiltered.map(function(l) {
       var chk = lpSelected.has(l.location) ? 'checked' : '';
       return '<div class="lp-loc-row">'
-          return '<div class="lp-loc-row">'
-            + '<input type="checkbox" ' + chk + ' data-loc="' + l.location.replace(/"/g,'&quot;') + '" onchange="lpToggleLoc(this.dataset.loc,this.checked)">'
-            + '<div class="lp-loc-name">' + l.location + '</div>'
-            + '</div>';
+        + '<input type="checkbox" ' + chk + ' data-loc="' + l.location.replace(/"/g, '&quot;') + '" onchange="lpToggleLoc(this.dataset.loc,this.checked)">'
         + '<div class="lp-loc-name">' + l.location + '</div>'
-            + '</div>';
         + '</div>';
     }).join('');
     lpUpdateSelectedCount();
@@ -19810,13 +19807,14 @@ window.psVaExport = function() {
     return [
       '^XA',
       '^MMT',
-      '^PW406',    // 2" wide at 203dpi
-      '^LL203',    // 1" tall at 203dpi
+      '^PW406',           // 2" wide at 203dpi = 406 dots
+      '^LL203',           // 1" tall at 203dpi = 203 dots
       '^LS0',
-      // Location text
-      '^FO10,8^A0N,22,22^FD' + barcodeVal + '^FS',
-      // Code 128 barcode
-      '^FO10,38^BCN,90,N,N,N^FD' + barcodeVal + '^FS',
+      '^CI28',            // UTF-8 encoding
+      // Location text — centered, top of label
+      '^FO0,6^FB406,1,0,C,0^A0N,24,24^FD' + barcodeVal + '^FS',
+      // Code 128 barcode — centered
+      '^FO20,36^BY2,3,100^BCN,100,N,N,N^FD' + barcodeVal + '^FS',
       '^XZ'
     ].join('\n');
   }
@@ -19835,9 +19833,14 @@ window.psVaExport = function() {
     area.innerHTML = sel.map(function(l) {
       var loc = l.location.replace(/^'/, '');
       return '<div class="lp-preview-label">'
-        + '<div style="font-weight:700;font-size:12px;margin-bottom:3px">' + loc + '</div>'
-        + '<div class="lp-preview-barcode">&#x2588;&#x2592;&#x2588;&#x2592;&#x2588;&#x2588;&#x2592;&#x2588;</div>'
-        + '<div style="font-size:9px;color:#666">' + loc + '</div>'
+        + '<div style="font-weight:700;font-size:12px;margin-bottom:4px;text-align:center">' + loc + '</div>'
+        + '<svg xmlns="http://www.w3.org/2000/svg" width="180" height="50" style="display:block;margin:0 auto">'
+        + '<rect width="180" height="50" fill="white"/>'
+        + '<text x="90" y="44" font-size="9" text-anchor="middle" font-family="monospace" fill="#333">' + loc + '</text>'
+        // Simple barcode simulation — alternating bars
+        + (function(){var b='';for(var x=5;x<175;x+=3){b+='<rect x="'+x+'" y="2" width="'+(Math.random()>0.5?2:1)+'" height="36" fill="black"/>';}return b;})()
+        + '</svg>'
+        + '<div style="font-size:9px;color:#888;text-align:center;margin-top:2px">Code 128 · 1” × 2”</div>'
         + '</div>';
     }).join('');
   }
