@@ -19606,7 +19606,7 @@ window.psVaExport = function() {
   <div class="lp-card">
     <div class="lp-card-title">Locations <span id="lp-total-badge" class="lp-count-badge" style="display:none">0</span></div>
     <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
-      <button class="lp-btn lp-btn-primary" onclick="lpLoadLocations()" id="lp-load-btn">📋 Load from Master List</button>
+      <button class="lp-btn lp-btn-primary" onclick="lpLoadLocations()" id="lp-load-btn">📋 Load Locations</button>
       <span id="lp-load-status" style="font-size:12px;color:var(--text3)"></span>
     </div>
 
@@ -19710,7 +19710,7 @@ window.psVaExport = function() {
     status.textContent = 'Loading…';
     // Use wFetch from main app scope
     fetch('https://xfitting-lookup.alfixedinc88.workers.dev/inventory/location-list', {
-      headers: { 'X-Session-Token': sessionToken || '' }
+      headers: { 'X-Session-Token': (window.XF_SESSION || '') }
     })
       .then(function(r) { return r.json(); })
       .then(function(d) {
