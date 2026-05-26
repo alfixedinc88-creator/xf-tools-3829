@@ -19728,7 +19728,7 @@ window.psVaExport = function() {
         var filterRow = g('lp-filter-row');
         filterRow.style.display = 'flex';
         filterRow.innerHTML = prefixes.map(function(p) {
-          return '<button class="lp-filter-btn' + (p==='ALL'?' active':'') + '" onclick="lpSetFilter('' + p + '',this)">' + p + '</button>';
+          return '<button class="lp-filter-btn' + (p==='ALL'?' active':'') + '" data-pfx="' + p + '" onclick="lpSetFilter(this.dataset.pfx,this)">' + p + '</button>';
         }).join('');
         // Update badge
         var badge = g('lp-total-badge');
@@ -19776,7 +19776,10 @@ window.psVaExport = function() {
     list.innerHTML = lpFiltered.map(function(l) {
       var chk = lpSelected.has(l.location) ? 'checked' : '';
       return '<div class="lp-loc-row">'
-        + '<input type="checkbox" ' + chk + ' onchange="lpToggleLoc('' + l.location.replace(/'/g,"\'") + '',this.checked)">'
+          return '<div class="lp-loc-row">'
+            + '<input type="checkbox" ' + chk + ' data-loc="' + l.location.replace(/"/g,'&quot;') + '" onchange="lpToggleLoc(this.dataset.loc,this.checked)">'
+            + '<div class="lp-loc-name">' + l.location + '</div>'
+            + '</div>';
         + '<div class="lp-loc-name">' + l.location + '</div>'
             + '</div>';
         + '</div>';
@@ -19815,14 +19818,12 @@ window.psVaExport = function() {
       // Code 128 barcode
       '^FO10,38^BCN,90,N,N,N^FD' + barcodeVal + '^FS',
       '^XZ'
-    ].join('
-');
+    ].join('\n');
   }
 
   function lpGenAllZPL() {
     var selected = lpLocations.filter(function(l){ return lpSelected.has(l.location); });
-    return selected.map(function(l){ return lpGenZPL(l.location); }).join('
-');
+    return selected.map(function(l){ return lpGenZPL(l.location); }).join('\n');
   }
 
   // ── PREVIEW ───────────────────────────────────────────────────────────────
