@@ -1,7 +1,7 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-  <!-- XFITTING-BUILD-V114-FEAT-20260501z12 -->
+  <!-- XFITTING-BUILD-V114-FEAT-20260501z13 -->
 <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate">
 <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&family=IBM+Plex+Sans:wght@300;400;500;600&display=swap" rel="stylesheet">
   <meta http-equiv="Pragma" content="no-cache">
@@ -1853,6 +1853,12 @@ input[type=checkbox]{width:15px;height:15px;cursor:pointer;accent-color:var(--bl
         <div class="launcher-card-desc">Live eBay listings, price research, velocity charts and approval queue.</div>
         <div style="display:inline-block;margin-top:10px;font-size:10px;font-family:var(--mono);padding:3px 8px;border-radius:4px;background:#e8f5e9;color:#2e7d32;font-weight:600;letter-spacing:1px">eBay · Operator</div>
       </div>
+      <div class="launcher-card" onclick="lpLaunchFromOperator()" style="border-color:#E0F2FE">
+        <div class="launcher-card-icon">🏷️</div>
+        <div class="launcher-card-title">Label Printer</div>
+        <div class="launcher-card-desc">Print location barcode labels for shelf tagging.</div>
+        <div style="display:inline-block;margin-top:10px;font-size:10px;font-family:var(--mono);padding:3px 8px;border-radius:4px;background:#E0F2FE;color:#0891B2;font-weight:600;letter-spacing:1px">Warehouse · All Staff</div>
+      </div>
     </div>
 
     <div class="launcher-section-label">⚙ Management</div>
@@ -1886,11 +1892,6 @@ input[type=checkbox]{width:15px;height:15px;cursor:pointer;accent-color:var(--bl
         <div class="launcher-card-title">AI Customer Support <span id="ebaymsgs-badge" style="display:none;background:var(--accent);color:#fff;font-size:10px;font-family:var(--mono);font-weight:700;padding:2px 6px;border-radius:10px;margin-left:6px;vertical-align:middle"></span></div>
         <div class="launcher-card-desc">AI replies for eBay, Amazon, Walmart, Shopify &amp; Email. Review queue, CS tool, analytics.</div>
         <div style="display:inline-block;margin-top:10px;font-size:10px;font-family:var(--mono);padding:3px 8px;border-radius:4px;background:#e8f5e9;color:#2e7d32;font-weight:600;letter-spacing:1px">All Platforms · AI · Management</div>
-      </div>
-      <div class="launcher-card" onclick="launchMgmtApp('labelprint')" style="border-color:#E0F2FE">
-        <div class="launcher-icon">🏷️</div>
-        <div class="launcher-title">Label Printer</div>
-        <div class="launcher-sub">Print location barcodes</div>
       </div>
       <div class="launcher-card" onclick="launchMgmtApp('ldash')" style="border-color:#fdf0ff">
         <div class="launcher-card-icon">🏢</div>
@@ -19633,6 +19634,19 @@ window.psVaExport = function() {
     <div style="font-size:11px;color:var(--text3);margin-top:6px">Showing first 3 labels</div>
   </div>
 
+  <!-- Single label input -->
+  <div class="lp-card">
+    <div class="lp-card-title">Print Single Label</div>
+    <div style="font-size:12px;color:var(--text2);margin-bottom:10px">Type or scan any location to print one label instantly.</div>
+    <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
+      <input id="lp-single-input" type="text" placeholder="e.g. BARN=1-1-2-1" autocomplete="off" autocapitalize="characters"
+        style="flex:1;min-width:140px;padding:8px 12px;border:1.5px solid var(--border);border-radius:8px;background:var(--bg);color:var(--text);font-size:14px;font-family:var(--mono)"
+        onkeydown="if(event.key==='Enter') lpPrintSingle()">
+      <button class="lp-btn lp-btn-primary" onclick="lpPrintSingle()">🖨️ Print</button>
+    </div>
+    <div id="lp-single-status" style="font-size:12px;color:var(--text2);margin-top:6px"></div>
+  </div>
+
   <!-- Label Settings -->
   <div class="lp-card" id="lp-settings-card" style="display:none">
     <div class="lp-card-title">Label Settings</div>
@@ -19845,6 +19859,31 @@ window.psVaExport = function() {
     };
   }
 
+  window.lpPrintSingle = function() {
+    var inp    = g('lp-single-input');
+    var status = g('lp-single-status');
+    var loc    = inp ? inp.value.trim() : '';
+    if (!loc) { if(status) status.textContent = 'Enter a location first'; return; }
+    if (!lpConnected) { if(status) status.textContent = 'Connect to printer first'; return; }
+    var dd      = g('lp-printer-dropdown');
+    var idx     = parseInt(dd ? dd.value : '0') || 0;
+    var printer = lpPrinters[idx];
+    if (!printer) { if(status) status.textContent = 'No printer selected'; return; }
+    var zpl = lpGenZPL(loc);
+    if(status) status.textContent = 'Printing ' + loc + '…';
+    fetch(LP_ZBP_URL + '/write', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ device: printer, data: zpl })
+    })
+      .then(function() {
+        if(status) status.textContent = '✓ Printed: ' + loc;
+        if(inp) inp.value = '';
+        setTimeout(function(){ if(inp) inp.focus(); }, 300);
+      })
+      .catch(function(e) { if(status) status.textContent = '⚠ ' + e.message; });
+  };
+
   window.lpResetSettings = function() {
     var d = {'lp-set-width':'406','lp-set-height':'203','lp-set-textsize':'24',
       'lp-set-texty':'6','lp-set-barheight':'100','lp-set-bary':'36','lp-set-barx':'20','lp-set-dark':'10'};
@@ -19959,6 +19998,13 @@ window.psVaExport = function() {
   };
 
   // ── LAUNCH ────────────────────────────────────────────────────────────────
+  // Launch from Operator section — no PIN required
+  window.lpLaunchFromOperator = function() {
+    document.getElementById('launcher').style.display = 'none';
+    document.getElementById('labelprint-app').style.display = 'block';
+    lpLaunch();
+  };
+
   window.lpLaunch = function() {
     // Auto-connect on launch
     setTimeout(lpConnect, 300);
