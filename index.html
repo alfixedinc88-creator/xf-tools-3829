@@ -19832,20 +19832,57 @@ window.psVaExport = function() {
 
   // ── ZPL GENERATION ────────────────────────────────────────────────────────
   // ZP 450 at 203 DPI, 1"x2" label = 203x406 dots
+  function lpGetSettings() {
+    return {
+      width:     parseInt((g('lp-set-width')     || {value:'406'}).value)  || 406,
+      height:    parseInt((g('lp-set-height')    || {value:'203'}).value)  || 203,
+      textSize:  parseInt((g('lp-set-textsize')  || {value:'24'}).value)   || 24,
+      textY:     parseInt((g('lp-set-texty')     || {value:'6'}).value)    || 6,
+      barHeight: parseInt((g('lp-set-barheight') || {value:'100'}).value)  || 100,
+      barY:      parseInt((g('lp-set-bary')      || {value:'36'}).value)   || 36,
+      barX:      parseInt((g('lp-set-barx')      || {value:'20'}).value)   || 20,
+      darkness:  parseInt((g('lp-set-dark')      || {value:'10'}).value)   || 10
+    };
+  }
+
+  window.lpResetSettings = function() {
+    var d = {'lp-set-width':'406','lp-set-height':'203','lp-set-textsize':'24',
+      'lp-set-texty':'6','lp-set-barheight':'100','lp-set-bary':'36','lp-set-barx':'20','lp-set-dark':'10'};
+    Object.keys(d).forEach(function(id){ var el=g(id); if(el) el.value=d[id]; });
+  };
+
+  window.lpTestPrint = function() {
+    if (!lpConnected) { alert('Connect to printer first'); return; }
+    var dd  = g('lp-printer-dropdown');
+    var idx = parseInt(dd ? dd.value : '0') || 0;
+    var printer = lpPrinters[idx];
+    if (!printer) { alert('No printer selected'); return; }
+    var testLoc = lpFiltered.length > 0 ? lpFiltered[0].location : 'TEST=1-1-1';
+    var zpl     = lpGenZPL(testLoc);
+    var status  = g('lp-test-status');
+    if (status) status.textContent = 'Sending test: ' + testLoc + '…';
+    fetch(LP_ZBP_URL + '/write', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ device: printer, data: zpl })
+    })
+      .then(function() { if(status) status.textContent = '✓ Test sent — adjust and try again if needed'; })
+      .catch(function(e) { if(status) status.textContent = '⚠ ' + e.message; });
+  };
+
   function lpGenZPL(loc) {
-    // Clean location for barcode — strip leading ' if present
+    var s          = lpGetSettings();
     var barcodeVal = loc.replace(/^'/, '');
     return [
       '^XA',
       '^MMT',
-      '^PW406',           // 2" wide at 203dpi = 406 dots
-      '^LL203',           // 1" tall at 203dpi = 203 dots
+      '^PW' + s.width,
+      '^LL' + s.height,
+      '^MD' + s.darkness,
       '^LS0',
-      '^CI28',            // UTF-8 encoding
-      // Location text — centered, top of label
-      '^FO0,6^FB406,1,0,C,0^A0N,24,24^FD' + barcodeVal + '^FS',
-      // Code 128 barcode — centered
-      '^FO20,36^BY2,3,100^BCN,100,N,N,N^FD' + barcodeVal + '^FS',
+      '^CI28',
+      '^FO0,' + s.textY + '^FB' + s.width + ',1,0,C,0^A0N,' + s.textSize + ',' + s.textSize + '^FD' + barcodeVal + '^FS',
+      '^FO' + s.barX + ',' + s.barY + '^BY2,3,' + s.barHeight + '^BCN,' + s.barHeight + ',N,N,N^FD' + barcodeVal + '^FS',
       '^XZ'
     ].join('\n');
   }
