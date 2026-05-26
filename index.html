@@ -19633,6 +19633,36 @@ window.psVaExport = function() {
     <div style="font-size:11px;color:var(--text3);margin-top:6px">Showing first 3 labels</div>
   </div>
 
+  <!-- Label Settings -->
+  <div class="lp-card" id="lp-settings-card" style="display:none">
+    <div class="lp-card-title">Label Settings</div>
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-bottom:12px">
+      <div><div style="font-size:11px;font-weight:700;color:var(--text3);margin-bottom:4px">LABEL WIDTH (dots)</div>
+        <input id="lp-set-width" type="number" value="406" min="100" max="800" style="width:100%;padding:6px 8px;border:1.5px solid var(--border);border-radius:7px;background:var(--bg);color:var(--text);font-size:13px;font-family:var(--mono)">
+        <div style="font-size:10px;color:var(--text3);margin-top:2px">2&quot; &times; 203dpi = 406</div></div>
+      <div><div style="font-size:11px;font-weight:700;color:var(--text3);margin-bottom:4px">LABEL HEIGHT (dots)</div>
+        <input id="lp-set-height" type="number" value="203" min="100" max="800" style="width:100%;padding:6px 8px;border:1.5px solid var(--border);border-radius:7px;background:var(--bg);color:var(--text);font-size:13px;font-family:var(--mono)">
+        <div style="font-size:10px;color:var(--text3);margin-top:2px">1&quot; &times; 203dpi = 203</div></div>
+      <div><div style="font-size:11px;font-weight:700;color:var(--text3);margin-bottom:4px">TEXT SIZE (dots)</div>
+        <input id="lp-set-textsize" type="number" value="24" min="10" max="60" style="width:100%;padding:6px 8px;border:1.5px solid var(--border);border-radius:7px;background:var(--bg);color:var(--text);font-size:13px;font-family:var(--mono)"></div>
+      <div><div style="font-size:11px;font-weight:700;color:var(--text3);margin-bottom:4px">TEXT Y OFFSET (dots)</div>
+        <input id="lp-set-texty" type="number" value="6" min="0" max="100" style="width:100%;padding:6px 8px;border:1.5px solid var(--border);border-radius:7px;background:var(--bg);color:var(--text);font-size:13px;font-family:var(--mono)"></div>
+      <div><div style="font-size:11px;font-weight:700;color:var(--text3);margin-bottom:4px">BARCODE HEIGHT (dots)</div>
+        <input id="lp-set-barheight" type="number" value="100" min="20" max="180" style="width:100%;padding:6px 8px;border:1.5px solid var(--border);border-radius:7px;background:var(--bg);color:var(--text);font-size:13px;font-family:var(--mono)"></div>
+      <div><div style="font-size:11px;font-weight:700;color:var(--text3);margin-bottom:4px">BARCODE Y OFFSET (dots)</div>
+        <input id="lp-set-bary" type="number" value="36" min="0" max="150" style="width:100%;padding:6px 8px;border:1.5px solid var(--border);border-radius:7px;background:var(--bg);color:var(--text);font-size:13px;font-family:var(--mono)"></div>
+      <div><div style="font-size:11px;font-weight:700;color:var(--text3);margin-bottom:4px">BARCODE X MARGIN (dots)</div>
+        <input id="lp-set-barx" type="number" value="20" min="0" max="100" style="width:100%;padding:6px 8px;border:1.5px solid var(--border);border-radius:7px;background:var(--bg);color:var(--text);font-size:13px;font-family:var(--mono)"></div>
+      <div><div style="font-size:11px;font-weight:700;color:var(--text3);margin-bottom:4px">DARKNESS (1-30)</div>
+        <input id="lp-set-dark" type="number" value="10" min="1" max="30" style="width:100%;padding:6px 8px;border:1.5px solid var(--border);border-radius:7px;background:var(--bg);color:var(--text);font-size:13px;font-family:var(--mono)"></div>
+    </div>
+    <div style="display:flex;gap:8px;flex-wrap:wrap">
+      <button class="lp-btn lp-btn-primary" onclick="lpTestPrint()">&#x1F5A8; Print Test Label</button>
+      <button class="lp-btn lp-btn-secondary" onclick="lpResetSettings()">&#x21BA; Reset Defaults</button>
+    </div>
+    <div id="lp-test-status" style="font-size:12px;color:var(--text2);margin-top:8px"></div>
+  </div>
+
   <!-- Print -->
   <div class="lp-card" id="lp-print-card" style="display:none">
     <div class="lp-card-title">Print</div>
@@ -19757,7 +19787,7 @@ window.psVaExport = function() {
     lpRenderPreview();
     g('lp-print-card').style.display = 'block';
     g('lp-preview-card').style.display = 'block';
-        g('lp-settings-card').style.display = 'block';
+        var sc = g('lp-settings-card'); if(sc) sc.style.display = 'block';
   };
 
   window.lpSelectAll = function(val) {
