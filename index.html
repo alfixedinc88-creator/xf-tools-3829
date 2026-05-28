@@ -20032,8 +20032,8 @@ window.psVaExport = function() {
         var badge = g('lp-total-badge');
         badge.textContent = d.count;
         badge.style.display = 'inline';
-        // Select all by default
-        lpLocations.forEach(function(l) { lpSelected.add(l.location); });
+        // Start with nothing selected — user selects after filtering
+        lpSelected.clear();
         lpSetFilter('ALL', filterRow.querySelector('.lp-filter-btn'));
       })
       .catch(function(e) {
@@ -20044,6 +20044,7 @@ window.psVaExport = function() {
 
   window.lpSetFilter = function(pfx, btn) {
     lpCurrentFilter = pfx;
+    lpSelected.clear(); // clear selection when switching filter
     document.querySelectorAll('#labelprint-app .lp-filter-btn').forEach(function(b){ b.classList.remove('active'); });
     if (btn) btn.classList.add('active');
     lpFiltered = pfx === 'ALL' ? lpLocations : lpLocations.filter(function(l) {
