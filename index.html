@@ -11952,6 +11952,12 @@ function awdHandleScan(raw) {
     </div>
     <!-- Location search -->
     <div id="inv-audit-search-loc" style="display:none">
+      <div style="display:flex;gap:6px;align-items:center;margin-bottom:6px">
+        <button class="icam-btn" id="inv-audit-loc-cam-btn" onclick="invAuditLocToggleCam()" style="white-space:nowrap;padding:6px 10px;font-size:12px">&#x1F4F7; Scan</button>
+      </div>
+      <div id="inv-audit-loc-reader-wrap" style="display:none;border-radius:8px;overflow:hidden;background:#000;min-height:120px;margin-bottom:8px">
+        <div id="inv-audit-loc-qr-reader"></div>
+      </div>
       <div style="display:flex;gap:6px;align-items:center;margin-bottom:8px">
         <select id="inv-audit-loc-prefix" style="padding:6px 8px;border:1.5px solid var(--border);border-radius:7px;background:var(--bg);color:var(--text);font-size:13px;font-family:var(--mono)"><option value="2FL=">2FL=</option><option value="BARN=">BARN=</option><option value="BASEMENT=">BASEMENT=</option><option value="BH OFFICE=">BH OFFICE=</option><option value="C1=">C1=</option><option value="C2=">C2=</option><option value="C3=">C3=</option><option value="C4=">C4=</option><option value="C5=">C5=</option><option value="FRONT=">FRONT=</option></select>
         <input id="inv-audit-loc-shelf" type="text" placeholder="e.g. 5-1 or 5-1-3" autocomplete="off" style="flex:1;padding:6px 10px;border:1.5px solid var(--border);border-radius:7px;background:var(--bg);color:var(--text);font-size:13px;font-family:var(--mono)" oninput="invAuditLocSearch()" onkeydown="if(event.key==='Enter')invAuditLocSearch()">
@@ -14291,7 +14297,68 @@ function awdHandleScan(raw) {
       .catch(function(e) { if(status) status.textContent = 'Error: ' + e.message; });
   };
 
+  // ── Audit location camera scan ────────────────────────────────────────
+  var invAuditLocCamRunning = false;
+  var invAuditLocQrScanner  = null;
+  var invAuditLocLastScan   = 0;
+
+  window.invAuditLocToggleCam = function() {
+    if (invAuditLocCamRunning) { invAuditLocStopCam(); return; }
+    var btn = g('inv-audit-loc-cam-btn');
+    if (btn) { btn.textContent = '⏳'; btn.disabled = true; }
+    invLoadQR().then(function() {
+      var wrap = g('inv-audit-loc-reader-wrap');
+      if (wrap) wrap.style.display = 'block';
+      if (invAuditLocQrScanner) { try { invAuditLocQrScanner.clear(); } catch(e){} invAuditLocQrScanner = null; }
+      invAuditLocQrScanner = new Html5Qrcode('inv-audit-loc-qr-reader');
+      invAuditLocQrScanner.start(
+        { facingMode: 'environment' },
+        { fps: 10, qrbox: { width: 280, height: 90 } },
+        function(code) {
+          var now = Date.now();
+          if (now - invAuditLocLastScan < 2000) return;
+          invAuditLocLastScan = now;
+          invAuditLocStopCam();
+          var eqIdx = code.indexOf('=');
+          if (eqIdx > 0) {
+            var pfxEl = g('inv-audit-loc-prefix');
+            var shfEl = g('inv-audit-loc-shelf');
+            if (pfxEl) pfxEl.value = code.slice(0, eqIdx + 1);
+            if (shfEl) shfEl.value = code.slice(eqIdx + 1);
+          } else {
+            var shfEl = g('inv-audit-loc-shelf');
+            if (shfEl) shfEl.value = code;
+          }
+          invAuditLocSearch();
+        },
+        function() {}
+      ).then(function() {
+        invAuditLocCamRunning = true;
+        if (btn) { btn.textContent = '⏹ Stop'; btn.className = 'icam-btn scanning'; btn.disabled = false; }
+      }).catch(function() {
+        invFlash('Camera error — check permissions', 'error');
+        if (btn) { btn.textContent = '&#x1F4F7; Scan'; btn.className = 'icam-btn'; btn.disabled = false; }
+        var wrap = g('inv-audit-loc-reader-wrap'); if (wrap) wrap.style.display = 'none';
+      });
+    }).catch(function() {
+      invFlash('Could not load scanner', 'error');
+      if (btn) { btn.textContent = '&#x1F4F7; Scan'; btn.disabled = false; }
+    });
+  };
+
+  function invAuditLocStopCam() {
+    if (invAuditLocQrScanner && invAuditLocCamRunning) {
+      invAuditLocQrScanner.stop().catch(function(){});
+      invAuditLocQrScanner = null;
+    }
+    invAuditLocCamRunning = false;
+    var wrap = g('inv-audit-loc-reader-wrap'); if (wrap) wrap.style.display = 'none';
+    var btn  = g('inv-audit-loc-cam-btn');
+    if (btn) { btn.textContent = '&#x1F4F7; Scan'; btn.className = 'icam-btn'; btn.disabled = false; }
+  }
+
   var invAuditSearchMode = 'part';
+
 
 
   window.invAuditSetSearchMode = function(mode) {
