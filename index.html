@@ -3501,7 +3501,7 @@ function hf(file,k){
     if(!rows||!rows.length){st.textContent='Could not parse';st.className='ust err';return;}
     ge('ico-'+k).textContent='✅';ge('zone-'+k).classList.add('loaded');
     st.textContent=rows.length+' rows';st.className='ust ok';
-    if(k==='fba')S.fba=rows;else if(k==='live')S.live=rows;else if(k==='awd')S.awd=rows;else S.res=rows;
+    if(k==='fba'){S.fba=rows;S.fbaFromCSV=true;}else if(k==='live')S.live=rows;else if(k==='awd')S.awd=rows;else S.res=rows;
     ge('proc-btn').disabled=S.fba.length===0;
   }).catch(e=>{st.textContent='Error: '+e.message;st.className='ust err';});
 }
@@ -4003,7 +4003,7 @@ async function awdAmazonSync() {
         var zone=ge('zone-'+x[0]); if(zone) zone.classList.add('loaded');
       });
       if(ge('proc-btn')) ge('proc-btn').disabled=false;
-      setTimeout(function(){ if(typeof loadReportsFromSheet === 'function') loadReportsFromSheet(); }, 800);
+      // Don't reload from sheet here — would overwrite manually uploaded CSV data
     } else {
       if (status) status.textContent = 'Error: ' + (data.error || 'unknown');
       if (btn) { btn.disabled=false; btn.style.background='var(--red)'; btn.textContent='⚠ Failed — retry'; }
@@ -4715,7 +4715,10 @@ async function loadReportsFromSheet() {
       if (pill) { pill.textContent='No data loaded'; pill.style.background='var(--gray-100)'; pill.style.color='var(--gray-500)'; }
       return;
     }
-    S.fba=fbaData; S.live=liveData; S.awd=awdData; S.res=resData;
+    // Only overwrite S.fba if user hasn't manually uploaded a CSV
+    if (!S.fbaFromCSV) S.fba=fbaData;
+    else console.log('[AWD] Keeping manually uploaded FBA CSV data — not overwriting with sheet data');
+    S.live=liveData; S.awd=awdData; S.res=resData;
     [['fba',fbaData,'📊'],['live',liveData,'📦'],['awd',awdData,'🏭'],['res',resData,'🔒']].forEach(([k,data,ico]) => {
       if (!data.length) return;
       const st=ge('st-'+k); if(st){st.textContent=data.length+' rows (saved)';st.className='ust ok';}
