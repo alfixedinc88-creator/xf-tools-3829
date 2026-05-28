@@ -12112,8 +12112,43 @@ function awdHandleScan(raw) {
     g("inv-tab-review").className      = "itab"   + (tab === "review"   ? " iactive" : "");
     g("inv-tab-audit").className       = "itab"   + (tab === "audit"    ? " iactive" : "");
     if (tab === "review" && invUnlocked) invLoadPending();
-    if (tab === "audit") invAuditLoadMode();
+    if (tab === "audit") { invAuditLoadMode(); if(typeof invLoadPrefixEditor==='function') invLoadPrefixEditor(); }
   };
+
+  // ── LOCATION PREFIXES ────────────────────────────────────────────────────
+  var INV_PREFIXES = ['2FL=','BARN=','BASEMENT=','BH=','C1=','C2=','C3=','C4=','C5=','FRONT='];
+
+  function invPrefixOptionsHTML(includeBlank) {
+    var blank = includeBlank ? '<option value="">-- prefix --</option>' : '';
+    return blank + INV_PREFIXES.map(function(p){ return '<option value="' + p + '">' + p + '</option>'; }).join('');
+  }
+
+  function invPopulateAllPrefixDropdowns() {
+    ['inv-newloc-prefix','inv-fel-prefix','xfr-fel-prefix','inv-audit-loc-prefix','audloc-add-loc-prefix'].forEach(function(id) {
+      var el = g(id); if (!el) return;
+      var cur = el.value; el.innerHTML = invPrefixOptionsHTML(false); if (cur) el.value = cur;
+    });
+    document.querySelectorAll('[id^="xfr-loc-dest-pfx-"]').forEach(function(el) {
+      var cur = el.value; el.innerHTML = invPrefixOptionsHTML(true); if (cur) el.value = cur;
+    });
+    document.querySelectorAll('[id^="inv-audit-movepfx-"]').forEach(function(el) {
+      var cur = el.value; el.innerHTML = invPrefixOptionsHTML(false); if (cur) el.value = cur;
+    });
+    document.querySelectorAll('.wtr-pfx').forEach(function(el) {
+      var cur = el.value; el.innerHTML = invPrefixOptionsHTML(true); if (cur) el.value = cur;
+    });
+  }
+
+  function invLoadPrefixes() {
+    wFetch(W + '/inventory/prefixes')
+      .then(function(r) { return r.json(); })
+      .then(function(d) {
+        if (d.ok && d.prefixes && d.prefixes.length) {
+          INV_PREFIXES = d.prefixes;
+          invPopulateAllPrefixDropdowns();
+        }
+      }).catch(function() {});
+  }
 
   window.invSetMode = function(mode) {
     console.log('[INV] invSetMode called with mode:', mode);
@@ -14300,8 +14335,27 @@ function awdHandleScan(raw) {
     var diff = actualCases - currentCases;
     var rowEl = g('inv-audit-loc-' + idx);
     if (diff === 0) {
-      invFlash('Count matches system \u2014 no correction needed', 'success');
-      if (rowEl) { rowEl.style.borderColor = 'var(--green)'; rowEl.style.background = 'var(--green-bg)'; }
+      // Log audit confirmation — sets cyan on sheet row
+      var confirmNote = '[AUDIT] Confirmed: ' + currentCases + ' cases verified correct';
+      var confirmBody = { type: 'IN', partNum: loc.partNum,
+        sku: loc.partNum.split('=')[0].trim(), name: '',
+        location: loc.location, cases: 0,
+        initials: initials, notes: confirmNote,
+        rowIndex: loc.rowIndex, isNew: false, overwriteLocation: false };
+      wFetch(W + '/inventory/log', { method: 'POST', body: JSON.stringify(confirmBody) })
+        .then(function(r) { return r.json(); })
+        .then(function(d) {
+          if (d && d.rowIndex) {
+            wFetch(W + '/inventory/verify', { method: 'POST',
+              body: JSON.stringify({ rowIndex: d.rowIndex, action: 'Approved', verifiedBy: initials,
+                item: Object.assign({}, confirmBody, { notes: confirmNote }) })
+            }).catch(function(){});
+          }
+        }).catch(function(){});
+      invFlash('Count matches — confirmed ✓', 'success');
+      var rowEl = g('inv-audit-loc-' + idx);
+      if (rowEl) { rowEl.style.borderColor = '#0891B2'; rowEl.style.background = '#E0F2FE'; }
+      setTimeout(invAuditAutoReturn, 1500);
       return;
     }
     var type = diff > 0 ? 'IN' : 'OUT';
@@ -14601,8 +14655,27 @@ function awdHandleScan(raw) {
     var currentCases = item.adjustedCases !== undefined ? item.adjustedCases : item.casesNum;
     var diff = actualCases - currentCases;
     if (diff === 0) {
-      invFlash('Count matches system — no correction needed', 'success');
-      if (rowEl) { rowEl.style.borderColor = 'var(--green)'; rowEl.style.background = 'var(--green-bg)'; }
+      // Log audit confirmation — sets cyan on sheet row
+      var confirmNote = '[AUDIT] Confirmed: ' + currentCases + ' cases verified correct';
+      var confirmBody = { type: 'IN', partNum: loc.partNum,
+        sku: loc.partNum.split('=')[0].trim(), name: '',
+        location: loc.location, cases: 0,
+        initials: initials, notes: confirmNote,
+        rowIndex: loc.rowIndex, isNew: false, overwriteLocation: false };
+      wFetch(W + '/inventory/log', { method: 'POST', body: JSON.stringify(confirmBody) })
+        .then(function(r) { return r.json(); })
+        .then(function(d) {
+          if (d && d.rowIndex) {
+            wFetch(W + '/inventory/verify', { method: 'POST',
+              body: JSON.stringify({ rowIndex: d.rowIndex, action: 'Approved', verifiedBy: initials,
+                item: Object.assign({}, confirmBody, { notes: confirmNote }) })
+            }).catch(function(){});
+          }
+        }).catch(function(){});
+      invFlash('Count matches — confirmed ✓', 'success');
+      var rowEl = g('inv-audit-loc-' + idx);
+      if (rowEl) { rowEl.style.borderColor = '#0891B2'; rowEl.style.background = '#E0F2FE'; }
+      setTimeout(invAuditAutoReturn, 1500);
       return;
     }
     var type = diff > 0 ? 'IN' : 'OUT';
