@@ -12173,8 +12173,15 @@ function awdHandleScan(raw) {
         if (d.ok && d.prefixes && d.prefixes.length) {
           INV_PREFIXES = d.prefixes;
           invPopulateAllPrefixDropdowns();
+          // Update textarea if visible
+          var ta = document.getElementById('inv-prefix-textarea');
+          if (ta) ta.value = INV_PREFIXES.join('\n');
         }
-      }).catch(function() {});
+      }).catch(function() {
+        // Sheet may not have Prefixes tab yet — show defaults in textarea
+        var ta = document.getElementById('inv-prefix-textarea');
+        if (ta && !ta.value) ta.value = INV_PREFIXES.join('\n');
+      });
   }
 
   window.invSetMode = function(mode) {
@@ -14540,7 +14547,38 @@ function awdHandleScan(raw) {
       .catch(function(e) { invFlash('Error: ' + e.message, 'error'); if(saveBtn) saveBtn.disabled=false; });
   };
 
+  window.invLoadPrefixEditor = function() {
+    var ta = document.getElementById('inv-prefix-textarea');
+    if (ta) ta.value = INV_PREFIXES.join('\n');
+    var st = document.getElementById('inv-prefix-status'); if (st) st.textContent = '';
+  };
+
+  window.invSavePrefixes = function() {
+    var ta  = document.getElementById('inv-prefix-textarea');
+    var st  = document.getElementById('inv-prefix-status');
+    if (!ta) return;
+    var prefixes = ta.value.split('\n')
+      .map(function(p){ return p.trim(); })
+      .filter(function(p){ return p.length > 0; });
+    if (!prefixes.length) { invFlash('Enter at least one prefix', 'error'); return; }
+    if (st) st.textContent = 'Saving…';
+    wFetch(W + '/inventory/prefixes', {
+      method: 'POST', body: JSON.stringify({ prefixes: prefixes })
+    }).then(function(r){ return r.json(); })
+      .then(function(d) {
+        if (d.ok) {
+          INV_PREFIXES = prefixes;
+          invPopulateAllPrefixDropdowns();
+          if (st) st.textContent = '✓ Saved ' + prefixes.length + ' prefixes';
+          invFlash('Prefixes saved ✓', 'success');
+        } else {
+          if (st) st.textContent = 'Error: ' + (d.error || 'unknown');
+        }
+      }).catch(function(e){ if (st) st.textContent = 'Error: ' + e.message; });
+  };
+
   window.invExportLocations = function() {
+
     var status = g('inv-export-status');
     if (status) status.textContent = 'Loading…';
     wFetch(W + '/inventory/location-list')
