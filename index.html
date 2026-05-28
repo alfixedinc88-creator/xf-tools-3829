@@ -11884,6 +11884,14 @@ function awdHandleScan(raw) {
     </div>
   </div>
   <div id="inv-review-content" style="display:none;padding:16px">
+    <!-- Bulk approve toolbar -->
+    <div id="inv-bulk-bar" style="display:none;position:sticky;top:0;z-index:5;background:var(--bg);border-bottom:1.5px solid var(--border);padding:10px 0;margin-bottom:14px;display:flex;gap:8px;align-items:center;flex-wrap:wrap">
+      <button onclick="invBulkSelectAll(true)" style="padding:6px 12px;border-radius:7px;border:1px solid var(--border);background:var(--bg3);color:var(--text);font-size:12px;font-weight:600;cursor:pointer">Select All</button>
+      <button onclick="invBulkSelectAll(false)" style="padding:6px 12px;border-radius:7px;border:1px solid var(--border);background:var(--bg3);color:var(--text);font-size:12px;font-weight:600;cursor:pointer">Select None</button>
+      <span id="inv-bulk-count" style="font-size:12px;color:var(--text3);flex:1"></span>
+      <button id="inv-bulk-approve-btn" onclick="invBulkApprove()" style="padding:8px 16px;border-radius:7px;border:none;background:var(--green);color:#fff;font-size:13px;font-weight:700;cursor:pointer">✓ Approve Selected</button>
+      <button onclick="invBulkReject()" style="padding:8px 16px;border-radius:7px;border:none;background:var(--red);color:#fff;font-size:13px;font-weight:700;cursor:pointer">✕ Reject Selected</button>
+    </div>
     <div style="margin-bottom:20px"><div class="isec-title in">📦 Pending Stock In</div><div id="inv-pending-in"></div></div>
     <div style="margin-bottom:20px"><div class="isec-title out">📤 Pending Stock Out</div><div id="inv-pending-out"></div></div>
     <div><div class="isec-title" style="color:var(--purple);border-left-color:var(--purple)">🔁 Pending Transfers</div><div id="inv-pending-xfr"></div></div>
@@ -13017,8 +13025,106 @@ function awdHandleScan(raw) {
     }
   };
 
+  // ── BULK APPROVE/REJECT ─────────────────────────────────────────────────
+  var invBulkPending = []; // all pending items for bulk ops
+  var invBulkXfrMap  = {}; // outItem.rowIndex -> {outItem, inItem} for transfers
+
+  window.invBulkUpdateCount = function() {
+    var chks = document.querySelectorAll('#inv-review-content .inv-bulk-chk:checked');
+    var cnt  = g('inv-bulk-count');
+    if (cnt) cnt.textContent = chks.length + ' selected';
+    var btn = g('inv-bulk-approve-btn');
+    if (btn) btn.disabled = chks.length === 0;
+  };
+
+  window.invBulkSelectAll = function(val) {
+    document.querySelectorAll('#inv-review-content .inv-bulk-chk').forEach(function(c){ c.checked = val; });
+    invBulkUpdateCount();
+  };
+
+  window.invBulkApprove = function() {
+    var chks = Array.from(document.querySelectorAll('#inv-review-content .inv-bulk-chk:checked'));
+    if (!chks.length) return;
+    var btn = g('inv-bulk-approve-btn');
+    if (btn) { btn.disabled = true; btn.textContent = 'Approving ' + chks.length + '…'; }
+    var regularItems = [];
+    var transferItems = [];
+    chks.forEach(function(c) {
+      var ri = c.dataset.ri;
+      if (c.classList.contains('inv-bulk-xfr')) {
+        var xfr = invBulkXfrMap[ri];
+        if (xfr) transferItems.push(xfr);
+      } else {
+        var item = invItemMap[ri];
+        if (item) regularItems.push(item);
+      }
+    });
+    var total   = regularItems.length + transferItems.length;
+    var done    = 0;
+    var errors  = 0;
+    function onDone(ok) {
+      done++;
+      if (!ok) errors++;
+      if (done === total) {
+        if (btn) { btn.disabled = false; btn.textContent = '✓ Approve Selected'; }
+        if (errors === 0) {
+          invFlash('✓ Approved ' + total + ' item' + (total!==1?'s':''), 'success');
+        } else {
+          invFlash('⚠ ' + (total-errors) + ' approved, ' + errors + ' failed', 'error');
+        }
+        invLoadPending();
+        invFetchPendingCount();
+      }
+    }
+    // Process all in parallel
+    regularItems.forEach(function(item) {
+      wFetch(W + '/inventory/verify', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ rowIndex: item.rowIndex, action: 'Approved', item: item })
+      }).then(function(r){ return r.json(); })
+        .then(function(d){ onDone(d.ok); })
+        .catch(function(){ onDone(false); });
+    });
+    transferItems.forEach(function(xfr) {
+      wFetch(W + '/inventory/transfer/verify', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ action: 'Approved', outItem: xfr.outItem, inItem: xfr.inItem })
+      }).then(function(r){ return r.json(); })
+        .then(function(d){ onDone(d.ok); })
+        .catch(function(){ onDone(false); });
+    });
+    if (total === 0) { if(btn) { btn.disabled=false; btn.textContent='✓ Approve Selected'; } }
+  };
+
+  window.invBulkReject = function() {
+    var chks = Array.from(document.querySelectorAll('#inv-review-content .inv-bulk-chk:checked'));
+    if (!chks.length) return;
+    if (!confirm('Reject ' + chks.length + ' selected item' + (chks.length!==1?'s':'') + '?')) return;
+    var total = chks.length; var done = 0;
+    chks.forEach(function(c) {
+      var ri = c.dataset.ri;
+      if (c.classList.contains('inv-bulk-xfr')) {
+        var xfr = invBulkXfrMap[ri];
+        if (xfr) {
+          wFetch(W + '/inventory/transfer/verify', {
+            method: 'POST', headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ action: 'Rejected', outItem: xfr.outItem, inItem: xfr.inItem })
+          }).then(function(){ done++; if(done===total){ invLoadPending(); invFetchPendingCount(); } }).catch(function(){ done++; });
+        } else { done++; }
+      } else {
+        var item = invItemMap[ri];
+        if (item) {
+          wFetch(W + '/inventory/verify', {
+            method: 'POST', headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ rowIndex: item.rowIndex, action: 'Rejected', item: item })
+          }).then(function(){ done++; if(done===total){ invLoadPending(); invFetchPendingCount(); } }).catch(function(){ done++; });
+        } else { done++; }
+      }
+    });
+  };
+
   function invLoadPending() {
-    g("inv-pending-in").innerHTML  = "<div class='iempty'>Loading\u2026</div>";
+    g("inv-pending-in").innerHTML  = "<div class='iempty'>Loading…</div>";
     g("inv-pending-out").innerHTML = "<div class='iempty'>Loading\u2026</div>";
     g("inv-pending-xfr").innerHTML = "<div class='iempty'>Loading\u2026</div>";
     wFetch(W + "/inventory/pending")
@@ -13035,12 +13141,19 @@ function awdHandleScan(raw) {
         inEl.innerHTML   = ins.length     ? "" : "<div class='iempty'>No pending IN</div>";
         outEl.innerHTML  = outs.length    ? "" : "<div class='iempty'>No pending OUT</div>";
         xfrEl.innerHTML  = xfrOuts.length ? "" : "<div class='iempty'>No pending transfers</div>";
+        invBulkXfrMap = {};
         ins.forEach(function(x)  { inEl.appendChild(invMakeCard(x)); });
         outs.forEach(function(x) { outEl.appendChild(invMakeCard(x)); });
         xfrOuts.forEach(function(xOut) {
           var xIn = xfrIns.find(function(y) { return y.transferId && y.transferId === xOut.transferId; }) || null;
+          invBulkXfrMap[xOut.rowIndex] = { outItem: xOut, inItem: xIn };
           xfrEl.appendChild(invMakeTransferCard(xOut, xIn));
         });
+        // Show bulk toolbar if any items
+        var total = ins.length + outs.length + xfrOuts.length;
+        var bar   = g('inv-bulk-bar');
+        if (bar) bar.style.display = total > 0 ? 'flex' : 'none';
+        invBulkUpdateCount();
       })
       .catch(function() {
         g("inv-pending-in").innerHTML = g("inv-pending-out").innerHTML = g("inv-pending-xfr").innerHTML = "<div class='iempty'>Load failed</div>";
@@ -13257,12 +13370,15 @@ function awdHandleScan(raw) {
     var locationDisplay = isMoveCard && item.overwriteLocation
       ? (item.location + ' → ' + item.overwriteLocation)
       : (item.location || '');
-    el.innerHTML = "<div class='ientry-head'><div><span class='ientry-part'>" + (item.partNum || "") + "</span>" + skuHtml + "</div><div style='display:flex;align-items:center;gap:4px'>" + foundBadge + typeHtml + "</div></div>"
+    var chkId = "inv-chk-" + item.rowIndex;
+    el.innerHTML = "<div style='display:flex;align-items:flex-start;gap:10px'>"
+      + "<input type='checkbox' id='" + chkId + "' class='inv-bulk-chk' data-ri='" + item.rowIndex + "' style='margin-top:3px;width:16px;height:16px;flex-shrink:0;cursor:pointer' onchange='invBulkUpdateCount()'>"
+      + "<div style='flex:1'><div class='ientry-head'><div><span class='ientry-part'>" + (item.partNum || "") + "</span>" + skuHtml + "</div><div style='display:flex;align-items:center;gap:4px'>" + foundBadge + typeHtml + "</div></div>"
       + nameHtml
-      + "<div class='ientry-meta'>\ud83d\udccd " + (item.location || "") + " &nbsp;|\u00a0 \ud83d\udce6 " + (item.cases || 0) + " cases &nbsp;|\u00a0 \ud83e\uddd1 " + (item.initials || "")
+      + "<div class='ientry-meta'>\ud83d\udccd " + locationDisplay + " &nbsp;|\u00a0 \ud83d\udce6 " + (item.cases || 0) + " cases &nbsp;|\u00a0 \ud83e\uddd1 " + (item.initials || "")
       + (displayNotes ? "<br>\ud83d\udcdd " + displayNotes : "")
       + (item.timestamp ? "<br>\ud83d\udd52 " + new Date(item.timestamp).toLocaleString('en-US',{timeZone:'America/New_York',month:'short',day:'numeric',hour:'numeric',minute:'2-digit',hour12:true}) : "") + "</div>"
-      + "<div class='ientry-btns'><button class='iapprove'>\u2713 Approve</button><button class='ireject'>\u2715 Reject</button></div>";
+      + "<div class='ientry-btns'><button class='iapprove'>\u2713 Approve</button><button class='ireject'>\u2715 Reject</button></div></div></div>";
     var ri = item.rowIndex;
     el.querySelector(".iapprove").onclick = function() { invVerify(ri, "Approved"); };
     el.querySelector(".ireject").onclick  = function() { invVerify(ri, "Rejected"); };
@@ -13305,7 +13421,9 @@ function awdHandleScan(raw) {
     var skuHtml  = (outItem.sku && outItem.sku !== outItem.partNum)
       ? "<div style='font-size:11px;font-family:var(--mono);color:var(--text3);margin-top:1px'>" + outItem.sku + "</div>" : "";
     el.innerHTML =
-      "<div class='ientry-head'><div><span class='ientry-part'>" + (outItem.partNum || "") + "</span>" + skuHtml + "</div>"
+      "<div style='display:flex;align-items:flex-start;gap:10px'>"
+      + "<input type='checkbox' class='inv-bulk-chk inv-bulk-xfr' data-ri='" + outItem.rowIndex + "' style='margin-top:3px;width:16px;height:16px;flex-shrink:0;cursor:pointer' onchange='invBulkUpdateCount()'>"
+      + "<div style='flex:1'><div class='ientry-head'><div><span class='ientry-part'>" + (outItem.partNum || "") + "</span>" + skuHtml + "</div>"
       + "<span class='ientry-type' style='background:var(--purple-bg);color:var(--purple)'>TRANSFER</span></div>"
       + nameHtml
       + "<div class='ientry-meta'>"
@@ -13314,7 +13432,7 @@ function awdHandleScan(raw) {
       + " &nbsp;|&nbsp; \ud83e\uddd1 " + (outItem.initials || "")
       + (outItem.notes ? "<br>\ud83d\udcdd " + outItem.notes : "")
       + (outItem.timestamp ? "<br>\ud83d\udd52 " + new Date(outItem.timestamp).toLocaleString('en-US',{timeZone:'America/New_York',month:'short',day:'numeric',hour:'numeric',minute:'2-digit',hour12:true}) : "") + "</div>"
-      + "<div class='ientry-btns'><button class='iapprove'>\u2713 Approve</button><button class='ireject'>\u2715 Reject</button></div>";
+      + "<div class='ientry-btns'><button class='iapprove'>\u2713 Approve</button><button class='ireject'>\u2715 Reject</button></div></div></div>";
     el.querySelector(".iapprove").onclick = function() { invVerifyTransfer(outItem, inItem, "Approved"); };
     el.querySelector(".ireject").onclick  = function() { invVerifyTransfer(outItem, inItem, "Rejected"); };
     return el;
