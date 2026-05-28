@@ -4437,6 +4437,17 @@ function launchApp(which) {
     invFetchPendingCount();
     // Init pull list on launch (renders persisted list if in out mode)
     if (typeof invRenderPullList === 'function') invRenderPullList();
+    // Wire location suggestion to new-location shelf input
+    setTimeout(function() {
+      var shfEl = g('inv-newloc-shelf');
+      if (shfEl && !shfEl._suggestWired) {
+        shfEl._suggestWired = true;
+        shfEl.addEventListener('input', function() {
+          invSuggestLocation('inv-newloc-prefix','inv-newloc-shelf','inv-newloc-suggest',
+            invPart ? invPart.partNum : '', '');
+        });
+      }
+    }, 500);
   } else if (which === 'upc') {
     document.getElementById('upc-app').style.display = 'flex';
     // Load warehouse data if not already loaded (needs DB.upc)
@@ -11743,6 +11754,7 @@ function awdHandleScan(raw) {
         <div style="display:flex;gap:6px;margin-top:6px;align-items:center"><select id="inv-newloc-prefix" style="padding:6px 8px;border:1.5px solid var(--border);border-radius:7px;background:var(--bg);color:var(--text);font-size:13px;font-family:var(--mono)"><option value="2FL=">2FL=</option><option value="BARN=">BARN=</option><option value="BASEMENT=">BASEMENT=</option><option value="BH OFFICE=">BH OFFICE=</option><option value="C1=">C1=</option><option value="C2=">C2=</option><option value="C3=">C3=</option><option value="C4=">C4=</option><option value="C5=">C5=</option><option value="FRONT=">FRONT=</option></select><button class="icam-btn" id="inv-newloc-cam-btn" onclick="invNewLocToggleCam()" style="padding:6px 10px;white-space:nowrap;font-size:12px">&#x1F4F7;</button><input id="inv-newloc-shelf" type="text" placeholder="e.g. 5-1-3" autocomplete="off" style="flex:1;padding:6px 10px;border:1.5px solid var(--border);border-radius:7px;background:var(--bg);color:var(--text);font-size:13px;font-family:var(--mono)"></div>
         <div id="inv-newloc-reader-wrap" style="display:none;border-radius:8px;overflow:hidden;background:#000;min-height:120px;margin-top:6px"><div id="inv-newloc-qr-reader"></div></div>
       </div>
+        <div id="inv-newloc-suggest" style="margin-top:6px;padding:6px 0;font-size:12px"></div>
     </div>
     <div id="inv-found-elsewhere-wrap" style="display:none;margin-top:12px;padding:12px;background:var(--purple-bg);border:1.5px solid var(--purple);border-radius:10px">
       <div style="font-size:13px;font-weight:700;color:var(--purple);margin-bottom:10px">📦 Found at unlisted location</div>
@@ -11983,6 +11995,18 @@ function awdHandleScan(raw) {
     </div>
     <div id="inv-audit-part-info" style="font-family:var(--mono);font-size:14px;font-weight:700;color:var(--text);margin-bottom:10px"></div>
     <div id="inv-audit-loc-list"></div>
+  </div>
+
+  <!-- Location Prefixes card -->
+  <div class="icard" id="inv-prefix-card" style="margin-bottom:12px">
+    <div class="icard-label">&#x1F3F7; Location Prefixes</div>
+    <div style="font-size:12px;color:var(--text3);margin-bottom:10px">Edit the prefixes that appear in all location dropdowns. Include the = sign (e.g. <strong>BH=</strong>). One per line.</div>
+    <textarea id="inv-prefix-textarea" rows="8" style="width:100%;padding:8px;border:1.5px solid var(--border);border-radius:8px;background:var(--bg);color:var(--text);font-size:13px;font-family:var(--mono);resize:vertical;box-sizing:border-box"></textarea>
+    <div style="display:flex;gap:8px;margin-top:8px;flex-wrap:wrap;align-items:center">
+      <button class="btn btn-primary btn-sm" onclick="invSavePrefixes()">&#x2713; Save Prefixes</button>
+      <button class="btn btn-secondary btn-sm" onclick="invLoadPrefixEditor()">&#x21BA; Reload</button>
+      <span id="inv-prefix-status" style="font-size:12px;color:var(--text3)"></span>
+    </div>
   </div>
 
   <!-- Export Locations card -->
@@ -12832,6 +12856,54 @@ function awdHandleScan(raw) {
 
   // Direct object-based picker — avoids index mismatch between filtered display
   // array and full invPart.locations array. Always use this from invShowLocs.
+  // ── LOCATION SUGGESTION ─────────────────────────────────────────────────
+  window.invSuggestLocation = function(pfxId, shelfId, resultId, partNum, fromLoc) {
+    var pfx   = (g(pfxId)   || {value:''}).value || '';
+    var shelf = ((g(shelfId) || {value:''}).value || '').trim();
+    var res   = g(resultId);
+    if (!res) return;
+    if (!partNum) { res.innerHTML = ''; return; }
+    wFetch(W + '/inventory/suggest-location?partNum=' + encodeURIComponent(partNum) + '&fromLoc=' + encodeURIComponent(fromLoc||pfx+shelf))
+      .then(function(r) { return r.json(); })
+      .then(function(d) {
+        if (!d.ok) { res.innerHTML = ''; return; }
+        res.innerHTML = '';
+        function makeBtn(loc, cases, isExisting) {
+          var btn = document.createElement('button');
+          btn.textContent = loc + (cases ? ' (' + cases + ' cases)' : '');
+          btn.style.cssText = 'display:inline-block;margin:2px;padding:3px 8px;border-radius:6px;font-size:12px;font-family:var(--mono);cursor:pointer;border:1px solid ' + (isExisting ? 'var(--green)' : 'var(--border)') + ';background:' + (isExisting ? 'var(--green-bg)' : 'var(--bg3)') + ';color:' + (isExisting ? 'var(--green)' : 'var(--text2)') + ';';
+          btn.onclick = (function(l){ return function(){ invPickSuggestedLoc(pfxId, shelfId, resultId, l); }; })(loc);
+          return btn;
+        }
+        if (d.existing && d.existing.length) {
+          var lbl = document.createElement('div');
+          lbl.style.cssText = 'font-size:11px;font-weight:700;color:var(--text3);margin-bottom:4px';
+          lbl.textContent = 'EXISTING LOCATIONS FOR THIS SKU';
+          res.appendChild(lbl);
+          d.existing.forEach(function(e) { res.appendChild(makeBtn(e.location, e.cases, true)); });
+        }
+        if (d.emptyNearby && d.emptyNearby.length) {
+          var lbl2 = document.createElement('div');
+          lbl2.style.cssText = 'font-size:11px;font-weight:700;color:var(--text3);margin:6px 0 4px';
+          lbl2.textContent = 'EMPTY NEARBY';
+          res.appendChild(lbl2);
+          d.emptyNearby.forEach(function(l) { res.appendChild(makeBtn(l, null, false)); });
+        }
+      }).catch(function() { res.innerHTML = ''; });
+  };
+
+  window.invPickSuggestedLoc = function(pfxId, shelfId, resultId, loc) {
+    var eq = loc.indexOf('=');
+    var pfxEl = g(pfxId); var shfEl = g(shelfId);
+    if (eq >= 0) {
+      if (pfxEl) pfxEl.value = loc.slice(0, eq+1);
+      if (shfEl) shfEl.value = loc.slice(eq+1);
+    } else {
+      if (shfEl) shfEl.value = loc;
+    }
+    var res = g(resultId); if (res) res.innerHTML = '';
+  };
+
   window.invPickLocFromInline = function(idx) {
     var caseId = "inv-out-cases-" + idx;
     var ci = document.getElementById(caseId);
