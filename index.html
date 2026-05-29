@@ -14705,93 +14705,131 @@ function awdHandleScan(raw) {
       .then(function(r) { return r.json(); })
       .then(function(d) {
         if (!d || !d.results) { resEl.innerHTML = '<div style="color:var(--red);font-size:13px">Search failed</div>'; return; }
-        if (!d.results.length) { resEl.innerHTML = '<div style="color:var(--text3);font-size:13px;padding:6px 0">No items found at ' + q + '</div>'; return; }
+        resEl.innerHTML = '';
+        if (!d.results.length) {
+          // Empty location — show add form
+          var emptyDiv = document.createElement('div');
+          emptyDiv.innerHTML = '<div style="color:var(--text3);font-size:13px;padding:6px 0;margin-bottom:8px">No items recorded at <strong>' + q + '</strong></div>';
+          resEl.appendChild(emptyDiv);
+          invAuditBuildAddForm(resEl, prefix, shelf);
+          return;
+        }
+        // Store items in map
+        d.results.forEach(function(item) { invAuditLocItemMap[String(item.rowIndex)] = item; });
+        invAuditLastLocSearch = { prefix: prefix, shelf: shelf };
+        // Summary line
+        var summary = document.createElement('div');
+        summary.style.cssText = 'font-size:11px;color:var(--text3);margin-bottom:8px';
+        summary.textContent = d.count + ' item' + (d.count!==1?'s':'') + ' at ' + q;
+        resEl.appendChild(summary);
         // Group by location
         var grouped = {};
-        d.results.forEach(function(r) {
-          if (!grouped[r.location]) grouped[r.location] = [];
-          grouped[r.location].push(r);
-        });
-        var html = '<div style="font-size:11px;color:var(--text3);margin-bottom:8px">' + d.count + ' item' + (d.count!==1?'s':'') + ' across ' + Object.keys(grouped).length + ' location' + (Object.keys(grouped).length!==1?'s':'') + '</div>';
+        d.results.forEach(function(r) { if (!grouped[r.location]) grouped[r.location] = []; grouped[r.location].push(r); });
+        // Submit All button (shown when >1 item)
+        if (d.results.length > 1) {
+          var allBtn = document.createElement('button');
+          allBtn.id = 'audloc-submit-all-btn';
+          allBtn.textContent = '✓ Submit All Counts';
+          allBtn.style.cssText = 'width:100%;padding:9px;border-radius:8px;border:none;background:#0891B2;color:#fff;font-size:14px;font-weight:700;cursor:pointer;margin-bottom:12px';
+          allBtn.onclick = function() { invAuditSubmitAllLoc(d.results); };
+          resEl.appendChild(allBtn);
+        }
+        // Render each location group
         Object.keys(grouped).sort().forEach(function(loc) {
           var items = grouped[loc];
-          html += '<div style="margin-bottom:12px">';
-          html += '<div style="font-family:var(--mono);font-size:13px;font-weight:700;color:var(--accent);margin-bottom:6px;padding:6px 10px;background:var(--bg3);border-radius:7px">' + loc + '</div>';
-          items.forEach(function(item, idx) {
-            var uid = 'audloc-' + item.rowIndex;
+          var locHeader = document.createElement('div');
+          locHeader.style.cssText = 'font-family:var(--mono);font-size:13px;font-weight:700;color:var(--accent);margin-bottom:6px;padding:6px 10px;background:var(--bg3);border-radius:7px';
+          locHeader.textContent = loc;
+          resEl.appendChild(locHeader);
+          items.forEach(function(item) {
             var adj = item.adjustedCases !== undefined ? item.adjustedCases : item.casesNum;
-            var pendingBadge = item.pendingCases > 0 ? ' <span style="font-size:11px;color:var(--orange);font-weight:600">(' + item.pendingCases + ' pending)</span>' : '';
-            html += '<div style="border:1.5px solid var(--border);border-radius:9px;padding:10px 12px;margin-bottom:6px;background:var(--bg2)" id="' + uid + '">';
-            html += '<div style="display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:8px">';
-            html += '<div><div style="font-family:var(--mono);font-size:13px;font-weight:700">' + item.partNum + '</div>';
-            if (item.name) html += '<div style="font-size:12px;color:var(--text2)">' + item.name + '</div>';
-            html += '<div style="font-size:12px;color:var(--text2);margin-top:2px">System: <strong>' + adj + ' cases</strong>' + pendingBadge + '</div></div>';
-            html += '<span style="font-size:11px;color:var(--text3)">Row ' + item.rowIndex + '</span></div>';
-            html += '<div style="display:flex;gap:8px;align-items:center">';
-            html += '<div style="font-size:11px;font-weight:700;color:var(--text3);white-space:nowrap">ACTUAL COUNT</div>';
-            html += '<input id="audloc-count-' + item.rowIndex + '" type="number" min="0" step="0.5" placeholder="Cases counted"';
-            html += ' style="flex:1;padding:7px 10px;border:1.5px solid var(--border);border-radius:7px;background:var(--bg);color:var(--text);font-size:14px;font-family:var(--mono)">';
-            html += '<button data-rowindex="' + item.rowIndex + '" onclick="invAuditSubmitLocByRow(this.dataset.rowindex)"'
-            html += ' style="padding:7px 14px;border-radius:7px;border:none;background:var(--accent);color:#fff;font-size:13px;font-weight:700;cursor:pointer">Submit</button>';
-            html += '</div></div>';
+            var row = document.createElement('div');
+            row.id = 'audloc-' + item.rowIndex;
+            row.style.cssText = 'border:1.5px solid var(--border);border-radius:9px;padding:10px 12px;margin-bottom:6px;background:var(--bg2)';
+            var pendBadge = item.pendingCases > 0 ? ' <span style="font-size:11px;color:var(--orange);font-weight:600">(' + item.pendingCases + ' pending)</span>' : '';
+            row.innerHTML = '<div style="display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:8px">'
+              + '<div><div style="font-family:var(--mono);font-size:13px;font-weight:700">' + item.partNum + '</div>'
+              + (item.name ? '<div style="font-size:12px;color:var(--text2)">' + item.name + '</div>' : '')
+              + '<div style="font-size:12px;color:var(--text2);margin-top:2px">System: <strong>' + adj + ' cases</strong>' + pendBadge + '</div></div>'
+              + '<span style="font-size:11px;color:var(--text3)">Row ' + item.rowIndex + '</span></div>'
+              + '<div style="display:flex;gap:8px;align-items:center">'
+              + '<div style="font-size:11px;font-weight:700;color:var(--text3);white-space:nowrap">ACTUAL COUNT</div>'
+              + '<input id="audloc-count-' + item.rowIndex + '" type="number" min="0" step="0.5" placeholder="Cases counted" style="flex:1;padding:7px 10px;border:1.5px solid var(--border);border-radius:7px;background:var(--bg);color:var(--text);font-size:14px;font-family:var(--mono)">'
+              + '</div>';
+            var submitBtn = document.createElement('button');
+            submitBtn.textContent = 'Submit';
+            submitBtn.style.cssText = 'margin-top:6px;padding:7px 14px;border-radius:7px;border:none;background:var(--accent);color:#fff;font-size:13px;font-weight:700;cursor:pointer;width:100%';
+            submitBtn.onclick = (function(locItem) { return function() {
+              invAuditSubmitLocRow(locItem, document.getElementById('audloc-count-' + locItem.rowIndex), document.getElementById('audloc-' + locItem.rowIndex));
+            }; })(item);
+            row.appendChild(submitBtn);
+            resEl.appendChild(row);
           });
-          html += '</div>';
         });
-        // Add unlisted item section as HTML string at bottom
-        html += '<div style="margin-top:16px;padding:12px;background:var(--purple-bg);border:1.5px solid var(--purple);border-radius:10px">';
-        html += '<div style="font-size:13px;font-weight:700;color:var(--purple);margin-bottom:8px">&#x1F4E6; Found item not in system at this location?</div>';
-        html += '<div style="display:flex;gap:6px;margin-bottom:6px;align-items:center">';
-        html += '<input id="audloc-add-part" type="text" placeholder="Part# e.g. 27-3-1=5XX" autocomplete="off" ';
-        html += 'style="flex:2;padding:6px 10px;border:1.5px solid var(--border);border-radius:7px;background:var(--bg);color:var(--text);font-size:12px;font-family:var(--mono)">';
-        html += '<input id="audloc-add-cases" type="number" min="0.1" step="0.5" placeholder="Cases" ';
-        html += 'style="width:80px;padding:6px 8px;border:1.5px solid var(--border);border-radius:7px;background:var(--bg);color:var(--text);font-size:12px;font-family:var(--mono)"></div>';
-        html += '<div style="font-size:11px;font-weight:700;color:var(--text3);margin-bottom:4px">LOCATION</div>';
-        html += '<div style="display:flex;gap:6px;align-items:center;margin-bottom:8px">';
-        html += '<select id="audloc-add-loc-prefix" style="padding:5px 7px;border:1.5px solid var(--border);border-radius:7px;background:var(--bg);color:var(--text);font-size:12px;font-family:var(--mono)">';
-        html += '<option value="2FL=">2FL=</option><option value="BARN=">BARN=</option><option value="BASEMENT=">BASEMENT=</option>';
-        html += '<option value="BH OFFICE=">BH OFFICE=</option><option value="C1=">C1=</option><option value="C2=">C2=</option>';
-        html += '<option value="C3=">C3=</option><option value="C4=">C4=</option><option value="C5=">C5=</option><option value="FRONT=">FRONT=</option></select>';
-        html += '<input id="audloc-add-loc-shelf" type="text" placeholder="e.g. 5-1-3" autocomplete="off" ';
-        html += 'style="flex:1;padding:5px 8px;border:1.5px solid var(--border);border-radius:7px;background:var(--bg);color:var(--text);font-size:12px;font-family:var(--mono)"></div>';
-        html += '<button onclick="invAuditAddUnlisted()" style="padding:7px 14px;border-radius:7px;border:none;background:var(--purple);color:#fff;font-size:13px;font-weight:700;cursor:pointer">&#x2B; Log Found Item</button>';
-        html += '<div id="audloc-add-result" style="margin-top:6px"></div></div>';
-        resEl.innerHTML = html;
-        // Store items in map for rowIndex-based access
-        d.results.forEach(function(item) { invAuditLocItemMap[String(item.rowIndex)] = item; });
-        // Store last search info for unlisted item default location
-        invAuditLastLocSearch = { prefix: prefix, shelf: shelf };
-        // Set default location in add form to match current search
-        var addPfx = g('audloc-add-loc-prefix'); if (addPfx) addPfx.value = prefix;
-        var addShf = g('audloc-add-loc-shelf'); if (addShf) addShf.value = shelf;
-        // Override submit for loc mode to read from correct input
-        d.results.forEach(function(item) {
-          var btn = document.querySelector('#audloc-' + item.rowIndex + ' button');
-          var inp = g('audloc-count-' + item.rowIndex);
-          if (btn && inp) {
-            btn.onclick = (function(locItem, locInp, rowEl) { return function() {
-              invAuditSubmitLocRow(locItem, locInp, rowEl);
-            }; })(item, inp, g('audloc-' + item.rowIndex));
-          }
-        });
+        // Add unlisted item section
+        invAuditBuildAddForm(resEl, prefix, shelf);
       })
       .catch(function(e) { resEl.innerHTML = '<div style="color:var(--red);font-size:13px">Error: ' + e.message + '</div>'; });
   };
 
+  window.invAuditSubmitAllLoc = function(items) {
+    var initials = ((g('inv-audit-initials') || {value:''}).value || '').trim().toUpperCase();
+    if (!initials) { invFlash('Enter your initials first', 'error'); return; }
+    // Check all inputs have values
+    var missing = items.filter(function(item) {
+      var inp = document.getElementById('audloc-count-' + item.rowIndex);
+      return !inp || inp.value === '' || inp.disabled;
+    });
+    if (missing.length) { invFlash('Enter counts for all ' + items.length + ' items first', 'error'); return; }
+    var btn = document.getElementById('audloc-submit-all-btn');
+    if (btn) { btn.disabled = true; btn.textContent = 'Submitting…'; }
+    var done = 0;
+    items.forEach(function(item) {
+      var inp   = document.getElementById('audloc-count-' + item.rowIndex);
+      var rowEl = document.getElementById('audloc-' + item.rowIndex);
+      invAuditSubmitLocRow(item, inp, rowEl);
+      done++;
+      if (done === items.length && btn) {
+        btn.textContent = '✓ All ' + items.length + ' submitted';
+      }
+    });
+  };
+
+  function invAuditBuildAddForm(resEl, prefix, shelf) {
+    var wrap = document.createElement('div');
+    wrap.style.cssText = 'margin-top:16px;padding:12px;background:var(--purple-bg);border:1.5px solid var(--purple);border-radius:10px';
+    wrap.innerHTML = '<div style="font-size:13px;font-weight:700;color:var(--purple);margin-bottom:8px">&#x1F4E6; Found item not in system at this location?</div>'
+      + '<div style="display:flex;gap:6px;margin-bottom:6px;align-items:center">'
+      + '<input id="audloc-add-part" type="text" placeholder="Part# e.g. 27-3-1=5XX" autocomplete="off" style="flex:2;padding:6px 10px;border:1.5px solid var(--border);border-radius:7px;background:var(--bg);color:var(--text);font-size:12px;font-family:var(--mono)">'
+      + '<input id="audloc-add-cases" type="number" min="0.1" step="0.5" placeholder="Cases" style="width:80px;padding:6px 8px;border:1.5px solid var(--border);border-radius:7px;background:var(--bg);color:var(--text);font-size:12px;font-family:var(--mono)"></div>'
+      + '<div style="font-size:11px;font-weight:700;color:var(--text3);margin-bottom:4px">LOCATION</div>'
+      + '<div style="display:flex;gap:6px;align-items:center;margin-bottom:8px">'
+      + '<select id="audloc-add-loc-prefix" style="padding:5px 7px;border:1.5px solid var(--border);border-radius:7px;background:var(--bg);color:var(--text);font-size:12px;font-family:var(--mono)">' + invPrefixOptionsHTML(false) + '</select>'
+      + '<input id="audloc-add-loc-shelf" type="text" placeholder="e.g. 5-1-3" autocomplete="off" style="flex:1;padding:5px 8px;border:1.5px solid var(--border);border-radius:7px;background:var(--bg);color:var(--text);font-size:12px;font-family:var(--mono)"></div>'
+      + '<button onclick="invAuditAddUnlisted()" style="padding:7px 14px;border-radius:7px;border:none;background:var(--purple);color:#fff;font-size:13px;font-weight:700;cursor:pointer">&#x2B; Log Found Item</button>'
+      + '<div id="audloc-add-result" style="margin-top:6px"></div>';
+    resEl.appendChild(wrap);
+    // Pre-fill location from search
+    var pfxEl = document.getElementById('audloc-add-loc-prefix');
+    var shfEl = document.getElementById('audloc-add-loc-shelf');
+    if (pfxEl) pfxEl.value = prefix;
+    if (shfEl) shfEl.value = shelf;
+  }
+
   window.invAuditSubmitLocRow = function(item, inp, rowEl) {
     var actualCases = parseFloat(inp ? inp.value : '');
-    var initials = ((g('inv-audit-initials') || {value:''}).value || '').trim().toUpperCase();
+    var initials    = ((g('inv-audit-initials') || {value:''}).value || '').trim().toUpperCase();
     if (isNaN(actualCases) || actualCases < 0) { invFlash('Enter a valid count (0 or more)', 'error'); return; }
     if (!initials) { invFlash('Enter your initials', 'error'); return; }
-    var currentCases = item.adjustedCases !== undefined ? item.adjustedCases : item.casesNum;
+    var currentCases = item.adjustedCases !== undefined ? item.adjustedCases : (item.casesNum || 0);
     var diff = actualCases - currentCases;
     if (diff === 0) {
-      // Log audit confirmation — sets cyan on sheet row
       var confirmNote = '[AUDIT] Confirmed: ' + currentCases + ' cases verified correct';
-      var confirmBody = { type: 'IN', partNum: loc.partNum,
-        sku: loc.partNum.split('=')[0].trim(), name: '',
-        location: loc.location, cases: 0,
+      var confirmBody = { type: 'IN', partNum: item.partNum,
+        sku: item.partNum.split('=')[0].trim(), name: item.name || '',
+        location: item.location, cases: 0,
         initials: initials, notes: confirmNote,
-        rowIndex: loc.rowIndex, isNew: false, overwriteLocation: false };
+        rowIndex: item.rowIndex, isNew: false, overwriteLocation: false };
       wFetch(W + '/inventory/log', { method: 'POST', body: JSON.stringify(confirmBody) })
         .then(function(r) { return r.json(); })
         .then(function(d) {
@@ -14803,9 +14841,8 @@ function awdHandleScan(raw) {
           }
         }).catch(function(){});
       invFlash('Count matches — confirmed ✓', 'success');
-      var rowEl = g('inv-audit-loc-' + idx);
       if (rowEl) { rowEl.style.borderColor = '#0891B2'; rowEl.style.background = '#E0F2FE'; }
-      setTimeout(invAuditAutoReturn, 1500);
+      if (inp) inp.disabled = true;
       return;
     }
     var type = diff > 0 ? 'IN' : 'OUT';
@@ -14813,37 +14850,30 @@ function awdHandleScan(raw) {
     var body = { type: type, partNum: item.partNum, sku: item.partNum.split('=')[0].trim(), name: item.name||'',
       location: item.location, cases: Math.abs(diff), initials: initials, notes: note,
       rowIndex: item.rowIndex, isNew: false, overwriteLocation: false };
+    if (inp) inp.disabled = true;
     if (invAuditAutoMode) {
       wFetch(W + '/inventory/log', { method: 'POST', body: JSON.stringify(body) })
         .then(function(r) { return r.json(); })
         .then(function(d) {
-          if (!d || !d.rowIndex) { invFlash('Log failed', 'error'); return null; }
+          if (!d || !d.rowIndex) { invFlash('Log failed', 'error'); if(inp) inp.disabled=false; return null; }
           return wFetch(W + '/inventory/verify', { method: 'POST',
             body: JSON.stringify({ rowIndex: d.rowIndex, action: 'Approved', verifiedBy: initials,
-              item: { type: type, partNum: loc.partNum, location: loc.location,
-                      cases: Math.abs(diff), rowIndex: loc.rowIndex } })
+              item: { type: type, partNum: item.partNum, location: item.location,
+                      cases: Math.abs(diff), rowIndex: item.rowIndex, notes: note } })
           }).then(function(r) { return r.json(); });
         })
         .then(function(v) {
           if (!v) return;
           invFlash('Corrected: ' + item.location + ' → ' + actualCases + ' cases', 'success');
-          setTimeout(invAuditAutoReturn, 1500);
-          if (rowEl) { rowEl.style.borderColor='var(--green)'; rowEl.style.background='var(--green-bg)'; if(inp) inp.disabled=true; rowEl.querySelector('button').disabled=true; }
-          // "Where's the rest?" — if count was lower, offer to log missing cases at another location
-          if (diff < 0) { invAuditShowWhereRest(item, Math.abs(diff), rowEl); }
-        })
-        .catch(function(e) { invFlash('Error: ' + e.message, 'error'); });
+          if (rowEl) { rowEl.style.borderColor = '#0891B2'; rowEl.style.background = '#E0F2FE'; }
+        }).catch(function(e) { invFlash('Error: ' + e.message, 'error'); if(inp) inp.disabled=false; });
     } else {
       wFetch(W + '/inventory/log', { method: 'POST', body: JSON.stringify(body) })
         .then(function(r) { return r.json(); })
         .then(function() {
-          invFlash('Queued for review: ' + item.location, 'success');
-          setTimeout(invAuditAutoReturn, 1500);
-          if (rowEl) { rowEl.style.borderColor='var(--orange)'; rowEl.style.background='var(--orange-bg)'; rowEl.style.opacity='0.75'; rowEl.querySelector('button').disabled=true; if(inp) inp.disabled=true; }
-          // "Where's the rest?" — if count was lower, offer to log missing cases at another location
-          if (diff < 0) { invAuditShowWhereRest(item, Math.abs(diff), rowEl); }
-        })
-        .catch(function(e) { invFlash('Error: ' + e.message, 'error'); });
+          invFlash('Queued: ' + item.location, 'success');
+          if (rowEl) { rowEl.style.borderColor = 'var(--orange)'; rowEl.style.background = 'var(--orange-bg)'; rowEl.style.opacity='0.75'; }
+        }).catch(function(e) { invFlash('Error: ' + e.message, 'error'); if(inp) inp.disabled=false; });
     }
   };
 
