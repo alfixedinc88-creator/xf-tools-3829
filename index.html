@@ -14778,44 +14778,68 @@ function awdHandleScan(raw) {
 
   // ── SKU Quick Search — for found-on-shelf and move forms ─────────────────────
   // Searches invPart.locations and local WH stock (S.wh) for matching SKUs
-  // inputId = text input, resultsId = results div, onSelect = function(partNum, name)
+  var _skuSearchCache = {};
+
   window.invSkuQuickSearch = function(query, resultsId, onSelectFn) {
     var res = document.getElementById(resultsId);
     if (!res) return;
-    query = query.trim().toUpperCase();
+    query = query.trim();
     if (query.length < 2) { res.innerHTML = ''; return; }
-    // Search from cached WH stock (loaded at app launch into window.S.wh)
-    var matches = [];
-    var whStock = (window.S && window.S.wh) ? window.S.wh : [];
-    whStock.forEach(function(item) {
-      var pn   = String(item.partNum || item[6] || '').trim().toUpperCase();
-      var name = String(item.name || item[4] || '').trim();
-      if (pn.includes(query) || name.toUpperCase().includes(query)) {
-        matches.push({ partNum: pn, name: name });
-      }
-    });
-    // Deduplicate by partNum
-    var seen = {};
-    matches = matches.filter(function(m) {
-      if (seen[m.partNum]) return false;
-      seen[m.partNum] = true;
-      return true;
-    });
-    if (!matches.length) { res.innerHTML = '<div style="font-size:12px;color:var(--text3);padding:4px">No matches</div>'; return; }
-    res.innerHTML = '';
-    matches.slice(0, 8).forEach(function(m) {
-      var btn = document.createElement('button');
-      btn.style.cssText = 'display:block;width:100%;text-align:left;padding:6px 10px;border:none;border-bottom:1px solid var(--border);background:var(--bg);color:var(--text);cursor:pointer;font-size:12px';
-      btn.innerHTML = '<span style="font-family:var(--mono);font-weight:700">' + m.partNum + '</span>'
-        + (m.name ? '<span style="color:var(--text2);margin-left:8px">' + m.name.slice(0,40) + '</span>' : '');
-      btn.onmousedown = function(e) { e.preventDefault(); }; // prevent blur before click
-      btn.onclick = function() {
-        onSelectFn(m.partNum, m.name);
-        res.innerHTML = '';
-      };
-      res.appendChild(btn);
-    });
+    res.innerHTML = '<div style="font-size:12px;color:var(--text3);padding:6px 10px">\u231b Searching\u2026</div>';
+    var cacheKey = query.toUpperCase();
+    if (_skuSearchCache[cacheKey]) { invSkuRenderResults(_skuSearchCache[cacheKey], res, onSelectFn); return; }
+    // SKU-style search (starts with digit or contains =) vs name search
+    var looksLikeSku = /^[0-9]/.test(query) || /=/.test(query);
+    var endpoint = looksLikeSku
+      ? W + '/inventory/lookup?code=' + encodeURIComponent(query.toUpperCase())
+      : W + '/inventory/search?name=' + encodeURIComponent(query);
+    wFetch(endpoint)
+      .then(function(r) { return r.json(); })
+      .then(function(d) {
+        var matches = [];
+        if (looksLikeSku) {
+          if (d.partNum) matches.push({ partNum: d.partNum, name: d.name || '', totalCases: 0 });
+          if (d.variants && d.variants.length) {
+            d.variants.forEach(function(v) { matches.push({ partNum: v, name: d.name || '', totalCases: 0 }); });
+          }
+        } else {
+          var items = d.items || d.results || [];
+          items.forEach(function(item) {
+            matches.push({ partNum: item.partNum || item.baseSku || '', name: item.name || '',
+              totalCases: item.totalCases || 0, location: item.lastLocation || '' });
+          });
+        }
+        if (!matches.length) {
+          res.innerHTML = '<div style="font-size:12px;color:var(--text3);padding:6px 10px">No matches for &ldquo;' + query + '&rdquo;</div>';
+          return;
+        }
+        _skuSearchCache[cacheKey] = matches;
+        invSkuRenderResults(matches, res, onSelectFn);
+      })
+      .catch(function() { res.innerHTML = '<div style="font-size:12px;color:var(--red);padding:6px 10px">Search failed</div>'; });
   };
+
+  function invSkuRenderResults(matches, res, onSelectFn) {
+    res.innerHTML = '';
+    var wrap = document.createElement('div');
+    wrap.style.cssText = 'border:1.5px solid var(--border);border-radius:8px;overflow:hidden;background:var(--bg2)';
+    matches.slice(0, 10).forEach(function(m, idx) {
+      var btn = document.createElement('button');
+      btn.style.cssText = 'display:block;width:100%;text-align:left;padding:8px 12px;border:none;'
+        + (idx > 0 ? 'border-top:1px solid var(--border);' : '')
+        + 'background:var(--bg2);color:var(--text);cursor:pointer;font-size:12px';
+      btn.onmouseover = function() { this.style.background = 'var(--bg3)'; };
+      btn.onmouseout  = function() { this.style.background = 'var(--bg2)'; };
+      var casesStr = m.totalCases > 0 ? ' <span style="color:var(--green);font-size:11px">&#x25CF; ' + m.totalCases + ' cases</span>' : '';
+      var locStr   = m.location   ? ' <span style="color:var(--text3);font-size:11px">&#x1F4CD; ' + m.location + '</span>' : '';
+      btn.innerHTML = '<div style="font-family:var(--mono);font-weight:700;font-size:13px">' + (m.partNum || '') + '</div>'
+        + '<div style="color:var(--text2);font-size:11px;margin-top:1px">' + (m.name || '') + casesStr + locStr + '</div>';
+      btn.onmousedown = function(e) { e.preventDefault(); };
+      btn.onclick = function() { onSelectFn(m.partNum, m.name); res.innerHTML = ''; };
+      wrap.appendChild(btn);
+    });
+    res.appendChild(wrap);
+  }
 
   var invAuditSearchMode = 'part';
 
