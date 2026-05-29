@@ -14537,7 +14537,8 @@ function awdHandleScan(raw) {
       location: loc.location, newLocation: newLoc,
       cases: newCases !== null ? newCases : parseFloat(loc.cases) || 0,
       initials: initials, notes: note,
-      rowIndex: loc.rowIndex, isNew: false, overwriteLocation: true };
+      rowIndex: loc.rowIndex, isNew: false,
+      overwriteLocation: newLoc }; // must be the actual new location string, not boolean
     var rowEl   = g('inv-audit-loc-' + idx);
     var saveBtn = g('inv-audit-movesave-' + idx);
     if (saveBtn) saveBtn.disabled = true;
@@ -14553,7 +14554,8 @@ function awdHandleScan(raw) {
         }).then(function(r) { return r.json(); });
       })
       .then(function(v) {
-        if (!v) return;
+        if (!v) { invFlash('Verify failed — no response', 'error'); if(saveBtn) saveBtn.disabled=false; return; }
+        if (v.error) { invFlash('Move error: ' + v.error, 'error'); if(saveBtn) saveBtn.disabled=false; return; }
         console.log('[MOVE] result:', JSON.stringify(v));
         invFlash('✓ Moved: ' + loc.location + ' → ' + newLoc + (v.masterRow ? ' (row ' + v.masterRow + ')' : ''), 'success');
         if (rowEl) { rowEl.style.borderColor = '#0891B2'; rowEl.style.background = '#E0F2FE'; }
