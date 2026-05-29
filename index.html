@@ -13256,8 +13256,10 @@ function awdHandleScan(raw) {
         if (btn) { btn.disabled = false; btn.textContent = '✓ Approve Selected'; }
         if (errors === 0) {
           invFlash('✓ Approved ' + total + ' item' + (total!==1?'s':''), 'success');
+        } else if (total - errors === 0) {
+          invFlash('⚠ All ' + errors + ' failed — check console for details', 'error');
         } else {
-          invFlash('⚠ ' + (total-errors) + ' approved, ' + errors + ' failed', 'error');
+          invFlash('✓ ' + (total-errors) + ' approved • ' + errors + ' may have failed — check sheet', 'warn');
         }
         invLoadPending();
         invFetchPendingCount();
@@ -13269,7 +13271,7 @@ function awdHandleScan(raw) {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ rowIndex: item.rowIndex, action: 'Approved', item: item })
       }).then(function(r){ return r.json(); })
-        .then(function(d){ onDone(d.ok); })
+        .then(function(d){ onDone(d && (d.ok || !d.error)); })
         .catch(function(){ onDone(false); });
     });
     transferItems.forEach(function(xfr) {
@@ -13277,7 +13279,7 @@ function awdHandleScan(raw) {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ action: 'Approved', outItem: xfr.outItem, inItem: xfr.inItem })
       }).then(function(r){ return r.json(); })
-        .then(function(d){ onDone(d.ok); })
+        .then(function(d){ onDone(d && (d.ok || !d.error)); })
         .catch(function(){ onDone(false); });
     });
     if (total === 0) { if(btn) { btn.disabled=false; btn.textContent='✓ Approve Selected'; } }
