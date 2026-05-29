@@ -1,7 +1,7 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-  <!-- XFITTING-BUILD-V114-FEAT-20260501z14 -->
+  <!-- XFITTING-BUILD-V114-FEAT-20260501z15 -->
 <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate">
 <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&family=IBM+Plex+Sans:wght@300;400;500;600&display=swap" rel="stylesheet">
   <meta http-equiv="Pragma" content="no-cache">
@@ -4480,9 +4480,13 @@ function launchApp(which) {
       var shfEl = document.getElementById('inv-newloc-shelf');
       if (shfEl && !shfEl._suggestWired) {
         shfEl._suggestWired = true;
+        var _suggestTimer = null;
         shfEl.addEventListener('input', function() {
-          invSuggestLocation('inv-newloc-prefix','inv-newloc-shelf','inv-newloc-suggest',
-            invPart ? invPart.partNum : '', '');
+          clearTimeout(_suggestTimer);
+          _suggestTimer = setTimeout(function() {
+            invSuggestLocation('inv-newloc-prefix','inv-newloc-shelf','inv-newloc-suggest',
+              invPart ? invPart.partNum : '', '');
+          }, 500); // wait 500ms after typing stops
         });
       }
     }, 500);
@@ -11800,7 +11804,13 @@ function awdHandleScan(raw) {
     <div id="inv-found-elsewhere-wrap" style="display:none;margin-top:12px;padding:12px;background:var(--purple-bg);border:1.5px solid var(--purple);border-radius:10px">
       <div style="font-size:13px;font-weight:700;color:var(--purple);margin-bottom:10px">📦 Found at unlisted location</div>
       <div class="ifield"><label>Part# / SKU</label>
-        <input id="inv-fel-sku" type="text" placeholder="e.g. 23-2-1=2xx" autocomplete="off" autocapitalize="characters"
+        <div style="position:relative">
+          <input id="inv-fel-sku-search" type="text" placeholder="Search SKU or name…" autocomplete="off"
+            style="width:100%;padding:6px 10px;border:1.5px solid var(--border);border-radius:7px 7px 0 0;background:var(--bg);color:var(--text);font-size:13px;box-sizing:border-box;margin-top:6px"
+            oninput="invSkuQuickSearch(this.value,'inv-fel-sku-res',function(pn,nm){var el=g('inv-fel-sku');if(el)el.value=pn;var si=g('inv-fel-sku-search');if(si)si.value=nm||pn;})">
+          <div id="inv-fel-sku-res" style="position:absolute;left:0;right:0;background:var(--bg2);border:1.5px solid var(--border);border-top:none;border-radius:0 0 7px 7px;z-index:10;max-height:150px;overflow-y:auto"></div>
+        </div>
+        <input id="inv-fel-sku" type="text" placeholder="Part# (auto-filled or type manually)" autocomplete="off" autocapitalize="characters"
           style="width:100%;padding:6px 10px;border:1.5px solid var(--border);border-radius:7px;background:var(--bg);color:var(--text);font-size:14px;font-family:var(--mono);margin-top:6px">
       </div>
       <div class="ifield"><label>Location Name</label>
@@ -11895,7 +11905,13 @@ function awdHandleScan(raw) {
     <div id="xfr-found-elsewhere-wrap" style="display:none;margin-top:12px;padding:12px;background:var(--purple-bg);border:1.5px solid var(--purple);border-radius:10px">
       <div style="font-size:13px;font-weight:700;color:var(--purple);margin-bottom:10px">📦 Found at unlisted location</div>
       <div class="ifield"><label>Part# / SKU</label>
-        <input id="inv-fel-sku" type="text" placeholder="e.g. 23-2-1=2xx" autocomplete="off" autocapitalize="characters"
+        <div style="position:relative">
+          <input id="inv-fel-sku-search" type="text" placeholder="Search SKU or name…" autocomplete="off"
+            style="width:100%;padding:6px 10px;border:1.5px solid var(--border);border-radius:7px 7px 0 0;background:var(--bg);color:var(--text);font-size:13px;box-sizing:border-box;margin-top:6px"
+            oninput="invSkuQuickSearch(this.value,'inv-fel-sku-res',function(pn,nm){var el=g('inv-fel-sku');if(el)el.value=pn;var si=g('inv-fel-sku-search');if(si)si.value=nm||pn;})">
+          <div id="inv-fel-sku-res" style="position:absolute;left:0;right:0;background:var(--bg2);border:1.5px solid var(--border);border-top:none;border-radius:0 0 7px 7px;z-index:10;max-height:150px;overflow-y:auto"></div>
+        </div>
+        <input id="inv-fel-sku" type="text" placeholder="Part# (auto-filled or type manually)" autocomplete="off" autocapitalize="characters"
           style="width:100%;padding:6px 10px;border:1.5px solid var(--border);border-radius:7px;background:var(--bg);color:var(--text);font-size:14px;font-family:var(--mono);margin-top:6px">
       </div>
       <div class="ifield"><label>Location Name</label>
@@ -12021,7 +12037,7 @@ function awdHandleScan(raw) {
       </div>
       <div style="display:flex;gap:6px;align-items:center;margin-bottom:8px">
         <select id="inv-audit-loc-prefix" style="padding:6px 8px;border:1.5px solid var(--border);border-radius:7px;background:var(--bg);color:var(--text);font-size:13px;font-family:var(--mono)"><option value="2FL=">2FL=</option><option value="BARN=">BARN=</option><option value="BASEMENT=">BASEMENT=</option><option value="BH=">BH=</option><option value="C1=">C1=</option><option value="C2=">C2=</option><option value="C3=">C3=</option><option value="C4=">C4=</option><option value="C5=">C5=</option><option value="FRONT=">FRONT=</option></select>
-        <input id="inv-audit-loc-shelf" type="text" placeholder="e.g. 5-1 or 5-1-3" autocomplete="off" style="flex:1;padding:6px 10px;border:1.5px solid var(--border);border-radius:7px;background:var(--bg);color:var(--text);font-size:13px;font-family:var(--mono)" oninput="invAuditLocSearch()" onkeydown="if(event.key==='Enter')invAuditLocSearch()">
+        <input id="inv-audit-loc-shelf" type="text" placeholder="e.g. 5-1 or 5-1-3" autocomplete="off" style="flex:1;padding:6px 10px;border:1.5px solid var(--border);border-radius:7px;background:var(--bg);color:var(--text);font-size:13px;font-family:var(--mono)" data-debounce="1" oninput="invAuditLocDebounce()" onkeydown="if(event.key==='Enter'){clearTimeout(window._auditLocTimer);invAuditLocSearch();}">
         <button class="isearch-btn" onclick="invAuditLocSearch()">Go</button>
       </div>
       <div id="inv-audit-loc-results"></div>
@@ -14461,7 +14477,13 @@ function awdHandleScan(raw) {
         + '<div style="font-size:11px;font-weight:700;color:var(--text3);white-space:nowrap">CASES AT NEW LOCATION</div>'
         + '<input id="inv-audit-movecases-' + i + '" type="number" min="0" step="0.5" placeholder="Leave blank = same count" style="flex:1;padding:5px 8px;border:1.5px solid var(--border);border-radius:7px;background:var(--bg);color:var(--text);font-size:12px;font-family:var(--mono)">'
         + '<button id="inv-audit-movesave-' + i + '" style="padding:5px 12px;border-radius:7px;border:none;background:var(--orange);color:#fff;font-size:12px;font-weight:700;cursor:pointer">Move</button>'
+        + '</div>'
+        + '<div style="margin-top:6px;font-size:11px;font-weight:700;color:var(--text3);margin-bottom:3px">OR SEARCH WHERE THIS ITEM LIVES</div>'
+        + '<div style="position:relative">'
+        + '<input id="inv-audit-movesearch-' + i + '" type="text" placeholder="Search SKU/name for existing location…" style="width:100%;padding:5px 8px;border:1.5px solid var(--border);border-radius:7px;background:var(--bg);color:var(--text);font-size:11px;box-sizing:border-box">'
+        + '<div id="inv-audit-movesearch-res-' + i + '" style="position:absolute;left:0;right:0;background:var(--bg2);border:1.5px solid var(--border);border-top:none;border-radius:0 0 7px 7px;z-index:10;max-height:120px;overflow-y:auto"></div>'
         + '</div></div>';
+
       (function(idx) {
         row.querySelector('#inv-audit-count-' + idx).onkeydown = function(e) { if(e.key==='Enter'){ e.preventDefault(); invAuditSubmitRow(idx); } };
         row.querySelector('#inv-audit-submit-' + idx).onclick  = function() { invAuditSubmitRow(idx); };
@@ -14470,6 +14492,36 @@ function awdHandleScan(raw) {
           if (mf) mf.style.display = mf.style.display === 'none' ? 'block' : 'none';
         };
         row.querySelector('#inv-audit-movesave-' + idx).onclick = function() { invAuditMoveLocation(idx); };
+        // Wire move SKU search
+        var moveSearch = row.querySelector('#inv-audit-movesearch-' + idx);
+        if (moveSearch) {
+          (function(ix) {
+            var _mt = null;
+            moveSearch.oninput = function() {
+              clearTimeout(_mt);
+              _mt = setTimeout(function() {
+                invSkuQuickSearch(moveSearch.value, 'inv-audit-movesearch-res-' + ix, function(pn) {
+                  // Find existing locations for this SKU and suggest
+                  wFetch(W + '/inventory/suggest-location?partNum=' + encodeURIComponent(pn) + '&fromLoc=')
+                    .then(function(r) { return r.json(); })
+                    .then(function(d) {
+                      if (d.existing && d.existing.length) {
+                        var pfxEl = g('inv-audit-movepfx-' + ix);
+                        var shfEl = g('inv-audit-moveshelf-' + ix);
+                        var loc   = d.existing[0].location;
+                        var eq    = loc.indexOf('=');
+                        if (pfxEl && eq >= 0) pfxEl.value = loc.slice(0, eq+1);
+                        if (shfEl && eq >= 0) shfEl.value = loc.slice(eq+1);
+                        moveSearch.value = pn + ' → ' + loc;
+                        var resEl = document.getElementById('inv-audit-movesearch-res-' + ix);
+                        if (resEl) resEl.innerHTML = '';
+                      }
+                    }).catch(function(){});
+                });
+              }, 300);
+            };
+          })(idx);
+        }
       })(i);
       list.appendChild(row);
     });
@@ -14716,6 +14768,53 @@ function awdHandleScan(raw) {
     if (btn) { btn.textContent = '&#x1F4F7; Scan'; btn.className = 'icam-btn'; btn.disabled = false; }
   }
 
+  // ── Debounce for audit location search ──────────────────────────────────────
+  window.invAuditLocDebounce = function() {
+    clearTimeout(window._auditLocTimer);
+    window._auditLocTimer = setTimeout(invAuditLocSearch, 500);
+  };
+
+  // ── SKU Quick Search — for found-on-shelf and move forms ─────────────────────
+  // Searches invPart.locations and local WH stock (S.wh) for matching SKUs
+  // inputId = text input, resultsId = results div, onSelect = function(partNum, name)
+  window.invSkuQuickSearch = function(query, resultsId, onSelectFn) {
+    var res = document.getElementById(resultsId);
+    if (!res) return;
+    query = query.trim().toUpperCase();
+    if (query.length < 2) { res.innerHTML = ''; return; }
+    // Search from cached WH stock (loaded at app launch into window.S.wh)
+    var matches = [];
+    var whStock = (window.S && window.S.wh) ? window.S.wh : [];
+    whStock.forEach(function(item) {
+      var pn   = String(item.partNum || item[6] || '').trim().toUpperCase();
+      var name = String(item.name || item[4] || '').trim();
+      if (pn.includes(query) || name.toUpperCase().includes(query)) {
+        matches.push({ partNum: pn, name: name });
+      }
+    });
+    // Deduplicate by partNum
+    var seen = {};
+    matches = matches.filter(function(m) {
+      if (seen[m.partNum]) return false;
+      seen[m.partNum] = true;
+      return true;
+    });
+    if (!matches.length) { res.innerHTML = '<div style="font-size:12px;color:var(--text3);padding:4px">No matches</div>'; return; }
+    res.innerHTML = '';
+    matches.slice(0, 8).forEach(function(m) {
+      var btn = document.createElement('button');
+      btn.style.cssText = 'display:block;width:100%;text-align:left;padding:6px 10px;border:none;border-bottom:1px solid var(--border);background:var(--bg);color:var(--text);cursor:pointer;font-size:12px';
+      btn.innerHTML = '<span style="font-family:var(--mono);font-weight:700">' + m.partNum + '</span>'
+        + (m.name ? '<span style="color:var(--text2);margin-left:8px">' + m.name.slice(0,40) + '</span>' : '');
+      btn.onmousedown = function(e) { e.preventDefault(); }; // prevent blur before click
+      btn.onclick = function() {
+        onSelectFn(m.partNum, m.name);
+        res.innerHTML = '';
+      };
+      res.appendChild(btn);
+    });
+  };
+
   var invAuditSearchMode = 'part';
 
 
@@ -14856,6 +14955,11 @@ function awdHandleScan(raw) {
     var wrap = document.createElement('div');
     wrap.style.cssText = 'margin-top:16px;padding:12px;background:var(--purple-bg);border:1.5px solid var(--purple);border-radius:10px';
     wrap.innerHTML = '<div style="font-size:13px;font-weight:700;color:var(--purple);margin-bottom:8px">&#x1F4E6; Found item not in system at this location?</div>'
+      + '<div style="font-size:11px;font-weight:700;color:var(--text3);margin-bottom:4px">SEARCH SKU</div>'
+      + '<div style="position:relative;margin-bottom:6px">'
+      + '<input id="audloc-add-search" type="text" placeholder="Type SKU or name to search…" autocomplete="off" style="width:100%;padding:6px 10px;border:1.5px solid var(--border);border-radius:7px;background:var(--bg);color:var(--text);font-size:12px;box-sizing:border-box">'
+      + '<div id="audloc-add-search-res" style="position:absolute;left:0;right:0;background:var(--bg2);border:1.5px solid var(--border);border-radius:0 0 7px 7px;z-index:10;max-height:150px;overflow-y:auto"></div>'
+      + '</div>'
       + '<div style="display:flex;gap:6px;margin-bottom:6px;align-items:center">'
       + '<input id="audloc-add-part" type="text" placeholder="Part# e.g. 27-3-1=5XX" autocomplete="off" style="flex:2;padding:6px 10px;border:1.5px solid var(--border);border-radius:7px;background:var(--bg);color:var(--text);font-size:12px;font-family:var(--mono)">'
       + '<input id="audloc-add-cases" type="number" min="0.1" step="0.5" placeholder="Cases" style="width:80px;padding:6px 8px;border:1.5px solid var(--border);border-radius:7px;background:var(--bg);color:var(--text);font-size:12px;font-family:var(--mono)"></div>'
@@ -14871,6 +14975,21 @@ function awdHandleScan(raw) {
     var shfEl = document.getElementById('audloc-add-loc-shelf');
     if (pfxEl) pfxEl.value = prefix;
     if (shfEl) shfEl.value = shelf;
+    // Wire SKU search
+    var skuSearch = document.getElementById('audloc-add-search');
+    if (skuSearch) {
+      var _skuTimer = null;
+      skuSearch.oninput = function() {
+        clearTimeout(_skuTimer);
+        _skuTimer = setTimeout(function() {
+          invSkuQuickSearch(skuSearch.value, 'audloc-add-search-res', function(pn, nm) {
+            var partEl = document.getElementById('audloc-add-part');
+            if (partEl) partEl.value = pn;
+            skuSearch.value = nm || pn;
+          });
+        }, 300);
+      };
+    }
   }
 
   window.invAuditSubmitLocRow = function(item, inp, rowEl) {
