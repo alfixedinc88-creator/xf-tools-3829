@@ -14487,8 +14487,8 @@ function awdHandleScan(raw) {
           if (!d || !d.rowIndex) { invFlash('Log failed', 'error'); return null; }
           return wFetch(W + '/inventory/verify', { method: 'POST',
             body: JSON.stringify({ rowIndex: d.rowIndex, action: 'Approved', verifiedBy: initials,
-              item: { type: type, partNum: loc.partNum, location: loc.location,
-                      cases: Math.abs(diff), rowIndex: loc.rowIndex } })
+              item: { type: 'IN', partNum: partNum, location: location,
+                      cases: cases, rowIndex: null, notes: note } })
           }).then(function(r) { return r.json(); });
         })
         .then(function(v) {
@@ -14920,8 +14920,8 @@ function awdHandleScan(raw) {
         if (invAuditAutoMode && d && d.rowIndex) {
           return wFetch(W + '/inventory/verify', { method: 'POST',
             body: JSON.stringify({ rowIndex: d.rowIndex, action: 'Approved', verifiedBy: initials,
-              item: { type: type, partNum: loc.partNum, location: loc.location,
-                      cases: Math.abs(diff), rowIndex: loc.rowIndex } })
+              item: { type: 'IN', partNum: partNum, location: location,
+                      cases: cases, rowIndex: null, notes: note } })
           }).then(function(r) { return r.json(); });
         }
         return d;
