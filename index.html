@@ -16248,6 +16248,7 @@ function _psLaunchInner() {
   if (saved) psBatchClosed = JSON.parse(saved);
   psSwitchTab('scan');
   psLoadScans();
+  psPlLoadToday(); // load print log on launch so all devices see today's data
   psLoadManifestFromSheet();  // load today's manifest so gap report is always ready
   psFocusScan();
 }
@@ -16306,8 +16307,10 @@ window.psSwitchTab = function(name) {
   if (name === 'printlog') { psPlLoadToday(); setTimeout(psFocusPrintLog, 100); }
   if (name === 'scan')     { psLoadScans(); }
   // Clear any existing refresh interval and start new one for active tab
-  if (window._psRefreshInterval) { clearInterval(window._psRefreshInterval); window._psRefreshInterval = null; }
+  if (window._psRefreshInterval)   { clearInterval(window._psRefreshInterval);   window._psRefreshInterval   = null; }
+  if (window._psPlRefreshInterval) { clearInterval(window._psPlRefreshInterval); window._psPlRefreshInterval = null; }
   if (name === 'scan')     { window._psRefreshInterval = setInterval(psLoadScans,     30000); }
+  if (name === 'printlog') { window._psPlRefreshInterval = setInterval(psPlLoadToday, 30000); }
   if (name === 'printlog') { window._psRefreshInterval = setInterval(psPlLoadToday,   30000); }
 };
 
@@ -16880,8 +16883,12 @@ window.psOrderLookup = async function() {
     if (!d.ok) { status.textContent = 'Error: ' + (d.error || 'Unknown error'); return; }
 
     var list = d.results || [];
+    var dbg = d.debug || {};
+    var dbgStr = dbg.totalRows !== undefined
+      ? ' [' + dbg.totalRows + ' rows, ' + dbg.skippedByDate + ' skipped by date, cutoff=' + dbg.cutoff + ', sampleDate=' + dbg.sampleDate + ']'
+      : '';
     status.textContent = list.length === 0
-      ? 'No orders found for "' + q + '" in last ' + days + ' days.'
+      ? 'No orders found for "' + q + '" in last ' + days + ' days.' + dbgStr
       : list.length + ' order' + (list.length !== 1 ? 's' : '') + ' found';
 
     if (list.length === 0) return;
