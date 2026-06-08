@@ -16392,17 +16392,12 @@ function _psProcessScan(raw) {
     body: JSON.stringify({ tracking: tracking, initials: psInitials })
   }).then(function(r){ return r.json(); }).then(function(data) {
     if (data.duplicate) {
-      psTodayScans = psTodayScans.filter(function(s){ return s !== optimistic; });
-      _psFlash('orange'); _psBeep(440, 100);
-      _psShowLastScan({ icon:'⚠️', cls:'warn', tracking: tracking, meta:'Already scanned at ' + psFmtTime(data.scannedAt) + ' · ' + data.carrier });
-      _psToast('Duplicate — already in sheet', 'warn');
-      psRenderScanList(); _psUpdateBatchBar();
-    } else if (data.ok) {
-      Object.assign(optimistic, { carrier: data.carrier, timestamp: data.timestamp });
-      _psShowLastScan({ icon:'✅', cls:'ok', tracking: tracking, meta: data.carrier + ' · Saved ✓' });
-      psRenderScanList();
-    } else {
-      throw new Error(data.error || 'Scan write failed');
+      var ov = document.getElementById('ps-dupe-overlay');
+      if (!ov || ov.style.display === 'none') {
+        _psFlash('red');
+        if (typeof psDupeShowAlert === 'function') psDupeShowAlert(tracking, data.scannedAt, data.initials || '', data.carrier || '');
+      }
+      return;
     }
   }).catch(function(e) {
     _psShowLastScan({ icon:'❌', cls:'err', tracking: tracking, meta:'Sheet write failed — ' + e.message });
@@ -17072,6 +17067,62 @@ function _psCarrierBadge(c) {
   if (c === 'USPS') return '<span class="ps-badge ps-badge-usps">USPS</span>';
   return '<span class="ps-badge ps-badge-gray">' + (c||'Unknown') + '</span>';
 }
+
+
+
+  // ── DUPLICATE SCAN ALARM ──────────────────────────────────────────────
+  var _psDupeAlarmInterval = null;
+
+  function psDupeAlarmStart() {
+    psDupeAlarmBeep();
+    _psDupeAlarmInterval = setInterval(function() {
+      psDupeAlarmBeep();
+      if (navigator.vibrate) navigator.vibrate([400,200,400,200,400,600]);
+    }, 2000);
+    if (navigator.vibrate) navigator.vibrate([400,200,400,200,400,600]);
+  }
+
+  function psDupeAlarmBeep() {
+    try {
+      var ctx = new (window.AudioContext || window.webkitAudioContext)();
+      function tone(freq, st, dur) {
+        var o = ctx.createOscillator(), g = ctx.createGain();
+        o.connect(g); g.connect(ctx.destination);
+        o.type = 'square'; o.frequency.setValueAtTime(freq, st);
+        g.gain.setValueAtTime(0.35, st);
+        g.gain.exponentialRampToValueAtTime(0.001, st+dur);
+        o.start(st); o.stop(st+dur);
+      }
+      var t = ctx.currentTime;
+      tone(880,t,0.15); tone(660,t+0.18,0.15); tone(880,t+0.36,0.15); tone(660,t+0.54,0.15); tone(440,t+0.72,0.3);
+    } catch(e) {}
+  }
+
+  function psDupeAlarmStop() {
+    if (_psDupeAlarmInterval) { clearInterval(_psDupeAlarmInterval); _psDupeAlarmInterval = null; }
+    if (navigator.vibrate) navigator.vibrate(0);
+  }
+
+  window.psDupeAcknowledge = function() {
+    psDupeAlarmStop();
+    var ov = document.getElementById('ps-dupe-overlay'); if (ov) ov.style.display = 'none';
+    var inp = document.getElementById('ps-scan-input'); if (inp) inp.focus();
+  };
+  window.psDupeCancel = window.psDupeAcknowledge;
+
+  window.psDupeShowAlert = function(tracking, firstScanTime, initials, carrier) {
+    var ov  = document.getElementById('ps-dupe-overlay');
+    var det = document.getElementById('ps-dupe-detail');
+    if (!ov) return;
+    var timeStr = firstScanTime ? psFmtTime(firstScanTime) : 'earlier today';
+    var byStr   = initials ? ' by ' + initials : '';
+    det.innerHTML = '<strong>' + tracking + '</strong><br>'
+      + (carrier ? carrier + ' &nbsp;&middot;&nbsp; ' : '')
+      + 'First scanned at <strong>' + timeStr + '</strong>' + byStr + '<br><br>'
+      + 'Check if this is a reshipment or mislabeled package.<br>Put aside if unsure.';
+    ov.style.display = 'flex';
+    psDupeAlarmStart();
+  };
 
 window.psFmtTime = function(iso) {
   if (!iso) return '—';
@@ -20740,6 +20791,21 @@ window.psVaExport = function() {
 
 })();
 </script>
+
+
+<!-- Duplicate scan alert overlay -->
+<div id="ps-dupe-overlay" style="display:none;position:fixed;top:0;left:0;right:0;bottom:0;z-index:999999;background:rgba(197,42,26,0.97);color:#fff;flex-direction:column;align-items:center;justify-content:center;text-align:center;padding:24px;font-family:var(--sans)">
+  <div style="font-size:80px;margin-bottom:16px">🚨</div>
+  <div style="font-size:32px;font-weight:900;letter-spacing:1px;margin-bottom:12px;line-height:1.1">ALREADY SCANNED</div>
+  <div style="font-size:18px;font-weight:700;margin-bottom:8px">DO NOT PACK THIS ORDER AGAIN</div>
+  <div id="ps-dupe-detail" style="font-size:14px;opacity:.85;margin-bottom:32px;line-height:1.6;background:rgba(0,0,0,.25);padding:12px 20px;border-radius:10px;max-width:340px"></div>
+  <button onclick="psDupeAcknowledge()" style="padding:16px 32px;border-radius:12px;border:3px solid #fff;background:#fff;color:#C52A1A;font-size:18px;font-weight:900;cursor:pointer;margin-bottom:12px;width:100%;max-width:340px">
+    ✓ I understand — different package
+  </button>
+  <button onclick="psDupeCancel()" style="padding:12px 32px;border-radius:12px;border:3px solid rgba(255,255,255,.5);background:transparent;color:#fff;font-size:15px;font-weight:700;cursor:pointer;width:100%;max-width:340px">
+    ✕ Cancel — put this aside
+  </button>
+</div>
 
 </body>
 </html>
