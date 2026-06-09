@@ -1,7 +1,7 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-  <!-- XFITTING-BUILD-V114-FEAT-20260501z16 -->
+  <!-- XFITTING-BUILD-V114-FEAT-20260501z17 -->
 <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate">
 <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&family=IBM+Plex+Sans:wght@300;400;500;600&display=swap" rel="stylesheet">
   <meta http-equiv="Pragma" content="no-cache">
@@ -15034,17 +15034,24 @@ function awdHandleScan(raw) {
     });
     if (missing.length) { invFlash('Enter counts for all ' + items.length + ' items first', 'error'); return; }
     var btn = document.getElementById('audloc-submit-all-btn');
-    if (btn) { btn.disabled = true; btn.textContent = 'Submitting…'; }
-    var done = 0;
-    items.forEach(function(item) {
+    if (btn) { btn.disabled = true; btn.textContent = 'Submitting 1 of ' + items.length + '…'; }
+    // Sequential — one at a time with 250ms gap
+    // Prevents concurrent /inventory/log appends returning wrong rowIndex
+    // which would cause verify to write to the wrong log row
+    function submitNext(idx) {
+      if (idx >= items.length) {
+        if (btn) { btn.disabled = false; btn.textContent = '✓ All ' + items.length + ' submitted'; }
+        invFetchPendingCount();
+        return;
+      }
+      if (btn) btn.textContent = 'Submitting ' + (idx+1) + ' of ' + items.length + '…';
+      var item  = items[idx];
       var inp   = document.getElementById('audloc-count-' + item.rowIndex);
       var rowEl = document.getElementById('audloc-' + item.rowIndex);
       invAuditSubmitLocRow(item, inp, rowEl);
-      done++;
-      if (done === items.length && btn) {
-        btn.textContent = '✓ All ' + items.length + ' submitted';
-      }
-    });
+      setTimeout(function() { submitNext(idx + 1); }, 250);
+    }
+    submitNext(0);
   };
 
   function invAuditBuildAddForm(resEl, prefix, shelf) {
