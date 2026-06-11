@@ -1,7 +1,7 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-  <!-- XFITTING-BUILD-V114-FEAT-20260501z18b -->
+  <!-- XFITTING-BUILD-V114-FEAT-20260501z19 -->
 <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate">
 <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&family=IBM+Plex+Sans:wght@300;400;500;600&display=swap" rel="stylesheet">
   <meta http-equiv="Pragma" content="no-cache">
@@ -12015,9 +12015,10 @@ function awdHandleScan(raw) {
   <div class="icard">
     <div class="icard-label">Transfer Stock</div>
     <div style="font-size:12px;color:var(--text3);margin-bottom:10px;line-height:1.5">Grab items from locations and add to cart. Set the destination when you arrive at the shelf.</div>
-    <div style="display:flex;gap:6px;margin-bottom:10px">
+    <div style="display:flex;gap:6px;margin-bottom:10px;flex-wrap:wrap">
       <button class="ixfr-mode-btn ixfr-active" id="xfr-mode-code" onclick="xfrSetSearchMode('code')">SKU / Part# / UPC</button>
       <button class="ixfr-mode-btn" id="xfr-mode-name" onclick="xfrSetSearchMode('name')">Product Name</button>
+      <button class="ixfr-mode-btn" id="xfr-mode-loc" onclick="xfrSetSearchMode('loc')">&#x1F4CD; Location</button>
     </div>
     <div style="margin-bottom:8px;display:flex;align-items:center;gap:8px">
       <label style="font-size:11px;font-weight:700;color:var(--text3);white-space:nowrap">INITIALS</label>
@@ -12028,9 +12029,22 @@ function awdHandleScan(raw) {
       <input class="isearch-inp" id="xfr-search-inp" type="text" placeholder="Part#, UPC, or name…" onkeydown="if(event.key==='Enter')xfrSearch()">
       <button class="isearch-btn" onclick="xfrSearch()">Go</button>
     </div>
-    <button class="icam-btn" id="xfr-cam-btn" onclick="xfrToggleCam()">📷 Scan Barcode</button>
+    <button class="icam-btn" id="xfr-cam-btn" onclick="xfrToggleCam()">&#x1F4F7; Scan Barcode</button>
     <div id="xfr-reader-wrap" style="display:none"><div id="xfr-qr-reader"></div></div>
     <div id="xfr-name-results" style="display:none;margin-top:10px"></div>
+    <!-- Location scan for transfer — scan shelf to see items to transfer -->
+    <div id="xfr-loc-scan-wrap" style="display:none;margin-top:8px">
+      <div style="display:flex;gap:6px;align-items:center;margin-bottom:6px">
+        <button class="icam-btn" id="xfr-loc-cam-btn" onclick="xfrLocScanToggleCam()" style="padding:6px 10px;font-size:12px;white-space:nowrap">&#x1F4F7; Scan</button>
+        <select id="xfr-loc-scan-prefix" style="padding:6px 8px;border:1.5px solid var(--border);border-radius:7px;background:var(--bg);color:var(--text);font-size:13px;font-family:var(--mono)"></select>
+        <input id="xfr-loc-scan-shelf" type="text" placeholder="e.g. 5-1 or 5-1-3" autocomplete="off"
+          style="flex:1;padding:6px 10px;border:1.5px solid var(--border);border-radius:7px;background:var(--bg);color:var(--text);font-size:13px;font-family:var(--mono)"
+          oninput="xfrLocScanDebounce()" onkeydown="if(event.key==='Enter'){clearTimeout(window._xfrLocTimer);xfrLocScanSearch();}">
+        <button class="isearch-btn" onclick="xfrLocScanSearch()">Go</button>
+      </div>
+      <div id="xfr-loc-scan-reader-wrap" style="display:none;border-radius:8px;overflow:hidden;background:#000;margin-bottom:8px"><div id="xfr-loc-scan-qr-reader"></div></div>
+      <div id="xfr-loc-scan-results"></div>
+    </div>
   </div>
   <div class="icard" id="xfr-result-card" style="display:none">
     <div style="display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:4px">
@@ -12346,7 +12360,7 @@ function awdHandleScan(raw) {
   }
 
   function invPopulateAllPrefixDropdowns() {
-    ['inv-newloc-prefix','inv-fel-prefix','xfr-fel-prefix','inv-audit-loc-prefix','audloc-add-loc-prefix','inv-loc-scan-prefix'].forEach(function(id) {
+    ['inv-newloc-prefix','inv-fel-prefix','xfr-fel-prefix','inv-audit-loc-prefix','audloc-add-loc-prefix','inv-loc-scan-prefix','xfr-loc-scan-prefix'].forEach(function(id) {
       var el = g(id); if (!el) return;
       var cur = el.value; el.innerHTML = invPrefixOptionsHTML(false); if (cur) el.value = cur;
     });
@@ -12514,33 +12528,54 @@ function awdHandleScan(raw) {
 
   // ── Location scan for stock in/out — same as audit location search ──────────
   var _invLocScanHtml5 = null;
+  var _invLocScanQr = null, _invLocScanCamRunning = false;
   window.invLocScanToggleCam = function() {
-    var wrap = g('inv-loc-scan-reader-wrap');
-    var btn  = g('inv-loc-scan-cam-btn');
-    if (!wrap) return;
-    if (wrap.style.display !== 'none') {
-      wrap.style.display = 'none';
-      btn.textContent = '?? Scan';
-      if (_invLocScanHtml5) { try { _invLocScanHtml5.stop(); } catch(e){} _invLocScanHtml5 = null; }
-      return;
-    }
-    wrap.style.display = 'block';
-    btn.textContent = '⏹ Stop';
-    if (typeof Html5Qrcode === 'undefined') return;
-    _invLocScanHtml5 = new Html5Qrcode('inv-loc-scan-qr-reader');
-    Html5Qrcode.getCameras().then(function(cams) {
-      if (!cams || !cams.length) return;
-      var camId = cams[cams.length-1].id;
-      _invLocScanHtml5.start(camId, { fps: 10, qrbox: { width: 280, height: 100 } }, function(code) {
-        var pfx = g('inv-loc-scan-prefix'); var shelf = g('inv-loc-scan-shelf');
-        if (pfx && shelf) { pfx.value = ''; shelf.value = code; }
-        invLocScanSearch(code);
-        _invLocScanHtml5.stop().catch(function(){});
-        wrap.style.display = 'none'; btn.textContent = '?? Scan';
-        _invLocScanHtml5 = null;
-      }, function(){});
+    if (_invLocScanCamRunning) { invLocScanStopCam(); return; }
+    var btn = g('inv-loc-scan-cam-btn');
+    if (btn) { btn.textContent = '⏳'; btn.disabled = true; }
+    invLoadQR().then(function() {
+      var wrap = g('inv-loc-scan-reader-wrap');
+      if (wrap) wrap.style.display = 'block';
+      if (_invLocScanQr) { try { _invLocScanQr.clear(); } catch(e){} _invLocScanQr = null; }
+      _invLocScanQr = new Html5Qrcode('inv-loc-scan-qr-reader');
+      _invLocScanQr.start(
+        { facingMode: 'environment' },
+        { fps: 10, qrbox: { width: 280, height: 90 } },
+        function(code) {
+          invLocScanStopCam();
+          // Parse prefix=shelf from barcode (e.g. BARN=5-1-3)
+          var eqIdx = code.indexOf('=');
+          if (eqIdx > 0) {
+            var pfxEl = g('inv-loc-scan-prefix'); var shfEl = g('inv-loc-scan-shelf');
+            if (pfxEl) pfxEl.value = code.slice(0, eqIdx + 1);
+            if (shfEl) shfEl.value = code.slice(eqIdx + 1);
+          } else {
+            var shfEl = g('inv-loc-scan-shelf'); if (shfEl) shfEl.value = code;
+          }
+          invLocScanSearch();
+        },
+        function() {}
+      ).then(function() {
+        _invLocScanCamRunning = true;
+        if (btn) { btn.textContent = '⏹ Stop'; btn.className = 'icam-btn scanning'; btn.disabled = false; }
+      }).catch(function() {
+        invFlash('Camera error — check permissions', 'error');
+        if (btn) { btn.textContent = '?? Scan'; btn.className = 'icam-btn'; btn.disabled = false; }
+        var wrap = g('inv-loc-scan-reader-wrap'); if (wrap) wrap.style.display = 'none';
+      });
+    }).catch(function() {
+      invFlash('Could not load scanner', 'error');
+      if (btn) { btn.textContent = '?? Scan'; btn.disabled = false; }
     });
   };
+
+  function invLocScanStopCam() {
+    if (_invLocScanQr && _invLocScanCamRunning) { _invLocScanQr.stop().catch(function(){}); _invLocScanQr = null; }
+    _invLocScanCamRunning = false;
+    var wrap = g('inv-loc-scan-reader-wrap'); if (wrap) wrap.style.display = 'none';
+    var btn  = g('inv-loc-scan-cam-btn');
+    if (btn) { btn.textContent = '?? Scan'; btn.className = 'icam-btn'; btn.disabled = false; }
+  }
 
   window.invLocScanDebounce = function() {
     clearTimeout(window._locScanTimer);
@@ -13991,8 +14026,22 @@ function awdHandleScan(raw) {
     xfrSearchMode = mode;
     g('xfr-mode-code').className = 'ixfr-mode-btn' + (mode === 'code' ? ' ixfr-active' : '');
     g('xfr-mode-name').className = 'ixfr-mode-btn' + (mode === 'name' ? ' ixfr-active' : '');
+    if (g('xfr-mode-loc')) g('xfr-mode-loc').className = 'ixfr-mode-btn' + (mode === 'loc' ? ' ixfr-active' : '');
     var inp = g('xfr-search-inp');
-    if (inp) inp.placeholder = mode === 'name' ? 'Type product name...' : 'Part#, UPC, or barcode\u2026';
+    var searchRow = inp && inp.closest ? inp.closest('.isearch-row') : null;
+    var camBtn = g('xfr-cam-btn');
+    var locWrap = g('xfr-loc-scan-wrap');
+    if (mode === 'loc') {
+      if (searchRow) searchRow.style.display = 'none';
+      if (camBtn) camBtn.style.display = 'none';
+      if (locWrap) locWrap.style.display = 'block';
+      invPopulateAllPrefixDropdowns();
+    } else {
+      if (searchRow) searchRow.style.display = '';
+      if (camBtn) camBtn.style.display = '';
+      if (locWrap) locWrap.style.display = 'none';
+      if (inp) inp.placeholder = mode === 'name' ? 'Type product name…' : 'Part#, UPC, or barcode…';
+    }
     var nr = g('xfr-name-results'); if (nr) nr.style.display = 'none';
   };
 
@@ -14000,7 +14049,103 @@ function awdHandleScan(raw) {
     var val = (g('xfr-search-inp').value || '').trim();
     if (!val) return;
     if (xfrSearchMode === 'name') { xfrNameSearch(val); }
+    else if (xfrSearchMode === 'loc') { xfrLocScanSearch(); }
     else { xfrLookup(val); }
+  };
+
+  // ── Transfer location scan ────────────────────────────────────────────────
+  var _xfrLocScanQr = null, _xfrLocScanCamRunning = false;
+
+  window.xfrLocScanToggleCam = function() {
+    if (_xfrLocScanCamRunning) { xfrLocScanStopCam(); return; }
+    var btn = g('xfr-loc-cam-btn');
+    if (btn) { btn.textContent = '⏳'; btn.disabled = true; }
+    invLoadQR().then(function() {
+      var wrap = g('xfr-loc-scan-reader-wrap');
+      if (wrap) wrap.style.display = 'block';
+      if (_xfrLocScanQr) { try { _xfrLocScanQr.clear(); } catch(e){} _xfrLocScanQr = null; }
+      _xfrLocScanQr = new Html5Qrcode('xfr-loc-scan-qr-reader');
+      _xfrLocScanQr.start(
+        { facingMode: 'environment' },
+        { fps: 10, qrbox: { width: 280, height: 90 } },
+        function(code) {
+          xfrLocScanStopCam();
+          var eqIdx = code.indexOf('=');
+          if (eqIdx > 0) {
+            var pfxEl = g('xfr-loc-scan-prefix'); var shfEl = g('xfr-loc-scan-shelf');
+            if (pfxEl) pfxEl.value = code.slice(0, eqIdx + 1);
+            if (shfEl) shfEl.value = code.slice(eqIdx + 1);
+          } else {
+            var shfEl = g('xfr-loc-scan-shelf'); if (shfEl) shfEl.value = code;
+          }
+          xfrLocScanSearch();
+        },
+        function() {}
+      ).then(function() {
+        _xfrLocScanCamRunning = true;
+        if (btn) { btn.textContent = '⏹ Stop'; btn.className = 'icam-btn scanning'; btn.disabled = false; }
+      }).catch(function() {
+        invFlash('Camera error — check permissions', 'error');
+        if (btn) { btn.textContent = '?? Scan'; btn.className = 'icam-btn'; btn.disabled = false; }
+        var wrap = g('xfr-loc-scan-reader-wrap'); if (wrap) wrap.style.display = 'none';
+      });
+    }).catch(function() {
+      invFlash('Could not load scanner', 'error');
+      if (btn) { btn.textContent = '?? Scan'; btn.disabled = false; }
+    });
+  };
+
+  function xfrLocScanStopCam() {
+    if (_xfrLocScanQr && _xfrLocScanCamRunning) { _xfrLocScanQr.stop().catch(function(){}); _xfrLocScanQr = null; }
+    _xfrLocScanCamRunning = false;
+    var wrap = g('xfr-loc-scan-reader-wrap'); if (wrap) wrap.style.display = 'none';
+    var btn  = g('xfr-loc-cam-btn');
+    if (btn) { btn.textContent = '?? Scan'; btn.className = 'icam-btn'; btn.disabled = false; }
+  }
+
+  window.xfrLocScanDebounce = function() {
+    clearTimeout(window._xfrLocTimer);
+    window._xfrLocTimer = setTimeout(xfrLocScanSearch, 500);
+  };
+
+  window.xfrLocScanSearch = function() {
+    var pfx   = (g('xfr-loc-scan-prefix') && g('xfr-loc-scan-prefix').value) || '';
+    var shelf = (g('xfr-loc-scan-shelf') && g('xfr-loc-scan-shelf').value || '').trim();
+    var loc   = shelf ? (pfx + shelf).toUpperCase() : '';
+    if (!loc || loc.length < 2) return;
+    var res = g('xfr-loc-scan-results');
+    if (res) res.innerHTML = '<div class="iempty" style="padding:12px;color:var(--text3);font-size:13px">Searching…</div>';
+    wFetch(W + '/inventory/location-search?loc=' + encodeURIComponent(loc))
+      .then(function(r) { return r.json(); })
+      .then(function(data) {
+        if (!data.ok || !data.results || !data.results.length) {
+          if (res) res.innerHTML = '<div class="iempty" style="padding:12px;color:var(--text3);font-size:13px">No items at ' + loc + '</div>';
+          return;
+        }
+        var html = '<div style="font-size:11px;font-weight:700;letter-spacing:.5px;text-transform:uppercase;color:var(--text3);margin-bottom:8px">Items at ' + loc + ' (' + data.results.length + ') — tap to add to transfer</div>';
+        data.results.forEach(function(item) {
+          var adj = item.adjustedCases !== undefined ? item.adjustedCases : item.casesNum || 0;
+          var pending = item.pendingCases || 0;
+          var pendingBadge = pending > 0 ? ' <span style="color:var(--orange);font-size:10px">(' + pending + ' pending)</span>' : '';
+          html += '<div class="iloc-opt xfr-loc-pick" style="cursor:pointer" data-pn="' + item.partNum + '" data-loc="' + item.location + '">'
+            + '<div style="flex:1"><div class="iloc-name" style="font-family:var(--mono)">' + item.partNum + '</div>'
+            + '<div style="font-size:12px;color:var(--text2)">' + (item.name || '') + '</div></div>'
+            + '<span class="iloc-badge">' + adj + ' cases' + pendingBadge + '</span>'
+            + '</div>';
+        });
+        if (res) res.innerHTML = html;
+      })
+      .catch(function() { if (res) res.innerHTML = '<div class="iempty" style="padding:12px;color:var(--red)">Search failed</div>'; });
+  };
+
+  // Tap item from location scan results in transfer — triggers xfrLookup
+  window.xfrLocPickItem = function(el) {
+    var partNum = el.dataset.pn || el.getAttribute('data-pn') || '';
+    if (!partNum) return;
+    var inp = g('xfr-search-inp');
+    if (inp) inp.value = partNum;
+    xfrSetSearchMode('code');
+    xfrLookup(partNum);
   };
 
   window.xfrToggleCam = function() {
