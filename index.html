@@ -3554,6 +3554,12 @@ window.poLogSubmit = function() {
 };
 
 // Also allow pre-filling from stock level table row click
+// Event delegation for .po-sku-cell clicks
+document.addEventListener('click', function(e) {
+  var cell = e.target.closest && e.target.closest('.po-sku-cell');
+  if (cell) { poLogPrefill(cell.getAttribute('data-sku')); }
+});
+
 window.poLogPrefill = function(sku) {
   document.getElementById('po-log-sku').value = sku;
   document.getElementById('po-log-form').style.display = 'block';
@@ -3597,25 +3603,24 @@ function renderOOS() {
   }
 
   var html = '<div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:10px">'
-    + '<button class="ps-filter-btn' + (_oosOrderFilter==='all'?' active':'') + '" onclick="oosSetFilter('all',this)">All</button>'
-    + '<button class="ps-filter-btn' + (_oosOrderFilter==='ordered'?' active':'') + '" onclick="oosSetFilter('ordered',this)" style="color:var(--green)">✓ PO Placed</button>'
-    + '<button class="ps-filter-btn' + (_oosOrderFilter==='not-ordered'?' active':'') + '" onclick="oosSetFilter('not-ordered',this)" style="color:var(--red)">⚠ Not Ordered</button>'
+    + '<button class="ps-filter-btn' + (_oosOrderFilter==='all'?' active':'') + '" onclick="oosSetFilter(&quot;all&quot;,this)">All</button>'
+    + '<button class="ps-filter-btn' + (_oosOrderFilter==='ordered'?' active':'') + '" onclick="oosSetFilter(&quot;ordered&quot;,this)" style="color:var(--green)">✓ PO Placed</button>'
+    + '<button class="ps-filter-btn' + (_oosOrderFilter==='not-ordered'?' active':'') + '" onclick="oosSetFilter(&quot;not-ordered&quot;,this)" style="color:var(--red)">⚠ Not Ordered</button>'
     + '</div>';
 
   html += '<div class="table-wrap"><table class="data-table">'
     + '<thead><tr><th>SKU</th><th>Product Name</th><th>Cases</th><th>PO Status</th></tr></thead><tbody>';
 
   items.forEach(function(r) {
+    var orderedNote = r.isOrdered && r.poNotes ? '<div style="font-size:10px;color:var(--text3);margin-top:3px;font-family:var(--mono)">' + String(r.poNotes).slice(0,80) + '</div>' : '';
     var poCell = r.isOrdered
-      ? '<span style="background:var(--green-bg);color:var(--green);font-size:11px;font-weight:700;padding:2px 8px;border-radius:4px;border:1px solid var(--green);display:inline-block">✓ Ordered</span>'
-        + (r.poNotes ? '<div style="font-size:10px;color:var(--text3);margin-top:3px;font-family:var(--mono)">' + r.poNotes.replace(/
-/g,'<br>').slice(0,80) + '</div>' : '')
+      ? '<span style="background:var(--green-bg);color:var(--green);font-size:11px;font-weight:700;padding:2px 8px;border-radius:4px;border:1px solid var(--green);display:inline-block">✓ Ordered</span>' + orderedNote
       : '<span style="background:var(--red-bg);color:var(--red);font-size:11px;font-weight:700;padding:2px 8px;border-radius:4px;border:1px solid var(--red);display:inline-block">⚠ Not Ordered</span>';
     var casesDisplay = r.casesNum > 0
       ? '<span style="color:var(--orange);font-family:var(--mono);font-size:12px">' + r.casesNum + ' (low)</span>'
       : '<span style="color:var(--red);font-family:var(--mono);font-size:12px">0</span>';
     html += '<tr>'
-      + '<td class="sku-col" style="cursor:pointer" onclick="poLogPrefill('' + r.sku + '')" title="Click to log a PO">' + r.sku + ' <span style="font-size:10px;color:var(--accent)">+PO</span></td>'
+      + '<td class="sku-col po-sku-cell" data-sku="' + r.sku + '" title="Click to log a PO">' + r.sku + ' <span style="font-size:10px;color:var(--accent)">+PO</span></td>'
       + '<td>' + r.name + '</td>'
       + '<td>' + casesDisplay + '</td>'
       + '<td>' + poCell + '</td>'
