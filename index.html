@@ -1,7 +1,7 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-  <!-- XFITTING-BUILD-V114-FEAT-20260501z17 -->
+  <!-- XFITTING-BUILD-V114-FEAT-20260501z19 -->
 <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate">
 <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&family=IBM+Plex+Sans:wght@300;400;500;600&display=swap" rel="stylesheet">
   <meta http-equiv="Pragma" content="no-cache">
@@ -2511,7 +2511,35 @@ input[type=checkbox]{width:15px;height:15px;cursor:pointer;accent-color:var(--bl
           <div class="oos-stat-lbl">Stock Level Items</div>
           <div class="oos-stat-num" id="oos-num">&mdash;</div>
         </div>
-        <div class="oos-filter"><input type="text" id="inp-oos" placeholder="Filter by SKU or name&hellip;" oninput="renderOOS()" /></div>
+        <div class="oos-filter">
+          <input type="text" id="inp-oos" placeholder="Filter by SKU or name…" oninput="renderOOS()" />
+        </div>
+        <!-- Log PO Placed quick form -->
+        <div id="po-log-form" style="display:none;background:var(--bg2);border:1.5px solid var(--accent);border-radius:10px;padding:14px 16px;margin:10px 0">
+          <div style="font-size:13px;font-weight:700;color:var(--text);margin-bottom:10px">&#x1F4CB; Log PO Placed</div>
+          <div style="display:flex;flex-direction:column;gap:8px">
+            <div>
+              <div style="font-size:11px;font-weight:600;color:var(--text3);text-transform:uppercase;letter-spacing:.5px;margin-bottom:4px">SKU / Part#</div>
+              <input id="po-log-sku" type="text" placeholder="e.g. 27-3-1" style="width:100%;padding:8px 10px;border:1.5px solid var(--border);border-radius:7px;background:var(--bg);color:var(--text);font-size:13px;font-family:var(--mono);box-sizing:border-box">
+            </div>
+            <div>
+              <div style="font-size:11px;font-weight:600;color:var(--text3);text-transform:uppercase;letter-spacing:.5px;margin-bottom:4px">Qty Ordered (cases)</div>
+              <input id="po-log-qty" type="number" min="1" placeholder="e.g. 200" style="width:100%;padding:8px 10px;border:1.5px solid var(--border);border-radius:7px;background:var(--bg);color:var(--text);font-size:13px;font-family:var(--mono);box-sizing:border-box">
+            </div>
+            <div>
+              <div style="font-size:11px;font-weight:600;color:var(--text3);text-transform:uppercase;letter-spacing:.5px;margin-bottom:4px">Vendor (optional)</div>
+              <input id="po-log-vendor" type="text" placeholder="e.g. JQ Supply" style="width:100%;padding:8px 10px;border:1.5px solid var(--border);border-radius:7px;background:var(--bg);color:var(--text);font-size:13px;box-sizing:border-box">
+            </div>
+            <div style="display:flex;gap:8px;margin-top:4px">
+              <button onclick="poLogSubmit()" style="flex:1;padding:10px;background:var(--accent);color:#fff;border:none;border-radius:8px;font-size:13px;font-weight:700;cursor:pointer;font-family:var(--sans)">&#x2713; Log PO</button>
+              <button onclick="document.getElementById('po-log-form').style.display='none'" style="padding:10px 16px;background:var(--bg3);color:var(--text3);border:1.5px solid var(--border);border-radius:8px;font-size:13px;cursor:pointer;font-family:var(--sans)">Cancel</button>
+            </div>
+          </div>
+        </div>
+        <div style="display:flex;gap:8px;margin-bottom:8px">
+          <button onclick="document.getElementById('po-log-form').style.display=document.getElementById('po-log-form').style.display==='none'?'block':'none'" style="padding:7px 14px;background:var(--accent);color:#fff;border:none;border-radius:8px;font-size:12px;font-weight:700;cursor:pointer;font-family:var(--sans)">&#x1F4CB; Log PO Placed</button>
+          <span id="oos-num" style="font-size:13px;color:var(--text3);align-self:center">0 items</span>
+        </div>
       </div>
       <div id="res-oos"></div>
     </div>
@@ -3007,16 +3035,26 @@ function parseMasterListRows(rows) {
     if (SKIP.has(partNum.toLowerCase())) continue;
     var casesRaw = r[8];
     var casesNum = (casesRaw !== '' && casesRaw !== null && casesRaw !== undefined) ? parseFloat(casesRaw) : null;
+    // Col H = location when cases present, OR PO notes when cases blank
+    // PO notes look like "1/13/26 order 200" — we flag these as ordered
+    var colH    = String(r[7]  || '').trim();
+    var colI    = String(r[8]  || '').trim();
+    var colJ    = String(r[9]  || '').trim();
+    // Ordered = cases blank AND col H contains order-like text (date + "order")
+    var isOrdered = !colI && /order/i.test(colH);
+    var poNotes   = isOrdered ? colH : '';
     out.push({
       sku:      String(r[3]  || '').trim(),
       name:     name,
       partNum:  partNum,
-      location: String(r[7]  || '').trim(),
+      location: colI ? colH : '',  // location only valid when cases present
       cases:    casesNum !== null ? String(casesRaw) : '',
       casesNum: casesNum,
-      eachQty:  String(r[9]  || '').trim(),
+      eachQty:  colJ,
       totalQty: String(r[11] || '').trim(),
       brand:    String(r[12] || '').trim(),
+      isOrdered: isOrdered,
+      poNotes:   poNotes,
     });
   }
   console.log('[XFITTING] parseMasterList -> ' + out.length + ' rows');
@@ -3474,26 +3512,114 @@ function copyLabel(id, btn) {
 // ═══════════════════════════════════════════════════════
 // OUT OF STOCK
 // ═══════════════════════════════════════════════════════
+// Stock level filter: 'all' | 'out' | 'low'
+var _oosStockFilter = 'all';
+// PO filter: 'all' | 'ordered' | 'not-ordered'
+var _oosOrderFilter = 'all';
+
 function renderOOS() {
-  const filter = (document.getElementById('inp-oos').value || '').toLowerCase();
-  const items  = filter ? DB.oos.filter(r => r.sku.toLowerCase().includes(filter) || r.name.toLowerCase().includes(filter)) : DB.oos;
+  var textFilter = (document.getElementById('inp-oos').value || '').toLowerCase();
+
+  // Use original DB.oos (Out_of_Stock sheet) — has SKU, Name, Cases, Status columns
+  var items = (DB.oos || []).slice();
+
+  // Build PO lookup from DB.master — check if base SKU has any isOrdered row
+  // and grab the most recent date from poNotes (format "M/D/YY order N")
+  var poMap = {};
+  (DB.master || []).forEach(function(r) {
+    if (!r.isOrdered) return;
+    var base = (r.sku || r.partNum || '').split('=')[0].trim().toUpperCase();
+    if (!base) return;
+    if (!poMap[base]) poMap[base] = { ordered: true, latestDate: '' };
+    if (r.poNotes) {
+      var parts = r.poNotes.trim().split(' ');
+      var d = parts[0] || '';
+      // Simple date comparison by string — format M/D/YY keeps sort order within a year
+      if (d && d.indexOf('/') > 0 && (!poMap[base].latestDate || d > poMap[base].latestDate)) {
+        poMap[base].latestDate = d;
+      }
+    }
+  });
+
+  // Enrich each item with PO info
+  items = items.map(function(r) {
+    var base = r.sku.split('=')[0].trim().toUpperCase();
+    var po   = poMap[base] || null;
+    return { sku: r.sku, name: r.name, cases: r.cases, status: r.status,
+             baseSku: base, isOrdered: !!(po && po.ordered), poDate: (po && po.latestDate) || '' };
+  });
+
+  // Text filter
+  if (textFilter) items = items.filter(function(r) {
+    return r.sku.toLowerCase().includes(textFilter) || r.name.toLowerCase().includes(textFilter);
+  });
+
+  // Stock level filter
+  if (_oosStockFilter === 'out') items = items.filter(function(r) {
+    return parseFloat(r.cases) === 0 || r.cases === '' || r.status === 'Out of Stock';
+  });
+  if (_oosStockFilter === 'low') items = items.filter(function(r) {
+    return parseFloat(r.cases) > 0 && r.status !== 'Out of Stock';
+  });
+
+  // PO filter
+  if (_oosOrderFilter === 'ordered')     items = items.filter(function(r){ return r.isOrdered; });
+  if (_oosOrderFilter === 'not-ordered') items = items.filter(function(r){ return !r.isOrdered; });
+
   document.getElementById('oos-num').textContent = items.length.toLocaleString();
+
   if (!items.length) {
-    document.getElementById('res-oos').innerHTML = `<div class="placeholder"><span class="placeholder-icon">✅</span><h3>No items found.</h3><p>No stock level items found.</p></div>`;
+    document.getElementById('res-oos').innerHTML = '<div class="placeholder"><span class="placeholder-icon">\u2705</span><h3>No items found.</h3><p>No stock level items match your filter.</p></div>';
     return;
   }
-  let html = `<div class="table-wrap"><table class="data-table">
-    <thead><tr><th>SKU</th><th>Product Name</th><th>Cases</th><th>Status</th></tr></thead><tbody>`;
-  items.forEach(r => {
-    html += `<tr>
-      <td class="sku-col">${r.sku}</td><td>${r.name}</td>
-      <td style="font-family:var(--mono);font-size:12px;color:var(--text2)">${r.cases}</td>
-      <td><span class="badge badge-red">${r.status}</span></td>
-    </tr>`;
+
+  // Two filter rows: Stock Level + PO Status
+  var html = '<div style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:6px;align-items:center">'
+    + '<span style="font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.5px;color:var(--text3)">Stock:</span>'
+    + '<button class="ps-filter-btn' + (_oosStockFilter==='all'?' active':'') + '" onclick="oosSetStockFilter(&quot;all&quot;,this)">All</button>'
+    + '<button class="ps-filter-btn' + (_oosStockFilter==='out'?' active':'') + '" onclick="oosSetStockFilter(&quot;out&quot;,this)">Out of Stock</button>'
+    + '<button class="ps-filter-btn' + (_oosStockFilter==='low'?' active':'') + '" onclick="oosSetStockFilter(&quot;low&quot;,this)">Low Stock</button>'
+    + '</div>'
+    + '<div style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:10px;align-items:center">'
+    + '<span style="font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.5px;color:var(--text3)">PO:</span>'
+    + '<button class="ps-filter-btn' + (_oosOrderFilter==='all'?' active':'') + '" onclick="oosSetFilter(&quot;all&quot;,this)">All</button>'
+    + '<button class="ps-filter-btn' + (_oosOrderFilter==='ordered'?' active':'') + '" onclick="oosSetFilter(&quot;ordered&quot;,this)">\u2713 PO Placed</button>'
+    + '<button class="ps-filter-btn' + (_oosOrderFilter==='not-ordered'?' active':'') + '" onclick="oosSetFilter(&quot;not-ordered&quot;,this)">\u26a0 Not Ordered</button>'
+    + '</div>';
+
+  html += '<div class="table-wrap"><table class="data-table">'
+    + '<thead><tr><th>SKU</th><th>Product Name</th><th>Cases</th><th>Status</th><th>PO</th></tr></thead><tbody>';
+
+  items.forEach(function(r) {
+    var statusBadge = r.status === 'Out of Stock'
+      ? '<span class="badge badge-red">Out of Stock</span>'
+      : '<span class="badge badge-orange">' + r.status + '</span>';
+
+    var poCell = r.isOrdered
+      ? '<span style="background:var(--green-bg);color:var(--green);font-size:11px;font-weight:700;padding:2px 7px;border-radius:4px;border:1px solid var(--green);white-space:nowrap">\u2713 ' + (r.poDate || 'Placed') + '</span>'
+      : '<span style="color:var(--text3);font-size:12px">\u2014</span>';
+
+    html += '<tr>'
+      + '<td class="sku-col">' + r.sku + '</td>'
+      + '<td>' + r.name + '</td>'
+      + '<td style="font-family:var(--mono);font-size:12px;color:var(--text2)">' + r.cases + '</td>'
+      + '<td>' + statusBadge + '</td>'
+      + '<td>' + poCell + '</td>'
+      + '</tr>';
   });
   html += '</tbody></table></div>';
   document.getElementById('res-oos').innerHTML = html;
 }
+
+window.oosSetStockFilter = function(f, btn) {
+  _oosStockFilter = f;
+  renderOOS();
+};
+
+window.oosSetFilter = function(f, btn) {
+  _oosOrderFilter = f;
+  renderOOS();
+};
 
 // ═══════════════════════════════════════════════════════
 // TABS
@@ -11762,17 +11888,29 @@ function awdHandleScan(raw) {
   </div>
   <div class="icard">
     <div class="icard-label">Scan or Search</div>
-    <div style="display:flex;gap:6px;margin-bottom:10px">
+    <div style="display:flex;gap:6px;margin-bottom:10px;flex-wrap:wrap">
       <button class="ixfr-mode-btn ixfr-active" id="inv-smode-code" onclick="invSetScanMode('code')">SKU / Part# / UPC</button>
       <button class="ixfr-mode-btn" id="inv-smode-name" onclick="invSetScanMode('name')">Product Name</button>
+      <button class="ixfr-mode-btn" id="inv-smode-loc" onclick="invSetScanMode('loc')">&#x1F4CD; Location</button>
     </div>
     <div class="isearch-row">
       <input class="isearch-inp" id="inv-search-inp" type="text" placeholder="Part# or barcode…" onkeydown="if(event.key==='Enter')invScanSearch()">
       <button class="isearch-btn" onclick="invScanSearch()">Go</button>
     </div>
-    <button class="icam-btn" id="inv-cam-btn" onclick="invToggleCam()">📷 Start Camera</button>
+    <button class="icam-btn" id="inv-cam-btn" onclick="invToggleCam()">&#x1F4F7; Start Camera</button>
     <div id="inv-reader-wrap"><div id="inv-qr-reader"></div></div>
     <div id="inv-name-results" style="display:none;margin-top:10px"></div>
+    <!-- Location scan mode — same as audit but for stock in/out -->
+    <div id="inv-loc-scan-wrap" style="display:none;margin-top:8px">
+      <div style="display:flex;gap:6px;align-items:center;margin-bottom:6px">
+        <button class="icam-btn" id="inv-loc-scan-cam-btn" onclick="invLocScanToggleCam()" style="padding:6px 10px;white-space:nowrap;font-size:12px">&#x1F4F7; Scan</button>
+        <select id="inv-loc-scan-prefix" style="padding:6px 8px;border:1.5px solid var(--border);border-radius:7px;background:var(--bg);color:var(--text);font-size:13px;font-family:var(--mono)"></select>
+        <input id="inv-loc-scan-shelf" type="text" placeholder="e.g. 5-1 or 5-1-3" autocomplete="off" style="flex:1;padding:6px 10px;border:1.5px solid var(--border);border-radius:7px;background:var(--bg);color:var(--text);font-size:13px;font-family:var(--mono)" oninput="invLocScanDebounce()" onkeydown="if(event.key==='Enter'){clearTimeout(window._locScanTimer);invLocScanSearch();}">
+        <button class="isearch-btn" onclick="invLocScanSearch()">Go</button>
+      </div>
+      <div id="inv-loc-scan-reader-wrap" style="display:none;border-radius:8px;overflow:hidden;background:#000;min-height:120px;margin-bottom:8px"><div id="inv-loc-scan-qr-reader"></div></div>
+      <div id="inv-loc-scan-results"></div>
+    </div>
   </div>
   <div class="icard" id="inv-result-card" style="display:none">
     <div style="display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:6px">
@@ -11793,6 +11931,9 @@ function awdHandleScan(raw) {
   </div>
   <div class="icard" id="inv-loc-card" style="display:none">
     <div class="icard-label" id="inv-loc-label">Select Location</div>
+    <div id="inv-loc-mode-helper" style="display:none;font-size:12px;color:var(--accent);background:var(--accent-bg);border-radius:6px;padding:8px 10px;margin-bottom:8px;border:1px solid #aec6fb">
+      &#x1F4E6; Tap a location to add stock there &mdash; or use <strong>+ Add New Location</strong> below for a new shelf.
+    </div>
     <div id="inv-loc-list"></div>
     <div id="inv-newloc-wrap" style="display:none;margin-top:8px">
       <div class="ifield"><label>New Location Name</label>
@@ -11874,9 +12015,10 @@ function awdHandleScan(raw) {
   <div class="icard">
     <div class="icard-label">Transfer Stock</div>
     <div style="font-size:12px;color:var(--text3);margin-bottom:10px;line-height:1.5">Grab items from locations and add to cart. Set the destination when you arrive at the shelf.</div>
-    <div style="display:flex;gap:6px;margin-bottom:10px">
+    <div style="display:flex;gap:6px;margin-bottom:10px;flex-wrap:wrap">
       <button class="ixfr-mode-btn ixfr-active" id="xfr-mode-code" onclick="xfrSetSearchMode('code')">SKU / Part# / UPC</button>
       <button class="ixfr-mode-btn" id="xfr-mode-name" onclick="xfrSetSearchMode('name')">Product Name</button>
+      <button class="ixfr-mode-btn" id="xfr-mode-loc" onclick="xfrSetSearchMode('loc')">&#x1F4CD; Location</button>
     </div>
     <div style="margin-bottom:8px;display:flex;align-items:center;gap:8px">
       <label style="font-size:11px;font-weight:700;color:var(--text3);white-space:nowrap">INITIALS</label>
@@ -11887,9 +12029,22 @@ function awdHandleScan(raw) {
       <input class="isearch-inp" id="xfr-search-inp" type="text" placeholder="Part#, UPC, or name…" onkeydown="if(event.key==='Enter')xfrSearch()">
       <button class="isearch-btn" onclick="xfrSearch()">Go</button>
     </div>
-    <button class="icam-btn" id="xfr-cam-btn" onclick="xfrToggleCam()">📷 Scan Barcode</button>
+    <button class="icam-btn" id="xfr-cam-btn" onclick="xfrToggleCam()">&#x1F4F7; Scan Barcode</button>
     <div id="xfr-reader-wrap" style="display:none"><div id="xfr-qr-reader"></div></div>
     <div id="xfr-name-results" style="display:none;margin-top:10px"></div>
+    <!-- Location scan for transfer — scan shelf to see items to transfer -->
+    <div id="xfr-loc-scan-wrap" style="display:none;margin-top:8px">
+      <div style="display:flex;gap:6px;align-items:center;margin-bottom:6px">
+        <button class="icam-btn" id="xfr-loc-cam-btn" onclick="xfrLocScanToggleCam()" style="padding:6px 10px;font-size:12px;white-space:nowrap">&#x1F4F7; Scan</button>
+        <select id="xfr-loc-scan-prefix" style="padding:6px 8px;border:1.5px solid var(--border);border-radius:7px;background:var(--bg);color:var(--text);font-size:13px;font-family:var(--mono)"></select>
+        <input id="xfr-loc-scan-shelf" type="text" placeholder="e.g. 5-1 or 5-1-3" autocomplete="off"
+          style="flex:1;padding:6px 10px;border:1.5px solid var(--border);border-radius:7px;background:var(--bg);color:var(--text);font-size:13px;font-family:var(--mono)"
+          oninput="xfrLocScanDebounce()" onkeydown="if(event.key==='Enter'){clearTimeout(window._xfrLocTimer);xfrLocScanSearch();}">
+        <button class="isearch-btn" onclick="xfrLocScanSearch()">Go</button>
+      </div>
+      <div id="xfr-loc-scan-reader-wrap" style="display:none;border-radius:8px;overflow:hidden;background:#000;margin-bottom:8px"><div id="xfr-loc-scan-qr-reader"></div></div>
+      <div id="xfr-loc-scan-results"></div>
+    </div>
   </div>
   <div class="icard" id="xfr-result-card" style="display:none">
     <div style="display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:4px">
@@ -12205,7 +12360,7 @@ function awdHandleScan(raw) {
   }
 
   function invPopulateAllPrefixDropdowns() {
-    ['inv-newloc-prefix','inv-fel-prefix','xfr-fel-prefix','inv-audit-loc-prefix','audloc-add-loc-prefix'].forEach(function(id) {
+    ['inv-newloc-prefix','inv-fel-prefix','xfr-fel-prefix','inv-audit-loc-prefix','audloc-add-loc-prefix','inv-loc-scan-prefix','xfr-loc-scan-prefix'].forEach(function(id) {
       var el = g(id); if (!el) return;
       var cur = el.value; el.innerHTML = invPrefixOptionsHTML(false); if (cur) el.value = cur;
     });
@@ -12338,22 +12493,140 @@ function awdHandleScan(raw) {
 
   window.invSetScanMode = function(mode) {
     invScanSearchMode = mode;
-    g("inv-smode-code").className = "ixfr-mode-btn" + (mode === "code" ? " ixfr-active" : "");
-    g("inv-smode-name").className = "ixfr-mode-btn" + (mode === "name" ? " ixfr-active" : "");
-    var inp = g("inv-search-inp");
-    if (inp) inp.placeholder = mode === "name" ? "Type product name\u2026" : "Part# or barcode\u2026";
-    var nr = g("inv-name-results"); if (nr) nr.style.display = "none";
-    // Reset lookup cards when switching mode
-    g("inv-result-card").style.display = "none";
-    g("inv-loc-card").style.display    = "none";
-    g("inv-detail-card").style.display = "none";
+    g('inv-smode-code').className = 'ixfr-mode-btn' + (mode === 'code' ? ' ixfr-active' : '');
+    g('inv-smode-name').className = 'ixfr-mode-btn' + (mode === 'name' ? ' ixfr-active' : '');
+    if (g('inv-smode-loc')) g('inv-smode-loc').className = 'ixfr-mode-btn' + (mode === 'loc' ? ' ixfr-active' : '');
+    var inp = g('inv-search-inp');
+    // Show/hide location scan panel vs regular search row
+    var searchRow = inp && inp.closest ? inp.closest('.isearch-row') : null;
+    var locWrap   = g('inv-loc-scan-wrap');
+    var camBtn    = g('inv-cam-btn');
+    if (mode === 'loc') {
+      if (searchRow) searchRow.style.display = 'none';
+      if (camBtn) camBtn.style.display = 'none';
+      if (locWrap) locWrap.style.display = 'block';
+      invPopulateAllPrefixDropdowns();
+    } else {
+      if (searchRow) searchRow.style.display = '';
+      if (camBtn) camBtn.style.display = '';
+      if (locWrap) locWrap.style.display = 'none';
+      if (inp) inp.placeholder = mode === 'name' ? 'Type product name…' : 'Part# or barcode…';
+    }
+    var nr = g('inv-name-results'); if (nr) nr.style.display = 'none';
+    g('inv-result-card').style.display = 'none';
+    g('inv-loc-card').style.display    = 'none';
+    g('inv-detail-card').style.display = 'none';
   };
 
   window.invScanSearch = function() {
-    var val = (g("inv-search-inp").value || "").trim();
+    var val = (g('inv-search-inp').value || '').trim();
     if (!val) return;
-    if (invScanSearchMode === "name") { invScanNameSearch(val); }
+    if (invScanSearchMode === 'name') { invScanNameSearch(val); }
+    else if (invScanSearchMode === 'loc') { invLocScanSearch(); }
     else { invLookup(val); }
+  };
+
+  // ── Location scan for stock in/out — same as audit location search ──────────
+  var _invLocScanHtml5 = null;
+  var _invLocScanQr = null, _invLocScanCamRunning = false;
+  window.invLocScanToggleCam = function() {
+    if (_invLocScanCamRunning) { invLocScanStopCam(); return; }
+    var btn = g('inv-loc-scan-cam-btn');
+    if (btn) { btn.textContent = '⏳'; btn.disabled = true; }
+    invLoadQR().then(function() {
+      var wrap = g('inv-loc-scan-reader-wrap');
+      if (wrap) wrap.style.display = 'block';
+      if (_invLocScanQr) { try { _invLocScanQr.clear(); } catch(e){} _invLocScanQr = null; }
+      _invLocScanQr = new Html5Qrcode('inv-loc-scan-qr-reader');
+      _invLocScanQr.start(
+        { facingMode: 'environment' },
+        { fps: 10, qrbox: { width: 280, height: 90 } },
+        function(code) {
+          invLocScanStopCam();
+          // Parse prefix=shelf from barcode (e.g. BARN=5-1-3)
+          var eqIdx = code.indexOf('=');
+          if (eqIdx > 0) {
+            var pfxEl = g('inv-loc-scan-prefix'); var shfEl = g('inv-loc-scan-shelf');
+            if (pfxEl) pfxEl.value = code.slice(0, eqIdx + 1);
+            if (shfEl) shfEl.value = code.slice(eqIdx + 1);
+          } else {
+            var shfEl = g('inv-loc-scan-shelf'); if (shfEl) shfEl.value = code;
+          }
+          invLocScanSearch();
+        },
+        function() {}
+      ).then(function() {
+        _invLocScanCamRunning = true;
+        if (btn) { btn.textContent = '⏹ Stop'; btn.className = 'icam-btn scanning'; btn.disabled = false; }
+      }).catch(function() {
+        invFlash('Camera error — check permissions', 'error');
+        if (btn) { btn.textContent = '?? Scan'; btn.className = 'icam-btn'; btn.disabled = false; }
+        var wrap = g('inv-loc-scan-reader-wrap'); if (wrap) wrap.style.display = 'none';
+      });
+    }).catch(function() {
+      invFlash('Could not load scanner', 'error');
+      if (btn) { btn.textContent = '?? Scan'; btn.disabled = false; }
+    });
+  };
+
+  function invLocScanStopCam() {
+    if (_invLocScanQr && _invLocScanCamRunning) { _invLocScanQr.stop().catch(function(){}); _invLocScanQr = null; }
+    _invLocScanCamRunning = false;
+    var wrap = g('inv-loc-scan-reader-wrap'); if (wrap) wrap.style.display = 'none';
+    var btn  = g('inv-loc-scan-cam-btn');
+    if (btn) { btn.textContent = '?? Scan'; btn.className = 'icam-btn'; btn.disabled = false; }
+  }
+
+  window.invLocScanDebounce = function() {
+    clearTimeout(window._locScanTimer);
+    window._locScanTimer = setTimeout(invLocScanSearch, 500);
+  };
+
+  window.invLocScanSearch = function(overrideLoc) {
+    var loc;
+    if (overrideLoc) {
+      loc = overrideLoc.trim().toUpperCase();
+    } else {
+      var pfx   = (g('inv-loc-scan-prefix') && g('inv-loc-scan-prefix').value) || '';
+      var shelf = (g('inv-loc-scan-shelf') && g('inv-loc-scan-shelf').value || '').trim();
+      loc = shelf ? (pfx + shelf).toUpperCase() : '';
+    }
+    if (!loc || loc.length < 2) return;
+    var res = g('inv-loc-scan-results');
+    if (res) res.innerHTML = '<div class="iempty" style="padding:12px;color:var(--text3);font-size:13px">Searching…</div>';
+    wFetch(W + '/inventory/location-search?loc=' + encodeURIComponent(loc))
+      .then(function(r) { return r.json(); })
+      .then(function(data) {
+        if (!data.ok || !data.results || !data.results.length) {
+          if (res) res.innerHTML = '<div class="iempty" style="padding:12px;color:var(--text3);font-size:13px">No items found at ' + loc + '</div>';
+          return;
+        }
+        // Show items at this location — tapping one goes straight into the stock in/out flow
+        var html = '<div style="font-size:11px;font-weight:700;letter-spacing:.5px;text-transform:uppercase;color:var(--text3);margin-bottom:8px">Items at ' + loc + ' (' + data.results.length + ')</div>';
+        data.results.forEach(function(item) {
+          var adj     = item.adjustedCases !== undefined ? item.adjustedCases : item.casesNum || 0;
+          var pending = item.pendingCases  || 0;
+          var pendingBadge = pending > 0 ? ' <span style="color:var(--orange);font-size:10px;font-weight:700">(' + pending + ' pending)</span>' : '';
+          html += '<div class="iloc-opt" style="cursor:pointer" onclick="invLocScanPickItem(' + JSON.stringify({partNum:item.partNum,name:item.name,rowIndex:item.rowIndex,location:item.location,cases:item.cases,casesNum:item.casesNum,adjustedCases:adj,pendingCases:pending}).replace(/"/g,"'") + ')">'
+            + '<div style="flex:1"><div class="iloc-name" style="font-family:var(--mono)">' + item.partNum + '</div>'
+            + '<div style="font-size:12px;color:var(--text2)">' + (item.name || '') + '</div></div>'
+            + '<span class="iloc-badge">' + adj + ' cases' + pendingBadge + '</span>'
+            + '</div>';
+        });
+        if (res) res.innerHTML = html;
+      })
+      .catch(function() { if (res) res.innerHTML = '<div class="iempty" style="padding:12px;color:var(--red)">Search failed</div>'; });
+  };
+
+  // When worker taps an item from location scan results — jump into lookup flow
+  window.invLocScanPickItem = function(itemStr) {
+    var item = typeof itemStr === 'string' ? JSON.parse(itemStr.replace(/'/g,'"')) : itemStr;
+    if (!item || !item.partNum) return;
+    // Set search input and trigger lookup
+    var inp = g('inv-search-inp');
+    if (inp) inp.value = item.partNum;
+    invSetScanMode('code');
+    invLookup(item.partNum);
   };
 
   function invScanNameSearch(query) {
@@ -12587,7 +12860,7 @@ function awdHandleScan(raw) {
       var pendingBadge = (invMode === "out" && loc.pendingCases > 0)
         ? " <span style='font-size:11px;font-weight:600;color:var(--orange);background:var(--orange-bg);border:1px solid var(--orange);border-radius:4px;padding:1px 6px'>" + loc.pendingCases + " pending</span>"
         : "";
-      var casesLabel = displayCases + " cases" + (invMode === "out" ? " available" : " on hand") + pendingBadge;
+      var casesLabel = invMode === 'in' ? (displayCases + ' cases on hand — tap to add more') : (displayCases + ' available' + pendingBadge);
 
       if (invMode === "out") {
         // Stock Out: expand inline to enter cases before adding to pull list
@@ -12716,9 +12989,14 @@ function awdHandleScan(raw) {
 
     g("inv-newloc-wrap").style.display = "none";
     g("inv-found-elsewhere-wrap").style.display = "none";
-    g("inv-loc-label").textContent = invMode === "in"
-      ? "All Locations \u2014 Select to Stock In"
-      : "Stock Out \u2014 Choose Location";
+    g('inv-loc-label').textContent = invMode === 'in'
+      ? 'Select Location to Add Stock'
+      : 'Stock Out — Choose Location';
+    // Show helper text for IN mode
+    var locHelper = g('inv-loc-mode-helper');
+    if (locHelper) {
+      locHelper.style.display = invMode === 'in' ? 'block' : 'none';
+    }
     g("inv-loc-card").style.display = "block";
     g("inv-detail-card").style.display = "none";
   }
@@ -13748,8 +14026,22 @@ function awdHandleScan(raw) {
     xfrSearchMode = mode;
     g('xfr-mode-code').className = 'ixfr-mode-btn' + (mode === 'code' ? ' ixfr-active' : '');
     g('xfr-mode-name').className = 'ixfr-mode-btn' + (mode === 'name' ? ' ixfr-active' : '');
+    if (g('xfr-mode-loc')) g('xfr-mode-loc').className = 'ixfr-mode-btn' + (mode === 'loc' ? ' ixfr-active' : '');
     var inp = g('xfr-search-inp');
-    if (inp) inp.placeholder = mode === 'name' ? 'Type product name...' : 'Part#, UPC, or barcode\u2026';
+    var searchRow = inp && inp.closest ? inp.closest('.isearch-row') : null;
+    var camBtn = g('xfr-cam-btn');
+    var locWrap = g('xfr-loc-scan-wrap');
+    if (mode === 'loc') {
+      if (searchRow) searchRow.style.display = 'none';
+      if (camBtn) camBtn.style.display = 'none';
+      if (locWrap) locWrap.style.display = 'block';
+      invPopulateAllPrefixDropdowns();
+    } else {
+      if (searchRow) searchRow.style.display = '';
+      if (camBtn) camBtn.style.display = '';
+      if (locWrap) locWrap.style.display = 'none';
+      if (inp) inp.placeholder = mode === 'name' ? 'Type product name…' : 'Part#, UPC, or barcode…';
+    }
     var nr = g('xfr-name-results'); if (nr) nr.style.display = 'none';
   };
 
@@ -13757,7 +14049,103 @@ function awdHandleScan(raw) {
     var val = (g('xfr-search-inp').value || '').trim();
     if (!val) return;
     if (xfrSearchMode === 'name') { xfrNameSearch(val); }
+    else if (xfrSearchMode === 'loc') { xfrLocScanSearch(); }
     else { xfrLookup(val); }
+  };
+
+  // ── Transfer location scan ────────────────────────────────────────────────
+  var _xfrLocScanQr = null, _xfrLocScanCamRunning = false;
+
+  window.xfrLocScanToggleCam = function() {
+    if (_xfrLocScanCamRunning) { xfrLocScanStopCam(); return; }
+    var btn = g('xfr-loc-cam-btn');
+    if (btn) { btn.textContent = '⏳'; btn.disabled = true; }
+    invLoadQR().then(function() {
+      var wrap = g('xfr-loc-scan-reader-wrap');
+      if (wrap) wrap.style.display = 'block';
+      if (_xfrLocScanQr) { try { _xfrLocScanQr.clear(); } catch(e){} _xfrLocScanQr = null; }
+      _xfrLocScanQr = new Html5Qrcode('xfr-loc-scan-qr-reader');
+      _xfrLocScanQr.start(
+        { facingMode: 'environment' },
+        { fps: 10, qrbox: { width: 280, height: 90 } },
+        function(code) {
+          xfrLocScanStopCam();
+          var eqIdx = code.indexOf('=');
+          if (eqIdx > 0) {
+            var pfxEl = g('xfr-loc-scan-prefix'); var shfEl = g('xfr-loc-scan-shelf');
+            if (pfxEl) pfxEl.value = code.slice(0, eqIdx + 1);
+            if (shfEl) shfEl.value = code.slice(eqIdx + 1);
+          } else {
+            var shfEl = g('xfr-loc-scan-shelf'); if (shfEl) shfEl.value = code;
+          }
+          xfrLocScanSearch();
+        },
+        function() {}
+      ).then(function() {
+        _xfrLocScanCamRunning = true;
+        if (btn) { btn.textContent = '⏹ Stop'; btn.className = 'icam-btn scanning'; btn.disabled = false; }
+      }).catch(function() {
+        invFlash('Camera error — check permissions', 'error');
+        if (btn) { btn.textContent = '?? Scan'; btn.className = 'icam-btn'; btn.disabled = false; }
+        var wrap = g('xfr-loc-scan-reader-wrap'); if (wrap) wrap.style.display = 'none';
+      });
+    }).catch(function() {
+      invFlash('Could not load scanner', 'error');
+      if (btn) { btn.textContent = '?? Scan'; btn.disabled = false; }
+    });
+  };
+
+  function xfrLocScanStopCam() {
+    if (_xfrLocScanQr && _xfrLocScanCamRunning) { _xfrLocScanQr.stop().catch(function(){}); _xfrLocScanQr = null; }
+    _xfrLocScanCamRunning = false;
+    var wrap = g('xfr-loc-scan-reader-wrap'); if (wrap) wrap.style.display = 'none';
+    var btn  = g('xfr-loc-cam-btn');
+    if (btn) { btn.textContent = '?? Scan'; btn.className = 'icam-btn'; btn.disabled = false; }
+  }
+
+  window.xfrLocScanDebounce = function() {
+    clearTimeout(window._xfrLocTimer);
+    window._xfrLocTimer = setTimeout(xfrLocScanSearch, 500);
+  };
+
+  window.xfrLocScanSearch = function() {
+    var pfx   = (g('xfr-loc-scan-prefix') && g('xfr-loc-scan-prefix').value) || '';
+    var shelf = (g('xfr-loc-scan-shelf') && g('xfr-loc-scan-shelf').value || '').trim();
+    var loc   = shelf ? (pfx + shelf).toUpperCase() : '';
+    if (!loc || loc.length < 2) return;
+    var res = g('xfr-loc-scan-results');
+    if (res) res.innerHTML = '<div class="iempty" style="padding:12px;color:var(--text3);font-size:13px">Searching…</div>';
+    wFetch(W + '/inventory/location-search?loc=' + encodeURIComponent(loc))
+      .then(function(r) { return r.json(); })
+      .then(function(data) {
+        if (!data.ok || !data.results || !data.results.length) {
+          if (res) res.innerHTML = '<div class="iempty" style="padding:12px;color:var(--text3);font-size:13px">No items at ' + loc + '</div>';
+          return;
+        }
+        var html = '<div style="font-size:11px;font-weight:700;letter-spacing:.5px;text-transform:uppercase;color:var(--text3);margin-bottom:8px">Items at ' + loc + ' (' + data.results.length + ') — tap to add to transfer</div>';
+        data.results.forEach(function(item) {
+          var adj = item.adjustedCases !== undefined ? item.adjustedCases : item.casesNum || 0;
+          var pending = item.pendingCases || 0;
+          var pendingBadge = pending > 0 ? ' <span style="color:var(--orange);font-size:10px">(' + pending + ' pending)</span>' : '';
+          html += '<div class="iloc-opt xfr-loc-pick" style="cursor:pointer" data-pn="' + item.partNum + '" data-loc="' + item.location + '">'
+            + '<div style="flex:1"><div class="iloc-name" style="font-family:var(--mono)">' + item.partNum + '</div>'
+            + '<div style="font-size:12px;color:var(--text2)">' + (item.name || '') + '</div></div>'
+            + '<span class="iloc-badge">' + adj + ' cases' + pendingBadge + '</span>'
+            + '</div>';
+        });
+        if (res) res.innerHTML = html;
+      })
+      .catch(function() { if (res) res.innerHTML = '<div class="iempty" style="padding:12px;color:var(--red)">Search failed</div>'; });
+  };
+
+  // Tap item from location scan results in transfer — triggers xfrLookup
+  window.xfrLocPickItem = function(el) {
+    var partNum = el.dataset.pn || el.getAttribute('data-pn') || '';
+    if (!partNum) return;
+    var inp = g('xfr-search-inp');
+    if (inp) inp.value = partNum;
+    xfrSetSearchMode('code');
+    xfrLookup(partNum);
   };
 
   window.xfrToggleCam = function() {
@@ -16582,6 +16970,13 @@ window.psCloseBatch = async function() {
   _psToast('Batch closed at ' + psFmtTime(ts));
   // Veeqo sync first — capture all shipped orders before marking batch closed
   if (psToken) await psAutoVeeqoSync();
+  // Reset print log display — it stays open 24/7 so clear it at batch close
+  // The sheet data persists; this just clears the in-memory list so the new
+  // day starts fresh visually. psPlLoadToday() will auto-reload for the new day.
+  psPlScans = [];
+  psPlRenderList();
+  var plBadge = document.getElementById('ps-printlog-badge');
+  if (plBadge) { plBadge.textContent = '0'; plBadge.style.display = 'none'; }
   var carriers = ['UPS','USPS','Unknown'];
   for (var i = 0; i < carriers.length; i++) {
     var carrier = carriers[i];
