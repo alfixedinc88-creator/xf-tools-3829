@@ -1,7 +1,7 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-  <!-- XFITTING-BUILD-V114-FEAT-20260501z18 -->
+  <!-- XFITTING-BUILD-V114-FEAT-20260501z18b -->
 <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate">
 <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&family=IBM+Plex+Sans:wght@300;400;500;600&display=swap" rel="stylesheet">
   <meta http-equiv="Pragma" content="no-cache">
@@ -3512,117 +3512,98 @@ function copyLabel(id, btn) {
 // ═══════════════════════════════════════════════════════
 // OUT OF STOCK
 // ═══════════════════════════════════════════════════════
-var _oosOrderFilter = 'all'; // 'all' | 'ordered' | 'not-ordered'
-
-// ── Log PO Placed ─────────────────────────────────────────────────────────────
-window.poLogSubmit = function() {
-  var sku    = (document.getElementById('po-log-sku').value || '').trim().toUpperCase();
-  var qty    = parseInt(document.getElementById('po-log-qty').value || 0);
-  var vendor = (document.getElementById('po-log-vendor').value || '').trim();
-  if (!sku)   { showToast('Enter a SKU or Part#', 'error'); return; }
-  if (!qty)   { showToast('Enter quantity ordered', 'error'); return; }
-
-  // Format: "M/D/YY order QTY" — matches existing format management uses
-  var now    = new Date();
-  var dateStr = (now.getMonth()+1) + '/' + now.getDate() + '/' + String(now.getFullYear()).slice(-2);
-  var note   = dateStr + ' order ' + qty + (vendor ? ' (' + vendor + ')' : '');
-
-  var btn = document.querySelector('#po-log-form button');
-  if (btn) { btn.disabled = true; btn.textContent = 'Saving…'; }
-
-  wFetch(W + '/inventory/po-log', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ sku: sku, note: note })
-  }).then(function(r) { return r.json(); })
-    .then(function(d) {
-      if (btn) { btn.disabled = false; btn.textContent = '✓ Log PO'; }
-      if (d.ok) {
-        showToast('✓ PO logged: ' + note + ' for ' + sku + ' (' + (d.updated || 0) + ' rows updated)', 'success');
-        document.getElementById('po-log-form').style.display = 'none';
-        document.getElementById('po-log-sku').value  = '';
-        document.getElementById('po-log-qty').value  = '';
-        document.getElementById('po-log-vendor').value = '';
-      } else {
-        showToast('Error: ' + (d.error || 'unknown'), 'error');
-      }
-    })
-    .catch(function(e) {
-      if (btn) { btn.disabled = false; btn.textContent = '✓ Log PO'; }
-      showToast('Failed: ' + e.message, 'error');
-    });
-};
-
-// Also allow pre-filling from stock level table row click
-// Event delegation for .po-sku-cell clicks
-document.addEventListener('click', function(e) {
-  var cell = e.target.closest && e.target.closest('.po-sku-cell');
-  if (cell) { poLogPrefill(cell.getAttribute('data-sku')); }
-});
-
-window.poLogPrefill = function(sku) {
-  document.getElementById('po-log-sku').value = sku;
-  document.getElementById('po-log-form').style.display = 'block';
-  document.getElementById('po-log-qty').focus();
-};
+// Stock level filter: 'all' | 'out' | 'low'
+var _oosStockFilter = 'all';
+// PO filter: 'all' | 'ordered' | 'not-ordered'
+var _oosOrderFilter = 'all';
 
 function renderOOS() {
-  const textFilter = (document.getElementById('inp-oos').value || '').toLowerCase();
+  var textFilter = (document.getElementById('inp-oos').value || '').toLowerCase();
 
-  // Build combined stock level list from Master_List (OOS + low stock)
-  // An item is OOS if casesNum === 0 or null; ordered if isOrdered flag set
-  var allItems = DB.master.filter(function(r) {
-    return r.casesNum === null || r.casesNum === 0 || r.isOrdered;
+  // Use original DB.oos (Out_of_Stock sheet) — has SKU, Name, Cases, Status columns
+  var items = (DB.oos || []).slice();
+
+  // Build PO lookup from DB.master — check if base SKU has any isOrdered row
+  // and grab the most recent date from poNotes (format "M/D/YY order N")
+  var poMap = {};
+  (DB.master || []).forEach(function(r) {
+    if (!r.isOrdered) return;
+    var base = (r.sku || r.partNum || '').split('=')[0].trim().toUpperCase();
+    if (!base) return;
+    if (!poMap[base]) poMap[base] = { ordered: true, latestDate: '' };
+    if (r.poNotes) {
+      var parts = r.poNotes.trim().split(' ');
+      var d = parts[0] || '';
+      // Simple date comparison by string — format M/D/YY keeps sort order within a year
+      if (d && d.indexOf('/') > 0 && (!poMap[base].latestDate || d > poMap[base].latestDate)) {
+        poMap[base].latestDate = d;
+      }
+    }
   });
 
-  // Deduplicate by baseSku — aggregate cases and PO notes
-  var skuMap = {};
-  allItems.forEach(function(r) {
-    var base = r.sku.split('=')[0].trim().toUpperCase() || r.partNum.split('=')[0].trim().toUpperCase();
-    if (!skuMap[base]) skuMap[base] = { sku: base, name: r.name, casesNum: 0, isOrdered: false, poNotes: '' };
-    if (r.casesNum) skuMap[base].casesNum += (r.casesNum || 0);
-    if (r.isOrdered) { skuMap[base].isOrdered = true; skuMap[base].poNotes = r.poNotes; }
+  // Enrich each item with PO info
+  items = items.map(function(r) {
+    var base = r.sku.split('=')[0].trim().toUpperCase();
+    var po   = poMap[base] || null;
+    return { sku: r.sku, name: r.name, cases: r.cases, status: r.status,
+             baseSku: base, isOrdered: !!(po && po.ordered), poDate: (po && po.latestDate) || '' };
   });
-
-  var items = Object.values(skuMap);
 
   // Text filter
   if (textFilter) items = items.filter(function(r) {
     return r.sku.toLowerCase().includes(textFilter) || r.name.toLowerCase().includes(textFilter);
   });
 
-  // Order filter
+  // Stock level filter
+  if (_oosStockFilter === 'out') items = items.filter(function(r) {
+    return parseFloat(r.cases) === 0 || r.cases === '' || r.status === 'Out of Stock';
+  });
+  if (_oosStockFilter === 'low') items = items.filter(function(r) {
+    return parseFloat(r.cases) > 0 && r.status !== 'Out of Stock';
+  });
+
+  // PO filter
   if (_oosOrderFilter === 'ordered')     items = items.filter(function(r){ return r.isOrdered; });
   if (_oosOrderFilter === 'not-ordered') items = items.filter(function(r){ return !r.isOrdered; });
 
   document.getElementById('oos-num').textContent = items.length.toLocaleString();
 
   if (!items.length) {
-    document.getElementById('res-oos').innerHTML = '<div class="placeholder"><span class="placeholder-icon">✅</span><h3>No items found.</h3><p>No stock level items match your filter.</p></div>';
+    document.getElementById('res-oos').innerHTML = '<div class="placeholder"><span class="placeholder-icon">\u2705</span><h3>No items found.</h3><p>No stock level items match your filter.</p></div>';
     return;
   }
 
-  var html = '<div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:10px">'
+  // Two filter rows: Stock Level + PO Status
+  var html = '<div style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:6px;align-items:center">'
+    + '<span style="font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.5px;color:var(--text3)">Stock:</span>'
+    + '<button class="ps-filter-btn' + (_oosStockFilter==='all'?' active':'') + '" onclick="oosSetStockFilter(&quot;all&quot;,this)">All</button>'
+    + '<button class="ps-filter-btn' + (_oosStockFilter==='out'?' active':'') + '" onclick="oosSetStockFilter(&quot;out&quot;,this)">Out of Stock</button>'
+    + '<button class="ps-filter-btn' + (_oosStockFilter==='low'?' active':'') + '" onclick="oosSetStockFilter(&quot;low&quot;,this)">Low Stock</button>'
+    + '</div>'
+    + '<div style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:10px;align-items:center">'
+    + '<span style="font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.5px;color:var(--text3)">PO:</span>'
     + '<button class="ps-filter-btn' + (_oosOrderFilter==='all'?' active':'') + '" onclick="oosSetFilter(&quot;all&quot;,this)">All</button>'
-    + '<button class="ps-filter-btn' + (_oosOrderFilter==='ordered'?' active':'') + '" onclick="oosSetFilter(&quot;ordered&quot;,this)" style="color:var(--green)">✓ PO Placed</button>'
-    + '<button class="ps-filter-btn' + (_oosOrderFilter==='not-ordered'?' active':'') + '" onclick="oosSetFilter(&quot;not-ordered&quot;,this)" style="color:var(--red)">⚠ Not Ordered</button>'
+    + '<button class="ps-filter-btn' + (_oosOrderFilter==='ordered'?' active':'') + '" onclick="oosSetFilter(&quot;ordered&quot;,this)">\u2713 PO Placed</button>'
+    + '<button class="ps-filter-btn' + (_oosOrderFilter==='not-ordered'?' active':'') + '" onclick="oosSetFilter(&quot;not-ordered&quot;,this)">\u26a0 Not Ordered</button>'
     + '</div>';
 
   html += '<div class="table-wrap"><table class="data-table">'
-    + '<thead><tr><th>SKU</th><th>Product Name</th><th>Cases</th><th>PO Status</th></tr></thead><tbody>';
+    + '<thead><tr><th>SKU</th><th>Product Name</th><th>Cases</th><th>Status</th><th>PO</th></tr></thead><tbody>';
 
   items.forEach(function(r) {
-    var orderedNote = r.isOrdered && r.poNotes ? '<div style="font-size:10px;color:var(--text3);margin-top:3px;font-family:var(--mono)">' + String(r.poNotes).slice(0,80) + '</div>' : '';
+    var statusBadge = r.status === 'Out of Stock'
+      ? '<span class="badge badge-red">Out of Stock</span>'
+      : '<span class="badge badge-orange">' + r.status + '</span>';
+
     var poCell = r.isOrdered
-      ? '<span style="background:var(--green-bg);color:var(--green);font-size:11px;font-weight:700;padding:2px 8px;border-radius:4px;border:1px solid var(--green);display:inline-block">✓ Ordered</span>' + orderedNote
-      : '<span style="background:var(--red-bg);color:var(--red);font-size:11px;font-weight:700;padding:2px 8px;border-radius:4px;border:1px solid var(--red);display:inline-block">⚠ Not Ordered</span>';
-    var casesDisplay = r.casesNum > 0
-      ? '<span style="color:var(--orange);font-family:var(--mono);font-size:12px">' + r.casesNum + ' (low)</span>'
-      : '<span style="color:var(--red);font-family:var(--mono);font-size:12px">0</span>';
+      ? '<span style="background:var(--green-bg);color:var(--green);font-size:11px;font-weight:700;padding:2px 7px;border-radius:4px;border:1px solid var(--green);white-space:nowrap">\u2713 ' + (r.poDate || 'Placed') + '</span>'
+      : '<span style="color:var(--text3);font-size:12px">\u2014</span>';
+
     html += '<tr>'
-      + '<td class="sku-col po-sku-cell" data-sku="' + r.sku + '" title="Click to log a PO">' + r.sku + ' <span style="font-size:10px;color:var(--accent)">+PO</span></td>'
+      + '<td class="sku-col">' + r.sku + '</td>'
       + '<td>' + r.name + '</td>'
-      + '<td>' + casesDisplay + '</td>'
+      + '<td style="font-family:var(--mono);font-size:12px;color:var(--text2)">' + r.cases + '</td>'
+      + '<td>' + statusBadge + '</td>'
       + '<td>' + poCell + '</td>'
       + '</tr>';
   });
@@ -3630,9 +3611,13 @@ function renderOOS() {
   document.getElementById('res-oos').innerHTML = html;
 }
 
+window.oosSetStockFilter = function(f, btn) {
+  _oosStockFilter = f;
+  renderOOS();
+};
+
 window.oosSetFilter = function(f, btn) {
   _oosOrderFilter = f;
-  document.querySelectorAll('#res-oos').forEach(function(){ });
   renderOOS();
 };
 
