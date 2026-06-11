@@ -1,7 +1,7 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-  <!-- XFITTING-BUILD-V114-FEAT-20260501z19 -->
+  <!-- XFITTING-BUILD-V114-FEAT-20260501z19b -->
 <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate">
 <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&family=IBM+Plex+Sans:wght@300;400;500;600&display=swap" rel="stylesheet">
   <meta http-equiv="Pragma" content="no-cache">
@@ -13566,7 +13566,7 @@ function awdHandleScan(raw) {
       }
       promise.catch(function(){ return false; }).then(function(ok) {
         done++; if (!ok) errors++;
-        setTimeout(function() { processNext(idx + 1); }, 300);
+        setTimeout(function() { processNext(idx + 1); }, 100);
       });
     }
     processNext(0);
@@ -15437,7 +15437,7 @@ function awdHandleScan(raw) {
       var inp   = document.getElementById('audloc-count-' + item.rowIndex);
       var rowEl = document.getElementById('audloc-' + item.rowIndex);
       invAuditSubmitLocRow(item, inp, rowEl);
-      setTimeout(function() { submitNext(idx + 1); }, 250);
+      setTimeout(function() { submitNext(idx + 1); }, 100);
     }
     submitNext(0);
   };
