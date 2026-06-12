@@ -3035,19 +3035,20 @@ function parseMasterListRows(rows) {
     if (SKIP.has(partNum.toLowerCase())) continue;
     var casesRaw = r[8];
     var casesNum = (casesRaw !== '' && casesRaw !== null && casesRaw !== undefined) ? parseFloat(casesRaw) : null;
-    // Col H = location when cases present, OR PO notes when cases blank
-    // PO notes look like "1/13/26 order 200" — we flag these as ordered
     var colH    = String(r[7]  || '').trim();
-    var colI    = String(r[8]  || '').trim();
     var colJ    = String(r[9]  || '').trim();
-    // Ordered = cases blank AND col H contains order-like text (date + "order")
-    var isOrdered = !colI && /order/i.test(colH);
+    // PO detection: col H contains order note when cases are blank
+    // e.g. "1/13/26 order 200" — must have blank cases AND "order" keyword
+    var isOrdered = (casesNum === null || casesNum === 0) && /order/i.test(colH);
     var poNotes   = isOrdered ? colH : '';
+    // Location: col H is always the location field — PO notes only appear
+    // on rows where cases are truly blank (casesNum === null)
+    // Keep location for all rows so UPC/label lookups work correctly
     out.push({
       sku:      String(r[3]  || '').trim(),
       name:     name,
       partNum:  partNum,
-      location: colI ? colH : '',  // location only valid when cases present
+      location: colH,  // always use col H as location — same as original behaviour
       cases:    casesNum !== null ? String(casesRaw) : '',
       casesNum: casesNum,
       eachQty:  colJ,
