@@ -1,7 +1,7 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-  <!-- XFITTING-BUILD-V114-FEAT-20260501z20 -->
+  <!-- XFITTING-BUILD-V114-FEAT-20260501z20b -->
 <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate">
 <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&family=IBM+Plex+Sans:wght@300;400;500;600&display=swap" rel="stylesheet">
   <meta http-equiv="Pragma" content="no-cache">
@@ -3035,20 +3035,19 @@ function parseMasterListRows(rows) {
     if (SKIP.has(partNum.toLowerCase())) continue;
     var casesRaw = r[8];
     var casesNum = (casesRaw !== '' && casesRaw !== null && casesRaw !== undefined) ? parseFloat(casesRaw) : null;
+    // Col H = location when cases present, OR PO notes when cases blank
+    // PO notes look like "1/13/26 order 200" — we flag these as ordered
     var colH    = String(r[7]  || '').trim();
+    var colI    = String(r[8]  || '').trim();
     var colJ    = String(r[9]  || '').trim();
-    // PO detection: col H contains order note when cases are blank
-    // e.g. "1/13/26 order 200" — must have blank cases AND "order" keyword
-    var isOrdered = (casesNum === null || casesNum === 0) && /order/i.test(colH);
+    // Ordered = cases blank AND col H contains order-like text (date + "order")
+    var isOrdered = !colI && /order/i.test(colH);
     var poNotes   = isOrdered ? colH : '';
-    // Location: col H is always the location field — PO notes only appear
-    // on rows where cases are truly blank (casesNum === null)
-    // Keep location for all rows so UPC/label lookups work correctly
     out.push({
       sku:      String(r[3]  || '').trim(),
       name:     name,
       partNum:  partNum,
-      location: colH,  // always use col H as location — same as original behaviour
+      location: colI ? colH : '',  // location only valid when cases present
       cases:    casesNum !== null ? String(casesRaw) : '',
       casesNum: casesNum,
       eachQty:  colJ,
@@ -5783,6 +5782,56 @@ function upcPrintFromBtn(btn) {
 // Print single label — same approach as BARCODE.html:
 // Render barcode into a fixed print container on the SAME page,
 // then call window.print(). CSS @media print hides everything else.
+window.upcShowDNS = function() {
+  var modal = document.getElementById('upc-dns-modal');
+  if (modal) { modal.style.display = 'flex'; }
+  setTimeout(function() {
+    var inp = document.getElementById('upc-dns-qty');
+    if (inp) { inp.select(); }
+  }, 50);
+};
+
+window.upcPrintDNS = function() {
+  var qty = parseInt((document.getElementById('upc-dns-qty') || {value:'1'}).value) || 1;
+  qty = Math.min(Math.max(qty, 1), 50);
+  document.getElementById('upc-dns-modal').style.display = 'none';
+
+  // Remove any existing print container
+  var existing = document.getElementById('upc-print-container');
+  if (existing) existing.parentNode.removeChild(existing);
+
+  // Build print container with qty labels stacked
+  var container = document.createElement('div');
+  container.id  = 'upc-print-container';
+  container.style.cssText = 'display:none;position:fixed;top:0;left:0;width:100%;height:100%;background:#fff;z-index:99999;';
+
+  // Each label is a 2x1 inch SVG (at 96dpi: 192x96px)
+  var labelsHtml = '';
+  for (var i = 0; i < qty; i++) {
+    labelsHtml += '<svg xmlns="http://www.w3.org/2000/svg" width="192" height="96" viewBox="0 0 192 96" '
+      + 'style="display:block;page-break-after:always">'
+      + '<rect width="192" height="96" fill="white" stroke="#000" stroke-width="1"/>'
+      + '<text x="96" y="34" font-size="13" font-weight="900" font-family="Arial,sans-serif" '
+      + 'text-anchor="middle" fill="#000" letter-spacing="1">DO NOT</text>'
+      + '<text x="96" y="56" font-size="13" font-weight="900" font-family="Arial,sans-serif" '
+      + 'text-anchor="middle" fill="#000" letter-spacing="1">SEPARATE</text>'
+      + '<line x1="16" y1="66" x2="176" y2="66" stroke="#000" stroke-width="1.5"/>'
+      + '<text x="96" y="82" font-size="9" font-family="Arial,sans-serif" '
+      + 'text-anchor="middle" fill="#555">Keep all items together</text>'
+      + '</svg>';
+  }
+  container.innerHTML = labelsHtml;
+  document.body.appendChild(container);
+
+  setTimeout(function() {
+    window.print();
+    setTimeout(function() {
+      var c = document.getElementById('upc-print-container');
+      if (c) c.parentNode.removeChild(c);
+    }, 1000);
+  }, 100);
+};
+
 function upcPrint(bcId, partNum, upc) {
   // Remove any existing print container
   var existing = document.getElementById('upc-print-container');
@@ -7895,8 +7944,26 @@ function salesToast(msg, type) {
       <div class="tb-name">UPC Barcodes</div>
       <div style="font-size:10px;background:var(--accent);color:#fff;padding:2px 7px;border-radius:20px;font-weight:600;opacity:.85">v1.0.8</div>
     </div>
-    <div class="topbar-right">
+    <div class="topbar-right" style="display:flex;gap:8px;align-items:center">
+      <button onclick="upcShowDNS()" style="padding:6px 14px;font-size:12px;font-weight:700;border:1.5px solid var(--border);border-radius:8px;background:var(--bg2);color:var(--text);cursor:pointer;font-family:var(--sans)">&#x1F6AB; Do Not Separate</button>
       <button class="btn btn-secondary" onclick="backToLauncher()" style="font-size:12px;padding:6px 14px">← Apps</button>
+    </div>
+  </div>
+
+  <!-- Do Not Separate modal -->
+  <div id="upc-dns-modal" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,.45);z-index:9999;align-items:center;justify-content:center">
+    <div style="background:var(--bg);border-radius:14px;padding:28px 28px 24px;max-width:320px;width:90%;box-shadow:0 8px 40px rgba(0,0,0,.18)">
+      <div style="font-size:16px;font-weight:800;color:var(--text);margin-bottom:6px">&#x1F6AB; Do Not Separate</div>
+      <div style="font-size:12px;color:var(--text3);margin-bottom:20px">Prints on 2×1 label stock. Set paper size to 2×1 in print dialog.</div>
+      <div style="margin-bottom:16px">
+        <label style="font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.5px;color:var(--text3);display:block;margin-bottom:6px">Quantity</label>
+        <input id="upc-dns-qty" type="number" min="1" max="50" value="1"
+          style="width:100%;padding:10px 12px;border:1.5px solid var(--border);border-radius:8px;font-size:18px;font-weight:700;font-family:var(--mono);box-sizing:border-box;text-align:center">
+      </div>
+      <div style="display:flex;gap:8px">
+        <button onclick="upcPrintDNS()" style="flex:1;padding:11px;background:var(--red);color:#fff;border:none;border-radius:8px;font-size:14px;font-weight:700;cursor:pointer;font-family:var(--sans)">&#x1F5A8; Print</button>
+        <button onclick="document.getElementById('upc-dns-modal').style.display='none'" style="padding:11px 16px;background:var(--bg3);color:var(--text3);border:1.5px solid var(--border);border-radius:8px;font-size:13px;cursor:pointer;font-family:var(--sans)">Cancel</button>
+      </div>
     </div>
   </div>
 
