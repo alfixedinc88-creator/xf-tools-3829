@@ -1,7 +1,7 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-  <!-- XFITTING-BUILD-V114-FEAT-20260501z19b -->
+  <!-- XFITTING-BUILD-V114-FEAT-20260501z20 -->
 <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate">
 <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&family=IBM+Plex+Sans:wght@300;400;500;600&display=swap" rel="stylesheet">
   <meta http-equiv="Pragma" content="no-cache">
@@ -4599,6 +4599,9 @@ function launchApp(which) {
     console.log('[INV] invToggleCam defined:', typeof window.invToggleCam);
     console.log('[INV] invLookup defined:', typeof window.invLookup);
     invFetchPendingCount();
+    // Poll every 30s — badge stays current during heavy stock out activity
+    clearInterval(window._invPendingPoll);
+    window._invPendingPoll = setInterval(invFetchPendingCount, 30000);
     // Init pull list on launch (renders persisted list if in out mode)
     if (typeof invRenderPullList === 'function') invRenderPullList();
     // Wire location suggestion to new-location shelf input
@@ -13444,15 +13447,14 @@ function awdHandleScan(raw) {
   }
 
   window.invFetchPendingCount = function() {
-    wFetch(W + "/inventory/pending")
+    // Uses dedicated /inventory/pending-count — works for any session (OPS or MGMT)
+    // D1-backed so instant — called frequently to keep badge accurate
+    wFetch(W + "/inventory/pending-count")
       .then(function(r) { return r.json(); })
       .then(function(d) {
-        // Count TRANSFER_OUT as one item — don't double-count the paired TRANSFER_IN
-        var n = (d.items || []).filter(function(x) {
-          return x.status === "Pending" && x.type !== "TRANSFER_IN";
-        }).length;
+        var n = d.count || 0;
         var b = g("inv-pending-badge");
-        b.textContent = n; b.style.display = n > 0 ? "inline-flex" : "none";
+        if (b) { b.textContent = n; b.style.display = n > 0 ? "inline-flex" : "none"; }
       }).catch(function() {});
   };
 
@@ -13566,7 +13568,7 @@ function awdHandleScan(raw) {
       }
       promise.catch(function(){ return false; }).then(function(ok) {
         done++; if (!ok) errors++;
-        setTimeout(function() { processNext(idx + 1); }, 100);
+        setTimeout(function() { processNext(idx + 1); }, 300);
       });
     }
     processNext(0);
@@ -15437,7 +15439,7 @@ function awdHandleScan(raw) {
       var inp   = document.getElementById('audloc-count-' + item.rowIndex);
       var rowEl = document.getElementById('audloc-' + item.rowIndex);
       invAuditSubmitLocRow(item, inp, rowEl);
-      setTimeout(function() { submitNext(idx + 1); }, 100);
+      setTimeout(function() { submitNext(idx + 1); }, 250);
     }
     submitNext(0);
   };
