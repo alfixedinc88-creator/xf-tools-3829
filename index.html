@@ -5808,16 +5808,21 @@ window.upcPrintDNS = function() {
   // Each label is a 2x1 inch SVG (at 96dpi: 192x96px)
   var labelsHtml = '';
   for (var i = 0; i < qty; i++) {
-    labelsHtml += '<svg xmlns="http://www.w3.org/2000/svg" width="192" height="96" viewBox="0 0 192 96" '
-      + 'style="display:block;page-break-after:always">'
-      + '<rect width="192" height="96" fill="white" stroke="#000" stroke-width="1"/>'
-      + '<text x="96" y="34" font-size="13" font-weight="900" font-family="Arial,sans-serif" '
-      + 'text-anchor="middle" fill="#000" letter-spacing="1">DO NOT</text>'
-      + '<text x="96" y="56" font-size="13" font-weight="900" font-family="Arial,sans-serif" '
-      + 'text-anchor="middle" fill="#000" letter-spacing="1">SEPARATE</text>'
-      + '<line x1="16" y1="66" x2="176" y2="66" stroke="#000" stroke-width="1.5"/>'
-      + '<text x="96" y="82" font-size="9" font-family="Arial,sans-serif" '
-      + 'text-anchor="middle" fill="#555">Keep all items together</text>'
+    // viewBox matches 2x1 label at 203dpi (406x203 dots)
+    // Triple-render text offset by 1px for bold effect at low DPI
+    // Arial Black forces heaviest available font
+    labelsHtml += '<svg xmlns="http://www.w3.org/2000/svg" width="406" height="203" viewBox="0 0 406 203" '
+      + 'style="display:block;page-break-after:always;width:2in;height:1in">'
+      + '<rect width="406" height="203" fill="white"/>'
+      + '<rect x="4" y="4" width="398" height="195" fill="white" stroke="#000" stroke-width="5" rx="4"/>'
+      // Triple-render "DO NOT" for bold effect
+      + '<text x="203" y="88" font-size="68" font-weight="900" font-family="Arial Black,Arial,sans-serif" text-anchor="middle" fill="#000" letter-spacing="3">DO NOT</text>'
+      + '<text x="204" y="89" font-size="68" font-weight="900" font-family="Arial Black,Arial,sans-serif" text-anchor="middle" fill="#000" letter-spacing="3">DO NOT</text>'
+      + '<text x="202" y="87" font-size="68" font-weight="900" font-family="Arial Black,Arial,sans-serif" text-anchor="middle" fill="#000" letter-spacing="3">DO NOT</text>'
+      // Triple-render "SEPARATE"
+      + '<text x="203" y="165" font-size="68" font-weight="900" font-family="Arial Black,Arial,sans-serif" text-anchor="middle" fill="#000" letter-spacing="3">SEPARATE</text>'
+      + '<text x="204" y="166" font-size="68" font-weight="900" font-family="Arial Black,Arial,sans-serif" text-anchor="middle" fill="#000" letter-spacing="3">SEPARATE</text>'
+      + '<text x="202" y="164" font-size="68" font-weight="900" font-family="Arial Black,Arial,sans-serif" text-anchor="middle" fill="#000" letter-spacing="3">SEPARATE</text>'
       + '</svg>';
   }
   container.innerHTML = labelsHtml;
