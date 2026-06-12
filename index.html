@@ -1,7 +1,7 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-  <!-- XFITTING-BUILD-V114-FEAT-20260501z20b -->
+  <!-- XFITTING-BUILD-V114-FEAT-20260501z20c -->
 <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate">
 <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&family=IBM+Plex+Sans:wght@300;400;500;600&display=swap" rel="stylesheet">
   <meta http-equiv="Pragma" content="no-cache">
@@ -14010,6 +14010,12 @@ function awdHandleScan(raw) {
           invFlash(action === "Approved" ? "Approved \u2713" : "Rejected", action === "Approved" ? "success" : "error");
           if (card) card.remove();
           invFetchPendingCount();
+        } else if (d.reload) {
+          // rowIndex=0 — item was loaded before sheet_row was assigned
+          // Reload the review tab to get fresh data
+          invFlash("Refreshing review list\u2026", "info");
+          if (card) { card.style.opacity = "1"; card.style.pointerEvents = "auto"; }
+          setTimeout(invLoadPending, 800);
         } else {
           invFlash("Error: " + (d.error || "unknown"), "error");
           if (card) { card.style.opacity = "1"; card.style.pointerEvents = "auto"; }
