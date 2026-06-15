@@ -1,7 +1,7 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-  <!-- XFITTING-BUILD-V114-FEAT-20260501z20c -->
+  <!-- XFITTING-BUILD-V114-FEAT-20260501z21 -->
 <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate">
 <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&family=IBM+Plex+Sans:wght@300;400;500;600&display=swap" rel="stylesheet">
   <meta http-equiv="Pragma" content="no-cache">
@@ -16841,19 +16841,22 @@ window.psSwitchTab = function(name) {
   document.querySelectorAll('#packship-app .ps-panel').forEach(function(p){ p.classList.remove('active'); });
   document.getElementById('ps-tab-' + name).classList.add('active');
   document.getElementById('ps-panel-' + name).classList.add('active');
-  if (name === 'scan')     { psFocusScan(); psRenderScanList(); }
+  if (name === 'scan')     { psFocusScan(); psRenderScanList(); psLoadScans(); }
   if (name === 'progress') { psLoadScans(); }
   if (name === 'lookup')   { psRenderLog(); }
   if (name === 'gaps')     { psLoadPrintLog().then(function(){ psRenderGaps(); }); }
   if (name === 'vsync')    { psCheckArchiveReminder(); }
   if (name === 'printlog') { psPlLoadToday(); setTimeout(psFocusPrintLog, 100); }
-  if (name === 'scan')     { psLoadScans(); }
-  // Clear any existing refresh interval and start new one for active tab
+  // Clear any existing refresh intervals and start fresh ones for active tab
   if (window._psRefreshInterval)   { clearInterval(window._psRefreshInterval);   window._psRefreshInterval   = null; }
   if (window._psPlRefreshInterval) { clearInterval(window._psPlRefreshInterval); window._psPlRefreshInterval = null; }
-  if (name === 'scan')     { window._psRefreshInterval = setInterval(psLoadScans,     30000); }
-  if (name === 'printlog') { window._psPlRefreshInterval = setInterval(psPlLoadToday, 30000); }
-  if (name === 'printlog') { window._psRefreshInterval = setInterval(psPlLoadToday,   30000); }
+  // Auto-refresh scans every 15s on scan/progress tabs — so other devices' scans appear
+  if (name === 'scan' || name === 'progress') {
+    window._psRefreshInterval = setInterval(psLoadScans, 15000);
+  }
+  if (name === 'printlog') {
+    window._psPlRefreshInterval = setInterval(psPlLoadToday, 30000);
+  }
 };
 
 // ── Focus ─────────────────────────────────────────────
