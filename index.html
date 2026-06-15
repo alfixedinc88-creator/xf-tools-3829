@@ -1,7 +1,7 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-  <!-- XFITTING-BUILD-V114-FEAT-20260501z21 -->
+  <!-- XFITTING-BUILD-V114-FEAT-20260501z21b -->
 <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate">
 <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&family=IBM+Plex+Sans:wght@300;400;500;600&display=swap" rel="stylesheet">
   <meta http-equiv="Pragma" content="no-cache">
@@ -16836,11 +16836,7 @@ window.psGoBack = function() {
 };
 
 // ── Tabs ──────────────────────────────────────────────
-// NOTE: an earlier duplicate window.psSwitchTab definition was removed here.
-// It was always overridden by the later definition (JS allows redefinition),
-// so it never executed — but it carried the auto-refresh interval logic which
-// is why other devices never saw new scans without a manual reload.
-// That logic has been merged into the active definition below.
+// (dead duplicate psSwitchTab removed in z21)
 
 // ── Focus ─────────────────────────────────────────────
 window.psFocusScan = function() {
@@ -16872,7 +16868,9 @@ window.psLoadManifestFromSheet = async function() {
 };
 
 window.psLoadScans = async function() {
-  if (!psToken) return;
+  // Removed "if (!psToken) return" guard — psPlLoadToday (which works
+  // cross-device) has no such guard and uses the same auth pattern.
+  // If psToken is genuinely invalid the fetch will fail and be caught below.
   try {
     var res  = await fetch(PS_WORKER + '/ship/scans?date=' + psTodayKey(), {
       headers: { 'X-Session-Token': psToken }
@@ -17799,9 +17797,6 @@ window.psSwitchTab = function(name) {
   if (name === 'vsync'   && _psUnlockedTabs['vsync'])   { psVeeqoOnUnlock(); }
   if (name === 'valerts' && _psUnlockedTabs['valerts']) { psVaOnUnlock(); }
 
-  // Auto-refresh scans every 20s on scan/progress tabs — so other devices'
-  // scans appear without manual page reload. This was previously defined
-  // in an earlier psSwitchTab that got overridden by this one, so it never ran.
   if (window._psRefreshInterval) { clearInterval(window._psRefreshInterval); window._psRefreshInterval = null; }
   if (window._psPlRefreshInterval) { clearInterval(window._psPlRefreshInterval); window._psPlRefreshInterval = null; }
   if (name === 'scan' || name === 'progress') {
