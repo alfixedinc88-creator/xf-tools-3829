@@ -16836,28 +16836,11 @@ window.psGoBack = function() {
 };
 
 // ── Tabs ──────────────────────────────────────────────
-window.psSwitchTab = function(name) {
-  document.querySelectorAll('#packship-app .ps-tabitem').forEach(function(t){ t.classList.remove('active'); });
-  document.querySelectorAll('#packship-app .ps-panel').forEach(function(p){ p.classList.remove('active'); });
-  document.getElementById('ps-tab-' + name).classList.add('active');
-  document.getElementById('ps-panel-' + name).classList.add('active');
-  if (name === 'scan')     { psFocusScan(); psRenderScanList(); psLoadScans(); }
-  if (name === 'progress') { psLoadScans(); }
-  if (name === 'lookup')   { psRenderLog(); }
-  if (name === 'gaps')     { psLoadPrintLog().then(function(){ psRenderGaps(); }); }
-  if (name === 'vsync')    { psCheckArchiveReminder(); }
-  if (name === 'printlog') { psPlLoadToday(); setTimeout(psFocusPrintLog, 100); }
-  // Clear any existing refresh intervals and start fresh ones for active tab
-  if (window._psRefreshInterval)   { clearInterval(window._psRefreshInterval);   window._psRefreshInterval   = null; }
-  if (window._psPlRefreshInterval) { clearInterval(window._psPlRefreshInterval); window._psPlRefreshInterval = null; }
-  // Auto-refresh scans every 15s on scan/progress tabs — so other devices' scans appear
-  if (name === 'scan' || name === 'progress') {
-    window._psRefreshInterval = setInterval(psLoadScans, 15000);
-  }
-  if (name === 'printlog') {
-    window._psPlRefreshInterval = setInterval(psPlLoadToday, 30000);
-  }
-};
+// NOTE: an earlier duplicate window.psSwitchTab definition was removed here.
+// It was always overridden by the later definition (JS allows redefinition),
+// so it never executed — but it carried the auto-refresh interval logic which
+// is why other devices never saw new scans without a manual reload.
+// That logic has been merged into the active definition below.
 
 // ── Focus ─────────────────────────────────────────────
 window.psFocusScan = function() {
@@ -17808,13 +17791,25 @@ window.psSwitchTab = function(name) {
     var pinEl = document.getElementById('ps-' + name + '-pin');
     if (pinEl) setTimeout(function(){ pinEl.focus(); }, 100);
   }
-  if (name === 'scan')        { psFocusScan(); psRenderScanList(); }
+  if (name === 'scan')        { psFocusScan(); psRenderScanList(); psLoadScans(); }
   if (name === 'progress')    { psLoadScans(); }
   if (name === 'lookup')      { psRenderLog(); }
   if (name === 'orderlookup') { document.getElementById('ps-ol-input').focus(); }
   if (name === 'gaps'    && _psUnlockedTabs['gaps'])    { psRunReconcile(); }
   if (name === 'vsync'   && _psUnlockedTabs['vsync'])   { psVeeqoOnUnlock(); }
   if (name === 'valerts' && _psUnlockedTabs['valerts']) { psVaOnUnlock(); }
+
+  // Auto-refresh scans every 20s on scan/progress tabs — so other devices'
+  // scans appear without manual page reload. This was previously defined
+  // in an earlier psSwitchTab that got overridden by this one, so it never ran.
+  if (window._psRefreshInterval) { clearInterval(window._psRefreshInterval); window._psRefreshInterval = null; }
+  if (window._psPlRefreshInterval) { clearInterval(window._psPlRefreshInterval); window._psPlRefreshInterval = null; }
+  if (name === 'scan' || name === 'progress') {
+    window._psRefreshInterval = setInterval(psLoadScans, 20000);
+  }
+  if (name === 'printlog') {
+    window._psPlRefreshInterval = setInterval(psPlLoadToday, 30000);
+  }
 };
 
 // ── Switch Packer ─────────────────────────────────────────────────────────────
