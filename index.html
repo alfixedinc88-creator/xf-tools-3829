@@ -1,7 +1,7 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-  <!-- XFITTING-BUILD-V114-FEAT-20260501z20b -->
+  <!-- XFITTING-BUILD-V114-FEAT-20260501z20c -->
 <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate">
 <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&family=IBM+Plex+Sans:wght@300;400;500;600&display=swap" rel="stylesheet">
   <meta http-equiv="Pragma" content="no-cache">
@@ -14000,10 +14000,12 @@ function awdHandleScan(raw) {
   window.invVerify = function(rowIndex, action) {
     var card = g("inv-entry-" + rowIndex);
     if (card) { card.style.opacity = "0.5"; card.style.pointerEvents = "none"; }
+    var itemPayload = invItemMap[rowIndex] || invItemMap[String(rowIndex)] || invItemMap[parseInt(rowIndex)] || null;
+    console.log('[invVerify] rowIndex:', rowIndex, 'type:', typeof rowIndex, 'item:', itemPayload ? 'found' : 'NULL', 'action:', action);
     wFetch(W + "/inventory/verify", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ rowIndex: rowIndex, action: action, item: invItemMap[rowIndex] || null })
+      body: JSON.stringify({ rowIndex: rowIndex, action: action, item: itemPayload })
     }).then(function(r) { return r.json(); })
       .then(function(d) {
         if (d.ok) {
