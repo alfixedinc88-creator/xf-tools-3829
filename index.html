@@ -11865,6 +11865,7 @@ function awdHandleScan(raw) {
 #inv-app .ientry-btns{display:flex;gap:8px}
 #inv-app .iapprove{flex:1;padding:12px;border-radius:8px;background:var(--green);color:#fff;font-size:14px;font-weight:700;border:none;cursor:pointer;font-family:'DM Sans',sans-serif;min-height:44px}
 #inv-app .ireject{flex:1;padding:12px;border-radius:8px;background:var(--bg3);border:1.5px solid var(--border);color:var(--text3);font-size:14px;font-weight:700;cursor:pointer;font-family:'DM Sans',sans-serif;min-height:44px}
+#inv-app .iedit{padding:10px 14px;border-radius:8px;background:var(--bg2);border:1.5px solid var(--accent);color:var(--accent);font-size:13px;font-weight:700;cursor:pointer;font-family:'DM Sans',sans-serif;min-height:44px;white-space:nowrap}
 #inv-app .iempty{text-align:center;color:var(--text3);padding:30px 20px;font-size:13px}
 #inv-app .isec-title{font-size:12px;font-weight:700;letter-spacing:.5px;text-transform:uppercase;margin-bottom:10px}
 #inv-app .isec-title.in{color:var(--green)}
@@ -13974,10 +13975,11 @@ function awdHandleScan(raw) {
       + "<div class='ientry-meta'>\ud83d\udccd " + locationDisplay + " &nbsp;|\u00a0 \ud83d\udce6 " + (item.cases || 0) + " cases &nbsp;|\u00a0 \ud83e\uddd1 " + (item.initials || "")
       + (displayNotes ? "<br>\ud83d\udcdd " + displayNotes : "")
       + (item.timestamp ? "<br>\ud83d\udd52 " + new Date(item.timestamp).toLocaleString('en-US',{timeZone:'America/New_York',month:'short',day:'numeric',hour:'numeric',minute:'2-digit',hour12:true}) : "") + "</div>"
-      + "<div class='ientry-btns'><button class='iapprove'>\u2713 Approve</button><button class='ireject'>\u2715 Reject</button></div></div></div>";
+      + "<div class='ientry-btns'><button class='iapprove'>\u2713 Approve</button><button class='ireject'>\u2715 Reject</button><button class='iedit'>\u270F Edit</button></div></div></div>";
     var ri = item.rowIndex;
     el.querySelector(".iapprove").onclick = function() { invVerify(ri, "Approved"); };
     el.querySelector(".ireject").onclick  = function() { invVerify(ri, "Rejected"); };
+    el.querySelector(".iedit").onclick    = function() { invShowEditRow(ri); };
     return el;
   }
 
@@ -14130,7 +14132,7 @@ function awdHandleScan(raw) {
       + " &nbsp;|&nbsp; \ud83e\uddd1 " + (outItem.initials || "")
       + (outItem.notes ? "<br>\ud83d\udcdd " + outItem.notes : "")
       + (outItem.timestamp ? "<br>\ud83d\udd52 " + new Date(outItem.timestamp).toLocaleString('en-US',{timeZone:'America/New_York',month:'short',day:'numeric',hour:'numeric',minute:'2-digit',hour12:true}) : "") + "</div>"
-      + "<div class='ientry-btns'><button class='iapprove'>\u2713 Approve</button><button class='ireject'>\u2715 Reject</button></div></div></div>";
+      + "<div class='ientry-btns'><button class='iapprove'>\u2713 Approve</button><button class='ireject'>\u2715 Reject</button><button class='iedit'>\u270F Edit</button></div></div></div>";
     el.querySelector(".iapprove").onclick = function() { invVerifyTransfer(outItem, inItem, "Approved"); };
     el.querySelector(".ireject").onclick  = function() { invVerifyTransfer(outItem, inItem, "Rejected"); };
     return el;
