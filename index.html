@@ -1,7 +1,7 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-  <!-- XFITTING-BUILD-V114-FEAT-20260501z22b -->
+  <!-- XFITTING-BUILD-V114-FEAT-20260501z22c -->
 <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate">
 <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&family=IBM+Plex+Sans:wght@300;400;500;600&display=swap" rel="stylesheet">
   <meta http-equiv="Pragma" content="no-cache">
@@ -11953,6 +11953,7 @@ function awdHandleScan(raw) {
   <button class="itab" id="inv-tab-transfer" onclick="invSwitchTab('transfer')">Transfer</button>
   <button class="itab" id="inv-tab-audit" onclick="invSwitchTab('audit')">🔍 Audit</button>
   <button class="itab" id="inv-tab-review" onclick="invSwitchTab('review')">Review<span class="ibadge" id="inv-pending-badge" style="display:none">0</span></button>
+  <button class="itab" id="inv-tab-skumgr" onclick="invSwitchTab('skumgr')">&#x1F4CB; SKU Mgr</button>
 </div>
 
 <div class="ipanel iactive" id="inv-panel-scan">
@@ -12324,6 +12325,29 @@ function awdHandleScan(raw) {
 
 </div>
 
+<div class="ipanel" id="inv-panel-skumgr">
+  <div class="icard">
+    <div class="icard-label">SKU Manager</div>
+    <div style="font-size:12px;color:var(--text3);margin-bottom:10px">Search by base SKU to view and edit all variants. Management PIN required.</div>
+
+    <!-- Search bar -->
+    <div style="display:flex;gap:8px;margin-bottom:10px">
+      <input id="skumgr-search-inp" type="text" placeholder="Base SKU (e.g. 27-3-1)" autocomplete="off"
+        style="flex:1;padding:10px 12px;border:1.5px solid var(--border);border-radius:8px;font-size:14px;font-family:var(--mono);background:var(--bg);color:var(--text)"
+        onkeydown="if(event.key==='Enter')skumgrSearch()">
+      <button onclick="skumgrSearch()"
+        style="padding:10px 18px;background:var(--accent);color:#fff;border:none;border-radius:8px;font-size:13px;font-weight:700;cursor:pointer;font-family:var(--sans)">Search</button>
+    </div>
+
+    <!-- Add new row button -->
+    <button onclick="skumgrShowAddRow()"
+      style="width:100%;padding:9px;background:var(--bg2);border:1.5px dashed var(--border);border-radius:8px;font-size:13px;font-weight:700;color:var(--accent);cursor:pointer;font-family:var(--sans);margin-bottom:12px">+ Add New Row</button>
+
+    <!-- Results -->
+    <div id="skumgr-results"></div>
+  </div>
+</div>
+
 </div>
 
 <script>
@@ -12420,12 +12444,15 @@ function awdHandleScan(raw) {
     g("inv-panel-transfer").className  = "ipanel" + (tab === "transfer" ? " iactive" : "");
     g("inv-panel-review").className    = "ipanel" + (tab === "review"   ? " iactive" : "");
     g("inv-panel-audit").className     = "ipanel" + (tab === "audit"    ? " iactive" : "");
+    g("inv-panel-skumgr").className    = "ipanel" + (tab === "skumgr"   ? " iactive" : "");
     g("inv-tab-scan").className        = "itab"   + (tab === "scan"     ? " iactive" : "");
     g("inv-tab-transfer").className    = "itab"   + (tab === "transfer" ? " iactive" : "");
     g("inv-tab-review").className      = "itab"   + (tab === "review"   ? " iactive" : "");
     g("inv-tab-audit").className       = "itab"   + (tab === "audit"    ? " iactive" : "");
+    g("inv-tab-skumgr").className      = "itab"   + (tab === "skumgr"   ? " iactive" : "");
     if (tab === "review" && invUnlocked) invLoadPending();
     if (tab === "audit") { invAuditLoadMode(); invPopulateAllPrefixDropdowns(); if(typeof invLoadPrefixEditor==='function') invLoadPrefixEditor(); }
+    if (tab === "skumgr" && !invUnlocked) { invSwitchTab('scan'); invFlash('Management PIN required', 'error'); return; }
   };
 
   // ── LOCATION PREFIXES ────────────────────────────────────────────────────
@@ -14000,6 +14027,209 @@ function awdHandleScan(raw) {
         else { invFlash('Error on OUT: '+(d2.error||'unknown'),'error'); if(card){card.style.opacity='1';card.style.pointerEvents='auto';} }
       });
     }).catch(function(){ invFlash('Verify failed','error'); if(card){card.style.opacity='1';card.style.pointerEvents='auto';} });
+  };
+
+
+  // ══════════════════════════════════════════════════════════════════════════
+  // SKU MANAGER (Phase 3b)
+  // Search base SKU → see all rows → edit any field → save to D1 + Sheets
+  // Add new rows directly from the app
+  // MGMT PIN required (gated in invSwitchTab)
+  // ══════════════════════════════════════════════════════════════════════════
+
+  var _skumgrRows = []; // current search results
+
+  window.skumgrSearch = function() {
+    var q = ((g('skumgr-search-inp') && g('skumgr-search-inp').value) || '').trim().toUpperCase();
+    if (!q) { invFlash('Enter a base SKU to search', 'error'); return; }
+    var res = g('skumgr-results');
+    if (res) res.innerHTML = '<div class="iempty" style="padding:16px;color:var(--text3)">Searching…</div>';
+    wFetch(W + '/inventory/sku-search?q=' + encodeURIComponent(q))
+      .then(function(r) { return r.json(); })
+      .then(function(d) {
+        if (!d.ok) { invFlash(d.error || 'Search failed', 'error'); return; }
+        _skumgrRows = d.results || [];
+        skumgrRenderResults();
+      })
+      .catch(function() { invFlash('Search failed', 'error'); });
+  };
+
+  function skumgrRenderResults() {
+    var res = g('skumgr-results');
+    if (!res) return;
+    if (!_skumgrRows.length) {
+      res.innerHTML = '<div class="iempty" style="padding:16px;color:var(--text3)">No rows found for that SKU.</div>';
+      return;
+    }
+    var html = '<div style="font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.5px;color:var(--text3);margin-bottom:8px">'
+      + _skumgrRows.length + ' row' + (_skumgrRows.length !== 1 ? 's' : '') + ' found</div>';
+    _skumgrRows.forEach(function(row, idx) {
+      html += '<div id="skumgr-row-' + idx + '" style="border:1.5px solid var(--border);border-radius:10px;padding:14px;margin-bottom:10px;background:var(--bg)">';
+      // View mode
+      html += '<div id="skumgr-view-' + idx + '">';
+      html += '<div style="display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:8px">';
+      html += '<div><div style="font-size:14px;font-weight:700;font-family:var(--mono);color:var(--text)">' + (row.part_num||'') + '</div>';
+      html += '<div style="font-size:11px;color:var(--text3);margin-top:2px">' + (row.name||'<em>no name</em>') + '</div></div>';
+      html += '<button onclick="skumgrStartEdit(' + idx + ')" style="padding:6px 14px;background:var(--bg2);border:1.5px solid var(--accent);color:var(--accent);border-radius:7px;font-size:12px;font-weight:700;cursor:pointer;font-family:var(--sans)">✏ Edit</button></div>';
+      html += '<div style="display:grid;grid-template-columns:1fr 1fr;gap:6px;font-size:12px">';
+      html += skumgrInfoCell('?? Location', row.location||'—');
+      html += skumgrInfoCell('?? Cases', row.cases !== undefined ? String(row.cases) : '—');
+      html += skumgrInfoCell('Price', row.price ? '$' + parseFloat(row.price).toFixed(2) : '—');
+      html += skumgrInfoCell('Units/Case', row.units_per_case || '—');
+      html += skumgrInfoCell('Vendor', row.vendor||'—');
+      html += skumgrInfoCell('Notes', row.prev_notes||'—');
+      html += '</div></div>';
+      // Edit mode (hidden)
+      html += '<div id="skumgr-edit-' + idx + '" style="display:none">';
+      html += skumgrEditField('Part #', 'skumgr-f-partnum-' + idx, row.part_num||'', 'text', 'var(--mono)');
+      html += skumgrEditField('Name', 'skumgr-f-name-' + idx, row.name||'', 'text');
+      html += skumgrEditField('Location', 'skumgr-f-location-' + idx, row.location||'', 'text', 'var(--mono)');
+      html += skumgrEditField('Cases', 'skumgr-f-cases-' + idx, row.cases !== undefined ? row.cases : '', 'number');
+      html += skumgrEditField('Units/Case', 'skumgr-f-upc-' + idx, row.units_per_case||'', 'number');
+      html += skumgrEditField('Price', 'skumgr-f-price-' + idx, row.price||'', 'number');
+      html += skumgrEditField('Vendor', 'skumgr-f-vendor-' + idx, row.vendor||'', 'text');
+      html += skumgrEditField('Notes (col K)', 'skumgr-f-notes-' + idx, row.prev_notes||'', 'text');
+      html += '<div style="display:flex;gap:8px;margin-top:12px">';
+      html += '<button onclick="skumgrSaveEdit(' + idx + ')" style="flex:1;padding:10px;background:var(--accent);color:#fff;border:none;border-radius:8px;font-size:13px;font-weight:700;cursor:pointer;font-family:var(--sans)">Save</button>';
+      html += '<button onclick="skumgrCancelEdit(' + idx + ')" style="padding:10px 16px;background:var(--bg3);color:var(--text3);border:1.5px solid var(--border);border-radius:8px;font-size:13px;cursor:pointer;font-family:var(--sans)">Cancel</button>';
+      html += '</div></div>';
+      html += '</div>';
+    });
+    res.innerHTML = html;
+  }
+
+  function skumgrInfoCell(label, val) {
+    return '<div style="background:var(--bg2);border-radius:6px;padding:6px 8px">'
+      + '<div style="font-size:10px;font-weight:700;color:var(--text3);text-transform:uppercase;letter-spacing:.4px">' + label + '</div>'
+      + '<div style="font-size:12px;color:var(--text);margin-top:2px;font-family:var(--mono)">' + val + '</div></div>';
+  }
+
+  function skumgrEditField(label, id, val, type, fontFamily) {
+    var ff = fontFamily ? 'font-family:' + fontFamily + ';' : '';
+    return '<div style="margin-bottom:8px">'
+      + '<label style="font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.4px;color:var(--text3);display:block;margin-bottom:3px">' + label + '</label>'
+      + '<input id="' + id + '" type="' + type + '" value="' + String(val).replace(/"/g,'&quot;') + '"'
+      + ' style="width:100%;padding:8px 10px;border:1.5px solid var(--border);border-radius:7px;font-size:13px;' + ff + 'box-sizing:border-box;background:var(--bg);color:var(--text)">'
+      + '</div>';
+  }
+
+  window.skumgrStartEdit = function(idx) {
+    var viewEl = g('skumgr-view-' + idx);
+    var editEl = g('skumgr-edit-' + idx);
+    if (viewEl) viewEl.style.display = 'none';
+    if (editEl) editEl.style.display = 'block';
+    var inp = g('skumgr-f-cases-' + idx);
+    if (inp) { inp.focus(); inp.select(); }
+  };
+
+  window.skumgrCancelEdit = function(idx) {
+    var viewEl = g('skumgr-view-' + idx);
+    var editEl = g('skumgr-edit-' + idx);
+    if (viewEl) viewEl.style.display = 'block';
+    if (editEl) editEl.style.display = 'none';
+  };
+
+  window.skumgrSaveEdit = function(idx) {
+    var row = _skumgrRows[idx];
+    if (!row) return;
+    var fld = function(id) { var el = g(id); return el ? el.value.trim() : ''; };
+    var partNum  = fld('skumgr-f-partnum-' + idx) || row.part_num;
+    var name     = fld('skumgr-f-name-' + idx);
+    var location = fld('skumgr-f-location-' + idx);
+    var cases    = fld('skumgr-f-cases-' + idx);
+    var upc      = fld('skumgr-f-upc-' + idx);
+    var price    = fld('skumgr-f-price-' + idx);
+    var vendor   = fld('skumgr-f-vendor-' + idx);
+    var notes    = fld('skumgr-f-notes-' + idx);
+    if (!partNum || !location || cases === '') { invFlash('Part#, Location, and Cases are required', 'error'); return; }
+    var saveBtn = g('skumgr-edit-' + idx) && g('skumgr-edit-' + idx).querySelector('button');
+    wFetch(W + '/inventory/sku-row', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        mode: 'update', sheetRow: row.sheet_row,
+        partNum, name, location,
+        cases: parseFloat(cases)||0,
+        sku: row.sku || partNum.split('=')[0].trim(),
+        unitsPerCase: parseFloat(upc)||0,
+        price: parseFloat(price)||0,
+        vendor, prevNotes: notes
+      })
+    })
+    .then(function(r) { return r.json(); })
+    .then(function(d) {
+      if (d.ok) {
+        // Update local cache so view refreshes correctly
+        _skumgrRows[idx] = Object.assign({}, row, {
+          part_num: partNum, name: name, location: location,
+          cases: parseFloat(cases)||0, units_per_case: parseFloat(upc)||0,
+          price: parseFloat(price)||0, vendor: vendor, prev_notes: notes
+        });
+        skumgrRenderResults();
+        invFlash('Saved ✓', 'success');
+      } else {
+        invFlash('Error: ' + (d.error||'unknown'), 'error');
+      }
+    })
+    .catch(function() { invFlash('Save failed', 'error'); });
+  };
+
+  // ── Add new row ────────────────────────────────────────────────────────────
+  window.skumgrShowAddRow = function() {
+    var modal = g('skumgr-add-modal');
+    if (modal) {
+      // Clear fields
+      ['skumgr-add-partnum','skumgr-add-name','skumgr-add-location',
+       'skumgr-add-cases','skumgr-add-upc','skumgr-add-price',
+       'skumgr-add-vendor','skumgr-add-notes'].forEach(function(id) {
+        var el = g(id); if (el) el.value = '';
+      });
+      modal.style.display = 'flex';
+      setTimeout(function() { var el = g('skumgr-add-partnum'); if (el) el.focus(); }, 50);
+    }
+  };
+
+  window.skumgrSaveNewRow = function() {
+    var fld = function(id) { var el = g(id); return el ? el.value.trim() : ''; };
+    var partNum  = fld('skumgr-add-partnum');
+    var name     = fld('skumgr-add-name');
+    var location = fld('skumgr-add-location');
+    var cases    = fld('skumgr-add-cases');
+    var upc      = fld('skumgr-add-upc');
+    var price    = fld('skumgr-add-price');
+    var vendor   = fld('skumgr-add-vendor');
+    var notes    = fld('skumgr-add-notes');
+    if (!partNum || !location || cases === '') { invFlash('Part#, Location, and Cases are required', 'error'); return; }
+    var btn = g('skumgr-add-save-btn');
+    if (btn) { btn.disabled = true; btn.textContent = 'Saving…'; }
+    wFetch(W + '/inventory/sku-row', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        mode: 'insert', partNum, name, location,
+        sku: partNum.split('=')[0].trim(),
+        cases: parseFloat(cases)||0,
+        unitsPerCase: parseFloat(upc)||0,
+        price: parseFloat(price)||0,
+        vendor, prevNotes: notes
+      })
+    })
+    .then(function(r) { return r.json(); })
+    .then(function(d) {
+      if (btn) { btn.disabled = false; btn.textContent = 'Save'; }
+      if (d.ok) {
+        g('skumgr-add-modal').style.display = 'none';
+        invFlash('Row added to Master_List ✓', 'success');
+        // Re-run search to show new row
+        skumgrSearch();
+      } else {
+        invFlash('Error: ' + (d.error||'unknown'), 'error');
+      }
+    })
+    .catch(function() {
+      if (btn) { btn.disabled = false; btn.textContent = 'Save'; }
+      invFlash('Save failed', 'error');
+    });
   };
 
   // ── Phase 3a: Edit Row ────────────────────────────────────────────────────
@@ -21413,6 +21643,64 @@ window.psVaExport = function() {
   <button onclick="psDupeCancel()" style="padding:12px 32px;border-radius:12px;border:3px solid rgba(255,255,255,.5);background:transparent;color:#fff;font-size:15px;font-weight:700;cursor:pointer;width:100%;max-width:340px">
     ✕ Cancel — put this aside
   </button>
+</div>
+
+<!-- SKU Manager — Add New Row Modal -->
+<div id="skumgr-add-modal" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,.5);z-index:99999;align-items:center;justify-content:center;overflow-y:auto">
+  <div style="background:var(--bg);border-radius:14px;padding:24px;max-width:400px;width:calc(100% - 40px);margin:20px auto;box-shadow:0 8px 40px rgba(0,0,0,.3)">
+    <div style="font-size:15px;font-weight:800;color:var(--text);margin-bottom:4px">+ Add New Row to Master_List</div>
+    <div style="font-size:11px;color:var(--text3);margin-bottom:16px">Part#, Location, and Cases are required.</div>
+    <div style="margin-bottom:10px">
+      <label style="font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.4px;color:var(--text3);display:block;margin-bottom:3px">Part # <span style="color:var(--red)">*</span></label>
+      <input id="skumgr-add-partnum" type="text" placeholder="e.g. 27-3-1=5" autocomplete="off"
+        style="width:100%;padding:9px 11px;border:1.5px solid var(--border);border-radius:8px;font-size:14px;font-family:var(--mono);box-sizing:border-box;background:var(--bg);color:var(--text)">
+    </div>
+    <div style="margin-bottom:10px">
+      <label style="font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.4px;color:var(--text3);display:block;margin-bottom:3px">Product Name</label>
+      <input id="skumgr-add-name" type="text" placeholder="e.g. 1 in Brass Ball Valve"
+        style="width:100%;padding:9px 11px;border:1.5px solid var(--border);border-radius:8px;font-size:13px;box-sizing:border-box;background:var(--bg);color:var(--text)">
+    </div>
+    <div style="margin-bottom:10px">
+      <label style="font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.4px;color:var(--text3);display:block;margin-bottom:3px">Location <span style="color:var(--red)">*</span></label>
+      <input id="skumgr-add-location" type="text" placeholder="e.g. BARN=5-1-3" autocomplete="off"
+        style="width:100%;padding:9px 11px;border:1.5px solid var(--border);border-radius:8px;font-size:14px;font-family:var(--mono);box-sizing:border-box;background:var(--bg);color:var(--text)">
+    </div>
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-bottom:10px">
+      <div>
+        <label style="font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.4px;color:var(--text3);display:block;margin-bottom:3px">Cases <span style="color:var(--red)">*</span></label>
+        <input id="skumgr-add-cases" type="number" min="0" placeholder="0"
+          style="width:100%;padding:9px 11px;border:1.5px solid var(--border);border-radius:8px;font-size:14px;font-family:var(--mono);box-sizing:border-box;background:var(--bg);color:var(--text)">
+      </div>
+      <div>
+        <label style="font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.4px;color:var(--text3);display:block;margin-bottom:3px">Units/Case</label>
+        <input id="skumgr-add-upc" type="number" min="0" placeholder="0"
+          style="width:100%;padding:9px 11px;border:1.5px solid var(--border);border-radius:8px;font-size:14px;font-family:var(--mono);box-sizing:border-box;background:var(--bg);color:var(--text)">
+      </div>
+    </div>
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-bottom:10px">
+      <div>
+        <label style="font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.4px;color:var(--text3);display:block;margin-bottom:3px">Price</label>
+        <input id="skumgr-add-price" type="number" min="0" step="0.01" placeholder="0.00"
+          style="width:100%;padding:9px 11px;border:1.5px solid var(--border);border-radius:8px;font-size:13px;box-sizing:border-box;background:var(--bg);color:var(--text)">
+      </div>
+      <div>
+        <label style="font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.4px;color:var(--text3);display:block;margin-bottom:3px">Vendor</label>
+        <input id="skumgr-add-vendor" type="text" placeholder="Vendor name"
+          style="width:100%;padding:9px 11px;border:1.5px solid var(--border);border-radius:8px;font-size:13px;box-sizing:border-box;background:var(--bg);color:var(--text)">
+      </div>
+    </div>
+    <div style="margin-bottom:16px">
+      <label style="font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.4px;color:var(--text3);display:block;margin-bottom:3px">Notes</label>
+      <input id="skumgr-add-notes" type="text" maxlength="120" placeholder="Optional notes"
+        style="width:100%;padding:9px 11px;border:1.5px solid var(--border);border-radius:8px;font-size:13px;box-sizing:border-box;background:var(--bg);color:var(--text)">
+    </div>
+    <div style="display:flex;gap:8px">
+      <button id="skumgr-add-save-btn" onclick="skumgrSaveNewRow()"
+        style="flex:1;padding:12px;background:var(--accent);color:#fff;border:none;border-radius:8px;font-size:14px;font-weight:700;cursor:pointer;font-family:var(--sans)">Save</button>
+      <button onclick="document.getElementById('skumgr-add-modal').style.display='none'"
+        style="padding:12px 16px;background:var(--bg3);color:var(--text3);border:1.5px solid var(--border);border-radius:8px;font-size:13px;cursor:pointer;font-family:var(--sans)">Cancel</button>
+    </div>
+  </div>
 </div>
 
 <!-- Edit Row Modal — placed at body level so position:fixed works across all apps -->
