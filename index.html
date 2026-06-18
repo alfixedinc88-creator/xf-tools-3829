@@ -1,7 +1,7 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-  <!-- XFITTING-BUILD-V114-FEAT-20260501z22e -->
+  <!-- XFITTING-BUILD-V114-FEAT-20260501z22f -->
 <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate">
 <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&family=IBM+Plex+Sans:wght@300;400;500;600&display=swap" rel="stylesheet">
   <meta http-equiv="Pragma" content="no-cache">
@@ -11954,6 +11954,7 @@ function awdHandleScan(raw) {
   <button class="itab" id="inv-tab-audit" onclick="invSwitchTab('audit')">🔍 Audit</button>
   <button class="itab" id="inv-tab-review" onclick="invSwitchTab('review')">Review<span class="ibadge" id="inv-pending-badge" style="display:none">0</span></button>
   <button class="itab" id="inv-tab-skumgr" onclick="invSwitchTab('skumgr')">&#x1F4CB; SKU Mgr</button>
+  <button class="itab" id="inv-tab-history" onclick="invSwitchTab('history')">&#x1F4DC; History</button>
 </div>
 
 <div class="ipanel iactive" id="inv-panel-scan">
@@ -12348,6 +12349,57 @@ function awdHandleScan(raw) {
   </div>
 </div>
 
+<div class="ipanel" id="inv-panel-history">
+  <div class="icard">
+    <div class="icard-label">Inventory Log History</div>
+
+    <!-- Filters -->
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-bottom:10px">
+      <div>
+        <label style="font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.4px;color:var(--text3);display:block;margin-bottom:3px">Date Range</label>
+        <select id="hist-days" style="width:100%;padding:8px 10px;border:1.5px solid var(--border);border-radius:8px;font-size:13px;background:var(--bg);color:var(--text)">
+          <option value="1">Today</option>
+          <option value="3">Last 3 days</option>
+          <option value="7" selected>Last 7 days</option>
+          <option value="14">Last 14 days</option>
+          <option value="30">Last 30 days</option>
+        </select>
+      </div>
+      <div>
+        <label style="font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.4px;color:var(--text3);display:block;margin-bottom:3px">Type</label>
+        <select id="hist-type" style="width:100%;padding:8px 10px;border:1.5px solid var(--border);border-radius:8px;font-size:13px;background:var(--bg);color:var(--text)">
+          <option value="ALL">All Types</option>
+          <option value="IN">Stock In</option>
+          <option value="OUT">Stock Out</option>
+          <option value="TRANSFER_OUT">Transfer</option>
+          <option value="AUDIT">Audit</option>
+          <option value="EDIT">Edit</option>
+        </select>
+      </div>
+      <div>
+        <label style="font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.4px;color:var(--text3);display:block;margin-bottom:3px">Status</label>
+        <select id="hist-status" style="width:100%;padding:8px 10px;border:1.5px solid var(--border);border-radius:8px;font-size:13px;background:var(--bg);color:var(--text)">
+          <option value="all">All</option>
+          <option value="pending">Pending</option>
+          <option value="verified">Verified</option>
+          <option value="rejected">Rejected</option>
+        </select>
+      </div>
+      <div>
+        <label style="font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.4px;color:var(--text3);display:block;margin-bottom:3px">Part # Filter</label>
+        <input id="hist-part" type="text" placeholder="e.g. 27-3-1" autocomplete="off"
+          style="width:100%;padding:8px 10px;border:1.5px solid var(--border);border-radius:8px;font-size:13px;font-family:var(--mono);box-sizing:border-box;background:var(--bg);color:var(--text)">
+      </div>
+    </div>
+    <button onclick="histLoad()"
+      style="width:100%;padding:10px;background:var(--accent);color:#fff;border:none;border-radius:8px;font-size:13px;font-weight:700;cursor:pointer;font-family:var(--sans);margin-bottom:12px">
+      &#x1F50D; Load History
+    </button>
+
+    <div id="hist-results"></div>
+  </div>
+</div>
+
 </div>
 
 <script>
@@ -12445,19 +12497,21 @@ function awdHandleScan(raw) {
     g("inv-panel-review").className    = "ipanel" + (tab === "review"   ? " iactive" : "");
     g("inv-panel-audit").className     = "ipanel" + (tab === "audit"    ? " iactive" : "");
     g("inv-panel-skumgr").className    = "ipanel" + (tab === "skumgr"   ? " iactive" : "");
+    g("inv-panel-history").className   = "ipanel" + (tab === "history"  ? " iactive" : "");
     g("inv-tab-scan").className        = "itab"   + (tab === "scan"     ? " iactive" : "");
     g("inv-tab-transfer").className    = "itab"   + (tab === "transfer" ? " iactive" : "");
     g("inv-tab-review").className      = "itab"   + (tab === "review"   ? " iactive" : "");
     g("inv-tab-audit").className       = "itab"   + (tab === "audit"    ? " iactive" : "");
     g("inv-tab-skumgr").className      = "itab"   + (tab === "skumgr"   ? " iactive" : "");
+    g("inv-tab-history").className     = "itab"   + (tab === "history"  ? " iactive" : "");
     if (tab === "review" && invUnlocked) invLoadPending();
     if (tab === "audit") { invAuditLoadMode(); invPopulateAllPrefixDropdowns(); if(typeof invLoadPrefixEditor==='function') invLoadPrefixEditor(); }
-    if (tab === "skumgr" && !invUnlocked) {
-      // Show PIN gate modal briefly, then redirect to skumgr after unlock
-      window._skumgrPendingTab = true;
-      invSwitchTab('review'); // this shows the PIN gate
+    if ((tab === "skumgr" || tab === "history") && !invUnlocked) {
+      window._skumgrPendingTab = tab; // remember which tab to open after unlock
+      invSwitchTab('review');
       return;
     }
+    if (tab === "history") { histLoad(); }
   };
 
   // ── LOCATION PREFIXES ────────────────────────────────────────────────────
@@ -13584,9 +13638,10 @@ function awdHandleScan(raw) {
           if (d.token) { XF_SESSION = d.token; sessionStorage.setItem("xf_session", d.token); }
           g("inv-pin-gate").style.display = "none";
           if (window._skumgrPendingTab) {
-            window._skumgrPendingTab = false;
+            var pendingTab = window._skumgrPendingTab;
+            window._skumgrPendingTab = null;
             g("inv-review-content").style.display = "none";
-            invSwitchTab('skumgr');
+            invSwitchTab(pendingTab);
           } else {
             g("inv-review-content").style.display = "block";
             invLoadPending();
@@ -13594,9 +13649,10 @@ function awdHandleScan(raw) {
         }).catch(function(){
           g("inv-pin-gate").style.display = "none";
           if (window._skumgrPendingTab) {
-            window._skumgrPendingTab = false;
+            var pendingTab = window._skumgrPendingTab;
+            window._skumgrPendingTab = null;
             g("inv-review-content").style.display = "none";
-            invSwitchTab('skumgr');
+            invSwitchTab(pendingTab);
           } else {
             g("inv-review-content").style.display = "block";
             invLoadPending();
@@ -14045,6 +14101,86 @@ function awdHandleScan(raw) {
     }).catch(function(){ invFlash('Verify failed','error'); if(card){card.style.opacity='1';card.style.pointerEvents='auto';} });
   };
 
+
+
+  // ══════════════════════════════════════════════════════════════════════════
+  // HISTORY TAB — Inventory Log viewer
+  // Reads from D1 inventory_log with filters — MGMT PIN required
+  // ══════════════════════════════════════════════════════════════════════════
+
+  window.histLoad = function() {
+    var days    = (g('hist-days')   && g('hist-days').value)   || '7';
+    var type    = (g('hist-type')   && g('hist-type').value)   || 'ALL';
+    var status  = (g('hist-status') && g('hist-status').value) || 'all';
+    var part    = (g('hist-part')   && g('hist-part').value.trim()) || '';
+    var res     = g('hist-results');
+    if (res) res.innerHTML = '<div style="padding:16px;color:var(--text3);font-size:13px">Loading…</div>';
+
+    var params = '?days=' + days + '&type=' + encodeURIComponent(type)
+      + '&status=' + status + (part ? '&part=' + encodeURIComponent(part) : '');
+
+    wFetch(W + '/inventory/history' + params)
+      .then(function(r) { return r.json(); })
+      .then(function(d) {
+        if (!d.ok) { if (res) res.innerHTML = '<div style="color:var(--red);padding:12px">' + (d.error||'Load failed') + '</div>'; return; }
+        histRender(d.rows, d.count, d.source);
+      })
+      .catch(function() { if (res) res.innerHTML = '<div style="color:var(--red);padding:12px">Load failed</div>'; });
+  };
+
+  function histRender(rows, count, source) {
+    var res = g('hist-results');
+    if (!res) return;
+    if (!rows || !rows.length) {
+      res.innerHTML = '<div style="padding:16px;color:var(--text3);font-size:13px">No entries found for this filter.</div>';
+      return;
+    }
+
+    var statusColor = { verified: 'var(--green)', rejected: 'var(--red)', pending: 'var(--orange)' };
+    var typeColor   = { IN: 'var(--green)', OUT: 'var(--red)', TRANSFER_OUT: 'var(--purple)',
+                        TRANSFER_IN: 'var(--purple)', AUDIT: 'var(--accent)', EDIT: 'var(--orange)' };
+
+    var thS = 'padding:7px 8px;text-align:left;font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.4px;color:var(--text3);white-space:nowrap;border-bottom:2px solid var(--border);background:var(--bg2)';
+    var html = '<div style="font-size:11px;color:var(--text3);margin-bottom:8px">'
+      + count + ' entries' + (source === 'd1' ? ' (D1)' : ' (Sheets)') + '</div>';
+    html += '<div style="overflow-x:auto;border:1.5px solid var(--border);border-radius:10px">';
+    html += '<table style="width:100%;border-collapse:collapse;font-size:11.5px">';
+    html += '<thead><tr>'
+      + '<th style="' + thS + '">Time</th>'
+      + '<th style="' + thS + '">Type</th>'
+      + '<th style="' + thS + '">Part #</th>'
+      + '<th style="' + thS + '">Location</th>'
+      + '<th style="' + thS + ';text-align:right">Cases</th>'
+      + '<th style="' + thS + '">By</th>'
+      + '<th style="' + thS + '">Status</th>'
+      + '<th style="' + thS + '">Notes</th>'
+      + '</tr></thead><tbody>';
+
+    rows.forEach(function(r, idx) {
+      var td  = 'padding:7px 8px;border-bottom:1px solid var(--border);vertical-align:middle;';
+      var bg  = idx % 2 === 0 ? 'var(--bg)' : 'var(--bg2)';
+      var ts  = r.timestamp ? new Date(r.timestamp).toLocaleString('en-US',{timeZone:'America/New_York',month:'short',day:'numeric',hour:'numeric',minute:'2-digit',hour12:true}) : '';
+      var typ = (r.type||'').toUpperCase();
+      var typLabel = typ === 'TRANSFER_OUT' ? 'TRANSFER' : typ === 'TRANSFER_IN' ? 'XFR IN' : typ;
+      var typCol  = typeColor[typ] || 'var(--text2)';
+      var stCol   = statusColor[(r.status||'').toLowerCase()] || 'var(--text2)';
+      var notes   = (r.notes||'').replace(/\[AUDIT\]\s*/,'').slice(0,60);
+
+      html += '<tr style="background:' + bg + '">'
+        + '<td style="' + td + 'white-space:nowrap;color:var(--text3);font-size:11px">' + ts + '</td>'
+        + '<td style="' + td + 'white-space:nowrap"><span style="font-size:10px;font-weight:700;color:' + typCol + '">' + typLabel + '</span></td>'
+        + '<td style="' + td + 'font-family:var(--mono);font-weight:700;white-space:nowrap">' + (r.part_num||'') + '</td>'
+        + '<td style="' + td + 'font-family:var(--mono);color:var(--text2);white-space:nowrap">' + (r.location||'') + '</td>'
+        + '<td style="' + td + 'text-align:right;font-family:var(--mono);font-weight:700">' + (r.cases||0) + '</td>'
+        + '<td style="' + td + 'font-family:var(--mono);color:var(--text2)">' + (r.initials||'') + '</td>'
+        + '<td style="' + td + 'white-space:nowrap"><span style="font-size:10px;font-weight:700;color:' + stCol + '">' + (r.status||'') + '</span></td>'
+        + '<td style="' + td + 'color:var(--text3);max-width:160px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="' + (r.notes||'') + '">' + notes + '</td>'
+        + '</tr>';
+    });
+
+    html += '</tbody></table></div>';
+    res.innerHTML = html;
+  }
 
   // ══════════════════════════════════════════════════════════════════════════
   // SKU MANAGER (Phase 3b)
