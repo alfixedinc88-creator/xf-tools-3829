@@ -1,7 +1,7 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-  <!-- XFITTING-BUILD-V114-FEAT-20260501z22g -->
+  <!-- XFITTING-BUILD-V114-FEAT-20260501z22h -->
 <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate">
 <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&family=IBM+Plex+Sans:wght@300;400;500;600&display=swap" rel="stylesheet">
   <meta http-equiv="Pragma" content="no-cache">
@@ -15966,7 +15966,7 @@ function awdHandleScan(raw) {
     // Check all inputs have values
     var missing = items.filter(function(item) {
       var inp = document.getElementById('audloc-count-' + item.rowIndex);
-      return !inp || inp.value === '' || inp.disabled;
+      return !inp || inp.value === ''; // disabled is OK — means already submitted
     });
     if (missing.length) { invFlash('Enter counts for all ' + items.length + ' items first', 'error'); return; }
     var btn = document.getElementById('audloc-submit-all-btn');
