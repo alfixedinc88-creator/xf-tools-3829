@@ -1,7 +1,7 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-  <!-- XFITTING-BUILD-V114-FEAT-20260501z22h -->
+  <!-- XFITTING-BUILD-V114-FEAT-20260501z22i -->
 <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate">
 <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&family=IBM+Plex+Sans:wght@300;400;500;600&display=swap" rel="stylesheet">
   <meta http-equiv="Pragma" content="no-cache">
@@ -16059,10 +16059,12 @@ function awdHandleScan(raw) {
       wFetch(W + '/inventory/log', { method: 'POST', body: JSON.stringify(confirmBody) })
         .then(function(r) { return r.json(); })
         .then(function(d) {
-          if (d && d.rowIndex) {
+          // Auto-verify confirmation regardless of rowIndex value
+          var ri = (d && d.rowIndex) ? d.rowIndex : 0;
+          if (ri || ri === 0) {
             wFetch(W + '/inventory/verify', { method: 'POST',
-              body: JSON.stringify({ rowIndex: d.rowIndex, action: 'Approved', verifiedBy: initials,
-                item: Object.assign({}, confirmBody, { notes: confirmNote }) })
+              body: JSON.stringify({ rowIndex: ri, action: 'Approved', verifiedBy: initials,
+                item: Object.assign({}, confirmBody, { rowIndex: ri, notes: confirmNote }) })
             }).catch(function(){});
           }
         }).catch(function(){});
@@ -16081,17 +16083,31 @@ function awdHandleScan(raw) {
       wFetch(W + '/inventory/log', { method: 'POST', body: JSON.stringify(body) })
         .then(function(r) { return r.json(); })
         .then(function(d) {
-          if (!d || !d.rowIndex) { invFlash('Log failed', 'error'); if(inp) inp.disabled=false; return null; }
+          if (!d) { invFlash('Log failed', 'error'); if(inp) inp.disabled=false; return null; }
+          var logRowIndex = d.rowIndex || 0;
+          // Send full item so worker has everything it needs to update Master_List
+          var verifyItem = {
+            type: type, partNum: item.partNum, location: item.location,
+            cases: String(Math.abs(diff)), rowIndex: logRowIndex,
+            sku: item.partNum.split('=')[0].trim(),
+            name: item.name || '', notes: note,
+            isNew: 'FALSE', isPlaceholder: 'FALSE',
+            overwriteLocation: ''
+          };
           return wFetch(W + '/inventory/verify', { method: 'POST',
-            body: JSON.stringify({ rowIndex: d.rowIndex, action: 'Approved', verifiedBy: initials,
-              item: { type: type, partNum: item.partNum, location: item.location,
-                      cases: Math.abs(diff), rowIndex: item.rowIndex, notes: note } })
+            body: JSON.stringify({ rowIndex: logRowIndex, action: 'Approved',
+              verifiedBy: initials, item: verifyItem })
           }).then(function(r) { return r.json(); });
         })
         .then(function(v) {
           if (!v) return;
-          invFlash('Corrected: ' + item.location + ' → ' + actualCases + ' cases', 'success');
-          if (rowEl) { rowEl.style.borderColor = '#0891B2'; rowEl.style.background = '#E0F2FE'; }
+          if (v.ok) {
+            invFlash('Corrected: ' + item.location + ' → ' + actualCases + ' cases ✓', 'success');
+            if (rowEl) { rowEl.style.borderColor = '#0891B2'; rowEl.style.background = '#E0F2FE'; }
+          } else {
+            invFlash('Auto-verify failed: ' + (v.error||'unknown'), 'error');
+            if(inp) inp.disabled=false;
+          }
         }).catch(function(e) { invFlash('Error: ' + e.message, 'error'); if(inp) inp.disabled=false; });
     } else {
       wFetch(W + '/inventory/log', { method: 'POST', body: JSON.stringify(body) })
