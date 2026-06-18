@@ -1,7 +1,7 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-  <!-- XFITTING-BUILD-V114-FEAT-20260501z22d -->
+  <!-- XFITTING-BUILD-V114-FEAT-20260501z22e -->
 <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate">
 <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&family=IBM+Plex+Sans:wght@300;400;500;600&display=swap" rel="stylesheet">
   <meta http-equiv="Pragma" content="no-cache">
@@ -15884,10 +15884,21 @@ function awdHandleScan(raw) {
   }
 
   window.invAuditSubmitLocRow = function(item, inp, rowEl) {
+    // Prevent duplicate submissions
+    if (rowEl && rowEl.dataset.submitted === '1') return;
+    if (rowEl) rowEl.dataset.submitted = '1';
+    var submitBtn = rowEl ? rowEl.querySelector('button[onclick*="Submit"],button[onclick*="submit"]') : null;
+    if (submitBtn) submitBtn.disabled = true;
     var actualCases = parseFloat(inp ? inp.value : '');
     var initials    = ((g('inv-audit-initials') || {value:''}).value || '').trim().toUpperCase();
-    if (isNaN(actualCases) || actualCases < 0) { invFlash('Enter a valid count (0 or more)', 'error'); return; }
-    if (!initials) { invFlash('Enter your initials', 'error'); return; }
+    if (isNaN(actualCases) || actualCases < 0) {
+      if (rowEl) rowEl.dataset.submitted = '0';
+      invFlash('Enter a valid count (0 or more)', 'error'); return;
+    }
+    if (!initials) {
+      if (rowEl) rowEl.dataset.submitted = '0';
+      invFlash('Enter your initials', 'error'); return;
+    }
     var currentCases = item.adjustedCases !== undefined ? item.adjustedCases : (item.casesNum || 0);
     var diff = actualCases - currentCases;
     if (diff === 0) {
