@@ -1,7 +1,7 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-  <!-- XFITTING-BUILD-V114-FEAT-20260501z22f -->
+  <!-- XFITTING-BUILD-V114-FEAT-20260501z22g -->
 <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate">
 <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&family=IBM+Plex+Sans:wght@300;400;500;600&display=swap" rel="stylesheet">
   <meta http-equiv="Pragma" content="no-cache">
@@ -12504,7 +12504,19 @@ function awdHandleScan(raw) {
     g("inv-tab-audit").className       = "itab"   + (tab === "audit"    ? " iactive" : "");
     g("inv-tab-skumgr").className      = "itab"   + (tab === "skumgr"   ? " iactive" : "");
     g("inv-tab-history").className     = "itab"   + (tab === "history"  ? " iactive" : "");
-    if (tab === "review" && invUnlocked) invLoadPending();
+    if (tab === "review") {
+      // Always restore correct visibility when switching to review tab
+      var gate = g("inv-pin-gate");
+      var content = g("inv-review-content");
+      if (invUnlocked) {
+        if (gate) gate.style.display = 'none';
+        if (content) content.style.display = 'block';
+        invLoadPending();
+      } else {
+        if (gate) gate.style.display = 'block';
+        if (content) content.style.display = 'none';
+      }
+    }
     if (tab === "audit") { invAuditLoadMode(); invPopulateAllPrefixDropdowns(); if(typeof invLoadPrefixEditor==='function') invLoadPrefixEditor(); }
     if ((tab === "skumgr" || tab === "history") && !invUnlocked) {
       window._skumgrPendingTab = tab; // remember which tab to open after unlock
@@ -15972,7 +15984,7 @@ function awdHandleScan(raw) {
       var item  = items[idx];
       var inp   = document.getElementById('audloc-count-' + item.rowIndex);
       var rowEl = document.getElementById('audloc-' + item.rowIndex);
-      invAuditSubmitLocRow(item, inp, rowEl);
+      invAuditSubmitLocRow(item, inp, rowEl, true);
       setTimeout(function() { submitNext(idx + 1); }, 250);
     }
     submitNext(0);
@@ -16019,9 +16031,9 @@ function awdHandleScan(raw) {
     }
   }
 
-  window.invAuditSubmitLocRow = function(item, inp, rowEl) {
-    // Prevent duplicate submissions
-    if (rowEl && rowEl.dataset.submitted === '1') return;
+  window.invAuditSubmitLocRow = function(item, inp, rowEl, fromBatch) {
+    // Prevent duplicate UI taps — batch calls pass fromBatch=true to bypass
+    if (!fromBatch && rowEl && rowEl.dataset.submitted === '1') return;
     if (rowEl) rowEl.dataset.submitted = '1';
     var submitBtn = rowEl ? rowEl.querySelector('button[onclick*="Submit"],button[onclick*="submit"]') : null;
     if (submitBtn) submitBtn.disabled = true;
