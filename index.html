@@ -1,7 +1,7 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-  <!-- XFITTING-BUILD-V114-FEAT-20260501z22i -->
+  <!-- XFITTING-BUILD-V114-FEAT-20260501z22j -->
 <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate">
 <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&family=IBM+Plex+Sans:wght@300;400;500;600&display=swap" rel="stylesheet">
   <meta http-equiv="Pragma" content="no-cache">
@@ -12188,12 +12188,21 @@ function awdHandleScan(raw) {
   </div>
   <div id="inv-review-content" style="display:none;padding:16px">
     <!-- Bulk approve toolbar -->
-    <div id="inv-bulk-bar" style="display:none;position:sticky;top:0;z-index:5;background:var(--bg);border-bottom:1.5px solid var(--border);padding:10px 0;margin-bottom:14px;display:flex;gap:8px;align-items:center;flex-wrap:wrap">
-      <button onclick="invBulkSelectAll(true)" style="padding:6px 12px;border-radius:7px;border:1px solid var(--border);background:var(--bg3);color:var(--text);font-size:12px;font-weight:600;cursor:pointer">Select All</button>
-      <button onclick="invBulkSelectAll(false)" style="padding:6px 12px;border-radius:7px;border:1px solid var(--border);background:var(--bg3);color:var(--text);font-size:12px;font-weight:600;cursor:pointer">Select None</button>
-      <span id="inv-bulk-count" style="font-size:12px;color:var(--text3);flex:1"></span>
-      <button id="inv-bulk-approve-btn" onclick="invBulkApprove()" style="padding:8px 16px;border-radius:7px;border:none;background:var(--green);color:#fff;font-size:13px;font-weight:700;cursor:pointer">✓ Approve Selected</button>
-      <button onclick="invBulkReject()" style="padding:8px 16px;border-radius:7px;border:none;background:var(--red);color:#fff;font-size:13px;font-weight:700;cursor:pointer">✕ Reject Selected</button>
+    <div id="inv-bulk-bar" style="display:none;position:sticky;top:0;z-index:5;background:var(--bg);border-bottom:1.5px solid var(--border);padding:10px 0;margin-bottom:14px">
+      <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-bottom:8px">
+        <button onclick="invBulkSelectAll(true)" style="padding:6px 12px;border-radius:7px;border:1px solid var(--border);background:var(--bg3);color:var(--text);font-size:12px;font-weight:600;cursor:pointer">Select All</button>
+        <button onclick="invBulkSelectAll(false)" style="padding:6px 12px;border-radius:7px;border:1px solid var(--border);background:var(--bg3);color:var(--text);font-size:12px;font-weight:600;cursor:pointer">Select None</button>
+        <span id="inv-bulk-count" style="font-size:12px;color:var(--text3);flex:1"></span>
+        <button id="inv-bulk-approve-btn" onclick="invBulkApprove()" style="padding:8px 16px;border-radius:7px;border:none;background:var(--green);color:#fff;font-size:13px;font-weight:700;cursor:pointer">✓ Approve Selected</button>
+        <button onclick="invBulkReject()" style="padding:8px 16px;border-radius:7px;border:none;background:var(--red);color:#fff;font-size:13px;font-weight:700;cursor:pointer">✕ Reject Selected</button>
+      </div>
+      <!-- Case summary bar — shows net case impact of selected items -->
+      <div id="inv-case-summary" style="display:none;background:var(--bg2);border-radius:8px;padding:8px 12px;font-size:12px;display:flex;gap:16px;flex-wrap:wrap;align-items:center">
+        <span style="font-weight:700;color:var(--text3);text-transform:uppercase;letter-spacing:.4px;font-size:10px">Selected Impact:</span>
+        <span id="inv-summary-in" style="color:var(--green);font-weight:700;font-family:var(--mono)"></span>
+        <span id="inv-summary-out" style="color:var(--red);font-weight:700;font-family:var(--mono)"></span>
+        <span id="inv-summary-net" style="font-weight:700;font-family:var(--mono);padding:2px 8px;border-radius:4px"></span>
+      </div>
     </div>
     <div style="margin-bottom:20px"><div class="isec-title in">📦 Pending Stock In</div><div id="inv-pending-in"></div></div>
     <div style="margin-bottom:20px"><div class="isec-title out">📤 Pending Stock Out</div><div id="inv-pending-out"></div></div>
@@ -13684,11 +13693,51 @@ function awdHandleScan(raw) {
   var invBulkFosMap  = {}; // inItem.rowIndex  -> {inItem, outItem} for Found on Shelf pairs
 
   window.invBulkUpdateCount = function() {
-    var chks = document.querySelectorAll('#inv-review-content .inv-bulk-chk:checked');
+    var chks = Array.from(document.querySelectorAll('#inv-review-content .inv-bulk-chk:checked'));
     var cnt  = g('inv-bulk-count');
     if (cnt) cnt.textContent = chks.length + ' selected';
     var btn = g('inv-bulk-approve-btn');
     if (btn) btn.disabled = chks.length === 0;
+
+    // Calculate case impact of selected items
+    var totalIn = 0, totalOut = 0;
+    chks.forEach(function(c) {
+      var ri = c.dataset.ri;
+      var item = null;
+      if (c.classList.contains('inv-bulk-xfr')) {
+        // Transfers — net zero but show movement
+        return;
+      } else if (c.classList.contains('inv-bulk-fos')) {
+        item = invItemMap[ri];
+      } else {
+        item = invItemMap[ri];
+      }
+      if (!item) return;
+      var cases = parseFloat(item.cases) || 0;
+      var type  = (item.type || '').toUpperCase();
+      if (type === 'IN' || type === 'TRANSFER_IN') totalIn  += cases;
+      if (type === 'OUT' || type === 'TRANSFER_OUT') totalOut += cases;
+    });
+
+    var sumEl    = g('inv-case-summary');
+    var inEl     = g('inv-summary-in');
+    var outEl    = g('inv-summary-out');
+    var netEl    = g('inv-summary-net');
+    if (!sumEl) return;
+
+    if (chks.length === 0) {
+      sumEl.style.display = 'none';
+      return;
+    }
+    sumEl.style.display = 'flex';
+    if (inEl)  inEl.textContent  = totalIn  > 0 ? '+' + totalIn  + ' cases IN'  : '';
+    if (outEl) outEl.textContent = totalOut > 0 ? '−' + totalOut + ' cases OUT' : '';
+    var net = totalIn - totalOut;
+    if (netEl) {
+      netEl.textContent = 'Net: ' + (net >= 0 ? '+' : '') + net + ' cases';
+      netEl.style.background = net > 0 ? 'var(--green-bg)' : net < 0 ? 'var(--red-bg)' : 'var(--bg3)';
+      netEl.style.color      = net > 0 ? 'var(--green)'    : net < 0 ? 'var(--red)'    : 'var(--text3)';
+    }
   };
 
   window.invBulkSelectAll = function(val) {
