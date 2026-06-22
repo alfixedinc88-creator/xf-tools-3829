@@ -14602,7 +14602,8 @@ function awdHandleScan(raw) {
 
   window.invVerifyTransfer = function(outItem, inItem, action) {
     var card = g("inv-entry-xfr-" + outItem.rowIndex);
-    if (card) { card.style.opacity = "0.5"; card.style.pointerEvents = "none"; }
+    if (card && card.dataset.verifying === '1') return;
+    if (card) { card.dataset.verifying = '1'; card.style.opacity = "0.5"; card.style.pointerEvents = "none"; }
     wFetch(W + "/inventory/transfer/verify", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
