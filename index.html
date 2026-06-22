@@ -1,7 +1,7 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-  <!-- XFITTING-BUILD-V114-FEAT-20260501z22j -->
+  <!-- XFITTING-BUILD-V114-FEAT-20260501z22k -->
 <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate">
 <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&family=IBM+Plex+Sans:wght@300;400;500;600&display=swap" rel="stylesheet">
   <meta http-equiv="Pragma" content="no-cache">
@@ -12399,7 +12399,24 @@ function awdHandleScan(raw) {
         <input id="hist-part" type="text" placeholder="e.g. 27-3-1" autocomplete="off"
           style="width:100%;padding:8px 10px;border:1.5px solid var(--border);border-radius:8px;font-size:13px;font-family:var(--mono);box-sizing:border-box;background:var(--bg);color:var(--text)">
       </div>
+      <div>
+        <label style="font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.4px;color:var(--text3);display:block;margin-bottom:3px">Location (exact)</label>
+        <input id="hist-loc" type="text" placeholder="e.g. BARN=5-1-3" autocomplete="off"
+          style="width:100%;padding:8px 10px;border:1.5px solid var(--border);border-radius:8px;font-size:13px;font-family:var(--mono);box-sizing:border-box;background:var(--bg);color:var(--text)">
+      </div>
+      <div>
+        <label style="font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.4px;color:var(--text3);display:block;margin-bottom:3px">Initials</label>
+        <input id="hist-init" type="text" placeholder="e.g. DJ" maxlength="4" autocomplete="off"
+          style="width:100%;padding:8px 10px;border:1.5px solid var(--border);border-radius:8px;font-size:13px;font-family:var(--mono);box-sizing:border-box;background:var(--bg);color:var(--text);text-transform:uppercase">
+      </div>
     </div>
+
+    <!-- Total cases counter -->
+    <div id="hist-total-bar" style="display:none;background:var(--bg2);border-radius:8px;padding:8px 12px;margin-bottom:10px;display:flex;align-items:center;gap:10px">
+      <span style="font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.4px;color:var(--text3)">Total Cases in Stock:</span>
+      <span id="hist-total-cases" style="font-size:16px;font-weight:800;font-family:var(--mono);color:var(--accent)"></span>
+    </div>
+
     <button onclick="histLoad()"
       style="width:100%;padding:10px;background:var(--accent);color:#fff;border:none;border-radius:8px;font-size:13px;font-weight:700;cursor:pointer;font-family:var(--sans);margin-bottom:12px">
       &#x1F50D; Load History
@@ -14174,16 +14191,27 @@ function awdHandleScan(raw) {
     var type    = (g('hist-type')   && g('hist-type').value)   || 'ALL';
     var status  = (g('hist-status') && g('hist-status').value) || 'all';
     var part    = (g('hist-part')   && g('hist-part').value.trim()) || '';
+    var loc     = (g('hist-loc')    && g('hist-loc').value.trim().toUpperCase()) || '';
+    var init    = (g('hist-init')   && g('hist-init').value.trim().toUpperCase()) || '';
     var res     = g('hist-results');
     if (res) res.innerHTML = '<div style="padding:16px;color:var(--text3);font-size:13px">Loading…</div>';
 
-    var params = '?days=' + days + '&type=' + encodeURIComponent(type)
-      + '&status=' + status + (part ? '&part=' + encodeURIComponent(part) : '');
+    var params = '?days=' + days + '&type=' + encodeURIComponent(type) + '&status=' + status
+      + (part ? '&part='     + encodeURIComponent(part) : '')
+      + (loc  ? '&location=' + encodeURIComponent(loc)  : '')
+      + (init ? '&initials=' + encodeURIComponent(init) : '');
 
     wFetch(W + '/inventory/history' + params)
       .then(function(r) { return r.json(); })
       .then(function(d) {
         if (!d.ok) { if (res) res.innerHTML = '<div style="color:var(--red);padding:12px">' + (d.error||'Load failed') + '</div>'; return; }
+        // Show total cases counter
+        var totalBar = g('hist-total-bar');
+        var totalEl  = g('hist-total-cases');
+        if (totalBar && d.totalCases !== undefined) {
+          totalBar.style.display = 'flex';
+          if (totalEl) totalEl.textContent = Number(d.totalCases).toLocaleString() + ' cases';
+        }
         histRender(d.rows, d.count, d.source);
       })
       .catch(function() { if (res) res.innerHTML = '<div style="color:var(--red);padding:12px">Load failed</div>'; });
