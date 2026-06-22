@@ -12411,10 +12411,10 @@ function awdHandleScan(raw) {
       </div>
     </div>
 
-    <!-- Total cases counter -->
-    <div id="hist-total-bar" style="display:none;background:var(--bg2);border-radius:8px;padding:8px 12px;margin-bottom:10px;display:flex;align-items:center;gap:10px">
+    <!-- Total cases in stock counter -->
+    <div id="hist-total-bar" style="display:none;background:var(--bg2);border-radius:8px;padding:8px 12px;margin-bottom:10px;align-items:center;gap:10px">
       <span style="font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.4px;color:var(--text3)">Total Cases in Stock:</span>
-      <span id="hist-total-cases" style="font-size:16px;font-weight:800;font-family:var(--mono);color:var(--accent)"></span>
+      <span id="hist-total-cases" style="font-size:18px;font-weight:800;font-family:var(--mono);color:var(--accent)"></span>
     </div>
 
     <button onclick="histLoad()"
@@ -13820,7 +13820,7 @@ function awdHandleScan(raw) {
       }
       promise.catch(function(){ return false; }).then(function(ok) {
         done++; if (!ok) errors++;
-        setTimeout(function() { processNext(idx + 1); }, 300);
+        processNext(idx + 1);
       });
     }
     processNext(0);
