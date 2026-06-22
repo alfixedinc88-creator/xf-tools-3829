@@ -14107,6 +14107,7 @@ function awdHandleScan(raw) {
 
   function invMakeCard(item) {
     invItemMap[item.rowIndex] = item;  // store for verify
+    if (item.d1Id && item.d1Id !== item.rowIndex) invItemMap[item.d1Id] = item; // also store by d1Id
     var el = document.createElement("div");
     el.className = "ientry";
     el.id = "inv-entry-" + item.rowIndex;
