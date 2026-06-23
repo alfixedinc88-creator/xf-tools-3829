@@ -1,7 +1,7 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-  <!-- XFITTING-BUILD-V114-FEAT-20260501z22k -->
+  <!-- XFITTING-BUILD-V114-FEAT-20260501z22l -->
 <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate">
 <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&family=IBM+Plex+Sans:wght@300;400;500;600&display=swap" rel="stylesheet">
   <meta http-equiv="Pragma" content="no-cache">
@@ -14291,18 +14291,21 @@ function awdHandleScan(raw) {
 
   var _skumgrRows = []; // current search results
   var _skumgrAutoLoaded = false; // track if initial load done
+  var _skumgrPage = 0;  // current page (0-based)
+  var _skumgrPerPage = 100; // rows per page
 
   window.skumgrAutoLoad = function() {
     if (_skumgrAutoLoaded) return; // only load once per session
     var res = g('skumgr-results');
     if (res) res.innerHTML = '<div style="padding:16px;color:var(--text3);font-size:13px">Loading…</div>';
     // Load all rows — use empty search to get first batch sorted by part_num
-    wFetch(W + '/inventory/sku-search?q=ALL&limit=200')
+    wFetch(W + '/inventory/sku-search?q=ALL&limit=1000')
       .then(function(r) { return r.json(); })
       .then(function(d) {
         if (d.ok && d.results && d.results.length) {
           _skumgrRows = d.results;
           _skumgrAutoLoaded = true;
+          _skumgrPage = 0;
           skumgrRenderResults();
         } else {
           if (res) res.innerHTML = '<div style="padding:16px;color:var(--text3);font-size:13px">Type a base SKU above to search.</div>';
@@ -14323,6 +14326,7 @@ function awdHandleScan(raw) {
       .then(function(d) {
         if (!d.ok) { invFlash(d.error || 'Search failed', 'error'); return; }
         _skumgrRows = d.results || [];
+        _skumgrPage = 0;
         skumgrRenderResults();
       })
       .catch(function() { invFlash('Search failed', 'error'); });
@@ -14335,8 +14339,34 @@ function awdHandleScan(raw) {
       res.innerHTML = '<div class="iempty" style="padding:16px;color:var(--text3)">No rows found.</div>';
       return;
     }
+    var totalRows  = _skumgrRows.length;
+    var totalPages = Math.ceil(totalRows / _skumgrPerPage);
+    if (_skumgrPage >= totalPages) _skumgrPage = totalPages - 1;
+    var pageStart  = _skumgrPage * _skumgrPerPage;
+    var pageRows   = _skumgrRows.slice(pageStart, pageStart + _skumgrPerPage);
+
+    // Per-page selector + pagination controls
+    var perPageOptions = [100, 200, 500, 1000].map(function(n) {
+      return '<option value="' + n + '"' + (n === _skumgrPerPage ? ' selected' : '') + '>' + n + ' per page</option>';
+    }).join('');
+    var pageInfo = 'Showing ' + (pageStart + 1) + '–' + Math.min(pageStart + _skumgrPerPage, totalRows) + ' of ' + totalRows + ' rows';
+    var prevBtn = '<button onclick="skumgrChangePage(' + (_skumgrPage - 1) + ')" style="padding:4px 10px;border-radius:6px;border:1.5px solid var(--border);background:var(--bg3);color:var(--text);font-size:12px;cursor:pointer" ' + (_skumgrPage === 0 ? 'disabled' : '') + '>← Prev</button>';
+    var nextBtn = '<button onclick="skumgrChangePage(' + (_skumgrPage + 1) + ')" style="padding:4px 10px;border-radius:6px;border:1.5px solid var(--border);background:var(--bg3);color:var(--text);font-size:12px;cursor:pointer" ' + (_skumgrPage >= totalPages - 1 ? 'disabled' : '') + '>Next →</button>';
+    var pageNums = '';
+    for (var pi = 0; pi < totalPages; pi++) {
+      if (pi === _skumgrPage || pi === 0 || pi === totalPages - 1 || Math.abs(pi - _skumgrPage) <= 1) {
+        pageNums += '<button onclick="skumgrChangePage(' + pi + ')" style="padding:4px 8px;border-radius:6px;border:1.5px solid ' + (pi === _skumgrPage ? 'var(--accent)' : 'var(--border)') + ';background:' + (pi === _skumgrPage ? 'var(--accent)' : 'var(--bg3)') + ';color:' + (pi === _skumgrPage ? '#fff' : 'var(--text)') + ';font-size:12px;cursor:pointer">' + (pi + 1) + '</button>';
+      } else if (Math.abs(pi - _skumgrPage) === 2) {
+        pageNums += '<span style="color:var(--text3);font-size:12px;padding:0 4px">…</span>';
+      }
+    }
+
     var thS = 'padding:8px 10px;text-align:left;font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.5px;color:var(--text3);white-space:nowrap;border-bottom:2px solid var(--border);background:var(--bg2)';
-    var html = '<div style="font-size:11px;color:var(--text3);margin-bottom:8px">' + _skumgrRows.length + ' row' + (_skumgrRows.length !== 1 ? 's' : '') + '</div>';
+    var html = '<div style="display:flex;align-items:center;gap:8px;margin-bottom:8px;flex-wrap:wrap">'
+      + '<span style="font-size:11px;color:var(--text3)">' + pageInfo + '</span>'
+      + '<select onchange="skumgrSetPerPage(this.value)" style="padding:4px 8px;border:1.5px solid var(--border);border-radius:6px;font-size:12px;background:var(--bg);color:var(--text)">' + perPageOptions + '</select>'
+      + '</div>'
+      + '<div style="display:flex;gap:4px;align-items:center;margin-bottom:8px;flex-wrap:wrap">' + prevBtn + pageNums + nextBtn + '</div>';
     html += '<div style="overflow-x:auto;border:1.5px solid var(--border);border-radius:10px">';
     html += '<table style="width:100%;border-collapse:collapse;font-size:12px">';
     html += '<thead><tr>'
@@ -14350,7 +14380,8 @@ function awdHandleScan(raw) {
       + '<th style="' + thS + '">Notes</th>'
       + '<th style="' + thS + '"></th>'
       + '</tr></thead><tbody>';
-    _skumgrRows.forEach(function(row, idx) {
+    pageRows.forEach(function(row, idx) {
+      var globalIdx = pageStart + idx; // real index in _skumgrRows
       var td = 'padding:8px 10px;border-bottom:1px solid var(--border);vertical-align:middle;';
       var bg = idx % 2 === 0 ? 'var(--bg)' : 'var(--bg2)';
       html += '<tr id="skumgr-view-row-' + idx + '" style="background:' + bg + '">'
@@ -14362,14 +14393,14 @@ function awdHandleScan(raw) {
         + '<td style="' + td + 'text-align:right;font-family:var(--mono);color:var(--text2)">' + (row.price ? '$' + parseFloat(row.price).toFixed(2) : '—') + '</td>'
         + '<td style="' + td + 'color:var(--text2)">' + (row.vendor||'—') + '</td>'
         + '<td style="' + td + 'color:var(--text3);max-width:120px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">' + (row.prev_notes||'—') + '</td>'
-        + '<td style="' + td + 'white-space:nowrap"><button onclick="skumgrStartEdit(' + idx + ')" style="padding:5px 12px;background:var(--bg3);border:1.5px solid var(--accent);color:var(--accent);border-radius:6px;font-size:11px;font-weight:700;cursor:pointer">✏ Edit</button></td>'
+        + '<td style="' + td + 'white-space:nowrap"><button onclick="skumgrStartEdit(' + globalIdx + ')" style="padding:5px 12px;background:var(--bg3);border:1.5px solid var(--accent);color:var(--accent);border-radius:6px;font-size:11px;font-weight:700;cursor:pointer">✏ Edit</button></td>'
         + '</tr>';
       // Edit row — expands inline below the row
       html += '<tr id="skumgr-edit-row-' + idx + '" style="display:none"><td colspan="9" style="padding:12px 10px;background:var(--bg2);border-bottom:1px solid var(--border)">';
       html += '<div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:8px;margin-bottom:10px">';
       html += skumgrInlineField('Part #',    'skumgr-f-partnum-'  + idx, row.part_num||'',     'text',   true);
       html += skumgrInlineField('Name',      'skumgr-f-name-'     + idx, row.name||'',         'text',   false);
-      html += skumgrInlineField('Location',  'skumgr-f-location-' + idx, row.location||'',     'text',   true);
+      html += skumgrInlineField('Location',  'skumgr-f-location-' + globalIdx, row.location||'',     'text',   true);
       html += skumgrInlineField('Cases',     'skumgr-f-cases-'    + idx, row.cases !== undefined ? row.cases : '', 'number', true);
       html += skumgrInlineField('Each/Case', 'skumgr-f-upc-'      + idx, row.units_per_case||'','number', false);
       html += skumgrInlineField('Price',     'skumgr-f-price-'    + idx, row.price||'',        'number', false);
@@ -14377,13 +14408,28 @@ function awdHandleScan(raw) {
       html += skumgrInlineField('Notes',     'skumgr-f-notes-'    + idx, row.prev_notes||'',   'text',   false);
       html += '</div>';
       html += '<div style="display:flex;gap:8px">';
-      html += '<button onclick="skumgrSaveEdit(' + idx + ')" style="padding:8px 20px;background:var(--accent);color:#fff;border:none;border-radius:7px;font-size:13px;font-weight:700;cursor:pointer">Save</button>';
-      html += '<button onclick="skumgrCancelEdit(' + idx + ')" style="padding:8px 16px;background:var(--bg3);color:var(--text3);border:1.5px solid var(--border);border-radius:7px;font-size:13px;cursor:pointer">Cancel</button>';
+      html += '<button onclick="skumgrSaveEdit(' + globalIdx + ')" style="padding:8px 20px;background:var(--accent);color:#fff;border:none;border-radius:7px;font-size:13px;font-weight:700;cursor:pointer">Save</button>';
+      html += '<button onclick="skumgrCancelEdit(' + globalIdx + ')" style="padding:8px 16px;background:var(--bg3);color:var(--text3);border:1.5px solid var(--border);border-radius:7px;font-size:13px;cursor:pointer">Cancel</button>';
       html += '</div></td></tr>';
     });
     html += '</tbody></table></div>';
     res.innerHTML = html;
   }
+
+  window.skumgrChangePage = function(page) {
+    var totalPages = Math.ceil(_skumgrRows.length / _skumgrPerPage);
+    if (page < 0 || page >= totalPages) return;
+    _skumgrPage = page;
+    skumgrRenderResults();
+    var res = g('skumgr-results');
+    if (res) res.scrollIntoView({ behavior: 'smooth', block: 'start' });
+  };
+
+  window.skumgrSetPerPage = function(val) {
+    _skumgrPerPage = parseInt(val) || 100;
+    _skumgrPage = 0;
+    skumgrRenderResults();
+  };
 
   function skumgrInlineField(label, id, val, type, isMono) {
     var ff = isMono ? 'font-family:var(--mono);' : '';
