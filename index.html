@@ -3011,7 +3011,10 @@ async function getToken() { return null; }
 
 
 async function fetchSheet(name) {
-  var url = 'https://xfitting-lookup.alfixedinc88.workers.dev?sheet=' + encodeURIComponent(name);
+  // Master_List reads from D1 (Phase 3 — live cases)
+  var url = name === 'Master_List'
+    ? 'https://xfitting-lookup.alfixedinc88.workers.dev/inventory/stock-levels'
+    : 'https://xfitting-lookup.alfixedinc88.workers.dev?sheet=' + encodeURIComponent(name);
   var res  = await wFetch(url);
   var json = await res.json();
   if (json.error) throw new Error('Sheet "' + name + '": ' + json.error);
@@ -4386,7 +4389,7 @@ const DISC = {
 // ── LOAD WAREHOUSE STOCK ──
 async function loadWarehouseStock() {
   try {
-    var url  = 'https://xfitting-lookup.alfixedinc88.workers.dev?sheet=Master_List';
+    var url  = 'https://xfitting-lookup.alfixedinc88.workers.dev/inventory/master-list';
     var res  = await wFetch(url);
     var json = await res.json();
     if (json.error) throw new Error(json.error);
