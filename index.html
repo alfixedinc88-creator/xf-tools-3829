@@ -3523,33 +3523,38 @@ var _oosOrderFilter = 'all';
 function renderOOS() {
   var textFilter = (document.getElementById('inp-oos').value || '').toLowerCase();
 
-  // Use original DB.oos (Out_of_Stock sheet) — has SKU, Name, Cases, Status columns
-  var items = (DB.oos || []).slice();
+  // Build stock levels from DB.master grouped by base SKU
+  // This replaces the old DB.oos (Out_of_Stock sheet) — driven from live D1 data
+  var skuMap = {};
 
-  // Build PO lookup from DB.master — check if base SKU has any isOrdered row
-  // and grab the most recent date from poNotes (format "M/D/YY order N")
-  var poMap = {};
+  // First seed from DB.products so all 737 base SKUs appear even with 0 cases
+  (DB.products || []).forEach(function(prod) {
+    var base = (prod.sku || '').trim().toUpperCase();
+    if (!base) return;
+    if (!skuMap[base]) skuMap[base] = { sku: base, name: prod.name || prod.warehouseName || '', totalCases: 0, isOrdered: false, poDate: '' };
+  });
+
+  // Accumulate cases and PO info from DB.master
   (DB.master || []).forEach(function(r) {
-    if (!r.isOrdered) return;
     var base = (r.sku || r.partNum || '').split('=')[0].trim().toUpperCase();
     if (!base) return;
-    if (!poMap[base]) poMap[base] = { ordered: true, latestDate: '' };
-    if (r.poNotes) {
-      var parts = r.poNotes.trim().split(' ');
-      var d = parts[0] || '';
-      // Simple date comparison by string — format M/D/YY keeps sort order within a year
-      if (d && d.indexOf('/') > 0 && (!poMap[base].latestDate || d > poMap[base].latestDate)) {
-        poMap[base].latestDate = d;
+    if (!skuMap[base]) skuMap[base] = { sku: base, name: r.name || '', totalCases: 0, isOrdered: false, poDate: '' };
+    if ((r.casesNum || 0) > 0) skuMap[base].totalCases += (r.casesNum || 0);
+    if (!skuMap[base].name && r.name) skuMap[base].name = r.name;
+    if (r.isOrdered) {
+      skuMap[base].isOrdered = true;
+      if (r.poNotes) {
+        var d = (r.poNotes.trim().split(' ')[0] || '');
+        if (d && d.indexOf('/') > 0 && (!skuMap[base].poDate || d > skuMap[base].poDate))
+          skuMap[base].poDate = d;
       }
     }
   });
 
-  // Enrich each item with PO info
-  items = items.map(function(r) {
-    var base = r.sku.split('=')[0].trim().toUpperCase();
-    var po   = poMap[base] || null;
-    return { sku: r.sku, name: r.name, cases: r.cases, status: r.status,
-             baseSku: base, isOrdered: !!(po && po.ordered), poDate: (po && po.latestDate) || '' };
+  var items = Object.values(skuMap).map(function(s) {
+    return { sku: s.sku, name: s.name, cases: String(s.totalCases),
+             status: s.totalCases > 0 ? 'In Stock' : 'Out of Stock',
+             baseSku: s.sku, isOrdered: s.isOrdered, poDate: s.poDate };
   });
 
   // Text filter
