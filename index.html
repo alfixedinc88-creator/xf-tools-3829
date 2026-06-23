@@ -3141,7 +3141,8 @@ async function loadAllSheets() {
     document.getElementById('tc-locator').textContent = inStock.toLocaleString();
     document.getElementById('tc-search').textContent  = DB.products.length.toLocaleString();
     document.getElementById('tc-awd').textContent     = DB.awdMaster.length.toLocaleString();
-    document.getElementById('tc-oos').textContent     = DB.oos.length.toLocaleString();
+    // Stock levels badge uses products count (all base SKUs) not OOS sheet
+    document.getElementById('tc-oos').textContent     = DB.products.length.toLocaleString();
 
     var now = new Date().toLocaleTimeString([], { hour:'2-digit', minute:'2-digit' });
     setSyncLabel('Synced ' + now, false);
