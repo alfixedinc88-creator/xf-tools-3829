@@ -1,7 +1,7 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-  <!-- XFITTING-BUILD-V114-FEAT-20260501z22l -->
+  <!-- XFITTING-BUILD-V114-FEAT-20260501z22m -->
 <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate">
 <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&family=IBM+Plex+Sans:wght@300;400;500;600&display=swap" rel="stylesheet">
   <meta http-equiv="Pragma" content="no-cache">
@@ -14248,7 +14248,7 @@ function awdHandleScan(raw) {
     html += '<thead><tr>'
       + '<th style="' + thS + '">Time</th>'
       + '<th style="' + thS + '">Type</th>'
-      + '<th style="' + thS + '">Part #</th>'
+      + '<th style="' + thS + 'cursor:pointer;user-select:none" onclick="skumgrToggleSort()">Part # ' + (_skumgrSort === 'asc' ? '↑' : '↓') + '</th>'
       + '<th style="' + thS + '">Location</th>'
       + '<th style="' + thS + ';text-align:right">Cases</th>'
       + '<th style="' + thS + '">By</th>'
@@ -14293,13 +14293,14 @@ function awdHandleScan(raw) {
   var _skumgrAutoLoaded = false; // track if initial load done
   var _skumgrPage = 0;  // current page (0-based)
   var _skumgrPerPage = 100; // rows per page
+  var _skumgrSort = 'asc'; // sort direction for Part # column
 
   window.skumgrAutoLoad = function() {
     if (_skumgrAutoLoaded) return; // only load once per session
     var res = g('skumgr-results');
     if (res) res.innerHTML = '<div style="padding:16px;color:var(--text3);font-size:13px">Loading…</div>';
     // Load all rows — use empty search to get first batch sorted by part_num
-    wFetch(W + '/inventory/sku-search?q=ALL&limit=1000')
+    wFetch(W + '/inventory/sku-search?q=ALL&limit=1000&sort=' + _skumgrSort)
       .then(function(r) { return r.json(); })
       .then(function(d) {
         if (d.ok && d.results && d.results.length) {
@@ -14321,7 +14322,7 @@ function awdHandleScan(raw) {
     if (!q) { invFlash('Enter a base SKU to search', 'error'); return; }
     var res = g('skumgr-results');
     if (res) res.innerHTML = '<div class="iempty" style="padding:16px;color:var(--text3)">Searching…</div>';
-    wFetch(W + '/inventory/sku-search?q=' + encodeURIComponent(q))
+    wFetch(W + '/inventory/sku-search?q=' + encodeURIComponent(q) + '&sort=' + _skumgrSort)
       .then(function(r) { return r.json(); })
       .then(function(d) {
         if (!d.ok) { invFlash(d.error || 'Search failed', 'error'); return; }
@@ -14370,7 +14371,7 @@ function awdHandleScan(raw) {
     html += '<div style="overflow-x:auto;border:1.5px solid var(--border);border-radius:10px">';
     html += '<table style="width:100%;border-collapse:collapse;font-size:12px">';
     html += '<thead><tr>'
-      + '<th style="' + thS + '">Part #</th>'
+      + '<th style="' + thS + 'cursor:pointer;user-select:none" onclick="skumgrToggleSort()">Part # ' + (_skumgrSort === 'asc' ? '↑' : '↓') + '</th>'
       + '<th style="' + thS + '">Name</th>'
       + '<th style="' + thS + '">Location</th>'
       + '<th style="' + thS + ';text-align:right">Cases</th>'
@@ -14415,6 +14416,13 @@ function awdHandleScan(raw) {
     html += '</tbody></table></div>';
     res.innerHTML = html;
   }
+
+  window.skumgrToggleSort = function() {
+    _skumgrSort = _skumgrSort === 'asc' ? 'desc' : 'asc';
+    _skumgrPage = 0;
+    _skumgrAutoLoaded = false; // force reload with new sort
+    skumgrAutoLoad();
+  };
 
   window.skumgrChangePage = function(page) {
     var totalPages = Math.ceil(_skumgrRows.length / _skumgrPerPage);
