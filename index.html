@@ -4386,7 +4386,7 @@ const DISC = {
 // ── LOAD WAREHOUSE STOCK ──
 async function loadWarehouseStock() {
   try {
-    var url  = 'https://xfitting-lookup.alfixedinc88.workers.dev?sheet=Master_List';
+    var url  = 'https://xfitting-lookup.alfixedinc88.workers.dev/inventory/master-list';
     var res  = await wFetch(url);
     var json = await res.json();
     if (json.error) throw new Error(json.error);
