@@ -1,7 +1,7 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-  <!-- XFITTING-BUILD-V114-FEAT-20260501z22m -->
+  <!-- XFITTING-BUILD-V114-FEAT-20260501z22n -->
 <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate">
 <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&family=IBM+Plex+Sans:wght@300;400;500;600&display=swap" rel="stylesheet">
   <meta http-equiv="Pragma" content="no-cache">
@@ -12349,6 +12349,14 @@ function awdHandleScan(raw) {
     <div class="icard-label">SKU Manager</div>
     <div style="font-size:12px;color:var(--text3);margin-bottom:10px">Search by base SKU to view and edit all variants. Management PIN required.</div>
 
+    <!-- Search mode toggle -->
+    <div style="display:flex;gap:6px;margin-bottom:8px">
+      <button id="skumgr-mode-sku" onclick="skumgrSetMode('sku')"
+        style="padding:6px 14px;border-radius:6px;border:1.5px solid var(--accent);background:var(--accent);color:#fff;font-size:12px;font-weight:700;cursor:pointer">By SKU</button>
+      <button id="skumgr-mode-loc" onclick="skumgrSetMode('loc')"
+        style="padding:6px 14px;border-radius:6px;border:1.5px solid var(--border);background:var(--bg3);color:var(--text);font-size:12px;font-weight:700;cursor:pointer">By Location</button>
+    </div>
+
     <!-- Search bar -->
     <div style="display:flex;gap:8px;margin-bottom:10px">
       <input id="skumgr-search-inp" type="text" placeholder="Base SKU (e.g. 27-3-1)" autocomplete="off"
@@ -14319,9 +14327,21 @@ function awdHandleScan(raw) {
 
   window.skumgrSearch = function() {
     var q = ((g('skumgr-search-inp') && g('skumgr-search-inp').value) || '').trim().toUpperCase();
-    if (!q) { invFlash('Enter a base SKU to search', 'error'); return; }
+    if (!q) { invFlash('Enter a ' + (_skumgrMode === 'loc' ? 'location' : 'base SKU') + ' to search', 'error'); return; }
     var res = g('skumgr-results');
     if (res) res.innerHTML = '<div class="iempty" style="padding:16px;color:var(--text3)">Searching…</div>';
+    // Location mode
+    if (_skumgrMode === 'loc') {
+      wFetch(W + '/inventory/sku-search?location=' + encodeURIComponent(q))
+        .then(function(r) { return r.json(); })
+        .then(function(d) {
+          _skumgrRows = d.results || [];
+          _skumgrPage = 0;
+          skumgrRenderResults();
+        })
+        .catch(function() { if (res) res.innerHTML = '<div style="color:var(--red);padding:12px">Search failed</div>'; });
+      return;
+    }
     wFetch(W + '/inventory/sku-search?q=' + encodeURIComponent(q) + '&sort=' + _skumgrSort)
       .then(function(r) { return r.json(); })
       .then(function(d) {
