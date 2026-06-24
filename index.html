@@ -1,7 +1,7 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-  <!-- XFITTING-BUILD-V114-FEAT-20260501z22r -->
+  <!-- XFITTING-BUILD-V114-FEAT-20260501z22s -->
 <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate">
 <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&family=IBM+Plex+Sans:wght@300;400;500;600&display=swap" rel="stylesheet">
   <meta http-equiv="Pragma" content="no-cache">
@@ -18381,7 +18381,8 @@ window.psFmtDateTime = function(iso) {
 
 window.psTodayKey = function() {
   var d = new Date();
-  return d.getFullYear() + '-' + String(d.getMonth()+1).padStart(2,'0') + '-' + String(d.getDate()).padStart(2,'0');
+  // Must use UTC to match worker's shipTodayKey — local time breaks after 8 PM EST
+  return d.getUTCFullYear() + '-' + String(d.getUTCMonth()+1).padStart(2,'0') + '-' + String(d.getUTCDate()).padStart(2,'0');
 };
 
 var _psToastTimer;
@@ -22026,7 +22027,7 @@ window.psVaExport = function() {
     if (status) status.textContent = '✓ Downloaded ' + sel.length + ' labels as ZPL file. Send to printer: copy /b xfitting-labels.zpl \\\\.\\USB001';
   };
 
-  // ── LAUNCH  ────────────────────────────────────────────────────────────────
+  // ── LAUNCH ────────────────────────────────────────────────────────────────
   // Launch from Operator section — no PIN required
   window.lpLaunchFromOperator = function() {
     document.getElementById('launcher').style.display = 'none';
