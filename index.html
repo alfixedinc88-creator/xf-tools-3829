@@ -1,7 +1,7 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-  <!-- XFITTING-BUILD-V114-FEAT-20260501z22p -->
+  <!-- XFITTING-BUILD-V114-FEAT-20260501z22q -->
 <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate">
 <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&family=IBM+Plex+Sans:wght@300;400;500;600&display=swap" rel="stylesheet">
   <meta http-equiv="Pragma" content="no-cache">
@@ -15791,7 +15791,7 @@ function awdHandleScan(raw) {
           return wFetch(W + '/inventory/verify', { method: 'POST',
             body: JSON.stringify({ rowIndex: d.rowIndex, action: 'Approved', verifiedBy: initials,
               item: { type: 'IN', partNum: partNum, location: location,
-                      cases: cases, rowIndex: null, notes: note } })
+                      cases: cases, rowIndex: d.rowIndex, isNew: true, notes: note, d1Id: d.d1Id } })
           }).then(function(r) { return r.json(); });
         })
         .then(function(v) {
@@ -16351,7 +16351,7 @@ function awdHandleScan(raw) {
           return wFetch(W + '/inventory/verify', { method: 'POST',
             body: JSON.stringify({ rowIndex: d.rowIndex, action: 'Approved', verifiedBy: initials,
               item: { type: 'IN', partNum: partNum, location: location,
-                      cases: cases, rowIndex: null, notes: note } })
+                      cases: cases, rowIndex: d.rowIndex, isNew: true, notes: note, d1Id: d.d1Id } })
           }).then(function(r) { return r.json(); });
         }
         return d;
@@ -16404,7 +16404,9 @@ function awdHandleScan(raw) {
         .then(function(d) {
           if (invAuditAutoMode && d && d.rowIndex) {
             return wFetch(W + '/inventory/verify', { method: 'POST',
-              body: JSON.stringify({ rowIndex: d.rowIndex, action: 'Approved', verifiedBy: init2 })
+              body: JSON.stringify({ rowIndex: d.rowIndex, action: 'Approved', verifiedBy: init2,
+                item: { type: 'IN', partNum: item.partNum, location: loc2,
+                        cases: cases2, rowIndex: d.rowIndex, isNew: true, notes: note2, d1Id: d.d1Id } })
             }).then(function(r) { return r.json(); });
           }
           return d;
