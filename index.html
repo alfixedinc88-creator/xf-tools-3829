@@ -1,7 +1,7 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-  <!-- XFITTING-BUILD-V114-FEAT-20260501z22s -->
+  <!-- XFITTING-BUILD-V114-FEAT-20260501z22r -->
 <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate">
 <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&family=IBM+Plex+Sans:wght@300;400;500;600&display=swap" rel="stylesheet">
   <meta http-equiv="Pragma" content="no-cache">
@@ -16101,10 +16101,31 @@ function awdHandleScan(raw) {
         if (!d || !d.results) { resEl.innerHTML = '<div style="color:var(--red);font-size:13px">Search failed</div>'; return; }
         resEl.innerHTML = '';
         if (!d.results.length) {
-          // Empty location — show add form
+          // Empty location — show register button + add form
           var emptyDiv = document.createElement('div');
           emptyDiv.innerHTML = '<div style="color:var(--text3);font-size:13px;padding:6px 0;margin-bottom:8px">No items recorded at <strong>' + q + '</strong></div>';
           resEl.appendChild(emptyDiv);
+          // Register button — only if location not yet in locations table
+          wFetch(W + '/inventory/locations?prefix=' + encodeURIComponent(q.split('=')[0] || '') + '&status=all')
+            .then(function(r2) { return r2.json(); })
+            .then(function(ld) {
+              var known = (ld.locations || []).some(function(l) { return l.location.toUpperCase() === q.toUpperCase(); });
+              if (!known) {
+                var regBtn = document.createElement('button');
+                regBtn.textContent = '\uD83D\uDCCD Register this shelf';
+                regBtn.style.cssText = 'padding:7px 14px;border-radius:7px;border:none;background:var(--accent);color:#fff;font-size:12px;font-weight:700;cursor:pointer;margin-bottom:10px';
+                regBtn.onclick = function() {
+                  regBtn.disabled = true; regBtn.textContent = 'Registering\u2026';
+                  wFetch(W + '/inventory/locations/register', { method:'POST', body: JSON.stringify({ location: q }) })
+                    .then(function(r3) { return r3.json(); })
+                    .then(function(rd) {
+                      if (rd.ok) { regBtn.textContent = '\u2713 Registered'; regBtn.style.background = 'var(--green)'; }
+                      else { regBtn.textContent = 'Failed'; regBtn.style.background = 'var(--red)'; regBtn.disabled = false; }
+                    }).catch(function() { regBtn.textContent = 'Failed'; regBtn.disabled = false; });
+                };
+                resEl.appendChild(regBtn);
+              }
+            }).catch(function(){});
           invAuditBuildAddForm(resEl, prefix, shelf);
           return;
         }
@@ -18381,8 +18402,7 @@ window.psFmtDateTime = function(iso) {
 
 window.psTodayKey = function() {
   var d = new Date();
-  // Must use UTC to match worker's shipTodayKey — local time breaks after 8 PM EST
-  return d.getUTCFullYear() + '-' + String(d.getUTCMonth()+1).padStart(2,'0') + '-' + String(d.getUTCDate()).padStart(2,'0');
+  return d.getFullYear() + '-' + String(d.getMonth()+1).padStart(2,'0') + '-' + String(d.getDate()).padStart(2,'0');
 };
 
 var _psToastTimer;
