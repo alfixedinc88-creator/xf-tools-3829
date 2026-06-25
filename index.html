@@ -12355,6 +12355,8 @@ function awdHandleScan(raw) {
         style="padding:6px 14px;border-radius:6px;border:1.5px solid var(--accent);background:var(--accent);color:#fff;font-size:12px;font-weight:700;cursor:pointer">By SKU</button>
       <button id="skumgr-mode-loc" onclick="skumgrSetMode('loc')"
         style="padding:6px 14px;border-radius:6px;border:1.5px solid var(--border);background:var(--bg3);color:var(--text);font-size:12px;font-weight:700;cursor:pointer">By Location</button>
+      <button id="skumgr-filter-instock" onclick="skumgrToggleInStock()"
+        style="padding:6px 14px;border-radius:6px;border:1.5px solid var(--border);background:var(--bg3);color:var(--text);font-size:12px;font-weight:700;cursor:pointer;margin-left:8px">📦 In Stock Only</button>
     </div>
 
     <!-- Search bar -->
@@ -14303,13 +14305,14 @@ function awdHandleScan(raw) {
   var _skumgrPerPage = 100; // rows per page
   var _skumgrSort = 'asc'; // sort direction for Part # column
   var _skumgrMode = 'sku'; // search mode: sku or loc
+  var _skumgrInStockOnly = false; // filter to only show rows with cases > 0
 
   window.skumgrAutoLoad = function() {
     if (_skumgrAutoLoaded) return; // only load once per session
     var res = g('skumgr-results');
     if (res) res.innerHTML = '<div style="padding:16px;color:var(--text3);font-size:13px">Loading…</div>';
     // Load all rows — use empty search to get first batch sorted by part_num
-    wFetch(W + '/inventory/sku-search?q=ALL&limit=1000&sort=' + _skumgrSort)
+    wFetch(W + '/inventory/sku-search?q=ALL&limit=1000&sort=' + _skumgrSort + (_skumgrInStockOnly ? '&instock=1' : ''))
       .then(function(r) { return r.json(); })
       .then(function(d) {
         if (d.ok && d.results && d.results.length) {
@@ -14343,7 +14346,7 @@ function awdHandleScan(raw) {
         .catch(function() { if (res) res.innerHTML = '<div style="color:var(--red);padding:12px">Search failed</div>'; });
       return;
     }
-    wFetch(W + '/inventory/sku-search?q=' + encodeURIComponent(q) + '&sort=' + _skumgrSort)
+    wFetch(W + '/inventory/sku-search?q=' + encodeURIComponent(q) + '&sort=' + _skumgrSort + (_skumgrInStockOnly ? '&instock=1' : ''))
       .then(function(r) { return r.json(); })
       .then(function(d) {
         if (!d.ok) { invFlash(d.error || 'Search failed', 'error'); return; }
@@ -14437,6 +14440,20 @@ function awdHandleScan(raw) {
     html += '</tbody></table></div>';
     res.innerHTML = html;
   }
+
+  window.skumgrToggleInStock = function() {
+    _skumgrInStockOnly = !_skumgrInStockOnly;
+    var btn = g('skumgr-filter-instock');
+    if (btn) {
+      btn.style.background = _skumgrInStockOnly ? 'var(--green)' : 'var(--bg3)';
+      btn.style.color = _skumgrInStockOnly ? '#fff' : 'var(--text)';
+      btn.style.borderColor = _skumgrInStockOnly ? 'var(--green)' : 'var(--border)';
+      btn.textContent = _skumgrInStockOnly ? '📦 In Stock Only ✓' : '📦 In Stock Only';
+    }
+    // Reload with filter
+    _skumgrAutoLoaded = false;
+    skumgrAutoLoad();
+  };
 
   window.skumgrSetMode = function(mode) {
     _skumgrMode = mode;
