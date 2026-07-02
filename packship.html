@@ -4,7 +4,7 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>XFitting — Pack & Ship</title>
-  <!-- XFITTING-BUILD-V114-PACK-20260701z22y -->
+  <!-- XFITTING-BUILD-V114-PACK-20260701 -->
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700;800&family=DM+Mono:wght@400;500&display=swap" rel="stylesheet">
   <style>
@@ -34,9 +34,9 @@
   --shadow:   0 1px 3px rgba(0,0,0,0.08), 0 1px 2px rgba(0,0,0,0.04);
   --shadow2:  0 4px 12px rgba(0,0,0,0.08), 0 2px 4px rgba(0,0,0,0.04);
 }
-
     *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
     body { display:flex; flex-direction:column; min-height:100vh; background:var(--bg); font-family:var(--sans); color:var(--text); }
+
 /* ── Pack & Ship scoped styles ───────────────────────────────────── */
 .ps-topbar { background:var(--bg2); border-bottom:1px solid var(--border); height:56px; display:flex; align-items:center; justify-content:space-between; padding:0 20px; position:sticky; top:0; z-index:200; }
 .ps-topbar-left { display:flex; align-items:center; gap:12px; }
@@ -1063,8 +1063,10 @@
 <script>
   const W = 'https://xfitting-lookup.alfixedinc88.workers.dev';
   const PS_WORKER = W;
+
   function backToLauncher() { window.location.href = 'index.html'; }
   window.psGoBack = function() { window.location.href = 'index.html'; };
+
 function showToast(msg) {
   var t = document.getElementById('xf-toast');
   if (!t) {
@@ -1078,18 +1080,6 @@ function showToast(msg) {
   setTimeout(function() { t.style.opacity='0'; t.style.transform='translateX(-50%) translateY(20px)'; }, 4000);
 }
 
-async function wFetch(url, opts) {
-  opts = opts || {};
-  opts.headers = Object.assign({}, opts.headers || {}, {
-    'X-Session-Token': psToken || ''
-  });
-  var r = await fetch(url, opts);
-  if (r.status === 401) {
-    psSignOut();
-    throw new Error('Unauthorized');
-  }
-  return r;
-}
 
 // PS_WORKER defined above
 var PS_PIN_MOBILE = '2589';
@@ -2186,8 +2176,8 @@ window.psUnlockTab = function(tab) {
 
 // Override psSwitchTab to re-show gate if tab not yet unlocked
 window.psSwitchTab = function(name) {
-  document.querySelectorAll('.ps-tabitem').forEach(function(t){ t.classList.remove('active'); });
-  document.querySelectorAll('.ps-panel').forEach(function(p){ p.classList.remove('active'); });
+  document.querySelectorAll('#packship-app .ps-tabitem').forEach(function(t){ t.classList.remove('active'); });
+  document.querySelectorAll('#packship-app .ps-panel').forEach(function(p){ p.classList.remove('active'); });
   document.getElementById('ps-tab-' + name).classList.add('active');
   document.getElementById('ps-panel-' + name).classList.add('active');
   // Show gate if protected tab not yet unlocked this session
@@ -2709,8 +2699,8 @@ window.psVaExport = function() {
   _psToast('Exported ' + rows.length + ' rows');
 };
 
-  // Auto-launch
+
+
   if (typeof psOnLaunch === 'function') psOnLaunch();
-})();
 </script>
 </html>
