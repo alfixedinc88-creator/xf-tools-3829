@@ -13737,7 +13737,8 @@ function awdHandleScan(raw) {
     if (btn) btn.disabled = chks.length === 0;
 
     // Calculate case impact of selected items
-    var totalIn = 0, totalOut = 0;
+    // Excludes confirmed audits (cases=0 IN) — they don't change master_list
+    var totalIn = 0, totalOut = 0, confirmedCount = 0;
     chks.forEach(function(c) {
       var ri = c.dataset.ri;
       var item = null;
@@ -13752,6 +13753,12 @@ function awdHandleScan(raw) {
       if (!item) return;
       var cases = parseFloat(item.cases) || 0;
       var type  = (item.type || '').toUpperCase();
+      var notes = (item.notes || '').toUpperCase();
+      // Skip confirmed audits — cases=0 IN with Confirmed note — no actual case change
+      if (type === 'IN' && cases === 0 && notes.indexOf('CONFIRMED') !== -1) {
+        confirmedCount++;
+        return;
+      }
       if (type === 'IN' || type === 'TRANSFER_IN') totalIn  += cases;
       if (type === 'OUT' || type === 'TRANSFER_OUT') totalOut += cases;
     });
@@ -13771,7 +13778,8 @@ function awdHandleScan(raw) {
     if (outEl) outEl.textContent = totalOut > 0 ? '−' + totalOut + ' cases OUT' : '';
     var net = totalIn - totalOut;
     if (netEl) {
-      netEl.textContent = 'Net: ' + (net >= 0 ? '+' : '') + net + ' cases';
+      netEl.textContent = 'Net: ' + (net >= 0 ? '+' : '') + net + ' cases'
+        + (confirmedCount > 0 ? ' (' + confirmedCount + ' confirms excluded)' : '');
       netEl.style.background = net > 0 ? 'var(--green-bg)' : net < 0 ? 'var(--red-bg)' : 'var(--bg3)';
       netEl.style.color      = net > 0 ? 'var(--green)'    : net < 0 ? 'var(--red)'    : 'var(--text3)';
     }
@@ -13838,9 +13846,37 @@ function awdHandleScan(raw) {
           body: JSON.stringify({ rowIndex: work.item.rowIndex, action: 'Approved', item: work.item })
         }).then(function(r){ return r.json(); }).then(function(d){ return !!(d && (d.ok || !d.error)); });
       }
+      // Retry once on failure with 600ms delay
       promise.catch(function(){ return false; }).then(function(ok) {
-        done++; if (!ok) errors++;
-        processNext(idx + 1);
+        if (!ok) {
+          // Retry once
+          setTimeout(function() {
+            var retryPromise;
+            if (work.type === 'transfer') {
+              retryPromise = wFetch(W + '/inventory/transfer/verify', {
+                method: 'POST', headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ action: 'Approved', outItem: work.xfr.outItem, inItem: work.xfr.inItem })
+              }).then(function(r){ return r.json(); }).then(function(d){ return !!(d && (d.ok || !d.error)); });
+            } else if (work.type === 'fos') {
+              retryPromise = wFetch(W + '/inventory/verify', {
+                method: 'POST', headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ rowIndex: work.fos.inItem.rowIndex, action: 'Approved', item: work.fos.inItem })
+              }).then(function(r){ return r.json(); }).then(function(d){ return !!(d && (d.ok || !d.error)); });
+            } else {
+              retryPromise = wFetch(W + '/inventory/verify', {
+                method: 'POST', headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ rowIndex: work.item.rowIndex, action: 'Approved', item: work.item })
+              }).then(function(r){ return r.json(); }).then(function(d){ return !!(d && (d.ok || !d.error)); });
+            }
+            retryPromise.catch(function(){ return false; }).then(function(retryOk) {
+              done++; if (!retryOk) errors++;
+              processNext(idx + 1);
+            });
+          }, 600);
+        } else {
+          done++;
+          processNext(idx + 1);
+        }
       });
     }
     processNext(0);
