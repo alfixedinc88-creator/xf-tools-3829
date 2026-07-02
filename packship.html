@@ -34,8 +34,17 @@
   --shadow:   0 1px 3px rgba(0,0,0,0.08), 0 1px 2px rgba(0,0,0,0.04);
   --shadow2:  0 4px 12px rgba(0,0,0,0.08), 0 2px 4px rgba(0,0,0,0.04);
 }
-    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
-    body { display:flex; flex-direction:column; min-height:100vh; background:var(--bg); font-family:var(--sans); color:var(--text); }
+
+*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+body {
+  display: flex;
+  flex-direction: column;
+  min-height: 100vh;
+  background: var(--bg);
+  font-family: var(--sans);
+  color: var(--text);
+}
+
 
 /* ── Pack & Ship scoped styles ───────────────────────────────────── */
 .ps-topbar { background:var(--bg2); border-bottom:1px solid var(--border); height:56px; display:flex; align-items:center; justify-content:space-between; padding:0 20px; position:sticky; top:0; z-index:200; }
@@ -54,7 +63,7 @@
 .ps-back-btn:hover { border-color:var(--accent); color:var(--accent); background:var(--accent-bg); }
 
 /* Sign-in overlay */
-#packship-app #ps-signin-overlay { position:absolute; inset:0; background:linear-gradient(135deg,#eef2fd 0%,#f4f5f7 60%,#e8f7ee 100%); display:flex; align-items:center; justify-content:center; padding:24px; z-index:300; min-height:100vh; }
+#ps-signin-overlay { position:absolute; inset:0; background:linear-gradient(135deg,#eef2fd 0%,#f4f5f7 60%,#e8f7ee 100%); display:flex; align-items:center; justify-content:center; padding:24px; z-index:300; min-height:100vh; }
 .ps-pin-card { background:var(--bg2); border:1px solid var(--border); border-radius:16px; padding:44px 40px; max-width:400px; width:100%; box-shadow:var(--shadow2); }
 .ps-pin-h { font-size:20px; font-weight:700; color:var(--text); margin-bottom:6px; }
 .ps-pin-sub { font-size:14px; color:var(--text2); margin-bottom:24px; line-height:1.5; }
@@ -1061,12 +1070,15 @@
 
 </body>
 <script>
-  const W = 'https://xfitting-lookup.alfixedinc88.workers.dev';
-  const PS_WORKER = W;
+// ── Constants ────────────────────────────────────────────────────────────
+const PS_WORKER = 'https://xfitting-lookup.alfixedinc88.workers.dev';
+const W = PS_WORKER;
 
-  function backToLauncher() { window.location.href = 'index.html'; }
-  window.psGoBack = function() { window.location.href = 'index.html'; };
+// ── Navigation ───────────────────────────────────────────────────────────
+function backToLauncher() { window.location.href = 'index.html'; }
+function launchApp(app) { window.location.href = app + '.html'; }
 
+// ── Toast notification ───────────────────────────────────────────────────
 function showToast(msg) {
   var t = document.getElementById('xf-toast');
   if (!t) {
@@ -1080,23 +1092,24 @@ function showToast(msg) {
   setTimeout(function() { t.style.opacity='0'; t.style.transform='translateX(-50%) translateY(20px)'; }, 4000);
 }
 
-<<<<<<< HEAD
-=======
+// ── Authenticated fetch ──────────────────────────────────────────────────
 async function wFetch(url, opts) {
   opts = opts || {};
+  var token = typeof psToken !== 'undefined' ? psToken : '';
   opts.headers = Object.assign({}, opts.headers || {}, {
-    'X-Session-Token': psToken || ''
+    'X-Session-Token': token
   });
   var r = await fetch(url, opts);
   if (r.status === 401) {
-    psSignOut();
+    if (typeof psSignOut === 'function') psSignOut();
     throw new Error('Unauthorized');
   }
   return r;
 }
->>>>>>> e6fa7b5141222c0705b56fc9c98426d81e829042
 
-// PS_WORKER defined above
+// ── Pack & Ship App ──────────────────────────────────────────────────────
+
+// PS_WORKER = defined at top of file
 var PS_PIN_MOBILE = '2589';
 var PS_PIN_MGMT   = '6523';
 var PS_IGNORED_FBA = ['amazon channel fba'];
@@ -2714,13 +2727,9 @@ window.psVaExport = function() {
   _psToast('Exported ' + rows.length + ' rows');
 };
 
-<<<<<<< HEAD
 
 
-=======
-  // Auto-launch
->>>>>>> e6fa7b5141222c0705b56fc9c98426d81e829042
-  if (typeof psOnLaunch === 'function') psOnLaunch();
-})();
+// ── Boot ─────────────────────────────────────────────────────────────────
+if (typeof psOnLaunch === 'function') psOnLaunch();
 </script>
 </html>
