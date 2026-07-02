@@ -1080,6 +1080,21 @@ function showToast(msg) {
   setTimeout(function() { t.style.opacity='0'; t.style.transform='translateX(-50%) translateY(20px)'; }, 4000);
 }
 
+<<<<<<< HEAD
+=======
+async function wFetch(url, opts) {
+  opts = opts || {};
+  opts.headers = Object.assign({}, opts.headers || {}, {
+    'X-Session-Token': psToken || ''
+  });
+  var r = await fetch(url, opts);
+  if (r.status === 401) {
+    psSignOut();
+    throw new Error('Unauthorized');
+  }
+  return r;
+}
+>>>>>>> e6fa7b5141222c0705b56fc9c98426d81e829042
 
 // PS_WORKER defined above
 var PS_PIN_MOBILE = '2589';
@@ -2176,8 +2191,8 @@ window.psUnlockTab = function(tab) {
 
 // Override psSwitchTab to re-show gate if tab not yet unlocked
 window.psSwitchTab = function(name) {
-  document.querySelectorAll('#packship-app .ps-tabitem').forEach(function(t){ t.classList.remove('active'); });
-  document.querySelectorAll('#packship-app .ps-panel').forEach(function(p){ p.classList.remove('active'); });
+  document.querySelectorAll('.ps-tabitem').forEach(function(t){ t.classList.remove('active'); });
+  document.querySelectorAll('.ps-panel').forEach(function(p){ p.classList.remove('active'); });
   document.getElementById('ps-tab-' + name).classList.add('active');
   document.getElementById('ps-panel-' + name).classList.add('active');
   // Show gate if protected tab not yet unlocked this session
@@ -2699,8 +2714,13 @@ window.psVaExport = function() {
   _psToast('Exported ' + rows.length + ' rows');
 };
 
+<<<<<<< HEAD
 
 
+=======
+  // Auto-launch
+>>>>>>> e6fa7b5141222c0705b56fc9c98426d81e829042
   if (typeof psOnLaunch === 'function') psOnLaunch();
+})();
 </script>
 </html>
