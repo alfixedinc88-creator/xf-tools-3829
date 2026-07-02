@@ -1836,7 +1836,8 @@ async function wFetch(url, opts) {
 }
 
 
-var XF_ROLE = sessionStorage.getItem('xf_role') || null;
+var XF_SESSION = sessionStorage.getItem('xf_session') || null;
+var XF_ROLE    = sessionStorage.getItem('xf_role')    || null;
 if (XF_SESSION) {
   document.addEventListener('DOMContentLoaded', function() {
     var ps = document.getElementById('pin-screen');
