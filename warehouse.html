@@ -43,6 +43,7 @@ body {
   background: var(--bg);
   font-family: var(--sans);
   color: var(--text);
+  visibility: visible;
 }
 
 <style>
@@ -969,8 +970,194 @@ body {
   --r:10px;--rs:6px;--rl:14px;
 }
 *{box-sizing:border-box;margin:0;padding:0}
-/* removed: body visibility:hidden */
+/* removed: /* removed visibility:hidden */
+#pin-screen {
+  position:fixed;inset:0;background:linear-gradient(135deg,#eef2fd 0%,#f4f5f7 50%,#fff8f0 100%);
+  display:flex;align-items:center;justify-content:center;z-index:99999;
+}
+.pin-card {
+  background:var(--bg2);border:1px solid var(--border);border-radius:16px;
+  padding:44px 40px;max-width:360px;width:100%;box-shadow:var(--shadow2);text-align:center;
+}
+.pin-logo {
+  background:var(--accent);color:#fff;font-family:var(--mono);font-size:13px;
+  font-weight:500;padding:7px 14px;border-radius:8px;letter-spacing:.5px;
+  display:inline-block;margin-bottom:20px;
+}
+.pin-title { font-size:18px;font-weight:700;color:var(--text);margin-bottom:6px; }
+.pin-sub   { font-size:13px;color:var(--text3);margin-bottom:28px; }
+.pin-dots  { display:flex;justify-content:center;gap:12px;margin-bottom:28px; }
+.pin-dot {
+  width:14px;height:14px;border-radius:50%;
+  background:var(--bg4);border:2px solid var(--border2);
+  transition:all .15s;
+}
+.pin-dot.filled { background:var(--accent);border-color:var(--accent); }
+.pin-dot.error  { background:var(--red);border-color:var(--red); }
+.pin-pad { display:grid;grid-template-columns:repeat(3,1fr);gap:10px;max-width:240px;margin:0 auto; }
+.pin-btn {
+  background:var(--bg3);border:1.5px solid var(--border2);border-radius:10px;
+  font-size:20px;font-weight:600;font-family:var(--sans);color:var(--text);
+  padding:16px;cursor:pointer;transition:all .12s;user-select:none;
+}
+.pin-btn:hover  { background:var(--accent-bg);border-color:var(--accent);color:var(--accent); }
+.pin-btn:active { transform:scale(.94); }
+.pin-btn.del    { font-size:16px;color:var(--text3); }
+.pin-btn.del:hover { color:var(--red);border-color:var(--red);background:var(--red-bg); }
+.pin-error {
+  margin-top:16px;font-size:12px;color:var(--red);font-weight:600;
+  min-height:18px;transition:opacity .2s;
+}
+@keyframes pinShake {
+  0%,100%{transform:translateX(0)}
+  20%{transform:translateX(-8px)}
+  40%{transform:translateX(8px)}
+  60%{transform:translateX(-5px)}
+  80%{transform:translateX(5px)}
+}
+.pin-dots.shake { animation:pinShake .4s ease; }
+
+
+
+:root{
+  --blue:#2563EB;--blue-light:#EFF6FF;--blue-mid:#DBEAFE;
+  --green:#16A34A;--green-light:#F0FDF4;
+  --orange:#EA580C;--orange-light:#FFF7ED;
+  --red:#DC2626;--red-light:#FEF2F2;
+  --yellow:#CA8A04;--yellow-light:#FEFCE8;
+  --gray-50:#F9FAFB;--gray-100:#F3F4F6;--gray-200:#E5E7EB;
+  --gray-300:#D1D5DB;--gray-400:#9CA3AF;--gray-500:#6B7280;
+  --gray-600:#4B5563;--gray-700:#374151;--gray-800:#1F2937;--gray-900:#111827;
+  --white:#fff;--shadow-sm:0 1px 2px rgba(0,0,0,.05);--shadow-lg:0 10px 15px rgba(0,0,0,.1),0 4px 6px rgba(0,0,0,.05);
+  --r:10px;--rs:6px;--rl:14px;
+}
+*{box-sizing:border-box;margin:0;padding:0}
+/* removed: body visibility:hidden from repricer CSS */
 #pin-screen{position:fixed;inset:0;background:var(--white);display:flex;align-items:center;justify-content:center;z-index:9999;flex-direction:column;gap:32px}
+#pin-screen.hidden{display:none}
+.pin-logo{display:flex;align-items:center;gap:10px}
+.pin-mark{width:44px;height:44px;background:var(--blue);border-radius:10px;display:flex;align-items:center;justify-content:center;color:white;font-weight:700;font-size:18px;letter-spacing:-1px}
+.pin-wordmark{font-size:22px;font-weight:700;letter-spacing:-.5px;color:var(--gray-900)}
+.pin-wordmark span{color:var(--blue)}
+.pin-card{background:var(--white);border:1px solid var(--gray-200);border-radius:var(--rl);padding:36px 40px;box-shadow:var(--shadow-lg);text-align:center;width:340px}
+.pin-card h2{font-size:18px;font-weight:600;color:var(--gray-900);margin-bottom:6px}
+.pin-card p{font-size:13px;color:var(--gray-500);margin-bottom:24px}
+.pin-dots{display:flex;gap:12px;justify-content:center;margin-bottom:24px}
+.pin-dot{width:14px;height:14px;border-radius:50%;border:2px solid var(--gray-300);background:transparent;transition:all .15s}
+.pin-dot.filled{background:var(--blue);border-color:var(--blue)}
+.pin-keypad{display:grid;grid-template-columns:repeat(3,1fr);gap:10px}
+.pin-key{height:52px;border:1px solid var(--gray-200);background:var(--white);border-radius:var(--rs);font-size:20px;font-weight:500;cursor:pointer;font-family:'DM Sans',sans-serif;color:var(--gray-800);transition:all .1s}
+.pin-key:hover{background:var(--gray-50)}.pin-key:active{background:var(--blue-mid);border-color:var(--blue)}
+.pin-key.del{font-size:16px;color:var(--gray-500)}
+.pin-err{color:var(--red);font-size:13px;font-weight:500;min-height:18px}
+#app{display:none;flex-direction:column;min-height:100vh}
+#app.visible{display:flex}
+#awd-app-inner{display:flex!important;flex-direction:column;min-height:100vh}
+.hdr{background:var(--white);border-bottom:1px solid var(--gray-200);padding:0 24px;height:60px;display:flex;align-items:center;justify-content:space-between;position:sticky;top:0;z-index:100;box-shadow:var(--shadow-sm)}
+.hdr-l{display:flex;align-items:center;gap:16px}
+.logo{display:flex;align-items:center;gap:9px;text-decoration:none}
+.logo-mark{width:32px;height:32px;background:var(--blue);border-radius:7px;display:flex;align-items:center;justify-content:center;color:white;font-weight:700;font-size:13px;letter-spacing:-1px}
+.logo-text{font-size:16px;font-weight:700;color:var(--gray-900);letter-spacing:-.3px}
+.logo-text span{color:var(--blue)}
+.hdiv{width:1px;height:20px;background:var(--gray-200)}
+.hdr-title{font-size:14px;font-weight:500;color:var(--gray-600)}
+.hdr-r{display:flex;align-items:center;gap:10px}
+.tabs{background:var(--white);border-bottom:1px solid var(--gray-200);padding:0 24px;display:flex;overflow-x:auto;position:sticky;top:56px;z-index:90;}
+.tab{padding:14px 18px;font-size:13px;font-weight:500;color:var(--gray-500);cursor:pointer;border-bottom:2px solid transparent;transition:all .15s;white-space:nowrap;display:flex;align-items:center;gap:7px}
+.tab:hover{color:var(--gray-700)}.tab.active{color:var(--blue);border-bottom-color:var(--blue)}
+.tbadge{background:var(--blue);color:white;font-size:10px;font-weight:700;min-width:18px;height:18px;border-radius:9px;display:flex;align-items:center;justify-content:center;padding:0 5px}
+.main{flex:1;padding:24px;max-width:1600px;width:100%;margin:0 auto}
+.page{display:none}.page.active{display:block}
+.btn{display:inline-flex;align-items:center;gap:6px;padding:8px 16px;border-radius:var(--rs);font-size:13px;font-weight:500;cursor:pointer;font-family:'DM Sans',sans-serif;border:1px solid transparent;transition:all .15s;line-height:1}
+.btn-primary{background:var(--blue);color:white;border-color:var(--blue)}.btn-primary:hover{background:#1D4ED8}
+.btn-secondary{background:var(--white);color:var(--gray-700);border-color:var(--gray-200)}.btn-secondary:hover{background:var(--gray-50);border-color:var(--gray-300)}
+.btn-success{background:var(--green);color:white;border-color:var(--green)}.btn-success:hover{background:#15803D}
+.btn-sm{padding:5px 11px;font-size:12px}.btn:disabled{opacity:.45;cursor:not-allowed;pointer-events:none}
+.card{background:var(--white);border:1px solid var(--gray-200);border-radius:var(--r);box-shadow:var(--shadow-sm)}
+.card-hdr{padding:16px 20px;border-bottom:1px solid var(--gray-100);display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap}
+.card-title{font-size:14px;font-weight:600;color:var(--gray-800)}
+.card-sub{font-size:12px;color:var(--gray-500);margin-top:2px}
+.card-body{padding:20px}
+.stats-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(160px,1fr));gap:14px;margin-bottom:22px}
+.stat{background:var(--white);border:1px solid var(--gray-200);border-radius:var(--r);padding:16px 18px;box-shadow:var(--shadow-sm)}
+.stat-lbl{font-size:11px;font-weight:500;color:var(--gray-500);text-transform:uppercase;letter-spacing:.5px;margin-bottom:6px}
+.stat-val{font-size:26px;font-weight:700;color:var(--gray-900);letter-spacing:-.5px;line-height:1}
+.stat-sub{font-size:12px;color:var(--gray-500);margin-top:4px}
+.stat.blue .stat-val{color:var(--blue)}.stat.green .stat-val{color:var(--green)}.stat.orange .stat-val{color:var(--orange)}.stat.red .stat-val{color:var(--red)}
+.tw{overflow-x:auto}
+table{width:100%;border-collapse:collapse}
+th{text-align:left;font-size:11px;font-weight:600;color:var(--gray-500);text-transform:uppercase;letter-spacing:.4px;padding:10px 12px;background:var(--gray-50);border-bottom:1px solid var(--gray-200);white-space:nowrap}
+th.sort{cursor:pointer;user-select:none}th.sort:hover{color:var(--gray-700);background:var(--gray-100)}
+.sa{margin-left:3px;opacity:.3;font-size:9px}
+th.asc .sa{opacity:1;color:var(--blue)}th.asc .sa::after{content:'▲'}
+th.desc .sa{opacity:1;color:var(--blue)}th.desc .sa::after{content:'▼'}
+td{padding:10px 12px;border-bottom:1px solid var(--gray-100);vertical-align:middle}
+tr:last-child td{border-bottom:none}tr:hover td{background:var(--gray-50)}
+.sku{font-family:monospace;font-size:12px;color:var(--gray-700);font-weight:500}
+.asin{font-family:monospace;font-size:11px;color:var(--gray-500)}
+.r{text-align:right;font-variant-numeric:tabular-nums}
+.badge{display:inline-flex;align-items:center;padding:2px 8px;border-radius:999px;font-size:11px;font-weight:600;white-space:nowrap}
+.bg{background:var(--green-light);color:var(--green)}.by{background:var(--yellow-light);color:var(--yellow)}
+.bo{background:var(--orange-light);color:var(--orange)}.br{background:var(--red-light);color:var(--red)}.bgr{background:var(--gray-100);color:var(--gray-600)}
+.fbar{display:flex;gap:10px;flex-wrap:wrap;margin-bottom:16px;align-items:center}
+.sw{position:relative}
+.si{border:1px solid var(--gray-200);border-radius:var(--rs);padding:7px 10px 7px 32px;font-size:13px;font-family:'DM Sans',sans-serif;color:var(--gray-800);width:215px}
+.si:focus{outline:none;border-color:var(--blue);box-shadow:0 0 0 3px rgba(37,99,235,.1)}
+.sic{position:absolute;left:9px;top:50%;transform:translateY(-50%);color:var(--gray-400);pointer-events:none}
+select.fsel{border:1px solid var(--gray-200);border-radius:var(--rs);padding:7px 10px;font-size:13px;font-family:'DM Sans',sans-serif;color:var(--gray-700);background:white;cursor:pointer}
+select.fsel:focus{outline:none;border-color:var(--blue)}.mla{margin-left:auto}
+.upload-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(200px,1fr));gap:12px;margin-bottom:20px}
+.uzone{border:2px dashed var(--gray-300);border-radius:var(--r);text-align:center;transition:all .2s;background:var(--white);display:flex;flex-direction:column}
+.uzone.drag{border-color:var(--blue)}.uzone.loaded{border-color:var(--green);border-style:solid;background:var(--green-light)}
+.udrop{position:relative;padding:20px 14px 14px;cursor:pointer;flex:1}
+.udrop:hover{background:rgba(37,99,235,.04);border-radius:calc(var(--r) - 2px) calc(var(--r) - 2px) 0 0}
+.uzone.loaded .udrop:hover{background:rgba(22,163,74,.05)}
+.udrop input[type=file]{position:absolute;inset:0;opacity:0;cursor:pointer;width:100%;height:100%}
+.uico{font-size:24px;margin-bottom:7px}.ulbl{font-size:12px;font-weight:600;color:var(--gray-700);margin-bottom:3px}
+.uhint{font-size:11px;color:var(--gray-500);line-height:1.4}
+.ust{font-size:11px;font-weight:600;margin-top:6px}.ust.ok{color:var(--green)}.ust.err{color:var(--red)}
+.ulink-row{padding:9px 14px;border-top:1px solid var(--gray-100);background:var(--gray-50);border-radius:0 0 calc(var(--r) - 2px) calc(var(--r) - 2px)}
+.uzone.loaded .ulink-row{background:rgba(22,163,74,.06);border-top-color:rgba(22,163,74,.15)}
+.report-link{display:inline-flex;align-items:center;gap:5px;font-size:11px;color:var(--blue);text-decoration:none;font-weight:500;padding:2px 4px;border-radius:3px}
+.report-link:hover{background:var(--blue-mid)}
+.cpack-card{border:1px solid var(--gray-200);border-radius:var(--r);background:var(--white);overflow:hidden;margin-bottom:20px}
+.cpack-card.has-data{border-color:var(--green)}
+.cpack-header{display:flex;align-items:center;gap:12px;padding:14px 18px;background:var(--gray-50);border-bottom:1px solid var(--gray-200)}
+.cpack-card.has-data .cpack-header{background:var(--green-light);border-bottom-color:rgba(22,163,74,.2)}
+.cpack-body{padding:12px 18px;display:flex;align-items:center;gap:14px;flex-wrap:wrap}
+.cpack-drop{position:relative;display:inline-flex}
+.cpack-drop input[type=file]{position:absolute;inset:0;opacity:0;cursor:pointer;width:100%;height:100%}
+.empty{text-align:center;padding:50px 20px;color:var(--gray-400)}
+.empty .ico{font-size:34px;margin-bottom:10px}
+.empty h3{font-size:15px;font-weight:600;color:var(--gray-600);margin-bottom:5px}.empty p{font-size:13px}
+.alert{border-radius:var(--rs);padding:11px 14px;font-size:13px;display:flex;gap:8px;align-items:flex-start;margin-bottom:14px}
+.alert-warn{background:var(--yellow-light);border:1px solid #FDE68A;color:#92400E}
+.alert-info{background:var(--blue-light);border:1px solid var(--blue-mid);color:#1E40AF}
+.alert-err{background:var(--red-light);border:1px solid #FECACA;color:#991B1B}
+.bld-layout{display:grid;grid-template-columns:1fr 340px;gap:20px;align-items:start}
+@media(max-width:1100px){.bld-layout{grid-template-columns:1fr}}
+.qty-inp{width:72px;text-align:center;border:1px solid var(--gray-200);border-radius:var(--rs);padding:5px 8px;font-size:13px;font-family:'DM Sans',sans-serif;color:var(--gray-800)}
+.qty-inp:focus{outline:none;border-color:var(--blue)}
+.sum-card{position:sticky;top:88px}
+.sum-item{display:flex;justify-content:space-between;align-items:center;padding:7px 0;border-bottom:1px solid var(--gray-100)}
+.sum-item:last-child{border-bottom:none}
+.sum-sku{font-size:12px;font-family:monospace;color:var(--gray-600)}.sum-qty{font-size:13px;font-weight:600;color:var(--gray-800)}
+.sum-total{display:flex;justify-content:space-between;padding-top:10px;margin-top:6px;border-top:2px solid var(--gray-200)}
+.tt{position:relative;display:inline-flex;align-items:center;gap:3px;cursor:help}
+.tt-ico{width:13px;height:13px;border-radius:50%;background:var(--gray-300);color:var(--gray-600);font-size:8px;font-weight:700;display:inline-flex;align-items:center;justify-content:center;flex-shrink:0}
+.tt-box{display:none;position:absolute;bottom:calc(100% + 6px);left:50%;transform:translateX(-50%);background:var(--gray-900);color:white;font-size:11px;font-weight:400;padding:7px 10px;border-radius:5px;z-index:500;line-height:1.45;text-transform:none;letter-spacing:0;pointer-events:none;width:210px;white-space:normal}
+.tt-box::after{content:'';position:absolute;top:100%;left:50%;transform:translateX(-50%);border:5px solid transparent;border-top-color:var(--gray-900)}
+.tt:hover .tt-box{display:block}
+.cfg-inp{border:1px solid var(--gray-200);border-radius:var(--rs);padding:7px 10px;font-size:13px;font-family:'DM Sans',sans-serif;color:var(--gray-800)}
+.cfg-inp:focus{outline:none;border-color:var(--blue);box-shadow:0 0 0 3px rgba(37,99,235,.1)}
+input[type=checkbox]{width:15px;height:15px;cursor:pointer;accent-color:var(--blue)}
+.cp-pill{display:inline-flex;align-items:center;gap:4px;font-size:11px;font-weight:500;padding:2px 8px;border-radius:999px}
+.cp-pill.found{background:var(--green-light);color:var(--green)}.cp-pill.missing{background:var(--gray-100);color:var(--gray-500)}
+#toast{position:fixed;bottom:24px;right:24px;z-index:9999;background:var(--gray-900);color:white;padding:11px 16px;border-radius:var(--rs);font-size:13px;font-weight:500;box-shadow:var(--shadow-lg);transform:translateY(80px);opacity:0;transition:all .3s cubic-bezier(.16,1,.3,1);pointer-events:none}
+#toast.show{transform:translateY(0);opacity:1}#toast.success{background:var(--green)}#toast.error{background:var(--red)}
+
+
+/* ── LAUNCHER ── */
 #pin-screen.hidden{display:none}
 .pin-logo{display:flex;align-items:center;gap:10px}
 .pin-mark{width:44px;height:44px;background:var(--blue);border-radius:10px;display:flex;align-items:center;justify-content:center;color:white;font-weight:700;font-size:18px;letter-spacing:-1px}
@@ -1100,7 +1287,7 @@ input[type=checkbox]{width:15px;height:15px;cursor:pointer;accent-color:var(--bl
   background:linear-gradient(135deg,#eef2fd 0%,#f4f5f7 60%,#fff8f0 100%);
   padding:24px;
 }
-body { display:flex;flex-direction:column;min-height:100vh; }
+/* wh-app hidden rule removed */
 .launcher-inner { max-width:480px;margin:0 auto; text-align:center;max-width:560px;width:100%; }
 .launcher-logo {
   display:inline-flex;align-items:center;gap:12px;margin-bottom:32px;
@@ -1128,7 +1315,7 @@ body { display:flex;flex-direction:column;min-height:100vh; }
 .launcher-card-title { font-size:16px;font-weight:700;color:var(--text);margin-bottom:6px; }
 .launcher-card-desc  { font-size:12px;color:var(--text3);line-height:1.5; }
 #awd-app { display:none;flex-direction:column;min-height:100vh; }
-body.visible, #awd-app.visible { display:flex; }
+#wh-app.visible, #awd-app.visible { display:flex; }
 
 
 /* ── AWD PLANNER SCOPED ── */
@@ -1703,6 +1890,640 @@ body.visible, #awd-app.visible { display:flex; }
   </style>
 </head>
 <body>
+<script>document.body.style.visibility="visible";</script>
+<div id="loading-bar" style="display:none;position:fixed;top:0;left:0;right:0;height:3px;background:var(--accent);z-index:9999"></div>
+<div id="pin-screen" style="display:flex;position:fixed;inset:0;z-index:9999;background:#f4f5f7;align-items:center;justify-content:center;">
+  <div class="pin-card">
+    <div class="pin-logo">XFITTING</div>
+    <div class="pin-title">Warehouse Lookup</div>
+    <div class="pin-sub">Enter your PIN to continue</div>
+    <div class="pin-dots" id="pin-dots">
+      <div class="pin-dot" id="pd0"></div>
+      <div class="pin-dot" id="pd1"></div>
+      <div class="pin-dot" id="pd2"></div>
+      <div class="pin-dot" id="pd3"></div>
+    </div>
+    <div class="pin-pad">
+      <button class="pin-btn" onclick="pinKey('1')">1</button>
+      <button class="pin-btn" onclick="pinKey('2')">2</button>
+      <button class="pin-btn" onclick="pinKey('3')">3</button>
+      <button class="pin-btn" onclick="pinKey('4')">4</button>
+      <button class="pin-btn" onclick="pinKey('5')">5</button>
+      <button class="pin-btn" onclick="pinKey('6')">6</button>
+      <button class="pin-btn" onclick="pinKey('7')">7</button>
+      <button class="pin-btn" onclick="pinKey('8')">8</button>
+      <button class="pin-btn" onclick="pinKey('9')">9</button>
+      <div></div>
+      <button class="pin-btn" onclick="pinKey('0')">0</button>
+      <button class="pin-btn del" onclick="pinDel()">&#9003;</button>
+    </div>
+    <div class="pin-error" id="pin-error"></div>
+  </div>
+</div>
+
+
+<!-- ═══ LAUNCHER ═══ -->
+<div id="launcher" style="display:none;">
+  <div class="launcher-inner">
+    <div class="launcher-logo"><div class="launcher-mark">XF</div><div class="launcher-name">XFITTING</div></div>
+    <div class="launcher-sub">Internal Tools — Choose an app to continue</div>
+    <div style="font-size:11px;color:var(--text3);margin-top:6px;opacity:.7">v1.1.1</div>
+
+    <div class="launcher-section-label">🏭 Warehouse</div>
+    <div class="launcher-grid">
+      <div class="launcher-card" onclick="launchApp('warehouse')">
+        <div class="launcher-card-icon">📍</div>
+        <div class="launcher-card-title">Warehouse Lookup</div>
+        <div class="launcher-card-desc">Find item locations, AWD labels, stock levels and UPC codes</div>
+      </div>
+      <div class="launcher-card" onclick="launchApp('awd')">
+        <div class="launcher-card-icon">🚛</div>
+        <div class="launcher-card-title">AWD Planner</div>
+        <div class="launcher-card-desc">Amazon inventory analysis, shipment recommendations and builder</div>
+      </div>
+      <div class="launcher-card" onclick="launchApp('upc')">
+        <div class="launcher-card-icon">🏷️</div>
+        <div class="launcher-card-title">UPC Barcodes</div>
+        <div class="launcher-card-desc">Print Zebra barcode labels by SKU, UPC, or AWD shipment</div>
+      </div>
+      <div class="launcher-card" onclick="launchApp('inventory')">
+        <div class="launcher-card-icon">📋</div>
+        <div class="launcher-card-title">Inventory</div>
+        <div class="launcher-card-desc">Scan cases in/out, log locations, approve with management PIN</div>
+      </div>
+      <div class="launcher-card" onclick="launchApp('packship')" style="border-color:#e8f7ee">
+        <div class="launcher-card-icon">📦</div>
+        <div class="launcher-card-title">Pack &amp; Ship</div>
+        <div class="launcher-card-desc">Scan tracking barcodes, batch close, gap analysis and carrier claims</div>
+        <div style="display:inline-block;margin-top:10px;font-size:10px;font-family:var(--mono);padding:3px 8px;border-radius:4px;background:var(--green-bg);color:var(--green);font-weight:600;letter-spacing:1px">No PIN · Scan Only</div>
+      </div>
+      <div class="launcher-card" onclick="launchApp('messenger')" style="border-color:#ede9fe">
+        <div class="launcher-card-icon">💬</div>
+        <div class="launcher-card-title">Messenger</div>
+        <div class="launcher-card-desc">Send messages to management — request resources, materials, or flag issues</div>
+        <div style="display:inline-block;margin-top:10px;font-size:10px;font-family:var(--mono);padding:3px 8px;border-radius:4px;background:#ede9fe;color:var(--purple);font-weight:600;letter-spacing:1px">No PIN · Initials Only</div>
+      </div>
+    </div>
+
+    <div class="launcher-section-label">⚡ Operator</div>
+    <div class="launcher-mgmt-row">
+      <div class="launcher-card" onclick="launchMgmtApp('repricer')" style="border-color:#e8f5e9">
+        <div class="launcher-card-icon">💰</div>
+        <div class="launcher-card-title">eBay Repricer</div>
+        <div class="launcher-card-desc">Live eBay listings, price research, velocity charts and approval queue.</div>
+        <div style="display:inline-block;margin-top:10px;font-size:10px;font-family:var(--mono);padding:3px 8px;border-radius:4px;background:#e8f5e9;color:#2e7d32;font-weight:600;letter-spacing:1px">eBay · Operator</div>
+      </div>
+      <div class="launcher-card" onclick="lpLaunchFromOperator()" style="border-color:#E0F2FE">
+        <div class="launcher-card-icon">🏷️</div>
+        <div class="launcher-card-title">Label Printer</div>
+        <div class="launcher-card-desc">Print location barcode labels for shelf tagging.</div>
+        <div style="display:inline-block;margin-top:10px;font-size:10px;font-family:var(--mono);padding:3px 8px;border-radius:4px;background:#E0F2FE;color:#0891B2;font-weight:600;letter-spacing:1px">Warehouse · All Staff</div>
+      </div>
+    </div>
+
+    <div class="launcher-section-label">⚙ Management</div>
+    <div class="launcher-mgmt-row">
+      <div class="launcher-card" onclick="launchMgmtApp('reorder')" style="border-color:var(--accent-bg)">
+        <div class="launcher-card-icon">📦</div>
+        <div class="launcher-card-title">Reorder Planner</div>
+        <div class="launcher-card-desc">Upload platform sales reports to see which parts need reordering. Build and export purchase orders by vendor.</div>
+        <div style="display:inline-block;margin-top:10px;font-size:10px;font-family:var(--mono);padding:3px 8px;border-radius:4px;background:var(--accent-bg);color:var(--accent);font-weight:600;letter-spacing:1px">Purchase Orders · Management</div>
+      </div>
+      <div class="launcher-card" onclick="launchMgmtApp('dashboard')" style="border-color:var(--orange-bg)">
+        <div class="launcher-card-icon">📊</div>
+        <div class="launcher-card-title">Sales Dashboard</div>
+        <div class="launcher-card-desc">Sales KPIs, leaderboards and AI-powered insights across Amazon, eBay, and XFitting.</div>
+        <div style="display:inline-block;margin-top:10px;font-size:10px;font-family:var(--mono);padding:3px 8px;border-radius:4px;background:var(--orange-bg);color:var(--orange);font-weight:600;letter-spacing:1px">All Platforms · Management</div>
+      </div>
+      <div class="launcher-card" onclick="launchMgmtApp('receivepo')" style="border-color:var(--green-bg)">
+        <div class="launcher-card-icon">🚚</div>
+        <div class="launcher-card-title">Receive PO</div>
+        <div class="launcher-card-desc">Upload a pallet manifest to receive a purchase order. Matches parts to Master List, sets pallet locations, and updates cases, pricing, and vendor automatically.</div>
+        <div style="display:inline-block;margin-top:10px;font-size:10px;font-family:var(--mono);padding:3px 8px;border-radius:4px;background:var(--green-bg);color:var(--green);font-weight:600;letter-spacing:1px">Receiving · Management</div>
+      </div>
+      <div class="launcher-card" onclick="launchMgmtApp('msginbox')" style="border-color:#ede9fe" id="msg-inbox-launcher-card">
+        <div class="launcher-card-icon">📥</div>
+        <div class="launcher-card-title">Message Inbox <span id="msg-inbox-badge" style="display:none;background:var(--red);color:#fff;font-size:10px;font-family:var(--mono);font-weight:700;padding:2px 6px;border-radius:10px;margin-left:6px;vertical-align:middle"></span></div>
+        <div class="launcher-card-desc">View and reply to messages from warehouse staff. Manage requests for resources, materials and alerts.</div>
+        <div style="display:inline-block;margin-top:10px;font-size:10px;font-family:var(--mono);padding:3px 8px;border-radius:4px;background:#ede9fe;color:var(--purple);font-weight:600;letter-spacing:1px">Inbox · Management</div>
+      </div>
+      <div class="launcher-card" onclick="launchMgmtApp('ebaymsgs')" style="border-color:#e8f5e9" id="ebaymsgs-launcher-card">
+        <div class="launcher-card-icon">🤖</div>
+        <div class="launcher-card-title">AI Customer Support <span id="ebaymsgs-badge" style="display:none;background:var(--accent);color:#fff;font-size:10px;font-family:var(--mono);font-weight:700;padding:2px 6px;border-radius:10px;margin-left:6px;vertical-align:middle"></span></div>
+        <div class="launcher-card-desc">AI replies for eBay, Amazon, Walmart, Shopify &amp; Email. Review queue, CS tool, analytics.</div>
+        <div style="display:inline-block;margin-top:10px;font-size:10px;font-family:var(--mono);padding:3px 8px;border-radius:4px;background:#e8f5e9;color:#2e7d32;font-weight:600;letter-spacing:1px">All Platforms · AI · Management</div>
+      </div>
+      <div class="launcher-card" onclick="launchMgmtApp('ldash')" style="border-color:#fdf0ff">
+        <div class="launcher-card-icon">🏢</div>
+        <div class="launcher-card-title">Leadership Dashboard</div>
+        <div class="launcher-card-desc">Live operations overview — action queue, shipping status, reorder urgency, sales snapshot and inventory health.</div>
+        <div style="display:inline-block;margin-top:10px;font-size:10px;font-family:var(--mono);padding:3px 8px;border-radius:4px;background:#fdf0ff;color:#7c3aed;font-weight:600;letter-spacing:1px">Operations · Leadership</div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- ═══ LEADERSHIP DASHBOARD APP ═══ -->
+<div id="ldash-app" style="display:none;flex-direction:column;min-height:100vh;background:var(--bg);">
+
+  <!-- Topbar -->
+  <div class="topbar">
+    <div class="topbar-left">
+      <div class="tb-logo">XFITTING</div>
+      <div class="tb-name">Leadership Dashboard</div>
+      <div style="font-size:10px;background:#7c3aed;color:#fff;padding:2px 7px;border-radius:20px;font-weight:600;opacity:.85">Live</div>
+      <div class="tb-divider"></div>
+      <div class="tb-sub" id="ldash-last-updated">Loading…</div>
+    </div>
+    <div class="topbar-right">
+      <button class="back-btn" id="ldash-refresh-btn" onclick="ldashRefresh()" style="margin-right:8px">↻ Refresh</button>
+      <button class="back-btn" onclick="backToLauncher()">← Apps</button>
+    </div>
+  </div>
+
+  <div style="max-width:1200px;margin:0 auto;padding:20px 16px;width:100%;box-sizing:border-box;">
+
+    <!-- Zone 1: Action Queue -->
+    <div style="margin-bottom:24px;">
+      <div style="font-size:11px;font-weight:700;letter-spacing:2px;text-transform:uppercase;color:var(--text3);margin-bottom:12px;">⚡ Action Queue — Needs Attention</div>
+      <div id="ldash-action-queue" style="display:grid;grid-template-columns:repeat(auto-fill,minmax(180px,1fr));gap:12px;"></div>
+    </div>
+
+    <!-- Zone 2 + 3: Shipping + Sales -->
+    <div style="display:grid;grid-template-columns:1fr 1.4fr;gap:16px;margin-bottom:16px;" id="ldash-mid-row">
+
+      <!-- Zone 2: Shipping Today -->
+      <div style="background:var(--bg2);border:1.5px solid var(--border);border-radius:14px;padding:18px 20px;">
+        <div style="font-size:13px;font-weight:700;color:var(--text);margin-bottom:14px;">📦 Shipping Today</div>
+        <div id="ldash-ship-content"><div style="color:var(--text3);font-size:12px;">Loading…</div></div>
+      </div>
+
+      <!-- Zone 3: Sales Snapshot -->
+      <div style="background:var(--bg2);border:1.5px solid var(--border);border-radius:14px;padding:18px 20px;">
+        <div style="font-size:13px;font-weight:700;color:var(--text);margin-bottom:14px;">💰 Sales Snapshot — Last 30 Days</div>
+        <div id="ldash-sales-content"><div style="color:var(--text3);font-size:12px;">Loading…</div></div>
+      </div>
+    </div>
+
+    <!-- Zone 4: Inventory Health -->
+    <div style="background:var(--bg2);border:1.5px solid var(--border);border-radius:14px;overflow:hidden;">
+      <div style="display:flex;align-items:center;justify-content:space-between;padding:18px 20px 14px;flex-wrap:wrap;gap:10px;position:sticky;top:56px;z-index:100;background:var(--bg2);border-bottom:1px solid var(--border);">
+        <div style="font-size:13px;font-weight:700;color:var(--text);">📋 Inventory Health</div>
+        <div style="display:flex;gap:6px;flex-wrap:wrap;">
+          <button id="ldash-ih-btn-critical" class="ldash-tab-btn active" onclick="ldashIHTab('critical')">🔴 Critical Stock</button>
+          <button id="ldash-ih-btn-discrepancy" class="ldash-tab-btn" onclick="ldashIHTab('discrepancy')">⚠️ Discrepancies</button>
+          <button id="ldash-ih-btn-pending" class="ldash-tab-btn" onclick="ldashIHTab('pending')">🕐 Pending Reviews</button>
+        </div>
+      </div>
+      <div id="ldash-ih-content" style="padding:14px 20px;"><div style="color:var(--text3);font-size:12px;">Loading…</div></div>
+    </div>
+
+  </div>
+</div>
+
+<style>
+#ldash-app .ldash-action-card {
+  background:var(--bg2);border:1.5px solid var(--border);border-radius:12px;
+  padding:16px;cursor:pointer;transition:all .15s;
+}
+#ldash-app .ldash-action-card:hover { transform:translateY(-2px);box-shadow:var(--shadow2); }
+#ldash-app .ldash-action-card.red   { border-color:#fca5a5;background:#fff5f5; }
+#ldash-app .ldash-action-card.orange{ border-color:#fed7aa;background:#fffbf5; }
+#ldash-app .ldash-action-card.green { border-color:#bbf7d0;background:#f0fdf4; }
+#ldash-app .ldash-ac-num  { font-size:32px;font-weight:700;font-family:var(--mono);line-height:1;margin-bottom:6px; }
+#ldash-app .ldash-ac-label{ font-size:12px;font-weight:600;color:var(--text);margin-bottom:3px; }
+#ldash-app .ldash-ac-sub  { font-size:10px;color:var(--text3); }
+#ldash-app .ldash-stat-row { display:flex;gap:16px;margin-bottom:12px;flex-wrap:wrap; }
+#ldash-app .ldash-stat     { flex:1;min-width:70px;text-align:center;background:var(--bg3);border-radius:8px;padding:10px 8px; }
+#ldash-app .ldash-stat-val { font-size:22px;font-weight:700;font-family:var(--mono);color:var(--text); }
+#ldash-app .ldash-stat-lbl { font-size:10px;color:var(--text3);margin-top:2px; }
+#ldash-app .ldash-progress { background:var(--bg3);border-radius:100px;height:8px;margin:6px 0 12px;overflow:hidden; }
+#ldash-app .ldash-progress-fill { height:100%;border-radius:100px;background:var(--accent);transition:width .4s; }
+#ldash-app .ldash-table { width:100%;border-collapse:collapse;font-size:12px; }
+#ldash-app .ldash-table th { text-align:left;padding:7px 10px;background:var(--bg3);color:var(--text3);font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.5px; }
+#ldash-app .ldash-table td { padding:8px 10px;border-bottom:1px solid var(--border);color:var(--text); }
+#ldash-app .ldash-table tr:last-child td { border-bottom:none; }
+#ldash-app .ldash-table tr:hover td { background:var(--bg3); }
+#ldash-app .ldash-badge { display:inline-block;padding:2px 7px;border-radius:100px;font-size:10px;font-weight:700;font-family:var(--mono); }
+#ldash-app .ldash-badge.red    { background:var(--red-bg);color:var(--red); }
+#ldash-app .ldash-badge.orange { background:var(--orange-bg);color:var(--orange); }
+#ldash-app .ldash-badge.green  { background:var(--green-bg);color:var(--green); }
+#ldash-app .ldash-badge.blue   { background:var(--accent-bg);color:var(--accent); }
+#ldash-app .ldash-tab-btn {
+  font-size:11px;font-family:var(--mono);font-weight:600;padding:5px 12px;
+  border-radius:7px;border:1.5px solid var(--border2);background:var(--bg3);
+  color:var(--text3);cursor:pointer;transition:all .15s;
+}
+#ldash-app .ldash-tab-btn:hover { border-color:var(--accent);color:var(--accent); }
+#ldash-app .ldash-tab-btn.active { border-color:var(--accent);color:var(--accent);background:var(--accent-bg); }
+#ldash-app .ldash-packer-row { display:flex;align-items:center;gap:10px;padding:6px 0;border-bottom:1px solid var(--border); }
+#ldash-app .ldash-packer-row:last-child { border-bottom:none; }
+@media(max-width:700px){
+  #ldash-mid-row { grid-template-columns:1fr !important; }
+}
+</style>
+
+<script>
+(function() {
+  'use strict';
+
+  var LD_WORKER = 'https://xfitting-lookup.alfixedinc88.workers.dev';
+  var ldIHTab = 'critical';
+  var ldData = {
+    pendingInv: [], scans: [], manifest: [], alerts: [],
+    messages: [], roRows: [], salesData: null
+  };
+
+  // ── UTC today key (matches worker) ──────────────────────────────────────
+  function ldTodayKey() {
+    var d = new Date();
+    return d.getUTCFullYear() + '-'
+      + String(d.getUTCMonth()+1).padStart(2,'0') + '-'
+      + String(d.getUTCDate()).padStart(2,'0');
+  }
+
+  // ── Launch ───────────────────────────────────────────────────────────────
+  window.ldashOnLaunch = function() {
+    ldashRefresh();
+  };
+
+  window.ldashRefresh = async function() {
+    var btn = document.getElementById('ldash-refresh-btn');
+    if (btn) { btn.disabled = true; btn.textContent = '↻ Loading…'; }
+    document.getElementById('ldash-last-updated').textContent = 'Loading…';
+
+    try {
+      await Promise.all([
+        ldFetchInventoryPending(),
+        ldFetchScans(),
+        ldFetchManifest(),
+        ldFetchAlerts(),
+        ldFetchMessages(),
+      ]);
+      // Sales + reorder from CALC (already loaded if Reorder/Sales was opened)
+      ldLoadSalesFromCalc();
+    } catch(e) {
+      console.error('[LDASH] refresh error:', e);
+    }
+
+    ldRenderAll();
+    var now = new Date().toLocaleTimeString('en-US', {timeZone:'America/New_York',hour:'2-digit',minute:'2-digit',hour12:true});
+    document.getElementById('ldash-last-updated').textContent = 'Updated ' + now + ' EST';
+    if (btn) { btn.disabled = false; btn.textContent = '↻ Refresh'; }
+  };
+
+  // ── Data fetchers ────────────────────────────────────────────────────────
+  async function ldFetchInventoryPending() {
+    try {
+      var r = await fetch(LD_WORKER + '/inventory/pending', {
+        headers: {'X-Session-Token': XF_SESSION || ''}
+      });
+      var d = await r.json();
+      ldData.pendingInv = d.items || [];
+    } catch(e) { ldData.pendingInv = []; }
+  }
+
+  async function ldFetchScans() {
+    try {
+      var r = await fetch(LD_WORKER + '/ship/scans?date=' + ldTodayKey(), {
+        headers: {'X-Session-Token': XF_SESSION || ''}
+      });
+      var d = await r.json();
+      ldData.scans = d.scans || [];
+    } catch(e) { ldData.scans = []; }
+  }
+
+  async function ldFetchManifest() {
+    try {
+      var r = await fetch(LD_WORKER + '/ship/manifest?date=' + ldTodayKey(), {
+        headers: {'X-Session-Token': XF_SESSION || ''}
+      });
+      var d = await r.json();
+      ldData.manifest = d.manifest || [];
+    } catch(e) { ldData.manifest = []; }
+  }
+
+  async function ldFetchAlerts() {
+    try {
+      var r = await fetch(LD_WORKER + '/veeqo/alerts', {
+        headers: {'X-Session-Token': XF_SESSION || ''}
+      });
+      var d = await r.json();
+      ldData.alerts = d.alerts || [];
+    } catch(e) { ldData.alerts = []; }
+  }
+
+  async function ldFetchMessages() {
+    try {
+      var r = await fetch(LD_WORKER + '/msg/list?all=1&limit=200', {
+        headers: {'X-Session-Token': XF_SESSION || ''}
+      });
+      var d = await r.json();
+      ldData.messages = (d.messages || []).filter(function(m) { return m.status === 'open'; });
+    } catch(e) { ldData.messages = []; }
+  }
+
+  function ldLoadSalesFromCalc() {
+    // Pull from CALC if Reorder/Sales data has been loaded this session
+    if (CALC && CALC.partSales && CALC.partSales.length > 0) {
+      ldData.salesData = CALC.partSales;
+      ldData.roRows    = (RO.jq || []).concat(RO.eff || []);
+    } else {
+      ldData.salesData = null;
+      ldData.roRows    = [];
+    }
+  }
+
+  // ── Master render ────────────────────────────────────────────────────────
+  function ldRenderAll() {
+    ldRenderActionQueue();
+    ldRenderShipping();
+    ldRenderSales();
+    ldRenderIH();
+  }
+
+  // ── Zone 1: Action Queue ─────────────────────────────────────────────────
+  function ldRenderActionQueue() {
+    var pending   = ldData.pendingInv.length;
+    var exceptions = ldData.alerts.filter(function(a) { return a.alertLevel === 'EXCEPTION'; }).length;
+    var returned   = ldData.alerts.filter(function(a) { return a.alertLevel === 'RETURNED'; }).length;
+    var neverScan  = ldData.alerts.filter(function(a) { return a.alertLevel === 'NEVER_SCANNED_2D'; }).length;
+    var stuck      = ldData.alerts.filter(function(a) { return a.alertLevel === 'STUCK_10D'; }).length;
+    var messages   = ldData.messages.length;
+    var scanned    = ldData.scans.length;
+    var manifest   = ldData.manifest.length;
+    var gap        = Math.max(0, manifest - scanned);
+
+    // Critical stock from RO rows
+    var critStock  = ldData.roRows.filter(function(r) { return r.urgency === 'critical'; }).length;
+    var watchStock = ldData.roRows.filter(function(r) { return r.urgency === 'watch'; }).length;
+
+    var cards = [
+      {
+        num: pending, label: 'Pending Reviews', sub: 'Inventory approvals waiting',
+        color: pending > 0 ? 'red' : 'green',
+        onclick: "backToLauncher();launchApp('inventory');"
+      },
+      {
+        num: exceptions + returned, label: 'Shipping Issues', sub: exceptions + ' exceptions · ' + returned + ' returned',
+        color: (exceptions + returned) > 0 ? 'red' : 'green',
+        onclick: "backToLauncher();launchApp('packship');"
+      },
+      {
+        num: neverScan, label: 'Never Scanned 2d+', sub: 'Labels with no carrier scan',
+        color: neverScan > 0 ? 'orange' : 'green',
+        onclick: "backToLauncher();launchApp('packship');"
+      },
+      {
+        num: stuck, label: 'Not Delivered 10d+', sub: 'Packages overdue',
+        color: stuck > 0 ? 'orange' : 'green',
+        onclick: "backToLauncher();launchApp('packship');"
+      },
+      {
+        num: critStock, label: 'Critical Stock', sub: watchStock + ' more on watch',
+        color: critStock > 0 ? 'red' : (watchStock > 0 ? 'orange' : 'green'),
+        onclick: ldData.roRows.length > 0 ? "backToLauncher();launchMgmtApp('reorder');" : null
+      },
+      {
+        num: gap, label: 'Gap Report', sub: scanned + ' scanned · ' + manifest + ' in manifest',
+        color: gap > 0 ? 'orange' : 'green',
+        onclick: "backToLauncher();launchApp('packship');"
+      },
+      {
+        num: messages, label: 'Open Messages', sub: 'From warehouse floor',
+        color: messages > 0 ? 'orange' : 'green',
+        onclick: "backToLauncher();launchMgmtApp('msginbox');"
+      },
+    ];
+
+    var html = '';
+    cards.forEach(function(c) {
+      var numColor = c.color === 'red' ? 'color:var(--red)' : c.color === 'orange' ? 'color:var(--orange)' : 'color:var(--green)';
+      var clickAttr = c.onclick ? ' onclick="' + c.onclick + '"' : '';
+      var cursor = c.onclick ? 'cursor:pointer' : '';
+      html += '<div class="ldash-action-card ' + c.color + '" ' + clickAttr + ' style="' + cursor + '">'
+        + '<div class="ldash-ac-num" style="' + numColor + '">' + c.num + '</div>'
+        + '<div class="ldash-ac-label">' + c.label + '</div>'
+        + '<div class="ldash-ac-sub">' + c.sub + '</div>'
+        + '</div>';
+    });
+    document.getElementById('ldash-action-queue').innerHTML = html;
+  }
+
+  // ── Zone 2: Shipping Today ────────────────────────────────────────────────
+  function ldRenderShipping() {
+    var scans    = ldData.scans;
+    var manifest = ldData.manifest;
+    var total    = scans.length;
+    var ups      = scans.filter(function(s) { return (s.carrier||'').toUpperCase() === 'UPS'; }).length;
+    var usps     = scans.filter(function(s) { return (s.carrier||'').toUpperCase() === 'USPS'; }).length;
+    var other    = total - ups - usps;
+
+    // Packer breakdown
+    var packerMap = {};
+    scans.forEach(function(s) {
+      var init = (s.initials || '?').toUpperCase();
+      packerMap[init] = (packerMap[init] || 0) + 1;
+    });
+    var packers = Object.entries(packerMap).sort(function(a,b){ return b[1]-a[1]; });
+
+    // Progress vs manifest
+    var pct = manifest.length > 0 ? Math.min(100, Math.round(total / manifest.length * 100)) : 0;
+
+    // Last scan time
+    var lastScan = '';
+    if (scans.length > 0) {
+      var sorted = scans.slice().sort(function(a,b){ return (b.timestamp||'').localeCompare(a.timestamp||''); });
+      if (sorted[0].timestamp) {
+        lastScan = new Date(sorted[0].timestamp).toLocaleTimeString('en-US',{timeZone:'America/New_York',hour:'2-digit',minute:'2-digit',hour12:true});
+      }
+    }
+
+    var html = '<div class="ldash-stat-row">'
+      + '<div class="ldash-stat"><div class="ldash-stat-val">' + total + '</div><div class="ldash-stat-lbl">Scanned</div></div>'
+      + '<div class="ldash-stat"><div class="ldash-stat-val" style="color:var(--orange)">' + ups + '</div><div class="ldash-stat-lbl">UPS</div></div>'
+      + '<div class="ldash-stat"><div class="ldash-stat-val" style="color:var(--purple)">' + usps + '</div><div class="ldash-stat-lbl">USPS</div></div>'
+      + '<div class="ldash-stat"><div class="ldash-stat-val">' + manifest.length + '</div><div class="ldash-stat-lbl">Manifest</div></div>'
+      + '</div>';
+
+    if (manifest.length > 0) {
+      html += '<div style="font-size:11px;color:var(--text3);margin-bottom:4px">'
+        + pct + '% complete vs manifest</div>'
+        + '<div class="ldash-progress"><div class="ldash-progress-fill" style="width:' + pct + '%"></div></div>';
+    }
+
+    if (lastScan) {
+      html += '<div style="font-size:11px;color:var(--text3);margin-bottom:10px">Last scan: ' + lastScan + ' EST</div>';
+    }
+
+    if (packers.length > 0) {
+      html += '<div style="font-size:11px;font-weight:700;color:var(--text2);margin-bottom:6px">Packers Today</div>';
+      packers.forEach(function(p) {
+        html += '<div class="ldash-packer-row">'
+          + '<div style="font-family:var(--mono);font-size:13px;font-weight:700;color:var(--accent);min-width:36px">' + p[0] + '</div>'
+          + '<div style="flex:1;background:var(--bg3);border-radius:4px;height:6px;overflow:hidden">'
+          + '<div style="height:100%;background:var(--accent);width:' + Math.round(p[1]/total*100) + '%"></div></div>'
+          + '<div style="font-family:var(--mono);font-size:12px;color:var(--text);min-width:28px;text-align:right">' + p[1] + '</div>'
+          + '</div>';
+      });
+    } else {
+      html += '<div style="color:var(--text3);font-size:12px;padding:8px 0">No scans yet today</div>';
+    }
+
+    document.getElementById('ldash-ship-content').innerHTML = html;
+  }
+
+  // ── Zone 3: Sales Snapshot ────────────────────────────────────────────────
+  function ldRenderSales() {
+    var sd = ldData.salesData;
+    if (!sd || sd.length === 0) {
+      document.getElementById('ldash-sales-content').innerHTML =
+        '<div style="color:var(--text3);font-size:12px;padding:8px 0">No sales data — open Reorder Planner or Sales Dashboard and run ⚡ Recompute first.</div>';
+      return;
+    }
+
+    function n(v) { return parseFloat((v||'').toString().replace(/[$,]/g,'')) || 0; }
+
+    var totals = { amzU:0, ebayU:0, xfU:0, amzS:0, ebayS:0, xfS:0 };
+    sd.forEach(function(r) {
+      totals.amzU  += n(r['AMZ 30 units sold']  || r['amzU30'] || 0);
+      totals.ebayU += n(r['eBay 30 units sold']  || r['ebayU30'] || 0);
+      totals.xfU   += n(r['XF 30 units sold']    || r['xfU30'] || 0);
+      totals.amzS  += n(r['AMZ 30 sales']  || r['amzS30'] || 0);
+      totals.ebayS += n(r['eBay 30 sales']  || r['ebayS30'] || 0);
+      totals.xfS   += n(r['XF 30 sales']    || r['xfS30'] || 0);
+    });
+
+    var totalRev = totals.amzS + totals.ebayS + totals.xfS;
+    var totalUnits = totals.amzU + totals.ebayU + totals.xfU;
+
+    function fmt(n) { return n >= 1000 ? '$' + (n/1000).toFixed(1) + 'k' : '$' + Math.round(n); }
+    function bar(val, total, color) {
+      var pct = total > 0 ? Math.round(val/total*100) : 0;
+      return '<div style="display:flex;align-items:center;gap:8px;margin-bottom:6px">'
+        + '<div style="width:60px;font-size:11px;color:var(--text3)">' + pct + '%</div>'
+        + '<div style="flex:1;background:var(--bg3);border-radius:4px;height:8px;overflow:hidden">'
+        + '<div style="height:100%;border-radius:4px;background:' + color + ';width:' + pct + '%"></div></div>'
+        + '<div style="width:44px;font-size:11px;font-family:var(--mono);text-align:right;color:var(--text)">' + fmt(val) + '</div>'
+        + '</div>';
+    }
+
+    var html = '<div class="ldash-stat-row">'
+      + '<div class="ldash-stat"><div class="ldash-stat-val">' + fmt(totalRev) + '</div><div class="ldash-stat-lbl">Total Revenue</div></div>'
+      + '<div class="ldash-stat"><div class="ldash-stat-val">' + totalUnits.toLocaleString() + '</div><div class="ldash-stat-lbl">Units Sold</div></div>'
+      + '</div>';
+
+    html += '<div style="font-size:11px;font-weight:700;color:var(--text2);margin-bottom:8px">Revenue by Platform</div>';
+    html += '<div style="font-size:10px;color:var(--text3);margin-bottom:4px">Amazon</div>' + bar(totals.amzS, totalRev, '#FF9900');
+    html += '<div style="font-size:10px;color:var(--text3);margin-bottom:4px">eBay</div>'    + bar(totals.ebayS, totalRev, '#e53238');
+    html += '<div style="font-size:10px;color:var(--text3);margin-bottom:4px">Shopify</div>'+ bar(totals.xfS, totalRev, '#96bf48');
+
+    // Top 5 SKUs by units
+    var top5 = sd.slice().sort(function(a,b){
+      return (n(b['eBay 30 units sold']||0)+n(b['AMZ 30 units sold']||0)+n(b['XF 30 units sold']||0))
+           - (n(a['eBay 30 units sold']||0)+n(a['AMZ 30 units sold']||0)+n(a['XF 30 units sold']||0));
+    }).slice(0,5);
+
+    html += '<div style="font-size:11px;font-weight:700;color:var(--text2);margin:12px 0 6px">Top 5 Parts by Units</div>';
+    html += '<table class="ldash-table"><thead><tr><th>Part#</th><th>AMZ</th><th>eBay</th><th>XF</th></tr></thead><tbody>';
+    top5.forEach(function(r) {
+      html += '<tr><td style="font-family:var(--mono);font-size:11px">' + (r['Part#']||r.pn||'') + '</td>'
+        + '<td style="font-family:var(--mono)">' + Math.round(n(r['AMZ 30 units sold']||0)) + '</td>'
+        + '<td style="font-family:var(--mono)">' + Math.round(n(r['eBay 30 units sold']||0)) + '</td>'
+        + '<td style="font-family:var(--mono)">' + Math.round(n(r['XF 30 units sold']||0)) + '</td>'
+        + '</tr>';
+    });
+    html += '</tbody></table>';
+
+    document.getElementById('ldash-sales-content').innerHTML = html;
+  }
+
+  // ── Zone 4: Inventory Health ──────────────────────────────────────────────
+  window.ldashIHTab = function(tab) {
+    ldIHTab = tab;
+    ['critical','discrepancy','pending'].forEach(function(t) {
+      var btn = document.getElementById('ldash-ih-btn-' + t);
+      if (btn) btn.className = 'ldash-tab-btn' + (t === tab ? ' active' : '');
+    });
+    ldRenderIH();
+  };
+
+  function ldRenderIH() {
+    var el = document.getElementById('ldash-ih-content');
+
+    if (ldIHTab === 'critical') {
+      var rows = ldData.roRows.filter(function(r) { return r.urgency === 'critical' || r.urgency === 'watch'; });
+      if (rows.length === 0) {
+        el.innerHTML = '<div style="color:var(--green);font-size:13px;padding:8px 0">✓ No critical or watch items' + (ldData.roRows.length === 0 ? ' — load Reorder Planner data first' : '') + '</div>';
+        return;
+      }
+      var html = '<table class="ldash-table"><thead><tr><th>Part#</th><th>Name</th><th>WH Units</th><th>Daily Vel</th><th>Days Left</th><th>Status</th></tr></thead><tbody>';
+      rows.slice(0,20).forEach(function(r) {
+        var dohStr = r.doh !== null ? Math.round(r.doh) + 'd' : '—';
+        var badge  = r.urgency === 'critical'
+          ? '<span class="ldash-badge red">CRITICAL</span>'
+          : '<span class="ldash-badge orange">WATCH</span>';
+        html += '<tr><td style="font-family:var(--mono);font-size:11px">' + (r.pn||'') + '</td>'
+          + '<td style="max-width:160px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:11px">' + (r.itemName||'') + '</td>'
+          + '<td style="font-family:var(--mono)">' + (r.whUnitsTotal !== null ? Math.round(r.whUnitsTotal) : '—') + '</td>'
+          + '<td style="font-family:var(--mono)">' + (r.daily > 0 ? r.daily.toFixed(1) : '—') + '</td>'
+          + '<td style="font-family:var(--mono);font-weight:700">' + dohStr + '</td>'
+          + '<td>' + badge + '</td></tr>';
+      });
+      html += '</tbody></table>';
+      if (rows.length > 20) html += '<div style="font-size:11px;color:var(--text3);padding:8px 0">Showing 20 of ' + rows.length + ' — open Reorder Planner for full list</div>';
+      el.innerHTML = html;
+
+    } else if (ldIHTab === 'discrepancy') {
+      // Find negative cases from DB.master
+      var negRows = (DB.master || []).filter(function(r) { return r.casesNum !== null && r.casesNum < 0; });
+      if (negRows.length === 0) {
+        el.innerHTML = '<div style="color:var(--green);font-size:13px;padding:8px 0">✓ No discrepancies found in Master List</div>';
+        return;
+      }
+      var html = '<table class="ldash-table"><thead><tr><th>Part#</th><th>Location</th><th>Cases</th><th>SKU</th></tr></thead><tbody>';
+      negRows.forEach(function(r) {
+        html += '<tr><td style="font-family:var(--mono);font-size:11px">' + (r.partNum||'') + '</td>'
+          + '<td style="font-family:var(--mono);font-size:11px">' + (r.location||'') + '</td>'
+          + '<td style="font-family:var(--mono);color:var(--red);font-weight:700">' + r.casesNum + '</td>'
+          + '<td style="font-family:var(--mono);font-size:11px;color:var(--text3)">' + (r.sku||'') + '</td>'
+          + '</tr>';
+      });
+      html += '</tbody></table>';
+      el.innerHTML = html;
+
+    } else if (ldIHTab === 'pending') {
+      var pending = ldData.pendingInv;
+      if (pending.length === 0) {
+        el.innerHTML = '<div style="color:var(--green);font-size:13px;padding:8px 0">✓ No pending inventory reviews</div>';
+        return;
+      }
+      var html = '<table class="ldash-table"><thead><tr><th>Type</th><th>Part#</th><th>Location</th><th>Cases</th><th>By</th><th>When</th></tr></thead><tbody>';
+      pending.slice(0,30).forEach(function(r) {
+        var type = (r.type||'').replace('TRANSFER_','XFR ');
+        var when = r.timestamp ? new Date(r.timestamp).toLocaleString('en-US',{timeZone:'America/New_York',month:'short',day:'numeric',hour:'2-digit',minute:'2-digit',hour12:true}) : '';
+        var typeBadge = type.includes('IN') ? '<span class="ldash-badge green">' + type + '</span>'
+          : type.includes('OUT') ? '<span class="ldash-badge orange">' + type + '</span>'
+          : '<span class="ldash-badge blue">' + type + '</span>';
+        html += '<tr><td>' + typeBadge + '</td>'
+          + '<td style="font-family:var(--mono);font-size:11px">' + (r.partNum||'') + '</td>'
+          + '<td style="font-family:var(--mono);font-size:11px">' + (r.location||'') + '</td>'
+          + '<td style="font-family:var(--mono);font-weight:700">' + (r.cases||'') + '</td>'
+          + '<td style="font-family:var(--mono);font-size:11px">' + (r.initials||'') + '</td>'
+          + '<td style="font-size:10px;color:var(--text3)">' + when + '</td>'
+          + '</tr>';
+      });
+      html += '</tbody></table>';
+      if (pending.length > 30) html += '<div style="font-size:11px;color:var(--text3);padding:8px 0">Showing 30 of ' + pending.length + '</div>';
+      el.innerHTML = html;
+    }
+  }
+
+})();
+</script>
+
+<!-- ═══ WAREHOUSE LOOKUP APP ═══ -->
+<div id="wh-app" style="display:none;">
 
   <div class="topbar">
     <div class="topbar-left">
@@ -2169,12 +2990,12 @@ setInterval(function() {
 }, 20 * 60 * 1000); // 20 minutes
 // ─────────────────────────────────────────────────────────────────────────────
 
-function showLoading(on) { document.getElementById('loading-bar').style.display = on ? 'block' : 'none'; }
+function showLoading(on) { var lb=document.getElementById('loading-bar'); if(lb) lb.style.display = on ? 'block' : 'none'; }
 
 function setSyncLabel(text, syncing) {
   var pill = document.getElementById('sync-pill');
   var dot  = syncing ? 'background:var(--orange)' : '';
-  pill.innerHTML = '<div class="dot" style="' + dot + '"></div><span class="fname">' + text + '</span>';
+  if(pill) pill.innerHTML = '<div class="dot" style="' + dot + '"></div><span class="fname">' + text + '</span>';
 }
 
 function showToast(msg) {
