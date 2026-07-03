@@ -114,7 +114,112 @@ body {
   color: var(--text);
 }
 
-  </style>
+  
+/* UPC layout styles */
+.topbar {
+  background: var(--bg2);
+  border-bottom: 1px solid var(--border);
+  height: 56px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0 24px;
+  position: sticky;
+  top: 0;
+  z-index: 200;
+  box-shadow: 0 1px 0 var(--border);
+}
+.topbar-left {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+.tb-logo {
+  background: var(--accent);
+  color: #fff;
+  font-family: var(--mono);
+  font-size: 12px;
+  font-weight: 500;
+  padding: 5px 10px;
+  border-radius: 6px;
+  letter-spacing: 0.5px;
+}
+.tb-name {
+  font-size: 15px;
+  font-weight: 700;
+  color: var(--text);
+  letter-spacing: -0.2px;
+}
+.tb-divider {
+  width: 1px;
+  height: 20px;
+  background: var(--border2);
+}
+.tb-sub {
+  font-size: 13px;
+  color: var(--text3);
+}
+.topbar-right {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+.file-pill {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  background: var(--bg3);
+  border: 1px solid var(--border);
+  border-radius: 100px;
+  padding: 5px 12px;
+  font-size: 12px;
+  color: var(--text2);
+  max-width: 220px;
+}
+.file-pill .dot {
+  width: 7px; height: 7px;
+  border-radius: 50%;
+  background: var(--green);
+  flex-shrink: 0;
+  animation: pulse 2.5s ease-in-out infinite;
+}
+.file-pill .fname {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-family: var(--mono);
+  font-size: 11px;
+  color: var(--text);
+}
+.btn-new {
+  background: none;
+  border: 1px solid var(--border2);
+  color: var(--text2);
+  font-size: 12px;
+  font-weight: 600;
+  padding: 6px 14px;
+  border-radius: 8px;
+  cursor: pointer;
+  transition: all 0.15s;
+  white-space: nowrap;
+  font-family: var(--sans);
+}
+.btn-new:hover { border-color: var(--accent); color: var(--accent); background: var(--accent-bg); }
+.tb-sub, .tb-divider { display: none; }
+.btn-disconnect {
+  background:none;border:1px solid var(--border2);color:var(--text3);
+  font-size:11px;padding:5px 12px;border-radius:8px;cursor:pointer;
+  transition:all .15s;font-family:var(--sans);
+}
+.btn-disconnect:hover { border-color:var(--red);color:var(--red);background:var(--red-bg); }
+.back-btn {
+  background:none;border:1px solid var(--border2,#E5E7EB);color:var(--text3,#6B7280);
+  font-size:12px;padding:5px 12px;border-radius:8px;cursor:pointer;
+  font-family:'DM Sans',sans-serif;display:flex;align-items:center;gap:5px;
+  transition:all .15s;
+}
+.back-btn:hover { color:var(--accent,#2563EB);border-color:var(--accent,#2563EB); }
+</style>
 </head>
 <body>
 <div id="upc-app">
@@ -4023,6 +4128,9 @@ async function wFetch(url, opts) {
   return r;
 }
 
+
+// ── AWD State (shared with UPC for shipment checking) ───────────────────
+const S = { fba:[], live:[], awd:[], res:[], joined:[], cpackMap:{}, cpackDate:null, cpackCount:0, shipment:{}, loaded:false };
 
 // ── UPC Barcodes App ─────────────────────────────────────────────────────
 // UPC BARCODE APP FUNCTIONS
