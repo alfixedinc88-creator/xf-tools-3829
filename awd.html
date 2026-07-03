@@ -1297,7 +1297,9 @@ if (XF_SESSION) {
   document.addEventListener('DOMContentLoaded', function() {
     var ps = document.getElementById('pin-screen');
     if (ps) { ps.style.display = 'none'; ps.style.visibility = 'hidden'; }
-    document.getElementById('launcher').style.display = 'flex';
+    // Standalone AWD — show awd-app directly
+    var awdAppEl = document.getElementById('awd-app');
+    if (awdAppEl) awdAppEl.style.display = 'flex';
     // Only pre-load mgmt tabs if role was mgmt — avoids 401 noise on OPS session restore
     if (typeof silentLoadSaved === 'function' && XF_ROLE === 'mgmt') silentLoadSaved();
   });
@@ -6380,7 +6382,7 @@ function salesToast(msg, type) {
 </body>
 <script>
 // ── Constants ────────────────────────────────────────────────────────────
-const WORKER_URL = 'https://xfitting-lookup.alfixedinc88.workers.dev';
+// WORKER_URL defined above
 const W = WORKER_URL;
 var XF_SESSION = sessionStorage.getItem('xf_session') || null;
 var XF_ROLE    = sessionStorage.getItem('xf_role')    || null;
