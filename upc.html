@@ -114,7 +114,112 @@ body {
   color: var(--text);
 }
 
-  </style>
+  
+/* UPC layout styles */
+.topbar {
+  background: var(--bg2);
+  border-bottom: 1px solid var(--border);
+  height: 56px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0 24px;
+  position: sticky;
+  top: 0;
+  z-index: 200;
+  box-shadow: 0 1px 0 var(--border);
+}
+.topbar-left {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+.tb-logo {
+  background: var(--accent);
+  color: #fff;
+  font-family: var(--mono);
+  font-size: 12px;
+  font-weight: 500;
+  padding: 5px 10px;
+  border-radius: 6px;
+  letter-spacing: 0.5px;
+}
+.tb-name {
+  font-size: 15px;
+  font-weight: 700;
+  color: var(--text);
+  letter-spacing: -0.2px;
+}
+.tb-divider {
+  width: 1px;
+  height: 20px;
+  background: var(--border2);
+}
+.tb-sub {
+  font-size: 13px;
+  color: var(--text3);
+}
+.topbar-right {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+.file-pill {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  background: var(--bg3);
+  border: 1px solid var(--border);
+  border-radius: 100px;
+  padding: 5px 12px;
+  font-size: 12px;
+  color: var(--text2);
+  max-width: 220px;
+}
+.file-pill .dot {
+  width: 7px; height: 7px;
+  border-radius: 50%;
+  background: var(--green);
+  flex-shrink: 0;
+  animation: pulse 2.5s ease-in-out infinite;
+}
+.file-pill .fname {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-family: var(--mono);
+  font-size: 11px;
+  color: var(--text);
+}
+.btn-new {
+  background: none;
+  border: 1px solid var(--border2);
+  color: var(--text2);
+  font-size: 12px;
+  font-weight: 600;
+  padding: 6px 14px;
+  border-radius: 8px;
+  cursor: pointer;
+  transition: all 0.15s;
+  white-space: nowrap;
+  font-family: var(--sans);
+}
+.btn-new:hover { border-color: var(--accent); color: var(--accent); background: var(--accent-bg); }
+.tb-sub, .tb-divider { display: none; }
+.btn-disconnect {
+  background:none;border:1px solid var(--border2);color:var(--text3);
+  font-size:11px;padding:5px 12px;border-radius:8px;cursor:pointer;
+  transition:all .15s;font-family:var(--sans);
+}
+.btn-disconnect:hover { border-color:var(--red);color:var(--red);background:var(--red-bg); }
+.back-btn {
+  background:none;border:1px solid var(--border2,#E5E7EB);color:var(--text3,#6B7280);
+  font-size:12px;padding:5px 12px;border-radius:8px;cursor:pointer;
+  font-family:'DM Sans',sans-serif;display:flex;align-items:center;gap:5px;
+  transition:all .15s;
+}
+.back-btn:hover { color:var(--accent,#2563EB);border-color:var(--accent,#2563EB); }
+</style>
 </head>
 <body>
 <div id="upc-app">
@@ -4024,6 +4129,62 @@ async function wFetch(url, opts) {
 }
 
 
+// ── Shared globals needed by UPC app ────────────────────────────────────
+const DB = { master:[], products:[], awdMaster:[], upc:[], oos:[] };
+const S = { fba:[], live:[], awd:[], res:[], joined:[], cpackMap:{}, cpackDate:null, cpackCount:0, shipment:{}, loaded:false };
+const AWD_DB = { products:[], awdMaster:[], fnskuToPartNum:{}, partNumToFnsku:{}, loaded:false };
+
+async function loadAWDPlannerDB() {
+  try {
+    const [r1, r2, r3] = await Promise.all([
+      wFetch('https://xfitting-lookup.alfixedinc88.workers.dev?sheet=Products').then(r => r.json()),
+      wFetch('https://xfitting-lookup.alfixedinc88.workers.dev?sheet=AWD_Master').then(r => r.json()),
+      wFetch('https://xfitting-lookup.alfixedinc88.workers.dev?sheet=FBA_Live').then(r => r.json()),
+    ]);
+
+    // Parse Products: col2=base SKU, col4=warehouseName
+    AWD_DB.products = [];
+    (r1.values || []).slice(1).forEach(function(r) {
+      const sku = String(r[1]||'').trim();
+      if (!sku || sku.toLowerCase() === 'sku') return;
+      AWD_DB.products.push({ sku: sku.toLowerCase(), warehouseName: String(r[3]||'').trim() });
+    });
+
+    // Parse AWD_Master: col3=UPC, col7=partNum
+    AWD_DB.awdMaster = [];
+    (r2.values || []).slice(1).forEach(function(r) {
+      const partNum = String(r[6]||'').trim();
+      if (!partNum) return;
+      AWD_DB.awdMaster.push({
+        partNum:      partNum,
+        upc:          String(r[2]||'').trim(),
+        location:     String(r[3]||'').trim(),
+        label:        String(r[1]||'').trim(),
+        unitsPerCase: parseFloat(String(r[5]||'').trim()) || 0,  // col6 = packages per case
+        sku:          String(r[7]||'').trim(),
+      });
+    });
+
+    // Parse FBA_Live: col A (idx 0) = part#, col B (idx 1) = FNSKU
+    // Build fnsku → partNum and partNum → fnsku maps for AWD label match
+    AWD_DB.fnskuToPartNum = {};  // fnsku → partNum
+    AWD_DB.partNumToFnsku = {};  // partNum → fnsku
+    (r3.values || []).slice(1).forEach(function(r) {
+      const partNum = String(r[0]||'').trim();
+      const fnsku   = String(r[1]||'').trim();
+      if (!partNum || !fnsku) return;
+      AWD_DB.fnskuToPartNum[fnsku.toUpperCase()]       = partNum;
+      AWD_DB.partNumToFnsku[partNum.toUpperCase()]     = fnsku;
+    });
+
+    AWD_DB.loaded = true;
+    console.log('[XFITTING] AWD_DB loaded:', AWD_DB.products.length, 'products,', AWD_DB.awdMaster.length, 'AWD rows,', Object.keys(AWD_DB.fnskuToPartNum).length, 'FNSKUs');
+  } catch(e) {
+    console.error('[XFITTING] loadAWDPlannerDB failed:', e);
+  }
+}
+
+
 // ── UPC Barcodes App ─────────────────────────────────────────────────────
 // UPC BARCODE APP FUNCTIONS
 // ═══════════════════════════════════════════════════════
@@ -4784,6 +4945,28 @@ function upcRenderSheet(matches) {
 
 
 // ── Boot ─────────────────────────────────────────────────────────────────
-if (typeof upcOnLaunch === 'function') upcOnLaunch();
+// Auto-authenticate with mobile PIN for UPC app (no user PIN needed)
+(function() {
+  if (XF_SESSION) { 
+    if (typeof upcOnLaunch === 'function') upcOnLaunch();
+    return;
+  }
+  fetch(WORKER_URL + '/auth', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ pin: '2589', pin_type: 'mobile' })
+  }).then(function(r) { return r.json(); })
+  .then(function(d) {
+    if (d.token) {
+      XF_SESSION = d.token;
+      XF_ROLE = 'mobile';
+      sessionStorage.setItem('xf_session', d.token);
+      sessionStorage.setItem('xf_role', 'mobile');
+    }
+  }).catch(function(){})
+  .finally(function() {
+    if (typeof upcOnLaunch === 'function') upcOnLaunch();
+  });
+})();
 </script>
 </html>
