@@ -4129,9 +4129,61 @@ async function wFetch(url, opts) {
 }
 
 
-// ── AWD State (shared with UPC for shipment checking) ───────────────────
+// ── Shared globals needed by UPC app ────────────────────────────────────
+const DB = { master:[], products:[], awdMaster:[], upc:[], oos:[] };
 const S = { fba:[], live:[], awd:[], res:[], joined:[], cpackMap:{}, cpackDate:null, cpackCount:0, shipment:{}, loaded:false };
 const AWD_DB = { products:[], awdMaster:[], fnskuToPartNum:{}, partNumToFnsku:{}, loaded:false };
+
+async function loadAWDPlannerDB() {
+  try {
+    const [r1, r2, r3] = await Promise.all([
+      wFetch('https://xfitting-lookup.alfixedinc88.workers.dev?sheet=Products').then(r => r.json()),
+      wFetch('https://xfitting-lookup.alfixedinc88.workers.dev?sheet=AWD_Master').then(r => r.json()),
+      wFetch('https://xfitting-lookup.alfixedinc88.workers.dev?sheet=FBA_Live').then(r => r.json()),
+    ]);
+
+    // Parse Products: col2=base SKU, col4=warehouseName
+    AWD_DB.products = [];
+    (r1.values || []).slice(1).forEach(function(r) {
+      const sku = String(r[1]||'').trim();
+      if (!sku || sku.toLowerCase() === 'sku') return;
+      AWD_DB.products.push({ sku: sku.toLowerCase(), warehouseName: String(r[3]||'').trim() });
+    });
+
+    // Parse AWD_Master: col3=UPC, col7=partNum
+    AWD_DB.awdMaster = [];
+    (r2.values || []).slice(1).forEach(function(r) {
+      const partNum = String(r[6]||'').trim();
+      if (!partNum) return;
+      AWD_DB.awdMaster.push({
+        partNum:      partNum,
+        upc:          String(r[2]||'').trim(),
+        location:     String(r[3]||'').trim(),
+        label:        String(r[1]||'').trim(),
+        unitsPerCase: parseFloat(String(r[5]||'').trim()) || 0,  // col6 = packages per case
+        sku:          String(r[7]||'').trim(),
+      });
+    });
+
+    // Parse FBA_Live: col A (idx 0) = part#, col B (idx 1) = FNSKU
+    // Build fnsku → partNum and partNum → fnsku maps for AWD label match
+    AWD_DB.fnskuToPartNum = {};  // fnsku → partNum
+    AWD_DB.partNumToFnsku = {};  // partNum → fnsku
+    (r3.values || []).slice(1).forEach(function(r) {
+      const partNum = String(r[0]||'').trim();
+      const fnsku   = String(r[1]||'').trim();
+      if (!partNum || !fnsku) return;
+      AWD_DB.fnskuToPartNum[fnsku.toUpperCase()]       = partNum;
+      AWD_DB.partNumToFnsku[partNum.toUpperCase()]     = fnsku;
+    });
+
+    AWD_DB.loaded = true;
+    console.log('[XFITTING] AWD_DB loaded:', AWD_DB.products.length, 'products,', AWD_DB.awdMaster.length, 'AWD rows,', Object.keys(AWD_DB.fnskuToPartNum).length, 'FNSKUs');
+  } catch(e) {
+    console.error('[XFITTING] loadAWDPlannerDB failed:', e);
+  }
+}
+
 
 // ── UPC Barcodes App ─────────────────────────────────────────────────────
 // UPC BARCODE APP FUNCTIONS
