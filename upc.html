@@ -4131,6 +4131,7 @@ async function wFetch(url, opts) {
 
 // ── AWD State (shared with UPC for shipment checking) ───────────────────
 const S = { fba:[], live:[], awd:[], res:[], joined:[], cpackMap:{}, cpackDate:null, cpackCount:0, shipment:{}, loaded:false };
+const AWD_DB = { products:[], awdMaster:[], fnskuToPartNum:{}, partNumToFnsku:{}, loaded:false };
 
 // ── UPC Barcodes App ─────────────────────────────────────────────────────
 // UPC BARCODE APP FUNCTIONS
@@ -4892,6 +4893,28 @@ function upcRenderSheet(matches) {
 
 
 // ── Boot ─────────────────────────────────────────────────────────────────
-if (typeof upcOnLaunch === 'function') upcOnLaunch();
+// Auto-authenticate with mobile PIN for UPC app (no user PIN needed)
+(function() {
+  if (XF_SESSION) { 
+    if (typeof upcOnLaunch === 'function') upcOnLaunch();
+    return;
+  }
+  fetch(WORKER_URL + '/auth', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ pin: '2589', pin_type: 'mobile' })
+  }).then(function(r) { return r.json(); })
+  .then(function(d) {
+    if (d.token) {
+      XF_SESSION = d.token;
+      XF_ROLE = 'mobile';
+      sessionStorage.setItem('xf_session', d.token);
+      sessionStorage.setItem('xf_role', 'mobile');
+    }
+  }).catch(function(){})
+  .finally(function() {
+    if (typeof upcOnLaunch === 'function') upcOnLaunch();
+  });
+})();
 </script>
 </html>
