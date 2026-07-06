@@ -19410,6 +19410,9 @@ window.psVaExport = function() {
         }
 
         status.textContent = 'Parsed ' + rpoData.length + ' part rows. Matching to Master List…';
+        // DEBUG: expose for console inspection
+        window._rpoDebug = { rpoData: rpoData, rpoPrices: rpoPrices };
+        console.log('[RPO DEBUG] rpoPrices keys:', Object.keys(rpoPrices).length, 'sample:', Object.keys(rpoPrices).slice(0,3));
         rpoFetchAndMatch(status);
 
       } catch(err) {
