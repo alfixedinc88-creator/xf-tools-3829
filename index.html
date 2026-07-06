@@ -19369,8 +19369,8 @@ window.psVaExport = function() {
         }
 
         // ── Parse EFF1 price sheet ──
-        if (wb.Sheets['EFF1']) {
-          var effRaw = XLSX.utils.sheet_to_json(wb.Sheets['EFF1'], { header: 1, defval: '' });
+        if (wb.Sheets['EFF1'] || wb.Sheets['EFF']) {
+          var effRaw = XLSX.utils.sheet_to_json(wb.Sheets['EFF1'] || wb.Sheets['EFF'], { header: 1, defval: '' });
           for (var j = 1; j < effRaw.length; j++) {
             var er = effRaw[j];
             // Col D = Part Number (may be slash-delimited), Col F = Unit Price
@@ -19389,8 +19389,8 @@ window.psVaExport = function() {
         }
 
         // ── Parse JQ1 price sheet (JQ wins — overwrites EFF) ──
-        if (wb.Sheets['JQ1']) {
-          var jqRaw = XLSX.utils.sheet_to_json(wb.Sheets['JQ1'], { header: 1, defval: '' });
+        if (wb.Sheets['JQ1'] || wb.Sheets['JQ']) {
+          var jqRaw = XLSX.utils.sheet_to_json(wb.Sheets['JQ1'] || wb.Sheets['JQ'], { header: 1, defval: '' });
           var lastDesc = '';
           var lastPrice = 0;
           for (var k = 1; k < jqRaw.length; k++) {
@@ -19449,7 +19449,7 @@ window.psVaExport = function() {
       var bs = pn.split('=')[0].trim();
       mlBaseExistsSet[bs] = true;
       if (!mlBaseMap[bs] || r.rowIndex > mlBaseMap[bs]) mlBaseMap[bs] = r.rowIndex;
-      var casesBlank = (r.cases === '' || r.cases === null || r.cases === undefined);
+      var casesBlank = (r.cases === '' || r.cases === null || r.cases === undefined || parseFloat(r.cases) === 0);
       if (casesBlank) {
         if (!mlBlankMap[pn]) mlBlankMap[pn] = [];
         mlBlankMap[pn].push(r);
@@ -19505,7 +19505,6 @@ window.psVaExport = function() {
         pricePerUnit:  priceInfo ? priceInfo.price : null,
         oldPrice:      oldPrice,
         d1Id:          mlRow ? mlRow.d1Id : null,
-        rowIndex:      mlRow ? mlRow.rowIndex : null,
         mlRow:         mlRow || null,
         oldLocation:   mlRow ? (mlRow.location || '') : '',
         isPlaceholder: !needsNewRow && !notInCatalog,
