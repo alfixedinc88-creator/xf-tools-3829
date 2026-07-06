@@ -19374,8 +19374,10 @@ window.psVaExport = function() {
           for (var j = 1; j < effRaw.length; j++) {
             var er = effRaw[j];
             // Col D = Part Number (may be slash-delimited), Col F = Unit Price
-            var partCell  = String(er[3] || '').trim();
-            var unitPrice = parseFloat(er[5]) || 0;
+            // SheetJS strips leading empty cols — EFF1 data starts at col A(0)
+            // row2: ["Part Number","","UNIT PRICE"] → partNum=index 0, price=index 2
+            var partCell  = String(er[0] || '').trim();
+            var unitPrice = parseFloat(er[2]) || 0;
             if (!partCell || !unitPrice) continue;
             // Split multi-part-number cells
             var parts = partCell.split('/');
@@ -19396,9 +19398,11 @@ window.psVaExport = function() {
           for (var k = 1; k < jqRaw.length; k++) {
             var jr = jqRaw[k];
             // Col B = XF code (part num), Col C = Description, Col E = Unit Price
-            var xfCode = String(jr[1] || '').trim().toUpperCase();
-            var jDesc  = String(jr[2] || '').trim();
-            var jPrice = parseFloat(jr[4]) || 0;
+            // SheetJS strips leading empty cols — JQ1 data starts at col B(0)
+            // row2: ["XF code","DESCRIPTION","","UNIT PRICE USD/PCS"] → xf=0, desc=1, price=3
+            var xfCode = String(jr[0] || '').trim().toUpperCase();
+            var jDesc  = String(jr[1] || '').trim();
+            var jPrice = parseFloat(jr[3]) || 0;
             if (jDesc)  lastDesc  = jDesc;
             if (jPrice) lastPrice = jPrice;
             if (!xfCode) continue;
@@ -19411,17 +19415,7 @@ window.psVaExport = function() {
 
         status.textContent = 'Parsed ' + rpoData.length + ' part rows. Matching to Master List…';
         // DEBUG: expose for console inspection
-        // Debug EFF1 parsing
-        if (wb.Sheets['EFF1']) {
-          var _effTest = XLSX.utils.sheet_to_json(wb.Sheets['EFF1'], { header:1, defval:'' });
-          console.log('[RPO DEBUG EFF] rows:', _effTest.length, 'row2:', JSON.stringify(_effTest[1]), 'row3:', JSON.stringify(_effTest[2]));
-        }
-        if (wb.Sheets['JQ1']) {
-          var _jqTest = XLSX.utils.sheet_to_json(wb.Sheets['JQ1'], { header:1, defval:'' });
-          console.log('[RPO DEBUG JQ] rows:', _jqTest.length, 'row2:', JSON.stringify(_jqTest[1]), 'row3:', JSON.stringify(_jqTest[2]));
-        }
-        window._rpoDebug = { rpoData: rpoData, rpoPrices: rpoPrices, sheets: wb.SheetNames };
-        console.log('[RPO DEBUG] Sheet names:', JSON.stringify(wb.SheetNames), '| rpoPrices keys:', Object.keys(rpoPrices).length);
+
         rpoFetchAndMatch(status);
 
       } catch(err) {
