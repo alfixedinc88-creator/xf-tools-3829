@@ -19504,6 +19504,8 @@ window.psVaExport = function() {
         totalUnits:    item.totalUnits,
         pricePerUnit:  priceInfo ? priceInfo.price : null,
         oldPrice:      oldPrice,
+        d1Id:          mlRow ? mlRow.d1Id : null,
+        rowIndex:      mlRow ? mlRow.rowIndex : null,
         mlRow:         mlRow || null,
         oldLocation:   mlRow ? (mlRow.location || '') : '',
         isPlaceholder: !needsNewRow && !notInCatalog,
@@ -19677,6 +19679,7 @@ window.psVaExport = function() {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
+          d1Id:           item.d1Id,
           rowIndex:       item.rowIndex,
           insertAfter:    item.insertAfter,
           needsNewRow:    item.needsNewRow,
@@ -19688,6 +19691,7 @@ window.psVaExport = function() {
           upc:            item.upc,
           pricePerUnit:   item.pricePerUnit,
           colKValue:      item.colKValue,
+          initials:       'MGMT',
           logPrice:       !!isFirstVariant   // worker logs price change only when true
         })
       }).then(function(r) { return r.json(); })
