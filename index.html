@@ -19411,8 +19411,17 @@ window.psVaExport = function() {
 
         status.textContent = 'Parsed ' + rpoData.length + ' part rows. Matching to Master List…';
         // DEBUG: expose for console inspection
+        // Debug EFF1 parsing
+        if (wb.Sheets['EFF1']) {
+          var _effTest = XLSX.utils.sheet_to_json(wb.Sheets['EFF1'], { header:1, defval:'' });
+          console.log('[RPO DEBUG EFF] rows:', _effTest.length, 'row2:', JSON.stringify(_effTest[1]), 'row3:', JSON.stringify(_effTest[2]));
+        }
+        if (wb.Sheets['JQ1']) {
+          var _jqTest = XLSX.utils.sheet_to_json(wb.Sheets['JQ1'], { header:1, defval:'' });
+          console.log('[RPO DEBUG JQ] rows:', _jqTest.length, 'row2:', JSON.stringify(_jqTest[1]), 'row3:', JSON.stringify(_jqTest[2]));
+        }
         window._rpoDebug = { rpoData: rpoData, rpoPrices: rpoPrices, sheets: wb.SheetNames };
-        console.log('[RPO DEBUG] Sheet names:', JSON.stringify(wb.SheetNames), '| rpoPrices keys:', Object.keys(rpoPrices).length, '| sample:', JSON.stringify(Object.keys(rpoPrices).slice(0,3)));
+        console.log('[RPO DEBUG] Sheet names:', JSON.stringify(wb.SheetNames), '| rpoPrices keys:', Object.keys(rpoPrices).length);
         rpoFetchAndMatch(status);
 
       } catch(err) {
