@@ -19511,6 +19511,7 @@ window.psVaExport = function() {
         pricePerUnit:  priceInfo ? priceInfo.price : null,
         oldPrice:      oldPrice,
         d1Id:          mlRow ? mlRow.d1Id : null,
+        unitsPerCase:  item.unitsPerCase || 0,
         mlRow:         mlRow || null,
         oldLocation:   mlRow ? (mlRow.location || '') : '',
         isPlaceholder: !needsNewRow && !notInCatalog,
@@ -19697,6 +19698,7 @@ window.psVaExport = function() {
           pricePerUnit:   item.pricePerUnit,
           colKValue:      item.colKValue,
           initials:       'MGMT',
+          unitsPerCase:   item.unitsPerCase || 0,
           logPrice:       !!isFirstVariant   // worker logs price change only when true
         })
       }).then(function(r) { return r.json(); })
