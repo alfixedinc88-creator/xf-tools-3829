@@ -35,7 +35,7 @@
   --shadow2:  0 4px 12px rgba(0,0,0,0.08), 0 2px 4px rgba(0,0,0,0.04);
 }
 *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
-body { display:flex; flex-direction:column; min-height:100vh; background:var(--bg); font-family:var(--sans); color:var(--text); visibility:visible; }
+body { display:flex; flex-direction:column; min-height:100vh; background:var(--bg); font-family:var(--sans); color:var(--text); }
 #awd-app { display:none; flex-direction:column; min-height:100vh; width:100%; }
 #app.visible{display:flex}
 #awd-app-inner{display:flex!important;flex-direction:column;min-height:100vh}
@@ -751,7 +751,6 @@ input[type=checkbox]{width:15px;height:15px;cursor:pointer;accent-color:var(--bl
   </style>
 </head>
 <body>
-<script>document.body.style.visibility="visible";</script>
 <div id="awd-app">
 
 <div id="awd-app-inner">
@@ -1040,6 +1039,7 @@ input[type=checkbox]{width:15px;height:15px;cursor:pointer;accent-color:var(--bl
 
 <!-- ═══════════════════════════════════════════════════════ -->
 </div>
+
 <script>
 // ── Constants ────────────────────────────────────────────────────────────
 const WORKER_URL = 'https://xfitting-lookup.alfixedinc88.workers.dev';
@@ -1051,7 +1051,7 @@ const DB = { master:[], products:[], awdMaster:[], upc:[], oos:[] };
 function backToLauncher() { window.location.href = 'index.html'; }
 function launchApp(app)   { window.location.href = app + '.html'; }
 
-// ── Shared utilities ─────────────────────────────────────────────────────
+// ── Toast ────────────────────────────────────────────────────────────────
 function showToast(msg) {
   var t = document.getElementById('xf-toast');
   if (!t) {
@@ -1065,6 +1065,8 @@ function showToast(msg) {
   setTimeout(function() { t.style.opacity='0'; t.style.transform='translateX(-50%) translateY(20px)'; }, 4000);
 }
 
+
+// ── wFetch ───────────────────────────────────────────────────────────────
 async function wFetch(url, opts) {
   opts = opts || {};
   opts.headers = Object.assign({}, opts.headers || {}, {
@@ -4701,16 +4703,21 @@ function salesToast(msg, type) {
 <!-- ═══════════════════════════════════════════════════════ -->
 
 
-// ── Boot ──────────────────────────────────────────────────────────────────
+// ── Boot ─────────────────────────────────────────────────────────────────
 (function() {
   var awdEl = document.getElementById('awd-app');
   if (XF_SESSION) { if(awdEl) awdEl.style.display='flex'; return; }
   fetch(WORKER_URL + '/auth', {
-    method:'POST', headers:{'Content-Type':'application/json'},
+    method:'POST',
+    headers:{'Content-Type':'application/json'},
     body: JSON.stringify({pin:'1314', pin_type:'ops'})
   }).then(function(r){ return r.json(); })
   .then(function(d){
-    if(d.token){ XF_SESSION=d.token; XF_ROLE='ops'; sessionStorage.setItem('xf_session',d.token); sessionStorage.setItem('xf_role','ops'); }
+    if(d.token){
+      XF_SESSION=d.token; XF_ROLE='ops';
+      sessionStorage.setItem('xf_session',d.token);
+      sessionStorage.setItem('xf_role','ops');
+    }
     if(awdEl) awdEl.style.display='flex';
   }).catch(function(){ if(awdEl) awdEl.style.display='flex'; });
 })();
