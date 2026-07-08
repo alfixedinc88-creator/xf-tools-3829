@@ -5012,17 +5012,28 @@ function skuMapEdit(idx, val) {
   }
 }
 
-(function() {
+function awdStandaloneInit() {
   var awdEl = document.getElementById('awd-app');
-  if (XF_SESSION) { if(awdEl) awdEl.style.display='flex'; return; }
+  if (awdEl) awdEl.style.display = 'flex';
+  // Load all data same as launchApp('awd') in combined app
+  if (typeof loadWarehouseStock   === 'function' && !WH.loaded)      loadWarehouseStock();
+  if (typeof loadAWDPlannerDB     === 'function' && !AWD_DB.loaded)   loadAWDPlannerDB();
+  if (typeof loadDiscontinuedSKUs === 'function' && !DISC.loaded)     loadDiscontinuedSKUs();
+  if (typeof loadCfg              === 'function')                      loadCfg();
+  if (typeof loadCpackFromStorage === 'function')                      loadCpackFromStorage();
+  if (typeof loadReportsFromSheet === 'function' && !S.loaded)         loadReportsFromSheet();
+}
+
+(function() {
+  if (XF_SESSION) { awdStandaloneInit(); return; }
   fetch(WORKER_URL + '/auth', {
     method:'POST', headers:{'Content-Type':'application/json'},
     body: JSON.stringify({pin:'1314', pin_type:'ops'})
   }).then(function(r){ return r.json(); })
   .then(function(d){
     if(d.token){ XF_SESSION=d.token; XF_ROLE='ops'; sessionStorage.setItem('xf_session',d.token); sessionStorage.setItem('xf_role','ops'); }
-    if(awdEl) awdEl.style.display='flex';
-  }).catch(function(){ if(awdEl) awdEl.style.display='flex'; });
+    awdStandaloneInit();
+  }).catch(function(){ awdStandaloneInit(); });
 })();
 </script>
 </body>
