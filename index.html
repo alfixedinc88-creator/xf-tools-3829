@@ -1,7 +1,7 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-  <!-- XFITTING-BUILD-V114-FEAT-20260501z22r -->
+  <!-- XFITTING-BUILD-V114-FEAT-20260706z22z -->
 <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate">
 <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&family=IBM+Plex+Sans:wght@300;400;500;600&display=swap" rel="stylesheet">
   <meta http-equiv="Pragma" content="no-cache">
@@ -19369,13 +19369,15 @@ window.psVaExport = function() {
         }
 
         // ── Parse EFF1 price sheet ──
-        if (wb.Sheets['EFF1']) {
-          var effRaw = XLSX.utils.sheet_to_json(wb.Sheets['EFF1'], { header: 1, defval: '' });
+        if (wb.Sheets['EFF1'] || wb.Sheets['EFF']) {
+          var effRaw = XLSX.utils.sheet_to_json(wb.Sheets['EFF1'] || wb.Sheets['EFF'], { header: 1, defval: '' });
           for (var j = 1; j < effRaw.length; j++) {
             var er = effRaw[j];
             // Col D = Part Number (may be slash-delimited), Col F = Unit Price
-            var partCell  = String(er[3] || '').trim();
-            var unitPrice = parseFloat(er[5]) || 0;
+            // SheetJS strips leading empty cols — EFF1 data starts at col A(0)
+            // row2: ["Part Number","","UNIT PRICE"] → partNum=index 0, price=index 2
+            var partCell  = String(er[0] || '').trim();
+            var unitPrice = parseFloat(er[2]) || 0;
             if (!partCell || !unitPrice) continue;
             // Split multi-part-number cells
             var parts = partCell.split('/');
@@ -19389,16 +19391,18 @@ window.psVaExport = function() {
         }
 
         // ── Parse JQ1 price sheet (JQ wins — overwrites EFF) ──
-        if (wb.Sheets['JQ1']) {
-          var jqRaw = XLSX.utils.sheet_to_json(wb.Sheets['JQ1'], { header: 1, defval: '' });
+        if (wb.Sheets['JQ1'] || wb.Sheets['JQ']) {
+          var jqRaw = XLSX.utils.sheet_to_json(wb.Sheets['JQ1'] || wb.Sheets['JQ'], { header: 1, defval: '' });
           var lastDesc = '';
           var lastPrice = 0;
           for (var k = 1; k < jqRaw.length; k++) {
             var jr = jqRaw[k];
             // Col B = XF code (part num), Col C = Description, Col E = Unit Price
-            var xfCode = String(jr[1] || '').trim().toUpperCase();
-            var jDesc  = String(jr[2] || '').trim();
-            var jPrice = parseFloat(jr[4]) || 0;
+            // SheetJS strips leading empty cols — JQ1 data starts at col B(0)
+            // row2: ["XF code","DESCRIPTION","","UNIT PRICE USD/PCS"] → xf=0, desc=1, price=3
+            var xfCode = String(jr[0] || '').trim().toUpperCase();
+            var jDesc  = String(jr[1] || '').trim();
+            var jPrice = parseFloat(jr[3]) || 0;
             if (jDesc)  lastDesc  = jDesc;
             if (jPrice) lastPrice = jPrice;
             if (!xfCode) continue;
@@ -19410,6 +19414,8 @@ window.psVaExport = function() {
         }
 
         status.textContent = 'Parsed ' + rpoData.length + ' part rows. Matching to Master List…';
+        // DEBUG: expose for console inspection
+
         rpoFetchAndMatch(status);
 
       } catch(err) {
@@ -19449,7 +19455,7 @@ window.psVaExport = function() {
       var bs = pn.split('=')[0].trim();
       mlBaseExistsSet[bs] = true;
       if (!mlBaseMap[bs] || r.rowIndex > mlBaseMap[bs]) mlBaseMap[bs] = r.rowIndex;
-      var casesBlank = (r.cases === '' || r.cases === null || r.cases === undefined);
+      var casesBlank = (r.cases === '' || r.cases === null || r.cases === undefined || parseFloat(r.cases) === 0);
       if (casesBlank) {
         if (!mlBlankMap[pn]) mlBlankMap[pn] = [];
         mlBlankMap[pn].push(r);
@@ -19504,6 +19510,8 @@ window.psVaExport = function() {
         totalUnits:    item.totalUnits,
         pricePerUnit:  priceInfo ? priceInfo.price : null,
         oldPrice:      oldPrice,
+        d1Id:          mlRow ? mlRow.d1Id : null,
+        unitsPerCase:  item.unitsPerCase || 0,
         mlRow:         mlRow || null,
         oldLocation:   mlRow ? (mlRow.location || '') : '',
         isPlaceholder: !needsNewRow && !notInCatalog,
@@ -19677,6 +19685,7 @@ window.psVaExport = function() {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
+          d1Id:           item.d1Id,
           rowIndex:       item.rowIndex,
           insertAfter:    item.insertAfter,
           needsNewRow:    item.needsNewRow,
@@ -19688,6 +19697,8 @@ window.psVaExport = function() {
           upc:            item.upc,
           pricePerUnit:   item.pricePerUnit,
           colKValue:      item.colKValue,
+          initials:       'MGMT',
+          unitsPerCase:   item.unitsPerCase || 0,
           logPrice:       !!isFirstVariant   // worker logs price change only when true
         })
       }).then(function(r) { return r.json(); })
