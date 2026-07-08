@@ -4,7 +4,7 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>XFitting — AWD Planner</title>
-  <!-- XFITTING-BUILD-V114-FEAT-20260707 -->
+  <!-- XFITTING-BUILD-V114-FEAT-20260707b -->
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700;800&family=DM+Mono:wght@400;500&display=swap" rel="stylesheet">
   <style>
@@ -1041,7 +1041,6 @@ input[type=checkbox]{width:15px;height:15px;cursor:pointer;accent-color:var(--bl
 </div>
 
 <script>
-// ── Constants ────────────────────────────────────────────────────────────
 const WORKER_URL = 'https://xfitting-lookup.alfixedinc88.workers.dev';
 const W = WORKER_URL;
 var XF_SESSION = sessionStorage.getItem('xf_session') || null;
@@ -1050,8 +1049,6 @@ var pinEntry   = '';
 const DB = { master:[], products:[], awdMaster:[], upc:[], oos:[] };
 function backToLauncher() { window.location.href = 'index.html'; }
 function launchApp(app)   { window.location.href = app + '.html'; }
-
-// ── Toast ────────────────────────────────────────────────────────────────
 function showToast(msg) {
   var t = document.getElementById('xf-toast');
   if (!t) {
@@ -1065,8 +1062,6 @@ function showToast(msg) {
   setTimeout(function() { t.style.opacity='0'; t.style.transform='translateX(-50%) translateY(20px)'; }, 4000);
 }
 
-
-// ── wFetch ───────────────────────────────────────────────────────────────
 async function wFetch(url, opts) {
   opts = opts || {};
   opts.headers = Object.assign({}, opts.headers || {}, {
@@ -1087,8 +1082,697 @@ async function wFetch(url, opts) {
   return r;
 }
 
+// ═══ AWD PLANNER JS ═══
 
-// ── AWD Planner App ──────────────────────────────────────────────────────
+// ── CONFIG ──
+const DFLT={pin:'1234',targetDays:120};
+let C={...DFLT};
+function loadCfg(){
+  try{const s=JSON.parse(localStorage.getItem('awdcfg3')||'{}');C={...DFLT,...s};}catch(e){C={...DFLT};}
+  if(ge('cfg-tgt'))ge('cfg-tgt').value=C.targetDays;if(ge('tgt-lbl'))ge('tgt-lbl').textContent=C.targetDays;
+}
+function saveSettings(){
+  C.targetDays=parseInt(ge('cfg-tgt').value)||120;ge('tgt-lbl').textContent=C.targetDays;
+  localStorage.setItem('awdcfg3',JSON.stringify(C));awd_planner_toast('Settings saved','success');
+}
+
+// ── STATE ──
+const S={fba:[],live:[],awd:[],res:[],joined:[],cpackMap:{},cpackDate:null,cpackCount:0,shipment:{},loaded:false};
+
+// ── FILE UPLOAD ──
+function dov(e,k){e.preventDefault();ge('zone-'+k).classList.add('drag');}
+function dlv(k){ge('zone-'+k).classList.remove('drag');}
+function drp(e,k){e.preventDefault();dlv(k);const f=e.dataTransfer.files[0];if(f)hf(f,k);}
+function fch(e,k){const f=e.target.files[0];if(f)hf(f,k);}
+function hf(file,k){
+  const st=ge('st-'+k);st.textContent='Reading…';st.className='ust';
+  readTxt(file).then(txt=>{
+    const rows=k==='awd'?parseCSV(txt.split(/\r?\n/).slice(3).join('\n'),0):parseCSV(txt,0);
+    if(!rows||!rows.length){st.textContent='Could not parse';st.className='ust err';return;}
+    ge('ico-'+k).textContent='✅';ge('zone-'+k).classList.add('loaded');
+    st.textContent=rows.length+' rows';st.className='ust ok';
+    if(k==='fba'){S.fba=rows;S.fbaFromCSV=true;}else if(k==='live')S.live=rows;else if(k==='awd')S.awd=rows;else S.res=rows;
+    ge('proc-btn').disabled=S.fba.length===0;
+  }).catch(e=>{st.textContent='Error: '+e.message;st.className='ust err';});
+}
+
+// ── CASE PACK (persistent, headers on row 10 = skip 9 rows) ──
+function loadCpackFile(e){
+  const f=e.target.files[0];if(!f)return;
+  readTxt(f).then(txt=>{
+    const rows=parseCSV(txt,9);
+    if(!rows||!rows.length){awd_planner_toast('Could not parse case pack file','error');return;}
+    buildCpackMap(rows);
+    localStorage.setItem('awdCpack',JSON.stringify({rows,date:new Date().toISOString()}));
+    updateCpackUI();awd_planner_toast('Case pack data saved — '+S.cpackCount+' SKUs','success');
+  }).catch(e=>awd_planner_toast('Error: '+e.message,'error'));
+}
+function buildCpackMap(rows){
+  S.cpackMap={};
+  rows.forEach(r=>{
+    const sku=(gf(r,'SKU')||gf(r,'sku')||'').trim().toUpperCase();
+    if(!sku)return;
+    S.cpackMap[sku]={
+      unitsPerBox:pn(gf(r,'Units per box')),
+      weightLb:pn(gf(r,'Box weight (lb)')),
+      lengthIn:pn(gf(r,'Box length (inch)')||gf(r,'Box length (in)')),
+      widthIn:pn(gf(r,'Box width (inch)')||gf(r,'Box width (in)')),
+      heightIn:pn(gf(r,'Box height (inch)')||gf(r,'Box height (in)'))
+    };
+  });
+  S.cpackCount=Object.keys(S.cpackMap).length;
+}
+function loadCpackFromStorage(){
+  try{
+    const saved=localStorage.getItem('awdCpack');if(!saved)return;
+    const {rows,date}=JSON.parse(saved);
+    buildCpackMap(rows);S.cpackDate=date?new Date(date):null;updateCpackUI();
+  }catch(e){}
+}
+async function syncCpackFromSheet(){
+  const btn=ge('cpack-sync-btn');
+  if(btn){btn.disabled=true;btn.textContent='Syncing\u2026';}
+  try{
+    const res=await wFetch('https://xfitting-lookup.alfixedinc88.workers.dev/awd/cpack');
+    const data=await res.json();
+    if(!data.ok||!data.rows||!data.rows.length){
+      awd_planner_toast('Sync failed: '+(data.error||'No rows returned'),'error');return;
+    }
+    buildCpackMap(data.rows);
+    localStorage.setItem('awdCpack',JSON.stringify({rows:data.rows,date:new Date().toISOString()}));
+    S.cpackDate=new Date();
+    updateCpackUI();
+    renderBuilder();
+    awd_planner_toast('Synced from sheet \u2014 '+S.cpackCount+' SKUs','success');
+  }catch(e){
+    awd_planner_toast('Sync error: '+e.message,'error');
+  }finally{
+    if(btn){btn.disabled=false;btn.textContent='Sync from Sheet';}
+  }
+}
+function updateCpackUI(){
+  const has=S.cpackCount>0;
+  const card=ge('cpack-card'),body=ge('cpack-body'),sub=ge('cpack-sub');
+  if(has){
+    card.classList.add('has-data');
+    const ds=S.cpackDate?S.cpackDate.toLocaleDateString('en-US',{month:'short',day:'numeric',year:'numeric'}):'unknown date';
+    sub.textContent=S.cpackCount+' SKUs loaded · Last updated '+ds;
+    ge('cpack-detail').textContent='Box weight, L×W×H, units/box pre-filled on export.';
+    body.style.display='flex';
+  }else{
+    card.classList.remove('has-data');
+    sub.textContent='Not loaded — upload once, saved permanently in your browser';
+    body.style.display='none';
+  }
+}
+function clearCpack(){S.cpackMap={};S.cpackCount=0;S.cpackDate=null;localStorage.removeItem('awdCpack');updateCpackUI();renderBuilder();awd_planner_toast('Case pack data cleared');}
+
+// ── CSV PARSER ──
+function parseCSV(txt,skipRows=0){
+  if(!txt||!txt.trim())return[];
+  const lines=txt.split(/\r?\n/).filter(l=>l.trim());
+  if(lines.length<skipRows+2)return[];
+  const hl=lines[skipRows];
+  const delim=hl.split('\t').length>hl.split(',').length?'\t':',';
+  const hdrs=splitL(hl,delim).map(h=>h.trim().replace(/^\uFEFF/,'').replace(/^"|"$/g,''));
+  const rows=[];
+  for(let i=skipRows+1;i<lines.length;i++){
+    if(!lines[i].trim())continue;
+    const vals=splitL(lines[i],delim);
+    const row={};hdrs.forEach((h,j)=>{row[h]=(vals[j]||'').trim().replace(/^"|"$/g,'');});
+    if(Object.values(row).some(v=>v))rows.push(row);
+  }
+  return rows;
+}
+function splitL(line,delim){
+  if(delim==='\t')return line.split('\t');
+  const out=[];let cur='';let q=false;
+  for(let i=0;i<line.length;i++){
+    const c=line[i];
+    if(c==='"'&&!q){q=true;continue;}
+    if(c==='"'&&q){if(line[i+1]==='"'){cur+='"';i++;}else q=false;continue;}
+    if(c===','&&!q){out.push(cur);cur='';continue;}
+    cur+=c;
+  }
+  out.push(cur);return out;
+}
+function readTxt(f){return new Promise((res,rej)=>{const r=new FileReader();r.onload=e=>res(e.target.result);r.onerror=()=>rej(new Error('Read failed'));r.readAsText(f);});}
+
+// ── PROCESS DATA (mirrors AWD_Planner formulas exactly) ──
+// G  FBA Fulfillable      = FBA_Live: afn-fulfillable-quantity
+// H  FC Processing        = FBA_Reserve: reserved_fc-processing
+// I  FC Transfer          = FBA_Reserve: reserved_fc-transfers
+// J  AWD Available        = AWD_Inventory: Available in AWD (units) + Inbound to AWD (units)
+// K  AWD Reserved         = AWD_Inventory: Reserved in AWD (units)
+// L  AWD Outbound to FBA  = AWD_Inventory: Outbound to FBA (units)
+// D  90d Sold             = FBA_Inventory: units-shipped-t90
+// E  Daily Sales          = D / 90
+// F  Target               = E * targetDays
+// M  Total Network        = G+H+I+J+K+L
+// N  Rec Send             = MAX(0, F-M)
+// O  Net Days             = M/E
+async function processData(){
+  ge('up-err').style.display='none';
+  try{
+    // AWD map
+    const awdMap={};
+    S.awd.forEach(r=>{
+      const sku=(gf(r,'SKU')||'').trim().toUpperCase();if(!sku)return;
+      awdMap[sku]={
+        avail:pn(gf(r,'Available in AWD (units)'))+pn(gf(r,'Inbound to AWD (units)')),
+        reserved:pn(gf(r,'Reserved in AWD (units)')),
+        outbound:pn(gf(r,'Outbound to FBA (units)'))
+      };
+    });
+    // Reserve map
+    const resMap={};
+    S.res.forEach(r=>{
+      const sku=(gf(r,'sku')||'').trim().toUpperCase();if(!sku)return;
+      resMap[sku]={fcProc:pn(gf(r,'reserved_fc-processing')),fcTrans:pn(gf(r,'reserved_fc-transfers'))};
+    });
+    // FBA Inventory 90d map + FC Transfer map (col "Reserved FC Transfer")
+    const invMap={};
+    const fcTransMap={};
+    S.fba.forEach(r=>{
+      const sku=(gf(r,'sku')||'').trim().toUpperCase();if(!sku)return;
+      invMap[sku]=pn(gf(r,'units-shipped-t90'));
+      const fct=pn(gf(r,'Reserved FC Transfer'));
+      if(fct>0) fcTransMap[sku]=fct;
+    });
+    // Primary SKU list from FBA_Live (mirrors FILTER on FBA_Live!A)
+    const source=S.live.length?S.live:S.fba;
+    const seen=new Set();
+    S.joined=source
+      .filter(r=>{const s=skuOf(r);if(!s||seen.has(s))return false;seen.add(s);return true;})
+      .map(r=>buildRow(r,invMap,awdMap,resMap,fcTransMap));
+    S.loaded=true;
+    renderDashboard();renderInv();renderRecs();updateBadges();
+    const pill=ge('data-pill');
+    pill.textContent=S.joined.length+' SKUs loaded';
+    pill.style.background='var(--green-light)';pill.style.color='var(--green)';
+    awd_planner_toast('Processed '+S.joined.length+' SKUs — saving…','success');
+    awd_switchTab('dashboard');
+    await saveReportsToSheet();
+    loadShipmentFromSheet();
+  }catch(e){ge('up-err').style.display='flex';ge('up-err').textContent='Error: '+e.message;console.error(e);}
+}
+function buildRow(r,invMap,awdMap,resMap,fcTransMap){
+  const sku=skuOf(r),skuU=sku.toUpperCase();
+  const asin=(gf(r,'asin')||gf(r,'ASIN')||'').trim();
+  const name=gf(r,'product-name')||'';
+  const fbaFul=pn(gf(r,'afn-fulfillable-quantity'));
+  const res=resMap[skuU]||{};
+  const fcProc=res.fcProc||0;
+  // FC Transfer: use FBA_Inventory "Reserved FC Transfer" (most accurate), fall back to FBA_Reserve
+  const fcTrans=(fcTransMap&&fcTransMap[skuU])||res.fcTrans||0;
+  const awd=awdMap[skuU]||{};
+  const awdAvail=awd.avail||0,awdReserved=awd.reserved||0,awdOutbound=awd.outbound||0;
+  const sold90=invMap[skuU]||pn(gf(r,'units-shipped-t90'));
+  const dailySales=sold90>0?sold90/90:0;
+  const target=dailySales>0?Math.ceil(dailySales*C.targetDays):0;
+  const totalNetwork=fbaFul+fcProc+fcTrans+awdAvail+awdReserved+awdOutbound;
+  const recSend=Math.max(0,target-totalNetwork);
+  const netDays=dailySales>0?totalNetwork/dailySales:999;
+  return{sku,asin,name,fbaFul,fcProc,fcTrans,awdAvail,awdReserved,awdOutbound,sold90,dailySales,target,totalNetwork,recSend,netDays};
+}
+function skuOf(r){return(gf(r,'sku')||gf(r,'SKU')||gf(r,'MSKU')||'').trim();}
+
+// ── DEMO DATA ──
+function loadDemo(){
+  const items=[
+    {sku:'XF-COMP-BLK-S',asin:'B08A0001',name:'Compression Tights Black S',fba:45,fcP:0,fcT:0,awdA:0,awdR:0,awdO:0,s90:320},
+    {sku:'XF-COMP-BLK-M',asin:'B08A0002',name:'Compression Tights Black M',fba:80,fcP:5,fcT:3,awdA:20,awdR:2,awdO:0,s90:250},
+    {sku:'XF-COMP-BLK-L',asin:'B08A0003',name:'Compression Tights Black L',fba:200,fcP:10,fcT:5,awdA:50,awdR:5,awdO:8,s90:265},
+    {sku:'XF-COMP-WHT-S',asin:'B08A0004',name:'Compression Tights White S',fba:30,fcP:0,fcT:0,awdA:0,awdR:0,awdO:0,s90:145},
+    {sku:'XF-COMP-WHT-M',asin:'B08A0005',name:'Compression Tights White M',fba:350,fcP:20,fcT:10,awdA:100,awdR:5,awdO:10,s90:220},
+    {sku:'XF-VEST-BLK-M',asin:'B09B0006',name:'Training Vest Black M',fba:90,fcP:0,fcT:2,awdA:30,awdR:0,awdO:0,s90:175},
+    {sku:'XF-VEST-BLK-L',asin:'B09B0007',name:'Training Vest Black L',fba:120,fcP:5,fcT:3,awdA:60,awdR:0,awdO:5,s90:165},
+    {sku:'XF-SHORT-BLK-S',asin:'B09C0008',name:'Training Shorts Black S',fba:15,fcP:0,fcT:0,awdA:0,awdR:0,awdO:0,s90:160},
+    {sku:'XF-SHORT-BLK-M',asin:'B09C0009',name:'Training Shorts Black M',fba:180,fcP:15,fcT:8,awdA:80,awdR:5,awdO:0,s90:195},
+    {sku:'XF-SHORT-GRY-M',asin:'B09C0010',name:'Training Shorts Grey M',fba:60,fcP:0,fcT:2,awdA:10,awdR:0,awdO:0,s90:145},
+    {sku:'XF-TANK-BLK-M',asin:'B09D0011',name:'Tank Top Black M',fba:8,fcP:0,fcT:0,awdA:0,awdR:0,awdO:0,s90:125},
+    {sku:'XF-TANK-WHT-L',asin:'B09D0012',name:'Tank Top White L',fba:500,fcP:30,fcT:15,awdA:200,awdR:10,awdO:20,s90:240},
+  ];
+  S.joined=items.map(i=>{
+    const dailySales=i.s90/90,target=Math.ceil(dailySales*C.targetDays);
+    const totalNetwork=i.fba+i.fcP+i.fcT+i.awdA+i.awdR+i.awdO;
+    return{sku:i.sku,asin:i.asin,name:i.name,fbaFul:i.fba,fcProc:i.fcP,fcTrans:i.fcT,awdAvail:i.awdA,awdReserved:i.awdR,awdOutbound:i.awdO,sold90:i.s90,dailySales,target,totalNetwork,recSend:Math.max(0,target-totalNetwork),netDays:totalNetwork/dailySales};
+  });
+  if(S.cpackCount===0){
+    const demo={'XF-COMP-BLK-S':{unitsPerBox:6,weightLb:4.2,lengthIn:12,widthIn:8,heightIn:6},'XF-COMP-BLK-M':{unitsPerBox:6,weightLb:4.4,lengthIn:12,widthIn:8,heightIn:6},'XF-SHORT-BLK-S':{unitsPerBox:8,weightLb:3.8,lengthIn:10,widthIn:8,heightIn:5},'XF-TANK-BLK-M':{unitsPerBox:10,weightLb:3.2,lengthIn:10,widthIn:7,heightIn:5}};
+    Object.entries(demo).forEach(([k,v])=>S.cpackMap[k]=v);
+    S.cpackCount=Object.keys(S.cpackMap).length;S.cpackDate=new Date();updateCpackUI();
+  }
+  S.loaded=true;
+  ['fba','live','awd','res'].forEach(k=>{ge('ico-'+k).textContent='✅';ge('zone-'+k).classList.add('loaded');const st=ge('st-'+k);st.textContent='Demo';st.className='ust ok';});
+  ge('proc-btn').disabled=false;
+  renderDashboard();renderInv();renderRecs();updateBadges();
+  const pill=ge('data-pill');pill.textContent='Demo · '+S.joined.length+' SKUs';
+  pill.style.background='var(--blue-light)';pill.style.color='var(--blue)';
+  awd_planner_toast('Demo data loaded','success');awd_switchTab('dashboard');
+}
+
+// ── DAYS BADGE ──
+function db(d){
+  const n=Math.round(d);
+  if(d>=999)return'<span class="badge bgr">No velocity</span>';
+  if(d<=0)return'<span class="badge br">OOS</span>';
+  if(d<=30)return'<span class="badge br">'+n+'d</span>';
+  if(d<=60)return'<span class="badge bo">'+n+'d</span>';
+  if(d<=120)return'<span class="badge by">'+n+'d</span>';
+  return'<span class="badge bg">'+n+'d</span>';
+}
+
+// ── DASHBOARD ──
+
+
+// ── INVENTORY ──
+let invDir='asc';
+function sortInv(){invDir=invDir==='asc'?'desc':'asc';renderInv();}
+function renderInv(){
+  if(!S.loaded)return;
+  const q=ge('inv-q').value.toLowerCase(),f=ge('inv-f').value;
+  let data=[...S.joined].filter(r=>{
+    if(q&&!r.sku.toLowerCase().includes(q)&&!r.asin.toLowerCase().includes(q)&&!r.name.toLowerCase().includes(q))return false;
+    if(f==='critical'&&(r.netDays>30||r.netDays>=999))return false;
+    if(f==='warning'&&(r.netDays<=30||r.netDays>60||r.netDays>=999))return false;
+    if(f==='ok'&&(r.netDays<=60||r.netDays>120||r.netDays>=999))return false;
+    if(f==='good'&&r.netDays<=120)return false;
+    if(f==='awaiting'){if(r.recSend<=0)return false;if(DISC.skus.has(r.sku.toUpperCase()))return false;if(checkWarehouseStock(r.sku).status!=='awaiting')return false;}
+    return true;
+  });
+  data.sort((a,b)=>invDir==='asc'?a.netDays-b.netDays:b.netDays-a.netDays);
+  const th=ge('th-days');th.className='sort r '+(invDir==='asc'?'asc':'desc');
+  ge('inv-count').textContent=data.length+' SKU'+(data.length!==1?'s':'');
+  const tb=ge('inv-tbody');
+  if(!data.length){tb.innerHTML='<tr><td colspan="16"><div class="empty" style="padding:30px"><div class="ico">🔍</div><h3>No matches</h3></div></td></tr>';return;}
+  tb.innerHTML=data.map(r=>{
+    const staged=!!S.shipment[r.sku];
+    const actionBtn=staged
+      ?'<span style="font-size:11px;color:var(--green,#0E7F3E);font-weight:600;white-space:nowrap">&#10003; In Shipment</span>'
+      :`<button class="btn btn-sm btn-secondary" style="white-space:nowrap;font-size:11px" onclick="invAddToBuilder('${esc(r.sku)}')">+ Add</button>`;
+    return`<tr>
+    <td class="sku">${r.sku}</td>
+    <td style="font-size:12px;color:var(--gray-600);max-width:150px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="${r.name}">${r.name||'—'}</td>
+    <td class="asin">${r.asin||'—'}</td>
+    <td class="r">${db(r.netDays)}</td>
+    <td class="r">${fn(r.fbaFul)}</td><td class="r">${fn(r.fcProc)}</td><td class="r">${fn(r.fcTrans)}</td>
+    <td class="r">${fn(r.awdAvail)}</td><td class="r">${fn(r.awdReserved)}</td><td class="r">${fn(r.awdOutbound)}</td>
+    <td class="r"><strong>${fn(r.totalNetwork)}</strong></td>
+    <td class="r">${fn(r.sold90)}</td>
+    <td class="r">${r.dailySales>0?r.dailySales.toFixed(1):'—'}</td>
+    <td class="r">${fn(r.target)}</td>
+    <td class="r">${r.recSend>0?'<strong style="color:var(--blue)">'+fn(r.recSend)+'</strong>':'<span style="color:var(--gray-300)">—</span>'}</td>
+    <td>${actionBtn}</td>
+  </tr>`;}).join('');
+}
+function exportInvCSV(){
+  if(!S.joined.length){awd_planner_toast('No data','error');return;}
+  const h=['SKU','ASIN','Product Name','Net Days','FBA Fulfillable','FC Processing','FC Transfer','AWD Available','AWD Reserved','AWD Outbound','Total Network','Sold 90d','Daily Sales','Target 120d','Rec Send Qty'];
+  const rows=S.joined.map(r=>[r.sku,r.asin,r.name,r.netDays>=999?'':Math.round(r.netDays),r.fbaFul,r.fcProc,r.fcTrans,r.awdAvail,r.awdReserved,r.awdOutbound,r.totalNetwork,r.sold90,r.dailySales.toFixed(2),r.target,r.recSend]);
+  dlCSV([h,...rows],'inventory.csv');awd_planner_toast('Exported','success');
+}
+
+// ── RECOMMENDATIONS ──
+function visRecs(){
+  const q=ge('rec-q').value.toLowerCase(),f=ge('rec-f').value;
+  return S.joined.filter(r=>{
+    if(r.netDays>=999&&r.recSend===0)return false;
+    if(q&&!r.sku.toLowerCase().includes(q)&&!r.asin.toLowerCase().includes(q)&&!r.name.toLowerCase().includes(q))return false;
+    if(f==='critical'&&r.netDays>30)return false;
+    if(f==='warning'&&(r.netDays<=30||r.netDays>60))return false;
+    if(f==='ok'&&(r.netDays<=60||r.netDays>120))return false;
+    return true;
+  }).sort((a,b)=>a.netDays-b.netDays);
+}
+
+function togRec(sku,c){if(c)addSku(sku);else removeSku(sku);}
+function toggleAllVis(c){visRecs().forEach(r=>{if(c)stage(r);else delete S.shipment[r.sku];});updateBadges();renderRecs();renderBuilder();}
+function addAllVisible(){ge('rec-all').checked=true;toggleAllVis(true);awd_planner_toast('Added to builder','success');}
+
+// ── BUILDER ──
+function findRow(sku){return S.joined.find(r=>r.sku===sku);}
+function stage(row){if(S.shipment[row.sku])return;S.shipment[row.sku]={row,qty:row.recSend||0};saveShipmentToSheet();}
+
+function removeSku(sku){delete S.shipment[sku];updateBadges();renderRecs();renderBuilder();saveShipmentToSheet();}
+function clearBuilder(){if(!Object.keys(S.shipment).length)return;S.shipment={};updateBadges();renderRecs();renderBuilder();awd_planner_toast('Cleared');}
+function updQty(sku,v){if(!S.shipment[sku])return;S.shipment[sku].qty=Math.max(0,parseInt(v)||0);updateSummary();saveShipmentToSheet();}
+
+// ── MANUAL ADD TO BUILDER ──
+function bldShowManualAdd(){
+  ge('bld-empty').style.display='none';
+  ge('bld-body').style.display='block';
+  const panel=ge('bld-manual-panel');
+  panel.style.display='block';
+  ge('bld-manual-sku').value='';
+  ge('bld-manual-name').value='';
+  ge('bld-manual-qty').value='0';
+  ge('bld-manual-err').style.display='none';
+  setTimeout(function(){ge('bld-manual-sku').focus();},50);
+}
+function bldHideManualAdd(){
+  ge('bld-manual-panel').style.display='none';
+  if(!Object.keys(S.shipment).length){
+    ge('bld-empty').style.display='';
+    ge('bld-body').style.display='none';
+  }
+}
+function bldManualAdd(){
+  const sku=(ge('bld-manual-sku').value||'').trim().toUpperCase();
+  const name=(ge('bld-manual-name').value||'').trim();
+  const qty=Math.max(0,parseInt(ge('bld-manual-qty').value)||0);
+  const errEl=ge('bld-manual-err');
+  if(!sku){errEl.textContent='SKU is required.';errEl.style.display='block';ge('bld-manual-sku').focus();return;}
+  if(S.shipment[sku]){errEl.textContent=sku+' is already in the shipment — update the qty in the table below.';errEl.style.display='block';return;}
+  errEl.style.display='none';
+  // Use existing S.joined row if available; otherwise build a stub
+  const existing=S.joined.find(function(r){return r.sku.toUpperCase()===sku;});
+  const row=existing||{sku,asin:'',name:name||sku,fbaFul:0,fcProc:0,fcTrans:0,awdAvail:0,awdReserved:0,awdOutbound:0,sold90:0,dailySales:0,target:0,totalNetwork:0,recSend:0,netDays:999,_manual:true};
+  if(existing&&name)row.name=name;
+  S.shipment[sku]={row,qty};
+  updateBadges();renderRecs();renderInv();renderBuilder();saveShipmentToSheet();
+  awd_planner_toast('Added: '+sku,'success');
+  ge('bld-manual-sku').value='';ge('bld-manual-name').value='';ge('bld-manual-qty').value='0';
+  ge('bld-manual-sku').focus();
+}
+// ── ADD TO BUILDER FROM INVENTORY TAB ──
+function invAddToBuilder(sku){
+  const row=S.joined.find(r=>r.sku===sku);
+  if(!row)return;
+  if(S.shipment[sku]){awd_planner_toast(sku+' already in shipment','error');return;}
+  stage(row);
+  updateBadges();renderRecs();renderInv();renderBuilder();
+  awd_planner_toast('Added: '+sku,'success');
+}
+
+
+var _bldSortDir = 0; // 0=none, 1=asc, -1=desc
+function bldToggleSort(){
+  _bldSortDir = _bldSortDir === 1 ? -1 : 1;
+  var arrow = ge('bld-sort-arrow');
+  if(arrow) arrow.innerHTML = _bldSortDir === 1 ? '&#9650;' : '&#9660;';
+  renderBuilder();
+}
+function renderBuilder(){
+  const items=Object.entries(S.shipment);
+  const manualOpen=ge('bld-manual-panel')&&ge('bld-manual-panel').style.display!=='none';
+  ge('bld-empty').style.display=(items.length||manualOpen)?'none':'';
+  ge('bld-body').style.display=(items.length||manualOpen)?'block':'none';
+  if(!items.length){updateSummary();return;}
+  const q=ge('bld-q').value.toLowerCase();
+  let filt=items.filter(([sku])=>!q||sku.toLowerCase().includes(q));
+  if(_bldSortDir!==0) filt=filt.slice().sort(([a],[b])=>_bldSortDir*a.localeCompare(b));
+  ge('bld-count').textContent=items.length+' SKU'+(items.length!==1?'s':'');
+  const matched=items.filter(([sku])=>{const cp=S.cpackMap[sku.toUpperCase()];return cp&&cp.unitsPerBox>0;}).length;
+  const note=ge('cpack-note');
+  if(note)note.textContent=S.cpackCount>0?'📐 '+matched+' of '+items.length+' SKUs have case pack templates':'📐 No case pack data loaded — box dims will be blank on export';
+  ge('bld-tbody').innerHTML=filt.map(([sku,item])=>{
+    const r=item.row,cp=S.cpackMap[sku.toUpperCase()],hasCP=cp&&cp.unitsPerBox>0;
+    const boxes=hasCP?Math.ceil(item.qty/cp.unitsPerBox):null;
+    const ws = checkWarehouseStock(sku);
+    const exportQty = hasCP ? boxes * cp.unitsPerBox : item.qty;
+
+    // ── SPLIT LABEL PREFIX LOGIC ──
+    // exactRows = warehouse rows with matching variant (pre-labeled)
+    // bulkRows  = warehouse rows with different variant (needs relabeling)
+    // For exact rows: packagesAvailable = casesNum × unitsPerCase (packages per case)
+    // preLabeled_boxes = FLOOR(packagesAvailable ÷ unitsPerBox), capped at total boxes
+    // bulk_boxes = total boxes - preLabeled_boxes
+    // Bulk rows can NEVER be pre-labeled (wrong variant = repackage needed, not just relabel)
+    let lPrefix = null;
+    if (hasCP && boxes > 0) {
+      const exactRows = ws.exactRows || [];
+      const hasExact = exactRows.length > 0;
+
+      if (hasExact) {
+        // Sum labeled packages available across all exact-variant warehouse locations
+        let labeledPkgs = 0;
+        exactRows.forEach(function(row) {
+          const upc_pkgs = getUnitsPerCase(row.partNum);
+          if (upc_pkgs > 0) {
+            labeledPkgs += row.casesNum * upc_pkgs;
+          } else {
+            // unitsPerCase unknown — treat all exact cases as labeled (conservative)
+            labeledPkgs = Infinity;
+          }
+        });
+
+        const preLabeledBoxes = labeledPkgs === Infinity
+          ? boxes  // assume all pre-labeled if we can't calculate
+          : Math.min(boxes, Math.floor(labeledPkgs / cp.unitsPerBox));
+        const bulkBoxes = boxes - preLabeledBoxes;
+
+        if (preLabeledBoxes > 0 && bulkBoxes > 0) {
+          lPrefix = preLabeledBoxes + '/' + bulkBoxes + '$';  // true split
+        } else if (preLabeledBoxes > 0) {
+          lPrefix = String(boxes);  // all pre-labeled
+        } else {
+          lPrefix = String(boxes) + '$';  // exact rows exist but not enough packages
+        }
+      } else if (ws.status === 'bulk') {
+        lPrefix = String(boxes) + '$';  // only different variant — all need labels
+      }
+      // awaiting/unknown: lPrefix stays null → shows — in table
+    }
+
+    return`<tr>
+      <td class="sku">${sku}</td>
+      <td style="font-size:12px;color:var(--gray-600);max-width:120px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="${r.name}">${r.name||'—'}</td>
+      <td class="r">${db(r.netDays)}</td>
+      <td class="r">${fn(r.recSend)}</td>
+      <td><input type="number" class="qty-inp" value="${item.qty}" min="0" oninput="updQty('${esc(sku)}',this.value)"></td>
+      <td class="r">${hasCP
+        ? `<span class="cp-pill found">${cp.unitsPerBox}/box · ${exportQty} units · ${boxes} box${boxes!==1?'es':''}</span>`
+        : '<span class="cp-pill missing">No template</span>'}</td>
+      <td>${lPrefix
+        ? `<button class="btn btn-sm btn-secondary" style="font-size:11px${lPrefix && lPrefix.includes('/') ? ';color:#EA580C;border-color:#FDBA74' : ''}" onclick="copyLabelFromBuilder('${esc(sku)}','${esc(lPrefix)}')">📋 ${lPrefix}</button>`
+        : '<span style="color:var(--gray-400);font-size:11px">—</span>'}</td>
+      <td><button class="btn btn-sm btn-secondary" style="padding:4px 8px" onclick="removeSku('${esc(sku)}')">✕</button></td>
+    </tr>`;
+  }).join('');
+  updateSummary();
+}
+function updateSummary(){
+  const items=Object.entries(S.shipment);let tot=0;
+  ge('sum-items').innerHTML=items.slice(0,16).map(([sku,i])=>{tot+=i.qty;return'<div class="sum-item"><span class="sum-sku">'+sku+'</span><span class="sum-qty">'+fn(i.qty)+'</span></div>';}).join('')
+    +(items.length>16?'<div style="font-size:11px;color:var(--gray-400);text-align:center;padding:6px 0">+' +(items.length-16)+' more</div>':'');
+  if(!items.length)ge('sum-items').innerHTML='<div style="text-align:center;color:var(--gray-400);font-size:13px;padding:10px 0">No SKUs added</div>';
+  ge('sum-total').textContent=fn(tot);ge('bld-units-lbl').textContent=fn(tot)+' total units';
+}
+
+// ── EXPORT AWD CSV (Amazon AWD Template format) ──
+
+
+// ── UTILITIES ──
+function ge(id){return document.getElementById(id);}
+function gf(row,col){if(!row||!col)return'';return(row[col]??row[col.toLowerCase()]??row[col.toUpperCase()]??'').toString().trim();}
+function pn(v){const n=parseFloat((v||'').toString().replace(/,/g,''));return isNaN(n)||n<0?0:n;}
+function fn(n,d=0){if(n===null||n===undefined||isNaN(n))return'—';return Number(n.toFixed(d)).toLocaleString();}
+function esc(s){return(s||'').replace(/\\/g,'\\\\').replace(/'/g,'\\x27');}
+function dlCSV(rows,fname){
+  const csv=rows.map(r=>r.map(c=>{const s=String(c??'');return s.includes(',')||s.includes('"')||s.includes('\n')?'"'+s.replace(/"/g,'""')+'"':s;}).join(',')).join('\n');
+  const a=document.createElement('a');a.href=URL.createObjectURL(new Blob([csv],{type:'text/csv'}));a.download=fname;a.click();
+}
+// ── SYNC FROM AMAZON ─────────────────────────────────────────────────────────
+var AWD_VELOCITY_POLL_KEY = 'awd_velocity_report';
+var _awdVelocityPollTimer = null;
+
+// On planner load — resume polling if a report was in progress
+function awdCheckPendingVelocity() {
+  var saved = localStorage.getItem(AWD_VELOCITY_POLL_KEY);
+  if (!saved) return;
+  try {
+    var info = JSON.parse(saved);
+    if (info.reportId && info.status !== 'DONE') {
+      var vstatus = ge('awd-velocity-status');
+      if (vstatus) { vstatus.style.display = 'block'; vstatus.textContent = '⏳ Velocity report resuming… (requested ' + new Date(info.requestedAt).toLocaleTimeString('en-US',{hour:'numeric',minute:'2-digit',hour12:true,timeZone:'America/New_York'}) + ')'; }
+      awdStartVelocityPolling(info.reportId);
+    }
+  } catch(e) {}
+}
+
+async function awdAmazonSync() {
+  var btn    = ge('awd-amazon-sync-btn');
+  var status = ge('awd-sync-status');
+  var vstatus = ge('awd-velocity-status');
+  if (btn) { btn.disabled = true; btn.textContent = '⏳ Syncing inventory…'; }
+  if (status) status.textContent = 'Calling Amazon SP-API…';
+  if (vstatus) vstatus.style.display = 'none';
+
+  // Step 1: Sync inventory quantities
+  try {
+    var res  = await wFetch('https://xfitting-lookup.alfixedinc88.workers.dev/awd/amazon-sync', { method: 'POST' });
+    var data = await res.json();
+    if (data.ok) {
+      var ts = new Date(data.syncedAt).toLocaleString('en-US',{ month:'short', day:'numeric', hour:'numeric', minute:'2-digit', hour12:true, timeZone:'America/New_York' });
+      if (status) status.textContent = '✓ Inventory synced at ' + ts + ' · ' + data.fbaCount + ' FBA · ' + data.awdCount + ' AWD SKUs';
+      if (btn) { btn.textContent = '⏳ Requesting velocity…'; }
+      [['fba', data.fbaCount+' SKUs'],['live', data.fbaCount+' SKUs'],['awd', data.awdCount+' SKUs'],['res', data.fbaCount+' SKUs']].forEach(function(x){
+        var ico=ge('ico-'+x[0]); if(ico) ico.textContent='✅';
+        var st=ge('st-'+x[0]); if(st){ st.textContent=x[1]+' (from API)'; st.className='ust ok'; }
+        var zone=ge('zone-'+x[0]); if(zone) zone.classList.add('loaded');
+      });
+      if(ge('proc-btn')) ge('proc-btn').disabled=false;
+      // Don't reload from sheet here — would overwrite manually uploaded CSV data
+    } else {
+      if (status) status.textContent = 'Error: ' + (data.error || 'unknown');
+      if (btn) { btn.disabled=false; btn.style.background='var(--red)'; btn.textContent='⚠ Failed — retry'; }
+      return;
+    }
+  } catch(e) {
+    if (status) status.textContent = 'Error: ' + e.message;
+    if (btn) { btn.disabled=false; btn.style.background='var(--red)'; btn.textContent='⚠ Failed — retry'; }
+    return;
+  }
+
+  // Step 2: Request velocity report
+  try {
+    var vres  = await wFetch('https://xfitting-lookup.alfixedinc88.workers.dev/awd/amazon-velocity-request', { method: 'POST' });
+    var vdata = await vres.json();
+    if (vdata.ok && vdata.reportId) {
+      localStorage.setItem(AWD_VELOCITY_POLL_KEY, JSON.stringify({ reportId: vdata.reportId, requestedAt: vdata.requestedAt, status: 'IN_QUEUE' }));
+      if (vstatus) { vstatus.style.display = 'block'; vstatus.textContent = '⏳ Velocity report requested — processing (est. 2–30 min)…'; }
+      if (btn) { btn.disabled=false; btn.style.background=''; btn.textContent='⚡ Sync from Amazon'; }
+      awd_planner_toast('Inventory synced — velocity report processing in background', 'success');
+      awdStartVelocityPolling(vdata.reportId);
+    } else {
+      if (vstatus) { vstatus.style.display='block'; vstatus.textContent = 'Velocity request failed: ' + (vdata.error||'unknown'); }
+      if (btn) { btn.disabled=false; btn.textContent='⚡ Sync from Amazon'; }
+    }
+  } catch(e) {
+    if (vstatus) { vstatus.style.display='block'; vstatus.textContent = 'Velocity request error: ' + e.message; }
+    if (btn) { btn.disabled=false; btn.textContent='⚡ Sync from Amazon'; }
+  }
+}
+
+function awdStartVelocityPolling(reportId) {
+  if (_awdVelocityPollTimer) clearInterval(_awdVelocityPollTimer);
+  _awdVelocityPollTimer = setInterval(function() { awdPollVelocity(reportId); }, 30000);
+  // Also poll immediately after 5 seconds
+  setTimeout(function() { awdPollVelocity(reportId); }, 5000);
+}
+
+async function awdPollVelocity(reportId) {
+  var vstatus = ge('awd-velocity-status');
+  try {
+    var res  = await wFetch('https://xfitting-lookup.alfixedinc88.workers.dev/awd/amazon-velocity-status?reportId=' + encodeURIComponent(reportId));
+    var data = await res.json();
+    if (!data.ok) { if (vstatus) vstatus.textContent = 'Status check error: ' + (data.error||'unknown'); return; }
+    var s = data.status;
+    // Update localStorage
+    var saved = localStorage.getItem(AWD_VELOCITY_POLL_KEY);
+    if (saved) { try { var info=JSON.parse(saved); info.status=s; localStorage.setItem(AWD_VELOCITY_POLL_KEY, JSON.stringify(info)); } catch(e){} }
+    if (s === 'DONE' && data.reportDocumentId) {
+      if (vstatus) vstatus.textContent = '⏳ Velocity report ready — downloading and writing to sheet…';
+      clearInterval(_awdVelocityPollTimer);
+      _awdVelocityPollTimer = null;
+      awdDownloadVelocity(data.reportDocumentId);
+    } else if (s === 'FATAL' || s === 'CANCELLED') {
+      if (vstatus) vstatus.textContent = '⚠ Velocity report ' + s.toLowerCase() + ' — try sync again';
+      localStorage.removeItem(AWD_VELOCITY_POLL_KEY);
+      clearInterval(_awdVelocityPollTimer); _awdVelocityPollTimer = null;
+    } else {
+      var elapsed = '';
+      try { var info=JSON.parse(localStorage.getItem(AWD_VELOCITY_POLL_KEY)||'{}'); if(info.requestedAt){ var mins=Math.floor((Date.now()-new Date(info.requestedAt).getTime())/60000); elapsed=' ('+mins+'m elapsed)'; } } catch(e){}
+      if (vstatus) vstatus.textContent = '⏳ Velocity report ' + s.toLowerCase().replace('_',' ') + elapsed + ' — checking every 30s…';
+    }
+  } catch(e) { if (vstatus) vstatus.textContent = 'Poll error: ' + e.message; }
+}
+
+async function awdDownloadVelocity(reportDocumentId) {
+  var vstatus = ge('awd-velocity-status');
+  try {
+    var res  = await wFetch('https://xfitting-lookup.alfixedinc88.workers.dev/awd/amazon-velocity-download', {
+      method: 'POST',
+      body: JSON.stringify({ reportDocumentId: reportDocumentId })
+    });
+    var data = await res.json();
+    if (data.ok) {
+      localStorage.removeItem(AWD_VELOCITY_POLL_KEY);
+      var msg = '✓ Velocity written — ' + data.skusMatched + ' SKUs matched';
+      if (data.unmappedCount > 0) msg += ' · ' + data.unmappedCount + ' ASINs unmapped';
+      if (data.debug) {
+        msg += ' | t90col=' + data.debug.st90ColLetter
+          + ' updates=' + data.debug.totalUpdates
+          + ' asinMapSize=' + data.debug.asinDailyMapSize
+          + ' velAsins=[' + (data.debug.sampleVelocityAsins||[]).slice(0,2).join(',') + ']'
+          + ' fbaAsins=[' + (data.debug.sampleFbaSheetAsins||[]).slice(0,2).join(',') + ']'
+          + ' reportEntry=' + (data.debug.reportFirstEntryKeys||[]).join(',');
+      }
+      if (vstatus) vstatus.textContent = msg;
+      awd_planner_toast('Velocity data ready — ' + data.skusMatched + ' SKUs updated', 'success');
+      var st=ge('st-fba'); if(st){ st.textContent='Velocity loaded (from API)'; st.className='ust ok'; }
+      // Show unmapped ASINs if any
+      if (data.unmapped && data.unmapped.length > 0) {
+        awdShowUnmappedAsins(data.unmapped, data.unmappedCount);
+      }
+      // Reload FBA_Inventory sheet data to pick up freshly written velocity columns
+      setTimeout(function(){ if(typeof loadReportsFromSheet === 'function') loadReportsFromSheet(); }, 1000);
+    } else {
+      if (vstatus) vstatus.textContent = '⚠ Velocity download failed: ' + (data.error||'unknown');
+    }
+  } catch(e) {
+    if (vstatus) vstatus.textContent = 'Download error: ' + e.message;
+  }
+}
+
+function awdShowUnmappedAsins(unmapped, totalCount) {
+  // Remove existing unmapped section if any
+  var existing = ge('awd-unmapped-section');
+  if (existing) existing.remove();
+  var container = ge('awd-sync-status');
+  if (!container) return;
+  var section = document.createElement('div');
+  section.id = 'awd-unmapped-section';
+  section.style.cssText = 'margin-top:12px;padding:12px 14px;background:var(--orange-bg,#FEF3E2);border:1.5px solid var(--orange,#B45309);border-radius:10px';
+  var title = totalCount > unmapped.length
+    ? '⚠ ' + totalCount + ' unmapped ASINs (showing first ' + unmapped.length + ')'
+    : '⚠ ' + totalCount + ' unmapped ASIN' + (totalCount!==1?'s':'');
+  section.innerHTML = '<div style="font-size:13px;font-weight:700;color:var(--orange,#B45309);margin-bottom:6px">' + title + '</div>'
+    + '<div style="font-size:12px;color:#4B5563;margin-bottom:10px">These ASINs have no valid SKU mapping. Enter the correct SKU to include their velocity data.</div>'
+    + '<div id="awd-unmapped-list"></div>';
+  container.parentElement.appendChild(section);
+  var list = ge('awd-unmapped-list');
+  unmapped.forEach(function(item) {
+    var row = document.createElement('div');
+    row.style.cssText = 'display:flex;gap:8px;align-items:center;margin-bottom:6px;flex-wrap:wrap';
+    row.id = 'awd-unmap-row-' + item.asin;
+    row.innerHTML = '<div style="font-family:var(--mono,monospace);font-size:12px;font-weight:700;min-width:120px">' + item.asin + '</div>'
+      + '<div style="font-size:11px;color:#9CA3AF;min-width:80px">t90: ' + (item.velocity ? item.velocity.t90 : 0) + ' units</div>'
+      + '<input id="awd-sku-' + item.asin + '" type="text" placeholder="e.g. 23-2-1=2" value="' + (item.currentSku||'') + '"'
+      + ' style="flex:1;min-width:140px;padding:5px 8px;border:1.5px solid #DDE0E6;border-radius:6px;font-size:12px;font-family:var(--mono,monospace)">'
+      + '<button data-asin="' + item.asin + '" onclick="awdSaveAsinMapping(this.dataset.asin)"'
+      + ' style="padding:5px 12px;border-radius:6px;border:none;background:#1A56DB;color:#fff;font-size:12px;font-weight:700;cursor:pointer;white-space:nowrap">Save</button>';
+    list.appendChild(row);
+  });
+}
+
+window.awdSaveAsinMapping = async function(asin) {
+  var inp = ge('awd-sku-' + asin);
+  var sku = inp ? inp.value.trim() : '';
+  if (!sku) { awd_planner_toast('Enter a SKU first', 'error'); return; }
+  var btn = inp ? inp.nextElementSibling : null;
+  if (btn) btn.disabled = true;
+  try {
+    var res  = await wFetch('https://xfitting-lookup.alfixedinc88.workers.dev/awd/amazon-map-asin', {
+      method: 'POST',
+      body: JSON.stringify({ asin: asin, sku: sku })
+    });
+    var data = await res.json();
+    if (data.ok) {
+      var row = ge('awd-unmap-row-' + asin);
+      if (row) { row.style.opacity='0.5'; row.style.pointerEvents='none'; }
+      awd_planner_toast('Mapped: ' + asin + ' → ' + sku, 'success');
+    } else {
+      if (btn) btn.disabled = false;
+      awd_planner_toast('Save failed: ' + (data.error||'unknown'), 'error');
+    }
+  } catch(e) {
+    if (btn) btn.disabled = false;
+    awd_planner_toast('Error: ' + e.message, 'error');
+  }
+};
+
 // Check for pending velocity report on load
 (function() { if (document.readyState === 'loading') { document.addEventListener('DOMContentLoaded', awdCheckPendingVelocity); } else { setTimeout(awdCheckPendingVelocity, 2000); } })();
 
@@ -4702,22 +5386,15 @@ function salesToast(msg, type) {
 
 <!-- ═══════════════════════════════════════════════════════ -->
 
-
-// ── Boot ─────────────────────────────────────────────────────────────────
 (function() {
   var awdEl = document.getElementById('awd-app');
   if (XF_SESSION) { if(awdEl) awdEl.style.display='flex'; return; }
   fetch(WORKER_URL + '/auth', {
-    method:'POST',
-    headers:{'Content-Type':'application/json'},
+    method:'POST', headers:{'Content-Type':'application/json'},
     body: JSON.stringify({pin:'1314', pin_type:'ops'})
   }).then(function(r){ return r.json(); })
   .then(function(d){
-    if(d.token){
-      XF_SESSION=d.token; XF_ROLE='ops';
-      sessionStorage.setItem('xf_session',d.token);
-      sessionStorage.setItem('xf_role','ops');
-    }
+    if(d.token){ XF_SESSION=d.token; XF_ROLE='ops'; sessionStorage.setItem('xf_session',d.token); sessionStorage.setItem('xf_role','ops'); }
     if(awdEl) awdEl.style.display='flex';
   }).catch(function(){ if(awdEl) awdEl.style.display='flex'; });
 })();
