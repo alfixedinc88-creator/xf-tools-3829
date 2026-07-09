@@ -1,0 +1,612 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>XFitting — Label Printer</title>
+  <!-- XFITTING-BUILD-V114-FEAT-20260707 -->
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700;800&family=DM+Mono:wght@400;500&display=swap" rel="stylesheet">
+  <style>
+:root {
+  --bg:       #f4f5f7;
+  --bg2:      #ffffff;
+  --bg3:      #f0f1f3;
+  --bg4:      #e8eaed;
+  --border:   #dde0e6;
+  --border2:  #c8cbd4;
+  --text:     #1a1d23;
+  --text2:    #4a5060;
+  --text3:    #8a90a0;
+  --accent:   #1a56db;
+  --accent-bg:#eef2fd;
+  --accent2:  #1246c0;
+  --green:    #0e7f3e;
+  --green-bg: #e8f7ee;
+  --red:      #c52a1a;
+  --red-bg:   #fdf0ee;
+  --orange:   #b45309;
+  --orange-bg:#fef3e2;
+  --purple:   #6d28d9;
+  --purple-bg:#f2effe;
+  --mono:     'DM Mono', monospace;
+  --sans:     'DM Sans', sans-serif;
+  --shadow:   0 1px 3px rgba(0,0,0,0.08), 0 1px 2px rgba(0,0,0,0.04);
+  --shadow2:  0 4px 12px rgba(0,0,0,0.08), 0 2px 4px rgba(0,0,0,0.04);
+}
+*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+body { display:flex; flex-direction:column; min-height:100vh; background:var(--bg); font-family:var(--sans); color:var(--text); }
+  </style>
+</head>
+<body>
+
+<script>
+// ── Globals needed by Label Printer IIFE ─────────────────────────────────
+var XF_SESSION = sessionStorage.getItem('xf_session') || null;
+window.XF_SESSION = XF_SESSION;
+var XF_ROLE = sessionStorage.getItem('xf_role') || null;
+function backToLauncher() { window.location.href = 'index.html'; }
+function launchApp(app)   { window.location.href = app + '.html'; }
+async function wFetch(url, opts) {
+  opts = opts || {};
+  opts.headers = Object.assign({}, opts.headers || {}, {
+    'X-Session-Token': XF_SESSION || ''
+  });
+  var r = await fetch(url, opts);
+  if (r.status === 401) {
+    XF_SESSION = null;
+    XF_ROLE = null;
+    sessionStorage.removeItem('xf_session');
+    sessionStorage.removeItem('xf_role');
+    var ps = document.getElementById('pin-screen');
+    if (ps) { ps.style.display = 'flex'; ps.style.opacity = '1'; ps.style.visibility = 'visible'; }
+    var la = document.getElementById('launcher');
+    if (la) la.style.display = 'none';
+    throw new Error('Unauthorized');
+  }
+  return r;
+}
+
+
+// Auto-auth with OPS PIN on load
+(function() {
+  if (XF_SESSION) return;
+  fetch('https://xfitting-lookup.alfixedinc88.workers.dev/auth', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ pin: '1314', pin_type: 'ops' })
+  }).then(function(r) { return r.json(); })
+  .then(function(d) {
+    if (d.token) {
+      XF_SESSION = d.token;
+      window.XF_SESSION = d.token;
+      sessionStorage.setItem('xf_session', d.token);
+    }
+  }).catch(function() {});
+})();
+</script>
+
+<div id="labelprint-app" style="display:flex;min-height:100vh;background:var(--bg);font-family:var(--sans)">
+
+<style>
+#labelprint-app {
+  --lp-cyan: #0891B2;
+  --lp-cyan-bg: #E0F2FE;
+  --lp-border: #CBD5E1;
+}
+#labelprint-app .lp-header {
+  background:#0891B2;
+  color:#fff;
+  padding:14px 16px;
+  display:flex;
+  align-items:center;
+  gap:12px;
+  position:sticky;
+  top:0;
+  z-index:10;
+}
+#labelprint-app .lp-header-title { font-size:17px;font-weight:700;flex:1 }
+#labelprint-app .lp-back { background:rgba(255,255,255,0.2);border:none;color:#fff;padding:6px 12px;border-radius:7px;font-size:13px;font-weight:700;cursor:pointer }
+#labelprint-app .lp-body { padding:16px;max-width:640px;margin:0 auto }
+#labelprint-app .lp-card { background:var(--bg2);border:1.5px solid var(--border);border-radius:12px;padding:14px 16px;margin-bottom:14px }
+#labelprint-app .lp-card-title { font-size:13px;font-weight:700;color:var(--text2);text-transform:uppercase;letter-spacing:.5px;margin-bottom:10px }
+#labelprint-app .lp-status-dot { width:10px;height:10px;border-radius:50%;display:inline-block;margin-right:6px }
+#labelprint-app .lp-status-dot.connected { background:#0E7F3E }
+#labelprint-app .lp-status-dot.disconnected { background:#C52A1A }
+#labelprint-app .lp-status-dot.checking { background:#B45309;animation:lp-pulse 1s infinite }
+@keyframes lp-pulse { 0%,100%{opacity:1}50%{opacity:.4} }
+#labelprint-app .lp-btn { padding:9px 18px;border-radius:8px;border:none;font-size:13px;font-weight:700;cursor:pointer;font-family:var(--sans) }
+#labelprint-app .lp-btn-primary { background:#0891B2;color:#fff }
+#labelprint-app .lp-btn-primary:disabled { opacity:.5;cursor:not-allowed }
+#labelprint-app .lp-btn-secondary { background:var(--bg3);color:var(--text);border:1.5px solid var(--border) }
+#labelprint-app .lp-btn-green { background:#0E7F3E;color:#fff }
+#labelprint-app .lp-filter-row { display:flex;gap:8px;flex-wrap:wrap;margin-bottom:10px }
+#labelprint-app .lp-filter-btn { padding:5px 12px;border-radius:20px;border:1.5px solid var(--border);background:var(--bg);color:var(--text2);font-size:12px;font-weight:600;cursor:pointer }
+#labelprint-app .lp-filter-btn.active { background:#0891B2;color:#fff;border-color:#0891B2 }
+#labelprint-app .lp-loc-list { max-height:300px;overflow-y:auto;border:1px solid var(--border);border-radius:8px }
+#labelprint-app .lp-loc-row { display:flex;align-items:center;gap:10px;padding:8px 12px;border-bottom:1px solid var(--border);font-size:12px }
+#labelprint-app .lp-loc-row:last-child { border-bottom:none }
+#labelprint-app .lp-loc-row input[type=checkbox] { width:16px;height:16px;cursor:pointer }
+#labelprint-app .lp-loc-name { font-family:var(--mono);font-weight:700;flex:1 }
+#labelprint-app .lp-loc-meta { font-size:11px;color:var(--text3) }
+#labelprint-app .lp-preview { background:#fff;border:1.5px solid var(--lp-border);border-radius:8px;padding:10px;margin-top:10px;font-family:monospace }
+#labelprint-app .lp-preview-label { background:#fff;border:2px solid #333;border-radius:4px;padding:4px 8px;display:inline-block;margin:4px;font-size:11px;min-width:180px;text-align:center }
+#labelprint-app .lp-preview-barcode { letter-spacing:-1px;font-size:28px;color:#000;display:block;margin:2px 0 }
+#labelprint-app .lp-count-badge { background:#0891B2;color:#fff;font-size:11px;font-weight:700;padding:2px 8px;border-radius:10px;margin-left:8px }
+</style>
+
+<div class="lp-header">
+  <button class="lp-back" onclick="backToLauncher()">← Apps</button>
+  <div class="lp-header-title">🏷️ Label Printer</div>
+  <div style="font-size:12px;opacity:.8">ZP 450</div>
+</div>
+
+<div class="lp-body">
+
+  <!-- Printer connection -->
+  <div class="lp-card">
+    <div class="lp-card-title">Printer Connection</div>
+    <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap">
+      <div>
+        <span class="lp-status-dot checking" id="lp-status-dot"></span>
+        <span id="lp-status-text" style="font-size:13px">Checking for Zebra Browser Print...</span>
+      </div>
+      <button class="lp-btn lp-btn-secondary" onclick="lpConnect()" id="lp-connect-btn">🔌 Connect</button>
+    </div>
+    <div id="lp-printer-select" style="display:none;margin-top:10px">
+      <div style="font-size:12px;color:var(--text2);margin-bottom:6px">Select printer:</div>
+      <select id="lp-printer-dropdown" style="padding:6px 10px;border:1.5px solid var(--border);border-radius:7px;background:var(--bg);color:var(--text);font-size:13px;width:100%"></select>
+    </div>
+    <div id="lp-zbp-help" style="display:none;margin-top:10px;padding:10px;background:var(--orange-bg);border-radius:8px;font-size:12px;color:var(--text2)">
+      ⚠️ Zebra Browser Print not detected. <a href="https://www.zebra.com/us/en/support-downloads/software/printer-software/browser-print.html" target="_blank" style="color:#0891B2;font-weight:700">Download here</a> — install and restart this page.
+    </div>
+  </div>
+
+  <!-- Load locations -->
+  <div class="lp-card">
+    <div class="lp-card-title">Locations <span id="lp-total-badge" class="lp-count-badge" style="display:none">0</span></div>
+    <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
+      <button class="lp-btn lp-btn-primary" onclick="lpLoadLocations()" id="lp-load-btn">📋 Load Locations</button>
+      <span id="lp-load-status" style="font-size:12px;color:var(--text3)"></span>
+    </div>
+
+    <!-- Prefix filters -->
+    <div id="lp-filter-row" class="lp-filter-row" style="display:none;margin-top:12px">
+      <button class="lp-filter-btn active" onclick="lpSetFilter('ALL',this)">All</button>
+    </div>
+
+    <!-- Select all / none -->
+    <div id="lp-select-bar" style="display:none;margin-bottom:6px;align-items:center;gap:8px">
+      <button class="lp-btn lp-btn-secondary" style="padding:4px 10px;font-size:11px" onclick="lpSelectAll(true)">Select All</button>
+      <button class="lp-btn lp-btn-secondary" style="padding:4px 10px;font-size:11px" onclick="lpSelectAll(false)">Select None</button>
+      <span id="lp-selected-count" style="font-size:12px;color:var(--text3)"></span>
+    </div>
+
+    <!-- Location list -->
+    <div id="lp-loc-list" class="lp-loc-list" style="display:none"></div>
+  </div>
+
+  <!-- Label preview -->
+  <div class="lp-card" id="lp-preview-card" style="display:none">
+    <div class="lp-card-title">Label Preview (1" × 2")</div>
+    <div id="lp-preview-area"></div>
+    <div style="font-size:11px;color:var(--text3);margin-top:6px">Showing first 3 labels</div>
+  </div>
+
+  <!-- Single label input -->
+  <div class="lp-card">
+    <div class="lp-card-title">Print Single Label</div>
+    <div style="font-size:12px;color:var(--text2);margin-bottom:10px">Type or scan any location to print one label instantly.</div>
+    <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
+      <input id="lp-single-input" type="text" placeholder="e.g. BARN=1-1-2-1" autocomplete="off" autocapitalize="characters"
+        style="flex:1;min-width:140px;padding:8px 12px;border:1.5px solid var(--border);border-radius:8px;background:var(--bg);color:var(--text);font-size:14px;font-family:var(--mono)"
+        onkeydown="if(event.key==='Enter') lpPrintSingle()">
+      <button class="lp-btn lp-btn-primary" onclick="lpPrintSingle()">🖨️ Print</button>
+    </div>
+    <div id="lp-single-status" style="font-size:12px;color:var(--text2);margin-top:6px"></div>
+  </div>
+
+  <!-- Label Settings -->
+  <div class="lp-card" id="lp-settings-card" style="display:none">
+    <div class="lp-card-title">Label Settings</div>
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-bottom:12px">
+      <div><div style="font-size:11px;font-weight:700;color:var(--text3);margin-bottom:4px">LABEL WIDTH (dots)</div>
+        <input id="lp-set-width" type="number" value="406" min="100" max="800" style="width:100%;padding:6px 8px;border:1.5px solid var(--border);border-radius:7px;background:var(--bg);color:var(--text);font-size:13px;font-family:var(--mono)">
+        <div style="font-size:10px;color:var(--text3);margin-top:2px">2&quot; &times; 203dpi = 406</div></div>
+      <div><div style="font-size:11px;font-weight:700;color:var(--text3);margin-bottom:4px">LABEL HEIGHT (dots)</div>
+        <input id="lp-set-height" type="number" value="203" min="100" max="800" style="width:100%;padding:6px 8px;border:1.5px solid var(--border);border-radius:7px;background:var(--bg);color:var(--text);font-size:13px;font-family:var(--mono)">
+        <div style="font-size:10px;color:var(--text3);margin-top:2px">1&quot; &times; 203dpi = 203</div></div>
+      <div><div style="font-size:11px;font-weight:700;color:var(--text3);margin-bottom:4px">TEXT SIZE (dots)</div>
+        <input id="lp-set-textsize" type="number" value="24" min="10" max="60" style="width:100%;padding:6px 8px;border:1.5px solid var(--border);border-radius:7px;background:var(--bg);color:var(--text);font-size:13px;font-family:var(--mono)"></div>
+      <div><div style="font-size:11px;font-weight:700;color:var(--text3);margin-bottom:4px">TEXT Y OFFSET (dots)</div>
+        <input id="lp-set-texty" type="number" value="6" min="0" max="100" style="width:100%;padding:6px 8px;border:1.5px solid var(--border);border-radius:7px;background:var(--bg);color:var(--text);font-size:13px;font-family:var(--mono)"></div>
+      <div><div style="font-size:11px;font-weight:700;color:var(--text3);margin-bottom:4px">BARCODE HEIGHT (dots)</div>
+        <input id="lp-set-barheight" type="number" value="100" min="20" max="180" style="width:100%;padding:6px 8px;border:1.5px solid var(--border);border-radius:7px;background:var(--bg);color:var(--text);font-size:13px;font-family:var(--mono)"></div>
+      <div><div style="font-size:11px;font-weight:700;color:var(--text3);margin-bottom:4px">BARCODE Y OFFSET (dots)</div>
+        <input id="lp-set-bary" type="number" value="36" min="0" max="150" style="width:100%;padding:6px 8px;border:1.5px solid var(--border);border-radius:7px;background:var(--bg);color:var(--text);font-size:13px;font-family:var(--mono)"></div>
+      <div><div style="font-size:11px;font-weight:700;color:var(--text3);margin-bottom:4px">BARCODE X MARGIN (dots)</div>
+        <input id="lp-set-barx" type="number" value="20" min="0" max="100" style="width:100%;padding:6px 8px;border:1.5px solid var(--border);border-radius:7px;background:var(--bg);color:var(--text);font-size:13px;font-family:var(--mono)"></div>
+      <div><div style="font-size:11px;font-weight:700;color:var(--text3);margin-bottom:4px">DARKNESS (1-30)</div>
+        <input id="lp-set-dark" type="number" value="10" min="1" max="30" style="width:100%;padding:6px 8px;border:1.5px solid var(--border);border-radius:7px;background:var(--bg);color:var(--text);font-size:13px;font-family:var(--mono)"></div>
+    </div>
+    <div style="display:flex;gap:8px;flex-wrap:wrap">
+      <button class="lp-btn lp-btn-primary" onclick="lpTestPrint()">&#x1F5A8; Print Test Label</button>
+      <button class="lp-btn lp-btn-secondary" onclick="lpResetSettings()">&#x21BA; Reset Defaults</button>
+    </div>
+    <div id="lp-test-status" style="font-size:12px;color:var(--text2);margin-top:8px"></div>
+  </div>
+
+  <!-- Print -->
+  <div class="lp-card" id="lp-print-card" style="display:none">
+    <div class="lp-card-title">Print</div>
+    <div style="display:flex;gap:10px;flex-wrap:wrap;align-items:center">
+      <button class="lp-btn lp-btn-green" id="lp-print-btn" onclick="lpPrint()" disabled>🖨️ Print Selected Labels</button>
+      <button class="lp-btn lp-btn-secondary" onclick="lpDownloadZPL()">⬇️ Download ZPL</button>
+    </div>
+    <div id="lp-print-status" style="font-size:12px;color:var(--text2);margin-top:8px"></div>
+  </div>
+
+</div>
+</div>
+<!-- /labelprint-app -->
+
+
+
+
+<script>
+(function() {
+  // ── LABEL PRINTER APP ─────────────────────────────────────────────────────
+  var LP_ZBP_URL     = 'http://localhost:9100'; // Zebra Browser Print default port
+  var lpLocations    = []; // all locations from API
+  var lpFiltered     = []; // currently filtered
+  var lpSelected     = new Set(); // selected location strings
+  var lpPrinters     = [];
+  var lpConnected    = false;
+  var lpCurrentFilter = 'ALL';
+
+  function g(id) { return document.getElementById(id); }
+
+  // ── ZBP CONNECTION ────────────────────────────────────────────────────────
+  window.lpConnect = function() {
+    var dot  = g('lp-status-dot');
+    var text = g('lp-status-text');
+    var help = g('lp-zbp-help');
+    var sel  = g('lp-printer-select');
+    dot.className = 'lp-status-dot checking';
+    text.textContent = 'Connecting to Zebra Browser Print...';
+    // Try to reach ZBP local service
+    fetch(LP_ZBP_URL + '/available', { mode: 'cors' })
+      .then(function(r) { return r.json(); })
+      .then(function(d) {
+        lpPrinters = d.printer || [];
+        if (!lpPrinters.length) throw new Error('No printers found');
+        lpConnected = true;
+        dot.className = 'lp-status-dot connected';
+        text.textContent = 'Connected — ' + lpPrinters.length + ' printer' + (lpPrinters.length!==1?'s':'') + ' found';
+        help.style.display = 'none';
+        sel.style.display = 'block';
+        var dd = g('lp-printer-dropdown');
+        dd.innerHTML = lpPrinters.map(function(p,i) {
+          return '<option value="' + i + '">' + (p.name || p.uid || 'Printer ' + (i+1)) + '</option>';
+        }).join('');
+        // Auto-select ZP 450 if found
+        lpPrinters.forEach(function(p,i) {
+          if ((p.name||'').toLowerCase().includes('zp') || (p.name||'').toLowerCase().includes('450')) {
+            dd.value = String(i);
+          }
+        });
+        // Enable print button if locations loaded
+        if (lpSelected.size > 0) g('lp-print-btn').disabled = false;
+      })
+      .catch(function() {
+        lpConnected = false;
+        dot.className = 'lp-status-dot disconnected';
+        text.textContent = 'Zebra Browser Print not found';
+        help.style.display = 'block';
+        sel.style.display = 'none';
+      });
+  };
+
+  // ── LOAD LOCATIONS ────────────────────────────────────────────────────────
+  window.lpLoadLocations = function() {
+    var btn    = g('lp-load-btn');
+    var status = g('lp-load-status');
+    btn.disabled = true;
+    status.textContent = 'Loading…';
+    // Use wFetch from main app scope
+    fetch('https://xfitting-lookup.alfixedinc88.workers.dev/inventory/location-list', {
+      headers: { 'X-Session-Token': (window.XF_SESSION || '') }
+    })
+      .then(function(r) { return r.json(); })
+      .then(function(d) {
+        btn.disabled = false;
+        if (!d || !d.locations) { status.textContent = 'Failed to load'; return; }
+        lpLocations = d.locations;
+        status.textContent = '✓ ' + d.count + ' locations loaded';
+        // Build prefix filter buttons
+        var prefixes = ['ALL'];
+        lpLocations.forEach(function(l) {
+          var eq = l.location.indexOf('=');
+          var pfx = eq >= 0 ? l.location.slice(0, eq+1) : l.location.split(/[\s\-]/)[0];
+          if (prefixes.indexOf(pfx) < 0) prefixes.push(pfx);
+        });
+        var filterRow = g('lp-filter-row');
+        filterRow.style.display = 'flex';
+        filterRow.innerHTML = prefixes.map(function(p) {
+          return '<button class="lp-filter-btn' + (p==='ALL'?' active':'') + '" data-pfx="' + p + '" onclick="lpSetFilter(this.dataset.pfx,this)">' + p + '</button>';
+        }).join('');
+        // Update badge
+        var badge = g('lp-total-badge');
+        badge.textContent = d.count;
+        badge.style.display = 'inline';
+        // Start with nothing selected — user selects after filtering
+        lpSelected.clear();
+        lpSetFilter('ALL', filterRow.querySelector('.lp-filter-btn'));
+      })
+      .catch(function(e) {
+        btn.disabled = false;
+        status.textContent = 'Error: ' + e.message;
+      });
+  };
+
+  window.lpSetFilter = function(pfx, btn) {
+    lpCurrentFilter = pfx;
+    lpSelected.clear(); // clear selection when switching filter
+    document.querySelectorAll('#labelprint-app .lp-filter-btn').forEach(function(b){ b.classList.remove('active'); });
+    if (btn) btn.classList.add('active');
+    lpFiltered = pfx === 'ALL' ? lpLocations : lpLocations.filter(function(l) {
+      var eq = l.location.indexOf('=');
+      var p  = eq >= 0 ? l.location.slice(0, eq+1) : l.location.split(/[\s\-]/)[0];
+      return p === pfx;
+    });
+    lpRenderList();
+    lpRenderPreview();
+    g('lp-print-card').style.display = 'block';
+    g('lp-preview-card').style.display = 'block';
+        var sc = g('lp-settings-card'); if(sc) sc.style.display = 'block';
+  };
+
+  window.lpSelectAll = function(val) {
+    lpFiltered.forEach(function(l) {
+      if (val) lpSelected.add(l.location);
+      else     lpSelected.delete(l.location);
+    });
+    lpRenderList();
+    lpUpdateSelectedCount();
+  };
+
+  function lpRenderList() {
+    var list      = g('lp-loc-list');
+    var selectBar = g('lp-select-bar');
+    if (list) list.style.display = 'block';
+    if (selectBar) selectBar.style.display = 'flex';
+    if (!list) return;
+    list.innerHTML = '';
+    lpFiltered.forEach(function(l, i) {
+      var row  = document.createElement('div');
+      row.className = 'lp-loc-row';
+      var chk  = document.createElement('input');
+      chk.type = 'checkbox';
+      chk.checked = lpSelected.has(l.location);
+      chk.onchange = (function(loc){ return function(){ lpToggleLoc(loc, this.checked); }; })(l.location);
+      var name = document.createElement('div');
+      name.className = 'lp-loc-name';
+      name.textContent = l.location;
+      row.appendChild(chk);
+      row.appendChild(name);
+      list.appendChild(row);
+    });
+    lpUpdateSelectedCount();
+  }
+
+  window.lpToggleLoc = function(loc, val) {
+    if (val) lpSelected.add(loc);
+    else     lpSelected.delete(loc);
+    lpUpdateSelectedCount();
+    lpRenderPreview();
+  };
+
+  function lpUpdateSelectedCount() {
+    var cnt = g('lp-selected-count');
+    var sel = lpFiltered.filter(function(l){ return lpSelected.has(l.location); }).length;
+    if (cnt) cnt.textContent = sel + ' of ' + lpFiltered.length + ' selected';
+    var printBtn = g('lp-print-btn');
+    if (printBtn) printBtn.disabled = !(lpConnected && sel > 0);
+  }
+
+  // ── ZPL GENERATION ────────────────────────────────────────────────────────
+  // ZP 450 at 203 DPI, 1"x2" label = 203x406 dots
+  function lpGetSettings() {
+    return {
+      width:     parseInt((g('lp-set-width')     || {value:'406'}).value)  || 406,
+      height:    parseInt((g('lp-set-height')    || {value:'203'}).value)  || 203,
+      textSize:  parseInt((g('lp-set-textsize')  || {value:'24'}).value)   || 24,
+      textY:     parseInt((g('lp-set-texty')     || {value:'6'}).value)    || 6,
+      barHeight: parseInt((g('lp-set-barheight') || {value:'100'}).value)  || 100,
+      barY:      parseInt((g('lp-set-bary')      || {value:'36'}).value)   || 36,
+      barX:      parseInt((g('lp-set-barx')      || {value:'20'}).value)   || 20,
+      darkness:  parseInt((g('lp-set-dark')      || {value:'10'}).value)   || 10
+    };
+  }
+
+  window.lpPrintSingle = function() {
+    var inp    = g('lp-single-input');
+    var status = g('lp-single-status');
+    var loc    = inp ? inp.value.trim() : '';
+    if (!loc) { if(status) status.textContent = 'Enter a location first'; return; }
+    if (!lpConnected) { if(status) status.textContent = 'Connect to printer first'; return; }
+    var dd      = g('lp-printer-dropdown');
+    var idx     = parseInt(dd ? dd.value : '0') || 0;
+    var printer = lpPrinters[idx];
+    if (!printer) { if(status) status.textContent = 'No printer selected'; return; }
+    var zpl = lpGenZPL(loc);
+    if(status) status.textContent = 'Printing ' + loc + '…';
+    fetch(LP_ZBP_URL + '/write', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ device: printer, data: zpl })
+    })
+      .then(function() {
+        if(status) status.textContent = '✓ Printed: ' + loc;
+        if(inp) inp.value = '';
+        setTimeout(function(){ if(inp) inp.focus(); }, 300);
+      })
+      .catch(function(e) { if(status) status.textContent = '⚠ ' + e.message; });
+  };
+
+  var LP_SETTINGS_KEY = 'lp_settings';
+  var LP_DEFAULTS = {'lp-set-width':'406','lp-set-height':'203','lp-set-textsize':'24',
+    'lp-set-texty':'6','lp-set-barheight':'100','lp-set-bary':'36','lp-set-barx':'20','lp-set-dark':'10'};
+
+  function lpSaveSettings() {
+    var vals = {};
+    Object.keys(LP_DEFAULTS).forEach(function(id){ var el=g(id); if(el) vals[id]=el.value; });
+    localStorage.setItem(LP_SETTINGS_KEY, JSON.stringify(vals));
+  }
+
+  function lpLoadSettings() {
+    var saved = {};
+    try { saved = JSON.parse(localStorage.getItem(LP_SETTINGS_KEY) || '{}'); } catch(e){}
+    Object.keys(LP_DEFAULTS).forEach(function(id){
+      var el = g(id);
+      if (el) el.value = saved[id] || LP_DEFAULTS[id];
+    });
+    // Auto-save on any change
+    Object.keys(LP_DEFAULTS).forEach(function(id){
+      var el = g(id);
+      if (el) el.addEventListener('change', lpSaveSettings);
+    });
+  }
+
+  window.lpResetSettings = function() {
+    Object.keys(LP_DEFAULTS).forEach(function(id){ var el=g(id); if(el) el.value=LP_DEFAULTS[id]; });
+    localStorage.removeItem(LP_SETTINGS_KEY);
+  };
+
+  window.lpTestPrint = function() {
+    if (!lpConnected) { alert('Connect to printer first'); return; }
+    var dd  = g('lp-printer-dropdown');
+    var idx = parseInt(dd ? dd.value : '0') || 0;
+    var printer = lpPrinters[idx];
+    if (!printer) { alert('No printer selected'); return; }
+    var testLoc = lpFiltered.length > 0 ? lpFiltered[0].location : 'TEST=1-1-1';
+    var zpl     = lpGenZPL(testLoc);
+    var status  = g('lp-test-status');
+    if (status) status.textContent = 'Sending test: ' + testLoc + '…';
+    fetch(LP_ZBP_URL + '/write', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ device: printer, data: zpl })
+    })
+      .then(function() { if(status) status.textContent = '✓ Test sent — adjust and try again if needed'; })
+      .catch(function(e) { if(status) status.textContent = '⚠ ' + e.message; });
+  };
+
+  function lpGenZPL(loc) {
+    var s          = lpGetSettings();
+    var barcodeVal = loc.replace(/^'/, '');
+    return [
+      '^XA',
+      '^MMT',
+      '^PW' + s.width,
+      '^LL' + s.height,
+      '^MD' + s.darkness,
+      '^LS0',
+      '^CI28',
+      '^FO0,' + s.textY + '^FB' + s.width + ',1,0,C,0^A0N,' + s.textSize + ',' + s.textSize + '^FD' + barcodeVal + '^FS',
+      '^FO' + s.barX + ',' + s.barY + '^BY2,3,' + s.barHeight + '^BCN,' + s.barHeight + ',N,N,N^FD' + barcodeVal + '^FS',
+      '^XZ'
+    ].join('\n');
+  }
+
+  function lpGenAllZPL() {
+    var selected = lpLocations.filter(function(l){ return lpSelected.has(l.location); });
+    return selected.map(function(l){ return lpGenZPL(l.location); }).join('\n');
+  }
+
+  // ── PREVIEW ───────────────────────────────────────────────────────────────
+  function lpRenderPreview() {
+    var area = g('lp-preview-area');
+    if (!area) return;
+    var sel = lpFiltered.filter(function(l){ return lpSelected.has(l.location); }).slice(0,3);
+    if (!sel.length) { area.innerHTML = '<div style="color:var(--text3);font-size:12px">No locations selected</div>'; return; }
+    area.innerHTML = sel.map(function(l) {
+      var loc = l.location.replace(/^'/, '');
+      return '<div class="lp-preview-label">'
+        + '<div style="font-weight:700;font-size:12px;margin-bottom:4px;text-align:center">' + loc + '</div>'
+        + '<svg xmlns="http://www.w3.org/2000/svg" width="180" height="50" style="display:block;margin:0 auto">'
+        + '<rect width="180" height="50" fill="white"/>'
+        + '<text x="90" y="44" font-size="9" text-anchor="middle" font-family="monospace" fill="#333">' + loc + '</text>'
+        // Simple barcode simulation — alternating bars
+        + (function(){var b='';for(var x=5;x<175;x+=3){b+='<rect x="'+x+'" y="2" width="'+(Math.random()>0.5?2:1)+'" height="36" fill="black"/>';}return b;})()
+        + '</svg>'
+        + '<div style="font-size:9px;color:#888;text-align:center;margin-top:2px">Code 128 · 1” × 2”</div>'
+        + '</div>';
+    }).join('');
+  }
+
+  // ── PRINT VIA ZEBRA BROWSER PRINT ─────────────────────────────────────────
+  window.lpPrint = function() {
+    if (!lpConnected) { alert('Connect to printer first'); return; }
+    var dd  = g('lp-printer-dropdown');
+    var idx = parseInt(dd ? dd.value : '0') || 0;
+    var printer = lpPrinters[idx];
+    if (!printer) { alert('No printer selected'); return; }
+    var zpl    = lpGenAllZPL();
+    var status = g('lp-print-status');
+    var btn    = g('lp-print-btn');
+    var sel    = lpLocations.filter(function(l){ return lpSelected.has(l.location); });
+    btn.disabled = true;
+    if (status) status.textContent = 'Sending ' + sel.length + ' labels to printer…';
+    // Send ZPL to ZBP
+    fetch(LP_ZBP_URL + '/write', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ device: printer, data: zpl })
+    })
+      .then(function(r) { return r.json(); })
+      .then(function() {
+        if (status) status.textContent = '✓ Sent ' + sel.length + ' label' + (sel.length!==1?'s':'') + ' to ' + (printer.name||'printer');
+        btn.disabled = false;
+      })
+      .catch(function(e) {
+        if (status) status.textContent = '⚠ Print error: ' + e.message;
+        btn.disabled = false;
+      });
+  };
+
+  // ── DOWNLOAD ZPL (fallback) ───────────────────────────────────────────────
+  window.lpDownloadZPL = function() {
+    var zpl  = lpGenAllZPL();
+    var sel  = lpLocations.filter(function(l){ return lpSelected.has(l.location); });
+    var blob = new Blob([zpl], { type: 'text/plain' });
+    var url  = URL.createObjectURL(blob);
+    var a    = document.createElement('a');
+    a.href = url;
+    a.download = 'xfitting-labels-' + sel.length + '.zpl';
+    a.click();
+    URL.revokeObjectURL(url);
+    var status = g('lp-print-status');
+    if (status) status.textContent = '✓ Downloaded ' + sel.length + ' labels as ZPL file. Send to printer: copy /b xfitting-labels.zpl \\\\.\\USB001';
+  };
+
+  // ── LAUNCH ────────────────────────────────────────────────────────────────
+  // Launch from Operator section — no PIN required
+  window.lpLaunchFromOperator = function() {
+    document.getElementById('launcher').style.display = 'none';
+    document.getElementById('labelprint-app').style.display = 'block';
+    lpLaunch();
+  };
+
+  window.lpLaunch = function() {
+    lpLoadSettings(); // restore saved settings
+    setTimeout(lpConnect, 300);
+  };
+
+})();
+</script>
+
+
+
+</body>
+</html>
