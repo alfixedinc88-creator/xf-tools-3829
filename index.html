@@ -4118,20 +4118,20 @@ function launchApp(which) {
 }
 
 function backToLauncher() {
-  document.getElementById('inv-app').style.display = 'none';
-  document.getElementById('wh-app').style.display = 'none';
-  document.getElementById('awd-app').style.display = 'none';
-  document.getElementById('upc-app').style.display = 'none';
-  document.getElementById('reorder-app').style.display = 'none';
-  document.getElementById('dashboard-app').style.display = 'none';
-  document.getElementById('packship-app').style.display = 'none';
-  document.getElementById('receivepo-app').style.display = 'none';
-  document.getElementById('messenger-app').style.display = 'none';
-  document.getElementById('msginbox-app').style.display = 'none';
-  document.getElementById('ebaymsgs-app').style.display = 'none';
-  document.getElementById('ldash-app').style.display = 'none';
-  document.getElementById('labelprint-app').style.display = 'none';
-  document.getElementById('launcher').style.display = 'flex';
+  // Hide all app divs (null-safe — some may have been removed)
+  var appIds = [
+    'inv-app','wh-app','awd-app','upc-app','reorder-app',
+    'dashboard-app','packship-app','receivepo-app','messenger-app',
+    'msginbox-app','ebaymsgs-app','ldash-app','repricer-root','labelprint-app'
+  ];
+  appIds.forEach(function(id) {
+    var el = document.getElementById(id);
+    if (el) el.style.display = 'none';
+  });
+  var launcher = document.getElementById('launcher');
+  if (launcher) launcher.style.display = 'flex';
+  var pinScreen = document.getElementById('pin-screen');
+  if (pinScreen) { pinScreen.style.display = 'none'; pinScreen.style.visibility = 'hidden'; }
 }
 
 // After PIN always shows launcher
