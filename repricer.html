@@ -851,6 +851,8 @@ async function rprCheckPin() {
     if (r.ok && data.token) {
       rprToken = data.token;
       rprPinLevel = data.pin_level || 'ops';
+      sessionStorage.setItem('rpr_token', data.token);
+      sessionStorage.setItem('rpr_level', rprPinLevel);
       document.getElementById('rpr-pin-screen').style.display = 'none';
       document.getElementById('rpr-app').style.display = 'flex';
       rprApplyPinLevel();
@@ -3221,6 +3223,24 @@ function awdHandleScan(raw) {
 })();
 
 
+</script>
+<script>
+// ── Repricer Standalone Boot ──────────────────────────────────────────────
+(function() {
+  var savedToken = sessionStorage.getItem('rpr_token');
+  var savedLevel = sessionStorage.getItem('rpr_level');
+  if (savedToken) {
+    // Restore session - skip PIN screen
+    rprToken = savedToken;
+    rprPinLevel = savedLevel || 'price';
+    document.getElementById('rpr-app').style.display = 'flex';
+    if (typeof rprApplyPinLevel === 'function') rprApplyPinLevel();
+    if (typeof rprLoad === 'function') rprLoad();
+  } else {
+    // Show PIN screen
+    document.getElementById('rpr-pin-screen').style.display = 'flex';
+  }
+})();
 </script>
 </body>
 </html>
