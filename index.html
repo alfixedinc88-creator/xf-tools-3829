@@ -1,7 +1,7 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-  <!-- XFITTING-BUILD-V115-FEAT-20260707c -->
+  <!-- XFITTING-BUILD-V115-FEAT-20260707d -->
 <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate">
 <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&family=IBM+Plex+Sans:wght@300;400;500;600&display=swap" rel="stylesheet">
   <meta http-equiv="Pragma" content="no-cache">
@@ -4174,15 +4174,15 @@ function mgmtPinKey(d) {
           XF_SESSION = d.token;
           sessionStorage.setItem('xf_session', d.token);
           document.getElementById('mgmt-pin-screen').style.display = 'none';
-          if (mgmtPinTarget === 'repricer') {
-            document.getElementById('launcher').style.display = 'none';
-            document.getElementById('repricer-root').style.display = 'block';
-            document.getElementById('rpr-pin-screen').style.display = 'none';
-            document.getElementById('rpr-app').style.display = 'flex';
-            rprToken = d.token;
-            rprPinLevel = 'mgmt';
-            if (typeof rprApplyPinLevel === 'function') rprApplyPinLevel();
-            if (typeof rprLoad === 'function') rprLoad();
+          // Standalone apps — redirect with session token
+          var standaloneApps = {
+            'repricer':  'repricer.html',
+            'receivepo': 'receivepo.html',
+          };
+          if (standaloneApps[mgmtPinTarget]) {
+            // Store session so standalone can pick it up
+            sessionStorage.setItem('xf_role', mgmtPinTarget === 'repricer' ? 'price' : 'mgmt');
+            window.location.href = standaloneApps[mgmtPinTarget];
           } else {
             salesLaunchApp(mgmtPinTarget);
           }
@@ -4216,33 +4216,34 @@ function mgmtPinCancel() {
 }
 
 async function salesLaunchApp(name) {
-  document.getElementById('launcher').style.display = 'none';
+  var launcherEl = document.getElementById('launcher');
+  if (launcherEl) launcherEl.style.display = 'none';
   if (name === 'receivepo') {
-    document.getElementById('receivepo-app').style.display = 'flex';
-    document.getElementById('receivepo-app').style.flexDirection = 'column';
+    (function(){ var _e=document.getElementById('receivepo-app'); if(_e) _e.style.display='flex'; })();
+    (function(){ var _e=document.getElementById('receivepo-app'); if(_e) _e.style.flexDirection='column'; })();
     rpoReset();
     return;
   }
   if (name === 'msginbox') {
-    document.getElementById('msginbox-app').style.display = 'flex';
-    document.getElementById('msginbox-app').style.flexDirection = 'column';
+    (function(){ var _e=document.getElementById('msginbox-app'); if(_e) _e.style.display='flex'; })();
+    (function(){ var _e=document.getElementById('msginbox-app'); if(_e) _e.style.flexDirection='column'; })();
     msgInboxOnLaunch();
     return;
   }
   if (name === 'ebaymsgs') {
-    document.getElementById('ebaymsgs-app').style.display = 'flex';
-    document.getElementById('ebaymsgs-app').style.flexDirection = 'column';
+    (function(){ var _e=document.getElementById('ebaymsgs-app'); if(_e) _e.style.display='flex'; })();
+    (function(){ var _e=document.getElementById('ebaymsgs-app'); if(_e) _e.style.flexDirection='column'; })();
     ebayMsgsOnLaunch();
     return;
   }
   if (name === 'ldash') {
-    document.getElementById('ldash-app').style.display = 'flex';
-    document.getElementById('ldash-app').style.flexDirection = 'column';
+    (function(){ var _e=document.getElementById('ldash-app'); if(_e) _e.style.display='flex'; })();
+    (function(){ var _e=document.getElementById('ldash-app'); if(_e) _e.style.flexDirection='column'; })();
     ldashOnLaunch();
     return;
   }
   if (name === 'labelprint') {
-    document.getElementById('labelprint-app').style.display = 'block';
+    (function(){ var _e=document.getElementById('labelprint-app'); if(_e) _e.style.display='block'; })();
     if (typeof lpLaunch === 'function') lpLaunch();
     return;
   }
