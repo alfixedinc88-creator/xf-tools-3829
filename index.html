@@ -1412,6 +1412,37 @@ input[type=checkbox]{width:15px;height:15px;cursor:pointer;accent-color:var(--bl
   </div>
 </div>
 
+<div id="mgmt-pin-screen" style="display:none;position:fixed;inset:0;background:var(--bg);z-index:8000;align-items:center;justify-content:center;flex-direction:column">
+  <div style="text-align:center;animation:fadeIn .3s ease">
+    <div style="font-family:var(--mono);font-size:10px;letter-spacing:4px;color:var(--text3);text-transform:uppercase;margin-bottom:28px">
+      <span style="color:var(--accent)">XF</span>ITTING — Management Access
+    </div>
+    <div style="font-size:20px;font-weight:600;color:var(--text);margin-bottom:6px">Management PIN Required</div>
+    <div style="font-size:13px;color:var(--text2);margin-bottom:28px">This area is restricted to management</div>
+    <div style="display:flex;gap:12px;justify-content:center;margin-bottom:20px" id="mgmt-pd-row">
+      <div class="mgmt-dot" id="mgmt-pd0"></div>
+      <div class="mgmt-dot" id="mgmt-pd1"></div>
+      <div class="mgmt-dot" id="mgmt-pd2"></div>
+      <div class="mgmt-dot" id="mgmt-pd3"></div>
+    </div>
+    <div style="display:grid;grid-template-columns:repeat(3,60px);gap:10px;justify-content:center">
+      <button class="mgmt-key" onclick="mgmtPinKey('1')">1</button>
+      <button class="mgmt-key" onclick="mgmtPinKey('2')">2</button>
+      <button class="mgmt-key" onclick="mgmtPinKey('3')">3</button>
+      <button class="mgmt-key" onclick="mgmtPinKey('4')">4</button>
+      <button class="mgmt-key" onclick="mgmtPinKey('5')">5</button>
+      <button class="mgmt-key" onclick="mgmtPinKey('6')">6</button>
+      <button class="mgmt-key" onclick="mgmtPinKey('7')">7</button>
+      <button class="mgmt-key" onclick="mgmtPinKey('8')">8</button>
+      <button class="mgmt-key" onclick="mgmtPinKey('9')">9</button>
+      <button class="mgmt-key" onclick="mgmtPinDel()" style="font-size:12px;color:#8b90a8">DEL</button>
+      <button class="mgmt-key" onclick="mgmtPinKey('0')">0</button>
+      <button class="mgmt-key" onclick="mgmtPinCancel()" style="font-size:11px;color:#8b90a8">← Back</button>
+    </div>
+    <div id="mgmt-pin-error" style="color:var(--red);font-size:12px;margin-top:16px;font-family:var(--mono);opacity:0;transition:opacity .2s">Incorrect PIN</div>
+  </div>
+</div>
+
 <!-- ═══ LEADERSHIP DASHBOARD APP ═══ -->
 <div id="ldash-app" style="display:none;flex-direction:column;min-height:100vh;background:var(--bg);">
 
@@ -4116,6 +4147,129 @@ function launchApp(which) {
     msgOnLaunch();
   }
 }
+
+function launchMgmtApp(name) {
+  history.pushState({ xfApp: name }, '', '');
+  mgmtPinTarget = name;
+  mgmtPinBuf = "";
+  ['mgmt-pd0','mgmt-pd1','mgmt-pd2','mgmt-pd3'].forEach(function(id) {
+    document.getElementById(id).classList.remove('filled');
+  });
+  document.getElementById('mgmt-pin-error').style.opacity = '0';
+  document.getElementById('mgmt-pin-screen').style.display = 'flex';
+}
+
+function mgmtPinKey(d) {
+  if (mgmtPinBuf.length >= 4) return;
+  mgmtPinBuf += d;
+  document.getElementById('mgmt-pd' + (mgmtPinBuf.length - 1)).classList.add('filled');
+  if (mgmtPinBuf.length === 4) {
+    setTimeout(function() {
+      var pinType = mgmtPinTarget === 'repricer' ? 'price' : 'mgmt';
+      fetch(WORKER_URL + '/auth', {
+        method: 'POST', headers: {'Content-Type':'application/json'},
+        body: JSON.stringify({ pin: mgmtPinBuf, pin_type: pinType })
+      }).then(function(r){ return r.json(); }).then(function(d){
+        if (d.token) {
+          XF_SESSION = d.token;
+          sessionStorage.setItem('xf_session', d.token);
+          document.getElementById('mgmt-pin-screen').style.display = 'none';
+          if (mgmtPinTarget === 'repricer') {
+            document.getElementById('launcher').style.display = 'none';
+            document.getElementById('repricer-root').style.display = 'block';
+            document.getElementById('rpr-pin-screen').style.display = 'none';
+            document.getElementById('rpr-app').style.display = 'flex';
+            rprToken = d.token;
+            rprPinLevel = 'mgmt';
+            if (typeof rprApplyPinLevel === 'function') rprApplyPinLevel();
+            if (typeof rprLoad === 'function') rprLoad();
+          } else {
+            salesLaunchApp(mgmtPinTarget);
+          }
+        } else {
+          document.getElementById('mgmt-pin-error').style.opacity = '1';
+          setTimeout(function() {
+            mgmtPinBuf = "";
+            ['mgmt-pd0','mgmt-pd1','mgmt-pd2','mgmt-pd3'].forEach(function(id){
+              document.getElementById(id).classList.remove('filled');
+            });
+            document.getElementById('mgmt-pin-error').style.opacity = '0';
+          }, 900);
+        }
+      }).catch(function(){
+        document.getElementById('mgmt-pin-error').style.opacity = '1';
+      });
+    }, 120);
+  }
+}
+
+function mgmtPinDel() {
+  if (!mgmtPinBuf.length) return;
+  document.getElementById('mgmt-pd' + (mgmtPinBuf.length - 1)).classList.remove('filled');
+  mgmtPinBuf = mgmtPinBuf.slice(0, -1);
+}
+
+function mgmtPinCancel() {
+  document.getElementById('mgmt-pin-screen').style.display = 'none';
+  mgmtPinBuf = "";
+  mgmtPinTarget = null;
+}
+
+async function salesLaunchApp(name) {
+  document.getElementById('launcher').style.display = 'none';
+  if (name === 'receivepo') {
+    document.getElementById('receivepo-app').style.display = 'flex';
+    document.getElementById('receivepo-app').style.flexDirection = 'column';
+    rpoReset();
+    return;
+  }
+  if (name === 'msginbox') {
+    document.getElementById('msginbox-app').style.display = 'flex';
+    document.getElementById('msginbox-app').style.flexDirection = 'column';
+    msgInboxOnLaunch();
+    return;
+  }
+  if (name === 'ebaymsgs') {
+    document.getElementById('ebaymsgs-app').style.display = 'flex';
+    document.getElementById('ebaymsgs-app').style.flexDirection = 'column';
+    ebayMsgsOnLaunch();
+    return;
+  }
+  if (name === 'ldash') {
+    document.getElementById('ldash-app').style.display = 'flex';
+    document.getElementById('ldash-app').style.flexDirection = 'column';
+    ldashOnLaunch();
+    return;
+  }
+  if (name === 'labelprint') {
+    document.getElementById('labelprint-app').style.display = 'block';
+    if (typeof lpLaunch === 'function') lpLaunch();
+    return;
+  }
+  var appId = name === 'reorder' ? 'reorder-app' : 'dashboard-app';
+  var appKey = name === 'reorder' ? 'ro' : 'db';
+  document.getElementById(appId).style.display = 'flex';
+  document.getElementById(appId).style.flexDirection = 'column';
+  setStatus(appKey, 'loading', 'Loading...');
+  try {
+    await salesLoadWarehouseStock();
+    await readCalcTabs();
+    lastUpdated = new Date();
+    updateLastUpdatedLabels();
+    buildReorderRows();
+    buildDashboardData();
+    var whCount = Object.keys(CALC.whStock).length;
+    var upcCount = Object.keys(CALC.upc).length;
+    setStatus(appKey, 'ok', 'WH: ' + whCount + ' parts · ' + upcCount + ' UPC');
+    salesToast('Loaded · WH: ' + whCount + ' parts', 'success');
+  } catch(e) {
+    console.error('[salesLaunchApp] error:', e.message, e.stack);
+    setStatus(appKey, 'err', 'Error: ' + e.message);
+    salesToast('Load error: ' + e.message, 'error');
+  }
+}
+
+
 
 function backToLauncher() {
   // Hide all app divs (null-safe — some may have been removed)
