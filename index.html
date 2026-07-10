@@ -4249,24 +4249,29 @@ async function salesLaunchApp(name) {
   }
   var appId = name === 'reorder' ? 'reorder-app' : 'dashboard-app';
   var appKey = name === 'reorder' ? 'ro' : 'db';
-  document.getElementById(appId).style.display = 'flex';
-  document.getElementById(appId).style.flexDirection = 'column';
-  setStatus(appKey, 'loading', 'Loading...');
+  var appEl = document.getElementById(appId);
+  if (!appEl) {
+    console.warn('[salesLaunchApp] app div not found:', appId);
+    return;
+  }
+  appEl.style.display = 'flex';
+  appEl.style.flexDirection = 'column';
+  if (typeof setStatus === 'function') setStatus(appKey, 'loading', 'Loading...');
   try {
-    await salesLoadWarehouseStock();
-    await readCalcTabs();
-    lastUpdated = new Date();
-    updateLastUpdatedLabels();
-    buildReorderRows();
-    buildDashboardData();
-    var whCount = Object.keys(CALC.whStock).length;
-    var upcCount = Object.keys(CALC.upc).length;
-    setStatus(appKey, 'ok', 'WH: ' + whCount + ' parts · ' + upcCount + ' UPC');
-    salesToast('Loaded · WH: ' + whCount + ' parts', 'success');
+    if (typeof salesLoadWarehouseStock === 'function') await salesLoadWarehouseStock();
+    if (typeof readCalcTabs === 'function') await readCalcTabs();
+    if (typeof lastUpdated !== 'undefined') lastUpdated = new Date();
+    if (typeof updateLastUpdatedLabels === 'function') updateLastUpdatedLabels();
+    if (typeof buildReorderRows === 'function') buildReorderRows();
+    if (typeof buildDashboardData === 'function') buildDashboardData();
+    var whCount = (typeof CALC !== 'undefined' && CALC.whStock) ? Object.keys(CALC.whStock).length : 0;
+    var upcCount = (typeof CALC !== 'undefined' && CALC.upc) ? Object.keys(CALC.upc).length : 0;
+    if (typeof setStatus === 'function') setStatus(appKey, 'ok', 'WH: ' + whCount + ' parts · ' + upcCount + ' UPC');
+    if (typeof salesToast === 'function') salesToast('Loaded · WH: ' + whCount + ' parts', 'success');
   } catch(e) {
     console.error('[salesLaunchApp] error:', e.message, e.stack);
-    setStatus(appKey, 'err', 'Error: ' + e.message);
-    salesToast('Load error: ' + e.message, 'error');
+    if (typeof setStatus === 'function') setStatus(appKey, 'err', 'Error: ' + e.message);
+    if (typeof salesToast === 'function') salesToast('Load error: ' + e.message, 'error');
   }
 }
 
