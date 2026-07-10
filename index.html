@@ -1412,6 +1412,451 @@ input[type=checkbox]{width:15px;height:15px;cursor:pointer;accent-color:var(--bl
   </div>
 </div>
 
+<!-- ═══ REORDER PLANNER APP ═══ -->
+<div id="reorder-app" style="display:none;">
+  <div class="topbar">
+    <div class="topbar-left">
+      <div class="tb-logo">XFITTING</div>
+      <div class="tb-name">Reorder Planner</div>
+      <div style="font-size:10px;background:var(--accent);color:#fff;padding:2px 7px;border-radius:20px;font-weight:600;opacity:.85">v1.0.8</div>
+    </div>
+    <div class="topbar-right">
+      <div class="sales-status-pill" id="ro-status-pill" style="display:flex">
+        <div class="sales-sdot" id="ro-sdot"></div>
+        <span id="ro-status-text">Loading...</span>
+      </div>
+      <button class="btn btn-secondary" onclick="salesGoBack()" style="font-size:12px;padding:6px 14px">← Apps</button>
+    </div>
+  </div>
+  <div class="sales-tab-bar">
+    <button class="sales-tab-btn active" id="ro-tab-upload" onclick="roTab('upload')">Upload Reports</button>
+    <button class="sales-tab-btn" id="ro-tab-jq" onclick="roTab('jq')">JQ Vendor <span class="sales-tab-badge" id="jq-badge" style="display:none">0</span></button>
+    <button class="sales-tab-btn" id="ro-tab-eff" onclick="roTab('eff')">EFF Vendor <span class="sales-tab-badge" id="eff-badge" style="display:none">0</span></button>
+    <button class="sales-tab-btn" id="ro-tab-po" onclick="roTab('po')">📦 PO Cases</button>
+    <button class="sales-tab-btn" id="ro-tab-ai" onclick="roTab('ai')">✦ AI Insights</button>
+    <button class="sales-tab-btn" id="ro-tab-skumap" onclick="roTab('skumap')">🔗 SKU Map</button>
+  </div>
+  <div class="sales-body">
+
+    <!-- Upload Tab -->
+    <div class="sales-panel active" id="ro-panel-upload">
+      <div class="sales-section-header">
+        <div>
+          <div class="sales-section-title">Upload Sales Reports</div>
+          <div class="sales-section-sub">Upload your CSV reports — app writes raw data to the Sales Forecast sheet, then reads back the calculated vendor &amp; COGS data</div>
+        </div>
+      </div>
+
+      <div class="sales-upload-section">
+        
+        <div style="margin-bottom:12px;padding:10px 14px;background:var(--accent-bg);border:1.5px solid var(--accent);border-radius:8px;font-size:12px;color:var(--text2)">
+          📋 <strong style="color:var(--accent)">Amazon Reports</strong> — Download from <a href="https://sellercentral.amazon.com/business-reports/#/report?id=102%3ADetailSalesTrafficBySKU&chartCols=&columns=0%2F1%2F2%2F3%2F4%2F5%2F6%2F7%2F8%2F9%2F10%2F11%2F12%2F13%2F14%2F15%2F16%2F17%2F18%2F19%2F20%2F21%2F22%2F23%2F24%2F25%2F26%2F27%2F28%2F29%2F30%2F31%2F32%2F33%2F34%2F35%2F36%2F37%2F38%2F39%2F40%2F41%2F42%2F43%2F44%2F45%2F46%2F47&dashboardView=ALL_COLUMNS" target="_blank" style="color:var(--accent);text-decoration:none;font-weight:600">Seller Central → Business Reports → Detail Page Sales & Traffic by SKU</a><br>
+          <span style="color:var(--red);font-weight:600">⚠</span> Select <strong>all columns</strong> and set the date range — 30 days for Amz30, 90 days for Amz90.
+        </div>
+        <div class="sales-upload-title">Amazon Reports</div>
+        <div class="sales-upload-grid">
+          <div class="sales-upload-card" id="uc-Amz30">
+            <input type="file" class="sales-upload-input" accept=".csv" onchange="handleUpload(event,'Amz30')">
+            <div class="s-uc-label">Amz30</div>
+            <div class="s-uc-sub">Amazon 30-Day Business Report (.csv)</div>
+            <div class="s-uc-status" id="uc-status-Amz30">Click to select file</div>
+          </div>
+          <div class="sales-upload-card" id="uc-Amz90">
+            <input type="file" class="sales-upload-input" accept=".csv" onchange="handleUpload(event,'Amz90')">
+            <div class="s-uc-label">Amz90</div>
+            <div class="s-uc-sub">Amazon 90-Day Business Report (.csv)</div>
+            <div class="s-uc-status" id="uc-status-Amz90">Click to select file</div>
+          </div>
+        </div>
+      </div>
+
+      <div class="sales-upload-section">
+        
+        <div class="sales-upload-title">eBay Reports</div>
+        <div style="background:var(--bg2);border:1.5px solid var(--border);border-radius:12px;padding:18px 20px;margin-bottom:0;">
+          <div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:12px;margin-bottom:14px;">
+            <div>
+              <div style="font-size:14px;font-weight:600;color:var(--text);margin-bottom:3px;">📡 Fetch from eBay API</div>
+              <div style="font-size:12px;color:var(--text2);">Pulls your last 30 and 90 days of orders directly — no CSV download needed</div>
+            </div>
+            <button onclick="fetchEbaySales('ro')" id="ro-ebay-fetch-btn" class="sales-primary-btn" style="white-space:nowrap;">
+              ↓ Fetch eBay Sales
+            </button>
+          </div>
+          <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;">
+            <div style="background:var(--bg3);border:1px solid var(--border);border-radius:8px;padding:10px 14px;" id="ro-ebay30-status-card">
+              <div style="font-family:var(--mono);font-size:11px;font-weight:600;color:var(--accent);margin-bottom:4px;">Ebay30</div>
+              <div style="font-size:12px;color:var(--text3);" id="ro-ebay30-status">Not fetched yet</div>
+            </div>
+            <div style="background:var(--bg3);border:1px solid var(--border);border-radius:8px;padding:10px 14px;" id="ro-ebay90-status-card">
+              <div style="font-family:var(--mono);font-size:11px;font-weight:600;color:var(--accent);margin-bottom:4px;">Ebay90</div>
+              <div style="font-size:12px;color:var(--text3);" id="ro-ebay90-status">Not fetched yet</div>
+            </div>
+          </div>
+          <div style="margin-top:10px;font-size:11px;color:var(--text3);display:flex;align-items:center;gap:6px;">
+            <span>📦 Shows both units sold and order count per SKU</span>
+            <span style="margin-left:auto;font-family:var(--mono);" id="ro-ebay-last-fetch"></span>
+          </div>
+        </div>
+      </div>
+
+      <div class="sales-upload-section">
+        
+        <div style="margin-bottom:12px;padding:10px 14px;background:var(--accent-bg);border:1.5px solid var(--accent);border-radius:8px;font-size:12px;color:var(--text2)">
+          📋 <strong style="color:var(--accent)">Shopify Reports</strong> — Export from <a href="https://admin.shopify.com/store/093304-8e/orders" target="_blank" style="color:var(--accent);text-decoration:none;font-weight:600">Shopify Admin → Orders</a><br>
+          <span style="color:var(--red);font-weight:600">⚠</span> Click Export then set the date range — 30 days for XF30, 90 days for XF90.
+        </div>
+        <div class="sales-upload-title">Shopify Reports</div>
+        <div class="sales-upload-grid">
+          <div class="sales-upload-card" id="uc-XF30">
+            <input type="file" class="sales-upload-input" accept=".csv" onchange="handleUpload(event,'XF30')">
+            <div class="s-uc-label">XF30</div>
+            <div class="s-uc-sub">Shopify 30-Day Orders Export (.csv)</div>
+            <div class="s-uc-status" id="uc-status-XF30">Click to select file</div>
+          </div>
+          <div class="sales-upload-card" id="uc-XF90">
+            <input type="file" class="sales-upload-input" accept=".csv" onchange="handleUpload(event,'XF90')">
+            <div class="s-uc-label">XF90</div>
+            <div class="s-uc-sub">Shopify 90-Day Orders Export (.csv)</div>
+            <div class="s-uc-status" id="uc-status-XF90">Click to select file</div>
+          </div>
+        </div>
+      </div>
+
+      <div class="sales-action-row">
+        <button class="sales-primary-btn" id="process-btn" onclick="processAllReports()">▶ Upload All &amp; Build Plan</button>
+        <button class="sales-ghost-btn" onclick="loadSavedData()">↻ Load Last Saved Data</button>
+        <button class="sales-ghost-btn" onclick="recomputeTabs()">⚡ Recompute Totals</button>
+        <span class="sales-load-note" id="last-updated"></span>
+      </div>
+    </div>
+
+    <!-- JQ Tab -->
+    <div class="sales-panel" id="ro-panel-jq">
+      <div class="sales-config-bar">
+        <span class="sales-config-label">TARGET DAYS</span>
+        <input type="number" class="sales-config-input" id="jq-target" value="180" min="30" max="365">
+        <div class="sales-config-div"></div>
+        <span class="sales-config-label">LEAD TIME</span>
+        <input type="number" class="sales-config-input" id="jq-lead" value="90" min="1" max="180">
+        <div class="sales-config-div"></div>
+        <button class="sales-apply-btn" onclick="buildReorderRows()">Recalculate</button>
+      </div>
+      <div class="sales-po-bar">
+        <div class="sales-po-summary">
+          <strong id="jq-crit">0</strong> critical &nbsp;·&nbsp;
+          <strong id="jq-watch">0</strong> watch &nbsp;·&nbsp;
+          <strong id="jq-cost">$0</strong> est. PO value
+        </div>
+        <button class="sales-export-btn" onclick="exportPO('jq')">⬇ Export JQ PO (.txt)</button>
+      </div>
+      <div class="sales-search-bar">
+        <input type="text" class="sales-search-input" id="jq-search" placeholder="Search part number..." oninput="filterVendor('jq')">
+        <select class="sales-filter-select" id="jq-filter" onchange="filterVendor('jq')">
+          <option value="all">All Status</option>
+          <option value="critical">Critical</option>
+          <option value="watch">Watch</option>
+          <option value="ok">OK</option>
+        </select>
+      </div>
+      <div class="sales-table-wrap" id="jq-wrap">
+        <div class="sales-empty"><div class="sales-empty-icon">📋</div><div class="sales-empty-title">No data yet</div><div class="sales-empty-sub">Upload reports and click "Upload All &amp; Build Plan"</div></div>
+      </div>
+    </div>
+
+    <!-- EFF Tab -->
+    <div class="sales-panel" id="ro-panel-eff">
+      <div class="sales-config-bar">
+        <span class="sales-config-label">TARGET DAYS</span>
+        <input type="number" class="sales-config-input" id="eff-target" value="180" min="30" max="365">
+        <div class="sales-config-div"></div>
+        <span class="sales-config-label">LEAD TIME</span>
+        <input type="number" class="sales-config-input" id="eff-lead" value="90" min="1" max="180">
+        <div class="sales-config-div"></div>
+        <button class="sales-apply-btn" onclick="buildReorderRows()">Recalculate</button>
+      </div>
+      <div class="sales-po-bar">
+        <div class="sales-po-summary">
+          <strong id="eff-crit">0</strong> critical &nbsp;·&nbsp;
+          <strong id="eff-watch">0</strong> watch &nbsp;·&nbsp;
+          <strong id="eff-cost">$0</strong> est. PO value
+        </div>
+        <button class="sales-export-btn" onclick="exportPO('eff')">⬇ Export EFF PO (.txt)</button>
+      </div>
+      <div class="sales-search-bar">
+        <input type="text" class="sales-search-input" id="eff-search" placeholder="Search part number..." oninput="filterVendor('eff')">
+        <select class="sales-filter-select" id="eff-filter" onchange="filterVendor('eff')">
+          <option value="all">All Status</option>
+          <option value="critical">Critical</option>
+          <option value="watch">Watch</option>
+          <option value="ok">OK</option>
+        </select>
+      </div>
+      <div class="sales-table-wrap" id="eff-wrap">
+        <div class="sales-empty"><div class="sales-empty-icon">📋</div><div class="sales-empty-title">No data yet</div><div class="sales-empty-sub">Upload reports and click "Upload All &amp; Build Plan"</div></div>
+      </div>
+    </div>
+
+    <!-- PO Cases Tab -->
+    <div class="sales-panel" id="ro-panel-po">
+      <div class="sales-section-header">
+        <div>
+          <div class="sales-section-title">Purchase Order — Cases to Order</div>
+          <div class="sales-section-sub" id="po-summary">Load data to see recommendations</div>
+        </div>
+        <button class="btn btn-primary" style="font-size:12px" onclick="exportPOCases()">⬇ Export CSV</button>
+      </div>
+      <div id="po-wrap" style="overflow-x:auto"></div>
+    </div>
+
+    <!-- AI Tab - Reorder -->
+    <div class="sales-panel" id="ro-panel-ai">
+      <div id="ro-ai-container">
+        <div class="sales-ai-layout">
+        <div class="sales-ai-card" id="ro-ai-auto">
+          <div class="sales-ai-header">
+            <span class="sales-ai-label">✦ AI Analysis</span>
+            <button class="sales-ai-refresh" onclick="runAutoInsights('ro')" id="ro-ai-refresh-btn">↻ Refresh</button>
+          </div>
+          <div class="sales-ai-body" id="ro-ai-auto-body">
+            <div class="sales-ai-placeholder">
+              <div class="sales-ai-placeholder-icon">✦</div>
+              <div>Load data then click <strong>Analyze</strong> to get AI insights on your reorder priorities, vendor breakdown, and inventory risk.</div>
+              <button class="sales-primary-btn" style="margin-top:16px" onclick="runAutoInsights('ro')">✦ Analyze Reorder Data</button>
+            </div>
+          </div>
+        </div>
+        <div class="sales-ai-chat-wrap" id="ro-ai-chat-wrap">
+          <div class="sales-ai-msgs" id="ro-ai-messages"></div>
+          <div class="sales-ai-input-row">
+            <input type="text" class="sales-ai-input" id="ro-ai-input" placeholder="Ask anything about your reorder data..." onkeydown="aiChatKey(event,'ro')">
+            <button class="sales-ai-send" onclick="aiChat('ro')">Send</button>
+          </div>
+        </div>
+        </div><!-- /sales-ai-layout -->
+      </div>
+    </div>
+
+  <!-- SKU Map Tab -->
+    <div class="sales-panel" id="ro-panel-skumap">
+      <div class="sales-section-header">
+        <div>
+          <div class="sales-section-title">🔗 eBay SKU Mapping</div>
+          <div class="sales-section-sub" id="skumap-summary">Maps eBay SKUs with trailing characters to canonical part numbers</div>
+        </div>
+        <div style="display:flex;gap:8px;align-items:center">
+          <button class="btn btn-secondary" style="font-size:12px" onclick="loadUnmappedSkus()">↻ Refresh</button>
+          <button class="btn btn-primary" style="font-size:12px" onclick="saveSkuMap()">💾 Save Map</button>
+          <button class="btn btn-secondary" style="font-size:12px" onclick="exportSkuMap()">⬇ Export CSV</button>
+        </div>
+      </div>
+      <div id="skumap-status" style="padding:8px 0;font-size:12px;color:var(--text3)"></div>
+      <div id="skumap-wrap" style="overflow-x:auto"></div>
+    </div>
+
+  </div>
+</div>
+
+<!-- DASHBOARD APP -->
+
+
+<!-- ═══ SALES DASHBOARD APP ═══ -->
+
+<!-- ═══ SALES DASHBOARD APP ═══ -->
+<div id="dashboard-app" style="display:none;">
+  <div class="topbar">
+    <div class="topbar-left">
+      <div class="tb-logo">XFITTING</div>
+      <div class="tb-name">Sales Dashboard</div>
+      <div style="font-size:10px;background:var(--accent);color:#fff;padding:2px 7px;border-radius:20px;font-weight:600;opacity:.85">v1.0.8</div>
+    </div>
+    <div class="topbar-right">
+      <div class="sales-status-pill" id="db-status-pill" style="display:none">
+        <div class="sales-sdot" id="db-sdot"></div>
+        <span id="db-status-text">Loading...</span>
+      </div>
+      <button class="btn btn-secondary" onclick="salesGoBack()" style="font-size:12px;padding:6px 14px">← Apps</button>
+    </div>
+  </div>
+  <div class="sales-tab-bar">
+    <button class="sales-tab-btn active" id="db-tab-upload" onclick="dbTab('upload')">Upload Reports</button>
+    <button class="sales-tab-btn" id="db-tab-overview" onclick="dbTab('overview')">Overview</button>
+    <button class="sales-tab-btn" id="db-tab-parts" onclick="dbTab('parts')">Part# Detail</button>
+    <button class="sales-tab-btn" id="db-tab-skus" onclick="dbTab('skus')">SKU Detail</button>
+    <button class="sales-tab-btn" id="db-tab-ai" onclick="dbTab('ai')">✦ AI Insights</button>
+  </div>
+  <div class="sales-body">
+
+    <!-- Upload Tab -->
+    <div class="sales-panel active" id="db-panel-upload">
+      <div class="sales-section-header">
+        <div>
+          <div class="sales-section-title">Upload Sales Reports</div>
+          <div class="sales-section-sub">Same reports feed both apps — uploading here updates the shared Sales Forecast sheet</div>
+        </div>
+      </div>
+
+      <div class="sales-upload-section">
+        
+        <div style="margin-bottom:12px;padding:10px 14px;background:var(--accent-bg);border:1.5px solid var(--accent);border-radius:8px;font-size:12px;color:var(--text2)">
+          📋 <strong style="color:var(--accent)">Amazon Reports</strong> — Download from <a href="https://sellercentral.amazon.com/business-reports/#/report?id=102%3ADetailSalesTrafficBySKU&chartCols=&columns=0%2F1%2F2%2F3%2F4%2F5%2F6%2F7%2F8%2F9%2F10%2F11%2F12%2F13%2F14%2F15%2F16%2F17%2F18%2F19%2F20%2F21%2F22%2F23%2F24%2F25%2F26%2F27%2F28%2F29%2F30%2F31%2F32%2F33%2F34%2F35%2F36%2F37%2F38%2F39%2F40%2F41%2F42%2F43%2F44%2F45%2F46%2F47&dashboardView=ALL_COLUMNS" target="_blank" style="color:var(--accent);text-decoration:none;font-weight:600">Seller Central → Business Reports → Detail Page Sales & Traffic by SKU</a><br>
+          <span style="color:var(--red);font-weight:600">⚠</span> Select <strong>all columns</strong> and set the date range — 30 days for Amz30, 90 days for Amz90.
+        </div>
+        <div class="sales-upload-title">Amazon Reports</div>
+        <div class="sales-upload-grid">
+          <div class="sales-upload-card" id="db-uc-Amz30">
+            <input type="file" class="sales-upload-input" accept=".csv" onchange="handleUpload(event,'Amz30')">
+            <div class="s-uc-label">Amz30</div><div class="s-uc-sub">Amazon 30-Day Business Report (.csv)</div>
+            <div class="s-uc-status" id="db-uc-status-Amz30">Click to select file</div>
+          </div>
+          <div class="sales-upload-card" id="db-uc-Amz90">
+            <input type="file" class="sales-upload-input" accept=".csv" onchange="handleUpload(event,'Amz90')">
+            <div class="s-uc-label">Amz90</div><div class="s-uc-sub">Amazon 90-Day Business Report (.csv)</div>
+            <div class="s-uc-status" id="db-uc-status-Amz90">Click to select file</div>
+          </div>
+        </div>
+      </div>
+      <div class="sales-upload-section">
+        
+        <div class="sales-upload-title">eBay Reports</div>
+        <div style="background:var(--bg2);border:1.5px solid var(--border);border-radius:12px;padding:18px 20px;margin-bottom:0;">
+          <div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:12px;margin-bottom:14px;">
+            <div>
+              <div style="font-size:14px;font-weight:600;color:var(--text);margin-bottom:3px;">📡 Fetch from eBay API</div>
+              <div style="font-size:12px;color:var(--text2);">Pulls your last 30 and 90 days of orders directly — no CSV download needed</div>
+            </div>
+            <button onclick="fetchEbaySales('db')" id="db-ebay-fetch-btn" class="sales-primary-btn" style="white-space:nowrap;">
+              ↓ Fetch eBay Sales
+            </button>
+          </div>
+          <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;">
+            <div style="background:var(--bg3);border:1px solid var(--border);border-radius:8px;padding:10px 14px;">
+              <div style="font-family:var(--mono);font-size:11px;font-weight:600;color:var(--accent);margin-bottom:4px;">Ebay30</div>
+              <div style="font-size:12px;color:var(--text3);" id="db-ebay30-status">Not fetched yet</div>
+            </div>
+            <div style="background:var(--bg3);border:1px solid var(--border);border-radius:8px;padding:10px 14px;">
+              <div style="font-family:var(--mono);font-size:11px;font-weight:600;color:var(--accent);margin-bottom:4px;">Ebay90</div>
+              <div style="font-size:12px;color:var(--text3);" id="db-ebay90-status">Not fetched yet</div>
+            </div>
+          </div>
+          <div style="margin-top:10px;font-size:11px;color:var(--text3);display:flex;align-items:center;gap:6px;">
+            <span>📦 Shows both units sold and order count per SKU</span>
+            <span style="margin-left:auto;font-family:var(--mono);" id="db-ebay-last-fetch"></span>
+          </div>
+        </div>
+      </div>
+      <div class="sales-upload-section">
+        
+        <div style="margin-bottom:12px;padding:10px 14px;background:var(--accent-bg);border:1.5px solid var(--accent);border-radius:8px;font-size:12px;color:var(--text2)">
+          📋 <strong style="color:var(--accent)">Shopify Reports</strong> — Export from <a href="https://admin.shopify.com/store/093304-8e/orders" target="_blank" style="color:var(--accent);text-decoration:none;font-weight:600">Shopify Admin → Orders</a><br>
+          <span style="color:var(--red);font-weight:600">⚠</span> Click Export then set the date range — 30 days for XF30, 90 days for XF90.
+        </div>
+        <div class="sales-upload-title">Shopify Reports</div>
+        <div class="sales-upload-grid">
+          <div class="sales-upload-card" id="db-uc-XF30">
+            <input type="file" class="sales-upload-input" accept=".csv" onchange="handleUpload(event,'XF30')">
+            <div class="s-uc-label">XF30</div><div class="s-uc-sub">Shopify 30-Day Orders Export (.csv)</div>
+            <div class="s-uc-status" id="db-uc-status-XF30">Click to select file</div>
+          </div>
+          <div class="sales-upload-card" id="db-uc-XF90">
+            <input type="file" class="sales-upload-input" accept=".csv" onchange="handleUpload(event,'XF90')">
+            <div class="s-uc-label">XF90</div><div class="s-uc-sub">Shopify 90-Day Orders Export (.csv)</div>
+            <div class="s-uc-status" id="db-uc-status-XF90">Click to select file</div>
+          </div>
+        </div>
+      </div>
+
+      <div class="sales-action-row">
+        <button class="sales-primary-btn" onclick="processAllReports()">▶ Upload All &amp; Build Dashboard</button>
+        <button class="sales-ghost-btn" onclick="loadSavedData()">↻ Load Last Saved Data</button>
+        <button class="sales-ghost-btn" onclick="recomputeTabs()">⚡ Recompute Totals</button>
+        <span class="sales-load-note" id="db-last-updated"></span>
+      </div>
+    </div>
+
+    <!-- Overview -->
+    <div class="sales-panel" id="db-panel-overview">
+      <div class="sales-kpi-grid" id="db-kpis">
+        <div class="sales-empty" style="grid-column:1/-1;padding:40px"><div class="sales-empty-icon">📊</div><div class="sales-empty-title">No data yet</div></div>
+      </div>
+      <div class="sales-two-col" id="db-lb"></div>
+    </div>
+
+    <!-- Parts Detail -->
+    <div class="sales-panel" id="db-panel-parts">
+      <div class="sales-view-toggle" id="parts-toggle">
+        <button class="sales-toggle-opt active" onclick="setSort('parts','units')">Units</button>
+        <button class="sales-toggle-opt" onclick="setSort('parts','sales')">Sales</button>
+        <button class="sales-toggle-opt" onclick="setSort('parts','alpha')">A-Z</button>
+      </div>
+      <div class="sales-search-bar">
+        <input type="text" class="sales-search-input" id="parts-search" placeholder="Search part number..." oninput="renderParts()">
+        <select class="sales-filter-select" id="parts-plat" onchange="renderParts()">
+          <option value="all">All Platforms</option>
+          <option value="amz">Amazon Best</option>
+          <option value="ebay">eBay Best</option>
+          <option value="xf">Shopify Best</option>
+        </select>
+      </div>
+      <div class="sales-table-wrap" id="parts-wrap">
+        <div class="sales-empty"><div class="sales-empty-icon">📋</div><div class="sales-empty-title">No data yet</div></div>
+      </div>
+    </div>
+
+    <!-- SKU Detail -->
+    <div class="sales-panel" id="db-panel-skus">
+      <div class="sales-view-toggle" id="skus-toggle">
+        <button class="sales-toggle-opt active" onclick="setSort('skus','units')">Units</button>
+        <button class="sales-toggle-opt" onclick="setSort('skus','sales')">Sales</button>
+        <button class="sales-toggle-opt" onclick="setSort('skus','alpha')">A-Z</button>
+      </div>
+      <div class="sales-search-bar">
+        <input type="text" class="sales-search-input" id="skus-search" placeholder="Search SKU..." oninput="renderSkus()">
+      </div>
+      <div class="sales-table-wrap" id="skus-wrap">
+        <div class="sales-empty"><div class="sales-empty-icon">📋</div><div class="sales-empty-title">No data yet</div></div>
+      </div>
+    </div>
+
+    <!-- AI Tab - Dashboard -->
+    <div class="sales-panel" id="db-panel-ai">
+      <div id="db-ai-container">
+        <div class="sales-ai-layout">
+        <div class="sales-ai-card" id="db-ai-auto">
+          <div class="sales-ai-header">
+            <span class="sales-ai-label">✦ AI Analysis</span>
+            <button class="sales-ai-refresh" onclick="runAutoInsights('db')" id="db-ai-refresh-btn">↻ Refresh</button>
+          </div>
+          <div class="sales-ai-body" id="db-ai-auto-body">
+            <div class="sales-ai-placeholder">
+              <div class="sales-ai-placeholder-icon">✦</div>
+              <div>Load data then click <strong>Analyze</strong> to get AI insights on platform performance, top movers, and sales trends.</div>
+              <button class="sales-primary-btn" style="margin-top:16px" onclick="runAutoInsights('db')">✦ Analyze Sales Data</button>
+            </div>
+          </div>
+        </div>
+        <div class="sales-ai-chat-wrap" id="db-ai-chat-wrap">
+          <div class="sales-ai-msgs" id="db-ai-messages"></div>
+          <div class="sales-ai-input-row">
+            <input type="text" class="sales-ai-input" id="db-ai-input" placeholder="Ask anything about your sales data..." onkeydown="aiChatKey(event,'db')">
+            <button class="sales-ai-send" onclick="aiChat('db')">Send</button>
+          </div>
+        </div>
+        </div><!-- /sales-ai-layout -->
+      </div>
+    </div>
+
+  </div>
+</div>
+
+<div id="toast"></div>
+
+
+
+<div id="sales-toast"></div>
+
+
+
 <div id="mgmt-pin-screen" style="display:none;position:fixed;inset:0;background:var(--bg);z-index:8000;align-items:center;justify-content:center;flex-direction:column">
   <div style="text-align:center;animation:fadeIn .3s ease">
     <div style="font-family:var(--mono);font-size:10px;letter-spacing:4px;color:var(--text3);text-transform:uppercase;margin-bottom:28px">
@@ -13393,6 +13838,66 @@ function awdHandleScan(raw) {
 </div><!-- /packship-app -->
 
 <script>
+var CALC = { partSales:[], skuSales:[], jqVendor:[], effVendor:[], cogs:{}, whStock:{}, upc:{}, itemNames:{}, upcCodes:{}, skuNames:{} }
+
+async function readCalcTabs() {
+  if (salesFetchLock) { console.log('[readCalcTabs] skipped — fetch in progress'); return; }
+
+  // Read each tab with a 25s timeout — fails fast instead of hanging forever.
+  // No retry loop since Recompute writes plain values (no formula recalc needed).
+  async function readTabSafe(tab) {
+    try {
+      var timeoutPromise = new Promise(function(_, reject) {
+        setTimeout(function() { reject(new Error('Timeout reading ' + tab + ' (45s)')); }, 45000);
+      });
+      var rows = await Promise.race([ workerGet(tab), timeoutPromise ]);
+      console.log('[readCalcTabs]', tab, rows.length, 'rows');
+      return rows;
+    } catch(e) {
+      console.warn('[readCalcTabs]', tab, 'failed:', e.message.slice(0, 80));
+      salesToast('⚠ ' + tab + ' — ' + e.message.slice(0, 60), 'error');
+      return [];
+    }
+  }
+
+  // Read static vendor/COGS tabs first — always small and fast
+  var staticTabs = ['JQ_Vendor', 'EFF_Vendor', 'COGS'];
+  var staticResults = [];
+  for (var i = 0; i < staticTabs.length; i++) {
+    staticResults.push(await readTabSafe(staticTabs[i]));
+  }
+  CALC.jqVendor = sheetToObjs(staticResults[0]);
+  CALC.effVendor = sheetToObjs(staticResults[1]);
+  CALC.cogs = {};
+  sheetToObjs(staticResults[2]).forEach(function(r) {
+    var sku = (r['SKU'] || r['sku'] || '').toString().trim().toUpperCase();
+    var price = n(r['Unit Price'] || r['unit price'] || r['Price'] || '');
+    if (sku) CALC.cogs[sku] = price;
+  });
+
+  // Read Part#_Sales + SKU_Sales — these are populated by Recompute (plain values, no formulas)
+  // Use a short 10s timeout since these should return fast once formulas are removed
+  async function readTabFast(tab) {
+    try {
+      var timeoutP = new Promise(function(_, rej){ setTimeout(function(){ rej(new Error('Timeout ' + tab)); }, 10000); });
+      return await Promise.race([ workerGet(tab), timeoutP ]);
+    } catch(e) {
+      console.log('[readCalcTabs]', tab, 'skipped:', e.message.slice(0,50));
+      return [];
+    }
+  }
+  var partRows = await readTabFast('Part#_Sales');
+  if (partRows.length > 1) {
+    CALC.partSales = sheetToObjs(partRows);
+    var skuRows = await readTabFast('SKU_Sales');
+    CALC.skuSales = sheetToObjs(skuRows);
+    console.log('[readCalcTabs] Part#_Sales:', CALC.partSales.length, 'SKU_Sales:', CALC.skuSales.length);
+  } else {
+    console.log('[readCalcTabs] Part#_Sales empty — run ⚡ Recompute to populate');
+    salesToast('No sales data yet — hit ⚡ Recompute Totals to build from raw data', 'info');
+  }
+}
+
 // ═══════════════════════════════════════════════════════
 //  PACK & SHIP — Integrated into XFitting v1.0.9
 //  All identifiers prefixed with ps_ to avoid collisions
