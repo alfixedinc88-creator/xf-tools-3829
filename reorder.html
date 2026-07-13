@@ -1992,6 +1992,7 @@ var W = WORKER_URL;
 var XF_SESSION = sessionStorage.getItem('xf_session') || null;
 var XF_ROLE    = sessionStorage.getItem('xf_role')    || null;
 var mgmtPinBuf = '';
+var _whFetchLock = false;
 var mgmtPinTarget = 'reorder';
 function backToLauncher() { window.location.href = 'index.html'; }
 function launchApp(app)   { window.location.href = app + '.html'; }
@@ -4061,20 +4062,20 @@ function salesToast(msg, type) {
 
 
 
-(function() {{
+(function() {
   var pinScreen = document.getElementById('mgmt-pin-screen');
   var savedToken = sessionStorage.getItem('xf_session');
   var savedRole  = sessionStorage.getItem('xf_role');
-  if (savedToken && savedRole === 'mgmt') {{
+  if (savedToken && savedRole === 'mgmt') {
     XF_SESSION = savedToken; XF_ROLE = 'mgmt';
     if (pinScreen) pinScreen.style.display = 'none';
     var appEl = document.getElementById('reorder-app');
     if (appEl) appEl.style.display = 'flex';
     salesLaunchApp('reorder');
     return;
-  }}
+  }
   if (pinScreen) pinScreen.style.display = 'flex';
-}})();
+})();
 </script>
 </body>
 </html>
