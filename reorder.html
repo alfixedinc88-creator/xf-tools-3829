@@ -1688,12 +1688,60 @@ input[type=checkbox]{width:15px;height:15px;cursor:pointer;accent-color:var(--bl
   to   { transform: translateY(0);     opacity: 1; }
 }
 
+/* MANAGEMENT PIN */
+.mgmt-dot { width: 14px; height: 14px; border-radius: 50%; background: var(--bg3); border: 2px solid var(--border2); transition: all .15s; }
+.mgmt-dot.filled { background: var(--accent); border-color: var(--accent); }
+.mgmt-key {
+  width: 60px; height: 60px;
+  border-radius: 12px;
+  background: var(--bg2);
+  border: 1.5px solid var(--border);
+  color: var(--text);
+  font-family: var(--mono);
+  font-size: 18px; font-weight: 500;
+  cursor: pointer; transition: all .1s;
+}
+.mgmt-key:hover { background: var(--bg3); border-color: var(--accent); color: var(--accent); }
+.mgmt-key:active { transform: scale(.94); }
 *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
 body { display:flex; flex-direction:column; min-height:100vh; background:var(--bg); font-family:var(--sans); color:var(--text); }
 #reorder-app { display:none; flex-direction:column; min-height:100vh; width:100%; }
   </style>
 </head>
 <body>
+
+<div id="mgmt-pin-screen" style="display:none;position:fixed;inset:0;background:var(--bg);z-index:8000;align-items:center;justify-content:center;flex-direction:column">
+  <div style="text-align:center;animation:fadeIn .3s ease">
+    <div style="font-family:var(--mono);font-size:10px;letter-spacing:4px;color:var(--text3);text-transform:uppercase;margin-bottom:28px">
+      <span style="color:var(--accent)">XF</span>ITTING — Management Access
+    </div>
+    <div style="font-size:20px;font-weight:600;color:var(--text);margin-bottom:6px">Management PIN Required</div>
+    <div style="font-size:13px;color:var(--text2);margin-bottom:28px">This area is restricted to management</div>
+    <div style="display:flex;gap:12px;justify-content:center;margin-bottom:20px" id="mgmt-pd-row">
+      <div class="mgmt-dot" id="mgmt-pd0"></div>
+      <div class="mgmt-dot" id="mgmt-pd1"></div>
+      <div class="mgmt-dot" id="mgmt-pd2"></div>
+      <div class="mgmt-dot" id="mgmt-pd3"></div>
+    </div>
+    <div style="display:grid;grid-template-columns:repeat(3,60px);gap:10px;justify-content:center">
+      <button class="mgmt-key" onclick="mgmtPinKey('1')">1</button>
+      <button class="mgmt-key" onclick="mgmtPinKey('2')">2</button>
+      <button class="mgmt-key" onclick="mgmtPinKey('3')">3</button>
+      <button class="mgmt-key" onclick="mgmtPinKey('4')">4</button>
+      <button class="mgmt-key" onclick="mgmtPinKey('5')">5</button>
+      <button class="mgmt-key" onclick="mgmtPinKey('6')">6</button>
+      <button class="mgmt-key" onclick="mgmtPinKey('7')">7</button>
+      <button class="mgmt-key" onclick="mgmtPinKey('8')">8</button>
+      <button class="mgmt-key" onclick="mgmtPinKey('9')">9</button>
+      <button class="mgmt-key" onclick="mgmtPinDel()" style="font-size:12px;color:#8b90a8">DEL</button>
+      <button class="mgmt-key" onclick="mgmtPinKey('0')">0</button>
+      <button class="mgmt-key" onclick="mgmtPinCancel()" style="font-size:11px;color:#8b90a8">← Back</button>
+    </div>
+    <div id="mgmt-pin-error" style="color:var(--red);font-size:12px;margin-top:16px;font-family:var(--mono);opacity:0;transition:opacity .2s">Incorrect PIN</div>
+  </div>
+</div>
+
+
 <div id="reorder-app">
 <div id="reorder-app" style="display:none;">
   <div class="topbar">
@@ -1940,13 +1988,17 @@ body { display:flex; flex-direction:column; min-height:100vh; background:var(--b
 </div>
 
 </div>
+
 <script>
 var WORKER_URL = 'https://xfitting-lookup.alfixedinc88.workers.dev';
 var W = WORKER_URL;
 var XF_SESSION = sessionStorage.getItem('xf_session') || null;
 var XF_ROLE    = sessionStorage.getItem('xf_role')    || null;
+var mgmtPinBuf = '';
+var mgmtPinTarget = 'reorder';
 function backToLauncher() { window.location.href = 'index.html'; }
 function launchApp(app)   { window.location.href = app + '.html'; }
+function mgmtPinCancel()  { window.location.href = 'index.html'; }
 function showToast(msg) {
   var t = document.getElementById('xf-toast');
   if (!t) {
@@ -1980,6 +2032,126 @@ async function wFetch(url, opts) {
   return r;
 }
 
+function launchMgmtApp(name) {
+  history.pushState({ xfApp: name }, '', '');
+  mgmtPinTarget = name;
+  mgmtPinBuf = "";
+  ['mgmt-pd0','mgmt-pd1','mgmt-pd2','mgmt-pd3'].forEach(function(id) {
+    document.getElementById(id).classList.remove('filled');
+  });
+  document.getElementById('mgmt-pin-error').style.opacity = '0';
+  document.getElementById('mgmt-pin-screen').style.display = 'flex';
+}
+
+function mgmtPinKey(d) {
+  if (mgmtPinBuf.length >= 4) return;
+  mgmtPinBuf += d;
+  document.getElementById('mgmt-pd' + (mgmtPinBuf.length - 1)).classList.add('filled');
+  if (mgmtPinBuf.length === 4) {
+    setTimeout(function() {
+      var pinType = mgmtPinTarget === 'repricer' ? 'price' : 'mgmt';
+      fetch(WORKER_URL + '/auth', {
+        method: 'POST', headers: {'Content-Type':'application/json'},
+        body: JSON.stringify({ pin: mgmtPinBuf, pin_type: pinType })
+      }).then(function(r){ return r.json(); }).then(function(d){
+        if (d.token) {
+          XF_SESSION = d.token;
+          sessionStorage.setItem('xf_session', d.token);
+          document.getElementById('mgmt-pin-screen').style.display = 'none';
+          if (mgmtPinTarget === 'repricer') {
+            document.getElementById('launcher').style.display = 'none';
+            document.getElementById('repricer-root').style.display = 'block';
+            document.getElementById('rpr-pin-screen').style.display = 'none';
+            document.getElementById('rpr-app').style.display = 'flex';
+            rprToken = d.token;
+            rprPinLevel = 'mgmt';
+            if (typeof rprApplyPinLevel === 'function') rprApplyPinLevel();
+            if (typeof rprLoad === 'function') rprLoad();
+          } else {
+            salesLaunchApp(mgmtPinTarget);
+          }
+        } else {
+          document.getElementById('mgmt-pin-error').style.opacity = '1';
+          setTimeout(function() {
+            mgmtPinBuf = "";
+            ['mgmt-pd0','mgmt-pd1','mgmt-pd2','mgmt-pd3'].forEach(function(id){
+              document.getElementById(id).classList.remove('filled');
+            });
+            document.getElementById('mgmt-pin-error').style.opacity = '0';
+          }, 900);
+        }
+      }).catch(function(){
+        document.getElementById('mgmt-pin-error').style.opacity = '1';
+      });
+    }, 120);
+  }
+}
+
+function mgmtPinDel() {
+  if (!mgmtPinBuf.length) return;
+  document.getElementById('mgmt-pd' + (mgmtPinBuf.length - 1)).classList.remove('filled');
+  mgmtPinBuf = mgmtPinBuf.slice(0, -1);
+}
+
+function mgmtPinCancel() {
+  document.getElementById('mgmt-pin-screen').style.display = 'none';
+  mgmtPinBuf = "";
+  mgmtPinTarget = null;
+}
+
+async function salesLaunchApp(name) {
+  var _la=document.getElementById('launcher'); if(_la) _la.style.display='none';
+  if (name === 'receivepo') {
+    (function(){ var _e=document.getElementById('receivepo-app'); if(_e) _e.style.display='flex'; })();
+    (function(){ var _e=document.getElementById('receivepo-app'); if(_e) _e.style.flexDirection='column'; })();
+    rpoReset();
+    return;
+  }
+  if (name === 'msginbox') {
+    (function(){ var _e=document.getElementById('msginbox-app'); if(_e) _e.style.display='flex'; })();
+    (function(){ var _e=document.getElementById('msginbox-app'); if(_e) _e.style.flexDirection='column'; })();
+    msgInboxOnLaunch();
+    return;
+  }
+  if (name === 'ebaymsgs') {
+    (function(){ var _e=document.getElementById('ebaymsgs-app'); if(_e) _e.style.display='flex'; })();
+    (function(){ var _e=document.getElementById('ebaymsgs-app'); if(_e) _e.style.flexDirection='column'; })();
+    ebayMsgsOnLaunch();
+    return;
+  }
+  if (name === 'ldash') {
+    (function(){ var _e=document.getElementById('ldash-app'); if(_e) _e.style.display='flex'; })();
+    (function(){ var _e=document.getElementById('ldash-app'); if(_e) _e.style.flexDirection='column'; })();
+    ldashOnLaunch();
+    return;
+  }
+  if (name === 'labelprint') {
+    (function(){ var _e=document.getElementById('labelprint-app'); if(_e) _e.style.display='block'; })();
+    if (typeof lpLaunch === 'function') lpLaunch();
+    return;
+  }
+  var appId = name === 'reorder' ? 'reorder-app' : 'dashboard-app';
+  var appKey = name === 'reorder' ? 'ro' : 'db';
+  document.getElementById(appId).style.display = 'flex';
+  document.getElementById(appId).style.flexDirection = 'column';
+  setStatus(appKey, 'loading', 'Loading...');
+  try {
+    await salesLoadWarehouseStock();
+    await readCalcTabs();
+    lastUpdated = new Date();
+    updateLastUpdatedLabels();
+    buildReorderRows();
+    buildDashboardData();
+    var whCount = Object.keys(CALC.whStock).length;
+    var upcCount = Object.keys(CALC.upc).length;
+    setStatus(appKey, 'ok', 'WH: ' + whCount + ' parts · ' + upcCount + ' UPC');
+    salesToast('Loaded · WH: ' + whCount + ' parts', 'success');
+  } catch(e) {
+    console.error('[salesLaunchApp] error:', e.message, e.stack);
+    setStatus(appKey, 'err', 'Error: ' + e.message);
+    salesToast('Load error: ' + e.message, 'error');
+  }
+}
 
 // ═══════════════════════════════════════════════════════
 // PIN LOCK — own block so credentials errors never break it
@@ -2016,7 +2188,7 @@ if (XF_SESSION) {
   document.addEventListener('DOMContentLoaded', function() {
     var ps = document.getElementById('pin-screen');
     if (ps) { ps.style.display = 'none'; ps.style.visibility = 'hidden'; }
-    window.location.href = 'index.html';
+    document.getElementById('launcher').style.display = 'flex';
     // Only pre-load mgmt tabs if role was mgmt — avoids 401 noise on OPS session restore
     if (typeof silentLoadSaved === 'function' && XF_ROLE === 'mgmt') silentLoadSaved();
   });
@@ -2069,7 +2241,7 @@ function checkPin() {
         ps.style.transition = 'opacity .3s'; ps.style.opacity = '0';
         setTimeout(function() {
           ps.style.display = 'none'; ps.style.visibility = 'hidden';
-          window.location.href = 'index.html';
+          document.getElementById('launcher').style.display = 'flex';
           // Only pre-load mgmt calc tabs if this is a mgmt-level token
           if (typeof silentLoadSaved === 'function' && type === 'mgmt') silentLoadSaved();
         }, 300);
@@ -3735,7 +3907,7 @@ function awd_planner_toast(msg, type) {
 // ═══════════════════════════════════════════════════════
 function launchApp(which) {
   history.pushState({ xfApp: which }, '', '');
-  (function(){ var _la=document.getElementById('launcher'); if(_la) _la.style.display='none'; })();
+  document.getElementById('launcher').style.display = 'none';
   if (which === 'warehouse') {
     document.getElementById('wh-app').style.display = 'flex';
     if (DB.master.length === 0) loadAllSheets();
@@ -3805,7 +3977,7 @@ function backToLauncher() {
   document.getElementById('ebaymsgs-app').style.display = 'none';
   document.getElementById('ldash-app').style.display = 'none';
   document.getElementById('labelprint-app').style.display = 'none';
-  window.location.href = 'index.html';
+  document.getElementById('launcher').style.display = 'flex';
 }
 
 // After PIN always shows launcher
@@ -5136,7 +5308,7 @@ function mgmtPinKey(d) {
           sessionStorage.setItem('xf_session', d.token);
           document.getElementById('mgmt-pin-screen').style.display = 'none';
           if (mgmtPinTarget === 'repricer') {
-            (function(){ var _la=document.getElementById('launcher'); if(_la) _la.style.display='none'; })();
+            document.getElementById('launcher').style.display = 'none';
             document.getElementById('repricer-root').style.display = 'block';
             document.getElementById('rpr-pin-screen').style.display = 'none';
             document.getElementById('rpr-app').style.display = 'flex';
@@ -5177,33 +5349,33 @@ function mgmtPinCancel() {
 }
 
 async function salesLaunchApp(name) {
-  var _la = document.getElementById('launcher'); if (_la) _la.style.display = 'none';
+  document.getElementById('launcher').style.display = 'none';
   if (name === 'receivepo') {
-    (function(){ var _e=document.getElementById('receivepo-app'); if(_e) _e.style.display='flex'; })();
-    (function(){ var _e=document.getElementById('receivepo-app'); if(_e) _e.style.flexDirection='column'; })();
+    document.getElementById('receivepo-app').style.display = 'flex';
+    document.getElementById('receivepo-app').style.flexDirection = 'column';
     rpoReset();
     return;
   }
   if (name === 'msginbox') {
-    (function(){ var _e=document.getElementById('msginbox-app'); if(_e) _e.style.display='flex'; })();
-    (function(){ var _e=document.getElementById('msginbox-app'); if(_e) _e.style.flexDirection='column'; })();
+    document.getElementById('msginbox-app').style.display = 'flex';
+    document.getElementById('msginbox-app').style.flexDirection = 'column';
     msgInboxOnLaunch();
     return;
   }
   if (name === 'ebaymsgs') {
-    (function(){ var _e=document.getElementById('ebaymsgs-app'); if(_e) _e.style.display='flex'; })();
-    (function(){ var _e=document.getElementById('ebaymsgs-app'); if(_e) _e.style.flexDirection='column'; })();
+    document.getElementById('ebaymsgs-app').style.display = 'flex';
+    document.getElementById('ebaymsgs-app').style.flexDirection = 'column';
     ebayMsgsOnLaunch();
     return;
   }
   if (name === 'ldash') {
-    (function(){ var _e=document.getElementById('ldash-app'); if(_e) _e.style.display='flex'; })();
-    (function(){ var _e=document.getElementById('ldash-app'); if(_e) _e.style.flexDirection='column'; })();
+    document.getElementById('ldash-app').style.display = 'flex';
+    document.getElementById('ldash-app').style.flexDirection = 'column';
     ldashOnLaunch();
     return;
   }
   if (name === 'labelprint') {
-    (function(){ var _e=document.getElementById('labelprint-app'); if(_e) _e.style.display='block'; })();
+    document.getElementById('labelprint-app').style.display = 'block';
     if (typeof lpLaunch === 'function') lpLaunch();
     return;
   }
@@ -5231,7 +5403,11 @@ async function salesLaunchApp(name) {
 }
 
 function salesGoBack() {
-  window.location.href = 'index.html';
+  document.getElementById('reorder-app').style.display = 'none';
+  document.getElementById('dashboard-app').style.display = 'none';
+  document.getElementById('receivepo-app').style.display = 'none';
+  document.getElementById('launcher').style.display = 'flex';
+  if (SALES_WORKER_URL) silentLoadSaved();
 }
 
 // ─── SALES APP JS ────────────────────────────────────────────────────────────
@@ -7087,22 +7263,25 @@ function salesToast(msg, type) {
 
 
 
+
+// ── Standalone Boot ───────────────────────────────────────────────────────
 (function() {
-  var appEl = document.getElementById('reorder-app');
-  if (XF_SESSION) {
+  var pinScreen = document.getElementById('mgmt-pin-screen');
+  var savedToken = sessionStorage.getItem('xf_session');
+  var savedRole  = sessionStorage.getItem('xf_role');
+
+  if (savedToken && (savedRole === 'mgmt' || savedRole === 'ops')) {
+    XF_SESSION = savedToken;
+    XF_ROLE = savedRole;
+    if (pinScreen) pinScreen.style.display = 'none';
+    var appEl = document.getElementById('reorder-app');
     if (appEl) appEl.style.display = 'flex';
-    if (typeof salesLaunchApp === 'function') salesLaunchApp('reorder');
+    salesLaunchApp('reorder');
     return;
   }
-  fetch(WORKER_URL + '/auth', {
-    method:'POST', headers:{'Content-Type':'application/json'},
-    body: JSON.stringify({pin:'6523', pin_type:'mgmt'})
-  }).then(function(r){ return r.json(); })
-  .then(function(d){
-    if (d.token) { XF_SESSION=d.token; XF_ROLE='mgmt'; sessionStorage.setItem('xf_session',d.token); sessionStorage.setItem('xf_role','mgmt'); }
-    if (appEl) appEl.style.display = 'flex';
-    if (typeof salesLaunchApp === 'function') salesLaunchApp('reorder');
-  }).catch(function(){ if (appEl) appEl.style.display = 'flex'; });
+
+  // Show MGMT PIN screen
+  if (pinScreen) pinScreen.style.display = 'flex';
 })();
 </script>
 </body>
