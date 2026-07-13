@@ -1939,16 +1939,10 @@ body { display:flex; flex-direction:column; min-height:100vh; background:var(--b
   </div>
 </div>
 
-<!-- DASHBOARD APP -->
-
-
-<!-- ═══ SALES DASHBOARD APP ═══ -->
-
 </div>
-
 <script>
-const WORKER_URL = 'https://xfitting-lookup.alfixedinc88.workers.dev';
-const W = WORKER_URL;
+var WORKER_URL = 'https://xfitting-lookup.alfixedinc88.workers.dev';
+var W = WORKER_URL;
 var XF_SESSION = sessionStorage.getItem('xf_session') || null;
 var XF_ROLE    = sessionStorage.getItem('xf_role')    || null;
 function backToLauncher() { window.location.href = 'index.html'; }
@@ -1986,7 +1980,6 @@ async function wFetch(url, opts) {
   return r;
 }
 
-<script>
 
 // ═══════════════════════════════════════════════════════
 // PIN LOCK — own block so credentials errors never break it
@@ -5238,8 +5231,7 @@ async function salesLaunchApp(name) {
 }
 
 function salesGoBack() {
-  window.location.href = 'index.html';
-  return; // standalone
+  window.location.href = 'index.html'; return;
   document.getElementById('reorder-app').style.display = 'none';
   document.getElementById('dashboard-app').style.display = 'none';
   document.getElementById('receivepo-app').style.display = 'none';
@@ -7112,16 +7104,10 @@ function salesToast(msg, type) {
     body: JSON.stringify({pin:'6523', pin_type:'mgmt'})
   }).then(function(r){ return r.json(); })
   .then(function(d){
-    if (d.token) {
-      XF_SESSION = d.token; XF_ROLE = 'mgmt';
-      sessionStorage.setItem('xf_session', d.token);
-      sessionStorage.setItem('xf_role', 'mgmt');
-    }
+    if (d.token) { XF_SESSION=d.token; XF_ROLE='mgmt'; sessionStorage.setItem('xf_session',d.token); sessionStorage.setItem('xf_role','mgmt'); }
     if (appEl) appEl.style.display = 'flex';
     if (typeof salesLaunchApp === 'function') salesLaunchApp('reorder');
-  }).catch(function(){
-    if (appEl) appEl.style.display = 'flex';
-  });
+  }).catch(function(){ if (appEl) appEl.style.display = 'flex'; });
 })();
 </script>
 </body>
