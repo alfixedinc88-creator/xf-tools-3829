@@ -1997,6 +1997,8 @@ var XF_ROLE    = sessionStorage.getItem('xf_role')    || null;
 var mgmtPinBuf = '';
 var mgmtPinTarget = 'reorder';
 function backToLauncher() { window.location.href = 'index.html'; }
+function _setHtml(id, html) { var e=document.getElementById(id); if(e) e.innerHTML=html; }
+function _setText(id, txt) { var e=document.getElementById(id); if(e) e.textContent=txt; }
 function launchApp(app)   { window.location.href = app + '.html'; }
 function mgmtPinCancel()  { window.location.href = 'index.html'; }
 function showToast(msg) {
@@ -2140,8 +2142,8 @@ async function salesLaunchApp(name) {
     await readCalcTabs();
     lastUpdated = new Date();
     updateLastUpdatedLabels();
-    buildReorderRows();
-    buildDashboardData();
+    if (name === 'reorder') buildReorderRows();
+    if (name === 'dashboard') buildDashboardData();
     var whCount = Object.keys(CALC.whStock).length;
     var upcCount = Object.keys(CALC.upc).length;
     setStatus(appKey, 'ok', 'WH: ' + whCount + ' parts · ' + upcCount + ' UPC');
@@ -2455,15 +2457,15 @@ async function loadAllSheets() {
     DB.oos       = parseOOSRows(results[4]);
 
     var inStock = DB.master.filter(function(r) { return (r.casesNum || 0) > 0; }).length;
-    document.getElementById('tc-locator').textContent = inStock.toLocaleString();
-    document.getElementById('tc-search').textContent  = DB.products.length.toLocaleString();
-    document.getElementById('tc-awd').textContent     = DB.awdMaster.length.toLocaleString();
+    (function(){ var _e=document.getElementById('tc-locator'); if(_e) _e.textContent=inStock.toLocaleString(); })();
+    (function(){ var _e=document.getElementById('tc-search'); if(_e) _e.textContent=DB.products.length.toLocaleString(); })();
+    (function(){ var _e=document.getElementById('tc-awd'); if(_e) _e.textContent=DB.awdMaster.length.toLocaleString(); })();
     // Stock levels badge uses products count (all base SKUs) not OOS sheet
-    document.getElementById('tc-oos').textContent     = DB.products.length.toLocaleString();
+    (function(){ var _e=document.getElementById('tc-oos'); if(_e) _e.textContent=DB.products.length.toLocaleString(); })();
 
     var now = new Date().toLocaleTimeString([], { hour:'2-digit', minute:'2-digit' });
     setSyncLabel('Synced ' + now, false);
-    document.getElementById('tb-sub').textContent = 'Live - ' + DB.master.length.toLocaleString() + ' rows';
+    (function(){ var _e=document.getElementById('tb-sub'); if(_e) _e.textContent='Live - ' + DB.master.length.toLocaleString() + ' rows'; })();
     showToast('Loaded - ' + DB.master.length.toLocaleString() + ' master, ' + DB.products.length.toLocaleString() + ' products, ' + DB.awdMaster.length.toLocaleString() + ' AWD');
     renderOOS();
   } catch(e) {
@@ -2665,13 +2667,13 @@ function doSearch(tab) {
 
 function clearPane(tab) {
   document.getElementById('inp-' + tab).value = '';
-  document.getElementById('meta-' + tab).innerHTML = '';
+  (function(){ var _e=document.getElementById('meta-' + tab); if(_e) _e.innerHTML= ''; })()
   const ph = {
     locator: `<div class="placeholder"><span class="placeholder-icon">📍</span><h3>Item Locator</h3><p>Search by SKU or product name. Shows all in-stock locations.</p></div>`,
     search:  `<div class="placeholder"><span class="placeholder-icon">🔍</span><h3>Item Search</h3><p>Search base SKUs by name or SKU. Set Count to calculate total weight.</p></div>`,
     awd:     `<div class="placeholder"><span class="placeholder-icon">🚚</span><h3>AWD Lookup</h3><p>Search by part number or SKU. Copy the label stack for shipping labels.</p></div>`,
   };
-  document.getElementById('res-' + tab).innerHTML = ph[tab] || '';
+  (function(){ var _e=document.getElementById('res-' + tab); if(_e) _e.innerHTML= ph[tab] || ''; })()
 }
 
 // ═══════════════════════════════════════════════════════
@@ -2892,10 +2894,10 @@ function renderOOS() {
   if (_oosOrderFilter === 'ordered')     items = items.filter(function(r){ return r.isOrdered; });
   if (_oosOrderFilter === 'not-ordered') items = items.filter(function(r){ return !r.isOrdered; });
 
-  document.getElementById('oos-num').textContent = items.length.toLocaleString();
+  (function(){ var _e=document.getElementById('oos-num'); if(_e) _e.textContent=items.length.toLocaleString(); })();
 
   if (!items.length) {
-    document.getElementById('res-oos').innerHTML = '<div class="placeholder"><span class="placeholder-icon">\u2705</span><h3>No items found.</h3><p>No stock level items match your filter.</p></div>';
+    (function(){ var _e=document.getElementById('res-oos'); if(_e) _e.innerHTML= '<div class="placeholder"><span class="placeholder-icon">\u2705</span><h3>No items found.</h3><p>No stock level items match your filter.</p></div>'; })()
     return;
   }
 
@@ -2934,7 +2936,7 @@ function renderOOS() {
       + '</tr>';
   });
   html += '</tbody></table></div>';
-  document.getElementById('res-oos').innerHTML = html;
+  (function(){ var _e=document.getElementById('res-oos'); if(_e) _e.innerHTML= html; })()
 }
 
 window.oosSetStockFilter = function(f, btn) {
@@ -4556,10 +4558,10 @@ function upcValidateChecksum(digits12) {
 
 // Called when UPC app launches
 function upcOnLaunch() {
-  document.getElementById('upc-results').innerHTML = '';
+  (function(){ var _e=document.getElementById('upc-results'); if(_e) _e.innerHTML= ''; })()
   (function(){ var _e=document.getElementById('upc-empty'); if(_e) _e.style.display='block'; })();
   document.getElementById('upc-search-inp').value = '';
-  document.getElementById('upc-file-status').textContent = '';
+  (function(){ var _e=document.getElementById('upc-file-status'); if(_e) _e.textContent=''; })();
   upcCheckShipment();
   // Auto-load last saved shipment from sheet (so workers see it without uploading)
   upcAutoLoadSavedShipment();
@@ -4592,7 +4594,7 @@ async function upcAutoLoadSavedShipment() {
 }
 
 function upcClear() {
-  document.getElementById('upc-results').innerHTML = '';
+  (function(){ var _e=document.getElementById('upc-results'); if(_e) _e.innerHTML= ''; })()
   (function(){ var _e=document.getElementById('upc-empty'); if(_e) _e.style.display='block'; })();
 }
 
@@ -4679,7 +4681,7 @@ function upcResetVerify() {
   _upcVerifiedFail = {};
   _upcLastScanned  = '';
   upcUpdateTally();
-  document.getElementById('upc-scan-result').textContent = 'Point camera at case barcode';
+  (function(){ var _e=document.getElementById('upc-scan-result'); if(_e) _e.textContent='Point camera at case barcode'; })();
   (function(){ var _e=document.getElementById('upc-scan-result'); if(_e) _e.style.background='rgba(255,255,255,.08)'; })();
   (function(){ var _e=document.getElementById('upc-scan-result'); if(_e) _e.style.color='rgba(255,255,255,.4)'; })();
 }
@@ -4703,8 +4705,8 @@ async function upcStartScan() {
   var overlay  = document.getElementById('upc-camera-overlay');
   var resultEl = document.getElementById('upc-scan-result');
   overlay.style.display = 'flex';
-  document.getElementById('upc-tally-ok').textContent   = Object.keys(_upcVerifiedOk).length;
-  document.getElementById('upc-tally-fail').textContent = Object.keys(_upcVerifiedFail).length;
+  (function(){ var _e=document.getElementById('upc-tally-ok'); if(_e) _e.textContent=Object.keys(_upcVerifiedOk).length; })();
+  (function(){ var _e=document.getElementById('upc-tally-fail'); if(_e) _e.textContent=Object.keys(_upcVerifiedFail).length; })();
   resultEl.textContent  = 'Starting camera…';
   resultEl.style.background = 'rgba(255,255,255,.08)';
   resultEl.style.color  = 'rgba(255,255,255,.5)';
@@ -4761,7 +4763,7 @@ async function upcStopScan() {
   if (_html5QrScanner) {
     try { await _html5QrScanner.stop(); } catch(_) {}
     _html5QrScanner = null;
-    document.getElementById('upc-html5qr-reader').innerHTML = '';
+    (function(){ var _e=document.getElementById('upc-html5qr-reader'); if(_e) _e.innerHTML= ''; })()
   }
   if (_upcScanStream) {
     _upcScanStream.getTracks().forEach(function(t) { t.stop(); });
@@ -4890,18 +4892,18 @@ function upcSearch(query) {
   var q = String(query || '').trim();
   if (!q) { upcClear(); return; }
   if (!DB.upc.length && !AWD_DB.awdMaster.length) {
-    document.getElementById('upc-results').innerHTML = '<div style="text-align:center;padding:40px;color:var(--text3)">Loading data, please wait...</div>';
+    (function(){ var _e=document.getElementById('upc-results'); if(_e) _e.innerHTML= '<div style="text-align:center; })()padding:40px;color:var(--text3)">Loading data, please wait...</div>';
     (function(){ var _e=document.getElementById('upc-empty'); if(_e) _e.style.display='none'; })();
     return;
   }
   var matches = upcLookup(q);
   (function(){ var _e=document.getElementById('upc-empty'); if(_e) _e.style.display='none'; })();
   if (!matches.length) {
-    document.getElementById('upc-results').innerHTML = '<div style="text-align:center;padding:40px;color:var(--text3)"><div style="font-size:32px;margin-bottom:12px">&#128269;</div><div style="font-size:14px;font-weight:600">No valid UPC-A found for <code style="color:var(--accent)">' + q + '</code></div><div style="font-size:12px;margin-top:8px">Try the full part number with variant suffix (e.g. 27-3-1=10X)</div></div>';
+    (function(){ var _e=document.getElementById('upc-results'); if(_e) _e.innerHTML= '<div style="text-align:center; })()padding:40px;color:var(--text3)"><div style="font-size:32px;margin-bottom:12px">&#128269;</div><div style="font-size:14px;font-weight:600">No valid UPC-A found for <code style="color:var(--accent)">' + q + '</code></div><div style="font-size:12px;margin-top:8px">Try the full part number with variant suffix (e.g. 27-3-1=10X)</div></div>';
     return;
   }
   loadJsBarcode(function() {
-    document.getElementById('upc-results').innerHTML = upcRenderCards(matches);
+    (function(){ var _e=document.getElementById('upc-results'); if(_e) _e.innerHTML= upcRenderCards(matches); })()
     upcDrawBarcodes();
   });
 }
@@ -4909,7 +4911,7 @@ function upcSearch(query) {
 // Load live shipment from AWD Planner builder
 function upcLoadShipment() {
   if (!S || !S.shipment || !Object.keys(S.shipment).length) {
-    document.getElementById('upc-results').innerHTML = '<div style="text-align:center;padding:40px;color:var(--text3)">No SKUs staged in AWD Planner.</div>';
+    (function(){ var _e=document.getElementById('upc-results'); if(_e) _e.innerHTML= '<div style="text-align:center; })()padding:40px;color:var(--text3)">No SKUs staged in AWD Planner.</div>';
     (function(){ var _e=document.getElementById('upc-empty'); if(_e) _e.style.display='none'; })();
     return;
   }
@@ -5033,7 +5035,7 @@ function upcRenderFromSkuList(skus, sourceName, mode) {
   });
 
   if (!allMatches.length) {
-    document.getElementById('upc-results').innerHTML = '<div style="text-align:center;padding:40px;color:var(--text3)">No UPCs found for any SKUs in this shipment.</div>';
+    (function(){ var _e=document.getElementById('upc-results'); if(_e) _e.innerHTML= '<div style="text-align:center; })()padding:40px;color:var(--text3)">No UPCs found for any SKUs in this shipment.</div>';
     return;
   }
 
@@ -5050,7 +5052,7 @@ function upcRenderFromSkuList(skus, sourceName, mode) {
 
   loadJsBarcode(function() {
     var body = (mode === 'sheet') ? upcRenderSheet(allMatches) : upcRenderCards(allMatches);
-    document.getElementById('upc-results').innerHTML = header + body;
+    (function(){ var _e=document.getElementById('upc-results'); if(_e) _e.innerHTML= header + body; })()
     upcDrawBarcodes();
   });
 }
@@ -5389,8 +5391,8 @@ async function salesLaunchApp(name) {
     await readCalcTabs();
     lastUpdated = new Date();
     updateLastUpdatedLabels();
-    buildReorderRows();
-    buildDashboardData();
+    if (name === 'reorder') buildReorderRows();
+    if (name === 'dashboard') buildDashboardData();
     var whCount = Object.keys(CALC.whStock).length;
     var upcCount = Object.keys(CALC.upc).length;
     setStatus(appKey, 'ok', 'WH: ' + whCount + ' parts · ' + upcCount + ' UPC');
@@ -5615,7 +5617,7 @@ async function fetchEbaySales(ctx) {
       lastUpdated = new Date();
       updateLastUpdatedLabels();
       buildReorderRows();
-      buildDashboardData();
+      // buildDashboardData() — dashboard only
       var whCount = Object.keys(CALC.whStock).length;
       setStatus('ro', 'ok', 'WH: ' + whCount + ' parts');
       setStatus('db', 'ok', 'Up to date');
@@ -5740,8 +5742,8 @@ async function processAllReports() {
     await readCalcTabs();
     lastUpdated = new Date();
     updateLastUpdatedLabels();
-    buildReorderRows();
-    buildDashboardData();
+    if (name === 'reorder') buildReorderRows();
+    if (name === 'dashboard') buildDashboardData();
     var whCount = Object.keys(CALC.whStock).length;
     setStatus('ro','ok','WH: ' + whCount + ' parts');
     setStatus('db','ok','Up to date');
@@ -5763,8 +5765,8 @@ async function loadSavedData() {
     await readCalcTabs();
     lastUpdated = new Date();
     updateLastUpdatedLabels();
-    buildReorderRows();
-    buildDashboardData();
+    if (name === 'reorder') buildReorderRows();
+    if (name === 'dashboard') buildDashboardData();
     var whCount = Object.keys(CALC.whStock).length;
     setStatus('ro','ok','WH: ' + whCount + ' parts');
     setStatus('db','ok','Up to date');
@@ -5785,8 +5787,8 @@ async function autoLoadOnLaunch(app) {
     await readCalcTabs();
     lastUpdated = new Date();
     updateLastUpdatedLabels();
-    buildReorderRows();
-    buildDashboardData();
+    if (name === 'reorder') buildReorderRows();
+    if (name === 'dashboard') buildDashboardData();
     var whCount = Object.keys(CALC.whStock).length;
     setStatus(app, 'ok', 'Loaded · WH: ' + whCount + ' parts');
     salesToast('Data loaded — ' + whCount + ' WH parts', 'success');
@@ -6416,7 +6418,7 @@ function renderKPIs() {
   });
   o += '</div>';
 
-  document.getElementById('db-kpis').innerHTML = o;
+  (function(){ var _e=document.getElementById('db-kpis'); if(_e) _e.innerHTML= o; })()
 }
 
 function renderLeaderboards() {
@@ -6438,8 +6440,8 @@ function renderLeaderboards() {
     var rank=i===0?'🥇':i===1?'🥈':i===2?'🥉':'<span style="font-family:var(--mono);font-size:11px;color:var(--text3)">'+(i+1)+'</span>';
     return '<div class="sales-lb-row">'      +'<div class="sales-lb-rank'+(i<3?' top':'')+'">'+rank+'</div>'      +'<div class="sales-lb-name" style="display:flex;align-items:center;gap:6px">'+r.pn+' '+(DL[r.dom]||'')+' '+(TR[r.trend]||'')+'</div>'      +'<div class="sales-lb-bar-wrap"><div class="sales-lb-bar" style="width:'+pct+'%"></div></div>'      +'<div class="sales-lb-val">'+fmtFn(r[key])+'</div></div>';
   }
-  document.getElementById('db-lb').innerHTML =
-    '<div style="display:grid;grid-template-columns:1fr 1fr;gap:12px">'    +'<div class="sales-leaderboard"><div class="sales-lb-header">🏆 Top by Units · 30d</div>'    +byU.map(function(r,i){return lbRowFull(r,i,'u30',maxU,function(v){return v.toLocaleString()});}).join('')+'</div>'    +'<div class="sales-leaderboard"><div class="sales-lb-header">💰 Top by Revenue · 30d</div>'    +byS.map(function(r,i){return lbRowFull(r,i,'s30',maxS,function(v){return '$'+fmt0(v)});}).join('')+'</div>'    +'</div>';
+  (function(){ var _e=document.getElementById('db-lb'); if(_e) _e.innerHTML=
+    '<div style="display:grid; })()grid-template-columns:1fr 1fr;gap:12px">'    +'<div class="sales-leaderboard"><div class="sales-lb-header">🏆 Top by Units · 30d</div>'    +byU.map(function(r,i){return lbRowFull(r,i,'u30',maxU,function(v){return v.toLocaleString()});}).join('')+'</div>'    +'<div class="sales-leaderboard"><div class="sales-lb-header">💰 Top by Revenue · 30d</div>'    +byS.map(function(r,i){return lbRowFull(r,i,'s30',maxS,function(v){return '$'+fmt0(v)});}).join('')+'</div>'    +'</div>';
 }
 
 function renderLeaderboards() {
@@ -6476,8 +6478,8 @@ function renderLeaderboards() {
          + '</div>';
   }
 
-  document.getElementById('db-lb').innerHTML =
-    '<div style="display:grid;grid-template-columns:1fr 1fr;gap:12px">'
+  (function(){ var _e=document.getElementById('db-lb'); if(_e) _e.innerHTML=
+    '<div style="display:grid; })()grid-template-columns:1fr 1fr;gap:12px">'
     + '<div class="sales-leaderboard">'
     +   '<div class="sales-lb-header">&#127942; Top by Units &middot; 30d</div>'
     +   byU.map(function(r,i){return row(r,i,'u30',maxU,function(v){return v.toLocaleString()+' u';});}).join('')
@@ -6740,8 +6742,8 @@ async function recomputeTabs() {
     await readCalcTabs();
     lastUpdated = new Date();
     updateLastUpdatedLabels();
-    buildReorderRows();
-    buildDashboardData();
+    if (name === 'reorder') buildReorderRows();
+    if (name === 'dashboard') buildDashboardData();
     var whCount = Object.keys(CALC.whStock).length;
     setStatus('ro', 'ok', 'WH: ' + whCount + ' parts');
     setStatus('db', 'ok', 'Up to date');
@@ -7112,7 +7114,7 @@ async function runAutoInsights(app) {
     ];
     // Show chat area after auto analysis
     document.getElementById(app+'-ai-chat-wrap').style.display = 'flex';
-    document.getElementById(app+'-ai-messages').innerHTML = '<div class="sales-ai-empty">Analysis complete — ask follow-up questions below</div>';
+    (function(){ var _e=document.getElementById(app+'-ai-messages'); if(_e) _e.innerHTML= '<div class="sales-ai-empty">Analysis complete — ask follow-up questions below</div>'; })()
   } catch(e) {
     bodyEl.innerHTML = '<div style="color:var(--red);padding:8px;font-family:var(--mono);font-size:12px">Error: '+e.message+'</div>';
   }
@@ -7255,6 +7257,7 @@ function fmt0(v){ return (v||0).toLocaleString('en-US',{minimumFractionDigits:0,
 var salesTimer;
 function salesToast(msg, type) {
   var el=document.getElementById('sales-toast');
+  if (!el) { console.log('[salesToast]', msg); return; }
   el.innerHTML=msg;
   el.className='show '+(type||'');
   clearTimeout(salesTimer);
