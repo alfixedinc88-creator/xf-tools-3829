@@ -1709,7 +1709,6 @@ body { display:flex; flex-direction:column; min-height:100vh; background:var(--b
   </style>
 </head>
 <body>
-
 <div id="mgmt-pin-screen" style="display:none;position:fixed;inset:0;background:var(--bg);z-index:8000;align-items:center;justify-content:center;flex-direction:column">
   <div style="text-align:center;animation:fadeIn .3s ease">
     <div style="font-family:var(--mono);font-size:10px;letter-spacing:4px;color:var(--text3);text-transform:uppercase;margin-bottom:28px">
@@ -1740,7 +1739,6 @@ body { display:flex; flex-direction:column; min-height:100vh; background:var(--b
     <div id="mgmt-pin-error" style="color:var(--red);font-size:12px;margin-top:16px;font-family:var(--mono);opacity:0;transition:opacity .2s">Incorrect PIN</div>
   </div>
 </div>
-
 
 <div id="reorder-app">
 <div id="reorder-app" style="display:none;">
@@ -1988,7 +1986,6 @@ body { display:flex; flex-direction:column; min-height:100vh; background:var(--b
 </div>
 
 </div>
-
 <script>
 var WORKER_URL = 'https://xfitting-lookup.alfixedinc88.workers.dev';
 var W = WORKER_URL;
@@ -1997,8 +1994,6 @@ var XF_ROLE    = sessionStorage.getItem('xf_role')    || null;
 var mgmtPinBuf = '';
 var mgmtPinTarget = 'reorder';
 function backToLauncher() { window.location.href = 'index.html'; }
-function _setHtml(id, html) { var e=document.getElementById(id); if(e) e.innerHTML=html; }
-function _setText(id, txt) { var e=document.getElementById(id); if(e) e.textContent=txt; }
 function launchApp(app)   { window.location.href = app + '.html'; }
 function mgmtPinCancel()  { window.location.href = 'index.html'; }
 function showToast(msg) {
@@ -2041,8 +2036,8 @@ function launchMgmtApp(name) {
   ['mgmt-pd0','mgmt-pd1','mgmt-pd2','mgmt-pd3'].forEach(function(id) {
     document.getElementById(id).classList.remove('filled');
   });
-  (function(){ var _e=document.getElementById('mgmt-pin-error'); if(_e) _e.style.opacity='0'; })();
-  (function(){ var _e=document.getElementById('mgmt-pin-screen'); if(_e) _e.style.display='flex'; })();
+  document.getElementById('mgmt-pin-error').style.opacity = '0';
+  document.getElementById('mgmt-pin-screen').style.display = 'flex';
 }
 
 function mgmtPinKey(d) {
@@ -2059,12 +2054,12 @@ function mgmtPinKey(d) {
         if (d.token) {
           XF_SESSION = d.token;
           sessionStorage.setItem('xf_session', d.token);
-          (function(){ var _e=document.getElementById('mgmt-pin-screen'); if(_e) _e.style.display='none'; })();
+          document.getElementById('mgmt-pin-screen').style.display = 'none';
           if (mgmtPinTarget === 'repricer') {
-            (function(){ var _e=document.getElementById('launcher'); if(_e) _e.style.display='none'; })();
-            (function(){ var _e=document.getElementById('repricer-root'); if(_e) _e.style.display='block'; })();
-            (function(){ var _e=document.getElementById('rpr-pin-screen'); if(_e) _e.style.display='none'; })();
-            (function(){ var _e=document.getElementById('rpr-app'); if(_e) _e.style.display='flex'; })();
+            document.getElementById('launcher').style.display = 'none';
+            document.getElementById('repricer-root').style.display = 'block';
+            document.getElementById('rpr-pin-screen').style.display = 'none';
+            document.getElementById('rpr-app').style.display = 'flex';
             rprToken = d.token;
             rprPinLevel = 'mgmt';
             if (typeof rprApplyPinLevel === 'function') rprApplyPinLevel();
@@ -2073,17 +2068,17 @@ function mgmtPinKey(d) {
             salesLaunchApp(mgmtPinTarget);
           }
         } else {
-          (function(){ var _e=document.getElementById('mgmt-pin-error'); if(_e) _e.style.opacity='1'; })();
+          document.getElementById('mgmt-pin-error').style.opacity = '1';
           setTimeout(function() {
             mgmtPinBuf = "";
             ['mgmt-pd0','mgmt-pd1','mgmt-pd2','mgmt-pd3'].forEach(function(id){
               document.getElementById(id).classList.remove('filled');
             });
-            (function(){ var _e=document.getElementById('mgmt-pin-error'); if(_e) _e.style.opacity='0'; })();
+            document.getElementById('mgmt-pin-error').style.opacity = '0';
           }, 900);
         }
       }).catch(function(){
-        (function(){ var _e=document.getElementById('mgmt-pin-error'); if(_e) _e.style.opacity='1'; })();
+        document.getElementById('mgmt-pin-error').style.opacity = '1';
       });
     }, 120);
   }
@@ -2096,7 +2091,7 @@ function mgmtPinDel() {
 }
 
 function mgmtPinCancel() {
-  (function(){ var _e=document.getElementById('mgmt-pin-screen'); if(_e) _e.style.display='none'; })();
+  document.getElementById('mgmt-pin-screen').style.display = 'none';
   mgmtPinBuf = "";
   mgmtPinTarget = null;
 }
@@ -2104,31 +2099,31 @@ function mgmtPinCancel() {
 async function salesLaunchApp(name) {
   var _la=document.getElementById('launcher'); if(_la) _la.style.display='none';
   if (name === 'receivepo') {
-    (function(){ var _e=document.getElementById('receivepo-app'); if(_e) _e.style.display='flex'; })();
-    (function(){ var _e=document.getElementById('receivepo-app'); if(_e) _e.style.flexDirection='column'; })();
+    document.getElementById('receivepo-app').style.display = 'flex';
+    document.getElementById('receivepo-app').style.flexDirection = 'column';
     rpoReset();
     return;
   }
   if (name === 'msginbox') {
-    (function(){ var _e=document.getElementById('msginbox-app'); if(_e) _e.style.display='flex'; })();
-    (function(){ var _e=document.getElementById('msginbox-app'); if(_e) _e.style.flexDirection='column'; })();
+    document.getElementById('msginbox-app').style.display = 'flex';
+    document.getElementById('msginbox-app').style.flexDirection = 'column';
     msgInboxOnLaunch();
     return;
   }
   if (name === 'ebaymsgs') {
-    (function(){ var _e=document.getElementById('ebaymsgs-app'); if(_e) _e.style.display='flex'; })();
-    (function(){ var _e=document.getElementById('ebaymsgs-app'); if(_e) _e.style.flexDirection='column'; })();
+    document.getElementById('ebaymsgs-app').style.display = 'flex';
+    document.getElementById('ebaymsgs-app').style.flexDirection = 'column';
     ebayMsgsOnLaunch();
     return;
   }
   if (name === 'ldash') {
-    (function(){ var _e=document.getElementById('ldash-app'); if(_e) _e.style.display='flex'; })();
-    (function(){ var _e=document.getElementById('ldash-app'); if(_e) _e.style.flexDirection='column'; })();
+    document.getElementById('ldash-app').style.display = 'flex';
+    document.getElementById('ldash-app').style.flexDirection = 'column';
     ldashOnLaunch();
     return;
   }
   if (name === 'labelprint') {
-    (function(){ var _e=document.getElementById('labelprint-app'); if(_e) _e.style.display='block'; })();
+    document.getElementById('labelprint-app').style.display = 'block';
     if (typeof lpLaunch === 'function') lpLaunch();
     return;
   }
@@ -2142,8 +2137,8 @@ async function salesLaunchApp(name) {
     await readCalcTabs();
     lastUpdated = new Date();
     updateLastUpdatedLabels();
-    if (name === 'reorder') buildReorderRows();
-    if (name === 'dashboard') buildDashboardData();
+    if(name==='reorder') buildReorderRows();
+    if(name==='dashboard') buildDashboardData();
     var whCount = Object.keys(CALC.whStock).length;
     var upcCount = Object.keys(CALC.upc).length;
     setStatus(appKey, 'ok', 'WH: ' + whCount + ' parts · ' + upcCount + ' UPC');
@@ -2190,7 +2185,7 @@ if (XF_SESSION) {
   document.addEventListener('DOMContentLoaded', function() {
     var ps = document.getElementById('pin-screen');
     if (ps) { ps.style.display = 'none'; ps.style.visibility = 'hidden'; }
-    (function(){ var _e=document.getElementById('launcher'); if(_e) _e.style.display='flex'; })();
+    document.getElementById('launcher').style.display = 'flex';
     // Only pre-load mgmt tabs if role was mgmt — avoids 401 noise on OPS session restore
     if (typeof silentLoadSaved === 'function' && XF_ROLE === 'mgmt') silentLoadSaved();
   });
@@ -2243,7 +2238,7 @@ function checkPin() {
         ps.style.transition = 'opacity .3s'; ps.style.opacity = '0';
         setTimeout(function() {
           ps.style.display = 'none'; ps.style.visibility = 'hidden';
-          (function(){ var _e=document.getElementById('launcher'); if(_e) _e.style.display='flex'; })();
+          document.getElementById('launcher').style.display = 'flex';
           // Only pre-load mgmt calc tabs if this is a mgmt-level token
           if (typeof silentLoadSaved === 'function' && type === 'mgmt') silentLoadSaved();
         }, 300);
@@ -2272,7 +2267,7 @@ function showSetupErr(msg) {
 async function connect(silent) {
   var sheetId  = document.getElementById('inp-sheet-id').value.trim();
   var credsRaw = document.getElementById('inp-creds').value.trim();
-  (function(){ var _e=document.getElementById('setup-error'); if(_e) _e.style.display='none'; })();
+  document.getElementById('setup-error').style.display = 'none';
 
   if (!sheetId || !credsRaw) { showSetupErr('Please fill in both the Sheet ID and the JSON key.'); return; }
 
@@ -2297,8 +2292,8 @@ async function connect(silent) {
     localStorage.setItem('xf_creds', credsRaw);
     SHEET_ID = sheetId;
     CREDS    = creds;
-    (function(){ var _e=document.getElementById('setup-screen'); if(_e) _e.style.display='none'; })();
-    (function(){ var _e=document.getElementById('app'); if(_e) _e.style.display='flex'; })();
+    document.getElementById('setup-screen').style.display = 'none';
+    document.getElementById('app').style.display = 'flex';
     await loadAllSheets();
   } catch(e) {
     btn.disabled = false;
@@ -2309,10 +2304,10 @@ async function connect(silent) {
 
 function reenterCreds() {
   // Show setup screen without clearing anything — just let them re-enter
-  (function(){ var _e=document.getElementById('app'); if(_e) _e.style.display='none'; })();
-  (function(){ var _e=document.getElementById('setup-screen'); if(_e) _e.style.display='flex'; })();
+  document.getElementById('app').style.display = 'none';
+  document.getElementById('setup-screen').style.display = 'flex';
   if (SHEET_ID) document.getElementById('inp-sheet-id').value = SHEET_ID;
-  (function(){ var _e=document.getElementById('setup-error'); if(_e) _e.style.display='none'; })();
+  document.getElementById('setup-error').style.display = 'none';
   var btn = document.getElementById('btn-connect');
   btn.disabled = false;
   btn.textContent = 'Connect to Sheet';
@@ -2457,23 +2452,23 @@ async function loadAllSheets() {
     DB.oos       = parseOOSRows(results[4]);
 
     var inStock = DB.master.filter(function(r) { return (r.casesNum || 0) > 0; }).length;
-    (function(){ var _e=document.getElementById('tc-locator'); if(_e) _e.textContent=inStock.toLocaleString(); })();
-    (function(){ var _e=document.getElementById('tc-search'); if(_e) _e.textContent=DB.products.length.toLocaleString(); })();
-    (function(){ var _e=document.getElementById('tc-awd'); if(_e) _e.textContent=DB.awdMaster.length.toLocaleString(); })();
+    document.getElementById('tc-locator').textContent = inStock.toLocaleString();
+    document.getElementById('tc-search').textContent  = DB.products.length.toLocaleString();
+    document.getElementById('tc-awd').textContent     = DB.awdMaster.length.toLocaleString();
     // Stock levels badge uses products count (all base SKUs) not OOS sheet
-    (function(){ var _e=document.getElementById('tc-oos'); if(_e) _e.textContent=DB.products.length.toLocaleString(); })();
+    document.getElementById('tc-oos').textContent     = DB.products.length.toLocaleString();
 
     var now = new Date().toLocaleTimeString([], { hour:'2-digit', minute:'2-digit' });
     setSyncLabel('Synced ' + now, false);
-    (function(){ var _e=document.getElementById('tb-sub'); if(_e) _e.textContent='Live - ' + DB.master.length.toLocaleString() + ' rows'; })();
+    document.getElementById('tb-sub').textContent = 'Live - ' + DB.master.length.toLocaleString() + ' rows';
     showToast('Loaded - ' + DB.master.length.toLocaleString() + ' master, ' + DB.products.length.toLocaleString() + ' products, ' + DB.awdMaster.length.toLocaleString() + ' AWD');
     renderOOS();
   } catch(e) {
     console.error('[XFITTING] loadAllSheets error:', e);
     showLoading(false);
     // On any auth error kick back to setup screen with the error shown
-    (function(){ var _e=document.getElementById('app'); if(_e) _e.style.display='none'; })();
-    (function(){ var _e=document.getElementById('setup-screen'); if(_e) _e.style.display='flex'; })();
+    document.getElementById('app').style.display = 'none';
+    document.getElementById('setup-screen').style.display = 'flex';
     var errEl = document.getElementById('setup-error');
     errEl.textContent = 'Connection failed: ' + e.message + '\n\nPlease re-enter your Sheet ID and credentials below.';
     errEl.style.display = 'block';
@@ -2667,13 +2662,13 @@ function doSearch(tab) {
 
 function clearPane(tab) {
   document.getElementById('inp-' + tab).value = '';
-  (function(){ var _e=document.getElementById('meta-' + tab); if(_e) _e.innerHTML= ''; })()
+  document.getElementById('meta-' + tab).innerHTML = '';
   const ph = {
     locator: `<div class="placeholder"><span class="placeholder-icon">📍</span><h3>Item Locator</h3><p>Search by SKU or product name. Shows all in-stock locations.</p></div>`,
     search:  `<div class="placeholder"><span class="placeholder-icon">🔍</span><h3>Item Search</h3><p>Search base SKUs by name or SKU. Set Count to calculate total weight.</p></div>`,
     awd:     `<div class="placeholder"><span class="placeholder-icon">🚚</span><h3>AWD Lookup</h3><p>Search by part number or SKU. Copy the label stack for shipping labels.</p></div>`,
   };
-  (function(){ var _e=document.getElementById('res-' + tab); if(_e) _e.innerHTML= ph[tab] || ''; })()
+  document.getElementById('res-' + tab).innerHTML = ph[tab] || '';
 }
 
 // ═══════════════════════════════════════════════════════
@@ -2894,10 +2889,10 @@ function renderOOS() {
   if (_oosOrderFilter === 'ordered')     items = items.filter(function(r){ return r.isOrdered; });
   if (_oosOrderFilter === 'not-ordered') items = items.filter(function(r){ return !r.isOrdered; });
 
-  (function(){ var _e=document.getElementById('oos-num'); if(_e) _e.textContent=items.length.toLocaleString(); })();
+  document.getElementById('oos-num').textContent = items.length.toLocaleString();
 
   if (!items.length) {
-    (function(){ var _e=document.getElementById('res-oos'); if(_e) _e.innerHTML= '<div class="placeholder"><span class="placeholder-icon">\u2705</span><h3>No items found.</h3><p>No stock level items match your filter.</p></div>'; })()
+    document.getElementById('res-oos').innerHTML = '<div class="placeholder"><span class="placeholder-icon">\u2705</span><h3>No items found.</h3><p>No stock level items match your filter.</p></div>';
     return;
   }
 
@@ -2936,7 +2931,7 @@ function renderOOS() {
       + '</tr>';
   });
   html += '</tbody></table></div>';
-  (function(){ var _e=document.getElementById('res-oos'); if(_e) _e.innerHTML= html; })()
+  document.getElementById('res-oos').innerHTML = html;
 }
 
 window.oosSetStockFilter = function(f, btn) {
@@ -3909,12 +3904,12 @@ function awd_planner_toast(msg, type) {
 // ═══════════════════════════════════════════════════════
 function launchApp(which) {
   history.pushState({ xfApp: which }, '', '');
-  (function(){ var _e=document.getElementById('launcher'); if(_e) _e.style.display='none'; })();
+  document.getElementById('launcher').style.display = 'none';
   if (which === 'warehouse') {
-    (function(){ var _e=document.getElementById('wh-app'); if(_e) _e.style.display='flex'; })();
+    document.getElementById('wh-app').style.display = 'flex';
     if (DB.master.length === 0) loadAllSheets();
   } else if (which === 'awd') {
-    (function(){ var _e=document.getElementById('awd-app'); if(_e) _e.style.display='flex'; })();
+    document.getElementById('awd-app').style.display = 'flex';
     if (!WH.loaded) loadWarehouseStock();
     if (!AWD_DB.loaded) loadAWDPlannerDB();
     if (!DISC.loaded) loadDiscontinuedSKUs();
@@ -3922,7 +3917,7 @@ function launchApp(which) {
     loadCpackFromStorage();
     if (!S.loaded) loadReportsFromSheet();
   } else if (which === 'inventory') {
-    (function(){ var _e=document.getElementById('inv-app'); if(_e) _e.style.display='flex'; })();
+    document.getElementById('inv-app').style.display = 'flex';
     console.log('[INV] invSetMode defined:', typeof window.invSetMode);
     console.log('[INV] invToggleCam defined:', typeof window.invToggleCam);
     console.log('[INV] invLookup defined:', typeof window.invLookup);
@@ -3948,7 +3943,7 @@ function launchApp(which) {
       }
     }, 500);
   } else if (which === 'upc') {
-    (function(){ var _e=document.getElementById('upc-app'); if(_e) _e.style.display='flex'; })();
+    document.getElementById('upc-app').style.display = 'flex';
     // Load warehouse data if not already loaded (needs DB.upc)
     if (DB.master.length === 0) loadAllSheets();
     // Load AWD_DB for SKU-to-UPC lookup from planner side
@@ -3956,30 +3951,30 @@ function launchApp(which) {
     upcOnLaunch();
   } else if (which === 'packship') {
     // Pack & Ship: no PIN required — show directly
-    (function(){ var _e=document.getElementById('packship-app'); if(_e) _e.style.display='flex'; })();
+    document.getElementById('packship-app').style.display = 'flex';
     psOnLaunch();
   } else if (which === 'messenger') {
     // Messenger: no PIN required — initials only
-    (function(){ var _e=document.getElementById('messenger-app'); if(_e) _e.style.display='flex'; })();
+    document.getElementById('messenger-app').style.display = 'flex';
     msgOnLaunch();
   }
 }
 
 function backToLauncher() {
-  (function(){ var _e=document.getElementById('inv-app'); if(_e) _e.style.display='none'; })();
-  (function(){ var _e=document.getElementById('wh-app'); if(_e) _e.style.display='none'; })();
-  (function(){ var _e=document.getElementById('awd-app'); if(_e) _e.style.display='none'; })();
-  (function(){ var _e=document.getElementById('upc-app'); if(_e) _e.style.display='none'; })();
-  (function(){ var _e=document.getElementById('reorder-app'); if(_e) _e.style.display='none'; })();
-  (function(){ var _e=document.getElementById('dashboard-app'); if(_e) _e.style.display='none'; })();
-  (function(){ var _e=document.getElementById('packship-app'); if(_e) _e.style.display='none'; })();
-  (function(){ var _e=document.getElementById('receivepo-app'); if(_e) _e.style.display='none'; })();
-  (function(){ var _e=document.getElementById('messenger-app'); if(_e) _e.style.display='none'; })();
-  (function(){ var _e=document.getElementById('msginbox-app'); if(_e) _e.style.display='none'; })();
-  (function(){ var _e=document.getElementById('ebaymsgs-app'); if(_e) _e.style.display='none'; })();
-  (function(){ var _e=document.getElementById('ldash-app'); if(_e) _e.style.display='none'; })();
-  (function(){ var _e=document.getElementById('labelprint-app'); if(_e) _e.style.display='none'; })();
-  (function(){ var _e=document.getElementById('launcher'); if(_e) _e.style.display='flex'; })();
+  document.getElementById('inv-app').style.display = 'none';
+  document.getElementById('wh-app').style.display = 'none';
+  document.getElementById('awd-app').style.display = 'none';
+  document.getElementById('upc-app').style.display = 'none';
+  document.getElementById('reorder-app').style.display = 'none';
+  document.getElementById('dashboard-app').style.display = 'none';
+  document.getElementById('packship-app').style.display = 'none';
+  document.getElementById('receivepo-app').style.display = 'none';
+  document.getElementById('messenger-app').style.display = 'none';
+  document.getElementById('msginbox-app').style.display = 'none';
+  document.getElementById('ebaymsgs-app').style.display = 'none';
+  document.getElementById('ldash-app').style.display = 'none';
+  document.getElementById('labelprint-app').style.display = 'none';
+  document.getElementById('launcher').style.display = 'flex';
 }
 
 // After PIN always shows launcher
@@ -4558,10 +4553,10 @@ function upcValidateChecksum(digits12) {
 
 // Called when UPC app launches
 function upcOnLaunch() {
-  (function(){ var _e=document.getElementById('upc-results'); if(_e) _e.innerHTML= ''; })()
-  (function(){ var _e=document.getElementById('upc-empty'); if(_e) _e.style.display='block'; })();
+  document.getElementById('upc-results').innerHTML = '';
+  document.getElementById('upc-empty').style.display = 'block';
   document.getElementById('upc-search-inp').value = '';
-  (function(){ var _e=document.getElementById('upc-file-status'); if(_e) _e.textContent=''; })();
+  document.getElementById('upc-file-status').textContent = '';
   upcCheckShipment();
   // Auto-load last saved shipment from sheet (so workers see it without uploading)
   upcAutoLoadSavedShipment();
@@ -4594,8 +4589,8 @@ async function upcAutoLoadSavedShipment() {
 }
 
 function upcClear() {
-  (function(){ var _e=document.getElementById('upc-results'); if(_e) _e.innerHTML= ''; })()
-  (function(){ var _e=document.getElementById('upc-empty'); if(_e) _e.style.display='block'; })();
+  document.getElementById('upc-results').innerHTML = '';
+  document.getElementById('upc-empty').style.display = 'block';
 }
 
 // Show live shipment banner if AWD planner has staged SKUs
@@ -4681,9 +4676,9 @@ function upcResetVerify() {
   _upcVerifiedFail = {};
   _upcLastScanned  = '';
   upcUpdateTally();
-  (function(){ var _e=document.getElementById('upc-scan-result'); if(_e) _e.textContent='Point camera at case barcode'; })();
-  (function(){ var _e=document.getElementById('upc-scan-result'); if(_e) _e.style.background='rgba(255,255,255,.08)'; })();
-  (function(){ var _e=document.getElementById('upc-scan-result'); if(_e) _e.style.color='rgba(255,255,255,.4)'; })();
+  document.getElementById('upc-scan-result').textContent = 'Point camera at case barcode';
+  document.getElementById('upc-scan-result').style.background = 'rgba(255,255,255,.08)';
+  document.getElementById('upc-scan-result').style.color = 'rgba(255,255,255,.4)';
 }
 
 // Html5-QRCode instance
@@ -4705,15 +4700,15 @@ async function upcStartScan() {
   var overlay  = document.getElementById('upc-camera-overlay');
   var resultEl = document.getElementById('upc-scan-result');
   overlay.style.display = 'flex';
-  (function(){ var _e=document.getElementById('upc-tally-ok'); if(_e) _e.textContent=Object.keys(_upcVerifiedOk).length; })();
-  (function(){ var _e=document.getElementById('upc-tally-fail'); if(_e) _e.textContent=Object.keys(_upcVerifiedFail).length; })();
+  document.getElementById('upc-tally-ok').textContent   = Object.keys(_upcVerifiedOk).length;
+  document.getElementById('upc-tally-fail').textContent = Object.keys(_upcVerifiedFail).length;
   resultEl.textContent  = 'Starting camera…';
   resultEl.style.background = 'rgba(255,255,255,.08)';
   resultEl.style.color  = 'rgba(255,255,255,.5)';
 
   // Use Html5-QRCode for all platforms — handles iOS PWA live scanning reliably
-  (function(){ var _e=document.getElementById('upc-ios-mode'); if(_e) _e.style.display='block'; })();
-  (function(){ var _e=document.getElementById('upc-viewfinder-wrap'); if(_e) _e.style.display='none'; })();
+  document.getElementById('upc-ios-mode').style.display        = 'block';
+  document.getElementById('upc-viewfinder-wrap').style.display = 'none';
 
   try {
     await upcLoadHtml5QR();
@@ -4763,14 +4758,14 @@ async function upcStopScan() {
   if (_html5QrScanner) {
     try { await _html5QrScanner.stop(); } catch(_) {}
     _html5QrScanner = null;
-    (function(){ var _e=document.getElementById('upc-html5qr-reader'); if(_e) _e.innerHTML= ''; })()
+    document.getElementById('upc-html5qr-reader').innerHTML = '';
   }
   if (_upcScanStream) {
     _upcScanStream.getTracks().forEach(function(t) { t.stop(); });
     _upcScanStream = null;
   }
   cancelAnimationFrame(_upcScanTimer);
-  (function(){ var _e=document.getElementById('upc-camera-overlay'); if(_e) _e.style.display='none'; })();
+  document.getElementById('upc-camera-overlay').style.display = 'none';
   upcUpdateTally();
 }
 
@@ -4892,18 +4887,18 @@ function upcSearch(query) {
   var q = String(query || '').trim();
   if (!q) { upcClear(); return; }
   if (!DB.upc.length && !AWD_DB.awdMaster.length) {
-    (function(){ var _e=document.getElementById('upc-results'); if(_e) _e.innerHTML= '<div style="text-align:center; })()padding:40px;color:var(--text3)">Loading data, please wait...</div>';
-    (function(){ var _e=document.getElementById('upc-empty'); if(_e) _e.style.display='none'; })();
+    document.getElementById('upc-results').innerHTML = '<div style="text-align:center;padding:40px;color:var(--text3)">Loading data, please wait...</div>';
+    document.getElementById('upc-empty').style.display = 'none';
     return;
   }
   var matches = upcLookup(q);
-  (function(){ var _e=document.getElementById('upc-empty'); if(_e) _e.style.display='none'; })();
+  document.getElementById('upc-empty').style.display = 'none';
   if (!matches.length) {
-    (function(){ var _e=document.getElementById('upc-results'); if(_e) _e.innerHTML= '<div style="text-align:center; })()padding:40px;color:var(--text3)"><div style="font-size:32px;margin-bottom:12px">&#128269;</div><div style="font-size:14px;font-weight:600">No valid UPC-A found for <code style="color:var(--accent)">' + q + '</code></div><div style="font-size:12px;margin-top:8px">Try the full part number with variant suffix (e.g. 27-3-1=10X)</div></div>';
+    document.getElementById('upc-results').innerHTML = '<div style="text-align:center;padding:40px;color:var(--text3)"><div style="font-size:32px;margin-bottom:12px">&#128269;</div><div style="font-size:14px;font-weight:600">No valid UPC-A found for <code style="color:var(--accent)">' + q + '</code></div><div style="font-size:12px;margin-top:8px">Try the full part number with variant suffix (e.g. 27-3-1=10X)</div></div>';
     return;
   }
   loadJsBarcode(function() {
-    (function(){ var _e=document.getElementById('upc-results'); if(_e) _e.innerHTML= upcRenderCards(matches); })()
+    document.getElementById('upc-results').innerHTML = upcRenderCards(matches);
     upcDrawBarcodes();
   });
 }
@@ -4911,8 +4906,8 @@ function upcSearch(query) {
 // Load live shipment from AWD Planner builder
 function upcLoadShipment() {
   if (!S || !S.shipment || !Object.keys(S.shipment).length) {
-    (function(){ var _e=document.getElementById('upc-results'); if(_e) _e.innerHTML= '<div style="text-align:center; })()padding:40px;color:var(--text3)">No SKUs staged in AWD Planner.</div>';
-    (function(){ var _e=document.getElementById('upc-empty'); if(_e) _e.style.display='none'; })();
+    document.getElementById('upc-results').innerHTML = '<div style="text-align:center;padding:40px;color:var(--text3)">No SKUs staged in AWD Planner.</div>';
+    document.getElementById('upc-empty').style.display = 'none';
     return;
   }
   var skus = Object.keys(S.shipment).filter(function(k) { return S.shipment[k].qty > 0; });
@@ -4922,7 +4917,7 @@ function upcLoadShipment() {
 // Handle file drop
 function upcHandleDrop(e) {
   e.preventDefault();
-  (function(){ var _e=document.getElementById('upc-drop-zone'); if(_e) _e.style.borderColor='var(--border)'; })();
+  document.getElementById('upc-drop-zone').style.borderColor = 'var(--border)';
   var f = e.dataTransfer.files[0];
   if (f) upcHandleFile(f);
 }
@@ -5017,7 +5012,7 @@ function upcReadXlsx(file, status) {
 // Given a list of SKUs, look up UPCs and render barcodes
 // mode: 'sheet' = compact table view, 'card' = large card stack
 function upcRenderFromSkuList(skus, sourceName, mode) {
-  (function(){ var _e=document.getElementById('upc-empty'); if(_e) _e.style.display='none'; })();
+  document.getElementById('upc-empty').style.display = 'none';
   var allMatches = [];
   var seen = new Set();
   skus.forEach(function(sku) {
@@ -5035,7 +5030,7 @@ function upcRenderFromSkuList(skus, sourceName, mode) {
   });
 
   if (!allMatches.length) {
-    (function(){ var _e=document.getElementById('upc-results'); if(_e) _e.innerHTML= '<div style="text-align:center; })()padding:40px;color:var(--text3)">No UPCs found for any SKUs in this shipment.</div>';
+    document.getElementById('upc-results').innerHTML = '<div style="text-align:center;padding:40px;color:var(--text3)">No UPCs found for any SKUs in this shipment.</div>';
     return;
   }
 
@@ -5052,7 +5047,7 @@ function upcRenderFromSkuList(skus, sourceName, mode) {
 
   loadJsBarcode(function() {
     var body = (mode === 'sheet') ? upcRenderSheet(allMatches) : upcRenderCards(allMatches);
-    (function(){ var _e=document.getElementById('upc-results'); if(_e) _e.innerHTML= header + body; })()
+    document.getElementById('upc-results').innerHTML = header + body;
     upcDrawBarcodes();
   });
 }
@@ -5122,7 +5117,7 @@ window.upcShowDNS = function() {
 window.upcPrintDNS = function() {
   var qty = parseInt((document.getElementById('upc-dns-qty') || {value:'1'}).value) || 1;
   qty = Math.min(Math.max(qty, 1), 50);
-  (function(){ var _e=document.getElementById('upc-dns-modal'); if(_e) _e.style.display='none'; })();
+  document.getElementById('upc-dns-modal').style.display = 'none';
 
   // Remove any existing print container
   var existing = document.getElementById('upc-print-container');
@@ -5290,8 +5285,8 @@ function launchMgmtApp(name) {
   ['mgmt-pd0','mgmt-pd1','mgmt-pd2','mgmt-pd3'].forEach(function(id) {
     document.getElementById(id).classList.remove('filled');
   });
-  (function(){ var _e=document.getElementById('mgmt-pin-error'); if(_e) _e.style.opacity='0'; })();
-  (function(){ var _e=document.getElementById('mgmt-pin-screen'); if(_e) _e.style.display='flex'; })();
+  document.getElementById('mgmt-pin-error').style.opacity = '0';
+  document.getElementById('mgmt-pin-screen').style.display = 'flex';
 }
 
 function mgmtPinKey(d) {
@@ -5308,12 +5303,12 @@ function mgmtPinKey(d) {
         if (d.token) {
           XF_SESSION = d.token;
           sessionStorage.setItem('xf_session', d.token);
-          (function(){ var _e=document.getElementById('mgmt-pin-screen'); if(_e) _e.style.display='none'; })();
+          document.getElementById('mgmt-pin-screen').style.display = 'none';
           if (mgmtPinTarget === 'repricer') {
-            (function(){ var _e=document.getElementById('launcher'); if(_e) _e.style.display='none'; })();
-            (function(){ var _e=document.getElementById('repricer-root'); if(_e) _e.style.display='block'; })();
-            (function(){ var _e=document.getElementById('rpr-pin-screen'); if(_e) _e.style.display='none'; })();
-            (function(){ var _e=document.getElementById('rpr-app'); if(_e) _e.style.display='flex'; })();
+            document.getElementById('launcher').style.display = 'none';
+            document.getElementById('repricer-root').style.display = 'block';
+            document.getElementById('rpr-pin-screen').style.display = 'none';
+            document.getElementById('rpr-app').style.display = 'flex';
             rprToken = d.token;
             rprPinLevel = 'mgmt';
             if (typeof rprApplyPinLevel === 'function') rprApplyPinLevel();
@@ -5322,17 +5317,17 @@ function mgmtPinKey(d) {
             salesLaunchApp(mgmtPinTarget);
           }
         } else {
-          (function(){ var _e=document.getElementById('mgmt-pin-error'); if(_e) _e.style.opacity='1'; })();
+          document.getElementById('mgmt-pin-error').style.opacity = '1';
           setTimeout(function() {
             mgmtPinBuf = "";
             ['mgmt-pd0','mgmt-pd1','mgmt-pd2','mgmt-pd3'].forEach(function(id){
               document.getElementById(id).classList.remove('filled');
             });
-            (function(){ var _e=document.getElementById('mgmt-pin-error'); if(_e) _e.style.opacity='0'; })();
+            document.getElementById('mgmt-pin-error').style.opacity = '0';
           }, 900);
         }
       }).catch(function(){
-        (function(){ var _e=document.getElementById('mgmt-pin-error'); if(_e) _e.style.opacity='1'; })();
+        document.getElementById('mgmt-pin-error').style.opacity = '1';
       });
     }, 120);
   }
@@ -5345,39 +5340,39 @@ function mgmtPinDel() {
 }
 
 function mgmtPinCancel() {
-  (function(){ var _e=document.getElementById('mgmt-pin-screen'); if(_e) _e.style.display='none'; })();
+  document.getElementById('mgmt-pin-screen').style.display = 'none';
   mgmtPinBuf = "";
   mgmtPinTarget = null;
 }
 
 async function salesLaunchApp(name) {
-  (function(){ var _e=document.getElementById('launcher'); if(_e) _e.style.display='none'; })();
+  var _la=document.getElementById('launcher'); if(_la) _la.style.display='none';
   if (name === 'receivepo') {
-    (function(){ var _e=document.getElementById('receivepo-app'); if(_e) _e.style.display='flex'; })();
-    (function(){ var _e=document.getElementById('receivepo-app'); if(_e) _e.style.flexDirection='column'; })();
+    document.getElementById('receivepo-app').style.display = 'flex';
+    document.getElementById('receivepo-app').style.flexDirection = 'column';
     rpoReset();
     return;
   }
   if (name === 'msginbox') {
-    (function(){ var _e=document.getElementById('msginbox-app'); if(_e) _e.style.display='flex'; })();
-    (function(){ var _e=document.getElementById('msginbox-app'); if(_e) _e.style.flexDirection='column'; })();
+    document.getElementById('msginbox-app').style.display = 'flex';
+    document.getElementById('msginbox-app').style.flexDirection = 'column';
     msgInboxOnLaunch();
     return;
   }
   if (name === 'ebaymsgs') {
-    (function(){ var _e=document.getElementById('ebaymsgs-app'); if(_e) _e.style.display='flex'; })();
-    (function(){ var _e=document.getElementById('ebaymsgs-app'); if(_e) _e.style.flexDirection='column'; })();
+    document.getElementById('ebaymsgs-app').style.display = 'flex';
+    document.getElementById('ebaymsgs-app').style.flexDirection = 'column';
     ebayMsgsOnLaunch();
     return;
   }
   if (name === 'ldash') {
-    (function(){ var _e=document.getElementById('ldash-app'); if(_e) _e.style.display='flex'; })();
-    (function(){ var _e=document.getElementById('ldash-app'); if(_e) _e.style.flexDirection='column'; })();
+    document.getElementById('ldash-app').style.display = 'flex';
+    document.getElementById('ldash-app').style.flexDirection = 'column';
     ldashOnLaunch();
     return;
   }
   if (name === 'labelprint') {
-    (function(){ var _e=document.getElementById('labelprint-app'); if(_e) _e.style.display='block'; })();
+    document.getElementById('labelprint-app').style.display = 'block';
     if (typeof lpLaunch === 'function') lpLaunch();
     return;
   }
@@ -5391,8 +5386,8 @@ async function salesLaunchApp(name) {
     await readCalcTabs();
     lastUpdated = new Date();
     updateLastUpdatedLabels();
-    if (name === 'reorder') buildReorderRows();
-    if (name === 'dashboard') buildDashboardData();
+    if(name==='reorder') buildReorderRows();
+    if(name==='dashboard') buildDashboardData();
     var whCount = Object.keys(CALC.whStock).length;
     var upcCount = Object.keys(CALC.upc).length;
     setStatus(appKey, 'ok', 'WH: ' + whCount + ' parts · ' + upcCount + ' UPC');
@@ -5404,13 +5399,7 @@ async function salesLaunchApp(name) {
   }
 }
 
-function salesGoBack() {
-  (function(){ var _e=document.getElementById('reorder-app'); if(_e) _e.style.display='none'; })();
-  (function(){ var _e=document.getElementById('dashboard-app'); if(_e) _e.style.display='none'; })();
-  (function(){ var _e=document.getElementById('receivepo-app'); if(_e) _e.style.display='none'; })();
-  (function(){ var _e=document.getElementById('launcher'); if(_e) _e.style.display='flex'; })();
-  if (SALES_WORKER_URL) silentLoadSaved();
-}
+function salesGoBack() { window.location.href = 'index.html'; }
 
 // ─── SALES APP JS ────────────────────────────────────────────────────────────
 
@@ -5617,7 +5606,7 @@ async function fetchEbaySales(ctx) {
       lastUpdated = new Date();
       updateLastUpdatedLabels();
       buildReorderRows();
-      // buildDashboardData() — dashboard only
+      buildDashboardData();
       var whCount = Object.keys(CALC.whStock).length;
       setStatus('ro', 'ok', 'WH: ' + whCount + ' parts');
       setStatus('db', 'ok', 'Up to date');
@@ -5742,8 +5731,8 @@ async function processAllReports() {
     await readCalcTabs();
     lastUpdated = new Date();
     updateLastUpdatedLabels();
-    if (name === 'reorder') buildReorderRows();
-    if (name === 'dashboard') buildDashboardData();
+    if(name==='reorder') buildReorderRows();
+    if(name==='dashboard') buildDashboardData();
     var whCount = Object.keys(CALC.whStock).length;
     setStatus('ro','ok','WH: ' + whCount + ' parts');
     setStatus('db','ok','Up to date');
@@ -5765,8 +5754,8 @@ async function loadSavedData() {
     await readCalcTabs();
     lastUpdated = new Date();
     updateLastUpdatedLabels();
-    if (name === 'reorder') buildReorderRows();
-    if (name === 'dashboard') buildDashboardData();
+    if(name==='reorder') buildReorderRows();
+    if(name==='dashboard') buildDashboardData();
     var whCount = Object.keys(CALC.whStock).length;
     setStatus('ro','ok','WH: ' + whCount + ' parts');
     setStatus('db','ok','Up to date');
@@ -5787,8 +5776,8 @@ async function autoLoadOnLaunch(app) {
     await readCalcTabs();
     lastUpdated = new Date();
     updateLastUpdatedLabels();
-    if (name === 'reorder') buildReorderRows();
-    if (name === 'dashboard') buildDashboardData();
+    if(name==='reorder') buildReorderRows();
+    if(name==='dashboard') buildDashboardData();
     var whCount = Object.keys(CALC.whStock).length;
     setStatus(app, 'ok', 'Loaded · WH: ' + whCount + ' parts');
     salesToast('Data loaded — ' + whCount + ' WH parts', 'success');
@@ -6418,7 +6407,7 @@ function renderKPIs() {
   });
   o += '</div>';
 
-  (function(){ var _e=document.getElementById('db-kpis'); if(_e) _e.innerHTML= o; })()
+  document.getElementById('db-kpis').innerHTML = o;
 }
 
 function renderLeaderboards() {
@@ -6440,8 +6429,8 @@ function renderLeaderboards() {
     var rank=i===0?'🥇':i===1?'🥈':i===2?'🥉':'<span style="font-family:var(--mono);font-size:11px;color:var(--text3)">'+(i+1)+'</span>';
     return '<div class="sales-lb-row">'      +'<div class="sales-lb-rank'+(i<3?' top':'')+'">'+rank+'</div>'      +'<div class="sales-lb-name" style="display:flex;align-items:center;gap:6px">'+r.pn+' '+(DL[r.dom]||'')+' '+(TR[r.trend]||'')+'</div>'      +'<div class="sales-lb-bar-wrap"><div class="sales-lb-bar" style="width:'+pct+'%"></div></div>'      +'<div class="sales-lb-val">'+fmtFn(r[key])+'</div></div>';
   }
-  (function(){ var _e=document.getElementById('db-lb'); if(_e) _e.innerHTML=
-    '<div style="display:grid; })()grid-template-columns:1fr 1fr;gap:12px">'    +'<div class="sales-leaderboard"><div class="sales-lb-header">🏆 Top by Units · 30d</div>'    +byU.map(function(r,i){return lbRowFull(r,i,'u30',maxU,function(v){return v.toLocaleString()});}).join('')+'</div>'    +'<div class="sales-leaderboard"><div class="sales-lb-header">💰 Top by Revenue · 30d</div>'    +byS.map(function(r,i){return lbRowFull(r,i,'s30',maxS,function(v){return '$'+fmt0(v)});}).join('')+'</div>'    +'</div>';
+  document.getElementById('db-lb').innerHTML =
+    '<div style="display:grid;grid-template-columns:1fr 1fr;gap:12px">'    +'<div class="sales-leaderboard"><div class="sales-lb-header">🏆 Top by Units · 30d</div>'    +byU.map(function(r,i){return lbRowFull(r,i,'u30',maxU,function(v){return v.toLocaleString()});}).join('')+'</div>'    +'<div class="sales-leaderboard"><div class="sales-lb-header">💰 Top by Revenue · 30d</div>'    +byS.map(function(r,i){return lbRowFull(r,i,'s30',maxS,function(v){return '$'+fmt0(v)});}).join('')+'</div>'    +'</div>';
 }
 
 function renderLeaderboards() {
@@ -6478,8 +6467,8 @@ function renderLeaderboards() {
          + '</div>';
   }
 
-  (function(){ var _e=document.getElementById('db-lb'); if(_e) _e.innerHTML=
-    '<div style="display:grid; })()grid-template-columns:1fr 1fr;gap:12px">'
+  document.getElementById('db-lb').innerHTML =
+    '<div style="display:grid;grid-template-columns:1fr 1fr;gap:12px">'
     + '<div class="sales-leaderboard">'
     +   '<div class="sales-lb-header">&#127942; Top by Units &middot; 30d</div>'
     +   byU.map(function(r,i){return row(r,i,'u30',maxU,function(v){return v.toLocaleString()+' u';});}).join('')
@@ -6742,8 +6731,8 @@ async function recomputeTabs() {
     await readCalcTabs();
     lastUpdated = new Date();
     updateLastUpdatedLabels();
-    if (name === 'reorder') buildReorderRows();
-    if (name === 'dashboard') buildDashboardData();
+    if(name==='reorder') buildReorderRows();
+    if(name==='dashboard') buildDashboardData();
     var whCount = Object.keys(CALC.whStock).length;
     setStatus('ro', 'ok', 'WH: ' + whCount + ' parts');
     setStatus('db', 'ok', 'Up to date');
@@ -7114,7 +7103,7 @@ async function runAutoInsights(app) {
     ];
     // Show chat area after auto analysis
     document.getElementById(app+'-ai-chat-wrap').style.display = 'flex';
-    (function(){ var _e=document.getElementById(app+'-ai-messages'); if(_e) _e.innerHTML= '<div class="sales-ai-empty">Analysis complete — ask follow-up questions below</div>'; })()
+    document.getElementById(app+'-ai-messages').innerHTML = '<div class="sales-ai-empty">Analysis complete — ask follow-up questions below</div>';
   } catch(e) {
     bodyEl.innerHTML = '<div style="color:var(--red);padding:8px;font-family:var(--mono);font-size:12px">Error: '+e.message+'</div>';
   }
@@ -7257,7 +7246,7 @@ function fmt0(v){ return (v||0).toLocaleString('en-US',{minimumFractionDigits:0,
 var salesTimer;
 function salesToast(msg, type) {
   var el=document.getElementById('sales-toast');
-  if (!el) { console.log('[salesToast]', msg); return; }
+  if(!el) return;
   el.innerHTML=msg;
   el.className='show '+(type||'');
   clearTimeout(salesTimer);
@@ -7266,24 +7255,18 @@ function salesToast(msg, type) {
 
 
 
-
-// ── Standalone Boot ───────────────────────────────────────────────────────
 (function() {
   var pinScreen = document.getElementById('mgmt-pin-screen');
   var savedToken = sessionStorage.getItem('xf_session');
   var savedRole  = sessionStorage.getItem('xf_role');
-
-  if (savedToken && (savedRole === 'mgmt' || savedRole === 'ops')) {
-    XF_SESSION = savedToken;
-    XF_ROLE = savedRole;
+  if (savedToken && savedRole === 'mgmt') {
+    XF_SESSION = savedToken; XF_ROLE = 'mgmt';
     if (pinScreen) pinScreen.style.display = 'none';
     var appEl = document.getElementById('reorder-app');
     if (appEl) appEl.style.display = 'flex';
     salesLaunchApp('reorder');
     return;
   }
-
-  // Show MGMT PIN screen
   if (pinScreen) pinScreen.style.display = 'flex';
 })();
 </script>
