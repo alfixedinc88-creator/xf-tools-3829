@@ -1981,8 +1981,8 @@ function launchMgmtApp(name) {
   ['mgmt-pd0','mgmt-pd1','mgmt-pd2','mgmt-pd3'].forEach(function(id) {
     document.getElementById(id).classList.remove('filled');
   });
-  document.getElementById('mgmt-pin-error').style.opacity = '0';
-  document.getElementById('mgmt-pin-screen').style.display = 'flex';
+  (function(){ var _e=document.getElementById('mgmt-pin-error'); if(_e) _e.style.opacity='0'; })();
+  (function(){ var _e=document.getElementById('mgmt-pin-screen'); if(_e) _e.style.display='flex'; })();
 }
 
 function mgmtPinKey(d) {
@@ -1999,12 +1999,12 @@ function mgmtPinKey(d) {
         if (d.token) {
           XF_SESSION = d.token;
           sessionStorage.setItem('xf_session', d.token);
-          document.getElementById('mgmt-pin-screen').style.display = 'none';
+          (function(){ var _e=document.getElementById('mgmt-pin-screen'); if(_e) _e.style.display='none'; })();
           if (mgmtPinTarget === 'repricer') {
-            document.getElementById('launcher').style.display = 'none';
-            document.getElementById('repricer-root').style.display = 'block';
-            document.getElementById('rpr-pin-screen').style.display = 'none';
-            document.getElementById('rpr-app').style.display = 'flex';
+            (function(){ var _e=document.getElementById('launcher'); if(_e) _e.style.display='none'; })();
+            (function(){ var _e=document.getElementById('repricer-root'); if(_e) _e.style.display='block'; })();
+            (function(){ var _e=document.getElementById('rpr-pin-screen'); if(_e) _e.style.display='none'; })();
+            (function(){ var _e=document.getElementById('rpr-app'); if(_e) _e.style.display='flex'; })();
             rprToken = d.token;
             rprPinLevel = 'mgmt';
             if (typeof rprApplyPinLevel === 'function') rprApplyPinLevel();
@@ -2013,17 +2013,17 @@ function mgmtPinKey(d) {
             salesLaunchApp(mgmtPinTarget);
           }
         } else {
-          document.getElementById('mgmt-pin-error').style.opacity = '1';
+          (function(){ var _e=document.getElementById('mgmt-pin-error'); if(_e) _e.style.opacity='1'; })();
           setTimeout(function() {
             mgmtPinBuf = "";
             ['mgmt-pd0','mgmt-pd1','mgmt-pd2','mgmt-pd3'].forEach(function(id){
               document.getElementById(id).classList.remove('filled');
             });
-            document.getElementById('mgmt-pin-error').style.opacity = '0';
+            (function(){ var _e=document.getElementById('mgmt-pin-error'); if(_e) _e.style.opacity='0'; })();
           }, 900);
         }
       }).catch(function(){
-        document.getElementById('mgmt-pin-error').style.opacity = '1';
+        (function(){ var _e=document.getElementById('mgmt-pin-error'); if(_e) _e.style.opacity='1'; })();
       });
     }, 120);
   }
@@ -2036,7 +2036,7 @@ function mgmtPinDel() {
 }
 
 function mgmtPinCancel() {
-  document.getElementById('mgmt-pin-screen').style.display = 'none';
+  (function(){ var _e=document.getElementById('mgmt-pin-screen'); if(_e) _e.style.display='none'; })();
   mgmtPinBuf = "";
   mgmtPinTarget = null;
 }
@@ -2130,7 +2130,7 @@ if (XF_SESSION) {
   document.addEventListener('DOMContentLoaded', function() {
     var ps = document.getElementById('pin-screen');
     if (ps) { ps.style.display = 'none'; ps.style.visibility = 'hidden'; }
-    document.getElementById('launcher').style.display = 'flex';
+    (function(){ var _e=document.getElementById('launcher'); if(_e) _e.style.display='flex'; })();
     // Only pre-load mgmt tabs if role was mgmt — avoids 401 noise on OPS session restore
     if (typeof silentLoadSaved === 'function' && XF_ROLE === 'mgmt') silentLoadSaved();
   });
@@ -2183,7 +2183,7 @@ function checkPin() {
         ps.style.transition = 'opacity .3s'; ps.style.opacity = '0';
         setTimeout(function() {
           ps.style.display = 'none'; ps.style.visibility = 'hidden';
-          document.getElementById('launcher').style.display = 'flex';
+          (function(){ var _e=document.getElementById('launcher'); if(_e) _e.style.display='flex'; })();
           // Only pre-load mgmt calc tabs if this is a mgmt-level token
           if (typeof silentLoadSaved === 'function' && type === 'mgmt') silentLoadSaved();
         }, 300);
@@ -2212,7 +2212,7 @@ function showSetupErr(msg) {
 async function connect(silent) {
   var sheetId  = document.getElementById('inp-sheet-id').value.trim();
   var credsRaw = document.getElementById('inp-creds').value.trim();
-  document.getElementById('setup-error').style.display = 'none';
+  (function(){ var _e=document.getElementById('setup-error'); if(_e) _e.style.display='none'; })();
 
   if (!sheetId || !credsRaw) { showSetupErr('Please fill in both the Sheet ID and the JSON key.'); return; }
 
@@ -2237,8 +2237,8 @@ async function connect(silent) {
     localStorage.setItem('xf_creds', credsRaw);
     SHEET_ID = sheetId;
     CREDS    = creds;
-    document.getElementById('setup-screen').style.display = 'none';
-    document.getElementById('app').style.display = 'flex';
+    (function(){ var _e=document.getElementById('setup-screen'); if(_e) _e.style.display='none'; })();
+    (function(){ var _e=document.getElementById('app'); if(_e) _e.style.display='flex'; })();
     await loadAllSheets();
   } catch(e) {
     btn.disabled = false;
@@ -2249,10 +2249,10 @@ async function connect(silent) {
 
 function reenterCreds() {
   // Show setup screen without clearing anything — just let them re-enter
-  document.getElementById('app').style.display = 'none';
-  document.getElementById('setup-screen').style.display = 'flex';
+  (function(){ var _e=document.getElementById('app'); if(_e) _e.style.display='none'; })();
+  (function(){ var _e=document.getElementById('setup-screen'); if(_e) _e.style.display='flex'; })();
   if (SHEET_ID) document.getElementById('inp-sheet-id').value = SHEET_ID;
-  document.getElementById('setup-error').style.display = 'none';
+  (function(){ var _e=document.getElementById('setup-error'); if(_e) _e.style.display='none'; })();
   var btn = document.getElementById('btn-connect');
   btn.disabled = false;
   btn.textContent = 'Connect to Sheet';
@@ -2412,8 +2412,8 @@ async function loadAllSheets() {
     console.error('[XFITTING] loadAllSheets error:', e);
     showLoading(false);
     // On any auth error kick back to setup screen with the error shown
-    document.getElementById('app').style.display = 'none';
-    document.getElementById('setup-screen').style.display = 'flex';
+    (function(){ var _e=document.getElementById('app'); if(_e) _e.style.display='none'; })();
+    (function(){ var _e=document.getElementById('setup-screen'); if(_e) _e.style.display='flex'; })();
     var errEl = document.getElementById('setup-error');
     errEl.textContent = 'Connection failed: ' + e.message + '\n\nPlease re-enter your Sheet ID and credentials below.';
     errEl.style.display = 'block';
@@ -3849,12 +3849,12 @@ function awd_planner_toast(msg, type) {
 // ═══════════════════════════════════════════════════════
 function launchApp(which) {
   history.pushState({ xfApp: which }, '', '');
-  document.getElementById('launcher').style.display = 'none';
+  (function(){ var _e=document.getElementById('launcher'); if(_e) _e.style.display='none'; })();
   if (which === 'warehouse') {
-    document.getElementById('wh-app').style.display = 'flex';
+    (function(){ var _e=document.getElementById('wh-app'); if(_e) _e.style.display='flex'; })();
     if (DB.master.length === 0) loadAllSheets();
   } else if (which === 'awd') {
-    document.getElementById('awd-app').style.display = 'flex';
+    (function(){ var _e=document.getElementById('awd-app'); if(_e) _e.style.display='flex'; })();
     if (!WH.loaded) loadWarehouseStock();
     if (!AWD_DB.loaded) loadAWDPlannerDB();
     if (!DISC.loaded) loadDiscontinuedSKUs();
@@ -3862,7 +3862,7 @@ function launchApp(which) {
     loadCpackFromStorage();
     if (!S.loaded) loadReportsFromSheet();
   } else if (which === 'inventory') {
-    document.getElementById('inv-app').style.display = 'flex';
+    (function(){ var _e=document.getElementById('inv-app'); if(_e) _e.style.display='flex'; })();
     console.log('[INV] invSetMode defined:', typeof window.invSetMode);
     console.log('[INV] invToggleCam defined:', typeof window.invToggleCam);
     console.log('[INV] invLookup defined:', typeof window.invLookup);
@@ -3888,7 +3888,7 @@ function launchApp(which) {
       }
     }, 500);
   } else if (which === 'upc') {
-    document.getElementById('upc-app').style.display = 'flex';
+    (function(){ var _e=document.getElementById('upc-app'); if(_e) _e.style.display='flex'; })();
     // Load warehouse data if not already loaded (needs DB.upc)
     if (DB.master.length === 0) loadAllSheets();
     // Load AWD_DB for SKU-to-UPC lookup from planner side
@@ -3896,30 +3896,30 @@ function launchApp(which) {
     upcOnLaunch();
   } else if (which === 'packship') {
     // Pack & Ship: no PIN required — show directly
-    document.getElementById('packship-app').style.display = 'flex';
+    (function(){ var _e=document.getElementById('packship-app'); if(_e) _e.style.display='flex'; })();
     psOnLaunch();
   } else if (which === 'messenger') {
     // Messenger: no PIN required — initials only
-    document.getElementById('messenger-app').style.display = 'flex';
+    (function(){ var _e=document.getElementById('messenger-app'); if(_e) _e.style.display='flex'; })();
     msgOnLaunch();
   }
 }
 
 function backToLauncher() {
-  document.getElementById('inv-app').style.display = 'none';
-  document.getElementById('wh-app').style.display = 'none';
-  document.getElementById('awd-app').style.display = 'none';
-  document.getElementById('upc-app').style.display = 'none';
-  document.getElementById('reorder-app').style.display = 'none';
-  document.getElementById('dashboard-app').style.display = 'none';
-  document.getElementById('packship-app').style.display = 'none';
-  document.getElementById('receivepo-app').style.display = 'none';
-  document.getElementById('messenger-app').style.display = 'none';
-  document.getElementById('msginbox-app').style.display = 'none';
-  document.getElementById('ebaymsgs-app').style.display = 'none';
-  document.getElementById('ldash-app').style.display = 'none';
-  document.getElementById('labelprint-app').style.display = 'none';
-  document.getElementById('launcher').style.display = 'flex';
+  (function(){ var _e=document.getElementById('inv-app'); if(_e) _e.style.display='none'; })();
+  (function(){ var _e=document.getElementById('wh-app'); if(_e) _e.style.display='none'; })();
+  (function(){ var _e=document.getElementById('awd-app'); if(_e) _e.style.display='none'; })();
+  (function(){ var _e=document.getElementById('upc-app'); if(_e) _e.style.display='none'; })();
+  (function(){ var _e=document.getElementById('reorder-app'); if(_e) _e.style.display='none'; })();
+  (function(){ var _e=document.getElementById('dashboard-app'); if(_e) _e.style.display='none'; })();
+  (function(){ var _e=document.getElementById('packship-app'); if(_e) _e.style.display='none'; })();
+  (function(){ var _e=document.getElementById('receivepo-app'); if(_e) _e.style.display='none'; })();
+  (function(){ var _e=document.getElementById('messenger-app'); if(_e) _e.style.display='none'; })();
+  (function(){ var _e=document.getElementById('msginbox-app'); if(_e) _e.style.display='none'; })();
+  (function(){ var _e=document.getElementById('ebaymsgs-app'); if(_e) _e.style.display='none'; })();
+  (function(){ var _e=document.getElementById('ldash-app'); if(_e) _e.style.display='none'; })();
+  (function(){ var _e=document.getElementById('labelprint-app'); if(_e) _e.style.display='none'; })();
+  (function(){ var _e=document.getElementById('launcher'); if(_e) _e.style.display='flex'; })();
 }
 
 // After PIN always shows launcher
@@ -4499,7 +4499,7 @@ function upcValidateChecksum(digits12) {
 // Called when UPC app launches
 function upcOnLaunch() {
   document.getElementById('upc-results').innerHTML = '';
-  document.getElementById('upc-empty').style.display = 'block';
+  (function(){ var _e=document.getElementById('upc-empty'); if(_e) _e.style.display='block'; })();
   document.getElementById('upc-search-inp').value = '';
   document.getElementById('upc-file-status').textContent = '';
   upcCheckShipment();
@@ -4535,7 +4535,7 @@ async function upcAutoLoadSavedShipment() {
 
 function upcClear() {
   document.getElementById('upc-results').innerHTML = '';
-  document.getElementById('upc-empty').style.display = 'block';
+  (function(){ var _e=document.getElementById('upc-empty'); if(_e) _e.style.display='block'; })();
 }
 
 // Show live shipment banner if AWD planner has staged SKUs
@@ -4622,8 +4622,8 @@ function upcResetVerify() {
   _upcLastScanned  = '';
   upcUpdateTally();
   document.getElementById('upc-scan-result').textContent = 'Point camera at case barcode';
-  document.getElementById('upc-scan-result').style.background = 'rgba(255,255,255,.08)';
-  document.getElementById('upc-scan-result').style.color = 'rgba(255,255,255,.4)';
+  (function(){ var _e=document.getElementById('upc-scan-result'); if(_e) _e.style.background='rgba(255,255,255,.08)'; })();
+  (function(){ var _e=document.getElementById('upc-scan-result'); if(_e) _e.style.color='rgba(255,255,255,.4)'; })();
 }
 
 // Html5-QRCode instance
@@ -4652,8 +4652,8 @@ async function upcStartScan() {
   resultEl.style.color  = 'rgba(255,255,255,.5)';
 
   // Use Html5-QRCode for all platforms — handles iOS PWA live scanning reliably
-  document.getElementById('upc-ios-mode').style.display        = 'block';
-  document.getElementById('upc-viewfinder-wrap').style.display = 'none';
+  (function(){ var _e=document.getElementById('upc-ios-mode'); if(_e) _e.style.display='block'; })();
+  (function(){ var _e=document.getElementById('upc-viewfinder-wrap'); if(_e) _e.style.display='none'; })();
 
   try {
     await upcLoadHtml5QR();
@@ -4710,7 +4710,7 @@ async function upcStopScan() {
     _upcScanStream = null;
   }
   cancelAnimationFrame(_upcScanTimer);
-  document.getElementById('upc-camera-overlay').style.display = 'none';
+  (function(){ var _e=document.getElementById('upc-camera-overlay'); if(_e) _e.style.display='none'; })();
   upcUpdateTally();
 }
 
@@ -4833,11 +4833,11 @@ function upcSearch(query) {
   if (!q) { upcClear(); return; }
   if (!DB.upc.length && !AWD_DB.awdMaster.length) {
     document.getElementById('upc-results').innerHTML = '<div style="text-align:center;padding:40px;color:var(--text3)">Loading data, please wait...</div>';
-    document.getElementById('upc-empty').style.display = 'none';
+    (function(){ var _e=document.getElementById('upc-empty'); if(_e) _e.style.display='none'; })();
     return;
   }
   var matches = upcLookup(q);
-  document.getElementById('upc-empty').style.display = 'none';
+  (function(){ var _e=document.getElementById('upc-empty'); if(_e) _e.style.display='none'; })();
   if (!matches.length) {
     document.getElementById('upc-results').innerHTML = '<div style="text-align:center;padding:40px;color:var(--text3)"><div style="font-size:32px;margin-bottom:12px">&#128269;</div><div style="font-size:14px;font-weight:600">No valid UPC-A found for <code style="color:var(--accent)">' + q + '</code></div><div style="font-size:12px;margin-top:8px">Try the full part number with variant suffix (e.g. 27-3-1=10X)</div></div>';
     return;
@@ -4852,7 +4852,7 @@ function upcSearch(query) {
 function upcLoadShipment() {
   if (!S || !S.shipment || !Object.keys(S.shipment).length) {
     document.getElementById('upc-results').innerHTML = '<div style="text-align:center;padding:40px;color:var(--text3)">No SKUs staged in AWD Planner.</div>';
-    document.getElementById('upc-empty').style.display = 'none';
+    (function(){ var _e=document.getElementById('upc-empty'); if(_e) _e.style.display='none'; })();
     return;
   }
   var skus = Object.keys(S.shipment).filter(function(k) { return S.shipment[k].qty > 0; });
@@ -4862,7 +4862,7 @@ function upcLoadShipment() {
 // Handle file drop
 function upcHandleDrop(e) {
   e.preventDefault();
-  document.getElementById('upc-drop-zone').style.borderColor = 'var(--border)';
+  (function(){ var _e=document.getElementById('upc-drop-zone'); if(_e) _e.style.borderColor='var(--border)'; })();
   var f = e.dataTransfer.files[0];
   if (f) upcHandleFile(f);
 }
@@ -4957,7 +4957,7 @@ function upcReadXlsx(file, status) {
 // Given a list of SKUs, look up UPCs and render barcodes
 // mode: 'sheet' = compact table view, 'card' = large card stack
 function upcRenderFromSkuList(skus, sourceName, mode) {
-  document.getElementById('upc-empty').style.display = 'none';
+  (function(){ var _e=document.getElementById('upc-empty'); if(_e) _e.style.display='none'; })();
   var allMatches = [];
   var seen = new Set();
   skus.forEach(function(sku) {
@@ -5062,7 +5062,7 @@ window.upcShowDNS = function() {
 window.upcPrintDNS = function() {
   var qty = parseInt((document.getElementById('upc-dns-qty') || {value:'1'}).value) || 1;
   qty = Math.min(Math.max(qty, 1), 50);
-  document.getElementById('upc-dns-modal').style.display = 'none';
+  (function(){ var _e=document.getElementById('upc-dns-modal'); if(_e) _e.style.display='none'; })();
 
   // Remove any existing print container
   var existing = document.getElementById('upc-print-container');
@@ -5230,8 +5230,8 @@ function launchMgmtApp(name) {
   ['mgmt-pd0','mgmt-pd1','mgmt-pd2','mgmt-pd3'].forEach(function(id) {
     document.getElementById(id).classList.remove('filled');
   });
-  document.getElementById('mgmt-pin-error').style.opacity = '0';
-  document.getElementById('mgmt-pin-screen').style.display = 'flex';
+  (function(){ var _e=document.getElementById('mgmt-pin-error'); if(_e) _e.style.opacity='0'; })();
+  (function(){ var _e=document.getElementById('mgmt-pin-screen'); if(_e) _e.style.display='flex'; })();
 }
 
 function mgmtPinKey(d) {
@@ -5248,12 +5248,12 @@ function mgmtPinKey(d) {
         if (d.token) {
           XF_SESSION = d.token;
           sessionStorage.setItem('xf_session', d.token);
-          document.getElementById('mgmt-pin-screen').style.display = 'none';
+          (function(){ var _e=document.getElementById('mgmt-pin-screen'); if(_e) _e.style.display='none'; })();
           if (mgmtPinTarget === 'repricer') {
-            document.getElementById('launcher').style.display = 'none';
-            document.getElementById('repricer-root').style.display = 'block';
-            document.getElementById('rpr-pin-screen').style.display = 'none';
-            document.getElementById('rpr-app').style.display = 'flex';
+            (function(){ var _e=document.getElementById('launcher'); if(_e) _e.style.display='none'; })();
+            (function(){ var _e=document.getElementById('repricer-root'); if(_e) _e.style.display='block'; })();
+            (function(){ var _e=document.getElementById('rpr-pin-screen'); if(_e) _e.style.display='none'; })();
+            (function(){ var _e=document.getElementById('rpr-app'); if(_e) _e.style.display='flex'; })();
             rprToken = d.token;
             rprPinLevel = 'mgmt';
             if (typeof rprApplyPinLevel === 'function') rprApplyPinLevel();
@@ -5262,17 +5262,17 @@ function mgmtPinKey(d) {
             salesLaunchApp(mgmtPinTarget);
           }
         } else {
-          document.getElementById('mgmt-pin-error').style.opacity = '1';
+          (function(){ var _e=document.getElementById('mgmt-pin-error'); if(_e) _e.style.opacity='1'; })();
           setTimeout(function() {
             mgmtPinBuf = "";
             ['mgmt-pd0','mgmt-pd1','mgmt-pd2','mgmt-pd3'].forEach(function(id){
               document.getElementById(id).classList.remove('filled');
             });
-            document.getElementById('mgmt-pin-error').style.opacity = '0';
+            (function(){ var _e=document.getElementById('mgmt-pin-error'); if(_e) _e.style.opacity='0'; })();
           }, 900);
         }
       }).catch(function(){
-        document.getElementById('mgmt-pin-error').style.opacity = '1';
+        (function(){ var _e=document.getElementById('mgmt-pin-error'); if(_e) _e.style.opacity='1'; })();
       });
     }, 120);
   }
@@ -5285,39 +5285,39 @@ function mgmtPinDel() {
 }
 
 function mgmtPinCancel() {
-  document.getElementById('mgmt-pin-screen').style.display = 'none';
+  (function(){ var _e=document.getElementById('mgmt-pin-screen'); if(_e) _e.style.display='none'; })();
   mgmtPinBuf = "";
   mgmtPinTarget = null;
 }
 
 async function salesLaunchApp(name) {
-  document.getElementById('launcher').style.display = 'none';
+  (function(){ var _e=document.getElementById('launcher'); if(_e) _e.style.display='none'; })();
   if (name === 'receivepo') {
-    document.getElementById('receivepo-app').style.display = 'flex';
-    document.getElementById('receivepo-app').style.flexDirection = 'column';
+    (function(){ var _e=document.getElementById('receivepo-app'); if(_e) _e.style.display='flex'; })();
+    (function(){ var _e=document.getElementById('receivepo-app'); if(_e) _e.style.flexDirection='column'; })();
     rpoReset();
     return;
   }
   if (name === 'msginbox') {
-    document.getElementById('msginbox-app').style.display = 'flex';
-    document.getElementById('msginbox-app').style.flexDirection = 'column';
+    (function(){ var _e=document.getElementById('msginbox-app'); if(_e) _e.style.display='flex'; })();
+    (function(){ var _e=document.getElementById('msginbox-app'); if(_e) _e.style.flexDirection='column'; })();
     msgInboxOnLaunch();
     return;
   }
   if (name === 'ebaymsgs') {
-    document.getElementById('ebaymsgs-app').style.display = 'flex';
-    document.getElementById('ebaymsgs-app').style.flexDirection = 'column';
+    (function(){ var _e=document.getElementById('ebaymsgs-app'); if(_e) _e.style.display='flex'; })();
+    (function(){ var _e=document.getElementById('ebaymsgs-app'); if(_e) _e.style.flexDirection='column'; })();
     ebayMsgsOnLaunch();
     return;
   }
   if (name === 'ldash') {
-    document.getElementById('ldash-app').style.display = 'flex';
-    document.getElementById('ldash-app').style.flexDirection = 'column';
+    (function(){ var _e=document.getElementById('ldash-app'); if(_e) _e.style.display='flex'; })();
+    (function(){ var _e=document.getElementById('ldash-app'); if(_e) _e.style.flexDirection='column'; })();
     ldashOnLaunch();
     return;
   }
   if (name === 'labelprint') {
-    document.getElementById('labelprint-app').style.display = 'block';
+    (function(){ var _e=document.getElementById('labelprint-app'); if(_e) _e.style.display='block'; })();
     if (typeof lpLaunch === 'function') lpLaunch();
     return;
   }
@@ -5345,10 +5345,10 @@ async function salesLaunchApp(name) {
 }
 
 function salesGoBack() {
-  document.getElementById('reorder-app').style.display = 'none';
-  document.getElementById('dashboard-app').style.display = 'none';
-  document.getElementById('receivepo-app').style.display = 'none';
-  document.getElementById('launcher').style.display = 'flex';
+  (function(){ var _e=document.getElementById('reorder-app'); if(_e) _e.style.display='none'; })();
+  (function(){ var _e=document.getElementById('dashboard-app'); if(_e) _e.style.display='none'; })();
+  (function(){ var _e=document.getElementById('receivepo-app'); if(_e) _e.style.display='none'; })();
+  (function(){ var _e=document.getElementById('launcher'); if(_e) _e.style.display='flex'; })();
   if (SALES_WORKER_URL) silentLoadSaved();
 }
 
