@@ -3677,7 +3677,7 @@ function awd_planner_toast(msg, type) {
 // ═══════════════════════════════════════════════════════
 function launchApp(which) {
   history.pushState({ xfApp: which }, '', '');
-  document.getElementById('launcher').style.display = 'none';
+  (function(){ var _la=document.getElementById('launcher'); if(_la) _la.style.display='none'; })();
   if (which === 'warehouse') {
     document.getElementById('wh-app').style.display = 'flex';
     if (DB.master.length === 0) loadAllSheets();
@@ -5078,7 +5078,7 @@ function mgmtPinKey(d) {
           sessionStorage.setItem('xf_session', d.token);
           document.getElementById('mgmt-pin-screen').style.display = 'none';
           if (mgmtPinTarget === 'repricer') {
-            document.getElementById('launcher').style.display = 'none';
+            (function(){ var _la=document.getElementById('launcher'); if(_la) _la.style.display='none'; })();
             document.getElementById('repricer-root').style.display = 'block';
             document.getElementById('rpr-pin-screen').style.display = 'none';
             document.getElementById('rpr-app').style.display = 'flex';
@@ -5119,33 +5119,33 @@ function mgmtPinCancel() {
 }
 
 async function salesLaunchApp(name) {
-  document.getElementById('launcher').style.display = 'none';
+  var _la = document.getElementById('launcher'); if (_la) _la.style.display = 'none';
   if (name === 'receivepo') {
-    document.getElementById('receivepo-app').style.display = 'flex';
-    document.getElementById('receivepo-app').style.flexDirection = 'column';
+    (function(){ var _e=document.getElementById('receivepo-app'); if(_e) _e.style.display='flex'; })();
+    (function(){ var _e=document.getElementById('receivepo-app'); if(_e) _e.style.flexDirection='column'; })();
     rpoReset();
     return;
   }
   if (name === 'msginbox') {
-    document.getElementById('msginbox-app').style.display = 'flex';
-    document.getElementById('msginbox-app').style.flexDirection = 'column';
+    (function(){ var _e=document.getElementById('msginbox-app'); if(_e) _e.style.display='flex'; })();
+    (function(){ var _e=document.getElementById('msginbox-app'); if(_e) _e.style.flexDirection='column'; })();
     msgInboxOnLaunch();
     return;
   }
   if (name === 'ebaymsgs') {
-    document.getElementById('ebaymsgs-app').style.display = 'flex';
-    document.getElementById('ebaymsgs-app').style.flexDirection = 'column';
+    (function(){ var _e=document.getElementById('ebaymsgs-app'); if(_e) _e.style.display='flex'; })();
+    (function(){ var _e=document.getElementById('ebaymsgs-app'); if(_e) _e.style.flexDirection='column'; })();
     ebayMsgsOnLaunch();
     return;
   }
   if (name === 'ldash') {
-    document.getElementById('ldash-app').style.display = 'flex';
-    document.getElementById('ldash-app').style.flexDirection = 'column';
+    (function(){ var _e=document.getElementById('ldash-app'); if(_e) _e.style.display='flex'; })();
+    (function(){ var _e=document.getElementById('ldash-app'); if(_e) _e.style.flexDirection='column'; })();
     ldashOnLaunch();
     return;
   }
   if (name === 'labelprint') {
-    document.getElementById('labelprint-app').style.display = 'block';
+    (function(){ var _e=document.getElementById('labelprint-app'); if(_e) _e.style.display='block'; })();
     if (typeof lpLaunch === 'function') lpLaunch();
     return;
   }
@@ -5173,12 +5173,7 @@ async function salesLaunchApp(name) {
 }
 
 function salesGoBack() {
-  window.location.href = 'index.html'; return;
-  document.getElementById('reorder-app').style.display = 'none';
-  document.getElementById('dashboard-app').style.display = 'none';
-  document.getElementById('receivepo-app').style.display = 'none';
   window.location.href = 'index.html';
-  if (SALES_WORKER_URL) silentLoadSaved();
 }
 
 // ─── SALES APP JS ────────────────────────────────────────────────────────────
