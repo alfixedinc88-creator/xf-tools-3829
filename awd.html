@@ -2083,22 +2083,7 @@ function launchApp(which) {
   }
 }
 
-function backToLauncher() {
-  document.getElementById('inv-app').style.display = 'none';
-  document.getElementById('wh-app').style.display = 'none';
-  document.getElementById('awd-app').style.display = 'none';
-  document.getElementById('upc-app').style.display = 'none';
-  document.getElementById('reorder-app').style.display = 'none';
-  document.getElementById('dashboard-app').style.display = 'none';
-  document.getElementById('packship-app').style.display = 'none';
-  document.getElementById('receivepo-app').style.display = 'none';
-  document.getElementById('messenger-app').style.display = 'none';
-  document.getElementById('msginbox-app').style.display = 'none';
-  document.getElementById('ebaymsgs-app').style.display = 'none';
-  document.getElementById('ldash-app').style.display = 'none';
-  document.getElementById('labelprint-app').style.display = 'none';
-  var _ae=document.getElementById('awd-app'); if(_ae) _ae.style.display='flex';
-}
+// backToLauncher already defined above — this duplicate removed
 
 // After PIN always shows launcher
 window.addEventListener('load', function() {
