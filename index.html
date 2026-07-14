@@ -1368,7 +1368,7 @@ input[type=checkbox]{width:15px;height:15px;cursor:pointer;accent-color:var(--bl
 
     <div class="launcher-section-label">🏭 Warehouse</div>
     <div class="launcher-grid">
-      <div class="launcher-card" onclick="launchApp('warehouse')">
+      <div class="launcher-card" onclick="window.location.href='warehouse.html'">
         <div class="launcher-card-icon">📍</div>
         <div class="launcher-card-title">Warehouse Lookup</div>
         <div class="launcher-card-desc">Find item locations, AWD labels, stock levels and UPC codes</div>
@@ -3823,10 +3823,7 @@ function awd_planner_toast(msg, type) {
 function launchApp(which) {
   history.pushState({ xfApp: which }, '', '');
   document.getElementById('launcher').style.display = 'none';
-  if (which === 'warehouse') {
-    document.getElementById('wh-app').style.display = 'flex';
-    if (DB.master.length === 0) loadAllSheets();
-  } else if (which === 'inventory') {
+  if (which === 'inventory') {
     document.getElementById('inv-app').style.display = 'flex';
     console.log('[INV] invSetMode defined:', typeof window.invSetMode);
     console.log('[INV] invToggleCam defined:', typeof window.invToggleCam);
