@@ -1388,7 +1388,7 @@ input[type=checkbox]{width:15px;height:15px;cursor:pointer;accent-color:var(--bl
         <div class="launcher-card-title">Inventory</div>
         <div class="launcher-card-desc">Scan cases in/out, log locations, approve with management PIN</div>
       </div>
-      <div class="launcher-card" onclick="launchApp('packship')" style="border-color:#e8f7ee">
+      <div class="launcher-card" onclick="window.location.href='packship.html'" style="border-color:#e8f7ee">
         <div class="launcher-card-icon">📦</div>
         <div class="launcher-card-title">Pack &amp; Ship</div>
         <div class="launcher-card-desc">Scan tracking barcodes, batch close, gap analysis and carrier claims</div>
@@ -1704,17 +1704,17 @@ input[type=checkbox]{width:15px;height:15px;cursor:pointer;accent-color:var(--bl
       {
         num: exceptions + returned, label: 'Shipping Issues', sub: exceptions + ' exceptions · ' + returned + ' returned',
         color: (exceptions + returned) > 0 ? 'red' : 'green',
-        onclick: "backToLauncher();launchApp('packship');"
+        onclick: "window.location.href='packship.html';"
       },
       {
         num: neverScan, label: 'Never Scanned 2d+', sub: 'Labels with no carrier scan',
         color: neverScan > 0 ? 'orange' : 'green',
-        onclick: "backToLauncher();launchApp('packship');"
+        onclick: "window.location.href='packship.html';"
       },
       {
         num: stuck, label: 'Not Delivered 10d+', sub: 'Packages overdue',
         color: stuck > 0 ? 'orange' : 'green',
-        onclick: "backToLauncher();launchApp('packship');"
+        onclick: "window.location.href='packship.html';"
       },
       {
         num: critStock, label: 'Critical Stock', sub: watchStock + ' more on watch',
@@ -1724,7 +1724,7 @@ input[type=checkbox]{width:15px;height:15px;cursor:pointer;accent-color:var(--bl
       {
         num: gap, label: 'Gap Report', sub: scanned + ' scanned · ' + manifest + ' in manifest',
         color: gap > 0 ? 'orange' : 'green',
-        onclick: "backToLauncher();launchApp('packship');"
+        onclick: "window.location.href='packship.html';"
       },
       {
         num: messages, label: 'Open Messages', sub: 'From warehouse floor',
@@ -3849,17 +3849,6 @@ function launchApp(which) {
         });
       }
     }, 500);
-  } else if (which === 'upc') {
-    document.getElementById('upc-app').style.display = 'flex';
-    // Load warehouse data if not already loaded (needs DB.upc)
-    if (DB.master.length === 0) loadAllSheets();
-    // Load AWD_DB for SKU-to-UPC lookup from planner side
-    if (!AWD_DB.loaded) loadAWDPlannerDB();
-    upcOnLaunch();
-  } else if (which === 'packship') {
-    // Pack & Ship: no PIN required — show directly
-    document.getElementById('packship-app').style.display = 'flex';
-    psOnLaunch();
   } else if (which === 'messenger') {
     // Messenger: no PIN required — initials only
     document.getElementById('messenger-app').style.display = 'flex';
