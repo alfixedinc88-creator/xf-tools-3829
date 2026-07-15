@@ -631,7 +631,10 @@ async function wFetch(url, opts) {
         style="padding:6px 14px;border-radius:6px;border:1.5px solid var(--border);background:var(--bg3);color:var(--text);font-size:12px;font-weight:700;cursor:pointer">By Location</button>
       <button id="skumgr-filter-instock" onclick="skumgrToggleInStock()"
         style="padding:6px 14px;border-radius:6px;border:1.5px solid var(--border);background:var(--bg3);color:var(--text);font-size:12px;font-weight:700;cursor:pointer;margin-left:8px">📦 In Stock Only</button>
+      <button id="skumgr-export-btn" onclick="skumgrExportMasterList()"
+        style="padding:6px 14px;border-radius:6px;border:1.5px solid var(--green);background:var(--bg3);color:var(--green);font-size:12px;font-weight:700;cursor:pointer;margin-left:auto">⬇ Export Master List CSV</button>
     </div>
+    <div id="skumgr-export-status" style="font-size:12px;color:var(--text3);margin-bottom:8px"></div>
 
     <!-- Search bar -->
     <div style="display:flex;gap:8px;margin-bottom:10px">
@@ -2908,6 +2911,40 @@ async function wFetch(url, opts) {
       }
     })
     .catch(function() { invFlash('Save failed', 'error'); });
+  };
+
+  // ── Export full Master List ──────────────────────────────────────────────
+  // Pulls the complete D1 master_list (all fields, all rows, including
+  // sheet_row=0 rows that never had a Sheets counterpart) and downloads
+  // it as a CSV. This is the full dataset — not the location-only export
+  // above, which is scoped for barcode label printing.
+  window.skumgrExportMasterList = function() {
+    var status = g('skumgr-export-status');
+    if (status) status.textContent = 'Loading…';
+    wFetch(W + '/inventory/master-list')
+      .then(function(r) { return r.json(); })
+      .then(function(d) {
+        var rows = (d && d.values) || [];
+        if (!rows.length) { if (status) status.textContent = 'No data returned'; return; }
+        // Skip the raw Sheets-style header row (has blank spacer columns);
+        // write a clean header instead. Data rows keep the same column order.
+        var headers = ['SKU','Name','Part#','Location','Cases','Each Case Qty','Notes','Vendor','Price','Total'];
+        var csv = headers.map(function(h){ return '"' + h.replace(/"/g,'""') + '"'; }).join(',') + '\n';
+        for (var i = 1; i < rows.length; i++) {
+          var r = rows[i];
+          // Source array layout: [ , , , SKU, Name, , Part#, Location, Cases, EachCaseQty, Notes, , Vendor, Price, Total ]
+          var out = [r[3], r[4], r[6], r[7], r[8], r[9], r[10], r[12], r[13], r[14]];
+          csv += out.map(function(v){ return '"' + String(v==null?'':v).replace(/"/g,'""') + '"'; }).join(',') + '\n';
+        }
+        var blob = new Blob([csv], { type: 'text/csv' });
+        var url  = URL.createObjectURL(blob);
+        var a    = document.createElement('a');
+        var stamp = new Date().toISOString().slice(0,10);
+        a.href = url; a.download = 'xfitting-master-list-' + stamp + '.csv'; a.click();
+        URL.revokeObjectURL(url);
+        if (status) status.textContent = '✓ ' + (rows.length - 1) + ' rows exported (source: ' + (d.source||'d1') + ')';
+      })
+      .catch(function(e) { if (status) status.textContent = 'Error: ' + e.message; });
   };
 
   // ── Add new row ────────────────────────────────────────────────────────────
