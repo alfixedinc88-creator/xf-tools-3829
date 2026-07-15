@@ -2616,7 +2616,9 @@ async function wFetch(url, opts) {
   var _skumgrAutoLoaded = false; // track if initial load done
   var _skumgrPage = 0;  // current page (0-based)
   var _skumgrPerPage = 100; // rows per page
-  var _skumgrSort = 'asc'; // sort direction for Part # column
+  var _skumgrSort = 'asc'; // legacy — kept so unrelated History-tab button doesn't error; unused by SKU Manager now
+  var _skumgrSortField = 'custom'; // 'custom' (default order) | 'part_num' | 'name' | 'location' | 'cases'
+  var _skumgrSortDir   = 'asc';    // 'asc' | 'desc' — only meaningful when _skumgrSortField !== 'custom'
   var _skumgrMode = 'sku'; // search mode: sku or loc
   var _skumgrInStockOnly = false; // filter to only show rows with cases > 0
   var _skumgrSortMode = 'custom'; // 'custom' = order form order, 'alpha' = A-Z
@@ -2627,25 +2629,14 @@ async function wFetch(url, opts) {
     var res = g('skumgr-results');
     if (res) res.innerHTML = '<div style="padding:16px;color:var(--text3);font-size:13px">Loading…</div>';
     // Load all rows — use empty search to get first batch sorted by part_num
-    wFetch(W + '/inventory/sku-search?q=ALL&limit=6000&sort=' + (_skumgrSortMode === 'custom' ? 'asc' : _skumgrSort) + (_skumgrInStockOnly ? '&instock=1' : ''))
+    wFetch(W + '/inventory/sku-search?q=ALL&limit=6000&sort=asc' + (_skumgrInStockOnly ? '&instock=1' : ''))
       .then(function(r) { return r.json(); })
       .then(function(d) {
         if (d.ok && d.results && d.results.length) {
           _skumgrRows = d.results;
           _skumgrAutoLoaded = true;
           _skumgrPage = 0;
-          // Apply custom sort order if in custom mode
-          if (_skumgrSortMode === 'custom' && SKU_SORT_ORDER && SKU_SORT_ORDER.length) {
-            var orderMap = {};
-            SKU_SORT_ORDER.forEach(function(sku, i) { orderMap[sku.toUpperCase()] = i; });
-            _skumgrRows.sort(function(a, b) {
-              var ai = orderMap.hasOwnProperty((a.base_sku||'').toUpperCase()) ? orderMap[(a.base_sku||'').toUpperCase()] : 9999;
-              var bi = orderMap.hasOwnProperty((b.base_sku||'').toUpperCase()) ? orderMap[(b.base_sku||'').toUpperCase()] : 9999;
-              if (ai !== bi) return ai - bi;
-              return (a.part_num||'').localeCompare(b.part_num||'');
-            });
-          }
-          skumgrRenderResults();
+          skumgrApplySortAndRender(); // applies current sort state (custom order by default)
         } else {
           if (res) res.innerHTML = '<div style="padding:16px;color:var(--text3);font-size:13px">Type a base SKU above to search.</div>';
         }
@@ -2666,22 +2657,76 @@ async function wFetch(url, opts) {
         .then(function(r) { return r.json(); })
         .then(function(d) {
           _skumgrRows = d.results || [];
-          _skumgrPage = 0;
-          skumgrRenderResults();
+          skumgrApplySortAndRender(); // applies whatever sort is currently active
         })
         .catch(function() { if (res) res.innerHTML = '<div style="color:var(--red);padding:12px">Search failed</div>'; });
       return;
     }
-    wFetch(W + '/inventory/sku-search?q=' + encodeURIComponent(q) + '&sort=' + _skumgrSort + (_skumgrInStockOnly ? '&instock=1' : ''))
+    wFetch(W + '/inventory/sku-search?q=' + encodeURIComponent(q) + '&sort=asc' + (_skumgrInStockOnly ? '&instock=1' : ''))
       .then(function(r) { return r.json(); })
       .then(function(d) {
         if (!d.ok) { invFlash(d.error || 'Search failed', 'error'); return; }
         _skumgrRows = d.results || [];
-        _skumgrPage = 0;
-        skumgrRenderResults();
+        skumgrApplySortAndRender(); // applies whatever sort is currently active
       })
       .catch(function() { invFlash('Search failed', 'error'); });
   };
+
+    // ── Sort engine ──────────────────────────────────────────────────────────
+    // Default is always the custom SKU_SORT_ORDER (matches physical order
+    // form / warehouse walk order). Clicking a sortable column header cycles:
+    // asc -> desc -> back to default custom order. Sorting is entirely
+    // client-side (operates on whatever _skumgrRows currently holds, whether
+    // that's the full auto-loaded list or a targeted search's results), so
+    // it never triggers a network reload and can never wipe out a search.
+    function skumgrApplyCustomOrder() {
+      if (SKU_SORT_ORDER && SKU_SORT_ORDER.length) {
+        var orderMap = {};
+        SKU_SORT_ORDER.forEach(function(sku, i) { orderMap[sku.toUpperCase()] = i; });
+        _skumgrRows.sort(function(a, b) {
+          var ai = orderMap.hasOwnProperty((a.base_sku||'').toUpperCase()) ? orderMap[(a.base_sku||'').toUpperCase()] : 9999;
+          var bi = orderMap.hasOwnProperty((b.base_sku||'').toUpperCase()) ? orderMap[(b.base_sku||'').toUpperCase()] : 9999;
+          if (ai !== bi) return ai - bi;
+          return (a.part_num||'').localeCompare(b.part_num||'');
+        });
+      }
+    }
+
+    window.skumgrSortBy = function(field) {
+      if (_skumgrSortField === field) {
+        if (_skumgrSortDir === 'asc') { _skumgrSortDir = 'desc'; }
+        else { _skumgrSortField = 'custom'; _skumgrSortDir = 'asc'; } // 3rd click -> back to default
+      } else {
+        _skumgrSortField = field;
+        _skumgrSortDir = 'asc';
+      }
+      skumgrApplySortAndRender();
+    };
+
+    function skumgrApplySortAndRender() {
+      if (_skumgrSortField === 'custom') {
+        skumgrApplyCustomOrder();
+      } else {
+        var field = _skumgrSortField, dir = _skumgrSortDir;
+        _skumgrRows.sort(function(a, b) {
+          if (field === 'cases') {
+            var av = parseFloat(a.cases) || 0, bv = parseFloat(b.cases) || 0;
+            return dir === 'asc' ? av - bv : bv - av;
+          }
+          var as_ = String(a[field]||'').toUpperCase(), bs_ = String(b[field]||'').toUpperCase();
+          if (as_ < bs_) return dir === 'asc' ? -1 : 1;
+          if (as_ > bs_) return dir === 'asc' ? 1 : -1;
+          return 0;
+        });
+      }
+      _skumgrPage = 0;
+      skumgrRenderResults();
+    }
+
+    function skumgrSortIcon(field) {
+      if (_skumgrSortField !== field) return '';
+      return _skumgrSortDir === 'asc' ? ' ↑' : ' ↓';
+    }
 
     function skumgrRenderResults() {
     var res = g('skumgr-results');
@@ -2720,11 +2765,12 @@ async function wFetch(url, opts) {
       + '<div style="display:flex;gap:4px;align-items:center;margin-bottom:8px;flex-wrap:wrap">' + prevBtn + pageNums + nextBtn + '</div>';
     html += '<div style="overflow-x:auto;border:1.5px solid var(--border);border-radius:10px">';
     html += '<table style="width:100%;border-collapse:collapse;font-size:12px">';
+    var sortableThS = thS + 'cursor:pointer;user-select:none';
     html += '<thead><tr>'
-      + '<th style="' + thS + 'cursor:pointer;user-select:none" onclick="skumgrToggleSort()">Part # ' + (_skumgrSort === 'asc' ? '↑' : '↓') + '</th>'
-      + '<th style="' + thS + '">Name</th>'
-      + '<th style="' + thS + '">Location</th>'
-      + '<th style="' + thS + ';text-align:right">Cases</th>'
+      + '<th style="' + sortableThS + '" onclick="skumgrSortBy(\'part_num\')" title="Click to sort — default is warehouse order">Part # ' + (_skumgrSortField === 'custom' ? '📋' : skumgrSortIcon('part_num')) + '</th>'
+      + '<th style="' + sortableThS + '" onclick="skumgrSortBy(\'name\')">Name' + skumgrSortIcon('name') + '</th>'
+      + '<th style="' + sortableThS + '" onclick="skumgrSortBy(\'location\')">Location' + skumgrSortIcon('location') + '</th>'
+      + '<th style="' + sortableThS + ';text-align:right" onclick="skumgrSortBy(\'cases\')">Cases' + skumgrSortIcon('cases') + '</th>'
       + '<th style="' + thS + ';text-align:right">Ea/Case</th>'
       + '<th style="' + thS + ';text-align:right">Price</th>'
       + '<th style="' + thS + '">Vendor</th>'
