@@ -2179,14 +2179,48 @@ function _psWireEvents() {
 // Tracks which tabs have been unlocked this session
 var _psUnlockedTabs = {};
 
-window.psUnlockTab = function(tab) {
+window.psUnlockTab = async function(tab) {
   var pinEl  = document.getElementById('ps-' + tab + '-pin');
   var errEl  = document.getElementById('ps-' + tab + '-pin-err');
+  var btnEl  = document.getElementById('ps-' + tab + '-pin-btn');
   var pin    = pinEl ? pinEl.value.trim() : '';
-  if (pin !== PS_PIN_MGMT) {
-    if (errEl) errEl.textContent = 'Incorrect PIN.';
+  if (!pin) { if (errEl) errEl.textContent = 'Enter the management PIN.'; return; }
+
+  // BUGFIX: this used to just compare `pin` against a hardcoded client-side
+  // constant (PS_PIN_MGMT) and, if it matched, flip a local boolean to show
+  // the panel — it never actually called /auth to upgrade the session.
+  // For anyone signed in via initials-only (a 'mobile'-level psToken —
+  // the normal floor-worker flow), that left psToken at 'mobile' even
+  // after "unlocking" a gated tab, so every mgmt-only API call afterward
+  // (Veeqo labels/alerts, gap reconcile, status upload) got a 401 even
+  // though the UI showed the content as unlocked.
+  // Fix: actually call /auth with pin_type:'mgmt', same as psSignInMgmt,
+  // and only unlock once the server confirms the PIN and issues a real
+  // mgmt-level token.
+  if (btnEl) { btnEl.disabled = true; btnEl.textContent = 'Checking…'; }
+  if (errEl) errEl.textContent = '';
+  try {
+    var res  = await fetch(PS_WORKER + '/auth', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ pin: pin, pin_type: 'mgmt' })
+    });
+    var data = await res.json();
+    if (!data.token) {
+      if (errEl) errEl.textContent = 'Incorrect PIN.';
+      return;
+    }
+    // Upgrade the session to the real mgmt token — this is what was missing
+    psToken = data.token;
+    psRole  = 'mgmt';
+    sessionStorage.setItem('ps_token', psToken);
+    sessionStorage.setItem('ps_role', psRole);
+  } catch(e) {
+    if (errEl) errEl.textContent = 'Connection error: ' + e.message;
     return;
+  } finally {
+    if (btnEl) { btnEl.disabled = false; btnEl.textContent = 'Unlock'; }
   }
+
   // Correct — hide gate, show content
   _psUnlockedTabs[tab] = true;
   var gate    = document.getElementById('ps-' + tab + '-gate');
