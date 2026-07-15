@@ -2877,7 +2877,13 @@ async function wFetch(url, opts) {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
-        mode: 'update', sheetRow: row.sheet_row,
+        // d1Id is the real, always-unique D1 primary key — send it so the
+        // worker can reliably target this exact row even when sheet_row is 0
+        // (rows created directly in D1 by Receive PO for a brand-new
+        // SKU/location never get synced to Sheets, so sheet_row stays 0 —
+        // and 0 is falsy, which used to make edits to those rows silently
+        // fail and revert on refresh).
+        mode: 'update', sheetRow: row.sheet_row, d1Id: row.id,
         partNum, name, location,
         cases: parseFloat(cases)||0,
         sku: row.sku || partNum.split('=')[0].trim(),
