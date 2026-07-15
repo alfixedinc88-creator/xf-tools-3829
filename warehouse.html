@@ -1898,9 +1898,15 @@ async function getToken() { return null; }
 
 
 async function fetchSheet(name) {
-  // Master_List reads from D1 (Phase 3 — live cases)
-  var url = name === 'Master_List'
-    ? 'https://xfitting-lookup.alfixedinc88.workers.dev/inventory/stock-levels'
+  // Master_List, AWD_Master, Out_of_Stock all read live from D1 — no sync,
+  // no staleness. Products/UPC stay on Sheets (manual-edit workflow).
+  var D1_ROUTES = {
+    'Master_List':    '/inventory/stock-levels',
+    'AWD_Master':     '/inventory/awd-lookup',
+    'Out_of_Stock':   '/inventory/out-of-stock',
+  };
+  var url = D1_ROUTES[name]
+    ? 'https://xfitting-lookup.alfixedinc88.workers.dev' + D1_ROUTES[name]
     : 'https://xfitting-lookup.alfixedinc88.workers.dev?sheet=' + encodeURIComponent(name);
   var res  = await wFetch(url);
   var json = await res.json();
