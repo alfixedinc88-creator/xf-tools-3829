@@ -1538,7 +1538,9 @@ async function wFetch(url, opts) {
           type: type, partNum: partNum, sku: invPart.sku || partNum,
           location: loc.location, cases: cases, initials: initials || '?',
           notes: notes, isNew: false, isPlaceholder: false,
-          masterRowIndex: loc.rowIndex || null
+          masterRowIndex: loc.rowIndex,
+      masterId: loc.masterId || null || null,
+          masterId: loc.masterId || null
         })
       }).then(function(r){ return r.json(); }).then(cb)
         .catch(function(){ cb({ ok: false, error: 'Network error' }); });
@@ -1566,7 +1568,8 @@ async function wFetch(url, opts) {
             partNum: partNum, sku: invPart.sku || partNum,
             name: invPart.name || '', location: loc.location,
             cases: pull, rowIndex: loc.rowIndex,
-            masterRowIndex: loc.rowIndex, foundOnShelf: true
+            masterRowIndex: loc.rowIndex,
+      masterId: loc.masterId || null, foundOnShelf: true
           });
           invPullList.sort(function(a,b){
             return invLocSort(a.location)-invLocSort(b.location)||a.location.localeCompare(b.location);
@@ -1899,7 +1902,11 @@ async function wFetch(url, opts) {
           type: invMode.toUpperCase(), partNum: invPart.partNum, sku: invPart.sku,
           location: location, cases: cases, initials: initials, notes: notes,
           isNew: !!invSelLoc.isNew, isPlaceholder: !!invSelLoc.isPlaceholder,
-          masterRowIndex: invSelLoc.rowIndex || null
+          masterRowIndex: invSelLoc.rowIndex || null,
+          // Real D1 row id — lets approve target this EXACT row even when
+          // another row shares identical part_num+location text (e.g. a
+          // second entry at the same shelf with a different case count).
+          masterId: invSelLoc.masterId || null
         })
       }).then(function(r) { return r.json(); })
         .then(function(d) {
@@ -2265,7 +2272,8 @@ async function wFetch(url, opts) {
       cases:        preFilled,
       rowIndex:     loc.rowIndex,
       isPlaceholder: loc.isPlaceholder || false,
-      masterRowIndex: loc.rowIndex
+      masterRowIndex: loc.rowIndex,
+      masterId: loc.masterId || null
     });
     // Sort numerically by location
     invPullList.sort(function(a, b) {
