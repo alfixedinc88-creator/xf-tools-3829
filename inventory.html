@@ -890,8 +890,11 @@ async function wFetch(url, opts) {
       }
     } catch(e) {}
     // 3. Always fetch from sheet — sheet is authoritative source of truth
-    // This overwrites localStorage if sheet has been updated
-    wFetch(W + '/inventory/prefixes')
+    // This overwrites localStorage if sheet has been updated.
+    // Cache-busting query param — belt-and-suspenders alongside the
+    // server's Cache-Control: no-store, in case any intermediate cache
+    // (mobile browser heuristic caching, a proxy, etc.) ignores it.
+    wFetch(W + '/inventory/prefixes?_=' + Date.now())
       .then(function(r) { return r.json(); })
       .then(function(d) {
         if (d.ok && d.prefixes && d.prefixes.length) {
@@ -4342,9 +4345,19 @@ async function wFetch(url, opts) {
           if (st) st.textContent = '✓ Saved ' + prefixes.length + ' prefixes';
           invFlash('Prefixes saved ✓', 'success');
         } else {
-          if (st) st.textContent = 'Error: ' + (d.error || 'unknown');
+          // Was previously easy to miss (small status text only) — a
+          // management-only save attempted from a non-mgmt session (e.g.
+          // the ops-floor initials-only sign-in) would fail here but could
+          // look like "nothing happened" rather than a clear permission
+          // error. Now also raised as a visible toast.
+          var errMsg = d.error || 'unknown error';
+          if (st) st.textContent = 'Error: ' + errMsg;
+          invFlash('Save failed: ' + errMsg, 'error');
         }
-      }).catch(function(e){ if (st) st.textContent = 'Error: ' + e.message; });
+      }).catch(function(e){
+        if (st) st.textContent = 'Error: ' + e.message;
+        invFlash('Save failed: ' + e.message, 'error');
+      });
   };
 
   window.invExportLocations = function() {
