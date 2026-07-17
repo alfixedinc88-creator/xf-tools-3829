@@ -433,6 +433,8 @@ async function wFetch(url, opts) {
       </div>
       <div class="ifield"><label>Location Name</label>
         <div style="display:flex;gap:6px;margin-top:6px;align-items:center"><select id="xfr-fel-prefix" style="padding:6px 8px;border:1.5px solid var(--border);border-radius:7px;background:var(--bg);color:var(--text);font-size:13px;font-family:var(--mono)"><option value="2FL=">2FL=</option><option value="BARN=">BARN=</option><option value="BASEMENT=">BASEMENT=</option><option value="BH=">BH=</option><option value="C1=">C1=</option><option value="C2=">C2=</option><option value="C3=">C3=</option><option value="C4=">C4=</option><option value="C5=">C5=</option><option value="FRONT=">FRONT=</option></select><input id="xfr-fel-loc" type="text" placeholder="e.g. 5-1-3" autocomplete="off" style="flex:1;padding:6px 10px;border:1.5px solid var(--border);border-radius:7px;background:var(--bg);color:var(--text);font-size:13px;font-family:var(--mono)"></div>
+        <button type="button" class="btn btn-secondary btn-sm" onclick="xfrBrowseEmptyByPrefix()" style="margin-top:6px;font-size:12px">&#x1F50D; Browse empty shelves in this area</button>
+        <div id="xfr-fel-empty-results" style="margin-top:6px"></div>
       </div>
       <div class="ifield"><label>Cases Found at Location</label><input id="xfr-fel-found" type="number" min="0.1" step="0.5" placeholder="0"></div>
       <button class="isubmit" onclick="xfrSubmitFoundElsewhere()" style="background:var(--purple);border-color:var(--purple);margin-top:4px">Use This Location</button>
@@ -1764,6 +1766,49 @@ async function wFetch(url, opts) {
       if (shfEl) shfEl.value = loc;
     }
     var res = g(resultId); if (res) res.innerHTML = '';
+  };
+
+  // ── Browse empty shelves within a chosen prefix/area ──────────────────────
+  // Complements invSuggestLocation (which suggests based on a specific
+  // part/base_sku): this lets the worker pick an AREA first (BARN=, C1=,
+  // etc.) and see every genuinely empty shelf in that area, regardless of
+  // what part it's for. Uses the same /inventory/locations?status=empty
+  // endpoint already used by the Locations admin view.
+  window.xfrBrowseEmptyByPrefix = function() {
+    var pfxEl = g('xfr-fel-prefix');
+    var res   = g('xfr-fel-empty-results');
+    if (!pfxEl || !res) return;
+    var prefix = pfxEl.value;
+    res.innerHTML = '<div style="font-size:12px;color:var(--text3)">Loading…</div>';
+    wFetch(W + '/inventory/locations?prefix=' + encodeURIComponent(prefix) + '&status=empty')
+      .then(function(r) { return r.json(); })
+      .then(function(d) {
+        if (!d.ok || !d.locations || !d.locations.length) {
+          res.innerHTML = '<div style="font-size:12px;color:var(--text3)">No empty shelves found in ' + prefix + '</div>';
+          return;
+        }
+        res.innerHTML = '';
+        var lbl = document.createElement('div');
+        lbl.style.cssText = 'font-size:11px;font-weight:700;color:var(--text3);margin-bottom:4px';
+        lbl.textContent = 'EMPTY SHELVES IN ' + prefix + ' (' + d.locations.length + ')';
+        res.appendChild(lbl);
+        d.locations.forEach(function(loc) {
+          var btn = document.createElement('button');
+          btn.type = 'button';
+          btn.textContent = loc.location;
+          btn.style.cssText = 'display:inline-block;margin:2px;padding:3px 8px;border-radius:6px;font-size:12px;font-family:var(--mono);cursor:pointer;border:1px solid var(--border);background:var(--bg3);color:var(--text2)';
+          btn.onclick = function() {
+            var eq = loc.location.indexOf('=');
+            var shfEl = g('xfr-fel-loc');
+            if (shfEl) shfEl.value = eq >= 0 ? loc.location.slice(eq+1) : loc.location;
+            res.innerHTML = '';
+          };
+          res.appendChild(btn);
+        });
+      })
+      .catch(function() {
+        res.innerHTML = '<div style="font-size:12px;color:var(--red)">Failed to load empty shelves</div>';
+      });
   };
 
   window.invPickLocFromInline = function(idx) {
