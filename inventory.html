@@ -3573,6 +3573,53 @@ async function wFetch(url, opts) {
     });
   }
 
+  // Live location suggestions shown directly on the add-to-cart row — so a
+  // worker doing a single transfer sees "known locations" and "empty
+  // shelves" immediately, without needing to detour through the cart's
+  // separate destination picker. Same endpoint/data as that picker.
+  function xfrLoadInlineSuggestions(idx, partNum, fromLoc) {
+    var box = g('xfr-loc-suggest-' + idx);
+    if (!box) return;
+    box.innerHTML = '<div style="font-size:11px;color:var(--text3)">Loading suggestions…</div>';
+    wFetch(W + '/inventory/suggest-location?partNum=' + encodeURIComponent(partNum) + '&fromLoc=' + encodeURIComponent(fromLoc))
+      .then(function(r) { return r.json(); })
+      .then(function(d) {
+        box = g('xfr-loc-suggest-' + idx); // re-fetch in case DOM changed while loading
+        if (!box) return;
+        if (!d || !d.ok) { box.innerHTML = ''; return; }
+        box.innerHTML = '';
+        var existBtnStyle = 'display:inline-block;margin:2px;padding:3px 8px;border-radius:6px;font-size:12px;font-family:var(--mono);cursor:pointer;border:1px solid var(--green);background:var(--green-bg);color:var(--green)';
+        var emptyBtnStyle = 'display:inline-block;margin:2px;padding:3px 8px;border-radius:6px;font-size:12px;font-family:var(--mono);cursor:pointer;border:1px solid var(--border);background:var(--bg3);color:var(--text2)';
+        (d.existing || []).forEach(function(loc) {
+          var btn = document.createElement('button');
+          btn.type = 'button'; btn.style.cssText = existBtnStyle;
+          btn.textContent = loc.location + ' (' + (loc.cases||0) + ' cases)';
+          btn.onclick = function() { xfrPickInlineSuggestion(idx, loc.location); };
+          box.appendChild(btn);
+        });
+        (d.emptyNearby || []).concat(d.emptyOther || []).forEach(function(loc) {
+          var btn = document.createElement('button');
+          btn.type = 'button'; btn.style.cssText = emptyBtnStyle;
+          btn.textContent = loc;
+          btn.onclick = function() { xfrPickInlineSuggestion(idx, loc); };
+          box.appendChild(btn);
+        });
+      })
+      .catch(function() { if (box) box.innerHTML = ''; });
+  }
+
+  window.xfrPickInlineSuggestion = function(idx, loc) {
+    var eq = loc.indexOf('=');
+    var pfxEl = g('xfr-loc-dest-pfx-' + idx);
+    var shfEl = g('xfr-loc-dest-shelf-' + idx);
+    if (eq >= 0) {
+      if (pfxEl) pfxEl.value = loc.slice(0, eq+1);
+      if (shfEl) shfEl.value = loc.slice(eq+1);
+    } else {
+      if (shfEl) shfEl.value = loc;
+    }
+  };
+
   function xfrShowFromLocs() {
     var locs = (xfrPart.locations || []).filter(function(l) { return parseFloat(l.cases) > 0; });
     var list = g('xfr-from-list');
@@ -3605,6 +3652,7 @@ async function wFetch(url, opts) {
         + '<input id="xfr-loc-cases-' + i + '" type="number" min="0.1" step="0.5" placeholder="0"'
         + ' style="width:100%;padding:7px 10px;border:1.5px solid var(--border);border-radius:7px;background:var(--bg);color:var(--text);font-size:14px;font-family:var(--mono);box-sizing:border-box">'
         + '<div style="font-size:11px;font-weight:700;color:var(--text3);margin:8px 0 4px">TO LOCATION</div>'
+        + '<div id="xfr-loc-suggest-' + i + '" style="margin-bottom:8px"></div>'
         + '<div style="display:flex;gap:6px;align-items:center">'
         + '<select id="xfr-loc-dest-pfx-' + i + '" style="padding:5px 7px;border:1.5px solid var(--border);border-radius:7px;background:var(--bg);color:var(--text);font-size:12px;font-family:var(--mono)">'
         + '<option value="">-- prefix --</option>'
@@ -3639,6 +3687,7 @@ async function wFetch(url, opts) {
           if (form) { form.style.display = 'block'; var ci = g('xfr-loc-cases-' + idx); if (ci) { ci.value = ''; setTimeout(function(){ ci.focus(); }, 50); } }
           if (badge) badge.textContent = '▾';
           g('xfr-found-elsewhere-wrap').style.display = 'none';
+          xfrLoadInlineSuggestions(idx, xfrPart.partNum, xfrFromLoc.location);
         }
       }; })(i, el);
       list.appendChild(el);
