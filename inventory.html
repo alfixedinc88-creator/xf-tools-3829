@@ -3801,32 +3801,66 @@ async function wFetch(url, opts) {
 
   window.xfrOpenPicker = function(i) {
     xfrPickerActiveIdx = i;
+    var cartItem = xfrCart[i];
+    var list = g('xfr-dest-picker-list');
+    list.innerHTML = '<div style="font-size:12px;color:var(--text3);padding:8px 2px">Loading suggestions…</div>';
+    g('xfr-dest-picker').style.display = 'flex';
+
+    // BUGFIX: xfrKnownLocs was every location this item is CURRENTLY
+    // stocked at — including the FROM location itself (trivially always
+    // "known," since that's the transfer's own source — never a useful
+    // destination suggestion). It also had no concept of empty shelves at
+    // all, since it's just item-location data, not a location registry.
+    // Now fetches live from /inventory/suggest-location — the same D1-
+    // backed endpoint used elsewhere in the app — which excludes fromLoc
+    // server-side and includes genuinely empty nearby shelves.
+    var partNum = cartItem ? cartItem.partNum : (xfrPart ? xfrPart.partNum : '');
+    var fromLoc = cartItem ? cartItem.fromLocation : '';
+    wFetch(W + '/inventory/suggest-location?partNum=' + encodeURIComponent(partNum) + '&fromLoc=' + encodeURIComponent(fromLoc))
+      .then(function(r) { return r.json(); })
+      .then(function(d) { xfrRenderPickerList(d && d.ok ? d : { existing: [], emptyNearby: [], emptyOther: [] }); })
+      .catch(function() { xfrRenderPickerList({ existing: [], emptyNearby: [], emptyOther: [] }); });
+  };
+
+  function xfrRenderPickerList(d) {
     var list = g('xfr-dest-picker-list');
     list.innerHTML = '';
 
-    if (xfrKnownLocs.length > 0) {
+    if (d.existing && d.existing.length) {
       var hdr = document.createElement('div');
       hdr.style.cssText = 'font-size:11px;font-weight:700;letter-spacing:.5px;text-transform:uppercase;color:var(--text3);padding:4px 2px 10px';
       hdr.textContent = 'Known locations for this SKU';
       list.appendChild(hdr);
-
-      xfrKnownLocs.forEach(function(loc) {
+      d.existing.forEach(function(loc) {
         var el = document.createElement('div');
         el.className = 'xfr-dest-picker-item';
-        var varHtml = loc.variants.map(function(v) {
-          return '<span style="font-size:11px;font-family:var(--mono);color:var(--text3)">' + v.partNum + ' &nbsp;·&nbsp; ' + v.cases + ' cases</span>';
-        }).join('<br>');
         el.innerHTML = '<div>'
           + '<div style="font-size:15px;font-weight:600;color:var(--text)">' + loc.location + '</div>'
-          + (varHtml ? '<div style="margin-top:3px">' + varHtml + '</div>' : '')
+          + '<div style="margin-top:3px"><span style="font-size:11px;font-family:var(--mono);color:var(--text3)">' + (loc.cases||0) + ' cases</span></div>'
           + '</div><span style="color:var(--purple);font-size:13px;font-weight:700">Select ›</span>';
         el.onclick = function() { xfrPickerSelect(loc.location, false); };
         list.appendChild(el);
       });
     }
 
+    var emptyAll = (d.emptyNearby || []).concat(d.emptyOther || []);
+    if (emptyAll.length) {
+      var ehdr = document.createElement('div');
+      ehdr.style.cssText = 'font-size:11px;font-weight:700;letter-spacing:.5px;text-transform:uppercase;color:var(--text3);padding:14px 2px 10px' + (d.existing && d.existing.length ? ';border-top:1px solid var(--border);margin-top:6px' : '');
+      ehdr.textContent = 'Empty shelves';
+      list.appendChild(ehdr);
+      emptyAll.forEach(function(loc) {
+        var el = document.createElement('div');
+        el.className = 'xfr-dest-picker-item';
+        el.innerHTML = '<div><div style="font-size:15px;font-weight:600;color:var(--green)">' + loc + '</div></div>'
+          + '<span style="color:var(--green);font-size:13px;font-weight:700">Select ›</span>';
+        el.onclick = function() { xfrPickerSelect(loc, false); };
+        list.appendChild(el);
+      });
+    }
+
     var newHdr = document.createElement('div');
-    newHdr.style.cssText = 'font-size:11px;font-weight:700;letter-spacing:.5px;text-transform:uppercase;color:var(--text3);padding:14px 2px 10px' + (xfrKnownLocs.length > 0 ? ';border-top:1px solid var(--border);margin-top:6px' : '');
+    newHdr.style.cssText = 'font-size:11px;font-weight:700;letter-spacing:.5px;text-transform:uppercase;color:var(--text3);padding:14px 2px 10px' + ((d.existing && d.existing.length) || emptyAll.length ? ';border-top:1px solid var(--border);margin-top:6px' : '');
     newHdr.textContent = 'New location';
     list.appendChild(newHdr);
 
@@ -3834,7 +3868,7 @@ async function wFetch(url, opts) {
     newEl.className = 'xfr-dest-picker-item new-loc-item';
     newEl.innerHTML = '<div>'
       + '<div style="font-size:15px;font-weight:600;color:var(--green)">+ New Location</div>'
-      + '<div style="font-size:12px;color:var(--text3);margin-top:2px">Enter a location not in the system</div>'
+      + '<div style="font-size:12px;color:var(--text3);margin-top:2px">Enter a location not in the system, or scan one</div>'
       + '</div><span style="color:var(--green);font-size:13px;font-weight:700">Enter ›</span>';
     list.appendChild(newEl);
 
@@ -3849,12 +3883,22 @@ async function wFetch(url, opts) {
       sel.id = 'xfr-picker-new-prefix';
       sel.style.cssText = 'padding:6px 8px;border:1.5px solid var(--border);border-radius:7px;background:var(--bg);color:var(--text);font-size:13px;font-family:var(--mono)';
       INV_PREFIXES.forEach(function(p) { var o = document.createElement('option'); o.value = p; o.textContent = p; sel.appendChild(o); });
+      var camBtn = document.createElement('button');
+      camBtn.type = 'button'; camBtn.id = 'xfr-picker-cam-btn'; camBtn.className = 'icam-btn';
+      camBtn.textContent = '📷'; camBtn.style.cssText = 'padding:6px 10px;white-space:nowrap;font-size:12px';
+      camBtn.onclick = window.xfrPickerToggleCam;
       var inp = document.createElement('input');
       inp.id = 'xfr-picker-new-inp';
       inp.type = 'text'; inp.placeholder = 'e.g. 5-1-3'; inp.autocomplete = 'off';
       inp.style.cssText = 'flex:1;padding:6px 10px;border:1.5px solid var(--border);border-radius:7px;background:var(--bg);color:var(--text);font-size:13px;font-family:var(--mono)';
-      row.appendChild(sel); row.appendChild(inp);
+      row.appendChild(sel); row.appendChild(camBtn); row.appendChild(inp);
       newInputWrap.appendChild(row);
+      var readerWrap = document.createElement('div');
+      readerWrap.id = 'xfr-picker-reader-wrap';
+      readerWrap.style.cssText = 'display:none;border-radius:8px;overflow:hidden;background:#000;min-height:120px;margin-top:6px';
+      var readerDiv = document.createElement('div'); readerDiv.id = 'xfr-picker-qr-reader';
+      readerWrap.appendChild(readerDiv);
+      newInputWrap.appendChild(readerWrap);
       var confirmBtn = document.createElement('button');
       confirmBtn.className = 'xfr-dest-new-confirm';
       confirmBtn.textContent = 'Confirm New Location';
@@ -3869,11 +3913,70 @@ async function wFetch(url, opts) {
       var inp = g('xfr-picker-new-inp');
       if (inp) { inp.value = ''; setTimeout(function() { inp.focus(); }, 50); }
     };
-
-    g('xfr-dest-picker').style.display = 'flex';
   };
 
+  // ── Camera scan for the picker's "New Location" input ─────────────────
+  // Mirrors invNewLocToggleCam's exact pattern, targeting the picker's own
+  // prefix/shelf inputs instead. Requested directly: workers should be
+  // able to scan a location barcode here, not just type it manually.
+  var xfrPickerCamRunning = false;
+  var xfrPickerQrScanner  = null;
+  var xfrPickerLastScan   = 0;
+
+  window.xfrPickerToggleCam = function() {
+    if (xfrPickerCamRunning) { xfrPickerStopCam(); return; }
+    var btn = g('xfr-picker-cam-btn');
+    if (btn) { btn.textContent = '⏳'; btn.disabled = true; }
+    invLoadQR().then(function() {
+      var wrap = g('xfr-picker-reader-wrap');
+      if (wrap) wrap.style.display = 'block';
+      if (xfrPickerQrScanner) { try { xfrPickerQrScanner.clear(); } catch(e){} xfrPickerQrScanner = null; }
+      xfrPickerQrScanner = new Html5Qrcode('xfr-picker-qr-reader');
+      xfrPickerQrScanner.start(
+        { facingMode: 'environment' },
+        { fps: 10, qrbox: { width: 280, height: 90 } },
+        function(code) {
+          var now = Date.now();
+          if (now - xfrPickerLastScan < 2000) return;
+          xfrPickerLastScan = now;
+          xfrPickerStopCam();
+          var eqIdx = code.indexOf('=');
+          if (eqIdx > 0) {
+            var pfxEl = g('xfr-picker-new-prefix'); var shfEl = g('xfr-picker-new-inp');
+            if (pfxEl) pfxEl.value = code.slice(0, eqIdx + 1);
+            if (shfEl) { shfEl.value = code.slice(eqIdx + 1); shfEl.focus(); }
+          } else {
+            var shfEl = g('xfr-picker-new-inp');
+            if (shfEl) { shfEl.value = code; shfEl.focus(); }
+          }
+        },
+        function() {}
+      ).then(function() {
+        xfrPickerCamRunning = true;
+        if (btn) { btn.textContent = '⏹'; btn.className = 'icam-btn scanning'; btn.disabled = false; }
+      }).catch(function() {
+        invFlash('Camera error', 'error');
+        if (btn) { btn.textContent = '📷'; btn.className = 'icam-btn'; btn.disabled = false; }
+        var wrap = g('xfr-picker-reader-wrap'); if (wrap) wrap.style.display = 'none';
+      });
+    }).catch(function() {
+      invFlash('Could not load scanner', 'error');
+      if (btn) { btn.textContent = '📷'; btn.disabled = false; }
+    });
+  };
+
+  function xfrPickerStopCam() {
+    if (xfrPickerQrScanner) {
+      try { xfrPickerQrScanner.stop().then(function() { try { xfrPickerQrScanner.clear(); } catch(e){} }); } catch(e){}
+    }
+    xfrPickerCamRunning = false;
+    var btn = g('xfr-picker-cam-btn');
+    if (btn) { btn.textContent = '📷'; btn.className = 'icam-btn'; btn.disabled = false; }
+    var wrap = g('xfr-picker-reader-wrap'); if (wrap) wrap.style.display = 'none';
+  }
+
   window.xfrClosePicker = function() {
+    xfrPickerStopCam();
     g('xfr-dest-picker').style.display = 'none';
     xfrPickerActiveIdx = -1;
   };
