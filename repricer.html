@@ -733,7 +733,10 @@ body { margin:0; padding:0; font-family:'DM Sans',sans-serif; }
           </div>
           <button class="pc-lookup-btn" id="pc-lookup-btn" onclick="rprCalcFetch()">Calculate</button>
         </div>
-        <div id="pc-cog-status" style="margin-top:10px"></div>
+        <div style="display:flex;justify-content:space-between;align-items:center;margin-top:10px">
+          <div id="pc-cog-status"></div>
+          <button class="pc-copy" onclick="rprOpenTierEditor()" style="white-space:nowrap">⚙ Edit Tiers</button>
+        </div>
       </div>
 
       <div class="pc-result-card" id="pc-results-card" style="display:none">
@@ -3074,66 +3077,33 @@ function awdHandleScan(raw) {
 
 // ════════════════════════════════════════════════════════
 // PRICE CALCULATOR
+// Rebuilt on D1 — was maintaining its own hardcoded copy of the markup
+// tiers (MULTS/TIER_BREAKS/LANDED_MULT below) AND doing its own client-side
+// COGS-sheet parsing, completely separate from the same data used
+// elsewhere. That's exactly how this tab's numbers had already drifted out
+// of date (Amazon 80%/eBay 77% here vs the actual current policy of
+// 83%/79%) before this fix. Now a single API call does everything server-
+// side against the same price_tiers table the Edit Tiers screen edits.
 // ════════════════════════════════════════════════════════
 (function() {
-  var _pcCogCache = {};
-  var _pcLastCog  = null;
   var _pcLastSku  = '';
-
-  var SHIPPING    = 5.25;
-  var LANDED_MULT = 1.50;
-
-  var MKTS = [
-    { key: 'ebay',    label: 'eBay'               },
-    { key: 'amazon',  label: 'Amazon'             },
-    { key: 'walmart', label: 'Walmart'            },
-    { key: 'shopify', label: 'Shopify / XFITTING' },
-  ];
-
-  var TIER_BREAKS = [1, 2, 5, 10, 25, 50];
-
-  var MULTS = {
-    //        1pc    2-4    5-9    10-24  25-49  50+
-    ebay:    [1.770, 1.695, 1.670, 1.620, 1.570, 1.520],
-    amazon:  [1.800, 1.725, 1.700, 1.650, 1.600, 1.550],
-    walmart: [1.770, 1.695, 1.670, 1.620, 1.570, 1.520],
-    shopify: [1.750, 1.675, 1.650, 1.600, 1.550, 1.500],
-  };
-
-  var TIER_LABELS = ['1 pc', '2–4 pc', '5–9 pc', '10–24 pc', '25–49 pc', '50+ pc'];
+  var _pcLastQty  = 0;
 
   function g(id) { return document.getElementById(id); }
   function fmt$(n) { return '$' + Number(n).toFixed(2); }
 
-  function tierIdx(qty) {
-    var idx = 0;
-    for (var i = 0; i < TIER_BREAKS.length; i++) {
-      if (qty >= TIER_BREAKS[i]) idx = i;
-    }
-    return idx;
-  }
-
-  function calcPrices(landedCog1pc, qty, mkt) {
-    var mult     = MULTS[mkt][tierIdx(qty)];
-    var cogTotal = +(landedCog1pc * qty).toFixed(4);
-    var floor    = +(cogTotal * 1.40 + SHIPPING).toFixed(2);
-    var suggested= +Math.max(landedCog1pc * mult * qty + SHIPPING, floor).toFixed(2);
-    var max      = +(cogTotal * 2.00 + SHIPPING).toFixed(2);
-    var perUnit  = +(suggested / qty).toFixed(2);
-    return { floor: floor, suggested: suggested, max: max, perUnit: perUnit };
-  }
-
-  function renderResults(landedCog1pc, qty) {
+  // Renders the results table directly from the API response — no local
+  // tier/multiplier logic here at all anymore, that all lives in D1 now.
+  function renderResults(data) {
     var rows = '';
-    MKTS.forEach(function(mkt) {
-      var p = calcPrices(landedCog1pc, qty, mkt.key);
+    (data.results || []).forEach(function(r) {
       rows += '<tr>'
-        + '<td><span class="pc-mkt">' + mkt.label + '</span></td>'
-        + '<td class="num pc-unit">' + fmt$(p.perUnit) + '</td>'
-        + '<td class="num pc-floor">' + fmt$(p.floor) + '</td>'
-        + '<td class="num pc-suggested">' + fmt$(p.suggested) + '</td>'
-        + '<td class="num pc-max">' + fmt$(p.max) + '</td>'
-        + '<td><button class="pc-copy" onclick="rprCalcCopy(' + p.suggested + ',this)">Copy</button></td>'
+        + '<td><span class="pc-mkt">' + r.label + '</span></td>'
+        + '<td class="num pc-unit">' + fmt$(r.perUnit) + '</td>'
+        + '<td class="num pc-floor">' + fmt$(r.floor) + '</td>'
+        + '<td class="num pc-suggested">' + fmt$(r.suggested) + '</td>'
+        + '<td class="num pc-max">' + fmt$(r.max) + '</td>'
+        + '<td><button class="pc-copy" onclick="rprCalcCopy(' + r.suggested + ',this)">Copy</button></td>'
         + '</tr>';
     });
     g('pc-tbody').innerHTML = rows;
@@ -3153,43 +3123,21 @@ function awdHandleScan(raw) {
     g('pc-results-card').style.display = 'none';
 
     try {
-      var unitPrice;
-      if (_pcCogCache.hasOwnProperty(sku)) {
-        unitPrice = _pcCogCache[sku];
-      } else {
-        var data = await apiCall('/sheets?sheet=COGS');
-        var rows = data.values || [];
-        // Row 0 = headers (BaseSKU, Unit Price, LastUpdated, Vendor)
-        // Start at row 1 for data
-        unitPrice = null;
-        for (var i = 1; i < rows.length; i++) {
-          var r = rows[i];
-          var rowSku = (r[0] || '').toString().trim().toUpperCase();
-          if (rowSku === sku) {
-            // Strip $, commas, spaces before parsing
-            var raw = (r[1] || '').toString().replace(/[$,\s]/g, '');
-            unitPrice = parseFloat(raw) || null;
-            break;
-          }
-        }
-        console.log('[CALC] rows:', rows.length, '| match for', sku, ':', unitPrice, '| sample:', rows.slice(1,4).map(function(r){return r[0];}));
-        _pcCogCache[sku] = unitPrice;
-      }
+      var data = await apiCall('/repricer/suggest-price?sku=' + encodeURIComponent(sku) + '&qty=' + qty);
 
-      if (!unitPrice || unitPrice <= 0) {
-        g('pc-cog-status').innerHTML = '<span class="pc-badge missing">⚠️ ' + sku + ' not found in COGS sheet</span>';
-        rprToast('SKU not found in COGS sheet', 'warn');
+      if (!data.ok) {
+        g('pc-cog-status').innerHTML = '<span class="pc-badge missing">⚠️ ' + (data.error || (sku + ' not found in COGS table')) + '</span>';
+        rprToast(data.error || 'SKU not found', 'warn');
         return;
       }
 
-      _pcLastCog = unitPrice;
       _pcLastSku = sku;
-      var landed = +(unitPrice * LANDED_MULT).toFixed(4);
+      _pcLastQty = qty;
 
       g('pc-cog-status').innerHTML = '<span class="pc-badge found">✓ ' + sku + ' found</span>';
       g('pc-result-title').textContent = sku + ' — Qty ' + qty;
-      g('pc-result-sub').textContent = 'Tier: ' + TIER_LABELS[tierIdx(qty)];
-      renderResults(landed, qty);
+      g('pc-result-sub').textContent = 'Tier: ' + (data.tier || '—');
+      renderResults(data);
       g('pc-results-card').style.display = 'block';
 
     } catch(e) {
@@ -3200,14 +3148,15 @@ function awdHandleScan(raw) {
     }
   };
 
-  window.rprCalcReset = function() {
-    if (_pcLastCog !== null) {
-      var qty = parseInt(g('pc-qty') ? g('pc-qty').value : '') || 0;
-      if (qty > 0) {
-        var landed = +(_pcLastCog * LANDED_MULT).toFixed(4);
-        renderResults(landed, qty);
-        g('pc-results-card').style.display = 'block';
-      }
+  window.rprCalcReset = async function() {
+    if (_pcLastSku && _pcLastQty > 0) {
+      try {
+        var data = await apiCall('/repricer/suggest-price?sku=' + encodeURIComponent(_pcLastSku) + '&qty=' + _pcLastQty);
+        if (data.ok) {
+          renderResults(data);
+          g('pc-results-card').style.display = 'block';
+        }
+      } catch(e) { /* silent — this is just a refresh-after-tier-edit convenience, not user-initiated */ }
     }
   };
 
@@ -3218,6 +3167,108 @@ function awdHandleScan(raw) {
       btn.style.color = '#0e7f3e';
       setTimeout(function() { btn.textContent = orig; btn.style.color = ''; }, 1800);
     }).catch(function() { rprToast('Copy failed', 'error'); });
+  };
+
+  // ── Edit Tiers — reads/writes the D1 price_tiers + price_calc_config
+  // tables directly. This is now the ONE place to change markup policy —
+  // no code edits needed, no separate copies to keep in sync.
+  var _tierMarketOrder = ['amazon', 'ebay', 'walmart', 'shopify'];
+  var _tierMarketLabels = { amazon: 'Amazon', ebay: 'eBay', walmart: 'Walmart', shopify: 'Shopify / XFITTING' };
+
+  window.rprOpenTierEditor = async function() {
+    document.getElementById('modal-title').textContent = 'Edit Volume Discount Tiers';
+    document.getElementById('modal-body').innerHTML = '<div style="padding:20px;text-align:center;color:var(--text-muted)">Loading…</div>';
+    document.getElementById('modal-footer').innerHTML = '';
+    document.getElementById('price-modal').classList.remove('hidden');
+
+    try {
+      var data = await apiCall('/repricer/price-tiers');
+      if (!data.ok) { rprToast(data.error || 'Failed to load tiers', 'error'); closeModal(); return; }
+
+      var byMkt = {};
+      data.tiers.forEach(function(t) { (byMkt[t.marketplace] = byMkt[t.marketplace] || []).push(t); });
+
+      var html = '<div style="font-size:12px;color:var(--text-muted);margin-bottom:14px">'
+        + 'Edit the multiplier for any tier below (e.g. 1.83 = 83% markup). Min/Max Qty define the bracket. '
+        + 'Changes apply everywhere this data is used once saved.</div>';
+
+      _tierMarketOrder.forEach(function(mkt) {
+        var rows = (byMkt[mkt] || []).sort(function(a,b){ return a.sort_order - b.sort_order; });
+        html += '<div style="margin-bottom:16px">'
+          + '<div style="font-size:13px;font-weight:700;margin-bottom:6px">' + (_tierMarketLabels[mkt] || mkt) + '</div>'
+          + '<table style="width:100%;border-collapse:collapse;font-size:12px" data-mkt="' + mkt + '">'
+          + '<thead><tr>'
+          + '<th style="text-align:left;padding:4px 8px;color:var(--text-muted)">Min Qty</th>'
+          + '<th style="text-align:left;padding:4px 8px;color:var(--text-muted)">Max Qty</th>'
+          + '<th style="text-align:left;padding:4px 8px;color:var(--text-muted)">Multiplier</th>'
+          + '<th style="text-align:left;padding:4px 8px;color:var(--text-muted)">Markup %</th>'
+          + '</tr></thead><tbody>';
+        rows.forEach(function(t) {
+          html += '<tr data-id="' + t.id + '" data-mkt="' + mkt + '" data-sort="' + t.sort_order + '" data-label="' + (t.label||'').replace(/"/g,'&quot;') + '">'
+            + '<td style="padding:4px 8px"><input type="number" class="tier-min" value="' + t.min_qty + '" style="width:60px;padding:4px 6px;border:1px solid var(--border);border-radius:5px;background:var(--surface);color:var(--text)"></td>'
+            + '<td style="padding:4px 8px"><input type="number" class="tier-max" value="' + t.max_qty + '" style="width:60px;padding:4px 6px;border:1px solid var(--border);border-radius:5px;background:var(--surface);color:var(--text)"></td>'
+            + '<td style="padding:4px 8px"><input type="number" step="0.001" class="tier-mult" value="' + t.multiplier + '" oninput="rprTierMultChanged(this)" style="width:80px;padding:4px 6px;border:1px solid var(--border);border-radius:5px;background:var(--surface);color:var(--text)"></td>'
+            + '<td style="padding:4px 8px" class="tier-pct">' + Math.round((t.multiplier - 1) * 1000) / 10 + '%</td>'
+            + '</tr>';
+        });
+        html += '</tbody></table></div>';
+      });
+
+      html += '<div style="border-top:1px solid var(--border);padding-top:12px;margin-top:4px;display:grid;grid-template-columns:1fr 1fr;gap:10px;font-size:12px">'
+        + '<div><label style="color:var(--text-muted)">Shipping ($)</label><br><input id="cfg-shipping" type="number" step="0.01" value="' + (data.config.shipping ?? 5.25) + '" style="width:100%;padding:5px 8px;border:1px solid var(--border);border-radius:5px;background:var(--surface);color:var(--text)"></div>'
+        + '<div><label style="color:var(--text-muted)">Landed Cost Multiplier</label><br><input id="cfg-landed" type="number" step="0.01" value="' + (data.config.landed_multiplier ?? 1.50) + '" style="width:100%;padding:5px 8px;border:1px solid var(--border);border-radius:5px;background:var(--surface);color:var(--text)"></div>'
+        + '<div><label style="color:var(--text-muted)">Floor Multiplier</label><br><input id="cfg-floor" type="number" step="0.01" value="' + (data.config.floor_multiplier ?? 1.40) + '" style="width:100%;padding:5px 8px;border:1px solid var(--border);border-radius:5px;background:var(--surface);color:var(--text)"></div>'
+        + '<div><label style="color:var(--text-muted)">Ceiling Multiplier</label><br><input id="cfg-ceiling" type="number" step="0.01" value="' + (data.config.ceiling_multiplier ?? 2.00) + '" style="width:100%;padding:5px 8px;border:1px solid var(--border);border-radius:5px;background:var(--surface);color:var(--text)"></div>'
+        + '</div>';
+
+      document.getElementById('modal-body').innerHTML = html;
+      document.getElementById('modal-footer').innerHTML =
+        '<button class="pc-lookup-btn" onclick="rprSaveTiers()">Save Changes</button>'
+        + '<button class="pc-copy" onclick="closeModal()" style="margin-left:8px">Cancel</button>';
+    } catch(e) {
+      rprToast('Failed to load tiers: ' + e.message, 'error');
+      closeModal();
+    }
+  };
+
+  // Live-update the % display as someone edits a multiplier
+  window.rprTierMultChanged = function(input) {
+    var pct = Math.round((parseFloat(input.value || 1) - 1) * 1000) / 10;
+    input.closest('tr').querySelector('.tier-pct').textContent = pct + '%';
+  };
+
+  window.rprSaveTiers = async function() {
+    var tiers = [];
+    document.querySelectorAll('#modal-body tr[data-id]').forEach(function(row) {
+      tiers.push({
+        marketplace: row.getAttribute('data-mkt'),
+        label:       row.getAttribute('data-label'),
+        min_qty:     parseInt(row.querySelector('.tier-min').value) || 0,
+        max_qty:     parseInt(row.querySelector('.tier-max').value) || 0,
+        multiplier:  parseFloat(row.querySelector('.tier-mult').value) || 0,
+        sort_order:  parseInt(row.getAttribute('data-sort')) || 0,
+      });
+    });
+    var config = {
+      shipping:          parseFloat(document.getElementById('cfg-shipping').value) || 5.25,
+      landed_multiplier: parseFloat(document.getElementById('cfg-landed').value)   || 1.50,
+      floor_multiplier:  parseFloat(document.getElementById('cfg-floor').value)    || 1.40,
+      ceiling_multiplier:parseFloat(document.getElementById('cfg-ceiling').value)  || 2.00,
+    };
+
+    try {
+      var res = await apiCall('/repricer/price-tiers', { method: 'POST', body: JSON.stringify({ tiers: tiers, config: config }) });
+      if (res.ok) {
+        rprToast('Tiers saved ✓', 'success');
+        closeModal();
+        // Refresh the currently-shown calculation, if any, so it reflects the new tiers immediately
+        if (typeof rprCalcReset === 'function') rprCalcReset();
+      } else {
+        rprToast(res.error || 'Save failed', 'error');
+      }
+    } catch(e) {
+      rprToast('Save failed: ' + e.message, 'error');
+    }
   };
 
 })();
