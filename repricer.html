@@ -859,7 +859,7 @@ async function rprCheckPin() {
       document.getElementById('rpr-pin-screen').style.display = 'none';
       document.getElementById('rpr-app').style.display = 'flex';
       rprApplyPinLevel();
-      rprLoad();
+      loadEbayTierCache().then(rprLoad);
     } else {
       rprPinFail();
     }
@@ -1338,18 +1338,52 @@ function setSyncStatus(live) {
 }
 
 // ════════════════════════════════════════════
-// PRICING HELPERS (mirrors SKU_MASTER logic)
+// PRICING HELPERS
+// BUGFIX: this was the THIRD hardcoded copy of the markup tiers found this
+// session, used throughout Active Listings/Price Decision — sorting,
+// filtering, floor/target badges. Its numbers (75/67.5/65/60/55/50) had
+// already gone stale relative to the actual current eBay policy (79% start,
+// confirmed 2026-07-20), same drift problem the Price Calculator tab had.
+// Now reads the same D1 price_tiers table (marketplace='ebay') the Edit
+// Tiers screen edits and the worker's ebayListings() also reads from.
+//
+// These functions run synchronously across hundreds of listing rows in
+// tight sort/filter loops, so they can't become async API calls per-row
+// the way the Calculator tab could — instead the tier data is fetched ONCE
+// at app load into _ebayTierCache, and these read that cache synchronously.
+// Falls back to the last-known-correct hardcoded values only if the cache
+// genuinely never loaded (e.g. offline), so the page never breaks blank.
 // ════════════════════════════════════════════
 const SHIPPING = 5.25; // flat shipping added to all price calculations
+var _ebayTierCache = null; // populated by loadEbayTierCache() at app boot
+var _priceCfgCache = { landed_multiplier: 1.50, floor_multiplier: 1.40, ceiling_multiplier: 2.00, shipping: 5.25 };
+
+async function loadEbayTierCache() {
+  try {
+    var data = await apiCall('/repricer/price-tiers');
+    if (data.ok && data.tiers) {
+      _ebayTierCache = data.tiers.filter(function(t) { return t.marketplace === 'ebay'; }).sort(function(a,b){ return a.sort_order - b.sort_order; });
+      if (data.config) _priceCfgCache = Object.assign({}, _priceCfgCache, data.config);
+    }
+  } catch(e) {
+    console.error('[Pricing] Failed to load tier cache, using last-known fallback values:', e.message);
+  }
+}
 
 function calcTierUnitPrice(cog1pc, qty) {
-  // Tier multipliers match SKU_MASTER sheet formula exactly
-  if (qty >= 50) return cog1pc * 1.50;
-  if (qty >= 25) return cog1pc * 1.55;
-  if (qty >= 10) return cog1pc * 1.60;
-  if (qty >= 5)  return cog1pc * 1.65;
-  if (qty >= 2)  return cog1pc * 1.675;
-  return cog1pc * 1.75;
+  if (_ebayTierCache && _ebayTierCache.length) {
+    var matched = _ebayTierCache.find(function(t) { return qty >= t.min_qty && qty <= t.max_qty; });
+    var mult = matched ? matched.multiplier : _ebayTierCache[0].multiplier;
+    return cog1pc * mult;
+  }
+  // Fallback only — matches the last confirmed-correct numbers, used only
+  // if the D1 fetch above genuinely failed (e.g. offline at app load).
+  if (qty >= 50) return cog1pc * 1.54;
+  if (qty >= 25) return cog1pc * 1.59;
+  if (qty >= 10) return cog1pc * 1.64;
+  if (qty >= 5)  return cog1pc * 1.69;
+  if (qty >= 2)  return cog1pc * 1.715;
+  return cog1pc * 1.79;
 }
 // All prices include $5.25 shipping. Min = 40% markup (matches sheet formula)
 function getMinPrice(cog1pc, qty)    { return (cog1pc * qty * 1.40) + SHIPPING; }
@@ -3263,6 +3297,12 @@ function awdHandleScan(raw) {
         closeModal();
         // Refresh the currently-shown calculation, if any, so it reflects the new tiers immediately
         if (typeof rprCalcReset === 'function') rprCalcReset();
+        // Also refresh Active Listings' tier cache + re-render so floor/target/max badges
+        // reflect the new tiers immediately, without needing a page reload
+        if (typeof loadEbayTierCache === 'function') {
+          await loadEbayTierCache();
+          if (typeof renderListings === 'function' && typeof rprAllListings !== 'undefined') renderListings(rprAllListings);
+        }
       } else {
         rprToast(res.error || 'Save failed', 'error');
       }
@@ -3286,7 +3326,8 @@ function awdHandleScan(raw) {
     rprPinLevel = savedLevel || 'price';
     document.getElementById('rpr-app').style.display = 'flex';
     if (typeof rprApplyPinLevel === 'function') rprApplyPinLevel();
-    if (typeof rprLoad === 'function') rprLoad();
+    if (typeof loadEbayTierCache === 'function' && typeof rprLoad === 'function') { loadEbayTierCache().then(rprLoad); }
+    else if (typeof rprLoad === 'function') { rprLoad(); }
   } else {
     // Show PIN screen
     document.getElementById('rpr-pin-screen').style.display = 'flex';
