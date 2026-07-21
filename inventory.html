@@ -5266,6 +5266,73 @@ async function wFetch(url, opts) {
 
 </script>
 
+<!-- BUGFIX: both modals below were referenced by JS (skumgrShowAddRow /
+     invShowEditRow) but never actually existed in the HTML — clicking
+     either button did nothing, no error, since the code defensively
+     checks `if (modal)` before acting on a null element. Reported as
+     "clicking add new row doesn't work... silent fail" — Edit Row had
+     the exact same bug, just not yet reported. Both added here, matching
+     the existing working modal pattern (see inv-audit-pin-modal). -->
+
+<!-- SKU Manager — Add New Row -->
+<div id="skumgr-add-modal" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,.45);z-index:999;align-items:center;justify-content:center">
+  <div style="background:var(--bg2);border-radius:14px;padding:24px;width:340px;max-width:90vw;max-height:85vh;overflow-y:auto;box-shadow:0 8px 32px rgba(0,0,0,.18)">
+    <div style="font-size:15px;font-weight:700;color:var(--text);margin-bottom:14px">Add New Row to Master_List</div>
+
+    <label style="font-size:11px;font-weight:700;color:var(--text3);text-transform:uppercase">Part# *</label>
+    <input id="skumgr-add-partnum" type="text" placeholder="e.g. 27-1-1=10XX" style="width:100%;padding:8px 10px;margin:4px 0 10px;border:1.5px solid var(--border);border-radius:8px;background:var(--bg);color:var(--text);font-family:var(--mono);font-size:13px;box-sizing:border-box">
+
+    <label style="font-size:11px;font-weight:700;color:var(--text3);text-transform:uppercase">Name</label>
+    <input id="skumgr-add-name" type="text" placeholder="Product name" style="width:100%;padding:8px 10px;margin:4px 0 10px;border:1.5px solid var(--border);border-radius:8px;background:var(--bg);color:var(--text);font-size:13px;box-sizing:border-box">
+
+    <label style="font-size:11px;font-weight:700;color:var(--text3);text-transform:uppercase">Location *</label>
+    <input id="skumgr-add-location" type="text" placeholder="e.g. BARN=1-1" style="width:100%;padding:8px 10px;margin:4px 0 10px;border:1.5px solid var(--border);border-radius:8px;background:var(--bg);color:var(--text);font-family:var(--mono);font-size:13px;box-sizing:border-box">
+
+    <label style="font-size:11px;font-weight:700;color:var(--text3);text-transform:uppercase">Cases *</label>
+    <input id="skumgr-add-cases" type="number" step="0.5" placeholder="0" style="width:100%;padding:8px 10px;margin:4px 0 10px;border:1.5px solid var(--border);border-radius:8px;background:var(--bg);color:var(--text);font-size:13px;box-sizing:border-box">
+
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px">
+      <div>
+        <label style="font-size:11px;font-weight:700;color:var(--text3);text-transform:uppercase">Units/Case</label>
+        <input id="skumgr-add-upc" type="number" step="1" placeholder="0" style="width:100%;padding:8px 10px;margin:4px 0 10px;border:1.5px solid var(--border);border-radius:8px;background:var(--bg);color:var(--text);font-size:13px;box-sizing:border-box">
+      </div>
+      <div>
+        <label style="font-size:11px;font-weight:700;color:var(--text3);text-transform:uppercase">Price</label>
+        <input id="skumgr-add-price" type="number" step="0.01" placeholder="0.00" style="width:100%;padding:8px 10px;margin:4px 0 10px;border:1.5px solid var(--border);border-radius:8px;background:var(--bg);color:var(--text);font-size:13px;box-sizing:border-box">
+      </div>
+    </div>
+
+    <label style="font-size:11px;font-weight:700;color:var(--text3);text-transform:uppercase">Vendor</label>
+    <input id="skumgr-add-vendor" type="text" placeholder="Vendor name" style="width:100%;padding:8px 10px;margin:4px 0 10px;border:1.5px solid var(--border);border-radius:8px;background:var(--bg);color:var(--text);font-size:13px;box-sizing:border-box">
+
+    <label style="font-size:11px;font-weight:700;color:var(--text3);text-transform:uppercase">Notes</label>
+    <textarea id="skumgr-add-notes" rows="2" placeholder="Optional notes" style="width:100%;padding:8px 10px;margin:4px 0 14px;border:1.5px solid var(--border);border-radius:8px;background:var(--bg);color:var(--text);font-size:13px;box-sizing:border-box;resize:vertical"></textarea>
+
+    <div style="display:flex;gap:8px">
+      <button id="skumgr-add-save-btn" onclick="skumgrSaveNewRow()" style="flex:1;padding:10px;border-radius:8px;border:none;background:var(--accent);color:#fff;font-size:13px;font-weight:700;cursor:pointer">Save</button>
+      <button onclick="document.getElementById('skumgr-add-modal').style.display='none'" style="padding:10px 16px;border-radius:8px;border:1px solid var(--border);background:var(--bg3);color:var(--text2);font-size:13px;cursor:pointer">Cancel</button>
+    </div>
+  </div>
+</div>
+
+<!-- Review tab — Edit Row (manual cases correction) -->
+<div id="inv-edit-modal" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,.45);z-index:999;align-items:center;justify-content:center">
+  <div style="background:var(--bg2);border-radius:14px;padding:24px;width:300px;max-width:90vw;box-shadow:0 8px 32px rgba(0,0,0,.18)">
+    <div style="font-size:15px;font-weight:700;color:var(--text);margin-bottom:4px">Edit Row</div>
+    <div id="inv-edit-partnum" style="font-size:12px;font-family:var(--mono);color:var(--text3);margin-bottom:14px"></div>
+
+    <label style="font-size:11px;font-weight:700;color:var(--text3);text-transform:uppercase">Cases</label>
+    <input id="inv-edit-cases" type="number" step="0.5" style="width:100%;padding:8px 10px;margin:4px 0 10px;border:1.5px solid var(--border);border-radius:8px;background:var(--bg);color:var(--text);font-size:14px;box-sizing:border-box">
+
+    <label style="font-size:11px;font-weight:700;color:var(--text3);text-transform:uppercase">Notes</label>
+    <input id="inv-edit-notes" type="text" placeholder="Reason for correction" style="width:100%;padding:8px 10px;margin:4px 0 14px;border:1.5px solid var(--border);border-radius:8px;background:var(--bg);color:var(--text);font-size:13px;box-sizing:border-box">
+
+    <div style="display:flex;gap:8px">
+      <button id="inv-edit-save-btn" onclick="invSaveEditRow()" style="flex:1;padding:10px;border-radius:8px;border:none;background:var(--accent);color:#fff;font-size:13px;font-weight:700;cursor:pointer">Save</button>
+      <button onclick="document.getElementById('inv-edit-modal').style.display='none'" style="padding:10px 16px;border-radius:8px;border:1px solid var(--border);background:var(--bg3);color:var(--text2);font-size:13px;cursor:pointer">Cancel</button>
+    </div>
+  </div>
+</div>
 
 </body>
 </html>
