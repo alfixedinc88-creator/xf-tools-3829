@@ -403,6 +403,11 @@ body { margin:0; padding:0; font-family:'DM Sans',sans-serif; }
 
       <div class="filter-bar">
         <input class="search-input" id="listing-search" placeholder="Search SKU, title, or item number…" oninput="filterListings()">
+        <select class="filter-select" id="listing-marketplace-filter" onchange="filterListings()">
+          <option value="all">All Marketplaces</option>
+          <option value="ebay">eBay</option>
+          <option value="amazon">Amazon</option>
+        </select>
         <select class="filter-select" id="listing-filter" onchange="filterListings()">
           <option value="all">All Listings</option>
           <option value="below">Below Floor Price</option>
@@ -1392,37 +1397,98 @@ function getTargetPrice(cog1pc, qty) { return (calcTierUnitPrice(cog1pc, qty) * 
 function fmt$(n)   { return (n == null || isNaN(n)) ? '—' : '$' + Number(n).toFixed(2); }
 function fmtPct(n) { return (n == null || isNaN(n)) ? '—' : (n >= 0 ? '+' : '') + (n * 100).toFixed(1) + '%'; }
 function isPriceBelow(l) {
-  if (!l.cog1pc || !l.packQty || !l.price) return false;
-  return l.price < getMinPrice(l.cog1pc, l.packQty);
+  if (!l.price) return false;
+  const floor = listingFloor(l);
+  return floor > 0 && l.price < floor;
 }
+
+// Amazon listings arrive with floor/target/max already computed server-side
+// (amazonListingsDownload enriches each row using D1 price_tiers for
+// marketplace='amazon'). eBay listings compute these client-side using the
+// cached D1 tier data (_ebayTierCache). These three helpers pick the right
+// source per listing so every other function can call one thing regardless
+// of marketplace, instead of branching everywhere.
+function listingFloor(l)  { return l.marketplace === 'amazon' ? (l.floor  || 0) : (l.cog1pc ? getMinPrice(l.cog1pc, l.packQty)    : 0); }
+function listingTarget(l) { return l.marketplace === 'amazon' ? (l.target || 0) : (l.cog1pc ? getTargetPrice(l.cog1pc, l.packQty) : 0); }
+function listingMax(l)    { return l.marketplace === 'amazon' ? (l.max    || 0) : (l.cog1pc ? getMaxPrice(l.cog1pc, l.packQty)    : 0); }
 
 // ════════════════════════════════════════════
 // TAB 1 — ACTIVE LISTINGS
 // ════════════════════════════════════════════
+// Amazon listings are a 3-step async flow (report generation isn't
+// instant) — request, then poll status every 10s until DONE, then
+// download. Capped at ~2 minutes of polling so a stuck report can't hang
+// the page forever; if it times out, eBay data still loads normally and
+// the user sees a clear message rather than an infinite spinner.
+async function loadAmazonListings(onStatus) {
+  const reqData = await apiCall('/amazon/listings-request', { method: 'POST' });
+  if (!reqData.ok) throw new Error(reqData.error || 'Amazon report request failed');
+  const reportId = reqData.reportId;
+
+  const maxAttempts = 12; // 12 * 10s = 2 minutes
+  let reportDocumentId = null;
+  for (let i = 0; i < maxAttempts; i++) {
+    if (onStatus) onStatus(`Waiting for Amazon report… (${i + 1}/${maxAttempts})`);
+    await new Promise(r => setTimeout(r, 10000));
+    const statusData = await apiCall('/amazon/listings-status?reportId=' + encodeURIComponent(reportId));
+    if (!statusData.ok) throw new Error(statusData.error || 'Amazon report status check failed');
+    if (statusData.status === 'DONE') { reportDocumentId = statusData.reportDocumentId; break; }
+    if (statusData.status === 'CANCELLED' || statusData.status === 'FATAL') {
+      throw new Error('Amazon report generation failed (status: ' + statusData.status + ')');
+    }
+  }
+  if (!reportDocumentId) throw new Error('Amazon report took too long — try syncing again in a minute');
+
+  if (onStatus) onStatus('Downloading Amazon listings…');
+  const dlData = await apiCall('/amazon/listings-download', {
+    method: 'POST', body: JSON.stringify({ reportDocumentId })
+  });
+  if (!dlData.ok) throw new Error(dlData.error || 'Amazon report download failed');
+  return dlData.listings || [];
+}
+
 async function rprLoad() {
   // OPS pin can only use SKU Lookup — skip the mgmt-only load
   if (rprPinLevel === 'ops') return;
   document.getElementById('listings-content').innerHTML = `<div class="loading"><div class="spinner"></div> Pulling live eBay listings…</div>`;
+
+  let ebayListings = [], ebayError = null;
   try {
     const data = await apiCall('/ebay/listings');
-    rprAllListings = data.listings || [];
-    setSyncStatus(true);
-    renderListings(rprAllListings);
-    rprToast(`✓ ${rprAllListings.length} listings loaded`, 'success');
-    refreshQueueCount(); // update approval badge
-    refreshPriceAlertsBadge(); // update price alerts badge
-  } catch(e) {
+    ebayListings = data.listings || [];
+  } catch(e) { ebayError = e.message; }
+
+  // Amazon is best-effort — if it fails or times out, eBay data still
+  // loads and renders normally rather than blocking on Amazon entirely.
+  let amazonListings = [], amazonError = null;
+  try {
+    document.getElementById('listings-content').innerHTML = `<div class="loading"><div class="spinner"></div> eBay loaded — now pulling Amazon listings (this can take ~1-2 min)…</div>`;
+    amazonListings = await loadAmazonListings(msg => {
+      document.getElementById('listings-content').innerHTML = `<div class="loading"><div class="spinner"></div> ${msg}</div>`;
+    });
+  } catch(e) { amazonError = e.message; console.error('[Amazon listings]', e.message); }
+
+  if (ebayError && !ebayListings.length) {
     setSyncStatus(false);
     document.getElementById('listings-content').innerHTML =
-      `<div class="empty-state"><div class="icon">⚠️</div><div class="msg">${e.message}</div>
+      `<div class="empty-state"><div class="icon">⚠️</div><div class="msg">${ebayError}</div>
        <div class="sub">Check Worker is deployed and eBay credentials are set in Cloudflare</div></div>`;
+    return;
   }
+
+  rprAllListings = [...ebayListings.map(l => ({ ...l, marketplace: l.marketplace || 'ebay' })), ...amazonListings];
+  setSyncStatus(true);
+  renderListings(rprAllListings);
+  const summary = `✓ ${ebayListings.length} eBay` + (amazonListings.length ? ` + ${amazonListings.length} Amazon` : '') + ' listings loaded';
+  rprToast(summary + (amazonError ? ` (Amazon: ${amazonError})` : ''), amazonError ? 'error' : 'success');
+  refreshQueueCount(); // update approval badge
+  refreshPriceAlertsBadge(); // update price alerts badge
 }
 
 function renderListings(data) {
   const belowCount  = data.filter(l => isPriceBelow(l)).length;
-  const reviewCount = data.filter(l => !isPriceBelow(l) && l.cog1pc && l.price < getTargetPrice(l.cog1pc, l.packQty)).length;
-  const okCount     = data.filter(l => !isPriceBelow(l) && (!l.cog1pc || l.price >= getTargetPrice(l.cog1pc, l.packQty))).length;
+  const reviewCount = data.filter(l => !isPriceBelow(l) && l.cog1pc && l.price < listingTarget(l)).length;
+  const okCount     = data.filter(l => !isPriceBelow(l) && (!l.cog1pc || l.price >= listingTarget(l))).length;
 
   document.getElementById('stat-total').textContent  = data.length;
   document.getElementById('stat-below').textContent  = belowCount;
@@ -1445,12 +1511,12 @@ function renderListings(data) {
     let av, bv;
     if (S.col === 'pack')    { av = a.packQty;  bv = b.packQty; }
     else if (S.col === 'price')  { av = a.price||0; bv = b.price||0; }
-    else if (S.col === 'floor')  { av = a.cog1pc ? getMinPrice(a.cog1pc,a.packQty) : 0; bv = b.cog1pc ? getMinPrice(b.cog1pc,b.packQty) : 0; }
-    else if (S.col === 'target') { av = a.cog1pc ? getTargetPrice(a.cog1pc,a.packQty) : 0; bv = b.cog1pc ? getTargetPrice(b.cog1pc,b.packQty) : 0; }
+    else if (S.col === 'floor')  { av = listingFloor(a); bv = listingFloor(b); }
+    else if (S.col === 'target') { av = listingTarget(a); bv = listingTarget(b); }
     else if (S.col === 'qty')    { av = a.qty||0;   bv = b.qty||0; }
     else if (S.col === 'sku')    { av = a.sku||'';  bv = b.sku||''; return av.localeCompare(bv) * S.dir; }
     else if (S.col === 'status') {
-      const rank = l => isPriceBelow(l) ? 0 : (l.cog1pc && l.price < getTargetPrice(l.cog1pc,l.packQty)) ? 1 : 2;
+      const rank = l => isPriceBelow(l) ? 0 : (l.cog1pc && l.price < listingTarget(l)) ? 1 : 2;
       av = rank(a); bv = rank(b);
     }
     else return 0;
@@ -1463,9 +1529,13 @@ function renderListings(data) {
     return `<th class="num sortable${active?' sort-active':''}" onclick="listingsSort('${col}')" style="cursor:pointer;user-select:none">${label}${arrow}</th>`;
   }
 
+  const mpBadge = mp => mp === 'amazon'
+    ? `<span class="badge" style="background:#ff990022;color:#cc7a00;border:1px solid #cc7a0055">Amazon</span>`
+    : `<span class="badge" style="background:#0064d222;color:#0064d2;border:1px solid #0064d255">eBay</span>`;
+
   const rows = sortData.map(l => {
-    const floor  = l.cog1pc ? getMinPrice(l.cog1pc, l.packQty)    : 0;
-    const target = l.cog1pc ? getTargetPrice(l.cog1pc, l.packQty) : 0;
+    const floor  = listingFloor(l);
+    const target = listingTarget(l);
     const below  = isPriceBelow(l);
     // 1pc listings: shipping is separate so floor note shown
     const floorDisplay = floor
@@ -1479,7 +1549,8 @@ function renderListings(data) {
     return `<tr>
       <td class="sku" style="cursor:pointer" onclick="listingsSort('sku')">${l.sku}</td>
       <td class="bold">${l.title || l.sku}</td>
-      <td style="font-family:var(--mono);font-size:11px;color:var(--text3)">${l.itemId || l.offerId || '—'}</td>
+      <td>${mpBadge(l.marketplace)}</td>
+      <td style="font-family:var(--mono);font-size:11px;color:var(--text3)">${l.marketplace === 'amazon' ? (l.asin || '—') : (l.itemId || l.offerId || '—')}</td>
       <td class="num">${l.packQty}pc</td>
       <td class="num bold" style="color:${below ? 'var(--red)' : 'var(--text)'}">${fmt$(l.price)}</td>
       <td class="num">${floorDisplay}</td>
@@ -1494,7 +1565,7 @@ function renderListings(data) {
     <div class="table-wrap"><table class="data-table">
       <thead><tr>
         <th onclick="listingsSort('sku')" style="cursor:pointer;user-select:none">SKU${S.col==='sku'?(S.dir===1?' ▲':' ▼'):''}</th>
-        <th>Title</th><th>Item #</th>
+        <th>Title</th><th>Market</th><th>Item # / ASIN</th>
         ${sortTh('pack','Pack')}
         ${sortTh('price','Current')}
         ${sortTh('floor','Floor')}
@@ -1523,15 +1594,17 @@ function listingsSort(col) {
 }
 
 function filterListings() {
-  const q = document.getElementById('listing-search').value.toLowerCase();
-  const f = document.getElementById('listing-filter').value;
+  const q  = document.getElementById('listing-search').value.toLowerCase();
+  const f  = document.getElementById('listing-filter').value;
+  const mp = document.getElementById('listing-marketplace-filter') ? document.getElementById('listing-marketplace-filter').value : 'all';
   const filtered = rprAllListings.filter(l => {
-    const mq = !q || l.sku.toLowerCase().includes(q) || (l.title||'').toLowerCase().includes(q) || String(l.itemId||'').includes(q);
+    const mq = !q || l.sku.toLowerCase().includes(q) || (l.title||'').toLowerCase().includes(q) || String(l.itemId||l.asin||'').includes(q);
+    const mmp = mp === 'all' || l.marketplace === mp;
     const mf = f === 'all'    ? true
              : f === 'below'  ? isPriceBelow(l)
-             : f === 'review' ? (!isPriceBelow(l) && l.cog1pc && l.price < getTargetPrice(l.cog1pc, l.packQty))
-             : (!isPriceBelow(l) && (!l.cog1pc || l.price >= getTargetPrice(l.cog1pc, l.packQty)));
-    return mq && mf;
+             : f === 'review' ? (!isPriceBelow(l) && l.cog1pc && l.price < listingTarget(l))
+             : (!isPriceBelow(l) && (!l.cog1pc || l.price >= listingTarget(l)));
+    return mq && mmp && mf;
   });
   renderListings(filtered);
 }
@@ -1540,6 +1613,7 @@ function filterListings() {
 // PRICE MODAL
 // ════════════════════════════════════════════
 function openPriceModal(listing) {
+  if (listing.marketplace === 'amazon') { openAmazonPriceModal(listing); return; }
   currentListing = listing;
   const floor  = listing.cog1pc ? getMinPrice(listing.cog1pc, listing.packQty)    : 0;
   const target = listing.cog1pc ? getTargetPrice(listing.cog1pc, listing.packQty) : 0;
@@ -1656,6 +1730,121 @@ async function submitPriceChange() {
 function closeModal() {
   document.getElementById('price-modal').classList.add('hidden');
   currentListing = null;
+}
+
+// ════════════════════════════════════════════
+// AMAZON PRICE MODAL
+// Amazon prices per-SKU, not per-ASIN — updating an ASIN's price means
+// pushing the same new price to every SKU under it (confirmed behavior:
+// FBA + FBM siblings both get the same price). Unlike eBay's flow, this
+// has no auto-approve/queue tiers yet — just a floor guardrail — since
+// that policy layer hasn't been built for Amazon. Always shows a dry-run
+// confirmation (which SKUs will be touched) before ever pushing for real.
+let currentAmazonListing = null;
+
+function openAmazonPriceModal(listing) {
+  currentAmazonListing = listing;
+  const floor  = listingFloor(listing);
+  const target = listingTarget(listing);
+  const max    = listingMax(listing);
+
+  document.getElementById('modal-title').textContent = `Update Price — ${listing.sku} (Amazon)`;
+  document.getElementById('modal-body').innerHTML = `
+    <div class="info-grid" style="margin-bottom:16px">
+      <div class="info-cell"><div class="info-cell-label">ASIN</div><div class="info-cell-value" style="font-size:11px;font-family:var(--mono)">${listing.asin || '—'}</div></div>
+      <div class="info-cell"><div class="info-cell-label">Pack Size</div><div class="info-cell-value">${listing.packQty}pc</div></div>
+      <div class="info-cell"><div class="info-cell-label">Current Price</div><div class="info-cell-value">${fmt$(listing.price)}</div></div>
+      <div class="info-cell"><div class="info-cell-label">COGS (1pc)</div><div class="info-cell-value">${listing.cog1pc ? fmt$(listing.cog1pc) : 'Not in COGS table'}</div></div>
+    </div>
+    ${floor ? `<div class="info-grid" style="margin-bottom:16px">
+      <div class="info-cell"><div class="info-cell-label">Floor</div><div class="info-cell-value" style="color:var(--red)">${fmt$(floor)}</div></div>
+      <div class="info-cell"><div class="info-cell-label">Target</div><div class="info-cell-value" style="color:var(--accent)">${fmt$(target)}</div></div>
+      <div class="info-cell"><div class="info-cell-label">Max</div><div class="info-cell-value" style="color:var(--green)">${fmt$(max)}</div></div>
+    </div>` : ''}
+    <div class="form-group">
+      <label class="form-label">New Price</label>
+      <input class="form-input price-input-large" type="number" id="amz-new-price-input"
+        step="0.01" value="${listing.price ? listing.price.toFixed(2) : ''}">
+      ${floor ? `<div class="form-hint">Floor: ${fmt$(floor)} · Target: ${fmt$(target)} · Max: ${fmt$(max)}</div>` : ''}
+    </div>
+    <div id="amz-modal-alert"></div>
+    <div id="amz-fanout-preview"></div>`;
+  document.getElementById('modal-footer').innerHTML = `
+    <button class="btn btn-secondary" onclick="closeModal()">Cancel</button>
+    <button class="btn btn-primary" id="amz-check-btn" onclick="amazonCheckFanout()">Check SKUs & Continue</button>`;
+  document.getElementById('price-modal').classList.remove('hidden');
+}
+
+// Step 1: dry-run — find every SKU under this ASIN, show them explicitly
+// before anything real happens. Never silently pushes on first click.
+async function amazonCheckFanout() {
+  const newPrice = parseFloat(document.getElementById('amz-new-price-input').value);
+  const alertEl  = document.getElementById('amz-modal-alert');
+  if (!newPrice || newPrice <= 0) { alertEl.innerHTML = `<div class="alert alert-error">Enter a valid price</div>`; return; }
+
+  const floor = listingFloor(currentAmazonListing);
+  if (floor && newPrice < floor * 0.95) {
+    alertEl.innerHTML = `<div class="alert alert-error">⛔ More than 5% below floor (${fmt$(floor)}). Cannot proceed.</div>`;
+    return;
+  }
+
+  const btn = document.getElementById('amz-check-btn');
+  btn.disabled = true; btn.textContent = 'Checking…';
+  try {
+    const dry = await apiCall('/amazon/update-price', {
+      method: 'POST',
+      body: JSON.stringify({ asin: currentAmazonListing.asin, newPrice, dryRun: true })
+    });
+    if (!dry.ok) { alertEl.innerHTML = `<div class="alert alert-error">${dry.error || 'SKU lookup failed'}</div>`; btn.disabled = false; btn.textContent = 'Check SKUs & Continue'; return; }
+
+    const skuList = (dry.skus || []).map(s => `<li style="font-family:var(--mono);font-size:12px">${s}</li>`).join('');
+    document.getElementById('amz-fanout-preview').innerHTML = `
+      <div class="alert alert-warning" style="margin-top:12px">
+        <strong>This will update ${dry.skus.length} SKU${dry.skus.length===1?'':'s'}</strong> under ASIN ${currentAmazonListing.asin} to ${fmt$(newPrice)}:
+        <ul style="margin:8px 0 0 18px">${skuList}</ul>
+      </div>`;
+    document.getElementById('modal-footer').innerHTML = `
+      <button class="btn btn-secondary" onclick="closeModal()">Cancel</button>
+      <button class="btn btn-primary" onclick="submitAmazonPriceChange(${newPrice})">Confirm — Update ${dry.skus.length} SKU${dry.skus.length===1?'':'s'}</button>`;
+  } catch(e) {
+    alertEl.innerHTML = `<div class="alert alert-error">${e.message}</div>`;
+  } finally {
+    btn.disabled = false;
+    if (document.getElementById('amz-check-btn')) btn.textContent = 'Check SKUs & Continue';
+  }
+}
+
+// Step 2: the real push, only reachable after explicit confirmation above.
+async function submitAmazonPriceChange(newPrice) {
+  const alertEl = document.getElementById('amz-modal-alert');
+  try {
+    const result = await apiCall('/amazon/update-price', {
+      method: 'POST',
+      body: JSON.stringify({ asin: currentAmazonListing.asin, newPrice })
+    });
+    if (!result.ok && !result.results) {
+      alertEl.innerHTML = `<div class="alert alert-error">${result.error || 'Update failed'}</div>`;
+      return;
+    }
+    const rows = (result.results || []).map(r =>
+      `<div style="display:flex;justify-content:space-between;font-size:12px;padding:4px 0;border-bottom:1px solid var(--border)">
+        <span style="font-family:var(--mono)">${r.sku}</span>
+        <span style="color:${r.ok?'var(--green)':'var(--red)'}">${r.ok ? '✓ Updated' : '✗ ' + (r.error||'Failed')}</span>
+      </div>`).join('');
+    document.getElementById('amz-fanout-preview').innerHTML =
+      `<div style="margin-top:12px"><strong>Results:</strong>${rows}</div>`;
+    document.getElementById('modal-footer').innerHTML = `<button class="btn btn-secondary" onclick="closeModal()">Close</button>`;
+
+    if (result.ok) {
+      rprToast('✓ Amazon price updated on all SKUs', 'success');
+      const idx = rprAllListings.findIndex(l => l.marketplace === 'amazon' && l.asin === currentAmazonListing.asin);
+      if (idx > -1) { rprAllListings[idx].price = newPrice; filterListings(); }
+    } else {
+      rprToast('⚠ Some SKUs failed — see results above', 'error');
+    }
+  } catch(e) {
+    alertEl.innerHTML = `<div class="alert alert-error">${e.message}</div>`;
+  }
 }
 
 // ════════════════════════════════════════════
