@@ -769,25 +769,34 @@ body { margin:0; padding:0; font-family:'DM Sans',sans-serif; }
   </div>
   </div>
 
-</div><!-- /app -->
+  <!-- BUGFIX: the modal and toast below were previously placed AFTER
+       #repricer-root's own closing tag, making them direct children of
+       <body> instead of descendants of #repricer-root. Since their
+       styling (position:fixed, z-index:9000, display:flex) is scoped as
+       "#repricer-root .modal-overlay", none of it ever matched — the
+       modal rendered as a plain static block with no special positioning
+       at all, which is exactly why it appeared to show up "behind" the
+       page instead of as an overlay on top. This affected BOTH eBay and
+       Amazon editing equally (same shared modal element) — just happened
+       to get noticed while testing Amazon specifically. Moved inside
+       #repricer-root so the existing CSS scoping actually applies. -->
 
-<!-- PRICE CHANGE MODAL -->
-<div class="modal-overlay hidden" id="price-modal">
-  <div class="modal">
-    <div class="modal-header">
-      <div class="modal-title" id="modal-title">Update Price</div>
-      <button class="modal-close" onclick="closeModal()">✕</button>
+  <!-- PRICE CHANGE MODAL -->
+  <div class="modal-overlay hidden" id="price-modal">
+    <div class="modal">
+      <div class="modal-header">
+        <div class="modal-title" id="modal-title">Update Price</div>
+        <button class="modal-close" onclick="closeModal()">✕</button>
+      </div>
+      <div class="modal-body" id="modal-body"></div>
+      <div class="modal-footer" id="modal-footer"></div>
     </div>
-    <div class="modal-body" id="modal-body"></div>
-    <div class="modal-footer" id="modal-footer"></div>
   </div>
-</div>
 
-<!-- TOAST -->
-<div id="toast"></div>
+  <!-- TOAST -->
+  <div id="toast"></div>
 
-
-</div>
+</div><!-- /app -->
 
 
 <script>
