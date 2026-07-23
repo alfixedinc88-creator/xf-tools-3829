@@ -3621,17 +3621,7 @@ async function wFetch(url, opts) {
   };
 
   function xfrShowFromLocs() {
-    // BUGFIX: this filter only checked cases > 0, never excluding
-    // isPlaceholder — a "WILL BE HERE" row has cases recorded (the
-    // expected/on-order quantity) even though it isn't a real shelf yet.
-    // This let workers pick a placeholder as a transfer FROM source,
-    // which then fails at approval time with "FROM row not found in D1"
-    // once the placeholder gets resolved into a real location by an
-    // unrelated stock-in in the meantime — confirmed root cause of
-    // several stuck transfer approvals. isPlaceholder is already
-    // correctly excluded elsewhere in this file (see the OUT-of-stock
-    // check above); this was the one spot that got missed.
-    var locs = (xfrPart.locations || []).filter(function(l) { return parseFloat(l.cases) > 0 && !l.isPlaceholder; });
+    var locs = (xfrPart.locations || []).filter(function(l) { return parseFloat(l.cases) > 0; });
     var list = g('xfr-from-list');
     list.innerHTML = '';
     var lbl = g('xfr-from-label'); if (lbl) lbl.textContent = 'From Location';
@@ -3775,6 +3765,18 @@ async function wFetch(url, opts) {
       name:         xfrPart.name || '',
       fromLocation: xfrFromLoc.location,
       fromRowIndex: xfrFromLoc.rowIndex,
+      // BUGFIX: masterId (the D1 master_list row's real primary key) was
+      // available on xfrFromLoc (inventoryLookup already returns it per
+      // location) but never captured here. Without it, the transfer's
+      // FROM row could only be resolved later by matching part_num +
+      // location TEXT — which breaks if that location string changes
+      // between when the transfer is queued and when it's approved (e.g.
+      // the pallet gets received again, or partially shelved, renaming
+      // the row's location out from under an already-queued transfer).
+      // Capturing the actual row ID here means the transfer can find the
+      // exact same row later regardless of what its location text says
+      // by then — same pattern already used for regular stock in/out.
+      fromMasterId: xfrFromLoc.masterId || null,
       cases:        cases,
       initials:     initials,
       toLocation:   toLocation,
@@ -3804,6 +3806,7 @@ async function wFetch(url, opts) {
       name:         xfrPart.name || '',
       fromLocation: xfrFromLoc.location,
       fromRowIndex: xfrFromLoc.rowIndex,
+      fromMasterId: xfrFromLoc.masterId || null, // see xfrAddToCartInline for why
       cases:        cases,
       initials:     initials,
       toLocation:   toLocation,
@@ -4097,6 +4100,7 @@ async function wFetch(url, opts) {
         body: JSON.stringify({
           partNum: item.partNum, sku: item.sku, name: item.name || '',
           fromLocation: item.fromLocation, fromRowIndex: item.fromRowIndex,
+          fromMasterId: item.fromMasterId || null,
           toLocation: item.toLocation, toRowIndex: item.toRowIndex,
           isNewLocation: !!item.isNewLocation,
           cases: item.cases, initials: item.initials, notes: notes
