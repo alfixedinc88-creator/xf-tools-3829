@@ -3621,7 +3621,17 @@ async function wFetch(url, opts) {
   };
 
   function xfrShowFromLocs() {
-    var locs = (xfrPart.locations || []).filter(function(l) { return parseFloat(l.cases) > 0; });
+    // BUGFIX: this filter only checked cases > 0, never excluding
+    // isPlaceholder — a "WILL BE HERE" row has cases recorded (the
+    // expected/on-order quantity) even though it isn't a real shelf yet.
+    // This let workers pick a placeholder as a transfer FROM source,
+    // which then fails at approval time with "FROM row not found in D1"
+    // once the placeholder gets resolved into a real location by an
+    // unrelated stock-in in the meantime — confirmed root cause of
+    // several stuck transfer approvals. isPlaceholder is already
+    // correctly excluded elsewhere in this file (see the OUT-of-stock
+    // check above); this was the one spot that got missed.
+    var locs = (xfrPart.locations || []).filter(function(l) { return parseFloat(l.cases) > 0 && !l.isPlaceholder; });
     var list = g('xfr-from-list');
     list.innerHTML = '';
     var lbl = g('xfr-from-label'); if (lbl) lbl.textContent = 'From Location';
