@@ -389,6 +389,7 @@ body { margin:0; padding:0; font-family:'DM Sans',sans-serif; }
     <div class="tabitem"        id="tab-pricealerts" onclick="rprTab('pricealerts')">🏷️ Price Alerts  <span class="tab-cnt" id="cnt-pricealerts" style="background:#fdf0ee;color:#c52a1a">—</span></div>
     <div class="tabitem"        id="tab-skulookup"   onclick="rprTab('skulookup')">🔎 SKU Lookup</div>
     <div class="tabitem" id="tab-calculator" onclick="rprTab('calculator')">🧮 Price Calculator</div>
+    <div class="tabitem" id="tab-bulktitles" onclick="rprTab('bulktitles')">✏️ Bulk Titles</div>
   </div>
 
   <!-- ═══ TAB: ACTIVE LISTINGS ═══ -->
@@ -767,7 +768,64 @@ body { margin:0; padding:0; font-family:'DM Sans',sans-serif; }
 
     </div>
   </div>
+
+  <!-- ═══ TAB: BULK TITLES (Amazon JSON_LISTINGS_FEED) ═══ -->
+  <div class="tab-panel" id="panel-bulktitles">
+    <div class="panel-body">
+      <style>
+        #panel-bulktitles .bt-card{background:var(--surface2);border:1px solid var(--border);border-radius:12px;padding:20px;margin-bottom:16px}
+        #panel-bulktitles .bt-label{font-size:11px;font-weight:700;letter-spacing:.6px;text-transform:uppercase;color:var(--text-muted);margin-bottom:8px;display:block}
+        #panel-bulktitles textarea{width:100%;min-height:160px;padding:12px;border:1.5px solid var(--border);border-radius:8px;font-size:13px;font-family:var(--mono,monospace);background:var(--surface);color:var(--text);outline:none;box-sizing:border-box;resize:vertical}
+        #panel-bulktitles textarea:focus{border-color:var(--accent)}
+        #panel-bulktitles .bt-hint{font-size:11px;color:var(--text-muted);margin-top:6px}
+        #panel-bulktitles .bt-btn{padding:10px 20px;border-radius:8px;border:none;font-size:14px;font-weight:600;cursor:pointer;font-family:inherit;margin-top:12px;margin-right:8px}
+        #panel-bulktitles .bt-btn-primary{background:var(--accent);color:#fff}
+        #panel-bulktitles .bt-btn-secondary{background:var(--surface);color:var(--text);border:1.5px solid var(--border)}
+        #panel-bulktitles .bt-btn:disabled{opacity:.4;cursor:not-allowed}
+        #panel-bulktitles .bt-table{width:100%;border-collapse:collapse;margin-top:12px}
+        #panel-bulktitles .bt-table th{padding:9px 12px;text-align:left;font-size:11px;font-weight:700;letter-spacing:.5px;text-transform:uppercase;color:var(--text-muted);background:var(--surface);border-bottom:2px solid var(--border)}
+        #panel-bulktitles .bt-table td{padding:10px 12px;border-bottom:1px solid var(--border);font-size:12px;vertical-align:top}
+        #panel-bulktitles .bt-table tr:last-child td{border-bottom:none}
+        #panel-bulktitles .bt-mono{font-family:var(--mono,monospace)}
+        #panel-bulktitles .bt-over{color:#c52a1a;font-weight:700}
+        #panel-bulktitles .bt-ok{color:#0e7f3e;font-weight:700}
+        #panel-bulktitles .bt-badge{display:inline-flex;align-items:center;gap:6px;padding:3px 9px;border-radius:6px;font-size:11px;font-weight:600;border:1px solid}
+        #panel-bulktitles .bt-badge.ok{background:#ecfdf5;color:#0e7f3e;border-color:#0e7f3e}
+        #panel-bulktitles .bt-badge.fail{background:#fdf0ee;color:#c52a1a;border-color:#c52a1a}
+        #panel-bulktitles .bt-badge.pending{background:#fffbeb;color:#b45309;border-color:#b45309}
+        #panel-bulktitles .bt-status-line{font-size:13px;margin-top:12px;padding:10px 14px;border-radius:8px}
+        #panel-bulktitles .bt-status-line.info{background:#eef2fd;color:var(--accent)}
+        #panel-bulktitles .bt-status-line.error{background:#fdf0ee;color:#c52a1a}
+        #panel-bulktitles .bt-status-line.success{background:#ecfdf5;color:#0e7f3e}
+      </style>
+
+      <div class="bt-card">
+        <div class="bt-label">Paste CSV — ASIN, New Title (one per line)</div>
+        <textarea id="bt-input" placeholder="B07BCNXV1Q,XFITTING 10 Pack Pex Barb 1 Inch Ball Valve, Yellow Handle, Brass&#10;B08JGQ3HWW,10 Pieces XFITTING 3/4&quot; Male x 3/4&quot; GHT Hose Bibb No-Kink, 1/4 Turn"></textarea>
+        <div class="bt-hint">First column ASIN, rest of the line is the title (commas inside titles are fine — only the first comma splits).</div>
+        <button class="bt-btn bt-btn-primary" onclick="btParse()">Parse &amp; Preview</button>
+        <button class="bt-btn bt-btn-secondary" onclick="btReset()">Clear</button>
+      </div>
+
+      <div id="bt-preview-card" style="display:none" class="bt-card">
+        <div class="bt-label" id="bt-preview-title">Preview</div>
+        <div id="bt-preview-table"></div>
+        <button class="bt-btn bt-btn-secondary" id="bt-checksku-btn" onclick="btCheckSkus()">Check SKUs (Dry Run)</button>
+      </div>
+
+      <div id="bt-status" style="display:none"></div>
+
+      <div id="bt-confirm-card" style="display:none" class="bt-card"></div>
+
+      <div id="bt-results-card" style="display:none" class="bt-card">
+        <div class="bt-label">Results</div>
+        <div id="bt-results-table"></div>
+      </div>
+
+    </div>
   </div>
+  </div>
+
 
   <!-- BUGFIX: the modal and toast below were previously placed AFTER
        #repricer-root's own closing tag, making them direct children of
@@ -1036,6 +1094,7 @@ function rprTab(tab) {
   document.getElementById('panel-' + tab).classList.add('active');
   if (tab === 'approval') renderApprovals();
   if (tab === 'calculator') rprCalcReset();
+  if (tab === 'bulktitles') btReset();
 }
 
 async function refreshQueueCount() {
@@ -3508,6 +3567,177 @@ function awdHandleScan(raw) {
       rprToast('Save failed: ' + e.message, 'error');
     }
   };
+
+  // ════════════════════════════════════════════
+  // BULK TITLES (Amazon JSON_LISTINGS_FEED)
+  // ════════════════════════════════════════════
+  var btParsed = [];       // [{asin, newTitle}]
+  var btResolvedSkus = []; // [{asin, sku, newTitle}] -- from dry-run check
+  var btFeedId = null;
+  var btPollTimer = null;
+
+  window.btReset = function() {
+    btParsed = []; btResolvedSkus = []; btFeedId = null;
+    if (btPollTimer) { clearInterval(btPollTimer); btPollTimer = null; }
+    var input = g('bt-input'); if (input) input.value = '';
+    var pc = g('bt-preview-card'); if (pc) pc.style.display = 'none';
+    var st = g('bt-status'); if (st) { st.style.display = 'none'; st.innerHTML = ''; }
+    var cc = g('bt-confirm-card'); if (cc) { cc.style.display = 'none'; cc.innerHTML = ''; }
+    var rc = g('bt-results-card'); if (rc) rc.style.display = 'none';
+  };
+
+  function btShowStatus(msg, type) {
+    var st = g('bt-status');
+    if (!st) return;
+    st.style.display = 'block';
+    st.innerHTML = '<div class="bt-status-line ' + (type || 'info') + '">' + msg + '</div>';
+  }
+
+  // Parses "ASIN,rest of line is the title" -- only the FIRST comma splits,
+  // so commas inside the title itself (very common in these titles) are safe.
+  window.btParse = function() {
+    var raw = (g('bt-input') || {}).value || '';
+    var lines = raw.split('\n').map(function(l){ return l.trim(); }).filter(Boolean);
+    btParsed = [];
+    var badRows = [];
+    lines.forEach(function(line, idx) {
+      var commaIdx = line.indexOf(',');
+      if (commaIdx === -1) { badRows.push(idx + 1); return; }
+      var asin = line.slice(0, commaIdx).trim();
+      var newTitle = line.slice(commaIdx + 1).trim();
+      if (!asin || !newTitle) { badRows.push(idx + 1); return; }
+      btParsed.push({ asin: asin, newTitle: newTitle });
+    });
+
+    if (!btParsed.length) {
+      btShowStatus('No valid rows found. Format: ASIN,New Title (one per line)', 'error');
+      return;
+    }
+
+    var overLimit = btParsed.filter(function(t){ return t.newTitle.length > 75; });
+    var rows = btParsed.map(function(t) {
+      var over = t.newTitle.length > 75;
+      return '<tr>'
+        + '<td class="bt-mono">' + t.asin + '</td>'
+        + '<td>' + t.newTitle + '</td>'
+        + '<td class="' + (over ? 'bt-over' : 'bt-ok') + '">' + t.newTitle.length + (over ? ' ⚠' : ' ✓') + '</td>'
+        + '</tr>';
+    }).join('');
+    g('bt-preview-title').textContent = btParsed.length + ' title' + (btParsed.length!==1?'s':'') + ' parsed'
+      + (overLimit.length ? ' — ' + overLimit.length + ' OVER 75 chars, will be rejected' : '')
+      + (badRows.length ? ' — ' + badRows.length + ' row(s) skipped (bad format)' : '');
+    g('bt-preview-table').innerHTML = '<div class="table-wrap"><table class="bt-table"><thead><tr><th>ASIN</th><th>New Title</th><th>Length</th></tr></thead><tbody>' + rows + '</tbody></table></div>';
+    g('bt-preview-card').style.display = 'block';
+    g('bt-checksku-btn').disabled = overLimit.length > 0;
+    g('bt-checksku-btn').textContent = overLimit.length > 0 ? 'Fix over-limit titles first' : 'Check SKUs (Dry Run)';
+    g('bt-confirm-card').style.display = 'none';
+    g('bt-results-card').style.display = 'none';
+    var st = g('bt-status'); if (st) { st.style.display = 'none'; st.innerHTML = ''; }
+  };
+
+  // Step 1: dry-run -- resolve every ASIN to its SKU(s) via platform_skus,
+  // show exactly what would be submitted before anything real happens.
+  window.btCheckSkus = async function() {
+    if (!btParsed.length) return;
+    btShowStatus('Checking SKUs…', 'info');
+    try {
+      var res = await apiCall('/amazon/titles-feed-submit', {
+        method: 'POST',
+        body: JSON.stringify({ titles: btParsed, dryRun: true })
+      });
+      if (!res.ok) { btShowStatus(res.error || 'Check failed', 'error'); return; }
+
+      var unresolvedHtml = res.unresolvedAsins && res.unresolvedAsins.length
+        ? '<div class="bt-status-line error" style="margin-top:8px">' + res.unresolvedAsins.length + ' ASIN(s) not found in your imported Amazon SKU list — they will be skipped: '
+          + res.unresolvedAsins.join(', ') + '</div>'
+        : '';
+
+      var sampleRows = (res.sample || []).map(function(r) {
+        return '<tr><td class="bt-mono">' + r.asin + '</td><td class="bt-mono">' + r.sku + '</td><td>' + r.newTitle + '</td></tr>';
+      }).join('');
+
+      g('bt-confirm-card').innerHTML =
+        '<div class="bt-label">Ready to Submit</div>'
+        + '<div>This will update <strong>' + res.resolvedSkus + ' SKU(s)</strong> across ' + res.totalAsins + ' ASIN(s) submitted.</div>'
+        + unresolvedHtml
+        + (sampleRows ? '<div class="table-wrap"><table class="bt-table" style="margin-top:10px"><thead><tr><th>ASIN</th><th>SKU</th><th>New Title</th></tr></thead><tbody>' + sampleRows + '</tbody></table>'
+            + (res.resolvedSkus > res.sample.length ? '<div class="bt-hint">…and ' + (res.resolvedSkus - res.sample.length) + ' more</div>' : '') + '</div>' : '')
+        + '<button class="bt-btn bt-btn-primary" onclick="btSubmitFeed()">Confirm — Submit Feed</button>'
+        + '<button class="bt-btn bt-btn-secondary" onclick="btReset()">Cancel</button>';
+      g('bt-confirm-card').style.display = 'block';
+      var st = g('bt-status'); if (st) { st.style.display = 'none'; st.innerHTML = ''; }
+    } catch(e) {
+      btShowStatus('Check failed: ' + e.message, 'error');
+    }
+  };
+
+  // Step 2: the real submission, only reachable after explicit confirmation above.
+  window.btSubmitFeed = async function() {
+    g('bt-confirm-card').innerHTML = '';
+    g('bt-confirm-card').style.display = 'none';
+    btShowStatus('Submitting feed to Amazon…', 'info');
+    try {
+      var res = await apiCall('/amazon/titles-feed-submit', {
+        method: 'POST',
+        body: JSON.stringify({ titles: btParsed, dryRun: false })
+      });
+      if (!res.ok) { btShowStatus(res.error || 'Submission failed', 'error'); return; }
+      btFeedId = res.feedId;
+      btShowStatus('Feed submitted (ID: ' + btFeedId + ') — ' + res.skusSubmitted + ' SKUs. Waiting for Amazon to process…', 'info');
+      btPollFeedStatus();
+    } catch(e) {
+      btShowStatus('Submission failed: ' + e.message, 'error');
+    }
+  };
+
+  // Polls every 15s -- feed processing can take a few minutes, matching
+  // the same patient-polling pattern already used for Amazon listings sync.
+  function btPollFeedStatus() {
+    if (btPollTimer) clearInterval(btPollTimer);
+    var attempts = 0;
+    var maxAttempts = 40; // 40 * 15s = 10 minutes
+    btPollTimer = setInterval(async function() {
+      attempts++;
+      try {
+        var res = await apiCall('/amazon/titles-feed-status?feedId=' + encodeURIComponent(btFeedId));
+        if (!res.ok) { clearInterval(btPollTimer); btShowStatus(res.error || 'Status check failed', 'error'); return; }
+        btShowStatus('Feed ' + btFeedId + ' — status: ' + res.status + ' (checked ' + attempts + '/' + maxAttempts + ')', 'info');
+        if (res.status === 'DONE') {
+          clearInterval(btPollTimer);
+          btFetchReport(res.resultFeedDocumentId);
+        } else if (res.status === 'CANCELLED' || res.status === 'FATAL') {
+          clearInterval(btPollTimer);
+          btShowStatus('Feed processing failed with status: ' + res.status, 'error');
+        } else if (attempts >= maxAttempts) {
+          clearInterval(btPollTimer);
+          btShowStatus('Still processing after 10 minutes — check back later. Feed ID: ' + btFeedId, 'error');
+        }
+      } catch(e) {
+        clearInterval(btPollTimer);
+        btShowStatus('Status check failed: ' + e.message, 'error');
+      }
+    }, 15000);
+  }
+
+  async function btFetchReport(resultFeedDocumentId) {
+    btShowStatus('Feed processed — fetching results…', 'info');
+    try {
+      var res = await apiCall('/amazon/titles-feed-report?resultFeedDocumentId=' + encodeURIComponent(resultFeedDocumentId));
+      if (!res.ok) { btShowStatus(res.error || 'Report fetch failed', 'error'); return; }
+      var okCount = res.results.filter(function(r){ return r.ok; }).length;
+      var failCount = res.results.length - okCount;
+      var rows = res.results.map(function(r) {
+        var badge = r.ok ? '<span class="bt-badge ok">✓ Updated</span>' : '<span class="bt-badge fail">✗ Failed</span>';
+        var errMsg = (!r.ok && r.errors && r.errors.length) ? r.errors.map(function(e){return e.message;}).join('; ') : '';
+        return '<tr><td class="bt-mono">' + r.sku + '</td><td>' + badge + '</td><td>' + errMsg + '</td></tr>';
+      }).join('');
+      g('bt-results-table').innerHTML = '<div class="table-wrap"><table class="bt-table"><thead><tr><th>SKU</th><th>Status</th><th>Error</th></tr></thead><tbody>' + rows + '</tbody></table></div>';
+      g('bt-results-card').style.display = 'block';
+      btShowStatus(okCount + ' updated, ' + failCount + ' failed', failCount > 0 ? 'error' : 'success');
+    } catch(e) {
+      btShowStatus('Report fetch failed: ' + e.message, 'error');
+    }
+  }
 
 })();
 
