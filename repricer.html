@@ -3573,11 +3573,11 @@ function awdHandleScan(raw) {
   // ════════════════════════════════════════════
   var btParsed = [];       // [{asin, newTitle}]
   var btResolvedSkus = []; // [{asin, sku, newTitle}] -- from dry-run check
-  var btFeedId = null;
+  var btFeedIds = []; // multiple batches of 20 each get their own feed
   var btPollTimer = null;
 
   window.btReset = function() {
-    btParsed = []; btResolvedSkus = []; btFeedId = null;
+    btParsed = []; btResolvedSkus = []; btFeedIds = [];
     if (btPollTimer) { clearInterval(btPollTimer); btPollTimer = null; }
     var input = g('bt-input'); if (input) input.value = '';
     var pc = g('bt-preview-card'); if (pc) pc.style.display = 'none';
@@ -3635,34 +3635,53 @@ function awdHandleScan(raw) {
     var st = g('bt-status'); if (st) { st.style.display = 'none'; st.innerHTML = ''; }
   };
 
-  // Step 1: dry-run -- resolve every ASIN to its SKU(s) via platform_skus,
-  // show exactly what would be submitted before anything real happens.
+  // Step 1: dry-run -- resolve every ASIN to its SKU(s) via a live Amazon
+  // lookup (not the AmazonSKU sheet — that only lists one correctly-
+  // formatted SKU per ASIN by design, not every SKU/FBA-FBM sibling).
+  // The worker caps each call at 20 ASINs (5 live lookups in parallel) to
+  // stay under the worker's execution limit, so for anything beyond 20
+  // this loops automatically, accumulating totals across every batch.
   window.btCheckSkus = async function() {
     if (!btParsed.length) return;
-    btShowStatus('Checking SKUs…', 'info');
-    try {
-      var res = await apiCall('/amazon/titles-feed-submit', {
-        method: 'POST',
-        body: JSON.stringify({ titles: btParsed, dryRun: true })
-      });
-      if (!res.ok) { btShowStatus(res.error || 'Check failed', 'error'); return; }
+    var pending = btParsed.slice();
+    var totalResolved = 0, totalUnresolved = [], allSample = [];
+    var batchNum = 0, totalBatches = Math.ceil(pending.length / 20);
 
-      var unresolvedHtml = res.unresolvedAsins && res.unresolvedAsins.length
-        ? '<div class="bt-status-line error" style="margin-top:8px">' + res.unresolvedAsins.length + ' ASIN(s) not found in your imported Amazon SKU list — they will be skipped: '
-          + res.unresolvedAsins.join(', ') + '</div>'
+    try {
+      while (pending.length) {
+        batchNum++;
+        btShowStatus('Checking SKUs — batch ' + batchNum + ' of ' + totalBatches + ' (' + pending.length + ' ASINs left)…', 'info');
+        var res = await apiCall('/amazon/titles-feed-submit', {
+          method: 'POST',
+          body: JSON.stringify({ titles: pending, dryRun: true })
+        });
+        if (!res.ok) { btShowStatus(res.error || 'Check failed', 'error'); return; }
+        totalResolved += res.resolvedSkus;
+        totalUnresolved = totalUnresolved.concat(res.unresolvedAsins || []);
+        allSample = allSample.concat(res.sample || []);
+        // remainingAsins tells us what's left -- rebuild the pending list
+        // to only those ASINs (keeping their newTitle) for the next loop
+        var remainingSet = {};
+        (res.remainingAsins || []).forEach(function(a){ remainingSet[a] = true; });
+        pending = btParsed.filter(function(t){ return remainingSet[t.asin]; });
+      }
+
+      var unresolvedHtml = totalUnresolved.length
+        ? '<div class="bt-status-line error" style="margin-top:8px">' + totalUnresolved.length + ' ASIN(s) have no active SKU on Amazon — they will be skipped: '
+          + totalUnresolved.join(', ') + '</div>'
         : '';
 
-      var sampleRows = (res.sample || []).map(function(r) {
+      var sampleRows = allSample.slice(0, 15).map(function(r) {
         return '<tr><td class="bt-mono">' + r.asin + '</td><td class="bt-mono">' + r.sku + '</td><td>' + r.newTitle + '</td></tr>';
       }).join('');
 
       g('bt-confirm-card').innerHTML =
         '<div class="bt-label">Ready to Submit</div>'
-        + '<div>This will update <strong>' + res.resolvedSkus + ' SKU(s)</strong> across ' + res.totalAsins + ' ASIN(s) submitted.</div>'
+        + '<div>This will update <strong>' + totalResolved + ' SKU(s)</strong> across ' + btParsed.length + ' ASIN(s) submitted, in ' + totalBatches + ' feed batch(es).</div>'
         + unresolvedHtml
         + (sampleRows ? '<div class="table-wrap"><table class="bt-table" style="margin-top:10px"><thead><tr><th>ASIN</th><th>SKU</th><th>New Title</th></tr></thead><tbody>' + sampleRows + '</tbody></table>'
-            + (res.resolvedSkus > res.sample.length ? '<div class="bt-hint">…and ' + (res.resolvedSkus - res.sample.length) + ' more</div>' : '') + '</div>' : '')
-        + '<button class="bt-btn bt-btn-primary" onclick="btSubmitFeed()">Confirm — Submit Feed</button>'
+            + (totalResolved > allSample.length ? '<div class="bt-hint">…and ' + (totalResolved - Math.min(15,allSample.length)) + ' more</div>' : '') + '</div>' : '')
+        + '<button class="bt-btn bt-btn-primary" onclick="btSubmitFeed()">Confirm — Submit ' + totalBatches + ' Feed Batch(es)</button>'
         + '<button class="bt-btn bt-btn-secondary" onclick="btReset()">Cancel</button>';
       g('bt-confirm-card').style.display = 'block';
       var st = g('bt-status'); if (st) { st.style.display = 'none'; st.innerHTML = ''; }
@@ -3671,46 +3690,79 @@ function awdHandleScan(raw) {
     }
   };
 
-  // Step 2: the real submission, only reachable after explicit confirmation above.
+  // Step 2: the real submission, only reachable after explicit confirmation
+  // above. Loops the same way as the dry-run check -- each batch of 20
+  // becomes its own feed, so this can create multiple feedIds for a large
+  // submission. All of them get polled and reported on together below.
   window.btSubmitFeed = async function() {
     g('bt-confirm-card').innerHTML = '';
     g('bt-confirm-card').style.display = 'none';
-    btShowStatus('Submitting feed to Amazon…', 'info');
+    btFeedIds = [];
+    var pending = btParsed.slice();
+    var batchNum = 0, totalBatches = Math.ceil(pending.length / 20);
+    var totalSkusSubmitted = 0;
+
     try {
-      var res = await apiCall('/amazon/titles-feed-submit', {
-        method: 'POST',
-        body: JSON.stringify({ titles: btParsed, dryRun: false })
-      });
-      if (!res.ok) { btShowStatus(res.error || 'Submission failed', 'error'); return; }
-      btFeedId = res.feedId;
-      btShowStatus('Feed submitted (ID: ' + btFeedId + ') — ' + res.skusSubmitted + ' SKUs. Waiting for Amazon to process…', 'info');
+      while (pending.length) {
+        batchNum++;
+        btShowStatus('Submitting batch ' + batchNum + ' of ' + totalBatches + ' to Amazon…', 'info');
+        var res = await apiCall('/amazon/titles-feed-submit', {
+          method: 'POST',
+          body: JSON.stringify({ titles: pending, dryRun: false })
+        });
+        if (!res.ok) { btShowStatus((res.error || 'Submission failed') + ' (after ' + btFeedIds.length + ' batch(es) already submitted successfully)', 'error'); if (btFeedIds.length) btPollFeedStatus(); return; }
+        btFeedIds.push(res.feedId);
+        totalSkusSubmitted += res.skusSubmitted;
+        var remainingSet = {};
+        (res.remainingAsins || []).forEach(function(a){ remainingSet[a] = true; });
+        pending = btParsed.filter(function(t){ return remainingSet[t.asin]; });
+      }
+      btShowStatus(btFeedIds.length + ' feed(s) submitted — ' + totalSkusSubmitted + ' SKUs total. Waiting for Amazon to process…', 'info');
       btPollFeedStatus();
     } catch(e) {
-      btShowStatus('Submission failed: ' + e.message, 'error');
+      btShowStatus('Submission failed: ' + e.message + (btFeedIds.length ? ' (' + btFeedIds.length + ' batch(es) already submitted)' : ''), 'error');
+      if (btFeedIds.length) btPollFeedStatus();
     }
   };
 
-  // Polls every 15s -- feed processing can take a few minutes, matching
-  // the same patient-polling pattern already used for Amazon listings sync.
+  // Polls every 15s. With multiple feeds (large batches), polls all of
+  // them each round and only moves to results once every single one is
+  // done -- same patient-polling pattern already used for Amazon listings
+  // sync, just extended to track more than one feed at a time.
   function btPollFeedStatus() {
     if (btPollTimer) clearInterval(btPollTimer);
     var attempts = 0;
     var maxAttempts = 40; // 40 * 15s = 10 minutes
+    var doneResultDocs = []; // resultFeedDocumentIds for feeds that finished
+    var pendingFeedIds = btFeedIds.slice();
+
     btPollTimer = setInterval(async function() {
       attempts++;
       try {
-        var res = await apiCall('/amazon/titles-feed-status?feedId=' + encodeURIComponent(btFeedId));
-        if (!res.ok) { clearInterval(btPollTimer); btShowStatus(res.error || 'Status check failed', 'error'); return; }
-        btShowStatus('Feed ' + btFeedId + ' — status: ' + res.status + ' (checked ' + attempts + '/' + maxAttempts + ')', 'info');
-        if (res.status === 'DONE') {
+        var stillPending = [];
+        for (var i = 0; i < pendingFeedIds.length; i++) {
+          var fid = pendingFeedIds[i];
+          var res = await apiCall('/amazon/titles-feed-status?feedId=' + encodeURIComponent(fid));
+          if (!res.ok) { clearInterval(btPollTimer); btShowStatus(res.error || 'Status check failed for feed ' + fid, 'error'); return; }
+          if (res.status === 'DONE') {
+            doneResultDocs.push(res.resultFeedDocumentId);
+          } else if (res.status === 'CANCELLED' || res.status === 'FATAL') {
+            clearInterval(btPollTimer);
+            btShowStatus('Feed ' + fid + ' failed with status: ' + res.status, 'error');
+            return;
+          } else {
+            stillPending.push(fid);
+          }
+        }
+        pendingFeedIds = stillPending;
+        btShowStatus(doneResultDocs.length + '/' + btFeedIds.length + ' feed(s) done (checked ' + attempts + '/' + maxAttempts + ')', 'info');
+
+        if (!pendingFeedIds.length) {
           clearInterval(btPollTimer);
-          btFetchReport(res.resultFeedDocumentId);
-        } else if (res.status === 'CANCELLED' || res.status === 'FATAL') {
-          clearInterval(btPollTimer);
-          btShowStatus('Feed processing failed with status: ' + res.status, 'error');
+          btFetchReports(doneResultDocs);
         } else if (attempts >= maxAttempts) {
           clearInterval(btPollTimer);
-          btShowStatus('Still processing after 10 minutes — check back later. Feed ID: ' + btFeedId, 'error');
+          btShowStatus('Still processing after 10 minutes — check back later. Feed IDs: ' + btFeedIds.join(', '), 'error');
         }
       } catch(e) {
         clearInterval(btPollTimer);
@@ -3719,21 +3771,27 @@ function awdHandleScan(raw) {
     }, 15000);
   }
 
-  async function btFetchReport(resultFeedDocumentId) {
-    btShowStatus('Feed processed — fetching results…', 'info');
+  // Fetches and combines results from every completed feed in this
+  // submission into one results table.
+  async function btFetchReports(resultFeedDocumentIds) {
+    btShowStatus('All feeds processed — fetching results…', 'info');
+    var allResults = [];
     try {
-      var res = await apiCall('/amazon/titles-feed-report?resultFeedDocumentId=' + encodeURIComponent(resultFeedDocumentId));
-      if (!res.ok) { btShowStatus(res.error || 'Report fetch failed', 'error'); return; }
-      var okCount = res.results.filter(function(r){ return r.ok; }).length;
-      var failCount = res.results.length - okCount;
-      var rows = res.results.map(function(r) {
+      for (var i = 0; i < resultFeedDocumentIds.length; i++) {
+        var res = await apiCall('/amazon/titles-feed-report?resultFeedDocumentId=' + encodeURIComponent(resultFeedDocumentIds[i]));
+        if (!res.ok) { btShowStatus(res.error || 'Report fetch failed for one batch', 'error'); return; }
+        allResults = allResults.concat(res.results || []);
+      }
+      var okCount = allResults.filter(function(r){ return r.ok; }).length;
+      var failCount = allResults.length - okCount;
+      var rows = allResults.map(function(r) {
         var badge = r.ok ? '<span class="bt-badge ok">✓ Updated</span>' : '<span class="bt-badge fail">✗ Failed</span>';
         var errMsg = (!r.ok && r.errors && r.errors.length) ? r.errors.map(function(e){return e.message;}).join('; ') : '';
         return '<tr><td class="bt-mono">' + r.sku + '</td><td>' + badge + '</td><td>' + errMsg + '</td></tr>';
       }).join('');
       g('bt-results-table').innerHTML = '<div class="table-wrap"><table class="bt-table"><thead><tr><th>SKU</th><th>Status</th><th>Error</th></tr></thead><tbody>' + rows + '</tbody></table></div>';
       g('bt-results-card').style.display = 'block';
-      btShowStatus(okCount + ' updated, ' + failCount + ' failed', failCount > 0 ? 'error' : 'success');
+      btShowStatus(okCount + ' updated, ' + failCount + ' failed (across ' + resultFeedDocumentIds.length + ' feed batch(es))', failCount > 0 ? 'error' : 'success');
     } catch(e) {
       btShowStatus('Report fetch failed: ' + e.message, 'error');
     }
