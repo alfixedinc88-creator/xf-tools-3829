@@ -3574,10 +3574,14 @@ function awdHandleScan(raw) {
   var btParsed = [];       // [{asin, newTitle}]
   var btResolvedSkus = []; // [{asin, sku, newTitle}] -- from dry-run check
   var btFeedIds = []; // multiple batches of 20 each get their own feed
+  var btMessageMaps = {}; // feedId -> [{messageId, sku, asin}] -- needed to
+                           // correlate the report's issues (keyed by
+                           // messageId only) back to specific SKUs, since
+                           // Amazon's report never repeats the SKU itself
   var btPollTimer = null;
 
   window.btReset = function() {
-    btParsed = []; btResolvedSkus = []; btFeedIds = [];
+    btParsed = []; btResolvedSkus = []; btFeedIds = []; btMessageMaps = {};
     if (btPollTimer) { clearInterval(btPollTimer); btPollTimer = null; }
     var input = g('bt-input'); if (input) input.value = '';
     var pc = g('bt-preview-card'); if (pc) pc.style.display = 'none';
@@ -3712,6 +3716,7 @@ function awdHandleScan(raw) {
         });
         if (!res.ok) { btShowStatus((res.error || 'Submission failed') + ' (after ' + btFeedIds.length + ' batch(es) already submitted successfully)', 'error'); if (btFeedIds.length) btPollFeedStatus(); return; }
         btFeedIds.push(res.feedId);
+        btMessageMaps[res.feedId] = res.messageMap || [];
         totalSkusSubmitted += res.skusSubmitted;
         var remainingSet = {};
         (res.remainingAsins || []).forEach(function(a){ remainingSet[a] = true; });
@@ -3733,7 +3738,7 @@ function awdHandleScan(raw) {
     if (btPollTimer) clearInterval(btPollTimer);
     var attempts = 0;
     var maxAttempts = 40; // 40 * 15s = 10 minutes
-    var doneResultDocs = []; // resultFeedDocumentIds for feeds that finished
+    var doneFeeds = []; // [{feedId, resultFeedDocumentId}] -- keep feedId attached so we can look up its messageMap later
     var pendingFeedIds = btFeedIds.slice();
 
     btPollTimer = setInterval(async function() {
@@ -3745,7 +3750,7 @@ function awdHandleScan(raw) {
           var res = await apiCall('/amazon/titles-feed-status?feedId=' + encodeURIComponent(fid));
           if (!res.ok) { clearInterval(btPollTimer); btShowStatus(res.error || 'Status check failed for feed ' + fid, 'error'); return; }
           if (res.status === 'DONE') {
-            doneResultDocs.push(res.resultFeedDocumentId);
+            doneFeeds.push({ feedId: fid, resultFeedDocumentId: res.resultFeedDocumentId });
           } else if (res.status === 'CANCELLED' || res.status === 'FATAL') {
             clearInterval(btPollTimer);
             btShowStatus('Feed ' + fid + ' failed with status: ' + res.status, 'error');
@@ -3755,11 +3760,11 @@ function awdHandleScan(raw) {
           }
         }
         pendingFeedIds = stillPending;
-        btShowStatus(doneResultDocs.length + '/' + btFeedIds.length + ' feed(s) done (checked ' + attempts + '/' + maxAttempts + ')', 'info');
+        btShowStatus(doneFeeds.length + '/' + btFeedIds.length + ' feed(s) done (checked ' + attempts + '/' + maxAttempts + ')', 'info');
 
         if (!pendingFeedIds.length) {
           clearInterval(btPollTimer);
-          btFetchReports(doneResultDocs);
+          btFetchReports(doneFeeds);
         } else if (attempts >= maxAttempts) {
           clearInterval(btPollTimer);
           btShowStatus('Still processing after 10 minutes — check back later. Feed IDs: ' + btFeedIds.join(', '), 'error');
@@ -3771,27 +3776,36 @@ function awdHandleScan(raw) {
     }, 15000);
   }
 
-  // Fetches and combines results from every completed feed in this
-  // submission into one results table.
-  async function btFetchReports(resultFeedDocumentIds) {
+  // Fetches every completed feed's report and correlates it against the
+  // messageMap stored at submission time. The report itself only lists
+  // PROBLEMS (issues), keyed by messageId, not SKU — so every SKU whose
+  // messageId does NOT appear in issues is a success; anything that does
+  // appear is shown with its actual error text.
+  async function btFetchReports(doneFeeds) {
     btShowStatus('All feeds processed — fetching results…', 'info');
     var allResults = [];
     try {
-      for (var i = 0; i < resultFeedDocumentIds.length; i++) {
-        var res = await apiCall('/amazon/titles-feed-report?resultFeedDocumentId=' + encodeURIComponent(resultFeedDocumentIds[i]));
-        if (!res.ok) { btShowStatus(res.error || 'Report fetch failed for one batch', 'error'); return; }
-        allResults = allResults.concat(res.results || []);
+      for (var i = 0; i < doneFeeds.length; i++) {
+        var feedId = doneFeeds[i].feedId;
+        var res = await apiCall('/amazon/titles-feed-report?resultFeedDocumentId=' + encodeURIComponent(doneFeeds[i].resultFeedDocumentId));
+        if (!res.ok) { btShowStatus(res.error || 'Report fetch failed for feed ' + feedId, 'error'); return; }
+        var messageMap = btMessageMaps[feedId] || [];
+        var issueByMsgId = {};
+        (res.issues || []).forEach(function(iss) { issueByMsgId[iss.messageId] = iss; });
+        messageMap.forEach(function(m) {
+          var issue = issueByMsgId[m.messageId];
+          allResults.push({ sku: m.sku, asin: m.asin, ok: !issue, error: issue ? issue.message : null });
+        });
       }
       var okCount = allResults.filter(function(r){ return r.ok; }).length;
       var failCount = allResults.length - okCount;
       var rows = allResults.map(function(r) {
         var badge = r.ok ? '<span class="bt-badge ok">✓ Updated</span>' : '<span class="bt-badge fail">✗ Failed</span>';
-        var errMsg = (!r.ok && r.errors && r.errors.length) ? r.errors.map(function(e){return e.message;}).join('; ') : '';
-        return '<tr><td class="bt-mono">' + r.sku + '</td><td>' + badge + '</td><td>' + errMsg + '</td></tr>';
+        return '<tr><td class="bt-mono">' + r.sku + '</td><td>' + badge + '</td><td>' + (r.error || '') + '</td></tr>';
       }).join('');
       g('bt-results-table').innerHTML = '<div class="table-wrap"><table class="bt-table"><thead><tr><th>SKU</th><th>Status</th><th>Error</th></tr></thead><tbody>' + rows + '</tbody></table></div>';
       g('bt-results-card').style.display = 'block';
-      btShowStatus(okCount + ' updated, ' + failCount + ' failed (across ' + resultFeedDocumentIds.length + ' feed batch(es))', failCount > 0 ? 'error' : 'success');
+      btShowStatus(okCount + ' updated, ' + failCount + ' failed (across ' + doneFeeds.length + ' feed batch(es))', failCount > 0 ? 'error' : 'success');
     } catch(e) {
       btShowStatus('Report fetch failed: ' + e.message, 'error');
     }
