@@ -390,6 +390,7 @@ body { margin:0; padding:0; font-family:'DM Sans',sans-serif; }
     <div class="tabitem"        id="tab-skulookup"   onclick="rprTab('skulookup')">🔎 SKU Lookup</div>
     <div class="tabitem" id="tab-calculator" onclick="rprTab('calculator')">🧮 Price Calculator</div>
     <div class="tabitem" id="tab-bulktitles" onclick="rprTab('bulktitles')">✏️ Bulk Titles</div>
+    <div class="tabitem" id="tab-shopify" onclick="rprTab('shopify')">🛍️ Shopify Listings</div>
   </div>
 
   <!-- ═══ TAB: ACTIVE LISTINGS ═══ -->
@@ -824,6 +825,50 @@ body { margin:0; padding:0; font-family:'DM Sans',sans-serif; }
 
     </div>
   </div>
+
+  <!-- ═══ TAB: SHOPIFY LISTINGS ═══ -->
+  <div class="tab-panel" id="panel-shopify">
+    <div class="panel-body">
+      <style>
+        #panel-shopify .sy-card{background:var(--surface2);border:1px solid var(--border);border-radius:12px;padding:20px;margin-bottom:16px}
+        #panel-shopify .sy-label{font-size:11px;font-weight:700;letter-spacing:.6px;text-transform:uppercase;color:var(--text-muted);margin-bottom:8px;display:block}
+        #panel-shopify .sy-btn{padding:10px 20px;border-radius:8px;border:none;font-size:14px;font-weight:600;cursor:pointer;font-family:inherit;margin-top:12px;margin-right:8px}
+        #panel-shopify .sy-btn-primary{background:var(--accent);color:#fff}
+        #panel-shopify .sy-btn-secondary{background:var(--surface);color:var(--text);border:1.5px solid var(--border)}
+        #panel-shopify .sy-btn:disabled{opacity:.4;cursor:not-allowed}
+        #panel-shopify .sy-btn-sm{padding:5px 12px;font-size:12px;margin-top:0}
+        #panel-shopify .sy-table{width:100%;border-collapse:collapse;margin-top:12px}
+        #panel-shopify .sy-table th{padding:9px 12px;text-align:left;font-size:11px;font-weight:700;letter-spacing:.5px;text-transform:uppercase;color:var(--text-muted);background:var(--surface);border-bottom:2px solid var(--border)}
+        #panel-shopify .sy-table td{padding:10px 12px;border-bottom:1px solid var(--border);font-size:12px;vertical-align:top}
+        #panel-shopify .sy-table tr:last-child td{border-bottom:none}
+        #panel-shopify .sy-mono{font-family:var(--mono,monospace)}
+        #panel-shopify .sy-badge{display:inline-flex;align-items:center;gap:6px;padding:3px 9px;border-radius:6px;font-size:11px;font-weight:600;border:1px solid}
+        #panel-shopify .sy-badge.ok{background:#ecfdf5;color:#0e7f3e;border-color:#0e7f3e}
+        #panel-shopify .sy-badge.fail{background:#fdf0ee;color:#c52a1a;border-color:#c52a1a}
+        #panel-shopify .sy-badge.pushed{background:#eef2fd;color:var(--accent);border-color:var(--accent)}
+        #panel-shopify .sy-badge.pending{background:#fffbeb;color:#b45309;border-color:#b45309}
+        #panel-shopify .sy-status-line{font-size:13px;margin-top:12px;padding:10px 14px;border-radius:8px}
+        #panel-shopify .sy-status-line.info{background:#eef2fd;color:var(--accent)}
+        #panel-shopify .sy-status-line.error{background:#fdf0ee;color:#c52a1a}
+        #panel-shopify .sy-status-line.success{background:#ecfdf5;color:#0e7f3e}
+      </style>
+
+      <div class="sy-card">
+        <div class="sy-label">Product Catalog — one row per base SKU</div>
+        <div id="sy-catalog-table"><div class="loading"><div class="spinner"></div> Loading catalog…</div></div>
+        <button class="sy-btn sy-btn-secondary" onclick="syLoadCatalog()">↻ Refresh</button>
+        <button class="sy-btn sy-btn-primary" id="sy-check-btn" onclick="syCheckSelected()" disabled>Check Selected (Dry Run)</button>
+      </div>
+
+      <div id="sy-status" style="display:none"></div>
+      <div id="sy-confirm-card" style="display:none" class="sy-card"></div>
+      <div id="sy-results-card" style="display:none" class="sy-card">
+        <div class="sy-label">Results</div>
+        <div id="sy-results-table"></div>
+      </div>
+
+    </div>
+  </div>
   </div>
 
 
@@ -1095,6 +1140,7 @@ function rprTab(tab) {
   if (tab === 'approval') renderApprovals();
   if (tab === 'calculator') rprCalcReset();
   if (tab === 'bulktitles') btReset();
+  if (tab === 'shopify') syLoadCatalog();
 }
 
 async function refreshQueueCount() {
@@ -3810,6 +3856,127 @@ function awdHandleScan(raw) {
       btShowStatus('Report fetch failed: ' + e.message, 'error');
     }
   }
+
+  // ════════════════════════════════════════════
+  // SHOPIFY LISTINGS
+  // ════════════════════════════════════════════
+  var syCatalog = []; // rows from /shopify/catalog-list
+  var sySelected = {}; // baseSku -> true
+
+  function syShowStatus(msg, type) {
+    var st = g('sy-status');
+    if (!st) return;
+    st.style.display = 'block';
+    st.innerHTML = '<div class="sy-status-line ' + (type || 'info') + '">' + msg + '</div>';
+  }
+
+  // BUGFIX: the checkbox's onchange previously tried to reference
+  // sySelected directly from an inline HTML attribute — but sySelected is
+  // scoped inside this IIFE's closure, and inline event handlers execute
+  // in the global scope, which can't see it (confirmed via a real
+  // ReferenceError, same class of bug as invItemMap in the inventory app
+  // earlier). Exposing a real window function here instead, so the
+  // inline handler has something in global scope it can actually call —
+  // the function itself still updates the closure-scoped sySelected from
+  // the correct scope.
+  window.syToggleRow = function(baseSku, checked) {
+    sySelected[baseSku] = checked;
+    var btn = g('sy-check-btn');
+    if (btn) btn.disabled = !Object.values(sySelected).some(Boolean);
+  };
+
+  window.syLoadCatalog = async function() {
+    g('sy-catalog-table').innerHTML = '<div class="loading"><div class="spinner"></div> Loading catalog…</div>';
+    sySelected = {};
+    try {
+      var res = await apiCall('/shopify/catalog-list');
+      if (!res.ok) { g('sy-catalog-table').innerHTML = '<div class="sy-status-line error">' + (res.error || 'Load failed') + '</div>'; return; }
+      syCatalog = res.rows || [];
+      syRenderCatalog();
+    } catch(e) {
+      g('sy-catalog-table').innerHTML = '<div class="sy-status-line error">Load failed: ' + e.message + '</div>';
+    }
+  };
+
+  function syRenderCatalog() {
+    if (!syCatalog.length) {
+      g('sy-catalog-table').innerHTML = '<div class="empty-state"><div class="icon">🛍️</div><div class="msg">No catalog rows found</div></div>';
+      return;
+    }
+    var rows = syCatalog.map(function(r) {
+      var pushed = !!r.shopifyProductId;
+      var badge = pushed
+        ? '<span class="sy-badge pushed">✓ Pushed ' + (r.shopifyPushedAt ? new Date(r.shopifyPushedAt).toLocaleDateString() : '') + '</span>'
+        : (r.status === 'Ready to List' ? '<span class="sy-badge pending">Ready to List</span>' : '<span class="sy-badge">' + (r.status || 'Draft') + '</span>');
+      var checked = sySelected[r.baseSku] ? 'checked' : '';
+      return '<tr>'
+        + '<td><input type="checkbox" ' + checked + ' onchange="syToggleRow(\'' + r.baseSku + '\', this.checked)"></td>'
+        + '<td class="sy-mono">' + r.baseSku + '</td>'
+        + '<td>' + (r.title || '') + '</td>'
+        + '<td>' + (r.fittingType || '') + '</td>'
+        + '<td>' + (r.price ? '$' + Number(r.price).toFixed(2) : '') + '</td>'
+        + '<td>' + badge + '</td>'
+        + '</tr>';
+    }).join('');
+    g('sy-catalog-table').innerHTML = '<div class="table-wrap"><table class="sy-table"><thead><tr><th></th><th>Base SKU</th><th>Title</th><th>Type</th><th>Price</th><th>Status</th></tr></thead><tbody>' + rows + '</tbody></table></div>';
+  }
+
+  window.syCheckSelected = async function() {
+    var baseSkus = Object.keys(sySelected).filter(function(k){ return sySelected[k]; });
+    if (!baseSkus.length) return;
+    syShowStatus('Checking ' + baseSkus.length + ' listing(s)…', 'info');
+    try {
+      var res = await apiCall('/shopify/listing-create', {
+        method: 'POST',
+        body: JSON.stringify({ baseSkus: baseSkus, dryRun: true })
+      });
+      if (!res.ok) { syShowStatus(res.error || 'Check failed', 'error'); return; }
+
+      var rows = res.results.map(function(r) {
+        if (!r.ok) return '<tr><td class="sy-mono">' + r.baseSku + '</td><td colspan="4" style="color:var(--red,#c52a1a)">' + r.error + '</td></tr>';
+        var p = r.preview;
+        var pushedWarning = r.alreadyPushed ? '<div style="color:#b45309;font-size:11px;margin-top:4px">⚠ Already pushed (' + r.existingProductId + ') — will create a SECOND listing if you continue</div>' : '';
+        return '<tr><td class="sy-mono">' + r.baseSku + '</td><td>' + p.title + '</td><td>$' + p.price + '</td><td>' + p.imageCount + ' images, ' + p.tags.length + ' tags</td><td>' + pushedWarning + '</td></tr>';
+      }).join('');
+
+      g('sy-confirm-card').innerHTML =
+        '<div class="sy-label">Ready to Create</div>'
+        + '<div class="table-wrap"><table class="sy-table"><thead><tr><th>Base SKU</th><th>Title</th><th>Price</th><th>Content</th><th></th></tr></thead><tbody>' + rows + '</tbody></table></div>'
+        + '<button class="sy-btn sy-btn-primary" onclick="syConfirmCreate(false)">Confirm — Create as Draft</button>'
+        + '<button class="sy-btn sy-btn-secondary" onclick="document.getElementById(\'sy-confirm-card\').style.display=\'none\'">Cancel</button>';
+      g('sy-confirm-card').style.display = 'block';
+      var st = g('sy-status'); if (st) { st.style.display = 'none'; st.innerHTML = ''; }
+    } catch(e) {
+      syShowStatus('Check failed: ' + e.message, 'error');
+    }
+  };
+
+  window.syConfirmCreate = async function(force) {
+    var baseSkus = Object.keys(sySelected).filter(function(k){ return sySelected[k]; });
+    g('sy-confirm-card').style.display = 'none';
+    syShowStatus('Creating ' + baseSkus.length + ' listing(s) in Shopify…', 'info');
+    try {
+      var res = await apiCall('/shopify/listing-create', {
+        method: 'POST',
+        body: JSON.stringify({ baseSkus: baseSkus, dryRun: false, force: !!force })
+      });
+      if (!res.ok) { syShowStatus(res.error || 'Creation failed', 'error'); return; }
+
+      var okCount = res.results.filter(function(r){ return r.ok; }).length;
+      var failCount = res.results.length - okCount;
+      var rows = res.results.map(function(r) {
+        var badge = r.ok ? '<span class="sy-badge ok">✓ Created (draft)</span>' : '<span class="sy-badge fail">✗ ' + r.error + '</span>';
+        return '<tr><td class="sy-mono">' + r.baseSku + '</td><td>' + badge + '</td></tr>';
+      }).join('');
+      g('sy-results-table').innerHTML = '<div class="table-wrap"><table class="sy-table"><thead><tr><th>Base SKU</th><th>Result</th></tr></thead><tbody>' + rows + '</tbody></table></div>';
+      g('sy-results-card').style.display = 'block';
+      syShowStatus(okCount + ' created, ' + failCount + ' failed', failCount > 0 ? 'error' : 'success');
+      sySelected = {};
+      syLoadCatalog(); // refresh to show updated "Pushed" status
+    } catch(e) {
+      syShowStatus('Creation failed: ' + e.message, 'error');
+    }
+  };
 
 })();
 
