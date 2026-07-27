@@ -389,9 +389,14 @@ body { margin:0; padding:0; font-family:'DM Sans',sans-serif; }
     <div class="tabitem"        id="tab-pricealerts" onclick="rprTab('pricealerts')">🏷️ Price Alerts  <span class="tab-cnt" id="cnt-pricealerts" style="background:#fdf0ee;color:#c52a1a">—</span></div>
     <div class="tabitem"        id="tab-skulookup"   onclick="rprTab('skulookup')">🔎 SKU Lookup</div>
     <div class="tabitem" id="tab-calculator" onclick="rprTab('calculator')">🧮 Price Calculator</div>
-    <div class="tabitem" id="tab-bulktitles" onclick="rprTab('bulktitles')">✏️ Bulk Titles</div>
-    <div class="tabitem" id="tab-shopify" onclick="rprTab('shopify')">🛍️ Shopify Listings</div>
-    <div class="tabitem" id="tab-ebaylist" onclick="rprTab('ebaylist')">🏷️ eBay Listings</div>
+    <div class="tabitem" id="tab-listings-dropdown-trigger" onclick="rprToggleListingsDropdown(event)" style="position:relative">
+      🚀 Listings ▾
+      <div id="rpr-listings-dropdown" style="display:none;position:absolute;top:100%;left:0;background:var(--surface2,#fff);border:1px solid var(--border,#dde0e6);border-radius:8px;box-shadow:0 8px 24px rgba(0,0,0,.12);z-index:500;min-width:180px;padding:4px;margin-top:4px">
+        <div class="tabitem" id="tab-bulktitles" onclick="event.stopPropagation(); rprTab('bulktitles')" style="white-space:nowrap">✏️ Bulk Titles</div>
+        <div class="tabitem" id="tab-shopify" onclick="event.stopPropagation(); rprTab('shopify')" style="white-space:nowrap">🛍️ Shopify Listings</div>
+        <div class="tabitem" id="tab-ebaylist" onclick="event.stopPropagation(); rprTab('ebaylist')" style="white-space:nowrap">🏷️ eBay Listings</div>
+      </div>
+    </div>
   </div>
 
   <!-- ═══ TAB: ACTIVE LISTINGS ═══ -->
@@ -1188,7 +1193,31 @@ function rprTab(tab) {
   if (tab === 'bulktitles') btReset();
   if (tab === 'shopify') syLoadCatalog();
   if (tab === 'ebaylist') ebLoadCatalog();
+
+  // Grouped under the "Listings" dropdown — mark the trigger active too
+  // so it's visually clear which section you're in, and close the
+  // dropdown now that a selection was made. Safe no-op for any other tab.
+  var dd = document.getElementById('rpr-listings-dropdown');
+  if (dd) dd.style.display = 'none';
+  var trigger = document.getElementById('tab-listings-dropdown-trigger');
+  if (trigger) {
+    if (['bulktitles', 'shopify', 'ebaylist'].indexOf(tab) !== -1) trigger.classList.add('active');
+    else trigger.classList.remove('active');
+  }
 }
+
+function rprToggleListingsDropdown(event) {
+  event.stopPropagation();
+  var dd = document.getElementById('rpr-listings-dropdown');
+  if (dd) dd.style.display = (dd.style.display === 'none' || !dd.style.display) ? 'block' : 'none';
+}
+document.addEventListener('click', function(e) {
+  var dd = document.getElementById('rpr-listings-dropdown');
+  var trigger = document.getElementById('tab-listings-dropdown-trigger');
+  if (dd && dd.style.display === 'block' && trigger && !trigger.contains(e.target)) {
+    dd.style.display = 'none';
+  }
+});
 
 async function refreshQueueCount() {
   try {
@@ -4043,7 +4072,13 @@ function awdHandleScan(raw) {
     g('eb-catalog-table').innerHTML = '<div class="loading"><div class="spinner"></div> Loading catalog…</div>';
     ebSelected = {};
     try {
-      var res = await apiCall('/shopify/catalog-list'); // shared catalog source across both tabs
+      // BUGFIX: was previously calling this with no params, which
+      // returns the grouped (one row per base_sku) view built for
+      // Shopify. eBay individual listings are one PER PACK SIZE, so this
+      // was silently only showing/letting the user select the 1-pack row
+      // even though staging actually creates a listing for every pack
+      // size. grouped=false returns every row.
+      var res = await apiCall('/shopify/catalog-list?grouped=false');
       if (!res.ok) { g('eb-catalog-table').innerHTML = '<div class="eb-status-line error">' + (res.error || 'Load failed') + '</div>'; return; }
       ebCatalog = res.rows || [];
       ebRenderCatalog();
@@ -4067,23 +4102,42 @@ function awdHandleScan(raw) {
       g('eb-catalog-table').innerHTML = '<div class="empty-state"><div class="icon">🏷️</div><div class="msg">No catalog rows found</div></div>';
       return;
     }
-    var rows = ebCatalog.map(function(r) {
-      var badge;
-      if (r.ebayPublishedAt) badge = '<span class="eb-badge published">✓ Live</span>';
-      else if (r.ebayOfferId) badge = '<span class="eb-badge staged">Staged, not published</span>';
-      else if (!r.titleShort || !r.ebayCategoryId) badge = '<span class="eb-badge fail">Missing title_short or category</span>';
-      else badge = '<span class="eb-badge pending">Ready</span>';
-      var checked = ebSelected[r.baseSku] ? 'checked' : '';
+    // Group the ungrouped, per-pack-size rows back to one table row per
+    // base_sku for display/selection — staging is one action per
+    // base_sku (it internally fans out to every pack size), so selection
+    // stays 1:1 with base_sku to avoid ambiguity, while still showing
+    // each individual pack size's real status rather than just the
+    // 1-pack row's, which is what was misleading before.
+    var byBaseSku = {};
+    ebCatalog.forEach(function(r) {
+      if (!byBaseSku[r.baseSku]) byBaseSku[r.baseSku] = [];
+      byBaseSku[r.baseSku].push(r);
+    });
+
+    var rows = Object.keys(byBaseSku).map(function(baseSku) {
+      var members = byBaseSku[baseSku]; // already ordered by pack_qty ASC from the API
+      var repRow = members[0]; // representative row for title/price/category-readiness display
+
+      var packBadges = members.map(function(m) {
+        var cls = m.ebayPublishedAt ? 'published' : (m.ebayOfferId ? 'staged' : 'pending');
+        var label = (m.packQty || '?') + (m.ebayPublishedAt ? ' ✓' : (m.ebayOfferId ? ' ●' : ''));
+        return '<span class="eb-badge ' + cls + '" style="margin-right:4px" title="' + m.sku + '">' + label + '</span>';
+      }).join('');
+
+      var readiness = (!repRow.titleShort || !repRow.ebayCategoryId)
+        ? '<div style="color:var(--red,#c52a1a);font-size:11px;margin-top:4px">⚠ Missing title_short or category</div>' : '';
+
+      var checked = ebSelected[baseSku] ? 'checked' : '';
       return '<tr>'
-        + '<td><input type="checkbox" ' + checked + ' onchange="ebToggleRow(\'' + r.baseSku + '\', this.checked)"></td>'
-        + '<td class="eb-mono">' + r.baseSku + '</td>'
-        + '<td>' + (r.titleShort || r.title || '') + '</td>'
-        + '<td>' + (r.price ? '$' + Number(r.price).toFixed(2) : '') + '</td>'
-        + '<td><input class="eb-input-sm" type="number" placeholder="8888" onchange="ebSetQuantity(\'' + r.baseSku + '\', this.value)"></td>'
-        + '<td>' + badge + '</td>'
+        + '<td><input type="checkbox" ' + checked + ' onchange="ebToggleRow(\'' + baseSku + '\', this.checked)"></td>'
+        + '<td class="eb-mono">' + baseSku + '</td>'
+        + '<td>' + (repRow.titleShort || repRow.title || '') + '</td>'
+        + '<td>' + members.length + ' pack size' + (members.length === 1 ? '' : 's') + ' → ' + members.length + ' listing' + (members.length === 1 ? '' : 's') + '</td>'
+        + '<td><input class="eb-input-sm" type="number" placeholder="8888" onchange="ebSetQuantity(\'' + baseSku + '\', this.value)"></td>'
+        + '<td>' + packBadges + readiness + '</td>'
         + '</tr>';
     }).join('');
-    g('eb-catalog-table').innerHTML = '<div class="table-wrap"><table class="eb-table"><thead><tr><th></th><th>Base SKU</th><th>Title</th><th>Price</th><th>Qty</th><th>Status</th></tr></thead><tbody>' + rows + '</tbody></table></div>';
+    g('eb-catalog-table').innerHTML = '<div class="table-wrap"><table class="eb-table"><thead><tr><th></th><th>Base SKU</th><th>Title</th><th>Pack Sizes</th><th>Qty</th><th>Status (● staged, ✓ live)</th></tr></thead><tbody>' + rows + '</tbody></table></div>';
   }
 
   function ebBuildItems() {
