@@ -4378,7 +4378,7 @@ function awdHandleScan(raw) {
       g('eb-confirm-card').innerHTML =
         '<div class="eb-label">Ready to Stage Variation Group</div>'
         + '<div><strong>Group title:</strong> ' + p.groupPayload.title + '</div>'
-        + '<div style="margin-top:4px"><strong>Varies by:</strong> Pack Size (' + p.groupPayload.variesBy.specifications[0].values.join(', ') + ')</div>'
+        + '<div style="margin-top:4px"><strong>Varies by:</strong> ' + p.groupPayload.variesBy.specifications[0].name + ' (' + p.groupPayload.variesBy.specifications[0].values.join(', ') + ')</div>'
         + alreadyWarning
         + '<div class="table-wrap"><table class="eb-table" style="margin-top:10px"><thead><tr><th>Real SKU</th><th>Pack Size</th><th>Price</th></tr></thead><tbody>' + memberRows + '</tbody></table></div>'
         + '<button class="eb-btn eb-btn-primary" onclick="ebConfirmVariationStage(\'' + baseSku + '\', ' + (quantity||'undefined') + ', ' + !!res.alreadyStaged + ')">Confirm — Stage Variation Group</button>'
