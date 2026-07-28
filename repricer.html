@@ -858,6 +858,7 @@ body { margin:0; padding:0; font-family:'DM Sans',sans-serif; }
         <div class="sy-label">Product Catalog — one row per base SKU</div>
         <div id="sy-catalog-table"><div class="loading"><div class="spinner"></div> Loading catalog…</div></div>
         <button class="sy-btn sy-btn-secondary" onclick="syLoadCatalog()">↻ Refresh</button>
+        <button class="sy-btn sy-btn-secondary" id="sy-import-btn" onclick="syImportFromSheet()">📥 Import from Sheet</button>
         <button class="sy-btn sy-btn-primary" id="sy-check-btn" onclick="syCheckSelected()" disabled>Check Selected (Dry Run)</button>
       </div>
 
@@ -903,6 +904,7 @@ body { margin:0; padding:0; font-family:'DM Sans',sans-serif; }
         <div class="eb-label">Product Catalog — one row per base SKU</div>
         <div id="eb-catalog-table"><div class="loading"><div class="spinner"></div> Loading catalog…</div></div>
         <button class="eb-btn eb-btn-secondary" onclick="ebLoadCatalog()">↻ Refresh</button>
+        <button class="eb-btn eb-btn-secondary" id="eb-import-btn" onclick="ebImportFromSheet()">📥 Import from Sheet</button>
         <button class="eb-btn eb-btn-primary" id="eb-check-btn" onclick="ebCheckSelected()" disabled>Check Selected (Dry Run)</button>
         <button class="eb-btn eb-btn-secondary" id="eb-variation-btn" onclick="ebCheckVariation()" disabled style="border-color:var(--accent);color:var(--accent)">🔀 Stage as Variation (single base SKU, needs 2+ pack sizes)</button>
       </div>
@@ -4001,6 +4003,25 @@ function awdHandleScan(raw) {
     }
   };
 
+  // Pulls fresh data from the Product_Catalog sheet into D1, then
+  // refreshes the table so the new/changed rows show up immediately —
+  // previously required a manual curl command every time the sheet changed.
+  window.syImportFromSheet = async function() {
+    var btn = g('sy-import-btn');
+    if (btn) { btn.disabled = true; btn.textContent = 'Importing…'; }
+    syShowStatus('Importing from Google Sheet…', 'info');
+    try {
+      var res = await apiCall('/inventory/import-product-catalog', { method: 'POST', body: JSON.stringify({}) });
+      if (!res.ok) { syShowStatus(res.error || 'Import failed', 'error'); return; }
+      syShowStatus(res.message + ' (' + res.trackingPreserved + ' tracking record(s) preserved)', 'success');
+      syLoadCatalog();
+    } catch(e) {
+      syShowStatus('Import failed: ' + e.message, 'error');
+    } finally {
+      if (btn) { btn.disabled = false; btn.textContent = '📥 Import from Sheet'; }
+    }
+  };
+
   function syRenderCatalog() {
     if (!syCatalog.length) {
       g('sy-catalog-table').innerHTML = '<div class="empty-state"><div class="icon">🛍️</div><div class="msg">No catalog rows found</div></div>';
@@ -4111,6 +4132,25 @@ function awdHandleScan(raw) {
       ebRenderCatalog();
     } catch(e) {
       g('eb-catalog-table').innerHTML = '<div class="eb-status-line error">Load failed: ' + e.message + '</div>';
+    }
+  };
+
+  // Pulls fresh data from the Product_Catalog sheet into D1, then
+  // refreshes the table — previously required a manual curl command
+  // every time the sheet changed (e.g. after fixing an ebay_category_id).
+  window.ebImportFromSheet = async function() {
+    var btn = g('eb-import-btn');
+    if (btn) { btn.disabled = true; btn.textContent = 'Importing…'; }
+    ebShowStatus('Importing from Google Sheet…', 'info');
+    try {
+      var res = await apiCall('/inventory/import-product-catalog', { method: 'POST', body: JSON.stringify({}) });
+      if (!res.ok) { ebShowStatus(res.error || 'Import failed', 'error'); return; }
+      ebShowStatus(res.message + ' (' + res.trackingPreserved + ' tracking record(s) preserved)', 'success');
+      ebLoadCatalog();
+    } catch(e) {
+      ebShowStatus('Import failed: ' + e.message, 'error');
+    } finally {
+      if (btn) { btn.disabled = false; btn.textContent = '📥 Import from Sheet'; }
     }
   };
 
