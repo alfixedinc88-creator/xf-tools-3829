@@ -389,13 +389,8 @@ body { margin:0; padding:0; font-family:'DM Sans',sans-serif; }
     <div class="tabitem"        id="tab-pricealerts" onclick="rprTab('pricealerts')">🏷️ Price Alerts  <span class="tab-cnt" id="cnt-pricealerts" style="background:#fdf0ee;color:#c52a1a">—</span></div>
     <div class="tabitem"        id="tab-skulookup"   onclick="rprTab('skulookup')">🔎 SKU Lookup</div>
     <div class="tabitem" id="tab-calculator" onclick="rprTab('calculator')">🧮 Price Calculator</div>
-    <div class="tabitem" id="tab-listings-dropdown-trigger" onclick="rprToggleListingsDropdown(event)" style="position:relative">
+    <div class="tabitem" id="tab-listings-dropdown-trigger" onclick="rprToggleListingsDropdown(event)">
       🚀 Listings ▾
-      <div id="rpr-listings-dropdown" style="display:none;position:absolute;top:100%;left:0;background:var(--surface2,#fff);border:1px solid var(--border,#dde0e6);border-radius:8px;box-shadow:0 8px 24px rgba(0,0,0,.12);z-index:500;min-width:180px;padding:4px;margin-top:4px">
-        <div class="tabitem" id="tab-bulktitles" onclick="event.stopPropagation(); rprTab('bulktitles')" style="white-space:nowrap">✏️ Bulk Titles</div>
-        <div class="tabitem" id="tab-shopify" onclick="event.stopPropagation(); rprTab('shopify')" style="white-space:nowrap">🛍️ Shopify Listings</div>
-        <div class="tabitem" id="tab-ebaylist" onclick="event.stopPropagation(); rprTab('ebaylist')" style="white-space:nowrap">🏷️ eBay Listings</div>
-      </div>
     </div>
   </div>
 
@@ -950,6 +945,23 @@ body { margin:0; padding:0; font-family:'DM Sans',sans-serif; }
   <!-- TOAST -->
   <div id="toast"></div>
 
+  <!-- LISTINGS DROPDOWN — moved here from inside the tabbar. Same fix
+       pattern as the price-modal earlier: z-index alone couldn't make it
+       paint above later, unrelated page content (confirmed via
+       document.elementFromPoint showing a stat-card rendering on top of
+       it despite z-index:500) because its ancestor (.tabbar) has no
+       explicit z-index of its own, so the dropdown's stacking was
+       confined to whatever context .tabbar participates in. Moving it
+       here, as a direct child of the app root with position:fixed and
+       coordinates computed from the trigger's actual screen position at
+       open-time, sidesteps the whole ancestor-stacking-context problem
+       entirely rather than continuing to fight it. -->
+  <div id="rpr-listings-dropdown" style="display:none;position:fixed;background:var(--surface2,#fff);border:1px solid var(--border,#dde0e6);border-radius:8px;box-shadow:0 8px 24px rgba(0,0,0,.25);z-index:9500;min-width:180px;padding:4px">
+    <div class="tabitem" id="tab-bulktitles" onclick="event.stopPropagation(); rprTab('bulktitles')" style="white-space:nowrap">✏️ Bulk Titles</div>
+    <div class="tabitem" id="tab-shopify" onclick="event.stopPropagation(); rprTab('shopify')" style="white-space:nowrap">🛍️ Shopify Listings</div>
+    <div class="tabitem" id="tab-ebaylist" onclick="event.stopPropagation(); rprTab('ebaylist')" style="white-space:nowrap">🏷️ eBay Listings</div>
+  </div>
+
 </div><!-- /app -->
 
 
@@ -1209,12 +1221,26 @@ function rprTab(tab) {
 function rprToggleListingsDropdown(event) {
   event.stopPropagation();
   var dd = document.getElementById('rpr-listings-dropdown');
-  if (dd) dd.style.display = (dd.style.display === 'none' || !dd.style.display) ? 'block' : 'none';
+  var trigger = document.getElementById('tab-listings-dropdown-trigger');
+  if (!dd || !trigger) return;
+  var opening = (dd.style.display === 'none' || !dd.style.display);
+  if (opening) {
+    // Now that the dropdown lives outside the tabbar (position:fixed, not
+    // nested position:absolute), it needs its screen coordinates computed
+    // explicitly from the trigger's actual current position, rather than
+    // relying on CSS to position it relative to a parent.
+    var rect = trigger.getBoundingClientRect();
+    dd.style.top = (rect.bottom + 4) + 'px';
+    dd.style.left = rect.left + 'px';
+    dd.style.display = 'block';
+  } else {
+    dd.style.display = 'none';
+  }
 }
 document.addEventListener('click', function(e) {
   var dd = document.getElementById('rpr-listings-dropdown');
   var trigger = document.getElementById('tab-listings-dropdown-trigger');
-  if (dd && dd.style.display === 'block' && trigger && !trigger.contains(e.target)) {
+  if (dd && dd.style.display === 'block' && trigger && !trigger.contains(e.target) && !dd.contains(e.target)) {
     dd.style.display = 'none';
   }
 });
