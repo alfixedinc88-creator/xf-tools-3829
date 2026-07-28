@@ -4236,14 +4236,23 @@ function awdHandleScan(raw) {
 
       var okCount = res.results.filter(function(r){ return r.ok; }).length;
       var failCount = res.results.length - okCount;
+      // Bulk publish is genuinely useful once a batch is staged — one
+      // confirmation showing the real count, rather than requiring N
+      // individual clicks, but still one explicit confirm either way,
+      // same "review before it's live" caution as everywhere else.
       var rows = res.results.map(function(r) {
         var badge = r.ok ? '<span class="eb-badge staged">✓ Staged</span>' : '<span class="eb-badge fail">✗ ' + r.error + '</span>';
+        var checkbox = r.ok ? '<input type="checkbox" class="eb-publish-check" data-offer-id="' + r.offerId + '" checked>' : '';
         var publishBtn = r.ok ? '<button class="eb-btn eb-btn-primary" style="margin-top:0;padding:5px 12px;font-size:12px" onclick="ebPublish(\'' + r.offerId + '\', this)">Publish (go live)</button>' : '';
-        return '<tr><td class="eb-mono">' + r.baseSku + '</td><td>' + badge + '</td><td>' + publishBtn + '</td></tr>';
+        return '<tr><td>' + checkbox + '</td><td class="eb-mono">' + r.baseSku + '</td><td>' + badge + '</td><td>' + publishBtn + '</td></tr>';
       }).join('');
-      g('eb-results-table').innerHTML = '<div class="table-wrap"><table class="eb-table"><thead><tr><th>Base SKU</th><th>Result</th><th></th></tr></thead><tbody>' + rows + '</tbody></table></div>';
+      var selectAllHtml = okCount > 1
+        ? '<div style="margin-bottom:10px"><input type="checkbox" id="eb-select-all-publish" checked onchange="ebToggleSelectAllPublish(this.checked)"> <label for="eb-select-all-publish" style="cursor:pointer">Select all</label> '
+          + '<button class="eb-btn eb-btn-primary" style="margin-top:0" onclick="ebPublishSelected()">Publish Selected</button></div>'
+        : '';
+      g('eb-results-table').innerHTML = selectAllHtml + '<div class="table-wrap"><table class="eb-table"><thead><tr><th></th><th>Base SKU</th><th>Result</th><th></th></tr></thead><tbody>' + rows + '</tbody></table></div>';
       g('eb-results-card').style.display = 'block';
-      ebShowStatus(okCount + ' staged, ' + failCount + ' failed — review each, then Publish individually when ready', failCount > 0 ? 'error' : 'success');
+      ebShowStatus(okCount + ' staged, ' + failCount + ' failed — publish individually or select multiple and Publish Selected', failCount > 0 ? 'error' : 'success');
       ebSelected = {};
       ebLoadCatalog();
     } catch(e) {
@@ -4275,6 +4284,32 @@ function awdHandleScan(raw) {
     } catch(e) {
       ebShowStatus('Publish failed: ' + e.message, 'error');
       if (btnEl) { btnEl.disabled = false; btnEl.textContent = 'Publish (go live)'; }
+    }
+  };
+
+  window.ebToggleSelectAllPublish = function(checked) {
+    document.querySelectorAll('.eb-publish-check').forEach(function(cb) { cb.checked = checked; });
+  };
+
+  window.ebPublishSelected = async function() {
+    var offerIds = Array.from(document.querySelectorAll('.eb-publish-check:checked')).map(function(cb) { return cb.getAttribute('data-offer-id'); });
+    if (!offerIds.length) return;
+    if (!confirm('Publish ' + offerIds.length + ' offer(s) to make them LIVE eBay listings now?')) return;
+    ebShowStatus('Publishing ' + offerIds.length + ' offer(s)…', 'info');
+    try {
+      var res = await apiCall('/ebay/listing-publish', { method: 'POST', body: JSON.stringify({ offerIds: offerIds }) });
+      if (!res.ok) { ebShowStatus(res.error || 'Publish failed', 'error'); return; }
+      var okCount = res.results.filter(function(r){ return r.ok; }).length;
+      var failCount = res.results.length - okCount;
+      var rows = res.results.map(function(r) {
+        var badge = r.ok ? '<span class="eb-badge published">✓ Live (' + r.listingId + ')</span>' : '<span class="eb-badge fail">✗ ' + r.error + '</span>';
+        return '<tr><td class="eb-mono">' + r.offerId + '</td><td>' + badge + '</td></tr>';
+      }).join('');
+      g('eb-results-table').innerHTML = '<div class="table-wrap"><table class="eb-table"><thead><tr><th>Offer ID</th><th>Result</th></tr></thead><tbody>' + rows + '</tbody></table></div>';
+      ebShowStatus(okCount + ' published, ' + failCount + ' failed', failCount > 0 ? 'error' : 'success');
+      ebLoadCatalog();
+    } catch(e) {
+      ebShowStatus('Publish failed: ' + e.message, 'error');
     }
   };
 
