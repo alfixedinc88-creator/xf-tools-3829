@@ -904,6 +904,7 @@ body { margin:0; padding:0; font-family:'DM Sans',sans-serif; }
         <div id="eb-catalog-table"><div class="loading"><div class="spinner"></div> Loading catalog…</div></div>
         <button class="eb-btn eb-btn-secondary" onclick="ebLoadCatalog()">↻ Refresh</button>
         <button class="eb-btn eb-btn-primary" id="eb-check-btn" onclick="ebCheckSelected()" disabled>Check Selected (Dry Run)</button>
+        <button class="eb-btn eb-btn-secondary" id="eb-variation-btn" onclick="ebCheckVariation()" disabled style="border-color:var(--accent);color:var(--accent)">🔀 Stage as Variation (single base SKU, needs 2+ pack sizes)</button>
       </div>
 
       <div id="eb-status" style="display:none"></div>
@@ -4115,8 +4116,19 @@ function awdHandleScan(raw) {
 
   window.ebToggleRow = function(baseSku, checked) {
     ebSelected[baseSku] = checked;
+    var selectedSkus = Object.keys(ebSelected).filter(function(k){ return ebSelected[k]; });
     var btn = g('eb-check-btn');
-    if (btn) btn.disabled = !Object.values(ebSelected).some(Boolean);
+    if (btn) btn.disabled = !selectedSkus.length;
+
+    // Variation staging is one base_sku at a time (the API's own
+    // constraint — a group is inherently tied to a single product), and
+    // needs at least 2 pack sizes to make a dropdown meaningful at all.
+    var varBtn = g('eb-variation-btn');
+    if (varBtn) {
+      var onlyOneSelected = selectedSkus.length === 1;
+      var packCount = onlyOneSelected ? ebCatalog.filter(function(r){ return r.baseSku === selectedSkus[0]; }).length : 0;
+      varBtn.disabled = !(onlyOneSelected && packCount >= 2);
+    }
   };
 
   window.ebSetQuantity = function(baseSku, value) {
@@ -4153,6 +4165,12 @@ function awdHandleScan(raw) {
       var readiness = (!repRow.titleShort || !repRow.ebayCategoryId)
         ? '<div style="color:var(--red,#c52a1a);font-size:11px;margin-top:4px">⚠ Missing title_short or category</div>' : '';
 
+      var variationBadge = repRow.ebayVariationListingId
+        ? '<span class="eb-badge published">✓ Variation Live</span>'
+        : repRow.ebayVariationGroupKey
+          ? '<span class="eb-badge staged">Staged, not published</span>'
+          : (members.length >= 2 ? '<span class="eb-badge pending">Not staged</span>' : '<span style="color:var(--text-muted,#8a90a0);font-size:11px">Needs 2+ packs</span>');
+
       var checked = ebSelected[baseSku] ? 'checked' : '';
       return '<tr>'
         + '<td><input type="checkbox" ' + checked + ' onchange="ebToggleRow(\'' + baseSku + '\', this.checked)"></td>'
@@ -4161,9 +4179,10 @@ function awdHandleScan(raw) {
         + '<td>' + members.length + ' pack size' + (members.length === 1 ? '' : 's') + ' → ' + members.length + ' listing' + (members.length === 1 ? '' : 's') + '</td>'
         + '<td><input class="eb-input-sm" type="number" placeholder="8888" onchange="ebSetQuantity(\'' + baseSku + '\', this.value)"></td>'
         + '<td>' + packBadges + readiness + '</td>'
+        + '<td>' + variationBadge + '</td>'
         + '</tr>';
     }).join('');
-    g('eb-catalog-table').innerHTML = '<div class="table-wrap"><table class="eb-table"><thead><tr><th></th><th>Base SKU</th><th>Title</th><th>Pack Sizes</th><th>Qty</th><th>Status (● staged, ✓ live)</th></tr></thead><tbody>' + rows + '</tbody></table></div>';
+    g('eb-catalog-table').innerHTML = '<div class="table-wrap"><table class="eb-table"><thead><tr><th></th><th>Base SKU</th><th>Title</th><th>Pack Sizes</th><th>Qty</th><th>Individual (● staged, ✓ live)</th><th>Variation</th></tr></thead><tbody>' + rows + '</tbody></table></div>';
   }
 
   function ebBuildItems() {
@@ -4253,6 +4272,81 @@ function awdHandleScan(raw) {
         ebShowStatus('Publish failed: ' + r.error, 'error');
         if (btnEl) { btnEl.disabled = false; btnEl.textContent = 'Publish (go live)'; }
       }
+    } catch(e) {
+      ebShowStatus('Publish failed: ' + e.message, 'error');
+      if (btnEl) { btnEl.disabled = false; btnEl.textContent = 'Publish (go live)'; }
+    }
+  };
+
+  // ── EBAY VARIATION LISTING (one listing, pack sizes as a dropdown) ──
+  // Reuses the same checkbox selection as individual listings, but the
+  // API itself is single-base_sku (a group is inherently tied to one
+  // product), enforced by ebToggleRow only enabling this button when
+  // exactly one base_sku with 2+ pack sizes is selected.
+  window.ebCheckVariation = async function() {
+    var baseSku = Object.keys(ebSelected).filter(function(k){ return ebSelected[k]; })[0];
+    if (!baseSku) return;
+    var quantity = ebQuantities[baseSku] ? parseInt(ebQuantities[baseSku]) : undefined;
+    ebShowStatus('Checking variation listing for ' + baseSku + '…', 'info');
+    try {
+      var body = { baseSku: baseSku, dryRun: true };
+      if (quantity) body.quantity = quantity;
+      var res = await apiCall('/ebay/variation-stage', { method: 'POST', body: JSON.stringify(body) });
+      if (!res.ok) { ebShowStatus(res.error || 'Check failed', 'error'); return; }
+
+      var p = res.preview;
+      var alreadyWarning = res.alreadyStaged ? '<div style="color:#b45309;font-size:11px;margin-top:6px">⚠ Already staged as a variation group — confirming will create a SECOND group unless you pass force</div>' : '';
+      var memberRows = p.members.map(function(m) {
+        return '<tr><td class="eb-mono">' + m.realSku + '</td><td>' + m.packQty + ' Pack</td><td>$' + m.price + '</td></tr>';
+      }).join('');
+
+      g('eb-confirm-card').innerHTML =
+        '<div class="eb-label">Ready to Stage Variation Group</div>'
+        + '<div><strong>Group title:</strong> ' + p.groupPayload.title + '</div>'
+        + '<div style="margin-top:4px"><strong>Varies by:</strong> Pack Size (' + p.groupPayload.variesBy.specifications[0].values.join(', ') + ')</div>'
+        + alreadyWarning
+        + '<div class="table-wrap"><table class="eb-table" style="margin-top:10px"><thead><tr><th>Real SKU</th><th>Pack Size</th><th>Price</th></tr></thead><tbody>' + memberRows + '</tbody></table></div>'
+        + '<button class="eb-btn eb-btn-primary" onclick="ebConfirmVariationStage(\'' + baseSku + '\', ' + (quantity||'undefined') + ', ' + !!res.alreadyStaged + ')">Confirm — Stage Variation Group</button>'
+        + '<button class="eb-btn eb-btn-secondary" onclick="document.getElementById(\'eb-confirm-card\').style.display=\'none\'">Cancel</button>';
+      g('eb-confirm-card').style.display = 'block';
+      var st = g('eb-status'); if (st) { st.style.display = 'none'; st.innerHTML = ''; }
+    } catch(e) {
+      ebShowStatus('Check failed: ' + e.message, 'error');
+    }
+  };
+
+  window.ebConfirmVariationStage = async function(baseSku, quantity, force) {
+    g('eb-confirm-card').style.display = 'none';
+    ebShowStatus('Staging variation group for ' + baseSku + ' on eBay…', 'info');
+    try {
+      var body = { baseSku: baseSku, dryRun: false, force: !!force };
+      if (quantity) body.quantity = quantity;
+      var res = await apiCall('/ebay/variation-stage', { method: 'POST', body: JSON.stringify(body) });
+      if (!res.ok) { ebShowStatus(res.error || 'Staging failed', 'error'); return; }
+
+      g('eb-results-table').innerHTML =
+        '<div class="table-wrap"><table class="eb-table"><thead><tr><th>Group</th><th>Result</th><th></th></tr></thead><tbody>'
+        + '<tr><td class="eb-mono">' + res.groupKey + '</td><td><span class="eb-badge staged">✓ Staged (' + res.offerIds.length + ' variants)</span></td>'
+        + '<td><button class="eb-btn eb-btn-primary" style="margin-top:0;padding:5px 12px;font-size:12px" onclick="ebPublishVariation(\'' + res.groupKey + '\', this)">Publish (go live)</button></td></tr>'
+        + '</tbody></table></div>';
+      g('eb-results-card').style.display = 'block';
+      ebShowStatus('Variation group staged — review, then Publish when ready', 'success');
+      ebSelected = {};
+      ebLoadCatalog();
+    } catch(e) {
+      ebShowStatus('Staging failed: ' + e.message, 'error');
+    }
+  };
+
+  window.ebPublishVariation = async function(groupKey, btnEl) {
+    if (!confirm('Publish this variation group to make it a LIVE eBay listing now?')) return;
+    if (btnEl) { btnEl.disabled = true; btnEl.textContent = 'Publishing…'; }
+    try {
+      var res = await apiCall('/ebay/variation-publish', { method: 'POST', body: JSON.stringify({ groupKey: groupKey }) });
+      if (!res.ok) { ebShowStatus(res.error || 'Publish failed', 'error'); if (btnEl) { btnEl.disabled = false; btnEl.textContent = 'Publish (go live)'; } return; }
+      ebShowStatus('Live — eBay listing ID ' + res.listingId, 'success');
+      if (btnEl) { btnEl.textContent = '✓ Live (' + res.listingId + ')'; btnEl.disabled = true; }
+      ebLoadCatalog();
     } catch(e) {
       ebShowStatus('Publish failed: ' + e.message, 'error');
       if (btnEl) { btnEl.disabled = false; btnEl.textContent = 'Publish (go live)'; }
