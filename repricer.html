@@ -802,6 +802,14 @@ body { margin:0; padding:0; font-family:'DM Sans',sans-serif; }
       </style>
 
       <div class="bt-card">
+        <div class="bt-label">Auto-Scan Live Catalog for Long Titles</div>
+        <div class="bt-hint" style="margin-bottom:10px">Uses the listings already pulled by "Sync Listings" on Active Listings — sync there first if you haven't recently. Automatically skips anything already fixed, even across sessions.</div>
+        <div id="bt-scan-summary"></div>
+        <button class="bt-btn bt-btn-primary" onclick="btScanCatalog()">🔍 Scan Synced Catalog</button>
+        <button class="bt-btn bt-btn-secondary" onclick="btLoadNeedsWork()">↻ Load Saved Needs-Work List</button>
+      </div>
+
+      <div class="bt-card">
         <div class="bt-label">Paste CSV — ASIN, New Title (one per line)</div>
         <textarea id="bt-input" placeholder="B07BCNXV1Q,XFITTING 10 Pack Pex Barb 1 Inch Ball Valve, Yellow Handle, Brass&#10;B08JGQ3HWW,10 Pieces XFITTING 3/4&quot; Male x 3/4&quot; GHT Hose Bibb No-Kink, 1/4 Turn"></textarea>
         <div class="bt-hint">First column ASIN, rest of the line is the title (commas inside titles are fine — only the first comma splits).</div>
@@ -3950,6 +3958,21 @@ function awdHandleScan(raw) {
       }
       var okCount = allResults.filter(function(r){ return r.ok; }).length;
       var failCount = allResults.length - okCount;
+
+      // Marks successfully-updated ASINs done in the persistent tracking
+      // table, so future catalog scans never re-flag them — only done
+      // here, after confirmed success, not at submission time, since a
+      // submission can still fail at this stage.
+      var successfulUpdates = allResults.filter(function(r){ return r.ok; }).map(function(r) {
+        var parsedEntry = btParsed.find(function(p){ return p.asin === r.asin; });
+        return { asin: r.asin, newTitle: parsedEntry ? parsedEntry.newTitle : '' };
+      });
+      if (successfulUpdates.length) {
+        apiCall('/amazon/titles-mark-done', { method: 'POST', body: JSON.stringify({ updates: successfulUpdates }) }).catch(function(e) {
+          console.error('[Bulk Titles] mark-done failed (titles still updated fine on Amazon):', e.message);
+        });
+      }
+
       var rows = allResults.map(function(r) {
         var badge = r.ok ? '<span class="bt-badge ok">✓ Updated</span>' : '<span class="bt-badge fail">✗ Failed</span>';
         return '<tr><td class="bt-mono">' + r.sku + '</td><td>' + badge + '</td><td>' + (r.error || '') + '</td></tr>';
@@ -4427,6 +4450,64 @@ function awdHandleScan(raw) {
       if (btnEl) { btnEl.disabled = false; btnEl.textContent = 'Publish (go live)'; }
     }
   };
+
+  // ════════════════════════════════════════════
+  // AMAZON TITLE AUTO-SCAN — replaces manually cross-
+  // referencing a spreadsheet of "already done" ASINs against the full
+  // catalog. Reuses rprAllListings (already populated by "Sync Listings"
+  // on Active Listings) rather than triggering a second Amazon pull.
+  // ════════════════════════════════════════════
+  window.btScanCatalog = async function() {
+    if (typeof rprAllListings === 'undefined' || !rprAllListings.length) {
+      g('bt-scan-summary').innerHTML = '<div class="bt-status-line error">No synced listings found — go to Active Listings and click Sync Listings first.</div>';
+      return;
+    }
+    var amazonListings = rprAllListings.filter(function(l) { return l.marketplace === 'amazon' && l.title; });
+    if (!amazonListings.length) {
+      g('bt-scan-summary').innerHTML = '<div class="bt-status-line error">No Amazon listings in the synced data.</div>';
+      return;
+    }
+
+    g('bt-scan-summary').innerHTML = '<div class="bt-status-line info">Scanning ' + amazonListings.length + ' Amazon listings…</div>';
+    try {
+      var res = await apiCall('/amazon/titles-scan', {
+        method: 'POST',
+        body: JSON.stringify({ listings: amazonListings.map(function(l) { return { asin: l.asin, sku: l.sku, title: l.title }; }) })
+      });
+      if (!res.ok) { g('bt-scan-summary').innerHTML = '<div class="bt-status-line error">' + (res.error || 'Scan failed') + '</div>'; return; }
+      renderNeedsWork(res.needsWork, res.totalScanned, res.overLimitCount, res.alreadyDoneCount);
+    } catch(e) {
+      g('bt-scan-summary').innerHTML = '<div class="bt-status-line error">Scan failed: ' + e.message + '</div>';
+    }
+  };
+
+  window.btLoadNeedsWork = async function() {
+    g('bt-scan-summary').innerHTML = '<div class="bt-status-line info">Loading saved needs-work list…</div>';
+    try {
+      var res = await apiCall('/amazon/titles-needs-work');
+      if (!res.ok) { g('bt-scan-summary').innerHTML = '<div class="bt-status-line error">' + (res.error || 'Load failed') + '</div>'; return; }
+      renderNeedsWork(res.needsWork.map(function(r) { return { asin: r.asin, sku: r.sku, title: r.original_title }; }), null, null, null);
+    } catch(e) {
+      g('bt-scan-summary').innerHTML = '<div class="bt-status-line error">Load failed: ' + e.message + '</div>';
+    }
+  };
+
+  function renderNeedsWork(needsWork, totalScanned, overLimitCount, alreadyDoneCount) {
+    if (!needsWork.length) {
+      g('bt-scan-summary').innerHTML = '<div class="bt-status-line success">Nothing needs work — every over-limit title already has a shortened version.</div>';
+      return;
+    }
+    var summaryLine = totalScanned !== null
+      ? totalScanned + ' scanned, ' + overLimitCount + ' over 75 chars, ' + alreadyDoneCount + ' already fixed — ' + needsWork.length + ' remaining'
+      : needsWork.length + ' saved item(s) still need titles drafted';
+    var rows = needsWork.map(function(r) {
+      return '<tr><td class="bt-mono">' + r.asin + '</td><td>' + r.title.length + '</td><td>' + r.title + '</td></tr>';
+    }).join('');
+    g('bt-scan-summary').innerHTML =
+      '<div class="bt-status-line info">' + summaryLine + '</div>'
+      + '<div class="table-wrap" style="margin-top:10px;max-height:400px;overflow-y:auto"><table class="bt-table"><thead><tr><th>ASIN</th><th>Len</th><th>Current Title</th></tr></thead><tbody>' + rows + '</tbody></table></div>'
+      + '<div class="bt-hint" style="margin-top:8px">Draft shortened titles for these, then paste ASIN,NewTitle pairs into the box below — completed ones are tracked automatically and won\'t show up here again.</div>';
+  }
 
 })();
 
