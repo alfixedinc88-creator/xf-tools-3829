@@ -4658,6 +4658,23 @@ function awdHandleScan(raw) {
       // values look correct. Copying data into a genuinely fresh,
       // untouched template download sidesteps that entirely, since
       // nothing ever re-writes the file programmatically.
+      // BUGFIX: confirmed via a real pasted-result upload — fields
+      // joined with plain tabs/newlines broke on any description
+      // containing an embedded line break (which all of them do).
+      // Excel treats a bare \n inside pasted TSV as a NEW ROW, not
+      // part of the same cell — the description text was spilling
+      // across multiple rows on its own. Standard TSV/CSV escaping:
+      // any field containing a tab, newline, or quote gets wrapped in
+      // double quotes (with existing quotes doubled), which tells
+      // Excel/Sheets to treat everything inside as one cell regardless
+      // of embedded line breaks.
+      function tsvEscape(val) {
+        var s = String(val == null ? '' : val);
+        if (s.indexOf('\t') !== -1 || s.indexOf('\n') !== -1 || s.indexOf('"') !== -1) {
+          return '"' + s.replace(/"/g, '""') + '"';
+        }
+        return s;
+      }
       var TSV_ROWS = res.rows.map(function(r) {
         var kf = r.keyFeatures || [];
         return [
@@ -4665,7 +4682,7 @@ function awdHandleScan(raw) {
           r.country_of_origin_substantial_transformation, r.condition, r.fulfillmentCenterID, r.quantity,
           r.shortDescription, kf[0]||'', kf[1]||'', kf[2]||'', kf[3]||'',
           r.mainImageUrl, r.isProp65WarningRequired, r.material, r.valve_type,
-        ].join('\t');
+        ].map(tsvEscape).join('\t');
       });
       var tsv = TSV_ROWS.join('\n');
 
