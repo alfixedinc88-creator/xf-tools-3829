@@ -4640,7 +4640,19 @@ function awdHandleScan(raw) {
     wmShowStatus('Fetching catalog data for ' + baseSkus.length + ' base SKU(s)…', 'info');
     try {
       var res = await apiCall('/walmart/spreadsheet-data', { method: 'POST', body: JSON.stringify({ baseSkus: baseSkus }) });
-      if (!res.ok) { wmShowStatus(res.error || 'Failed to fetch spreadsheet data', 'error'); return; }
+      if (!res.ok) {
+        // BUGFIX: the worker already returns a detailed per-row skipped
+        // list with the SPECIFIC reason each row wasn't included, even
+        // on total failure — this was previously discarded, showing
+        // only the generic top-level message, which made a specific
+        // problem (e.g. walmart_product_type not set) look like a
+        // blanket, misleading "no UPC" claim.
+        var detailHtml = (res.skipped && res.skipped.length)
+          ? '<div style="margin-top:6px">' + res.skipped.map(function(s){ return (s.sku || s.baseSku) + ': ' + s.reason; }).join('<br>') + '</div>'
+          : '';
+        wmShowStatus((res.error || 'Failed to fetch spreadsheet data') + detailHtml, 'error');
+        return;
+      }
 
       if (typeof XLSX === 'undefined') { wmShowStatus('xlsx library failed to load — check your internet connection and reload the page', 'error'); return; }
 
