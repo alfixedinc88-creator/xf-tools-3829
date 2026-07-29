@@ -37,6 +37,7 @@
 *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
 body { margin:0; padding:0; font-family:'DM Sans',sans-serif; }
   </style>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
 </head>
 <body>
 
@@ -926,6 +927,44 @@ body { margin:0; padding:0; font-family:'DM Sans',sans-serif; }
 
     </div>
   </div>
+
+  <!-- ═══ TAB: WALMART LISTINGS ═══ -->
+  <div class="tab-panel" id="panel-walmartlist">
+    <div class="panel-body">
+      <style>
+        #panel-walmartlist .wm-card{background:var(--surface2);border:1px solid var(--border);border-radius:12px;padding:20px;margin-bottom:16px}
+        #panel-walmartlist .wm-label{font-size:11px;font-weight:700;letter-spacing:.6px;text-transform:uppercase;color:var(--text-muted);margin-bottom:8px;display:block}
+        #panel-walmartlist .wm-btn{padding:10px 20px;border-radius:8px;border:none;font-size:14px;font-weight:600;cursor:pointer;font-family:inherit;margin-top:12px;margin-right:8px}
+        #panel-walmartlist .wm-btn-primary{background:var(--accent);color:#fff}
+        #panel-walmartlist .wm-btn-secondary{background:var(--surface);color:var(--text);border:1.5px solid var(--border)}
+        #panel-walmartlist .wm-btn:disabled{opacity:.4;cursor:not-allowed}
+        #panel-walmartlist .wm-table{width:100%;border-collapse:collapse;margin-top:12px}
+        #panel-walmartlist .wm-table th{padding:9px 12px;text-align:left;font-size:11px;font-weight:700;letter-spacing:.5px;text-transform:uppercase;color:var(--text-muted);background:var(--surface);border-bottom:2px solid var(--border)}
+        #panel-walmartlist .wm-table td{padding:10px 12px;border-bottom:1px solid var(--border);font-size:12px;vertical-align:top}
+        #panel-walmartlist .wm-table tr:last-child td{border-bottom:none}
+        #panel-walmartlist .wm-mono{font-family:var(--mono,monospace)}
+        #panel-walmartlist .wm-badge{display:inline-flex;align-items:center;gap:6px;padding:3px 9px;border-radius:6px;font-size:11px;font-weight:600;border:1px solid}
+        #panel-walmartlist .wm-badge.ok{background:#ecfdf5;color:#0e7f3e;border-color:#0e7f3e}
+        #panel-walmartlist .wm-badge.fail{background:#fdf0ee;color:#c52a1a;border-color:#c52a1a}
+        #panel-walmartlist .wm-status-line{font-size:13px;margin-top:12px;padding:10px 14px;border-radius:8px}
+        #panel-walmartlist .wm-status-line.info{background:#eef2fd;color:var(--accent)}
+        #panel-walmartlist .wm-status-line.error{background:#fdf0ee;color:#c52a1a}
+        #panel-walmartlist .wm-status-line.success{background:#ecfdf5;color:#0e7f3e}
+      </style>
+
+      <div class="wm-card">
+        <div class="wm-label">Product Catalog — one row per base SKU</div>
+        <div class="wm-hint" style="margin-bottom:10px;font-size:12px;color:var(--text-muted)">Generates a real .xlsx matching Walmart's current template exactly — upload it yourself through Seller Center (the path proven to work for this account). Requires UPC, title_short, starting_price, weight_lbs, and walmart_product_type all set per row.</div>
+        <div id="wm-catalog-table"><div class="loading"><div class="spinner"></div> Loading catalog…</div></div>
+        <button class="wm-btn wm-btn-secondary" onclick="wmLoadCatalog()">↻ Refresh</button>
+        <button class="wm-btn wm-btn-secondary" onclick="wmImportFromSheet()" id="wm-import-btn">📥 Import from Sheet</button>
+        <button class="wm-btn wm-btn-primary" id="wm-generate-btn" onclick="wmGenerateSpreadsheet()" disabled>📄 Generate Spreadsheet</button>
+      </div>
+
+      <div id="wm-status" style="display:none"></div>
+
+    </div>
+  </div>
   </div>
 
 
@@ -971,6 +1010,7 @@ body { margin:0; padding:0; font-family:'DM Sans',sans-serif; }
     <div class="tabitem" id="tab-bulktitles" onclick="event.stopPropagation(); rprTab('bulktitles')" style="white-space:nowrap">✏️ Bulk Titles</div>
     <div class="tabitem" id="tab-shopify" onclick="event.stopPropagation(); rprTab('shopify')" style="white-space:nowrap">🛍️ Shopify Listings</div>
     <div class="tabitem" id="tab-ebaylist" onclick="event.stopPropagation(); rprTab('ebaylist')" style="white-space:nowrap">🏷️ eBay Listings</div>
+        <div class="tabitem" id="tab-walmartlist" onclick="event.stopPropagation(); rprTab('walmartlist')" style="white-space:nowrap">🏬 Walmart Listings</div>
   </div>
 
 </div><!-- /app -->
@@ -1216,6 +1256,7 @@ function rprTab(tab) {
   if (tab === 'bulktitles') btReset();
   if (tab === 'shopify') syLoadCatalog();
   if (tab === 'ebaylist') ebLoadCatalog();
+  if (tab === 'walmartlist') wmLoadCatalog();
 
   // Grouped under the "Listings" dropdown — mark the trigger active too
   // so it's visually clear which section you're in, and close the
@@ -1224,7 +1265,7 @@ function rprTab(tab) {
   if (dd) dd.style.display = 'none';
   var trigger = document.getElementById('tab-listings-dropdown-trigger');
   if (trigger) {
-    if (['bulktitles', 'shopify', 'ebaylist'].indexOf(tab) !== -1) trigger.classList.add('active');
+    if (['bulktitles', 'shopify', 'ebaylist', 'walmartlist'].indexOf(tab) !== -1) trigger.classList.add('active');
     else trigger.classList.remove('active');
   }
 }
@@ -4508,6 +4549,133 @@ function awdHandleScan(raw) {
       + '<div class="table-wrap" style="margin-top:10px;max-height:400px;overflow-y:auto"><table class="bt-table"><thead><tr><th>ASIN</th><th>Len</th><th>Current Title</th></tr></thead><tbody>' + rows + '</tbody></table></div>'
       + '<div class="bt-hint" style="margin-top:8px">Draft shortened titles for these, then paste ASIN,NewTitle pairs into the box below — completed ones are tracked automatically and won\'t show up here again.</div>';
   }
+
+  // ════════════════════════════════════════════
+  // WALMART LISTINGS — generates a real .xlsx matching Walmart's exact
+  // current template, for upload through Seller Center's UI (the path
+  // proven to work for this account, unlike the API route which was
+  // abandoned after exhausting reasonable attempts).
+  // ════════════════════════════════════════════
+  var wmCatalog = [];
+  var wmSelected = {};
+
+  function wmShowStatus(msg, type) {
+    var st = g('wm-status');
+    if (!st) return;
+    st.style.display = 'block';
+    st.innerHTML = '<div class="wm-status-line ' + (type || 'info') + '">' + msg + '</div>';
+  }
+
+  window.wmLoadCatalog = async function() {
+    g('wm-catalog-table').innerHTML = '<div class="loading"><div class="spinner"></div> Loading catalog…</div>';
+    wmSelected = {};
+    try {
+      var res = await apiCall('/shopify/catalog-list?grouped=false');
+      if (!res.ok) { g('wm-catalog-table').innerHTML = '<div class="wm-status-line error">' + (res.error || 'Load failed') + '</div>'; return; }
+      wmCatalog = res.rows || [];
+      wmRenderCatalog();
+    } catch(e) {
+      g('wm-catalog-table').innerHTML = '<div class="wm-status-line error">Load failed: ' + e.message + '</div>';
+    }
+  };
+
+  window.wmImportFromSheet = async function() {
+    var btn = g('wm-import-btn');
+    if (btn) { btn.disabled = true; btn.textContent = 'Importing…'; }
+    wmShowStatus('Importing from Google Sheet…', 'info');
+    try {
+      var res = await apiCall('/inventory/import-product-catalog', { method: 'POST', body: JSON.stringify({}) });
+      if (!res.ok) { wmShowStatus(res.error || 'Import failed', 'error'); return; }
+      wmShowStatus(res.message + ' (' + res.trackingPreserved + ' tracking record(s) preserved)', 'success');
+      wmLoadCatalog();
+    } catch(e) {
+      wmShowStatus('Import failed: ' + e.message, 'error');
+    } finally {
+      if (btn) { btn.disabled = false; btn.textContent = '📥 Import from Sheet'; }
+    }
+  };
+
+  window.wmToggleRow = function(baseSku, checked) {
+    wmSelected[baseSku] = checked;
+    var btn = g('wm-generate-btn');
+    if (btn) btn.disabled = !Object.values(wmSelected).some(Boolean);
+  };
+
+  function wmRenderCatalog() {
+    if (!wmCatalog.length) {
+      g('wm-catalog-table').innerHTML = '<div class="empty-state"><div class="icon">🏬</div><div class="msg">No catalog rows found</div></div>';
+      return;
+    }
+    var byBaseSku = {};
+    wmCatalog.forEach(function(r) {
+      if (!byBaseSku[r.baseSku]) byBaseSku[r.baseSku] = [];
+      byBaseSku[r.baseSku].push(r);
+    });
+    var rows = Object.keys(byBaseSku).map(function(baseSku) {
+      var members = byBaseSku[baseSku];
+      var readyCount = members.filter(function(m) { return m.upc; }).length; // full readiness (walmart_product_type etc.) is checked server-side at generate time
+      var badge = readyCount > 0
+        ? '<span class="wm-badge ok">' + readyCount + '/' + members.length + ' have UPC</span>'
+        : '<span class="wm-badge fail">No UPC on any pack size</span>';
+      var checked = wmSelected[baseSku] ? 'checked' : '';
+      return '<tr>'
+        + '<td><input type="checkbox" ' + checked + ' onchange="wmToggleRow(\'' + baseSku + '\', this.checked)"></td>'
+        + '<td class="wm-mono">' + baseSku + '</td>'
+        + '<td>' + (members[0].titleShort || members[0].title || '') + '</td>'
+        + '<td>' + members.length + ' pack size' + (members.length === 1 ? '' : 's') + '</td>'
+        + '<td>' + badge + '</td>'
+        + '</tr>';
+    }).join('');
+    g('wm-catalog-table').innerHTML = '<div class="table-wrap"><table class="wm-table"><thead><tr><th></th><th>Base SKU</th><th>Title</th><th>Pack Sizes</th><th>UPC Status</th></tr></thead><tbody>' + rows + '</tbody></table></div>';
+  }
+
+  // Builds the actual downloadable .xlsx, matching the real current
+  // Walmart template's exact multi-row header structure (confirmed by
+  // reading the real spec spreadsheet directly — row 1 is a machine-
+  // parsed metadata string, rows 2-6 are section/label/field-name/help
+  // header rows, data starts row 7). Sheet name must match exactly too.
+  window.wmGenerateSpreadsheet = async function() {
+    var baseSkus = Object.keys(wmSelected).filter(function(k){ return wmSelected[k]; });
+    if (!baseSkus.length) return;
+    wmShowStatus('Fetching catalog data for ' + baseSkus.length + ' base SKU(s)…', 'info');
+    try {
+      var res = await apiCall('/walmart/spreadsheet-data', { method: 'POST', body: JSON.stringify({ baseSkus: baseSkus }) });
+      if (!res.ok) { wmShowStatus(res.error || 'Failed to fetch spreadsheet data', 'error'); return; }
+
+      if (typeof XLSX === 'undefined') { wmShowStatus('xlsx library failed to load — check your internet connection and reload the page', 'error'); return; }
+
+      var META_ROW = ['Version=5.0.20260608-18_15_07,MP_ITEM,product_content_and_site_exp,en,external,Product Content And Site Exp,0,0'];
+      var SECTION_ROW = ['SKU', 'Spec Product Type', 'Required to sell on Walmart website', '', '', '', '', '', 'Condition Details', 'Inventory', '', 'Required for the item to be visible on Walmart website', '', '', '', '', '', ''];
+      var SUBSECTION_ROW = ['', '', 'Product Identifiers (productIdentifiers)', '', '', '', '', '', '', '', '', '', '', '', '', '', '', ''];
+      var LABEL_ROW = ['SKU', 'Spec Product Type', 'Product ID Type', 'Product ID', 'Product Name', 'Brand Name', 'Selling Price', 'Shipping Weight (lbs)', 'Country of Origin - Substantial Transformation', 'Condition', 'Fulfillment Center ID', 'Inventory Quantity', 'Site Description', 'Key Features', 'Key Features 1', 'Key Features 2', 'Key Features 3', 'Main Image URL', 'Is Prop 65 Warning Required', 'Material', 'Valve Type'];
+      var FIELD_ROW = ['sku', 'specProductType', 'productIdType', 'productId', 'productName', 'brand', 'price', 'ShippingWeight', 'country_of_origin_substantial_transformation', 'condition', 'fulfillmentCenterID', 'quantity', 'shortDescription', 'keyFeatures', 'keyFeatures', 'keyFeatures', 'keyFeatures', 'mainImageUrl', 'isProp65WarningRequired', 'material', 'valve_type'];
+      var HELP_ROW = FIELD_ROW.map(function(f){ return ''; }); // left blank — documentation only, not machine-parsed
+
+      var dataRows = res.rows.map(function(r) {
+        var kf = r.keyFeatures || [];
+        return [
+          r.sku, r.specProductType, r.productIdType, r.productId, r.productName, r.brand, r.price, r.ShippingWeight,
+          r.country_of_origin_substantial_transformation, r.condition, r.fulfillmentCenterID, r.quantity,
+          r.shortDescription, kf[0]||'', kf[1]||'', kf[2]||'', kf[3]||'',
+          r.mainImageUrl, r.isProp65WarningRequired, r.material, r.valve_type,
+        ];
+      });
+
+      var aoa = [META_ROW, SECTION_ROW, SUBSECTION_ROW, LABEL_ROW, FIELD_ROW, HELP_ROW].concat(dataRows);
+      var ws = XLSX.utils.aoa_to_sheet(aoa);
+      var wb = XLSX.utils.book_new();
+      XLSX.utils.book_append_sheet(wb, ws, 'Product Content And Site Exp');
+      XLSX.writeFile(wb, 'walmart_item_setup_' + new Date().toISOString().slice(0,10) + '.xlsx');
+
+      var skippedMsg = res.skipped && res.skipped.length ? ' (' + res.skipped.length + ' skipped — see below)' : '';
+      wmShowStatus(res.rowCount + ' row(s) written to spreadsheet' + skippedMsg + '. Upload it through Seller Center\'s Item Setup.', 'success');
+      if (res.skipped && res.skipped.length) {
+        wmShowStatus(g('wm-status').innerHTML + '<div class="wm-status-line error" style="margin-top:6px">' + res.skipped.map(function(s){ return s.sku || s.baseSku; }).join(', ') + ' — ' + res.skipped[0].reason + '</div>', 'success');
+      }
+    } catch(e) {
+      wmShowStatus('Failed to generate spreadsheet: ' + e.message, 'error');
+    }
+  };
 
 })();
 
