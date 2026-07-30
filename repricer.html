@@ -4675,14 +4675,16 @@ function awdHandleScan(raw) {
         }
         return s;
       }
+      // SIMPLIFIED: the worker now returns each row as a flat, already-
+      // correctly-ordered 93-column array (matching the real template
+      // exactly, confirmed column-by-column against the actual file) —
+      // rather than a named object this function had to manually
+      // reassemble in a specific order. That manual reassembly was the
+      // source of the column-misalignment bug (missing several required
+      // fields caused everything after them to shift left). Now it's
+      // just escape-and-join, since the order is already correct.
       var TSV_ROWS = res.rows.map(function(r) {
-        var kf = r.keyFeatures || [];
-        return [
-          r.sku, r.specProductType, r.productIdType, r.productId, r.productName, r.brand, r.price, r.ShippingWeight,
-          r.country_of_origin_substantial_transformation, r.condition, r.fulfillmentCenterID, r.quantity,
-          r.shortDescription, kf[0]||'', kf[1]||'', kf[2]||'', kf[3]||'',
-          r.mainImageUrl, r.isProp65WarningRequired, r.material, r.valve_type,
-        ].map(tsvEscape).join('\t');
+        return r.map(tsvEscape).join('\t');
       });
       var tsv = TSV_ROWS.join('\n');
 
