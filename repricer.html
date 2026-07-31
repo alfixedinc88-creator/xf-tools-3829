@@ -993,7 +993,7 @@ body { margin:0; padding:0; font-family:'DM Sans',sans-serif; }
         <div class="az-label">Product Catalog — one row per base SKU</div>
         <div class="az-hint" style="margin-bottom:10px;font-size:12px;color:var(--text-muted)">Creates brand-new Amazon listings (VALVE product type) via the Listings Items API. Requires UPC, title_short, starting_price, and description all set per row. Standalone and variation are mutually exclusive per product — choose one, not both, since Amazon won't allow the same UPC on two listings.</div>
         <div style="margin-bottom:14px">
-          <label class="az-label" style="display:inline-block;margin-right:8px">Fulfillment</label>
+          <label class="az-label" style="display:inline-block;margin-right:8px">Fulfillment (standalone only — variation families always create both)</label>
           <label style="margin-right:16px;font-size:13px;cursor:pointer"><input type="radio" name="az-fulfillment" value="fbm" checked onchange="azFulfillmentType='fbm'"> FBM (merchant-fulfilled)</label>
           <label style="font-size:13px;cursor:pointer"><input type="radio" name="az-fulfillment" value="fba" onchange="azFulfillmentType='fba'"> FBA (Amazon-fulfilled)</label>
         </div>
@@ -4920,21 +4920,27 @@ function awdHandleScan(raw) {
     if (!baseSku) return;
     azShowStatus('Checking variation family for ' + baseSku + '…', 'info');
     try {
-      var res = await apiCall('/amazon/variation-create', { method: 'POST', body: JSON.stringify({ baseSku: baseSku, dryRun: true, fulfillmentType: azFulfillmentType }) });
+      // No fulfillmentType sent here — variation families always create
+      // BOTH an FBM and FBA child for every pack size under one shared
+      // parent now, confirmed as the correct behavior since FBM/FBA
+      // versions of the same product need to live in the same family,
+      // not two separate ones.
+      var res = await apiCall('/amazon/variation-create', { method: 'POST', body: JSON.stringify({ baseSku: baseSku, dryRun: true }) });
       if (!res.ok) { azShowStatus(res.error || 'Check failed', 'error'); return; }
 
       var skippedHtml = (res.skipped && res.skipped.length)
         ? '<div style="color:var(--red,#c52a1a);font-size:11px;margin-top:6px">' + res.skipped.map(function(s){ return s.sku + ': ' + s.reason; }).join('<br>') + '</div>'
         : '';
       var childRows = res.preview.children.map(function(c) {
-        return '<tr><td class="az-mono">' + c.sku + '</td><td>' + c.packQty + '</td><td>$' + c.attributes.purchasable_offer[0].our_price[0].schedule[0].value_with_tax + '</td></tr>';
+        var fulfillBadge = c.fulfillmentType === 'fba' ? '<span class="az-badge ok">FBA</span>' : '<span class="az-badge fail" style="background:#eef2fd;color:var(--accent);border-color:var(--accent)">FBM</span>';
+        return '<tr><td class="az-mono">' + c.sku + '</td><td>' + fulfillBadge + '</td><td>' + c.packQty + '</td><td>$' + c.attributes.purchasable_offer[0].our_price[0].schedule[0].value_with_tax + '</td></tr>';
       }).join('');
 
       g('az-confirm-card').innerHTML =
-        '<div class="az-label">Ready to Create Variation Family (' + res.childCount + ' children)</div>'
+        '<div class="az-label">Ready to Create Variation Family (' + res.childCount + ' children — FBM + FBA for each pack size)</div>'
         + '<div><strong>Parent SKU:</strong> <span class="az-mono">' + res.parentSku + '</span></div>'
         + skippedHtml
-        + '<div class="table-wrap" style="margin-top:10px"><table class="az-table"><thead><tr><th>Child SKU</th><th>Qty</th><th>Price</th></tr></thead><tbody>' + childRows + '</tbody></table></div>'
+        + '<div class="table-wrap" style="margin-top:10px"><table class="az-table"><thead><tr><th>Child SKU</th><th>Fulfillment</th><th>Qty</th><th>Price</th></tr></thead><tbody>' + childRows + '</tbody></table></div>'
         + '<button class="az-btn az-btn-primary" onclick="azConfirmVariationCreate(\'' + baseSku + '\')">Confirm — Create Variation Family</button>'
         + '<button class="az-btn az-btn-secondary" onclick="document.getElementById(\'az-confirm-card\').style.display=\'none\'">Cancel</button>';
       g('az-confirm-card').style.display = 'block';
@@ -4946,19 +4952,20 @@ function awdHandleScan(raw) {
 
   window.azConfirmVariationCreate = async function(baseSku) {
     g('az-confirm-card').style.display = 'none';
-    azShowStatus('Creating variation family for ' + baseSku + ' on Amazon…', 'info');
+    azShowStatus('Creating variation family (FBM + FBA) for ' + baseSku + ' on Amazon…', 'info');
     try {
-      var res = await apiCall('/amazon/variation-create', { method: 'POST', body: JSON.stringify({ baseSku: baseSku, dryRun: false, fulfillmentType: azFulfillmentType }) });
+      var res = await apiCall('/amazon/variation-create', { method: 'POST', body: JSON.stringify({ baseSku: baseSku, dryRun: false }) });
       if (!res.parent) { azShowStatus(res.error || 'Creation failed', 'error'); return; }
 
-      var allResults = [res.parent].concat(res.children.map(function(c) { return { sku: c.sku, status: c.status, ok: c.ok, error: c.error }; }));
+      var allResults = [Object.assign({ label: 'PARENT' }, res.parent)].concat(res.children.map(function(c) {
+        return { label: c.fulfillmentType ? c.fulfillmentType.toUpperCase() : 'child', sku: c.sku, status: c.status, ok: c.ok, error: c.error };
+      }));
       var okCount = allResults.filter(function(r){ return r.ok; }).length;
       var failCount = allResults.length - okCount;
-      var rows = allResults.map(function(r, i) {
-        var label = i === 0 ? 'PARENT' : 'child';
+      var rows = allResults.map(function(r) {
         var badge = r.ok ? '<span class="az-badge ok">✓ ' + r.status + '</span>' : '<span class="az-badge fail">✗ ' + r.status + '</span>';
         var errorDetail = r.error ? '<div style="font-size:10px;color:var(--red,#c52a1a);margin-top:4px;max-width:500px">' + r.error.replace(/</g,'&lt;') + '</div>' : '';
-        return '<tr><td>' + label + '</td><td class="az-mono">' + r.sku + '</td><td>' + badge + errorDetail + '</td></tr>';
+        return '<tr><td>' + r.label + '</td><td class="az-mono">' + r.sku + '</td><td>' + badge + errorDetail + '</td></tr>';
       }).join('');
       g('az-results-table').innerHTML = '<div class="table-wrap"><table class="az-table"><thead><tr><th></th><th>SKU</th><th>Result</th></tr></thead><tbody>' + rows + '</tbody></table></div>';
       g('az-results-card').style.display = 'block';
