@@ -991,11 +991,17 @@ body { margin:0; padding:0; font-family:'DM Sans',sans-serif; }
 
       <div class="az-card">
         <div class="az-label">Product Catalog — one row per base SKU</div>
-        <div class="az-hint" style="margin-bottom:10px;font-size:12px;color:var(--text-muted)">Creates brand-new Amazon listings (VALVE product type) via the Listings Items API. Requires UPC, title_short, starting_price, and description all set per row.</div>
+        <div class="az-hint" style="margin-bottom:10px;font-size:12px;color:var(--text-muted)">Creates brand-new Amazon listings (VALVE product type) via the Listings Items API. Requires UPC, title_short, starting_price, and description all set per row. Standalone and variation are mutually exclusive per product — choose one, not both, since Amazon won't allow the same UPC on two listings.</div>
+        <div style="margin-bottom:14px">
+          <label class="az-label" style="display:inline-block;margin-right:8px">Fulfillment</label>
+          <label style="margin-right:16px;font-size:13px;cursor:pointer"><input type="radio" name="az-fulfillment" value="fbm" checked onchange="azFulfillmentType='fbm'"> FBM (merchant-fulfilled)</label>
+          <label style="font-size:13px;cursor:pointer"><input type="radio" name="az-fulfillment" value="fba" onchange="azFulfillmentType='fba'"> FBA (Amazon-fulfilled)</label>
+        </div>
         <div id="az-catalog-table"><div class="loading"><div class="spinner"></div> Loading catalog…</div></div>
         <button class="az-btn az-btn-secondary" onclick="azLoadCatalog()">↻ Refresh</button>
         <button class="az-btn az-btn-secondary" onclick="azImportFromSheet()" id="az-import-btn">📥 Import from Sheet</button>
         <button class="az-btn az-btn-primary" id="az-check-btn" onclick="azCheckSelected()" disabled>Check Selected (Dry Run)</button>
+        <button class="az-btn az-btn-secondary" id="az-variation-btn" onclick="azCheckVariation()" disabled style="border-color:var(--accent);color:var(--accent)">🔀 Create as Variation Family (single base SKU, 2+ pack sizes)</button>
       </div>
 
       <div id="az-status" style="display:none"></div>
@@ -4770,6 +4776,7 @@ function awdHandleScan(raw) {
   // ════════════════════════════════════════════
   var azCatalog = [];
   var azSelected = {};
+  window.azFulfillmentType = 'fbm';
 
   function azShowStatus(msg, type) {
     var st = g('az-status');
@@ -4809,8 +4816,16 @@ function awdHandleScan(raw) {
 
   window.azToggleRow = function(baseSku, checked) {
     azSelected[baseSku] = checked;
+    var selectedSkus = Object.keys(azSelected).filter(function(k){ return azSelected[k]; });
     var btn = g('az-check-btn');
-    if (btn) btn.disabled = !Object.values(azSelected).some(Boolean);
+    if (btn) btn.disabled = !selectedSkus.length;
+
+    var varBtn = g('az-variation-btn');
+    if (varBtn) {
+      var onlyOneSelected = selectedSkus.length === 1;
+      var packCount = onlyOneSelected ? azCatalog.filter(function(r){ return r.baseSku === selectedSkus[0]; }).length : 0;
+      varBtn.disabled = !(onlyOneSelected && packCount >= 2);
+    }
   };
 
   function azRenderCatalog() {
@@ -4846,7 +4861,7 @@ function awdHandleScan(raw) {
     if (!baseSkus.length) return;
     azShowStatus('Checking ' + baseSkus.length + ' base SKU(s)…', 'info');
     try {
-      var res = await apiCall('/amazon/listing-create', { method: 'POST', body: JSON.stringify({ baseSkus: baseSkus, dryRun: true }) });
+      var res = await apiCall('/amazon/listing-create', { method: 'POST', body: JSON.stringify({ baseSkus: baseSkus, dryRun: true, fulfillmentType: azFulfillmentType }) });
       if (!res.ok) { azShowStatus(res.error || 'Check failed', 'error'); return; }
 
       var skippedHtml = (res.skipped && res.skipped.length)
@@ -4874,7 +4889,7 @@ function awdHandleScan(raw) {
     g('az-confirm-card').style.display = 'none';
     azShowStatus('Creating ' + baseSkus.length + ' base SKU\'s listing(s) on Amazon…', 'info');
     try {
-      var res = await apiCall('/amazon/listing-create', { method: 'POST', body: JSON.stringify({ baseSkus: baseSkus, dryRun: false }) });
+      var res = await apiCall('/amazon/listing-create', { method: 'POST', body: JSON.stringify({ baseSkus: baseSkus, dryRun: false, fulfillmentType: azFulfillmentType }) });
       if (!res.ok && !res.results) { azShowStatus(res.error || 'Creation failed', 'error'); return; }
 
       var okCount = res.results.filter(function(r){ return r.ok; }).length;
@@ -4889,6 +4904,65 @@ function awdHandleScan(raw) {
       g('az-results-table').innerHTML = '<div class="table-wrap"><table class="az-table"><thead><tr><th>SKU</th><th>Result</th></tr></thead><tbody>' + rows + '</tbody></table></div>';
       g('az-results-card').style.display = 'block';
       azShowStatus(okCount + ' accepted, ' + failCount + ' failed — check Seller Central to confirm listings go fully live', failCount > 0 ? 'error' : 'success');
+      azSelected = {};
+      azLoadCatalog();
+    } catch(e) {
+      azShowStatus('Creation failed: ' + e.message, 'error');
+    }
+  };
+
+  // Variation family creation — single base SKU, real SKUs for children
+  // (confirmed with the user: standalone and variation are mutually
+  // exclusive per product on Amazon, so no derived-SKU/UPC conflict to
+  // avoid here, unlike Walmart).
+  window.azCheckVariation = async function() {
+    var baseSku = Object.keys(azSelected).filter(function(k){ return azSelected[k]; })[0];
+    if (!baseSku) return;
+    azShowStatus('Checking variation family for ' + baseSku + '…', 'info');
+    try {
+      var res = await apiCall('/amazon/variation-create', { method: 'POST', body: JSON.stringify({ baseSku: baseSku, dryRun: true, fulfillmentType: azFulfillmentType }) });
+      if (!res.ok) { azShowStatus(res.error || 'Check failed', 'error'); return; }
+
+      var skippedHtml = (res.skipped && res.skipped.length)
+        ? '<div style="color:var(--red,#c52a1a);font-size:11px;margin-top:6px">' + res.skipped.map(function(s){ return s.sku + ': ' + s.reason; }).join('<br>') + '</div>'
+        : '';
+      var childRows = res.preview.children.map(function(c) {
+        return '<tr><td class="az-mono">' + c.sku + '</td><td>' + c.packQty + '</td><td>$' + c.attributes.purchasable_offer[0].our_price[0].schedule[0].value_with_tax + '</td></tr>';
+      }).join('');
+
+      g('az-confirm-card').innerHTML =
+        '<div class="az-label">Ready to Create Variation Family (' + res.childCount + ' children)</div>'
+        + '<div><strong>Parent SKU:</strong> <span class="az-mono">' + res.parentSku + '</span></div>'
+        + skippedHtml
+        + '<div class="table-wrap" style="margin-top:10px"><table class="az-table"><thead><tr><th>Child SKU</th><th>Qty</th><th>Price</th></tr></thead><tbody>' + childRows + '</tbody></table></div>'
+        + '<button class="az-btn az-btn-primary" onclick="azConfirmVariationCreate(\'' + baseSku + '\')">Confirm — Create Variation Family</button>'
+        + '<button class="az-btn az-btn-secondary" onclick="document.getElementById(\'az-confirm-card\').style.display=\'none\'">Cancel</button>';
+      g('az-confirm-card').style.display = 'block';
+      var st = g('az-status'); if (st) { st.style.display = 'none'; st.innerHTML = ''; }
+    } catch(e) {
+      azShowStatus('Check failed: ' + e.message, 'error');
+    }
+  };
+
+  window.azConfirmVariationCreate = async function(baseSku) {
+    g('az-confirm-card').style.display = 'none';
+    azShowStatus('Creating variation family for ' + baseSku + ' on Amazon…', 'info');
+    try {
+      var res = await apiCall('/amazon/variation-create', { method: 'POST', body: JSON.stringify({ baseSku: baseSku, dryRun: false, fulfillmentType: azFulfillmentType }) });
+      if (!res.parent) { azShowStatus(res.error || 'Creation failed', 'error'); return; }
+
+      var allResults = [res.parent].concat(res.children.map(function(c) { return { sku: c.sku, status: c.status, ok: c.ok, error: c.error }; }));
+      var okCount = allResults.filter(function(r){ return r.ok; }).length;
+      var failCount = allResults.length - okCount;
+      var rows = allResults.map(function(r, i) {
+        var label = i === 0 ? 'PARENT' : 'child';
+        var badge = r.ok ? '<span class="az-badge ok">✓ ' + r.status + '</span>' : '<span class="az-badge fail">✗ ' + r.status + '</span>';
+        var errorDetail = r.error ? '<div style="font-size:10px;color:var(--red,#c52a1a);margin-top:4px;max-width:500px">' + r.error.replace(/</g,'&lt;') + '</div>' : '';
+        return '<tr><td>' + label + '</td><td class="az-mono">' + r.sku + '</td><td>' + badge + errorDetail + '</td></tr>';
+      }).join('');
+      g('az-results-table').innerHTML = '<div class="table-wrap"><table class="az-table"><thead><tr><th></th><th>SKU</th><th>Result</th></tr></thead><tbody>' + rows + '</tbody></table></div>';
+      g('az-results-card').style.display = 'block';
+      azShowStatus(okCount + ' accepted, ' + failCount + ' failed — variation family linkage can take longer to resolve than initial acceptance', failCount > 0 ? 'error' : 'success');
       azSelected = {};
       azLoadCatalog();
     } catch(e) {
