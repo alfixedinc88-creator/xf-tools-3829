@@ -964,6 +964,49 @@ body { margin:0; padding:0; font-family:'DM Sans',sans-serif; }
 
     </div>
   </div>
+
+  <!-- ═══ TAB: AMAZON LISTINGS ═══ -->
+  <div class="tab-panel" id="panel-amazonlist">
+    <div class="panel-body">
+      <style>
+        #panel-amazonlist .az-card{background:var(--surface2);border:1px solid var(--border);border-radius:12px;padding:20px;margin-bottom:16px}
+        #panel-amazonlist .az-label{font-size:11px;font-weight:700;letter-spacing:.6px;text-transform:uppercase;color:var(--text-muted);margin-bottom:8px;display:block}
+        #panel-amazonlist .az-btn{padding:10px 20px;border-radius:8px;border:none;font-size:14px;font-weight:600;cursor:pointer;font-family:inherit;margin-top:12px;margin-right:8px}
+        #panel-amazonlist .az-btn-primary{background:var(--accent);color:#fff}
+        #panel-amazonlist .az-btn-secondary{background:var(--surface);color:var(--text);border:1.5px solid var(--border)}
+        #panel-amazonlist .az-btn:disabled{opacity:.4;cursor:not-allowed}
+        #panel-amazonlist .az-table{width:100%;border-collapse:collapse;margin-top:12px}
+        #panel-amazonlist .az-table th{padding:9px 12px;text-align:left;font-size:11px;font-weight:700;letter-spacing:.5px;text-transform:uppercase;color:var(--text-muted);background:var(--surface);border-bottom:2px solid var(--border)}
+        #panel-amazonlist .az-table td{padding:10px 12px;border-bottom:1px solid var(--border);font-size:12px;vertical-align:top}
+        #panel-amazonlist .az-table tr:last-child td{border-bottom:none}
+        #panel-amazonlist .az-mono{font-family:var(--mono,monospace)}
+        #panel-amazonlist .az-badge{display:inline-flex;align-items:center;gap:6px;padding:3px 9px;border-radius:6px;font-size:11px;font-weight:600;border:1px solid}
+        #panel-amazonlist .az-badge.ok{background:#ecfdf5;color:#0e7f3e;border-color:#0e7f3e}
+        #panel-amazonlist .az-badge.fail{background:#fdf0ee;color:#c52a1a;border-color:#c52a1a}
+        #panel-amazonlist .az-status-line{font-size:13px;margin-top:12px;padding:10px 14px;border-radius:8px}
+        #panel-amazonlist .az-status-line.info{background:#eef2fd;color:var(--accent)}
+        #panel-amazonlist .az-status-line.error{background:#fdf0ee;color:#c52a1a}
+        #panel-amazonlist .az-status-line.success{background:#ecfdf5;color:#0e7f3e}
+      </style>
+
+      <div class="az-card">
+        <div class="az-label">Product Catalog — one row per base SKU</div>
+        <div class="az-hint" style="margin-bottom:10px;font-size:12px;color:var(--text-muted)">Creates brand-new Amazon listings (VALVE product type) via the Listings Items API. Requires UPC, title_short, starting_price, and description all set per row.</div>
+        <div id="az-catalog-table"><div class="loading"><div class="spinner"></div> Loading catalog…</div></div>
+        <button class="az-btn az-btn-secondary" onclick="azLoadCatalog()">↻ Refresh</button>
+        <button class="az-btn az-btn-secondary" onclick="azImportFromSheet()" id="az-import-btn">📥 Import from Sheet</button>
+        <button class="az-btn az-btn-primary" id="az-check-btn" onclick="azCheckSelected()" disabled>Check Selected (Dry Run)</button>
+      </div>
+
+      <div id="az-status" style="display:none"></div>
+      <div id="az-confirm-card" style="display:none" class="az-card"></div>
+      <div id="az-results-card" style="display:none" class="az-card">
+        <div class="az-label">Results</div>
+        <div id="az-results-table"></div>
+      </div>
+
+    </div>
+  </div>
   </div>
 
 
@@ -1010,6 +1053,7 @@ body { margin:0; padding:0; font-family:'DM Sans',sans-serif; }
     <div class="tabitem" id="tab-shopify" onclick="event.stopPropagation(); rprTab('shopify')" style="white-space:nowrap">🛍️ Shopify Listings</div>
     <div class="tabitem" id="tab-ebaylist" onclick="event.stopPropagation(); rprTab('ebaylist')" style="white-space:nowrap">🏷️ eBay Listings</div>
         <div class="tabitem" id="tab-walmartlist" onclick="event.stopPropagation(); rprTab('walmartlist')" style="white-space:nowrap">🏬 Walmart Listings</div>
+        <div class="tabitem" id="tab-amazonlist" onclick="event.stopPropagation(); rprTab('amazonlist')" style="white-space:nowrap">🛒 Amazon Listings</div>
   </div>
 
 </div><!-- /app -->
@@ -1256,6 +1300,7 @@ function rprTab(tab) {
   if (tab === 'shopify') syLoadCatalog();
   if (tab === 'ebaylist') ebLoadCatalog();
   if (tab === 'walmartlist') wmLoadCatalog();
+  if (tab === 'amazonlist') azLoadCatalog();
 
   // Grouped under the "Listings" dropdown — mark the trigger active too
   // so it's visually clear which section you're in, and close the
@@ -1264,7 +1309,7 @@ function rprTab(tab) {
   if (dd) dd.style.display = 'none';
   var trigger = document.getElementById('tab-listings-dropdown-trigger');
   if (trigger) {
-    if (['bulktitles', 'shopify', 'ebaylist', 'walmartlist'].indexOf(tab) !== -1) trigger.classList.add('active');
+    if (['bulktitles', 'shopify', 'ebaylist', 'walmartlist', 'amazonlist'].indexOf(tab) !== -1) trigger.classList.add('active');
     else trigger.classList.remove('active');
   }
 }
@@ -4713,6 +4758,141 @@ function awdHandleScan(raw) {
       }
     } catch(e) {
       wmShowStatus('Failed to prepare data: ' + e.message, 'error');
+    }
+  };
+
+  // ════════════════════════════════════════════
+  // AMAZON LISTINGS — creates brand-new Amazon listings via the
+  // Listings Items API (VALVE product type). Unlike eBay's stage-then-
+  // publish split, Amazon's create call handles both dry-run preview and
+  // real submission in one endpoint, so the flow is simpler: check
+  // (dry-run) -> confirm (real) in one step, no separate publish click.
+  // ════════════════════════════════════════════
+  var azCatalog = [];
+  var azSelected = {};
+
+  function azShowStatus(msg, type) {
+    var st = g('az-status');
+    if (!st) return;
+    st.style.display = 'block';
+    st.innerHTML = '<div class="az-status-line ' + (type || 'info') + '">' + msg + '</div>';
+  }
+
+  window.azLoadCatalog = async function() {
+    g('az-catalog-table').innerHTML = '<div class="loading"><div class="spinner"></div> Loading catalog…</div>';
+    azSelected = {};
+    try {
+      var res = await apiCall('/shopify/catalog-list?grouped=false');
+      if (!res.ok) { g('az-catalog-table').innerHTML = '<div class="az-status-line error">' + (res.error || 'Load failed') + '</div>'; return; }
+      azCatalog = res.rows || [];
+      azRenderCatalog();
+    } catch(e) {
+      g('az-catalog-table').innerHTML = '<div class="az-status-line error">Load failed: ' + e.message + '</div>';
+    }
+  };
+
+  window.azImportFromSheet = async function() {
+    var btn = g('az-import-btn');
+    if (btn) { btn.disabled = true; btn.textContent = 'Importing…'; }
+    azShowStatus('Importing from Google Sheet…', 'info');
+    try {
+      var res = await apiCall('/inventory/import-product-catalog', { method: 'POST', body: JSON.stringify({}) });
+      if (!res.ok) { azShowStatus(res.error || 'Import failed', 'error'); return; }
+      azShowStatus(res.message + ' (' + res.trackingPreserved + ' tracking record(s) preserved)', 'success');
+      azLoadCatalog();
+    } catch(e) {
+      azShowStatus('Import failed: ' + e.message, 'error');
+    } finally {
+      if (btn) { btn.disabled = false; btn.textContent = '📥 Import from Sheet'; }
+    }
+  };
+
+  window.azToggleRow = function(baseSku, checked) {
+    azSelected[baseSku] = checked;
+    var btn = g('az-check-btn');
+    if (btn) btn.disabled = !Object.values(azSelected).some(Boolean);
+  };
+
+  function azRenderCatalog() {
+    if (!azCatalog.length) {
+      g('az-catalog-table').innerHTML = '<div class="empty-state"><div class="icon">🛒</div><div class="msg">No catalog rows found</div></div>';
+      return;
+    }
+    var byBaseSku = {};
+    azCatalog.forEach(function(r) {
+      if (!byBaseSku[r.baseSku]) byBaseSku[r.baseSku] = [];
+      byBaseSku[r.baseSku].push(r);
+    });
+    var rows = Object.keys(byBaseSku).map(function(baseSku) {
+      var members = byBaseSku[baseSku];
+      var readyCount = members.filter(function(m) { return m.upc; }).length;
+      var badge = readyCount > 0
+        ? '<span class="az-badge ok">' + readyCount + '/' + members.length + ' have UPC</span>'
+        : '<span class="az-badge fail">No UPC on any pack size</span>';
+      var checked = azSelected[baseSku] ? 'checked' : '';
+      return '<tr>'
+        + '<td><input type="checkbox" ' + checked + ' onchange="azToggleRow(\'' + baseSku + '\', this.checked)"></td>'
+        + '<td class="az-mono">' + baseSku + '</td>'
+        + '<td>' + (members[0].titleShort || members[0].title || '') + '</td>'
+        + '<td>' + members.length + ' pack size' + (members.length === 1 ? '' : 's') + '</td>'
+        + '<td>' + badge + '</td>'
+        + '</tr>';
+    }).join('');
+    g('az-catalog-table').innerHTML = '<div class="table-wrap"><table class="az-table"><thead><tr><th></th><th>Base SKU</th><th>Title</th><th>Pack Sizes</th><th>UPC Status</th></tr></thead><tbody>' + rows + '</tbody></table></div>';
+  }
+
+  window.azCheckSelected = async function() {
+    var baseSkus = Object.keys(azSelected).filter(function(k){ return azSelected[k]; });
+    if (!baseSkus.length) return;
+    azShowStatus('Checking ' + baseSkus.length + ' base SKU(s)…', 'info');
+    try {
+      var res = await apiCall('/amazon/listing-create', { method: 'POST', body: JSON.stringify({ baseSkus: baseSkus, dryRun: true }) });
+      if (!res.ok) { azShowStatus(res.error || 'Check failed', 'error'); return; }
+
+      var skippedHtml = (res.skipped && res.skipped.length)
+        ? '<div style="color:var(--red,#c52a1a);font-size:11px;margin-top:6px">' + res.skipped.map(function(s){ return (s.sku || s.baseSku) + ': ' + s.reason; }).join('<br>') + '</div>'
+        : '';
+      var previewRows = res.preview.map(function(p) {
+        return '<tr><td class="az-mono">' + p.sku + '</td><td>' + p.attributes.item_name[0].value + '</td><td>$' + p.attributes.purchasable_offer[0].our_price[0].schedule[0].value_with_tax + '</td></tr>';
+      }).join('');
+
+      g('az-confirm-card').innerHTML =
+        '<div class="az-label">Ready to Create ' + res.itemCount + ' Listing(s)</div>'
+        + skippedHtml
+        + '<div class="table-wrap" style="margin-top:10px"><table class="az-table"><thead><tr><th>SKU</th><th>Title</th><th>Price</th></tr></thead><tbody>' + previewRows + '</tbody></table></div>'
+        + '<button class="az-btn az-btn-primary" onclick="azConfirmCreate()">Confirm — Create Listing(s)</button>'
+        + '<button class="az-btn az-btn-secondary" onclick="document.getElementById(\'az-confirm-card\').style.display=\'none\'">Cancel</button>';
+      g('az-confirm-card').style.display = 'block';
+      var st = g('az-status'); if (st) { st.style.display = 'none'; st.innerHTML = ''; }
+    } catch(e) {
+      azShowStatus('Check failed: ' + e.message, 'error');
+    }
+  };
+
+  window.azConfirmCreate = async function() {
+    var baseSkus = Object.keys(azSelected).filter(function(k){ return azSelected[k]; });
+    g('az-confirm-card').style.display = 'none';
+    azShowStatus('Creating ' + baseSkus.length + ' base SKU\'s listing(s) on Amazon…', 'info');
+    try {
+      var res = await apiCall('/amazon/listing-create', { method: 'POST', body: JSON.stringify({ baseSkus: baseSkus, dryRun: false }) });
+      if (!res.ok && !res.results) { azShowStatus(res.error || 'Creation failed', 'error'); return; }
+
+      var okCount = res.results.filter(function(r){ return r.ok; }).length;
+      var failCount = res.results.length - okCount;
+      var rows = res.results.map(function(r) {
+        var badge = r.ok
+          ? '<span class="az-badge ok">✓ ' + r.status + '</span>'
+          : '<span class="az-badge fail">✗ ' + r.status + '</span>';
+        var errorDetail = r.error ? '<div style="font-size:10px;color:var(--red,#c52a1a);margin-top:4px;max-width:500px">' + r.error.replace(/</g,'&lt;') + '</div>' : '';
+        return '<tr><td class="az-mono">' + r.sku + '</td><td>' + badge + errorDetail + '</td></tr>';
+      }).join('');
+      g('az-results-table').innerHTML = '<div class="table-wrap"><table class="az-table"><thead><tr><th>SKU</th><th>Result</th></tr></thead><tbody>' + rows + '</tbody></table></div>';
+      g('az-results-card').style.display = 'block';
+      azShowStatus(okCount + ' accepted, ' + failCount + ' failed — check Seller Central to confirm listings go fully live', failCount > 0 ? 'error' : 'success');
+      azSelected = {};
+      azLoadCatalog();
+    } catch(e) {
+      azShowStatus('Creation failed: ' + e.message, 'error');
     }
   };
 
