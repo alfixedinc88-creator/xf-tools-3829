@@ -255,6 +255,22 @@ body {
 
   <div style="max-width:960px;margin:0 auto;padding:24px 20px;width:100%">
 
+    <!-- Type a UPC directly and print a barcode for it — reuses the
+         existing upcPrint() function (already used elsewhere for
+         search-result rows), just exposed via manual entry instead of
+         requiring a match in the sheet/AWD Master first. -->
+    <div style="background:#fff;border:1.5px solid var(--border);border-radius:12px;padding:20px 24px;margin-bottom:16px">
+      <div style="font-size:13px;font-weight:700;color:var(--text);margin-bottom:12px">⌨️ Type &amp; Print a UPC</div>
+      <div style="display:flex;gap:8px">
+        <input id="upc-manual-inp" type="text" inputmode="numeric" placeholder="e.g. 840428942885"
+          style="flex:1;padding:10px 12px;border:1.5px solid var(--border);border-radius:8px;font-size:13px;font-family:var(--mono);outline:none"
+          onkeydown="if(event.key==='Enter'){upcManualPrint()}">
+        <button class="btn btn-primary" style="font-size:12px;padding:10px 16px" onclick="upcManualPrint()">🖨️ Print</button>
+      </div>
+      <div id="upc-manual-error" style="font-size:11px;color:var(--red,#c52a1a);margin-top:6px;display:none"></div>
+      <div style="font-size:11px;color:var(--text3);margin-top:8px">Prints a barcode for any UPC you type — doesn't need to exist in the sheet or AWD Master first.</div>
+    </div>
+
     <!-- Two input methods side by side -->
     <div style="display:grid;grid-template-columns:1fr 1fr;gap:16px;margin-bottom:20px">
 
@@ -4871,6 +4887,24 @@ function upcPrint(bcId, partNum, upc) {
     }, 1000);
   }, 100);
 }
+
+// Restores the manual "type a UPC and print it" feature — reuses the
+// existing upcPrint() function directly rather than duplicating its
+// barcode-generation logic. Basic validation only (non-empty, digits),
+// no requirement that it exists in the sheet/AWD Master, unlike the
+// search box above.
+window.upcManualPrint = function() {
+  var inp = document.getElementById('upc-manual-inp');
+  var errEl = document.getElementById('upc-manual-error');
+  var val = (inp.value || '').trim();
+  errEl.style.display = 'none';
+
+  if (!val) { errEl.textContent = 'Enter a UPC first'; errEl.style.display = 'block'; return; }
+  if (!/^\d+$/.test(val)) { errEl.textContent = 'UPC should be digits only'; errEl.style.display = 'block'; return; }
+  if (val.length !== 12 && val.length !== 13) { errEl.textContent = 'Warning: typical UPC is 12 digits (or 13 for EAN) — printing anyway'; errEl.style.display = 'block'; }
+
+  upcPrint(null, null, val);
+};
 
 // Save uploaded shipment SKUs to Google Sheet so workers can access them
 async function upcSaveShipmentToSheet(skus, filename) {
