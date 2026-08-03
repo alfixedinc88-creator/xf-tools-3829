@@ -4570,21 +4570,42 @@ function upcLookup(query) {
 }
 
 // Search input handler
-function upcSearch(query) {
+// Guards against out-of-order results if the user types quickly —
+// only the response matching the LATEST request actually gets
+// rendered, in case an earlier search resolves after a newer one.
+var _upcSearchToken = 0;
+
+async function upcSearch(query) {
   var q = String(query || '').trim();
   if (!q) { upcClear(); return; }
-  if (!DB.upc.length && !AWD_DB.awdMaster.length) {
-    document.getElementById('upc-results').innerHTML = '<div style="text-align:center;padding:40px;color:var(--text3)">Loading data, please wait...</div>';
-    document.getElementById('upc-empty').style.display = 'none';
+
+  var myToken = ++_upcSearchToken;
+  document.getElementById('upc-empty').style.display = 'none';
+  document.getElementById('upc-results').innerHTML = '<div style="text-align:center;padding:40px;color:var(--text3)">Searching…</div>';
+
+  // SWITCHED to D1 — the old DB.upc/AWD_Master (Google Sheets) path is
+  // gone. DB.upc was confirmed never actually populated in this file,
+  // and AWD_Master required a separate, redundant sheet just to work
+  // around that. This now searches the real upc table directly.
+  var matches = [];
+  try {
+    var res = await wFetch('https://xfitting-lookup.alfixedinc88.workers.dev/inventory/upc-d1-lookup?q=' + encodeURIComponent(q)).then(function(r) { return r.json(); });
+    if (myToken !== _upcSearchToken) return; // a newer search has since started — discard this stale result
+    if (res.ok) {
+      matches = (res.results || []).map(function(r) { return { partNum: r.sku, upc: r.insideUpc }; });
+    }
+  } catch(e) {
+    if (myToken !== _upcSearchToken) return;
+    document.getElementById('upc-results').innerHTML = '<div style="text-align:center;padding:40px;color:var(--red,#c52a1a)">Search failed: ' + e.message + '</div>';
     return;
   }
-  var matches = upcLookup(q);
-  document.getElementById('upc-empty').style.display = 'none';
+
   if (!matches.length) {
     document.getElementById('upc-results').innerHTML = '<div style="text-align:center;padding:40px;color:var(--text3)"><div style="font-size:32px;margin-bottom:12px">&#128269;</div><div style="font-size:14px;font-weight:600">No valid UPC-A found for <code style="color:var(--accent)">' + q + '</code></div><div style="font-size:12px;margin-top:8px">Try the full part number with variant suffix (e.g. 27-3-1=10X)</div></div>';
     return;
   }
   loadJsBarcode(function() {
+    if (myToken !== _upcSearchToken) return;
     document.getElementById('upc-results').innerHTML = upcRenderCards(matches);
     upcDrawBarcodes();
   });
