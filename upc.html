@@ -4903,7 +4903,17 @@ window.upcManualPrint = function() {
   if (!/^\d+$/.test(val)) { errEl.textContent = 'UPC should be digits only'; errEl.style.display = 'block'; return; }
   if (val.length !== 12 && val.length !== 13) { errEl.textContent = 'Warning: typical UPC is 12 digits (or 13 for EAN) — printing anyway'; errEl.style.display = 'block'; }
 
-  upcPrint(null, null, val);
+  // BUGFIX: confirmed this was the real cause of "nothing happens" —
+  // upcPrint() assumes the barcode library is already loaded, but it
+  // only actually gets loaded elsewhere (via a search). Calling it
+  // directly without ensuring the library is loaded first fails
+  // silently (caught internally, only logged to console, never shown
+  // to the user) if no search has happened yet in that session.
+  // upcSearch already handles this correctly via loadJsBarcode() —
+  // matching that same pattern here.
+  loadJsBarcode(function() {
+    upcPrint(null, null, val);
+  });
 };
 
 // Save uploaded shipment SKUs to Google Sheet so workers can access them
