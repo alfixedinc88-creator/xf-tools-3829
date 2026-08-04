@@ -5051,13 +5051,17 @@ function awdHandleScan(raw) {
       // first thing worth re-checking against a fresh real URL.
       return 'https://www.ebay.com/mesh/ord/details?mode=SH&srn=460576&orderid=' + encodeURIComponent(num) + '&source=Orders&ru=' + encodeURIComponent('https://www.ebay.com/sh/ord/?filter=status%3AALL_ORDERS');
     }
-    if (ch.indexOf('walmart') !== -1) {
-      return 'https://seller.walmart.com/orders/manage-orders?orderGroups=All&poNumber=' + encodeURIComponent(num);
-    }
-    // Shopify deliberately NOT included here — its real order URL needs
-    // Shopify's own internal numeric order ID, which Veeqo's order-
-    // search response doesn't actually contain. Using Veeqo's own
-    // orderId there would have pointed to the wrong order entirely.
+    // Walmart deliberately NOT included here — confirmed with the user
+    // that Veeqo's "order number" for Walmart orders is a genuinely
+    // different value from the purchase order (PO) number the real
+    // Walmart Seller Center URL actually needs, and the PO number isn't
+    // present anywhere in Veeqo's response at all. This was silently
+    // building a wrong link every time before this fix, not just
+    // occasionally — removed rather than leave a confidently-wrong link
+    // that looks correct until someone actually clicks it.
+    // Shopify also NOT included — its real order URL needs Shopify's
+    // own internal numeric order ID, which Veeqo's order-search
+    // response doesn't actually contain either.
     return null; // unknown/unsupported channel — no confirmed pattern, stays plain text
   }
 
