@@ -5031,6 +5031,36 @@ function awdHandleScan(raw) {
     st.innerHTML = '<div class="wm-status-line ' + (type || 'info') + '" style="padding:10px 14px;border-radius:8px;font-size:13px">' + msg + '</div>';
   }
 
+  // Builds a deep link to the actual order on its marketplace's seller
+  // portal. Confirmed from REAL URLs the user copied directly out of
+  // their own browser for each platform — not guessed from public docs,
+  // since these are internal seller-UI routes with no published API
+  // spec. Returns null for channels with no confirmed pattern (order
+  // number just displays as plain text in that case, not a broken link).
+  function rtOrderLink(o) {
+    var ch = (o.channel || '').toLowerCase();
+    var num = o.orderNum || '';
+    if (ch.indexOf('amazon') !== -1) {
+      return 'https://sellercentral.amazon.com/orders-v3/order/' + encodeURIComponent(num);
+    }
+    if (ch.indexOf('ebay') !== -1) {
+      // eBay's link includes an "srn" account-reference param captured
+      // from a real observed URL — HONESTY NOTE: unconfirmed whether
+      // this value is a fixed account identifier or session-specific;
+      // if this particular link stops working over time, that's the
+      // first thing worth re-checking against a fresh real URL.
+      return 'https://www.ebay.com/mesh/ord/details?mode=SH&srn=460576&orderid=' + encodeURIComponent(num) + '&source=Orders&ru=' + encodeURIComponent('https://www.ebay.com/sh/ord/?filter=status%3AALL_ORDERS');
+    }
+    if (ch.indexOf('walmart') !== -1) {
+      return 'https://seller.walmart.com/orders/manage-orders?orderGroups=All&poNumber=' + encodeURIComponent(num);
+    }
+    // Shopify deliberately NOT included here — its real order URL needs
+    // Shopify's own internal numeric order ID, which Veeqo's order-
+    // search response doesn't actually contain. Using Veeqo's own
+    // orderId there would have pointed to the wrong order entirely.
+    return null; // unknown/unsupported channel — no confirmed pattern, stays plain text
+  }
+
   window.rtSearch = async function() {
     var q = (document.getElementById('rt-search-inp').value || '').trim();
     if (!q) return;
@@ -5055,12 +5085,17 @@ function awdHandleScan(raw) {
             + '</div></div>';
         }).join('');
 
+        var orderLink = rtOrderLink(o);
+        var orderNumHtml = orderLink
+          ? '<a href="' + orderLink + '" target="_blank" rel="noopener" style="color:var(--accent);text-decoration:none">Order ' + o.orderNum + ' ↗</a>'
+          : 'Order ' + o.orderNum;
+
         return '<div class="rt-order-card">'
           + '<div class="rt-order-head">'
           + '<div><span class="rt-channel-badge">' + o.channel + '</span>' + (o.isFBA ? ' <span class="rt-fba-flag">FBA — fulfilled by Amazon</span>' : '') + '<div style="font-weight:700;font-size:15px;margin-top:6px">' + o.customerName + '</div>'
           + '<div class="rt-mono">' + o.address.address1 + (o.address.address2 ? ', ' + o.address.address2 : '') + ', ' + o.address.city + ' ' + o.address.zip + '</div>'
           + '</div>'
-          + '<div style="text-align:right"><div class="rt-mono">Order ' + o.orderNum + '</div>'
+          + '<div style="text-align:right"><div class="rt-mono">' + orderNumHtml + '</div>'
           + (o.tracking ? '<div class="rt-mono">' + o.carrier + ': ' + o.tracking + ' (' + (o.trackingStatus || 'unknown') + ')</div>' : '<div class="rt-mono">No tracking yet</div>')
           + '</div>'
           + '</div>'
