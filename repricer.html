@@ -388,6 +388,7 @@ body { margin:0; padding:0; font-family:'DM Sans',sans-serif; }
     <div class="tabitem"        id="tab-approval"    onclick="rprTab('approval')">⚠️ Approval Queue  <span class="tab-cnt" id="cnt-approval" style="background:#fdf0ee;color:#c52a1a">—</span></div>
     <div class="tabitem"        id="tab-pricealerts" onclick="rprTab('pricealerts')">🏷️ Price Alerts  <span class="tab-cnt" id="cnt-pricealerts" style="background:#fdf0ee;color:#c52a1a">—</span></div>
     <div class="tabitem"        id="tab-skulookup"   onclick="rprTab('skulookup')">🔎 SKU Lookup</div>
+    <div class="tabitem"        id="tab-returns"     onclick="rprTab('returns')">📦 Returns</div>
     <div class="tabitem" id="tab-calculator" onclick="rprTab('calculator')">🧮 Price Calculator</div>
     <div class="tabitem" id="tab-listings-dropdown-trigger" onclick="rprToggleListingsDropdown(event)">
       🚀 Listings ▾
@@ -691,6 +692,41 @@ body { margin:0; padding:0; font-family:'DM Sans',sans-serif; }
       <div id="sku-lookup-content"></div>
     </div>
   </div>
+
+  <!-- ═══ TAB: RETURNS / ORDER SEARCH ═══ -->
+  <div class="tab-panel" id="panel-returns">
+    <div class="panel-body">
+      <style>
+        #panel-returns .rt-card{background:var(--surface2);border:1px solid var(--border);border-radius:12px;padding:20px;margin-bottom:16px}
+        #panel-returns .rt-label{font-size:11px;font-weight:700;letter-spacing:.6px;text-transform:uppercase;color:var(--text-muted);margin-bottom:8px;display:block}
+        #panel-returns .rt-input{flex:1;padding:10px 12px;border:1.5px solid var(--border);border-radius:8px;font-size:14px;font-family:inherit;outline:none}
+        #panel-returns .rt-btn{padding:10px 20px;border-radius:8px;border:none;font-size:14px;font-weight:600;cursor:pointer;font-family:inherit}
+        #panel-returns .rt-btn-primary{background:var(--accent);color:#fff}
+        #panel-returns .rt-order-card{background:#fff;border:1.5px solid var(--border);border-radius:10px;padding:16px;margin-bottom:12px}
+        #panel-returns .rt-order-head{display:flex;justify-content:space-between;align-items:flex-start;flex-wrap:wrap;gap:8px;margin-bottom:10px;padding-bottom:10px;border-bottom:1px solid var(--border)}
+        #panel-returns .rt-channel-badge{display:inline-block;padding:3px 10px;border-radius:6px;font-size:11px;font-weight:700;background:var(--accent);color:#fff}
+        #panel-returns .rt-mono{font-family:var(--mono,monospace);font-size:12px;color:var(--text-muted)}
+        #panel-returns .rt-line-item{display:flex;gap:10px;align-items:center;padding:8px 0;border-bottom:1px solid var(--border)}
+        #panel-returns .rt-line-item:last-child{border-bottom:none}
+        #panel-returns .rt-line-item img{width:44px;height:44px;object-fit:cover;border-radius:6px;border:1px solid var(--border)}
+        #panel-returns .rt-fba-flag{color:var(--red,#c52a1a);font-size:11px;font-weight:700}
+      </style>
+
+      <div class="rt-card">
+        <div class="rt-label">Search Order — customer name, order number, or tracking number</div>
+        <div style="display:flex;gap:8px">
+          <input id="rt-search-inp" type="text" class="rt-input" placeholder="e.g. Smith, or 112-1536980-1001846"
+            onkeydown="if(event.key==='Enter'){rtSearch()}">
+          <button class="rt-btn rt-btn-primary" onclick="rtSearch()">🔍 Search</button>
+        </div>
+        <div style="font-size:11px;color:var(--text3);margin-top:8px">Searches directly against Veeqo — same data across eBay, Amazon, Walmart, and Reship in one place, no need to check each marketplace separately.</div>
+      </div>
+
+      <div id="rt-status" style="display:none"></div>
+      <div id="rt-results"></div>
+    </div>
+  </div>
+
   <!-- ═══ TAB: PRICE CALCULATOR ═══ -->
   <div class="tab-panel" id="panel-calculator">
     <div class="panel-body">
@@ -4977,6 +5013,64 @@ function awdHandleScan(raw) {
     }
   };
 
+})();
+
+// ════════════════════════════════════════════
+// RETURNS / ORDER SEARCH — searches Veeqo directly by customer name,
+// order number, or tracking number. Reuses the worker's existing,
+// already-confirmed-working Veeqo extraction helpers (customer name,
+// address, line items with bin location and images) — replaces
+// manually searching Veeqo's own UI to find which marketplace/order a
+// return belongs to.
+// ════════════════════════════════════════════
+(function() {
+  function rtShowStatus(msg, type) {
+    var st = document.getElementById('rt-status');
+    if (!st) return;
+    st.style.display = 'block';
+    st.innerHTML = '<div class="wm-status-line ' + (type || 'info') + '" style="padding:10px 14px;border-radius:8px;font-size:13px">' + msg + '</div>';
+  }
+
+  window.rtSearch = async function() {
+    var q = (document.getElementById('rt-search-inp').value || '').trim();
+    if (!q) return;
+    document.getElementById('rt-results').innerHTML = '';
+    rtShowStatus('Searching Veeqo for "' + q + '"…', 'info');
+    try {
+      var res = await apiCall('/veeqo/order-search?q=' + encodeURIComponent(q));
+      if (!res.ok) { rtShowStatus(res.error || 'Search failed', 'error'); return; }
+
+      if (!res.results.length) {
+        rtShowStatus('No orders found for "' + q + '"', 'error');
+        return;
+      }
+      var st = document.getElementById('rt-status'); if (st) { st.style.display = 'none'; st.innerHTML = ''; }
+
+      document.getElementById('rt-results').innerHTML = res.results.map(function(o) {
+        var lineItemsHtml = (o.lineItems || []).map(function(li) {
+          return '<div class="rt-line-item">'
+            + (li.i ? '<img src="' + li.i + '" onerror="this.style.display=\'none\'">' : '')
+            + '<div><div class="rt-mono" style="font-weight:700;color:var(--text)">' + li.s + ' × ' + li.q + '</div>'
+            + (li.b ? '<div class="rt-mono">Bin: ' + li.b + '</div>' : '<div class="rt-mono">Bin: not found</div>')
+            + '</div></div>';
+        }).join('');
+
+        return '<div class="rt-order-card">'
+          + '<div class="rt-order-head">'
+          + '<div><span class="rt-channel-badge">' + o.channel + '</span>' + (o.isFBA ? ' <span class="rt-fba-flag">FBA — fulfilled by Amazon</span>' : '') + '<div style="font-weight:700;font-size:15px;margin-top:6px">' + o.customerName + '</div>'
+          + '<div class="rt-mono">' + o.address.address1 + (o.address.address2 ? ', ' + o.address.address2 : '') + ', ' + o.address.city + ' ' + o.address.zip + '</div>'
+          + '</div>'
+          + '<div style="text-align:right"><div class="rt-mono">Order ' + o.orderNum + '</div>'
+          + (o.tracking ? '<div class="rt-mono">' + o.carrier + ': ' + o.tracking + ' (' + (o.trackingStatus || 'unknown') + ')</div>' : '<div class="rt-mono">No tracking yet</div>')
+          + '</div>'
+          + '</div>'
+          + lineItemsHtml
+          + '</div>';
+      }).join('');
+    } catch(e) {
+      rtShowStatus('Search failed: ' + e.message, 'error');
+    }
+  };
 })();
 
 
