@@ -5065,6 +5065,27 @@ function awdHandleScan(raw) {
     return null; // unknown/unsupported channel — no confirmed pattern, stays plain text
   }
 
+  // Walmart's real order URL needs the purchaseOrderId, which is
+  // genuinely different from Veeqo's order number and not available
+  // anywhere in Veeqo's own data — this looks it up via Walmart's own
+  // API first, then opens the real order once found.
+  window.rtOpenWalmartOrder = async function(btn, customerOrderId) {
+    var originalText = btn.textContent;
+    btn.disabled = true;
+    btn.textContent = 'Looking up…';
+    try {
+      var res = await apiCall('/walmart/order-lookup?customerOrderId=' + encodeURIComponent(customerOrderId));
+      if (!res.ok) { alert('Lookup failed: ' + (res.error || 'unknown error')); return; }
+      if (!res.found) { alert('No matching Walmart order found for ' + customerOrderId); return; }
+      window.open('https://seller.walmart.com/orders/manage-orders?orderGroups=All&poNumber=' + encodeURIComponent(res.purchaseOrderId), '_blank');
+    } catch(e) {
+      alert('Lookup failed: ' + e.message);
+    } finally {
+      btn.disabled = false;
+      btn.textContent = originalText;
+    }
+  };
+
   window.rtSearch = async function() {
     var q = (document.getElementById('rt-search-inp').value || '').trim();
     if (!q) return;
@@ -5090,9 +5111,19 @@ function awdHandleScan(raw) {
         }).join('');
 
         var orderLink = rtOrderLink(o);
-        var orderNumHtml = orderLink
-          ? '<a href="' + orderLink + '" target="_blank" rel="noopener" style="color:var(--accent);text-decoration:none">Order ' + o.orderNum + ' ↗</a>'
-          : 'Order ' + o.orderNum;
+        var isWalmart = (o.channel || '').toLowerCase().indexOf('walmart') !== -1;
+        var orderNumHtml;
+        if (orderLink) {
+          orderNumHtml = '<a href="' + orderLink + '" target="_blank" rel="noopener" style="color:var(--accent);text-decoration:none">Order ' + o.orderNum + ' ↗</a>';
+        } else if (isWalmart) {
+          // Walmart needs a real API lookup first (Veeqo's order number
+          // and Walmart's actual PO number are confirmed different
+          // values, with no PO number in Veeqo's data at all) — button
+          // triggers the lookup, then opens once the real PO is found.
+          orderNumHtml = 'Order ' + o.orderNum + ' <button class="rt-btn rt-btn-primary" style="padding:3px 10px;font-size:11px;margin-left:6px" onclick="rtOpenWalmartOrder(this, \'' + o.orderNum.replace(/'/g, "\\'") + '\')">Open on Walmart ↗</button>';
+        } else {
+          orderNumHtml = 'Order ' + o.orderNum;
+        }
 
         return '<div class="rt-order-card">'
           + '<div class="rt-order-head">'
