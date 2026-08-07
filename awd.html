@@ -1473,6 +1473,90 @@ function bldToggleSort(){
   if(arrow) arrow.innerHTML = _bldSortDir === 1 ? '&#9650;' : '&#9660;';
   renderBuilder();
 }
+// ── SHARED BULK POOL ALLOCATION ──
+// FIX: confirmed real bug — when multiple pack-size variants of the
+// same base SKU are all in the shipment builder, each one's "bulk
+// stock available" was calculated independently, with no awareness
+// that OTHER variants competing for the same physical, unlabeled
+// warehouse stock might already be counting on that same pool. This
+// let the total across all variants exceed what's actually available.
+// Confirmed with the user: when the shared bulk pool can't cover
+// everyone's need, split it proportionally by how much each variant
+// is asking for, not first-come-first-served or urgency-based.
+function calculateSharedBulkAllocation(items) {
+  const groups = {}; // base_sku -> array of per-item calc data
+  items.forEach(([sku, item]) => {
+    const cp = S.cpackMap[sku.toUpperCase()];
+    if (!cp || !cp.unitsPerBox) return;
+    const boxes = Math.ceil(item.qty / cp.unitsPerBox);
+    if (boxes <= 0) return;
+    const ws = checkWarehouseStock(sku);
+    const base = baseSKU_awd(sku);
+
+    // Exact-match labeled stock — no sharing conflict here, this stock
+    // is already specific to this one SKU, same logic as before.
+    let labeledPkgs = 0, exactUnknown = false;
+    const exactRows = ws.exactRows || [];
+    if (exactRows.length > 0) {
+      exactRows.forEach(row => {
+        const upc = getUnitsPerCase(row.partNum);
+        if (upc > 0) labeledPkgs += row.casesNum * upc;
+        else exactUnknown = true;
+      });
+    }
+    const preLabeledBoxes = exactUnknown ? boxes : Math.min(boxes, Math.floor(labeledPkgs / cp.unitsPerBox));
+    const desiredBulkBoxes = boxes - preLabeledBoxes;
+
+    if (!groups[base]) groups[base] = [];
+    groups[base].push({ sku, cp, boxes, preLabeledBoxes, desiredBulkBoxes, hasExact: exactRows.length > 0, wsStatus: ws.status, bulkRows: ws.bulkRows || [] });
+  });
+
+  const result = {};
+  Object.keys(groups).forEach(base => {
+    const groupItems = groups[base];
+
+    // Bulk pool is the SAME physical stock for every item in this
+    // group (all share the same base SKU) — calculate it ONCE per
+    // group, not once per item, so it isn't double-counted.
+    const bulkRows = groupItems[0].bulkRows;
+    let totalBulkPieces = 0, bulkUnknown = false;
+    bulkRows.forEach(row => {
+      const upc = getUnitsPerCase(row.partNum);
+      if (upc > 0) totalBulkPieces += row.casesNum * upc;
+      else bulkUnknown = true; // can't reliably convert this row's cases to pieces
+    });
+
+    const totalDesiredPieces = groupItems.reduce((sum, gi) => sum + gi.desiredBulkBoxes * gi.cp.unitsPerBox, 0);
+
+    groupItems.forEach(gi => {
+      let allocatedBulkBoxes, capped = false;
+      if (bulkUnknown || totalDesiredPieces === 0 || totalDesiredPieces <= totalBulkPieces) {
+        // Either can't reliably calculate, nobody needs bulk stock, or
+        // there's enough for everyone — no capping needed.
+        allocatedBulkBoxes = gi.desiredBulkBoxes;
+      } else {
+        // Not enough for everyone — proportional split by each item's
+        // own share of total demand.
+        const desiredPieces = gi.desiredBulkBoxes * gi.cp.unitsPerBox;
+        const share = desiredPieces / totalDesiredPieces;
+        const allocatedPieces = Math.floor(totalBulkPieces * share);
+        allocatedBulkBoxes = Math.min(gi.desiredBulkBoxes, Math.floor(allocatedPieces / gi.cp.unitsPerBox));
+        capped = allocatedBulkBoxes < gi.desiredBulkBoxes;
+      }
+      result[gi.sku] = {
+        preLabeledBoxes: gi.preLabeledBoxes,
+        allocatedBulkBoxes,
+        desiredBulkBoxes: gi.desiredBulkBoxes,
+        capped,
+        hasExact: gi.hasExact,
+        wsStatus: gi.wsStatus,
+        bulkPoolUnknown: bulkUnknown,
+      };
+    });
+  });
+  return result;
+}
+
 function renderBuilder(){
   const items=Object.entries(S.shipment);
   const manualOpen=ge('bld-manual-panel')&&ge('bld-manual-panel').style.display!=='none';
@@ -1486,6 +1570,12 @@ function renderBuilder(){
   const matched=items.filter(([sku])=>{const cp=S.cpackMap[sku.toUpperCase()];return cp&&cp.unitsPerBox>0;}).length;
   const note=ge('cpack-note');
   if(note)note.textContent=S.cpackCount>0?'📐 '+matched+' of '+items.length+' SKUs have case pack templates':'📐 No case pack data loaded — box dims will be blank on export';
+
+  // Calculated ONCE across the whole shipment, not per row, so bulk
+  // stock shared between multiple pack sizes of the same product is
+  // correctly split rather than double-counted.
+  const bulkAlloc = calculateSharedBulkAllocation(items);
+
   ge('bld-tbody').innerHTML=filt.map(([sku,item])=>{
     const r=item.row,cp=S.cpackMap[sku.toUpperCase()],hasCP=cp&&cp.unitsPerBox>0;
     const boxes=hasCP?Math.ceil(item.qty/cp.unitsPerBox):null;
@@ -1493,50 +1583,43 @@ function renderBuilder(){
     const exportQty = hasCP ? boxes * cp.unitsPerBox : item.qty;
 
     // ── SPLIT LABEL PREFIX LOGIC ──
-    // exactRows = warehouse rows with matching variant (pre-labeled)
-    // bulkRows  = warehouse rows with different variant (needs relabeling)
-    // For exact rows: packagesAvailable = casesNum × unitsPerCase (packages per case)
-    // preLabeled_boxes = FLOOR(packagesAvailable ÷ unitsPerBox), capped at total boxes
-    // bulk_boxes = total boxes - preLabeled_boxes
-    // Bulk rows can NEVER be pre-labeled (wrong variant = repackage needed, not just relabel)
-    let lPrefix = null;
-    if (hasCP && boxes > 0) {
-      const exactRows = ws.exactRows || [];
-      const hasExact = exactRows.length > 0;
+    // Now uses the pre-calculated SHARED allocation (bulkAlloc) instead
+    // of recomputing bulk stock independently per row — that's exactly
+    // what let two variants of the same product both assume they had
+    // full access to the same limited bulk pool.
+    let lPrefix = null, stockWarning = null;
+    const alloc = bulkAlloc[sku];
+    if (hasCP && boxes > 0 && alloc) {
+      const preLabeledBoxes = alloc.preLabeledBoxes;
+      const bulkBoxes = alloc.allocatedBulkBoxes;
 
-      if (hasExact) {
-        // Sum labeled packages available across all exact-variant warehouse locations
-        let labeledPkgs = 0;
-        exactRows.forEach(function(row) {
-          const upc_pkgs = getUnitsPerCase(row.partNum);
-          if (upc_pkgs > 0) {
-            labeledPkgs += row.casesNum * upc_pkgs;
-          } else {
-            // unitsPerCase unknown — treat all exact cases as labeled (conservative)
-            labeledPkgs = Infinity;
-          }
-        });
-
-        const preLabeledBoxes = labeledPkgs === Infinity
-          ? boxes  // assume all pre-labeled if we can't calculate
-          : Math.min(boxes, Math.floor(labeledPkgs / cp.unitsPerBox));
-        const bulkBoxes = boxes - preLabeledBoxes;
-
+      if (alloc.hasExact) {
         if (preLabeledBoxes > 0 && bulkBoxes > 0) {
           lPrefix = preLabeledBoxes + '/' + bulkBoxes + '$';  // true split
+        } else if (preLabeledBoxes > 0 && alloc.desiredBulkBoxes === 0) {
+          lPrefix = String(boxes);  // all pre-labeled, no bulk needed at all
         } else if (preLabeledBoxes > 0) {
-          lPrefix = String(boxes);  // all pre-labeled
+          lPrefix = preLabeledBoxes + '/' + bulkBoxes + '$'; // pre-labeled covers some, capped bulk covers rest (possibly 0)
         } else {
           lPrefix = String(boxes) + '$';  // exact rows exist but not enough packages
         }
-      } else if (ws.status === 'bulk') {
-        lPrefix = String(boxes) + '$';  // only different variant — all need labels
+      } else if (alloc.wsStatus === 'bulk') {
+        lPrefix = String(bulkBoxes) + '$';  // only different variant — all need labels, capped by shared pool
       }
       // awaiting/unknown: lPrefix stays null → shows — in table
+
+      // NEW: surfaces the actual fix — if this variant wanted more bulk
+      // stock than its fair share of the shared pool allowed, show it
+      // plainly rather than silently under-delivering with no
+      // explanation.
+      if (alloc.capped) {
+        const shortfall = alloc.desiredBulkBoxes - alloc.allocatedBulkBoxes;
+        stockWarning = `⚠ ${shortfall} box${shortfall!==1?'es':''} short — shared bulk stock split across ${sku.split('=')[0]} variants`;
+      }
     }
 
     return`<tr>
-      <td class="sku">${sku}</td>
+      <td class="sku">${sku}${stockWarning ? `<div style="font-size:10px;color:#C2410C;font-weight:600;margin-top:2px">${stockWarning}</div>` : ''}</td>
       <td style="font-size:12px;color:var(--gray-600);max-width:120px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="${r.name}">${r.name||'—'}</td>
       <td class="r">${db(r.netDays)}</td>
       <td class="r">${fn(r.recSend)}</td>
