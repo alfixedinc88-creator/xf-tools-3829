@@ -1798,11 +1798,37 @@ body { display:flex; flex-direction:column; min-height:100vh; background:var(--b
 
       <div class="sales-upload-section">
         
+        <div style="background:var(--bg2);border:1.5px solid var(--border);border-radius:12px;padding:18px 20px;margin-bottom:14px;">
+          <div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:12px;margin-bottom:14px;">
+            <div>
+              <div style="font-size:14px;font-weight:600;color:var(--text);margin-bottom:3px;">📡 Fetch from Amazon API</div>
+              <div style="font-size:12px;color:var(--text2);">Pulls sales &amp; traffic by SKU directly — no manual report download needed</div>
+            </div>
+            <button onclick="fetchAmazonSales('ro')" id="ro-amz-fetch-btn" class="sales-primary-btn" style="white-space:nowrap;">
+              ↓ Fetch Amazon Sales
+            </button>
+          </div>
+          <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;">
+            <div style="background:var(--bg3);border:1px solid var(--border);border-radius:8px;padding:10px 14px;" id="ro-amz30-status-card">
+              <div style="font-family:var(--mono);font-size:11px;font-weight:600;color:var(--accent);margin-bottom:4px;">Amz30</div>
+              <div style="font-size:12px;color:var(--text3);" id="ro-amz30-status">Not fetched yet</div>
+            </div>
+            <div style="background:var(--bg3);border:1px solid var(--border);border-radius:8px;padding:10px 14px;" id="ro-amz90-status-card">
+              <div style="font-family:var(--mono);font-size:11px;font-weight:600;color:var(--accent);margin-bottom:4px;">Amz90</div>
+              <div style="font-size:12px;color:var(--text3);" id="ro-amz90-status">Not fetched yet</div>
+            </div>
+          </div>
+          <div style="margin-top:10px;font-size:11px;color:var(--text3);display:flex;align-items:center;gap:6px;">
+            <span>⚠ 90-day pull exceeds Amazon's documented 30-day report lookback — older data may be incomplete</span>
+            <span style="margin-left:auto;font-family:var(--mono);" id="ro-amz-last-fetch"></span>
+          </div>
+        </div>
+
         <div style="margin-bottom:12px;padding:10px 14px;background:var(--accent-bg);border:1.5px solid var(--accent);border-radius:8px;font-size:12px;color:var(--text2)">
-          📋 <strong style="color:var(--accent)">Amazon Reports</strong> — Download from <a href="https://sellercentral.amazon.com/business-reports/#/report?id=102%3ADetailSalesTrafficBySKU&chartCols=&columns=0%2F1%2F2%2F3%2F4%2F5%2F6%2F7%2F8%2F9%2F10%2F11%2F12%2F13%2F14%2F15%2F16%2F17%2F18%2F19%2F20%2F21%2F22%2F23%2F24%2F25%2F26%2F27%2F28%2F29%2F30%2F31%2F32%2F33%2F34%2F35%2F36%2F37%2F38%2F39%2F40%2F41%2F42%2F43%2F44%2F45%2F46%2F47&dashboardView=ALL_COLUMNS" target="_blank" style="color:var(--accent);text-decoration:none;font-weight:600">Seller Central → Business Reports → Detail Page Sales & Traffic by SKU</a><br>
+          📋 <strong style="color:var(--accent)">Or upload manually</strong> — Download from <a href="https://sellercentral.amazon.com/business-reports/#/report?id=102%3ADetailSalesTrafficBySKU&chartCols=&columns=0%2F1%2F2%2F3%2F4%2F5%2F6%2F7%2F8%2F9%2F10%2F11%2F12%2F13%2F14%2F15%2F16%2F17%2F18%2F19%2F20%2F21%2F22%2F23%2F24%2F25%2F26%2F27%2F28%2F29%2F30%2F31%2F32%2F33%2F34%2F35%2F36%2F37%2F38%2F39%2F40%2F41%2F42%2F43%2F44%2F45%2F46%2F47&dashboardView=ALL_COLUMNS" target="_blank" style="color:var(--accent);text-decoration:none;font-weight:600">Seller Central → Business Reports → Detail Page Sales & Traffic by SKU</a><br>
           <span style="color:var(--red);font-weight:600">⚠</span> Select <strong>all columns</strong> and set the date range — 30 days for Amz30, 90 days for Amz90.
         </div>
-        <div class="sales-upload-title">Amazon Reports</div>
+        <div class="sales-upload-title">Amazon Reports (manual fallback)</div>
         <div class="sales-upload-grid">
           <div class="sales-upload-card" id="uc-Amz30">
             <input type="file" class="sales-upload-input" accept=".csv" onchange="handleUpload(event,'Amz30')">
@@ -2360,6 +2386,127 @@ function findCol(headers, keys) {
 
 // ── fetchEbaySales — Fetch eBay orders in TWO separate worker calls ─────────────
 // Each call gets its own 1000-subrequest budget — sending both in one call exceeds the limit.
+// Fetches Amazon sales directly via SP-API (GET_SALES_AND_TRAFFIC_REPORT,
+// confirmed working against real account data), then writes into the
+// SAME Amz30/Amz90 sheet tabs the manual CSV upload writes to, in the
+// exact column format the existing worker-side recompute logic already
+// expects (header row containing "sku", "units ordered", "ordered
+// product sales" - case-insensitive substring match, confirmed from
+// the actual worker code). This means nothing downstream (recompute,
+// readCalcTabs, buildReorderRows) needs to change at all.
+async function fetchAmazonSales(ctx) {
+  const btnId = ctx + '-amz-fetch-btn';
+  const btn = document.getElementById(btnId);
+  if (btn) { btn.disabled = true; btn.textContent = '⟳ Fetching...'; }
+
+  function setStatus30(msg, ok) {
+    const el = document.getElementById(ctx + '-amz30-status');
+    if (el) { el.textContent = msg; el.style.color = ok ? 'var(--green)' : ok === false ? 'var(--red)' : 'var(--text3)'; }
+  }
+  function setStatus90(msg, ok) {
+    const el = document.getElementById(ctx + '-amz90-status');
+    if (el) { el.textContent = msg; el.style.color = ok ? 'var(--green)' : ok === false ? 'var(--red)' : 'var(--text3)'; }
+  }
+
+  async function fetchWindow(days, setStatusFn) {
+    setStatusFn('Requesting report...', null);
+    const reqRes = await wFetch(SALES_WORKER_URL + '/amazon/sales-traffic-request', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ days })
+    });
+    const reqData = await reqRes.json();
+    if (!reqData.ok && !reqData.requests) throw new Error(days + 'd: ' + (reqData.error || 'Request failed'));
+
+    const reportIds = reqData.requests.filter(r => r.ok).map(r => r.reportId);
+    if (!reportIds.length) throw new Error(days + 'd: no report chunks were successfully requested');
+
+    // Poll each chunk until DONE (or a real failure), same pattern as
+    // the existing Amazon listings status polling elsewhere in this app
+    setStatusFn('Processing (0/' + reportIds.length + ')...', null);
+    const reportDocumentIds = [];
+    for (let i = 0; i < reportIds.length; i++) {
+      let status = null;
+      for (let attempt = 0; attempt < 30; attempt++) {
+        const statusRes = await wFetch(SALES_WORKER_URL + '/amazon/listings-status?reportId=' + encodeURIComponent(reportIds[i]));
+        status = await statusRes.json();
+        if (status.status === 'DONE' || status.status === 'FATAL' || status.status === 'CANCELLED') break;
+        await new Promise(r => setTimeout(r, 3000));
+      }
+      if (!status || status.status !== 'DONE') throw new Error(days + 'd: report chunk ' + (i+1) + ' did not complete (status: ' + (status && status.status) + ')');
+      reportDocumentIds.push(status.reportDocumentId);
+      setStatusFn('Processing (' + (i+1) + '/' + reportIds.length + ')...', null);
+    }
+
+    setStatusFn('Downloading...', null);
+    const dlRes = await wFetch(SALES_WORKER_URL + '/amazon/sales-traffic-download', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ reportDocumentIds })
+    });
+    const dlData = await dlRes.json();
+    if (!dlData.ok && !dlData.rows) throw new Error(days + 'd: download failed - ' + (dlData.error || JSON.stringify(dlData.errors)));
+
+    return dlData.rows || [];
+  }
+
+  salesFetchLock = true;
+  try {
+    setStatus('ro', 'loading', 'Fetching Amazon 30d...');
+    setStatus('db', 'loading', 'Fetching Amazon 30d...');
+    salesToast('<span class="sales-spinner"></span>Fetching Amazon 30d sales...', 'info');
+    const rows30 = await fetchWindow(30, setStatus30);
+    setStatus30('✓ ' + rows30.length + ' SKUs', true);
+    salesToast('✓ 30d done — ' + rows30.length + ' SKUs. Fetching 90d...', 'success');
+
+    setStatus('ro', 'loading', 'Fetching Amazon 90d...');
+    setStatus('db', 'loading', 'Fetching Amazon 90d...');
+    const rows90 = await fetchWindow(90, setStatus90);
+    setStatus90('✓ ' + rows90.length + ' SKUs', true);
+
+    // Convert to the same 2D-array shape the CSV upload produces —
+    // header row, then data rows — matching the exact column names
+    // the worker's recompute step already looks for.
+    function toSheetRows(rows) {
+      return [['SKU', 'Units Ordered', 'Ordered Product Sales']]
+        .concat(rows.map(r => [r.sku, r.unitsOrdered, r.orderedProductSales]));
+    }
+
+    salesToast('<span class="sales-spinner"></span>Writing to sheet...', 'info');
+    await workerPut('Amz30', toSheetRows(rows30));
+    await workerPut('Amz90', toSheetRows(rows90));
+
+    const ts = new Date().toLocaleString();
+    ['ro-amz-last-fetch', 'db-amz-last-fetch'].forEach(function(id) {
+      var el = document.getElementById(id);
+      if (el) el.textContent = 'Last fetched: ' + ts;
+    });
+    salesToast('✓ Amazon fetched — ' + rows30.length + ' (30d) / ' + rows90.length + ' (90d) SKUs written', 'success');
+
+    salesToast('<span class="sales-spinner"></span>Computing sales totals (4 steps)...', 'info');
+    try { await recomputeTabsSilent(); } catch(compErr) { salesToast('⚠ Compute error: ' + compErr.message, 'error'); }
+
+    salesToast('<span class="sales-spinner"></span>Reading calc tabs...', 'info');
+    try {
+      await salesLoadWarehouseStock();
+      await readCalcTabs();
+      lastUpdated = new Date();
+      updateLastUpdatedLabels();
+      buildReorderRows();
+      salesToast('✓ Amazon sales integrated — reorder plan updated', 'success');
+    } catch(readErr) {
+      salesToast('⚠ Read-back error: ' + readErr.message, 'error');
+    }
+
+    setStatus('ro', 'ok', 'Ready');
+    setStatus('db', 'ok', 'Ready');
+  } catch(e) {
+    setStatus30('✗ ' + e.message, false);
+    setStatus('ro', 'err', 'Amazon fetch failed');
+    setStatus('db', 'err', 'Amazon fetch failed');
+    salesToast('✗ Amazon fetch failed: ' + e.message, 'error');
+  } finally {
+    salesFetchLock = false;
+    if (btn) { btn.disabled = false; btn.textContent = '↓ Fetch Amazon Sales'; }
+  }
+}
+
 async function fetchEbaySales(ctx) {
   const btnId = ctx + '-ebay-fetch-btn';
   const btn = document.getElementById(btnId);
