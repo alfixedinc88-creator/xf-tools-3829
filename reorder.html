@@ -1740,7 +1740,14 @@ body { display:flex; flex-direction:column; min-height:100vh; background:var(--b
   </div>
 </div>
 
-<div id="reorder-app">
+<!-- BUGFIX: this element used to be wrapped in a second, redundant
+     div sharing this same id, with no styling of its own. Having two
+     elements share one ID meant document.getElementById always
+     returned that outer, already-visible wrapper — this inner element
+     (the one with display:none and all the actual content) could
+     never be targeted by ID at all, so nothing ever removed its
+     display:none. That's exactly why the page loaded data
+     successfully but stayed blank. -->
 <div id="reorder-app" style="display:none;">
   <div class="topbar">
     <div class="topbar-left">
@@ -1985,7 +1992,6 @@ body { display:flex; flex-direction:column; min-height:100vh; background:var(--b
   </div>
 </div>
 
-</div>
 <script>
 var WORKER_URL = 'https://xfitting-lookup.alfixedinc88.workers.dev';
 var W = WORKER_URL;
