@@ -958,7 +958,14 @@ body {
   --r:10px;--rs:6px;--rl:14px;
 }
 *{box-sizing:border-box;margin:0;padding:0}
-body{font-family:'DM Sans',sans-serif;background:var(--gray-50);color:var(--gray-800);min-height:100vh;font-size:14px;line-height:1.5;visibility:hidden}
+body{font-family:'DM Sans',sans-serif;background:var(--gray-50);color:var(--gray-800);min-height:100vh;font-size:14px;line-height:1.5}
+/* BUGFIX: same root cause confirmed and fixed in reorder.html - this
+   rule used to include visibility:hidden. The only code anywhere in
+   this file that tries to restore it looks up id="pin-screen", but
+   this app's actual PIN screen is id="mgmt-pin-screen" - a different,
+   mismatched id, so that lookup always returns null and
+   visibility:visible is never set under any circumstance. Removed the
+   unreliable hidden-by-default state entirely. */
 #pin-screen{position:fixed;inset:0;background:var(--white);display:flex;align-items:center;justify-content:center;z-index:9999;flex-direction:column;gap:32px}
 #pin-screen.hidden{display:none}
 .pin-logo{display:flex;align-items:center;gap:10px}
@@ -1740,7 +1747,14 @@ body { display:flex; flex-direction:column; min-height:100vh; background:var(--b
   </div>
 </div>
 
-<div id="dashboard-app">
+<!-- BUGFIX: same duplicate-ID pattern confirmed and fixed in
+     reorder.html - this element used to be wrapped in a second,
+     redundant div sharing this same id, with no styling of its own.
+     document.getElementById always returns the first match, so that
+     outer wrapper (already visible, no display:none) was the only one
+     any code could ever reach - this inner element, the one with
+     display:none and all the actual content, could never be targeted
+     by id at all. -->
 <div id="dashboard-app" style="display:none;">
   <div class="topbar">
     <div class="topbar-left">
@@ -1927,7 +1941,6 @@ body { display:flex; flex-direction:column; min-height:100vh; background:var(--b
   </div>
 </div>
 
-</div>
 <script>
 var WORKER_URL = 'https://xfitting-lookup.alfixedinc88.workers.dev';
 var W = WORKER_URL;
