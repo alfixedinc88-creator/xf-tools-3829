@@ -192,8 +192,12 @@ async function wFetch(url, opts) {
 
     <!-- Not in catalog alert -->
     <div class="rpo-card" id="rpo-notincatalog-card" style="display:none;border-color:var(--red-bg)">
-      <div class="rpo-label" style="color:var(--red)">✗ Not in Catalog — Excluded from Upload</div>
-      <p style="font-size:13px;color:var(--text2);margin-bottom:10px;line-height:1.5">These part numbers have no matching base SKU anywhere in Master List. They have been <strong>excluded</strong> from this upload. Fix the part numbers in your pallet sheet and re-upload to include them.</p>
+      <div class="rpo-label" style="color:var(--red)">⚠ Not in Catalog</div>
+      <p style="font-size:13px;color:var(--text2);margin-bottom:10px;line-height:1.5">These part numbers have no matching base SKU anywhere in Master List. This could mean a typo in the pallet sheet, or a genuinely new product. By default they're left out — check the box below if you want to add them as new Master List / COGS entries anyway.</p>
+      <label style="display:flex;align-items:center;gap:8px;font-size:13px;font-weight:600;color:var(--text);margin-bottom:12px;cursor:pointer">
+        <input type="checkbox" id="rpo-include-unknown" onchange="rpoRenderPreview()" style="width:16px;height:16px;cursor:pointer">
+        Include these as new catalog entries anyway
+      </label>
       <div id="rpo-notincatalog-list"></div>
     </div>
 
@@ -726,13 +730,16 @@ async function wFetch(url, opts) {
   };
 
   window.rpoConfirm = function() {
-    // BUGFIX: previously filtered out every row not already in the
-    // catalog, silently dropping genuinely new SKUs instead of adding
-    // them. Confirmed the backend's insert path already handles a
-    // missing d1Id/rowIndex correctly (falls through to INSERT), so
-    // no backend change was needed - just stop excluding these rows
-    // here. All parsed rows now get applied.
-    var toApply = rpoMatches.slice();
+    // Confirmed with the user: notInCatalog rows need an explicit
+    // opt-in, not automatic inclusion - they could be genuine typos in
+    // the pallet sheet, so silently adding them to the catalog isn't
+    // the safest default. The backend's insert path already handles a
+    // missing d1Id/rowIndex correctly (falls through to INSERT) when
+    // these ARE included, confirmed no backend change needed there.
+    var includeUnknown = document.getElementById('rpo-include-unknown') && document.getElementById('rpo-include-unknown').checked;
+    var toApply = includeUnknown
+      ? rpoMatches.slice()
+      : rpoMatches.filter(function(x) { return !x.notInCatalog; });
     if (toApply.length === 0) { rpoToast('Nothing to apply', 'error'); return; }
 
     document.getElementById('rpo-step-preview').style.display = 'none';
@@ -751,7 +758,9 @@ async function wFetch(url, opts) {
         bar.style.width = '100%';
         document.getElementById('rpo-step-applying').style.display = 'none';
         document.getElementById('rpo-step-done').style.display = 'block';
+        var notInCat = includeUnknown ? 0 : rpoMatches.filter(function(x) { return x.notInCatalog; }).length;
         var summary = applied + ' of ' + toApply.length + ' parts received. Master List updated.';
+        if (notInCat > 0) summary += ' ' + notInCat + ' part(s) left out — not in catalog. Check "Include as new catalog entries" and re-submit if these are real, or fix the part numbers and re-upload if they\u2019re typos.';
         summary += ' Workers can now transfer from pallet locations to shelves.';
         document.getElementById('rpo-done-summary').textContent = summary;
         return;
