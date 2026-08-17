@@ -419,25 +419,35 @@ async function wFetch(url, opts) {
           // Forward-fill pallet
           if (palletRaw) lastPallet = palletRaw;
 
+          // Strip "ALFIXED " prefix first if present, so auto-detect
+          // below sees "JQ2512A-1" not "ALFIXED JQ2512A-1" (this
+          // stripped form is also the final pallet name for this case,
+          // unlike the number-only case below which gets rewritten
+          // further).
+          var strippedPallet = /^ALFIXED\s+/i.test(lastPallet)
+            ? lastPallet.replace(/^ALFIXED\s+/i, '').trim()
+            : lastPallet;
+
+          // Determine vendor - confirmed with the user: when a vendor
+          // is explicitly selected (not "Mixed/auto-detect"), it fully
+          // overrides pallet-name detection for every row in this
+          // upload, no exceptions. Also used below for the pallet-NAME
+          // rewrite itself - that rewrite was independently hardcoding
+          // "EFF" for number-only pallets, a separate bug from the
+          // vendor field, missed in the earlier fix.
+          var vendorForRow = (rpoVendorOverride && rpoVendorOverride !== 'AUTO')
+            ? rpoVendorOverride
+            : (/^JQ/i.test(strippedPallet) ? 'JQ' : 'EFF');
+
           // Normalize pallet name:
           // "ALFIXED JQ2512A-1" → "JQ2512A-1"
-          // "1" → "EFF Pallet 1"
-          var palletName = lastPallet;
-          if (/^ALFIXED\s+/i.test(palletName)) {
-            palletName = palletName.replace(/^ALFIXED\s+/i, '').trim();
-          } else if (/^\d+$/.test(palletName)) {
-            palletName = 'EFF Pallet ' + palletName;
-          }
+          // "1" → "JQ Pallet 1" or "EFF Pallet 1", depending on the
+          // determined vendor above - not hardcoded to EFF anymore.
+          var palletName = /^\d+$/.test(strippedPallet)
+            ? vendorForRow + ' Pallet ' + strippedPallet
+            : strippedPallet;
 
-          // Determine vendor from pallet
-          // Confirmed with the user: when a vendor is explicitly
-          // selected (not "Mixed/auto-detect"), it fully overrides
-          // pallet-name detection for every row in this upload - no
-          // exceptions, since pallet-name auto-detection isn't
-          // reliable when a JQ shipment uses plain numbered pallets.
-          var vendor = (rpoVendorOverride && rpoVendorOverride !== 'AUTO')
-            ? rpoVendorOverride
-            : (/^JQ/i.test(palletName) ? 'JQ' : 'EFF');
+          var vendor = vendorForRow;
 
           if (partNum) {
             rpoData.push({
