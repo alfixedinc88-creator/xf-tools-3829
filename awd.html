@@ -1411,7 +1411,22 @@ function toggleAllVis(c){visRecs().forEach(r=>{if(c)stage(r);else delete S.shipm
 function addAllVisible(){ge('rec-all').checked=true;toggleAllVis(true);awd_planner_toast('Added to builder','success');}
 
 // ── BUILDER ──
-function findRow(sku){return S.joined.find(r=>r.sku===sku);}
+// Confirmed elsewhere in this project: trailing X/XX on a SKU is a
+// listing-recency marker, not a quantity signal - "=2", "=2X", "=2XX"
+// are the exact same product. A saved shipment SKU and today's fresh
+// product data can end up with different exact suffix variants if the
+// underlying listing got relisted/updated between saves - strict
+// string equality would then permanently fail to match them, even
+// though they're the same real product.
+function normalizeSkuForMatch(sku) {
+  return (sku || '').trim().replace(/[x\-]+$/i, '');
+}
+function findRow(sku){
+  var exact = S.joined.find(function(r){ return r.sku === sku; });
+  if (exact) return exact;
+  var normalized = normalizeSkuForMatch(sku);
+  return S.joined.find(function(r){ return normalizeSkuForMatch(r.sku) === normalized; });
+}
 function stage(row){if(S.shipment[row.sku])return;S.shipment[row.sku]={row,qty:row.recSend||0};saveShipmentToSheet();}
 
 function removeSku(sku){delete S.shipment[sku];updateBadges();renderRecs();renderBuilder();saveShipmentToSheet();}
@@ -2411,8 +2426,18 @@ async function loadReportsFromSheet() {
       const zone=ge('zone-'+k); if(zone) zone.classList.add('loaded');
     });
     if (ge('proc-btn')) ge('proc-btn').disabled = false;
-    processData();
-    setTimeout(loadShipmentFromSheet, 500); // load after processData completes
+    // BUGFIX: processData() is async but was called without await, then
+    // loadShipmentFromSheet() fired on a fixed 500ms timer regardless
+    // of whether processData had actually finished. If the real load
+    // ever took longer than 500ms, loadShipmentFromSheet ran before
+    // the product data it depends on (findRow's search space) was
+    // ready - every saved SKU would then silently fail to match and
+    // get dropped, with the sheet data itself completely untouched.
+    // Now genuinely waits for real completion instead of a guessed
+    // delay. Not calling loadShipmentFromSheet() again here -
+    // processData() already calls it safely and correctly internally,
+    // right after S.joined (its search space) is populated.
+    await processData();
   } catch(e) {
     console.error('[XFITTING] loadReportsFromSheet:', e);
     const pill = ge('data-pill');
