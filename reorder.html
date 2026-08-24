@@ -1808,10 +1808,14 @@ body { display:flex; flex-direction:column; min-height:100vh; background:var(--b
               ↓ Fetch Amazon Sales
             </button>
           </div>
-          <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;">
+          <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:10px;">
             <div style="background:var(--bg3);border:1px solid var(--border);border-radius:8px;padding:10px 14px;" id="ro-amz30-status-card">
               <div style="font-family:var(--mono);font-size:11px;font-weight:600;color:var(--accent);margin-bottom:4px;">Amz30</div>
               <div style="font-size:12px;color:var(--text3);" id="ro-amz30-status">Not fetched yet</div>
+            </div>
+            <div style="background:var(--bg3);border:1px solid var(--border);border-radius:8px;padding:10px 14px;" id="ro-amz60-status-card">
+              <div style="font-family:var(--mono);font-size:11px;font-weight:600;color:var(--accent);margin-bottom:4px;">Amz60</div>
+              <div style="font-size:12px;color:var(--text3);" id="ro-amz60-status">Not fetched yet</div>
             </div>
             <div style="background:var(--bg3);border:1px solid var(--border);border-radius:8px;padding:10px 14px;" id="ro-amz90-status-card">
               <div style="font-family:var(--mono);font-size:11px;font-weight:600;color:var(--accent);margin-bottom:4px;">Amz90</div>
@@ -1826,20 +1830,26 @@ body { display:flex; flex-direction:column; min-height:100vh; background:var(--b
 
         <div style="margin-bottom:12px;padding:10px 14px;background:var(--accent-bg);border:1.5px solid var(--accent);border-radius:8px;font-size:12px;color:var(--text2)">
           📋 <strong style="color:var(--accent)">Or upload manually</strong> — Download from <a href="https://sellercentral.amazon.com/business-reports/#/report?id=102%3ADetailSalesTrafficBySKU&chartCols=&columns=0%2F1%2F2%2F3%2F4%2F5%2F6%2F7%2F8%2F9%2F10%2F11%2F12%2F13%2F14%2F15%2F16%2F17%2F18%2F19%2F20%2F21%2F22%2F23%2F24%2F25%2F26%2F27%2F28%2F29%2F30%2F31%2F32%2F33%2F34%2F35%2F36%2F37%2F38%2F39%2F40%2F41%2F42%2F43%2F44%2F45%2F46%2F47&dashboardView=ALL_COLUMNS" target="_blank" style="color:var(--accent);text-decoration:none;font-weight:600">Seller Central → Business Reports → Detail Page Sales & Traffic by SKU</a><br>
-          <span style="color:var(--red);font-weight:600">⚠</span> Select <strong>all columns</strong> and set the date range — 30 days for Amz30, 90 days for Amz90.
+          <span style="color:var(--red);font-weight:600">⚠</span> These are three genuinely SEPARATE 30-day windows, not overlapping "last 30/last 90" snapshots — Amz30 = today back 30 days, Amz60 = 30-60 days ago, Amz90 = 60-90 days ago. Combined they give a true, non-overlapping 90-day total.
         </div>
         <div class="sales-upload-title">Amazon Reports (manual fallback)</div>
-        <div class="sales-upload-grid">
+        <div class="sales-upload-grid" style="grid-template-columns:1fr 1fr 1fr;">
           <div class="sales-upload-card" id="uc-Amz30">
             <input type="file" class="sales-upload-input" accept=".csv" onchange="handleUpload(event,'Amz30')">
             <div class="s-uc-label">Amz30</div>
-            <div class="s-uc-sub">Amazon 30-Day Business Report (.csv)</div>
+            <div class="s-uc-sub">Days 0–30 ago</div>
             <div class="s-uc-status" id="uc-status-Amz30">Click to select file</div>
+          </div>
+          <div class="sales-upload-card" id="uc-Amz60">
+            <input type="file" class="sales-upload-input" accept=".csv" onchange="handleUpload(event,'Amz60')">
+            <div class="s-uc-label">Amz60</div>
+            <div class="s-uc-sub">Days 30–60 ago</div>
+            <div class="s-uc-status" id="uc-status-Amz60">Click to select file</div>
           </div>
           <div class="sales-upload-card" id="uc-Amz90">
             <input type="file" class="sales-upload-input" accept=".csv" onchange="handleUpload(event,'Amz90')">
             <div class="s-uc-label">Amz90</div>
-            <div class="s-uc-sub">Amazon 90-Day Business Report (.csv)</div>
+            <div class="s-uc-sub">Days 60–90 ago</div>
             <div class="s-uc-status" id="uc-status-Amz90">Click to select file</div>
           </div>
         </div>
@@ -1858,10 +1868,14 @@ body { display:flex; flex-direction:column; min-height:100vh; background:var(--b
               ↓ Fetch eBay Sales
             </button>
           </div>
-          <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;">
+          <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:10px;">
             <div style="background:var(--bg3);border:1px solid var(--border);border-radius:8px;padding:10px 14px;" id="ro-ebay30-status-card">
               <div style="font-family:var(--mono);font-size:11px;font-weight:600;color:var(--accent);margin-bottom:4px;">Ebay30</div>
               <div style="font-size:12px;color:var(--text3);" id="ro-ebay30-status">Not fetched yet</div>
+            </div>
+            <div style="background:var(--bg3);border:1px solid var(--border);border-radius:8px;padding:10px 14px;" id="ro-ebay60-status-card">
+              <div style="font-family:var(--mono);font-size:11px;font-weight:600;color:var(--accent);margin-bottom:4px;">Ebay60</div>
+              <div style="font-size:12px;color:var(--text3);" id="ro-ebay60-status">Not fetched yet</div>
             </div>
             <div style="background:var(--bg3);border:1px solid var(--border);border-radius:8px;padding:10px 14px;" id="ro-ebay90-status-card">
               <div style="font-family:var(--mono);font-size:11px;font-weight:600;color:var(--accent);margin-bottom:4px;">Ebay90</div>
@@ -1869,7 +1883,7 @@ body { display:flex; flex-direction:column; min-height:100vh; background:var(--b
             </div>
           </div>
           <div style="margin-top:10px;font-size:11px;color:var(--text3);display:flex;align-items:center;gap:6px;">
-            <span>📦 Shows both units sold and order count per SKU</span>
+            <span>📦 Three separate, non-overlapping 30-day windows — Ebay30/60/90 = days 0-30 / 30-60 / 60-90 ago</span>
             <span style="margin-left:auto;font-family:var(--mono);" id="ro-ebay-last-fetch"></span>
           </div>
         </div>
@@ -1879,20 +1893,26 @@ body { display:flex; flex-direction:column; min-height:100vh; background:var(--b
         
         <div style="margin-bottom:12px;padding:10px 14px;background:var(--accent-bg);border:1.5px solid var(--accent);border-radius:8px;font-size:12px;color:var(--text2)">
           📋 <strong style="color:var(--accent)">Shopify Reports</strong> — Export from <a href="https://admin.shopify.com/store/093304-8e/orders" target="_blank" style="color:var(--accent);text-decoration:none;font-weight:600">Shopify Admin → Orders</a><br>
-          <span style="color:var(--red);font-weight:600">⚠</span> Click Export then set the date range — 30 days for XF30, 90 days for XF90.
+          <span style="color:var(--red);font-weight:600">⚠</span> Three genuinely SEPARATE 30-day windows, not overlapping snapshots — XF30 = days 0-30 ago, XF60 = days 30-60 ago, XF90 = days 60-90 ago.
         </div>
         <div class="sales-upload-title">Shopify Reports</div>
-        <div class="sales-upload-grid">
+        <div class="sales-upload-grid" style="grid-template-columns:1fr 1fr 1fr;">
           <div class="sales-upload-card" id="uc-XF30">
             <input type="file" class="sales-upload-input" accept=".csv" onchange="handleUpload(event,'XF30')">
             <div class="s-uc-label">XF30</div>
-            <div class="s-uc-sub">Shopify 30-Day Orders Export (.csv)</div>
+            <div class="s-uc-sub">Days 0–30 ago</div>
             <div class="s-uc-status" id="uc-status-XF30">Click to select file</div>
+          </div>
+          <div class="sales-upload-card" id="uc-XF60">
+            <input type="file" class="sales-upload-input" accept=".csv" onchange="handleUpload(event,'XF60')">
+            <div class="s-uc-label">XF60</div>
+            <div class="s-uc-sub">Days 30–60 ago</div>
+            <div class="s-uc-status" id="uc-status-XF60">Click to select file</div>
           </div>
           <div class="sales-upload-card" id="uc-XF90">
             <input type="file" class="sales-upload-input" accept=".csv" onchange="handleUpload(event,'XF90')">
             <div class="s-uc-label">XF90</div>
-            <div class="s-uc-sub">Shopify 90-Day Orders Export (.csv)</div>
+            <div class="s-uc-sub">Days 60–90 ago</div>
             <div class="s-uc-status" id="uc-status-XF90">Click to select file</div>
           </div>
         </div>
