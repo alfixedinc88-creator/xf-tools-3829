@@ -165,13 +165,25 @@ async function wFetch(url, opts) {
   <div class="rpo-card" id="rpo-step-upload">
     <div class="rpo-label">Step 1 — Upload Pallet Manifest</div>
     <p style="font-size:13px;color:var(--text2);margin-bottom:14px;line-height:1.5">Upload the Excel file with a <strong>Pallet</strong> sheet and optionally <strong>EFF1</strong> / <strong>JQ1</strong> sheets for vendor pricing. The app will match each part number to Master List and preview all changes before anything is written.</p>
-    <div class="rpo-drop" id="rpo-dropzone" onclick="document.getElementById('rpo-file-inp').click()">
+
+    <div style="margin-bottom:14px">
+      <div class="rpo-label" style="margin-bottom:8px">Vendor for this shipment <span style="color:var(--red)">*</span></div>
+      <p style="font-size:12px;color:var(--text3);margin-bottom:10px;line-height:1.4">Pallet-name auto-detection isn't reliable when a JQ shipment uses plain numbered pallets — pick the real vendor here to override it completely for this upload.</p>
+      <div style="display:flex;gap:8px">
+        <button type="button" id="rpo-vendor-jq" class="rpo-vendor-btn" onclick="rpoSetVendor('JQ')" style="flex:1;padding:12px;border:2px solid var(--border);border-radius:8px;background:var(--bg2);font-weight:600;cursor:pointer;font-family:inherit">JQ</button>
+        <button type="button" id="rpo-vendor-eff" class="rpo-vendor-btn" onclick="rpoSetVendor('EFF')" style="flex:1;padding:12px;border:2px solid var(--border);border-radius:8px;background:var(--bg2);font-weight:600;cursor:pointer;font-family:inherit">EFF</button>
+        <button type="button" id="rpo-vendor-mixed" class="rpo-vendor-btn" onclick="rpoSetVendor('AUTO')" style="flex:1;padding:12px;border:2px solid var(--border);border-radius:8px;background:var(--bg2);font-weight:600;cursor:pointer;font-family:inherit">Mixed (auto-detect)</button>
+      </div>
+    </div>
+
+    <div class="rpo-drop" id="rpo-dropzone" onclick="rpoDropzoneClick()" style="opacity:0.5;pointer-events:none">
       <div class="rpo-drop-icon">📂</div>
-      <div class="rpo-drop-text">Click to choose or drag &amp; drop</div>
+      <div class="rpo-drop-text">Select a vendor above first</div>
       <div class="rpo-drop-sub">Excel .xlsx file with Pallet sheet</div>
     </div>
     <input type="file" id="rpo-file-inp" accept=".xlsx" style="display:none" onchange="rpoHandleFile(this.files[0])">
     <div id="rpo-parse-status" style="margin-top:10px;font-size:13px;color:var(--text3);display:none"></div>
+    <button type="button" onclick="rpoDownloadTemplate()" style="margin-top:14px;padding:8px 14px;border:1.5px solid var(--border);border-radius:8px;background:var(--bg2);font-size:12px;font-weight:600;cursor:pointer;font-family:inherit;color:var(--text2)">⬇ Download blank template</button>
   </div>
 
   <!-- Step 2: Preview -->
@@ -180,8 +192,12 @@ async function wFetch(url, opts) {
 
     <!-- Not in catalog alert -->
     <div class="rpo-card" id="rpo-notincatalog-card" style="display:none;border-color:var(--red-bg)">
-      <div class="rpo-label" style="color:var(--red)">✗ Not in Catalog — Excluded from Upload</div>
-      <p style="font-size:13px;color:var(--text2);margin-bottom:10px;line-height:1.5">These part numbers have no matching base SKU anywhere in Master List. They have been <strong>excluded</strong> from this upload. Fix the part numbers in your pallet sheet and re-upload to include them.</p>
+      <div class="rpo-label" style="color:var(--red)">⚠ Not in Catalog</div>
+      <p style="font-size:13px;color:var(--text2);margin-bottom:10px;line-height:1.5">These part numbers have no matching base SKU anywhere in Master List. This could mean a typo in the pallet sheet, or a genuinely new product. By default they're left out — check the box below if you want to add them as new Master List / COGS entries anyway.</p>
+      <label style="display:flex;align-items:center;gap:8px;font-size:13px;font-weight:600;color:var(--text);margin-bottom:12px;cursor:pointer">
+        <input type="checkbox" id="rpo-include-unknown" onchange="rpoRenderPreview()" style="width:16px;height:16px;cursor:pointer">
+        Include these as new catalog entries anyway
+      </label>
       <div id="rpo-notincatalog-list"></div>
     </div>
 
@@ -288,10 +304,70 @@ async function wFetch(url, opts) {
     dz.addEventListener('dragleave', function() { dz.classList.remove('dragover'); });
     dz.addEventListener('drop', function(e) {
       e.preventDefault(); dz.classList.remove('dragover');
+      if (!rpoVendorOverride) { rpoToast('Select a vendor above first', 'error'); return; }
       var f = e.dataTransfer.files[0];
       if (f) rpoHandleFile(f);
     });
   })();
+
+  // Vendor override state - null means nothing chosen yet, matches the
+  // "can't be skipped" requirement: dropzone stays disabled until this
+  // is set to something.
+  var rpoVendorOverride = null;
+
+  window.rpoSetVendor = function(v) {
+    rpoVendorOverride = v;
+    ['jq', 'eff', 'mixed'].forEach(function(id) {
+      var btn = document.getElementById('rpo-vendor-' + id);
+      var isActive = (id === 'jq' && v === 'JQ') || (id === 'eff' && v === 'EFF') || (id === 'mixed' && v === 'AUTO');
+      btn.style.borderColor = isActive ? 'var(--accent)' : 'var(--border)';
+      btn.style.background = isActive ? 'var(--accent-bg)' : 'var(--bg2)';
+      btn.style.color = isActive ? 'var(--accent)' : 'var(--text)';
+    });
+    var dz = document.getElementById('rpo-dropzone');
+    dz.style.opacity = '1';
+    dz.style.pointerEvents = 'auto';
+    dz.querySelector('.rpo-drop-text').textContent = 'Click to choose or drag & drop';
+  };
+
+  window.rpoDropzoneClick = function() {
+    if (!rpoVendorOverride) { rpoToast('Select a vendor above first', 'error'); return; }
+    document.getElementById('rpo-file-inp').click();
+  };
+
+  window.rpoDownloadTemplate = function() {
+    if (typeof XLSX === 'undefined') {
+      var s = document.createElement('script');
+      s.src = 'https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js';
+      s.onload = function() { rpoBuildTemplate(); };
+      document.head.appendChild(s);
+    } else {
+      rpoBuildTemplate();
+    }
+  };
+
+  function rpoBuildTemplate() {
+    var wb = XLSX.utils.book_new();
+    // Pallet sheet - header rows match what the parser expects at
+    // row 3+ (row 1 blank/title, row 2 column headers)
+    var palletSheet = XLSX.utils.aoa_to_sheet([
+      ['Pallet Manifest'],
+      ['Pallet', 'Description', 'PartNum', 'Total Units', 'UPC', 'Cases'],
+    ]);
+    XLSX.utils.book_append_sheet(wb, palletSheet, 'Pallet');
+
+    var effSheet = XLSX.utils.aoa_to_sheet([
+      ['Part Number', '', 'UNIT PRICE'],
+    ]);
+    XLSX.utils.book_append_sheet(wb, effSheet, 'EFF1');
+
+    var jqSheet = XLSX.utils.aoa_to_sheet([
+      ['XF code', 'DESCRIPTION', '', 'UNIT PRICE USD/PCS'],
+    ]);
+    XLSX.utils.book_append_sheet(wb, jqSheet, 'JQ1');
+
+    XLSX.writeFile(wb, 'receive_po_template.xlsx');
+  }
 
   window.rpoHandleFile = function(file) {
     if (!file) return;
@@ -343,18 +419,35 @@ async function wFetch(url, opts) {
           // Forward-fill pallet
           if (palletRaw) lastPallet = palletRaw;
 
+          // Strip "ALFIXED " prefix first if present, so auto-detect
+          // below sees "JQ2512A-1" not "ALFIXED JQ2512A-1" (this
+          // stripped form is also the final pallet name for this case,
+          // unlike the number-only case below which gets rewritten
+          // further).
+          var strippedPallet = /^ALFIXED\s+/i.test(lastPallet)
+            ? lastPallet.replace(/^ALFIXED\s+/i, '').trim()
+            : lastPallet;
+
+          // Determine vendor - confirmed with the user: when a vendor
+          // is explicitly selected (not "Mixed/auto-detect"), it fully
+          // overrides pallet-name detection for every row in this
+          // upload, no exceptions. Also used below for the pallet-NAME
+          // rewrite itself - that rewrite was independently hardcoding
+          // "EFF" for number-only pallets, a separate bug from the
+          // vendor field, missed in the earlier fix.
+          var vendorForRow = (rpoVendorOverride && rpoVendorOverride !== 'AUTO')
+            ? rpoVendorOverride
+            : (/^JQ/i.test(strippedPallet) ? 'JQ' : 'EFF');
+
           // Normalize pallet name:
           // "ALFIXED JQ2512A-1" → "JQ2512A-1"
-          // "1" → "EFF Pallet 1"
-          var palletName = lastPallet;
-          if (/^ALFIXED\s+/i.test(palletName)) {
-            palletName = palletName.replace(/^ALFIXED\s+/i, '').trim();
-          } else if (/^\d+$/.test(palletName)) {
-            palletName = 'EFF Pallet ' + palletName;
-          }
+          // "1" → "JQ Pallet 1" or "EFF Pallet 1", depending on the
+          // determined vendor above - not hardcoded to EFF anymore.
+          var palletName = /^\d+$/.test(strippedPallet)
+            ? vendorForRow + ' Pallet ' + strippedPallet
+            : strippedPallet;
 
-          // Determine vendor from pallet
-          var vendor = /^JQ/i.test(palletName) ? 'JQ' : 'EFF';
+          var vendor = vendorForRow;
 
           if (partNum) {
             rpoData.push({
@@ -664,9 +757,17 @@ async function wFetch(url, opts) {
   };
 
   window.rpoConfirm = function() {
-    // Only apply rows that are NOT flagged as not-in-catalog
-    var toApply = rpoMatches.filter(function(x) { return !x.notInCatalog; });
-    if (toApply.length === 0) { rpoToast('Nothing to apply — fix catalog issues first', 'error'); return; }
+    // Confirmed with the user: notInCatalog rows need an explicit
+    // opt-in, not automatic inclusion - they could be genuine typos in
+    // the pallet sheet, so silently adding them to the catalog isn't
+    // the safest default. The backend's insert path already handles a
+    // missing d1Id/rowIndex correctly (falls through to INSERT) when
+    // these ARE included, confirmed no backend change needed there.
+    var includeUnknown = document.getElementById('rpo-include-unknown') && document.getElementById('rpo-include-unknown').checked;
+    var toApply = includeUnknown
+      ? rpoMatches.slice()
+      : rpoMatches.filter(function(x) { return !x.notInCatalog; });
+    if (toApply.length === 0) { rpoToast('Nothing to apply', 'error'); return; }
 
     document.getElementById('rpo-step-preview').style.display = 'none';
     document.getElementById('rpo-step-applying').style.display = 'block';
@@ -684,9 +785,9 @@ async function wFetch(url, opts) {
         bar.style.width = '100%';
         document.getElementById('rpo-step-applying').style.display = 'none';
         document.getElementById('rpo-step-done').style.display = 'block';
-        var notInCat = rpoMatches.filter(function(x) { return x.notInCatalog; }).length;
+        var notInCat = includeUnknown ? 0 : rpoMatches.filter(function(x) { return x.notInCatalog; }).length;
         var summary = applied + ' of ' + toApply.length + ' parts received. Master List updated.';
-        if (notInCat > 0) summary += ' ' + notInCat + ' part(s) skipped — not in catalog. Fix part numbers and re-upload.';
+        if (notInCat > 0) summary += ' ' + notInCat + ' part(s) left out — not in catalog. Check "Include as new catalog entries" and re-submit if these are real, or fix the part numbers and re-upload if they\u2019re typos.';
         summary += ' Workers can now transfer from pallet locations to shelves.';
         document.getElementById('rpo-done-summary').textContent = summary;
         return;
@@ -694,7 +795,7 @@ async function wFetch(url, opts) {
       var item = toApply[idx++];
       var pct = Math.round((idx / toApply.length) * 100);
       bar.style.width = pct + '%';
-      applyStatus.textContent = (item.needsNewRow ? 'Inserting' : 'Updating') + ' ' + item.partNum + '\u2026 (' + idx + '/' + toApply.length + ')';
+      applyStatus.textContent = ((item.needsNewRow || item.notInCatalog) ? 'Inserting' : 'Updating') + ' ' + item.partNum + '\u2026 (' + idx + '/' + toApply.length + ')';
 
       // Only log price once per base SKU — on the first variant we encounter
       var isFirstVariant = item.pricePerUnit && !loggedBaseSkus[item.baseSku];
