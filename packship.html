@@ -2115,19 +2115,21 @@ window.psRunUndeliveredReport = async function() {
   psUndeliveredRows = null;
 
   var allRaw = [];
+  var totalFailedLookups = 0;
   var page = 1;
   var hasMore = true;
   var MAX_PAGES = 200; // safety ceiling - matches the worker's own cap
 
   try {
     while (hasMore && page <= MAX_PAGES) {
-      progressEl.textContent = 'Checking page ' + page + '… (' + allRaw.length + ' undelivered found so far)';
+      progressEl.textContent = 'Checking page ' + page + '… (' + allRaw.length + ' undelivered, ' + totalFailedLookups + ' lookup failures so far)';
       var res = await fetch(PS_WORKER + '/veeqo/undelivered-report?page=' + page + '&days=' + days + '&excludeRecentDays=' + excludeRecentDays, {
         headers: { 'X-Session-Token': psToken }
       });
       var data = await res.json();
       if (!data.ok) throw new Error(data.error || 'Report failed on page ' + page);
       allRaw = allRaw.concat(data.undelivered || []);
+      totalFailedLookups += data.failedLookupCount || 0;
       hasMore = data.hasMore;
       page++;
     }
@@ -2153,8 +2155,13 @@ window.psRunUndeliveredReport = async function() {
     document.getElementById('ps-und-usps').textContent  = uspsCount;
     document.getElementById('ps-und-ups').textContent   = upsCount;
     summaryEl.style.display = 'block';
-    progressEl.textContent = 'Done — ' + deduped.length + ' unique undelivered shipments across ' + (page - 1) + ' page(s).';
-    _psToast(deduped.length + ' undelivered shipments found', deduped.length > 0 ? 'warn' : 'ok');
+    var doneMsg = 'Done — ' + deduped.length + ' unique undelivered shipments across ' + (page - 1) + ' page(s).';
+    // Surfaced explicitly: these are real API failures (e.g. rate
+    // limiting), NOT confirmed undelivered - they're excluded from the
+    // count above entirely rather than silently counted as undelivered.
+    if (totalFailedLookups > 0) doneMsg += ' ⚠ ' + totalFailedLookups + ' tracking lookups failed (rate limit or timeout) and were skipped - not counted either way. Re-run later to pick those up.';
+    progressEl.textContent = doneMsg;
+    _psToast(deduped.length + ' undelivered' + (totalFailedLookups > 0 ? ', ' + totalFailedLookups + ' lookup failures skipped' : ''), deduped.length > 0 ? 'warn' : 'ok');
   } catch(e) {
     _psToast('Error: ' + e.message, 'err');
     progressEl.textContent = 'Failed: ' + e.message;
