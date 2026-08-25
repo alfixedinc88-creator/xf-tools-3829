@@ -1121,6 +1121,7 @@ var psInitials   = '';
 var psTodayScans = [];
 var psManifest   = [];
 var psGapRows    = [];
+var psGapScanWithoutManifest = [];
 var psScanFilter = 'all';
 var psGapFilter  = 'all';
 var psBatchClosed = { ALL: null };
@@ -1757,17 +1758,24 @@ window.psRunReconcile = async function() {
   if (btn && btn.disabled) return; // already running
   if (btn) { btn.disabled = true; btn.innerHTML = '<span class="ps-spinner"></span>Analysing gaps…'; }
   try {
-    // Manifest is already written to sheet on CSV upload — just run the comparison
-    var recRes  = await fetch(PS_WORKER + '/ship/reconcile', {
-      method: 'POST', headers: { 'Content-Type': 'application/json', 'X-Session-Token': psToken },
-      body: JSON.stringify({ date: psTodayKey() })
+    // BUGFIX: previously called /ship/reconcile and used its `gaps` list
+    // directly as psGapRows - but that list ONLY contains rows that were
+    // NOT scanned, by definition. Any actually-complete row never made it
+    // into psGapRows at all, so the "OK" status and Scanned count could
+    // never really populate. Now calls the dedicated three-way endpoint,
+    // which returns every manifested row with its real status already
+    // computed server-side - genuinely full picture, not just problems.
+    var res  = await fetch(PS_WORKER + '/ship/label-gap-report?date=' + psTodayKey(), {
+      headers: { 'X-Session-Token': psToken }
     });
-    var recData = await recRes.json();
-    if (!recData.ok) throw new Error(recData.error || 'Reconcile failed');
-    psGapRows = recData.gaps || [];
+    var data = await res.json();
+    if (!data.ok) throw new Error(data.error || 'Gap report failed');
+    psGapRows = data.all || [];
+    psGapScanWithoutManifest = data.scanWithoutManifest || [];
     document.getElementById('ps-tab-gaps').style.display = 'flex';
     _psUpdateGapBadge(); psRenderGaps(); psSwitchTab('gaps');
-    _psToast('Gap analysis done — ' + recData.results.gap + ' gaps found', recData.results.gap > 0 ? 'warn' : 'ok');
+    var flaggedCount = data.summary.flaggedPrintNoScan + data.summary.flaggedManifestOnly;
+    _psToast('Gap analysis done — ' + flaggedCount + ' flagged', flaggedCount > 0 ? 'warn' : 'ok');
   } catch(e) {
     _psToast('Error: ' + e.message, 'err');
   } finally {
@@ -1954,18 +1962,18 @@ window.psRenderGaps = function() {
     document.getElementById('ps-gap-summary').style.display = 'none';
     return;
   }
-  // Build lookup sets
-  var printSet = new Set(psPrintLog.map(function(p){ return (p.tracking||'').toUpperCase(); }));
-  var scanSet  = new Set(psTodayScans.map(function(s){ return (s.tracking||'').toUpperCase(); }));
-  // Enrich with three-way status
+  // Status already computed server-side (complete / ok_no_print /
+  // flagged_print_no_scan / flagged_manifest_only) — map onto the
+  // existing 3-bucket UI: complete + ok_no_print both count as "ok"
+  // (manifest+scan with no print is explicitly fine, confirmed with
+  // the user), flagged_print_no_scan -> "missing" (the real gap),
+  // flagged_manifest_only -> "unprinted" (never even attempted).
   var enriched = psGapRows.map(function(g) {
-    var t = (g.tracking||'').toUpperCase();
-    var printed = printSet.has(t);
-    var scanned = scanSet.has(t);
-    var status = (printed && scanned) ? 'ok' : printed ? 'missing' : scanned ? 'ok' : 'unprinted';
-    return Object.assign({}, g, { printed: printed, scanned: scanned, status: status });
+    var status = (g.status === 'complete' || g.status === 'ok_no_print') ? 'ok'
+               : (g.status === 'flagged_print_no_scan') ? 'missing'
+               : 'unprinted';
+    return Object.assign({}, g, { printed: g.inPrint, scanned: g.inScan, status: status });
   });
-  // Summary
   var nPrinted   = enriched.filter(function(r){ return r.printed; }).length;
   var nScanned   = enriched.filter(function(r){ return r.scanned; }).length;
   var nMissing   = enriched.filter(function(r){ return r.status === 'missing'; }).length;
@@ -1982,24 +1990,40 @@ window.psRenderGaps = function() {
   else if (psGapFilter === 'missing')   items = enriched.filter(function(r){ return r.status === 'missing'; });
   else if (psGapFilter === 'unprinted') items = enriched.filter(function(r){ return r.status === 'unprinted'; });
   else if (psGapFilter === 'ok')        items = enriched.filter(function(r){ return r.status === 'ok'; });
-  if (!items.length) { list.innerHTML = '<div class="ps-empty-state"><div class="ps-empty-icon">✅</div><div class="ps-empty-title">No items match this filter</div></div>'; return; }
-  list.innerHTML = items.map(function(g) {
-    var dotColor = g.status === 'ok' ? 'var(--green)' : g.status === 'missing' ? 'var(--red)' : 'var(--orange)';
-    var statusBadge = g.status === 'ok'
-      ? '<span class="ps-badge" style="background:var(--green-bg);color:var(--green);border:1px solid var(--green)">✅ Printed + Scanned</span>'
-      : g.status === 'missing'
-      ? '<span class="ps-badge" style="background:var(--red-bg);color:var(--red);border:1px solid var(--red)">🔴 Printed · Not Scanned</span>'
-      : '<span class="ps-badge" style="background:var(--orange-bg);color:var(--orange);border:1px solid var(--orange)">🟡 Not Printed</span>';
-    return '<div class="ps-card"><div class="ps-card-row">'
-      + '<div class="ps-card-dot" style="background:' + dotColor + '"></div>'
-      + '<div class="ps-card-tracking">' + g.tracking + '</div>'
-      + '<div class="ps-card-meta">'
-      + _psCarrierBadge(g.carrier) + statusBadge
-      + (g.orderNum ? '<span class="ps-badge ps-badge-blue">#' + g.orderNum + '</span>' : '')
-      + (g.channel  ? '<span class="ps-badge ps-badge-gray">' + g.channel + '</span>' : '')
-      + (g.shipToState ? '<span class="ps-badge ps-badge-gray">' + g.shipToState + '</span>' : '')
-      + '</div></div></div>';
-  }).join('');
+  var listHtml = '';
+  if (!items.length) {
+    listHtml = '<div class="ps-empty-state"><div class="ps-empty-icon">✅</div><div class="ps-empty-title">No items match this filter</div></div>';
+  } else {
+    listHtml = items.map(function(g) {
+      var dotColor = g.status === 'ok' ? 'var(--green)' : g.status === 'missing' ? 'var(--red)' : 'var(--orange)';
+      var statusBadge = g.status === 'ok'
+        ? '<span class="ps-badge" style="background:var(--green-bg);color:var(--green);border:1px solid var(--green)">✅ ' + (g.printed ? 'Printed + Scanned' : 'Scanned (no print log)') + '</span>'
+        : g.status === 'missing'
+        ? '<span class="ps-badge" style="background:var(--red-bg);color:var(--red);border:1px solid var(--red)">🔴 Printed · Not Scanned</span>'
+        : '<span class="ps-badge" style="background:var(--orange-bg);color:var(--orange);border:1px solid var(--orange)">🟡 Not Printed, Not Scanned</span>';
+      return '<div class="ps-card"><div class="ps-card-row">'
+        + '<div class="ps-card-dot" style="background:' + dotColor + '"></div>'
+        + '<div class="ps-card-tracking">' + g.tracking + '</div>'
+        + '<div class="ps-card-meta">'
+        + _psCarrierBadge(g.carrier) + statusBadge
+        + (g.orderNum ? '<span class="ps-badge ps-badge-blue">#' + g.orderNum + '</span>' : '')
+        + (g.channel  ? '<span class="ps-badge ps-badge-gray">' + g.channel + '</span>' : '')
+        + (g.customerName ? '<span class="ps-badge ps-badge-gray">' + g.customerName + '</span>' : '')
+        + '</div></div></div>';
+    }).join('');
+  }
+  // Separate section for scans that never made it into the manifest at
+  // all — only possible if the Veeqo lookup failed during that scan.
+  // Different root cause than a shipping gap, so kept visually separate
+  // rather than mixed into the filtered list above.
+  if (psGapScanWithoutManifest.length > 0) {
+    listHtml += '<div style="margin-top:20px;padding:14px 16px;background:var(--bg3);border-radius:10px;border:1px solid var(--orange)">'
+      + '<div style="font-size:13px;font-weight:700;color:var(--orange);margin-bottom:8px">⚠ Scanned but never matched to a manifest order (' + psGapScanWithoutManifest.length + ')</div>'
+      + '<div style="font-size:12px;color:var(--text2);margin-bottom:8px">These were scanned successfully, but the Veeqo order lookup didn\'t find a match at scan time — worth a manual check.</div>'
+      + psGapScanWithoutManifest.map(function(t){ return '<span class="ps-badge ps-badge-gray" style="margin:2px">' + t + '</span>'; }).join('')
+      + '</div>';
+  }
+  list.innerHTML = listHtml;
 };
 
 function _psUpdateGapBadge() {
@@ -2009,10 +2033,13 @@ function _psUpdateGapBadge() {
 }
 
 window.psExportGaps = function() {
-  if (!psGapRows.length) { _psToast('No gaps to export'); return; }
-  var header = 'TrackingNumber,Carrier,OrderNum,Channel,Service,ShipToState';
+  if (!psGapRows.length && !psGapScanWithoutManifest.length) { _psToast('No gap data to export'); return; }
+  var header = 'TrackingNumber,Carrier,OrderNum,Channel,CustomerName,Status';
   var rows   = psGapRows.map(function(g){
-    return [g.tracking,g.carrier,g.orderNum,g.channel,g.service,g.shipToState].map(function(v){ return '"' + (v||'').replace(/"/g,'""') + '"'; }).join(',');
+    return [g.tracking,g.carrier,g.orderNum,g.channel,g.customerName,g.status].map(function(v){ return '"' + (v||'').toString().replace(/"/g,'""') + '"'; }).join(',');
+  });
+  psGapScanWithoutManifest.forEach(function(t) {
+    rows.push(['"' + t + '"','""','""','""','""','"scan_without_manifest"'].join(','));
   });
   var blob = new Blob([[header].concat(rows).join('\n')], { type:'text/csv' });
   var url  = URL.createObjectURL(blob);
