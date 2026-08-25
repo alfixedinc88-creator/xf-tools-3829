@@ -572,6 +572,7 @@ body {
   <div class="ps-tabitem"        id="ps-tab-orderlookup" onclick="psSwitchTab('orderlookup')">📋 Order Lookup</div>
   <div class="ps-tabitem"        id="ps-tab-status"      onclick="psSwitchTab('status')">📡 Status Check</div>
   <div class="ps-tabitem"        id="ps-tab-gaps"     onclick="psSwitchTab('gaps')">⚠️ Gap Report <span class="ps-tab-badge" id="ps-gap-badge" style="display:none">0</span></div>
+  <div class="ps-tabitem"        id="ps-tab-undelivered" onclick="psSwitchTab('undelivered')">📦 Undelivered Report</div>
   <div class="ps-tabitem"        id="ps-tab-vsync"    onclick="psSwitchTab('vsync')">🔄 Veeqo Sync</div>
   <div class="ps-tabitem"        id="ps-tab-valerts"  onclick="psSwitchTab('valerts')">🚨 Alerts <span class="ps-tab-badge" id="ps-valerts-badge" style="display:none">0</span></div>
   <div class="ps-tabitem"        id="ps-tab-printlog" onclick="psSwitchTab('printlog')">🖨️ Print Log <span class="ps-tab-badge" id="ps-printlog-badge" style="display:none">0</span></div>
@@ -874,6 +875,53 @@ body {
           <div class="ps-empty-icon">📄</div>
           <div class="ps-empty-title">Run reconciliation first</div>
           <div class="ps-empty-sub">Manifest syncs automatically every hour. Click Run Gap Analysis to check now.</div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ══ UNDELIVERED REPORT panel ══ -->
+  <div class="ps-panel" id="ps-panel-undelivered">
+    <div id="ps-undelivered-gate" class="ps-mgmt-gate">
+      <div class="ps-mgmt-gate-icon">🔒</div>
+      <div class="ps-mgmt-gate-title">Management Access Required</div>
+      <div class="ps-mgmt-gate-sub">Enter the management PIN to view the Undelivered Report.</div>
+      <div class="ps-mgmt-gate-row">
+        <input class="ps-mgmt-gate-input" id="ps-undelivered-pin" type="password" inputmode="numeric" maxlength="6" placeholder="••••">
+        <button class="ps-btn-go" id="ps-undelivered-pin-btn" onclick="psUnlockTab('undelivered')">Unlock</button>
+      </div>
+      <div class="ps-pin-err" id="ps-undelivered-pin-err" style="margin-top:10px"></div>
+    </div>
+    <div id="ps-undelivered-content" style="display:none">
+      <div class="ps-section-header">
+        <div>
+          <div class="ps-section-title" style="font-size:15px;text-transform:none;letter-spacing:0">📦 Undelivered Report</div>
+          <div style="font-size:13px;color:var(--text2);margin-top:4px">Checks Veeqo's real tracking status for every shipment in the window, batches results for each carrier's own bulk-tracking tool, and builds a spreadsheet for manual carrier-site verification.</div>
+        </div>
+      </div>
+
+      <div class="ps-card" style="margin-bottom:16px">
+        <div style="display:flex;gap:14px;flex-wrap:wrap;align-items:flex-end;margin-bottom:10px">
+          <div>
+            <label style="display:block;font-size:11px;font-weight:700;color:var(--text3);text-transform:uppercase;letter-spacing:.5px;margin-bottom:5px">Days back</label>
+            <input type="number" id="ps-und-days" value="50" min="1" max="180" style="width:80px;padding:8px;border:1.5px solid var(--border);border-radius:8px;font-family:var(--mono);font-size:13px">
+          </div>
+          <div>
+            <label style="display:block;font-size:11px;font-weight:700;color:var(--text3);text-transform:uppercase;letter-spacing:.5px;margin-bottom:5px">Exclude most recent</label>
+            <input type="number" id="ps-und-exclude" value="15" min="0" max="90" style="width:80px;padding:8px;border:1.5px solid var(--border);border-radius:8px;font-family:var(--mono);font-size:13px">
+            <span style="font-size:11px;color:var(--text3)">days</span>
+          </div>
+          <button class="ps-btn-primary" id="ps-und-run-btn" style="width:auto;padding:11px 24px" onclick="psRunUndeliveredReport()">Generate Report</button>
+        </div>
+        <div id="ps-und-progress" style="display:none;font-size:13px;color:var(--text2);font-family:var(--mono)"></div>
+      </div>
+
+      <div id="ps-und-summary" style="display:none;margin-bottom:14px;padding:14px 16px;background:var(--bg3);border-radius:10px;border:1px solid var(--border)">
+        <div style="display:flex;gap:20px;flex-wrap:wrap;align-items:center">
+          <div style="text-align:center"><div id="ps-und-total" style="font-size:22px;font-weight:700;font-family:var(--mono);color:var(--accent)">—</div><div style="font-size:11px;font-weight:700;color:var(--text3);text-transform:uppercase;letter-spacing:.6px">Undelivered</div></div>
+          <div style="text-align:center"><div id="ps-und-usps" style="font-size:22px;font-weight:700;font-family:var(--mono);color:var(--text)">—</div><div style="font-size:11px;font-weight:700;color:var(--text3);text-transform:uppercase;letter-spacing:.6px">USPS</div></div>
+          <div style="text-align:center"><div id="ps-und-ups" style="font-size:22px;font-weight:700;font-family:var(--mono);color:var(--text)">—</div><div style="font-size:11px;font-weight:700;color:var(--text3);text-transform:uppercase;letter-spacing:.6px">UPS</div></div>
+          <button class="ps-btn-export" id="ps-und-download-btn" onclick="psDownloadUndeliveredReport()">⬇ Download Spreadsheet</button>
         </div>
       </div>
     </div>
@@ -2049,6 +2097,159 @@ window.psExportGaps = function() {
   _psToast('Gap report exported');
 };
 
+// ── Undelivered Report ───────────────────────────────
+var psUndeliveredRows = null; // holds the built (deduped) result until downloaded
+
+window.psRunUndeliveredReport = async function() {
+  var btn = document.getElementById('ps-und-run-btn');
+  var progressEl = document.getElementById('ps-und-progress');
+  var summaryEl = document.getElementById('ps-und-summary');
+  if (btn.disabled) return;
+
+  var days = parseInt(document.getElementById('ps-und-days').value) || 50;
+  var excludeRecentDays = parseInt(document.getElementById('ps-und-exclude').value) || 15;
+
+  btn.disabled = true;
+  progressEl.style.display = 'block';
+  summaryEl.style.display = 'none';
+  psUndeliveredRows = null;
+
+  var allRaw = [];
+  var page = 1;
+  var hasMore = true;
+  var MAX_PAGES = 200; // safety ceiling - matches the worker's own cap
+
+  try {
+    while (hasMore && page <= MAX_PAGES) {
+      progressEl.textContent = 'Checking page ' + page + '… (' + allRaw.length + ' undelivered found so far)';
+      var res = await fetch(PS_WORKER + '/veeqo/undelivered-report?page=' + page + '&days=' + days + '&excludeRecentDays=' + excludeRecentDays, {
+        headers: { 'X-Session-Token': psToken }
+      });
+      var data = await res.json();
+      if (!data.ok) throw new Error(data.error || 'Report failed on page ' + page);
+      allRaw = allRaw.concat(data.undelivered || []);
+      hasMore = data.hasMore;
+      page++;
+    }
+
+    // Dedup by tracking number, keeping every order number seen for it -
+    // same logic as the Python generator, so results match exactly
+    // whichever path is used.
+    var byTracking = {};
+    allRaw.forEach(function(r) {
+      if (!byTracking[r.tracking]) {
+        byTracking[r.tracking] = Object.assign({}, r, { allOrderNums: [r.orderNum || ''] });
+      } else if (r.orderNum && byTracking[r.tracking].allOrderNums.indexOf(r.orderNum) === -1) {
+        byTracking[r.tracking].allOrderNums.push(r.orderNum);
+      }
+    });
+    var deduped = Object.values(byTracking);
+
+    psUndeliveredRows = deduped;
+
+    var uspsCount = deduped.filter(function(r){ return (r.carrier||'').toUpperCase() === 'USPS'; }).length;
+    var upsCount  = deduped.filter(function(r){ return (r.carrier||'').toUpperCase() === 'UPS'; }).length;
+    document.getElementById('ps-und-total').textContent = deduped.length;
+    document.getElementById('ps-und-usps').textContent  = uspsCount;
+    document.getElementById('ps-und-ups').textContent   = upsCount;
+    summaryEl.style.display = 'block';
+    progressEl.textContent = 'Done — ' + deduped.length + ' unique undelivered shipments across ' + (page - 1) + ' page(s).';
+    _psToast(deduped.length + ' undelivered shipments found', deduped.length > 0 ? 'warn' : 'ok');
+  } catch(e) {
+    _psToast('Error: ' + e.message, 'err');
+    progressEl.textContent = 'Failed: ' + e.message;
+  } finally {
+    btn.disabled = false;
+  }
+};
+
+// Carrier batch limits confirmed with the user: USPS bulk tool takes 35
+// at once, UPS takes 25. Unknown/other carriers default to the more
+// conservative 25.
+var PS_CARRIER_BATCH_LIMITS = { USPS: 35, UPS: 25, FEDEX: 25 };
+var PS_DEFAULT_BATCH_LIMIT = 25;
+
+window.psDownloadUndeliveredReport = function() {
+  if (!psUndeliveredRows || !psUndeliveredRows.length) { _psToast('Run the report first'); return; }
+  if (typeof XLSX === 'undefined') {
+    var s = document.createElement('script');
+    s.src = 'https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js';
+    s.onload = function() { _psBuildUndeliveredWorkbook(); };
+    document.head.appendChild(s);
+  } else {
+    _psBuildUndeliveredWorkbook();
+  }
+};
+
+function _psBuildUndeliveredWorkbook() {
+  var byCarrier = {};
+  psUndeliveredRows.forEach(function(r) {
+    var c = (r.carrier || 'Unknown').toUpperCase();
+    if (!byCarrier[c]) byCarrier[c] = [];
+    byCarrier[c].push(r);
+  });
+
+  var wb = XLSX.utils.book_new();
+
+  // Instructions sheet
+  var instructions = [
+    ['Undelivered Shipments — Carrier Verification Workflow'],
+    [],
+    ['Window: last ' + document.getElementById('ps-und-days').value + ' days, excluding the most recent ' + document.getElementById('ps-und-exclude').value + ' days'],
+    [psUndeliveredRows.length + ' unique tracking numbers to verify.'],
+    [],
+    ['This report lists shipments Veeqo has not confirmed as delivered. Veeqo\'s'],
+    ['own tracking status can lag or differ from the carrier\'s real status, so'],
+    ['this needs a manual cross-check against each carrier\'s own site before'],
+    ['anything gets sent to the claims team.'],
+    [],
+    ['How to use each carrier tab:'],
+    ['  1. Each batch is sized to that carrier\'s bulk-tracking limit'],
+    ['     (USPS: 35 numbers, UPS: 25 numbers per lookup).'],
+    ['  2. Copy the tracking-numbers block for a batch and paste it into'],
+    ['     that carrier\'s own bulk tracking tool.'],
+    ['  3. For each tracking number the carrier confirms as DELIVERED,'],
+    ['     delete that row from the batch.'],
+    ['  4. For everything left, fill in "Updated Status" with what the'],
+    ['     carrier actually shows, then hand the remaining list to claims.'],
+    [],
+    ['USPS bulk tracking: https://tools.usps.com/go/TrackConfirmAction'],
+    ['UPS tracking: https://www.ups.com/track'],
+  ];
+  var wsInstructions = XLSX.utils.aoa_to_sheet(instructions);
+  wsInstructions['!cols'] = [{ wch: 90 }];
+  XLSX.utils.book_append_sheet(wb, wsInstructions, 'Instructions');
+
+  // One sheet per carrier
+  Object.keys(byCarrier).forEach(function(carrier) {
+    var limit = PS_CARRIER_BATCH_LIMITS[carrier] || PS_DEFAULT_BATCH_LIMIT;
+    var items = byCarrier[carrier].slice().sort(function(a,b){ return (a.shippedAt||'').localeCompare(b.shippedAt||''); });
+    var batches = [];
+    for (var i = 0; i < items.length; i += limit) batches.push(items.slice(i, i + limit));
+
+    var rows = [[carrier + ' — ' + items.length + ' shipments in ' + batches.length + ' batch(es)']];
+    rows.push([]);
+    batches.forEach(function(batch, bi) {
+      rows.push(['Batch ' + (bi+1) + ' (' + batch.length + ' tracking numbers)']);
+      rows.push(['Copy-paste block (one per line):']);
+      rows.push([batch.map(function(r){ return r.tracking; }).join('\n')]);
+      rows.push([]);
+      rows.push(['Tracking Number', 'Order Num(s)', 'Channel', 'Ship Date', 'Tracking Link', 'Updated Status (fill in after checking carrier site)']);
+      batch.forEach(function(r) {
+        rows.push([r.tracking, r.allOrderNums.join(', '), r.channel||'', r.shippedAt||'', r.trackingUrl||'', '']);
+      });
+      rows.push([]); rows.push([]);
+    });
+
+    var ws = XLSX.utils.aoa_to_sheet(rows);
+    ws['!cols'] = [{ wch: 24 }, { wch: 20 }, { wch: 16 }, { wch: 12 }, { wch: 45 }, { wch: 40 }];
+    XLSX.utils.book_append_sheet(wb, ws, carrier.slice(0, 31));
+  });
+
+  XLSX.writeFile(wb, 'undelivered_report_' + psTodayKey() + '.xlsx');
+  _psToast('Report downloaded');
+}
+
 // ── Helpers ───────────────────────────────────────────
 function _psCarrierBadge(c) {
   if (c === 'UPS')  return '<span class="ps-badge ps-badge-ups">UPS</span>';
@@ -2270,7 +2471,7 @@ window.psSwitchTab = function(name) {
   document.getElementById('ps-tab-' + name).classList.add('active');
   document.getElementById('ps-panel-' + name).classList.add('active');
   // Show gate if protected tab not yet unlocked this session
-  if ((name === 'status' || name === 'gaps' || name === 'vsync' || name === 'valerts') && !_psUnlockedTabs[name]) {
+  if ((name === 'status' || name === 'gaps' || name === 'undelivered' || name === 'vsync' || name === 'valerts') && !_psUnlockedTabs[name]) {
     var gate    = document.getElementById('ps-' + name + '-gate');
     var content = document.getElementById('ps-' + name + '-content');
     if (gate)    gate.style.display    = 'block';
