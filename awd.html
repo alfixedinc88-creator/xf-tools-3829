@@ -1158,21 +1158,12 @@ async function syncCpackFromSheet(){
     if(!data.ok||!data.rows||!data.rows.length){
       awd_planner_toast('Sync failed: '+(data.error||'No rows returned'),'error');return;
     }
-    const rawRowCount = data.rows.length;
     buildCpackMap(data.rows);
     localStorage.setItem('awdCpack',JSON.stringify({rows:data.rows,date:new Date().toISOString()}));
     S.cpackDate=new Date();
     updateCpackUI();
     renderBuilder();
-    // Diagnostic: cpackMap is keyed by SKU, so multiple rows sharing the
-    // same SKU collapse into one entry - S.cpackCount is distinct SKUs,
-    // not total rows read. Surfacing both so a real gap (rows genuinely
-    // missing) is distinguishable from expected dedup (rows genuinely
-    // duplicate SKUs in the source sheet).
-    console.log('[XFITTING] cpack sync - raw rows from sheet:', rawRowCount, '| distinct SKUs after dedup:', S.cpackCount, '| duplicates collapsed:', rawRowCount - S.cpackCount);
-    var msg = 'Synced from sheet — '+S.cpackCount+' unique SKUs';
-    if (rawRowCount !== S.cpackCount) msg += ' (from '+rawRowCount+' rows, '+(rawRowCount-S.cpackCount)+' were duplicate SKUs)';
-    awd_planner_toast(msg,'success');
+    awd_planner_toast('Synced from sheet \u2014 '+S.cpackCount+' SKUs','success');
   }catch(e){
     awd_planner_toast('Sync error: '+e.message,'error');
   }finally{
@@ -1240,7 +1231,7 @@ function readTxt(f){return new Promise((res,rej)=>{const r=new FileReader();r.on
 // M  Total Network        = G+H+I+J+K+L
 // N  Rec Send             = MAX(0, F-M)
 // O  Net Days             = M/E
-async function processData(){
+async function processData(skipSave){
   ge('up-err').style.display='none';
   try{
     // AWD map
@@ -1279,9 +1270,16 @@ async function processData(){
     const pill=ge('data-pill');
     pill.textContent=S.joined.length+' SKUs loaded';
     pill.style.background='var(--green-light)';pill.style.color='var(--green)';
-    awd_planner_toast('Processed '+S.joined.length+' SKUs — saving…','success');
+    awd_planner_toast('Processed '+S.joined.length+' SKUs'+(skipSave?'':' — saving…'),'success');
     awd_switchTab('dashboard');
-    await saveReportsToSheet();
+    // BUGFIX: previously always saved back to the same 4 sheets this
+    // data was just read from on a normal page load (loadReportsFromSheet
+    // -> processData), a genuinely redundant round trip - 4 large writes
+    // to Sheets, awaited, before the shipment could even start loading.
+    // Only save when this is real, newly-uploaded CSV data (the manual
+    // "Process Reports" button), not when it's unchanged data that just
+    // came from these same sheets.
+    if (!skipSave) await saveReportsToSheet();
     loadShipmentFromSheet();
   }catch(e){ge('up-err').style.display='flex';ge('up-err').textContent='Error: '+e.message;console.error(e);}
 }
@@ -2446,7 +2444,11 @@ async function loadReportsFromSheet() {
     // delay. Not calling loadShipmentFromSheet() again here -
     // processData() already calls it safely and correctly internally,
     // right after S.joined (its search space) is populated.
-    await processData();
+    // skipSave=true: this data just came from loadReportsFromSheet
+    // reading these exact same 4 sheets - writing it right back would
+    // be a genuinely redundant round trip (4 large Sheets writes,
+    // awaited, delaying the shipment from loading for no reason).
+    await processData(true);
   } catch(e) {
     console.error('[XFITTING] loadReportsFromSheet:', e);
     const pill = ge('data-pill');
