@@ -1158,12 +1158,21 @@ async function syncCpackFromSheet(){
     if(!data.ok||!data.rows||!data.rows.length){
       awd_planner_toast('Sync failed: '+(data.error||'No rows returned'),'error');return;
     }
+    const rawRowCount = data.rows.length;
     buildCpackMap(data.rows);
     localStorage.setItem('awdCpack',JSON.stringify({rows:data.rows,date:new Date().toISOString()}));
     S.cpackDate=new Date();
     updateCpackUI();
     renderBuilder();
-    awd_planner_toast('Synced from sheet \u2014 '+S.cpackCount+' SKUs','success');
+    // Diagnostic: cpackMap is keyed by SKU, so multiple rows sharing the
+    // same SKU collapse into one entry - S.cpackCount is distinct SKUs,
+    // not total rows read. Surfacing both so a real gap (rows genuinely
+    // missing) is distinguishable from expected dedup (rows genuinely
+    // duplicate SKUs in the source sheet).
+    console.log('[XFITTING] cpack sync - raw rows from sheet:', rawRowCount, '| distinct SKUs after dedup:', S.cpackCount, '| duplicates collapsed:', rawRowCount - S.cpackCount);
+    var msg = 'Synced from sheet — '+S.cpackCount+' unique SKUs';
+    if (rawRowCount !== S.cpackCount) msg += ' (from '+rawRowCount+' rows, '+(rawRowCount-S.cpackCount)+' were duplicate SKUs)';
+    awd_planner_toast(msg,'success');
   }catch(e){
     awd_planner_toast('Sync error: '+e.message,'error');
   }finally{
