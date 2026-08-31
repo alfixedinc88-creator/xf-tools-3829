@@ -413,6 +413,14 @@ async function wFetch(url, opts) {
           var totalUnits= parseFloat(r[3]) || 0;
           var upc       = parseFloat(r[4]) || 0;
           var cases     = parseFloat(r[5]) || 0;
+          // Confirmed with the user: units per case = Total Units /
+          // Cases - this is real, fresh data from THIS specific
+          // receive, derived from two columns already being read here,
+          // no separate column needed. Only calculated when cases > 0
+          // (avoids divide-by-zero); falls back to the matched
+          // product's existing known value in the matching step below
+          // when this receive's own data can't support the calculation.
+          var unitsPerCaseCalc = cases > 0 ? Math.round(totalUnits / cases) : 0;
 
           if (!partNum && !desc) continue; // blank row
 
@@ -458,7 +466,8 @@ async function wFetch(url, opts) {
               vendor:     vendor,
               cases:      cases,
               upc:        upc,
-              totalUnits: totalUnits
+              totalUnits: totalUnits,
+              unitsPerCase: unitsPerCaseCalc
             });
           }
         }
@@ -623,14 +632,13 @@ async function wFetch(url, opts) {
         pricePerUnit:  priceInfo ? priceInfo.price : null,
         oldPrice:      oldPrice,
         d1Id:          mlRow ? mlRow.d1Id : null,
-        // BUGFIX: previously always item.unitsPerCase (a field the
-        // upload sheet never actually contains, so this was always
-        // undefined -> 0 on every single receive, forever). Now
-        // carries forward the matched product's own known value from
-        // master_list, since this is a real product property (a
-        // 10-pack is always a 10-pack) that shouldn't need re-entry
-        // every time it's received again - same principle already
-        // used for desc above.
+        // Priority: (1) calculated fresh from THIS receive's own Total
+        // Units / Cases (confirmed with the user as the real source -
+        // most accurate, since it reflects what's actually on this
+        // pallet), (2) the matched product's existing known value from
+        // master_list if this receive's own data can't support the
+        // calculation (e.g. cases=0 on this particular row), (3) 0 if
+        // genuinely neither is available.
         unitsPerCase:  item.unitsPerCase || (mlRow ? mlRow.unitsPerCase : 0) || 0,
         mlRow:         mlRow || null,
         oldLocation:   mlRow ? (mlRow.location || '') : '',
