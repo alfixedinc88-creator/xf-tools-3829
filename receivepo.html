@@ -623,7 +623,15 @@ async function wFetch(url, opts) {
         pricePerUnit:  priceInfo ? priceInfo.price : null,
         oldPrice:      oldPrice,
         d1Id:          mlRow ? mlRow.d1Id : null,
-        unitsPerCase:  item.unitsPerCase || 0,
+        // BUGFIX: previously always item.unitsPerCase (a field the
+        // upload sheet never actually contains, so this was always
+        // undefined -> 0 on every single receive, forever). Now
+        // carries forward the matched product's own known value from
+        // master_list, since this is a real product property (a
+        // 10-pack is always a 10-pack) that shouldn't need re-entry
+        // every time it's received again - same principle already
+        // used for desc above.
+        unitsPerCase:  item.unitsPerCase || (mlRow ? mlRow.unitsPerCase : 0) || 0,
         mlRow:         mlRow || null,
         oldLocation:   mlRow ? (mlRow.location || '') : '',
         isPlaceholder: !needsNewRow && !notInCatalog,
