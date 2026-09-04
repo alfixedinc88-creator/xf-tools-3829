@@ -1,0 +1,428 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<!-- XFITTING-BUILD-V1-ADMIN-20260904 -->
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>XFitting Admin</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700&family=DM+Mono:wght@400;500&display=swap" rel="stylesheet">
+<style>
+  :root {
+    --accent:#1A56DB; --green:#0E7F3E; --red:#C52A1A; --orange:#B45309; --purple:#6D28D9;
+    --bg:#F4F5F7; --bg2:#FFFFFF; --bg3:#EEF0F3; --border:#DFE2E7;
+    --text:#131A2A; --text2:#4B5565; --text3:#7A8496;
+    --mono:'DM Mono',monospace; --sans:'DM Sans',sans-serif;
+    --shadow:0 1px 3px rgba(20,25,40,.08), 0 1px 2px rgba(20,25,40,.06);
+  }
+  * { box-sizing:border-box; }
+  body { margin:0; font-family:var(--sans); background:var(--bg); color:var(--text); -webkit-font-smoothing:antialiased; }
+  #admin-app { max-width:1100px; margin:0 auto; padding:24px 20px 60px; }
+
+  /* ── Login gate ── */
+  #ad-login-gate { max-width:380px; margin:80px auto; background:var(--bg2); border:1px solid var(--border); border-radius:14px; padding:32px 28px; box-shadow:var(--shadow); text-align:center; }
+  #ad-login-gate .ad-icon { font-size:34px; margin-bottom:10px; }
+  #ad-login-gate h1 { font-size:19px; margin:0 0 6px; }
+  #ad-login-gate p { font-size:13px; color:var(--text3); margin:0 0 22px; }
+  .ad-input { width:100%; padding:11px 14px; border:1.5px solid var(--border); border-radius:9px; font-family:var(--sans); font-size:14px; margin-bottom:10px; }
+  .ad-input:focus { outline:none; border-color:var(--accent); }
+  .ad-btn { width:100%; padding:12px; border:none; border-radius:9px; background:var(--accent); color:#fff; font-family:var(--sans); font-weight:600; font-size:14px; cursor:pointer; }
+  .ad-btn:hover { opacity:.92; }
+  .ad-btn:disabled { opacity:.5; cursor:default; }
+  .ad-btn-sm { padding:6px 12px; font-size:12px; border-radius:7px; }
+  .ad-btn-outline { background:transparent; border:1.5px solid var(--border); color:var(--text2); }
+  .ad-btn-danger { background:var(--red); }
+  .ad-btn-green { background:var(--green); }
+  .ad-err { color:var(--red); font-size:12.5px; margin-top:10px; min-height:16px; }
+
+  /* ── Denied ── */
+  #ad-denied { max-width:420px; margin:80px auto; text-align:center; color:var(--text2); }
+  #ad-denied .ad-icon { font-size:36px; }
+
+  /* ── Header ── */
+  #ad-header { display:flex; align-items:center; justify-content:space-between; margin-bottom:22px; padding-bottom:16px; border-bottom:1px solid var(--border); }
+  #ad-header h1 { font-size:18px; margin:0; }
+  #ad-header .ad-who { font-size:12.5px; color:var(--text3); margin-top:2px; }
+  #ad-header .ad-who b { color:var(--text2); }
+
+  /* ── Tabs ── */
+  .ad-tabs { display:flex; gap:6px; margin-bottom:18px; }
+  .ad-tab { padding:9px 16px; border-radius:9px; font-size:13px; font-weight:600; color:var(--text3); cursor:pointer; border:1px solid transparent; }
+  .ad-tab.active { background:var(--bg2); color:var(--accent); border-color:var(--border); box-shadow:var(--shadow); }
+
+  /* ── Cards / table ── */
+  .ad-card { background:var(--bg2); border:1px solid var(--border); border-radius:12px; padding:18px; box-shadow:var(--shadow); margin-bottom:16px; }
+  .ad-card-header { display:flex; align-items:center; justify-content:space-between; margin-bottom:14px; }
+  .ad-card-header h2 { font-size:14px; margin:0; }
+  table.ad-table { width:100%; border-collapse:collapse; font-size:13px; }
+  table.ad-table th { text-align:left; padding:8px 10px; background:var(--bg3); font-size:10.5px; font-weight:700; letter-spacing:.4px; text-transform:uppercase; color:var(--text3); border-bottom:1px solid var(--border); }
+  table.ad-table td { padding:9px 10px; border-bottom:1px solid var(--border); vertical-align:middle; }
+  table.ad-table tr:last-child td { border-bottom:none; }
+  .ad-badge { display:inline-block; padding:2px 8px; border-radius:5px; font-size:10.5px; font-weight:700; font-family:var(--mono); margin:1px 3px 1px 0; }
+  .ad-badge-admin { background:#FDF0EE; color:var(--red); }
+  .ad-badge-mgmt { background:#FEF6E7; color:var(--orange); }
+  .ad-badge-ops { background:#E9F5EE; color:var(--green); }
+  .ad-badge-mobile { background:#EDE9FE; color:var(--purple); }
+  .ad-badge-price { background:#E5F0FF; color:var(--accent); }
+  .ad-dot { display:inline-block; width:8px; height:8px; border-radius:50%; margin-right:6px; }
+  .ad-dot-active { background:var(--green); }
+  .ad-dot-inactive { background:var(--text3); }
+  .ad-mono { font-family:var(--mono); font-size:12px; color:var(--text2); }
+
+  /* ── Modal ── */
+  .ad-modal-backdrop { position:fixed; inset:0; background:rgba(15,20,35,.4); display:flex; align-items:center; justify-content:center; z-index:50; padding:20px; }
+  .ad-modal { background:var(--bg2); border-radius:14px; padding:24px; width:100%; max-width:420px; box-shadow:0 12px 40px rgba(0,0,0,.2); }
+  .ad-modal h3 { margin:0 0 16px; font-size:16px; }
+  .ad-field-label { font-size:11px; font-weight:700; text-transform:uppercase; letter-spacing:.4px; color:var(--text3); margin-bottom:5px; display:block; }
+  .ad-field { margin-bottom:14px; }
+  .ad-role-check { display:flex; align-items:center; gap:8px; padding:6px 0; font-size:13.5px; }
+  .ad-modal-actions { display:flex; gap:8px; margin-top:18px; }
+  .ad-modal-actions .ad-btn { flex:1; }
+
+  .ad-toast { position:fixed; bottom:24px; left:50%; transform:translateX(-50%); background:var(--text); color:#fff; padding:11px 20px; border-radius:9px; font-size:13px; z-index:100; box-shadow:0 6px 20px rgba(0,0,0,.25); }
+  .ad-toast.err { background:var(--red); }
+  .ad-toast.ok { background:var(--green); }
+
+  .ad-empty { text-align:center; padding:40px 20px; color:var(--text3); font-size:13px; }
+</style>
+</head>
+<body>
+<div id="admin-app">
+
+  <div id="ad-login-gate">
+    <div class="ad-icon">🔐</div>
+    <h1>XFitting Admin</h1>
+    <p>Sign in with your XFitting credentials</p>
+    <input class="ad-input" id="ad-username" type="text" placeholder="Username" autocomplete="username">
+    <input class="ad-input" id="ad-password" type="password" placeholder="Password" autocomplete="current-password">
+    <button class="ad-btn" id="ad-login-btn" onclick="adLogin()">Sign In</button>
+    <div class="ad-err" id="ad-login-err"></div>
+  </div>
+
+  <div id="ad-denied" style="display:none">
+    <div class="ad-icon">🚫</div>
+    <h2>Admin access required</h2>
+    <p>You're signed in, but this account doesn't have admin access.</p>
+    <button class="ad-btn ad-btn-outline" style="width:auto;margin-top:14px;padding:9px 20px" onclick="adLogout()">Sign out</button>
+  </div>
+
+  <div id="ad-main" style="display:none">
+    <div id="ad-header">
+      <div>
+        <h1>XFitting Admin</h1>
+        <div class="ad-who">Signed in as <b id="ad-who-name"></b></div>
+      </div>
+      <button class="ad-btn ad-btn-outline ad-btn-sm" onclick="adLogout()">Sign Out</button>
+    </div>
+
+    <div class="ad-tabs">
+      <div class="ad-tab active" id="ad-tab-users" onclick="adSwitchTab('users')">👤 Users</div>
+      <div class="ad-tab" id="ad-tab-activity" onclick="adSwitchTab('activity')">📊 Activity</div>
+    </div>
+
+    <div id="ad-panel-users">
+      <div class="ad-card">
+        <div class="ad-card-header">
+          <h2>All Users</h2>
+          <button class="ad-btn ad-btn-sm" style="width:auto" onclick="adOpenCreateModal()">+ New User</button>
+        </div>
+        <div id="ad-users-table-wrap"><div class="ad-empty">Loading…</div></div>
+      </div>
+    </div>
+
+    <div id="ad-panel-activity" style="display:none">
+      <div class="ad-card">
+        <div class="ad-card-header">
+          <h2>Recent Activity</h2>
+          <select id="ad-activity-user-filter" class="ad-input" style="width:auto;margin:0;padding:7px 10px;font-size:12.5px" onchange="adLoadActivity()">
+            <option value="">All users</option>
+          </select>
+        </div>
+        <div id="ad-activity-table-wrap"><div class="ad-empty">Loading…</div></div>
+      </div>
+    </div>
+  </div>
+
+</div>
+
+<!-- Create / Edit user modal -->
+<div class="ad-modal-backdrop" id="ad-user-modal" style="display:none">
+  <div class="ad-modal">
+    <h3 id="ad-modal-title">New User</h3>
+    <div class="ad-field">
+      <label class="ad-field-label">Username</label>
+      <input class="ad-input" id="ad-m-username" style="margin:0" placeholder="jdoe">
+    </div>
+    <div class="ad-field" id="ad-m-password-field">
+      <label class="ad-field-label">Password</label>
+      <input class="ad-input" id="ad-m-password" type="password" style="margin:0" placeholder="At least 8 characters">
+    </div>
+    <div class="ad-field">
+      <label class="ad-field-label">Display Name / Initials</label>
+      <input class="ad-input" id="ad-m-displayname" style="margin:0" placeholder="JD" maxlength="4">
+    </div>
+    <div class="ad-field">
+      <label class="ad-field-label">Roles</label>
+      <label class="ad-role-check"><input type="checkbox" value="ops" class="ad-m-role"> Ops</label>
+      <label class="ad-role-check"><input type="checkbox" value="mgmt" class="ad-m-role"> Mgmt</label>
+      <label class="ad-role-check"><input type="checkbox" value="mobile" class="ad-m-role"> Mobile</label>
+      <label class="ad-role-check"><input type="checkbox" value="price" class="ad-m-role"> Price</label>
+      <label class="ad-role-check"><input type="checkbox" value="admin" class="ad-m-role"> Admin</label>
+    </div>
+    <div class="ad-err" id="ad-m-err"></div>
+    <div class="ad-modal-actions">
+      <button class="ad-btn ad-btn-outline" onclick="adCloseModal()">Cancel</button>
+      <button class="ad-btn" id="ad-m-save-btn" onclick="adSaveUser()">Save</button>
+    </div>
+  </div>
+</div>
+
+<!-- Reset password modal -->
+<div class="ad-modal-backdrop" id="ad-reset-modal" style="display:none">
+  <div class="ad-modal">
+    <h3>Reset Password</h3>
+    <div class="ad-field">
+      <label class="ad-field-label">New Password</label>
+      <input class="ad-input" id="ad-r-password" type="password" style="margin:0" placeholder="At least 8 characters">
+    </div>
+    <div style="font-size:12px;color:var(--text3)">This immediately signs the user out of any device they're currently logged into.</div>
+    <div class="ad-err" id="ad-r-err"></div>
+    <div class="ad-modal-actions">
+      <button class="ad-btn ad-btn-outline" onclick="adCloseResetModal()">Cancel</button>
+      <button class="ad-btn ad-btn-danger" onclick="adSaveReset()">Reset Password</button>
+    </div>
+  </div>
+</div>
+
+<script>
+const AD_WORKER = 'https://xfitting-lookup.alfixedinc88.workers.dev';
+var AD = { token: localStorage.getItem('xf_cred_token') || null, user: null, users: [], resetUserId: null, editingUserId: null };
+
+function ge(id) { return document.getElementById(id); }
+
+function adToast(msg, type) {
+  var t = document.createElement('div');
+  t.className = 'ad-toast' + (type ? ' ' + type : '');
+  t.textContent = msg;
+  document.body.appendChild(t);
+  setTimeout(function(){ t.remove(); }, 3200);
+}
+
+async function adFetch(path, opts) {
+  opts = opts || {};
+  opts.headers = Object.assign({ 'Content-Type': 'application/json' }, opts.headers || {}, AD.token ? { 'X-Cred-Token': AD.token } : {});
+  var res = await fetch(AD_WORKER + path, opts);
+  var data = await res.json().catch(function(){ return {}; });
+  if (res.status === 403 && data.error === 'Admin access required') {
+    adShowDenied();
+  }
+  return { status: res.status, data: data };
+}
+
+window.adLogin = async function() {
+  var username = ge('ad-username').value.trim();
+  var password = ge('ad-password').value;
+  var btn = ge('ad-login-btn');
+  var err = ge('ad-login-err');
+  err.textContent = '';
+  if (!username || !password) { err.textContent = 'Enter your username and password.'; return; }
+  btn.disabled = true; btn.textContent = 'Signing in…';
+  try {
+    var res = await fetch(AD_WORKER + '/auth/login', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ username: username, password: password })
+    });
+    var data = await res.json();
+    if (!res.ok) { err.textContent = data.error || 'Login failed'; return; }
+    AD.token = data.token;
+    AD.user = { displayName: data.displayName, roles: data.roles };
+    localStorage.setItem('xf_cred_token', data.token);
+    localStorage.setItem('xf_cred_user', JSON.stringify(AD.user));
+    if (!data.roles.includes('admin')) { adShowDenied(); return; }
+    adShowMain();
+  } catch(e) {
+    err.textContent = 'Connection error — try again.';
+  } finally {
+    btn.disabled = false; btn.textContent = 'Sign In';
+  }
+};
+
+window.adLogout = async function() {
+  try { await fetch(AD_WORKER + '/auth/logout', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ token: AD.token }) }); } catch(e){}
+  localStorage.removeItem('xf_cred_token');
+  localStorage.removeItem('xf_cred_user');
+  AD.token = null; AD.user = null;
+  location.reload();
+};
+
+function adShowMain() {
+  ge('ad-login-gate').style.display = 'none';
+  ge('ad-denied').style.display = 'none';
+  ge('ad-main').style.display = 'block';
+  ge('ad-who-name').textContent = AD.user.displayName + ' (' + AD.user.roles.join(', ') + ')';
+  adLoadUsers();
+}
+function adShowDenied() {
+  ge('ad-login-gate').style.display = 'none';
+  ge('ad-main').style.display = 'none';
+  ge('ad-denied').style.display = 'block';
+}
+
+window.adSwitchTab = function(name) {
+  ['users','activity'].forEach(function(n) {
+    ge('ad-tab-' + n).classList.toggle('active', n === name);
+    ge('ad-panel-' + n).style.display = (n === name) ? 'block' : 'none';
+  });
+  if (name === 'activity') adLoadActivity();
+};
+
+var ROLE_LABELS = { admin:'Admin', mgmt:'Mgmt', ops:'Ops', mobile:'Mobile', price:'Price' };
+
+function adRoleBadges(roles) {
+  if (!roles.length) return '<span style="color:var(--text3);font-size:12px">none</span>';
+  return roles.map(function(r) { return '<span class="ad-badge ad-badge-' + r + '">' + (ROLE_LABELS[r]||r) + '</span>'; }).join('');
+}
+
+window.adLoadUsers = async function() {
+  var r = await adFetch('/admin/users/list');
+  if (r.status !== 200) { ge('ad-users-table-wrap').innerHTML = '<div class="ad-empty">Could not load users.</div>'; return; }
+  AD.users = r.data.users;
+  var filterSel = ge('ad-activity-user-filter');
+  filterSel.innerHTML = '<option value="">All users</option>' + AD.users.map(function(u){ return '<option value="'+u.id+'">'+u.username+'</option>'; }).join('');
+
+  if (!AD.users.length) { ge('ad-users-table-wrap').innerHTML = '<div class="ad-empty">No users yet.</div>'; return; }
+
+  var rows = AD.users.map(function(u) {
+    var lastLogin = u.lastLogin ? new Date(u.lastLogin).toLocaleString('en-US', { timeZone:'America/New_York', month:'short', day:'numeric', hour:'numeric', minute:'2-digit', hour12:true }) : '—';
+    return '<tr>'
+      + '<td><span class="ad-dot ' + (u.active?'ad-dot-active':'ad-dot-inactive') + '"></span>' + u.username + '</td>'
+      + '<td class="ad-mono">' + u.displayName + '</td>'
+      + '<td>' + adRoleBadges(u.roles) + '</td>'
+      + '<td class="ad-mono" style="font-size:11px;color:var(--text3)">' + lastLogin + '</td>'
+      + '<td style="white-space:nowrap">'
+      +   '<button class="ad-btn ad-btn-outline ad-btn-sm" onclick="adOpenEditModal(' + u.id + ')">Edit</button> '
+      +   '<button class="ad-btn ad-btn-outline ad-btn-sm" onclick="adOpenResetModal(' + u.id + ')">Reset PW</button> '
+      +   '<button class="ad-btn ad-btn-sm ' + (u.active?'ad-btn-danger':'ad-btn-green') + '" onclick="adToggleActive(' + u.id + ',' + (!u.active) + ')">' + (u.active?'Disable':'Enable') + '</button>'
+      + '</td>'
+      + '</tr>';
+  }).join('');
+
+  ge('ad-users-table-wrap').innerHTML = '<table class="ad-table"><thead><tr><th>Username</th><th>Name</th><th>Roles</th><th>Last Login</th><th>Actions</th></tr></thead><tbody>' + rows + '</tbody></table>';
+};
+
+window.adOpenCreateModal = function() {
+  AD.editingUserId = null;
+  ge('ad-modal-title').textContent = 'New User';
+  ge('ad-m-username').value = ''; ge('ad-m-username').disabled = false;
+  ge('ad-m-password').value = '';
+  ge('ad-m-password-field').style.display = 'block';
+  ge('ad-m-displayname').value = '';
+  document.querySelectorAll('.ad-m-role').forEach(function(cb){ cb.checked = false; });
+  ge('ad-m-err').textContent = '';
+  ge('ad-user-modal').style.display = 'flex';
+};
+
+window.adOpenEditModal = function(userId) {
+  var u = AD.users.find(function(x){ return x.id === userId; });
+  if (!u) return;
+  AD.editingUserId = userId;
+  ge('ad-modal-title').textContent = 'Edit ' + u.username;
+  ge('ad-m-username').value = u.username; ge('ad-m-username').disabled = true;
+  ge('ad-m-password-field').style.display = 'none'; // roles-only edit, password reset is separate
+  ge('ad-m-displayname').value = u.displayName;
+  document.querySelectorAll('.ad-m-role').forEach(function(cb){ cb.checked = u.roles.indexOf(cb.value) !== -1; });
+  ge('ad-m-err').textContent = '';
+  ge('ad-user-modal').style.display = 'flex';
+};
+
+window.adCloseModal = function() { ge('ad-user-modal').style.display = 'none'; };
+
+window.adSaveUser = async function() {
+  var err = ge('ad-m-err'); err.textContent = '';
+  var roles = Array.from(document.querySelectorAll('.ad-m-role:checked')).map(function(cb){ return cb.value; });
+  var displayName = ge('ad-m-displayname').value.trim();
+  if (!displayName) { err.textContent = 'Display name/initials required.'; return; }
+
+  if (AD.editingUserId) {
+    var r = await adFetch('/admin/users/update-roles', { method:'POST', body: JSON.stringify({ userId: AD.editingUserId, roles: roles }) });
+    if (r.status !== 200) { err.textContent = r.data.error || 'Failed to update roles.'; return; }
+    adToast('Roles updated', 'ok');
+  } else {
+    var username = ge('ad-m-username').value.trim();
+    var password = ge('ad-m-password').value;
+    if (!username || !password) { err.textContent = 'Username and password required.'; return; }
+    var r2 = await adFetch('/admin/users/create', { method:'POST', body: JSON.stringify({ username: username, password: password, displayName: displayName, roles: roles }) });
+    if (r2.status !== 200) { err.textContent = r2.data.error || 'Failed to create user.'; return; }
+    adToast('User created', 'ok');
+  }
+  adCloseModal();
+  adLoadUsers();
+};
+
+window.adOpenResetModal = function(userId) {
+  AD.resetUserId = userId;
+  ge('ad-r-password').value = '';
+  ge('ad-r-err').textContent = '';
+  ge('ad-reset-modal').style.display = 'flex';
+};
+window.adCloseResetModal = function() { ge('ad-reset-modal').style.display = 'none'; };
+
+window.adSaveReset = async function() {
+  var err = ge('ad-r-err'); err.textContent = '';
+  var password = ge('ad-r-password').value;
+  if (!password) { err.textContent = 'Enter a new password.'; return; }
+  var r = await adFetch('/admin/users/reset-password', { method:'POST', body: JSON.stringify({ userId: AD.resetUserId, newPassword: password }) });
+  if (r.status !== 200) { err.textContent = r.data.error || 'Failed to reset password.'; return; }
+  adToast('Password reset — user signed out everywhere', 'ok');
+  adCloseResetModal();
+};
+
+window.adToggleActive = async function(userId, active) {
+  var r = await adFetch('/admin/users/toggle-active', { method:'POST', body: JSON.stringify({ userId: userId, active: active }) });
+  if (r.status !== 200) { adToast('Failed: ' + (r.data.error||''), 'err'); return; }
+  adToast(active ? 'User enabled' : 'User disabled', active ? 'ok' : 'err');
+  adLoadUsers();
+};
+
+window.adLoadActivity = async function() {
+  var userId = ge('ad-activity-user-filter').value;
+  var r = await adFetch('/admin/activity' + (userId ? '?userId=' + userId : ''));
+  if (r.status !== 200) { ge('ad-activity-table-wrap').innerHTML = '<div class="ad-empty">Could not load activity.</div>'; return; }
+  var rows = r.data.activity;
+  if (!rows.length) {
+    ge('ad-activity-table-wrap').innerHTML = '<div class="ad-empty">No activity recorded yet — this fills in as apps are migrated to the new login system and start logging real actions.</div>';
+    return;
+  }
+  var userMap = {}; AD.users.forEach(function(u){ userMap[u.id] = u.username; });
+  var html = rows.map(function(a) {
+    var meta = {}; try { meta = JSON.parse(a.metadata || '{}'); } catch(e){}
+    var metaStr = Object.keys(meta).map(function(k){ return k + '=' + meta[k]; }).join(', ');
+    var ts = new Date(a.timestamp).toLocaleString('en-US', { timeZone:'America/New_York', month:'short', day:'numeric', hour:'numeric', minute:'2-digit', second:'2-digit', hour12:true });
+    return '<tr><td class="ad-mono" style="font-size:11px;color:var(--text3)">' + ts + '</td><td>' + (userMap[a.user_id]||('#'+a.user_id)) + '</td><td><span class="ad-badge ad-badge-ops">' + a.action_type + '</span></td><td class="ad-mono" style="font-size:11.5px">' + metaStr + '</td></tr>';
+  }).join('');
+  ge('ad-activity-table-wrap').innerHTML = '<table class="ad-table"><thead><tr><th>Time</th><th>User</th><th>Action</th><th>Details</th></tr></thead><tbody>' + html + '</tbody></table>';
+};
+
+// ── On load: if a token already exists, verify it still works before showing the gate ──
+(async function adInit() {
+  if (!AD.token) return;
+  var cachedUser = localStorage.getItem('xf_cred_user');
+  if (cachedUser) { try { AD.user = JSON.parse(cachedUser); } catch(e) {} }
+  if (!AD.user || !AD.user.roles.includes('admin')) {
+    // Cached role isn't admin (or nothing cached) - don't even try, just clear and show login fresh
+    localStorage.removeItem('xf_cred_token'); localStorage.removeItem('xf_cred_user');
+    AD.token = null; AD.user = null;
+    return;
+  }
+  var r = await adFetch('/admin/users/list');
+  if (r.status === 200) {
+    AD.users = r.data.users;
+    adShowMain();
+  } else {
+    localStorage.removeItem('xf_cred_token'); localStorage.removeItem('xf_cred_user');
+    AD.token = null; AD.user = null;
+  }
+})();
+</script>
+</body>
+</html>
