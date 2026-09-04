@@ -42,38 +42,66 @@ body { display:flex; flex-direction:column; min-height:100vh; background:var(--b
 
 <script>
 // ── Globals needed by RPO IIFE ─────────────────────────────────────────────
-var XF_SESSION = sessionStorage.getItem('xf_session') || null;
-var XF_ROLE    = sessionStorage.getItem('xf_role')    || null;
 function backToLauncher() { window.location.href = 'index.html'; }
 function launchApp(app)   { window.location.href = app + '.html'; }
 
-// ── Auto-auth for Receive PO (requires MGMT session) ─────────────────────
-// If no session, prompt for MGMT PIN via browser prompt
-document.addEventListener('DOMContentLoaded', function() {
-  if (!XF_SESSION || XF_ROLE === 'ops') {
-    var pin = prompt('Enter MGMT PIN to access Receive PO:');
-    if (!pin) { window.location.href = 'index.html'; return; }
-    fetch('https://xfitting-lookup.alfixedinc88.workers.dev/auth', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ pin: pin, pin_type: 'mgmt' })
-    }).then(function(r) { return r.json(); })
-    .then(function(d) {
-      if (d.token) {
-        XF_SESSION = d.token;
-        XF_ROLE = 'mgmt';
-        sessionStorage.setItem('xf_session', d.token);
-        sessionStorage.setItem('xf_role', 'mgmt');
-      } else {
-        alert('Invalid PIN');
-        window.location.href = 'index.html';
-      }
-    }).catch(function() {
-      alert('Auth failed');
-      window.location.href = 'index.html';
+// ── Credential-based auth (migrated from PIN) ─────────────────────────────
+// Shares the same localStorage keys as the admin app, so a login on one
+// app carries across to this one without asking again - matches the
+// "one login, works everywhere" design confirmed earlier.
+var RPO_WORKER = 'https://xfitting-lookup.alfixedinc88.workers.dev';
+var RPO_CRED_TOKEN = localStorage.getItem('xf_cred_token') || null;
+var RPO_CRED_USER  = null;
+try { RPO_CRED_USER = JSON.parse(localStorage.getItem('xf_cred_user') || 'null'); } catch(e) {}
+
+function rpoShowLoginGate() {
+  var gate = document.getElementById('rpo-cred-gate');
+  var app  = document.getElementById('receivepo-app');
+  if (gate) gate.style.display = 'flex';
+  if (app)  app.style.display  = 'none';
+}
+function rpoShowApp() {
+  var gate = document.getElementById('rpo-cred-gate');
+  var app  = document.getElementById('receivepo-app');
+  if (gate) gate.style.display = 'none';
+  if (app)  app.style.display  = 'flex';
+}
+
+window.rpoCredLogin = async function() {
+  var username = document.getElementById('rpo-cred-username').value.trim();
+  var password = document.getElementById('rpo-cred-password').value;
+  var btn = document.getElementById('rpo-cred-login-btn');
+  var err = document.getElementById('rpo-cred-err');
+  err.textContent = '';
+  if (!username || !password) { err.textContent = 'Enter your username and password.'; return; }
+  btn.disabled = true; btn.textContent = 'Signing in…';
+  try {
+    var res = await fetch(RPO_WORKER + '/auth/login', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ username: username, password: password })
     });
+    var data = await res.json();
+    if (!res.ok) { err.textContent = data.error || 'Login failed'; return; }
+    if (!data.roles.includes('mgmt')) { err.textContent = 'This account does not have management access.'; return; }
+    RPO_CRED_TOKEN = data.token;
+    RPO_CRED_USER = { displayName: data.displayName, roles: data.roles, userId: data.userId };
+    localStorage.setItem('xf_cred_token', data.token);
+    localStorage.setItem('xf_cred_user', JSON.stringify(RPO_CRED_USER));
+    rpoShowApp();
+  } catch(e) {
+    err.textContent = 'Connection error — try again.';
+  } finally {
+    btn.disabled = false; btn.textContent = 'Sign In';
   }
-});
+};
+
+window.rpoCredLogout = async function() {
+  try { await fetch(RPO_WORKER + '/auth/logout', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ token: RPO_CRED_TOKEN }) }); } catch(e){}
+  localStorage.removeItem('xf_cred_token');
+  localStorage.removeItem('xf_cred_user');
+  window.location.href = 'index.html';
+};
+
 function showToast(msg) {
   var t = document.getElementById('xf-toast');
   if (!t) {
@@ -90,26 +118,54 @@ function showToast(msg) {
 async function wFetch(url, opts) {
   opts = opts || {};
   opts.headers = Object.assign({}, opts.headers || {}, {
-    'X-Session-Token': XF_SESSION || ''
+    'X-Cred-Token': RPO_CRED_TOKEN || ''
   });
   var r = await fetch(url, opts);
-  if (r.status === 401) {
-    XF_SESSION = null;
-    XF_ROLE = null;
-    sessionStorage.removeItem('xf_session');
-    sessionStorage.removeItem('xf_role');
-    var ps = document.getElementById('pin-screen');
-    if (ps) { ps.style.display = 'flex'; ps.style.opacity = '1'; ps.style.visibility = 'visible'; }
-    var la = document.getElementById('launcher');
-    if (la) la.style.display = 'none';
+  if (r.status === 401 || r.status === 403) {
+    RPO_CRED_TOKEN = null;
+    localStorage.removeItem('xf_cred_token');
+    localStorage.removeItem('xf_cred_user');
+    rpoShowLoginGate();
     throw new Error('Unauthorized');
   }
   return r;
 }
 
+// ── On load: verify any existing token still works before showing the app ──
+document.addEventListener('DOMContentLoaded', async function() {
+  if (!RPO_CRED_TOKEN || !RPO_CRED_USER || !RPO_CRED_USER.roles.includes('mgmt')) {
+    rpoShowLoginGate();
+    return;
+  }
+  try {
+    var res = await fetch(RPO_WORKER + '/inventory/receive-preview', { headers: { 'X-Cred-Token': RPO_CRED_TOKEN } });
+    if (res.status === 401 || res.status === 403) {
+      localStorage.removeItem('xf_cred_token'); localStorage.removeItem('xf_cred_user');
+      rpoShowLoginGate();
+    } else {
+      rpoShowApp();
+    }
+  } catch(e) {
+    rpoShowLoginGate();
+  }
+});
 </script>
 
-<div id="receivepo-app" style="display:flex;flex-direction:column;min-height:100vh;background:var(--bg);">
+<div id="rpo-cred-gate" style="display:none;min-height:100vh;align-items:center;justify-content:center;background:var(--bg);font-family:var(--sans);">
+  <div style="max-width:360px;width:100%;padding:32px 28px;background:var(--bg2);border:1px solid var(--border);border-radius:14px;box-shadow:0 1px 3px rgba(20,25,40,.08);text-align:center;margin:0 20px;">
+    <div style="font-size:32px;margin-bottom:8px;">🚚</div>
+    <h1 style="font-size:18px;margin:0 0 4px;">Receive PO</h1>
+    <p style="font-size:13px;color:var(--text3);margin:0 0 20px;">Sign in with your XFitting credentials</p>
+    <input id="rpo-cred-username" type="text" placeholder="Username" autocomplete="username" style="width:100%;padding:11px 14px;border:1.5px solid var(--border);border-radius:9px;font-family:var(--sans);font-size:14px;margin-bottom:10px;box-sizing:border-box;">
+    <input id="rpo-cred-password" type="password" placeholder="Password" autocomplete="current-password" style="width:100%;padding:11px 14px;border:1.5px solid var(--border);border-radius:9px;font-family:var(--sans);font-size:14px;margin-bottom:14px;box-sizing:border-box;">
+    <button id="rpo-cred-login-btn" onclick="rpoCredLogin()" style="width:100%;padding:12px;border:none;border-radius:9px;background:var(--accent);color:#fff;font-family:var(--sans);font-weight:600;font-size:14px;cursor:pointer;">Sign In</button>
+    <div id="rpo-cred-err" style="color:var(--red);font-size:12.5px;margin-top:10px;min-height:16px;"></div>
+  </div>
+</div>
+
+</script>
+
+<div id="receivepo-app" style="display:none;flex-direction:column;min-height:100vh;background:var(--bg);">
 <style>
 #receivepo-app .rpo-topbar{display:flex;align-items:center;justify-content:space-between;padding:12px 16px;background:var(--bg2);border-bottom:1px solid var(--border);position:sticky;top:0;z-index:100}
 #receivepo-app .rpo-title{font-size:15px;font-weight:700;color:var(--text)}
@@ -806,6 +862,19 @@ async function wFetch(url, opts) {
         if (notInCat > 0) summary += ' ' + notInCat + ' part(s) left out — not in catalog. Check "Include as new catalog entries" and re-submit if these are real, or fix the part numbers and re-upload if they\u2019re typos.';
         summary += ' Workers can now transfer from pallet locations to shelves.';
         document.getElementById('rpo-done-summary').textContent = summary;
+
+        // One activity log entry for this whole batch, not per SKU -
+        // fire-and-forget, doesn't block the done screen from showing.
+        var batchTotalUnits = toApply.reduce(function(sum, x) { return sum + (parseFloat(x.totalUnits) || 0); }, 0);
+        wFetch(W + '/inventory/receive-batch-logged', {
+          method: 'POST', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            pallet: (toApply[0] && toApply[0].pallet) || '',
+            vendor: (toApply[0] && toApply[0].vendor) || '',
+            skuCount: applied,
+            totalUnits: batchTotalUnits,
+          })
+        }).catch(function() { /* non-critical - don't disrupt the completed receive */ });
         return;
       }
       var item = toApply[idx++];
@@ -833,7 +902,7 @@ async function wFetch(url, opts) {
           upc:            item.upc,
           pricePerUnit:   item.pricePerUnit,
           colKValue:      item.colKValue,
-          initials:       'MGMT',
+          initials:       (RPO_CRED_USER && RPO_CRED_USER.displayName) || 'MGMT',
           unitsPerCase:   item.unitsPerCase || 0,
           logPrice:       !!isFirstVariant   // worker logs price change only when true
         })
