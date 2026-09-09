@@ -1531,6 +1531,20 @@ input[type=checkbox]{width:15px;height:15px;cursor:pointer;accent-color:var(--bl
   border-bottom: 1px solid var(--border);
   white-space: nowrap;
 }
+.podash-resize-handle {
+  position: absolute;
+  right: 0;
+  top: 0;
+  bottom: 0;
+  width: 6px;
+  cursor: col-resize;
+  user-select: none;
+  border-right: 2px solid transparent;
+}
+.podash-resize-handle:hover, .podash-resize-handle:active {
+  border-right: 2px solid var(--accent);
+}
+.po-resizable th { overflow: hidden; text-overflow: ellipsis; }
 .sales-table-wrap tr:last-child td { border-bottom: none; }
 .sales-table-wrap tr:hover td { background: var(--bg3); }
 .s-mono { font-family: 'IBM Plex Mono', monospace; }
@@ -2057,7 +2071,21 @@ body { display:flex; flex-direction:column; min-height:100vh; background:var(--b
           <div class="sales-section-title">🎯 PO Recommendations — FBA-First, Cross-Platform</div>
           <div class="sales-section-sub" id="podash-summary">Rolls up eBay/Shopify demand onto existing FBA listings, weighted by each listing's own velocity</div>
         </div>
-        <div style="display:flex;gap:8px;align-items:center">
+        <div style="display:flex;gap:14px;align-items:center;flex-wrap:wrap">
+          <label style="font-size:12px;color:var(--text3);display:flex;align-items:center;gap:5px">
+            Velocity window:
+            <select id="podash-days" onchange="loadPORecommendations()" style="font-size:12px;padding:4px 6px;border-radius:6px;border:1px solid var(--border)">
+              <option value="30">30 days</option>
+              <option value="60">60 days</option>
+              <option value="90" selected>90 days</option>
+              <option value="180">6 months</option>
+            </select>
+          </label>
+          <label style="font-size:12px;color:var(--text3);display:flex;align-items:center;gap:5px">
+            Order for:
+            <input type="number" id="podash-threshold" value="3" min="0.5" step="0.5" style="width:50px;font-size:12px;padding:4px 6px;border-radius:6px;border:1px solid var(--border)" onchange="renderPORecommendations()">
+            months
+          </label>
           <label style="font-size:12px;color:var(--text3);display:flex;align-items:center;gap:5px">
             <input type="checkbox" id="podash-show-all" onchange="renderPORecommendations()"> Show zero-demand rows
           </label>
@@ -2065,7 +2093,7 @@ body { display:flex; flex-direction:column; min-height:100vh; background:var(--b
           <button class="btn btn-primary" style="font-size:12px" onclick="exportPORecommendations()">⬇ Export CSV</button>
         </div>
       </div>
-      <div id="podash-wrap" style="overflow-x:auto"></div>
+      <div id="podash-wrap" class="sales-table-wrap" style="overflow-x:auto"></div>
 
       <div class="sales-section-header" style="margin-top:24px">
         <div>
@@ -2073,7 +2101,7 @@ body { display:flex; flex-direction:column; min-height:100vh; background:var(--b
           <div class="sales-section-sub">These base SKUs have genuine sales on other platforms but no matching FBA listing at all</div>
         </div>
       </div>
-      <div id="podash-nofba-wrap" style="overflow-x:auto"></div>
+      <div id="podash-nofba-wrap" class="sales-table-wrap" style="overflow-x:auto"></div>
     </div>
 
   </div>
@@ -3128,18 +3156,19 @@ function renderVendor(vendor) {
   wrap.innerHTML = h;
 }
 
-var PO_RECS = { fbaRecommendations: [], noFbaRecommendations: [] };
+var PO_RECS = { fbaRecommendations: [], noFbaRecommendations: [], windowDays: 90 };
 
 async function loadPORecommendations() {
   var wrap = document.getElementById('podash-wrap');
-  var summary = document.getElementById('podash-summary');
+  var days = document.getElementById('podash-days').value;
   wrap.innerHTML = '<div class="sales-empty"><div class="sales-empty-icon">⏳</div><div class="sales-empty-title">Loading recommendations…</div></div>';
   try {
-    var res = await wFetch(W + '/reorder/recommendations');
+    var res = await wFetch(W + '/reorder/recommendations?days=' + days);
     var data = await res.json();
     if (!data.ok) { wrap.innerHTML = '<div class="sales-empty"><div class="sales-empty-title">Error: ' + escHtml(data.error||'') + '</div></div>'; return; }
     PO_RECS.fbaRecommendations = data.fbaRecommendations || [];
     PO_RECS.noFbaRecommendations = data.noFbaRecommendations || [];
+    PO_RECS.windowDays = data.windowDays || 90;
     document.getElementById('podash-wrap').dataset.loaded = '1';
     renderPORecommendations();
   } catch(e) {
@@ -3149,60 +3178,103 @@ async function loadPORecommendations() {
 
 function renderPORecommendations() {
   var showAll = document.getElementById('podash-show-all').checked;
+  var thresholdMonths = parseFloat(document.getElementById('podash-threshold').value) || 3;
   var rows = PO_RECS.fbaRecommendations;
   if (!showAll) rows = rows.filter(function(r){ return r.totalDemand > 0; });
 
   var summary = document.getElementById('podash-summary');
-  summary.textContent = rows.length + ' of ' + PO_RECS.fbaRecommendations.length + ' FBA listings shown · ' +
+  summary.textContent = rows.length + ' of ' + PO_RECS.fbaRecommendations.length + ' FBA listings shown (velocity from last ' +
+    PO_RECS.windowDays + ' days) · ordering for ' + thresholdMonths + ' month' + (thresholdMonths==1?'':'s') + ' · ' +
     PO_RECS.noFbaRecommendations.length + ' items with demand but no FBA listing';
 
   var wrap = document.getElementById('podash-wrap');
   if (!rows.length) {
     wrap.innerHTML = '<div class="sales-empty"><div class="sales-empty-icon">✅</div><div class="sales-empty-title">No FBA listings with demand right now</div></div>';
   } else {
-    var html = '<table class="sales-table"><thead><tr>' +
-      '<th>Base SKU</th><th>SKU</th><th>ASIN</th><th class="r">Amazon (90d)</th><th class="r">Other Platforms</th><th class="r">Total Demand</th><th class="r">Available</th>' +
+    var html = '<table class="po-resizable"><thead><tr>' +
+      '<th style="position:relative">Base SKU<span class="podash-resize-handle"></span></th>' +
+      '<th style="position:relative">SKU<span class="podash-resize-handle"></span></th>' +
+      '<th style="position:relative">ASIN<span class="podash-resize-handle"></span></th>' +
+      '<th class="r" style="position:relative">Monthly Velocity<span class="podash-resize-handle"></span></th>' +
+      '<th class="r" style="position:relative">Order Qty (pcs)<span class="podash-resize-handle"></span></th>' +
+      '<th class="r" style="position:relative">Pack Size<span class="podash-resize-handle"></span></th>' +
+      '<th class="r" style="position:relative">Packs to Order<span class="podash-resize-handle"></span></th>' +
+      '<th class="r" style="position:relative">Warehouse Cases<span class="podash-resize-handle"></span></th>' +
       '</tr></thead><tbody>';
     rows.forEach(function(r) {
+      var orderQty = r.monthlyVelocity * thresholdMonths;
+      var packsToOrder = r.packSize > 0 ? (orderQty / r.packSize) : orderQty;
       html += '<tr>' +
         '<td>' + escHtml(r.baseSku) + '</td>' +
         '<td class="mono">' + escHtml(r.sku) + '</td>' +
         '<td class="mono" style="font-size:11px;color:var(--text3)">' + escHtml(r.asin) + '</td>' +
-        '<td class="r">' + fmt0(r.amazonSales90d) + '</td>' +
-        '<td class="r">' + fmt0(r.otherPlatformShare) + '</td>' +
-        '<td class="r" style="font-weight:600">' + fmt0(r.totalDemand) + '</td>' +
-        '<td class="r">' + fmt0(r.available) + '</td>' +
+        '<td class="r">' + fmt0(r.monthlyVelocity) + '</td>' +
+        '<td class="r" style="font-weight:600">' + fmt0(orderQty) + '</td>' +
+        '<td class="r" style="color:var(--text3)">' + r.packSize + '</td>' +
+        '<td class="r" style="font-weight:600;color:var(--accent)">' + fmt0(Math.ceil(packsToOrder)) + '</td>' +
+        '<td class="r">' + fmt0(r.warehouseCases) + '</td>' +
         '</tr>';
     });
     html += '</tbody></table>';
     wrap.innerHTML = html;
+    podashEnableColumnResize();
   }
 
   var nofbaWrap = document.getElementById('podash-nofba-wrap');
   if (!PO_RECS.noFbaRecommendations.length) {
     nofbaWrap.innerHTML = '<div class="sales-empty"><div class="sales-empty-title">None — every base SKU with demand has an FBA listing</div></div>';
   } else {
-    var html2 = '<table class="sales-table"><thead><tr><th>Base SKU</th><th>SKU</th><th class="r">Total Demand</th></tr></thead><tbody>';
+    var html2 = '<table><thead><tr><th>Base SKU</th><th>SKU</th><th class="r">Monthly Velocity</th><th class="r">Order Qty (pcs)</th><th class="r">Warehouse Cases</th></tr></thead><tbody>';
     PO_RECS.noFbaRecommendations.forEach(function(r) {
-      html2 += '<tr><td>' + escHtml(r.baseSku) + '</td><td class="mono">' + escHtml(r.sku) + '</td><td class="r">' + fmt0(r.totalDemand) + '</td></tr>';
+      var orderQty = r.monthlyVelocity * thresholdMonths;
+      html2 += '<tr><td>' + escHtml(r.baseSku) + '</td><td class="mono">' + escHtml(r.sku) + '</td>' +
+        '<td class="r">' + fmt0(r.monthlyVelocity) + '</td><td class="r">' + fmt0(orderQty) + '</td><td class="r">' + fmt0(r.warehouseCases) + '</td></tr>';
     });
     html2 += '</tbody></table>';
     nofbaWrap.innerHTML = html2;
   }
 }
 
+// Simple, reliable drag-resize for table headers - a thin handle at the
+// right edge of each <th>, dragged to adjust that column's width directly.
+function podashEnableColumnResize() {
+  document.querySelectorAll('.po-resizable .podash-resize-handle').forEach(function(handle) {
+    handle.onmousedown = function(e) {
+      e.preventDefault();
+      var th = handle.parentElement;
+      var startX = e.pageX;
+      var startWidth = th.offsetWidth;
+      function onMove(e2) {
+        var newWidth = Math.max(50, startWidth + (e2.pageX - startX));
+        th.style.width = newWidth + 'px';
+        th.style.minWidth = newWidth + 'px';
+      }
+      function onUp() {
+        document.removeEventListener('mousemove', onMove);
+        document.removeEventListener('mouseup', onUp);
+      }
+      document.addEventListener('mousemove', onMove);
+      document.addEventListener('mouseup', onUp);
+    };
+  });
+}
+
 function exportPORecommendations() {
   var showAll = document.getElementById('podash-show-all').checked;
+  var thresholdMonths = parseFloat(document.getElementById('podash-threshold').value) || 3;
   var rows = PO_RECS.fbaRecommendations;
   if (!showAll) rows = rows.filter(function(r){ return r.totalDemand > 0; });
 
-  var csv = 'Base SKU,SKU,ASIN,Amazon (90d),Other Platforms,Total Demand,Available\n';
+  var csv = 'Base SKU,SKU,ASIN,Monthly Velocity,Order Qty (pcs),Pack Size,Packs to Order,Warehouse Cases\n';
   rows.forEach(function(r) {
-    csv += [r.baseSku, r.sku, r.asin, r.amazonSales90d, r.otherPlatformShare, r.totalDemand, r.available].join(',') + '\n';
+    var orderQty = r.monthlyVelocity * thresholdMonths;
+    var packsToOrder = r.packSize > 0 ? Math.ceil(orderQty / r.packSize) : Math.ceil(orderQty);
+    csv += [r.baseSku, r.sku, r.asin, r.monthlyVelocity, orderQty.toFixed(1), r.packSize, packsToOrder, r.warehouseCases].join(',') + '\n';
   });
-  csv += '\nNo FBA Listing\nBase SKU,SKU,Total Demand\n';
+  csv += '\nNo FBA Listing\nBase SKU,SKU,Monthly Velocity,Order Qty (pcs),Warehouse Cases\n';
   PO_RECS.noFbaRecommendations.forEach(function(r) {
-    csv += [r.baseSku, r.sku, r.totalDemand].join(',') + '\n';
+    var orderQty = r.monthlyVelocity * thresholdMonths;
+    csv += [r.baseSku, r.sku, r.monthlyVelocity, orderQty.toFixed(1), r.warehouseCases].join(',') + '\n';
   });
 
   var blob = new Blob([csv], { type: 'text/csv' });
