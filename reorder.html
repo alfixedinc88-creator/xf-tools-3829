@@ -1784,6 +1784,7 @@ body { display:flex; flex-direction:column; min-height:100vh; background:var(--b
     <button class="sales-tab-btn" id="ro-tab-po" onclick="roTab('po')">📦 PO Cases</button>
     <button class="sales-tab-btn" id="ro-tab-ai" onclick="roTab('ai')">✦ AI Insights</button>
     <button class="sales-tab-btn" id="ro-tab-skumap" onclick="roTab('skumap')">🔗 SKU Map</button>
+    <button class="sales-tab-btn" id="ro-tab-podash" onclick="roTab('podash')">🎯 PO Recommendations</button>
   </div>
   <div class="sales-body">
 
@@ -2047,6 +2048,32 @@ body { display:flex; flex-direction:column; min-height:100vh; background:var(--b
       </div>
       <div id="skumap-status" style="padding:8px 0;font-size:12px;color:var(--text3)"></div>
       <div id="skumap-wrap" style="overflow-x:auto"></div>
+    </div>
+
+    <!-- PO Recommendations Tab -->
+    <div class="sales-panel" id="ro-panel-podash">
+      <div class="sales-section-header">
+        <div>
+          <div class="sales-section-title">🎯 PO Recommendations — FBA-First, Cross-Platform</div>
+          <div class="sales-section-sub" id="podash-summary">Rolls up eBay/Shopify demand onto existing FBA listings, weighted by each listing's own velocity</div>
+        </div>
+        <div style="display:flex;gap:8px;align-items:center">
+          <label style="font-size:12px;color:var(--text3);display:flex;align-items:center;gap:5px">
+            <input type="checkbox" id="podash-show-all" onchange="renderPORecommendations()"> Show zero-demand rows
+          </label>
+          <button class="btn btn-secondary" style="font-size:12px" onclick="loadPORecommendations()">↻ Refresh</button>
+          <button class="btn btn-primary" style="font-size:12px" onclick="exportPORecommendations()">⬇ Export CSV</button>
+        </div>
+      </div>
+      <div id="podash-wrap" style="overflow-x:auto"></div>
+
+      <div class="sales-section-header" style="margin-top:24px">
+        <div>
+          <div class="sales-section-title">No FBA Listing — Real Demand, Nowhere to Roll Up</div>
+          <div class="sales-section-sub">These base SKUs have genuine sales on other platforms but no matching FBA listing at all</div>
+        </div>
+      </div>
+      <div id="podash-nofba-wrap" style="overflow-x:auto"></div>
     </div>
 
   </div>
@@ -3101,6 +3128,90 @@ function renderVendor(vendor) {
   wrap.innerHTML = h;
 }
 
+var PO_RECS = { fbaRecommendations: [], noFbaRecommendations: [] };
+
+async function loadPORecommendations() {
+  var wrap = document.getElementById('podash-wrap');
+  var summary = document.getElementById('podash-summary');
+  wrap.innerHTML = '<div class="sales-empty"><div class="sales-empty-icon">⏳</div><div class="sales-empty-title">Loading recommendations…</div></div>';
+  try {
+    var res = await wFetch(W + '/reorder/recommendations');
+    var data = await res.json();
+    if (!data.ok) { wrap.innerHTML = '<div class="sales-empty"><div class="sales-empty-title">Error: ' + escHtml(data.error||'') + '</div></div>'; return; }
+    PO_RECS.fbaRecommendations = data.fbaRecommendations || [];
+    PO_RECS.noFbaRecommendations = data.noFbaRecommendations || [];
+    document.getElementById('podash-wrap').dataset.loaded = '1';
+    renderPORecommendations();
+  } catch(e) {
+    wrap.innerHTML = '<div class="sales-empty"><div class="sales-empty-title">Failed to load: ' + escHtml(e.message) + '</div></div>';
+  }
+}
+
+function renderPORecommendations() {
+  var showAll = document.getElementById('podash-show-all').checked;
+  var rows = PO_RECS.fbaRecommendations;
+  if (!showAll) rows = rows.filter(function(r){ return r.totalDemand > 0; });
+
+  var summary = document.getElementById('podash-summary');
+  summary.textContent = rows.length + ' of ' + PO_RECS.fbaRecommendations.length + ' FBA listings shown · ' +
+    PO_RECS.noFbaRecommendations.length + ' items with demand but no FBA listing';
+
+  var wrap = document.getElementById('podash-wrap');
+  if (!rows.length) {
+    wrap.innerHTML = '<div class="sales-empty"><div class="sales-empty-icon">✅</div><div class="sales-empty-title">No FBA listings with demand right now</div></div>';
+  } else {
+    var html = '<table class="sales-table"><thead><tr>' +
+      '<th>Base SKU</th><th>SKU</th><th>ASIN</th><th class="r">Amazon (90d)</th><th class="r">Other Platforms</th><th class="r">Total Demand</th><th class="r">Available</th>' +
+      '</tr></thead><tbody>';
+    rows.forEach(function(r) {
+      html += '<tr>' +
+        '<td>' + escHtml(r.baseSku) + '</td>' +
+        '<td class="mono">' + escHtml(r.sku) + '</td>' +
+        '<td class="mono" style="font-size:11px;color:var(--text3)">' + escHtml(r.asin) + '</td>' +
+        '<td class="r">' + fmt0(r.amazonSales90d) + '</td>' +
+        '<td class="r">' + fmt0(r.otherPlatformShare) + '</td>' +
+        '<td class="r" style="font-weight:600">' + fmt0(r.totalDemand) + '</td>' +
+        '<td class="r">' + fmt0(r.available) + '</td>' +
+        '</tr>';
+    });
+    html += '</tbody></table>';
+    wrap.innerHTML = html;
+  }
+
+  var nofbaWrap = document.getElementById('podash-nofba-wrap');
+  if (!PO_RECS.noFbaRecommendations.length) {
+    nofbaWrap.innerHTML = '<div class="sales-empty"><div class="sales-empty-title">None — every base SKU with demand has an FBA listing</div></div>';
+  } else {
+    var html2 = '<table class="sales-table"><thead><tr><th>Base SKU</th><th>SKU</th><th class="r">Total Demand</th></tr></thead><tbody>';
+    PO_RECS.noFbaRecommendations.forEach(function(r) {
+      html2 += '<tr><td>' + escHtml(r.baseSku) + '</td><td class="mono">' + escHtml(r.sku) + '</td><td class="r">' + fmt0(r.totalDemand) + '</td></tr>';
+    });
+    html2 += '</tbody></table>';
+    nofbaWrap.innerHTML = html2;
+  }
+}
+
+function exportPORecommendations() {
+  var showAll = document.getElementById('podash-show-all').checked;
+  var rows = PO_RECS.fbaRecommendations;
+  if (!showAll) rows = rows.filter(function(r){ return r.totalDemand > 0; });
+
+  var csv = 'Base SKU,SKU,ASIN,Amazon (90d),Other Platforms,Total Demand,Available\n';
+  rows.forEach(function(r) {
+    csv += [r.baseSku, r.sku, r.asin, r.amazonSales90d, r.otherPlatformShare, r.totalDemand, r.available].join(',') + '\n';
+  });
+  csv += '\nNo FBA Listing\nBase SKU,SKU,Total Demand\n';
+  PO_RECS.noFbaRecommendations.forEach(function(r) {
+    csv += [r.baseSku, r.sku, r.totalDemand].join(',') + '\n';
+  });
+
+  var blob = new Blob([csv], { type: 'text/csv' });
+  var a = document.createElement('a');
+  a.href = URL.createObjectURL(blob);
+  a.download = 'po_recommendations_' + new Date().toISOString().slice(0,10) + '.csv';
+  a.click();
+}
+
 function renderPOCases() {
   var allRows = RO.jq.concat(RO.eff).filter(function(r){ return r.reorderQty > 0; });
   allRows = sortRows(allRows, poSort.col, poSort.dir);
@@ -3564,12 +3675,13 @@ function skusTableSortBy(col) {
 
 // ─── TAB SWITCHERS ───────────────────────────────────────────────────────────
 function roTab(name) {
-  ['upload','jq','eff','po','ai','skumap'].forEach(function(t){
+  ['upload','jq','eff','po','ai','skumap','podash'].forEach(function(t){
     document.getElementById('ro-tab-'+t).className='sales-tab-btn'+(t===name?' active':'');
     document.getElementById('ro-panel-'+t).className='sales-panel'+(t===name?' active':'');
   });
   if (name==='po') renderPOCases();
   if (name==='skumap') loadUnmappedSkus();
+  if (name==='podash' && !document.getElementById('podash-wrap').dataset.loaded) loadPORecommendations();
   if (name==='ai' && CALC.jqVendor.length && !document.getElementById('ro-ai-auto-body').dataset.loaded) {
     runAutoInsights('ro');
   }
