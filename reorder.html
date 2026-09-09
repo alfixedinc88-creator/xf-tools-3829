@@ -1544,7 +1544,7 @@ input[type=checkbox]{width:15px;height:15px;cursor:pointer;accent-color:var(--bl
 .podash-resize-handle:hover, .podash-resize-handle:active {
   border-right: 2px solid var(--accent);
 }
-.po-resizable th { overflow: hidden; text-overflow: ellipsis; }
+.po-resizable th { overflow: hidden; text-overflow: ellipsis; position: sticky; top: 0; z-index: 2; background: var(--bg3); }
 .sales-table-wrap tr:last-child td { border-bottom: none; }
 .sales-table-wrap tr:hover td { background: var(--bg3); }
 .s-mono { font-family: 'IBM Plex Mono', monospace; }
@@ -2093,7 +2093,7 @@ body { display:flex; flex-direction:column; min-height:100vh; background:var(--b
           <button class="btn btn-primary" style="font-size:12px" onclick="exportPORecommendations()">⬇ Export CSV</button>
         </div>
       </div>
-      <div id="podash-wrap" class="sales-table-wrap" style="overflow-x:auto"></div>
+      <div id="podash-wrap" class="sales-table-wrap" style="overflow-x:auto;overflow-y:auto;max-height:70vh"></div>
 
       <div class="sales-section-header" style="margin-top:24px">
         <div>
@@ -3192,14 +3192,14 @@ function renderPORecommendations() {
     wrap.innerHTML = '<div class="sales-empty"><div class="sales-empty-icon">✅</div><div class="sales-empty-title">No FBA listings with demand right now</div></div>';
   } else {
     var html = '<table class="po-resizable"><thead><tr>' +
-      '<th style="position:relative">Base SKU<span class="podash-resize-handle"></span></th>' +
-      '<th style="position:relative">SKU<span class="podash-resize-handle"></span></th>' +
-      '<th style="position:relative">ASIN<span class="podash-resize-handle"></span></th>' +
-      '<th class="r" style="position:relative">Monthly Velocity<span class="podash-resize-handle"></span></th>' +
-      '<th class="r" style="position:relative">Order Qty (pcs)<span class="podash-resize-handle"></span></th>' +
-      '<th class="r" style="position:relative">Pack Size<span class="podash-resize-handle"></span></th>' +
-      '<th class="r" style="position:relative">Packs to Order<span class="podash-resize-handle"></span></th>' +
-      '<th class="r" style="position:relative">Warehouse Cases<span class="podash-resize-handle"></span></th>' +
+      '<th>Base SKU<span class="podash-resize-handle"></span></th>' +
+      '<th>SKU<span class="podash-resize-handle"></span></th>' +
+      '<th>ASIN<span class="podash-resize-handle"></span></th>' +
+      '<th class="r">Monthly Velocity<span class="podash-resize-handle"></span></th>' +
+      '<th class="r">Order Qty (pcs)<span class="podash-resize-handle"></span></th>' +
+      '<th class="r">Pack Size<span class="podash-resize-handle"></span></th>' +
+      '<th class="r">Packs to Order<span class="podash-resize-handle"></span></th>' +
+      '<th class="r">Warehouse Cases<span class="podash-resize-handle"></span></th>' +
       '</tr></thead><tbody>';
     rows.forEach(function(r) {
       var orderQty = r.monthlyVelocity * thresholdMonths;
