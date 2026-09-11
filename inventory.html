@@ -323,7 +323,11 @@ async function wFetch(url, opts) {
         <div class="ifield"><label>Cases Found</label><input id="inv-fel-found" type="number" min="0.1" step="0.5" placeholder="0"></div>
         <div class="ifield" id="inv-fel-pull-wrap"><label id="inv-fel-pull-label">Cases to Pull</label><input id="inv-fel-pull" type="number" min="0" step="0.5" placeholder="0"></div>
       </div>
-      <button class="isubmit" id="inv-fel-btn" onclick="invSubmitFoundElsewhere()" style="background:var(--purple);border-color:var(--purple);margin-top:4px">Log Found Location</button>
+      <div style="margin-top:10px;display:flex;gap:8px;align-items:center">
+        <div class="ifield" style="flex:1;margin:0"><label style="font-size:10px">Initials</label><input id="inv-fel-initials" type="text" maxlength="4" placeholder="e.g. DJ"></div>
+        <div class="ifield" style="flex:2;margin:0"><label style="font-size:10px">Notes (optional)</label><input id="inv-fel-notes" type="text" placeholder=""></div>
+      </div>
+      <button class="isubmit" id="inv-fel-btn" onclick="invSubmitFoundElsewhere()" style="background:var(--purple);border-color:var(--purple);margin-top:10px">Log Found Location</button>
     </div>
     <!-- Found on Shelf panel — shown when tapping "Found?" on a 0-case known location -->
     <div id="inv-fos-wrap" style="display:none;margin-top:12px;padding:12px;background:var(--orange-bg);border:1.5px solid var(--orange);border-radius:10px">
@@ -1603,6 +1607,8 @@ async function wFetch(url, opts) {
     g("inv-fel-loc").value   = "";
     g("inv-fel-found").value = "";
     var pi = g("inv-fel-pull"); if (pi) pi.value = "";
+    var fi = g("inv-fel-initials"); if (fi) fi.value = "";
+    var fn = g("inv-fel-notes"); if (fn) fn.value = "";
     g("inv-loc-card").style.display = "block";
     g("inv-found-elsewhere-wrap").style.display = "block";
     var felSkuEl = g("inv-fel-sku"); if (felSkuEl && invPart) { felSkuEl.value = invPart.partNum || ''; }
@@ -1625,21 +1631,28 @@ async function wFetch(url, opts) {
     var felSku = skuInp ? skuInp.value.trim().toUpperCase() : '';
     if (!felSku) { invFlash("Enter a Part# / SKU", "error"); return; }
 
-    var initials = (g("inv-initials") && g("inv-initials").value.trim()) || "";
-    if (!initials) initials = (g("inv-pull-initials") && g("inv-pull-initials").value.trim()) || "";
+    // Initials now come from this panel's own field and are required —
+    // this used to silently fall back to the main Scan form's initials (or
+    // a literal "?" if that was blank too), which is exactly the "?" you'd
+    // see later in History's By column since this panel can be opened
+    // before the main Details card (with its own Initials field) is ever shown.
+    var initials = (g("inv-fel-initials") && g("inv-fel-initials").value.trim()) || "";
+    if (!initials) { invFlash("Enter your initials", "error"); return; }
+    var userNotes = (g("inv-fel-notes") && g("inv-fel-notes").value.trim()) || "";
 
     var btn = g("inv-fel-btn");
     btn.disabled = true;
     btn.textContent = "Saving\u2026";
 
     var submitEntry = function(type, cases, notes, cb) {
+      var fullNotes = userNotes ? (notes + " \u2014 " + userNotes) : notes;
       wFetch(W + "/inventory/log", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           type: type, partNum: felSku, sku: felSku.split('=')[0].trim(),
-          location: loc, cases: cases, initials: initials || "?",
-          notes: notes, isNew: true, isPlaceholder: false, masterRowIndex: null
+          location: loc, cases: cases, initials: initials,
+          notes: fullNotes, isNew: true, isPlaceholder: false, masterRowIndex: null
         })
       }).then(function(r){ return r.json(); }).then(cb)
         .catch(function(){ cb({ ok: false, error: "Network error" }); });
@@ -1991,6 +2004,8 @@ async function wFetch(url, opts) {
     g("inv-fel-loc").value = "";
     g("inv-fel-found").value = "";
     var pi = g("inv-fel-pull"); if (pi) pi.value = "";
+    var fi = g("inv-fel-initials"); if (fi) fi.value = "";
+    var fn = g("inv-fel-notes"); if (fn) fn.value = "";
     g("inv-warn").style.display = "none";
     var nr = g("inv-name-results"); if (nr) nr.style.display = "none";
     if (!keepMode) invStopCam();
