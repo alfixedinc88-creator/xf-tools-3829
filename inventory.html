@@ -2509,7 +2509,9 @@ async function wFetch(url, opts) {
           location: item.location, cases: item.cases, initials: initials,
           notes: itemNotes, rowIndex: item.rowIndex, masterRowIndex: item.masterRowIndex,
           isPlaceholder: false, isNew: false, overwriteLocation: "",
-          clientTimestamp: entryTs
+          clientTimestamp: entryTs,
+          addedAt: item.addedAt || null,
+          grabbedAt: item.grabbedAt || null
         })
       }).then(function(r) { return r.json(); })
         .then(function(d) {
@@ -2674,7 +2676,21 @@ async function wFetch(url, opts) {
     rows.forEach(function(r, idx) {
       var td  = 'padding:7px 8px;border-bottom:1px solid var(--border);vertical-align:middle;';
       var bg  = idx % 2 === 0 ? 'var(--bg)' : 'var(--bg2)';
-      var ts  = r.timestamp ? new Date(r.timestamp).toLocaleString('en-US',{timeZone:'America/New_York',month:'short',day:'numeric',hour:'numeric',minute:'2-digit',hour12:true}) : '';
+      var fmtT = function(iso) {
+        return iso ? new Date(iso).toLocaleString('en-US',{timeZone:'America/New_York',month:'short',day:'numeric',hour:'numeric',minute:'2-digit',hour12:true}) : '';
+      };
+      // Pull-list entries (Stock Out) carry their real Added/Grabbed moments
+      // separately from the log timestamp — show both here in the Time
+      // column when present, instead of just the single submit time.
+      var timeCell;
+      if (r.added_at || r.grabbed_at) {
+        var parts = [];
+        if (r.added_at)   parts.push('Added ' + fmtT(r.added_at));
+        if (r.grabbed_at) parts.push('Grabbed ' + fmtT(r.grabbed_at));
+        timeCell = parts.join(' \u00b7 ');
+      } else {
+        timeCell = fmtT(r.timestamp);
+      }
       var typ = (r.type||'').toUpperCase();
       var typLabel = typ === 'TRANSFER_OUT' ? 'TRANSFER' : typ === 'TRANSFER_IN' ? 'XFR IN' : typ;
       var typCol  = typeColor[typ] || 'var(--text2)';
@@ -2682,7 +2698,7 @@ async function wFetch(url, opts) {
       var notes   = (r.notes||'').replace(/\[AUDIT\]\s*/,'').slice(0,60);
 
       html += '<tr style="background:' + bg + '">'
-        + '<td style="' + td + 'white-space:nowrap;color:var(--text3);font-size:11px">' + ts + '</td>'
+        + '<td style="' + td + 'white-space:nowrap;color:var(--text3);font-size:11px">' + timeCell + '</td>'
         + '<td style="' + td + 'white-space:nowrap"><span style="font-size:10px;font-weight:700;color:' + typCol + '">' + typLabel + '</span></td>'
         + '<td style="' + td + 'font-family:var(--mono);font-weight:700;white-space:nowrap">' + (r.part_num||'') + '</td>'
         + '<td style="' + td + 'color:var(--text2);max-width:140px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="' + (r.name||'') + '">' + (r.name||'') + '</td>'
