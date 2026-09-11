@@ -2320,6 +2320,15 @@ async function wFetch(url, opts) {
     localStorage.setItem('xfitting_pulllist', JSON.stringify(invPullList));
   }
 
+  // Small helper — consistent time format for pull-list Added/Grabbed stamps
+  // (same format History's table already uses, so it reads the same way).
+  function invFmtStamp(iso) {
+    if (!iso) return '';
+    try {
+      return new Date(iso).toLocaleString('en-US',{timeZone:'America/New_York',month:'short',day:'numeric',hour:'numeric',minute:'2-digit',hour12:true});
+    } catch(e) { return ''; }
+  }
+
   function invAddToPullList(part, loc) {
     // Check for duplicate
     var key = part.partNum + '|' + loc.location;
@@ -2336,7 +2345,8 @@ async function wFetch(url, opts) {
       rowIndex:     loc.rowIndex,
       isPlaceholder: loc.isPlaceholder || false,
       masterRowIndex: loc.rowIndex,
-      masterId: loc.masterId || null
+      masterId: loc.masterId || null,
+      addedAt: new Date().toISOString()
     });
     // Sort numerically by location
     invPullList.sort(function(a, b) {
@@ -2397,6 +2407,7 @@ async function wFetch(url, opts) {
         "<div class='ipull-loc'>" + item.location + "</div>" +
         "<div class='ipull-pn'>" + item.partNum + fossBadge + noneBadge + "</div>" +
         "<div class='ipull-name'>" + (item.name || '') + "</div>" +
+        (item.addedAt ? "<div style='font-size:10px;color:var(--text3);margin-top:2px'>Added " + invFmtStamp(item.addedAt) + (item.grabbedAt ? " &nbsp;\u00b7&nbsp; Grabbed " + invFmtStamp(item.grabbedAt) : "") + "</div>" : "") +
         (item.noneFound
           ? "<div style='font-size:11px;color:var(--red);margin-top:4px;font-weight:600'>Will log 0 cases — management review required</div>"
           : "<div style='margin-top:6px;display:flex;gap:6px;align-items:center'>" +
@@ -2422,6 +2433,7 @@ async function wFetch(url, opts) {
   window.invTogglePullCheck = function(i) {
     if (!invPullList[i]) return;
     invPullList[i].grabbed = !invPullList[i].grabbed;
+    invPullList[i].grabbedAt = invPullList[i].grabbed ? new Date().toISOString() : null;
     invSavePullList();
     invRenderPullList();
   };
@@ -2444,6 +2456,7 @@ async function wFetch(url, opts) {
     invPullList[i].noneFound = true;
     invPullList[i].cases = 0;
     invPullList[i].grabbed = true;
+    invPullList[i].grabbedAt = new Date().toISOString();
     invSavePullList();
     invRenderPullList();
     invFlash('None Found logged — submit to send for review', 'warn');
@@ -2482,6 +2495,14 @@ async function wFetch(url, opts) {
         : item.foundOnShelf
           ? ('[FOUND ON SHELF] ' + notes).trim()
           : notes;
+      // Carry the Add-to-List / Mark-as-grabbed timestamps into the log
+      // entry's notes so they're visible later in the History tab — those
+      // two actions don't create a log row of their own (only this final
+      // submit does), so this is the only way they end up in History.
+      var stamps = [];
+      if (item.addedAt)   stamps.push('Added ' + invFmtStamp(item.addedAt));
+      if (item.grabbedAt) stamps.push('Grabbed ' + invFmtStamp(item.grabbedAt));
+      if (stamps.length) itemNotes = (itemNotes ? itemNotes + ' \u2014 ' : '') + stamps.join(' \u00b7 ');
       wFetch(W + "/inventory/log", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
