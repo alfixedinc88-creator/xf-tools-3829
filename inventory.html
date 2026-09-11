@@ -1530,16 +1530,10 @@ async function wFetch(url, opts) {
 
     var loc     = _invFosLoc;
     var partNum = (loc.partNum && loc.partNum !== invPart.partNum) ? loc.partNum : invPart.partNum;
-
-    var initials = (g('inv-pull-initials') && g('inv-pull-initials').value.trim()) || '';
-    // BUGFIX: this used to fall back to a literal "?" when initials was left
-    // blank, which silently wrote "?" into inventory_log and showed up as
-    // "?" in the History tab's By column. Require initials instead, same as
-    // the main Scan form does.
-    if (!initials) { invFlash('Enter your initials', 'error'); return; }
-
     var btn     = g('inv-fos-btn');
     btn.disabled = true; btn.textContent = 'Saving\u2026';
+
+    var initials = (g('inv-pull-initials') && g('inv-pull-initials').value.trim()) || '';
 
     var submitEntry = function(type, cases, notes, cb) {
       wFetch(W + '/inventory/log', {
@@ -1547,7 +1541,7 @@ async function wFetch(url, opts) {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           type: type, partNum: partNum, sku: invPart.sku || partNum,
-          location: loc.location, cases: cases, initials: initials,
+          location: loc.location, cases: cases, initials: initials || '?',
           notes: notes, isNew: false, isPlaceholder: false,
           masterRowIndex: loc.rowIndex,
       masterId: loc.masterId || null || null,
@@ -1633,11 +1627,6 @@ async function wFetch(url, opts) {
 
     var initials = (g("inv-initials") && g("inv-initials").value.trim()) || "";
     if (!initials) initials = (g("inv-pull-initials") && g("inv-pull-initials").value.trim()) || "";
-    // BUGFIX: this used to fall back to a literal "?" when initials was left
-    // blank, which silently wrote "?" into inventory_log and showed up as
-    // "?" in the History tab's By column. Require initials instead, same as
-    // the main Scan form does.
-    if (!initials) { invFlash("Enter your initials", "error"); return; }
 
     var btn = g("inv-fel-btn");
     btn.disabled = true;
@@ -1649,7 +1638,7 @@ async function wFetch(url, opts) {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           type: type, partNum: felSku, sku: felSku.split('=')[0].trim(),
-          location: loc, cases: cases, initials: initials,
+          location: loc, cases: cases, initials: initials || "?",
           notes: notes, isNew: true, isPlaceholder: false, masterRowIndex: null
         })
       }).then(function(r){ return r.json(); }).then(cb)
@@ -2638,9 +2627,9 @@ async function wFetch(url, opts) {
     html += '<thead><tr>'
       + '<th style="' + thS + '">Time</th>'
       + '<th style="' + thS + '">Type</th>'
-      + '<th style="' + thS + 'max-width:90px;cursor:pointer;user-select:none" onclick="skumgrCycleSortMode()">Part # ' + (_skumgrSortMode === 'custom' ? '📋' : _skumgrSort === 'asc' ? '↑' : '↓') + '</th>'
+      + '<th style="' + thS + 'cursor:pointer;user-select:none" onclick="skumgrCycleSortMode()">Part # ' + (_skumgrSortMode === 'custom' ? '📋' : _skumgrSort === 'asc' ? '↑' : '↓') + '</th>'
       + '<th style="' + thS + '">Item</th>'
-      + '<th style="' + thS + 'max-width:80px">Location</th>'
+      + '<th style="' + thS + '">Location</th>'
       + '<th style="' + thS + ';text-align:right">Cases</th>'
       + '<th style="' + thS + '">By</th>'
       + '<th style="' + thS + '">Status</th>'
@@ -2660,9 +2649,9 @@ async function wFetch(url, opts) {
       html += '<tr style="background:' + bg + '">'
         + '<td style="' + td + 'white-space:nowrap;color:var(--text3);font-size:11px">' + ts + '</td>'
         + '<td style="' + td + 'white-space:nowrap"><span style="font-size:10px;font-weight:700;color:' + typCol + '">' + typLabel + '</span></td>'
-        + '<td style="' + td + 'font-family:var(--mono);font-weight:700;max-width:90px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="' + (r.part_num||'') + '">' + (r.part_num||'') + '</td>'
+        + '<td style="' + td + 'font-family:var(--mono);font-weight:700;white-space:nowrap">' + (r.part_num||'') + '</td>'
         + '<td style="' + td + 'color:var(--text2);max-width:140px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="' + (r.name||'') + '">' + (r.name||'') + '</td>'
-        + '<td style="' + td + 'font-family:var(--mono);color:var(--text2);max-width:80px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="' + (r.location||'') + '">' + (r.location||'') + '</td>'
+        + '<td style="' + td + 'font-family:var(--mono);color:var(--text2);white-space:nowrap">' + (r.location||'') + '</td>'
         + '<td style="' + td + 'text-align:right;font-family:var(--mono);font-weight:700">' + (r.cases||0) + '</td>'
         + '<td style="' + td + 'font-family:var(--mono);color:var(--text2)">' + (r.initials||'') + '</td>'
         + '<td style="' + td + 'white-space:nowrap"><span style="font-size:10px;font-weight:700;color:' + stCol + '">' + (r.status||'') + '</span></td>'
