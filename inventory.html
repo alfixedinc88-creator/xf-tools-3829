@@ -2495,14 +2495,12 @@ async function wFetch(url, opts) {
         : item.foundOnShelf
           ? ('[FOUND ON SHELF] ' + notes).trim()
           : notes;
-      // Carry the Add-to-List / Mark-as-grabbed timestamps into the log
-      // entry's notes so they're visible later in the History tab — those
-      // two actions don't create a log row of their own (only this final
-      // submit does), so this is the only way they end up in History.
-      var stamps = [];
-      if (item.addedAt)   stamps.push('Added ' + invFmtStamp(item.addedAt));
-      if (item.grabbedAt) stamps.push('Grabbed ' + invFmtStamp(item.grabbedAt));
-      if (stamps.length) itemNotes = (itemNotes ? itemNotes + ' \u2014 ' : '') + stamps.join(' \u00b7 ');
+      // Use the actual Grabbed moment (or Added, if it was never checked
+      // off) as this entry's log timestamp — so History's Time column shows
+      // when the item was really pulled/added, not just when the whole pull
+      // list happened to get submitted. Falls back to "now" only for older
+      // pull-list items saved before these stamps existed.
+      var entryTs = item.grabbedAt || item.addedAt || new Date().toISOString();
       wFetch(W + "/inventory/log", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -2510,7 +2508,8 @@ async function wFetch(url, opts) {
           type: "OUT", partNum: item.partNum, sku: item.sku, name: item.name,
           location: item.location, cases: item.cases, initials: initials,
           notes: itemNotes, rowIndex: item.rowIndex, masterRowIndex: item.masterRowIndex,
-          isPlaceholder: false, isNew: false, overwriteLocation: ""
+          isPlaceholder: false, isNew: false, overwriteLocation: "",
+          clientTimestamp: entryTs
         })
       }).then(function(r) { return r.json(); })
         .then(function(d) {
