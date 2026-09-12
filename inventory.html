@@ -2384,6 +2384,7 @@ async function wFetch(url, opts) {
   };
 
   window.invReviewSetMode = function(mode) {
+    var prevMode = invReviewAutoMode; // remember in case the save is actually rejected
     invReviewAutoMode = (mode === 'auto');
     invReviewLastSetAt = Date.now();
     invReviewUpdateModeUI();
@@ -2391,10 +2392,28 @@ async function wFetch(url, opts) {
     wFetch(W + '/inventory/review-mode', { method: 'POST', body: JSON.stringify({ mode: mode }) })
       .then(function(r) { return r.json(); })
       .then(function(d) {
-        invFlash('Approval mode: ' + (invReviewAutoMode ? 'Auto' : 'Manual') + ' for everyone (saved)', 'success');
+        // BUGFIX: wFetch only throws for HTTP 401 — a 403 ("Management
+        // access required", the mgmt-only route check) or a 500 still
+        // resolves normally here with an error body, no `ok:true`. This
+        // used to always show "saved" regardless, so a rejected save was
+        // invisible — it looked fine for a moment, then a later read of
+        // the real (unchanged) value would show back up as "Auto doesn't
+        // stick." Now actually checks the response before believing it.
+        if (d && d.ok) {
+          invReviewLastSetAt = Date.now(); // confirmed save — restart the cooldown from here
+          invFlash('Approval mode: ' + (invReviewAutoMode ? 'Auto' : 'Manual') + ' for everyone (saved)', 'success');
+        } else {
+          invReviewAutoMode = prevMode;
+          invReviewLastSetAt = 0; // no real change happened — let syncing resume immediately
+          invReviewUpdateModeUI();
+          invFlash('Save failed: ' + (d && d.error ? d.error : 'unknown error — mode NOT changed'), 'error');
+        }
       })
       .catch(function(e) {
-        invFlash('Mode changed locally — could not save to server', 'warn');
+        invReviewAutoMode = prevMode;
+        invReviewLastSetAt = 0;
+        invReviewUpdateModeUI();
+        invFlash('Save failed: ' + (e && e.message ? e.message : 'network error') + ' — mode NOT changed', 'error');
       });
   };
 
