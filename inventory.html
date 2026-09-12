@@ -2511,7 +2511,8 @@ async function wFetch(url, opts) {
           isPlaceholder: false, isNew: false, overwriteLocation: "",
           clientTimestamp: entryTs,
           addedAt: item.addedAt || null,
-          grabbedAt: item.grabbedAt || null
+          grabbedAt: item.grabbedAt || null,
+          noneFound: !!item.noneFound
         })
       }).then(function(r) { return r.json(); })
         .then(function(d) {
