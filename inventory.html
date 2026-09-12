@@ -780,6 +780,22 @@ async function wFetch(url, opts) {
     <div style="font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.4px;color:var(--text3);margin-bottom:8px">By Person</div>
     <div id="hist-report-people" style="margin-bottom:14px"><div style="padding:12px;color:var(--text3);font-size:13px">Loading…</div></div>
 
+    <!-- Starting/Ending cases for the period — reconstructed from the
+         current live total plus every change during (and, for a past date,
+         after) the period. See inventoryHistorySummary for the exact math
+         and its one caveat (manual SKU Manager "Edit" overrides). -->
+    <div style="font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.4px;color:var(--text3);margin-bottom:8px">Cases In Stock</div>
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-bottom:14px">
+      <div style="background:var(--bg2);border-radius:8px;padding:10px;text-align:center">
+        <div style="font-size:9px;font-weight:700;text-transform:uppercase;letter-spacing:.4px;color:var(--text3)">Started With</div>
+        <div id="hist-rt-start" style="font-size:20px;font-weight:800;font-family:var(--mono);color:var(--text)">—</div>
+      </div>
+      <div style="background:var(--bg2);border-radius:8px;padding:10px;text-align:center">
+        <div style="font-size:9px;font-weight:700;text-transform:uppercase;letter-spacing:.4px;color:var(--text3)">Ended With</div>
+        <div id="hist-rt-end" style="font-size:20px;font-weight:800;font-family:var(--mono);color:var(--text)">—</div>
+      </div>
+    </div>
+
     <!-- Overall totals -->
     <div style="font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.4px;color:var(--text3);margin-bottom:8px">Overall Totals</div>
     <div id="hist-report-totals" style="display:grid;grid-template-columns:repeat(3,1fr);gap:8px">
@@ -2855,6 +2871,8 @@ async function wFetch(url, opts) {
     ['hist-rt-in','hist-rt-out','hist-rt-xfr','hist-rt-audit'].forEach(function(id){ var e=g(id); if(e) e.textContent = '\u2026'; });
     if (g('hist-rt-in-cases'))  g('hist-rt-in-cases').textContent  = '';
     if (g('hist-rt-out-cases')) g('hist-rt-out-cases').textContent = '';
+    if (g('hist-rt-start')) g('hist-rt-start').textContent = '\u2026';
+    if (g('hist-rt-end'))   g('hist-rt-end').textContent   = '\u2026';
 
     var qs = dateVal ? ('date=' + encodeURIComponent(dateVal)) : ('days=' + days);
 
@@ -2877,6 +2895,8 @@ async function wFetch(url, opts) {
         if (g('hist-rt-audit')) g('hist-rt-audit').textContent = (t.audits||0).toLocaleString();
         if (g('hist-rt-in-cases'))  g('hist-rt-in-cases').textContent  = (t.casesIn||0).toLocaleString()  + ' cases';
         if (g('hist-rt-out-cases')) g('hist-rt-out-cases').textContent = (t.casesOut||0).toLocaleString() + ' cases';
+        if (g('hist-rt-start')) g('hist-rt-start').textContent = (d.startingCases !== undefined ? Number(d.startingCases).toLocaleString() : '\u2014');
+        if (g('hist-rt-end'))   g('hist-rt-end').textContent   = (d.endingCases   !== undefined ? Number(d.endingCases).toLocaleString()   : '\u2014');
 
         var people = d.byPerson || [];
         if (!peopleEl) return;
