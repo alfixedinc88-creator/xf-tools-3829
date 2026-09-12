@@ -754,10 +754,10 @@ async function wFetch(url, opts) {
        list above), so counts are always accurate even on busy days. -->
   <div class="icard" style="margin-top:14px">
     <div class="icard-label">Activity Report</div>
-    <div style="display:flex;gap:8px;align-items:flex-end;margin-bottom:12px">
-      <div style="flex:1">
+    <div style="display:flex;gap:8px;align-items:flex-end;margin-bottom:8px;flex-wrap:wrap">
+      <div style="flex:1;min-width:140px">
         <label style="font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.4px;color:var(--text3);display:block;margin-bottom:3px">Period</label>
-        <select id="hist-report-days" onchange="histLoadReport()" style="width:100%;padding:8px 10px;border:1.5px solid var(--border);border-radius:8px;font-size:13px;background:var(--bg);color:var(--text)">
+        <select id="hist-report-days" onchange="g('hist-report-date').value='';histLoadReport()" style="width:100%;padding:8px 10px;border:1.5px solid var(--border);border-radius:8px;font-size:13px;background:var(--bg);color:var(--text)">
           <option value="1" selected>Today</option>
           <option value="3">Last 3 days</option>
           <option value="7">Last 7 days</option>
@@ -768,18 +768,30 @@ async function wFetch(url, opts) {
           <option value="9999">All time</option>
         </select>
       </div>
-      <button onclick="histLoadReport()" style="padding:9px 16px;background:var(--accent);color:#fff;border:none;border-radius:8px;font-size:13px;font-weight:700;cursor:pointer;white-space:nowrap">Refresh</button>
+      <div style="flex:1;min-width:140px">
+        <label style="font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.4px;color:var(--text3);display:block;margin-bottom:3px">Or Pick a Day</label>
+        <input id="hist-report-date" type="date" onchange="histLoadReport()" style="width:100%;padding:8px 10px;border:1.5px solid var(--border);border-radius:8px;font-size:13px;background:var(--bg);color:var(--text);box-sizing:border-box">
+      </div>
+      <button onclick="g('hist-report-date').value='';histLoadReport()" style="padding:9px 16px;background:var(--accent);color:#fff;border:none;border-radius:8px;font-size:13px;font-weight:700;cursor:pointer;white-space:nowrap">Refresh</button>
     </div>
+    <div id="hist-report-range-label" style="font-size:11px;color:var(--text3);margin-bottom:12px"></div>
+
+    <!-- Per-person breakdown -->
+    <div style="font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.4px;color:var(--text3);margin-bottom:8px">By Person</div>
+    <div id="hist-report-people" style="margin-bottom:14px"><div style="padding:12px;color:var(--text3);font-size:13px">Loading…</div></div>
 
     <!-- Overall totals -->
-    <div id="hist-report-totals" style="display:grid;grid-template-columns:repeat(4,1fr);gap:8px;margin-bottom:14px">
+    <div style="font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.4px;color:var(--text3);margin-bottom:8px">Overall Totals</div>
+    <div id="hist-report-totals" style="display:grid;grid-template-columns:repeat(3,1fr);gap:8px">
       <div style="background:var(--bg2);border-radius:8px;padding:10px;text-align:center">
         <div style="font-size:9px;font-weight:700;text-transform:uppercase;letter-spacing:.4px;color:var(--text3)">Stock In</div>
         <div id="hist-rt-in" style="font-size:20px;font-weight:800;font-family:var(--mono);color:var(--green)">—</div>
+        <div id="hist-rt-in-cases" style="font-size:10px;color:var(--text3);font-family:var(--mono)"></div>
       </div>
       <div style="background:var(--bg2);border-radius:8px;padding:10px;text-align:center">
         <div style="font-size:9px;font-weight:700;text-transform:uppercase;letter-spacing:.4px;color:var(--text3)">Stock Out</div>
         <div id="hist-rt-out" style="font-size:20px;font-weight:800;font-family:var(--mono);color:var(--red)">—</div>
+        <div id="hist-rt-out-cases" style="font-size:10px;color:var(--text3);font-family:var(--mono)"></div>
       </div>
       <div style="background:var(--bg2);border-radius:8px;padding:10px;text-align:center">
         <div style="font-size:9px;font-weight:700;text-transform:uppercase;letter-spacing:.4px;color:var(--text3)">Transfers</div>
@@ -790,10 +802,6 @@ async function wFetch(url, opts) {
         <div id="hist-rt-audit" style="font-size:20px;font-weight:800;font-family:var(--mono);color:var(--accent)">—</div>
       </div>
     </div>
-
-    <!-- Per-person breakdown -->
-    <div style="font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.4px;color:var(--text3);margin-bottom:8px">By Person</div>
-    <div id="hist-report-people"><div style="padding:12px;color:var(--text3);font-size:13px">Loading…</div></div>
   </div>
 </div>
 
@@ -2838,24 +2846,37 @@ async function wFetch(url, opts) {
   // below). See inventoryHistorySummary in the worker for exactly how each
   // bucket (Stock In / Stock Out / Transfers / Audits) is defined.
   window.histLoadReport = function() {
+    var dateVal = (g('hist-report-date') && g('hist-report-date').value) || '';
     var days = (g('hist-report-days') && g('hist-report-days').value) || '1';
     var totalsEl = g('hist-report-totals');
     var peopleEl = g('hist-report-people');
+    var rangeLbl = g('hist-report-range-label');
     if (peopleEl) peopleEl.innerHTML = '<div style="padding:12px;color:var(--text3);font-size:13px">Loading\u2026</div>';
     ['hist-rt-in','hist-rt-out','hist-rt-xfr','hist-rt-audit'].forEach(function(id){ var e=g(id); if(e) e.textContent = '\u2026'; });
+    if (g('hist-rt-in-cases'))  g('hist-rt-in-cases').textContent  = '';
+    if (g('hist-rt-out-cases')) g('hist-rt-out-cases').textContent = '';
 
-    wFetch(W + '/inventory/history-summary?days=' + days)
+    var qs = dateVal ? ('date=' + encodeURIComponent(dateVal)) : ('days=' + days);
+
+    wFetch(W + '/inventory/history-summary?' + qs)
       .then(function(r) { return r.json(); })
       .then(function(d) {
         if (!d.ok) {
           if (peopleEl) peopleEl.innerHTML = '<div style="color:var(--red);padding:12px">' + (d.error||'Load failed') + '</div>';
           return;
         }
+        if (rangeLbl) {
+          rangeLbl.textContent = d.date
+            ? ('Showing: ' + d.date)
+            : (days === '9999' ? 'Showing: all time' : 'Showing: last ' + days + ' day' + (days === '1' ? '' : 's'));
+        }
         var t = d.totals || {};
         if (g('hist-rt-in'))    g('hist-rt-in').textContent    = (t.stockIn||0).toLocaleString();
         if (g('hist-rt-out'))   g('hist-rt-out').textContent   = (t.stockOut||0).toLocaleString();
         if (g('hist-rt-xfr'))   g('hist-rt-xfr').textContent   = (t.transfers||0).toLocaleString();
         if (g('hist-rt-audit')) g('hist-rt-audit').textContent = (t.audits||0).toLocaleString();
+        if (g('hist-rt-in-cases'))  g('hist-rt-in-cases').textContent  = (t.casesIn||0).toLocaleString()  + ' cases';
+        if (g('hist-rt-out-cases')) g('hist-rt-out-cases').textContent = (t.casesOut||0).toLocaleString() + ' cases';
 
         var people = d.byPerson || [];
         if (!peopleEl) return;
@@ -2871,6 +2892,7 @@ async function wFetch(url, opts) {
           + '<th style="' + thS + '">Initials</th>'
           + '<th style="' + thS + ';text-align:right">In</th>'
           + '<th style="' + thS + ';text-align:right">Out</th>'
+          + '<th style="' + thS + ';text-align:right">Cases Out</th>'
           + '<th style="' + thS + ';text-align:right">Transfers</th>'
           + '<th style="' + thS + ';text-align:right">Audits</th>'
           + '<th style="' + thS + ';text-align:right">Total</th>'
@@ -2881,6 +2903,7 @@ async function wFetch(url, opts) {
             + '<td style="' + tdS + ';font-weight:700">' + (p.initials || '\u2014') + '</td>'
             + '<td style="' + tdS + ';text-align:right;color:var(--green)">' + p.stockIn + '</td>'
             + '<td style="' + tdS + ';text-align:right;color:var(--red)">' + p.stockOut + '</td>'
+            + '<td style="' + tdS + ';text-align:right;color:var(--red);font-weight:700">' + (p.casesOut||0).toLocaleString() + '</td>'
             + '<td style="' + tdS + ';text-align:right;color:var(--purple)">' + p.transfers + '</td>'
             + '<td style="' + tdS + ';text-align:right;color:var(--accent)">' + p.audits + '</td>'
             + '<td style="' + tdS + ';text-align:right;font-weight:800">' + p.total + '</td>'
