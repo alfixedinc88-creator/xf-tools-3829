@@ -682,6 +682,54 @@ async function wFetch(url, opts) {
 </div>
 
 <div class="ipanel" id="inv-panel-history">
+
+  <!-- Activity Report — totals + per-person breakdown, aggregated
+       server-side over EVERY matching row (not capped at 500 like the
+       list below), so counts are always accurate even on busy days. -->
+  <div class="icard" style="margin-bottom:14px">
+    <div class="icard-label">Activity Report</div>
+    <div style="display:flex;gap:8px;align-items:flex-end;margin-bottom:12px">
+      <div style="flex:1">
+        <label style="font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.4px;color:var(--text3);display:block;margin-bottom:3px">Period</label>
+        <select id="hist-report-days" onchange="histLoadReport()" style="width:100%;padding:8px 10px;border:1.5px solid var(--border);border-radius:8px;font-size:13px;background:var(--bg);color:var(--text)">
+          <option value="1" selected>Today</option>
+          <option value="3">Last 3 days</option>
+          <option value="7">Last 7 days</option>
+          <option value="14">Last 14 days</option>
+          <option value="30">Last 30 days</option>
+          <option value="60">Last 60 days</option>
+          <option value="90">Last 90 days</option>
+          <option value="9999">All time</option>
+        </select>
+      </div>
+      <button onclick="histLoadReport()" style="padding:9px 16px;background:var(--accent);color:#fff;border:none;border-radius:8px;font-size:13px;font-weight:700;cursor:pointer;white-space:nowrap">Refresh</button>
+    </div>
+
+    <!-- Overall totals -->
+    <div id="hist-report-totals" style="display:grid;grid-template-columns:repeat(4,1fr);gap:8px;margin-bottom:14px">
+      <div style="background:var(--bg2);border-radius:8px;padding:10px;text-align:center">
+        <div style="font-size:9px;font-weight:700;text-transform:uppercase;letter-spacing:.4px;color:var(--text3)">Stock In</div>
+        <div id="hist-rt-in" style="font-size:20px;font-weight:800;font-family:var(--mono);color:var(--green)">—</div>
+      </div>
+      <div style="background:var(--bg2);border-radius:8px;padding:10px;text-align:center">
+        <div style="font-size:9px;font-weight:700;text-transform:uppercase;letter-spacing:.4px;color:var(--text3)">Stock Out</div>
+        <div id="hist-rt-out" style="font-size:20px;font-weight:800;font-family:var(--mono);color:var(--red)">—</div>
+      </div>
+      <div style="background:var(--bg2);border-radius:8px;padding:10px;text-align:center">
+        <div style="font-size:9px;font-weight:700;text-transform:uppercase;letter-spacing:.4px;color:var(--text3)">Transfers</div>
+        <div id="hist-rt-xfr" style="font-size:20px;font-weight:800;font-family:var(--mono);color:var(--purple)">—</div>
+      </div>
+      <div style="background:var(--bg2);border-radius:8px;padding:10px;text-align:center">
+        <div style="font-size:9px;font-weight:700;text-transform:uppercase;letter-spacing:.4px;color:var(--text3)">Audits</div>
+        <div id="hist-rt-audit" style="font-size:20px;font-weight:800;font-family:var(--mono);color:var(--accent)">—</div>
+      </div>
+    </div>
+
+    <!-- Per-person breakdown -->
+    <div style="font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.4px;color:var(--text3);margin-bottom:8px">By Person</div>
+    <div id="hist-report-people"><div style="padding:12px;color:var(--text3);font-size:13px">Loading…</div></div>
+  </div>
+
   <div class="icard">
     <div class="icard-label">Inventory Log History</div>
 
@@ -873,7 +921,7 @@ async function wFetch(url, opts) {
       invSwitchTab('review');
       return;
     }
-    if (tab === "history") { histLoad(); }
+    if (tab === "history") { histLoad(); histLoadReport(); }
     if (tab === "skumgr") { skumgrAutoLoad(); }
   };
 
@@ -2784,6 +2832,67 @@ async function wFetch(url, opts) {
   // HISTORY TAB — Inventory Log viewer
   // Reads from D1 inventory_log with filters — MGMT PIN required
   // ══════════════════════════════════════════════════════════════════════════
+
+  // Activity Report — aggregated totals + per-person breakdown, straight
+  // from D1 over the full selected period (not the 500-row-capped list
+  // below). See inventoryHistorySummary in the worker for exactly how each
+  // bucket (Stock In / Stock Out / Transfers / Audits) is defined.
+  window.histLoadReport = function() {
+    var days = (g('hist-report-days') && g('hist-report-days').value) || '1';
+    var totalsEl = g('hist-report-totals');
+    var peopleEl = g('hist-report-people');
+    if (peopleEl) peopleEl.innerHTML = '<div style="padding:12px;color:var(--text3);font-size:13px">Loading\u2026</div>';
+    ['hist-rt-in','hist-rt-out','hist-rt-xfr','hist-rt-audit'].forEach(function(id){ var e=g(id); if(e) e.textContent = '\u2026'; });
+
+    wFetch(W + '/inventory/history-summary?days=' + days)
+      .then(function(r) { return r.json(); })
+      .then(function(d) {
+        if (!d.ok) {
+          if (peopleEl) peopleEl.innerHTML = '<div style="color:var(--red);padding:12px">' + (d.error||'Load failed') + '</div>';
+          return;
+        }
+        var t = d.totals || {};
+        if (g('hist-rt-in'))    g('hist-rt-in').textContent    = (t.stockIn||0).toLocaleString();
+        if (g('hist-rt-out'))   g('hist-rt-out').textContent   = (t.stockOut||0).toLocaleString();
+        if (g('hist-rt-xfr'))   g('hist-rt-xfr').textContent   = (t.transfers||0).toLocaleString();
+        if (g('hist-rt-audit')) g('hist-rt-audit').textContent = (t.audits||0).toLocaleString();
+
+        var people = d.byPerson || [];
+        if (!peopleEl) return;
+        if (people.length === 0) {
+          peopleEl.innerHTML = '<div style="padding:12px;color:var(--text3);font-size:13px">No activity in this period</div>';
+          return;
+        }
+        var thS = 'padding:6px 8px;text-align:left;font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.4px;color:var(--text3);white-space:nowrap;border-bottom:2px solid var(--border);background:var(--bg2)';
+        var tdS = 'padding:6px 8px;border-bottom:1px solid var(--border);white-space:nowrap;font-family:var(--mono)';
+        var html = '<div style="overflow-x:auto;border:1.5px solid var(--border);border-radius:10px">'
+          + '<table style="width:100%;border-collapse:collapse;font-size:12px">'
+          + '<thead><tr>'
+          + '<th style="' + thS + '">Initials</th>'
+          + '<th style="' + thS + ';text-align:right">In</th>'
+          + '<th style="' + thS + ';text-align:right">Out</th>'
+          + '<th style="' + thS + ';text-align:right">Transfers</th>'
+          + '<th style="' + thS + ';text-align:right">Audits</th>'
+          + '<th style="' + thS + ';text-align:right">Total</th>'
+          + '</tr></thead><tbody>';
+        people.forEach(function(p, idx) {
+          var bg = idx % 2 === 0 ? 'var(--bg)' : 'var(--bg2)';
+          html += '<tr style="background:' + bg + '">'
+            + '<td style="' + tdS + ';font-weight:700">' + (p.initials || '\u2014') + '</td>'
+            + '<td style="' + tdS + ';text-align:right;color:var(--green)">' + p.stockIn + '</td>'
+            + '<td style="' + tdS + ';text-align:right;color:var(--red)">' + p.stockOut + '</td>'
+            + '<td style="' + tdS + ';text-align:right;color:var(--purple)">' + p.transfers + '</td>'
+            + '<td style="' + tdS + ';text-align:right;color:var(--accent)">' + p.audits + '</td>'
+            + '<td style="' + tdS + ';text-align:right;font-weight:800">' + p.total + '</td>'
+            + '</tr>';
+        });
+        html += '</tbody></table></div>';
+        peopleEl.innerHTML = html;
+      })
+      .catch(function() {
+        if (peopleEl) peopleEl.innerHTML = '<div style="color:var(--red);padding:12px">Load failed</div>';
+      });
+  };
 
   window.histLoad = function() {
     var days    = (g('hist-days')   && g('hist-days').value)   || '7';
