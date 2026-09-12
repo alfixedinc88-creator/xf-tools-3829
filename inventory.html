@@ -476,6 +476,21 @@ async function wFetch(url, opts) {
     </div>
   </div>
   <div id="inv-review-content" style="display:none;padding:16px">
+    <!-- Approval mode card — Auto instantly approves new Stock In/Out and
+         Transfer entries as they come in (skipping this Review queue
+         entirely); Manual leaves them here to approve by hand. Separate
+         from Audit's own Auto/Manual toggle, which only affects Audit
+         corrections. -->
+    <div class="icard" style="margin-bottom:14px">
+      <div class="icard-label">Approval Mode</div>
+      <div style="display:flex;justify-content:space-between;align-items:center">
+        <div style="font-size:12px;color:var(--text3)" id="inv-review-mode-desc">Manual &#x2014; new entries wait here for approval</div>
+        <div style="display:flex;gap:6px">
+          <button id="inv-review-mode-manual" class="btn btn-sm" style="font-size:12px;font-weight:700;background:var(--accent);color:#fff;border-color:var(--accent)" onclick="invReviewRequestMode('manual')">Manual</button>
+          <button id="inv-review-mode-auto" class="btn btn-sm" style="font-size:12px" onclick="invReviewRequestMode('auto')">Auto</button>
+        </div>
+      </div>
+    </div>
     <!-- Bulk approve toolbar -->
     <div id="inv-bulk-bar" style="display:none;position:sticky;top:0;z-index:5;background:var(--bg);border-bottom:1.5px solid var(--border);padding:10px 0;margin-bottom:14px">
       <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-bottom:8px">
@@ -840,6 +855,7 @@ async function wFetch(url, opts) {
         if (gate) gate.style.display = 'none';
         if (content) content.style.display = 'block';
         invLoadPending();
+        invReviewLoadMode();
       } else {
         if (gate) gate.style.display = 'block';
         if (content) content.style.display = 'none';
@@ -2267,6 +2283,67 @@ async function wFetch(url, opts) {
         } else { done++; }
       }
     });
+  };
+
+  // ── REVIEW TAB APPROVAL MODE (Auto/Manual) ──────────────────────────
+  // Same pattern as Audit's own Auto/Manual toggle (Config-sheet backed,
+  // PIN-gated switch), but this one controls the general Scan In/Out,
+  // Found-at-location, and Transfer flows that land in this Review tab —
+  // Audit's toggle is separate and unaffected by this one.
+  var invReviewAutoMode    = false; // loaded from Config sheet on tab open
+  var invReviewPendingMode = null;  // mode awaiting PIN confirmation
+
+  function invReviewUpdateModeUI() {
+    var manBtn = g('inv-review-mode-manual');
+    var autoBtn = g('inv-review-mode-auto');
+    var desc = g('inv-review-mode-desc');
+    if (!manBtn) return;
+    if (invReviewAutoMode) {
+      manBtn.style.background = ''; manBtn.style.color = ''; manBtn.style.borderColor = '';
+      autoBtn.style.background = 'var(--green)'; autoBtn.style.color = '#fff'; autoBtn.style.borderColor = 'var(--green)';
+      if (desc) desc.textContent = 'Auto \u2014 new entries approve instantly, no Review needed';
+    } else {
+      manBtn.style.background = 'var(--accent)'; manBtn.style.color = '#fff'; manBtn.style.borderColor = 'var(--accent)';
+      autoBtn.style.background = ''; autoBtn.style.color = ''; autoBtn.style.borderColor = '';
+      if (desc) desc.textContent = 'Manual \u2014 new entries wait here for approval';
+    }
+  }
+
+  // Load review mode from Config sheet (shared across all devices)
+  window.invReviewLoadMode = function() {
+    wFetch(W + '/inventory/review-mode')
+      .then(function(r) { return r.json(); })
+      .then(function(d) {
+        if (d && d.mode) {
+          invReviewAutoMode = (d.mode === 'auto');
+          invReviewUpdateModeUI();
+        }
+      })
+      .catch(function() {}); // silent fail — stays at default manual
+  };
+
+  // Called when mode button clicked — shows the shared PIN modal
+  window.invReviewRequestMode = function(mode) {
+    if ((mode === 'auto') === invReviewAutoMode) return; // already in that mode
+    invReviewPendingMode = mode;
+    invAuditPinEntry = '';
+    ['inv-apd0','inv-apd1','inv-apd2','inv-apd3'].forEach(function(id){ var d=g(id); if(d) d.classList.remove('filled'); });
+    var modal = g('inv-audit-pin-modal');
+    if (modal) modal.style.display = 'flex';
+  };
+
+  window.invReviewSetMode = function(mode) {
+    invReviewAutoMode = (mode === 'auto');
+    invReviewUpdateModeUI();
+    invFlash('Saving approval mode\u2026', 'success');
+    wFetch(W + '/inventory/review-mode', { method: 'POST', body: JSON.stringify({ mode: mode }) })
+      .then(function(r) { return r.json(); })
+      .then(function(d) {
+        invFlash('Approval mode: ' + (invReviewAutoMode ? 'Auto' : 'Manual') + ' (saved)', 'success');
+      })
+      .catch(function(e) {
+        invFlash('Mode changed locally — could not save to server', 'warn');
+      });
   };
 
   function invLoadPending() {
@@ -4296,6 +4373,7 @@ async function wFetch(url, opts) {
     var modal = g('inv-audit-pin-modal');
     if (modal) modal.style.display = 'none';
     invAuditPendingMode = null;
+    invReviewPendingMode = null;
     invAuditPinEntry = '';
     // Re-enable any disabled rename buttons on cancel
     document.querySelectorAll('#inv-rename-prefix-list button').forEach(function(b){ b.disabled=false; b.style.opacity=''; });
@@ -4328,6 +4406,7 @@ async function wFetch(url, opts) {
         var modal = g('inv-audit-pin-modal');
         if (modal) modal.style.display = 'none';
         if (invAuditPendingMode) { invAuditSetMode(invAuditPendingMode); invAuditPendingMode = null; }
+        if (invReviewPendingMode) { invReviewSetMode(invReviewPendingMode); invReviewPendingMode = null; }
         if (invRenamePending) {
           // Show rename confirmation
           var msg = g('inv-rename-confirm-msg');
