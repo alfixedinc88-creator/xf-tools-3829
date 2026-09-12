@@ -2328,6 +2328,38 @@ async function wFetch(url, opts) {
       .catch(function() {}); // silent fail — stays at default manual
   };
 
+  // BUGFIX: the actual approve decision was always correctly global (every
+  // /inventory/log and /inventory/transfer call re-reads the saved Config
+  // value live from the server, no matter which window changed it) — but
+  // this Auto/Manual toggle display itself was only ever refreshed once,
+  // when a window first opened the Review tab. So a window already open
+  // before someone else flipped the mode kept showing the OLD mode until
+  // that person happened to re-click into Review — looking exactly like
+  // "my window didn't become Auto." Now it re-syncs on its own: every 20s
+  // while Review is the visible tab, and immediately whenever this window/
+  // tab regains focus or becomes visible again (covers switching back from
+  // another app, another browser tab, or waking the screen).
+  var invReviewSyncInterval = null;
+  function invReviewStartSync() {
+    if (invReviewSyncInterval) return;
+    invReviewSyncInterval = setInterval(function() {
+      if (g('inv-tab-review') && g('inv-tab-review').classList.contains('iactive')) {
+        invReviewLoadMode();
+      }
+    }, 20000);
+  }
+  invReviewStartSync();
+  document.addEventListener('visibilitychange', function() {
+    if (!document.hidden && g('inv-tab-review') && g('inv-tab-review').classList.contains('iactive')) {
+      invReviewLoadMode();
+    }
+  });
+  window.addEventListener('focus', function() {
+    if (g('inv-tab-review') && g('inv-tab-review').classList.contains('iactive')) {
+      invReviewLoadMode();
+    }
+  });
+
   // Called when mode button clicked — shows the shared PIN modal
   window.invReviewRequestMode = function(mode) {
     if ((mode === 'auto') === invReviewAutoMode) return; // already in that mode
@@ -2341,11 +2373,11 @@ async function wFetch(url, opts) {
   window.invReviewSetMode = function(mode) {
     invReviewAutoMode = (mode === 'auto');
     invReviewUpdateModeUI();
-    invFlash('Saving approval mode\u2026', 'success');
+    invFlash('Saving approval mode\u2026 (applies everywhere immediately)', 'success');
     wFetch(W + '/inventory/review-mode', { method: 'POST', body: JSON.stringify({ mode: mode }) })
       .then(function(r) { return r.json(); })
       .then(function(d) {
-        invFlash('Approval mode: ' + (invReviewAutoMode ? 'Auto' : 'Manual') + ' (saved)', 'success');
+        invFlash('Approval mode: ' + (invReviewAutoMode ? 'Auto' : 'Manual') + ' for everyone (saved)', 'success');
       })
       .catch(function(e) {
         invFlash('Mode changed locally — could not save to server', 'warn');
