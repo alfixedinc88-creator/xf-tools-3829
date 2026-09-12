@@ -516,26 +516,6 @@ async function wFetch(url, opts) {
 
 <div class="ipanel" id="inv-panel-audit">
 
-  <!-- PIN modal for mode toggle — fixed overlay -->
-  <div id="inv-audit-pin-modal" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,.45);z-index:999;align-items:center;justify-content:center">
-    <div style="background:var(--bg2);border-radius:14px;padding:24px;width:280px;box-shadow:0 8px 32px rgba(0,0,0,.18)">
-      <div style="font-size:14px;font-weight:700;color:var(--text);margin-bottom:4px">Management PIN</div>
-      <div style="font-size:12px;color:var(--text3);margin-bottom:14px">Required to change approval mode</div>
-      <div class="ipin-dots" style="margin-bottom:12px">
-        <div class="ipin-dot" id="inv-apd0"></div><div class="ipin-dot" id="inv-apd1"></div>
-        <div class="ipin-dot" id="inv-apd2"></div><div class="ipin-dot" id="inv-apd3"></div>
-      </div>
-      <div class="ipin-pad">
-        <button class="ipin-key" onclick="invAuditPinKey('1')">1</button><button class="ipin-key" onclick="invAuditPinKey('2')">2</button><button class="ipin-key" onclick="invAuditPinKey('3')">3</button>
-        <button class="ipin-key" onclick="invAuditPinKey('4')">4</button><button class="ipin-key" onclick="invAuditPinKey('5')">5</button><button class="ipin-key" onclick="invAuditPinKey('6')">6</button>
-        <button class="ipin-key" onclick="invAuditPinKey('7')">7</button><button class="ipin-key" onclick="invAuditPinKey('8')">8</button><button class="ipin-key" onclick="invAuditPinKey('9')">9</button>
-        <button class="ipin-key" onclick="invAuditPinKey('back')">&#x232B;</button><button class="ipin-key" onclick="invAuditPinKey('0')">0</button><button class="ipin-key" onclick="invAuditPinKey('clear')" style="font-size:12px">CLR</button>
-      </div>
-      <div class="ipin-err" id="inv-audit-pin-err" style="display:none;margin-top:8px">Incorrect PIN</div>
-      <button onclick="invAuditCancelPin()" style="margin-top:14px;width:100%;padding:8px;border-radius:8px;border:1px solid var(--border);background:var(--bg3);color:var(--text2);font-size:13px;cursor:pointer">Cancel</button>
-    </div>
-  </div>
-
   <!-- Approval mode card -->
   <div class="icard">
     <div class="icard-label">Approval Mode</div>
@@ -637,6 +617,32 @@ async function wFetch(url, opts) {
     <div id="inv-rename-result" style="margin-top:10px"></div>
   </div>
 
+</div>
+
+<!-- PIN modal for mode toggles (Audit + Review approval mode) and prefix
+     rename — moved OUT of inv-panel-audit so it isn't trapped inside that
+     tab's display:none when a different tab is active. It used to live
+     nested inside the Audit panel, which meant clicking "Auto" from the
+     Review tab (or anywhere else that reuses this same modal) set the
+     modal's own display to flex but its hidden ancestor panel still kept
+     it invisible — the exact "nothing happens when I click Auto" bug. -->
+<div id="inv-audit-pin-modal" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,.45);z-index:999;align-items:center;justify-content:center">
+  <div style="background:var(--bg2);border-radius:14px;padding:24px;width:280px;box-shadow:0 8px 32px rgba(0,0,0,.18)">
+    <div style="font-size:14px;font-weight:700;color:var(--text);margin-bottom:4px">Management PIN</div>
+    <div style="font-size:12px;color:var(--text3);margin-bottom:14px">Required to change approval mode</div>
+    <div class="ipin-dots" style="margin-bottom:12px">
+      <div class="ipin-dot" id="inv-apd0"></div><div class="ipin-dot" id="inv-apd1"></div>
+      <div class="ipin-dot" id="inv-apd2"></div><div class="ipin-dot" id="inv-apd3"></div>
+    </div>
+    <div class="ipin-pad">
+      <button class="ipin-key" onclick="invAuditPinKey('1')">1</button><button class="ipin-key" onclick="invAuditPinKey('2')">2</button><button class="ipin-key" onclick="invAuditPinKey('3')">3</button>
+      <button class="ipin-key" onclick="invAuditPinKey('4')">4</button><button class="ipin-key" onclick="invAuditPinKey('5')">5</button><button class="ipin-key" onclick="invAuditPinKey('6')">6</button>
+      <button class="ipin-key" onclick="invAuditPinKey('7')">7</button><button class="ipin-key" onclick="invAuditPinKey('8')">8</button><button class="ipin-key" onclick="invAuditPinKey('9')">9</button>
+      <button class="ipin-key" onclick="invAuditPinKey('back')">&#x232B;</button><button class="ipin-key" onclick="invAuditPinKey('0')">0</button><button class="ipin-key" onclick="invAuditPinKey('clear')" style="font-size:12px">CLR</button>
+    </div>
+    <div class="ipin-err" id="inv-audit-pin-err" style="display:none;margin-top:8px">Incorrect PIN</div>
+    <button onclick="invAuditCancelPin()" style="margin-top:14px;width:100%;padding:8px;border-radius:8px;border:1px solid var(--border);background:var(--bg3);color:var(--text2);font-size:13px;cursor:pointer">Cancel</button>
+  </div>
 </div>
 
 <div class="ipanel" id="inv-panel-skumgr">
