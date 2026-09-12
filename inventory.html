@@ -2317,6 +2317,11 @@ async function wFetch(url, opts) {
 
   // Load review mode from Config sheet (shared across all devices)
   window.invReviewLoadMode = function() {
+    // Skip the read entirely if we just saved a change locally — the write
+    // may not have finished propagating yet (Sheets round trip), and a
+    // sync check that lands in that window would read the still-old value
+    // and stomp the just-set mode right back. See invReviewLastSetAt below.
+    if (Date.now() - invReviewLastSetAt < 8000) return;
     wFetch(W + '/inventory/review-mode')
       .then(function(r) { return r.json(); })
       .then(function(d) {
@@ -2339,6 +2344,14 @@ async function wFetch(url, opts) {
   // while Review is the visible tab, and immediately whenever this window/
   // tab regains focus or becomes visible again (covers switching back from
   // another app, another browser tab, or waking the screen).
+  //
+  // BUGFIX 2: closing the PIN modal after switching modes can itself fire a
+  // window "focus" event, which used to trigger an immediate sync read —
+  // sometimes fast enough to complete BEFORE the save's Sheets write had
+  // actually landed, reading the still-old value and flipping the toggle
+  // back within a couple seconds (looked like "Auto doesn't stick"). The
+  // invReviewLastSetAt guard in invReviewLoadMode above closes that race.
+  var invReviewLastSetAt   = 0;
   var invReviewSyncInterval = null;
   function invReviewStartSync() {
     if (invReviewSyncInterval) return;
@@ -2372,6 +2385,7 @@ async function wFetch(url, opts) {
 
   window.invReviewSetMode = function(mode) {
     invReviewAutoMode = (mode === 'auto');
+    invReviewLastSetAt = Date.now();
     invReviewUpdateModeUI();
     invFlash('Saving approval mode\u2026 (applies everywhere immediately)', 'success');
     wFetch(W + '/inventory/review-mode', { method: 'POST', body: JSON.stringify({ mode: mode }) })
