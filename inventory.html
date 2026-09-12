@@ -2106,6 +2106,15 @@ async function wFetch(url, opts) {
         confirmedCount++;
         return;
       }
+      // None Found always logs cases:0 (nothing was "pulled"), but the real
+      // impact is that whatever was on the shelf goes to 0 — e.g. "Had 3 —
+      // found 0 — should leave 0" means the net change is -3, not -0. Pull
+      // the real "Had X" quantity out of the auto-note for these so the
+      // bulk Net reflects what will actually happen on approval.
+      if (type === 'OUT' && notes.indexOf('[NONE FOUND ON SHELF]') !== -1) {
+        var hadMatch = notes.match(/HAD\s+([\d.]+)/);
+        if (hadMatch) cases = parseFloat(hadMatch[1]) || 0;
+      }
       if (type === 'IN' || type === 'TRANSFER_IN') totalIn  += cases;
       if (type === 'OUT' || type === 'TRANSFER_OUT') totalOut += cases;
     });
