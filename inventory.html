@@ -683,53 +683,6 @@ async function wFetch(url, opts) {
 
 <div class="ipanel" id="inv-panel-history">
 
-  <!-- Activity Report — totals + per-person breakdown, aggregated
-       server-side over EVERY matching row (not capped at 500 like the
-       list below), so counts are always accurate even on busy days. -->
-  <div class="icard" style="margin-bottom:14px">
-    <div class="icard-label">Activity Report</div>
-    <div style="display:flex;gap:8px;align-items:flex-end;margin-bottom:12px">
-      <div style="flex:1">
-        <label style="font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.4px;color:var(--text3);display:block;margin-bottom:3px">Period</label>
-        <select id="hist-report-days" onchange="histLoadReport()" style="width:100%;padding:8px 10px;border:1.5px solid var(--border);border-radius:8px;font-size:13px;background:var(--bg);color:var(--text)">
-          <option value="1" selected>Today</option>
-          <option value="3">Last 3 days</option>
-          <option value="7">Last 7 days</option>
-          <option value="14">Last 14 days</option>
-          <option value="30">Last 30 days</option>
-          <option value="60">Last 60 days</option>
-          <option value="90">Last 90 days</option>
-          <option value="9999">All time</option>
-        </select>
-      </div>
-      <button onclick="histLoadReport()" style="padding:9px 16px;background:var(--accent);color:#fff;border:none;border-radius:8px;font-size:13px;font-weight:700;cursor:pointer;white-space:nowrap">Refresh</button>
-    </div>
-
-    <!-- Overall totals -->
-    <div id="hist-report-totals" style="display:grid;grid-template-columns:repeat(4,1fr);gap:8px;margin-bottom:14px">
-      <div style="background:var(--bg2);border-radius:8px;padding:10px;text-align:center">
-        <div style="font-size:9px;font-weight:700;text-transform:uppercase;letter-spacing:.4px;color:var(--text3)">Stock In</div>
-        <div id="hist-rt-in" style="font-size:20px;font-weight:800;font-family:var(--mono);color:var(--green)">—</div>
-      </div>
-      <div style="background:var(--bg2);border-radius:8px;padding:10px;text-align:center">
-        <div style="font-size:9px;font-weight:700;text-transform:uppercase;letter-spacing:.4px;color:var(--text3)">Stock Out</div>
-        <div id="hist-rt-out" style="font-size:20px;font-weight:800;font-family:var(--mono);color:var(--red)">—</div>
-      </div>
-      <div style="background:var(--bg2);border-radius:8px;padding:10px;text-align:center">
-        <div style="font-size:9px;font-weight:700;text-transform:uppercase;letter-spacing:.4px;color:var(--text3)">Transfers</div>
-        <div id="hist-rt-xfr" style="font-size:20px;font-weight:800;font-family:var(--mono);color:var(--purple)">—</div>
-      </div>
-      <div style="background:var(--bg2);border-radius:8px;padding:10px;text-align:center">
-        <div style="font-size:9px;font-weight:700;text-transform:uppercase;letter-spacing:.4px;color:var(--text3)">Audits</div>
-        <div id="hist-rt-audit" style="font-size:20px;font-weight:800;font-family:var(--mono);color:var(--accent)">—</div>
-      </div>
-    </div>
-
-    <!-- Per-person breakdown -->
-    <div style="font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.4px;color:var(--text3);margin-bottom:8px">By Person</div>
-    <div id="hist-report-people"><div style="padding:12px;color:var(--text3);font-size:13px">Loading…</div></div>
-  </div>
-
   <div class="icard">
     <div class="icard-label">Inventory Log History</div>
 
@@ -794,6 +747,53 @@ async function wFetch(url, opts) {
     </button>
 
     <div id="hist-results"></div>
+  </div>
+
+  <!-- Activity Report — totals + per-person breakdown, aggregated
+       server-side over EVERY matching row (not capped at 500 like the
+       list above), so counts are always accurate even on busy days. -->
+  <div class="icard" style="margin-top:14px">
+    <div class="icard-label">Activity Report</div>
+    <div style="display:flex;gap:8px;align-items:flex-end;margin-bottom:12px">
+      <div style="flex:1">
+        <label style="font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.4px;color:var(--text3);display:block;margin-bottom:3px">Period</label>
+        <select id="hist-report-days" onchange="histLoadReport()" style="width:100%;padding:8px 10px;border:1.5px solid var(--border);border-radius:8px;font-size:13px;background:var(--bg);color:var(--text)">
+          <option value="1" selected>Today</option>
+          <option value="3">Last 3 days</option>
+          <option value="7">Last 7 days</option>
+          <option value="14">Last 14 days</option>
+          <option value="30">Last 30 days</option>
+          <option value="60">Last 60 days</option>
+          <option value="90">Last 90 days</option>
+          <option value="9999">All time</option>
+        </select>
+      </div>
+      <button onclick="histLoadReport()" style="padding:9px 16px;background:var(--accent);color:#fff;border:none;border-radius:8px;font-size:13px;font-weight:700;cursor:pointer;white-space:nowrap">Refresh</button>
+    </div>
+
+    <!-- Overall totals -->
+    <div id="hist-report-totals" style="display:grid;grid-template-columns:repeat(4,1fr);gap:8px;margin-bottom:14px">
+      <div style="background:var(--bg2);border-radius:8px;padding:10px;text-align:center">
+        <div style="font-size:9px;font-weight:700;text-transform:uppercase;letter-spacing:.4px;color:var(--text3)">Stock In</div>
+        <div id="hist-rt-in" style="font-size:20px;font-weight:800;font-family:var(--mono);color:var(--green)">—</div>
+      </div>
+      <div style="background:var(--bg2);border-radius:8px;padding:10px;text-align:center">
+        <div style="font-size:9px;font-weight:700;text-transform:uppercase;letter-spacing:.4px;color:var(--text3)">Stock Out</div>
+        <div id="hist-rt-out" style="font-size:20px;font-weight:800;font-family:var(--mono);color:var(--red)">—</div>
+      </div>
+      <div style="background:var(--bg2);border-radius:8px;padding:10px;text-align:center">
+        <div style="font-size:9px;font-weight:700;text-transform:uppercase;letter-spacing:.4px;color:var(--text3)">Transfers</div>
+        <div id="hist-rt-xfr" style="font-size:20px;font-weight:800;font-family:var(--mono);color:var(--purple)">—</div>
+      </div>
+      <div style="background:var(--bg2);border-radius:8px;padding:10px;text-align:center">
+        <div style="font-size:9px;font-weight:700;text-transform:uppercase;letter-spacing:.4px;color:var(--text3)">Audits</div>
+        <div id="hist-rt-audit" style="font-size:20px;font-weight:800;font-family:var(--mono);color:var(--accent)">—</div>
+      </div>
+    </div>
+
+    <!-- Per-person breakdown -->
+    <div style="font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.4px;color:var(--text3);margin-bottom:8px">By Person</div>
+    <div id="hist-report-people"><div style="padding:12px;color:var(--text3);font-size:13px">Loading…</div></div>
   </div>
 </div>
 
