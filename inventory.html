@@ -691,7 +691,7 @@ async function wFetch(url, opts) {
     <div style="display:flex;gap:8px;align-items:flex-end;margin-bottom:8px;flex-wrap:wrap">
       <div style="flex:1;min-width:140px">
         <label style="font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.4px;color:var(--text3);display:block;margin-bottom:3px">Period</label>
-        <select id="hist-report-days" onchange="g('hist-report-date').value='';histLoadReport()" style="width:100%;padding:8px 10px;border:1.5px solid var(--border);border-radius:8px;font-size:13px;background:var(--bg);color:var(--text)">
+        <select id="hist-report-days" onchange="histReportPeriodChanged()" style="width:100%;padding:8px 10px;border:1.5px solid var(--border);border-radius:8px;font-size:13px;background:var(--bg);color:var(--text)">
           <option value="1" selected>Today</option>
           <option value="yesterday">Yesterday</option>
           <option value="daybefore">Day Before Yesterday</option>
@@ -708,7 +708,7 @@ async function wFetch(url, opts) {
         <label style="font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.4px;color:var(--text3);display:block;margin-bottom:3px">Or Pick a Day</label>
         <input id="hist-report-date" type="date" onchange="histLoadReport()" style="width:100%;padding:8px 10px;border:1.5px solid var(--border);border-radius:8px;font-size:13px;background:var(--bg);color:var(--text);box-sizing:border-box">
       </div>
-      <button onclick="g('hist-report-date').value='';histLoadReport()" style="padding:9px 16px;background:var(--accent);color:#fff;border:none;border-radius:8px;font-size:13px;font-weight:700;cursor:pointer;white-space:nowrap">Refresh</button>
+      <button onclick="histLoadReport()" style="padding:9px 16px;background:var(--accent);color:#fff;border:none;border-radius:8px;font-size:13px;font-weight:700;cursor:pointer;white-space:nowrap">Refresh</button>
     </div>
     <div id="hist-report-range-label" style="font-size:11px;color:var(--text3);margin-bottom:12px"></div>
 
@@ -2858,6 +2858,19 @@ async function wFetch(url, opts) {
   // HISTORY TAB — Inventory Log viewer
   // Reads from D1 inventory_log with filters — MGMT PIN required
   // ══════════════════════════════════════════════════════════════════════════
+
+  // Small window-exposed wrapper — inline onchange/onclick attributes run
+  // in the GLOBAL scope, not inside this app's private closure, so they
+  // can only call functions actually attached to `window` (like this one
+  // and histLoadReport itself) — never a local helper like g(), which
+  // used to be called directly inline here and silently threw
+  // "g is not defined", stopping histLoadReport() from ever running.
+  // That's why switching Today/Yesterday/Day Before Yesterday did nothing.
+  window.histReportPeriodChanged = function() {
+    var d = document.getElementById('hist-report-date');
+    if (d) d.value = '';
+    histLoadReport();
+  };
 
   // Small helper — the calendar date N days ago (or 0 for today), as seen
   // in America/New_York, formatted 'YYYY-MM-DD'. Used to turn "Yesterday"
