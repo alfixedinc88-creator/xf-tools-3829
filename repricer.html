@@ -490,10 +490,6 @@ body { margin:0; padding:0; font-family:'DM Sans',sans-serif; }
             <label class="form-label">Notes</label>
             <textarea class="form-input" id="nr-notes" rows="2" placeholder="Any observations about pricing, demand, competition…" style="resize:vertical"></textarea>
           </div>
-          <div class="form-group">
-            <label class="form-label">Your Initials</label>
-            <input class="form-input" id="nr-initials" placeholder="e.g. JD" style="width:80px">
-          </div>
           <div id="nr-save-alert"></div>
           <div style="display:flex;gap:10px;margin-top:4px">
             <button class="btn btn-success" onclick="nrSaveResearch()">💾 Save Research</button>
@@ -1201,9 +1197,7 @@ async function runAutoReprice() {
 
   if (!confirm(`Auto-reprice will correct ${fixable.length} listing(s) to floor × 1.02.${tooLarge.length ? '\n\n' + tooLarge.length + ' listing(s) need >10% correction and will be skipped.' : ''}\n\nProceed?`)) return;
 
-  const pin      = prompt('Enter your Price Change PIN:');
-  if (!pin) return;
-  const initials = prompt('Enter your initials:') || 'AUTO';
+  const initials = (rprCredUser && rprCredUser.displayName) || 'MGMT';
 
   btn.disabled    = true;
   btn.textContent = '⏳ Running…';
@@ -1237,7 +1231,6 @@ async function runAutoReprice() {
       const data = await apiCall('/repricer/auto-reprice', {
         method: 'POST',
         body: JSON.stringify({
-          pricePin: pin,
           user: initials,
           listings: chunk.map(l => ({
             itemId:   l.itemId,
@@ -1967,16 +1960,7 @@ function openPriceModal(listing) {
       ${floor ? `<div class="form-hint">Floor: ${fmt$(floor)} · Target: ${fmt$(target)} · Max: ${fmt$(max)}${listing.packQty===1 ? ' · shipping charged separately' : ''}</div>` : ''}
     </div>
     <div id="price-change-preview"></div>
-    <div style="display:flex;gap:12px">
-      <div class="form-group" style="flex:1">
-        <label class="form-label">Your Initials</label>
-        <input class="form-input" type="text" id="price-initials-input" maxlength="4" placeholder="e.g. JD" autocomplete="off">
-      </div>
-      <div class="form-group" style="flex:1">
-        <label class="form-label">Price Change PIN</label>
-        <input class="form-input" type="password" id="price-pin-input" maxlength="4" placeholder="••••" autocomplete="off">
-      </div>
-    </div>
+    <div class="form-hint" style="margin-bottom:10px">Submitting as <strong>${(rprCredUser && rprCredUser.displayName) || 'MGMT'}</strong></div>
     <div id="modal-alert"></div>`;
   document.getElementById('modal-footer').innerHTML = `
     <button class="btn btn-secondary" onclick="closeModal()">Cancel</button>
@@ -2004,8 +1988,7 @@ function updatePricePreview() {
 
 async function submitPriceChange() {
   const newPrice  = parseFloat(document.getElementById('new-price-input').value);
-  const pin       = document.getElementById('price-pin-input').value;
-  const initials  = (document.getElementById('price-initials-input')?.value || '').trim() || 'OPS';
+  const initials  = (rprCredUser && rprCredUser.displayName) || 'MGMT';
   const alertEl   = document.getElementById('modal-alert');
   if (!newPrice || newPrice <= 0) { alertEl.innerHTML = `<div class="alert alert-error">Enter a valid price</div>`; return; }
   const floor     = currentListing.cog1pc ? getMinPrice(currentListing.cog1pc, currentListing.packQty) : 0;
@@ -2030,7 +2013,7 @@ async function submitPriceChange() {
         cog1pc:   currentListing.cog1pc || 0,
         floor, target: currentListing.cog1pc ? getTargetPrice(currentListing.cog1pc, currentListing.packQty) : 0,
         oldPrice: currentListing.price,
-        newPrice, pricePin: pin, user: initials
+        newPrice, user: initials
       })
     });
     const pct = currentListing.price ? (newPrice - currentListing.price) / currentListing.price : 0;
@@ -2372,10 +2355,8 @@ async function nrSaveResearch() {
   const rank       = parseInt(document.getElementById('nr-our-rank').value) || 0;
   const lowestComp = parseFloat(document.getElementById('nr-lowest-comp').value) || 0;
   const notes      = document.getElementById('nr-notes').value.trim();
-  const initials   = document.getElementById('nr-initials').value.trim();
+  const initials   = (rprCredUser && rprCredUser.displayName) || 'MGMT';
   const alertEl    = document.getElementById('nr-save-alert');
-
-  if (!initials) { alertEl.innerHTML = `<div class="alert alert-error">Please enter your initials</div>`; return; }
 
   alertEl.innerHTML = `<div class="loading"><div class="spinner"></div> Fetching sales history & saving…</div>`;
 
@@ -2439,7 +2420,6 @@ function nrReset() {
   document.getElementById('nr-our-rank').value = '';
   document.getElementById('nr-lowest-comp').value = '';
   document.getElementById('nr-notes').value = '';
-  document.getElementById('nr-initials').value = '';
   document.getElementById('nr-save-alert').innerHTML = '';
   nrRenderCompList();
 }
@@ -2625,14 +2605,7 @@ function renderDecisionForm(listing) {
     </div>
 
     <div style="background:var(--surface2);border-radius:12px;padding:20px;margin-bottom:20px">
-      <div class="form-group">
-        <label class="form-label">Your Initials</label>
-        <input class="form-input" type="text" id="dec-initials" maxlength="4" placeholder="e.g. JD" style="width:100px">
-      </div>
-      <div class="form-group">
-        <label class="form-label">Price Change PIN</label>
-        <input class="form-input" type="password" id="dec-pin" maxlength="4" placeholder="••••" autocomplete="off" style="width:120px">
-      </div>
+      <div class="form-hint">Submitting as <strong>${(rprCredUser && rprCredUser.displayName) || 'MGMT'}</strong></div>
     </div>
 
     <div id="dec-alert"></div>
@@ -2709,13 +2682,10 @@ async function submitDecision() {
   const newPrice = parseFloat(document.getElementById('dec-new-price').value);
   const compPrice = parseFloat(document.getElementById('dec-comp-price').value) || 0;
   const notes    = document.getElementById('dec-notes').value.trim();
-  const initials = document.getElementById('dec-initials').value.trim();
-  const pin      = document.getElementById('dec-pin').value.trim();
+  const initials = (rprCredUser && rprCredUser.displayName) || 'MGMT';
   const alertEl  = document.getElementById('dec-alert');
 
   if (!newPrice) { alertEl.innerHTML = `<div class="alert alert-error">Enter a valid price</div>`; return; }
-  if (!initials) { alertEl.innerHTML = `<div class="alert alert-error">Enter your initials</div>`; return; }
-  if (!pin)      { alertEl.innerHTML = `<div class="alert alert-error">Enter your PIN</div>`; return; }
 
   const floor = decisionListing.cog1pc ? getMinPrice(decisionListing.cog1pc, decisionListing.packQty) : 0;
   const hardFloor = floor * 0.95;
@@ -2739,7 +2709,7 @@ async function submitDecision() {
         oldPrice:   decisionListing.price,
         newPrice,
         lowestComp: compPrice,
-        notes, user: initials, pricePin: pin
+        notes, user: initials
       })
     });
 
@@ -2860,10 +2830,7 @@ function openDecisionApply(rawD) {
       <input class="form-input price-input-large" type="number" id="new-price-input" value="${d.suggest.toFixed(2)}" step="0.01" oninput="updatePricePreview()">
     </div>
     <div id="price-change-preview"></div>
-    <div class="form-group">
-      <label class="form-label">Price Change PIN</label>
-      <input class="form-input" type="password" id="price-pin-input" maxlength="4" placeholder="••••" autocomplete="off">
-    </div>
+    <div class="form-hint" style="margin-bottom:10px">Submitting as <strong>${(rprCredUser && rprCredUser.displayName) || 'MGMT'}</strong></div>
     <div id="modal-alert"></div>`;
   document.getElementById('modal-footer').innerHTML = `
     <button class="btn btn-secondary" onclick="closeModal()">Cancel</button>
@@ -3416,8 +3383,7 @@ async function renderApprovals() {
 }
 
 async function queueAction(rowIndex, action, itemId, newPrice) {
-  const initials = prompt('Enter your manager initials to confirm:');
-  if (!initials) return;
+  const initials = (rprCredUser && rprCredUser.displayName) || 'MGMT';
   try {
     const result = await apiCall('/repricer/queue-action', {
       method: 'POST',
