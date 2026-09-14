@@ -981,28 +981,12 @@ body {
   <div class="pin-card">
     <div class="pin-logo">XFITTING</div>
     <div class="pin-title">Warehouse Lookup</div>
-    <div class="pin-sub">Enter your PIN to continue</div>
-    <div class="pin-dots" id="pin-dots">
-      <div class="pin-dot" id="pd0"></div>
-      <div class="pin-dot" id="pd1"></div>
-      <div class="pin-dot" id="pd2"></div>
-      <div class="pin-dot" id="pd3"></div>
-    </div>
-    <div class="pin-pad">
-      <button class="pin-btn" onclick="pinKey('1')">1</button>
-      <button class="pin-btn" onclick="pinKey('2')">2</button>
-      <button class="pin-btn" onclick="pinKey('3')">3</button>
-      <button class="pin-btn" onclick="pinKey('4')">4</button>
-      <button class="pin-btn" onclick="pinKey('5')">5</button>
-      <button class="pin-btn" onclick="pinKey('6')">6</button>
-      <button class="pin-btn" onclick="pinKey('7')">7</button>
-      <button class="pin-btn" onclick="pinKey('8')">8</button>
-      <button class="pin-btn" onclick="pinKey('9')">9</button>
-      <div></div>
-      <button class="pin-btn" onclick="pinKey('0')">0</button>
-      <button class="pin-btn del" onclick="pinDel()">&#9003;</button>
-    </div>
+    <div class="pin-sub">Enter your XFitting credentials</div>
+    <input id="cred-username" type="text" placeholder="Username" autocomplete="username" style="width:100%;padding:11px 14px;border:1.5px solid #dfe2e7;border-radius:9px;font-family:inherit;font-size:14px;margin:16px 0 10px;box-sizing:border-box;">
+    <input id="cred-password" type="password" placeholder="Password" autocomplete="current-password" style="width:100%;padding:11px 14px;border:1.5px solid #dfe2e7;border-radius:9px;font-family:inherit;font-size:14px;margin-bottom:14px;box-sizing:border-box;">
+    <button id="cred-login-btn" onclick="credLogin()" style="width:100%;padding:12px;border:none;border-radius:9px;background:#1a56db;color:#fff;font-family:inherit;font-weight:600;font-size:14px;cursor:pointer;">Sign In</button>
     <div class="pin-error" id="pin-error"></div>
+    <a href="index.html" style="display:inline-block;margin-top:14px;font-size:12.5px;color:#7a8496;text-decoration:none;">← Back to Launcher</a>
   </div>
 </div>
 
@@ -1728,100 +1712,91 @@ function backToLauncher() { window.location.href = 'index.html'; }
 async function wFetch(url, opts) {
   opts = opts || {};
   opts.headers = Object.assign({}, opts.headers || {}, {
-    'X-Session-Token': XF_SESSION || ''
+    'X-Cred-Token': CRED_TOKEN || ''
   });
   var r = await fetch(url, opts);
-  if (r.status === 401) {
-    XF_SESSION = null;
-    XF_ROLE = null;
-    sessionStorage.removeItem('xf_session');
-    sessionStorage.removeItem('xf_role');
+  if (r.status === 401 || r.status === 403) {
+    CRED_TOKEN = null;
+    localStorage.removeItem('xf_cred_token');
+    localStorage.removeItem('xf_cred_user');
     var ps = document.getElementById('pin-screen');
     if (ps) { ps.style.display = 'flex'; ps.style.opacity = '1'; ps.style.visibility = 'visible'; }
-    var la = document.getElementById('launcher');
-    if (la) la.style.display = 'none';
+    var whAppEl = document.getElementById('wh-app');
+    if (whAppEl) whAppEl.style.display = 'none';
     throw new Error('Unauthorized');
   }
   return r;
 }
 
 
-var XF_SESSION = sessionStorage.getItem('xf_session') || null;
-var XF_ROLE    = sessionStorage.getItem('xf_role')    || null;
-if (XF_SESSION) {
-  document.addEventListener('DOMContentLoaded', function() {
+var CRED_TOKEN = localStorage.getItem('xf_cred_token') || null;
+var CRED_USER  = null;
+try { CRED_USER = JSON.parse(localStorage.getItem('xf_cred_user') || 'null'); } catch(e) {}
+
+(async function() {
+  if (!CRED_TOKEN || !CRED_USER || !(CRED_USER.roles.includes('ops') || CRED_USER.roles.includes('mobile') || CRED_USER.roles.includes('mgmt'))) {
+    localStorage.removeItem('xf_cred_token'); localStorage.removeItem('xf_cred_user');
+    CRED_TOKEN = null;
+    return;
+  }
+  document.addEventListener('DOMContentLoaded', async function() {
+    // Verify the cached token still actually works before trusting it
+    try {
+      var res = await fetch(WORKER_URL + '?sheet=Products', { headers: { 'X-Cred-Token': CRED_TOKEN } });
+      if (res.status === 401 || res.status === 403) {
+        localStorage.removeItem('xf_cred_token'); localStorage.removeItem('xf_cred_user');
+        CRED_TOKEN = null;
+        return;
+      }
+    } catch(e) { return; }
     var ps = document.getElementById('pin-screen');
     if (ps) { ps.style.display = 'none'; ps.style.visibility = 'hidden'; }
     // Standalone — show wh-app directly
     var whAppEl = document.getElementById('wh-app');
     if (whAppEl) whAppEl.style.display = 'flex';
     if (typeof loadAllSheets === 'function') loadAllSheets();
-    // Only pre-load mgmt tabs if role was mgmt — avoids 401 noise on OPS session restore
-    if (typeof silentLoadSaved === 'function' && XF_ROLE === 'mgmt') silentLoadSaved();
+    // Only pre-load mgmt tabs if role includes mgmt — avoids 401 noise otherwise
+    if (typeof silentLoadSaved === 'function' && CRED_USER.roles.includes('mgmt')) silentLoadSaved();
   });
-}
+})();
 
-document.addEventListener('keydown', function(e) {
-  var ps = document.getElementById('pin-screen');
-  if (!ps || ps.style.display === 'none') return;
-  if (e.key >= '0' && e.key <= '9') pinKey(e.key);
-  if (e.key === 'Backspace') pinDel();
-});
-
-var pinEntry = '';
-
-function pinKey(k) {
-  if (pinEntry.length >= 4) return;
-  pinEntry += k;
-  updatePinDots();
-  if (pinEntry.length === 4) setTimeout(checkPin, 120);
-}
-
-function pinDel() {
-  if (!pinEntry.length) return;
-  pinEntry = pinEntry.slice(0, -1);
-  updatePinDots();
-  var pe = document.getElementById('pin-error');
-  if (pe) pe.textContent = '';
-}
-
-function updatePinDots() {
-  for (var i = 0; i < 4; i++) {
-    var d = document.getElementById('pd' + i);
-    if (!d) continue;
-    d.classList.toggle('filled', i < pinEntry.length);
-    d.classList.remove('error');
-  }
-}
-
-function checkPin() {
-  var pin = pinEntry;
-  function tryAuth(type, fallback) {
-    fetch(WORKER_URL + '/auth', {
+window.credLogin = async function() {
+  var username = document.getElementById('cred-username').value.trim();
+  var password = document.getElementById('cred-password').value;
+  var btn = document.getElementById('cred-login-btn');
+  var err = document.getElementById('pin-error');
+  err.textContent = '';
+  if (!username || !password) { err.textContent = 'Enter your username and password.'; return; }
+  btn.disabled = true; btn.textContent = 'Signing in…';
+  try {
+    var res = await fetch(WORKER_URL + '/auth/login', {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ pin: pin, pin_type: type })
-    }).then(function(r){ return r.json(); }).then(function(d){
-      if (d.token) {
-        XF_SESSION = d.token;
-        XF_ROLE = type;
-        sessionStorage.setItem('xf_session', d.token);
-        sessionStorage.setItem('xf_role', type);
-        var ps = document.getElementById('pin-screen');
-        ps.style.transition = 'opacity .3s'; ps.style.opacity = '0';
-        setTimeout(function() {
-          ps.style.display = 'none'; ps.style.visibility = 'hidden';
-          var whApp = document.getElementById('wh-app'); if (whApp) whApp.style.display = 'flex';
-          if (typeof loadAllSheets === 'function') loadAllSheets();
-          // Only pre-load mgmt calc tabs if this is a mgmt-level token
-          if (typeof silentLoadSaved === 'function' && type === 'mgmt') silentLoadSaved();
-        }, 300);
-      } else if (fallback) {
-        tryAuth(fallback, null);
-      } else { pinFail(); }
-    }).catch(function(){ pinFail(); });
+      body: JSON.stringify({ username: username, password: password })
+    });
+    var data = await res.json();
+    if (!res.ok) { err.textContent = data.error || 'Login failed'; return; }
+    if (!data.roles.includes('ops') && !data.roles.includes('mobile') && !data.roles.includes('mgmt')) {
+      err.textContent = 'This account does not have access to Warehouse Lookup.';
+      return;
+    }
+    CRED_TOKEN = data.token;
+    CRED_USER = { displayName: data.displayName, roles: data.roles, userId: data.userId };
+    localStorage.setItem('xf_cred_token', data.token);
+    localStorage.setItem('xf_cred_user', JSON.stringify(CRED_USER));
+    var ps = document.getElementById('pin-screen');
+    ps.style.transition = 'opacity .3s'; ps.style.opacity = '0';
+    setTimeout(function() {
+      ps.style.display = 'none'; ps.style.visibility = 'hidden';
+      var whApp = document.getElementById('wh-app'); if (whApp) whApp.style.display = 'flex';
+      if (typeof loadAllSheets === 'function') loadAllSheets();
+      if (typeof silentLoadSaved === 'function' && CRED_USER.roles.includes('mgmt')) silentLoadSaved();
+    }, 300);
+  } catch(e) {
+    err.textContent = 'Connection error — try again.';
+  } finally {
+    btn.disabled = false; btn.textContent = 'Sign In';
   }
-  tryAuth('ops', 'mobile');
-}
+};
 
 // ── Main app globals ──
 const SHEET_NAMES = { master:'Master_List', products:'Products', awd:'AWD_Master', upc:'UPC', oos:'Out_of_Stock' };
@@ -2071,7 +2046,7 @@ async function refreshAllSheets() {
 // The full loadAllSheets() on launch already populated everything; this just
 // refreshes the two sheets used by client-side search so case counts stay fresh.
 setInterval(function() {
-  if (!XF_SESSION) return; // don't run if not signed in
+  if (!CRED_TOKEN) return; // don't run if not signed in
   if (_whFetchLock) return; // skip if warehouse fetch already in progress
   _whFetchLock = true;
   Promise.all([
