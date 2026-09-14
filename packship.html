@@ -249,13 +249,6 @@ body {
 .ps-info-box { background:var(--accent-bg); border:1px solid #aec6fb; border-radius:10px; padding:12px 16px; font-size:13px; color:var(--accent); margin-bottom:16px; line-height:1.5; }
 .ps-warn-box { background:var(--orange-bg); border:1px solid #fcd34d; border-radius:10px; padding:12px 16px; font-size:13px; color:var(--orange); margin-bottom:16px; line-height:1.5; }
 
-/* ── Switch Packer modal ── */
-#ps-switch-modal { position:fixed; inset:0; background:rgba(0,0,0,0.4); z-index:600; display:none; align-items:center; justify-content:center; padding:24px; }
-#ps-switch-modal.show { display:flex; }
-.ps-switch-card { background:var(--bg2); border:1px solid var(--border); border-radius:16px; padding:28px 28px 24px; max-width:340px; width:100%; box-shadow:0 20px 60px rgba(0,0,0,.18); }
-.ps-switch-title { font-size:17px; font-weight:700; color:var(--text); margin-bottom:6px; }
-.ps-switch-sub { font-size:13px; color:var(--text2); margin-bottom:18px; line-height:1.5; }
-
 /* ── Mgmt PIN gate (inline in protected panels) ── */
 .ps-mgmt-gate { background:var(--bg2); border:1px solid var(--border); border-radius:12px; padding:36px 28px; max-width:380px; margin:40px auto 0; box-shadow:var(--shadow2); text-align:center; }
 .ps-mgmt-gate-icon { font-size:32px; margin-bottom:12px; }
@@ -481,13 +474,6 @@ body {
 #packship-app .ps-info-box { background:var(--accent-bg); border:1px solid #aec6fb; border-radius:10px; padding:12px 16px; font-size:13px; color:var(--accent); margin-bottom:16px; line-height:1.5; }
 #packship-app .ps-warn-box { background:var(--orange-bg); border:1px solid #fcd34d; border-radius:10px; padding:12px 16px; font-size:13px; color:var(--orange); margin-bottom:16px; line-height:1.5; }
 
-/* ── Switch Packer modal ── */
-#ps-switch-modal { position:fixed; inset:0; background:rgba(0,0,0,0.4); z-index:600; display:none; align-items:center; justify-content:center; padding:24px; }
-#ps-switch-modal.show { display:flex; }
-#packship-app .ps-switch-card { background:var(--bg2); border:1px solid var(--border); border-radius:16px; padding:28px 28px 24px; max-width:340px; width:100%; box-shadow:0 20px 60px rgba(0,0,0,.18); }
-#packship-app .ps-switch-title { font-size:17px; font-weight:700; color:var(--text); margin-bottom:6px; }
-#packship-app .ps-switch-sub { font-size:13px; color:var(--text2); margin-bottom:18px; line-height:1.5; }
-
 /* ── Mgmt PIN gate (inline in protected panels) ── */
 #packship-app .ps-mgmt-gate { background:var(--bg2); border:1px solid var(--border); border-radius:12px; padding:36px 28px; max-width:380px; margin:40px auto 0; box-shadow:var(--shadow2); text-align:center; }
 #packship-app .ps-mgmt-gate-icon { font-size:32px; margin-bottom:12px; }
@@ -507,7 +493,7 @@ body {
 }
 </style>
 
-<!-- Sign-in overlay (initials / mgmt PIN) -->
+<!-- Sign-in overlay (real credentials) -->
 <div id="ps-signin-overlay" style="position:fixed;inset:0;background:linear-gradient(135deg,#eef2fd 0%,#f4f5f7 60%,#e8f7ee 100%);display:flex;align-items:center;justify-content:center;padding:24px;z-index:300;">
   <div class="ps-pin-card">
     <div class="brand-row">
@@ -517,30 +503,20 @@ body {
         <div class="brand-sub">Shipment Scan Verification · v3.0</div>
       </div>
     </div>
-    <div id="ps-form-ops">
-      <div class="ps-pin-h">Pack &amp; Ship</div>
-      <div class="ps-pin-sub">Enter your initials to start scanning. Each scan saves directly to the sheet.</div>
-      <div class="ps-field-wrap">
-        <label class="ps-field-lbl">Your Initials</label>
-        <input class="ps-field-input" id="ps-inp-initials" type="text" maxlength="4" placeholder="e.g. JR" autocomplete="off" style="text-transform:uppercase">
-      </div>
-      <button class="ps-btn-primary" id="ps-btn-ops-signin" onclick="psSignInOps()">Start Scanning</button>
-      <div class="ps-pin-err" id="ps-err-ops"></div>
-      <div class="ps-pin-divider"></div>
-      <div class="ps-mgmt-toggle">Manager? <a onclick="psShowForm('mgmt')">Sign in for review &amp; reports</a></div>
+    <div class="ps-pin-h">Sign In</div>
+    <div class="ps-pin-sub">Enter your XFitting credentials to continue.</div>
+    <div class="ps-field-wrap">
+      <label class="ps-field-lbl">Username</label>
+      <input class="ps-field-input" id="ps-cred-username" type="text" autocomplete="username">
     </div>
-    <div id="ps-form-mgmt" style="display:none">
-      <div class="ps-pin-h">Management Sign-In</div>
-      <div class="ps-pin-sub">View gap reports and track shipments.</div>
-      <div class="ps-field-wrap">
-        <label class="ps-field-lbl">Management PIN</label>
-        <input class="ps-field-input" id="ps-inp-mgmt-pin" type="password" inputmode="numeric" maxlength="6" placeholder="••••" autocomplete="off">
-      </div>
-      <button class="ps-btn-primary" id="ps-btn-mgmt-signin" onclick="psSignInMgmt()">Sign In — Review Mode</button>
-      <div class="ps-pin-err" id="ps-err-mgmt"></div>
-      <div class="ps-pin-divider"></div>
-      <div class="ps-mgmt-toggle">Packer? <a onclick="psShowForm('ops')">Sign in as Warehouse</a></div>
+    <div class="ps-field-wrap">
+      <label class="ps-field-lbl">Password</label>
+      <input class="ps-field-input" id="ps-cred-password" type="password" autocomplete="current-password">
     </div>
+    <button class="ps-btn-primary" id="ps-cred-login-btn" onclick="psCredLogin()">Sign In</button>
+    <div class="ps-pin-err" id="ps-cred-err"></div>
+    <div class="ps-pin-divider"></div>
+    <a href="index.html" style="display:block;text-align:center;font-size:12.5px;color:var(--text3);text-decoration:none;">← Back to Launcher</a>
   </div>
 </div>
 
@@ -559,7 +535,6 @@ body {
       <div class="ps-dot"></div>
       <span id="ps-session-label">—</span>
     </div>
-    <button class="ps-btn-sm" id="ps-switch-btn" onclick="psSwitchPacker()" style="display:none">Switch Packer</button>
     <button class="ps-btn-sm" onclick="psSignOut()">Sign Out</button>
   </div>
 </div>
@@ -770,9 +745,10 @@ body {
     <div id="ps-status-gate" class="ps-mgmt-gate">
       <div class="ps-mgmt-gate-icon">🔒</div>
       <div class="ps-mgmt-gate-title">Management Access Required</div>
-      <div class="ps-mgmt-gate-sub">Enter the management PIN to access the Status Checker.</div>
-      <div class="ps-mgmt-gate-row">
-        <input class="ps-mgmt-gate-input" id="ps-status-pin" type="password" inputmode="numeric" maxlength="6" placeholder="••••">
+      <div class="ps-mgmt-gate-sub">Sign in with a management account to access the Status Checker.</div>
+      <div class="ps-mgmt-gate-row" style="flex-direction:column;gap:8px">
+        <input class="ps-mgmt-gate-input" id="ps-status-username" type="text" placeholder="Username" autocomplete="username">
+        <input class="ps-mgmt-gate-input" id="ps-status-password" type="password" placeholder="Password" autocomplete="current-password">
         <button class="ps-btn-go" onclick="psUnlockTab('status')">Unlock</button>
       </div>
       <div class="ps-pin-err" id="ps-status-pin-err" style="margin-top:10px"></div>
@@ -837,9 +813,10 @@ body {
     <div id="ps-gaps-gate" class="ps-mgmt-gate">
       <div class="ps-mgmt-gate-icon">🔒</div>
       <div class="ps-mgmt-gate-title">Management Access Required</div>
-      <div class="ps-mgmt-gate-sub">Enter the management PIN to view the Gap Report.</div>
-      <div class="ps-mgmt-gate-row">
-        <input class="ps-mgmt-gate-input" id="ps-gaps-pin" type="password" inputmode="numeric" maxlength="6" placeholder="••••">
+      <div class="ps-mgmt-gate-sub">Sign in with a management account to view the Gap Report.</div>
+      <div class="ps-mgmt-gate-row" style="flex-direction:column;gap:8px">
+        <input class="ps-mgmt-gate-input" id="ps-gaps-username" type="text" placeholder="Username" autocomplete="username">
+        <input class="ps-mgmt-gate-input" id="ps-gaps-password" type="password" placeholder="Password" autocomplete="current-password">
         <button class="ps-btn-go" onclick="psUnlockTab('gaps')">Unlock</button>
       </div>
       <div class="ps-pin-err" id="ps-gaps-pin-err" style="margin-top:10px"></div>
@@ -885,9 +862,10 @@ body {
     <div id="ps-undelivered-gate" class="ps-mgmt-gate">
       <div class="ps-mgmt-gate-icon">🔒</div>
       <div class="ps-mgmt-gate-title">Management Access Required</div>
-      <div class="ps-mgmt-gate-sub">Enter the management PIN to view the Undelivered Report.</div>
-      <div class="ps-mgmt-gate-row">
-        <input class="ps-mgmt-gate-input" id="ps-undelivered-pin" type="password" inputmode="numeric" maxlength="6" placeholder="••••">
+      <div class="ps-mgmt-gate-sub">Sign in with a management account to view the Undelivered Report.</div>
+      <div class="ps-mgmt-gate-row" style="flex-direction:column;gap:8px">
+        <input class="ps-mgmt-gate-input" id="ps-undelivered-username" type="text" placeholder="Username" autocomplete="username">
+        <input class="ps-mgmt-gate-input" id="ps-undelivered-password" type="password" placeholder="Password" autocomplete="current-password">
         <button class="ps-btn-go" id="ps-undelivered-pin-btn" onclick="psUnlockTab('undelivered')">Unlock</button>
       </div>
       <div class="ps-pin-err" id="ps-undelivered-pin-err" style="margin-top:10px"></div>
@@ -932,9 +910,10 @@ body {
     <div id="ps-vsync-gate" class="ps-mgmt-gate">
       <div class="ps-mgmt-gate-icon">🔒</div>
       <div class="ps-mgmt-gate-title">Management Access Required</div>
-      <div class="ps-mgmt-gate-sub">Enter the management PIN to access Veeqo Sync.</div>
-      <div class="ps-mgmt-gate-row">
-        <input class="ps-mgmt-gate-input" id="ps-vsync-pin" type="password" inputmode="numeric" maxlength="6" placeholder="••••">
+      <div class="ps-mgmt-gate-sub">Sign in with a management account to access Veeqo Sync.</div>
+      <div class="ps-mgmt-gate-row" style="flex-direction:column;gap:8px">
+        <input class="ps-mgmt-gate-input" id="ps-vsync-username" type="text" placeholder="Username" autocomplete="username">
+        <input class="ps-mgmt-gate-input" id="ps-vsync-password" type="password" placeholder="Password" autocomplete="current-password">
         <button class="ps-btn-primary" style="width:auto;padding:11px 20px" onclick="psUnlockTab('vsync')">Unlock</button>
       </div>
       <div id="ps-vsync-pin-err" style="color:var(--red);font-size:13px;margin-top:8px;font-family:var(--mono);text-align:center;min-height:18px"></div>
@@ -1011,9 +990,10 @@ body {
     <div id="ps-valerts-gate" class="ps-mgmt-gate">
       <div class="ps-mgmt-gate-icon">🔒</div>
       <div class="ps-mgmt-gate-title">Management Access Required</div>
-      <div class="ps-mgmt-gate-sub">Enter the management PIN to view Tracking Alerts.</div>
-      <div class="ps-mgmt-gate-row">
-        <input class="ps-mgmt-gate-input" id="ps-valerts-pin" type="password" inputmode="numeric" maxlength="6" placeholder="••••">
+      <div class="ps-mgmt-gate-sub">Sign in with a management account to view Tracking Alerts.</div>
+      <div class="ps-mgmt-gate-row" style="flex-direction:column;gap:8px">
+        <input class="ps-mgmt-gate-input" id="ps-valerts-username" type="text" placeholder="Username" autocomplete="username">
+        <input class="ps-mgmt-gate-input" id="ps-valerts-password" type="password" placeholder="Password" autocomplete="current-password">
         <button class="ps-btn-primary" style="width:auto;padding:11px 20px" onclick="psUnlockTab('valerts')">Unlock</button>
       </div>
       <div id="ps-valerts-pin-err" style="color:var(--red);font-size:13px;margin-top:8px;font-family:var(--mono);text-align:center;min-height:18px"></div>
@@ -1098,23 +1078,6 @@ body {
 
 </div><!-- /ps-content -->
 
-<!-- Switch Packer modal -->
-<div id="ps-switch-modal">
-  <div class="ps-switch-card">
-    <div class="ps-switch-title">Switch Packer</div>
-    <div class="ps-switch-sub">Enter the new packer's initials. All future scans will be tagged with these initials. No sign-out needed.</div>
-    <div class="ps-field-wrap">
-      <label class="ps-field-lbl">New Initials</label>
-      <input class="ps-field-input" id="ps-switch-initials" type="text" maxlength="4" placeholder="e.g. MK" autocomplete="off" style="text-transform:uppercase">
-    </div>
-    <div style="display:flex;gap:8px;margin-top:4px">
-      <button class="ps-btn-primary" onclick="psConfirmSwitch()" style="flex:1">Switch</button>
-      <button class="ps-btn-sm" onclick="psCloseSwitchModal()" style="flex:0 0 auto;padding:13px 18px">Cancel</button>
-    </div>
-    <div class="ps-pin-err" id="ps-switch-err"></div>
-  </div>
-</div>
-
 
 </body>
 <script>
@@ -1143,12 +1106,11 @@ function showToast(msg) {
 // ── Authenticated fetch ──────────────────────────────────────────────────
 async function wFetch(url, opts) {
   opts = opts || {};
-  var token = typeof psToken !== 'undefined' ? psToken : '';
   opts.headers = Object.assign({}, opts.headers || {}, {
-    'X-Session-Token': token
+    'X-Cred-Token': psCredToken || ''
   });
   var r = await fetch(url, opts);
-  if (r.status === 401) {
+  if (r.status === 401 || r.status === 403) {
     if (typeof psSignOut === 'function') psSignOut();
     throw new Error('Unauthorized');
   }
@@ -1158,13 +1120,13 @@ async function wFetch(url, opts) {
 // ── Pack & Ship App ──────────────────────────────────────────────────────
 
 // PS_WORKER = defined at top of file
-var PS_PIN_MOBILE = '2589';
-var PS_PIN_MGMT   = '6523';
 var PS_IGNORED_FBA = ['amazon channel fba'];
 
 // State
-var psToken      = sessionStorage.getItem('ps_token') || null;
-var psRole       = sessionStorage.getItem('ps_role') || null;   // 'mobile' | 'mgmt'
+var psCredToken  = localStorage.getItem('xf_cred_token') || null;
+var psCredUser   = null;
+try { psCredUser = JSON.parse(localStorage.getItem('xf_cred_user') || 'null'); } catch(e) {}
+var psRole       = null;   // 'mobile' | 'mgmt' — derived from real roles after login
 var psInitials   = '';
 var psTodayScans = [];
 var psManifest   = [];
@@ -1173,12 +1135,14 @@ var psGapScanWithoutManifest = [];
 var psScanFilter = 'all';
 var psGapFilter  = 'all';
 var psBatchClosed = { ALL: null };
-// Restore initials from session
-if (!psInitials) psInitials = sessionStorage.getItem('ps_initials') || '';
 
 // Called by main app launchApp('packship')
 window.psOnLaunch = function() {
-  // Show overlay every time app opens (fresh sign-in)
+  // Deliberately always shows the sign-in overlay on open, not restored
+  // from a cached token - this is a genuinely shared device between
+  // shifts/workers, so every open should be a real, fresh identity check
+  // rather than silently continuing as whoever last signed in (possibly
+  // on a different app entirely, via the shared credential token).
   document.getElementById('ps-signin-overlay').style.display = 'flex';
   document.getElementById('ps-tb-date').textContent = new Date().toLocaleDateString('en-US', { weekday:'short', month:'short', day:'numeric' });
   // Wire up events only once
@@ -1189,79 +1153,48 @@ window.psOnLaunch = function() {
 };
 
 // ── Auth ──────────────────────────────────────────────
-window.psShowForm = function(which) {
-  document.getElementById('ps-form-ops').style.display  = which === 'ops'  ? 'block' : 'none';
-  document.getElementById('ps-form-mgmt').style.display = which === 'mgmt' ? 'block' : 'none';
-};
-
-window.psSignInOps = async function() {
-  var initials = document.getElementById('ps-inp-initials').value.trim().toUpperCase();
-  var err = document.getElementById('ps-err-ops');
-  var btn = document.getElementById('ps-btn-ops-signin');
-  if (!initials) { err.textContent = 'Enter your initials first.'; return; }
-  btn.disabled = true; btn.textContent = 'Starting…';
-  try {
-    var res  = await fetch(PS_WORKER + '/auth', {
-      method: 'POST', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ pin: PS_PIN_MOBILE, pin_type: 'mobile' })
-    });
-    var data = await res.json();
-    if (!data.token) throw new Error(data.error || 'Auth failed');
-    psToken    = data.token;
-    psRole     = 'mobile';
-    psInitials = initials;
-    sessionStorage.setItem('ps_token', psToken);
-    sessionStorage.setItem('ps_role', psRole);
-    sessionStorage.setItem('ps_initials', psInitials);
-    err.textContent = '';
-    _psLaunchInner();
-  } catch(e) {
-    err.textContent = 'Connection error: ' + e.message;
-  } finally {
-    btn.disabled = false; btn.textContent = 'Start Scanning';
-  }
-};
-
-window.psSignInMgmt = async function() {
-  var pin = document.getElementById('ps-inp-mgmt-pin').value.trim();
-  var err = document.getElementById('ps-err-mgmt');
-  var btn = document.getElementById('ps-btn-mgmt-signin');
+window.psCredLogin = async function() {
+  var username = document.getElementById('ps-cred-username').value.trim();
+  var password = document.getElementById('ps-cred-password').value;
+  var err = document.getElementById('ps-cred-err');
+  var btn = document.getElementById('ps-cred-login-btn');
+  err.textContent = '';
+  if (!username || !password) { err.textContent = 'Enter your username and password.'; return; }
   btn.disabled = true; btn.textContent = 'Signing in…';
   try {
-    var res  = await fetch(PS_WORKER + '/auth', {
+    var res = await fetch(PS_WORKER + '/auth/login', {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ pin: pin, pin_type: 'mgmt' })
+      body: JSON.stringify({ username: username, password: password })
     });
     var data = await res.json();
-    if (!data.token) throw new Error(data.error || 'Incorrect PIN');
-    psToken    = data.token;
-    psRole     = 'mgmt';
-    psInitials = 'MGR';
-    sessionStorage.setItem('ps_token', psToken);
-    sessionStorage.setItem('ps_role', psRole);
-    sessionStorage.setItem('ps_initials', psInitials);
-    err.textContent = '';
+    if (!res.ok) { err.textContent = data.error || 'Login failed'; return; }
+    if (!data.roles.includes('mobile') && !data.roles.includes('ops') && !data.roles.includes('mgmt')) {
+      err.textContent = 'This account does not have access to Pack & Ship.';
+      return;
+    }
+    psCredToken = data.token;
+    psCredUser  = { displayName: data.displayName, roles: data.roles, userId: data.userId };
+    psRole      = data.roles.includes('mgmt') ? 'mgmt' : 'mobile';
+    psInitials  = data.displayName;
+    localStorage.setItem('xf_cred_token', data.token);
+    localStorage.setItem('xf_cred_user', JSON.stringify(psCredUser));
     _psLaunchInner();
   } catch(e) {
-    err.textContent = 'Sign-in error: ' + e.message;
+    err.textContent = 'Connection error — try again.';
   } finally {
-    btn.disabled = false; btn.textContent = 'Sign In — Review Mode';
+    btn.disabled = false; btn.textContent = 'Sign In';
   }
 };
 
 function _psLaunchInner() {
   document.getElementById('ps-signin-overlay').style.display = 'none';
-  document.getElementById('ps-session-label').textContent = psRole === 'mgmt' ? 'Manager' : psInitials;
-  var switchBtn = document.getElementById('ps-switch-btn');
+  document.getElementById('ps-session-label').textContent = psRole === 'mgmt' ? 'Manager (' + psInitials + ')' : psInitials;
   if (psRole === 'mgmt') {
-    if (switchBtn) switchBtn.style.display = 'none';
     // Gap report always available for managers — show tab and reconcile bar
     var gapTab = document.getElementById('ps-tab-gaps');
     if (gapTab) gapTab.style.display = 'flex';
     var recBar = document.getElementById('ps-reconcile-bar');
     if (recBar) recBar.style.display = 'flex';
-  } else {
-    if (switchBtn) switchBtn.style.display = 'inline-block';
   }
   var saved = localStorage.getItem('ps_batch_' + psTodayKey());
   if (saved) psBatchClosed = JSON.parse(saved);
@@ -1277,7 +1210,7 @@ var _psLastDateKey = null; // set on first interval tick after psTodayKey is def
 setInterval(function() {
   if (!_psLastDateKey) { _psLastDateKey = psTodayKey(); return; }
   var nowKey = psTodayKey();
-  if (nowKey !== _psLastDateKey && psToken) {
+  if (nowKey !== _psLastDateKey && psCredToken) {
     _psLastDateKey = nowKey;
     // New day — reset batch state and reload data
     psBatchClosed = { ALL: null };
@@ -1293,18 +1226,19 @@ setInterval(function() {
   }
 }, 60000);
 
-window.psSignOut = function() {
-  psToken = null; psRole = null; psInitials = '';
+window.psSignOut = async function() {
+  var oldToken = psCredToken;
+  psCredToken = null; psCredUser = null; psRole = null; psInitials = '';
   psTodayScans = []; psManifest = []; psGapRows = [];
   psBatchClosed = { ALL: null };
-  sessionStorage.removeItem('ps_token');
-  sessionStorage.removeItem('ps_role');
-  sessionStorage.removeItem('ps_initials');
-  document.getElementById('ps-inp-initials').value  = '';
-  document.getElementById('ps-inp-mgmt-pin').value  = '';
-  document.getElementById('ps-err-ops').textContent  = '';
-  document.getElementById('ps-err-mgmt').textContent = '';
-  psShowForm('ops');
+  localStorage.removeItem('xf_cred_token');
+  localStorage.removeItem('xf_cred_user');
+  if (oldToken) {
+    try { await fetch(PS_WORKER + '/auth/logout', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ token: oldToken }) }); } catch(e){}
+  }
+  document.getElementById('ps-cred-username').value = '';
+  document.getElementById('ps-cred-password').value = '';
+  document.getElementById('ps-cred-err').textContent = '';
   document.getElementById('ps-signin-overlay').style.display = 'flex';
 };
 
@@ -1324,10 +1258,10 @@ window.psFocusScan = function() {
 // ── Load scans ────────────────────────────────────────
 // Load today's manifest from sheet on launch — keeps gap report live without CSV upload
 window.psLoadManifestFromSheet = async function() {
-  if (!psToken) return;
+  if (!psCredToken) return;
   try {
     var res  = await fetch(PS_WORKER + '/ship/manifest?date=' + psTodayKey(), {
-      headers: { 'X-Session-Token': psToken }
+      headers: { 'X-Cred-Token': psCredToken }
     });
     var data = await res.json();
     if (data.manifest && data.manifest.length > 0) {
@@ -1345,12 +1279,12 @@ window.psLoadManifestFromSheet = async function() {
 };
 
 window.psLoadScans = async function() {
-  // Removed "if (!psToken) return" guard — psPlLoadToday (which works
+  // Removed "if (!psCredToken) return" guard — psPlLoadToday (which works
   // cross-device) has no such guard and uses the same auth pattern.
-  // If psToken is genuinely invalid the fetch will fail and be caught below.
+  // If psCredToken is genuinely invalid the fetch will fail and be caught below.
   try {
     var res  = await fetch(PS_WORKER + '/ship/scans?date=' + psTodayKey(), {
-      headers: { 'X-Session-Token': psToken }
+      headers: { 'X-Cred-Token': psCredToken }
     });
     var data = await res.json();
     if (data.scans) {
@@ -1391,7 +1325,7 @@ function _psProcessScan(raw) {
 
   fetch(PS_WORKER + '/ship/scan', {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json', 'X-Session-Token': psToken },
+    headers: { 'Content-Type': 'application/json', 'X-Cred-Token': psCredToken },
     body: JSON.stringify({ tracking: tracking, initials: psInitials })
   }).then(function(r){ return r.json(); }).then(function(data) {
     if (data.duplicate) {
@@ -1498,7 +1432,7 @@ function _psUpdateBatchBar() {
 window.psCloseBatch = async function() {
   // If batch already closed, still run Veeqo sync in case it didn't fire last time
   if (psBatchClosed.ALL) {
-    if (psToken) psAutoVeeqoSync();
+    if (psCredToken) psAutoVeeqoSync();
     return;
   }
   var ts = new Date().toISOString();
@@ -1507,7 +1441,7 @@ window.psCloseBatch = async function() {
   _psUpdateBatchBar();
   _psToast('Batch closed at ' + psFmtTime(ts));
   // Veeqo sync first — capture all shipped orders before marking batch closed
-  if (psToken) await psAutoVeeqoSync();
+  if (psCredToken) await psAutoVeeqoSync();
   // Reset print log display — it stays open 24/7 so clear it at batch close
   // The sheet data persists; this just clears the in-memory list so the new
   // day starts fresh visually. psPlLoadToday() will auto-reload for the new day.
@@ -1522,7 +1456,7 @@ window.psCloseBatch = async function() {
     try {
       var bcRes = await fetch(PS_WORKER + '/ship/batch-close', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json', 'X-Session-Token': psToken },
+        headers: { 'Content-Type': 'application/json', 'X-Cred-Token': psCredToken },
         body: JSON.stringify({ carrier: carrier, initials: psInitials })
       });
       if (!bcRes.ok) { _psToast('Batch close error for ' + carrier + ' (' + bcRes.status + ')', 'error'); }
@@ -1534,7 +1468,7 @@ async function psAutoVeeqoSync() {
   try {
     var vr = await fetch(PS_WORKER + '/veeqo/sync-manifest', {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json', 'X-Session-Token': psToken }
+      headers: { 'Content-Type': 'application/json', 'X-Cred-Token': psCredToken }
     });
     var vdata = await vr.json();
     if (vdata.ok) {
@@ -1606,7 +1540,7 @@ function psPlProcessScan(raw) {
   // Send to worker (non-blocking)
   fetch(PS_WORKER + '/ship/print-log', {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json', 'X-Session-Token': psToken },
+    headers: { 'Content-Type': 'application/json', 'X-Cred-Token': psCredToken },
     body: JSON.stringify({ tracking: clean })
   }).catch(function(e) { console.error('[PL] log error:', e); });
 }
@@ -1664,7 +1598,7 @@ function psPlRenderList() {
 window.psPlLoadToday = async function() {
   try {
     var res  = await fetch(PS_WORKER + '/ship/print-log?date=' + psTodayKey(), {
-      headers: { 'X-Session-Token': psToken }
+      headers: { 'X-Cred-Token': psCredToken }
     });
     var data = await res.json();
     if (data.ok && data.scans) {
@@ -1762,10 +1696,10 @@ function _psParseCSV(text) {
   psRenderProgress();
 
   // Write to Manifest_Log sheet immediately — worker overwrites today's rows if they exist
-  if (psToken && rows.length > 0) {
+  if (psCredToken && rows.length > 0) {
     fetch(PS_WORKER + '/ship/manifest', {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json', 'X-Session-Token': psToken },
+      headers: { 'Content-Type': 'application/json', 'X-Cred-Token': psCredToken },
       body: JSON.stringify({ rows: rows, uploadedBy: psInitials })
     }).then(function(r){ return r.json(); }).then(function(d){
       if (d.ok) {
@@ -1814,7 +1748,7 @@ window.psRunReconcile = async function() {
     // which returns every manifested row with its real status already
     // computed server-side - genuinely full picture, not just problems.
     var res  = await fetch(PS_WORKER + '/ship/label-gap-report?date=' + psTodayKey(), {
-      headers: { 'X-Session-Token': psToken }
+      headers: { 'X-Cred-Token': psCredToken }
     });
     var data = await res.json();
     if (!data.ok) throw new Error(data.error || 'Gap report failed');
@@ -1842,7 +1776,7 @@ window.psDoLookup = async function() {
   document.getElementById('ps-lr-sub').textContent    = '';
   document.getElementById('ps-lr-grid').innerHTML     = '';
   try {
-    var r    = await fetch(PS_WORKER + '/ship/lookup?tracking=' + encodeURIComponent(q), { headers: { 'X-Session-Token': psToken } });
+    var r    = await fetch(PS_WORKER + '/ship/lookup?tracking=' + encodeURIComponent(q), { headers: { 'X-Cred-Token': psCredToken } });
     var data = await r.json();
     var vmap = {
       scanned_in_manifest:     { icon:'✅', text:'Scanned — In Manifest',       cls:'ok',   sub:'Scan record found and matched in the Veeqo manifest.' },
@@ -1889,7 +1823,7 @@ window.psOrderLookup = async function() {
 
   try {
     var r = await fetch(PS_WORKER + '/ship/order-lookup?q=' + encodeURIComponent(q) + '&days=' + days, {
-      headers: { 'X-Session-Token': psToken }
+      headers: { 'X-Cred-Token': psCredToken }
     });
     var d = await r.json();
     if (!d.ok) { status.textContent = 'Error: ' + (d.error || 'Unknown error'); return; }
@@ -1996,7 +1930,7 @@ window.psFilterGaps = function(f, btn) {
 window.psLoadPrintLog = async function() {
   try {
     var res  = await fetch(PS_WORKER + '/ship/print-log?date=' + psTodayKey(), {
-      headers: { 'X-Session-Token': psToken }
+      headers: { 'X-Cred-Token': psCredToken }
     });
     var data = await res.json();
     if (data.ok && data.scans) { psPrintLog = data.scans; }
@@ -2124,7 +2058,7 @@ window.psRunUndeliveredReport = async function() {
     while (hasMore && page <= MAX_PAGES) {
       progressEl.textContent = 'Checking page ' + page + '… (' + allRaw.length + ' undelivered, ' + totalFailedLookups + ' lookup failures so far)';
       var res = await fetch(PS_WORKER + '/veeqo/undelivered-report?page=' + page + '&days=' + days + '&excludeRecentDays=' + excludeRecentDays, {
-        headers: { 'X-Session-Token': psToken }
+        headers: { 'X-Cred-Token': psCredToken }
       });
       var data = await res.json();
       if (!data.ok) throw new Error(data.error || 'Report failed on page ' + page);
@@ -2373,25 +2307,16 @@ function _psWireEvents() {
   });
 
   document.getElementById('ps-lookup-input').addEventListener('keydown', function(e){ if (e.key === 'Enter') psDoLookup(); });
-  document.getElementById('ps-inp-initials').addEventListener('keydown', function(e){ if (e.key === 'Enter') psSignInOps(); });
-  document.getElementById('ps-inp-initials').addEventListener('input',   function(e){ e.target.value = e.target.value.toUpperCase(); });
-  document.getElementById('ps-inp-mgmt-pin').addEventListener('keydown', function(e){ if (e.key === 'Enter') psSignInMgmt(); });
+  document.getElementById('ps-cred-username').addEventListener('keydown', function(e){ if (e.key === 'Enter') document.getElementById('ps-cred-password').focus(); });
+  document.getElementById('ps-cred-password').addEventListener('keydown', function(e){ if (e.key === 'Enter') psCredLogin(); });
 
-  // Switch Packer modal
-  var swInp = document.getElementById('ps-switch-initials');
-  if (swInp) {
-    swInp.addEventListener('keydown', function(e){ if (e.key === 'Enter') psConfirmSwitch(); });
-    swInp.addEventListener('input',   function(e){ e.target.value = e.target.value.toUpperCase(); });
-  }
   // PIN gate Enter keys
-  var stPin = document.getElementById('ps-status-pin');
-  if (stPin) stPin.addEventListener('keydown', function(e){ if (e.key === 'Enter') psUnlockTab('status'); });
-  var gpPin = document.getElementById('ps-gaps-pin');
-  if (gpPin) gpPin.addEventListener('keydown', function(e){ if (e.key === 'Enter') psUnlockTab('gaps'); });
-  var vsPin = document.getElementById('ps-vsync-pin');
-  if (vsPin) vsPin.addEventListener('keydown', function(e){ if (e.key === 'Enter') psUnlockTab('vsync'); });
-  var vaPin = document.getElementById('ps-valerts-pin');
-  if (vaPin) vaPin.addEventListener('keydown', function(e){ if (e.key === 'Enter') psUnlockTab('valerts'); });
+  ['status','gaps','vsync','valerts'].forEach(function(tab) {
+    var u = document.getElementById('ps-' + tab + '-username');
+    var p = document.getElementById('ps-' + tab + '-password');
+    if (u) u.addEventListener('keydown', function(e){ if (e.key === 'Enter') { var pw = document.getElementById('ps-' + tab + '-password'); if (pw) pw.focus(); } });
+    if (p) p.addEventListener('keydown', function(e){ if (e.key === 'Enter') psUnlockTab(tab); });
+  });
 
   // Status drop zone drag-and-drop
   var sdz = document.getElementById('ps-status-drop-zone');
@@ -2415,42 +2340,37 @@ function _psWireEvents() {
 var _psUnlockedTabs = {};
 
 window.psUnlockTab = async function(tab) {
-  var pinEl  = document.getElementById('ps-' + tab + '-pin');
+  var userEl = document.getElementById('ps-' + tab + '-username');
+  var passEl = document.getElementById('ps-' + tab + '-password');
   var errEl  = document.getElementById('ps-' + tab + '-pin-err');
   var btnEl  = document.getElementById('ps-' + tab + '-pin-btn');
-  var pin    = pinEl ? pinEl.value.trim() : '';
-  if (!pin) { if (errEl) errEl.textContent = 'Enter the management PIN.'; return; }
+  var username = userEl ? userEl.value.trim() : '';
+  var password = passEl ? passEl.value : '';
+  if (!username || !password) { if (errEl) errEl.textContent = 'Enter a management username and password.'; return; }
 
-  // BUGFIX: this used to just compare `pin` against a hardcoded client-side
-  // constant (PS_PIN_MGMT) and, if it matched, flip a local boolean to show
-  // the panel — it never actually called /auth to upgrade the session.
-  // For anyone signed in via initials-only (a 'mobile'-level psToken —
-  // the normal floor-worker flow), that left psToken at 'mobile' even
-  // after "unlocking" a gated tab, so every mgmt-only API call afterward
-  // (Veeqo labels/alerts, gap reconcile, status upload) got a 401 even
-  // though the UI showed the content as unlocked.
-  // Fix: actually call /auth with pin_type:'mgmt', same as psSignInMgmt,
-  // and only unlock once the server confirms the PIN and issues a real
-  // mgmt-level token.
   if (btnEl) { btnEl.disabled = true; btnEl.textContent = 'Checking…'; }
   if (errEl) errEl.textContent = '';
   try {
-    var res  = await fetch(PS_WORKER + '/auth', {
+    var res  = await fetch(PS_WORKER + '/auth/login', {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ pin: pin, pin_type: 'mgmt' })
+      body: JSON.stringify({ username: username, password: password })
     });
     var data = await res.json();
-    if (!data.token) {
-      if (errEl) errEl.textContent = 'Incorrect PIN.';
+    if (!res.ok) { if (errEl) errEl.textContent = data.error || 'Login failed'; return; }
+    if (!data.roles.includes('mgmt')) {
+      if (errEl) errEl.textContent = 'This account does not have management access.';
       return;
     }
-    // Upgrade the session to the real mgmt token — this is what was missing
-    psToken = data.token;
-    psRole  = 'mgmt';
-    sessionStorage.setItem('ps_token', psToken);
-    sessionStorage.setItem('ps_role', psRole);
+    // Upgrade the session to the real mgmt-level credential
+    psCredToken = data.token;
+    psCredUser  = { displayName: data.displayName, roles: data.roles, userId: data.userId };
+    psRole      = 'mgmt';
+    psInitials  = data.displayName;
+    localStorage.setItem('xf_cred_token', data.token);
+    localStorage.setItem('xf_cred_user', JSON.stringify(psCredUser));
+    document.getElementById('ps-session-label').textContent = 'Manager (' + psInitials + ')';
   } catch(e) {
-    if (errEl) errEl.textContent = 'Connection error: ' + e.message;
+    if (errEl) errEl.textContent = 'Connection error — try again.';
     return;
   } finally {
     if (btnEl) { btnEl.disabled = false; btnEl.textContent = 'Unlock'; }
@@ -2462,7 +2382,8 @@ window.psUnlockTab = async function(tab) {
   var content = document.getElementById('ps-' + tab + '-content');
   if (gate)    gate.style.display    = 'none';
   if (content) content.style.display = 'block';
-  if (pinEl)   pinEl.value           = '';
+  if (userEl)  userEl.value          = '';
+  if (passEl)  passEl.value          = '';
   if (errEl)   errEl.textContent     = '';
   // For gaps tab — if gap data already exists, render it
   if (tab === 'gaps')    psRunReconcile();
@@ -2505,28 +2426,6 @@ window.psSwitchTab = function(name) {
 };
 
 // ── Switch Packer ─────────────────────────────────────────────────────────────
-window.psSwitchPacker = function() {
-  document.getElementById('ps-switch-initials').value = '';
-  document.getElementById('ps-switch-err').textContent = '';
-  document.getElementById('ps-switch-modal').classList.add('show');
-  setTimeout(function(){ document.getElementById('ps-switch-initials').focus(); }, 100);
-};
-
-window.psCloseSwitchModal = function() {
-  document.getElementById('ps-switch-modal').classList.remove('show');
-};
-
-window.psConfirmSwitch = function() {
-  var newInitials = document.getElementById('ps-switch-initials').value.trim().toUpperCase();
-  if (!newInitials) { document.getElementById('ps-switch-err').textContent = 'Enter initials.'; return; }
-  var prev = psInitials;
-  psInitials = newInitials;
-  document.getElementById('ps-session-label').textContent = newInitials;
-  psCloseSwitchModal();
-  _psToast('Packer switched from ' + prev + ' to ' + newInitials);
-  psFocusScan();
-};
-
 // ── Status Checker ────────────────────────────────────────────────────────────
 var PS_STATUS_MAP = {
   'created':             { label:'Never Shipped',       color:'red',    icon:'🔴', priority:1, flag:true  },
@@ -2601,7 +2500,7 @@ function _psParseStatusCSV(text) {
   _psRenderStatusList();
   document.getElementById('ps-status-stat-bar').style.display = 'grid';
   document.getElementById('ps-status-results').style.display  = 'block';
-  if (psToken) _psUploadStatusToSheet(rows);
+  if (psCredToken) _psUploadStatusToSheet(rows);
 }
 
 function _psRenderStatusStats() {
@@ -2696,14 +2595,14 @@ window.psExportStatusFlags = function() {
 };
 
 function _psUploadStatusToSheet(rows) {
-  if (!psToken || !rows.length) return;
+  if (!psCredToken || !rows.length) return;
   var sheetRows = [['Date','Tracking','Status','StatusLabel','Carrier','OrderNum','Channel','Service','ShipDate','ShipToState']];
   var today = psTodayKey();
   rows.forEach(function(r){
     sheetRows.push([today,r.tracking,r.status,r.classified.label,r.carrier,r.orderNum,r.channel,r.service,r.shipDate,r.shipToState]);
   });
   fetch(PS_WORKER + '/ship/status-upload', {
-    method:'POST', headers:{'Content-Type':'application/json','X-Session-Token':psToken},
+    method:'POST', headers:{'Content-Type':'application/json','X-Cred-Token':psCredToken},
     body: JSON.stringify({ rows: sheetRows })
   }).then(function(r){ return r.json(); }).then(function(d){
     if (d.ok) _psToast('Status data saved to sheet');
@@ -2725,7 +2624,7 @@ async function psVeeqoCheckStatus() {
   if (!pill || !text) return;
   pill.textContent = 'Checking…';
   try {
-    var res  = await fetch(PS_WORKER + '/veeqo/status', { headers: { 'X-Session-Token': psToken || '' } });
+    var res  = await fetch(PS_WORKER + '/veeqo/status', { headers: { 'X-Cred-Token': psCredToken || '' } });
     var data = await res.json();
     if (data.connected) {
       pill.textContent = '✓ Connected';
@@ -2743,9 +2642,9 @@ async function psVeeqoCheckStatus() {
 }
 
 async function psVeeqoLoadLabels() {
-  if (!psToken) return;
+  if (!psCredToken) return;
   try {
-    var res  = await fetch(PS_WORKER + '/veeqo/labels-today', { headers: { 'X-Session-Token': psToken } });
+    var res  = await fetch(PS_WORKER + '/veeqo/labels-today', { headers: { 'X-Cred-Token': psCredToken } });
     var data = await res.json();
     if (typeof data.total !== 'undefined') {
       var bar = document.getElementById('ps-vlabels-bar');
@@ -2785,7 +2684,7 @@ window.psArchiveLogs = async function() {
   try {
     var res  = await fetch(PS_WORKER + '/ship/archive-logs', {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json', 'X-Session-Token': psToken }
+      headers: { 'Content-Type': 'application/json', 'X-Cred-Token': psCredToken }
     });
     var data = await res.json();
     if (data.ok) {
@@ -2814,10 +2713,10 @@ function psCheckArchiveReminder() {
 window.psVeeqoSyncManifest = async function() {
   var btn = document.getElementById('ps-vsync-manifest-btn');
   var out = document.getElementById('ps-vsync-manifest-result');
-  if (!psToken) { _psToast('Management session required', 'error'); return; }
+  if (!psCredToken) { _psToast('Management session required', 'error'); return; }
   btn.disabled = true; btn.textContent = '⏳ Syncing…'; out.textContent = '';
   try {
-    var r    = await fetch(PS_WORKER + '/veeqo/sync-manifest', { method:'POST', headers:{ 'X-Session-Token': psToken } });
+    var r    = await fetch(PS_WORKER + '/veeqo/sync-manifest', { method:'POST', headers:{ 'X-Cred-Token': psCredToken } });
     var data = await r.json();
     if (data.ok) {
       var added = data.added !== undefined ? data.added : (data.synced || 0);
@@ -2839,12 +2738,12 @@ window.psVeeqoSyncManifest = async function() {
 window.psVeeqoSyncTracking = async function() {
   var btn = document.getElementById('ps-vsync-tracking-btn');
   var out = document.getElementById('ps-vsync-tracking-result');
-  if (!psToken) { _psToast('Management session required', 'error'); return; }
+  if (!psCredToken) { _psToast('Management session required', 'error'); return; }
   btn.disabled = true; btn.textContent = '⏳ Checking…'; out.textContent = '';
   try {
     var r    = await fetch(PS_WORKER + '/veeqo/sync-tracking', {
       method: 'POST',
-      headers: { 'X-Session-Token': psToken, 'Content-Type': 'application/json' },
+      headers: { 'X-Cred-Token': psCredToken, 'Content-Type': 'application/json' },
       body: JSON.stringify({}),
     });
     var data = await r.json();
@@ -2879,11 +2778,11 @@ var psVaActiveFilter = 'ALL';
 function psVaOnUnlock() { psVaLoad(); }
 
 async function psVaLoad() {
-  if (!psToken) return;
+  if (!psCredToken) return;
   var list = document.getElementById('ps-va-list');
   if (list) list.innerHTML = '<div style="text-align:center;padding:40px;color:var(--text3);font-size:13px">Loading tracking status…</div>';
   try {
-    var res  = await fetch(PS_WORKER + '/veeqo/alerts?days=30', { headers: { 'X-Session-Token': psToken } });
+    var res  = await fetch(PS_WORKER + '/veeqo/alerts?days=30', { headers: { 'X-Cred-Token': psCredToken } });
     var data = await res.json();
     // New API: data.claims (30+ days not delivered) + data.allNonDelivered
     // Use allNonDelivered for full list, claims for the claims-ready subset
