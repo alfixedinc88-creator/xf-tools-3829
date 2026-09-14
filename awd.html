@@ -751,6 +751,18 @@ input[type=checkbox]{width:15px;height:15px;cursor:pointer;accent-color:var(--bl
   </style>
 </head>
 <body>
+<div id="awd-cred-gate" style="display:none;min-height:100vh;align-items:center;justify-content:center;background:var(--bg, #f4f5f7);font-family:var(--sans, 'DM Sans', sans-serif);">
+  <div style="max-width:360px;width:100%;padding:32px 28px;background:var(--bg2, #fff);border:1px solid var(--border, #dfe2e7);border-radius:14px;box-shadow:0 1px 3px rgba(20,25,40,.08);text-align:center;margin:0 20px;">
+    <div style="font-size:32px;margin-bottom:8px;">📦</div>
+    <h1 style="font-size:18px;margin:0 0 4px;">AWD Planner</h1>
+    <p style="font-size:13px;color:var(--text3, #7a8496);margin:0 0 20px;">Sign in with your XFitting credentials</p>
+    <input id="awd-cred-username" type="text" placeholder="Username" autocomplete="username" style="width:100%;padding:11px 14px;border:1.5px solid var(--border, #dfe2e7);border-radius:9px;font-family:inherit;font-size:14px;margin-bottom:10px;box-sizing:border-box;">
+    <input id="awd-cred-password" type="password" placeholder="Password" autocomplete="current-password" style="width:100%;padding:11px 14px;border:1.5px solid var(--border, #dfe2e7);border-radius:9px;font-family:inherit;font-size:14px;margin-bottom:14px;box-sizing:border-box;">
+    <button id="awd-cred-login-btn" onclick="awdCredLogin()" style="width:100%;padding:12px;border:none;border-radius:9px;background:var(--accent, #1a56db);color:#fff;font-family:inherit;font-weight:600;font-size:14px;cursor:pointer;">Sign In</button>
+    <div id="awd-cred-err" style="color:var(--red, #c52a1a);font-size:12.5px;margin-top:10px;min-height:16px;"></div>
+  </div>
+</div>
+
 <div id="awd-app">
 
 <div id="awd-app-inner">
@@ -1043,8 +1055,9 @@ input[type=checkbox]{width:15px;height:15px;cursor:pointer;accent-color:var(--bl
 <script>
 const WORKER_URL = 'https://xfitting-lookup.alfixedinc88.workers.dev';
 const W = WORKER_URL;
-var XF_SESSION = sessionStorage.getItem('xf_session') || null;
-var XF_ROLE    = sessionStorage.getItem('xf_role')    || null;
+var AWD_CRED_TOKEN = localStorage.getItem('xf_cred_token') || null;
+var AWD_CRED_USER  = null;
+try { AWD_CRED_USER = JSON.parse(localStorage.getItem('xf_cred_user') || 'null'); } catch(e) {}
 var pinEntry   = '';
 const DB = { master:[], products:[], awdMaster:[], upc:[], oos:[] };
 function backToLauncher() { window.location.href = 'index.html'; }
@@ -1065,22 +1078,69 @@ function showToast(msg) {
 async function wFetch(url, opts) {
   opts = opts || {};
   opts.headers = Object.assign({}, opts.headers || {}, {
-    'X-Session-Token': XF_SESSION || ''
+    'X-Cred-Token': AWD_CRED_TOKEN || ''
   });
   var r = await fetch(url, opts);
-  if (r.status === 401) {
-    XF_SESSION = null;
-    XF_ROLE = null;
-    sessionStorage.removeItem('xf_session');
-    sessionStorage.removeItem('xf_role');
-    var ps = document.getElementById('pin-screen');
-    if (ps) { ps.style.display = 'flex'; ps.style.opacity = '1'; ps.style.visibility = 'visible'; }
-    var la = document.getElementById('launcher');
-    if (la) la.style.display = 'none';
+  if (r.status === 401 || r.status === 403) {
+    AWD_CRED_TOKEN = null;
+    localStorage.removeItem('xf_cred_token');
+    localStorage.removeItem('xf_cred_user');
+    awdShowLoginGate();
     throw new Error('Unauthorized');
   }
   return r;
 }
+
+// ── Credential-based auth gate ──────────────────────────────────────────
+function awdShowLoginGate() {
+  var gate = document.getElementById('awd-cred-gate');
+  var app  = document.getElementById('awd-app');
+  if (gate) gate.style.display = 'flex';
+  if (app)  app.style.display  = 'none';
+}
+function awdHideLoginGate() {
+  var gate = document.getElementById('awd-cred-gate');
+  if (gate) gate.style.display = 'none';
+}
+
+window.awdCredLogin = async function() {
+  var username = document.getElementById('awd-cred-username').value.trim();
+  var password = document.getElementById('awd-cred-password').value;
+  var btn = document.getElementById('awd-cred-login-btn');
+  var err = document.getElementById('awd-cred-err');
+  err.textContent = '';
+  if (!username || !password) { err.textContent = 'Enter your username and password.'; return; }
+  btn.disabled = true; btn.textContent = 'Signing in…';
+  try {
+    var res = await fetch(WORKER_URL + '/auth/login', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ username: username, password: password })
+    });
+    var data = await res.json();
+    if (!res.ok) { err.textContent = data.error || 'Login failed'; return; }
+    if (!data.roles.includes('ops') && !data.roles.includes('mgmt')) {
+      err.textContent = 'This account does not have access to AWD Planner.';
+      return;
+    }
+    AWD_CRED_TOKEN = data.token;
+    AWD_CRED_USER = { displayName: data.displayName, roles: data.roles, userId: data.userId };
+    localStorage.setItem('xf_cred_token', data.token);
+    localStorage.setItem('xf_cred_user', JSON.stringify(AWD_CRED_USER));
+    awdHideLoginGate();
+    awdStandaloneInit();
+  } catch(e) {
+    err.textContent = 'Connection error — try again.';
+  } finally {
+    btn.disabled = false; btn.textContent = 'Sign In';
+  }
+};
+
+window.awdCredLogout = async function() {
+  try { await fetch(WORKER_URL + '/auth/logout', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ token: AWD_CRED_TOKEN }) }); } catch(e){}
+  localStorage.removeItem('xf_cred_token');
+  localStorage.removeItem('xf_cred_user');
+  window.location.href = 'index.html';
+};
 
 // ═══ AWD PLANNER JS ═══
 
@@ -5138,16 +5198,26 @@ function awdStandaloneInit() {
   if (typeof loadReportsFromSheet === 'function' && !S.loaded)         loadReportsFromSheet();
 }
 
-(function() {
-  if (XF_SESSION) { awdStandaloneInit(); return; }
-  fetch(WORKER_URL + '/auth', {
-    method:'POST', headers:{'Content-Type':'application/json'},
-    body: JSON.stringify({pin:'1314', pin_type:'ops'})
-  }).then(function(r){ return r.json(); })
-  .then(function(d){
-    if(d.token){ XF_SESSION=d.token; XF_ROLE='ops'; sessionStorage.setItem('xf_session',d.token); sessionStorage.setItem('xf_role','ops'); }
-    awdStandaloneInit();
-  }).catch(function(){ awdStandaloneInit(); });
+(async function() {
+  if (!AWD_CRED_TOKEN || !AWD_CRED_USER || !(AWD_CRED_USER.roles.includes('ops') || AWD_CRED_USER.roles.includes('mgmt'))) {
+    localStorage.removeItem('xf_cred_token'); localStorage.removeItem('xf_cred_user');
+    AWD_CRED_TOKEN = null;
+    awdShowLoginGate();
+    return;
+  }
+  // Verify the cached token still actually works before trusting it
+  try {
+    var res = await fetch(WORKER_URL + '?sheet=Products', { headers: { 'X-Cred-Token': AWD_CRED_TOKEN } });
+    if (res.status === 401 || res.status === 403) {
+      localStorage.removeItem('xf_cred_token'); localStorage.removeItem('xf_cred_user');
+      AWD_CRED_TOKEN = null;
+      awdShowLoginGate();
+    } else {
+      awdStandaloneInit();
+    }
+  } catch(e) {
+    awdShowLoginGate();
+  }
 })();
 </script>
 </body>
