@@ -330,32 +330,16 @@ body { margin:0; padding:0; font-family:'DM Sans',sans-serif; }
 
 </style>
 <!-- PIN SCREEN -->
-<div id="rpr-pin-screen" style="display:none;">
+<div id="rpr-pin-screen" style="display:none;align-items:center;justify-content:center;min-height:100vh;">
   <div class="pin-card">
     <div class="pin-logo">XF · REPRICER</div>
-    <div class="pin-title">Management Access</div>
-    <div class="pin-sub">Enter your PIN to continue</div>
-    <div class="pin-dots" id="rpr-pin-dots">
-      <div class="pin-dot"></div>
-      <div class="pin-dot"></div>
-      <div class="pin-dot"></div>
-      <div class="pin-dot"></div>
-    </div>
-    <div class="pin-pad">
-      <button class="pin-btn" onclick="rprPinPress('1')">1</button>
-      <button class="pin-btn" onclick="rprPinPress('2')">2</button>
-      <button class="pin-btn" onclick="rprPinPress('3')">3</button>
-      <button class="pin-btn" onclick="rprPinPress('4')">4</button>
-      <button class="pin-btn" onclick="rprPinPress('5')">5</button>
-      <button class="pin-btn" onclick="rprPinPress('6')">6</button>
-      <button class="pin-btn" onclick="rprPinPress('7')">7</button>
-      <button class="pin-btn" onclick="rprPinPress('8')">8</button>
-      <button class="pin-btn" onclick="rprPinPress('9')">9</button>
-      <button class="pin-btn" onclick="rprPinPress('')"></button>
-      <button class="pin-btn" onclick="rprPinPress('0')">0</button>
-      <button class="pin-btn del" onclick="rprPinDel()">⌫</button>
-    </div>
+    <div class="pin-title">Sign In</div>
+    <div class="pin-sub">Enter your XFitting credentials</div>
+    <input id="rpr-cred-username" type="text" placeholder="Username" autocomplete="username" style="width:100%;padding:11px 14px;border:1.5px solid #dfe2e7;border-radius:9px;font-family:inherit;font-size:14px;margin:16px 0 10px;box-sizing:border-box;">
+    <input id="rpr-cred-password" type="password" placeholder="Password" autocomplete="current-password" style="width:100%;padding:11px 14px;border:1.5px solid #dfe2e7;border-radius:9px;font-family:inherit;font-size:14px;margin-bottom:14px;box-sizing:border-box;">
+    <button id="rpr-cred-login-btn" onclick="rprCredLogin()" style="width:100%;padding:12px;border:none;border-radius:9px;background:#1a56db;color:#fff;font-family:inherit;font-weight:600;font-size:14px;cursor:pointer;">Sign In</button>
     <div class="pin-error" id="rpr-pin-error"></div>
+    <a href="index.html" style="display:inline-block;margin-top:14px;font-size:12.5px;color:#7a8496;text-decoration:none;">← Back to Launcher</a>
   </div>
 </div>
 
@@ -1118,7 +1102,9 @@ const CFG = {
 // ════════════════════════════════════════════
 // STATE
 // ════════════════════════════════════════════
-let rprToken  = null;
+let rprCredToken = localStorage.getItem('xf_cred_token') || null;
+let rprCredUser  = null;
+try { rprCredUser = JSON.parse(localStorage.getItem('xf_cred_user') || 'null'); } catch(e) {}
 let rprAllListings   = [];
 let allResearch   = [];
 let allDecisions  = [];
@@ -1132,62 +1118,50 @@ let priceAlertsData = [];
 // ════════════════════════════════════════════
 
 
-let rprPinEntry = '';
 let rprPinLevel = 'ops';
-function rprPinPress(d) {
-  if (!d || rprPinEntry.length >= 4) return;
-  rprPinEntry += d;
-  rprDots();
-  if (rprPinEntry.length === 4) setTimeout(rprCheckPin, 120);
-}
-function rprPinDel() {
-  rprPinEntry = rprPinEntry.slice(0, -1);
-  rprDots();
-  document.getElementById('rpr-pin-error').textContent = '';
-}
-function rprDots() {
-  document.querySelectorAll('#rpr-pin-screen .pin-dot').forEach((d, i) => {
-    d.classList.toggle('filled', i < rprPinEntry.length);
-    d.classList.remove('error');
-  });
-}
-async function rprCheckPin() {
+
+window.rprCredLogin = async function() {
+  var username = document.getElementById('rpr-cred-username').value.trim();
+  var password = document.getElementById('rpr-cred-password').value;
+  var btn = document.getElementById('rpr-cred-login-btn');
+  var err = document.getElementById('rpr-pin-error');
+  err.textContent = '';
+  if (!username || !password) { err.textContent = 'Enter your username and password.'; return; }
+  btn.disabled = true; btn.textContent = 'Signing in…';
   try {
-    // Try mgmt first, fall back to ops — ops can access SKU Lookup only
-    let r = await fetch(CFG.WORKER + '/auth', {
+    var res = await fetch(CFG.WORKER + '/auth/login', {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ pin: rprPinEntry, pin_type: 'mgmt' })
+      body: JSON.stringify({ username: username, password: password })
     });
-    let data = await r.json();
-    if (!r.ok || !data.token) {
-      // Try ops pin
-      r = await fetch(CFG.WORKER + '/auth', {
-        method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ pin: rprPinEntry, pin_type: 'ops' })
-      });
-      data = await r.json();
+    var data = await res.json();
+    if (!res.ok) { err.textContent = data.error || 'Login failed'; return; }
+    if (!data.roles.includes('ops') && !data.roles.includes('mgmt')) {
+      err.textContent = 'This account does not have access to the Repricer.';
+      return;
     }
-    if (r.ok && data.token) {
-      rprToken = data.token;
-      rprPinLevel = data.pin_level || 'ops';
-      sessionStorage.setItem('rpr_token', data.token);
-      sessionStorage.setItem('rpr_level', rprPinLevel);
-      document.getElementById('rpr-pin-screen').style.display = 'none';
-      document.getElementById('rpr-app').style.display = 'flex';
-      rprApplyPinLevel();
-      loadEbayTierCache().then(rprLoad);
-    } else {
-      rprPinFail();
-    }
-  } catch(e) { rprPinFail(); }
-}
-function rprPinFail() {
-  document.querySelectorAll('#rpr-pin-screen .pin-dot').forEach(d => d.classList.add('error'));
-  const dots = document.getElementById('rpr-pin-dots');
-  dots.classList.add('shake');
-  document.getElementById('rpr-pin-error').textContent = 'Incorrect PIN';
-  setTimeout(() => { dots.classList.remove('shake'); rprPinEntry = ''; rprDots(); }, 600);
-}
+    rprCredToken = data.token;
+    rprCredUser = { displayName: data.displayName, roles: data.roles, userId: data.userId };
+    rprPinLevel = data.roles.includes('mgmt') ? 'mgmt' : 'ops';
+    localStorage.setItem('xf_cred_token', data.token);
+    localStorage.setItem('xf_cred_user', JSON.stringify(rprCredUser));
+    document.getElementById('rpr-pin-screen').style.display = 'none';
+    document.getElementById('rpr-app').style.display = 'flex';
+    rprApplyPinLevel();
+    loadEbayTierCache().then(rprLoad);
+  } catch(e) {
+    err.textContent = 'Connection error — try again.';
+  } finally {
+    btn.disabled = false; btn.textContent = 'Sign In';
+  }
+};
+
+window.rprCredLogout = async function() {
+  try { await fetch(CFG.WORKER + '/auth/logout', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ token: rprCredToken }) }); } catch(e){}
+  localStorage.removeItem('xf_cred_token');
+  localStorage.removeItem('xf_cred_user');
+  rprCredToken = null;
+  window.location.href = 'index.html';
+};
 
 // ════════════════════════════════════════════
 // NAVIGATION
@@ -1563,21 +1537,21 @@ function clearSkuLookup() {
 function rprBack() {
   document.getElementById('repricer-root').style.display = 'none';
   window.location.href = 'index.html';
-  rprToken = null;
 }
 
 // ════════════════════════════════════════════
-// API — X-Session-Token (matches worker v7)
+// API — X-Cred-Token
 // ════════════════════════════════════════════
 async function apiCall(path, opts = {}) {
-  const headers = { 'Content-Type': 'application/json', 'X-Session-Token': rprToken, ...opts.headers };
+  const headers = { 'Content-Type': 'application/json', 'X-Cred-Token': rprCredToken, ...opts.headers };
   const r = await fetch(CFG.WORKER + path, { ...opts, headers });
-  if (r.status === 401) {
-    rprToken = null;
-    document.getElementById('rpr-app').classList.remove('visible');
-    document.getElementById('rpr-pin-screen').classList.remove('hidden');
-    rprPinEntry = ''; rprDots();
-    throw new Error('Session expired — please re-enter PIN');
+  if (r.status === 401 || r.status === 403) {
+    rprCredToken = null;
+    localStorage.removeItem('xf_cred_token');
+    localStorage.removeItem('xf_cred_user');
+    document.getElementById('rpr-app').style.display = 'none';
+    document.getElementById('rpr-pin-screen').style.display = 'flex';
+    throw new Error('Session expired — please sign in again');
   }
   if (!r.ok) {
     const err = await r.json().catch(() => ({}));
@@ -5147,19 +5121,28 @@ function awdHandleScan(raw) {
 </script>
 <script>
 // ── Repricer Standalone Boot ──────────────────────────────────────────────
-(function() {
-  var savedToken = sessionStorage.getItem('rpr_token');
-  var savedLevel = sessionStorage.getItem('rpr_level');
-  if (savedToken) {
-    // Restore session - skip PIN screen
-    rprToken = savedToken;
-    rprPinLevel = savedLevel || 'price';
-    document.getElementById('rpr-app').style.display = 'flex';
-    if (typeof rprApplyPinLevel === 'function') rprApplyPinLevel();
-    if (typeof loadEbayTierCache === 'function' && typeof rprLoad === 'function') { loadEbayTierCache().then(rprLoad); }
-    else if (typeof rprLoad === 'function') { rprLoad(); }
-  } else {
-    // Show PIN screen
+(async function() {
+  if (!rprCredToken || !rprCredUser || !(rprCredUser.roles.includes('ops') || rprCredUser.roles.includes('mgmt'))) {
+    localStorage.removeItem('xf_cred_token'); localStorage.removeItem('xf_cred_user');
+    rprCredToken = null;
+    document.getElementById('rpr-pin-screen').style.display = 'flex';
+    return;
+  }
+  rprPinLevel = rprCredUser.roles.includes('mgmt') ? 'mgmt' : 'ops';
+  // Verify the cached token still actually works before trusting it
+  try {
+    var res = await fetch(CFG.WORKER + '/repricer/sku-master', { headers: { 'X-Cred-Token': rprCredToken } });
+    if (res.status === 401 || res.status === 403) {
+      localStorage.removeItem('xf_cred_token'); localStorage.removeItem('xf_cred_user');
+      rprCredToken = null;
+      document.getElementById('rpr-pin-screen').style.display = 'flex';
+    } else {
+      document.getElementById('rpr-app').style.display = 'flex';
+      if (typeof rprApplyPinLevel === 'function') rprApplyPinLevel();
+      if (typeof loadEbayTierCache === 'function' && typeof rprLoad === 'function') { loadEbayTierCache().then(rprLoad); }
+      else if (typeof rprLoad === 'function') { rprLoad(); }
+    }
+  } catch(e) {
     document.getElementById('rpr-pin-screen').style.display = 'flex';
   }
 })();
