@@ -1631,21 +1631,7 @@ input[type=checkbox]{width:15px;height:15px;cursor:pointer;accent-color:var(--bl
 .sales-ai-send:disabled { background: var(--bg4); color: var(--text3); cursor: not-allowed; }
 .sales-ai-empty { text-align: center; color: var(--text3); font-size: 12px; font-family: 'IBM Plex Mono', monospace; padding: 20px; }
 
-/* MANAGEMENT PIN */
-.mgmt-dot { width: 14px; height: 14px; border-radius: 50%; background: var(--bg3); border: 2px solid var(--border2); transition: all .15s; }
-.mgmt-dot.filled { background: var(--accent); border-color: var(--accent); }
-.mgmt-key {
-  width: 60px; height: 60px;
-  border-radius: 12px;
-  background: var(--bg2);
-  border: 1.5px solid var(--border);
-  color: var(--text);
-  font-family: var(--mono);
-  font-size: 18px; font-weight: 500;
-  cursor: pointer; transition: all .1s;
-}
-.mgmt-key:hover { background: var(--bg3); border-color: var(--accent); color: var(--accent); }
-.mgmt-key:active { transform: scale(.94); }
+/* MANAGEMENT LOGIN */
 
 @keyframes fadeIn { from { opacity: 0; transform: translateY(12px); } to { opacity: 1; transform: translateY(0); } }
 
@@ -1695,21 +1681,6 @@ input[type=checkbox]{width:15px;height:15px;cursor:pointer;accent-color:var(--bl
   to   { transform: translateY(0);     opacity: 1; }
 }
 
-/* MANAGEMENT PIN */
-.mgmt-dot { width: 14px; height: 14px; border-radius: 50%; background: var(--bg3); border: 2px solid var(--border2); transition: all .15s; }
-.mgmt-dot.filled { background: var(--accent); border-color: var(--accent); }
-.mgmt-key {
-  width: 60px; height: 60px;
-  border-radius: 12px;
-  background: var(--bg2);
-  border: 1.5px solid var(--border);
-  color: var(--text);
-  font-family: var(--mono);
-  font-size: 18px; font-weight: 500;
-  cursor: pointer; transition: all .1s;
-}
-.mgmt-key:hover { background: var(--bg3); border-color: var(--accent); color: var(--accent); }
-.mgmt-key:active { transform: scale(.94); }
 *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
 body { display:flex; flex-direction:column; min-height:100vh; background:var(--bg); font-family:var(--sans); color:var(--text); }
 #dashboard-app { display:none; flex-direction:column; min-height:100vh; width:100%; }
@@ -1717,33 +1688,17 @@ body { display:flex; flex-direction:column; min-height:100vh; background:var(--b
 </head>
 <body>
 <div id="mgmt-pin-screen" style="display:none;position:fixed;inset:0;background:var(--bg);z-index:8000;align-items:center;justify-content:center;flex-direction:column">
-  <div style="text-align:center;animation:fadeIn .3s ease">
+  <div style="text-align:center;animation:fadeIn .3s ease;max-width:340px;width:100%;padding:0 20px">
     <div style="font-family:var(--mono);font-size:10px;letter-spacing:4px;color:var(--text3);text-transform:uppercase;margin-bottom:28px">
-      <span style="color:var(--accent)">XF</span>ITTING — Management Access
+      <span style="color:var(--accent)">XF</span>ITTING — Dashboard
     </div>
-    <div style="font-size:20px;font-weight:600;color:var(--text);margin-bottom:6px">Management PIN Required</div>
-    <div style="font-size:13px;color:var(--text2);margin-bottom:28px">This area is restricted to management</div>
-    <div style="display:flex;gap:12px;justify-content:center;margin-bottom:20px" id="mgmt-pd-row">
-      <div class="mgmt-dot" id="mgmt-pd0"></div>
-      <div class="mgmt-dot" id="mgmt-pd1"></div>
-      <div class="mgmt-dot" id="mgmt-pd2"></div>
-      <div class="mgmt-dot" id="mgmt-pd3"></div>
-    </div>
-    <div style="display:grid;grid-template-columns:repeat(3,60px);gap:10px;justify-content:center">
-      <button class="mgmt-key" onclick="mgmtPinKey('1')">1</button>
-      <button class="mgmt-key" onclick="mgmtPinKey('2')">2</button>
-      <button class="mgmt-key" onclick="mgmtPinKey('3')">3</button>
-      <button class="mgmt-key" onclick="mgmtPinKey('4')">4</button>
-      <button class="mgmt-key" onclick="mgmtPinKey('5')">5</button>
-      <button class="mgmt-key" onclick="mgmtPinKey('6')">6</button>
-      <button class="mgmt-key" onclick="mgmtPinKey('7')">7</button>
-      <button class="mgmt-key" onclick="mgmtPinKey('8')">8</button>
-      <button class="mgmt-key" onclick="mgmtPinKey('9')">9</button>
-      <button class="mgmt-key" onclick="mgmtPinDel()" style="font-size:12px;color:#8b90a8">DEL</button>
-      <button class="mgmt-key" onclick="mgmtPinKey('0')">0</button>
-      <button class="mgmt-key" onclick="mgmtPinCancel()" style="font-size:11px;color:#8b90a8">← Back</button>
-    </div>
-    <div id="mgmt-pin-error" style="color:var(--red);font-size:12px;margin-top:16px;font-family:var(--mono);opacity:0;transition:opacity .2s">Incorrect PIN</div>
+    <div style="font-size:20px;font-weight:600;color:var(--text);margin-bottom:6px">Management Access Required</div>
+    <div style="font-size:13px;color:var(--text2);margin-bottom:28px">Sign in with your XFitting credentials</div>
+    <input id="mgmt-cred-username" type="text" placeholder="Username" autocomplete="username" style="width:100%;padding:11px 14px;border:1.5px solid var(--border,#dfe2e7);border-radius:9px;font-family:inherit;font-size:14px;margin-bottom:10px;box-sizing:border-box">
+    <input id="mgmt-cred-password" type="password" placeholder="Password" autocomplete="current-password" style="width:100%;padding:11px 14px;border:1.5px solid var(--border,#dfe2e7);border-radius:9px;font-family:inherit;font-size:14px;margin-bottom:14px;box-sizing:border-box">
+    <button id="mgmt-cred-login-btn" onclick="mgmtCredLogin()" style="width:100%;padding:12px;border:none;border-radius:9px;background:var(--accent,#1a56db);color:#fff;font-family:inherit;font-weight:600;font-size:14px;cursor:pointer">Sign In</button>
+    <div id="mgmt-pin-error" style="color:var(--red);font-size:12px;margin-top:16px;font-family:var(--mono);min-height:16px">Incorrect PIN</div>
+    <a href="index.html" style="display:inline-block;margin-top:14px;font-size:12.5px;color:var(--text3);text-decoration:none">← Back to Launcher</a>
   </div>
 </div>
 
@@ -1944,10 +1899,9 @@ body { display:flex; flex-direction:column; min-height:100vh; background:var(--b
 <script>
 var WORKER_URL = 'https://xfitting-lookup.alfixedinc88.workers.dev';
 var W = WORKER_URL;
-var XF_SESSION = sessionStorage.getItem('xf_session') || null;
-var XF_ROLE    = sessionStorage.getItem('xf_role')    || null;
-var mgmtPinBuf = '';
-var _whFetchLock = false;
+var MGMT_CRED_TOKEN = localStorage.getItem('xf_cred_token') || null;
+var MGMT_CRED_USER  = null;
+try { MGMT_CRED_USER = JSON.parse(localStorage.getItem('xf_cred_user') || 'null'); } catch(e) {}
 var mgmtPinTarget = 'dashboard';
 function backToLauncher() { window.location.href = 'index.html'; }
 function launchApp(app)   { window.location.href = app + '.html'; }
@@ -1968,144 +1922,55 @@ function showToast(msg) {
 async function wFetch(url, opts) {
   opts = opts || {};
   opts.headers = Object.assign({}, opts.headers || {}, {
-    'X-Session-Token': XF_SESSION || ''
+    'X-Cred-Token': MGMT_CRED_TOKEN || ''
   });
   var r = await fetch(url, opts);
-  if (r.status === 401) {
-    XF_SESSION = null;
-    XF_ROLE = null;
-    sessionStorage.removeItem('xf_session');
-    sessionStorage.removeItem('xf_role');
-    var ps = document.getElementById('pin-screen');
+  if (r.status === 401 || r.status === 403) {
+    MGMT_CRED_TOKEN = null;
+    MGMT_CRED_USER = null;
+    localStorage.removeItem('xf_cred_token');
+    localStorage.removeItem('xf_cred_user');
+    var ps = document.getElementById('mgmt-pin-screen');
     if (ps) { ps.style.display = 'flex'; ps.style.opacity = '1'; ps.style.visibility = 'visible'; }
-    var la = document.getElementById('launcher');
-    if (la) la.style.display = 'none';
+    var da = document.getElementById('dashboard-app');
+    if (da) da.style.display = 'none';
     throw new Error('Unauthorized');
   }
   return r;
 }
 
-function mgmtPinKey(d) {
-  if (mgmtPinBuf.length >= 4) return;
-  mgmtPinBuf += d;
-  document.getElementById('mgmt-pd' + (mgmtPinBuf.length - 1)).classList.add('filled');
-  if (mgmtPinBuf.length === 4) {
-    setTimeout(function() {
-      var pinType = mgmtPinTarget === 'repricer' ? 'price' : 'mgmt';
-      fetch(WORKER_URL + '/auth', {
-        method: 'POST', headers: {'Content-Type':'application/json'},
-        body: JSON.stringify({ pin: mgmtPinBuf, pin_type: pinType })
-      }).then(function(r){ return r.json(); }).then(function(d){
-        if (d.token) {
-          XF_SESSION = d.token;
-          sessionStorage.setItem('xf_session', d.token);
-          document.getElementById('mgmt-pin-screen').style.display = 'none';
-          if (mgmtPinTarget === 'repricer') {
-            document.getElementById('launcher').style.display = 'none';
-            document.getElementById('repricer-root').style.display = 'block';
-            document.getElementById('rpr-pin-screen').style.display = 'none';
-            document.getElementById('rpr-app').style.display = 'flex';
-            rprToken = d.token;
-            rprPinLevel = 'mgmt';
-            if (typeof rprApplyPinLevel === 'function') rprApplyPinLevel();
-            if (typeof rprLoad === 'function') rprLoad();
-          } else {
-            salesLaunchApp(mgmtPinTarget);
-          }
-        } else {
-          document.getElementById('mgmt-pin-error').style.opacity = '1';
-          setTimeout(function() {
-            mgmtPinBuf = "";
-            ['mgmt-pd0','mgmt-pd1','mgmt-pd2','mgmt-pd3'].forEach(function(id){
-              document.getElementById(id).classList.remove('filled');
-            });
-            document.getElementById('mgmt-pin-error').style.opacity = '0';
-          }, 900);
-        }
-      }).catch(function(){
-        document.getElementById('mgmt-pin-error').style.opacity = '1';
-      });
-    }, 120);
+window.mgmtCredLogin = async function() {
+  var username = document.getElementById('mgmt-cred-username').value.trim();
+  var password = document.getElementById('mgmt-cred-password').value;
+  var btn = document.getElementById('mgmt-cred-login-btn');
+  var err = document.getElementById('mgmt-pin-error');
+  err.textContent = '';
+  if (!username || !password) { err.textContent = 'Enter your username and password.'; return; }
+  btn.disabled = true; btn.textContent = 'Signing in\u2026';
+  try {
+    var res = await fetch(WORKER_URL + '/auth/login', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ username: username, password: password })
+    });
+    var data = await res.json();
+    if (!res.ok) { err.textContent = data.error || 'Login failed'; return; }
+    if (!data.roles.includes('mgmt')) {
+      err.textContent = 'This account does not have access to the Dashboard.';
+      return;
+    }
+    MGMT_CRED_TOKEN = data.token;
+    MGMT_CRED_USER = { displayName: data.displayName, roles: data.roles, userId: data.userId };
+    localStorage.setItem('xf_cred_token', data.token);
+    localStorage.setItem('xf_cred_user', JSON.stringify(MGMT_CRED_USER));
+    document.getElementById('mgmt-pin-screen').style.display = 'none';
+    salesLaunchApp('dashboard');
+  } catch(e) {
+    err.textContent = 'Connection error \u2014 try again.';
+  } finally {
+    btn.disabled = false; btn.textContent = 'Sign In';
   }
-}
+};
 
-function mgmtPinDel() {
-  if (!mgmtPinBuf.length) return;
-  document.getElementById('mgmt-pd' + (mgmtPinBuf.length - 1)).classList.remove('filled');
-  mgmtPinBuf = mgmtPinBuf.slice(0, -1);
-}
-
-function mgmtPinCancel() {
-  document.getElementById('mgmt-pin-screen').style.display = 'none';
-  mgmtPinBuf = "";
-  mgmtPinTarget = null;
-}
-function launchMgmtApp(name) {
-  history.pushState({ xfApp: name }, '', '');
-  mgmtPinTarget = name;
-  mgmtPinBuf = "";
-  ['mgmt-pd0','mgmt-pd1','mgmt-pd2','mgmt-pd3'].forEach(function(id) {
-    document.getElementById(id).classList.remove('filled');
-  });
-  document.getElementById('mgmt-pin-error').style.opacity = '0';
-  document.getElementById('mgmt-pin-screen').style.display = 'flex';
-}
-
-function mgmtPinKey(d) {
-  if (mgmtPinBuf.length >= 4) return;
-  mgmtPinBuf += d;
-  document.getElementById('mgmt-pd' + (mgmtPinBuf.length - 1)).classList.add('filled');
-  if (mgmtPinBuf.length === 4) {
-    setTimeout(function() {
-      var pinType = mgmtPinTarget === 'repricer' ? 'price' : 'mgmt';
-      fetch(WORKER_URL + '/auth', {
-        method: 'POST', headers: {'Content-Type':'application/json'},
-        body: JSON.stringify({ pin: mgmtPinBuf, pin_type: pinType })
-      }).then(function(r){ return r.json(); }).then(function(d){
-        if (d.token) {
-          XF_SESSION = d.token;
-          sessionStorage.setItem('xf_session', d.token);
-          document.getElementById('mgmt-pin-screen').style.display = 'none';
-          if (mgmtPinTarget === 'repricer') {
-            document.getElementById('launcher').style.display = 'none';
-            document.getElementById('repricer-root').style.display = 'block';
-            document.getElementById('rpr-pin-screen').style.display = 'none';
-            document.getElementById('rpr-app').style.display = 'flex';
-            rprToken = d.token;
-            rprPinLevel = 'mgmt';
-            if (typeof rprApplyPinLevel === 'function') rprApplyPinLevel();
-            if (typeof rprLoad === 'function') rprLoad();
-          } else {
-            salesLaunchApp(mgmtPinTarget);
-          }
-        } else {
-          document.getElementById('mgmt-pin-error').style.opacity = '1';
-          setTimeout(function() {
-            mgmtPinBuf = "";
-            ['mgmt-pd0','mgmt-pd1','mgmt-pd2','mgmt-pd3'].forEach(function(id){
-              document.getElementById(id).classList.remove('filled');
-            });
-            document.getElementById('mgmt-pin-error').style.opacity = '0';
-          }, 900);
-        }
-      }).catch(function(){
-        document.getElementById('mgmt-pin-error').style.opacity = '1';
-      });
-    }, 120);
-  }
-}
-
-function mgmtPinDel() {
-  if (!mgmtPinBuf.length) return;
-  document.getElementById('mgmt-pd' + (mgmtPinBuf.length - 1)).classList.remove('filled');
-  mgmtPinBuf = mgmtPinBuf.slice(0, -1);
-}
-
-function mgmtPinCancel() {
-  document.getElementById('mgmt-pin-screen').style.display = 'none';
-  mgmtPinBuf = "";
-  mgmtPinTarget = null;
-}
 
 async function salesLaunchApp(name) {
   var _la=document.getElementById('launcher'); if(_la) _la.style.display='none';
@@ -4017,19 +3882,31 @@ function salesToast(msg, type) {
 
 
 
-(function() {
+(async function() {
   var pinScreen = document.getElementById('mgmt-pin-screen');
-  var savedToken = sessionStorage.getItem('xf_session');
-  var savedRole  = sessionStorage.getItem('xf_role');
-  if (savedToken && savedRole === 'mgmt') {
-    XF_SESSION = savedToken; XF_ROLE = 'mgmt';
-    if (pinScreen) pinScreen.style.display = 'none';
-    var appEl = document.getElementById('dashboard-app');
-    if (appEl) appEl.style.display = 'flex';
-    salesLaunchApp('dashboard');
+  if (!MGMT_CRED_TOKEN || !MGMT_CRED_USER || !MGMT_CRED_USER.roles.includes('mgmt')) {
+    localStorage.removeItem('xf_cred_token'); localStorage.removeItem('xf_cred_user');
+    MGMT_CRED_TOKEN = null;
+    if (pinScreen) pinScreen.style.display = 'flex';
     return;
   }
-  if (pinScreen) pinScreen.style.display = 'flex';
+  // Verify the cached token still actually works before trusting it
+  try {
+    var res = await fetch(WORKER_URL + '?sheet=Products', { headers: { 'X-Cred-Token': MGMT_CRED_TOKEN } });
+    if (res.status === 401 || res.status === 403) {
+      localStorage.removeItem('xf_cred_token'); localStorage.removeItem('xf_cred_user');
+      MGMT_CRED_TOKEN = null;
+      if (pinScreen) pinScreen.style.display = 'flex';
+      return;
+    }
+  } catch(e) {
+    if (pinScreen) pinScreen.style.display = 'flex';
+    return;
+  }
+  if (pinScreen) pinScreen.style.display = 'none';
+  var appEl = document.getElementById('dashboard-app');
+  if (appEl) appEl.style.display = 'flex';
+  salesLaunchApp('dashboard');
 })();
 </script>
 </body>
