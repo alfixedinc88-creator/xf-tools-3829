@@ -1396,6 +1396,15 @@ window.psCredLogin = async function() {
     psCredUser  = { displayName: data.displayName, roles: data.roles, userId: data.userId };
     psRole      = data.roles.includes('mgmt') ? 'mgmt' : 'mobile';
     psInitials  = data.displayName;
+    // A mgmt-role login already has full access - no separate step-up
+    // should ever be required for the 5 gated tabs (Status/Gaps/
+    // Undelivered/Veeqo Sync/Alerts). Without this, _psUnlockedTabs
+    // stayed empty for anyone who logged in as mgmt directly (it was
+    // only ever set by the step-up flow itself), so a real mgmt user
+    // still got asked to sign in again on those tabs.
+    if (psRole === 'mgmt') {
+      ['status','gaps','undelivered','vsync','valerts'].forEach(function(t){ _psUnlockedTabs[t] = true; });
+    }
     localStorage.setItem('xf_cred_token', data.token);
     localStorage.setItem('xf_cred_user', JSON.stringify(psCredUser));
     _psLaunchInner();
@@ -2096,7 +2105,7 @@ window.psRunReconcile = async function() {
   } catch(e) {
     _psToast('Error: ' + e.message, 'err');
   } finally {
-    btn.disabled = false; btn.textContent = 'Run Gap Analysis';
+    if (btn) { btn.disabled = false; btn.textContent = 'Run Gap Analysis'; }
   }
 };
 
@@ -2720,8 +2729,11 @@ window.psUnlockTab = async function(tab) {
     if (btnEl) { btnEl.disabled = false; btnEl.textContent = 'Unlock'; }
   }
 
-  // Correct — hide gate, show content
-  _psUnlockedTabs[tab] = true;
+  // Correct — hide gate, show content. Also unlock the other 4 gated tabs:
+  // the credentials just verified are real, account-level mgmt access, not
+  // scoped to this one tab, so there's no reason to make someone re-enter
+  // them again for each tab separately in the same session.
+  ['status','gaps','undelivered','vsync','valerts'].forEach(function(t){ _psUnlockedTabs[t] = true; });
   var gate    = document.getElementById('ps-' + tab + '-gate');
   var content = document.getElementById('ps-' + tab + '-content');
   if (gate)    gate.style.display    = 'none';
@@ -2742,14 +2754,25 @@ window.psSwitchTab = function(name) {
   document.querySelectorAll('.ps-panel').forEach(function(p){ p.classList.remove('active'); });
   document.getElementById('ps-tab-' + name).classList.add('active');
   document.getElementById('ps-panel-' + name).classList.add('active');
-  // Show gate if protected tab not yet unlocked this session
-  if ((name === 'status' || name === 'gaps' || name === 'undelivered' || name === 'vsync' || name === 'valerts') && !_psUnlockedTabs[name]) {
+  // Show gate if protected tab not yet unlocked this session, otherwise
+  // make sure the gate is actually hidden and content shown - this else
+  // branch was missing entirely, so an already-unlocked tab (e.g. a
+  // direct mgmt login, or any tab after stepping up via a different one)
+  // never got its gate explicitly hidden. The gate has no default
+  // display:none in its CSS, so it stayed visible regardless of the
+  // real unlocked state underneath it.
+  if (name === 'status' || name === 'gaps' || name === 'undelivered' || name === 'vsync' || name === 'valerts') {
     var gate    = document.getElementById('ps-' + name + '-gate');
     var content = document.getElementById('ps-' + name + '-content');
-    if (gate)    gate.style.display    = 'block';
-    if (content) content.style.display = 'none';
-    var pinEl = document.getElementById('ps-' + name + '-pin');
-    if (pinEl) setTimeout(function(){ pinEl.focus(); }, 100);
+    if (_psUnlockedTabs[name]) {
+      if (gate)    gate.style.display    = 'none';
+      if (content) content.style.display = 'block';
+    } else {
+      if (gate)    gate.style.display    = 'block';
+      if (content) content.style.display = 'none';
+      var pinEl = document.getElementById('ps-' + name + '-pin');
+      if (pinEl) setTimeout(function(){ pinEl.focus(); }, 100);
+    }
   }
   if (name === 'scan')        {
     psFocusScan();
