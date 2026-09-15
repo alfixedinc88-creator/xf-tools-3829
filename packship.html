@@ -818,7 +818,10 @@ body {
       <div class="ps-scan-box" onclick="psFocusScan()">
         <div class="ps-scan-box-header">
           <div class="ps-scan-icon">⌖</div>
-          <div class="ps-scan-title">Scan Tracking Barcode</div>
+          <div>
+            <div class="ps-scan-title">Scan Tracking Barcode</div>
+            <div class="ps-scan-hint">Fixed DS9308 scanner logs each scan automatically · field must stay focused</div>
+          </div>
         </div>
         <input class="ps-scan-input" id="ps-scan-input" type="text" placeholder="Click here to Scan" autocomplete="off" autocorrect="off" autocapitalize="off" spellcheck="false">
         <div class="ps-last-scan" id="ps-last-scan">
@@ -1484,6 +1487,7 @@ function _psLaunchInner() {
   psPlLoadToday(); // load print log on launch so all devices see today's data
   psLoadManifestFromSheet();  // load today's manifest so gap report is always ready
   psFocusScan();
+  psScanStartRefocus();
 }
 
 // ── Auto-detect new day — runs every 60s ──────────────────────────────
@@ -1535,6 +1539,28 @@ window.psFocusScan = function() {
   var inp = document.getElementById('ps-scan-input');
   if (inp) inp.focus();
 };
+
+// Auto-refocus every 2s while the Scan tab is on screen — same mechanism
+// as the Print Log tab's psPlStartRefocus() below, now that a fixed-mount
+// DS9308 sits at the Scan station too: it just types keystrokes into
+// whatever currently has focus, so if that field loses focus (a click
+// elsewhere on the page, a modal opening, anything) the scanner would
+// silently stop registering scans until someone clicks back into the box.
+// Self-clears the moment the Scan tab isn't the active panel anymore.
+var psScanRefocusInterval = null;
+function psScanStartRefocus() {
+  if (psScanRefocusInterval) return;
+  psScanRefocusInterval = setInterval(function() {
+    var panel = document.getElementById('ps-panel-scan');
+    if (panel && panel.classList.contains('active')) {
+      var inp = document.getElementById('ps-scan-input');
+      if (inp && document.activeElement !== inp) inp.focus();
+    } else {
+      clearInterval(psScanRefocusInterval);
+      psScanRefocusInterval = null;
+    }
+  }, 2000);
+}
 
 // ── Load scans ────────────────────────────────────────
 // Load today's manifest from sheet on launch — keeps gap report live without CSV upload
@@ -2921,6 +2947,7 @@ window.psSwitchTab = function(name) {
   }
   if (name === 'scan')        {
     psFocusScan();
+    psScanStartRefocus();
     var dinp = document.getElementById('ps-scan-summary-date');
     if (dinp) { var tk = psTodayKey(); dinp.value = tk; dinp.max = tk; }
     psScanSummaryDate = null;
