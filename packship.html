@@ -91,6 +91,10 @@ body {
 
 /* Content */
 .ps-content { flex:1; padding:20px; max-width:960px; margin:0 auto; width:100%; }
+/* Scan tab: shift the whole content column to the left instead of centering it,
+   and let it run wider than the other tabs (not capped at 960px) so the
+   product-card row has room for full-size photos without squeezing. */
+.ps-content:has(#ps-panel-scan.active) { margin-left:0; margin-right:auto; max-width:1300px; }
 .ps-panel { display:none; }
 .ps-panel.active { display:block; }
 
@@ -173,13 +177,24 @@ body {
    of a bigger order (up to PS_SCAN_MAX_ITEMS) flow into the full-width
    strip below the scan bar (.ps-scan-product-items-more) — both use the
    same card so a 20-item order still reads as one consistent grid. */
-.ps-scan-product-wrap { flex:1 1 380px; min-width:0; background:var(--bg2); border:1px solid var(--border); border-radius:12px; padding:14px 16px; box-shadow:var(--shadow); }
+.ps-scan-product-wrap { flex:1 1 960px; min-width:960px; background:var(--bg2); border:1px solid var(--border); border-radius:12px; padding:14px 16px; box-shadow:var(--shadow); }
 .ps-scan-product-tracking { font-family:var(--mono); font-size:12px; font-weight:700; letter-spacing:.3px; color:var(--text3); text-transform:uppercase; margin-bottom:10px; word-break:break-all; }
 .ps-scan-product-items { display:flex; flex-wrap:wrap; gap:10px; }
 .ps-scan-product-items-more { background:var(--bg2); border:1px solid var(--border); border-radius:12px; padding:14px 16px; margin-bottom:20px; box-shadow:var(--shadow); }
 .ps-scan-product-item { display:flex; flex-direction:column; align-items:center; text-align:center; width:168px; background:var(--bg3); border:1px solid var(--border); border-radius:10px; padding:10px; gap:8px; }
 .ps-scan-product-img { width:140px; height:140px; object-fit:cover; border-radius:8px; border:1px solid var(--border); background:var(--bg2); flex-shrink:0; }
 .ps-scan-product-img-placeholder { width:140px; height:140px; border-radius:8px; border:1px solid var(--border); background:var(--bg2); display:flex; align-items:center; justify-content:center; font-size:52px; flex-shrink:0; }
+/* Overflow strip: cap each row at 7 fixed-width cards (matches the top row's
+   card size) instead of however many happen to fit the screen width — 8
+   was too many. Extra items wrap to additional rows of 7. */
+#ps-scan-product-more { display:grid; grid-template-columns:repeat(7, 168px); gap:10px; justify-content:start; }
+/* Top-row product items: same card/photo/text size as the overflow strip
+   below (.ps-scan-product-items-more uses the exact same .ps-scan-product-item
+   rules above) — just forced into a single row of 5 fixed-width columns so
+   it never wraps. The wider .ps-content max-width above gives it the room
+   to do that without shrinking anything. Scoped by ID so the overflow strip
+   itself (#ps-scan-product-more) keeps its own flex-wrap multi-row layout. */
+#ps-scan-product-items { display:grid; grid-template-columns:repeat(5, 168px); gap:10px; }
 .ps-scan-product-info { width:100%; min-width:0; }
 .ps-scan-product-sku { font-family:var(--mono); font-size:10.5px; font-weight:700; color:var(--text); margin-bottom:8px; word-break:break-word; line-height:1.25; }
 /* Qty and Total Qty sit on the same row, but sized worlds apart on purpose:
@@ -190,6 +205,25 @@ body {
 .ps-scan-product-stat-label { font-size:7.5px; font-weight:600; text-transform:uppercase; letter-spacing:.5px; color:var(--text3); }
 .ps-scan-product-stat-val { font-family:var(--mono); font-size:12px; font-weight:600; color:var(--text3); }
 .ps-scan-product-stat-val.total { color:var(--accent); font-size:38px; line-height:1; font-weight:800; }
+
+/* Today's scan summary — total scanned today + a per-person breakdown,
+   shown between the order cards and the "Today's Scans" list. */
+.ps-scan-summary { display:flex; align-items:center; gap:20px; flex-wrap:wrap; background:var(--bg2); border:1px solid var(--border); border-radius:12px; padding:14px 18px; margin-bottom:16px; box-shadow:var(--shadow); }
+.ps-scan-summary-total { display:flex; flex-direction:column; align-items:center; padding-right:20px; border-right:1px solid var(--border); min-width:64px; }
+.ps-scan-summary-total-val { font-family:var(--mono); font-size:30px; font-weight:800; color:var(--accent); line-height:1; }
+.ps-scan-summary-total-label { font-size:10px; font-weight:600; text-transform:uppercase; letter-spacing:.5px; color:var(--text3); margin-top:5px; text-align:center; }
+.ps-scan-summary-by { display:flex; flex-wrap:wrap; gap:10px; flex:1; }
+.ps-scan-summary-chip { display:flex; align-items:center; gap:10px; background:var(--bg3); border:1px solid var(--border); border-radius:12px; padding:6px 10px 6px 14px; }
+.ps-scan-summary-chip-info { display:flex; flex-direction:column; gap:2px; }
+.ps-scan-summary-chip-name { font-size:12px; font-weight:700; color:var(--text); }
+.ps-scan-summary-chip-split { font-family:var(--mono); font-size:10px; font-weight:600; color:var(--text3); white-space:nowrap; }
+.ps-scan-summary-chip-ups { color:var(--orange); }
+.ps-scan-summary-chip-usps { color:var(--purple); }
+.ps-scan-summary-chip-count { font-family:var(--mono); font-size:13px; font-weight:800; color:var(--accent); background:var(--bg2); border-radius:14px; padding:2px 9px; }
+.ps-scan-summary-empty { font-size:12px; color:var(--text3); font-style:italic; }
+.ps-scan-summary-datewrap { display:flex; flex-direction:column; gap:4px; margin-left:auto; padding-left:16px; border-left:1px solid var(--border); }
+.ps-scan-summary-date-label { font-size:10px; font-weight:600; text-transform:uppercase; letter-spacing:.5px; color:var(--text3); }
+.ps-scan-summary-date-input { font-family:inherit; font-size:13px; color:var(--text); background:var(--bg3); border:1px solid var(--border); border-radius:8px; padding:6px 8px; }
 
 /* Batch close */
 .ps-batch-close-bar { background:var(--bg2); border:1px solid var(--border); border-radius:12px; padding:16px 18px; margin-bottom:16px; box-shadow:var(--shadow); display:flex; align-items:center; gap:12px; flex-wrap:wrap; }
@@ -308,7 +342,18 @@ body {
   .ps-stat-val { font-size:22px; }
   .ps-batch-close-bar { flex-direction:column; align-items:stretch; }
   .ps-scan-toprow { flex-direction:column; }
-  .ps-scan-box, .ps-scan-product-wrap { flex-basis:auto; width:100%; }
+  .ps-scan-box, .ps-scan-product-wrap { flex-basis:auto; width:100%; min-width:0; }
+  #ps-scan-product-items { grid-template-columns:repeat(2, 1fr); }
+  #ps-scan-product-items .ps-scan-product-item { width:100%; }
+  #ps-scan-product-items .ps-scan-product-img,
+  #ps-scan-product-items .ps-scan-product-img-placeholder { width:100%; height:auto; aspect-ratio:1/1; }
+  #ps-scan-product-more { grid-template-columns:repeat(2, 1fr); }
+  #ps-scan-product-more .ps-scan-product-item { width:100%; }
+  #ps-scan-product-more .ps-scan-product-img,
+  #ps-scan-product-more .ps-scan-product-img-placeholder { width:100%; height:auto; aspect-ratio:1/1; }
+  .ps-scan-summary { gap:12px; padding:12px 14px; }
+  .ps-scan-summary-total { padding-right:14px; }
+  .ps-scan-summary-datewrap { margin-left:0; padding-left:0; border-left:none; width:100%; }
 }
 
   </style>
@@ -360,6 +405,10 @@ body {
 
 /* Content */
 #packship-app .ps-content { flex:1; padding:20px; max-width:960px; margin:0 auto; width:100%; }
+/* Scan tab: shift the whole content column to the left instead of centering it,
+   and let it run wider than the other tabs (not capped at 960px) so the
+   product-card row has room for full-size photos without squeezing. */
+#packship-app .ps-content:has(#ps-panel-scan.active) { margin-left:0; margin-right:auto; max-width:1300px; }
 #packship-app .ps-panel { display:none; }
 #packship-app .ps-panel.active { display:block; }
 
@@ -433,13 +482,24 @@ body {
 #packship-app .ps-ls-meta { font-size:12px; color:var(--text2); }
 
 /* Scan product card — shown after a scan, mirrors the scanned tracking's order item(s) */
-#packship-app .ps-scan-product-wrap { flex:1 1 380px; min-width:0; background:var(--bg2); border:1px solid var(--border); border-radius:12px; padding:14px 16px; box-shadow:var(--shadow); }
+#packship-app .ps-scan-product-wrap { flex:1 1 960px; min-width:960px; background:var(--bg2); border:1px solid var(--border); border-radius:12px; padding:14px 16px; box-shadow:var(--shadow); }
 #packship-app .ps-scan-product-tracking { font-family:var(--mono); font-size:12px; font-weight:700; letter-spacing:.3px; color:var(--text3); text-transform:uppercase; margin-bottom:10px; word-break:break-all; }
 #packship-app .ps-scan-product-items { display:flex; flex-wrap:wrap; gap:10px; }
 #packship-app .ps-scan-product-items-more { background:var(--bg2); border:1px solid var(--border); border-radius:12px; padding:14px 16px; margin-bottom:20px; box-shadow:var(--shadow); }
 #packship-app .ps-scan-product-item { display:flex; flex-direction:column; align-items:center; text-align:center; width:168px; background:var(--bg3); border:1px solid var(--border); border-radius:10px; padding:10px; gap:8px; }
 #packship-app .ps-scan-product-img { width:140px; height:140px; object-fit:cover; border-radius:8px; border:1px solid var(--border); background:var(--bg2); flex-shrink:0; }
 #packship-app .ps-scan-product-img-placeholder { width:140px; height:140px; border-radius:8px; border:1px solid var(--border); background:var(--bg2); display:flex; align-items:center; justify-content:center; font-size:52px; flex-shrink:0; }
+/* Overflow strip: cap each row at 7 fixed-width cards (matches the top row's
+   card size) instead of however many happen to fit the screen width — 8
+   was too many. Extra items wrap to additional rows of 7. */
+#packship-app #ps-scan-product-more { display:grid; grid-template-columns:repeat(7, 168px); gap:10px; justify-content:start; }
+/* Top-row product items: same card/photo/text size as the overflow strip
+   below (.ps-scan-product-items-more uses the exact same .ps-scan-product-item
+   rules above) — just forced into a single row of 5 fixed-width columns so
+   it never wraps. The wider .ps-content max-width above gives it the room
+   to do that without shrinking anything. Scoped by ID so the overflow strip
+   itself (#ps-scan-product-more) keeps its own flex-wrap multi-row layout. */
+#packship-app #ps-scan-product-items { display:grid; grid-template-columns:repeat(5, 168px); gap:10px; }
 #packship-app .ps-scan-product-info { width:100%; min-width:0; }
 #packship-app .ps-scan-product-sku { font-family:var(--mono); font-size:10.5px; font-weight:700; color:var(--text); margin-bottom:8px; word-break:break-word; line-height:1.25; }
 #packship-app .ps-scan-product-meta { display:flex; flex-direction:row; align-items:center; justify-content:center; gap:12px; }
@@ -447,6 +507,25 @@ body {
 #packship-app .ps-scan-product-stat-label { font-size:7.5px; font-weight:600; text-transform:uppercase; letter-spacing:.5px; color:var(--text3); }
 #packship-app .ps-scan-product-stat-val { font-family:var(--mono); font-size:12px; font-weight:600; color:var(--text3); }
 #packship-app .ps-scan-product-stat-val.total { color:var(--accent); font-size:38px; line-height:1; font-weight:800; }
+
+/* Today's scan summary — total scanned today + a per-person breakdown,
+   shown between the order cards and the "Today's Scans" list. */
+#packship-app .ps-scan-summary { display:flex; align-items:center; gap:20px; flex-wrap:wrap; background:var(--bg2); border:1px solid var(--border); border-radius:12px; padding:14px 18px; margin-bottom:16px; box-shadow:var(--shadow); }
+#packship-app .ps-scan-summary-total { display:flex; flex-direction:column; align-items:center; padding-right:20px; border-right:1px solid var(--border); min-width:64px; }
+#packship-app .ps-scan-summary-total-val { font-family:var(--mono); font-size:30px; font-weight:800; color:var(--accent); line-height:1; }
+#packship-app .ps-scan-summary-total-label { font-size:10px; font-weight:600; text-transform:uppercase; letter-spacing:.5px; color:var(--text3); margin-top:5px; text-align:center; }
+#packship-app .ps-scan-summary-by { display:flex; flex-wrap:wrap; gap:10px; flex:1; }
+#packship-app .ps-scan-summary-chip { display:flex; align-items:center; gap:10px; background:var(--bg3); border:1px solid var(--border); border-radius:12px; padding:6px 10px 6px 14px; }
+#packship-app .ps-scan-summary-chip-info { display:flex; flex-direction:column; gap:2px; }
+#packship-app .ps-scan-summary-chip-name { font-size:12px; font-weight:700; color:var(--text); }
+#packship-app .ps-scan-summary-chip-split { font-family:var(--mono); font-size:10px; font-weight:600; color:var(--text3); white-space:nowrap; }
+#packship-app .ps-scan-summary-chip-ups { color:var(--orange); }
+#packship-app .ps-scan-summary-chip-usps { color:var(--purple); }
+#packship-app .ps-scan-summary-chip-count { font-family:var(--mono); font-size:13px; font-weight:800; color:var(--accent); background:var(--bg2); border-radius:14px; padding:2px 9px; }
+#packship-app .ps-scan-summary-empty { font-size:12px; color:var(--text3); font-style:italic; }
+#packship-app .ps-scan-summary-datewrap { display:flex; flex-direction:column; gap:4px; margin-left:auto; padding-left:16px; border-left:1px solid var(--border); }
+#packship-app .ps-scan-summary-date-label { font-size:10px; font-weight:600; text-transform:uppercase; letter-spacing:.5px; color:var(--text3); }
+#packship-app .ps-scan-summary-date-input { font-family:inherit; font-size:13px; color:var(--text); background:var(--bg3); border:1px solid var(--border); border-radius:8px; padding:6px 8px; }
 
 /* Batch close */
 #packship-app .ps-batch-close-bar { background:var(--bg2); border:1px solid var(--border); border-radius:12px; padding:16px 18px; margin-bottom:16px; box-shadow:var(--shadow); display:flex; align-items:center; gap:12px; flex-wrap:wrap; }
@@ -565,7 +644,18 @@ body {
   #packship-app .ps-stat-val { font-size:22px; }
   #packship-app .ps-batch-close-bar { flex-direction:column; align-items:stretch; }
   #packship-app .ps-scan-toprow { flex-direction:column; }
-  #packship-app .ps-scan-box, #packship-app .ps-scan-product-wrap { flex-basis:auto; width:100%; }
+  #packship-app .ps-scan-box, #packship-app .ps-scan-product-wrap { flex-basis:auto; width:100%; min-width:0; }
+  #packship-app #ps-scan-product-items { grid-template-columns:repeat(2, 1fr); }
+  #packship-app #ps-scan-product-items .ps-scan-product-item { width:100%; }
+  #packship-app #ps-scan-product-items .ps-scan-product-img,
+  #packship-app #ps-scan-product-items .ps-scan-product-img-placeholder { width:100%; height:auto; aspect-ratio:1/1; }
+  #packship-app #ps-scan-product-more { grid-template-columns:repeat(2, 1fr); }
+  #packship-app #ps-scan-product-more .ps-scan-product-item { width:100%; }
+  #packship-app #ps-scan-product-more .ps-scan-product-img,
+  #packship-app #ps-scan-product-more .ps-scan-product-img-placeholder { width:100%; height:auto; aspect-ratio:1/1; }
+  #packship-app .ps-scan-summary { gap:12px; padding:12px 14px; }
+  #packship-app .ps-scan-summary-total { padding-right:14px; }
+  #packship-app .ps-scan-summary-datewrap { margin-left:0; padding-left:0; border-left:none; width:100%; }
 }
 </style>
 
@@ -672,6 +762,19 @@ body {
          flow here, full width, still above "Today's Scans" — so a big
          multi-item order (up to ~20) stays visible without scrolling. -->
     <div class="ps-scan-product-items ps-scan-product-items-more" id="ps-scan-product-more" style="display:none"></div>
+
+    <!-- Total scanned + who scanned how many, for whatever date is picked. -->
+    <div class="ps-scan-summary" id="ps-scan-summary">
+      <div class="ps-scan-summary-total">
+        <div class="ps-scan-summary-total-val" id="ps-scan-summary-total-val">0</div>
+        <div class="ps-scan-summary-total-label" id="ps-scan-summary-total-label">Scanned<br>Today</div>
+      </div>
+      <div class="ps-scan-summary-by" id="ps-scan-summary-by"></div>
+      <div class="ps-scan-summary-datewrap">
+        <label class="ps-scan-summary-date-label" for="ps-scan-summary-date">Check a date</label>
+        <input type="date" class="ps-scan-summary-date-input" id="ps-scan-summary-date" onchange="psScanSummaryDateChange()">
+      </div>
+    </div>
 
     <div class="ps-section-header" style="margin-top:4px">
       <div class="ps-section-title">Today's Scans</div>
@@ -1448,7 +1551,7 @@ window.psScanImgFallback = function(img) {
 // of a bigger order (up to PS_SCAN_MAX_ITEMS) flow into the full-width strip
 // below the scan bar, so a large order still stays above "Today's Scans"
 // without the shipper needing to scroll to double-check everything.
-var PS_SCAN_TOP_ITEM_COUNT = 4;
+var PS_SCAN_TOP_ITEM_COUNT = 5;
 var PS_SCAN_MAX_ITEMS = 20;
 
 function _psScanProductCardHtml(li) {
@@ -1497,7 +1600,7 @@ async function _psLoadScanProduct(tracking) {
     var rest = cardsHtml.slice(PS_SCAN_TOP_ITEM_COUNT);
     if (rest.length && moreEl) {
       moreEl.innerHTML = rest.join('');
-      moreEl.style.display = 'flex';
+      moreEl.style.display = 'grid';
     }
   } catch(e) {
     itEl.innerHTML = '<div style="font-size:12px;color:var(--red);">Lookup error: ' + e.message + '</div>';
@@ -1783,9 +1886,105 @@ window.psFilterScans = function(f, btn) {
   psRenderScanList();
 };
 
+// Total scanned + a per-person breakdown (by scanner initials), shown just
+// above "Today's Scans" — for whatever date is picked in the little date
+// field on the right of that bar (defaults to today, but any past date can
+// be checked). psScanSummaryDate tracks which date is currently on screen;
+// null/"today" means it's following the live psTodayScans feed, anything
+// else is a one-off fetch that the live refresh must not stomp on.
+var psScanSummaryDate = null;
+
+function _psPaintScanSummary(scans, labelHtml) {
+  var wrap = document.getElementById('ps-scan-summary');
+  if (!wrap) return;
+  document.getElementById('ps-scan-summary-total-label').innerHTML = labelHtml;
+  var total = scans.length;
+  document.getElementById('ps-scan-summary-total-val').textContent = total;
+  var byEl = document.getElementById('ps-scan-summary-by');
+  if (!total) {
+    byEl.innerHTML = '<div class="ps-scan-summary-empty">No scans that day</div>';
+    return;
+  }
+  // Per person: total plus a UPS / USPS split, so a manager can see not
+  // just how many each shipper scanned but which carrier they worked.
+  var byUser = {};
+  scans.forEach(function(s) {
+    var who = s.initials || 'Unassigned';
+    if (!byUser[who]) byUser[who] = { total:0, ups:0, usps:0, other:0 };
+    byUser[who].total++;
+    if (s.carrier === 'UPS') byUser[who].ups++;
+    else if (s.carrier === 'USPS') byUser[who].usps++;
+    else byUser[who].other++;
+  });
+  var names = Object.keys(byUser).sort(function(a, b) { return byUser[b].total - byUser[a].total; });
+  byEl.innerHTML = names.map(function(n) {
+    var u = byUser[n];
+    var parts = [];
+    if (u.ups)   parts.push('<span class="ps-scan-summary-chip-ups">' + u.ups + ' UPS</span>');
+    if (u.usps)  parts.push('<span class="ps-scan-summary-chip-usps">' + u.usps + ' USPS</span>');
+    if (u.other) parts.push('<span class="ps-scan-summary-chip-other">' + u.other + ' other</span>');
+    return '<div class="ps-scan-summary-chip">'
+      +   '<div class="ps-scan-summary-chip-info">'
+      +     '<span class="ps-scan-summary-chip-name">' + n + '</span>'
+      +     '<span class="ps-scan-summary-chip-split">' + parts.join(' · ') + '</span>'
+      +   '</div>'
+      +   '<span class="ps-scan-summary-chip-count">' + u.total + '</span>'
+      + '</div>';
+  }).join('');
+}
+
+// Only repaints from the live today-feed when the picker is actually
+// sitting on today — otherwise a background refresh would silently yank
+// the user back off whatever past date they picked to check.
+function _psRenderScanSummary() {
+  if (psScanSummaryDate && psScanSummaryDate !== psTodayKey()) return;
+  _psPaintScanSummary(psTodayScans, 'Scanned<br>Today');
+}
+
+function _psDateKeyOffset(days) {
+  var d = new Date();
+  d.setUTCDate(d.getUTCDate() + days);
+  return d.getUTCFullYear() + '-' + String(d.getUTCMonth()+1).padStart(2,'0') + '-' + String(d.getUTCDate()).padStart(2,'0');
+}
+
+function _psFmtSummaryDateLabel(dateKey) {
+  if (dateKey === psTodayKey())            return 'Scanned<br>Today';
+  if (dateKey === _psDateKeyOffset(-1))     return 'Scanned<br>Yesterday';
+  var p = dateKey.split('-');
+  var d = new Date(Date.UTC(+p[0], +p[1]-1, +p[2]));
+  return 'Scanned<br>' + d.toLocaleDateString('en-US', { month:'short', day:'numeric', timeZone:'UTC' });
+}
+
+// Fires when the shipper picks a date in the summary bar's date field.
+window.psScanSummaryDateChange = async function() {
+  var inp = document.getElementById('ps-scan-summary-date');
+  if (!inp || !inp.value) return;
+  var dateKey = inp.value; // native date input already gives YYYY-MM-DD
+  psScanSummaryDate = dateKey;
+
+  if (dateKey === psTodayKey()) {
+    _psPaintScanSummary(psTodayScans, 'Scanned<br>Today');
+    return;
+  }
+
+  var byEl = document.getElementById('ps-scan-summary-by');
+  document.getElementById('ps-scan-summary-total-label').innerHTML = _psFmtSummaryDateLabel(dateKey);
+  byEl.innerHTML = '<div class="ps-scan-summary-empty">Loading…</div>';
+  try {
+    var res  = await fetch(PS_WORKER + '/ship/scans?date=' + dateKey, { headers: { 'X-Cred-Token': psCredToken } });
+    var data = await res.json();
+    if (psScanSummaryDate !== dateKey) return; // user already picked another date
+    _psPaintScanSummary(data.scans || [], _psFmtSummaryDateLabel(dateKey));
+  } catch(e) {
+    if (psScanSummaryDate !== dateKey) return;
+    byEl.innerHTML = '<div class="ps-scan-summary-empty">Couldn\'t load that date</div>';
+  }
+};
+
 window.psRenderScanList = function() {
   var list = document.getElementById('ps-scan-list');
   document.getElementById('ps-scan-cnt-label').textContent = psTodayScans.length + ' scan' + (psTodayScans.length !== 1 ? 's' : '');
+  _psRenderScanSummary();
   var items = psScanFilter === 'all' ? psTodayScans.slice() : psTodayScans.filter(function(s){ return s.carrier === psScanFilter; });
   items.sort(function(a,b){ return new Date(b.timestamp) - new Date(a.timestamp); }); // newest first
   if (!items.length) {
@@ -2515,7 +2714,13 @@ window.psSwitchTab = function(name) {
     var pinEl = document.getElementById('ps-' + name + '-pin');
     if (pinEl) setTimeout(function(){ pinEl.focus(); }, 100);
   }
-  if (name === 'scan')        { psFocusScan(); psRenderScanList(); psLoadScans(); }
+  if (name === 'scan')        {
+    psFocusScan();
+    var dinp = document.getElementById('ps-scan-summary-date');
+    if (dinp) { var tk = psTodayKey(); dinp.value = tk; dinp.max = tk; }
+    psScanSummaryDate = null;
+    psRenderScanList(); psLoadScans();
+  }
   if (name === 'closebatch')  { _psUpdateBatchBar(); }
   if (name === 'progress')    { psLoadScans(); }
   if (name === 'lookup')      { psRenderLog(); }
