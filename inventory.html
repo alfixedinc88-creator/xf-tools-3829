@@ -42,8 +42,9 @@ body { display:flex; flex-direction:column; min-height:100vh; background:var(--b
 
 <script>
 // ── Globals needed by inventory IIFE ─────────────────────────────────────
-var XF_SESSION = sessionStorage.getItem('xf_session') || null;
-var XF_ROLE    = sessionStorage.getItem('xf_role')    || null;
+var INV_CRED_TOKEN = localStorage.getItem('xf_cred_token') || null;
+var INV_CRED_USER  = null;
+try { INV_CRED_USER = JSON.parse(localStorage.getItem('xf_cred_user') || 'null'); } catch(e) {}
 function backToLauncher() { window.location.href = 'index.html'; }
 function launchApp(app)   { window.location.href = app + '.html'; }
 function showToast(msg) {
@@ -62,26 +63,72 @@ function showToast(msg) {
 async function wFetch(url, opts) {
   opts = opts || {};
   opts.headers = Object.assign({}, opts.headers || {}, {
-    'X-Session-Token': XF_SESSION || ''
+    'X-Cred-Token': INV_CRED_TOKEN || ''
   });
   var r = await fetch(url, opts);
-  if (r.status === 401) {
-    XF_SESSION = null;
-    XF_ROLE = null;
-    sessionStorage.removeItem('xf_session');
-    sessionStorage.removeItem('xf_role');
-    var ps = document.getElementById('pin-screen');
-    if (ps) { ps.style.display = 'flex'; ps.style.opacity = '1'; ps.style.visibility = 'visible'; }
-    var la = document.getElementById('launcher');
-    if (la) la.style.display = 'none';
+  if (r.status === 401 || r.status === 403) {
+    INV_CRED_TOKEN = null;
+    localStorage.removeItem('xf_cred_token');
+    localStorage.removeItem('xf_cred_user');
+    var gate = document.getElementById('inv-cred-gate');
+    if (gate) gate.style.display = 'flex';
+    var app = document.getElementById('inv-app');
+    if (app) app.style.display = 'none';
     throw new Error('Unauthorized');
   }
   return r;
 }
 
+// ── Credential login ──────────────────────────────────────────────────────
+window.invCredLogin = async function() {
+  var username = document.getElementById('inv-cred-username').value.trim();
+  var password = document.getElementById('inv-cred-password').value;
+  var btn = document.getElementById('inv-cred-login-btn');
+  var err = document.getElementById('inv-cred-err');
+  err.textContent = '';
+  if (!username || !password) { err.textContent = 'Enter your username and password.'; return; }
+  btn.disabled = true; btn.textContent = 'Signing in…';
+  try {
+    var res = await fetch('https://xfitting-lookup.alfixedinc88.workers.dev/auth/login', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ username: username, password: password })
+    });
+    var data = await res.json();
+    if (!res.ok) { err.textContent = data.error || 'Login failed'; return; }
+    if (!data.roles.includes('ops') && !data.roles.includes('mobile') && !data.roles.includes('mgmt')) {
+      err.textContent = 'This account does not have access to Inventory.';
+      return;
+    }
+    INV_CRED_TOKEN = data.token;
+    INV_CRED_USER = { displayName: data.displayName, roles: data.roles, userId: data.userId };
+    localStorage.setItem('xf_cred_token', data.token);
+    localStorage.setItem('xf_cred_user', JSON.stringify(INV_CRED_USER));
+    document.getElementById('inv-cred-gate').style.display = 'none';
+    document.getElementById('inv-app').style.display = 'flex';
+    if (typeof invOnLogin === 'function') invOnLogin();
+  } catch(e) {
+    err.textContent = 'Connection error — try again.';
+  } finally {
+    btn.disabled = false; btn.textContent = 'Sign In';
+  }
+};
+
 </script>
 
-<div id="inv-app" style="display:flex;flex-direction:column;min-height:100vh;font-family:'DM Sans',sans-serif;background:var(--bg)">
+<div id="inv-cred-gate" style="display:flex;min-height:100vh;align-items:center;justify-content:center;background:var(--bg, #f4f5f7);font-family:'DM Sans',sans-serif;">
+  <div style="max-width:360px;width:100%;padding:32px 28px;background:var(--bg2, #fff);border:1px solid var(--border, #dfe2e7);border-radius:14px;box-shadow:0 1px 3px rgba(20,25,40,.08);text-align:center;margin:0 20px;">
+    <div style="font-size:32px;margin-bottom:8px;">📋</div>
+    <h1 style="font-size:18px;margin:0 0 4px;">Inventory</h1>
+    <p style="font-size:13px;color:var(--text3, #7a8496);margin:0 0 20px;">Sign in with your XFitting credentials</p>
+    <input id="inv-cred-username" type="text" placeholder="Username" autocomplete="username" style="width:100%;padding:11px 14px;border:1.5px solid var(--border, #dfe2e7);border-radius:9px;font-family:inherit;font-size:14px;margin-bottom:10px;box-sizing:border-box;">
+    <input id="inv-cred-password" type="password" placeholder="Password" autocomplete="current-password" style="width:100%;padding:11px 14px;border:1.5px solid var(--border, #dfe2e7);border-radius:9px;font-family:inherit;font-size:14px;margin-bottom:14px;box-sizing:border-box;">
+    <button id="inv-cred-login-btn" onclick="invCredLogin()" style="width:100%;padding:12px;border:none;border-radius:9px;background:var(--accent, #1a56db);color:#fff;font-family:inherit;font-weight:600;font-size:14px;cursor:pointer;">Sign In</button>
+    <div id="inv-cred-err" style="color:var(--red, #c52a1a);font-size:12.5px;margin-top:10px;min-height:16px;"></div>
+    <a href="index.html" style="display:inline-block;margin-top:14px;font-size:12.5px;color:var(--text3, #7a8496);text-decoration:none;">← Back to Launcher</a>
+  </div>
+</div>
+
+<div id="inv-app" style="display:none;flex-direction:column;min-height:100vh;font-family:'DM Sans',sans-serif;background:var(--bg)">
 <style>
 #inv-app{-webkit-tap-highlight-color:transparent;-webkit-touch-callout:none}
 #inv-app .itopbar{display:flex;align-items:center;justify-content:space-between;padding:12px 16px;background:var(--bg2);border-bottom:1px solid var(--border);position:sticky;top:0;z-index:100}
@@ -210,17 +257,10 @@ async function wFetch(url, opts) {
 <div id="inv-reauth-overlay" class="ireauth-overlay" style="display:none">
   <div class="ireauth-card">
     <div class="ireauth-title">🔒 Session Expired</div>
-    <div class="ireauth-sub">Enter your OPS PIN to continue.<br>Your list is safe.</div>
-    <div class="ireauth-dots" id="inv-reauth-dots">
-      <div class="ipin-dot" id="inv-rd0"></div><div class="ipin-dot" id="inv-rd1"></div>
-      <div class="ipin-dot" id="inv-rd2"></div><div class="ipin-dot" id="inv-rd3"></div>
-    </div>
-    <div class="ireauth-pad">
-      <button class="ireauth-key" onclick="invReauthKey('1')">1</button><button class="ireauth-key" onclick="invReauthKey('2')">2</button><button class="ireauth-key" onclick="invReauthKey('3')">3</button>
-      <button class="ireauth-key" onclick="invReauthKey('4')">4</button><button class="ireauth-key" onclick="invReauthKey('5')">5</button><button class="ireauth-key" onclick="invReauthKey('6')">6</button>
-      <button class="ireauth-key" onclick="invReauthKey('7')">7</button><button class="ireauth-key" onclick="invReauthKey('8')">8</button><button class="ireauth-key" onclick="invReauthKey('9')">9</button>
-      <button class="ireauth-key" onclick="invReauthKey('back')">⌫</button><button class="ireauth-key" onclick="invReauthKey('0')">0</button><button class="ireauth-key" onclick="invReauthKey('clear')" style="font-size:12px">CLR</button>
-    </div>
+    <div class="ireauth-sub">Sign in again to continue.<br>Your list is safe.</div>
+    <input id="inv-reauth-username" type="text" placeholder="Username" autocomplete="username" style="width:100%;padding:10px 12px;border:1.5px solid var(--border);border-radius:8px;font-size:14px;margin:14px 0 8px;box-sizing:border-box">
+    <input id="inv-reauth-password" type="password" placeholder="Password" autocomplete="current-password" style="width:100%;padding:10px 12px;border:1.5px solid var(--border);border-radius:8px;font-size:14px;margin-bottom:10px;box-sizing:border-box">
+    <button onclick="invReauthLogin()" style="width:100%;padding:10px;border-radius:8px;border:none;background:var(--accent);color:#fff;font-size:13px;font-weight:700;cursor:pointer">Sign In</button>
     <div class="ireauth-err" id="inv-reauth-err"></div>
     <button class="ireauth-cancel" onclick="invReauthCancel()">Cancel</button>
   </div>
@@ -323,9 +363,8 @@ async function wFetch(url, opts) {
         <div class="ifield"><label>Cases Found</label><input id="inv-fel-found" type="number" min="0.1" step="0.5" placeholder="0"></div>
         <div class="ifield" id="inv-fel-pull-wrap"><label id="inv-fel-pull-label">Cases to Pull</label><input id="inv-fel-pull" type="number" min="0" step="0.5" placeholder="0"></div>
       </div>
-      <div style="margin-top:10px;display:flex;gap:8px;align-items:center">
-        <div class="ifield" style="flex:1;margin:0"><label style="font-size:10px">Initials</label><input id="inv-fel-initials" type="text" maxlength="4" placeholder="e.g. DJ"></div>
-        <div class="ifield" style="flex:2;margin:0"><label style="font-size:10px">Notes (optional)</label><input id="inv-fel-notes" type="text" placeholder=""></div>
+      <div style="margin-top:10px">
+        <div class="ifield" style="margin:0"><label style="font-size:10px">Notes (optional)</label><input id="inv-fel-notes" type="text" placeholder=""></div>
       </div>
       <button class="isubmit" id="inv-fel-btn" onclick="invSubmitFoundElsewhere()" style="background:var(--purple);border-color:var(--purple);margin-top:10px">Log Found Location</button>
     </div>
@@ -344,8 +383,7 @@ async function wFetch(url, opts) {
     <div class="icard-label">Details</div>
     <div class="iwarn" id="inv-warn" style="display:none"></div>
     <div class="ifield-row">
-      <div class="ifield"><label>Cases</label><input id="inv-cases" type="number" min="0.1" step="0.5" placeholder="0"></div>
-      <div class="ifield"><label>Initials</label><input id="inv-initials" type="text" maxlength="4" placeholder="e.g. DJ"></div>
+      <div class="ifield" style="flex:1"><label>Cases</label><input id="inv-cases" type="number" min="0.1" step="0.5" placeholder="0"></div>
     </div>
     <div class="ifield"><label>Notes (optional)</label><input id="inv-notes" type="text" placeholder=""></div>
     <button class="isubmit sin" id="inv-submit-btn" onclick="invSubmit()">Submit Stock In</button>
@@ -359,9 +397,8 @@ async function wFetch(url, opts) {
     </div>
     <div class="ipull-progress" id="inv-pull-progress" style="display:none"></div>
     <div id="inv-pulllist-items"></div>
-    <div style="margin-top:12px;display:flex;gap:8px;align-items:center">
-      <div class="ifield" style="flex:1;margin:0"><label style="font-size:10px">Initials</label><input id="inv-pull-initials" type="text" maxlength="4" placeholder="e.g. DJ"></div>
-      <div class="ifield" style="flex:2;margin:0"><label style="font-size:10px">Notes (optional)</label><input id="inv-pull-notes" type="text" placeholder=""></div>
+    <div style="margin-top:12px">
+      <div class="ifield" style="margin:0"><label style="font-size:10px">Notes (optional)</label><input id="inv-pull-notes" type="text" placeholder=""></div>
     </div>
     <button class="isubmit sout" style="margin-top:10px" onclick="invSubmitPullList()">📤 Submit Pull List</button>
   </div>
@@ -385,11 +422,6 @@ async function wFetch(url, opts) {
       <button class="ixfr-mode-btn ixfr-active" id="xfr-mode-code" onclick="xfrSetSearchMode('code')">SKU / Part# / UPC</button>
       <button class="ixfr-mode-btn" id="xfr-mode-name" onclick="xfrSetSearchMode('name')">Product Name</button>
       <button class="ixfr-mode-btn" id="xfr-mode-loc" onclick="xfrSetSearchMode('loc')">&#x1F4CD; Location</button>
-    </div>
-    <div style="margin-bottom:8px;display:flex;align-items:center;gap:8px">
-      <label style="font-size:11px;font-weight:700;color:var(--text3);white-space:nowrap">INITIALS</label>
-      <input id="xfr-cart-initials" type="text" maxlength="4" placeholder="e.g. DJ" autocomplete="off"
-        style="width:70px;padding:6px 10px;border:1.5px solid var(--border);border-radius:7px;background:var(--bg);color:var(--text);font-size:13px;font-family:var(--mono);text-transform:uppercase">
     </div>
     <div class="isearch-row">
       <input class="isearch-inp" id="xfr-search-inp" type="text" placeholder="Part#, UPC, or name…" onkeydown="if(event.key==='Enter')xfrSearch()">
@@ -461,18 +493,12 @@ async function wFetch(url, opts) {
 <div class="ipanel" id="inv-panel-review">
   <div id="inv-pin-gate">
     <div class="ipin-wrap">
-      <div style="font-size:14px;font-weight:700;color:var(--text)">Management PIN Required</div>
-      <div class="ipin-dots">
-        <div class="ipin-dot" id="inv-pd0"></div><div class="ipin-dot" id="inv-pd1"></div>
-        <div class="ipin-dot" id="inv-pd2"></div><div class="ipin-dot" id="inv-pd3"></div>
-      </div>
-      <div class="ipin-pad">
-        <button class="ipin-key" onclick="invPinKey('1')">1</button><button class="ipin-key" onclick="invPinKey('2')">2</button><button class="ipin-key" onclick="invPinKey('3')">3</button>
-        <button class="ipin-key" onclick="invPinKey('4')">4</button><button class="ipin-key" onclick="invPinKey('5')">5</button><button class="ipin-key" onclick="invPinKey('6')">6</button>
-        <button class="ipin-key" onclick="invPinKey('7')">7</button><button class="ipin-key" onclick="invPinKey('8')">8</button><button class="ipin-key" onclick="invPinKey('9')">9</button>
-        <button class="ipin-key" onclick="invPinKey('back')">⌫</button><button class="ipin-key" onclick="invPinKey('0')">0</button><button class="ipin-key" onclick="invPinKey('clear')" style="font-size:12px">CLR</button>
-      </div>
-      <div class="ipin-err" id="inv-pin-err" style="display:none">Incorrect PIN</div>
+      <div style="font-size:14px;font-weight:700;color:var(--text)">Management Access Required</div>
+      <div style="font-size:12px;color:var(--text3);margin:6px 0 14px">Sign in with a management account.</div>
+      <input id="inv-stepup-username" type="text" placeholder="Username" autocomplete="username" style="width:100%;padding:10px 12px;border:1.5px solid var(--border);border-radius:8px;font-size:14px;margin-bottom:8px;box-sizing:border-box">
+      <input id="inv-stepup-password" type="password" placeholder="Password" autocomplete="current-password" style="width:100%;padding:10px 12px;border:1.5px solid var(--border);border-radius:8px;font-size:14px;margin-bottom:10px;box-sizing:border-box">
+      <button onclick="invMgmtStepUp()" style="width:100%;padding:10px;border-radius:8px;border:none;background:var(--accent);color:#fff;font-size:13px;font-weight:700;cursor:pointer">Unlock</button>
+      <div class="ipin-err" id="inv-pin-err" style="display:none">Incorrect username or password</div>
     </div>
   </div>
   <div id="inv-review-content" style="display:none;padding:16px">
@@ -526,13 +552,6 @@ async function wFetch(url, opts) {
         <button id="inv-audit-mode-auto" class="btn btn-sm" style="font-size:12px" onclick="invAuditRequestMode('auto')">Auto</button>
       </div>
     </div>
-  </div>
-
-  <!-- Initials card -->
-  <div class="icard">
-    <div class="icard-label">Initials</div>
-    <input id="inv-audit-initials" type="text" maxlength="4" placeholder="e.g. DJ" autocomplete="off"
-      style="width:80px;padding:8px 10px;border:1.5px solid var(--border);border-radius:7px;background:var(--bg);color:var(--text);font-size:15px;font-family:var(--mono);text-transform:uppercase">
   </div>
 
   <!-- Search card -->
@@ -628,20 +647,13 @@ async function wFetch(url, opts) {
      it invisible — the exact "nothing happens when I click Auto" bug. -->
 <div id="inv-audit-pin-modal" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,.45);z-index:999;align-items:center;justify-content:center">
   <div style="background:var(--bg2);border-radius:14px;padding:24px;width:280px;box-shadow:0 8px 32px rgba(0,0,0,.18)">
-    <div style="font-size:14px;font-weight:700;color:var(--text);margin-bottom:4px">Management PIN</div>
-    <div style="font-size:12px;color:var(--text3);margin-bottom:14px">Required to change approval mode</div>
-    <div class="ipin-dots" style="margin-bottom:12px">
-      <div class="ipin-dot" id="inv-apd0"></div><div class="ipin-dot" id="inv-apd1"></div>
-      <div class="ipin-dot" id="inv-apd2"></div><div class="ipin-dot" id="inv-apd3"></div>
-    </div>
-    <div class="ipin-pad">
-      <button class="ipin-key" onclick="invAuditPinKey('1')">1</button><button class="ipin-key" onclick="invAuditPinKey('2')">2</button><button class="ipin-key" onclick="invAuditPinKey('3')">3</button>
-      <button class="ipin-key" onclick="invAuditPinKey('4')">4</button><button class="ipin-key" onclick="invAuditPinKey('5')">5</button><button class="ipin-key" onclick="invAuditPinKey('6')">6</button>
-      <button class="ipin-key" onclick="invAuditPinKey('7')">7</button><button class="ipin-key" onclick="invAuditPinKey('8')">8</button><button class="ipin-key" onclick="invAuditPinKey('9')">9</button>
-      <button class="ipin-key" onclick="invAuditPinKey('back')">&#x232B;</button><button class="ipin-key" onclick="invAuditPinKey('0')">0</button><button class="ipin-key" onclick="invAuditPinKey('clear')" style="font-size:12px">CLR</button>
-    </div>
-    <div class="ipin-err" id="inv-audit-pin-err" style="display:none;margin-top:8px">Incorrect PIN</div>
-    <button onclick="invAuditCancelPin()" style="margin-top:14px;width:100%;padding:8px;border-radius:8px;border:1px solid var(--border);background:var(--bg3);color:var(--text2);font-size:13px;cursor:pointer">Cancel</button>
+    <div style="font-size:14px;font-weight:700;color:var(--text);margin-bottom:4px">Management Access Required</div>
+    <div style="font-size:12px;color:var(--text3);margin-bottom:14px">Sign in with a management account to continue.</div>
+    <input id="inv-audit-stepup-username" type="text" placeholder="Username" autocomplete="username" style="width:100%;padding:10px 12px;border:1.5px solid var(--border);border-radius:8px;font-size:14px;margin-bottom:8px;box-sizing:border-box">
+    <input id="inv-audit-stepup-password" type="password" placeholder="Password" autocomplete="current-password" style="width:100%;padding:10px 12px;border:1.5px solid var(--border);border-radius:8px;font-size:14px;margin-bottom:10px;box-sizing:border-box">
+    <button onclick="invAuditMgmtStepUp()" style="width:100%;padding:10px;border-radius:8px;border:none;background:var(--accent);color:#fff;font-size:13px;font-weight:700;cursor:pointer">Unlock</button>
+    <div class="ipin-err" id="inv-audit-pin-err" style="display:none;margin-top:8px">Incorrect username or password</div>
+    <button onclick="invAuditCancelPin()" style="margin-top:10px;width:100%;padding:8px;border-radius:8px;border:1px solid var(--border);background:var(--bg3);color:var(--text2);font-size:13px;cursor:pointer">Cancel</button>
   </div>
 </div>
 
@@ -829,7 +841,6 @@ async function wFetch(url, opts) {
 
 (function() {
   var W = "https://xfitting-lookup.alfixedinc88.workers.dev";
-  var MPIN = "6523";
   var invMode = "in";
   var invPart = null;
   var invSelLoc = null;
@@ -837,7 +848,6 @@ async function wFetch(url, opts) {
   var invScanSearchMode = "code";
   var invQrScanner = null;
   var invLastScan = 0;
-  var invPinEntry = "";
   var invUnlocked = false;
   var invFlashTimer = null;
   var _invQrLib = false;
@@ -856,56 +866,44 @@ async function wFetch(url, opts) {
   // ── Session reauth ────────────────────────────────────────────────
   // When a submit gets a 401 (session expired), show an inline PIN prompt,
   // re-authenticate silently, then call the retry function automatically.
-  var _reauthPin      = "";
   var _reauthCallback = null;
   var _reauthCancelFn = null;
-  var OPS_PIN = "1314";
 
   function invReauth(retryFn, cancelFn) {
-    _reauthPin      = "";
     _reauthCallback = retryFn;
     _reauthCancelFn = cancelFn || null;
     g("inv-reauth-err").textContent = "";
-    for (var i = 0; i < 4; i++) g("inv-rd" + i).className = "ipin-dot";
+    g("inv-reauth-username").value = ""; g("inv-reauth-password").value = "";
     g("inv-reauth-overlay").style.display = "flex";
   }
 
-  window.invReauthKey = function(k) {
-    if (k === "clear") _reauthPin = "";
-    else if (k === "back") _reauthPin = _reauthPin.slice(0, -1);
-    else if (_reauthPin.length < 4) _reauthPin += k;
-    for (var i = 0; i < 4; i++) g("inv-rd" + i).className = "ipin-dot" + (i < _reauthPin.length ? " filled" : "");
-    g("inv-reauth-err").textContent = "";
-    if (_reauthPin.length === 4) {
-      fetch(W + "/auth", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ pin: _reauthPin, pin_type: "ops" })
-      }).then(function(r) { return r.json(); })
-        .then(function(d) {
-          if (d.token) {
-            XF_SESSION = d.token;
-            sessionStorage.setItem("xf_session", d.token);
-            g("inv-reauth-overlay").style.display = "none";
-            _reauthPin = "";
-            if (_reauthCallback) { var fn = _reauthCallback; _reauthCallback = null; fn(); }
-          } else {
-            g("inv-reauth-err").textContent = "Incorrect PIN";
-            _reauthPin = "";
-            for (var j = 0; j < 4; j++) g("inv-rd" + j).className = "ipin-dot";
-          }
-        })
-        .catch(function() {
-          g("inv-reauth-err").textContent = "Auth failed — check connection";
-          _reauthPin = "";
-          for (var j = 0; j < 4; j++) g("inv-rd" + j).className = "ipin-dot";
-        });
+  window.invReauthLogin = async function() {
+    var username = g("inv-reauth-username").value.trim();
+    var password = g("inv-reauth-password").value;
+    var err = g("inv-reauth-err");
+    err.textContent = "";
+    if (!username || !password) { err.textContent = "Enter your username and password."; return; }
+    try {
+      var res = await fetch("https://xfitting-lookup.alfixedinc88.workers.dev/auth/login", {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ username: username, password: password })
+      });
+      var data = await res.json();
+      if (!res.ok) { err.textContent = data.error || "Login failed"; return; }
+      INV_CRED_TOKEN = data.token;
+      INV_CRED_USER = { displayName: data.displayName, roles: data.roles, userId: data.userId };
+      localStorage.setItem("xf_cred_token", data.token);
+      localStorage.setItem("xf_cred_user", JSON.stringify(INV_CRED_USER));
+      g("inv-reauth-overlay").style.display = "none";
+      if (_reauthCallback) { var fn = _reauthCallback; _reauthCallback = null; fn(); }
+    } catch(e) {
+      err.textContent = "Connection error — try again.";
     }
   };
 
   window.invReauthCancel = function() {
     g("inv-reauth-overlay").style.display = "none";
-    _reauthPin = ""; _reauthCallback = null;
+    _reauthCallback = null;
     if (_reauthCancelFn) { var fn = _reauthCancelFn; _reauthCancelFn = null; fn(); }
   };
 
@@ -1633,7 +1631,7 @@ async function wFetch(url, opts) {
     var btn     = g('inv-fos-btn');
     btn.disabled = true; btn.textContent = 'Saving\u2026';
 
-    var initials = (g('inv-pull-initials') && g('inv-pull-initials').value.trim()) || '';
+    var initials = (INV_CRED_USER && INV_CRED_USER.displayName) || 'OPS';
 
     var submitEntry = function(type, cases, notes, cb) {
       wFetch(W + '/inventory/log', {
@@ -1703,7 +1701,6 @@ async function wFetch(url, opts) {
     g("inv-fel-loc").value   = "";
     g("inv-fel-found").value = "";
     var pi = g("inv-fel-pull"); if (pi) pi.value = "";
-    var fi = g("inv-fel-initials"); if (fi) fi.value = "";
     var fn = g("inv-fel-notes"); if (fn) fn.value = "";
     g("inv-loc-card").style.display = "block";
     g("inv-found-elsewhere-wrap").style.display = "block";
@@ -1727,13 +1724,7 @@ async function wFetch(url, opts) {
     var felSku = skuInp ? skuInp.value.trim().toUpperCase() : '';
     if (!felSku) { invFlash("Enter a Part# / SKU", "error"); return; }
 
-    // Initials now come from this panel's own field and are required —
-    // this used to silently fall back to the main Scan form's initials (or
-    // a literal "?" if that was blank too), which is exactly the "?" you'd
-    // see later in History's By column since this panel can be opened
-    // before the main Details card (with its own Initials field) is ever shown.
-    var initials = (g("inv-fel-initials") && g("inv-fel-initials").value.trim()) || "";
-    if (!initials) { invFlash("Enter your initials", "error"); return; }
+    var initials = (INV_CRED_USER && INV_CRED_USER.displayName) || "OPS";
     var userNotes = (g("inv-fel-notes") && g("inv-fel-notes").value.trim()) || "";
 
     var btn = g("inv-fel-btn");
@@ -2037,7 +2028,7 @@ async function wFetch(url, opts) {
 
   window.invSubmit = function() {
     var cases    = parseFloat(g("inv-cases").value);
-    var initials = g("inv-initials").value.trim();
+    var initials = (INV_CRED_USER && INV_CRED_USER.displayName) || "OPS";
     var notes    = g("inv-notes").value.trim();
     var newLocPrefix = (g("inv-newloc-prefix") || {value:""}).value || "";
     var newLocShelf  = (g("inv-newloc-shelf")  || {value:""}).value.trim();
@@ -2045,7 +2036,6 @@ async function wFetch(url, opts) {
     if (!invPart)   { invFlash("No item selected", "error"); return; }
     if (!invSelLoc) { invFlash("Select a location first", "error"); return; }
     if (!cases || cases < 0.1) { invFlash("Enter number of cases", "error"); return; }
-    if (!initials)  { invFlash("Enter your initials", "error"); return; }
     if (invSelLoc.isNew && !newLoc) { invFlash("Enter new location name", "error"); return; }
     var location = invSelLoc.isNew ? newLoc : invSelLoc.location;
     var btn = g("inv-submit-btn");
@@ -2091,7 +2081,7 @@ async function wFetch(url, opts) {
     g("inv-result-card").style.display  = "none";
     g("inv-loc-card").style.display     = "none";
     g("inv-detail-card").style.display  = "none";
-    g("inv-cases").value = ""; g("inv-initials").value = ""; g("inv-notes").value = "";
+    g("inv-cases").value = ""; g("inv-notes").value = "";
     g("inv-newloc-inp") && (g("inv-newloc-inp").value = "");
     g("inv-newloc-shelf") && (g("inv-newloc-shelf").value = "");
     g("inv-newloc-wrap").style.display = "none";
@@ -2100,12 +2090,15 @@ async function wFetch(url, opts) {
     g("inv-fel-loc").value = "";
     g("inv-fel-found").value = "";
     var pi = g("inv-fel-pull"); if (pi) pi.value = "";
-    var fi = g("inv-fel-initials"); if (fi) fi.value = "";
     var fn = g("inv-fel-notes"); if (fn) fn.value = "";
     g("inv-warn").style.display = "none";
     var nr = g("inv-name-results"); if (nr) nr.style.display = "none";
     if (!keepMode) invStopCam();
   }
+
+  window.invOnLogin = function() {
+    invFetchPendingCount();
+  };
 
   window.invFetchPendingCount = function() {
     // Uses dedicated /inventory/pending-count — works for any session (OPS or MGMT)
@@ -2119,51 +2112,43 @@ async function wFetch(url, opts) {
       }).catch(function() {});
   };
 
-  window.invPinKey = function(k) {
-    if (k === "clear") invPinEntry = "";
-    else if (k === "back") invPinEntry = invPinEntry.slice(0, -1);
-    else if (invPinEntry.length < 4) invPinEntry += k;
-    for (var i = 0; i < 4; i++) {
-      g("inv-pd" + i).className = "ipin-dot" + (i < invPinEntry.length ? " filled" : "");
-    }
-    g("inv-pin-err").style.display = "none";
-    if (invPinEntry.length === 4) {
-      if (invPinEntry === MPIN) {
-        invUnlocked = true;
-        // Upgrade session to mgmt level so /inventory/pending works
-        fetch(W + "/auth", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ pin: MPIN, pin_type: "mgmt" })
-        }).then(function(r){ return r.json(); }).then(function(d){
-          if (d.token) { XF_SESSION = d.token; sessionStorage.setItem("xf_session", d.token); }
-          g("inv-pin-gate").style.display = "none";
-          if (window._skumgrPendingTab) {
-            var pendingTab = window._skumgrPendingTab;
-            window._skumgrPendingTab = null;
-            g("inv-review-content").style.display = "none";
-            invSwitchTab(pendingTab);
-          } else {
-            g("inv-review-content").style.display = "block";
-            invLoadPending();
-          }
-        }).catch(function(){
-          g("inv-pin-gate").style.display = "none";
-          if (window._skumgrPendingTab) {
-            var pendingTab = window._skumgrPendingTab;
-            window._skumgrPendingTab = null;
-            g("inv-review-content").style.display = "none";
-            invSwitchTab(pendingTab);
-          } else {
-            g("inv-review-content").style.display = "block";
-            invLoadPending();
-          }
-        });
-      } else {
-        g("inv-pin-err").style.display = "block";
-        invPinEntry = "";
-        for (var j = 0; j < 4; j++) g("inv-pd" + j).className = "ipin-dot";
+  window.invMgmtStepUp = async function() {
+    var username = g('inv-stepup-username').value.trim();
+    var password = g('inv-stepup-password').value;
+    var err = g('inv-pin-err');
+    err.style.display = 'none';
+    if (!username || !password) { err.textContent = 'Enter a management username and password.'; err.style.display = 'block'; return; }
+    try {
+      var res = await fetch('https://xfitting-lookup.alfixedinc88.workers.dev/auth/login', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ username: username, password: password })
+      });
+      var data = await res.json();
+      if (!res.ok || !data.roles.includes('mgmt')) {
+        err.textContent = res.ok ? 'This account does not have management access.' : (data.error || 'Login failed');
+        err.style.display = 'block';
+        return;
       }
+      // Real, server-confirmed mgmt access — upgrade the session
+      INV_CRED_TOKEN = data.token;
+      INV_CRED_USER = { displayName: data.displayName, roles: data.roles, userId: data.userId };
+      localStorage.setItem('xf_cred_token', data.token);
+      localStorage.setItem('xf_cred_user', JSON.stringify(INV_CRED_USER));
+      invUnlocked = true;
+      g('inv-stepup-username').value = ''; g('inv-stepup-password').value = '';
+      g('inv-pin-gate').style.display = 'none';
+      if (window._skumgrPendingTab) {
+        var pendingTab = window._skumgrPendingTab;
+        window._skumgrPendingTab = null;
+        g('inv-review-content').style.display = 'none';
+        invSwitchTab(pendingTab);
+      } else {
+        g('inv-review-content').style.display = 'block';
+        invLoadPending();
+      }
+    } catch(e) {
+      err.textContent = 'Connection error — try again.';
+      err.style.display = 'block';
     }
   };
 
@@ -2451,8 +2436,6 @@ async function wFetch(url, opts) {
   window.invReviewRequestMode = function(mode) {
     if ((mode === 'auto') === invReviewAutoMode) return; // already in that mode
     invReviewPendingMode = mode;
-    invAuditPinEntry = '';
-    ['inv-apd0','inv-apd1','inv-apd2','inv-apd3'].forEach(function(id){ var d=g(id); if(d) d.classList.remove('filled'); });
     var modal = g('inv-audit-pin-modal');
     if (modal) modal.style.display = 'flex';
   };
@@ -2702,10 +2685,9 @@ async function wFetch(url, opts) {
   };
 
   window.invSubmitPullList = function() {
-    var initials = g("inv-pull-initials").value.trim();
+    var initials = (INV_CRED_USER && INV_CRED_USER.displayName) || "OPS";
     var notes    = g("inv-pull-notes").value.trim();
     if (invPullList.length === 0) { invFlash("Pull list is empty", "error"); return; }
-    if (!initials) { invFlash("Enter your initials", "error"); return; }
     var missing = invPullList.filter(function(x) { return !x.noneFound && (!x.cases || parseFloat(x.cases) < 0.1); });
     if (missing.length > 0) { invFlash(missing.length + " item(s) missing case count", "error"); return; }
     var btn = document.querySelector("#inv-pulllist-card .isubmit");
@@ -2717,7 +2699,7 @@ async function wFetch(url, opts) {
         invFlash("Pull list submitted \u2713", "success");
         invPullList = []; invSavePullList(); invRenderPullList();
         btn.disabled = false; btn.textContent = "\ud83d\udce4 Submit Pull List";
-        g("inv-pull-initials").value = ""; g("inv-pull-notes").value = "";
+        g("inv-pull-notes").value = "";
         return;
       }
       var item = items[idx++];
@@ -4161,9 +4143,6 @@ async function wFetch(url, opts) {
       warn.style.display = 'block';
     }
     var ci = g('xfr-addcart-cases'); if (ci) ci.value = '';
-    // Pre-fill initials if already in cart
-    var ii = g('xfr-cart-initials');
-    if (ii && !ii.value && xfrCart.length > 0 && xfrCart[0].initials) ii.value = xfrCart[0].initials;
     g('xfr-addcart-card').style.display = 'block';
   }
 
@@ -4183,14 +4162,13 @@ async function wFetch(url, opts) {
 
   window.xfrAddToCartInline = function(idx) {
     var cases    = parseFloat((g('xfr-loc-cases-' + idx) || {value:0}).value || 0);
-    var initials = ((g('xfr-cart-initials') || {value:''}).value || '').trim().toUpperCase();
+    var initials = (INV_CRED_USER && INV_CRED_USER.displayName) || 'OPS';
     var destPfx   = (g('xfr-loc-dest-pfx-' + idx)   || {value:''}).value || '';
     var destShelf = ((g('xfr-loc-dest-shelf-' + idx) || {value:''}).value || '').trim();
     var toLocation = destPfx && destShelf ? destPfx + destShelf : '';
     if (!xfrPart)    { invFlash('No item selected', 'error'); return; }
     if (!xfrFromLoc) { invFlash('Select a From location', 'error'); return; }
     if (!cases || cases < 0.1) { invFlash('Enter number of cases', 'error'); return; }
-    if (!initials) { invFlash('Enter initials at the top', 'error'); return; }
     if (!xfrFromLoc.isNew && cases > parseFloat(xfrFromLoc.cases || 0)) { invFlash('Exceeds available cases (' + xfrFromLoc.cases + ')', 'error'); return; }
     xfrCart.push({
       partNum:      xfrPart.partNum,
@@ -4226,14 +4204,13 @@ async function wFetch(url, opts) {
 
   window.xfrAddToCart = function() {
     var cases    = parseFloat((g('xfr-addcart-cases') || {}).value || 0);
-    var initials = ((g('xfr-cart-initials') || {}).value || '').trim();
+    var initials = (INV_CRED_USER && INV_CRED_USER.displayName) || 'OPS';
     var destPfx   = (g('xfr-addcart-dest-prefix') || {value:''}).value || '';
     var destShelf = ((g('xfr-addcart-dest-shelf') || {value:''}).value || '').trim();
     var toLocation = destPfx && destShelf ? destPfx + destShelf : '';
     if (!xfrPart)    { invFlash('No item selected', 'error'); return; }
     if (!xfrFromLoc) { invFlash('Select a From location', 'error'); return; }
     if (!cases || cases < 0.1) { invFlash('Enter number of cases', 'error'); return; }
-    if (!initials)           { invFlash('Enter your initials', 'error'); return; }
     if (!xfrFromLoc.isNew && cases > parseFloat(xfrFromLoc.cases || 0)) { invFlash('Exceeds available cases (' + xfrFromLoc.cases + ')', 'error'); return; }
     xfrCart.push({
       partNum:      xfrPart.partNum,
@@ -4591,8 +4568,7 @@ async function wFetch(url, opts) {
 
   // ── AUDIT TAB ──────────────────────────────────────────────────────────────
 
-  var invAuditPinEntry   = '';
-  var invAuditPendingMode = null; // mode waiting for PIN confirmation
+  var invAuditPendingMode = null; // mode waiting for mgmt step-up confirmation
   var invAuditAutoMode   = false; // loaded from Config sheet on tab open
 
   function invAuditUpdateModeUI() {
@@ -4624,12 +4600,10 @@ async function wFetch(url, opts) {
       .catch(function() {}); // silent fail — stays at default manual
   };
 
-  // Called when mode button clicked — shows PIN modal
+  // Called when mode button clicked — shows the mgmt step-up modal
   window.invAuditRequestMode = function(mode) {
     if ((mode === 'auto') === invAuditAutoMode) return; // already in that mode
     invAuditPendingMode = mode;
-    invAuditPinEntry = '';
-    ['inv-apd0','inv-apd1','inv-apd2','inv-apd3'].forEach(function(id){ var d=g(id); if(d) d.classList.remove('filled'); });
     var modal = g('inv-audit-pin-modal');
     if (modal) modal.style.display = 'flex';
   };
@@ -4639,7 +4613,6 @@ async function wFetch(url, opts) {
     if (modal) modal.style.display = 'none';
     invAuditPendingMode = null;
     invReviewPendingMode = null;
-    invAuditPinEntry = '';
     // Re-enable any disabled rename buttons on cancel
     document.querySelectorAll('#inv-rename-prefix-list button').forEach(function(b){ b.disabled=false; b.style.opacity=''; });
   };
@@ -4658,34 +4631,43 @@ async function wFetch(url, opts) {
       });
   };
 
-  window.invAuditPinKey = function(k) {
-    if (k === 'back')       invAuditPinEntry = invAuditPinEntry.slice(0,-1);
-    else if (k === 'clear') invAuditPinEntry = '';
-    else if (invAuditPinEntry.length < 4) invAuditPinEntry += k;
-    ['inv-apd0','inv-apd1','inv-apd2','inv-apd3'].forEach(function(id,i){
-      var d=g(id); if(d) d.classList.toggle('filled', i < invAuditPinEntry.length);
-    });
-    if (invAuditPinEntry.length === 4) {
-      if (invAuditPinEntry === MPIN) {
-        // PIN correct — apply pending action (mode change or rename)
-        var modal = g('inv-audit-pin-modal');
-        if (modal) modal.style.display = 'none';
-        if (invAuditPendingMode) { invAuditSetMode(invAuditPendingMode); invAuditPendingMode = null; }
-        if (invReviewPendingMode) { invReviewSetMode(invReviewPendingMode); invReviewPendingMode = null; }
-        if (invRenamePending) {
-          // Show rename confirmation
-          var msg = g('inv-rename-confirm-msg');
-          if (msg) msg.textContent = 'Rename "' + invRenamePending.oldPrefix + '" → "' + invRenamePending.newPrefix + '" in all Master List rows?';
-          var conf = g('inv-rename-confirm');
-          if (conf) { conf.style.display = 'block'; conf.scrollIntoView({ behavior: 'smooth', block: 'center' }); }
-        }
-        invAuditPinEntry = '';
-      } else {
-        var err = g('inv-audit-pin-err');
-        if (err) { err.style.display='block'; setTimeout(function(){ err.style.display='none'; },1500); }
-        invAuditPinEntry = '';
-        ['inv-apd0','inv-apd1','inv-apd2','inv-apd3'].forEach(function(id){ var d=g(id); if(d) d.classList.remove('filled'); });
+  window.invAuditMgmtStepUp = async function() {
+    var username = g('inv-audit-stepup-username').value.trim();
+    var password = g('inv-audit-stepup-password').value;
+    var err = g('inv-audit-pin-err');
+    err.style.display = 'none';
+    if (!username || !password) { err.textContent = 'Enter a management username and password.'; err.style.display = 'block'; return; }
+    try {
+      var res = await fetch('https://xfitting-lookup.alfixedinc88.workers.dev/auth/login', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ username: username, password: password })
+      });
+      var data = await res.json();
+      if (!res.ok || !data.roles.includes('mgmt')) {
+        err.textContent = res.ok ? 'This account does not have management access.' : (data.error || 'Login failed');
+        err.style.display = 'block';
+        return;
       }
+      // Real, server-confirmed mgmt access — upgrade the session, then apply the pending action
+      INV_CRED_TOKEN = data.token;
+      INV_CRED_USER = { displayName: data.displayName, roles: data.roles, userId: data.userId };
+      localStorage.setItem('xf_cred_token', data.token);
+      localStorage.setItem('xf_cred_user', JSON.stringify(INV_CRED_USER));
+      g('inv-audit-stepup-username').value = ''; g('inv-audit-stepup-password').value = '';
+      var modal = g('inv-audit-pin-modal');
+      if (modal) modal.style.display = 'none';
+      if (invAuditPendingMode) { invAuditSetMode(invAuditPendingMode); invAuditPendingMode = null; }
+      if (invReviewPendingMode) { invReviewSetMode(invReviewPendingMode); invReviewPendingMode = null; }
+      if (invRenamePending) {
+        // Show rename confirmation
+        var msg = g('inv-rename-confirm-msg');
+        if (msg) msg.textContent = 'Rename "' + invRenamePending.oldPrefix + '" → "' + invRenamePending.newPrefix + '" in all Master List rows?';
+        var conf = g('inv-rename-confirm');
+        if (conf) { conf.style.display = 'block'; conf.scrollIntoView({ behavior: 'smooth', block: 'center' }); }
+      }
+    } catch(e) {
+      err.textContent = 'Connection error — try again.';
+      err.style.display = 'block';
     }
   };
 
@@ -4866,9 +4848,8 @@ async function wFetch(url, opts) {
     if (!loc) { invFlash('Location not found', 'error'); return; }
     var countInp    = g('inv-audit-count-' + idx);
     var actualCases = parseFloat(countInp ? countInp.value : '');
-    var initials    = ((g('inv-audit-initials') || {value:''}).value || '').trim().toUpperCase();
+    var initials    = ((INV_CRED_USER && INV_CRED_USER.displayName) || 'OPS');
     if (isNaN(actualCases) || actualCases < 0) { invFlash('Enter a valid count (0 or more)', 'error'); return; }
-    if (!initials) { invFlash('Enter your initials', 'error'); return; }
     var currentCases = loc.adjustedCases !== undefined ? loc.adjustedCases : parseFloat(loc.cases) || 0;
     var diff = actualCases - currentCases;
     var rowEl = g('inv-audit-loc-' + idx);
@@ -4945,9 +4926,8 @@ async function wFetch(url, opts) {
     var pfx      = (g('inv-audit-movepfx-' + idx) || {value:''}).value || '';
     var shelf    = ((g('inv-audit-moveshelf-' + idx) || {value:''}).value || '').trim();
     var newLoc   = pfx + shelf;
-    var initials = ((g('inv-audit-initials') || {value:''}).value || '').trim().toUpperCase();
+    var initials = ((INV_CRED_USER && INV_CRED_USER.displayName) || 'OPS');
     if (!shelf || shelf.length < 2) { invFlash('Enter the correct shelf location', 'error'); return; }
-    if (!initials) { invFlash('Enter your initials', 'error'); return; }
     if (newLoc.toUpperCase() === loc.location.toUpperCase()) { invFlash('Same location \u2014 no change needed', 'warn'); return; }
     var casesMoveInp = g('inv-audit-movecases-' + idx);
     var countInp     = g('inv-audit-count-' + idx);
@@ -5318,8 +5298,7 @@ async function wFetch(url, opts) {
   };
 
   window.invAuditSubmitAllLoc = function(items) {
-    var initials = ((g('inv-audit-initials') || {value:''}).value || '').trim().toUpperCase();
-    if (!initials) { invFlash('Enter your initials first', 'error'); return; }
+    var initials = ((INV_CRED_USER && INV_CRED_USER.displayName) || 'OPS');
     // Check all inputs have values
     var missing = items.filter(function(item) {
       var inp = document.getElementById('audloc-count-' + item.rowIndex);
@@ -5395,14 +5374,10 @@ async function wFetch(url, opts) {
     var submitBtn = rowEl ? rowEl.querySelector('button[onclick*="Submit"],button[onclick*="submit"]') : null;
     if (submitBtn) submitBtn.disabled = true;
     var actualCases = parseFloat(inp ? inp.value : '');
-    var initials    = ((g('inv-audit-initials') || {value:''}).value || '').trim().toUpperCase();
+    var initials    = ((INV_CRED_USER && INV_CRED_USER.displayName) || 'OPS');
     if (isNaN(actualCases) || actualCases < 0) {
       if (rowEl) rowEl.dataset.submitted = '0';
       invFlash('Enter a valid count (0 or more)', 'error'); return;
-    }
-    if (!initials) {
-      if (rowEl) rowEl.dataset.submitted = '0';
-      invFlash('Enter your initials', 'error'); return;
     }
     var currentCases = item.adjustedCases !== undefined ? item.adjustedCases : (item.casesNum || 0);
     var diff = actualCases - currentCases;
@@ -5485,12 +5460,11 @@ async function wFetch(url, opts) {
     var locPfx   = (g('audloc-add-loc-prefix') || {value:''}).value || '';
     var locShelf = ((g('audloc-add-loc-shelf') || {value:''}).value || '').trim();
     var location = locPfx + locShelf;
-    var initials = ((g('inv-audit-initials') || {value:''}).value || '').trim().toUpperCase();
+    var initials = ((INV_CRED_USER && INV_CRED_USER.displayName) || 'OPS');
     var resEl    = g('audloc-add-result');
     if (!partNum) { invFlash('Enter a part number', 'error'); return; }
     if (!cases || cases < 0.1) { invFlash('Enter case count', 'error'); return; }
     if (!location || locShelf.length < 2) { invFlash('Enter a location', 'error'); return; }
-    if (!initials) { invFlash('Enter your initials', 'error'); return; }
     var note = '[AUDIT] Found on shelf — not previously listed at ' + location;
     var body = { type: 'IN', partNum: partNum, sku: partNum.split('=')[0].trim(), name: '',
       location: location, cases: cases, initials: initials, notes: note,
@@ -5542,11 +5516,10 @@ async function wFetch(url, opts) {
       var shelf  = (prompt.querySelector('.wtr-shelf').value || '').trim();
       var cases2 = parseFloat(prompt.querySelector('.wtr-cases').value || 0);
       var loc2   = pfx + shelf;
-      var init2  = ((g('inv-audit-initials') || {value:''}).value || '').trim().toUpperCase();
+      var init2  = ((INV_CRED_USER && INV_CRED_USER.displayName) || 'OPS');
       var resEl2 = prompt.querySelector('.wtr-result');
       if (!pfx || !shelf || shelf.length < 2) { resEl2.innerHTML = '<div style="color:var(--red);font-size:11px">Enter a location</div>'; return; }
       if (!cases2 || cases2 < 0.1) { resEl2.innerHTML = '<div style="color:var(--red);font-size:11px">Enter cases</div>'; return; }
-      if (!init2) { resEl2.innerHTML = '<div style="color:var(--red);font-size:11px">Enter initials</div>'; return; }
       var note2 = '[AUDIT] Found ' + cases2 + ' cases of ' + item.partNum + ' here (split from ' + item.location + ')';
       var body2 = { type: 'IN', partNum: item.partNum, sku: item.partNum.split('=')[0].trim(), name: item.name||'',
         location: loc2, cases: cases2, initials: init2, notes: note2,
@@ -5674,11 +5647,9 @@ async function wFetch(url, opts) {
     var newPrefix = newInput ? newInput.value.trim() : '';
     if (!newPrefix) { invFlash('Enter a new prefix', 'error'); return; }
     if (newPrefix === p.prefix) { invFlash('Same prefix — no change needed', 'warn'); return; }
-    // Require management PIN
-    invAuditPendingMode = null; // reuse PIN modal for rename
+    // Require management credentials
+    invAuditPendingMode = null; // reuse the mgmt step-up modal for rename
     invRenamePending = { oldPrefix: p.prefix, newPrefix: newPrefix };
-    invAuditPinEntry = '';
-    ['inv-apd0','inv-apd1','inv-apd2','inv-apd3'].forEach(function(id){ var d=g(id); if(d) d.classList.remove('filled'); });
     var modal = g('inv-audit-pin-modal');
     if (modal) modal.style.display = 'flex';
   };
@@ -5736,7 +5707,31 @@ async function wFetch(url, opts) {
   };
 
 })();
+</script>
 
+<script>
+(async function() {
+  if (!INV_CRED_TOKEN || !INV_CRED_USER || !(INV_CRED_USER.roles.includes('ops') || INV_CRED_USER.roles.includes('mobile') || INV_CRED_USER.roles.includes('mgmt'))) {
+    localStorage.removeItem('xf_cred_token'); localStorage.removeItem('xf_cred_user');
+    INV_CRED_TOKEN = null;
+    return; // login gate already visible by default
+  }
+  // Verify the cached token still actually works before trusting it.
+  // /inventory/prefixes is mgmt-only, so a 403 here just means this
+  // logged-in user isn't mgmt - NOT that the token itself is invalid.
+  // Only a 401 means "log out and show the gate again".
+  try {
+    var res = await fetch('https://xfitting-lookup.alfixedinc88.workers.dev/inventory/prefixes', { headers: { 'X-Cred-Token': INV_CRED_TOKEN } });
+    if (res.status === 401) {
+      localStorage.removeItem('xf_cred_token'); localStorage.removeItem('xf_cred_user');
+      INV_CRED_TOKEN = null;
+      return;
+    }
+  } catch(e) { return; }
+  document.getElementById('inv-cred-gate').style.display = 'none';
+  document.getElementById('inv-app').style.display = 'flex';
+  if (typeof invOnLogin === 'function') invOnLogin();
+})();
 </script>
 
 <!-- BUGFIX: both modals below were referenced by JS (skumgrShowAddRow /
