@@ -223,7 +223,8 @@ body {
 .ps-scan-summary-total-val.warn { color:var(--orange); }
 .ps-scan-summary-total-label { font-size:10px; font-weight:600; text-transform:uppercase; letter-spacing:.5px; color:var(--text3); margin-top:5px; text-align:center; }
 .ps-scan-summary-by { display:flex; flex-wrap:wrap; gap:10px; flex:1; }
-.ps-scan-summary-chip { display:flex; align-items:center; gap:10px; background:var(--bg3); border:1px solid var(--border); border-radius:12px; padding:6px 10px 6px 14px; }
+.ps-scan-summary-chip { display:flex; align-items:center; gap:10px; background:var(--bg3); border:1px solid var(--border); border-radius:12px; padding:6px 10px 6px 14px; cursor:pointer; transition:background .15s, border-color .15s; }
+.ps-scan-summary-chip:hover { background:var(--bg4); border-color:var(--border2); }
 .ps-scan-summary-chip-info { display:flex; flex-direction:column; gap:2px; }
 .ps-scan-summary-chip-name { font-size:12px; font-weight:700; color:var(--text); }
 .ps-scan-summary-chip-split { font-family:var(--mono); font-size:10px; font-weight:600; color:var(--text3); white-space:nowrap; }
@@ -232,9 +233,25 @@ body {
 .ps-scan-summary-chip-count { font-family:var(--mono); font-size:13px; font-weight:800; color:var(--accent); background:var(--bg2); border-radius:14px; padding:2px 9px; }
 .ps-scan-summary-printed-split { font-family:var(--mono); font-size:9px; font-weight:600; color:var(--text3); margin-top:3px; white-space:nowrap; }
 .ps-scan-summary-empty { font-size:12px; color:var(--text3); font-style:italic; }
+.ps-scan-summary-namewrap { display:flex; flex-direction:column; gap:4px; padding-left:16px; border-left:1px solid var(--border); }
+.ps-scan-summary-namewrap-label { font-size:10px; font-weight:600; text-transform:uppercase; letter-spacing:.5px; color:var(--text3); }
+.ps-scan-summary-name-input { font-family:inherit; font-size:13px; color:var(--text); background:var(--bg3); border:1px solid var(--border); border-radius:8px; padding:6px 8px; width:120px; }
 .ps-scan-summary-datewrap { display:flex; flex-direction:column; gap:4px; margin-left:auto; padding-left:16px; border-left:1px solid var(--border); }
 .ps-scan-summary-date-label { font-size:10px; font-weight:600; text-transform:uppercase; letter-spacing:.5px; color:var(--text3); }
 .ps-scan-summary-date-input { font-family:inherit; font-size:13px; color:var(--text); background:var(--bg3); border:1px solid var(--border); border-radius:8px; padding:6px 8px; }
+
+/* Per-person scan-history modal — opened by clicking a name chip above.
+   Mirrors the same fixed-overlay pattern as .ps-dupe-overlay. */
+.ps-person-modal-overlay { position:fixed; inset:0; background:rgba(20,20,26,.55); display:none; align-items:center; justify-content:center; padding:24px; z-index:520; }
+.ps-person-modal { background:var(--bg2); border:1px solid var(--border); border-radius:16px; max-width:480px; width:100%; max-height:82vh; display:flex; flex-direction:column; box-shadow:var(--shadow2); overflow:hidden; }
+.ps-person-modal-header { display:flex; align-items:flex-start; justify-content:space-between; gap:12px; padding:20px 22px 14px; border-bottom:1px solid var(--border); }
+.ps-person-modal-title { font-size:17px; font-weight:800; color:var(--text); }
+.ps-person-modal-sub { font-size:12px; color:var(--text3); margin-top:4px; font-family:var(--mono); }
+.ps-person-modal-close { background:var(--bg3); border:1px solid var(--border); color:var(--text2); width:28px; height:28px; border-radius:8px; font-size:15px; cursor:pointer; flex-shrink:0; line-height:1; }
+.ps-person-modal-close:hover { background:var(--bg4); }
+.ps-person-modal-search { padding:14px 22px 0; }
+.ps-person-modal-body { padding:14px 22px 22px; overflow-y:auto; flex:1; }
+.ps-person-modal-empty { font-size:13px; color:var(--text3); font-style:italic; text-align:center; padding:24px 0; }
 
 /* Batch close */
 .ps-batch-close-bar { background:var(--bg2); border:1px solid var(--border); border-radius:12px; padding:16px 18px; margin-bottom:16px; box-shadow:var(--shadow); display:flex; align-items:center; gap:12px; flex-wrap:wrap; }
@@ -364,6 +381,8 @@ body {
   #ps-scan-product-more .ps-scan-product-img-placeholder { width:100%; height:auto; aspect-ratio:1/1; }
   .ps-scan-summary { gap:12px; padding:12px 14px; }
   .ps-scan-summary-total { padding-right:14px; }
+  .ps-scan-summary-namewrap { padding-left:0; border-left:none; width:100%; }
+  .ps-scan-summary-name-input { width:100%; }
   .ps-scan-summary-datewrap { margin-left:0; padding-left:0; border-left:none; width:100%; }
 }
 
@@ -536,7 +555,8 @@ body {
 #packship-app .ps-scan-summary-total-val.warn { color:var(--orange); }
 #packship-app .ps-scan-summary-total-label { font-size:10px; font-weight:600; text-transform:uppercase; letter-spacing:.5px; color:var(--text3); margin-top:5px; text-align:center; }
 #packship-app .ps-scan-summary-by { display:flex; flex-wrap:wrap; gap:10px; flex:1; }
-#packship-app .ps-scan-summary-chip { display:flex; align-items:center; gap:10px; background:var(--bg3); border:1px solid var(--border); border-radius:12px; padding:6px 10px 6px 14px; }
+#packship-app .ps-scan-summary-chip { display:flex; align-items:center; gap:10px; background:var(--bg3); border:1px solid var(--border); border-radius:12px; padding:6px 10px 6px 14px; cursor:pointer; transition:background .15s, border-color .15s; }
+#packship-app .ps-scan-summary-chip:hover { background:var(--bg4); border-color:var(--border2); }
 #packship-app .ps-scan-summary-chip-info { display:flex; flex-direction:column; gap:2px; }
 #packship-app .ps-scan-summary-chip-name { font-size:12px; font-weight:700; color:var(--text); }
 #packship-app .ps-scan-summary-chip-split { font-family:var(--mono); font-size:10px; font-weight:600; color:var(--text3); white-space:nowrap; }
@@ -545,9 +565,25 @@ body {
 #packship-app .ps-scan-summary-chip-count { font-family:var(--mono); font-size:13px; font-weight:800; color:var(--accent); background:var(--bg2); border-radius:14px; padding:2px 9px; }
 #packship-app .ps-scan-summary-printed-split { font-family:var(--mono); font-size:9px; font-weight:600; color:var(--text3); margin-top:3px; white-space:nowrap; }
 #packship-app .ps-scan-summary-empty { font-size:12px; color:var(--text3); font-style:italic; }
+#packship-app .ps-scan-summary-namewrap { display:flex; flex-direction:column; gap:4px; padding-left:16px; border-left:1px solid var(--border); }
+#packship-app .ps-scan-summary-namewrap-label { font-size:10px; font-weight:600; text-transform:uppercase; letter-spacing:.5px; color:var(--text3); }
+#packship-app .ps-scan-summary-name-input { font-family:inherit; font-size:13px; color:var(--text); background:var(--bg3); border:1px solid var(--border); border-radius:8px; padding:6px 8px; width:120px; }
 #packship-app .ps-scan-summary-datewrap { display:flex; flex-direction:column; gap:4px; margin-left:auto; padding-left:16px; border-left:1px solid var(--border); }
 #packship-app .ps-scan-summary-date-label { font-size:10px; font-weight:600; text-transform:uppercase; letter-spacing:.5px; color:var(--text3); }
 #packship-app .ps-scan-summary-date-input { font-family:inherit; font-size:13px; color:var(--text); background:var(--bg3); border:1px solid var(--border); border-radius:8px; padding:6px 8px; }
+
+/* Per-person scan-history modal — opened by clicking a name chip above.
+   Mirrors the same fixed-overlay pattern as .ps-dupe-overlay. */
+#packship-app .ps-person-modal-overlay { position:fixed; inset:0; background:rgba(20,20,26,.55); display:none; align-items:center; justify-content:center; padding:24px; z-index:520; }
+#packship-app .ps-person-modal { background:var(--bg2); border:1px solid var(--border); border-radius:16px; max-width:480px; width:100%; max-height:82vh; display:flex; flex-direction:column; box-shadow:var(--shadow2); overflow:hidden; }
+#packship-app .ps-person-modal-header { display:flex; align-items:flex-start; justify-content:space-between; gap:12px; padding:20px 22px 14px; border-bottom:1px solid var(--border); }
+#packship-app .ps-person-modal-title { font-size:17px; font-weight:800; color:var(--text); }
+#packship-app .ps-person-modal-sub { font-size:12px; color:var(--text3); margin-top:4px; font-family:var(--mono); }
+#packship-app .ps-person-modal-close { background:var(--bg3); border:1px solid var(--border); color:var(--text2); width:28px; height:28px; border-radius:8px; font-size:15px; cursor:pointer; flex-shrink:0; line-height:1; }
+#packship-app .ps-person-modal-close:hover { background:var(--bg4); }
+#packship-app .ps-person-modal-search { padding:14px 22px 0; }
+#packship-app .ps-person-modal-body { padding:14px 22px 22px; overflow-y:auto; flex:1; }
+#packship-app .ps-person-modal-empty { font-size:13px; color:var(--text3); font-style:italic; text-align:center; padding:24px 0; }
 
 /* Batch close */
 #packship-app .ps-batch-close-bar { background:var(--bg2); border:1px solid var(--border); border-radius:12px; padding:16px 18px; margin-bottom:16px; box-shadow:var(--shadow); display:flex; align-items:center; gap:12px; flex-wrap:wrap; }
@@ -677,6 +713,8 @@ body {
   #packship-app #ps-scan-product-more .ps-scan-product-img-placeholder { width:100%; height:auto; aspect-ratio:1/1; }
   #packship-app .ps-scan-summary { gap:12px; padding:12px 14px; }
   #packship-app .ps-scan-summary-total { padding-right:14px; }
+  #packship-app .ps-scan-summary-namewrap { padding-left:0; border-left:none; width:100%; }
+  #packship-app .ps-scan-summary-name-input { width:100%; }
   #packship-app .ps-scan-summary-datewrap { margin-left:0; padding-left:0; border-left:none; width:100%; }
 }
 </style>
@@ -715,6 +753,25 @@ body {
     <div class="ps-dupe-title">Duplicate Scan!</div>
     <div class="ps-dupe-detail" id="ps-dupe-detail">—</div>
     <button class="ps-dupe-btn" onclick="psDupeAcknowledge()">OK, Got It</button>
+  </div>
+</div>
+
+<!-- Per-person scan-history modal — opened by clicking a name chip in the
+     Scan tab's summary bar. Shows every scan that person made on whichever
+     date is currently loaded in that bar (today, or a picked past date). -->
+<div id="ps-person-modal-overlay" class="ps-person-modal-overlay" onclick="if(event.target===this) psClosePersonDetail()">
+  <div class="ps-person-modal">
+    <div class="ps-person-modal-header">
+      <div>
+        <div class="ps-person-modal-title" id="ps-person-modal-title">—</div>
+        <div class="ps-person-modal-sub" id="ps-person-modal-sub"></div>
+      </div>
+      <button class="ps-person-modal-close" onclick="psClosePersonDetail()">✕</button>
+    </div>
+    <div class="ps-person-modal-search">
+      <input type="text" class="ps-search-input" id="ps-person-modal-search" placeholder="Search tracking, carrier…" oninput="_psRenderPersonModalList()" style="padding-left:14px">
+    </div>
+    <div class="ps-person-modal-body" id="ps-person-modal-body"></div>
   </div>
 </div>
 
@@ -807,6 +864,10 @@ body {
         <div class="ps-scan-summary-total-label" id="ps-scan-summary-total-label">Scanned<br>Today</div>
       </div>
       <div class="ps-scan-summary-by" id="ps-scan-summary-by"></div>
+      <div class="ps-scan-summary-namewrap">
+        <label class="ps-scan-summary-namewrap-label" for="ps-scan-summary-namefilter">Find person</label>
+        <input type="text" class="ps-scan-summary-name-input" id="ps-scan-summary-namefilter" placeholder="Name…" oninput="_psRenderPersonChips()">
+      </div>
       <div class="ps-scan-summary-datewrap">
         <label class="ps-scan-summary-date-label" for="ps-scan-summary-date">Check a date</label>
         <input type="date" class="ps-scan-summary-date-input" id="ps-scan-summary-date" onchange="psScanSummaryDateChange()">
@@ -1931,17 +1992,24 @@ window.psFilterScans = function(f, btn) {
 // else is a one-off fetch that the live refresh must not stomp on.
 var psScanSummaryDate = null;
 
+// Backing data for the currently-shown per-person chips: whatever date's
+// scans _psPaintScanSummary last painted (today's live feed, or a picked
+// past date), plus the grouped-by-initials totals computed from it. Kept
+// around (rather than just thrown into the chip HTML) so clicking a chip
+// or typing into "Find person" can re-slice this without a new fetch —
+// the person-detail modal below reads straight from _psScanSummaryScans.
+var _psScanSummaryScans  = [];
+var _psScanSummaryByUser = {};
+var _psPersonModalName   = null; // set while the detail modal is open
+
 function _psPaintScanSummary(scans, labelHtml) {
   var wrap = document.getElementById('ps-scan-summary');
   if (!wrap) return;
   document.getElementById('ps-scan-summary-total-label').innerHTML = labelHtml;
   var total = scans.length;
   document.getElementById('ps-scan-summary-total-val').textContent = total;
-  var byEl = document.getElementById('ps-scan-summary-by');
-  if (!total) {
-    byEl.innerHTML = '<div class="ps-scan-summary-empty">No scans that day</div>';
-    return;
-  }
+  _psScanSummaryScans = scans;
+
   // Per person: total plus a UPS / USPS split, so a manager can see not
   // just how many each shipper scanned but which carrier they worked.
   var byUser = {};
@@ -1953,20 +2021,106 @@ function _psPaintScanSummary(scans, labelHtml) {
     else if (s.carrier === 'USPS') byUser[who].usps++;
     else byUser[who].other++;
   });
-  var names = Object.keys(byUser).sort(function(a, b) { return byUser[b].total - byUser[a].total; });
+  _psScanSummaryByUser = byUser;
+  _psRenderPersonChips();
+
+  // If the detail modal is currently open for someone, keep it live too —
+  // otherwise a scan coming in (or a periodic refresh) while it's open
+  // would leave it showing a stale list.
+  if (_psPersonModalName) _psRenderPersonModalList();
+}
+
+// Renders (or re-renders) the per-person chips from whatever's currently
+// loaded in _psScanSummaryByUser, filtered by the "Find person" box —
+// lets a manager narrow a long shipper list down to one name before
+// clicking in, on top of whatever date is picked above. No new fetch;
+// just re-slices data that's already loaded.
+function _psRenderPersonChips() {
+  var byEl = document.getElementById('ps-scan-summary-by');
+  if (!byEl) return;
+  var byUser    = _psScanSummaryByUser;
+  var allNames  = Object.keys(byUser).sort(function(a, b) { return byUser[b].total - byUser[a].total; });
+  if (!allNames.length) {
+    byEl.innerHTML = '<div class="ps-scan-summary-empty">No scans that day</div>';
+    return;
+  }
+  var filterInp = document.getElementById('ps-scan-summary-namefilter');
+  var q = (filterInp && filterInp.value || '').trim().toLowerCase();
+  var names = q ? allNames.filter(function(n){ return n.toLowerCase().indexOf(q) !== -1; }) : allNames;
+  if (!names.length) {
+    byEl.innerHTML = '<div class="ps-scan-summary-empty">No one matching "' + q + '"</div>';
+    return;
+  }
   byEl.innerHTML = names.map(function(n) {
     var u = byUser[n];
     var parts = [];
     if (u.ups)   parts.push('<span class="ps-scan-summary-chip-ups">' + u.ups + ' UPS</span>');
     if (u.usps)  parts.push('<span class="ps-scan-summary-chip-usps">' + u.usps + ' USPS</span>');
     if (u.other) parts.push('<span class="ps-scan-summary-chip-other">' + u.other + ' other</span>');
-    return '<div class="ps-scan-summary-chip">'
+    return '<div class="ps-scan-summary-chip" data-person="' + n.replace(/"/g,'&quot;') + '" role="button" tabindex="0">'
       +   '<div class="ps-scan-summary-chip-info">'
       +     '<span class="ps-scan-summary-chip-name">' + n + '</span>'
       +     '<span class="ps-scan-summary-chip-split">' + parts.join(' · ') + '</span>'
       +   '</div>'
       +   '<span class="ps-scan-summary-chip-count">' + u.total + '</span>'
       + '</div>';
+  }).join('');
+}
+
+// ── Per-person scan-history detail modal ────────────────────────────────
+// Opened by clicking a name chip. Lists every scan that person made on
+// whichever date the summary bar is currently showing (today's live feed,
+// or a past date picked via "Check a date") — so date picker + name chip
+// together answer "what did this person do on that day". Reads from
+// _psScanSummaryScans rather than issuing a new request.
+window.psShowPersonDetail = function(name) {
+  _psPersonModalName = name;
+  var searchInp = document.getElementById('ps-person-modal-search');
+  if (searchInp) searchInp.value = '';
+  document.getElementById('ps-person-modal-title').textContent = name;
+  _psRenderPersonModalList();
+  document.getElementById('ps-person-modal-overlay').style.display = 'flex';
+};
+
+window.psClosePersonDetail = function() {
+  document.getElementById('ps-person-modal-overlay').style.display = 'none';
+  _psPersonModalName = null;
+};
+
+function _psRenderPersonModalList() {
+  if (!_psPersonModalName) return;
+  var scans = _psScanSummaryScans.filter(function(s) {
+    return (s.initials || 'Unassigned') === _psPersonModalName;
+  });
+  scans.sort(function(a,b){ return new Date(b.timestamp) - new Date(a.timestamp); }); // newest first
+
+  var searchInp = document.getElementById('ps-person-modal-search');
+  var q = (searchInp && searchInp.value || '').trim().toLowerCase();
+  var items = q ? scans.filter(function(s) {
+    return (s.tracking||'').toLowerCase().indexOf(q) !== -1 || (s.carrier||'').toLowerCase().indexOf(q) !== -1;
+  }) : scans;
+
+  var dateKey   = psScanSummaryDate || psTodayKey();
+  var dateLabel = _psFmtSummaryDateLabel(dateKey).replace('Scanned<br>', '').replace(/<br>/g, ' ');
+  var ups  = scans.filter(function(s){ return s.carrier === 'UPS'; }).length;
+  var usps = scans.filter(function(s){ return s.carrier === 'USPS'; }).length;
+  var subParts = [scans.length + ' scan' + (scans.length !== 1 ? 's' : '')];
+  if (ups)  subParts.push(ups + ' UPS');
+  if (usps) subParts.push(usps + ' USPS');
+  document.getElementById('ps-person-modal-sub').textContent = subParts.join(' · ') + ' — ' + dateLabel;
+
+  var body = document.getElementById('ps-person-modal-body');
+  if (!items.length) {
+    body.innerHTML = '<div class="ps-person-modal-empty">' + (q ? 'No scans matching "' + q + '"' : 'No scans') + '</div>';
+    return;
+  }
+  body.innerHTML = items.map(function(s) {
+    return '<div class="ps-card"><div class="ps-card-row">'
+      +   '<div class="ps-card-dot green"></div>'
+      +   '<div class="ps-card-tracking">' + s.tracking + '</div>'
+      +   '<div class="ps-card-meta">' + _psCarrierBadge(s.carrier) + (s.batchClosedAt ? '<span class="ps-badge ps-badge-green">Closed</span>' : '') + '</div>'
+      +   '<div class="ps-card-time">' + psFmtTime(s.timestamp) + '</div>'
+      + '</div></div>';
   }).join('');
 }
 
@@ -2649,6 +2803,20 @@ function _psWireEvents() {
     setTimeout(function(){ var v = scanInp.value.trim(); if (v.length > 8) _psProcessScan(v); }, 60);
   });
 
+
+  // Per-person scan-history modal: one delegated click listener on the
+  // chip row (survives _psRenderPersonChips() rebuilding the chip HTML on
+  // every repaint), plus Escape to close it same as any overlay.
+  var summaryByEl = document.getElementById('ps-scan-summary-by');
+  if (summaryByEl) {
+    summaryByEl.addEventListener('click', function(e){
+      var chip = e.target.closest('.ps-scan-summary-chip');
+      if (chip && chip.dataset.person) psShowPersonDetail(chip.dataset.person);
+    });
+  }
+  document.addEventListener('keydown', function(e){
+    if (e.key === 'Escape' && _psPersonModalName) psClosePersonDetail();
+  });
 
   document.getElementById('ps-lookup-input').addEventListener('keydown', function(e){ if (e.key === 'Enter') psDoLookup(); });
   document.getElementById('ps-cred-username').addEventListener('keydown', function(e){ if (e.key === 'Enter') document.getElementById('ps-cred-password').focus(); });
