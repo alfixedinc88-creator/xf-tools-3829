@@ -150,7 +150,11 @@ body {
 /* Scan tab layout — scan box sits as a compact left column next to the
    scanned order's product info (instead of stacked above it), so an
    order with several items still fits without scrolling. */
-.ps-scan-toprow { display:flex; gap:16px; align-items:flex-start; flex-wrap:wrap; margin-bottom:20px; }
+/* nowrap on purpose — the product card area must always sit beside the scan
+   box, never drop underneath it, no matter how narrow the browser window
+   gets (short of the phone breakpoint below, which switches to a column
+   layout instead). It shrinks to fit rather than wrapping to a new row. */
+.ps-scan-toprow { display:flex; gap:16px; align-items:flex-start; flex-wrap:nowrap; margin-bottom:20px; }
 #ps-panel-scan .ps-scan-box { padding:16px; margin-bottom:0; flex:0 0 280px; }
 #ps-panel-scan .ps-scan-box-header { gap:8px; margin-bottom:10px; }
 #ps-panel-scan .ps-scan-icon { width:30px; height:30px; font-size:16px; }
@@ -177,24 +181,29 @@ body {
    of a bigger order (up to PS_SCAN_MAX_ITEMS) flow into the full-width
    strip below the scan bar (.ps-scan-product-items-more) — both use the
    same card so a 20-item order still reads as one consistent grid. */
-.ps-scan-product-wrap { flex:1 1 960px; min-width:960px; background:var(--bg2); border:1px solid var(--border); border-radius:12px; padding:14px 16px; box-shadow:var(--shadow); }
+/* flex:1 1 auto + min-width:0 (not a fixed min-width) so this can shrink as
+   small as it needs to rather than ever forcing the toprow to wrap. */
+.ps-scan-product-wrap { flex:1 1 auto; min-width:0; background:var(--bg2); border:1px solid var(--border); border-radius:12px; padding:14px 16px; box-shadow:var(--shadow); }
 .ps-scan-product-tracking { font-family:var(--mono); font-size:12px; font-weight:700; letter-spacing:.3px; color:var(--text3); text-transform:uppercase; margin-bottom:10px; word-break:break-all; }
 .ps-scan-product-items { display:flex; flex-wrap:wrap; gap:10px; }
 .ps-scan-product-items-more { background:var(--bg2); border:1px solid var(--border); border-radius:12px; padding:14px 16px; margin-bottom:20px; box-shadow:var(--shadow); }
-.ps-scan-product-item { display:flex; flex-direction:column; align-items:center; text-align:center; width:168px; background:var(--bg3); border:1px solid var(--border); border-radius:10px; padding:10px; gap:8px; }
-.ps-scan-product-img { width:140px; height:140px; object-fit:cover; border-radius:8px; border:1px solid var(--border); background:var(--bg2); flex-shrink:0; }
-.ps-scan-product-img-placeholder { width:140px; height:140px; border-radius:8px; border:1px solid var(--border); background:var(--bg2); display:flex; align-items:center; justify-content:center; font-size:52px; flex-shrink:0; }
-/* Overflow strip: cap each row at 7 fixed-width cards (matches the top row's
-   card size) instead of however many happen to fit the screen width — 8
-   was too many. Extra items wrap to additional rows of 7. */
-#ps-scan-product-more { display:grid; grid-template-columns:repeat(7, 168px); gap:10px; justify-content:start; }
-/* Top-row product items: same card/photo/text size as the overflow strip
-   below (.ps-scan-product-items-more uses the exact same .ps-scan-product-item
-   rules above) — just forced into a single row of 5 fixed-width columns so
-   it never wraps. The wider .ps-content max-width above gives it the room
-   to do that without shrinking anything. Scoped by ID so the overflow strip
-   itself (#ps-scan-product-more) keeps its own flex-wrap multi-row layout. */
-#ps-scan-product-items { display:grid; grid-template-columns:repeat(5, 168px); gap:10px; }
+/* width:100% (capped by max-width) instead of a hard fixed width, so cards
+   can shrink with their grid column when space is tight. */
+.ps-scan-product-item { display:flex; flex-direction:column; align-items:center; text-align:center; width:100%; max-width:168px; background:var(--bg3); border:1px solid var(--border); border-radius:10px; padding:10px; gap:8px; }
+.ps-scan-product-img { width:100%; max-width:140px; height:auto; aspect-ratio:1/1; object-fit:cover; border-radius:8px; border:1px solid var(--border); background:var(--bg2); }
+.ps-scan-product-img-placeholder { width:100%; max-width:140px; height:auto; aspect-ratio:1/1; border-radius:8px; border:1px solid var(--border); background:var(--bg2); display:flex; align-items:center; justify-content:center; font-size:52px; }
+/* Overflow strip: cap each row at 7 cards (up to 168px each, matching the
+   top row's card size) instead of however many happen to fit the screen
+   width — 8 was too many. Extra items wrap to additional rows of 7. */
+#ps-scan-product-more { display:grid; grid-template-columns:repeat(7, minmax(0, 168px)); gap:10px; justify-content:start; }
+/* Top-row product items: up to 5 columns, same max card/photo/text size as
+   the overflow strip below — but minmax(0,...) lets every column shrink
+   together (instead of wrapping to a new row) whenever the scan box +
+   this area can't both fit at full size. That's what keeps this row
+   permanently beside the scan box rather than dropping underneath it.
+   Scoped by ID so the overflow strip (#ps-scan-product-more) keeps its
+   own independent grid/row-count. */
+#ps-scan-product-items { display:grid; grid-template-columns:repeat(5, minmax(0, 168px)); gap:10px; justify-content:start; }
 .ps-scan-product-info { width:100%; min-width:0; }
 .ps-scan-product-sku { font-family:var(--mono); font-size:10.5px; font-weight:700; color:var(--text); margin-bottom:8px; word-break:break-word; line-height:1.25; }
 /* Qty and Total Qty sit on the same row, but sized worlds apart on purpose:
@@ -460,7 +469,11 @@ body {
 #packship-app .ps-scan-title { font-size:15px; font-weight:700; color:var(--text); }
 #packship-app .ps-scan-hint { font-size:12px; color:var(--text3); margin-top:1px; }
 
-#packship-app .ps-scan-toprow { display:flex; gap:16px; align-items:flex-start; flex-wrap:wrap; margin-bottom:20px; }
+/* nowrap on purpose — the product card area must always sit beside the scan
+   box, never drop underneath it, no matter how narrow the browser window
+   gets (short of the phone breakpoint below, which switches to a column
+   layout instead). It shrinks to fit rather than wrapping to a new row. */
+#packship-app .ps-scan-toprow { display:flex; gap:16px; align-items:flex-start; flex-wrap:nowrap; margin-bottom:20px; }
 #packship-app #ps-panel-scan .ps-scan-box { padding:16px; margin-bottom:0; flex:0 0 280px; }
 #packship-app #ps-panel-scan .ps-scan-box-header { gap:8px; margin-bottom:10px; }
 #packship-app #ps-panel-scan .ps-scan-icon { width:30px; height:30px; font-size:16px; }
@@ -482,24 +495,29 @@ body {
 #packship-app .ps-ls-meta { font-size:12px; color:var(--text2); }
 
 /* Scan product card — shown after a scan, mirrors the scanned tracking's order item(s) */
-#packship-app .ps-scan-product-wrap { flex:1 1 960px; min-width:960px; background:var(--bg2); border:1px solid var(--border); border-radius:12px; padding:14px 16px; box-shadow:var(--shadow); }
+/* flex:1 1 auto + min-width:0 (not a fixed min-width) so this can shrink as
+   small as it needs to rather than ever forcing the toprow to wrap. */
+#packship-app .ps-scan-product-wrap { flex:1 1 auto; min-width:0; background:var(--bg2); border:1px solid var(--border); border-radius:12px; padding:14px 16px; box-shadow:var(--shadow); }
 #packship-app .ps-scan-product-tracking { font-family:var(--mono); font-size:12px; font-weight:700; letter-spacing:.3px; color:var(--text3); text-transform:uppercase; margin-bottom:10px; word-break:break-all; }
 #packship-app .ps-scan-product-items { display:flex; flex-wrap:wrap; gap:10px; }
 #packship-app .ps-scan-product-items-more { background:var(--bg2); border:1px solid var(--border); border-radius:12px; padding:14px 16px; margin-bottom:20px; box-shadow:var(--shadow); }
-#packship-app .ps-scan-product-item { display:flex; flex-direction:column; align-items:center; text-align:center; width:168px; background:var(--bg3); border:1px solid var(--border); border-radius:10px; padding:10px; gap:8px; }
-#packship-app .ps-scan-product-img { width:140px; height:140px; object-fit:cover; border-radius:8px; border:1px solid var(--border); background:var(--bg2); flex-shrink:0; }
-#packship-app .ps-scan-product-img-placeholder { width:140px; height:140px; border-radius:8px; border:1px solid var(--border); background:var(--bg2); display:flex; align-items:center; justify-content:center; font-size:52px; flex-shrink:0; }
-/* Overflow strip: cap each row at 7 fixed-width cards (matches the top row's
-   card size) instead of however many happen to fit the screen width — 8
-   was too many. Extra items wrap to additional rows of 7. */
-#packship-app #ps-scan-product-more { display:grid; grid-template-columns:repeat(7, 168px); gap:10px; justify-content:start; }
-/* Top-row product items: same card/photo/text size as the overflow strip
-   below (.ps-scan-product-items-more uses the exact same .ps-scan-product-item
-   rules above) — just forced into a single row of 5 fixed-width columns so
-   it never wraps. The wider .ps-content max-width above gives it the room
-   to do that without shrinking anything. Scoped by ID so the overflow strip
-   itself (#ps-scan-product-more) keeps its own flex-wrap multi-row layout. */
-#packship-app #ps-scan-product-items { display:grid; grid-template-columns:repeat(5, 168px); gap:10px; }
+/* width:100% (capped by max-width) instead of a hard fixed width, so cards
+   can shrink with their grid column when space is tight. */
+#packship-app .ps-scan-product-item { display:flex; flex-direction:column; align-items:center; text-align:center; width:100%; max-width:168px; background:var(--bg3); border:1px solid var(--border); border-radius:10px; padding:10px; gap:8px; }
+#packship-app .ps-scan-product-img { width:100%; max-width:140px; height:auto; aspect-ratio:1/1; object-fit:cover; border-radius:8px; border:1px solid var(--border); background:var(--bg2); }
+#packship-app .ps-scan-product-img-placeholder { width:100%; max-width:140px; height:auto; aspect-ratio:1/1; border-radius:8px; border:1px solid var(--border); background:var(--bg2); display:flex; align-items:center; justify-content:center; font-size:52px; }
+/* Overflow strip: cap each row at 7 cards (up to 168px each, matching the
+   top row's card size) instead of however many happen to fit the screen
+   width — 8 was too many. Extra items wrap to additional rows of 7. */
+#packship-app #ps-scan-product-more { display:grid; grid-template-columns:repeat(7, minmax(0, 168px)); gap:10px; justify-content:start; }
+/* Top-row product items: up to 5 columns, same max card/photo/text size as
+   the overflow strip below — but minmax(0,...) lets every column shrink
+   together (instead of wrapping to a new row) whenever the scan box +
+   this area can't both fit at full size. That's what keeps this row
+   permanently beside the scan box rather than dropping underneath it.
+   Scoped by ID so the overflow strip (#ps-scan-product-more) keeps its
+   own independent grid/row-count. */
+#packship-app #ps-scan-product-items { display:grid; grid-template-columns:repeat(5, minmax(0, 168px)); gap:10px; justify-content:start; }
 #packship-app .ps-scan-product-info { width:100%; min-width:0; }
 #packship-app .ps-scan-product-sku { font-family:var(--mono); font-size:10.5px; font-weight:700; color:var(--text); margin-bottom:8px; word-break:break-word; line-height:1.25; }
 #packship-app .ps-scan-product-meta { display:flex; flex-direction:row; align-items:center; justify-content:center; gap:12px; }
