@@ -1396,15 +1396,6 @@ window.psCredLogin = async function() {
     psCredUser  = { displayName: data.displayName, roles: data.roles, userId: data.userId };
     psRole      = data.roles.includes('mgmt') ? 'mgmt' : 'mobile';
     psInitials  = data.displayName;
-    // A mgmt-role login already has full access - no separate step-up
-    // should ever be required for the 5 gated tabs (Status/Gaps/
-    // Undelivered/Veeqo Sync/Alerts). Without this, _psUnlockedTabs
-    // stayed empty for anyone who logged in as mgmt directly (it was
-    // only ever set by the step-up flow itself), so a real mgmt user
-    // still got asked to sign in again on those tabs.
-    if (psRole === 'mgmt') {
-      ['status','gaps','undelivered','vsync','valerts'].forEach(function(t){ _psUnlockedTabs[t] = true; });
-    }
     localStorage.setItem('xf_cred_token', data.token);
     localStorage.setItem('xf_cred_user', JSON.stringify(psCredUser));
     _psLaunchInner();
@@ -2099,21 +2090,13 @@ window.psRunReconcile = async function() {
     psGapRows = data.all || [];
     psGapScanWithoutManifest = data.scanWithoutManifest || [];
     document.getElementById('ps-tab-gaps').style.display = 'flex';
-    _psUpdateGapBadge(); psRenderGaps();
-    // Only jump to the gaps tab if the user is still actually on it -
-    // this fetch is async, so if they've already clicked to a different
-    // tab while it was in flight, forcing them back here on completion
-    // would yank them away from wherever they navigated to in the
-    // meantime. The data/badge above are already updated regardless,
-    // so it's correct whenever they do visit.
-    var gapsPanel = document.getElementById('ps-panel-gaps');
-    if (gapsPanel && gapsPanel.classList.contains('active')) { psSwitchTab('gaps'); }
+    _psUpdateGapBadge(); psRenderGaps(); psSwitchTab('gaps');
     var flaggedCount = data.summary.flaggedPrintNoScan + data.summary.flaggedManifestOnly;
     _psToast('Gap analysis done — ' + flaggedCount + ' flagged', flaggedCount > 0 ? 'warn' : 'ok');
   } catch(e) {
     _psToast('Error: ' + e.message, 'err');
   } finally {
-    if (btn) { btn.disabled = false; btn.textContent = 'Run Gap Analysis'; }
+    btn.disabled = false; btn.textContent = 'Run Gap Analysis';
   }
 };
 
@@ -2737,11 +2720,8 @@ window.psUnlockTab = async function(tab) {
     if (btnEl) { btnEl.disabled = false; btnEl.textContent = 'Unlock'; }
   }
 
-  // Correct — hide gate, show content. Also unlock the other 4 gated tabs:
-  // the credentials just verified are real, account-level mgmt access, not
-  // scoped to this one tab, so there's no reason to make someone re-enter
-  // them again for each tab separately in the same session.
-  ['status','gaps','undelivered','vsync','valerts'].forEach(function(t){ _psUnlockedTabs[t] = true; });
+  // Correct — hide gate, show content
+  _psUnlockedTabs[tab] = true;
   var gate    = document.getElementById('ps-' + tab + '-gate');
   var content = document.getElementById('ps-' + tab + '-content');
   if (gate)    gate.style.display    = 'none';
@@ -2762,32 +2742,21 @@ window.psSwitchTab = function(name) {
   document.querySelectorAll('.ps-panel').forEach(function(p){ p.classList.remove('active'); });
   document.getElementById('ps-tab-' + name).classList.add('active');
   document.getElementById('ps-panel-' + name).classList.add('active');
-  // Show gate if protected tab not yet unlocked this session, otherwise
-  // make sure the gate is actually hidden and content shown - this else
-  // branch was missing entirely, so an already-unlocked tab (e.g. a
-  // direct mgmt login, or any tab after stepping up via a different one)
-  // never got its gate explicitly hidden. The gate has no default
-  // display:none in its CSS, so it stayed visible regardless of the
-  // real unlocked state underneath it.
-  if (name === 'status' || name === 'gaps' || name === 'undelivered' || name === 'vsync' || name === 'valerts') {
+  // Show gate if protected tab not yet unlocked this session
+  if ((name === 'status' || name === 'gaps' || name === 'undelivered' || name === 'vsync' || name === 'valerts') && !_psUnlockedTabs[name]) {
     var gate    = document.getElementById('ps-' + name + '-gate');
     var content = document.getElementById('ps-' + name + '-content');
-    if (_psUnlockedTabs[name]) {
-      if (gate)    gate.style.display    = 'none';
-      if (content) content.style.display = 'block';
-    } else {
-      if (gate)    gate.style.display    = 'block';
-      if (content) content.style.display = 'none';
-      var pinEl = document.getElementById('ps-' + name + '-pin');
-      if (pinEl) setTimeout(function(){ pinEl.focus(); }, 100);
-    }
+    if (gate)    gate.style.display    = 'block';
+    if (content) content.style.display = 'none';
+    var pinEl = document.getElementById('ps-' + name + '-pin');
+    if (pinEl) setTimeout(function(){ pinEl.focus(); }, 100);
   }
   if (name === 'scan')        {
     psFocusScan();
     var dinp = document.getElementById('ps-scan-summary-date');
     if (dinp) { var tk = psTodayKey(); dinp.value = tk; dinp.max = tk; }
     psScanSummaryDate = null;
-    psRenderScanList(); psLoadScans(); _psLoadScanPrintedToday(); _psLoadScanNotPrinted();
+    psRenderScanList(); psLoadScans(); _psLoadScanPrintStatus();
   }
   if (name === 'closebatch')  { _psUpdateBatchBar(); }
   if (name === 'progress')    { psLoadScans(); }
@@ -2802,7 +2771,7 @@ window.psSwitchTab = function(name) {
   if (name === 'scan' || name === 'progress') {
     window._psRefreshInterval = setInterval(function() {
       psLoadScans();
-      if (name === 'scan') { _psLoadScanPrintedToday(); _psLoadScanNotPrinted(); }
+      if (name === 'scan') { _psLoadScanPrintStatus(); }
     }, 20000);
   }
   if (name === 'printlog') {
@@ -3042,47 +3011,59 @@ async function psVeeqoLoadLabels() {
   } catch (e) { console.error('[PS] veeqo labels-today:', e); }
 }
 
-// Painted into the "Printed Today" tile on the Scan tab's summary bar.
-// NOTE: this used to read /veeqo/labels-today, but that pulls from Veeqo's
-// own order "shipped" status, which lags well behind reality (confirmed:
-// showed 76 when the print-station scanner had already logged 97) and is
-// also management-only. /ship/print-log is the real-time DB the DS9308
-// print-station scanner writes to the instant a label prints — same
-// source the Print Log tab itself uses — so it's both accurate and, unlike
-// the Veeqo routes, open to every login, not just management.
-async function _psLoadScanPrintedToday() {
+// ── Scan tab "Printed Today" / "Not Printed Yet" tiles ─────────────────────
+// Live-first, with a graceful fallback:
+//   1) Try GET /veeqo/print-status (real live Veeqo numbers — see the
+//      worker's veeqoPrintStatus() for why this replaces the old
+//      /veeqo/labels-today "status=shipped" signal, which undercounts).
+//   2) If that route 404s / errors (i.e. the backend hasn't been updated
+//      with the new route yet), fall back to the old DB-mirror sources
+//      (/ship/print-log and /ship/label-gap-report) so the tiles still
+//      work today. The moment the new backend route is deployed, this
+//      auto-upgrades to real numbers with no further frontend change.
+function _psPaintPrintedTile(total, ups, usps) {
+  var wrap = document.getElementById('ps-scan-summary-printed');
+  if (!wrap) return;
+  wrap.style.display = 'flex';
+  document.getElementById('ps-scan-summary-printed-val').textContent = total;
+  var parts = [];
+  if (ups)  parts.push(ups + ' UPS');
+  if (usps) parts.push(usps + ' USPS');
+  document.getElementById('ps-scan-summary-printed-split').textContent = parts.join(' · ');
+}
+
+function _psPaintNotPrintedTile(total) {
+  var wrap = document.getElementById('ps-scan-summary-notprinted');
+  if (!wrap) return;
+  wrap.style.display = 'flex';
+  document.getElementById('ps-scan-summary-notprinted-val').textContent = total;
+}
+
+// Fallback source for "Printed Today": /ship/print-log, the real-time DB
+// the DS9308 print-station scanner writes to the instant a label prints.
+async function _psLoadScanPrintedTodayFallback() {
   var wrap = document.getElementById('ps-scan-summary-printed');
   if (!wrap || !psCredToken) return;
   try {
     var res  = await fetch(PS_WORKER + '/ship/print-log?date=' + psTodayKey(), { headers: { 'X-Cred-Token': psCredToken } });
     var data = await res.json();
     if (!data.ok || !data.scans) { wrap.style.display = 'none'; return; }
-    wrap.style.display = 'flex';
-    document.getElementById('ps-scan-summary-printed-val').textContent = data.scans.length;
     var ups = 0, usps = 0;
     data.scans.forEach(function(s) {
       if (s.carrier === 'UPS') ups++;
       else if (s.carrier === 'USPS') usps++;
     });
-    var parts = [];
-    if (ups)  parts.push(ups + ' UPS');
-    if (usps) parts.push(usps + ' USPS');
-    document.getElementById('ps-scan-summary-printed-split').textContent = parts.join(' · ');
+    _psPaintPrintedTile(data.scans.length, ups, usps);
   } catch (e) {
     console.error('[PS] scan-tab print-log:', e);
     wrap.style.display = 'none';
   }
 }
 
-// "Not Printed Yet" tile — Veeqo orders synced into today's manifest that
-// have NEITHER a print-log entry NOR a scan-log entry yet (the
-// flaggedManifestOnly bucket the Gap Report tab already calls "Not
-// Printed"; reused here under the same name for consistency). Unlike the
-// /veeqo/* routes, /ship/label-gap-report has no management-only gate, so
-// this works for every shipper's login, not just management. Always
-// "today" — kept alongside the Printed(Veeqo) tile for the same
-// Veeqo-vs-floor snapshot rather than following the date picker below.
-async function _psLoadScanNotPrinted() {
+// Fallback source for "Not Printed Yet": Veeqo orders synced into today's
+// manifest that have neither a print-log entry nor a scan-log entry yet
+// (the flaggedManifestOnly bucket the Gap Report tab calls "Not Printed").
+async function _psLoadScanNotPrintedFallback() {
   var wrap = document.getElementById('ps-scan-summary-notprinted');
   if (!wrap || !psCredToken) return;
   try {
@@ -3091,11 +3072,32 @@ async function _psLoadScanNotPrinted() {
     });
     var data = await res.json();
     if (!data.ok || !data.summary) { wrap.style.display = 'none'; return; }
-    wrap.style.display = 'flex';
-    document.getElementById('ps-scan-summary-notprinted-val').textContent = data.summary.flaggedManifestOnly || 0;
+    _psPaintNotPrintedTile(data.summary.flaggedManifestOnly || 0);
   } catch (e) {
     console.error('[PS] scan-tab label-gap-report:', e);
     wrap.style.display = 'none';
+  }
+}
+
+// Tries the live Veeqo-backed route first; only falls back to the old
+// DB-mirror sources above if it's unavailable (not yet deployed / errors).
+async function _psLoadScanPrintStatus() {
+  if (!psCredToken) return;
+  var usedLive = false;
+  try {
+    var res = await fetch(PS_WORKER + '/veeqo/print-status?date=' + psTodayKey(), { headers: { 'X-Cred-Token': psCredToken } });
+    if (res.ok) {
+      var data = await res.json();
+      if (data.ok && data.printedToday && data.notPrintedYet) {
+        _psPaintPrintedTile(data.printedToday.total, data.printedToday.ups, data.printedToday.usps);
+        _psPaintNotPrintedTile(data.notPrintedYet.total);
+        usedLive = true;
+      }
+    }
+  } catch (e) { /* fall through to fallback sources below */ }
+  if (!usedLive) {
+    _psLoadScanPrintedTodayFallback();
+    _psLoadScanNotPrintedFallback();
   }
 }
 
