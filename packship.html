@@ -2099,7 +2099,15 @@ window.psRunReconcile = async function() {
     psGapRows = data.all || [];
     psGapScanWithoutManifest = data.scanWithoutManifest || [];
     document.getElementById('ps-tab-gaps').style.display = 'flex';
-    _psUpdateGapBadge(); psRenderGaps(); psSwitchTab('gaps');
+    _psUpdateGapBadge(); psRenderGaps();
+    // Only jump to the gaps tab if the user is still actually on it -
+    // this fetch is async, so if they've already clicked to a different
+    // tab while it was in flight, forcing them back here on completion
+    // would yank them away from wherever they navigated to in the
+    // meantime. The data/badge above are already updated regardless,
+    // so it's correct whenever they do visit.
+    var gapsPanel = document.getElementById('ps-panel-gaps');
+    if (gapsPanel && gapsPanel.classList.contains('active')) { psSwitchTab('gaps'); }
     var flaggedCount = data.summary.flaggedPrintNoScan + data.summary.flaggedManifestOnly;
     _psToast('Gap analysis done — ' + flaggedCount + ' flagged', flaggedCount > 0 ? 'warn' : 'ok');
   } catch(e) {
