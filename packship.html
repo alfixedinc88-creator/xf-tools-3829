@@ -220,6 +220,7 @@ body {
 .ps-scan-summary { display:flex; align-items:center; gap:20px; flex-wrap:wrap; background:var(--bg2); border:1px solid var(--border); border-radius:12px; padding:14px 18px; margin-bottom:16px; box-shadow:var(--shadow); }
 .ps-scan-summary-total { display:flex; flex-direction:column; align-items:center; padding-right:20px; border-right:1px solid var(--border); min-width:64px; }
 .ps-scan-summary-total-val { font-family:var(--mono); font-size:30px; font-weight:800; color:var(--accent); line-height:1; }
+.ps-scan-summary-total-val.warn { color:var(--orange); }
 .ps-scan-summary-total-label { font-size:10px; font-weight:600; text-transform:uppercase; letter-spacing:.5px; color:var(--text3); margin-top:5px; text-align:center; }
 .ps-scan-summary-by { display:flex; flex-wrap:wrap; gap:10px; flex:1; }
 .ps-scan-summary-chip { display:flex; align-items:center; gap:10px; background:var(--bg3); border:1px solid var(--border); border-radius:12px; padding:6px 10px 6px 14px; }
@@ -229,6 +230,7 @@ body {
 .ps-scan-summary-chip-ups { color:var(--orange); }
 .ps-scan-summary-chip-usps { color:var(--purple); }
 .ps-scan-summary-chip-count { font-family:var(--mono); font-size:13px; font-weight:800; color:var(--accent); background:var(--bg2); border-radius:14px; padding:2px 9px; }
+.ps-scan-summary-printed-split { font-family:var(--mono); font-size:9px; font-weight:600; color:var(--text3); margin-top:3px; white-space:nowrap; }
 .ps-scan-summary-empty { font-size:12px; color:var(--text3); font-style:italic; }
 .ps-scan-summary-datewrap { display:flex; flex-direction:column; gap:4px; margin-left:auto; padding-left:16px; border-left:1px solid var(--border); }
 .ps-scan-summary-date-label { font-size:10px; font-weight:600; text-transform:uppercase; letter-spacing:.5px; color:var(--text3); }
@@ -531,6 +533,7 @@ body {
 #packship-app .ps-scan-summary { display:flex; align-items:center; gap:20px; flex-wrap:wrap; background:var(--bg2); border:1px solid var(--border); border-radius:12px; padding:14px 18px; margin-bottom:16px; box-shadow:var(--shadow); }
 #packship-app .ps-scan-summary-total { display:flex; flex-direction:column; align-items:center; padding-right:20px; border-right:1px solid var(--border); min-width:64px; }
 #packship-app .ps-scan-summary-total-val { font-family:var(--mono); font-size:30px; font-weight:800; color:var(--accent); line-height:1; }
+#packship-app .ps-scan-summary-total-val.warn { color:var(--orange); }
 #packship-app .ps-scan-summary-total-label { font-size:10px; font-weight:600; text-transform:uppercase; letter-spacing:.5px; color:var(--text3); margin-top:5px; text-align:center; }
 #packship-app .ps-scan-summary-by { display:flex; flex-wrap:wrap; gap:10px; flex:1; }
 #packship-app .ps-scan-summary-chip { display:flex; align-items:center; gap:10px; background:var(--bg3); border:1px solid var(--border); border-radius:12px; padding:6px 10px 6px 14px; }
@@ -540,6 +543,7 @@ body {
 #packship-app .ps-scan-summary-chip-ups { color:var(--orange); }
 #packship-app .ps-scan-summary-chip-usps { color:var(--purple); }
 #packship-app .ps-scan-summary-chip-count { font-family:var(--mono); font-size:13px; font-weight:800; color:var(--accent); background:var(--bg2); border-radius:14px; padding:2px 9px; }
+#packship-app .ps-scan-summary-printed-split { font-family:var(--mono); font-size:9px; font-weight:600; color:var(--text3); margin-top:3px; white-space:nowrap; }
 #packship-app .ps-scan-summary-empty { font-size:12px; color:var(--text3); font-style:italic; }
 #packship-app .ps-scan-summary-datewrap { display:flex; flex-direction:column; gap:4px; margin-left:auto; padding-left:16px; border-left:1px solid var(--border); }
 #packship-app .ps-scan-summary-date-label { font-size:10px; font-weight:600; text-transform:uppercase; letter-spacing:.5px; color:var(--text3); }
@@ -781,8 +785,22 @@ body {
          multi-item order (up to ~20) stays visible without scrolling. -->
     <div class="ps-scan-product-items ps-scan-product-items-more" id="ps-scan-product-more" style="display:none"></div>
 
-    <!-- Total scanned + who scanned how many, for whatever date is picked. -->
+    <!-- Total scanned + who scanned how many, for whatever date is picked,
+         plus how many labels Veeqo shows as printed today, and how many
+         Veeqo orders still have no print recorded at all — both of those
+         two are always "today" (Printed has no history lookup available,
+         and Not Printed is kept alongside it for the same at-a-glance
+         Veeqo-vs-floor comparison rather than tied to the date picker). -->
     <div class="ps-scan-summary" id="ps-scan-summary">
+      <div class="ps-scan-summary-total" id="ps-scan-summary-printed" style="display:none">
+        <div class="ps-scan-summary-total-val" id="ps-scan-summary-printed-val">0</div>
+        <div class="ps-scan-summary-total-label">Printed<br>(Veeqo)</div>
+        <div class="ps-scan-summary-printed-split" id="ps-scan-summary-printed-split"></div>
+      </div>
+      <div class="ps-scan-summary-total" id="ps-scan-summary-notprinted" style="display:none">
+        <div class="ps-scan-summary-total-val warn" id="ps-scan-summary-notprinted-val">0</div>
+        <div class="ps-scan-summary-total-label">Not Printed<br>Yet</div>
+      </div>
       <div class="ps-scan-summary-total">
         <div class="ps-scan-summary-total-val" id="ps-scan-summary-total-val">0</div>
         <div class="ps-scan-summary-total-label" id="ps-scan-summary-total-label">Scanned<br>Today</div>
@@ -2737,7 +2755,7 @@ window.psSwitchTab = function(name) {
     var dinp = document.getElementById('ps-scan-summary-date');
     if (dinp) { var tk = psTodayKey(); dinp.value = tk; dinp.max = tk; }
     psScanSummaryDate = null;
-    psRenderScanList(); psLoadScans();
+    psRenderScanList(); psLoadScans(); _psLoadScanVeeqoLabels(); _psLoadScanNotPrinted();
   }
   if (name === 'closebatch')  { _psUpdateBatchBar(); }
   if (name === 'progress')    { psLoadScans(); }
@@ -2750,7 +2768,10 @@ window.psSwitchTab = function(name) {
   if (window._psRefreshInterval) { clearInterval(window._psRefreshInterval); window._psRefreshInterval = null; }
   if (window._psPlRefreshInterval) { clearInterval(window._psPlRefreshInterval); window._psPlRefreshInterval = null; }
   if (name === 'scan' || name === 'progress') {
-    window._psRefreshInterval = setInterval(psLoadScans, 20000);
+    window._psRefreshInterval = setInterval(function() {
+      psLoadScans();
+      if (name === 'scan') { _psLoadScanVeeqoLabels(); _psLoadScanNotPrinted(); }
+    }, 20000);
   }
   if (name === 'printlog') {
     window._psPlRefreshInterval = setInterval(psPlLoadToday, 30000);
@@ -2987,6 +3008,54 @@ async function psVeeqoLoadLabels() {
       document.getElementById('ps-vl-synctime').textContent = new Date().toLocaleTimeString('en-US', { timeZone:'America/New_York', hour:'numeric', minute:'2-digit', hour12:true });
     }
   } catch (e) { console.error('[PS] veeqo labels-today:', e); }
+}
+
+// Same /veeqo/labels-today data, but painted into the "Printed (Veeqo)" tile
+// on the Scan tab's summary bar, so a shipper can see it without unlocking
+// the management-only Veeqo Sync tab. If the endpoint 404s/401s for a
+// non-management login, this just quietly stays hidden instead of erroring.
+async function _psLoadScanVeeqoLabels() {
+  var wrap = document.getElementById('ps-scan-summary-printed');
+  if (!wrap || !psCredToken) return;
+  try {
+    var res  = await fetch(PS_WORKER + '/veeqo/labels-today', { headers: { 'X-Cred-Token': psCredToken } });
+    var data = await res.json();
+    if (typeof data.total === 'undefined') { wrap.style.display = 'none'; return; }
+    wrap.style.display = 'flex';
+    document.getElementById('ps-scan-summary-printed-val').textContent = data.total;
+    var parts = [];
+    if (data.ups)  parts.push(data.ups + ' UPS');
+    if (data.usps) parts.push(data.usps + ' USPS');
+    document.getElementById('ps-scan-summary-printed-split').textContent = parts.join(' · ');
+  } catch (e) {
+    console.error('[PS] scan-tab veeqo labels-today:', e);
+    wrap.style.display = 'none';
+  }
+}
+
+// "Not Printed Yet" tile — Veeqo orders synced into today's manifest that
+// have NEITHER a print-log entry NOR a scan-log entry yet (the
+// flaggedManifestOnly bucket the Gap Report tab already calls "Not
+// Printed"; reused here under the same name for consistency). Unlike the
+// /veeqo/* routes, /ship/label-gap-report has no management-only gate, so
+// this works for every shipper's login, not just management. Always
+// "today" — kept alongside the Printed(Veeqo) tile for the same
+// Veeqo-vs-floor snapshot rather than following the date picker below.
+async function _psLoadScanNotPrinted() {
+  var wrap = document.getElementById('ps-scan-summary-notprinted');
+  if (!wrap || !psCredToken) return;
+  try {
+    var res  = await fetch(PS_WORKER + '/ship/label-gap-report?date=' + psTodayKey(), {
+      headers: { 'X-Cred-Token': psCredToken }
+    });
+    var data = await res.json();
+    if (!data.ok || !data.summary) { wrap.style.display = 'none'; return; }
+    wrap.style.display = 'flex';
+    document.getElementById('ps-scan-summary-notprinted-val').textContent = data.summary.flaggedManifestOnly || 0;
+  } catch (e) {
+    console.error('[PS] scan-tab label-gap-report:', e);
+    wrap.style.display = 'none';
+  }
 }
 
 // ── ARCHIVE LOGS ────────────────────────────────────────────────────────────
