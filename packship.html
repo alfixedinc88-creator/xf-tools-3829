@@ -159,6 +159,20 @@ body {
 .ps-refocus-hint { text-align:center; font-size:12px; color:var(--text3); margin-top:8px; cursor:pointer; padding:8px; }
 .ps-refocus-hint:hover { color:var(--accent); }
 
+/* Scan product card — shown after a scan, mirrors the scanned tracking's order item(s) */
+.ps-scan-product-wrap { background:var(--bg2); border:1px solid var(--border); border-radius:12px; padding:18px 20px; margin-bottom:16px; box-shadow:var(--shadow); }
+.ps-scan-product-tracking { font-family:var(--mono); font-size:12px; font-weight:700; letter-spacing:.3px; color:var(--text3); text-transform:uppercase; margin-bottom:14px; word-break:break-all; }
+.ps-scan-product-item { display:flex; gap:16px; align-items:center; padding:14px 0; border-top:1px solid var(--border); }
+.ps-scan-product-item:first-child { border-top:none; padding-top:0; }
+.ps-scan-product-img { width:180px; height:180px; object-fit:cover; border-radius:12px; border:1px solid var(--border); background:var(--bg3); flex-shrink:0; }
+.ps-scan-product-img-placeholder { width:180px; height:180px; border-radius:12px; border:1px solid var(--border); background:var(--bg3); display:flex; align-items:center; justify-content:center; font-size:60px; flex-shrink:0; }
+.ps-scan-product-info { flex:1; min-width:0; }
+.ps-scan-product-sku { font-family:var(--mono); font-size:15px; font-weight:700; color:var(--text); margin-bottom:14px; word-break:break-word; }
+.ps-scan-product-meta { display:flex; gap:28px; flex-wrap:wrap; align-items:flex-end; }
+.ps-scan-product-stat-label { font-size:10px; font-weight:600; text-transform:uppercase; letter-spacing:.6px; color:var(--text3); margin-bottom:3px; }
+.ps-scan-product-stat-val { font-family:var(--mono); font-size:22px; font-weight:700; color:var(--text); }
+.ps-scan-product-stat-val.total { color:var(--accent); font-size:44px; line-height:1; font-weight:800; }
+
 /* Batch close */
 .ps-batch-close-bar { background:var(--bg2); border:1px solid var(--border); border-radius:12px; padding:16px 18px; margin-bottom:16px; box-shadow:var(--shadow); display:flex; align-items:center; gap:12px; flex-wrap:wrap; }
 .ps-batch-close-label { flex:1; font-size:13px; color:var(--text2); min-width:180px; }
@@ -249,6 +263,16 @@ body {
 .ps-info-box { background:var(--accent-bg); border:1px solid #aec6fb; border-radius:10px; padding:12px 16px; font-size:13px; color:var(--accent); margin-bottom:16px; line-height:1.5; }
 .ps-warn-box { background:var(--orange-bg); border:1px solid #fcd34d; border-radius:10px; padding:12px 16px; font-size:13px; color:var(--orange); margin-bottom:16px; line-height:1.5; }
 
+/* ── Duplicate scan warning overlay ── */
+.ps-dupe-overlay { position:fixed; inset:0; background:rgba(20,10,10,.6); display:none; align-items:center; justify-content:center; padding:24px; z-index:500; }
+.ps-dupe-card { background:var(--bg2); border:2px solid var(--red); border-radius:16px; padding:36px 28px; max-width:420px; width:100%; box-shadow:var(--shadow2); text-align:center; }
+.ps-dupe-icon { font-size:48px; margin-bottom:10px; }
+.ps-dupe-title { font-size:20px; font-weight:800; color:var(--red); margin-bottom:14px; }
+.ps-dupe-detail { font-size:14px; color:var(--text2); line-height:1.6; margin-bottom:24px; }
+.ps-dupe-detail strong { color:var(--text); font-family:var(--mono); }
+.ps-dupe-btn { background:var(--red); color:#fff; border:none; padding:13px 30px; font-family:var(--sans); font-size:15px; font-weight:700; border-radius:10px; cursor:pointer; transition:opacity .15s; }
+.ps-dupe-btn:hover { opacity:.88; }
+
 /* ── Mgmt PIN gate (inline in protected panels) ── */
 .ps-mgmt-gate { background:var(--bg2); border:1px solid var(--border); border-radius:12px; padding:36px 28px; max-width:380px; margin:40px auto 0; box-shadow:var(--shadow2); text-align:center; }
 .ps-mgmt-gate-icon { font-size:32px; margin-bottom:12px; }
@@ -265,6 +289,9 @@ body {
   .ps-stat-bar { grid-template-columns:repeat(2,1fr); gap:8px; }
   .ps-stat-val { font-size:22px; }
   .ps-batch-close-bar { flex-direction:column; align-items:stretch; }
+  .ps-scan-product-item { flex-direction:column; align-items:flex-start; }
+  .ps-scan-product-img, .ps-scan-product-img-placeholder { width:100%; height:200px; }
+  .ps-scan-product-stat-val.total { font-size:36px; }
 }
 
   </style>
@@ -384,6 +411,20 @@ body {
 #packship-app .ps-refocus-hint { text-align:center; font-size:12px; color:var(--text3); margin-top:8px; cursor:pointer; padding:8px; }
 #packship-app .ps-refocus-hint:hover { color:var(--accent); }
 
+/* Scan product card — shown after a scan, mirrors the scanned tracking's order item(s) */
+#packship-app .ps-scan-product-wrap { background:var(--bg2); border:1px solid var(--border); border-radius:12px; padding:18px 20px; margin-bottom:16px; box-shadow:var(--shadow); }
+#packship-app .ps-scan-product-tracking { font-family:var(--mono); font-size:12px; font-weight:700; letter-spacing:.3px; color:var(--text3); text-transform:uppercase; margin-bottom:14px; word-break:break-all; }
+#packship-app .ps-scan-product-item { display:flex; gap:16px; align-items:center; padding:14px 0; border-top:1px solid var(--border); }
+#packship-app .ps-scan-product-item:first-child { border-top:none; padding-top:0; }
+#packship-app .ps-scan-product-img { width:180px; height:180px; object-fit:cover; border-radius:12px; border:1px solid var(--border); background:var(--bg3); flex-shrink:0; }
+#packship-app .ps-scan-product-img-placeholder { width:180px; height:180px; border-radius:12px; border:1px solid var(--border); background:var(--bg3); display:flex; align-items:center; justify-content:center; font-size:60px; flex-shrink:0; }
+#packship-app .ps-scan-product-info { flex:1; min-width:0; }
+#packship-app .ps-scan-product-sku { font-family:var(--mono); font-size:15px; font-weight:700; color:var(--text); margin-bottom:14px; word-break:break-word; }
+#packship-app .ps-scan-product-meta { display:flex; gap:28px; flex-wrap:wrap; align-items:flex-end; }
+#packship-app .ps-scan-product-stat-label { font-size:10px; font-weight:600; text-transform:uppercase; letter-spacing:.6px; color:var(--text3); margin-bottom:3px; }
+#packship-app .ps-scan-product-stat-val { font-family:var(--mono); font-size:22px; font-weight:700; color:var(--text); }
+#packship-app .ps-scan-product-stat-val.total { color:var(--accent); font-size:44px; line-height:1; font-weight:800; }
+
 /* Batch close */
 #packship-app .ps-batch-close-bar { background:var(--bg2); border:1px solid var(--border); border-radius:12px; padding:16px 18px; margin-bottom:16px; box-shadow:var(--shadow); display:flex; align-items:center; gap:12px; flex-wrap:wrap; }
 #packship-app .ps-batch-close-label { flex:1; font-size:13px; color:var(--text2); min-width:180px; }
@@ -474,6 +515,16 @@ body {
 #packship-app .ps-info-box { background:var(--accent-bg); border:1px solid #aec6fb; border-radius:10px; padding:12px 16px; font-size:13px; color:var(--accent); margin-bottom:16px; line-height:1.5; }
 #packship-app .ps-warn-box { background:var(--orange-bg); border:1px solid #fcd34d; border-radius:10px; padding:12px 16px; font-size:13px; color:var(--orange); margin-bottom:16px; line-height:1.5; }
 
+/* ── Duplicate scan warning overlay ── */
+#packship-app .ps-dupe-overlay { position:fixed; inset:0; background:rgba(20,10,10,.6); display:none; align-items:center; justify-content:center; padding:24px; z-index:500; }
+#packship-app .ps-dupe-card { background:var(--bg2); border:2px solid var(--red); border-radius:16px; padding:36px 28px; max-width:420px; width:100%; box-shadow:var(--shadow2); text-align:center; }
+#packship-app .ps-dupe-icon { font-size:48px; margin-bottom:10px; }
+#packship-app .ps-dupe-title { font-size:20px; font-weight:800; color:var(--red); margin-bottom:14px; }
+#packship-app .ps-dupe-detail { font-size:14px; color:var(--text2); line-height:1.6; margin-bottom:24px; }
+#packship-app .ps-dupe-detail strong { color:var(--text); font-family:var(--mono); }
+#packship-app .ps-dupe-btn { background:var(--red); color:#fff; border:none; padding:13px 30px; font-family:var(--sans); font-size:15px; font-weight:700; border-radius:10px; cursor:pointer; transition:opacity .15s; }
+#packship-app .ps-dupe-btn:hover { opacity:.88; }
+
 /* ── Mgmt PIN gate (inline in protected panels) ── */
 #packship-app .ps-mgmt-gate { background:var(--bg2); border:1px solid var(--border); border-radius:12px; padding:36px 28px; max-width:380px; margin:40px auto 0; box-shadow:var(--shadow2); text-align:center; }
 #packship-app .ps-mgmt-gate-icon { font-size:32px; margin-bottom:12px; }
@@ -490,6 +541,9 @@ body {
   #packship-app .ps-stat-bar { grid-template-columns:repeat(2,1fr); gap:8px; }
   #packship-app .ps-stat-val { font-size:22px; }
   #packship-app .ps-batch-close-bar { flex-direction:column; align-items:stretch; }
+  #packship-app .ps-scan-product-item { flex-direction:column; align-items:flex-start; }
+  #packship-app .ps-scan-product-img, #packship-app .ps-scan-product-img-placeholder { width:100%; height:200px; }
+  #packship-app .ps-scan-product-stat-val.total { font-size:36px; }
 }
 </style>
 
@@ -520,6 +574,16 @@ body {
   </div>
 </div>
 
+<!-- Duplicate scan warning overlay -->
+<div id="ps-dupe-overlay" class="ps-dupe-overlay">
+  <div class="ps-dupe-card">
+    <div class="ps-dupe-icon">🚨</div>
+    <div class="ps-dupe-title">Duplicate Scan!</div>
+    <div class="ps-dupe-detail" id="ps-dupe-detail">—</div>
+    <button class="ps-dupe-btn" onclick="psDupeAcknowledge()">OK, Got It</button>
+  </div>
+</div>
+
 <!-- Top bar -->
 <div class="ps-topbar">
   <div class="ps-topbar-left">
@@ -542,6 +606,7 @@ body {
 <!-- Tab bar -->
 <div class="ps-tabbar">
   <div class="ps-tabitem active" id="ps-tab-scan"     onclick="psSwitchTab('scan')">📦 Scan</div>
+  <div class="ps-tabitem"        id="ps-tab-closebatch" onclick="psSwitchTab('closebatch')">📦 Close Batch</div>
   <div class="ps-tabitem"        id="ps-tab-progress" onclick="psSwitchTab('progress')">📊 Progress</div>
   <div class="ps-tabitem"        id="ps-tab-lookup"      onclick="psSwitchTab('lookup')">🔍 Lookup</div>
   <div class="ps-tabitem"        id="ps-tab-orderlookup" onclick="psSwitchTab('orderlookup')">📋 Order Lookup</div>
@@ -558,9 +623,6 @@ body {
 
   <!-- SCAN panel -->
   <div class="ps-panel active" id="ps-panel-scan">
-    <div class="ps-info-box" id="ps-scanner-hint">
-      📡 <strong>Scanner ready.</strong> Your Bluetooth scanner acts like a keyboard — just point and scan. The field below auto-captures every scan. Tap anywhere on this page to refocus if needed.
-    </div>
     <div class="ps-scan-box" onclick="psFocusScan()">
       <div class="ps-scan-box-header">
         <div class="ps-scan-icon">⌖</div>
@@ -579,34 +641,13 @@ body {
       </div>
       <div class="ps-refocus-hint" id="ps-refocus-hint" style="display:none">⚠️ Scanner lost focus — tap here to refocus</div>
     </div>
-    <div class="ps-batch-close-bar" id="ps-batch-close-bar" style="display:none">
-      <div class="ps-batch-close-label"><strong>Ready to drop off?</strong> Close the batch to record the handoff time for all packages.</div>
-      <button class="ps-btn-batch" id="ps-btn-close-batch" onclick="psCloseBatch()">📦 Close Batch</button>
-    </div>
-    <div id="ps-closed-banners"></div>
 
-    <!-- Daily Veeqo CSV upload — available to all roles -->
-    <div class="ps-upload-area" id="ps-daily-upload-area">
-      <div class="ps-upload-area-header">
-        <div class="ps-upload-area-title">📄 End of Day — Upload Veeqo Report</div>
-        <div class="ps-manifest-loaded-pill" id="ps-manifest-pill" style="display:none">
-          ✓ <span id="ps-manifest-count">0</span> orders loaded
-        </div>
-      </div>
-      <div class="ps-drop-zone" id="ps-drop-zone">
-        <input type="file" accept=".csv" onchange="psHandleCSV(this)">
-        <span class="ps-drop-icon">📂</span>
-        <div class="ps-drop-title">Drop today's Veeqo CSV here</div>
-        <div class="ps-drop-hint">or <b>click to browse</b> · FBA auto-removed · appends to Manifest_Log sheet</div>
-      </div>
-      <div class="ps-upload-msg" id="ps-upload-msg"></div>
-      <div class="ps-reconcile-bar" id="ps-reconcile-bar" style="display:none;margin-top:12px">
-        <div class="ps-reconcile-label">
-          Manifest ready. <strong>Run Gap Analysis</strong> to see what wasn't scanned today.
-        </div>
-        <button class="ps-btn-reconcile" id="ps-btn-reconcile" onclick="psRunReconcile()">Run Gap Analysis</button>
-      </div>
+    <!-- Product card for the just-scanned tracking number -->
+    <div class="ps-scan-product-wrap" id="ps-scan-product-wrap" style="display:none">
+      <div class="ps-scan-product-tracking" id="ps-scan-product-tracking">—</div>
+      <div id="ps-scan-product-items"></div>
     </div>
+
     <div class="ps-section-header" style="margin-top:4px">
       <div class="ps-section-title">Today's Scans</div>
       <div class="ps-section-cnt" id="ps-scan-cnt-label">0 scans</div>
@@ -622,6 +663,20 @@ body {
         <div class="ps-empty-title">No scans yet today</div>
         <div class="ps-empty-sub">Start scanning labels — each scan saves directly to the sheet.</div>
       </div>
+    </div>
+  </div>
+
+  <!-- CLOSE BATCH panel -->
+  <div class="ps-panel" id="ps-panel-closebatch">
+    <div class="ps-batch-close-bar" id="ps-batch-close-bar" style="display:none">
+      <div class="ps-batch-close-label"><strong>Ready to drop off?</strong> Close the batch to record the handoff time for all packages.</div>
+      <button class="ps-btn-batch" id="ps-btn-close-batch" onclick="psCloseBatch()">📦 Close Batch</button>
+    </div>
+    <div id="ps-closed-banners"></div>
+    <div class="ps-empty-state" id="ps-closebatch-empty">
+      <div class="ps-empty-icon">📦</div>
+      <div class="ps-empty-title">Nothing to close yet</div>
+      <div class="ps-empty-sub">Once packages are scanned today, the close-batch button will appear here.</div>
     </div>
   </div>
 
@@ -1288,7 +1343,10 @@ window.psLoadScans = async function() {
     });
     var data = await res.json();
     if (data.scans) {
-      psTodayScans = data.scans;
+      // Newest scan first, regardless of the order the sheet/API returns.
+      psTodayScans = data.scans.slice().sort(function(a,b){
+        return new Date(b.timestamp) - new Date(a.timestamp);
+      });
       psRenderScanList();
       psRenderProgress();
       psRenderLog();
@@ -1308,8 +1366,10 @@ function _psProcessScan(raw) {
   if (dupe) {
     _psFlash('orange');
     _psBeep(440, 100);
-    _psShowLastScan({ icon:'⚠️', cls:'warn', tracking: tracking, meta:'Already scanned at ' + psFmtTime(dupe.timestamp) + ' · ' + dupe.carrier });
+    _psShowLastScan({ icon:'⚠️', cls:'warn', tracking: tracking, meta:'Already scanned at ' + psFmtTime(dupe.timestamp) + (dupe.initials ? ' by ' + dupe.initials : '') + ' · ' + dupe.carrier });
     _psToast('Duplicate — scanned at ' + psFmtTime(dupe.timestamp), 'warn');
+    psDupeShowAlert(tracking, dupe.timestamp, dupe.initials, dupe.carrier);
+    _psLoadScanProduct(tracking);
     inp.focus(); return;
   }
 
@@ -1321,6 +1381,7 @@ function _psProcessScan(raw) {
   _psShowLastScan({ icon:'✅', cls:'ok', tracking: tracking, meta: carrier + ' · Saving to sheet…' });
   psRenderScanList();
   _psUpdateBatchBar();
+  _psLoadScanProduct(tracking);
   inp.focus();
 
   fetch(PS_WORKER + '/ship/scan', {
@@ -1340,6 +1401,65 @@ function _psProcessScan(raw) {
     _psShowLastScan({ icon:'❌', cls:'err', tracking: tracking, meta:'Sheet write failed — ' + e.message });
     _psToast('Sheet error — ' + e.message, 'err');
   });
+}
+
+// ── Scan product card ──────────────────────────────────
+// SKU codes are stored as "<multiplier>=<name>" (e.g. "1=3/8X DUAL S").
+// The number before "=" is how many units are in that single line item;
+// multiplied by the ordered qty gives the real total quantity purchased.
+function _psSkuMultiplier(sku) {
+  var m = String(sku || '').match(/^\s*(\d+)\s*=/);
+  return m ? (parseInt(m[1], 10) || 1) : 1;
+}
+
+window.psScanImgFallback = function(img) {
+  var div = document.createElement('div');
+  div.className = 'ps-scan-product-img-placeholder';
+  div.textContent = '📦';
+  img.replaceWith(div);
+};
+
+async function _psLoadScanProduct(tracking) {
+  var wrap  = document.getElementById('ps-scan-product-wrap');
+  var trkEl = document.getElementById('ps-scan-product-tracking');
+  var itEl  = document.getElementById('ps-scan-product-items');
+  if (!wrap) return;
+  wrap.style.display = 'block';
+  trkEl.textContent = tracking;
+  itEl.innerHTML = '<div style="font-size:12px;color:var(--text3);">Loading product info…</div>';
+  try {
+    var r = await fetch(PS_WORKER + '/ship/order-lookup?q=' + encodeURIComponent(tracking) + '&days=7', {
+      headers: { 'X-Cred-Token': psCredToken }
+    });
+    var d = await r.json();
+    if (!d.ok) { itEl.innerHTML = '<div style="font-size:12px;color:var(--red);">Lookup error: ' + (d.error || 'unknown') + '</div>'; return; }
+    var order = (d.results || [])[0];
+    var items = (order && order.lineItems) || [];
+    if (!items.length) {
+      itEl.innerHTML = '<div style="font-size:12px;color:var(--text3);font-style:italic;">No item data for this order — run Veeqo Sync to populate order details.</div>';
+      return;
+    }
+    itEl.innerHTML = items.map(function(li) {
+      var sku   = li.s || '—';
+      var qty   = parseInt(li.q, 10) || 1;
+      var total = _psSkuMultiplier(sku) * qty;
+      var imgHtml = li.i
+        ? '<img class="ps-scan-product-img" src="' + li.i + '" onerror="psScanImgFallback(this)">'
+        : '<div class="ps-scan-product-img-placeholder">📦</div>';
+      return '<div class="ps-scan-product-item">'
+        + imgHtml
+        + '<div class="ps-scan-product-info">'
+        +   '<div class="ps-scan-product-sku">' + sku + '</div>'
+        +   '<div class="ps-scan-product-meta">'
+        +     '<div><div class="ps-scan-product-stat-label">Qty</div><div class="ps-scan-product-stat-val">' + qty + '</div></div>'
+        +     '<div><div class="ps-scan-product-stat-label">Total Qty</div><div class="ps-scan-product-stat-val total">' + total + '</div></div>'
+        +   '</div>'
+        + '</div>'
+        + '</div>';
+    }).join('');
+  } catch(e) {
+    itEl.innerHTML = '<div style="font-size:12px;color:var(--red);">Lookup error: ' + e.message + '</div>';
+  }
 }
 
 // ── Normalize / detect carrier ────────────────────────
@@ -1412,8 +1532,10 @@ function _psBeep(freq, dur) {
 function _psUpdateBatchBar() {
   var bar = document.getElementById('ps-batch-close-bar');
   var btn = document.getElementById('ps-btn-close-batch');
+  var empty = document.getElementById('ps-closebatch-empty');
   if (psTodayScans.length > 0) {
     bar.style.display = 'flex';
+    if (empty) empty.style.display = 'none';
     if (psBatchClosed.ALL) {
       btn.disabled = true; btn.textContent = '✓ Batch Closed';
     } else {
@@ -1421,6 +1543,7 @@ function _psUpdateBatchBar() {
     }
   } else {
     bar.style.display = 'none';
+    if (empty) empty.style.display = 'block';
   }
   var cb = document.getElementById('ps-closed-banners');
   cb.innerHTML = '';
@@ -1621,7 +1744,8 @@ window.psFilterScans = function(f, btn) {
 window.psRenderScanList = function() {
   var list = document.getElementById('ps-scan-list');
   document.getElementById('ps-scan-cnt-label').textContent = psTodayScans.length + ' scan' + (psTodayScans.length !== 1 ? 's' : '');
-  var items = psScanFilter === 'all' ? psTodayScans : psTodayScans.filter(function(s){ return s.carrier === psScanFilter; });
+  var items = psScanFilter === 'all' ? psTodayScans.slice() : psTodayScans.filter(function(s){ return s.carrier === psScanFilter; });
+  items.sort(function(a,b){ return new Date(b.timestamp) - new Date(a.timestamp); }); // newest first
   if (!items.length) {
     list.innerHTML = '<div class="ps-empty-state"><div class="ps-empty-icon">📭</div><div class="ps-empty-title">No scans yet' + (psScanFilter !== 'all' ? ' for ' + psScanFilter : '') + '</div><div class="ps-empty-sub">Each scan saves instantly to Google Sheets.</div></div>';
     return;
@@ -1655,73 +1779,6 @@ window.psRenderProgress = function() {
     return '<div class="ps-card"><div class="ps-card-row"><div class="ps-card-dot green"></div><div class="ps-card-tracking">' + s.tracking + '</div><div class="ps-card-meta">' + _psCarrierBadge(s.carrier) + '<span class="ps-badge ps-badge-gray">' + (s.initials||'—') + '</span></div><div class="ps-card-time">' + psFmtTime(s.timestamp) + '</div></div></div>';
   }).join('');
 };
-
-// ── CSV upload ────────────────────────────────────────
-window.psHandleCSV = function(input) {
-  var file = input.files[0]; if (!file) return;
-  var reader = new FileReader();
-  reader.onload = function(e){ _psParseCSV(e.target.result); };
-  reader.readAsText(file);
-};
-
-function _psParseCSV(text) {
-  var msg = document.getElementById('ps-upload-msg');
-  msg.className = 'ps-upload-msg'; msg.textContent = 'Parsing…';
-  var lines = text.split(/\r?\n/).filter(function(l){ return l.trim(); });
-  if (lines.length < 2) { msg.className = 'ps-upload-msg err'; msg.textContent = '⚠ No data rows found.'; return; }
-  // Normalize headers: lowercase + strip spaces so "Tracking ID" matches "trackingid"
-  var rawHeaders = _psParseLine(lines[0]);
-  var headers = rawHeaders.map(function(h){ return h.trim().toLowerCase().replace(/\s+/g,''); });
-  var col = function(name){ return headers.indexOf(name.toLowerCase().replace(/\s+/g,'')); };
-  var iTracking = col('tracking id'), iOrder = col('order id'), iStore = col('store'), iCarrier = col('carrier'), iService = col('service'), iShipTo = col('ship to state');
-  if (iTracking === -1) { msg.className = 'ps-upload-msg err'; msg.textContent = '⚠ "Tracking ID" column not found.'; return; }
-  var loaded = 0, skippedFBA = 0, rows = [];
-  for (var i = 1; i < lines.length; i++) {
-    var cols  = _psParseLine(lines[i]);
-    var store = (iStore !== -1 ? cols[iStore] : '').trim();
-    var rawTrk = (iTracking !== -1 ? cols[iTracking] : '').trim();
-    if (PS_IGNORED_FBA.includes(store.toLowerCase())) { skippedFBA++; continue; }
-    if (!rawTrk) continue;
-    rawTrk.split(/[;,]/).map(function(t){ return psNormalizeTracking(t); }).filter(Boolean).forEach(function(tn){
-      rows.push({ tracking: tn.toUpperCase(), orderNum: (iOrder !== -1 ? cols[iOrder] : '').trim(), channel: store, carrier: psDetectCarrier(tn), service: (iService !== -1 ? cols[iService] : '').trim(), shipToState: (iShipTo !== -1 ? cols[iShipTo] : '').trim() });
-      loaded++;
-    });
-  }
-  psManifest = rows;
-  document.getElementById('ps-manifest-pill').style.display = 'flex';
-  document.getElementById('ps-manifest-count').textContent  = loaded;
-  document.getElementById('ps-drop-zone').querySelector('.ps-drop-title').textContent = 'Replace CSV (drop new file)';
-  msg.className = 'ps-upload-msg ok';
-  msg.textContent = '✓ ' + loaded + ' tracking numbers parsed' + (skippedFBA ? ' · ' + skippedFBA + ' FBA skipped' : '') + ' · Saving to sheet…';
-  psRenderProgress();
-
-  // Write to Manifest_Log sheet immediately — worker overwrites today's rows if they exist
-  if (psCredToken && rows.length > 0) {
-    fetch(PS_WORKER + '/ship/manifest', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json', 'X-Cred-Token': psCredToken },
-      body: JSON.stringify({ rows: rows, uploadedBy: psInitials })
-    }).then(function(r){ return r.json(); }).then(function(d){
-      if (d.ok) {
-        msg.textContent = '✓ ' + loaded + ' orders saved to sheet' + (skippedFBA ? ' · ' + skippedFBA + ' FBA skipped' : '') + (d.replaced ? ' · Previous upload replaced' : '');
-        // Show Gap Analysis button
-        document.getElementById('ps-reconcile-bar').style.display = 'flex';
-      } else {
-        msg.className = 'ps-upload-msg err';
-        msg.textContent = '⚠ Parsed OK but sheet write failed: ' + (d.error || d.message || 'unknown error');
-        // Still show gap analysis button — data is in memory
-        document.getElementById('ps-reconcile-bar').style.display = 'flex';
-      }
-    }).catch(function(e){
-      msg.className = 'ps-upload-msg err';
-      msg.textContent = '⚠ Parsed OK but sheet write failed: ' + e.message;
-      document.getElementById('ps-reconcile-bar').style.display = 'flex';
-    });
-  } else {
-    // No token yet (shouldn't happen) — just show the reconcile button
-    document.getElementById('ps-reconcile-bar').style.display = 'flex';
-  }
-}
 
 function _psParseLine(line) {
   var result = [], cur = '', inQ = false;
@@ -2201,30 +2258,49 @@ function _psCarrierBadge(c) {
 
 
   // ── DUPLICATE SCAN ALARM ──────────────────────────────────────────────
+  // Loud, near-continuous siren that keeps repeating until the shipper
+  // taps "OK, Got It". Reuses a single AudioContext across beeps instead
+  // of creating a new one every cycle — browsers cap how many contexts
+  // can exist at once, so a dupe left unacknowledged for a while could
+  // eventually throw and go silent with the old approach.
   var _psDupeAlarmInterval = null;
+  var _psDupeAlarmCtx = null;
+
+  function _psDupeGetCtx() {
+    if (!_psDupeAlarmCtx || _psDupeAlarmCtx.state === 'closed') {
+      _psDupeAlarmCtx = new (window.AudioContext || window.webkitAudioContext)();
+    }
+    if (_psDupeAlarmCtx.state === 'suspended') _psDupeAlarmCtx.resume();
+    return _psDupeAlarmCtx;
+  }
 
   function psDupeAlarmStart() {
     psDupeAlarmBeep();
     _psDupeAlarmInterval = setInterval(function() {
       psDupeAlarmBeep();
-      if (navigator.vibrate) navigator.vibrate([400,200,400,200,400,600]);
-    }, 2000);
-    if (navigator.vibrate) navigator.vibrate([400,200,400,200,400,600]);
+      if (navigator.vibrate) navigator.vibrate([500,150,500,150,500]);
+    }, 1300);
+    if (navigator.vibrate) navigator.vibrate([500,150,500,150,500]);
   }
 
   function psDupeAlarmBeep() {
     try {
-      var ctx = new (window.AudioContext || window.webkitAudioContext)();
-      function tone(freq, st, dur) {
+      var ctx = _psDupeGetCtx();
+      function tone(freq, st, dur, gain) {
         var o = ctx.createOscillator(), g = ctx.createGain();
         o.connect(g); g.connect(ctx.destination);
         o.type = 'square'; o.frequency.setValueAtTime(freq, st);
-        g.gain.setValueAtTime(0.35, st);
+        g.gain.setValueAtTime(gain, st);
         g.gain.exponentialRampToValueAtTime(0.001, st+dur);
         o.start(st); o.stop(st+dur);
       }
       var t = ctx.currentTime;
-      tone(880,t,0.15); tone(660,t+0.18,0.15); tone(880,t+0.36,0.15); tone(660,t+0.54,0.15); tone(440,t+0.72,0.3);
+      // Loud back-to-back two-tone wail (0.8 gain, ~vs the old 0.35) with
+      // almost no gap, so each 1.3s cycle reads as one continuous blare.
+      tone(1046, t,        0.28, 0.8);
+      tone(784,  t + 0.28, 0.28, 0.8);
+      tone(1046, t + 0.56, 0.28, 0.8);
+      tone(784,  t + 0.84, 0.28, 0.8);
     } catch(e) {}
   }
 
@@ -2297,14 +2373,6 @@ function _psWireEvents() {
   scanInp.addEventListener('blur',  function(){ document.getElementById('ps-refocus-hint').style.display = 'block'; });
   scanInp.addEventListener('focus', function(){ document.getElementById('ps-refocus-hint').style.display = 'none'; });
 
-  var dz = document.getElementById('ps-drop-zone');
-  dz.addEventListener('dragover',  function(e){ e.preventDefault(); dz.classList.add('drag-over'); });
-  dz.addEventListener('dragleave', function(){ dz.classList.remove('drag-over'); });
-  dz.addEventListener('drop', function(e){
-    e.preventDefault(); dz.classList.remove('drag-over');
-    var file = e.dataTransfer.files[0];
-    if (file && file.name.endsWith('.csv')) { var r = new FileReader(); r.onload = function(ev){ _psParseCSV(ev.target.result); }; r.readAsText(file); }
-  });
 
   document.getElementById('ps-lookup-input').addEventListener('keydown', function(e){ if (e.key === 'Enter') psDoLookup(); });
   document.getElementById('ps-cred-username').addEventListener('keydown', function(e){ if (e.key === 'Enter') document.getElementById('ps-cred-password').focus(); });
@@ -2408,6 +2476,7 @@ window.psSwitchTab = function(name) {
     if (pinEl) setTimeout(function(){ pinEl.focus(); }, 100);
   }
   if (name === 'scan')        { psFocusScan(); psRenderScanList(); psLoadScans(); }
+  if (name === 'closebatch')  { _psUpdateBatchBar(); }
   if (name === 'progress')    { psLoadScans(); }
   if (name === 'lookup')      { psRenderLog(); }
   if (name === 'orderlookup') { document.getElementById('ps-ol-input').focus(); }
