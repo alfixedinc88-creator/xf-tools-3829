@@ -786,15 +786,16 @@ body {
     <div class="ps-scan-product-items ps-scan-product-items-more" id="ps-scan-product-more" style="display:none"></div>
 
     <!-- Total scanned + who scanned how many, for whatever date is picked,
-         plus how many labels Veeqo shows as printed today, and how many
-         Veeqo orders still have no print recorded at all — both of those
-         two are always "today" (Printed has no history lookup available,
-         and Not Printed is kept alongside it for the same at-a-glance
-         Veeqo-vs-floor comparison rather than tied to the date picker). -->
+         plus how many labels the print-station scanner has actually logged
+         today, and how many Veeqo orders still have no print recorded at
+         all. Both of those two are always "today" and independent of the
+         date picker below (Printed reads the real-time print-log DB, no
+         history lookup wired up for it; Not Printed is kept alongside it
+         for the same at-a-glance comparison). -->
     <div class="ps-scan-summary" id="ps-scan-summary">
       <div class="ps-scan-summary-total" id="ps-scan-summary-printed" style="display:none">
         <div class="ps-scan-summary-total-val" id="ps-scan-summary-printed-val">0</div>
-        <div class="ps-scan-summary-total-label">Printed<br>(Veeqo)</div>
+        <div class="ps-scan-summary-total-label">Printed<br>Today</div>
         <div class="ps-scan-summary-printed-split" id="ps-scan-summary-printed-split"></div>
       </div>
       <div class="ps-scan-summary-total" id="ps-scan-summary-notprinted" style="display:none">
@@ -2755,7 +2756,7 @@ window.psSwitchTab = function(name) {
     var dinp = document.getElementById('ps-scan-summary-date');
     if (dinp) { var tk = psTodayKey(); dinp.value = tk; dinp.max = tk; }
     psScanSummaryDate = null;
-    psRenderScanList(); psLoadScans(); _psLoadScanVeeqoLabels(); _psLoadScanNotPrinted();
+    psRenderScanList(); psLoadScans(); _psLoadScanPrintedToday(); _psLoadScanNotPrinted();
   }
   if (name === 'closebatch')  { _psUpdateBatchBar(); }
   if (name === 'progress')    { psLoadScans(); }
@@ -2770,7 +2771,7 @@ window.psSwitchTab = function(name) {
   if (name === 'scan' || name === 'progress') {
     window._psRefreshInterval = setInterval(function() {
       psLoadScans();
-      if (name === 'scan') { _psLoadScanVeeqoLabels(); _psLoadScanNotPrinted(); }
+      if (name === 'scan') { _psLoadScanPrintedToday(); _psLoadScanNotPrinted(); }
     }, 20000);
   }
   if (name === 'printlog') {
@@ -3010,25 +3011,34 @@ async function psVeeqoLoadLabels() {
   } catch (e) { console.error('[PS] veeqo labels-today:', e); }
 }
 
-// Same /veeqo/labels-today data, but painted into the "Printed (Veeqo)" tile
-// on the Scan tab's summary bar, so a shipper can see it without unlocking
-// the management-only Veeqo Sync tab. If the endpoint 404s/401s for a
-// non-management login, this just quietly stays hidden instead of erroring.
-async function _psLoadScanVeeqoLabels() {
+// Painted into the "Printed Today" tile on the Scan tab's summary bar.
+// NOTE: this used to read /veeqo/labels-today, but that pulls from Veeqo's
+// own order "shipped" status, which lags well behind reality (confirmed:
+// showed 76 when the print-station scanner had already logged 97) and is
+// also management-only. /ship/print-log is the real-time DB the DS9308
+// print-station scanner writes to the instant a label prints — same
+// source the Print Log tab itself uses — so it's both accurate and, unlike
+// the Veeqo routes, open to every login, not just management.
+async function _psLoadScanPrintedToday() {
   var wrap = document.getElementById('ps-scan-summary-printed');
   if (!wrap || !psCredToken) return;
   try {
-    var res  = await fetch(PS_WORKER + '/veeqo/labels-today', { headers: { 'X-Cred-Token': psCredToken } });
+    var res  = await fetch(PS_WORKER + '/ship/print-log?date=' + psTodayKey(), { headers: { 'X-Cred-Token': psCredToken } });
     var data = await res.json();
-    if (typeof data.total === 'undefined') { wrap.style.display = 'none'; return; }
+    if (!data.ok || !data.scans) { wrap.style.display = 'none'; return; }
     wrap.style.display = 'flex';
-    document.getElementById('ps-scan-summary-printed-val').textContent = data.total;
+    document.getElementById('ps-scan-summary-printed-val').textContent = data.scans.length;
+    var ups = 0, usps = 0;
+    data.scans.forEach(function(s) {
+      if (s.carrier === 'UPS') ups++;
+      else if (s.carrier === 'USPS') usps++;
+    });
     var parts = [];
-    if (data.ups)  parts.push(data.ups + ' UPS');
-    if (data.usps) parts.push(data.usps + ' USPS');
+    if (ups)  parts.push(ups + ' UPS');
+    if (usps) parts.push(usps + ' USPS');
     document.getElementById('ps-scan-summary-printed-split').textContent = parts.join(' · ');
   } catch (e) {
-    console.error('[PS] scan-tab veeqo labels-today:', e);
+    console.error('[PS] scan-tab print-log:', e);
     wrap.style.display = 'none';
   }
 }
