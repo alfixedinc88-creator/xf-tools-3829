@@ -222,7 +222,20 @@ body {
 </style>
 </head>
 <body>
-<div id="upc-app">
+<div id="upc-cred-gate" style="display:flex;min-height:100vh;align-items:center;justify-content:center;background:var(--bg, #f4f5f7);font-family:'DM Sans',sans-serif;">
+  <div style="max-width:360px;width:100%;padding:32px 28px;background:var(--bg2, #fff);border:1px solid var(--border, #dfe2e7);border-radius:14px;box-shadow:0 1px 3px rgba(20,25,40,.08);text-align:center;margin:0 20px;">
+    <div style="font-size:32px;margin-bottom:8px;">🏷️</div>
+    <h1 style="font-size:18px;margin:0 0 4px;">UPC Barcodes</h1>
+    <p style="font-size:13px;color:var(--text3, #7a8496);margin:0 0 20px;">Sign in with your XFitting credentials</p>
+    <input id="upc-cred-username" type="text" placeholder="Username" autocomplete="username" style="width:100%;padding:11px 14px;border:1.5px solid var(--border, #dfe2e7);border-radius:9px;font-family:inherit;font-size:14px;margin-bottom:10px;box-sizing:border-box;">
+    <input id="upc-cred-password" type="password" placeholder="Password" autocomplete="current-password" style="width:100%;padding:11px 14px;border:1.5px solid var(--border, #dfe2e7);border-radius:9px;font-family:inherit;font-size:14px;margin-bottom:14px;box-sizing:border-box;">
+    <button id="upc-cred-login-btn" onclick="upcCredLogin()" style="width:100%;padding:12px;border:none;border-radius:9px;background:var(--accent, #1a56db);color:#fff;font-family:inherit;font-weight:600;font-size:14px;cursor:pointer;">Sign In</button>
+    <div id="upc-cred-err" style="color:var(--red, #c52a1a);font-size:12.5px;margin-top:10px;min-height:16px;"></div>
+    <a href="index.html" style="display:inline-block;margin-top:14px;font-size:12.5px;color:var(--text3, #7a8496);text-decoration:none;">← Back to Launcher</a>
+  </div>
+</div>
+
+<div id="upc-app" style="display:none;">
 
   <div class="topbar">
     <div class="topbar-left">
@@ -4102,8 +4115,9 @@ function awdHandleScan(raw) {
 // ── Constants ────────────────────────────────────────────────────────────
 const WORKER_URL = 'https://xfitting-lookup.alfixedinc88.workers.dev';
 const W = WORKER_URL;
-var XF_SESSION = sessionStorage.getItem('xf_session') || null;
-var XF_ROLE    = sessionStorage.getItem('xf_role')    || null;
+var UPC_CRED_TOKEN = localStorage.getItem('xf_cred_token') || null;
+var UPC_CRED_USER  = null;
+try { UPC_CRED_USER = JSON.parse(localStorage.getItem('xf_cred_user') || 'null'); } catch(e) {}
 
 // ── Navigation ───────────────────────────────────────────────────────────
 function backToLauncher() { window.location.href = 'index.html'; }
@@ -4122,23 +4136,56 @@ function showToast(msg) {
   setTimeout(function() { t.style.opacity='0'; t.style.transform='translateX(-50%) translateY(20px)'; }, 4000);
 }
 
+// ── Credential login ──────────────────────────────────────────────────────
+window.upcCredLogin = async function() {
+  var username = document.getElementById('upc-cred-username').value.trim();
+  var password = document.getElementById('upc-cred-password').value;
+  var btn = document.getElementById('upc-cred-login-btn');
+  var err = document.getElementById('upc-cred-err');
+  err.textContent = '';
+  if (!username || !password) { err.textContent = 'Enter your username and password.'; return; }
+  btn.disabled = true; btn.textContent = 'Signing in…';
+  try {
+    var res = await fetch(WORKER_URL + '/auth/login', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ username: username, password: password })
+    });
+    var data = await res.json();
+    if (!res.ok) { err.textContent = data.error || 'Login failed'; return; }
+    if (!data.roles.includes('ops') && !data.roles.includes('mobile') && !data.roles.includes('mgmt')) {
+      err.textContent = 'This account does not have access to UPC Barcodes.';
+      return;
+    }
+    UPC_CRED_TOKEN = data.token;
+    UPC_CRED_USER = { displayName: data.displayName, roles: data.roles, userId: data.userId };
+    localStorage.setItem('xf_cred_token', data.token);
+    localStorage.setItem('xf_cred_user', JSON.stringify(UPC_CRED_USER));
+    document.getElementById('upc-cred-gate').style.display = 'none';
+    document.getElementById('upc-app').style.display = 'block';
+    if (typeof upcOnLaunch === 'function') upcOnLaunch();
+  } catch(e) {
+    err.textContent = 'Connection error — try again.';
+  } finally {
+    btn.disabled = false; btn.textContent = 'Sign In';
+  }
+};
 
 // ── Authenticated fetch ──────────────────────────────────────────────────
 async function wFetch(url, opts) {
   opts = opts || {};
   opts.headers = Object.assign({}, opts.headers || {}, {
-    'X-Session-Token': XF_SESSION || ''
+    'X-Cred-Token': UPC_CRED_TOKEN || ''
   });
   var r = await fetch(url, opts);
-  if (r.status === 401) {
-    XF_SESSION = null;
-    XF_ROLE = null;
-    sessionStorage.removeItem('xf_session');
-    sessionStorage.removeItem('xf_role');
-    var ps = document.getElementById('pin-screen');
-    if (ps) { ps.style.display = 'flex'; ps.style.opacity = '1'; ps.style.visibility = 'visible'; }
-    var la = document.getElementById('launcher');
-    if (la) la.style.display = 'none';
+  if (r.status === 401 || r.status === 403) {
+    UPC_CRED_TOKEN = null;
+    UPC_CRED_USER = null;
+    localStorage.removeItem('xf_cred_token');
+    localStorage.removeItem('xf_cred_user');
+    var gate = document.getElementById('upc-cred-gate');
+    if (gate) gate.style.display = 'flex';
+    var app = document.getElementById('upc-app');
+    if (app) app.style.display = 'none';
     throw new Error('Unauthorized');
   }
   return r;
@@ -5010,28 +5057,24 @@ function upcRenderSheet(matches) {
 
 
 // ── Boot ─────────────────────────────────────────────────────────────────
-// Auto-authenticate with mobile PIN for UPC app (no user PIN needed)
-(function() {
-  if (XF_SESSION) { 
-    if (typeof upcOnLaunch === 'function') upcOnLaunch();
-    return;
+(async function() {
+  if (!UPC_CRED_TOKEN || !UPC_CRED_USER || !(UPC_CRED_USER.roles.includes('ops') || UPC_CRED_USER.roles.includes('mobile') || UPC_CRED_USER.roles.includes('mgmt'))) {
+    localStorage.removeItem('xf_cred_token'); localStorage.removeItem('xf_cred_user');
+    UPC_CRED_TOKEN = null;
+    return; // login gate already visible by default
   }
-  fetch(WORKER_URL + '/auth', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ pin: '2589', pin_type: 'mobile' })
-  }).then(function(r) { return r.json(); })
-  .then(function(d) {
-    if (d.token) {
-      XF_SESSION = d.token;
-      XF_ROLE = 'mobile';
-      sessionStorage.setItem('xf_session', d.token);
-      sessionStorage.setItem('xf_role', 'mobile');
+  // Verify the cached token still actually works before trusting it
+  try {
+    var res = await fetch(WORKER_URL + '?sheet=Products', { headers: { 'X-Cred-Token': UPC_CRED_TOKEN } });
+    if (res.status === 401 || res.status === 403) {
+      localStorage.removeItem('xf_cred_token'); localStorage.removeItem('xf_cred_user');
+      UPC_CRED_TOKEN = null;
+      return;
     }
-  }).catch(function(){})
-  .finally(function() {
-    if (typeof upcOnLaunch === 'function') upcOnLaunch();
-  });
+  } catch(e) { return; }
+  document.getElementById('upc-cred-gate').style.display = 'none';
+  document.getElementById('upc-app').style.display = 'block';
+  if (typeof upcOnLaunch === 'function') upcOnLaunch();
 })();
 </script>
 </html>
