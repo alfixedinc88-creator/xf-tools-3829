@@ -2097,6 +2097,14 @@ window.invCredLogin = async function() {
   }
 
   window.invOnLogin = function() {
+    // A mgmt-role login already has full access - no separate step-up
+    // should ever be required for Review/SKU Mgr/History. Without this,
+    // invUnlocked stayed false for anyone who logged in as mgmt directly
+    // (it was only ever set true by the step-up flow itself), so a real
+    // mgmt user would still get asked to "sign in again" on those tabs.
+    if (INV_CRED_USER && INV_CRED_USER.roles && INV_CRED_USER.roles.includes('mgmt')) {
+      invUnlocked = true;
+    }
     invFetchPendingCount();
   };
 
