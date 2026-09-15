@@ -135,12 +135,22 @@ body {
 .ps-progress-fill { height:100%; background:var(--accent); border-radius:100px; transition:width .4s ease; }
 .ps-progress-fill.complete { background:var(--green); }
 
-/* Scan box */
+/* Scan box (base — shared with the Print Log panel's own scanner box, so
+   keep this generic; the Scan tab's compact look is a scoped override below) */
 .ps-scan-box { background:var(--bg2); border:1px solid var(--border); border-radius:12px; padding:20px; margin-bottom:20px; box-shadow:var(--shadow); cursor:pointer; }
 .ps-scan-box-header { display:flex; align-items:center; gap:10px; margin-bottom:14px; }
 .ps-scan-icon { width:36px; height:36px; background:var(--accent-bg); border-radius:8px; display:flex; align-items:center; justify-content:center; color:var(--accent); font-size:20px; flex-shrink:0; }
 .ps-scan-title { font-size:15px; font-weight:700; color:var(--text); }
 .ps-scan-hint { font-size:12px; color:var(--text3); margin-top:1px; }
+
+/* Scan tab layout — scan box sits as a compact left column next to the
+   scanned order's product info (instead of stacked above it), so an
+   order with several items still fits without scrolling. */
+.ps-scan-toprow { display:flex; gap:16px; align-items:flex-start; flex-wrap:wrap; margin-bottom:20px; }
+#ps-panel-scan .ps-scan-box { padding:16px; margin-bottom:0; flex:0 0 280px; }
+#ps-panel-scan .ps-scan-box-header { gap:8px; margin-bottom:10px; }
+#ps-panel-scan .ps-scan-icon { width:30px; height:30px; font-size:16px; }
+#ps-panel-scan .ps-scan-title { font-size:11px; font-weight:700; text-transform:uppercase; letter-spacing:.5px; color:var(--text3); }
 .ps-scan-input { width:100%; background:var(--bg3); border:2px solid var(--border2); border-radius:10px; color:var(--text); font-family:var(--mono); font-size:16px; font-weight:500; padding:12px 16px; outline:none; transition:border-color .15s,box-shadow .15s; letter-spacing:.5px; }
 .ps-scan-input:focus { border-color:var(--accent); box-shadow:0 0 0 3px rgba(26,86,219,.12); background:var(--bg2); }
 .ps-scan-input.flash-green  { border-color:var(--green)!important; background:var(--green-bg)!important; box-shadow:0 0 0 3px rgba(14,127,62,.15)!important; }
@@ -156,22 +166,30 @@ body {
 .ps-ls-icon { font-size:18px; flex-shrink:0; line-height:1; }
 .ps-ls-tracking { font-family:var(--mono); font-size:13px; font-weight:500; color:var(--text); margin-bottom:2px; }
 .ps-ls-meta { font-size:12px; color:var(--text2); }
-.ps-refocus-hint { text-align:center; font-size:12px; color:var(--text3); margin-top:8px; cursor:pointer; padding:8px; }
-.ps-refocus-hint:hover { color:var(--accent); }
 
-/* Scan product card — shown after a scan, mirrors the scanned tracking's order item(s) */
-.ps-scan-product-wrap { background:var(--bg2); border:1px solid var(--border); border-radius:12px; padding:18px 20px; margin-bottom:16px; box-shadow:var(--shadow); }
-.ps-scan-product-tracking { font-family:var(--mono); font-size:12px; font-weight:700; letter-spacing:.3px; color:var(--text3); text-transform:uppercase; margin-bottom:14px; word-break:break-all; }
-.ps-scan-product-item { display:flex; gap:16px; align-items:center; padding:14px 0; border-top:1px solid var(--border); }
-.ps-scan-product-item:first-child { border-top:none; padding-top:0; }
-.ps-scan-product-img { width:180px; height:180px; object-fit:cover; border-radius:12px; border:1px solid var(--border); background:var(--bg3); flex-shrink:0; }
-.ps-scan-product-img-placeholder { width:180px; height:180px; border-radius:12px; border:1px solid var(--border); background:var(--bg3); display:flex; align-items:center; justify-content:center; font-size:60px; flex-shrink:0; }
-.ps-scan-product-info { flex:1; min-width:0; }
-.ps-scan-product-sku { font-family:var(--mono); font-size:15px; font-weight:700; color:var(--text); margin-bottom:14px; word-break:break-word; }
-.ps-scan-product-meta { display:flex; gap:28px; flex-wrap:wrap; align-items:flex-end; }
-.ps-scan-product-stat-label { font-size:10px; font-weight:600; text-transform:uppercase; letter-spacing:.6px; color:var(--text3); margin-bottom:3px; }
-.ps-scan-product-stat-val { font-family:var(--mono); font-size:22px; font-weight:700; color:var(--text); }
-.ps-scan-product-stat-val.total { color:var(--accent); font-size:44px; line-height:1; font-weight:800; }
+/* Scan product card — shown after a scan, mirrors the scanned tracking's order item(s).
+   Items are square photo-on-top cards so they wrap into a dense grid: the
+   first couple sit next to the scan box (.ps-scan-product-wrap), the rest
+   of a bigger order (up to PS_SCAN_MAX_ITEMS) flow into the full-width
+   strip below the scan bar (.ps-scan-product-items-more) — both use the
+   same card so a 20-item order still reads as one consistent grid. */
+.ps-scan-product-wrap { flex:1 1 380px; min-width:0; background:var(--bg2); border:1px solid var(--border); border-radius:12px; padding:14px 16px; box-shadow:var(--shadow); }
+.ps-scan-product-tracking { font-family:var(--mono); font-size:12px; font-weight:700; letter-spacing:.3px; color:var(--text3); text-transform:uppercase; margin-bottom:10px; word-break:break-all; }
+.ps-scan-product-items { display:flex; flex-wrap:wrap; gap:10px; }
+.ps-scan-product-items-more { background:var(--bg2); border:1px solid var(--border); border-radius:12px; padding:14px 16px; margin-bottom:20px; box-shadow:var(--shadow); }
+.ps-scan-product-item { display:flex; flex-direction:column; align-items:center; text-align:center; width:168px; background:var(--bg3); border:1px solid var(--border); border-radius:10px; padding:10px; gap:8px; }
+.ps-scan-product-img { width:140px; height:140px; object-fit:cover; border-radius:8px; border:1px solid var(--border); background:var(--bg2); flex-shrink:0; }
+.ps-scan-product-img-placeholder { width:140px; height:140px; border-radius:8px; border:1px solid var(--border); background:var(--bg2); display:flex; align-items:center; justify-content:center; font-size:52px; flex-shrink:0; }
+.ps-scan-product-info { width:100%; min-width:0; }
+.ps-scan-product-sku { font-family:var(--mono); font-size:10.5px; font-weight:700; color:var(--text); margin-bottom:8px; word-break:break-word; line-height:1.25; }
+/* Qty and Total Qty sit on the same row, but sized worlds apart on purpose:
+   Qty stays small/muted, Total Qty is the big bold number — the one number
+   a shipper should actually double-check against the packing count. */
+.ps-scan-product-meta { display:flex; flex-direction:row; align-items:center; justify-content:center; gap:12px; }
+.ps-scan-product-meta > div:last-child { border-left:1px solid var(--border); padding-left:12px; }
+.ps-scan-product-stat-label { font-size:7.5px; font-weight:600; text-transform:uppercase; letter-spacing:.5px; color:var(--text3); }
+.ps-scan-product-stat-val { font-family:var(--mono); font-size:12px; font-weight:600; color:var(--text3); }
+.ps-scan-product-stat-val.total { color:var(--accent); font-size:38px; line-height:1; font-weight:800; }
 
 /* Batch close */
 .ps-batch-close-bar { background:var(--bg2); border:1px solid var(--border); border-radius:12px; padding:16px 18px; margin-bottom:16px; box-shadow:var(--shadow); display:flex; align-items:center; gap:12px; flex-wrap:wrap; }
@@ -289,9 +307,8 @@ body {
   .ps-stat-bar { grid-template-columns:repeat(2,1fr); gap:8px; }
   .ps-stat-val { font-size:22px; }
   .ps-batch-close-bar { flex-direction:column; align-items:stretch; }
-  .ps-scan-product-item { flex-direction:column; align-items:flex-start; }
-  .ps-scan-product-img, .ps-scan-product-img-placeholder { width:100%; height:200px; }
-  .ps-scan-product-stat-val.total { font-size:36px; }
+  .ps-scan-toprow { flex-direction:column; }
+  .ps-scan-box, .ps-scan-product-wrap { flex-basis:auto; width:100%; }
 }
 
   </style>
@@ -393,6 +410,12 @@ body {
 #packship-app .ps-scan-icon { width:36px; height:36px; background:var(--accent-bg); border-radius:8px; display:flex; align-items:center; justify-content:center; color:var(--accent); font-size:20px; flex-shrink:0; }
 #packship-app .ps-scan-title { font-size:15px; font-weight:700; color:var(--text); }
 #packship-app .ps-scan-hint { font-size:12px; color:var(--text3); margin-top:1px; }
+
+#packship-app .ps-scan-toprow { display:flex; gap:16px; align-items:flex-start; flex-wrap:wrap; margin-bottom:20px; }
+#packship-app #ps-panel-scan .ps-scan-box { padding:16px; margin-bottom:0; flex:0 0 280px; }
+#packship-app #ps-panel-scan .ps-scan-box-header { gap:8px; margin-bottom:10px; }
+#packship-app #ps-panel-scan .ps-scan-icon { width:30px; height:30px; font-size:16px; }
+#packship-app #ps-panel-scan .ps-scan-title { font-size:11px; font-weight:700; text-transform:uppercase; letter-spacing:.5px; color:var(--text3); }
 #packship-app .ps-scan-input { width:100%; background:var(--bg3); border:2px solid var(--border2); border-radius:10px; color:var(--text); font-family:var(--mono); font-size:16px; font-weight:500; padding:12px 16px; outline:none; transition:border-color .15s,box-shadow .15s; letter-spacing:.5px; }
 #packship-app .ps-scan-input:focus { border-color:var(--accent); box-shadow:0 0 0 3px rgba(26,86,219,.12); background:var(--bg2); }
 #packship-app .ps-scan-input.flash-green  { border-color:var(--green)!important; background:var(--green-bg)!important; box-shadow:0 0 0 3px rgba(14,127,62,.15)!important; }
@@ -408,22 +431,22 @@ body {
 #packship-app .ps-ls-icon { font-size:18px; flex-shrink:0; line-height:1; }
 #packship-app .ps-ls-tracking { font-family:var(--mono); font-size:13px; font-weight:500; color:var(--text); margin-bottom:2px; }
 #packship-app .ps-ls-meta { font-size:12px; color:var(--text2); }
-#packship-app .ps-refocus-hint { text-align:center; font-size:12px; color:var(--text3); margin-top:8px; cursor:pointer; padding:8px; }
-#packship-app .ps-refocus-hint:hover { color:var(--accent); }
 
 /* Scan product card — shown after a scan, mirrors the scanned tracking's order item(s) */
-#packship-app .ps-scan-product-wrap { background:var(--bg2); border:1px solid var(--border); border-radius:12px; padding:18px 20px; margin-bottom:16px; box-shadow:var(--shadow); }
-#packship-app .ps-scan-product-tracking { font-family:var(--mono); font-size:12px; font-weight:700; letter-spacing:.3px; color:var(--text3); text-transform:uppercase; margin-bottom:14px; word-break:break-all; }
-#packship-app .ps-scan-product-item { display:flex; gap:16px; align-items:center; padding:14px 0; border-top:1px solid var(--border); }
-#packship-app .ps-scan-product-item:first-child { border-top:none; padding-top:0; }
-#packship-app .ps-scan-product-img { width:180px; height:180px; object-fit:cover; border-radius:12px; border:1px solid var(--border); background:var(--bg3); flex-shrink:0; }
-#packship-app .ps-scan-product-img-placeholder { width:180px; height:180px; border-radius:12px; border:1px solid var(--border); background:var(--bg3); display:flex; align-items:center; justify-content:center; font-size:60px; flex-shrink:0; }
-#packship-app .ps-scan-product-info { flex:1; min-width:0; }
-#packship-app .ps-scan-product-sku { font-family:var(--mono); font-size:15px; font-weight:700; color:var(--text); margin-bottom:14px; word-break:break-word; }
-#packship-app .ps-scan-product-meta { display:flex; gap:28px; flex-wrap:wrap; align-items:flex-end; }
-#packship-app .ps-scan-product-stat-label { font-size:10px; font-weight:600; text-transform:uppercase; letter-spacing:.6px; color:var(--text3); margin-bottom:3px; }
-#packship-app .ps-scan-product-stat-val { font-family:var(--mono); font-size:22px; font-weight:700; color:var(--text); }
-#packship-app .ps-scan-product-stat-val.total { color:var(--accent); font-size:44px; line-height:1; font-weight:800; }
+#packship-app .ps-scan-product-wrap { flex:1 1 380px; min-width:0; background:var(--bg2); border:1px solid var(--border); border-radius:12px; padding:14px 16px; box-shadow:var(--shadow); }
+#packship-app .ps-scan-product-tracking { font-family:var(--mono); font-size:12px; font-weight:700; letter-spacing:.3px; color:var(--text3); text-transform:uppercase; margin-bottom:10px; word-break:break-all; }
+#packship-app .ps-scan-product-items { display:flex; flex-wrap:wrap; gap:10px; }
+#packship-app .ps-scan-product-items-more { background:var(--bg2); border:1px solid var(--border); border-radius:12px; padding:14px 16px; margin-bottom:20px; box-shadow:var(--shadow); }
+#packship-app .ps-scan-product-item { display:flex; flex-direction:column; align-items:center; text-align:center; width:168px; background:var(--bg3); border:1px solid var(--border); border-radius:10px; padding:10px; gap:8px; }
+#packship-app .ps-scan-product-img { width:140px; height:140px; object-fit:cover; border-radius:8px; border:1px solid var(--border); background:var(--bg2); flex-shrink:0; }
+#packship-app .ps-scan-product-img-placeholder { width:140px; height:140px; border-radius:8px; border:1px solid var(--border); background:var(--bg2); display:flex; align-items:center; justify-content:center; font-size:52px; flex-shrink:0; }
+#packship-app .ps-scan-product-info { width:100%; min-width:0; }
+#packship-app .ps-scan-product-sku { font-family:var(--mono); font-size:10.5px; font-weight:700; color:var(--text); margin-bottom:8px; word-break:break-word; line-height:1.25; }
+#packship-app .ps-scan-product-meta { display:flex; flex-direction:row; align-items:center; justify-content:center; gap:12px; }
+#packship-app .ps-scan-product-meta > div:last-child { border-left:1px solid var(--border); padding-left:12px; }
+#packship-app .ps-scan-product-stat-label { font-size:7.5px; font-weight:600; text-transform:uppercase; letter-spacing:.5px; color:var(--text3); }
+#packship-app .ps-scan-product-stat-val { font-family:var(--mono); font-size:12px; font-weight:600; color:var(--text3); }
+#packship-app .ps-scan-product-stat-val.total { color:var(--accent); font-size:38px; line-height:1; font-weight:800; }
 
 /* Batch close */
 #packship-app .ps-batch-close-bar { background:var(--bg2); border:1px solid var(--border); border-radius:12px; padding:16px 18px; margin-bottom:16px; box-shadow:var(--shadow); display:flex; align-items:center; gap:12px; flex-wrap:wrap; }
@@ -541,9 +564,8 @@ body {
   #packship-app .ps-stat-bar { grid-template-columns:repeat(2,1fr); gap:8px; }
   #packship-app .ps-stat-val { font-size:22px; }
   #packship-app .ps-batch-close-bar { flex-direction:column; align-items:stretch; }
-  #packship-app .ps-scan-product-item { flex-direction:column; align-items:flex-start; }
-  #packship-app .ps-scan-product-img, #packship-app .ps-scan-product-img-placeholder { width:100%; height:200px; }
-  #packship-app .ps-scan-product-stat-val.total { font-size:36px; }
+  #packship-app .ps-scan-toprow { flex-direction:column; }
+  #packship-app .ps-scan-box, #packship-app .ps-scan-product-wrap { flex-basis:auto; width:100%; }
 }
 </style>
 
@@ -623,30 +645,33 @@ body {
 
   <!-- SCAN panel -->
   <div class="ps-panel active" id="ps-panel-scan">
-    <div class="ps-scan-box" onclick="psFocusScan()">
-      <div class="ps-scan-box-header">
-        <div class="ps-scan-icon">⌖</div>
-        <div>
+    <div class="ps-scan-toprow">
+      <div class="ps-scan-box" onclick="psFocusScan()">
+        <div class="ps-scan-box-header">
+          <div class="ps-scan-icon">⌖</div>
           <div class="ps-scan-title">Scan Tracking Barcode</div>
-          <div class="ps-scan-hint">Bluetooth scanner or type + Enter · carrier auto-detected · saves to Google Sheet</div>
+        </div>
+        <input class="ps-scan-input" id="ps-scan-input" type="text" placeholder="Click here to Scan" autocomplete="off" autocorrect="off" autocapitalize="off" spellcheck="false">
+        <div class="ps-last-scan" id="ps-last-scan">
+          <div class="ps-ls-icon" id="ps-ls-icon">✓</div>
+          <div>
+            <div class="ps-ls-tracking" id="ps-ls-tracking">—</div>
+            <div class="ps-ls-meta" id="ps-ls-meta">—</div>
+          </div>
         </div>
       </div>
-      <input class="ps-scan-input" id="ps-scan-input" type="text" placeholder="Focus here — scan or type tracking number…" autocomplete="off" autocorrect="off" autocapitalize="off" spellcheck="false">
-      <div class="ps-last-scan" id="ps-last-scan">
-        <div class="ps-ls-icon" id="ps-ls-icon">✓</div>
-        <div>
-          <div class="ps-ls-tracking" id="ps-ls-tracking">—</div>
-          <div class="ps-ls-meta" id="ps-ls-meta">—</div>
-        </div>
+
+      <!-- First 1-2 items of the scanned order, right next to the scan box -->
+      <div class="ps-scan-product-wrap" id="ps-scan-product-wrap" style="display:none">
+        <div class="ps-scan-product-tracking" id="ps-scan-product-tracking">—</div>
+        <div id="ps-scan-product-items" class="ps-scan-product-items"></div>
       </div>
-      <div class="ps-refocus-hint" id="ps-refocus-hint" style="display:none">⚠️ Scanner lost focus — tap here to refocus</div>
     </div>
 
-    <!-- Product card for the just-scanned tracking number -->
-    <div class="ps-scan-product-wrap" id="ps-scan-product-wrap" style="display:none">
-      <div class="ps-scan-product-tracking" id="ps-scan-product-tracking">—</div>
-      <div id="ps-scan-product-items"></div>
-    </div>
+    <!-- Any remaining items (order has more than fit next to the scan box)
+         flow here, full width, still above "Today's Scans" — so a big
+         multi-item order (up to ~20) stays visible without scrolling. -->
+    <div class="ps-scan-product-items ps-scan-product-items-more" id="ps-scan-product-more" style="display:none"></div>
 
     <div class="ps-section-header" style="margin-top:4px">
       <div class="ps-section-title">Today's Scans</div>
@@ -1419,12 +1444,40 @@ window.psScanImgFallback = function(img) {
   img.replaceWith(div);
 };
 
+// Only the first couple of items show right next to the scan bar; the rest
+// of a bigger order (up to PS_SCAN_MAX_ITEMS) flow into the full-width strip
+// below the scan bar, so a large order still stays above "Today's Scans"
+// without the shipper needing to scroll to double-check everything.
+var PS_SCAN_TOP_ITEM_COUNT = 4;
+var PS_SCAN_MAX_ITEMS = 20;
+
+function _psScanProductCardHtml(li) {
+  var sku   = li.s || '—';
+  var qty   = parseInt(li.q, 10) || 1;
+  var total = _psSkuMultiplier(sku) * qty;
+  var imgHtml = li.i
+    ? '<img class="ps-scan-product-img" src="' + li.i + '" onerror="psScanImgFallback(this)">'
+    : '<div class="ps-scan-product-img-placeholder">📦</div>';
+  return '<div class="ps-scan-product-item">'
+    + imgHtml
+    + '<div class="ps-scan-product-info">'
+    +   '<div class="ps-scan-product-sku">' + sku + '</div>'
+    +   '<div class="ps-scan-product-meta">'
+    +     '<div><div class="ps-scan-product-stat-label">Qty</div><div class="ps-scan-product-stat-val">' + qty + '</div></div>'
+    +     '<div><div class="ps-scan-product-stat-label">Total Qty</div><div class="ps-scan-product-stat-val total">' + total + '</div></div>'
+    +   '</div>'
+    + '</div>'
+    + '</div>';
+}
+
 async function _psLoadScanProduct(tracking) {
-  var wrap  = document.getElementById('ps-scan-product-wrap');
-  var trkEl = document.getElementById('ps-scan-product-tracking');
-  var itEl  = document.getElementById('ps-scan-product-items');
+  var wrap   = document.getElementById('ps-scan-product-wrap');
+  var trkEl  = document.getElementById('ps-scan-product-tracking');
+  var itEl   = document.getElementById('ps-scan-product-items');
+  var moreEl = document.getElementById('ps-scan-product-more');
   if (!wrap) return;
   wrap.style.display = 'block';
+  if (moreEl) { moreEl.style.display = 'none'; moreEl.innerHTML = ''; }
   trkEl.textContent = tracking;
   itEl.innerHTML = '<div style="font-size:12px;color:var(--text3);">Loading product info…</div>';
   try {
@@ -1434,29 +1487,18 @@ async function _psLoadScanProduct(tracking) {
     var d = await r.json();
     if (!d.ok) { itEl.innerHTML = '<div style="font-size:12px;color:var(--red);">Lookup error: ' + (d.error || 'unknown') + '</div>'; return; }
     var order = (d.results || [])[0];
-    var items = (order && order.lineItems) || [];
+    var items = ((order && order.lineItems) || []).slice(0, PS_SCAN_MAX_ITEMS);
     if (!items.length) {
       itEl.innerHTML = '<div style="font-size:12px;color:var(--text3);font-style:italic;">No item data for this order — run Veeqo Sync to populate order details.</div>';
       return;
     }
-    itEl.innerHTML = items.map(function(li) {
-      var sku   = li.s || '—';
-      var qty   = parseInt(li.q, 10) || 1;
-      var total = _psSkuMultiplier(sku) * qty;
-      var imgHtml = li.i
-        ? '<img class="ps-scan-product-img" src="' + li.i + '" onerror="psScanImgFallback(this)">'
-        : '<div class="ps-scan-product-img-placeholder">📦</div>';
-      return '<div class="ps-scan-product-item">'
-        + imgHtml
-        + '<div class="ps-scan-product-info">'
-        +   '<div class="ps-scan-product-sku">' + sku + '</div>'
-        +   '<div class="ps-scan-product-meta">'
-        +     '<div><div class="ps-scan-product-stat-label">Qty</div><div class="ps-scan-product-stat-val">' + qty + '</div></div>'
-        +     '<div><div class="ps-scan-product-stat-label">Total Qty</div><div class="ps-scan-product-stat-val total">' + total + '</div></div>'
-        +   '</div>'
-        + '</div>'
-        + '</div>';
-    }).join('');
+    var cardsHtml = items.map(_psScanProductCardHtml);
+    itEl.innerHTML = cardsHtml.slice(0, PS_SCAN_TOP_ITEM_COUNT).join('');
+    var rest = cardsHtml.slice(PS_SCAN_TOP_ITEM_COUNT);
+    if (rest.length && moreEl) {
+      moreEl.innerHTML = rest.join('');
+      moreEl.style.display = 'flex';
+    }
   } catch(e) {
     itEl.innerHTML = '<div style="font-size:12px;color:var(--red);">Lookup error: ' + e.message + '</div>';
   }
@@ -2370,8 +2412,6 @@ function _psWireEvents() {
   scanInp.addEventListener('paste', function(){
     setTimeout(function(){ var v = scanInp.value.trim(); if (v.length > 8) _psProcessScan(v); }, 60);
   });
-  scanInp.addEventListener('blur',  function(){ document.getElementById('ps-refocus-hint').style.display = 'block'; });
-  scanInp.addEventListener('focus', function(){ document.getElementById('ps-refocus-hint').style.display = 'none'; });
 
 
   document.getElementById('ps-lookup-input').addEventListener('keydown', function(e){ if (e.key === 'Enter') psDoLookup(); });
