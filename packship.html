@@ -932,15 +932,49 @@ body {
 
   <!-- CLOSE BATCH panel -->
   <div class="ps-panel" id="ps-panel-closebatch">
-    <div class="ps-batch-close-bar" id="ps-batch-close-bar" style="display:none">
-      <div class="ps-batch-close-label"><strong>Ready to drop off?</strong> Close the batch to record the handoff time for all packages.</div>
-      <button class="ps-btn-batch" id="ps-btn-close-batch" onclick="psCloseBatch()">📦 Close Batch</button>
+    <!-- USPS drop-off run tracker — independent of whether today has any
+         scans yet, so it's always visible here. "Leaving for USPS" now
+         ALSO closes today's batch in the same click (see psUspsRunStart),
+         so there's no separate Close Batch button anymore — one action
+         covers both. Anyone can start/end a run; the full run history is
+         gated below to Admin accounts only. -->
+    <div class="ps-batch-close-bar" style="flex-direction:column; align-items:stretch; gap:10px;">
+      <div class="ps-batch-close-label"><strong>🚚 USPS Drop-off</strong> Leaving for USPS also closes today's batch (handoff time for all packages), so there's just the one button.</div>
+      <div id="ps-usps-run-open-list"></div>
+      <div style="display:flex; gap:8px; flex-wrap:wrap; align-items:center;">
+        <input type="text" class="ps-field-input" id="ps-usps-run-name" placeholder="Name" style="max-width:220px; margin:0;">
+        <button class="ps-btn-batch" id="ps-usps-run-start-btn" onclick="psUspsRunStart()">🚚 Leaving for USPS</button>
+      </div>
     </div>
     <div id="ps-closed-banners"></div>
-    <div class="ps-empty-state" id="ps-closebatch-empty">
-      <div class="ps-empty-icon">📦</div>
-      <div class="ps-empty-title">Nothing to close yet</div>
-      <div class="ps-empty-sub">Once packages are scanned today, the close-batch button will appear here.</div>
+
+    <!-- USPS Run Report — collapsed behind a click, then behind an Admin
+         login (separate from whoever's actively signed into this device;
+         checking the report doesn't change who's logged in for scanning). -->
+    <div class="ps-card" style="margin-top:16px;">
+      <div style="display:flex;align-items:center;justify-content:space-between;cursor:pointer;" onclick="psToggleUspsReportSection()">
+        <div style="font-weight:700;font-size:13px;color:var(--text);">🔒 USPS Run Report (Admin)</div>
+        <div style="font-size:12px;color:var(--text3);" id="ps-usps-report-caret">▼</div>
+      </div>
+      <div id="ps-usps-report-section" style="display:none;margin-top:14px;">
+        <div id="ps-usps-report-gate" class="ps-mgmt-gate">
+          <div class="ps-mgmt-gate-icon">🔒</div>
+          <div class="ps-mgmt-gate-title">Admin Access Required</div>
+          <div class="ps-mgmt-gate-sub">Sign in with an admin account to see who dropped off packages, when they left, and when they were back.</div>
+          <div class="ps-mgmt-gate-row" style="flex-direction:column;gap:8px">
+            <input class="ps-mgmt-gate-input" id="ps-usps-report-username" type="text" placeholder="Username" autocomplete="username">
+            <input class="ps-mgmt-gate-input" id="ps-usps-report-password" type="password" placeholder="Password" autocomplete="current-password">
+            <button class="ps-btn-go" id="ps-usps-report-pin-btn" onclick="psUnlockUspsReport()">Unlock</button>
+          </div>
+          <div class="ps-pin-err" id="ps-usps-report-pin-err" style="margin-top:10px"></div>
+        </div>
+        <div id="ps-usps-report-content" style="display:none">
+          <div class="ps-section-header">
+            <div class="ps-section-title" style="font-size:15px;text-transform:none;letter-spacing:0">🚚 USPS Drop-off Runs — last 30 days</div>
+          </div>
+          <div id="ps-usps-report-list"></div>
+        </div>
+      </div>
     </div>
   </div>
 
@@ -1517,6 +1551,9 @@ function _psLaunchInner() {
   }
   var saved = localStorage.getItem('ps_batch_' + psTodayKey());
   if (saved) psBatchClosed = JSON.parse(saved);
+  var lastUspsName = localStorage.getItem('ps_usps_run_last_name');
+  var uspsNameInp  = document.getElementById('ps-usps-run-name');
+  if (lastUspsName && uspsNameInp) uspsNameInp.value = lastUspsName;
   psSwitchTab('scan');
   psLoadScans();
   psPlLoadToday(); // load print log on launch so all devices see today's data
@@ -1833,23 +1870,12 @@ function _psBeep(freq, dur) {
 }
 
 // ── Batch close ───────────────────────────────────────
+// No more separate Close Batch button to enable/disable here — closing
+// the batch now happens as part of "Leaving for USPS" (see
+// psUspsRunStart). This just keeps the confirmation banner in sync.
 function _psUpdateBatchBar() {
-  var bar = document.getElementById('ps-batch-close-bar');
-  var btn = document.getElementById('ps-btn-close-batch');
-  var empty = document.getElementById('ps-closebatch-empty');
-  if (psTodayScans.length > 0) {
-    bar.style.display = 'flex';
-    if (empty) empty.style.display = 'none';
-    if (psBatchClosed.ALL) {
-      btn.disabled = true; btn.textContent = '✓ Batch Closed';
-    } else {
-      btn.disabled = false; btn.textContent = '📦 Close Batch';
-    }
-  } else {
-    bar.style.display = 'none';
-    if (empty) empty.style.display = 'block';
-  }
   var cb = document.getElementById('ps-closed-banners');
+  if (!cb) return;
   cb.innerHTML = '';
   if (psBatchClosed.ALL) {
     cb.innerHTML = '<div class="ps-closed-banner">✅ Batch closed at ' + psFmtTime(psBatchClosed.ALL) + ' — all packages handed off to carrier</div>';
@@ -1890,6 +1916,165 @@ window.psCloseBatch = async function() {
     } catch(e) { _psToast('Batch close failed: ' + e.message, 'error'); console.error('[PS] batch-close error:', e); }
   }
 };
+
+// ── USPS drop-off runs ────────────────────────────────────────────────
+// Tracks who's currently out taking packages to the post office (name +
+// left-at time), and lets that same run be closed out with a "Back"
+// button. The full history (paired left/back/duration) is only visible
+// to an Admin over in XFitting Admin — this card only ever shows who's
+// OUT right now, not a log.
+var _psUspsRunOpen = [];
+
+window.psUspsRunLoadOpen = async function() {
+  try {
+    var res  = await fetch(PS_WORKER + '/ship/usps-run/open', { headers: { 'X-Cred-Token': psCredToken } });
+    var data = await res.json();
+    if (data.ok) { _psUspsRunOpen = data.open || []; _psRenderUspsRunOpenList(); }
+  } catch(e) { console.error('[PS] usps-run/open error:', e); }
+};
+
+function _psRenderUspsRunOpenList() {
+  var wrap = document.getElementById('ps-usps-run-open-list');
+  if (!wrap) return;
+  if (!_psUspsRunOpen.length) { wrap.innerHTML = ''; return; }
+  wrap.innerHTML = _psUspsRunOpen.map(function(r) {
+    var mins = Math.max(0, Math.round((Date.now() - new Date(r.leftAt).getTime()) / 60000));
+    var elapsed = mins < 60 ? (mins + 'm') : (Math.floor(mins/60) + 'h ' + (mins%60) + 'm');
+    return '<div class="ps-card"><div class="ps-card-row">'
+      +   '<div class="ps-card-dot green"></div>'
+      +   '<div style="flex:1;min-width:0;"><strong>' + r.name + '</strong> left at ' + psFmtTime(r.leftAt) + ' — out ' + elapsed + '</div>'
+      +   '<button class="ps-btn-sm" style="white-space:nowrap;border-color:var(--green);color:var(--green);background:var(--green-bg);" onclick="psUspsRunEnd(' + r.id + ')">✅ Back from USPS</button>'
+      + '</div></div>';
+  }).join('');
+}
+
+window.psUspsRunStart = async function() {
+  var inp  = document.getElementById('ps-usps-run-name');
+  var name = (inp.value || '').trim();
+  if (!name) { _psToast('Enter a name first', 'error'); inp.focus(); return; }
+  var btn = document.getElementById('ps-usps-run-start-btn');
+  btn.disabled = true;
+  try {
+    var res  = await fetch(PS_WORKER + '/ship/usps-run/start', {
+      method: 'POST', headers: { 'Content-Type': 'application/json', 'X-Cred-Token': psCredToken },
+      body: JSON.stringify({ name: name })
+    });
+    var data = await res.json();
+    if (!data.ok) { _psToast(data.error || 'Failed to start run', 'error'); return; }
+    localStorage.setItem('ps_usps_run_last_name', name); // convenience for next time
+    inp.value = '';
+    _psToast(name + ' logged as leaving for USPS');
+    psUspsRunLoadOpen();
+    // Leaving for USPS also closes today's batch — one click covers both,
+    // so there's no separate Close Batch button anymore. psCloseBatch()
+    // already no-ops safely (just re-syncs Veeqo) if it's already closed,
+    // so this stays harmless on a second/third run of the same day.
+    await psCloseBatch();
+  } catch(e) { _psToast('Failed to start run: ' + e.message, 'error'); } finally { btn.disabled = false; }
+};
+
+window.psUspsRunEnd = async function(id) {
+  try {
+    var res  = await fetch(PS_WORKER + '/ship/usps-run/end', {
+      method: 'POST', headers: { 'Content-Type': 'application/json', 'X-Cred-Token': psCredToken },
+      body: JSON.stringify({ id: id })
+    });
+    var data = await res.json();
+    if (!data.ok) { _psToast(data.error || 'Failed to close out run', 'error'); return; }
+    _psToast('Welcome back!');
+    psUspsRunLoadOpen();
+  } catch(e) { _psToast('Failed to close out run: ' + e.message, 'error'); }
+};
+
+// ── USPS Run Report — admin-only, click-to-reveal ────────────────────────
+// Deliberately separate from psUnlockTab(): that function hard-requires the
+// 'mgmt' role and, on success, upgrades the whole app's active session to
+// the credential just entered (so the packing station switches to whoever
+// logged in). This report is a quick admin peek, not a role switch — it
+// checks for the 'admin' role specifically and keeps whatever session was
+// already active for scanning untouched. The freshly-obtained admin token
+// is only used for this one report fetch.
+window.psToggleUspsReportSection = function() {
+  var sec    = document.getElementById('ps-usps-report-section');
+  var caret  = document.getElementById('ps-usps-report-caret');
+  if (!sec) return;
+  var showing = sec.style.display !== 'none';
+  sec.style.display = showing ? 'none' : 'block';
+  if (caret) caret.textContent = showing ? '▼' : '▲';
+};
+
+window.psUnlockUspsReport = async function() {
+  var userEl = document.getElementById('ps-usps-report-username');
+  var passEl = document.getElementById('ps-usps-report-password');
+  var errEl  = document.getElementById('ps-usps-report-pin-err');
+  var btnEl  = document.getElementById('ps-usps-report-pin-btn');
+  var username = userEl ? userEl.value.trim() : '';
+  var password = passEl ? passEl.value : '';
+  if (!username || !password) { if (errEl) errEl.textContent = 'Enter an admin username and password.'; return; }
+
+  if (btnEl) { btnEl.disabled = true; btnEl.textContent = 'Checking…'; }
+  if (errEl) errEl.textContent = '';
+  var adminToken = null;
+  try {
+    var res  = await fetch(PS_WORKER + '/auth/login', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ username: username, password: password })
+    });
+    var data = await res.json();
+    if (!res.ok) { if (errEl) errEl.textContent = data.error || 'Login failed'; return; }
+    if (!data.roles || !data.roles.includes('admin')) {
+      if (errEl) errEl.textContent = 'This account does not have admin access.';
+      return;
+    }
+    adminToken = data.token;
+  } catch(e) {
+    if (errEl) errEl.textContent = 'Connection error — try again.';
+    return;
+  } finally {
+    if (btnEl) { btnEl.disabled = false; btnEl.textContent = 'Unlock'; }
+  }
+
+  // Correct admin login — fetch the report with the freshly-obtained token
+  try {
+    var rres  = await fetch(PS_WORKER + '/ship/usps-runs', { headers: { 'X-Cred-Token': adminToken } });
+    var rdata = await rres.json();
+    if (!rres.ok || !rdata.ok) { if (errEl) errEl.textContent = rdata.error || 'Could not load report'; return; }
+    _psRenderUspsReportList(rdata.runs || []);
+  } catch(e) {
+    if (errEl) errEl.textContent = 'Connection error loading report — try again.';
+    return;
+  }
+
+  var gate    = document.getElementById('ps-usps-report-gate');
+  var content = document.getElementById('ps-usps-report-content');
+  if (gate)    gate.style.display    = 'none';
+  if (content) content.style.display = 'block';
+  if (userEl)  userEl.value          = '';
+  if (passEl)  passEl.value          = '';
+  if (errEl)   errEl.textContent     = '';
+};
+
+function _psRenderUspsReportList(runs) {
+  var wrap = document.getElementById('ps-usps-report-list');
+  if (!wrap) return;
+  if (!runs.length) {
+    wrap.innerHTML = '<div class="ps-empty-state"><div class="ps-empty-icon">🚚</div><div class="ps-empty-title">No runs yet</div><div class="ps-empty-sub">No USPS drop-off runs in the last 30 days.</div></div>';
+    return;
+  }
+  wrap.innerHTML = runs.map(function(r) {
+    var dur = (r.durationMin === null || r.durationMin === undefined)
+      ? '<span style="color:var(--orange);font-weight:600;">Still out</span>'
+      : (r.durationMin + ' min');
+    return '<div class="ps-card"><div class="ps-card-row">'
+      +   '<div class="ps-card-dot ' + (r.durationMin === null || r.durationMin === undefined ? 'orange' : 'green') + '"></div>'
+      +   '<div style="flex:1;min-width:0;">'
+      +     '<strong>' + r.name + '</strong> — left ' + psFmtDateTime(r.leftAt)
+      +     (r.returnedAt ? ' · back ' + psFmtDateTime(r.returnedAt) : '')
+      +   '</div>'
+      +   '<div style="white-space:nowrap;font-size:12px;color:var(--text3);">' + dur + '</div>'
+      + '</div></div>';
+  }).join('');
+}
 
 async function psAutoVeeqoSync() {
   try {
@@ -2977,6 +3162,7 @@ function _psWireEvents() {
   });
 
   document.getElementById('ps-lookup-input').addEventListener('keydown', function(e){ if (e.key === 'Enter') psDoLookup(); });
+  document.getElementById('ps-usps-run-name').addEventListener('keydown', function(e){ if (e.key === 'Enter') psUspsRunStart(); });
   document.getElementById('ps-cred-username').addEventListener('keydown', function(e){ if (e.key === 'Enter') document.getElementById('ps-cred-password').focus(); });
   document.getElementById('ps-cred-password').addEventListener('keydown', function(e){ if (e.key === 'Enter') psCredLogin(); });
 
@@ -2987,6 +3173,13 @@ function _psWireEvents() {
     if (u) u.addEventListener('keydown', function(e){ if (e.key === 'Enter') { var pw = document.getElementById('ps-' + tab + '-password'); if (pw) pw.focus(); } });
     if (p) p.addEventListener('keydown', function(e){ if (e.key === 'Enter') psUnlockTab(tab); });
   });
+
+  // USPS Run Report gate — separate from the loop above since it calls
+  // psUnlockUspsReport() (admin-role check), not psUnlockTab().
+  var uspsRepU = document.getElementById('ps-usps-report-username');
+  var uspsRepP = document.getElementById('ps-usps-report-password');
+  if (uspsRepU) uspsRepU.addEventListener('keydown', function(e){ if (e.key === 'Enter') { if (uspsRepP) uspsRepP.focus(); } });
+  if (uspsRepP) uspsRepP.addEventListener('keydown', function(e){ if (e.key === 'Enter') psUnlockUspsReport(); });
 
   // Status drop zone drag-and-drop
   var sdz = document.getElementById('ps-status-drop-zone');
@@ -3085,7 +3278,7 @@ window.psSwitchTab = function(name) {
     psScanSummaryDate = null;
     psRenderScanList(); psLoadScans(); _psLoadScanPrintStatus();
   }
-  if (name === 'closebatch')  { _psUpdateBatchBar(); }
+  if (name === 'closebatch')  { _psUpdateBatchBar(); psUspsRunLoadOpen(); }
   if (name === 'progress')    { psLoadScans(); }
   if (name === 'lookup')      { psRenderLog(); }
   if (name === 'orderlookup') { document.getElementById('ps-ol-input').focus(); }
@@ -3095,6 +3288,7 @@ window.psSwitchTab = function(name) {
 
   if (window._psRefreshInterval) { clearInterval(window._psRefreshInterval); window._psRefreshInterval = null; }
   if (window._psPlRefreshInterval) { clearInterval(window._psPlRefreshInterval); window._psPlRefreshInterval = null; }
+  if (window._psUspsRunInterval) { clearInterval(window._psUspsRunInterval); window._psUspsRunInterval = null; }
   if (name === 'scan' || name === 'progress') {
     window._psRefreshInterval = setInterval(function() {
       psLoadScans();
@@ -3103,6 +3297,11 @@ window.psSwitchTab = function(name) {
   }
   if (name === 'printlog') {
     window._psPlRefreshInterval = setInterval(psPlLoadToday, 30000);
+  }
+  if (name === 'closebatch') {
+    // Re-fetches (catches a run started/ended from another device) and
+    // keeps the "out Xm" elapsed time ticking while this tab is open.
+    window._psUspsRunInterval = setInterval(psUspsRunLoadOpen, 20000);
   }
 };
 
