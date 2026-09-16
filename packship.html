@@ -1397,6 +1397,20 @@ body {
     <div class="ps-info-box">
       🖨️ <strong>Print Station Log.</strong> The DS9308 fixed-mount scanner at the Zebra printer logs each label automatically as it prints. Keep this tab open on the print station computer.
     </div>
+    <!-- Printing-as name — shared across every open Pack & Ship tab/device
+         (not just this browser), so whoever sets it here shows up everywhere
+         else within the existing ~30s print-log refresh, no page reload
+         needed. Stored with each print as it happens, so the log below shows
+         who was printing at the time of each label, not just right now. -->
+    <div class="ps-card" style="margin-bottom:12px;">
+      <div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap;">
+        <div style="font-size:13px;color:var(--text2);white-space:nowrap;">🖨️ Printing as:</div>
+        <div id="ps-pl-operator-display" style="font-weight:700;font-size:14px;color:var(--text);">Not set</div>
+        <div style="flex:1;min-width:12px;"></div>
+        <input type="text" class="ps-field-input" id="ps-pl-operator-input" placeholder="Your name" style="max-width:160px;margin:0;" onkeydown="if(event.key==='Enter')psPlSetOperator()">
+        <button class="ps-btn-sm" onclick="psPlSetOperator()">Set</button>
+      </div>
+    </div>
     <div class="ps-scan-box" onclick="psFocusPrintLog()">
       <div class="ps-scan-box-header">
         <div class="ps-scan-icon">🖨️</div>
@@ -2142,7 +2156,7 @@ function psPlProcessScan(raw) {
   if (psPlLastScan[clean] && (now - psPlLastScan[clean]) < psPlDeupMs) return;
   psPlLastScan[clean] = now;
   var ts   = new Date().toISOString();
-  var entry = { timestamp: ts, tracking: clean, carrier: carrier };
+  var entry = { timestamp: ts, tracking: clean, carrier: carrier, operatorName: _psPlOperatorName || '' };
   psPlScans.unshift(entry);
   psPlUpdateLastScan(entry);
   psPlRenderList();
@@ -2201,10 +2215,42 @@ function psPlRenderList() {
       + '<div class="ps-card-dot green"></div>'
       + '<div class="ps-card-tracking">' + s.tracking + '</div>'
       + '<div class="ps-card-meta"><span class="ps-badge ' + cls + '">' + s.carrier + '</span>'
+      + (s.operatorName ? '<span class="ps-badge ps-badge-gray">' + s.operatorName + '</span>' : '')
       + '<span style="font-size:11px;color:var(--text3)">' + psFmtTime(s.timestamp) + '</span>'
       + '</div></div></div>';
   }).join('');
 }
+
+// ── Print station "printing as" name ─────────────────────────────────────
+// A single shared value on the backend (not per-browser), read/written by
+// every Pack & Ship instance. psPlLoadToday() already polls /ship/print-log
+// every ~30s while this tab is open (and once at app launch) — the operator
+// name rides along in that same response, so a name change on one computer
+// shows up on every other open tab within that same refresh, no reload.
+var _psPlOperatorName = '';
+
+function _psPlShowOperator(name) {
+  _psPlOperatorName = name || '';
+  var disp = document.getElementById('ps-pl-operator-display');
+  if (disp) disp.textContent = _psPlOperatorName || 'Not set';
+}
+
+window.psPlSetOperator = async function() {
+  var inp  = document.getElementById('ps-pl-operator-input');
+  var name = inp ? inp.value.trim() : '';
+  if (!name) { _psToast('Enter a name first', 'error'); if (inp) inp.focus(); return; }
+  try {
+    var res  = await fetch(PS_WORKER + '/ship/print-station', {
+      method: 'POST', headers: { 'Content-Type': 'application/json', 'X-Cred-Token': psCredToken },
+      body: JSON.stringify({ name: name })
+    });
+    var data = await res.json();
+    if (!data.ok) { _psToast(data.error || 'Failed to set name', 'error'); return; }
+    _psPlShowOperator(data.operatorName);
+    if (inp) inp.value = '';
+    _psToast('Now printing as ' + _psPlOperatorName);
+  } catch(e) { _psToast('Failed to set name: ' + e.message, 'error'); }
+};
 
 // Load today's print log from sheet on tab open
 window.psPlLoadToday = async function() {
@@ -2219,6 +2265,7 @@ window.psPlLoadToday = async function() {
       var badge = document.getElementById('ps-printlog-badge');
       if (badge && psPlScans.length) { badge.textContent = psPlScans.length; badge.style.display = 'inline'; }
     }
+    if (data.ok) _psPlShowOperator(data.operatorName);
   } catch(e) { console.log('[PL] load error:', e.message); }
   psPlStartRefocus();
 };
