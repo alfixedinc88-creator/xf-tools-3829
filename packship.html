@@ -2887,8 +2887,14 @@ window.psFmtDateTime = function(iso) {
 };
 
 window.psTodayKey = function() {
+  // Uses the warehouse's local calendar day (America/New_York), matching
+  // psFmtTime/psFmtDateTime above and the backend's shipTodayKey(). This
+  // used to use UTC, which rolls over to the next date in the early
+  // evening Eastern time — hours before the actual work day is done —
+  // making "Today's Scans" and "Printed Today" both come up empty/wrong
+  // for the rest of that evening.
   var d = new Date();
-  return d.getUTCFullYear() + '-' + String(d.getUTCMonth()+1).padStart(2,'0') + '-' + String(d.getUTCDate()).padStart(2,'0');
+  return d.toLocaleDateString('en-CA', { timeZone: 'America/New_York' });
 };
 
 var _psToastTimer;
