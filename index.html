@@ -1300,60 +1300,12 @@ input[type=checkbox]{width:15px;height:15px;cursor:pointer;accent-color:var(--bl
 <div id="pin-screen" style="display:flex;position:fixed;inset:0;z-index:9999;background:#f4f5f7;align-items:center;justify-content:center;">
   <div class="pin-card">
     <div class="pin-logo">XFITTING</div>
-    <div class="pin-title">Warehouse Lookup</div>
-    <div class="pin-sub">Enter your PIN to continue</div>
-    <div class="pin-dots" id="pin-dots">
-      <div class="pin-dot" id="pd0"></div>
-      <div class="pin-dot" id="pd1"></div>
-      <div class="pin-dot" id="pd2"></div>
-      <div class="pin-dot" id="pd3"></div>
-    </div>
-    <div class="pin-pad">
-      <button class="pin-btn" onclick="pinKey('1')">1</button>
-      <button class="pin-btn" onclick="pinKey('2')">2</button>
-      <button class="pin-btn" onclick="pinKey('3')">3</button>
-      <button class="pin-btn" onclick="pinKey('4')">4</button>
-      <button class="pin-btn" onclick="pinKey('5')">5</button>
-      <button class="pin-btn" onclick="pinKey('6')">6</button>
-      <button class="pin-btn" onclick="pinKey('7')">7</button>
-      <button class="pin-btn" onclick="pinKey('8')">8</button>
-      <button class="pin-btn" onclick="pinKey('9')">9</button>
-      <div></div>
-      <button class="pin-btn" onclick="pinKey('0')">0</button>
-      <button class="pin-btn del" onclick="pinDel()">&#9003;</button>
-    </div>
+    <div class="pin-title">Sign In</div>
+    <div class="pin-sub">Enter your XFitting credentials</div>
+    <input id="launcher-cred-username" type="text" placeholder="Username" autocomplete="username" style="width:100%;padding:11px 14px;border:1.5px solid #dfe2e7;border-radius:9px;font-family:inherit;font-size:14px;margin:16px 0 10px;box-sizing:border-box;">
+    <input id="launcher-cred-password" type="password" placeholder="Password" autocomplete="current-password" style="width:100%;padding:11px 14px;border:1.5px solid #dfe2e7;border-radius:9px;font-family:inherit;font-size:14px;margin-bottom:14px;box-sizing:border-box;">
+    <button id="launcher-cred-login-btn" onclick="launcherCredLogin()" style="width:100%;padding:12px;border:none;border-radius:9px;background:#1a56db;color:#fff;font-family:inherit;font-weight:600;font-size:14px;cursor:pointer;">Sign In</button>
     <div class="pin-error" id="pin-error"></div>
-  </div>
-</div>
-
-<div id="mgmt-pin-screen" style="display:none;position:fixed;inset:0;background:var(--bg);z-index:8000;align-items:center;justify-content:center;flex-direction:column">
-  <div style="text-align:center;animation:fadeIn .3s ease">
-    <div style="font-family:var(--mono);font-size:10px;letter-spacing:4px;color:var(--text3);text-transform:uppercase;margin-bottom:28px">
-      <span style="color:var(--accent)">XF</span>ITTING — Management Access
-    </div>
-    <div style="font-size:20px;font-weight:600;color:var(--text);margin-bottom:6px">Management PIN Required</div>
-    <div style="font-size:13px;color:var(--text2);margin-bottom:28px">This area is restricted to management</div>
-    <div style="display:flex;gap:12px;justify-content:center;margin-bottom:20px" id="mgmt-pd-row">
-      <div class="mgmt-dot" id="mgmt-pd0"></div>
-      <div class="mgmt-dot" id="mgmt-pd1"></div>
-      <div class="mgmt-dot" id="mgmt-pd2"></div>
-      <div class="mgmt-dot" id="mgmt-pd3"></div>
-    </div>
-    <div style="display:grid;grid-template-columns:repeat(3,60px);gap:10px;justify-content:center">
-      <button class="mgmt-key" onclick="mgmtPinKey('1')">1</button>
-      <button class="mgmt-key" onclick="mgmtPinKey('2')">2</button>
-      <button class="mgmt-key" onclick="mgmtPinKey('3')">3</button>
-      <button class="mgmt-key" onclick="mgmtPinKey('4')">4</button>
-      <button class="mgmt-key" onclick="mgmtPinKey('5')">5</button>
-      <button class="mgmt-key" onclick="mgmtPinKey('6')">6</button>
-      <button class="mgmt-key" onclick="mgmtPinKey('7')">7</button>
-      <button class="mgmt-key" onclick="mgmtPinKey('8')">8</button>
-      <button class="mgmt-key" onclick="mgmtPinKey('9')">9</button>
-      <button class="mgmt-key" onclick="mgmtPinDel()" style="font-size:12px;color:#8b90a8">DEL</button>
-      <button class="mgmt-key" onclick="mgmtPinKey('0')">0</button>
-      <button class="mgmt-key" onclick="mgmtPinCancel()" style="font-size:11px;color:#8b90a8">← Back</button>
-    </div>
-    <div id="mgmt-pin-error" style="color:var(--red);font-size:12px;margin-top:16px;font-family:var(--mono);opacity:0;transition:opacity .2s">Incorrect PIN</div>
   </div>
 </div>
 
@@ -1420,13 +1372,13 @@ input[type=checkbox]{width:15px;height:15px;cursor:pointer;accent-color:var(--bl
 
     <div class="launcher-section-label">⚙ Management</div>
     <div class="launcher-mgmt-row">
-      <div class="launcher-card" onclick="launchMgmtApp('reorder')" style="border-color:var(--accent-bg)">
+      <div class="launcher-card" onclick="window.location.href='reorder.html'" style="border-color:var(--accent-bg)">
         <div class="launcher-card-icon">📦</div>
         <div class="launcher-card-title">Reorder Planner</div>
         <div class="launcher-card-desc">Upload platform sales reports to see which parts need reordering. Build and export purchase orders by vendor.</div>
         <div style="display:inline-block;margin-top:10px;font-size:10px;font-family:var(--mono);padding:3px 8px;border-radius:4px;background:var(--accent-bg);color:var(--accent);font-weight:600;letter-spacing:1px">Purchase Orders · Management</div>
       </div>
-      <div class="launcher-card" onclick="launchMgmtApp('dashboard')" style="border-color:var(--orange-bg)">
+      <div class="launcher-card" onclick="window.location.href='sales.html'" style="border-color:var(--orange-bg)">
         <div class="launcher-card-icon">📊</div>
         <div class="launcher-card-title">Sales Dashboard</div>
         <div class="launcher-card-desc">Sales KPIs, leaderboards and AI-powered insights across Amazon, eBay, and XFitting.</div>
@@ -1438,19 +1390,19 @@ input[type=checkbox]{width:15px;height:15px;cursor:pointer;accent-color:var(--bl
         <div class="launcher-card-desc">Upload a pallet manifest to receive a purchase order. Matches parts to Master List, sets pallet locations, and updates cases, pricing, and vendor automatically.</div>
         <div style="display:inline-block;margin-top:10px;font-size:10px;font-family:var(--mono);padding:3px 8px;border-radius:4px;background:var(--green-bg);color:var(--green);font-weight:600;letter-spacing:1px">Receiving · Management</div>
       </div>
-      <div class="launcher-card" onclick="launchMgmtApp('msginbox')" style="border-color:#ede9fe" id="msg-inbox-launcher-card">
+      <div class="launcher-card" onclick="salesLaunchApp('msginbox')" style="border-color:#ede9fe" id="msg-inbox-launcher-card">
         <div class="launcher-card-icon">📥</div>
         <div class="launcher-card-title">Message Inbox <span id="msg-inbox-badge" style="display:none;background:var(--red);color:#fff;font-size:10px;font-family:var(--mono);font-weight:700;padding:2px 6px;border-radius:10px;margin-left:6px;vertical-align:middle"></span></div>
         <div class="launcher-card-desc">View and reply to messages from warehouse staff. Manage requests for resources, materials and alerts.</div>
         <div style="display:inline-block;margin-top:10px;font-size:10px;font-family:var(--mono);padding:3px 8px;border-radius:4px;background:#ede9fe;color:var(--purple);font-weight:600;letter-spacing:1px">Inbox · Management</div>
       </div>
-      <div class="launcher-card" onclick="launchMgmtApp('ebaymsgs')" style="border-color:#e8f5e9" id="ebaymsgs-launcher-card">
+      <div class="launcher-card" onclick="salesLaunchApp('ebaymsgs')" style="border-color:#e8f5e9" id="ebaymsgs-launcher-card">
         <div class="launcher-card-icon">🤖</div>
         <div class="launcher-card-title">AI Customer Support <span id="ebaymsgs-badge" style="display:none;background:var(--accent);color:#fff;font-size:10px;font-family:var(--mono);font-weight:700;padding:2px 6px;border-radius:10px;margin-left:6px;vertical-align:middle"></span></div>
         <div class="launcher-card-desc">AI replies for eBay, Amazon, Walmart, Shopify &amp; Email. Review queue, CS tool, analytics.</div>
         <div style="display:inline-block;margin-top:10px;font-size:10px;font-family:var(--mono);padding:3px 8px;border-radius:4px;background:#e8f5e9;color:#2e7d32;font-weight:600;letter-spacing:1px">All Platforms · AI · Management</div>
       </div>
-      <div class="launcher-card" onclick="launchMgmtApp('ldash')" style="border-color:#fdf0ff">
+      <div class="launcher-card" onclick="salesLaunchApp('ldash')" style="border-color:#fdf0ff">
         <div class="launcher-card-icon">🏢</div>
         <div class="launcher-card-title">Leadership Dashboard</div>
         <div class="launcher-card-desc">Live operations overview — action queue, shipping status, reorder urgency, sales snapshot and inventory health.</div>
@@ -1619,7 +1571,7 @@ input[type=checkbox]{width:15px;height:15px;cursor:pointer;accent-color:var(--bl
   async function ldFetchInventoryPending() {
     try {
       var r = await fetch(LD_WORKER + '/inventory/pending', {
-        headers: {'X-Session-Token': XF_SESSION || ''}
+        headers: {'X-Cred-Token': XF_CRED_TOKEN || ''}
       });
       var d = await r.json();
       ldData.pendingInv = d.items || [];
@@ -1629,7 +1581,7 @@ input[type=checkbox]{width:15px;height:15px;cursor:pointer;accent-color:var(--bl
   async function ldFetchScans() {
     try {
       var r = await fetch(LD_WORKER + '/ship/scans?date=' + ldTodayKey(), {
-        headers: {'X-Session-Token': XF_SESSION || ''}
+        headers: {'X-Cred-Token': XF_CRED_TOKEN || ''}
       });
       var d = await r.json();
       ldData.scans = d.scans || [];
@@ -1639,7 +1591,7 @@ input[type=checkbox]{width:15px;height:15px;cursor:pointer;accent-color:var(--bl
   async function ldFetchManifest() {
     try {
       var r = await fetch(LD_WORKER + '/ship/manifest?date=' + ldTodayKey(), {
-        headers: {'X-Session-Token': XF_SESSION || ''}
+        headers: {'X-Cred-Token': XF_CRED_TOKEN || ''}
       });
       var d = await r.json();
       ldData.manifest = d.manifest || [];
@@ -1649,7 +1601,7 @@ input[type=checkbox]{width:15px;height:15px;cursor:pointer;accent-color:var(--bl
   async function ldFetchAlerts() {
     try {
       var r = await fetch(LD_WORKER + '/veeqo/alerts', {
-        headers: {'X-Session-Token': XF_SESSION || ''}
+        headers: {'X-Cred-Token': XF_CRED_TOKEN || ''}
       });
       var d = await r.json();
       ldData.alerts = d.alerts || [];
@@ -1659,7 +1611,7 @@ input[type=checkbox]{width:15px;height:15px;cursor:pointer;accent-color:var(--bl
   async function ldFetchMessages() {
     try {
       var r = await fetch(LD_WORKER + '/msg/list?all=1&limit=200', {
-        headers: {'X-Session-Token': XF_SESSION || ''}
+        headers: {'X-Cred-Token': XF_CRED_TOKEN || ''}
       });
       var d = await r.json();
       ldData.messages = (d.messages || []).filter(function(m) { return m.status === 'open'; });
@@ -1725,7 +1677,7 @@ input[type=checkbox]{width:15px;height:15px;cursor:pointer;accent-color:var(--bl
       {
         num: critStock, label: 'Critical Stock', sub: watchStock + ' more on watch',
         color: critStock > 0 ? 'red' : (watchStock > 0 ? 'orange' : 'green'),
-        onclick: ldData.roRows.length > 0 ? "backToLauncher();launchMgmtApp('reorder');" : null
+        onclick: ldData.roRows.length > 0 ? "window.location.href='reorder.html';" : null
       },
       {
         num: gap, label: 'Gap Report', sub: scanned + ' scanned · ' + manifest + ' in manifest',
@@ -1735,7 +1687,7 @@ input[type=checkbox]{width:15px;height:15px;cursor:pointer;accent-color:var(--bl
       {
         num: messages, label: 'Open Messages', sub: 'From warehouse floor',
         color: messages > 0 ? 'orange' : 'green',
-        onclick: "backToLauncher();launchMgmtApp('msginbox');"
+        onclick: "backToLauncher();salesLaunchApp('msginbox');"
       },
     ];
 
@@ -1969,10 +1921,11 @@ input[type=checkbox]{width:15px;height:15px;cursor:pointer;accent-color:var(--bl
 // ── Preserved shared functions (moved from former wh-app block) ──
 
 // ═══════════════════════════════════════════════════════
-// PIN LOCK — own block so credentials errors never break it
+// LOGIN — own block so credential errors never break it
 // ═══════════════════════════════════════════════════════
-var XF_SESSION = sessionStorage.getItem('xf_session') || null;
-var pinEntry   = '';
+var XF_CRED_TOKEN = localStorage.getItem('xf_cred_token') || null;
+var XF_CRED_USER  = null;
+try { XF_CRED_USER = JSON.parse(localStorage.getItem('xf_cred_user') || 'null'); } catch(e) {}
 var WORKER_URL = 'https://xfitting-lookup.alfixedinc88.workers.dev';
 var _whFetchLock = false; // prevents concurrent warehouse sheet reads (rate limit guard)
 
@@ -1980,14 +1933,14 @@ var _whFetchLock = false; // prevents concurrent warehouse sheet reads (rate lim
 async function wFetch(url, opts) {
   opts = opts || {};
   opts.headers = Object.assign({}, opts.headers || {}, {
-    'X-Session-Token': XF_SESSION || ''
+    'X-Cred-Token': XF_CRED_TOKEN || ''
   });
   var r = await fetch(url, opts);
-  if (r.status === 401) {
-    XF_SESSION = null;
-    XF_ROLE = null;
-    sessionStorage.removeItem('xf_session');
-    sessionStorage.removeItem('xf_role');
+  if (r.status === 401 || r.status === 403) {
+    XF_CRED_TOKEN = null;
+    XF_CRED_USER = null;
+    localStorage.removeItem('xf_cred_token');
+    localStorage.removeItem('xf_cred_user');
     var ps = document.getElementById('pin-screen');
     if (ps) { ps.style.display = 'flex'; ps.style.opacity = '1'; ps.style.visibility = 'visible'; }
     var la = document.getElementById('launcher');
@@ -1997,59 +1950,70 @@ async function wFetch(url, opts) {
   return r;
 }
 
-var XF_ROLE = sessionStorage.getItem('xf_role') || null;
-if (XF_SESSION) {
-  document.addEventListener('DOMContentLoaded', function() {
-    var ps = document.getElementById('pin-screen');
-    if (ps) { ps.style.display = 'none'; ps.style.visibility = 'hidden'; }
-    var la = document.getElementById('launcher');
-    if (la) la.style.display = 'flex';
-    if (typeof silentLoadSaved === 'function' && XF_ROLE === 'mgmt') silentLoadSaved();
-  });
-}
-
-document.addEventListener('keydown', function(e) {
-  var ps = document.getElementById('pin-screen');
-  if (!ps || ps.style.display === 'none') return;
-  if (e.key >= '0' && e.key <= '9') pinKey(e.key);
-  if (e.key === 'Backspace') pinDel();
-});
-
-function checkPin() {
-  var pin = pinEntry;
-  function tryAuth(type, fallback) {
-    fetch(WORKER_URL + '/auth', {
-      method: 'POST', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ pin: pin, pin_type: type })
-    }).then(function(r){ return r.json(); }).then(function(d){
-      if (d.token) {
-        XF_SESSION = d.token;
-        XF_ROLE = type;
-        sessionStorage.setItem('xf_session', d.token);
-        sessionStorage.setItem('xf_role', type);
-        var ps = document.getElementById('pin-screen');
-        if (ps) { ps.style.transition = 'opacity .3s'; ps.style.opacity = '0'; }
-        setTimeout(function() {
-          if (ps) { ps.style.display = 'none'; ps.style.visibility = 'hidden'; }
-          var la = document.getElementById('launcher');
-          if (la) la.style.display = 'flex';
-          if (typeof silentLoadSaved === 'function' && type === 'mgmt') silentLoadSaved();
-        }, 300);
-      } else if (fallback) {
-        tryAuth(fallback, null);
-      } else { pinFail(); }
-    }).catch(function(){ pinFail(); });
+(async function() {
+  if (!XF_CRED_TOKEN || !XF_CRED_USER) {
+    localStorage.removeItem('xf_cred_token'); localStorage.removeItem('xf_cred_user');
+    XF_CRED_TOKEN = null;
+    return; // login gate already visible by default
   }
-  tryAuth('ops', 'mobile');
-}
+  // Verify the cached token still actually works before trusting it
+  try {
+    var res = await fetch(WORKER_URL + '?sheet=Products', { headers: { 'X-Cred-Token': XF_CRED_TOKEN } });
+    if (res.status === 401) {
+      localStorage.removeItem('xf_cred_token'); localStorage.removeItem('xf_cred_user');
+      XF_CRED_TOKEN = null;
+      return;
+    }
+  } catch(e) { return; }
+  var ps = document.getElementById('pin-screen');
+  if (ps) { ps.style.display = 'none'; ps.style.visibility = 'hidden'; }
+  var la = document.getElementById('launcher');
+  if (la) la.style.display = 'flex';
+  applyRoleVisibility();
+  if (typeof silentLoadSaved === 'function' && XF_CRED_USER.roles.includes('mgmt')) silentLoadSaved();
+})();
 
-// pinFail was referenced but never defined in the original app — added a
-// safe fallback so a wrong PIN doesn't throw a ReferenceError.
-function pinFail() {
-  var pe = document.getElementById('pin-error');
-  if (pe) pe.textContent = 'Incorrect PIN';
-  pinEntry = '';
-  updatePinDots();
+window.launcherCredLogin = async function() {
+  var username = document.getElementById('launcher-cred-username').value.trim();
+  var password = document.getElementById('launcher-cred-password').value;
+  var btn = document.getElementById('launcher-cred-login-btn');
+  var err = document.getElementById('pin-error');
+  err.textContent = '';
+  if (!username || !password) { err.textContent = 'Enter your username and password.'; return; }
+  btn.disabled = true; btn.textContent = 'Signing in…';
+  try {
+    var res = await fetch(WORKER_URL + '/auth/login', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ username: username, password: password })
+    });
+    var data = await res.json();
+    if (!res.ok) { err.textContent = data.error || 'Login failed'; return; }
+    XF_CRED_TOKEN = data.token;
+    XF_CRED_USER = { displayName: data.displayName, roles: data.roles, userId: data.userId };
+    localStorage.setItem('xf_cred_token', data.token);
+    localStorage.setItem('xf_cred_user', JSON.stringify(XF_CRED_USER));
+    var ps = document.getElementById('pin-screen');
+    if (ps) { ps.style.transition = 'opacity .3s'; ps.style.opacity = '0'; }
+    setTimeout(function() {
+      if (ps) { ps.style.display = 'none'; ps.style.visibility = 'hidden'; }
+      var la = document.getElementById('launcher');
+      if (la) la.style.display = 'flex';
+      applyRoleVisibility();
+      if (typeof silentLoadSaved === 'function' && data.roles.includes('mgmt')) silentLoadSaved();
+    }, 300);
+  } catch(e) {
+    err.textContent = 'Connection error — try again.';
+  } finally {
+    btn.disabled = false; btn.textContent = 'Sign In';
+  }
+};
+
+// Shows/hides mgmt-only launcher cards based on the real logged-in
+// user's roles, rather than a separate PIN gate at click-time.
+function applyRoleVisibility() {
+  var isMgmt = !!(XF_CRED_USER && XF_CRED_USER.roles && XF_CRED_USER.roles.includes('mgmt'));
+  var mgmtRow = document.querySelector('.launcher-mgmt-row');
+  if (mgmtRow) mgmtRow.style.display = isMgmt ? '' : 'none';
 }
 
 function backToLauncher() {
@@ -2099,100 +2063,12 @@ function launchApp(which) {
       }
     }, 500);
   } else if (which === 'messenger') {
-    // Messenger: no PIN required — initials only
+    // Messenger: uses the real, already-logged-in launcher identity
     document.getElementById('messenger-app').style.display = 'flex';
     msgOnLaunch();
   }
 }
 
-function launchMgmtApp(name) {
-  history.pushState({ xfApp: name }, '', '');
-  mgmtPinTarget = name;
-  mgmtPinBuf = "";
-  ['mgmt-pd0','mgmt-pd1','mgmt-pd2','mgmt-pd3'].forEach(function(id) {
-    document.getElementById(id).classList.remove('filled');
-  });
-  document.getElementById('mgmt-pin-error').style.opacity = '0';
-  document.getElementById('mgmt-pin-screen').style.display = 'flex';
-}
-
-function mgmtPinCancel() {
-  document.getElementById('mgmt-pin-screen').style.display = 'none';
-  mgmtPinBuf = "";
-  mgmtPinTarget = null;
-}
-
-function mgmtPinDel() {
-  if (!mgmtPinBuf.length) return;
-  document.getElementById('mgmt-pd' + (mgmtPinBuf.length - 1)).classList.remove('filled');
-  mgmtPinBuf = mgmtPinBuf.slice(0, -1);
-}
-
-function mgmtPinKey(d) {
-  if (mgmtPinBuf.length >= 4) return;
-  mgmtPinBuf += d;
-  document.getElementById('mgmt-pd' + (mgmtPinBuf.length - 1)).classList.add('filled');
-  if (mgmtPinBuf.length === 4) {
-    setTimeout(function() {
-      var pinType = mgmtPinTarget === 'repricer' ? 'price' : 'mgmt';
-      fetch(WORKER_URL + '/auth', {
-        method: 'POST', headers: {'Content-Type':'application/json'},
-        body: JSON.stringify({ pin: mgmtPinBuf, pin_type: pinType })
-      }).then(function(r){ return r.json(); }).then(function(d){
-        if (d.token) {
-          XF_SESSION = d.token;
-          sessionStorage.setItem('xf_session', d.token);
-          document.getElementById('mgmt-pin-screen').style.display = 'none';
-          // Standalone apps — redirect with session token
-          var standaloneApps = {
-            'repricer':  'repricer.html',
-            'receivepo': 'receivepo.html',
-            'reorder':   'reorder.html',
-            'dashboard': 'sales.html',
-          };
-          if (standaloneApps[mgmtPinTarget]) {
-            // Store session so standalone can pick it up
-            sessionStorage.setItem('xf_role', mgmtPinTarget === 'repricer' ? 'price' : 'mgmt');
-            // repricer.html checks its own rpr_token/rpr_level keys — sync them too
-            if (mgmtPinTarget === 'repricer') {
-              sessionStorage.setItem('rpr_token', d.token);
-              sessionStorage.setItem('rpr_level', 'mgmt');
-            }
-            window.location.href = standaloneApps[mgmtPinTarget];
-          } else if (typeof salesLaunchApp === 'function') {
-            salesLaunchApp(mgmtPinTarget);
-          }
-        } else {
-          document.getElementById('mgmt-pin-error').style.opacity = '1';
-          setTimeout(function() {
-            mgmtPinBuf = "";
-            ['mgmt-pd0','mgmt-pd1','mgmt-pd2','mgmt-pd3'].forEach(function(id){
-              document.getElementById(id).classList.remove('filled');
-            });
-            document.getElementById('mgmt-pin-error').style.opacity = '0';
-          }, 900);
-        }
-      }).catch(function(){
-        document.getElementById('mgmt-pin-error').style.opacity = '1';
-      });
-    }, 120);
-  }
-}
-
-function pinDel() {
-  if (!pinEntry.length) return;
-  pinEntry = pinEntry.slice(0, -1);
-  updatePinDots();
-  var pe = document.getElementById('pin-error');
-  if (pe) pe.textContent = '';
-}
-
-function pinKey(k) {
-  if (pinEntry.length >= 4) return;
-  pinEntry += k;
-  updatePinDots();
-  if (pinEntry.length === 4) setTimeout(checkPin, 120);
-}
 
 async function salesLaunchApp(name) {
   var launcherEl = document.getElementById('launcher');
@@ -2226,9 +2102,9 @@ async function salesLaunchApp(name) {
     if (typeof lpLaunch === 'function') lpLaunch();
     return;
   }
-  // reorder/dashboard now redirect to standalone reorder.html/sales.html
-  // via mgmtPinKey's standaloneApps map — this branch should be unreachable,
-  // but log a warning if somehow still hit.
+  // reorder/dashboard now redirect directly to standalone reorder.html/
+  // sales.html from their own launcher cards — this branch should be
+  // unreachable, but log a warning if somehow still hit.
   console.warn('[salesLaunchApp] unexpected target (should redirect to standalone):', name);
 }
 
@@ -2245,14 +2121,6 @@ function showToast(msg) {
   setTimeout(function() { t.style.opacity='0'; t.style.transform='translateX(-50%) translateY(20px)'; }, 4000);
 }
 
-function updatePinDots() {
-  for (var i = 0; i < 4; i++) {
-    var d = document.getElementById('pd' + i);
-    if (!d) continue;
-    d.classList.toggle('filled', i < pinEntry.length);
-    d.classList.remove('error');
-  }
-}
 </script>
 
 <!-- PIN SCREEN -->
@@ -2267,21 +2135,6 @@ function updatePinDots() {
     <button class="back-btn" onclick="backToLauncher()">&#8592; Apps</button>
     <span style="font-weight:700;font-size:15px;color:var(--text);">💬 Messenger</span>
     <span id="msg-sender-label" style="font-size:12px;font-family:var(--mono);color:var(--text3);"></span>
-  </div>
-  <!-- sign-in screen -->
-  <div id="msg-signin-screen" style="flex:1;display:flex;flex-direction:column;align-items:center;justify-content:center;padding:32px 24px;">
-    <div style="background:#fff;border:1px solid var(--border);border-radius:14px;padding:32px 28px;max-width:360px;width:100%;box-shadow:var(--shadow);">
-      <div style="font-size:36px;text-align:center;margin-bottom:10px;">💬</div>
-      <div style="font-weight:700;font-size:18px;text-align:center;margin-bottom:6px;color:var(--text);">Warehouse Messenger</div>
-      <div style="font-size:13px;color:var(--text3);text-align:center;margin-bottom:24px;">Enter your initials to send a message to management</div>
-      <label style="font-size:12px;font-weight:600;color:var(--text2);text-transform:uppercase;letter-spacing:.5px;display:block;margin-bottom:6px;">Your Initials</label>
-      <input id="msg-initials-input" maxlength="4" autocomplete="off" autocapitalize="characters"
-        style="width:100%;box-sizing:border-box;border:1.5px solid var(--border);border-radius:8px;padding:11px 14px;font-size:18px;font-family:var(--mono);font-weight:700;text-transform:uppercase;text-align:center;letter-spacing:4px;outline:none;background:var(--bg);"
-        placeholder="JD" oninput="this.value=this.value.toUpperCase();"
-        onkeydown="if(event.key==='Enter')msgSignIn();">
-      <button onclick="msgSignIn()" style="margin-top:16px;width:100%;background:var(--purple);color:#fff;border:none;border-radius:8px;padding:13px;font-size:15px;font-weight:700;cursor:pointer;font-family:var(--sans);">Continue</button>
-      <div id="msg-signin-err" style="color:var(--red);font-size:12px;text-align:center;margin-top:10px;display:none;">Enter your initials (2–4 letters)</div>
-    </div>
   </div>
   <!-- compose screen -->
   <div id="msg-compose-screen" style="flex:1;display:none;flex-direction:column;padding:20px 16px;max-width:560px;width:100%;margin:0 auto;box-sizing:border-box;">
@@ -2454,8 +2307,8 @@ function updatePinDots() {
 /* ═══════════════════════════════════════════════════════
    WAREHOUSE MESSENGER  —  XFitting v1.1.0
    No global pollution — all vars prefixed msg* / msgi*
-   Warehouse send: no PIN, initials only
-   Mgmt inbox: MGMT PIN (handled by launchMgmtApp)
+   Requires real XFitting credential login (see launcher gate)
+   Mgmt inbox: requires mgmt role, shown via launcher's role visibility
    Worker: /msg/send  /msg/list  /msg/reply  /msg/status
    Sheet:  MSG_SHEET_ID env var, tab "Messages"
 ═══════════════════════════════════════════════════════ */
@@ -2499,11 +2352,9 @@ function updatePinDots() {
 
   /* ── Launcher hook ───────────────────────────────── */
   window.msgOnLaunch = function() {
-    document.getElementById('msg-signin-screen').style.display = 'flex';
-    document.getElementById('msg-compose-screen').style.display = 'none';
-    document.getElementById('msg-initials-input').value = '';
-    document.getElementById('msg-signin-err').style.display = 'none';
-    msgInitials = '';
+    document.getElementById('msg-compose-screen').style.display = 'flex';
+    msgInitials = (XF_CRED_USER && XF_CRED_USER.displayName) || '';
+    document.getElementById('msg-sender-label').textContent = msgInitials;
     msgSelCat = '';
     msgSelPri = 'Normal';
     // reset category / priority selections
@@ -2519,19 +2370,6 @@ function updatePinDots() {
     // wire char counter
     var ta = document.getElementById('msg-body-input');
     ta.oninput = function() { document.getElementById('msg-char-count').textContent = ta.value.length; };
-  };
-
-  window.msgSignIn = function() {
-    var val = (document.getElementById('msg-initials-input').value || '').trim().toUpperCase();
-    if (!val || val.length < 2) {
-      document.getElementById('msg-signin-err').style.display = 'block';
-      return;
-    }
-    msgInitials = val;
-    document.getElementById('msg-signin-err').style.display = 'none';
-    document.getElementById('msg-signin-screen').style.display = 'none';
-    document.getElementById('msg-compose-screen').style.display = 'flex';
-    document.getElementById('msg-sender-label').textContent = val;
     msgLoadMyHistory();
   };
 
@@ -2647,9 +2485,9 @@ function updatePinDots() {
   function msgInboxLoad() {
     var list = document.getElementById('msgi-list');
     list.innerHTML = '<div style="color:var(--text3);font-size:13px;padding:16px 0;">Loading messages…</div>';
-    var token = sessionStorage.getItem('xf_session') || '';
+    var token = localStorage.getItem('xf_cred_token') || '';
     fetch(MSG_WORKER + '/msg/list?all=1', {
-      headers: token ? { 'X-Session-Token': token } : {}
+      headers: token ? { 'X-Cred-Token': token } : {}
     }).then(function(r) { return r.json(); })
       .then(function(d) {
         msgAllMessages = (d.messages || []).reverse(); // newest first
@@ -2713,10 +2551,10 @@ function updatePinDots() {
   window.msgInboxSendReply = function() {
     var replyText = (document.getElementById('msg-reply-input').value || '').trim();
     if (!replyText || !msgReplyTargetId) return;
-    var token = sessionStorage.getItem('xf_session') || '';
+    var token = localStorage.getItem('xf_cred_token') || '';
     fetch(MSG_WORKER + '/msg/reply', {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json', 'X-Session-Token': token },
+      headers: { 'Content-Type': 'application/json', 'X-Cred-Token': token },
       body: JSON.stringify({ id: msgReplyTargetId, reply: replyText })
     }).then(function(r) { return r.json(); }).then(function(d) {
       document.getElementById('msg-reply-modal').style.display = 'none';
@@ -2734,10 +2572,10 @@ function updatePinDots() {
   };
 
   window.msgInboxSetStatus = function(id, status) {
-    var token = sessionStorage.getItem('xf_session') || '';
+    var token = localStorage.getItem('xf_cred_token') || '';
     fetch(MSG_WORKER + '/msg/status', {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json', 'X-Session-Token': token },
+      headers: { 'Content-Type': 'application/json', 'X-Cred-Token': token },
       body: JSON.stringify({ id: id, status: status })
     }).then(function(r) { return r.json(); }).then(function(d) {
       if (d.ok) {
@@ -3405,7 +3243,7 @@ function updatePinDots() {
 <script>
 /* ═══════════════════════════════════════════════════════
    EBAY AI MESSAGES  —  XFitting v1.1.1
-   Management-only; launched via launchMgmtApp('ebaymsgs')
+   Management-only; card shown via launcher's role visibility, launched via salesLaunchApp('ebaymsgs')
    No global pollution — all vars/funcs prefixed em* / ebayMsgs*
    Worker: /ebay-msg/list  /ebay-msg/ai-draft  /ebay-msg/send  /ebay-msg/log
 ═══════════════════════════════════════════════════════ */
@@ -3514,9 +3352,9 @@ function updatePinDots() {
     document.getElementById('em-stats').style.display = 'flex';
     // tabs already visible
 
-    var token = sessionStorage.getItem('xf_session') || '';
+    var token = localStorage.getItem('xf_cred_token') || '';
     fetch(EM_WORKER + '/ebay-msg/list?days=' + days + '&status=' + status, {
-      headers: { 'X-Session-Token': token }
+      headers: { 'X-Cred-Token': token }
     }).then(function(r) { return r.json(); }).then(function(d) {
       btn.disabled = false;
       btn.innerHTML = '📨 Fetch Messages';
@@ -3648,10 +3486,10 @@ function updatePinDots() {
     btn.disabled = true;
     btn.textContent = '⏳ Drafting…';
     emSetStatus('Generating AI drafts…', 'loading');
-    var token = sessionStorage.getItem('xf_session') || '';
+    var token = localStorage.getItem('xf_cred_token') || '';
     fetch(EM_WORKER + '/ebay-msg/ai-draft', {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json', 'X-Session-Token': token },
+      headers: { 'Content-Type': 'application/json', 'X-Cred-Token': token },
       body: JSON.stringify({ messages: undrafted.map(function(m) {
         return Object.assign({}, m, { _note: m._note || '' });
       }), agentName: emAgentName })
@@ -3705,10 +3543,10 @@ function updatePinDots() {
     var btn = document.getElementById('em-send-btn-' + idx);
     var regenBtn = document.querySelector('#em-card-' + idx + ' .em-regen-btn');
     if (regenBtn) { regenBtn.disabled = true; regenBtn.textContent = '⏳ Drafting…'; }
-    var token = sessionStorage.getItem('xf_session') || '';
+    var token = localStorage.getItem('xf_cred_token') || '';
     fetch(EM_WORKER + '/ebay-msg/ai-draft', {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json', 'X-Session-Token': token },
+      headers: { 'Content-Type': 'application/json', 'X-Cred-Token': token },
       body: JSON.stringify({ messages: [Object.assign({}, msg, { _note: msg._note || '' })], agentName: emAgentName })
     }).then(function(r) { return r.json(); }).then(function(d) {
       if (d.messages && d.messages[0] && d.messages[0].draftOk) {
@@ -3741,10 +3579,10 @@ function updatePinDots() {
     var btn   = document.getElementById('em-send-btn-' + idx);
     if (btn) { btn.disabled = true; btn.textContent = '⏳ Sending…'; }
     emSetStatus('Sending reply…', 'loading');
-    var token = sessionStorage.getItem('xf_session') || '';
+    var token = localStorage.getItem('xf_cred_token') || '';
     fetch(EM_WORKER + '/ebay-msg/send', {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json', 'X-Session-Token': token },
+      headers: { 'Content-Type': 'application/json', 'X-Cred-Token': token },
       body: JSON.stringify({
         messageId:    msg.messageId,
         itemId:       msg.itemId,
@@ -3821,9 +3659,9 @@ function updatePinDots() {
     var threadId = msg.externalMsgId || msg.messageId || '';
     if (!threadId) { panel.innerHTML = '<div class="em-thread-loading">No thread ID available.</div>'; return; }
     panel.innerHTML = '<div class="em-thread-loading">Loading thread...</div>';
-    var token = sessionStorage.getItem('xf_session') || '';
+    var token = localStorage.getItem('xf_cred_token') || '';
     fetch(EM_WORKER + '/ebay-msg/threads?threadId=' + encodeURIComponent(threadId), {
-      headers: { 'X-Session-Token': token }
+      headers: { 'X-Cred-Token': token }
     }).then(function(r) { return r.json(); }).then(function(d) {
       panel.dataset.loaded = '1';
       var thread = d.thread || [];
@@ -3850,7 +3688,7 @@ function updatePinDots() {
 
   function emSaveBuyerMessages(messages) {
     if (!messages || !messages.length) return;
-    var token = sessionStorage.getItem('xf_session') || '';
+    var token = localStorage.getItem('xf_cred_token') || '';
     var toSave = messages.map(function(m) {
       return {
         threadId:  m.externalMsgId || m.messageId || '',
@@ -3868,15 +3706,15 @@ function updatePinDots() {
     if (!toSave.length) return;
     fetch(EM_WORKER + '/ebay-msg/threads/save', {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json', 'X-Session-Token': token },
+      headers: { 'Content-Type': 'application/json', 'X-Cred-Token': token },
       body: JSON.stringify({ messages: toSave })
     }).catch(function() {});
   }
 
   function emRunCleanup() {
-    var token = sessionStorage.getItem('xf_session') || '';
+    var token = localStorage.getItem('xf_cred_token') || '';
     fetch(EM_WORKER + '/ebay-msg/cleanup', {
-      method: 'POST', headers: { 'X-Session-Token': token }
+      method: 'POST', headers: { 'X-Cred-Token': token }
     }).then(function(r){ return r.json(); }).then(function(d){
       if (d.deleted > 0) console.log('[eBay Msgs] Cleaned ' + d.deleted + ' old rows');
     }).catch(function() {});
@@ -3885,9 +3723,9 @@ function updatePinDots() {
   window.emLoadLog = function() {
     var list  = document.getElementById('em-log-list');
     list.innerHTML = '<div class="em-loading">⏳ Loading log…</div>';
-    var token = sessionStorage.getItem('xf_session') || '';
+    var token = localStorage.getItem('xf_cred_token') || '';
     fetch(EM_WORKER + '/ebay-msg/log?limit=50', {
-      headers: { 'X-Session-Token': token }
+      headers: { 'X-Cred-Token': token }
     }).then(function(r) { return r.json(); }).then(function(d) {
       var entries = d.log || [];
       if (!entries.length) {
@@ -3957,10 +3795,10 @@ function updatePinDots() {
     btn.disabled = true; btn.textContent = '\u23f3 Generating\u2026';
     document.getElementById('cs-status').textContent = 'Sending to Claude Haiku\u2026';
     document.getElementById('cs-output-card').style.display = 'none';
-    var token = sessionStorage.getItem('xf_session') || '';
+    var token = localStorage.getItem('xf_cred_token') || '';
     fetch(CS_WORKER + '/cs-tool/draft', {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json', 'X-Session-Token': token },
+      headers: { 'Content-Type': 'application/json', 'X-Cred-Token': token },
       body: JSON.stringify({
         platform:     csPlatform,
         orderNumber:  (document.getElementById('cs-order-num').value  || '').trim(),
@@ -4024,9 +3862,9 @@ function updatePinDots() {
     var body   = document.getElementById('em-analytics-body');
     if (!body) return;
     body.innerHTML = '<div class="em-loading">\u23f3 Loading\u2026</div>';
-    var token = sessionStorage.getItem('xf_session') || '';
+    var token = localStorage.getItem('xf_cred_token') || '';
     fetch(WORKER_URL + '/ebay-msg/analytics?days=' + days, {
-      headers: { 'X-Session-Token': token }
+      headers: { 'X-Cred-Token': token }
     }).then(function(r) { return r.json(); }).then(function(d) {
       if (!d.ok) { body.innerHTML = '<div style="color:var(--red);font-size:13px;">Failed to load analytics.</div>'; return; }
       var avgR = d.avgResponseMin !== null
@@ -4071,10 +3909,10 @@ function updatePinDots() {
     if (!draft) { showToast('Generate a reply first'); return; }
     var btn = document.getElementById('cs-save-btn');
     if (btn) { btn.disabled = true; btn.textContent = '...'; }
-    var token = sessionStorage.getItem('xf_session') || '';
+    var token = localStorage.getItem('xf_cred_token') || '';
     fetch(WORKER_URL + '/cs-tool/log-save', {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json', 'X-Session-Token': token },
+      headers: { 'Content-Type': 'application/json', 'X-Cred-Token': token },
       body: JSON.stringify({
         platform:        csPlatform || 'Unknown',
         orderNumber:     (document.getElementById('cs-order-num') ? document.getElementById('cs-order-num').value : '').trim(),
@@ -4106,9 +3944,9 @@ function updatePinDots() {
     var platform = (document.getElementById('cs-log-filter') || {}).value || '';
     if (!listEl) return;
     listEl.innerHTML = '<div class="em-loading">⏳ Loading CS Log...</div>';
-    var token = sessionStorage.getItem('xf_session') || '';
+    var token = localStorage.getItem('xf_cred_token') || '';
     var qs = '/cs-tool/log?limit=100' + (platform ? '&platform=' + encodeURIComponent(platform) : '');
-    fetch(WORKER_URL + qs, { headers: { 'X-Session-Token': token } })
+    fetch(WORKER_URL + qs, { headers: { 'X-Cred-Token': token } })
       .then(function(r) { return r.json(); })
       .then(function(d) {
         var entries = d.log || [];
