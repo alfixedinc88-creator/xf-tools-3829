@@ -257,11 +257,12 @@ body {
    chrome above (same header/close/body look) — just wider, since an
    order card's item table needs more room than a list of scans. */
 .ps-tracking-modal { max-width:640px; }
-/* Only the Scan tab's own scan list gets the clickable treatment — Print
-   Log and other lists reuse the same .ps-card-tracking class but aren't
-   wired up to open this modal, so they stay plain text. */
-#ps-scan-list .ps-card-tracking { cursor:pointer; text-decoration-line:underline; text-decoration-style:dotted; text-decoration-color:var(--border2); text-underline-offset:3px; }
-#ps-scan-list .ps-card-tracking:hover { color:var(--accent); }
+/* The Scan tab's own scan list, and the per-person modal opened from a
+   name chip, both get the clickable treatment — Print Log and other lists
+   reuse the same .ps-card-tracking class but aren't wired up to open this
+   modal, so they stay plain text. */
+#ps-scan-list .ps-card-tracking, #ps-person-modal-body .ps-card-tracking { cursor:pointer; text-decoration-line:underline; text-decoration-style:dotted; text-decoration-color:var(--border2); text-underline-offset:3px; }
+#ps-scan-list .ps-card-tracking:hover, #ps-person-modal-body .ps-card-tracking:hover { color:var(--accent); }
 
 /* Batch close */
 .ps-batch-close-bar { background:var(--bg2); border:1px solid var(--border); border-radius:12px; padding:16px 18px; margin-bottom:16px; box-shadow:var(--shadow); display:flex; align-items:center; gap:12px; flex-wrap:wrap; }
@@ -599,11 +600,12 @@ body {
    chrome above (same header/close/body look) — just wider, since an
    order card's item table needs more room than a list of scans. */
 #packship-app .ps-tracking-modal { max-width:640px; }
-/* Only the Scan tab's own scan list gets the clickable treatment — Print
-   Log and other lists reuse the same .ps-card-tracking class but aren't
-   wired up to open this modal, so they stay plain text. */
-#packship-app #ps-scan-list .ps-card-tracking { cursor:pointer; text-decoration-line:underline; text-decoration-style:dotted; text-decoration-color:var(--border2); text-underline-offset:3px; }
-#packship-app #ps-scan-list .ps-card-tracking:hover { color:var(--accent); }
+/* The Scan tab's own scan list, and the per-person modal opened from a
+   name chip, both get the clickable treatment — Print Log and other lists
+   reuse the same .ps-card-tracking class but aren't wired up to open this
+   modal, so they stay plain text. */
+#packship-app #ps-scan-list .ps-card-tracking, #packship-app #ps-person-modal-body .ps-card-tracking { cursor:pointer; text-decoration-line:underline; text-decoration-style:dotted; text-decoration-color:var(--border2); text-underline-offset:3px; }
+#packship-app #ps-scan-list .ps-card-tracking:hover, #packship-app #ps-person-modal-body .ps-card-tracking:hover { color:var(--accent); }
 
 /* Batch close */
 #packship-app .ps-batch-close-bar { background:var(--bg2); border:1px solid var(--border); border-radius:12px; padding:16px 18px; margin-bottom:16px; box-shadow:var(--shadow); display:flex; align-items:center; gap:12px; flex-wrap:wrap; }
@@ -2177,7 +2179,7 @@ function _psRenderPersonModalList() {
     return '<div class="ps-card"><div class="ps-card-row">'
       +   '<div class="ps-card-dot green"></div>'
       +   '<div class="ps-card-tracking">' + s.tracking + '</div>'
-      +   '<div class="ps-card-meta">' + _psCarrierBadge(s.carrier) + (s.batchClosedAt ? '<span class="ps-badge ps-badge-green">Closed</span>' : '') + '</div>'
+      +   '<div class="ps-card-meta">' + _psCarrierBadge(s.carrier) + _psItemWeightBadges(s) + (s.batchClosedAt ? '<span class="ps-badge ps-badge-green">Closed</span>' : '') + '</div>'
       +   '<div class="ps-card-time">' + psFmtTime(s.timestamp) + '</div>'
       + '</div></div>';
   }).join('');
@@ -2242,7 +2244,7 @@ window.psRenderScanList = function() {
     return;
   }
   list.innerHTML = items.slice(0,150).map(function(s){
-    return '<div class="ps-card"><div class="ps-card-row"><div class="ps-card-dot green"></div><div class="ps-card-tracking">' + s.tracking + '</div><div class="ps-card-meta">' + _psCarrierBadge(s.carrier) + '<span class="ps-badge ps-badge-gray">' + (s.initials||'—') + '</span>' + (s.batchClosedAt ? '<span class="ps-badge ps-badge-green">Closed</span>' : '') + '</div><div class="ps-card-time">' + psFmtTime(s.timestamp) + '</div></div></div>';
+    return '<div class="ps-card"><div class="ps-card-row"><div class="ps-card-dot green"></div><div class="ps-card-tracking">' + s.tracking + '</div><div class="ps-card-meta">' + _psCarrierBadge(s.carrier) + '<span class="ps-badge ps-badge-gray">' + (s.initials||'—') + '</span>' + _psItemWeightBadges(s) + (s.batchClosedAt ? '<span class="ps-badge ps-badge-green">Closed</span>' : '') + '</div><div class="ps-card-time">' + psFmtTime(s.timestamp) + '</div></div></div>';
   }).join('');
   if (items.length > 150) list.innerHTML += '<div style="text-align:center;padding:12px;font-size:12px;color:var(--text3)">Showing 150 of ' + items.length + ' — see Progress tab for full list</div>';
 };
@@ -2797,6 +2799,18 @@ function _psCarrierBadge(c) {
   return '<span class="ps-badge ps-badge-gray">' + (c||'Unknown') + '</span>';
 }
 
+// itemCount/weightLb come from the worker joining the manifest's line
+// items + the Products sheet's per-SKU weight (see
+// shipAttachItemsAndWeight in worker.txt) — null until an order's gone
+// through Veeqo Sync or a manifest upload, so those are just left off
+// rather than shown as a misleading "0". Shared by Today's Scans and the
+// per-person modal so both stay in sync.
+function _psItemWeightBadges(s) {
+  var itemsBadge  = (s.itemCount != null) ? '<span class="ps-badge ps-badge-gray">' + s.itemCount + ' item' + (s.itemCount !== 1 ? 's' : '') + '</span>' : '';
+  var weightBadge = (s.weightLb   != null) ? '<span class="ps-badge ps-badge-gray">' + s.weightLb + ' lb</span>' : '';
+  return itemsBadge + weightBadge;
+}
+
 
 
   // ── DUPLICATE SCAN ALARM ──────────────────────────────────────────────
@@ -2931,9 +2945,13 @@ function _psWireEvents() {
     });
   }
 
-  // Tracking → order detail modal: same delegated-click pattern, on
-  // "Today's Scans" — survives psRenderScanList() rebuilding the list on
-  // every repaint (new scan, filter change, periodic refresh, etc).
+  // Tracking → order detail modal: same delegated-click pattern, on both
+  // "Today's Scans" and the per-person modal's own scan list — survives
+  // psRenderScanList()/_psRenderPersonModalList() rebuilding those lists
+  // on every repaint (new scan, filter change, periodic refresh, etc).
+  // Opening it from inside the person modal stacks it on top (same
+  // overlay class, later in the DOM), so closing it just falls back to
+  // the person modal underneath rather than losing your place.
   var scanListEl = document.getElementById('ps-scan-list');
   if (scanListEl) {
     scanListEl.addEventListener('click', function(e){
@@ -2941,11 +2959,21 @@ function _psWireEvents() {
       if (trackEl) psShowTrackingDetail(trackEl.textContent.trim());
     });
   }
+  var personModalBodyEl = document.getElementById('ps-person-modal-body');
+  if (personModalBodyEl) {
+    personModalBodyEl.addEventListener('click', function(e){
+      var trackEl = e.target.closest('.ps-card-tracking');
+      if (trackEl) psShowTrackingDetail(trackEl.textContent.trim());
+    });
+  }
 
   document.addEventListener('keydown', function(e){
     if (e.key !== 'Escape') return;
-    if (_psPersonModalName)  psClosePersonDetail();
-    if (_psTrackingModalOpen) psCloseTrackingDetail();
+    // Close whichever modal is on top first — if the tracking modal was
+    // opened from inside the person modal, one Escape should reveal the
+    // person modal again, not close both at once.
+    if (_psTrackingModalOpen) { psCloseTrackingDetail(); return; }
+    if (_psPersonModalName)   psClosePersonDetail();
   });
 
   document.getElementById('ps-lookup-input').addEventListener('keydown', function(e){ if (e.key === 'Enter') psDoLookup(); });
