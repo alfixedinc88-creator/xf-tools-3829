@@ -253,6 +253,16 @@ body {
 .ps-person-modal-body { padding:14px 22px 22px; overflow-y:auto; flex:1; }
 .ps-person-modal-empty { font-size:13px; color:var(--text3); font-style:italic; text-align:center; padding:24px 0; }
 
+/* Tracking → order detail modal reuses all of the .ps-person-modal-*
+   chrome above (same header/close/body look) — just wider, since an
+   order card's item table needs more room than a list of scans. */
+.ps-tracking-modal { max-width:640px; }
+/* Only the Scan tab's own scan list gets the clickable treatment — Print
+   Log and other lists reuse the same .ps-card-tracking class but aren't
+   wired up to open this modal, so they stay plain text. */
+#ps-scan-list .ps-card-tracking { cursor:pointer; text-decoration-line:underline; text-decoration-style:dotted; text-decoration-color:var(--border2); text-underline-offset:3px; }
+#ps-scan-list .ps-card-tracking:hover { color:var(--accent); }
+
 /* Batch close */
 .ps-batch-close-bar { background:var(--bg2); border:1px solid var(--border); border-radius:12px; padding:16px 18px; margin-bottom:16px; box-shadow:var(--shadow); display:flex; align-items:center; gap:12px; flex-wrap:wrap; }
 .ps-batch-close-label { flex:1; font-size:13px; color:var(--text2); min-width:180px; }
@@ -585,6 +595,16 @@ body {
 #packship-app .ps-person-modal-body { padding:14px 22px 22px; overflow-y:auto; flex:1; }
 #packship-app .ps-person-modal-empty { font-size:13px; color:var(--text3); font-style:italic; text-align:center; padding:24px 0; }
 
+/* Tracking → order detail modal reuses all of the .ps-person-modal-*
+   chrome above (same header/close/body look) — just wider, since an
+   order card's item table needs more room than a list of scans. */
+#packship-app .ps-tracking-modal { max-width:640px; }
+/* Only the Scan tab's own scan list gets the clickable treatment — Print
+   Log and other lists reuse the same .ps-card-tracking class but aren't
+   wired up to open this modal, so they stay plain text. */
+#packship-app #ps-scan-list .ps-card-tracking { cursor:pointer; text-decoration-line:underline; text-decoration-style:dotted; text-decoration-color:var(--border2); text-underline-offset:3px; }
+#packship-app #ps-scan-list .ps-card-tracking:hover { color:var(--accent); }
+
 /* Batch close */
 #packship-app .ps-batch-close-bar { background:var(--bg2); border:1px solid var(--border); border-radius:12px; padding:16px 18px; margin-bottom:16px; box-shadow:var(--shadow); display:flex; align-items:center; gap:12px; flex-wrap:wrap; }
 #packship-app .ps-batch-close-label { flex:1; font-size:13px; color:var(--text2); min-width:180px; }
@@ -772,6 +792,22 @@ body {
       <input type="text" class="ps-search-input" id="ps-person-modal-search" placeholder="Search tracking, carrier…" oninput="_psRenderPersonModalList()" style="padding-left:14px">
     </div>
     <div class="ps-person-modal-body" id="ps-person-modal-body"></div>
+  </div>
+</div>
+
+<!-- Tracking → order detail modal — opened by clicking a tracking number
+     in the Scan tab's "Today's Scans" list. Looks it up the same way the
+     Order Lookup tab does and shows the same order card, in a popup. -->
+<div id="ps-tracking-modal-overlay" class="ps-person-modal-overlay" onclick="if(event.target===this) psCloseTrackingDetail()">
+  <div class="ps-person-modal ps-tracking-modal">
+    <div class="ps-person-modal-header">
+      <div>
+        <div class="ps-person-modal-title" id="ps-tracking-modal-title">—</div>
+        <div class="ps-person-modal-sub" id="ps-tracking-modal-sub"></div>
+      </div>
+      <button class="ps-person-modal-close" onclick="psCloseTrackingDetail()">✕</button>
+    </div>
+    <div class="ps-person-modal-body" id="ps-tracking-modal-body"></div>
   </div>
 </div>
 
@@ -2323,6 +2359,72 @@ window.psDoLookup = async function() {
 };
 
 // ── Order Lookup ───────────────────────────────────────
+// _psRenderOrderLookupCard renders ONE order from /ship/order-lookup's
+// results[] into the same card markup everywhere it's used — the Order
+// Lookup tab below, and the tracking→order detail modal opened from the
+// Scan tab's "Today's Scans" list (see psShowTrackingDetail further down).
+function _psRenderOrderLookupCard(o) {
+  var channelColor = o.channel.toLowerCase().includes('amazon') ? '#FF9900'
+    : o.channel.toLowerCase().includes('ebay') ? '#e53238'
+    : o.channel.toLowerCase().includes('shopify') ? '#96bf48' : 'var(--accent)';
+
+  var carrierBadge = o.carrier === 'UPS'
+    ? '<span class="ps-badge ps-badge-ups">UPS</span>'
+    : o.carrier === 'USPS'
+    ? '<span class="ps-badge ps-badge-usps">USPS</span>'
+    : (o.carrier ? '<span class="ps-badge ps-badge-gray">' + o.carrier + '</span>' : '');
+
+  var statusBadge = o.reconcileStatus === 'Scanned'
+    ? '<span class="ps-badge ps-badge-green">Scanned</span>'
+    : o.reconcileStatus === 'Gap'
+    ? '<span class="ps-badge ps-badge-red">Gap</span>'
+    : '<span class="ps-badge ps-badge-gray">' + (o.reconcileStatus || 'Pending') + '</span>';
+
+  var itemsHtml = '';
+  if (o.lineItems && o.lineItems.length > 0) {
+    itemsHtml = '<table style="width:100%;border-collapse:collapse;margin-top:10px;">'
+      + '<thead><tr>'
+      + '<th style="text-align:left;font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.5px;color:var(--text3);padding:4px 4px 6px 0;border-bottom:1px solid var(--border);">Img</th>'
+      + '<th style="text-align:left;font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.5px;color:var(--text3);padding:4px 8px 6px 0;border-bottom:1px solid var(--border);">SKU</th>'
+      + '<th style="text-align:left;font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.5px;color:var(--text3);padding:4px 8px 6px;border-bottom:1px solid var(--border);">Bin</th>'
+      + '<th style="text-align:right;font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.5px;color:var(--text3);padding:4px 0 6px 8px;border-bottom:1px solid var(--border);">Qty</th>'
+      + '</tr></thead><tbody>'
+      + o.lineItems.map(function(li) {
+          var imgHtml = li.i
+            ? '<img src="' + li.i + '" style="width:40px;height:40px;object-fit:cover;border-radius:4px;border:1px solid var(--border);" onerror="this.style.display=\'none\'">'
+            : '<div style="width:40px;height:40px;background:var(--bg3);border-radius:4px;border:1px solid var(--border);display:flex;align-items:center;justify-content:center;font-size:16px;">📦</div>';
+          return '<tr>'
+            + '<td style="padding:5px 4px 5px 0;border-bottom:1px solid var(--border);">' + imgHtml + '</td>'
+            + '<td style="font-family:var(--mono);font-size:11px;color:var(--accent);padding:5px 8px 5px 0;border-bottom:1px solid var(--border);">' + (li.s || '—') + '</td>'
+            + '<td style="font-family:var(--mono);font-size:11px;color:var(--text2);padding:5px 8px;border-bottom:1px solid var(--border);">' + (li.b || '—') + '</td>'
+            + '<td style="font-family:var(--mono);font-size:13px;font-weight:700;color:var(--text);text-align:right;padding:5px 0 5px 8px;border-bottom:1px solid var(--border);">×' + (li.q || 1) + '</td>'
+            + '</tr>';
+        }).join('')
+      + '</tbody></table>';
+  } else {
+    itemsHtml = '<div style="font-size:12px;color:var(--text3);margin-top:8px;font-style:italic;">No item data — run Veeqo Sync to populate order details</div>';
+  }
+
+  var addrLine = [o.address1, o.address2].filter(Boolean).join(', ');
+  var cityLine  = [o.city, o.shipToState, o.zip].filter(Boolean).join(', ');
+
+  return '<div class="ps-card" style="margin-bottom:12px;">'
+    + '<div style="display:flex;align-items:flex-start;justify-content:space-between;gap:12px;flex-wrap:wrap;margin-bottom:8px;">'
+    +   '<div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;">'
+    +     '<span style="font-family:var(--mono);font-size:13px;font-weight:700;color:var(--text);">#' + (o.orderNum || '—') + '</span>'
+    +     '<span style="font-size:11px;font-weight:700;padding:2px 8px;border-radius:100px;background:' + channelColor + '22;color:' + channelColor + ';">' + o.channel + '</span>'
+    +     carrierBadge + statusBadge
+    +   '</div>'
+    +   '<div style="font-size:11px;color:var(--text3);font-family:var(--mono);">' + o.date + '</div>'
+    + '</div>'
+    + (o.customerName ? '<div style="font-size:13px;font-weight:600;color:var(--text);margin-bottom:2px;">👤 ' + o.customerName + '</div>' : '')
+    + (addrLine ? '<div style="font-size:12px;color:var(--text2);margin-bottom:1px;">📫 ' + addrLine + '</div>' : '')
+    + (cityLine  ? '<div style="font-size:12px;color:var(--text3);margin-bottom:4px;">📍 ' + cityLine  + '</div>' : '')
+    + '<div style="font-size:11px;font-family:var(--mono);color:var(--text3);word-break:break-all;">' + (o.tracking || '') + '</div>'
+    + itemsHtml
+    + '</div>';
+}
+
 window.psOrderLookup = async function() {
   var q      = (document.getElementById('ps-ol-input').value || '').trim();
   var days   = document.getElementById('ps-ol-days').value || '7';
@@ -2351,70 +2453,55 @@ window.psOrderLookup = async function() {
 
     if (list.length === 0) return;
 
-    results.innerHTML = list.map(function(o) {
-      var channelColor = o.channel.toLowerCase().includes('amazon') ? '#FF9900'
-        : o.channel.toLowerCase().includes('ebay') ? '#e53238'
-        : o.channel.toLowerCase().includes('shopify') ? '#96bf48' : 'var(--accent)';
-
-      var carrierBadge = o.carrier === 'UPS'
-        ? '<span class="ps-badge ps-badge-ups">UPS</span>'
-        : o.carrier === 'USPS'
-        ? '<span class="ps-badge ps-badge-usps">USPS</span>'
-        : (o.carrier ? '<span class="ps-badge ps-badge-gray">' + o.carrier + '</span>' : '');
-
-      var statusBadge = o.reconcileStatus === 'Scanned'
-        ? '<span class="ps-badge ps-badge-green">Scanned</span>'
-        : o.reconcileStatus === 'Gap'
-        ? '<span class="ps-badge ps-badge-red">Gap</span>'
-        : '<span class="ps-badge ps-badge-gray">' + (o.reconcileStatus || 'Pending') + '</span>';
-
-      var itemsHtml = '';
-      if (o.lineItems && o.lineItems.length > 0) {
-        itemsHtml = '<table style="width:100%;border-collapse:collapse;margin-top:10px;">'
-          + '<thead><tr>'
-          + '<th style="text-align:left;font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.5px;color:var(--text3);padding:4px 4px 6px 0;border-bottom:1px solid var(--border);">Img</th>'
-          + '<th style="text-align:left;font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.5px;color:var(--text3);padding:4px 8px 6px 0;border-bottom:1px solid var(--border);">SKU</th>'
-          + '<th style="text-align:left;font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.5px;color:var(--text3);padding:4px 8px 6px;border-bottom:1px solid var(--border);">Bin</th>'
-          + '<th style="text-align:right;font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.5px;color:var(--text3);padding:4px 0 6px 8px;border-bottom:1px solid var(--border);">Qty</th>'
-          + '</tr></thead><tbody>'
-          + o.lineItems.map(function(li) {
-              var imgHtml = li.i
-                ? '<img src="' + li.i + '" style="width:40px;height:40px;object-fit:cover;border-radius:4px;border:1px solid var(--border);" onerror="this.style.display=\'none\'">'
-                : '<div style="width:40px;height:40px;background:var(--bg3);border-radius:4px;border:1px solid var(--border);display:flex;align-items:center;justify-content:center;font-size:16px;">📦</div>';
-              return '<tr>'
-                + '<td style="padding:5px 4px 5px 0;border-bottom:1px solid var(--border);">' + imgHtml + '</td>'
-                + '<td style="font-family:var(--mono);font-size:11px;color:var(--accent);padding:5px 8px 5px 0;border-bottom:1px solid var(--border);">' + (li.s || '—') + '</td>'
-                + '<td style="font-family:var(--mono);font-size:11px;color:var(--text2);padding:5px 8px;border-bottom:1px solid var(--border);">' + (li.b || '—') + '</td>'
-                + '<td style="font-family:var(--mono);font-size:13px;font-weight:700;color:var(--text);text-align:right;padding:5px 0 5px 8px;border-bottom:1px solid var(--border);">×' + (li.q || 1) + '</td>'
-                + '</tr>';
-            }).join('')
-          + '</tbody></table>';
-      } else {
-        itemsHtml = '<div style="font-size:12px;color:var(--text3);margin-top:8px;font-style:italic;">No item data — run Veeqo Sync to populate order details</div>';
-      }
-
-      var addrLine = [o.address1, o.address2].filter(Boolean).join(', ');
-      var cityLine  = [o.city, o.shipToState, o.zip].filter(Boolean).join(', ');
-
-      return '<div class="ps-card" style="margin-bottom:12px;">'
-        + '<div style="display:flex;align-items:flex-start;justify-content:space-between;gap:12px;flex-wrap:wrap;margin-bottom:8px;">'
-        +   '<div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;">'
-        +     '<span style="font-family:var(--mono);font-size:13px;font-weight:700;color:var(--text);">#' + (o.orderNum || '—') + '</span>'
-        +     '<span style="font-size:11px;font-weight:700;padding:2px 8px;border-radius:100px;background:' + channelColor + '22;color:' + channelColor + ';">' + o.channel + '</span>'
-        +     carrierBadge + statusBadge
-        +   '</div>'
-        +   '<div style="font-size:11px;color:var(--text3);font-family:var(--mono);">' + o.date + '</div>'
-        + '</div>'
-        + (o.customerName ? '<div style="font-size:13px;font-weight:600;color:var(--text);margin-bottom:2px;">👤 ' + o.customerName + '</div>' : '')
-        + (addrLine ? '<div style="font-size:12px;color:var(--text2);margin-bottom:1px;">📫 ' + addrLine + '</div>' : '')
-        + (cityLine  ? '<div style="font-size:12px;color:var(--text3);margin-bottom:4px;">📍 ' + cityLine  + '</div>' : '')
-        + '<div style="font-size:11px;font-family:var(--mono);color:var(--text3);word-break:break-all;">' + (o.tracking || '') + '</div>'
-        + itemsHtml
-        + '</div>';
-    }).join('');
+    results.innerHTML = list.map(_psRenderOrderLookupCard).join('');
   } catch(e) {
     status.textContent = 'Request failed: ' + e.message;
   }
+};
+
+// ── Tracking → order detail modal (Scan tab) ────────────────────────────
+// Clicking a tracking number in "Today's Scans" looks it up the exact same
+// way the Order Lookup tab does — same /ship/order-lookup call, same
+// _psRenderOrderLookupCard() renderer — just shown in a popup instead of a
+// separate tab, so a shipper doesn't have to leave the Scan tab to see
+// what they just packed.
+var _psTrackingModalOpen = false;
+
+window.psShowTrackingDetail = async function(tracking) {
+  if (!tracking) return;
+  _psTrackingModalOpen = true;
+  document.getElementById('ps-tracking-modal-title').textContent = tracking;
+  document.getElementById('ps-tracking-modal-sub').textContent = 'Looking up…';
+  document.getElementById('ps-tracking-modal-body').innerHTML = '<div class="ps-person-modal-empty">Looking up…</div>';
+  document.getElementById('ps-tracking-modal-overlay').style.display = 'flex';
+  try {
+    var r = await fetch(PS_WORKER + '/ship/order-lookup?q=' + encodeURIComponent(tracking) + '&days=7', {
+      headers: { 'X-Cred-Token': psCredToken }
+    });
+    var d = await r.json();
+    if (!_psTrackingModalOpen) return; // closed before the fetch came back
+    if (!d.ok) {
+      document.getElementById('ps-tracking-modal-sub').textContent = '';
+      document.getElementById('ps-tracking-modal-body').innerHTML = '<div class="ps-person-modal-empty">Error: ' + (d.error || 'Unknown error') + '</div>';
+      return;
+    }
+    var list = d.results || [];
+    document.getElementById('ps-tracking-modal-sub').textContent = list.length
+      ? list.length + ' order' + (list.length !== 1 ? 's' : '') + ' found'
+      : 'No order found';
+    document.getElementById('ps-tracking-modal-body').innerHTML = list.length
+      ? list.map(_psRenderOrderLookupCard).join('')
+      : '<div class="ps-person-modal-empty">No order found for this tracking number in the last 7 days.</div>';
+  } catch(e) {
+    if (!_psTrackingModalOpen) return;
+    document.getElementById('ps-tracking-modal-sub').textContent = '';
+    document.getElementById('ps-tracking-modal-body').innerHTML = '<div class="ps-person-modal-empty">Request failed: ' + e.message + '</div>';
+  }
+};
+
+window.psCloseTrackingDetail = function() {
+  _psTrackingModalOpen = false;
+  document.getElementById('ps-tracking-modal-overlay').style.display = 'none';
 };
 
 // ── Scan log ──────────────────────────────────────────
@@ -2837,8 +2924,22 @@ function _psWireEvents() {
       if (chip && chip.dataset.person) psShowPersonDetail(chip.dataset.person);
     });
   }
+
+  // Tracking → order detail modal: same delegated-click pattern, on
+  // "Today's Scans" — survives psRenderScanList() rebuilding the list on
+  // every repaint (new scan, filter change, periodic refresh, etc).
+  var scanListEl = document.getElementById('ps-scan-list');
+  if (scanListEl) {
+    scanListEl.addEventListener('click', function(e){
+      var trackEl = e.target.closest('.ps-card-tracking');
+      if (trackEl) psShowTrackingDetail(trackEl.textContent.trim());
+    });
+  }
+
   document.addEventListener('keydown', function(e){
-    if (e.key === 'Escape' && _psPersonModalName) psClosePersonDetail();
+    if (e.key !== 'Escape') return;
+    if (_psPersonModalName)  psClosePersonDetail();
+    if (_psTrackingModalOpen) psCloseTrackingDetail();
   });
 
   document.getElementById('ps-lookup-input').addEventListener('keydown', function(e){ if (e.key === 'Enter') psDoLookup(); });
