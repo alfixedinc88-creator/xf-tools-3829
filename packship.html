@@ -1642,14 +1642,21 @@ window.psFocusScan = function() {
 // elsewhere on the page, a modal opening, anything) the scanner would
 // silently stop registering scans until someone clicks back into the box.
 // Self-clears the moment the Scan tab isn't the active panel anymore.
+// IDs of fields on this tab that need real typing (a name to filter by, a
+// date to jump to) — the refocus loop below must leave these alone while
+// someone's using them, or every keystroke gets interrupted within 2s as
+// focus gets yanked back to the scan box mid-word.
+var PS_SCAN_TYPING_FIELDS = ['ps-scan-summary-namefilter', 'ps-scan-summary-date'];
 var psScanRefocusInterval = null;
 function psScanStartRefocus() {
   if (psScanRefocusInterval) return;
   psScanRefocusInterval = setInterval(function() {
     var panel = document.getElementById('ps-panel-scan');
     if (panel && panel.classList.contains('active')) {
-      var inp = document.getElementById('ps-scan-input');
-      if (inp && document.activeElement !== inp) inp.focus();
+      var inp    = document.getElementById('ps-scan-input');
+      var active = document.activeElement;
+      var typingElsewhere = active && PS_SCAN_TYPING_FIELDS.indexOf(active.id) !== -1;
+      if (inp && active !== inp && !typingElsewhere) inp.focus();
     } else {
       clearInterval(psScanRefocusInterval);
       psScanRefocusInterval = null;
@@ -2132,13 +2139,18 @@ window.psFocusPrintLog = function() {
 };
 
 // Auto-refocus every 2s when on printlog tab
+// Same reasoning as PS_SCAN_TYPING_FIELDS on the Scan tab — the "Your name"
+// field here needs real typing too, so the refocus loop must leave it alone.
+var PS_PRINTLOG_TYPING_FIELDS = ['ps-pl-operator-input'];
 function psPlStartRefocus() {
   if (psPlRefocusInterval) return;
   psPlRefocusInterval = setInterval(function() {
     var panel = document.getElementById('ps-panel-printlog');
     if (panel && panel.classList.contains('active')) {
-      var inp = document.getElementById('ps-printlog-input');
-      if (inp && document.activeElement !== inp) inp.focus();
+      var inp    = document.getElementById('ps-printlog-input');
+      var active = document.activeElement;
+      var typingElsewhere = active && PS_PRINTLOG_TYPING_FIELDS.indexOf(active.id) !== -1;
+      if (inp && active !== inp && !typingElsewhere) inp.focus();
     } else {
       clearInterval(psPlRefocusInterval);
       psPlRefocusInterval = null;
