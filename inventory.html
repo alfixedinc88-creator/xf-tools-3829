@@ -1196,7 +1196,7 @@ window.invCredLogin = async function() {
     window._locScanTimer = setTimeout(invLocScanSearch, 500);
   };
 
-  window.invLocScanSearch = function(overrideLoc) {
+  window.invLocScanSearch = function(overrideLoc, fallbackCode) {
     var loc;
     if (overrideLoc) {
       loc = overrideLoc.trim().toUpperCase();
@@ -1212,6 +1212,22 @@ window.invCredLogin = async function() {
       .then(function(r) { return r.json(); })
       .then(function(data) {
         if (!data.ok || !data.results || !data.results.length) {
+          // Only the Stock Out Reports flow passes fallbackCode. That flow
+          // found real orders where the exact same value that /inventory
+          // /location-search can't match against master_list.location DOES
+          // match as a part number/SKU via the ordinary /inventory/lookup
+          // (the manual "Go" click on the SKU box) — so rather than make
+          // someone click Go by hand every time, try that automatically
+          // before giving up. Everything else calling this function (the
+          // camera scanner, manual Location-mode typing) keeps the plain
+          // "not found" behavior — a barcode that doesn't match a location
+          // has no reason to also be tried as a part number there.
+          if (fallbackCode) {
+            if (res) res.innerHTML = '';
+            var locWrap = g('inv-loc-scan-wrap'); if (locWrap) locWrap.style.display = 'none';
+            invLookup(fallbackCode);
+            return;
+          }
           if (res) res.innerHTML = '<div class="iempty" style="padding:12px;color:var(--text3);font-size:13px">No items found at ' + loc + '</div>';
           return;
         }
@@ -2216,36 +2232,24 @@ window.invCredLogin = async function() {
 
   // Tapping a reported entry (now headlined by bin location, see above)
   // runs the exact same lookup as typing the SKU into "Scan or Search" and
-  // pressing Go. Searches by the bin location (the headline — see
-  // invRenderStockoutList above) rather than SKU, but stays visually on
-  // the "SKU / Part# / UPC" tab per request — it does NOT flip the mode
-  // buttons over to "Location" or swap in the prefix-dropdown/shelf UI.
-  // The bin text lands right in the normal search box, and results come
-  // from the same location-search results list Location mode itself uses
-  // (#inv-loc-scan-results) — just shown on its own, with that mode's
-  // scan/prefix/shelf controls kept hidden since this isn't Location mode.
+  // pressing Go. Stays visually on the "SKU / Part# / UPC" tab (per
+  // request) and searches straight by SKU/part# — no location-search step
+  // at all. Started out trying a location-search first (since the headline
+  // shows the bin location), with a fallback to SKU/part# only if that came
+  // up empty — but real testing showed the location-search leg was never
+  // the one that actually found anything (these bin-location-shaped values
+  // apparently live in master_list as part numbers, not in the location
+  // column), so it was just a wasted round-trip for every single click.
+  // Skipped entirely now — straight to invLookup.
   window.invStockoutGo = function(idx) {
     var s = _invStockoutOpenList[idx];
     if (!s) return;
-    var loc = (s.binLocation || '').trim();
+    var code = (s.binLocation || s.sku || '').trim();
+    if (!code) return;
     invSetScanMode('code'); // always land on/stay on the SKU/Part#/UPC tab
     var inp = g('inv-search-inp');
-    if (loc) {
-      if (inp) inp.value = loc;
-      var locWrap = g('inv-loc-scan-wrap');
-      if (locWrap) {
-        locWrap.style.display = 'block';           // reveal just the results area below...
-        if (locWrap.firstElementChild) locWrap.firstElementChild.style.display = 'none'; // ...not the cam/prefix/shelf/Go row
-      }
-      invLocScanSearch(loc);
-    } else if (s.sku) {
-      // No bin location on this report at all — fall back to the old SKU
-      // lookup so this still does something useful instead of no-op'ing.
-      if (inp) inp.value = s.sku;
-      invLookup(s.sku);
-    } else {
-      return;
-    }
+    if (inp) inp.value = code;
+    invLookup(code);
     // Check it off and keep the report list open (rather than closing it) —
     // so working through several reports in a row means: tap one, see it
     // get checked, tap the next, without having to reopen the list each
