@@ -3989,7 +3989,11 @@ function psPickStartRefocus() {
     if (panel && panel.classList.contains('active')) {
       var inp    = document.getElementById('ps-pick-input');
       var active = document.activeElement;
-      var typingElsewhere = active && PS_PICKING_TYPING_FIELDS.indexOf(active.id) !== -1;
+      // Prefix match covers the "No Stock" checkbox/quantity inputs too —
+      // those get a fresh dynamic id (ps-nostock-chk-N / ps-nostock-qty-N)
+      // per item every time the picked list renders, so they can't be
+      // listed individually in PS_PICKING_TYPING_FIELDS above.
+      var typingElsewhere = active && (PS_PICKING_TYPING_FIELDS.indexOf(active.id) !== -1 || (active.id && active.id.indexOf('ps-nostock-') === 0));
       if (inp && active !== inp && !typingElsewhere) inp.focus();
     } else {
       clearInterval(psPickRefocusInterval);
