@@ -2160,13 +2160,20 @@ window.invCredLogin = async function() {
     wrap.innerHTML = _invStockoutOpenList.map(function(s, idx) {
       var when = '';
       try { when = new Date(s.timestamp).toLocaleString([], {month:'short', day:'numeric', hour:'numeric', minute:'2-digit'}); } catch(e) { when = s.timestamp || ''; }
+      // Bin location is the headline now — that's what someone walking the
+      // floor actually recognizes, same reasoning as the Pack & Ship "No
+      // Stock" report itself. SKU drops down into the detail line below
+      // instead of disappearing — still useful for confirming the right
+      // item, just not the first thing shown. Falls back to showing the
+      // SKU up top only for the rare report with no bin location on file.
+      var headline = s.binLocation || s.sku || '—';
       return '<div style="border:1.5px solid var(--border);border-radius:8px;padding:8px 10px;margin-bottom:8px;background:var(--bg3)">'
         + '<div style="display:flex;justify-content:space-between;align-items:center;gap:8px">'
-        +   '<div style="font-family:var(--mono);font-weight:700;font-size:13px;color:var(--accent);cursor:pointer" onclick="invStockoutGo(' + idx + ')">' + (s.sku || '—') + '</div>'
+        +   '<div style="font-family:var(--mono);font-weight:700;font-size:13px;color:var(--accent);cursor:pointer" onclick="invStockoutGo(' + idx + ')">' + headline + '</div>'
         +   '<button style="font-size:11px;padding:4px 8px;border:1px solid var(--border);border-radius:6px;background:var(--bg);color:var(--text2);cursor:pointer" onclick="invStockoutResolve(' + s.id + ',this)">Resolved</button>'
         + '</div>'
         + '<div style="font-size:11px;color:var(--text3);margin-top:3px">'
-        +   (s.binLocation ? 'Bin ' + s.binLocation + ' · ' : '')
+        +   (s.sku ? s.sku + ' · ' : '')
         +   (s.orderNum ? 'Order ' + s.orderNum + ' · ' : '')
         +   (s.tracking ? s.tracking + ' · ' : '')
         +   'reported by ' + (s.reportedBy || '?') + (when ? ' · ' + when : '')
@@ -2184,10 +2191,12 @@ window.invCredLogin = async function() {
     if (_invStockoutListShown) invRenderStockoutList();
   };
 
-  // Tapping a reported SKU runs the exact same lookup as typing it into
-  // "Scan or Search" and pressing Go — reuses invLookup directly rather than
-  // building a separate detail view, so bin location/stock all come from the
-  // app's one normal Scan flow.
+  // Tapping a reported entry (now headlined by bin location, see above)
+  // runs the exact same lookup as typing the SKU into "Scan or Search" and
+  // pressing Go — reuses invLookup directly rather than building a separate
+  // detail view, so bin location/stock all come from the app's one normal
+  // Scan flow. Lookup is still done BY SKU regardless of what's displayed —
+  // bin location isn't a searchable code on its own.
   window.invStockoutGo = function(idx) {
     var s = _invStockoutOpenList[idx];
     if (!s || !s.sku) return;
