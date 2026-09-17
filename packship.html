@@ -1441,10 +1441,14 @@ body {
       <div class="ps-card" style="margin-top:12px">
         <div style="font-size:13px;font-weight:700;color:var(--text);margin-bottom:4px">Backfill Real Weight</div>
         <div style="font-size:12px;color:var(--text2);margin-bottom:14px;line-height:1.5">
-          Fills in the real Veeqo shipment weight for today's orders that don't have it yet (scanned/picked before this feature existed). Rescanning won't do this — a duplicate scan is rejected before it ever checks Veeqo — so use this button instead. Processes up to 50 at a time; click again if it says more are left.
+          Fills in the real Veeqo shipment weight for a day's orders that don't have it yet (scanned/picked before this feature existed). Rescanning won't do this — a duplicate scan is rejected before it ever checks Veeqo — so use this button instead. Processes up to 50 at a time; click again if it says more are left. Defaults to today, but pick an earlier date if that's where the orders you're checking actually landed.
+        </div>
+        <div style="display:flex;gap:10px;flex-wrap:wrap;align-items:center;margin-bottom:10px">
+          <label style="font-size:12px;color:var(--text3);font-weight:600" for="ps-vsync-weight-date">Date</label>
+          <input type="date" class="ps-field-input" id="ps-vsync-weight-date" style="max-width:170px;margin:0">
         </div>
         <div style="display:flex;flex-direction:column;gap:10px;align-items:flex-start">
-          <button class="ps-btn-primary" style="width:auto;padding:10px 22px" id="ps-vsync-weight-btn" onclick="psVeeqoBackfillWeight()">⚖️ Backfill Today's Weight</button>
+          <button class="ps-btn-primary" style="width:auto;padding:10px 22px" id="ps-vsync-weight-btn" onclick="psVeeqoBackfillWeight()">⚖️ Backfill That Day's Weight</button>
           <div id="ps-vsync-weight-result" style="font-size:12px;color:var(--text2);font-family:var(--mono);width:100%"></div>
         </div>
       </div>
@@ -4373,6 +4377,8 @@ function _psUploadStatusToSheet(rows) {
 function psVeeqoOnUnlock() {
   psVeeqoCheckStatus();
   psVeeqoLoadLabels();
+  var wdinp = document.getElementById('ps-vsync-weight-date');
+  if (wdinp && !wdinp.value) { var tk = psTodayKey(); wdinp.value = tk; wdinp.max = tk; }
 }
 
 async function psVeeqoCheckStatus() {
@@ -4585,16 +4591,29 @@ window.psVeeqoSyncManifest = async function() {
 window.psVeeqoBackfillWeight = async function() {
   var btn = document.getElementById('ps-vsync-weight-btn');
   var out = document.getElementById('ps-vsync-weight-result');
+  var dateInp = document.getElementById('ps-vsync-weight-date');
+  var pickDate = (dateInp && dateInp.value) || psTodayKey();
   if (!psCredToken) { _psToast('Management session required', 'error'); return; }
   btn.disabled = true; btn.textContent = '⏳ Checking Veeqo…'; out.textContent = '';
   try {
     var r    = await fetch(PS_WORKER + '/veeqo/backfill-weight', {
       method: 'POST',
       headers: { 'X-Cred-Token': psCredToken, 'Content-Type': 'application/json' },
-      body: JSON.stringify({ date: psTodayKey() }),
+      body: JSON.stringify({ date: pickDate }),
     });
     var data = await r.json();
     if (data.ok) {
+      // checked=0 is ambiguous on its own — could mean "nothing left to do,
+      // every order that day already has weight" or "wrong date, there's
+      // nothing here at all." totalRowsForDate tells them apart.
+      if (data.checked === 0) {
+        var zeroMsg = data.totalRowsForDate === 0
+          ? '⚠ No manifest rows at all for ' + pickDate + ' — try a different date (this is likely not the day your scans landed on).'
+          : '✓ All ' + data.totalRowsForDate + ' order(s) on ' + pickDate + ' already have weight — nothing to backfill.';
+        out.textContent = zeroMsg;
+        _psToast(zeroMsg.replace(/^[✓⚠]\s*/, ''));
+        return;
+      }
       var bits = [data.updated + ' updated'];
       if (data.notFoundInVeeqo) bits.push(data.notFoundInVeeqo + ' not found in Veeqo');
       if (data.veeqoHadNoWeight) bits.push(data.veeqoHadNoWeight + ' had no weight in Veeqo');
