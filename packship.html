@@ -94,7 +94,7 @@ body {
 /* Scan tab: shift the whole content column to the left instead of centering it,
    and let it run wider than the other tabs (not capped at 960px) so the
    product-card row has room for full-size photos without squeezing. */
-.ps-content:has(#ps-panel-scan.active) { margin-left:0; margin-right:auto; max-width:1300px; }
+.ps-content:has(#ps-panel-scan.active), .ps-content:has(#ps-panel-picking.active) { margin-left:0; margin-right:auto; max-width:1300px; }
 .ps-panel { display:none; }
 .ps-panel.active { display:block; }
 
@@ -155,10 +155,10 @@ body {
    gets (short of the phone breakpoint below, which switches to a column
    layout instead). It shrinks to fit rather than wrapping to a new row. */
 .ps-scan-toprow { display:flex; gap:16px; align-items:flex-start; flex-wrap:nowrap; margin-bottom:20px; }
-#ps-panel-scan .ps-scan-box { padding:16px; margin-bottom:0; flex:0 0 280px; }
-#ps-panel-scan .ps-scan-box-header { gap:8px; margin-bottom:10px; }
-#ps-panel-scan .ps-scan-icon { width:30px; height:30px; font-size:16px; }
-#ps-panel-scan .ps-scan-title { font-size:11px; font-weight:700; text-transform:uppercase; letter-spacing:.5px; color:var(--text3); }
+#ps-panel-scan .ps-scan-box, #ps-panel-picking .ps-scan-box { padding:16px; margin-bottom:0; flex:0 0 280px; }
+#ps-panel-scan .ps-scan-box-header, #ps-panel-picking .ps-scan-box-header { gap:8px; margin-bottom:10px; }
+#ps-panel-scan .ps-scan-icon, #ps-panel-picking .ps-scan-icon { width:30px; height:30px; font-size:16px; }
+#ps-panel-scan .ps-scan-title, #ps-panel-picking .ps-scan-title { font-size:11px; font-weight:700; text-transform:uppercase; letter-spacing:.5px; color:var(--text3); }
 .ps-scan-input { width:100%; background:var(--bg3); border:2px solid var(--border2); border-radius:10px; color:var(--text); font-family:var(--mono); font-size:16px; font-weight:500; padding:12px 16px; outline:none; transition:border-color .15s,box-shadow .15s; letter-spacing:.5px; }
 .ps-scan-input:focus { border-color:var(--accent); box-shadow:0 0 0 3px rgba(26,86,219,.12); background:var(--bg2); }
 .ps-scan-input.flash-green  { border-color:var(--green)!important; background:var(--green-bg)!important; box-shadow:0 0 0 3px rgba(14,127,62,.15)!important; }
@@ -195,15 +195,18 @@ body {
 /* Overflow strip: cap each row at 7 cards (up to 168px each, matching the
    top row's card size) instead of however many happen to fit the screen
    width — 8 was too many. Extra items wrap to additional rows of 7. */
-#ps-scan-product-more { display:grid; grid-template-columns:repeat(7, minmax(0, 168px)); gap:10px; justify-content:start; }
+#ps-scan-product-more, #ps-pick-product-more { display:grid; grid-template-columns:repeat(7, minmax(0, 168px)); gap:10px; justify-content:start; }
 /* Top-row product items: up to 5 columns, same max card/photo/text size as
    the overflow strip below — but minmax(0,...) lets every column shrink
    together (instead of wrapping to a new row) whenever the scan box +
    this area can't both fit at full size. That's what keeps this row
    permanently beside the scan box rather than dropping underneath it.
    Scoped by ID so the overflow strip (#ps-scan-product-more) keeps its
-   own independent grid/row-count. */
-#ps-scan-product-items { display:grid; grid-template-columns:repeat(5, minmax(0, 168px)); gap:10px; justify-content:start; }
+   own independent grid/row-count. Picking tab's #ps-pick-product-items/
+   #ps-pick-product-more mirror these two rules exactly — same card size,
+   same 5-then-7 layout — since they share the .ps-scan-product-item(s)
+   classes but have their own element IDs. */
+#ps-scan-product-items, #ps-pick-product-items { display:grid; grid-template-columns:repeat(5, minmax(0, 168px)); gap:10px; justify-content:start; }
 .ps-scan-product-info { width:100%; min-width:0; }
 .ps-scan-product-sku { font-family:var(--mono); font-size:10.5px; font-weight:700; color:var(--text); margin-bottom:8px; word-break:break-word; line-height:1.25; }
 /* Qty and Total Qty sit on the same row, but sized worlds apart on purpose:
@@ -382,14 +385,14 @@ body {
   .ps-batch-close-bar { flex-direction:column; align-items:stretch; }
   .ps-scan-toprow { flex-direction:column; }
   .ps-scan-box, .ps-scan-product-wrap { flex-basis:auto; width:100%; min-width:0; }
-  #ps-scan-product-items { grid-template-columns:repeat(2, 1fr); }
-  #ps-scan-product-items .ps-scan-product-item { width:100%; }
-  #ps-scan-product-items .ps-scan-product-img,
-  #ps-scan-product-items .ps-scan-product-img-placeholder { width:100%; height:auto; aspect-ratio:1/1; }
-  #ps-scan-product-more { grid-template-columns:repeat(2, 1fr); }
-  #ps-scan-product-more .ps-scan-product-item { width:100%; }
-  #ps-scan-product-more .ps-scan-product-img,
-  #ps-scan-product-more .ps-scan-product-img-placeholder { width:100%; height:auto; aspect-ratio:1/1; }
+  #ps-scan-product-items, #ps-pick-product-items { grid-template-columns:repeat(2, 1fr); }
+  #ps-scan-product-items .ps-scan-product-item, #ps-pick-product-items .ps-scan-product-item { width:100%; }
+  #ps-scan-product-items .ps-scan-product-img, #ps-pick-product-items .ps-scan-product-img,
+  #ps-scan-product-items .ps-scan-product-img-placeholder, #ps-pick-product-items .ps-scan-product-img-placeholder { width:100%; height:auto; aspect-ratio:1/1; }
+  #ps-scan-product-more, #ps-pick-product-more { grid-template-columns:repeat(2, 1fr); }
+  #ps-scan-product-more .ps-scan-product-item, #ps-pick-product-more .ps-scan-product-item { width:100%; }
+  #ps-scan-product-more .ps-scan-product-img, #ps-pick-product-more .ps-scan-product-img,
+  #ps-scan-product-more .ps-scan-product-img-placeholder, #ps-pick-product-more .ps-scan-product-img-placeholder { width:100%; height:auto; aspect-ratio:1/1; }
   .ps-scan-summary { gap:12px; padding:12px 14px; }
   .ps-scan-summary-total { padding-right:14px; }
   .ps-scan-summary-namewrap { padding-left:0; border-left:none; width:100%; }
@@ -449,7 +452,7 @@ body {
 /* Scan tab: shift the whole content column to the left instead of centering it,
    and let it run wider than the other tabs (not capped at 960px) so the
    product-card row has room for full-size photos without squeezing. */
-#packship-app .ps-content:has(#ps-panel-scan.active) { margin-left:0; margin-right:auto; max-width:1300px; }
+#packship-app .ps-content:has(#ps-panel-scan.active), #packship-app .ps-content:has(#ps-panel-picking.active) { margin-left:0; margin-right:auto; max-width:1300px; }
 #packship-app .ps-panel { display:none; }
 #packship-app .ps-panel.active { display:block; }
 
@@ -506,10 +509,10 @@ body {
    gets (short of the phone breakpoint below, which switches to a column
    layout instead). It shrinks to fit rather than wrapping to a new row. */
 #packship-app .ps-scan-toprow { display:flex; gap:16px; align-items:flex-start; flex-wrap:nowrap; margin-bottom:20px; }
-#packship-app #ps-panel-scan .ps-scan-box { padding:16px; margin-bottom:0; flex:0 0 280px; }
-#packship-app #ps-panel-scan .ps-scan-box-header { gap:8px; margin-bottom:10px; }
-#packship-app #ps-panel-scan .ps-scan-icon { width:30px; height:30px; font-size:16px; }
-#packship-app #ps-panel-scan .ps-scan-title { font-size:11px; font-weight:700; text-transform:uppercase; letter-spacing:.5px; color:var(--text3); }
+#packship-app #ps-panel-scan .ps-scan-box, #packship-app #ps-panel-picking .ps-scan-box { padding:16px; margin-bottom:0; flex:0 0 280px; }
+#packship-app #ps-panel-scan .ps-scan-box-header, #packship-app #ps-panel-picking .ps-scan-box-header { gap:8px; margin-bottom:10px; }
+#packship-app #ps-panel-scan .ps-scan-icon, #packship-app #ps-panel-picking .ps-scan-icon { width:30px; height:30px; font-size:16px; }
+#packship-app #ps-panel-scan .ps-scan-title, #packship-app #ps-panel-picking .ps-scan-title { font-size:11px; font-weight:700; text-transform:uppercase; letter-spacing:.5px; color:var(--text3); }
 #packship-app .ps-scan-input { width:100%; background:var(--bg3); border:2px solid var(--border2); border-radius:10px; color:var(--text); font-family:var(--mono); font-size:16px; font-weight:500; padding:12px 16px; outline:none; transition:border-color .15s,box-shadow .15s; letter-spacing:.5px; }
 #packship-app .ps-scan-input:focus { border-color:var(--accent); box-shadow:0 0 0 3px rgba(26,86,219,.12); background:var(--bg2); }
 #packship-app .ps-scan-input.flash-green  { border-color:var(--green)!important; background:var(--green-bg)!important; box-shadow:0 0 0 3px rgba(14,127,62,.15)!important; }
@@ -541,15 +544,16 @@ body {
 /* Overflow strip: cap each row at 7 cards (up to 168px each, matching the
    top row's card size) instead of however many happen to fit the screen
    width — 8 was too many. Extra items wrap to additional rows of 7. */
-#packship-app #ps-scan-product-more { display:grid; grid-template-columns:repeat(7, minmax(0, 168px)); gap:10px; justify-content:start; }
+#packship-app #ps-scan-product-more, #packship-app #ps-pick-product-more { display:grid; grid-template-columns:repeat(7, minmax(0, 168px)); gap:10px; justify-content:start; }
 /* Top-row product items: up to 5 columns, same max card/photo/text size as
    the overflow strip below — but minmax(0,...) lets every column shrink
    together (instead of wrapping to a new row) whenever the scan box +
    this area can't both fit at full size. That's what keeps this row
    permanently beside the scan box rather than dropping underneath it.
    Scoped by ID so the overflow strip (#ps-scan-product-more) keeps its
-   own independent grid/row-count. */
-#packship-app #ps-scan-product-items { display:grid; grid-template-columns:repeat(5, minmax(0, 168px)); gap:10px; justify-content:start; }
+   own independent grid/row-count. Picking tab mirrors these via its own
+   #ps-pick-product-items/#ps-pick-product-more IDs. */
+#packship-app #ps-scan-product-items, #packship-app #ps-pick-product-items { display:grid; grid-template-columns:repeat(5, minmax(0, 168px)); gap:10px; justify-content:start; }
 #packship-app .ps-scan-product-info { width:100%; min-width:0; }
 #packship-app .ps-scan-product-sku { font-family:var(--mono); font-size:10.5px; font-weight:700; color:var(--text); margin-bottom:8px; word-break:break-word; line-height:1.25; }
 #packship-app .ps-scan-product-meta { display:flex; flex-direction:row; align-items:center; justify-content:center; gap:12px; }
@@ -725,14 +729,14 @@ body {
   #packship-app .ps-batch-close-bar { flex-direction:column; align-items:stretch; }
   #packship-app .ps-scan-toprow { flex-direction:column; }
   #packship-app .ps-scan-box, #packship-app .ps-scan-product-wrap { flex-basis:auto; width:100%; min-width:0; }
-  #packship-app #ps-scan-product-items { grid-template-columns:repeat(2, 1fr); }
-  #packship-app #ps-scan-product-items .ps-scan-product-item { width:100%; }
-  #packship-app #ps-scan-product-items .ps-scan-product-img,
-  #packship-app #ps-scan-product-items .ps-scan-product-img-placeholder { width:100%; height:auto; aspect-ratio:1/1; }
-  #packship-app #ps-scan-product-more { grid-template-columns:repeat(2, 1fr); }
-  #packship-app #ps-scan-product-more .ps-scan-product-item { width:100%; }
-  #packship-app #ps-scan-product-more .ps-scan-product-img,
-  #packship-app #ps-scan-product-more .ps-scan-product-img-placeholder { width:100%; height:auto; aspect-ratio:1/1; }
+  #packship-app #ps-scan-product-items, #packship-app #ps-pick-product-items { grid-template-columns:repeat(2, 1fr); }
+  #packship-app #ps-scan-product-items .ps-scan-product-item, #packship-app #ps-pick-product-items .ps-scan-product-item { width:100%; }
+  #packship-app #ps-scan-product-items .ps-scan-product-img, #packship-app #ps-pick-product-items .ps-scan-product-img,
+  #packship-app #ps-scan-product-items .ps-scan-product-img-placeholder, #packship-app #ps-pick-product-items .ps-scan-product-img-placeholder { width:100%; height:auto; aspect-ratio:1/1; }
+  #packship-app #ps-scan-product-more, #packship-app #ps-pick-product-more { grid-template-columns:repeat(2, 1fr); }
+  #packship-app #ps-scan-product-more .ps-scan-product-item, #packship-app #ps-pick-product-more .ps-scan-product-item { width:100%; }
+  #packship-app #ps-scan-product-more .ps-scan-product-img, #packship-app #ps-pick-product-more .ps-scan-product-img,
+  #packship-app #ps-scan-product-more .ps-scan-product-img-placeholder, #packship-app #ps-pick-product-more .ps-scan-product-img-placeholder { width:100%; height:auto; aspect-ratio:1/1; }
   #packship-app .ps-scan-summary { gap:12px; padding:12px 14px; }
   #packship-app .ps-scan-summary-total { padding-right:14px; }
   #packship-app .ps-scan-summary-namewrap { padding-left:0; border-left:none; width:100%; }
@@ -833,6 +837,26 @@ body {
   </div>
 </div>
 
+<!-- Per-picker detail modal — opened by clicking a name chip in the
+     Picking tab's "Find person" summary bar. Same shape as the Packing
+     (Scan) tab's person modal, including item/weight badges since a
+     picker's history benefits from the same at-a-glance info. -->
+<div id="ps-pick-person-modal-overlay" class="ps-person-modal-overlay" onclick="if(event.target===this) psPickClosePersonDetail()">
+  <div class="ps-person-modal">
+    <div class="ps-person-modal-header">
+      <div>
+        <div class="ps-person-modal-title" id="ps-pick-person-modal-title">—</div>
+        <div class="ps-person-modal-sub" id="ps-pick-person-modal-sub"></div>
+      </div>
+      <button class="ps-person-modal-close" onclick="psPickClosePersonDetail()">✕</button>
+    </div>
+    <div class="ps-person-modal-search">
+      <input type="text" class="ps-search-input" id="ps-pick-person-modal-search" placeholder="Search tracking, carrier…" oninput="_psPickRenderPersonModalList()" style="padding-left:14px">
+    </div>
+    <div class="ps-person-modal-body" id="ps-pick-person-modal-body"></div>
+  </div>
+</div>
+
 <!-- Top bar -->
 <div class="ps-topbar">
   <div class="ps-topbar-left">
@@ -854,7 +878,8 @@ body {
 
 <!-- Tab bar -->
 <div class="ps-tabbar">
-  <div class="ps-tabitem active" id="ps-tab-scan"     onclick="psSwitchTab('scan')">📦 Scan</div>
+  <div class="ps-tabitem active" id="ps-tab-picking"  onclick="psSwitchTab('picking')">🧺 Picking</div>
+  <div class="ps-tabitem"        id="ps-tab-scan"     onclick="psSwitchTab('scan')">📦 Packing</div>
   <div class="ps-tabitem"        id="ps-tab-closebatch" onclick="psSwitchTab('closebatch')">📦 Close Batch</div>
   <div class="ps-tabitem"        id="ps-tab-progress" onclick="psSwitchTab('progress')">📊 Progress</div>
   <div class="ps-tabitem"        id="ps-tab-lookup"      onclick="psSwitchTab('lookup')">🔍 Lookup</div>
@@ -870,8 +895,74 @@ body {
 <!-- Content panels -->
 <div class="ps-content">
 
+  <!-- PICKING panel — almost identical layout/behavior to the Packing (Scan)
+       panel below, on purpose: a picker scans the same tracking barcode to
+       see which item(s) to pull, how many they've picked, the UPS/USPS
+       split, and can search/find a person or check a past date the same
+       way. It's a separate log (ship_pick_log) from Packing's scan log,
+       since picking happens earlier in the workflow and is a distinct step. -->
+  <div class="ps-panel active" id="ps-panel-picking">
+    <div class="ps-scan-toprow">
+      <div class="ps-scan-box" onclick="psFocusPick()">
+        <div class="ps-scan-box-header">
+          <div class="ps-scan-icon">🧺</div>
+          <div class="ps-scan-title">Scan to Pick</div>
+        </div>
+        <input class="ps-scan-input" id="ps-pick-input" type="text" placeholder="Click here to Scan" autocomplete="off" autocorrect="off" autocapitalize="off" spellcheck="false">
+        <div class="ps-last-scan" id="ps-pick-last-scan">
+          <div class="ps-ls-icon" id="ps-pick-ls-icon">✓</div>
+          <div>
+            <div class="ps-ls-tracking" id="ps-pick-ls-tracking">—</div>
+            <div class="ps-ls-meta" id="ps-pick-ls-meta">—</div>
+          </div>
+        </div>
+      </div>
+
+      <!-- First 1-2 items of the order to pick, right next to the scan box -->
+      <div class="ps-scan-product-wrap" id="ps-pick-product-wrap" style="display:none">
+        <div class="ps-scan-product-tracking" id="ps-pick-product-tracking">—</div>
+        <div id="ps-pick-product-items" class="ps-scan-product-items"></div>
+      </div>
+    </div>
+
+    <div class="ps-scan-product-items ps-scan-product-items-more" id="ps-pick-product-more" style="display:none"></div>
+
+    <div class="ps-scan-summary" id="ps-pick-summary">
+      <div class="ps-scan-summary-total">
+        <div class="ps-scan-summary-total-val" id="ps-pick-summary-total-val">0</div>
+        <div class="ps-scan-summary-total-label" id="ps-pick-summary-total-label">Picked<br>Today</div>
+      </div>
+      <div class="ps-scan-summary-by" id="ps-pick-summary-by"></div>
+      <div class="ps-scan-summary-namewrap">
+        <label class="ps-scan-summary-namewrap-label" for="ps-pick-summary-namefilter">Find person</label>
+        <input type="text" class="ps-scan-summary-name-input" id="ps-pick-summary-namefilter" placeholder="Name…" oninput="_psPickRenderPersonChips()">
+      </div>
+      <div class="ps-scan-summary-datewrap">
+        <label class="ps-scan-summary-date-label" for="ps-pick-summary-date">Check a date</label>
+        <input type="date" class="ps-scan-summary-date-input" id="ps-pick-summary-date" onchange="psPickSummaryDateChange()">
+      </div>
+    </div>
+
+    <div class="ps-section-header" style="margin-top:4px">
+      <div class="ps-section-title">Today's Picks</div>
+      <div class="ps-section-cnt" id="ps-pick-cnt-label">0 picks</div>
+    </div>
+    <div class="ps-filter-row">
+      <button class="ps-filter-btn active" onclick="psFilterPicks('all',this)">All</button>
+      <button class="ps-filter-btn" onclick="psFilterPicks('UPS',this)">UPS</button>
+      <button class="ps-filter-btn" onclick="psFilterPicks('USPS',this)">USPS</button>
+    </div>
+    <div id="ps-pick-list">
+      <div class="ps-empty-state">
+        <div class="ps-empty-icon">📭</div>
+        <div class="ps-empty-title">No picks yet today</div>
+        <div class="ps-empty-sub">Start scanning orders to pick — each pick saves instantly.</div>
+      </div>
+    </div>
+  </div>
+
   <!-- SCAN panel -->
-  <div class="ps-panel active" id="ps-panel-scan">
+  <div class="ps-panel" id="ps-panel-scan">
     <div class="ps-scan-toprow">
       <div class="ps-scan-box" onclick="psFocusScan()">
         <div class="ps-scan-box-header">
@@ -1617,12 +1708,13 @@ function _psLaunchInner() {
   var lastUspsName = localStorage.getItem('ps_usps_run_last_name');
   var uspsNameInp  = document.getElementById('ps-usps-run-name');
   if (lastUspsName && uspsNameInp) uspsNameInp.value = lastUspsName;
-  psSwitchTab('scan');
+  psSwitchTab('picking');
   psLoadScans();
+  psLoadPicks();
   psPlLoadToday(); // load print log on launch so all devices see today's data
   psLoadManifestFromSheet();  // load today's manifest so gap report is always ready
-  psFocusScan();
-  psScanStartRefocus();
+  psFocusPick();
+  psPickStartRefocus();
 }
 
 // ── Auto-detect new day — runs every 60s ──────────────────────────────
@@ -1635,12 +1727,14 @@ setInterval(function() {
     // New day — reset batch state and reload data
     psBatchClosed = { ALL: null };
     psTodayScans  = [];
+    psTodayPicks  = [];
     psManifest    = [];
     psGapRows     = [];
     var saved = localStorage.getItem('ps_batch_' + nowKey);
     if (saved) psBatchClosed = JSON.parse(saved);
     _psUpdateBatchBar();
     psLoadScans();
+    psLoadPicks();
     psLoadManifestFromSheet();
     _psToast('New day detected — scan data refreshed');
   }
@@ -1649,7 +1743,7 @@ setInterval(function() {
 window.psSignOut = async function() {
   var oldToken = psCredToken;
   psCredToken = null; psCredUser = null; psRole = null; psInitials = '';
-  psTodayScans = []; psManifest = []; psGapRows = [];
+  psTodayScans = []; psTodayPicks = []; psManifest = []; psGapRows = [];
   psBatchClosed = { ALL: null };
   localStorage.removeItem('xf_cred_token');
   localStorage.removeItem('xf_cred_user');
@@ -3458,6 +3552,15 @@ function _psWireEvents() {
     setTimeout(function(){ var v = scanInp.value.trim(); if (v.length > 8) _psProcessScan(v); }, 60);
   });
 
+  var pickInp = document.getElementById('ps-pick-input');
+  if (pickInp) {
+    pickInp.addEventListener('keydown', function(e){
+      if (e.key === 'Enter') { var v = pickInp.value.trim(); if (v) _psProcessPick(v); }
+    });
+    pickInp.addEventListener('paste', function(){
+      setTimeout(function(){ var v = pickInp.value.trim(); if (v.length > 8) _psProcessPick(v); }, 60);
+    });
+  }
 
   // Per-person scan-history modal: one delegated click listener on the
   // chip row (survives _psRenderPersonChips() rebuilding the chip HTML on
@@ -3477,6 +3580,16 @@ function _psWireEvents() {
     plSummaryByEl.addEventListener('click', function(e){
       var chip = e.target.closest('.ps-scan-summary-chip');
       if (chip && chip.dataset.person) psPlShowPersonDetail(chip.dataset.person);
+    });
+  }
+
+  // Same delegated-click pattern for the Picking tab's own person-summary
+  // chips (separate element, separate modal — see psPickShowPersonDetail).
+  var pickSummaryByEl = document.getElementById('ps-pick-summary-by');
+  if (pickSummaryByEl) {
+    pickSummaryByEl.addEventListener('click', function(e){
+      var chip = e.target.closest('.ps-scan-summary-chip');
+      if (chip && chip.dataset.person) psPickShowPersonDetail(chip.dataset.person);
     });
   }
 
@@ -3502,6 +3615,23 @@ function _psWireEvents() {
     });
   }
 
+  // Same delegated tracking-click pattern for the Picking tab's own list
+  // and its person-detail modal — reuses the same order-lookup popup.
+  var pickListEl = document.getElementById('ps-pick-list');
+  if (pickListEl) {
+    pickListEl.addEventListener('click', function(e){
+      var trackEl = e.target.closest('.ps-card-tracking');
+      if (trackEl) psShowTrackingDetail(trackEl.textContent.trim());
+    });
+  }
+  var pickPersonModalBodyEl = document.getElementById('ps-pick-person-modal-body');
+  if (pickPersonModalBodyEl) {
+    pickPersonModalBodyEl.addEventListener('click', function(e){
+      var trackEl = e.target.closest('.ps-card-tracking');
+      if (trackEl) psShowTrackingDetail(trackEl.textContent.trim());
+    });
+  }
+
   document.addEventListener('keydown', function(e){
     if (e.key !== 'Escape') return;
     // Close whichever modal is on top first — if the tracking modal was
@@ -3510,6 +3640,7 @@ function _psWireEvents() {
     if (_psTrackingModalOpen)   { psCloseTrackingDetail(); return; }
     if (_psPersonModalName)     psClosePersonDetail();
     if (_psPlPersonModalName)   psPlClosePersonDetail();
+    if (_psPickPersonModalName) psPickClosePersonDetail();
   });
 
   document.getElementById('ps-lookup-input').addEventListener('keydown', function(e){ if (e.key === 'Enter') psDoLookup(); });
@@ -3643,6 +3774,14 @@ window.psSwitchTab = function(name) {
     psScanSummaryDate = null;
     psRenderScanList(); psLoadScans(); _psLoadScanPrintStatus();
   }
+  if (name === 'picking')     {
+    psFocusPick();
+    psPickStartRefocus();
+    var pdinp = document.getElementById('ps-pick-summary-date');
+    if (pdinp) { var ptk = psTodayKey(); pdinp.value = ptk; pdinp.max = ptk; }
+    psPickSummaryDate = null;
+    psRenderPickList(); psLoadPicks();
+  }
   if (name === 'closebatch')  { _psUpdateBatchBar(); psUspsRunLoadOpen(); }
   if (name === 'progress')    { psLoadScans(); }
   if (name === 'lookup')      { psRenderLog(); }
@@ -3652,6 +3791,7 @@ window.psSwitchTab = function(name) {
   if (name === 'valerts' && _psUnlockedTabs['valerts']) { psVaOnUnlock(); }
 
   if (window._psRefreshInterval) { clearInterval(window._psRefreshInterval); window._psRefreshInterval = null; }
+  if (window._psPickRefreshInterval) { clearInterval(window._psPickRefreshInterval); window._psPickRefreshInterval = null; }
   if (window._psPlRefreshInterval) { clearInterval(window._psPlRefreshInterval); window._psPlRefreshInterval = null; }
   if (window._psPlOperatorPollInterval) { clearInterval(window._psPlOperatorPollInterval); window._psPlOperatorPollInterval = null; }
   if (window._psUspsRunInterval) { clearInterval(window._psUspsRunInterval); window._psUspsRunInterval = null; }
@@ -3660,6 +3800,9 @@ window.psSwitchTab = function(name) {
       psLoadScans();
       if (name === 'scan') { _psLoadScanPrintStatus(); }
     }, 20000);
+  }
+  if (name === 'picking') {
+    window._psPickRefreshInterval = setInterval(psLoadPicks, 20000);
   }
   if (name === 'printlog') {
     window._psPlRefreshInterval = setInterval(psPlLoadToday, 30000);
@@ -3674,6 +3817,354 @@ window.psSwitchTab = function(name) {
     // keeps the "out Xm" elapsed time ticking while this tab is open.
     window._psUspsRunInterval = setInterval(psUspsRunLoadOpen, 20000);
   }
+};
+
+// ── Picking tab ───────────────────────────────────────────────────────────────
+// Mirrors the Packing (Scan) tab's mechanics closely on purpose (per the
+// request: "almost same like scan tab") — same scan-input/last-scan/
+// product-card UI, same duplicate-scan check, same Find-person/Check-a-date
+// summary with per-person UPS/USPS chips and a click-through detail modal.
+// Kept as its own separate log (ship_pick_log via /ship/pick, /ship/picks)
+// since picking is a distinct, earlier step than packing.
+
+var psTodayPicks    = [];
+var psPickFilter    = 'all';
+
+window.psFocusPick = function() {
+  var inp = document.getElementById('ps-pick-input');
+  if (inp) inp.focus();
+};
+
+// Same fixed-mount-scanner refocus pattern as PS_SCAN_TYPING_FIELDS /
+// PS_PRINTLOG_TYPING_FIELDS — any typing-capable field added to this tab
+// (the name filter, the date field) MUST be listed here or the 2s refocus
+// loop will steal focus mid-keystroke.
+var PS_PICKING_TYPING_FIELDS = ['ps-pick-summary-namefilter', 'ps-pick-summary-date'];
+var psPickRefocusInterval = null;
+function psPickStartRefocus() {
+  if (psPickRefocusInterval) return;
+  psPickRefocusInterval = setInterval(function() {
+    var panel = document.getElementById('ps-panel-picking');
+    if (panel && panel.classList.contains('active')) {
+      var inp    = document.getElementById('ps-pick-input');
+      var active = document.activeElement;
+      var typingElsewhere = active && PS_PICKING_TYPING_FIELDS.indexOf(active.id) !== -1;
+      if (inp && active !== inp && !typingElsewhere) inp.focus();
+    } else {
+      clearInterval(psPickRefocusInterval);
+      psPickRefocusInterval = null;
+    }
+  }, 2000);
+}
+
+window.psLoadPicks = async function() {
+  try {
+    var res  = await fetch(PS_WORKER + '/ship/picks?date=' + psTodayKey(), {
+      headers: { 'X-Cred-Token': psCredToken }
+    });
+    var data = await res.json();
+    if (data.picks) {
+      psTodayPicks = data.picks.slice().sort(function(a,b){
+        return new Date(b.timestamp) - new Date(a.timestamp);
+      });
+      psRenderPickList();
+    }
+  } catch(e) { console.error('[PS] loadPicks error:', e); }
+};
+
+function _psPickFlash(type) {
+  var inp = document.getElementById('ps-pick-input');
+  if (!inp) return;
+  inp.classList.remove('flash-green','flash-red','flash-orange');
+  void inp.offsetWidth;
+  inp.classList.add('flash-' + type);
+  setTimeout(function(){ inp.classList.remove('flash-green','flash-red','flash-orange'); }, 900);
+}
+
+function _psShowPickLastScan(o) {
+  var el = document.getElementById('ps-pick-last-scan');
+  if (!el) return;
+  el.className = 'ps-last-scan show ' + o.cls;
+  document.getElementById('ps-pick-ls-icon').textContent     = o.icon;
+  document.getElementById('ps-pick-ls-tracking').textContent = o.tracking;
+  document.getElementById('ps-pick-ls-meta').textContent     = o.meta;
+}
+
+function _psProcessPick(raw) {
+  var inp      = document.getElementById('ps-pick-input');
+  var tracking = psNormalizeTracking(raw);
+  inp.value = '';
+  if (!tracking) return; // rejected by format validation (DataMatrix garbage etc)
+
+  var dupe = psTodayPicks.find(function(s){ return s.tracking.toUpperCase() === tracking; });
+  if (dupe) {
+    _psPickFlash('orange');
+    _psBeep(440, 100);
+    _psShowPickLastScan({ icon:'⚠️', cls:'warn', tracking: tracking, meta:'Already picked at ' + psFmtTime(dupe.timestamp) + (dupe.initials ? ' by ' + dupe.initials : '') + ' · ' + dupe.carrier });
+    _psToast('Duplicate — picked at ' + psFmtTime(dupe.timestamp), 'warn');
+    _psLoadPickProduct(tracking);
+    inp.focus(); return;
+  }
+
+  var carrier = psDetectCarrier(tracking);
+  var optimistic = { tracking: tracking, carrier: carrier, initials: psInitials, timestamp: new Date().toISOString(), orderNum:'' };
+  psTodayPicks.unshift(optimistic);
+  _psPickFlash('green');
+  _psBeep(880, 80);
+  _psShowPickLastScan({ icon:'✅', cls:'ok', tracking: tracking, meta: carrier + ' · Saving…' });
+  psRenderPickList();
+  _psShowPickProductLoading(tracking);
+  inp.focus();
+
+  fetch(PS_WORKER + '/ship/pick', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', 'X-Cred-Token': psCredToken },
+    body: JSON.stringify({ tracking: tracking, initials: psInitials })
+  }).then(function(r){ return r.json(); }).then(function(data) {
+    if (data.duplicate) {
+      _psPickFlash('orange');
+      _psShowPickLastScan({ icon:'⚠️', cls:'warn', tracking: tracking, meta:'Already picked at ' + psFmtTime(data.scannedAt) + (data.initials ? ' by ' + data.initials : '') });
+      return;
+    }
+    // Same race-condition fix as Packing's _psProcessScan: the response
+    // already carries the line items it just fetched from Veeqo, so use
+    // those directly instead of firing a second, separately-racing lookup.
+    if (data.lineItems) {
+      _psRenderPickProduct(tracking, data.lineItems);
+    } else {
+      _psLoadPickProduct(tracking);
+    }
+  }).catch(function(e) {
+    _psShowPickLastScan({ icon:'❌', cls:'err', tracking: tracking, meta:'Save failed — ' + e.message });
+    _psToast('Save error — ' + e.message, 'err');
+  });
+}
+
+// ── Picking product card ────────────────────────────────────────────────
+// Reuses _psScanProductCardHtml (Packing tab) — it doesn't reference any
+// Packing-specific element IDs, just builds a card from a line item.
+function _psShowPickProductLoading(tracking) {
+  var wrap   = document.getElementById('ps-pick-product-wrap');
+  var trkEl  = document.getElementById('ps-pick-product-tracking');
+  var itEl   = document.getElementById('ps-pick-product-items');
+  var moreEl = document.getElementById('ps-pick-product-more');
+  if (!wrap) return;
+  wrap.style.display = 'block';
+  if (moreEl) { moreEl.style.display = 'none'; moreEl.innerHTML = ''; }
+  if (trkEl) trkEl.textContent = tracking;
+  if (itEl)  itEl.innerHTML = '<div style="font-size:12px;color:var(--text3);">Loading product info…</div>';
+}
+
+function _psRenderPickProduct(tracking, items) {
+  var trkEl  = document.getElementById('ps-pick-product-tracking');
+  var itEl   = document.getElementById('ps-pick-product-items');
+  var moreEl = document.getElementById('ps-pick-product-more');
+  if (!itEl) return;
+  if (trkEl) trkEl.textContent = tracking;
+  items = (items || []).slice(0, PS_SCAN_MAX_ITEMS);
+  if (!items.length) {
+    itEl.innerHTML = '<div style="font-size:12px;color:var(--text3);font-style:italic;">No item data for this order — run Veeqo Sync to populate order details.</div>';
+    if (moreEl) { moreEl.style.display = 'none'; moreEl.innerHTML = ''; }
+    return;
+  }
+  var cardsHtml = items.map(_psScanProductCardHtml);
+  itEl.innerHTML = cardsHtml.slice(0, PS_SCAN_TOP_ITEM_COUNT).join('');
+  var rest = cardsHtml.slice(PS_SCAN_TOP_ITEM_COUNT);
+  if (rest.length && moreEl) {
+    moreEl.innerHTML = rest.join('');
+    moreEl.style.display = 'grid';
+  } else if (moreEl) {
+    moreEl.style.display = 'none';
+    moreEl.innerHTML = '';
+  }
+}
+
+async function _psLoadPickProduct(tracking) {
+  _psShowPickProductLoading(tracking);
+  var itEl = document.getElementById('ps-pick-product-items');
+  try {
+    var r = await fetch(PS_WORKER + '/ship/order-lookup?q=' + encodeURIComponent(tracking) + '&days=7', {
+      headers: { 'X-Cred-Token': psCredToken }
+    });
+    var d = await r.json();
+    if (!d.ok) { if (itEl) itEl.innerHTML = '<div style="font-size:12px;color:var(--red);">Lookup error: ' + (d.error || 'unknown') + '</div>'; return; }
+    var order = (d.results || [])[0];
+    _psRenderPickProduct(tracking, (order && order.lineItems) || []);
+  } catch(e) {
+    if (itEl) itEl.innerHTML = '<div style="font-size:12px;color:var(--red);">Lookup error: ' + e.message + '</div>';
+  }
+}
+
+window.psFilterPicks = function(f, btn) {
+  psPickFilter = f;
+  document.querySelectorAll('#ps-panel-picking .ps-filter-btn').forEach(function(b){ b.classList.remove('active'); });
+  btn.classList.add('active');
+  psRenderPickList();
+};
+
+// ── Picking summary / find-person / check-a-date ────────────────────────
+var psPickSummaryDate     = null;
+var _psPickSummaryScans   = [];
+var _psPickSummaryByUser  = {};
+var _psPickPersonModalName = null;
+
+function _psPaintPickSummary(scans, labelHtml) {
+  var wrap = document.getElementById('ps-pick-summary');
+  if (!wrap) return;
+  document.getElementById('ps-pick-summary-total-label').innerHTML = labelHtml;
+  document.getElementById('ps-pick-summary-total-val').textContent = scans.length;
+  _psPickSummaryScans = scans;
+
+  var byUser = {};
+  scans.forEach(function(s) {
+    var who = s.initials || 'Unassigned';
+    if (!byUser[who]) byUser[who] = { total:0, ups:0, usps:0, other:0 };
+    byUser[who].total++;
+    if (s.carrier === 'UPS') byUser[who].ups++;
+    else if (s.carrier === 'USPS') byUser[who].usps++;
+    else byUser[who].other++;
+  });
+  _psPickSummaryByUser = byUser;
+  _psPickRenderPersonChips();
+
+  if (_psPickPersonModalName) _psPickRenderPersonModalList();
+}
+
+function _psPickRenderPersonChips() {
+  var byEl = document.getElementById('ps-pick-summary-by');
+  if (!byEl) return;
+  var byUser    = _psPickSummaryByUser;
+  var allNames  = Object.keys(byUser).sort(function(a, b) { return byUser[b].total - byUser[a].total; });
+  if (!allNames.length) {
+    byEl.innerHTML = '<div class="ps-scan-summary-empty">No picks that day</div>';
+    return;
+  }
+  var filterInp = document.getElementById('ps-pick-summary-namefilter');
+  var q = (filterInp && filterInp.value || '').trim().toLowerCase();
+  var names = q ? allNames.filter(function(n){ return n.toLowerCase().indexOf(q) !== -1; }) : allNames;
+  if (!names.length) {
+    byEl.innerHTML = '<div class="ps-scan-summary-empty">No one matching "' + q + '"</div>';
+    return;
+  }
+  byEl.innerHTML = names.map(function(n) {
+    var u = byUser[n];
+    var parts = [];
+    if (u.ups)   parts.push('<span class="ps-scan-summary-chip-ups">' + u.ups + ' UPS</span>');
+    if (u.usps)  parts.push('<span class="ps-scan-summary-chip-usps">' + u.usps + ' USPS</span>');
+    if (u.other) parts.push('<span class="ps-scan-summary-chip-other">' + u.other + ' other</span>');
+    return '<div class="ps-scan-summary-chip" data-person="' + n.replace(/"/g,'&quot;') + '" role="button" tabindex="0">'
+      +   '<div class="ps-scan-summary-chip-info">'
+      +     '<span class="ps-scan-summary-chip-name">' + n + '</span>'
+      +     '<span class="ps-scan-summary-chip-split">' + parts.join(' · ') + '</span>'
+      +   '</div>'
+      +   '<span class="ps-scan-summary-chip-count">' + u.total + '</span>'
+      + '</div>';
+  }).join('');
+}
+
+window.psPickShowPersonDetail = function(name) {
+  _psPickPersonModalName = name;
+  var searchInp = document.getElementById('ps-pick-person-modal-search');
+  if (searchInp) searchInp.value = '';
+  document.getElementById('ps-pick-person-modal-title').textContent = name;
+  _psPickRenderPersonModalList();
+  document.getElementById('ps-pick-person-modal-overlay').style.display = 'flex';
+};
+
+window.psPickClosePersonDetail = function() {
+  document.getElementById('ps-pick-person-modal-overlay').style.display = 'none';
+  _psPickPersonModalName = null;
+};
+
+function _psPickRenderPersonModalList() {
+  if (!_psPickPersonModalName) return;
+  var scans = _psPickSummaryScans.filter(function(s) {
+    return (s.initials || 'Unassigned') === _psPickPersonModalName;
+  });
+  scans.sort(function(a,b){ return new Date(b.timestamp) - new Date(a.timestamp); });
+
+  var searchInp = document.getElementById('ps-pick-person-modal-search');
+  var q = (searchInp && searchInp.value || '').trim().toLowerCase();
+  var items = q ? scans.filter(function(s) {
+    return (s.tracking||'').toLowerCase().indexOf(q) !== -1 || (s.carrier||'').toLowerCase().indexOf(q) !== -1;
+  }) : scans;
+
+  var dateKey   = psPickSummaryDate || psTodayKey();
+  var dateLabel = _psFmtPickSummaryDateLabel(dateKey).replace('Picked<br>', '').replace(/<br>/g, ' ');
+  var ups  = scans.filter(function(s){ return s.carrier === 'UPS'; }).length;
+  var usps = scans.filter(function(s){ return s.carrier === 'USPS'; }).length;
+  var subParts = [scans.length + ' pick' + (scans.length !== 1 ? 's' : '')];
+  if (ups)  subParts.push(ups + ' UPS');
+  if (usps) subParts.push(usps + ' USPS');
+  document.getElementById('ps-pick-person-modal-sub').textContent = subParts.join(' · ') + ' — ' + dateLabel;
+
+  var body = document.getElementById('ps-pick-person-modal-body');
+  if (!items.length) {
+    body.innerHTML = '<div class="ps-person-modal-empty">' + (q ? 'No picks matching "' + q + '"' : 'No picks') + '</div>';
+    return;
+  }
+  body.innerHTML = items.map(function(s) {
+    return '<div class="ps-card"><div class="ps-card-row">'
+      +   '<div class="ps-card-dot green"></div>'
+      +   '<div class="ps-card-tracking">' + s.tracking + '</div>'
+      +   '<div class="ps-card-meta">' + _psCarrierBadge(s.carrier) + _psItemWeightBadges(s) + '</div>'
+      +   '<div class="ps-card-time">' + psFmtTime(s.timestamp) + '</div>'
+      + '</div></div>';
+  }).join('');
+}
+
+function _psRenderPickSummary() {
+  if (psPickSummaryDate && psPickSummaryDate !== psTodayKey()) return;
+  _psPaintPickSummary(psTodayPicks, 'Picked<br>Today');
+}
+
+function _psFmtPickSummaryDateLabel(dateKey) {
+  if (dateKey === psTodayKey())            return 'Picked<br>Today';
+  if (dateKey === _psDateKeyOffset(-1))     return 'Picked<br>Yesterday';
+  var p = dateKey.split('-');
+  var d = new Date(Date.UTC(+p[0], +p[1]-1, +p[2]));
+  return 'Picked<br>' + d.toLocaleDateString('en-US', { month:'short', day:'numeric', timeZone:'UTC' });
+}
+
+window.psPickSummaryDateChange = async function() {
+  var inp = document.getElementById('ps-pick-summary-date');
+  if (!inp || !inp.value) return;
+  var dateKey = inp.value;
+  psPickSummaryDate = dateKey;
+
+  if (dateKey === psTodayKey()) {
+    _psPaintPickSummary(psTodayPicks, 'Picked<br>Today');
+    return;
+  }
+
+  var byEl = document.getElementById('ps-pick-summary-by');
+  document.getElementById('ps-pick-summary-total-label').innerHTML = _psFmtPickSummaryDateLabel(dateKey);
+  byEl.innerHTML = '<div class="ps-scan-summary-empty">Loading…</div>';
+  try {
+    var res  = await fetch(PS_WORKER + '/ship/picks?date=' + dateKey, { headers: { 'X-Cred-Token': psCredToken } });
+    var data = await res.json();
+    if (psPickSummaryDate !== dateKey) return; // user already picked another date
+    _psPaintPickSummary(data.picks || [], _psFmtPickSummaryDateLabel(dateKey));
+  } catch(e) {
+    if (psPickSummaryDate !== dateKey) return;
+    byEl.innerHTML = '<div class="ps-scan-summary-empty">Couldn\'t load that date</div>';
+  }
+};
+
+window.psRenderPickList = function() {
+  var list = document.getElementById('ps-pick-list');
+  document.getElementById('ps-pick-cnt-label').textContent = psTodayPicks.length + ' pick' + (psTodayPicks.length !== 1 ? 's' : '');
+  _psRenderPickSummary();
+  var items = psPickFilter === 'all' ? psTodayPicks.slice() : psTodayPicks.filter(function(s){ return s.carrier === psPickFilter; });
+  items.sort(function(a,b){ return new Date(b.timestamp) - new Date(a.timestamp); });
+  if (!items.length) {
+    list.innerHTML = '<div class="ps-empty-state"><div class="ps-empty-icon">📭</div><div class="ps-empty-title">No picks yet' + (psPickFilter !== 'all' ? ' for ' + psPickFilter : '') + '</div><div class="ps-empty-sub">Each pick saves instantly.</div></div>';
+    return;
+  }
+  list.innerHTML = items.slice(0,150).map(function(s){
+    return '<div class="ps-card"><div class="ps-card-row"><div class="ps-card-dot green"></div><div class="ps-card-tracking">' + s.tracking + '</div><div class="ps-card-meta">' + _psCarrierBadge(s.carrier) + '<span class="ps-badge ps-badge-gray">' + (s.initials||'—') + '</span>' + _psItemWeightBadges(s) + '</div><div class="ps-card-time">' + psFmtTime(s.timestamp) + '</div></div></div>';
+  }).join('');
+  if (items.length > 150) list.innerHTML += '<div style="text-align:center;padding:12px;font-size:12px;color:var(--text3)">Showing 150 of ' + items.length + '</div>';
 };
 
 // ── Switch Packer ─────────────────────────────────────────────────────────────
