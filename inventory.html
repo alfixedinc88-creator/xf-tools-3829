@@ -299,6 +299,9 @@ window.invCredLogin = async function() {
       <div style="font-size:11px;color:var(--text3)" id="inv-stockout-toggle-txt">Show</div>
     </div>
     <div id="inv-stockout-list" style="display:none;margin-top:10px"></div>
+    <div id="inv-stockout-resolveall-wrap" style="display:none;margin-top:8px">
+      <button id="inv-stockout-resolveall-btn" onclick="event.stopPropagation();invStockoutResolveAll()" style="width:100%;padding:9px;border:1px solid var(--border);border-radius:7px;background:var(--bg);color:var(--text2);font-weight:700;font-size:12px;cursor:pointer">Resolve All</button>
+    </div>
   </div>
   <div class="icard">
     <div class="icard-label">Scan or Search</div>
@@ -2183,6 +2186,11 @@ window.invCredLogin = async function() {
   function invRenderStockoutList() {
     var wrap = g("inv-stockout-list");
     if (!wrap) return;
+    // "Resolve All" only makes sense while the list is actually open and
+    // there's something in it — hidden the rest of the time so it can't be
+    // tapped by accident from a collapsed card.
+    var raWrap = g("inv-stockout-resolveall-wrap");
+    if (raWrap) raWrap.style.display = (_invStockoutListShown && _invStockoutOpenList.length) ? 'block' : 'none';
     if (!_invStockoutOpenList.length) {
       wrap.innerHTML = '<div style="font-size:12px;color:var(--text3);padding:6px 0">Nothing reported out of stock right now.</div>';
       return;
@@ -2233,6 +2241,9 @@ window.invCredLogin = async function() {
     if (_invStockoutListShown) {
       invSetMode('out'); // opening the reports list means you're about to go pull stock — land in Stock Out mode automatically
       invRenderStockoutList();
+    } else {
+      var raWrap = g("inv-stockout-resolveall-wrap");
+      if (raWrap) raWrap.style.display = 'none';
     }
   };
 
@@ -2304,6 +2315,42 @@ window.invCredLogin = async function() {
         if (btnEl) { btnEl.disabled = false; btnEl.textContent = 'Resolved'; }
         invFlash('Could not resolve — ' + e.message, 'error');
       });
+  };
+
+  // Resolves every currently-open report in one tap instead of clicking
+  // "Resolved" on each one individually. Reuses the same single-item
+  // /inventory/stockout-resolve endpoint (there's no separate batch route
+  // on the backend), firing one request per report at once and clearing
+  // the whole list once they've all come back — same batching pattern as
+  // Pack & Ship's "Report Selected as Out of Stock" on the Picking tab.
+  window.invStockoutResolveAll = function() {
+    var open = _invStockoutOpenList.slice();
+    if (!open.length) return;
+    if (!confirm('Resolve all ' + open.length + ' open report' + (open.length !== 1 ? 's' : '') + '?')) return;
+    var raBtn = g("inv-stockout-resolveall-btn");
+    if (raBtn) { raBtn.disabled = true; raBtn.textContent = 'Resolving…'; }
+    var resolvedBy = (INV_CRED_USER && INV_CRED_USER.displayName) || 'OPS';
+    Promise.all(open.map(function(s) {
+      return wFetch(W + '/inventory/stockout-resolve', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ id: s.id, resolvedBy: resolvedBy })
+      }).then(function(r) { return r.json(); }).then(function(d) {
+        return { id: s.id, ok: !!(d && d.ok) };
+      }).catch(function() { return { id: s.id, ok: false }; });
+    })).then(function(results) {
+      var resolvedIds = {};
+      results.forEach(function(r) { if (r.ok) resolvedIds[r.id] = true; });
+      var failedCount = results.length - Object.keys(resolvedIds).length;
+      _invStockoutOpenList = _invStockoutOpenList.filter(function(s) { return !resolvedIds[s.id]; });
+      var b = g("inv-stockout-badge");
+      if (b) { var n = _invStockoutOpenList.length; b.textContent = n; b.style.display = n > 0 ? "inline-flex" : "none"; }
+      if (raBtn) { raBtn.disabled = false; raBtn.textContent = 'Resolve All'; }
+      invRenderStockoutList();
+      if (failedCount > 0) {
+        invFlash(failedCount + ' report' + (failedCount !== 1 ? 's' : '') + ' could not be resolved — try again', 'error');
+      }
+    });
   };
 
   window.invMgmtStepUp = async function() {
