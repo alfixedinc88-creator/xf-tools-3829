@@ -2193,17 +2193,39 @@ window.invCredLogin = async function() {
 
   // Tapping a reported entry (now headlined by bin location, see above)
   // runs the exact same lookup as typing the SKU into "Scan or Search" and
-  // pressing Go — reuses invLookup directly rather than building a separate
-  // detail view, so bin location/stock all come from the app's one normal
-  // Scan flow. Lookup is still done BY SKU regardless of what's displayed —
-  // bin location isn't a searchable code on its own.
+  // pressing Go. Switched from a SKU lookup to a LOCATION search — the
+  // headline is now the bin location (see invRenderStockoutList above), so
+  // tapping it should search by that same bin location, same as scanning
+  // a shelf barcode in Location mode: split "PREFIX=SHELF" the same way
+  // the camera scanner does (invLocScanToggleCam above) so the prefix
+  // dropdown and shelf field both land populated and visible, not just the
+  // search silently running underneath.
   window.invStockoutGo = function(idx) {
     var s = _invStockoutOpenList[idx];
-    if (!s || !s.sku) return;
-    invSetScanMode('code');
-    var inp = g('inv-search-inp');
-    if (inp) inp.value = s.sku;
-    invLookup(s.sku);
+    if (!s) return;
+    var loc = (s.binLocation || '').trim();
+    if (!loc) {
+      // No bin location on this report at all — nothing to search by
+      // location, fall back to the old SKU lookup so this still does
+      // something useful instead of silently no-op'ing.
+      if (!s.sku) return;
+      invSetScanMode('code');
+      var inp = g('inv-search-inp');
+      if (inp) inp.value = s.sku;
+      invLookup(s.sku);
+    } else {
+      invSetScanMode('loc');
+      var pfxEl = g('inv-loc-scan-prefix'), shfEl = g('inv-loc-scan-shelf');
+      var eqIdx = loc.indexOf('=');
+      if (eqIdx > 0) {
+        if (pfxEl) pfxEl.value = loc.slice(0, eqIdx + 1);
+        if (shfEl) shfEl.value = loc.slice(eqIdx + 1);
+      } else {
+        if (pfxEl) pfxEl.value = '';
+        if (shfEl) shfEl.value = loc;
+      }
+      invLocScanSearch();
+    }
     _invStockoutListShown = false;
     var wrap = g("inv-stockout-list");
     var txt  = g("inv-stockout-toggle-txt");
