@@ -813,6 +813,26 @@ body {
   </div>
 </div>
 
+<!-- Per-print-station-person detail modal — opened by clicking a name chip
+     in the Print Log tab's "Find person" summary bar. Separate from the
+     Scan tab's person modal since the fields shown differ (tracking +
+     carrier + time only — no item/weight badges, no batch-closed state). -->
+<div id="ps-pl-person-modal-overlay" class="ps-person-modal-overlay" onclick="if(event.target===this) psPlClosePersonDetail()">
+  <div class="ps-person-modal">
+    <div class="ps-person-modal-header">
+      <div>
+        <div class="ps-person-modal-title" id="ps-pl-person-modal-title">—</div>
+        <div class="ps-person-modal-sub" id="ps-pl-person-modal-sub"></div>
+      </div>
+      <button class="ps-person-modal-close" onclick="psPlClosePersonDetail()">✕</button>
+    </div>
+    <div class="ps-person-modal-search">
+      <input type="text" class="ps-search-input" id="ps-pl-person-modal-search" placeholder="Search tracking, carrier…" oninput="_psPlRenderPersonModalList()" style="padding-left:14px">
+    </div>
+    <div class="ps-person-modal-body" id="ps-pl-person-modal-body"></div>
+  </div>
+</div>
+
 <!-- Top bar -->
 <div class="ps-topbar">
   <div class="ps-topbar-left">
@@ -1394,9 +1414,6 @@ body {
 
   <!-- ── Print Log Panel ── -->
   <div class="ps-panel" id="ps-panel-printlog">
-    <div class="ps-info-box">
-      🖨️ <strong>Print Station Log.</strong> The DS9308 fixed-mount scanner at the Zebra printer logs each label automatically as it prints. Keep this tab open on the print station computer.
-    </div>
     <!-- Printing-as name — shared across every open Pack & Ship tab/device
          (not just this browser), so whoever sets it here shows up everywhere
          else within the existing ~30s print-log refresh, no page reload
@@ -1435,6 +1452,29 @@ body {
       <div class="ps-stat-card"><div class="ps-stat-num" id="ps-pl-ups-count">0</div><div class="ps-stat-label">UPS</div></div>
       <div class="ps-stat-card"><div class="ps-stat-num" id="ps-pl-usps-count">0</div><div class="ps-stat-label">USPS</div></div>
     </div>
+
+    <!-- Who printed how many, UPS/USPS split, for whatever date is picked —
+         same "Find person" + "Check a date" pattern as the Scan tab's
+         summary bar (reuses the same CSS classes). The 3 stat cards above
+         are always today, same as the Scan tab's Printed/Not-Printed tiles;
+         this section is the date-aware, searchable one. Defaults to today,
+         backed by whatever psPlScans already has loaded. -->
+    <div class="ps-scan-summary" id="ps-pl-summary" style="margin-top:14px">
+      <div class="ps-scan-summary-total">
+        <div class="ps-scan-summary-total-val" id="ps-pl-summary-total-val">0</div>
+        <div class="ps-scan-summary-total-label" id="ps-pl-summary-total-label">Printed<br>Today</div>
+      </div>
+      <div class="ps-scan-summary-by" id="ps-pl-summary-by"></div>
+      <div class="ps-scan-summary-namewrap">
+        <label class="ps-scan-summary-namewrap-label" for="ps-pl-summary-namefilter">Find person</label>
+        <input type="text" class="ps-scan-summary-name-input" id="ps-pl-summary-namefilter" placeholder="Name…" oninput="_psPlRenderPersonChips()">
+      </div>
+      <div class="ps-scan-summary-datewrap">
+        <label class="ps-scan-summary-date-label" for="ps-pl-summary-date">Check a date</label>
+        <input type="date" class="ps-scan-summary-date-input" id="ps-pl-summary-date" onchange="psPlSummaryDateChange()">
+      </div>
+    </div>
+
     <div class="ps-filter-row" style="margin-top:12px">
       <button class="ps-filter-btn active" id="ps-pl-filter-all" onclick="psPrintLogFilter('all',this)">All</button>
       <button class="ps-filter-btn" onclick="psPrintLogFilter('UPS',this)">UPS</button>
@@ -2269,6 +2309,7 @@ function psPlRenderList() {
   if (cnt)  cnt.textContent  = psPlScans.length;
   if (upc)  upc.textContent  = ups;
   if (uspc) uspc.textContent = usps;
+  _psPlRenderSummary();
   var list   = document.getElementById('ps-printlog-list');
   if (!list) return;
   var items  = psPlFilter === 'all' ? psPlScans : psPlScans.filter(function(s){ return s.carrier === psPlFilter; });
@@ -2287,6 +2328,167 @@ function psPlRenderList() {
       + '</div></div></div>';
   }).join('');
 }
+
+// ── Print Log "Find person" / "Check a date" summary ────────────────────
+// Same pattern as the Scan tab's ps-scan-summary bar: a per-person total
+// with a UPS/USPS split, searchable by name, and switchable to a past date.
+// psPlSummaryDate tracks which date is on screen — null/today means it
+// follows the live psPlScans feed (repainted every time psPlRenderList()
+// runs); anything else is a one-off fetch for that date that the live
+// refresh must not overwrite.
+var psPlSummaryDate     = null;
+var _psPlSummaryScans   = [];
+var _psPlSummaryByUser  = {};
+var _psPlPersonModalName = null;
+
+function _psPlPaintSummary(scans, labelHtml) {
+  var wrap = document.getElementById('ps-pl-summary');
+  if (!wrap) return;
+  document.getElementById('ps-pl-summary-total-label').innerHTML = labelHtml;
+  document.getElementById('ps-pl-summary-total-val').textContent = scans.length;
+  _psPlSummaryScans = scans;
+
+  var byUser = {};
+  scans.forEach(function(s) {
+    var who = s.operatorName || 'Unassigned';
+    if (!byUser[who]) byUser[who] = { total:0, ups:0, usps:0, other:0 };
+    byUser[who].total++;
+    if (s.carrier === 'UPS') byUser[who].ups++;
+    else if (s.carrier === 'USPS') byUser[who].usps++;
+    else byUser[who].other++;
+  });
+  _psPlSummaryByUser = byUser;
+  _psPlRenderPersonChips();
+
+  if (_psPlPersonModalName) _psPlRenderPersonModalList();
+}
+
+function _psPlRenderPersonChips() {
+  var byEl = document.getElementById('ps-pl-summary-by');
+  if (!byEl) return;
+  var byUser   = _psPlSummaryByUser;
+  var allNames = Object.keys(byUser).sort(function(a, b) { return byUser[b].total - byUser[a].total; });
+  if (!allNames.length) {
+    byEl.innerHTML = '<div class="ps-scan-summary-empty">No prints that day</div>';
+    return;
+  }
+  var filterInp = document.getElementById('ps-pl-summary-namefilter');
+  var q = (filterInp && filterInp.value || '').trim().toLowerCase();
+  var names = q ? allNames.filter(function(n){ return n.toLowerCase().indexOf(q) !== -1; }) : allNames;
+  if (!names.length) {
+    byEl.innerHTML = '<div class="ps-scan-summary-empty">No one matching "' + q + '"</div>';
+    return;
+  }
+  byEl.innerHTML = names.map(function(n) {
+    var u = byUser[n];
+    var parts = [];
+    if (u.ups)   parts.push('<span class="ps-scan-summary-chip-ups">' + u.ups + ' UPS</span>');
+    if (u.usps)  parts.push('<span class="ps-scan-summary-chip-usps">' + u.usps + ' USPS</span>');
+    if (u.other) parts.push('<span class="ps-scan-summary-chip-other">' + u.other + ' other</span>');
+    return '<div class="ps-scan-summary-chip" data-person="' + n.replace(/"/g,'&quot;') + '" role="button" tabindex="0">'
+      +   '<div class="ps-scan-summary-chip-info">'
+      +     '<span class="ps-scan-summary-chip-name">' + n + '</span>'
+      +     '<span class="ps-scan-summary-chip-split">' + parts.join(' · ') + '</span>'
+      +   '</div>'
+      +   '<span class="ps-scan-summary-chip-count">' + u.total + '</span>'
+      + '</div>';
+  }).join('');
+}
+
+// ── Per-person print-history detail modal ────────────────────────────────
+window.psPlShowPersonDetail = function(name) {
+  _psPlPersonModalName = name;
+  var searchInp = document.getElementById('ps-pl-person-modal-search');
+  if (searchInp) searchInp.value = '';
+  document.getElementById('ps-pl-person-modal-title').textContent = name;
+  _psPlRenderPersonModalList();
+  document.getElementById('ps-pl-person-modal-overlay').style.display = 'flex';
+};
+
+window.psPlClosePersonDetail = function() {
+  document.getElementById('ps-pl-person-modal-overlay').style.display = 'none';
+  _psPlPersonModalName = null;
+};
+
+function _psPlRenderPersonModalList() {
+  if (!_psPlPersonModalName) return;
+  var scans = _psPlSummaryScans.filter(function(s) {
+    return (s.operatorName || 'Unassigned') === _psPlPersonModalName;
+  });
+  scans.sort(function(a,b){ return new Date(b.timestamp) - new Date(a.timestamp); }); // newest first
+
+  var searchInp = document.getElementById('ps-pl-person-modal-search');
+  var q = (searchInp && searchInp.value || '').trim().toLowerCase();
+  var items = q ? scans.filter(function(s) {
+    return (s.tracking||'').toLowerCase().indexOf(q) !== -1 || (s.carrier||'').toLowerCase().indexOf(q) !== -1;
+  }) : scans;
+
+  var dateKey   = psPlSummaryDate || psTodayKey();
+  var dateLabel = _psFmtPlSummaryDateLabel(dateKey).replace('Printed<br>', '').replace(/<br>/g, ' ');
+  var ups  = scans.filter(function(s){ return s.carrier === 'UPS'; }).length;
+  var usps = scans.filter(function(s){ return s.carrier === 'USPS'; }).length;
+  var subParts = [scans.length + ' print' + (scans.length !== 1 ? 's' : '')];
+  if (ups)  subParts.push(ups + ' UPS');
+  if (usps) subParts.push(usps + ' USPS');
+  document.getElementById('ps-pl-person-modal-sub').textContent = subParts.join(' · ') + ' — ' + dateLabel;
+
+  var body = document.getElementById('ps-pl-person-modal-body');
+  if (!items.length) {
+    body.innerHTML = '<div class="ps-person-modal-empty">' + (q ? 'No prints matching "' + q + '"' : 'No prints') + '</div>';
+    return;
+  }
+  body.innerHTML = items.map(function(s) {
+    var cls = s.carrier === 'UPS' ? 'ps-badge-ups' : 'ps-badge-usps';
+    return '<div class="ps-card"><div class="ps-card-row">'
+      +   '<div class="ps-card-dot green"></div>'
+      +   '<div class="ps-card-tracking">' + s.tracking + '</div>'
+      +   '<div class="ps-card-meta"><span class="ps-badge ' + cls + '">' + s.carrier + '</span></div>'
+      +   '<div class="ps-card-time">' + psFmtTime(s.timestamp) + '</div>'
+      + '</div></div>';
+  }).join('');
+}
+
+// Only repaints from the live today-feed when the picker is actually
+// sitting on today — otherwise a background refresh would silently yank
+// the user back off whatever past date they picked to check.
+function _psPlRenderSummary() {
+  if (psPlSummaryDate && psPlSummaryDate !== psTodayKey()) return;
+  _psPlPaintSummary(psPlScans, 'Printed<br>Today');
+}
+
+function _psFmtPlSummaryDateLabel(dateKey) {
+  if (dateKey === psTodayKey())        return 'Printed<br>Today';
+  if (dateKey === _psDateKeyOffset(-1)) return 'Printed<br>Yesterday';
+  var p = dateKey.split('-');
+  var d = new Date(Date.UTC(+p[0], +p[1]-1, +p[2]));
+  return 'Printed<br>' + d.toLocaleDateString('en-US', { month:'short', day:'numeric', timeZone:'UTC' });
+}
+
+// Fires when someone picks a date in the Print Log summary bar.
+window.psPlSummaryDateChange = async function() {
+  var inp = document.getElementById('ps-pl-summary-date');
+  if (!inp || !inp.value) return;
+  var dateKey = inp.value; // native date input already gives YYYY-MM-DD
+  psPlSummaryDate = dateKey;
+
+  if (dateKey === psTodayKey()) {
+    _psPlPaintSummary(psPlScans, 'Printed<br>Today');
+    return;
+  }
+
+  var byEl = document.getElementById('ps-pl-summary-by');
+  document.getElementById('ps-pl-summary-total-label').innerHTML = _psFmtPlSummaryDateLabel(dateKey);
+  byEl.innerHTML = '<div class="ps-scan-summary-empty">Loading…</div>';
+  try {
+    var res  = await fetch(PS_WORKER + '/ship/print-log?date=' + dateKey, { headers: { 'X-Cred-Token': psCredToken } });
+    var data = await res.json();
+    if (psPlSummaryDate !== dateKey) return; // user already picked another date
+    _psPlPaintSummary(data.scans || [], _psFmtPlSummaryDateLabel(dateKey));
+  } catch(e) {
+    if (psPlSummaryDate !== dateKey) return;
+    byEl.innerHTML = '<div class="ps-scan-summary-empty">Couldn\'t load that date</div>';
+  }
+};
 
 // ── Print station "printing as" name ─────────────────────────────────────
 // A single shared value on the backend (not per-browser), read/written by
@@ -3264,6 +3466,16 @@ function _psWireEvents() {
     });
   }
 
+  // Same delegated-click pattern for the Print Log tab's own person-summary
+  // chips (separate element, separate modal — see psPlShowPersonDetail).
+  var plSummaryByEl = document.getElementById('ps-pl-summary-by');
+  if (plSummaryByEl) {
+    plSummaryByEl.addEventListener('click', function(e){
+      var chip = e.target.closest('.ps-scan-summary-chip');
+      if (chip && chip.dataset.person) psPlShowPersonDetail(chip.dataset.person);
+    });
+  }
+
   // Tracking → order detail modal: same delegated-click pattern, on both
   // "Today's Scans" and the per-person modal's own scan list — survives
   // psRenderScanList()/_psRenderPersonModalList() rebuilding those lists
@@ -3291,8 +3503,9 @@ function _psWireEvents() {
     // Close whichever modal is on top first — if the tracking modal was
     // opened from inside the person modal, one Escape should reveal the
     // person modal again, not close both at once.
-    if (_psTrackingModalOpen) { psCloseTrackingDetail(); return; }
-    if (_psPersonModalName)   psClosePersonDetail();
+    if (_psTrackingModalOpen)   { psCloseTrackingDetail(); return; }
+    if (_psPersonModalName)     psClosePersonDetail();
+    if (_psPlPersonModalName)   psPlClosePersonDetail();
   });
 
   document.getElementById('ps-lookup-input').addEventListener('keydown', function(e){ if (e.key === 'Enter') psDoLookup(); });
