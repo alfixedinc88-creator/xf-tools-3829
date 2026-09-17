@@ -1433,6 +1433,21 @@ body {
           <div id="ps-vsync-tracking-result" style="font-size:12px;color:var(--text2);font-family:var(--mono)"></div>
         </div>
       </div>
+      <!-- Backfill weight card — one-time catch-up for orders that were
+           already scanned/picked before the real Veeqo weight was being
+           captured. Rescanning them does nothing (a duplicate scan/pick
+           returns instantly and never re-checks Veeqo), so this looks each
+           one up directly instead. -->
+      <div class="ps-card" style="margin-top:12px">
+        <div style="font-size:13px;font-weight:700;color:var(--text);margin-bottom:4px">Backfill Real Weight</div>
+        <div style="font-size:12px;color:var(--text2);margin-bottom:14px;line-height:1.5">
+          Fills in the real Veeqo shipment weight for today's orders that don't have it yet (scanned/picked before this feature existed). Rescanning won't do this — a duplicate scan is rejected before it ever checks Veeqo — so use this button instead. Processes up to 50 at a time; click again if it says more are left.
+        </div>
+        <div style="display:flex;gap:10px;flex-wrap:wrap;align-items:center">
+          <button class="ps-btn-primary" style="width:auto;padding:10px 22px" id="ps-vsync-weight-btn" onclick="psVeeqoBackfillWeight()">⚖️ Backfill Today's Weight</button>
+          <div id="ps-vsync-weight-result" style="font-size:12px;color:var(--text2);font-family:var(--mono)"></div>
+        </div>
+      </div>
       <!-- Archive card -->
       <div class="ps-card" style="margin-top:12px;border-color:var(--orange)">
         <div style="display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:4px">
@@ -4564,6 +4579,38 @@ window.psVeeqoSyncManifest = async function() {
     _psToast('Sync error: ' + e.message, 'error');
   } finally {
     btn.disabled = false; btn.textContent = '🔄 Sync from Veeqo';
+  }
+};
+
+window.psVeeqoBackfillWeight = async function() {
+  var btn = document.getElementById('ps-vsync-weight-btn');
+  var out = document.getElementById('ps-vsync-weight-result');
+  if (!psCredToken) { _psToast('Management session required', 'error'); return; }
+  btn.disabled = true; btn.textContent = '⏳ Checking Veeqo…'; out.textContent = '';
+  try {
+    var r    = await fetch(PS_WORKER + '/veeqo/backfill-weight', {
+      method: 'POST',
+      headers: { 'X-Cred-Token': psCredToken, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ date: psTodayKey() }),
+    });
+    var data = await r.json();
+    if (data.ok) {
+      var bits = [data.updated + ' updated'];
+      if (data.notFoundInVeeqo) bits.push(data.notFoundInVeeqo + ' not found in Veeqo');
+      if (data.veeqoHadNoWeight) bits.push(data.veeqoHadNoWeight + ' had no weight in Veeqo');
+      var msg = '✓ Checked ' + data.checked + ' · ' + bits.join(' · ') + (data.remaining ? ' · more left, click again' : '');
+      out.textContent = msg;
+      _psToast(data.updated + ' order' + (data.updated !== 1 ? 's' : '') + ' backfilled with real weight');
+      psLoadScans(); psLoadPicks(); // refresh so the new weight shows up right away
+    } else {
+      out.textContent = '✗ ' + (data.error || 'Backfill failed');
+      _psToast('Backfill error: ' + (data.error || 'Unknown'), 'error');
+    }
+  } catch (e) {
+    out.textContent = '✗ ' + e.message;
+    _psToast('Backfill error: ' + e.message, 'error');
+  } finally {
+    btn.disabled = false; btn.textContent = '⚖️ Backfill Today\'s Weight';
   }
 };
 
