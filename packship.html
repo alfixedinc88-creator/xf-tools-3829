@@ -1989,9 +1989,9 @@ function _psScanProductCardHtml(li, ctx) {
   var imgHtml = li.i
     ? '<img class="ps-scan-product-img" src="' + li.i + '" onerror="psScanImgFallback(this)">'
     : '<div class="ps-scan-product-img-placeholder">📦</div>';
-  var binHtml = bin
-    ? '<div><div class="ps-scan-product-stat-label">Bin</div><div class="ps-scan-product-stat-val">' + bin + '</div></div>'
-    : '';
+  // Bin location intentionally not shown here — this card only surfaces
+  // SKU / Qty / Total Qty. `bin` is still captured above (not displayed)
+  // because the "No Stock" stockout-report context below still records it.
   var noStockHtml = '';
   if (ctx && ctx.showNoStock) {
     var idx = window._psPickStockoutCtx.push({ tracking: ctx.tracking, orderNum: ctx.orderNum || '', sku: li.s || '', bin: bin }) - 1;
@@ -2004,7 +2004,6 @@ function _psScanProductCardHtml(li, ctx) {
     +   '<div class="ps-scan-product-meta">'
     +     '<div><div class="ps-scan-product-stat-label">Qty</div><div class="ps-scan-product-stat-val">' + qty + '</div></div>'
     +     '<div><div class="ps-scan-product-stat-label">Total Qty</div><div class="ps-scan-product-stat-val total">' + total + '</div></div>'
-    +     binHtml
     +   '</div>'
     +   noStockHtml
     + '</div>'
