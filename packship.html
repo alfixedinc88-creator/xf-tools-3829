@@ -4147,7 +4147,11 @@ async function _psLoadPickProduct(tracking, showNoStock) {
 window.psReportNoStock = function(idx, btnEl) {
   var ctx = window._psPickStockoutCtx[idx];
   if (!ctx) return;
-  if (!confirm('Report ' + ctx.sku + ' as out of stock?\n\nThis order will be removed from your picked list and go back to the queue for someone to pick once it\'s restocked.')) return;
+  // Identify the item by bin location, not SKU — that's what the picker
+  // actually recognizes standing at the shelf. Falls back to SKU only if
+  // this item genuinely has no bin location on file.
+  var label = ctx.bin || ctx.sku;
+  if (!confirm('Report ' + label + ' as out of stock?\n\nThis order will be removed from your picked list and go back to the queue for someone to pick once it\'s restocked.')) return;
   if (btnEl) { btnEl.disabled = true; btnEl.textContent = 'Reporting…'; }
   fetch(PS_WORKER + '/ship/stockout', {
     method: 'POST',
@@ -4161,7 +4165,7 @@ window.psReportNoStock = function(idx, btnEl) {
     psRenderPickList();
     var wrap = document.getElementById('ps-pick-product-wrap');
     if (wrap) wrap.style.display = 'none';
-    _psToast(ctx.sku + ' reported out of stock — order sent back to the picking queue');
+    _psToast(label + ' reported out of stock — order sent back to the picking queue');
   }).catch(function(e) {
     if (btnEl) { btnEl.disabled = false; btnEl.textContent = '⚠ No Stock'; }
     _psToast('Report failed — ' + e.message, 'err');
