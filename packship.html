@@ -2226,8 +2226,12 @@ window.psFocusPrintLog = function() {
 
 // Auto-refocus every 2s when on printlog tab
 // Same reasoning as PS_SCAN_TYPING_FIELDS on the Scan tab — the "Your name"
-// field here needs real typing too, so the refocus loop must leave it alone.
-var PS_PRINTLOG_TYPING_FIELDS = ['ps-pl-operator-input'];
+// field, plus the later-added "Find person" and "Check a date" search
+// fields, all need real typing too, so the refocus loop must leave them
+// alone. (The search fields were added after this list, in the round that
+// built the Find Person / Check a Date bar, and got missed here at the
+// time — that's the "jumps back to waiting for print scanner" bug.)
+var PS_PRINTLOG_TYPING_FIELDS = ['ps-pl-operator-input', 'ps-pl-summary-namefilter', 'ps-pl-summary-date'];
 function psPlStartRefocus() {
   if (psPlRefocusInterval) return;
   psPlRefocusInterval = setInterval(function() {
