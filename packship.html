@@ -946,6 +946,7 @@ body {
     <div class="ps-section-header" style="margin-top:4px">
       <div class="ps-section-title">Today's Picks</div>
       <div class="ps-section-cnt" id="ps-pick-cnt-label">0 picks</div>
+      <span onclick="psShowDebug('pick')" style="cursor:pointer;text-decoration:underline;font-size:11px;color:var(--text3);margin-left:10px">debug</span>
     </div>
     <div class="ps-filter-row">
       <button class="ps-filter-btn active" onclick="psFilterPicks('all',this)">All</button>
@@ -1026,6 +1027,7 @@ body {
     <div class="ps-section-header" style="margin-top:4px">
       <div class="ps-section-title">Today's Scans</div>
       <div class="ps-section-cnt" id="ps-scan-cnt-label">0 scans</div>
+      <span onclick="psShowDebug('scan')" style="cursor:pointer;text-decoration:underline;font-size:11px;color:var(--text3);margin-left:10px">debug</span>
     </div>
     <div class="ps-filter-row">
       <button class="ps-filter-btn active" onclick="psFilterScans('all',this)">All</button>
@@ -3448,6 +3450,23 @@ function _psItemWeightBadges(s) {
   var weightBadge = (s.weightLb   != null) ? '<span class="ps-badge ps-badge-gray">' + s.weightLb + ' lb</span>' : '';
   return itemsBadge + weightBadge;
 }
+
+// Temporary self-check: shows exactly what the server sent back for the
+// first few rows of today's scans/picks, so we can tell from a screenshot
+// whether itemCount/weightLb are missing because the backend never sent
+// them (data problem) or because something in the badge rendering is
+// dropping them (display problem) — no dev tools needed.
+window.psShowDebug = function(kind) {
+  var list = kind === 'pick' ? psTodayPicks : psTodayScans;
+  if (!list || !list.length) { alert('No ' + kind + 's loaded for today yet — scan/pick something first, or pick a date above.'); return; }
+  var sample = list.slice(0, 3).map(function(s) {
+    return {
+      tracking: s.tracking, itemCount: s.itemCount, weightLb: s.weightLb,
+      weightSource: s.weightSource, carrier: s.carrier, orderNum: s.orderNum,
+    };
+  });
+  alert('First ' + sample.length + ' of ' + list.length + ' ' + kind + '(s) today:\n\n' + JSON.stringify(sample, null, 2));
+};
 
 
 
