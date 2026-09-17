@@ -1735,7 +1735,9 @@ function _psProcessScan(raw) {
   _psShowLastScan({ icon:'✅', cls:'ok', tracking: tracking, meta: carrier + ' · Saving to sheet…' });
   psRenderScanList();
   _psUpdateBatchBar();
-  _psLoadScanProduct(tracking);
+  // Just shows the "Loading product info…" placeholder — does NOT fire the
+  // order-lookup fetch here anymore. See the big comment below on why.
+  _psShowScanProductLoading(tracking);
   inp.focus();
 
   fetch(PS_WORKER + '/ship/scan', {
@@ -1750,6 +1752,26 @@ function _psProcessScan(raw) {
         if (typeof psDupeShowAlert === 'function') psDupeShowAlert(tracking, data.scannedAt, data.initials || '', data.carrier || '');
       }
       return;
+    }
+    // FIX for "scan a label, order info doesn't show, have to rescan and
+    // then it shows": this used to fire _psLoadScanProduct(tracking) (a
+    // separate GET /ship/order-lookup) at the same moment as this POST,
+    // instead of waiting for it. order-lookup only reads our own manifest
+    // mirror table, which the backend doesn't finish writing to until AFTER
+    // this same POST's own Veeqo round-trip completes — so that parallel
+    // lookup almost always lost the race and came back empty on the very
+    // first scan. A rescan "worked" purely because enough time had passed
+    // by then for the first scan's backend work to finish.
+    // Fix: the /ship/scan response above now already carries the line items
+    // it just fetched from Veeqo, so use those directly — no second
+    // request, no race. Only fall back to the order-lookup fetch if this
+    // came back null, which means Veeqo genuinely doesn't have a match yet
+    // (order not marked shipped there yet, or VEEQO_API_KEY unset) — a real
+    // "not synced yet" case, not this timing bug.
+    if (data.lineItems) {
+      _psRenderScanProduct(tracking, data.lineItems);
+    } else {
+      _psLoadScanProduct(tracking);
     }
   }).catch(function(e) {
     _psShowLastScan({ icon:'❌', cls:'err', tracking: tracking, meta:'Sheet write failed — ' + e.message });
@@ -1799,7 +1821,10 @@ function _psScanProductCardHtml(li) {
     + '</div>';
 }
 
-async function _psLoadScanProduct(tracking) {
+// Just sets up the "Loading…" placeholder — no network call. Split out of
+// _psLoadScanProduct so a fresh scan can show this immediately without also
+// kicking off the order-lookup fetch that used to race the /ship/scan POST.
+function _psShowScanProductLoading(tracking) {
   var wrap   = document.getElementById('ps-scan-product-wrap');
   var trkEl  = document.getElementById('ps-scan-product-tracking');
   var itEl   = document.getElementById('ps-scan-product-items');
@@ -1807,29 +1832,50 @@ async function _psLoadScanProduct(tracking) {
   if (!wrap) return;
   wrap.style.display = 'block';
   if (moreEl) { moreEl.style.display = 'none'; moreEl.innerHTML = ''; }
-  trkEl.textContent = tracking;
-  itEl.innerHTML = '<div style="font-size:12px;color:var(--text3);">Loading product info…</div>';
+  if (trkEl) trkEl.textContent = tracking;
+  if (itEl)  itEl.innerHTML = '<div style="font-size:12px;color:var(--text3);">Loading product info…</div>';
+}
+
+// Renders line items we already have in hand — used both by the
+// order-lookup fetch below and directly by a fresh scan's own response
+// (see _psProcessScan), which is the race-free fast path.
+function _psRenderScanProduct(tracking, items) {
+  var trkEl  = document.getElementById('ps-scan-product-tracking');
+  var itEl   = document.getElementById('ps-scan-product-items');
+  var moreEl = document.getElementById('ps-scan-product-more');
+  if (!itEl) return;
+  if (trkEl) trkEl.textContent = tracking;
+  items = (items || []).slice(0, PS_SCAN_MAX_ITEMS);
+  if (!items.length) {
+    itEl.innerHTML = '<div style="font-size:12px;color:var(--text3);font-style:italic;">No item data for this order — run Veeqo Sync to populate order details.</div>';
+    if (moreEl) { moreEl.style.display = 'none'; moreEl.innerHTML = ''; }
+    return;
+  }
+  var cardsHtml = items.map(_psScanProductCardHtml);
+  itEl.innerHTML = cardsHtml.slice(0, PS_SCAN_TOP_ITEM_COUNT).join('');
+  var rest = cardsHtml.slice(PS_SCAN_TOP_ITEM_COUNT);
+  if (rest.length && moreEl) {
+    moreEl.innerHTML = rest.join('');
+    moreEl.style.display = 'grid';
+  } else if (moreEl) {
+    moreEl.style.display = 'none';
+    moreEl.innerHTML = '';
+  }
+}
+
+async function _psLoadScanProduct(tracking) {
+  _psShowScanProductLoading(tracking);
+  var itEl = document.getElementById('ps-scan-product-items');
   try {
     var r = await fetch(PS_WORKER + '/ship/order-lookup?q=' + encodeURIComponent(tracking) + '&days=7', {
       headers: { 'X-Cred-Token': psCredToken }
     });
     var d = await r.json();
-    if (!d.ok) { itEl.innerHTML = '<div style="font-size:12px;color:var(--red);">Lookup error: ' + (d.error || 'unknown') + '</div>'; return; }
+    if (!d.ok) { if (itEl) itEl.innerHTML = '<div style="font-size:12px;color:var(--red);">Lookup error: ' + (d.error || 'unknown') + '</div>'; return; }
     var order = (d.results || [])[0];
-    var items = ((order && order.lineItems) || []).slice(0, PS_SCAN_MAX_ITEMS);
-    if (!items.length) {
-      itEl.innerHTML = '<div style="font-size:12px;color:var(--text3);font-style:italic;">No item data for this order — run Veeqo Sync to populate order details.</div>';
-      return;
-    }
-    var cardsHtml = items.map(_psScanProductCardHtml);
-    itEl.innerHTML = cardsHtml.slice(0, PS_SCAN_TOP_ITEM_COUNT).join('');
-    var rest = cardsHtml.slice(PS_SCAN_TOP_ITEM_COUNT);
-    if (rest.length && moreEl) {
-      moreEl.innerHTML = rest.join('');
-      moreEl.style.display = 'grid';
-    }
+    _psRenderScanProduct(tracking, (order && order.lineItems) || []);
   } catch(e) {
-    itEl.innerHTML = '<div style="font-size:12px;color:var(--red);">Lookup error: ' + e.message + '</div>';
+    if (itEl) itEl.innerHTML = '<div style="font-size:12px;color:var(--red);">Lookup error: ' + e.message + '</div>';
   }
 }
 
