@@ -249,7 +249,8 @@ body {
    (scoped to just that person's scans) — see _psRenderItemCountBreakdown. */
 .ps-itemcount-row { display:flex; flex-wrap:wrap; align-items:center; gap:8px; }
 .ps-itemcount-label { font-size:10px; font-weight:600; text-transform:uppercase; letter-spacing:.5px; color:var(--text3); margin-right:2px; }
-.ps-itemcount-chip { display:flex; align-items:baseline; gap:5px; background:var(--bg3); border:1px solid var(--border); border-radius:100px; padding:4px 11px; }
+.ps-itemcount-chip { display:flex; align-items:baseline; gap:5px; background:var(--bg3); border:1px solid var(--border); border-radius:100px; padding:4px 11px; cursor:pointer; transition:background .15s, border-color .15s; }
+.ps-itemcount-chip:hover { background:var(--bg4); border-color:var(--border2); }
 .ps-itemcount-chip b { font-family:var(--mono); font-size:13px; font-weight:800; color:var(--accent); }
 .ps-itemcount-chip span { font-size:10px; font-weight:600; color:var(--text3); white-space:nowrap; }
 .ps-itemcount-chip.unknown b { color:var(--text3); }
@@ -600,7 +601,8 @@ body {
 
 #packship-app .ps-itemcount-row { display:flex; flex-wrap:wrap; align-items:center; gap:8px; }
 #packship-app .ps-itemcount-label { font-size:10px; font-weight:600; text-transform:uppercase; letter-spacing:.5px; color:var(--text3); margin-right:2px; }
-#packship-app .ps-itemcount-chip { display:flex; align-items:baseline; gap:5px; background:var(--bg3); border:1px solid var(--border); border-radius:100px; padding:4px 11px; }
+#packship-app .ps-itemcount-chip { display:flex; align-items:baseline; gap:5px; background:var(--bg3); border:1px solid var(--border); border-radius:100px; padding:4px 11px; cursor:pointer; transition:background .15s, border-color .15s; }
+#packship-app .ps-itemcount-chip:hover { background:var(--bg4); border-color:var(--border2); }
 #packship-app .ps-itemcount-chip b { font-family:var(--mono); font-size:13px; font-weight:800; color:var(--accent); }
 #packship-app .ps-itemcount-chip span { font-size:10px; font-weight:600; color:var(--text3); white-space:nowrap; }
 #packship-app .ps-itemcount-chip.unknown b { color:var(--text3); }
@@ -840,22 +842,6 @@ body {
   </div>
 </div>
 
-<!-- Tracking → order detail modal — opened by clicking a tracking number
-     in the Scan tab's "Today's Scans" list. Looks it up the same way the
-     Order Lookup tab does and shows the same order card, in a popup. -->
-<div id="ps-tracking-modal-overlay" class="ps-person-modal-overlay" onclick="if(event.target===this) psCloseTrackingDetail()">
-  <div class="ps-person-modal ps-tracking-modal">
-    <div class="ps-person-modal-header">
-      <div>
-        <div class="ps-person-modal-title" id="ps-tracking-modal-title">—</div>
-        <div class="ps-person-modal-sub" id="ps-tracking-modal-sub"></div>
-      </div>
-      <button class="ps-person-modal-close" onclick="psCloseTrackingDetail()">✕</button>
-    </div>
-    <div class="ps-person-modal-body" id="ps-tracking-modal-body"></div>
-  </div>
-</div>
-
 <!-- Per-print-station-person detail modal — opened by clicking a name chip
      in the Print Log tab's "Find person" summary bar. Separate from the
      Scan tab's person modal since the fields shown differ (tracking +
@@ -892,7 +878,50 @@ body {
     <div class="ps-person-modal-search">
       <input type="text" class="ps-search-input" id="ps-pick-person-modal-search" placeholder="Search tracking, carrier…" oninput="_psPickRenderPersonModalList()" style="padding-left:14px">
     </div>
+    <!-- Same package-size breakdown as the Packing tab, scoped to just
+         this picker's picks for whatever date the modal opened against —
+         see _psPickRenderPersonModalList. -->
+    <div class="ps-itemcount-row" id="ps-pick-person-modal-itemcount-breakdown" style="padding:10px 22px 0"></div>
     <div class="ps-person-modal-body" id="ps-pick-person-modal-body"></div>
+  </div>
+</div>
+
+<!-- Package-size detail modal — opened by clicking any "Package sizes"
+     chip across the app (Packing tab's overall row or person modal,
+     Picking tab's overall row or person modal). Lists the actual packages
+     behind that count so someone can see what's in, say, the "3 × 1 item"
+     bucket. Placed last among the modals so it always stacks on top,
+     whichever person modal (if any) it was opened from — same trick as
+     the tracking modal uses relative to the Packing person modal. -->
+<div id="ps-itemcount-modal-overlay" class="ps-person-modal-overlay" onclick="if(event.target===this) psCloseItemCountDetail()">
+  <div class="ps-person-modal">
+    <div class="ps-person-modal-header">
+      <div>
+        <div class="ps-person-modal-title" id="ps-itemcount-modal-title">—</div>
+        <div class="ps-person-modal-sub" id="ps-itemcount-modal-sub"></div>
+      </div>
+      <button class="ps-person-modal-close" onclick="psCloseItemCountDetail()">✕</button>
+    </div>
+    <div class="ps-person-modal-body" id="ps-itemcount-modal-body"></div>
+  </div>
+</div>
+
+<!-- Tracking → order detail modal — opened by clicking a tracking number
+     in any scan/pick list, including from inside the person or
+     package-size popups above. Looks it up the same way the Order Lookup
+     tab does and shows the same order card, in a popup. Placed last of all
+     the modals so it always ends up on top, no matter which one (if any)
+     it was opened from. -->
+<div id="ps-tracking-modal-overlay" class="ps-person-modal-overlay" onclick="if(event.target===this) psCloseTrackingDetail()">
+  <div class="ps-person-modal ps-tracking-modal">
+    <div class="ps-person-modal-header">
+      <div>
+        <div class="ps-person-modal-title" id="ps-tracking-modal-title">—</div>
+        <div class="ps-person-modal-sub" id="ps-tracking-modal-sub"></div>
+      </div>
+      <button class="ps-person-modal-close" onclick="psCloseTrackingDetail()">✕</button>
+    </div>
+    <div class="ps-person-modal-body" id="ps-tracking-modal-body"></div>
   </div>
 </div>
 
@@ -974,7 +1003,22 @@ body {
       <button onclick="psSubmitNoStock()" style="width:100%;padding:11px;border:none;border-radius:8px;background:var(--red);color:#fff;font-weight:700;font-size:13px;cursor:pointer">⚠ Report Selected as Out of Stock</button>
     </div>
 
+    <!-- Same "Printed Today" / "Not Printed Yet" tiles as the Packing tab —
+         same live numbers, not scoped to picking specifically, just shown
+         here too so a picker doesn't have to flip to Packing to see them.
+         Painted by the same _psLoadPrintStatus()/_psPaintPrintedTile()/
+         _psPaintNotPrintedTile() functions the Packing tab uses; see those
+         for the live-Veeqo-first-with-DB-fallback logic. -->
     <div class="ps-scan-summary" id="ps-pick-summary">
+      <div class="ps-scan-summary-total" id="ps-pick-summary-printed" style="display:none">
+        <div class="ps-scan-summary-total-val" id="ps-pick-summary-printed-val">0</div>
+        <div class="ps-scan-summary-total-label">Printed<br>Today</div>
+        <div class="ps-scan-summary-printed-split" id="ps-pick-summary-printed-split"></div>
+      </div>
+      <div class="ps-scan-summary-total" id="ps-pick-summary-notprinted" style="display:none">
+        <div class="ps-scan-summary-total-val warn" id="ps-pick-summary-notprinted-val">0</div>
+        <div class="ps-scan-summary-total-label">Not Printed<br>Yet</div>
+      </div>
       <div class="ps-scan-summary-total">
         <div class="ps-scan-summary-total-val" id="ps-pick-summary-total-val">0</div>
         <div class="ps-scan-summary-total-label" id="ps-pick-summary-total-label">Picked<br>Today</div>
@@ -989,6 +1033,12 @@ body {
         <input type="date" class="ps-scan-summary-date-input" id="ps-pick-summary-date" onchange="psPickSummaryDateChange()">
       </div>
     </div>
+
+    <!-- Same package-size breakdown as the Packing tab — "how many 1-item
+         packages, 2-item, 3-item, etc." for whatever pick feed/date the
+         summary bar above is showing. Painted alongside the per-person
+         chips by _psPaintPickSummary. -->
+    <div class="ps-itemcount-row" id="ps-pick-itemcount-breakdown" style="margin-top:10px"></div>
 
     <div class="ps-section-header" style="margin-top:4px">
       <div class="ps-section-title">Today's Picks</div>
@@ -2808,6 +2858,12 @@ function _psPaintScanSummary(scans, labelHtml) {
   if (_psPersonModalName) _psRenderPersonModalList();
 }
 
+// Backing data for the package-size chips below: elId -> the exact scans
+// array that was last painted into that row. Clicking a chip looks itself
+// up here (by elId + the item count it represents) rather than re-deriving
+// anything, so the popup always matches exactly what the chip counted.
+var _psItemCountSource = {};
+
 // Package-size breakdown: "N packages had 1 item, N had 2 items, …" — built
 // from the same s.itemCount field _psItemWeightBadges already reads (the
 // worker joins it in from the manifest's line items per scan). Shared by
@@ -2815,10 +2871,12 @@ function _psPaintScanSummary(scans, labelHtml) {
 // below, just pointed at different scan lists/target elements. Scans with
 // no itemCount on record (older rows, or a manifest join miss) are counted
 // but bucketed separately rather than silently dropped, so the numbers
-// still add up to the total shown just above.
+// still add up to the total shown just above. Each chip is clickable —
+// see psShowItemCountDetail — to see exactly which packages are in it.
 function _psRenderItemCountBreakdown(scans, elId) {
   var el = document.getElementById(elId);
   if (!el) return;
+  _psItemCountSource[elId] = scans;
   var counts = {};
   var unknown = 0;
   scans.forEach(function(s) {
@@ -2829,13 +2887,57 @@ function _psRenderItemCountBreakdown(scans, elId) {
   var sizes = Object.keys(counts).map(Number).sort(function(a, b) { return a - b; });
   if (!sizes.length && !unknown) { el.innerHTML = ''; return; }
   var chips = sizes.map(function(n) {
-    return '<span class="ps-itemcount-chip"><b>' + counts[n] + '</b><span>× ' + n + ' item' + (n !== 1 ? 's' : '') + '</span></span>';
+    return '<span class="ps-itemcount-chip" role="button" tabindex="0" onclick="psShowItemCountDetail(\'' + elId + '\',' + n + ')"><b>' + counts[n] + '</b><span>× ' + n + ' item' + (n !== 1 ? 's' : '') + '</span></span>';
   }).join('');
   if (unknown) {
-    chips += '<span class="ps-itemcount-chip unknown"><b>' + unknown + '</b><span>unknown size</span></span>';
+    chips += '<span class="ps-itemcount-chip unknown" role="button" tabindex="0" onclick="psShowItemCountDetail(\'' + elId + '\',\'unknown\')"><b>' + unknown + '</b><span>unknown size</span></span>';
   }
   el.innerHTML = '<span class="ps-itemcount-label">Package sizes</span>' + chips;
 }
+
+var _psItemCountModalOpen = false;
+
+// Opened by clicking a package-size chip — shows exactly which packages
+// are behind that count, so a manager can actually look at them instead of
+// just seeing a number. elId says which breakdown row was clicked (the
+// Packing tab's overall one, or the one inside a person's modal), which
+// _psItemCountSource maps back to the right scan list; n is either an item
+// count or the string 'unknown' for the no-data bucket.
+window.psShowItemCountDetail = function(elId, n) {
+  var scans = _psItemCountSource[elId] || [];
+  var bucket, titleText;
+  if (n === 'unknown') {
+    bucket = scans.filter(function(s) {
+      var v = parseInt(s.itemCount, 10);
+      return s.itemCount == null || !v || v < 1;
+    });
+    titleText = 'Unknown size';
+  } else {
+    bucket = scans.filter(function(s) { return parseInt(s.itemCount, 10) === n; });
+    titleText = n + ' item' + (n !== 1 ? 's' : '');
+  }
+  bucket = bucket.slice().sort(function(a, b) { return new Date(b.timestamp) - new Date(a.timestamp); });
+  document.getElementById('ps-itemcount-modal-title').textContent = titleText;
+  document.getElementById('ps-itemcount-modal-sub').textContent = bucket.length + ' package' + (bucket.length !== 1 ? 's' : '');
+  var body = document.getElementById('ps-itemcount-modal-body');
+  body.innerHTML = !bucket.length
+    ? '<div class="ps-person-modal-empty">No packages</div>'
+    : bucket.map(function(s) {
+        return '<div class="ps-card"><div class="ps-card-row">'
+          +   '<div class="ps-card-dot green"></div>'
+          +   '<div class="ps-card-tracking">' + s.tracking + '</div>'
+          +   '<div class="ps-card-meta">' + _psCarrierBadge(s.carrier) + '<span class="ps-badge ps-badge-gray">' + (s.initials || '—') + '</span>' + _psItemWeightBadges(s) + (s.batchClosedAt ? '<span class="ps-badge ps-badge-green">Closed</span>' : '') + '</div>'
+          +   '<div class="ps-card-time">' + psFmtTime(s.timestamp) + '</div>'
+          + '</div></div>';
+      }).join('');
+  _psItemCountModalOpen = true;
+  document.getElementById('ps-itemcount-modal-overlay').style.display = 'flex';
+};
+
+window.psCloseItemCountDetail = function() {
+  document.getElementById('ps-itemcount-modal-overlay').style.display = 'none';
+  _psItemCountModalOpen = false;
+};
 
 // Renders (or re-renders) the per-person chips from whatever's currently
 // loaded in _psScanSummaryByUser, filtered by the "Find person" box —
@@ -3835,12 +3937,24 @@ function _psWireEvents() {
     });
   }
 
+  // Same delegated tracking-click pattern inside the package-size detail
+  // popup (psShowItemCountDetail) — lets you go straight from "3 × 1 item"
+  // to a specific package's order card without closing anything first.
+  var itemCountModalBodyEl = document.getElementById('ps-itemcount-modal-body');
+  if (itemCountModalBodyEl) {
+    itemCountModalBodyEl.addEventListener('click', function(e){
+      var trackEl = e.target.closest('.ps-card-tracking');
+      if (trackEl) psShowTrackingDetail(trackEl.textContent.trim());
+    });
+  }
+
   document.addEventListener('keydown', function(e){
     if (e.key !== 'Escape') return;
     // Close whichever modal is on top first — if the tracking modal was
     // opened from inside the person modal, one Escape should reveal the
     // person modal again, not close both at once.
     if (_psTrackingModalOpen)   { psCloseTrackingDetail(); return; }
+    if (_psItemCountModalOpen)  { psCloseItemCountDetail(); return; }
     if (_psPersonModalName)     psClosePersonDetail();
     if (_psPlPersonModalName)   psPlClosePersonDetail();
     if (_psPickPersonModalName) psPickClosePersonDetail();
@@ -3975,7 +4089,7 @@ window.psSwitchTab = function(name) {
     var dinp = document.getElementById('ps-scan-summary-date');
     if (dinp) { var tk = psTodayKey(); dinp.value = tk; dinp.max = tk; }
     psScanSummaryDate = null;
-    psRenderScanList(); psLoadScans(); _psLoadScanPrintStatus();
+    psRenderScanList(); psLoadScans(); _psLoadPrintStatus();
   }
   if (name === 'picking')     {
     psFocusPick();
@@ -3983,7 +4097,7 @@ window.psSwitchTab = function(name) {
     var pdinp = document.getElementById('ps-pick-summary-date');
     if (pdinp) { var ptk = psTodayKey(); pdinp.value = ptk; pdinp.max = ptk; }
     psPickSummaryDate = null;
-    psRenderPickList(); psLoadPicks();
+    psRenderPickList(); psLoadPicks(); _psLoadPrintStatus();
   }
   if (name === 'closebatch')  { _psUpdateBatchBar(); psUspsRunLoadOpen(); }
   if (name === 'progress')    { psLoadScans(); }
@@ -4001,11 +4115,14 @@ window.psSwitchTab = function(name) {
   if (name === 'scan' || name === 'progress') {
     window._psRefreshInterval = setInterval(function() {
       psLoadScans();
-      if (name === 'scan') { _psLoadScanPrintStatus(); }
+      if (name === 'scan') { _psLoadPrintStatus(); }
     }, 20000);
   }
   if (name === 'picking') {
-    window._psPickRefreshInterval = setInterval(psLoadPicks, 20000);
+    window._psPickRefreshInterval = setInterval(function() {
+      psLoadPicks();
+      _psLoadPrintStatus();
+    }, 20000);
   }
   if (name === 'printlog') {
     window._psPlRefreshInterval = setInterval(psPlLoadToday, 30000);
@@ -4326,6 +4443,7 @@ function _psPaintPickSummary(scans, labelHtml) {
   });
   _psPickSummaryByUser = byUser;
   _psPickRenderPersonChips();
+  _psRenderItemCountBreakdown(scans, 'ps-pick-itemcount-breakdown');
 
   if (_psPickPersonModalName) _psPickRenderPersonModalList();
 }
@@ -4397,6 +4515,9 @@ function _psPickRenderPersonModalList() {
   if (ups)  subParts.push(ups + ' UPS');
   if (usps) subParts.push(usps + ' USPS');
   document.getElementById('ps-pick-person-modal-sub').textContent = subParts.join(' · ') + ' — ' + dateLabel;
+  // Scoped to this picker's full day, same reasoning as subParts above —
+  // not narrowed by the tracking/carrier search box.
+  _psRenderItemCountBreakdown(scans, 'ps-pick-person-modal-itemcount-breakdown');
 
   var body = document.getElementById('ps-pick-person-modal-body');
   if (!items.length) {
@@ -4701,7 +4822,11 @@ async function psVeeqoLoadLabels() {
   } catch (e) { console.error('[PS] veeqo labels-today:', e); }
 }
 
-// ── Scan tab "Printed Today" / "Not Printed Yet" tiles ─────────────────────
+// ── "Printed Today" / "Not Printed Yet" tiles (Packing tab AND Picking tab)─
+// Same underlying numbers either way — today's overall print status isn't
+// specific to which tab someone's on — so every paint/load function below
+// just updates whichever of the two tiles are present on the page at once,
+// rather than each tab having its own copy of this logic.
 // Live-first, with a graceful fallback:
 //   1) Try GET /veeqo/print-status (real live Veeqo numbers — see the
 //      worker's veeqoPrintStatus() for why this replaces the old
@@ -4711,33 +4836,53 @@ async function psVeeqoLoadLabels() {
 //      (/ship/print-log and /ship/label-gap-report) so the tiles still
 //      work today. The moment the new backend route is deployed, this
 //      auto-upgrades to real numbers with no further frontend change.
+var PS_PRINT_TILE_IDS = ['ps-scan-summary', 'ps-pick-summary'];
+
 function _psPaintPrintedTile(total, ups, usps) {
-  var wrap = document.getElementById('ps-scan-summary-printed');
-  if (!wrap) return;
-  wrap.style.display = 'flex';
-  document.getElementById('ps-scan-summary-printed-val').textContent = total;
   var parts = [];
   if (ups)  parts.push(ups + ' UPS');
   if (usps) parts.push(usps + ' USPS');
-  document.getElementById('ps-scan-summary-printed-split').textContent = parts.join(' · ');
+  PS_PRINT_TILE_IDS.forEach(function(prefix) {
+    var wrap = document.getElementById(prefix + '-printed');
+    if (!wrap) return;
+    wrap.style.display = 'flex';
+    document.getElementById(prefix + '-printed-val').textContent = total;
+    var splitEl = document.getElementById(prefix + '-printed-split');
+    if (splitEl) splitEl.textContent = parts.join(' · ');
+  });
 }
 
 function _psPaintNotPrintedTile(total) {
-  var wrap = document.getElementById('ps-scan-summary-notprinted');
-  if (!wrap) return;
-  wrap.style.display = 'flex';
-  document.getElementById('ps-scan-summary-notprinted-val').textContent = total;
+  PS_PRINT_TILE_IDS.forEach(function(prefix) {
+    var wrap = document.getElementById(prefix + '-notprinted');
+    if (!wrap) return;
+    wrap.style.display = 'flex';
+    document.getElementById(prefix + '-notprinted-val').textContent = total;
+  });
+}
+
+function _psHidePrintedTile() {
+  PS_PRINT_TILE_IDS.forEach(function(prefix) {
+    var wrap = document.getElementById(prefix + '-printed');
+    if (wrap) wrap.style.display = 'none';
+  });
+}
+
+function _psHideNotPrintedTile() {
+  PS_PRINT_TILE_IDS.forEach(function(prefix) {
+    var wrap = document.getElementById(prefix + '-notprinted');
+    if (wrap) wrap.style.display = 'none';
+  });
 }
 
 // Fallback source for "Printed Today": /ship/print-log, the real-time DB
 // the DS9308 print-station scanner writes to the instant a label prints.
-async function _psLoadScanPrintedTodayFallback() {
-  var wrap = document.getElementById('ps-scan-summary-printed');
-  if (!wrap || !psCredToken) return;
+async function _psLoadPrintedTodayFallback() {
+  if (!psCredToken) return;
   try {
     var res  = await fetch(PS_WORKER + '/ship/print-log?date=' + psTodayKey(), { headers: { 'X-Cred-Token': psCredToken } });
     var data = await res.json();
-    if (!data.ok || !data.scans) { wrap.style.display = 'none'; return; }
+    if (!data.ok || !data.scans) { _psHidePrintedTile(); return; }
     var ups = 0, usps = 0;
     data.scans.forEach(function(s) {
       if (s.carrier === 'UPS') ups++;
@@ -4745,33 +4890,34 @@ async function _psLoadScanPrintedTodayFallback() {
     });
     _psPaintPrintedTile(data.scans.length, ups, usps);
   } catch (e) {
-    console.error('[PS] scan-tab print-log:', e);
-    wrap.style.display = 'none';
+    console.error('[PS] print-log:', e);
+    _psHidePrintedTile();
   }
 }
 
 // Fallback source for "Not Printed Yet": Veeqo orders synced into today's
 // manifest that have neither a print-log entry nor a scan-log entry yet
 // (the flaggedManifestOnly bucket the Gap Report tab calls "Not Printed").
-async function _psLoadScanNotPrintedFallback() {
-  var wrap = document.getElementById('ps-scan-summary-notprinted');
-  if (!wrap || !psCredToken) return;
+async function _psLoadNotPrintedFallback() {
+  if (!psCredToken) return;
   try {
     var res  = await fetch(PS_WORKER + '/ship/label-gap-report?date=' + psTodayKey(), {
       headers: { 'X-Cred-Token': psCredToken }
     });
     var data = await res.json();
-    if (!data.ok || !data.summary) { wrap.style.display = 'none'; return; }
+    if (!data.ok || !data.summary) { _psHideNotPrintedTile(); return; }
     _psPaintNotPrintedTile(data.summary.flaggedManifestOnly || 0);
   } catch (e) {
-    console.error('[PS] scan-tab label-gap-report:', e);
-    wrap.style.display = 'none';
+    console.error('[PS] label-gap-report:', e);
+    _psHideNotPrintedTile();
   }
 }
 
 // Tries the live Veeqo-backed route first; only falls back to the old
 // DB-mirror sources above if it's unavailable (not yet deployed / errors).
-async function _psLoadScanPrintStatus() {
+// Called from both the Packing and Picking tabs (see psSwitchTab) since
+// the numbers it paints aren't tab-specific.
+async function _psLoadPrintStatus() {
   if (!psCredToken) return;
   var usedLive = false;
   try {
@@ -4786,8 +4932,8 @@ async function _psLoadScanPrintStatus() {
     }
   } catch (e) { /* fall through to fallback sources below */ }
   if (!usedLive) {
-    _psLoadScanPrintedTodayFallback();
-    _psLoadScanNotPrintedFallback();
+    _psLoadPrintedTodayFallback();
+    _psLoadNotPrintedFallback();
   }
 }
 
