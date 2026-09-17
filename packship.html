@@ -1851,6 +1851,7 @@ window.psLoadScans = async function() {
       headers: { 'X-Cred-Token': psCredToken }
     });
     var data = await res.json();
+    window._psScansDebugError = data.debugError || null;
     if (data.scans) {
       // Newest scan first, regardless of the order the sheet/API returns.
       psTodayScans = data.scans.slice().sort(function(a,b){
@@ -3457,15 +3458,22 @@ function _psItemWeightBadges(s) {
 // them (data problem) or because something in the badge rendering is
 // dropping them (display problem) — no dev tools needed.
 window.psShowDebug = function(kind) {
-  var list = kind === 'pick' ? psTodayPicks : psTodayScans;
-  if (!list || !list.length) { alert('No ' + kind + 's loaded for today yet — scan/pick something first, or pick a date above.'); return; }
+  var list  = kind === 'pick' ? psTodayPicks : psTodayScans;
+  var error = kind === 'pick' ? window._psPicksDebugError : window._psScansDebugError;
+  var header = error
+    ? '⚠ SERVER ERROR while attaching item/weight data:\n' + error + '\n\n(This is why nothing shows — fix this first.)\n\n'
+    : '';
+  if (!list || !list.length) { alert(header + 'No ' + kind + 's loaded for today yet — scan/pick something first, or pick a date above.'); return; }
   var sample = list.slice(0, 3).map(function(s) {
     return {
-      tracking: s.tracking, itemCount: s.itemCount, weightLb: s.weightLb,
-      weightSource: s.weightSource, carrier: s.carrier, orderNum: s.orderNum,
+      tracking: s.tracking,
+      itemCount: s.hasOwnProperty('itemCount') ? s.itemCount : '(missing key)',
+      weightLb: s.hasOwnProperty('weightLb') ? s.weightLb : '(missing key)',
+      weightSource: s.hasOwnProperty('weightSource') ? s.weightSource : '(missing key)',
+      carrier: s.carrier, orderNum: s.orderNum,
     };
   });
-  alert('First ' + sample.length + ' of ' + list.length + ' ' + kind + '(s) today:\n\n' + JSON.stringify(sample, null, 2));
+  alert(header + 'First ' + sample.length + ' of ' + list.length + ' ' + kind + '(s) today:\n\n' + JSON.stringify(sample, null, 2));
 };
 
 
@@ -3901,6 +3909,7 @@ window.psLoadPicks = async function() {
       headers: { 'X-Cred-Token': psCredToken }
     });
     var data = await res.json();
+    window._psPicksDebugError = data.debugError || null;
     if (data.picks) {
       psTodayPicks = data.picks.slice().sort(function(a,b){
         return new Date(b.timestamp) - new Date(a.timestamp);
