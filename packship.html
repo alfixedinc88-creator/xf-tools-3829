@@ -243,6 +243,17 @@ body {
 .ps-scan-summary-date-label { font-size:10px; font-weight:600; text-transform:uppercase; letter-spacing:.5px; color:var(--text3); }
 .ps-scan-summary-date-input { font-family:inherit; font-size:13px; color:var(--text); background:var(--bg3); border:1px solid var(--border); border-radius:8px; padding:6px 8px; }
 
+/* Package-size breakdown — "how many 1-item packages, 2-item, 3-item…"
+   Reused as-is both under the Packing tab's overall summary (for whatever
+   scan feed/date is currently shown) and inside the per-person modal
+   (scoped to just that person's scans) — see _psRenderItemCountBreakdown. */
+.ps-itemcount-row { display:flex; flex-wrap:wrap; align-items:center; gap:8px; }
+.ps-itemcount-label { font-size:10px; font-weight:600; text-transform:uppercase; letter-spacing:.5px; color:var(--text3); margin-right:2px; }
+.ps-itemcount-chip { display:flex; align-items:baseline; gap:5px; background:var(--bg3); border:1px solid var(--border); border-radius:100px; padding:4px 11px; }
+.ps-itemcount-chip b { font-family:var(--mono); font-size:13px; font-weight:800; color:var(--accent); }
+.ps-itemcount-chip span { font-size:10px; font-weight:600; color:var(--text3); white-space:nowrap; }
+.ps-itemcount-chip.unknown b { color:var(--text3); }
+
 /* Per-person scan-history modal — opened by clicking a name chip above.
    Mirrors the same fixed-overlay pattern as .ps-dupe-overlay. */
 .ps-person-modal-overlay { position:fixed; inset:0; background:rgba(20,20,26,.55); display:none; align-items:center; justify-content:center; padding:24px; z-index:520; }
@@ -587,6 +598,13 @@ body {
 #packship-app .ps-scan-summary-date-label { font-size:10px; font-weight:600; text-transform:uppercase; letter-spacing:.5px; color:var(--text3); }
 #packship-app .ps-scan-summary-date-input { font-family:inherit; font-size:13px; color:var(--text); background:var(--bg3); border:1px solid var(--border); border-radius:8px; padding:6px 8px; }
 
+#packship-app .ps-itemcount-row { display:flex; flex-wrap:wrap; align-items:center; gap:8px; }
+#packship-app .ps-itemcount-label { font-size:10px; font-weight:600; text-transform:uppercase; letter-spacing:.5px; color:var(--text3); margin-right:2px; }
+#packship-app .ps-itemcount-chip { display:flex; align-items:baseline; gap:5px; background:var(--bg3); border:1px solid var(--border); border-radius:100px; padding:4px 11px; }
+#packship-app .ps-itemcount-chip b { font-family:var(--mono); font-size:13px; font-weight:800; color:var(--accent); }
+#packship-app .ps-itemcount-chip span { font-size:10px; font-weight:600; color:var(--text3); white-space:nowrap; }
+#packship-app .ps-itemcount-chip.unknown b { color:var(--text3); }
+
 /* Per-person scan-history modal — opened by clicking a name chip above.
    Mirrors the same fixed-overlay pattern as .ps-dupe-overlay. */
 #packship-app .ps-person-modal-overlay { position:fixed; inset:0; background:rgba(20,20,26,.55); display:none; align-items:center; justify-content:center; padding:24px; z-index:520; }
@@ -814,6 +832,10 @@ body {
     <div class="ps-person-modal-search">
       <input type="text" class="ps-search-input" id="ps-person-modal-search" placeholder="Search tracking, carrier…" oninput="_psRenderPersonModalList()" style="padding-left:14px">
     </div>
+    <!-- Same package-size breakdown as the Packing tab summary, but scoped
+         to just this person's scans for whatever date the modal opened
+         against — see _psRenderPersonModalList. -->
+    <div class="ps-itemcount-row" id="ps-person-modal-itemcount-breakdown" style="padding:10px 22px 0"></div>
     <div class="ps-person-modal-body" id="ps-person-modal-body"></div>
   </div>
 </div>
@@ -1048,6 +1070,12 @@ body {
         <input type="date" class="ps-scan-summary-date-input" id="ps-scan-summary-date" onchange="psScanSummaryDateChange()">
       </div>
     </div>
+
+    <!-- Package-size breakdown — "how many 1-item packages, 2-item, 3-item,
+         etc." for whatever scan feed/date the summary bar above is showing.
+         Painted alongside the per-person chips by _psPaintScanSummary, from
+         the same itemCount the worker already attaches to each scan. -->
+    <div class="ps-itemcount-row" id="ps-scan-itemcount-breakdown" style="margin-top:10px"></div>
 
     <div class="ps-section-header" style="margin-top:4px">
       <div class="ps-section-title">Today's Scans</div>
@@ -2772,11 +2800,41 @@ function _psPaintScanSummary(scans, labelHtml) {
   });
   _psScanSummaryByUser = byUser;
   _psRenderPersonChips();
+  _psRenderItemCountBreakdown(scans, 'ps-scan-itemcount-breakdown');
 
   // If the detail modal is currently open for someone, keep it live too —
   // otherwise a scan coming in (or a periodic refresh) while it's open
   // would leave it showing a stale list.
   if (_psPersonModalName) _psRenderPersonModalList();
+}
+
+// Package-size breakdown: "N packages had 1 item, N had 2 items, …" — built
+// from the same s.itemCount field _psItemWeightBadges already reads (the
+// worker joins it in from the manifest's line items per scan). Shared by
+// both the Packing tab's overall summary bar and the per-person modal
+// below, just pointed at different scan lists/target elements. Scans with
+// no itemCount on record (older rows, or a manifest join miss) are counted
+// but bucketed separately rather than silently dropped, so the numbers
+// still add up to the total shown just above.
+function _psRenderItemCountBreakdown(scans, elId) {
+  var el = document.getElementById(elId);
+  if (!el) return;
+  var counts = {};
+  var unknown = 0;
+  scans.forEach(function(s) {
+    var n = parseInt(s.itemCount, 10);
+    if (s.itemCount == null || !n || n < 1) { unknown++; return; }
+    counts[n] = (counts[n] || 0) + 1;
+  });
+  var sizes = Object.keys(counts).map(Number).sort(function(a, b) { return a - b; });
+  if (!sizes.length && !unknown) { el.innerHTML = ''; return; }
+  var chips = sizes.map(function(n) {
+    return '<span class="ps-itemcount-chip"><b>' + counts[n] + '</b><span>× ' + n + ' item' + (n !== 1 ? 's' : '') + '</span></span>';
+  }).join('');
+  if (unknown) {
+    chips += '<span class="ps-itemcount-chip unknown"><b>' + unknown + '</b><span>unknown size</span></span>';
+  }
+  el.innerHTML = '<span class="ps-itemcount-label">Package sizes</span>' + chips;
 }
 
 // Renders (or re-renders) the per-person chips from whatever's currently
@@ -2857,6 +2915,10 @@ function _psRenderPersonModalList() {
   if (ups)  subParts.push(ups + ' UPS');
   if (usps) subParts.push(usps + ' USPS');
   document.getElementById('ps-person-modal-sub').textContent = subParts.join(' · ') + ' — ' + dateLabel;
+  // Scoped to this person's full day (not narrowed by the tracking/carrier
+  // search box above — same reasoning as subParts just above: the search
+  // box is for finding one scan, not for changing what the totals mean).
+  _psRenderItemCountBreakdown(scans, 'ps-person-modal-itemcount-breakdown');
 
   var body = document.getElementById('ps-person-modal-body');
   if (!items.length) {
