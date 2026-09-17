@@ -1443,9 +1443,9 @@ body {
         <div style="font-size:12px;color:var(--text2);margin-bottom:14px;line-height:1.5">
           Fills in the real Veeqo shipment weight for today's orders that don't have it yet (scanned/picked before this feature existed). Rescanning won't do this — a duplicate scan is rejected before it ever checks Veeqo — so use this button instead. Processes up to 50 at a time; click again if it says more are left.
         </div>
-        <div style="display:flex;gap:10px;flex-wrap:wrap;align-items:center">
+        <div style="display:flex;flex-direction:column;gap:10px;align-items:flex-start">
           <button class="ps-btn-primary" style="width:auto;padding:10px 22px" id="ps-vsync-weight-btn" onclick="psVeeqoBackfillWeight()">⚖️ Backfill Today's Weight</button>
-          <div id="ps-vsync-weight-result" style="font-size:12px;color:var(--text2);font-family:var(--mono)"></div>
+          <div id="ps-vsync-weight-result" style="font-size:12px;color:var(--text2);font-family:var(--mono);width:100%"></div>
         </div>
       </div>
       <!-- Archive card -->
@@ -4599,7 +4599,17 @@ window.psVeeqoBackfillWeight = async function() {
       if (data.notFoundInVeeqo) bits.push(data.notFoundInVeeqo + ' not found in Veeqo');
       if (data.veeqoHadNoWeight) bits.push(data.veeqoHadNoWeight + ' had no weight in Veeqo');
       var msg = '✓ Checked ' + data.checked + ' · ' + bits.join(' · ') + (data.remaining ? ' · more left, click again' : '');
-      out.textContent = msg;
+      // Raw sample of what Veeqo actually returned for a few trackings —
+      // shown right here so it's easy to see exactly which field (if any)
+      // carried the weight and what unit, without needing curl/Postman.
+      var sampleHtml = '';
+      if (data.debugSample && data.debugSample.length) {
+        sampleHtml = '<div style="margin-top:10px;padding:10px;background:var(--bg3);border:1px solid var(--border);border-radius:8px;">'
+          + '<div style="font-weight:700;margin-bottom:6px;">Raw Veeqo sample (first ' + data.debugSample.length + '):</div>'
+          + '<pre style="white-space:pre-wrap;word-break:break-word;margin:0;font-size:11px;">' + JSON.stringify(data.debugSample, null, 2).replace(/</g,'&lt;') + '</pre>'
+          + '</div>';
+      }
+      out.innerHTML = msg + sampleHtml;
       _psToast(data.updated + ' order' + (data.updated !== 1 ? 's' : '') + ' backfilled with real weight');
       psLoadScans(); psLoadPicks(); // refresh so the new weight shows up right away
     } else {
