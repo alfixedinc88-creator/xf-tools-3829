@@ -1046,6 +1046,21 @@ body {
          chips by _psPaintPickSummary. -->
     <div class="ps-itemcount-row" id="ps-pick-itemcount-breakdown" style="margin-top:10px"></div>
 
+    <!-- "No Stock Found" list — orders where D1's own master_list ALREADY
+         showed zero cases at the time a picker reported it, so nothing new
+         went to Inventory's Stock Out Reports (see psSubmitNoStock / the
+         worker's /ship/stockout branch logic). Kept here, scoped to the
+         Picking tab, so whoever's picking can see what's been set aside
+         and why, same collapsible pattern as Inventory's own Stock Out
+         Reports card. -->
+    <div class="ps-card" id="ps-nostock-card" style="margin-top:10px;border-color:#f5a89e">
+      <div style="display:flex;justify-content:space-between;align-items:center;cursor:pointer" onclick="psToggleNostockList()">
+        <div style="font-size:13px;font-weight:700;color:var(--red)">🚫 No Stock Found<span class="ps-badge-red" id="ps-nostock-badge" style="display:none;margin-left:8px;padding:2px 8px;border-radius:100px;font-size:11px;font-weight:700">0</span></div>
+        <div style="font-size:11px;color:var(--text3)" id="ps-nostock-toggle-txt">Show</div>
+      </div>
+      <div id="ps-nostock-list" style="display:none;margin-top:10px"></div>
+    </div>
+
     <div class="ps-section-header" style="margin-top:4px">
       <div class="ps-section-title">Today's Picks</div>
       <div class="ps-section-cnt" id="ps-pick-cnt-label">0 picks</div>
@@ -4135,7 +4150,7 @@ window.psSwitchTab = function(name) {
     var pdinp = document.getElementById('ps-pick-summary-date');
     if (pdinp) { var ptk = psTodayKey(); pdinp.value = ptk; pdinp.max = ptk; }
     psPickSummaryDate = null;
-    psRenderPickList(); psLoadPicks(); _psLoadPrintStatus();
+    psRenderPickList(); psLoadPicks(); _psLoadPrintStatus(); psFetchNostockCount();
   }
   if (name === 'closebatch')  { _psUpdateBatchBar(); psUspsRunLoadOpen(); }
   if (name === 'progress')    { psLoadScans(); }
@@ -4398,6 +4413,15 @@ async function _psLoadPickProduct(tracking, showNoStock) {
 // item(s). One /ship/stockout POST goes out per checked item so Inventory
 // gets a separate line (with its own quantity) for each; the delete is
 // harmless to repeat since it's a no-op past the first one.
+// Before finalizing, asks the worker's real-time stock check
+// (POST /ship/stock-check) which of the checked items D1's own master_list
+// ALREADY shows as zero at that bin — those don't need to bother Inventory
+// at all, they just need the picker to confirm "yep, really empty" and set
+// the order aside. Anything else is a genuine discrepancy (system still
+// shows stock, or the bin can't be checked) and goes to Inventory as
+// before. The submit itself (POST /ship/stockout per item, below) re-checks
+// authoritatively at write time regardless — this precheck only exists to
+// build an accurate confirm dialog instead of one flat "out of stock?".
 window.psSubmitNoStock = function() {
   var ctxList = window._psPickStockoutCtx || [];
   var selected = [];
@@ -4411,42 +4435,79 @@ window.psSubmitNoStock = function() {
   }
   if (!selected.length) { _psToast('Check off at least one item first', 'err'); return; }
 
-  var listText = selected.map(function(s) {
-    return '• ' + (s.ctx.bin || s.ctx.sku) + ' × ' + s.qty;
-  }).join('\n');
-  var n = selected.length;
-  var msg = 'Report ' + n + ' item' + (n !== 1 ? 's' : '') + ' as out of stock?\n\n' + listText
-    + '\n\nThis order will be removed from your picked list and go back to the queue for someone to pick once it\'s restocked.';
-  if (!confirm(msg)) return;
-
   var subEl = document.getElementById('ps-pick-nostock-submit-wrap');
   var btn   = subEl && subEl.querySelector('button');
-  if (btn) { btn.disabled = true; btn.textContent = 'Reporting…'; }
+  if (btn) { btn.disabled = true; btn.textContent = 'Checking stock…'; }
 
-  var tracking = selected[0].ctx.tracking;
-  Promise.all(selected.map(function(s) {
-    return fetch(PS_WORKER + '/ship/stockout', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json', 'X-Cred-Token': psCredToken },
-      body: JSON.stringify({
-        tracking: s.ctx.tracking, orderNum: s.ctx.orderNum, sku: s.ctx.sku,
-        binLocation: s.ctx.bin, quantity: s.qty, initials: psInitials
-      })
-    }).then(function(r) { return r.json(); });
-  })).then(function(results) {
-    var failed = results.some(function(r) { return !r || !r.ok; });
-    if (failed) throw new Error('One or more reports failed');
-    // Whole order went back to the queue — pull it out of today's picked
-    // list right away instead of waiting on the next psLoadPicks() poll.
-    psTodayPicks = psTodayPicks.filter(function(s){ return s.tracking.toUpperCase() !== tracking.toUpperCase(); });
-    psRenderPickList();
-    var wrap = document.getElementById('ps-pick-product-wrap');
-    if (wrap) wrap.style.display = 'none';
-    if (subEl) subEl.style.display = 'none';
-    _psToast(n + ' item' + (n !== 1 ? 's' : '') + ' reported out of stock — order sent back to the picking queue');
+  fetch(PS_WORKER + '/ship/stock-check', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', 'X-Cred-Token': psCredToken },
+    body: JSON.stringify({ items: selected.map(function(s){ return { sku: s.ctx.sku, bin: s.ctx.bin }; }) })
+  }).then(function(r) { return r.json(); }).then(function(checkData) {
+    var checkResults = (checkData && checkData.results) || [];
+    var noStockSel = [], realSel = [];
+    selected.forEach(function(s, i) {
+      var r = checkResults[i];
+      if (r && r.noStockFound) noStockSel.push(s); else realSel.push(s);
+    });
+
+    var msg = '';
+    if (realSel.length) {
+      msg += 'Report ' + realSel.length + ' item' + (realSel.length !== 1 ? 's' : '') + ' as out of stock to Inventory?\n\n'
+        + realSel.map(function(s){ return '• ' + (s.ctx.bin || s.ctx.sku) + ' × ' + s.qty; }).join('\n') + '\n';
+    }
+    if (noStockSel.length) {
+      msg += (realSel.length ? '\n' : '') + '🚫 No Stock Found — our records already show these as empty, so nothing new goes to Inventory:\n\n'
+        + noStockSel.map(function(s){ return '• ' + (s.ctx.bin || s.ctx.sku) + ' × ' + s.qty; }).join('\n')
+        + '\n\nConfirm and set this order aside.\n';
+    }
+    msg += '\nThis order will be removed from your picked list' + (realSel.length ? ' and go back to the queue once restocked.' : '.');
+    if (!confirm(msg)) {
+      if (btn) { btn.disabled = false; btn.textContent = '⚠ Report Selected as Out of Stock'; }
+      return;
+    }
+
+    if (btn) btn.textContent = 'Reporting…';
+    var n = selected.length;
+    var tracking = selected[0].ctx.tracking;
+    Promise.all(selected.map(function(s) {
+      return fetch(PS_WORKER + '/ship/stockout', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'X-Cred-Token': psCredToken },
+        body: JSON.stringify({
+          tracking: s.ctx.tracking, orderNum: s.ctx.orderNum, sku: s.ctx.sku,
+          binLocation: s.ctx.bin, quantity: s.qty, initials: psInitials
+        })
+      }).then(function(r) { return r.json(); });
+    })).then(function(results) {
+      var failed = results.some(function(r) { return !r || !r.ok; });
+      if (failed) throw new Error('One or more reports failed');
+      var noStockCount = results.filter(function(r){ return r && r.noStockFound; }).length;
+      var realCount = results.length - noStockCount;
+      // Whole order went back off today's picked list — pull it out right
+      // away instead of waiting on the next psLoadPicks() poll.
+      psTodayPicks = psTodayPicks.filter(function(s){ return s.tracking.toUpperCase() !== tracking.toUpperCase(); });
+      psRenderPickList();
+      var wrap = document.getElementById('ps-pick-product-wrap');
+      if (wrap) wrap.style.display = 'none';
+      if (subEl) subEl.style.display = 'none';
+      psFetchNostockCount();
+      var toastMsg;
+      if (noStockCount && realCount) {
+        toastMsg = realCount + ' reported to Inventory, ' + noStockCount + ' already showed no stock — order set aside';
+      } else if (noStockCount) {
+        toastMsg = noStockCount + ' item' + (noStockCount !== 1 ? 's' : '') + ' — no stock found, order set aside';
+      } else {
+        toastMsg = n + ' item' + (n !== 1 ? 's' : '') + ' reported out of stock — order sent back to the picking queue';
+      }
+      _psToast(toastMsg);
+    }).catch(function(e) {
+      if (btn) { btn.disabled = false; btn.textContent = '⚠ Report Selected as Out of Stock'; }
+      _psToast('Report failed — ' + e.message, 'err');
+    });
   }).catch(function(e) {
     if (btn) { btn.disabled = false; btn.textContent = '⚠ Report Selected as Out of Stock'; }
-    _psToast('Report failed — ' + e.message, 'err');
+    _psToast('Stock check failed — ' + e.message, 'err');
   });
 };
 
@@ -4455,6 +4516,95 @@ window.psFilterPicks = function(f, btn) {
   document.querySelectorAll('#ps-panel-picking .ps-filter-btn').forEach(function(b){ b.classList.remove('active'); });
   btn.classList.add('active');
   psRenderPickList();
+};
+
+// ── "No Stock Found" list (Picking tab) ──────────────────────────────────
+// Own, Picking-scoped record of orders that came back "no stock found" —
+// D1's master_list already showed zero at that bin when reported, so
+// Inventory's Stock Out Reports never heard about it (see psSubmitNoStock
+// and the worker's shipReportStockout branch logic). Same collapsible
+// card / list pattern as Inventory's own Stock Out Reports card, just fed
+// by a different table (ship_nostock_log via GET /ship/nostock).
+var _psNostockOpenList = [];
+var _psNostockListShown = false;
+
+window.psFetchNostockCount = function() {
+  fetch(PS_WORKER + '/ship/nostock?status=open', { headers: { 'X-Cred-Token': psCredToken } })
+    .then(function(r) { return r.json(); })
+    .then(function(d) {
+      _psNostockOpenList = (d.nostock || []);
+      var n = _psNostockOpenList.length;
+      var b = document.getElementById('ps-nostock-badge');
+      if (b) { b.textContent = n; b.style.display = n > 0 ? 'inline-flex' : 'none'; }
+      if (_psNostockListShown) psRenderNostockList();
+    }).catch(function() {});
+};
+
+function psRenderNostockList() {
+  var wrap = document.getElementById('ps-nostock-list');
+  if (!wrap) return;
+  if (!_psNostockOpenList.length) {
+    wrap.innerHTML = '<div style="font-size:12px;color:var(--text3);padding:6px 0">No "no stock found" reports right now.</div>';
+    return;
+  }
+  wrap.innerHTML = _psNostockOpenList.map(function(s, idx) {
+    var when = '';
+    try { when = new Date(s.timestamp).toLocaleString([], {month:'short', day:'numeric', hour:'numeric', minute:'2-digit'}); } catch(e) { when = s.timestamp || ''; }
+    var headline = s.binLocation || s.sku || '—';
+    return '<div style="border:1.5px solid var(--border);border-radius:8px;padding:8px 10px;margin-bottom:8px;background:var(--bg3)">'
+      + '<div style="display:flex;justify-content:space-between;align-items:center;gap:8px">'
+      +   '<div style="font-family:var(--mono);font-weight:700;font-size:13px;color:var(--accent);cursor:pointer" onclick="psNostockGo(' + idx + ')">' + headline + '</div>'
+      +   '<button style="font-size:11px;padding:4px 8px;border:1px solid var(--border);border-radius:6px;background:var(--bg);color:var(--text2);cursor:pointer" onclick="psNostockResolve(' + s.id + ',this)">Resolved</button>'
+      + '</div>'
+      + '<div style="font-size:11px;color:var(--text3);margin-top:3px">'
+      +   (s.sku ? s.sku + ' · ' : '')
+      +   (s.orderNum ? 'Order ' + s.orderNum + ' · ' : '')
+      +   (s.tracking ? s.tracking + ' · ' : '')
+      +   'reported by ' + (s.reportedBy || '?') + (when ? ' · ' + when : '')
+      + '</div>'
+      + '</div>';
+  }).join('');
+}
+
+window.psToggleNostockList = function() {
+  _psNostockListShown = !_psNostockListShown;
+  var wrap = document.getElementById('ps-nostock-list');
+  var txt  = document.getElementById('ps-nostock-toggle-txt');
+  if (wrap) wrap.style.display = _psNostockListShown ? 'block' : 'none';
+  if (txt) txt.textContent = _psNostockListShown ? 'Hide' : 'Show';
+  if (_psNostockListShown) psRenderNostockList();
+};
+
+// Tapping a reported entry pulls up that order's item card the same way
+// scanning its tracking into the pick box would — quick way to see what
+// was set aside without retyping the tracking number.
+window.psNostockGo = function(idx) {
+  var s = _psNostockOpenList[idx];
+  if (!s || !s.tracking) return;
+  _psNostockListShown = false;
+  var wrap = document.getElementById('ps-nostock-list');
+  var txt  = document.getElementById('ps-nostock-toggle-txt');
+  if (wrap) wrap.style.display = 'none';
+  if (txt) txt.textContent = 'Show';
+  _psLoadPickProduct(s.tracking);
+};
+
+window.psNostockResolve = function(id, btnEl) {
+  if (btnEl) { btnEl.disabled = true; btnEl.textContent = '…'; }
+  fetch(PS_WORKER + '/ship/nostock-resolve', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', 'X-Cred-Token': psCredToken },
+    body: JSON.stringify({ id: id, resolvedBy: psInitials })
+  }).then(function(r) { return r.json(); }).then(function(d) {
+    if (!d || !d.ok) throw new Error('failed');
+    _psNostockOpenList = _psNostockOpenList.filter(function(s) { return s.id !== id; });
+    var b = document.getElementById('ps-nostock-badge');
+    if (b) { var n = _psNostockOpenList.length; b.textContent = n; b.style.display = n > 0 ? 'inline-flex' : 'none'; }
+    psRenderNostockList();
+  }).catch(function() {
+    if (btnEl) { btnEl.disabled = false; btnEl.textContent = 'Resolved'; }
+    _psToast('Could not mark resolved — try again', 'err');
+  });
 };
 
 // ── Picking summary / find-person / check-a-date ────────────────────────
