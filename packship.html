@@ -4943,33 +4943,14 @@ window._psNostockResolveModalShowFound = function() {
   var casesInp = document.getElementById('ps-nostock-found-cases');
   if (casesInp) casesInp.focus();
 
-  // Part# / SKU numbers in this warehouse are "<shelf number>=<variant>" —
-  // the same numeric shelf address shown for this report (the number under
-  // "Resolve Report" above), plus a "=" and whatever variant code is on the
-  // item. So the box starts already filled with "<that number>=" — same
-  // number the Location field is seeded from — and the picker just types the
-  // variant after the "=". If they then correct the shelf number because it
-  // turned up somewhere else, this box's prefix follows along too, same idea
-  // as the Location prefix dropdown, just keyed off the shelf number instead
-  // of a fixed list. Never clobbers a part# the picker typed themselves:
-  // only keeps syncing the prefix while it still matches what we last
-  // auto-filled.
-  var shelfInp2 = document.getElementById('ps-nostock-found-shelf');
-  var partInp   = document.getElementById('ps-nostock-found-partnum');
-  if (shelfInp2 && partInp) {
-    partInp.dataset.autoPrefix = suggestedShelf || '';
-    shelfInp2.addEventListener('input', function() {
-      var shelfNow  = shelfInp2.value.trim();
-      var cur       = partInp.value || '';
-      var eqIdx     = cur.indexOf('=');
-      var curPrefix = eqIdx >= 0 ? cur.slice(0, eqIdx) : cur;
-      if (cur === '' || curPrefix === partInp.dataset.autoPrefix) {
-        var suffix = eqIdx >= 0 ? cur.slice(eqIdx + 1) : '';
-        partInp.value = shelfNow ? (shelfNow + '=' + suffix) : suffix;
-        partInp.dataset.autoPrefix = shelfNow;
-      }
-    });
-  }
+  // Part# / SKU numbers in this warehouse are "<shelf number>=<variant>", so
+  // the box starts already filled with "<the report's original number>=" —
+  // the same number shown under "Resolve Report" above — ready for the
+  // picker to just type the variant after the "=". This is a one-time
+  // starting guess only: editing Location afterward (e.g. because it
+  // actually turned up on a different shelf) does NOT touch this box —
+  // Part# / SKU is the item's own identity, not derived from wherever it
+  // happened to be found, so it stays exactly what the picker typed.
 };
 
 window._psNostockResolveModalBack = function() {
