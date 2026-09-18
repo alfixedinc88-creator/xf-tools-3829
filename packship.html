@@ -1143,6 +1143,7 @@ body {
         <div style="font-size:13px;font-weight:700;color:var(--red)">🚫 No Stock Found<span class="ps-badge-red" id="ps-nostock-badge" style="display:none;margin-left:8px;padding:2px 8px;border-radius:100px;font-size:11px;font-weight:700">0</span></div>
         <div style="display:flex;align-items:center;gap:12px">
           <div style="font-size:11px;color:var(--text3);text-decoration:underline;cursor:pointer" onclick="event.stopPropagation();psShowNostockHistory()">History</div>
+          <div style="font-size:11px;color:var(--orange);font-weight:700;cursor:pointer;display:none" id="ps-nostock-fix-badge" onclick="event.stopPropagation();psShowNostockHistory('needsfix')" title="&quot;Found It&quot; reports that couldn't auto-update Inventory — click to see why"></div>
           <div style="font-size:11px;color:var(--text3)" id="ps-nostock-toggle-txt">Show</div>
         </div>
       </div>
@@ -4283,7 +4284,7 @@ window.psSwitchTab = function(name) {
     var pdinp = document.getElementById('ps-pick-summary-date');
     if (pdinp) { var ptk = psTodayKey(); pdinp.value = ptk; pdinp.max = ptk; }
     psPickSummaryDate = null;
-    psRenderPickList(); psLoadPicks(); _psLoadPrintStatus(); psFetchNostockCount();
+    psRenderPickList(); psLoadPicks(); _psLoadPrintStatus(); psFetchNostockCount(); psFetchNostockNeedsFixCount();
   }
   if (name === 'closebatch')  { _psUpdateBatchBar(); psUspsRunLoadOpen(); }
   if (name === 'progress')    { psLoadScans(); }
@@ -4719,6 +4720,25 @@ window.psFetchNostockCount = function() {
     }).catch(function() {});
 };
 
+// Separate, orange "⚠ N need fix" indicator next to History — counts
+// resolved "Found It" reports where master_list did NOT end up getting
+// auto-corrected (0 or >1 inventory rows matched, or the write itself
+// failed — see shipResolveNostock's note). Easy to miss buried in a long
+// History list otherwise, so this surfaces it right on the card and, when
+// clicked, opens History pre-filtered to just those.
+window.psFetchNostockNeedsFixCount = function() {
+  fetch(PS_WORKER + '/ship/nostock?status=resolved&date=all', { headers: { 'X-Cred-Token': psCredToken } })
+    .then(function(r) { return r.json(); })
+    .then(function(d) {
+      var list = (d && d.nostock) || [];
+      var n = list.filter(function(s) { return s.outcome === 'found' && !s.masterListUpdated; }).length;
+      var b = document.getElementById('ps-nostock-fix-badge');
+      if (!b) return;
+      b.textContent = '⚠ ' + n + ' need' + (n === 1 ? 's' : '') + ' fix';
+      b.style.display = n > 0 ? 'inline-block' : 'none';
+    }).catch(function() {});
+};
+
 // Per-tracking order lookup, memoized — several "no stock found" rows can
 // share the same tracking (more than one item flagged on the same order),
 // and re-opening the card shouldn't re-fetch what it already has. Resolves
@@ -5014,6 +5034,7 @@ window._psNostockResolveModalSubmitFound = function() {
     } else {
       _psToast((d.note || 'Logged, but Inventory needs a manual SKU Mgr update for this one'), 'err');
     }
+    psFetchNostockNeedsFixCount();
     _psNostockResolvePending = null;
   }).catch(function(e) {
     errEl.textContent = e.message || 'Save failed — try again';
@@ -5082,9 +5103,14 @@ function _psNostockResolveIds(ids) {
 // status (GET /ship/nostock?status=all&date=all) rather than trying to
 // remember what scrolled off locally.
 var _psNostockHistoryModalOpen = false;
+var _psNostockHistoryList   = []; // full fetched list, filtered client-side so switching tabs is instant
+var _psNostockHistoryFilter = 'all'; // 'all' | 'needsfix'
 
-window.psShowNostockHistory = async function() {
+// initialFilter: pass 'needsfix' (e.g. from the ⚠ badge) to open straight
+// into the "couldn't auto-update Inventory" view instead of the full list.
+window.psShowNostockHistory = async function(initialFilter) {
   _psNostockHistoryModalOpen = true;
+  _psNostockHistoryFilter = initialFilter === 'needsfix' ? 'needsfix' : 'all';
   document.getElementById('ps-nostock-history-modal-sub').textContent = 'Loading…';
   document.getElementById('ps-nostock-history-modal-body').innerHTML = '<div class="ps-person-modal-empty">Loading…</div>';
   document.getElementById('ps-nostock-history-modal-overlay').style.display = 'flex';
@@ -5097,17 +5123,36 @@ window.psShowNostockHistory = async function() {
       document.getElementById('ps-nostock-history-modal-body').innerHTML = '<div class="ps-person-modal-empty">Error: ' + ((d && d.error) || 'Unknown error') + '</div>';
       return;
     }
-    var list = d.nostock || [];
-    document.getElementById('ps-nostock-history-modal-sub').textContent = list.length + ' report' + (list.length !== 1 ? 's' : '') + ' total';
-    document.getElementById('ps-nostock-history-modal-body').innerHTML = list.length
-      ? list.map(_psRenderNostockHistoryRow).join('')
-      : '<div class="ps-person-modal-empty">No "No Stock Found" reports yet.</div>';
+    _psNostockHistoryList = d.nostock || [];
+    _psRenderNostockHistoryBody();
   } catch (e) {
     if (!_psNostockHistoryModalOpen) return;
     document.getElementById('ps-nostock-history-modal-sub').textContent = '';
     document.getElementById('ps-nostock-history-modal-body').innerHTML = '<div class="ps-person-modal-empty">Request failed: ' + e.message + '</div>';
   }
 };
+
+// Re-renders from the already-fetched _psNostockHistoryList — switching
+// between "All" and "⚠ Needs Fix" is instant, no re-fetch.
+window.psNostockHistorySetFilter = function(f) {
+  _psNostockHistoryFilter = f;
+  _psRenderNostockHistoryBody();
+};
+
+function _psRenderNostockHistoryBody() {
+  var list = _psNostockHistoryList;
+  var needsFixList = list.filter(function(s) { return s.status === 'resolved' && s.outcome === 'found' && !s.masterListUpdated; });
+  var filtered = _psNostockHistoryFilter === 'needsfix' ? needsFixList : list;
+  document.getElementById('ps-nostock-history-modal-sub').textContent = list.length + ' report' + (list.length !== 1 ? 's' : '') + ' total';
+  var tabsHtml = '<div style="display:flex;gap:8px;margin-bottom:12px">'
+    + '<button class="ps-btn-sm" onclick="psNostockHistorySetFilter(\'all\')" style="' + (_psNostockHistoryFilter === 'all' ? 'background:var(--accent);color:#fff;border-color:var(--accent);font-weight:700' : '') + '">All (' + list.length + ')</button>'
+    + '<button class="ps-btn-sm" onclick="psNostockHistorySetFilter(\'needsfix\')" style="' + (_psNostockHistoryFilter === 'needsfix' ? 'background:var(--orange);color:#fff;border-color:var(--orange);font-weight:700' : 'color:var(--orange);border-color:var(--orange)') + '">⚠ Needs Fix (' + needsFixList.length + ')</button>'
+    + '</div>';
+  var listHtml = filtered.length
+    ? filtered.map(_psRenderNostockHistoryRow).join('')
+    : '<div class="ps-person-modal-empty">' + (_psNostockHistoryFilter === 'needsfix' ? 'Nothing needs a manual fix right now.' : 'No "No Stock Found" reports yet.') + '</div>';
+  document.getElementById('ps-nostock-history-modal-body').innerHTML = tabsHtml + listHtml;
+}
 
 window.psCloseNostockHistory = function() {
   _psNostockHistoryModalOpen = false;
@@ -5139,8 +5184,15 @@ function _psRenderNostockHistoryRow(s) {
       + (s.foundPartNum ? ' · Part# ' + s.foundPartNum : '')
       + ' — ' + (s.masterListUpdated
           ? '<span style="color:var(--green)">Inventory updated</span>'
-          : '<span style="color:var(--orange)">Inventory NOT auto-updated, check SKU Mgr</span>')
-      + '</div>';
+          : '<span style="color:var(--orange)">Inventory NOT auto-updated</span>')
+      + '</div>'
+      // The specific reason it wasn't auto-updated (persisted found_note) —
+      // "no row matched", "3 rows matched, too ambiguous", or an update
+      // error — so there's a real answer here instead of just "check SKU
+      // Mgr" with no explanation of why.
+      + (!s.masterListUpdated && s.foundNote
+          ? '<div style="font-size:11px;color:var(--orange);margin-top:3px;padding:6px 8px;background:var(--orange-bg,rgba(230,126,34,.08));border-radius:6px">⚠ ' + s.foundNote + '</div>'
+          : (!s.masterListUpdated ? '<div style="font-size:11px;color:var(--text3);margin-top:3px">Check SKU Mgr for this one.</div>' : ''));
   } else if (s.status === 'resolved' && s.outcome === 'not_found') {
     outcomeHtml = '<div style="font-size:11px;color:var(--text3);margin-top:4px">🚫 Still not found</div>';
   }
