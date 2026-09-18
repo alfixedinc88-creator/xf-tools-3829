@@ -1726,8 +1726,7 @@ body { display:flex; flex-direction:column; min-height:100vh; background:var(--b
     </div>
   </div>
   <div class="sales-tab-bar">
-    <button class="sales-tab-btn active" id="db-tab-upload" onclick="dbTab('upload')">Upload Reports</button>
-    <button class="sales-tab-btn" id="db-tab-overview" onclick="dbTab('overview')">Overview</button>
+    <button class="sales-tab-btn active" id="db-tab-overview" onclick="dbTab('overview')">Overview</button>
     <button class="sales-tab-btn" id="db-tab-parts" onclick="dbTab('parts')">Part# Detail</button>
     <button class="sales-tab-btn" id="db-tab-skus" onclick="dbTab('skus')">SKU Detail</button>
     <button class="sales-tab-btn" id="db-tab-ai" onclick="dbTab('ai')">✦ AI Insights</button>
@@ -1735,91 +1734,6 @@ body { display:flex; flex-direction:column; min-height:100vh; background:var(--b
   <div class="sales-body">
 
     <!-- Upload Tab -->
-    <div class="sales-panel active" id="db-panel-upload">
-      <div class="sales-section-header">
-        <div>
-          <div class="sales-section-title">Upload Sales Reports</div>
-          <div class="sales-section-sub">Same reports feed both apps — uploading here updates the shared Sales Forecast sheet</div>
-        </div>
-      </div>
-
-      <div class="sales-upload-section">
-        
-        <div style="margin-bottom:12px;padding:10px 14px;background:var(--accent-bg);border:1.5px solid var(--accent);border-radius:8px;font-size:12px;color:var(--text2)">
-          📋 <strong style="color:var(--accent)">Amazon Reports</strong> — Download from <a href="https://sellercentral.amazon.com/business-reports/#/report?id=102%3ADetailSalesTrafficBySKU&chartCols=&columns=0%2F1%2F2%2F3%2F4%2F5%2F6%2F7%2F8%2F9%2F10%2F11%2F12%2F13%2F14%2F15%2F16%2F17%2F18%2F19%2F20%2F21%2F22%2F23%2F24%2F25%2F26%2F27%2F28%2F29%2F30%2F31%2F32%2F33%2F34%2F35%2F36%2F37%2F38%2F39%2F40%2F41%2F42%2F43%2F44%2F45%2F46%2F47&dashboardView=ALL_COLUMNS" target="_blank" style="color:var(--accent);text-decoration:none;font-weight:600">Seller Central → Business Reports → Detail Page Sales & Traffic by SKU</a><br>
-          <span style="color:var(--red);font-weight:600">⚠</span> Select <strong>all columns</strong> and set the date range — 30 days for Amz30, 90 days for Amz90.
-        </div>
-        <div class="sales-upload-title">Amazon Reports</div>
-        <div class="sales-upload-grid">
-          <div class="sales-upload-card" id="db-uc-Amz30">
-            <input type="file" class="sales-upload-input" accept=".csv" onchange="handleUpload(event,'Amz30')">
-            <div class="s-uc-label">Amz30</div><div class="s-uc-sub">Amazon 30-Day Business Report (.csv)</div>
-            <div class="s-uc-status" id="db-uc-status-Amz30">Click to select file</div>
-          </div>
-          <div class="sales-upload-card" id="db-uc-Amz90">
-            <input type="file" class="sales-upload-input" accept=".csv" onchange="handleUpload(event,'Amz90')">
-            <div class="s-uc-label">Amz90</div><div class="s-uc-sub">Amazon 90-Day Business Report (.csv)</div>
-            <div class="s-uc-status" id="db-uc-status-Amz90">Click to select file</div>
-          </div>
-        </div>
-      </div>
-      <div class="sales-upload-section">
-        
-        <div class="sales-upload-title">eBay Reports</div>
-        <div style="background:var(--bg2);border:1.5px solid var(--border);border-radius:12px;padding:18px 20px;margin-bottom:0;">
-          <div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:12px;margin-bottom:14px;">
-            <div>
-              <div style="font-size:14px;font-weight:600;color:var(--text);margin-bottom:3px;">📡 Fetch from eBay API</div>
-              <div style="font-size:12px;color:var(--text2);">Pulls your last 30 and 90 days of orders directly — no CSV download needed</div>
-            </div>
-            <button onclick="fetchEbaySales('db')" id="db-ebay-fetch-btn" class="sales-primary-btn" style="white-space:nowrap;">
-              ↓ Fetch eBay Sales
-            </button>
-          </div>
-          <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;">
-            <div style="background:var(--bg3);border:1px solid var(--border);border-radius:8px;padding:10px 14px;">
-              <div style="font-family:var(--mono);font-size:11px;font-weight:600;color:var(--accent);margin-bottom:4px;">Ebay30</div>
-              <div style="font-size:12px;color:var(--text3);" id="db-ebay30-status">Not fetched yet</div>
-            </div>
-            <div style="background:var(--bg3);border:1px solid var(--border);border-radius:8px;padding:10px 14px;">
-              <div style="font-family:var(--mono);font-size:11px;font-weight:600;color:var(--accent);margin-bottom:4px;">Ebay90</div>
-              <div style="font-size:12px;color:var(--text3);" id="db-ebay90-status">Not fetched yet</div>
-            </div>
-          </div>
-          <div style="margin-top:10px;font-size:11px;color:var(--text3);display:flex;align-items:center;gap:6px;">
-            <span>📦 Shows both units sold and order count per SKU</span>
-            <span style="margin-left:auto;font-family:var(--mono);" id="db-ebay-last-fetch"></span>
-          </div>
-        </div>
-      </div>
-      <div class="sales-upload-section">
-        
-        <div style="margin-bottom:12px;padding:10px 14px;background:var(--accent-bg);border:1.5px solid var(--accent);border-radius:8px;font-size:12px;color:var(--text2)">
-          📋 <strong style="color:var(--accent)">Shopify Reports</strong> — Export from <a href="https://admin.shopify.com/store/093304-8e/orders" target="_blank" style="color:var(--accent);text-decoration:none;font-weight:600">Shopify Admin → Orders</a><br>
-          <span style="color:var(--red);font-weight:600">⚠</span> Click Export then set the date range — 30 days for XF30, 90 days for XF90.
-        </div>
-        <div class="sales-upload-title">Shopify Reports</div>
-        <div class="sales-upload-grid">
-          <div class="sales-upload-card" id="db-uc-XF30">
-            <input type="file" class="sales-upload-input" accept=".csv" onchange="handleUpload(event,'XF30')">
-            <div class="s-uc-label">XF30</div><div class="s-uc-sub">Shopify 30-Day Orders Export (.csv)</div>
-            <div class="s-uc-status" id="db-uc-status-XF30">Click to select file</div>
-          </div>
-          <div class="sales-upload-card" id="db-uc-XF90">
-            <input type="file" class="sales-upload-input" accept=".csv" onchange="handleUpload(event,'XF90')">
-            <div class="s-uc-label">XF90</div><div class="s-uc-sub">Shopify 90-Day Orders Export (.csv)</div>
-            <div class="s-uc-status" id="db-uc-status-XF90">Click to select file</div>
-          </div>
-        </div>
-      </div>
-
-      <div class="sales-action-row">
-        <button class="sales-primary-btn" onclick="processAllReports()">▶ Upload All &amp; Build Dashboard</button>
-        <button class="sales-ghost-btn" onclick="loadSavedData()">↻ Load Last Saved Data</button>
-        <button class="sales-ghost-btn" onclick="recomputeTabs()">⚡ Recompute Totals</button>
-        <span class="sales-load-note" id="db-last-updated"></span>
-      </div>
-    </div>
 
     <!-- Overview -->
     <div class="sales-panel" id="db-panel-overview">
@@ -1843,6 +1757,7 @@ body { display:flex; flex-direction:column; min-height:100vh; background:var(--b
           <option value="amz">Amazon Best</option>
           <option value="ebay">eBay Best</option>
           <option value="xf">Shopify Best</option>
+          <option value="wal">Walmart Best</option>
         </select>
       </div>
       <div class="sales-table-wrap" id="parts-wrap">
@@ -1900,6 +1815,7 @@ body { display:flex; flex-direction:column; min-height:100vh; background:var(--b
 var WORKER_URL = 'https://xfitting-lookup.alfixedinc88.workers.dev';
 var W = WORKER_URL;
 var MGMT_CRED_TOKEN = localStorage.getItem('xf_cred_token') || null;
+var _whFetchLock = false; // prevents concurrent warehouse sheet reads (rate limit guard) - restored, was accidentally dropped during the credential migration
 var MGMT_CRED_USER  = null;
 try { MGMT_CRED_USER = JSON.parse(localStorage.getItem('xf_cred_user') || 'null'); } catch(e) {}
 var mgmtPinTarget = 'dashboard';
@@ -2003,25 +1919,22 @@ async function salesLaunchApp(name) {
     if (typeof lpLaunch === 'function') lpLaunch();
     return;
   }
-  var appId = name === 'reorder' ? 'reorder-app' : 'dashboard-app';
-  var appKey = name === 'reorder' ? 'ro' : 'db';
-  document.getElementById(appId).style.display = 'flex';
-  document.getElementById(appId).style.flexDirection = 'column';
-  setStatus(appKey, 'loading', 'Loading...');
+  document.getElementById('dashboard-app').style.display = 'flex';
+  document.getElementById('dashboard-app').style.flexDirection = 'column';
+  setStatus('db', 'loading', 'Loading...');
   try {
     await salesLoadWarehouseStock();
-    await readCalcTabs();
+    await readDashboardDataFromD1();
     lastUpdated = new Date();
     updateLastUpdatedLabels();
-    if(name==='reorder') buildReorderRows();
-    if(name==='dashboard') buildDashboardData();
+    buildDashboardData();
     var whCount = Object.keys(CALC.whStock).length;
     var upcCount = Object.keys(CALC.upc).length;
-    setStatus(appKey, 'ok', 'WH: ' + whCount + ' parts · ' + upcCount + ' UPC');
+    setStatus('db', 'ok', 'WH: ' + whCount + ' parts · ' + upcCount + ' UPC');
     salesToast('Loaded · WH: ' + whCount + ' parts', 'success');
   } catch(e) {
     console.error('[salesLaunchApp] error:', e.message, e.stack);
-    setStatus(appKey, 'err', 'Error: ' + e.message);
+    setStatus('db', 'err', 'Error: ' + e.message);
     salesToast('Load error: ' + e.message, 'error');
   }
 }
@@ -2035,7 +1948,7 @@ var SALES_WORKER_URL = "https://xfitting-lookup.alfixedinc88.workers.dev";
 // Staged files: { Amz30: [[row,...]], Amz90: [...], ... }
 var staged = {};
 // Calculated data read back from sheet
-var CALC = { partSales:[], skuSales:[], jqVendor:[], effVendor:[], cogs:{}, whStock:{}, upc:{}, itemNames:{}, upcCodes:{}, skuNames:{} };
+var CALC = { partSales:[], skuSales:[], jqVendor:[], effVendor:[], cogs:{}, whStock:{}, upc:{}, itemNames:{}, upcCodes:{}, skuNames:{}, rawParts:[], rawSkus:[] };
 // upc: { partNum.toLowerCase() -> { unitsPerCase, packSize } }
 // Processed reorder rows
 var RO = { jq:[], eff:[] };
@@ -2054,6 +1967,20 @@ var salesFetchLock = false;  // prevents overlapping sheet reads during eBay fet
 // _whFetchLock declared in main script block (shared with background refresh)
 
 // ─── WAREHOUSE STOCK ─────────────────────────────────────────────────────────
+// ─── DASHBOARD DATA — D1-BACKED (replaces the old stale Sheets pipeline) ────
+// Pulls directly from /sales/dashboard-data, which queries the same D1
+// *_sales_weekly tables the Reorder app's PO Recommendations already
+// uses correctly (kept current by cron, not by someone remembering to
+// re-upload a CSV). Stores the raw parts/skus arrays as-is; buildDashboardData
+// does the shaping into DB_PARTS/DB_SKUS for rendering.
+async function readDashboardDataFromD1() {
+  var res = await wFetch(SALES_WORKER_URL + '/sales/dashboard-data');
+  var data = await res.json();
+  if (!data.ok) throw new Error(data.error || 'Failed to load dashboard data');
+  CALC.rawParts = data.parts || [];
+  CALC.rawSkus = data.skus || [];
+}
+
 async function salesLoadWarehouseStock() {
   if (!SALES_WORKER_URL) return;
   // If a warehouse fetch is already in progress (e.g. background refresh),
@@ -2156,342 +2083,6 @@ function findCol(headers, keys) {
   return -1;
 }
 
-// ─── FILE UPLOAD & CSV PARSING ───────────────────────────────────────────────
-
-// ── fetchEbaySales — Fetch eBay orders in TWO separate worker calls ─────────────
-// Each call gets its own 1000-subrequest budget — sending both in one call exceeds the limit.
-async function fetchEbaySales(ctx) {
-  const btnId = ctx + '-ebay-fetch-btn';
-  const btn = document.getElementById(btnId);
-  if (btn) { btn.disabled = true; btn.textContent = '⟳ Fetching...'; }
-
-  function setStatus30(msg, ok) {
-    const el = document.getElementById(ctx + '-ebay30-status');
-    if (el) { el.textContent = msg; el.style.color = ok ? 'var(--green)' : ok === false ? 'var(--red)' : 'var(--text3)'; }
-  }
-  function setStatus90(msg, ok) {
-    const el = document.getElementById(ctx + '-ebay90-status');
-    if (el) { el.textContent = msg; el.style.color = ok ? 'var(--green)' : ok === false ? 'var(--red)' : 'var(--text3)'; }
-  }
-
-  setStatus30('Fetching 30d...', null);
-  setStatus90('Waiting...', null);
-  setStatus('ro', 'loading', 'Fetching eBay 30d...');
-  setStatus('db', 'loading', 'Fetching eBay 30d...');
-  salesToast('<span class="sales-spinner"></span>Fetching eBay 30d orders...', 'info');
-
-  salesFetchLock = true;
-  var totalOrders = 0, totalRows = 0;
-  try {
-    // ── Call 1: 30d — separate invocation = fresh 1000-subrequest budget ──
-    const res30 = await wFetch(SALES_WORKER_URL + '/ebay/sales-fetch', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ window: '30d' })
-    });
-    const data30 = await res30.json();
-    if (!data30.ok) throw new Error('30d: ' + (data30.error || 'Fetch failed'));
-    var w30 = data30.windows && data30.windows['30d'];
-    var orders30 = w30 ? w30.ordersProcessed : (data30.orders || 0);
-    var rows30   = w30 ? w30.itemsWritten    : (data30.skus   || 0);
-    totalOrders += orders30; totalRows += rows30;
-    setStatus30('✓ ' + orders30 + ' orders → ' + rows30 + ' rows', true);
-    salesToast('✓ 30d done — ' + orders30 + ' orders. Fetching 90d...', 'success');
-
-    // ── Call 2: 90d — new invocation = fresh budget ──
-    setStatus90('Fetching 90d...', null);
-    setStatus('ro', 'loading', 'Fetching eBay 90d...');
-    setStatus('db', 'loading', 'Fetching eBay 90d...');
-    const res90 = await wFetch(SALES_WORKER_URL + '/ebay/sales-fetch', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ window: '90d' })
-    });
-    const data90 = await res90.json();
-    if (!data90.ok) throw new Error('90d: ' + (data90.error || 'Fetch failed'));
-    var w90 = data90.windows && data90.windows['90d'];
-    var orders90 = w90 ? w90.ordersProcessed : (data90.orders || 0);
-    var rows90   = w90 ? w90.itemsWritten    : (data90.skus   || 0);
-    totalOrders += orders90; totalRows += rows90;
-    setStatus90('✓ ' + orders90 + ' orders → ' + rows90 + ' rows', true);
-
-    const ts = new Date().toLocaleString();
-    ['ro-ebay-last-fetch', 'db-ebay-last-fetch'].forEach(function(id) {
-      var el = document.getElementById(id);
-      if (el) el.textContent = 'Last fetched: ' + ts;
-    });
-    salesToast('✓ eBay fetched — ' + totalOrders + ' orders · ' + totalRows + ' rows written', 'success');
-
-    // Compute Part#_Sales + SKU_Sales via 4-step chunked approach
-    salesToast('<span class="sales-spinner"></span>Computing sales totals (4 steps)...', 'info');
-    try { await recomputeTabsSilent(); } catch(compErr) { salesToast('⚠ Compute error: ' + compErr.message, 'error'); }
-
-    salesToast('<span class="sales-spinner"></span>Reading calc tabs...', 'info');
-    try {
-      await salesLoadWarehouseStock();
-      await readCalcTabs();
-      lastUpdated = new Date();
-      updateLastUpdatedLabels();
-      buildReorderRows();
-      buildDashboardData();
-      var whCount = Object.keys(CALC.whStock).length;
-      setStatus('ro', 'ok', 'WH: ' + whCount + ' parts');
-      setStatus('db', 'ok', 'Up to date');
-      salesToast('✓ Data loaded — ' + CALC.partSales.length + ' parts', 'success');
-    } catch(calcErr) {
-      setStatus('ro', 'err', 'Calc read error');
-      setStatus('db', 'err', 'Calc read error');
-      salesToast('Calc error: ' + calcErr.message, 'error');
-    }
-
-  } catch(e) {
-    setStatus30('✗ ' + e.message, false);
-    setStatus90('✗ ' + e.message, false);
-    setStatus('ro', 'err', 'eBay fetch failed');
-    setStatus('db', 'err', 'eBay fetch failed');
-    salesToast('eBay fetch error: ' + e.message, 'error');
-  } finally {
-    salesFetchLock = false;
-    if (btn) { btn.disabled = false; btn.textContent = '↓ Fetch eBay Sales'; }
-  }
-}
-
-function handleUpload(evt, tabName) {
-  var file = evt.target.files[0];
-  if (!file) return;
-  setUploadCard(tabName, 'uploading', 'Reading ' + file.name + '...');
-  var reader = new FileReader();
-  reader.onload = function(e) {
-    var text = e.target.result;
-    var rows = salesParseCSV(text, tabName);
-    if (!rows || rows.length < 2) {
-      setUploadCard(tabName, 'error', 'Could not parse — check file format');
-      return;
-    }
-    staged[tabName] = rows;
-    setUploadCard(tabName, 'has-data', '✓ ' + file.name + ' (' + (rows.length-1) + ' rows)');
-    salesToast('Loaded ' + tabName + ': ' + (rows.length-1) + ' rows', 'success');
-  };
-  reader.readAsText(file);
-}
-
-function salesParseCSV(text, tabName) {
-  // Normalise line endings
-  text = text.replace(/\r\n/g,'\n').replace(/\r/g,'\n');
-  var lines = text.split('\n');
-
-  // eBay reports: row 11 = headers, row 12 = first data (1-indexed)
-  // So slice from index 10 (0-indexed) — row[0] becomes headers, row[1]+ is data
-  var startLine = 0;
-  if (tabName === 'Ebay30' || tabName === 'Ebay90') {
-    startLine = 10;
-  }
-
-  var dataLines = lines.slice(startLine).filter(function(l){ return l.trim(); });
-  return dataLines.map(function(line){ return csvRowToArray(line); });
-}
-
-function csvRowToArray(line) {
-  // Handles quoted fields with commas inside
-  var result = [], cur = '', inQ = false;
-  for (var i=0;i<line.length;i++) {
-    var c = line[i];
-    if (c==='"') { inQ=!inQ; }
-    else if (c===',' && !inQ) { result.push(cur.trim()); cur=''; }
-    else { cur+=c; }
-  }
-  result.push(cur.trim());
-  return result;
-}
-
-function setUploadCard(tabName, state, msg) {
-  // Update both reorder and dashboard upload cards
-  ['uc-'+tabName, 'db-uc-'+tabName].forEach(function(id) {
-    var card = document.getElementById(id);
-    if (card) card.className = 'upload-card ' + state;
-  });
-  ['uc-status-'+tabName, 'db-uc-status-'+tabName].forEach(function(id) {
-    var el = document.getElementById(id);
-    if (el) el.textContent = msg;
-  });
-}
-
-// ─── PROCESS ALL: UPLOAD → SHEET → READ BACK ────────────────────────────────
-async function processAllReports() {
-  if (!SALES_WORKER_URL) { salesToast('WORKER_URL not set in app config', 'error'); return; }
-  var tabs = Object.keys(staged);
-  if (!tabs.length) { salesToast('No files loaded yet — select CSV files first', 'error'); return; }
-
-  setStatus('ro','loading','Uploading...');
-  setStatus('db','loading','Uploading...');
-  salesToast('<span class="sales-spinner"></span>Uploading ' + tabs.length + ' report(s) to sheet...', 'info');
-
-  // Upload each staged file to its tab
-  var uploadErrors = [];
-  for (var i=0;i<tabs.length;i++) {
-    var tab = tabs[i];
-    try {
-      setStatus('ro','loading','Writing '+tab+'...');
-      await workerPut(tab, staged[tab]);
-      salesToast('✓ ' + tab + ' written to sheet', 'success');
-    } catch(e) {
-      uploadErrors.push(tab + ': ' + e.message);
-      salesToast('✗ Failed ' + tab + ': ' + e.message, 'error');
-    }
-  }
-
-  if (uploadErrors.length) {
-    setStatus('ro','err','Upload errors');
-    setStatus('db','err','Upload errors');
-    return;
-  }
-
-  // Compute Part#_Sales + SKU_Sales via 4-step chunked approach
-  salesToast('<span class="sales-spinner"></span>Computing sales totals (4 steps)...', 'info');
-  try { await recomputeTabsSilent(); } catch(ce) { salesToast('⚠ Compute error: ' + ce.message, 'error'); }
-
-  // Now read back all calculated tabs + warehouse stock
-  salesToast('<span class="sales-spinner"></span>Reading calculated data from sheet...', 'info');
-  setStatus('ro','loading','Reading back...');
-  try {
-    await salesLoadWarehouseStock();
-    await readCalcTabs();
-    lastUpdated = new Date();
-    updateLastUpdatedLabels();
-    if(name==='reorder') buildReorderRows();
-    if(name==='dashboard') buildDashboardData();
-    var whCount = Object.keys(CALC.whStock).length;
-    setStatus('ro','ok','WH: ' + whCount + ' parts');
-    setStatus('db','ok','Up to date');
-    salesToast('✓ Data loaded — ' + CALC.partSales.length + ' parts, ' + CALC.jqVendor.length + ' JQ, ' + CALC.effVendor.length + ' EFF parts', 'success');
-  } catch(e) {
-    setStatus('ro','err','Read-back failed');
-    setStatus('db','err','Read-back failed');
-    salesToast('Read-back error: ' + e.message, 'error');
-  }
-}
-
-async function loadSavedData() {
-  if (!SALES_WORKER_URL) { salesToast('WORKER_URL not set', 'error'); return; }
-  setStatus('ro','loading','Loading...');
-  setStatus('db','loading','Loading...');
-  salesToast('<span class="sales-spinner"></span>Loading data from sheets...', 'info');
-  try {
-    await salesLoadWarehouseStock();
-    await readCalcTabs();
-    lastUpdated = new Date();
-    updateLastUpdatedLabels();
-    if(name==='reorder') buildReorderRows();
-    if(name==='dashboard') buildDashboardData();
-    var whCount = Object.keys(CALC.whStock).length;
-    setStatus('ro','ok','WH: ' + whCount + ' parts');
-    setStatus('db','ok','Up to date');
-    salesToast('✓ Loaded · WH: ' + whCount + ' parts', 'success');
-  } catch(e) {
-    setStatus('ro','err','Load failed');
-    setStatus('db','err','Load failed');
-    salesToast('Load error: ' + e.message, 'error');
-  }
-}
-
-async function autoLoadOnLaunch(app) {
-  // Load WH stock and calc tabs in parallel — both must finish before building rows
-  if (!SALES_WORKER_URL) return;
-  setStatus(app, 'loading', 'Loading data...');
-  try {
-    await salesLoadWarehouseStock();
-    await readCalcTabs();
-    lastUpdated = new Date();
-    updateLastUpdatedLabels();
-    if(name==='reorder') buildReorderRows();
-    if(name==='dashboard') buildDashboardData();
-    var whCount = Object.keys(CALC.whStock).length;
-    setStatus(app, 'ok', 'Loaded · WH: ' + whCount + ' parts');
-    salesToast('Data loaded — ' + whCount + ' WH parts', 'success');
-  } catch(e) {
-    setStatus(app, 'err', 'Load failed');
-    salesToast('Load error: ' + e.message, 'error');
-  }
-}
-
-async function silentLoadSaved() {
-  // Pre-fetch in background after PIN — salesLaunchApp will rebuild rows on open
-  if (!SALES_WORKER_URL || salesFetchLock) return;
-  try {
-    await salesLoadWarehouseStock();
-    await readCalcTabs();  // sequential — not parallel with WH load
-    lastUpdated = new Date();
-  } catch(e) { /* silent */ }
-}
-
-async function readCalcTabs() {
-  if (salesFetchLock) { console.log('[readCalcTabs] skipped — fetch in progress'); return; }
-
-  // Read each tab with a 25s timeout — fails fast instead of hanging forever.
-  // No retry loop since Recompute writes plain values (no formula recalc needed).
-  async function readTabSafe(tab) {
-    try {
-      var timeoutPromise = new Promise(function(_, reject) {
-        setTimeout(function() { reject(new Error('Timeout reading ' + tab + ' (45s)')); }, 45000);
-      });
-      var rows = await Promise.race([ workerGet(tab), timeoutPromise ]);
-      console.log('[readCalcTabs]', tab, rows.length, 'rows');
-      return rows;
-    } catch(e) {
-      console.warn('[readCalcTabs]', tab, 'failed:', e.message.slice(0, 80));
-      salesToast('⚠ ' + tab + ' — ' + e.message.slice(0, 60), 'error');
-      return [];
-    }
-  }
-
-  // Read static vendor/COGS tabs first — always small and fast
-  var staticTabs = ['JQ_Vendor', 'EFF_Vendor', 'COGS'];
-  var staticResults = [];
-  for (var i = 0; i < staticTabs.length; i++) {
-    staticResults.push(await readTabSafe(staticTabs[i]));
-  }
-  CALC.jqVendor = sheetToObjs(staticResults[0]);
-  CALC.effVendor = sheetToObjs(staticResults[1]);
-  CALC.cogs = {};
-  sheetToObjs(staticResults[2]).forEach(function(r) {
-    var sku = (r['SKU'] || r['sku'] || '').toString().trim().toUpperCase();
-    var price = n(r['Unit Price'] || r['unit price'] || r['Price'] || '');
-    if (sku) CALC.cogs[sku] = price;
-  });
-
-  // Read Part#_Sales + SKU_Sales — these are populated by Recompute (plain values, no formulas)
-  // Use a short 10s timeout since these should return fast once formulas are removed
-  async function readTabFast(tab) {
-    try {
-      var timeoutP = new Promise(function(_, rej){ setTimeout(function(){ rej(new Error('Timeout ' + tab)); }, 10000); });
-      return await Promise.race([ workerGet(tab), timeoutP ]);
-    } catch(e) {
-      console.log('[readCalcTabs]', tab, 'skipped:', e.message.slice(0,50));
-      return [];
-    }
-  }
-  var partRows = await readTabFast('Part#_Sales');
-  if (partRows.length > 1) {
-    CALC.partSales = sheetToObjs(partRows);
-    var skuRows = await readTabFast('SKU_Sales');
-    CALC.skuSales = sheetToObjs(skuRows);
-    console.log('[readCalcTabs] Part#_Sales:', CALC.partSales.length, 'SKU_Sales:', CALC.skuSales.length);
-  } else {
-    console.log('[readCalcTabs] Part#_Sales empty — run ⚡ Recompute to populate');
-    salesToast('No sales data yet — hit ⚡ Recompute Totals to build from raw data', 'info');
-  }
-}
-
-function sheetToObjs(rows) {
-  if (!rows || rows.length < 2) return [];
-  var headers = rows[0];
-  return rows.slice(1).filter(function(r){ return r.some(function(c){ return c && c.toString().trim(); }); })
-    .map(function(r) {
-      var obj = {};
-      headers.forEach(function(h,i){ obj[h] = r[i] !== undefined ? r[i] : ''; });
-      return obj;
-    });
-}
 
 function updateLastUpdatedLabels() {
   var str = lastUpdated ? 'Last updated ' + lastUpdated.toLocaleTimeString() : '';
@@ -2925,30 +2516,29 @@ function exportPO(vendor) {
 
 // ─── DASHBOARD LOGIC ─────────────────────────────────────────────────────────
 function buildDashboardData() {
-  DB_PARTS = CALC.partSales.map(function(r){
-    var pn = (r['Part#']||'').toString();
+  DB_PARTS = CALC.rawParts.map(function(r){
+    var pn = r.partNum;
     if (!pn) return null;
-    var amzU30=n(r['AMZ 30 units sold']), amzU90=n(r['AMZ 90 units sold']);
-    var ebayU30=n(r['eBay 30 units sold']), ebayU90=n(r['eBay 90 units sold']);
-    var xfU30=n(r['XF 30 units sold']), xfU90=n(r['XF 90 units sold']);
-    var amzS30=n(r['AMZ 30 sales']), ebayS30=n(r['eBay 30 sales']), xfS30=n(r['XF 30 sales']);
-    var amzS90=n(r['AMZ 90 sales']), ebayS90=n(r['eBay 90 sales']), xfS90=n(r['XF 90 sales']);
-    var u30=amzU30+ebayU30+xfU30, u90=amzU90+ebayU90+xfU90;
-    var s30=amzS30+ebayS30+xfS30, s90=amzS90+ebayS90+xfS90;
-    var dom = u30===0?'tie':[['amz',amzU30],['ebay',ebayU30],['xf',xfU30]].sort(function(a,b){return b[1]-a[1];})[0][0];
-    if(amzU30===ebayU30&&ebayU30===xfU30&&u30>0) dom='tie';
+    var amzU30=r.amzU30||0, amzU90=r.amzU90||0, ebayU30=r.ebayU30||0, ebayU90=r.ebayU90||0,
+        xfU30=r.xfU30||0, xfU90=r.xfU90||0, walU30=r.walU30||0, walU90=r.walU90||0;
+    var amzS30=r.amzS30||0, ebayS30=r.ebayS30||0, xfS30=r.xfS30||0, walS30=r.walS30||0;
+    var amzS90=r.amzS90||0, ebayS90=r.ebayS90||0, xfS90=r.xfS90||0, walS90=r.walS90||0;
+    var u30=amzU30+ebayU30+xfU30+walU30, u90=amzU90+ebayU90+xfU90+walU90;
+    var s30=amzS30+ebayS30+xfS30+walS30, s90=amzS90+ebayS90+xfS90+walS90;
+    var platEntries = [['amz',amzU30],['ebay',ebayU30],['xf',xfU30],['wal',walU30]];
+    var dom = u30===0 ? 'tie' : platEntries.sort(function(a,b){return b[1]-a[1];})[0][0];
+    if (platEntries.filter(function(p){return p[1]===platEntries[0][1];}).length === platEntries.length && u30>0) dom='tie';
     var d30=u30/30, d90=u90/90;
     var trend = !d90||!d30?'flat':d30>d90*1.05?'up':d30<d90*0.95?'down':'flat';
-    return {pn,amzU30,amzU90,ebayU30,ebayU90,xfU30,xfU90,amzS30,ebayS30,xfS30,amzS90,ebayS90,xfS90,u30,u90,s30,s90,dom,trend};
+    return {pn,amzU30,amzU90,ebayU30,ebayU90,xfU30,xfU90,walU30,walU90,amzS30,ebayS30,xfS30,walS30,amzS90,ebayS90,xfS90,walS90,u30,u90,s30,s90,dom,trend,oos:!!r.oos};
   }).filter(Boolean);
 
-  DB_SKUS = CALC.skuSales.map(function(r){
-    var sku=(r['BASE SKU']||r['Base SKU']||'').toString();
+  DB_SKUS = CALC.rawSkus.map(function(r){
+    var sku = r.baseSku;
     if (!sku) return null;
-    var u30=n(r['30 units sold']), u90=n(r['90 units sold']);
-    var s30=n(r['30 sales']), s90=n(r['90 sales']);
-    var daily=n(r['daily units sold'])||(u30/30);
-    var trend=!u90||!u30?'flat':(u30/30)>(u90/90)*1.05?'up':(u30/30)<(u90/90)*0.95?'down':'flat';
+    var u30=r.units30||0, u90=r.units90||0, s30=r.sales30||0, s90=r.sales90||0;
+    var daily = r.dailyAvg || (u30/30);
+    var trend = !u90||!u30?'flat':(u30/30)>(u90/90)*1.05?'up':(u30/30)<(u90/90)*0.95?'down':'flat';
     return {sku,u30,u90,s30,s90,daily,trend};
   }).filter(Boolean);
 
@@ -2960,13 +2550,13 @@ function buildDashboardData() {
 }
 
 function renderKPIs() {
-  var amzU30=0,ebayU30=0,xfU30=0,amzS30=0,ebayS30=0,xfS30=0,u90=0,s90=0;
+  var amzU30=0,ebayU30=0,xfU30=0,walU30=0,amzS30=0,ebayS30=0,xfS30=0,walS30=0,u90=0,s90=0;
   DB_PARTS.forEach(function(r){
-    amzU30+=r.amzU30; ebayU30+=r.ebayU30; xfU30+=r.xfU30;
-    amzS30+=r.amzS30; ebayS30+=r.ebayS30; xfS30+=r.xfS30;
+    amzU30+=r.amzU30; ebayU30+=r.ebayU30; xfU30+=r.xfU30; walU30+=r.walU30;
+    amzS30+=r.amzS30; ebayS30+=r.ebayS30; xfS30+=r.xfS30; walS30+=r.walS30;
     u90+=r.u90; s90+=(r.s90||0);
   });
-  var u30=amzU30+ebayU30+xfU30, s30=amzS30+ebayS30+xfS30;
+  var u30=amzU30+ebayU30+xfU30+walU30, s30=amzS30+ebayS30+xfS30+walS30;
   var active = DB_PARTS.filter(function(r){ return r.u30>0; }).length;
   var totU = Math.max(u30,1), totS = Math.max(s30,1);
   var unitTrend = u90>0 ? ((u30/30)-(u90/90))/(u90/90)*100 : 0;
@@ -2981,7 +2571,8 @@ function renderKPIs() {
   var plats = [
     {name:'Amazon',  u:amzU30, s:amzS30, c:'#f59e0b', ct:'#b45309'},
     {name:'eBay',    u:ebayU30,s:ebayS30,c:'var(--accent)', ct:'var(--accent2)'},
-    {name:'Shopify', u:xfU30,  s:xfS30,  c:'var(--green)',  ct:'var(--green)'}
+    {name:'Shopify', u:xfU30,  s:xfS30,  c:'var(--green)',  ct:'var(--green)'},
+    {name:'Walmart', u:walU30, s:walS30, c:'#0071ce',        ct:'#0071ce'}
   ];
 
   var o = '';
@@ -3131,14 +2722,16 @@ function renderParts() {
     +ppth('eBay 90d','ebayU90','text-align:right')
     +ppth('XF 30d','xfU30','text-align:right')
     +ppth('XF 90d','xfU90','text-align:right')
+    +ppth('Walmart 30d','walU30','text-align:right')
+    +ppth('Walmart 90d','walU90','text-align:right')
     +ppth('Total 30d','u30','text-align:right')
     +ppth('Rev 30d','s30','text-align:right')
     +'</tr></thead><tbody>';
-  var DL={'amz':'<span class="sales-plat-badge sales-plat-amz">AMZ</span>','ebay':'<span class="sales-plat-badge sales-plat-ebay">eBay</span>','xf':'<span class="sales-plat-badge sales-plat-xf">XF</span>','tie':'<span class="sales-plat-badge sales-plat-tie">TIE</span>'};
+  var DL={'amz':'<span class="sales-plat-badge sales-plat-amz">AMZ</span>','ebay':'<span class="sales-plat-badge sales-plat-ebay">eBay</span>','xf':'<span class="sales-plat-badge sales-plat-xf">XF</span>','wal':'<span class="sales-plat-badge" style="background:rgba(0,113,206,.12);color:#0071ce">WAL</span>','tie':'<span class="sales-plat-badge sales-plat-tie">TIE</span>'};
   var TL={'up':'<span style="font-size:11px;color:var(--green);font-family:var(--mono)">▲ Growing</span>','down':'<span style="font-size:11px;color:var(--red);font-family:var(--mono)">▼ Slowing</span>','flat':'<span style="font-size:11px;color:var(--text3);font-family:var(--mono)">● Stable</span>'};
   rows.forEach(function(r){
     h+='<tr>'
-      +'<td class="s-mono" style="font-weight:600;max-width:160px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">'+r.pn+'</td>'
+      +'<td class="s-mono" style="font-weight:600;max-width:160px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">'+r.pn+(r.oos?' <span style="color:var(--red);font-size:10px;font-weight:700">OOS</span>':'')+'</td>'
       +'<td style="text-align:left">'+(DL[r.dom]||'')+'</td>'
       +'<td style="text-align:left">'+(TL[r.trend]||'')+'</td>'
       +'<td class="s-num num mono">'+r.amzU30+'</td>'
@@ -3147,6 +2740,8 @@ function renderParts() {
       +'<td class="s-num num mono" style="color:var(--text3)">'+r.ebayU90+'</td>'
       +'<td class="s-num num mono">'+r.xfU30+'</td>'
       +'<td class="s-num num mono" style="color:var(--text3)">'+r.xfU90+'</td>'
+      +'<td class="s-num num mono">'+r.walU30+'</td>'
+      +'<td class="s-num num mono" style="color:var(--text3)">'+r.walU90+'</td>'
       +'<td class="s-num num mono" style="font-weight:600">'+r.u30+'</td>'
       +'<td class="s-num num mono" style="color:var(--green)">$'+fmt0(r.s30)+'</td>'
       +'</tr>';
@@ -3208,7 +2803,7 @@ function roTab(name) {
   }
 }
 function dbTab(name) {
-  ['upload','overview','parts','skus','ai'].forEach(function(t){
+  ['overview','parts','skus','ai'].forEach(function(t){
     document.getElementById('db-tab-'+t).className='sales-tab-btn'+(t===name?' active':'');
     document.getElementById('db-panel-'+t).className='sales-panel'+(t===name?' active':'');
   });
@@ -3288,131 +2883,6 @@ function workerPut(tab, rows) {
 
 
 
-// ── recomputeTabs — 4-step chunked compute to stay under 30s worker limit ───
-// Each step is a separate worker invocation with its own budget.
-// Browser merges the accumulators and sends merged data to the write step.
-async function recomputeTabs() {
-  if (salesFetchLock) { salesToast('Fetch in progress — wait for it to finish', 'error'); return; }
-  salesFetchLock = true;
-  setStatus('ro', 'loading', 'Recomputing...');
-  setStatus('db', 'loading', 'Recomputing...');
-
-  async function computeStep(step, body) {
-    var url = SALES_WORKER_URL + '/sales/compute-tabs?step=' + step;
-    var res  = await wFetch(url, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(body || {})
-    });
-    var data = await res.json();
-    if (!data.ok) throw new Error('Step ' + step + ' failed: ' + (data.error || 'unknown'));
-    return data;
-  }
-
-  function mergeAcc(target, source) {
-    for (var pn in source) {
-      if (!target[pn]) target[pn] = {};
-      for (var k in source[pn]) {
-        target[pn][k] = (target[pn][k] || 0) + (source[pn][k] || 0);
-      }
-    }
-  }
-
-  try {
-    salesToast('<span class="sales-spinner"></span>Step 1/5 — Loading UPC master list...', 'info');
-    var upcData = await computeStep('upc');
-    salesToast('✓ UPC: ' + (upcData.totalParts||0) + ' parts · ' + (upcData.oosCount||0) + ' OOS · Step 2/5 eBay...', 'success');
-
-    salesToast('<span class="sales-spinner"></span>Step 2/5 — Computing eBay sales...', 'info');
-    var ebayData = await computeStep('ebay');
-    salesToast('✓ eBay: ' + (ebayData.rows30||0) + ' / ' + (ebayData.rows90||0) + ' rows · Step 3/5 Amazon...', 'success');
-
-    var amzData = await computeStep('amz');
-    salesToast('✓ Amazon: ' + (amzData.rows30||0) + ' / ' + (amzData.rows90||0) + ' rows · Step 4/5 Shopify...', 'success');
-
-    var xfData = await computeStep('xf');
-    salesToast('✓ Shopify: ' + (xfData.rows30||0) + ' / ' + (xfData.rows90||0) + ' rows · Step 5/5 Writing...', 'success');
-
-    // Merge all accumulators in the browser
-    var merged = {};
-    mergeAcc(merged, ebayData.acc || {});
-    mergeAcc(merged, amzData.acc  || {});
-    mergeAcc(merged, xfData.acc   || {});
-
-    var writeData = await computeStep('write', {
-      acc:      merged,
-      upcParts: upcData.upcParts || [],
-      oosParts: upcData.oosParts || []
-    });
-    salesToast('✓ Written — ' + writeData.parts + ' parts · ' + writeData.skus + ' SKUs · updating vendors...', 'success');
-
-    // Step 5b: update JQ_Vendor + EFF_Vendor with sales totals
-    try {
-      var vendorData = await computeStep('vendors', { acc: merged });
-      salesToast('✓ Vendors updated — JQ: ' + (vendorData.jqUpdated||0) + ' · EFF: ' + (vendorData.effUpdated||0) + ' parts with sales', 'success');
-    } catch(ve) {
-      salesToast('⚠ Vendor update: ' + ve.message, 'error');
-    }
-
-    await salesLoadWarehouseStock();
-    await readCalcTabs();
-    lastUpdated = new Date();
-    updateLastUpdatedLabels();
-    if(name==='reorder') buildReorderRows();
-    if(name==='dashboard') buildDashboardData();
-    var whCount = Object.keys(CALC.whStock).length;
-    setStatus('ro', 'ok', 'WH: ' + whCount + ' parts');
-    setStatus('db', 'ok', 'Up to date');
-    salesToast('✓ Done — ' + CALC.partSales.length + ' parts loaded', 'success');
-  } catch(e) {
-    setStatus('ro', 'err', 'Recompute failed');
-    setStatus('db', 'err', 'Recompute failed');
-    salesToast('Recompute error: ' + e.message, 'error');
-  } finally {
-    salesFetchLock = false;
-  }
-}
-
-
-// ── recomputeTabsSilent — same as recomputeTabs but no status/lock updates ───
-// Used internally after eBay fetch and CSV upload — caller manages the lock.
-async function recomputeTabsSilent() {
-  async function computeStep(step, body) {
-    var res  = await wFetch(SALES_WORKER_URL + '/sales/compute-tabs?step=' + step, {
-      method: 'POST', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(body || {})
-    });
-    var data = await res.json();
-    if (!data.ok) throw new Error('Step ' + step + ': ' + (data.error || 'unknown'));
-    return data;
-  }
-  function mergeAcc(target, source) {
-    for (var pn in source) {
-      if (!target[pn]) target[pn] = {};
-      for (var k in source[pn]) target[pn][k] = (target[pn][k]||0) + (source[pn][k]||0);
-    }
-  }
-  var upcData  = await computeStep('upc');
-  salesToast('✓ UPC: ' + (upcData.totalParts||0) + ' parts · eBay next...', 'success');
-  var ebayData = await computeStep('ebay');
-  salesToast('✓ eBay computed · Amazon next...', 'success');
-  var amzData  = await computeStep('amz');
-  salesToast('✓ Amazon computed · Shopify next...', 'success');
-  var xfData   = await computeStep('xf');
-  salesToast('✓ Shopify computed · Writing...', 'success');
-  var merged = {};
-  mergeAcc(merged, ebayData.acc||{});
-  mergeAcc(merged, amzData.acc||{});
-  mergeAcc(merged, xfData.acc||{});
-  var writeData = await computeStep('write', {
-    acc: merged,
-    upcParts: upcData.upcParts || [],
-    oosParts: upcData.oosParts || []
-  });
-  salesToast('✓ Written — ' + writeData.parts + ' parts · updating vendors...', 'success');
-  try { await computeStep('vendors', { acc: merged }); } catch(_) {}
-  salesToast('✓ Computed — ' + writeData.parts + ' parts · ' + writeData.skus + ' SKUs', 'success');
-}
 
 // ─── SKU MAP ─────────────────────────────────────────────────────────────────
 var skuMapRows = [];  // [{ sku, units, suggestion, masterPart, confirmed }]
