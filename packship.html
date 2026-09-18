@@ -996,6 +996,26 @@ body {
   </div>
 </div>
 
+<!-- No Stock resolve — replaces the plain "Resolved" button with a choice:
+     the picker either still didn't find it ("Still Not Found", same as the
+     old one-click resolve) or actually located the stock ("Found It" — asks
+     how many cases and where, then corrects master_list automatically so
+     the next person who searches for it sees it's there — see
+     psNostockResolve / _psNostockResolveModalSubmitFound and the worker's
+     shipResolveNostock "found" branch). -->
+<div id="ps-nostock-resolve-modal-overlay" class="ps-person-modal-overlay" onclick="if(event.target===this) _psNostockResolveModalCancel()">
+  <div class="ps-person-modal">
+    <div class="ps-person-modal-header">
+      <div>
+        <div class="ps-person-modal-title">Resolve Report</div>
+        <div class="ps-person-modal-sub" id="ps-nostock-resolve-modal-sub"></div>
+      </div>
+      <button class="ps-person-modal-close" onclick="_psNostockResolveModalCancel()">✕</button>
+    </div>
+    <div class="ps-person-modal-body" id="ps-nostock-resolve-modal-body"></div>
+  </div>
+</div>
+
 <!-- Top bar -->
 <div class="ps-topbar">
   <div class="ps-topbar-left">
@@ -4117,6 +4137,7 @@ function _psWireEvents() {
     // opened from inside the person modal, one Escape should reveal the
     // person modal again, not close both at once.
     if (_psNostockPending)      { _psNostockConfirmCancel(); return; }
+    if (_psNostockResolvePending) { _psNostockResolveModalCancel(); return; }
     if (_psTrackingModalOpen)   { psCloseTrackingDetail(); return; }
     if (_psNostockHistoryModalOpen) { psCloseNostockHistory(); return; }
     if (_psItemCountModalOpen)  { psCloseItemCountDetail(); return; }
@@ -4802,7 +4823,7 @@ function psRenderNostockList() {
       +   '<div style="flex:1;min-width:0">'
       +     '<div style="display:flex;justify-content:space-between;align-items:center;gap:8px">'
       +       '<div style="font-family:var(--mono);font-weight:700;font-size:13px;color:var(--accent);cursor:pointer" onclick="psNostockGo(' + idx + ')">' + headline + '</div>'
-      +       '<button style="font-size:11px;padding:4px 8px;border:1px solid var(--border);border-radius:6px;background:var(--bg);color:var(--text2);cursor:pointer;flex-shrink:0" onclick="psNostockResolve(' + s.id + ',this)">Resolved</button>'
+      +       '<button style="font-size:11px;padding:4px 8px;border:1px solid var(--border);border-radius:6px;background:var(--bg);color:var(--text2);cursor:pointer;flex-shrink:0" onclick="psNostockResolve(' + s.id + ',this)">Resolve…</button>'
       +     '</div>'
       +     '<div style="font-size:11px;color:var(--text3);margin-top:3px">'
       +       (s.sku ? s.sku + ' · ' : '')
@@ -4842,12 +4863,147 @@ window.psNostockGo = function(idx) {
   _psLoadPickProduct(s.tracking);
 };
 
+// Opens the Resolve modal instead of resolving straight away — "Still Not
+// Found" inside it does exactly what the old one-click Resolved button
+// used to (reuses _psNostockResolveIds below); "Found It" reveals the
+// cases/location form. See _psNostockResolvePending for what the modal's
+// own buttons act on.
+var _psNostockResolvePending = null; // { id, btnEl }
+
 window.psNostockResolve = function(id, btnEl) {
-  if (btnEl) { btnEl.disabled = true; btnEl.textContent = '…'; }
-  _psNostockResolveIds([id]).then(function(result) {
+  var report = _psNostockOpenList.filter(function(s) { return s.id === id; })[0];
+  _psNostockResolvePending = { id: id, btnEl: btnEl };
+  var headline = (report && (report.binLocation || report.sku)) || ('report #' + id);
+  document.getElementById('ps-nostock-resolve-modal-sub').textContent = headline;
+  _psNostockRenderResolveModalChoice(report);
+  document.getElementById('ps-nostock-resolve-modal-overlay').style.display = 'flex';
+};
+
+function _psNostockRenderResolveModalChoice(report) {
+  var body = document.getElementById('ps-nostock-resolve-modal-body');
+  var sub = (report && (
+    (report.sku ? report.sku + ' · ' : '') +
+    (report.orderNum ? 'Order ' + report.orderNum + ' · ' : '') +
+    (report.tracking || '')
+  )) || '';
+  body.innerHTML =
+      (sub ? '<div style="font-size:11px;color:var(--text3);margin-bottom:14px">' + sub + '</div>' : '')
+    + '<div style="display:flex;flex-direction:column;gap:10px">'
+    +   '<button onclick="_psNostockResolveModalNotFound()" style="width:100%;padding:14px;border:1.5px solid var(--border);border-radius:10px;background:var(--bg3);color:var(--text);font-weight:700;font-size:13px;cursor:pointer;text-align:left">'
+    +     '🚫 Still Not Found<div style="font-weight:500;font-size:11px;color:var(--text3);margin-top:2px">Nothing there — close this report out, same as before.</div>'
+    +   '</button>'
+    +   '<button onclick="_psNostockResolveModalShowFound()" style="width:100%;padding:14px;border:1.5px solid var(--green);border-radius:10px;background:var(--bg3);color:var(--green);font-weight:700;font-size:13px;cursor:pointer;text-align:left">'
+    +     '✅ Found It<div style="font-weight:500;font-size:11px;color:var(--text3);margin-top:2px">Located the stock — tell us how many cases and where, and we\'ll update Inventory so it shows up next time.</div>'
+    +   '</button>'
+    + '</div>';
+}
+
+window._psNostockResolveModalShowFound = function() {
+  var p = _psNostockResolvePending;
+  if (!p) return;
+  var report = _psNostockOpenList.filter(function(s) { return s.id === p.id; })[0];
+  var body = document.getElementById('ps-nostock-resolve-modal-body');
+  // Location defaults to the bin this report was originally checked
+  // against — usually right (the stock was there all along, just
+  // undercounted), but editable in case it actually turned up somewhere
+  // else entirely.
+  var suggestedLoc = (report && report.binLocation) || '';
+  // Split "PREFIX=shelf" into its prefix + shelf parts (same convention as
+  // Inventory's "Log Found Location" panel) so the dropdown pre-selects the
+  // right prefix and the number field just gets the rest — pickers only
+  // have to type the shelf/bin number, same as they already do in Inventory.
+  var _psLocPrefixes = ['2FL=','BARN=','BASEMENT=','BH=','C1=','C2=','C3=','C4=','C5=','FRONT='];
+  var suggestedPrefix = _psLocPrefixes[0], suggestedShelf = suggestedLoc;
+  for (var _pi = 0; _pi < _psLocPrefixes.length; _pi++) {
+    if (suggestedLoc.toUpperCase().indexOf(_psLocPrefixes[_pi]) === 0) {
+      suggestedPrefix = _psLocPrefixes[_pi];
+      suggestedShelf = suggestedLoc.slice(_psLocPrefixes[_pi].length);
+      break;
+    }
+  }
+  var _psLocOptsHtml = _psLocPrefixes.map(function(pfx) {
+    return '<option value="' + pfx + '"' + (pfx === suggestedPrefix ? ' selected' : '') + '>' + pfx + '</option>';
+  }).join('');
+  body.innerHTML =
+      '<div style="font-size:12px;color:var(--text2);margin-bottom:12px">How many cases, and where?</div>'
+    + '<label style="font-size:11px;font-weight:700;color:var(--text3);display:block;margin-bottom:4px">Cases Found</label>'
+    + '<input type="number" min="0" step="1" id="ps-nostock-found-cases" class="ps-field-input" style="margin:0 0 12px" placeholder="e.g. 5">'
+    + '<label style="font-size:11px;font-weight:700;color:var(--text3);display:block;margin-bottom:4px">Location</label>'
+    + '<div style="display:flex;gap:6px;align-items:center;margin:0 0 16px">'
+    +   '<select id="ps-nostock-found-prefix" style="padding:11px 8px;border:1.5px solid var(--border2);border-radius:10px;background:var(--bg3);color:var(--text);font-size:13px;font-family:var(--mono)">' + _psLocOptsHtml + '</select>'
+    +   '<input type="text" id="ps-nostock-found-shelf" class="ps-field-input" style="margin:0;font-family:var(--mono)" value="' + suggestedShelf.replace(/"/g,'&quot;') + '" placeholder="e.g. 5-1-3">'
+    + '</div>'
+    + '<div id="ps-nostock-found-err" style="color:var(--red);font-size:12px;margin-bottom:10px;min-height:16px"></div>'
+    + '<div style="display:flex;gap:10px;justify-content:flex-end">'
+    +   '<button class="ps-btn-sm" onclick="_psNostockResolveModalBack()">Back</button>'
+    +   '<button class="ps-btn-sm" id="ps-nostock-found-submit-btn" onclick="_psNostockResolveModalSubmitFound()" style="background:var(--green);color:#fff;border-color:var(--green);font-weight:700">Save &amp; Resolve</button>'
+    + '</div>';
+  var casesInp = document.getElementById('ps-nostock-found-cases');
+  if (casesInp) casesInp.focus();
+};
+
+window._psNostockResolveModalBack = function() {
+  var p = _psNostockResolvePending;
+  if (!p) return;
+  var report = _psNostockOpenList.filter(function(s) { return s.id === p.id; })[0];
+  _psNostockRenderResolveModalChoice(report);
+};
+
+window._psNostockResolveModalNotFound = function() {
+  var p = _psNostockResolvePending;
+  if (!p) return;
+  document.getElementById('ps-nostock-resolve-modal-overlay').style.display = 'none';
+  if (p.btnEl) { p.btnEl.disabled = true; p.btnEl.textContent = '…'; }
+  _psNostockResolveIds([p.id]).then(function(result) {
     if (!result.failedIds.length) return;
-    if (btnEl) { btnEl.disabled = false; btnEl.textContent = 'Resolved'; }
+    if (p.btnEl) { p.btnEl.disabled = false; p.btnEl.textContent = 'Resolve…'; }
     _psToast('Could not mark resolved — try again', 'err');
+  });
+  _psNostockResolvePending = null;
+};
+
+window._psNostockResolveModalCancel = function() {
+  document.getElementById('ps-nostock-resolve-modal-overlay').style.display = 'none';
+  _psNostockResolvePending = null;
+};
+
+window._psNostockResolveModalSubmitFound = function() {
+  var p = _psNostockResolvePending;
+  if (!p) return;
+  var casesEl  = document.getElementById('ps-nostock-found-cases');
+  var prefixEl = document.getElementById('ps-nostock-found-prefix');
+  var shelfEl  = document.getElementById('ps-nostock-found-shelf');
+  var errEl    = document.getElementById('ps-nostock-found-err');
+  var cases    = parseFloat(casesEl && casesEl.value);
+  var shelf    = (shelfEl && shelfEl.value || '').trim();
+  var location = ((prefixEl && prefixEl.value) || '') + shelf;
+  if (!isFinite(cases) || cases < 0) { errEl.textContent = 'Enter how many cases were found (0 or more).'; if (casesEl) casesEl.focus(); return; }
+  if (!shelf) { errEl.textContent = 'Enter the shelf/bin number where it was found.'; if (shelfEl) shelfEl.focus(); return; }
+  errEl.textContent = '';
+
+  var btn = document.getElementById('ps-nostock-found-submit-btn');
+  if (btn) { btn.disabled = true; btn.textContent = 'Saving…'; }
+
+  fetch(PS_WORKER + '/ship/nostock-resolve', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', 'X-Cred-Token': psCredToken },
+    body: JSON.stringify({ id: p.id, resolvedBy: psInitials, outcome: 'found', cases: cases, location: location })
+  }).then(function(r) { return r.json(); }).then(function(d) {
+    if (!d || !d.ok) throw new Error((d && d.error) || 'Request failed');
+    document.getElementById('ps-nostock-resolve-modal-overlay').style.display = 'none';
+    _psNostockOpenList = _psNostockOpenList.filter(function(s) { return s.id !== p.id; });
+    var b = document.getElementById('ps-nostock-badge');
+    if (b) { var n = _psNostockOpenList.length; b.textContent = n; b.style.display = n > 0 ? 'inline-flex' : 'none'; }
+    psRenderNostockList();
+    if (d.masterListUpdated) {
+      _psToast('✓ Found ' + cases + ' case' + (cases !== 1 ? 's' : '') + ' at ' + location + ' — Inventory updated');
+    } else {
+      _psToast((d.note || 'Logged, but Inventory needs a manual SKU Mgr update for this one'), 'err');
+    }
+    _psNostockResolvePending = null;
+  }).catch(function(e) {
+    errEl.textContent = e.message || 'Save failed — try again';
+    if (btn) { btn.disabled = false; btn.textContent = 'Save & Resolve'; }
   });
 };
 
@@ -4955,6 +5111,24 @@ function _psRenderNostockHistoryRow(s) {
   var statusHtml = s.status === 'resolved'
     ? '<span style="color:var(--green);font-weight:700">Resolved</span> by ' + (s.resolvedBy || '?') + (resolvedWhen ? ' · ' + resolvedWhen : '')
     : '<span style="color:var(--orange);font-weight:700">Still open</span>';
+  // Outcome line — only meaningful once resolved. "found" reports came
+  // through the newer resolve-with-cases-and-location flow (see
+  // psNostockResolve/_psNostockResolveModalSubmitFound); anything resolved
+  // before that existed has no outcome on file and reads the same as a
+  // plain "not_found" always did.
+  var outcomeHtml = '';
+  if (s.status === 'resolved' && s.outcome === 'found') {
+    outcomeHtml = '<div style="font-size:11px;margin-top:4px">'
+      + '<span style="color:var(--green);font-weight:700">✅ Found</span> '
+      + (s.foundCases != null ? s.foundCases + ' case' + (s.foundCases !== 1 ? 's' : '') : '?')
+      + (s.foundLocation ? ' at ' + s.foundLocation : '')
+      + ' — ' + (s.masterListUpdated
+          ? '<span style="color:var(--green)">Inventory updated</span>'
+          : '<span style="color:var(--orange)">Inventory NOT auto-updated, check SKU Mgr</span>')
+      + '</div>';
+  } else if (s.status === 'resolved' && s.outcome === 'not_found') {
+    outcomeHtml = '<div style="font-size:11px;color:var(--text3);margin-top:4px">🚫 Still not found</div>';
+  }
   return '<div style="border-bottom:1px solid var(--border);padding:10px 0">'
     + '<div style="display:flex;justify-content:space-between;gap:8px;align-items:baseline;flex-wrap:wrap">'
     +   '<div style="font-family:var(--mono);font-weight:700;font-size:13px">' + headline + '</div>'
@@ -4966,6 +5140,7 @@ function _psRenderNostockHistoryRow(s) {
     +   (s.tracking ? s.tracking + ' · ' : '')
     +   'reported by ' + (s.reportedBy || '?') + (reportedWhen ? ' · ' + reportedWhen : '')
     + '</div>'
+    + outcomeHtml
     + '</div>';
 }
 
