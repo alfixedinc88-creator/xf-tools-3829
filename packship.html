@@ -109,6 +109,19 @@ body {
 .ps-card-meta { display:flex; gap:6px; align-items:center; flex-shrink:0; flex-wrap:wrap; }
 .ps-card-time { font-size:11px; color:var(--text3); font-family:var(--mono); flex-shrink:0; }
 
+/* Stacked card row — used inside the narrow (480px) modal popups: the
+   item-count breakdown ("3 x 1 item" etc.) and the per-person scan/pick
+   lists. Those modals are too narrow to fit a full tracking number PLUS
+   carrier/initials/weight/closed badges PLUS the time all on one line —
+   the plain .ps-card-row above just truncates the tracking number down to
+   a few characters ("1Z20260918…") to make room, which defeats the whole
+   point of opening the row (telling one package apart from another).
+   Here the tracking gets its own full-width line, never truncated; badges
+   and time wrap freely underneath it instead. */
+.ps-card-row-top { display:flex; align-items:center; gap:8px; margin-bottom:6px; }
+.ps-card-row-top .ps-card-tracking { flex:1; min-width:0; overflow:visible; text-overflow:clip; white-space:normal; word-break:break-all; font-weight:700; }
+.ps-card-row-bottom { display:flex; align-items:center; justify-content:space-between; gap:8px; flex-wrap:wrap; padding-left:18px; }
+
 /* Badges */
 .ps-badge { font-family:var(--mono); font-size:10px; font-weight:500; padding:2px 8px; border-radius:100px; white-space:nowrap; }
 .ps-badge-ups    { background:#fef3e2; color:var(--orange); border:1px solid #fcd34d; }
@@ -285,8 +298,8 @@ body {
    name chip, both get the clickable treatment — Print Log and other lists
    reuse the same .ps-card-tracking class but aren't wired up to open this
    modal, so they stay plain text. */
-#ps-scan-list .ps-card-tracking, #ps-person-modal-body .ps-card-tracking { cursor:pointer; text-decoration-line:underline; text-decoration-style:dotted; text-decoration-color:var(--border2); text-underline-offset:3px; }
-#ps-scan-list .ps-card-tracking:hover, #ps-person-modal-body .ps-card-tracking:hover { color:var(--accent); }
+#ps-scan-list .ps-card-tracking, #ps-person-modal-body .ps-card-tracking, #ps-pick-list .ps-card-tracking, #ps-pick-person-modal-body .ps-card-tracking, #ps-itemcount-modal-body .ps-card-tracking { cursor:pointer; text-decoration-line:underline; text-decoration-style:dotted; text-decoration-color:var(--border2); text-underline-offset:3px; }
+#ps-scan-list .ps-card-tracking:hover, #ps-person-modal-body .ps-card-tracking:hover, #ps-pick-list .ps-card-tracking:hover, #ps-pick-person-modal-body .ps-card-tracking:hover, #ps-itemcount-modal-body .ps-card-tracking:hover { color:var(--accent); }
 
 /* Batch close */
 .ps-batch-close-bar { background:var(--bg2); border:1px solid var(--border); border-radius:12px; padding:16px 18px; margin-bottom:16px; box-shadow:var(--shadow); display:flex; align-items:center; gap:12px; flex-wrap:wrap; }
@@ -487,6 +500,9 @@ body {
 #packship-app .ps-card-tracking { font-family:var(--mono); font-size:13px; font-weight:500; color:var(--text); flex:1; min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
 #packship-app .ps-card-meta { display:flex; gap:6px; align-items:center; flex-shrink:0; flex-wrap:wrap; }
 #packship-app .ps-card-time { font-size:11px; color:var(--text3); font-family:var(--mono); flex-shrink:0; }
+#packship-app .ps-card-row-top { display:flex; align-items:center; gap:8px; margin-bottom:6px; }
+#packship-app .ps-card-row-top .ps-card-tracking { flex:1; min-width:0; overflow:visible; text-overflow:clip; white-space:normal; word-break:break-all; font-weight:700; }
+#packship-app .ps-card-row-bottom { display:flex; align-items:center; justify-content:space-between; gap:8px; flex-wrap:wrap; padding-left:18px; }
 
 /* Badges */
 #packship-app .ps-badge { font-family:var(--mono); font-size:10px; font-weight:500; padding:2px 8px; border-radius:100px; white-space:nowrap; }
@@ -642,8 +658,8 @@ body {
    name chip, both get the clickable treatment — Print Log and other lists
    reuse the same .ps-card-tracking class but aren't wired up to open this
    modal, so they stay plain text. */
-#packship-app #ps-scan-list .ps-card-tracking, #packship-app #ps-person-modal-body .ps-card-tracking { cursor:pointer; text-decoration-line:underline; text-decoration-style:dotted; text-decoration-color:var(--border2); text-underline-offset:3px; }
-#packship-app #ps-scan-list .ps-card-tracking:hover, #packship-app #ps-person-modal-body .ps-card-tracking:hover { color:var(--accent); }
+#packship-app #ps-scan-list .ps-card-tracking, #packship-app #ps-person-modal-body .ps-card-tracking, #packship-app #ps-pick-list .ps-card-tracking, #packship-app #ps-pick-person-modal-body .ps-card-tracking, #packship-app #ps-itemcount-modal-body .ps-card-tracking { cursor:pointer; text-decoration-line:underline; text-decoration-style:dotted; text-decoration-color:var(--border2); text-underline-offset:3px; }
+#packship-app #ps-scan-list .ps-card-tracking:hover, #packship-app #ps-person-modal-body .ps-card-tracking:hover, #packship-app #ps-pick-list .ps-card-tracking:hover, #packship-app #ps-pick-person-modal-body .ps-card-tracking:hover, #packship-app #ps-itemcount-modal-body .ps-card-tracking:hover { color:var(--accent); }
 
 /* Batch close */
 #packship-app .ps-batch-close-bar { background:var(--bg2); border:1px solid var(--border); border-radius:12px; padding:16px 18px; margin-bottom:16px; box-shadow:var(--shadow); display:flex; align-items:center; gap:12px; flex-wrap:wrap; }
@@ -3053,12 +3069,23 @@ window.psShowItemCountDetail = function(elId, key) {
   body.innerHTML = !bucket.length
     ? '<div class="ps-person-modal-empty">No packages</div>'
     : bucket.map(function(s) {
-        return '<div class="ps-card"><div class="ps-card-row">'
-          +   '<div class="ps-card-dot green"></div>'
-          +   '<div class="ps-card-tracking">' + s.tracking + '</div>'
-          +   '<div class="ps-card-meta">' + _psCarrierBadge(s.carrier) + '<span class="ps-badge ps-badge-gray">' + (s.initials || '—') + '</span>' + _psItemWeightBadges(s) + (s.batchClosedAt ? '<span class="ps-badge ps-badge-green">Closed</span>' : '') + '</div>'
-          +   '<div class="ps-card-time">' + psFmtTime(s.timestamp) + '</div>'
-          + '</div></div>';
+        // Stacked layout (see .ps-card-row-top/.ps-card-row-bottom) — this
+        // modal is narrow, and cramming the full tracking number plus
+        // carrier/initials/weight/closed badges plus the time onto one
+        // line left the tracking number truncated down to a few
+        // characters, which was the whole thing someone opens this list
+        // to read. Tracking gets its own full line here; everything else
+        // wraps underneath it.
+        return '<div class="ps-card">'
+          +   '<div class="ps-card-row-top">'
+          +     '<div class="ps-card-dot green"></div>'
+          +     '<div class="ps-card-tracking">' + s.tracking + '</div>'
+          +   '</div>'
+          +   '<div class="ps-card-row-bottom">'
+          +     '<div class="ps-card-meta">' + _psCarrierBadge(s.carrier) + '<span class="ps-badge ps-badge-gray">' + (s.initials || '—') + '</span>' + _psItemWeightBadges(s) + (s.batchClosedAt ? '<span class="ps-badge ps-badge-green">Closed</span>' : '') + '</div>'
+          +     '<div class="ps-card-time">' + psFmtTime(s.timestamp) + '</div>'
+          +   '</div>'
+          + '</div>';
       }).join('');
   _psItemCountModalOpen = true;
   document.getElementById('ps-itemcount-modal-overlay').style.display = 'flex';
@@ -3158,12 +3185,18 @@ function _psRenderPersonModalList() {
     return;
   }
   body.innerHTML = items.map(function(s) {
-    return '<div class="ps-card"><div class="ps-card-row">'
-      +   '<div class="ps-card-dot green"></div>'
-      +   '<div class="ps-card-tracking">' + s.tracking + '</div>'
-      +   '<div class="ps-card-meta">' + _psCarrierBadge(s.carrier) + _psItemWeightBadges(s) + (s.batchClosedAt ? '<span class="ps-badge ps-badge-green">Closed</span>' : '') + '</div>'
-      +   '<div class="ps-card-time">' + psFmtTime(s.timestamp) + '</div>'
-      + '</div></div>';
+    // Stacked layout — see the comment in psShowItemCountDetail; same
+    // narrow-modal truncation problem, same fix.
+    return '<div class="ps-card">'
+      +   '<div class="ps-card-row-top">'
+      +     '<div class="ps-card-dot green"></div>'
+      +     '<div class="ps-card-tracking">' + s.tracking + '</div>'
+      +   '</div>'
+      +   '<div class="ps-card-row-bottom">'
+      +     '<div class="ps-card-meta">' + _psCarrierBadge(s.carrier) + _psItemWeightBadges(s) + (s.batchClosedAt ? '<span class="ps-badge ps-badge-green">Closed</span>' : '') + '</div>'
+      +     '<div class="ps-card-time">' + psFmtTime(s.timestamp) + '</div>'
+      +   '</div>'
+      + '</div>';
   }).join('');
 }
 
@@ -5042,12 +5075,19 @@ function _psPickRenderPersonModalList() {
     return;
   }
   body.innerHTML = items.map(function(s) {
-    return '<div class="ps-card"><div class="ps-card-row">'
-      +   '<div class="ps-card-dot green"></div>'
-      +   '<div class="ps-card-tracking">' + s.tracking + '</div>'
-      +   '<div class="ps-card-meta">' + _psCarrierBadge(s.carrier) + _psItemWeightBadges(s) + '</div>'
-      +   '<div class="ps-card-time">' + psFmtTime(s.timestamp) + '</div>'
-      + '</div></div>';
+    // Stacked layout — see the comment in psShowItemCountDetail; same
+    // narrow-modal truncation problem ("Picking also have that issue"),
+    // same fix.
+    return '<div class="ps-card">'
+      +   '<div class="ps-card-row-top">'
+      +     '<div class="ps-card-dot green"></div>'
+      +     '<div class="ps-card-tracking">' + s.tracking + '</div>'
+      +   '</div>'
+      +   '<div class="ps-card-row-bottom">'
+      +     '<div class="ps-card-meta">' + _psCarrierBadge(s.carrier) + _psItemWeightBadges(s) + '</div>'
+      +     '<div class="ps-card-time">' + psFmtTime(s.timestamp) + '</div>'
+      +   '</div>'
+      + '</div>';
   }).join('');
 }
 
