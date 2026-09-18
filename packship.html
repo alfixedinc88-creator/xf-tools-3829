@@ -4731,7 +4731,7 @@ window.psFetchNostockNeedsFixCount = function() {
     .then(function(r) { return r.json(); })
     .then(function(d) {
       var list = (d && d.nostock) || [];
-      var n = list.filter(function(s) { return s.outcome === 'found' && !s.masterListUpdated; }).length;
+      var n = list.filter(function(s) { return s.outcome === 'found' && !s.masterListUpdated && !s.fixAcknowledged; }).length;
       var b = document.getElementById('ps-nostock-fix-badge');
       if (!b) return;
       b.textContent = '⚠ ' + n + ' need' + (n === 1 ? 's' : '') + ' fix';
@@ -5141,7 +5141,7 @@ window.psNostockHistorySetFilter = function(f) {
 
 function _psRenderNostockHistoryBody() {
   var list = _psNostockHistoryList;
-  var needsFixList = list.filter(function(s) { return s.status === 'resolved' && s.outcome === 'found' && !s.masterListUpdated; });
+  var needsFixList = list.filter(function(s) { return s.status === 'resolved' && s.outcome === 'found' && !s.masterListUpdated && !s.fixAcknowledged; });
   var filtered = _psNostockHistoryFilter === 'needsfix' ? needsFixList : list;
   document.getElementById('ps-nostock-history-modal-sub').textContent = list.length + ' report' + (list.length !== 1 ? 's' : '') + ' total';
   var tabsHtml = '<div style="display:flex;gap:8px;margin-bottom:12px">'
@@ -5183,16 +5183,25 @@ function _psRenderNostockHistoryRow(s) {
       + (s.foundLocation ? ' at ' + s.foundLocation : '')
       + (s.foundPartNum ? ' · Part# ' + s.foundPartNum : '')
       + ' — ' + (s.masterListUpdated
-          ? '<span style="color:var(--green)">Inventory updated</span>'
+          ? '<span style="color:var(--green)">Inventory updated' + (s.autoCreated ? ' (new SKU Mgr row auto-created)' : '') + '</span>'
           : '<span style="color:var(--orange)">Inventory NOT auto-updated</span>')
       + '</div>'
       // The specific reason it wasn't auto-updated (persisted found_note) —
       // "no row matched", "3 rows matched, too ambiguous", or an update
       // error — so there's a real answer here instead of just "check SKU
-      // Mgr" with no explanation of why.
-      + (!s.masterListUpdated && s.foundNote
+      // Mgr" with no explanation of why. Once someone's fixed it by hand and
+      // hit "Mark Fixed" (see psNostockMarkFixed), show that instead — the
+      // note stays on file (still what happened at resolve time) but the
+      // picker no longer needs to act on it.
+      + (!s.masterListUpdated && s.fixAcknowledged
+          ? '<div style="font-size:11px;color:var(--green);margin-top:3px">✓ Marked fixed by ' + (s.fixAckBy || '?') + (s.fixAckAt ? ' · ' + (function(){ try { return new Date(s.fixAckAt).toLocaleString([], {month:'short', day:'numeric', hour:'numeric', minute:'2-digit'}); } catch(e){ return s.fixAckAt; } })() : '') + '</div>'
+        : !s.masterListUpdated && s.foundNote
           ? '<div style="font-size:11px;color:var(--orange);margin-top:3px;padding:6px 8px;background:var(--orange-bg,rgba(230,126,34,.08));border-radius:6px">⚠ ' + s.foundNote + '</div>'
-          : (!s.masterListUpdated ? '<div style="font-size:11px;color:var(--text3);margin-top:3px">Check SKU Mgr for this one.</div>' : ''));
+              + '<button class="ps-btn-sm" onclick="psNostockMarkFixed(' + s.id + ',this)" style="margin-top:6px;color:var(--green);border-color:var(--green)">✓ Mark Fixed</button>'
+        : !s.masterListUpdated
+          ? '<div style="font-size:11px;color:var(--text3);margin-top:3px">Check SKU Mgr for this one.</div>'
+              + '<button class="ps-btn-sm" onclick="psNostockMarkFixed(' + s.id + ',this)" style="margin-top:6px;color:var(--green);border-color:var(--green)">✓ Mark Fixed</button>'
+        : '');
   } else if (s.status === 'resolved' && s.outcome === 'not_found') {
     outcomeHtml = '<div style="font-size:11px;color:var(--text3);margin-top:4px">🚫 Still not found</div>';
   }
@@ -5210,6 +5219,30 @@ function _psRenderNostockHistoryRow(s) {
     + outcomeHtml
     + '</div>';
 }
+
+// Acknowledges a "Found It" report that couldn't auto-update Inventory,
+// once someone's gone and fixed it by hand in SKU Mgr — doesn't touch the
+// report's own outcome/note (still an honest record of what happened at
+// resolve time), just adds a "fixed by/when" on top so it drops off the ⚠
+// Needs Fix view. Updates the already-open History list in place instead of
+// re-fetching, so the row just re-renders where it is.
+window.psNostockMarkFixed = function(id, btnEl) {
+  if (btnEl) { btnEl.disabled = true; btnEl.textContent = 'Saving…'; }
+  fetch(PS_WORKER + '/ship/nostock-mark-fixed', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', 'X-Cred-Token': psCredToken },
+    body: JSON.stringify({ id: id, by: psInitials })
+  }).then(function(r) { return r.json(); }).then(function(d) {
+    if (!d || !d.ok) throw new Error((d && d.error) || 'Request failed');
+    var row = _psNostockHistoryList.filter(function(s) { return s.id === id; })[0];
+    if (row) { row.fixAcknowledged = true; row.fixAckBy = psInitials; row.fixAckAt = new Date().toISOString(); }
+    _psRenderNostockHistoryBody();
+    psFetchNostockNeedsFixCount();
+  }).catch(function(e) {
+    if (btnEl) { btnEl.disabled = false; btnEl.textContent = '✓ Mark Fixed'; }
+    _psToast('Could not mark fixed — try again', 'err');
+  });
+};
 
 // ── Picking summary / find-person / check-a-date ────────────────────────
 var psPickSummaryDate     = null;
