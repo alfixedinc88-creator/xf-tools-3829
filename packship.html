@@ -1629,6 +1629,31 @@ body {
           <button class="ps-btn-primary" style="width:auto;padding:10px 22px" id="ps-vsync-weight-btn" onclick="psVeeqoBackfillWeight()">⚖️ Backfill That Day's Weight</button>
           <div id="ps-vsync-weight-result" style="font-size:12px;color:var(--text2);font-family:var(--mono);width:100%"></div>
         </div>
+
+        <!-- Force re-check — a normal backfill above only ever fills orders
+             with NO weight on file yet; it will never touch a row that
+             already has a (possibly wrong) number, even one saved by an
+             older, buggy version of the weight math. "All done" from the
+             button above only ever means "nothing left to fill in" — not
+             "every number is correct." This is the only way to actually
+             correct an already-wrong weight. -->
+        <div style="margin-top:16px;padding-top:14px;border-top:1px solid var(--border)">
+          <div style="font-size:12.5px;font-weight:700;color:var(--red);margin-bottom:4px">⚠ Weight still looks wrong after backfilling?</div>
+          <div style="font-size:11.5px;color:var(--text3);margin-bottom:10px;line-height:1.5">
+            That order already has SOME number saved — the button above skips it no matter how many times you run it. Use Force below to overwrite it with a fresh, correctly-converted number straight from Veeqo.
+          </div>
+          <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin-bottom:10px">
+            <input type="text" class="ps-field-input" id="ps-vsync-force-tracking" placeholder="Tracking number, e.g. 9334610990150212086872" style="max-width:280px;margin:0;font-family:var(--mono);font-size:12px">
+            <button class="ps-btn-sm" style="background:var(--red);color:#fff;border-color:var(--red);font-weight:700" id="ps-vsync-force-one-btn" onclick="psVeeqoForceFixOne()">Force Fix This Tracking</button>
+          </div>
+          <div id="ps-vsync-force-one-result" style="font-size:12px;color:var(--text2);font-family:var(--mono);width:100%;margin-bottom:12px"></div>
+          <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center">
+            <button class="ps-btn-sm" style="background:var(--red);color:#fff;border-color:var(--red);font-weight:700" id="ps-vsync-force-all-btn" onclick="psVeeqoForceRecomputeAll()">🔁 Force-Recompute Every Order (all dates)</button>
+            <button class="ps-btn-sm" style="display:none" id="ps-vsync-force-all-stop-btn" onclick="psVeeqoForceRecomputeStop()">Stop</button>
+          </div>
+          <div style="font-size:11px;color:var(--text3);margin-top:6px">Runs automatically in batches until every order's weight has been re-checked against Veeqo — can take a while for a lot of history. Safe to stop and restart later.</div>
+          <div id="ps-vsync-force-all-result" style="font-size:12px;color:var(--text2);font-family:var(--mono);width:100%;margin-top:8px"></div>
+        </div>
       </div>
       <!-- Archive card -->
       <div class="ps-card" style="margin-top:12px;border-color:var(--orange)">
@@ -5560,6 +5585,130 @@ window.psVeeqoBackfillWeight = async function() {
   } finally {
     btn.disabled = false; btn.textContent = '⚖️ Backfill Today\'s Weight';
   }
+};
+
+// ── Force re-check (overwrite already-set weights) ───────────────────────
+// The plain backfill above only ever fills a row that has NO weight yet
+// (WHERE weight_lb IS NULL on the worker side) — so a row that already has
+// a WRONG number, saved by an older version of the weight math (e.g. a unit
+// mix-up that read grams as ounces and landed on something like 104.89 lb
+// for what was really a 3 lb 11 oz package), is invisible to it forever, no
+// matter how many times it's run or how many times it reports "all done."
+// force:true drops that guard so the row gets recomputed and OVERWRITTEN.
+// A single-tracking request (below) doesn't even need force — the worker
+// has no IS-NULL filter at all when a specific tracking is given, so it
+// always re-checks and overwrites that one row — but force is still passed
+// for clarity and in case that ever changes.
+window.psVeeqoForceFixOne = async function() {
+  var inp = document.getElementById('ps-vsync-force-tracking');
+  var out = document.getElementById('ps-vsync-force-one-result');
+  var btn = document.getElementById('ps-vsync-force-one-btn');
+  var tracking = (inp && inp.value || '').trim();
+  if (!tracking) { _psToast('Enter a tracking number first', 'err'); return; }
+  if (!psCredToken) { _psToast('Management session required', 'error'); return; }
+  btn.disabled = true; btn.textContent = '⏳ Checking Veeqo…'; out.textContent = '';
+  try {
+    var r = await fetch(PS_WORKER + '/veeqo/backfill-weight', {
+      method: 'POST',
+      headers: { 'X-Cred-Token': psCredToken, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ tracking: tracking, force: true }),
+    });
+    var data = await r.json();
+    if (!data.ok) { out.textContent = '✗ ' + (data.error || 'Request failed'); _psToast('Force fix failed', 'error'); return; }
+    if (!data.checked) {
+      out.textContent = '⚠ No manifest row found for that tracking — has it been scanned/picked at least once?';
+      return;
+    }
+    var d = (data.debugSample && data.debugSample[0]) || null;
+    if (data.updated) {
+      var lb = d ? d.computedWeightLb : null;
+      var lbTxt = lb != null ? lb + ' lb' : '(no number)';
+      out.innerHTML = '<span style="color:var(--green);font-weight:700">✓ Updated — new weight: ' + lbTxt + '</span>'
+        + (d ? '<pre style="white-space:pre-wrap;word-break:break-word;margin:8px 0 0;font-size:11px;background:var(--bg3);border:1px solid var(--border);border-radius:8px;padding:8px">' + JSON.stringify(d, null, 2).replace(/</g,'&lt;') + '</pre>' : '');
+      _psToast('Weight corrected: ' + lbTxt);
+      psLoadScans(); psLoadPicks();
+    } else {
+      var why = data.notFoundInVeeqo ? 'Not found in Veeqo (query+status=shipped search turned up nothing for this tracking).'
+        : data.veeqoHadNoWeight ? 'Veeqo has this order but no weight on the shipment/allocation.'
+        : 'Unknown reason — see raw sample below.';
+      out.innerHTML = '⚠ ' + why + (d ? '<pre style="white-space:pre-wrap;word-break:break-word;margin:8px 0 0;font-size:11px;background:var(--bg3);border:1px solid var(--border);border-radius:8px;padding:8px">' + JSON.stringify(d, null, 2).replace(/</g,'&lt;') + '</pre>' : '');
+      _psToast(why, 'err');
+    }
+  } catch (e) {
+    out.textContent = '✗ ' + e.message;
+    _psToast('Force fix error: ' + e.message, 'error');
+  } finally {
+    btn.disabled = false; btn.textContent = 'Force Fix This Tracking';
+  }
+};
+
+// Auto-loops the bulk endpoint with force:true across every date, paging
+// with afterId (force mode never shrinks its own WHERE clause the way the
+// plain backfill does, so without a cursor a re-click would just reprocess
+// the same first batch forever — see the worker's afterId comment). Keeps
+// going until the worker reports nothing left, Stop is clicked, or a
+// generous safety cap is hit so a stuck loop can't run forever unattended.
+var _psForceRecomputeRunning = false;
+var _psForceRecomputeStop    = false;
+
+window.psVeeqoForceRecomputeAll = async function() {
+  if (_psForceRecomputeRunning) return;
+  if (!psCredToken) { _psToast('Management session required', 'error'); return; }
+  if (!confirm('This re-checks EVERY order ever scanned/picked against Veeqo and overwrites its stored weight, even ones that already look fine. It can take a while and makes a lot of Veeqo requests. Continue?')) return;
+
+  _psForceRecomputeRunning = true;
+  _psForceRecomputeStop    = false;
+  var startBtn = document.getElementById('ps-vsync-force-all-btn');
+  var stopBtn  = document.getElementById('ps-vsync-force-all-stop-btn');
+  var out      = document.getElementById('ps-vsync-force-all-result');
+  startBtn.disabled = true; startBtn.textContent = '⏳ Running…';
+  stopBtn.style.display = 'inline-block';
+
+  var afterId = 0, totalChecked = 0, totalUpdated = 0, totalNotFound = 0, totalNoWeight = 0, round = 0;
+  var MAX_ROUNDS = 500; // 500 x 150/round = 75,000 rows ceiling, well past any realistic backlog
+  try {
+    while (round < MAX_ROUNDS) {
+      if (_psForceRecomputeStop) { out.innerHTML = '⏸ Stopped — ' + totalChecked + ' checked, ' + totalUpdated + ' updated so far. Note: clicking the button again restarts from the very beginning, it does not resume from here.'; break; }
+      round++;
+      var r = await fetch(PS_WORKER + '/veeqo/backfill-weight', {
+        method: 'POST',
+        headers: { 'X-Cred-Token': psCredToken, 'Content-Type': 'application/json' },
+        body: JSON.stringify({ date: 'all', force: true, limit: 150, afterId: afterId }),
+      });
+      var data = await r.json();
+      if (!data.ok) { out.textContent = '✗ ' + (data.error || 'Request failed') + ' — stopped after ' + totalChecked + ' checked.'; break; }
+      totalChecked  += data.checked || 0;
+      totalUpdated  += data.updated || 0;
+      totalNotFound += data.notFoundInVeeqo || 0;
+      totalNoWeight += data.veeqoHadNoWeight || 0;
+      afterId = data.nextAfterId || afterId;
+      out.innerHTML = '⏳ Batch ' + round + ' — ' + totalChecked + ' checked · ' + totalUpdated + ' updated · ' + totalNotFound + ' not found · ' + totalNoWeight + ' had no weight in Veeqo';
+      if (!data.checked || !data.remaining) {
+        out.innerHTML = '<span style="color:var(--green);font-weight:700">✓ All done — ' + totalChecked + ' checked, ' + totalUpdated + ' corrected/updated, ' + totalNotFound + ' not found in Veeqo, ' + totalNoWeight + ' had no weight in Veeqo.</span>';
+        _psToast('Force recompute finished — ' + totalUpdated + ' order(s) corrected');
+        psLoadScans(); psLoadPicks();
+        break;
+      }
+      // Small pause between batches — this is making real Veeqo API calls
+      // per row, so this is about being a good citizen of that rate limit,
+      // not about D1.
+      await new Promise(function(res){ setTimeout(res, 400); });
+    }
+    if (round >= MAX_ROUNDS) out.innerHTML += '<br>⚠ Hit the safety cap (' + MAX_ROUNDS + ' batches) — click the button again to keep going from tracking id ' + afterId + '.';
+  } catch (e) {
+    out.textContent = '✗ ' + e.message + ' — stopped after ' + totalChecked + ' checked, ' + totalUpdated + ' updated.';
+    _psToast('Force recompute error: ' + e.message, 'error');
+  } finally {
+    _psForceRecomputeRunning = false;
+    startBtn.disabled = false; startBtn.textContent = '🔁 Force-Recompute Every Order (all dates)';
+    stopBtn.style.display = 'none';
+  }
+};
+
+window.psVeeqoForceRecomputeStop = function() {
+  _psForceRecomputeStop = true;
+  var stopBtn = document.getElementById('ps-vsync-force-all-stop-btn');
+  if (stopBtn) stopBtn.textContent = 'Stopping…';
 };
 
 window.psVeeqoSyncTracking = async function() {
