@@ -1410,8 +1410,14 @@ window.invCredLogin = async function() {
     });
   }
 
+  var invSearchedExactVariant = null; // set when the user's search included
+    // "=" (an exact variant like "23-2-3=2") — used to pin that variant's
+    // own locations to the top of the list, and as the target for Big
+    // Company's substitution math below.
+
   window.invLookup = function(code) {
     if (!code) return;
+    invSearchedExactVariant = code.indexOf('=') >= 0 ? code.trim().toUpperCase() : null;
     g("inv-result-card").style.display = "none";
     g("inv-loc-card").style.display    = "none";
     g("inv-detail-card").style.display = "none";
@@ -1428,11 +1434,15 @@ window.invCredLogin = async function() {
         g("inv-result-outside").textContent = d.outsideUpc || "—";
         g("inv-result-upcs").style.display  = (d.insideUpc || d.outsideUpc) ? "grid" : "none";
         g("inv-result-card").style.display = "block";
-        if (d.isMultiVariant && d.variants && d.variants.length > 1) {
-          invShowVariantPicker(d.variants);
-        } else {
-          invShowLocs();
-        }
+        // BUGFIX: bare searches ("23-2-3") already skipped straight to a
+        // flattened, always-expanded, no-click list of every location —
+        // but an exact search ("23-2-3=2") used to route through the older
+        // variant-picker/click-to-expand screen instead, since it isn't
+        // "multi-variant" from the server's point of view. Both now always
+        // go through the same invShowLocs(), so an exact search gets
+        // identical no-click behavior, just with that exact variant's own
+        // locations pinned to the top (see invSortLocsForOut).
+        invShowLocs();
       })
       .catch(function() { invFlash("Lookup failed", "error"); });
   };
@@ -1548,6 +1558,83 @@ window.invCredLogin = async function() {
     invPullListPendingCases = null;
   };
 
+  // Decides the order Stock Out shows locations in, across every variant of
+  // the searched base SKU at once (already flattened into one list by the
+  // time this runs). Two different priorities depending on what kind of
+  // Stock Out this is:
+  //
+  // Shelving: just get the most available stock — sort by each variant's
+  // total cases descending, tie-broken by the higher "=" suffix.
+  //
+  // Big Company (Amazon FBA relabeling): every unit has to exactly match a
+  // UPC-coded bag count, so if the searched variant (e.g. "=2") is out of
+  // stock, substituting a random other pack size means physically cutting
+  // bags open and recounting into new bags — real time lost. The fewer
+  // bags that have to be cut, and the less awkward the recount, the
+  // better:
+  //   1. The searched exact variant's own locations always come first
+  //      when in stock — that's still the ideal pick.
+  //   2. Failing that, prefer a variant whose count is a CLEAN multiple of
+  //      the target (e.g. target=2 → 20, 200, 2000 all divide evenly),
+  //      smallest multiple first — a 20-bag splits into a tidy 10 groups
+  //      of 2 with a single cut and zero leftover; a 2000-bag technically
+  //      works too but means portioning out far more than needed from one
+  //      bag, so smaller clean multiples are preferred first.
+  //   3. If nothing divides evenly, fall back to the single largest bag
+  //      that's actually in stock (tie-broken by more total stock) —
+  //      exactly the "=50 beats ten separate =5 bags" reasoning: one bag
+  //      to cut beats several.
+  function invSortLocsForOut(locs) {
+    var byVariant = {}, order = [];
+    locs.forEach(function(l) {
+      var pn = (l.partNum || invPart.partNum || '').toUpperCase();
+      if (!byVariant[pn]) { byVariant[pn] = []; order.push(pn); }
+      byVariant[pn].push(l);
+    });
+
+    function availOf(l) { return l.adjustedCases !== undefined ? l.adjustedCases : (parseFloat(l.cases) || 0); }
+    function suffixOf(pn) { var eq = pn.indexOf('='); return eq >= 0 ? (parseFloat(pn.slice(eq + 1)) || 0) : 0; }
+    function totalCasesOf(pn) { return byVariant[pn].reduce(function(s, l) { return s + availOf(l); }, 0); }
+
+    var targetVariant = invSearchedExactVariant;
+    var targetSuffix = targetVariant ? suffixOf(targetVariant) : 0;
+
+    order.sort(function(a, b) {
+      // The exact variant searched for always wins, if it's actually here.
+      var aIsTarget = targetVariant && a === targetVariant;
+      var bIsTarget = targetVariant && b === targetVariant;
+      if (aIsTarget && !bIsTarget) return -1;
+      if (bIsTarget && !aIsTarget) return 1;
+
+      if (invStockOutDest === 'company' && targetSuffix > 0) {
+        var aSuf = suffixOf(a), bSuf = suffixOf(b);
+        var aClean = aSuf > 0 && aSuf % targetSuffix === 0;
+        var bClean = bSuf > 0 && bSuf % targetSuffix === 0;
+        if (aClean && !bClean) return -1;
+        if (bClean && !aClean) return 1;
+        if (aClean && bClean) return aSuf - bSuf; // smallest clean multiple first
+        // Neither divides evenly — biggest bag (fewest to cut) first, then most stock.
+        if (bSuf !== aSuf) return bSuf - aSuf;
+        return totalCasesOf(b) - totalCasesOf(a);
+      }
+
+      // Shelving (or Big Company with no "=" target given): most stock
+      // first, tie-broken by the higher suffix.
+      var aCases = totalCasesOf(a), bCases = totalCasesOf(b);
+      if (bCases !== aCases) return bCases - aCases;
+      return suffixOf(b) - suffixOf(a);
+    });
+
+    // Within a variant, its best (most-stocked) location first.
+    order.forEach(function(pn) {
+      byVariant[pn].sort(function(a, b) { return availOf(b) - availOf(a); });
+    });
+
+    var sorted = [];
+    order.forEach(function(pn) { sorted = sorted.concat(byVariant[pn]); });
+    return sorted;
+  }
+
   function invShowLocs() {
     var allLocs = (invPart && invPart.locations) ? invPart.locations : [];
     // Both Stock In and Stock Out: only show locations with cases > 0 normally
@@ -1565,7 +1652,9 @@ window.invCredLogin = async function() {
           return avail <= 0 && !l.isPlaceholder;
         })
       : [];
+    if (invMode === "out") locs = invSortLocsForOut(locs);
     invSelLoc = null;
+    invVariantRowInfo = [];
     var list = g("inv-loc-list");
     list.innerHTML = "";
 
@@ -1609,60 +1698,26 @@ window.invCredLogin = async function() {
       var casesLabel = invMode === 'in' ? (displayCases + ' cases on hand — tap to add more') : (displayCases + ' available' + pendingBadge);
 
       if (invMode === "out") {
-        // Stock Out: expand inline to enter cases before adding to pull list
-        var formId = "inv-out-form-" + i;
-        var caseId = "inv-out-cases-" + i;
-        var badgeId = "inv-out-badge-" + i;
+        // Stock Out: cases input and Add to List button are already
+        // visible — no click needed to reveal them, same as the flattened
+        // search-results list, since this is now the same underlying view.
+        var caseId = "inv-var-cases-" + i;
+        invVariantRowInfo[i] = { loc: loc, partNum: loc.partNum || invPart.partNum };
         el.innerHTML = "<div style='display:flex;justify-content:space-between;align-items:center'>"
           + "<div>" + partLabelHtml
           + "<div class='iloc-name'>" + loc.location + "</div>"
-          + "<div class='iloc-cases' style='" + casesStyle + "'>" + casesLabel + "</div></div>"
-          + "<span class='iloc-badge ex' id='" + badgeId + "'>Pull</span></div>"
-          + "<div id='" + formId + "' style='display:none;margin-top:10px;padding-top:10px;border-top:1px solid var(--border)'>"
+          + "<div class='iloc-cases' style='" + casesStyle + "'>" + casesLabel + "</div></div></div>"
+          + "<div style='margin-top:10px;padding-top:10px;border-top:1px solid var(--border)'>"
           + "<div style='font-size:11px;font-weight:700;color:var(--text3);margin-bottom:4px'>CASES TO PULL</div>"
           + "<div style='display:flex;gap:8px;align-items:center'>"
           + "<input id='" + caseId + "' type='number' min='0.1' step='0.5' placeholder='0' "
           + "style='width:90px;padding:7px 10px;border:1.5px solid var(--border);border-radius:7px;background:var(--bg);color:var(--text);font-size:14px;font-family:var(--mono)' "
-          + "onkeydown='if(event.key===\"Enter\"){event.preventDefault();invPickLocFromInline(" + i + ")}'>"
-          + "<button onclick='invPickLocFromInline(" + i + ")' "
+          + "onkeydown='if(event.key===\"Enter\"){event.preventDefault();invPickVariantFromInline(" + i + ")}'>"
+          + "<button onclick='invPickVariantFromInline(" + i + ")' "
           + "style='padding:7px 16px;border-radius:7px;border:none;background:var(--accent);color:#fff;font-size:13px;font-weight:700;font-family:var(--sans);cursor:pointer'>Add to List</button>"
           + "</div></div>";
         el.style.display = "block";
         el.style.padding = "10px 12px";
-        el.onclick = null;
-        el.querySelector("div").onclick = (function(idx, locEl, loc) { return function(e) {
-          // Collapse all other rows
-          list.querySelectorAll(".iloc-opt").forEach(function(other) {
-            if (other !== locEl) {
-              other.classList.remove("isel");
-              var f = document.getElementById("inv-out-form-" + idx);
-            }
-          });
-          // Collapse all other expanded forms
-          var allForms = list.querySelectorAll("[id^='inv-out-form-']");
-          var allBadges = list.querySelectorAll("[id^='inv-out-badge-']");
-          allForms.forEach(function(f) { if (f.id !== formId) f.style.display = 'none'; });
-          allBadges.forEach(function(b) { if (b.id !== badgeId) b.textContent = 'Pull'; });
-          var form = document.getElementById(formId);
-          var badge2 = document.getElementById(badgeId);
-          var isOpen = form && form.style.display !== 'none';
-          if (isOpen) {
-            form.style.display = 'none';
-            locEl.classList.remove('isel');
-            if (badge2) badge2.textContent = 'Pull';
-          } else {
-            // Set invSelLoc NOW so invPickLocFromInline can read it
-            invSelLoc = loc;
-            if (loc.partNum) {
-              invPart = Object.assign({}, invPart, { partNum: loc.partNum });
-            }
-            locEl.classList.add('isel');
-            form.style.display = 'block';
-            if (badge2) badge2.textContent = '▾';
-            var ci = document.getElementById(caseId);
-            if (ci) setTimeout(function(){ ci.focus(); }, 50);
-          }
-        }; })(i, el, loc);
       } else {
         el.innerHTML = "<div>" + partLabelHtml
           + "<div class='iloc-name'>" + loc.location + "</div>"
@@ -2222,6 +2277,7 @@ window.invCredLogin = async function() {
 
   function invReset(keepMode) {
     invPart = null; invSelLoc = null;
+    invSearchedExactVariant = null;
     g("inv-search-inp").value = "";
     g("inv-result-card").style.display  = "none";
     g("inv-loc-card").style.display     = "none";
