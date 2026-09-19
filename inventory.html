@@ -731,6 +731,8 @@ window.invCredLogin = async function() {
         style="padding:6px 14px;border-radius:6px;border:1.5px solid var(--orange);background:var(--bg3);color:var(--orange);font-size:12px;font-weight:700;cursor:pointer">🔀 Merge Duplicate Rows</button>
       <button id="skumgr-backfill-btn" onclick="skumgrCheckBackfill()"
         style="padding:6px 14px;border-radius:6px;border:1.5px solid var(--purple);background:var(--bg3);color:var(--purple);font-size:12px;font-weight:700;cursor:pointer">🧩 Fill Missing Ea/Case, Price, Vendor</button>
+      <button id="skumgr-history-btn" onclick="skumgrShowAllHistory()"
+        style="padding:6px 14px;border-radius:6px;border:1.5px solid var(--accent);background:var(--bg3);color:var(--accent);font-size:12px;font-weight:700;cursor:pointer">📜 History</button>
     </div>
     <div id="skumgr-export-status" style="font-size:12px;color:var(--text3);margin-bottom:8px"></div>
     <!-- Fill Missing Info preview/confirm panel — hidden until checked -->
@@ -3604,6 +3606,7 @@ window.invCredLogin = async function() {
       + '<th style="' + thS + '">By</th>'
       + '<th style="' + thS + '">Status</th>'
       + '<th style="' + thS + '">Notes</th>'
+      + '<th style="' + thS + '" title="Warehouse-wide total before \u2192 after this change">Total Before \u2192 After</th>'
       + '</tr></thead><tbody>';
 
     rows.forEach(function(r, idx) {
@@ -3629,6 +3632,15 @@ window.invCredLogin = async function() {
       var typCol  = typeColor[typ] || 'var(--text2)';
       var stCol   = statusColor[(r.status||'').toLowerCase()] || 'var(--text2)';
       var notes   = (r.notes||'').replace(/\[AUDIT\]\s*/,'').slice(0,60);
+      // Total Before → After — only present on rows recorded after this
+      // feature shipped (older rows show "—", there's nothing to backfill
+      // them with). A red ⚠ means the after-total didn't match what this
+      // change alone should have produced — usually another change landed
+      // at almost the same instant.
+      var totalCell = (r.total_before !== null && r.total_before !== undefined)
+        ? (Number(r.total_before).toLocaleString() + ' \u2192 ' + Number(r.total_after).toLocaleString()
+           + (r.total_warning ? ' <span title="' + r.total_warning.replace(/"/g,'&quot;') + '" style="color:var(--red);font-weight:700;cursor:help">\u26a0</span>' : ''))
+        : '<span style="color:var(--text3)">\u2014</span>';
 
       html += '<tr style="background:' + bg + '">'
         + '<td style="' + td + 'white-space:nowrap;color:var(--text3);font-size:11px">' + timeCell + '</td>'
@@ -3640,6 +3652,7 @@ window.invCredLogin = async function() {
         + '<td style="' + td + 'font-family:var(--mono);color:var(--text2)">' + (r.initials||'') + '</td>'
         + '<td style="' + td + 'white-space:nowrap"><span style="font-size:10px;font-weight:700;color:' + stCol + '">' + (r.status||'') + '</span></td>'
         + '<td style="' + td + 'color:var(--text3);max-width:160px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="' + (r.notes||'') + '">' + notes + '</td>'
+        + '<td style="' + td + 'font-family:var(--mono);white-space:nowrap;font-size:11px">' + totalCell + '</td>'
         + '</tr>';
     });
 
@@ -4123,6 +4136,35 @@ window.invCredLogin = async function() {
   };
 
   // ── Row edit history (click a row's Notes cell) ─────────────────────────
+  function skumgrFmtHistTime(iso) {
+    return iso ? new Date(iso).toLocaleString('en-US',{timeZone:'America/New_York',month:'short',day:'numeric',hour:'numeric',minute:'2-digit',hour12:true}) : '';
+  }
+
+  function skumgrRenderHistoryRows(rows, includePartLoc) {
+    if (rows.length === 0) return '<div style="padding:12px;color:var(--text3)">No history found.</div>';
+    return rows.map(function(r) {
+      var typ = (r.type||'').toUpperCase();
+      var color = typ === 'IN' ? 'var(--green)' : typ === 'OUT' ? 'var(--red)' : typ === 'EDIT' ? 'var(--orange)' : 'var(--purple)';
+      var partLocLine = includePartLoc
+        ? '<div style="font-family:var(--mono);font-weight:700;font-size:11px;color:var(--text)">' + (r.part_num||'') + (r.location ? ' @ ' + r.location : '') + '</div>'
+        : '';
+      var totalLine = (r.total_before !== null && r.total_before !== undefined)
+        ? '<div style="font-family:var(--mono);font-size:11px;color:var(--text3);margin-top:2px">Total: ' + Number(r.total_before).toLocaleString() + ' \u2192 ' + Number(r.total_after).toLocaleString()
+          + (r.total_warning ? ' <span title="' + String(r.total_warning).replace(/"/g,'&quot;') + '" style="color:var(--red);font-weight:700;cursor:help">\u26a0</span>' : '') + '</div>'
+        : '';
+      return '<div style="padding:8px 0;border-bottom:1px solid var(--border)">'
+        + partLocLine
+        + '<div style="display:flex;justify-content:space-between;align-items:center">'
+        + '<span style="font-weight:700;color:' + color + '">' + typ + ' \u00b7 ' + (r.cases||0) + ' cases</span>'
+        + '<span style="color:var(--text3);font-size:11px">' + skumgrFmtHistTime(r.timestamp) + '</span>'
+        + '</div>'
+        + (r.initials ? '<div style="color:var(--text3);font-size:11px;margin-top:2px">by ' + r.initials + '</div>' : '')
+        + (r.notes ? '<div style="color:var(--text2);font-size:11px;margin-top:2px">' + r.notes + '</div>' : '')
+        + totalLine
+        + '</div>';
+    }).join('');
+  }
+
   window.skumgrShowRowHistory = function(partNum, location) {
     var modal = g('skumgr-history-modal');
     var title = g('skumgr-history-title');
@@ -4133,24 +4175,27 @@ window.invCredLogin = async function() {
     wFetch(W + '/inventory/history?days=9999&part=' + encodeURIComponent(partNum) + '&location=' + encodeURIComponent(location))
       .then(function(r) { return r.json(); })
       .then(function(d) {
-        var rows = (d && d.rows) || [];
-        if (!body) return;
-        if (rows.length === 0) { body.innerHTML = '<div style="padding:12px;color:var(--text3)">No history found for this row.</div>'; return; }
-        var fmtT = function(iso) {
-          return iso ? new Date(iso).toLocaleString('en-US',{timeZone:'America/New_York',month:'short',day:'numeric',hour:'numeric',minute:'2-digit',hour12:true}) : '';
-        };
-        body.innerHTML = rows.map(function(r) {
-          var typ = (r.type||'').toUpperCase();
-          var color = typ === 'IN' ? 'var(--green)' : typ === 'OUT' ? 'var(--red)' : typ === 'EDIT' ? 'var(--orange)' : 'var(--purple)';
-          return '<div style="padding:8px 0;border-bottom:1px solid var(--border)">'
-            + '<div style="display:flex;justify-content:space-between;align-items:center">'
-            + '<span style="font-weight:700;color:' + color + '">' + typ + ' \u00b7 ' + (r.cases||0) + ' cases</span>'
-            + '<span style="color:var(--text3);font-size:11px">' + fmtT(r.timestamp) + '</span>'
-            + '</div>'
-            + (r.initials ? '<div style="color:var(--text3);font-size:11px;margin-top:2px">by ' + r.initials + '</div>' : '')
-            + (r.notes ? '<div style="color:var(--text2);font-size:11px;margin-top:2px">' + r.notes + '</div>' : '')
-            + '</div>';
-        }).join('');
+        if (body) body.innerHTML = skumgrRenderHistoryRows((d && d.rows) || [], false);
+      })
+      .catch(function() { if (body) body.innerHTML = '<div style="padding:12px;color:var(--red)">Failed to load history</div>'; });
+  };
+
+  // "History" button — every edit made from THIS tab (individual row edits,
+  // Merge Duplicate Rows, Fill Missing Info), no matter how small, across
+  // every part and location — not scoped to one row like clicking a Notes
+  // cell is. Reuses the same backend filter (source=skumgr) that already
+  // tags every SKU Mgr-originated write, and the same modal as row history.
+  window.skumgrShowAllHistory = function() {
+    var modal = g('skumgr-history-modal');
+    var title = g('skumgr-history-title');
+    var body = g('skumgr-history-body');
+    if (title) title.textContent = 'SKU Manager \u2014 All Edits';
+    if (body) body.innerHTML = '<div style="padding:12px;color:var(--text3)">Loading\u2026</div>';
+    if (modal) modal.style.display = 'flex';
+    wFetch(W + '/inventory/history?days=9999&source=skumgr')
+      .then(function(r) { return r.json(); })
+      .then(function(d) {
+        if (body) body.innerHTML = skumgrRenderHistoryRows((d && d.rows) || [], true);
       })
       .catch(function() { if (body) body.innerHTML = '<div style="padding:12px;color:var(--red)">Failed to load history</div>'; });
   };
