@@ -4746,6 +4746,10 @@ function _psShowNostockConfirmModal(selected, realSel, noStockSel, btn, subEl) {
 
   document.getElementById('ps-nostock-confirm-body').innerHTML = html;
   document.getElementById('ps-nostock-confirm-overlay').style.display = 'flex';
+  // Chime + spoken alert fires as soon as this confirm screen shows a "No
+  // Stock Found" block — right when the picker needs to notice it, not
+  // after they've already tapped Confirm and moved on.
+  if (noStockSel.length) _psNoStockAlertSound();
 }
 
 window.psNostockConfirmModalOpen = function() {
@@ -4791,11 +4795,9 @@ window._psNostockConfirmAccept = function() {
     if (wrap) wrap.style.display = 'none';
     if (subEl) subEl.style.display = 'none';
     psFetchNostockCount();
-    // Distinct chime + spoken confirmation — separate from the plain scan
-    // beeps (_psBeep) so "No Stock Found" specifically doesn't get missed
-    // in a noisy warehouse. Only for the items that were ACTUALLY no stock
-    // found (noStockCount), not a generic "out of stock reported" beep.
-    if (noStockCount) _psNoStockAlertSound();
+    // (Chime + spoken "No Stock Found" alert already played when the
+    // Confirm Report screen came up — see _psShowNostockConfirmModal —
+    // rather than here after the report's already gone through.)
     var toastMsg;
     if (noStockCount && realCount) {
       toastMsg = realCount + ' reported to Inventory, ' + noStockCount + ' already showed no stock — order set aside';
