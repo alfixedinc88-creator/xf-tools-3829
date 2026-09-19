@@ -833,10 +833,14 @@ body {
 </div>
 
 <!-- Picking tab's version of the same alarm — reuses the .ps-dupe-* classes
-     (shared, not ID-scoped, so no new CSS needed) but adds a second button:
+     (shared, not ID-scoped, so no new CSS needed) but adds two more buttons:
      "No Inventory" opens the item card WITH the per-item "No Stock" buttons,
      for exactly this moment (a picker who already picked this order once is
-     back at it, meaning it's not actually on the shelf). -->
+     back at it, meaning it's not actually on the shelf). "Cancel Label" is
+     for when the label itself is being called off (wrong print, mislabeled,
+     order canceled) — see psPickDupeCancelLabel — which removes it from
+     whoever originally picked it and logs it for review instead of just
+     dismissing the alarm. -->
 <div id="ps-pick-dupe-overlay" class="ps-dupe-overlay">
   <div class="ps-dupe-card">
     <div class="ps-dupe-icon">🚨</div>
@@ -845,6 +849,7 @@ body {
     <div style="display:flex;gap:10px;justify-content:center;flex-wrap:wrap;margin-top:4px">
       <button class="ps-dupe-btn" onclick="psPickDupeAcknowledge()">OK, Got It</button>
       <button class="ps-dupe-btn" style="background:var(--text3)" onclick="psPickDupeNoInventory()">🚫 No Inventory</button>
+      <button class="ps-dupe-btn" style="background:var(--purple,#8e44ad)" onclick="psPickDupeCancelLabel()">🏷️ Cancel Label</button>
     </div>
   </div>
 </div>
@@ -971,6 +976,22 @@ body {
       <button class="ps-person-modal-close" onclick="psCloseNostockHistory()">✕</button>
     </div>
     <div class="ps-person-modal-body" id="ps-nostock-history-modal-body"></div>
+  </div>
+</div>
+
+<!-- Canceled Labels history — opened by the Picking tab's 🏷️ Canceled
+     Labels card. Covers every date (GET /ship/cancel-label?date=all); see
+     psShowCancelLabelHistory. -->
+<div id="ps-cancel-label-history-modal-overlay" class="ps-person-modal-overlay" onclick="if(event.target===this) psCloseCancelLabelHistory()">
+  <div class="ps-person-modal ps-tracking-modal">
+    <div class="ps-person-modal-header">
+      <div>
+        <div class="ps-person-modal-title">🏷️ Canceled Labels</div>
+        <div class="ps-person-modal-sub" id="ps-cancel-label-history-modal-sub"></div>
+      </div>
+      <button class="ps-person-modal-close" onclick="psCloseCancelLabelHistory()">✕</button>
+    </div>
+    <div class="ps-person-modal-body" id="ps-cancel-label-history-modal-body"></div>
   </div>
 </div>
 
@@ -1148,6 +1169,16 @@ body {
         </div>
       </div>
       <div id="ps-nostock-list" style="display:none;margin-top:10px"></div>
+    </div>
+
+    <!-- "Canceled Labels" — every label called off via the "Already Picked!"
+         alarm's 🏷️ Cancel Label button (see psPickDupeCancelLabel). Not a
+         to-do list like No Stock Found above (nothing to resolve here, it's
+         just a record), so this is a flat click-to-view History rather than
+         a collapsible/resolvable list. -->
+    <div class="ps-card" id="ps-cancel-label-card" style="margin-top:10px;border-color:#c4b5fd;display:flex;justify-content:space-between;align-items:center;cursor:pointer" onclick="psShowCancelLabelHistory()">
+      <div style="font-size:13px;font-weight:700;color:var(--purple)">🏷️ Canceled Labels<span class="ps-badge-red" id="ps-cancel-label-badge" style="display:none;margin-left:8px;padding:2px 8px;border-radius:100px;font-size:11px;font-weight:700;background:var(--purple-bg);color:var(--purple)">0</span></div>
+      <div style="font-size:11px;color:var(--text3);text-decoration:underline">History</div>
     </div>
 
     <div class="ps-section-header" style="margin-top:4px">
@@ -2367,6 +2398,47 @@ function _psBeep(freq, dur) {
     gain.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + dur/1000);
     osc.start(ctx.currentTime); osc.stop(ctx.currentTime + dur/1000);
   } catch(e) {}
+}
+
+// ── "No Stock Found" alert sound (Picking tab) ───────────────────────────
+// Deliberately different from both _psBeep (the plain single-tone scan
+// confirmation) and the dupe/pick alarm's urgent two-tone wail — a
+// three-note descending chime to catch attention, immediately followed by
+// a spoken confirmation so a picker across the room hears WHAT happened
+// without having to walk over and read the screen. Falls back to just the
+// chime (repeated, so it's still noticeable) if the browser doesn't support
+// speech synthesis.
+function _psNoStockChime() {
+  try {
+    var ctx = new (window.AudioContext || window.webkitAudioContext)();
+    function tone(freq, st, dur) {
+      var o = ctx.createOscillator(), g = ctx.createGain();
+      o.connect(g); g.connect(ctx.destination);
+      o.type = 'triangle'; o.frequency.setValueAtTime(freq, st);
+      g.gain.setValueAtTime(0.22, st);
+      g.gain.exponentialRampToValueAtTime(0.001, st + dur);
+      o.start(st); o.stop(st + dur);
+    }
+    var t = ctx.currentTime;
+    tone(659, t,        0.16);
+    tone(523, t + 0.18, 0.16);
+    tone(392, t + 0.36, 0.30);
+  } catch(e) {}
+}
+
+function _psSpeakNoStockFound() {
+  try {
+    if (!window.speechSynthesis || !window.SpeechSynthesisUtterance) { _psNoStockChime(); return; }
+    window.speechSynthesis.cancel(); // don't stack if one's already mid-sentence
+    var msg = new SpeechSynthesisUtterance('No stock found. Please confirm, and put label on the side to double check. Thank you.');
+    msg.rate = 0.95; msg.pitch = 1; msg.volume = 1;
+    window.speechSynthesis.speak(msg);
+  } catch(e) { _psNoStockChime(); }
+}
+
+function _psNoStockAlertSound() {
+  _psNoStockChime();
+  setTimeout(_psSpeakNoStockFound, 650);
 }
 
 // ── Batch close ───────────────────────────────────────
@@ -3956,17 +4028,20 @@ window.psShowDebug = function(kind) {
 
   // ── Picking tab's own version of the above — same alarm engine
   // (psDupeAlarmStart/Stop, one shared AudioContext), separate overlay
-  // element and a second button. "No Inventory" is the whole point: a
-  // picker scanning something already marked picked today means it's not
-  // actually on the shelf, so that's the moment to offer flagging it,
-  // rather than showing "No Stock" buttons on every order up front.
+  // element and two extra buttons. "No Inventory" is for when a picker
+  // scanning something already marked picked today means it's not actually
+  // on the shelf. "Cancel Label" (see psPickDupeCancelLabel) is for when the
+  // label/order itself is being called off — keeps the full context (not
+  // just tracking) so that button has what it needs to log a useful report.
   var psPickDupeCurrentTracking = null;
+  var psPickDupeCurrentInfo = null; // { tracking, firstScanTime, initials, carrier, orderNum }
 
   window.psPickDupeAcknowledge = function() {
     psDupeAlarmStop();
     var ov = document.getElementById('ps-pick-dupe-overlay'); if (ov) ov.style.display = 'none';
     var inp = document.getElementById('ps-pick-input'); if (inp) inp.focus();
     psPickDupeCurrentTracking = null;
+    psPickDupeCurrentInfo = null;
   };
   window.psPickDupeCancel = window.psPickDupeAcknowledge;
 
@@ -3975,12 +4050,53 @@ window.psShowDebug = function(kind) {
     psDupeAlarmStop();
     var ov = document.getElementById('ps-pick-dupe-overlay'); if (ov) ov.style.display = 'none';
     psPickDupeCurrentTracking = null;
+    psPickDupeCurrentInfo = null;
     if (tracking) _psLoadPickProduct(tracking, true); // true = show "No Stock" buttons now
     var inp = document.getElementById('ps-pick-input'); if (inp) inp.focus();
   };
 
-  window.psPickDupeShowAlert = function(tracking, firstScanTime, initials, carrier) {
+  // Calls off the label entirely — removes it from whoever originally
+  // picked it (deletes today's ship_pick_log row, same as a stockout
+  // report does) and logs a permanent record via POST /ship/cancel-label
+  // so it's still reviewable under the "🏷️ Canceled Labels" card even
+  // though the pick itself is gone. Confirms first since this affects
+  // someone else's picked count.
+  window.psPickDupeCancelLabel = function() {
+    var info = psPickDupeCurrentInfo;
+    if (!info || !info.tracking) { window.psPickDupeAcknowledge(); return; }
+    var who = info.initials ? info.initials : 'whoever picked it';
+    if (!confirm('Cancel this label for ' + info.tracking + '?\n\nThis removes it from ' + who + '\'s picked count today and logs it for review.')) return;
+
+    psDupeAlarmStop();
+    var ov = document.getElementById('ps-pick-dupe-overlay'); if (ov) ov.style.display = 'none';
+    psPickDupeCurrentTracking = null;
+    psPickDupeCurrentInfo = null;
+
+    fetch(PS_WORKER + '/ship/cancel-label', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'X-Cred-Token': psCredToken },
+      body: JSON.stringify({
+        tracking: info.tracking, orderNum: info.orderNum || '', carrier: info.carrier || '',
+        pickedBy: info.initials || '', pickedAt: info.firstScanTime || '', canceledBy: psInitials
+      })
+    }).then(function(r) { return r.json(); }).then(function(d) {
+      if (!d || !d.ok) throw new Error((d && d.error) || 'Request failed');
+      // Take it off today's picked list right away, same as the No Stock
+      // Found confirm flow does, instead of waiting on the next poll.
+      psTodayPicks = psTodayPicks.filter(function(s) { return s.tracking.toUpperCase() !== info.tracking.toUpperCase(); });
+      psRenderPickList();
+      psFetchCancelLabelCount();
+      _psToast('Label canceled — removed from ' + who + '\'s picks');
+    }).catch(function(e) {
+      _psToast('Could not cancel label — ' + e.message, 'err');
+    });
+
+    var inp = document.getElementById('ps-pick-input'); if (inp) inp.focus();
+  };
+
+  window.psPickDupeShowAlert = function(tracking, firstScanTime, initials, carrier, orderNum) {
     psPickDupeCurrentTracking = tracking;
+    psPickDupeCurrentInfo = { tracking: tracking, firstScanTime: firstScanTime, initials: initials, carrier: carrier, orderNum: orderNum || '' };
     var ov  = document.getElementById('ps-pick-dupe-overlay');
     var det = document.getElementById('ps-pick-dupe-detail');
     if (!ov) return;
@@ -3989,7 +4105,8 @@ window.psShowDebug = function(kind) {
     det.innerHTML = '<strong>' + tracking + '</strong><br>'
       + (carrier ? carrier + ' &nbsp;&middot;&nbsp; ' : '')
       + 'Already picked at <strong>' + timeStr + '</strong>' + byStr + '<br><br>'
-      + 'If it\'s not actually there, tap <strong>No Inventory</strong> to flag which item is missing.';
+      + 'If it\'s not actually there, tap <strong>No Inventory</strong> to flag which item is missing.'
+      + ' If the label itself is being canceled, tap <strong>Cancel Label</strong>.';
     ov.style.display = 'flex';
     psDupeAlarmStart();
   };
@@ -4284,7 +4401,7 @@ window.psSwitchTab = function(name) {
     var pdinp = document.getElementById('ps-pick-summary-date');
     if (pdinp) { var ptk = psTodayKey(); pdinp.value = ptk; pdinp.max = ptk; }
     psPickSummaryDate = null;
-    psRenderPickList(); psLoadPicks(); _psLoadPrintStatus(); psFetchNostockCount(); psFetchNostockNeedsFixCount();
+    psRenderPickList(); psLoadPicks(); _psLoadPrintStatus(); psFetchNostockCount(); psFetchNostockNeedsFixCount(); psFetchCancelLabelCount();
   }
   if (name === 'closebatch')  { _psUpdateBatchBar(); psUspsRunLoadOpen(); }
   if (name === 'progress')    { psLoadScans(); }
@@ -4414,7 +4531,7 @@ function _psProcessPick(raw) {
     _psBeep(440, 100);
     _psShowPickLastScan({ icon:'⚠️', cls:'warn', tracking: tracking, meta:'Already picked at ' + psFmtTime(dupe.timestamp) + (dupe.initials ? ' by ' + dupe.initials : '') + ' · ' + dupe.carrier });
     _psToast('Duplicate — picked at ' + psFmtTime(dupe.timestamp), 'warn');
-    psPickDupeShowAlert(tracking, dupe.timestamp, dupe.initials, dupe.carrier);
+    psPickDupeShowAlert(tracking, dupe.timestamp, dupe.initials, dupe.carrier, dupe.orderNum);
     _psLoadPickProduct(tracking); // no showNoStock — plain item view under the alarm
     inp.focus(); return;
   }
@@ -4439,7 +4556,7 @@ function _psProcessPick(raw) {
       if (!pov || pov.style.display === 'none') {
         _psPickFlash('orange');
         _psShowPickLastScan({ icon:'⚠️', cls:'warn', tracking: tracking, meta:'Already picked at ' + psFmtTime(data.scannedAt) + (data.initials ? ' by ' + data.initials : '') });
-        if (typeof psPickDupeShowAlert === 'function') psPickDupeShowAlert(tracking, data.scannedAt, data.initials || '', data.carrier || '');
+        if (typeof psPickDupeShowAlert === 'function') psPickDupeShowAlert(tracking, data.scannedAt, data.initials || '', data.carrier || '', data.orderNum || '');
       }
       return;
     }
@@ -4674,6 +4791,11 @@ window._psNostockConfirmAccept = function() {
     if (wrap) wrap.style.display = 'none';
     if (subEl) subEl.style.display = 'none';
     psFetchNostockCount();
+    // Distinct chime + spoken confirmation — separate from the plain scan
+    // beeps (_psBeep) so "No Stock Found" specifically doesn't get missed
+    // in a noisy warehouse. Only for the items that were ACTUALLY no stock
+    // found (noStockCount), not a generic "out of stock reported" beep.
+    if (noStockCount) _psNoStockAlertSound();
     var toastMsg;
     if (noStockCount && realCount) {
       toastMsg = realCount + ' reported to Inventory, ' + noStockCount + ' already showed no stock — order set aside';
@@ -4701,7 +4823,71 @@ window.psFilterPicks = function(f, btn) {
 // ── "No Stock Found" list (Picking tab) ──────────────────────────────────
 // Own, Picking-scoped record of orders that came back "no stock found" —
 // D1's master_list already showed zero at that bin when reported, so
-// Inventory's Stock Out Reports never heard about it (see psSubmitNoStock
+// ── "Canceled Labels" (Picking tab) ──────────────────────────────────────
+// Badge + History for every label called off via the "Already Picked!"
+// alarm's 🏷️ Cancel Label button (see psPickDupeCancelLabel). Counts
+// TODAY's cancellations for the badge (matches how the rest of Picking is
+// scoped to today), but History always pulls the full record.
+window.psFetchCancelLabelCount = function() {
+  fetch(PS_WORKER + '/ship/cancel-label', { headers: { 'X-Cred-Token': psCredToken } })
+    .then(function(r) { return r.json(); })
+    .then(function(d) {
+      var n = ((d && d.cancelLabels) || []).length;
+      var b = document.getElementById('ps-cancel-label-badge');
+      if (b) { b.textContent = n; b.style.display = n > 0 ? 'inline-flex' : 'none'; }
+    }).catch(function() {});
+};
+
+window.psShowCancelLabelHistory = function() {
+  document.getElementById('ps-cancel-label-history-modal-sub').textContent = 'Loading…';
+  document.getElementById('ps-cancel-label-history-modal-body').innerHTML = '<div class="ps-person-modal-empty">Loading…</div>';
+  document.getElementById('ps-cancel-label-history-modal-overlay').style.display = 'flex';
+  fetch(PS_WORKER + '/ship/cancel-label?date=all', { headers: { 'X-Cred-Token': psCredToken } })
+    .then(function(r) { return r.json(); })
+    .then(function(d) {
+      if (!d || !d.ok) {
+        document.getElementById('ps-cancel-label-history-modal-sub').textContent = '';
+        document.getElementById('ps-cancel-label-history-modal-body').innerHTML = '<div class="ps-person-modal-empty">Error: ' + ((d && d.error) || 'Unknown error') + '</div>';
+        return;
+      }
+      var list = d.cancelLabels || [];
+      document.getElementById('ps-cancel-label-history-modal-sub').textContent = list.length + ' canceled label' + (list.length !== 1 ? 's' : '');
+      document.getElementById('ps-cancel-label-history-modal-body').innerHTML = list.length
+        ? list.map(_psRenderCancelLabelRow).join('')
+        : '<div class="ps-person-modal-empty">No labels have been canceled.</div>';
+    }).catch(function(e) {
+      document.getElementById('ps-cancel-label-history-modal-sub').textContent = '';
+      document.getElementById('ps-cancel-label-history-modal-body').innerHTML = '<div class="ps-person-modal-empty">Request failed: ' + e.message + '</div>';
+    });
+};
+
+window.psCloseCancelLabelHistory = function() {
+  document.getElementById('ps-cancel-label-history-modal-overlay').style.display = 'none';
+};
+
+function _psRenderCancelLabelRow(s) {
+  var when = '';
+  try { when = new Date(s.timestamp).toLocaleString([], {month:'short', day:'numeric', year:'numeric', hour:'numeric', minute:'2-digit'}); } catch(e) { when = s.timestamp || ''; }
+  var pickedWhen = '';
+  if (s.pickedAt) {
+    try { pickedWhen = new Date(s.pickedAt).toLocaleString([], {month:'short', day:'numeric', hour:'numeric', minute:'2-digit'}); } catch(e) { pickedWhen = s.pickedAt; }
+  }
+  return '<div style="border-bottom:1px solid var(--border);padding:10px 0">'
+    + '<div style="display:flex;justify-content:space-between;gap:8px;align-items:baseline;flex-wrap:wrap">'
+    +   '<div style="font-family:var(--mono);font-weight:700;font-size:13px">' + s.tracking + '</div>'
+    +   '<div style="font-size:11px;text-align:right;color:var(--purple);font-weight:700">Canceled by ' + (s.canceledBy || '?') + (when ? ' · ' + when : '') + '</div>'
+    + '</div>'
+    + '<div style="font-size:11px;color:var(--text3);margin-top:3px">'
+    +   (s.orderNum ? 'Order ' + s.orderNum + ' · ' : '')
+    +   (s.carrier ? s.carrier + ' · ' : '')
+    +   'originally picked by ' + (s.pickedBy || '?') + (pickedWhen ? ' · ' + pickedWhen : '')
+    + '</div>'
+    + '</div>';
+}
+
+// "No Stock Found" list — orders where D1's own master_list ALREADY showed
+// zero cases at the time a picker reported it, so nothing new went to
+// Inventory's Stock Out Reports (see psSubmitNoStock
 // and the worker's shipReportStockout branch logic). Same collapsible
 // card / list pattern as Inventory's own Stock Out Reports card, just fed
 // by a different table (ship_nostock_log via GET /ship/nostock).
