@@ -1440,26 +1440,30 @@ window.invCredLogin = async function() {
       return b.totalCases - a.totalCases || b.suffixNum - a.suffixNum;
     });
 
-    variantInfo.forEach(function(info, i) {
-      var v = info.v, totalCases = info.totalCases, locCount = info.locCount;
-      var el = document.createElement("div");
-      el.className = "iloc-opt";
+    // Flatten every (variant, location) combination into one list of rows,
+    // each already showing its own cases input and Add to List button —
+    // no intermediate "pick a variant" or "pick a location" screen at all.
+    // Sort variants by total cases desc (tie: higher "=" suffix first), and
+    // within a variant, its individual locations by cases desc too, so the
+    // most useful row to actually pull from always lands at the top.
+    variantInfo.forEach(function(info) {
+      info.locs.sort(function(a, b) { return (parseFloat(b.cases)||0) - (parseFloat(a.cases)||0); });
+    });
 
-      if (invMode === "out" && locCount === 1) {
-        // Exactly one location for this variant — show the cases input and
-        // Add to List button already expanded, no click needed at all to
-        // reveal them (this used to require tapping the row first to open
-        // the form — removed entirely per request: type cases, tap Add to
-        // List, done). When there's more than one location, a choice is
-        // still genuinely needed, so that case keeps the click-through-to-
-        // locations flow below.
-        var onlyLoc = info.locs[0];
-        var caseId  = "inv-var-cases-" + i;
-        invVariantRowInfo[i] = { loc: onlyLoc, partNum: v };
+    var rowIdx = 0;
+    variantInfo.forEach(function(info) {
+      var v = info.v;
+      info.locs.forEach(function(loc) {
+        var i = rowIdx++;
+        var el = document.createElement("div");
+        el.className = "iloc-opt";
+        var caseId = "inv-var-cases-" + i;
+        invVariantRowInfo[i] = { loc: loc, partNum: v };
+        var locCases = parseFloat(loc.cases) || 0;
         el.innerHTML = "<div style='display:flex;justify-content:space-between;align-items:center'>"
           + "<div>"
           + "<div class='iloc-name' style='font-family:var(--mono);font-size:14px'>" + v + "</div>"
-          + "<div style='font-size:11px;color:var(--text3);margin-top:2px'>" + onlyLoc.location + " \u00b7 " + totalCases + " cases</div>"
+          + "<div style='font-size:11px;color:var(--text3);margin-top:2px'>" + loc.location + " \u00b7 " + locCases + " cases</div>"
           + "</div></div>"
           + "<div style='margin-top:10px;padding-top:10px;border-top:1px solid var(--border)'>"
           + "<div style='font-size:11px;font-weight:700;color:var(--text3);margin-bottom:4px'>CASES TO PULL</div>"
@@ -1473,34 +1477,11 @@ window.invCredLogin = async function() {
         el.style.display = "block";
         el.style.padding = "10px 12px";
         list.appendChild(el);
-        return;
-      }
-
-      // Multiple locations for this variant — still need to choose which
-      // one, so this keeps the existing click-through-to-locations flow.
-      el.innerHTML = "<div style='flex:1'>"
-        + "<div class='iloc-name' style='font-family:var(--mono);font-size:14px'>" + v + "</div>"
-        + "<div style='font-size:11px;color:var(--text3);margin-top:2px'>" + totalCases + " cases · " + locCount + " location" + (locCount !== 1 ? "s" : "") + "</div>"
-        + "</div>"
-        + "<span class='iloc-badge ex'>Select</span>";
-      el.style.display = "flex";
-      el.style.alignItems = "center";
-      el.onclick = function() {
-        // Filter locations to this variant only
-        var varLocs = (invPart.locations || []).filter(function(l) {
-          return !l.partNum || l.partNum.toUpperCase() === v.toUpperCase();
-        });
-        varLocs = varLocs.filter(function(l) { return parseFloat(l.cases) > 0; });
-        if (varLocs.length === 0) { invFlash("No stock for " + v, "error"); return; }
-        invPart = Object.assign({}, invPart, { partNum: v, locations: varLocs });
-        g("inv-result-part").textContent = v;
-        invShowLocs();
-      };
-      list.appendChild(el);
+      });
     });
   }
 
-  // Mirrors invPickLocFromInline, for the single-location quick-pull rows
+  // Mirrors invPickLocFromInline, for the always-expanded quick-pull rows
   // above — reads the row's own captured {loc, partNum} from
   // invVariantRowInfo instead of a shared invSelLoc/invPart global, so
   // clicking row 2's "Add to List" can never accidentally submit against
