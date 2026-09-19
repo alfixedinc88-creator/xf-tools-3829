@@ -3614,7 +3614,8 @@ window.psDoLookup = async function() {
 // results[] into the same card markup everywhere it's used — the Order
 // Lookup tab below, and the tracking→order detail modal opened from the
 // Scan tab's "Today's Scans" list (see psShowTrackingDetail further down).
-function _psRenderOrderLookupCard(o) {
+function _psRenderOrderLookupCard(o, opts) {
+  opts = opts || {};
   var channelColor = o.channel.toLowerCase().includes('amazon') ? '#FF9900'
     : o.channel.toLowerCase().includes('ebay') ? '#e53238'
     : o.channel.toLowerCase().includes('shopify') ? '#96bf48' : 'var(--accent)';
@@ -3633,25 +3634,47 @@ function _psRenderOrderLookupCard(o) {
 
   var itemsHtml = '';
   if (o.lineItems && o.lineItems.length > 0) {
-    itemsHtml = '<table style="width:100%;border-collapse:collapse;margin-top:10px;">'
-      + '<thead><tr>'
-      + '<th style="text-align:left;font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.5px;color:var(--text3);padding:4px 4px 6px 0;border-bottom:1px solid var(--border);">Img</th>'
-      + '<th style="text-align:left;font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.5px;color:var(--text3);padding:4px 8px 6px 0;border-bottom:1px solid var(--border);">SKU</th>'
-      + '<th style="text-align:left;font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.5px;color:var(--text3);padding:4px 8px 6px;border-bottom:1px solid var(--border);">Bin</th>'
-      + '<th style="text-align:right;font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.5px;color:var(--text3);padding:4px 0 6px 8px;border-bottom:1px solid var(--border);">Qty</th>'
-      + '</tr></thead><tbody>'
-      + o.lineItems.map(function(li) {
-          var imgHtml = li.i
-            ? '<img src="' + li.i + '" style="width:40px;height:40px;object-fit:cover;border-radius:4px;border:1px solid var(--border);" onerror="this.style.display=\'none\'">'
-            : '<div style="width:40px;height:40px;background:var(--bg3);border-radius:4px;border:1px solid var(--border);display:flex;align-items:center;justify-content:center;font-size:16px;">📦</div>';
-          return '<tr>'
-            + '<td style="padding:5px 4px 5px 0;border-bottom:1px solid var(--border);">' + imgHtml + '</td>'
-            + '<td style="font-family:var(--mono);font-size:11px;color:var(--accent);padding:5px 8px 5px 0;border-bottom:1px solid var(--border);">' + (li.s || '—') + '</td>'
-            + '<td style="font-family:var(--mono);font-size:11px;color:var(--text2);padding:5px 8px;border-bottom:1px solid var(--border);">' + (li.b || '—') + '</td>'
-            + '<td style="font-family:var(--mono);font-size:13px;font-weight:700;color:var(--text);text-align:right;padding:5px 0 5px 8px;border-bottom:1px solid var(--border);">×' + (li.q || 1) + '</td>'
-            + '</tr>';
-        }).join('')
-      + '</tbody></table>';
+    if (opts.bigPhotos) {
+      // Big-photo grid — used from the Cancellation tab's "View Order &
+      // Photos" popup. The whole point there is someone standing in the
+      // warehouse trying to spot a specific box by what's inside it, which
+      // a 40px thumbnail in a table is too small to actually recognize at
+      // a glance. Same underlying data as the compact table below, just
+      // laid out as photo-first cards.
+      itemsHtml = '<div style="display:flex;flex-wrap:wrap;gap:12px;margin-top:12px">'
+        + o.lineItems.map(function(li) {
+            var imgHtml = li.i
+              ? '<img src="' + li.i + '" style="width:120px;height:120px;object-fit:cover;border-radius:10px;border:1px solid var(--border);display:block" onerror="this.style.display=\'none\'">'
+              : '<div style="width:120px;height:120px;background:var(--bg3);border-radius:10px;border:1px solid var(--border);display:flex;align-items:center;justify-content:center;font-size:36px">📦</div>';
+            return '<div style="width:120px;text-align:center">'
+              + imgHtml
+              + '<div style="font-family:var(--mono);font-size:11px;color:var(--accent);margin-top:6px;word-break:break-all;line-height:1.3">' + (li.s || '—') + '</div>'
+              + '<div style="font-family:var(--mono);font-size:11px;color:var(--text2);margin-top:2px">Bin: ' + (li.b || '—') + '</div>'
+              + '<div style="font-size:14px;font-weight:700;color:var(--text);margin-top:2px">×' + (li.q || 1) + '</div>'
+              + '</div>';
+          }).join('')
+        + '</div>';
+    } else {
+      itemsHtml = '<table style="width:100%;border-collapse:collapse;margin-top:10px;">'
+        + '<thead><tr>'
+        + '<th style="text-align:left;font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.5px;color:var(--text3);padding:4px 4px 6px 0;border-bottom:1px solid var(--border);">Img</th>'
+        + '<th style="text-align:left;font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.5px;color:var(--text3);padding:4px 8px 6px 0;border-bottom:1px solid var(--border);">SKU</th>'
+        + '<th style="text-align:left;font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.5px;color:var(--text3);padding:4px 8px 6px;border-bottom:1px solid var(--border);">Bin</th>'
+        + '<th style="text-align:right;font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.5px;color:var(--text3);padding:4px 0 6px 8px;border-bottom:1px solid var(--border);">Qty</th>'
+        + '</tr></thead><tbody>'
+        + o.lineItems.map(function(li) {
+            var imgHtml = li.i
+              ? '<img src="' + li.i + '" style="width:40px;height:40px;object-fit:cover;border-radius:4px;border:1px solid var(--border);" onerror="this.style.display=\'none\'">'
+              : '<div style="width:40px;height:40px;background:var(--bg3);border-radius:4px;border:1px solid var(--border);display:flex;align-items:center;justify-content:center;font-size:16px;">📦</div>';
+            return '<tr>'
+              + '<td style="padding:5px 4px 5px 0;border-bottom:1px solid var(--border);">' + imgHtml + '</td>'
+              + '<td style="font-family:var(--mono);font-size:11px;color:var(--accent);padding:5px 8px 5px 0;border-bottom:1px solid var(--border);">' + (li.s || '—') + '</td>'
+              + '<td style="font-family:var(--mono);font-size:11px;color:var(--text2);padding:5px 8px;border-bottom:1px solid var(--border);">' + (li.b || '—') + '</td>'
+              + '<td style="font-family:var(--mono);font-size:13px;font-weight:700;color:var(--text);text-align:right;padding:5px 0 5px 8px;border-bottom:1px solid var(--border);">×' + (li.q || 1) + '</td>'
+              + '</tr>';
+          }).join('')
+        + '</tbody></table>';
+    }
   } else {
     itemsHtml = '<div style="font-size:12px;color:var(--text3);margin-top:8px;font-style:italic;">No item data — run Veeqo Sync to populate order details</div>';
   }
@@ -3718,12 +3741,18 @@ window.psOrderLookup = async function() {
 // what they just packed.
 var _psTrackingModalOpen = false;
 
-window.psShowTrackingDetail = async function(tracking) {
+window.psShowTrackingDetail = async function(tracking, opts) {
   if (!tracking) return;
+  opts = opts || {};
   _psTrackingModalOpen = true;
   document.getElementById('ps-tracking-modal-title').textContent = tracking;
   document.getElementById('ps-tracking-modal-sub').textContent = 'Looking up…';
   document.getElementById('ps-tracking-modal-body').innerHTML = '<div class="ps-person-modal-empty">Looking up…</div>';
+  // Same order-detail modal every other tab uses, just given more room when
+  // opened with bigPhotos (from the Cancellation tab) so a row of large
+  // product photos doesn't feel cramped.
+  var modalEl = document.querySelector('#ps-tracking-modal-overlay .ps-tracking-modal');
+  if (modalEl) modalEl.style.maxWidth = opts.bigPhotos ? '760px' : '';
   document.getElementById('ps-tracking-modal-overlay').style.display = 'flex';
   try {
     var r = await fetch(PS_WORKER + '/ship/order-lookup?q=' + encodeURIComponent(tracking) + '&days=7', {
@@ -3741,7 +3770,7 @@ window.psShowTrackingDetail = async function(tracking) {
       ? list.length + ' order' + (list.length !== 1 ? 's' : '') + ' found'
       : 'No order found';
     document.getElementById('ps-tracking-modal-body').innerHTML = list.length
-      ? list.map(_psRenderOrderLookupCard).join('')
+      ? list.map(function(o) { return _psRenderOrderLookupCard(o, opts); }).join('')
       : '<div class="ps-person-modal-empty">No order found for this tracking number in the last 7 days.</div>';
   } catch(e) {
     if (!_psTrackingModalOpen) return;
@@ -5016,6 +5045,112 @@ var _psCancelOrderOpenList = [];      // what the Cancellation tab's own list sh
 var _psCancelOrderCache = {};         // UPPERCASE tracking -> pending record, for fast scan-time lookups
 var _psCancelOrderCurrent = null;     // the record the alert overlay is currently showing
 
+// id -> { checking: bool, pick: {initials,timestamp,carrier,dateKey}|null,
+//         pack: {initials,timestamp,carrier,dateKey}|null, error: bool }
+// Lets someone who's marking an order for cancellation see right away
+// whether it's already moved further down the line than they think — the
+// scan-time alert only ever catches a FUTURE scan, so if it was already
+// picked or packed before it landed on this list, that alert never fires
+// and the only way to find the physical box is to know who touched it and
+// when. Checked once per entry (not on every 20s refresh) plus a manual
+// "↻ Recheck" link per row.
+var _psCancelOrderStatusInfo = {};
+
+// Looks a tracking up across the last `daysBack` calendar days (today
+// inclusive) of both Picking and Packing history via the same
+// GET /ship/picks?date= and GET /ship/scans?date= endpoints the summary
+// bars already use — no new backend endpoint needed. Stops at the first
+// (most recent) match in each list; a tracking normally only appears once
+// in each anyway.
+// NOTE: deliberately NOT reusing the older _psDateKeyOffset() helper here —
+// that one shifts by UTC calendar days, while "today" everywhere else in
+// this app (psTodayKey(), the backend's shipTodayKey()) is the warehouse's
+// NY calendar day. Those two disagree for several hours every evening
+// Eastern time (UTC has already rolled to the next date while NY hasn't),
+// which would silently shift this 3-day lookback onto the wrong days —
+// checking a day that hasn't happened yet and missing the oldest day that
+// should've been included. Anchoring to psTodayKey() keeps it correct
+// regardless of what time it is.
+function _psNyDateKeyOffset(daysAgo) {
+  var parts = psTodayKey().split('-').map(Number);
+  var d = new Date(Date.UTC(parts[0], parts[1] - 1, parts[2]));
+  d.setUTCDate(d.getUTCDate() - daysAgo);
+  return d.getUTCFullYear() + '-' + String(d.getUTCMonth() + 1).padStart(2, '0') + '-' + String(d.getUTCDate()).padStart(2, '0');
+}
+
+function _psFetchPickPackHistory(tracking, daysBack) {
+  daysBack = daysBack || 3;
+  var upperTracking = String(tracking || '').toUpperCase();
+  var dateKeys = [];
+  for (var i = 0; i < daysBack; i++) dateKeys.push(_psNyDateKeyOffset(i));
+
+  var pickReqs = dateKeys.map(function(dk) {
+    return fetch(PS_WORKER + '/ship/picks?date=' + dk, { headers: { 'X-Cred-Token': psCredToken } })
+      .then(function(r) { return r.json(); })
+      .then(function(d) { return { dateKey: dk, rows: (d && d.picks) || [] }; })
+      .catch(function() { return { dateKey: dk, rows: [] }; });
+  });
+  var scanReqs = dateKeys.map(function(dk) {
+    return fetch(PS_WORKER + '/ship/scans?date=' + dk, { headers: { 'X-Cred-Token': psCredToken } })
+      .then(function(r) { return r.json(); })
+      .then(function(d) { return { dateKey: dk, rows: (d && d.scans) || [] }; })
+      .catch(function() { return { dateKey: dk, rows: [] }; });
+  });
+
+  return Promise.all(pickReqs.concat(scanReqs)).then(function(results) {
+    var pickResults = results.slice(0, dateKeys.length);
+    var scanResults = results.slice(dateKeys.length);
+    var pick = null, pack = null;
+    pickResults.forEach(function(res) {
+      if (pick) return;
+      var m = res.rows.find(function(row) { return String(row.tracking || '').toUpperCase() === upperTracking; });
+      if (m) pick = { initials: m.initials || '', timestamp: m.timestamp || '', carrier: m.carrier || '', dateKey: res.dateKey };
+    });
+    scanResults.forEach(function(res) {
+      if (pack) return;
+      var m = res.rows.find(function(row) { return String(row.tracking || '').toUpperCase() === upperTracking; });
+      if (m) pack = { initials: m.initials || '', timestamp: m.timestamp || '', carrier: m.carrier || '', dateKey: res.dateKey };
+    });
+    return { pick: pick, pack: pack };
+  });
+}
+
+window.psCancelOrderCheckHistory = function(id, tracking) {
+  _psCancelOrderStatusInfo[id] = { checking: true, pick: null, pack: null, error: false };
+  _psRenderCancelOrderList();
+  _psFetchPickPackHistory(tracking, 3).then(function(info) {
+    _psCancelOrderStatusInfo[id] = { checking: false, pick: info.pick, pack: info.pack, error: false };
+    _psRenderCancelOrderList();
+  }).catch(function() {
+    _psCancelOrderStatusInfo[id] = { checking: false, pick: null, pack: null, error: true };
+    _psRenderCancelOrderList();
+  });
+};
+
+function _psRenderPickPackStatusLine(r) {
+  var info = _psCancelOrderStatusInfo[r.id];
+  if (!info || info.checking) {
+    return '<div style="font-size:11px;color:var(--text3);margin-top:5px">🔍 Checking Picking/Packing history (last 3 days)…</div>';
+  }
+  if (info.error) {
+    return '<div style="font-size:11px;color:var(--text3);margin-top:5px">Couldn\'t check Picking/Packing history — <span style="cursor:pointer;text-decoration:underline" onclick="psCancelOrderCheckHistory(' + r.id + ',\'' + r.tracking + '\')">retry</span></div>';
+  }
+  var lines = [];
+  if (info.pick) {
+    lines.push('📦 Picked by <b>' + (info.pick.initials || '?') + '</b> at ' + psFmtDateTime(info.pick.timestamp));
+  }
+  if (info.pack) {
+    lines.push('✅ Packed by <b>' + (info.pack.initials || '?') + '</b> at ' + psFmtDateTime(info.pack.timestamp) + (info.pack.carrier ? ' (' + info.pack.carrier + ')' : ''));
+  }
+  if (!lines.length) {
+    lines.push('Not yet picked or packed in the last 3 days');
+  }
+  return '<div style="font-size:11.5px;margin-top:5px;padding:6px 8px;background:var(--bg2);border-radius:6px;line-height:1.6">'
+    + lines.join('<br>')
+    + ' <span style="cursor:pointer;text-decoration:underline;color:var(--text3);font-size:10.5px" onclick="psCancelOrderCheckHistory(' + r.id + ',\'' + r.tracking + '\')">↻ Recheck</span>'
+    + '</div>';
+}
+
 window.psAddCancelOrder = function() {
   var trackingEl = document.getElementById('ps-cancelorder-tracking');
   var tracking = psNormalizeTracking(trackingEl.value);
@@ -5077,6 +5212,17 @@ function _psRenderCancelOrderList() {
   el.innerHTML = list.length
     ? list.map(_psRenderCancelOrderCard).join('')
     : '<div class="ps-empty-state"><div class="ps-empty-icon">🗑️</div><div class="ps-empty-title">Nothing marked for cancellation</div><div class="ps-empty-sub">Add a tracking number above — Picking and Packing will be alerted the moment they scan it.</div></div>';
+
+  // Kick off the Picking/Packing history check AND the full order-lookup
+  // (photos included) for any entry that doesn't have one cached yet —
+  // once per entry, not on every refresh, so leaving the tab open doesn't
+  // keep re-firing fetches every 20s. Cancellations should be rare, so
+  // showing everything right on the card instead of hiding it behind a
+  // click is fine — there's normally only a couple of these on screen.
+  list.forEach(function(r) {
+    if (!_psCancelOrderStatusInfo[r.id]) window.psCancelOrderCheckHistory(r.id, r.tracking);
+    if (!_psCancelOrderLookupInfo[r.id]) window.psCancelOrderLoadOrderInfo(r.id, r.tracking);
+  });
 }
 
 function _psRenderCancelOrderCard(r) {
@@ -5095,7 +5241,49 @@ function _psRenderCancelOrderCard(r) {
     +   'requested by ' + (r.requestedBy || '?') + ' · ' + reqWhen
     + '</div>'
     + (r.reason ? '<div style="font-size:11.5px;margin-top:4px">Reason: ' + r.reason + '</div>' : '')
-    + '<button class="ps-btn-sm" onclick="psCancelOrderMarkDone(' + r.id + ',this)" style="margin-top:6px;color:var(--green);border-color:var(--green)">' + doneBtnLabel + '</button>'
+    + _psRenderPickPackStatusLine(r)
+    + _psRenderCancelOrderInlineOrder(r)
+    + '<button class="ps-btn-sm" onclick="psCancelOrderMarkDone(' + r.id + ',this)" style="margin-top:8px;color:var(--green);border-color:var(--green)">' + doneBtnLabel + '</button>'
+    + '</div>';
+}
+
+// id -> { loading: bool, order: obj|null, error: bool } — the full
+// /ship/order-lookup result for this tracking (same data + renderer the
+// Lookup tab and the click-a-tracking popups use), fetched automatically
+// so it's sitting right on the card instead of behind a click. Fine to do
+// for every open row since cancellations should be rare — this tab is
+// never going to be showing dozens of these at once.
+var _psCancelOrderLookupInfo = {};
+
+window.psCancelOrderLoadOrderInfo = function(id, tracking) {
+  _psCancelOrderLookupInfo[id] = { loading: true, order: null, error: false };
+  _psRenderCancelOrderList();
+  fetch(PS_WORKER + '/ship/order-lookup?q=' + encodeURIComponent(tracking) + '&days=7', {
+    headers: { 'X-Cred-Token': psCredToken }
+  }).then(function(r) { return r.json(); }).then(function(d) {
+    var order = (d && d.ok && d.results && d.results[0]) || null;
+    _psCancelOrderLookupInfo[id] = { loading: false, order: order, error: false };
+    _psRenderCancelOrderList();
+  }).catch(function() {
+    _psCancelOrderLookupInfo[id] = { loading: false, order: null, error: true };
+    _psRenderCancelOrderList();
+  });
+};
+
+function _psRenderCancelOrderInlineOrder(r) {
+  var info = _psCancelOrderLookupInfo[r.id];
+  if (!info || info.loading) {
+    return '<div style="font-size:11px;color:var(--text3);margin-top:8px">🔍 Loading order details &amp; photos…</div>';
+  }
+  if (info.error) {
+    return '<div style="font-size:11px;color:var(--text3);margin-top:8px">Couldn\'t load order details — <span style="cursor:pointer;text-decoration:underline" onclick="psCancelOrderLoadOrderInfo(' + r.id + ',\'' + r.tracking + '\')">retry</span></div>';
+  }
+  if (!info.order) {
+    return '<div style="font-size:11px;color:var(--text3);margin-top:8px;font-style:italic">No order found for this tracking in the last 7 days.</div>';
+  }
+  return '<div style="margin-top:8px;padding-top:8px;border-top:1px dashed var(--border)">'
+    + _psRenderOrderLookupCard(info.order, { bigPhotos: true })
+    + '<span style="cursor:pointer;text-decoration:underline;color:var(--text3);font-size:10.5px" onclick="psCancelOrderLoadOrderInfo(' + r.id + ',\'' + r.tracking + '\')">↻ Refresh order info</span>'
     + '</div>';
 }
 
@@ -5108,6 +5296,8 @@ window.psCancelOrderMarkDone = function(id, btnEl) {
   }).then(function(r) { return r.json(); }).then(function(d) {
     if (!d || !d.ok) throw new Error((d && d.error) || 'Request failed');
     _psCancelOrderOpenList = _psCancelOrderOpenList.filter(function(r) { return r.id !== id; });
+    delete _psCancelOrderStatusInfo[id];
+    delete _psCancelOrderLookupInfo[id];
     _psRenderCancelOrderList();
     _psRebuildCancelOrderCache();
     _psToast('Marked canceled');
