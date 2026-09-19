@@ -2998,6 +2998,65 @@ window.invCredLogin = async function() {
     return m ? parseInt(m[1]) : 9999;
   }
 
+  // Pull List's inline "system count" correction — pops up asking what's
+  // actually on the shelf right now, logs it as the same kind of [AUDIT]
+  // correction the Audit tab itself makes, and applies it to master_list
+  // immediately (immediateApprove:true — see inventoryLog in the worker
+  // for why this specific action can't wait for manual review): the very
+  // next thing that happens is pulling cases from this same location, so
+  // the correction has to have already landed before that math runs.
+  // e.g. system shows 5, only 3 are actually there — correct to 3 first,
+  // then grabbing 1 case leaves 2, not 4. Both the correction and the pull
+  // are separately visible in History and the Activity Report afterward,
+  // since this reuses the exact same /inventory/log + [AUDIT] tagging
+  // everything else already goes through.
+  window.invPromptSystemCorrection = function(i) {
+    var item = invPullList[i];
+    if (!item || item.systemCases === undefined) return;
+    var oldVal = parseFloat(item.systemCases) || 0;
+    var input = window.prompt('System shows ' + oldVal + ' cases at ' + item.location + '.\nWhat do you actually see on the shelf?', oldVal);
+    if (input === null) return; // cancelled
+    var newVal = parseFloat(input);
+    if (isNaN(newVal) || newVal < 0) { invFlash('Enter a valid number', 'error'); return; }
+    if (newVal === oldVal) { invFlash('No change', 'warn'); return; }
+
+    var diff = newVal - oldVal;
+    var type = diff > 0 ? 'IN' : 'OUT';
+    var cases = Math.abs(diff);
+    var initials = (INV_CRED_USER && INV_CRED_USER.displayName) || 'OPS';
+
+    invFlash('Saving correction\u2026', 'success');
+    wFetch(W + '/inventory/log', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        type: type, partNum: item.partNum, sku: item.sku, name: item.name,
+        location: item.location, cases: cases, initials: initials,
+        notes: '[AUDIT] [PULL LIST CORRECTION] ' + oldVal + ' \u2192 ' + newVal,
+        isNew: false, isPlaceholder: !!item.isPlaceholder,
+        masterRowIndex: item.masterRowIndex, masterId: item.masterId || null,
+        immediateApprove: true
+      })
+    }).then(function(r) { return r.json(); })
+      .then(function(d) {
+        if (d.ok) {
+          item.systemCases = newVal;
+          invSavePullList();
+          invRenderPullList();
+          invFlash('\u2713 Corrected ' + item.location + ': ' + oldVal + ' \u2192 ' + newVal, 'success');
+        } else {
+          invFlash('Correction failed: ' + (d.error || 'unknown'), 'error');
+        }
+      })
+      .catch(function(err) {
+        if (isUnauthorized(err)) {
+          invReauth(function() { invPromptSystemCorrection(i); }, function() {});
+        } else {
+          invFlash('Correction failed \u2014 network error', 'error');
+        }
+      });
+  };
+
   // Jumps from a Pull List row straight into SKU Manager's edit form for
   // that exact part+location — so a mismatch between what's physically on
   // the shelf and what the system shows can be corrected right away,
@@ -3078,7 +3137,7 @@ window.invCredLogin = async function() {
       // straight into SKU Manager's edit form when it doesn't match what's
       // actually on the shelf, instead of navigating + searching by hand.
       var sysCasesHtml = item.systemCases !== undefined
-        ? " <span onclick='invJumpToSkuEdit(" + i + ")' title='System shows " + item.systemCases + " \u2014 tap to edit in SKU Mgr' "
+        ? " <span onclick='invPromptSystemCorrection(" + i + ")' title='System shows " + item.systemCases + " \u2014 tap to correct' "
           + "style='cursor:pointer;font-size:11px;color:var(--text3);text-decoration:underline dotted;white-space:nowrap'>(system: " + item.systemCases + ")</span>"
         : "";
       infoDiv.innerHTML =
