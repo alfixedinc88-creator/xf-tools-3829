@@ -1140,7 +1140,7 @@ body {
              is the same underlying setting as the matching picker on the
              Packing tab. -->
         <div style="display:flex;align-items:center;gap:6px;margin:2px 0 8px;font-size:11px;color:var(--text3);" onclick="event.stopPropagation()">
-          <span style="white-space:nowrap;">🔊 Alert voice:</span>
+          <span id="ps-pick-voice-label" style="white-space:nowrap;">🔊 Alert voice:</span>
           <select id="ps-pick-voice-select" onchange="psSetAlertVoice(this.value)" onclick="event.stopPropagation()" style="flex:1;min-width:0;font-size:11px;padding:3px 6px;border-radius:6px;border:1px solid var(--border);background:var(--bg3);color:var(--text);">
             <option value="">Auto</option>
           </select>
@@ -1260,7 +1260,7 @@ body {
              comment there); same underlying setting, kept in sync between
              both dropdowns by psSetAlertVoice/_psRenderVoiceSelects. -->
         <div style="display:flex;align-items:center;gap:6px;margin:2px 0 8px;font-size:11px;color:var(--text3);" onclick="event.stopPropagation()">
-          <span style="white-space:nowrap;">🔊 Alert voice:</span>
+          <span id="ps-scan-voice-label" style="white-space:nowrap;">🔊 Alert voice:</span>
           <select id="ps-scan-voice-select" onchange="psSetAlertVoice(this.value)" onclick="event.stopPropagation()" style="flex:1;min-width:0;font-size:11px;padding:3px 6px;border-radius:6px;border:1px solid var(--border);background:var(--bg3);color:var(--text);">
             <option value="">Auto</option>
           </select>
@@ -2075,6 +2075,11 @@ window.psCredLogin = async function() {
 function _psLaunchInner() {
   document.getElementById('ps-signin-overlay').style.display = 'none';
   document.getElementById('ps-session-label').textContent = psRole === 'mgmt' ? 'Manager (' + psInitials + ')' : psInitials;
+  // Re-applies the alert-voice admin lock now that psCredUser.roles reflects
+  // whoever actually just signed in — the very first render of these
+  // dropdowns can happen before login (as soon as the browser's voice list
+  // loads), when there's no session yet to check.
+  if (window.speechSynthesis) _psRenderVoiceSelects(window.speechSynthesis.getVoices() || []);
   if (psRole === 'mgmt') {
     // Gap report always available for managers — show tab and reconcile bar
     var gapTab = document.getElementById('ps-tab-gaps');
@@ -2159,7 +2164,12 @@ window.psFocusScan = function() {
 // date to jump to) — the refocus loop below must leave these alone while
 // someone's using them, or every keystroke gets interrupted within 2s as
 // focus gets yanked back to the scan box mid-word.
-var PS_SCAN_TYPING_FIELDS = ['ps-scan-summary-namefilter', 'ps-scan-summary-date'];
+// ps-scan-voice-select is here for the same reason, just for clicking
+// instead of typing — this was the actual cause of "so hard to pick which
+// voice": without it, this same 2s loop was yanking focus back to the scan
+// box while the dropdown was still open, closing it out from under
+// whoever was trying to pick an option.
+var PS_SCAN_TYPING_FIELDS = ['ps-scan-summary-namefilter', 'ps-scan-summary-date', 'ps-scan-voice-select'];
 var psScanRefocusInterval = null;
 function psScanStartRefocus() {
   if (psScanRefocusInterval) return;
@@ -2586,6 +2596,19 @@ if (window.speechSynthesis) {
   window.speechSynthesis.onvoiceschanged = _psLoadFemaleVoice;
 }
 
+// NEW — whether the signed-in account can change the alert voice.
+// Deliberately checks the real 'admin' role (from psCredUser.roles, set at
+// login — see psCredLogin/the mgmt step-up flow), not psRole's simplified
+// 'mgmt'/'mobile' split: this is the same 'admin' role the backend's own
+// /admin/* routes require (see verifyCredSession/'admin' checks server-
+// side), kept separate from 'mgmt' on purpose there too, so a manager
+// account alone doesn't automatically get this. Anyone can still see which
+// voice is set and hear it with "▶ Test" — only actually changing it is
+// gated.
+function _psIsAdmin() {
+  return !!(psCredUser && psCredUser.roles && psCredUser.roles.indexOf('admin') !== -1);
+}
+
 // Fills in both the Picking and Packing tabs' "🔊 Alert voice" dropdowns
 // (same underlying setting, shown in both places since either tab can
 // trigger the alarm) with every voice this browser has installed — English
@@ -2593,8 +2616,14 @@ if (window.speechSynthesis) {
 // selects whichever one is actually in use right now. Either dropdown
 // missing from the DOM (not on that tab, or page not fully built yet) is
 // just skipped, not an error.
+//
+// Also re-applies the admin-only lock every time it runs — called again
+// right after login (see _psLaunchInner / the mgmt step-up flow) once
+// psCredUser.roles is actually known, since the very first render can
+// happen before anyone's signed in this session.
 function _psRenderVoiceSelects(voices) {
   var selects = [document.getElementById('ps-pick-voice-select'), document.getElementById('ps-scan-voice-select')];
+  var labels  = [document.getElementById('ps-pick-voice-label'), document.getElementById('ps-scan-voice-label')];
   if (!selects[0] && !selects[1]) return;
   var sorted = voices.slice().sort(function(a, b) {
     var aEn = /^en/i.test(a.lang || '') ? 0 : 1;
@@ -2611,10 +2640,19 @@ function _psRenderVoiceSelects(voices) {
   var savedName = null;
   try { savedName = localStorage.getItem(PS_VOICE_KEY); } catch(e) {}
   var savedStillExists = savedName && sorted.some(function(v){ return v.name === savedName; });
+  var isAdmin = _psIsAdmin();
   selects.forEach(function(sel) {
     if (!sel) return;
     sel.innerHTML = optionsHtml;
     sel.value = savedStillExists ? savedName : '';
+    sel.disabled = !isAdmin;
+    sel.title = isAdmin ? '' : 'Only an Admin account can change this — ask a manager/admin to update it.';
+    sel.style.opacity = isAdmin ? '1' : '.6';
+    sel.style.cursor = isAdmin ? 'pointer' : 'not-allowed';
+  });
+  labels.forEach(function(lbl) {
+    if (!lbl) return;
+    lbl.textContent = isAdmin ? '🔊 Alert voice:' : '🔊 Alert voice (🔒 Admin only):';
   });
 }
 
@@ -2622,7 +2660,15 @@ function _psRenderVoiceSelects(voices) {
 // saved preference and goes back to the auto-detected guess; picking a
 // specific voice saves it to this browser and switches the live alert
 // voice immediately, in both tabs at once (same setting either way).
+// Refuses the change for anyone signed in without the 'admin' role — the
+// select is already disabled for them (see _psRenderVoiceSelects), so this
+// is just the same belt-and-suspenders check the backend's own /admin/*
+// routes use, not the primary defense.
 window.psSetAlertVoice = function(name) {
+  if (!_psIsAdmin()) {
+    _psRenderVoiceSelects(window.speechSynthesis ? (window.speechSynthesis.getVoices() || []) : []);
+    return;
+  }
   try {
     if (name) localStorage.setItem(PS_VOICE_KEY, name);
     else localStorage.removeItem(PS_VOICE_KEY);
@@ -4709,6 +4755,11 @@ window.psUnlockTab = async function(tab) {
     localStorage.setItem('xf_cred_token', data.token);
     localStorage.setItem('xf_cred_user', JSON.stringify(psCredUser));
     document.getElementById('ps-session-label').textContent = 'Manager (' + psInitials + ')';
+    // This step-up can upgrade the session to an 'admin' account too (the
+    // step-up only checks for 'mgmt', but data.roles may include 'admin' as
+    // well) — re-apply the alert-voice lock so it unlocks immediately
+    // without needing a full page reload.
+    if (window.speechSynthesis) _psRenderVoiceSelects(window.speechSynthesis.getVoices() || []);
   } catch(e) {
     if (errEl) errEl.textContent = 'Connection error — try again.';
     return;
@@ -4839,7 +4890,11 @@ window.psFocusPick = function() {
 // PS_PRINTLOG_TYPING_FIELDS — any typing-capable field added to this tab
 // (the name filter, the date field) MUST be listed here or the 2s refocus
 // loop will steal focus mid-keystroke.
-var PS_PICKING_TYPING_FIELDS = ['ps-pick-summary-namefilter', 'ps-pick-summary-date'];
+// ps-pick-voice-select is here for the same reason the Packing tab's
+// matching select is in PS_SCAN_TYPING_FIELDS — this loop was closing the
+// voice dropdown out from under whoever was trying to click an option in
+// it, within 2 seconds of opening it.
+var PS_PICKING_TYPING_FIELDS = ['ps-pick-summary-namefilter', 'ps-pick-summary-date', 'ps-pick-voice-select'];
 var psPickRefocusInterval = null;
 function psPickStartRefocus() {
   if (psPickRefocusInterval) return;
