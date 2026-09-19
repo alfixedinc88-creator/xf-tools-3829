@@ -2405,19 +2405,31 @@ function _psBeep(freq, dur) {
 // psDupeAlarmStart further down) speak through this. getVoices() can come
 // back empty until the browser's 'voiceschanged' event fires (Chrome does
 // this asynchronously), so the female-voice lookup re-runs whenever the
-// voice list changes, not just once at load.
+// voice list changes, not just once at load. Prefers an American English
+// (en-US) female voice specifically; falls back in steps (female voice of
+// any locale, then any en-US voice, then whatever the browser defaults to
+// with a raised pitch) so there's always something reasonable instead of
+// silently failing to find an exact match.
 var _psFemaleVoice = null;
 function _psLoadFemaleVoice() {
   try {
     if (!window.speechSynthesis) return;
     var voices = window.speechSynthesis.getVoices() || [];
     if (!voices.length) return;
-    var preferredNames = ['female', 'zira', 'samantha', 'victoria', 'karen', 'moira', 'tessa', 'fiona', 'susan', 'google uk english female', 'google us english', 'microsoft zira'];
-    var found = null;
-    for (var i = 0; i < preferredNames.length && !found; i++) {
-      found = voices.find(function(v) { return v.name.toLowerCase().indexOf(preferredNames[i]) !== -1; });
+    var femaleNames = ['female', 'zira', 'samantha', 'victoria', 'karen', 'moira', 'tessa', 'fiona', 'susan', 'aria', 'jenny', 'ava', 'allison', 'susan'];
+    function isFemaleName(v) {
+      var n = v.name.toLowerCase();
+      for (var i = 0; i < femaleNames.length; i++) { if (n.indexOf(femaleNames[i]) !== -1) return true; }
+      return false;
     }
-    _psFemaleVoice = found || null;
+    function isUSEnglish(v) { return /^en[-_]us/i.test(v.lang || ''); }
+
+    var found = voices.find(function(v) { return isUSEnglish(v) && isFemaleName(v); })
+      || voices.find(function(v) { return isUSEnglish(v) && /female/i.test(v.name); })
+      || voices.find(isFemaleName)
+      || voices.find(isUSEnglish)
+      || null;
+    _psFemaleVoice = found;
   } catch(e) {}
 }
 if (window.speechSynthesis) {
@@ -2434,7 +2446,7 @@ function _psSpeakAlert(text) {
     if (!window.speechSynthesis || !window.SpeechSynthesisUtterance) return;
     window.speechSynthesis.cancel();
     var msg = new SpeechSynthesisUtterance(text);
-    msg.rate = 0.95; msg.pitch = 1.3; msg.volume = 1;
+    msg.lang = 'en-US'; msg.rate = 0.95; msg.pitch = 1.3; msg.volume = 1;
     if (_psFemaleVoice) msg.voice = _psFemaleVoice;
     window.speechSynthesis.speak(msg);
   } catch(e) {}
@@ -4000,67 +4012,27 @@ window.psShowDebug = function(kind) {
 
 
   // ── DUPLICATE SCAN ALARM ──────────────────────────────────────────────
-  // Loud, near-continuous siren that keeps repeating until the shipper
-  // taps "OK, Got It" (Packing) or "OK, Got It" / "No Inventory" / "Cancel
-  // Label" (Picking) — all of those already funnel through psDupeAlarmStop,
-  // shared by both tabs, so the spoken layer added here stops the same way
-  // with no extra wiring needed. Reuses a single AudioContext across beeps
-  // instead of creating a new one every cycle — browsers cap how many
-  // contexts can exist at once, so a dupe left unacknowledged for a while
-  // could eventually throw and go silent with the old approach. The spoken
-  // phrase repeats on its own slower interval (_psDupeSpeechInterval) so it
-  // doesn't talk over itself mid-sentence every 1.3s like the siren tone
-  // does — uses _psSpeakAlert (girl voice when the browser has one, see the
-  // shared voice picker above).
-  var _psDupeAlarmInterval = null;
+  // Spoken-only alert ("Double scan, please check. Thank you.", repeating)
+  // that keeps going until the shipper taps "OK, Got It" (Packing) or "OK,
+  // Got It" / "No Inventory" / "Cancel Label" (Picking) — all of those
+  // already funnel through psDupeAlarmStop, shared by both tabs, so it
+  // stops the same way with no extra wiring needed. No tone/siren anymore
+  // (removed per request) — just the spoken phrase via _psSpeakAlert
+  // (American English female voice when the browser has one, see the
+  // shared voice picker above), plus a vibration pulse for phones.
   var _psDupeSpeechInterval = null;
-  var _psDupeAlarmCtx = null;
-
-  function _psDupeGetCtx() {
-    if (!_psDupeAlarmCtx || _psDupeAlarmCtx.state === 'closed') {
-      _psDupeAlarmCtx = new (window.AudioContext || window.webkitAudioContext)();
-    }
-    if (_psDupeAlarmCtx.state === 'suspended') _psDupeAlarmCtx.resume();
-    return _psDupeAlarmCtx;
-  }
 
   function psDupeAlarmStart() {
-    psDupeAlarmBeep();
     _psSpeakAlert('Double scan, please check. Thank you.');
-    _psDupeAlarmInterval = setInterval(function() {
-      psDupeAlarmBeep();
-      if (navigator.vibrate) navigator.vibrate([500,150,500,150,500]);
-    }, 1300);
+    if (navigator.vibrate) navigator.vibrate([500,150,500,150,500]);
     if (_psDupeSpeechInterval) clearInterval(_psDupeSpeechInterval);
     _psDupeSpeechInterval = setInterval(function() {
       _psSpeakAlert('Double scan, please check. Thank you.');
+      if (navigator.vibrate) navigator.vibrate([500,150,500,150,500]);
     }, 4000);
-    if (navigator.vibrate) navigator.vibrate([500,150,500,150,500]);
-  }
-
-  function psDupeAlarmBeep() {
-    try {
-      var ctx = _psDupeGetCtx();
-      function tone(freq, st, dur, gain) {
-        var o = ctx.createOscillator(), g = ctx.createGain();
-        o.connect(g); g.connect(ctx.destination);
-        o.type = 'square'; o.frequency.setValueAtTime(freq, st);
-        g.gain.setValueAtTime(gain, st);
-        g.gain.exponentialRampToValueAtTime(0.001, st+dur);
-        o.start(st); o.stop(st+dur);
-      }
-      var t = ctx.currentTime;
-      // Loud back-to-back two-tone wail (0.8 gain, ~vs the old 0.35) with
-      // almost no gap, so each 1.3s cycle reads as one continuous blare.
-      tone(1046, t,        0.28, 0.8);
-      tone(784,  t + 0.28, 0.28, 0.8);
-      tone(1046, t + 0.56, 0.28, 0.8);
-      tone(784,  t + 0.84, 0.28, 0.8);
-    } catch(e) {}
   }
 
   function psDupeAlarmStop() {
-    if (_psDupeAlarmInterval) { clearInterval(_psDupeAlarmInterval); _psDupeAlarmInterval = null; }
     if (_psDupeSpeechInterval) { clearInterval(_psDupeSpeechInterval); _psDupeSpeechInterval = null; }
     if (window.speechSynthesis) window.speechSynthesis.cancel();
     if (navigator.vibrate) navigator.vibrate(0);
