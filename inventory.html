@@ -272,7 +272,8 @@ window.invCredLogin = async function() {
 </div>
 
 <div class="itabs">
-  <button class="itab iactive" id="inv-tab-scan" onclick="invSwitchTab('scan')">Scan</button>
+  <button class="itab iactive" id="inv-tab-scan" onclick="invSwitchTab('scan')">📦 Stock In</button>
+  <button class="itab" id="inv-tab-stockout" onclick="invSwitchTab('stockout')">📤 Stock Out</button>
   <button class="itab" id="inv-tab-transfer" onclick="invSwitchTab('transfer')">Transfer</button>
   <button class="itab" id="inv-tab-audit" onclick="invSwitchTab('audit')">🔍 Audit</button>
   <button class="itab" id="inv-tab-review" onclick="invSwitchTab('review')">Review<span class="ibadge" id="inv-pending-badge" style="display:none">0</span></button>
@@ -281,11 +282,26 @@ window.invCredLogin = async function() {
 </div>
 
 <div class="ipanel iactive" id="inv-panel-scan">
-  <div class="icard">
+  <!-- The Mode toggle used to live here (Stock In / Stock Out inside one
+       shared tab) — now that they're separate tabs, which tab you're on
+       already determines the mode, so this card is hidden rather than
+       removed (invSetMode still drives it, just no longer shown). -->
+  <div class="icard" style="display:none">
     <div class="icard-label">Mode</div>
     <div class="imode-row">
       <button class="imode-btn min" id="inv-mode-in" onclick="invSetMode('in')">📦 Stock In</button>
       <button class="imode-btn" id="inv-mode-out" onclick="invSetMode('out')">📤 Stock Out</button>
+    </div>
+  </div>
+  <!-- Stock Out destination — For Shelving (restocking a bin/shelf) vs For
+       Big Company (an outbound bulk shipment). Only shown in Stock Out
+       mode; tags the resulting log entry's notes so History/Review can
+       tell the two apart later. Defaults to Shelving. -->
+  <div class="icard" id="inv-stockout-dest-card" style="display:none">
+    <div class="icard-label">Stock Out For</div>
+    <div class="imode-row">
+      <button class="imode-btn min" id="inv-stockoutdest-shelving" onclick="invSetStockOutDest('shelving')">🏬 Shelving</button>
+      <button class="imode-btn" id="inv-stockoutdest-company" onclick="invSetStockOutDest('company')">🏢 Big Company</button>
     </div>
   </div>
   <!-- Picking-tab "no stock on shelf" reports (Pack & Ship) land here — a
@@ -939,19 +955,27 @@ window.invCredLogin = async function() {
   // ─────────────────────────────────────────────────────────────────
 
   window.invSwitchTab = function(tab) {
-    g("inv-panel-scan").className      = "ipanel" + (tab === "scan"     ? " iactive" : "");
+    // "scan" (Stock In) and "stockout" (Stock Out) share the same
+    // underlying panel and logic — only the forced invMode differs. See
+    // invSetMode for the Stock In/Out UI split that already existed here.
+    var scanPanelActive = (tab === "scan" || tab === "stockout");
+    g("inv-panel-scan").className      = "ipanel" + (scanPanelActive ? " iactive" : "");
     g("inv-panel-transfer").className  = "ipanel" + (tab === "transfer" ? " iactive" : "");
     g("inv-panel-review").className    = "ipanel" + (tab === "review"   ? " iactive" : "");
     g("inv-panel-audit").className     = "ipanel" + (tab === "audit"    ? " iactive" : "");
     g("inv-panel-skumgr").className    = "ipanel" + (tab === "skumgr"   ? " iactive" : "");
     g("inv-panel-history").className   = "ipanel" + (tab === "history"  ? " iactive" : "");
     g("inv-tab-scan").className        = "itab"   + (tab === "scan"     ? " iactive" : "");
+    g("inv-tab-stockout").className    = "itab"   + (tab === "stockout" ? " iactive" : "");
     g("inv-tab-transfer").className    = "itab"   + (tab === "transfer" ? " iactive" : "");
     g("inv-tab-review").className      = "itab"   + (tab === "review"   ? " iactive" : "");
     g("inv-tab-audit").className       = "itab"   + (tab === "audit"    ? " iactive" : "");
     g("inv-tab-skumgr").className      = "itab"   + (tab === "skumgr"   ? " iactive" : "");
     g("inv-tab-history").className     = "itab"   + (tab === "history"  ? " iactive" : "");
-    if (tab === "scan") { invFetchStockoutCount(); }
+    if (scanPanelActive) {
+      invSetMode(tab === "stockout" ? "out" : "in");
+      invFetchStockoutCount();
+    }
     if (tab === "review") {
       // Always restore correct visibility when switching to review tab
       var gate = g("inv-pin-gate");
@@ -1045,6 +1069,11 @@ window.invCredLogin = async function() {
     g("inv-submit-btn").className   = "isubmit " + (mode === "in" ? "sin" : "sout");
     // Pull list card: show in out mode, hide in in mode
     g("inv-pulllist-card").style.display = mode === "out" ? "block" : "none";
+    // Stock Out For (Shelving / Big Company) — only meaningful in Stock
+    // Out mode, so only shown there. Doesn't reset back to Shelving on
+    // every mode flip; invStockOutDest keeps whatever was last picked.
+    var destCard = g("inv-stockout-dest-card");
+    if (destCard) destCard.style.display = mode === "out" ? "block" : "none";
     if (mode === "out") invRenderPullList();
     // Hide scan result cards when switching mode
     g("inv-result-card").style.display = "none";
@@ -1052,6 +1081,21 @@ window.invCredLogin = async function() {
     g("inv-detail-card").style.display = "none";
     g("inv-submit-btn").textContent = mode === "in" ? "Submit Stock In" : "Submit Stock Out";
     invReset(true);
+  };
+
+  // Stock Out For — Shelving (restocking a bin) vs Big Company (an
+  // outbound bulk shipment). Tags the resulting log entry's notes so
+  // History/Review can tell the two apart later (see invSubmitPullList,
+  // invSubmitFoundOnShelf, invSubmitFoundElsewhere for where the tag gets
+  // applied). Kept as its own global rather than folded into invMode,
+  // since it's a sub-choice within Stock Out, not a third mode.
+  var invStockOutDest = 'shelving';
+  window.invSetStockOutDest = function(dest) {
+    invStockOutDest = dest;
+    var shelvingBtn = g('inv-stockoutdest-shelving');
+    var companyBtn  = g('inv-stockoutdest-company');
+    if (shelvingBtn) shelvingBtn.className = 'imode-btn' + (dest === 'shelving' ? ' min' : '');
+    if (companyBtn)  companyBtn.className  = 'imode-btn' + (dest === 'company'  ? ' mout' : '');
   };
 
   function invLoadQR() {
@@ -1763,7 +1807,7 @@ window.invCredLogin = async function() {
         _invFosLoc = null;
         invReset(true); invFetchPendingCount(); return;
       }
-      submitEntry('OUT', pull, '[FOUND ON SHELF \u2014 pulling ' + pull + ' of ' + found + ' found]', function(dOut) {
+      submitEntry('OUT', pull, '[' + (invStockOutDest === 'company' ? 'BIG COMPANY' : 'SHELVING') + '] [FOUND ON SHELF \u2014 pulling ' + pull + ' of ' + found + ' found]', function(dOut) {
         btn.disabled = false; btn.textContent = 'Log Found + Pull';
         if (dOut.ok) {
           // Add to pull list
@@ -1874,7 +1918,7 @@ window.invCredLogin = async function() {
           invFetchPendingCount();
           return;
         }
-        submitEntry("OUT", pull, "[FOUND AT UNLISTED LOCATION \u2014 pulling " + pull + " of " + found + " found]", function(dOut) {
+        submitEntry("OUT", pull, "[" + (invStockOutDest === 'company' ? 'BIG COMPANY' : 'SHELVING') + "] [FOUND AT UNLISTED LOCATION \u2014 pulling " + pull + " of " + found + " found]", function(dOut) {
           btn.disabled = false; btn.textContent = "Log Found Location";
           if (dOut.ok) {
             invPullList.push({
@@ -2301,7 +2345,11 @@ window.invCredLogin = async function() {
     if (wrap) wrap.style.display = _invStockoutListShown ? 'block' : 'none';
     if (txt) txt.textContent = _invStockoutListShown ? 'Hide' : 'Show';
     if (_invStockoutListShown) {
-      invSetMode('out'); // opening the reports list means you're about to go pull stock — land in Stock Out mode automatically
+      // Opening the reports list means you're about to go pull stock — land
+      // on the Stock Out tab automatically (now a separate tab from Stock
+      // In, so switch the tab itself, not just the mode, to keep the tab
+      // bar's highlighted state correct).
+      invSwitchTab('stockout');
       invRenderStockoutList();
     } else {
       var raWrap = g("inv-stockout-resolveall-wrap");
@@ -3011,6 +3059,10 @@ window.invCredLogin = async function() {
         : item.foundOnShelf
           ? ('[FOUND ON SHELF] ' + notes).trim()
           : notes;
+      // Tag which kind of Stock Out this is (Shelving vs Big Company),
+      // so History/Review can tell them apart later.
+      var destTag = invStockOutDest === 'company' ? '[BIG COMPANY] ' : '[SHELVING] ';
+      itemNotes = (destTag + itemNotes).trim();
       // Use the actual Grabbed moment (or Added, if it was never checked
       // off) as this entry's log timestamp — so History's Time column shows
       // when the item was really pulled/added, not just when the whole pull
