@@ -858,14 +858,19 @@ body {
      Packing (_psProcessScan): whichever one scans a tracking that's on the
      open Cancellation list (see the Cancellation tab / psAddCancelOrder)
      gets this instead of the normal pick/scan flow — no pick/scan record
-     is ever created for it. One button: tear the label off, throw it away,
-     tap Confirm — see psCancelOrderConfirmTorn / psShowCancelOrderAlert. -->
+     is ever created for it. Keeps firing on EVERY scan of that tracking,
+     not just the first, for as long as the order is pending OR confirmed —
+     it only stops once someone taps "Mark Canceled" on the Cancellation
+     tab itself. The button row is rewritten by psShowCancelOrderAlert
+     depending on whether this is the first catch (still needs the label
+     torn off) or a repeat scan of one that's already been confirmed (just
+     needs an acknowledgment — see the comment there). -->
 <div id="ps-cancelorder-alert-overlay" class="ps-dupe-overlay">
   <div class="ps-dupe-card">
     <div class="ps-dupe-icon">🗑️</div>
-    <div class="ps-dupe-title">Order Marked for Cancellation!</div>
+    <div class="ps-dupe-title" id="ps-cancelorder-alert-title">Order Marked for Cancellation!</div>
     <div class="ps-dupe-detail" id="ps-cancelorder-alert-detail">—</div>
-    <div style="display:flex;gap:10px;justify-content:center;flex-wrap:wrap;margin-top:4px">
+    <div id="ps-cancelorder-alert-buttons" style="display:flex;gap:10px;justify-content:center;flex-wrap:wrap;margin-top:4px">
       <button class="ps-dupe-btn" style="background:var(--green)" onclick="psCancelOrderConfirmTorn()">✅ Confirm — Label Torn &amp; Trashed</button>
       <button class="ps-dupe-btn" style="background:var(--text3)" onclick="psCancelOrderAlertDismiss()">Not This One</button>
     </div>
@@ -4975,11 +4980,14 @@ window.psFilterPicks = function(f, btn) {
 // D1's master_list already showed zero at that bin when reported, so
 // ── "Canceled Labels" (Picking tab) ──────────────────────────────────────
 // Badge + History for every label called off via the "Already Picked!"
-// alarm's 🏷️ Cancel Label button (see psPickDupeCancelLabel). Counts
-// TODAY's cancellations for the badge (matches how the rest of Picking is
-// scoped to today), but History always pulls the full record.
+// alarm's 🏷️ Cancel Label button (see psPickDupeCancelLabel). The badge
+// counts labels nobody's confirmed reviewed yet (status=open — see
+// shipGetCancelLabels), regardless of what date they happened on, same as
+// the Cancellation tab's own badge — a canceled label from a few days ago
+// still needs a look, it doesn't just roll off at midnight. Confirming one
+// (via psCancelLabelAck, from the History list) takes it off this count.
 window.psFetchCancelLabelCount = function() {
-  fetch(PS_WORKER + '/ship/cancel-label', { headers: { 'X-Cred-Token': psCredToken } })
+  fetch(PS_WORKER + '/ship/cancel-label?status=open', { headers: { 'X-Cred-Token': psCredToken } })
     .then(function(r) { return r.json(); })
     .then(function(d) {
       var n = ((d && d.cancelLabels) || []).length;
@@ -5022,6 +5030,13 @@ function _psRenderCancelLabelRow(s) {
   if (s.pickedAt) {
     try { pickedWhen = new Date(s.pickedAt).toLocaleString([], {month:'short', day:'numeric', hour:'numeric', minute:'2-digit'}); } catch(e) { pickedWhen = s.pickedAt; }
   }
+  var ackWhen = '';
+  if (s.ackAt) {
+    try { ackWhen = new Date(s.ackAt).toLocaleString([], {month:'short', day:'numeric', hour:'numeric', minute:'2-digit'}); } catch(e) { ackWhen = s.ackAt; }
+  }
+  var ackHtml = s.acknowledged
+    ? '<div style="font-size:11px;color:var(--green);font-weight:700;margin-top:5px">✓ Confirmed by ' + (s.ackBy || '?') + (ackWhen ? ' · ' + ackWhen : '') + '</div>'
+    : '<button class="ps-btn-sm" onclick="psCancelLabelAck(' + s.id + ',this)" style="margin-top:6px;color:var(--green);border-color:var(--green)">✓ Confirm</button>';
   return '<div style="border-bottom:1px solid var(--border);padding:10px 0">'
     + '<div style="display:flex;justify-content:space-between;gap:8px;align-items:baseline;flex-wrap:wrap">'
     +   '<div style="font-family:var(--mono);font-weight:700;font-size:13px">' + s.tracking + '</div>'
@@ -5032,8 +5047,27 @@ function _psRenderCancelLabelRow(s) {
     +   (s.carrier ? s.carrier + ' · ' : '')
     +   'originally picked by ' + (s.pickedBy || '?') + (pickedWhen ? ' · ' + pickedWhen : '')
     + '</div>'
+    + ackHtml
     + '</div>';
 }
+
+window.psCancelLabelAck = function(id, btnEl) {
+  if (btnEl) { btnEl.disabled = true; btnEl.textContent = 'Saving…'; }
+  fetch(PS_WORKER + '/ship/cancel-label-ack', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', 'X-Cred-Token': psCredToken },
+    body: JSON.stringify({ id: id, ackBy: psInitials })
+  }).then(function(r) { return r.json(); }).then(function(d) {
+    if (!d || !d.ok) throw new Error((d && d.error) || 'Request failed');
+    // Re-render the History list so this row flips to "Confirmed", and
+    // refresh the front-page badge count since it just dropped by one.
+    window.psShowCancelLabelHistory();
+    psFetchCancelLabelCount();
+  }).catch(function(e) {
+    if (btnEl) { btnEl.disabled = false; btnEl.textContent = '✓ Confirm'; }
+    _psToast('Could not confirm — ' + e.message, 'err');
+  });
+};
 
 // ── Order Cancellation (Cancellation tab + Picking/Packing intercept) ────
 // Completely separate from "Cancel Label" above: that one is a picker/
@@ -5127,27 +5161,31 @@ window.psCancelOrderCheckHistory = function(id, tracking) {
   });
 };
 
+// Kept to a single compact line (not the old padded multi-line box) so a
+// whole cancellation entry — photo, order summary, pick/pack status, and
+// the Mark Canceled button — reads as one dense row instead of sprawling
+// down the page. See _psRenderCancelOrderCard.
 function _psRenderPickPackStatusLine(r) {
   var info = _psCancelOrderStatusInfo[r.id];
   if (!info || info.checking) {
-    return '<div style="font-size:11px;color:var(--text3);margin-top:5px">🔍 Checking Picking/Packing history (last 3 days)…</div>';
+    return '<div style="font-size:10.5px;color:var(--text3);margin-top:2px">🔍 Checking pick/pack history…</div>';
   }
   if (info.error) {
-    return '<div style="font-size:11px;color:var(--text3);margin-top:5px">Couldn\'t check Picking/Packing history — <span style="cursor:pointer;text-decoration:underline" onclick="psCancelOrderCheckHistory(' + r.id + ',\'' + r.tracking + '\')">retry</span></div>';
+    return '<div style="font-size:10.5px;color:var(--text3);margin-top:2px">Couldn\'t check pick/pack history — <span style="cursor:pointer;text-decoration:underline" onclick="psCancelOrderCheckHistory(' + r.id + ',\'' + r.tracking + '\')">retry</span></div>';
   }
-  var lines = [];
+  var parts = [];
   if (info.pick) {
-    lines.push('📦 Picked by <b>' + (info.pick.initials || '?') + '</b> at ' + psFmtDateTime(info.pick.timestamp));
+    parts.push('📦 Picked by <b>' + (info.pick.initials || '?') + '</b> ' + psFmtTime(info.pick.timestamp));
   }
   if (info.pack) {
-    lines.push('✅ Packed by <b>' + (info.pack.initials || '?') + '</b> at ' + psFmtDateTime(info.pack.timestamp) + (info.pack.carrier ? ' (' + info.pack.carrier + ')' : ''));
+    parts.push('✅ Packed by <b>' + (info.pack.initials || '?') + '</b> ' + psFmtTime(info.pack.timestamp) + (info.pack.carrier ? ' (' + info.pack.carrier + ')' : ''));
   }
-  if (!lines.length) {
-    lines.push('Not yet picked or packed in the last 3 days');
+  if (!parts.length) {
+    parts.push('Not yet picked/packed (3 days)');
   }
-  return '<div style="font-size:11.5px;margin-top:5px;padding:6px 8px;background:var(--bg2);border-radius:6px;line-height:1.6">'
-    + lines.join('<br>')
-    + ' <span style="cursor:pointer;text-decoration:underline;color:var(--text3);font-size:10.5px" onclick="psCancelOrderCheckHistory(' + r.id + ',\'' + r.tracking + '\')">↻ Recheck</span>'
+  return '<div style="font-size:10.5px;color:var(--text2);margin-top:2px">'
+    + parts.join(' &nbsp;·&nbsp; ')
+    + ' <span style="cursor:pointer;text-decoration:underline;color:var(--text3)" onclick="psCancelOrderCheckHistory(' + r.id + ',\'' + r.tracking + '\')" title="Recheck">↻</span>'
     + '</div>';
 }
 
@@ -5193,10 +5231,15 @@ window.psLoadCancelOrders = function() {
 function _psRebuildCancelOrderCache() {
   _psCancelOrderCache = {};
   _psCancelOrderOpenList.forEach(function(r) {
-    // Only 'pending' triggers the alert — once it's 'confirmed' the label's
-    // already been torn off and thrown away, so a second scan (if it
-    // somehow happened) shouldn't alert again.
-    if (r.status === 'pending' && r.tracking) _psCancelOrderCache[r.tracking.toUpperCase()] = r;
+    // Both 'pending' AND 'confirmed' keep triggering the alert — the label
+    // being torn off doesn't mean the order is actually done, that only
+    // happens once someone taps "Mark Canceled" on the Cancellation tab
+    // (status 'done', which isn't in the "open" list this cache is built
+    // from). Until then, every scan of this tracking should keep warning
+    // whoever picks/packs it up, in case it gets handled to a box again
+    // some other way. psShowCancelOrderAlert shows a different message for
+    // an already-confirmed repeat scan vs. a first catch.
+    if ((r.status === 'pending' || r.status === 'confirmed') && r.tracking) _psCancelOrderCache[r.tracking.toUpperCase()] = r;
   });
 }
 
@@ -5225,34 +5268,42 @@ function _psRenderCancelOrderList() {
   });
 }
 
+// Each entry is one compact row — a small photo on the left, everything
+// else packed tightly to its right — so several cancellations fit on
+// screen at once instead of one giant card per order (that was the
+// previous design: full order details + a wrapped grid of big photos,
+// which meant scrolling to see more than one or two). Tapping the photo or
+// tracking number still opens the full order detail (all the Lookup-tab
+// info, big photos included) in the shared popup — see psShowTrackingDetail
+// — for the rare case someone needs more than this row shows.
 function _psRenderCancelOrderCard(r) {
   var reqWhen = psFmtDateTime(r.requestedAt);
   var statusHtml = r.status === 'confirmed'
-    ? '<span style="color:var(--purple);font-weight:700">✂️ Label torn</span> by ' + (r.confirmedBy || '?') + (r.confirmedAt ? ' · ' + psFmtDateTime(r.confirmedAt) : '') + (r.confirmedFrom ? ' (' + r.confirmedFrom + ')' : '')
-    : '<span style="color:var(--orange);font-weight:700">⏳ Waiting to be scanned</span>';
-  var doneBtnLabel = r.status === 'confirmed' ? '✓ Mark Canceled (done in Veeqo)' : 'Mark Canceled anyway';
-  return '<div class="ps-card" style="margin-top:8px">'
-    + '<div style="display:flex;justify-content:space-between;gap:8px;flex-wrap:wrap;align-items:baseline">'
-    +   '<div style="font-family:var(--mono);font-weight:700;font-size:13px">' + r.tracking + '</div>'
-    +   '<div style="font-size:11px;text-align:right">' + statusHtml + '</div>'
-    + '</div>'
-    + '<div style="font-size:11px;color:var(--text3);margin-top:3px">'
-    +   (r.orderNum ? 'Order ' + r.orderNum + ' · ' : '')
-    +   'requested by ' + (r.requestedBy || '?') + ' · ' + reqWhen
-    + '</div>'
-    + (r.reason ? '<div style="font-size:11.5px;margin-top:4px">Reason: ' + r.reason + '</div>' : '')
-    + _psRenderPickPackStatusLine(r)
-    + _psRenderCancelOrderInlineOrder(r)
-    + '<button class="ps-btn-sm" onclick="psCancelOrderMarkDone(' + r.id + ',this)" style="margin-top:8px;color:var(--green);border-color:var(--green)">' + doneBtnLabel + '</button>'
+    ? '<span style="color:var(--purple);font-weight:700">✂️ Torn</span>'
+    : '<span style="color:var(--orange);font-weight:700">⏳ Waiting</span>';
+  var doneBtnLabel = r.status === 'confirmed' ? '✓ Mark Canceled' : 'Mark Canceled anyway';
+  var openDetail = 'psShowTrackingDetail(\'' + r.tracking + '\',{bigPhotos:true})';
+  return '<div class="ps-card" style="margin-top:8px;padding:10px 12px;display:flex;gap:10px;align-items:flex-start">'
+    +   _psRenderCancelOrderThumb(r, openDetail)
+    +   '<div style="flex:1;min-width:0">'
+    +     '<div style="display:flex;justify-content:space-between;gap:8px;flex-wrap:wrap;align-items:baseline">'
+    +       '<div style="font-family:var(--mono);font-weight:700;font-size:12.5px;cursor:pointer;text-decoration:underline;text-decoration-style:dotted;text-underline-offset:2px" onclick="' + openDetail + '">' + r.tracking + '</div>'
+    +       '<div style="font-size:11px;white-space:nowrap">' + statusHtml + '</div>'
+    +     '</div>'
+    +     _psRenderCancelOrderSummaryLine(r)
+    +     '<div style="font-size:10.5px;color:var(--text3);margin-top:2px">requested by ' + (r.requestedBy || '?') + ' · ' + reqWhen + (r.reason ? ' · ' + r.reason : '') + '</div>'
+    +     _psRenderPickPackStatusLine(r)
+    +     '<button class="ps-btn-sm" onclick="psCancelOrderMarkDone(' + r.id + ',this)" style="margin-top:5px;padding:2px 10px;font-size:11px;color:var(--green);border-color:var(--green)">' + doneBtnLabel + '</button>'
+    +   '</div>'
     + '</div>';
 }
 
 // id -> { loading: bool, order: obj|null, error: bool } — the full
 // /ship/order-lookup result for this tracking (same data + renderer the
 // Lookup tab and the click-a-tracking popups use), fetched automatically
-// so it's sitting right on the card instead of behind a click. Fine to do
-// for every open row since cancellations should be rare — this tab is
-// never going to be showing dozens of these at once.
+// so the compact summary line + thumbnail below don't need a click to
+// populate. The FULL version (every line item, big photos) only renders
+// when someone taps through to psShowTrackingDetail.
 var _psCancelOrderLookupInfo = {};
 
 window.psCancelOrderLoadOrderInfo = function(id, tracking) {
@@ -5270,21 +5321,44 @@ window.psCancelOrderLoadOrderInfo = function(id, tracking) {
   });
 };
 
-function _psRenderCancelOrderInlineOrder(r) {
+// One small square thumbnail — the first line item's photo, with a little
+// badge if there are more — instead of the old full photo grid. Clicking
+// it opens the same full order-detail popup the tracking number does.
+function _psRenderCancelOrderThumb(r, openDetail) {
+  var info = _psCancelOrderLookupInfo[r.id];
+  var items = info && info.order && info.order.lineItems;
+  var img = items && items.length && items[0].i;
+  var extra = items && items.length > 1 ? items.length : 0;
+  var boxHtml = img
+    ? '<img src="' + img + '" style="width:56px;height:56px;object-fit:cover;border-radius:8px;border:1px solid var(--border);display:block" onerror="this.style.display=\'none\'">'
+    : '<div style="width:56px;height:56px;background:var(--bg3);border-radius:8px;border:1px solid var(--border);display:flex;align-items:center;justify-content:center;font-size:22px">📦</div>';
+  return '<div style="flex-shrink:0;position:relative;cursor:pointer" onclick="' + openDetail + '" title="View full order details + photos">'
+    + boxHtml
+    + (extra > 1 ? '<div style="position:absolute;bottom:-4px;right:-4px;background:var(--accent);color:#fff;font-size:9px;font-weight:700;border-radius:100px;padding:1px 5px;line-height:1.3">' + extra + '</div>' : '')
+    + '</div>';
+}
+
+// One condensed line — order #, customer, item count, carrier — standing
+// in for the old full order card. Same underlying data, just trimmed down
+// to what fits on a single line at a glance.
+function _psRenderCancelOrderSummaryLine(r) {
   var info = _psCancelOrderLookupInfo[r.id];
   if (!info || info.loading) {
-    return '<div style="font-size:11px;color:var(--text3);margin-top:8px">🔍 Loading order details &amp; photos…</div>';
+    return '<div style="font-size:11px;color:var(--text3);margin-top:2px">Loading order info…</div>';
   }
   if (info.error) {
-    return '<div style="font-size:11px;color:var(--text3);margin-top:8px">Couldn\'t load order details — <span style="cursor:pointer;text-decoration:underline" onclick="psCancelOrderLoadOrderInfo(' + r.id + ',\'' + r.tracking + '\')">retry</span></div>';
+    return '<div style="font-size:11px;color:var(--text3);margin-top:2px">Couldn\'t load order info — <span style="cursor:pointer;text-decoration:underline" onclick="psCancelOrderLoadOrderInfo(' + r.id + ',\'' + r.tracking + '\')">retry</span></div>';
   }
   if (!info.order) {
-    return '<div style="font-size:11px;color:var(--text3);margin-top:8px;font-style:italic">No order found for this tracking in the last 7 days.</div>';
+    return '<div style="font-size:11px;color:var(--text3);margin-top:2px;font-style:italic">No order found (last 7 days)</div>';
   }
-  return '<div style="margin-top:8px;padding-top:8px;border-top:1px dashed var(--border)">'
-    + _psRenderOrderLookupCard(info.order, { bigPhotos: true })
-    + '<span style="cursor:pointer;text-decoration:underline;color:var(--text3);font-size:10.5px" onclick="psCancelOrderLoadOrderInfo(' + r.id + ',\'' + r.tracking + '\')">↻ Refresh order info</span>'
-    + '</div>';
+  var o = info.order;
+  var parts = [];
+  if (o.orderNum)     parts.push('Order ' + o.orderNum);
+  if (o.customerName) parts.push(o.customerName);
+  if (o.lineItems && o.lineItems.length) parts.push(o.lineItems.length + ' item' + (o.lineItems.length !== 1 ? 's' : ''));
+  if (o.carrier)      parts.push(o.carrier);
+  return '<div style="font-size:11px;color:var(--text2);margin-top:2px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">' + (parts.join(' · ') || '—') + '</div>';
 }
 
 window.psCancelOrderMarkDone = function(id, btnEl) {
@@ -5380,16 +5454,37 @@ function _psCancelOrderAlarmStop() {
 }
 
 // fromTab: 'picking' | 'packing' — recorded as confirmed_from so the
-// history shows which side actually caught it.
+// history shows which side actually caught it. entry.status decides which
+// variant shows: 'pending' is the first catch (still needs the label torn
+// off); 'confirmed' is a REPEAT scan of one that's already been torn off
+// but not yet marked canceled on the Cancellation tab — same underlying
+// alert, just an acknowledgment instead of asking them to tear it off
+// again, since that already happened.
 function psShowCancelOrderAlert(entry, fromTab) {
   entry._fromTab = fromTab;
   _psCancelOrderCurrent = entry;
   var det = document.getElementById('ps-cancelorder-alert-detail');
-  det.innerHTML = '<strong>' + entry.tracking + '</strong><br>'
-    + (entry.orderNum ? 'Order ' + entry.orderNum + '<br>' : '')
-    + 'Marked for cancellation by ' + (entry.requestedBy || '?') + (entry.requestedAt ? ' · ' + psFmtDateTime(entry.requestedAt) : '')
-    + (entry.reason ? '<br><br>Reason: ' + entry.reason : '')
-    + '<br><br>Tear the label off and throw it away, then tap Confirm.';
+  var titleEl = document.getElementById('ps-cancelorder-alert-title');
+  var btnsEl = document.getElementById('ps-cancelorder-alert-buttons');
+
+  if (entry.status === 'confirmed') {
+    titleEl.textContent = 'Already Marked for Cancellation!';
+    det.innerHTML = '<strong>' + entry.tracking + '</strong><br>'
+      + (entry.orderNum ? 'Order ' + entry.orderNum + '<br>' : '')
+      + 'Label already confirmed torn &amp; trashed by ' + (entry.confirmedBy || '?') + (entry.confirmedAt ? ' · ' + psFmtDateTime(entry.confirmedAt) : '')
+      + '<br><br>This order is still waiting to be marked canceled on the 🗑️ Cancellation tab — it\'ll keep alerting until that happens.';
+    btnsEl.innerHTML = '<button class="ps-dupe-btn" style="background:var(--accent)" onclick="psCancelOrderAlertDismiss()">OK, Got It</button>';
+  } else {
+    titleEl.textContent = 'Order Marked for Cancellation!';
+    det.innerHTML = '<strong>' + entry.tracking + '</strong><br>'
+      + (entry.orderNum ? 'Order ' + entry.orderNum + '<br>' : '')
+      + 'Marked for cancellation by ' + (entry.requestedBy || '?') + (entry.requestedAt ? ' · ' + psFmtDateTime(entry.requestedAt) : '')
+      + (entry.reason ? '<br><br>Reason: ' + entry.reason : '')
+      + '<br><br>Tear the label off and throw it away, then tap Confirm.';
+    btnsEl.innerHTML = '<button class="ps-dupe-btn" style="background:var(--green)" onclick="psCancelOrderConfirmTorn()">✅ Confirm — Label Torn &amp; Trashed</button>'
+      + '<button class="ps-dupe-btn" style="background:var(--text3)" onclick="psCancelOrderAlertDismiss()">Not This One</button>';
+  }
+
   document.getElementById('ps-cancelorder-alert-overlay').style.display = 'flex';
   _psCancelOrderAlarmStart();
 }
@@ -5406,7 +5501,19 @@ window.psCancelOrderConfirmTorn = function() {
   _psCancelOrderAlarmStop();
   var ov = document.getElementById('ps-cancelorder-alert-overlay'); if (ov) ov.style.display = 'none';
   _psCancelOrderCurrent = null;
-  delete _psCancelOrderCache[entry.tracking.toUpperCase()];
+
+  // Deliberately NOT deleted from _psCancelOrderCache here — per the
+  // updated requirement, this order should keep alerting on every scan
+  // (now with the "already confirmed" message) until someone actually taps
+  // "Mark Canceled" on the Cancellation tab. Just flip the cached copy's
+  // status locally so an immediate re-scan (before the fetch below even
+  // finishes) already shows the right variant.
+  var trackingUpper = entry.tracking.toUpperCase();
+  if (_psCancelOrderCache[trackingUpper]) {
+    _psCancelOrderCache[trackingUpper].status = 'confirmed';
+    _psCancelOrderCache[trackingUpper].confirmedBy = psInitials;
+    _psCancelOrderCache[trackingUpper].confirmedAt = new Date().toISOString();
+  }
 
   fetch(PS_WORKER + '/ship/cancel-order-confirm', {
     method: 'POST',
