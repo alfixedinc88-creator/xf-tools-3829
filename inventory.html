@@ -57,6 +57,12 @@ function invSignOut() {
   localStorage.removeItem('xf_cred_user');
   window.location.reload();
 }
+function invRefreshPage() {
+  // Plain reload — for whenever something looks stale or stuck and the
+  // simplest fix is just starting the page fresh. Doesn't touch login or
+  // the saved Pull List, both of which persist across a reload already.
+  window.location.reload();
+}
 function showToast(msg) {
   var t = document.getElementById('xf-toast');
   if (!t) {
@@ -278,7 +284,7 @@ window.invCredLogin = async function() {
 
 <div class="itopbar">
   <div class="itopbar-title">📋 Inventory</div>
-  <button class="iback" id="inv-goback-btn" onclick="invGoBack()" style="display:none;margin-left:8px">⬅ Go Back</button>
+  <button class="iback" id="inv-refresh-btn" onclick="invRefreshPage()" style="margin-left:8px">🔄 Refresh</button>
   <button class="iback" id="inv-signout-btn" onclick="invSignOut()" style="margin-left:8px">🚪 Sign Out</button>
   <button class="iback" onclick="backToLauncher()">← Apps</button>
 </div>
@@ -1004,31 +1010,7 @@ window.invCredLogin = async function() {
   }
   // ─────────────────────────────────────────────────────────────────
 
-  // Tracks which tab was active before the current one, so "Go Back" can
-  // return to wherever they actually were — not a fixed "home" tab. Doesn't
-  // grow unbounded (capped at 20) and only records real navigation (re-
-  // clicking the tab you're already on doesn't count as a move).
-  var invTabHistory  = [];
-  var _invCurrentTab = null;
-
-  function invUpdateGoBackBtn() {
-    var btn = g('inv-goback-btn');
-    if (btn) btn.style.display = invTabHistory.length > 0 ? 'inline-flex' : 'none';
-  }
-
-  window.invGoBack = function() {
-    if (invTabHistory.length === 0) return;
-    var prevTab = invTabHistory.pop();
-    invSwitchTab(prevTab, true);
-  };
-
-  window.invSwitchTab = function(tab, _isGoingBack) {
-    if (!_isGoingBack && _invCurrentTab && _invCurrentTab !== tab) {
-      invTabHistory.push(_invCurrentTab);
-      if (invTabHistory.length > 20) invTabHistory.shift();
-    }
-    _invCurrentTab = tab;
-    invUpdateGoBackBtn();
+  window.invSwitchTab = function(tab) {
     // "scan" (Stock In) and "stockout" (Stock Out) share the same
     // underlying panel and logic — only the forced invMode differs. See
     // invSetMode for the Stock In/Out UI split that already existed here.
