@@ -865,6 +865,11 @@ window.invCredLogin = async function() {
   var invMode = "in";
   var invPart = null;
   var invSelLoc = null;
+  var invVariantRowInfo = []; // per-row {loc, partNum} for the always-expanded
+                               // single-location quick-pull rows in
+                               // invShowVariantPicker — keeps each row's
+                               // submit button tied to that exact row's data
+                               // regardless of typing/tabbing/clicking order.
   var invCamRunning = false;
   var invScanSearchMode = "code";
   var invQrScanner = null;
@@ -1391,6 +1396,7 @@ window.invCredLogin = async function() {
   function invShowVariantPicker(variants) {
     var list = g("inv-loc-list");
     list.innerHTML = "";
+    invVariantRowInfo = [];
     g("inv-loc-label").textContent = "Select Part Number";
     g("inv-loc-card").style.display = "block";
     g("inv-detail-card").style.display = "none";
@@ -1440,22 +1446,22 @@ window.invCredLogin = async function() {
       el.className = "iloc-opt";
 
       if (invMode === "out" && locCount === 1) {
-        // Exactly one location for this variant — pull straight from this
-        // row, no need to click through to a locations screen just to pick
-        // the only option that exists. (When there's more than one
-        // location, a choice is still genuinely needed, so that case keeps
-        // the click-through-to-locations flow below.)
+        // Exactly one location for this variant — show the cases input and
+        // Add to List button already expanded, no click needed at all to
+        // reveal them (this used to require tapping the row first to open
+        // the form — removed entirely per request: type cases, tap Add to
+        // List, done). When there's more than one location, a choice is
+        // still genuinely needed, so that case keeps the click-through-to-
+        // locations flow below.
         var onlyLoc = info.locs[0];
-        var formId  = "inv-var-form-" + i;
         var caseId  = "inv-var-cases-" + i;
-        var badgeId = "inv-var-badge-" + i;
+        invVariantRowInfo[i] = { loc: onlyLoc, partNum: v };
         el.innerHTML = "<div style='display:flex;justify-content:space-between;align-items:center'>"
           + "<div>"
           + "<div class='iloc-name' style='font-family:var(--mono);font-size:14px'>" + v + "</div>"
           + "<div style='font-size:11px;color:var(--text3);margin-top:2px'>" + onlyLoc.location + " \u00b7 " + totalCases + " cases</div>"
-          + "</div>"
-          + "<span class='iloc-badge ex' id='" + badgeId + "'>Pull</span></div>"
-          + "<div id='" + formId + "' style='display:none;margin-top:10px;padding-top:10px;border-top:1px solid var(--border)'>"
+          + "</div></div>"
+          + "<div style='margin-top:10px;padding-top:10px;border-top:1px solid var(--border)'>"
           + "<div style='font-size:11px;font-weight:700;color:var(--text3);margin-bottom:4px'>CASES TO PULL</div>"
           + "<div style='display:flex;gap:8px;align-items:center'>"
           + "<input id='" + caseId + "' type='number' min='0.1' step='0.5' placeholder='0' "
@@ -1466,28 +1472,6 @@ window.invCredLogin = async function() {
           + "</div></div>";
         el.style.display = "block";
         el.style.padding = "10px 12px";
-        el.querySelector("div").onclick = (function(idx, locEl, variantLoc, variantPart) { return function() {
-          list.querySelectorAll("[id^='inv-var-form-']").forEach(function(f) { if (f.id !== formId) f.style.display = 'none'; });
-          list.querySelectorAll("[id^='inv-var-badge-']").forEach(function(b) { if (b.id !== badgeId) b.textContent = 'Pull'; });
-          list.querySelectorAll(".iloc-opt").forEach(function(other) { if (other !== locEl) other.classList.remove('isel'); });
-          var form = document.getElementById(formId);
-          var badge2 = document.getElementById(badgeId);
-          var isOpen = form && form.style.display !== 'none';
-          if (isOpen) {
-            form.style.display = 'none';
-            locEl.classList.remove('isel');
-            if (badge2) badge2.textContent = 'Pull';
-          } else {
-            invPart = Object.assign({}, invPart, { partNum: variantPart });
-            g("inv-result-part").textContent = variantPart;
-            invSelLoc = variantLoc;
-            locEl.classList.add('isel');
-            form.style.display = 'block';
-            if (badge2) badge2.textContent = '\u25be';
-            var ci = document.getElementById(caseId);
-            if (ci) setTimeout(function(){ ci.focus(); }, 50);
-          }
-        }; })(i, el, onlyLoc, v);
         list.appendChild(el);
         return;
       }
@@ -1516,22 +1500,26 @@ window.invCredLogin = async function() {
     });
   }
 
-  // Mirrors invPickLocFromInline exactly, for the single-location quick-pull
-  // rows above — kept as a separate function (rather than reusing that one
-  // directly) since it reads from "inv-var-cases-*" ids instead of
-  // "inv-out-cases-*", to avoid id collisions if both lists ever render at
-  // once.
+  // Mirrors invPickLocFromInline, for the single-location quick-pull rows
+  // above — reads the row's own captured {loc, partNum} from
+  // invVariantRowInfo instead of a shared invSelLoc/invPart global, so
+  // clicking row 2's "Add to List" can never accidentally submit against
+  // row 1's location no matter how the rows were interacted with.
   window.invPickVariantFromInline = function(idx) {
+    var rowInfo = invVariantRowInfo[idx];
+    if (!rowInfo) { invFlash("Something went wrong — try searching again", "error"); return; }
     var ci = document.getElementById("inv-var-cases-" + idx);
     var cases = ci ? parseFloat(ci.value) : 0;
     if (!cases || cases < 0.1) { invFlash("Enter number of cases", "error"); if (ci) ci.focus(); return; }
-    if (!invSelLoc) { invFlash("No location selected", "error"); return; }
-    var availCases = invSelLoc.adjustedCases !== undefined ? invSelLoc.adjustedCases : parseFloat(invSelLoc.cases || 0);
+    var loc = rowInfo.loc;
+    var availCases = loc.adjustedCases !== undefined ? loc.adjustedCases : parseFloat(loc.cases || 0);
     if (cases > availCases) {
       invFlash("Exceeds available cases (" + availCases + ")", "error"); return;
     }
+    invPart = Object.assign({}, invPart, { partNum: rowInfo.partNum });
+    g("inv-result-part").textContent = rowInfo.partNum;
     invPullListPendingCases = cases;
-    invPickLocDirect(invSelLoc);
+    invPickLocDirect(loc);
     invPullListPendingCases = null;
   };
 
