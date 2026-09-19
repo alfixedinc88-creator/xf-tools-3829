@@ -854,6 +854,24 @@ body {
   </div>
 </div>
 
+<!-- Order Cancellation alert — shared between Picking (_psProcessPick) and
+     Packing (_psProcessScan): whichever one scans a tracking that's on the
+     open Cancellation list (see the Cancellation tab / psAddCancelOrder)
+     gets this instead of the normal pick/scan flow — no pick/scan record
+     is ever created for it. One button: tear the label off, throw it away,
+     tap Confirm — see psCancelOrderConfirmTorn / psShowCancelOrderAlert. -->
+<div id="ps-cancelorder-alert-overlay" class="ps-dupe-overlay">
+  <div class="ps-dupe-card">
+    <div class="ps-dupe-icon">🗑️</div>
+    <div class="ps-dupe-title">Order Marked for Cancellation!</div>
+    <div class="ps-dupe-detail" id="ps-cancelorder-alert-detail">—</div>
+    <div style="display:flex;gap:10px;justify-content:center;flex-wrap:wrap;margin-top:4px">
+      <button class="ps-dupe-btn" style="background:var(--green)" onclick="psCancelOrderConfirmTorn()">✅ Confirm — Label Torn &amp; Trashed</button>
+      <button class="ps-dupe-btn" style="background:var(--text3)" onclick="psCancelOrderAlertDismiss()">Not This One</button>
+    </div>
+  </div>
+</div>
+
 <!-- Per-person scan-history modal — opened by clicking a name chip in the
      Scan tab's summary bar. Shows every scan that person made on whichever
      date is currently loaded in that bar (today, or a picked past date). -->
@@ -995,6 +1013,24 @@ body {
   </div>
 </div>
 
+<!-- Order Cancellation history — opened from the Cancellation tab. Covers
+     every status (GET /ship/cancel-order?status=all), so the full
+     requested -> confirmed -> done timeline stays visible even after an
+     entry drops off the "Open Cancellations" list. See
+     psShowCancelOrderHistory. -->
+<div id="ps-cancelorder-history-modal-overlay" class="ps-person-modal-overlay" onclick="if(event.target===this) psCloseCancelOrderHistory()">
+  <div class="ps-person-modal ps-tracking-modal">
+    <div class="ps-person-modal-header">
+      <div>
+        <div class="ps-person-modal-title">🗑️ Cancellation — History</div>
+        <div class="ps-person-modal-sub" id="ps-cancelorder-history-modal-sub"></div>
+      </div>
+      <button class="ps-person-modal-close" onclick="psCloseCancelOrderHistory()">✕</button>
+    </div>
+    <div class="ps-person-modal-body" id="ps-cancelorder-history-modal-body"></div>
+  </div>
+</div>
+
 <!-- No Stock confirm — replaces a plain confirm() so "goes to Inventory" and
      "No Stock Found" are impossible to mix up at a glance (strong red vs
      purple blocks, not just wording). Opened by psSubmitNoStock() after the
@@ -1061,6 +1097,7 @@ body {
   <div class="ps-tabitem active" id="ps-tab-picking"  onclick="psSwitchTab('picking')">🧺 Picking</div>
   <div class="ps-tabitem"        id="ps-tab-scan"     onclick="psSwitchTab('scan')">📦 Packing</div>
   <div class="ps-tabitem"        id="ps-tab-closebatch" onclick="psSwitchTab('closebatch')">🚐 Close Batch</div>
+  <div class="ps-tabitem"        id="ps-tab-cancellation" onclick="psSwitchTab('cancellation')">🗑️ Cancellation <span class="ps-tab-badge" id="ps-cancelorder-badge" style="display:none">0</span></div>
   <div class="ps-tabitem"        id="ps-tab-progress" onclick="psSwitchTab('progress')">📊 Progress</div>
   <div class="ps-tabitem"        id="ps-tab-lookup"      onclick="psSwitchTab('lookup')">🔍 Lookup</div>
   <div class="ps-tabitem"        id="ps-tab-orderlookup" onclick="psSwitchTab('orderlookup')">📋 Order Lookup</div>
@@ -1331,6 +1368,37 @@ body {
           </div>
           <div id="ps-usps-report-list"></div>
         </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- CANCELLATION panel — flag an order ahead of time so Picking/Packing
+       get stopped and alerted the moment they scan it, instead of shipping
+       something that's already been called off. See psAddCancelOrder,
+       psShowCancelOrderAlert (Picking/Packing side), psCancelOrderMarkDone,
+       psShowCancelOrderHistory. -->
+  <div class="ps-panel" id="ps-panel-cancellation">
+    <div class="ps-card">
+      <div style="font-weight:700;font-size:14px;margin-bottom:10px">🗑️ Mark an Order for Cancellation</div>
+      <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:flex-start">
+        <input type="text" class="ps-field-input" id="ps-cancelorder-tracking" placeholder="Scan or type tracking number" style="flex:2;min-width:220px;margin:0" onkeydown="if(event.key==='Enter'){event.preventDefault();psAddCancelOrder();}">
+        <input type="text" class="ps-field-input" id="ps-cancelorder-ordernum" placeholder="Order # (optional)" style="flex:1;min-width:140px;margin:0" onkeydown="if(event.key==='Enter'){event.preventDefault();psAddCancelOrder();}">
+        <input type="text" class="ps-field-input" id="ps-cancelorder-reason" placeholder="Reason (optional)" style="flex:1;min-width:160px;margin:0" onkeydown="if(event.key==='Enter'){event.preventDefault();psAddCancelOrder();}">
+        <button class="ps-btn-go" onclick="psAddCancelOrder()">Add to Cancellation List</button>
+      </div>
+      <div style="font-size:11px;color:var(--text3);margin-top:8px">Picking and Packing will get an alert the moment this tracking is scanned — they'll tear the label off, throw it away, and tap Confirm. Come back here once it's actually been canceled (in Veeqo, etc) and mark it done.</div>
+    </div>
+
+    <div class="ps-section-header" style="margin-top:16px">
+      <div class="ps-section-title">Open Cancellations</div>
+      <div class="ps-section-cnt" id="ps-cancelorder-cnt-label">0 open</div>
+      <span onclick="psShowCancelOrderHistory()" style="cursor:pointer;text-decoration:underline;font-size:11px;color:var(--text3);margin-left:10px">History</span>
+    </div>
+    <div id="ps-cancelorder-list">
+      <div class="ps-empty-state">
+        <div class="ps-empty-icon">🗑️</div>
+        <div class="ps-empty-title">Nothing marked for cancellation</div>
+        <div class="ps-empty-sub">Add a tracking number above — Picking and Packing will be alerted the moment they scan it.</div>
       </div>
     </div>
   </div>
@@ -2140,6 +2208,13 @@ function _psProcessScan(raw) {
   var tracking = psNormalizeTracking(raw);
   inp.value = '';
   if (!tracking) return; // rejected by format validation (DataMatrix garbage etc)
+
+  var cancelEntry = _psCancelOrderCache[tracking];
+  if (cancelEntry) {
+    psShowCancelOrderAlert(cancelEntry, 'packing');
+    inp.focus();
+    return;
+  }
 
   var dupe = psTodayScans.find(function(s){ return s.tracking.toUpperCase() === tracking; });
   if (dupe) {
@@ -4426,7 +4501,7 @@ window.psSwitchTab = function(name) {
     var dinp = document.getElementById('ps-scan-summary-date');
     if (dinp) { var tk = psTodayKey(); dinp.value = tk; dinp.max = tk; }
     psScanSummaryDate = null;
-    psRenderScanList(); psLoadScans(); _psLoadPrintStatus();
+    psRenderScanList(); psLoadScans(); _psLoadPrintStatus(); psLoadCancelOrders();
   }
   if (name === 'picking')     {
     psFocusPick();
@@ -4434,9 +4509,10 @@ window.psSwitchTab = function(name) {
     var pdinp = document.getElementById('ps-pick-summary-date');
     if (pdinp) { var ptk = psTodayKey(); pdinp.value = ptk; pdinp.max = ptk; }
     psPickSummaryDate = null;
-    psRenderPickList(); psLoadPicks(); _psLoadPrintStatus(); psFetchNostockCount(); psFetchNostockNeedsFixCount(); psFetchCancelLabelCount();
+    psRenderPickList(); psLoadPicks(); _psLoadPrintStatus(); psFetchNostockCount(); psFetchNostockNeedsFixCount(); psFetchCancelLabelCount(); psLoadCancelOrders();
   }
   if (name === 'closebatch')  { _psUpdateBatchBar(); psUspsRunLoadOpen(); }
+  if (name === 'cancellation') { psLoadCancelOrders(); }
   if (name === 'progress')    { psLoadScans(); }
   if (name === 'lookup')      { psRenderLog(); }
   if (name === 'orderlookup') { document.getElementById('ps-ol-input').focus(); }
@@ -4452,13 +4528,14 @@ window.psSwitchTab = function(name) {
   if (name === 'scan' || name === 'progress') {
     window._psRefreshInterval = setInterval(function() {
       psLoadScans();
-      if (name === 'scan') { _psLoadPrintStatus(); }
+      if (name === 'scan') { _psLoadPrintStatus(); psLoadCancelOrders(); }
     }, 20000);
   }
   if (name === 'picking') {
     window._psPickRefreshInterval = setInterval(function() {
       psLoadPicks();
       _psLoadPrintStatus();
+      psLoadCancelOrders();
     }, 20000);
   }
   if (name === 'printlog') {
@@ -4557,6 +4634,13 @@ function _psProcessPick(raw) {
   var tracking = psNormalizeTracking(raw);
   inp.value = '';
   if (!tracking) return; // rejected by format validation (DataMatrix garbage etc)
+
+  var cancelEntry = _psCancelOrderCache[tracking];
+  if (cancelEntry) {
+    psShowCancelOrderAlert(cancelEntry, 'picking');
+    inp.focus();
+    return;
+  }
 
   var dupe = psTodayPicks.find(function(s){ return s.tracking.toUpperCase() === tracking; });
   if (dupe) {
@@ -4921,6 +5005,231 @@ function _psRenderCancelLabelRow(s) {
     + '</div>'
     + '</div>';
 }
+
+// ── Order Cancellation (Cancellation tab + Picking/Packing intercept) ────
+// Completely separate from "Cancel Label" above: that one is a picker/
+// packer pulling a DUPLICATE scan off their own tally. This is someone
+// (usually office) flagging a whole ORDER ahead of time — before anyone
+// has scanned it — so that whichever of Picking/Packing hits it next gets
+// stopped and alerted instead of shipping something already called off.
+var _psCancelOrderOpenList = [];      // what the Cancellation tab's own list shows
+var _psCancelOrderCache = {};         // UPPERCASE tracking -> pending record, for fast scan-time lookups
+var _psCancelOrderCurrent = null;     // the record the alert overlay is currently showing
+
+window.psAddCancelOrder = function() {
+  var trackingEl = document.getElementById('ps-cancelorder-tracking');
+  var tracking = psNormalizeTracking(trackingEl.value);
+  if (!tracking) { _psToast('Enter a tracking number first', 'err'); return; }
+  var orderNum = document.getElementById('ps-cancelorder-ordernum').value.trim();
+  var reason   = document.getElementById('ps-cancelorder-reason').value.trim();
+  fetch(PS_WORKER + '/ship/cancel-order', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', 'X-Cred-Token': psCredToken },
+    body: JSON.stringify({ tracking: tracking, orderNum: orderNum, reason: reason, requestedBy: psInitials })
+  }).then(function(r) { return r.json(); }).then(function(d) {
+    if (!d || !d.ok) throw new Error((d && d.error) || 'Request failed');
+    trackingEl.value = '';
+    document.getElementById('ps-cancelorder-ordernum').value = '';
+    document.getElementById('ps-cancelorder-reason').value = '';
+    _psToast(d.alreadyExists ? (tracking + ' is already on the cancellation list') : ('Added to cancellation list — ' + tracking));
+    psLoadCancelOrders();
+    trackingEl.focus();
+  }).catch(function(e) {
+    _psToast('Could not add — ' + e.message, 'err');
+  });
+};
+
+// Pulls the open (pending+confirmed) list for the Cancellation tab's own
+// display AND rebuilds the fast scan-time lookup cache Picking/Packing
+// check against. Called on the Cancellation tab's own load, and polled
+// alongside Picking's/Packing's existing refresh intervals so a
+// cancellation added from another device shows up there too within the
+// same ~20s window everything else already refreshes on.
+window.psLoadCancelOrders = function() {
+  fetch(PS_WORKER + '/ship/cancel-order?status=open', { headers: { 'X-Cred-Token': psCredToken } })
+    .then(function(r) { return r.json(); })
+    .then(function(d) {
+      _psCancelOrderOpenList = (d && d.cancelOrders) || [];
+      _psRenderCancelOrderList();
+      _psRebuildCancelOrderCache();
+    }).catch(function() {});
+};
+
+function _psRebuildCancelOrderCache() {
+  _psCancelOrderCache = {};
+  _psCancelOrderOpenList.forEach(function(r) {
+    // Only 'pending' triggers the alert — once it's 'confirmed' the label's
+    // already been torn off and thrown away, so a second scan (if it
+    // somehow happened) shouldn't alert again.
+    if (r.status === 'pending' && r.tracking) _psCancelOrderCache[r.tracking.toUpperCase()] = r;
+  });
+}
+
+function _psRenderCancelOrderList() {
+  var list = _psCancelOrderOpenList;
+  var cntEl = document.getElementById('ps-cancelorder-cnt-label');
+  if (cntEl) cntEl.textContent = list.length + ' open';
+  var pendingCount = list.filter(function(r) { return r.status === 'pending'; }).length;
+  var b = document.getElementById('ps-cancelorder-badge');
+  if (b) { b.textContent = pendingCount; b.style.display = pendingCount > 0 ? 'inline-flex' : 'none'; }
+  var el = document.getElementById('ps-cancelorder-list');
+  if (!el) return;
+  el.innerHTML = list.length
+    ? list.map(_psRenderCancelOrderCard).join('')
+    : '<div class="ps-empty-state"><div class="ps-empty-icon">🗑️</div><div class="ps-empty-title">Nothing marked for cancellation</div><div class="ps-empty-sub">Add a tracking number above — Picking and Packing will be alerted the moment they scan it.</div></div>';
+}
+
+function _psRenderCancelOrderCard(r) {
+  var reqWhen = psFmtDateTime(r.requestedAt);
+  var statusHtml = r.status === 'confirmed'
+    ? '<span style="color:var(--purple);font-weight:700">✂️ Label torn</span> by ' + (r.confirmedBy || '?') + (r.confirmedAt ? ' · ' + psFmtDateTime(r.confirmedAt) : '') + (r.confirmedFrom ? ' (' + r.confirmedFrom + ')' : '')
+    : '<span style="color:var(--orange);font-weight:700">⏳ Waiting to be scanned</span>';
+  var doneBtnLabel = r.status === 'confirmed' ? '✓ Mark Canceled (done in Veeqo)' : 'Mark Canceled anyway';
+  return '<div class="ps-card" style="margin-top:8px">'
+    + '<div style="display:flex;justify-content:space-between;gap:8px;flex-wrap:wrap;align-items:baseline">'
+    +   '<div style="font-family:var(--mono);font-weight:700;font-size:13px">' + r.tracking + '</div>'
+    +   '<div style="font-size:11px;text-align:right">' + statusHtml + '</div>'
+    + '</div>'
+    + '<div style="font-size:11px;color:var(--text3);margin-top:3px">'
+    +   (r.orderNum ? 'Order ' + r.orderNum + ' · ' : '')
+    +   'requested by ' + (r.requestedBy || '?') + ' · ' + reqWhen
+    + '</div>'
+    + (r.reason ? '<div style="font-size:11.5px;margin-top:4px">Reason: ' + r.reason + '</div>' : '')
+    + '<button class="ps-btn-sm" onclick="psCancelOrderMarkDone(' + r.id + ',this)" style="margin-top:6px;color:var(--green);border-color:var(--green)">' + doneBtnLabel + '</button>'
+    + '</div>';
+}
+
+window.psCancelOrderMarkDone = function(id, btnEl) {
+  if (btnEl) { btnEl.disabled = true; btnEl.textContent = 'Saving…'; }
+  fetch(PS_WORKER + '/ship/cancel-order-done', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', 'X-Cred-Token': psCredToken },
+    body: JSON.stringify({ id: id, doneBy: psInitials })
+  }).then(function(r) { return r.json(); }).then(function(d) {
+    if (!d || !d.ok) throw new Error((d && d.error) || 'Request failed');
+    _psCancelOrderOpenList = _psCancelOrderOpenList.filter(function(r) { return r.id !== id; });
+    _psRenderCancelOrderList();
+    _psRebuildCancelOrderCache();
+    _psToast('Marked canceled');
+  }).catch(function(e) {
+    if (btnEl) { btnEl.disabled = false; btnEl.textContent = '✓ Mark Canceled'; }
+    _psToast('Could not mark canceled — ' + e.message, 'err');
+  });
+};
+
+window.psShowCancelOrderHistory = function() {
+  document.getElementById('ps-cancelorder-history-modal-sub').textContent = 'Loading…';
+  document.getElementById('ps-cancelorder-history-modal-body').innerHTML = '<div class="ps-person-modal-empty">Loading…</div>';
+  document.getElementById('ps-cancelorder-history-modal-overlay').style.display = 'flex';
+  fetch(PS_WORKER + '/ship/cancel-order?status=all', { headers: { 'X-Cred-Token': psCredToken } })
+    .then(function(r) { return r.json(); })
+    .then(function(d) {
+      if (!d || !d.ok) {
+        document.getElementById('ps-cancelorder-history-modal-sub').textContent = '';
+        document.getElementById('ps-cancelorder-history-modal-body').innerHTML = '<div class="ps-person-modal-empty">Error: ' + ((d && d.error) || 'Unknown error') + '</div>';
+        return;
+      }
+      var list = d.cancelOrders || [];
+      document.getElementById('ps-cancelorder-history-modal-sub').textContent = list.length + ' record' + (list.length !== 1 ? 's' : '');
+      document.getElementById('ps-cancelorder-history-modal-body').innerHTML = list.length
+        ? list.map(_psRenderCancelOrderHistoryRow).join('')
+        : '<div class="ps-person-modal-empty">Nothing has been marked for cancellation yet.</div>';
+    }).catch(function(e) {
+      document.getElementById('ps-cancelorder-history-modal-sub').textContent = '';
+      document.getElementById('ps-cancelorder-history-modal-body').innerHTML = '<div class="ps-person-modal-empty">Request failed: ' + e.message + '</div>';
+    });
+};
+
+window.psCloseCancelOrderHistory = function() {
+  document.getElementById('ps-cancelorder-history-modal-overlay').style.display = 'none';
+};
+
+function _psRenderCancelOrderHistoryRow(r) {
+  var statusBadge = r.status === 'done'
+    ? '<span style="color:var(--green);font-weight:700">✓ Canceled</span>'
+    : r.status === 'confirmed'
+      ? '<span style="color:var(--purple);font-weight:700">✂️ Label Torn</span>'
+      : '<span style="color:var(--orange);font-weight:700">⏳ Pending</span>';
+  var timeline = '<div style="font-size:11px;color:var(--text3);margin-top:4px">'
+    + '1. Requested by ' + (r.requestedBy || '?') + ' · ' + psFmtDateTime(r.requestedAt) + '</div>';
+  if (r.confirmedBy) {
+    timeline += '<div style="font-size:11px;color:var(--text3);margin-top:2px">'
+      + '2. Label torn &amp; trashed — confirmed by ' + r.confirmedBy + ' · ' + psFmtDateTime(r.confirmedAt) + (r.confirmedFrom ? ' (' + r.confirmedFrom + ')' : '') + '</div>';
+  }
+  if (r.doneBy) {
+    timeline += '<div style="font-size:11px;color:var(--text3);margin-top:2px">'
+      + (r.confirmedBy ? '3' : '2') + '. Marked canceled by ' + r.doneBy + ' · ' + psFmtDateTime(r.doneAt) + '</div>';
+  }
+  return '<div style="border-bottom:1px solid var(--border);padding:10px 0">'
+    + '<div style="display:flex;justify-content:space-between;gap:8px;align-items:baseline;flex-wrap:wrap">'
+    +   '<div style="font-family:var(--mono);font-weight:700;font-size:13px">' + r.tracking + '</div>'
+    +   '<div style="font-size:11px">' + statusBadge + '</div>'
+    + '</div>'
+    + (r.orderNum ? '<div style="font-size:11px;color:var(--text3);margin-top:2px">Order ' + r.orderNum + '</div>' : '')
+    + (r.reason ? '<div style="font-size:11.5px;margin-top:3px">Reason: ' + r.reason + '</div>' : '')
+    + timeline
+    + '</div>';
+}
+
+// ── Picking/Packing side: the alert itself ───────────────────────────────
+// Repeats (speech only, no tone — matches the double-scan alarm's current
+// design) until either button is tapped, via the same _psSpeakAlert engine.
+var _psCancelOrderSpeechInterval = null;
+
+function _psCancelOrderAlarmStart() {
+  _psSpeakAlert('Order canceled. Please confirm.');
+  if (_psCancelOrderSpeechInterval) clearInterval(_psCancelOrderSpeechInterval);
+  _psCancelOrderSpeechInterval = setInterval(function() {
+    _psSpeakAlert('Order canceled. Please confirm.');
+  }, 4000);
+}
+
+function _psCancelOrderAlarmStop() {
+  if (_psCancelOrderSpeechInterval) { clearInterval(_psCancelOrderSpeechInterval); _psCancelOrderSpeechInterval = null; }
+  if (window.speechSynthesis) window.speechSynthesis.cancel();
+}
+
+// fromTab: 'picking' | 'packing' — recorded as confirmed_from so the
+// history shows which side actually caught it.
+function psShowCancelOrderAlert(entry, fromTab) {
+  entry._fromTab = fromTab;
+  _psCancelOrderCurrent = entry;
+  var det = document.getElementById('ps-cancelorder-alert-detail');
+  det.innerHTML = '<strong>' + entry.tracking + '</strong><br>'
+    + (entry.orderNum ? 'Order ' + entry.orderNum + '<br>' : '')
+    + 'Marked for cancellation by ' + (entry.requestedBy || '?') + (entry.requestedAt ? ' · ' + psFmtDateTime(entry.requestedAt) : '')
+    + (entry.reason ? '<br><br>Reason: ' + entry.reason : '')
+    + '<br><br>Tear the label off and throw it away, then tap Confirm.';
+  document.getElementById('ps-cancelorder-alert-overlay').style.display = 'flex';
+  _psCancelOrderAlarmStart();
+}
+
+window.psCancelOrderAlertDismiss = function() {
+  _psCancelOrderAlarmStop();
+  var ov = document.getElementById('ps-cancelorder-alert-overlay'); if (ov) ov.style.display = 'none';
+  _psCancelOrderCurrent = null;
+};
+
+window.psCancelOrderConfirmTorn = function() {
+  var entry = _psCancelOrderCurrent;
+  if (!entry) { window.psCancelOrderAlertDismiss(); return; }
+  _psCancelOrderAlarmStop();
+  var ov = document.getElementById('ps-cancelorder-alert-overlay'); if (ov) ov.style.display = 'none';
+  _psCancelOrderCurrent = null;
+  delete _psCancelOrderCache[entry.tracking.toUpperCase()];
+
+  fetch(PS_WORKER + '/ship/cancel-order-confirm', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', 'X-Cred-Token': psCredToken },
+    body: JSON.stringify({ id: entry.id, confirmedBy: psInitials, confirmedFrom: entry._fromTab || '' })
+  }).then(function(r) { return r.json(); }).then(function(d) {
+    if (!d || !d.ok) throw new Error((d && d.error) || 'Request failed');
+    _psToast('Confirmed — label torn & trashed for ' + entry.tracking);
+    psLoadCancelOrders();
+  }).catch(function(e) {
+    _psToast('Saved locally, but the report failed to save — ' + e.message, 'err');
+  });
+};
 
 // "No Stock Found" list — orders where D1's own master_list ALREADY showed
 // zero cases at the time a picker reported it, so nothing new went to
