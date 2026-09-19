@@ -2211,13 +2211,18 @@ function _psProcessScan(raw) {
     return;
   }
 
+  // psTodayScans only ever holds today's scans (loaded from
+  // /ship/scans?date=<today>), so a hit here is always same-day — the
+  // server's POST response below is what catches a duplicate from an
+  // earlier day (see SHIP_DUPE_LOOKBACK_DAYS), since re-fetching 3-7 days
+  // of scans on every keystroke here would be too chatty for no benefit.
   var dupe = psTodayScans.find(function(s){ return s.tracking.toUpperCase() === tracking; });
   if (dupe) {
     _psFlash('orange');
     _psBeep(440, 100);
     _psShowLastScan({ icon:'⚠️', cls:'warn', tracking: tracking, meta:'Already scanned at ' + psFmtTime(dupe.timestamp) + (dupe.initials ? ' by ' + dupe.initials : '') + ' · ' + dupe.carrier });
     _psToast('Duplicate — scanned at ' + psFmtTime(dupe.timestamp), 'warn');
-    psDupeShowAlert(tracking, dupe.timestamp, dupe.initials, dupe.carrier);
+    psDupeShowAlert(tracking, dupe.timestamp, dupe.initials, dupe.carrier, psTodayKey());
     _psLoadScanProduct(tracking);
     inp.focus(); return;
   }
@@ -2241,10 +2246,29 @@ function _psProcessScan(raw) {
     body: JSON.stringify({ tracking: tracking, initials: psInitials })
   }).then(function(r){ return r.json(); }).then(function(data) {
     if (data.duplicate) {
+      // The server rejected the write (a match somewhere in the last
+      // SHIP_DUPE_LOOKBACK_DAYS days) — undo the optimistic add above so
+      // this doesn't sit in "today's scans" looking like a fresh scan.
+      psTodayScans = psTodayScans.filter(function(s){ return s.tracking.toUpperCase() !== tracking; });
+      psRenderScanList();
+      _psUpdateBatchBar();
       var ov = document.getElementById('ps-dupe-overlay');
-      if (!ov || ov.style.display === 'none') {
+      // BUGFIX: this used to check `ov.style.display === 'none'`, but the
+      // overlay's hidden state comes from its CSS class, not an inline
+      // style — style.display starts out as '' (not 'none') until
+      // psDupeShowAlert has run at least once, which made this guard false
+      // on a fresh page and silently skip the alert the very first time.
+      // That was a rare, easy-to-miss race-condition path before (the
+      // client-side same-day cache almost always caught it first) — now
+      // that the server check also catches cross-day duplicates the client
+      // cache can't see, this path fires routinely, so the bug needed
+      // fixing here. Checking for 'flex' (what psDupeShowAlert sets when
+      // it shows the overlay) instead of 'none' correctly detects "already
+      // showing" vs. "not showing yet".
+      if (!ov || ov.style.display !== 'flex') {
         _psFlash('red');
-        if (typeof psDupeShowAlert === 'function') psDupeShowAlert(tracking, data.scannedAt, data.initials || '', data.carrier || '');
+        _psShowLastScan({ icon:'⚠️', cls:'warn', tracking: tracking, meta:'Duplicate — already scanned ' + psFmtWhen(data.scannedDate, data.scannedAt) + (data.initials ? ' by ' + data.initials : '') });
+        if (typeof psDupeShowAlert === 'function') psDupeShowAlert(tracking, data.scannedAt, data.initials || '', data.carrier || '', data.scannedDate || '');
       }
       return;
     }
@@ -4144,16 +4168,21 @@ window.psShowDebug = function(kind) {
   };
   window.psDupeCancel = window.psDupeAcknowledge;
 
-  window.psDupeShowAlert = function(tracking, firstScanTime, initials, carrier) {
+  window.psDupeShowAlert = function(tracking, firstScanTime, initials, carrier, scannedDate) {
     var ov  = document.getElementById('ps-dupe-overlay');
     var det = document.getElementById('ps-dupe-detail');
     if (!ov) return;
-    var timeStr = firstScanTime ? psFmtTime(firstScanTime) : 'earlier today';
+    // scannedDate (YYYY-MM-DD) comes from the server's 7-day lookback dupe
+    // check (see SHIP_DUPE_LOOKBACK_DAYS) — psFmtWhen shows the date too
+    // when it's not today, so a match from a few days ago doesn't read as
+    // "earlier today".
+    var timeStr = firstScanTime ? psFmtWhen(scannedDate, firstScanTime) : 'earlier today';
     var byStr   = initials ? ' by ' + initials : '';
     det.innerHTML = '<strong>' + tracking + '</strong><br>'
       + (carrier ? carrier + ' &nbsp;&middot;&nbsp; ' : '')
-      + 'First scanned at <strong>' + timeStr + '</strong>' + byStr + '<br><br>'
-      + 'Check if this is a reshipment or mislabeled package.<br>Put aside if unsure.';
+      + 'First scanned <strong>' + timeStr + '</strong>' + byStr + '<br><br>'
+      + 'Check if this is a reshipment or mislabeled package.<br>Put aside if unsure.'
+      + (scannedDate && scannedDate !== psTodayKey() ? '<br><br><span style="color:var(--warn,#c77700);font-weight:600;">⚠️ This was scanned on a different day — double-check before treating it as new.</span>' : '');
     ov.style.display = 'flex';
     psDupeAlarmStart();
   };
@@ -4226,19 +4255,24 @@ window.psShowDebug = function(kind) {
     var inp = document.getElementById('ps-pick-input'); if (inp) inp.focus();
   };
 
-  window.psPickDupeShowAlert = function(tracking, firstScanTime, initials, carrier, orderNum) {
+  window.psPickDupeShowAlert = function(tracking, firstScanTime, initials, carrier, orderNum, scannedDate) {
     psPickDupeCurrentTracking = tracking;
     psPickDupeCurrentInfo = { tracking: tracking, firstScanTime: firstScanTime, initials: initials, carrier: carrier, orderNum: orderNum || '' };
     var ov  = document.getElementById('ps-pick-dupe-overlay');
     var det = document.getElementById('ps-pick-dupe-detail');
     if (!ov) return;
-    var timeStr = firstScanTime ? psFmtTime(firstScanTime) : 'earlier today';
+    // scannedDate (YYYY-MM-DD) comes from the server's 7-day lookback dupe
+    // check (see SHIP_DUPE_LOOKBACK_DAYS) — psFmtWhen shows the date too
+    // when it's not today, so a match from a few days ago doesn't read as
+    // "earlier today".
+    var timeStr = firstScanTime ? psFmtWhen(scannedDate, firstScanTime) : 'earlier today';
     var byStr   = initials ? ' by ' + initials : '';
     det.innerHTML = '<strong>' + tracking + '</strong><br>'
       + (carrier ? carrier + ' &nbsp;&middot;&nbsp; ' : '')
-      + 'Already picked at <strong>' + timeStr + '</strong>' + byStr + '<br><br>'
+      + 'Already picked <strong>' + timeStr + '</strong>' + byStr + '<br><br>'
       + 'If it\'s not actually there, tap <strong>No Inventory</strong> to flag which item is missing.'
-      + ' If the label itself is being canceled, tap <strong>Cancel Label</strong>.';
+      + ' If the label itself is being canceled, tap <strong>Cancel Label</strong>.'
+      + (scannedDate && scannedDate !== psTodayKey() ? '<br><br><span style="color:var(--warn,#c77700);font-weight:600;">⚠️ This was picked on a different day — double-check before treating it as new.</span>' : '');
     ov.style.display = 'flex';
     psDupeAlarmStart();
   };
@@ -4266,6 +4300,26 @@ window.psTodayKey = function() {
   // for the rest of that evening.
   var d = new Date();
   return d.toLocaleDateString('en-CA', { timeZone: 'America/New_York' });
+};
+
+// Picking/Packing double-scan duplicate check now looks back up to 7 days
+// (see SHIP_DUPE_LOOKBACK_DAYS server-side), not just today — so the
+// duplicate-alert text needs to say WHICH day the earlier pick/scan
+// happened, not just a bare time, or "Already picked at 10:15 AM" reads
+// as "earlier today" even when it was 3 days ago. Pass the dupe's date key
+// (YYYY-MM-DD, e.g. what the server returns as scannedDate) plus its iso
+// timestamp; when the date is missing or is today, this reads exactly like
+// the old time-only text so nothing changes for the common same-day case.
+// Returns a fragment meant to be concatenated right after a verb like
+// "scanned"/"picked" — e.g. "at 10:15 AM" for today, or "Sep 17 at 10:15 AM"
+// for an earlier day — so callers can just write "Already picked " + timeStr
+// and get correct phrasing either way.
+window.psFmtWhen = function(dateKey, iso) {
+  if (!iso) return 'earlier today';
+  if (!dateKey || dateKey === psTodayKey()) return 'at ' + psFmtTime(iso);
+  var d = new Date(iso);
+  return d.toLocaleDateString('en-US', { month:'short', day:'numeric', timeZone:'America/New_York' })
+    + ' at ' + d.toLocaleTimeString('en-US', { hour:'numeric', minute:'2-digit', hour12:true, timeZone:'America/New_York' });
 };
 
 var _psToastTimer;
@@ -4666,13 +4720,18 @@ function _psProcessPick(raw) {
     return;
   }
 
+  // psTodayPicks only ever holds today's picks (loaded from
+  // /ship/picks?date=<today>), so a hit here is always same-day — the
+  // server's POST response below is what catches a duplicate from an
+  // earlier day (see SHIP_DUPE_LOOKBACK_DAYS), since re-fetching 3-7 days
+  // of picks on every keystroke here would be too chatty for no benefit.
   var dupe = psTodayPicks.find(function(s){ return s.tracking.toUpperCase() === tracking; });
   if (dupe) {
     _psPickFlash('orange');
     _psBeep(440, 100);
     _psShowPickLastScan({ icon:'⚠️', cls:'warn', tracking: tracking, meta:'Already picked at ' + psFmtTime(dupe.timestamp) + (dupe.initials ? ' by ' + dupe.initials : '') + ' · ' + dupe.carrier });
     _psToast('Duplicate — picked at ' + psFmtTime(dupe.timestamp), 'warn');
-    psPickDupeShowAlert(tracking, dupe.timestamp, dupe.initials, dupe.carrier, dupe.orderNum);
+    psPickDupeShowAlert(tracking, dupe.timestamp, dupe.initials, dupe.carrier, dupe.orderNum, psTodayKey());
     _psLoadPickProduct(tracking); // no showNoStock — plain item view under the alarm
     inp.focus(); return;
   }
@@ -4693,11 +4752,21 @@ function _psProcessPick(raw) {
     body: JSON.stringify({ tracking: tracking, initials: psInitials })
   }).then(function(r){ return r.json(); }).then(function(data) {
     if (data.duplicate) {
+      // The server rejected the write (a match somewhere in the last
+      // SHIP_DUPE_LOOKBACK_DAYS days) — undo the optimistic add above so
+      // this doesn't sit in "today's picks" looking like a fresh pick.
+      psTodayPicks = psTodayPicks.filter(function(s){ return s.tracking.toUpperCase() !== tracking; });
+      psRenderPickList();
       var pov = document.getElementById('ps-pick-dupe-overlay');
-      if (!pov || pov.style.display === 'none') {
+      // BUGFIX — same issue as the matching check in _psProcessScan above:
+      // style.display starts as '' (not 'none') until the overlay has been
+      // shown at least once, so checking for 'none' silently skipped the
+      // very first alert. Check for 'flex' (what psPickDupeShowAlert sets)
+      // instead, to correctly detect "already showing".
+      if (!pov || pov.style.display !== 'flex') {
         _psPickFlash('orange');
-        _psShowPickLastScan({ icon:'⚠️', cls:'warn', tracking: tracking, meta:'Already picked at ' + psFmtTime(data.scannedAt) + (data.initials ? ' by ' + data.initials : '') });
-        if (typeof psPickDupeShowAlert === 'function') psPickDupeShowAlert(tracking, data.scannedAt, data.initials || '', data.carrier || '', data.orderNum || '');
+        _psShowPickLastScan({ icon:'⚠️', cls:'warn', tracking: tracking, meta:'Duplicate — already picked ' + psFmtWhen(data.scannedDate, data.scannedAt) + (data.initials ? ' by ' + data.initials : '') });
+        if (typeof psPickDupeShowAlert === 'function') psPickDupeShowAlert(tracking, data.scannedAt, data.initials || '', data.carrier || '', data.orderNum || '', data.scannedDate || '');
       }
       return;
     }
