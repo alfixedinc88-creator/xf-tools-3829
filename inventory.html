@@ -1526,7 +1526,7 @@ window.invCredLogin = async function() {
           + "style='width:90px;padding:7px 10px;border:1.5px solid var(--border);border-radius:7px;background:var(--bg);color:var(--text);font-size:14px;font-family:var(--mono)' "
           + "onkeydown='if(event.key===\"Enter\"){event.preventDefault();invPickVariantFromInline(" + i + ")}'>"
           + "<button onclick='invPickVariantFromInline(" + i + ")' "
-          + "style='padding:7px 16px;border-radius:7px;border:none;background:var(--accent);color:#fff;font-size:13px;font-weight:700;font-family:var(--sans);cursor:pointer'>Add to List</button>"
+          + "style='padding:7px 16px;border-radius:7px;border:none;background:var(--accent);color:#fff;font-size:13px;font-weight:700;font-family:var(--sans);cursor:pointer'>Add to Pull List</button>"
           + "</div></div>";
         el.style.display = "block";
         el.style.padding = "10px 12px";
@@ -1714,7 +1714,7 @@ window.invCredLogin = async function() {
           + "style='width:90px;padding:7px 10px;border:1.5px solid var(--border);border-radius:7px;background:var(--bg);color:var(--text);font-size:14px;font-family:var(--mono)' "
           + "onkeydown='if(event.key===\"Enter\"){event.preventDefault();invPickVariantFromInline(" + i + ")}'>"
           + "<button onclick='invPickVariantFromInline(" + i + ")' "
-          + "style='padding:7px 16px;border-radius:7px;border:none;background:var(--accent);color:#fff;font-size:13px;font-weight:700;font-family:var(--sans);cursor:pointer'>Add to List</button>"
+          + "style='padding:7px 16px;border-radius:7px;border:none;background:var(--accent);color:#fff;font-size:13px;font-weight:700;font-family:var(--sans);cursor:pointer'>Add to Pull List</button>"
           + "</div></div>";
         el.style.display = "block";
         el.style.padding = "10px 12px";
@@ -2963,6 +2963,12 @@ window.invCredLogin = async function() {
       name:         part.name || '',
       location:     loc.location,
       cases:        preFilled,
+      // The system's on-hand count at the moment this was added — kept
+      // separate from `cases` (which becomes the quantity being pulled,
+      // entered by whoever's working the list) so it can still be shown
+      // for comparison later, e.g. if what's physically on the shelf
+      // doesn't match what the system thinks is there.
+      systemCases:  loc.adjustedCases !== undefined ? loc.adjustedCases : (parseFloat(loc.cases) || 0),
       rowIndex:     loc.rowIndex,
       isPlaceholder: loc.isPlaceholder || false,
       masterRowIndex: loc.rowIndex,
@@ -2991,6 +2997,50 @@ window.invCredLogin = async function() {
     var m = loc.match(/(\d+)/);
     return m ? parseInt(m[1]) : 9999;
   }
+
+  // Jumps from a Pull List row straight into SKU Manager's edit form for
+  // that exact part+location — so a mismatch between what's physically on
+  // the shelf and what the system shows can be corrected right away,
+  // instead of navigating there and searching by hand.
+  window.invJumpToSkuEdit = function(i) {
+    var item = invPullList[i];
+    if (!item) return;
+    if (!invUnlocked) {
+      // SKU Manager sits behind the same management PIN as Review — switching
+      // there will trigger that gate as normal; we just can't auto-open the
+      // edit form until after they unlock, so tell them what to look for.
+      invFlash('Unlock Review/Mgmt access, then search "' + item.partNum + '" in SKU Mgr to edit', 'warn');
+      invSwitchTab('skumgr');
+      return;
+    }
+    invSwitchTab('skumgr');
+    skumgrSetMode('sku');
+    var baseSku = (item.sku || item.partNum || '').split('=')[0].trim();
+    var inp = g('skumgr-search-inp');
+    if (inp) inp.value = baseSku;
+    skumgrSearch();
+    var tries = 0;
+    var poll = setInterval(function() {
+      tries++;
+      var idx = _skumgrRows.findIndex(function(r) {
+        return (r.part_num || '').toUpperCase() === (item.partNum || '').toUpperCase()
+            && (r.location || '').toUpperCase() === (item.location || '').toUpperCase();
+      });
+      if (idx >= 0) {
+        clearInterval(poll);
+        _skumgrPage = Math.floor(idx / _skumgrPerPage);
+        skumgrRenderResults();
+        setTimeout(function() {
+          skumgrStartEdit(idx);
+          var rowEl = g('skumgr-view-row-' + (idx - _skumgrPage * _skumgrPerPage));
+          if (rowEl) rowEl.scrollIntoView({ behavior: 'smooth', block: 'center' });
+        }, 50);
+      } else if (tries > 20) {
+        clearInterval(poll);
+        invFlash('Search loaded, but couldn\u2019t find ' + item.location + ' automatically \u2014 find it in the list below', 'warn');
+      }
+    }, 150);
+  };
 
   function invRenderPullList() {
     var el = g("inv-pulllist-items");
@@ -3024,6 +3074,13 @@ window.invCredLogin = async function() {
       var infoDiv = document.createElement("div");
       var noneBadge = item.noneFound ? " <span style='background:var(--red-bg);color:var(--red);font-size:10px;font-weight:700;padding:1px 6px;border-radius:4px;border:1px solid var(--red);font-family:var(--sans)'>NONE FOUND</span>" : "";
       var fossBadge = item.foundOnShelf ? " <span style='background:var(--orange-bg);color:var(--orange);font-size:10px;font-weight:700;padding:1px 6px;border-radius:4px;border:1px solid var(--orange);font-family:var(--sans)'>FOUND ON SHELF</span>" : "";
+      // System's on-hand count, captured when this was added — clickable
+      // straight into SKU Manager's edit form when it doesn't match what's
+      // actually on the shelf, instead of navigating + searching by hand.
+      var sysCasesHtml = item.systemCases !== undefined
+        ? " <span onclick='invJumpToSkuEdit(" + i + ")' title='System shows " + item.systemCases + " \u2014 tap to edit in SKU Mgr' "
+          + "style='cursor:pointer;font-size:11px;color:var(--text3);text-decoration:underline dotted;white-space:nowrap'>(system: " + item.systemCases + ")</span>"
+        : "";
       infoDiv.innerHTML =
         "<div class='ipull-loc'>" + item.location + "</div>" +
         "<div class='ipull-pn'>" + item.partNum + fossBadge + noneBadge + "</div>" +
@@ -3031,11 +3088,12 @@ window.invCredLogin = async function() {
         (item.addedAt ? "<div style='font-size:10px;color:var(--text3);margin-top:2px'>Added " + invFmtStamp(item.addedAt) + (item.grabbedAt ? " &nbsp;\u00b7&nbsp; Grabbed " + invFmtStamp(item.grabbedAt) : "") + "</div>" : "") +
         (item.noneFound
           ? "<div style='font-size:11px;color:var(--red);margin-top:4px;font-weight:600'>Will log 0 cases — management review required</div>"
-          : "<div style='margin-top:6px;display:flex;gap:6px;align-items:center'>" +
+          : "<div style='margin-top:6px;display:flex;gap:6px;align-items:center;flex-wrap:wrap'>" +
               "<input type='number' min='0.1' step='0.5' placeholder='Cases' value='" + (item.cases || '') + "' " +
                 "style='width:70px;padding:4px 8px;border-radius:6px;border:1px solid var(--border);background:var(--bg3);color:var(--text);font-size:13px' " +
                 "onchange='invUpdatePullCases(" + i + ", this.value)'>" +
               "<span style='font-size:11px;color:var(--text3)'>cases</span>" +
+              sysCasesHtml +
               "<button onclick='invMarkNoneFound(" + i + ")' style='margin-left:4px;font-size:11px;font-weight:700;padding:4px 10px;border-radius:6px;border:1.5px solid var(--red);background:var(--red-bg);color:var(--red);cursor:pointer;font-family:var(--sans)'>None Found</button>" +
             "</div>");
 
