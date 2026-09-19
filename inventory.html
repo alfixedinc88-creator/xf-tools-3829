@@ -47,6 +47,16 @@ var INV_CRED_USER  = null;
 try { INV_CRED_USER = JSON.parse(localStorage.getItem('xf_cred_user') || 'null'); } catch(e) {}
 function backToLauncher() { window.location.href = 'index.html'; }
 function launchApp(app)   { window.location.href = app + '.html'; }
+function invSignOut() {
+  // Deliberately does NOT touch the saved Pull List (still in progress
+  // work shouldn't vanish just because someone signs out) — only clears
+  // the login credentials, then reloads so the login gate shows fresh,
+  // exactly like a first visit. Works the same whether they're about to
+  // sign back in as themselves or hand the device to someone else.
+  localStorage.removeItem('xf_cred_token');
+  localStorage.removeItem('xf_cred_user');
+  window.location.reload();
+}
 function showToast(msg) {
   var t = document.getElementById('xf-toast');
   if (!t) {
@@ -268,6 +278,8 @@ window.invCredLogin = async function() {
 
 <div class="itopbar">
   <div class="itopbar-title">📋 Inventory</div>
+  <button class="iback" id="inv-goback-btn" onclick="invGoBack()" style="display:none;margin-left:8px">⬅ Go Back</button>
+  <button class="iback" id="inv-signout-btn" onclick="invSignOut()" style="margin-left:8px">🚪 Sign Out</button>
   <button class="iback" onclick="backToLauncher()">← Apps</button>
 </div>
 
@@ -710,9 +722,22 @@ window.invCredLogin = async function() {
       <button id="skumgr-export-btn" onclick="skumgrExportMasterList()"
         style="padding:6px 14px;border-radius:6px;border:1.5px solid var(--green);background:var(--bg3);color:var(--green);font-size:12px;font-weight:700;cursor:pointer;margin-left:auto">⬇ Export Master List CSV</button>
       <button id="skumgr-merge-btn" onclick="skumgrCheckDuplicates()"
-        style="padding:6px 14px;border-radius:6px;border:1.5px solid var(--orange);background:var(--bg3);color:var(--orange);font-size:12px;font-weight:700;cursor:pointer">\ud83d\udd00 Merge Duplicate Rows</button>
+        style="padding:6px 14px;border-radius:6px;border:1.5px solid var(--orange);background:var(--bg3);color:var(--orange);font-size:12px;font-weight:700;cursor:pointer">🔀 Merge Duplicate Rows</button>
+      <button id="skumgr-backfill-btn" onclick="skumgrCheckBackfill()"
+        style="padding:6px 14px;border-radius:6px;border:1.5px solid var(--purple);background:var(--bg3);color:var(--purple);font-size:12px;font-weight:700;cursor:pointer">🧩 Fill Missing Ea/Case, Price, Vendor</button>
     </div>
     <div id="skumgr-export-status" style="font-size:12px;color:var(--text3);margin-bottom:8px"></div>
+    <!-- Fill Missing Info preview/confirm panel — hidden until checked -->
+    <div id="skumgr-backfill-panel" style="display:none;border:1.5px solid var(--purple);background:#f2effe;border-radius:10px;padding:12px;margin-bottom:12px">
+      <div id="skumgr-backfill-summary" style="font-size:13px;color:var(--text);margin-bottom:10px"></div>
+      <div id="skumgr-backfill-list" style="max-height:220px;overflow-y:auto;margin-bottom:10px;font-size:12px"></div>
+      <div style="display:flex;gap:8px">
+        <button id="skumgr-backfill-confirm-btn" onclick="skumgrExecuteBackfill()"
+          style="padding:8px 16px;background:var(--purple);color:#fff;border:none;border-radius:7px;font-size:13px;font-weight:700;cursor:pointer">Confirm Fill</button>
+        <button onclick="document.getElementById('skumgr-backfill-panel').style.display='none'"
+          style="padding:8px 16px;background:var(--bg3);color:var(--text2);border:1.5px solid var(--border);border-radius:7px;font-size:13px;cursor:pointer">Cancel</button>
+      </div>
+    </div>
     <!-- Merge Duplicates preview/confirm panel — hidden until checked -->
     <div id="skumgr-merge-panel" style="display:none;border:1.5px solid var(--orange);background:var(--orange-bg);border-radius:10px;padding:12px;margin-bottom:12px">
       <div id="skumgr-merge-summary" style="font-size:13px;color:var(--text);margin-bottom:10px"></div>
@@ -720,16 +745,18 @@ window.invCredLogin = async function() {
       <div style="display:flex;gap:8px">
         <button id="skumgr-merge-confirm-btn" onclick="skumgrExecuteMerge()"
           style="padding:8px 16px;background:var(--orange);color:#fff;border:none;border-radius:7px;font-size:13px;font-weight:700;cursor:pointer">Confirm Merge</button>
-        <button onclick="g('skumgr-merge-panel').style.display='none'"
+        <button onclick="document.getElementById('skumgr-merge-panel').style.display='none'"
           style="padding:8px 16px;background:var(--bg3);color:var(--text2);border:1.5px solid var(--border);border-radius:7px;font-size:13px;cursor:pointer">Cancel</button>
       </div>
     </div>
-    <!-- Row edit-history modal — opened by clicking a row's Notes cell -->
-    <div id="skumgr-history-modal" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,.45);z-index:998;align-items:center;justify-content:center;padding:16px">
+    <!-- Row edit-history modal — opened by clicking a row's Notes cell.
+         Clicking the dark backdrop also closes it (event.target check so
+         clicking inside the card itself doesn't). -->
+    <div id="skumgr-history-modal" onclick="if(event.target===this) this.style.display='none'" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,.45);z-index:998;align-items:center;justify-content:center;padding:16px">
       <div style="background:var(--bg2);border-radius:14px;padding:18px;width:100%;max-width:480px;max-height:80vh;overflow-y:auto;box-shadow:0 8px 32px rgba(0,0,0,.18)">
         <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px">
           <div style="font-size:14px;font-weight:700;color:var(--text)" id="skumgr-history-title">Edit History</div>
-          <button onclick="g('skumgr-history-modal').style.display='none'" style="background:none;border:none;color:var(--text3);font-size:22px;cursor:pointer;line-height:1">&times;</button>
+          <button onclick="document.getElementById('skumgr-history-modal').style.display='none'" style="background:none;border:none;color:var(--text3);font-size:22px;cursor:pointer;line-height:1">&times;</button>
         </div>
         <div id="skumgr-history-body" style="font-size:12px"></div>
       </div>
@@ -977,7 +1004,31 @@ window.invCredLogin = async function() {
   }
   // ─────────────────────────────────────────────────────────────────
 
-  window.invSwitchTab = function(tab) {
+  // Tracks which tab was active before the current one, so "Go Back" can
+  // return to wherever they actually were — not a fixed "home" tab. Doesn't
+  // grow unbounded (capped at 20) and only records real navigation (re-
+  // clicking the tab you're already on doesn't count as a move).
+  var invTabHistory  = [];
+  var _invCurrentTab = null;
+
+  function invUpdateGoBackBtn() {
+    var btn = g('inv-goback-btn');
+    if (btn) btn.style.display = invTabHistory.length > 0 ? 'inline-flex' : 'none';
+  }
+
+  window.invGoBack = function() {
+    if (invTabHistory.length === 0) return;
+    var prevTab = invTabHistory.pop();
+    invSwitchTab(prevTab, true);
+  };
+
+  window.invSwitchTab = function(tab, _isGoingBack) {
+    if (!_isGoingBack && _invCurrentTab && _invCurrentTab !== tab) {
+      invTabHistory.push(_invCurrentTab);
+      if (invTabHistory.length > 20) invTabHistory.shift();
+    }
+    _invCurrentTab = tab;
+    invUpdateGoBackBtn();
     // "scan" (Stock In) and "stockout" (Stock Out) share the same
     // underlying panel and logic — only the forced invMode differs. See
     // invSetMode for the Stock In/Out UI split that already existed here.
@@ -4033,6 +4084,59 @@ window.invCredLogin = async function() {
       .catch(function() {
         if (btn) { btn.disabled = false; btn.textContent = 'Confirm Merge'; }
         if (summary) summary.textContent = 'Merge failed \u2014 network error';
+      });
+  };
+
+  // ── Fill Missing Ea/Case, Price, Vendor from a sibling variant ──────────
+  // Same dry-run-then-confirm pattern as Merge Duplicates — this also
+  // changes real records, so nothing executes without seeing the plan first.
+  window.skumgrCheckBackfill = function() {
+    var panel = g('skumgr-backfill-panel');
+    var summary = g('skumgr-backfill-summary');
+    var list = g('skumgr-backfill-list');
+    if (panel) panel.style.display = 'block';
+    if (summary) summary.textContent = 'Checking for missing info\u2026';
+    if (list) list.innerHTML = '';
+    wFetch(W + '/inventory/backfill-variant-info')
+      .then(function(r) { return r.json(); })
+      .then(function(d) {
+        if (!d.ok) { if (summary) summary.textContent = 'Error: ' + (d.error || 'unknown'); return; }
+        if (d.fieldsToFill === 0) {
+          if (summary) summary.textContent = '\u2713 Nothing to fill \u2014 every row either has this info or has no sibling variant with it.';
+          var btn = g('skumgr-backfill-confirm-btn'); if (btn) btn.style.display = 'none';
+          return;
+        }
+        var btn2 = g('skumgr-backfill-confirm-btn'); if (btn2) btn2.style.display = '';
+        if (summary) summary.innerHTML = 'Found <strong>' + d.fieldsToFill + '</strong> field' + (d.fieldsToFill === 1 ? '' : 's') + ' to fill, across <strong>' + d.rowsAffected + '</strong> row' + (d.rowsAffected === 1 ? '' : 's') + '.';
+        if (list) {
+          var fieldLabel = { units_per_case: 'Ea/Case', vendor: 'Vendor', price: 'Price' };
+          list.innerHTML = d.plan.map(function(p) {
+            return '<div style="padding:6px 8px;border-bottom:1px solid var(--border)"><span style="font-family:var(--mono);font-weight:700">' + p.partNum + '</span> \u2014 '
+              + (fieldLabel[p.field] || p.field) + ': ' + (p.oldValue || '(blank)') + ' \u2192 <strong>' + p.newValue + '</strong></div>';
+          }).join('');
+        }
+      })
+      .catch(function() { if (summary) summary.textContent = 'Check failed \u2014 network error'; });
+  };
+
+  window.skumgrExecuteBackfill = function() {
+    var summary = g('skumgr-backfill-summary');
+    var btn = g('skumgr-backfill-confirm-btn');
+    if (btn) { btn.disabled = true; btn.textContent = 'Filling\u2026'; }
+    wFetch(W + '/inventory/backfill-variant-info', { method: 'POST' })
+      .then(function(r) { return r.json(); })
+      .then(function(d) {
+        if (btn) { btn.disabled = false; btn.textContent = 'Confirm Fill'; btn.style.display = 'none'; }
+        if (!d.ok) { if (summary) summary.textContent = 'Fill failed: ' + (d.error || 'unknown'); return; }
+        if (summary) summary.innerHTML = '\u2713 Filled ' + d.fieldsFilled + ' field' + (d.fieldsFilled === 1 ? '' : 's') + ' across ' + d.rowsUpdated + ' row' + (d.rowsUpdated === 1 ? '' : 's') + '.';
+        var list = g('skumgr-backfill-list'); if (list) list.innerHTML = '';
+        invFlash('\u2713 Filled missing info on ' + d.rowsUpdated + ' row(s)', 'success');
+        if (g('skumgr-search-inp') && g('skumgr-search-inp').value.trim()) skumgrSearch();
+        else skumgrAutoLoad();
+      })
+      .catch(function() {
+        if (btn) { btn.disabled = false; btn.textContent = 'Confirm Fill'; }
+        if (summary) summary.textContent = 'Fill failed \u2014 network error';
       });
   };
 
