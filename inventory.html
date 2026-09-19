@@ -737,6 +737,11 @@ window.invCredLogin = async function() {
     <div id="skumgr-export-status" style="font-size:12px;color:var(--text3);margin-bottom:8px"></div>
     <!-- Fill Missing Info preview/confirm panel — hidden until checked -->
     <div id="skumgr-backfill-panel" style="display:none;border:1.5px solid var(--purple);background:#f2effe;border-radius:10px;padding:12px;margin-bottom:12px">
+      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px">
+        <div style="font-size:13px;font-weight:700;color:var(--purple)">Fill Missing Info</div>
+        <button onclick="document.getElementById('skumgr-backfill-panel').style.display='none'"
+          style="background:none;border:none;color:var(--text3);font-size:20px;cursor:pointer;line-height:1;padding:0 4px">&times;</button>
+      </div>
       <div id="skumgr-backfill-summary" style="font-size:13px;color:var(--text);margin-bottom:10px"></div>
       <div id="skumgr-backfill-list" style="max-height:220px;overflow-y:auto;margin-bottom:10px;font-size:12px"></div>
       <div style="display:flex;gap:8px">
@@ -748,6 +753,11 @@ window.invCredLogin = async function() {
     </div>
     <!-- Merge Duplicates preview/confirm panel — hidden until checked -->
     <div id="skumgr-merge-panel" style="display:none;border:1.5px solid var(--orange);background:var(--orange-bg);border-radius:10px;padding:12px;margin-bottom:12px">
+      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px">
+        <div style="font-size:13px;font-weight:700;color:var(--orange)">Merge Duplicate Rows</div>
+        <button onclick="document.getElementById('skumgr-merge-panel').style.display='none'"
+          style="background:none;border:none;color:var(--text3);font-size:20px;cursor:pointer;line-height:1;padding:0 4px">&times;</button>
+      </div>
       <div id="skumgr-merge-summary" style="font-size:13px;color:var(--text);margin-bottom:10px"></div>
       <div id="skumgr-merge-list" style="max-height:220px;overflow-y:auto;margin-bottom:10px;font-size:12px"></div>
       <div style="display:flex;gap:8px">
@@ -789,6 +799,18 @@ window.invCredLogin = async function() {
 </div>
 
 <div class="ipanel" id="inv-panel-history">
+
+  <!-- Full note popup — opened by clicking a row's Notes cell below, since
+       the cell itself is truncated and hover tooltips don't work on touch. -->
+  <div id="hist-note-modal" onclick="if(event.target===this) this.style.display='none'" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,.45);z-index:998;align-items:center;justify-content:center;padding:16px">
+    <div style="background:var(--bg2);border-radius:14px;padding:18px;width:100%;max-width:420px;max-height:70vh;overflow-y:auto;box-shadow:0 8px 32px rgba(0,0,0,.18)">
+      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px">
+        <div style="font-size:14px;font-weight:700;color:var(--text)">Full Note</div>
+        <button onclick="document.getElementById('hist-note-modal').style.display='none'" style="background:none;border:none;color:var(--text3);font-size:22px;cursor:pointer;line-height:1">&times;</button>
+      </div>
+      <div id="hist-note-body" style="font-size:13px;color:var(--text2);white-space:pre-wrap;word-break:break-word"></div>
+    </div>
+  </div>
 
   <!-- Activity Report — totals + per-person breakdown, aggregated
        server-side over EVERY matching row (not capped at 500 like the
@@ -878,16 +900,21 @@ window.invCredLogin = async function() {
           <option value="30">Last 30 days</option>
         </select>
       </div>
-      <div>
+      <div style="position:relative">
         <label style="font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.4px;color:var(--text3);display:block;margin-bottom:3px">Type</label>
-        <select id="hist-type" style="width:100%;padding:8px 10px;border:1.5px solid var(--border);border-radius:8px;font-size:13px;background:var(--bg);color:var(--text)">
-          <option value="ALL">All Types</option>
-          <option value="IN">Stock In</option>
-          <option value="OUT">Stock Out</option>
-          <option value="TRANSFER_OUT">Transfer</option>
-          <option value="AUDIT">Audit</option>
-          <option value="EDIT">Edit</option>
-        </select>
+        <button type="button" id="hist-type-btn" onclick="histToggleTypeDropdown()"
+          style="width:100%;text-align:left;padding:8px 10px;border:1.5px solid var(--border);border-radius:8px;font-size:13px;background:var(--bg);color:var(--text);cursor:pointer;display:flex;justify-content:space-between;align-items:center;box-sizing:border-box">
+          <span id="hist-type-label">All Types</span><span style="color:var(--text3)">\u25be</span>
+        </button>
+        <div id="hist-type-dropdown" style="display:none;position:absolute;top:100%;left:0;right:0;z-index:50;background:var(--bg2);border:1.5px solid var(--border);border-radius:8px;margin-top:4px;padding:10px;box-shadow:0 4px 16px rgba(0,0,0,.15)">
+          <label style="display:flex;align-items:center;gap:6px;font-size:13px;padding:5px 2px;cursor:pointer"><input type="checkbox" class="hist-type-chk" value="IN"> Stock In</label>
+          <label style="display:flex;align-items:center;gap:6px;font-size:13px;padding:5px 2px;cursor:pointer"><input type="checkbox" class="hist-type-chk" value="OUT"> Stock Out</label>
+          <label style="display:flex;align-items:center;gap:6px;font-size:13px;padding:5px 2px;cursor:pointer"><input type="checkbox" class="hist-type-chk" value="TRANSFER_OUT"> Transfer</label>
+          <label style="display:flex;align-items:center;gap:6px;font-size:13px;padding:5px 2px;cursor:pointer"><input type="checkbox" class="hist-type-chk" value="AUDIT"> Audit</label>
+          <label style="display:flex;align-items:center;gap:6px;font-size:13px;padding:5px 2px;cursor:pointer"><input type="checkbox" class="hist-type-chk" value="EDIT"> Edit</label>
+          <button type="button" onclick="histApplyTypeFilter()"
+            style="margin-top:8px;width:100%;padding:7px;background:var(--accent);color:#fff;border:none;border-radius:6px;font-size:12px;font-weight:700;cursor:pointer">Apply</button>
+        </div>
       </div>
       <div>
         <label style="font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.4px;color:var(--text3);display:block;margin-bottom:3px">Status</label>
@@ -3466,6 +3493,16 @@ window.invCredLogin = async function() {
   // from D1 over the full selected period (not the 500-row-capped list
   // below). See inventoryHistorySummary in the worker for exactly how each
   // bucket (Stock In / Stock Out / Transfers / Audits) is defined.
+  // Full note popup — the Notes cell in the list below is truncated with
+  // an ellipsis and a hover tooltip, which doesn't work on touch devices;
+  // clicking it opens this instead so the whole thing is always readable.
+  window.histShowFullNote = function(text) {
+    var body = g('hist-note-body');
+    if (body) body.textContent = text || '(no notes)';
+    var modal = g('hist-note-modal');
+    if (modal) modal.style.display = 'flex';
+  };
+
   window.histLoadReport = function() {
     var sel = (g('hist-report-days') && g('hist-report-days').value) || '1';
     var dateVal = (g('hist-report-date') && g('hist-report-date').value) || '';
@@ -3548,9 +3585,47 @@ window.invCredLogin = async function() {
       });
   };
 
+  // Multi-select Type filter — the button/checkbox list above sets this,
+  // histLoad() reads it. Empty array means "all types" (no filter sent).
+  var _histSelectedTypes = [];
+
+  window.histToggleTypeDropdown = function() {
+    var dd = g('hist-type-dropdown');
+    if (dd) dd.style.display = dd.style.display === 'none' ? 'block' : 'none';
+  };
+
+  function histTypeDisplayName(v) {
+    var map = { IN: 'Stock In', OUT: 'Stock Out', TRANSFER_OUT: 'Transfer', AUDIT: 'Audit', EDIT: 'Edit' };
+    return map[v] || v;
+  }
+
+  window.histApplyTypeFilter = function() {
+    var checked = Array.prototype.slice.call(document.querySelectorAll('.hist-type-chk:checked')).map(function(c) { return c.value; });
+    _histSelectedTypes = checked;
+    var lbl = g('hist-type-label');
+    if (lbl) {
+      lbl.textContent = checked.length === 0
+        ? 'All Types'
+        : checked.length === 1
+          ? histTypeDisplayName(checked[0])
+          : checked.length + ' types selected';
+    }
+    var dd = g('hist-type-dropdown');
+    if (dd) dd.style.display = 'none';
+    histLoad();
+  };
+
+  // Close the Type dropdown when clicking anywhere outside it.
+  document.addEventListener('click', function(e) {
+    var dd = g('hist-type-dropdown');
+    var btn = g('hist-type-btn');
+    if (!dd || dd.style.display === 'none') return;
+    if (dd.contains(e.target) || (btn && btn.contains(e.target))) return;
+    dd.style.display = 'none';
+  });
+
   window.histLoad = function() {
     var days    = (g('hist-days')   && g('hist-days').value)   || '7';
-    var type    = (g('hist-type')   && g('hist-type').value)   || 'ALL';
     var status  = (g('hist-status') && g('hist-status').value) || 'all';
     var part    = (g('hist-part')   && g('hist-part').value.trim()) || '';
     var loc     = (g('hist-loc')    && g('hist-loc').value.trim().toUpperCase()) || '';
@@ -3558,7 +3633,8 @@ window.invCredLogin = async function() {
     var res     = g('hist-results');
     if (res) res.innerHTML = '<div style="padding:16px;color:var(--text3);font-size:13px">Loading…</div>';
 
-    var params = '?days=' + days + '&type=' + encodeURIComponent(type) + '&status=' + status
+    var params = '?days=' + days + '&status=' + status
+      + (_histSelectedTypes.length ? '&types=' + encodeURIComponent(_histSelectedTypes.join(',')) : '')
       + (part ? '&part='     + encodeURIComponent(part) : '')
       + (loc  ? '&location=' + encodeURIComponent(loc)  : '')
       + (init ? '&initials=' + encodeURIComponent(init) : '');
@@ -3651,7 +3727,7 @@ window.invCredLogin = async function() {
         + '<td style="' + td + 'text-align:right;font-family:var(--mono);font-weight:700">' + (r.cases||0) + '</td>'
         + '<td style="' + td + 'font-family:var(--mono);color:var(--text2)">' + (r.initials||'') + '</td>'
         + '<td style="' + td + 'white-space:nowrap"><span style="font-size:10px;font-weight:700;color:' + stCol + '">' + (r.status||'') + '</span></td>'
-        + '<td style="' + td + 'color:var(--text3);max-width:160px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="' + (r.notes||'') + '">' + notes + '</td>'
+        + '<td style="' + td + 'color:var(--text3);max-width:160px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;cursor:pointer;text-decoration:underline dotted" title="Click to see full note" onclick=\'histShowFullNote(' + JSON.stringify(r.notes||'') + ')\'>' + (notes || '\u2014') + '</td>'
         + '<td style="' + td + 'font-family:var(--mono);white-space:nowrap;font-size:11px">' + totalCell + '</td>'
         + '</tr>';
     });
