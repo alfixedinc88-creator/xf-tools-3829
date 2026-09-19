@@ -2400,14 +2400,55 @@ function _psBeep(freq, dur) {
   } catch(e) {}
 }
 
+// ── Shared spoken-alert voice + engine ───────────────────────────────────
+// Both the "No Stock Found" alert below and the double-scan alarm (see
+// psDupeAlarmStart further down) speak through this. getVoices() can come
+// back empty until the browser's 'voiceschanged' event fires (Chrome does
+// this asynchronously), so the female-voice lookup re-runs whenever the
+// voice list changes, not just once at load.
+var _psFemaleVoice = null;
+function _psLoadFemaleVoice() {
+  try {
+    if (!window.speechSynthesis) return;
+    var voices = window.speechSynthesis.getVoices() || [];
+    if (!voices.length) return;
+    var preferredNames = ['female', 'zira', 'samantha', 'victoria', 'karen', 'moira', 'tessa', 'fiona', 'susan', 'google uk english female', 'google us english', 'microsoft zira'];
+    var found = null;
+    for (var i = 0; i < preferredNames.length && !found; i++) {
+      found = voices.find(function(v) { return v.name.toLowerCase().indexOf(preferredNames[i]) !== -1; });
+    }
+    _psFemaleVoice = found || null;
+  } catch(e) {}
+}
+if (window.speechSynthesis) {
+  _psLoadFemaleVoice();
+  window.speechSynthesis.onvoiceschanged = _psLoadFemaleVoice;
+}
+
+// Speaks one phrase — cancels anything already mid-sentence first so
+// repeating alarms never stack/garble, uses the female voice found above
+// when one's available, and raises pitch a bit as a fallback cue even when
+// the browser has no distinct female voice to offer.
+function _psSpeakAlert(text) {
+  try {
+    if (!window.speechSynthesis || !window.SpeechSynthesisUtterance) return;
+    window.speechSynthesis.cancel();
+    var msg = new SpeechSynthesisUtterance(text);
+    msg.rate = 0.95; msg.pitch = 1.3; msg.volume = 1;
+    if (_psFemaleVoice) msg.voice = _psFemaleVoice;
+    window.speechSynthesis.speak(msg);
+  } catch(e) {}
+}
+
 // ── "No Stock Found" alert sound (Picking tab) ───────────────────────────
 // Deliberately different from both _psBeep (the plain single-tone scan
 // confirmation) and the dupe/pick alarm's urgent two-tone wail — a
-// three-note descending chime to catch attention, immediately followed by
-// a spoken confirmation so a picker across the room hears WHAT happened
-// without having to walk over and read the screen. Falls back to just the
-// chime (repeated, so it's still noticeable) if the browser doesn't support
-// speech synthesis.
+// three-note descending chime, immediately followed by a spoken
+// confirmation so a picker across the room hears WHAT happened without
+// having to walk over and read the screen. Repeats (see
+// _psNoStockAlarmStart/Stop) for as long as the Confirm Report screen is
+// up, same "keeps going until someone acts on it" idea as the double-scan
+// alarm below, stopped by _psNostockConfirmAccept/_psNostockConfirmCancel.
 function _psNoStockChime() {
   try {
     var ctx = new (window.AudioContext || window.webkitAudioContext)();
@@ -2426,19 +2467,24 @@ function _psNoStockChime() {
   } catch(e) {}
 }
 
-function _psSpeakNoStockFound() {
-  try {
-    if (!window.speechSynthesis || !window.SpeechSynthesisUtterance) { _psNoStockChime(); return; }
-    window.speechSynthesis.cancel(); // don't stack if one's already mid-sentence
-    var msg = new SpeechSynthesisUtterance('No stock found. Please confirm, and put label on the side to double check. Thank you.');
-    msg.rate = 0.95; msg.pitch = 1; msg.volume = 1;
-    window.speechSynthesis.speak(msg);
-  } catch(e) { _psNoStockChime(); }
+var _psNoStockAlarmInterval = null;
+
+function _psNoStockAlarmCycle() {
+  _psNoStockChime();
+  setTimeout(function() {
+    _psSpeakAlert('No stock found. Please confirm, and put label on the side to double check. Thank you.');
+  }, 650);
 }
 
-function _psNoStockAlertSound() {
-  _psNoStockChime();
-  setTimeout(_psSpeakNoStockFound, 650);
+function _psNoStockAlarmStart() {
+  _psNoStockAlarmCycle();
+  if (_psNoStockAlarmInterval) clearInterval(_psNoStockAlarmInterval);
+  _psNoStockAlarmInterval = setInterval(_psNoStockAlarmCycle, 5000);
+}
+
+function _psNoStockAlarmStop() {
+  if (_psNoStockAlarmInterval) { clearInterval(_psNoStockAlarmInterval); _psNoStockAlarmInterval = null; }
+  if (window.speechSynthesis) window.speechSynthesis.cancel();
 }
 
 // ── Batch close ───────────────────────────────────────
@@ -3955,11 +4001,19 @@ window.psShowDebug = function(kind) {
 
   // ── DUPLICATE SCAN ALARM ──────────────────────────────────────────────
   // Loud, near-continuous siren that keeps repeating until the shipper
-  // taps "OK, Got It". Reuses a single AudioContext across beeps instead
-  // of creating a new one every cycle — browsers cap how many contexts
-  // can exist at once, so a dupe left unacknowledged for a while could
-  // eventually throw and go silent with the old approach.
+  // taps "OK, Got It" (Packing) or "OK, Got It" / "No Inventory" / "Cancel
+  // Label" (Picking) — all of those already funnel through psDupeAlarmStop,
+  // shared by both tabs, so the spoken layer added here stops the same way
+  // with no extra wiring needed. Reuses a single AudioContext across beeps
+  // instead of creating a new one every cycle — browsers cap how many
+  // contexts can exist at once, so a dupe left unacknowledged for a while
+  // could eventually throw and go silent with the old approach. The spoken
+  // phrase repeats on its own slower interval (_psDupeSpeechInterval) so it
+  // doesn't talk over itself mid-sentence every 1.3s like the siren tone
+  // does — uses _psSpeakAlert (girl voice when the browser has one, see the
+  // shared voice picker above).
   var _psDupeAlarmInterval = null;
+  var _psDupeSpeechInterval = null;
   var _psDupeAlarmCtx = null;
 
   function _psDupeGetCtx() {
@@ -3972,10 +4026,15 @@ window.psShowDebug = function(kind) {
 
   function psDupeAlarmStart() {
     psDupeAlarmBeep();
+    _psSpeakAlert('Double scan, please check. Thank you.');
     _psDupeAlarmInterval = setInterval(function() {
       psDupeAlarmBeep();
       if (navigator.vibrate) navigator.vibrate([500,150,500,150,500]);
     }, 1300);
+    if (_psDupeSpeechInterval) clearInterval(_psDupeSpeechInterval);
+    _psDupeSpeechInterval = setInterval(function() {
+      _psSpeakAlert('Double scan, please check. Thank you.');
+    }, 4000);
     if (navigator.vibrate) navigator.vibrate([500,150,500,150,500]);
   }
 
@@ -4002,6 +4061,8 @@ window.psShowDebug = function(kind) {
 
   function psDupeAlarmStop() {
     if (_psDupeAlarmInterval) { clearInterval(_psDupeAlarmInterval); _psDupeAlarmInterval = null; }
+    if (_psDupeSpeechInterval) { clearInterval(_psDupeSpeechInterval); _psDupeSpeechInterval = null; }
+    if (window.speechSynthesis) window.speechSynthesis.cancel();
     if (navigator.vibrate) navigator.vibrate(0);
   }
 
@@ -4749,7 +4810,7 @@ function _psShowNostockConfirmModal(selected, realSel, noStockSel, btn, subEl) {
   // Chime + spoken alert fires as soon as this confirm screen shows a "No
   // Stock Found" block — right when the picker needs to notice it, not
   // after they've already tapped Confirm and moved on.
-  if (noStockSel.length) _psNoStockAlertSound();
+  if (noStockSel.length) _psNoStockAlarmStart();
 }
 
 window.psNostockConfirmModalOpen = function() {
@@ -4758,6 +4819,7 @@ window.psNostockConfirmModalOpen = function() {
 };
 
 window._psNostockConfirmCancel = function() {
+  _psNoStockAlarmStop();
   document.getElementById('ps-nostock-confirm-overlay').style.display = 'none';
   var p = _psNostockPending;
   _psNostockPending = null;
@@ -4765,6 +4827,7 @@ window._psNostockConfirmCancel = function() {
 };
 
 window._psNostockConfirmAccept = function() {
+  _psNoStockAlarmStop();
   var p = _psNostockPending;
   if (!p) return;
   document.getElementById('ps-nostock-confirm-overlay').style.display = 'none';
