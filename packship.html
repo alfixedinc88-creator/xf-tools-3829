@@ -3701,6 +3701,22 @@ function _psRenderOrderLookupCard(o, opts) {
   var addrLine = [o.address1, o.address2].filter(Boolean).join(', ');
   var cityLine  = [o.city, o.shipToState, o.zip].filter(Boolean).join(', ');
 
+  // NEW — "Activity History": every pick/pack/print/stockout/no-stock/
+  // cancellation event ever logged against this tracking, in one place.
+  // Collapsed by default and fetched lazily on first expand (see
+  // psToggleTrackingHistory + GET /ship/tracking-history) — not loaded
+  // eagerly for every card, since Order Lookup can show up to 50 of these
+  // at once and most searches never open it.
+  var histId = 'ps-ol-hist-' + (_psOrderLookupCardSeq++);
+  var histHtml = (o.tracking ? (
+    '<div style="margin-top:10px;padding-top:8px;border-top:1px dashed var(--border);">'
+      + '<div style="cursor:pointer;font-size:12px;font-weight:700;color:var(--accent);user-select:none;" onclick="psToggleTrackingHistory(\'' + o.tracking + '\',\'' + histId + '\')">'
+      +   '📜 Show Activity History — picks, packs, prints, stock issues, cancellations'
+      + '</div>'
+      + '<div id="' + histId + '" style="display:none;margin-top:8px;"></div>'
+    + '</div>'
+  ) : '');
+
   return '<div class="ps-card" style="margin-bottom:12px;">'
     + '<div style="display:flex;align-items:flex-start;justify-content:space-between;gap:12px;flex-wrap:wrap;margin-bottom:8px;">'
     +   '<div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;">'
@@ -3715,8 +3731,70 @@ function _psRenderOrderLookupCard(o, opts) {
     + (cityLine  ? '<div style="font-size:12px;color:var(--text3);margin-bottom:4px;">📍 ' + cityLine  + '</div>' : '')
     + '<div style="font-size:11px;font-family:var(--mono);color:var(--text3);word-break:break-all;">' + (o.tracking || '') + '</div>'
     + itemsHtml
+    + histHtml
     + '</div>';
 }
+
+// Ever-incrementing suffix for the Activity History container id above —
+// _psRenderOrderLookupCard can render many cards on one page (Order Lookup
+// results, the Scan tab's tracking-detail modal, the Cancellation tab's
+// "View Order & Photos" popup), so a plain fixed id would collide the
+// second time any of those renders more than one card.
+var _psOrderLookupCardSeq = 0;
+
+// Renders one GET /ship/tracking-history event list into the same compact
+// timeline markup everywhere psToggleTrackingHistory uses it.
+function _psRenderTrackingHistory(events) {
+  if (!events || !events.length) {
+    return '<div style="font-size:12px;color:var(--text3);font-style:italic;">No activity logged for this tracking yet.</div>';
+  }
+  return '<div style="display:flex;flex-direction:column;gap:8px;">'
+    + events.map(function(e) {
+        return '<div style="display:flex;gap:8px;align-items:flex-start;">'
+          + '<div style="font-size:15px;line-height:1.3;">' + (e.icon || '•') + '</div>'
+          + '<div style="flex:1;min-width:0;">'
+          +   '<div style="font-size:12px;font-weight:700;color:var(--text);">' + (e.label || 'Event') + (e.by ? ' <span style="font-weight:400;color:var(--text2);">— ' + e.by + '</span>' : '') + '</div>'
+          +   '<div style="font-size:11px;font-family:var(--mono);color:var(--text3);">' + (e.at ? psFmtDateTime(e.at) : 'time unknown') + '</div>'
+          +   (e.detail ? '<div style="font-size:12px;color:var(--text2);margin-top:1px;">' + e.detail + '</div>' : '')
+          + '</div>'
+        + '</div>';
+      }).join('')
+    + '</div>';
+}
+
+// Toggles + lazy-loads the Activity History block a card's link points at.
+// Second click (or clicking while it's already loaded) just hides it again
+// without re-fetching — psToggleTrackingHistory doesn't re-request once
+// el.dataset.loaded is set, so re-opening the same card is instant.
+window.psToggleTrackingHistory = async function(tracking, containerId) {
+  var el = document.getElementById(containerId);
+  if (!el) return;
+  var toggle = el.previousElementSibling;
+
+  if (el.style.display === 'block') {
+    el.style.display = 'none';
+    if (toggle) toggle.innerHTML = '📜 Show Activity History — picks, packs, prints, stock issues, cancellations';
+    return;
+  }
+
+  el.style.display = 'block';
+  if (toggle) toggle.innerHTML = '📜 Hide Activity History';
+
+  if (el.dataset.loaded === '1') return; // already fetched once, just re-showing
+
+  el.innerHTML = '<div style="font-size:12px;color:var(--text3);">Loading activity history…</div>';
+  try {
+    var r = await fetch(PS_WORKER + '/ship/tracking-history?tracking=' + encodeURIComponent(tracking), {
+      headers: { 'X-Cred-Token': psCredToken }
+    });
+    var d = await r.json();
+    if (!d.ok) { el.innerHTML = '<div style="font-size:12px;color:var(--err,#c0392b);">Could not load history — ' + (d.error || 'unknown error') + '</div>'; return; }
+    el.innerHTML = _psRenderTrackingHistory(d.events);
+    el.dataset.loaded = '1';
+  } catch(e) {
+    el.innerHTML = '<div style="font-size:12px;color:var(--err,#c0392b);">Request failed — ' + e.message + '</div>';
+  }
+};
 
 window.psOrderLookup = async function() {
   var q      = (document.getElementById('ps-ol-input').value || '').trim();
