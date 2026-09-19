@@ -4720,10 +4720,22 @@ window.psFetchNostockCount = function() {
     }).catch(function() {});
 };
 
+// Shared "does this report need someone's attention" check — true for a
+// resolved "Found It" report that either (a) never got auto-corrected in
+// SKU Mgr at all (0 or >1 inventory rows matched, or the write itself
+// failed), or (b) DID get a new row auto-created but only as a best guess,
+// because its Part# family didn't all agree on name/case size/price/vendor
+// (see shipResolveNostock's needsReview) — either way, dismissed the same
+// way via "Mark Fixed" once someone's checked it.
+function _psNostockNeedsAttention(s) {
+  return s.outcome === 'found' && (!s.masterListUpdated || s.needsReview) && !s.fixAcknowledged;
+}
+
 // Separate, orange "⚠ N need fix" indicator next to History — counts
 // resolved "Found It" reports where master_list did NOT end up getting
 // auto-corrected (0 or >1 inventory rows matched, or the write itself
-// failed — see shipResolveNostock's note). Easy to miss buried in a long
+// failed — see shipResolveNostock's note), plus ones that got a best-guess
+// auto-created row worth double-checking. Easy to miss buried in a long
 // History list otherwise, so this surfaces it right on the card and, when
 // clicked, opens History pre-filtered to just those.
 window.psFetchNostockNeedsFixCount = function() {
@@ -4731,7 +4743,7 @@ window.psFetchNostockNeedsFixCount = function() {
     .then(function(r) { return r.json(); })
     .then(function(d) {
       var list = (d && d.nostock) || [];
-      var n = list.filter(function(s) { return s.outcome === 'found' && !s.masterListUpdated && !s.fixAcknowledged; }).length;
+      var n = list.filter(_psNostockNeedsAttention).length;
       var b = document.getElementById('ps-nostock-fix-badge');
       if (!b) return;
       b.textContent = '⚠ ' + n + ' need' + (n === 1 ? 's' : '') + ' fix';
@@ -5141,7 +5153,7 @@ window.psNostockHistorySetFilter = function(f) {
 
 function _psRenderNostockHistoryBody() {
   var list = _psNostockHistoryList;
-  var needsFixList = list.filter(function(s) { return s.status === 'resolved' && s.outcome === 'found' && !s.masterListUpdated && !s.fixAcknowledged; });
+  var needsFixList = list.filter(function(s) { return s.status === 'resolved' && _psNostockNeedsAttention(s); });
   var filtered = _psNostockHistoryFilter === 'needsfix' ? needsFixList : list;
   document.getElementById('ps-nostock-history-modal-sub').textContent = list.length + ' report' + (list.length !== 1 ? 's' : '') + ' total';
   var tabsHtml = '<div style="display:flex;gap:8px;margin-bottom:12px">'
@@ -5183,18 +5195,26 @@ function _psRenderNostockHistoryRow(s) {
       + (s.foundLocation ? ' at ' + s.foundLocation : '')
       + (s.foundPartNum ? ' · Part# ' + s.foundPartNum : '')
       + ' — ' + (s.masterListUpdated
-          ? '<span style="color:var(--green)">Inventory updated' + (s.autoCreated ? ' (new SKU Mgr row auto-created)' : '') + '</span>'
+          ? (s.needsReview && !s.fixAcknowledged
+              ? '<span style="color:var(--orange)">Inventory updated — best guess, please verify' + (s.autoCreated ? ' (new SKU Mgr row auto-created)' : '') + '</span>'
+              : '<span style="color:var(--green)">Inventory updated' + (s.autoCreated ? ' (new SKU Mgr row auto-created)' : '') + '</span>')
           : '<span style="color:var(--orange)">Inventory NOT auto-updated</span>')
       + '</div>'
-      // The specific reason it wasn't auto-updated (persisted found_note) —
-      // "no row matched", "3 rows matched, too ambiguous", or an update
-      // error — so there's a real answer here instead of just "check SKU
-      // Mgr" with no explanation of why. Once someone's fixed it by hand and
-      // hit "Mark Fixed" (see psNostockMarkFixed), show that instead — the
-      // note stays on file (still what happened at resolve time) but the
-      // picker no longer needs to act on it.
-      + (!s.masterListUpdated && s.fixAcknowledged
+      // The specific reason it needs a look (persisted found_note) — "no row
+      // matched", "3 rows matched, too ambiguous", an update error, or (for
+      // needsReview) which family sibling its info was copied from because
+      // the family disagreed — so there's a real answer here instead of just
+      // "check SKU Mgr" with no explanation of why. Once someone's fixed it
+      // by hand (or double-checked a best-guess row) and hit "Mark Fixed"
+      // (see psNostockMarkFixed), show that instead — the note stays on file
+      // (still what happened at resolve time) but the picker no longer needs
+      // to act on it. needsReview is checked ahead of masterListUpdated since
+      // a needsReview row DID get auto-created but still wants a human look.
+      + (s.fixAcknowledged
           ? '<div style="font-size:11px;color:var(--green);margin-top:3px">✓ Marked fixed by ' + (s.fixAckBy || '?') + (s.fixAckAt ? ' · ' + (function(){ try { return new Date(s.fixAckAt).toLocaleString([], {month:'short', day:'numeric', hour:'numeric', minute:'2-digit'}); } catch(e){ return s.fixAckAt; } })() : '') + '</div>'
+        : s.needsReview && s.foundNote
+          ? '<div style="font-size:11px;color:var(--orange);margin-top:3px;padding:6px 8px;background:var(--orange-bg,rgba(230,126,34,.08));border-radius:6px">⚠ ' + s.foundNote + '</div>'
+              + '<button class="ps-btn-sm" onclick="psNostockMarkFixed(' + s.id + ',this)" style="margin-top:6px;color:var(--green);border-color:var(--green)">✓ Mark Fixed</button>'
         : !s.masterListUpdated && s.foundNote
           ? '<div style="font-size:11px;color:var(--orange);margin-top:3px;padding:6px 8px;background:var(--orange-bg,rgba(230,126,34,.08));border-radius:6px">⚠ ' + s.foundNote + '</div>'
               + '<button class="ps-btn-sm" onclick="psNostockMarkFixed(' + s.id + ',this)" style="margin-top:6px;color:var(--green);border-color:var(--green)">✓ Mark Fixed</button>'
