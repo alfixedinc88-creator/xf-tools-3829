@@ -272,8 +272,8 @@ window.invCredLogin = async function() {
 </div>
 
 <div class="itabs">
-  <button class="itab iactive" id="inv-tab-scan" onclick="invSwitchTab('scan')">📦 Stock In</button>
-  <button class="itab" id="inv-tab-stockout" onclick="invSwitchTab('stockout')">📤 Stock Out</button>
+  <button class="itab iactive" id="inv-tab-stockout" onclick="invSwitchTab('stockout')">📤 Stock Out</button>
+  <button class="itab" id="inv-tab-scan" onclick="invSwitchTab('scan')">📦 Stock In</button>
   <button class="itab" id="inv-tab-transfer" onclick="invSwitchTab('transfer')">Transfer</button>
   <button class="itab" id="inv-tab-audit" onclick="invSwitchTab('audit')">🔍 Audit</button>
   <button class="itab" id="inv-tab-review" onclick="invSwitchTab('review')">Review<span class="ibadge" id="inv-pending-badge" style="display:none">0</span></button>
@@ -289,15 +289,15 @@ window.invCredLogin = async function() {
   <div class="icard" style="display:none">
     <div class="icard-label">Mode</div>
     <div class="imode-row">
-      <button class="imode-btn min" id="inv-mode-in" onclick="invSetMode('in')">📦 Stock In</button>
-      <button class="imode-btn" id="inv-mode-out" onclick="invSetMode('out')">📤 Stock Out</button>
+      <button class="imode-btn" id="inv-mode-in" onclick="invSetMode('in')">📦 Stock In</button>
+      <button class="imode-btn min" id="inv-mode-out" onclick="invSetMode('out')">📤 Stock Out</button>
     </div>
   </div>
   <!-- Stock Out destination — For Shelving (restocking a bin/shelf) vs For
        Big Company (an outbound bulk shipment). Only shown in Stock Out
        mode; tags the resulting log entry's notes so History/Review can
        tell the two apart later. Defaults to Shelving. -->
-  <div class="icard" id="inv-stockout-dest-card" style="display:none">
+  <div class="icard" id="inv-stockout-dest-card">
     <div class="icard-label">Stock Out For</div>
     <div class="imode-row">
       <button class="imode-btn min" id="inv-stockoutdest-shelving" onclick="invSetStockOutDest('shelving')">🏬 Shelving</button>
@@ -709,8 +709,31 @@ window.invCredLogin = async function() {
         style="padding:6px 14px;border-radius:6px;border:1.5px solid var(--border);background:var(--bg3);color:var(--text);font-size:12px;font-weight:700;cursor:pointer;margin-left:8px">📦 In Stock Only</button>
       <button id="skumgr-export-btn" onclick="skumgrExportMasterList()"
         style="padding:6px 14px;border-radius:6px;border:1.5px solid var(--green);background:var(--bg3);color:var(--green);font-size:12px;font-weight:700;cursor:pointer;margin-left:auto">⬇ Export Master List CSV</button>
+      <button id="skumgr-merge-btn" onclick="skumgrCheckDuplicates()"
+        style="padding:6px 14px;border-radius:6px;border:1.5px solid var(--orange);background:var(--bg3);color:var(--orange);font-size:12px;font-weight:700;cursor:pointer">\ud83d\udd00 Merge Duplicate Rows</button>
     </div>
     <div id="skumgr-export-status" style="font-size:12px;color:var(--text3);margin-bottom:8px"></div>
+    <!-- Merge Duplicates preview/confirm panel — hidden until checked -->
+    <div id="skumgr-merge-panel" style="display:none;border:1.5px solid var(--orange);background:var(--orange-bg);border-radius:10px;padding:12px;margin-bottom:12px">
+      <div id="skumgr-merge-summary" style="font-size:13px;color:var(--text);margin-bottom:10px"></div>
+      <div id="skumgr-merge-list" style="max-height:220px;overflow-y:auto;margin-bottom:10px;font-size:12px"></div>
+      <div style="display:flex;gap:8px">
+        <button id="skumgr-merge-confirm-btn" onclick="skumgrExecuteMerge()"
+          style="padding:8px 16px;background:var(--orange);color:#fff;border:none;border-radius:7px;font-size:13px;font-weight:700;cursor:pointer">Confirm Merge</button>
+        <button onclick="g('skumgr-merge-panel').style.display='none'"
+          style="padding:8px 16px;background:var(--bg3);color:var(--text2);border:1.5px solid var(--border);border-radius:7px;font-size:13px;cursor:pointer">Cancel</button>
+      </div>
+    </div>
+    <!-- Row edit-history modal — opened by clicking a row's Notes cell -->
+    <div id="skumgr-history-modal" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,.45);z-index:998;align-items:center;justify-content:center;padding:16px">
+      <div style="background:var(--bg2);border-radius:14px;padding:18px;width:100%;max-width:480px;max-height:80vh;overflow-y:auto;box-shadow:0 8px 32px rgba(0,0,0,.18)">
+        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px">
+          <div style="font-size:14px;font-weight:700;color:var(--text)" id="skumgr-history-title">Edit History</div>
+          <button onclick="g('skumgr-history-modal').style.display='none'" style="background:none;border:none;color:var(--text3);font-size:22px;cursor:pointer;line-height:1">&times;</button>
+        </div>
+        <div id="skumgr-history-body" style="font-size:12px"></div>
+      </div>
+    </div>
 
     <!-- Search bar -->
     <div style="display:flex;gap:8px;margin-bottom:10px">
@@ -878,7 +901,7 @@ window.invCredLogin = async function() {
 
 (function() {
   var W = "https://xfitting-lookup.alfixedinc88.workers.dev";
-  var invMode = "in";
+  var invMode = "out"; // Stock Out is now the default landing tab (see invOnLogin, which calls invSwitchTab('stockout') to fully initialize this)
   var invPart = null;
   var invSelLoc = null;
   var invVariantRowInfo = []; // per-row {loc, partNum} for the always-expanded
@@ -2308,6 +2331,14 @@ window.invCredLogin = async function() {
     }
     invFetchPendingCount();
     invFetchStockoutCount();
+    // Land on Stock Out by default — the most common first action when
+    // opening the app. invSwitchTab (not just setting invMode) also runs
+    // every UI side effect that mode change needs (Pull List card, Stock
+    // Out For toggle, submit button label, etc.), so this is the one call
+    // that reliably initializes the whole screen correctly, rather than
+    // trying to keep several pieces of static HTML in sync with a default
+    // that isn't "in" anymore.
+    invSwitchTab('stockout');
   };
 
   window.invFetchPendingCount = function() {
@@ -3767,7 +3798,7 @@ window.invCredLogin = async function() {
         + '<td style="' + td + 'text-align:right;font-family:var(--mono);color:var(--text2)">' + (row.units_per_case||'—') + '</td>'
         + '<td style="' + td + 'text-align:right;font-family:var(--mono);color:var(--text2)">' + (row.price ? '$' + parseFloat(row.price).toFixed(2) : '—') + '</td>'
         + '<td style="' + td + 'color:var(--text2)">' + (row.vendor||'—') + '</td>'
-        + '<td style="' + td + 'color:var(--text3);max-width:120px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">' + (row.prev_notes||'—') + '</td>'
+        + '<td style="' + td + 'color:var(--text3);max-width:120px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;cursor:pointer;text-decoration:underline dotted" title="Click to see edit history" onclick=\'skumgrShowRowHistory(' + JSON.stringify(row.part_num||'') + ',' + JSON.stringify(row.location||'') + ')\'>' + (row.prev_notes||'—') + '</td>'
         + '<td style="' + td + 'white-space:nowrap"><button onclick="skumgrStartEdit(' + globalIdx + ')" style="padding:5px 12px;background:var(--bg3);border:1.5px solid var(--accent);color:var(--accent);border-radius:6px;font-size:11px;font-weight:700;cursor:pointer">✏ Edit</button></td>'
         + '</tr>';
       // Edit row — expands inline below the row
@@ -3942,6 +3973,102 @@ window.invCredLogin = async function() {
   // sheet_row=0 rows that never had a Sheets counterpart) and downloads
   // it as a CSV. This is the full dataset — not the location-only export
   // above, which is scoped for barcode label printing.
+  // ── Merge Duplicate Rows ──────────────────────────────────────────────────
+  // Finds master_list rows that share the exact same Part# + Location (the
+  // same item's quantity accidentally split across two rows, e.g. 10 cases
+  // and 5 cases for the identical spot instead of one row of 15) and
+  // offers to combine them. Always previews first (GET, changes nothing) —
+  // this touches real inventory records, so nothing executes without an
+  // explicit confirm after seeing exactly what would merge.
+  window.skumgrCheckDuplicates = function() {
+    var panel = g('skumgr-merge-panel');
+    var summary = g('skumgr-merge-summary');
+    var list = g('skumgr-merge-list');
+    if (panel) panel.style.display = 'block';
+    if (summary) summary.textContent = 'Checking for duplicates\u2026';
+    if (list) list.innerHTML = '';
+    wFetch(W + '/inventory/merge-duplicates')
+      .then(function(r) { return r.json(); })
+      .then(function(d) {
+        if (!d.ok) { if (summary) summary.textContent = 'Error: ' + (d.error || 'unknown'); return; }
+        _skumgrMergePlanCount = d.duplicateGroups;
+        if (d.duplicateGroups === 0) {
+          if (summary) summary.innerHTML = '\u2713 No duplicate Part#+Location rows found. Total cases: <strong>' + d.totalCasesBefore.toLocaleString() + '</strong>';
+          var btn = g('skumgr-merge-confirm-btn'); if (btn) btn.style.display = 'none';
+          return;
+        }
+        var btn2 = g('skumgr-merge-confirm-btn'); if (btn2) btn2.style.display = '';
+        if (summary) summary.innerHTML = 'Found <strong>' + d.duplicateGroups + '</strong> duplicate group' + (d.duplicateGroups === 1 ? '' : 's') + ' ('
+          + d.rowsToRemove + ' row' + (d.rowsToRemove === 1 ? '' : 's') + ' will be removed).<br>'
+          + 'Total cases before: <strong>' + d.totalCasesBefore.toLocaleString() + '</strong> \u2014 after merging: <strong>' + d.totalCasesAfter.toLocaleString() + '</strong> (unchanged \u2014 merging only combines rows, never changes the actual count).';
+        if (list) {
+          list.innerHTML = d.plan.map(function(p) {
+            return '<div style="padding:6px 8px;border-bottom:1px solid var(--border)"><span style="font-family:var(--mono);font-weight:700">' + p.partNum + '</span> @ ' + p.location
+              + ' \u2014 ' + p.caseValues.join(' + ') + ' = <strong>' + p.newCases + '</strong></div>';
+          }).join('');
+        }
+      })
+      .catch(function() { if (summary) summary.textContent = 'Check failed \u2014 network error'; });
+  };
+  var _skumgrMergePlanCount = 0;
+
+  window.skumgrExecuteMerge = function() {
+    var summary = g('skumgr-merge-summary');
+    var btn = g('skumgr-merge-confirm-btn');
+    if (btn) { btn.disabled = true; btn.textContent = 'Merging\u2026'; }
+    wFetch(W + '/inventory/merge-duplicates', { method: 'POST' })
+      .then(function(r) { return r.json(); })
+      .then(function(d) {
+        if (btn) { btn.disabled = false; btn.textContent = 'Confirm Merge'; btn.style.display = 'none'; }
+        if (!d.ok) { if (summary) summary.textContent = 'Merge failed: ' + (d.error || 'unknown'); return; }
+        if (summary) summary.innerHTML = '\u2713 Merged ' + d.mergedGroups + ' duplicate group' + (d.mergedGroups === 1 ? '' : 's') + '.<br>'
+          + 'Total cases before: <strong>' + d.totalCasesBefore.toLocaleString() + '</strong> \u2014 after: <strong>' + d.totalCasesAfter.toLocaleString() + '</strong> '
+          + (d.totalsMatch ? '<span style="color:var(--green)">\u2713 matches</span>' : '<span style="color:var(--red)">\u26a0 MISMATCH \u2014 please check</span>');
+        var list = g('skumgr-merge-list'); if (list) list.innerHTML = '';
+        invFlash('\u2713 Merged ' + d.mergedGroups + ' duplicate row group(s)', 'success');
+        // Refresh whatever search is currently showing so the merged rows reflect immediately
+        if (g('skumgr-search-inp') && g('skumgr-search-inp').value.trim()) skumgrSearch();
+        else skumgrAutoLoad();
+      })
+      .catch(function() {
+        if (btn) { btn.disabled = false; btn.textContent = 'Confirm Merge'; }
+        if (summary) summary.textContent = 'Merge failed \u2014 network error';
+      });
+  };
+
+  // ── Row edit history (click a row's Notes cell) ─────────────────────────
+  window.skumgrShowRowHistory = function(partNum, location) {
+    var modal = g('skumgr-history-modal');
+    var title = g('skumgr-history-title');
+    var body = g('skumgr-history-body');
+    if (title) title.textContent = 'Edit History \u2014 ' + partNum + ' @ ' + location;
+    if (body) body.innerHTML = '<div style="padding:12px;color:var(--text3)">Loading\u2026</div>';
+    if (modal) modal.style.display = 'flex';
+    wFetch(W + '/inventory/history?days=9999&part=' + encodeURIComponent(partNum) + '&location=' + encodeURIComponent(location))
+      .then(function(r) { return r.json(); })
+      .then(function(d) {
+        var rows = (d && d.rows) || [];
+        if (!body) return;
+        if (rows.length === 0) { body.innerHTML = '<div style="padding:12px;color:var(--text3)">No history found for this row.</div>'; return; }
+        var fmtT = function(iso) {
+          return iso ? new Date(iso).toLocaleString('en-US',{timeZone:'America/New_York',month:'short',day:'numeric',hour:'numeric',minute:'2-digit',hour12:true}) : '';
+        };
+        body.innerHTML = rows.map(function(r) {
+          var typ = (r.type||'').toUpperCase();
+          var color = typ === 'IN' ? 'var(--green)' : typ === 'OUT' ? 'var(--red)' : typ === 'EDIT' ? 'var(--orange)' : 'var(--purple)';
+          return '<div style="padding:8px 0;border-bottom:1px solid var(--border)">'
+            + '<div style="display:flex;justify-content:space-between;align-items:center">'
+            + '<span style="font-weight:700;color:' + color + '">' + typ + ' \u00b7 ' + (r.cases||0) + ' cases</span>'
+            + '<span style="color:var(--text3);font-size:11px">' + fmtT(r.timestamp) + '</span>'
+            + '</div>'
+            + (r.initials ? '<div style="color:var(--text3);font-size:11px;margin-top:2px">by ' + r.initials + '</div>' : '')
+            + (r.notes ? '<div style="color:var(--text2);font-size:11px;margin-top:2px">' + r.notes + '</div>' : '')
+            + '</div>';
+        }).join('');
+      })
+      .catch(function() { if (body) body.innerHTML = '<div style="padding:12px;color:var(--red)">Failed to load history</div>'; });
+  };
+
   window.skumgrExportMasterList = function() {
     var status = g('skumgr-export-status');
     if (status) status.textContent = 'Loading…';
