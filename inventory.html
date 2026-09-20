@@ -469,14 +469,32 @@ window.invCredLogin = async function() {
   <div class="icard" id="inv-pulllist-card" style="display:none">
     <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px">
       <div class="icard-label" style="margin:0">Pull List</div>
-      <button onclick="invClearPullList()" style="background:none;border:none;color:var(--text3);font-size:12px;cursor:pointer;padding:4px 8px">Clear All</button>
+      <div style="display:flex;gap:4px;align-items:center">
+        <span onclick="invShowSavedPullBatches()" style="font-size:12px;color:var(--text3);text-decoration:underline dotted;cursor:pointer;padding:4px 8px">📂 Saved For Later</span>
+        <button onclick="invClearPullList()" style="background:none;border:none;color:var(--text3);font-size:12px;cursor:pointer;padding:4px 8px">Clear All</button>
+      </div>
     </div>
     <div class="ipull-progress" id="inv-pull-progress" style="display:none"></div>
     <div id="inv-pulllist-items"></div>
     <div style="margin-top:12px">
       <div class="ifield" style="margin:0"><label style="font-size:10px">Notes (optional)</label><input id="inv-pull-notes" type="text" placeholder=""></div>
     </div>
-    <button class="isubmit sout" style="margin-top:10px" onclick="invSubmitPullList()">📤 Submit Pull List</button>
+    <!-- Marking Grabbed/None Found now submits that item immediately (see
+         invTogglePullCheck/invMarkNoneFound) — this button only ever shows
+         up if something actually failed to submit and needs retrying. -->
+    <button class="isubmit sout" id="inv-pull-retry-btn" style="margin-top:10px;display:none" onclick="invRetryAllFailedPullItems()">⚠ Retry Failed Submissions</button>
+  </div>
+</div>
+<!-- Saved Pull-List Batches — a shared spot (visible from any device)
+     someone can save their still-ungrabbed items to if they run out of
+     time, and anyone (including themselves, later) can pick back up. -->
+<div id="inv-pull-batches-modal" onclick="if(event.target===this) this.style.display='none'" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,.45);z-index:998;align-items:center;justify-content:center;padding:16px">
+  <div style="background:var(--bg2);border-radius:14px;padding:18px;width:100%;max-width:480px;max-height:80vh;overflow-y:auto;box-shadow:0 8px 32px rgba(0,0,0,.18)">
+    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px">
+      <div style="font-size:14px;font-weight:700;color:var(--text)">Saved For Later</div>
+      <button onclick="document.getElementById('inv-pull-batches-modal').style.display='none'" style="background:none;border:none;color:var(--text3);font-size:22px;cursor:pointer;line-height:1">&times;</button>
+    </div>
+    <div id="inv-pull-batches-body" style="font-size:12px"></div>
   </div>
 </div>
 
@@ -1209,7 +1227,7 @@ window.invCredLogin = async function() {
 
   // Stock Out For — Shelving (restocking a bin) vs Big Company (an
   // outbound bulk shipment). Tags the resulting log entry's notes so
-  // History/Review can tell the two apart later (see invSubmitPullList,
+  // History/Review can tell the two apart later (see invSubmitOnePullItem,
   // invSubmitFoundOnShelf, invSubmitFoundElsewhere for where the tag gets
   // applied). Kept as its own global rather than folded into invMode,
   // since it's a sub-choice within Stock Out, not a third mode.
@@ -3427,7 +3445,8 @@ window.invCredLogin = async function() {
 
     var checkDiv = document.createElement("div");
     checkDiv.className = "ipull-check" + (item.grabbed ? " checked" : "");
-    checkDiv.title = item.grabbed ? "Mark not grabbed" : "Mark as grabbed";
+    checkDiv.title = item.submitted ? "Already submitted" : (item.grabbed ? "Mark not grabbed" : "Mark as grabbed");
+    if (item.submitted) checkDiv.style.cursor = "default";
     checkDiv.onclick = (function(idx) { return function() { invTogglePullCheck(idx); }; })(i);
 
     var infoDiv = document.createElement("div");
@@ -3443,32 +3462,143 @@ window.invCredLogin = async function() {
       ? " <span onclick='invPromptSystemCorrection(" + i + ")' title='System shows " + item.systemCases + " \u2014 tap to correct' "
         + "style='cursor:pointer;font-size:11px;color:var(--text3);text-decoration:underline dotted;white-space:nowrap'>(system: " + item.systemCases + ")</span>"
       : "";
+    // Bottom section branches on submission state now that Grabbed/None
+    // Found auto-submit immediately: still-editable form while ungrabbed,
+    // then a "Submitting…" / done / failed status once it's been acted on
+    // — never both at once, since once submitted the case count already
+    // left the shelf as far as the system's concerned (see
+    // invTogglePullCheck for why un-checking a submitted item is blocked).
+    var statusLine;
+    if (item.submitted) {
+      statusLine = "<div style='font-size:11px;color:var(--green);margin-top:4px;font-weight:600'>\u2713 "
+        + (item.noneFound ? "None Found \u2014 submitted for review" : "Submitted \u2014 " + item.cases + " cases")
+        + "</div>";
+    } else if (item._submitting) {
+      statusLine = "<div style='font-size:11px;color:var(--text3);margin-top:4px;font-weight:600'>Submitting\u2026</div>";
+    } else if (item.submitError) {
+      statusLine = "<div onclick='invRetryPullItem(" + i + ")' style='font-size:11px;color:var(--red);margin-top:4px;font-weight:700;cursor:pointer;text-decoration:underline'>\u26a0 " + item.submitError + " \u2014 tap to retry</div>";
+    } else {
+      statusLine = "<div style='margin-top:6px;display:flex;gap:6px;align-items:center;flex-wrap:wrap'>" +
+          "<input type='number' min='0.1' step='0.5' placeholder='Cases' value='" + (item.cases || '') + "' " +
+            "style='width:70px;padding:4px 8px;border-radius:6px;border:1px solid var(--border);background:var(--bg3);color:var(--text);font-size:13px' " +
+            "onchange='invUpdatePullCases(" + i + ", this.value)'>" +
+          "<span style='font-size:11px;color:var(--text3)'>cases</span>" +
+          sysCasesHtml +
+          "<button onclick='invMarkNoneFound(" + i + ")' style='margin-left:4px;font-size:11px;font-weight:700;padding:4px 10px;border-radius:6px;border:1.5px solid var(--red);background:var(--red-bg);color:var(--red);cursor:pointer;font-family:var(--sans)'>None Found</button>" +
+        "</div>";
+    }
     infoDiv.innerHTML =
       "<div class='ipull-loc'>" + item.location + "</div>" +
       "<div class='ipull-pn'>" + item.partNum + fossBadge + noneBadge + stockoutBadge + "</div>" +
       "<div class='ipull-name'>" + (item.name || '') + "</div>" +
       (item.addedAt ? "<div style='font-size:10px;color:var(--text3);margin-top:2px'>Added " + invFmtStamp(item.addedAt) + (item.grabbedAt ? " &nbsp;\u00b7&nbsp; Grabbed " + invFmtStamp(item.grabbedAt) : "") + "</div>" : "") +
-      (item.noneFound
-        ? "<div style='font-size:11px;color:var(--red);margin-top:4px;font-weight:600'>Will log 0 cases — management review required</div>"
-        : "<div style='margin-top:6px;display:flex;gap:6px;align-items:center;flex-wrap:wrap'>" +
-            "<input type='number' min='0.1' step='0.5' placeholder='Cases' value='" + (item.cases || '') + "' " +
-              "style='width:70px;padding:4px 8px;border-radius:6px;border:1px solid var(--border);background:var(--bg3);color:var(--text);font-size:13px' " +
-              "onchange='invUpdatePullCases(" + i + ", this.value)'>" +
-            "<span style='font-size:11px;color:var(--text3)'>cases</span>" +
-            sysCasesHtml +
-            "<button onclick='invMarkNoneFound(" + i + ")' style='margin-left:4px;font-size:11px;font-weight:700;padding:4px 10px;border-radius:6px;border:1.5px solid var(--red);background:var(--red-bg);color:var(--red);cursor:pointer;font-family:var(--sans)'>None Found</button>" +
-          "</div>");
+      statusLine;
 
     var removeBtn = document.createElement("button");
     removeBtn.innerHTML = "&times;";
-    removeBtn.style.cssText = "background:none;border:none;color:var(--text3);font-size:18px;cursor:pointer;padding:4px;line-height:1";
-    removeBtn.onclick = (function(idx) { return function() { invRemoveFromPullList(idx); }; })(i);
+    if (item.submitted) {
+      // Kept in the DOM (so row spacing doesn't jump) but visually and
+      // functionally inert — once submitted this row IS the record, not
+      // something to remove.
+      removeBtn.style.cssText = "background:none;border:none;color:transparent;font-size:18px;cursor:default;padding:4px;line-height:1";
+    } else {
+      removeBtn.style.cssText = "background:none;border:none;color:var(--text3);font-size:18px;cursor:pointer;padding:4px;line-height:1";
+      removeBtn.onclick = (function(idx) { return function() { invRemoveFromPullList(idx); }; })(i);
+    }
 
     row.appendChild(checkDiv);
     row.appendChild(infoDiv);
     row.appendChild(removeBtn);
     return row;
   }
+
+  // Saves every currently-Ungrabbed item to a shared spot any device can
+  // see (see the pull-batch/* endpoints in the worker) — for when there's
+  // no time left to finish the list and someone else (or the same person,
+  // later) needs to pick it back up. Removes the saved items from THIS
+  // device's list right after, so it's always clear what's actually still
+  // left to do here versus handed off. Grabbed/None Found items are never
+  // touched — those already happened and stay as this device's record.
+  window.invSaveUngrabbedForLater = function() {
+    var toSave = invPullList.filter(function(x) { return !x.grabbed && !x.noneFound; });
+    if (toSave.length === 0) { invFlash('Nothing ungrabbed to save', 'warn'); return; }
+    var savedBy = (INV_CRED_USER && INV_CRED_USER.displayName) || 'OPS';
+    if (!confirm('Save ' + toSave.length + ' ungrabbed item(s) for someone else to pick up? They\u2019ll be removed from your list.')) return;
+    wFetch(W + '/inventory/pull-batch/save', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ items: toSave, savedBy: savedBy })
+    }).then(function(r) { return r.json(); })
+      .then(function(d) {
+        if (!d.ok) { invFlash('Save failed: ' + (d.error || 'unknown'), 'error'); return; }
+        invPullList = invPullList.filter(function(x) { return x.grabbed || x.noneFound; });
+        invSavePullList();
+        invRenderPullList();
+        invFlash('\u2713 Saved ' + toSave.length + ' item(s) for later', 'success');
+      })
+      .catch(function() { invFlash('Save failed \u2014 network error', 'error'); });
+  };
+
+  window.invShowSavedPullBatches = function() {
+    var modal = g('inv-pull-batches-modal');
+    var body = g('inv-pull-batches-body');
+    if (body) body.innerHTML = '<div style="padding:12px;color:var(--text3)">Loading\u2026</div>';
+    if (modal) modal.style.display = 'flex';
+    wFetch(W + '/inventory/pull-batch/list?status=open')
+      .then(function(r) { return r.json(); })
+      .then(function(d) {
+        if (!body) return;
+        var rows = (d && d.batches) || [];
+        if (rows.length === 0) { body.innerHTML = '<div style="padding:12px;color:var(--text3)">Nothing saved right now.</div>'; return; }
+        body.innerHTML = rows.map(function(b) {
+          var when = '';
+          try { when = new Date(b.saved_at).toLocaleString([], {month:'short', day:'numeric', hour:'numeric', minute:'2-digit'}); } catch(e) { when = b.saved_at || ''; }
+          return '<div style="padding:8px 0;border-bottom:1px solid var(--border);display:flex;justify-content:space-between;align-items:center;gap:8px">'
+            + '<div>'
+            + '<div style="font-weight:700">' + b.item_count + ' item' + (b.item_count === 1 ? '' : 's') + '</div>'
+            + '<div style="color:var(--text3);font-size:11px;margin-top:2px">Saved by ' + (b.saved_by || '?') + (when ? ' \u00b7 ' + when : '') + '</div>'
+            + (b.note ? '<div style="color:var(--text2);font-size:11px;margin-top:2px">' + b.note + '</div>' : '')
+            + '</div>'
+            + '<button onclick="invResumePullBatch(' + b.id + ',this)" style="padding:6px 12px;border-radius:7px;border:none;background:var(--accent);color:#fff;font-size:12px;font-weight:700;cursor:pointer;flex-shrink:0">Resume</button>'
+            + '</div>';
+        }).join('');
+      })
+      .catch(function() { if (body) body.innerHTML = '<div style="padding:12px;color:var(--red)">Failed to load</div>'; });
+  };
+
+  window.invResumePullBatch = function(id, btnEl) {
+    if (btnEl) { btnEl.disabled = true; btnEl.textContent = '\u2026'; }
+    var claimedBy = (INV_CRED_USER && INV_CRED_USER.displayName) || 'OPS';
+    wFetch(W + '/inventory/pull-batch/claim', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ id: id, claimedBy: claimedBy })
+    }).then(function(r) { return r.json(); })
+      .then(function(d) {
+        if (!d.ok) {
+          invFlash('Could not resume: ' + (d.error || 'unknown'), 'error');
+          if (btnEl) { btnEl.disabled = false; btnEl.textContent = 'Resume'; }
+          return;
+        }
+        var items = d.items || [];
+        // Merge in, skipping anything already sitting in the current list
+        // (same part+location) rather than creating a duplicate row.
+        var existingKeys = {};
+        invPullList.forEach(function(x) { existingKeys[x.key] = true; });
+        var added = 0;
+        items.forEach(function(item) {
+          if (!existingKeys[item.key]) { invPullList.push(item); added++; }
+        });
+        invSavePullList();
+        invRenderPullList();
+        var modal = g('inv-pull-batches-modal'); if (modal) modal.style.display = 'none';
+        invFlash('\u2713 Resumed ' + added + ' item(s)' + (added < items.length ? ' (' + (items.length - added) + ' already in your list)' : ''), 'success');
+      })
+      .catch(function() {
+        invFlash('Could not resume \u2014 network error', 'error');
+        if (btnEl) { btnEl.disabled = false; btnEl.textContent = 'Resume'; }
+      });
+  };
 
   function invRenderPullList() {
     var el = g("inv-pulllist-items");
@@ -3529,6 +3659,22 @@ window.invCredLogin = async function() {
       header.onclick = (function(k) { return function() { invTogglePullSection(k); }; })(key);
       section.appendChild(header);
 
+      // Ungrabbed only — running out of time to finish the list? Save
+      // everything still ungrabbed to a shared spot any device can see and
+      // pick up later (see invSaveUngrabbedForLater), then it clears out of
+      // this device's Ungrabbed so it's obvious what's actually left to do
+      // here versus handed off.
+      if (key === 'ungrabbed' && indices.length > 0 && open) {
+        var saveBar = document.createElement("div");
+        saveBar.style.cssText = "margin-top:6px";
+        var saveBtn = document.createElement("button");
+        saveBtn.textContent = "\ud83d\udcbe Save All " + indices.length + " for Later";
+        saveBtn.style.cssText = "width:100%;padding:8px;border-radius:7px;border:1.5px solid var(--accent);background:var(--bg3);color:var(--accent);font-size:12px;font-weight:700;cursor:pointer";
+        saveBtn.onclick = invSaveUngrabbedForLater;
+        saveBar.appendChild(saveBtn);
+        section.appendChild(saveBar);
+      }
+
       var body = document.createElement("div");
       body.style.cssText = "margin-top:6px;display:" + (open ? "block" : "none");
       if (indices.length === 0) {
@@ -3543,6 +3689,7 @@ window.invCredLogin = async function() {
     buildSection('ungrabbed', 'Ungrabbed', 'var(--text)', ungrabbedIdx);
     buildSection('grabbed', 'Grabbed', 'var(--green)', grabbedIdx);
     buildSection('nonefound', 'None Found', 'var(--red)', noneFoundIdx);
+    invUpdatePullRetryBtn();
   }
 
   // If this Pull List item came from a Stock Out Report (see
@@ -3575,9 +3722,30 @@ window.invCredLogin = async function() {
 
   window.invTogglePullCheck = function(i) {
     if (!invPullList[i]) return;
+    // Once an item has actually been submitted, this is a done deal —
+    // the case count already left the shelf as far as the system's
+    // concerned, so un-checking here can't undo that. Use the "system:"
+    // correction link instead for an actual mistake.
+    if (invPullList[i].submitted) {
+      invFlash('Already submitted \u2014 use the system count link to correct a mistake', 'warn');
+      return;
+    }
     invPullList[i].grabbed = !invPullList[i].grabbed;
     invPullList[i].grabbedAt = invPullList[i].grabbed ? new Date().toISOString() : null;
-    if (invPullList[i].grabbed) invAutoResolveStockoutIfNeeded(invPullList[i]);
+    if (invPullList[i].grabbed) {
+      if (!invPullList[i].cases || parseFloat(invPullList[i].cases) < 0.1) {
+        invFlash('Enter cases before marking grabbed', 'error');
+        invPullList[i].grabbed = false;
+        invPullList[i].grabbedAt = null;
+        invRenderPullList();
+        return;
+      }
+      invAutoResolveStockoutIfNeeded(invPullList[i]);
+      invSavePullList();
+      invRenderPullList();
+      invSubmitOnePullItem(i); // submits immediately — no separate Submit Pull List step anymore
+      return;
+    }
     invSavePullList();
     invRenderPullList();
   };
@@ -3590,6 +3758,10 @@ window.invCredLogin = async function() {
   };
 
   window.invRemoveFromPullList = function(i) {
+    if (invPullList[i] && invPullList[i].submitted) {
+      invFlash('Already submitted \u2014 this stays as your record of what was done', 'warn');
+      return;
+    }
     invPullList.splice(i, 1);
     invSavePullList();
     invRenderPullList();
@@ -3604,7 +3776,8 @@ window.invCredLogin = async function() {
     invAutoResolveStockoutIfNeeded(invPullList[i]);
     invSavePullList();
     invRenderPullList();
-    invFlash('None Found logged — submit to send for review', 'warn');
+    invSubmitOnePullItem(i); // submits immediately, same as Grabbed
+    invFlash('None Found logged \u2014 sent for review', 'warn');
   };
 
   window.invClearPullList = function() {
@@ -3615,69 +3788,92 @@ window.invCredLogin = async function() {
     invRenderPullList();
   };
 
-  window.invSubmitPullList = function() {
+  // Submits exactly one item the moment it's marked Grabbed or None Found —
+  // replaces the old "fill the whole list, then click Submit Pull List at
+  // the end" flow. The item stays visible afterward (in its Grabbed/None
+  // Found section) as a record of what's actually been done, rather than
+  // disappearing — that's the whole point of not needing a separate
+  // Submit button anymore: check it off and it's already recorded.
+  function invSubmitOnePullItem(i) {
+    var item = invPullList[i];
+    if (!item || item.submitted || item._submitting) return;
+    item._submitting = true;
+    item.submitError = null;
+    invRenderPullList();
+
     var initials = (INV_CRED_USER && INV_CRED_USER.displayName) || "OPS";
-    var notes    = g("inv-pull-notes").value.trim();
-    if (invPullList.length === 0) { invFlash("Pull list is empty", "error"); return; }
-    var missing = invPullList.filter(function(x) { return !x.noneFound && (!x.cases || parseFloat(x.cases) < 0.1); });
-    if (missing.length > 0) { invFlash(missing.length + " item(s) missing case count", "error"); return; }
-    var btn = document.querySelector("#inv-pulllist-card .isubmit");
-    btn.disabled = true; btn.textContent = "Submitting\u2026";
-    var items = invPullList.slice();
-    var idx = 0;
-    function submitNext() {
-      if (idx >= items.length) {
-        invFlash("Pull list submitted \u2713", "success");
-        invPullList = []; invSavePullList(); invRenderPullList();
-        btn.disabled = false; btn.textContent = "\ud83d\udce4 Submit Pull List";
-        g("inv-pull-notes").value = "";
-        return;
-      }
-      var item = items[idx++];
-      var itemNotes = item.noneFound
-        ? ('[NONE FOUND ON SHELF] ' + notes).trim()
-        : item.foundOnShelf
-          ? ('[FOUND ON SHELF] ' + notes).trim()
-          : notes;
-      // Tag which kind of Stock Out this is (Shelving vs Big Company),
-      // so History/Review can tell them apart later.
-      var destTag = invStockOutDest === 'company' ? '[BIG COMPANY] ' : '[SHELVING] ';
-      itemNotes = (destTag + itemNotes).trim();
-      // Use the actual Grabbed moment (or Added, if it was never checked
-      // off) as this entry's log timestamp — so History's Time column shows
-      // when the item was really pulled/added, not just when the whole pull
-      // list happened to get submitted. Falls back to "now" only for older
-      // pull-list items saved before these stamps existed.
-      var entryTs = item.grabbedAt || item.addedAt || new Date().toISOString();
-      wFetch(W + "/inventory/log", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          type: "OUT", partNum: item.partNum, sku: item.sku, name: item.name,
-          location: item.location, cases: item.cases, initials: initials,
-          notes: itemNotes, rowIndex: item.rowIndex, masterRowIndex: item.masterRowIndex,
-          isPlaceholder: false, isNew: false, overwriteLocation: "",
-          clientTimestamp: entryTs,
-          addedAt: item.addedAt || null,
-          grabbedAt: item.grabbedAt || null,
-          noneFound: !!item.noneFound
-        })
-      }).then(function(r) { return r.json(); })
-        .then(function(d) {
-          if (d.ok) { submitNext(); }
-          else { invFlash("Submit failed: " + (d.error || "unknown"), "error"); btn.disabled = false; btn.textContent = "\ud83d\udce4 Submit Pull List"; }
-        })
-        .catch(function(err) {
-          if (isUnauthorized(err)) {
-            idx--;  // rewind so this item retries after reauth
-            invReauth(submitNext, function() { btn.disabled = false; btn.textContent = "\ud83d\udce4 Submit Pull List"; });
-          } else {
-            invFlash("Submit failed", "error"); btn.disabled = false; btn.textContent = "\ud83d\udce4 Submit Pull List";
-          }
-        });
-    }
-    submitNext();
+    var notes = (g("inv-pull-notes") && g("inv-pull-notes").value.trim()) || "";
+    var itemNotes = item.noneFound
+      ? ('[NONE FOUND ON SHELF] ' + notes).trim()
+      : item.foundOnShelf
+        ? ('[FOUND ON SHELF] ' + notes).trim()
+        : notes;
+    var destTag = invStockOutDest === 'company' ? '[BIG COMPANY] ' : '[SHELVING] ';
+    itemNotes = (destTag + itemNotes).trim();
+    var entryTs = item.grabbedAt || item.addedAt || new Date().toISOString();
+
+    wFetch(W + "/inventory/log", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        type: "OUT", partNum: item.partNum, sku: item.sku, name: item.name,
+        location: item.location, cases: item.cases, initials: initials,
+        notes: itemNotes, rowIndex: item.rowIndex, masterRowIndex: item.masterRowIndex,
+        isPlaceholder: false, isNew: false, overwriteLocation: "",
+        clientTimestamp: entryTs,
+        addedAt: item.addedAt || null,
+        grabbedAt: item.grabbedAt || null,
+        noneFound: !!item.noneFound
+      })
+    }).then(function(r) { return r.json(); })
+      .then(function(d) {
+        item._submitting = false;
+        if (d.ok) {
+          item.submitted = true;
+          item.submitError = null;
+        } else {
+          item.submitError = d.error || "Submit failed";
+        }
+        invSavePullList();
+        invRenderPullList();
+        invUpdatePullRetryBtn();
+      })
+      .catch(function(err) {
+        item._submitting = false;
+        if (isUnauthorized(err)) {
+          invReauth(function() { invSubmitOnePullItem(i); }, function() {
+            item.submitError = "Sign-in required \u2014 tap to retry";
+            invRenderPullList();
+            invUpdatePullRetryBtn();
+          });
+        } else {
+          item.submitError = "Network error \u2014 tap to retry";
+          invSavePullList();
+          invRenderPullList();
+          invUpdatePullRetryBtn();
+        }
+      });
+  }
+
+  window.invRetryPullItem = function(i) {
+    if (!invPullList[i]) return;
+    invPullList[i].submitError = null;
+    invSubmitOnePullItem(i);
   };
+
+  window.invRetryAllFailedPullItems = function() {
+    invPullList.forEach(function(item, i) {
+      if (item.submitError && !item.submitted) invSubmitOnePullItem(i);
+    });
+  };
+
+  function invUpdatePullRetryBtn() {
+    var btn = g('inv-pull-retry-btn');
+    if (!btn) return;
+    var failedCount = invPullList.filter(function(x) { return x.submitError && !x.submitted; }).length;
+    btn.style.display = failedCount > 0 ? 'block' : 'none';
+    btn.textContent = '\u26a0 Retry ' + failedCount + ' Failed Submission' + (failedCount === 1 ? '' : 's');
+  }
   // ─────────────────────────────────────────────────────────────────
 
   function invMakeCard(item) {
