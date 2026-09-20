@@ -370,11 +370,17 @@ window.invCredLogin = async function() {
          of every ordinary invLookup so it never lingers on an unrelated
          search. -->
     <div id="inv-grab-banner" style="display:none;background:var(--red-bg);color:var(--red);border-radius:8px;padding:8px 10px;font-size:13px;font-weight:700;margin-bottom:10px"></div>
-    <div style="display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:6px">
-      <div class="iresult-part" id="inv-result-part"></div>
-      <div id="inv-result-sku" style="font-size:11px;font-weight:600;font-family:var(--mono);color:var(--text3);padding-top:3px"></div>
+    <div style="display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:6px;gap:8px">
+      <div style="display:flex;align-items:baseline;gap:8px;flex-wrap:wrap;flex:1;min-width:0">
+        <div class="iresult-part" id="inv-result-part"></div>
+        <div class="iresult-name" id="inv-result-name" style="margin:0"></div>
+      </div>
+      <div style="display:flex;align-items:flex-start;gap:8px;flex-shrink:0">
+        <div id="inv-result-sku" style="font-size:11px;font-weight:600;font-family:var(--mono);color:var(--text3);padding-top:3px"></div>
+        <button type="button" onclick="invCloseResult()" title="Close"
+          style="background:none;border:none;color:var(--text3);font-size:20px;cursor:pointer;line-height:1;padding:0">&times;</button>
+      </div>
     </div>
-    <div class="iresult-name" id="inv-result-name" style="margin-bottom:8px"></div>
     <div style="display:grid;grid-template-columns:1fr 1fr;gap:6px" id="inv-result-upcs">
       <div style="background:var(--bg3);border-radius:6px;padding:8px 10px">
         <div style="font-size:10px;font-weight:700;letter-spacing:.5px;text-transform:uppercase;color:var(--text3);margin-bottom:3px">Inside UPC</div>
@@ -2388,6 +2394,12 @@ window.invCredLogin = async function() {
         });
     }
     doSubmit();
+  };
+
+  window.invCloseResult = function() {
+    // Same as clearing the search entirely — hides the result/location/
+    // detail cards and resets the search box, staying on this same tab.
+    invReset(true);
   };
 
   function invReset(keepMode) {
