@@ -374,7 +374,7 @@ window.invCredLogin = async function() {
     <!-- Filled in as soon as the Part# matches a known item (see
          invQuickAddPrefillUpc) — stays hidden for a genuinely new item,
          since there's no name to show yet. -->
-    <div id="inv-qa-name-display" style="display:none;font-size:13px;color:var(--text2);margin-top:6px;padding:7px 10px;background:var(--bg3);border-radius:7px"></div>
+    <div id="inv-qa-name-display" style="display:none;font-size:13px;color:var(--text2);margin-top:6px;padding:7px 10px;background:var(--bg3);border-radius:7px;align-items:center;gap:8px"><img id="inv-qa-photo" src="" alt="" style="display:none;width:36px;height:36px;object-fit:cover;border-radius:6px;border:1px solid var(--border);flex-shrink:0" onerror="this.style.display='none'"><span id="inv-qa-name-text"></span></div>
 
     <div class="ifield" style="margin-top:10px">
       <label>Location</label>
@@ -439,6 +439,7 @@ window.invCredLogin = async function() {
          search. -->
     <div id="inv-grab-banner" style="display:none;background:var(--red-bg);color:var(--red);border-radius:8px;padding:8px 10px;font-size:13px;font-weight:700;margin-bottom:10px"></div>
     <div style="display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:6px;gap:8px">
+      <img id="inv-result-photo" src="" alt="" style="display:none;width:48px;height:48px;object-fit:cover;border-radius:8px;border:1px solid var(--border);flex-shrink:0" onerror="this.style.display='none'">
       <div style="display:flex;align-items:baseline;gap:8px;flex-wrap:wrap;flex:1;min-width:0">
         <div class="iresult-part" id="inv-result-part"></div>
         <div class="iresult-name" id="inv-result-name" style="margin:0"></div>
@@ -609,8 +610,9 @@ window.invCredLogin = async function() {
     </div>
   </div>
   <div class="icard" id="xfr-result-card" style="display:none">
-    <div style="display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:4px">
-      <div class="iresult-part" id="xfr-result-part"></div>
+    <div style="display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:4px;gap:8px">
+      <img id="xfr-result-photo" src="" alt="" style="display:none;width:44px;height:44px;object-fit:cover;border-radius:8px;border:1px solid var(--border);flex-shrink:0" onerror="this.style.display='none'">
+      <div style="flex:1;min-width:0"><div class="iresult-part" id="xfr-result-part"></div></div>
       <div id="xfr-result-sku" style="font-size:11px;font-weight:600;font-family:var(--mono);color:var(--text3);padding-top:3px"></div>
     </div>
     <div class="iresult-name" id="xfr-result-name"></div>
@@ -760,7 +762,10 @@ window.invCredLogin = async function() {
       <div class="icard-label" style="margin:0">Audit Locations</div>
       <button class="btn btn-secondary btn-sm" onclick="invAuditReset()">&#x2190; Search Again</button>
     </div>
-    <div id="inv-audit-part-info" style="font-family:var(--mono);font-size:14px;font-weight:700;color:var(--text);margin-bottom:10px"></div>
+    <div style="display:flex;align-items:center;gap:8px;margin-bottom:10px">
+      <img id="inv-audit-photo" src="" alt="" style="display:none;width:40px;height:40px;object-fit:cover;border-radius:7px;border:1px solid var(--border);flex-shrink:0" onerror="this.style.display='none'">
+      <div id="inv-audit-part-info" style="font-family:var(--mono);font-size:14px;font-weight:700;color:var(--text)"></div>
+    </div>
     <div id="inv-audit-loc-list"></div>
   </div>
 
@@ -773,6 +778,39 @@ window.invCredLogin = async function() {
       <button class="btn btn-primary btn-sm" onclick="invSavePrefixes()">&#x2713; Save Prefixes</button>
       <button class="btn btn-secondary btn-sm" onclick="invLoadPrefixEditor()">&#x21BA; Reload</button>
       <span id="inv-prefix-status" style="font-size:12px;color:var(--text3)"></span>
+    </div>
+  </div>
+
+  <!-- Product Photos (admin) — one photo per base_sku, shared across
+       every pack-size variant of that item. Since Stock In/Out, Transfer
+       and Audit all pull this same photo through /inventory/lookup,
+       changing it here updates it everywhere at once — that's not a
+       separate sync step, it's just how the one shared field works. -->
+  <div class="icard" id="inv-photo-card" style="margin-bottom:12px">
+    <div class="icard-label">🖼 Product Photos</div>
+    <div style="font-size:12px;color:var(--text3);margin-bottom:10px">Search a Part# or item name, then paste a link to an image (must already be hosted somewhere — e.g. a Shopify product photo URL). One photo per item — it updates on Stock In, Stock Out, Transfer and Audit all at once.</div>
+    <div style="display:flex;gap:6px;margin-bottom:8px">
+      <input id="inv-photo-search-inp" type="text" placeholder="Search Part# or name…" style="flex:1;padding:8px 10px;border:1.5px solid var(--border);border-radius:7px;background:var(--bg);color:var(--text);font-size:13px" onkeydown="if(event.key==='Enter'){event.preventDefault();invPhotoSearch();}">
+      <button class="btn btn-secondary btn-sm" onclick="invPhotoSearch()">Search</button>
+    </div>
+    <div id="inv-photo-search-results"></div>
+  </div>
+  <!-- Edit form for a single item's photo — hidden until one is picked
+       from the search results above. -->
+  <div class="icard" id="inv-photo-edit-card" style="display:none;margin-bottom:12px">
+    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px">
+      <div class="icard-label" style="margin:0" id="inv-photo-edit-title">Edit Photo</div>
+      <button onclick="document.getElementById('inv-photo-edit-card').style.display='none'" style="background:none;border:none;color:var(--text3);font-size:20px;cursor:pointer;line-height:1">&times;</button>
+    </div>
+    <div style="display:flex;gap:10px;align-items:center;margin-bottom:10px">
+      <img id="inv-photo-edit-preview" src="" alt="" style="display:none;width:64px;height:64px;object-fit:cover;border-radius:8px;border:1px solid var(--border)" onerror="this.style.display='none'">
+      <div id="inv-photo-edit-noimg" style="width:64px;height:64px;border-radius:8px;border:1.5px dashed var(--border);display:flex;align-items:center;justify-content:center;color:var(--text3);font-size:10px;text-align:center">No photo</div>
+    </div>
+    <div class="ifield"><label>Image URL</label><input id="inv-photo-edit-url" type="text" placeholder="https://…" onchange="invPhotoUrlPreview()"></div>
+    <div style="display:flex;gap:8px;margin-top:8px">
+      <button class="btn btn-primary btn-sm" onclick="invPhotoSave()">✓ Save Photo</button>
+      <button class="btn btn-secondary btn-sm" onclick="invPhotoRemove()">Remove Photo</button>
+      <span id="inv-photo-edit-status" style="font-size:12px;color:var(--text3)"></span>
     </div>
   </div>
 
@@ -1721,6 +1759,11 @@ window.invCredLogin = async function() {
         g("inv-result-part").textContent = d.isMultiVariant ? d.baseSku : d.partNum;
         g("inv-result-sku").textContent   = d.sku && d.sku !== d.partNum ? d.sku : "";
         g("inv-result-name").textContent  = d.name || "";
+        var photoEl = g("inv-result-photo");
+        if (photoEl) {
+          if (d.photo) { photoEl.src = d.photo; photoEl.style.display = "block"; }
+          else { photoEl.style.display = "none"; photoEl.src = ""; }
+        }
         g("inv-result-inside").textContent  = d.insideUpc  || "—";
         g("inv-result-outside").textContent = d.outsideUpc || "—";
         g("inv-result-upcs").style.display  = (d.insideUpc || d.outsideUpc) ? "grid" : "none";
@@ -2693,17 +2736,29 @@ window.invCredLogin = async function() {
     var partNum = (g("inv-qa-partnum") && g("inv-qa-partnum").value.trim().toUpperCase()) || "";
     var upcField = g("inv-qa-upc");
     var nameDisplay = g("inv-qa-name-display");
-    if (!partNum) { if (nameDisplay) nameDisplay.style.display = "none"; return; }
+    var photoEl = g("inv-qa-photo");
+    if (!partNum) {
+      if (nameDisplay) nameDisplay.style.display = "none";
+      if (photoEl) { photoEl.style.display = "none"; photoEl.src = ""; }
+      return;
+    }
     wFetch(W + "/inventory/lookup?code=" + encodeURIComponent(partNum))
       .then(function(r) { return r.json(); })
       .then(function(d) {
         // Bail if the Part# box has changed since this request went out —
-        // don't show a name/QTY that no longer matches what's typed in.
+        // don't show a name/photo that no longer matches what's typed in.
         var stillSame = (g("inv-qa-partnum") && g("inv-qa-partnum").value.trim().toUpperCase()) === partNum;
         if (!stillSame) return;
-        if (nameDisplay) {
-          if (d && d.name) { nameDisplay.textContent = d.name; nameDisplay.style.display = "block"; }
-          else { nameDisplay.style.display = "none"; }
+        var nameText = g("inv-qa-name-text");
+        if (d && d.name) {
+          if (nameText) nameText.textContent = d.name;
+          if (nameDisplay) nameDisplay.style.display = "flex";
+        } else if (nameDisplay) {
+          nameDisplay.style.display = "none";
+        }
+        if (photoEl) {
+          if (d && d.photo) { photoEl.src = d.photo; photoEl.style.display = "block"; }
+          else { photoEl.style.display = "none"; photoEl.src = ""; }
         }
         if (upcField && !upcField.value) {
           var knownUpc = 0;
@@ -2878,6 +2933,7 @@ window.invCredLogin = async function() {
             g("inv-qa-partnum").value = ""; g("inv-qa-shelf").value = "";
             g("inv-qa-cases").value = ""; g("inv-qa-upc").value = "";
             var nameDisplay = g("inv-qa-name-display"); if (nameDisplay) nameDisplay.style.display = "none";
+            var qaPhotoEl = g("inv-qa-photo"); if (qaPhotoEl) { qaPhotoEl.style.display = "none"; qaPhotoEl.src = ""; }
             invFetchPendingCount();
           } else {
             invFlash("Error: " + (d.error || "unknown"), "error");
@@ -2915,6 +2971,8 @@ window.invCredLogin = async function() {
     g("inv-result-card").style.display  = "none";
     g("inv-loc-card").style.display     = "none";
     g("inv-detail-card").style.display  = "none";
+    var photoEl = g("inv-result-photo");
+    if (photoEl) { photoEl.style.display = "none"; photoEl.src = ""; }
     g("inv-cases").value = ""; g("inv-notes").value = "";
     if (g("inv-units-per-case")) g("inv-units-per-case").value = "";
     g("inv-newloc-inp") && (g("inv-newloc-inp").value = "");
@@ -6277,6 +6335,11 @@ window.invCredLogin = async function() {
         g('xfr-result-part').textContent = d.isMultiVariant ? d.baseSku : d.partNum;
         g('xfr-result-sku').textContent  = d.sku && d.sku !== d.partNum ? d.sku : '';
         g('xfr-result-name').textContent = d.name || '';
+        var xfrPhotoEl = g('xfr-result-photo');
+        if (xfrPhotoEl) {
+          if (d.photo) { xfrPhotoEl.src = d.photo; xfrPhotoEl.style.display = 'block'; }
+          else { xfrPhotoEl.style.display = 'none'; xfrPhotoEl.src = ''; }
+        }
         g('xfr-result-card').style.display = 'block';
         if (d.isMultiVariant && d.variants && d.variants.length > 1) {
           xfrShowVariantPicker(d.variants);
@@ -7086,6 +7149,11 @@ window.invCredLogin = async function() {
     var locs = (data.locations || []);
     invAuditCurrentLocs = locs;
     g('inv-audit-part-info').textContent = data.partNum + (data.name ? ' — ' + data.name : '');
+    var auditPhotoEl = g('inv-audit-photo');
+    if (auditPhotoEl) {
+      if (data.photo) { auditPhotoEl.src = data.photo; auditPhotoEl.style.display = 'block'; }
+      else { auditPhotoEl.style.display = 'none'; auditPhotoEl.src = ''; }
+    }
     g('inv-audit-result-card').style.display = 'block';
     g('inv-audit-search-card').style.display = 'none';
     var list = g('inv-audit-loc-list');
@@ -7344,6 +7412,102 @@ window.invCredLogin = async function() {
         if (st) st.textContent = 'Error: ' + e.message;
         invFlash('Save failed: ' + e.message, 'error');
       });
+  };
+
+  // ── Product Photos (admin) ───────────────────────────────────────────────
+  var invPhotoCurrentSku = null;
+
+  window.invPhotoSearch = function() {
+    var q = (g('inv-photo-search-inp') && g('inv-photo-search-inp').value.trim()) || '';
+    var resultsEl = g('inv-photo-search-results');
+    if (!q || q.length < 2) { invFlash('Type at least 2 characters', 'error'); return; }
+    if (resultsEl) resultsEl.innerHTML = '<div style="padding:8px 0;color:var(--text3);font-size:13px">Searching…</div>';
+    wFetch(W + '/inventory/product-photo-search?q=' + encodeURIComponent(q))
+      .then(function(r) { return r.json(); })
+      .then(function(d) {
+        if (!resultsEl) return;
+        if (!d.ok) { resultsEl.innerHTML = '<div style="padding:8px 0;color:var(--red);font-size:13px">' + (d.error || 'Search failed') + '</div>'; return; }
+        var results = d.results || [];
+        if (results.length === 0) { resultsEl.innerHTML = '<div style="padding:8px 0;color:var(--text3);font-size:13px">No matches.</div>'; return; }
+        resultsEl.innerHTML = results.map(function(r) {
+          var thumb = r.photo
+            ? '<img src="' + r.photo + '" style="width:32px;height:32px;object-fit:cover;border-radius:6px;border:1px solid var(--border);flex-shrink:0" onerror="this.style.display=\'none\'">'
+            : '<div style="width:32px;height:32px;border-radius:6px;border:1.5px dashed var(--border);flex-shrink:0"></div>';
+          return '<div onclick=\'invPhotoPick(' + JSON.stringify(r.baseSku) + ',' + JSON.stringify(r.name || '') + ',' + JSON.stringify(r.photo || '') + ')\' style="display:flex;align-items:center;gap:8px;padding:8px 6px;border-bottom:1px solid var(--border);cursor:pointer">'
+            + thumb
+            + '<div><div style="font-family:var(--mono);font-weight:700;font-size:12px">' + r.baseSku + '</div>'
+            + (r.name ? '<div style="font-size:11px;color:var(--text3)">' + r.name + '</div>' : '')
+            + '</div></div>';
+        }).join('');
+      })
+      .catch(function() { if (resultsEl) resultsEl.innerHTML = '<div style="padding:8px 0;color:var(--red);font-size:13px">Search failed — network error</div>'; });
+  };
+
+  window.invPhotoPick = function(baseSku, name, photo) {
+    invPhotoCurrentSku = baseSku;
+    var title = g('inv-photo-edit-title');
+    if (title) title.textContent = baseSku + (name ? ' — ' + name : '');
+    var urlInp = g('inv-photo-edit-url');
+    if (urlInp) urlInp.value = photo || '';
+    var preview = g('inv-photo-edit-preview');
+    var noimg = g('inv-photo-edit-noimg');
+    if (photo) {
+      if (preview) { preview.src = photo; preview.style.display = 'block'; }
+      if (noimg) noimg.style.display = 'none';
+    } else {
+      if (preview) { preview.style.display = 'none'; preview.src = ''; }
+      if (noimg) noimg.style.display = 'flex';
+    }
+    var status = g('inv-photo-edit-status'); if (status) status.textContent = '';
+    var card = g('inv-photo-edit-card'); if (card) card.style.display = 'block';
+  };
+
+  // Live preview as soon as a URL is pasted/typed in, before saving —
+  // lets an admin confirm it's actually the right image first.
+  window.invPhotoUrlPreview = function() {
+    var url = (g('inv-photo-edit-url') && g('inv-photo-edit-url').value.trim()) || '';
+    var preview = g('inv-photo-edit-preview');
+    var noimg = g('inv-photo-edit-noimg');
+    if (url) {
+      if (preview) { preview.src = url; preview.style.display = 'block'; }
+      if (noimg) noimg.style.display = 'none';
+    } else {
+      if (preview) { preview.style.display = 'none'; preview.src = ''; }
+      if (noimg) noimg.style.display = 'flex';
+    }
+  };
+
+  window.invPhotoSave = function() {
+    if (!invPhotoCurrentSku) return;
+    var url = (g('inv-photo-edit-url') && g('inv-photo-edit-url').value.trim()) || '';
+    var status = g('inv-photo-edit-status');
+    if (status) status.textContent = 'Saving…';
+    var editedBy = (INV_CRED_USER && INV_CRED_USER.displayName) || 'OPS';
+    wFetch(W + '/inventory/product-photo', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ baseSku: invPhotoCurrentSku, imageUrl: url, editedBy: editedBy })
+    }).then(function(r) { return r.json(); })
+      .then(function(d) {
+        if (d.ok) {
+          if (status) status.textContent = '✓ Saved';
+          invFlash('✓ Photo updated for ' + invPhotoCurrentSku, 'success');
+        } else {
+          if (status) status.textContent = 'Error: ' + (d.error || 'unknown');
+          invFlash('Save failed: ' + (d.error || 'unknown'), 'error');
+        }
+      })
+      .catch(function() {
+        if (status) status.textContent = 'Network error';
+        invFlash('Save failed — network error', 'error');
+      });
+  };
+
+  window.invPhotoRemove = function() {
+    var urlInp = g('inv-photo-edit-url');
+    if (urlInp) urlInp.value = '';
+    invPhotoUrlPreview();
+    invPhotoSave();
   };
 
   window.invExportLocations = function() {
