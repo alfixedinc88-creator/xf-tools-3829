@@ -1766,6 +1766,9 @@ window.invCredLogin = async function() {
       return;
     }
 
+    var invLocsExtraEls = []; // rows beyond the first 5, held back until "Show more"/"Show all"
+    var INV_LOCS_VISIBLE = 5;
+
     locs.forEach(function(loc, i) {
       var el = document.createElement("div");
       el.className = "iloc-opt";
@@ -1816,8 +1819,49 @@ window.invCredLogin = async function() {
           + badge;
         el.onclick = (function(l) { return function() { invPickLocDirect(l); }; })(loc);
       }
-      list.appendChild(el);
+      // Stock Out: only the first 5 rows go in right away — the rest are
+      // held back and revealed via "Show more"/"Show all" below, since
+      // each row here is a full expanded card (cases input + button), and
+      // a long list of those is a lot of scrolling for something that's
+      // usually not needed. Stock In's rows are compact single lines, so
+      // no cutoff there.
+      if (invMode === "out" && i >= INV_LOCS_VISIBLE) {
+        invLocsExtraEls.push(el);
+      } else {
+        list.appendChild(el);
+      }
     });
+
+    if (invMode === "out" && invLocsExtraEls.length > 0) {
+      var moreWrap = document.createElement("div");
+      moreWrap.style.cssText = "margin-top:6px;display:flex;gap:8px";
+      var showMoreBtn = document.createElement("button");
+      showMoreBtn.type = "button";
+      showMoreBtn.textContent = "Show 5 more (" + invLocsExtraEls.length + " left)";
+      showMoreBtn.style.cssText = "flex:1;padding:9px;border-radius:7px;border:1.5px solid var(--border);background:var(--bg3);color:var(--text);font-size:12px;font-weight:700;cursor:pointer";
+      var showAllBtn = document.createElement("button");
+      showAllBtn.type = "button";
+      showAllBtn.textContent = "Show all (" + invLocsExtraEls.length + ")";
+      showAllBtn.style.cssText = showMoreBtn.style.cssText;
+      moreWrap.appendChild(showMoreBtn);
+      moreWrap.appendChild(showAllBtn);
+      list.appendChild(moreWrap);
+
+      showMoreBtn.onclick = function() {
+        invLocsExtraEls.splice(0, 5).forEach(function(el) { list.insertBefore(el, moreWrap); });
+        if (invLocsExtraEls.length === 0) {
+          moreWrap.remove();
+        } else {
+          showMoreBtn.textContent = "Show 5 more (" + invLocsExtraEls.length + " left)";
+          showAllBtn.textContent = "Show all (" + invLocsExtraEls.length + ")";
+        }
+      };
+      showAllBtn.onclick = function() {
+        invLocsExtraEls.forEach(function(el) { list.insertBefore(el, moreWrap); });
+        invLocsExtraEls = [];
+        moreWrap.remove();
+      };
+    }
 
     // Stock Out: zero-case locations with "Found on Shelf?" override —
     // minimized by default (just a clickable summary line) since these are
@@ -3149,7 +3193,7 @@ window.invCredLogin = async function() {
     var item = invPullList[i];
     if (!item || item.systemCases === undefined) return;
     var oldVal = parseFloat(item.systemCases) || 0;
-    var input = window.prompt('System shows ' + oldVal + ' cases at ' + item.location + '.\nWhat do you actually see on the shelf?', oldVal);
+    var input = window.prompt('System shows ' + oldVal + ' cases at ' + item.location + ' (this is the count BEFORE you grab any).\nWhat do you actually see on the shelf right now, before grabbing?', oldVal);
     if (input === null) return; // cancelled
     var newVal = parseFloat(input);
     if (isNaN(newVal) || newVal < 0) { invFlash('Enter a valid number', 'error'); return; }
@@ -3251,6 +3295,17 @@ window.invCredLogin = async function() {
       prog.style.display = "block";
       prog.textContent = checkedCount + " of " + invPullList.length + " grabbed";
       prog.style.color = checkedCount === invPullList.length ? "var(--green)" : "var(--text3)";
+    }
+    // For Shelving (not Big Company), always put "=OLD" variants first —
+    // older/discontinued stock that should get grabbed and worked through
+    // before anything else. Stable sort, so everything else keeps its
+    // existing relative order.
+    if (invStockOutDest === 'shelving') {
+      invPullList.sort(function(a, b) {
+        var aOld = /=OLD$/i.test(a.partNum || '') ? 0 : 1;
+        var bOld = /=OLD$/i.test(b.partNum || '') ? 0 : 1;
+        return aOld - bOld;
+      });
     }
     el.innerHTML = "";
     invPullList.forEach(function(item, i) {
