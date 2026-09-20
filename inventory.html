@@ -470,7 +470,7 @@ window.invCredLogin = async function() {
     <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px">
       <div class="icard-label" style="margin:0">Pull List</div>
       <div style="display:flex;gap:4px;align-items:center">
-        <span onclick="invShowSavedPullBatches()" style="font-size:12px;color:var(--text3);text-decoration:underline dotted;cursor:pointer;padding:4px 8px">📂 Saved For Later</span>
+        <span onclick="invShowSavedPullBatches()" style="font-size:12px;color:var(--text3);text-decoration:underline dotted;cursor:pointer;padding:4px 8px">📂 Saved For Later<span class="ibadge" id="inv-pull-saved-badge" style="display:none;margin-left:4px">0</span></span>
         <button onclick="invClearPullList()" style="background:none;border:none;color:var(--text3);font-size:12px;cursor:pointer;padding:4px 8px">Clear All</button>
       </div>
     </div>
@@ -483,6 +483,18 @@ window.invCredLogin = async function() {
          invTogglePullCheck/invMarkNoneFound) — this button only ever shows
          up if something actually failed to submit and needs retrying. -->
     <button class="isubmit sout" id="inv-pull-retry-btn" style="margin-top:10px;display:none" onclick="invRetryAllFailedPullItems()">⚠ Retry Failed Submissions</button>
+  </div>
+</div>
+<!-- Already in Pull List — shown instead of silently refusing when the
+     same part+location gets added twice. -->
+<div id="inv-dup-pull-modal" onclick="if(event.target===this) invDupPullOk()" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,.45);z-index:999;align-items:center;justify-content:center;padding:16px">
+  <div style="background:var(--bg2);border-radius:14px;padding:20px;width:100%;max-width:340px;box-shadow:0 8px 32px rgba(0,0,0,.18)">
+    <div style="font-size:14px;font-weight:700;color:var(--text);margin-bottom:6px">Already in Pull List</div>
+    <div id="inv-dup-pull-body" style="font-size:13px;color:var(--text2);margin-bottom:16px"></div>
+    <div style="display:flex;gap:8px">
+      <button onclick="invDupPullOk()" style="flex:1;padding:10px;border-radius:8px;border:1.5px solid var(--border);background:var(--bg3);color:var(--text);font-size:13px;font-weight:700;cursor:pointer">OK</button>
+      <button onclick="invDupPullAddMore()" style="flex:1;padding:10px;border-radius:8px;border:none;background:var(--accent);color:#fff;font-size:13px;font-weight:700;cursor:pointer">Add More</button>
+    </div>
   </div>
 </div>
 <!-- Saved Pull-List Batches — a shared spot (visible from any device)
@@ -1117,6 +1129,7 @@ window.invCredLogin = async function() {
     if (scanPanelActive) {
       invSetMode(tab === "stockout" ? "out" : "in");
       invFetchStockoutCount();
+      if (tab === "stockout" && typeof invUpdateSavedBatchCount === 'function') invUpdateSavedBatchCount();
     }
     if (tab === "review") {
       // Always restore correct visibility when switching to review tab
@@ -1702,6 +1715,7 @@ window.invCredLogin = async function() {
     invPart = Object.assign({}, invPart, { partNum: rowInfo.partNum });
     g("inv-result-part").textContent = rowInfo.partNum;
     invPullListPendingCases = cases;
+    invPullListPendingCasesInputEl = ci;
     invPickLocDirect(loc);
     invPullListPendingCases = null;
   };
@@ -2350,6 +2364,12 @@ window.invCredLogin = async function() {
   };
 
   var invPullListPendingCases = null;
+  // The cases input element the pending-cases value above actually came
+  // from — kept so that if invAddToPullList finds this is a duplicate and
+  // the person picks "OK" (don't add), that same input can be reset back
+  // to empty/0, rather than leaving a number sitting there that never
+  // actually got added to anything.
+  var invPullListPendingCasesInputEl = null;
 
   function invPickLocDirect(loc) {
     invSelLoc = loc;
@@ -3251,11 +3271,55 @@ window.invCredLogin = async function() {
     } catch(e) { return ''; }
   }
 
+  var _invDupPullPending = null; // { existingIdx, newCases, inputEl }
+
+  function invShowDupPullModal(existingIdx, newCases, inputEl) {
+    _invDupPullPending = { existingIdx: existingIdx, newCases: newCases, inputEl: inputEl };
+    var existing = invPullList[existingIdx];
+    var body = g('inv-dup-pull-body');
+    if (body) {
+      body.innerHTML = existing.partNum + ' @ ' + existing.location + ' is already in your pull list'
+        + (existing.cases ? ' with <strong>' + existing.cases + '</strong> cases entered' : '') + '.<br><br>'
+        + 'OK \u2014 leave it as is.<br>'
+        + 'Add More \u2014 add your new ' + (newCases || 0) + ' on top of what\u2019s already there.';
+    }
+    var modal = g('inv-dup-pull-modal');
+    if (modal) modal.style.display = 'flex';
+  }
+
+  window.invDupPullOk = function() {
+    var modal = g('inv-dup-pull-modal'); if (modal) modal.style.display = 'none';
+    if (_invDupPullPending && _invDupPullPending.inputEl) {
+      _invDupPullPending.inputEl.value = '0';
+    }
+    _invDupPullPending = null;
+  };
+
+  window.invDupPullAddMore = function() {
+    var modal = g('inv-dup-pull-modal'); if (modal) modal.style.display = 'none';
+    if (_invDupPullPending) {
+      var item = invPullList[_invDupPullPending.existingIdx];
+      if (item) {
+        var oldCases = parseFloat(item.cases) || 0;
+        item.cases = oldCases + (parseFloat(_invDupPullPending.newCases) || 0);
+        invSavePullList();
+        invRenderPullList();
+        invFlash('Updated: ' + item.partNum + ' @ ' + item.location + ' \u2014 now ' + item.cases + ' cases', 'success');
+      }
+      if (_invDupPullPending.inputEl) _invDupPullPending.inputEl.value = '0';
+    }
+    _invDupPullPending = null;
+  };
+
   function invAddToPullList(part, loc) {
     // Check for duplicate
     var key = part.partNum + '|' + loc.location;
-    var exists = invPullList.some(function(x) { return x.key === key; });
-    if (exists) { invFlash("Already in pull list", "warn"); return; }
+    var existingIdx = -1;
+    for (var qi = 0; qi < invPullList.length; qi++) { if (invPullList[qi].key === key) { existingIdx = qi; break; } }
+    if (existingIdx >= 0) {
+      invShowDupPullModal(existingIdx, invPullListPendingCases || 0, invPullListPendingCasesInputEl);
+      return;
+    }
     var preFilled = invPullListPendingCases ? String(invPullListPendingCases) : '';
     invPullList.push({
       key:          key,
@@ -3438,10 +3502,29 @@ window.invCredLogin = async function() {
   // from before: still addresses every handler (check, cases, None Found,
   // remove, system correction) by this item's real index into invPullList,
   // regardless of which section it's currently displayed under.
-  function invBuildPullRow(item, i) {
+  var _invPullSaveSelection = {}; // index -> true, for the Ungrabbed "save for later" picker
+
+  function invBuildPullRow(item, i, showSelectCheckbox) {
     var row = document.createElement("div");
     row.className = "ipull-row" + (item.noneFound ? " ipl-nonefound" : item.grabbed ? " ipl-checked" : "");
     row.id = "ipull-row-" + i;
+
+    // Ungrabbed section only — a separate selection checkbox for choosing
+    // which items to save for later vs keep working on right now. Not the
+    // same thing as the grabbed checkmark next to it.
+    if (showSelectCheckbox) {
+      var selectBox = document.createElement("input");
+      selectBox.type = "checkbox";
+      selectBox.checked = !!_invPullSaveSelection[i];
+      selectBox.title = "Select to save for later";
+      selectBox.style.cssText = "width:18px;height:18px;flex-shrink:0;cursor:pointer;accent-color:var(--accent);margin-right:6px;align-self:center";
+      selectBox.onclick = (function(idx) { return function(e) {
+        if (e.target.checked) _invPullSaveSelection[idx] = true;
+        else delete _invPullSaveSelection[idx];
+        invUpdateSaveSelectedBtn();
+      }; })(i);
+      row.appendChild(selectBox);
+    }
 
     var checkDiv = document.createElement("div");
     checkDiv.className = "ipull-check" + (item.grabbed ? " checked" : "");
@@ -3520,10 +3603,16 @@ window.invCredLogin = async function() {
   // left to do here versus handed off. Grabbed/None Found items are never
   // touched — those already happened and stay as this device's record.
   window.invSaveUngrabbedForLater = function() {
-    var toSave = invPullList.filter(function(x) { return !x.grabbed && !x.noneFound; });
-    if (toSave.length === 0) { invFlash('Nothing ungrabbed to save', 'warn'); return; }
+    var selectedIdx = Object.keys(_invPullSaveSelection).map(Number).filter(function(i) {
+      return invPullList[i] && !invPullList[i].grabbed && !invPullList[i].noneFound;
+    });
+    if (selectedIdx.length === 0) {
+      invFlash('Check off which item(s) to save first', 'error');
+      return;
+    }
+    var toSave = selectedIdx.map(function(i) { return invPullList[i]; });
     var savedBy = (INV_CRED_USER && INV_CRED_USER.displayName) || 'OPS';
-    if (!confirm('Save ' + toSave.length + ' ungrabbed item(s) for someone else to pick up? They\u2019ll be removed from your list.')) return;
+    if (!confirm('Save ' + toSave.length + ' selected item(s) for someone else to pick up? They\u2019ll be removed from your list; anything you didn\u2019t check stays here to keep working on.')) return;
     wFetch(W + '/inventory/pull-batch/save', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -3531,12 +3620,45 @@ window.invCredLogin = async function() {
     }).then(function(r) { return r.json(); })
       .then(function(d) {
         if (!d.ok) { invFlash('Save failed: ' + (d.error || 'unknown'), 'error'); return; }
-        invPullList = invPullList.filter(function(x) { return x.grabbed || x.noneFound; });
+        var selectedSet = {};
+        selectedIdx.forEach(function(i) { selectedSet[i] = true; });
+        invPullList = invPullList.filter(function(x, i) { return !selectedSet[i]; });
+        _invPullSaveSelection = {};
         invSavePullList();
         invRenderPullList();
+        invUpdateSavedBatchCount();
         invFlash('\u2713 Saved ' + toSave.length + ' item(s) for later', 'success');
       })
       .catch(function() { invFlash('Save failed \u2014 network error', 'error'); });
+  };
+
+  window.invToggleSelectAllForSave = function(ungrabbedIndices) {
+    var allSelected = ungrabbedIndices.length > 0 && ungrabbedIndices.every(function(i) { return _invPullSaveSelection[i]; });
+    if (allSelected) {
+      ungrabbedIndices.forEach(function(i) { delete _invPullSaveSelection[i]; });
+    } else {
+      ungrabbedIndices.forEach(function(i) { _invPullSaveSelection[i] = true; });
+    }
+    invRenderPullList();
+  };
+
+  function invUpdateSaveSelectedBtn() {
+    var btn = g('inv-pull-save-selected-btn');
+    if (!btn) return;
+    var n = Object.keys(_invPullSaveSelection).length;
+    btn.textContent = n > 0 ? ('\ud83d\udcbe Save ' + n + ' Selected for Later') : '\ud83d\udcbe Save Selected for Later';
+    btn.disabled = n === 0;
+    btn.style.opacity = n === 0 ? '0.5' : '1';
+  }
+
+  window.invUpdateSavedBatchCount = function() {
+    wFetch(W + '/inventory/pull-batch/list?status=open')
+      .then(function(r) { return r.json(); })
+      .then(function(d) {
+        var n = (d && d.batches) ? d.batches.length : 0;
+        var b = g('inv-pull-saved-badge');
+        if (b) { b.textContent = n; b.style.display = n > 0 ? 'inline-flex' : 'none'; }
+      }).catch(function() {});
   };
 
   window.invShowSavedPullBatches = function() {
@@ -3591,6 +3713,7 @@ window.invCredLogin = async function() {
         });
         invSavePullList();
         invRenderPullList();
+        invUpdateSavedBatchCount();
         var modal = g('inv-pull-batches-modal'); if (modal) modal.style.display = 'none';
         invFlash('\u2713 Resumed ' + added + ' item(s)' + (added < items.length ? ' (' + (items.length - added) + ' already in your list)' : ''), 'success');
       })
@@ -3644,6 +3767,11 @@ window.invCredLogin = async function() {
     ungrabbedIdx.sort(function(a, b) {
       return invPullLocationRank(invPullList[a].location) - invPullLocationRank(invPullList[b].location);
     });
+    // Drop any stale selections — an item that got grabbed/removed since
+    // it was checked for saving shouldn't still count toward "N selected".
+    var ungrabbedSet = {};
+    ungrabbedIdx.forEach(function(i) { ungrabbedSet[i] = true; });
+    Object.keys(_invPullSaveSelection).forEach(function(k) { if (!ungrabbedSet[k]) delete _invPullSaveSelection[k]; });
 
     el.innerHTML = "";
 
@@ -3659,18 +3787,26 @@ window.invCredLogin = async function() {
       header.onclick = (function(k) { return function() { invTogglePullSection(k); }; })(key);
       section.appendChild(header);
 
-      // Ungrabbed only — running out of time to finish the list? Save
-      // everything still ungrabbed to a shared spot any device can see and
-      // pick up later (see invSaveUngrabbedForLater), then it clears out of
-      // this device's Ungrabbed so it's obvious what's actually left to do
-      // here versus handed off.
+      // Ungrabbed only — pick exactly which items to hand off (save for
+      // later) versus keep working on right now. Select All is a
+      // convenience for "actually, all of them" — same result as checking
+      // each individually.
       if (key === 'ungrabbed' && indices.length > 0 && open) {
         var saveBar = document.createElement("div");
-        saveBar.style.cssText = "margin-top:6px";
+        saveBar.style.cssText = "margin-top:6px;display:flex;flex-direction:column;gap:6px";
+        var selectAllRow = document.createElement("label");
+        selectAllRow.style.cssText = "display:flex;align-items:center;gap:6px;font-size:11px;color:var(--text3);cursor:pointer";
+        var allSelected = indices.length > 0 && indices.every(function(i) { return _invPullSaveSelection[i]; });
+        selectAllRow.innerHTML = "<input type='checkbox' " + (allSelected ? "checked" : "") + " style='width:16px;height:16px;cursor:pointer;accent-color:var(--accent)'> Select All (to save for later)";
+        selectAllRow.querySelector("input").onclick = (function(idxList) { return function() { invToggleSelectAllForSave(idxList); }; })(indices);
         var saveBtn = document.createElement("button");
-        saveBtn.textContent = "\ud83d\udcbe Save All " + indices.length + " for Later";
-        saveBtn.style.cssText = "width:100%;padding:8px;border-radius:7px;border:1.5px solid var(--accent);background:var(--bg3);color:var(--accent);font-size:12px;font-weight:700;cursor:pointer";
+        saveBtn.id = "inv-pull-save-selected-btn";
+        var selCount = indices.filter(function(i) { return _invPullSaveSelection[i]; }).length;
+        saveBtn.textContent = selCount > 0 ? ("\ud83d\udcbe Save " + selCount + " Selected for Later") : "\ud83d\udcbe Save Selected for Later";
+        saveBtn.disabled = selCount === 0;
+        saveBtn.style.cssText = "width:100%;padding:8px;border-radius:7px;border:1.5px solid var(--accent);background:var(--bg3);color:var(--accent);font-size:12px;font-weight:700;cursor:pointer;opacity:" + (selCount === 0 ? "0.5" : "1");
         saveBtn.onclick = invSaveUngrabbedForLater;
+        saveBar.appendChild(selectAllRow);
         saveBar.appendChild(saveBtn);
         section.appendChild(saveBar);
       }
@@ -3680,7 +3816,7 @@ window.invCredLogin = async function() {
       if (indices.length === 0) {
         body.innerHTML = "<div style='padding:8px 4px;color:var(--text3);font-size:12px'>None</div>";
       } else {
-        indices.forEach(function(i) { body.appendChild(invBuildPullRow(invPullList[i], i)); });
+        indices.forEach(function(i) { body.appendChild(invBuildPullRow(invPullList[i], i, key === 'ungrabbed')); });
       }
       section.appendChild(body);
       el.appendChild(section);
