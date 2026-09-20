@@ -3836,7 +3836,7 @@ window.invCredLogin = async function() {
 
     var topBarHtml = '<div style="padding-bottom:8px;margin-bottom:6px;border-bottom:1px solid var(--border)">'
       + '<label style="display:flex;align-items:center;gap:6px;font-size:11px;color:var(--text3);cursor:pointer;margin-bottom:6px">'
-      + '<input type="checkbox" ' + (allSelected ? 'checked' : '') + ' onclick="invTogglePullBatchSelectAll(' + JSON.stringify(allFlatKeys) + ')" style="width:16px;height:16px;cursor:pointer;accent-color:' + actionColor + '"> Select All (' + flatItems.length + ' item' + (flatItems.length === 1 ? '' : 's') + ')</label>'
+      + '<input type="checkbox" ' + (allSelected ? 'checked' : '') + ' onclick=\'invTogglePullBatchSelectAll(' + JSON.stringify(allFlatKeys) + ')\' style="width:16px;height:16px;cursor:pointer;accent-color:' + actionColor + '"> Select All (' + flatItems.length + ' item' + (flatItems.length === 1 ? '' : 's') + ')</label>'
       + '<div style="display:flex;gap:6px">'
       + '<button onclick="invConfirmPullBatchAction()" ' + (selCount === 0 ? 'disabled' : '') + ' style="flex:1;padding:8px;border-radius:7px;border:none;background:' + actionColor + ';color:#fff;font-size:12px;font-weight:700;cursor:pointer;opacity:' + (selCount === 0 ? '0.5' : '1') + '">' + actionLabel + (selCount > 0 ? ' ' + selCount : '') + ' Selected</button>'
       + '<button onclick="invSetPullBatchMode(null)" style="padding:8px 14px;border-radius:7px;border:1.5px solid var(--border);background:var(--bg3);color:var(--text2);font-size:12px;font-weight:700;cursor:pointer">Cancel</button>'
@@ -3847,7 +3847,7 @@ window.invCredLogin = async function() {
       var when = '';
       try { when = new Date(fi.savedAt).toLocaleString([], {month:'short', day:'numeric', hour:'numeric', minute:'2-digit'}); } catch(e) {}
       return '<div style="display:flex;gap:8px;align-items:flex-start;padding:8px 0;border-bottom:1px solid var(--border)">'
-        + '<input type="checkbox" ' + (_invPullBatchSelection[flatKey] ? 'checked' : '') + ' onclick="invTogglePullBatchSelect(' + JSON.stringify(flatKey) + ', this.checked)" style="width:18px;height:18px;cursor:pointer;accent-color:' + actionColor + ';margin-top:2px;flex-shrink:0">'
+        + '<input type="checkbox" ' + (_invPullBatchSelection[flatKey] ? 'checked' : '') + ' onclick=\'invTogglePullBatchSelect(' + JSON.stringify(flatKey) + ', this.checked)\' style="width:18px;height:18px;cursor:pointer;accent-color:' + actionColor + ';margin-top:2px;flex-shrink:0">'
         + '<div style="flex:1">'
         + '<div style="font-family:var(--mono);font-weight:700;font-size:12px">' + (fi.partNum || '') + ' @ ' + (fi.location || '') + '</div>'
         + (fi.name ? '<div style="font-size:11px;color:var(--text2)">' + fi.name + '</div>' : '')
