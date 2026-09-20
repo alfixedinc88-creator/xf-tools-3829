@@ -3761,31 +3761,21 @@ window.invCredLogin = async function() {
       body.innerHTML = '<div style="padding:12px;color:var(--text3)">' + (isHistory ? 'Nothing yet.' : 'Nothing saved right now.') + '</div>';
       return;
     }
-    var openIds = rows.filter(function(b) { return b.status === 'open'; }).map(function(b) { return b.id; });
+    var openBatches = rows.filter(function(b) { return b.status === 'open'; });
     var mode = _invPullBatchMode; // null | 'resume' | 'remove'
 
-    // Top bar: either the two trigger buttons (default), or the active
-    // picker's Select All / Confirm / Cancel row.
+    if (!isHistory && mode) {
+      invRenderPullBatchItemPicker(body, openBatches, mode);
+      return;
+    }
+
+    // Default (no picker open) — one summary card per batch, same as before.
     var topBarHtml = '';
-    if (!isHistory && openIds.length > 0) {
-      if (!mode) {
-        topBarHtml = '<div style="display:flex;gap:8px;padding-bottom:8px;margin-bottom:6px;border-bottom:1px solid var(--border)">'
-          + '<button onclick="invSetPullBatchMode(\'resume\')" style="flex:1;padding:8px;border-radius:7px;border:1.5px solid var(--accent);background:var(--bg3);color:var(--accent);font-size:12px;font-weight:700;cursor:pointer">\u25b6 Select to Resume</button>'
-          + '<button onclick="invSetPullBatchMode(\'remove\')" style="flex:1;padding:8px;border-radius:7px;border:1.5px solid var(--red);background:var(--bg3);color:var(--red);font-size:12px;font-weight:700;cursor:pointer">\ud83d\uddd1 Select to Remove</button>'
-          + '</div>';
-      } else {
-        var selCount = openIds.filter(function(id) { return _invPullBatchSelection[id]; }).length;
-        var allSelected = selCount === openIds.length;
-        var actionColor = mode === 'remove' ? 'var(--red)' : 'var(--accent)';
-        var actionLabel = mode === 'remove' ? 'Remove' : 'Resume';
-        topBarHtml = '<div style="padding-bottom:8px;margin-bottom:6px;border-bottom:1px solid var(--border)">'
-          + '<label style="display:flex;align-items:center;gap:6px;font-size:11px;color:var(--text3);cursor:pointer;margin-bottom:6px">'
-          + '<input type="checkbox" ' + (allSelected ? 'checked' : '') + ' onclick="invTogglePullBatchSelectAll(' + JSON.stringify(openIds) + ')" style="width:16px;height:16px;cursor:pointer;accent-color:' + actionColor + '"> Select All</label>'
-          + '<div style="display:flex;gap:6px">'
-          + '<button onclick="invConfirmPullBatchAction()" ' + (selCount === 0 ? 'disabled' : '') + ' style="flex:1;padding:8px;border-radius:7px;border:none;background:' + actionColor + ';color:#fff;font-size:12px;font-weight:700;cursor:pointer;opacity:' + (selCount === 0 ? '0.5' : '1') + '">' + actionLabel + (selCount > 0 ? ' ' + selCount : '') + ' Selected</button>'
-          + '<button onclick="invSetPullBatchMode(null)" style="padding:8px 14px;border-radius:7px;border:1.5px solid var(--border);background:var(--bg3);color:var(--text2);font-size:12px;font-weight:700;cursor:pointer">Cancel</button>'
-          + '</div></div>';
-      }
+    if (!isHistory && openBatches.length > 0) {
+      topBarHtml = '<div style="display:flex;gap:8px;padding-bottom:8px;margin-bottom:6px;border-bottom:1px solid var(--border)">'
+        + '<button onclick="invSetPullBatchMode(\'resume\')" style="flex:1;padding:8px;border-radius:7px;border:1.5px solid var(--accent);background:var(--bg3);color:var(--accent);font-size:12px;font-weight:700;cursor:pointer">\u25b6 Select Items to Resume</button>'
+        + '<button onclick="invSetPullBatchMode(\'remove\')" style="flex:1;padding:8px;border-radius:7px;border:1.5px solid var(--red);background:var(--bg3);color:var(--red);font-size:12px;font-weight:700;cursor:pointer">\ud83d\uddd1 Select Items to Remove</button>'
+        + '</div>';
     }
 
     body.innerHTML = topBarHtml + rows.map(function(b) {
@@ -3801,33 +3791,71 @@ window.invCredLogin = async function() {
         try { removedWhen = new Date(b.removed_at).toLocaleString([], {month:'short', day:'numeric', hour:'numeric', minute:'2-digit'}); } catch(e) {}
         statusLine = '<div style="color:var(--red);font-size:11px;font-weight:700;margin-top:2px">\u2715 Removed by ' + (b.removed_by || '?') + (removedWhen ? ' \u00b7 ' + removedWhen : '') + '</div>';
       }
-      var selectBoxHtml = (b.status === 'open' && mode)
-        ? '<input type="checkbox" ' + (_invPullBatchSelection[b.id] ? 'checked' : '') + ' onclick="invTogglePullBatchSelect(' + b.id + ', this.checked)" style="width:18px;height:18px;cursor:pointer;accent-color:' + (mode === 'remove' ? 'var(--red)' : 'var(--accent)') + ';margin-top:2px;flex-shrink:0">'
-        : '';
-      // Individual one-off buttons only show when no bulk picker is active
-      // — keeps the row uncluttered while a picker's actually open.
-      var individualBtnsHtml = (b.status === 'open' && !mode)
+      var individualBtnsHtml = (b.status === 'open')
         ? '<div style="display:flex;gap:6px;flex-shrink:0">'
-          + '<button onclick="invResumePullBatch(' + b.id + ',this)" style="padding:6px 12px;border-radius:7px;border:none;background:var(--accent);color:#fff;font-size:12px;font-weight:700;cursor:pointer">Resume</button>'
-          + '<button onclick="invRemovePullBatch(' + b.id + ',this)" style="padding:6px 10px;border-radius:7px;border:1.5px solid var(--red);background:var(--bg3);color:var(--red);font-size:12px;font-weight:700;cursor:pointer">Remove</button>'
+          + '<button onclick="invResumePullBatch(' + b.id + ',this)" style="padding:6px 12px;border-radius:7px;border:none;background:var(--accent);color:#fff;font-size:12px;font-weight:700;cursor:pointer">Resume All</button>'
+          + '<button onclick="invRemovePullBatch(' + b.id + ',this)" style="padding:6px 10px;border-radius:7px;border:1.5px solid var(--red);background:var(--bg3);color:var(--red);font-size:12px;font-weight:700;cursor:pointer">Remove All</button>'
           + '</div>'
         : '';
       return '<div style="padding:8px 0;border-bottom:1px solid var(--border)">'
         + '<div style="display:flex;justify-content:space-between;align-items:center;gap:8px">'
-        + '<div style="display:flex;gap:8px;align-items:flex-start">'
-        + selectBoxHtml
         + '<div>'
         + '<div style="font-weight:700">' + b.item_count + ' item' + (b.item_count === 1 ? '' : 's') + '</div>'
         + '<div style="color:var(--text3);font-size:11px;margin-top:2px">Saved by ' + (b.saved_by || '?') + (when ? ' \u00b7 ' + when : '') + '</div>'
         + (b.note ? '<div style="color:var(--text2);font-size:11px;margin-top:2px">' + b.note + '</div>' : '')
         + statusLine
         + '</div>'
-        + '</div>'
         + individualBtnsHtml
         + '</div>'
         + invPullBatchItemsHtml(b.items)
         + '</div>';
     }).join('');
+  }
+
+  // The actual per-item picker — flattens every item out of every open
+  // batch into one checklist (each item tagged with which batch it came
+  // from, so Confirm knows where to pull it back out of), since a single
+  // saved batch can hold several different SKUs and picking "resume the
+  // whole batch" isn't always what's wanted.
+  function invRenderPullBatchItemPicker(body, openBatches, mode) {
+    var flatItems = [];
+    openBatches.forEach(function(b) {
+      (b.items || []).forEach(function(it) {
+        flatItems.push({ batchId: b.id, key: it.key, partNum: it.partNum, location: it.location, cases: it.cases, name: it.name, savedBy: b.saved_by, savedAt: b.saved_at });
+      });
+    });
+    if (flatItems.length === 0) {
+      body.innerHTML = '<div style="padding:12px;color:var(--text3)">Nothing to select.</div>';
+      return;
+    }
+    var actionColor = mode === 'remove' ? 'var(--red)' : 'var(--accent)';
+    var actionLabel = mode === 'remove' ? 'Remove' : 'Resume';
+    var allFlatKeys = flatItems.map(function(fi) { return fi.batchId + '::' + fi.key; });
+    var selCount = allFlatKeys.filter(function(k) { return _invPullBatchSelection[k]; }).length;
+    var allSelected = selCount === allFlatKeys.length;
+
+    var topBarHtml = '<div style="padding-bottom:8px;margin-bottom:6px;border-bottom:1px solid var(--border)">'
+      + '<label style="display:flex;align-items:center;gap:6px;font-size:11px;color:var(--text3);cursor:pointer;margin-bottom:6px">'
+      + '<input type="checkbox" ' + (allSelected ? 'checked' : '') + ' onclick="invTogglePullBatchSelectAll(' + JSON.stringify(allFlatKeys) + ')" style="width:16px;height:16px;cursor:pointer;accent-color:' + actionColor + '"> Select All (' + flatItems.length + ' item' + (flatItems.length === 1 ? '' : 's') + ')</label>'
+      + '<div style="display:flex;gap:6px">'
+      + '<button onclick="invConfirmPullBatchAction()" ' + (selCount === 0 ? 'disabled' : '') + ' style="flex:1;padding:8px;border-radius:7px;border:none;background:' + actionColor + ';color:#fff;font-size:12px;font-weight:700;cursor:pointer;opacity:' + (selCount === 0 ? '0.5' : '1') + '">' + actionLabel + (selCount > 0 ? ' ' + selCount : '') + ' Selected</button>'
+      + '<button onclick="invSetPullBatchMode(null)" style="padding:8px 14px;border-radius:7px;border:1.5px solid var(--border);background:var(--bg3);color:var(--text2);font-size:12px;font-weight:700;cursor:pointer">Cancel</button>'
+      + '</div></div>';
+
+    var itemsHtml = flatItems.map(function(fi) {
+      var flatKey = fi.batchId + '::' + fi.key;
+      var when = '';
+      try { when = new Date(fi.savedAt).toLocaleString([], {month:'short', day:'numeric', hour:'numeric', minute:'2-digit'}); } catch(e) {}
+      return '<div style="display:flex;gap:8px;align-items:flex-start;padding:8px 0;border-bottom:1px solid var(--border)">'
+        + '<input type="checkbox" ' + (_invPullBatchSelection[flatKey] ? 'checked' : '') + ' onclick="invTogglePullBatchSelect(' + JSON.stringify(flatKey) + ', this.checked)" style="width:18px;height:18px;cursor:pointer;accent-color:' + actionColor + ';margin-top:2px;flex-shrink:0">'
+        + '<div style="flex:1">'
+        + '<div style="font-family:var(--mono);font-weight:700;font-size:12px">' + (fi.partNum || '') + ' @ ' + (fi.location || '') + '</div>'
+        + (fi.name ? '<div style="font-size:11px;color:var(--text2)">' + fi.name + '</div>' : '')
+        + '<div style="font-size:11px;color:var(--text3);margin-top:2px">' + (fi.cases || 0) + ' cases \u00b7 saved by ' + (fi.savedBy || '?') + (when ? ' \u00b7 ' + when : '') + '</div>'
+        + '</div></div>';
+    }).join('');
+
+    body.innerHTML = topBarHtml + itemsHtml;
   }
 
   window.invSetPullBatchMode = function(mode) {
@@ -3850,37 +3878,77 @@ window.invCredLogin = async function() {
   };
 
   window.invConfirmPullBatchAction = function() {
-    var ids = Object.keys(_invPullBatchSelection).map(Number);
-    if (ids.length === 0) return;
+    // Selection keys are "batchId::itemKey" — split back into
+    // {batchId, key} pairs the item-level endpoints expect.
+    var flatKeys = Object.keys(_invPullBatchSelection);
+    if (flatKeys.length === 0) return;
+    var picks = flatKeys.map(function(fk) {
+      var idx = fk.indexOf('::');
+      return { batchId: fk.slice(0, idx), key: fk.slice(idx + 2) };
+    });
+
     if (_invPullBatchMode === 'remove') {
-      if (!confirm('Remove ' + ids.length + ' selected batch(es)? Their items will NOT come back into anyone\u2019s Pull List \u2014 only use this to discard them.')) return;
-      Promise.all(ids.map(function(id) { return invRemovePullBatch(id, null, true); }))
-        .then(function() {
+      if (!confirm('Remove ' + picks.length + ' selected item(s)? They will NOT come back into anyone\u2019s Pull List \u2014 only use this to discard them.')) return;
+      wFetch(W + '/inventory/pull-batch/remove-items', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ items: picks, removedBy: (INV_CRED_USER && INV_CRED_USER.displayName) || 'OPS' })
+      }).then(function(r) { return r.json(); })
+        .then(function(d) {
           _invPullBatchMode = null; _invPullBatchSelection = {};
           invUpdateSavedBatchCount();
           invLoadPullBatchesView('open');
-          invFlash('\u2713 Removed ' + ids.length + ' batch(es)', 'success');
+          if (d && d.ok) invFlash('\u2713 Removed ' + (d.removedCount != null ? d.removedCount : picks.length) + ' item(s)', 'success');
+          else invFlash('Could not remove: ' + ((d && d.error) || 'unknown'), 'error');
+        })
+        .catch(function() {
+          invFlash('Could not remove \u2014 network error', 'error');
         });
     } else if (_invPullBatchMode === 'resume') {
-      var totalAdded = 0, totalMerged = 0;
-      var chain = Promise.resolve();
-      ids.forEach(function(id) {
-        chain = chain.then(function() {
-          return invResumePullBatch(id, null, true).then(function(r) {
-            if (r) { totalAdded += r.added || 0; totalMerged += r.merged || 0; }
+      wFetch(W + '/inventory/pull-batch/claim-items', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ items: picks, claimedBy: (INV_CRED_USER && INV_CRED_USER.displayName) || 'OPS' })
+      }).then(function(r) { return r.json(); })
+        .then(function(d) {
+          _invPullBatchMode = null; _invPullBatchSelection = {};
+          if (!d || !d.ok) {
+            invFlash('Could not resume: ' + ((d && d.error) || 'unknown'), 'error');
+            invLoadPullBatchesView('open');
+            return;
+          }
+          var items = d.items || [];
+          // Same merge-into-existing-item logic as a whole-batch resume —
+          // see invResumePullBatch for the full reasoning.
+          var added = 0, merged = 0;
+          items.forEach(function(item) {
+            var idx = -1;
+            for (var qi = 0; qi < invPullList.length; qi++) { if (invPullList[qi].key === item.key) { idx = qi; break; } }
+            var existing = idx >= 0 ? invPullList[idx] : null;
+            if (existing && !existing.grabbed && !existing.noneFound && !existing.submitted) {
+              var addCases = parseFloat(item.cases) || 0;
+              existing.cases = (parseFloat(existing.cases) || 0) + addCases;
+              existing.resumeNotes = existing.resumeNotes || [];
+              existing.resumeNotes.push({ cases: addCases, savedBy: item._batchSavedBy || 'someone', savedAt: item._batchSavedAt || '' });
+              merged++;
+            } else {
+              invPullList.push(item);
+              added++;
+            }
           });
+          invSavePullList();
+          invRenderPullList();
+          invUpdateSavedBatchCount();
+          invLoadPullBatchesView('open');
+          var modal = g('inv-pull-batches-modal'); if (modal) modal.style.display = 'none';
+          var msg = [];
+          if (added)  msg.push(added + ' new item' + (added === 1 ? '' : 's'));
+          if (merged) msg.push(merged + ' merged into what you already had');
+          invFlash('\u2713 Resumed \u2014 ' + (msg.join(', ') || 'nothing to add'), 'success');
+        })
+        .catch(function() {
+          invFlash('Could not resume \u2014 network error', 'error');
         });
-      });
-      chain.then(function() {
-        _invPullBatchMode = null; _invPullBatchSelection = {};
-        invUpdateSavedBatchCount();
-        invLoadPullBatchesView('open');
-        var modal = g('inv-pull-batches-modal'); if (modal) modal.style.display = 'none';
-        var msg = [];
-        if (totalAdded)  msg.push(totalAdded + ' new item' + (totalAdded === 1 ? '' : 's'));
-        if (totalMerged) msg.push(totalMerged + ' merged into what you already had');
-        invFlash('\u2713 Resumed ' + ids.length + ' batch(es) \u2014 ' + (msg.join(', ') || 'nothing to add'), 'success');
-      });
     }
   };
 
