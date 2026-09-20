@@ -1318,6 +1318,19 @@ input[type=checkbox]{width:15px;height:15px;cursor:pointer;accent-color:var(--bl
     <div class="launcher-sub">Internal Tools — Choose an app to continue</div>
     <div style="font-size:11px;color:var(--text3);margin-top:6px;opacity:.7">v1.1.1</div>
 
+    <!-- NEW — New Worker Training (training.html). Uses its own separate
+         Cloudflare worker (xfitting-training) for the "I finished" sign-off,
+         so nothing here depends on the main worker. -->
+    <div class="launcher-section-label">🎓 New Workers — Start Here</div>
+    <div class="launcher-grid">
+      <div class="launcher-card" onclick="window.location.href='training.html'" style="border-color:#f3e6d6">
+        <div class="launcher-card-icon">🎓</div>
+        <div class="launcher-card-title">New Worker Training</div>
+        <div class="launcher-card-desc">Step-by-step Picker guide with photos and app screens. English &amp; Español. Finish this before your first shift.</div>
+        <div style="display:inline-block;margin-top:10px;font-size:10px;font-family:var(--mono);padding:3px 8px;border-radius:4px;background:#f3e6d6;color:#8a5a2b;font-weight:600;letter-spacing:1px">Start Here · All Staff</div>
+      </div>
+    </div>
+
     <div class="launcher-section-label">🏭 Warehouse</div>
     <div class="launcher-grid">
       <div class="launcher-card" onclick="window.location.href='warehouse.html'">
