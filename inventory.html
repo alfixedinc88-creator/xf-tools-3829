@@ -3503,6 +3503,21 @@ window.invCredLogin = async function() {
   // remove, system correction) by this item's real index into invPullList,
   // regardless of which section it's currently displayed under.
   var _invPullSaveSelection = {}; // index -> true, for the Ungrabbed "save for later" picker
+  // Whether the Save For Later picker (checkboxes + Select All + Save/
+  // Cancel) is currently showing. Starts false — normal Ungrabbed view has
+  // no selection checkboxes at all until this is explicitly opened.
+  var invPullSaveModeActive = false;
+
+  window.invOpenSaveForLaterPicker = function() {
+    invPullSaveModeActive = true;
+    invRenderPullList();
+  };
+
+  window.invCloseSaveForLaterPicker = function() {
+    invPullSaveModeActive = false;
+    _invPullSaveSelection = {};
+    invRenderPullList();
+  };
 
   function invBuildPullRow(item, i, showSelectCheckbox) {
     var row = document.createElement("div");
@@ -3624,6 +3639,7 @@ window.invCredLogin = async function() {
         selectedIdx.forEach(function(i) { selectedSet[i] = true; });
         invPullList = invPullList.filter(function(x, i) { return !selectedSet[i]; });
         _invPullSaveSelection = {};
+        invPullSaveModeActive = false; // back to the plain trigger button — done saving
         invSavePullList();
         invRenderPullList();
         invUpdateSavedBatchCount();
@@ -3787,27 +3803,45 @@ window.invCredLogin = async function() {
       header.onclick = (function(k) { return function() { invTogglePullSection(k); }; })(key);
       section.appendChild(header);
 
-      // Ungrabbed only — pick exactly which items to hand off (save for
-      // later) versus keep working on right now. Select All is a
-      // convenience for "actually, all of them" — same result as checking
-      // each individually.
+      // Ungrabbed only — starts as a single unobtrusive trigger button.
+      // Only after tapping it does the actual picker (checkboxes on each
+      // row, Select All, Save/Cancel) show up — asked for specifically so
+      // the normal Ungrabbed view doesn't have selection checkboxes
+      // cluttering every row all the time, only when actually requested.
       if (key === 'ungrabbed' && indices.length > 0 && open) {
         var saveBar = document.createElement("div");
         saveBar.style.cssText = "margin-top:6px;display:flex;flex-direction:column;gap:6px";
-        var selectAllRow = document.createElement("label");
-        selectAllRow.style.cssText = "display:flex;align-items:center;gap:6px;font-size:11px;color:var(--text3);cursor:pointer";
-        var allSelected = indices.length > 0 && indices.every(function(i) { return _invPullSaveSelection[i]; });
-        selectAllRow.innerHTML = "<input type='checkbox' " + (allSelected ? "checked" : "") + " style='width:16px;height:16px;cursor:pointer;accent-color:var(--accent)'> Select All (to save for later)";
-        selectAllRow.querySelector("input").onclick = (function(idxList) { return function() { invToggleSelectAllForSave(idxList); }; })(indices);
-        var saveBtn = document.createElement("button");
-        saveBtn.id = "inv-pull-save-selected-btn";
-        var selCount = indices.filter(function(i) { return _invPullSaveSelection[i]; }).length;
-        saveBtn.textContent = selCount > 0 ? ("\ud83d\udcbe Save " + selCount + " Selected for Later") : "\ud83d\udcbe Save Selected for Later";
-        saveBtn.disabled = selCount === 0;
-        saveBtn.style.cssText = "width:100%;padding:8px;border-radius:7px;border:1.5px solid var(--accent);background:var(--bg3);color:var(--accent);font-size:12px;font-weight:700;cursor:pointer;opacity:" + (selCount === 0 ? "0.5" : "1");
-        saveBtn.onclick = invSaveUngrabbedForLater;
-        saveBar.appendChild(selectAllRow);
-        saveBar.appendChild(saveBtn);
+
+        if (!invPullSaveModeActive) {
+          var openBtn = document.createElement("button");
+          openBtn.textContent = "\ud83d\udcbe Save For Later\u2026";
+          openBtn.style.cssText = "width:100%;padding:8px;border-radius:7px;border:1.5px solid var(--accent);background:var(--bg3);color:var(--accent);font-size:12px;font-weight:700;cursor:pointer";
+          openBtn.onclick = invOpenSaveForLaterPicker;
+          saveBar.appendChild(openBtn);
+        } else {
+          var selectAllRow = document.createElement("label");
+          selectAllRow.style.cssText = "display:flex;align-items:center;gap:6px;font-size:11px;color:var(--text3);cursor:pointer";
+          var allSelected = indices.length > 0 && indices.every(function(i) { return _invPullSaveSelection[i]; });
+          selectAllRow.innerHTML = "<input type='checkbox' " + (allSelected ? "checked" : "") + " style='width:16px;height:16px;cursor:pointer;accent-color:var(--accent)'> Select All";
+          selectAllRow.querySelector("input").onclick = (function(idxList) { return function() { invToggleSelectAllForSave(idxList); }; })(indices);
+          var btnRow = document.createElement("div");
+          btnRow.style.cssText = "display:flex;gap:6px";
+          var saveBtn = document.createElement("button");
+          saveBtn.id = "inv-pull-save-selected-btn";
+          var selCount = indices.filter(function(i) { return _invPullSaveSelection[i]; }).length;
+          saveBtn.textContent = selCount > 0 ? ("\ud83d\udcbe Save " + selCount) : "\ud83d\udcbe Save Selected";
+          saveBtn.disabled = selCount === 0;
+          saveBtn.style.cssText = "flex:1;padding:8px;border-radius:7px;border:1.5px solid var(--accent);background:var(--bg3);color:var(--accent);font-size:12px;font-weight:700;cursor:pointer;opacity:" + (selCount === 0 ? "0.5" : "1");
+          saveBtn.onclick = invSaveUngrabbedForLater;
+          var cancelBtn = document.createElement("button");
+          cancelBtn.textContent = "Cancel";
+          cancelBtn.style.cssText = "padding:8px 14px;border-radius:7px;border:1.5px solid var(--border);background:var(--bg3);color:var(--text2);font-size:12px;font-weight:700;cursor:pointer";
+          cancelBtn.onclick = invCloseSaveForLaterPicker;
+          btnRow.appendChild(saveBtn);
+          btnRow.appendChild(cancelBtn);
+          saveBar.appendChild(selectAllRow);
+          saveBar.appendChild(btnRow);
+        }
         section.appendChild(saveBar);
       }
 
@@ -3816,7 +3850,7 @@ window.invCredLogin = async function() {
       if (indices.length === 0) {
         body.innerHTML = "<div style='padding:8px 4px;color:var(--text3);font-size:12px'>None</div>";
       } else {
-        indices.forEach(function(i) { body.appendChild(invBuildPullRow(invPullList[i], i, key === 'ungrabbed')); });
+        indices.forEach(function(i) { body.appendChild(invBuildPullRow(invPullList[i], i, key === 'ungrabbed' && invPullSaveModeActive)); });
       }
       section.appendChild(body);
       el.appendChild(section);
