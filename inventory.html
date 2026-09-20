@@ -3693,9 +3693,15 @@ window.invCredLogin = async function() {
       }).catch(function() {});
   };
 
+  var _invPullBatchesData = [];    // last-fetched batch list, cached so selecting doesn't refetch from the server
+  var _invPullBatchSelection = {}; // batch id -> true
+  var _invPullBatchMode = null;    // null | 'resume' | 'remove' — which bulk picker (if any) is showing
+
   window.invShowSavedPullBatches = function() {
     var modal = g('inv-pull-batches-modal');
     if (modal) modal.style.display = 'flex';
+    _invPullBatchMode = null;
+    _invPullBatchSelection = {};
     invLoadPullBatchesView('open');
   };
 
@@ -3703,22 +3709,28 @@ window.invCredLogin = async function() {
     if (!items || !items.length) return '';
     return '<div style="margin-top:6px;padding:6px 8px;background:var(--bg3);border-radius:6px">'
       + items.map(function(it) {
-          return '<div style="display:flex;justify-content:space-between;font-family:var(--mono);font-size:11px;padding:2px 0">'
+          return '<div style="padding:2px 0">'
+            + '<div style="display:flex;justify-content:space-between;font-family:var(--mono);font-size:11px">'
             + '<span>' + (it.partNum || '') + ' @ ' + (it.location || '') + '</span>'
             + '<span style="font-weight:700">' + (it.cases || 0) + ' cs</span>'
+            + '</div>'
+            + (it.name ? '<div style="font-size:10px;color:var(--text3)">' + it.name + '</div>' : '')
             + '</div>';
         }).join('')
       + '</div>';
   }
 
-  var _invPullBatchSelection = {}; // batch id -> true, for bulk Remove in the Waiting tab
-
+  // Fetches fresh from the server (call this on open, or after an action
+  // actually changes something) and renders. Toggling a checkbox afterward
+  // just calls invRenderPullBatches() directly — no network round trip —
+  // since the full list is cached in _invPullBatchesData already.
   window.invLoadPullBatchesView = function(mode) {
     var body = g('inv-pull-batches-body');
     var openTab = g('inv-pull-batches-tab-open');
     var historyTab = g('inv-pull-batches-tab-history');
     var isHistory = mode === 'all';
-    if (!isHistory) _invPullBatchSelection = {}; // fresh each time the Waiting tab (re)loads
+    _invPullBatchIsHistory = isHistory;
+    if (!isHistory) { _invPullBatchMode = null; _invPullBatchSelection = {}; }
     if (openTab) {
       openTab.style.background = isHistory ? 'var(--bg3)' : 'var(--accent)';
       openTab.style.color = isHistory ? 'var(--text2)' : '#fff';
@@ -3733,69 +3745,147 @@ window.invCredLogin = async function() {
     wFetch(W + '/inventory/pull-batch/list?status=' + mode)
       .then(function(r) { return r.json(); })
       .then(function(d) {
-        if (!body) return;
-        var rows = (d && d.batches) || [];
-        if (rows.length === 0) {
-          body.innerHTML = '<div style="padding:12px;color:var(--text3)">' + (isHistory ? 'Nothing yet.' : 'Nothing saved right now.') + '</div>';
-          return;
-        }
-        var openIds = rows.filter(function(b) { return b.status === 'open'; }).map(function(b) { return b.id; });
-        // Bulk remove bar — only meaningful in the Waiting tab, and only
-        // once there's more than one open batch to choose between.
-        var bulkBarHtml = '';
-        if (!isHistory && openIds.length > 1) {
-          var selCount = openIds.filter(function(id) { return _invPullBatchSelection[id]; }).length;
-          var allSelected = selCount === openIds.length;
-          bulkBarHtml = '<div style="display:flex;align-items:center;gap:8px;padding:6px 0;border-bottom:1px solid var(--border);margin-bottom:6px">'
-            + '<label style="display:flex;align-items:center;gap:6px;font-size:11px;color:var(--text3);cursor:pointer;flex:1">'
-            + '<input type="checkbox" id="inv-pull-batch-selectall" ' + (allSelected ? 'checked' : '') + ' onclick="invTogglePullBatchSelectAll(' + JSON.stringify(openIds) + ')" style="width:16px;height:16px;cursor:pointer;accent-color:var(--red)"> Select All</label>'
-            + '<button id="inv-pull-batch-removeselected-btn" onclick="invRemoveSelectedPullBatches()" ' + (selCount === 0 ? 'disabled' : '') + ' style="padding:6px 10px;border-radius:7px;border:1.5px solid var(--red);background:var(--bg3);color:var(--red);font-size:11px;font-weight:700;cursor:pointer;opacity:' + (selCount === 0 ? '0.5' : '1') + '">Remove ' + (selCount > 0 ? selCount + ' Selected' : 'Selected') + '</button>'
-            + '<button onclick="invRemoveAllPullBatches(' + JSON.stringify(openIds) + ')" style="padding:6px 10px;border-radius:7px;border:1.5px solid var(--red);background:var(--red);color:#fff;font-size:11px;font-weight:700;cursor:pointer">Remove All</button>'
-            + '</div>';
-        }
-        body.innerHTML = bulkBarHtml + rows.map(function(b) {
-          var when = '';
-          try { when = new Date(b.saved_at).toLocaleString([], {month:'short', day:'numeric', hour:'numeric', minute:'2-digit'}); } catch(e) { when = b.saved_at || ''; }
-          var statusLine = '';
-          if (b.status === 'claimed') {
-            var claimedWhen = '';
-            try { claimedWhen = new Date(b.claimed_at).toLocaleString([], {month:'short', day:'numeric', hour:'numeric', minute:'2-digit'}); } catch(e) {}
-            statusLine = '<div style="color:var(--green);font-size:11px;font-weight:700;margin-top:2px">\u2713 Resumed by ' + (b.claimed_by || '?') + (claimedWhen ? ' \u00b7 ' + claimedWhen : '') + '</div>';
-          } else if (b.status === 'removed') {
-            var removedWhen = '';
-            try { removedWhen = new Date(b.removed_at).toLocaleString([], {month:'short', day:'numeric', hour:'numeric', minute:'2-digit'}); } catch(e) {}
-            statusLine = '<div style="color:var(--red);font-size:11px;font-weight:700;margin-top:2px">\u2715 Removed by ' + (b.removed_by || '?') + (removedWhen ? ' \u00b7 ' + removedWhen : '') + '</div>';
-          }
-          var selectBoxHtml = (b.status === 'open')
-            ? '<input type="checkbox" class="inv-pull-batch-chk" data-id="' + b.id + '" ' + (_invPullBatchSelection[b.id] ? 'checked' : '') + ' onclick="invTogglePullBatchSelect(' + b.id + ', this.checked)" style="width:16px;height:16px;cursor:pointer;accent-color:var(--red);margin-top:2px;flex-shrink:0">'
-            : '';
-          return '<div style="padding:8px 0;border-bottom:1px solid var(--border)">'
-            + '<div style="display:flex;justify-content:space-between;align-items:center;gap:8px">'
-            + '<div style="display:flex;gap:8px;align-items:flex-start">'
-            + selectBoxHtml
-            + '<div>'
-            + '<div style="font-weight:700">' + b.item_count + ' item' + (b.item_count === 1 ? '' : 's') + '</div>'
-            + '<div style="color:var(--text3);font-size:11px;margin-top:2px">Saved by ' + (b.saved_by || '?') + (when ? ' \u00b7 ' + when : '') + '</div>'
-            + (b.note ? '<div style="color:var(--text2);font-size:11px;margin-top:2px">' + b.note + '</div>' : '')
-            + statusLine
-            + '</div>'
-            + '</div>'
-            + (b.status === 'open'
-                ? '<div style="display:flex;gap:6px;flex-shrink:0">'
-                  + '<button onclick="invResumePullBatch(' + b.id + ',this)" style="padding:6px 12px;border-radius:7px;border:none;background:var(--accent);color:#fff;font-size:12px;font-weight:700;cursor:pointer">Resume</button>'
-                  + '<button onclick="invRemovePullBatch(' + b.id + ',this)" style="padding:6px 10px;border-radius:7px;border:1.5px solid var(--red);background:var(--bg3);color:var(--red);font-size:12px;font-weight:700;cursor:pointer">Remove</button>'
-                  + '</div>'
-                : '')
-            + '</div>'
-            + invPullBatchItemsHtml(b.items)
-            + '</div>';
-        }).join('');
+        _invPullBatchesData = (d && d.batches) || [];
+        invRenderPullBatches();
       })
       .catch(function() { if (body) body.innerHTML = '<div style="padding:12px;color:var(--red)">Failed to load</div>'; });
   };
+  var _invPullBatchIsHistory = false;
 
-  window.invRemovePullBatch = function(id, btnEl, skipConfirm) {
-    if (!skipConfirm && !confirm('Remove this saved batch? Its items will NOT come back into anyone\u2019s Pull List \u2014 only use this to discard it.')) return;
+  function invRenderPullBatches() {
+    var body = g('inv-pull-batches-body');
+    if (!body) return;
+    var rows = _invPullBatchesData;
+    var isHistory = _invPullBatchIsHistory;
+    if (rows.length === 0) {
+      body.innerHTML = '<div style="padding:12px;color:var(--text3)">' + (isHistory ? 'Nothing yet.' : 'Nothing saved right now.') + '</div>';
+      return;
+    }
+    var openIds = rows.filter(function(b) { return b.status === 'open'; }).map(function(b) { return b.id; });
+    var mode = _invPullBatchMode; // null | 'resume' | 'remove'
+
+    // Top bar: either the two trigger buttons (default), or the active
+    // picker's Select All / Confirm / Cancel row.
+    var topBarHtml = '';
+    if (!isHistory && openIds.length > 0) {
+      if (!mode) {
+        topBarHtml = '<div style="display:flex;gap:8px;padding-bottom:8px;margin-bottom:6px;border-bottom:1px solid var(--border)">'
+          + '<button onclick="invSetPullBatchMode(\'resume\')" style="flex:1;padding:8px;border-radius:7px;border:1.5px solid var(--accent);background:var(--bg3);color:var(--accent);font-size:12px;font-weight:700;cursor:pointer">\u25b6 Select to Resume</button>'
+          + '<button onclick="invSetPullBatchMode(\'remove\')" style="flex:1;padding:8px;border-radius:7px;border:1.5px solid var(--red);background:var(--bg3);color:var(--red);font-size:12px;font-weight:700;cursor:pointer">\ud83d\uddd1 Select to Remove</button>'
+          + '</div>';
+      } else {
+        var selCount = openIds.filter(function(id) { return _invPullBatchSelection[id]; }).length;
+        var allSelected = selCount === openIds.length;
+        var actionColor = mode === 'remove' ? 'var(--red)' : 'var(--accent)';
+        var actionLabel = mode === 'remove' ? 'Remove' : 'Resume';
+        topBarHtml = '<div style="padding-bottom:8px;margin-bottom:6px;border-bottom:1px solid var(--border)">'
+          + '<label style="display:flex;align-items:center;gap:6px;font-size:11px;color:var(--text3);cursor:pointer;margin-bottom:6px">'
+          + '<input type="checkbox" ' + (allSelected ? 'checked' : '') + ' onclick="invTogglePullBatchSelectAll(' + JSON.stringify(openIds) + ')" style="width:16px;height:16px;cursor:pointer;accent-color:' + actionColor + '"> Select All</label>'
+          + '<div style="display:flex;gap:6px">'
+          + '<button onclick="invConfirmPullBatchAction()" ' + (selCount === 0 ? 'disabled' : '') + ' style="flex:1;padding:8px;border-radius:7px;border:none;background:' + actionColor + ';color:#fff;font-size:12px;font-weight:700;cursor:pointer;opacity:' + (selCount === 0 ? '0.5' : '1') + '">' + actionLabel + (selCount > 0 ? ' ' + selCount : '') + ' Selected</button>'
+          + '<button onclick="invSetPullBatchMode(null)" style="padding:8px 14px;border-radius:7px;border:1.5px solid var(--border);background:var(--bg3);color:var(--text2);font-size:12px;font-weight:700;cursor:pointer">Cancel</button>'
+          + '</div></div>';
+      }
+    }
+
+    body.innerHTML = topBarHtml + rows.map(function(b) {
+      var when = '';
+      try { when = new Date(b.saved_at).toLocaleString([], {month:'short', day:'numeric', hour:'numeric', minute:'2-digit'}); } catch(e) { when = b.saved_at || ''; }
+      var statusLine = '';
+      if (b.status === 'claimed') {
+        var claimedWhen = '';
+        try { claimedWhen = new Date(b.claimed_at).toLocaleString([], {month:'short', day:'numeric', hour:'numeric', minute:'2-digit'}); } catch(e) {}
+        statusLine = '<div style="color:var(--green);font-size:11px;font-weight:700;margin-top:2px">\u2713 Resumed by ' + (b.claimed_by || '?') + (claimedWhen ? ' \u00b7 ' + claimedWhen : '') + '</div>';
+      } else if (b.status === 'removed') {
+        var removedWhen = '';
+        try { removedWhen = new Date(b.removed_at).toLocaleString([], {month:'short', day:'numeric', hour:'numeric', minute:'2-digit'}); } catch(e) {}
+        statusLine = '<div style="color:var(--red);font-size:11px;font-weight:700;margin-top:2px">\u2715 Removed by ' + (b.removed_by || '?') + (removedWhen ? ' \u00b7 ' + removedWhen : '') + '</div>';
+      }
+      var selectBoxHtml = (b.status === 'open' && mode)
+        ? '<input type="checkbox" ' + (_invPullBatchSelection[b.id] ? 'checked' : '') + ' onclick="invTogglePullBatchSelect(' + b.id + ', this.checked)" style="width:18px;height:18px;cursor:pointer;accent-color:' + (mode === 'remove' ? 'var(--red)' : 'var(--accent)') + ';margin-top:2px;flex-shrink:0">'
+        : '';
+      // Individual one-off buttons only show when no bulk picker is active
+      // — keeps the row uncluttered while a picker's actually open.
+      var individualBtnsHtml = (b.status === 'open' && !mode)
+        ? '<div style="display:flex;gap:6px;flex-shrink:0">'
+          + '<button onclick="invResumePullBatch(' + b.id + ',this)" style="padding:6px 12px;border-radius:7px;border:none;background:var(--accent);color:#fff;font-size:12px;font-weight:700;cursor:pointer">Resume</button>'
+          + '<button onclick="invRemovePullBatch(' + b.id + ',this)" style="padding:6px 10px;border-radius:7px;border:1.5px solid var(--red);background:var(--bg3);color:var(--red);font-size:12px;font-weight:700;cursor:pointer">Remove</button>'
+          + '</div>'
+        : '';
+      return '<div style="padding:8px 0;border-bottom:1px solid var(--border)">'
+        + '<div style="display:flex;justify-content:space-between;align-items:center;gap:8px">'
+        + '<div style="display:flex;gap:8px;align-items:flex-start">'
+        + selectBoxHtml
+        + '<div>'
+        + '<div style="font-weight:700">' + b.item_count + ' item' + (b.item_count === 1 ? '' : 's') + '</div>'
+        + '<div style="color:var(--text3);font-size:11px;margin-top:2px">Saved by ' + (b.saved_by || '?') + (when ? ' \u00b7 ' + when : '') + '</div>'
+        + (b.note ? '<div style="color:var(--text2);font-size:11px;margin-top:2px">' + b.note + '</div>' : '')
+        + statusLine
+        + '</div>'
+        + '</div>'
+        + individualBtnsHtml
+        + '</div>'
+        + invPullBatchItemsHtml(b.items)
+        + '</div>';
+    }).join('');
+  }
+
+  window.invSetPullBatchMode = function(mode) {
+    _invPullBatchMode = mode;
+    _invPullBatchSelection = {};
+    invRenderPullBatches();
+  };
+
+  window.invTogglePullBatchSelect = function(id, checked) {
+    if (checked) _invPullBatchSelection[id] = true;
+    else delete _invPullBatchSelection[id];
+    invRenderPullBatches(); // local only — no refetch
+  };
+
+  window.invTogglePullBatchSelectAll = function(openIds) {
+    var allSelected = openIds.length > 0 && openIds.every(function(id) { return _invPullBatchSelection[id]; });
+    if (allSelected) openIds.forEach(function(id) { delete _invPullBatchSelection[id]; });
+    else openIds.forEach(function(id) { _invPullBatchSelection[id] = true; });
+    invRenderPullBatches();
+  };
+
+  window.invConfirmPullBatchAction = function() {
+    var ids = Object.keys(_invPullBatchSelection).map(Number);
+    if (ids.length === 0) return;
+    if (_invPullBatchMode === 'remove') {
+      if (!confirm('Remove ' + ids.length + ' selected batch(es)? Their items will NOT come back into anyone\u2019s Pull List \u2014 only use this to discard them.')) return;
+      Promise.all(ids.map(function(id) { return invRemovePullBatch(id, null, true); }))
+        .then(function() {
+          _invPullBatchMode = null; _invPullBatchSelection = {};
+          invUpdateSavedBatchCount();
+          invLoadPullBatchesView('open');
+          invFlash('\u2713 Removed ' + ids.length + ' batch(es)', 'success');
+        });
+    } else if (_invPullBatchMode === 'resume') {
+      var totalAdded = 0, totalMerged = 0;
+      var chain = Promise.resolve();
+      ids.forEach(function(id) {
+        chain = chain.then(function() {
+          return invResumePullBatch(id, null, true).then(function(r) {
+            if (r) { totalAdded += r.added || 0; totalMerged += r.merged || 0; }
+          });
+        });
+      });
+      chain.then(function() {
+        _invPullBatchMode = null; _invPullBatchSelection = {};
+        invUpdateSavedBatchCount();
+        invLoadPullBatchesView('open');
+        var modal = g('inv-pull-batches-modal'); if (modal) modal.style.display = 'none';
+        var msg = [];
+        if (totalAdded)  msg.push(totalAdded + ' new item' + (totalAdded === 1 ? '' : 's'));
+        if (totalMerged) msg.push(totalMerged + ' merged into what you already had');
+        invFlash('\u2713 Resumed ' + ids.length + ' batch(es) \u2014 ' + (msg.join(', ') || 'nothing to add'), 'success');
+      });
+    }
+  };
+
+  window.invRemovePullBatch = function(id, btnEl, silent) {
+    if (!silent && !confirm('Remove this saved batch? Its items will NOT come back into anyone\u2019s Pull List \u2014 only use this to discard it.')) return;
     if (btnEl) { btnEl.disabled = true; btnEl.textContent = '\u2026'; }
     var removedBy = (INV_CRED_USER && INV_CRED_USER.displayName) || 'OPS';
     return wFetch(W + '/inventory/pull-batch/remove', {
@@ -3805,11 +3895,11 @@ window.invCredLogin = async function() {
     }).then(function(r) { return r.json(); })
       .then(function(d) {
         if (!d.ok) {
-          if (!skipConfirm) invFlash('Could not remove: ' + (d.error || 'unknown'), 'error');
+          if (!silent) invFlash('Could not remove: ' + (d.error || 'unknown'), 'error');
           if (btnEl) { btnEl.disabled = false; btnEl.textContent = 'Remove'; }
           return d;
         }
-        if (!skipConfirm) {
+        if (!silent) {
           invUpdateSavedBatchCount();
           invLoadPullBatchesView('open');
           invFlash('Removed', 'success');
@@ -3817,63 +3907,25 @@ window.invCredLogin = async function() {
         return d;
       })
       .catch(function() {
-        if (!skipConfirm) invFlash('Could not remove \u2014 network error', 'error');
+        if (!silent) invFlash('Could not remove \u2014 network error', 'error');
         if (btnEl) { btnEl.disabled = false; btnEl.textContent = 'Remove'; }
         return { ok: false };
       });
   };
 
-  window.invTogglePullBatchSelect = function(id, checked) {
-    if (checked) _invPullBatchSelection[id] = true;
-    else delete _invPullBatchSelection[id];
-    invLoadPullBatchesView('open');
-  };
-
-  window.invTogglePullBatchSelectAll = function(openIds) {
-    var allSelected = openIds.length > 0 && openIds.every(function(id) { return _invPullBatchSelection[id]; });
-    if (allSelected) openIds.forEach(function(id) { delete _invPullBatchSelection[id]; });
-    else openIds.forEach(function(id) { _invPullBatchSelection[id] = true; });
-    invLoadPullBatchesView('open');
-  };
-
-  window.invRemoveSelectedPullBatches = function() {
-    var ids = Object.keys(_invPullBatchSelection).map(Number);
-    if (ids.length === 0) return;
-    if (!confirm('Remove ' + ids.length + ' selected batch(es)? Their items will NOT come back into anyone\u2019s Pull List \u2014 only use this to discard them.')) return;
-    Promise.all(ids.map(function(id) { return invRemovePullBatch(id, null, true); }))
-      .then(function() {
-        _invPullBatchSelection = {};
-        invUpdateSavedBatchCount();
-        invLoadPullBatchesView('open');
-        invFlash('\u2713 Removed ' + ids.length + ' batch(es)', 'success');
-      });
-  };
-
-  window.invRemoveAllPullBatches = function(openIds) {
-    if (!openIds || openIds.length === 0) return;
-    if (!confirm('Remove ALL ' + openIds.length + ' saved batch(es)? Their items will NOT come back into anyone\u2019s Pull List \u2014 only use this to discard everything waiting.')) return;
-    Promise.all(openIds.map(function(id) { return invRemovePullBatch(id, null, true); }))
-      .then(function() {
-        _invPullBatchSelection = {};
-        invUpdateSavedBatchCount();
-        invLoadPullBatchesView('open');
-        invFlash('\u2713 Removed all ' + openIds.length + ' batch(es)', 'success');
-      });
-  };
-
-  window.invResumePullBatch = function(id, btnEl) {
+  window.invResumePullBatch = function(id, btnEl, silent) {
     if (btnEl) { btnEl.disabled = true; btnEl.textContent = '\u2026'; }
     var claimedBy = (INV_CRED_USER && INV_CRED_USER.displayName) || 'OPS';
-    wFetch(W + '/inventory/pull-batch/claim', {
+    return wFetch(W + '/inventory/pull-batch/claim', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ id: id, claimedBy: claimedBy })
     }).then(function(r) { return r.json(); })
       .then(function(d) {
         if (!d.ok) {
-          invFlash('Could not resume: ' + (d.error || 'unknown'), 'error');
+          if (!silent) invFlash('Could not resume: ' + (d.error || 'unknown'), 'error');
           if (btnEl) { btnEl.disabled = false; btnEl.textContent = 'Resume'; }
-          return;
+          return { added: 0, merged: 0 };
         }
         var items = d.items || [];
         var batchSavedBy = d.savedBy || 'someone';
@@ -3904,16 +3956,20 @@ window.invCredLogin = async function() {
         });
         invSavePullList();
         invRenderPullList();
-        invUpdateSavedBatchCount();
-        var modal = g('inv-pull-batches-modal'); if (modal) modal.style.display = 'none';
-        var msg = [];
-        if (added)  msg.push(added + ' new item' + (added === 1 ? '' : 's'));
-        if (merged) msg.push(merged + ' merged into what you already had');
-        invFlash('\u2713 Resumed \u2014 ' + msg.join(', '), 'success');
+        if (!silent) {
+          invUpdateSavedBatchCount();
+          var modal = g('inv-pull-batches-modal'); if (modal) modal.style.display = 'none';
+          var msg = [];
+          if (added)  msg.push(added + ' new item' + (added === 1 ? '' : 's'));
+          if (merged) msg.push(merged + ' merged into what you already had');
+          invFlash('\u2713 Resumed \u2014 ' + (msg.join(', ') || 'nothing to add'), 'success');
+        }
+        return { added: added, merged: merged };
       })
       .catch(function() {
-        invFlash('Could not resume \u2014 network error', 'error');
+        if (!silent) invFlash('Could not resume \u2014 network error', 'error');
         if (btnEl) { btnEl.disabled = false; btnEl.textContent = 'Resume'; }
+        return { added: 0, merged: 0 };
       });
   };
 
