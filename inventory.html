@@ -811,7 +811,7 @@ window.invCredLogin = async function() {
   <div id="hist-note-modal" onclick="if(event.target===this) this.style.display='none'" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,.45);z-index:998;align-items:center;justify-content:center;padding:16px">
     <div style="background:var(--bg2);border-radius:14px;padding:18px;width:100%;max-width:420px;max-height:70vh;overflow-y:auto;box-shadow:0 8px 32px rgba(0,0,0,.18)">
       <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px">
-        <div style="font-size:14px;font-weight:700;color:var(--text)">Full Note</div>
+        <div style="font-size:14px;font-weight:700;color:var(--text)" id="hist-note-title">Full Note</div>
         <button onclick="document.getElementById('hist-note-modal').style.display='none'" style="background:none;border:none;color:var(--text3);font-size:22px;cursor:pointer;line-height:1">&times;</button>
       </div>
       <div id="hist-note-body" style="font-size:13px;color:var(--text2);white-space:pre-wrap;word-break:break-word"></div>
@@ -3593,7 +3593,9 @@ window.invCredLogin = async function() {
   // Full note popup — the Notes cell in the list below is truncated with
   // an ellipsis and a hover tooltip, which doesn't work on touch devices;
   // clicking it opens this instead so the whole thing is always readable.
-  window.histShowFullNote = function(text) {
+  window.histShowFullNote = function(text, title) {
+    var titleEl = g('hist-note-title');
+    if (titleEl) titleEl.textContent = title || 'Full Note';
     var body = g('hist-note-body');
     if (body) body.textContent = text || '(no notes)';
     var modal = g('hist-note-modal');
@@ -3812,7 +3814,7 @@ window.invCredLogin = async function() {
       // at almost the same instant.
       var totalCell = (r.total_before !== null && r.total_before !== undefined)
         ? (Number(r.total_before).toLocaleString() + ' \u2192 ' + Number(r.total_after).toLocaleString()
-           + (r.total_warning ? ' <span title="' + r.total_warning.replace(/"/g,'&quot;') + '" style="color:var(--red);font-weight:700;cursor:help">\u26a0</span>' : ''))
+           + (r.total_warning ? ' <span onclick=\'histShowFullNote(' + JSON.stringify(r.total_warning) + ', "\u26a0 Warning")\' style="color:var(--red);font-weight:700;cursor:pointer;text-decoration:underline dotted">\u26a0</span>' : ''))
         : '<span style="color:var(--text3)">\u2014</span>';
 
       html += '<tr style="background:' + bg + '">'
@@ -4323,7 +4325,7 @@ window.invCredLogin = async function() {
         : '';
       var totalLine = (r.total_before !== null && r.total_before !== undefined)
         ? '<div style="font-family:var(--mono);font-size:11px;color:var(--text3);margin-top:2px">Total: ' + Number(r.total_before).toLocaleString() + ' \u2192 ' + Number(r.total_after).toLocaleString()
-          + (r.total_warning ? ' <span title="' + String(r.total_warning).replace(/"/g,'&quot;') + '" style="color:var(--red);font-weight:700;cursor:help">\u26a0</span>' : '') + '</div>'
+          + (r.total_warning ? ' <span onclick=\'alert(' + JSON.stringify(String(r.total_warning)) + ')\' style="color:var(--red);font-weight:700;cursor:pointer;text-decoration:underline dotted">\u26a0</span>' : '') + '</div>'
         : '';
       return '<div style="padding:8px 0;border-bottom:1px solid var(--border)">'
         + partLocLine
