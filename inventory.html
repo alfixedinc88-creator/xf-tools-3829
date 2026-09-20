@@ -360,15 +360,36 @@ window.invCredLogin = async function() {
        same safety net the search flow gets. -->
   <div class="icard" id="inv-quickadd-card">
     <div class="icard-label">Quick Add</div>
-    <div class="ifield"><label>Part #</label><input id="inv-qa-partnum" type="text" placeholder="e.g. 23-2-3=25" autocomplete="off" onblur="invQuickAddPrefillUpc()"></div>
-    <div class="ifield"><label>Location</label><input id="inv-qa-location" type="text" placeholder="e.g. BARN=11-2-10" autocomplete="off"></div>
-    <div class="ifield-row">
+    <div class="ifield">
+      <label>Part # or Barcode</label>
+      <div style="display:flex;gap:6px">
+        <input id="inv-qa-partnum" type="text" placeholder="e.g. 23-2-3=25" autocomplete="off" style="flex:1" onblur="invQuickAddPrefillUpc()">
+        <button class="icam-btn" id="inv-qa-partnum-cam-btn" onclick="invQaScanPartNum()" style="padding:8px 12px;white-space:nowrap">📷</button>
+      </div>
+    </div>
+    <div id="inv-qa-partnum-reader-wrap" style="display:none;border-radius:8px;overflow:hidden;background:#000;min-height:120px;margin-top:6px"><div id="inv-qa-partnum-qr-reader"></div></div>
+    <!-- Filled in as soon as the Part# matches a known item (see
+         invQuickAddPrefillUpc) — stays hidden for a genuinely new item,
+         since there's no name to show yet. -->
+    <div id="inv-qa-name-display" style="display:none;font-size:13px;color:var(--text2);margin-top:6px;padding:7px 10px;background:var(--bg3);border-radius:7px"></div>
+
+    <div class="ifield" style="margin-top:10px">
+      <label>Location</label>
+      <div style="display:flex;gap:6px;align-items:center">
+        <select id="inv-qa-prefix" style="padding:8px;border:1.5px solid var(--border);border-radius:7px;background:var(--bg);color:var(--text);font-size:13px;font-family:var(--mono)"><option value="2FL=">2FL=</option><option value="BARN=">BARN=</option><option value="BSMT=">BSMT=</option><option value="BO=">BO=</option><option value="C1=">C1=</option><option value="C2=">C2=</option><option value="C3=">C3=</option><option value="C4=">C4=</option><option value="C5=">C5=</option><option value="FRONT=">FRONT=</option><option value="PR=">PR=</option></select>
+        <input id="inv-qa-shelf" type="text" placeholder="e.g. 11-2-10" autocomplete="off" style="flex:1;padding:8px 10px;border:1.5px solid var(--border);border-radius:7px;background:var(--bg);color:var(--text);font-size:13px;font-family:var(--mono)">
+        <button class="icam-btn" id="inv-qa-loc-cam-btn" onclick="invQaScanLocation()" style="padding:8px 12px;white-space:nowrap">📷</button>
+      </div>
+    </div>
+    <div id="inv-qa-loc-reader-wrap" style="display:none;border-radius:8px;overflow:hidden;background:#000;min-height:120px;margin-top:6px"><div id="inv-qa-loc-qr-reader"></div></div>
+
+    <div class="ifield-row" style="margin-top:10px">
       <div class="ifield" style="flex:1"><label>QTY Case</label><input id="inv-qa-cases" type="number" min="0.1" step="0.5" placeholder="0"></div>
       <div class="ifield" style="flex:1"><label>QTY per Case</label><input id="inv-qa-upc" type="number" min="0" step="1" placeholder="e.g. 12"></div>
     </div>
     <button class="isubmit sin" id="inv-qa-submit-btn" onclick="invQuickAddSubmit()">Submit Stock In</button>
   </div>
-  <div class="icard">
+  <div class="icard" id="inv-scansearch-card">
     <div class="icard-label">Scan or Search</div>
     <div style="display:flex;gap:6px;margin-bottom:10px;flex-wrap:wrap">
       <button class="ixfr-mode-btn ixfr-active" id="inv-smode-code" onclick="invSetScanMode('code')">SKU / Part# / UPC</button>
@@ -1185,7 +1206,7 @@ window.invCredLogin = async function() {
   }
 
   function invPopulateAllPrefixDropdowns() {
-    ['inv-newloc-prefix','inv-fel-prefix','xfr-fel-prefix','inv-audit-loc-prefix','audloc-add-loc-prefix','inv-loc-scan-prefix','xfr-loc-scan-prefix'].forEach(function(id) {
+    ['inv-newloc-prefix','inv-fel-prefix','xfr-fel-prefix','inv-audit-loc-prefix','audloc-add-loc-prefix','inv-loc-scan-prefix','xfr-loc-scan-prefix','inv-qa-prefix'].forEach(function(id) {
       var el = g(id); if (!el) return;
       var cur = el.value; el.innerHTML = invPrefixOptionsHTML(false); if (cur) el.value = cur;
     });
@@ -1263,6 +1284,11 @@ window.invCredLogin = async function() {
     // Quick Add — Stock In only; doesn't make sense for Stock Out.
     var quickAddCard = g("inv-quickadd-card");
     if (quickAddCard) quickAddCard.style.display = mode === "in" ? "block" : "none";
+    // Scan or Search — Stock In now uses Quick Add instead; Stock Out
+    // still needs this to find an existing item to pull, so it only
+    // hides for Stock In, never removed for Stock Out.
+    var scanSearchCard = g("inv-scansearch-card");
+    if (scanSearchCard) scanSearchCard.style.display = mode === "out" ? "block" : "none";
     if (mode === "out") invRenderPullList();
     // Hide scan result cards when switching mode
     g("inv-result-card").style.display = "none";
@@ -2641,29 +2667,145 @@ window.invCredLogin = async function() {
   // as a starting value. Never overwrites something already typed in —
   // only fills it when that box is still empty, so it's purely a
   // convenience, not something fighting a deliberate manual entry.
+  // Fired when the Part# field loses focus — looks up the item and, if
+  // it's a known one, shows its name right there (so there's instant
+  // confirmation this is the right part) and fills in QTY per Case as a
+  // starting value. The name always updates to match whatever's actually
+  // in the box; QTY per Case only fills in when that field is still
+  // empty, so it never fights a deliberate manual entry.
   window.invQuickAddPrefillUpc = function() {
     var partNum = (g("inv-qa-partnum") && g("inv-qa-partnum").value.trim().toUpperCase()) || "";
     var upcField = g("inv-qa-upc");
-    if (!partNum || !upcField || upcField.value) return;
+    var nameDisplay = g("inv-qa-name-display");
+    if (!partNum) { if (nameDisplay) nameDisplay.style.display = "none"; return; }
     wFetch(W + "/inventory/lookup?code=" + encodeURIComponent(partNum))
       .then(function(r) { return r.json(); })
       .then(function(d) {
-        if (upcField.value) return; // they typed something while this was loading — don't clobber it
-        var knownUpc = 0;
-        if (d && d.locations) {
-          for (var i = 0; i < d.locations.length; i++) {
-            var v = parseFloat(d.locations[i].eachQty);
-            if (v > 0) { knownUpc = v; break; }
-          }
+        // Bail if the Part# box has changed since this request went out —
+        // don't show a name/QTY that no longer matches what's typed in.
+        var stillSame = (g("inv-qa-partnum") && g("inv-qa-partnum").value.trim().toUpperCase()) === partNum;
+        if (!stillSame) return;
+        if (nameDisplay) {
+          if (d && d.name) { nameDisplay.textContent = d.name; nameDisplay.style.display = "block"; }
+          else { nameDisplay.style.display = "none"; }
         }
-        if (knownUpc > 0) upcField.value = knownUpc;
+        if (upcField && !upcField.value) {
+          var knownUpc = 0;
+          if (d && d.locations) {
+            for (var i = 0; i < d.locations.length; i++) {
+              var v = parseFloat(d.locations[i].eachQty);
+              if (v > 0) { knownUpc = v; break; }
+            }
+          }
+          if (knownUpc > 0) upcField.value = knownUpc;
+        }
       })
       .catch(function() {});
   };
 
+  // Camera scan straight into the Quick Add Part# field — a focused,
+  // single-shot scan (unlike the two-stage Scan or Search camera), since
+  // Quick Add's fields are all on one screen already.
+  window.invQaScanPartNum = function() {
+    if (invQaPartnumCamRunning) { invQaStopPartnumCam(); return; }
+    var btn = g('inv-qa-partnum-cam-btn');
+    if (btn) { btn.textContent = '\u23f3'; btn.disabled = true; }
+    invLoadQR().then(function() {
+      var wrap = g('inv-qa-partnum-reader-wrap');
+      if (wrap) wrap.style.display = 'block';
+      if (invQaPartnumQrScanner) { try { invQaPartnumQrScanner.clear(); } catch(e) {} invQaPartnumQrScanner = null; }
+      invQaPartnumQrScanner = new Html5Qrcode('inv-qa-partnum-qr-reader');
+      invQaPartnumQrScanner.start(
+        { facingMode: 'environment' },
+        { fps: 10, qrbox: { width: 260, height: 90 } },
+        function(code) {
+          var now = Date.now();
+          if (now - invQaPartnumLastScan < 2000) return;
+          invQaPartnumLastScan = now;
+          invQaStopPartnumCam();
+          var inp = g('inv-qa-partnum');
+          if (inp) { inp.value = code.toUpperCase(); }
+          invQuickAddPrefillUpc();
+        },
+        function() {}
+      ).then(function() {
+        invQaPartnumCamRunning = true;
+        if (btn) { btn.textContent = '\u23f9'; btn.className = 'icam-btn scanning'; btn.disabled = false; }
+      }).catch(function() {
+        invFlash('Camera error', 'error');
+        if (btn) { btn.textContent = '\ud83d\udcf7'; btn.className = 'icam-btn'; btn.disabled = false; }
+        var wrap = g('inv-qa-partnum-reader-wrap'); if (wrap) wrap.style.display = 'none';
+      });
+    }).catch(function() {
+      invFlash('Could not load scanner', 'error');
+      if (btn) { btn.textContent = '\ud83d\udcf7'; btn.disabled = false; }
+    });
+  };
+  function invQaStopPartnumCam() {
+    if (invQaPartnumQrScanner && invQaPartnumCamRunning) { invQaPartnumQrScanner.stop().catch(function(){}); invQaPartnumQrScanner = null; }
+    invQaPartnumCamRunning = false;
+    var wrap = g('inv-qa-partnum-reader-wrap'); if (wrap) wrap.style.display = 'none';
+    var btn = g('inv-qa-partnum-cam-btn');
+    if (btn) { btn.textContent = '\ud83d\udcf7'; btn.className = 'icam-btn'; btn.disabled = false; }
+  }
+  var invQaPartnumQrScanner = null, invQaPartnumCamRunning = false, invQaPartnumLastScan = 0;
+
+  // Camera scan for Quick Add's Location — same prefix/shelf split every
+  // other location scanner in this app uses (invNewLocToggleCam etc.).
+  window.invQaScanLocation = function() {
+    if (invQaLocCamRunning) { invQaStopLocCam(); return; }
+    var btn = g('inv-qa-loc-cam-btn');
+    if (btn) { btn.textContent = '\u23f3'; btn.disabled = true; }
+    invLoadQR().then(function() {
+      var wrap = g('inv-qa-loc-reader-wrap');
+      if (wrap) wrap.style.display = 'block';
+      if (invQaLocQrScanner) { try { invQaLocQrScanner.clear(); } catch(e) {} invQaLocQrScanner = null; }
+      invQaLocQrScanner = new Html5Qrcode('inv-qa-loc-qr-reader');
+      invQaLocQrScanner.start(
+        { facingMode: 'environment' },
+        { fps: 10, qrbox: { width: 280, height: 90 } },
+        function(code) {
+          var now = Date.now();
+          if (now - invQaLocLastScan < 2000) return;
+          invQaLocLastScan = now;
+          invQaStopLocCam();
+          var eqIdx = code.indexOf('=');
+          var pfxEl = g('inv-qa-prefix'); var shfEl = g('inv-qa-shelf');
+          if (eqIdx > 0) {
+            if (pfxEl) pfxEl.value = code.slice(0, eqIdx + 1);
+            if (shfEl) shfEl.value = code.slice(eqIdx + 1);
+          } else if (shfEl) {
+            shfEl.value = code;
+          }
+        },
+        function() {}
+      ).then(function() {
+        invQaLocCamRunning = true;
+        if (btn) { btn.textContent = '\u23f9'; btn.className = 'icam-btn scanning'; btn.disabled = false; }
+      }).catch(function() {
+        invFlash('Camera error', 'error');
+        if (btn) { btn.textContent = '\ud83d\udcf7'; btn.className = 'icam-btn'; btn.disabled = false; }
+        var wrap = g('inv-qa-loc-reader-wrap'); if (wrap) wrap.style.display = 'none';
+      });
+    }).catch(function() {
+      invFlash('Could not load scanner', 'error');
+      if (btn) { btn.textContent = '\ud83d\udcf7'; btn.disabled = false; }
+    });
+  };
+  function invQaStopLocCam() {
+    if (invQaLocQrScanner && invQaLocCamRunning) { invQaLocQrScanner.stop().catch(function(){}); invQaLocQrScanner = null; }
+    invQaLocCamRunning = false;
+    var wrap = g('inv-qa-loc-reader-wrap'); if (wrap) wrap.style.display = 'none';
+    var btn = g('inv-qa-loc-cam-btn');
+    if (btn) { btn.textContent = '\ud83d\udcf7'; btn.className = 'icam-btn'; btn.disabled = false; }
+  }
+  var invQaLocQrScanner = null, invQaLocCamRunning = false, invQaLocLastScan = 0;
+
   window.invQuickAddSubmit = function() {
     var partNum  = (g("inv-qa-partnum")  && g("inv-qa-partnum").value.trim().toUpperCase())  || "";
-    var location = (g("inv-qa-location") && g("inv-qa-location").value.trim().toUpperCase()) || "";
+    var qaPrefix = (g("inv-qa-prefix") && g("inv-qa-prefix").value) || "";
+    var qaShelf  = (g("inv-qa-shelf")  && g("inv-qa-shelf").value.trim().toUpperCase()) || "";
+    var location = qaShelf ? (qaPrefix + qaShelf) : "";
     var cases    = parseFloat(g("inv-qa-cases") && g("inv-qa-cases").value);
     var upc      = (g("inv-qa-upc") && g("inv-qa-upc").value) ? parseFloat(g("inv-qa-upc").value) : 0;
     if (!partNum)  { invFlash("Enter a Part #", "error"); return; }
@@ -2688,8 +2830,9 @@ window.invCredLogin = async function() {
         .then(function(d) {
           if (d.ok) {
             invFlash("✓ Logged — pending approval", "success");
-            g("inv-qa-partnum").value = ""; g("inv-qa-location").value = "";
+            g("inv-qa-partnum").value = ""; g("inv-qa-shelf").value = "";
             g("inv-qa-cases").value = ""; g("inv-qa-upc").value = "";
+            var nameDisplay = g("inv-qa-name-display"); if (nameDisplay) nameDisplay.style.display = "none";
             invFetchPendingCount();
           } else {
             invFlash("Error: " + (d.error || "unknown"), "error");
