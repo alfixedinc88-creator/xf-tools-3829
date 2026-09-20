@@ -3307,6 +3307,79 @@ window.invCredLogin = async function() {
     }, 150);
   };
 
+  // Walking order through the warehouse for the Ungrabbed section — front
+  // areas first, then middle, then back — so working through the list top
+  // to bottom means walking a real route instead of crisscrossing back and
+  // forth. Anything with a prefix not in this list sorts to the very end.
+  var INV_PULL_AREA_ORDER = ['FRONT=','2FL=','BO=','BSMT=','PR=','GARAGE=','C1=','C2=','BARN=','C3=','C4=','C5='];
+  function invPullLocationRank(location) {
+    var loc = (location || '').toUpperCase();
+    for (var i = 0; i < INV_PULL_AREA_ORDER.length; i++) {
+      if (loc.indexOf(INV_PULL_AREA_ORDER[i]) === 0) return i;
+    }
+    return INV_PULL_AREA_ORDER.length;
+  }
+
+  // Which of the three sections are expanded — Ungrabbed starts open since
+  // that's the active working list; Grabbed and None Found start collapsed
+  // so they don't clutter the thing you're actually still working through.
+  // Toggling one doesn't reset the others.
+  var invPullSectionOpen = { ungrabbed: true, grabbed: false, nonefound: false };
+
+  window.invTogglePullSection = function(key) {
+    invPullSectionOpen[key] = !invPullSectionOpen[key];
+    invRenderPullList();
+  };
+
+  // Builds one row's DOM element — pulled out of the old single forEach
+  // loop so it can be reused across all three sections below, unchanged
+  // from before: still addresses every handler (check, cases, None Found,
+  // remove, system correction) by this item's real index into invPullList,
+  // regardless of which section it's currently displayed under.
+  function invBuildPullRow(item, i) {
+    var row = document.createElement("div");
+    row.className = "ipull-row" + (item.noneFound ? " ipl-nonefound" : item.grabbed ? " ipl-checked" : "");
+    row.id = "ipull-row-" + i;
+
+    var checkDiv = document.createElement("div");
+    checkDiv.className = "ipull-check" + (item.grabbed ? " checked" : "");
+    checkDiv.title = item.grabbed ? "Mark not grabbed" : "Mark as grabbed";
+    checkDiv.onclick = (function(idx) { return function() { invTogglePullCheck(idx); }; })(i);
+
+    var infoDiv = document.createElement("div");
+    var noneBadge = item.noneFound ? " <span style='background:var(--red-bg);color:var(--red);font-size:10px;font-weight:700;padding:1px 6px;border-radius:4px;border:1px solid var(--red);font-family:var(--sans)'>NONE FOUND</span>" : "";
+    var fossBadge = item.foundOnShelf ? " <span style='background:var(--orange-bg);color:var(--orange);font-size:10px;font-weight:700;padding:1px 6px;border-radius:4px;border:1px solid var(--orange);font-family:var(--sans)'>FOUND ON SHELF</span>" : "";
+    var sysCasesHtml = item.systemCases !== undefined
+      ? " <span onclick='invPromptSystemCorrection(" + i + ")' title='System shows " + item.systemCases + " \u2014 tap to correct' "
+        + "style='cursor:pointer;font-size:11px;color:var(--text3);text-decoration:underline dotted;white-space:nowrap'>(system: " + item.systemCases + ")</span>"
+      : "";
+    infoDiv.innerHTML =
+      "<div class='ipull-loc'>" + item.location + "</div>" +
+      "<div class='ipull-pn'>" + item.partNum + fossBadge + noneBadge + "</div>" +
+      "<div class='ipull-name'>" + (item.name || '') + "</div>" +
+      (item.addedAt ? "<div style='font-size:10px;color:var(--text3);margin-top:2px'>Added " + invFmtStamp(item.addedAt) + (item.grabbedAt ? " &nbsp;\u00b7&nbsp; Grabbed " + invFmtStamp(item.grabbedAt) : "") + "</div>" : "") +
+      (item.noneFound
+        ? "<div style='font-size:11px;color:var(--red);margin-top:4px;font-weight:600'>Will log 0 cases — management review required</div>"
+        : "<div style='margin-top:6px;display:flex;gap:6px;align-items:center;flex-wrap:wrap'>" +
+            "<input type='number' min='0.1' step='0.5' placeholder='Cases' value='" + (item.cases || '') + "' " +
+              "style='width:70px;padding:4px 8px;border-radius:6px;border:1px solid var(--border);background:var(--bg3);color:var(--text);font-size:13px' " +
+              "onchange='invUpdatePullCases(" + i + ", this.value)'>" +
+            "<span style='font-size:11px;color:var(--text3)'>cases</span>" +
+            sysCasesHtml +
+            "<button onclick='invMarkNoneFound(" + i + ")' style='margin-left:4px;font-size:11px;font-weight:700;padding:4px 10px;border-radius:6px;border:1.5px solid var(--red);background:var(--red-bg);color:var(--red);cursor:pointer;font-family:var(--sans)'>None Found</button>" +
+          "</div>");
+
+    var removeBtn = document.createElement("button");
+    removeBtn.innerHTML = "&times;";
+    removeBtn.style.cssText = "background:none;border:none;color:var(--text3);font-size:18px;cursor:pointer;padding:4px;line-height:1";
+    removeBtn.onclick = (function(idx) { return function() { invRemoveFromPullList(idx); }; })(i);
+
+    row.appendChild(checkDiv);
+    row.appendChild(infoDiv);
+    row.appendChild(removeBtn);
+    return row;
+  }
+
   function invRenderPullList() {
     var el = g("inv-pulllist-items");
     var prog = g("inv-pull-progress");
@@ -3334,55 +3407,52 @@ window.invCredLogin = async function() {
         return aOld - bOld;
       });
     }
-    el.innerHTML = "";
+
+    // Split into Ungrabbed / Grabbed / None Found, keeping each item's real
+    // index into invPullList — every row handler (check, cases, None
+    // Found, remove, system correction) addresses items by that index, so
+    // it has to stay correct no matter which section a row ends up
+    // displayed in or how that section gets sorted.
+    var grabbedIdx = [], noneFoundIdx = [], ungrabbedIdx = [];
     invPullList.forEach(function(item, i) {
-      var row = document.createElement("div");
-      row.className = "ipull-row" + (item.grabbed ? " ipl-checked" : "");
-      row.id = "ipull-row-" + i;
-
-      var checkDiv = document.createElement("div");
-      checkDiv.className = "ipull-check" + (item.grabbed ? " checked" : "");
-      checkDiv.title = item.grabbed ? "Mark not grabbed" : "Mark as grabbed";
-      checkDiv.onclick = (function(idx) { return function() { invTogglePullCheck(idx); }; })(i);
-
-      row.className = "ipull-row" + (item.noneFound ? " ipl-nonefound" : item.grabbed ? " ipl-checked" : "");
-
-      var infoDiv = document.createElement("div");
-      var noneBadge = item.noneFound ? " <span style='background:var(--red-bg);color:var(--red);font-size:10px;font-weight:700;padding:1px 6px;border-radius:4px;border:1px solid var(--red);font-family:var(--sans)'>NONE FOUND</span>" : "";
-      var fossBadge = item.foundOnShelf ? " <span style='background:var(--orange-bg);color:var(--orange);font-size:10px;font-weight:700;padding:1px 6px;border-radius:4px;border:1px solid var(--orange);font-family:var(--sans)'>FOUND ON SHELF</span>" : "";
-      // System's on-hand count, captured when this was added — clickable
-      // straight into SKU Manager's edit form when it doesn't match what's
-      // actually on the shelf, instead of navigating + searching by hand.
-      var sysCasesHtml = item.systemCases !== undefined
-        ? " <span onclick='invPromptSystemCorrection(" + i + ")' title='System shows " + item.systemCases + " \u2014 tap to correct' "
-          + "style='cursor:pointer;font-size:11px;color:var(--text3);text-decoration:underline dotted;white-space:nowrap'>(system: " + item.systemCases + ")</span>"
-        : "";
-      infoDiv.innerHTML =
-        "<div class='ipull-loc'>" + item.location + "</div>" +
-        "<div class='ipull-pn'>" + item.partNum + fossBadge + noneBadge + "</div>" +
-        "<div class='ipull-name'>" + (item.name || '') + "</div>" +
-        (item.addedAt ? "<div style='font-size:10px;color:var(--text3);margin-top:2px'>Added " + invFmtStamp(item.addedAt) + (item.grabbedAt ? " &nbsp;\u00b7&nbsp; Grabbed " + invFmtStamp(item.grabbedAt) : "") + "</div>" : "") +
-        (item.noneFound
-          ? "<div style='font-size:11px;color:var(--red);margin-top:4px;font-weight:600'>Will log 0 cases — management review required</div>"
-          : "<div style='margin-top:6px;display:flex;gap:6px;align-items:center;flex-wrap:wrap'>" +
-              "<input type='number' min='0.1' step='0.5' placeholder='Cases' value='" + (item.cases || '') + "' " +
-                "style='width:70px;padding:4px 8px;border-radius:6px;border:1px solid var(--border);background:var(--bg3);color:var(--text);font-size:13px' " +
-                "onchange='invUpdatePullCases(" + i + ", this.value)'>" +
-              "<span style='font-size:11px;color:var(--text3)'>cases</span>" +
-              sysCasesHtml +
-              "<button onclick='invMarkNoneFound(" + i + ")' style='margin-left:4px;font-size:11px;font-weight:700;padding:4px 10px;border-radius:6px;border:1.5px solid var(--red);background:var(--red-bg);color:var(--red);cursor:pointer;font-family:var(--sans)'>None Found</button>" +
-            "</div>");
-
-      var removeBtn = document.createElement("button");
-      removeBtn.innerHTML = "&times;";
-      removeBtn.style.cssText = "background:none;border:none;color:var(--text3);font-size:18px;cursor:pointer;padding:4px;line-height:1";
-      removeBtn.onclick = (function(idx) { return function() { invRemoveFromPullList(idx); }; })(i);
-
-      row.appendChild(checkDiv);
-      row.appendChild(infoDiv);
-      row.appendChild(removeBtn);
-      el.appendChild(row);
+      if (item.noneFound) noneFoundIdx.push(i);
+      else if (item.grabbed) grabbedIdx.push(i);
+      else ungrabbedIdx.push(i);
     });
+    // Ungrabbed only — walk order front → middle → back, so working
+    // straight down the list is an actual efficient route, not backtracking.
+    ungrabbedIdx.sort(function(a, b) {
+      return invPullLocationRank(invPullList[a].location) - invPullLocationRank(invPullList[b].location);
+    });
+
+    el.innerHTML = "";
+
+    function buildSection(key, label, color, indices) {
+      var open = invPullSectionOpen[key];
+      var section = document.createElement("div");
+      section.style.marginBottom = "10px";
+
+      var header = document.createElement("div");
+      header.style.cssText = "display:flex;justify-content:space-between;align-items:center;cursor:pointer;padding:8px 10px;background:var(--bg2);border-radius:8px;border:1px solid var(--border)";
+      header.innerHTML = "<span style='font-size:12px;font-weight:700;color:" + color + "'>" + label + " (" + indices.length + ")</span>"
+        + "<span style='color:var(--text3);font-size:12px;font-weight:700'>" + (open ? "Hide \u25b4" : "Show \u25be") + "</span>";
+      header.onclick = (function(k) { return function() { invTogglePullSection(k); }; })(key);
+      section.appendChild(header);
+
+      var body = document.createElement("div");
+      body.style.cssText = "margin-top:6px;display:" + (open ? "block" : "none");
+      if (indices.length === 0) {
+        body.innerHTML = "<div style='padding:8px 4px;color:var(--text3);font-size:12px'>None</div>";
+      } else {
+        indices.forEach(function(i) { body.appendChild(invBuildPullRow(invPullList[i], i)); });
+      }
+      section.appendChild(body);
+      el.appendChild(section);
+    }
+
+    buildSection('ungrabbed', 'Ungrabbed', 'var(--text)', ungrabbedIdx);
+    buildSection('grabbed', 'Grabbed', 'var(--green)', grabbedIdx);
+    buildSection('nonefound', 'None Found', 'var(--red)', noneFoundIdx);
   }
 
   window.invTogglePullCheck = function(i) {
