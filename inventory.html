@@ -1813,12 +1813,40 @@ window.invCredLogin = async function() {
       list.appendChild(el);
     });
 
-    // Stock Out: show zero-case locations with "Found on Shelf?" override
+    // Stock Out: zero-case locations with "Found on Shelf?" override —
+    // minimized by default (just a clickable summary line) since these are
+    // usually not what someone's looking for; tap it to expand the actual
+    // list, tap the × to collapse it again. Nothing here ever navigates
+    // away — it all happens right on this same location list.
     if (invMode === "out" && zeroLocs.length > 0) {
-      var divider = document.createElement("div");
-      divider.style.cssText = "font-size:11px;font-weight:700;letter-spacing:.5px;text-transform:uppercase;color:var(--orange);margin:12px 0 6px;padding-top:10px;border-top:1px solid var(--border)";
-      divider.textContent = "System shows 0 cases — Found on shelf?";
-      list.appendChild(divider);
+      var zeroWrap = document.createElement("div");
+      zeroWrap.style.cssText = "margin:12px 0 6px;padding-top:10px;border-top:1px solid var(--border)";
+
+      var zeroHeader = document.createElement("div");
+      zeroHeader.style.cssText = "display:flex;justify-content:space-between;align-items:center;cursor:pointer;padding:4px 0";
+      zeroHeader.innerHTML = "<span style='font-size:11px;font-weight:700;letter-spacing:.5px;text-transform:uppercase;color:var(--orange)'>\u26a0 System shows 0 cases \u2014 Found on shelf? (" + zeroLocs.length + ")</span>"
+        + "<span id='inv-zero-toggle-icon' style='color:var(--orange);font-size:12px;font-weight:700'>Show \u25be</span>";
+      zeroWrap.appendChild(zeroHeader);
+
+      var zeroBody = document.createElement("div");
+      zeroBody.id = "inv-zero-body";
+      zeroBody.style.display = "none"; // minimized by default
+      zeroBody.style.marginTop = "6px";
+      zeroWrap.appendChild(zeroBody);
+
+      var zeroCloseBtn = document.createElement("div");
+      zeroCloseBtn.style.cssText = "display:none;text-align:right;margin-top:4px";
+      zeroCloseBtn.innerHTML = "<span style='cursor:pointer;color:var(--text3);font-size:12px;font-weight:700'>\u2715 Close</span>";
+      zeroWrap.appendChild(zeroCloseBtn);
+
+      function invSetZeroExpanded(open) {
+        zeroBody.style.display = open ? "block" : "none";
+        zeroCloseBtn.style.display = open ? "block" : "none";
+        var icon = document.getElementById('inv-zero-toggle-icon');
+        if (icon) icon.textContent = open ? "Hide \u25b4" : "Show \u25be";
+      }
+      zeroHeader.onclick = function() { invSetZeroExpanded(zeroBody.style.display === "none"); };
+      zeroCloseBtn.onclick = function(e) { e.stopPropagation(); invSetZeroExpanded(false); };
 
       zeroLocs.forEach(function(loc) {
         var el = document.createElement("div");
@@ -1833,8 +1861,10 @@ window.invCredLogin = async function() {
           + "<div style='font-size:12px;color:var(--orange);font-weight:600'>0 cases on record</div></div>"
           + "<span class='iloc-badge' style='background:var(--orange-bg);color:var(--orange);border:1px solid var(--orange)'>Found?</span>";
         el.onclick = (function(l) { return function() { invFoundOnShelf(l); }; })(loc);
-        list.appendChild(el);
+        zeroBody.appendChild(el);
       });
+
+      list.appendChild(zeroWrap);
     }
 
     // Stock Out: if ALL locations are zero (none in the locs array), still show override option
