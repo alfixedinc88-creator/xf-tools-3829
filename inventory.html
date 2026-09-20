@@ -359,12 +359,15 @@ window.invCredLogin = async function() {
        stock, this adds to it instead of creating a duplicate row — the
        same safety net the search flow gets. -->
   <div class="icard" id="inv-quickadd-card">
-    <div class="icard-label">Quick Add</div>
+    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:2px">
+      <div class="icard-label" style="margin-bottom:0">Quick Add</div>
+      <span onclick="invShowStockInHistory()" style="font-size:11px;color:var(--text3);text-decoration:underline dotted;cursor:pointer">📜 History</span>
+    </div>
     <div class="ifield">
       <label>Part # or Barcode</label>
       <div style="display:flex;gap:6px">
         <input id="inv-qa-partnum" type="text" placeholder="e.g. 23-2-3=25" autocomplete="off" style="flex:1" onblur="invQuickAddPrefillUpc()">
-        <button class="icam-btn" id="inv-qa-partnum-cam-btn" onclick="invQaScanPartNum()" style="padding:8px 12px;white-space:nowrap">📷</button>
+        <button class="icam-btn" id="inv-qa-partnum-cam-btn" onclick="invQaScanPartNum()" style="width:auto;min-height:0;padding:8px 10px;font-size:15px;margin-top:0;white-space:nowrap;flex-shrink:0">📷</button>
       </div>
     </div>
     <div id="inv-qa-partnum-reader-wrap" style="display:none;border-radius:8px;overflow:hidden;background:#000;min-height:120px;margin-top:6px"><div id="inv-qa-partnum-qr-reader"></div></div>
@@ -378,7 +381,7 @@ window.invCredLogin = async function() {
       <div style="display:flex;gap:6px;align-items:center">
         <select id="inv-qa-prefix" style="padding:8px;border:1.5px solid var(--border);border-radius:7px;background:var(--bg);color:var(--text);font-size:13px;font-family:var(--mono)"><option value="2FL=">2FL=</option><option value="BARN=">BARN=</option><option value="BSMT=">BSMT=</option><option value="BO=">BO=</option><option value="C1=">C1=</option><option value="C2=">C2=</option><option value="C3=">C3=</option><option value="C4=">C4=</option><option value="C5=">C5=</option><option value="FRONT=">FRONT=</option><option value="PR=">PR=</option></select>
         <input id="inv-qa-shelf" type="text" placeholder="e.g. 11-2-10" autocomplete="off" style="flex:1;padding:8px 10px;border:1.5px solid var(--border);border-radius:7px;background:var(--bg);color:var(--text);font-size:13px;font-family:var(--mono)">
-        <button class="icam-btn" id="inv-qa-loc-cam-btn" onclick="invQaScanLocation()" style="padding:8px 12px;white-space:nowrap">📷</button>
+        <button class="icam-btn" id="inv-qa-loc-cam-btn" onclick="invQaScanLocation()" style="width:auto;min-height:0;padding:8px 10px;font-size:15px;margin-top:0;white-space:nowrap;flex-shrink:0">📷</button>
       </div>
     </div>
     <div id="inv-qa-loc-reader-wrap" style="display:none;border-radius:8px;overflow:hidden;background:#000;min-height:120px;margin-top:6px"><div id="inv-qa-loc-qr-reader"></div></div>
@@ -388,6 +391,19 @@ window.invCredLogin = async function() {
       <div class="ifield" style="flex:1"><label>QTY per Case</label><input id="inv-qa-upc" type="number" min="0" step="1" placeholder="e.g. 12"></div>
     </div>
     <button class="isubmit sin" id="inv-qa-submit-btn" onclick="invQuickAddSubmit()">Submit Stock In</button>
+  </div>
+  <!-- Quick Add / Stock In History — who put how many cases into where,
+       most recent first. Reuses the same /inventory/history endpoint the
+       main History tab uses, filtered to plain Stock In only (excludes
+       Audit-tagged corrections, which already have their own place). -->
+  <div id="inv-qa-history-modal" onclick="if(event.target===this) this.style.display='none'" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,.45);z-index:998;align-items:center;justify-content:center;padding:16px">
+    <div style="background:var(--bg2);border-radius:14px;padding:18px;width:100%;max-width:480px;max-height:80vh;overflow-y:auto;box-shadow:0 8px 32px rgba(0,0,0,.18)">
+      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px">
+        <div style="font-size:14px;font-weight:700;color:var(--text)">Stock In History</div>
+        <button onclick="document.getElementById('inv-qa-history-modal').style.display='none'" style="background:none;border:none;color:var(--text3);font-size:22px;cursor:pointer;line-height:1">&times;</button>
+      </div>
+      <div id="inv-qa-history-body" style="font-size:12px"></div>
+    </div>
   </div>
   <div class="icard" id="inv-scansearch-card">
     <div class="icard-label">Scan or Search</div>
@@ -2801,6 +2817,35 @@ window.invCredLogin = async function() {
   }
   var invQaLocQrScanner = null, invQaLocCamRunning = false, invQaLocLastScan = 0;
 
+  // Who put how many cases into where, most recent first — plain Stock In
+  // only (Audit-tagged corrections have their own place already).
+  window.invShowStockInHistory = function() {
+    var modal = g('inv-qa-history-modal');
+    var body = g('inv-qa-history-body');
+    if (body) body.innerHTML = '<div style="padding:12px;color:var(--text3)">Loading\u2026</div>';
+    if (modal) modal.style.display = 'flex';
+    wFetch(W + '/inventory/history?days=30&types=IN')
+      .then(function(r) { return r.json(); })
+      .then(function(d) {
+        if (!body) return;
+        var rows = (d && d.rows) || [];
+        if (rows.length === 0) { body.innerHTML = '<div style="padding:12px;color:var(--text3)">Nothing in the last 30 days.</div>'; return; }
+        body.innerHTML = rows.map(function(r) {
+          var when = '';
+          try { when = new Date(r.timestamp).toLocaleString([], {month:'short', day:'numeric', hour:'numeric', minute:'2-digit'}); } catch(e) { when = r.timestamp || ''; }
+          return '<div style="padding:8px 0;border-bottom:1px solid var(--border)">'
+            + '<div style="display:flex;justify-content:space-between;align-items:center">'
+            + '<span style="font-family:var(--mono);font-weight:700">' + (r.part_num || '') + '</span>'
+            + '<span style="font-weight:700;color:var(--green)">+' + (r.cases || 0) + ' cases</span>'
+            + '</div>'
+            + '<div style="color:var(--text3);font-size:11px;margin-top:2px">' + (r.location || '') + '</div>'
+            + '<div style="color:var(--text3);font-size:11px;margin-top:2px">by ' + (r.initials || '?') + (when ? ' \u00b7 ' + when : '') + '</div>'
+            + '</div>';
+        }).join('');
+      })
+      .catch(function() { if (body) body.innerHTML = '<div style="padding:12px;color:var(--red)">Failed to load</div>'; });
+  };
+
   window.invQuickAddSubmit = function() {
     var partNum  = (g("inv-qa-partnum")  && g("inv-qa-partnum").value.trim().toUpperCase())  || "";
     var qaPrefix = (g("inv-qa-prefix") && g("inv-qa-prefix").value) || "";
@@ -4815,6 +4860,35 @@ window.invCredLogin = async function() {
   // Full note popup — the Notes cell in the list below is truncated with
   // an ellipsis and a hover tooltip, which doesn't work on touch devices;
   // clicking it opens this instead so the whole thing is always readable.
+  // Cancel a Verified Stock In/Out entry — applies the opposite movement,
+  // logs that as its own new line (with a note pointing back at this
+  // entry), and flags this row CANCELLED. Never deletes or edits the
+  // original — see the worker's /inventory/cancel-entry for the full
+  // reasoning.
+  window.invCancelHistoryEntry = function(id, btnEl) {
+    if (!confirm('Cancel this entry? This reverses it (e.g. an In gets undone with an Out of the same amount) and logs that as a new line \u2014 this original line stays, marked Cancelled, as the record.')) return;
+    if (btnEl) { btnEl.disabled = true; btnEl.textContent = '\u2026'; }
+    var cancelledBy = (INV_CRED_USER && INV_CRED_USER.displayName) || 'OPS';
+    wFetch(W + '/inventory/cancel-entry', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ id: id, cancelledBy: cancelledBy })
+    }).then(function(r) { return r.json(); })
+      .then(function(d) {
+        if (d && d.ok) {
+          invFlash('\u2713 Cancelled \u2014 reversed and logged', 'success');
+          if (typeof histLoad === 'function') histLoad();
+        } else {
+          invFlash('Could not cancel: ' + ((d && d.error) || 'unknown'), 'error');
+          if (btnEl) { btnEl.disabled = false; btnEl.textContent = 'Cancel'; }
+        }
+      })
+      .catch(function() {
+        invFlash('Could not cancel \u2014 network error', 'error');
+        if (btnEl) { btnEl.disabled = false; btnEl.textContent = 'Cancel'; }
+      });
+  };
+
   window.histShowFullNote = function(text, title) {
     var titleEl = g('hist-note-title');
     if (titleEl) titleEl.textContent = title || 'Full Note';
@@ -5004,6 +5078,7 @@ window.invCredLogin = async function() {
       + '<th style="' + thS + '">Status</th>'
       + '<th style="' + thS + '">Notes</th>'
       + '<th style="' + thS + '" title="Warehouse-wide total before → after this change">Total Before → After</th>'
+      + '<th style="' + thS + '"></th>'
       + '</tr></thead><tbody>';
 
     rows.forEach(function(r, idx) {
@@ -5038,6 +5113,21 @@ window.invCredLogin = async function() {
         ? (Number(r.total_before).toLocaleString() + ' → ' + Number(r.total_after).toLocaleString()
            + (r.total_warning ? ' <span onclick=\'histShowFullNote(' + JSON.stringify(r.total_warning) + ', "⚠ Warning")\' style="color:var(--red);font-weight:700;cursor:pointer;text-decoration:underline dotted">⚠</span>' : ''))
         : '<span style="color:var(--text3)">—</span>';
+      // Cancel — only offered on a Verified plain Stock In/Out entry that
+      // hasn't already been cancelled (see invCancelHistoryEntry / the
+      // worker's /inventory/cancel-entry for what actually happens: the
+      // opposite movement gets applied and logged as its own new line,
+      // this row is never edited or removed, just flagged).
+      var cancelCell;
+      if (r.cancelled_at) {
+        var cancelWhen = '';
+        try { cancelWhen = new Date(r.cancelled_at).toLocaleString([], {month:'short', day:'numeric', hour:'numeric', minute:'2-digit'}); } catch(e) {}
+        cancelCell = '<span title="Cancelled by ' + (r.cancelled_by||'?') + (cancelWhen ? ' · ' + cancelWhen : '') + '" style="font-size:10px;font-weight:700;color:var(--red);white-space:nowrap">CANCELLED</span>';
+      } else if (r.status === 'Verified' && (typ === 'IN' || typ === 'OUT') && r.id) {
+        cancelCell = '<button onclick="invCancelHistoryEntry(' + r.id + ',this)" style="font-size:10px;font-weight:700;padding:3px 8px;border-radius:5px;border:1px solid var(--red);background:var(--bg3);color:var(--red);cursor:pointer;white-space:nowrap">Cancel</button>';
+      } else {
+        cancelCell = '';
+      }
 
       html += '<tr style="background:' + bg + '">'
         + '<td style="' + td + 'white-space:nowrap;color:var(--text3);font-size:11px">' + timeCell + '</td>'
@@ -5050,6 +5140,7 @@ window.invCredLogin = async function() {
         + '<td style="' + td + 'white-space:nowrap"><span style="font-size:10px;font-weight:700;color:' + stCol + '">' + (r.status||'') + '</span></td>'
         + '<td style="' + td + 'color:var(--text3);max-width:160px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;cursor:pointer;text-decoration:underline dotted" title="Click to see full note" onclick=\'histShowFullNote(' + JSON.stringify(r.notes||'') + ')\'>' + (notes || '—') + '</td>'
         + '<td style="' + td + 'font-family:var(--mono);white-space:nowrap;font-size:11px">' + totalCell + '</td>'
+        + '<td style="' + td + 'white-space:nowrap">' + cancelCell + '</td>'
         + '</tr>';
     });
 
