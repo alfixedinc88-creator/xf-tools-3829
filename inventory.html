@@ -506,6 +506,10 @@ window.invCredLogin = async function() {
       <div style="font-size:14px;font-weight:700;color:var(--text)">Saved For Later</div>
       <button onclick="document.getElementById('inv-pull-batches-modal').style.display='none'" style="background:none;border:none;color:var(--text3);font-size:22px;cursor:pointer;line-height:1">&times;</button>
     </div>
+    <div style="display:flex;gap:6px;margin-bottom:12px">
+      <button id="inv-pull-batches-tab-open" onclick="invLoadPullBatchesView('open')" style="flex:1;padding:6px;border-radius:7px;border:1.5px solid var(--accent);background:var(--accent);color:#fff;font-size:12px;font-weight:700;cursor:pointer">Waiting</button>
+      <button id="inv-pull-batches-tab-history" onclick="invLoadPullBatchesView('all')" style="flex:1;padding:6px;border-radius:7px;border:1.5px solid var(--border);background:var(--bg3);color:var(--text2);font-size:12px;font-weight:700;cursor:pointer">History</button>
+    </div>
     <div id="inv-pull-batches-body" style="font-size:12px"></div>
   </div>
 </div>
@@ -3585,11 +3589,21 @@ window.invCredLogin = async function() {
           "<button onclick='invMarkNoneFound(" + i + ")' style='margin-left:4px;font-size:11px;font-weight:700;padding:4px 10px;border-radius:6px;border:1.5px solid var(--red);background:var(--red-bg);color:var(--red);cursor:pointer;font-family:var(--sans)'>None Found</button>" +
         "</div>";
     }
+    // Each time cases got merged in from a resumed Saved-For-Later batch
+    // (see invResumePullBatch), a line shows exactly how many, saved by
+    // whom, and when — so the extra cases in the total aren't a mystery.
+    var resumeNotesHtml = "";
+    if (item.resumeNotes && item.resumeNotes.length) {
+      resumeNotesHtml = item.resumeNotes.map(function(n) {
+        return "<div style='font-size:10px;color:var(--accent);margin-top:2px'>+" + n.cases + " from Saved For Later \u2014 saved by " + (n.savedBy || '?') + (n.savedAt ? ' \u00b7 ' + invFmtStamp(n.savedAt) : '') + "</div>";
+      }).join("");
+    }
     infoDiv.innerHTML =
       "<div class='ipull-loc'>" + item.location + "</div>" +
       "<div class='ipull-pn'>" + item.partNum + fossBadge + noneBadge + stockoutBadge + "</div>" +
       "<div class='ipull-name'>" + (item.name || '') + "</div>" +
       (item.addedAt ? "<div style='font-size:10px;color:var(--text3);margin-top:2px'>Added " + invFmtStamp(item.addedAt) + (item.grabbedAt ? " &nbsp;\u00b7&nbsp; Grabbed " + invFmtStamp(item.grabbedAt) : "") + "</div>" : "") +
+      resumeNotesHtml +
       statusLine;
 
     var removeBtn = document.createElement("button");
@@ -3671,7 +3685,9 @@ window.invCredLogin = async function() {
     wFetch(W + '/inventory/pull-batch/list?status=open')
       .then(function(r) { return r.json(); })
       .then(function(d) {
-        var n = (d && d.batches) ? d.batches.length : 0;
+        // Total items waiting across every saved batch, not the number of
+        // batches — saving 4 items in one go should show "4", not "1".
+        var n = ((d && d.batches) || []).reduce(function(sum, b) { return sum + (b.item_count || 0); }, 0);
         var b = g('inv-pull-saved-badge');
         if (b) { b.textContent = n; b.style.display = n > 0 ? 'inline-flex' : 'none'; }
       }).catch(function() {});
@@ -3679,29 +3695,105 @@ window.invCredLogin = async function() {
 
   window.invShowSavedPullBatches = function() {
     var modal = g('inv-pull-batches-modal');
-    var body = g('inv-pull-batches-body');
-    if (body) body.innerHTML = '<div style="padding:12px;color:var(--text3)">Loading\u2026</div>';
     if (modal) modal.style.display = 'flex';
-    wFetch(W + '/inventory/pull-batch/list?status=open')
+    invLoadPullBatchesView('open');
+  };
+
+  function invPullBatchItemsHtml(items) {
+    if (!items || !items.length) return '';
+    return '<div style="margin-top:6px;padding:6px 8px;background:var(--bg3);border-radius:6px">'
+      + items.map(function(it) {
+          return '<div style="display:flex;justify-content:space-between;font-family:var(--mono);font-size:11px;padding:2px 0">'
+            + '<span>' + (it.partNum || '') + ' @ ' + (it.location || '') + '</span>'
+            + '<span style="font-weight:700">' + (it.cases || 0) + ' cs</span>'
+            + '</div>';
+        }).join('')
+      + '</div>';
+  }
+
+  window.invLoadPullBatchesView = function(mode) {
+    var body = g('inv-pull-batches-body');
+    var openTab = g('inv-pull-batches-tab-open');
+    var historyTab = g('inv-pull-batches-tab-history');
+    var isHistory = mode === 'all';
+    if (openTab) {
+      openTab.style.background = isHistory ? 'var(--bg3)' : 'var(--accent)';
+      openTab.style.color = isHistory ? 'var(--text2)' : '#fff';
+      openTab.style.borderColor = isHistory ? 'var(--border)' : 'var(--accent)';
+    }
+    if (historyTab) {
+      historyTab.style.background = isHistory ? 'var(--accent)' : 'var(--bg3)';
+      historyTab.style.color = isHistory ? '#fff' : 'var(--text2)';
+      historyTab.style.borderColor = isHistory ? 'var(--accent)' : 'var(--border)';
+    }
+    if (body) body.innerHTML = '<div style="padding:12px;color:var(--text3)">Loading\u2026</div>';
+    wFetch(W + '/inventory/pull-batch/list?status=' + mode)
       .then(function(r) { return r.json(); })
       .then(function(d) {
         if (!body) return;
         var rows = (d && d.batches) || [];
-        if (rows.length === 0) { body.innerHTML = '<div style="padding:12px;color:var(--text3)">Nothing saved right now.</div>'; return; }
+        if (rows.length === 0) {
+          body.innerHTML = '<div style="padding:12px;color:var(--text3)">' + (isHistory ? 'Nothing yet.' : 'Nothing saved right now.') + '</div>';
+          return;
+        }
         body.innerHTML = rows.map(function(b) {
           var when = '';
           try { when = new Date(b.saved_at).toLocaleString([], {month:'short', day:'numeric', hour:'numeric', minute:'2-digit'}); } catch(e) { when = b.saved_at || ''; }
-          return '<div style="padding:8px 0;border-bottom:1px solid var(--border);display:flex;justify-content:space-between;align-items:center;gap:8px">'
+          var statusLine = '';
+          if (b.status === 'claimed') {
+            var claimedWhen = '';
+            try { claimedWhen = new Date(b.claimed_at).toLocaleString([], {month:'short', day:'numeric', hour:'numeric', minute:'2-digit'}); } catch(e) {}
+            statusLine = '<div style="color:var(--green);font-size:11px;font-weight:700;margin-top:2px">\u2713 Resumed by ' + (b.claimed_by || '?') + (claimedWhen ? ' \u00b7 ' + claimedWhen : '') + '</div>';
+          } else if (b.status === 'removed') {
+            var removedWhen = '';
+            try { removedWhen = new Date(b.removed_at).toLocaleString([], {month:'short', day:'numeric', hour:'numeric', minute:'2-digit'}); } catch(e) {}
+            statusLine = '<div style="color:var(--red);font-size:11px;font-weight:700;margin-top:2px">\u2715 Removed by ' + (b.removed_by || '?') + (removedWhen ? ' \u00b7 ' + removedWhen : '') + '</div>';
+          }
+          return '<div style="padding:8px 0;border-bottom:1px solid var(--border)">'
+            + '<div style="display:flex;justify-content:space-between;align-items:center;gap:8px">'
             + '<div>'
             + '<div style="font-weight:700">' + b.item_count + ' item' + (b.item_count === 1 ? '' : 's') + '</div>'
             + '<div style="color:var(--text3);font-size:11px;margin-top:2px">Saved by ' + (b.saved_by || '?') + (when ? ' \u00b7 ' + when : '') + '</div>'
             + (b.note ? '<div style="color:var(--text2);font-size:11px;margin-top:2px">' + b.note + '</div>' : '')
+            + statusLine
             + '</div>'
-            + '<button onclick="invResumePullBatch(' + b.id + ',this)" style="padding:6px 12px;border-radius:7px;border:none;background:var(--accent);color:#fff;font-size:12px;font-weight:700;cursor:pointer;flex-shrink:0">Resume</button>'
+            + (b.status === 'open'
+                ? '<div style="display:flex;gap:6px;flex-shrink:0">'
+                  + '<button onclick="invResumePullBatch(' + b.id + ',this)" style="padding:6px 12px;border-radius:7px;border:none;background:var(--accent);color:#fff;font-size:12px;font-weight:700;cursor:pointer">Resume</button>'
+                  + '<button onclick="invRemovePullBatch(' + b.id + ',this)" style="padding:6px 10px;border-radius:7px;border:1.5px solid var(--red);background:var(--bg3);color:var(--red);font-size:12px;font-weight:700;cursor:pointer">Remove</button>'
+                  + '</div>'
+                : '')
+            + '</div>'
+            + invPullBatchItemsHtml(b.items)
             + '</div>';
         }).join('');
       })
       .catch(function() { if (body) body.innerHTML = '<div style="padding:12px;color:var(--red)">Failed to load</div>'; });
+  };
+
+  window.invRemovePullBatch = function(id, btnEl) {
+    if (!confirm('Remove this saved batch? Its items will NOT come back into anyone\u2019s Pull List \u2014 only use this to discard it.')) return;
+    if (btnEl) { btnEl.disabled = true; btnEl.textContent = '\u2026'; }
+    var removedBy = (INV_CRED_USER && INV_CRED_USER.displayName) || 'OPS';
+    wFetch(W + '/inventory/pull-batch/remove', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ id: id, removedBy: removedBy })
+    }).then(function(r) { return r.json(); })
+      .then(function(d) {
+        if (!d.ok) {
+          invFlash('Could not remove: ' + (d.error || 'unknown'), 'error');
+          if (btnEl) { btnEl.disabled = false; btnEl.textContent = 'Remove'; }
+          return;
+        }
+        invUpdateSavedBatchCount();
+        invLoadPullBatchesView('open');
+        invFlash('Removed', 'success');
+      })
+      .catch(function() {
+        invFlash('Could not remove \u2014 network error', 'error');
+        if (btnEl) { btnEl.disabled = false; btnEl.textContent = 'Remove'; }
+      });
   };
 
   window.invResumePullBatch = function(id, btnEl) {
@@ -3719,19 +3811,40 @@ window.invCredLogin = async function() {
           return;
         }
         var items = d.items || [];
-        // Merge in, skipping anything already sitting in the current list
-        // (same part+location) rather than creating a duplicate row.
-        var existingKeys = {};
-        invPullList.forEach(function(x) { existingKeys[x.key] = true; });
-        var added = 0;
+        var batchSavedBy = d.savedBy || 'someone';
+        var batchSavedAt = d.savedAt || '';
+        // Same part+location already sitting in the list? Add the resumed
+        // cases on top of what's there instead of skipping it — e.g.
+        // already had 1 case queued, the saved batch had 2 more of the
+        // same thing, end result is 3. A visible note goes on the item so
+        // it's clear some of that number came from elsewhere, by whom and
+        // when. Can't merge into a row that's already grabbed/submitted
+        // though (see invTogglePullCheck for why not) — that one lands as
+        // its own separate row instead.
+        var added = 0, merged = 0;
         items.forEach(function(item) {
-          if (!existingKeys[item.key]) { invPullList.push(item); added++; }
+          var idx = -1;
+          for (var qi = 0; qi < invPullList.length; qi++) { if (invPullList[qi].key === item.key) { idx = qi; break; } }
+          var existing = idx >= 0 ? invPullList[idx] : null;
+          if (existing && !existing.grabbed && !existing.noneFound && !existing.submitted) {
+            var addCases = parseFloat(item.cases) || 0;
+            existing.cases = (parseFloat(existing.cases) || 0) + addCases;
+            existing.resumeNotes = existing.resumeNotes || [];
+            existing.resumeNotes.push({ cases: addCases, savedBy: batchSavedBy, savedAt: batchSavedAt });
+            merged++;
+          } else {
+            invPullList.push(item);
+            added++;
+          }
         });
         invSavePullList();
         invRenderPullList();
         invUpdateSavedBatchCount();
         var modal = g('inv-pull-batches-modal'); if (modal) modal.style.display = 'none';
-        invFlash('\u2713 Resumed ' + added + ' item(s)' + (added < items.length ? ' (' + (items.length - added) + ' already in your list)' : ''), 'success');
+        var msg = [];
+        if (added)  msg.push(added + ' new item' + (added === 1 ? '' : 's'));
+        if (merged) msg.push(merged + ' merged into what you already had');
+        invFlash('\u2713 Resumed \u2014 ' + msg.join(', '), 'success');
       })
       .catch(function() {
         invFlash('Could not resume \u2014 network error', 'error');
