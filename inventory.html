@@ -360,7 +360,7 @@ window.invCredLogin = async function() {
        same safety net the search flow gets. -->
   <div class="icard" id="inv-quickadd-card">
     <div class="icard-label">Quick Add</div>
-    <div class="ifield"><label>Part #</label><input id="inv-qa-partnum" type="text" placeholder="e.g. 23-2-3=25" autocomplete="off"></div>
+    <div class="ifield"><label>Part #</label><input id="inv-qa-partnum" type="text" placeholder="e.g. 23-2-3=25" autocomplete="off" onblur="invQuickAddPrefillUpc()"></div>
     <div class="ifield"><label>Location</label><input id="inv-qa-location" type="text" placeholder="e.g. BARN=11-2-10" autocomplete="off"></div>
     <div class="ifield-row">
       <div class="ifield" style="flex:1"><label>QTY Case</label><input id="inv-qa-cases" type="number" min="0.1" step="0.5" placeholder="0"></div>
@@ -2553,6 +2553,24 @@ window.invCredLogin = async function() {
       warn.textContent = "⚠ Removing cases — current stock: " + invSelLoc.cases;
       warn.style.display = "block";
     }
+    // Pre-fill QTY per Case from whatever's already on record for this
+    // item — this specific location's own value if picking an existing
+    // one, or (for a brand-new location) whatever another location of the
+    // same item already has, since a new shelf for a known item is almost
+    // always the same case-pack size. Still just a starting value — the
+    // field stays a normal editable box, so it's a one-click change if
+    // this particular shipment is actually packed differently.
+    var upcInput = g("inv-units-per-case");
+    if (upcInput && invMode === "in") {
+      var knownUpc = (invSelLoc && parseFloat(invSelLoc.eachQty)) || 0;
+      if (!knownUpc && invPart && invPart.locations) {
+        for (var i = 0; i < invPart.locations.length; i++) {
+          var v = parseFloat(invPart.locations[i].eachQty);
+          if (v > 0) { knownUpc = v; break; }
+        }
+      }
+      upcInput.value = knownUpc > 0 ? knownUpc : "";
+    }
     g("inv-detail-card").style.display = "block";
   }
 
@@ -2618,6 +2636,31 @@ window.invCredLogin = async function() {
   // also for). Always submits through the same isNew Stock In path
   // everything else uses, so an existing Part#+Location just gets added
   // to rather than duplicated (see the worker's isNew/IN insert logic).
+  // Fired when the Part# field loses focus — if this matches a known item
+  // that already has a QTY per Case on record, fills it in automatically
+  // as a starting value. Never overwrites something already typed in —
+  // only fills it when that box is still empty, so it's purely a
+  // convenience, not something fighting a deliberate manual entry.
+  window.invQuickAddPrefillUpc = function() {
+    var partNum = (g("inv-qa-partnum") && g("inv-qa-partnum").value.trim().toUpperCase()) || "";
+    var upcField = g("inv-qa-upc");
+    if (!partNum || !upcField || upcField.value) return;
+    wFetch(W + "/inventory/lookup?code=" + encodeURIComponent(partNum))
+      .then(function(r) { return r.json(); })
+      .then(function(d) {
+        if (upcField.value) return; // they typed something while this was loading — don't clobber it
+        var knownUpc = 0;
+        if (d && d.locations) {
+          for (var i = 0; i < d.locations.length; i++) {
+            var v = parseFloat(d.locations[i].eachQty);
+            if (v > 0) { knownUpc = v; break; }
+          }
+        }
+        if (knownUpc > 0) upcField.value = knownUpc;
+      })
+      .catch(function() {});
+  };
+
   window.invQuickAddSubmit = function() {
     var partNum  = (g("inv-qa-partnum")  && g("inv-qa-partnum").value.trim().toUpperCase())  || "";
     var location = (g("inv-qa-location") && g("inv-qa-location").value.trim().toUpperCase()) || "";
@@ -5209,7 +5252,11 @@ window.invCredLogin = async function() {
         sku: row.sku || partNum.split('=')[0].trim(),
         unitsPerCase: parseFloat(upc)||0,
         price: parseFloat(price)||0,
-        vendor, prevNotes: notes
+        vendor, prevNotes: notes,
+        // Who actually made this edit — used for History's initials/
+        // verified-by instead of a generic "MGMT" label, so it's clear
+        // whose change it was, same as every other action in the app.
+        editedBy: (INV_CRED_USER && INV_CRED_USER.displayName) || 'OPS'
       })
     })
     .then(function(r) { return r.json(); })
