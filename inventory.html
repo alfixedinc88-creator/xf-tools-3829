@@ -336,6 +336,21 @@ window.invCredLogin = async function() {
     <div id="inv-stockout-resolveall-wrap" style="display:none;margin-top:8px">
       <button id="inv-stockout-resolveall-btn" onclick="event.stopPropagation();invStockoutResolveAll()" style="width:100%;padding:9px;border:1px solid var(--border);border-radius:7px;background:var(--bg);color:var(--text2);font-weight:700;font-size:12px;cursor:pointer">Resolve All</button>
     </div>
+    <div style="margin-top:8px;text-align:right">
+      <span onclick="event.stopPropagation();invShowStockoutHistory()" style="font-size:11px;color:var(--text3);text-decoration:underline dotted;cursor:pointer">📜 History</span>
+    </div>
+  </div>
+  <!-- Stock Out Reports History — every report that's ever been resolved,
+       whether by hand or automatically when its Pull List item got
+       Grabbed/None Found. Read-only; nothing here can be un-resolved. -->
+  <div id="inv-stockout-history-modal" onclick="if(event.target===this) this.style.display='none'" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,.45);z-index:998;align-items:center;justify-content:center;padding:16px">
+    <div style="background:var(--bg2);border-radius:14px;padding:18px;width:100%;max-width:480px;max-height:80vh;overflow-y:auto;box-shadow:0 8px 32px rgba(0,0,0,.18)">
+      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px">
+        <div style="font-size:14px;font-weight:700;color:var(--text)">Stock Out Reports — History</div>
+        <button onclick="document.getElementById('inv-stockout-history-modal').style.display='none'" style="background:none;border:none;color:var(--text3);font-size:22px;cursor:pointer;line-height:1">&times;</button>
+      </div>
+      <div id="inv-stockout-history-body" style="font-size:12px"></div>
+    </div>
   </div>
   <div class="icard">
     <div class="icard-label">Scan or Search</div>
@@ -1527,6 +1542,12 @@ window.invCredLogin = async function() {
   window.invLookup = function(code) {
     if (!code) return;
     invSearchedExactVariant = code.indexOf('=') >= 0 ? code.trim().toUpperCase() : null;
+    // Reset here, not just when a Stock Out Report is tapped — every
+    // ordinary search must start clean, so a stray leftover tag from an
+    // earlier report click can never attach itself to an unrelated item.
+    // invStockoutGo sets this AFTER calling invLookup, specifically so its
+    // own call doesn't immediately wipe out the very value it's setting.
+    _invPendingStockoutSourceId = null;
     g("inv-result-card").style.display = "none";
     g("inv-loc-card").style.display    = "none";
     g("inv-detail-card").style.display = "none";
@@ -2531,6 +2552,15 @@ window.invCredLogin = async function() {
   // ── Stock Out Reports (Pack & Ship Picking tab "No Stock" flags) ─────────
   var _invStockoutOpenList = [];
   var _invStockoutListShown = false;
+  // Set right after invLookup() inside invStockoutGo, read once by
+  // invAddToPullList (see there), then cleared — see that comment for the
+  // full reasoning.
+  var _invPendingStockoutSourceId = null;
+  // Tracks which reports have actually been tapped (the one-time "Go"
+  // click) — separate from the manual viewed-checkbox below. Once set,
+  // the headline itself stops being clickable (see invRenderStockoutList),
+  // so the same report can't accidentally get searched/added twice.
+  var _invStockoutClickedIds = {};
   // Tracks which reports someone has already tapped this session, purely
   // as a visual "I already looked at this one" checkbox while working
   // through a batch of reports — not synced to the server (that's what
@@ -2574,6 +2604,7 @@ window.invCredLogin = async function() {
       // SKU up top only for the rare report with no bin location on file.
       var headline = s.binLocation || s.sku || '—';
       var viewed = !!_invStockoutViewedIds[s.id];
+      var clicked = !!_invStockoutClickedIds[s.id];
       // Quantity a picker entered when flagging this item (defaults to 1 —
       // covers both truly-missing quantity data and the old reports made
       // before this field existed). Shown as its own badge, not buried in
@@ -2581,11 +2612,17 @@ window.invCredLogin = async function() {
       // bin — this is the number they need to grab.
       var qty = s.quantity != null ? (parseInt(s.quantity, 10) || 1) : 1;
       var qtyBadge = '<span style="font-size:10px;font-weight:700;color:var(--red);background:var(--red-bg);border-radius:10px;padding:2px 7px;flex-shrink:0">Need ' + qty + '</span>';
+      // One-time click — once used, the headline stops being clickable
+      // entirely (not just grayed out) so the same report can't get
+      // searched/added to the Pull List a second time by accident.
+      var headlineHtml = clicked
+        ? '<span style="font-family:var(--mono);font-weight:700;font-size:13px;color:var(--text3);text-decoration:line-through">' + headline + '</span>'
+        : '<span style="font-family:var(--mono);font-weight:700;font-size:13px;color:var(--accent);cursor:pointer" onclick="invStockoutGo(' + idx + ')">' + headline + '</span>';
       return '<div style="border:1.5px solid var(--border);border-radius:8px;padding:8px 10px;margin-bottom:8px;background:var(--bg3)">'
         + '<div style="display:flex;justify-content:space-between;align-items:center;gap:8px">'
         +   '<div style="display:flex;align-items:center;gap:8px;flex:1;min-width:0">'
         +     '<input type="checkbox" ' + (viewed ? 'checked' : '') + ' onclick="invStockoutToggleViewed(' + s.id + ')" style="width:16px;height:16px;flex-shrink:0;cursor:pointer;accent-color:var(--accent)">'
-        +     '<span style="font-family:var(--mono);font-weight:700;font-size:13px;color:var(--accent);cursor:pointer" onclick="invStockoutGo(' + idx + ')">' + headline + '</span>'
+        +     headlineHtml
         +     qtyBadge
         +   '</div>'
         +   '<button style="font-size:11px;padding:4px 8px;border:1px solid var(--border);border-radius:6px;background:var(--bg);color:var(--text2);cursor:pointer;flex-shrink:0" onclick="invStockoutResolve(' + s.id + ',this)">Resolved</button>'
@@ -2599,6 +2636,39 @@ window.invCredLogin = async function() {
         + '</div>';
     }).join('');
   }
+
+  window.invShowStockoutHistory = function() {
+    var body = g('inv-stockout-history-body');
+    var modal = g('inv-stockout-history-modal');
+    if (body) body.innerHTML = '<div style="padding:12px;color:var(--text3)">Loading\u2026</div>';
+    if (modal) modal.style.display = 'flex';
+    wFetch(W + '/inventory/stockouts?status=resolved')
+      .then(function(r) { return r.json(); })
+      .then(function(d) {
+        if (!body) return;
+        var rows = (d && d.stockouts) || [];
+        if (rows.length === 0) { body.innerHTML = '<div style="padding:12px;color:var(--text3)">Nothing resolved yet.</div>'; return; }
+        body.innerHTML = rows.map(function(s) {
+          var when = '';
+          try { when = new Date(s.timestamp).toLocaleString([], {month:'short', day:'numeric', hour:'numeric', minute:'2-digit'}); } catch(e) { when = s.timestamp || ''; }
+          var resolvedWhen = '';
+          try { resolvedWhen = s.resolvedAt ? new Date(s.resolvedAt).toLocaleString([], {month:'short', day:'numeric', hour:'numeric', minute:'2-digit'}) : ''; } catch(e) {}
+          var qty = s.quantity != null ? (parseInt(s.quantity, 10) || 1) : 1;
+          return '<div style="padding:8px 0;border-bottom:1px solid var(--border)">'
+            + '<div style="display:flex;justify-content:space-between;align-items:center">'
+            + '<span style="font-family:var(--mono);font-weight:700">' + (s.binLocation || s.sku || '\u2014') + '</span>'
+            + '<span style="font-size:10px;font-weight:700;color:var(--green)">\u2713 Resolved</span>'
+            + '</div>'
+            + '<div style="color:var(--text3);font-size:11px;margin-top:2px">'
+            + 'Need ' + qty + (s.sku ? ' \u00b7 ' + s.sku : '') + (s.orderNum ? ' \u00b7 Order ' + s.orderNum : '')
+            + '</div>'
+            + '<div style="color:var(--text3);font-size:11px;margin-top:2px">Reported by ' + (s.reportedBy || '?') + (when ? ' \u00b7 ' + when : '') + '</div>'
+            + '<div style="color:var(--text3);font-size:11px;margin-top:2px">Resolved by ' + (s.resolvedBy || '?') + (resolvedWhen ? ' \u00b7 ' + resolvedWhen : '') + '</div>'
+            + '</div>';
+        }).join('');
+      })
+      .catch(function() { if (body) body.innerHTML = '<div style="padding:12px;color:var(--red)">Failed to load history</div>'; });
+  };
 
   window.invToggleStockoutList = function() {
     _invStockoutListShown = !_invStockoutListShown;
@@ -2642,12 +2712,17 @@ window.invCredLogin = async function() {
   window.invStockoutGo = function(idx) {
     var s = _invStockoutOpenList[idx];
     if (!s) return;
+    if (_invStockoutClickedIds[s.id]) return; // one-time click — already used
     var code = (s.binLocation || s.sku || '').trim();
     if (!code) return;
     invSetScanMode('code'); // always land on/stay on the SKU/Part#/UPC tab
     var inp = g('inv-search-inp');
     if (inp) inp.value = code;
     invLookup(code);
+    // Set AFTER invLookup() (which resets this exact value at its own
+    // start) — the next item pushed to the Pull List picks this up and
+    // tags itself as having come from this report; see invAddToPullList.
+    _invPendingStockoutSourceId = s.id;
     // invLookup() above synchronously clears/hides #inv-grab-banner before
     // it kicks off its (async) fetch — setting the banner's real content
     // here, right after, means it's already in place by the time that
@@ -2661,10 +2736,12 @@ window.invCredLogin = async function() {
       gb.textContent = '📦 Grab ' + qty + (s.orderNum ? ' for Order ' + s.orderNum : '');
       gb.style.display = 'block';
     }
-    // Check it off and keep the report list open (rather than closing it) —
-    // so working through several reports in a row means: tap one, see it
-    // get checked, tap the next, without having to reopen the list each
-    // time.
+    // Locks the headline (one-time click) and keeps the manual "viewed"
+    // checkbox in sync too — check it off and keep the report list open
+    // (rather than closing it), so working through several reports in a
+    // row means: tap one, see it get checked, tap the next, without
+    // having to reopen the list each time.
+    _invStockoutClickedIds[s.id] = true;
     _invStockoutViewedIds[s.id] = true;
     invRenderStockoutList();
   };
@@ -3179,8 +3256,15 @@ window.invCredLogin = async function() {
       isPlaceholder: loc.isPlaceholder || false,
       masterRowIndex: loc.rowIndex,
       masterId: loc.masterId || null,
-      addedAt: new Date().toISOString()
+      addedAt: new Date().toISOString(),
+      // Set when this item came from tapping a Stock Out Report — lets the
+      // Pull List show where it came from, and auto-resolves that report
+      // the moment this item gets Grabbed or marked None Found (see
+      // invTogglePullCheck / invMarkNoneFound). Cleared right after use so
+      // it only ever tags the one add it was actually meant for.
+      sourceStockoutId: _invPendingStockoutSourceId || null
     });
+    _invPendingStockoutSourceId = null;
     // Sort numerically by location
     invPullList.sort(function(a, b) {
       return invLocSort(a.location) - invLocSort(b.location) ||
@@ -3349,13 +3433,19 @@ window.invCredLogin = async function() {
     var infoDiv = document.createElement("div");
     var noneBadge = item.noneFound ? " <span style='background:var(--red-bg);color:var(--red);font-size:10px;font-weight:700;padding:1px 6px;border-radius:4px;border:1px solid var(--red);font-family:var(--sans)'>NONE FOUND</span>" : "";
     var fossBadge = item.foundOnShelf ? " <span style='background:var(--orange-bg);color:var(--orange);font-size:10px;font-weight:700;padding:1px 6px;border-radius:4px;border:1px solid var(--orange);font-family:var(--sans)'>FOUND ON SHELF</span>" : "";
+    // Marks an item that came from tapping a Stock Out Report — that
+    // report auto-resolves the moment this item gets Grabbed or None
+    // Found (see invTogglePullCheck / invMarkNoneFound), so this badge is
+    // the visible reminder of that connection while it's still sitting
+    // here ungrabbed.
+    var stockoutBadge = item.sourceStockoutId ? " <span style='background:var(--accent-bg,var(--bg3));color:var(--accent);font-size:10px;font-weight:700;padding:1px 6px;border-radius:4px;border:1px solid var(--accent);font-family:var(--sans)'>\ud83d\udccb STOCK OUT REPORT</span>" : "";
     var sysCasesHtml = item.systemCases !== undefined
       ? " <span onclick='invPromptSystemCorrection(" + i + ")' title='System shows " + item.systemCases + " \u2014 tap to correct' "
         + "style='cursor:pointer;font-size:11px;color:var(--text3);text-decoration:underline dotted;white-space:nowrap'>(system: " + item.systemCases + ")</span>"
       : "";
     infoDiv.innerHTML =
       "<div class='ipull-loc'>" + item.location + "</div>" +
-      "<div class='ipull-pn'>" + item.partNum + fossBadge + noneBadge + "</div>" +
+      "<div class='ipull-pn'>" + item.partNum + fossBadge + noneBadge + stockoutBadge + "</div>" +
       "<div class='ipull-name'>" + (item.name || '') + "</div>" +
       (item.addedAt ? "<div style='font-size:10px;color:var(--text3);margin-top:2px'>Added " + invFmtStamp(item.addedAt) + (item.grabbedAt ? " &nbsp;\u00b7&nbsp; Grabbed " + invFmtStamp(item.grabbedAt) : "") + "</div>" : "") +
       (item.noneFound
@@ -3455,10 +3545,39 @@ window.invCredLogin = async function() {
     buildSection('nonefound', 'None Found', 'var(--red)', noneFoundIdx);
   }
 
+  // If this Pull List item came from a Stock Out Report (see
+  // invStockoutGo / invAddToPullList), resolving it here means the report
+  // itself never needs a separate manual "Resolved" tap — the moment the
+  // actual work (grabbing it, or confirming it's not there) happens, the
+  // report reflects that automatically. Guards against firing twice (e.g.
+  // toggling grabbed on/off) with a one-time flag on the item itself.
+  function invAutoResolveStockoutIfNeeded(item) {
+    if (!item.sourceStockoutId || item._stockoutResolved) return;
+    item._stockoutResolved = true;
+    var resolvedBy = (INV_CRED_USER && INV_CRED_USER.displayName) || 'OPS';
+    wFetch(W + '/inventory/stockout-resolve', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ id: item.sourceStockoutId, resolvedBy: resolvedBy })
+    }).then(function(r) { return r.json(); })
+      .then(function(d) {
+        if (d && d.ok) {
+          _invStockoutOpenList = _invStockoutOpenList.filter(function(s) { return s.id !== item.sourceStockoutId; });
+          var b = g("inv-stockout-badge");
+          if (b) { var n = _invStockoutOpenList.length; b.textContent = n; b.style.display = n > 0 ? "inline-flex" : "none"; }
+          if (_invStockoutListShown) invRenderStockoutList();
+        } else {
+          item._stockoutResolved = false; // allow retrying later if this failed
+        }
+      })
+      .catch(function() { item._stockoutResolved = false; });
+  }
+
   window.invTogglePullCheck = function(i) {
     if (!invPullList[i]) return;
     invPullList[i].grabbed = !invPullList[i].grabbed;
     invPullList[i].grabbedAt = invPullList[i].grabbed ? new Date().toISOString() : null;
+    if (invPullList[i].grabbed) invAutoResolveStockoutIfNeeded(invPullList[i]);
     invSavePullList();
     invRenderPullList();
   };
@@ -3482,6 +3601,7 @@ window.invCredLogin = async function() {
     invPullList[i].cases = 0;
     invPullList[i].grabbed = true;
     invPullList[i].grabbedAt = new Date().toISOString();
+    invAutoResolveStockoutIfNeeded(invPullList[i]);
     invSavePullList();
     invRenderPullList();
     invFlash('None Found logged — submit to send for review', 'warn');
