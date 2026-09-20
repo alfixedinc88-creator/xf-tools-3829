@@ -352,6 +352,22 @@ window.invCredLogin = async function() {
       <div id="inv-stockout-history-body" style="font-size:12px"></div>
     </div>
   </div>
+  <!-- Quick Add — Stock In only. Fill in Part#, Location, QTY Case and
+       QTY per Case directly and submit, without going through Scan or
+       Search first. Uses the same isNew Stock In path as everything else
+       (see invSubmit), so if that exact Part# + Location already has
+       stock, this adds to it instead of creating a duplicate row — the
+       same safety net the search flow gets. -->
+  <div class="icard" id="inv-quickadd-card">
+    <div class="icard-label">Quick Add</div>
+    <div class="ifield"><label>Part #</label><input id="inv-qa-partnum" type="text" placeholder="e.g. 23-2-3=25" autocomplete="off"></div>
+    <div class="ifield"><label>Location</label><input id="inv-qa-location" type="text" placeholder="e.g. BARN=11-2-10" autocomplete="off"></div>
+    <div class="ifield-row">
+      <div class="ifield" style="flex:1"><label>QTY Case</label><input id="inv-qa-cases" type="number" min="0.1" step="0.5" placeholder="0"></div>
+      <div class="ifield" style="flex:1"><label>QTY per Case</label><input id="inv-qa-upc" type="number" min="0" step="1" placeholder="e.g. 12"></div>
+    </div>
+    <button class="isubmit sin" id="inv-qa-submit-btn" onclick="invQuickAddSubmit()">Submit Stock In</button>
+  </div>
   <div class="icard">
     <div class="icard-label">Scan or Search</div>
     <div style="display:flex;gap:6px;margin-bottom:10px;flex-wrap:wrap">
@@ -978,7 +994,7 @@ window.invCredLogin = async function() {
         <label style="font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.4px;color:var(--text3);display:block;margin-bottom:3px">Type</label>
         <button type="button" id="hist-type-btn" onclick="histToggleTypeDropdown()"
           style="width:100%;text-align:left;padding:8px 10px;border:1.5px solid var(--border);border-radius:8px;font-size:13px;background:var(--bg);color:var(--text);cursor:pointer;display:flex;justify-content:space-between;align-items:center;box-sizing:border-box">
-          <span id="hist-type-label">All Types</span><span style="color:var(--text3)">\u25be</span>
+          <span id="hist-type-label">All Types</span><span style="color:var(--text3)">▾</span>
         </button>
         <div id="hist-type-dropdown" style="display:none;position:absolute;top:100%;left:0;right:0;z-index:50;background:var(--bg2);border:1.5px solid var(--border);border-radius:8px;margin-top:4px;padding:10px;box-shadow:0 4px 16px rgba(0,0,0,.15)">
           <label style="display:flex;align-items:center;gap:6px;font-size:13px;padding:5px 2px;cursor:pointer"><input type="checkbox" class="hist-type-chk" value="IN"> Stock In</label>
@@ -1244,6 +1260,9 @@ window.invCredLogin = async function() {
     // stock out, so hidden there.
     var upcField = g("inv-upc-field");
     if (upcField) upcField.style.display = mode === "in" ? "block" : "none";
+    // Quick Add — Stock In only; doesn't make sense for Stock Out.
+    var quickAddCard = g("inv-quickadd-card");
+    if (quickAddCard) quickAddCard.style.display = mode === "in" ? "block" : "none";
     if (mode === "out") invRenderPullList();
     // Hide scan result cards when switching mode
     g("inv-result-card").style.display = "none";
@@ -1292,7 +1311,7 @@ window.invCredLogin = async function() {
     if (invCamRunning) { invStopCam(); return; }
     invCamStage = "sku";
     var btn = g("inv-cam-btn");
-    btn.textContent = "Starting\u2026";
+    btn.textContent = "Starting…";
     btn.disabled = true;
     invLoadQR().then(function() {
       g("inv-reader-wrap").style.display = "block";
@@ -1312,8 +1331,8 @@ window.invCredLogin = async function() {
             // Camera stays running — now waiting for the Location scan.
             invCamStage = "location";
             var btn2 = g("inv-cam-btn");
-            if (btn2) btn2.textContent = "\ud83d\udcf7 Now Scan Location";
-            invFlash("Found it \u2014 now scan the Location", "success");
+            if (btn2) btn2.textContent = "📷 Now Scan Location";
+            invFlash("Found it — now scan the Location", "success");
           } else if (invMode === "in" && invCamStage === "location") {
             invApplyScannedLocationForStockIn(code);
             invStopCam();
@@ -1328,19 +1347,19 @@ window.invCredLogin = async function() {
         function() {}
       ).then(function() {
         invCamRunning = true;
-        btn.textContent = invMode === "in" ? "\ud83d\udcf7 Scan SKU / Part# / UPC" : "\u23f9 Stop Camera";
+        btn.textContent = invMode === "in" ? "📷 Scan SKU / Part# / UPC" : "⏹ Stop Camera";
         btn.className = "icam-btn scanning";
         btn.disabled = false;
       }).catch(function(err) {
-        invFlash("Camera error \u2014 check permissions", "error");
-        btn.textContent = "\ud83d\udcf7 Start Camera";
+        invFlash("Camera error — check permissions", "error");
+        btn.textContent = "📷 Start Camera";
         btn.className = "icam-btn";
         btn.disabled = false;
         g("inv-reader-wrap").style.display = "none";
       });
     }).catch(function() {
       invFlash("Could not load scanner", "error");
-      btn.textContent = "\ud83d\udcf7 Start Camera";
+      btn.textContent = "📷 Start Camera";
       btn.disabled = false;
     });
   };
@@ -1370,7 +1389,7 @@ window.invCredLogin = async function() {
       if (pfxEl && prefix) pfxEl.value = prefix;
       if (shfEl) shfEl.value = shelf;
       invPickNew();
-      invFlash("New location: " + fullLoc + " \u2014 enter Cases to finish", "success");
+      invFlash("New location: " + fullLoc + " — enter Cases to finish", "success");
     }
   }
 
@@ -1382,7 +1401,7 @@ window.invCredLogin = async function() {
     invCamRunning = false;
     invCamStage = "sku";
     g("inv-reader-wrap").style.display = "none";
-    g("inv-cam-btn").textContent = "\ud83d\udcf7 Start Camera";
+    g("inv-cam-btn").textContent = "📷 Start Camera";
     g("inv-cam-btn").className = "icam-btn";
     g("inv-cam-btn").disabled = false;
   }
@@ -1618,8 +1637,8 @@ window.invCredLogin = async function() {
       var el = document.createElement("div");
       el.className = "iloc-opt";
       var stockLine = item.totalCases > 0
-        ? item.totalCases + " cases \u00b7 " + item.locCount + " location" + (item.locCount !== 1 ? "s" : "") + (item.variantCount > 1 ? " \u00b7 " + item.variantCount + " variants" : "")
-        : (item.lastLocation ? "<span style='color:var(--orange)'>No stock \u00b7 last seen: " + item.lastLocation + "</span>" : "<span style='color:var(--red)'>No stock on record</span>");
+        ? item.totalCases + " cases · " + item.locCount + " location" + (item.locCount !== 1 ? "s" : "") + (item.variantCount > 1 ? " · " + item.variantCount + " variants" : "")
+        : (item.lastLocation ? "<span style='color:var(--orange)'>No stock · last seen: " + item.lastLocation + "</span>" : "<span style='color:var(--red)'>No stock on record</span>");
       el.innerHTML = "<div style='flex:1'>"
         + "<div style='font-size:12px;font-family:var(--mono);color:var(--accent);margin-bottom:2px'>" + item.baseSku + "</div>"
         + "<div style='font-size:14px;font-weight:600;color:var(--text)'>" + item.name + "</div>"
@@ -1747,7 +1766,7 @@ window.invCredLogin = async function() {
         el.innerHTML = "<div style='display:flex;justify-content:space-between;align-items:center'>"
           + "<div>"
           + "<div class='iloc-name' style='font-family:var(--mono);font-size:14px'>" + v + "</div>"
-          + "<div style='font-size:11px;color:var(--text3);margin-top:2px'>" + loc.location + " \u00b7 " + locCases + " cases</div>"
+          + "<div style='font-size:11px;color:var(--text3);margin-top:2px'>" + loc.location + " · " + locCases + " cases</div>"
           + "</div></div>"
           + "<div style='margin-top:10px;padding-top:10px;border-top:1px solid var(--border)'>"
           + "<div style='font-size:11px;font-weight:700;color:var(--text3);margin-bottom:4px'>CASES TO PULL</div>"
@@ -2014,8 +2033,8 @@ window.invCredLogin = async function() {
 
       var zeroHeader = document.createElement("div");
       zeroHeader.style.cssText = "display:flex;justify-content:space-between;align-items:center;cursor:pointer;padding:4px 0";
-      zeroHeader.innerHTML = "<span style='font-size:11px;font-weight:700;letter-spacing:.5px;text-transform:uppercase;color:var(--orange)'>\u26a0 System shows 0 cases \u2014 Found on shelf? (" + zeroLocs.length + ")</span>"
-        + "<span id='inv-zero-toggle-icon' style='color:var(--orange);font-size:12px;font-weight:700'>Show \u25be</span>";
+      zeroHeader.innerHTML = "<span style='font-size:11px;font-weight:700;letter-spacing:.5px;text-transform:uppercase;color:var(--orange)'>⚠ System shows 0 cases — Found on shelf? (" + zeroLocs.length + ")</span>"
+        + "<span id='inv-zero-toggle-icon' style='color:var(--orange);font-size:12px;font-weight:700'>Show ▾</span>";
       zeroWrap.appendChild(zeroHeader);
 
       var zeroBody = document.createElement("div");
@@ -2026,14 +2045,14 @@ window.invCredLogin = async function() {
 
       var zeroCloseBtn = document.createElement("div");
       zeroCloseBtn.style.cssText = "display:none;text-align:right;margin-top:4px";
-      zeroCloseBtn.innerHTML = "<span style='cursor:pointer;color:var(--text3);font-size:12px;font-weight:700'>\u2715 Close</span>";
+      zeroCloseBtn.innerHTML = "<span style='cursor:pointer;color:var(--text3);font-size:12px;font-weight:700'>✕ Close</span>";
       zeroWrap.appendChild(zeroCloseBtn);
 
       function invSetZeroExpanded(open) {
         zeroBody.style.display = open ? "block" : "none";
         zeroCloseBtn.style.display = open ? "block" : "none";
         var icon = document.getElementById('inv-zero-toggle-icon');
-        if (icon) icon.textContent = open ? "Hide \u25b4" : "Show \u25be";
+        if (icon) icon.textContent = open ? "Hide ▴" : "Show ▾";
       }
       zeroHeader.onclick = function() { invSetZeroExpanded(zeroBody.style.display === "none"); };
       zeroCloseBtn.onclick = function(e) { e.stopPropagation(); invSetZeroExpanded(false); };
@@ -2134,7 +2153,7 @@ window.invCredLogin = async function() {
     var loc     = _invFosLoc;
     var partNum = (loc.partNum && loc.partNum !== invPart.partNum) ? loc.partNum : invPart.partNum;
     var btn     = g('inv-fos-btn');
-    btn.disabled = true; btn.textContent = 'Saving\u2026';
+    btn.disabled = true; btn.textContent = 'Saving…';
 
     var initials = (INV_CRED_USER && INV_CRED_USER.displayName) || 'OPS';
 
@@ -2162,12 +2181,12 @@ window.invCredLogin = async function() {
       }
       if (pull <= 0) {
         btn.disabled = false; btn.textContent = 'Log Found + Pull';
-        invFlash('\u2713 Logged ' + found + ' cases found at ' + loc.location + ' \u2014 pending approval', 'success');
+        invFlash('✓ Logged ' + found + ' cases found at ' + loc.location + ' — pending approval', 'success');
         g('inv-fos-wrap').style.display = 'none';
         _invFosLoc = null;
         invReset(true); invFetchPendingCount(); return;
       }
-      submitEntry('OUT', pull, '[' + (invStockOutDest === 'company' ? 'BIG COMPANY' : 'SHELVING') + '] [FOUND ON SHELF \u2014 pulling ' + pull + ' of ' + found + ' found]', function(dOut) {
+      submitEntry('OUT', pull, '[' + (invStockOutDest === 'company' ? 'BIG COMPANY' : 'SHELVING') + '] [FOUND ON SHELF — pulling ' + pull + ' of ' + found + ' found]', function(dOut) {
         btn.disabled = false; btn.textContent = 'Log Found + Pull';
         if (dOut.ok) {
           // Add to pull list
@@ -2183,7 +2202,7 @@ window.invCredLogin = async function() {
             return invLocSort(a.location)-invLocSort(b.location)||a.location.localeCompare(b.location);
           });
           invSavePullList(); invRenderPullList();
-          invFlash('\u2713 Found ' + found + ' @ ' + loc.location + ' \u2014 pulling ' + pull + ' \u2014 pending approval', 'success');
+          invFlash('✓ Found ' + found + ' @ ' + loc.location + ' — pulling ' + pull + ' — pending approval', 'success');
           g('inv-fos-wrap').style.display = 'none';
           _invFosLoc = null;
           invReset(true); invFetchPendingCount();
@@ -2234,10 +2253,10 @@ window.invCredLogin = async function() {
 
     var btn = g("inv-fel-btn");
     btn.disabled = true;
-    btn.textContent = "Saving\u2026";
+    btn.textContent = "Saving…";
 
     var submitEntry = function(type, cases, notes, cb) {
-      var fullNotes = userNotes ? (notes + " \u2014 " + userNotes) : notes;
+      var fullNotes = userNotes ? (notes + " — " + userNotes) : notes;
       wFetch(W + "/inventory/log", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -2254,7 +2273,7 @@ window.invCredLogin = async function() {
       submitEntry("IN", found, "[FOUND AT UNLISTED LOCATION]", function(d) {
         btn.disabled = false; btn.textContent = "Log Found Location";
         if (d.ok) {
-          invFlash("\u2713 Logged " + found + " cases IN at " + loc + " \u2014 pending approval", "success");
+          invFlash("✓ Logged " + found + " cases IN at " + loc + " — pending approval", "success");
           g("inv-found-elsewhere-wrap").style.display = "none";
           invReset(true);
           invFetchPendingCount();
@@ -2272,13 +2291,13 @@ window.invCredLogin = async function() {
         }
         if (pull <= 0) {
           btn.disabled = false; btn.textContent = "Log Found Location";
-          invFlash("\u2713 Logged " + found + " cases found at " + loc + " \u2014 pending approval", "success");
+          invFlash("✓ Logged " + found + " cases found at " + loc + " — pending approval", "success");
           g("inv-found-elsewhere-wrap").style.display = "none";
           invReset(true);
           invFetchPendingCount();
           return;
         }
-        submitEntry("OUT", pull, "[" + (invStockOutDest === 'company' ? 'BIG COMPANY' : 'SHELVING') + "] [FOUND AT UNLISTED LOCATION \u2014 pulling " + pull + " of " + found + " found]", function(dOut) {
+        submitEntry("OUT", pull, "[" + (invStockOutDest === 'company' ? 'BIG COMPANY' : 'SHELVING') + "] [FOUND AT UNLISTED LOCATION — pulling " + pull + " of " + found + " found]", function(dOut) {
           btn.disabled = false; btn.textContent = "Log Found Location";
           if (dOut.ok) {
             invPullList.push({
@@ -2293,7 +2312,7 @@ window.invCredLogin = async function() {
             });
             invSavePullList();
             invRenderPullList();
-            invFlash("\u2713 Found " + found + " at " + loc + " \u2014 pulling " + pull + " \u2014 pending approval", "success");
+            invFlash("✓ Found " + found + " at " + loc + " — pulling " + pull + " — pending approval", "success");
             g("inv-found-elsewhere-wrap").style.display = "none";
             invReset(true);
             invFetchPendingCount();
@@ -2528,10 +2547,10 @@ window.invCredLogin = async function() {
     var warn = g("inv-warn");
     warn.style.display = "none";
     if (invSelLoc && invSelLoc.isPlaceholder) {
-      warn.textContent = "\u26a0 Placeholder location \u2014 approving will set real location.";
+      warn.textContent = "⚠ Placeholder location — approving will set real location.";
       warn.style.display = "block";
     } else if (invMode === "out" && invSelLoc && !invSelLoc.isNew) {
-      warn.textContent = "\u26a0 Removing cases \u2014 current stock: " + invSelLoc.cases;
+      warn.textContent = "⚠ Removing cases — current stock: " + invSelLoc.cases;
       warn.style.display = "block";
     }
     g("inv-detail-card").style.display = "block";
@@ -2552,7 +2571,7 @@ window.invCredLogin = async function() {
     var location = invSelLoc.isNew ? newLoc : invSelLoc.location;
     var btn = g("inv-submit-btn");
     btn.disabled = true;
-    btn.textContent = "Saving\u2026";
+    btn.textContent = "Saving…";
     function doSubmit() {
       wFetch(W + "/inventory/log", {
         method: "POST",
@@ -2573,7 +2592,7 @@ window.invCredLogin = async function() {
         })
       }).then(function(r) { return r.json(); })
         .then(function(d) {
-          if (d.ok) { invFlash("Logged \u2014 pending approval", "success"); invReset(false); invFetchPendingCount(); }
+          if (d.ok) { invFlash("Logged — pending approval", "success"); invReset(false); invFetchPendingCount(); }
           else { invFlash("Error: " + (d.error || "unknown"), "error"); }
         })
         .catch(function(err) {
@@ -2589,6 +2608,67 @@ window.invCredLogin = async function() {
         });
     }
     doSubmit();
+  };
+
+  // Quick Add — Part#, Location, Cases and QTY per Case in one form, no
+  // Scan or Search step first. Looks up the part first (quietly, in the
+  // background) to pick up its real name/SKU when it's a known item —
+  // improves data quality without blocking submission if it comes back
+  // empty (a genuinely brand-new item, which is exactly what this form is
+  // also for). Always submits through the same isNew Stock In path
+  // everything else uses, so an existing Part#+Location just gets added
+  // to rather than duplicated (see the worker's isNew/IN insert logic).
+  window.invQuickAddSubmit = function() {
+    var partNum  = (g("inv-qa-partnum")  && g("inv-qa-partnum").value.trim().toUpperCase())  || "";
+    var location = (g("inv-qa-location") && g("inv-qa-location").value.trim().toUpperCase()) || "";
+    var cases    = parseFloat(g("inv-qa-cases") && g("inv-qa-cases").value);
+    var upc      = (g("inv-qa-upc") && g("inv-qa-upc").value) ? parseFloat(g("inv-qa-upc").value) : 0;
+    if (!partNum)  { invFlash("Enter a Part #", "error"); return; }
+    if (!location) { invFlash("Enter a Location", "error"); return; }
+    if (!cases || cases < 0.1) { invFlash("Enter QTY Case", "error"); return; }
+
+    var initials = (INV_CRED_USER && INV_CRED_USER.displayName) || "OPS";
+    var btn = g("inv-qa-submit-btn");
+    btn.disabled = true;
+    btn.textContent = "Saving…";
+
+    function doQuickAddSubmit(name, sku) {
+      wFetch(W + "/inventory/log", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          type: "IN", partNum: partNum, sku: sku || partNum, name: name || "",
+          location: location, cases: cases, initials: initials, notes: "",
+          isNew: true, isPlaceholder: false, unitsPerCase: upc || 0
+        })
+      }).then(function(r) { return r.json(); })
+        .then(function(d) {
+          if (d.ok) {
+            invFlash("✓ Logged — pending approval", "success");
+            g("inv-qa-partnum").value = ""; g("inv-qa-location").value = "";
+            g("inv-qa-cases").value = ""; g("inv-qa-upc").value = "";
+            invFetchPendingCount();
+          } else {
+            invFlash("Error: " + (d.error || "unknown"), "error");
+          }
+        })
+        .catch(function(err) {
+          if (isUnauthorized(err)) {
+            invReauth(function() { doQuickAddSubmit(name, sku); }, function() { btn.disabled = false; btn.textContent = "Submit Stock In"; });
+          } else {
+            invFlash("Submit failed", "error");
+          }
+        })
+        .finally(function() {
+          btn.disabled = false;
+          btn.textContent = "Submit Stock In";
+        });
+    }
+
+    wFetch(W + "/inventory/lookup?code=" + encodeURIComponent(partNum))
+      .then(function(r) { return r.json(); })
+      .then(function(d) { doQuickAddSubmit(d && d.name, d && d.sku); })
+      .catch(function() { doQuickAddSubmit("", ""); });
   };
 
   window.invCloseResult = function() {
@@ -2753,7 +2833,7 @@ window.invCredLogin = async function() {
   window.invShowStockoutHistory = function() {
     var body = g('inv-stockout-history-body');
     var modal = g('inv-stockout-history-modal');
-    if (body) body.innerHTML = '<div style="padding:12px;color:var(--text3)">Loading\u2026</div>';
+    if (body) body.innerHTML = '<div style="padding:12px;color:var(--text3)">Loading…</div>';
     if (modal) modal.style.display = 'flex';
     wFetch(W + '/inventory/stockouts?status=resolved')
       .then(function(r) { return r.json(); })
@@ -2769,14 +2849,14 @@ window.invCredLogin = async function() {
           var qty = s.quantity != null ? (parseInt(s.quantity, 10) || 1) : 1;
           return '<div style="padding:8px 0;border-bottom:1px solid var(--border)">'
             + '<div style="display:flex;justify-content:space-between;align-items:center">'
-            + '<span style="font-family:var(--mono);font-weight:700">' + (s.binLocation || s.sku || '\u2014') + '</span>'
-            + '<span style="font-size:10px;font-weight:700;color:var(--green)">\u2713 Resolved</span>'
+            + '<span style="font-family:var(--mono);font-weight:700">' + (s.binLocation || s.sku || '—') + '</span>'
+            + '<span style="font-size:10px;font-weight:700;color:var(--green)">✓ Resolved</span>'
             + '</div>'
             + '<div style="color:var(--text3);font-size:11px;margin-top:2px">'
-            + 'Need ' + qty + (s.sku ? ' \u00b7 ' + s.sku : '') + (s.orderNum ? ' \u00b7 Order ' + s.orderNum : '')
+            + 'Need ' + qty + (s.sku ? ' · ' + s.sku : '') + (s.orderNum ? ' · Order ' + s.orderNum : '')
             + '</div>'
-            + '<div style="color:var(--text3);font-size:11px;margin-top:2px">Reported by ' + (s.reportedBy || '?') + (when ? ' \u00b7 ' + when : '') + '</div>'
-            + '<div style="color:var(--text3);font-size:11px;margin-top:2px">Resolved by ' + (s.resolvedBy || '?') + (resolvedWhen ? ' \u00b7 ' + resolvedWhen : '') + '</div>'
+            + '<div style="color:var(--text3);font-size:11px;margin-top:2px">Reported by ' + (s.reportedBy || '?') + (when ? ' · ' + when : '') + '</div>'
+            + '<div style="color:var(--text3);font-size:11px;margin-top:2px">Resolved by ' + (s.resolvedBy || '?') + (resolvedWhen ? ' · ' + resolvedWhen : '') + '</div>'
             + '</div>';
         }).join('');
       })
@@ -3169,11 +3249,11 @@ window.invCredLogin = async function() {
     if (invReviewAutoMode) {
       manBtn.style.background = ''; manBtn.style.color = ''; manBtn.style.borderColor = '';
       autoBtn.style.background = 'var(--green)'; autoBtn.style.color = '#fff'; autoBtn.style.borderColor = 'var(--green)';
-      if (desc) desc.textContent = 'Auto \u2014 new entries approve instantly, no Review needed';
+      if (desc) desc.textContent = 'Auto — new entries approve instantly, no Review needed';
     } else {
       manBtn.style.background = 'var(--accent)'; manBtn.style.color = '#fff'; manBtn.style.borderColor = 'var(--accent)';
       autoBtn.style.background = ''; autoBtn.style.color = ''; autoBtn.style.borderColor = '';
-      if (desc) desc.textContent = 'Manual \u2014 new entries wait here for approval';
+      if (desc) desc.textContent = 'Manual — new entries wait here for approval';
     }
   }
 
@@ -3248,7 +3328,7 @@ window.invCredLogin = async function() {
     invReviewAutoMode = (mode === 'auto');
     invReviewLastSetAt = Date.now();
     invReviewUpdateModeUI();
-    invFlash('Saving approval mode\u2026 (applies everywhere immediately)', 'success');
+    invFlash('Saving approval mode… (applies everywhere immediately)', 'success');
     wFetch(W + '/inventory/review-mode', { method: 'POST', body: JSON.stringify({ mode: mode }) })
       .then(function(r) { return r.json(); })
       .then(function(d) {
@@ -3279,8 +3359,8 @@ window.invCredLogin = async function() {
 
   function invLoadPending() {
     g("inv-pending-in").innerHTML  = "<div class='iempty'>Loading…</div>";
-    g("inv-pending-out").innerHTML = "<div class='iempty'>Loading\u2026</div>";
-    g("inv-pending-xfr").innerHTML = "<div class='iempty'>Loading\u2026</div>";
+    g("inv-pending-out").innerHTML = "<div class='iempty'>Loading…</div>";
+    g("inv-pending-xfr").innerHTML = "<div class='iempty'>Loading…</div>";
     wFetch(W + "/inventory/pending")
       .then(function(r) { return r.json(); })
       .then(function(d) {
@@ -3355,8 +3435,8 @@ window.invCredLogin = async function() {
     if (body) {
       body.innerHTML = existing.partNum + ' @ ' + existing.location + ' is already in your pull list'
         + (existing.cases ? ' with <strong>' + existing.cases + '</strong> cases entered' : '') + '.<br><br>'
-        + 'OK \u2014 leave it as is.<br>'
-        + 'Add More \u2014 add your new ' + (newCases || 0) + ' on top of what\u2019s already there.';
+        + 'OK — leave it as is.<br>'
+        + 'Add More — add your new ' + (newCases || 0) + ' on top of what’s already there.';
     }
     var modal = g('inv-dup-pull-modal');
     if (modal) modal.style.display = 'flex';
@@ -3379,7 +3459,7 @@ window.invCredLogin = async function() {
         item.cases = oldCases + (parseFloat(_invDupPullPending.newCases) || 0);
         invSavePullList();
         invRenderPullList();
-        invFlash('Updated: ' + item.partNum + ' @ ' + item.location + ' \u2014 now ' + item.cases + ' cases', 'success');
+        invFlash('Updated: ' + item.partNum + ' @ ' + item.location + ' — now ' + item.cases + ' cases', 'success');
       }
       if (_invDupPullPending.inputEl) _invDupPullPending.inputEl.value = '0';
     }
@@ -3472,14 +3552,14 @@ window.invCredLogin = async function() {
     var cases = Math.abs(diff);
     var initials = (INV_CRED_USER && INV_CRED_USER.displayName) || 'OPS';
 
-    invFlash('Saving correction\u2026', 'success');
+    invFlash('Saving correction…', 'success');
     wFetch(W + '/inventory/log', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
         type: type, partNum: item.partNum, sku: item.sku, name: item.name,
         location: item.location, cases: cases, initials: initials,
-        notes: '[AUDIT] [PULL LIST CORRECTION] ' + oldVal + ' \u2192 ' + newVal,
+        notes: '[AUDIT] [PULL LIST CORRECTION] ' + oldVal + ' → ' + newVal,
         isNew: false, isPlaceholder: !!item.isPlaceholder,
         masterRowIndex: item.masterRowIndex, masterId: item.masterId || null,
         immediateApprove: true
@@ -3490,7 +3570,7 @@ window.invCredLogin = async function() {
           item.systemCases = newVal;
           invSavePullList();
           invRenderPullList();
-          invFlash('\u2713 Corrected ' + item.location + ': ' + oldVal + ' \u2192 ' + newVal, 'success');
+          invFlash('✓ Corrected ' + item.location + ': ' + oldVal + ' → ' + newVal, 'success');
         } else {
           invFlash('Correction failed: ' + (d.error || 'unknown'), 'error');
         }
@@ -3499,7 +3579,7 @@ window.invCredLogin = async function() {
         if (isUnauthorized(err)) {
           invReauth(function() { invPromptSystemCorrection(i); }, function() {});
         } else {
-          invFlash('Correction failed \u2014 network error', 'error');
+          invFlash('Correction failed — network error', 'error');
         }
       });
   };
@@ -3543,7 +3623,7 @@ window.invCredLogin = async function() {
         }, 50);
       } else if (tries > 20) {
         clearInterval(poll);
-        invFlash('Search loaded, but couldn\u2019t find ' + item.location + ' automatically \u2014 find it in the list below', 'warn');
+        invFlash('Search loaded, but couldn’t find ' + item.location + ' automatically — find it in the list below', 'warn');
       }
     }, 150);
   };
@@ -3630,9 +3710,9 @@ window.invCredLogin = async function() {
     // Found (see invTogglePullCheck / invMarkNoneFound), so this badge is
     // the visible reminder of that connection while it's still sitting
     // here ungrabbed.
-    var stockoutBadge = item.sourceStockoutId ? " <span style='background:var(--accent-bg,var(--bg3));color:var(--accent);font-size:10px;font-weight:700;padding:1px 6px;border-radius:4px;border:1px solid var(--accent);font-family:var(--sans)'>\ud83d\udccb STOCK OUT REPORT</span>" : "";
+    var stockoutBadge = item.sourceStockoutId ? " <span style='background:var(--accent-bg,var(--bg3));color:var(--accent);font-size:10px;font-weight:700;padding:1px 6px;border-radius:4px;border:1px solid var(--accent);font-family:var(--sans)'>📋 STOCK OUT REPORT</span>" : "";
     var sysCasesHtml = item.systemCases !== undefined
-      ? " <span onclick='invPromptSystemCorrection(" + i + ")' title='System shows " + item.systemCases + " \u2014 tap to correct' "
+      ? " <span onclick='invPromptSystemCorrection(" + i + ")' title='System shows " + item.systemCases + " — tap to correct' "
         + "style='cursor:pointer;font-size:11px;color:var(--text3);text-decoration:underline dotted;white-space:nowrap'>(system: " + item.systemCases + ")</span>"
       : "";
     // Bottom section branches on submission state now that Grabbed/None
@@ -3643,13 +3723,13 @@ window.invCredLogin = async function() {
     // invTogglePullCheck for why un-checking a submitted item is blocked).
     var statusLine;
     if (item.submitted) {
-      statusLine = "<div style='font-size:11px;color:var(--green);margin-top:4px;font-weight:600'>\u2713 "
-        + (item.noneFound ? "None Found \u2014 submitted for review" : "Submitted \u2014 " + item.cases + " cases")
+      statusLine = "<div style='font-size:11px;color:var(--green);margin-top:4px;font-weight:600'>✓ "
+        + (item.noneFound ? "None Found — submitted for review" : "Submitted — " + item.cases + " cases")
         + "</div>";
     } else if (item._submitting) {
-      statusLine = "<div style='font-size:11px;color:var(--text3);margin-top:4px;font-weight:600'>Submitting\u2026</div>";
+      statusLine = "<div style='font-size:11px;color:var(--text3);margin-top:4px;font-weight:600'>Submitting…</div>";
     } else if (item.submitError) {
-      statusLine = "<div onclick='invRetryPullItem(" + i + ")' style='font-size:11px;color:var(--red);margin-top:4px;font-weight:700;cursor:pointer;text-decoration:underline'>\u26a0 " + item.submitError + " \u2014 tap to retry</div>";
+      statusLine = "<div onclick='invRetryPullItem(" + i + ")' style='font-size:11px;color:var(--red);margin-top:4px;font-weight:700;cursor:pointer;text-decoration:underline'>⚠ " + item.submitError + " — tap to retry</div>";
     } else {
       statusLine = "<div style='margin-top:6px;display:flex;gap:6px;align-items:center;flex-wrap:wrap'>" +
           "<input type='number' min='0.1' step='0.5' placeholder='Cases' value='" + (item.cases || '') + "' " +
@@ -3666,14 +3746,14 @@ window.invCredLogin = async function() {
     var resumeNotesHtml = "";
     if (item.resumeNotes && item.resumeNotes.length) {
       resumeNotesHtml = item.resumeNotes.map(function(n) {
-        return "<div style='font-size:10px;color:var(--accent);margin-top:2px'>+" + n.cases + " from Saved For Later \u2014 saved by " + (n.savedBy || '?') + (n.savedAt ? ' \u00b7 ' + invFmtStamp(n.savedAt) : '') + "</div>";
+        return "<div style='font-size:10px;color:var(--accent);margin-top:2px'>+" + n.cases + " from Saved For Later — saved by " + (n.savedBy || '?') + (n.savedAt ? ' · ' + invFmtStamp(n.savedAt) : '') + "</div>";
       }).join("");
     }
     infoDiv.innerHTML =
       "<div class='ipull-loc'>" + item.location + "</div>" +
       "<div class='ipull-pn'>" + item.partNum + fossBadge + noneBadge + stockoutBadge + "</div>" +
       "<div class='ipull-name'>" + (item.name || '') + "</div>" +
-      (item.addedAt ? "<div style='font-size:10px;color:var(--text3);margin-top:2px'>Added " + invFmtStamp(item.addedAt) + (item.grabbedAt ? " &nbsp;\u00b7&nbsp; Grabbed " + invFmtStamp(item.grabbedAt) : "") + "</div>" : "") +
+      (item.addedAt ? "<div style='font-size:10px;color:var(--text3);margin-top:2px'>Added " + invFmtStamp(item.addedAt) + (item.grabbedAt ? " &nbsp;·&nbsp; Grabbed " + invFmtStamp(item.grabbedAt) : "") + "</div>" : "") +
       resumeNotesHtml +
       statusLine;
 
@@ -3712,7 +3792,7 @@ window.invCredLogin = async function() {
     }
     var toSave = selectedIdx.map(function(i) { return invPullList[i]; });
     var savedBy = (INV_CRED_USER && INV_CRED_USER.displayName) || 'OPS';
-    if (!confirm('Save ' + toSave.length + ' selected item(s) for someone else to pick up? They\u2019ll be removed from your list; anything you didn\u2019t check stays here to keep working on.')) return;
+    if (!confirm('Save ' + toSave.length + ' selected item(s) for someone else to pick up? They’ll be removed from your list; anything you didn’t check stays here to keep working on.')) return;
     wFetch(W + '/inventory/pull-batch/save', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -3728,9 +3808,9 @@ window.invCredLogin = async function() {
         invSavePullList();
         invRenderPullList();
         invUpdateSavedBatchCount();
-        invFlash('\u2713 Saved ' + toSave.length + ' item(s) for later', 'success');
+        invFlash('✓ Saved ' + toSave.length + ' item(s) for later', 'success');
       })
-      .catch(function() { invFlash('Save failed \u2014 network error', 'error'); });
+      .catch(function() { invFlash('Save failed — network error', 'error'); });
   };
 
   window.invToggleSelectAllForSave = function(ungrabbedIndices) {
@@ -3747,7 +3827,7 @@ window.invCredLogin = async function() {
     var btn = g('inv-pull-save-selected-btn');
     if (!btn) return;
     var n = Object.keys(_invPullSaveSelection).length;
-    btn.textContent = n > 0 ? ('\ud83d\udcbe Save ' + n + ' Selected for Later') : '\ud83d\udcbe Save Selected for Later';
+    btn.textContent = n > 0 ? ('💾 Save ' + n + ' Selected for Later') : '💾 Save Selected for Later';
     btn.disabled = n === 0;
     btn.style.opacity = n === 0 ? '0.5' : '1';
   }
@@ -3812,7 +3892,7 @@ window.invCredLogin = async function() {
       historyTab.style.color = isHistory ? '#fff' : 'var(--text2)';
       historyTab.style.borderColor = isHistory ? 'var(--accent)' : 'var(--border)';
     }
-    if (body) body.innerHTML = '<div style="padding:12px;color:var(--text3)">Loading\u2026</div>';
+    if (body) body.innerHTML = '<div style="padding:12px;color:var(--text3)">Loading…</div>';
     wFetch(W + '/inventory/pull-batch/list?status=' + mode)
       .then(function(r) { return r.json(); })
       .then(function(d) {
@@ -3844,8 +3924,8 @@ window.invCredLogin = async function() {
     var topBarHtml = '';
     if (!isHistory && openBatches.length > 0) {
       topBarHtml = '<div style="display:flex;gap:8px;padding-bottom:8px;margin-bottom:6px;border-bottom:1px solid var(--border)">'
-        + '<button onclick="invSetPullBatchMode(\'resume\')" style="flex:1;padding:8px;border-radius:7px;border:1.5px solid var(--accent);background:var(--bg3);color:var(--accent);font-size:12px;font-weight:700;cursor:pointer">\u25b6 Select Items to Resume</button>'
-        + '<button onclick="invSetPullBatchMode(\'remove\')" style="flex:1;padding:8px;border-radius:7px;border:1.5px solid var(--red);background:var(--bg3);color:var(--red);font-size:12px;font-weight:700;cursor:pointer">\ud83d\uddd1 Select Items to Remove</button>'
+        + '<button onclick="invSetPullBatchMode(\'resume\')" style="flex:1;padding:8px;border-radius:7px;border:1.5px solid var(--accent);background:var(--bg3);color:var(--accent);font-size:12px;font-weight:700;cursor:pointer">▶ Select Items to Resume</button>'
+        + '<button onclick="invSetPullBatchMode(\'remove\')" style="flex:1;padding:8px;border-radius:7px;border:1.5px solid var(--red);background:var(--bg3);color:var(--red);font-size:12px;font-weight:700;cursor:pointer">🗑 Select Items to Remove</button>'
         + '</div>';
     }
 
@@ -3856,11 +3936,11 @@ window.invCredLogin = async function() {
       if (b.status === 'claimed') {
         var claimedWhen = '';
         try { claimedWhen = new Date(b.claimed_at).toLocaleString([], {month:'short', day:'numeric', hour:'numeric', minute:'2-digit'}); } catch(e) {}
-        statusLine = '<div style="color:var(--green);font-size:11px;font-weight:700;margin-top:2px">\u2713 Resumed by ' + (b.claimed_by || '?') + (claimedWhen ? ' \u00b7 ' + claimedWhen : '') + '</div>';
+        statusLine = '<div style="color:var(--green);font-size:11px;font-weight:700;margin-top:2px">✓ Resumed by ' + (b.claimed_by || '?') + (claimedWhen ? ' · ' + claimedWhen : '') + '</div>';
       } else if (b.status === 'removed') {
         var removedWhen = '';
         try { removedWhen = new Date(b.removed_at).toLocaleString([], {month:'short', day:'numeric', hour:'numeric', minute:'2-digit'}); } catch(e) {}
-        statusLine = '<div style="color:var(--red);font-size:11px;font-weight:700;margin-top:2px">\u2715 Removed by ' + (b.removed_by || '?') + (removedWhen ? ' \u00b7 ' + removedWhen : '') + '</div>';
+        statusLine = '<div style="color:var(--red);font-size:11px;font-weight:700;margin-top:2px">✕ Removed by ' + (b.removed_by || '?') + (removedWhen ? ' · ' + removedWhen : '') + '</div>';
       }
       var individualBtnsHtml = (b.status === 'open')
         ? '<div style="display:flex;gap:6px;flex-shrink:0">'
@@ -3872,7 +3952,7 @@ window.invCredLogin = async function() {
         + '<div style="display:flex;justify-content:space-between;align-items:center;gap:8px">'
         + '<div>'
         + '<div style="font-weight:700">' + b.item_count + ' item' + (b.item_count === 1 ? '' : 's') + '</div>'
-        + '<div style="color:var(--text3);font-size:11px;margin-top:2px">Saved by ' + (b.saved_by || '?') + (when ? ' \u00b7 ' + when : '') + '</div>'
+        + '<div style="color:var(--text3);font-size:11px;margin-top:2px">Saved by ' + (b.saved_by || '?') + (when ? ' · ' + when : '') + '</div>'
         + (b.note ? '<div style="color:var(--text2);font-size:11px;margin-top:2px">' + b.note + '</div>' : '')
         + statusLine
         + '</div>'
@@ -3922,7 +4002,7 @@ window.invCredLogin = async function() {
         + '<div style="flex:1">'
         + '<div style="font-family:var(--mono);font-weight:700;font-size:12px">' + (fi.partNum || '') + ' @ ' + (fi.location || '') + '</div>'
         + (fi.name ? '<div style="font-size:11px;color:var(--text2)">' + fi.name + '</div>' : '')
-        + '<div style="font-size:11px;color:var(--text3);margin-top:2px">' + (fi.cases || 0) + ' cases \u00b7 saved by ' + (fi.savedBy || '?') + (when ? ' \u00b7 ' + when : '') + '</div>'
+        + '<div style="font-size:11px;color:var(--text3);margin-top:2px">' + (fi.cases || 0) + ' cases · saved by ' + (fi.savedBy || '?') + (when ? ' · ' + when : '') + '</div>'
         + '</div></div>';
     }).join('');
 
@@ -3959,7 +4039,7 @@ window.invCredLogin = async function() {
     });
 
     if (_invPullBatchMode === 'remove') {
-      if (!confirm('Remove ' + picks.length + ' selected item(s)? They will NOT come back into anyone\u2019s Pull List \u2014 only use this to discard them.')) return;
+      if (!confirm('Remove ' + picks.length + ' selected item(s)? They will NOT come back into anyone’s Pull List — only use this to discard them.')) return;
       wFetch(W + '/inventory/pull-batch/remove-items', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -3969,11 +4049,11 @@ window.invCredLogin = async function() {
           _invPullBatchMode = null; _invPullBatchSelection = {};
           invUpdateSavedBatchCount();
           invLoadPullBatchesView('open');
-          if (d && d.ok) invFlash('\u2713 Removed ' + (d.removedCount != null ? d.removedCount : picks.length) + ' item(s)', 'success');
+          if (d && d.ok) invFlash('✓ Removed ' + (d.removedCount != null ? d.removedCount : picks.length) + ' item(s)', 'success');
           else invFlash('Could not remove: ' + ((d && d.error) || 'unknown'), 'error');
         })
         .catch(function() {
-          invFlash('Could not remove \u2014 network error', 'error');
+          invFlash('Could not remove — network error', 'error');
         });
     } else if (_invPullBatchMode === 'resume') {
       wFetch(W + '/inventory/pull-batch/claim-items', {
@@ -4015,17 +4095,17 @@ window.invCredLogin = async function() {
           var msg = [];
           if (added)  msg.push(added + ' new item' + (added === 1 ? '' : 's'));
           if (merged) msg.push(merged + ' merged into what you already had');
-          invFlash('\u2713 Resumed \u2014 ' + (msg.join(', ') || 'nothing to add'), 'success');
+          invFlash('✓ Resumed — ' + (msg.join(', ') || 'nothing to add'), 'success');
         })
         .catch(function() {
-          invFlash('Could not resume \u2014 network error', 'error');
+          invFlash('Could not resume — network error', 'error');
         });
     }
   };
 
   window.invRemovePullBatch = function(id, btnEl, silent) {
-    if (!silent && !confirm('Remove this saved batch? Its items will NOT come back into anyone\u2019s Pull List \u2014 only use this to discard it.')) return;
-    if (btnEl) { btnEl.disabled = true; btnEl.textContent = '\u2026'; }
+    if (!silent && !confirm('Remove this saved batch? Its items will NOT come back into anyone’s Pull List — only use this to discard it.')) return;
+    if (btnEl) { btnEl.disabled = true; btnEl.textContent = '…'; }
     var removedBy = (INV_CRED_USER && INV_CRED_USER.displayName) || 'OPS';
     return wFetch(W + '/inventory/pull-batch/remove', {
       method: 'POST',
@@ -4046,14 +4126,14 @@ window.invCredLogin = async function() {
         return d;
       })
       .catch(function() {
-        if (!silent) invFlash('Could not remove \u2014 network error', 'error');
+        if (!silent) invFlash('Could not remove — network error', 'error');
         if (btnEl) { btnEl.disabled = false; btnEl.textContent = 'Remove'; }
         return { ok: false };
       });
   };
 
   window.invResumePullBatch = function(id, btnEl, silent) {
-    if (btnEl) { btnEl.disabled = true; btnEl.textContent = '\u2026'; }
+    if (btnEl) { btnEl.disabled = true; btnEl.textContent = '…'; }
     var claimedBy = (INV_CRED_USER && INV_CRED_USER.displayName) || 'OPS';
     return wFetch(W + '/inventory/pull-batch/claim', {
       method: 'POST',
@@ -4101,12 +4181,12 @@ window.invCredLogin = async function() {
           var msg = [];
           if (added)  msg.push(added + ' new item' + (added === 1 ? '' : 's'));
           if (merged) msg.push(merged + ' merged into what you already had');
-          invFlash('\u2713 Resumed \u2014 ' + (msg.join(', ') || 'nothing to add'), 'success');
+          invFlash('✓ Resumed — ' + (msg.join(', ') || 'nothing to add'), 'success');
         }
         return { added: added, merged: merged };
       })
       .catch(function() {
-        if (!silent) invFlash('Could not resume \u2014 network error', 'error');
+        if (!silent) invFlash('Could not resume — network error', 'error');
         if (btnEl) { btnEl.disabled = false; btnEl.textContent = 'Resume'; }
         return { added: 0, merged: 0 };
       });
@@ -4172,7 +4252,7 @@ window.invCredLogin = async function() {
       var header = document.createElement("div");
       header.style.cssText = "display:flex;justify-content:space-between;align-items:center;cursor:pointer;padding:8px 10px;background:var(--bg2);border-radius:8px;border:1px solid var(--border)";
       header.innerHTML = "<span style='font-size:12px;font-weight:700;color:" + color + "'>" + label + " (" + indices.length + ")</span>"
-        + "<span style='color:var(--text3);font-size:12px;font-weight:700'>" + (open ? "Hide \u25b4" : "Show \u25be") + "</span>";
+        + "<span style='color:var(--text3);font-size:12px;font-weight:700'>" + (open ? "Hide ▴" : "Show ▾") + "</span>";
       header.onclick = (function(k) { return function() { invTogglePullSection(k); }; })(key);
       section.appendChild(header);
 
@@ -4187,7 +4267,7 @@ window.invCredLogin = async function() {
 
         if (!invPullSaveModeActive) {
           var openBtn = document.createElement("button");
-          openBtn.textContent = "\ud83d\udcbe Save For Later\u2026";
+          openBtn.textContent = "💾 Save For Later…";
           openBtn.style.cssText = "width:100%;padding:8px;border-radius:7px;border:1.5px solid var(--accent);background:var(--bg3);color:var(--accent);font-size:12px;font-weight:700;cursor:pointer";
           openBtn.onclick = invOpenSaveForLaterPicker;
           saveBar.appendChild(openBtn);
@@ -4202,7 +4282,7 @@ window.invCredLogin = async function() {
           var saveBtn = document.createElement("button");
           saveBtn.id = "inv-pull-save-selected-btn";
           var selCount = indices.filter(function(i) { return _invPullSaveSelection[i]; }).length;
-          saveBtn.textContent = selCount > 0 ? ("\ud83d\udcbe Save " + selCount) : "\ud83d\udcbe Save Selected";
+          saveBtn.textContent = selCount > 0 ? ("💾 Save " + selCount) : "💾 Save Selected";
           saveBtn.disabled = selCount === 0;
           saveBtn.style.cssText = "flex:1;padding:8px;border-radius:7px;border:1.5px solid var(--accent);background:var(--bg3);color:var(--accent);font-size:12px;font-weight:700;cursor:pointer;opacity:" + (selCount === 0 ? "0.5" : "1");
           saveBtn.onclick = invSaveUngrabbedForLater;
@@ -4270,7 +4350,7 @@ window.invCredLogin = async function() {
     // concerned, so un-checking here can't undo that. Use the "system:"
     // correction link instead for an actual mistake.
     if (invPullList[i].submitted) {
-      invFlash('Already submitted \u2014 use the system count link to correct a mistake', 'warn');
+      invFlash('Already submitted — use the system count link to correct a mistake', 'warn');
       return;
     }
     invPullList[i].grabbed = !invPullList[i].grabbed;
@@ -4302,7 +4382,7 @@ window.invCredLogin = async function() {
 
   window.invRemoveFromPullList = function(i) {
     if (invPullList[i] && invPullList[i].submitted) {
-      invFlash('Already submitted \u2014 this stays as your record of what was done', 'warn');
+      invFlash('Already submitted — this stays as your record of what was done', 'warn');
       return;
     }
     invPullList.splice(i, 1);
@@ -4320,7 +4400,7 @@ window.invCredLogin = async function() {
     invSavePullList();
     invRenderPullList();
     invSubmitOnePullItem(i); // submits immediately, same as Grabbed
-    invFlash('None Found logged \u2014 sent for review', 'warn');
+    invFlash('None Found logged — sent for review', 'warn');
   };
 
   window.invClearPullList = function() {
@@ -4385,12 +4465,12 @@ window.invCredLogin = async function() {
         item._submitting = false;
         if (isUnauthorized(err)) {
           invReauth(function() { invSubmitOnePullItem(i); }, function() {
-            item.submitError = "Sign-in required \u2014 tap to retry";
+            item.submitError = "Sign-in required — tap to retry";
             invRenderPullList();
             invUpdatePullRetryBtn();
           });
         } else {
-          item.submitError = "Network error \u2014 tap to retry";
+          item.submitError = "Network error — tap to retry";
           invSavePullList();
           invRenderPullList();
           invUpdatePullRetryBtn();
@@ -4415,7 +4495,7 @@ window.invCredLogin = async function() {
     if (!btn) return;
     var failedCount = invPullList.filter(function(x) { return x.submitError && !x.submitted; }).length;
     btn.style.display = failedCount > 0 ? 'block' : 'none';
-    btn.textContent = '\u26a0 Retry ' + failedCount + ' Failed Submission' + (failedCount === 1 ? '' : 's');
+    btn.textContent = '⚠ Retry ' + failedCount + ' Failed Submission' + (failedCount === 1 ? '' : 's');
   }
   // ─────────────────────────────────────────────────────────────────
 
@@ -4427,7 +4507,7 @@ window.invCredLogin = async function() {
     el.id = "inv-entry-" + item.rowIndex;
     var isFound = item.notes && item.notes.indexOf('[FOUND ON SHELF]') === 0;
     var typeHtml = "<span class='ientry-type " + item.type.toLowerCase() + "'>" + item.type + "</span>";
-    var foundBadge = isFound ? "<span style='background:var(--orange-bg);color:var(--orange);font-size:10px;font-weight:700;padding:2px 8px;border-radius:4px;border:1px solid var(--orange);margin-left:6px'>\u26a0 FOUND ON SHELF</span>" : "";
+    var foundBadge = isFound ? "<span style='background:var(--orange-bg);color:var(--orange);font-size:10px;font-weight:700;padding:2px 8px;border-radius:4px;border:1px solid var(--orange);margin-left:6px'>⚠ FOUND ON SHELF</span>" : "";
     var nameHtml = item.name ? "<div style='font-size:12px;color:var(--text2);margin-top:2px;margin-bottom:6px'>" + item.name + "</div>" : "";
     var skuHtml  = (item.sku && item.sku !== item.partNum)
       ? "<div style='font-size:11px;font-family:var(--mono);color:var(--text3);margin-top:1px'>" + item.sku + "</div>" : "";
@@ -4447,18 +4527,18 @@ window.invCredLogin = async function() {
       var stampParts = [];
       if (item.addedAt)   stampParts.push('Added ' + fmtT(item.addedAt));
       if (item.grabbedAt) stampParts.push('Grabbed ' + fmtT(item.grabbedAt));
-      timeLine = "<br>\ud83d\udd52 " + stampParts.join(' \u00b7 ');
+      timeLine = "<br>🕒 " + stampParts.join(' · ');
     } else if (item.timestamp) {
-      timeLine = "<br>\ud83d\udd52 " + fmtT(item.timestamp);
+      timeLine = "<br>🕒 " + fmtT(item.timestamp);
     }
     el.innerHTML = "<div style='display:flex;align-items:flex-start;gap:10px'>"
       + "<input type='checkbox' id='" + chkId + "' class='inv-bulk-chk' data-ri='" + item.rowIndex + "' style='margin-top:3px;width:16px;height:16px;flex-shrink:0;cursor:pointer' onchange='invBulkUpdateCount()'>"
       + "<div style='flex:1'><div class='ientry-head'><div><span class='ientry-part'>" + (item.partNum || "") + "</span>" + skuHtml + "</div><div style='display:flex;align-items:center;gap:4px'>" + foundBadge + typeHtml + "</div></div>"
       + nameHtml
-      + "<div class='ientry-meta'>\ud83d\udccd " + locationDisplay + " &nbsp;|\u00a0 \ud83d\udce6 " + (item.cases || 0) + " cases &nbsp;|\u00a0 \ud83e\uddd1 " + (item.initials || "")
-      + (displayNotes ? "<br>\ud83d\udcdd " + displayNotes : "")
+      + "<div class='ientry-meta'>📍 " + locationDisplay + " &nbsp;|  📦 " + (item.cases || 0) + " cases &nbsp;|  🧑 " + (item.initials || "")
+      + (displayNotes ? "<br>📝 " + displayNotes : "")
       + timeLine + "</div>"
-      + "<div class='ientry-btns'><button class='iapprove'>\u2713 Approve</button><button class='ireject'>\u2715 Reject</button></div></div></div>";
+      + "<div class='ientry-btns'><button class='iapprove'>✓ Approve</button><button class='ireject'>✕ Reject</button></div></div></div>";
     var ri = item.rowIndex;
     el.querySelector(".iapprove").onclick = function() { invVerify(ri, "Approved"); };
     el.querySelector(".ireject").onclick  = function() { invVerify(ri, "Rejected"); };
@@ -4570,12 +4650,12 @@ window.invCredLogin = async function() {
     var totalsEl = g('hist-report-totals');
     var peopleEl = g('hist-report-people');
     var rangeLbl = g('hist-report-range-label');
-    if (peopleEl) peopleEl.innerHTML = '<div style="padding:12px;color:var(--text3);font-size:13px">Loading\u2026</div>';
-    ['hist-rt-in','hist-rt-out','hist-rt-xfr','hist-rt-audit'].forEach(function(id){ var e=g(id); if(e) e.textContent = '\u2026'; });
+    if (peopleEl) peopleEl.innerHTML = '<div style="padding:12px;color:var(--text3);font-size:13px">Loading…</div>';
+    ['hist-rt-in','hist-rt-out','hist-rt-xfr','hist-rt-audit'].forEach(function(id){ var e=g(id); if(e) e.textContent = '…'; });
     if (g('hist-rt-in-cases'))  g('hist-rt-in-cases').textContent  = '';
     if (g('hist-rt-out-cases')) g('hist-rt-out-cases').textContent = '';
-    if (g('hist-rt-start')) g('hist-rt-start').textContent = '\u2026';
-    if (g('hist-rt-end'))   g('hist-rt-end').textContent   = '\u2026';
+    if (g('hist-rt-start')) g('hist-rt-start').textContent = '…';
+    if (g('hist-rt-end'))   g('hist-rt-end').textContent   = '…';
 
     var qs = dateVal ? ('date=' + encodeURIComponent(dateVal)) : ('days=' + days);
 
@@ -4598,8 +4678,8 @@ window.invCredLogin = async function() {
         if (g('hist-rt-audit')) g('hist-rt-audit').textContent = (t.audits||0).toLocaleString();
         if (g('hist-rt-in-cases'))  g('hist-rt-in-cases').textContent  = (t.casesIn||0).toLocaleString()  + ' cases';
         if (g('hist-rt-out-cases')) g('hist-rt-out-cases').textContent = (t.casesOut||0).toLocaleString() + ' cases';
-        if (g('hist-rt-start')) g('hist-rt-start').textContent = (d.startingCases !== undefined ? Number(d.startingCases).toLocaleString() : '\u2014');
-        if (g('hist-rt-end'))   g('hist-rt-end').textContent   = (d.endingCases   !== undefined ? Number(d.endingCases).toLocaleString()   : '\u2014');
+        if (g('hist-rt-start')) g('hist-rt-start').textContent = (d.startingCases !== undefined ? Number(d.startingCases).toLocaleString() : '—');
+        if (g('hist-rt-end'))   g('hist-rt-end').textContent   = (d.endingCases   !== undefined ? Number(d.endingCases).toLocaleString()   : '—');
 
         var people = d.byPerson || [];
         if (!peopleEl) return;
@@ -4623,7 +4703,7 @@ window.invCredLogin = async function() {
         people.forEach(function(p, idx) {
           var bg = idx % 2 === 0 ? 'var(--bg)' : 'var(--bg2)';
           html += '<tr style="background:' + bg + '">'
-            + '<td style="' + tdS + ';font-weight:700">' + (p.initials || '\u2014') + '</td>'
+            + '<td style="' + tdS + ';font-weight:700">' + (p.initials || '—') + '</td>'
             + '<td style="' + tdS + ';text-align:right;color:var(--green)">' + p.stockIn + '</td>'
             + '<td style="' + tdS + ';text-align:right;color:var(--red)">' + p.stockOut + '</td>'
             + '<td style="' + tdS + ';text-align:right;color:var(--red);font-weight:700">' + (p.casesOut||0).toLocaleString() + '</td>'
@@ -4737,7 +4817,7 @@ window.invCredLogin = async function() {
       + '<th style="' + thS + '">By</th>'
       + '<th style="' + thS + '">Status</th>'
       + '<th style="' + thS + '">Notes</th>'
-      + '<th style="' + thS + '" title="Warehouse-wide total before \u2192 after this change">Total Before \u2192 After</th>'
+      + '<th style="' + thS + '" title="Warehouse-wide total before → after this change">Total Before → After</th>'
       + '</tr></thead><tbody>';
 
     rows.forEach(function(r, idx) {
@@ -4754,7 +4834,7 @@ window.invCredLogin = async function() {
         var parts = [];
         if (r.added_at)   parts.push('Added ' + fmtT(r.added_at));
         if (r.grabbed_at) parts.push('Grabbed ' + fmtT(r.grabbed_at));
-        timeCell = parts.join(' \u00b7 ');
+        timeCell = parts.join(' · ');
       } else {
         timeCell = fmtT(r.timestamp);
       }
@@ -4769,9 +4849,9 @@ window.invCredLogin = async function() {
       // change alone should have produced — usually another change landed
       // at almost the same instant.
       var totalCell = (r.total_before !== null && r.total_before !== undefined)
-        ? (Number(r.total_before).toLocaleString() + ' \u2192 ' + Number(r.total_after).toLocaleString()
-           + (r.total_warning ? ' <span onclick=\'histShowFullNote(' + JSON.stringify(r.total_warning) + ', "\u26a0 Warning")\' style="color:var(--red);font-weight:700;cursor:pointer;text-decoration:underline dotted">\u26a0</span>' : ''))
-        : '<span style="color:var(--text3)">\u2014</span>';
+        ? (Number(r.total_before).toLocaleString() + ' → ' + Number(r.total_after).toLocaleString()
+           + (r.total_warning ? ' <span onclick=\'histShowFullNote(' + JSON.stringify(r.total_warning) + ', "⚠ Warning")\' style="color:var(--red);font-weight:700;cursor:pointer;text-decoration:underline dotted">⚠</span>' : ''))
+        : '<span style="color:var(--text3)">—</span>';
 
       html += '<tr style="background:' + bg + '">'
         + '<td style="' + td + 'white-space:nowrap;color:var(--text3);font-size:11px">' + timeCell + '</td>'
@@ -4782,7 +4862,7 @@ window.invCredLogin = async function() {
         + '<td style="' + td + 'text-align:right;font-family:var(--mono);font-weight:700">' + (r.cases||0) + '</td>'
         + '<td style="' + td + 'font-family:var(--mono);color:var(--text2)">' + (r.initials||'') + '</td>'
         + '<td style="' + td + 'white-space:nowrap"><span style="font-size:10px;font-weight:700;color:' + stCol + '">' + (r.status||'') + '</span></td>'
-        + '<td style="' + td + 'color:var(--text3);max-width:160px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;cursor:pointer;text-decoration:underline dotted" title="Click to see full note" onclick=\'histShowFullNote(' + JSON.stringify(r.notes||'') + ')\'>' + (notes || '\u2014') + '</td>'
+        + '<td style="' + td + 'color:var(--text3);max-width:160px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;cursor:pointer;text-decoration:underline dotted" title="Click to see full note" onclick=\'histShowFullNote(' + JSON.stringify(r.notes||'') + ')\'>' + (notes || '—') + '</td>'
         + '<td style="' + td + 'font-family:var(--mono);white-space:nowrap;font-size:11px">' + totalCell + '</td>'
         + '</tr>';
     });
@@ -5167,7 +5247,7 @@ window.invCredLogin = async function() {
     var summary = g('skumgr-merge-summary');
     var list = g('skumgr-merge-list');
     if (panel) panel.style.display = 'block';
-    if (summary) summary.textContent = 'Checking for duplicates\u2026';
+    if (summary) summary.textContent = 'Checking for duplicates…';
     if (list) list.innerHTML = '';
     wFetch(W + '/inventory/merge-duplicates')
       .then(function(r) { return r.json(); })
@@ -5175,46 +5255,46 @@ window.invCredLogin = async function() {
         if (!d.ok) { if (summary) summary.textContent = 'Error: ' + (d.error || 'unknown'); return; }
         _skumgrMergePlanCount = d.duplicateGroups;
         if (d.duplicateGroups === 0) {
-          if (summary) summary.innerHTML = '\u2713 No duplicate Part#+Location rows found. Total cases: <strong>' + d.totalCasesBefore.toLocaleString() + '</strong>';
+          if (summary) summary.innerHTML = '✓ No duplicate Part#+Location rows found. Total cases: <strong>' + d.totalCasesBefore.toLocaleString() + '</strong>';
           var btn = g('skumgr-merge-confirm-btn'); if (btn) btn.style.display = 'none';
           return;
         }
         var btn2 = g('skumgr-merge-confirm-btn'); if (btn2) btn2.style.display = '';
         if (summary) summary.innerHTML = 'Found <strong>' + d.duplicateGroups + '</strong> duplicate group' + (d.duplicateGroups === 1 ? '' : 's') + ' ('
           + d.rowsToRemove + ' row' + (d.rowsToRemove === 1 ? '' : 's') + ' will be removed).<br>'
-          + 'Total cases before: <strong>' + d.totalCasesBefore.toLocaleString() + '</strong> \u2014 after merging: <strong>' + d.totalCasesAfter.toLocaleString() + '</strong> (unchanged \u2014 merging only combines rows, never changes the actual count).';
+          + 'Total cases before: <strong>' + d.totalCasesBefore.toLocaleString() + '</strong> — after merging: <strong>' + d.totalCasesAfter.toLocaleString() + '</strong> (unchanged — merging only combines rows, never changes the actual count).';
         if (list) {
           list.innerHTML = d.plan.map(function(p) {
             return '<div style="padding:6px 8px;border-bottom:1px solid var(--border)"><span style="font-family:var(--mono);font-weight:700">' + p.partNum + '</span> @ ' + p.location
-              + ' \u2014 ' + p.caseValues.join(' + ') + ' = <strong>' + p.newCases + '</strong></div>';
+              + ' — ' + p.caseValues.join(' + ') + ' = <strong>' + p.newCases + '</strong></div>';
           }).join('');
         }
       })
-      .catch(function() { if (summary) summary.textContent = 'Check failed \u2014 network error'; });
+      .catch(function() { if (summary) summary.textContent = 'Check failed — network error'; });
   };
   var _skumgrMergePlanCount = 0;
 
   window.skumgrExecuteMerge = function() {
     var summary = g('skumgr-merge-summary');
     var btn = g('skumgr-merge-confirm-btn');
-    if (btn) { btn.disabled = true; btn.textContent = 'Merging\u2026'; }
+    if (btn) { btn.disabled = true; btn.textContent = 'Merging…'; }
     wFetch(W + '/inventory/merge-duplicates', { method: 'POST' })
       .then(function(r) { return r.json(); })
       .then(function(d) {
         if (btn) { btn.disabled = false; btn.textContent = 'Confirm Merge'; btn.style.display = 'none'; }
         if (!d.ok) { if (summary) summary.textContent = 'Merge failed: ' + (d.error || 'unknown'); return; }
-        if (summary) summary.innerHTML = '\u2713 Merged ' + d.mergedGroups + ' duplicate group' + (d.mergedGroups === 1 ? '' : 's') + '.<br>'
-          + 'Total cases before: <strong>' + d.totalCasesBefore.toLocaleString() + '</strong> \u2014 after: <strong>' + d.totalCasesAfter.toLocaleString() + '</strong> '
-          + (d.totalsMatch ? '<span style="color:var(--green)">\u2713 matches</span>' : '<span style="color:var(--red)">\u26a0 MISMATCH \u2014 please check</span>');
+        if (summary) summary.innerHTML = '✓ Merged ' + d.mergedGroups + ' duplicate group' + (d.mergedGroups === 1 ? '' : 's') + '.<br>'
+          + 'Total cases before: <strong>' + d.totalCasesBefore.toLocaleString() + '</strong> — after: <strong>' + d.totalCasesAfter.toLocaleString() + '</strong> '
+          + (d.totalsMatch ? '<span style="color:var(--green)">✓ matches</span>' : '<span style="color:var(--red)">⚠ MISMATCH — please check</span>');
         var list = g('skumgr-merge-list'); if (list) list.innerHTML = '';
-        invFlash('\u2713 Merged ' + d.mergedGroups + ' duplicate row group(s)', 'success');
+        invFlash('✓ Merged ' + d.mergedGroups + ' duplicate row group(s)', 'success');
         // Refresh whatever search is currently showing so the merged rows reflect immediately
         if (g('skumgr-search-inp') && g('skumgr-search-inp').value.trim()) skumgrSearch();
         else skumgrAutoLoad();
       })
       .catch(function() {
         if (btn) { btn.disabled = false; btn.textContent = 'Confirm Merge'; }
-        if (summary) summary.textContent = 'Merge failed \u2014 network error';
+        if (summary) summary.textContent = 'Merge failed — network error';
       });
   };
 
@@ -5226,14 +5306,14 @@ window.invCredLogin = async function() {
     var summary = g('skumgr-backfill-summary');
     var list = g('skumgr-backfill-list');
     if (panel) panel.style.display = 'block';
-    if (summary) summary.textContent = 'Checking for missing info\u2026';
+    if (summary) summary.textContent = 'Checking for missing info…';
     if (list) list.innerHTML = '';
     wFetch(W + '/inventory/backfill-variant-info')
       .then(function(r) { return r.json(); })
       .then(function(d) {
         if (!d.ok) { if (summary) summary.textContent = 'Error: ' + (d.error || 'unknown'); return; }
         if (d.fieldsToFill === 0) {
-          if (summary) summary.textContent = '\u2713 Nothing to fill \u2014 every row either has this info or has no sibling variant with it.';
+          if (summary) summary.textContent = '✓ Nothing to fill — every row either has this info or has no sibling variant with it.';
           var btn = g('skumgr-backfill-confirm-btn'); if (btn) btn.style.display = 'none';
           return;
         }
@@ -5242,32 +5322,32 @@ window.invCredLogin = async function() {
         if (list) {
           var fieldLabel = { units_per_case: 'Ea/Case', vendor: 'Vendor', price: 'Price' };
           list.innerHTML = d.plan.map(function(p) {
-            return '<div style="padding:6px 8px;border-bottom:1px solid var(--border)"><span style="font-family:var(--mono);font-weight:700">' + p.partNum + '</span> \u2014 '
-              + (fieldLabel[p.field] || p.field) + ': ' + (p.oldValue || '(blank)') + ' \u2192 <strong>' + p.newValue + '</strong></div>';
+            return '<div style="padding:6px 8px;border-bottom:1px solid var(--border)"><span style="font-family:var(--mono);font-weight:700">' + p.partNum + '</span> — '
+              + (fieldLabel[p.field] || p.field) + ': ' + (p.oldValue || '(blank)') + ' → <strong>' + p.newValue + '</strong></div>';
           }).join('');
         }
       })
-      .catch(function() { if (summary) summary.textContent = 'Check failed \u2014 network error'; });
+      .catch(function() { if (summary) summary.textContent = 'Check failed — network error'; });
   };
 
   window.skumgrExecuteBackfill = function() {
     var summary = g('skumgr-backfill-summary');
     var btn = g('skumgr-backfill-confirm-btn');
-    if (btn) { btn.disabled = true; btn.textContent = 'Filling\u2026'; }
+    if (btn) { btn.disabled = true; btn.textContent = 'Filling…'; }
     wFetch(W + '/inventory/backfill-variant-info', { method: 'POST' })
       .then(function(r) { return r.json(); })
       .then(function(d) {
         if (btn) { btn.disabled = false; btn.textContent = 'Confirm Fill'; btn.style.display = 'none'; }
         if (!d.ok) { if (summary) summary.textContent = 'Fill failed: ' + (d.error || 'unknown'); return; }
-        if (summary) summary.innerHTML = '\u2713 Filled ' + d.fieldsFilled + ' field' + (d.fieldsFilled === 1 ? '' : 's') + ' across ' + d.rowsUpdated + ' row' + (d.rowsUpdated === 1 ? '' : 's') + '.';
+        if (summary) summary.innerHTML = '✓ Filled ' + d.fieldsFilled + ' field' + (d.fieldsFilled === 1 ? '' : 's') + ' across ' + d.rowsUpdated + ' row' + (d.rowsUpdated === 1 ? '' : 's') + '.';
         var list = g('skumgr-backfill-list'); if (list) list.innerHTML = '';
-        invFlash('\u2713 Filled missing info on ' + d.rowsUpdated + ' row(s)', 'success');
+        invFlash('✓ Filled missing info on ' + d.rowsUpdated + ' row(s)', 'success');
         if (g('skumgr-search-inp') && g('skumgr-search-inp').value.trim()) skumgrSearch();
         else skumgrAutoLoad();
       })
       .catch(function() {
         if (btn) { btn.disabled = false; btn.textContent = 'Confirm Fill'; }
-        if (summary) summary.textContent = 'Fill failed \u2014 network error';
+        if (summary) summary.textContent = 'Fill failed — network error';
       });
   };
 
@@ -5280,14 +5360,14 @@ window.invCredLogin = async function() {
     var summary = g('skumgr-fixeq-summary');
     var list = g('skumgr-fixeq-list');
     if (panel) panel.style.display = 'block';
-    if (summary) summary.textContent = 'Checking for double "=" \u2026';
+    if (summary) summary.textContent = 'Checking for double "=" …';
     if (list) list.innerHTML = '';
     wFetch(W + '/inventory/fix-double-equals')
       .then(function(r) { return r.json(); })
       .then(function(d) {
         if (!d.ok) { if (summary) summary.textContent = 'Error: ' + (d.error || 'unknown'); return; }
         if (d.rowsAffected === 0) {
-          if (summary) summary.textContent = '\u2713 No double "=" found in any location.';
+          if (summary) summary.textContent = '✓ No double "=" found in any location.';
           var btn = g('skumgr-fixeq-confirm-btn'); if (btn) btn.style.display = 'none';
           return;
         }
@@ -5295,32 +5375,32 @@ window.invCredLogin = async function() {
         if (summary) summary.innerHTML = 'Found <strong>' + d.rowsAffected + '</strong> location' + (d.rowsAffected === 1 ? '' : 's') + ' with a double "=".';
         if (list) {
           list.innerHTML = d.plan.map(function(p) {
-            return '<div style="padding:6px 8px;border-bottom:1px solid var(--border)"><span style="font-family:var(--mono);font-weight:700">' + p.partNum + '</span> \u2014 '
-              + p.oldLocation + ' \u2192 <strong>' + p.newLocation + '</strong></div>';
+            return '<div style="padding:6px 8px;border-bottom:1px solid var(--border)"><span style="font-family:var(--mono);font-weight:700">' + p.partNum + '</span> — '
+              + p.oldLocation + ' → <strong>' + p.newLocation + '</strong></div>';
           }).join('');
         }
       })
-      .catch(function() { if (summary) summary.textContent = 'Check failed \u2014 network error'; });
+      .catch(function() { if (summary) summary.textContent = 'Check failed — network error'; });
   };
 
   window.skumgrExecuteFixDoubleEquals = function() {
     var summary = g('skumgr-fixeq-summary');
     var btn = g('skumgr-fixeq-confirm-btn');
-    if (btn) { btn.disabled = true; btn.textContent = 'Fixing\u2026'; }
+    if (btn) { btn.disabled = true; btn.textContent = 'Fixing…'; }
     wFetch(W + '/inventory/fix-double-equals', { method: 'POST' })
       .then(function(r) { return r.json(); })
       .then(function(d) {
         if (btn) { btn.disabled = false; btn.textContent = 'Confirm Fix'; btn.style.display = 'none'; }
         if (!d.ok) { if (summary) summary.textContent = 'Fix failed: ' + (d.error || 'unknown'); return; }
-        if (summary) summary.innerHTML = '\u2713 Fixed ' + d.rowsFixed + ' location' + (d.rowsFixed === 1 ? '' : 's') + '.';
+        if (summary) summary.innerHTML = '✓ Fixed ' + d.rowsFixed + ' location' + (d.rowsFixed === 1 ? '' : 's') + '.';
         var list = g('skumgr-fixeq-list'); if (list) list.innerHTML = '';
-        invFlash('\u2713 Fixed ' + d.rowsFixed + ' location(s) with a double "="', 'success');
+        invFlash('✓ Fixed ' + d.rowsFixed + ' location(s) with a double "="', 'success');
         if (g('skumgr-search-inp') && g('skumgr-search-inp').value.trim()) skumgrSearch();
         else skumgrAutoLoad();
       })
       .catch(function() {
         if (btn) { btn.disabled = false; btn.textContent = 'Confirm Fix'; }
-        if (summary) summary.textContent = 'Fix failed \u2014 network error';
+        if (summary) summary.textContent = 'Fix failed — network error';
       });
   };
 
@@ -5338,13 +5418,13 @@ window.invCredLogin = async function() {
         ? '<div style="font-family:var(--mono);font-weight:700;font-size:11px;color:var(--text)">' + (r.part_num||'') + (r.location ? ' @ ' + r.location : '') + '</div>'
         : '';
       var totalLine = (r.total_before !== null && r.total_before !== undefined)
-        ? '<div style="font-family:var(--mono);font-size:11px;color:var(--text3);margin-top:2px">Total: ' + Number(r.total_before).toLocaleString() + ' \u2192 ' + Number(r.total_after).toLocaleString()
-          + (r.total_warning ? ' <span onclick=\'alert(' + JSON.stringify(String(r.total_warning)) + ')\' style="color:var(--red);font-weight:700;cursor:pointer;text-decoration:underline dotted">\u26a0</span>' : '') + '</div>'
+        ? '<div style="font-family:var(--mono);font-size:11px;color:var(--text3);margin-top:2px">Total: ' + Number(r.total_before).toLocaleString() + ' → ' + Number(r.total_after).toLocaleString()
+          + (r.total_warning ? ' <span onclick=\'alert(' + JSON.stringify(String(r.total_warning)) + ')\' style="color:var(--red);font-weight:700;cursor:pointer;text-decoration:underline dotted">⚠</span>' : '') + '</div>'
         : '';
       return '<div style="padding:8px 0;border-bottom:1px solid var(--border)">'
         + partLocLine
         + '<div style="display:flex;justify-content:space-between;align-items:center">'
-        + '<span style="font-weight:700;color:' + color + '">' + typ + ' \u00b7 ' + (r.cases||0) + ' cases</span>'
+        + '<span style="font-weight:700;color:' + color + '">' + typ + ' · ' + (r.cases||0) + ' cases</span>'
         + '<span style="color:var(--text3);font-size:11px">' + skumgrFmtHistTime(r.timestamp) + '</span>'
         + '</div>'
         + (r.initials ? '<div style="color:var(--text3);font-size:11px;margin-top:2px">by ' + r.initials + '</div>' : '')
@@ -5358,8 +5438,8 @@ window.invCredLogin = async function() {
     var modal = g('skumgr-history-modal');
     var title = g('skumgr-history-title');
     var body = g('skumgr-history-body');
-    if (title) title.textContent = 'Edit History \u2014 ' + partNum + ' @ ' + location;
-    if (body) body.innerHTML = '<div style="padding:12px;color:var(--text3)">Loading\u2026</div>';
+    if (title) title.textContent = 'Edit History — ' + partNum + ' @ ' + location;
+    if (body) body.innerHTML = '<div style="padding:12px;color:var(--text3)">Loading…</div>';
     if (modal) modal.style.display = 'flex';
     wFetch(W + '/inventory/history?days=9999&part=' + encodeURIComponent(partNum) + '&location=' + encodeURIComponent(location))
       .then(function(r) { return r.json(); })
@@ -5378,8 +5458,8 @@ window.invCredLogin = async function() {
     var modal = g('skumgr-history-modal');
     var title = g('skumgr-history-title');
     var body = g('skumgr-history-body');
-    if (title) title.textContent = 'SKU Manager \u2014 All Edits';
-    if (body) body.innerHTML = '<div style="padding:12px;color:var(--text3)">Loading\u2026</div>';
+    if (title) title.textContent = 'SKU Manager — All Edits';
+    if (body) body.innerHTML = '<div style="padding:12px;color:var(--text3)">Loading…</div>';
     if (modal) modal.style.display = 'flex';
     wFetch(W + '/inventory/history?days=9999&source=skumgr')
       .then(function(r) { return r.json(); })
@@ -5555,7 +5635,7 @@ window.invCredLogin = async function() {
     }).then(function(r) { return r.json(); })
       .then(function(d) {
         if (d.ok) {
-          invFlash(action === "Approved" ? "Approved \u2713" : "Rejected", action === "Approved" ? "success" : "error");
+          invFlash(action === "Approved" ? "Approved ✓" : "Rejected", action === "Approved" ? "success" : "error");
           if (card) card.remove();
           invFetchPendingCount();
         } else {
@@ -5590,9 +5670,9 @@ window.invCredLogin = async function() {
       var stampParts = [];
       if (outItem.addedAt)   stampParts.push('Added ' + fmtT(outItem.addedAt));
       if (outItem.grabbedAt) stampParts.push('Grabbed ' + fmtT(outItem.grabbedAt));
-      timeLine = "<br>\ud83d\udd52 " + stampParts.join(' \u00b7 ');
+      timeLine = "<br>🕒 " + stampParts.join(' · ');
     } else if (outItem.timestamp) {
-      timeLine = "<br>\ud83d\udd52 " + fmtT(outItem.timestamp);
+      timeLine = "<br>🕒 " + fmtT(outItem.timestamp);
     }
     el.innerHTML =
       "<div style='display:flex;align-items:flex-start;gap:10px'>"
@@ -5601,12 +5681,12 @@ window.invCredLogin = async function() {
       + "<span class='ientry-type' style='background:var(--purple-bg);color:var(--purple)'>TRANSFER</span></div>"
       + nameHtml
       + "<div class='ientry-meta'>"
-      + "\ud83d\udd01 <strong>" + fromLoc + "</strong> \u2192 <strong>" + toLoc + "</strong>"
-      + " &nbsp;|&nbsp; \ud83d\udce6 " + (outItem.cases || 0) + " cases"
-      + " &nbsp;|&nbsp; \ud83e\uddd1 " + (outItem.initials || "")
-      + (outItem.notes ? "<br>\ud83d\udcdd " + outItem.notes : "")
+      + "🔁 <strong>" + fromLoc + "</strong> → <strong>" + toLoc + "</strong>"
+      + " &nbsp;|&nbsp; 📦 " + (outItem.cases || 0) + " cases"
+      + " &nbsp;|&nbsp; 🧑 " + (outItem.initials || "")
+      + (outItem.notes ? "<br>📝 " + outItem.notes : "")
       + timeLine + "</div>"
-      + "<div class='ientry-btns'><button class='iapprove'>\u2713 Approve</button><button class='ireject'>\u2715 Reject</button></div></div></div>";
+      + "<div class='ientry-btns'><button class='iapprove'>✓ Approve</button><button class='ireject'>✕ Reject</button></div></div></div>";
     el.querySelector(".iapprove").onclick = function() { invVerifyTransfer(outItem, inItem, "Approved"); };
     el.querySelector(".ireject").onclick  = function() { invVerifyTransfer(outItem, inItem, "Rejected"); };
     return el;
@@ -5623,7 +5703,7 @@ window.invCredLogin = async function() {
     }).then(function(r) { return r.json(); })
       .then(function(d) {
         if (d.ok) {
-          invFlash(action === "Approved" ? "Transfer approved \u2713" : "Transfer rejected", action === "Approved" ? "success" : "error");
+          invFlash(action === "Approved" ? "Transfer approved ✓" : "Transfer rejected", action === "Approved" ? "success" : "error");
           if (card) card.remove();
           invFetchPendingCount();
         } else {
@@ -5789,7 +5869,7 @@ window.invCredLogin = async function() {
   window.xfrToggleCam = function() {
     if (xfrCamRunning) { xfrStopCam(); return; }
     var btn = g('xfr-cam-btn');
-    btn.textContent = 'Starting\u2026'; btn.disabled = true;
+    btn.textContent = 'Starting…'; btn.disabled = true;
     invLoadQR().then(function() {
       g('xfr-reader-wrap').style.display = 'block';
       if (xfrQrScanner) { try { xfrQrScanner.clear(); } catch(e){} xfrQrScanner = null; }
@@ -5809,13 +5889,13 @@ window.invCredLogin = async function() {
         function() {}
       ).then(function() {
         xfrCamRunning = true;
-        btn.textContent = '\u23f9 Stop Camera'; btn.className = 'icam-btn scanning'; btn.disabled = false;
+        btn.textContent = '⏹ Stop Camera'; btn.className = 'icam-btn scanning'; btn.disabled = false;
       }).catch(function() {
-        invFlash('Camera error \u2014 check permissions', 'error');
-        btn.textContent = '\ud83d\udcf7 Scan Barcode'; btn.className = 'icam-btn'; btn.disabled = false;
+        invFlash('Camera error — check permissions', 'error');
+        btn.textContent = '📷 Scan Barcode'; btn.className = 'icam-btn'; btn.disabled = false;
         g('xfr-reader-wrap').style.display = 'none';
       });
-    }).catch(function() { invFlash('Could not load scanner', 'error'); btn.textContent = '\ud83d\udcf7 Scan Barcode'; btn.disabled = false; });
+    }).catch(function() { invFlash('Could not load scanner', 'error'); btn.textContent = '📷 Scan Barcode'; btn.disabled = false; });
   };
 
   function xfrStopCam() {
@@ -5823,7 +5903,7 @@ window.invCredLogin = async function() {
     xfrCamRunning = false;
     var wrap = g('xfr-reader-wrap'); if (wrap) wrap.style.display = 'none';
     var btn = g('xfr-cam-btn');
-    if (btn) { btn.textContent = '\ud83d\udcf7 Scan Barcode'; btn.className = 'icam-btn'; btn.disabled = false; }
+    if (btn) { btn.textContent = '📷 Scan Barcode'; btn.className = 'icam-btn'; btn.disabled = false; }
   }
 
   function xfrNameSearch(query) {
@@ -5880,8 +5960,8 @@ window.invCredLogin = async function() {
       var el = document.createElement('div');
       el.className = 'iloc-opt';
       var stockLine = item.totalCases > 0
-        ? item.totalCases + ' cases \u00b7 ' + item.locCount + ' location' + (item.locCount !== 1 ? 's' : '') + (item.variantCount > 1 ? ' \u00b7 ' + item.variantCount + ' variants' : '')
-        : (item.lastLocation ? "<span style='color:var(--orange)'>No stock \u00b7 last seen: " + item.lastLocation + '</span>' : "<span style='color:var(--red)'>No stock on record</span>");
+        ? item.totalCases + ' cases · ' + item.locCount + ' location' + (item.locCount !== 1 ? 's' : '') + (item.variantCount > 1 ? ' · ' + item.variantCount + ' variants' : '')
+        : (item.lastLocation ? "<span style='color:var(--orange)'>No stock · last seen: " + item.lastLocation + '</span>' : "<span style='color:var(--red)'>No stock on record</span>");
       el.innerHTML = '<div style="flex:1">'
         + '<div style="font-size:12px;font-family:var(--mono);color:var(--accent);margin-bottom:2px">' + item.baseSku + '</div>'
         + '<div style="font-size:13px;font-weight:600;color:var(--text)">' + item.name + '</div>'
@@ -5946,7 +6026,7 @@ window.invCredLogin = async function() {
       var locCount = (xfrPart.locations || [])
         .filter(function(l) { return l.partNum && l.partNum.toUpperCase() === v.toUpperCase() && parseFloat(l.cases) > 0; }).length;
       el.innerHTML = '<div style="flex:1"><div class="iloc-name" style="font-family:var(--mono);font-size:14px">' + v + '</div>'
-        + '<div style="font-size:11px;color:var(--text3);margin-top:2px">' + totalCases + ' cases \u00b7 ' + locCount + ' location' + (locCount !== 1 ? 's' : '') + '</div></div>'
+        + '<div style="font-size:11px;color:var(--text3);margin-top:2px">' + totalCases + ' cases · ' + locCount + ' location' + (locCount !== 1 ? 's' : '') + '</div></div>'
         + '<span class="iloc-badge ex">Select</span>';
       el.style.display = 'flex'; el.style.alignItems = 'center';
       el.onclick = function() {
@@ -6111,9 +6191,9 @@ window.invCredLogin = async function() {
     var warn = g('xfr-addcart-warn');
     if (warn) {
       if (xfrFromLoc.isNew) {
-        warn.textContent = '\u26a0 Found location — ' + xfrFromLoc.cases + ' cases found. Negative result if you pull more.';
+        warn.textContent = '⚠ Found location — ' + xfrFromLoc.cases + ' cases found. Negative result if you pull more.';
       } else {
-        warn.textContent = '\u26a0 Max: ' + xfrFromLoc.cases + ' cases available';
+        warn.textContent = '⚠ Max: ' + xfrFromLoc.cases + ' cases available';
       }
       warn.style.display = 'block';
     }
@@ -6173,7 +6253,7 @@ window.invCredLogin = async function() {
     });
     xfrSaveCart();
     xfrRenderCart();
-    invFlash('Added: ' + xfrPart.partNum + ' \u00d7' + cases, 'success');
+    invFlash('Added: ' + xfrPart.partNum + ' ×' + cases, 'success');
     xfrResetLookup();
   };
 
@@ -6204,7 +6284,7 @@ window.invCredLogin = async function() {
     });
     xfrSaveCart();
     xfrRenderCart();
-    invFlash('Added to cart: ' + xfrPart.partNum + ' \u00d7' + cases, 'success');
+    invFlash('Added to cart: ' + xfrPart.partNum + ' ×' + cases, 'success');
     xfrResetLookup();
   };
 
@@ -6228,13 +6308,13 @@ window.invCredLogin = async function() {
       row.className = 'xfr-cart-item';
       var destLabel = item.toLocation
         ? item.toLocation + (item.isNewLocation ? ' (new)' : '')
-        : 'Set destination\u2026';
+        : 'Set destination…';
       var stampLine = '';
       if (item.addedAt || item.grabbedAt) {
         var stampParts = [];
         if (item.addedAt)   stampParts.push('Added ' + fmtT(item.addedAt));
         if (item.grabbedAt) stampParts.push('Grabbed ' + fmtT(item.grabbedAt));
-        stampLine = "<div style='font-size:10px;color:var(--text3);margin-top:4px'>" + stampParts.join(' \u00b7 ') + '</div>';
+        stampLine = "<div style='font-size:10px;color:var(--text3);margin-top:4px'>" + stampParts.join(' · ') + '</div>';
       }
       row.innerHTML =
         '<div class="xfr-cart-item-head">'
@@ -6242,8 +6322,8 @@ window.invCredLogin = async function() {
           + '<button onclick="xfrRemoveCartItem(' + i + ')" style="background:none;border:none;color:var(--text3);font-size:18px;cursor:pointer;padding:0;line-height:1">&times;</button>'
         + '</div>'
         + '<div class="xfr-cart-item-meta">'
-          + '\ud83d\udccd From: <strong>' + item.fromLocation + '</strong>'
-          + ' &nbsp;\u00b7\u00a0 \ud83d\udce6 ' + item.cases + ' cases'
+          + '📍 From: <strong>' + item.fromLocation + '</strong>'
+          + ' &nbsp;·  📦 ' + item.cases + ' cases'
           + (item.name ? '<br><span style="color:var(--text3)">' + item.name + '</span>' : '')
         + '</div>'
         + '<div style="font-size:11px;font-weight:600;color:var(--text2);margin-bottom:5px">To Location:</div>'
@@ -6358,7 +6438,7 @@ window.invCredLogin = async function() {
       // existing/empty location from the list above.
       var checkBtn = document.createElement('button');
       checkBtn.type = 'button'; checkBtn.id = 'xfr-picker-new-check';
-      checkBtn.innerHTML = '\u2713';
+      checkBtn.innerHTML = '✓';
       checkBtn.title = 'Confirm this location';
       checkBtn.style.cssText = 'padding:6px 14px;border:none;border-radius:7px;background:var(--green);color:#fff;font-size:16px;font-weight:700;cursor:pointer;flex-shrink:0';
       checkBtn.onclick = window.xfrPickerConfirmNew;
@@ -6488,15 +6568,15 @@ window.invCredLogin = async function() {
     if (missing.length > 0) { invFlash(missing.length + ' item(s) missing destination', 'error'); return; }
     var notes = ((g('xfr-cart-notes') || {}).value || '').trim();
     var btn = g('xfr-cart-submit-btn');
-    if (btn) { btn.disabled = true; btn.textContent = 'Submitting\u2026'; }
+    if (btn) { btn.disabled = true; btn.textContent = 'Submitting…'; }
     var items = xfrCart.slice();
     var idx = 0;
     function submitNext() {
       if (idx >= items.length) {
-        invFlash('All ' + items.length + ' transfer(s) logged \u2713', 'success');
+        invFlash('All ' + items.length + ' transfer(s) logged ✓', 'success');
         xfrCart = []; xfrSaveCart(); xfrRenderCart();
         var cn = g('xfr-cart-notes'); if (cn) cn.value = '';
-        if (btn) { btn.disabled = false; btn.textContent = '\ud83d\udd01 Submit All Transfers'; }
+        if (btn) { btn.disabled = false; btn.textContent = '🔁 Submit All Transfers'; }
         invFetchPendingCount();
         return;
       }
@@ -6519,18 +6599,18 @@ window.invCredLogin = async function() {
           if (d.ok) { submitNext(); }
           else {
             invFlash('Failed on ' + item.partNum + ': ' + (d.error || 'unknown'), 'error');
-            if (btn) { btn.disabled = false; btn.textContent = '\ud83d\udd01 Submit All Transfers'; }
+            if (btn) { btn.disabled = false; btn.textContent = '🔁 Submit All Transfers'; }
           }
         })
         .catch(function(err) {
           if (isUnauthorized(err)) {
             idx--;  // rewind so this item retries after reauth
             invReauth(submitNext, function() {
-              if (btn) { btn.disabled = false; btn.textContent = '\ud83d\udd01 Submit All Transfers'; }
+              if (btn) { btn.disabled = false; btn.textContent = '🔁 Submit All Transfers'; }
             });
           } else {
             invFlash('Submit failed', 'error');
-            if (btn) { btn.disabled = false; btn.textContent = '\ud83d\udd01 Submit All Transfers'; }
+            if (btn) { btn.disabled = false; btn.textContent = '🔁 Submit All Transfers'; }
           }
         });
     }
@@ -6724,7 +6804,7 @@ window.invCredLogin = async function() {
   function invAuditShowLocations(data) {
     var locs = (data.locations || []);
     invAuditCurrentLocs = locs;
-    g('inv-audit-part-info').textContent = data.partNum + (data.name ? ' \u2014 ' + data.name : '');
+    g('inv-audit-part-info').textContent = data.partNum + (data.name ? ' — ' + data.name : '');
     g('inv-audit-result-card').style.display = 'block';
     g('inv-audit-search-card').style.display = 'none';
     var list = g('inv-audit-loc-list');
@@ -6853,7 +6933,7 @@ window.invCredLogin = async function() {
       return;
     }
     var type = diff > 0 ? 'IN' : 'OUT';
-    var note = '[AUDIT] System: ' + currentCases + ' \u2192 Actual: ' + actualCases + ' (diff: ' + (diff > 0 ? '+' : '') + diff.toFixed(1) + ')';
+    var note = '[AUDIT] System: ' + currentCases + ' → Actual: ' + actualCases + ' (diff: ' + (diff > 0 ? '+' : '') + diff.toFixed(1) + ')';
     var body = { type: type, partNum: loc.partNum,
       sku: loc.partNum.split('=')[0].trim(), name: '',
       location: loc.location, cases: Math.abs(diff),
@@ -6873,7 +6953,7 @@ window.invCredLogin = async function() {
         })
         .then(function(v) {
           if (!v) return;
-          invFlash('Corrected: ' + loc.location + ' \u2192 ' + actualCases + ' cases', 'success');
+          invFlash('Corrected: ' + loc.location + ' → ' + actualCases + ' cases', 'success');
           setTimeout(invAuditAutoReturn, 1500);
           if (rowEl) { rowEl.style.borderColor = '#0891B2'; rowEl.style.background = '#E0F2FE';
             if (countInp) countInp.disabled = true;
@@ -6903,14 +6983,14 @@ window.invCredLogin = async function() {
     var newLoc   = pfx + shelf;
     var initials = ((INV_CRED_USER && INV_CRED_USER.displayName) || 'OPS');
     if (!shelf || shelf.length < 2) { invFlash('Enter the correct shelf location', 'error'); return; }
-    if (newLoc.toUpperCase() === loc.location.toUpperCase()) { invFlash('Same location \u2014 no change needed', 'warn'); return; }
+    if (newLoc.toUpperCase() === loc.location.toUpperCase()) { invFlash('Same location — no change needed', 'warn'); return; }
     var casesMoveInp = g('inv-audit-movecases-' + idx);
     var countInp     = g('inv-audit-count-' + idx);
     // Use move cases input first, then count input, then original cases
     var newCases = (casesMoveInp && casesMoveInp.value !== '') ? parseFloat(casesMoveInp.value)
                  : (countInp && countInp.value !== '') ? parseFloat(countInp.value)
                  : null;
-    var note = '[AUDIT] Location moved: ' + loc.location + ' \u2192 ' + newLoc + (newCases !== null ? ' | cases: ' + loc.cases + ' \u2192 ' + newCases : '');
+    var note = '[AUDIT] Location moved: ' + loc.location + ' → ' + newLoc + (newCases !== null ? ' | cases: ' + loc.cases + ' → ' + newCases : '');
     var body = { type: 'MOVE', partNum: loc.partNum,
       sku: loc.partNum.split('=')[0].trim(), name: '',
       location: loc.location, newLocation: newLoc,
@@ -7082,7 +7162,7 @@ window.invCredLogin = async function() {
     if (!res) return;
     query = query.trim();
     if (query.length < 2) { res.innerHTML = ''; return; }
-    res.innerHTML = '<div style="font-size:12px;color:var(--text3);padding:6px 10px">\u231b Searching\u2026</div>';
+    res.innerHTML = '<div style="font-size:12px;color:var(--text3);padding:6px 10px">⌛ Searching…</div>';
     var cacheKey = query.toUpperCase();
     if (_skuSearchCache[cacheKey]) { invSkuRenderResults(_skuSearchCache[cacheKey], res, onSelectFn); return; }
     // SKU-style search (starts with digit or contains =) vs name search
@@ -7197,14 +7277,14 @@ window.invCredLogin = async function() {
               var known = (ld.locations || []).some(function(l) { return l.location.toUpperCase() === q.toUpperCase(); });
               if (!known) {
                 var regBtn = document.createElement('button');
-                regBtn.textContent = '\uD83D\uDCCD Register this shelf';
+                regBtn.textContent = '📍 Register this shelf';
                 regBtn.style.cssText = 'padding:7px 14px;border-radius:7px;border:none;background:var(--accent);color:#fff;font-size:12px;font-weight:700;cursor:pointer;margin-bottom:10px';
                 regBtn.onclick = function() {
-                  regBtn.disabled = true; regBtn.textContent = 'Registering\u2026';
+                  regBtn.disabled = true; regBtn.textContent = 'Registering…';
                   wFetch(W + '/inventory/locations/register', { method:'POST', body: JSON.stringify({ location: q }) })
                     .then(function(r3) { return r3.json(); })
                     .then(function(rd) {
-                      if (rd.ok) { regBtn.textContent = '\u2713 Registered'; regBtn.style.background = 'var(--green)'; }
+                      if (rd.ok) { regBtn.textContent = '✓ Registered'; regBtn.style.background = 'var(--green)'; }
                       else { regBtn.textContent = 'Failed'; regBtn.style.background = 'var(--red)'; regBtn.disabled = false; }
                     }).catch(function() { regBtn.textContent = 'Failed'; regBtn.disabled = false; });
                 };
