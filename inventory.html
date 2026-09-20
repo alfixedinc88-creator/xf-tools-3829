@@ -460,6 +460,7 @@ window.invCredLogin = async function() {
     <div class="iwarn" id="inv-warn" style="display:none"></div>
     <div class="ifield-row">
       <div class="ifield" style="flex:1"><label>Cases</label><input id="inv-cases" type="number" min="0.1" step="0.5" placeholder="0"></div>
+      <div class="ifield" style="flex:1" id="inv-upc-field"><label>QTY per Case</label><input id="inv-units-per-case" type="number" min="0" step="1" placeholder="e.g. 12"></div>
     </div>
     <div class="ifield"><label>Notes (optional)</label><input id="inv-notes" type="text" placeholder=""></div>
     <button class="isubmit sin" id="inv-submit-btn" onclick="invSubmit()">Submit Stock In</button>
@@ -1233,6 +1234,16 @@ window.invCredLogin = async function() {
     // every mode flip; invStockOutDest keeps whatever was last picked.
     var destCard = g("inv-stockout-dest-card");
     if (destCard) destCard.style.display = mode === "out" ? "block" : "none";
+    // Stock Out Reports (Pack & Ship "no stock" flags) — Stock Out only.
+    // This card lives in the shared panel both tabs use, so without this
+    // it would show up on Stock In too, which doesn't make sense there.
+    var stockoutReportsCard = g("inv-stockout-card");
+    if (stockoutReportsCard) stockoutReportsCard.style.display = mode === "out" ? "block" : "none";
+    // QTY per Case only makes sense when receiving stock in (setting the
+    // case-pack size for a new item/location) — meaningless when pulling
+    // stock out, so hidden there.
+    var upcField = g("inv-upc-field");
+    if (upcField) upcField.style.display = mode === "in" ? "block" : "none";
     if (mode === "out") invRenderPullList();
     // Hide scan result cards when switching mode
     g("inv-result-card").style.display = "none";
@@ -1268,9 +1279,18 @@ window.invCredLogin = async function() {
     });
   }
 
+  // Stock In only: scanning the SKU/Part#/UPC doesn't close the camera —
+  // it stays live and immediately expects the Location next, so the whole
+  // "receive this pallet" action is one continuous camera session instead
+  // of start-scan-stop, then manually starting a second camera for the
+  // location. Stock Out (and anywhere else) keeps the original single-
+  // scan-and-close behavior, since it doesn't have this two-step shape.
+  var invCamStage = "sku"; // "sku" | "location" — only meaningful in Stock In
+
   window.invToggleCam = function() {
     console.log('[INV] invToggleCam called, invCamRunning:', invCamRunning);
     if (invCamRunning) { invStopCam(); return; }
+    invCamStage = "sku";
     var btn = g("inv-cam-btn");
     btn.textContent = "Starting\u2026";
     btn.disabled = true;
@@ -1285,15 +1305,30 @@ window.invCredLogin = async function() {
           var now = Date.now();
           if (now - invLastScan < 2000) return;
           invLastScan = now;
-          invStopCam();
-          g("inv-search-inp").value = code;
-          invSetScanMode("code");
-          invLookup(code);
+          if (invMode === "in" && invCamStage === "sku") {
+            g("inv-search-inp").value = code;
+            invSetScanMode("code");
+            invLookup(code);
+            // Camera stays running — now waiting for the Location scan.
+            invCamStage = "location";
+            var btn2 = g("inv-cam-btn");
+            if (btn2) btn2.textContent = "\ud83d\udcf7 Now Scan Location";
+            invFlash("Found it \u2014 now scan the Location", "success");
+          } else if (invMode === "in" && invCamStage === "location") {
+            invApplyScannedLocationForStockIn(code);
+            invStopCam();
+          } else {
+            // Stock Out (or anything else): original one-shot behavior.
+            invStopCam();
+            g("inv-search-inp").value = code;
+            invSetScanMode("code");
+            invLookup(code);
+          }
         },
         function() {}
       ).then(function() {
         invCamRunning = true;
-        btn.textContent = "\u23f9 Stop Camera";
+        btn.textContent = invMode === "in" ? "\ud83d\udcf7 Scan SKU / Part# / UPC" : "\u23f9 Stop Camera";
         btn.className = "icam-btn scanning";
         btn.disabled = false;
       }).catch(function(err) {
@@ -1310,12 +1345,42 @@ window.invCredLogin = async function() {
     });
   };
 
+  // Applies a scanned Location code during Stock In's combined scan
+  // session — reuses the exact same prefix/shelf split invNewLocToggleCam
+  // uses. If the scanned location already exists for this item, selects it
+  // directly (skips "new location" entirely); otherwise fills the New
+  // Location fields and opens that form, ready for Cases/QTY per Case.
+  function invApplyScannedLocationForStockIn(code) {
+    var eqIdx = code.indexOf('=');
+    var prefix = eqIdx > 0 ? code.slice(0, eqIdx + 1) : '';
+    var shelf  = eqIdx > 0 ? code.slice(eqIdx + 1) : code;
+    var fullLoc = (prefix + shelf).trim().toUpperCase();
+
+    var existing = null;
+    if (invPart && invPart.locations) {
+      for (var i = 0; i < invPart.locations.length; i++) {
+        if ((invPart.locations[i].location || '').toUpperCase() === fullLoc) { existing = invPart.locations[i]; break; }
+      }
+    }
+    if (existing) {
+      invPickLocDirect(existing);
+      invFlash("Location matched: " + existing.location, "success");
+    } else {
+      var pfxEl = g('inv-newloc-prefix'); var shfEl = g('inv-newloc-shelf');
+      if (pfxEl && prefix) pfxEl.value = prefix;
+      if (shfEl) shfEl.value = shelf;
+      invPickNew();
+      invFlash("New location: " + fullLoc + " \u2014 enter Cases to finish", "success");
+    }
+  }
+
   function invStopCam() {
     if (invQrScanner && invCamRunning) {
       invQrScanner.stop().catch(function() {});
       invQrScanner = null;
     }
     invCamRunning = false;
+    invCamStage = "sku";
     g("inv-reader-wrap").style.display = "none";
     g("inv-cam-btn").textContent = "\ud83d\udcf7 Start Camera";
     g("inv-cam-btn").className = "icam-btn";
@@ -2476,6 +2541,7 @@ window.invCredLogin = async function() {
     var cases    = parseFloat(g("inv-cases").value);
     var initials = (INV_CRED_USER && INV_CRED_USER.displayName) || "OPS";
     var notes    = g("inv-notes").value.trim();
+    var unitsPerCase = (g("inv-units-per-case") && g("inv-units-per-case").value) ? parseFloat(g("inv-units-per-case").value) : 0;
     var newLocPrefix = (g("inv-newloc-prefix") || {value:""}).value || "";
     var newLocShelf  = (g("inv-newloc-shelf")  || {value:""}).value.trim();
     var newLoc = newLocPrefix && newLocShelf ? newLocPrefix + newLocShelf : newLocShelf;
@@ -2499,7 +2565,11 @@ window.invCredLogin = async function() {
           // Real D1 row id — lets approve target this EXACT row even when
           // another row shares identical part_num+location text (e.g. a
           // second entry at the same shelf with a different case count).
-          masterId: invSelLoc.masterId || null
+          masterId: invSelLoc.masterId || null,
+          // Only meaningful for a genuinely new row — see the worker's
+          // isNew/IN insert logic for how this takes priority over
+          // guessing the value from a sibling variant.
+          unitsPerCase: unitsPerCase || 0
         })
       }).then(function(r) { return r.json(); })
         .then(function(d) {
@@ -2535,6 +2605,7 @@ window.invCredLogin = async function() {
     g("inv-loc-card").style.display     = "none";
     g("inv-detail-card").style.display  = "none";
     g("inv-cases").value = ""; g("inv-notes").value = "";
+    if (g("inv-units-per-case")) g("inv-units-per-case").value = "";
     g("inv-newloc-inp") && (g("inv-newloc-inp").value = "");
     g("inv-newloc-shelf") && (g("inv-newloc-shelf").value = "");
     g("inv-newloc-wrap").style.display = "none";
