@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>XFitting Picker Training</title>
+<title>XFitting Training Center</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link href="https://fonts.googleapis.com/css2?family=Barlow+Condensed:wght@600;700;800&family=Barlow:wght@400;500;600;700&family=DM+Mono:wght@500&display=swap" rel="stylesheet">
 <style>
@@ -124,6 +124,23 @@ figcaption{font-size:14px;color:var(--ink3);margin-top:6px}
 .done-btn:focus-visible{outline:3px solid var(--blue);outline-offset:2px}
 .tr-msg{margin-top:12px;font-weight:600}
 .tr-msg.ok{color:var(--green)}.tr-msg.err{color:var(--red)}
+#view-home .hero{padding-block:28px 8px}
+#view-home .eyebrow{font:700 13px var(--body);letter-spacing:.12em;text-transform:uppercase;color:var(--kraft)}
+#view-home h1{font-family:var(--display);font-weight:800;font-size:clamp(40px,9vw,64px);line-height:.95;margin:6px 0 12px;text-transform:uppercase}
+#view-home .lede{color:var(--ink2);max-width:60ch;margin:0}
+#view-home .hazard{height:8px;border-radius:3px;background:repeating-linear-gradient(-45deg,var(--yellow) 0 12px,var(--ink) 12px 24px);margin:24px 0}
+.grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(260px,1fr));gap:16px;padding-bottom:48px}
+.mod{display:flex;flex-direction:column;gap:8px;background:var(--paper);border:1.5px solid var(--line);border-radius:12px;padding:18px;color:var(--ink);text-decoration:none;box-shadow:var(--shadow);transition:border-color .15s,transform .15s}
+.mod:hover{border-color:var(--kraft);transform:translateY(-2px)}
+.mod:focus-visible{outline:3px solid var(--blue);outline-offset:2px}
+.mod .icon{font-size:36px;line-height:1}
+.mod h2{font-family:var(--display);font-weight:700;font-size:28px;text-transform:uppercase;margin:0;line-height:1}
+.mod p{margin:0;color:var(--ink2);font-size:15.5px}
+.mod .meta{display:flex;gap:8px;flex-wrap:wrap;margin-top:auto;padding-top:6px}
+.chip{font:700 12px var(--body);letter-spacing:.06em;text-transform:uppercase;padding:3px 9px;border-radius:999px;background:var(--kraft-bg);color:var(--kraft)}
+.chip.done{background:var(--green-bg);color:var(--green)}
+.admin{padding-bottom:48px}
+#view-home .admin h2{font-family:var(--display);font-weight:700;font-size:26px;text-transform:uppercase;margin:0 0 10px}
 footer{margin-top:40px;color:var(--ink3);font-size:14px}
 @media (max-width:420px){.brand{font-size:17px}.seg button{padding:7px 10px;font-size:14px}}
 @media (prefers-reduced-motion:reduce){*{scroll-behavior:auto!important}}
@@ -133,14 +150,29 @@ footer{margin-top:40px;color:var(--ink3);font-size:14px}
 <body>
 <div id="app" data-lang="en">
 <div class="langbar"><div class="wrap">
-  <div class="brand"><a class="back" href="index.html" aria-label="Back to apps">←</a><b>XF</b><span class="en">Picker Guide</span><span class="es">Guía del Picker</span></div>
+  <div class="brand"><a class="back" id="backlink" href="index.html" aria-label="Back">←</a><b>XF</b><span id="brand-title"><span class="en">Training</span><span class="es">Capacitación</span></span></div>
   <div class="seg" role="group" aria-label="Language / Idioma">
     <button id="l-en" type="button" aria-pressed="true" onclick="setLang('en')">English</button>
     <button id="l-es" type="button" aria-pressed="false" onclick="setLang('es')">Español</button>
   </div>
 </div></div>
 
-<div class="wrap">
+<div class="wrap" id="view-home">
+  <header class="hero">
+    <div class="eyebrow"><span class="en">New workers start here</span><span class="es">Trabajadores nuevos empiezan aquí</span></div>
+    <h1><span class="en">Training Center</span><span class="es">Centro de capacitación</span></h1>
+    <p class="lede"><span class="en">Pick your job below. Read every step, then press “Mark complete” at the bottom of the guide.</span><span class="es">Elige tu trabajo abajo. Lee todos los pasos y al final presiona “Marcar como terminada”.</span></p>
+  </header>
+  <div class="hazard" aria-hidden="true"></div>
+  <div class="grid" id="modules"></div>
+  <section class="admin" id="home-admin" hidden>
+    <h2><span class="en">Manager view — who finished</span><span class="es">Vista de gerente — quién terminó</span></h2>
+    <div class="tblwrap"><table id="home-admin-table" class="quick"></table></div>
+  </section>
+</div>
+
+<!-- ═══ PICKER GUIDE ═══ -->
+<div class="wrap" id="view-picker" hidden>
 <header class="hero">
   <div class="eyebrow"><span class="en">New picker training</span><span class="es">Capacitación para pickers nuevos</span></div>
   <h1><span class="en">How to pick orders</span><span class="es">Cómo surtir pedidos</span></h1>
@@ -454,6 +486,72 @@ function trLoadAdmin(){
   }).catch(function(){});
 }
 trLoadMe();
+
+// ── Views: #picker shows the guide, no hash shows the Training Center ──
+var TITLES = { picker: { en:'Picker Guide', es:'Guía del Picker' } };
+function showView(){
+  var v = (location.hash || '').replace('#','');
+  var isGuide = !!TITLES[v];
+  document.getElementById('view-home').hidden = isGuide;
+  Object.keys(TITLES).forEach(function(k){ document.getElementById('view-' + k).hidden = (k !== v); });
+  var back = document.getElementById('backlink');
+  back.href = isGuide ? '#' : 'index.html';
+  back.setAttribute('aria-label', isGuide ? 'Back to Training Center' : 'Back to apps');
+  document.getElementById('brand-title').innerHTML = isGuide
+    ? '<span class="en">' + TITLES[v].en + '</span><span class="es">' + TITLES[v].es + '</span>'
+    : '<span class="en">Training</span><span class="es">Capacitación</span>';
+  window.scrollTo(0, 0);
+}
+window.addEventListener('hashchange', function(){ showView(); if (!location.hash || location.hash === '#') loadStatus(); });
+showView();
+
+var MODULES = [
+  { id:'picker', file:'#picker', icon:'🧺',
+    en:{ title:'Picker Guide', desc:'Read location codes and labels, scan with Pack & Ship, and report missing items.' },
+    es:{ title:'Guía del Picker', desc:'Lee códigos y etiquetas, escanea con Pack & Ship y reporta artículos que faltan.' },
+    steps:7 }
+  // , { id:'packer', file:'training-packer.html', icon:'📦', en:{title:'Packer Guide',desc:'...'}, es:{title:'Guía del Empacador',desc:'...'}, steps:0 }
+];
+
+function esc(s){ return String(s).replace(/[&<>"]/g,function(c){return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c];}); }
+function fmt(iso){ try { return new Date(iso).toLocaleDateString([], {month:'short',day:'numeric',year:'numeric'}); } catch(e){ return iso; } }
+
+function renderModules(done){
+  done = done || {};
+  document.getElementById('modules').innerHTML = MODULES.map(function(m){
+    var d = done[m.id];
+    var status = d
+      ? '<span class="chip done"><span class="en">✓ Finished ' + fmt(d) + '</span><span class="es">✓ Terminado ' + fmt(d) + '</span></span>'
+      : '<span class="chip"><span class="en">Not finished</span><span class="es">Sin terminar</span></span>';
+    return '<a class="mod" href="' + esc(m.file) + '">'
+      + '<div class="icon" aria-hidden="true">' + m.icon + '</div>'
+      + '<h2><span class="en">' + esc(m.en.title) + '</span><span class="es">' + esc(m.es.title) + '</span></h2>'
+      + '<p><span class="en">' + esc(m.en.desc) + '</span><span class="es">' + esc(m.es.desc) + '</span></p>'
+      + '<div class="meta"><span class="chip"><span class="en">' + m.steps + ' steps</span><span class="es">' + m.steps + ' pasos</span></span>' + status + '</div>'
+      + '</a>';
+  }).join('');
+}
+
+
+renderModules();
+function loadStatus(){
+  var tok = null; try { tok = localStorage.getItem('xf_cred_token'); } catch(e) {}
+  if (!tok) return;
+  fetch(TRAINING_WORKER + '/training/me', { headers:{'X-Cred-Token':tok} }).then(function(r){ return r.json(); }).then(function(d){
+    if (!d.ok) return;
+    var done = {}; (d.completed || []).forEach(function(c){ done[c.module] = c.completed_at; });
+    renderModules(done);
+    if ((d.user.roles || []).indexOf('mgmt') < 0) return;
+    return fetch(TRAINING_WORKER + '/training/all', { headers:{'X-Cred-Token':tok} }).then(function(r){ return r.json(); }).then(function(a){
+      if (!a.ok) return;
+      var rows = a.completions || [];
+      document.getElementById('home-admin-table').innerHTML = '<tr><th>Name</th><th>Guide</th><th>Finished</th></tr>'
+        + (rows.length ? rows.map(function(c){ return '<tr><td>' + esc(c.display_name) + '</td><td>' + esc(c.module) + '</td><td>' + fmt(c.completed_at) + '</td></tr>'; }).join('') : '<tr><td colspan="3">Nobody yet.</td></tr>');
+      document.getElementById('home-admin').hidden = false;
+    });
+  }).catch(function(){});
+}
+loadStatus();
 </script>
 
 </body>
