@@ -1568,6 +1568,24 @@ body {
       </div>
       <div id="ps-ol-debug-result" style="margin-top:12px"></div>
     </div>
+
+    <!-- Temporary mgmt-only diagnostic for "No Stock Found" reports that
+         turn out to be wrong — a picker flags an item, our own stock check
+         (D1 master_list) says the bin's empty, but a manual check in
+         Inventory shows real stock. Paste the tracking number and see
+         exactly which bin/SKU we checked and what master_list actually has
+         on file for it — same data /ship/stock-check itself used to make
+         the call, no DevTools or manually-built URL needed. Safe to remove
+         once confirmed working. -->
+    <div id="ps-ol-nostock-debug-tool" style="display:none;margin-top:14px;padding:14px;border:1.5px dashed var(--border2);border-radius:10px;background:var(--bg3)">
+      <div style="font-size:12px;font-weight:700;color:var(--text2);margin-bottom:4px">🔧 Check "No Stock Found" (temporary debug tool)</div>
+      <div style="font-size:11px;color:var(--text3);margin-bottom:10px">Paste a tracking number to see exactly what bin/SKU we checked against master_list, and what master_list actually has on file at that bin — useful when a report says "no stock" but Inventory shows stock on hand.</div>
+      <div style="display:flex;gap:8px">
+        <input id="ps-ol-nostock-debug-tracking" type="text" placeholder="Tracking number…" style="flex:1;font-size:13px;font-family:var(--mono);padding:8px 10px;border:1.5px solid var(--border2);border-radius:7px;background:var(--bg);color:var(--text)" onkeydown="if(event.key==='Enter')psRunStockoutDebug()">
+        <button class="ps-btn-go" onclick="psRunStockoutDebug()">Check</button>
+      </div>
+      <div id="ps-ol-nostock-debug-result" style="margin-top:12px"></div>
+    </div>
   </div>
 
   <!-- STATUS CHECK panel -->
@@ -4144,7 +4162,62 @@ window.psRunLineItemsDebug = function() {
 function _psRenderOrderLookupDebugTool() {
   var wrap = document.getElementById('ps-ol-debug-tool');
   if (wrap) wrap.style.display = (psRole === 'mgmt' || _psIsAdmin()) ? 'block' : 'none';
+  var wrap2 = document.getElementById('ps-ol-nostock-debug-tool');
+  if (wrap2) wrap2.style.display = (psRole === 'mgmt' || _psIsAdmin()) ? 'block' : 'none';
 }
+
+// ── "No Stock Found" Check (temporary mgmt debug tool) ──────────────────
+// Calls the worker's /ship/stockout-debug directly (see that route's own
+// comment) and shows, in plain language, exactly what bin/SKU the real
+// stock check used and what master_list actually has on file for it — the
+// same three-tier lookup (bin against location, then bin against the sku
+// column, then exact SKU text against part_num) _psCheckStockLevel itself
+// runs, so a mismatch between "system says no stock" and "Inventory shows
+// stock on hand" can be seen directly instead of guessed at. Only shown to
+// a mgmt/admin session; see _psRenderOrderLookupDebugTool above.
+window.psRunStockoutDebug = function() {
+  var inp = document.getElementById('ps-ol-nostock-debug-tracking');
+  var tracking = inp ? inp.value.trim() : '';
+  var out = document.getElementById('ps-ol-nostock-debug-result');
+  if (!tracking) { if (out) out.innerHTML = '<div style="font-size:12px;color:var(--red)">Enter a tracking number first.</div>'; return; }
+  if (out) out.innerHTML = '<div style="font-size:12px;color:var(--text3)">Checking…</div>';
+  fetch(PS_WORKER + '/ship/stockout-debug?tracking=' + encodeURIComponent(tracking), {
+    headers: { 'X-Cred-Token': psCredToken }
+  }).then(function(r) { return r.json(); }).then(function(d) {
+    if (!out) return;
+    if (!d || !d.ok) { out.innerHTML = '<div style="font-size:12px;color:var(--red)">Error: ' + ((d && d.error) || 'request failed') + '</div>'; return; }
+    if (!d.found) { out.innerHTML = '<div style="font-size:12px;color:var(--text3)">' + (d.note || 'No cached line items for this tracking.') + '</div>'; return; }
+    function rowsTable(rows) {
+      if (!rows || !rows.length) return '<div style="font-size:11px;color:var(--text3);padding:2px 0 2px 10px">none</div>';
+      return '<div style="margin:2px 0 2px 10px">' + rows.map(function(r) {
+        return '<div style="font-family:var(--mono);font-size:11px;padding:2px 0">'
+          + 'loc <b>' + (r.location || '—') + '</b> · sku ' + (r.sku || '—') + ' · part_num ' + (r.part_num || '—')
+          + ' · <b style="color:' + (parseFloat(r.cases) > 0 ? 'var(--green)' : 'var(--red)') + '">' + r.cases + ' cases</b>'
+          + '</div>';
+      }).join('') + '</div>';
+    }
+    var itemsHtml = (d.lineItems || []).map(function(li) {
+      var found = li.noStockFound;
+      var casesLabel = li.finalCases === null ? 'unknown (nothing matched — treated as a real discrepancy, goes to Inventory)' : (li.finalCases + ' cases');
+      return '<div style="border:1.5px solid ' + (found ? 'var(--red)' : 'var(--border2)') + ';border-radius:8px;padding:10px 12px;margin-bottom:10px;background:' + (found ? 'var(--red-bg)' : 'var(--bg2)') + '">'
+        + '<div style="font-family:var(--mono);font-size:13px;font-weight:700">' + (li.sku || '(no sku)') + '</div>'
+        + '<div style="font-size:11px;color:var(--text3);margin-top:2px">bin scanned: <b>' + (li.bin || '(none)') + '</b>' + (li.binSrc ? ' · source: ' + li.binSrc : '') + '</div>'
+        + '<div style="font-size:12px;margin-top:6px">Result: <b style="color:' + (found ? 'var(--red)' : 'var(--green)') + '">' + (found ? 'No Stock Found' : 'Has stock') + '</b> — ' + casesLabel + '</div>'
+        + '<div style="font-size:11px;font-weight:700;color:var(--text2);margin-top:8px">master_list rows at this bin (location column):</div>'
+        + rowsTable(li.masterListRowsAtThisBin)
+        + (li.similarLocationsFound ? '<div style="font-size:11px;color:var(--orange);margin-top:4px">Similar location strings on file (formatting difference only — not used): ' + li.similarLocationsFound.join(', ') + '</div>' : '')
+        + '<div style="font-size:11px;font-weight:700;color:var(--text2);margin-top:8px">master_list rows where the bin matches the sku column instead:</div>'
+        + rowsTable(li.masterListRowsByBinAsSkuColumn)
+        + '<div style="font-size:11px;font-weight:700;color:var(--text2);margin-top:8px">master_list rows where this exact SKU text matches part_num:</div>'
+        + rowsTable(li.masterListRowsByPartNum)
+        + '</div>';
+    }).join('') || '<div style="font-size:12px;color:var(--text3)">No cached line items for this tracking.</div>';
+    out.innerHTML = ''
+      + '<div style="font-size:12px;margin-bottom:10px"><b>Order ' + (d.orderNum || '') + '</b></div>'
+      + itemsHtml
+      + '<div style="font-size:11px;color:var(--text3);margin-top:6px">If a row shows real cases here but the picker still saw "No Stock Found," check whether the bin scanned above matches where Inventory actually keeps that SKU — a mismatched bin is the most common cause. Screenshot or copy this box and send it back if something still looks wrong.</div>';
+  }).catch(function(e) { if (out) out.innerHTML = '<div style="font-size:12px;color:var(--red)">Request failed: ' + e.message + '</div>'; });
+};
 
 // ── Tracking → order detail modal (Scan tab) ────────────────────────────
 // Clicking a tracking number in "Today's Scans" looks it up the exact same
