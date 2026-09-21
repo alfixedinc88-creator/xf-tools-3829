@@ -1745,46 +1745,76 @@ window.invCredLogin = async function() {
 
   window.invLookup = function(code) {
     if (!code) return;
-    invSearchedExactVariant = code.indexOf('=') >= 0 ? code.trim().toUpperCase() : null;
     // Reset here, not just when a Stock Out Report is tapped — every
     // ordinary search must start clean, so a stray leftover tag from an
     // earlier report click can never attach itself to an unrelated item.
-    // invStockoutGo sets this AFTER calling invLookup, specifically so its
-    // own call doesn't immediately wipe out the very value it's setting.
+    // invStockoutGo sets this AFTER its own lookup resolves, specifically
+    // so that doesn't immediately wipe out the very value it's setting.
     _invPendingStockoutSourceId = null;
     g("inv-result-card").style.display = "none";
     g("inv-loc-card").style.display    = "none";
     g("inv-detail-card").style.display = "none";
     var gb = g("inv-grab-banner"); if (gb) { gb.style.display = "none"; gb.innerHTML = ""; }
-    wFetch(W + "/inventory/lookup?code=" + encodeURIComponent(code))
-      .then(function(r) { return r.json(); })
-      .then(function(d) {
-        if (!d.partNum) { invFlash("Not found: " + code, "error"); return; }
-        invPart = d;
-        g("inv-result-part").textContent = d.isMultiVariant ? d.baseSku : d.partNum;
-        g("inv-result-sku").textContent   = d.sku && d.sku !== d.partNum ? d.sku : "";
-        g("inv-result-name").textContent  = d.name || "";
-        var photoEl = g("inv-result-photo");
-        if (photoEl) {
-          if (d.photo) { photoEl.src = d.photo; photoEl.style.display = "block"; }
-          else { photoEl.style.display = "none"; photoEl.src = ""; }
-        }
-        g("inv-result-inside").textContent  = d.insideUpc  || "—";
-        g("inv-result-outside").textContent = d.outsideUpc || "—";
-        g("inv-result-upcs").style.display  = (d.insideUpc || d.outsideUpc) ? "grid" : "none";
-        g("inv-result-card").style.display = "block";
-        // BUGFIX: bare searches ("23-2-3") already skipped straight to a
-        // flattened, always-expanded, no-click list of every location —
-        // but an exact search ("23-2-3=2") used to route through the older
-        // variant-picker/click-to-expand screen instead, since it isn't
-        // "multi-variant" from the server's point of view. Both now always
-        // go through the same invShowLocs(), so an exact search gets
-        // identical no-click behavior, just with that exact variant's own
-        // locations pinned to the top (see invSortLocsForOut).
-        invShowLocs();
-      })
+    _invFetchLookupRaw(code)
+      .then(function(d) { _invRenderLookupResult(code, d); })
       .catch(function() { invFlash("Lookup failed", "error"); });
   };
+
+  // Raw fetch only — no UI side effects — so invStockoutGo's bin→SKU
+  // fallback (below) can try more than one code before deciding what to
+  // show, without a "not found" flash firing for the attempt that doesn't
+  // pan out. window.invLookup (above) is just this call plus rendering.
+  function _invFetchLookupRaw(code) {
+    return wFetch(W + "/inventory/lookup?code=" + encodeURIComponent(code))
+      .then(function(r) { return r.json(); });
+  }
+
+  // True only when the lookup actually found the item AND at least one of
+  // its locations has real cases on hand right now (escrow-adjusted) — not
+  // just "some location row exists", since inventoryLookup returns every
+  // location row for a matched part/base-SKU family regardless of whether
+  // that row currently shows any cases. This is what invStockoutGo (below)
+  // uses to decide whether a code was a "real" hit worth showing, or
+  // whether it should try the other code it has on hand instead.
+  function _invHasRealStock(d) {
+    if (!d || !d.partNum) return false;
+    return (d.locations || []).some(function(l) {
+      var avail = l.adjustedCases !== undefined ? l.adjustedCases : (parseFloat(l.cases) || 0);
+      return avail > 0;
+    });
+  }
+
+  // Renders a successful (or not-found) /inventory/lookup response for the
+  // given search code — the part window.invLookup used to do inline.
+  // Pulled out so invStockoutGo's fallback path (below) can call it once,
+  // for whichever of its two attempted codes actually found stock, instead
+  // of duplicating this whole block.
+  function _invRenderLookupResult(code, d) {
+    invSearchedExactVariant = code.indexOf('=') >= 0 ? code.trim().toUpperCase() : null;
+    if (!d.partNum) { invFlash("Not found: " + code, "error"); return; }
+    invPart = d;
+    g("inv-result-part").textContent = d.isMultiVariant ? d.baseSku : d.partNum;
+    g("inv-result-sku").textContent   = d.sku && d.sku !== d.partNum ? d.sku : "";
+    g("inv-result-name").textContent  = d.name || "";
+    var photoEl = g("inv-result-photo");
+    if (photoEl) {
+      if (d.photo) { photoEl.src = d.photo; photoEl.style.display = "block"; }
+      else { photoEl.style.display = "none"; photoEl.src = ""; }
+    }
+    g("inv-result-inside").textContent  = d.insideUpc  || "—";
+    g("inv-result-outside").textContent = d.outsideUpc || "—";
+    g("inv-result-upcs").style.display  = (d.insideUpc || d.outsideUpc) ? "grid" : "none";
+    g("inv-result-card").style.display = "block";
+    // BUGFIX: bare searches ("23-2-3") already skipped straight to a
+    // flattened, always-expanded, no-click list of every location —
+    // but an exact search ("23-2-3=2") used to route through the older
+    // variant-picker/click-to-expand screen instead, since it isn't
+    // "multi-variant" from the server's point of view. Both now always
+    // go through the same invShowLocs(), so an exact search gets
+    // identical no-click behavior, just with that exact variant's own
+    // locations pinned to the top (see invSortLocsForOut).
+    invShowLocs();
+  }
 
   function invShowVariantPicker(variants) {
     var list = g("inv-loc-list");
@@ -3200,38 +3230,58 @@ window.invCredLogin = async function() {
   };
 
   // Tapping a reported entry (now headlined by bin location, see above)
-  // runs the exact same lookup as typing the SKU into "Scan or Search" and
-  // pressing Go. Stays visually on the "SKU / Part# / UPC" tab (per
-  // request) and searches straight by SKU/part# — no location-search step
-  // at all. Started out trying a location-search first (since the headline
-  // shows the bin location), with a fallback to SKU/part# only if that came
-  // up empty — but real testing showed the location-search leg was never
-  // the one that actually found anything (these bin-location-shaped values
-  // apparently live in master_list as part numbers, not in the location
-  // column), so it was just a wasted round-trip for every single click.
-  // Skipped entirely now — straight to invLookup.
+  // searches by SKU/part# — no dedicated location-column search step (see
+  // the account incident that removed it: these bin-location-shaped values
+  // apparently live in master_list AS part numbers for most items, not in
+  // the location column, so a real location-column search never found
+  // anything and was just a wasted round-trip).
+  //
+  // BUGFIX: that "bin-location-shaped value = part number" convention
+  // doesn't hold for every item — confirmed on two real reports (bins
+  // "27-5-2" and "201-2-6") where the bin search came back "no stock on
+  // record" even though the SKU genuinely had cases on hand; Inventory's
+  // own manual SKU search found it immediately. Searching by binLocation
+  // alone, with no fallback, meant a report like that looked exactly like
+  // a real stock-out. Now tries binLocation first as before, and — only if
+  // that search turns up no actual cases anywhere — automatically retries
+  // using the report's own sku field before giving up, via
+  // _invLookupWithFallback below. Whichever code actually finds stock is
+  // what gets shown (and left in the search box), so it's never a silent
+  // guess.
   window.invStockoutGo = function(idx) {
     var s = _invStockoutOpenList[idx];
     if (!s) return;
     if (_invStockoutClickedIds[s.id]) return; // one-time click — already used
-    var code = (s.binLocation || s.sku || '').trim();
-    if (!code) return;
+    var bin = (s.binLocation || '').trim();
+    var sku = (s.sku || '').trim();
+    var primary  = bin || sku;
+    var fallback = (bin && sku && bin.toUpperCase() !== sku.toUpperCase()) ? sku : '';
+    if (!primary) return;
     invSetScanMode('code'); // always land on/stay on the SKU/Part#/UPC tab
     var inp = g('inv-search-inp');
-    if (inp) inp.value = code;
-    invLookup(code);
-    // Set AFTER invLookup() (which resets this exact value at its own
-    // start) — the next item pushed to the Pull List picks this up and
-    // tags itself as having come from this report; see invAddToPullList.
-    _invPendingStockoutSourceId = s.id;
-    // invLookup() above synchronously clears/hides #inv-grab-banner before
-    // it kicks off its (async) fetch — setting the banner's real content
-    // here, right after, means it's already in place by the time that
-    // fetch resolves and sets #inv-result-card back to visible. This is
-    // the "don't have to put it how many box they have to grab" part —
-    // the quantity came from the picker's own qty box on the No Stock
-    // report, not from anything the inventory side has to work out.
+    if (inp) inp.value = primary;
+
+    // Same "every search starts clean" reset invLookup does at its own top
+    // — this bypasses that function for the actual fetch (see
+    // _invLookupWithFallback), so it has to do the same reset itself.
+    g("inv-result-card").style.display = "none";
+    g("inv-loc-card").style.display    = "none";
+    g("inv-detail-card").style.display = "none";
     var gb = g('inv-grab-banner');
+    if (gb) { gb.style.display = "none"; gb.innerHTML = ""; }
+
+    _invLookupWithFallback(primary, fallback, inp);
+
+    // Set AFTER kicking off the lookup(s) above (which reset this exact
+    // value at their own start) — the next item pushed to the Pull List
+    // picks this up and tags itself as having come from this report; see
+    // invAddToPullList.
+    _invPendingStockoutSourceId = s.id;
+    // Doesn't depend on which code ends up finding stock — the quantity
+    // came from the picker's own qty box on the No Stock report, not from
+    // anything Inventory has to work out — so it's set immediately rather
+    // than waiting on the fetch(es) above to resolve. This is the "don't
+    // have to work out how many boxes to grab" part.
     if (gb) {
       var qty = s.quantity != null ? (parseInt(s.quantity, 10) || 1) : 1;
       gb.textContent = '📦 Grab ' + qty + (s.orderNum ? ' for Order ' + s.orderNum : '');
@@ -3246,6 +3296,29 @@ window.invCredLogin = async function() {
     _invStockoutViewedIds[s.id] = true;
     invRenderStockoutList();
   };
+
+  // Tries `primaryCode` first; if that doesn't turn up any real cases
+  // anywhere, automatically retries with `fallbackCode` (when there is
+  // one) before giving up. See invStockoutGo's own comment above for the
+  // real-account incident this fixes. Whichever attempt actually finds
+  // stock is rendered (and left in the search box, via searchInp, so it's
+  // visibly clear which code the shown result belongs to); if neither
+  // does, renders the primary attempt's result — the same "no stock on
+  // record" state the tool always showed, still tied to what the picker
+  // actually reported.
+  function _invLookupWithFallback(primaryCode, fallbackCode, searchInp) {
+    _invFetchLookupRaw(primaryCode).then(function(d1) {
+      if (_invHasRealStock(d1) || !fallbackCode) { _invRenderLookupResult(primaryCode, d1); return; }
+      _invFetchLookupRaw(fallbackCode).then(function(d2) {
+        if (_invHasRealStock(d2)) {
+          if (searchInp) searchInp.value = fallbackCode;
+          _invRenderLookupResult(fallbackCode, d2);
+        } else {
+          _invRenderLookupResult(primaryCode, d1);
+        }
+      }).catch(function() { _invRenderLookupResult(primaryCode, d1); });
+    }).catch(function() { invFlash("Lookup failed", "error"); });
+  }
 
   window.invStockoutResolve = function(id, btnEl) {
     if (btnEl) { btnEl.disabled = true; btnEl.textContent = '…'; }
