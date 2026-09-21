@@ -374,7 +374,7 @@ window.invCredLogin = async function() {
     <!-- Filled in as soon as the Part# matches a known item (see
          invQuickAddPrefillUpc) — stays hidden for a genuinely new item,
          since there's no name to show yet. -->
-    <div id="inv-qa-name-display" style="display:none;font-size:13px;color:var(--text2);margin-top:6px;padding:7px 10px;background:var(--bg3);border-radius:7px;align-items:center;gap:8px"><img id="inv-qa-photo" src="" alt="" style="display:none;width:36px;height:36px;object-fit:cover;border-radius:6px;border:1px solid var(--border);flex-shrink:0" onerror="this.style.display='none'"><span id="inv-qa-name-text"></span></div>
+    <div id="inv-qa-name-display" style="display:none;font-size:13px;color:var(--text2);margin-top:6px;padding:7px 10px;background:var(--bg3);border-radius:7px;align-items:center;gap:8px"><img id="inv-qa-photo" src="" alt="" style="display:none;width:36px;height:36px;object-fit:cover;border-radius:6px;border:1px solid var(--border);flex-shrink:0" onerror="this.style.display='none'"><span id="inv-qa-name-text" style="flex:1"></span><button type="button" onclick="invQuickAddClearSearch()" title="Close and search a new item" style="background:none;border:none;color:var(--text3);font-size:18px;cursor:pointer;line-height:1;padding:0 2px;flex-shrink:0">&times;</button></div>
 
     <div class="ifield" style="margin-top:10px">
       <label>Location</label>
@@ -2737,6 +2737,20 @@ window.invCredLogin = async function() {
   // starting value. The name always updates to match whatever's actually
   // in the box; QTY per Case only fills in when that field is still
   // empty, so it never fights a deliberate manual entry.
+  // Closes the name/photo popup and resets the whole Quick Add form —
+  // Part#, Location, Cases, QTY per Case — so the next thing typed is
+  // unambiguously a fresh search for a different item, not leftover
+  // fields from whatever was just looked up.
+  window.invQuickAddClearSearch = function() {
+    var partnumInp = g("inv-qa-partnum"); if (partnumInp) partnumInp.value = "";
+    var shelfInp = g("inv-qa-shelf"); if (shelfInp) shelfInp.value = "";
+    var casesInp = g("inv-qa-cases"); if (casesInp) casesInp.value = "";
+    var upcInp = g("inv-qa-upc"); if (upcInp) upcInp.value = "";
+    var nameDisplay = g("inv-qa-name-display"); if (nameDisplay) nameDisplay.style.display = "none";
+    var photoEl = g("inv-qa-photo"); if (photoEl) { photoEl.style.display = "none"; photoEl.src = ""; }
+    if (partnumInp) partnumInp.focus();
+  };
+
   window.invQuickAddPrefillUpc = function() {
     var partNum = (g("inv-qa-partnum") && g("inv-qa-partnum").value.trim().toUpperCase()) || "";
     var upcField = g("inv-qa-upc");
