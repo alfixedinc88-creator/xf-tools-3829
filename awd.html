@@ -1709,7 +1709,7 @@ function renderBuilder(){
       <td><input type="number" class="qty-inp" value="${item.qty}" min="0" oninput="updQty('${esc(sku)}',this.value)"></td>
       <td class="r">${hasCP
         ? `<span class="cp-pill found">${cp.unitsPerBox}/box · ${exportQty} units · ${boxes} box${boxes!==1?'es':''}</span>`
-        : '<span class="cp-pill missing">No template</span>'}</td>
+        : `<span class="cp-pill missing" style="cursor:pointer;text-decoration:underline" onclick="openAddTemplateModal('${esc(sku)}')" title="Click to add a case pack template for this SKU">No template — click to add</span>`}</td>
       <td>${lPrefix
         ? `<button class="btn btn-sm btn-secondary" style="font-size:11px${lPrefix && lPrefix.includes('/') ? ';color:#EA580C;border-color:#FDBA74' : ''}" onclick="copyLabelFromBuilder('${esc(sku)}','${esc(lPrefix)}')">📋 ${lPrefix}</button>`
         : '<span style="color:var(--gray-400);font-size:11px">—</span>'}</td>
@@ -5221,5 +5221,114 @@ function awdStandaloneInit() {
   }
 })();
 </script>
+<div id="add-template-modal" style="display:none;position:fixed;inset:0;background:rgba(15,20,35,.4);align-items:center;justify-content:center;z-index:200;padding:20px;">
+  <div style="background:var(--bg2);border-radius:14px;padding:24px;width:100%;max-width:400px;box-shadow:0 12px 40px rgba(0,0,0,.2);">
+    <h3 style="margin:0 0 4px;font-size:16px;">Add Case Pack Template</h3>
+    <div style="font-size:12.5px;color:var(--text3);margin-bottom:16px;font-family:var(--mono, monospace);" id="add-template-sku-label"></div>
+
+    <label style="font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.4px;color:var(--text3);margin-bottom:5px;display:block;">Units per Box <span style="color:var(--red)">*</span></label>
+    <input id="add-template-units" type="number" min="1" step="1" style="width:100%;padding:10px 12px;border:1.5px solid var(--border);border-radius:8px;font-size:14px;margin-bottom:12px;box-sizing:border-box;" placeholder="e.g. 12">
+
+    <label style="font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.4px;color:var(--text3);margin-bottom:5px;display:block;">Box Weight (lb)</label>
+    <input id="add-template-weight" type="number" min="0" step="0.1" style="width:100%;padding:10px 12px;border:1.5px solid var(--border);border-radius:8px;font-size:14px;margin-bottom:12px;box-sizing:border-box;" placeholder="e.g. 5.5">
+
+    <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:8px;margin-bottom:6px;">
+      <div>
+        <label style="font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.4px;color:var(--text3);margin-bottom:5px;display:block;">L (in)</label>
+        <input id="add-template-length" type="number" min="0" step="0.1" style="width:100%;padding:10px 8px;border:1.5px solid var(--border);border-radius:8px;font-size:14px;box-sizing:border-box;">
+      </div>
+      <div>
+        <label style="font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.4px;color:var(--text3);margin-bottom:5px;display:block;">W (in)</label>
+        <input id="add-template-width" type="number" min="0" step="0.1" style="width:100%;padding:10px 8px;border:1.5px solid var(--border);border-radius:8px;font-size:14px;box-sizing:border-box;">
+      </div>
+      <div>
+        <label style="font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.4px;color:var(--text3);margin-bottom:5px;display:block;">H (in)</label>
+        <input id="add-template-height" type="number" min="0" step="0.1" style="width:100%;padding:10px 8px;border:1.5px solid var(--border);border-radius:8px;font-size:14px;box-sizing:border-box;">
+      </div>
+    </div>
+
+    <div style="color:var(--red);font-size:12.5px;margin-top:8px;min-height:16px;" id="add-template-err"></div>
+
+    <div style="display:flex;gap:8px;margin-top:18px;">
+      <button class="btn btn-secondary" style="flex:1" onclick="closeAddTemplateModal()">Cancel</button>
+      <button class="btn btn-primary" style="flex:1" id="add-template-save-btn" onclick="saveNewTemplate()">Save Template</button>
+    </div>
+  </div>
+</div>
+
+<script>
+var ADD_TEMPLATE_SKU = null;
+
+window.openAddTemplateModal = function(sku) {
+  ADD_TEMPLATE_SKU = sku;
+  document.getElementById('add-template-sku-label').textContent = sku;
+  document.getElementById('add-template-units').value = '';
+  document.getElementById('add-template-weight').value = '';
+  document.getElementById('add-template-length').value = '';
+  document.getElementById('add-template-width').value = '';
+  document.getElementById('add-template-height').value = '';
+  document.getElementById('add-template-err').textContent = '';
+  document.getElementById('add-template-modal').style.display = 'flex';
+};
+window.closeAddTemplateModal = function() {
+  document.getElementById('add-template-modal').style.display = 'none';
+  ADD_TEMPLATE_SKU = null;
+};
+
+window.saveNewTemplate = async function() {
+  var err = document.getElementById('add-template-err');
+  err.textContent = '';
+  var unitsPerBox = document.getElementById('add-template-units').value;
+  var weightLb    = document.getElementById('add-template-weight').value;
+  var lengthIn    = document.getElementById('add-template-length').value;
+  var widthIn     = document.getElementById('add-template-width').value;
+  var heightIn    = document.getElementById('add-template-height').value;
+
+  if (!unitsPerBox || parseFloat(unitsPerBox) <= 0) {
+    err.textContent = 'Units per box is required and must be greater than 0.';
+    return;
+  }
+
+  var btn = document.getElementById('add-template-save-btn');
+  btn.disabled = true; btn.textContent = 'Saving…';
+  try {
+    var res = await wFetch('https://xfitting-lookup.alfixedinc88.workers.dev/awd/cpack-add', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        sku: ADD_TEMPLATE_SKU, unitsPerBox: unitsPerBox, weightLb: weightLb,
+        lengthIn: lengthIn, widthIn: widthIn, heightIn: heightIn,
+      })
+    });
+    var data = await res.json();
+    if (!data.ok) { err.textContent = data.error || 'Failed to save template.'; return; }
+
+    // Update the in-memory cpackMap immediately, and persist to
+    // localStorage the same way syncCpackFromSheet does - no need to
+    // wait for a full re-sync from the sheet, the builder table
+    // reflects this new template right away.
+    S.cpackMap[data.sku] = {
+      unitsPerBox: data.template.unitsPerBox, weightLb: data.template.weightLb,
+      lengthIn: data.template.lengthIn, widthIn: data.template.widthIn, heightIn: data.template.heightIn,
+    };
+    S.cpackCount = Object.keys(S.cpackMap).length;
+    try {
+      var saved = JSON.parse(localStorage.getItem('awdCpack') || '{}');
+      var rows = saved.rows || [];
+      rows.push({ SKU: data.sku, 'Units per box': String(unitsPerBox), 'Box weight (lb)': String(weightLb||''), 'Box length (inch)': String(lengthIn||''), 'Box width (inch)': String(widthIn||''), 'Box height (inch)': String(heightIn||'') });
+      localStorage.setItem('awdCpack', JSON.stringify({ rows: rows, date: new Date().toISOString() }));
+    } catch(e) {}
+
+    updateCpackUI();
+    renderBuilder();
+    closeAddTemplateModal();
+    awd_planner_toast('Template added for ' + data.sku, 'success');
+  } catch(e) {
+    err.textContent = 'Connection error — try again.';
+  } finally {
+    btn.disabled = false; btn.textContent = 'Save Template';
+  }
+};
+</script>
+
 </body>
 </html>
