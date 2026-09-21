@@ -4107,6 +4107,24 @@ window.psRunLineItemsDebug = function() {
     }
     var itemsHtml = (d.itemsForThisTracking || []).map(function(li){ return itemLine(li, false); }).join('') || '<div style="font-size:12px;color:var(--text3)">none found</div>';
     var fullHtml  = (d.fullOrderLineItems || []).map(function(li){ return itemLine(li, true); }).join('');
+    // When Veeqo didn't send a per-package item list under either field
+    // name this checks for, showing the friendly summary alone isn't
+    // enough to fix it — the raw Veeqo data is included below (copyable)
+    // so it can be sent back and the real field/structure this account
+    // uses can be found instead of guessing a 3rd name blind.
+    var rawBlockHtml = '';
+    if (!d.allocatedItemsFieldFound && d.rawOrder) {
+      var rawId = 'ps-ol-debug-raw-' + Date.now();
+      rawBlockHtml = ''
+        + '<div style="margin-top:14px;padding-top:10px;border-top:1px solid var(--border2)">'
+        +   '<button class="ps-btn-sm" onclick="var t=document.getElementById(\'' + rawId + '\'); t.style.display = t.style.display===\'none\' ? \'block\' : \'none\';">Show raw Veeqo data (for troubleshooting)</button>'
+        +   '<div id="' + rawId + '" style="display:none;margin-top:8px">'
+        +     '<div style="font-size:11px;color:var(--text3);margin-bottom:6px">Copy everything in this box and send it back — this is the full, unfiltered order Veeqo sent, needed to find where this account actually records which item is in which package.</div>'
+        +     '<textarea readonly style="width:100%;height:260px;font-family:var(--mono);font-size:10px;padding:8px;border:1.5px solid var(--border2);border-radius:7px;background:var(--bg);color:var(--text)" onclick="this.select()">' + JSON.stringify(d.rawOrder, null, 2).replace(/</g,'&lt;') + '</textarea>'
+        +     '<button class="ps-btn-sm" style="margin-top:6px" onclick="var ta=this.previousElementSibling; ta.select(); document.execCommand(\'copy\'); this.textContent=\'Copied!\'; var b=this;setTimeout(function(){b.textContent=\'Copy\';},1500);">Copy</button>'
+        +   '</div>'
+        + '</div>';
+    }
     out.innerHTML = ''
       + '<div style="font-size:12px;margin-bottom:6px"><b>Order ' + (d.orderNumber || '') + '</b> · ' + d.totalAllocationsOnOrder + ' package' + (d.totalAllocationsOnOrder !== 1 ? 's' : '') + ' total on this order</div>'
       + '<div style="font-size:12px;margin-bottom:4px">Matched this tracking to one specific package: <b style="color:' + (d.matchedAllocationFound ? 'var(--green)' : 'var(--red)') + '">' + (d.matchedAllocationFound ? 'Yes' : 'No — this is the problem, see below') + '</b></div>'
@@ -4115,6 +4133,7 @@ window.psRunLineItemsDebug = function() {
       + itemsHtml
       + '<div style="font-size:12px;font-weight:700;margin-top:8px">Full order, for comparison (' + d.fullOrderLineItemsCount + ' total):</div>'
       + fullHtml
+      + rawBlockHtml
       + '<div style="font-size:11px;color:var(--text3);margin-top:10px">Screenshot or copy this box and send it back if the split-order fix still isn\'t showing the right items.</div>';
   }).catch(function(e) { if (out) out.innerHTML = '<div style="font-size:12px;color:var(--red)">Request failed: ' + e.message + '</div>'; });
 };
