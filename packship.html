@@ -4607,6 +4607,11 @@ window.psShowDebug = function(kind) {
     var ov = document.getElementById('ps-pick-dupe-overlay'); if (ov) ov.style.display = 'none';
     psPickDupeCurrentTracking = null;
     psPickDupeCurrentInfo = null;
+    // Clear the item card right away — it was showing this now-canceled
+    // order's items (see _psProcessPick, which loads the product card
+    // alongside the "Already Picked!" alarm), and there's no reason to keep
+    // showing it once the label itself has been called off.
+    _psClearPickProduct();
 
     fetch(PS_WORKER + '/ship/cancel-label', {
       method: 'POST',
@@ -5225,6 +5230,27 @@ function _psRenderPickProduct(tracking, items, orderNum, showNoStock) {
     if (btn) { btn.disabled = false; btn.textContent = '⚠ Report Selected as Out of Stock'; }
     itEl.scrollIntoView({ behavior: 'smooth', block: 'center' });
   }
+}
+
+// Hides and empties the Picking tab's item card entirely — used when the
+// order it was showing no longer applies (see psPickDupeCancelLabel: once a
+// label is canceled via the "Already Picked!" alarm's 3rd button, that
+// canceled order's items shouldn't keep sitting on screen). Distinct from
+// _psShowPickProductLoading, which keeps the card open with a "Loading…"
+// placeholder — this closes it, same as it looks before anything's been
+// scanned yet.
+function _psClearPickProduct() {
+  var wrap   = document.getElementById('ps-pick-product-wrap');
+  var trkEl  = document.getElementById('ps-pick-product-tracking');
+  var itEl   = document.getElementById('ps-pick-product-items');
+  var moreEl = document.getElementById('ps-pick-product-more');
+  var subEl  = document.getElementById('ps-pick-nostock-submit-wrap');
+  if (wrap)  wrap.style.display = 'none';
+  if (trkEl) trkEl.textContent = '—';
+  if (itEl)  itEl.innerHTML = '';
+  if (moreEl) { moreEl.style.display = 'none'; moreEl.innerHTML = ''; }
+  if (subEl) subEl.style.display = 'none';
+  window._psPickStockoutCtx = [];
 }
 
 async function _psLoadPickProduct(tracking, showNoStock) {
