@@ -1174,7 +1174,15 @@ body {
 
       <!-- First 1-2 items of the order to pick, right next to the scan box -->
       <div class="ps-scan-product-wrap" id="ps-pick-product-wrap" style="display:none">
-        <div class="ps-scan-product-tracking" id="ps-pick-product-tracking">—</div>
+        <div style="display:flex;justify-content:space-between;align-items:flex-start;gap:8px;margin-bottom:10px">
+          <div class="ps-scan-product-tracking" id="ps-pick-product-tracking" style="margin-bottom:0">—</div>
+          <!-- Only shown during the "No Inventory" flow (see
+               _psRenderPickProduct's showNoStock) — lets a picker close this
+               box without having to check off/report anything, once they've
+               already handled it some other way. Reuses _psClearPickProduct,
+               the same helper Cancel Label already uses to clear this card. -->
+          <button id="ps-pick-product-close" onclick="_psClearPickProduct()" title="Close" aria-label="Close" style="display:none;flex-shrink:0;width:26px;height:26px;border:none;border-radius:6px;background:var(--bg2);color:var(--text3);font-size:15px;font-weight:700;cursor:pointer;line-height:1">✕</button>
+        </div>
         <div id="ps-pick-product-items" class="ps-scan-product-items"></div>
       </div>
     </div>
@@ -5270,15 +5278,19 @@ function _psProcessPick(raw) {
 // Reuses _psScanProductCardHtml (Packing tab) — it doesn't reference any
 // Packing-specific element IDs, just builds a card from a line item.
 function _psShowPickProductLoading(tracking) {
-  var wrap   = document.getElementById('ps-pick-product-wrap');
-  var trkEl  = document.getElementById('ps-pick-product-tracking');
-  var itEl   = document.getElementById('ps-pick-product-items');
-  var moreEl = document.getElementById('ps-pick-product-more');
+  var wrap    = document.getElementById('ps-pick-product-wrap');
+  var trkEl   = document.getElementById('ps-pick-product-tracking');
+  var itEl    = document.getElementById('ps-pick-product-items');
+  var moreEl  = document.getElementById('ps-pick-product-more');
+  var closeEl = document.getElementById('ps-pick-product-close');
   if (!wrap) return;
   wrap.style.display = 'block';
   if (moreEl) { moreEl.style.display = 'none'; moreEl.innerHTML = ''; }
   if (trkEl) trkEl.textContent = tracking;
   if (itEl)  itEl.innerHTML = '<div style="font-size:12px;color:var(--text3);">Loading product info…</div>';
+  // Hidden while loading — _psRenderPickProduct (right after this) decides
+  // whether it should actually show, based on showNoStock.
+  if (closeEl) closeEl.style.display = 'none';
 }
 
 // Cleared and rebuilt on every render — see _psScanProductCardHtml's comment
@@ -5291,12 +5303,17 @@ window._psPickStockoutCtx = [];
 // psPickDupeNoInventory below), since that's the actual signal that
 // something on this order isn't on the shelf.
 function _psRenderPickProduct(tracking, items, orderNum, showNoStock) {
-  var trkEl  = document.getElementById('ps-pick-product-tracking');
-  var itEl   = document.getElementById('ps-pick-product-items');
-  var moreEl = document.getElementById('ps-pick-product-more');
-  var subEl  = document.getElementById('ps-pick-nostock-submit-wrap');
+  var trkEl   = document.getElementById('ps-pick-product-tracking');
+  var itEl    = document.getElementById('ps-pick-product-items');
+  var moreEl  = document.getElementById('ps-pick-product-more');
+  var subEl   = document.getElementById('ps-pick-nostock-submit-wrap');
+  var closeEl = document.getElementById('ps-pick-product-close');
   if (!itEl) return;
   if (trkEl) trkEl.textContent = tracking;
+  // Only shown during the "No Inventory" flow — see the button's own
+  // comment on the markup for why (a normal pick doesn't need a way to
+  // dismiss the card; it clears itself on the next scan).
+  if (closeEl) closeEl.style.display = showNoStock ? 'inline-flex' : 'none';
   items = (items || []).slice(0, PS_SCAN_MAX_ITEMS);
   window._psPickStockoutCtx = [];
   if (!items.length) {
@@ -5332,16 +5349,18 @@ function _psRenderPickProduct(tracking, items, orderNum, showNoStock) {
 // placeholder — this closes it, same as it looks before anything's been
 // scanned yet.
 function _psClearPickProduct() {
-  var wrap   = document.getElementById('ps-pick-product-wrap');
-  var trkEl  = document.getElementById('ps-pick-product-tracking');
-  var itEl   = document.getElementById('ps-pick-product-items');
-  var moreEl = document.getElementById('ps-pick-product-more');
-  var subEl  = document.getElementById('ps-pick-nostock-submit-wrap');
+  var wrap    = document.getElementById('ps-pick-product-wrap');
+  var trkEl   = document.getElementById('ps-pick-product-tracking');
+  var itEl    = document.getElementById('ps-pick-product-items');
+  var moreEl  = document.getElementById('ps-pick-product-more');
+  var subEl   = document.getElementById('ps-pick-nostock-submit-wrap');
+  var closeEl = document.getElementById('ps-pick-product-close');
   if (wrap)  wrap.style.display = 'none';
   if (trkEl) trkEl.textContent = '—';
   if (itEl)  itEl.innerHTML = '';
   if (moreEl) { moreEl.style.display = 'none'; moreEl.innerHTML = ''; }
   if (subEl) subEl.style.display = 'none';
+  if (closeEl) closeEl.style.display = 'none';
   window._psPickStockoutCtx = [];
 }
 
