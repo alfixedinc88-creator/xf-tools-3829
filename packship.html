@@ -1552,6 +1552,22 @@ body {
     </div>
     <div id="ps-ol-status" style="font-size:12px;color:var(--text3);font-family:var(--mono);min-height:18px;padding:0 0 10px;"></div>
     <div id="ps-ol-results"></div>
+
+    <!-- Temporary mgmt-only diagnostic for the split-order item filtering
+         fix — paste a tracking number, see exactly what Veeqo sent back for
+         it (which package it matched, whether a per-package item list was
+         found, and what items it produced) without needing browser
+         DevTools or a manually-built debug URL. Safe to remove once the fix
+         is confirmed working for every real split order. -->
+    <div id="ps-ol-debug-tool" style="display:none;margin-top:24px;padding:14px;border:1.5px dashed var(--border2);border-radius:10px;background:var(--bg3)">
+      <div style="font-size:12px;font-weight:700;color:var(--text2);margin-bottom:4px">🔧 Check Split-Order Items (temporary debug tool)</div>
+      <div style="font-size:11px;color:var(--text3);margin-bottom:10px">Paste a tracking number to see exactly what the system found for it in Veeqo — useful for checking a split order shows the right items for each package.</div>
+      <div style="display:flex;gap:8px">
+        <input id="ps-ol-debug-tracking" type="text" placeholder="Tracking number…" style="flex:1;font-size:13px;font-family:var(--mono);padding:8px 10px;border:1.5px solid var(--border2);border-radius:7px;background:var(--bg);color:var(--text)" onkeydown="if(event.key==='Enter')psRunLineItemsDebug()">
+        <button class="ps-btn-go" onclick="psRunLineItemsDebug()">Check</button>
+      </div>
+      <div id="ps-ol-debug-result" style="margin-top:12px"></div>
+    </div>
   </div>
 
   <!-- STATUS CHECK panel -->
@@ -2116,6 +2132,7 @@ function _psLaunchInner() {
   // dropdowns can happen before login (as soon as the browser's voice list
   // loads), when there's no session yet to check.
   if (window.speechSynthesis) _psRenderVoiceSelects(window.speechSynthesis.getVoices() || []);
+  _psRenderOrderLookupDebugTool();
   if (psRole === 'mgmt') {
     // Gap report always available for managers — show tab and reconcile bar
     var gapTab = document.getElementById('ps-tab-gaps');
@@ -4068,6 +4085,48 @@ window.psOrderLookup = async function() {
   }
 };
 
+// ── Split-Order Item Check (temporary mgmt debug tool) ──────────────────
+// Calls the worker's /veeqo/line-items-debug directly (see that route's own
+// comment) and shows the raw findings in plain language, right in the app —
+// no DevTools/console or manually-built URL needed. Only shown to a
+// mgmt/admin session; see _psRenderOrderLookupDebugTool below.
+window.psRunLineItemsDebug = function() {
+  var inp = document.getElementById('ps-ol-debug-tracking');
+  var tracking = inp ? inp.value.trim() : '';
+  var out = document.getElementById('ps-ol-debug-result');
+  if (!tracking) { if (out) out.innerHTML = '<div style="font-size:12px;color:var(--red)">Enter a tracking number first.</div>'; return; }
+  if (out) out.innerHTML = '<div style="font-size:12px;color:var(--text3)">Checking…</div>';
+  fetch(PS_WORKER + '/veeqo/line-items-debug?tracking=' + encodeURIComponent(tracking), {
+    headers: { 'X-Cred-Token': psCredToken }
+  }).then(function(r) { return r.json(); }).then(function(d) {
+    if (!out) return;
+    if (!d || !d.ok) { out.innerHTML = '<div style="font-size:12px;color:var(--red)">Error: ' + ((d && d.error) || 'request failed') + '</div>'; return; }
+    if (!d.found) { out.innerHTML = '<div style="font-size:12px;color:var(--text3)">No shipped Veeqo order found for this tracking number.</div>'; return; }
+    function itemLine(li, dim) {
+      return '<div style="font-family:var(--mono);font-size:12px' + (dim ? ';color:var(--text3)' : '') + '">' + li.q + '× ' + li.s + (li.b ? ' (bin ' + li.b + ')' : '') + '</div>';
+    }
+    var itemsHtml = (d.itemsForThisTracking || []).map(function(li){ return itemLine(li, false); }).join('') || '<div style="font-size:12px;color:var(--text3)">none found</div>';
+    var fullHtml  = (d.fullOrderLineItems || []).map(function(li){ return itemLine(li, true); }).join('');
+    out.innerHTML = ''
+      + '<div style="font-size:12px;margin-bottom:6px"><b>Order ' + (d.orderNumber || '') + '</b> · ' + d.totalAllocationsOnOrder + ' package' + (d.totalAllocationsOnOrder !== 1 ? 's' : '') + ' total on this order</div>'
+      + '<div style="font-size:12px;margin-bottom:4px">Matched this tracking to one specific package: <b style="color:' + (d.matchedAllocationFound ? 'var(--green)' : 'var(--red)') + '">' + (d.matchedAllocationFound ? 'Yes' : 'No — this is the problem, see below') + '</b></div>'
+      + '<div style="font-size:12px;margin-bottom:10px">Veeqo sent a per-package item list for it: <b style="color:' + (d.allocatedItemsFieldFound ? 'var(--green)' : 'var(--red)') + '">' + (d.allocatedItemsFieldFound ? 'Yes (field: ' + d.allocatedItemsFieldName + ')' : 'No — this is why it fell back to the full order') + '</b></div>'
+      + '<div style="font-size:12px;font-weight:700">Items shown for THIS tracking (' + d.itemsForThisTrackingCount + ' total):</div>'
+      + itemsHtml
+      + '<div style="font-size:12px;font-weight:700;margin-top:8px">Full order, for comparison (' + d.fullOrderLineItemsCount + ' total):</div>'
+      + fullHtml
+      + '<div style="font-size:11px;color:var(--text3);margin-top:10px">Screenshot or copy this box and send it back if the split-order fix still isn\'t showing the right items.</div>';
+  }).catch(function(e) { if (out) out.innerHTML = '<div style="font-size:12px;color:var(--red)">Request failed: ' + e.message + '</div>'; });
+};
+
+// Shows/hides the debug tool above based on the signed-in session — called
+// on launch and every time the Order Lookup tab is opened (see psSwitchTab)
+// so it reflects a step-up/step-down without needing a page reload.
+function _psRenderOrderLookupDebugTool() {
+  var wrap = document.getElementById('ps-ol-debug-tool');
+  if (wrap) wrap.style.display = (psRole === 'mgmt' || _psIsAdmin()) ? 'block' : 'none';
+}
+
 // ── Tracking → order detail modal (Scan tab) ────────────────────────────
 // Clicking a tracking number in "Today's Scans" looks it up the exact same
 // way the Order Lookup tab does — same /ship/order-lookup call, same
@@ -4842,6 +4901,7 @@ window.psUnlockTab = async function(tab) {
     // well) — re-apply the alert-voice lock so it unlocks immediately
     // without needing a full page reload.
     if (window.speechSynthesis) _psRenderVoiceSelects(window.speechSynthesis.getVoices() || []);
+  _psRenderOrderLookupDebugTool();
   } catch(e) {
     if (errEl) errEl.textContent = 'Connection error — try again.';
     return;
@@ -4914,7 +4974,7 @@ window.psSwitchTab = function(name) {
   if (name === 'cancellation') { psLoadCancelOrders(); }
   if (name === 'progress')    { psLoadScans(); }
   if (name === 'lookup')      { psRenderLog(); }
-  if (name === 'orderlookup') { document.getElementById('ps-ol-input').focus(); }
+  if (name === 'orderlookup') { document.getElementById('ps-ol-input').focus(); _psRenderOrderLookupDebugTool(); }
   if (name === 'gaps'    && _psUnlockedTabs['gaps'])    { psRunReconcile(); }
   if (name === 'vsync'   && _psUnlockedTabs['vsync'])   { psVeeqoOnUnlock(); }
   if (name === 'valerts' && _psUnlockedTabs['valerts']) { psVaOnUnlock(); }
