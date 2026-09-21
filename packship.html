@@ -1018,6 +1018,22 @@ body {
   </div>
 </div>
 
+<!-- Double Print Warning history — opened by the Print Log tab's
+     ⚠️ Double Print Warning card. Covers every date (GET
+     /ship/print-log/double-print?status=all); see psShowPrintDupeHistory. -->
+<div id="ps-print-dupe-history-modal-overlay" class="ps-person-modal-overlay" onclick="if(event.target===this) psClosePrintDupeHistory()">
+  <div class="ps-person-modal ps-tracking-modal">
+    <div class="ps-person-modal-header">
+      <div>
+        <div class="ps-person-modal-title">⚠️ Double Print Warning — History</div>
+        <div class="ps-person-modal-sub" id="ps-print-dupe-history-modal-sub"></div>
+      </div>
+      <button class="ps-person-modal-close" onclick="psClosePrintDupeHistory()">✕</button>
+    </div>
+    <div class="ps-person-modal-body" id="ps-print-dupe-history-modal-body"></div>
+  </div>
+</div>
+
 <!-- Order Cancellation history — opened from the Cancellation tab. Covers
      every status (GET /ship/cancel-order?status=all), so the full
      requested -> confirmed -> done timeline stays visible even after an
@@ -1921,6 +1937,26 @@ body {
       <div class="ps-stat-card"><div class="ps-stat-num" id="ps-pl-count">0</div><div class="ps-stat-label">Printed Today</div></div>
       <div class="ps-stat-card"><div class="ps-stat-num" id="ps-pl-ups-count">0</div><div class="ps-stat-label">UPS</div></div>
       <div class="ps-stat-card"><div class="ps-stat-num" id="ps-pl-usps-count">0</div><div class="ps-stat-label">USPS</div></div>
+    </div>
+
+    <!-- "Double Print Warning" — a tracking got printed again more than 3
+         minutes after its last print (see SHIP_PRINT_DUPLICATE_WARN_SECONDS
+         server-side), far enough apart it's very unlikely to be the fixed
+         scanner just reading one label twice, so it's worth a look. Same
+         collapsible-card + History-modal pattern as the Picking tab's
+         🚫 No Stock Found card. Deliberately placed below the scanner box,
+         not inside it — nothing here is ever focused or clicked
+         automatically, so it can't interfere with "field must stay
+         focused" for the print-station scanner. -->
+    <div class="ps-card" id="ps-print-dupe-card" style="margin-top:12px;border-color:#f5a89e">
+      <div style="display:flex;justify-content:space-between;align-items:center;cursor:pointer" onclick="psTogglePrintDupeList()">
+        <div style="font-size:13px;font-weight:700;color:var(--red)">⚠️ Double Print Warning<span class="ps-badge-red" id="ps-print-dupe-badge" style="display:none;margin-left:8px;padding:2px 8px;border-radius:100px;font-size:11px;font-weight:700">0</span></div>
+        <div style="display:flex;align-items:center;gap:12px">
+          <div style="font-size:11px;color:var(--text3);text-decoration:underline;cursor:pointer" onclick="event.stopPropagation();psShowPrintDupeHistory()">History</div>
+          <div style="font-size:11px;color:var(--text3)" id="ps-print-dupe-toggle-txt">Show</div>
+        </div>
+      </div>
+      <div id="ps-print-dupe-list" style="display:none;margin-top:10px"></div>
     </div>
 
     <!-- Who printed how many, UPS/USPS split, for whatever date is picked —
@@ -2979,9 +3015,22 @@ async function psAutoVeeqoSync() {
 // ════════════════════════════════════════════
 var psPlScans     = [];
 var psPlFilter    = 'all';
-var psPlLastScan  = {}; // tracking -> timestamp for 2s dedup
-var psPlDeupMs    = 2000;
+var psPlLastScan  = {}; // tracking -> timestamp for local dedup
+// 1 minute — matches SHIP_PRINT_COLLAPSE_SECONDS on the worker: the same
+// physical label re-triggering the fixed scanner (slow feed, a second read
+// on a crooked label, etc) shouldn't count twice in "Printed Today" or ever
+// reach the server as a second scan. The worker enforces the same 60s
+// collapse window server-side too (see shipPrintLog's `collapsed` response
+// below), so a page reload or a second device scanning the same label still
+// gets caught — this local check is just the fast/common-case shortcut.
+var psPlDeupMs    = 60000;
 var psPlRefocusInterval = null;
+// Open ("unacknowledged") double-print warnings — kept in sync with the
+// server by psFetchPrintDupeCount, and used to paint the inline list under
+// the "⚠️ Double Print Warning" card. See psTogglePrintDupeList /
+// psRenderPrintDupeList below (same pattern as _psNostockOpenList).
+var _psPrintDupeOpenList  = [];
+var _psPrintDupeListShown = false;
 
 window.psFocusPrintLog = function() {
   var inp = document.getElementById('ps-printlog-input');
@@ -3026,23 +3075,55 @@ function psPlProcessScan(raw) {
   if (!clean) return; // rejected by format filter
   var carrier = psPlGetCarrier(clean);
   if (!carrier) return; // not a tracking number
-  // 2-second dedup
+  // Local dedup (see psPlDeupMs comment) — the fast/common-case shortcut
+  // that avoids even hitting the worker for a same-label re-read within the
+  // window. The worker enforces the same window itself (see the .then()
+  // below), which is what catches it across a page reload or another
+  // device/station scanning the same label.
   var now = Date.now();
   if (psPlLastScan[clean] && (now - psPlLastScan[clean]) < psPlDeupMs) return;
   psPlLastScan[clean] = now;
   var ts   = new Date().toISOString();
   var entry = { timestamp: ts, tracking: clean, carrier: carrier, operatorName: _psPlOperatorName || '' };
+  // Optimistic add so "Printed Today" and the list feel instant — reconciled
+  // below once the worker replies (removed again if it turns out the server
+  // collapsed this as the same physical label, per SHIP_PRINT_COLLAPSE_SECONDS).
   psPlScans.unshift(entry);
   psPlUpdateLastScan(entry);
   psPlRenderList();
   // Update badge
   var badge = document.getElementById('ps-printlog-badge');
   if (badge) { badge.textContent = psPlScans.length; badge.style.display = 'inline'; }
-  // Send to worker (non-blocking)
+  // Send to worker. This does NOT touch #ps-printlog-input or its focus in
+  // any way — it only updates the count/list/warning-card UI once the
+  // response comes back, so the fixed print-station scanner keeps typing
+  // into that field uninterrupted the whole time (no blocking alert/confirm
+  // here, ever).
   fetch(PS_WORKER + '/ship/print-log', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json', 'X-Cred-Token': psCredToken },
     body: JSON.stringify({ tracking: clean })
+  }).then(function(r) { return r.json(); }).then(function(d) {
+    if (!d || !d.ok) return;
+    if (d.collapsed) {
+      // Server agrees this was the same physical label read again within
+      // SHIP_PRINT_COLLAPSE_SECONDS — back out the optimistic entry so
+      // "Printed Today" doesn't double-count it.
+      var idx = psPlScans.indexOf(entry);
+      if (idx !== -1) psPlScans.splice(idx, 1);
+      psPlRenderList();
+      if (badge) { badge.textContent = psPlScans.length; badge.style.display = psPlScans.length ? 'inline' : 'none'; }
+      return;
+    }
+    if (d.doublePrintWarning) {
+      // Genuinely apart (>3 min) — refresh the Double Print Warning badge
+      // and give a non-blocking heads-up on the last-scan line. Never a
+      // popup/confirm/alarm here — that could steal focus from the fixed
+      // scanner input, which must keep receiving scans uninterrupted.
+      psFetchPrintDupeCount();
+      var meta = document.getElementById('ps-pl-ls-meta');
+      if (meta) meta.textContent = entry.carrier + ' · ' + psFmtTime(entry.timestamp) + ' · ⚠️ printed again (was ' + (d.priorPrintedBy || '?') + ')';
+    }
   }).catch(function(e) { console.error('[PL] log error:', e); });
 }
 
@@ -3316,6 +3397,7 @@ window.psPlLoadToday = async function() {
     }
     if (data.ok) _psPlShowOperator(data.operatorName);
   } catch(e) { console.log('[PL] load error:', e.message); }
+  psFetchPrintDupeCount();
   psPlStartRefocus();
 };
 
@@ -5365,6 +5447,126 @@ window.psCancelLabelAck = function(id, btnEl) {
     // refresh the front-page badge count since it just dropped by one.
     window.psShowCancelLabelHistory();
     psFetchCancelLabelCount();
+  }).catch(function(e) {
+    if (btnEl) { btnEl.disabled = false; btnEl.textContent = '✓ Confirm'; }
+    _psToast('Could not confirm — ' + e.message, 'err');
+  });
+};
+
+// ── "Double Print Warning" (Print Log tab) ───────────────────────────────
+// Flags two prints of the SAME tracking landing more than
+// SHIP_PRINT_DUPLICATE_WARN_SECONDS (3 min) apart — see shipPrintLog on the
+// worker for the collapse/normal/warning split, and its 7-day lookback
+// (SHIP_DUPE_LOOKBACK_DAYS, shared with Picking/Packing's own dupe check).
+// Badge counts open (unacknowledged) warnings, same "stays visible until
+// someone confirms it" pattern as Canceled Labels / No Stock Found — a real
+// double-print from a few days ago still needs a look. None of this touches
+// #ps-printlog-input or its focus; every element here is a div/button, none
+// are in PS_PRINTLOG_TYPING_FIELDS, and none need to be.
+window.psFetchPrintDupeCount = function() {
+  fetch(PS_WORKER + '/ship/print-log/double-print?status=open', { headers: { 'X-Cred-Token': psCredToken } })
+    .then(function(r) { return r.json(); })
+    .then(function(d) {
+      _psPrintDupeOpenList = (d && d.doublePrints) || [];
+      var n = _psPrintDupeOpenList.length;
+      var b = document.getElementById('ps-print-dupe-badge');
+      if (b) { b.textContent = n; b.style.display = n > 0 ? 'inline-flex' : 'none'; }
+      if (_psPrintDupeListShown) psRenderPrintDupeList();
+    }).catch(function() {});
+};
+
+window.psTogglePrintDupeList = function() {
+  _psPrintDupeListShown = !_psPrintDupeListShown;
+  var wrap = document.getElementById('ps-print-dupe-list');
+  var txt  = document.getElementById('ps-print-dupe-toggle-txt');
+  if (wrap) wrap.style.display = _psPrintDupeListShown ? 'block' : 'none';
+  if (txt) txt.textContent = _psPrintDupeListShown ? 'Hide' : 'Show';
+  if (_psPrintDupeListShown) psRenderPrintDupeList();
+};
+
+function psRenderPrintDupeList() {
+  var wrap = document.getElementById('ps-print-dupe-list');
+  if (!wrap) return;
+  if (!_psPrintDupeOpenList.length) {
+    wrap.innerHTML = '<div style="font-size:12px;color:var(--text3);padding:6px 0">No double-print warnings right now.</div>';
+    return;
+  }
+  wrap.innerHTML = _psPrintDupeOpenList.map(_psRenderPrintDupeRow).join('');
+}
+
+window.psShowPrintDupeHistory = function() {
+  document.getElementById('ps-print-dupe-history-modal-sub').textContent = 'Loading…';
+  document.getElementById('ps-print-dupe-history-modal-body').innerHTML = '<div class="ps-person-modal-empty">Loading…</div>';
+  document.getElementById('ps-print-dupe-history-modal-overlay').style.display = 'flex';
+  fetch(PS_WORKER + '/ship/print-log/double-print?status=all', { headers: { 'X-Cred-Token': psCredToken } })
+    .then(function(r) { return r.json(); })
+    .then(function(d) {
+      if (!d || !d.ok) {
+        document.getElementById('ps-print-dupe-history-modal-sub').textContent = '';
+        document.getElementById('ps-print-dupe-history-modal-body').innerHTML = '<div class="ps-person-modal-empty">Error: ' + ((d && d.error) || 'Unknown error') + '</div>';
+        return;
+      }
+      var list = d.doublePrints || [];
+      document.getElementById('ps-print-dupe-history-modal-sub').textContent = list.length + ' double-print warning' + (list.length !== 1 ? 's' : '') + ' (last 7 days and older)';
+      document.getElementById('ps-print-dupe-history-modal-body').innerHTML = list.length
+        ? list.map(_psRenderPrintDupeRow).join('')
+        : '<div class="ps-person-modal-empty">No double prints on record.</div>';
+    }).catch(function(e) {
+      document.getElementById('ps-print-dupe-history-modal-sub').textContent = '';
+      document.getElementById('ps-print-dupe-history-modal-body').innerHTML = '<div class="ps-person-modal-empty">Request failed: ' + e.message + '</div>';
+    });
+};
+
+window.psClosePrintDupeHistory = function() {
+  document.getElementById('ps-print-dupe-history-modal-overlay').style.display = 'none';
+};
+
+function _psFmtGap(sec) {
+  if (sec == null) return '';
+  if (sec < 60) return sec + 's';
+  var m = Math.floor(sec / 60), s = sec % 60;
+  if (m < 60) return m + 'm' + (s ? ' ' + s + 's' : '');
+  var h = Math.floor(m / 60); m = m % 60;
+  return h + 'h' + (m ? ' ' + m + 'm' : '');
+}
+
+function _psRenderPrintDupeRow(s) {
+  var firstWhen = '', secondWhen = '';
+  try { firstWhen = new Date(s.firstPrintedAt).toLocaleString([], {month:'short', day:'numeric', hour:'numeric', minute:'2-digit'}); } catch(e) { firstWhen = s.firstPrintedAt || ''; }
+  try { secondWhen = new Date(s.secondPrintedAt).toLocaleString([], {month:'short', day:'numeric', hour:'numeric', minute:'2-digit'}); } catch(e) { secondWhen = s.secondPrintedAt || ''; }
+  var ackWhen = '';
+  if (s.ackAt) {
+    try { ackWhen = new Date(s.ackAt).toLocaleString([], {month:'short', day:'numeric', hour:'numeric', minute:'2-digit'}); } catch(e) { ackWhen = s.ackAt; }
+  }
+  var ackHtml = s.acknowledged
+    ? '<div style="font-size:11px;color:var(--green);font-weight:700;margin-top:5px">✓ Confirmed by ' + (s.ackBy || '?') + (ackWhen ? ' · ' + ackWhen : '') + '</div>'
+    : '<button class="ps-btn-sm" onclick="psPrintDupeAck(' + s.id + ',this)" style="margin-top:6px;color:var(--green);border-color:var(--green)">✓ Confirm</button>';
+  return '<div style="border-bottom:1px solid var(--border);padding:10px 0">'
+    + '<div style="display:flex;justify-content:space-between;gap:8px;align-items:baseline;flex-wrap:wrap">'
+    +   '<div style="font-family:var(--mono);font-weight:700;font-size:13px">' + s.tracking + '</div>'
+    +   '<div style="font-size:11px;text-align:right;color:var(--red);font-weight:700">' + (s.carrier || '') + (s.gapSeconds != null ? ' · ' + _psFmtGap(s.gapSeconds) + ' apart' : '') + '</div>'
+    + '</div>'
+    + '<div style="font-size:11px;color:var(--text3);margin-top:3px">1st print: ' + (s.firstPrintedBy || '?') + (firstWhen ? ' · ' + firstWhen : '') + '</div>'
+    + '<div style="font-size:11px;color:var(--text3)">2nd print: ' + (s.secondPrintedBy || '?') + (secondWhen ? ' · ' + secondWhen : '') + '</div>'
+    + ackHtml
+    + '</div>';
+}
+
+window.psPrintDupeAck = function(id, btnEl) {
+  if (btnEl) { btnEl.disabled = true; btnEl.textContent = 'Saving…'; }
+  fetch(PS_WORKER + '/ship/print-log/double-print-ack', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', 'X-Cred-Token': psCredToken },
+    body: JSON.stringify({ id: id, ackBy: psInitials })
+  }).then(function(r) { return r.json(); }).then(function(d) {
+    if (!d || !d.ok) throw new Error((d && d.error) || 'Request failed');
+    // Re-render wherever it's showing (History modal and/or the inline
+    // list) so this row flips to "Confirmed", and refresh the badge count
+    // since it just dropped by one.
+    if (document.getElementById('ps-print-dupe-history-modal-overlay').style.display === 'flex') {
+      window.psShowPrintDupeHistory();
+    }
+    psFetchPrintDupeCount();
   }).catch(function(e) {
     if (btnEl) { btnEl.disabled = false; btnEl.textContent = '✓ Confirm'; }
     _psToast('Could not confirm — ' + e.message, 'err');
