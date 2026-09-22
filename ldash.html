@@ -1,0 +1,659 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <!-- XFITTING-BUILD-V1-FEAT-20260922 -->
+  <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate">
+  <meta http-equiv="Pragma" content="no-cache">
+  <meta http-equiv="Expires" content="0">
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+  <meta name="apple-mobile-web-app-title" content="XFitting">
+  <meta name="mobile-web-app-capable" content="yes">
+  <meta name="theme-color" content="#0f1117">
+  <title>XFitting — Leadership Dashboard</title>
+  <link href="https://fonts.googleapis.com/css2?family=DM+Mono:wght@400;500&family=DM+Sans:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+<style>
+:root {
+  --bg:       #f4f5f7;
+  --bg2:      #ffffff;
+  --bg3:      #f0f1f3;
+  --bg4:      #e8eaed;
+  --border:   #dde0e6;
+  --border2:  #c8cbd4;
+  --text:     #1a1d23;
+  --text2:    #4a5060;
+  --text3:    #8a90a0;
+  --accent:   #1a56db;
+  --accent-bg:#eef2fd;
+  --accent2:  #1246c0;
+  --green:    #0e7f3e;
+  --green-bg: #e8f7ee;
+  --red:      #c52a1a;
+  --red-bg:   #fdf0ee;
+  --orange:   #b45309;
+  --orange-bg:#fef3e2;
+  --purple:   #6d28d9;
+  --purple-bg:#f2effe;
+  --mono:     'DM Mono', monospace;
+  --sans:     'DM Sans', sans-serif;
+  --shadow:   0 1px 3px rgba(0,0,0,0.08), 0 1px 2px rgba(0,0,0,0.04);
+  --shadow2:  0 4px 12px rgba(0,0,0,0.08), 0 2px 4px rgba(0,0,0,0.04);
+}
+
+*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+body {
+  background: var(--bg);
+  color: var(--text);
+  font-family: var(--sans);
+  min-height: 100vh;
+  -webkit-font-smoothing: antialiased;
+}
+
+.topbar {
+  background: var(--bg2);
+  border-bottom: 1px solid var(--border);
+  height: 56px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0 24px;
+  position: sticky;
+  top: 0;
+  z-index: 200;
+  box-shadow: 0 1px 0 var(--border);
+}
+.topbar-left { display: flex; align-items: center; gap: 12px; }
+.tb-logo {
+  background: var(--accent); color: #fff; font-family: var(--mono);
+  font-size: 12px; font-weight: 500; padding: 5px 10px; border-radius: 6px; letter-spacing: 0.5px;
+}
+.tb-name { font-size: 15px; font-weight: 700; color: var(--text); letter-spacing: -0.2px; }
+.tb-divider { width: 1px; height: 20px; background: var(--border2); }
+.tb-sub { font-size: 13px; color: var(--text3); }
+.topbar-right { display: flex; align-items: center; gap: 10px; }
+.back-btn {
+  background:none;border:1px solid var(--border2,#E5E7EB);color:var(--text3,#6B7280);
+  font-size:12px;padding:5px 12px;border-radius:8px;cursor:pointer;
+  font-family:'DM Sans',sans-serif;display:flex;align-items:center;gap:5px;
+  transition:all .15s;
+}
+.back-btn:hover { color:var(--accent,#2563EB);border-color:var(--accent,#2563EB); }
+
+#ldash-cred-gate { display:flex; min-height:100vh; align-items:center; justify-content:center; background:var(--bg); font-family:var(--sans); }
+#ldash-cred-gate .card {
+  max-width:360px; width:100%; padding:32px 28px; background:var(--bg2);
+  border:1px solid var(--border); border-radius:14px; box-shadow:var(--shadow2);
+  text-align:center; margin:0 20px;
+}
+#ldash-cred-gate input {
+  width:100%; padding:11px 14px; border:1.5px solid var(--border); border-radius:9px;
+  font-family:inherit; font-size:14px; margin-bottom:10px; box-sizing:border-box;
+}
+#ldash-cred-gate button {
+  width:100%; padding:12px; border:none; border-radius:9px; background:var(--accent);
+  color:#fff; font-family:inherit; font-weight:600; font-size:14px; cursor:pointer;
+}
+
+#ldash-app .ldash-action-card {
+  background:var(--bg2);border:1.5px solid var(--border);border-radius:12px;
+  padding:16px;cursor:pointer;transition:all .15s;
+}
+#ldash-app .ldash-action-card:hover { transform:translateY(-2px);box-shadow:var(--shadow2); }
+#ldash-app .ldash-action-card.red   { border-color:#fca5a5;background:#fff5f5; }
+#ldash-app .ldash-action-card.orange{ border-color:#fed7aa;background:#fffbf5; }
+#ldash-app .ldash-action-card.green { border-color:#bbf7d0;background:#f0fdf4; }
+#ldash-app .ldash-ac-num  { font-size:32px;font-weight:700;font-family:var(--mono);line-height:1;margin-bottom:6px; }
+#ldash-app .ldash-ac-label{ font-size:12px;font-weight:600;color:var(--text);margin-bottom:3px; }
+#ldash-app .ldash-ac-sub  { font-size:10px;color:var(--text3); }
+#ldash-app .ldash-stat-row { display:flex;gap:16px;margin-bottom:12px;flex-wrap:wrap; }
+#ldash-app .ldash-stat     { flex:1;min-width:70px;text-align:center;background:var(--bg3);border-radius:8px;padding:10px 8px; }
+#ldash-app .ldash-stat-val { font-size:22px;font-weight:700;font-family:var(--mono);color:var(--text); }
+#ldash-app .ldash-stat-lbl { font-size:10px;color:var(--text3);margin-top:2px; }
+#ldash-app .ldash-progress { background:var(--bg3);border-radius:100px;height:8px;margin:6px 0 12px;overflow:hidden; }
+#ldash-app .ldash-progress-fill { height:100%;border-radius:100px;background:var(--accent);transition:width .4s; }
+#ldash-app .ldash-table { width:100%;border-collapse:collapse;font-size:12px; }
+#ldash-app .ldash-table th { text-align:left;padding:7px 10px;background:var(--bg3);color:var(--text3);font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.5px; }
+#ldash-app .ldash-table td { padding:8px 10px;border-bottom:1px solid var(--border);color:var(--text); }
+#ldash-app .ldash-table tr:last-child td { border-bottom:none; }
+#ldash-app .ldash-table tr:hover td { background:var(--bg3); }
+#ldash-app .ldash-badge { display:inline-block;padding:2px 7px;border-radius:100px;font-size:10px;font-weight:700;font-family:var(--mono); }
+#ldash-app .ldash-badge.red    { background:var(--red-bg);color:var(--red); }
+#ldash-app .ldash-badge.orange { background:var(--orange-bg);color:var(--orange); }
+#ldash-app .ldash-badge.green  { background:var(--green-bg);color:var(--green); }
+#ldash-app .ldash-badge.blue   { background:var(--accent-bg);color:var(--accent); }
+#ldash-app .ldash-tab-btn {
+  font-size:11px;font-family:var(--mono);font-weight:600;padding:5px 12px;
+  border-radius:7px;border:1.5px solid var(--border2);background:var(--bg3);
+  color:var(--text3);cursor:pointer;transition:all .15s;
+}
+#ldash-app .ldash-tab-btn:hover { border-color:var(--accent);color:var(--accent); }
+#ldash-app .ldash-tab-btn.active { border-color:var(--accent);color:var(--accent);background:var(--accent-bg); }
+#ldash-app .ldash-packer-row { display:flex;align-items:center;gap:10px;padding:6px 0;border-bottom:1px solid var(--border); }
+#ldash-app .ldash-packer-row:last-child { border-bottom:none; }
+@media(max-width:700px){
+  #ldash-mid-row { grid-template-columns:1fr !important; }
+}
+</style>
+</head>
+<body>
+
+<div id="ldash-cred-gate">
+  <div class="card">
+    <div style="font-size:32px;margin-bottom:8px;">📊</div>
+    <h1 style="font-size:18px;margin:0 0 4px;">Leadership Dashboard</h1>
+    <p style="font-size:13px;color:var(--text3);margin:0 0 20px;">Sign in with your XFitting credentials</p>
+    <input id="ldash-cred-username" type="text" placeholder="Username" autocomplete="username">
+    <input id="ldash-cred-password" type="password" placeholder="Password" autocomplete="current-password">
+    <button id="ldash-cred-login-btn" onclick="ldashCredLogin()">Sign In</button>
+    <div id="ldash-cred-err" style="color:var(--red);font-size:12.5px;margin-top:10px;min-height:16px;"></div>
+    <a href="index.html" style="display:inline-block;margin-top:14px;font-size:12.5px;color:var(--text3);text-decoration:none;">← Back to Launcher</a>
+  </div>
+</div>
+
+<div id="ldash-app" style="display:none;flex-direction:column;min-height:100vh;background:var(--bg);">
+
+  <!-- Topbar -->
+  <div class="topbar">
+    <div class="topbar-left">
+      <div class="tb-logo">XFITTING</div>
+      <div class="tb-name">Leadership Dashboard</div>
+      <div style="font-size:10px;background:#7c3aed;color:#fff;padding:2px 7px;border-radius:20px;font-weight:600;opacity:.85">Live</div>
+      <div class="tb-divider"></div>
+      <div class="tb-sub" id="ldash-last-updated">Loading…</div>
+    </div>
+    <div class="topbar-right">
+      <button class="back-btn" id="ldash-refresh-btn" onclick="ldashRefresh()" style="margin-right:8px">↻ Refresh</button>
+      <button class="back-btn" onclick="backToLauncher()">← Apps</button>
+    </div>
+  </div>
+
+  <div style="max-width:1200px;margin:0 auto;padding:20px 16px;width:100%;box-sizing:border-box;">
+
+    <!-- Zone 1: Action Queue -->
+    <div style="margin-bottom:24px;">
+      <div style="font-size:11px;font-weight:700;letter-spacing:2px;text-transform:uppercase;color:var(--text3);margin-bottom:12px;">⚡ Action Queue — Needs Attention</div>
+      <div id="ldash-action-queue" style="display:grid;grid-template-columns:repeat(auto-fill,minmax(180px,1fr));gap:12px;"></div>
+    </div>
+
+    <!-- Zone 2 + 3: Shipping + Sales -->
+    <div style="display:grid;grid-template-columns:1fr 1.4fr;gap:16px;margin-bottom:16px;" id="ldash-mid-row">
+
+      <!-- Zone 2: Shipping Today -->
+      <div style="background:var(--bg2);border:1.5px solid var(--border);border-radius:14px;padding:18px 20px;">
+        <div style="font-size:13px;font-weight:700;color:var(--text);margin-bottom:14px;">📦 Shipping Today</div>
+        <div id="ldash-ship-content"><div style="color:var(--text3);font-size:12px;">Loading…</div></div>
+      </div>
+
+      <!-- Zone 3: Sales Snapshot -->
+      <div style="background:var(--bg2);border:1.5px solid var(--border);border-radius:14px;padding:18px 20px;">
+        <div style="font-size:13px;font-weight:700;color:var(--text);margin-bottom:14px;">💰 Sales Snapshot — Last 30 Days</div>
+        <div id="ldash-sales-content"><div style="color:var(--text3);font-size:12px;">Loading…</div></div>
+      </div>
+    </div>
+
+    <!-- Zone 4: Inventory Health -->
+    <div style="background:var(--bg2);border:1.5px solid var(--border);border-radius:14px;overflow:hidden;">
+      <div style="display:flex;align-items:center;justify-content:space-between;padding:18px 20px 14px;flex-wrap:wrap;gap:10px;position:sticky;top:56px;z-index:100;background:var(--bg2);border-bottom:1px solid var(--border);">
+        <div style="font-size:13px;font-weight:700;color:var(--text);">📋 Inventory Health</div>
+        <div style="display:flex;gap:6px;flex-wrap:wrap;">
+          <button id="ldash-ih-btn-critical" class="ldash-tab-btn active" onclick="ldashIHTab('critical')">🔴 Critical Stock</button>
+          <button id="ldash-ih-btn-discrepancy" class="ldash-tab-btn" onclick="ldashIHTab('discrepancy')">⚠️ Discrepancies</button>
+          <button id="ldash-ih-btn-pending" class="ldash-tab-btn" onclick="ldashIHTab('pending')">🕐 Pending Reviews</button>
+        </div>
+      </div>
+      <div id="ldash-ih-content" style="padding:14px 20px;"><div style="color:var(--text3);font-size:12px;">Loading…</div></div>
+    </div>
+
+  </div>
+</div>
+<script>
+var WORKER_URL = 'https://xfitting-lookup.alfixedinc88.workers.dev';
+var LD_CRED_TOKEN = localStorage.getItem('xf_cred_token') || null;
+var LD_CRED_USER  = null;
+try { LD_CRED_USER = JSON.parse(localStorage.getItem('xf_cred_user') || 'null'); } catch(e) {}
+
+function backToLauncher() { window.location.href = 'index.html'; }
+
+async function wFetch(url, opts) {
+  opts = opts || {};
+  opts.headers = Object.assign({}, opts.headers || {}, {
+    'X-Cred-Token': LD_CRED_TOKEN || ''
+  });
+  var r = await fetch(url, opts);
+  if (r.status === 401 || r.status === 403) {
+    LD_CRED_TOKEN = null; LD_CRED_USER = null;
+    localStorage.removeItem('xf_cred_token'); localStorage.removeItem('xf_cred_user');
+    document.getElementById('ldash-cred-gate').style.display = 'flex';
+    document.getElementById('ldash-app').style.display = 'none';
+    throw new Error('Unauthorized');
+  }
+  return r;
+}
+
+window.ldashCredLogin = async function() {
+  var username = document.getElementById('ldash-cred-username').value.trim();
+  var password = document.getElementById('ldash-cred-password').value;
+  var btn = document.getElementById('ldash-cred-login-btn');
+  var err = document.getElementById('ldash-cred-err');
+  err.textContent = '';
+  if (!username || !password) { err.textContent = 'Enter your username and password.'; return; }
+  btn.disabled = true; btn.textContent = 'Signing in…';
+  try {
+    var res = await fetch(WORKER_URL + '/auth/login', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ username: username, password: password })
+    });
+    var data = await res.json();
+    if (!res.ok) { err.textContent = data.error || 'Login failed'; return; }
+    if (!data.roles.includes('mgmt')) {
+      err.textContent = 'This account does not have access to the Leadership Dashboard.';
+      return;
+    }
+    LD_CRED_TOKEN = data.token;
+    LD_CRED_USER = { displayName: data.displayName, roles: data.roles, userId: data.userId };
+    localStorage.setItem('xf_cred_token', data.token);
+    localStorage.setItem('xf_cred_user', JSON.stringify(LD_CRED_USER));
+    document.getElementById('ldash-cred-gate').style.display = 'none';
+    document.getElementById('ldash-app').style.display = 'flex';
+    if (typeof ldashOnLaunch === 'function') ldashOnLaunch();
+  } catch(e) {
+    err.textContent = 'Connection error — try again.';
+  } finally {
+    btn.disabled = false; btn.textContent = 'Sign In';
+  }
+};
+</script>
+
+<script>
+(function() {
+  'use strict';
+
+  var LD_WORKER = WORKER_URL;
+  var ldIHTab = 'critical';
+  var ldData = {
+    pendingInv: [], scans: [], manifest: [], alerts: [],
+    messages: [], roRows: [], salesData: null, discrepancies: []
+  };
+
+  // ── UTC today key (matches worker) ──────────────────────────────────────
+  function ldTodayKey() {
+    var d = new Date();
+    return d.getUTCFullYear() + '-'
+      + String(d.getUTCMonth()+1).padStart(2,'0') + '-'
+      + String(d.getUTCDate()).padStart(2,'0');
+  }
+
+  // ── Launch ───────────────────────────────────────────────────────────────
+  window.ldashOnLaunch = function() {
+    ldashRefresh();
+  };
+
+  window.ldashRefresh = async function() {
+    var btn = document.getElementById('ldash-refresh-btn');
+    if (btn) { btn.disabled = true; btn.textContent = '↻ Loading…'; }
+    document.getElementById('ldash-last-updated').textContent = 'Loading…';
+
+    try {
+      await Promise.all([
+        ldFetchInventoryPending(),
+        ldFetchScans(),
+        ldFetchManifest(),
+        ldFetchAlerts(),
+        ldFetchMessages(),
+        ldFetchSalesAndReorder(),
+        ldFetchDiscrepancies(),
+      ]);
+    } catch(e) {
+      console.error('[LDASH] refresh error:', e);
+    }
+
+    ldRenderAll();
+    var now = new Date().toLocaleTimeString('en-US', {timeZone:'America/New_York',hour:'2-digit',minute:'2-digit',hour12:true});
+    document.getElementById('ldash-last-updated').textContent = 'Updated ' + now + ' EST';
+    if (btn) { btn.disabled = false; btn.textContent = '↻ Refresh'; }
+  };
+
+  // ── Data fetchers ────────────────────────────────────────────────────────
+  async function ldFetchInventoryPending() {
+    try {
+      var r = await wFetch(LD_WORKER + '/inventory/pending');
+      var d = await r.json();
+      ldData.pendingInv = d.items || [];
+    } catch(e) { ldData.pendingInv = []; }
+  }
+
+  async function ldFetchScans() {
+    try {
+      var r = await wFetch(LD_WORKER + '/ship/scans?date=' + ldTodayKey());
+      var d = await r.json();
+      ldData.scans = d.scans || [];
+    } catch(e) { ldData.scans = []; }
+  }
+
+  async function ldFetchManifest() {
+    try {
+      var r = await wFetch(LD_WORKER + '/ship/manifest?date=' + ldTodayKey());
+      var d = await r.json();
+      ldData.manifest = d.manifest || [];
+    } catch(e) { ldData.manifest = []; }
+  }
+
+  async function ldFetchAlerts() {
+    try {
+      var r = await wFetch(LD_WORKER + '/veeqo/alerts');
+      var d = await r.json();
+      ldData.alerts = d.alerts || [];
+    } catch(e) { ldData.alerts = []; }
+  }
+
+  async function ldFetchMessages() {
+    try {
+      var r = await wFetch(LD_WORKER + '/msg/list?all=1&limit=200');
+      var d = await r.json();
+      ldData.messages = (d.messages || []).filter(function(m) { return m.status === 'open'; });
+    } catch(e) { ldData.messages = []; }
+  }
+
+  // Replaces the old ldLoadSalesFromCalc(), which read from a global
+  // CALC/RO object that was never actually defined anywhere in this file
+  // - a leftover from before Reorder and Sales Dashboard were split into
+  // their own standalone apps, at which point this cross-page reference
+  // became permanently broken (separate HTML pages don't share a JS
+  // context - this could never have worked since the split, not just
+  // gone stale). Now pulls real, current data directly from the same
+  // endpoints Sales Dashboard and Reorder Planner themselves use.
+  //
+  // /reorder/recommendations doesn't return urgency/days-on-hand
+  // directly (or a product name) - it returns warehouseCases/
+  // warehousePieces/monthlyVelocity, from which DOH is derived here.
+  // Thresholds (14d critical / 30d watch) are a reasonable, documented
+  // starting point, not pulled from an existing, verified source - worth
+  // confirming against whatever the team actually treats as urgent.
+  var LD_CRITICAL_DOH = 14;
+  var LD_WATCH_DOH = 30;
+
+  function ldDeriveUrgency(row) {
+    var pieces = row.warehousePieces || 0;
+    var dailyVelocity = (row.monthlyVelocity || 0) / 30;
+    var doh = dailyVelocity > 0 ? (pieces / dailyVelocity) : (pieces > 0 ? null : 0);
+    var urgency = 'ok';
+    if (doh !== null && doh <= LD_CRITICAL_DOH) urgency = 'critical';
+    else if (doh !== null && doh <= LD_WATCH_DOH) urgency = 'watch';
+    return {
+      pn: row.sku, baseSku: row.baseSku,
+      whUnitsTotal: row.warehousePieces, daily: dailyVelocity,
+      doh: doh, urgency: urgency,
+    };
+  }
+
+  async function ldFetchSalesAndReorder() {
+    try {
+      var salesRes = await wFetch(LD_WORKER + '/sales/dashboard-data');
+      var salesData = await salesRes.json();
+      ldData.salesData = (salesData.ok && salesData.parts) ? salesData.parts : null;
+    } catch(e) { ldData.salesData = null; }
+
+    try {
+      var roRes = await wFetch(LD_WORKER + '/reorder/recommendations?days=90');
+      var roData = await roRes.json();
+      var rawRows = roData.ok ? (roData.fbaRecommendations || []).concat(roData.noFbaRecommendations || []) : [];
+      ldData.roRows = rawRows.map(ldDeriveUrgency);
+    } catch(e) { ldData.roRows = []; }
+  }
+
+  // Replaces the old DB.master reference, also never defined anywhere in
+  // this file - same broken-leftover pattern as the sales/reorder
+  // connection above.
+  async function ldFetchDiscrepancies() {
+    try {
+      var r = await wFetch(LD_WORKER + '/inventory/discrepancies');
+      var d = await r.json();
+      ldData.discrepancies = d.ok ? (d.rows || []) : [];
+    } catch(e) { ldData.discrepancies = []; }
+  }
+
+  // ── Master render ────────────────────────────────────────────────────────
+  function ldRenderAll() {
+    ldRenderActionQueue();
+    ldRenderShipping();
+    ldRenderSales();
+    ldRenderIH();
+  }
+
+  // ── Zone 1: Action Queue ─────────────────────────────────────────────────
+  function ldRenderActionQueue() {
+    var pending   = ldData.pendingInv.length;
+    var exceptions = ldData.alerts.filter(function(a) { return a.alertLevel === 'EXCEPTION'; }).length;
+    var returned   = ldData.alerts.filter(function(a) { return a.alertLevel === 'RETURNED'; }).length;
+    var neverScan  = ldData.alerts.filter(function(a) { return a.alertLevel === 'NEVER_SCANNED_2D'; }).length;
+    var stuck      = ldData.alerts.filter(function(a) { return a.alertLevel === 'STUCK_10D'; }).length;
+    var messages   = ldData.messages.length;
+    var scanned    = ldData.scans.length;
+    var manifest   = ldData.manifest.length;
+    var gap        = Math.max(0, manifest - scanned);
+
+    var critStock  = ldData.roRows.filter(function(r) { return r.urgency === 'critical'; }).length;
+    var watchStock = ldData.roRows.filter(function(r) { return r.urgency === 'watch'; }).length;
+
+    var cards = [
+      { num: pending, label: 'Pending Reviews', sub: 'Inventory approvals waiting',
+        color: pending > 0 ? 'red' : 'green', onclick: "window.location.href='inventory.html';" },
+      { num: exceptions + returned, label: 'Shipping Issues', sub: exceptions + ' exceptions · ' + returned + ' returned',
+        color: (exceptions + returned) > 0 ? 'red' : 'green', onclick: "window.location.href='packship.html';" },
+      { num: neverScan, label: 'Never Scanned 2d+', sub: 'Labels with no carrier scan',
+        color: neverScan > 0 ? 'orange' : 'green', onclick: "window.location.href='packship.html';" },
+      { num: stuck, label: 'Not Delivered 10d+', sub: 'Packages overdue',
+        color: stuck > 0 ? 'orange' : 'green', onclick: "window.location.href='packship.html';" },
+      { num: critStock, label: 'Critical Stock', sub: watchStock + ' more on watch',
+        color: critStock > 0 ? 'red' : (watchStock > 0 ? 'orange' : 'green'),
+        onclick: ldData.roRows.length > 0 ? "window.location.href='reorder.html';" : null },
+      { num: gap, label: 'Gap Report', sub: scanned + ' scanned · ' + manifest + ' in manifest',
+        color: gap > 0 ? 'orange' : 'green', onclick: "window.location.href='packship.html';" },
+      { num: messages, label: 'Open Messages', sub: 'From warehouse floor',
+        color: messages > 0 ? 'orange' : 'green', onclick: "backToLauncher();" },
+    ];
+
+    var html = '';
+    cards.forEach(function(c) {
+      html += '<div class="ldash-action-card ' + c.color + '"' + (c.onclick ? ' onclick="' + c.onclick + '"' : '') + '>'
+        + '<div class="ldash-ac-num" style="color:var(--' + c.color + ')">' + c.num + '</div>'
+        + '<div class="ldash-ac-label">' + c.label + '</div>'
+        + '<div class="ldash-ac-sub">' + c.sub + '</div>'
+        + '</div>';
+    });
+    document.getElementById('ldash-action-queue').innerHTML = html;
+  }
+
+  // ── Zone 2: Shipping Today ───────────────────────────────────────────────
+  function ldRenderShipping() {
+    var el = document.getElementById('ldash-ship-content');
+    var scanned  = ldData.scans.length;
+    var manifest = ldData.manifest.length;
+    var pct = manifest > 0 ? Math.round(scanned / manifest * 100) : 0;
+
+    var byPacker = {};
+    ldData.scans.forEach(function(s) {
+      var who = s.initials || s.packer || 'Unknown';
+      byPacker[who] = (byPacker[who] || 0) + 1;
+    });
+    var packers = Object.keys(byPacker).sort(function(a,b){ return byPacker[b]-byPacker[a]; });
+
+    var html = '<div class="ldash-stat-row">'
+      + '<div class="ldash-stat"><div class="ldash-stat-val">' + scanned + '</div><div class="ldash-stat-lbl">Scanned</div></div>'
+      + '<div class="ldash-stat"><div class="ldash-stat-val">' + manifest + '</div><div class="ldash-stat-lbl">In Manifest</div></div>'
+      + '</div>';
+    html += '<div class="ldash-progress"><div class="ldash-progress-fill" style="width:' + pct + '%"></div></div>';
+    html += '<div style="font-size:11px;color:var(--text3);margin-bottom:14px">' + pct + '% of manifest scanned today</div>';
+
+    if (packers.length > 0) {
+      html += '<div style="font-size:11px;font-weight:700;color:var(--text2);margin-bottom:8px">By Packer</div>';
+      packers.forEach(function(p) {
+        html += '<div class="ldash-packer-row"><div style="font-family:var(--mono);font-size:12px;font-weight:600;flex:1">' + p + '</div>'
+          + '<div style="font-family:var(--mono);font-size:12px;color:var(--text3)">' + byPacker[p] + '</div></div>';
+      });
+    } else {
+      html += '<div style="color:var(--text3);font-size:12px">No scans yet today</div>';
+    }
+    el.innerHTML = html;
+  }
+
+  // ── Zone 3: Sales Snapshot ───────────────────────────────────────────────
+  // Fixed to read the real field names /sales/dashboard-data actually
+  // returns (amzU30, ebayU30, xfU30, walU30, amzS30, etc.) - the original
+  // code was written against old Sheets-export column-name strings
+  // ("AMZ 30 units sold") that never matched what this endpoint produces.
+  // Now includes Walmart, which the old pipeline never covered at all.
+  function ldRenderSales() {
+    var sd = ldData.salesData;
+    if (!sd || sd.length === 0) {
+      document.getElementById('ldash-sales-content').innerHTML =
+        '<div style="color:var(--text3);font-size:12px;padding:8px 0">No sales data available right now.</div>';
+      return;
+    }
+
+    var totals = { amzU:0, ebayU:0, xfU:0, walU:0, amzS:0, ebayS:0, xfS:0, walS:0 };
+    sd.forEach(function(r) {
+      totals.amzU  += r.amzU30  || 0; totals.ebayU += r.ebayU30 || 0;
+      totals.xfU   += r.xfU30   || 0; totals.walU  += r.walU30  || 0;
+      totals.amzS  += r.amzS30  || 0; totals.ebayS += r.ebayS30 || 0;
+      totals.xfS   += r.xfS30   || 0; totals.walS  += r.walS30  || 0;
+    });
+
+    var totalRev   = totals.amzS + totals.ebayS + totals.xfS + totals.walS;
+    var totalUnits = totals.amzU + totals.ebayU + totals.xfU + totals.walU;
+
+    function fmt(n) { return n >= 1000 ? '$' + (n/1000).toFixed(1) + 'k' : '$' + Math.round(n); }
+    function bar(val, total, color) {
+      var pct = total > 0 ? Math.round(val/total*100) : 0;
+      return '<div style="display:flex;align-items:center;gap:8px;margin-bottom:6px">'
+        + '<div style="width:60px;font-size:11px;color:var(--text3)">' + pct + '%</div>'
+        + '<div style="flex:1;background:var(--bg3);border-radius:4px;height:8px;overflow:hidden">'
+        + '<div style="height:100%;border-radius:4px;background:' + color + ';width:' + pct + '%"></div></div>'
+        + '<div style="width:44px;font-size:11px;font-family:var(--mono);text-align:right;color:var(--text)">' + fmt(val) + '</div>'
+        + '</div>';
+    }
+
+    var html = '<div class="ldash-stat-row">'
+      + '<div class="ldash-stat"><div class="ldash-stat-val">' + fmt(totalRev) + '</div><div class="ldash-stat-lbl">Total Revenue</div></div>'
+      + '<div class="ldash-stat"><div class="ldash-stat-val">' + totalUnits.toLocaleString() + '</div><div class="ldash-stat-lbl">Units Sold</div></div>'
+      + '</div>';
+
+    html += '<div style="font-size:11px;font-weight:700;color:var(--text2);margin-bottom:8px">Revenue by Platform</div>';
+    html += '<div style="font-size:10px;color:var(--text3);margin-bottom:4px">Amazon</div>'  + bar(totals.amzS, totalRev, '#FF9900');
+    html += '<div style="font-size:10px;color:var(--text3);margin-bottom:4px">eBay</div>'     + bar(totals.ebayS, totalRev, '#e53238');
+    html += '<div style="font-size:10px;color:var(--text3);margin-bottom:4px">Shopify</div>'  + bar(totals.xfS, totalRev, '#96bf48');
+    html += '<div style="font-size:10px;color:var(--text3);margin-bottom:4px">Walmart</div>'  + bar(totals.walS, totalRev, '#0071ce');
+
+    var top5 = sd.slice().sort(function(a,b){
+      var bu = (b.amzU30||0)+(b.ebayU30||0)+(b.xfU30||0)+(b.walU30||0);
+      var au = (a.amzU30||0)+(a.ebayU30||0)+(a.xfU30||0)+(a.walU30||0);
+      return bu - au;
+    }).slice(0,5);
+
+    html += '<div style="font-size:11px;font-weight:700;color:var(--text2);margin:12px 0 6px">Top 5 Parts by Units</div>';
+    html += '<table class="ldash-table"><thead><tr><th>Part#</th><th>AMZ</th><th>eBay</th><th>XF</th><th>WAL</th></tr></thead><tbody>';
+    top5.forEach(function(r) {
+      html += '<tr><td style="font-family:var(--mono);font-size:11px">' + (r.partNum||'') + '</td>'
+        + '<td style="font-family:var(--mono)">' + Math.round(r.amzU30||0) + '</td>'
+        + '<td style="font-family:var(--mono)">' + Math.round(r.ebayU30||0) + '</td>'
+        + '<td style="font-family:var(--mono)">' + Math.round(r.xfU30||0) + '</td>'
+        + '<td style="font-family:var(--mono)">' + Math.round(r.walU30||0) + '</td>'
+        + '</tr>';
+    });
+    html += '</tbody></table>';
+
+    document.getElementById('ldash-sales-content').innerHTML = html;
+  }
+
+  // ── Zone 4: Inventory Health ──────────────────────────────────────────────
+  window.ldashIHTab = function(tab) {
+    ldIHTab = tab;
+    ['critical','discrepancy','pending'].forEach(function(t) {
+      var btn = document.getElementById('ldash-ih-btn-' + t);
+      if (btn) btn.className = 'ldash-tab-btn' + (t === tab ? ' active' : '');
+    });
+    ldRenderIH();
+  };
+
+  function ldRenderIH() {
+    var el = document.getElementById('ldash-ih-content');
+
+    if (ldIHTab === 'critical') {
+      var rows = ldData.roRows.filter(function(r) { return r.urgency === 'critical' || r.urgency === 'watch'; });
+      if (rows.length === 0) {
+        el.innerHTML = '<div style="color:var(--green);font-size:13px;padding:8px 0">✓ No critical or watch items' + (ldData.roRows.length === 0 ? ' — no reorder data available' : '') + '</div>';
+        return;
+      }
+      // No product-name field is available from /reorder/recommendations,
+      // so that column was dropped rather than shown blank.
+      var html = '<table class="ldash-table"><thead><tr><th>Part#</th><th>WH Units</th><th>Daily Vel</th><th>Days Left</th><th>Status</th></tr></thead><tbody>';
+      rows.slice(0,20).forEach(function(r) {
+        var dohStr = r.doh !== null ? Math.round(r.doh) + 'd' : '—';
+        var badge  = r.urgency === 'critical'
+          ? '<span class="ldash-badge red">CRITICAL</span>'
+          : '<span class="ldash-badge orange">WATCH</span>';
+        html += '<tr><td style="font-family:var(--mono);font-size:11px">' + (r.pn||'') + '</td>'
+          + '<td style="font-family:var(--mono)">' + (r.whUnitsTotal !== null && r.whUnitsTotal !== undefined ? Math.round(r.whUnitsTotal) : '—') + '</td>'
+          + '<td style="font-family:var(--mono)">' + (r.daily > 0 ? r.daily.toFixed(1) : '—') + '</td>'
+          + '<td style="font-family:var(--mono);font-weight:700">' + dohStr + '</td>'
+          + '<td>' + badge + '</td></tr>';
+      });
+      html += '</tbody></table>';
+      if (rows.length > 20) html += '<div style="font-size:11px;color:var(--text3);padding:8px 0">Showing 20 of ' + rows.length + ' — open Reorder Planner for full list</div>';
+      el.innerHTML = html;
+
+    } else if (ldIHTab === 'discrepancy') {
+      // Fixed - was reading from a DB.master global that was never
+      // defined anywhere in this file. Now a real fetch to
+      // /inventory/discrepancies, same D1 master_list table.
+      var negRows = ldData.discrepancies || [];
+      if (negRows.length === 0) {
+        el.innerHTML = '<div style="color:var(--green);font-size:13px;padding:8px 0">✓ No discrepancies found in Master List</div>';
+        return;
+      }
+      var html = '<table class="ldash-table"><thead><tr><th>Part#</th><th>Location</th><th>Cases</th><th>SKU</th></tr></thead><tbody>';
+      negRows.forEach(function(r) {
+        html += '<tr><td style="font-family:var(--mono);font-size:11px">' + (r.part_num||'') + '</td>'
+          + '<td style="font-family:var(--mono);font-size:11px">' + (r.location||'') + '</td>'
+          + '<td style="font-family:var(--mono);color:var(--red);font-weight:700">' + r.cases + '</td>'
+          + '<td style="font-family:var(--mono);font-size:11px;color:var(--text3)">' + (r.sku||'') + '</td>'
+          + '</tr>';
+      });
+      html += '</tbody></table>';
+      el.innerHTML = html;
+
+    } else if (ldIHTab === 'pending') {
+      var pending = ldData.pendingInv;
+      if (pending.length === 0) {
+        el.innerHTML = '<div style="color:var(--green);font-size:13px;padding:8px 0">✓ No pending inventory reviews</div>';
+        return;
+      }
+      var html = '<table class="ldash-table"><thead><tr><th>Type</th><th>Part#</th><th>Location</th><th>Cases</th><th>By</th><th>When</th></tr></thead><tbody>';
+      pending.slice(0,30).forEach(function(r) {
+        var type = (r.type||'').replace('TRANSFER_','XFR ');
+        var when = r.timestamp ? new Date(r.timestamp).toLocaleString('en-US',{timeZone:'America/New_York',month:'short',day:'numeric',hour:'2-digit',minute:'2-digit',hour12:true}) : '';
+        var typeBadge = type.includes('IN') ? '<span class="ldash-badge green">' + type + '</span>'
+          : type.includes('OUT') ? '<span class="ldash-badge orange">' + type + '</span>'
+          : '<span class="ldash-badge blue">' + type + '</span>';
+        html += '<tr><td>' + typeBadge + '</td>'
+          + '<td style="font-family:var(--mono);font-size:11px">' + (r.partNum||'') + '</td>'
+          + '<td style="font-family:var(--mono);font-size:11px">' + (r.location||'') + '</td>'
+          + '<td style="font-family:var(--mono);font-weight:700">' + (r.cases||'') + '</td>'
+          + '<td style="font-family:var(--mono);font-size:11px">' + (r.initials||'') + '</td>'
+          + '<td style="font-size:10px;color:var(--text3)">' + when + '</td>'
+          + '</tr>';
+      });
+      html += '</tbody></table>';
+      if (pending.length > 30) html += '<div style="font-size:11px;color:var(--text3);padding:8px 0">Showing 30 of ' + pending.length + '</div>';
+      el.innerHTML = html;
+    }
+  }
+
+})();
+</script>
+
+</body>
+</html>
