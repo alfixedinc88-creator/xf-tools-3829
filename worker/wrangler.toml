@@ -1,0 +1,26 @@
+# Cloudflare Worker: xfitting-lookup
+# Deployed automatically by Cloudflare Workers Builds on every push to main
+# (dashboard → Workers & Pages → xfitting-lookup → Settings → Build,
+#  root directory = "worker", deploy command = "npx wrangler deploy").
+
+name = "xfitting-lookup"
+main = "src/index.js"
+# Must match the compatibility date shown in the dashboard
+# (Settings → Runtime) so behavior doesn't change on the first deploy.
+compatibility_date = "2024-09-23"
+
+# Keep the plain-text variables that are set in the dashboard.
+# Secrets (API keys, PINs, private keys) are never touched by deploys.
+keep_vars = true
+
+# D1 database, used everywhere in the code as env.DB.
+# IMPORTANT: this block must stay here. Deploying without it removes the
+# DB binding from the live worker.
+[[d1_databases]]
+binding = "DB"
+database_name = "xfitting-d1"
+database_id = "REPLACE_WITH_D1_DATABASE_ID"
+
+# Cron triggers: left out on purpose, so the schedules already set in the
+# dashboard (Settings → Triggers) stay unchanged. If you ever add a
+# [triggers] block here, it replaces the dashboard schedules completely.

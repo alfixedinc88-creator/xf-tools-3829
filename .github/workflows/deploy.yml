@@ -27,6 +27,11 @@ jobs:
       - name: Setup Pages
         uses: actions/configure-pages@v5
 
+      # The worker backend lives in this repo too, but it's deployed by
+      # Cloudflare, not served as part of the website.
+      - name: Exclude worker source from site
+        run: rm -rf worker
+
       - name: Upload artifact
         uses: actions/upload-pages-artifact@v3
         with:
