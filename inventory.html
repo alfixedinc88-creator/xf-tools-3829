@@ -291,7 +291,7 @@ window.invCredLogin = async function() {
 
 <div class="itabs">
   <button class="itab iactive" id="inv-tab-stockout" onclick="invSwitchTab('stockout')">📤 Stock Out</button>
-  <button class="itab" id="inv-tab-scan" onclick="invSwitchTab('scan')">📦 Stock In</button>
+  <button class="itab" id="inv-tab-scan" onclick="invSwitchTab('scan')">📦 Stock In / Found on Shelf</button>
   <button class="itab" id="inv-tab-transfer" onclick="invSwitchTab('transfer')">Transfer</button>
   <button class="itab" id="inv-tab-audit" onclick="invSwitchTab('audit')">🔍 Audit</button>
   <button class="itab" id="inv-tab-review" onclick="invSwitchTab('review')">Review<span class="ibadge" id="inv-pending-badge" style="display:none">0</span></button>
@@ -475,7 +475,13 @@ window.invCredLogin = async function() {
         <div id="inv-newloc-suggest" style="margin-top:6px;padding:6px 0;font-size:12px"></div>
     </div>
     <div id="inv-found-elsewhere-wrap" style="display:none;margin-top:12px;padding:12px;background:var(--purple-bg);border:1.5px solid var(--purple);border-radius:10px">
-      <div style="font-size:13px;font-weight:700;color:var(--purple);margin-bottom:10px">📦 Found at unlisted location</div>
+      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px">
+        <div style="font-size:13px;font-weight:700;color:var(--purple)">📦 Found at unlisted location</div>
+        <!-- Opened by tapping "Log found at new location" below — this
+             closes it again for the times that gets tapped by mistake,
+             without having to fill in or cancel out of the form. -->
+        <span onclick="invHideFoundElsePanel()" title="Close" aria-label="Close" style="cursor:pointer;color:var(--purple);font-size:16px;font-weight:700;line-height:1;padding:2px 4px">✕</span>
+      </div>
       <div class="ifield"><label>Part# / SKU</label>
         <div style="position:relative">
           <input id="inv-fel-sku-search" type="text" placeholder="Search SKU or name…" autocomplete="off"
@@ -622,7 +628,10 @@ window.invCredLogin = async function() {
     <div style="font-size:11px;color:var(--text3);margin-bottom:8px">Select the location you are moving stock out of.</div>
     <div id="xfr-from-list"></div>
     <div id="xfr-found-elsewhere-wrap" style="display:none;margin-top:12px;padding:12px;background:var(--purple-bg);border:1.5px solid var(--purple);border-radius:10px">
-      <div style="font-size:13px;font-weight:700;color:var(--purple);margin-bottom:10px">📦 Found at unlisted location</div>
+      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px">
+        <div style="font-size:13px;font-weight:700;color:var(--purple)">📦 Found at unlisted location</div>
+        <span onclick="xfrHideFoundElsePanel()" title="Close" aria-label="Close" style="cursor:pointer;color:var(--purple);font-size:16px;font-weight:700;line-height:1;padding:2px 4px">✕</span>
+      </div>
       <div class="ifield"><label>Part# / SKU</label>
         <div style="position:relative">
           <input id="inv-fel-sku-search" type="text" placeholder="Search SKU or name…" autocomplete="off"
@@ -2142,59 +2151,18 @@ window.invCredLogin = async function() {
       };
     }
 
-    // Stock Out: zero-case locations with "Found on Shelf?" override —
-    // minimized by default (just a clickable summary line) since these are
-    // usually not what someone's looking for; tap it to expand the actual
-    // list, tap the × to collapse it again. Nothing here ever navigates
-    // away — it all happens right on this same location list.
-    if (invMode === "out" && zeroLocs.length > 0) {
-      var zeroWrap = document.createElement("div");
-      zeroWrap.style.cssText = "margin:12px 0 6px;padding-top:10px;border-top:1px solid var(--border)";
-
-      var zeroHeader = document.createElement("div");
-      zeroHeader.style.cssText = "display:flex;justify-content:space-between;align-items:center;cursor:pointer;padding:4px 0";
-      zeroHeader.innerHTML = "<span style='font-size:11px;font-weight:700;letter-spacing:.5px;text-transform:uppercase;color:var(--orange)'>⚠ System shows 0 cases — Found on shelf? (" + zeroLocs.length + ")</span>"
-        + "<span id='inv-zero-toggle-icon' style='color:var(--orange);font-size:12px;font-weight:700'>Show ▾</span>";
-      zeroWrap.appendChild(zeroHeader);
-
-      var zeroBody = document.createElement("div");
-      zeroBody.id = "inv-zero-body";
-      zeroBody.style.display = "none"; // minimized by default
-      zeroBody.style.marginTop = "6px";
-      zeroWrap.appendChild(zeroBody);
-
-      var zeroCloseBtn = document.createElement("div");
-      zeroCloseBtn.style.cssText = "display:none;text-align:right;margin-top:4px";
-      zeroCloseBtn.innerHTML = "<span style='cursor:pointer;color:var(--text3);font-size:12px;font-weight:700'>✕ Close</span>";
-      zeroWrap.appendChild(zeroCloseBtn);
-
-      function invSetZeroExpanded(open) {
-        zeroBody.style.display = open ? "block" : "none";
-        zeroCloseBtn.style.display = open ? "block" : "none";
-        var icon = document.getElementById('inv-zero-toggle-icon');
-        if (icon) icon.textContent = open ? "Hide ▴" : "Show ▾";
-      }
-      zeroHeader.onclick = function() { invSetZeroExpanded(zeroBody.style.display === "none"); };
-      zeroCloseBtn.onclick = function(e) { e.stopPropagation(); invSetZeroExpanded(false); };
-
-      zeroLocs.forEach(function(loc) {
-        var el = document.createElement("div");
-        el.className = "iloc-opt";
-        el.style.borderColor = "var(--orange)";
-        el.style.background = "var(--orange-bg)";
-        var partLabelHtml = (loc.partNum && loc.partNum !== invPart.partNum)
-          ? "<div style='font-size:11px;font-family:var(--mono);font-weight:700;color:var(--accent);margin-bottom:3px'>" + loc.partNum + "</div>"
-          : "";
-        el.innerHTML = "<div>" + partLabelHtml
-          + "<div class='iloc-name'>" + loc.location + "</div>"
-          + "<div style='font-size:12px;color:var(--orange);font-weight:600'>0 cases on record</div></div>"
-          + "<span class='iloc-badge' style='background:var(--orange-bg);color:var(--orange);border:1px solid var(--orange)'>Found?</span>";
-        el.onclick = (function(l) { return function() { invFoundOnShelf(l); }; })(loc);
-        zeroBody.appendChild(el);
-      });
-
-      list.appendChild(zeroWrap);
-    }
+    // The "⚠ System shows 0 cases — Found on shelf?" collapsible list of
+    // zero-case locations (with a per-row "Found?" button wired to
+    // invFoundOnShelf) used to render here for Stock Out. Removed per
+    // request — it wasn't a fit for the workflow it was here for. Found-
+    // on-shelf/unlisted-location reporting is still fully available via
+    // "Log found at new location" below (and via the Stock In / Found on
+    // Shelf tab), just no longer as a standing list of every zero-case
+    // location on this item. invFoundOnShelf/invSubmitFoundOnShelf and the
+    // #inv-fos-wrap panel are left in place (dead code, not deleted) in
+    // case this is wanted back later — nothing else calls them now.
+    // (zeroLocs itself is still computed above — the branches right below
+    // still use its length to decide which message to show.)
 
     // Stock Out: if ALL locations are zero (none in the locs array), still show override option
     if (invMode === "out" && locs.length === 0 && zeroLocs.length === 0) {
@@ -2350,6 +2318,15 @@ window.invCredLogin = async function() {
     g("inv-found-elsewhere-wrap").style.display = "block";
     var felSkuEl = g("inv-fel-sku"); if (felSkuEl && invPart) { felSkuEl.value = invPart.partNum || ''; }
     g("inv-fel-loc").focus();
+  };
+
+  // Closes the "Found at unlisted location" panel without submitting
+  // anything — the ✕ next to its header, for when "Log found at new
+  // location" gets tapped by mistake. Just hides it; invShowFoundElsePanel
+  // already resets every field fresh the next time it's opened, so nothing
+  // needs clearing here.
+  window.invHideFoundElsePanel = function() {
+    g("inv-found-elsewhere-wrap").style.display = "none";
   };
 
   // Submit Found at Unlisted Location — Stock In and Stock Out only
@@ -6620,6 +6597,16 @@ window.invCredLogin = async function() {
 
     g('xfr-from-card').style.display = 'block';
   }
+
+  // Closes Transfer's "Found at unlisted location" panel without
+  // submitting anything — same ✕-next-to-the-header fix as the Stock
+  // In/Out version (invHideFoundElsePanel above), for when "Log found at
+  // new location" gets tapped by mistake here too.
+  window.xfrHideFoundElsePanel = function() {
+    g('xfr-found-elsewhere-wrap').style.display = 'none';
+    var fBtnSel = document.querySelector('#xfr-from-list .iloc-opt.isel');
+    if (fBtnSel) fBtnSel.classList.remove('isel');
+  };
 
   function xfrShowAddCart() {
     var ap = g('xfr-addcart-part'); if (ap) ap.textContent = xfrPart.partNum || '';
