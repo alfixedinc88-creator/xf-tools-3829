@@ -5163,15 +5163,47 @@ function psPickStartRefocus() {
   }, 2000);
 }
 
+// BUGFIX (real report: "Picked Today" number jumping backward, e.g.
+// 20 -> 18 -> back to 20 a moment later, when scanning fast): this used to
+// unconditionally REPLACE psTodayPicks with whatever this fetch returned.
+// Two different races both fed into that:
+//   1. Out-of-order responses — the picking tab's periodic 20s refresh
+//      (see _psPickRefreshInterval) can have a request in flight when
+//      another psLoadPicks() call fires (tab reactivated, etc); if the
+//      OLDER request's response happens to land AFTER the newer one, it
+//      would stomp the newer, more-complete list with stale data.
+//   2. Optimistic scans added while a request is in flight — _psProcessPick
+//      unshifts an optimistic entry into psTodayPicks the instant a label
+//      is scanned, well before the server round-trip finishes. If a
+//      psLoadPicks() fetch was already in flight at that moment, its
+//      response reflects the server's state from BEFORE that scan landed —
+//      replacing psTodayPicks with it silently drops the just-scanned
+//      item, and the count visibly ticks backward, only to "jump back up"
+//      on the next poll once the server has caught up.
+// Fixed the same way as the earlier Print Log refresh race: a sequence
+// guard discards any response that's no longer the latest request, and a
+// merge keeps any not-yet-confirmed optimistic entry that the server
+// response doesn't (yet) contain, instead of ever letting a real scan
+// vanish from the list mid-flight.
+var _psPickLoadSeq = 0;
 window.psLoadPicks = async function() {
+  var seq = ++_psPickLoadSeq;
   try {
     var res  = await fetch(PS_WORKER + '/ship/picks?date=' + psTodayKey(), {
       headers: { 'X-Cred-Token': psCredToken }
     });
     var data = await res.json();
+    if (seq !== _psPickLoadSeq) return; // a newer load has since started/finished — discard this stale one
     window._psPicksDebugError = data.debugError || null;
     if (data.picks) {
-      psTodayPicks = data.picks.slice().sort(function(a,b){
+      var serverTrackings = {};
+      data.picks.forEach(function(p){ serverTrackings[p.tracking.toUpperCase()] = true; });
+      // Any locally-optimistic pick the server doesn't know about yet stays
+      // put — it hasn't been dropped, just hasn't round-tripped yet.
+      var stillPending = psTodayPicks.filter(function(p){
+        return p._optimistic && !serverTrackings[p.tracking.toUpperCase()];
+      });
+      psTodayPicks = stillPending.concat(data.picks).sort(function(a,b){
         return new Date(b.timestamp) - new Date(a.timestamp);
       });
       psRenderPickList();
@@ -5227,7 +5259,10 @@ function _psProcessPick(raw) {
   }
 
   var carrier = psDetectCarrier(tracking);
-  var optimistic = { tracking: tracking, carrier: carrier, initials: psInitials, timestamp: new Date().toISOString(), orderNum:'' };
+  // _optimistic marks this as not yet confirmed by the server — psLoadPicks
+  // uses that flag to avoid ever wiping it back out from under a fast
+  // scanner (see the BUGFIX comment on psLoadPicks above).
+  var optimistic = { tracking: tracking, carrier: carrier, initials: psInitials, timestamp: new Date().toISOString(), orderNum:'', _optimistic: true };
   psTodayPicks.unshift(optimistic);
   _psPickFlash('green');
   _psBeep(880, 80);
