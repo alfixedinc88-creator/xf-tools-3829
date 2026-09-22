@@ -3830,6 +3830,27 @@ window.invCredLogin = async function() {
     var existingIdx = -1;
     for (var qi = 0; qi < invPullList.length; qi++) { if (invPullList[qi].key === key) { existingIdx = qi; break; } }
     if (existingIdx >= 0) {
+      // BUGFIX (real report: "click on 29-1-1, finish pull, Stock Out Report
+      // didn't auto-clear, had to hit Resolved by hand"): this used to
+      // return here without ever touching the existing pull-list item's
+      // sourceStockoutId. If the item tapped from a Stock Out Report was
+      // already sitting in the pull list — added earlier by hand, or from
+      // an earlier report click — the pending tag from THIS click was
+      // silently dropped on the floor. The report then had no way to
+      // auto-resolve once that pull-list item got marked Grabbed/None
+      // Found, so it just sat open until someone noticed and resolved it
+      // manually. Now: if this click came from a Stock Out Report and the
+      // existing item isn't already tagged from some earlier report, tag
+      // the existing item so the auto-resolve still fires later.
+      if (_invPendingStockoutSourceId && !invPullList[existingIdx].sourceStockoutId) {
+        invPullList[existingIdx].sourceStockoutId = _invPendingStockoutSourceId;
+        invSavePullList();
+      }
+      // Always clear here too (not just on the push path below) — otherwise
+      // a leftover pending id from this report click could wrongly attach
+      // itself to the NEXT, unrelated add-to-pull-list call if the person
+      // cancels out of this duplicate prompt via "OK" instead of confirming.
+      _invPendingStockoutSourceId = null;
       invShowDupPullModal(existingIdx, invPullListPendingCases || 0, invPullListPendingCasesInputEl);
       return;
     }
