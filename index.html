@@ -1317,6 +1317,10 @@ input[type=checkbox]{width:15px;height:15px;cursor:pointer;accent-color:var(--bl
     <div class="launcher-logo"><div class="launcher-mark">XF</div><div class="launcher-name">XFITTING</div></div>
     <div class="launcher-sub">Internal Tools — Choose an app to continue</div>
     <div style="font-size:11px;color:var(--text3);margin-top:6px;opacity:.7">v1.1.1</div>
+    <div style="display:flex;align-items:center;justify-content:center;gap:10px;margin-top:12px;font-size:12px;color:var(--text2)">
+      <span data-xf-signout-name></span>
+      <button data-xf-signout onclick="xfSignOut()" style="background:#fff;border:1px solid var(--border);color:var(--text2);font-size:12px;font-weight:600;padding:7px 14px;border-radius:8px;cursor:pointer;font-family:inherit">🚪 Sign Out</button>
+    </div>
 
     <div class="launcher-section-label">🏭 Warehouse</div>
     <div class="launcher-grid">
@@ -1637,7 +1641,7 @@ function showToast(msg) {
   <div style="background:#fff;border-bottom:1px solid var(--border);padding:0 16px;height:52px;display:flex;align-items:center;justify-content:space-between;flex-shrink:0;position:sticky;top:0;z-index:10;">
     <button class="back-btn" onclick="backToLauncher()">&#8592; Apps</button>
     <span style="font-weight:700;font-size:15px;color:var(--text);">💬 Messenger</span>
-    <span id="msg-sender-label" style="font-size:12px;font-family:var(--mono);color:var(--text3);"></span>
+    <span style="display:flex;align-items:center;gap:8px"><span id="msg-sender-label" style="font-size:12px;font-family:var(--mono);color:var(--text3);"></span><button class="back-btn" data-xf-signout onclick="xfSignOut()">🚪 Sign Out</button></span>
   </div>
   <!-- compose screen -->
   <div id="msg-compose-screen" style="flex:1;display:none;flex-direction:column;padding:20px 16px;max-width:560px;width:100%;margin:0 auto;box-sizing:border-box;">
@@ -1713,7 +1717,7 @@ function showToast(msg) {
   <div style="background:#fff;border-bottom:1px solid var(--border);padding:0 16px;height:52px;display:flex;align-items:center;justify-content:space-between;flex-shrink:0;position:sticky;top:0;z-index:10;">
     <button class="back-btn" onclick="backToLauncher()">&#8592; Apps</button>
     <span style="font-weight:700;font-size:15px;color:var(--text);">📥 Message Inbox</span>
-    <button onclick="msgInboxRefresh()" style="border:none;background:none;cursor:pointer;font-size:18px;padding:6px;" title="Refresh">🔄</button>
+    <span style="display:flex;align-items:center;gap:4px"><button onclick="msgInboxRefresh()" style="border:none;background:none;cursor:pointer;font-size:18px;padding:6px;" title="Refresh">🔄</button><button class="back-btn" data-xf-signout onclick="xfSignOut()">🚪 Sign Out</button></span>
   </div>
   <!-- filter bar -->
   <div style="background:#fff;border-bottom:1px solid var(--border);padding:10px 16px;display:flex;gap:8px;flex-wrap:wrap;align-items:center;">
@@ -2586,6 +2590,7 @@ function showToast(msg) {
     <span class="em-status-dot" id="em-dot"></span>
     <span id="em-status-txt" style="font-family:var(--mono);">Ready</span>
   </span>
+  <button class="em-btn" data-xf-signout onclick="xfSignOut()" style="margin-left:8px;">🚪 Sign Out</button>
   <button class="em-btn" onclick="backToLauncher()" style="margin-left:8px;">← Apps</button>
 </div>
 
