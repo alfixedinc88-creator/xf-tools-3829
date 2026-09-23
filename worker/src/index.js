@@ -14570,6 +14570,16 @@ async function shipStockoutDebug(url, env) {
         } catch (_) {}
       }
 
+      let masterRowsByBinFamily = [];
+      const famCode = String(binRaw || '').trim().toUpperCase();
+      if (_psIsFamilyCode(famCode)) {
+        try {
+          masterRowsByBinFamily = (await env.DB.prepare(
+            _PS_FAMILY_SQL('id, sku, base_sku, part_num, location, cases')
+          ).bind(..._psFamilyParams(famCode)).all()).results || [];
+        } catch (_) {}
+      }
+
       const cases = await _psCheckStockLevel(env, binRaw, skuRaw);
       lineItems.push({
         sku: skuRaw, bin: binRaw, binSrc: li._binSrc || '',
@@ -14577,6 +14587,7 @@ async function shipStockoutDebug(url, env) {
         masterListRowsAtThisBin: masterRowsAtBin,
         similarLocationsFound: similarLocations.length ? similarLocations : undefined,
         masterListRowsByBinAsSkuColumn: masterRowsByBinAsSkuColumn,
+        masterListRowsByBinFamily: masterRowsByBinFamily,
         masterListRowsByPartNum: masterRowsByPartNum,
         masterListRowsByBaseSku_diagnosticOnly_NOT_used_by_the_real_check: masterRowsByBaseSku,
       });
@@ -14584,7 +14595,7 @@ async function shipStockoutDebug(url, env) {
     return cors(new Response(JSON.stringify({
       ok: true, tracking, found: true, orderNum: mr.order_num || '',
       lineItems,
-      note: 'finalCases/noStockFound is exactly what a real "Report Selected as Out of Stock" tap would compute right now for each line — noStockFound:true is what routes that item to ship_nostock_log instead of ship_stockout_log. finalCases:null means nothing matched at all (blank bin AND no master_list row by location, by sku column, or by exact part_num) — treated as "can\'t verify", so it goes to Inventory same as a real discrepancy. masterListRowsAtThisBin / masterListRowsByBinAsSkuColumn / masterListRowsByPartNum are what the real check actually uses, in that order (bin against location, then bin against the sku column, then exact full-SKU-text against part_num). The base_sku field is diagnostic-only, shown to catch collisions like the one on 9334610990150212086872 — it is never used to decide noStockFound.',
+      note: 'finalCases/noStockFound is exactly what a real "Report Selected as Out of Stock" tap would compute right now for each line — noStockFound:true is what routes that item to ship_nostock_log instead of ship_stockout_log. finalCases:null means nothing matched at all (blank bin AND no master_list row by location, by sku column, or by exact part_num) — treated as "can\'t verify", so it goes to Inventory same as a real discrepancy. masterListRowsAtThisBin / masterListRowsByBinAsSkuColumn / masterListRowsByBinFamily / masterListRowsByPartNum are what the real check actually uses, in that order (bin against location, then bin against the sku column, then the bin's whole part-number family like Inventory's search — part_num/sku "<bin>" or "<bin>=…", base_sku "<bin>" — then exact full-SKU-text against part_num); any one of them finding cases > 0 means real stock. The base_sku field is diagnostic-only, shown to catch collisions like the one on 9334610990150212086872 — it is never used to decide noStockFound.',
     }, null, 2), { headers: { 'Content-Type': 'application/json' } }));
   } catch (e) {
     return cors(new Response(JSON.stringify({ ok: false, error: e.message }), { status: 500, headers: { 'Content-Type': 'application/json' } }));
@@ -14758,12 +14769,27 @@ async function shipPick(request, env) {
 // have real stock, but Picking says no stock found" symptom. Now runs both
 // checks and trusts whichever one actually found real stock; only treats
 // it as a genuine zero when neither angle finds any.
+//
+// BUGFIX (real report: tracking 9334610990370309920142, bin "3-3-2"): the
+// order's bin code is also the item's BASE part number in this account —
+// master_list keeps its stock under part_num "3-3-2=25" (etc.), at
+// whatever shelf/overflow location it's actually sitting in, which is
+// exactly how Inventory's own search finds it (inventoryLookup: same base
+// before "=" in part_num or sku). Checking only "a location literally
+// named 3-3-2" missed all of that, so an empty pick shelf with plenty of
+// cases in the back was reported as No Stock Found instead of going to
+// Inventory to restock. Now also sums the bin's whole part-number family
+// (part_num / sku equal to the bin or starting with "<bin>=", or base_sku
+// equal to it). Safe from the old base_sku collision above: that one came
+// from splitting the ORDER's SKU text ("10=..." -> "10"); this matches the
+// bin code itself, and only when it looks like a real code (has a dash).
 async function _psCheckStockLevel(env, bin, sku) {
   if (!env.DB) return null;
   const b = String(bin || '').trim().toUpperCase();
   const s = String(sku || '').trim().toUpperCase();
 
   let binCases = null; // null = no matching row at all; number = SUM found (may legitimately be 0)
+  let familyCases = null;
   let skuCases = null;
 
   if (b) {
@@ -14779,6 +14805,13 @@ async function _psCheckStockLevel(env, bin, sku) {
     }
   }
 
+  if (_psIsFamilyCode(b)) {
+    try {
+      const fam = await d1First(env, _PS_FAMILY_SQL('SUM(cases) as cases'), _psFamilyParams(b));
+      if (fam && fam.cases != null) familyCases = parseFloat(fam.cases) || 0;
+    } catch (e) { console.error('[Ship] stock level check (bin family) failed for', bin, e.message); }
+  }
+
   if (s) {
     try {
       const exact = await d1First(env, 'SELECT SUM(cases) as cases FROM master_list WHERE UPPER(part_num)=?', [s]);
@@ -14787,11 +14820,25 @@ async function _psCheckStockLevel(env, bin, sku) {
   }
 
   if (binCases !== null && binCases > 0) return binCases;
+  if (familyCases !== null && familyCases > 0) return familyCases;
   if (skuCases !== null && skuCases > 0) return skuCases;
-  if (binCases !== null) return binCases; // matched, but genuinely 0 both ways (or sku unmatched)
+  if (binCases !== null) return binCases; // matched, but genuinely 0 every way (or sku unmatched)
+  if (familyCases !== null) return familyCases;
   if (skuCases !== null) return skuCases; // sku matched at 0, bin never matched anything
   return null; // nothing matched anything at all -> can't verify
 }
+
+// A bin code like "3-3-2" / "23-2-3" / "BARN-1": at least one dash, only
+// letters/digits between — never a bare number like "10" (see the base_sku
+// collision described above _psCheckStockLevel).
+function _psIsFamilyCode(b) { return /^[A-Z0-9]+(-[A-Z0-9]+)+$/.test(b || ''); }
+// Every master_list row in a bin code's part-number family — same match
+// Inventory's search uses (inventoryLookup): part_num / sku equal to the
+// code or starting with "<code>=", or base_sku equal to it.
+function _PS_FAMILY_SQL(cols) {
+  return `SELECT ${cols} FROM master_list WHERE UPPER(TRIM(part_num))=? OR UPPER(TRIM(part_num)) LIKE ? OR UPPER(TRIM(sku)) LIKE ? OR UPPER(TRIM(base_sku))=?`;
+}
+function _psFamilyParams(b) { return [b, b + '=%', b + '=%', b]; }
 
 // Same two tiers _psCheckStockLevel checks a bin against (location column,
 // then the sku column — this account's master_list sometimes keys sku on a
