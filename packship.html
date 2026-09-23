@@ -8173,6 +8173,7 @@ window.psAlRates = async function() {
   lines.push((d.hold ? 'HOLD (' + d.hold + '): ' : 'Why: ') + d.reason);
   out.textContent = lines.join('\n');
   if (!(d.rates || []).length) out.textContent += '\n\nRaw Veeqo answers (send these to Claude):\n' + JSON.stringify(d.attempts, null, 2).slice(0, 4000);
+  else if (d.pickRaw) out.textContent += '\n\nPicked rate, as Veeqo sent it (for troubleshooting):\n' + JSON.stringify(d.pickRaw, null, 2).slice(0, 3000);
 };
 
 window.psAlTestBuy = async function() {

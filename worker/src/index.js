@@ -19772,7 +19772,10 @@ function autolabelParseQuote(q, source) {
       if (t) { days = Math.max(0, Math.ceil((t - Date.now()) / 86400000)); break; }
     }
   }
-  const service = String(q.name || q.title || q.service_name || q.short_service_name || q.service_type || '').slice(0, 80);
+  // Veeqo rates: `title` is the readable service ("USPS Ground Advantage"),
+  // `name` is the service CODE (for Amazon Shipping it's
+  // "amazon_shipping_v2-<id>") — show the readable one.
+  const service = String(q.title || q.service_name || q.short_service_name || q.name || q.service_type || '').slice(0, 80);
   return { carrier, service, price, days, source, raw: q };
 }
 
@@ -19921,6 +19924,14 @@ async function autolabelBuy(env, order, allocationId, quote) {
   for (const k of ['carrier_id', 'remote_shipment_id', 'service_type', 'sub_carrier_id', 'service_carrier',
                    'total_net_charge', 'base_rate', 'service_id', 'rate_id', 'quote_id', 'value_added_services']) {
     if (q[k] != null) shipment[k] = q[k];
+  }
+  // Veeqo answered a buy without it with HTTP 400 "Please provide
+  // service_type" (real test on an Amazon Shipping rate). On Veeqo rates the
+  // service code lives in `name` (the readable one is `title`), so that's
+  // what service_type gets when the rate has no explicit service_type.
+  if (shipment.service_type == null) {
+    const code = q.service_code || q.service_id || q.name;
+    if (code != null && code !== '') shipment.service_type = code;
   }
   const carrierSlug = typeof q.carrier === 'string' ? q.carrier : ((q.carrier && q.carrier.slug) || q.carrier_slug || quote.source);
   const body = { carrier: carrierSlug, shipment };
@@ -20217,7 +20228,8 @@ async function handleAutolabelRoute(path, method, url, request, env, session) {
       split: cfg.maxBoxLb > 0 && wt.lb != null && wt.lb > cfg.maxBoxLb ? autolabelSplitText(wt, cfg.maxBoxLb) : null,
       rates: q.quotes.map(x => ({ carrier: x.carrier, service: x.service, price: x.price, days: x.days })),
       pick: choice.pick ? { carrier: choice.pick.carrier, service: choice.pick.service, price: choice.pick.price, days: choice.pick.days } : null,
-      hold: choice.hold, reason: choice.reason, attempts: q.attempts });
+      hold: choice.hold, reason: choice.reason, attempts: q.attempts,
+      pickRaw: choice.pick ? choice.pick.raw : null });
   }
 
   // POST /veeqo/autolabel/test-buy { order } — buys ONE real label by hand,
