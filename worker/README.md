@@ -3,7 +3,7 @@
 Backend for the XFitting tools (`https://xfitting-lookup.alfixedinc88.workers.dev`).
 
 - Code: `src/index.js`
-- Config: `wrangler.toml`
+- Config: `../wrangler.toml` (repo root)
 - Deploys: automatic on push to `main` through Cloudflare Workers Builds.
 
 Secrets and variables (Google, eBay, Amazon, Veeqo, Walmart, Shopify keys,
