@@ -1,8 +1,8 @@
 // One-time repair for the xfitting-lookup worker.
 //
 // Creates a new worker version with the code from worker/src/index.js and
-// every binding (secrets, variables, D1) inherited from an older version that
-// still has them. Secret values stay inside Cloudflare and are never read or
+// every binding (secrets, variables, D1) inherited from the newest version,
+// after checking that version holds all the secrets of SOURCE_VERSION. Secret values stay inside Cloudflare and are never read or
 // printed here. The new version is then deployed at 100% and checked; if the
 // check fails, the previously active deployment is restored.
 //
@@ -35,15 +35,21 @@ async function cf(path, init = {}) {
 
 const sleep = ms => new Promise(r => setTimeout(r, ms));
 
-async function findVersion(prefix) {
+async function listVersions() {
+  const all = [];
   for (let page = 1; page <= 20; page++) {
     const result = await cf(`/versions?page=${page}&per_page=50`);
     const items = (result && result.items) || [];
-    const hit = items.find(v => String(v.id).toLowerCase().startsWith(prefix));
-    if (hit) return hit.id;
+    all.push(...items);
     if (items.length < 50) break;
   }
-  throw new Error(`No version starting with "${prefix}" found for ${SCRIPT}`);
+  // Newest first, whatever order the API returns
+  return all.sort((a, b) => String(b.metadata && b.metadata.created_on).localeCompare(String(a.metadata && a.metadata.created_on)));
+}
+
+function secretNames(version) {
+  return ((version.resources && version.resources.bindings) || [])
+    .filter(b => b.type === 'secret_text' || b.type === 'secret_key').map(b => b.name).sort();
 }
 
 async function deploy(versions, message) {
@@ -69,16 +75,35 @@ async function checkLive() {
   return false;
 }
 
-// 1. Source version and what it binds (names and types only)
-const sourceId = await findVersion(source);
-const src = await cf(`/versions/${sourceId}`);
+// 1. Newest versions, and which ones carry the secrets (names only)
+const versions = await listVersions();
+const hit = versions.find(v => String(v.id).toLowerCase().startsWith(source));
+if (!hit) throw new Error(`No version starting with "${source}" found for ${SCRIPT}`);
+const src = await cf(`/versions/${hit.id}`);
 const srcBindings = (src.resources && src.resources.bindings) || [];
+const srcSecrets = secretNames(src);
 const runtime = (src.resources && src.resources.script_runtime) || {};
-console.log(`Source version: ${sourceId} (#${src.number ?? '?'})`);
-console.log(`Bindings to inherit (${srcBindings.length}):`);
-for (const b of srcBindings) console.log(`  ${b.type.padEnd(12)} ${b.name}`);
-const secretCount = srcBindings.filter(b => b.type === 'secret_text' || b.type === 'secret_key').length;
-if (secretCount === 0) throw new Error('Source version has no secrets. Stopping so nothing gets worse.');
+console.log(`Source version ${hit.id}: ${srcBindings.length} bindings, ${srcSecrets.length} secrets`);
+if (srcSecrets.length === 0) throw new Error('Source version has no secrets. Stopping so nothing gets worse.');
+
+console.log('Newest versions:');
+for (const v of versions.slice(0, 6)) {
+  const full = await cf(`/versions/${v.id}`);
+  const n = secretNames(full).length;
+  console.log(`  ${v.id}  ${v.metadata && v.metadata.created_on}  source=${v.metadata && v.metadata.source}  secrets=${n}`);
+}
+
+// The API can only inherit from the newest ("latest") version, so that one
+// must already hold every secret the source version has.
+const latest = await cf(`/versions/${versions[0].id}`);
+const latestSecrets = new Set(secretNames(latest));
+const notOnLatest = srcSecrets.filter(n => !latestSecrets.has(n));
+if (notOnLatest.length) {
+  throw new Error(`The newest version (${versions[0].id}) is missing ${notOnLatest.length} secrets (${notOnLatest.join(', ')}). ` +
+    'Inheriting from it would not restore them, so nothing was changed. Send this log to Claude.');
+}
+console.log(`Newest version ${versions[0].id} has all ${srcSecrets.length} secrets. Inheriting from it.`);
+const latestBindings = (latest.resources && latest.resources.bindings) || [];
 
 const compatDate = String(runtime.compatibility_date || '2024-01-01').slice(0, 10);
 console.log(`Compatibility date: ${compatDate}, flags: ${JSON.stringify(runtime.compatibility_flags || [])}`);
@@ -95,8 +120,8 @@ const metadata = {
   main_module: 'index.js',
   compatibility_date: compatDate,
   compatibility_flags: runtime.compatibility_flags || [],
-  bindings: srcBindings.map(b => ({ type: 'inherit', name: b.name, version_id: sourceId })),
-  annotations: { 'workers/message': `Code from GitHub + bindings inherited from ${sourceId.slice(0, 8)}` },
+  bindings: latestBindings.map(b => ({ type: 'inherit', name: b.name })),
+  annotations: { 'workers/message': `Code from GitHub + bindings inherited from ${versions[0].id.slice(0, 8)}` },
 };
 const form = new FormData();
 form.append('metadata', JSON.stringify(metadata));
@@ -109,9 +134,9 @@ console.log(`New version uploaded: ${newId}`);
 // 4. Make sure every secret actually came across before going live
 const check = await cf(`/versions/${newId}`);
 const newNames = new Set(((check.resources && check.resources.bindings) || []).map(b => b.name));
-const missing = srcBindings.map(b => b.name).filter(n => !newNames.has(n));
-if (missing.length) throw new Error(`New version is missing bindings (${missing.join(', ')}). Not deploying it; the live site is unchanged.`);
-console.log('All bindings present on the new version.');
+const missing = srcSecrets.filter(n => !newNames.has(n));
+if (missing.length) throw new Error(`New version is missing secrets (${missing.join(', ')}). Not deploying it; the live site is unchanged.`);
+console.log(`All ${srcSecrets.length} secrets present on the new version.`);
 
 // 5. Deploy, verify, restore on failure
 await deploy([{ version_id: newId, percentage: 100 }], 'Restore secrets onto GitHub code');
