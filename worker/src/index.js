@@ -216,6 +216,72 @@ async function ensureCredAuthTables(env) {
   `).run().catch(()=>{});
 }
 
+// ── Levels (Worker / Pro / Admin / Owner) ─────────────────────────────────
+// A level is a named preset of the existing permission roles every page
+// and route already checks (mobile, ops, mgmt, price, admin) — so nothing
+// downstream changes: a person's roles are now
+//     their level's roles  ∪  their own extra roles (cred_user_roles).
+// cred_user_roles keeps meaning "this person's own boxes"; for people who
+// had roles before levels existed that's exactly their old set, so giving
+// them a level can only ever ADD access, never silently remove it.
+// Owner is special: always includes admin, plus the 'owner' role, which
+// only Owners have and which gates changing levels / Admin / Owner people.
+const CRED_PERMS = ['mobile', 'ops', 'mgmt', 'price', 'admin'];
+const CRED_LEVEL_DEFAULTS = [
+  { key: 'worker', name: 'Worker', rank: 1, roles: ['mobile', 'ops'] },
+  { key: 'pro',    name: 'Pro',    rank: 2, roles: ['mobile', 'ops', 'mgmt'] },
+  { key: 'admin',  name: 'Admin',  rank: 3, roles: ['mobile', 'ops', 'mgmt', 'price', 'admin'] },
+  { key: 'owner',  name: 'Owner',  rank: 4, roles: ['mobile', 'ops', 'mgmt', 'price', 'admin'] },
+];
+let _credLevelTablesReady = false;
+async function ensureCredLevelTables(env) {
+  if (_credLevelTablesReady) return;
+  await env.DB.prepare(`CREATE TABLE IF NOT EXISTS cred_levels (
+    key TEXT PRIMARY KEY, name TEXT NOT NULL, rank INTEGER NOT NULL, roles TEXT NOT NULL)`).run().catch(()=>{});
+  for (const l of CRED_LEVEL_DEFAULTS) {
+    await env.DB.prepare(`INSERT OR IGNORE INTO cred_levels (key, name, rank, roles) VALUES (?, ?, ?, ?)`)
+      .bind(l.key, l.name, l.rank, JSON.stringify(l.roles)).run().catch(()=>{});
+  }
+  await env.DB.prepare(`ALTER TABLE cred_users ADD COLUMN level TEXT`).run().catch(()=>{});
+  _credLevelTablesReady = true;
+}
+
+async function credGetLevels(env) {
+  await ensureCredLevelTables(env);
+  const rows = (await env.DB.prepare(`SELECT key, name, rank, roles FROM cred_levels ORDER BY rank`).all()).results || [];
+  const out = {};
+  for (const r of rows) {
+    let roles = []; try { roles = JSON.parse(r.roles || '[]'); } catch (_) {}
+    roles = roles.filter(x => CRED_PERMS.includes(x));
+    if (r.key === 'owner' && !roles.includes('admin')) roles.push('admin');
+    out[r.key] = { key: r.key, name: r.name, rank: r.rank, roles };
+  }
+  return out;
+}
+
+// Everything a person can do: level roles + their own extra roles.
+async function credEffectiveRoles(env, user, levels) {
+  levels = levels || await credGetLevels(env);
+  const own = ((await env.DB.prepare(`SELECT role FROM cred_user_roles WHERE user_id = ?`).bind(user.id).all()).results || []).map(r => r.role);
+  const lvl = user.level && levels[user.level];
+  const set = new Set([...(lvl ? lvl.roles : []), ...own]);
+  if (user.level === 'owner') { set.add('admin'); set.add('owner'); }
+  return [...set];
+}
+
+async function credOwnerCount(env) {
+  await ensureCredLevelTables(env);
+  const r = await env.DB.prepare(`SELECT COUNT(*) AS n FROM cred_users WHERE level = 'owner' AND active = 1`).first();
+  return (r && r.n) || 0;
+}
+
+// Owners can do everything. While NO owner exists yet (first setup), any
+// admin may act as one — that's how the first Owner gets assigned.
+async function credCanActAsOwner(env, session) {
+  if (session && session.roles && session.roles.includes('owner')) return true;
+  return (await credOwnerCount(env)) === 0;
+}
+
 // PBKDF2 password hashing - native to the Workers runtime via Web Crypto,
 // no external library needed. Per-user random salt, stored as "salt:hash".
 async function hashPassword(password, saltHex) {
@@ -286,8 +352,7 @@ async function credLogin(request, env) {
     await env.DB.prepare(`DELETE FROM cred_login_attempts WHERE username = ?`).bind(normalizedUsername).run().catch(()=>{});
   }
 
-  const rolesRes = await env.DB.prepare(`SELECT role FROM cred_user_roles WHERE user_id = ?`).bind(user.id).all();
-  const roles = (rolesRes.results || []).map(r => r.role);
+  const roles = await credEffectiveRoles(env, user);
 
   const token = newSessionToken();
   const now = new Date().toISOString();
@@ -295,7 +360,7 @@ async function credLogin(request, env) {
   await env.DB.prepare(`UPDATE cred_users SET last_login = ? WHERE id = ?`).bind(now, user.id).run();
 
   return cors(new Response(JSON.stringify({
-    token, userId: user.id, username: user.username, displayName: user.display_name, roles,
+    token, userId: user.id, username: user.username, displayName: user.display_name, roles, level: user.level || null,
   }), { headers: { 'Content-Type': 'application/json' } }));
 }
 
@@ -326,12 +391,11 @@ async function verifyCredSession(token, env) {
   }
   const user = await env.DB.prepare(`SELECT * FROM cred_users WHERE id = ? AND active = 1`).bind(session.user_id).first();
   if (!user) return null;
-  const rolesRes = await env.DB.prepare(`SELECT role FROM cred_user_roles WHERE user_id = ?`).bind(user.id).all();
-  const roles = (rolesRes.results || []).map(r => r.role);
+  const roles = await credEffectiveRoles(env, user);
 
   await env.DB.prepare(`UPDATE cred_sessions SET last_active = ? WHERE token = ?`).bind(new Date().toISOString(), token).run(); // rolling extension
 
-  return { userId: user.id, username: user.username, displayName: user.display_name, roles };
+  return { userId: user.id, username: user.username, displayName: user.display_name, roles, level: user.level || null };
 }
 
 // (Placeholder account bootstrap removed - real accounts with all roles
@@ -379,27 +443,47 @@ async function logUserActivity(env, userId, actionType, metadata) {
 // ═══════════════════════════════════════════════════════════════════════════════
 
 // GET /admin/users/list
-async function adminListUsers(env) {
+async function adminListUsers(env, session) {
   await ensureCredAuthTables(env);
-  const users = await env.DB.prepare(`SELECT id, username, display_name, active, created_at, last_login FROM cred_users ORDER BY username ASC`).all();
+  const levels = await credGetLevels(env);
+  const users = await env.DB.prepare(`SELECT id, username, display_name, active, created_at, last_login, level FROM cred_users ORDER BY username ASC`).all();
   const rolesRes = await env.DB.prepare(`SELECT user_id, role FROM cred_user_roles`).all();
   const rolesByUser = {};
   for (const r of (rolesRes.results || [])) {
     (rolesByUser[r.user_id] = rolesByUser[r.user_id] || []).push(r.role);
   }
-  const result = (users.results || []).map(u => ({
-    id: u.id, username: u.username, displayName: u.display_name,
-    active: !!u.active, createdAt: u.created_at, lastLogin: u.last_login,
-    roles: rolesByUser[u.id] || [],
-  }));
-  return cors(new Response(JSON.stringify({ ok: true, users: result }), { headers: { 'Content-Type': 'application/json' } }));
+  const result = (users.results || []).map(u => {
+    const extra = rolesByUser[u.id] || [];
+    const lvl = u.level && levels[u.level];
+    const eff = new Set([...(lvl ? lvl.roles : []), ...extra]);
+    if (u.level === 'owner') { eff.add('admin'); eff.add('owner'); }
+    return {
+      id: u.id, username: u.username, displayName: u.display_name,
+      active: !!u.active, createdAt: u.created_at, lastLogin: u.last_login,
+      level: u.level || null, extraRoles: extra, roles: [...eff],
+    };
+  });
+  const ownerCount = result.filter(u => u.level === 'owner' && u.active).length;
+  return cors(new Response(JSON.stringify({
+    ok: true, users: result, levels: Object.values(levels), perms: CRED_PERMS,
+    ownerCount, youCanManageLevels: await credCanActAsOwner(env, session),
+  }), { headers: { 'Content-Type': 'application/json' } }));
 }
 
 // POST /admin/users/create  { username, password, displayName, roles: [] }
-async function adminCreateUser(request, env) {
+async function adminCreateUser(request, env, session) {
   await ensureCredAuthTables(env);
   const body = await request.json().catch(() => ({}));
   const { username, password, displayName, roles } = body;
+  const levels = await credGetLevels(env);
+  const level = body.level || null;
+  if (level && !levels[level]) {
+    return cors(new Response(JSON.stringify({ ok: false, error: 'Unknown level' }), { status: 400, headers: { 'Content-Type': 'application/json' } }));
+  }
+  const ownerPowers = await credCanActAsOwner(env, session);
+  if ((level === 'admin' || level === 'owner' || (roles || []).includes('admin')) && !ownerPowers) {
+    return cors(new Response(JSON.stringify({ ok: false, error: 'Only an Owner can create Admin or Owner accounts' }), { status: 403, headers: { 'Content-Type': 'application/json' } }));
+  }
   if (!username || !password || !displayName) {
     return cors(new Response(JSON.stringify({ ok: false, error: 'username, password, and displayName required' }), { status: 400, headers: { 'Content-Type': 'application/json' } }));
   }
@@ -413,8 +497,8 @@ async function adminCreateUser(request, env) {
   }
   const hash = await hashPassword(password);
   const now = new Date().toISOString();
-  const result = await env.DB.prepare(`INSERT INTO cred_users (username, password_hash, display_name, active, created_at) VALUES (?, ?, ?, 1, ?)`)
-    .bind(uname, hash, displayName.trim(), now).run();
+  const result = await env.DB.prepare(`INSERT INTO cred_users (username, password_hash, display_name, active, created_at, level) VALUES (?, ?, ?, 1, ?, ?)`)
+    .bind(uname, hash, displayName.trim(), now, level).run();
   const userId = result.meta.last_row_id;
   const validRoles = ['ops', 'mgmt', 'mobile', 'price', 'admin'];
   for (const role of (roles || [])) {
@@ -426,10 +510,17 @@ async function adminCreateUser(request, env) {
 }
 
 // POST /admin/users/reset-password  { userId, newPassword }
-async function adminResetPassword(request, env) {
+async function adminResetPassword(request, env, session) {
   await ensureCredAuthTables(env);
   const body = await request.json().catch(() => ({}));
   const { userId, newPassword } = body;
+  // Resetting an Admin's / Owner's password would let an Admin take over
+  // that account — Owner only.
+  await ensureCredLevelTables(env);
+  const t = userId ? await env.DB.prepare(`SELECT level FROM cred_users WHERE id = ?`).bind(userId).first() : null;
+  if (t && (t.level === 'admin' || t.level === 'owner') && !(await credCanActAsOwner(env, session))) {
+    return cors(new Response(JSON.stringify({ ok: false, error: 'Only an Owner can reset an Admin or Owner password' }), { status: 403, headers: { 'Content-Type': 'application/json' } }));
+  }
   if (!userId || !newPassword) {
     return cors(new Response(JSON.stringify({ ok: false, error: 'userId and newPassword required' }), { status: 400, headers: { 'Content-Type': 'application/json' } }));
   }
@@ -448,7 +539,7 @@ async function adminResetPassword(request, env) {
 }
 
 // POST /admin/users/update-roles  { userId, roles: [] }  — replaces the full role set
-async function adminUpdateRoles(request, env) {
+async function adminUpdateRoles(request, env, session) {
   await ensureCredAuthTables(env);
   const body = await request.json().catch(() => ({}));
   const { userId, roles } = body;
@@ -457,6 +548,23 @@ async function adminUpdateRoles(request, env) {
   }
   const validRoles = ['ops', 'mgmt', 'mobile', 'price', 'admin'];
   const cleanRoles = [...new Set(roles.filter(r => validRoles.includes(r)))];
+  const deny = msg => cors(new Response(JSON.stringify({ ok: false, error: msg }), { status: 403, headers: { 'Content-Type': 'application/json' } }));
+
+  // Level (optional in the request — older callers only send roles).
+  const levels = await credGetLevels(env);
+  const target = await env.DB.prepare(`SELECT id, level, active FROM cred_users WHERE id = ?`).bind(userId).first();
+  if (!target) return cors(new Response(JSON.stringify({ ok: false, error: 'User not found' }), { status: 404, headers: { 'Content-Type': 'application/json' } }));
+  const hasLevel = Object.prototype.hasOwnProperty.call(body, 'level');
+  const newLevel = hasLevel ? (body.level || null) : (target.level || null);
+  if (newLevel && !levels[newLevel]) return cors(new Response(JSON.stringify({ ok: false, error: 'Unknown level' }), { status: 400, headers: { 'Content-Type': 'application/json' } }));
+  const ownerPowers = await credCanActAsOwner(env, session);
+  const high = l => l === 'admin' || l === 'owner';
+  if ((high(newLevel) || high(target.level)) && newLevel !== target.level && !ownerPowers) return deny('Only an Owner can give or take away the Admin or Owner level');
+  if (high(target.level) && !ownerPowers) return deny('Only an Owner can change an Admin or Owner');
+  const oldOwn = ((await env.DB.prepare(`SELECT role FROM cred_user_roles WHERE user_id = ?`).bind(userId).all()).results || []).map(r => r.role);
+  if (cleanRoles.includes('admin') !== oldOwn.includes('admin') && !ownerPowers) return deny('Only an Owner can give or take away Admin access');
+  if (target.level === 'owner' && newLevel !== 'owner' && target.active && (await credOwnerCount(env)) <= 1) return deny('This is the last Owner — make someone else Owner first');
+  if (hasLevel) await env.DB.prepare(`UPDATE cred_users SET level = ? WHERE id = ?`).bind(newLevel, userId).run();
   await env.DB.prepare(`DELETE FROM cred_user_roles WHERE user_id = ?`).bind(userId).run();
   for (const role of cleanRoles) {
     await env.DB.prepare(`INSERT INTO cred_user_roles (user_id, role) VALUES (?, ?)`).bind(userId, role).run();
@@ -464,13 +572,38 @@ async function adminUpdateRoles(request, env) {
   return cors(new Response(JSON.stringify({ ok: true, roles: cleanRoles }), { headers: { 'Content-Type': 'application/json' } }));
 }
 
+// POST /admin/levels/update  { levels: [{ key, roles: [...] }] } — what each
+// level can do. Owner only (or any admin while no Owner exists yet).
+async function adminUpdateLevels(request, env, session) {
+  if (!(await credCanActAsOwner(env, session))) {
+    return cors(new Response(JSON.stringify({ ok: false, error: 'Only an Owner can change what each level can do' }), { status: 403, headers: { 'Content-Type': 'application/json' } }));
+  }
+  const body = await request.json().catch(() => ({}));
+  const levels = await credGetLevels(env);
+  for (const l of (Array.isArray(body.levels) ? body.levels : [])) {
+    if (!levels[l.key]) continue;
+    let roles = [...new Set((l.roles || []).filter(r => CRED_PERMS.includes(r)))];
+    if (l.key === 'owner' && !roles.includes('admin')) roles.push('admin'); // an Owner can always reach this page
+    await env.DB.prepare(`UPDATE cred_levels SET roles = ? WHERE key = ?`).bind(JSON.stringify(roles), l.key).run();
+  }
+  return cors(new Response(JSON.stringify({ ok: true, levels: Object.values(await credGetLevels(env)) }), { headers: { 'Content-Type': 'application/json' } }));
+}
+
 // POST /admin/users/toggle-active  { userId, active: true|false }
-async function adminToggleActive(request, env) {
+async function adminToggleActive(request, env, session) {
   await ensureCredAuthTables(env);
   const body = await request.json().catch(() => ({}));
   const { userId, active } = body;
   if (!userId || typeof active !== 'boolean') {
     return cors(new Response(JSON.stringify({ ok: false, error: 'userId and active (boolean) required' }), { status: 400, headers: { 'Content-Type': 'application/json' } }));
+  }
+  await ensureCredLevelTables(env);
+  const t = await env.DB.prepare(`SELECT level, active FROM cred_users WHERE id = ?`).bind(userId).first();
+  if (t && (t.level === 'admin' || t.level === 'owner') && !(await credCanActAsOwner(env, session))) {
+    return cors(new Response(JSON.stringify({ ok: false, error: 'Only an Owner can disable or enable an Admin or Owner' }), { status: 403, headers: { 'Content-Type': 'application/json' } }));
+  }
+  if (t && t.level === 'owner' && t.active && !active && (await credOwnerCount(env)) <= 1) {
+    return cors(new Response(JSON.stringify({ ok: false, error: 'This is the last Owner — make someone else Owner first' }), { status: 403, headers: { 'Content-Type': 'application/json' } }));
   }
   await env.DB.prepare(`UPDATE cred_users SET active = ? WHERE id = ?`).bind(active ? 1 : 0, userId).run();
   if (!active) {
@@ -3178,11 +3311,12 @@ export default {
       if (!credSession || !credSession.roles.includes('admin')) {
         return cors(new Response(JSON.stringify({ error: 'Admin access required' }), { status: 403, headers: { 'Content-Type': 'application/json' } }));
       }
-      if (url.pathname === '/admin/users/list' && method === 'GET')            return await adminListUsers(env);
-      if (url.pathname === '/admin/users/create' && method === 'POST')        return await adminCreateUser(request, env);
-      if (url.pathname === '/admin/users/reset-password' && method === 'POST') return await adminResetPassword(request, env);
-      if (url.pathname === '/admin/users/update-roles' && method === 'POST')  return await adminUpdateRoles(request, env);
-      if (url.pathname === '/admin/users/toggle-active' && method === 'POST') return await adminToggleActive(request, env);
+      if (url.pathname === '/admin/users/list' && method === 'GET')            return await adminListUsers(env, credSession);
+      if (url.pathname === '/admin/users/create' && method === 'POST')        return await adminCreateUser(request, env, credSession);
+      if (url.pathname === '/admin/users/reset-password' && method === 'POST') return await adminResetPassword(request, env, credSession);
+      if (url.pathname === '/admin/users/update-roles' && method === 'POST')  return await adminUpdateRoles(request, env, credSession);
+      if (url.pathname === '/admin/users/toggle-active' && method === 'POST') return await adminToggleActive(request, env, credSession);
+      if (url.pathname === '/admin/levels/update' && method === 'POST')       return await adminUpdateLevels(request, env, credSession);
       if (url.pathname === '/admin/activity' && method === 'GET')             return await adminGetActivity(url, env);
       if (url.pathname === '/admin/usps-runs' && method === 'GET')            return await adminGetUspsRuns(url, env);
       return cors(new Response(JSON.stringify({ error: 'Admin route not found' }), { status: 404, headers: { 'Content-Type': 'application/json' } }));
