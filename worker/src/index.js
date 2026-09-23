@@ -282,6 +282,30 @@ async function credCanActAsOwner(env, session) {
   return (await credOwnerCount(env)) === 0;
 }
 
+// ── Pages & tabs a person may NOT see ────────────────────────────────────
+// access_rules rows: scope 'level:<key>' (allow=0 → that level can't see
+// the item) or 'user:<id>' (allow=0 hide / allow=1 show, overriding the
+// level for that one person). Items are page keys ("packship") or
+// page:tab keys ("packship:status") from the catalog in xf-access.js.
+// Owners always see everything. This hides things in the apps; what the
+// server allows is still decided by the permission roles above.
+let _accessTableReady = false;
+async function ensureAccessTable(env) {
+  if (_accessTableReady) return;
+  await env.DB.prepare(`CREATE TABLE IF NOT EXISTS access_rules (
+    scope TEXT NOT NULL, item TEXT NOT NULL, allow INTEGER NOT NULL, PRIMARY KEY (scope, item))`).run().catch(()=>{});
+  _accessTableReady = true;
+}
+async function accessBlockedFor(env, userId, level) {
+  if (level === 'owner') return [];
+  await ensureAccessTable(env);
+  const rows = (await env.DB.prepare(`SELECT scope, item, allow FROM access_rules WHERE scope = ? OR scope = ?`)
+    .bind('level:' + (level || '-'), 'user:' + userId).all()).results || [];
+  const blocked = new Set(rows.filter(r => r.scope.startsWith('level:') && !r.allow).map(r => r.item));
+  for (const r of rows.filter(r => r.scope.startsWith('user:'))) { if (r.allow) blocked.delete(r.item); else blocked.add(r.item); }
+  return [...blocked];
+}
+
 // PBKDF2 password hashing - native to the Workers runtime via Web Crypto,
 // no external library needed. Per-user random salt, stored as "salt:hash".
 async function hashPassword(password, saltHex) {
@@ -587,6 +611,44 @@ async function adminUpdateLevels(request, env, session) {
     await env.DB.prepare(`UPDATE cred_levels SET roles = ? WHERE key = ?`).bind(JSON.stringify(roles), l.key).run();
   }
   return cors(new Response(JSON.stringify({ ok: true, levels: Object.values(await credGetLevels(env)) }), { headers: { 'Content-Type': 'application/json' } }));
+}
+
+// GET /admin/access — every page/tab rule, by scope.
+async function adminGetAccess(env) {
+  await ensureAccessTable(env);
+  const rows = (await env.DB.prepare(`SELECT scope, item, allow FROM access_rules`).all()).results || [];
+  const rules = {};
+  for (const r of rows) (rules[r.scope] = rules[r.scope] || {})[r.item] = r.allow ? 1 : 0;
+  return cors(new Response(JSON.stringify({ ok: true, rules }), { headers: { 'Content-Type': 'application/json' } }));
+}
+
+// POST /admin/access/save { scope: 'level:worker' | 'user:12', rules: { item: 0|1 } }
+// Replaces all rules for that scope. Levels (and Admin/Owner people): Owner only.
+async function adminSaveAccess(request, env, session) {
+  await ensureAccessTable(env);
+  const b = await request.json().catch(() => ({}));
+  const scope = String(b.scope || '');
+  const deny = (msg, st) => cors(new Response(JSON.stringify({ ok: false, error: msg }), { status: st || 403, headers: { 'Content-Type': 'application/json' } }));
+  const ownerPowers = await credCanActAsOwner(env, session);
+  let m;
+  if ((m = scope.match(/^level:([a-z]+)$/))) {
+    const levels = await credGetLevels(env);
+    if (!levels[m[1]]) return deny('Unknown level', 400);
+    if (m[1] === 'owner') return deny('The Owner always sees everything', 400);
+    if (!ownerPowers) return deny('Only an Owner can change what a level can see');
+  } else if ((m = scope.match(/^user:(\d+)$/))) {
+    await ensureCredLevelTables(env);
+    const t = await env.DB.prepare(`SELECT level FROM cred_users WHERE id = ?`).bind(parseInt(m[1])).first();
+    if (!t) return deny('User not found', 404);
+    if ((t.level === 'admin' || t.level === 'owner') && !ownerPowers) return deny('Only an Owner can change what an Admin or Owner can see');
+  } else return deny('Bad scope', 400);
+  const entries = Object.entries(b.rules || {}).filter(([k, v]) => /^[a-z0-9_-]{1,40}(:[a-z0-9_-]{1,40})?$/.test(k) && (v === 0 || v === 1)).slice(0, 500);
+  if (scope.startsWith('level:') && entries.some(([, v]) => v === 1)) return deny('Level rules can only hide things', 400);
+  await env.DB.prepare(`DELETE FROM access_rules WHERE scope = ?`).bind(scope).run();
+  for (const [item, allow] of entries) {
+    await env.DB.prepare(`INSERT INTO access_rules (scope, item, allow) VALUES (?, ?, ?)`).bind(scope, item, allow).run();
+  }
+  return cors(new Response(JSON.stringify({ ok: true, saved: entries.length }), { headers: { 'Content-Type': 'application/json' } }));
 }
 
 // POST /admin/users/toggle-active  { userId, active: true|false }
@@ -3301,6 +3363,12 @@ export default {
     if (url.pathname === '/auth/logout' && method === 'POST') {
       return await credLogout(request, env);
     }
+    // What this signed-in person may not see (xf-access.js on every page).
+    if (url.pathname === '/auth/access' && method === 'GET') {
+      const s = await verifyCredSession(request.headers.get('X-Cred-Token'), env);
+      if (!s) return cors(new Response(JSON.stringify({ ok: false, error: 'Not signed in' }), { status: 401, headers: { 'Content-Type': 'application/json' } }));
+      return cors(new Response(JSON.stringify({ ok: true, level: s.level, blocked: await accessBlockedFor(env, s.userId, s.level) }), { headers: { 'Content-Type': 'application/json' } }));
+    }
 
     // ── Admin routes — all require a valid credential session with the
     // 'admin' role specifically (not 'mgmt' — see design note where this
@@ -3317,6 +3385,8 @@ export default {
       if (url.pathname === '/admin/users/update-roles' && method === 'POST')  return await adminUpdateRoles(request, env, credSession);
       if (url.pathname === '/admin/users/toggle-active' && method === 'POST') return await adminToggleActive(request, env, credSession);
       if (url.pathname === '/admin/levels/update' && method === 'POST')       return await adminUpdateLevels(request, env, credSession);
+      if (url.pathname === '/admin/access' && method === 'GET')               return await adminGetAccess(env);
+      if (url.pathname === '/admin/access/save' && method === 'POST')         return await adminSaveAccess(request, env, credSession);
       if (url.pathname === '/admin/activity' && method === 'GET')             return await adminGetActivity(url, env);
       if (url.pathname === '/admin/usps-runs' && method === 'GET')            return await adminGetUspsRuns(url, env);
       return cors(new Response(JSON.stringify({ error: 'Admin route not found' }), { status: 404, headers: { 'Content-Type': 'application/json' } }));

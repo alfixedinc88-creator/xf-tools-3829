@@ -97,6 +97,17 @@
   .ad-toast.err { background:var(--red); }
   .ad-toast.ok { background:var(--green); }
 
+  .ad-pg { border:1px solid var(--border); border-radius:10px; padding:10px 12px; margin-bottom:8px; background:var(--bg2); }
+  .ad-pg.off { background:var(--bg3); }
+  .ad-pg-head { display:flex; align-items:center; gap:10px; flex-wrap:wrap; }
+  .ad-pg-head label { display:flex; align-items:center; gap:8px; font-weight:700; font-size:13.5px; cursor:pointer; }
+  .ad-pg-file { font-family:var(--mono); font-size:11px; color:var(--text3); }
+  .ad-pg-needs { font-size:10.5px; font-weight:700; padding:2px 7px; border-radius:6px; background:var(--bg3); color:var(--text2); }
+  .ad-pg-warn { font-size:11px; color:var(--orange); }
+  .ad-pg-tabs { display:flex; flex-wrap:wrap; gap:6px 14px; margin:8px 0 0 26px; }
+  .ad-pg-tabs label { display:flex; align-items:center; gap:6px; font-size:12.5px; cursor:pointer; }
+  .ad-pg-tabs label.dis { opacity:.45; cursor:default; }
+  .ad-pg-custom { outline:2px dashed var(--orange); outline-offset:2px; border-radius:4px; }
   .ad-empty { text-align:center; padding:40px 20px; color:var(--text3); font-size:13px; }
 </style>
 </head>
@@ -133,6 +144,7 @@
     <div class="ad-tabs">
       <div class="ad-tab active" id="ad-tab-users" onclick="adSwitchTab('users')">👤 Users</div>
       <div class="ad-tab" id="ad-tab-levels" onclick="adSwitchTab('levels')">🎚️ Levels</div>
+      <div class="ad-tab" id="ad-tab-pages" onclick="adSwitchTab('pages')">🧩 Pages &amp; Tabs</div>
       <div class="ad-tab" id="ad-tab-activity" onclick="adSwitchTab('activity')">📊 Activity</div>
     </div>
 
@@ -163,6 +175,21 @@
           <b>🔐 Admin</b> — this Admin page (add people, reset passwords)<br>
           Changes apply to everyone on that level right away. A person can also get <b>extra</b> access on top of their level (Users → Edit).
         </div>
+      </div>
+    </div>
+
+    <div id="ad-panel-pages" style="display:none">
+      <div class="ad-card">
+        <div class="ad-card-header">
+          <h2>Which pages &amp; tabs they can see</h2>
+          <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
+            <select id="ad-pg-who" class="ad-input" style="width:auto;margin:0;padding:7px 10px;font-size:12.5px" onchange="adRenderPages()"></select>
+            <button class="ad-btn ad-btn-outline ad-btn-sm" style="width:auto" id="ad-pg-reset" onclick="adResetPages()">↺ Same as level</button>
+            <button class="ad-btn ad-btn-sm" style="width:auto" id="ad-pg-save" onclick="adSavePages()">💾 Save</button>
+          </div>
+        </div>
+        <div id="ad-pg-note" style="font-size:12.5px;color:var(--text3);margin-bottom:12px"></div>
+        <div id="ad-pg-wrap"><div class="ad-empty">Loading…</div></div>
       </div>
     </div>
 
@@ -311,12 +338,13 @@ function adShowDenied() {
 }
 
 window.adSwitchTab = function(name) {
-  ['users','levels','activity'].forEach(function(n) {
+  ['users','levels','pages','activity'].forEach(function(n) {
     ge('ad-tab-' + n).classList.toggle('active', n === name);
     ge('ad-panel-' + n).style.display = (n === name) ? 'block' : 'none';
   });
   if (name === 'activity') adLoadActivity();
   if (name === 'levels') adRenderLevels();
+  if (name === 'pages') adLoadPages();
 };
 
 var ROLE_LABELS = { admin:'Admin', mgmt:'Mgmt', ops:'Ops', mobile:'Mobile', price:'Price', owner:'Owner' };
@@ -524,6 +552,102 @@ window.adSaveLevels = async function() {
   adRenderLevels();
 };
 
+// ── Pages & Tabs: hide pages/tabs per level or per person ──
+// Level rules: {item:0} = hidden for that level. Person rules only store
+// differences from their level: 0 = hide, 1 = show even though the level hides it.
+function adPgCatalog() { return window.XF_ACCESS_CATALOG || []; }
+function adPgItems() { var out = []; adPgCatalog().forEach(function(p){ out.push(p.key); p.tabs.forEach(function(t){ out.push(p.key + ':' + t.key); }); }); return out; }
+function adPgNeedsRoles(needs) { return String(needs || '').toLowerCase().split(/[^a-z]+/).filter(function(w){ return ['mobile','ops','mgmt','price','admin'].indexOf(w) !== -1; }); }
+function adPgEsc(x) { return String(x == null ? '' : x).replace(/[&<>"]/g, function(c){ return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]; }); }
+
+window.adLoadPages = async function() {
+  if (!AD.levels || !AD.levels.length) await adLoadUsers();
+  var r = await adFetch('/admin/access');
+  if (r.status !== 200) { ge('ad-pg-wrap').innerHTML = '<div class="ad-empty">Could not load page access.</div>'; return; }
+  AD.access = r.data.rules || {};
+  var sel = ge('ad-pg-who'), cur = sel.value;
+  sel.innerHTML = '<optgroup label="Levels (everyone on that level)">' + AD.levels.filter(function(l){ return l.key !== 'owner'; }).map(function(l){ return '<option value="level:' + l.key + '">' + l.rank + ' · ' + adPgEsc(l.name) + '</option>'; }).join('') + '</optgroup>'
+    + '<optgroup label="One person">' + AD.users.map(function(u){ var l = adLevel(u.level); return '<option value="user:' + u.id + '">' + adPgEsc(u.username) + ' (' + (l ? adPgEsc(l.name) : 'no level') + ')</option>'; }).join('') + '</optgroup>';
+  if (cur && sel.querySelector('option[value="' + cur + '"]')) sel.value = cur;
+  adRenderPages();
+};
+
+// Hidden set for the chosen scope: { item: true } plus which items are person-specific.
+function adPgState(scope) {
+  var hidden = {}, custom = {}, levelHidden = {};
+  var m = scope.match(/^user:(\d+)$/), u = m && AD.users.find(function(x){ return String(x.id) === m[1]; });
+  var levelKey = m ? (u && u.level) : scope.slice(6);
+  var lr = (levelKey && AD.access['level:' + levelKey]) || {};
+  Object.keys(lr).forEach(function(k){ if (lr[k] === 0) levelHidden[k] = true; });
+  Object.keys(levelHidden).forEach(function(k){ hidden[k] = true; });
+  if (m) {
+    var ur = AD.access[scope] || {};
+    Object.keys(ur).forEach(function(k){ custom[k] = true; if (ur[k] === 0) hidden[k] = true; else delete hidden[k]; });
+  }
+  return { hidden: hidden, custom: custom, levelHidden: levelHidden, user: u, levelKey: levelKey };
+}
+
+window.adRenderPages = function() {
+  var scope = ge('ad-pg-who').value; if (!scope) return;
+  var st = adPgState(scope), isUser = scope.indexOf('user:') === 0;
+  var lvl = adLevel(st.levelKey);
+  var roles = isUser && st.user ? (st.user.roles || []) : (lvl ? lvl.roles : []);
+  var readOnly = false, note;
+  if (isUser && st.user && st.user.level === 'owner') { readOnly = true; note = '👑 Owners always see everything.'; }
+  else if (isUser && st.user && st.user.level === 'admin' && !AD.canManageLevels) { readOnly = true; note = 'Only an Owner can change what an Admin sees.'; }
+  else if (!isUser && !AD.canManageLevels) { readOnly = true; note = 'Only an Owner can change what a whole level sees. You can still change one person (pick a name).'; }
+  else if (isUser) note = 'Untick what <b>' + adPgEsc(st.user ? st.user.username : '') + '</b> should NOT see. Starts from their level' + (lvl ? ' (' + adPgEsc(lvl.name) + ')' : '') + '; <span class="ad-pg-custom">&nbsp;dashed&nbsp;</span> = set just for this person.';
+  else note = 'Untick what everyone on <b>' + adPgEsc(lvl ? lvl.name : '') + '</b> should NOT see. Hidden pages disappear from the front page; hidden tabs disappear from their page.';
+  ge('ad-pg-note').innerHTML = note + ' <span style="color:var(--text3)">“Needs” = the permission box (Levels tab) that page already requires — without it they can’t use it anyway.</span>';
+  ge('ad-pg-save').style.display = readOnly ? 'none' : '';
+  ge('ad-pg-reset').style.display = (isUser && !readOnly) ? '' : 'none';
+  ge('ad-pg-wrap').innerHTML = adPgCatalog().map(function(p) {
+    var on = !st.hidden[p.key], need = adPgNeedsRoles(p.needs);
+    var lacks = need.length && !need.some(function(r){ return roles.indexOf(r) !== -1; });
+    var dis = readOnly ? ' disabled' : '';
+    return '<div class="ad-pg' + (on ? '' : ' off') + '" data-page="' + p.key + '">'
+      + '<div class="ad-pg-head"><label class="' + (st.custom[p.key] ? 'ad-pg-custom' : '') + '"><input type="checkbox" class="ad-pg-cb" data-k="' + p.key + '"' + (on ? ' checked' : '') + dis + ' onchange="adPgToggle(this)"> ' + adPgEsc(p.name) + '</label>'
+      + '<span class="ad-pg-file">' + adPgEsc(p.file === 'index.html' ? 'front page app' : p.file) + '</span>'
+      + '<span class="ad-pg-needs">needs ' + adPgEsc(p.needs) + '</span>'
+      + (lacks ? '<span class="ad-pg-warn">⚠ doesn’t have ' + adPgEsc(p.needs) + ' — can’t open it anyway</span>' : '') + '</div>'
+      + (p.tabs.length ? '<div class="ad-pg-tabs">' + p.tabs.map(function(t) {
+          var k = p.key + ':' + t.key, ton = !st.hidden[k];
+          var tneed = t.needs ? adPgNeedsRoles(t.needs) : [], tl = tneed.length && !tneed.some(function(r){ return roles.indexOf(r) !== -1; });
+          return '<label class="' + (on ? '' : 'dis ') + (st.custom[k] ? 'ad-pg-custom' : '') + '"' + (tl ? ' title="Needs ' + adPgEsc(t.needs) + ' — they don’t have it, so it’s hidden anyway"' : '') + '><input type="checkbox" class="ad-pg-cb" data-k="' + k + '"' + (ton ? ' checked' : '') + (readOnly || !on ? ' disabled' : '') + '> ' + adPgEsc(t.label) + (t.needs ? ' <span class="ad-pg-needs"' + (tl ? ' style="color:var(--orange)"' : '') + '>' + adPgEsc(t.needs) + '</span>' : '') + '</label>';
+        }).join('') + '</div>' : '')
+      + '</div>';
+  }).join('');
+};
+
+window.adPgToggle = function(cb) {
+  var box = cb.closest('.ad-pg');
+  box.classList.toggle('off', !cb.checked);
+  box.querySelectorAll('.ad-pg-tabs label').forEach(function(l){ l.classList.toggle('dis', !cb.checked); l.querySelector('input').disabled = !cb.checked; });
+};
+
+window.adSavePages = async function() {
+  var scope = ge('ad-pg-who').value, st = adPgState(scope), isUser = scope.indexOf('user:') === 0;
+  var rules = {};
+  document.querySelectorAll('#ad-pg-wrap .ad-pg-cb').forEach(function(cb) {
+    var k = cb.dataset.k, hide = !cb.checked;
+    if (isUser) { if (hide !== !!st.levelHidden[k]) rules[k] = hide ? 0 : 1; }
+    else if (hide) rules[k] = 0;
+  });
+  var r = await adFetch('/admin/access/save', { method:'POST', body: JSON.stringify({ scope: scope, rules: rules }) });
+  if (r.status !== 200) { adToast(r.data.error || 'Failed', 'err'); return; }
+  adToast('Saved — applies next time their pages refresh', 'ok');
+  await adLoadPages();
+};
+
+window.adResetPages = async function() {
+  var scope = ge('ad-pg-who').value;
+  if (!confirm('Remove this person’s own settings so they see the same as their level?')) return;
+  var r = await adFetch('/admin/access/save', { method:'POST', body: JSON.stringify({ scope: scope, rules: {} }) });
+  if (r.status !== 200) { adToast(r.data.error || 'Failed', 'err'); return; }
+  adToast('Back to level settings', 'ok');
+  await adLoadPages();
+};
+
 window.adLoadActivity = async function() {
   var userId = ge('ad-activity-user-filter').value;
   var r = await adFetch('/admin/activity' + (userId ? '?userId=' + userId : ''));
@@ -563,5 +687,6 @@ window.adLoadActivity = async function() {
   }
 })();
 </script>
+<script src="xf-access.js"></script>
 </body>
 </html>
