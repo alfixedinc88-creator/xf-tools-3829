@@ -3396,6 +3396,7 @@ export default {
       if (url.pathname === '/inventory/soldout/lookup'  && method === 'GET')  return await soldoutLookup(url, env);
       if (url.pathname === '/inventory/soldout/set-qty' && method === 'POST') return await soldoutSetQty(request, env);
       if (url.pathname === '/inventory/soldout/log'     && method === 'GET')  return await soldoutLog(env);
+      if (url.pathname === '/inventory/soldout/add-listing' && method === 'POST') return await soldoutAddListing(request, env);
       return cors(new Response(JSON.stringify({ ok: false, error: 'Not found' }), { status: 404, headers: { 'Content-Type': 'application/json' } }));
     }
 
@@ -4182,7 +4183,7 @@ async function repricerSkuLookup(url, env) {
     const q = (url.searchParams.get('q') || '').trim().toUpperCase().replace(/^-+|-+$/g, '');
     if (!q || q.length < 2) return cors(new Response(JSON.stringify({ ok: false, error: 'Query too short' }), { status: 400, headers: { 'Content-Type': 'application/json' } }));
     const token = await getToken(env);
-    const ranges = ['EbaySKU!A2:C5000','AmazonSKU!A2:C5000','WalmartSKU!A2:C5000','ShopifySKU!A2:C5000'];
+    const ranges = ['EbaySKU!A2:C20000','AmazonSKU!A2:C20000','WalmartSKU!A2:C20000','ShopifySKU!A2:C20000'];
     const batchUrl = SHEETS_URL + '/' + env.SHEET_ID + '/values:batchGet?' + ranges.map(r => 'ranges=' + encodeURIComponent(r)).join('&');
     const batchResp = await fetch(batchUrl, { headers: { Authorization: 'Bearer ' + token } });
     const batchData = await batchResp.json();
@@ -9953,7 +9954,7 @@ async function importPlatformSkus(request, env) {
     const dryRun = body.dryRun === true;
 
     const token = await getToken(env);
-    const ranges = ['EbaySKU!A2:C5000', 'AmazonSKU!A2:C5000', 'WalmartSKU!A2:C5000', 'ShopifySKU!A2:C5000'];
+    const ranges = ['EbaySKU!A2:C20000', 'AmazonSKU!A2:C20000', 'WalmartSKU!A2:C20000', 'ShopifySKU!A2:C20000'];
     const batchUrl = SHEETS_URL + '/' + env.SHEET_ID + '/values:batchGet?' + ranges.map(r => 'ranges=' + encodeURIComponent(r)).join('&');
     const batchResp = await fetch(batchUrl, { headers: { Authorization: 'Bearer ' + token } });
     const batchData = await batchResp.json();
@@ -20730,4 +20731,47 @@ async function soldoutSetQty(request, env) {
 async function soldoutLog(env) {
   const rows = await d1All(env, 'SELECT * FROM listing_qty_log ORDER BY id DESC LIMIT 100');
   return _soResp({ ok: true, log: rows });
+}
+
+
+// POST { platform, listingId, sku, title, by } — adds a listing that's
+// missing from the SKU sheets (EbaySKU / AmazonSKU / WalmartSKU /
+// ShopifySKU: A = listing id, B = title, C = SKU), so Sold Out and the
+// Repricer's SKU Lookup find it from then on.
+async function soldoutAddListing(request, env) {
+  const b = await request.json().catch(() => ({}));
+  const tabs = { eBay: 'EbaySKU', Amazon: 'AmazonSKU', Walmart: 'WalmartSKU', Shopify: 'ShopifySKU' };
+  const tab = tabs[b.platform];
+  if (!tab) return _soResp({ ok: false, error: 'Pick eBay, Amazon, Walmart or Shopify' }, 400);
+  let id = String(b.listingId || '').trim();
+  const sku = String(b.sku || '').trim();
+  const title = String(b.title || '').trim().slice(0, 250);
+  if (b.platform === 'Amazon') id = id.toUpperCase();
+  if (!sku) return _soResp({ ok: false, error: 'SKU is required (e.g. 24-1-8=10)' }, 400);
+  if (!sku.split('=')[0].trim()) return _soResp({ ok: false, error: 'SKU must start with the base SKU (e.g. 24-1-8=10)' }, 400);
+  if (b.platform === 'eBay' && !/^\d{9,15}$/.test(id)) return _soResp({ ok: false, error: 'eBay item number should be 9–15 digits' }, 400);
+  if (b.platform === 'Amazon' && !/^[A-Z0-9]{10}$/.test(id)) return _soResp({ ok: false, error: 'ASIN should be 10 letters/numbers (e.g. B0CYQSH57X)' }, 400);
+  if (b.platform === 'Walmart' && id && !/^\d{5,15}$/.test(id)) return _soResp({ ok: false, error: 'Walmart item number should be digits' }, 400);
+
+  // Already on the sheet? (same listing id + SKU) — don't add it twice.
+  const token = await getToken(env);
+  const rr = await fetch(`${SHEETS_URL}/${env.SHEET_ID}/values/${encodeURIComponent(tab + '!A2:C20000')}`, { headers: { Authorization: 'Bearer ' + token } });
+  const rd = await rr.json().catch(() => ({}));
+  if (rd.error) return _soResp({ ok: false, error: 'Reading ' + tab + ': ' + rd.error.message }, 500);
+  const up = x => String(x || '').trim().toUpperCase();
+  const dup = (rd.values || []).find(r => up(r[2]) === up(sku) && (up(r[0]) === up(id) || (!id && !r[0])));
+  if (dup) return _soResp({ ok: true, alreadyThere: true, tab });
+
+  const res = await fetch(`${SHEETS_URL}/${env.SHEET_ID}/values/${encodeURIComponent(tab + '!A:C')}:append?valueInputOption=RAW&insertDataOption=INSERT_ROWS`, {
+    method: 'POST', headers: { Authorization: 'Bearer ' + token, 'Content-Type': 'application/json' },
+    body: JSON.stringify({ values: [[id, title, sku]] }),
+  });
+  const d = await res.json().catch(() => ({}));
+  if (!res.ok || d.error) return _soResp({ ok: false, error: 'Saving to ' + tab + ': ' + ((d.error && d.error.message) || res.status) }, 500);
+  await env.DB.prepare(`CREATE TABLE IF NOT EXISTS listing_qty_log (
+    id INTEGER PRIMARY KEY AUTOINCREMENT, ts TEXT NOT NULL, by_user TEXT, platform TEXT, listing_id TEXT,
+    sku TEXT, title TEXT, quantity INTEGER, ok INTEGER, detail TEXT)`).run().catch(() => {});
+  await d1Run(env, `INSERT INTO listing_qty_log (ts, by_user, platform, listing_id, sku, title, quantity, ok, detail) VALUES (?,?,?,?,?,?,?,?,?)`,
+    [new Date().toISOString(), String(b.by || '').slice(0, 40), b.platform, id, sku, title, null, 1, 'Added to ' + tab]);
+  return _soResp({ ok: true, tab, row: (d.updates && d.updates.updatedRange) || '' });
 }
