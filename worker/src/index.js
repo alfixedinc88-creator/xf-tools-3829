@@ -3776,6 +3776,9 @@ export default {
       ctx.waitUntil(veeqoManifestSync(env).then(
         r => console.log('[cron] veeqoManifestSync', JSON.stringify(r)),
         e => console.error('[cron] veeqoManifestSync FAILED', e && e.message)
+      ).then(() => labelCostFill(env, shipTodayKey())).then(
+        r => console.log('[cron] labelCostFill', JSON.stringify(r)),
+        e => console.error('[cron] labelCostFill FAILED', e && e.message)
       ));
     }
     // Auto Label + channel cancellation watch — runs on EVERY cron tick
@@ -13753,6 +13756,11 @@ async function ensureShipD1Tables(env) {
     )
   `).run().catch(()=>{});
   await env.DB.prepare(`CREATE INDEX IF NOT EXISTS idx_manifest_log_date ON ship_manifest_log(date)`).run().catch(()=>{});
+  // What the label cost (from the Veeqo shipment), filled in by
+  // labelCostFill() — hourly with the manifest sync, or on demand from the
+  // Auto Label tab's "Label costs" card.
+  await env.DB.prepare('ALTER TABLE ship_manifest_log ADD COLUMN label_cost REAL').run().catch(()=>{});
+  await env.DB.prepare('ALTER TABLE ship_manifest_log ADD COLUMN label_cost_src TEXT').run().catch(()=>{});
   await env.DB.prepare(`CREATE INDEX IF NOT EXISTS idx_manifest_log_date_tracking ON ship_manifest_log(date, tracking)`).run().catch(()=>{});
   // The REAL package weight Veeqo recorded when the label was purchased
   // (allocations[].shipment.weight, converted to lb — see
@@ -20216,6 +20224,45 @@ async function handleAutolabelRoute(path, method, url, request, env, session) {
     return veeqoResp({ ok: true });
   }
 
+  // ── Label costs ──
+  // GET ?date=YYYY-MM-DD (default today) -> every label on that day's
+  // manifest with its cost, plus totals by carrier.
+  if (path === '/veeqo/autolabel/costs' && method === 'GET') {
+    const date = /^\d{4}-\d{2}-\d{2}$/.test(url.searchParams.get('date') || '') ? url.searchParams.get('date') : shipTodayKey();
+    const rows = await d1All(env,
+      `SELECT tracking, order_num, channel, carrier, service, customer_name, weight_lb, label_cost, label_cost_src
+       FROM ship_manifest_log WHERE date=? ORDER BY id`, [date]);
+    const totals = {};
+    let missing = 0;
+    for (const r of rows) {
+      const c = r.carrier || 'Other';
+      totals[c] = totals[c] || { count: 0, withCost: 0, cost: 0 };
+      totals[c].count++;
+      if (r.label_cost != null) { totals[c].withCost++; totals[c].cost = Math.round((totals[c].cost + r.label_cost) * 100) / 100; }
+      else missing++;
+    }
+    return veeqoResp({ ok: true, date, labels: rows.length, missing, totals, rows });
+  }
+
+  // POST { date } — look the day's labels up in Veeqo and fill in costs.
+  if (path === '/veeqo/autolabel/costs-fill' && method === 'POST') {
+    const b = await request.json().catch(() => ({}));
+    const date = /^\d{4}-\d{2}-\d{2}$/.test(b.date || '') ? b.date : shipTodayKey();
+    return veeqoResp(await labelCostFill(env, date));
+  }
+
+  // GET ?tracking= — raw shipment fields for one label, to find where this
+  // account's Veeqo keeps the label cost if labelCostFill finds nothing.
+  if (path === '/veeqo/autolabel/cost-debug' && method === 'GET') {
+    const tracking = (url.searchParams.get('tracking') || '').trim().toUpperCase();
+    if (!tracking) return veeqoResp({ ok: false, error: 'tracking is required' }, 400);
+    const { order, error } = await veeqoLookupByTrackingSafe(env, tracking);
+    if (!order) return veeqoResp({ ok: false, error: error || 'Not found in Veeqo' });
+    const alloc = (order.allocations || []).find(a => _psAllocTrackingNumber(a) === tracking) || (order.allocations || [])[0];
+    return veeqoResp({ ok: true, tracking, order: order.number, found: labelCostFromShipment(alloc && alloc.shipment),
+      shipment: alloc && alloc.shipment, orderLevel: { total_shipping: order.total_shipping, delivery_cost: order.delivery_cost, shipping_cost: order.shipping_cost } });
+  }
+
   if (path === '/veeqo/autolabel/log' && method === 'GET') {
     const [log, cancels] = await Promise.all([
       d1All(env, 'SELECT * FROM autolabel_log ORDER BY id DESC LIMIT 100'),
@@ -20225,4 +20272,68 @@ async function handleAutolabelRoute(path, method, url, request, env, session) {
   }
 
   return veeqoResp({ error: 'Auto label route not found' }, 404);
+}
+
+
+// ── Label cost ───────────────────────────────────────────────────────────
+// Pulls what a bought label cost off a Veeqo shipment. The exact field
+// isn't documented anywhere reachable from here, so the likely names are
+// tried in order; /veeqo/autolabel/cost-debug shows the raw shipment when
+// none match. NOTE: order.delivery_cost / total_shipping is what the
+// CUSTOMER paid for shipping, not the label cost — deliberately not used.
+function labelCostFromShipment(s) {
+  if (!s || typeof s !== 'object') return null;
+  const tryKeys = (obj, prefix) => {
+    if (!obj || typeof obj !== 'object') return null;
+    for (const k of ['total_net_charge', 'net_charge', 'total_charge', 'total_cost', 'label_cost', 'shipping_cost',
+                     'postage', 'charge', 'cost', 'price', 'amount', 'base_rate', 'rate']) {
+      const n = autolabelMoney(obj[k]);
+      if (n != null && n > 0 && n < 1000) return { cost: Math.round(n * 100) / 100, field: prefix + k };
+    }
+    return null;
+  };
+  return tryKeys(s, '') || tryKeys(s.quote, 'quote.') || tryKeys(s.label, 'label.') ||
+         tryKeys(s.charges, 'charges.') || tryKeys(s.service, 'service.') || null;
+}
+
+// Fills ship_manifest_log.label_cost for every label on `date` that doesn't
+// have one yet. Labels bought by Auto Label use the price it recorded when
+// buying; everything else (printed by hand in Veeqo) is read from the
+// Veeqo shipment. Every package of a split order is matched by its own
+// tracking.
+async function labelCostFill(env, date) {
+  await ensureShipD1Tables(env);
+  await autolabelEnsureTables(env);
+  const need = await d1All(env, `SELECT tracking FROM ship_manifest_log WHERE date=? AND label_cost IS NULL`, [date]);
+  if (!need.length) return { ok: true, date, updated: 0, missing: 0 };
+  const want = new Set(need.map(r => String(r.tracking || '').toUpperCase()).filter(Boolean));
+  const found = new Map();
+
+  // 1) Auto Label's own purchases.
+  for (const r of await d1All(env, `SELECT tracking, price FROM autolabel_log WHERE action='bought' AND tracking!='' AND price IS NOT NULL AND date>=?`,
+      [new Date(Date.parse(date) - 3 * 86400000).toISOString().slice(0, 10)])) {
+    const t = String(r.tracking).toUpperCase();
+    if (want.has(t)) found.set(t, { cost: r.price, src: 'autolabel' });
+  }
+
+  // 2) Veeqo shipments shipped on that day.
+  let fieldSeen = null;
+  const since = new Date(Date.parse(date) - 3 * 86400000).toISOString().slice(0, 10);
+  const orders = await autolabelFetchVeeqoPages(env, `&status=shipped&created_at_min=${since}`, 15).catch(() => []);
+  for (const o of orders) {
+    for (const a of (o.allocations || [])) {
+      const t = _psAllocTrackingNumber(a);
+      if (!t || !want.has(t) || found.has(t)) continue;
+      const c = labelCostFromShipment(a.shipment);
+      if (c) { found.set(t, { cost: c.cost, src: 'veeqo:' + c.field }); fieldSeen = fieldSeen || c.field; }
+    }
+  }
+
+  const stmts = [];
+  for (const [t, c] of found) {
+    stmts.push(env.DB.prepare(`UPDATE ship_manifest_log SET label_cost=?, label_cost_src=? WHERE date=? AND UPPER(tracking)=? AND label_cost IS NULL`)
+      .bind(c.cost, c.src, date, t));
+  }
+  for (let i = 0; i < stmts.length; i += 100) await env.DB.batch(stmts.slice(i, i + 100));
+  return { ok: true, date, updated: found.size, missing: want.size - found.size, veeqoOrdersChecked: orders.length, costField: fieldSeen };
 }

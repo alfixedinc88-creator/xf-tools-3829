@@ -1845,6 +1845,23 @@ body {
         <div id="ps-al-orders" style="overflow-x:auto"></div>
       </div>
 
+      <!-- Label costs -->
+      <div class="ps-card" style="margin-bottom:16px">
+        <div style="font-size:13px;font-weight:700;color:var(--text);margin-bottom:6px">💵 Label costs</div>
+        <div style="font-size:12px;color:var(--text3);margin-bottom:10px;line-height:1.5">
+          Every label on the day's manifest — bought by Auto Label or printed by hand in Veeqo. Costs fill in by themselves every hour; use the button for another day.
+        </div>
+        <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-bottom:10px">
+          <input type="date" class="ps-field-input" id="ps-al-cost-date" style="max-width:170px;margin:0" onchange="psAlLoadCosts()">
+          <button class="ps-btn-sm" id="ps-al-cost-fill-btn" onclick="psAlFillCosts()">⬇ Fill in costs from Veeqo</button>
+          <span id="ps-al-cost-msg" style="font-size:12px;color:var(--text2);font-family:var(--mono)"></span>
+        </div>
+        <div id="ps-al-cost-totals" style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:10px"></div>
+        <details><summary style="font-size:12px;cursor:pointer;color:var(--text2)">Show every label</summary>
+          <div id="ps-al-cost-rows" style="overflow-x:auto;font-size:12px;margin-top:8px"></div>
+        </details>
+      </div>
+
       <!-- Re-weigh list -->
       <div class="ps-card" style="margin-bottom:16px">
         <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px">
@@ -7933,6 +7950,7 @@ function psAlOnUnlock() {
   psAlLoadConfig();
   psAlLoadLog();
   psAlLoadReweigh();
+  psAlLoadCosts();
 }
 
 async function psAlLoadConfig() {
@@ -8187,6 +8205,47 @@ window.psAlDismissReweigh = async function(qi) {
   var d = await _psAlFetch('/veeqo/autolabel/reweigh-dismiss', { method:'POST', body:{ orderId: q.orderId, by: psInitials || '' } });
   if (d.ok === false) { _psToast(d.error || 'Failed', 'error'); return; }
   psAlLoadReweigh();
+};
+
+// ── Label costs ──────────────────────────────────────────────────────────
+window.psAlLoadCosts = async function() {
+  var dEl = document.getElementById('ps-al-cost-date');
+  if (!dEl.value) dEl.value = psTodayKey();
+  var d = await _psAlFetch('/veeqo/autolabel/costs?date=' + encodeURIComponent(dEl.value));
+  var tot = document.getElementById('ps-al-cost-totals'), rowsEl = document.getElementById('ps-al-cost-rows');
+  if (d.ok === false) { tot.textContent = '✗ ' + (d.error || 'Failed'); return; }
+  var card = function(label, big, sub) {
+    return '<div style="border:1px solid var(--border);border-radius:10px;padding:8px 14px;min-width:120px"><div style="font-size:11px;color:var(--text3);font-weight:700">' + label + '</div>'
+      + '<div style="font-size:18px;font-weight:800">' + big + '</div><div style="font-size:11px;color:var(--text3)">' + sub + '</div></div>';
+  };
+  var all = 0, n = 0;
+  var cards = Object.keys(d.totals || {}).sort().map(function(c){
+    var t = d.totals[c]; all += t.cost; n += t.withCost;
+    return card(_psAlEsc(c), '$' + t.cost.toFixed(2), t.count + ' labels' + (t.withCost ? ' · avg $' + (t.cost / t.withCost).toFixed(2) : '') + (t.withCost < t.count ? ' · ' + (t.count - t.withCost) + ' no cost yet' : ''));
+  });
+  tot.innerHTML = d.labels ? card('ALL', '$' + all.toFixed(2), d.labels + ' labels' + (n ? ' · avg $' + (all / n).toFixed(2) : '')) + cards.join('')
+    : '<div style="font-size:12px;color:var(--text3)">No labels on the manifest for this day.</div>';
+  var th = 'style="text-align:left;padding:4px 6px;font-size:11px;color:var(--text3);border-bottom:1px solid var(--border)"';
+  var td = 'style="padding:4px 6px;border-bottom:1px solid var(--border)"';
+  rowsEl.innerHTML = (d.rows || []).length ? '<table style="width:100%;border-collapse:collapse"><tr><th ' + th + '>Tracking</th><th ' + th + '>Order</th><th ' + th + '>Channel</th><th ' + th + '>Carrier</th><th ' + th + '>Weight</th><th ' + th + '>Cost</th></tr>'
+    + d.rows.map(function(r){
+      return '<tr><td ' + td + '><span style="font-family:var(--mono)">' + _psAlEsc(r.tracking) + '</span></td><td ' + td + '>' + _psAlEsc(r.order_num) + '</td><td ' + td + '>' + _psAlEsc(r.channel) + '</td>'
+        + '<td ' + td + '>' + _psAlEsc(r.carrier) + '</td><td ' + td + '>' + (r.weight_lb != null ? Number(r.weight_lb).toFixed(1) + ' lb' : '') + '</td>'
+        + '<td ' + td + '>' + (r.label_cost != null ? '$' + Number(r.label_cost).toFixed(2) : '<span style="color:var(--text3)">—</span>') + '</td></tr>';
+    }).join('') + '</table>' : '';
+};
+
+window.psAlFillCosts = async function() {
+  var btn = document.getElementById('ps-al-cost-fill-btn'), msg = document.getElementById('ps-al-cost-msg');
+  var date = document.getElementById('ps-al-cost-date').value || psTodayKey();
+  btn.disabled = true; msg.textContent = 'Checking Veeqo…';
+  try {
+    var d = await _psAlFetch('/veeqo/autolabel/costs-fill', { method:'POST', body:{ date: date } });
+    if (d.ok === false) { msg.textContent = '✗ ' + (d.error || 'Failed'); return; }
+    msg.textContent = '✓ ' + d.updated + ' filled in' + (d.missing ? ' · ' + d.missing + ' still missing' : '');
+    if (d.missing && !d.costField && !d.updated) msg.textContent += ' — Veeqo didn\'t show a cost field; send Claude one tracking number to check';
+    psAlLoadCosts();
+  } finally { btn.disabled = false; }
 };
 </script>
 </html>
