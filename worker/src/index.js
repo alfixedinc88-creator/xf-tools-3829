@@ -20685,14 +20685,17 @@ async function _soShopify(env, it, qty) {
     }
   }
   if (!quantities.length) return { ok: false, error: 'Variant is not stocked at any Shopify location' };
-  const m = `mutation($input: InventorySetQuantitiesInput!) { inventorySetQuantities(input: $input) { userErrors { field message } } }`;
+  // Shopify API 2026-07 requires an @idempotent key on this mutation (real
+  // error: "The @idempotent directive is required for this mutation"); a
+  // fresh key per change, so a retried request can't apply twice.
+  const m = `mutation($input: InventorySetQuantitiesInput!, $key: String!) { inventorySetQuantities(input: $input) @idempotent(key: $key) { userErrors { field message } } }`;
   let res;
   try {
-    res = await shopifyGraphQL(env, m, { input: { name: 'available', reason: 'correction', quantities } });
+    res = await shopifyGraphQL(env, m, { key: crypto.randomUUID(), input: { name: 'available', reason: 'correction', quantities } });
   } catch (e) {
     // Older API versions don't know changeFromQuantity — retry the old way.
     if (!/changeFromQuantity/i.test(e.message)) throw e;
-    res = await shopifyGraphQL(env, m, { input: { name: 'available', reason: 'correction', ignoreCompareQuantity: true,
+    res = await shopifyGraphQL(env, m, { key: crypto.randomUUID(), input: { name: 'available', reason: 'correction', ignoreCompareQuantity: true,
       quantities: quantities.map(({ changeFromQuantity, ...rest }) => rest) } });
   }
   const errs = (res.inventorySetQuantities && res.inventorySetQuantities.userErrors) || [];
