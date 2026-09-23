@@ -4879,7 +4879,8 @@ window.psShowDebug = function(kind) {
       headers: { 'Content-Type': 'application/json', 'X-Cred-Token': psCredToken },
       body: JSON.stringify({
         tracking: info.tracking, orderNum: info.orderNum || '', carrier: info.carrier || '',
-        pickedBy: info.initials || '', pickedAt: info.firstScanTime || '', canceledBy: psInitials
+        pickedBy: info.initials || '', pickedAt: info.firstScanTime || '', canceledBy: psInitials,
+        pickDate: info.pickDate || undefined
       })
     }).then(function(r) { return r.json(); }).then(function(d) {
       if (!d || !d.ok) throw new Error((d && d.error) || 'Request failed');
@@ -4887,6 +4888,7 @@ window.psShowDebug = function(kind) {
       // Found confirm flow does, instead of waiting on the next poll.
       psTodayPicks = psTodayPicks.filter(function(s) { return s.tracking.toUpperCase() !== info.tracking.toUpperCase(); });
       psRenderPickList();
+      _psPickDropFromSummary(info.tracking);
       psFetchCancelLabelCount();
       _psToast('Label canceled — removed from ' + who + '\'s picks');
     }).catch(function(e) {
@@ -4894,6 +4896,15 @@ window.psShowDebug = function(kind) {
     });
 
     var inp = document.getElementById('ps-pick-input'); if (inp) inp.focus();
+  };
+
+  // Admin-only: the same two actions, started from a tracking in the
+  // Picking tab's person popup instead of from a double scan. pickDate is
+  // the day being viewed, so an older day's pick is the one removed.
+  window.psPickAdminCancelLabel = function(info) {
+    psPickDupeCurrentTracking = info.tracking;
+    psPickDupeCurrentInfo = info;
+    window.psPickDupeCancelLabel();
   };
 
   window.psPickDupeShowAlert = function(tracking, firstScanTime, initials, carrier, orderNum, scannedDate) {
@@ -5562,7 +5573,11 @@ function _psClearPickProduct() {
   window._psPickStockoutCtx = [];
 }
 
-async function _psLoadPickProduct(tracking, showNoStock) {
+async function _psLoadPickProduct(tracking, showNoStock, pickDate) {
+  // Which day's pick a "No Inventory" report takes back off — only set when
+  // an admin starts it from the person popup for an older day; every normal
+  // scan resets it to today (null).
+  window._psPickNoStockDate = pickDate || null;
   _psShowPickProductLoading(tracking);
   var itEl = document.getElementById('ps-pick-product-items');
   try {
@@ -5711,7 +5726,8 @@ window._psNostockConfirmAccept = function() {
       headers: { 'Content-Type': 'application/json', 'X-Cred-Token': psCredToken },
       body: JSON.stringify({
         tracking: s.ctx.tracking, orderNum: s.ctx.orderNum, sku: s.ctx.sku,
-        binLocation: s.ctx.bin, quantity: s.qty, initials: psInitials
+        binLocation: s.ctx.bin, quantity: s.qty, initials: psInitials,
+        pickDate: window._psPickNoStockDate || undefined
       })
     }).then(function(r) { return r.json(); });
   })).then(function(results) {
@@ -5723,6 +5739,8 @@ window._psNostockConfirmAccept = function() {
     // away instead of waiting on the next psLoadPicks() poll.
     psTodayPicks = psTodayPicks.filter(function(s){ return s.tracking.toUpperCase() !== tracking.toUpperCase(); });
     psRenderPickList();
+    _psPickDropFromSummary(tracking);
+    window._psPickNoStockDate = null;
     var wrap = document.getElementById('ps-pick-product-wrap');
     if (wrap) wrap.style.display = 'none';
     if (subEl) subEl.style.display = 'none';
@@ -7097,10 +7115,18 @@ function _psPickRenderPersonModalList() {
     body.innerHTML = '<div class="ps-person-modal-empty">' + (q ? 'No picks matching "' + q + '"' : 'No picks') + '</div>';
     return;
   }
-  body.innerHTML = items.map(function(s) {
+  _psPickPersonModalItems = items;
+  var isAdmin = _psIsAdmin();
+  body.innerHTML = items.map(function(s, i) {
     // Stacked layout — see the comment in psShowItemCountDetail; same
     // narrow-modal truncation problem ("Picking also have that issue"),
     // same fix.
+    var adminRow = isAdmin
+      ? '<div style="display:flex;gap:6px;margin-top:8px;flex-wrap:wrap">'
+      +   '<button class="ps-btn-sm" style="background:var(--text3);color:#fff;border-color:var(--text3)" onclick="psPickAdminAction(\'noinv\',' + i + ')">🚫 No Inventory</button>'
+      +   '<button class="ps-btn-sm" style="background:var(--purple,#8e44ad);color:#fff;border-color:var(--purple,#8e44ad)" onclick="psPickAdminAction(\'cancel\',' + i + ')">🏷️ Cancel Label</button>'
+      + '</div>'
+      : '';
     return '<div class="ps-card">'
       +   '<div class="ps-card-row-top">'
       +     '<div class="ps-card-dot green"></div>'
@@ -7110,8 +7136,40 @@ function _psPickRenderPersonModalList() {
       +     '<div class="ps-card-meta">' + _psCarrierBadge(s.carrier) + _psItemWeightBadges(s) + '</div>'
       +     '<div class="ps-card-time">' + psFmtTime(s.timestamp) + '</div>'
       +   '</div>'
+      +   adminRow
       + '</div>';
   }).join('');
+}
+
+var _psPickPersonModalItems = [];
+
+// Admin buttons on each tracking in the person popup — same two options as
+// the "Already Picked!" double-scan alert.
+window.psPickAdminAction = function(action, i) {
+  var s = _psPickPersonModalItems[i];
+  if (!s || !_psIsAdmin()) return;
+  var pickDate = psPickSummaryDate || psTodayKey();
+  if (action === 'noinv') {
+    // Opens the item card with the per-item "No Stock" checkboxes, exactly
+    // like the double-scan "No Inventory" button.
+    psPickClosePersonDetail();
+    _psLoadPickProduct(s.tracking, true, pickDate);
+    var wrap = document.getElementById('ps-pick-product-wrap');
+    if (wrap) setTimeout(function(){ wrap.scrollIntoView({ behavior:'smooth', block:'start' }); }, 150);
+  } else if (action === 'cancel') {
+    psPickAdminCancelLabel({ tracking: s.tracking, firstScanTime: s.timestamp, initials: s.initials || '',
+      carrier: s.carrier || '', orderNum: s.orderNum || '', pickDate: pickDate });
+  }
+};
+
+// Takes a tracking off the Picking summary being viewed (any day) and
+// redraws the name chips + open person popup.
+function _psPickDropFromSummary(tracking) {
+  var t = String(tracking || '').toUpperCase();
+  var left = _psPickSummaryScans.filter(function(s){ return String(s.tracking || '').toUpperCase() !== t; });
+  if (left.length === _psPickSummaryScans.length) return;
+  var lbl = document.getElementById('ps-pick-summary-total-label');
+  _psPaintPickSummary(left, lbl ? lbl.innerHTML : 'Picked');
 }
 
 function _psRenderPickSummary() {

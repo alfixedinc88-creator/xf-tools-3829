@@ -14908,6 +14908,9 @@ async function shipReportStockout(request, env) {
   await ensureShipD1Tables(env);
   const b = await request.json().catch(() => ({}));
   const { tracking, orderNum, sku, binLocation, initials, quantity } = b;
+  // Optional: which day's pick to take back off (admin fixing an older
+  // pick from the Picking tab's person popup). Defaults to today.
+  const pickDate = /^\d{4}-\d{2}-\d{2}$/.test(b.pickDate || '') ? b.pickDate : null;
 
   if (!tracking) return cors(new Response(JSON.stringify({ error: 'tracking required' }), { status: 400, headers: { 'Content-Type': 'application/json' } }));
   if (!sku)      return cors(new Response(JSON.stringify({ error: 'sku required' }),      { status: 400, headers: { 'Content-Type': 'application/json' } }));
@@ -14939,7 +14942,7 @@ async function shipReportStockout(request, env) {
   // Take the whole order off today's active picks — see comment above.
   const del = await env.DB.prepare(
     `DELETE FROM ship_pick_log WHERE date = ? AND UPPER(tracking) = ?`
-  ).bind(date, clean).run();
+  ).bind(pickDate || date, clean).run();
 
   return cors(new Response(JSON.stringify({
     ok: true, date, tracking: clean, sku, noStockFound, stockCases,
@@ -14962,6 +14965,9 @@ async function shipCancelLabel(request, env) {
   await ensureShipD1Tables(env);
   const b = await request.json().catch(() => ({}));
   const { tracking, orderNum, carrier, pickedBy, pickedAt, canceledBy } = b;
+  // Optional: which day's pick to remove (admin, from the person popup) —
+  // defaults to today like the double-scan flow.
+  const pickDate = /^\d{4}-\d{2}-\d{2}$/.test(b.pickDate || '') ? b.pickDate : null;
 
   if (!tracking)   return cors(new Response(JSON.stringify({ error: 'tracking required' }), { status: 400, headers: { 'Content-Type': 'application/json' } }));
   if (!canceledBy) return cors(new Response(JSON.stringify({ error: 'canceledBy required' }), { status: 400, headers: { 'Content-Type': 'application/json' } }));
@@ -14979,7 +14985,7 @@ async function shipCancelLabel(request, env) {
   // what actually removes it from the original picker's tally.
   const del = await env.DB.prepare(
     `DELETE FROM ship_pick_log WHERE date = ? AND UPPER(tracking) = ?`
-  ).bind(date, clean).run();
+  ).bind(pickDate || date, clean).run();
 
   return cors(new Response(JSON.stringify({
     ok: true, date, tracking: clean,
