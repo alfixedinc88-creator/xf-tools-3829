@@ -1126,6 +1126,7 @@ body {
   <div class="ps-tabitem"        id="ps-tab-gaps"     onclick="psSwitchTab('gaps')">⚠️ Gap Report <span class="ps-tab-badge" id="ps-gap-badge" style="display:none">0</span></div>
   <div class="ps-tabitem"        id="ps-tab-undelivered" onclick="psSwitchTab('undelivered')">📦 Undelivered Report</div>
   <div class="ps-tabitem"        id="ps-tab-vsync"    onclick="psSwitchTab('vsync')">🔄 Veeqo Sync</div>
+  <div class="ps-tabitem"        id="ps-tab-autolabel" onclick="psSwitchTab('autolabel')">🤖 Auto Label</div>
   <div class="ps-tabitem"        id="ps-tab-valerts"  onclick="psSwitchTab('valerts')">🚨 Alerts <span class="ps-tab-badge" id="ps-valerts-badge" style="display:none">0</span></div>
   <div class="ps-tabitem"        id="ps-tab-printlog" onclick="psSwitchTab('printlog')">🖨️ Print Log <span class="ps-tab-badge" id="ps-printlog-badge" style="display:none">0</span></div>
 </div>
@@ -1762,6 +1763,98 @@ body {
     </div>
   </div>
 
+  <!-- ══ AUTO LABEL panel ══ -->
+  <!-- Veeqo auto-label rules + channel cancellation watch. Everything here is
+       OFF until turned on. Worker side: handleAutolabelRoute / autolabelRun. -->
+  <div class="ps-panel" id="ps-panel-autolabel">
+    <div id="ps-autolabel-gate" class="ps-mgmt-gate">
+      <div class="ps-mgmt-gate-icon">🔒</div>
+      <div class="ps-mgmt-gate-title">Management Access Required</div>
+      <div class="ps-mgmt-gate-sub">Sign in with a management account to use Auto Label.</div>
+      <div class="ps-mgmt-gate-row" style="flex-direction:column;gap:8px">
+        <input class="ps-mgmt-gate-input" id="ps-autolabel-username" type="text" placeholder="Username" autocomplete="username">
+        <input class="ps-mgmt-gate-input" id="ps-autolabel-password" type="password" placeholder="Password" autocomplete="current-password">
+        <button class="ps-btn-primary" style="width:auto;padding:11px 20px" id="ps-autolabel-pin-btn" onclick="psUnlockTab('autolabel')">Unlock</button>
+      </div>
+      <div id="ps-autolabel-pin-err" style="color:var(--red);font-size:13px;margin-top:8px;font-family:var(--mono);text-align:center;min-height:18px"></div>
+    </div>
+    <div id="ps-autolabel-content" style="display:none">
+      <!-- On / off -->
+      <div class="ps-card" style="margin-bottom:16px">
+        <div style="font-size:13px;font-weight:700;color:var(--text);margin-bottom:6px">🤖 Auto Label</div>
+        <div style="font-size:12px;color:var(--text3);margin-bottom:10px;line-height:1.5">
+          Waits after an order comes in, holds same name + address orders for merging, picks USPS or UPS by the rules below, and never buys a label for a cancelled order.
+          Labels print through Veeqo's <b>DirectPrint</b> as soon as they're bought.
+        </div>
+        <div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:8px" id="ps-al-mode-btns">
+          <button class="ps-btn-sm" data-mode="off" onclick="psAlSetMode('off')">⏸ Off</button>
+          <button class="ps-btn-sm" data-mode="preview" onclick="psAlSetMode('preview')">👀 Preview only (no buying)</button>
+          <button class="ps-btn-sm" data-mode="auto" onclick="psAlSetMode('auto')">⚡ Auto buy labels</button>
+        </div>
+        <label style="display:flex;align-items:center;gap:8px;font-size:13px;color:var(--text2);cursor:pointer;margin-top:6px">
+          <input type="checkbox" id="ps-al-cancelwatch" onchange="psAlSaveConfig()">
+          Cancellation watch: put cancelled orders that already have a label on the 🗑️ Cancellation list
+        </label>
+        <div id="ps-al-status" style="font-size:12px;color:var(--text3);margin-top:10px;font-family:var(--mono);line-height:1.6"></div>
+      </div>
+
+      <!-- Rules -->
+      <div class="ps-card" style="margin-bottom:16px">
+        <div style="font-size:13px;font-weight:700;color:var(--text);margin-bottom:10px">📐 Rules</div>
+        <div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(210px,1fr));gap:10px 14px;font-size:12px;color:var(--text2)" id="ps-al-rules">
+          <label>Wait after newest order (min)<input class="ps-field-input" data-k="waitMinutes" type="number" min="0" step="1"></label>
+          <label>UPS must be cheaper by ($)<input class="ps-field-input" data-k="upsMinSavings" type="number" min="0" step="0.05"></label>
+          <label>…and arrive within (days)<input class="ps-field-input" data-k="upsMaxDays" type="number" min="1" step="1"></label>
+          <label>USPS-only channels (comma list)<input class="ps-field-input" data-k="uspsOnlyChannels" type="text"></label>
+          <label>Hold if label ≥ this % of order<input class="ps-field-input" data-k="lowValuePct" type="number" min="0" step="5"></label>
+          <label>…only for orders up to ($, 0 = all)<input class="ps-field-input" data-k="lowValueMaxOrder" type="number" min="0" step="1"></label>
+          <label>Never auto-buy channels (comma list)<input class="ps-field-input" data-k="skipChannels" type="text"></label>
+          <label>Max labels per run<input class="ps-field-input" data-k="maxLabelsPerRun" type="number" min="0" step="1"></label>
+          <label>Max labels per day<input class="ps-field-input" data-k="maxLabelsPerDay" type="number" min="0" step="1"></label>
+          <label>Orders to rate-check per run<input class="ps-field-input" data-k="maxQuotesPerRun" type="number" min="0" step="1"></label>
+          <label>Cancellation look-back (days)<input class="ps-field-input" data-k="cancelLookbackDays" type="number" min="1" step="1"></label>
+          <label>Run at most every (min)<input class="ps-field-input" data-k="minRunGapMinutes" type="number" min="1" step="1"></label>
+        </div>
+        <div style="display:flex;gap:10px;align-items:center;margin-top:12px;flex-wrap:wrap">
+          <button class="ps-btn-primary" style="width:auto;padding:10px 22px" onclick="psAlSaveConfig()">💾 Save rules</button>
+          <span id="ps-al-save-result" style="font-size:12px;color:var(--text2);font-family:var(--mono)"></span>
+        </div>
+      </div>
+
+      <!-- Tools -->
+      <div class="ps-card" style="margin-bottom:16px">
+        <div style="font-size:13px;font-weight:700;color:var(--text);margin-bottom:10px">🧪 Test</div>
+        <div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap;margin-bottom:10px">
+          <button class="ps-btn-primary" style="width:auto;padding:10px 22px" id="ps-al-run-btn" onclick="psAlRunPreview()">▶ Run preview now</button>
+          <span style="font-size:12px;color:var(--text3)">Shows what it would do right now. Never buys.</span>
+        </div>
+        <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
+          <input type="text" class="ps-field-input" id="ps-al-order" placeholder="Order number waiting for a label" style="max-width:280px;margin:0;font-family:var(--mono);font-size:13px">
+          <button class="ps-btn-sm" onclick="psAlRates()">💲 Check rates</button>
+          <button class="ps-btn-sm" style="background:var(--red);color:#fff;border-color:var(--red);font-weight:700" onclick="psAlTestBuy()">Test buy ONE label</button>
+        </div>
+        <div id="ps-al-tool-result" style="font-size:12px;color:var(--text2);font-family:var(--mono);margin-top:10px;white-space:pre-wrap;word-break:break-word"></div>
+      </div>
+
+      <!-- Last run -->
+      <div class="ps-card" style="margin-bottom:16px">
+        <div style="font-size:13px;font-weight:700;color:var(--text);margin-bottom:8px">📋 Last run</div>
+        <div id="ps-al-channels" style="font-size:12px;margin-bottom:8px"></div>
+        <div id="ps-al-counts" style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:10px"></div>
+        <div id="ps-al-orders" style="overflow-x:auto"></div>
+      </div>
+
+      <!-- History -->
+      <div class="ps-card">
+        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px">
+          <div style="font-size:13px;font-weight:700;color:var(--text)">🕘 Labels bought &amp; cancellations found</div>
+          <button class="ps-btn-sm" onclick="psAlLoadLog()">↻ Refresh</button>
+        </div>
+        <div id="ps-al-log" style="overflow-x:auto;font-size:12px"></div>
+      </div>
+    </div>
+  </div>
+
   <!-- ══ VEEQO SYNC panel ══ -->
   <div class="ps-panel" id="ps-panel-vsync">
     <div id="ps-vsync-gate" class="ps-mgmt-gate">
@@ -2138,7 +2231,7 @@ window.psCredLogin = async function() {
     // only ever set by the step-up flow itself), so a real mgmt user
     // still got asked to sign in again on those tabs.
     if (psRole === 'mgmt') {
-      ['status','gaps','undelivered','vsync','valerts'].forEach(function(t){ _psUnlockedTabs[t] = true; });
+      ['status','gaps','undelivered','vsync','valerts','autolabel'].forEach(function(t){ _psUnlockedTabs[t] = true; });
     }
     localStorage.setItem('xf_cred_token', data.token);
     localStorage.setItem('xf_cred_user', JSON.stringify(psCredUser));
@@ -4936,7 +5029,7 @@ function _psWireEvents() {
   document.getElementById('ps-cred-password').addEventListener('keydown', function(e){ if (e.key === 'Enter') psCredLogin(); });
 
   // PIN gate Enter keys
-  ['status','gaps','vsync','valerts'].forEach(function(tab) {
+  ['status','gaps','vsync','valerts','autolabel'].forEach(function(tab) {
     var u = document.getElementById('ps-' + tab + '-username');
     var p = document.getElementById('ps-' + tab + '-password');
     if (u) u.addEventListener('keydown', function(e){ if (e.key === 'Enter') { var pw = document.getElementById('ps-' + tab + '-password'); if (pw) pw.focus(); } });
@@ -5018,7 +5111,7 @@ window.psUnlockTab = async function(tab) {
   // the credentials just verified are real, account-level mgmt access, not
   // scoped to this one tab, so there's no reason to make someone re-enter
   // them again for each tab separately in the same session.
-  ['status','gaps','undelivered','vsync','valerts'].forEach(function(t){ _psUnlockedTabs[t] = true; });
+  ['status','gaps','undelivered','vsync','valerts','autolabel'].forEach(function(t){ _psUnlockedTabs[t] = true; });
   var gate    = document.getElementById('ps-' + tab + '-gate');
   var content = document.getElementById('ps-' + tab + '-content');
   if (gate)    gate.style.display    = 'none';
@@ -5031,6 +5124,7 @@ window.psUnlockTab = async function(tab) {
   // Veeqo tabs — fire on-unlock loaders
   if (tab === 'vsync')   psVeeqoOnUnlock();
   if (tab === 'valerts') psVaOnUnlock();
+  if (tab === 'autolabel') psAlOnUnlock();
 };
 
 // Override psSwitchTab to re-show gate if tab not yet unlocked
@@ -5046,7 +5140,7 @@ window.psSwitchTab = function(name) {
   // never got its gate explicitly hidden. The gate has no default
   // display:none in its CSS, so it stayed visible regardless of the
   // real unlocked state underneath it.
-  if (name === 'status' || name === 'gaps' || name === 'undelivered' || name === 'vsync' || name === 'valerts') {
+  if (name === 'status' || name === 'gaps' || name === 'undelivered' || name === 'vsync' || name === 'valerts' || name === 'autolabel') {
     var gate    = document.getElementById('ps-' + name + '-gate');
     var content = document.getElementById('ps-' + name + '-content');
     if (_psUnlockedTabs[name]) {
@@ -5083,6 +5177,7 @@ window.psSwitchTab = function(name) {
   if (name === 'gaps'    && _psUnlockedTabs['gaps'])    { psRunReconcile(); }
   if (name === 'vsync'   && _psUnlockedTabs['vsync'])   { psVeeqoOnUnlock(); }
   if (name === 'valerts' && _psUnlockedTabs['valerts']) { psVaOnUnlock(); }
+  if (name === 'autolabel' && _psUnlockedTabs['autolabel']) { psAlOnUnlock(); }
 
   if (window._psRefreshInterval) { clearInterval(window._psRefreshInterval); window._psRefreshInterval = null; }
   if (window._psPickRefreshInterval) { clearInterval(window._psPickRefreshInterval); window._psPickRefreshInterval = null; }
@@ -7775,5 +7870,210 @@ window.psVaExport = function() {
 
 // ── Boot  ─────────────────────────────────────────────────────────────────
 if (typeof psOnLaunch === 'function') psOnLaunch();
+
+// ══ AUTO LABEL tab ═══════════════════════════════════════════════════════
+// Worker: /veeqo/autolabel/* (mgmt only). All buying happens on the worker's
+// cron; nothing on this page buys a label except "Test buy ONE label".
+var _psAlConfig = null;
+var _PS_AL_LABELS = {
+  bought:     ['✅ Bought', 'var(--green)'],
+  buy_failed: ['❌ Buy failed', 'var(--red)'],
+  would_buy:  ['👀 Would buy', 'var(--accent)'],
+  cancelled:  ['🚫 Cancelled — don\'t print', 'var(--red)'],
+  merge:      ['🔗 Merge in Veeqo', 'var(--purple)'],
+  low_value:  ['💸 Low value — check', 'var(--orange)'],
+  no_rate:    ['❓ No rate', 'var(--orange)'],
+  hold:       ['✋ Hold', 'var(--orange)'],
+  ready:      ['⏭ Ready (next run)', 'var(--text2)'],
+  waiting:    ['⏳ Waiting', 'var(--text3)'],
+  skipped:    ['⏭ Skipped', 'var(--text3)'],
+  has_label:  ['🏷 Has label', 'var(--text3)']
+};
+
+function _psAlEsc(v) {
+  return String(v == null ? '' : v).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+}
+
+async function _psAlFetch(path, opts) {
+  opts = opts || {};
+  var headers = { 'X-Cred-Token': psCredToken };
+  if (opts.body) headers['Content-Type'] = 'application/json';
+  var r = await fetch(PS_WORKER + path, { method: opts.method || 'GET', headers: headers, body: opts.body ? JSON.stringify(opts.body) : undefined });
+  var data = await r.json().catch(function(){ return { ok:false, error:'Bad response (HTTP ' + r.status + ')' }; });
+  if (!r.ok && data.ok !== false) data = { ok:false, error: data.error || ('HTTP ' + r.status) };
+  return data;
+}
+
+function psAlOnUnlock() {
+  psAlLoadConfig();
+  psAlLoadLog();
+}
+
+async function psAlLoadConfig() {
+  var st = document.getElementById('ps-al-status');
+  try {
+    var d = await _psAlFetch('/veeqo/autolabel/config');
+    if (d.ok === false) { st.textContent = '✗ ' + (d.error || 'Could not load'); return; }
+    _psAlConfig = d.config;
+    _psAlRenderConfig(d);
+    if (d.lastRun) _psAlRenderRun(d.lastRun);
+  } catch (e) { st.textContent = '✗ ' + e.message; }
+}
+
+function _psAlRenderConfig(d) {
+  var c = d.config;
+  document.querySelectorAll('#ps-al-mode-btns button').forEach(function(b){
+    var on = b.getAttribute('data-mode') === c.mode;
+    var col = c.mode === 'auto' ? 'var(--green)' : c.mode === 'preview' ? 'var(--accent)' : 'var(--text2)';
+    b.style.background  = on ? col : '';
+    b.style.color       = on ? '#fff' : '';
+    b.style.borderColor = on ? col : '';
+  });
+  document.getElementById('ps-al-cancelwatch').checked = !!c.cancelWatch;
+  document.querySelectorAll('#ps-al-rules [data-k]').forEach(function(inp){
+    var k = inp.getAttribute('data-k');
+    if (k === 'lowValuePct') inp.value = Math.round((c.lowValueRatio || 0) * 100);
+    else if (Array.isArray(c[k])) inp.value = c[k].join(', ');
+    else inp.value = c[k];
+  });
+  var lines = [];
+  lines.push('Mode: ' + ({ off:'OFF', preview:'PREVIEW ONLY — nothing is bought', auto:'AUTO — buying labels' })[c.mode]);
+  if (c.mode === 'auto' && !d.buyVerified) lines.push('⚠ Auto can\'t buy yet — do one "Test buy ONE label" first.');
+  if (d.lastRun) {
+    lines.push('Last run: ' + new Date(d.lastRun.startedAt).toLocaleString() + ' (' + (d.lastRun.trigger === 'cron' ? 'automatic' : 'by hand') + ')');
+  }
+  document.getElementById('ps-al-status').innerHTML = lines.map(_psAlEsc).join('<br>');
+}
+
+function _psAlReadRules() {
+  var c = {};
+  document.querySelectorAll('#ps-al-rules [data-k]').forEach(function(inp){
+    var k = inp.getAttribute('data-k');
+    if (k === 'lowValuePct') c.lowValueRatio = (parseFloat(inp.value) || 0) / 100;
+    else c[k] = inp.value;
+  });
+  c.cancelWatch = document.getElementById('ps-al-cancelwatch').checked;
+  return c;
+}
+
+window.psAlSaveConfig = async function(extra) {
+  var out = document.getElementById('ps-al-save-result');
+  var body = _psAlReadRules();
+  if (extra) Object.keys(extra).forEach(function(k){ body[k] = extra[k]; });
+  out.textContent = 'Saving…';
+  var d = await _psAlFetch('/veeqo/autolabel/config', { method:'POST', body:{ config: body } });
+  if (d.ok === false) { out.textContent = '✗ ' + (d.error || 'Save failed'); _psToast('Save failed', 'error'); return; }
+  out.textContent = '✓ Saved';
+  _psToast('Auto Label settings saved');
+  psAlLoadConfig();
+};
+
+window.psAlSetMode = function(mode) {
+  if (mode === 'auto' && !confirm('Turn on AUTO buying?\n\nThe worker will buy real Veeqo labels (and DirectPrint will print them) for orders that pass the rules, up to the per-run / per-day limits.')) return;
+  psAlSaveConfig({ mode: mode });
+};
+
+window.psAlRunPreview = async function() {
+  var btn = document.getElementById('ps-al-run-btn');
+  btn.disabled = true; btn.textContent = '⏳ Checking Veeqo + channels…';
+  try {
+    var d = await _psAlFetch('/veeqo/autolabel/run', { method:'POST', body:{} });
+    if (d.ok === false) { _psToast(d.error || 'Run failed', 'error'); return; }
+    _psAlRenderRun(d);
+    psAlLoadConfig();
+  } catch (e) { _psToast(e.message, 'error'); }
+  finally { btn.disabled = false; btn.textContent = '▶ Run preview now'; }
+};
+
+function _psAlRenderRun(r) {
+  var ch = r.channels || {};
+  document.getElementById('ps-al-channels').innerHTML = 'Cancellation check: ' + ['amazon','ebay','walmart','shopify','veeqo'].map(function(k){
+    var c = ch[k];
+    if (!c) return '<span style="color:var(--text3)">' + k + ' —</span>';
+    return c.ok
+      ? '<span style="color:var(--green)">' + k + ' ✓ ' + c.count + '</span>'
+      : '<span style="color:var(--red)" title="' + _psAlEsc(c.error) + '">' + k + ' ✗ error</span>';
+  }).join(' · ') + (r.cancelWatch && r.cancelWatch.addedToCancelList ? ' · <b>' + r.cancelWatch.addedToCancelList + ' added to Cancellation list</b>' : '')
+    + (r.notes && r.notes.length ? '<div style="color:var(--orange);margin-top:4px">' + r.notes.map(_psAlEsc).join('<br>') + '</div>' : '');
+
+  var counts = r.counts || {};
+  document.getElementById('ps-al-counts').innerHTML = Object.keys(_PS_AL_LABELS).filter(function(k){ return counts[k]; }).map(function(k){
+    var L = _PS_AL_LABELS[k];
+    return '<span style="font-size:11px;font-weight:700;padding:4px 10px;border-radius:100px;border:1px solid ' + L[1] + ';color:' + L[1] + '">' + L[0] + ' ' + counts[k] + '</span>';
+  }).join('');
+
+  var rows = (r.orders || []).filter(function(o){ return o.decision !== 'has_label'; });
+  if (!rows.length) { document.getElementById('ps-al-orders').innerHTML = '<div style="font-size:12px;color:var(--text3)">' + (r.mode === 'off' ? 'Auto Label is off — only the cancellation check ran.' : 'No orders waiting for a label.') + '</div>'; return; }
+  var th = 'style="text-align:left;padding:6px 8px;font-size:11px;color:var(--text3);border-bottom:1px solid var(--border)"';
+  var td = 'style="padding:6px 8px;border-bottom:1px solid var(--border);vertical-align:top"';
+  document.getElementById('ps-al-orders').innerHTML = '<table style="width:100%;border-collapse:collapse;font-size:12px"><tr>'
+    + '<th ' + th + '>Result</th><th ' + th + '>Order</th><th ' + th + '>Channel</th><th ' + th + '>Customer</th><th ' + th + '>Total</th><th ' + th + '>Label</th><th ' + th + '>Why</th></tr>'
+    + rows.map(function(o){
+      var L = _PS_AL_LABELS[o.decision] || [o.decision, 'var(--text2)'];
+      var label = o.carrier ? (o.carrier + ' ' + (o.service || '') + (o.price != null ? ' $' + Number(o.price).toFixed(2) : '') + (o.days != null ? ' · ' + o.days + 'd' : '')) : '';
+      if (o.tracking) label += ' · ' + o.tracking;
+      return '<tr><td ' + td + '><span style="color:' + L[1] + ';font-weight:700;white-space:nowrap">' + L[0] + '</span></td>'
+        + '<td style="padding:6px 8px;border-bottom:1px solid var(--border);vertical-align:top;font-family:var(--mono)">' + _psAlEsc(o.number) + '</td>'
+        + '<td ' + td + '>' + _psAlEsc(o.channel) + '</td>'
+        + '<td ' + td + '>' + _psAlEsc(o.customer) + '</td>'
+        + '<td ' + td + '>' + (o.total != null ? '$' + Number(o.total).toFixed(2) : '') + '</td>'
+        + '<td ' + td + '>' + _psAlEsc(label) + '</td>'
+        + '<td ' + td + '>' + _psAlEsc(o.reason) + '</td></tr>';
+    }).join('') + '</table>';
+}
+
+window.psAlRates = async function() {
+  var num = document.getElementById('ps-al-order').value.trim();
+  var out = document.getElementById('ps-al-tool-result');
+  if (!num) { out.textContent = 'Type an order number first.'; return; }
+  out.textContent = 'Asking Veeqo for rates…';
+  var d = await _psAlFetch('/veeqo/autolabel/rates?order=' + encodeURIComponent(num));
+  if (d.ok === false) { out.textContent = '✗ ' + (d.error || 'Failed') + (d.attempts ? '\n\n' + JSON.stringify(d.attempts, null, 2) : ''); return; }
+  var lines = ['Order ' + d.order + ' · ' + d.channel + ' · total $' + (d.total != null ? Number(d.total).toFixed(2) : '?') + ' · rates from: ' + (d.source || 'none')];
+  (d.rates || []).slice().sort(function(a,b){ return a.price - b.price; }).forEach(function(x){
+    lines.push('  ' + x.carrier.padEnd(5) + ' $' + Number(x.price).toFixed(2).padStart(6) + '  ' + (x.days != null ? x.days + 'd' : '?d') + '  ' + x.service);
+  });
+  lines.push('');
+  lines.push(d.pick ? ('Rules pick: ' + d.pick.carrier + ' ' + d.pick.service + ' $' + Number(d.pick.price).toFixed(2)) : 'Rules pick: nothing');
+  lines.push((d.hold ? 'HOLD (' + d.hold + '): ' : 'Why: ') + d.reason);
+  out.textContent = lines.join('\n');
+  if (!(d.rates || []).length) out.textContent += '\n\nRaw Veeqo answers (send these to Claude):\n' + JSON.stringify(d.attempts, null, 2).slice(0, 4000);
+};
+
+window.psAlTestBuy = async function() {
+  var num = document.getElementById('ps-al-order').value.trim();
+  var out = document.getElementById('ps-al-tool-result');
+  if (!num) { out.textContent = 'Type an order number first.'; return; }
+  if (!confirm('Buy a REAL label in Veeqo for order ' + num + ' now?\n\nThis costs money. If DirectPrint is on, it prints right away.')) return;
+  out.textContent = 'Buying…';
+  var d = await _psAlFetch('/veeqo/autolabel/test-buy', { method:'POST', body:{ order: num } });
+  if (d.ok === false) { out.textContent = '✗ ' + (d.error || 'Failed') + (d.sentToVeeqo ? '\n\nRate used (send this to Claude):\n' + JSON.stringify(d.sentToVeeqo, null, 2).slice(0, 4000) : ''); return; }
+  out.textContent = '✓ Bought ' + d.carrier + ' ' + d.service + ' $' + Number(d.price).toFixed(2) + ' for ' + d.order + (d.tracking ? '\nTracking: ' + d.tracking : '\n(No tracking in the answer — check the order in Veeqo)') + '\n\nAuto mode can now buy labels.';
+  _psToast('Label bought for ' + d.order);
+  psAlLoadConfig(); psAlLoadLog();
+};
+
+window.psAlLoadLog = async function() {
+  var box = document.getElementById('ps-al-log');
+  var d = await _psAlFetch('/veeqo/autolabel/log');
+  if (d.ok === false) { box.textContent = '✗ ' + (d.error || 'Failed'); return; }
+  var names = { bought:'✅ Bought', buy_failed:'❌ Buy failed', cancel_listed:'🗑️ Added to Cancellation list', config:'⚙️ Settings changed' };
+  var log = (d.log || []).filter(function(x){ return x.action !== 'config'; }).slice(0, 40);
+  var html = log.length ? log.map(function(x){
+    return '<div style="padding:5px 0;border-bottom:1px solid var(--border)"><span style="font-family:var(--mono);color:var(--text3)">' + _psAlEsc(new Date(x.ts).toLocaleString()) + '</span> '
+      + '<b>' + _psAlEsc(names[x.action] || x.action) + '</b> ' + _psAlEsc(x.order_number) + ' · ' + _psAlEsc(x.channel) + ' · ' + _psAlEsc(x.customer)
+      + (x.carrier ? ' · ' + _psAlEsc(x.carrier + ' ' + x.service) + (x.price != null ? ' $' + Number(x.price).toFixed(2) : '') : '')
+      + (x.tracking ? ' · <span style="font-family:var(--mono)">' + _psAlEsc(x.tracking) + '</span>' : '')
+      + (x.action === 'buy_failed' ? '<div style="color:var(--red)">' + _psAlEsc(x.detail) + '</div>' : '') + '</div>';
+  }).join('') : '<div style="color:var(--text3)">Nothing yet.</div>';
+  var canc = (d.cancels || []).slice(0, 40);
+  var handled = { added_to_cancel_list:'on Cancellation list', not_printed:'not printed — blocked', not_in_veeqo:'not in Veeqo', already_shipped:'already shipped (older)' };
+  html += '<div style="font-weight:700;margin:14px 0 6px">Cancelled orders found on channels</div>' + (canc.length ? canc.map(function(c){
+    return '<div style="padding:4px 0;border-bottom:1px solid var(--border)"><span style="font-family:var(--mono);color:var(--text3)">' + _psAlEsc(new Date(c.first_seen).toLocaleString()) + '</span> '
+      + '<b>' + _psAlEsc(c.channel) + '</b> ' + _psAlEsc(c.order_num) + ' · ' + _psAlEsc(c.state) + ' · ' + _psAlEsc(handled[c.handled] || c.handled || '')
+      + (c.tracking ? ' · <span style="font-family:var(--mono)">' + _psAlEsc(c.tracking) + '</span>' : '') + '</div>';
+  }).join('') : '<div style="color:var(--text3)">None yet (turn on Cancellation watch).</div>');
+  box.innerHTML = html;
+};
 </script>
 </html>
