@@ -3387,6 +3387,18 @@ export default {
       return await inventoryDiscrepanciesHandler(env);
     }
 
+    // ── Sold Out: change listing quantities on the marketplaces (mgmt only) ──
+    if (url.pathname.startsWith('/inventory/soldout/')) {
+      const credSession = await verifyCredSession(request.headers.get('X-Cred-Token'), env);
+      if (!credSession || !credSession.roles.includes('mgmt')) {
+        return cors(new Response(JSON.stringify({ ok: false, error: 'Management access required' }), { status: 403, headers: { 'Content-Type': 'application/json' } }));
+      }
+      if (url.pathname === '/inventory/soldout/lookup'  && method === 'GET')  return await soldoutLookup(url, env);
+      if (url.pathname === '/inventory/soldout/set-qty' && method === 'POST') return await soldoutSetQty(request, env);
+      if (url.pathname === '/inventory/soldout/log'     && method === 'GET')  return await soldoutLog(env);
+      return cors(new Response(JSON.stringify({ ok: false, error: 'Not found' }), { status: 404, headers: { 'Content-Type': 'application/json' } }));
+    }
+
     // ── Inventory routes /inventory/* ──
     if (url.pathname.startsWith('/inventory/')) {
       const path = url.pathname;
@@ -20507,4 +20519,197 @@ async function labelCostFill(env, date) {
   }
   for (let i = 0; i < stmts.length; i += 100) await env.DB.batch(stmts.slice(i, i + 100));
   return { ok: true, date, updated: found.size, missing: want.size - found.size, veeqoOrdersChecked: orders.length, costField: fieldSeen };
+}
+
+// ═══════════════════════════════════════════════════════════════════════
+// SOLD OUT — set listing quantities on every marketplace  (/inventory/soldout/*)
+//
+// Inventory → "🚫 Sold Out" tab (mgmt only). Same search as the Repricer's
+// SKU Lookup (EbaySKU / AmazonSKU / WalmartSKU / ShopifySKU sheets), but
+// instead of copying IDs to paste into each Seller Center, the picked
+// listings get their quantity set directly through each channel's API:
+//   eBay    — Trading ReviseInventoryStatus (ItemID, + SKU for a
+//             variation); falls back to the Inventory API
+//             (bulk_update_price_quantity) for listings made with it.
+//   Amazon  — Listings API PATCH fulfillment_availability, for the
+//             merchant-fulfilled SKUs under the ASIN. FBA SKUs are skipped
+//             (Amazon controls those quantities).
+//   Walmart — PUT /v3/inventory?sku=
+//   Shopify — inventorySetQuantities on the variant with that SKU
+//             (quantity 0 → every location; otherwise the first location).
+// Every change is written to D1 listing_qty_log.
+// ═══════════════════════════════════════════════════════════════════════
+
+function _soResp(body, status) {
+  return cors(new Response(JSON.stringify(body), { status: status || 200, headers: { 'Content-Type': 'application/json' } }));
+}
+
+async function soldoutLookup(url, env) {
+  const r = await repricerSkuLookup(url, env);
+  return r; // same results shape: { ok, results:[{platform, listingId, title, sku, baseSku}], count }
+}
+
+function _xmlEsc(s) { return String(s == null ? '' : s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;'); }
+
+async function _soEbayTrading(env, itemId, sku, qty) {
+  const token = await getEbayToken(env);
+  const body = `<?xml version="1.0" encoding="utf-8"?>
+<ReviseInventoryStatusRequest xmlns="urn:ebay:apis:eBLBaseComponents">
+  <InventoryStatus>
+    <ItemID>${_xmlEsc(itemId)}</ItemID>${sku ? `
+    <SKU>${_xmlEsc(sku)}</SKU>` : ''}
+    <Quantity>${qty}</Quantity>
+  </InventoryStatus>
+</ReviseInventoryStatusRequest>`;
+  const r = await fetch('https://api.ebay.com/ws/api.dll', {
+    method: 'POST',
+    headers: { 'X-EBAY-API-CALL-NAME': 'ReviseInventoryStatus', 'X-EBAY-API-SITEID': '0',
+      'X-EBAY-API-COMPATIBILITY-LEVEL': '967', 'X-EBAY-API-IAF-TOKEN': token, 'Content-Type': 'text/xml' },
+    body,
+  });
+  const xml = await r.text();
+  const ok = /<Ack>(Success|Warning)<\/Ack>/.test(xml);
+  const msgs = [...xml.matchAll(/<LongMessage>([^<]+)<\/LongMessage>/g)].map(m => m[1]);
+  return { ok, error: ok ? null : (msgs.join(' | ') || 'eBay rejected the change') };
+}
+
+async function _soEbayInventoryApi(env, sku, qty) {
+  const token = await getEbayToken(env);
+  const h = { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json', 'Content-Language': 'en-US' };
+  const or = await fetch(`https://api.ebay.com/sell/inventory/v1/offer?sku=${encodeURIComponent(sku)}`, { headers: h });
+  const od = await or.json().catch(() => ({}));
+  if (!or.ok) return { ok: false, error: `Inventory API offers: ${JSON.stringify(od.errors || od).slice(0, 200)}` };
+  const offers = (od.offers || []).map(o => ({ offerId: o.offerId, availableQuantity: qty }));
+  const r = await fetch('https://api.ebay.com/sell/inventory/v1/bulk_update_price_quantity', {
+    method: 'POST', headers: h,
+    body: JSON.stringify({ requests: [{ sku, shipToLocationAvailability: { quantity: qty }, offers }] }),
+  });
+  const d = await r.json().catch(() => ({}));
+  const resp = (d.responses || [])[0] || {};
+  const ok = r.ok && (!resp.statusCode || resp.statusCode < 300);
+  return { ok, error: ok ? null : JSON.stringify(resp.errors || d.errors || d).slice(0, 300) };
+}
+
+async function _soEbay(env, it, qty) {
+  // ItemID alone first (single listing); with the SKU if eBay says the
+  // listing has variations / needs the SKU; then the Inventory API route.
+  let r = await _soEbayTrading(env, it.listingId, null, qty);
+  if (r.ok) return { ...r, via: 'ReviseInventoryStatus' };
+  const first = r.error;
+  if (it.sku) {
+    r = await _soEbayTrading(env, it.listingId, it.sku, qty);
+    if (r.ok) return { ...r, via: 'ReviseInventoryStatus+SKU' };
+    const inv = await _soEbayInventoryApi(env, it.sku, qty);
+    if (inv.ok) return { ...inv, via: 'Inventory API' };
+    return { ok: false, error: `${first} / with SKU: ${r.error} / Inventory API: ${inv.error}` };
+  }
+  return { ok: false, error: first };
+}
+
+async function _soAmazon(env, it, qty) {
+  if (!env.AMAZON_SELLER_ID) return { ok: false, error: 'AMAZON_SELLER_ID not set' };
+  const token = await getAmazonToken(env);
+  const sellerId = env.AMAZON_SELLER_ID;
+  const mid = env.AMAZON_MARKETPLACE_ID || 'ATVPDKIKX0DER';
+  const base = `https://sellingpartnerapi-na.amazon.com/listings/2021-08-01/items/${encodeURIComponent(sellerId)}`;
+  const sr = await fetch(`${base}?marketplaceIds=${mid}&identifiers=${encodeURIComponent(it.listingId)}&identifiersType=ASIN&includedData=summaries,fulfillmentAvailability`,
+    { headers: { 'x-amz-access-token': token } });
+  const sd = await sr.json().catch(() => ({}));
+  if (!sr.ok) return { ok: false, error: 'SKU lookup: ' + JSON.stringify(sd.errors || sd).slice(0, 200) };
+  const items = sd.items || [];
+  const isFba = i => (i.fulfillmentAvailability || []).some(f => /AMAZON/i.test(f.fulfillmentChannelCode || ''));
+  let targets = items.filter(i => !isFba(i));
+  const exact = targets.filter(i => String(i.sku).toUpperCase() === String(it.sku || '').toUpperCase());
+  if (exact.length) targets = exact;
+  const skipped = items.filter(isFba).map(i => i.sku);
+  if (!targets.length) return { ok: false, error: skipped.length ? `Only FBA SKUs under this ASIN (${skipped.join(', ')}) — Amazon controls those` : 'No SKUs found under this ASIN' };
+  const done = [], errors = [];
+  for (const t of targets) {
+    const pr = await fetch(`${base}/${encodeURIComponent(t.sku)}?marketplaceIds=${mid}`, {
+      method: 'PATCH',
+      headers: { 'x-amz-access-token': token, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ productType: 'PRODUCT', patches: [{ op: 'replace', path: '/attributes/fulfillment_availability',
+        value: [{ fulfillment_channel_code: 'DEFAULT', quantity: qty }] }] }),
+    });
+    const pd = await pr.json().catch(() => ({}));
+    const accepted = pr.ok && (!pd.status || /ACCEPTED/i.test(pd.status));
+    if (accepted) done.push(t.sku); else errors.push(`${t.sku}: ${JSON.stringify(pd.issues || pd.errors || pd).slice(0, 200)}`);
+  }
+  return { ok: !errors.length, error: errors.join(' | ') || null,
+    detail: `SKUs: ${done.join(', ')}${skipped.length ? ` · FBA skipped: ${skipped.join(', ')}` : ''}` };
+}
+
+async function _soWalmart(env, it, qty) {
+  if (!it.sku) return { ok: false, error: 'No Walmart SKU on the WalmartSKU sheet row' };
+  const token = await getWalmartToken(env);
+  const r = await fetch(`https://marketplace.walmartapis.com/v3/inventory?sku=${encodeURIComponent(it.sku)}`, {
+    method: 'PUT',
+    headers: { 'WM_SEC.ACCESS_TOKEN': token, 'WM_QOS.CORRELATION_ID': crypto.randomUUID(), 'WM_SVC.NAME': 'Walmart Marketplace',
+      'Accept': 'application/json', 'Content-Type': 'application/json' },
+    body: JSON.stringify({ sku: it.sku, quantity: { unit: 'EACH', amount: qty } }),
+  });
+  const d = await r.json().catch(() => ({}));
+  return { ok: r.ok, error: r.ok ? null : JSON.stringify(d.errors || d).slice(0, 300) };
+}
+
+async function _soShopify(env, it, qty) {
+  if (!it.sku) return { ok: false, error: 'No SKU on the ShopifySKU sheet row' };
+  const q = `query($q: String!) { productVariants(first: 10, query: $q) { edges { node { id sku inventoryItem { id
+    inventoryLevels(first: 10) { edges { node { location { id name } quantities(names: ["available"]) { name quantity } } } } } } } } }`;
+  const d = await shopifyGraphQL(env, q, { q: `sku:${JSON.stringify(it.sku)}` });
+  const variants = ((d.productVariants && d.productVariants.edges) || []).map(e => e.node)
+    .filter(v => String(v.sku || '').toUpperCase() === String(it.sku).toUpperCase());
+  if (!variants.length) return { ok: false, error: `No Shopify variant with SKU ${it.sku}` };
+  const quantities = [];
+  for (const v of variants) {
+    const levels = ((v.inventoryItem && v.inventoryItem.inventoryLevels && v.inventoryItem.inventoryLevels.edges) || []).map(e => e.node);
+    const use = qty === 0 ? levels : levels.slice(0, 1);
+    for (const l of use) {
+      const cur = ((l.quantities || []).find(x => x.name === 'available') || {}).quantity;
+      quantities.push({ inventoryItemId: v.inventoryItem.id, locationId: l.location.id, quantity: qty, changeFromQuantity: cur == null ? null : cur });
+    }
+  }
+  if (!quantities.length) return { ok: false, error: 'Variant is not stocked at any Shopify location' };
+  const m = `mutation($input: InventorySetQuantitiesInput!) { inventorySetQuantities(input: $input) { userErrors { field message } } }`;
+  let res;
+  try {
+    res = await shopifyGraphQL(env, m, { input: { name: 'available', reason: 'correction', quantities } });
+  } catch (e) {
+    // Older API versions don't know changeFromQuantity — retry the old way.
+    if (!/changeFromQuantity/i.test(e.message)) throw e;
+    res = await shopifyGraphQL(env, m, { input: { name: 'available', reason: 'correction', ignoreCompareQuantity: true,
+      quantities: quantities.map(({ changeFromQuantity, ...rest }) => rest) } });
+  }
+  const errs = (res.inventorySetQuantities && res.inventorySetQuantities.userErrors) || [];
+  return { ok: !errs.length, error: errs.length ? errs.map(e => e.message).join(' | ') : null, detail: `${quantities.length} location(s)` };
+}
+
+// POST { items:[{platform, listingId, sku, title}], quantity, by }
+async function soldoutSetQty(request, env) {
+  const b = await request.json().catch(() => ({}));
+  const qty = parseInt(b.quantity, 10);
+  if (!(qty >= 0 && qty <= 9999)) return _soResp({ ok: false, error: 'quantity must be 0–9999' }, 400);
+  const items = (Array.isArray(b.items) ? b.items : []).slice(0, 40);
+  if (!items.length) return _soResp({ ok: false, error: 'No listings selected' }, 400);
+  await env.DB.prepare(`CREATE TABLE IF NOT EXISTS listing_qty_log (
+    id INTEGER PRIMARY KEY AUTOINCREMENT, ts TEXT NOT NULL, by_user TEXT, platform TEXT, listing_id TEXT,
+    sku TEXT, title TEXT, quantity INTEGER, ok INTEGER, detail TEXT)`).run().catch(() => {});
+  const fns = { eBay: _soEbay, Amazon: _soAmazon, Walmart: _soWalmart, Shopify: _soShopify };
+  const results = [];
+  for (const it of items) {
+    const fn = fns[it.platform];
+    let r;
+    try { r = fn ? await fn(env, it, qty) : { ok: false, error: 'Unknown platform ' + it.platform }; }
+    catch (e) { r = { ok: false, error: String(e.message || e).slice(0, 300) }; }
+    results.push({ platform: it.platform, listingId: it.listingId, sku: it.sku, ok: !!r.ok, error: r.error || null, detail: r.detail || r.via || '' });
+    await d1Run(env, `INSERT INTO listing_qty_log (ts, by_user, platform, listing_id, sku, title, quantity, ok, detail) VALUES (?,?,?,?,?,?,?,?,?)`,
+      [new Date().toISOString(), String(b.by || '').slice(0, 40), it.platform || '', String(it.listingId || ''), it.sku || '',
+       String(it.title || '').slice(0, 200), qty, r.ok ? 1 : 0, String(r.error || r.detail || r.via || '').slice(0, 500)]);
+  }
+  return _soResp({ ok: results.every(r => r.ok), quantity: qty, results });
+}
+
+async function soldoutLog(env) {
+  const rows = await d1All(env, 'SELECT * FROM listing_qty_log ORDER BY id DESC LIMIT 100');
+  return _soResp({ ok: true, log: rows });
 }
