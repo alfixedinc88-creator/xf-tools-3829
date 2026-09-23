@@ -289,9 +289,12 @@ footer{margin-top:40px;color:var(--ink3);font-size:14px}
 <div id="app" data-lang="en">
 <div class="langbar"><div class="wrap">
   <div class="brand"><a class="back" id="backlink" href="index.html" aria-label="Back">←</a><b>XF</b><span id="brand-title"><span class="en">Training</span><span class="es">Capacitación</span></span></div>
+  <div style="display:flex;align-items:center;gap:8px;flex-shrink:0">
   <div class="seg" role="group" aria-label="Language / Idioma">
     <button id="l-en" type="button" aria-pressed="true" onclick="setLang('en')">English</button>
     <button id="l-es" type="button" aria-pressed="false" onclick="setLang('es')">Español</button>
+  </div>
+  <button type="button" data-xf-signout onclick="xfSignOut()" style="border:1.5px solid var(--line);background:none;border-radius:8px;padding:8px 12px;font:inherit;font-size:14px;font-weight:600;color:var(--ink);cursor:pointer;white-space:nowrap">🚪 <span class="en">Sign Out</span><span class="es">Salir</span></button>
   </div>
 </div></div>
 

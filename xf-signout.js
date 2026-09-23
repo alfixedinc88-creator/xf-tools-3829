@@ -1,4 +1,10 @@
-// Shared "Sign out" button for every XFitting page.
+// Shared "Sign Out" for every XFitting page.
+//
+// Each page puts its own "🚪 Sign Out" button in its top bar, styled like
+// that page's other buttons, marked data-xf-signout and calling
+// xfSignOut(). This script shows those buttons only while someone is
+// signed in, and fills any [data-xf-signout-name] with who that is. A page
+// with no such button gets a small floating one (bottom-left) instead.
 //
 // All pages share one sign-in (localStorage xf_cred_token / xf_cred_user),
 // so signing out anywhere signs out everywhere: the session is ended on the
@@ -37,19 +43,32 @@
   btn.type = 'button';
   btn.title = 'Sign out of every XFitting page on this device';
 
+  function headerButtons() { return document.querySelectorAll('[data-xf-signout]'); }
+
   function refresh() {
-    var t = token();
-    if (!t) { btn.style.display = 'none'; return; }
-    var n = userName();
+    var t = token(), n = userName();
+    var hb = headerButtons();
+    for (var i = 0; i < hb.length; i++) {
+      hb[i].style.display = t ? '' : 'none';
+      hb[i].title = n ? 'Signed in as ' + n + ' — sign out' : 'Sign out';
+    }
+    var names = document.querySelectorAll('[data-xf-signout-name]');
+    for (var j = 0; j < names.length; j++) names[j].textContent = t && n ? 'Signed in as ' + n : '';
+    if (!t || hb.length) { btn.style.display = 'none'; return; }
     btn.textContent = '🚪 Sign out' + (n ? ' (' + n + ')' : '');
     btn.style.display = 'flex';
   }
 
-  btn.onclick = async function () {
+  var busy = false;
+  window.xfSignOut = async function () {
+    if (busy) return;
     var n = userName();
     if (!confirm('Sign out' + (n ? ' ' + n : '') + '?\n\nThis signs you out of every XFitting page on this device.')) return;
+    busy = true;
     var t = token();
     btn.disabled = true; btn.textContent = 'Signing out…';
+    var hb = headerButtons();
+    for (var i = 0; i < hb.length; i++) hb[i].disabled = true;
     clearSignIn();
     try {
       if (t) await fetch(WORKER + '/auth/logout', {
@@ -58,6 +77,7 @@
     } catch (e) { /* signed out on this device either way */ }
     goHome();
   };
+  btn.onclick = window.xfSignOut;
 
   function mount() {
     document.head.appendChild(style);
