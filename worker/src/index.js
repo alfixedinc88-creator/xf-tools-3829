@@ -19274,6 +19274,7 @@ const AUTOLABEL_DEFAULTS = {
   lowValueRatio: 0.9,          // hold if the label costs >= this share of the order total (0 = rule off)
   lowValueMaxOrder: 0,         // only apply the low-value rule to orders <= this $ total (0 = every order)
   skipChannels: [],            // never auto-buy for these channels (name contains)
+  maxBoxLb: 20,                // hold orders whose box would weigh more than this and show how to split them (0 = rule off)
   maxLabelsPerRun: 10,         // most labels one run can buy
   maxLabelsPerDay: 150,        // most labels auto mode can buy per day
   maxQuotesPerRun: 15,         // most orders one run asks Veeqo for rates on
@@ -19294,6 +19295,7 @@ async function autolabelEnsureTables(env) {
       tracking TEXT, reason TEXT, detail TEXT
     )
   `).run().catch(()=>{});
+  await env.DB.prepare('ALTER TABLE autolabel_log ADD COLUMN alloc_id TEXT').run().catch(()=>{}); // one row per box on split orders
   await env.DB.prepare('CREATE INDEX IF NOT EXISTS idx_autolabel_log_order ON autolabel_log(order_id)').run().catch(()=>{});
   await env.DB.prepare('CREATE INDEX IF NOT EXISTS idx_autolabel_log_date ON autolabel_log(date, action)').run().catch(()=>{});
   // One row per cancelled order seen on a channel, so each one is only
@@ -19342,6 +19344,7 @@ function autolabelCleanConfig(c) {
     lowValueRatio:     num(c.lowValueRatio, D.lowValueRatio, 0, 10),
     lowValueMaxOrder:  num(c.lowValueMaxOrder, D.lowValueMaxOrder, 0, 100000),
     skipChannels:      list(c.skipChannels),
+    maxBoxLb:          num(c.maxBoxLb, D.maxBoxLb, 0, 150),
     maxLabelsPerRun:   Math.round(num(c.maxLabelsPerRun, D.maxLabelsPerRun, 0, 100)),
     maxLabelsPerDay:   Math.round(num(c.maxLabelsPerDay, D.maxLabelsPerDay, 0, 2000)),
     maxQuotesPerRun:   Math.round(num(c.maxQuotesPerRun, D.maxQuotesPerRun, 0, 60)),
@@ -19353,9 +19356,9 @@ function autolabelCleanConfig(c) {
 async function autolabelLog(env, entry) {
   const ts = new Date().toISOString();
   await d1Run(env,
-    `INSERT INTO autolabel_log (ts, date, order_id, order_number, channel, customer, action, carrier, service, price, order_total, tracking, reason, detail)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-    [ts, shipTodayKey(), String(entry.orderId || ''), entry.orderNumber || '', entry.channel || '', entry.customer || '',
+    `INSERT INTO autolabel_log (ts, date, order_id, alloc_id, order_number, channel, customer, action, carrier, service, price, order_total, tracking, reason, detail)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    [ts, shipTodayKey(), String(entry.orderId || ''), String(entry.allocId || ''), entry.orderNumber || '', entry.channel || '', entry.customer || '',
      entry.action, entry.carrier || '', entry.service || '', entry.price != null ? entry.price : null,
      entry.orderTotal != null ? entry.orderTotal : null, entry.tracking || '', entry.reason || '',
      entry.detail ? String(entry.detail).slice(0, 2000) : '']);
@@ -19685,12 +19688,87 @@ function autolabelChooseRate(order, quotes, cfg) {
   }
   if (!pick) return { pick: null, hold: 'no_rate', reason: usps || !quotes.length ? 'No rates from Veeqo' : 'No USPS rate — pick a service by hand', usps, ups };
 
+  const low = autolabelLowValue(order, pick.price, cfg);
+  if (low) return { pick, hold: 'low_value', reason: low, usps, ups };
+  return { pick, hold: null, reason, usps, ups };
+}
+
+// Low-value rule on the TOTAL label cost of an order (all boxes together).
+function autolabelLowValue(order, cost, cfg) {
   const total = autolabelOrderTotal(order);
   if (cfg.lowValueRatio > 0 && total != null && total > 0 &&
-      (!cfg.lowValueMaxOrder || total <= cfg.lowValueMaxOrder) && pick.price >= total * cfg.lowValueRatio) {
-    return { pick, hold: 'low_value', reason: `Label $${pick.price.toFixed(2)} vs order $${total.toFixed(2)} — check before shipping`, usps, ups };
+      (!cfg.lowValueMaxOrder || total <= cfg.lowValueMaxOrder) && cost >= total * cfg.lowValueRatio) {
+    return `Label $${cost.toFixed(2)} vs order $${total.toFixed(2)} — check before shipping`;
   }
-  return { pick, hold: null, reason, usps, ups };
+  return null;
+}
+
+// ── Box weight + split plan ──────────────────────────────────────────────
+// Weight comes from the same place Pack & Ship's weight estimate does: each
+// line's bin -> products.weight (one piece) x the SKU's "N=" multiplier x
+// qty (_psFetchWeightByKey / _psComputeOrderWeight). If any line has no
+// catalog weight, falls back to Veeqo's own product weights (weight_grams),
+// then to the allocation's weight; null when nothing is known.
+async function autolabelWeighAllocation(env, order, alloc) {
+  const items = await veeqoExtractLineItems(env, order, alloc);
+  const bins = Array.from(new Set(items.map(li => String(li.b || '').trim().toUpperCase()).filter(Boolean)));
+  const weightByKey = await _psFetchWeightByKey(env, bins).catch(() => ({}));
+  const w = _psComputeOrderWeight(items, weightByKey, null);
+  const units = w.debugLines.map(l => ({
+    sku: l.sku, qty: l.qty,
+    unitLb: l.perPieceWeightLb != null ? Math.round(l.perPieceWeightLb * l.multiplier * 1000) / 1000 : null,
+  }));
+  if (w.weightLb != null) return { lb: w.weightLb, source: 'catalog', units };
+
+  // Veeqo's own product weights (grams per sellable).
+  const lines = (alloc && Array.isArray(alloc.line_items) && alloc.line_items.length) ? alloc.line_items : (order.line_items || []);
+  let grams = 0, ok = lines.length > 0;
+  const vUnits = [];
+  for (const li of lines) {
+    const sell = li.sellable || li.product || {};
+    const g = parseFloat(sell.weight_grams != null ? sell.weight_grams : sell.weight);
+    const q = parseInt(li.quantity) || 1;
+    if (!isFinite(g) || g <= 0) { ok = false; break; }
+    grams += g * q;
+    vUnits.push({ sku: sell.sku_code || sell.sku || '', qty: q, unitLb: Math.round(g / 453.59237 * 1000) / 1000 });
+  }
+  if (ok) return { lb: Math.round(grams / 453.59237 * 100) / 100, source: 'veeqo_products', units: vUnits };
+
+  const aw = parseFloat(alloc && alloc.weight);
+  if (isFinite(aw) && aw > 0) {
+    const u = String((alloc && alloc.weight_unit) || 'g').toLowerCase();
+    const lb = u.startsWith('oz') ? aw / 16 : u.startsWith('lb') ? aw : u.startsWith('kg') ? aw / 0.45359237 : aw / 453.59237;
+    return { lb: Math.round(lb * 100) / 100, source: 'veeqo_allocation', units };
+  }
+  return { lb: null, source: null, units };
+}
+
+// Packs whole units (one Veeqo qty of a SKU — a "10=" pack stays one unit)
+// into as few boxes as possible, each <= maxLb, heaviest units first.
+function autolabelSplitPlan(units, maxLb) {
+  const pieces = [];
+  for (const u of units) {
+    if (u.unitLb == null) return { ok: false, reason: `no weight for ${u.sku}` };
+    if (u.unitLb > maxLb) return { ok: false, reason: `one ${u.sku} alone weighs ${u.unitLb} lb` };
+    for (let i = 0; i < u.qty; i++) pieces.push(u);
+  }
+  if (pieces.length > 2000) return { ok: false, reason: 'too many pieces to plan' };
+  pieces.sort((a, b) => b.unitLb - a.unitLb);
+  const boxes = [];
+  for (const pc of pieces) {
+    let box = boxes.find(b => b.lb + pc.unitLb <= maxLb + 1e-9);
+    if (!box) { box = { lb: 0, items: {} }; boxes.push(box); }
+    box.lb += pc.unitLb;
+    box.items[pc.sku] = (box.items[pc.sku] || 0) + 1;
+  }
+  return { ok: true, boxes: boxes.map(b => ({ lb: Math.round(b.lb * 100) / 100, items: b.items })) };
+}
+
+function autolabelSplitText(weight, maxLb) {
+  const plan = autolabelSplitPlan(weight.units, maxLb);
+  if (!plan.ok) return `${weight.lb} lb — over ${maxLb} lb, split by hand (${plan.reason})`;
+  return `${weight.lb} lb — split in Veeqo into ${plan.boxes.length} boxes: ` + plan.boxes.map((b, i) =>
+    `Box ${i + 1} (${b.lb} lb): ` + Object.entries(b.items).map(([sku, q]) => `${q}× ${sku}`).join(', ')).join(' | ');
 }
 
 async function autolabelBuy(env, order, allocationId, quote) {
@@ -19765,7 +19843,8 @@ async function autolabelRun(env, opts = {}) {
     if (cancel) { row.decision = 'cancelled'; row.reason = `Cancelled on ${cancel.channel} (${cancel.state}) — do not print`; }
     else if (listed.has(num)) { row.decision = 'cancelled'; row.reason = 'On the Cancellation list — do not print'; }
     else if (autolabelChannelMatches(o, cfg.skipChannels)) { row.decision = 'skipped'; row.reason = 'Channel is on the skip list'; }
-    else if (veeqoExtractTracking(o)) { row.decision = 'has_label'; row.reason = 'Already has a label'; }
+    else if (allocs.length && allocs.every(a => _psAllocTrackingNumber(a))) { row.decision = 'has_label'; row.reason = 'Already has a label'; }
+    else if (!allocs.length && veeqoExtractTracking(o)) { row.decision = 'has_label'; row.reason = 'Already has a label'; }
     else if (group.length > 1) {
       row.decision = 'merge';
       row.mergeWith = group.filter(g => g.id !== o.id).map(g => `${g.number} (${veeqoExtractChannel(g)})`);
@@ -19773,37 +19852,82 @@ async function autolabelRun(env, opts = {}) {
     }
     else if (ageMin != null && ageMin < cfg.waitMinutes) { row.decision = 'waiting'; row.reason = `Waiting — ${cfg.waitMinutes - ageMin} min left`; }
     else if (!allocs.length) { row.decision = 'hold'; row.reason = 'Not allocated in Veeqo (stock?)'; }
-    else if (allocs.length > 1) { row.decision = 'hold'; row.reason = 'Split into more than one package — do by hand'; }
-    else if (quotesLeft <= 0) { row.decision = 'ready'; row.reason = 'Ready — rates checked on a later run'; }
     else {
-      quotesLeft--;
-      const prior = await d1First(env,
-        `SELECT SUM(action='bought') AS bought, SUM(action='buy_failed') AS failed FROM autolabel_log WHERE order_id=?`, [String(o.id)]) || {};
-      if (prior.bought) { row.decision = 'has_label'; row.reason = 'Already bought by Auto Label'; }
-      else if ((prior.failed || 0) >= 2) { row.decision = 'hold'; row.reason = 'Buying failed twice — do by hand'; }
+      // Every package (allocation) on the order that doesn't have a label
+      // yet. A normal order is 1; an order already split in Veeqo has one
+      // per box, and each box gets its own label.
+      const open = allocs.filter(a => !_psAllocTrackingNumber(a));
+      const weights = [];
+      for (const a of open) weights.push(await autolabelWeighAllocation(env, o, a));
+      row.weightLb = weights.reduce((n, w) => (n == null || w.lb == null) ? null : n + w.lb, 0);
+      if (row.weightLb != null) row.weightLb = Math.round(row.weightLb * 100) / 100;
+      const heavyIdx = cfg.maxBoxLb > 0 ? weights.findIndex(w => w.lb != null && w.lb > cfg.maxBoxLb) : -1;
+      const boxes = open.length > 1 ? `${open.length} boxes: ` : '';
+
+      if (heavyIdx >= 0) {
+        row.decision = 'too_heavy';
+        row.reason = (open.length > 1 ? `Box ${heavyIdx + 1}: ` : '') + autolabelSplitText(weights[heavyIdx], cfg.maxBoxLb);
+      }
+      else if (quotesLeft <= 0) { row.decision = 'ready'; row.reason = 'Ready — rates checked on a later run'; }
       else {
-        // Last-second cancellation check for Amazon (buyer asked to cancel).
-        const amz = autolabelChannelType(o) === 'amazon' ? await autolabelAmazonBuyerCancel(env, o.number) : { checked: false };
-        if (amz.requested) { row.decision = 'cancelled'; row.reason = `Amazon buyer asked to cancel${amz.reason ? ` (${amz.reason})` : ''} — do not print`; }
+        quotesLeft--;
+        const prior = await d1First(env,
+          `SELECT SUM(action='buy_failed') AS failed FROM autolabel_log WHERE order_id=?`, [String(o.id)]) || {};
+        const boughtAllocs = new Set((await d1All(env,
+          `SELECT alloc_id FROM autolabel_log WHERE order_id=? AND action='bought'`, [String(o.id)])).map(r => String(r.alloc_id)));
+        const todo = open.filter(a => !boughtAllocs.has(String(a.id)));
+        if (!todo.length) { row.decision = 'has_label'; row.reason = 'Already bought by Auto Label'; }
+        else if ((prior.failed || 0) >= 2) { row.decision = 'hold'; row.reason = 'Buying failed twice — do by hand'; }
         else {
-          const { quotes, source } = await autolabelGetQuotes(env, allocs[0].id);
-          if (source) result.quoteSource = source;
-          const choice = autolabelChooseRate(o, quotes, cfg);
-          if (choice.pick) { row.carrier = choice.pick.carrier; row.service = choice.pick.service; row.price = choice.pick.price; row.days = choice.pick.days; }
-          if (choice.hold) { row.decision = choice.hold; row.reason = choice.reason; }
-          else if (!buy) { row.decision = 'would_buy'; row.reason = choice.reason; }
-          else if (buysLeft <= 0) { row.decision = 'ready'; row.reason = `${choice.reason} — label limit reached for this run/day`; }
+          // Last-second cancellation check for Amazon (buyer asked to cancel).
+          const amz = autolabelChannelType(o) === 'amazon' ? await autolabelAmazonBuyerCancel(env, o.number) : { checked: false };
+          if (amz.requested) { row.decision = 'cancelled'; row.reason = `Amazon buyer asked to cancel${amz.reason ? ` (${amz.reason})` : ''} — do not print`; }
           else {
-            const logBase = { orderId: o.id, orderNumber: o.number, channel: row.channel, customer: row.customer,
-              carrier: row.carrier, service: row.service, price: row.price, orderTotal: row.total, reason: choice.reason };
-            try {
-              const b = await autolabelBuy(env, o, allocs[0].id, choice.pick);
-              buysLeft--;
-              row.decision = 'bought'; row.reason = choice.reason; row.tracking = b.tracking;
-              await autolabelLog(env, { ...logBase, action: 'bought', tracking: b.tracking });
-            } catch (e) {
-              row.decision = 'buy_failed'; row.reason = String(e.message || e).slice(0, 200);
-              await autolabelLog(env, { ...logBase, action: 'buy_failed', detail: e.message });
+            // Rate every box; the carrier rules pick per box, the low-value
+            // rule looks at all boxes together.
+            const picks = [];
+            let hold = null;
+            for (const a of todo) {
+              const { quotes, source } = await autolabelGetQuotes(env, a.id);
+              if (source) result.quoteSource = source;
+              const choice = autolabelChooseRate(o, quotes, { ...cfg, lowValueRatio: 0 });
+              if (!choice.pick) { hold = choice; break; }
+              picks.push({ alloc: a, choice });
+            }
+            const cost = picks.reduce((n, p) => n + p.choice.pick.price, 0);
+            if (picks.length) {
+              const first = picks[0].choice.pick;
+              row.carrier = Array.from(new Set(picks.map(p => p.choice.pick.carrier))).join('+');
+              row.service = picks.length > 1 ? `${picks.length} labels` : first.service;
+              row.price = Math.round(cost * 100) / 100;
+              row.days = Math.max(...picks.map(p => p.choice.pick.days ?? 0));
+            }
+            const why = boxes + (picks.length ? picks[0].choice.reason : '');
+            const low = !hold ? autolabelLowValue(o, cost, cfg) : null;
+            if (hold) { row.decision = hold.hold; row.reason = boxes + hold.reason; }
+            else if (low) { row.decision = 'low_value'; row.reason = boxes + low; }
+            else if (!buy) { row.decision = 'would_buy'; row.reason = why; }
+            else if (buysLeft < picks.length) { row.decision = 'ready'; row.reason = `${why} — label limit reached for this run/day`; }
+            else {
+              const tracks = [];
+              row.decision = 'bought'; row.reason = why;
+              for (const p of picks) {
+                const pk = p.choice.pick;
+                const logBase = { orderId: o.id, allocId: p.alloc.id, orderNumber: o.number, channel: row.channel, customer: row.customer,
+                  carrier: pk.carrier, service: pk.service, price: pk.price, orderTotal: row.total, reason: p.choice.reason };
+                try {
+                  const b = await autolabelBuy(env, o, p.alloc.id, pk);
+                  buysLeft--;
+                  tracks.push(b.tracking);
+                  await autolabelLog(env, { ...logBase, action: 'bought', tracking: b.tracking });
+                } catch (e) {
+                  row.decision = 'buy_failed';
+                  row.reason = (tracks.length ? `${tracks.length} of ${picks.length} boxes bought, then: ` : '') + String(e.message || e).slice(0, 200);
+                  await autolabelLog(env, { ...logBase, action: 'buy_failed', detail: e.message });
+                  break;
+                }
+              }
+              row.tracking = tracks.filter(Boolean).join(', ');
             }
           }
         }
@@ -19813,7 +19937,7 @@ async function autolabelRun(env, opts = {}) {
     result.orders.push(row);
   }
 
-  const order = ['bought', 'buy_failed', 'would_buy', 'cancelled', 'merge', 'low_value', 'no_rate', 'hold', 'ready', 'waiting', 'skipped', 'has_label'];
+  const order = ['bought', 'buy_failed', 'would_buy', 'cancelled', 'merge', 'too_heavy', 'low_value', 'no_rate', 'hold', 'ready', 'waiting', 'skipped', 'has_label'];
   result.orders.sort((a, b) => order.indexOf(a.decision) - order.indexOf(b.decision));
   result.finishedAt = new Date().toISOString();
   return result;
@@ -19883,8 +20007,11 @@ async function handleAutolabelRoute(path, method, url, request, env, session) {
     const cfg = await autolabelLoadConfig(env);
     const q = await autolabelGetQuotes(env, alloc.id);
     const choice = autolabelChooseRate(o, q.quotes, cfg);
+    const wt = await autolabelWeighAllocation(env, o, alloc);
     return veeqoResp({ ok: true, order: o.number, channel: veeqoExtractChannel(o), total: autolabelOrderTotal(o),
-      allocationId: alloc.id, source: q.source,
+      allocationId: alloc.id, source: q.source, packages: (o.allocations || []).length,
+      weightLb: wt.lb, weightSource: wt.source,
+      split: cfg.maxBoxLb > 0 && wt.lb != null && wt.lb > cfg.maxBoxLb ? autolabelSplitText(wt, cfg.maxBoxLb) : null,
       rates: q.quotes.map(x => ({ carrier: x.carrier, service: x.service, price: x.price, days: x.days })),
       pick: choice.pick ? { carrier: choice.pick.carrier, service: choice.pick.service, price: choice.pick.price, days: choice.pick.days } : null,
       hold: choice.hold, reason: choice.reason, attempts: q.attempts });
@@ -19902,6 +20029,10 @@ async function handleAutolabelRoute(path, method, url, request, env, session) {
     const allocs = o.allocations || [];
     if (allocs.length !== 1) return veeqoResp({ ok: false, error: `Order has ${allocs.length} allocations — test with a normal single-package order` });
     const cfg = await autolabelLoadConfig(env);
+    if (cfg.maxBoxLb > 0 && !b.ignoreHold) {
+      const wt = await autolabelWeighAllocation(env, o, allocs[0]);
+      if (wt.lb != null && wt.lb > cfg.maxBoxLb) return veeqoResp({ ok: false, error: `Too heavy: ${autolabelSplitText(wt, cfg.maxBoxLb)}` });
+    }
     const cancels = await autolabelCollectCancels(env, cfg);
     const c = cancels.byNum.get(autolabelOrderNum(o.number));
     if (c) return veeqoResp({ ok: false, error: `Order is cancelled on ${c.channel} (${c.state}) — not buying` });
@@ -19913,7 +20044,7 @@ async function handleAutolabelRoute(path, method, url, request, env, session) {
     const choice = autolabelChooseRate(o, q.quotes, cfg);
     if (!choice.pick) return veeqoResp({ ok: false, error: choice.reason, attempts: q.attempts });
     if (choice.hold && !b.ignoreHold) return veeqoResp({ ok: false, error: `Rules say hold: ${choice.reason}` });
-    const logBase = { orderId: o.id, orderNumber: o.number, channel: veeqoExtractChannel(o), customer: veeqoExtractCustomerName(o),
+    const logBase = { orderId: o.id, allocId: allocs[0].id, orderNumber: o.number, channel: veeqoExtractChannel(o), customer: veeqoExtractCustomerName(o),
       carrier: choice.pick.carrier, service: choice.pick.service, price: choice.pick.price, orderTotal: autolabelOrderTotal(o), reason: 'Test buy: ' + choice.reason };
     try {
       const r = await autolabelBuy(env, o, allocs[0].id, choice.pick);

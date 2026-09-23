@@ -1809,6 +1809,7 @@ body {
           <label>Hold if label ≥ this % of order<input class="ps-field-input" data-k="lowValuePct" type="number" min="0" step="5"></label>
           <label>…only for orders up to ($, 0 = all)<input class="ps-field-input" data-k="lowValueMaxOrder" type="number" min="0" step="1"></label>
           <label>Never auto-buy channels (comma list)<input class="ps-field-input" data-k="skipChannels" type="text"></label>
+          <label>Max box weight (lb, 0 = off)<input class="ps-field-input" data-k="maxBoxLb" type="number" min="0" step="1"></label>
           <label>Max labels per run<input class="ps-field-input" data-k="maxLabelsPerRun" type="number" min="0" step="1"></label>
           <label>Max labels per day<input class="ps-field-input" data-k="maxLabelsPerDay" type="number" min="0" step="1"></label>
           <label>Orders to rate-check per run<input class="ps-field-input" data-k="maxQuotesPerRun" type="number" min="0" step="1"></label>
@@ -7881,6 +7882,7 @@ var _PS_AL_LABELS = {
   would_buy:  ['👀 Would buy', 'var(--accent)'],
   cancelled:  ['🚫 Cancelled — don\'t print', 'var(--red)'],
   merge:      ['🔗 Merge in Veeqo', 'var(--purple)'],
+  too_heavy:  ['⚖️ Too heavy — split', 'var(--purple)'],
   low_value:  ['💸 Low value — check', 'var(--orange)'],
   no_rate:    ['❓ No rate', 'var(--orange)'],
   hold:       ['✋ Hold', 'var(--orange)'],
@@ -8007,7 +8009,7 @@ function _psAlRenderRun(r) {
   var th = 'style="text-align:left;padding:6px 8px;font-size:11px;color:var(--text3);border-bottom:1px solid var(--border)"';
   var td = 'style="padding:6px 8px;border-bottom:1px solid var(--border);vertical-align:top"';
   document.getElementById('ps-al-orders').innerHTML = '<table style="width:100%;border-collapse:collapse;font-size:12px"><tr>'
-    + '<th ' + th + '>Result</th><th ' + th + '>Order</th><th ' + th + '>Channel</th><th ' + th + '>Customer</th><th ' + th + '>Total</th><th ' + th + '>Label</th><th ' + th + '>Why</th></tr>'
+    + '<th ' + th + '>Result</th><th ' + th + '>Order</th><th ' + th + '>Channel</th><th ' + th + '>Customer</th><th ' + th + '>Total</th><th ' + th + '>Weight</th><th ' + th + '>Label</th><th ' + th + '>Why</th></tr>'
     + rows.map(function(o){
       var L = _PS_AL_LABELS[o.decision] || [o.decision, 'var(--text2)'];
       var label = o.carrier ? (o.carrier + ' ' + (o.service || '') + (o.price != null ? ' $' + Number(o.price).toFixed(2) : '') + (o.days != null ? ' · ' + o.days + 'd' : '')) : '';
@@ -8017,6 +8019,7 @@ function _psAlRenderRun(r) {
         + '<td ' + td + '>' + _psAlEsc(o.channel) + '</td>'
         + '<td ' + td + '>' + _psAlEsc(o.customer) + '</td>'
         + '<td ' + td + '>' + (o.total != null ? '$' + Number(o.total).toFixed(2) : '') + '</td>'
+        + '<td ' + td + '>' + (o.weightLb != null ? Number(o.weightLb).toFixed(1) + '&nbsp;lb' : '') + '</td>'
         + '<td ' + td + '>' + _psAlEsc(label) + '</td>'
         + '<td ' + td + '>' + _psAlEsc(o.reason) + '</td></tr>';
     }).join('') + '</table>';
@@ -8030,6 +8033,8 @@ window.psAlRates = async function() {
   var d = await _psAlFetch('/veeqo/autolabel/rates?order=' + encodeURIComponent(num));
   if (d.ok === false) { out.textContent = '✗ ' + (d.error || 'Failed') + (d.attempts ? '\n\n' + JSON.stringify(d.attempts, null, 2) : ''); return; }
   var lines = ['Order ' + d.order + ' · ' + d.channel + ' · total $' + (d.total != null ? Number(d.total).toFixed(2) : '?') + ' · rates from: ' + (d.source || 'none')];
+  lines.push('Weight: ' + (d.weightLb != null ? d.weightLb + ' lb (' + d.weightSource + ')' : 'unknown') + (d.packages > 1 ? ' · first of ' + d.packages + ' boxes' : ''));
+  if (d.split) lines.push('⚖️ ' + d.split);
   (d.rates || []).slice().sort(function(a,b){ return a.price - b.price; }).forEach(function(x){
     lines.push('  ' + x.carrier.padEnd(5) + ' $' + Number(x.price).toFixed(2).padStart(6) + '  ' + (x.days != null ? x.days + 'd' : '?d') + '  ' + x.service);
   });
