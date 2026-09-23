@@ -1845,6 +1845,28 @@ body {
         <div id="ps-al-orders" style="overflow-x:auto"></div>
       </div>
 
+      <!-- Re-weigh list -->
+      <div class="ps-card" style="margin-bottom:16px">
+        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px">
+          <div style="font-size:13px;font-weight:700;color:var(--text)">⚖️ Re-weigh list</div>
+          <button class="ps-btn-sm" onclick="psAlLoadReweigh()">↻ Refresh</button>
+        </div>
+        <div style="font-size:12px;color:var(--text3);margin-bottom:10px;line-height:1.5">
+          Orders over the box limit are never auto-printed — print them by hand in Veeqo, or weigh the items and type the real weight here.
+          A saved weight is used for that bin on every future order (and in Pack &amp; Ship's weight estimate).
+        </div>
+        <div id="ps-al-reweigh" style="font-size:12px"></div>
+        <div style="font-weight:700;font-size:12px;margin:14px 0 6px">Weigh something without an order</div>
+        <div style="display:flex;gap:6px;flex-wrap:wrap;align-items:center">
+          <input class="ps-field-input" id="ps-al-w-bin" placeholder="Bin, e.g. 23-2-3" style="max-width:150px;margin:0;font-family:var(--mono);font-size:13px;padding:7px 10px">
+          <input class="ps-field-input" id="ps-al-w-pcs" type="number" min="1" placeholder="Pieces" style="max-width:100px;margin:0;font-size:13px;padding:7px 10px">
+          <input class="ps-field-input" id="ps-al-w-lb" type="number" min="0" step="0.01" placeholder="Real lb" style="max-width:110px;margin:0;font-size:13px;padding:7px 10px">
+          <button class="ps-btn-sm" onclick="psAlSaveWeightManual()">💾 Save weight</button>
+        </div>
+        <div style="font-weight:700;font-size:12px;margin:14px 0 6px">Saved real weights</div>
+        <div id="ps-al-weights" style="font-size:12px;overflow-x:auto"></div>
+      </div>
+
       <!-- History -->
       <div class="ps-card">
         <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px">
@@ -7882,7 +7904,8 @@ var _PS_AL_LABELS = {
   would_buy:  ['👀 Would buy', 'var(--accent)'],
   cancelled:  ['🚫 Cancelled — don\'t print', 'var(--red)'],
   merge:      ['🔗 Merge in Veeqo', 'var(--purple)'],
-  too_heavy:  ['⚖️ Too heavy — split', 'var(--purple)'],
+  weigh:      ['⚖️ Over limit — weigh / print by hand', 'var(--purple)'],
+  fix_veeqo_weight: ['⚖️ Fix weight in Veeqo', 'var(--orange)'],
   low_value:  ['💸 Low value — check', 'var(--orange)'],
   no_rate:    ['❓ No rate', 'var(--orange)'],
   hold:       ['✋ Hold', 'var(--orange)'],
@@ -7909,6 +7932,7 @@ async function _psAlFetch(path, opts) {
 function psAlOnUnlock() {
   psAlLoadConfig();
   psAlLoadLog();
+  psAlLoadReweigh();
 }
 
 async function psAlLoadConfig() {
@@ -7983,6 +8007,7 @@ window.psAlRunPreview = async function() {
     if (d.ok === false) { _psToast(d.error || 'Run failed', 'error'); return; }
     _psAlRenderRun(d);
     psAlLoadConfig();
+    psAlLoadReweigh();
   } catch (e) { _psToast(e.message, 'error'); }
   finally { btn.disabled = false; btn.textContent = '▶ Run preview now'; }
 };
@@ -8033,8 +8058,7 @@ window.psAlRates = async function() {
   var d = await _psAlFetch('/veeqo/autolabel/rates?order=' + encodeURIComponent(num));
   if (d.ok === false) { out.textContent = '✗ ' + (d.error || 'Failed') + (d.attempts ? '\n\n' + JSON.stringify(d.attempts, null, 2) : ''); return; }
   var lines = ['Order ' + d.order + ' · ' + d.channel + ' · total $' + (d.total != null ? Number(d.total).toFixed(2) : '?') + ' · rates from: ' + (d.source || 'none')];
-  lines.push('Weight: ' + (d.weightLb != null ? d.weightLb + ' lb (' + d.weightSource + ')' : 'unknown') + (d.packages > 1 ? ' · first of ' + d.packages + ' boxes' : ''));
-  if (d.split) lines.push('⚖️ ' + d.split);
+  lines.push('Weight: ' + (d.weightLb != null ? d.weightLb + ' lb (' + d.weightSource + ')' : 'unknown') + (d.veeqoWeightLb != null ? ' · Veeqo: ' + d.veeqoWeightLb + ' lb' : '') + (d.packages > 1 ? ' · first of ' + d.packages + ' boxes' : ''));
   (d.rates || []).slice().sort(function(a,b){ return a.price - b.price; }).forEach(function(x){
     lines.push('  ' + x.carrier.padEnd(5) + ' $' + Number(x.price).toFixed(2).padStart(6) + '  ' + (x.days != null ? x.days + 'd' : '?d') + '  ' + x.service);
   });
@@ -8079,6 +8103,90 @@ window.psAlLoadLog = async function() {
       + (c.tracking ? ' · <span style="font-family:var(--mono)">' + _psAlEsc(c.tracking) + '</span>' : '') + '</div>';
   }).join('') : '<div style="color:var(--text3)">None yet (turn on Cancellation watch).</div>');
   box.innerHTML = html;
+};
+
+// ── Re-weigh list ────────────────────────────────────────────────────────
+var _psAlReweigh = [];
+
+window.psAlLoadReweigh = async function() {
+  var box = document.getElementById('ps-al-reweigh');
+  var wbox = document.getElementById('ps-al-weights');
+  var d = await _psAlFetch('/veeqo/autolabel/reweigh');
+  if (d.ok === false) { box.textContent = '✗ ' + (d.error || 'Failed'); return; }
+  _psAlReweigh = d.queue || [];
+  var th = 'style="text-align:left;padding:4px 6px;font-size:11px;color:var(--text3);border-bottom:1px solid var(--border)"';
+  var td = 'style="padding:4px 6px;border-bottom:1px solid var(--border);vertical-align:middle"';
+  var inp = 'class="ps-field-input" style="margin:0;padding:5px 8px;font-size:12px;width:80px"';
+  box.innerHTML = _psAlReweigh.length ? _psAlReweigh.map(function(q, qi){
+    return '<div style="border:1px solid var(--border);border-radius:10px;padding:10px;margin-bottom:10px">'
+      + '<div style="display:flex;justify-content:space-between;gap:8px;flex-wrap:wrap"><div><b style="font-family:var(--mono)">' + _psAlEsc(q.orderNumber) + '</b> · ' + _psAlEsc(q.channel) + ' · ' + _psAlEsc(q.customer)
+      + ' · system <b>' + (q.estLb != null ? Number(q.estLb).toFixed(2) + ' lb' : '?') + '</b>'
+      + (q.veeqoLb != null ? ' · Veeqo ' + Number(q.veeqoLb).toFixed(2) + ' lb' : '') + '</div>'
+      + '<button class="ps-btn-sm" onclick="psAlDismissReweigh(' + qi + ')">Printed by hand — remove</button></div>'
+      + '<table style="width:100%;border-collapse:collapse;margin-top:6px"><tr><th ' + th + '>SKU</th><th ' + th + '>Bin</th><th ' + th + '>Pieces</th><th ' + th + '>System lb</th><th ' + th + '>Real weight</th><th ' + th + '></th></tr>'
+      + (q.lines || []).map(function(l, li){
+        var done = l.realPerPieceLb != null;
+        return '<tr><td ' + td + '>' + _psAlEsc(l.sku) + '</td><td ' + td + ' ><span style="font-family:var(--mono)">' + _psAlEsc(l.bin || '—') + '</span></td>'
+          + '<td ' + td + '><input ' + inp + ' type="number" min="1" id="ps-al-rw-p-' + qi + '-' + li + '" value="' + _psAlEsc(l.pieces) + '"></td>'
+          + '<td ' + td + '>' + (l.lineLb != null ? Number(l.lineLb).toFixed(2) : '?') + '</td>'
+          + '<td ' + td + '><input ' + inp + ' type="number" min="0" step="0.01" placeholder="lb" id="ps-al-rw-w-' + qi + '-' + li + '"'
+          + (done ? ' value="' + (Math.round(l.realPerPieceLb * l.pieces * 100) / 100) + '"' : '') + '></td>'
+          + '<td ' + td + '>' + (l.bin ? '<button class="ps-btn-sm" onclick="psAlSaveWeightLine(' + qi + ',' + li + ')">' + (done ? '✓ Update' : '💾 Save') + '</button>' : '<span style="color:var(--text3)">no bin</span>') + '</td></tr>';
+      }).join('') + '</table></div>';
+  }).join('') : '<div style="color:var(--text3)">Nothing to re-weigh.</div>';
+
+  var ws = d.weights || [];
+  wbox.innerHTML = ws.length ? '<table style="width:100%;border-collapse:collapse"><tr><th ' + th + '>Bin</th><th ' + th + '>SKU</th><th ' + th + '>Weighed</th><th ' + th + '>Per piece</th><th ' + th + '>Was (catalog)</th><th ' + th + '>By</th><th ' + th + '></th></tr>'
+    + ws.map(function(w){
+      return '<tr><td ' + td + '><span style="font-family:var(--mono)">' + _psAlEsc(w.bin) + '</span></td><td ' + td + '>' + _psAlEsc(w.sku) + '</td>'
+        + '<td ' + td + '>' + _psAlEsc(w.measured_pieces) + ' pcs = ' + Number(w.measured_lb).toFixed(2) + ' lb</td>'
+        + '<td ' + td + '>' + Number(w.per_piece_lb).toFixed(4) + ' lb</td>'
+        + '<td ' + td + '>' + (w.catalog_per_piece_lb != null ? Number(w.catalog_per_piece_lb).toFixed(4) + ' lb' : '—') + '</td>'
+        + '<td ' + td + '>' + _psAlEsc(w.measured_by) + ' · ' + _psAlEsc(new Date(w.measured_at).toLocaleDateString()) + '</td>'
+        + '<td ' + td + '><button class="ps-btn-sm" onclick="psAlDeleteWeight(\'' + _psAlEsc(String(w.bin).replace(/'/g, '')) + '\')">Delete</button></td></tr>';
+    }).join('') + '</table>' : '<div style="color:var(--text3)">None saved yet.</div>';
+};
+
+async function _psAlSaveWeight(body) {
+  body.by = psInitials || '';
+  var d = await _psAlFetch('/veeqo/autolabel/weight', { method:'POST', body: body });
+  if (d.ok === false) { _psToast(d.error || 'Save failed', 'error'); return false; }
+  _psToast('Saved: bin ' + d.bin + ' = ' + d.perPieceLb + ' lb per piece' + (d.orderDone ? ' · order done' : ''));
+  psAlLoadReweigh();
+  return true;
+}
+
+window.psAlSaveWeightLine = function(qi, li) {
+  var q = _psAlReweigh[qi], l = q && q.lines[li];
+  if (!l) return;
+  var pcs = parseInt(document.getElementById('ps-al-rw-p-' + qi + '-' + li).value);
+  var lb  = parseFloat(document.getElementById('ps-al-rw-w-' + qi + '-' + li).value);
+  if (!(pcs > 0) || !(lb > 0)) { _psToast('Type the pieces and the real weight', 'error'); return; }
+  _psAlSaveWeight({ bin: l.bin, sku: l.sku, pieces: pcs, weightLb: lb, orderId: q.orderId, orderNumber: q.orderNumber });
+};
+
+window.psAlSaveWeightManual = async function() {
+  var bin = document.getElementById('ps-al-w-bin').value.trim();
+  var pcs = parseInt(document.getElementById('ps-al-w-pcs').value);
+  var lb  = parseFloat(document.getElementById('ps-al-w-lb').value);
+  if (!bin || !(pcs > 0) || !(lb > 0)) { _psToast('Type the bin, pieces and real weight', 'error'); return; }
+  if (await _psAlSaveWeight({ bin: bin, pieces: pcs, weightLb: lb })) {
+    ['ps-al-w-bin','ps-al-w-pcs','ps-al-w-lb'].forEach(function(id){ document.getElementById(id).value = ''; });
+  }
+};
+
+window.psAlDeleteWeight = async function(bin) {
+  if (!confirm('Delete the saved real weight for bin ' + bin + '? The catalog weight will be used again.')) return;
+  var d = await _psAlFetch('/veeqo/autolabel/weight-delete', { method:'POST', body:{ bin: bin } });
+  if (d.ok === false) { _psToast(d.error || 'Delete failed', 'error'); return; }
+  psAlLoadReweigh();
+};
+
+window.psAlDismissReweigh = async function(qi) {
+  var q = _psAlReweigh[qi]; if (!q) return;
+  var d = await _psAlFetch('/veeqo/autolabel/reweigh-dismiss', { method:'POST', body:{ orderId: q.orderId, by: psInitials || '' } });
+  if (d.ok === false) { _psToast(d.error || 'Failed', 'error'); return; }
+  psAlLoadReweigh();
 };
 </script>
 </html>

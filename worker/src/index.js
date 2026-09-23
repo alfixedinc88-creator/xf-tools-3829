@@ -14247,9 +14247,43 @@ function _psChunkArr(arr, size) {
 // for the same order. `keyList` is a list of bin strings; despite the
 // column being named "sku" in the products table, that's what it's
 // actually matched against here.
+// Real weights typed in from the Auto Label tab's re-weigh list, one row
+// per bin: the measured weight of ONE piece (measured_lb / pieces). These
+// win over products.weight everywhere _psFetchWeightByKey is used (Pack &
+// Ship weight estimates + Auto Label), and live in their own table so the
+// Products sheet re-import (which wipes `products`) never loses them.
+let _weightOverrideTableReady = false;
+async function ensureWeightOverrideTable(env) {
+  if (_weightOverrideTableReady) return;
+  await env.DB.prepare(`
+    CREATE TABLE IF NOT EXISTS weight_overrides (
+      bin TEXT PRIMARY KEY, sku TEXT, per_piece_lb REAL NOT NULL,
+      measured_pieces INTEGER NOT NULL, measured_lb REAL NOT NULL,
+      catalog_per_piece_lb REAL, measured_by TEXT, measured_at TEXT NOT NULL, order_number TEXT
+    )
+  `).run().catch(()=>{});
+  _weightOverrideTableReady = true;
+}
+
+async function _psFetchWeightOverrides(env, keyList) {
+  const out = {};
+  if (!keyList.length) return out;
+  try {
+    await ensureWeightOverrideTable(env);
+    for (const chunk of _psChunkArr(keyList, 50)) {
+      const res = await env.DB.prepare(
+        `SELECT bin, per_piece_lb FROM weight_overrides WHERE bin IN (${chunk.map(() => '?').join(',')})`
+      ).bind(...chunk.map(k => String(k).toUpperCase())).all();
+      (res.results || []).forEach(r => { out[String(r.bin).toUpperCase()] = parseFloat(r.per_piece_lb); });
+    }
+  } catch (e) { console.error('[weight_overrides]', e.message); }
+  return out;
+}
+
 async function _psFetchWeightByKey(env, keyList) {
   const weightByKey = {};
   if (!keyList.length) return weightByKey;
+  const overrides = await _psFetchWeightOverrides(env, keyList);
   for (const chunk of _psChunkArr(keyList, 50)) {
     const sPlaceholders = chunk.map(() => '?').join(',');
     const res = await env.DB.prepare(
@@ -14260,6 +14294,7 @@ async function _psFetchWeightByKey(env, keyList) {
       if (p.sku && weightByKey[String(p.sku).toUpperCase()] == null) weightByKey[String(p.sku).toUpperCase()] = w;
     });
   }
+  for (const [k, w] of Object.entries(overrides)) { if (isFinite(w)) weightByKey[k] = w; }
   return weightByKey;
 }
 
@@ -19308,6 +19343,16 @@ async function autolabelEnsureTables(env) {
       PRIMARY KEY (channel, order_num)
     )
   `).run().catch(()=>{});
+  await ensureWeightOverrideTable(env);
+  // Orders held for being over the box limit, so they can be re-weighed.
+  await env.DB.prepare(`
+    CREATE TABLE IF NOT EXISTS reweigh_queue (
+      order_id TEXT PRIMARY KEY, order_number TEXT, channel TEXT, customer TEXT,
+      est_lb REAL, veeqo_lb REAL, lines TEXT, reason TEXT,
+      flagged_at TEXT NOT NULL, updated_at TEXT NOT NULL,
+      status TEXT NOT NULL DEFAULT 'open', done_by TEXT, done_at TEXT
+    )
+  `).run().catch(()=>{});
   await ensureShipD1Tables(env); // ship_order_cancel_log
   _autolabelTablesReady = true;
 }
@@ -19712,35 +19757,58 @@ function autolabelLowValue(order, cost, cfg) {
 async function autolabelWeighAllocation(env, order, alloc) {
   const items = await veeqoExtractLineItems(env, order, alloc);
   const bins = Array.from(new Set(items.map(li => String(li.b || '').trim().toUpperCase()).filter(Boolean)));
-  const weightByKey = await _psFetchWeightByKey(env, bins).catch(() => ({}));
+  const [weightByKey, overrides] = await Promise.all([
+    _psFetchWeightByKey(env, bins).catch(() => ({})),
+    _psFetchWeightOverrides(env, bins),
+  ]);
   const w = _psComputeOrderWeight(items, weightByKey, null);
+  const lines = w.debugLines.map(l => ({
+    sku: l.sku, bin: l.bin, qty: l.qty, pieces: l.physicalQty,
+    perPieceLb: l.perPieceWeightLb, lineLb: l.contributionLb,
+    real: !!overrides[String(l.bin || '').trim().toUpperCase()],
+  }));
   const units = w.debugLines.map(l => ({
     sku: l.sku, qty: l.qty,
     unitLb: l.perPieceWeightLb != null ? Math.round(l.perPieceWeightLb * l.multiplier * 1000) / 1000 : null,
   }));
-  if (w.weightLb != null) return { lb: w.weightLb, source: 'catalog', units };
 
-  // Veeqo's own product weights (grams per sellable).
-  const lines = (alloc && Array.isArray(alloc.line_items) && alloc.line_items.length) ? alloc.line_items : (order.line_items || []);
-  let grams = 0, ok = lines.length > 0;
+  // What Veeqo itself thinks the box weighs (its product weights) — this is
+  // what Veeqo's rates are based on.
+  const vLines = (alloc && Array.isArray(alloc.line_items) && alloc.line_items.length) ? alloc.line_items : (order.line_items || []);
+  let grams = 0, vOk = vLines.length > 0;
   const vUnits = [];
-  for (const li of lines) {
+  for (const li of vLines) {
     const sell = li.sellable || li.product || {};
-    const g = parseFloat(sell.weight_grams != null ? sell.weight_grams : sell.weight);
+    const g = parseFloat(sell.weight_grams);
     const q = parseInt(li.quantity) || 1;
-    if (!isFinite(g) || g <= 0) { ok = false; break; }
+    if (!isFinite(g) || g <= 0) { vOk = false; break; }
     grams += g * q;
     vUnits.push({ sku: sell.sku_code || sell.sku || '', qty: q, unitLb: Math.round(g / 453.59237 * 1000) / 1000 });
   }
-  if (ok) return { lb: Math.round(grams / 453.59237 * 100) / 100, source: 'veeqo_products', units: vUnits };
+  const veeqoLb = vOk ? Math.round(grams / 453.59237 * 100) / 100 : null;
+  const anyReal = lines.some(l => l.real);
+
+  if (w.weightLb != null) return { lb: w.weightLb, source: anyReal ? 'real' : 'catalog', units, lines, veeqoLb, anyReal };
+  if (veeqoLb != null) return { lb: veeqoLb, source: 'veeqo_products', units: vUnits, lines, veeqoLb, anyReal };
 
   const aw = parseFloat(alloc && alloc.weight);
   if (isFinite(aw) && aw > 0) {
     const u = String((alloc && alloc.weight_unit) || 'g').toLowerCase();
     const lb = u.startsWith('oz') ? aw / 16 : u.startsWith('lb') ? aw : u.startsWith('kg') ? aw / 0.45359237 : aw / 453.59237;
-    return { lb: Math.round(lb * 100) / 100, source: 'veeqo_allocation', units };
+    return { lb: Math.round(lb * 100) / 100, source: 'veeqo_allocation', units, lines, veeqoLb, anyReal };
   }
-  return { lb: null, source: null, units };
+  return { lb: null, source: null, units, lines, veeqoLb, anyReal };
+}
+
+async function autolabelQueueReweigh(env, o, weight, reason) {
+  const now = new Date().toISOString();
+  await d1Run(env,
+    `INSERT INTO reweigh_queue (order_id, order_number, channel, customer, est_lb, veeqo_lb, lines, reason, flagged_at, updated_at, status)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'open')
+     ON CONFLICT(order_id) DO UPDATE SET est_lb=excluded.est_lb, veeqo_lb=excluded.veeqo_lb, lines=excluded.lines,
+       reason=excluded.reason, updated_at=excluded.updated_at`,
+    [String(o.id), o.number || '', veeqoExtractChannel(o), veeqoExtractCustomerName(o),
+     weight.lb, weight.veeqoLb, JSON.stringify(weight.lines || []), reason, now, now]);
 }
 
 // Packs whole units (one Veeqo qty of a SKU — a "10=" pack stays one unit)
@@ -19861,12 +19929,28 @@ async function autolabelRun(env, opts = {}) {
       for (const a of open) weights.push(await autolabelWeighAllocation(env, o, a));
       row.weightLb = weights.reduce((n, w) => (n == null || w.lb == null) ? null : n + w.lb, 0);
       if (row.weightLb != null) row.weightLb = Math.round(row.weightLb * 100) / 100;
-      const heavyIdx = cfg.maxBoxLb > 0 ? weights.findIndex(w => w.lb != null && w.lb > cfg.maxBoxLb) : -1;
+      const max = cfg.maxBoxLb;
+      // Over the limit by our weight, or our weight and Veeqo's disagree by
+      // more than a pound across the limit -> someone should weigh it.
+      const heavyIdx = max > 0 ? weights.findIndex(w => w.lb != null && (w.lb > max ||
+        (!w.anyReal && w.veeqoLb != null && w.veeqoLb > max && Math.abs(w.veeqoLb - w.lb) > 1))) : -1;
+      // Our weight was measured for real, but Veeqo still has a different
+      // product weight -> its rate would be for the wrong weight.
+      const mismatchIdx = weights.findIndex(w => w.anyReal && w.lb != null && w.veeqoLb != null && Math.abs(w.veeqoLb - w.lb) > 0.5);
       const boxes = open.length > 1 ? `${open.length} boxes: ` : '';
 
       if (heavyIdx >= 0) {
-        row.decision = 'too_heavy';
-        row.reason = (open.length > 1 ? `Box ${heavyIdx + 1}: ` : '') + autolabelSplitText(weights[heavyIdx], cfg.maxBoxLb);
+        const hw = weights[heavyIdx];
+        row.decision = 'weigh';
+        row.reason = (open.length > 1 ? `Box ${heavyIdx + 1}: ` : '') +
+          (hw.lb > max ? `${hw.lb} lb (${hw.source})` : `System ${hw.lb} lb but Veeqo ${hw.veeqoLb} lb`) +
+          ` — over ${max} lb: print by hand in Veeqo, or re-weigh the items`;
+        await autolabelQueueReweigh(env, o, hw, row.reason);
+      }
+      else if (mismatchIdx >= 0) {
+        const mw = weights[mismatchIdx];
+        row.decision = 'fix_veeqo_weight';
+        row.reason = `Real weight ${mw.lb} lb, but Veeqo has ${mw.veeqoLb} lb — fix the product weight in Veeqo (see Re-weigh list), then it prints by itself`;
       }
       else if (quotesLeft <= 0) { row.decision = 'ready'; row.reason = 'Ready — rates checked on a later run'; }
       else {
@@ -19937,7 +20021,7 @@ async function autolabelRun(env, opts = {}) {
     result.orders.push(row);
   }
 
-  const order = ['bought', 'buy_failed', 'would_buy', 'cancelled', 'merge', 'too_heavy', 'low_value', 'no_rate', 'hold', 'ready', 'waiting', 'skipped', 'has_label'];
+  const order = ['bought', 'buy_failed', 'would_buy', 'cancelled', 'merge', 'weigh', 'fix_veeqo_weight', 'low_value', 'no_rate', 'hold', 'ready', 'waiting', 'skipped', 'has_label'];
   result.orders.sort((a, b) => order.indexOf(a.decision) - order.indexOf(b.decision));
   result.finishedAt = new Date().toISOString();
   return result;
@@ -20010,7 +20094,7 @@ async function handleAutolabelRoute(path, method, url, request, env, session) {
     const wt = await autolabelWeighAllocation(env, o, alloc);
     return veeqoResp({ ok: true, order: o.number, channel: veeqoExtractChannel(o), total: autolabelOrderTotal(o),
       allocationId: alloc.id, source: q.source, packages: (o.allocations || []).length,
-      weightLb: wt.lb, weightSource: wt.source,
+      weightLb: wt.lb, weightSource: wt.source, veeqoWeightLb: wt.veeqoLb, weightLines: wt.lines,
       split: cfg.maxBoxLb > 0 && wt.lb != null && wt.lb > cfg.maxBoxLb ? autolabelSplitText(wt, cfg.maxBoxLb) : null,
       rates: q.quotes.map(x => ({ carrier: x.carrier, service: x.service, price: x.price, days: x.days })),
       pick: choice.pick ? { carrier: choice.pick.carrier, service: choice.pick.service, price: choice.pick.price, days: choice.pick.days } : null,
@@ -20031,7 +20115,7 @@ async function handleAutolabelRoute(path, method, url, request, env, session) {
     const cfg = await autolabelLoadConfig(env);
     if (cfg.maxBoxLb > 0 && !b.ignoreHold) {
       const wt = await autolabelWeighAllocation(env, o, allocs[0]);
-      if (wt.lb != null && wt.lb > cfg.maxBoxLb) return veeqoResp({ ok: false, error: `Too heavy: ${autolabelSplitText(wt, cfg.maxBoxLb)}` });
+      if (wt.lb != null && wt.lb > cfg.maxBoxLb) return veeqoResp({ ok: false, error: `${wt.lb} lb — over ${cfg.maxBoxLb} lb: print by hand in Veeqo, or re-weigh it first` });
     }
     const cancels = await autolabelCollectCancels(env, cfg);
     const c = cancels.byNum.get(autolabelOrderNum(o.number));
@@ -20056,6 +20140,80 @@ async function handleAutolabelRoute(path, method, url, request, env, session) {
       await autolabelLog(env, { ...logBase, action: 'buy_failed', detail: e.message });
       return veeqoResp({ ok: false, error: e.message, sentToVeeqo: { chosenRate: choice.pick.raw } });
     }
+  }
+
+  // ── Re-weigh list + saved real weights ──
+  if (path === '/veeqo/autolabel/reweigh' && method === 'GET') {
+    const [queue, weights] = await Promise.all([
+      d1All(env, `SELECT * FROM reweigh_queue WHERE status='open' ORDER BY flagged_at DESC LIMIT 200`),
+      d1All(env, `SELECT * FROM weight_overrides ORDER BY measured_at DESC LIMIT 500`),
+    ]);
+    // Show the CURRENT per-piece weight each line would use, so a line that
+    // was already weighed shows as done.
+    const bins = Array.from(new Set(queue.flatMap(q => { try { return JSON.parse(q.lines || '[]').map(l => String(l.bin || '').toUpperCase()); } catch (_) { return []; } }).filter(Boolean)));
+    const ov = await _psFetchWeightOverrides(env, bins);
+    return veeqoResp({ ok: true, weights, queue: queue.map(q => {
+      let lines = []; try { lines = JSON.parse(q.lines || '[]'); } catch (_) {}
+      lines = lines.map(l => ({ ...l, realPerPieceLb: ov[String(l.bin || '').toUpperCase()] ?? null }));
+      return { orderId: q.order_id, orderNumber: q.order_number, channel: q.channel, customer: q.customer,
+        estLb: q.est_lb, veeqoLb: q.veeqo_lb, reason: q.reason, flaggedAt: q.flagged_at, lines };
+    }) });
+  }
+
+  // POST { bin, sku, pieces, weightLb, by, orderNumber, orderId } — "100 pieces
+  // from bin 23-2-3 really weigh 19.99 lb". Saved per bin as a per-piece
+  // weight, used for every future order with that bin.
+  if (path === '/veeqo/autolabel/weight' && method === 'POST') {
+    const b = await request.json().catch(() => ({}));
+    const bin = String(b.bin || '').trim().toUpperCase();
+    const pieces = parseInt(b.pieces);
+    const lb = parseFloat(b.weightLb);
+    if (!bin) return veeqoResp({ ok: false, error: 'bin is required' }, 400);
+    if (!(pieces > 0)) return veeqoResp({ ok: false, error: 'pieces must be more than 0' }, 400);
+    if (!(lb > 0 && lb < 1000)) return veeqoResp({ ok: false, error: 'weight must be between 0 and 1000 lb' }, 400);
+    const cat = await d1First(env, 'SELECT weight FROM products WHERE UPPER(sku)=? LIMIT 1', [bin]);
+    const perPiece = lb / pieces;
+    await d1Run(env,
+      `INSERT INTO weight_overrides (bin, sku, per_piece_lb, measured_pieces, measured_lb, catalog_per_piece_lb, measured_by, measured_at, order_number)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+       ON CONFLICT(bin) DO UPDATE SET sku=excluded.sku, per_piece_lb=excluded.per_piece_lb, measured_pieces=excluded.measured_pieces,
+         measured_lb=excluded.measured_lb, measured_by=excluded.measured_by, measured_at=excluded.measured_at, order_number=excluded.order_number`,
+      [bin, String(b.sku || ''), perPiece, pieces, lb, cat ? parseFloat(cat.weight) || null : null,
+       String(b.by || '').slice(0, 40), new Date().toISOString(), String(b.orderNumber || '')]);
+    // Close the order's re-weigh entry once every line on it has a real weight.
+    let orderDone = false;
+    if (b.orderId) {
+      const q = await d1First(env, `SELECT lines FROM reweigh_queue WHERE order_id=?`, [String(b.orderId)]);
+      if (q) {
+        let lines = []; try { lines = JSON.parse(q.lines || '[]'); } catch (_) {}
+        const lb2 = Array.from(new Set(lines.map(l => String(l.bin || '').toUpperCase()).filter(Boolean)));
+        const ov = await _psFetchWeightOverrides(env, lb2);
+        if (lines.length && lines.every(l => l.bin && ov[String(l.bin).toUpperCase()] != null)) {
+          await d1Run(env, `UPDATE reweigh_queue SET status='done', done_by=?, done_at=? WHERE order_id=?`,
+            [String(b.by || '').slice(0, 40), new Date().toISOString(), String(b.orderId)]);
+          orderDone = true;
+        }
+      }
+    }
+    return veeqoResp({ ok: true, bin, perPieceLb: Math.round(perPiece * 10000) / 10000,
+      catalogPerPieceLb: cat ? parseFloat(cat.weight) || null : null, orderDone });
+  }
+
+  if (path === '/veeqo/autolabel/weight-delete' && method === 'POST') {
+    const b = await request.json().catch(() => ({}));
+    const bin = String(b.bin || '').trim().toUpperCase();
+    if (!bin) return veeqoResp({ ok: false, error: 'bin is required' }, 400);
+    await d1Run(env, 'DELETE FROM weight_overrides WHERE bin=?', [bin]);
+    return veeqoResp({ ok: true });
+  }
+
+  // Take an order off the re-weigh list (e.g. it was printed by hand and
+  // nobody is going to weigh it).
+  if (path === '/veeqo/autolabel/reweigh-dismiss' && method === 'POST') {
+    const b = await request.json().catch(() => ({}));
+    await d1Run(env, `UPDATE reweigh_queue SET status='dismissed', done_by=?, done_at=? WHERE order_id=?`,
+      [String(b.by || '').slice(0, 40), new Date().toISOString(), String(b.orderId || '')]);
+    return veeqoResp({ ok: true });
   }
 
   if (path === '/veeqo/autolabel/log' && method === 'GET') {
