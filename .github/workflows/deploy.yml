@@ -30,7 +30,7 @@ jobs:
       # The worker backend lives in this repo too, but it's deployed by
       # Cloudflare, not served as part of the website.
       - name: Exclude worker source from site
-        run: rm -rf worker
+        run: rm -rf worker wrangler.toml
 
       - name: Upload artifact
         uses: actions/upload-pages-artifact@v3
