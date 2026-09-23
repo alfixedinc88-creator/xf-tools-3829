@@ -20617,26 +20617,41 @@ async function _soAmazon(env, it, qty) {
   const sd = await sr.json().catch(() => ({}));
   if (!sr.ok) return { ok: false, error: 'SKU lookup: ' + JSON.stringify(sd.errors || sd).slice(0, 200) };
   const items = sd.items || [];
-  const isFba = i => (i.fulfillmentAvailability || []).some(f => /AMAZON/i.test(f.fulfillmentChannelCode || ''));
+  // FBA = Amazon holds the stock (channel AMAZON_NA etc.) — never touched.
+  // FBM = our own stock, channel DEFAULT — the only ones changed.
+  const fa = i => i.fulfillmentAvailability || [];
+  const isFba = i => fa(i).some(f => /AMAZON/i.test(f.fulfillmentChannelCode || ''));
   let targets = items.filter(i => !isFba(i));
   const exact = targets.filter(i => String(i.sku).toUpperCase() === String(it.sku || '').toUpperCase());
   if (exact.length) targets = exact;
   const skipped = items.filter(isFba).map(i => i.sku);
-  if (!targets.length) return { ok: false, error: skipped.length ? `Only FBA SKUs under this ASIN (${skipped.join(', ')}) — Amazon controls those` : 'No SKUs found under this ASIN' };
+  if (!targets.length) return { ok: false, error: skipped.length ? `Only FBA listings under this ASIN (${skipped.join(', ')}) — skipped, Amazon controls those` : 'No SKUs found under this ASIN' };
   const done = [], errors = [];
   for (const t of targets) {
-    const pr = await fetch(`${base}/${encodeURIComponent(t.sku)}?marketplaceIds=${mid}`, {
+    // BUGFIX (real test: B0CYQSH57X / B0994BRMM9 didn't change): the patch
+    // was sent with the generic productType "PRODUCT". Amazon accepts that
+    // at the door, then drops the change while processing it against the
+    // listing's real product type. Use the listing's own product type.
+    const summary = (t.summaries || []).find(x => x.marketplaceId === mid) || (t.summaries || [])[0] || {};
+    const productType = summary.productType || 'PRODUCT';
+    const before = (fa(t).find(f => f.fulfillmentChannelCode === 'DEFAULT') || {}).quantity;
+    const pr = await fetch(`${base}/${encodeURIComponent(t.sku)}?marketplaceIds=${mid}&issueLocale=en_US`, {
       method: 'PATCH',
       headers: { 'x-amz-access-token': token, 'Content-Type': 'application/json' },
-      body: JSON.stringify({ productType: 'PRODUCT', patches: [{ op: 'replace', path: '/attributes/fulfillment_availability',
+      body: JSON.stringify({ productType, patches: [{ op: 'replace', path: '/attributes/fulfillment_availability',
         value: [{ fulfillment_channel_code: 'DEFAULT', quantity: qty }] }] }),
     });
     const pd = await pr.json().catch(() => ({}));
-    const accepted = pr.ok && (!pd.status || /ACCEPTED/i.test(pd.status));
-    if (accepted) done.push(t.sku); else errors.push(`${t.sku}: ${JSON.stringify(pd.issues || pd.errors || pd).slice(0, 200)}`);
+    const errIssues = (pd.issues || []).filter(x => /ERROR/i.test(x.severity || ''));
+    if (pr.ok && /ACCEPTED/i.test(pd.status || '') && !errIssues.length) {
+      done.push(`${t.sku}${before != null ? ` (was ${before})` : ''}`);
+    } else {
+      const why = errIssues.length ? errIssues.map(x => x.message).join('; ') : JSON.stringify(pd.errors || pd).slice(0, 200);
+      errors.push(`${t.sku}: ${why}`);
+    }
   }
   return { ok: !errors.length, error: errors.join(' | ') || null,
-    detail: `SKUs: ${done.join(', ')}${skipped.length ? ` · FBA skipped: ${skipped.join(', ')}` : ''}` };
+    detail: `FBM ${done.join(', ')}${done.length ? ' — Amazon can take up to 15 min to show it' : ''}${skipped.length ? ` · FBA skipped: ${skipped.join(', ')}` : ''}` };
 }
 
 async function _soWalmart(env, it, qty) {
