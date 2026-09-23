@@ -297,6 +297,7 @@ window.invCredLogin = async function() {
   <button class="itab" id="inv-tab-review" onclick="invSwitchTab('review')">Review<span class="ibadge" id="inv-pending-badge" style="display:none">0</span></button>
   <button class="itab" id="inv-tab-skumgr" onclick="invSwitchTab('skumgr')">&#x1F4CB; SKU Mgr</button>
   <button class="itab" id="inv-tab-history" onclick="invSwitchTab('history')">&#x1F4DC; History</button>
+  <button class="itab" id="inv-tab-soldout" onclick="invSwitchTab('soldout')">🚫 Sold Out</button>
 </div>
 
 <div class="ipanel iactive" id="inv-panel-scan">
@@ -977,6 +978,41 @@ window.invCredLogin = async function() {
   </div>
 </div>
 
+<!-- ══ SOLD OUT — set listing quantities on every marketplace (mgmt) ══
+     Same search as the Repricer's SKU Lookup, but the quantity is changed
+     directly through each channel's API. Worker: /inventory/soldout/*. -->
+<div class="ipanel" id="inv-panel-soldout">
+  <div class="icard">
+    <div class="icard-label">🚫 Sold Out — change listing quantities</div>
+    <div style="font-size:12px;color:var(--text3);margin-bottom:10px;line-height:1.5">
+      Search a base SKU to find its listings on eBay, Amazon, Walmart and Shopify. Tick the ones to change, set the quantity (0 = sold out), and update them all at once.
+      Amazon FBA listings are skipped (Amazon controls those).
+    </div>
+    <div style="display:flex;gap:6px;margin-bottom:10px">
+      <input id="so-q" type="text" placeholder="Base SKU, e.g. 25-2-3" autocomplete="off" autocapitalize="off"
+        style="flex:1;padding:10px 12px;border:1.5px solid var(--border);border-radius:8px;background:var(--bg);color:var(--text);font-size:14px;font-family:var(--mono)"
+        onkeydown="if(event.key==='Enter')soSearch()">
+      <button onclick="soSearch()" style="padding:10px 16px;border:none;border-radius:8px;background:var(--accent);color:#fff;font-weight:700;cursor:pointer">Search</button>
+    </div>
+    <div id="so-results"></div>
+    <div id="so-action" style="display:none;margin-top:12px;padding-top:12px;border-top:1px solid var(--border)">
+      <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
+        <label style="font-size:13px;font-weight:700;color:var(--text2)">Set quantity to</label>
+        <input id="so-qty" type="number" min="0" max="9999" step="1" value="0"
+          style="width:90px;padding:9px 10px;border:1.5px solid var(--border);border-radius:8px;background:var(--bg);color:var(--text);font-size:15px;font-weight:700;text-align:center">
+        <button id="so-go" onclick="soApply()" style="flex:1;min-width:200px;padding:12px 16px;border:none;border-radius:8px;background:var(--red);color:#fff;font-size:14px;font-weight:700;cursor:pointer">Update selected listings</button>
+      </div>
+    </div>
+  </div>
+  <div class="icard" style="margin-top:12px">
+    <div style="display:flex;justify-content:space-between;align-items:center">
+      <div class="icard-label" style="margin-bottom:0">📜 Quantity changes</div>
+      <span onclick="soLoadLog()" style="font-size:11px;color:var(--text3);text-decoration:underline dotted;cursor:pointer">↻ Refresh</span>
+    </div>
+    <div id="so-log" style="margin-top:8px;font-size:12px"></div>
+  </div>
+</div>
+
 <div class="ipanel" id="inv-panel-history">
 
   <!-- Full note popup — opened by clicking a row's Notes cell below, since
@@ -1229,6 +1265,8 @@ window.invCredLogin = async function() {
     g("inv-panel-audit").className     = "ipanel" + (tab === "audit"    ? " iactive" : "");
     g("inv-panel-skumgr").className    = "ipanel" + (tab === "skumgr"   ? " iactive" : "");
     g("inv-panel-history").className   = "ipanel" + (tab === "history"  ? " iactive" : "");
+    g("inv-panel-soldout").className   = "ipanel" + (tab === "soldout"  ? " iactive" : "");
+    g("inv-tab-soldout").className     = "itab"   + (tab === "soldout"  ? " iactive" : "");
     g("inv-tab-scan").className        = "itab"   + (tab === "scan"     ? " iactive" : "");
     g("inv-tab-stockout").className    = "itab"   + (tab === "stockout" ? " iactive" : "");
     g("inv-tab-transfer").className    = "itab"   + (tab === "transfer" ? " iactive" : "");
@@ -1256,13 +1294,14 @@ window.invCredLogin = async function() {
       }
     }
     if (tab === "audit") { invAuditLoadMode(); invPopulateAllPrefixDropdowns(); if(typeof invLoadPrefixes==='function') invLoadPrefixes(); }
-    if ((tab === "skumgr" || tab === "history") && !invUnlocked) {
+    if ((tab === "skumgr" || tab === "history" || tab === "soldout") && !invUnlocked) {
       window._skumgrPendingTab = tab; // remember which tab to open after unlock
       invSwitchTab('review');
       return;
     }
     if (tab === "history") { histLoad(); histLoadReport(); }
     if (tab === "skumgr") { skumgrAutoLoad(); }
+    if (tab === "soldout" && typeof soLoadLog === 'function') { soLoadLog(); setTimeout(function(){ var q = g('so-q'); if (q) q.focus(); }, 50); }
   };
 
   // ── LOCATION PREFIXES ────────────────────────────────────────────────────
@@ -8456,5 +8495,104 @@ window.invCredLogin = async function() {
   </div>
 </div>
 
+<script>
+// ── Sold Out tab ─────────────────────────────────────────────────────────
+(function () {
+  var W = 'https://xfitting-lookup.alfixedinc88.workers.dev';
+  var PLAT = ['eBay', 'Amazon', 'Walmart', 'Shopify'];
+  var COLOR = { eBay: '#c52a1a', Amazon: '#b45309', Walmart: '#1A56DB', Shopify: '#0E7F3E' };
+  var soRows = [];
+  function el(id) { return document.getElementById(id); }
+  function esc(v) { return String(v == null ? '' : v).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;'); }
+  function tok() { try { return localStorage.getItem('xf_cred_token') || ''; } catch (e) { return ''; } }
+  function who() { try { var u = JSON.parse(localStorage.getItem('xf_cred_user') || 'null'); return (u && u.displayName) || ''; } catch (e) { return ''; } }
+  async function call(path, opts) {
+    opts = opts || {};
+    var r = await fetch(W + path, { method: opts.method || 'GET',
+      headers: Object.assign({ 'X-Cred-Token': tok() }, opts.body ? { 'Content-Type': 'application/json' } : {}),
+      body: opts.body ? JSON.stringify(opts.body) : undefined });
+    var d = await r.json().catch(function(){ return { ok: false, error: 'HTTP ' + r.status }; });
+    if (!r.ok && d.ok !== false) d.ok = false;
+    return d;
+  }
+
+  window.soSearch = async function () {
+    var q = (el('so-q').value || '').trim();
+    var box = el('so-results');
+    el('so-action').style.display = 'none';
+    if (q.length < 2) { box.innerHTML = '<div style="font-size:12px;color:var(--text3)">Type at least 2 characters.</div>'; return; }
+    box.innerHTML = '<div style="font-size:12px;color:var(--text3)">Searching…</div>';
+    var d = await call('/inventory/soldout/lookup?q=' + encodeURIComponent(q));
+    if (d.ok === false) { box.innerHTML = '<div style="color:var(--red);font-size:12px">✗ ' + esc(d.error || 'Search failed') + '</div>'; return; }
+    soRows = d.results || [];
+    if (!soRows.length) { box.innerHTML = '<div style="font-size:12px;color:var(--text3)">No listings found for <b>' + esc(q) + '</b>.</div>'; return; }
+    var html = '<div style="font-size:12px;color:var(--text3);margin-bottom:6px">' + soRows.length + ' listing' + (soRows.length === 1 ? '' : 's') + ' — untick any you don\'t want to change.</div>';
+    PLAT.forEach(function (p) {
+      var idx = []; soRows.forEach(function (r, i) { if (r.platform === p) idx.push(i); });
+      if (!idx.length) return;
+      html += '<div style="margin:10px 0 4px;display:flex;align-items:center;gap:8px;border-bottom:2px solid var(--border);padding-bottom:4px">'
+        + '<input type="checkbox" checked onchange="soTogglePlat(\'' + p + '\', this.checked)">'
+        + '<b style="color:' + COLOR[p] + ';font-size:13px">' + p + '</b><span style="font-size:11px;color:var(--text3)">(' + idx.length + ')</span></div>';
+      idx.forEach(function (i) {
+        var r = soRows[i];
+        html += '<label style="display:flex;gap:8px;align-items:flex-start;padding:6px 2px;border-bottom:1px solid var(--border);cursor:pointer">'
+          + '<input type="checkbox" class="so-chk" data-i="' + i + '" data-p="' + p + '" checked style="margin-top:3px">'
+          + '<div style="flex:1;min-width:0"><div style="font-size:12px;color:var(--text)">' + esc(r.title || '—') + '</div>'
+          + '<div style="font-size:11px;color:var(--text3);font-family:var(--mono)">' + esc(r.listingId) + (r.sku ? ' · ' + esc(r.sku) : '') + '</div>'
+          + '<div class="so-res" id="so-res-' + i + '" style="font-size:11px;margin-top:2px"></div></div></label>';
+      });
+    });
+    box.innerHTML = html;
+    el('so-action').style.display = 'block';
+  };
+
+  window.soTogglePlat = function (p, on) {
+    document.querySelectorAll('.so-chk[data-p="' + p + '"]').forEach(function (c) { c.checked = on; });
+  };
+
+  window.soApply = async function () {
+    var picked = [];
+    document.querySelectorAll('.so-chk').forEach(function (c) { if (c.checked) picked.push(parseInt(c.getAttribute('data-i'), 10)); });
+    if (!picked.length) { alert('Tick at least one listing.'); return; }
+    var qty = parseInt(el('so-qty').value, 10);
+    if (!(qty >= 0 && qty <= 9999)) { alert('Quantity must be a whole number from 0 to 9999.'); return; }
+    var counts = {}; picked.forEach(function (i) { var p = soRows[i].platform; counts[p] = (counts[p] || 0) + 1; });
+    var summary = Object.keys(counts).map(function (p) { return counts[p] + ' ' + p; }).join(', ');
+    if (!confirm('Set quantity to ' + qty + ' on ' + picked.length + ' listing' + (picked.length === 1 ? '' : 's') + ' (' + summary + ')?\n\nThis changes the live listings right away.')) return;
+    var btn = el('so-go'); btn.disabled = true; btn.textContent = 'Updating ' + picked.length + '…';
+    picked.forEach(function (i) { el('so-res-' + i).innerHTML = '<span style="color:var(--text3)">⏳ updating…</span>'; });
+    try {
+      // In batches so one slow channel doesn't time the whole request out.
+      for (var s = 0; s < picked.length; s += 10) {
+        var chunk = picked.slice(s, s + 10);
+        var d = await call('/inventory/soldout/set-qty', { method: 'POST', body: { quantity: qty, by: who(),
+          items: chunk.map(function (i) { var r = soRows[i]; return { platform: r.platform, listingId: r.listingId, sku: r.sku, title: r.title }; }) } });
+        var res = d.results || [];
+        chunk.forEach(function (i, k) {
+          var r = res[k];
+          el('so-res-' + i).innerHTML = !r ? '<span style="color:var(--red)">✗ ' + esc(d.error || 'No answer') + '</span>'
+            : r.ok ? '<span style="color:var(--green);font-weight:700">✓ Set to ' + qty + '</span>' + (r.detail ? ' <span style="color:var(--text3)">' + esc(r.detail) + '</span>' : '')
+            : '<span style="color:var(--red)">✗ ' + esc(r.error) + '</span>';
+        });
+      }
+    } catch (e) { alert('Error: ' + e.message); }
+    finally { btn.disabled = false; btn.textContent = 'Update selected listings'; soLoadLog(); }
+  };
+
+  window.soLoadLog = async function () {
+    var box = el('so-log'); if (!box) return;
+    var d = await call('/inventory/soldout/log');
+    if (d.ok === false) { box.innerHTML = '<span style="color:var(--text3)">' + esc(d.error || '') + '</span>'; return; }
+    var log = d.log || [];
+    box.innerHTML = log.length ? log.map(function (x) {
+      return '<div style="padding:5px 0;border-bottom:1px solid var(--border)">'
+        + '<span style="color:var(--text3);font-family:var(--mono)">' + esc(new Date(x.ts).toLocaleString()) + '</span> '
+        + (x.ok ? '✓' : '<span style="color:var(--red)">✗</span>') + ' <b style="color:' + (COLOR[x.platform] || 'inherit') + '">' + esc(x.platform) + '</b> '
+        + esc(x.listing_id) + (x.sku ? ' · ' + esc(x.sku) : '') + ' → <b>' + esc(x.quantity) + '</b>'
+        + (x.by_user ? ' · ' + esc(x.by_user) : '') + (x.ok ? '' : '<div style="color:var(--red)">' + esc(x.detail) + '</div>') + '</div>';
+    }).join('') : '<span style="color:var(--text3)">No changes yet.</span>';
+  };
+})();
+</script>
 </body>
 </html>
