@@ -1810,6 +1810,9 @@ body {
           <label>…only for orders up to ($, 0 = all)<input class="ps-field-input" data-k="lowValueMaxOrder" type="number" min="0" step="1"></label>
           <label>Never auto-buy channels (comma list)<input class="ps-field-input" data-k="skipChannels" type="text"></label>
           <label>Max box weight (lb, 0 = off)<input class="ps-field-input" data-k="maxBoxLb" type="number" min="0" step="1"></label>
+          <label>Packing slip with the label<select class="ps-field-input" data-k="slipRule">
+            <option value="multi_sku">2+ different items</option><option value="multi_qty">2+ pieces in total</option>
+            <option value="all">Every order</option><option value="off">Never</option></select></label>
           <label>Max labels per run<input class="ps-field-input" data-k="maxLabelsPerRun" type="number" min="0" step="1"></label>
           <label>Max labels per day<input class="ps-field-input" data-k="maxLabelsPerDay" type="number" min="0" step="1"></label>
           <label>Orders to rate-check per run<input class="ps-field-input" data-k="maxQuotesPerRun" type="number" min="0" step="1"></label>
@@ -1843,6 +1846,31 @@ body {
         <div id="ps-al-channels" style="font-size:12px;margin-bottom:8px"></div>
         <div id="ps-al-counts" style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:10px"></div>
         <div id="ps-al-orders" style="overflow-x:auto"></div>
+      </div>
+
+      <!-- Packing slips -->
+      <div class="ps-card" style="margin-bottom:16px">
+        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px">
+          <div style="font-size:13px;font-weight:700;color:var(--text)">🧾 Packing slips <span id="ps-al-slip-count" style="font-family:var(--mono);color:var(--accent)"></span></div>
+          <button class="ps-btn-sm" onclick="psAlLoadSlips()">↻ Refresh</button>
+        </div>
+        <div style="font-size:12px;color:var(--text3);margin-bottom:10px;line-height:1.5">
+          When Auto Label buys a label for an order with more than one item (see "Packing slip" in Rules), its packing slip waits here.
+          Turn on <b>Printer station</b> on the computer next to the printer and leave this tab open — new slips print by themselves every minute.
+          For no print pop-up, start Chrome on that computer with <span style="font-family:var(--mono)">--kiosk-printing</span> (prints to the default printer).
+        </div>
+        <div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap;margin-bottom:10px">
+          <label style="display:flex;align-items:center;gap:6px;font-size:13px;color:var(--text2);cursor:pointer">
+            <input type="checkbox" id="ps-al-slip-station" onchange="psAlSlipStation(this.checked)"> 🖨 Printer station (this computer)
+          </label>
+          <button class="ps-btn-primary" style="width:auto;padding:8px 18px" onclick="psAlPrintNewSlips()">🖨 Print new slips now</button>
+          <span id="ps-al-slip-msg" style="font-size:12px;color:var(--text2);font-family:var(--mono)"></span>
+        </div>
+        <div style="display:flex;gap:6px;align-items:center;flex-wrap:wrap;margin-bottom:10px">
+          <input class="ps-field-input" id="ps-al-slip-order" placeholder="Order number" style="max-width:220px;margin:0;font-family:var(--mono);font-size:13px;padding:7px 10px">
+          <button class="ps-btn-sm" onclick="psAlSlipAdd()">+ Add slip for an order</button>
+        </div>
+        <div id="ps-al-slip-list" style="font-size:12px"></div>
       </div>
 
       <!-- Label costs -->
@@ -7951,6 +7979,7 @@ function psAlOnUnlock() {
   psAlLoadLog();
   psAlLoadReweigh();
   psAlLoadCosts();
+  psAlLoadSlips();
 }
 
 async function psAlLoadConfig() {
@@ -8057,6 +8086,7 @@ function _psAlRenderRun(r) {
       var L = _PS_AL_LABELS[o.decision] || [o.decision, 'var(--text2)'];
       var label = o.carrier ? (o.carrier + ' ' + (o.service || '') + (o.price != null ? ' $' + Number(o.price).toFixed(2) : '') + (o.days != null ? ' · ' + o.days + 'd' : '')) : '';
       if (o.tracking) label += ' · ' + o.tracking;
+      if (o.slip) label += ' · 🧾 slip';
       return '<tr><td ' + td + '><span style="color:' + L[1] + ';font-weight:700;white-space:nowrap">' + L[0] + '</span></td>'
         + '<td style="padding:6px 8px;border-bottom:1px solid var(--border);vertical-align:top;font-family:var(--mono)">' + _psAlEsc(o.number) + '</td>'
         + '<td ' + td + '>' + _psAlEsc(o.channel) + '</td>'
@@ -8246,6 +8276,129 @@ window.psAlFillCosts = async function() {
     if (d.missing && !d.costField && !d.updated) msg.textContent += ' — Veeqo didn\'t show a cost field; send Claude one tracking number to check';
     psAlLoadCosts();
   } finally { btn.disabled = false; }
+};
+
+// ── Packing slips ────────────────────────────────────────────────────────
+// Printing happens here in the browser (a worker can't reach a printer).
+// "Printer station" polls every minute and prints whatever is new; the
+// setting is remembered per computer.
+var _psAlSlipTimer = null, _psAlSlipBusy = false, _psAlSlipRecent = [];
+
+function _psAlSlipHtml(slips) {
+  var e = _psAlEsc;
+  var pages = slips.map(function(sl){
+    var t = sl.shipTo || {};
+    var items = sl.items || [];
+    var pcs = items.reduce(function(n, i){ return n + (parseInt(i.pieces) || 0); }, 0);
+    return '<div class="pg">'
+      + '<div class="hd"><div><div class="ttl">PACKING SLIP</div><div class="sub">' + e(sl.channel) + ' · ' + e(new Date(sl.createdAt).toLocaleDateString()) + '</div></div>'
+      + '<div class="ord">#' + e(sl.orderNumber) + (sl.boxCount > 1 ? '<div class="box">BOX ' + sl.boxNo + ' OF ' + sl.boxCount + '</div>' : '') + '</div></div>'
+      + '<div class="row"><div class="to"><div class="lbl">SHIP TO</div><b>' + e(t.name) + '</b><br>' + (t.company ? e(t.company) + '<br>' : '')
+      + e(t.address1) + (t.address2 ? ', ' + e(t.address2) : '') + '<br>' + e(t.city) + ', ' + e(t.state) + ' ' + e(t.zip) + (t.country && !/^(US|USA|United States)$/i.test(t.country) ? '<br>' + e(t.country) : '') + '</div>'
+      + '<div class="trk"><div class="lbl">' + e(sl.carrier || 'TRACKING') + '</div><span>' + e(sl.tracking || '—') + '</span></div></div>'
+      + '<table><tr><th class="ck"></th><th>Qty</th><th>SKU</th><th>Bin</th><th>Item</th><th>Pcs</th></tr>'
+      + items.map(function(i){ return '<tr><td class="ck">☐</td><td class="q">' + e(i.qty) + '</td><td class="m">' + e(i.sku) + '</td><td class="m">' + e(i.bin) + '</td><td>' + e(i.title) + '</td><td class="q">' + e(i.pieces) + '</td></tr>'; }).join('')
+      + '</table><div class="ft">' + items.length + ' item' + (items.length === 1 ? '' : 's') + ' · ' + pcs + ' pieces</div></div>';
+  }).join('');
+  return '<!doctype html><html><head><meta charset="utf-8"><title>Packing slips</title><style>'
+    + '@page{margin:0.3in}body{font-family:Arial,Helvetica,sans-serif;color:#000;margin:0}'
+    + '.pg{page-break-after:always;padding:4px}.pg:last-child{page-break-after:auto}'
+    + '.hd{display:flex;justify-content:space-between;align-items:flex-start;border-bottom:2px solid #000;padding-bottom:6px;margin-bottom:8px}'
+    + '.ttl{font-size:20px;font-weight:800;letter-spacing:1px}.sub{font-size:11px}.ord{font-size:18px;font-weight:800;text-align:right;font-family:monospace}'
+    + '.box{font-size:13px;border:2px solid #000;padding:2px 6px;margin:4px 0 0 auto;display:table}'
+    + '.row{display:flex;gap:16px;margin-bottom:10px;font-size:13px;line-height:1.35}.to{flex:1}.trk{text-align:right}.trk span{font-family:monospace;font-size:12px}'
+    + '.lbl{font-size:10px;font-weight:700;color:#444;letter-spacing:1px}'
+    + 'table{width:100%;border-collapse:collapse;font-size:13px}th{text-align:left;border-bottom:1.5px solid #000;font-size:11px;padding:4px}'
+    + 'td{border-bottom:1px solid #999;padding:5px 4px;vertical-align:top}.ck{width:18px;font-size:16px}.q{text-align:right;font-weight:700;white-space:nowrap}.m{font-family:monospace;white-space:nowrap}'
+    + '.ft{margin-top:8px;font-size:12px;font-weight:700;text-align:right}'
+    + '</style></head><body>' + pages + '</body></html>';
+}
+
+// Prints the given slips through a hidden iframe; resolves once the print
+// call returns (right away with --kiosk-printing, after the dialog otherwise).
+function _psAlPrintSlips(slips) {
+  return new Promise(function(resolve){
+    var f = document.createElement('iframe');
+    f.style.cssText = 'position:fixed;right:0;bottom:0;width:0;height:0;border:0;visibility:hidden';
+    document.body.appendChild(f);
+    f.contentDocument.open(); f.contentDocument.write(_psAlSlipHtml(slips)); f.contentDocument.close();
+    setTimeout(function(){
+      try { f.contentWindow.focus(); f.contentWindow.print(); } catch (e) { console.error(e); }
+      setTimeout(function(){ f.remove(); resolve(); }, 1000);
+    }, 300);
+  });
+}
+
+async function _psAlMarkPrinted(ids) {
+  return _psAlFetch('/veeqo/autolabel/slips-printed', { method:'POST', body:{ ids: ids, by: psInitials || '' } });
+}
+
+window.psAlPrintNewSlips = async function(silent) {
+  if (_psAlSlipBusy) return;
+  _psAlSlipBusy = true;
+  var msg = document.getElementById('ps-al-slip-msg');
+  try {
+    var d = await _psAlFetch('/veeqo/autolabel/slips?status=new&limit=50');
+    if (d.ok === false) { if (msg) msg.textContent = '✗ ' + (d.error || 'Failed'); return; }
+    var slips = d.slips || [];
+    if (!slips.length) { if (msg && !silent) msg.textContent = 'No new slips.'; return; }
+    await _psAlPrintSlips(slips);
+    await _psAlMarkPrinted(slips.map(function(s){ return s.id; }));
+    if (msg) msg.textContent = '✓ Printed ' + slips.length + ' slip' + (slips.length === 1 ? '' : 's') + ' at ' + new Date().toLocaleTimeString();
+    psAlLoadSlips();
+  } catch (e) { if (msg) msg.textContent = '✗ ' + e.message; }
+  finally { _psAlSlipBusy = false; }
+};
+
+window.psAlSlipStation = function(on) {
+  try { localStorage.setItem('xf_slip_station', on ? '1' : ''); } catch (_) {}
+  if (_psAlSlipTimer) { clearInterval(_psAlSlipTimer); _psAlSlipTimer = null; }
+  if (on) {
+    psAlPrintNewSlips(true);
+    _psAlSlipTimer = setInterval(function(){ psAlPrintNewSlips(true); }, 60000);
+    _psToast('Printer station on — new packing slips print every minute while this page is open');
+  }
+};
+
+window.psAlLoadSlips = async function() {
+  var box = document.getElementById('ps-al-slip-list');
+  var st = document.getElementById('ps-al-slip-station');
+  var saved = false; try { saved = localStorage.getItem('xf_slip_station') === '1'; } catch (_) {}
+  if (st && saved && !st.checked) { st.checked = true; psAlSlipStation(true); }
+  var [n, p] = await Promise.all([
+    _psAlFetch('/veeqo/autolabel/slips?status=new&limit=200'),
+    _psAlFetch('/veeqo/autolabel/slips?status=printed&limit=30'),
+  ]);
+  var newSlips = (n && n.slips) || [];
+  document.getElementById('ps-al-slip-count').textContent = newSlips.length ? '(' + newSlips.length + ' waiting)' : '';
+  _psAlSlipRecent = newSlips.concat((p && p.slips) || []);
+  box.innerHTML = _psAlSlipRecent.length ? _psAlSlipRecent.map(function(s, i){
+    return '<div style="padding:5px 0;border-bottom:1px solid var(--border);display:flex;gap:8px;align-items:center;flex-wrap:wrap">'
+      + '<span style="min-width:70px;font-weight:700;color:' + (s.printedAt ? 'var(--text3)' : 'var(--accent)') + '">' + (s.printedAt ? '✓ Printed' : '⏳ Waiting') + '</span>'
+      + '<span style="font-family:var(--mono)">' + _psAlEsc(s.orderNumber) + '</span>'
+      + (s.boxCount > 1 ? '<span>box ' + s.boxNo + '/' + s.boxCount + '</span>' : '')
+      + '<span>' + _psAlEsc(s.channel) + '</span><span>' + (s.items || []).length + ' items</span>'
+      + '<span style="color:var(--text3)">' + _psAlEsc(new Date(s.printedAt || s.createdAt).toLocaleString()) + '</span>'
+      + '<button class="ps-btn-sm" style="margin-left:auto" onclick="psAlReprintSlip(' + i + ')">' + (s.printedAt ? 'Reprint' : 'Print') + '</button></div>';
+  }).join('') : '<div style="color:var(--text3)">No packing slips yet.</div>';
+};
+
+window.psAlReprintSlip = async function(i) {
+  var s = _psAlSlipRecent[i]; if (!s) return;
+  await _psAlPrintSlips([s]);
+  await _psAlMarkPrinted([s.id]);
+  psAlLoadSlips();
+};
+
+window.psAlSlipAdd = async function() {
+  var inp = document.getElementById('ps-al-slip-order');
+  var num = inp.value.trim();
+  if (!num) { _psToast('Type an order number', 'error'); return; }
+  var d = await _psAlFetch('/veeqo/autolabel/slip-add', { method:'POST', body:{ order: num } });
+  if (d.ok === false) { _psToast(d.error || 'Failed', 'error'); return; }
+  _psToast('Added ' + d.added + ' slip' + (d.added === 1 ? '' : 's') + ' for ' + d.order);
+  inp.value = '';
+  psAlLoadSlips();
 };
 </script>
 </html>

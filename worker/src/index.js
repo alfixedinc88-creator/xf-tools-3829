@@ -19318,6 +19318,7 @@ const AUTOLABEL_DEFAULTS = {
   lowValueMaxOrder: 0,         // only apply the low-value rule to orders <= this $ total (0 = every order)
   skipChannels: [],            // never auto-buy for these channels (name contains)
   maxBoxLb: 20,                // hold orders whose box would weigh more than this and show how to split them (0 = rule off)
+  slipRule: 'multi_sku',       // packing slip with the label: 'multi_sku' (2+ different items) | 'multi_qty' (2+ pieces in total) | 'all' | 'off'
   maxLabelsPerRun: 10,         // most labels one run can buy
   maxLabelsPerDay: 150,        // most labels auto mode can buy per day
   maxQuotesPerRun: 15,         // most orders one run asks Veeqo for rates on
@@ -19361,6 +19362,19 @@ async function autolabelEnsureTables(env) {
       status TEXT NOT NULL DEFAULT 'open', done_by TEXT, done_at TEXT
     )
   `).run().catch(()=>{});
+  // Packing slips waiting for the printer station (Auto Label tab ->
+  // "Packing slips"), one per label bought for an order that matches
+  // slipRule.
+  await env.DB.prepare(`
+    CREATE TABLE IF NOT EXISTS packing_slip_queue (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      order_id TEXT, alloc_id TEXT, order_number TEXT, channel TEXT,
+      tracking TEXT, carrier TEXT, ship_to TEXT, items TEXT,
+      box_no INTEGER, box_count INTEGER,
+      created_at TEXT NOT NULL, printed_at TEXT, printed_by TEXT, print_count INTEGER DEFAULT 0
+    )
+  `).run().catch(()=>{});
+  await env.DB.prepare('CREATE INDEX IF NOT EXISTS idx_slip_printed ON packing_slip_queue(printed_at)').run().catch(()=>{});
   await ensureShipD1Tables(env); // ship_order_cancel_log
   _autolabelTablesReady = true;
 }
@@ -19398,6 +19412,7 @@ function autolabelCleanConfig(c) {
     lowValueMaxOrder:  num(c.lowValueMaxOrder, D.lowValueMaxOrder, 0, 100000),
     skipChannels:      list(c.skipChannels),
     maxBoxLb:          num(c.maxBoxLb, D.maxBoxLb, 0, 150),
+    slipRule:          ['multi_sku', 'multi_qty', 'all', 'off'].includes(c.slipRule) ? c.slipRule : D.slipRule,
     maxLabelsPerRun:   Math.round(num(c.maxLabelsPerRun, D.maxLabelsPerRun, 0, 100)),
     maxLabelsPerDay:   Math.round(num(c.maxLabelsPerDay, D.maxLabelsPerDay, 0, 2000)),
     maxQuotesPerRun:   Math.round(num(c.maxQuotesPerRun, D.maxQuotesPerRun, 0, 60)),
@@ -19862,6 +19877,45 @@ async function autolabelBuy(env, order, allocationId, quote) {
   return { tracking: String(tracking || '').toUpperCase(), response: resp, requestBody: body };
 }
 
+// ── Packing slips ────────────────────────────────────────────────────────
+// Does this package need a packing slip printed with its label?
+function autolabelSlipWanted(items, rule) {
+  if (rule === 'off') return false;
+  if (rule === 'all') return true;
+  const skus = new Set(items.map(i => i.s));
+  const pieces = items.reduce((n, i) => n + (parseInt(i.q) || 0) * _psWeightSkuMultiplier(i.s), 0);
+  return rule === 'multi_qty' ? pieces > 1 : skus.size > 1;
+}
+
+// Queues one packing slip for a package whose label was just bought.
+async function autolabelQueueSlip(env, cfg, o, alloc, tracking, carrier, boxNo, boxCount) {
+  try {
+    const items = await veeqoExtractLineItems(env, o, alloc);
+    if (!autolabelSlipWanted(items, cfg.slipRule)) return false;
+    // Product names, when Veeqo sends them, keyed by SKU.
+    const titles = {};
+    for (const li of (o.line_items || [])) {
+      const sell = li.sellable || {};
+      const t = sell.product_title || sell.full_title || sell.title || (li.product && li.product.title) || '';
+      if (sell.sku_code && t) titles[sell.sku_code] = t;
+    }
+    const d = o.deliver_to || {};
+    const shipTo = {
+      name: veeqoExtractCustomerName(o), company: d.company || '',
+      address1: d.address1 || '', address2: d.address2 || '', city: d.city || '',
+      state: d.state || '', zip: d.zip || d.postcode || '', country: d.country || '',
+    };
+    await d1Run(env,
+      `INSERT INTO packing_slip_queue (order_id, alloc_id, order_number, channel, tracking, carrier, ship_to, items, box_no, box_count, created_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      [String(o.id), String(alloc.id), o.number || '', veeqoExtractChannel(o), tracking || '', carrier || '',
+       JSON.stringify(shipTo),
+       JSON.stringify(items.map(i => ({ sku: i.s, qty: i.q, bin: i.b, img: i.i, pieces: (parseInt(i.q) || 0) * _psWeightSkuMultiplier(i.s), title: titles[i.s] || '' }))),
+       boxNo || 1, boxCount || 1, new Date().toISOString()]);
+    return true;
+  } catch (e) { console.error('[autolabel] slip queue failed', e.message); return false; }
+}
+
 // ── The run ──────────────────────────────────────────────────────────────
 // opts.buy: actually buy (cron in 'auto' mode only).
 // opts.trigger: 'cron' | 'manual' (just for the saved summary).
@@ -19998,7 +20052,10 @@ async function autolabelRun(env, opts = {}) {
             const low = !hold ? autolabelLowValue(o, cost, cfg) : null;
             if (hold) { row.decision = hold.hold; row.reason = boxes + hold.reason; }
             else if (low) { row.decision = 'low_value'; row.reason = boxes + low; }
-            else if (!buy) { row.decision = 'would_buy'; row.reason = why; }
+            else if (!buy) {
+              row.decision = 'would_buy'; row.reason = why;
+              if (cfg.slipRule !== 'off' && autolabelSlipWanted(await veeqoExtractLineItems(env, o, todo[0]), cfg.slipRule)) row.slip = true;
+            }
             else if (buysLeft < picks.length) { row.decision = 'ready'; row.reason = `${why} — label limit reached for this run/day`; }
             else {
               const tracks = [];
@@ -20012,6 +20069,7 @@ async function autolabelRun(env, opts = {}) {
                   buysLeft--;
                   tracks.push(b.tracking);
                   await autolabelLog(env, { ...logBase, action: 'bought', tracking: b.tracking });
+                  if (await autolabelQueueSlip(env, cfg, o, p.alloc, b.tracking, pk.carrier, allocs.indexOf(p.alloc) + 1, allocs.length)) row.slip = true;
                 } catch (e) {
                   row.decision = 'buy_failed';
                   row.reason = (tracks.length ? `${tracks.length} of ${picks.length} boxes bought, then: ` : '') + String(e.message || e).slice(0, 200);
@@ -20141,6 +20199,7 @@ async function handleAutolabelRoute(path, method, url, request, env, session) {
     try {
       const r = await autolabelBuy(env, o, allocs[0].id, choice.pick);
       await autolabelLog(env, { ...logBase, action: 'bought', tracking: r.tracking });
+      await autolabelQueueSlip(env, cfg, o, allocs[0], r.tracking, choice.pick.carrier, 1, 1);
       await autolabelSetKey(env, AUTOLABEL_VERIFIED_KEY, 'yes');
       return veeqoResp({ ok: true, order: o.number, carrier: choice.pick.carrier, service: choice.pick.service,
         price: choice.pick.price, tracking: r.tracking, veeqoResponse: r.response });
@@ -20222,6 +20281,53 @@ async function handleAutolabelRoute(path, method, url, request, env, session) {
     await d1Run(env, `UPDATE reweigh_queue SET status='dismissed', done_by=?, done_at=? WHERE order_id=?`,
       [String(b.by || '').slice(0, 40), new Date().toISOString(), String(b.orderId || '')]);
     return veeqoResp({ ok: true });
+  }
+
+  // ── Packing slips ──
+  // GET ?status=new|printed&limit= -> slips for the printer station.
+  if (path === '/veeqo/autolabel/slips' && method === 'GET') {
+    const printed = url.searchParams.get('status') === 'printed';
+    const limit = Math.min(200, parseInt(url.searchParams.get('limit')) || 50);
+    const rows = await d1All(env,
+      `SELECT * FROM packing_slip_queue WHERE printed_at IS ${printed ? 'NOT ' : ''}NULL ORDER BY id ${printed ? 'DESC' : 'ASC'} LIMIT ?`, [limit]);
+    return veeqoResp({ ok: true, slips: rows.map(r => {
+      let shipTo = {}, items = [];
+      try { shipTo = JSON.parse(r.ship_to || '{}'); } catch (_) {}
+      try { items = JSON.parse(r.items || '[]'); } catch (_) {}
+      return { id: r.id, orderNumber: r.order_number, channel: r.channel, tracking: r.tracking, carrier: r.carrier,
+        boxNo: r.box_no, boxCount: r.box_count, createdAt: r.created_at, printedAt: r.printed_at, printedBy: r.printed_by,
+        printCount: r.print_count || 0, shipTo, items };
+    }) });
+  }
+
+  // POST { ids:[...], by } -> mark slips as printed.
+  if (path === '/veeqo/autolabel/slips-printed' && method === 'POST') {
+    const b = await request.json().catch(() => ({}));
+    const ids = (Array.isArray(b.ids) ? b.ids : []).map(n => parseInt(n)).filter(n => n > 0).slice(0, 200);
+    const now = new Date().toISOString();
+    for (const id of ids) {
+      await d1Run(env, `UPDATE packing_slip_queue SET printed_at=COALESCE(printed_at, ?), printed_by=COALESCE(printed_by, ?), print_count=COALESCE(print_count,0)+1 WHERE id=?`,
+        [now, String(b.by || '').slice(0, 40), id]);
+    }
+    return veeqoResp({ ok: true, marked: ids.length });
+  }
+
+  // POST { order } -> queue a slip by hand for an order that already has a
+  // label (e.g. printed by hand in Veeqo).
+  if (path === '/veeqo/autolabel/slip-add' && method === 'POST') {
+    const b = await request.json().catch(() => ({}));
+    const number = String(b.order || '').trim();
+    if (!number) return veeqoResp({ ok: false, error: 'order is required' }, 400);
+    const res = await veeqoFetch(env, `/orders?query=${encodeURIComponent(number)}&page_size=10&page=1`).catch(() => []);
+    const o = (Array.isArray(res) ? res : []).find(x => autolabelOrderNum(x.number) === autolabelOrderNum(number));
+    if (!o) return veeqoResp({ ok: false, error: `Order ${number} not found in Veeqo` });
+    const allocs = o.allocations || [];
+    if (!allocs.length) return veeqoResp({ ok: false, error: 'Order is not allocated in Veeqo' });
+    let added = 0;
+    for (let i = 0; i < allocs.length; i++) {
+      if (await autolabelQueueSlip(env, { slipRule: 'all' }, o, allocs[i], _psAllocTrackingNumber(allocs[i]) || '', veeqoExtractCarrier(o), i + 1, allocs.length)) added++;
+    }
+    return veeqoResp({ ok: true, order: o.number, added });
   }
 
   // ── Label costs ──
