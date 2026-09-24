@@ -910,6 +910,13 @@ body {
   background-size:200% 100%;animation:loadbar 1.2s linear infinite;z-index:9999;display:none;
 }
 @keyframes loadbar { to { background-position:-200% 0; } }
+.back-btn {
+  background:none;border:1px solid var(--border2,#E5E7EB);color:var(--text3,#6B7280);
+  font-size:12px;padding:5px 12px;border-radius:8px;cursor:pointer;
+  font-family:'DM Sans',sans-serif;display:flex;align-items:center;gap:5px;
+  transition:all .15s;white-space:nowrap;
+}
+.back-btn:hover { color:var(--accent,#2563EB);border-color:var(--accent,#2563EB); }
 .btn-disconnect {
   background:none;border:1px solid var(--border2);color:var(--text3);
   font-size:11px;padding:5px 12px;border-radius:8px;cursor:pointer;
@@ -1105,7 +1112,7 @@ body {
       <div class="tb-sub" id="ldash-last-updated">Loading…</div>
     </div>
     <div class="topbar-right">
-      <button class="back-btn" id="ldash-refresh-btn" onclick="ldashRefresh()" style="margin-right:8px">↻ Refresh</button>
+      <button class="back-btn" id="ldash-refresh-btn" onclick="ldashRefresh()" style="margin-right:8px">🔄 Refresh</button>
       <button class="back-btn" data-xf-signout onclick="xfSignOut()" style="margin-right:8px">🚪 Sign Out</button>
       <button class="back-btn" onclick="backToLauncher()">← Apps</button>
     </div>
@@ -1239,7 +1246,7 @@ body {
     ldRenderAll();
     var now = new Date().toLocaleTimeString('en-US', {timeZone:'America/New_York',hour:'2-digit',minute:'2-digit',hour12:true});
     document.getElementById('ldash-last-updated').textContent = 'Updated ' + now + ' EST';
-    if (btn) { btn.disabled = false; btn.textContent = '↻ Refresh'; }
+    if (btn) { btn.disabled = false; btn.textContent = '🔄 Refresh'; }
   };
 
   // ── Data fetchers ────────────────────────────────────────────────────────
@@ -1603,11 +1610,13 @@ body {
       <div class="tb-divider"></div>
       <div class="tb-sub" id="tb-sub">Live</div>
     </div>
-    <div class="topbar-right"><button class="back-btn" onclick="backToLauncher()">&#8592; Apps</button>
+    <div class="topbar-right">
       <div class="file-pill" id="sync-pill"><div class="dot"></div><span class="fname">Connected</span></div>
-      <button class="btn-new" onclick="refreshAllSheets()">&#8635; Refresh</button>
       <button class="btn-disconnect" onclick="reenterCreds()">Re-enter Credentials</button>
       <button class="btn-disconnect" onclick="disconnect()">Disconnect</button>
+      <button class="back-btn" onclick="refreshAllSheets()" title="Reload the latest data">🔄 Refresh</button>
+      <button class="back-btn" data-xf-signout onclick="xfSignOut()">🚪 Sign Out</button>
+      <button class="back-btn" onclick="backToLauncher()">&#8592; Apps</button>
     </div>
   </div>
   <div class="tabbar">
