@@ -3614,6 +3614,7 @@ export default {
       if (!credSession || !credSession.roles.includes('mgmt')) {
         return cors(new Response(JSON.stringify({ ok: false, error: 'Management access required' }), { status: 403, headers: { 'Content-Type': 'application/json' } }));
       }
+      if (url.pathname.startsWith('/inventory/soldout/watch/')) return await handleListingWatch(url.pathname, method, request, env, credSession);
       if (url.pathname === '/inventory/soldout/lookup'  && method === 'GET')  return await soldoutLookup(url, env);
       if (url.pathname === '/inventory/soldout/set-qty' && method === 'POST') return await soldoutSetQty(request, env);
       if (url.pathname === '/inventory/soldout/qty'     && method === 'POST') return await soldoutGetQty(request, env);
@@ -4022,6 +4023,13 @@ export default {
     ctx.waitUntil(autolabelCron(env).then(
       r => { if (!r || !r.skipped) console.log('[cron] autolabel', JSON.stringify(r)); },
       e => console.error('[cron] autolabel FAILED', e && e.message)
+    ));
+    // Listing Watch — low / sold-out listings while SKU Mgr still has stock.
+    // Runs every tick while its switch is on: a page per channel at a time,
+    // a new full pass every `everyHours`. See lwCron().
+    ctx.waitUntil(lwCron(env).then(
+      r => { if (!r || !r.skipped) console.log('[cron] listing watch', JSON.stringify(r)); },
+      e => console.error('[cron] listing watch FAILED', e && e.message)
     ));
     // Veeqo tracking check: 8am EST (13:00 UTC) and 4pm EST (21:00 UTC)
     if ((hr === 13 || hr === 21) && min === 0) {
@@ -21036,6 +21044,317 @@ async function soldoutGetQty(request, env) {
     } catch (e) { return { qty: null, detail: '', error: String(e.message || e).slice(0, 200) }; }
   }));
   return _soResp({ ok: true, results });
+}
+
+// ═══════════════════════════════════════════════════════════════════════
+// LISTING WATCH — low / sold-out listings while we still have stock
+//                                        (/inventory/soldout/watch/*)
+//
+// A listing can end up at 0 (or a handful) on a channel without anyone
+// noticing — a sale, a channel sync, a manual edit — while SKU Mgr still
+// shows stock on the shelf. This scans every active listing's quantity:
+//   eBay    — Trading GetMyeBaySelling ActiveList (200 per page; a listing
+//             with variations is checked per variation)
+//   Amazon  — Listings API search, merchant-fulfilled (FBM) quantity only;
+//             FBA is Amazon's stock and is skipped
+//   Walmart — GET /v3/inventories (all ship nodes added up)
+//   Shopify — productVariants inventoryQuantity (active products)
+// and, for any listing under `threshold` (default 10, so 0 included), looks
+// up the part in SKU Mgr (D1 master_list, by the channel SKU's base part
+// before "="). Stock on the shelf → a warning in lw_alerts.
+//   mode 'manual' — warnings only; someone checks and fixes each one
+//   mode 'auto'   — the listing is also set to `restockQty` right away,
+//                   through the same code as the Sold Out tab, and logged
+//                   to listing_qty_log as "Auto (Listing Watch)".
+// A scan is done a page per channel at a time: on the cron tick (when
+// `watch` is on, a new pass every `everyHours`) and from the "Scan now"
+// button, which keeps asking for the next step until the pass is done.
+// ═══════════════════════════════════════════════════════════════════════
+
+const LW_DEFAULTS = { watch: true, mode: 'manual', threshold: 10, restockQty: 10, everyHours: 6, pagesPerTick: 2 };
+const LW_PLATFORMS = ['eBay', 'Amazon', 'Walmart', 'Shopify'];
+
+let _lwReady = false;
+async function lwEnsureTables(env) {
+  if (_lwReady) return;
+  await env.DB.prepare(`CREATE TABLE IF NOT EXISTS lw_kv (key TEXT PRIMARY KEY, value TEXT)`).run();
+  await env.DB.prepare(`CREATE TABLE IF NOT EXISTS lw_alerts (
+    id INTEGER PRIMARY KEY AUTOINCREMENT, platform TEXT NOT NULL, listing_id TEXT NOT NULL, sku TEXT NOT NULL DEFAULT '',
+    base_sku TEXT, title TEXT, qty INTEGER, our_cases REAL, our_detail TEXT, status TEXT NOT NULL DEFAULT 'open',
+    first_seen TEXT, last_seen TEXT, last_pass TEXT, fixed_at TEXT, note TEXT,
+    UNIQUE (platform, listing_id, sku))`).run();
+  // Quantity someone (or Auto) last set it to — it only warns again if the
+  // listing drops below that, not for a low number that was set on purpose.
+  await env.DB.prepare(`ALTER TABLE lw_alerts ADD COLUMN set_qty INTEGER`).run().catch(() => {});
+  _lwReady = true;
+}
+async function lwGet(env, key) { const r = await env.DB.prepare(`SELECT value FROM lw_kv WHERE key = ?`).bind(key).first(); return r ? r.value : null; }
+async function lwSet(env, key, value) { await env.DB.prepare(`INSERT INTO lw_kv (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value`).bind(key, value).run(); }
+function lwClean(c) {
+  const n = (v, d, lo, hi) => { v = parseInt(v, 10); return Number.isFinite(v) ? Math.min(hi, Math.max(lo, v)) : d; };
+  return { watch: c.watch !== false, mode: c.mode === 'auto' ? 'auto' : 'manual',
+    threshold: n(c.threshold, 10, 1, 1000), restockQty: n(c.restockQty, 10, 1, 9999),
+    everyHours: n(c.everyHours, 6, 1, 168), pagesPerTick: n(c.pagesPerTick, 2, 1, 10) };
+}
+async function lwConfig(env) { let c = {}; try { c = JSON.parse(await lwGet(env, 'config') || '{}'); } catch (_) {} return lwClean({ ...LW_DEFAULTS, ...c }); }
+async function lwState(env) { try { return JSON.parse(await lwGet(env, 'state') || 'null'); } catch (_) { return null; } }
+function lwNewPass() {
+  const p = {}; LW_PLATFORMS.forEach(k => { p[k] = { cursor: null, done: false, scanned: 0, low: 0, alerts: 0, error: null }; });
+  return { passId: new Date().toISOString(), startedAt: new Date().toISOString(), finishedAt: null, platforms: p };
+}
+const lwBase = sku => String(sku || '').split('=')[0].trim().toUpperCase().replace(/^-+|-+$/g, '');
+
+// ── One page of listings per channel: { items:[{listingId, sku, title, qty}], next, done } ──
+async function lwPageEbay(env, cursor) {
+  const page = cursor || 1;
+  const token = await getEbayToken(env);
+  const r = await fetch('https://api.ebay.com/ws/api.dll', {
+    method: 'POST',
+    headers: { 'X-EBAY-API-CALL-NAME': 'GetMyeBaySelling', 'X-EBAY-API-SITEID': '0',
+      'X-EBAY-API-COMPATIBILITY-LEVEL': '967', 'X-EBAY-API-IAF-TOKEN': token, 'Content-Type': 'text/xml' },
+    body: `<?xml version="1.0" encoding="utf-8"?>
+<GetMyeBaySellingRequest xmlns="urn:ebay:apis:eBLBaseComponents">
+  <ActiveList><Include>true</Include><Pagination><EntriesPerPage>200</EntriesPerPage><PageNumber>${page}</PageNumber></Pagination></ActiveList>
+  <DetailLevel>ReturnAll</DetailLevel>
+</GetMyeBaySellingRequest>`,
+  });
+  const xml = await r.text();
+  if (!/<Ack>(Success|Warning)<\/Ack>/.test(xml)) {
+    const msgs = [...xml.matchAll(/<LongMessage>([^<]+)<\/LongMessage>/g)].map(m => m[1]);
+    throw new Error('eBay: ' + (msgs.join(' | ') || 'GetMyeBaySelling failed'));
+  }
+  const active = (xml.match(/<ActiveList>([\s\S]*)<\/ActiveList>/) || [])[1] || '';
+  const tag = (s, t) => { const m = s.match(new RegExp('<' + t + '>([^<]*)</' + t + '>')); return m ? m[1] : ''; };
+  const unesc = s => s.replace(/&amp;/g, '&').replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&quot;/g, '"').replace(/&apos;/g, "'");
+  const items = [];
+  for (const m of active.matchAll(/<Item>([\s\S]*?)<\/Item>/g)) {
+    const it = m[1];
+    const id = tag(it, 'ItemID'), title = unesc(tag(it, 'Title'));
+    const vb = (it.match(/<Variations>([\s\S]*?)<\/Variations>/) || [])[1];
+    if (vb) {
+      for (const v of vb.matchAll(/<Variation>([\s\S]*?)<\/Variation>/g)) {
+        const q = parseInt(tag(v[1], 'Quantity') || '0', 10), sold = parseInt(tag(v[1], 'QuantitySold') || '0', 10);
+        items.push({ listingId: id, sku: unesc(tag(v[1], 'SKU')), title, qty: Math.max(0, q - sold) });
+      }
+    } else {
+      const top = it.replace(/<Variations>[\s\S]*?<\/Variations>/, '');
+      let qa = tag(top, 'QuantityAvailable');
+      if (qa === '') { const q = parseInt(tag(top, 'Quantity') || '0', 10), sold = parseInt(tag(top, 'QuantitySold') || '0', 10); qa = String(Math.max(0, q - sold)); }
+      items.push({ listingId: id, sku: unesc(tag(top, 'SKU')), title, qty: parseInt(qa, 10) || 0 });
+    }
+  }
+  const pages = parseInt(tag(active, 'TotalNumberOfPages') || '1', 10) || 1;
+  return { items, next: page + 1, done: page >= pages };
+}
+
+async function lwPageAmazon(env, cursor) {
+  if (!env.AMAZON_SELLER_ID) throw new Error('AMAZON_SELLER_ID not set');
+  const token = await getAmazonToken(env);
+  const mid = env.AMAZON_MARKETPLACE_ID || 'ATVPDKIKX0DER';
+  const u = `https://sellingpartnerapi-na.amazon.com/listings/2021-08-01/items/${encodeURIComponent(env.AMAZON_SELLER_ID)}?marketplaceIds=${mid}&includedData=summaries,fulfillmentAvailability&pageSize=20` + (cursor ? '&pageToken=' + encodeURIComponent(cursor) : '');
+  const r = await fetch(u, { headers: { 'x-amz-access-token': token } });
+  const d = await r.json().catch(() => ({}));
+  if (!r.ok) throw new Error('Amazon: ' + JSON.stringify(d.errors || d).slice(0, 200));
+  const items = [];
+  for (const i of (d.items || [])) {
+    const fa = i.fulfillmentAvailability || [];
+    if (fa.some(f => /AMAZON/i.test(f.fulfillmentChannelCode || ''))) continue; // FBA — Amazon's stock
+    const s = (i.summaries || []).find(x => x.marketplaceId === mid) || (i.summaries || [])[0] || {};
+    const q = (fa.find(f => f.fulfillmentChannelCode === 'DEFAULT') || {}).quantity;
+    items.push({ listingId: s.asin || i.sku, sku: i.sku, title: s.itemName || '', qty: q == null ? 0 : q });
+  }
+  const next = d.pagination && d.pagination.nextToken;
+  return { items, next: next || null, done: !next };
+}
+
+async function lwPageWalmart(env, cursor) {
+  const token = await getWalmartToken(env);
+  const r = await fetch('https://marketplace.walmartapis.com/v3/inventories?limit=50' + (cursor ? '&nextCursor=' + encodeURIComponent(cursor) : ''), {
+    headers: { 'WM_SEC.ACCESS_TOKEN': token, 'WM_QOS.CORRELATION_ID': crypto.randomUUID(), 'WM_SVC.NAME': 'Walmart Marketplace', 'Accept': 'application/json' },
+  });
+  const d = await r.json().catch(() => ({}));
+  if (!r.ok) throw new Error('Walmart: ' + JSON.stringify(d.errors || d).slice(0, 200));
+  const list = ((d.elements || {}).inventories) || [];
+  const items = list.map(inv => {
+    const nodes = inv.nodes || [];
+    const qty = nodes.reduce((a, n) => a + (((n.inputQty || n.availToSellQty || {}).amount) || 0), 0);
+    return { listingId: inv.sku, sku: inv.sku, title: '', qty };
+  });
+  const next = (d.meta || {}).nextCursor;
+  return { items, next: next || null, done: !next || !list.length };
+}
+
+async function lwPageShopify(env, cursor) {
+  const q = `query($after: String) { productVariants(first: 100, after: $after, query: "product_status:active") {
+    pageInfo { hasNextPage endCursor } edges { node { id sku title inventoryQuantity product { title } } } } }`;
+  const d = await shopifyGraphQL(env, q, { after: cursor || null });
+  const pv = d.productVariants || {};
+  const items = (pv.edges || []).map(e => e.node).filter(v => v.sku).map(v => ({
+    listingId: String(v.id).split('/').pop(), sku: v.sku,
+    title: v.product && v.product.title ? v.product.title + (v.title && v.title !== 'Default Title' ? ' — ' + v.title : '') : '',
+    qty: v.inventoryQuantity || 0 }));
+  const more = pv.pageInfo && pv.pageInfo.hasNextPage;
+  return { items, next: more ? pv.pageInfo.endCursor : null, done: !more };
+}
+const LW_PAGERS = { eBay: lwPageEbay, Amazon: lwPageAmazon, Walmart: lwPageWalmart, Shopify: lwPageShopify };
+
+// SKU Mgr stock for a set of base parts → { BASE: { cases, detail } }
+async function lwStock(env, bases) {
+  const out = {};
+  const list = [...new Set(bases.filter(Boolean))];
+  for (let i = 0; i < list.length; i += 80) {
+    const chunk = list.slice(i, i + 80);
+    const rows = await d1All(env, `SELECT UPPER(base_sku) AS b, part_num, location, cases FROM master_list
+      WHERE UPPER(base_sku) IN (${chunk.map(() => '?').join(',')}) AND cases > 0`, chunk).catch(() => []);
+    for (const r of rows) {
+      const o = out[r.b] = out[r.b] || { cases: 0, parts: [] };
+      o.cases += parseFloat(r.cases) || 0;
+      if (o.parts.length < 6) o.parts.push(`${r.part_num || r.b} @ ${r.location || '?'}: ${r.cases}`);
+    }
+  }
+  Object.values(out).forEach(o => { o.cases = Math.round(o.cases * 100) / 100; o.detail = o.parts.join(', '); });
+  return out;
+}
+
+async function lwAutoFix(env, cfg, a) {
+  const fns = { eBay: _soEbay, Amazon: _soAmazon, Walmart: _soWalmart, Shopify: _soShopify };
+  let r;
+  try { r = await fns[a.platform](env, { listingId: a.listing_id, sku: a.sku, title: a.title }, cfg.restockQty); }
+  catch (e) { r = { ok: false, error: String(e.message || e).slice(0, 300) }; }
+  await soEnsureLog(env);
+  await d1Run(env, `INSERT INTO listing_qty_log (ts, by_user, platform, listing_id, sku, title, quantity, ok, detail) VALUES (?,?,?,?,?,?,?,?,?)`,
+    [new Date().toISOString(), 'Auto (Listing Watch)', a.platform, a.listing_id, a.sku, String(a.title || '').slice(0, 200), cfg.restockQty, r.ok ? 1 : 0,
+     String(r.error || r.detail || r.via || '').slice(0, 500)]);
+  const now = new Date().toISOString();
+  await env.DB.prepare(`UPDATE lw_alerts SET status = ?, fixed_at = ?, note = ?, set_qty = ? WHERE id = ?`)
+    .bind(r.ok ? 'auto-fixed' : 'auto-failed', now, r.ok ? `Auto set to ${cfg.restockQty}` : ('Auto fix failed: ' + (r.error || '')).slice(0, 400), r.ok ? cfg.restockQty : null, a.id).run();
+  return r.ok;
+}
+
+// One step: a page (or `pages` pages) from every channel still going.
+async function lwStep(env, { pages, trigger }) {
+  await lwEnsureTables(env);
+  const cfg = await lwConfig(env);
+  let st = await lwState(env);
+  if (!st || st.finishedAt) return { state: st, idle: true };
+  let autoFixes = 0;
+  for (const plat of LW_PLATFORMS) {
+    const ps = st.platforms[plat];
+    for (let n = 0; n < pages && !ps.done; n++) {
+      let pg;
+      try { pg = await LW_PAGERS[plat](env, ps.cursor); }
+      catch (e) { ps.error = String(e.message || e).slice(0, 300); ps.done = true; break; }
+      ps.cursor = pg.next; ps.done = pg.done; ps.scanned += pg.items.length;
+      const low = pg.items.filter(i => i.qty < cfg.threshold);
+      ps.low += low.length;
+      if (!low.length) continue;
+      const stock = await lwStock(env, low.map(i => lwBase(i.sku)));
+      const now = new Date().toISOString();
+      for (const i of low) {
+        const base = lwBase(i.sku), s = stock[base];
+        if (!s || !(s.cases > 0)) continue; // really out — nothing to warn about
+        const prev = await env.DB.prepare(`SELECT id, status, set_qty FROM lw_alerts WHERE platform = ? AND listing_id = ? AND sku = ?`).bind(plat, String(i.listingId), i.sku || '').first();
+        if (prev) {
+          // Re-open a fixed one only if it dropped below what it was set to;
+          // a dismissed one stays dismissed while it stays low.
+          const keptFix = (prev.status === 'fixed' || prev.status === 'auto-fixed') && prev.set_qty != null && i.qty >= prev.set_qty;
+          const status = (prev.status === 'dismissed' || prev.status === 'open' || keptFix) ? prev.status : 'open';
+          await env.DB.prepare(`UPDATE lw_alerts SET qty = ?, our_cases = ?, our_detail = ?, title = COALESCE(NULLIF(?, ''), title), status = ?, last_seen = ?, last_pass = ? WHERE id = ?`)
+            .bind(i.qty, s.cases, s.detail, i.title || '', status, now, st.passId, prev.id).run();
+          if (status === 'open' && prev.status !== 'open') ps.alerts++;
+        } else {
+          await env.DB.prepare(`INSERT INTO lw_alerts (platform, listing_id, sku, base_sku, title, qty, our_cases, our_detail, status, first_seen, last_seen, last_pass) VALUES (?,?,?,?,?,?,?,?,'open',?,?,?)`)
+            .bind(plat, String(i.listingId), i.sku || '', base, i.title || '', i.qty, s.cases, s.detail, now, now, st.passId).run();
+          ps.alerts++;
+        }
+      }
+      if (cfg.mode === 'auto') {
+        const todo = await d1All(env, `SELECT * FROM lw_alerts WHERE status = 'open' AND platform = ? AND last_pass = ? LIMIT 5`, [plat, st.passId]);
+        for (const a of todo) { if (autoFixes >= 5) break; await lwAutoFix(env, cfg, a); autoFixes++; }
+      }
+      await lwSet(env, 'state', JSON.stringify(st)); // keep progress if the next page fails
+    }
+  }
+  if (LW_PLATFORMS.every(p => st.platforms[p].done)) {
+    st.finishedAt = new Date().toISOString();
+    // Warnings a clean channel scan didn't see as low any more: back in stock.
+    for (const p of LW_PLATFORMS) {
+      if (st.platforms[p].error) continue;
+      await env.DB.prepare(`UPDATE lw_alerts SET status = 'ok-now', note = 'Listing back at or above the limit', fixed_at = ? WHERE platform = ? AND status IN ('open','dismissed','auto-failed') AND (last_pass IS NULL OR last_pass != ?)`)
+        .bind(st.finishedAt, p, st.passId).run();
+    }
+  }
+  await lwSet(env, 'state', JSON.stringify(st));
+  return { state: st, idle: false, trigger };
+}
+
+async function lwCron(env) {
+  await lwEnsureTables(env);
+  const cfg = await lwConfig(env);
+  if (!cfg.watch) return { skipped: 'off' };
+  let st = await lwState(env);
+  if (!st || (st.finishedAt && Date.now() - Date.parse(st.startedAt) >= cfg.everyHours * 3600000)) {
+    st = lwNewPass(); await lwSet(env, 'state', JSON.stringify(st));
+  }
+  if (st.finishedAt) return { skipped: 'waiting' };
+  const r = await lwStep(env, { pages: cfg.pagesPerTick, trigger: 'cron' });
+  const p = r.state && r.state.platforms;
+  return { done: !!(r.state && r.state.finishedAt), scanned: p && LW_PLATFORMS.map(k => `${k}:${p[k].scanned}`).join(' ') };
+}
+
+async function soEnsureLog(env) {
+  await env.DB.prepare(`CREATE TABLE IF NOT EXISTS listing_qty_log (
+    id INTEGER PRIMARY KEY AUTOINCREMENT, ts TEXT NOT NULL, by_user TEXT, platform TEXT, listing_id TEXT,
+    sku TEXT, title TEXT, quantity INTEGER, ok INTEGER, detail TEXT)`).run().catch(() => {});
+}
+
+async function handleListingWatch(path, method, request, env, session) {
+  await lwEnsureTables(env);
+  const who = (session && (session.displayName || session.username)) || '';
+  if (path === '/inventory/soldout/watch/status' && method === 'GET') {
+    const alerts = await d1All(env, `SELECT * FROM lw_alerts WHERE status IN ('open','auto-failed') ORDER BY qty ASC, id DESC LIMIT 300`);
+    const recent = await d1All(env, `SELECT * FROM lw_alerts WHERE status NOT IN ('open','auto-failed') ORDER BY COALESCE(fixed_at, last_seen) DESC LIMIT 40`);
+    return _soResp({ ok: true, config: await lwConfig(env), defaults: LW_DEFAULTS, state: await lwState(env), alerts, recent });
+  }
+  if (path === '/inventory/soldout/watch/config' && method === 'POST') {
+    const b = await request.json().catch(() => ({}));
+    const cfg = lwClean({ ...(await lwConfig(env)), ...(b.config || {}) });
+    await lwSet(env, 'config', JSON.stringify(cfg));
+    return _soResp({ ok: true, config: cfg });
+  }
+  if (path === '/inventory/soldout/watch/scan' && method === 'POST') {
+    // Start a fresh pass; the page then calls /step until it's done.
+    const st = lwNewPass(); await lwSet(env, 'state', JSON.stringify(st));
+    return _soResp({ ok: true, state: st });
+  }
+  if (path === '/inventory/soldout/watch/step' && method === 'POST') {
+    const r = await lwStep(env, { pages: 1, trigger: 'manual' });
+    return _soResp({ ok: true, state: r.state, idle: r.idle });
+  }
+  if (path === '/inventory/soldout/watch/fix' && method === 'POST') {
+    // { id, quantity } — set that listing through the Sold Out code, mark fixed.
+    const b = await request.json().catch(() => ({}));
+    const qty = parseInt(b.quantity, 10);
+    if (!(qty >= 0 && qty <= 9999)) return _soResp({ ok: false, error: 'quantity must be 0–9999' }, 400);
+    const a = await env.DB.prepare(`SELECT * FROM lw_alerts WHERE id = ?`).bind(parseInt(b.id, 10)).first();
+    if (!a) return _soResp({ ok: false, error: 'Warning not found' }, 404);
+    const fns = { eBay: _soEbay, Amazon: _soAmazon, Walmart: _soWalmart, Shopify: _soShopify };
+    let r;
+    try { r = await fns[a.platform](env, { listingId: a.listing_id, sku: a.sku, title: a.title }, qty); }
+    catch (e) { r = { ok: false, error: String(e.message || e).slice(0, 300) }; }
+    await soEnsureLog(env);
+    await d1Run(env, `INSERT INTO listing_qty_log (ts, by_user, platform, listing_id, sku, title, quantity, ok, detail) VALUES (?,?,?,?,?,?,?,?,?)`,
+      [new Date().toISOString(), who + ' (Listing Watch)', a.platform, a.listing_id, a.sku, String(a.title || '').slice(0, 200), qty, r.ok ? 1 : 0, String(r.error || r.detail || r.via || '').slice(0, 500)]);
+    if (r.ok) await env.DB.prepare(`UPDATE lw_alerts SET status = 'fixed', fixed_at = ?, note = ?, set_qty = ? WHERE id = ?`).bind(new Date().toISOString(), `Set to ${qty} by ${who}`, qty, a.id).run();
+    return _soResp({ ok: !!r.ok, error: r.error || null, detail: r.detail || r.via || '' });
+  }
+  if (path === '/inventory/soldout/watch/dismiss' && method === 'POST') {
+    const b = await request.json().catch(() => ({}));
+    await env.DB.prepare(`UPDATE lw_alerts SET status = 'dismissed', fixed_at = ?, note = ? WHERE id = ?`)
+      .bind(new Date().toISOString(), `Dismissed by ${who}`, parseInt(b.id, 10)).run();
+    return _soResp({ ok: true });
+  }
+  return _soResp({ ok: false, error: 'Not found' }, 404);
 }
 
 // POST { items:[{platform, listingId, sku, title}], quantity, by }
