@@ -969,6 +969,144 @@ async function reorderComputeRecommendations(env, days) {
   return { fbaRecommendations, noFbaRecommendations, windowDays: days };
 }
 
+// ── GET /reorder/vendor-order — Reorder Planner → "🧾 Reorder" tab ──────────
+// What to order from each vendor, only in the part numbers we send to FBA:
+//   1. Every channel's sales in the window (eBay, Walmart, Shopify, Amazon),
+//      turned into PIECES (units sold × pack size), pooled per base part
+//      (27-3-1=25 and 27-3-1=10X both count toward 27-3-1).
+//   2. Each FBA SKU (fba_catalog) keeps its own Amazon sales; every other
+//      sale of the part (other channels, other packs) is split over the
+//      part's FBA SKUs by how many each sold on Amazon (even if none).
+//      A base part with no FBA SKU gets its best-selling pack instead.
+//   3. Need = monthly pieces × (leadMonths + coverMonths) − stock, where
+//      stock = SKU Mgr (master_list) for that SKU [+ other packs of the
+//      same part] [+ FBA stock at Amazon], all in pieces.
+//   4. Order = need in units of that SKU (÷ pack size), rounded UP to full
+//      cases from SKU Mgr's "Each Case Qty", with a note when rounded.
+// Plus vendor (SKU Mgr), outside-box / inside-bag UPC (upc table) and the
+// description, so the page can filter by vendor and download a CSV.
+async function reorderVendorOrder(env, url) {
+  const num = (k, d, lo, hi) => { const v = parseFloat(url.searchParams.get(k)); return Number.isFinite(v) ? Math.min(hi, Math.max(lo, v)) : d; };
+  const days = Math.round(num('days', 90, 7, 730));
+  const cover = num('cover', 3, 0.5, 24), lead = num('lead', 3, 0, 12);
+  const countFba = url.searchParams.get('fbaStock') !== '0';
+  const countOtherPacks = url.searchParams.get('otherPacks') === '1';
+  const since = new Date(Date.now() - days * 86400000).toISOString().slice(0, 10);
+  const all = async (sql, ...b) => { try { return (await env.DB.prepare(sql).bind(...b).all()).results || []; } catch (_) { return []; } };
+  const U = s => String(s || '').trim().toUpperCase();
+  const pack = s => reorderExtractPackSize(U(s)) || 1;
+
+  const fba = await all('SELECT sku, asin, available, product_name FROM fba_catalog');
+  const sales = {}; // exact SKU → { amz, other } in units (listing orders)
+  const chans = [['amazon_sales_weekly', 'amz'], ['ebay_sales_weekly', 'other'], ['walmart_sales_weekly', 'other'], ['shopify_sales_weekly', 'other']];
+  let dataFrom = null;
+  for (const [t, k] of chans) {
+    for (const r of await all(`SELECT sku, SUM(units_ordered) AS u FROM ${t} WHERE period_start >= ? GROUP BY sku`, since)) {
+      const s = U(r.sku); if (!s) continue;
+      (sales[s] = sales[s] || { amz: 0, other: 0 })[k] += r.u || 0;
+    }
+    const m = await all(`SELECT MIN(period_start) AS m FROM ${t}`);
+    if (m[0] && m[0].m && (!dataFrom || m[0].m < dataFrom)) dataFrom = m[0].m;
+  }
+
+  // SKU Mgr: stock (cases × each-case-qty, in units of that SKU), case qty, vendor, name.
+  const ml = await all(`SELECT part_num, base_sku, name, vendor, cases, units_per_case FROM master_list WHERE part_num != ''`);
+  const bySku = {}, byBase = {}, vendors = new Set();
+  for (const r of ml) {
+    const s = U(r.part_num), b = U(r.base_sku) || U(reorderGetBaseSku(s));
+    const o = bySku[s] = bySku[s] || { units: 0, caseQty: 0, vendor: '', name: '' };
+    o.units += (parseFloat(r.cases) || 0) * (parseFloat(r.units_per_case) || 0);
+    o.caseQty = Math.max(o.caseQty, parseFloat(r.units_per_case) || 0);
+    if (!o.vendor && r.vendor) o.vendor = String(r.vendor).trim();
+    if (!o.name && r.name) o.name = String(r.name).trim();
+    const bo = byBase[b] = byBase[b] || { vendor: '', name: '', skus: new Set() };
+    if (!bo.vendor && r.vendor) bo.vendor = String(r.vendor).trim();
+    if (!bo.name && r.name) bo.name = String(r.name).trim();
+    bo.skus.add(s);
+    if (r.vendor) vendors.add(String(r.vendor).trim());
+  }
+  const upcRows = await all('SELECT sku, inside_upc, outside_upc FROM upc');
+  const upc = {}; upcRows.forEach(r => { upc[U(r.sku)] = r; });
+  const prodRows = await all('SELECT base_sku, name FROM products');
+  const prodName = {}; prodRows.forEach(r => { const b = U(r.base_sku); if (b && r.name && !prodName[b]) prodName[b] = r.name; });
+
+  // FBA SKUs per base part (one per ASIN, the properly formatted SKU wins).
+  const asinSkus = {}, claimed = new Set(); // claimed = FBA SKU strings whose Amazon sales stay with that FBA SKU
+  fba.forEach(r => { if (r.sku) (asinSkus[r.asin || r.sku] = asinSkus[r.asin || r.sku] || []).push(r); });
+  const fbaByBase = {};
+  for (const k in asinSkus) {
+    const g = asinSkus[k];
+    const pick = g.find(r => reorderIsProperFormat(r.sku)) || g[0];
+    const sku = U(pick.sku);
+    const amzUnits = g.reduce((a, r) => a + ((sales[U(r.sku)] || {}).amz || 0), 0);
+    g.forEach(r => { claimed.add(U(r.sku)); });
+    const fbaAvail = g.reduce((a, r) => a + (parseFloat(r.available) || 0), 0);
+    (fbaByBase[U(reorderGetBaseSku(sku))] = fbaByBase[U(reorderGetBaseSku(sku))] || []).push({ sku, asin: pick.asin || '', amzUnits, amzPieces: amzUnits * pack(sku), fbaAvailPieces: fbaAvail * pack(sku), fbaName: pick.product_name || '' });
+  }
+  const fbaSkuSet = new Set(); Object.values(fbaByBase).forEach(l => l.forEach(v => fbaSkuSet.add(v.sku)));
+
+  // Sales in pieces per base part: `pool` = everything except the FBA
+  // SKUs' own Amazon sales (those stay with their FBA SKU); `total` = all.
+  const piecesByBase = {}, poolByBase = {}, piecesBySku = {};
+  for (const s in sales) {
+    const pcs = (sales[s].amz + sales[s].other) * pack(s);
+    const own = claimed.has(s) ? sales[s].amz * pack(s) : 0;
+    const b = U(reorderGetBaseSku(s));
+    piecesByBase[b] = (piecesByBase[b] || 0) + pcs;
+    poolByBase[b] = (poolByBase[b] || 0) + pcs - own;
+    piecesBySku[s] = (piecesBySku[s] || 0) + pcs;
+  }
+
+  const months = days / 30, rows = [];
+  const bases = new Set([...Object.keys(piecesByBase), ...Object.keys(fbaByBase)]);
+  for (const b of bases) {
+    const total = piecesByBase[b] || 0;
+    let targets;
+    if (fbaByBase[b]) {
+      const v = fbaByBase[b], w = v.reduce((a, x) => a + x.amzUnits, 0), pool = poolByBase[b] || 0;
+      targets = v.map(x => ({ ...x, demand: x.amzPieces + pool * (w > 0 ? x.amzUnits / w : 1 / v.length), fbaSku: true }));
+    } else {
+      if (!total) continue;
+      // No FBA SKU: order the best-selling pack of this part.
+      let best = null; for (const s in piecesBySku) if (U(reorderGetBaseSku(s)) === b && (!best || piecesBySku[s] > piecesBySku[best])) best = s;
+      targets = [{ sku: best, asin: '', demand: total, fbaAvailPieces: 0, fbaSku: false }];
+    }
+    const bo = byBase[b] || { skus: new Set() };
+    for (const t of targets) {
+      const ps = pack(t.sku), sm = bySku[t.sku] || { units: 0, caseQty: 0 };
+      const demandPcs = t.demand, monthlyPcs = demandPcs / months;
+      const ownPcs = sm.units * ps;
+      let otherPcs = 0;
+      [...bo.skus].forEach(s => { if (s !== t.sku && !fbaSkuSet.has(s) && bySku[s]) otherPcs += bySku[s].units * pack(s); });
+      const stockPcs = ownPcs + (countOtherPacks ? otherPcs : 0) + (countFba ? t.fbaAvailPieces : 0);
+      const needPcs = Math.max(0, monthlyPcs * (lead + cover) - stockPcs);
+      const needUnits = Math.ceil(needPcs / ps - 1e-9);
+      const caseQty = sm.caseQty || 0;
+      let orderUnits = needUnits, cases = null, notes = [];
+      if (needUnits > 0 && caseQty > 0) {
+        cases = Math.ceil(needUnits / caseQty);
+        orderUnits = cases * caseQty;
+        if (orderUnits !== needUnits) notes.push(`Rounded up from ${needUnits} to ${orderUnits} (${cases} case${cases === 1 ? '' : 's'} of ${caseQty})`);
+      } else if (needUnits > 0) notes.push('No case qty in SKU Mgr — not rounded');
+      if (!t.fbaSku) notes.push('No FBA listing — best-selling pack');
+      if (!countOtherPacks && otherPcs > 0) notes.push(`${Math.round(otherPcs)} pcs in other packs of ${b} not counted`);
+      const u = upc[t.sku] || {};
+      rows.push({
+        sku: t.sku, baseSku: b, asin: t.asin, fbaSku: t.fbaSku, packSize: ps,
+        description: sm.name || bo.name || prodName[b] || t.fbaName || '',
+        vendor: sm.vendor || bo.vendor || '',
+        outsideUpc: u.outside_upc || '', insideUpc: u.inside_upc || '',
+        soldPcs: Math.round(demandPcs), monthlyPcs: Math.round(monthlyPcs * 10) / 10,
+        stockUnits: Math.round(sm.units * 100) / 100, stockPcs: Math.round(ownPcs), otherPackPcs: Math.round(otherPcs),
+        fbaPcs: Math.round(t.fbaAvailPieces), needUnits, caseQty, cases, orderUnits, note: notes.join(' · '),
+      });
+    }
+  }
+  rows.sort((a, c) => reorderSortRank(a.baseSku) - reorderSortRank(c.baseSku) || a.sku.localeCompare(c.sku));
+  return cors(new Response(JSON.stringify({ ok: true, days, cover, lead, countFba, countOtherPacks, dataFrom,
+    vendors: [...vendors].sort(), rows }), { headers: { 'Content-Type': 'application/json' } }));
+}
+
 async function reorderRecommendationsHandler(env, days) {
   try {
     const result = await reorderComputeRecommendations(env, days);
@@ -3581,6 +3719,10 @@ export default {
 
     // ── Reorder recommendations - uses the existing PIN session, matching
     // the rest of the reorder app (not yet migrated to the credential system) ──
+    if (url.pathname === '/reorder/vendor-order' && method === 'GET') {
+      if (session.pin_level !== 'mgmt') return cors(new Response(JSON.stringify({ ok: false, error: 'Management access required' }), { status: 403, headers: { 'Content-Type': 'application/json' } }));
+      return await reorderVendorOrder(env, url);
+    }
     if (url.pathname === '/reorder/recommendations' && method === 'GET') {
       const daysParam = parseInt(url.searchParams.get('days')) || 90;
       return await reorderRecommendationsHandler(env, daysParam);
