@@ -3876,6 +3876,10 @@ async function rvoCheck(title, file) {
     + (sum.otherOff[0] ? line('↳ other pack size, NOT counted', sum.otherOff[0], sum.otherOff[1], 'color:#b45309') : '')
     + (sum.none[0] ? line('↳ not in the order list', sum.none[0], sum.none[1], 'color:var(--red)') : '')
     + line('Subtracted from what to order', sum.own[0] + sum.otherOn[0], counted, 'font-weight:700') + '</tbody></table>';
+  var old = d.lines.filter(function (l) { return !l.src_rows; }).length;
+  if (!d.lines.length) h = '<div style="font-size:13px;padding:10px;background:#FEF6E7;border-radius:8px;margin-bottom:10px">Nothing is saved under "' + escHtml(title) + '" (no lines with a quantity). Import the shipment file again with this Title — it needs a <b>Qty</b> or <b>Cases</b> column.</div>' + h;
+  else if (old) h = '<div style="font-size:13px;padding:10px;background:#FEF6E7;border-radius:8px;margin-bottom:10px">⚠ ' + (old === d.lines.length ? 'This title was' : old + ' of these lines were')
+    + ' imported before the Import check existed, so the <b>file row</b>, <b>cases</b> and <b>skipped lines</b> weren\'t recorded. Import the same file again with the Title <b>' + escHtml(title) + '</b> — it merges into this title and fills them in, and the check will then show the file total too.</div>' + h;
   var fileOk = !file || Math.abs(file.units - saved) < 0.001;
   h += '<div style="font-size:13px;margin-bottom:10px">' + (file ? ok(fileOk) + ' File units ' + (fileOk ? '= saved units' : '≠ saved units — difference ' + fmt0(file.units - saved)) + ' &nbsp; ' : '')
     + ok(counted === saved) + ' Saved units ' + (counted === saved ? '= units subtracted from the order' : '— ' + fmt0(saved - counted) + ' units are not counted (orange / red lines below)') + '</div>';
