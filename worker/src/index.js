@@ -988,6 +988,11 @@ async function reorderFixTables(env) {
     vendor TEXT, asin TEXT, case_qty REAL, by_user TEXT, updated_at TEXT)`).run();
   // History of everything done on the tab (fixes, part # corrections,
   // imports, CSV downloads) — shown under 🕘 History.
+  // On the way: quantities per imported shipment / order "title" (a
+  // container next week, one just shipped…). Same title again = merged into
+  // that title; a new title = its own column. Subtracted from what to order.
+  await env.DB.prepare(`CREATE TABLE IF NOT EXISTS reorder_incoming (title TEXT NOT NULL, part TEXT NOT NULL, qty REAL NOT NULL,
+    vendor TEXT, updated_at TEXT, PRIMARY KEY (title, part))`).run();
   await env.DB.prepare(`CREATE TABLE IF NOT EXISTS reorder_history (id INTEGER PRIMARY KEY AUTOINCREMENT, ts TEXT NOT NULL,
     by_user TEXT, action TEXT, part TEXT, detail TEXT)`).run();
   _reorderFixReady = true;
@@ -1010,7 +1015,10 @@ async function reorderCatalogImport(request, env, session) {
   const vendor = String(b.vendor || '').trim().slice(0, 40);
   if (!vendor) return _roResp({ ok: false, error: 'Vendor name required' }, 400);
   const rows = (Array.isArray(b.rows) ? b.rows : []).slice(0, 1000);
-  if (b.replace) await env.DB.prepare('DELETE FROM reorder_vendor_catalog WHERE vendor = ?').bind(vendor).run();
+  const title = String(b.title || '').trim().slice(0, 60);
+  // A titled (shipment) import only adds / updates — never wipes the vendor's info.
+  if (b.replace && !title) await env.DB.prepare('DELETE FROM reorder_vendor_catalog WHERE vendor = ?').bind(vendor).run();
+  let incParts = 0, incUnits = 0;
   const now = new Date().toISOString(), t = v => (v == null ? '' : String(v)).trim().slice(0, 300), n = v => { const x = parseFloat(v); return Number.isFinite(x) ? x : null; };
   const stmts = [];
   let kept = 0;
@@ -1018,6 +1026,12 @@ async function reorderCatalogImport(request, env, session) {
     const part = reorderCleanPart(r.part);
     if (!part || /^[.=]/.test(part)) continue;
     kept++;
+    const q = parseFloat(String(r.qty == null ? '' : r.qty).replace(/,/g, ''));
+    if (title && q > 0) {
+      incParts++; incUnits += q;
+      stmts.push(env.DB.prepare(`INSERT INTO reorder_incoming (title, part, qty, vendor, updated_at) VALUES (?,?,?,?,?)
+        ON CONFLICT(title, part) DO UPDATE SET qty = excluded.qty, vendor = excluded.vendor, updated_at = excluded.updated_at`).bind(title, part, q, vendor, now));
+    }
     stmts.push(env.DB.prepare(`INSERT INTO reorder_vendor_catalog (vendor, part, item_no, description, outside_upc, inside_upc, asin, inner_pcs, case_pcs, raw_part, updated_at)
       VALUES (?,?,?,?,?,?,?,?,?,?,?) ON CONFLICT(vendor, part) DO UPDATE SET
       item_no = COALESCE(NULLIF(excluded.item_no,''), item_no), description = COALESCE(NULLIF(excluded.description,''), description),
@@ -1028,6 +1042,11 @@ async function reorderCatalogImport(request, env, session) {
   }
   for (let i = 0; i < stmts.length; i += 50) await env.DB.batch(stmts.slice(i, i + 50));
   const c = await env.DB.prepare('SELECT COUNT(*) AS n FROM reorder_vendor_catalog WHERE vendor = ?').bind(vendor).first();
+  if (title) {
+    const it = await env.DB.prepare('SELECT COUNT(*) AS n, SUM(qty) AS u FROM reorder_incoming WHERE title = ?').bind(title).first() || {};
+    if (b.last) await reorderLog(env, _roWho(session), 'incoming', title, `On the way "${title}" (${vendor}${b.file ? ', ' + String(b.file).slice(0, 80) : ''}): now ${it.n || 0} part #s, ${Math.round(it.u || 0)} units`);
+    return _roResp({ ok: true, vendor, title, saved: kept, incoming: incParts, incomingParts: it.n || 0, incomingUnits: Math.round(it.u || 0), total: c ? c.n : kept });
+  }
   if (b.last) await reorderLog(env, _roWho(session), 'import', '', `Imported vendor sheet ${vendor}${b.file ? ' (' + String(b.file).slice(0, 80) + ')' : ''}: ${c ? c.n : kept} part #s`);
   return _roResp({ ok: true, vendor, saved: kept, total: c ? c.n : kept });
 }
@@ -1113,6 +1132,10 @@ async function reorderVendorOrder(env, url) {
   };
   const cat = {}; (await all('SELECT * FROM reorder_vendor_catalog ORDER BY vendor')).forEach(r => { const k = U(r.part); if (!cat[k]) cat[k] = r; });
   const fixes = {}; (await all('SELECT * FROM reorder_fix')).forEach(r => { fixes[U(r.part)] = r; });
+  const incoming = {}; // part → { title: units }
+  (await all('SELECT title, part, qty FROM reorder_incoming')).forEach(r => { const k = P(r.part); (incoming[k] = incoming[k] || {})[r.title] = (incoming[k][r.title] || 0) + (r.qty || 0); });
+  const incUnitsOf = k => Object.values(incoming[k] || {}).reduce((a, x) => a + x, 0);
+  const incomingTitles = await all('SELECT title, COUNT(*) AS parts, SUM(qty) AS units, MAX(vendor) AS vendor, MAX(updated_at) AS at FROM reorder_incoming GROUP BY title ORDER BY MIN(updated_at)');
 
   const fba = await all('SELECT sku, asin, available, product_name FROM fba_catalog');
   const sales = {}; // exact SKU → { amz, other } in units (listing orders)
@@ -1194,9 +1217,13 @@ async function reorderVendorOrder(env, url) {
       const ps = pack(t.sku), sm = bySku[t.sku] || { units: 0, caseQty: 0 };
       const demandPcs = t.demand, monthlyPcs = demandPcs / months;
       const ownPcs = sm.units * ps;
-      let otherPcs = 0;
+      let otherPcs = 0, otherIncPcs = 0;
       [...bo.skus].forEach(s => { if (s !== t.sku && !fbaSkuSet.has(s) && bySku[s]) otherPcs += bySku[s].units * pack(s); });
-      const stockPcs = ownPcs + (countOtherPacks ? otherPcs : 0) + (countFba ? t.fbaAvailPieces : 0);
+      // On the way (every imported title): this part # always counts; other
+      // packs of the part only with "Count other pack sizes".
+      for (const k in incoming) if (k !== t.sku && !fbaSkuSet.has(k) && U(reorderGetBaseSku(k)) === b) otherIncPcs += incUnitsOf(k) * pack(k);
+      const incUnits = incUnitsOf(t.sku);
+      const stockPcs = ownPcs + incUnits * ps + (countOtherPacks ? otherPcs + otherIncPcs : 0) + (countFba ? t.fbaAvailPieces : 0);
       const needPcs = Math.max(0, monthlyPcs * (lead + cover) - stockPcs);
       const needUnits = Math.ceil(needPcs / ps - 1e-9);
       const ct = cat[t.sku] || {}, fx = fixes[t.sku] || {};
@@ -1212,6 +1239,8 @@ async function reorderVendorOrder(env, url) {
       } else if (needUnits > 0) notes.push('No case qty in SKU Mgr — not rounded');
       if (!t.fbaSku) notes.push('No FBA listing — best-selling pack');
       if (!countOtherPacks && otherPcs > 0) notes.push(`${Math.round(otherPcs)} pcs in other packs of ${b} not counted`);
+      if (!countOtherPacks && otherIncPcs > 0) notes.push(`${Math.round(otherIncPcs)} pcs on the way in other packs of ${b} not counted`);
+      if (incUnits > 0) notes.push(`${Math.round(incUnits)} on the way subtracted`);
       const u = upc[t.sku] || {};
       const pick = (...v) => { for (const x of v) if (x != null && String(x).trim() !== '') return String(x).trim(); return ''; };
       const row = {
@@ -1225,6 +1254,7 @@ async function reorderVendorOrder(env, url) {
         soldPcs: Math.round(demandPcs), monthlyPcs: Math.round(monthlyPcs * 10) / 10,
         stockUnits: Math.round(sm.units * 100) / 100, stockPcs: Math.round(ownPcs), otherPackPcs: Math.round(otherPcs),
         fbaPcs: Math.round(t.fbaAvailPieces), needUnits, caseQty, cases, orderUnits, note: notes.join(' · '),
+        incoming: incoming[t.sku] || {}, incomingUnits: Math.round(incUnits),
       };
       row.issues = [];
       if (!reorderIsProperFormat(row.sku)) row.issues.push('Part # looks wrong');
@@ -1250,7 +1280,7 @@ async function reorderVendorOrder(env, url) {
   Object.values(fixes).forEach(r => { if (r.vendor) vendors.add(String(r.vendor).trim()); });
   const catCounts = await all('SELECT vendor, COUNT(*) AS n, MAX(updated_at) AS at FROM reorder_vendor_catalog GROUP BY vendor');
   return cors(new Response(JSON.stringify({ ok: true, days, cover, lead, countFba, countOtherPacks, dataFrom,
-    vendors: [...vendors].sort(), catalog: catCounts, rows }), { headers: { 'Content-Type': 'application/json' } }));
+    vendors: [...vendors].sort(), catalog: catCounts, incomingTitles, rows }), { headers: { 'Content-Type': 'application/json' } }));
 }
 
 async function reorderRecommendationsHandler(env, days) {
@@ -3876,6 +3906,16 @@ export default {
           ? ((await env.DB.prepare(`SELECT * FROM reorder_history WHERE UPPER(part) LIKE ? OR UPPER(detail) LIKE ? OR UPPER(by_user) LIKE ? ORDER BY id DESC LIMIT 300`).bind('%' + q + '%', '%' + q + '%', '%' + q + '%').all()).results || [])
           : ((await env.DB.prepare('SELECT * FROM reorder_history ORDER BY id DESC LIMIT 300').all()).results || []);
         return _roResp({ ok: true, history: rows });
+      }
+      if (url.pathname === '/reorder/fix/incoming-remove' && method === 'POST') {
+        // A shipment arrived (now in SKU Mgr) or was cancelled — drop its column.
+        await reorderFixTables(env);
+        const b = await request.json().catch(() => ({}));
+        const title = String(b.title || '').trim();
+        const it = await env.DB.prepare('SELECT COUNT(*) AS n, SUM(qty) AS u FROM reorder_incoming WHERE title = ?').bind(title).first() || {};
+        await env.DB.prepare('DELETE FROM reorder_incoming WHERE title = ?').bind(title).run();
+        await reorderLog(env, _roWho(roCs || session), 'incoming', title, `Removed on-the-way "${title}" (${it.n || 0} part #s, ${Math.round(it.u || 0)} units)${b.reason ? ' — ' + String(b.reason).slice(0, 100) : ''}`);
+        return _roResp({ ok: true });
       }
       if (url.pathname === '/reorder/fix/log' && method === 'POST') {
         // Things done only in the page (CSV download with hand-changed qtys).
