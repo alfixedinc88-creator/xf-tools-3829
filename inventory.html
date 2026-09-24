@@ -8547,7 +8547,7 @@ window.invCredLogin = async function() {
     if (d.ok === false) { box.innerHTML = '<div style="color:var(--red);font-size:12px">✗ ' + esc(d.error || 'Search failed') + '</div>'; return; }
     soRows = d.results || [];
     if (!soRows.length) { box.innerHTML = '<div style="font-size:12px;color:var(--text3)">No listings found for <b>' + esc(q) + '</b>.</div>'; return; }
-    var html = '<div style="font-size:12px;color:var(--text3);margin-bottom:6px">' + soRows.length + ' listing' + (soRows.length === 1 ? '' : 's') + ' — untick any you don\'t want to change.</div>';
+    var html = '<div style="font-size:12px;color:var(--text3);margin-bottom:6px">' + soRows.length + ' listing' + (soRows.length === 1 ? '' : 's') + ' — untick any you don\'t want to change. <b>Now</b> = quantity on the listing right now. <span onclick="soLoadQty()" style="text-decoration:underline dotted;cursor:pointer">↻ re-check</span></div>';
     PLAT.forEach(function (p) {
       var idx = []; soRows.forEach(function (r, i) { if (r.platform === p) idx.push(i); });
       if (!idx.length) return;
@@ -8558,13 +8558,42 @@ window.invCredLogin = async function() {
         var r = soRows[i];
         html += '<label style="display:flex;gap:8px;align-items:flex-start;padding:6px 2px;border-bottom:1px solid var(--border);cursor:pointer">'
           + '<input type="checkbox" class="so-chk" data-i="' + i + '" data-p="' + p + '" checked style="margin-top:3px">'
-          + '<div style="flex:1;min-width:0"><div style="font-size:12px;color:var(--text)">' + esc(r.title || '—') + '</div>'
+          + '<div style="flex:1;min-width:0"><div style="display:flex;gap:8px;align-items:flex-start"><div style="flex:1;min-width:0;font-size:12px;color:var(--text)">' + esc(r.title || '—') + '</div>'
+          + '<span class="so-now" id="so-now-' + i + '" style="flex-shrink:0;font-size:12px;font-weight:700;font-family:var(--mono);padding:2px 8px;border-radius:6px;background:var(--bg3);color:var(--text3);white-space:nowrap">Now: …</span></div>'
+          + '<div id="so-now-d-' + i + '" style="font-size:10.5px;color:var(--text3)"></div>'
           + '<div style="font-size:11px;color:var(--text3);font-family:var(--mono)">' + esc(r.listingId) + (r.sku ? ' · ' + esc(r.sku) : '') + '</div>'
           + '<div class="so-res" id="so-res-' + i + '" style="font-size:11px;margin-top:2px"></div></div></label>';
       });
     });
     box.innerHTML = html;
     el('so-action').style.display = 'block';
+    soLoadQty();
+  };
+
+  // Live quantity on each listing, a few at a time (each is a call to
+  // that channel). `only` = row numbers to re-check (default: all).
+  var soQtyRun = 0;
+  function soShowQty(i, r) {
+    var b = el('so-now-' + i), d = el('so-now-d-' + i);
+    if (!b) return;
+    if (!r || r.error) { b.textContent = 'Now: ?'; b.style.background = 'var(--bg3)'; b.style.color = 'var(--text3)'; b.title = (r && r.error) || 'No answer'; d.textContent = r && r.error ? '⚠ ' + r.error : ''; return; }
+    if (r.qty == null) { b.textContent = 'Now: —'; b.style.background = 'var(--bg3)'; b.style.color = 'var(--text3)'; }
+    else { b.textContent = 'Now: ' + r.qty; var zero = r.qty === 0 || r.ended;
+      b.style.background = zero ? '#FDF0EE' : '#E9F5EE'; b.style.color = zero ? 'var(--red)' : 'var(--green)'; }
+    b.title = ''; d.textContent = r.detail || '';
+  }
+  window.soLoadQty = async function (only) {
+    var run = ++soQtyRun;
+    var list = only || soRows.map(function (_, i) { return i; });
+    list.forEach(function (i) { var b = el('so-now-' + i); if (b) { b.textContent = 'Now: …'; b.style.background = 'var(--bg3)'; b.style.color = 'var(--text3)'; } });
+    for (var s = 0; s < list.length; s += 8) {
+      if (run !== soQtyRun) return; // a newer search / re-check took over
+      var chunk = list.slice(s, s + 8);
+      var d = await call('/inventory/soldout/qty', { method: 'POST',
+        body: { items: chunk.map(function (i) { var r = soRows[i]; return { platform: r.platform, listingId: r.listingId, sku: r.sku }; }) } });
+      if (run !== soQtyRun) return;
+      chunk.forEach(function (i, k) { soShowQty(i, d.ok === false ? { error: d.error || 'Could not read quantity' } : (d.results || [])[k]); });
+    }
   };
 
   window.soTogglePlat = function (p, on) {
@@ -8597,7 +8626,14 @@ window.invCredLogin = async function() {
         });
       }
     } catch (e) { alert('Error: ' + e.message); }
-    finally { btn.disabled = false; btn.textContent = 'Update selected listings'; soLoadLog(); }
+    finally {
+      btn.disabled = false; btn.textContent = 'Update selected listings'; soLoadLog();
+      // Re-read what the listings say now. Amazon takes up to 15 min to
+      // show a change, so those keep their old number with a note.
+      var again = picked.filter(function (i) { return soRows[i].platform !== 'Amazon'; });
+      picked.filter(function (i) { return soRows[i].platform === 'Amazon'; }).forEach(function (i) { var d = el('so-now-d-' + i); if (d) d.textContent = 'Amazon can take up to 15 min to show the new quantity — tap ↻ re-check later'; });
+      if (again.length) setTimeout(function () { soLoadQty(again); }, 1500);
+    }
   };
 
   window.soToggleAdd = function () {

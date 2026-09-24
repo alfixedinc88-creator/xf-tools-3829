@@ -3616,6 +3616,7 @@ export default {
       }
       if (url.pathname === '/inventory/soldout/lookup'  && method === 'GET')  return await soldoutLookup(url, env);
       if (url.pathname === '/inventory/soldout/set-qty' && method === 'POST') return await soldoutSetQty(request, env);
+      if (url.pathname === '/inventory/soldout/qty'     && method === 'POST') return await soldoutGetQty(request, env);
       if (url.pathname === '/inventory/soldout/log'     && method === 'GET')  return await soldoutLog(env);
       if (url.pathname === '/inventory/soldout/add-listing' && method === 'POST') return await soldoutAddListing(request, env);
       return cors(new Response(JSON.stringify({ ok: false, error: 'Not found' }), { status: 404, headers: { 'Content-Type': 'application/json' } }));
@@ -20922,6 +20923,119 @@ async function _soShopify(env, it, qty) {
   }
   const errs = (res.inventorySetQuantities && res.inventorySetQuantities.userErrors) || [];
   return { ok: !errs.length, error: errs.length ? errs.map(e => e.message).join(' | ') : null, detail: `${quantities.length} location(s)` };
+}
+
+// ── Current quantity on each listing (read only) ──────────────────────────
+// Each returns { qty, detail } — qty = what buyers can buy right now — or
+// throws / returns { error }.
+async function _soQtyEbay(env, it) {
+  const token = await getEbayToken(env);
+  const r = await fetch('https://api.ebay.com/ws/api.dll', {
+    method: 'POST',
+    headers: { 'X-EBAY-API-CALL-NAME': 'GetItem', 'X-EBAY-API-SITEID': '0',
+      'X-EBAY-API-COMPATIBILITY-LEVEL': '967', 'X-EBAY-API-IAF-TOKEN': token, 'Content-Type': 'text/xml' },
+    body: `<?xml version="1.0" encoding="utf-8"?>
+<GetItemRequest xmlns="urn:ebay:apis:eBLBaseComponents">
+  <ItemID>${_xmlEsc(it.listingId)}</ItemID>
+  <IncludeVariations>true</IncludeVariations>
+</GetItemRequest>`,
+  });
+  const xml = await r.text();
+  if (!/<Ack>(Success|Warning)<\/Ack>/.test(xml)) {
+    // Listings made with the Inventory API: read the SKU's stock instead.
+    if (it.sku) {
+      const h = { Authorization: `Bearer ${token}`, 'Content-Language': 'en-US' };
+      const ir = await fetch(`https://api.ebay.com/sell/inventory/v1/inventory_item/${encodeURIComponent(it.sku)}`, { headers: h });
+      if (ir.ok) {
+        const d = await ir.json().catch(() => ({}));
+        const q = (((d.availability || {}).shipToLocationAvailability) || {}).quantity;
+        if (q != null) return { qty: q, detail: 'Inventory API' };
+      }
+    }
+    const msgs = [...xml.matchAll(/<LongMessage>([^<]+)<\/LongMessage>/g)].map(m => m[1]);
+    return { error: msgs.join(' | ') || 'eBay did not return the listing' };
+  }
+  const status = (xml.match(/<ListingStatus>([^<]+)<\/ListingStatus>/) || [])[1] || '';
+  const ended = status && status !== 'Active';
+  const varBlock = (xml.match(/<Variations>([\s\S]*?)<\/Variations>/) || [])[1];
+  if (varBlock) {
+    const vars = [...varBlock.matchAll(/<Variation>([\s\S]*?)<\/Variation>/g)].map(m => {
+      const v = m[1];
+      const q = parseInt((v.match(/<Quantity>(\d+)<\/Quantity>/) || [])[1] || '0', 10);
+      const sold = parseInt((v.match(/<QuantitySold>(\d+)<\/QuantitySold>/) || [])[1] || '0', 10);
+      return { sku: (v.match(/<SKU>([^<]*)<\/SKU>/) || [])[1] || '', qty: Math.max(0, q - sold) };
+    });
+    const mine = it.sku ? vars.filter(v => v.sku.toUpperCase() === String(it.sku).toUpperCase()) : [];
+    if (mine.length) return { qty: mine[0].qty, detail: 'variation ' + mine[0].sku + (ended ? ' · listing ' + status : ''), ended };
+    return { qty: vars.reduce((a, v) => a + v.qty, 0), detail: `all ${vars.length} variations` + (ended ? ' · listing ' + status : ''), ended };
+  }
+  const top = xml.replace(/<Variations>[\s\S]*?<\/Variations>/, '');
+  const q = parseInt((top.match(/<Item>[\s\S]*?<Quantity>(\d+)<\/Quantity>/) || [])[1] || '0', 10);
+  const sold = parseInt((top.match(/<SellingStatus>[\s\S]*?<QuantitySold>(\d+)<\/QuantitySold>/) || [])[1] || '0', 10);
+  return { qty: Math.max(0, q - sold), detail: ended ? 'listing ' + status : '', ended };
+}
+
+async function _soQtyAmazon(env, it) {
+  if (!env.AMAZON_SELLER_ID) return { error: 'AMAZON_SELLER_ID not set' };
+  const token = await getAmazonToken(env);
+  const mid = env.AMAZON_MARKETPLACE_ID || 'ATVPDKIKX0DER';
+  const base = `https://sellingpartnerapi-na.amazon.com/listings/2021-08-01/items/${encodeURIComponent(env.AMAZON_SELLER_ID)}`;
+  const sr = await fetch(`${base}?marketplaceIds=${mid}&identifiers=${encodeURIComponent(it.listingId)}&identifiersType=ASIN&includedData=summaries,fulfillmentAvailability`,
+    { headers: { 'x-amz-access-token': token } });
+  const sd = await sr.json().catch(() => ({}));
+  if (!sr.ok) return { error: JSON.stringify(sd.errors || sd).slice(0, 200) };
+  const fa = i => i.fulfillmentAvailability || [];
+  const isFba = i => fa(i).some(f => /AMAZON/i.test(f.fulfillmentChannelCode || ''));
+  const items = sd.items || [];
+  let fbm = items.filter(i => !isFba(i));
+  const exact = fbm.filter(i => String(i.sku).toUpperCase() === String(it.sku || '').toUpperCase());
+  if (exact.length) fbm = exact;
+  const fba = items.filter(isFba).map(i => i.sku);
+  if (!fbm.length) return fba.length ? { qty: null, detail: `FBA only (${fba.join(', ')}) — Amazon's stock` } : { error: 'No SKUs under this ASIN' };
+  const parts = fbm.map(i => ({ sku: i.sku, qty: (fa(i).find(f => f.fulfillmentChannelCode === 'DEFAULT') || {}).quantity || 0 }));
+  return { qty: parts.reduce((a, x) => a + x.qty, 0),
+    detail: (parts.length > 1 ? parts.map(x => `${x.sku}: ${x.qty}`).join(', ') : 'FBM ' + parts[0].sku) + (fba.length ? ` · FBA ${fba.join(', ')} not counted` : '') };
+}
+
+async function _soQtyWalmart(env, it) {
+  if (!it.sku) return { error: 'No Walmart SKU on the sheet row' };
+  const token = await getWalmartToken(env);
+  const r = await fetch(`https://marketplace.walmartapis.com/v3/inventory?sku=${encodeURIComponent(it.sku)}`, {
+    headers: { 'WM_SEC.ACCESS_TOKEN': token, 'WM_QOS.CORRELATION_ID': crypto.randomUUID(), 'WM_SVC.NAME': 'Walmart Marketplace', 'Accept': 'application/json' },
+  });
+  const d = await r.json().catch(() => ({}));
+  if (!r.ok) return { error: JSON.stringify(d.errors || d).slice(0, 200) };
+  const amt = ((d.quantity || {}).amount);
+  return amt == null ? { error: 'Walmart returned no quantity' } : { qty: amt, detail: '' };
+}
+
+async function _soQtyShopify(env, it) {
+  if (!it.sku) return { error: 'No SKU on the ShopifySKU sheet row' };
+  const q = `query($q: String!) { productVariants(first: 10, query: $q) { edges { node { sku inventoryItem {
+    inventoryLevels(first: 10) { edges { node { location { name } quantities(names: ["available"]) { name quantity } } } } } } } } }`;
+  const d = await shopifyGraphQL(env, q, { q: `sku:${JSON.stringify(it.sku)}` });
+  const variants = ((d.productVariants && d.productVariants.edges) || []).map(e => e.node)
+    .filter(v => String(v.sku || '').toUpperCase() === String(it.sku).toUpperCase());
+  if (!variants.length) return { error: `No Shopify variant with SKU ${it.sku}` };
+  const levels = [];
+  variants.forEach(v => ((v.inventoryItem && v.inventoryItem.inventoryLevels && v.inventoryItem.inventoryLevels.edges) || [])
+    .forEach(e => levels.push({ loc: e.node.location.name, qty: ((e.node.quantities || []).find(x => x.name === 'available') || {}).quantity || 0 })));
+  return { qty: levels.reduce((a, l) => a + l.qty, 0), detail: levels.length > 1 ? levels.map(l => `${l.loc}: ${l.qty}`).join(', ') : '' };
+}
+
+// POST { items:[{platform, listingId, sku}] } → { results:[{qty, detail, error}] } (same order)
+async function soldoutGetQty(request, env) {
+  const b = await request.json().catch(() => ({}));
+  const items = (Array.isArray(b.items) ? b.items : []).slice(0, 12);
+  const fns = { eBay: _soQtyEbay, Amazon: _soQtyAmazon, Walmart: _soQtyWalmart, Shopify: _soQtyShopify };
+  const results = await Promise.all(items.map(async it => {
+    try {
+      const fn = fns[it.platform];
+      const r = fn ? await fn(env, it) : { error: 'Unknown platform ' + it.platform };
+      return { qty: r.qty == null ? null : r.qty, detail: r.detail || '', ended: !!r.ended, error: r.error || null };
+    } catch (e) { return { qty: null, detail: '', error: String(e.message || e).slice(0, 200) }; }
+  }));
+  return _soResp({ ok: true, results });
 }
 
 // POST { items:[{platform, listingId, sku, title}], quantity, by }
