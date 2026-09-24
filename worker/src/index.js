@@ -648,6 +648,23 @@ async function adminSaveAccess(request, env, session) {
   for (const [item, allow] of entries) {
     await env.DB.prepare(`INSERT INTO access_rules (scope, item, allow) VALUES (?, ?, ?)`).bind(scope, item, allow).run();
   }
+  // `grant`: behind-the-scenes permissions the ticked pages/tabs need (the
+  // Admin page picks them), added so a ticked tab actually works. Never admin.
+  const grant = [...new Set((Array.isArray(b.grant) ? b.grant : []).filter(r => ['mobile', 'ops', 'mgmt', 'price'].includes(r)))];
+  if (grant.length && (m = scope.match(/^level:([a-z]+)$/))) {
+    const lv = (await credGetLevels(env))[m[1]];
+    const roles = [...new Set([...(lv.roles || []), ...grant])];
+    await env.DB.prepare(`UPDATE cred_levels SET roles = ? WHERE key = ?`).bind(JSON.stringify(roles), m[1]).run();
+  } else if (grant.length && (m = scope.match(/^user:(\d+)$/))) {
+    const uid = parseInt(m[1]);
+    const u = await env.DB.prepare(`SELECT level FROM cred_users WHERE id = ?`).bind(uid).first();
+    const lv = u && u.level ? (await credGetLevels(env))[u.level] : null;
+    const own = ((await env.DB.prepare(`SELECT role FROM cred_user_roles WHERE user_id = ?`).bind(uid).all()).results || []).map(r => r.role);
+    for (const r of grant) {
+      if (own.includes(r) || (lv && (lv.roles || []).includes(r))) continue;
+      await env.DB.prepare(`INSERT INTO cred_user_roles (user_id, role) VALUES (?, ?)`).bind(uid, r).run();
+    }
+  }
   return cors(new Response(JSON.stringify({ ok: true, saved: entries.length }), { headers: { 'Content-Type': 'application/json' } }));
 }
 
