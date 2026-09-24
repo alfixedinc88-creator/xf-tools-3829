@@ -993,6 +993,9 @@ async function reorderFixTables(env) {
   // that title; a new title = its own column. Subtracted from what to order.
   await env.DB.prepare(`CREATE TABLE IF NOT EXISTS reorder_incoming (title TEXT NOT NULL, part TEXT NOT NULL, qty REAL NOT NULL,
     vendor TEXT, updated_at TEXT, PRIMARY KEY (title, part))`).run();
+  // Where each on-the-way line came from (file row, part # as written, cases shipped) — for the 📋 Import check.
+  for (const col of ['raw_part TEXT', 'src_rows TEXT', 'cases REAL'])
+    await env.DB.prepare(`ALTER TABLE reorder_incoming ADD COLUMN ${col}`).run().catch(() => {});
   await env.DB.prepare(`CREATE TABLE IF NOT EXISTS reorder_history (id INTEGER PRIMARY KEY AUTOINCREMENT, ts TEXT NOT NULL,
     by_user TEXT, action TEXT, part TEXT, detail TEXT)`).run();
   _reorderFixReady = true;
@@ -1029,8 +1032,11 @@ async function reorderCatalogImport(request, env, session) {
     const q = parseFloat(String(r.qty == null ? '' : r.qty).replace(/,/g, ''));
     if (title && q > 0) {
       incParts++; incUnits += q;
-      stmts.push(env.DB.prepare(`INSERT INTO reorder_incoming (title, part, qty, vendor, updated_at) VALUES (?,?,?,?,?)
-        ON CONFLICT(title, part) DO UPDATE SET qty = excluded.qty, vendor = excluded.vendor, updated_at = excluded.updated_at`).bind(title, part, q, vendor, now));
+      const cs = parseFloat(String(r.cases == null ? '' : r.cases).replace(/,/g, ''));
+      stmts.push(env.DB.prepare(`INSERT INTO reorder_incoming (title, part, qty, vendor, updated_at, raw_part, src_rows, cases) VALUES (?,?,?,?,?,?,?,?)
+        ON CONFLICT(title, part) DO UPDATE SET qty = excluded.qty, vendor = excluded.vendor, updated_at = excluded.updated_at,
+        raw_part = excluded.raw_part, src_rows = excluded.src_rows, cases = excluded.cases`)
+        .bind(title, part, q, vendor, now, t(r.raw || r.part), t(r.src_rows), Number.isFinite(cs) ? cs : null));
     }
     stmts.push(env.DB.prepare(`INSERT INTO reorder_vendor_catalog (vendor, part, item_no, description, outside_upc, inside_upc, asin, inner_pcs, case_pcs, raw_part, updated_at)
       VALUES (?,?,?,?,?,?,?,?,?,?,?) ON CONFLICT(vendor, part) DO UPDATE SET
@@ -3906,6 +3912,15 @@ export default {
           ? ((await env.DB.prepare(`SELECT * FROM reorder_history WHERE UPPER(part) LIKE ? OR UPPER(detail) LIKE ? OR UPPER(by_user) LIKE ? ORDER BY id DESC LIMIT 300`).bind('%' + q + '%', '%' + q + '%', '%' + q + '%').all()).results || [])
           : ((await env.DB.prepare('SELECT * FROM reorder_history ORDER BY id DESC LIMIT 300').all()).results || []);
         return _roResp({ ok: true, history: rows });
+      }
+      if (url.pathname === '/reorder/fix/incoming-lines' && method === 'GET') {
+        // One title's lines, with the part # each is read as after corrections.
+        await reorderFixTables(env);
+        const title = (url.searchParams.get('title') || '').trim();
+        const alias = {}; ((await env.DB.prepare('SELECT raw, part FROM reorder_alias').all()).results || []).forEach(r => { alias[String(r.raw).toUpperCase()] = String(r.part).toUpperCase(); });
+        const lines = ((await env.DB.prepare('SELECT part, qty, vendor, raw_part, src_rows, cases, updated_at FROM reorder_incoming WHERE title = ? ORDER BY rowid').bind(title).all()).results || [])
+          .map(r => ({ ...r, readAs: alias[String(r.part).toUpperCase()] || String(r.part).toUpperCase() }));
+        return _roResp({ ok: true, title, lines });
       }
       if (url.pathname === '/reorder/fix/incoming-remove' && method === 'POST') {
         // A shipment arrived (now in SKU Mgr) or was cancelled — drop its column.
