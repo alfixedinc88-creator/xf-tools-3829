@@ -2103,6 +2103,7 @@ body { display:flex; flex-direction:column; min-height:100vh; background:var(--b
         <input type="file" id="rvo-imp-file" accept=".xlsx,.xls,.csv" style="display:none" onchange="rvoImport(this)">
         <button class="btn btn-secondary" style="font-size:12px" onclick="rvoPickFile()">⬆ Import vendor sheet (.xlsx)</button>
       </div>
+      <details id="rvo-fixes-box" style="margin-bottom:10px" ontoggle="if(this.open)rvoLoadFixes()"><summary style="font-size:12px;color:var(--text2);cursor:pointer;font-weight:700">📝 Saved fixes <span id="rvo-fixes-n"></span></summary><div id="rvo-fixes" style="margin-top:6px"></div></details>
       <div class="sales-section-sub" id="rvo-summary" style="margin-bottom:8px"></div>
       <div id="rvo-wrap" class="sales-table-wrap" style="overflow:auto;max-height:70vh"><div style="padding:20px;color:var(--text3);font-size:13px">Loading…</div></div>
       <div id="rvo-edit" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,.45);z-index:9999;align-items:center;justify-content:center;padding:16px">
@@ -3702,7 +3703,9 @@ function rvoVisible() {
   var all = document.getElementById('rvo-all').checked;
   return RVO.rows.filter(function (r) {
     if (v === '__none' ? r.vendor : (v && r.vendor !== v)) return false;
-    if (q && (r.sku + ' ' + (r.from || []).join(' ') + ' ' + (r.asin || '') + ' ' + (r.description || '').toUpperCase()).indexOf(q) === -1) return false;
+    var mergedTxt = (r.merged || []).map(function (m) { return m.part + ' ' + m.from.join(' '); }).join(' ');
+    if (q && (r.sku + ' ' + (r.from || []).join(' ') + ' ' + mergedTxt + ' ' + (r.asin || '') + ' ' + (r.description || '').toUpperCase()).indexOf(q) === -1) return false;
+    if (q && mergedTxt.indexOf(q) !== -1) return true; // found through a corrected part # — show even if nothing to order
     if (document.getElementById('rvo-problems').checked) return (r.issues || []).length > 0;
     return all || r.orderUnits > 0 || RVO.edits[r.sku] > 0;
   });
@@ -3729,6 +3732,7 @@ function rvoRender() {
       + td('<b style="font-family:var(--mono)">' + escHtml(r.sku) + '</b>' + (r.fbaSku ? ' <span title="Sent to FBA" style="font-size:10px;color:#b45309">FBA</span>' : '')
         + (r.fixed ? ' <span title="Has your saved fixes" style="font-size:10px;color:var(--green)">✎</span>' : '')
         + ((r.from || []).length ? '<div style="font-size:10.5px;color:var(--text3);font-family:var(--mono)">from: ' + r.from.map(escHtml).join(', ') + '</div>' : '')
+        + (r.merged || []).map(function (m) { return '<div style="font-size:10.5px;color:#1A56DB;font-family:var(--mono)" title="Not ordered as its own part # — its sales are counted in this row">+ sales of ' + escHtml(m.part) + (m.from.length ? ' (from ' + m.from.map(escHtml).join(', ') + ')' : '') + '</div>'; }).join('')
         + (iss.length ? '<div style="font-size:10.5px;color:var(--red)">⚠ ' + iss.map(escHtml).join(' · ') + '</div>' : ''), 'white-space:nowrap')
       + td(r.asin ? '<a href="https://www.amazon.com/dp/' + encodeURIComponent(r.asin) + '" target="_blank" rel="noopener" style="font-family:var(--mono)">' + escHtml(r.asin) + '</a>' : '—')
       + td(miss(r.description), 'min-width:160px') + td(miss(r.vendor))
@@ -3744,6 +3748,38 @@ function rvoRender() {
   document.getElementById('rvo-wrap').innerHTML = html + '</tbody></table>';
 }
 
+
+// 📝 Saved fixes — every part # correction (raw → part) and per-part fix, with Undo.
+async function rvoLoadFixes() {
+  var box = document.getElementById('rvo-fixes'); box.innerHTML = '<div style="font-size:12px;color:var(--text3)">Loading…</div>';
+  try {
+    var d = await (await wFetch(W + '/reorder/fix/list')).json(); if (!d.ok) throw new Error(d.error || 'Failed');
+    var rowOf = {}; RVO.rows.forEach(function (r) { rowOf[r.sku] = r; });
+    var where = function (part) {
+      if (rowOf[part]) return 'own row';
+      var b = part.split('=')[0], on = RVO.rows.filter(function (r) { return r.baseSku === b; }).map(function (r) { return r.sku; });
+      return on.length ? 'counted in ' + on.join(', ') : 'no sales in this window';
+    };
+    document.getElementById('rvo-fixes-n').textContent = '(' + (d.aliases.length + d.fixes.length) + ')';
+    var h = '<table style="font-size:12px;border-collapse:collapse"><thead><tr><th style="text-align:left;padding:4px 8px">Was</th><th style="text-align:left;padding:4px 8px">Now</th><th style="text-align:left;padding:4px 8px">Where it shows</th><th></th></tr></thead><tbody>';
+    d.aliases.forEach(function (a) {
+      h += '<tr><td style="padding:4px 8px;font-family:var(--mono)">' + escHtml(a.raw) + '</td><td style="padding:4px 8px;font-family:var(--mono);font-weight:700">' + escHtml(a.part) + '</td>'
+        + '<td style="padding:4px 8px;color:var(--text3)">' + escHtml(RVO.loaded ? where(a.part) : '') + '</td>'
+        + '<td style="padding:4px 8px"><button class="btn btn-secondary" style="font-size:11px;padding:2px 8px" onclick="rvoUndoAlias(\'' + escHtml(a.raw).replace(/'/g, "\\'") + '\')">Undo</button></td></tr>';
+    });
+    d.fixes.forEach(function (f) {
+      var parts = ['description', 'outside_upc', 'inside_upc', 'vendor', 'asin', 'case_qty'].filter(function (k) { return f[k] != null && f[k] !== ''; }).map(function (k) { return k.replace('_', ' ') + ': ' + f[k]; });
+      h += '<tr><td style="padding:4px 8px;color:var(--text3)">(details)</td><td style="padding:4px 8px;font-family:var(--mono);font-weight:700">' + escHtml(f.part) + '</td><td style="padding:4px 8px;color:var(--text3)">' + escHtml(parts.join(' · ')) + '</td><td></td></tr>';
+    });
+    box.innerHTML = (d.aliases.length || d.fixes.length) ? h + '</tbody></table>' : '<div style="font-size:12px;color:var(--text3)">No fixes saved yet — use ✏️ on a row.</div>';
+  } catch (e) { box.innerHTML = '<div style="color:var(--red);font-size:12px">✗ ' + escHtml(e.message) + '</div>'; }
+}
+async function rvoUndoAlias(raw) {
+  if (!confirm('Undo: stop reading ' + raw + ' as the corrected part #?')) return;
+  var d = await (await wFetch(W + '/reorder/fix', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ raws: [raw], part: raw, fields: {} }) })).json();
+  if (!d.ok) { alert(d.error || 'Failed'); return; }
+  showToast('Undone — ' + raw); await rvoLoad(); rvoLoadFixes();
+}
 // ✏️ editor — part # correction (remembered as raw → part) and per-part fixes.
 var RVO_EDIT = null;
 var RVO_FIELDS = [['part', 'Part #'], ['description', 'Description'], ['outside_upc', 'Outside box UPC'], ['inside_upc', 'Inside bag UPC'],
@@ -3777,7 +3813,8 @@ async function rvoSaveEdit() {
   try {
     var res = await wFetch(W + '/reorder/fix', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ raws: raws, part: part, fields: fields }) });
     var d = await res.json(); if (!d.ok) throw new Error(d.error || 'Save failed');
-    rvoCloseEdit(); showToast('Saved — ' + d.part); rvoLoad();
+    rvoCloseEdit(); showToast('Saved — ' + d.part); await rvoLoad();
+    if (document.getElementById('rvo-fixes-box').open) rvoLoadFixes();
   } catch (e) { alert('Save failed: ' + e.message); }
 }
 
