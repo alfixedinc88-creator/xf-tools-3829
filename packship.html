@@ -1109,7 +1109,7 @@ body {
     </div>
     <button class="ps-btn-sm" onclick="location.reload()" title="Reload this page">🔄 Refresh</button>
     <button class="ps-btn-sm" onclick="psSignOut()">🚪 Sign Out</button>
-    <button class="ps-btn-sm" onclick="xfGoHome()">&#8592; Apps</button>
+    <button class="ps-btn-sm" onclick="window.xfGoHome ? xfGoHome() : (location.href='index.html')">&#8592; Apps</button>
   </div>
 </div>
 
@@ -8461,5 +8461,5 @@ window.psAlSlipAdd = async function() {
   psAlLoadSlips();
 };
 </script>
-<script src="xf-access.js"></script>
+<script src="xf-access.js?v=20260924"></script>
 </html>

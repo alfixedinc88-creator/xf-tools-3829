@@ -1744,7 +1744,7 @@ body { display:flex; flex-direction:column; min-height:100vh; background:var(--b
         <span id="ro-status-text">Loading...</span>
       </div>
       <button class="btn btn-secondary" onclick="location.reload()" style="font-size:12px;padding:6px 14px" title="Reload this page">🔄 Refresh</button><button class="btn btn-secondary" data-xf-signout onclick="xfSignOut()" style="font-size:12px;padding:6px 14px">🚪 Sign Out</button>
-      <button class="btn btn-secondary" onclick="xfGoHome()" style="font-size:12px;padding:6px 14px">← Apps</button>
+      <button class="btn btn-secondary" onclick="window.xfGoHome ? xfGoHome() : (location.href='index.html')" style="font-size:12px;padding:6px 14px">← Apps</button>
     </div>
   </div>
   <div class="sales-tab-bar">
@@ -4326,7 +4326,7 @@ function salesToast(msg, type) {
   salesLaunchApp('reorder');
 })();
 </script>
-<script src="xf-signout.js"></script>
-<script src="xf-access.js"></script>
+<script src="xf-signout.js?v=20260924"></script>
+<script src="xf-access.js?v=20260924"></script>
 </body>
 </html>
