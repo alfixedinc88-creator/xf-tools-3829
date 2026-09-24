@@ -8,6 +8,16 @@
 // reads it too). `needs` = the permission box that page/tab already
 // requires. `card` = the launcher card on the front page; `sel` = the tab
 // button on the page. Keys must match what's saved (page / page:tab).
+// ← Apps on every page calls xfGoHome(): always a fresh load of the front
+// page (already on it, e.g. inside Messenger → reload it). And when the
+// browser brings a page back from its back/forward memory, reload it so
+// nobody works on a stale screen.
+window.xfGoHome = function () {
+  var home = /(^|\/)(index\.html)?$/.test(location.pathname);
+  if (home) location.reload(); else location.href = 'index.html';
+};
+window.addEventListener('pageshow', function (e) { if (e.persisted) location.reload(); });
+
 (function () {
   var WORKER = 'https://xfitting-lookup.alfixedinc88.workers.dev';
   var card = function (s) { return '.launcher-card[onclick*="' + s + '"]'; };

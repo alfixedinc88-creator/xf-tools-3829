@@ -1109,7 +1109,7 @@ body {
     </div>
     <button class="ps-btn-sm" onclick="location.reload()" title="Reload this page">🔄 Refresh</button>
     <button class="ps-btn-sm" onclick="psSignOut()">🚪 Sign Out</button>
-    <button class="ps-btn-sm" onclick="psGoBack()">&#8592; Apps</button>
+    <button class="ps-btn-sm" onclick="xfGoHome()">&#8592; Apps</button>
   </div>
 </div>
 
@@ -2378,6 +2378,7 @@ window.psSignOut = async function() {
   document.getElementById('ps-cred-password').value = '';
   document.getElementById('ps-cred-err').textContent = '';
   document.getElementById('ps-signin-overlay').style.display = 'flex';
+  location.reload(); // start the next person on a fresh page
 };
 
 window.psGoBack = function() {
