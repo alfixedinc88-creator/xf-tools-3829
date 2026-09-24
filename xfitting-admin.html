@@ -143,7 +143,11 @@
         <h1>XFitting Admin</h1>
         <div class="ad-who">Signed in as <b id="ad-who-name"></b></div>
       </div>
-      <button class="ad-btn ad-btn-outline ad-btn-sm" onclick="adLogout()">Sign Out</button>
+      <div style="display:flex;gap:8px;flex-wrap:wrap;justify-content:flex-end">
+        <button class="ad-btn ad-btn-outline ad-btn-sm" style="width:auto" onclick="location.reload()" title="Reload this page">🔄 Refresh</button>
+        <button class="ad-btn ad-btn-outline ad-btn-sm" style="width:auto" onclick="adLogout()">🚪 Sign Out</button>
+        <button class="ad-btn ad-btn-outline ad-btn-sm" style="width:auto" onclick="location.href='index.html'">← Apps</button>
+      </div>
     </div>
 
     <div class="ad-tabs">
