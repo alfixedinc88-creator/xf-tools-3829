@@ -1114,7 +1114,7 @@ body {
     <div class="topbar-right">
       <button class="back-btn" id="ldash-refresh-btn" onclick="ldashRefresh()" style="margin-right:8px">🔄 Refresh</button>
       <button class="back-btn" data-xf-signout onclick="xfSignOut()" style="margin-right:8px">🚪 Sign Out</button>
-      <button class="back-btn" onclick="xfGoHome()">← Apps</button>
+      <button class="back-btn" onclick="window.xfGoHome ? xfGoHome() : (location.href='index.html')">← Apps</button>
     </div>
   </div>
 
@@ -1616,7 +1616,7 @@ body {
       <button class="btn-disconnect" onclick="disconnect()">Disconnect</button>
       <button class="back-btn" onclick="refreshAllSheets()" title="Reload the latest data">🔄 Refresh</button>
       <button class="back-btn" data-xf-signout onclick="xfSignOut()">🚪 Sign Out</button>
-      <button class="back-btn" onclick="xfGoHome()">&#8592; Apps</button>
+      <button class="back-btn" onclick="window.xfGoHome ? xfGoHome() : (location.href='index.html')">&#8592; Apps</button>
     </div>
   </div>
   <div class="tabbar">
@@ -1709,8 +1709,8 @@ body {
 
 <!-- ═══ AWD PLANNER APP ═══ -->
 
-<script src="xf-signout.js"></script>
-<script src="xf-access.js"></script>
+<script src="xf-signout.js?v=20260924"></script>
+<script src="xf-access.js?v=20260924"></script>
 </body>
 <script>
 // ── Constants ────────────────────────────────────────────────────────────

@@ -286,7 +286,7 @@ window.invCredLogin = async function() {
   <div class="itopbar-title">📋 Inventory</div>
   <button class="iback" id="inv-refresh-btn" onclick="invRefreshPage()" style="margin-left:8px">🔄 Refresh</button>
   <button class="iback" id="inv-signout-btn" onclick="invSignOut()" style="margin-left:8px">🚪 Sign Out</button>
-  <button class="iback" onclick="xfGoHome()">← Apps</button>
+  <button class="iback" onclick="window.xfGoHome ? xfGoHome() : (location.href='index.html')">← Apps</button>
 </div>
 
 <div class="itabs">
@@ -8646,6 +8646,6 @@ window.invCredLogin = async function() {
   };
 })();
 </script>
-<script src="xf-access.js"></script>
+<script src="xf-access.js?v=20260924"></script>
 </body>
 </html>
