@@ -2114,6 +2114,17 @@ body { display:flex; flex-direction:column; min-height:100vh; background:var(--b
       <details id="rvo-fixes-box" style="margin-bottom:10px" ontoggle="if(this.open)rvoLoadFixes()"><summary style="font-size:12px;color:var(--text2);cursor:pointer;font-weight:700">📝 Saved fixes <span id="rvo-fixes-n"></span></summary><div id="rvo-fixes" style="margin-top:6px"></div></details>
       <div class="sales-section-sub" id="rvo-summary" style="margin-bottom:8px"></div>
       <div id="rvo-wrap" class="sales-table-wrap" style="overflow:auto;max-height:70vh"><div style="padding:20px;color:var(--text3);font-size:13px">Loading…</div></div>
+      <div id="rvo-recv" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,.45);z-index:9998;align-items:flex-start;justify-content:center;padding:24px 16px;overflow:auto">
+        <div style="background:var(--bg2);border-radius:14px;padding:20px;width:900px;max-width:100%;box-shadow:0 8px 32px rgba(0,0,0,.2)">
+          <div style="font-size:16px;font-weight:700;margin-bottom:4px" id="rvo-rc-title">📦 Received</div>
+          <div style="font-size:12px;color:var(--text3);margin-bottom:10px">Each line is stocked into <b>SKU Mgr</b> at the location below (like a Stock In, already approved) and taken off On the way. Check the cases against what actually came in — change any that were short or over. Move it to shelves later with Inventory → Transfer.</div>
+          <label style="font-size:12px;font-weight:700">Location <input id="rvo-rc-loc" value="GARAGE" style="width:140px;margin-left:6px;padding:5px 8px;border:1.5px solid var(--border);border-radius:6px;font-family:var(--mono);text-transform:uppercase"></label>
+          <div id="rvo-rc-body" style="margin-top:10px"></div>
+          <div style="display:flex;gap:8px;margin-top:12px;align-items:center"><span id="rvo-rc-sum" style="flex:1;font-size:13px"></span>
+            <button class="btn btn-secondary" onclick="document.getElementById('rvo-recv').style.display='none'">Close</button>
+            <button class="btn btn-primary" id="rvo-rc-go" onclick="rvoReceiveGo()">📦 Stock in to SKU Mgr</button></div>
+        </div>
+      </div>
       <div id="rvo-check" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,.45);z-index:9998;align-items:flex-start;justify-content:center;padding:24px 16px;overflow:auto" onclick="if(event.target===this)this.style.display='none'">
         <div style="background:var(--bg2);border-radius:14px;padding:20px;width:980px;max-width:100%;box-shadow:0 8px 32px rgba(0,0,0,.2)">
           <div style="display:flex;align-items:center;gap:10px;margin-bottom:10px"><div style="font-size:16px;font-weight:700;flex:1" id="rvo-ck-title">📋 Import check</div>
@@ -3825,16 +3836,83 @@ function rvoRenderIncoming(titles) {
     return '<span style="display:inline-flex;align-items:center;gap:6px;background:#fff;border:1px solid #BFDBFE;border-radius:14px;padding:3px 4px 3px 10px">'
       + '<b>' + escHtml(t.title) + '</b> <span style="color:var(--text3)">' + escHtml(t.vendor || '') + ' · ' + fmt0(t.parts) + ' part #s · ' + fmt0(t.units) + ' units</span>'
       + '<button onclick="rvoCheck(\'' + escHtml(t.title).replace(/'/g, "\\'") + '\')" title="Where did every line of this shipment go?" style="border:none;background:#DBEAFE;border-radius:10px;padding:2px 8px;font-size:11px;cursor:pointer">🔍 Check</button>'
-      + '<button onclick="rvoRemoveTitle(\'' + escHtml(t.title).replace(/'/g, "\\'") + '\')" title="Arrived (now in SKU Mgr) or cancelled — remove this column" style="border:none;background:#DBEAFE;border-radius:10px;padding:2px 8px;font-size:11px;cursor:pointer">✓ Received / remove</button></span>';
+      + '<button onclick="rvoReceive(\'' + escHtml(t.title).replace(/'/g, "\\'") + '\')" title="It arrived — stock it into SKU Mgr (GARAGE) and take it off On the way" style="border:none;background:#D1FAE5;color:#065F46;border-radius:10px;padding:2px 8px;font-size:11px;font-weight:700;cursor:pointer">📦 Received</button>'
+      + '<button onclick="rvoRemoveTitle(\'' + escHtml(t.title).replace(/'/g, "\\'") + '\')" title="Cancelled or imported by mistake — take it off On the way without touching SKU Mgr" style="border:none;background:#FEE2E2;color:#991B1B;border-radius:10px;padding:2px 8px;font-size:11px;cursor:pointer">🗑 Remove</button></span>';
   }).join('') + ' <span style="flex:1"></span><button onclick="rvoResetWidths()" class="btn btn-secondary" style="font-size:11px;padding:2px 8px">↔ Reset column widths</button>';
 }
 async function rvoRemoveTitle(title) {
-  if (!confirm('Remove "' + title + '" from On the way?\\n\\nDo this once it has arrived and been put into SKU Mgr (or it was cancelled) — otherwise it would be counted twice or not at all.')) return;
+  if (!confirm('Remove "' + title + '" from On the way?\n\nUse this only if the shipment was CANCELLED or imported by mistake. SKU Mgr is not changed.\n\nIf it ARRIVED, press 📦 Received instead — that puts it into SKU Mgr.')) return;
   var d = await (await wFetch(W + '/reorder/fix/incoming-remove', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ title: title }) })).json();
   if (!d.ok) { alert(d.error || 'Failed'); return; }
   showToast('Removed "' + title + '"'); rvoLoad(); if (document.getElementById('rvo-hist-box').open) rvoLoadHistory();
 }
 
+// 📦 Received — stock a whole on-the-way title into SKU Mgr (GARAGE).
+var RVO_RC = null;
+async function rvoReceive(title) {
+  var d = await (await wFetch(W + '/reorder/fix/incoming-lines?title=' + encodeURIComponent(title))).json();
+  if (!d.ok) { alert(d.error || 'Failed'); return; }
+  var bySku = {}; RVO.rows.forEach(function (r) { bySku[r.sku] = r; });
+  d.lines.forEach(function (l) {
+    var r = bySku[l.readAs]; l.caseQty = r && r.caseQty ? r.caseQty : 0; l.description = r ? r.description : '';
+    l.addCases = rvoNum(l.cases) > 0 ? rvoNum(l.cases) : (l.caseQty ? Math.round(rvoNum(l.qty) / l.caseQty * 100) / 100 : '');
+  });
+  RVO_RC = { title: title, lines: d.lines };
+  document.getElementById('rvo-rc-title').textContent = '📦 Received — ' + title;
+  rvoRcRender();
+  document.getElementById('rvo-rc-go').disabled = false;
+  document.getElementById('rvo-recv').style.display = 'flex';
+}
+function rvoRcRender() {
+  var L = RVO_RC.lines;
+  document.getElementById('rvo-rc-body').innerHTML = '<div style="max-height:55vh;overflow:auto;border:1px solid var(--border);border-radius:8px"><table style="font-size:12px;border-collapse:collapse;width:100%"><thead style="position:sticky;top:0;background:var(--bg3)"><tr>'
+    + ['Part #', 'Qty (units)', 'Case qty', 'Cases to add', 'Result'].map(function (x) { return '<th style="text-align:left;padding:6px 8px">' + x + '</th>'; }).join('') + '</tr></thead><tbody>'
+    + L.map(function (l, i) {
+      var need = !(rvoNum(l.addCases) > 0) && !l.done;
+      return '<tr style="border-top:1px solid var(--border)"><td style="padding:5px 8px;font-family:var(--mono)"><b>' + escHtml(l.readAs) + '</b>' + (l.readAs !== (l.raw_part || l.part) ? '<div style="font-size:10.5px;color:var(--text3)">file: ' + escHtml(l.raw_part || l.part) + '</div>' : '') + '</td>'
+        + '<td style="padding:5px 8px;text-align:right">' + fmt0(l.qty) + '</td>'
+        + '<td style="padding:5px 8px;text-align:right">' + (l.caseQty ? fmt0(l.caseQty) : '<span style="color:var(--text3)">?</span>') + '</td>'
+        + '<td style="padding:5px 8px"><input type="number" min="0" step="0.5" value="' + (l.addCases === '' ? '' : l.addCases) + '" oninput="RVO_RC.lines[' + i + '].addCases=this.value;rvoRcSum()" ' + (l.done ? 'disabled' : '')
+        + ' style="width:80px;padding:3px 5px;border:1.5px solid ' + (need ? 'var(--red)' : 'var(--border)') + ';border-radius:5px;font-weight:700"' + (need ? ' placeholder="cases?"' : '') + '></td>'
+        + '<td style="padding:5px 8px">' + (l.res || '') + '</td></tr>';
+    }).join('') + '</tbody></table></div>';
+  rvoRcSum();
+}
+function rvoRcSum() {
+  var L = RVO_RC.lines.filter(function (l) { return !l.done; });
+  var cs = L.reduce(function (a, l) { return a + rvoNum(l.addCases); }, 0), un = L.reduce(function (a, l) { return a + rvoNum(l.qty); }, 0);
+  var miss = L.filter(function (l) { return !(rvoNum(l.addCases) > 0); }).length;
+  document.getElementById('rvo-rc-sum').innerHTML = !L.length ? '<b style="color:var(--green)">✓ All lines stocked in.</b>' : '<b>' + L.length + '</b> lines to stock in · <b>' + (Math.round(cs * 100) / 100) + '</b> cases · ' + fmt0(un) + ' units'
+    + (miss ? ' · <span style="color:var(--red)">' + miss + ' line(s) need the number of cases</span>' : '');
+}
+async function rvoReceiveGo() {
+  var loc = (document.getElementById('rvo-rc-loc').value || 'GARAGE').trim().toUpperCase();
+  var todo = RVO_RC.lines.filter(function (l) { return !l.done; });
+  if (!todo.length) { document.getElementById('rvo-recv').style.display = 'none'; return; }
+  var bad = todo.filter(function (l) { return !(rvoNum(l.addCases) > 0); });
+  if (bad.length) { alert('Fill in the number of cases for: ' + bad.map(function (l) { return l.readAs; }).join(', ')); return; }
+  if (!confirm('Stock ' + todo.length + ' line(s) into SKU Mgr at ' + loc + ' and take them off On the way?')) return;
+  var btn = document.getElementById('rvo-rc-go'); btn.disabled = true;
+  var ok = 0, fail = 0;
+  for (var s0 = 0; s0 < todo.length; s0 += 4) {
+    var chunk = todo.slice(s0, s0 + 4);
+    btn.textContent = '⏳ ' + Math.min(s0 + 4, todo.length) + ' / ' + todo.length;
+    chunk.forEach(function (l) { l.res = '<span style="color:var(--text3)">⏳</span>'; });
+    rvoRcRender();
+    try {
+      var d = await (await wFetch(W + '/reorder/fix/incoming-receive', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({
+        title: RVO_RC.title, location: loc, lines: chunk.map(function (l) { return { key: l.part, part: l.readAs, cases: rvoNum(l.addCases), description: l.description }; }) }) })).json();
+      if (!d.ok) throw new Error(d.error || 'Failed');
+      chunk.forEach(function (l, k) { var r = d.results[k] || {};
+        if (r.ok) { l.done = true; ok++; l.res = '<span style="color:var(--green);font-weight:700">✓ ' + (r.skipped ? 'already received' : rvoNum(l.addCases) + ' case(s) → ' + escHtml(loc) + (r.isNew ? ' (new row)' : '')) + '</span>'; }
+        else { fail++; l.res = '<span style="color:var(--red)">✗ ' + escHtml(r.error || 'Failed') + '</span>'; } });
+    } catch (e) { chunk.forEach(function (l) { fail++; l.res = '<span style="color:var(--red)">✗ ' + escHtml(e.message) + '</span>'; }); }
+    rvoRcRender();
+  }
+  btn.textContent = '📦 Stock in to SKU Mgr'; btn.disabled = false;
+  showToast(ok + ' line(s) stocked in at ' + loc + (fail ? ' — ' + fail + ' failed, see ✗' : ''));
+  await rvoLoad(); if (document.getElementById('rvo-hist-box').open) rvoLoadHistory();
+}
 // 📋 Import check — every line of an on-the-way title and where it ended up,
 // with totals that have to match (file → saved → counted in the order).
 var RVO_CK = null;
@@ -3942,7 +4020,7 @@ async function rvoTemplate() {
       ['', '• a Title (e.g. "Container Oct 15") = on the way: Qty is subtracted from what to order'],
       ['', '• same Title again = merged into it; a new Title = its own column'],
       ['', '• after importing, the 📋 Import check shows where every line went and that the unit totals match (also 🔍 Check on each title)'],
-      ['', '• when it arrives and is in SKU Mgr, press ✓ Received / remove on that title']];
+      ['', '• when it arrives, press 📦 Received — it goes into SKU Mgr at GARAGE (move it to shelves with Transfer); 🗑 Remove only for a cancelled / wrong import']];
     var wb = XLSX.utils.book_new();
     var ws = XLSX.utils.aoa_to_sheet([head].concat(ex));
     ws['!cols'] = [18, 34, 10, 22, 22, 14, 14, 18, 8, 8].map(function (w) { return { wch: w }; });
@@ -3963,8 +4041,8 @@ async function rvoLoadHistory() {
   try {
     var d = await (await wFetch(W + '/reorder/fix/history' + (q ? '?q=' + encodeURIComponent(q) : ''))).json();
     if (!d.ok) throw new Error(d.error || 'Failed');
-    var icon = { edit: '✏️', part: '🔁', undo: '↩️', import: '⬆', download: '⬇', incoming: '🚢' };
-    var lab = { edit: 'Edited', part: 'Part # fixed', undo: 'Undo', import: 'Import', download: 'CSV', incoming: 'On the way' };
+    var icon = { edit: '✏️', part: '🔁', undo: '↩️', import: '⬆', download: '⬇', incoming: '🚢', received: '📦' };
+    var lab = { edit: 'Edited', part: 'Part # fixed', undo: 'Undo', import: 'Import', download: 'CSV', incoming: 'On the way', received: 'Received' };
     box.innerHTML = !d.history.length ? '<div style="font-size:12px;color:var(--text3)">' + (q ? 'Nothing matches.' : 'Nothing yet — edits, part # fixes, imports and CSV downloads show up here.') + '</div>'
       : '<table style="font-size:12px;border-collapse:collapse;width:100%"><tbody>' + d.history.map(function (h) {
         var t = new Date(h.ts).toLocaleString('en-US', { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' });
