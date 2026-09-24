@@ -1209,6 +1209,16 @@ async function reorderVendorOrder(env, url) {
       rows.push(row);
     }
   }
+  // A corrected part # that isn't ordered itself (e.g. "3N-ZFDW-TPB4" fixed
+  // to "27-3-2=2+", a pack we don't send to FBA) has its sales folded into
+  // the part's FBA row(s) — say so on those rows so it can still be found.
+  const rowSkus = new Set(rows.map(r => r.sku)), rowsByBase = {};
+  rows.forEach(r => { (rowsByBase[r.baseSku] = rowsByBase[r.baseSku] || []).push(r); });
+  for (const part in fromMap) {
+    if (rowSkus.has(part)) continue;
+    const onRows = rowsByBase[U(reorderGetBaseSku(part))] || [];
+    onRows.forEach(r => { (r.merged = r.merged || []).push({ part, from: [...fromMap[part]] }); });
+  }
   rows.sort((a, c) => reorderSortRank(a.baseSku) - reorderSortRank(c.baseSku) || a.sku.localeCompare(c.sku));
   Object.values(cat).forEach(r => { if (r.vendor) vendors.add(String(r.vendor).trim()); });
   Object.values(fixes).forEach(r => { if (r.vendor) vendors.add(String(r.vendor).trim()); });
@@ -3829,9 +3839,15 @@ export default {
 
     // ── Reorder recommendations - uses the existing PIN session, matching
     // the rest of the reorder app (not yet migrated to the credential system) ──
-    if (url.pathname.startsWith('/reorder/vendor-catalog/') || url.pathname === '/reorder/fix') {
+    if (url.pathname.startsWith('/reorder/vendor-catalog/') || url.pathname.startsWith('/reorder/fix')) {
       if (session.pin_level !== 'mgmt') return _roResp({ ok: false, error: 'Management access required' }, 403);
       if (url.pathname === '/reorder/vendor-catalog/import' && method === 'POST') return await reorderCatalogImport(request, env);
+      if (url.pathname === '/reorder/fix/list' && method === 'GET') {
+        await reorderFixTables(env);
+        const aliases = (await env.DB.prepare('SELECT raw, part, by_user, updated_at FROM reorder_alias ORDER BY updated_at DESC').all()).results || [];
+        const fixes = (await env.DB.prepare('SELECT * FROM reorder_fix ORDER BY updated_at DESC').all()).results || [];
+        return _roResp({ ok: true, aliases, fixes });
+      }
       if (url.pathname === '/reorder/fix' && method === 'POST') {
         const cs = await verifyCredSession(request.headers.get('X-Cred-Token'), env).catch(() => null);
         return await reorderSaveFix(request, env, cs || session);
