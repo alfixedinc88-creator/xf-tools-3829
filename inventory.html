@@ -982,6 +982,29 @@ window.invCredLogin = async function() {
      Same search as the Repricer's SKU Lookup, but the quantity is changed
      directly through each channel's API. Worker: /inventory/soldout/*. -->
 <div class="ipanel" id="inv-panel-soldout">
+  <div class="icard" id="lw-card">
+    <div class="icard-label" style="display:flex;align-items:center;gap:8px;flex-wrap:wrap">⚠️ Listing Watch
+      <span id="lw-count" style="display:none;background:var(--red);color:#fff;font-size:11px;font-weight:700;padding:1px 8px;border-radius:10px"></span></div>
+    <div style="font-size:12px;color:var(--text3);margin-bottom:10px;line-height:1.5">
+      Checks every listing on eBay, Amazon (FBM), Walmart and Shopify. When one is at <b>0 or under the limit</b> but <b>SKU Mgr still shows stock</b>, it shows up here.
+      <b>Manual</b> = warn only, you fix it. <b>Auto</b> = also sets the listing back to the restock quantity by itself.
+    </div>
+    <div style="display:flex;flex-wrap:wrap;gap:10px 16px;align-items:center;margin-bottom:10px;font-size:12.5px">
+      <label style="display:flex;align-items:center;gap:6px;cursor:pointer"><input type="checkbox" id="lw-watch"> Check on schedule</label>
+      <span style="display:inline-flex;border:1.5px solid var(--border);border-radius:8px;overflow:hidden">
+        <button type="button" id="lw-mode-manual" onclick="lwSetMode('manual')" style="padding:6px 12px;border:none;font-size:12px;font-weight:700;cursor:pointer">✋ Manual</button>
+        <button type="button" id="lw-mode-auto" onclick="lwSetMode('auto')" style="padding:6px 12px;border:none;font-size:12px;font-weight:700;cursor:pointer">⚡ Auto</button>
+      </span>
+      <label>Warn under <input id="lw-threshold" type="number" min="1" max="1000" style="width:56px;padding:4px 6px;border:1.5px solid var(--border);border-radius:6px;background:var(--bg);color:var(--text)"></label>
+      <label>Restock to <input id="lw-restock" type="number" min="1" max="9999" style="width:60px;padding:4px 6px;border:1.5px solid var(--border);border-radius:6px;background:var(--bg);color:var(--text)"></label>
+      <label>Every <input id="lw-every" type="number" min="1" max="168" style="width:48px;padding:4px 6px;border:1.5px solid var(--border);border-radius:6px;background:var(--bg);color:var(--text)"> h</label>
+      <button type="button" onclick="lwSaveConfig()" style="padding:6px 12px;border:1.5px solid var(--border);border-radius:8px;background:var(--bg3);color:var(--text2);font-size:12px;font-weight:700;cursor:pointer">💾 Save</button>
+      <button type="button" id="lw-scan-btn" onclick="lwScanNow()" style="padding:6px 12px;border:none;border-radius:8px;background:var(--accent);color:#fff;font-size:12px;font-weight:700;cursor:pointer">🔎 Scan now</button>
+    </div>
+    <div id="lw-state" style="font-size:11.5px;color:var(--text3);margin-bottom:8px"></div>
+    <div id="lw-alerts"><div style="font-size:12px;color:var(--text3)">Loading…</div></div>
+    <details style="margin-top:8px"><summary style="font-size:12px;color:var(--text3);cursor:pointer">Recently fixed / dismissed</summary><div id="lw-recent" style="margin-top:6px"></div></details>
+  </div>
   <div class="icard">
     <div class="icard-label">🚫 Sold Out — change listing quantities</div>
     <div style="font-size:12px;color:var(--text3);margin-bottom:10px;line-height:1.5">
@@ -1322,7 +1345,7 @@ window.invCredLogin = async function() {
     }
     if (tab === "history") { histLoad(); histLoadReport(); }
     if (tab === "skumgr") { skumgrAutoLoad(); }
-    if (tab === "soldout" && typeof soLoadLog === 'function') { soLoadLog(); setTimeout(function(){ var q = g('so-q'); if (q) q.focus(); }, 50); }
+    if (tab === "soldout" && typeof soLoadLog === 'function') { soLoadLog(); if (typeof lwLoad === 'function') lwLoad(); setTimeout(function(){ var q = g('so-q'); if (q) q.focus(); }, 50); }
   };
 
   // ── LOCATION PREFIXES ────────────────────────────────────────────────────
@@ -8594,6 +8617,94 @@ window.invCredLogin = async function() {
       if (run !== soQtyRun) return;
       chunk.forEach(function (i, k) { soShowQty(i, d.ok === false ? { error: d.error || 'Could not read quantity' } : (d.results || [])[k]); });
     }
+  };
+
+
+  // ── Listing Watch ──────────────────────────────────────────────────────
+  var lw = { cfg: null, alerts: [], scanning: false };
+  function lwAgo(t) { if (!t) return '—'; var m = Math.round((Date.now() - Date.parse(t)) / 60000); return m < 1 ? 'just now' : m < 60 ? m + ' min ago' : m < 1440 ? Math.round(m / 60) + ' h ago' : Math.round(m / 1440) + ' d ago'; }
+  function lwModeUi() {
+    var auto = lw.cfg && lw.cfg.mode === 'auto';
+    el('lw-mode-manual').style.background = auto ? 'var(--bg)' : 'var(--accent)'; el('lw-mode-manual').style.color = auto ? 'var(--text2)' : '#fff';
+    el('lw-mode-auto').style.background = auto ? '#B45309' : 'var(--bg)'; el('lw-mode-auto').style.color = auto ? '#fff' : 'var(--text2)';
+  }
+  function lwRenderState(st) {
+    if (!st) { el('lw-state').textContent = 'Not scanned yet — press 🔎 Scan now.'; return; }
+    var p = st.platforms || {};
+    var parts = ['eBay', 'Amazon', 'Walmart', 'Shopify'].map(function (k) { var x = p[k] || {};
+      return '<b style="color:' + COLOR[k] + '">' + k + '</b> ' + (x.error ? '<span style="color:var(--red)" title="' + esc(x.error) + '">⚠ error</span>' : (x.scanned || 0) + (x.done ? '' : '…')); });
+    el('lw-state').innerHTML = (st.finishedAt ? 'Last scan ' + lwAgo(st.finishedAt) : 'Scanning… started ' + lwAgo(st.startedAt)) + ' · checked ' + parts.join(' · ')
+      + ['eBay', 'Amazon', 'Walmart', 'Shopify'].filter(function (k) { return p[k] && p[k].error; }).map(function (k) { return '<div style="color:var(--red);margin-top:2px">' + esc(p[k].error) + '</div>'; }).join('');
+  }
+  function lwRenderAlerts() {
+    var a = lw.alerts, c = el('lw-count');
+    c.style.display = a.length ? '' : 'none'; c.textContent = a.length;
+    if (!a.length) { el('lw-alerts').innerHTML = '<div style="font-size:12px;color:var(--green)">✓ No warnings — every low listing is really out of stock in SKU Mgr.</div>'; return; }
+    var rq = (lw.cfg && lw.cfg.restockQty) || 10;
+    el('lw-alerts').innerHTML = a.map(function (x) {
+      return '<div id="lw-a-' + x.id + '" style="border:1px solid var(--border);border-left:4px solid ' + (COLOR[x.platform] || '#999') + ';border-radius:8px;padding:8px 10px;margin-bottom:6px;background:var(--bg2)">'
+        + '<div style="display:flex;gap:8px;align-items:flex-start;flex-wrap:wrap"><div style="flex:1;min-width:180px">'
+        + '<div style="font-size:12px;font-weight:700;color:' + (COLOR[x.platform] || 'var(--text)') + '">' + esc(x.platform) + ' <span style="font-weight:400;color:var(--text)">' + esc(x.title || '') + '</span></div>'
+        + '<div style="font-size:11px;color:var(--text3);font-family:var(--mono)">' + esc(x.listing_id) + (x.sku ? ' · ' + esc(x.sku) : '') + '</div>'
+        + '<div style="font-size:11.5px;margin-top:3px">Listing: <b style="color:var(--red)">' + x.qty + '</b> · We have: <b style="color:var(--green)">' + x.our_cases + ' case(s)</b> <span style="color:var(--text3)">' + esc(x.our_detail || '') + '</span></div>'
+        + (x.status === 'auto-failed' ? '<div style="font-size:11px;color:var(--red)">' + esc(x.note || 'Auto fix failed') + '</div>' : '')
+        + '<div style="font-size:10.5px;color:var(--text3)">First seen ' + lwAgo(x.first_seen) + '</div></div>'
+        + '<div style="display:flex;gap:6px;align-items:center"><input type="number" id="lw-q-' + x.id + '" value="' + rq + '" min="0" max="9999" style="width:60px;padding:5px 6px;border:1.5px solid var(--border);border-radius:6px;background:var(--bg);color:var(--text)">'
+        + '<button onclick="lwFix(' + x.id + ')" style="padding:6px 10px;border:none;border-radius:6px;background:var(--green);color:#fff;font-size:12px;font-weight:700;cursor:pointer">Set</button>'
+        + '<button onclick="lwDismiss(' + x.id + ')" title="Not a problem — hide this warning" style="padding:6px 10px;border:1.5px solid var(--border);border-radius:6px;background:var(--bg3);color:var(--text2);font-size:12px;cursor:pointer">Dismiss</button></div></div>'
+        + '<div id="lw-r-' + x.id + '" style="font-size:11px;margin-top:3px"></div></div>';
+    }).join('');
+  }
+  function lwRenderRecent(r) {
+    var lab = { fixed: '✓ Fixed', 'auto-fixed': '⚡ Auto-fixed', dismissed: 'Dismissed', 'ok-now': 'OK now' };
+    el('lw-recent').innerHTML = !r.length ? '<div style="font-size:12px;color:var(--text3)">Nothing yet.</div>' : r.map(function (x) {
+      return '<div style="font-size:11.5px;padding:4px 0;border-bottom:1px solid var(--border)"><b style="color:' + (COLOR[x.platform] || 'var(--text)') + '">' + esc(x.platform) + '</b> ' + esc(x.sku || x.listing_id) + ' — ' + (lab[x.status] || esc(x.status)) + ' <span style="color:var(--text3)">' + esc(x.note || '') + ' · ' + lwAgo(x.fixed_at || x.last_seen) + '</span></div>'; }).join('');
+  }
+  window.lwLoad = async function () {
+    var d = await call('/inventory/soldout/watch/status');
+    if (d.ok === false) { el('lw-alerts').innerHTML = '<div style="color:var(--red);font-size:12px">✗ ' + esc(d.error || 'Could not load') + '</div>'; return; }
+    lw.cfg = d.config; lw.alerts = d.alerts || [];
+    el('lw-watch').checked = !!lw.cfg.watch; el('lw-threshold').value = lw.cfg.threshold; el('lw-restock').value = lw.cfg.restockQty; el('lw-every').value = lw.cfg.everyHours;
+    lwModeUi(); lwRenderState(d.state); lwRenderAlerts(); lwRenderRecent(d.recent || []);
+    return d;
+  };
+  window.lwSetMode = function (m) {
+    if (m === 'auto' && !confirm('Turn on AUTO?\n\nWhen a listing is under ' + el('lw-threshold').value + ' and SKU Mgr still has stock, the listing will be set to ' + el('lw-restock').value + ' by itself — no one checks first.\n\nTip: use Manual until the warnings look right.')) return;
+    lw.cfg = lw.cfg || {}; lw.cfg.mode = m; lwModeUi(); lwSaveConfig();
+  };
+  window.lwSaveConfig = async function () {
+    var d = await call('/inventory/soldout/watch/config', { method: 'POST', body: { config: {
+      watch: el('lw-watch').checked, mode: (lw.cfg && lw.cfg.mode) || 'manual',
+      threshold: el('lw-threshold').value, restockQty: el('lw-restock').value, everyHours: el('lw-every').value } } });
+    if (d.ok === false) { alert(d.error || 'Save failed'); return; }
+    lw.cfg = d.config; lwModeUi(); if (typeof showToast === 'function') showToast('Listing Watch saved'); lwRenderAlerts();
+  };
+  window.lwScanNow = async function () {
+    if (lw.scanning) return;
+    var btn = el('lw-scan-btn'); lw.scanning = true; btn.disabled = true; btn.textContent = '⏳ Scanning…';
+    try {
+      var d = await call('/inventory/soldout/watch/scan', { method: 'POST', body: {} });
+      if (d.ok === false) throw new Error(d.error || 'Could not start');
+      for (var n = 0; n < 400; n++) {
+        d = await call('/inventory/soldout/watch/step', { method: 'POST', body: {} });
+        if (d.ok === false) throw new Error(d.error || 'Scan step failed');
+        lwRenderState(d.state);
+        if (!d.state || d.state.finishedAt) break;
+      }
+    } catch (e) { alert('Scan stopped: ' + e.message); }
+    finally { lw.scanning = false; btn.disabled = false; btn.textContent = '🔎 Scan now'; lwLoad(); }
+  };
+  window.lwFix = async function (id) {
+    var q = parseInt(el('lw-q-' + id).value, 10);
+    if (!(q >= 0 && q <= 9999)) { alert('Quantity must be 0–9999'); return; }
+    var r = el('lw-r-' + id); r.innerHTML = '<span style="color:var(--text3)">⏳ updating…</span>';
+    var d = await call('/inventory/soldout/watch/fix', { method: 'POST', body: { id: id, quantity: q } });
+    if (d.ok) { r.innerHTML = '<span style="color:var(--green);font-weight:700">✓ Set to ' + q + '</span> <span style="color:var(--text3)">' + esc(d.detail || '') + '</span>'; setTimeout(lwLoad, 1200); soLoadLog(); }
+    else r.innerHTML = '<span style="color:var(--red)">✗ ' + esc(d.error || 'Failed') + '</span>';
+  };
+  window.lwDismiss = async function (id) {
+    await call('/inventory/soldout/watch/dismiss', { method: 'POST', body: { id: id } });
+    lwLoad();
   };
 
   window.soTogglePlat = function (p, on) {
