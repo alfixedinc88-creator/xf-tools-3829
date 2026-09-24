@@ -3922,6 +3922,49 @@ export default {
           .map(r => ({ ...r, readAs: alias[String(r.part).toUpperCase()] || String(r.part).toUpperCase() }));
         return _roResp({ ok: true, title, lines });
       }
+      if (url.pathname === '/reorder/fix/incoming-receive' && method === 'POST') {
+        // 📦 Received: each line becomes a Stock In at `location` (GARAGE by
+        // default) through the normal Inventory flow (inventoryLog → approved
+        // with inventoryVerify, same as the Review tab), so it's in SKU Mgr
+        // right away and shows in Inventory History. A line is deleted from
+        // "on the way" as soon as it's stocked in — a retry never adds twice.
+        // The page sends a few lines per call.
+        await reorderFixTables(env);
+        const b = await request.json().catch(() => ({}));
+        const title = String(b.title || '').trim();
+        const loc = String(b.location || 'GARAGE').trim().toUpperCase().slice(0, 40) || 'GARAGE';
+        const who = _roWho(roCs || session);
+        const initials = String((roCs && roCs.displayName) || who || 'RCV').slice(0, 10);
+        const results = [];
+        for (const ln of (Array.isArray(b.lines) ? b.lines : []).slice(0, 8)) {
+          const key = reorderCleanPart(ln.key || ln.part), part = reorderCleanPart(ln.part), cases = parseFloat(ln.cases);
+          const have = await env.DB.prepare('SELECT qty FROM reorder_incoming WHERE title = ? AND part = ?').bind(title, key).first();
+          if (!have) { results.push({ key, ok: true, skipped: 'already received' }); continue; }
+          if (!(cases > 0)) { results.push({ key, ok: false, error: 'Cases to add must be more than 0' }); continue; }
+          try {
+            const ex = await d1First(env, 'SELECT id, name FROM master_list WHERE UPPER(part_num) = ? AND UPPER(location) = ? LIMIT 1', [part, loc]);
+            const note = `[RECEIVED] ${title} — ${have.qty} units`;
+            const logBody = { type: 'IN', partNum: part, sku: part, name: String(ln.description || (ex && ex.name) || '').slice(0, 200),
+              location: loc, cases, initials, notes: note, isNew: !ex, masterId: ex ? ex.id : null };
+            const lr = await inventoryLog(new Request('https://internal/inventory/log', { method: 'POST', body: JSON.stringify(logBody) }), env);
+            const ld = await lr.json().catch(() => ({}));
+            if (!ld.ok) throw new Error(ld.error || 'Stock In failed');
+            if (!ld.autoApproved) {
+              const vr = await inventoryVerify(new Request('https://internal/inventory/verify', { method: 'POST', body: JSON.stringify({
+                rowIndex: ld.d1Id, action: 'Approved',
+                item: { type: 'IN', partNum: part, location: loc, overwriteLocation: '', isPlaceholder: false, isNew: !ex,
+                  cases, sku: part, notes: note, masterId: ex ? ex.id : null, d1Id: ld.d1Id } }) }), env);
+              const vd = await vr.json().catch(() => ({}));
+              if (!vd.ok) throw new Error('Logged as Stock In but not approved (' + (vd.error || 'verify failed') + ') — approve it in Inventory → Review');
+            }
+            await env.DB.prepare('DELETE FROM reorder_incoming WHERE title = ? AND part = ?').bind(title, key).run();
+            await reorderLog(env, who, 'received', part, `Received "${title}": ${cases} case(s) of ${part} (${have.qty} units) → SKU Mgr @ ${loc}`);
+            results.push({ key, ok: true, cases, location: loc, isNew: !ex });
+          } catch (e) { results.push({ key, ok: false, error: String(e.message || e).slice(0, 300) }); }
+        }
+        const left = await env.DB.prepare('SELECT COUNT(*) AS n FROM reorder_incoming WHERE title = ?').bind(title).first();
+        return _roResp({ ok: true, results, left: left ? left.n : 0 });
+      }
       if (url.pathname === '/reorder/fix/incoming-remove' && method === 'POST') {
         // A shipment arrived (now in SKU Mgr) or was cancelled — drop its column.
         await reorderFixTables(env);
