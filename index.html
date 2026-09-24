@@ -1639,9 +1639,8 @@ function showToast(msg) {
 <div id="messenger-app" style="display:none;flex-direction:column;min-height:100vh;background:var(--bg);">
   <!-- topbar -->
   <div style="background:#fff;border-bottom:1px solid var(--border);padding:0 16px;height:52px;display:flex;align-items:center;justify-content:space-between;flex-shrink:0;position:sticky;top:0;z-index:10;">
-    <button class="back-btn" onclick="backToLauncher()">&#8592; Apps</button>
     <span style="font-weight:700;font-size:15px;color:var(--text);">💬 Messenger</span>
-    <span style="display:flex;align-items:center;gap:8px"><span id="msg-sender-label" style="font-size:12px;font-family:var(--mono);color:var(--text3);"></span><button class="back-btn" data-xf-signout onclick="xfSignOut()">🚪 Sign Out</button></span>
+    <span style="display:flex;align-items:center;gap:8px"><span id="msg-sender-label" style="font-size:12px;font-family:var(--mono);color:var(--text3);"></span><button class="back-btn" onclick="msgOnLaunch()" title="Reload">🔄 Refresh</button><button class="back-btn" data-xf-signout onclick="xfSignOut()">🚪 Sign Out</button><button class="back-btn" onclick="backToLauncher()">&#8592; Apps</button></span>
   </div>
   <!-- compose screen -->
   <div id="msg-compose-screen" style="flex:1;display:none;flex-direction:column;padding:20px 16px;max-width:560px;width:100%;margin:0 auto;box-sizing:border-box;">
@@ -1715,9 +1714,8 @@ function showToast(msg) {
 <!-- ═══ MANAGEMENT MESSAGE INBOX APP ═══ -->
 <div id="msginbox-app" style="display:none;flex-direction:column;min-height:100vh;background:var(--bg);">
   <div style="background:#fff;border-bottom:1px solid var(--border);padding:0 16px;height:52px;display:flex;align-items:center;justify-content:space-between;flex-shrink:0;position:sticky;top:0;z-index:10;">
-    <button class="back-btn" onclick="backToLauncher()">&#8592; Apps</button>
     <span style="font-weight:700;font-size:15px;color:var(--text);">📥 Message Inbox</span>
-    <span style="display:flex;align-items:center;gap:4px"><button onclick="msgInboxRefresh()" style="border:none;background:none;cursor:pointer;font-size:18px;padding:6px;" title="Refresh">🔄</button><button class="back-btn" data-xf-signout onclick="xfSignOut()">🚪 Sign Out</button></span>
+    <span style="display:flex;align-items:center;gap:8px"><button class="back-btn" onclick="msgInboxRefresh()" title="Reload">🔄 Refresh</button><button class="back-btn" data-xf-signout onclick="xfSignOut()">🚪 Sign Out</button><button class="back-btn" onclick="backToLauncher()">&#8592; Apps</button></span>
   </div>
   <!-- filter bar -->
   <div style="background:#fff;border-bottom:1px solid var(--border);padding:10px 16px;display:flex;gap:8px;flex-wrap:wrap;align-items:center;">
@@ -2590,6 +2588,7 @@ function showToast(msg) {
     <span class="em-status-dot" id="em-dot"></span>
     <span id="em-status-txt" style="font-family:var(--mono);">Ready</span>
   </span>
+  <button class="em-btn" onclick="ebayMsgsOnLaunch()" style="margin-left:8px;" title="Reload">🔄 Refresh</button>
   <button class="em-btn" data-xf-signout onclick="xfSignOut()" style="margin-left:8px;">🚪 Sign Out</button>
   <button class="em-btn" onclick="backToLauncher()" style="margin-left:8px;">← Apps</button>
 </div>

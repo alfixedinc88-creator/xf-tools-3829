@@ -165,7 +165,7 @@ body {
       <div class="tb-sub" id="ldash-last-updated">Loading…</div>
     </div>
     <div class="topbar-right">
-      <button class="back-btn" id="ldash-refresh-btn" onclick="ldashRefresh()" style="margin-right:8px">↻ Refresh</button>
+      <button class="back-btn" id="ldash-refresh-btn" onclick="ldashRefresh()" style="margin-right:8px">🔄 Refresh</button>
       <button class="back-btn" data-xf-signout onclick="xfSignOut()" style="margin-right:8px">🚪 Sign Out</button>
       <button class="back-btn" onclick="backToLauncher()">← Apps</button>
     </div>
@@ -314,7 +314,7 @@ window.ldashCredLogin = async function() {
     ldRenderAll();
     var now = new Date().toLocaleTimeString('en-US', {timeZone:'America/New_York',hour:'2-digit',minute:'2-digit',hour12:true});
     document.getElementById('ldash-last-updated').textContent = 'Updated ' + now + ' EST';
-    if (btn) { btn.disabled = false; btn.textContent = '↻ Refresh'; }
+    if (btn) { btn.disabled = false; btn.textContent = '🔄 Refresh'; }
   };
 
   // ── Data fetchers ────────────────────────────────────────────────────────
