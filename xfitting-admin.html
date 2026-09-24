@@ -107,6 +107,11 @@
   .ad-pg-tabs { display:flex; flex-wrap:wrap; gap:6px 14px; margin:8px 0 0 26px; }
   .ad-pg-tabs label { display:flex; align-items:center; gap:6px; font-size:12.5px; cursor:pointer; }
   .ad-pg-tabs label.dis { opacity:.45; cursor:default; }
+  table.ad-pg-grid td, table.ad-pg-grid th { padding:6px 10px; }
+  .ad-pg-c { text-align:center; width:90px; white-space:nowrap; }
+  .ad-pg-c input { width:17px; height:17px; cursor:pointer; }
+  tr.ad-pg-prow td { background:var(--bg3); border-top:2px solid var(--border); }
+  tr.ad-pg-trow td:first-child { padding-left:30px; font-size:12.5px; color:var(--text2); }
   .ad-pg-custom { outline:2px dashed var(--orange); outline-offset:2px; border-radius:4px; }
   .ad-empty { text-align:center; padding:40px 20px; color:var(--text3); font-size:13px; }
 </style>
@@ -143,7 +148,7 @@
 
     <div class="ad-tabs">
       <div class="ad-tab active" id="ad-tab-users" onclick="adSwitchTab('users')">👤 Users</div>
-      <div class="ad-tab" id="ad-tab-levels" onclick="adSwitchTab('levels')">🎚️ Levels</div>
+      <div class="ad-tab" id="ad-tab-levels" style="display:none" onclick="adSwitchTab('levels')">🎚️ Levels</div>
       <div class="ad-tab" id="ad-tab-pages" onclick="adSwitchTab('pages')">🧩 Pages &amp; Tabs</div>
       <div class="ad-tab" id="ad-tab-activity" onclick="adSwitchTab('activity')">📊 Activity</div>
     </div>
@@ -227,10 +232,10 @@
     <div class="ad-field">
       <label class="ad-field-label">Level</label>
       <select class="ad-input" id="ad-m-level" style="margin:0" onchange="adRenderRoleChecks()">
-        <option value="">— No level (only the boxes below) —</option>
+        <option value="">— No level (keeps their old access) —</option>
       </select>
     </div>
-    <div class="ad-field">
+    <div class="ad-field" style="display:none">
       <label class="ad-field-label">Access <span style="text-transform:none;font-weight:500">— greyed = comes with the level · tick more for extra access</span></label>
       <label class="ad-role-check"><input type="checkbox" value="mobile" class="ad-m-role"> <span>📱 Mobile</span></label>
       <label class="ad-role-check"><input type="checkbox" value="ops" class="ad-m-role"> <span>🏭 Ops</span></label>
@@ -388,7 +393,6 @@ window.adLoadUsers = async function() {
       + '<td><span class="ad-dot ' + (u.active?'ad-dot-active':'ad-dot-inactive') + '"></span>' + u.username + '</td>'
       + '<td class="ad-mono">' + u.displayName + '</td>'
       + '<td>' + adLevelBadge(u.level) + '</td>'
-      + '<td>' + adRoleBadges(u.roles, u) + '</td>'
       + '<td class="ad-mono" style="font-size:11px;color:var(--text3)">' + lastLogin + '</td>'
       + '<td style="white-space:nowrap">'
       +   '<button class="ad-btn ad-btn-outline ad-btn-sm" onclick="adOpenEditModal(' + u.id + ')">Edit</button> '
@@ -398,7 +402,7 @@ window.adLoadUsers = async function() {
       + '</tr>';
   }).join('');
 
-  ge('ad-users-table-wrap').innerHTML = '<table class="ad-table"><thead><tr><th>Username</th><th>Name</th><th>Level</th><th>Access</th><th>Last Login</th><th>Actions</th></tr></thead><tbody>' + rows + '</tbody></table>';
+  ge('ad-users-table-wrap').innerHTML = '<table class="ad-table"><thead><tr><th>Username</th><th>Name</th><th>Level</th><th>Last Login</th><th>Actions</th></tr></thead><tbody>' + rows + '</tbody></table>';
 };
 
 window.adOpenCreateModal = function() {
@@ -434,7 +438,7 @@ window.adCloseModal = function() { ge('ad-user-modal').style.display = 'none'; }
 
 function adFillLevelSelect(val) {
   var sel = ge('ad-m-level');
-  sel.innerHTML = '<option value="">— No level (only the boxes below) —</option>' + (AD.levels || []).map(function(l){
+  sel.innerHTML = '<option value="">— No level (keeps their old access) —</option>' + (AD.levels || []).map(function(l){
     var locked = (l.key === 'admin' || l.key === 'owner') && !AD.canManageLevels;
     return '<option value="' + l.key + '"' + (locked ? ' disabled' : '') + '>' + l.rank + ' · ' + l.name + (locked ? ' (Owner only)' : '') + '</option>';
   }).join('');
@@ -552,13 +556,26 @@ window.adSaveLevels = async function() {
   adRenderLevels();
 };
 
-// ── Pages & Tabs: hide pages/tabs per level or per person ──
-// Level rules: {item:0} = hidden for that level. Person rules only store
-// differences from their level: 0 = hide, 1 = show even though the level hides it.
+// ── Pages & Tabs: tick which pages/tabs each level (or one person) can see ──
+// Saved as "hidden" rules: level rules {item:0}; a person's rules only store
+// differences from their level (0 = hide, 1 = show anyway). Ticking something
+// also quietly adds the behind-the-scenes permission that page/tab needs
+// (the old Mobile/Ops/Mgmt boxes), so it actually works for them.
+var AD_PG_LEVELS = ['worker','pro','admin','owner'];
 function adPgCatalog() { return window.XF_ACCESS_CATALOG || []; }
-function adPgItems() { var out = []; adPgCatalog().forEach(function(p){ out.push(p.key); p.tabs.forEach(function(t){ out.push(p.key + ':' + t.key); }); }); return out; }
-function adPgNeedsRoles(needs) { return String(needs || '').toLowerCase().split(/[^a-z]+/).filter(function(w){ return ['mobile','ops','mgmt','price','admin'].indexOf(w) !== -1; }); }
 function adPgEsc(x) { return String(x == null ? '' : x).replace(/[&<>"]/g, function(c){ return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]; }); }
+function adPgNeedsRoles(needs) { return String(needs || '').toLowerCase().split(/[^a-z]+/).filter(function(w){ return ['mobile','ops','mgmt','price'].indexOf(w) !== -1; }); }
+// Every item with the permissions it needs: [{k, page, tab, needs:[...]}]
+function adPgItems() {
+  var out = [];
+  adPgCatalog().forEach(function(p){
+    out.push({ k: p.key, page: p, needs: adPgNeedsRoles(p.needs) });
+    p.tabs.forEach(function(t){ out.push({ k: p.key + ':' + t.key, page: p, tab: t, needs: adPgNeedsRoles(t.needs || p.needs) }); });
+  });
+  return out;
+}
+function adPgHas(roles, needs) { return !needs.length || needs.some(function(r){ return roles.indexOf(r) !== -1; }); }
+function adPgHidden(scope) { var r = (AD.access || {})[scope] || {}, h = {}; Object.keys(r).forEach(function(k){ if (r[k] === 0) h[k] = true; }); return h; }
 
 window.adLoadPages = async function() {
   if (!AD.levels || !AD.levels.length) await adLoadUsers();
@@ -566,58 +583,81 @@ window.adLoadPages = async function() {
   if (r.status !== 200) { ge('ad-pg-wrap').innerHTML = '<div class="ad-empty">Could not load page access.</div>'; return; }
   AD.access = r.data.rules || {};
   var sel = ge('ad-pg-who'), cur = sel.value;
-  sel.innerHTML = '<optgroup label="Levels (everyone on that level)">' + AD.levels.filter(function(l){ return l.key !== 'owner'; }).map(function(l){ return '<option value="level:' + l.key + '">' + l.rank + ' · ' + adPgEsc(l.name) + '</option>'; }).join('') + '</optgroup>'
-    + '<optgroup label="One person">' + AD.users.map(function(u){ var l = adLevel(u.level); return '<option value="user:' + u.id + '">' + adPgEsc(u.username) + ' (' + (l ? adPgEsc(l.name) : 'no level') + ')</option>'; }).join('') + '</optgroup>';
+  sel.innerHTML = '<option value="levels">🎚️ By level — Worker / Pro / Admin / Owner</option>'
+    + '<optgroup label="One person (on top of their level)">' + AD.users.map(function(u){ var l = adLevel(u.level); return '<option value="user:' + u.id + '">' + adPgEsc(u.username) + ' (' + (l ? adPgEsc(l.name) : 'no level') + ')</option>'; }).join('') + '</optgroup>';
   if (cur && sel.querySelector('option[value="' + cur + '"]')) sel.value = cur;
   adRenderPages();
 };
 
-// Hidden set for the chosen scope: { item: true } plus which items are person-specific.
-function adPgState(scope) {
-  var hidden = {}, custom = {}, levelHidden = {};
-  var m = scope.match(/^user:(\d+)$/), u = m && AD.users.find(function(x){ return String(x.id) === m[1]; });
-  var levelKey = m ? (u && u.level) : scope.slice(6);
-  var lr = (levelKey && AD.access['level:' + levelKey]) || {};
-  Object.keys(lr).forEach(function(k){ if (lr[k] === 0) levelHidden[k] = true; });
-  Object.keys(levelHidden).forEach(function(k){ hidden[k] = true; });
-  if (m) {
-    var ur = AD.access[scope] || {};
-    Object.keys(ur).forEach(function(k){ custom[k] = true; if (ur[k] === 0) hidden[k] = true; else delete hidden[k]; });
-  }
-  return { hidden: hidden, custom: custom, levelHidden: levelHidden, user: u, levelKey: levelKey };
+window.adRenderPages = function() {
+  var scope = ge('ad-pg-who').value || 'levels';
+  if (scope === 'levels') return adRenderPagesGrid();
+  return adRenderPagesPerson(scope);
+};
+
+function adRenderPagesGrid() {
+  var can = AD.canManageLevels;
+  var lv = AD_PG_LEVELS.map(function(k){ return adLevel(k); }).filter(Boolean);
+  ge('ad-pg-note').innerHTML = can
+    ? 'Tick what each level can see, then <b>Save</b>. Unticked pages disappear from the front page; unticked tabs disappear from their page. 👑 Owner always sees everything; this Admin page is for Admin &amp; Owner only.'
+    : 'Only an Owner can change what a level sees. You can still change one person — pick a name above.';
+  ge('ad-pg-save').style.display = can ? '' : 'none';
+  ge('ad-pg-reset').style.display = 'none';
+  var hid = {}; lv.forEach(function(l){ hid[l.key] = adPgHidden('level:' + l.key); });
+  var cell = function(l, it, pageOn) {
+    if (l.key === 'owner') return '<td class="ad-pg-c"><input type="checkbox" checked disabled title="Owner always sees everything"></td>';
+    var on = !hid[l.key][it.k] && adPgHas(l.roles, it.needs);
+    var dis = !can || (it.tab && !pageOn[l.key]);
+    return '<td class="ad-pg-c"><input type="checkbox" class="ad-pg-g" data-l="' + l.key + '" data-k="' + it.k + '" data-p="' + it.page.key + '"' + (it.tab ? '' : ' data-page="1"') + (on ? ' checked' : '') + (dis ? ' disabled' : '') + ' onchange="adPgGridToggle(this)"></td>';
+  };
+  var rows = adPgCatalog().map(function(p) {
+    var pit = { k: p.key, page: p, needs: adPgNeedsRoles(p.needs) }, pageOn = {};
+    lv.forEach(function(l){ pageOn[l.key] = l.key === 'owner' || (!hid[l.key][p.key] && adPgHas(l.roles, pit.needs)); });
+    var h = '<tr class="ad-pg-prow"><td><b>' + adPgEsc(p.name) + '</b> <span class="ad-pg-file">' + adPgEsc(p.file === 'index.html' ? 'front page app' : p.file) + '</span></td>' + lv.map(function(l){ return cell(l, pit, pageOn); }).join('') + '</tr>';
+    p.tabs.forEach(function(t) {
+      var it = { k: p.key + ':' + t.key, page: p, tab: t, needs: adPgNeedsRoles(t.needs || p.needs) };
+      h += '<tr class="ad-pg-trow"><td>' + adPgEsc(t.label) + '</td>' + lv.map(function(l){ return cell(l, it, pageOn); }).join('') + '</tr>';
+    });
+    return h;
+  }).join('');
+  ge('ad-pg-wrap').innerHTML = '<table class="ad-table ad-pg-grid"><thead><tr><th>Page / tab</th>' + lv.map(function(l){ return '<th class="ad-pg-c">' + adLevelBadge(l.key) + '</th>'; }).join('') + '</tr></thead><tbody>' + rows + '</tbody></table>';
 }
 
-window.adRenderPages = function() {
-  var scope = ge('ad-pg-who').value; if (!scope) return;
-  var st = adPgState(scope), isUser = scope.indexOf('user:') === 0;
-  var lvl = adLevel(st.levelKey);
-  var roles = isUser && st.user ? (st.user.roles || []) : (lvl ? lvl.roles : []);
+window.adPgGridToggle = function(cb) {
+  if (!cb.dataset.page) return;
+  document.querySelectorAll('.ad-pg-g[data-l="' + cb.dataset.l + '"][data-p="' + cb.dataset.p + '"]:not([data-page])').forEach(function(t){ t.disabled = !cb.checked; });
+};
+
+function adRenderPagesPerson(scope) {
+  var u = AD.users.find(function(x){ return 'user:' + x.id === scope; });
+  if (!u) return;
+  var lvl = adLevel(u.level), roles = u.roles || [];
+  var lh = u.level ? adPgHidden('level:' + u.level) : {}, ur = AD.access[scope] || {};
   var readOnly = false, note;
-  if (isUser && st.user && st.user.level === 'owner') { readOnly = true; note = '👑 Owners always see everything.'; }
-  else if (isUser && st.user && st.user.level === 'admin' && !AD.canManageLevels) { readOnly = true; note = 'Only an Owner can change what an Admin sees.'; }
-  else if (!isUser && !AD.canManageLevels) { readOnly = true; note = 'Only an Owner can change what a whole level sees. You can still change one person (pick a name).'; }
-  else if (isUser) note = 'Untick what <b>' + adPgEsc(st.user ? st.user.username : '') + '</b> should NOT see. Starts from their level' + (lvl ? ' (' + adPgEsc(lvl.name) + ')' : '') + '; <span class="ad-pg-custom">&nbsp;dashed&nbsp;</span> = set just for this person.';
-  else note = 'Untick what everyone on <b>' + adPgEsc(lvl ? lvl.name : '') + '</b> should NOT see. Hidden pages disappear from the front page; hidden tabs disappear from their page.';
-  ge('ad-pg-note').innerHTML = note + ' <span style="color:var(--text3)">“Needs” = the permission box (Levels tab) that page already requires — without it they can’t use it anyway.</span>';
+  if (u.level === 'owner') { readOnly = true; note = '👑 Owners always see everything.'; }
+  else if (u.level === 'admin' && !AD.canManageLevels) { readOnly = true; note = 'Only an Owner can change what an Admin sees.'; }
+  else note = 'Tick what <b>' + adPgEsc(u.username) + '</b> can see. It starts from their level' + (lvl ? ' (' + adPgEsc(lvl.name) + ')' : '') + '; <span class="ad-pg-custom">&nbsp;dashed&nbsp;</span> = set just for this person.';
+  ge('ad-pg-note').innerHTML = note;
   ge('ad-pg-save').style.display = readOnly ? 'none' : '';
-  ge('ad-pg-reset').style.display = (isUser && !readOnly) ? '' : 'none';
+  ge('ad-pg-reset').style.display = readOnly ? 'none' : '';
+  var vis = function(it) {
+    if (u.level === 'owner') return true;
+    var base = Object.prototype.hasOwnProperty.call(ur, it.k) ? ur[it.k] === 1 : !lh[it.k];
+    return base && adPgHas(roles, it.needs);
+  };
+  var dis = readOnly ? ' disabled' : '';
   ge('ad-pg-wrap').innerHTML = adPgCatalog().map(function(p) {
-    var on = !st.hidden[p.key], need = adPgNeedsRoles(p.needs);
-    var lacks = need.length && !need.some(function(r){ return roles.indexOf(r) !== -1; });
-    var dis = readOnly ? ' disabled' : '';
-    return '<div class="ad-pg' + (on ? '' : ' off') + '" data-page="' + p.key + '">'
-      + '<div class="ad-pg-head"><label class="' + (st.custom[p.key] ? 'ad-pg-custom' : '') + '"><input type="checkbox" class="ad-pg-cb" data-k="' + p.key + '"' + (on ? ' checked' : '') + dis + ' onchange="adPgToggle(this)"> ' + adPgEsc(p.name) + '</label>'
-      + '<span class="ad-pg-file">' + adPgEsc(p.file === 'index.html' ? 'front page app' : p.file) + '</span>'
-      + '<span class="ad-pg-needs">needs ' + adPgEsc(p.needs) + '</span>'
-      + (lacks ? '<span class="ad-pg-warn">⚠ doesn’t have ' + adPgEsc(p.needs) + ' — can’t open it anyway</span>' : '') + '</div>'
+    var pit = { k: p.key, needs: adPgNeedsRoles(p.needs) }, on = vis(pit);
+    return '<div class="ad-pg' + (on ? '' : ' off') + '">'
+      + '<div class="ad-pg-head"><label class="' + (ur.hasOwnProperty(p.key) ? 'ad-pg-custom' : '') + '"><input type="checkbox" class="ad-pg-cb" data-k="' + p.key + '"' + (on ? ' checked' : '') + dis + ' onchange="adPgToggle(this)"> ' + adPgEsc(p.name) + '</label>'
+      + '<span class="ad-pg-file">' + adPgEsc(p.file === 'index.html' ? 'front page app' : p.file) + '</span></div>'
       + (p.tabs.length ? '<div class="ad-pg-tabs">' + p.tabs.map(function(t) {
-          var k = p.key + ':' + t.key, ton = !st.hidden[k];
-          var tneed = t.needs ? adPgNeedsRoles(t.needs) : [], tl = tneed.length && !tneed.some(function(r){ return roles.indexOf(r) !== -1; });
-          return '<label class="' + (on ? '' : 'dis ') + (st.custom[k] ? 'ad-pg-custom' : '') + '"' + (tl ? ' title="Needs ' + adPgEsc(t.needs) + ' — they don’t have it, so it’s hidden anyway"' : '') + '><input type="checkbox" class="ad-pg-cb" data-k="' + k + '"' + (ton ? ' checked' : '') + (readOnly || !on ? ' disabled' : '') + '> ' + adPgEsc(t.label) + (t.needs ? ' <span class="ad-pg-needs"' + (tl ? ' style="color:var(--orange)"' : '') + '>' + adPgEsc(t.needs) + '</span>' : '') + '</label>';
+          var k = p.key + ':' + t.key, ton = vis({ k: k, needs: adPgNeedsRoles(t.needs || p.needs) });
+          return '<label class="' + (on ? '' : 'dis ') + (ur.hasOwnProperty(k) ? 'ad-pg-custom' : '') + '"><input type="checkbox" class="ad-pg-cb" data-k="' + k + '"' + (ton ? ' checked' : '') + (readOnly || !on ? ' disabled' : '') + '> ' + adPgEsc(t.label) + '</label>';
         }).join('') + '</div>' : '')
       + '</div>';
   }).join('');
-};
+}
 
 window.adPgToggle = function(cb) {
   var box = cb.closest('.ad-pg');
@@ -625,18 +665,50 @@ window.adPgToggle = function(cb) {
   box.querySelectorAll('.ad-pg-tabs label').forEach(function(l){ l.classList.toggle('dis', !cb.checked); l.querySelector('input').disabled = !cb.checked; });
 };
 
+// Permissions needed so the ticked items work: for each ticked item the
+// roles can't cover, add the first permission it lists.
+function adPgGrant(roles, ticked) {
+  var need = {}, byK = {}; adPgItems().forEach(function(it){ byK[it.k] = it; });
+  ticked.forEach(function(k){ var it = byK[k]; if (it && !adPgHas(roles, it.needs)) need[it.needs[0]] = 1; });
+  return Object.keys(need);
+}
+
 window.adSavePages = async function() {
-  var scope = ge('ad-pg-who').value, st = adPgState(scope), isUser = scope.indexOf('user:') === 0;
-  var rules = {};
-  document.querySelectorAll('#ad-pg-wrap .ad-pg-cb').forEach(function(cb) {
-    var k = cb.dataset.k, hide = !cb.checked;
-    if (isUser) { if (hide !== !!st.levelHidden[k]) rules[k] = hide ? 0 : 1; }
-    else if (hide) rules[k] = 0;
-  });
-  var r = await adFetch('/admin/access/save', { method:'POST', body: JSON.stringify({ scope: scope, rules: rules }) });
-  if (r.status !== 200) { adToast(r.data.error || 'Failed', 'err'); return; }
-  adToast('Saved — applies next time their pages refresh', 'ok');
-  await adLoadPages();
+  var scope = ge('ad-pg-who').value || 'levels';
+  var btn = ge('ad-pg-save'); btn.disabled = true;
+  try {
+    if (scope === 'levels') {
+      if (!confirm('Save? This changes what everyone on these levels can see.')) return;
+      for (var i = 0; i < AD_PG_LEVELS.length; i++) {
+        var key = AD_PG_LEVELS[i]; if (key === 'owner') continue;
+        var l = adLevel(key); if (!l) continue;
+        var rules = {}, ticked = [];
+        document.querySelectorAll('.ad-pg-g[data-l="' + key + '"]').forEach(function(cb){
+          // A tab under an unticked page stays hidden with it.
+          var pageCb = document.querySelector('.ad-pg-g[data-l="' + key + '"][data-k="' + cb.dataset.p + '"]');
+          var on = cb.checked && (!pageCb || pageCb.checked);
+          if (on) ticked.push(cb.dataset.k); else rules[cb.dataset.k] = 0;
+        });
+        var r = await adFetch('/admin/access/save', { method:'POST', body: JSON.stringify({ scope: 'level:' + key, rules: rules, grant: adPgGrant(l.roles, ticked) }) });
+        if (r.status !== 200) { adToast(r.data.error || 'Failed', 'err'); return; }
+      }
+    } else {
+      var u = AD.users.find(function(x){ return 'user:' + x.id === scope; });
+      var lh = u && u.level ? adPgHidden('level:' + u.level) : {};
+      var rules2 = {}, ticked2 = [];
+      document.querySelectorAll('#ad-pg-wrap .ad-pg-cb').forEach(function(cb) {
+        var k = cb.dataset.k, pageCb = k.indexOf(':') !== -1 ? document.querySelector('#ad-pg-wrap .ad-pg-cb[data-k="' + k.split(':')[0] + '"]') : null;
+        var on = cb.checked && (!pageCb || pageCb.checked);
+        if (on) ticked2.push(k);
+        if (on !== !lh[k]) rules2[k] = on ? 1 : 0;
+      });
+      var r2 = await adFetch('/admin/access/save', { method:'POST', body: JSON.stringify({ scope: scope, rules: rules2, grant: adPgGrant(u ? (u.roles || []) : [], ticked2) }) });
+      if (r2.status !== 200) { adToast(r2.data.error || 'Failed', 'err'); return; }
+    }
+    adToast('Saved — applies next time their pages refresh', 'ok');
+    await adLoadUsers();
+    await adLoadPages();
+  } finally { btn.disabled = false; }
 };
 
 window.adResetPages = async function() {
