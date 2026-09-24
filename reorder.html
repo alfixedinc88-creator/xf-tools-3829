@@ -2103,6 +2103,9 @@ body { display:flex; flex-direction:column; min-height:100vh; background:var(--b
         <input type="file" id="rvo-imp-file" accept=".xlsx,.xls,.csv" style="display:none" onchange="rvoImport(this)">
         <button class="btn btn-secondary" style="font-size:12px" onclick="rvoPickFile()">⬆ Import vendor sheet (.xlsx)</button>
       </div>
+      <details id="rvo-hist-box" style="margin-bottom:6px" ontoggle="if(this.open)rvoLoadHistory()"><summary style="font-size:12px;color:var(--text2);cursor:pointer;font-weight:700">🕘 History — who changed what on this page</summary>
+        <div style="margin:6px 0"><input type="text" id="rvo-hist-q" placeholder="Search part #, name, text…" oninput="clearTimeout(window._rvoHq);window._rvoHq=setTimeout(rvoLoadHistory,300)" style="width:220px;font-size:12px;padding:4px 8px;border-radius:6px;border:1px solid var(--border)"></div>
+        <div id="rvo-hist" style="max-height:320px;overflow:auto"></div></details>
       <details id="rvo-fixes-box" style="margin-bottom:10px" ontoggle="if(this.open)rvoLoadFixes()"><summary style="font-size:12px;color:var(--text2);cursor:pointer;font-weight:700">📝 Saved fixes <span id="rvo-fixes-n"></span></summary><div id="rvo-fixes" style="margin-top:6px"></div></details>
       <div class="sales-section-sub" id="rvo-summary" style="margin-bottom:8px"></div>
       <div id="rvo-wrap" class="sales-table-wrap" style="overflow:auto;max-height:70vh"><div style="padding:20px;color:var(--text3);font-size:13px">Loading…</div></div>
@@ -3749,6 +3752,27 @@ function rvoRender() {
 }
 
 
+
+// 🕘 History — everything done on this tab (worker table reorder_history).
+async function rvoLoadHistory() {
+  var box = document.getElementById('rvo-hist'), q = (document.getElementById('rvo-hist-q').value || '').trim();
+  box.innerHTML = '<div style="font-size:12px;color:var(--text3)">Loading…</div>';
+  try {
+    var d = await (await wFetch(W + '/reorder/fix/history' + (q ? '?q=' + encodeURIComponent(q) : ''))).json();
+    if (!d.ok) throw new Error(d.error || 'Failed');
+    var icon = { edit: '✏️', part: '🔁', undo: '↩️', import: '⬆', download: '⬇' };
+    var lab = { edit: 'Edited', part: 'Part # fixed', undo: 'Undo', import: 'Import', download: 'CSV' };
+    box.innerHTML = !d.history.length ? '<div style="font-size:12px;color:var(--text3)">' + (q ? 'Nothing matches.' : 'Nothing yet — edits, part # fixes, imports and CSV downloads show up here.') + '</div>'
+      : '<table style="font-size:12px;border-collapse:collapse;width:100%"><tbody>' + d.history.map(function (h) {
+        var t = new Date(h.ts).toLocaleString('en-US', { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' });
+        return '<tr style="border-top:1px solid var(--border)"><td style="padding:5px 8px;white-space:nowrap;color:var(--text3)">' + escHtml(t) + '</td>'
+          + '<td style="padding:5px 8px;white-space:nowrap;font-weight:700">' + escHtml(h.by_user || '—') + '</td>'
+          + '<td style="padding:5px 8px;white-space:nowrap">' + (icon[h.action] || '•') + ' ' + escHtml(lab[h.action] || h.action) + '</td>'
+          + '<td style="padding:5px 8px;white-space:nowrap;font-family:var(--mono)">' + escHtml(h.part || '') + '</td>'
+          + '<td style="padding:5px 8px">' + escHtml(h.detail || '') + '</td></tr>';
+      }).join('') + '</tbody></table>';
+  } catch (e) { box.innerHTML = '<div style="color:var(--red);font-size:12px">✗ ' + escHtml(e.message) + '</div>'; }
+}
 // 📝 Saved fixes — every part # correction (raw → part) and per-part fix, with Undo.
 async function rvoLoadFixes() {
   var box = document.getElementById('rvo-fixes'); box.innerHTML = '<div style="font-size:12px;color:var(--text3)">Loading…</div>';
@@ -3779,6 +3803,7 @@ async function rvoUndoAlias(raw) {
   var d = await (await wFetch(W + '/reorder/fix', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ raws: [raw], part: raw, fields: {} }) })).json();
   if (!d.ok) { alert(d.error || 'Failed'); return; }
   showToast('Undone — ' + raw); await rvoLoad(); rvoLoadFixes();
+  if (document.getElementById('rvo-hist-box').open) rvoLoadHistory();
 }
 // ✏️ editor — part # correction (remembered as raw → part) and per-part fixes.
 var RVO_EDIT = null;
@@ -3792,7 +3817,7 @@ function rvoOpenEdit(i) {
   var vals = { part: r.sku, description: r.description, outside_upc: r.outsideUpc, inside_upc: r.insideUpc, vendor: r.vendor, asin: r.asin, case_qty: r.caseQty || '' };
   document.getElementById('rvo-e-fields').innerHTML = RVO_FIELDS.map(function (f) {
     return '<label style="display:block;font-size:11px;font-weight:700;color:var(--text3);text-transform:uppercase;margin-top:8px">' + f[1] + '</label>'
-      + '<input id="rvo-e-' + f[0] + '" value="' + escHtml(vals[f[0]] == null ? '' : vals[f[0]]) + '" ' + (f[0] === 'case_qty' ? 'type="number" min="0"' : '')
+      + '<input id="rvo-e-' + f[0] + '" value="' + escHtml(vals[f[0]] == null ? '' : String(vals[f[0]])) + '" ' + (f[0] === 'case_qty' ? 'type="number" min="0"' : '')
       + ' style="width:100%;box-sizing:border-box;padding:7px 9px;margin-top:3px;border:1.5px solid var(--border);border-radius:7px;font-size:13px;' + (/part|upc|asin/.test(f[0]) ? 'font-family:var(--mono)' : '') + '">'
       + (f[0] === 'part' ? '<div style="font-size:11px;color:var(--text3);margin-top:2px">Change it to the right part # — ' + raws.map(escHtml).join(', ') + ' will be read as this from now on.</div>' : '');
   }).join('');
@@ -3811,10 +3836,11 @@ async function rvoSaveEdit() {
   var raws = (r.from && r.from.length) ? r.from.slice() : [];
   if (part.toUpperCase() !== r.sku.toUpperCase() && !raws.length) raws = [r.sku];
   try {
-    var res = await wFetch(W + '/reorder/fix', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ raws: raws, part: part, fields: fields }) });
+    var res = await wFetch(W + '/reorder/fix', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ raws: raws, part: part, fields: fields, was: cur }) });
     var d = await res.json(); if (!d.ok) throw new Error(d.error || 'Save failed');
     rvoCloseEdit(); showToast('Saved — ' + d.part); await rvoLoad();
     if (document.getElementById('rvo-fixes-box').open) rvoLoadFixes();
+    if (document.getElementById('rvo-hist-box').open) rvoLoadHistory();
   } catch (e) { alert('Save failed: ' + e.message); }
 }
 
@@ -3873,7 +3899,7 @@ async function rvoImport(input) {
     if (!confirm('Import ' + rows.length + ' rows from ' + f.name + ' as vendor "' + vendor + '"?\n\nThis replaces what was imported before for ' + vendor + '. Your ✏️ fixes are kept.')) return;
     var saved = 0;
     for (var i = 0; i < rows.length; i += 400) {
-      var res = await wFetch(W + '/reorder/vendor-catalog/import', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ vendor: vendor, replace: i === 0, rows: rows.slice(i, i + 400) }) });
+      var res = await wFetch(W + '/reorder/vendor-catalog/import', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ vendor: vendor, replace: i === 0, last: i + 400 >= rows.length, file: f.name, rows: rows.slice(i, i + 400) }) });
       var d = await res.json(); if (!d.ok) throw new Error(d.error || 'Import failed');
       saved = d.total;
     }
@@ -3903,6 +3929,15 @@ function rvoCsv() {
   var a = document.createElement('a'); a.href = URL.createObjectURL(blob); a.download = name; document.body.appendChild(a); a.click();
   setTimeout(function () { URL.revokeObjectURL(a.href); a.remove(); }, 500);
   showToast('Downloaded ' + name + ' (' + rows.length + ' part numbers)');
+  // Record it in 🕘 History, with any quantities changed by hand / unticked.
+  var tot = rows.reduce(function (a, r) { return a + rvoQty(r); }, 0);
+  var hand = rows.filter(function (r) { return RVO.edits[r.sku] != null; }).map(function (r) { return r.sku + ' ' + r.orderUnits + '→' + rvoQty(r); });
+  var skipped = rvoVisible().filter(function (r) { return RVO.off[r.sku] && r.orderUnits > 0; }).map(function (r) { return r.sku; });
+  var m = RVO.meta || {};
+  var detail = 'Downloaded ' + name + ': ' + rows.length + ' part #s, ' + tot + ' units (window ' + m.days + ' d, lead ' + m.lead + ' mo, cover ' + m.cover + ' mo)'
+    + (hand.length ? ' · changed by hand: ' + hand.join(', ') : '') + (skipped.length ? ' · left out: ' + skipped.join(', ') : '');
+  wFetch(W + '/reorder/fix/log', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ action: 'download', part: v && v !== '__none' ? v : '', detail: detail }) })
+    .then(function () { if (document.getElementById('rvo-hist-box').open) rvoLoadHistory(); }).catch(function () {});
 }
 
 // ─── TAB SWITCHERS ───────────────────────────────────────────────────────────
