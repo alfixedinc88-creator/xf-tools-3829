@@ -986,16 +986,25 @@ async function reorderFixTables(env) {
   await env.DB.prepare(`CREATE TABLE IF NOT EXISTS reorder_alias (raw TEXT PRIMARY KEY, part TEXT NOT NULL, by_user TEXT, updated_at TEXT)`).run();
   await env.DB.prepare(`CREATE TABLE IF NOT EXISTS reorder_fix (part TEXT PRIMARY KEY, description TEXT, outside_upc TEXT, inside_upc TEXT,
     vendor TEXT, asin TEXT, case_qty REAL, by_user TEXT, updated_at TEXT)`).run();
+  // History of everything done on the tab (fixes, part # corrections,
+  // imports, CSV downloads) — shown under 🕘 History.
+  await env.DB.prepare(`CREATE TABLE IF NOT EXISTS reorder_history (id INTEGER PRIMARY KEY AUTOINCREMENT, ts TEXT NOT NULL,
+    by_user TEXT, action TEXT, part TEXT, detail TEXT)`).run();
   _reorderFixReady = true;
 }
 // "4-2-3==2" → "4-2-3=2", "24-4-7=1__" → "24-4-7=1", "201-2-9=10-" → "201-2-9=10".
 function reorderCleanPart(s) {
   return String(s || '').trim().toUpperCase().replace(/\s*=\s*/g, '=').replace(/=+/g, '=').replace(/[_\-.\s]+$/, '');
 }
+async function reorderLog(env, who, action, part, detail) {
+  await env.DB.prepare('INSERT INTO reorder_history (ts, by_user, action, part, detail) VALUES (?,?,?,?,?)')
+    .bind(new Date().toISOString(), String(who || '').slice(0, 40), action, String(part || '').slice(0, 80), String(detail || '').slice(0, 2000)).run().catch(() => {});
+}
+function _roWho(session) { return String((session && (session.displayName || session.username || session.userId)) || '').slice(0, 40); }
 function _roResp(body, status) { return cors(new Response(JSON.stringify(body), { status: status || 200, headers: { 'Content-Type': 'application/json' } })); }
 
 // POST { vendor, replace, rows:[{part, item_no, description, outside_upc, inside_upc, asin, inner_pcs, case_pcs}] }
-async function reorderCatalogImport(request, env) {
+async function reorderCatalogImport(request, env, session) {
   await reorderFixTables(env);
   const b = await request.json().catch(() => ({}));
   const vendor = String(b.vendor || '').trim().slice(0, 40);
@@ -1019,6 +1028,7 @@ async function reorderCatalogImport(request, env) {
   }
   for (let i = 0; i < stmts.length; i += 50) await env.DB.batch(stmts.slice(i, i + 50));
   const c = await env.DB.prepare('SELECT COUNT(*) AS n FROM reorder_vendor_catalog WHERE vendor = ?').bind(vendor).first();
+  if (b.last) await reorderLog(env, _roWho(session), 'import', '', `Imported vendor sheet ${vendor}${b.file ? ' (' + String(b.file).slice(0, 80) + ')' : ''}: ${c ? c.n : kept} part #s`);
   return _roResp({ ok: true, vendor, saved: kept, total: c ? c.n : kept });
 }
 
@@ -1028,10 +1038,17 @@ async function reorderSaveFix(request, env, session) {
   const b = await request.json().catch(() => ({}));
   const part = reorderCleanPart(b.part);
   if (!part) return _roResp({ ok: false, error: 'Part # required' }, 400);
-  const who = String((session && (session.displayName || session.userId)) || '').slice(0, 40), now = new Date().toISOString();
+  const who = _roWho(session), now = new Date().toISOString();
+  const before = await env.DB.prepare('SELECT * FROM reorder_fix WHERE part = ?').bind(part).first() || {};
   for (const raw0 of (Array.isArray(b.raws) ? b.raws : []).slice(0, 20)) {
     const raw = String(raw0 || '').trim().toUpperCase();
     if (!raw) continue;
+    const had = await env.DB.prepare('SELECT part FROM reorder_alias WHERE raw = ?').bind(raw).first();
+    if (raw === part) {
+      if (had) await reorderLog(env, who, 'undo', raw, `Part # correction removed: ${raw} is no longer read as ${had.part}`);
+    } else if (!had || had.part !== part) {
+      await reorderLog(env, who, 'part', part, `Part # corrected: ${raw} → ${part}${had ? ' (was → ' + had.part + ')' : ''}`);
+    }
     if (raw === part) await env.DB.prepare('DELETE FROM reorder_alias WHERE raw = ?').bind(raw).run();
     else await env.DB.prepare(`INSERT INTO reorder_alias (raw, part, by_user, updated_at) VALUES (?,?,?,?) ON CONFLICT(raw) DO UPDATE SET part = excluded.part, by_user = excluded.by_user, updated_at = excluded.updated_at`).bind(raw, part, who, now).run();
   }
@@ -1043,6 +1060,15 @@ async function reorderSaveFix(request, env, session) {
     ON CONFLICT(part) DO UPDATE SET description = excluded.description, outside_upc = excluded.outside_upc, inside_upc = excluded.inside_upc,
     vendor = excluded.vendor, asin = excluded.asin, case_qty = excluded.case_qty, by_user = excluded.by_user, updated_at = excluded.updated_at`)
     .bind(part, ...vals, who, now).run();
+  const names = ['description', 'outside_upc', 'inside_upc', 'vendor', 'asin', 'case_qty'], lab = { outside_upc: 'outside UPC', inside_upc: 'inside UPC', case_qty: 'case qty', asin: 'ASIN' };
+  const changes = [];
+  names.forEach((k, i) => {
+    // "was" = the saved fix, else what the page showed (vendor sheet / SKU Mgr).
+    const shown = (b.was && b.was[k] != null) ? String(b.was[k]) : '';
+    const a = before[k] != null ? String(before[k]) : shown, z = vals[i] == null ? '' : String(vals[i]);
+    if (a !== z && Object.prototype.hasOwnProperty.call(f, k)) changes.push(`${lab[k] || k}: ${a || '—'} → ${z || '(cleared)'}`);
+  });
+  if (changes.length) await reorderLog(env, who, 'edit', part, changes.join(' · '));
   return _roResp({ ok: true, part });
 }
 
@@ -3841,7 +3867,24 @@ export default {
     // the rest of the reorder app (not yet migrated to the credential system) ──
     if (url.pathname.startsWith('/reorder/vendor-catalog/') || url.pathname.startsWith('/reorder/fix')) {
       if (session.pin_level !== 'mgmt') return _roResp({ ok: false, error: 'Management access required' }, 403);
-      if (url.pathname === '/reorder/vendor-catalog/import' && method === 'POST') return await reorderCatalogImport(request, env);
+      const roCs = await verifyCredSession(request.headers.get('X-Cred-Token'), env).catch(() => null);
+      if (url.pathname === '/reorder/vendor-catalog/import' && method === 'POST') return await reorderCatalogImport(request, env, roCs || session);
+      if (url.pathname === '/reorder/fix/history' && method === 'GET') {
+        await reorderFixTables(env);
+        const q = (url.searchParams.get('q') || '').trim().toUpperCase();
+        const rows = q
+          ? ((await env.DB.prepare(`SELECT * FROM reorder_history WHERE UPPER(part) LIKE ? OR UPPER(detail) LIKE ? OR UPPER(by_user) LIKE ? ORDER BY id DESC LIMIT 300`).bind('%' + q + '%', '%' + q + '%', '%' + q + '%').all()).results || [])
+          : ((await env.DB.prepare('SELECT * FROM reorder_history ORDER BY id DESC LIMIT 300').all()).results || []);
+        return _roResp({ ok: true, history: rows });
+      }
+      if (url.pathname === '/reorder/fix/log' && method === 'POST') {
+        // Things done only in the page (CSV download with hand-changed qtys).
+        await reorderFixTables(env);
+        const b = await request.json().catch(() => ({}));
+        const action = ['download'].includes(b.action) ? b.action : 'note';
+        await reorderLog(env, _roWho(roCs || session), action, b.part || '', b.detail || '');
+        return _roResp({ ok: true });
+      }
       if (url.pathname === '/reorder/fix/list' && method === 'GET') {
         await reorderFixTables(env);
         const aliases = (await env.DB.prepare('SELECT raw, part, by_user, updated_at FROM reorder_alias ORDER BY updated_at DESC').all()).results || [];
@@ -3849,8 +3892,7 @@ export default {
         return _roResp({ ok: true, aliases, fixes });
       }
       if (url.pathname === '/reorder/fix' && method === 'POST') {
-        const cs = await verifyCredSession(request.headers.get('X-Cred-Token'), env).catch(() => null);
-        return await reorderSaveFix(request, env, cs || session);
+        return await reorderSaveFix(request, env, roCs || session);
       }
       return _roResp({ ok: false, error: 'Not found' }, 404);
     }
