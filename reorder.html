@@ -1755,6 +1755,7 @@ body { display:flex; flex-direction:column; min-height:100vh; background:var(--b
     <button class="sales-tab-btn" id="ro-tab-ai" onclick="roTab('ai')">✦ AI Insights</button>
     <button class="sales-tab-btn" id="ro-tab-skumap" onclick="roTab('skumap')">🔗 SKU Map</button>
     <button class="sales-tab-btn" id="ro-tab-podash" onclick="roTab('podash')">🎯 PO Recommendations</button>
+    <button class="sales-tab-btn" id="ro-tab-reorder" onclick="roTab('reorder')">🧾 Reorder</button>
   </div>
   <div class="sales-body">
 
@@ -2058,6 +2059,44 @@ body { display:flex; flex-direction:column; min-height:100vh; background:var(--b
         </div>
       </div>
       <div id="podash-nofba-wrap" class="sales-table-wrap" style="overflow-x:auto"></div>
+    </div>
+
+    <!-- Reorder Tab — what to order from each vendor (FBA part numbers only) -->
+    <div class="sales-panel" id="ro-panel-reorder">
+      <div class="sales-section-header">
+        <div>
+          <div class="sales-section-title">🧾 Reorder — what to order from each vendor</div>
+          <div class="sales-section-sub">All channels' sales (eBay, Walmart, Shopify, Amazon) for each part, ordered <b>only in the part numbers we ship to FBA</b>.
+            Need = monthly sales × (lead time + months to cover) − stock in SKU Mgr, rounded up to full cases.</div>
+        </div>
+      </div>
+      <div style="display:flex;gap:12px;align-items:center;flex-wrap:wrap;margin:6px 0 10px;font-size:12px;color:var(--text3)">
+        <label style="display:flex;align-items:center;gap:5px">Velocity window:
+          <select id="rvo-days-sel" onchange="rvoDaysSel()" style="font-size:12px;padding:4px 6px;border-radius:6px;border:1px solid var(--border)">
+            <option value="30">30 days</option><option value="60">60 days</option><option value="90" selected>90 days</option>
+            <option value="180">6 months</option><option value="365">1 year</option><option value="custom">Custom…</option>
+          </select>
+          <input type="number" id="rvo-days" value="90" min="7" max="730" style="display:none;width:60px;font-size:12px;padding:4px 6px;border-radius:6px;border:1px solid var(--border)"> <span id="rvo-days-u" style="display:none">days</span>
+        </label>
+        <label style="display:flex;align-items:center;gap:5px">Order for:
+          <input type="number" id="rvo-cover" value="3" min="0.5" max="24" step="0.5" style="width:52px;font-size:12px;padding:4px 6px;border-radius:6px;border:1px solid var(--border)"> months</label>
+        <label style="display:flex;align-items:center;gap:5px" title="Time from ordering until it arrives in our warehouse">Lead time:
+          <input type="number" id="rvo-lead" value="3" min="0" max="12" step="0.5" style="width:52px;font-size:12px;padding:4px 6px;border-radius:6px;border:1px solid var(--border)"> months</label>
+        <label style="display:flex;align-items:center;gap:5px"><input type="checkbox" id="rvo-fba" checked> Count FBA stock at Amazon</label>
+        <label style="display:flex;align-items:center;gap:5px" title="e.g. 27-3-1=25 on the shelf counts toward 27-3-1=10X (needs repacking)"><input type="checkbox" id="rvo-other"> Count other pack sizes in stock</label>
+        <button class="btn btn-primary" style="font-size:12px" onclick="rvoLoad()">↻ Calculate</button>
+      </div>
+      <div style="display:flex;gap:12px;align-items:center;flex-wrap:wrap;margin-bottom:10px;font-size:12px;color:var(--text3)">
+        <label style="display:flex;align-items:center;gap:5px">Vendor:
+          <select id="rvo-vendor" onchange="rvoRender()" style="font-size:12px;padding:4px 6px;border-radius:6px;border:1px solid var(--border);min-width:140px"><option value="">All vendors</option></select></label>
+        <label style="display:flex;align-items:center;gap:5px">Search:
+          <input type="text" id="rvo-q" placeholder="Part #, e.g. 27-3-1" oninput="rvoRender()" style="width:150px;font-size:12px;padding:4px 8px;border-radius:6px;border:1px solid var(--border);font-family:var(--mono)"></label>
+        <label style="display:flex;align-items:center;gap:5px"><input type="checkbox" id="rvo-all" onchange="rvoRender()"> Show parts that don't need ordering</label>
+        <span style="flex:1"></span>
+        <button class="btn btn-primary" style="font-size:12px" onclick="rvoCsv()">⬇ Download CSV for vendor</button>
+      </div>
+      <div class="sales-section-sub" id="rvo-summary" style="margin-bottom:8px"></div>
+      <div id="rvo-wrap" class="sales-table-wrap" style="overflow:auto;max-height:70vh"><div style="padding:20px;color:var(--text3);font-size:13px">Loading…</div></div>
     </div>
 
   </div>
@@ -3611,15 +3650,108 @@ function skusTableSortBy(col) {
   renderSkus();
 }
 
+
+// ─── 🧾 REORDER TAB — vendor order sheet ───────────────────────────────────
+// Numbers come from GET /reorder/vendor-order (see reorderVendorOrder in the
+// worker). Order quantities can be edited / unticked here; the CSV uses
+// what's on screen for the chosen vendor.
+var RVO = { loaded: false, rows: [], edits: {}, off: {}, meta: null };
+function rvoDaysSel() {
+  var v = document.getElementById('rvo-days-sel').value, c = v === 'custom';
+  document.getElementById('rvo-days').style.display = c ? '' : 'none';
+  document.getElementById('rvo-days-u').style.display = c ? '' : 'none';
+  if (!c) document.getElementById('rvo-days').value = v;
+}
+async function rvoLoad() {
+  var g = function (id) { return document.getElementById(id); };
+  var q = 'days=' + encodeURIComponent(g('rvo-days').value) + '&cover=' + encodeURIComponent(g('rvo-cover').value) + '&lead=' + encodeURIComponent(g('rvo-lead').value)
+    + '&fbaStock=' + (g('rvo-fba').checked ? 1 : 0) + '&otherPacks=' + (g('rvo-other').checked ? 1 : 0);
+  g('rvo-wrap').innerHTML = '<div style="padding:20px;color:var(--text3);font-size:13px">Calculating…</div>';
+  try {
+    var r = await wFetch(W + '/reorder/vendor-order?' + q);
+    var d = await r.json();
+    if (!d.ok) throw new Error(d.error || 'Failed');
+    RVO.loaded = true; RVO.rows = d.rows || []; RVO.meta = d; RVO.edits = {}; RVO.off = {};
+    var sel = g('rvo-vendor'), cur = sel.value;
+    sel.innerHTML = '<option value="">All vendors</option>' + (d.vendors || []).map(function (v) { return '<option value="' + escHtml(v) + '">' + escHtml(v) + '</option>'; }).join('') + '<option value="__none">(no vendor in SKU Mgr)</option>';
+    if (cur) sel.value = cur;
+    rvoRender();
+  } catch (e) { g('rvo-wrap').innerHTML = '<div style="padding:20px;color:var(--red);font-size:13px">✗ ' + escHtml(e.message) + '</div>'; }
+}
+function rvoQty(r) { return RVO.edits[r.sku] != null ? RVO.edits[r.sku] : r.orderUnits; }
+function rvoVisible() {
+  var v = document.getElementById('rvo-vendor').value, q = (document.getElementById('rvo-q').value || '').trim().toUpperCase();
+  var all = document.getElementById('rvo-all').checked;
+  return RVO.rows.filter(function (r) {
+    if (v === '__none' ? r.vendor : (v && r.vendor !== v)) return false;
+    if (q && r.sku.indexOf(q) === -1 && (r.description || '').toUpperCase().indexOf(q) === -1) return false;
+    return all || r.orderUnits > 0 || RVO.edits[r.sku] > 0;
+  });
+}
+function rvoRender() {
+  if (!RVO.loaded) return;
+  var rows = rvoVisible(), m = RVO.meta;
+  var inOrder = rows.filter(function (r) { return !RVO.off[r.sku] && rvoQty(r) > 0; });
+  var tot = inOrder.reduce(function (a, r) { return a + rvoQty(r); }, 0);
+  document.getElementById('rvo-summary').innerHTML = '<b>' + inOrder.length + '</b> part numbers to order · <b>' + fmt0(tot) + '</b> units total · sales from the last ' + m.days + ' days'
+    + (m.dataFrom ? ' (sales data starts ' + escHtml(m.dataFrom) + ')' : '') + ' · covering ' + m.lead + ' mo lead time + ' + m.cover + ' mo';
+  if (!rows.length) { document.getElementById('rvo-wrap').innerHTML = '<div style="padding:20px;color:var(--text3);font-size:13px">Nothing to order for this selection.</div>'; return; }
+  var th = function (t, tip) { return '<th style="padding:8px 10px;text-align:left;font-size:11px;white-space:nowrap"' + (tip ? ' title="' + tip + '"' : '') + '>' + t + '</th>'; };
+  var html = '<table><thead><tr>' + th('<input type="checkbox" checked onchange="rvoAll(this.checked)">') + th('Part #') + th('Description') + th('Vendor') + th('Outside box UPC') + th('Inside bag UPC')
+    + th('Sold (pcs)', 'Pieces sold in the window, all channels, this part number\'s share') + th('Per month (pcs)') + th('In stock', 'SKU Mgr: units of this part number (pieces)') + th('FBA (pcs)', 'At Amazon')
+    + th('Need', 'Units of this part number') + th('Case qty', 'SKU Mgr Each Case Qty') + th('Order') + th('Note') + '</tr></thead><tbody>';
+  rows.forEach(function (r) {
+    var off = !!RVO.off[r.sku], q = rvoQty(r), edited = RVO.edits[r.sku] != null;
+    var td = function (v, st) { return '<td style="padding:6px 10px;font-size:12px;border-top:1px solid var(--border);' + (st || '') + '">' + v + '</td>'; };
+    html += '<tr style="' + (off ? 'opacity:.45' : '') + '">'
+      + td('<input type="checkbox" ' + (off ? '' : 'checked') + ' onchange="rvoToggle(\'' + escHtml(r.sku) + '\',this.checked)">')
+      + td('<b style="font-family:var(--mono)">' + escHtml(r.sku) + '</b>' + (r.fbaSku ? ' <span title="Sent to FBA" style="font-size:10px;color:#b45309">FBA</span>' : ''), 'white-space:nowrap')
+      + td(escHtml(r.description || '—')) + td(escHtml(r.vendor || '—'))
+      + td(escHtml(r.outsideUpc || '—'), 'font-family:var(--mono)') + td(escHtml(r.insideUpc || '—'), 'font-family:var(--mono)')
+      + td(fmt0(r.soldPcs), 'text-align:right') + td(r.monthlyPcs, 'text-align:right')
+      + td(fmt0(r.stockUnits) + (r.packSize > 1 ? ' <span style="color:var(--text3)">(' + fmt0(r.stockPcs) + ' pcs)</span>' : ''), 'text-align:right;white-space:nowrap')
+      + td(fmt0(r.fbaPcs), 'text-align:right') + td(fmt0(r.needUnits), 'text-align:right') + td(r.caseQty ? fmt0(r.caseQty) : '—', 'text-align:right')
+      + td('<input type="number" min="0" value="' + q + '" onchange="rvoEdit(\'' + escHtml(r.sku) + '\',this.value)" style="width:72px;font-size:12px;padding:3px 5px;border-radius:5px;border:1px solid ' + (edited ? '#b45309' : 'var(--border)') + ';font-weight:700">')
+      + td(escHtml((edited ? 'Changed by hand (was ' + r.orderUnits + ')' + (r.note ? ' · ' : '') : '') + (r.note || '')), 'font-size:11px;color:var(--text3);min-width:180px')
+      + '</tr>';
+  });
+  document.getElementById('rvo-wrap').innerHTML = html + '</tbody></table>';
+}
+function rvoEdit(sku, v) { var n = parseInt(v, 10); RVO.edits[sku] = n >= 0 ? n : 0; rvoRender(); }
+function rvoToggle(sku, on) { if (on) delete RVO.off[sku]; else RVO.off[sku] = 1; rvoRender(); }
+function rvoAll(on) { rvoVisible().forEach(function (r) { if (on) delete RVO.off[r.sku]; else RVO.off[r.sku] = 1; }); rvoRender(); }
+function rvoCsv() {
+  if (!RVO.loaded) { alert('Press Calculate first.'); return; }
+  var v = document.getElementById('rvo-vendor').value;
+  var rows = rvoVisible().filter(function (r) { return !RVO.off[r.sku] && rvoQty(r) > 0; });
+  if (!rows.length) { alert('Nothing to order for this selection.'); return; }
+  if (!v && !confirm('No vendor picked — download every vendor in one file?')) return;
+  var cell = function (x) { x = String(x == null ? '' : x); return /[",\n]/.test(x) ? '"' + x.replace(/"/g, '""') + '"' : x; };
+  var upcCell = function (x) { return x ? '"=""' + String(x).replace(/"/g, '') + '"""' : ''; }; // keeps leading zeros / no 1.2E+11 in Excel
+  var head = ['Part #', 'Outside Box UPC Code', 'Inside Bag UPC Code', 'Description', 'Order Qty', 'Cases', 'Qty per Case', 'Note'];
+  var lines = [head.join(',')];
+  rows.forEach(function (r) {
+    var q = rvoQty(r), cases = r.caseQty ? Math.ceil(q / r.caseQty) : '';
+    var note = (RVO.edits[r.sku] != null ? 'Qty changed by hand' : (/Rounded up/.test(r.note) ? r.note.split(' · ').filter(function (n) { return /Rounded up/.test(n); })[0] : ''));
+    lines.push([cell(r.sku), upcCell(r.outsideUpc), upcCell(r.insideUpc), cell(r.description), q, cases, r.caseQty || '', cell(note)].join(','));
+  });
+  var name = (v && v !== '__none' ? v.replace(/[^A-Za-z0-9_-]+/g, '_') : 'ALL') + '_PO_' + new Date().toISOString().slice(0, 10) + '.csv';
+  var blob = new Blob(['﻿' + lines.join('\r\n')], { type: 'text/csv;charset=utf-8' });
+  var a = document.createElement('a'); a.href = URL.createObjectURL(blob); a.download = name; document.body.appendChild(a); a.click();
+  setTimeout(function () { URL.revokeObjectURL(a.href); a.remove(); }, 500);
+  showToast('Downloaded ' + name + ' (' + rows.length + ' part numbers)');
+}
+
 // ─── TAB SWITCHERS ───────────────────────────────────────────────────────────
 function roTab(name) {
-  ['upload','jq','eff','po','ai','skumap','podash'].forEach(function(t){
+  ['upload','jq','eff','po','ai','skumap','podash','reorder'].forEach(function(t){
     document.getElementById('ro-tab-'+t).className='sales-tab-btn'+(t===name?' active':'');
     document.getElementById('ro-panel-'+t).className='sales-panel'+(t===name?' active':'');
   });
   if (name==='po') renderPOCases();
   if (name==='skumap') loadUnmappedSkus();
   if (name==='podash' && !document.getElementById('podash-wrap').dataset.loaded) loadPORecommendations();
+  if (name==='reorder' && !RVO.loaded) rvoLoad();
   if (name==='ai' && CALC.jqVendor.length && !document.getElementById('ro-ai-auto-body').dataset.loaded) {
     runAutoInsights('ro');
   }
