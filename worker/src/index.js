@@ -969,6 +969,83 @@ async function reorderComputeRecommendations(env, days) {
   return { fbaRecommendations, noFbaRecommendations, windowDays: days };
 }
 
+
+// ── Reorder tab: vendor sheets + remembered fixes ──────────────────────────
+//   reorder_vendor_catalog — imported vendor sheets (JQ / EFF …): part #,
+//     item no, description, outside-box / inside-bag UPC, FBA ASIN, pieces
+//     per inner bag / carton. Re-importing a vendor replaces its rows.
+//   reorder_alias — raw SKU → right part # ("10-1/2F19 TEE" → "…"), set from
+//     the ✏️ editor; every report maps sales / FBA / SKU Mgr through it.
+//   reorder_fix — per part #: description, UPCs, vendor, ASIN, case qty typed
+//     in on the tab; these win over everything else.
+let _reorderFixReady = false;
+async function reorderFixTables(env) {
+  if (_reorderFixReady) return;
+  await env.DB.prepare(`CREATE TABLE IF NOT EXISTS reorder_vendor_catalog (vendor TEXT NOT NULL, part TEXT NOT NULL, item_no TEXT, description TEXT,
+    outside_upc TEXT, inside_upc TEXT, asin TEXT, inner_pcs REAL, case_pcs REAL, raw_part TEXT, updated_at TEXT, PRIMARY KEY (vendor, part))`).run();
+  await env.DB.prepare(`CREATE TABLE IF NOT EXISTS reorder_alias (raw TEXT PRIMARY KEY, part TEXT NOT NULL, by_user TEXT, updated_at TEXT)`).run();
+  await env.DB.prepare(`CREATE TABLE IF NOT EXISTS reorder_fix (part TEXT PRIMARY KEY, description TEXT, outside_upc TEXT, inside_upc TEXT,
+    vendor TEXT, asin TEXT, case_qty REAL, by_user TEXT, updated_at TEXT)`).run();
+  _reorderFixReady = true;
+}
+// "4-2-3==2" → "4-2-3=2", "24-4-7=1__" → "24-4-7=1", "201-2-9=10-" → "201-2-9=10".
+function reorderCleanPart(s) {
+  return String(s || '').trim().toUpperCase().replace(/\s*=\s*/g, '=').replace(/=+/g, '=').replace(/[_\-.\s]+$/, '');
+}
+function _roResp(body, status) { return cors(new Response(JSON.stringify(body), { status: status || 200, headers: { 'Content-Type': 'application/json' } })); }
+
+// POST { vendor, replace, rows:[{part, item_no, description, outside_upc, inside_upc, asin, inner_pcs, case_pcs}] }
+async function reorderCatalogImport(request, env) {
+  await reorderFixTables(env);
+  const b = await request.json().catch(() => ({}));
+  const vendor = String(b.vendor || '').trim().slice(0, 40);
+  if (!vendor) return _roResp({ ok: false, error: 'Vendor name required' }, 400);
+  const rows = (Array.isArray(b.rows) ? b.rows : []).slice(0, 1000);
+  if (b.replace) await env.DB.prepare('DELETE FROM reorder_vendor_catalog WHERE vendor = ?').bind(vendor).run();
+  const now = new Date().toISOString(), t = v => (v == null ? '' : String(v)).trim().slice(0, 300), n = v => { const x = parseFloat(v); return Number.isFinite(x) ? x : null; };
+  const stmts = [];
+  let kept = 0;
+  for (const r of rows) {
+    const part = reorderCleanPart(r.part);
+    if (!part || /^[.=]/.test(part)) continue;
+    kept++;
+    stmts.push(env.DB.prepare(`INSERT INTO reorder_vendor_catalog (vendor, part, item_no, description, outside_upc, inside_upc, asin, inner_pcs, case_pcs, raw_part, updated_at)
+      VALUES (?,?,?,?,?,?,?,?,?,?,?) ON CONFLICT(vendor, part) DO UPDATE SET
+      item_no = COALESCE(NULLIF(excluded.item_no,''), item_no), description = COALESCE(NULLIF(excluded.description,''), description),
+      outside_upc = COALESCE(NULLIF(excluded.outside_upc,''), outside_upc), inside_upc = COALESCE(NULLIF(excluded.inside_upc,''), inside_upc),
+      asin = COALESCE(NULLIF(excluded.asin,''), asin), inner_pcs = COALESCE(excluded.inner_pcs, inner_pcs), case_pcs = COALESCE(excluded.case_pcs, case_pcs),
+      raw_part = excluded.raw_part, updated_at = excluded.updated_at`)
+      .bind(vendor, part, t(r.item_no), t(r.description), t(r.outside_upc), t(r.inside_upc), t(r.asin).toUpperCase(), n(r.inner_pcs), n(r.case_pcs), t(r.part), now));
+  }
+  for (let i = 0; i < stmts.length; i += 50) await env.DB.batch(stmts.slice(i, i + 50));
+  const c = await env.DB.prepare('SELECT COUNT(*) AS n FROM reorder_vendor_catalog WHERE vendor = ?').bind(vendor).first();
+  return _roResp({ ok: true, vendor, saved: kept, total: c ? c.n : kept });
+}
+
+// POST { raws:[…], part, fields:{description, outside_upc, inside_upc, vendor, asin, case_qty} }
+async function reorderSaveFix(request, env, session) {
+  await reorderFixTables(env);
+  const b = await request.json().catch(() => ({}));
+  const part = reorderCleanPart(b.part);
+  if (!part) return _roResp({ ok: false, error: 'Part # required' }, 400);
+  const who = String((session && (session.displayName || session.userId)) || '').slice(0, 40), now = new Date().toISOString();
+  for (const raw0 of (Array.isArray(b.raws) ? b.raws : []).slice(0, 20)) {
+    const raw = String(raw0 || '').trim().toUpperCase();
+    if (!raw) continue;
+    if (raw === part) await env.DB.prepare('DELETE FROM reorder_alias WHERE raw = ?').bind(raw).run();
+    else await env.DB.prepare(`INSERT INTO reorder_alias (raw, part, by_user, updated_at) VALUES (?,?,?,?) ON CONFLICT(raw) DO UPDATE SET part = excluded.part, by_user = excluded.by_user, updated_at = excluded.updated_at`).bind(raw, part, who, now).run();
+  }
+  const f = b.fields || {}, t = v => { v = (v == null ? '' : String(v)).trim(); return v ? v.slice(0, 300) : null; };
+  const cq = parseFloat(f.case_qty);
+  const vals = [t(f.description), t(f.outside_upc), t(f.inside_upc), t(f.vendor), t(f.asin) && t(f.asin).toUpperCase(), Number.isFinite(cq) && cq > 0 ? cq : null];
+  if (vals.every(v => v == null)) await env.DB.prepare('DELETE FROM reorder_fix WHERE part = ?').bind(part).run();
+  else await env.DB.prepare(`INSERT INTO reorder_fix (part, description, outside_upc, inside_upc, vendor, asin, case_qty, by_user, updated_at) VALUES (?,?,?,?,?,?,?,?,?)
+    ON CONFLICT(part) DO UPDATE SET description = excluded.description, outside_upc = excluded.outside_upc, inside_upc = excluded.inside_upc,
+    vendor = excluded.vendor, asin = excluded.asin, case_qty = excluded.case_qty, by_user = excluded.by_user, updated_at = excluded.updated_at`)
+    .bind(part, ...vals, who, now).run();
+  return _roResp({ ok: true, part });
+}
+
 // ── GET /reorder/vendor-order — Reorder Planner → "🧾 Reorder" tab ──────────
 // What to order from each vendor, only in the part numbers we send to FBA:
 //   1. Every channel's sales in the window (eBay, Walmart, Shopify, Amazon),
@@ -995,6 +1072,21 @@ async function reorderVendorOrder(env, url) {
   const all = async (sql, ...b) => { try { return (await env.DB.prepare(sql).bind(...b).all()).results || []; } catch (_) { return []; } };
   const U = s => String(s || '').trim().toUpperCase();
   const pack = s => reorderExtractPackSize(U(s)) || 1;
+  // Part # clean-up + remembered corrections: "4-2-3==2" → "4-2-3=2",
+  // "24-4-7=1__" → "24-4-7=1", and any raw SKU someone mapped to the right
+  // part # on this tab ("10-1/2F19 TEE" → "…") — kept in `fromMap` so the
+  // row can still show where it came from.
+  await reorderFixTables(env);
+  const alias = {}; (await all('SELECT raw, part FROM reorder_alias')).forEach(r => { alias[U(r.raw)] = U(r.part); });
+  const fromMap = {};
+  const P = raw => {
+    const r = U(raw), c = reorderCleanPart(r);
+    const out = alias[r] || alias[c] || c;
+    if (r && out !== r) (fromMap[out] = fromMap[out] || new Set()).add(r);
+    return out;
+  };
+  const cat = {}; (await all('SELECT * FROM reorder_vendor_catalog ORDER BY vendor')).forEach(r => { const k = U(r.part); if (!cat[k]) cat[k] = r; });
+  const fixes = {}; (await all('SELECT * FROM reorder_fix')).forEach(r => { fixes[U(r.part)] = r; });
 
   const fba = await all('SELECT sku, asin, available, product_name FROM fba_catalog');
   const sales = {}; // exact SKU → { amz, other } in units (listing orders)
@@ -1002,7 +1094,7 @@ async function reorderVendorOrder(env, url) {
   let dataFrom = null;
   for (const [t, k] of chans) {
     for (const r of await all(`SELECT sku, SUM(units_ordered) AS u FROM ${t} WHERE period_start >= ? GROUP BY sku`, since)) {
-      const s = U(r.sku); if (!s) continue;
+      const s = P(r.sku); if (!s) continue;
       (sales[s] = sales[s] || { amz: 0, other: 0 })[k] += r.u || 0;
     }
     const m = await all(`SELECT MIN(period_start) AS m FROM ${t}`);
@@ -1013,7 +1105,7 @@ async function reorderVendorOrder(env, url) {
   const ml = await all(`SELECT part_num, base_sku, name, vendor, cases, units_per_case FROM master_list WHERE part_num != ''`);
   const bySku = {}, byBase = {}, vendors = new Set();
   for (const r of ml) {
-    const s = U(r.part_num), b = U(r.base_sku) || U(reorderGetBaseSku(s));
+    const s = P(r.part_num), b = U(reorderGetBaseSku(s));
     const o = bySku[s] = bySku[s] || { units: 0, caseQty: 0, vendor: '', name: '' };
     o.units += (parseFloat(r.cases) || 0) * (parseFloat(r.units_per_case) || 0);
     o.caseQty = Math.max(o.caseQty, parseFloat(r.units_per_case) || 0);
@@ -1026,19 +1118,19 @@ async function reorderVendorOrder(env, url) {
     if (r.vendor) vendors.add(String(r.vendor).trim());
   }
   const upcRows = await all('SELECT sku, inside_upc, outside_upc FROM upc');
-  const upc = {}; upcRows.forEach(r => { upc[U(r.sku)] = r; });
+  const upc = {}; upcRows.forEach(r => { upc[P(r.sku)] = r; });
   const prodRows = await all('SELECT base_sku, name FROM products');
   const prodName = {}; prodRows.forEach(r => { const b = U(r.base_sku); if (b && r.name && !prodName[b]) prodName[b] = r.name; });
 
   // FBA SKUs per base part (one per ASIN, the properly formatted SKU wins).
   const asinSkus = {}, claimed = new Set(); // claimed = FBA SKU strings whose Amazon sales stay with that FBA SKU
-  fba.forEach(r => { if (r.sku) (asinSkus[r.asin || r.sku] = asinSkus[r.asin || r.sku] || []).push(r); });
+  fba.forEach(r => { if (r.sku) { r.sku = P(r.sku); (asinSkus[r.asin || r.sku] = asinSkus[r.asin || r.sku] || []).push(r); } });
   const fbaByBase = {};
   for (const k in asinSkus) {
     const g = asinSkus[k];
     const pick = g.find(r => reorderIsProperFormat(r.sku)) || g[0];
     const sku = U(pick.sku);
-    const amzUnits = g.reduce((a, r) => a + ((sales[U(r.sku)] || {}).amz || 0), 0);
+    const amzUnits = [...new Set(g.map(r => U(r.sku)))].reduce((a, k) => a + ((sales[k] || {}).amz || 0), 0);
     g.forEach(r => { claimed.add(U(r.sku)); });
     const fbaAvail = g.reduce((a, r) => a + (parseFloat(r.available) || 0), 0);
     (fbaByBase[U(reorderGetBaseSku(sku))] = fbaByBase[U(reorderGetBaseSku(sku))] || []).push({ sku, asin: pick.asin || '', amzUnits, amzPieces: amzUnits * pack(sku), fbaAvailPieces: fbaAvail * pack(sku), fbaName: pick.product_name || '' });
@@ -1081,7 +1173,11 @@ async function reorderVendorOrder(env, url) {
       const stockPcs = ownPcs + (countOtherPacks ? otherPcs : 0) + (countFba ? t.fbaAvailPieces : 0);
       const needPcs = Math.max(0, monthlyPcs * (lead + cover) - stockPcs);
       const needUnits = Math.ceil(needPcs / ps - 1e-9);
-      const caseQty = sm.caseQty || 0;
+      const ct = cat[t.sku] || {}, fx = fixes[t.sku] || {};
+      // Case qty in units of this part #: a fix wins, then SKU Mgr, then the
+      // vendor sheet's carton (EFF "Master carton (pcs)" is pieces → ÷ pack).
+      let caseQty = parseFloat(fx.case_qty) || sm.caseQty || 0, caseSrc = fx.case_qty ? 'fix' : sm.caseQty ? 'SKU Mgr' : '';
+      if (!caseQty && parseFloat(ct.case_pcs) > 0) { caseQty = Math.max(1, Math.round(parseFloat(ct.case_pcs) / ps)); caseSrc = 'vendor sheet'; }
       let orderUnits = needUnits, cases = null, notes = [];
       if (needUnits > 0 && caseQty > 0) {
         cases = Math.ceil(needUnits / caseQty);
@@ -1091,20 +1187,34 @@ async function reorderVendorOrder(env, url) {
       if (!t.fbaSku) notes.push('No FBA listing — best-selling pack');
       if (!countOtherPacks && otherPcs > 0) notes.push(`${Math.round(otherPcs)} pcs in other packs of ${b} not counted`);
       const u = upc[t.sku] || {};
-      rows.push({
-        sku: t.sku, baseSku: b, asin: t.asin, fbaSku: t.fbaSku, packSize: ps,
-        description: sm.name || bo.name || prodName[b] || t.fbaName || '',
-        vendor: sm.vendor || bo.vendor || '',
-        outsideUpc: u.outside_upc || '', insideUpc: u.inside_upc || '',
+      const pick = (...v) => { for (const x of v) if (x != null && String(x).trim() !== '') return String(x).trim(); return ''; };
+      const row = {
+        sku: t.sku, baseSku: b, fbaSku: t.fbaSku, packSize: ps,
+        from: [...(fromMap[t.sku] || [])],
+        asin: pick(fx.asin, t.asin, ct.asin),
+        description: pick(fx.description, ct.description, sm.name, bo.name, prodName[b], t.fbaName),
+        vendor: pick(fx.vendor, ct.vendor, sm.vendor, bo.vendor),
+        outsideUpc: pick(fx.outside_upc, ct.outside_upc, u.outside_upc), insideUpc: pick(fx.inside_upc, ct.inside_upc, u.inside_upc),
+        itemNo: pick(ct.item_no), caseSrc, fixed: !!fixes[t.sku],
         soldPcs: Math.round(demandPcs), monthlyPcs: Math.round(monthlyPcs * 10) / 10,
         stockUnits: Math.round(sm.units * 100) / 100, stockPcs: Math.round(ownPcs), otherPackPcs: Math.round(otherPcs),
         fbaPcs: Math.round(t.fbaAvailPieces), needUnits, caseQty, cases, orderUnits, note: notes.join(' · '),
-      });
+      };
+      row.issues = [];
+      if (!reorderIsProperFormat(row.sku)) row.issues.push('Part # looks wrong');
+      if (!row.outsideUpc) row.issues.push('No outside box UPC');
+      if (!row.insideUpc) row.issues.push('No inside bag UPC');
+      if (!row.description) row.issues.push('No description');
+      if (!row.vendor) row.issues.push('No vendor');
+      rows.push(row);
     }
   }
   rows.sort((a, c) => reorderSortRank(a.baseSku) - reorderSortRank(c.baseSku) || a.sku.localeCompare(c.sku));
+  Object.values(cat).forEach(r => { if (r.vendor) vendors.add(String(r.vendor).trim()); });
+  Object.values(fixes).forEach(r => { if (r.vendor) vendors.add(String(r.vendor).trim()); });
+  const catCounts = await all('SELECT vendor, COUNT(*) AS n, MAX(updated_at) AS at FROM reorder_vendor_catalog GROUP BY vendor');
   return cors(new Response(JSON.stringify({ ok: true, days, cover, lead, countFba, countOtherPacks, dataFrom,
-    vendors: [...vendors].sort(), rows }), { headers: { 'Content-Type': 'application/json' } }));
+    vendors: [...vendors].sort(), catalog: catCounts, rows }), { headers: { 'Content-Type': 'application/json' } }));
 }
 
 async function reorderRecommendationsHandler(env, days) {
@@ -3719,6 +3829,15 @@ export default {
 
     // ── Reorder recommendations - uses the existing PIN session, matching
     // the rest of the reorder app (not yet migrated to the credential system) ──
+    if (url.pathname.startsWith('/reorder/vendor-catalog/') || url.pathname === '/reorder/fix') {
+      if (session.pin_level !== 'mgmt') return _roResp({ ok: false, error: 'Management access required' }, 403);
+      if (url.pathname === '/reorder/vendor-catalog/import' && method === 'POST') return await reorderCatalogImport(request, env);
+      if (url.pathname === '/reorder/fix' && method === 'POST') {
+        const cs = await verifyCredSession(request.headers.get('X-Cred-Token'), env).catch(() => null);
+        return await reorderSaveFix(request, env, cs || session);
+      }
+      return _roResp({ ok: false, error: 'Not found' }, 404);
+    }
     if (url.pathname === '/reorder/vendor-order' && method === 'GET') {
       if (session.pin_level !== 'mgmt') return cors(new Response(JSON.stringify({ ok: false, error: 'Management access required' }), { status: 403, headers: { 'Content-Type': 'application/json' } }));
       return await reorderVendorOrder(env, url);
