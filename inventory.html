@@ -8641,9 +8641,14 @@ window.invCredLogin = async function() {
     c.style.display = a.length ? '' : 'none'; c.textContent = a.length;
     if (!a.length) { el('lw-alerts').innerHTML = '<div style="font-size:12px;color:var(--green)">✓ No warnings — every low listing is really out of stock in SKU Mgr.</div>'; return; }
     var rq = (lw.cfg && lw.cfg.restockQty) || 10;
-    el('lw-alerts').innerHTML = a.map(function (x) {
+    el('lw-alerts').innerHTML = '<div style="display:flex;flex-wrap:wrap;gap:8px;align-items:center;margin-bottom:8px;padding:6px 8px;background:var(--bg3);border-radius:8px">'
+      + '<label style="display:flex;align-items:center;gap:6px;font-size:12px;font-weight:700;cursor:pointer"><input type="checkbox" id="lw-all" onchange="lwSelectAll(this.checked)"> Select all</label>'
+      + '<span id="lw-sel-n" style="font-size:11.5px;color:var(--text3)">0 selected</span><span style="flex:1"></span>'
+      + '<button id="lw-set-sel" onclick="lwFixMany(false)" style="padding:6px 12px;border:none;border-radius:6px;background:var(--green);color:#fff;font-size:12px;font-weight:700;cursor:pointer">✓ Set selected</button>'
+      + '<button id="lw-set-all" onclick="lwFixMany(true)" style="padding:6px 12px;border:1.5px solid var(--green);border-radius:6px;background:var(--bg2);color:var(--green);font-size:12px;font-weight:700;cursor:pointer">Set all (' + a.length + ')</button></div>'
+      + a.map(function (x) {
       return '<div id="lw-a-' + x.id + '" style="border:1px solid var(--border);border-left:4px solid ' + (COLOR[x.platform] || '#999') + ';border-radius:8px;padding:8px 10px;margin-bottom:6px;background:var(--bg2)">'
-        + '<div style="display:flex;gap:8px;align-items:flex-start;flex-wrap:wrap"><div style="flex:1;min-width:180px">'
+        + '<div style="display:flex;gap:8px;align-items:flex-start;flex-wrap:wrap"><input type="checkbox" class="lw-chk" data-id="' + x.id + '" onchange="lwSelCount()" style="margin-top:3px;width:16px;height:16px;cursor:pointer"><div style="flex:1;min-width:180px">'
         + '<div style="font-size:12px;font-weight:700;color:' + (COLOR[x.platform] || 'var(--text)') + '">' + esc(x.platform) + ' <span style="font-weight:400;color:var(--text)">' + esc(x.title || '') + '</span></div>'
         + '<div style="font-size:11px;color:var(--text3);font-family:var(--mono)">' + esc(x.listing_id) + (x.sku ? ' · ' + esc(x.sku) : '') + '</div>'
         + '<div style="font-size:11.5px;margin-top:3px">Listing: <b style="color:var(--red)">' + x.qty + '</b> · We have: <b style="color:var(--green)">' + x.our_cases + ' case(s)</b> <span style="color:var(--text3)">' + esc(x.our_detail || '') + '</span></div>'
@@ -8694,13 +8699,52 @@ window.invCredLogin = async function() {
     } catch (e) { alert('Scan stopped: ' + e.message); }
     finally { lw.scanning = false; btn.disabled = false; btn.textContent = '🔎 Scan now'; lwLoad(); }
   };
-  window.lwFix = async function (id) {
-    var q = parseInt(el('lw-q-' + id).value, 10);
-    if (!(q >= 0 && q <= 9999)) { alert('Quantity must be 0–9999'); return; }
-    var r = el('lw-r-' + id); r.innerHTML = '<span style="color:var(--text3)">⏳ updating…</span>';
+  // Sets one warning's listing to the quantity in its box. `quiet` = part
+  // of Set selected / Set all (no reload after each one).
+  async function lwFixOne(id, quiet) {
+    var q = parseInt(el('lw-q-' + id).value, 10), r = el('lw-r-' + id);
+    if (!(q >= 0 && q <= 9999)) { r.innerHTML = '<span style="color:var(--red)">✗ Quantity must be 0–9999</span>'; return false; }
+    r.innerHTML = '<span style="color:var(--text3)">⏳ updating…</span>';
     var d = await call('/inventory/soldout/watch/fix', { method: 'POST', body: { id: id, quantity: q } });
-    if (d.ok) { r.innerHTML = '<span style="color:var(--green);font-weight:700">✓ Set to ' + q + '</span> <span style="color:var(--text3)">' + esc(d.detail || '') + '</span>'; setTimeout(lwLoad, 1200); soLoadLog(); }
+    if (d.ok) r.innerHTML = '<span style="color:var(--green);font-weight:700">✓ Set to ' + q + '</span> <span style="color:var(--text3)">' + esc(d.detail || '') + '</span>';
     else r.innerHTML = '<span style="color:var(--red)">✗ ' + esc(d.error || 'Failed') + '</span>';
+    if (!quiet && d.ok) { setTimeout(lwLoad, 1200); soLoadLog(); }
+    return !!d.ok;
+  }
+  window.lwFix = function (id) { return lwFixOne(id, false); };
+  window.lwSelCount = function () {
+    var all = document.querySelectorAll('.lw-chk'), n = 0;
+    all.forEach(function (c) { if (c.checked) n++; });
+    if (el('lw-sel-n')) el('lw-sel-n').textContent = n + ' selected';
+    if (el('lw-all')) el('lw-all').checked = n > 0 && n === all.length;
+  };
+  window.lwSelectAll = function (on) { document.querySelectorAll('.lw-chk').forEach(function (c) { c.checked = on; }); lwSelCount(); };
+  window.lwFixMany = async function (all) {
+    var ids = [];
+    document.querySelectorAll('.lw-chk').forEach(function (c) {
+      var id = c.getAttribute('data-id'), r = el('lw-r-' + id);
+      if (r && /✓/.test(r.textContent)) return; // already set just now
+      if (all || c.checked) ids.push(parseInt(id, 10));
+    });
+    if (!ids.length) { alert(all ? 'Everything here is already set.' : 'Tick the listings to set first (or use Set all).'); return; }
+    if (!confirm('Set ' + ids.length + ' listing' + (ids.length === 1 ? '' : 's') + ' to the quantity in each box?\n\nThis changes the live listings right away.')) return;
+    var b1 = el('lw-set-sel'), b2 = el('lw-set-all'); b1.disabled = b2.disabled = true;
+    var ok = 0;
+    try {
+      for (var i = 0; i < ids.length; i++) {
+        b1.textContent = '⏳ ' + (i + 1) + ' / ' + ids.length;
+        if (await lwFixOne(ids[i], true)) ok++;
+      }
+    } finally {
+      b1.disabled = b2.disabled = false; b1.textContent = '✓ Set selected';
+      if (typeof showToast === 'function') showToast(ok + ' of ' + ids.length + ' set' + (ok < ids.length ? ' — see the red ✗ for the rest' : ''));
+      soLoadLog();
+      // All done → refresh the list. Any failed → keep it as is so the red
+      // ✗ reasons stay readable (↻ via Scan now / reopening the tab).
+      if (ok === ids.length) setTimeout(lwLoad, 2500);
+      else document.querySelectorAll('.lw-chk').forEach(function (c) { var id = c.getAttribute('data-id'); var r = el('lw-r-' + id); if (r && /✓/.test(r.textContent)) { c.checked = false; c.disabled = true; } });
+      lwSelCount();
+    }
   };
   window.lwDismiss = async function (id) {
     await call('/inventory/soldout/watch/dismiss', { method: 'POST', body: { id: id } });
