@@ -3727,7 +3727,7 @@ var lastUpdated = null;
 var aiHistory = { ro: [], db: [] };
 var toastTimer = null;
 var salesFetchLock = false;  // prevents overlapping sheet reads during eBay fetch
-// _whFetchLock declared in main script block (shared with background refresh)
+var _whFetchLock = false; // prevents concurrent warehouse sheet reads (was referenced but never declared)
 
 // ─── WAREHOUSE STOCK ─────────────────────────────────────────────────────────
 async function salesLoadWarehouseStock() {

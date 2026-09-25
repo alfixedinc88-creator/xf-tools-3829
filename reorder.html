@@ -2094,6 +2094,7 @@ body { display:flex; flex-direction:column; min-height:100vh; background:var(--b
             <option value="">All</option><option value="fba">FBA listings only</option><option value="nofba">Not in FBA only</option></select></label>
         <label style="display:flex;align-items:center;gap:5px">Search:
           <input type="text" id="rvo-q" placeholder="Part #, e.g. 27-3-1" oninput="rvoRender()" style="width:150px;font-size:12px;padding:4px 8px;border-radius:6px;border:1px solid var(--border);font-family:var(--mono)"></label>
+        <label style="display:flex;align-items:center;gap:5px" title="Change part #, description, vendor, UPCs, ASIN and case qty right in the table, then 💾 Save all"><input type="checkbox" id="rvo-inline" onchange="rvoInlToggle(this.checked)"> ✏️ Edit in table</label>
         <label style="display:flex;align-items:center;gap:5px"><input type="checkbox" id="rvo-all" onchange="rvoRender()"> Show parts that don't need ordering</label>
         <label style="display:flex;align-items:center;gap:5px"><input type="checkbox" id="rvo-problems" onchange="rvoRender()"> Only rows with ⚠ problems</label>
         <label style="display:flex;align-items:center;gap:5px" title="Part #s that don't look like ours and have no FBA listing — each shows its listing title so you can find the right part #"><input type="checkbox" id="rvo-weird" onchange="rvoRender()"> Only weird part #s (no FBA)</label>
@@ -2119,6 +2120,11 @@ body { display:flex; flex-direction:column; min-height:100vh; background:var(--b
         <div id="rvo-hist" style="max-height:320px;overflow:auto"></div></details>
       <details id="rvo-fixes-box" style="margin-bottom:10px" ontoggle="if(this.open)rvoLoadFixes()"><summary style="font-size:12px;color:var(--text2);cursor:pointer;font-weight:700">📝 Saved fixes <span id="rvo-fixes-n"></span></summary><div id="rvo-fixes" style="margin-top:6px"></div></details>
       <div class="sales-section-sub" id="rvo-summary" style="margin-bottom:8px"></div>
+      <div id="rvo-savebar" style="display:none;position:sticky;top:0;z-index:5;align-items:center;gap:10px;flex-wrap:wrap;background:#fffbeb;border:1px solid #fcd34d;border-radius:8px;padding:8px 12px;margin-bottom:8px;font-size:13px">
+        <span id="rvo-savebar-txt"></span><span style="flex:1"></span>
+        <button class="btn" style="font-size:12px" onclick="rvoInlDiscard()">✖ Discard</button>
+        <button class="btn btn-primary" id="rvo-savebar-go" style="font-size:12px" onclick="rvoInlSave()">💾 Save all</button>
+      </div>
       <div id="rvo-wrap" class="sales-table-wrap" style="overflow:auto;max-height:70vh"><div style="padding:20px;color:var(--text3);font-size:13px">Loading…</div></div>
       <div id="rvo-recv" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,.45);z-index:9998;align-items:flex-start;justify-content:center;padding:24px 16px;overflow:auto">
         <div style="background:var(--bg2);border-radius:14px;padding:20px;width:900px;max-width:100%;box-shadow:0 8px 32px rgba(0,0,0,.2)">
@@ -2308,7 +2314,7 @@ var lastUpdated = null;
 var aiHistory = { ro: [], db: [] };
 var toastTimer = null;
 var salesFetchLock = false;  // prevents overlapping sheet reads during eBay fetch
-// _whFetchLock declared in main script block (shared with background refresh)
+var _whFetchLock = false; // prevents concurrent warehouse sheet reads (was referenced but never declared)
 
 // ─── WAREHOUSE STOCK ─────────────────────────────────────────────────────────
 async function salesLoadWarehouseStock() {
@@ -3706,7 +3712,104 @@ function skusTableSortBy(col) {
 // Numbers come from GET /reorder/vendor-order (see reorderVendorOrder in the
 // worker). Order quantities can be edited / unticked here; the CSV uses
 // what's on screen for the chosen vendor.
-var RVO = { loaded: false, rows: [], edits: {}, off: {}, meta: null, titles: {}, titlesState: '' };
+var RVO = { loaded: false, rows: [], edits: {}, off: {}, meta: null, titles: {}, titlesState: '', pend: {} };
+// ✏️ Edit in table: cells become boxes; changes wait in RVO.pend (by row
+// index) until 💾 Save all sends them in one request.
+var RVO_INL_F = { part: 'sku', description: 'description', vendor: 'vendor', outside_upc: 'outsideUpc', inside_upc: 'insideUpc', asin: 'asin', case_qty: 'caseQty' };
+function rvoInlOn() { var c = document.getElementById('rvo-inline'); return !!(c && c.checked); }
+function rvoInlToggle(on) {
+  try { localStorage.setItem('rvo_inline', on ? '1' : '0'); } catch (e) {}
+  if (!on && Object.keys(RVO.pend).length && !confirm('Keep your unsaved changes? (OK = keep them for later, Cancel = discard)')) RVO.pend = {};
+  rvoRender(); rvoInlBar();
+}
+function rvoInlVal(r, f) { var v = r[RVO_INL_F[f]]; return v == null || (f === 'case_qty' && !v) ? '' : String(v); }
+function rvoInlBox(r, f, w) {
+  var i = RVO.rows.indexOf(r), p = RVO.pend[i] || {}, changed = Object.prototype.hasOwnProperty.call(p, f);
+  var v = changed ? p[f] : rvoInlVal(r, f), ph = '';
+  if (f === 'description' && !v) { var t = rvoTitlesOf(r)[0]; if (t) ph = t.title; }
+  return '<input class="rvo-inl" data-i="' + i + '" data-f="' + f + '" value="' + escHtml(v).replace(/"/g, '&quot;') + '"' + (ph ? ' placeholder="' + escHtml(ph).replace(/"/g, '&quot;') + '" title="Empty — the listing title is shown in grey. Double-click to use it."' : '')
+    + (f === 'case_qty' ? ' type="number" min="0"' : '') + ' onchange="rvoInl(this)" onkeydown="rvoInlKey(event,this)" ondblclick="if(!this.value&&this.placeholder){this.value=this.placeholder;rvoInl(this)}"'
+    + ' style="width:' + (w || '100%') + ';box-sizing:border-box;font-size:12px;padding:3px 5px;border-radius:5px;border:1px solid ' + (changed ? '#f59e0b' : 'var(--border)') + ';background:' + (changed ? '#fef3c7' : 'var(--bg2)') + ';' + (/part|upc|asin/.test(f) ? 'font-family:var(--mono);' : '') + (f === 'part' ? 'font-weight:700;' : '') + '">';
+}
+function rvoInl(el) {
+  var i = +el.dataset.i, f = el.dataset.f, r = RVO.rows[i]; if (!r) return;
+  var v = el.value.trim(), orig = rvoInlVal(r, f);
+  if (f === 'part') v = v.toUpperCase();
+  var p = RVO.pend[i] = RVO.pend[i] || {};
+  if (v === orig || (f === 'part' && v === '')) delete p[f]; else p[f] = v;
+  if (!Object.keys(p).length) delete RVO.pend[i];
+  var ch = Object.prototype.hasOwnProperty.call(RVO.pend[i] || {}, f);
+  el.style.borderColor = ch ? '#f59e0b' : 'var(--border)'; el.style.background = ch ? '#fef3c7' : 'var(--bg2)';
+  rvoInlBar();
+}
+// Enter / ↓ = same box in the next row, ↑ = row above.
+function rvoInlKey(e, el) {
+  if (e.key !== 'Enter' && e.key !== 'ArrowDown' && e.key !== 'ArrowUp') return;
+  if (el.type === 'number' && e.key !== 'Enter') return;
+  e.preventDefault();
+  var all = [].slice.call(document.querySelectorAll('#rvo-wrap .rvo-inl[data-f="' + el.dataset.f + '"]')), k = all.indexOf(el) + (e.key === 'ArrowUp' ? -1 : 1);
+  rvoInl(el);
+  if (all[k]) { all[k].focus(); all[k].select(); }
+}
+function rvoInlBar() {
+  var n = Object.keys(RVO.pend).length, bar = document.getElementById('rvo-savebar');
+  if (!bar) return;
+  bar.style.display = n ? 'flex' : 'none';
+  var cells = Object.values(RVO.pend).reduce(function (a, p) { return a + Object.keys(p).length; }, 0);
+  document.getElementById('rvo-savebar-txt').innerHTML = '<b>' + n + '</b> row' + (n === 1 ? '' : 's') + ' changed (' + cells + ' box' + (cells === 1 ? '' : 'es') + ') — not saved yet';
+}
+function rvoInlDiscard() {
+  if (!confirm('Discard all unsaved changes?')) return;
+  RVO.pend = {}; rvoRender(); rvoInlBar();
+}
+async function rvoInlSave() {
+  var keys = Object.keys(RVO.pend); if (!keys.length) return;
+  var btn = document.getElementById('rvo-savebar-go'); btn.disabled = true; btn.textContent = 'Saving…';
+  var items = [], partChanged = false;
+  keys.forEach(function (i) {
+    var r = RVO.rows[i], p = RVO.pend[i], fields = {}, was = {};
+    Object.keys(p).forEach(function (f) { if (f !== 'part') { fields[f] = p[f]; was[f] = rvoInlVal(r, f); } });
+    var part = p.part || r.sku, raws = (r.from && r.from.length) ? r.from.slice() : [];
+    if (part !== r.sku) { partChanged = true; if (!raws.length) raws = [r.sku]; }
+    items.push({ key: i, part: part, raws: raws, fields: fields, was: was });
+  });
+  try {
+    var res = await wFetch(W + '/reorder/fix/batch', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ items: items }) });
+    var d = await res.json(); if (!d.results) throw new Error(d.error || 'Save failed');
+    var bad = d.results.filter(function (x) { return !x.ok; });
+    d.results.forEach(function (x) {
+      if (!x.ok) return;
+      var r = RVO.rows[x.key], p = RVO.pend[x.key]; if (!r || !p) return;
+      // Show the saved values right away — no need to recalculate unless a part # changed.
+      if (p.description != null) r.description = p.description;
+      if (p.vendor != null) r.vendor = p.vendor;
+      if (p.outside_upc != null) r.outsideUpc = p.outside_upc;
+      if (p.inside_upc != null) r.insideUpc = p.inside_upc;
+      if (p.asin != null) r.asin = p.asin.toUpperCase();
+      if (p.case_qty != null) {
+        var cq = parseFloat(p.case_qty) || 0; r.caseQty = cq; r.caseSrc = cq ? 'fix' : '';
+        r.cases = r.needUnits > 0 && cq > 0 ? Math.ceil(r.needUnits / cq) : null;
+        r.orderUnits = r.cases ? r.cases * cq : r.needUnits;
+        var nn = (r.note || '').split(' · ').filter(function (t) { return t && !/^Rounded up from|^No case qty/.test(t); });
+        if (r.needUnits > 0 && cq > 0 && r.orderUnits !== r.needUnits) nn.unshift('Rounded up from ' + r.needUnits + ' to ' + r.orderUnits + ' (' + r.cases + ' case' + (r.cases === 1 ? '' : 's') + ' of ' + cq + ')');
+        else if (r.needUnits > 0 && !cq) nn.unshift('No case qty in SKU Mgr — not rounded');
+        r.note = nn.join(' · ');
+      }
+      r.fixed = true;
+      r.issues = (r.issues || []).filter(function (t) { return !((t === 'No outside box UPC' && r.outsideUpc) || (t === 'No inside bag UPC' && r.insideUpc) || (t === 'No description' && r.description) || (t === 'No vendor' && r.vendor)); });
+      delete RVO.pend[x.key];
+    });
+    showToast('Saved ' + (d.results.length - bad.length) + ' row' + (d.results.length - bad.length === 1 ? '' : 's') + (bad.length ? ' — ' + bad.length + ' failed' : ''));
+    if (bad.length) alert('Not saved:\n' + bad.map(function (x) { var r = RVO.rows[x.key]; return (r ? r.sku : '?') + ': ' + (x.error || 'failed'); }).join('\n'));
+    if (partChanged && !bad.length) await rvoLoad();
+    else rvoRender();
+    if (document.getElementById('rvo-fixes-box').open) rvoLoadFixes();
+    if (document.getElementById('rvo-hist-box').open) rvoLoadHistory();
+  } catch (e) { alert('Save failed: ' + e.message + '\nYour changes are still here — try again.'); }
+  btn.disabled = false; btn.textContent = '💾 Save all'; rvoInlBar();
+}
+window.addEventListener('beforeunload', function (e) { if (Object.keys(RVO.pend).length) { e.preventDefault(); e.returnValue = ''; } });
+
 // "Weird" = part # doesn't look like ours and has no FBA listing — the ones
 // to identify and fix. Their listing titles are fetched after Calculate.
 function rvoWeird(r) { return !r.fbaSku && (r.issues || []).indexOf('Part # looks wrong') !== -1; }
@@ -3778,6 +3881,9 @@ function rvoDaysSel() {
 }
 async function rvoLoad() {
   var g = function (id) { return document.getElementById(id); };
+  if (!RVO.inlInit) { RVO.inlInit = 1; try { if (localStorage.getItem('rvo_inline') === '1') g('rvo-inline').checked = true; } catch (e) {} }
+  if (Object.keys(RVO.pend).length && !confirm('You have unsaved changes in the table. Recalculate anyway and lose them?\n(Cancel, then 💾 Save all first.)')) return;
+  RVO.pend = {}; rvoInlBar();
   var q = 'days=' + encodeURIComponent(g('rvo-days').value) + '&cover=' + encodeURIComponent(g('rvo-cover').value) + '&lead=' + encodeURIComponent(g('rvo-lead').value)
     + '&fbaStock=' + (g('rvo-fba').checked ? 1 : 0) + '&otherPacks=' + (g('rvo-other').checked ? 1 : 0);
   g('rvo-wrap').innerHTML = '<div style="padding:20px;color:var(--text3);font-size:13px">Calculating…</div>';
@@ -3823,7 +3929,7 @@ function rvoCols() {
     { k: 'chk', label: '<input type="checkbox" checked onchange="rvoAll(this.checked)">', w: 44, cell: function (r) { return '<input type="checkbox" ' + (RVO.off[r.sku] ? '' : 'checked') + ' onchange="rvoToggle(\'' + escHtml(r.sku) + '\',this.checked)">'; } },
     { k: 'edit', label: '', w: 56, cell: function (r) { return '<button onclick="rvoOpenEdit(' + RVO.rows.indexOf(r) + ')" title="Fix part #, UPC, description, vendor, ASIN, case qty" style="border:1px solid var(--border);background:var(--bg2);border-radius:6px;padding:2px 6px;cursor:pointer">✏️</button>'; } },
     { k: 'sku', label: 'Part #', w: 190, sort: function (r) { return r.sku; }, cell: function (r) { var iss = r.issues || [];
-      return '<b style="font-family:var(--mono)">' + escHtml(r.sku) + '</b>' + (r.fbaSku ? ' <span title="Sent to FBA" style="font-size:10px;color:#b45309">FBA</span>' : '')
+      return (rvoInlOn() ? rvoInlBox(r, 'part', '150px') : '<b style="font-family:var(--mono)">' + escHtml(r.sku) + '</b>') + (r.fbaSku ? ' <span title="Sent to FBA" style="font-size:10px;color:#b45309">FBA</span>' : '')
         + (r.fixed ? ' <span title="Has your saved fixes" style="font-size:10px;color:var(--green)">✎</span>' : '')
         + (r.amazonCode ? ' <span title="A code Amazon made up when the listing was created without our part #. Open the ASIN to see the listing, then ✏️ to map it to the right part #." style="font-size:10px;color:#b45309;border:1px solid #fcd34d;border-radius:4px;padding:0 3px">Amazon seller SKU</span>' : '')
         + ((r.from || []).length ? '<div style="font-size:10.5px;color:var(--text3);font-family:var(--mono)">from: ' + r.from.map(escHtml).join(', ') + '</div>' : '')
@@ -3837,12 +3943,12 @@ function rvoCols() {
               + ' <button data-t="' + escHtml(t.title).replace(/"/g, '&quot;') + '" onclick="rvoCopyText(this.dataset.t)" title="Copy this title" style="border:none;background:none;cursor:pointer;padding:0 2px;font-size:11px">📋</button></div>'; }).join('')
             + (RVO.titlesState === 'loading' ? '<div style="font-size:10.5px;color:var(--text3)">Finding listing title…</div>'
               : RVO.titlesState === 'done' && !rvoTitlesOf(r).length ? '<div style="font-size:10.5px;color:var(--text3)">No listing title found</div>' : '') : ''); } },
-    { k: 'asin', label: 'FBA ASIN', w: 110, sort: function (r) { return r.asin || '~'; }, cell: function (r) { return r.asin ? '<a href="https://www.amazon.com/dp/' + encodeURIComponent(r.asin) + '" target="_blank" rel="noopener" style="font-family:var(--mono)">' + escHtml(r.asin) + '</a>' : '—'; } },
-    { k: 'desc', label: 'Description', w: 220, sort: function (r) { return (r.description || '~').toUpperCase(); }, cell: function (r) { if (r.description) return escHtml(r.description); var t = rvoTitlesOf(r)[0];
+    { k: 'asin', label: 'FBA ASIN', w: 110, sort: function (r) { return r.asin || '~'; }, cell: function (r) { if (rvoInlOn()) return rvoInlBox(r, 'asin'); return r.asin ? '<a href="https://www.amazon.com/dp/' + encodeURIComponent(r.asin) + '" target="_blank" rel="noopener" style="font-family:var(--mono)">' + escHtml(r.asin) + '</a>' : '—'; } },
+    { k: 'desc', label: 'Description', w: 220, sort: function (r) { return (r.description || '~').toUpperCase(); }, cell: function (r) { if (rvoInlOn()) return rvoInlBox(r, 'description'); if (r.description) return escHtml(r.description); var t = rvoTitlesOf(r)[0];
       return t ? '<i title="Not saved yet — from the ' + escHtml(t.platform) + ' listing. ✏️ to save it.">' + escHtml(t.title) + '</i><div style="font-size:10px;color:var(--text3)">from ' + escHtml(t.platform) + ' listing</div>' : miss(''); }, wrap: true },
-    { k: 'vendor', label: 'Vendor', w: 80, sort: function (r) { return r.vendor || '~'; }, cell: function (r) { return miss(r.vendor); } },
-    { k: 'oupc', label: 'Outside box UPC', w: 150, sort: function (r) { return r.outsideUpc || '~'; }, cell: function (r) { return '<span style="font-family:var(--mono)">' + miss(r.outsideUpc) + '</span>'; } },
-    { k: 'iupc', label: 'Inside bag UPC', w: 150, sort: function (r) { return r.insideUpc || '~'; }, cell: function (r) { return '<span style="font-family:var(--mono)">' + miss(r.insideUpc) + '</span>'; } },
+    { k: 'vendor', label: 'Vendor', w: 80, sort: function (r) { return r.vendor || '~'; }, cell: function (r) { return rvoInlOn() ? rvoInlBox(r, 'vendor') : miss(r.vendor); } },
+    { k: 'oupc', label: 'Outside box UPC', w: 150, sort: function (r) { return r.outsideUpc || '~'; }, cell: function (r) { return rvoInlOn() ? rvoInlBox(r, 'outside_upc') : '<span style="font-family:var(--mono)">' + miss(r.outsideUpc) + '</span>'; } },
+    { k: 'iupc', label: 'Inside bag UPC', w: 150, sort: function (r) { return r.insideUpc || '~'; }, cell: function (r) { return rvoInlOn() ? rvoInlBox(r, 'inside_upc') : '<span style="font-family:var(--mono)">' + miss(r.insideUpc) + '</span>'; } },
     { k: 'sold', label: 'Sold (pcs)', tip: 'Pieces sold in the window, all channels, this part number\'s share', w: 100, num: true, sort: function (r) { return r.soldPcs; }, cell: function (r) { return fmt0(r.soldPcs); } },
     { k: 'mo', label: 'Per month (pcs)', w: 145, num: true, sort: function (r) { return r.monthlyPcs; }, cell: function (r) { return r.monthlyPcs; } },
     { k: 'stock', label: 'In stock', tip: 'SKU Mgr: units of this part number (pieces)', w: 110, num: true, sort: function (r) { return r.stockPcs; }, cell: function (r) { return fmt0(r.stockUnits) + (r.packSize > 1 ? ' <span style="color:var(--text3)">(' + fmt0(r.stockPcs) + ' pcs)</span>' : ''); } },
@@ -3857,7 +3963,7 @@ function rvoCols() {
   if (titles.length) cols.push({ k: 'incTot', label: 'On the way', tip: 'All titles together — subtracted from Need', w: 100, num: true, sort: function (r) { return r.incomingUnits || 0; }, cell: function (r) { return r.incomingUnits ? '<b>' + fmt0(r.incomingUnits) + '</b>' : '—'; } });
   cols.push(
     { k: 'need', label: 'Need', tip: 'Units of this part # (after stock, FBA and on the way)', w: 70, num: true, sort: function (r) { return r.needUnits; }, cell: function (r) { return fmt0(r.needUnits); } },
-    { k: 'case', label: 'Case qty', tip: 'Units of this part # per case', w: 90, num: true, sort: function (r) { return r.caseQty || 0; }, cell: function (r) { return r.caseQty ? fmt0(r.caseQty) + (r.caseSrc && r.caseSrc !== 'SKU Mgr' ? '<div style="font-size:10px;color:var(--text3)">' + escHtml(r.caseSrc) + '</div>' : '') : '—'; } },
+    { k: 'case', label: 'Case qty', tip: 'Units of this part # per case', w: 90, num: true, sort: function (r) { return r.caseQty || 0; }, cell: function (r) { if (rvoInlOn()) return rvoInlBox(r, 'case_qty', '64px'); return r.caseQty ? fmt0(r.caseQty) + (r.caseSrc && r.caseSrc !== 'SKU Mgr' ? '<div style="font-size:10px;color:var(--text3)">' + escHtml(r.caseSrc) + '</div>' : '') : '—'; } },
     { k: 'order', label: 'Order', w: 95, sort: function (r) { return rvoQty(r); }, cell: function (r) { var ed = RVO.edits[r.sku] != null;
       return '<input type="number" min="0" value="' + rvoQty(r) + '" onchange="rvoEdit(\'' + escHtml(r.sku) + '\',this.value)" style="width:72px;font-size:12px;padding:3px 5px;border-radius:5px;border:1px solid ' + (ed ? '#b45309' : 'var(--border)') + ';font-weight:700">'; } },
     { k: 'note', label: 'Note', w: 260, wrap: true, sort: function (r) { return r.note || '~'; }, cell: function (r) { var ed = RVO.edits[r.sku] != null;

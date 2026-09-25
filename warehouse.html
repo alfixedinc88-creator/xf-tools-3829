@@ -2057,6 +2057,7 @@ async function refreshAllSheets() {
 // Runs silently — no spinner, no toast, never interrupts the user.
 // The full loadAllSheets() on launch already populated everything; this just
 // refreshes the two sheets used by client-side search so case counts stay fresh.
+var _whFetchLock = false; // prevents concurrent warehouse sheet reads (was referenced but never declared)
 setInterval(function() {
   if (!CRED_TOKEN) return; // don't run if not signed in
   if (_whFetchLock) return; // skip if warehouse fetch already in progress
