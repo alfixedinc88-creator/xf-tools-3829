@@ -3770,7 +3770,7 @@ async function batchUpdateSheets(env, sheetId, requests) {
 let _currentOrigin = "*";
 
 export default {
-  async fetch(request, env) {
+  async fetch(request, env, ctx) {
     const url    = new URL(request.url);
     const method = request.method;
     const origin = request.headers.get('Origin') || '*';
@@ -4350,7 +4350,7 @@ export default {
 
     // ── Pack & Ship routes /ship/* ──
     if (url.pathname.startsWith('/ship/')) {
-      return handleShipRoute(url, method, request, env, session);
+      return handleShipRoute(url, method, request, env, session, ctx);
     }
 
     // ── Warehouse Messenger routes /msg/* ──
@@ -14369,12 +14369,12 @@ async function shipTrackingHistory(url, env) {
   }));
 }
 
-async function handleShipRoute(url, method, request, env, session) {
+async function handleShipRoute(url, method, request, env, session, ctx) {
   const path = url.pathname;
   try {
-    if (path === '/ship/scan'         && method === 'POST') return await shipScan(request, env);
+    if (path === '/ship/scan'         && method === 'POST') return await shipScan(request, env, ctx);
     if (path === '/ship/scans'        && method === 'GET')  return await shipGetScans(url, env);
-    if (path === '/ship/pick'         && method === 'POST') return await shipPick(request, env);
+    if (path === '/ship/pick'         && method === 'POST') return await shipPick(request, env, ctx);
     if (path === '/ship/picks'        && method === 'GET')  return await shipGetPicks(url, env);
     if (path === '/ship/stockout'     && method === 'POST') return await shipReportStockout(request, env);
     if (path === '/ship/stock-check'  && method === 'POST') return await shipStockCheck(request, env);
@@ -14440,7 +14440,11 @@ async function handleShipRoute(url, method, request, env, session) {
 // cells in the workbook above the limit of 10000000 cells." D1 has no
 // such ceiling. Phase 1: Scan_Log + Print_Log. Manifest_Log (Phase 2)
 // still uses Sheets for now.
+// Runs its ~27 CREATE/ALTER/INDEX statements once per worker instance, not
+// on every request — every Pack & Ship scan/pick used to wait on all of them.
+let _shipD1Ready = false;
 async function ensureShipD1Tables(env) {
+  if (_shipD1Ready) return;
   await env.DB.prepare(`
     CREATE TABLE IF NOT EXISTS ship_scan_log (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -14764,6 +14768,7 @@ async function ensureShipD1Tables(env) {
     )
   `).run().catch(()=>{});
   await env.DB.prepare(`CREATE INDEX IF NOT EXISTS idx_pull_batch_status ON inventory_pull_batch(status)`).run().catch(()=>{});
+  _shipD1Ready = true;
 }
 
 // Both shipScan and shipPick do their own fresh, inline Veeqo lookup
@@ -14818,7 +14823,88 @@ async function shipMergeBinFromManifestCache(env, tracking, freshItems) {
   } catch (_) { return freshItems; }
 }
 
-async function shipScan(request, env) {
+// ── Order for a scanned label, fast ──────────────────────────────────────────
+// Our own copy first: ship_manifest_log already has the order's items and
+// bins for anything Veeqo Sync (hourly) or an earlier scan/pick saw — one
+// D1 read, instant. Returns { orderNum, items } or null.
+async function shipLocalOrder(env, clean) {
+  try {
+    const rows = (await env.DB.prepare(
+      `SELECT order_num, line_items FROM ship_manifest_log WHERE UPPER(tracking) = ? ORDER BY date DESC, id DESC LIMIT 5`
+    ).bind(clean).all()).results || [];
+    for (const r of rows) {
+      let items = []; try { items = JSON.parse(r.line_items || '[]'); } catch (_) {}
+      if (Array.isArray(items) && items.length) return { orderNum: String(r.order_num || ''), items };
+    }
+  } catch (_) {}
+  return null;
+}
+// Veeqo look-up for a label (what shipScan/shipPick used to do inline):
+// finds the order by tracking #, saves it to ship_manifest_log and returns
+// { orderNum, shipmentId, items } or null. Tries shipped orders first, then
+// any status (a label can be bought before Veeqo marks the order shipped —
+// those used to come back empty). Each Veeqo call gives up after 8 s so a
+// slow Veeqo can't leave the scan hanging.
+async function shipVeeqoOrder(env, clean, date, carrier) {
+  if (!env.VEEQO_API_KEY) return null;
+  const key = (env.VEEQO_API_KEY || '').trim();
+  const find = async (statusQs) => {
+    const ac = new AbortController(); const t = setTimeout(() => ac.abort(), 8000);
+    try {
+      const vRes = await fetch('https://api.veeqo.com/orders?query=' + encodeURIComponent(clean) + statusQs + '&page_size=3&page=1',
+        { headers: { 'x-api-key': key, 'Accept': 'application/json' }, signal: ac.signal });
+      if (!vRes.ok) return null;
+      const orders = await vRes.json().catch(() => []);
+      for (const o of (Array.isArray(orders) ? orders : [])) {
+        for (const alloc of (o.allocations || [])) {
+          const s = alloc.shipment;
+          if (s && s.tracking_number) {
+            const tn = typeof s.tracking_number === 'object' ? String(s.tracking_number.tracking_number || '') : String(s.tracking_number || '');
+            if (tn.trim().toUpperCase() === clean) return { order: o, shipment: s, allocation: alloc };
+          }
+        }
+      }
+      return null;
+    } catch (e) { return ac.signal.aborted ? 'timeout' : null; } finally { clearTimeout(t); }
+  };
+  let matched = await find('&status=shipped');
+  if (!matched) matched = await find(''); // not marked shipped yet — only when the first answered (no second 8 s wait)
+  if (!matched || matched === 'timeout') return null;
+  const orderNum = String(matched.order.number || matched.order.id || '');
+  const orderAddr = veeqoExtractAddress(matched.order);
+  const rawOrderItems = await veeqoExtractLineItems(env, matched.order, matched.allocation);
+  const orderItems = await shipMergeBinFromManifestCache(env, clean, rawOrderItems);
+  await manifestUpsertScanned(env, date, clean, {
+    orderNum, channel: (matched.order.channel && matched.order.channel.name) || '', carrier,
+    service: ((matched.order.allocations || [])[0]?.delivery_method?.name || ''),
+    shipToState: (matched.order.deliver_to?.state || ''),
+    customerName: veeqoExtractCustomerName(matched.order),
+    city: orderAddr.city, zip: orderAddr.zip,
+    address1: orderAddr.address1, address2: orderAddr.address2,
+    lineItems: orderItems,
+    // Pass `clean` (this row's own tracking) so a split order gets THIS
+    // shipment's real weight — see veeqoExtractWeightLb's comment.
+    weightLb: veeqoExtractWeightLb(matched.order, clean),
+  });
+  return { orderNum, shipmentId: String(matched.shipment.id || ''), items: orderItems };
+}
+// Items for a just-saved scan/pick row: our copy right away (Veeqo refresh
+// continues in the background to fill shipment id / order # / manifest),
+// else wait for Veeqo. `fill(v)` writes the Veeqo result onto the log row.
+async function shipOrderForScan(env, ctx, clean, date, carrier, fill) {
+  const local = await shipLocalOrder(env, clean);
+  const refresh = shipVeeqoOrder(env, clean, date, carrier)
+    .then(async v => { if (v) await fill(v); return v; })
+    .catch(() => null);
+  if (local) {
+    if (ctx && ctx.waitUntil) ctx.waitUntil(refresh); else await refresh;
+    return local;
+  }
+  const v = await refresh;
+  return v ? { orderNum: v.orderNum, items: v.items } : null;
+}
+
+async function shipScan(request, env, ctx) {
   await ensureShipD1Tables(env);
   const b = await request.json().catch(() => ({}));
   const { tracking, initials } = b;
@@ -14858,74 +14944,19 @@ async function shipScan(request, env) {
   ).bind(date, ts, clean, carrier, initials.toUpperCase()).run();
   const insertedId = inserted.meta.last_row_id;
 
-  // Look up ShipmentID + OrderNum from Veeqo inline (1 API call ~200ms)
-  // scanResponseLineItems carries whatever this lookup finds straight back
-  // in this request's own response (see below) — see the big comment above
-  // the return statement for why that matters.
+  // Order items for the page: our saved copy right away when we have it
+  // (Veeqo refresh then finishes in the background), else the Veeqo
+  // look-up — see shipOrderForScan. scanResponseLineItems rides back in
+  // THIS response (see the comment below for why).
   let scanResponseLineItems = null;
-  if (env.VEEQO_API_KEY) {
-    try {
-      const qs   = `?query=${encodeURIComponent(clean)}&status=shipped&page_size=3&page=1`;
-      const key  = (env.VEEQO_API_KEY || '').trim();
-      const vRes = await fetch('https://api.veeqo.com/orders' + qs, {
-        headers: { 'x-api-key': key, 'Accept': 'application/json' }
-      });
-      if (vRes.ok) {
-        const orders = await vRes.json().catch(() => []);
-        if (Array.isArray(orders) && orders.length > 0) {
-          let matched = null;
-          for (const o of orders) {
-            for (const alloc of (o.allocations || [])) {
-              const s = alloc.shipment;
-              if (s && s.tracking_number) {
-                const tn = typeof s.tracking_number === 'object'
-                  ? String(s.tracking_number.tracking_number || '')
-                  : String(s.tracking_number || '');
-                if (tn.trim().toUpperCase() === clean) { matched = { order: o, shipment: s, allocation: alloc }; break; }
-              }
-            }
-            if (matched) break;
-          }
-          if (matched) {
-            const shipmentId   = String(matched.shipment.id || '');
-            const orderNum     = String(matched.order.number || matched.order.id || '');
-            const orderChannel = (matched.order.channel && matched.order.channel.name) || '';
-            const orderService = ((matched.order.allocations || [])[0]?.delivery_method?.name || '');
-            const orderState   = (matched.order.deliver_to?.state || '');
-
-            // Update the exact row we just inserted, by its own D1 id -
-            // simpler and more reliable than the old Sheets approach of
-            // scanning backward for the "last matching row with no
-            // shipmentId yet", which could race under concurrent scans.
-            await env.DB.prepare(
-              `UPDATE ship_scan_log SET shipment_id = ?, order_num = ? WHERE id = ?`
-            ).bind(shipmentId, orderNum, insertedId).run();
-
-            // Manifest_Log upsert stays on Sheets for now (Phase 2)
-            const orderAddr = veeqoExtractAddress(matched.order);
-            const rawOrderItems = await veeqoExtractLineItems(env, matched.order, matched.allocation);
-            const orderItems = await shipMergeBinFromManifestCache(env, clean, rawOrderItems);
-            await manifestUpsertScanned(env, date, clean, {
-              orderNum, channel: orderChannel, carrier,
-              service: orderService, shipToState: orderState,
-              customerName: veeqoExtractCustomerName(matched.order),
-              city: orderAddr.city, zip: orderAddr.zip,
-              address1: orderAddr.address1, address2: orderAddr.address2,
-              lineItems: orderItems,
-              // Pass `clean` (this row's own tracking) so a split order
-              // (more than one shipment/allocation) gets THIS shipment's
-              // real weight, not whichever allocation happens to come
-              // first in the array — see veeqoExtractWeightLb's comment.
-              weightLb: veeqoExtractWeightLb(matched.order, clean),
-            });
-            // Hand the same items straight back in this response (see below)
-            // instead of making the frontend fetch them separately.
-            scanResponseLineItems = orderItems;
-          }
-        }
-      }
-    } catch (_) { /* non-critical — scan still recorded */ }
-  }
+  try {
+    const o = await shipOrderForScan(env, ctx, clean, date, carrier, v =>
+      env.DB.prepare(`UPDATE ship_scan_log SET shipment_id = ?, order_num = ? WHERE id = ?`).bind(v.shipmentId, v.orderNum, insertedId).run());
+    if (o) {
+      scanResponseLineItems = o.items;
+      if (o.orderNum) await env.DB.prepare(`UPDATE ship_scan_log SET order_num = ? WHERE id = ? AND (order_num IS NULL OR order_num = '')`).bind(o.orderNum, insertedId).run();
+    }
+  } catch (_) { /* non-critical — scan still recorded */ }
 
   // scanResponseLineItems rides along in THIS response on purpose — this is
   // the fix for "shipping department scans a label, order info doesn't
@@ -15376,7 +15407,7 @@ async function shipStockoutDebug(url, env) {
 // count/UPS-USPS carrier detection is available immediately, and the same
 // "return the line items straight in the response" fix so the Picking tab
 // doesn't hit the exact race condition that shipScan already had to fix.
-async function shipPick(request, env) {
+async function shipPick(request, env, ctx) {
   await ensureShipD1Tables(env);
   const b = await request.json().catch(() => ({}));
   const { tracking, initials } = b;
@@ -15416,68 +15447,19 @@ async function shipPick(request, env) {
   ).bind(date, ts, clean, carrier, initials.toUpperCase()).run();
   const insertedId = inserted.meta.last_row_id;
 
-  // Same inline Veeqo lookup shipScan uses — populates ship_manifest_log
-  // (if it isn't already there from a prior scan/sync) and hands the line
-  // items straight back in this response, avoiding the exact race condition
-  // already fixed on the Packing tab (see the long comment in shipScan).
+  // Same as shipScan: our saved copy right away, else Veeqo (populates
+  // ship_manifest_log), items handed straight back in this response.
   let pickResponseLineItems = null;
   let pickResponseOrderNum  = '';
-  if (env.VEEQO_API_KEY) {
-    try {
-      const qs   = `?query=${encodeURIComponent(clean)}&status=shipped&page_size=3&page=1`;
-      const key  = (env.VEEQO_API_KEY || '').trim();
-      const vRes = await fetch('https://api.veeqo.com/orders' + qs, {
-        headers: { 'x-api-key': key, 'Accept': 'application/json' }
-      });
-      if (vRes.ok) {
-        const orders = await vRes.json().catch(() => []);
-        if (Array.isArray(orders) && orders.length > 0) {
-          let matched = null;
-          for (const o of orders) {
-            for (const alloc of (o.allocations || [])) {
-              const s = alloc.shipment;
-              if (s && s.tracking_number) {
-                const tn = typeof s.tracking_number === 'object'
-                  ? String(s.tracking_number.tracking_number || '')
-                  : String(s.tracking_number || '');
-                if (tn.trim().toUpperCase() === clean) { matched = { order: o, shipment: s, allocation: alloc }; break; }
-              }
-            }
-            if (matched) break;
-          }
-          if (matched) {
-            const orderNum     = String(matched.order.number || matched.order.id || '');
-            const orderChannel = (matched.order.channel && matched.order.channel.name) || '';
-            const orderService = ((matched.order.allocations || [])[0]?.delivery_method?.name || '');
-            const orderState   = (matched.order.deliver_to?.state || '');
-
-            await env.DB.prepare(
-              `UPDATE ship_pick_log SET order_num = ? WHERE id = ?`
-            ).bind(orderNum, insertedId).run();
-
-            const orderAddr = veeqoExtractAddress(matched.order);
-            const rawOrderItems = await veeqoExtractLineItems(env, matched.order, matched.allocation);
-            const orderItems = await shipMergeBinFromManifestCache(env, clean, rawOrderItems);
-            await manifestUpsertScanned(env, date, clean, {
-              orderNum, channel: orderChannel, carrier,
-              service: orderService, shipToState: orderState,
-              customerName: veeqoExtractCustomerName(matched.order),
-              city: orderAddr.city, zip: orderAddr.zip,
-              address1: orderAddr.address1, address2: orderAddr.address2,
-              lineItems: orderItems,
-              // Pass `clean` (this row's own tracking) so a split order
-              // (more than one shipment/allocation) gets THIS shipment's
-              // real weight, not whichever allocation happens to come
-              // first in the array — see veeqoExtractWeightLb's comment.
-              weightLb: veeqoExtractWeightLb(matched.order, clean),
-            });
-            pickResponseLineItems = orderItems;
-            pickResponseOrderNum  = orderNum;
-          }
-        }
-      }
-    } catch (_) { /* non-critical — pick still recorded */ }
-  }
+  try {
+    const o = await shipOrderForScan(env, ctx, clean, date, carrier, v =>
+      env.DB.prepare(`UPDATE ship_pick_log SET order_num = ? WHERE id = ?`).bind(v.orderNum, insertedId).run());
+    if (o) {
+      pickResponseLineItems = o.items;
+      pickResponseOrderNum  = o.orderNum || '';
+      if (o.orderNum) await env.DB.prepare(`UPDATE ship_pick_log SET order_num = ? WHERE id = ? AND (order_num IS NULL OR order_num = '')`).bind(o.orderNum, insertedId).run();
+    }
+  } catch (_) { /* non-critical — pick still recorded */ }
 
   return cors(new Response(JSON.stringify({
     ok: true, date, tracking: clean, carrier, initials: initials.toUpperCase(), timestamp: ts,

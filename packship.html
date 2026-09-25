@@ -2481,6 +2481,22 @@ window.psLoadScans = async function() {
   } catch(e) { console.error('[PS] loadScans error:', e); }
 };
 
+// POST a scan/pick; gives up after 15 s (bad Wi-Fi, slow Veeqo) so the
+// product box never sits on "Loading…" — the caller then falls back to the
+// order look-up.
+function _psPostWithTimeout(url, body) {
+  var ac = window.AbortController ? new AbortController() : null;
+  var t = ac ? setTimeout(function(){ ac.abort(); }, 15000) : null;
+  return fetch(url, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', 'X-Cred-Token': psCredToken },
+    body: JSON.stringify(body),
+    signal: ac ? ac.signal : undefined
+  }).then(function(r){ return r.json(); })
+    .catch(function(e){ throw new Error(e && e.name === 'AbortError' ? 'took too long (check Wi-Fi)' : (e && e.message) || 'network error'); })
+    .finally(function(){ if (t) clearTimeout(t); });
+}
+
 // ── Scan processing ───────────────────────────────────
 function _psProcessScan(raw) {
   var inp      = document.getElementById('ps-scan-input');
@@ -2524,11 +2540,7 @@ function _psProcessScan(raw) {
   _psShowScanProductLoading(tracking);
   inp.focus();
 
-  fetch(PS_WORKER + '/ship/scan', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json', 'X-Cred-Token': psCredToken },
-    body: JSON.stringify({ tracking: tracking, initials: psInitials })
-  }).then(function(r){ return r.json(); }).then(function(data) {
+  _psPostWithTimeout(PS_WORKER + '/ship/scan', { tracking: tracking, initials: psInitials }).then(function(data) {
     if (data.duplicate) {
       // The server rejected the write (a match somewhere in the last
       // SHIP_DUPE_LOOKBACK_DAYS days) — undo the optimistic add above so
@@ -2577,8 +2589,10 @@ function _psProcessScan(raw) {
       _psLoadScanProduct(tracking);
     }
   }).catch(function(e) {
-    _psShowLastScan({ icon:'❌', cls:'err', tracking: tracking, meta:'Sheet write failed — ' + e.message });
-    _psToast('Sheet error — ' + e.message, 'err');
+    _psShowLastScan({ icon:'❌', cls:'err', tracking: tracking, meta:'Save failed — ' + e.message });
+    _psToast('Save error — ' + e.message, 'err');
+    // Still show the order if we have it, instead of "Loading…" forever.
+    _psLoadScanProduct(tracking);
   });
 }
 
@@ -5453,11 +5467,7 @@ function _psProcessPick(raw) {
   _psShowPickProductLoading(tracking);
   inp.focus();
 
-  fetch(PS_WORKER + '/ship/pick', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json', 'X-Cred-Token': psCredToken },
-    body: JSON.stringify({ tracking: tracking, initials: psInitials })
-  }).then(function(r){ return r.json(); }).then(function(data) {
+  _psPostWithTimeout(PS_WORKER + '/ship/pick', { tracking: tracking, initials: psInitials }).then(function(data) {
     if (data.duplicate) {
       // The server rejected the write (a match somewhere in the last
       // SHIP_DUPE_LOOKBACK_DAYS days) — undo the optimistic add above so
@@ -5488,6 +5498,7 @@ function _psProcessPick(raw) {
   }).catch(function(e) {
     _psShowPickLastScan({ icon:'❌', cls:'err', tracking: tracking, meta:'Save failed — ' + e.message });
     _psToast('Save error — ' + e.message, 'err');
+    _psLoadPickProduct(tracking);
   });
 }
 
