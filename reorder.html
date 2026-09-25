@@ -2093,6 +2093,9 @@ body { display:flex; flex-direction:column; min-height:100vh; background:var(--b
           <input type="text" id="rvo-q" placeholder="Part #, e.g. 27-3-1" oninput="rvoRender()" style="width:150px;font-size:12px;padding:4px 8px;border-radius:6px;border:1px solid var(--border);font-family:var(--mono)"></label>
         <label style="display:flex;align-items:center;gap:5px"><input type="checkbox" id="rvo-all" onchange="rvoRender()"> Show parts that don't need ordering</label>
         <label style="display:flex;align-items:center;gap:5px"><input type="checkbox" id="rvo-problems" onchange="rvoRender()"> Only rows with ⚠ problems</label>
+        <label style="display:flex;align-items:center;gap:5px" title="Part #s that don't look like ours and have no FBA listing — each shows its listing title so you can find the right part #"><input type="checkbox" id="rvo-weird" onchange="rvoRender()"> Only weird part #s (no FBA)</label>
+        <button class="btn" style="font-size:12px" onclick="rvoWeirdCopy()" title="Copy every weird part # with its listing title(s) — paste into Excel / Google Sheets">📋 Copy weird list</button>
+        <button class="btn" style="font-size:12px" onclick="rvoWeirdCsv()" title="Same list as a CSV file">⬇ Weird list CSV</button>
         <span style="flex:1"></span>
         <button class="btn btn-primary" style="font-size:12px" onclick="rvoCsv()">⬇ Download CSV for vendor</button>
       </div>
@@ -3700,7 +3703,70 @@ function skusTableSortBy(col) {
 // Numbers come from GET /reorder/vendor-order (see reorderVendorOrder in the
 // worker). Order quantities can be edited / unticked here; the CSV uses
 // what's on screen for the chosen vendor.
-var RVO = { loaded: false, rows: [], edits: {}, off: {}, meta: null };
+var RVO = { loaded: false, rows: [], edits: {}, off: {}, meta: null, titles: {}, titlesState: '' };
+// "Weird" = part # doesn't look like ours and has no FBA listing — the ones
+// to identify and fix. Their listing titles are fetched after Calculate.
+function rvoWeird(r) { return !r.fbaSku && (r.issues || []).indexOf('Part # looks wrong') !== -1; }
+function rvoTitlesOf(r) {
+  var out = [], seen = {};
+  [r.sku].concat(r.from || []).forEach(function (k) { (RVO.titles[String(k).toUpperCase()] || []).forEach(function (t) {
+    var key = t.platform + '|' + t.title; if (!seen[key]) { seen[key] = 1; out.push(t); } }); });
+  return out;
+}
+function rvoListingUrl(t) {
+  var id = String(t.listingId || '');
+  if (t.platform === 'eBay' && /^\d{9,}$/.test(id)) return 'https://www.ebay.com/itm/' + id;
+  if (t.platform === 'Amazon' && /^[A-Z0-9]{10}$/.test(id)) return 'https://www.amazon.com/dp/' + id;
+  if (t.platform === 'Walmart' && /^\d{5,}$/.test(id)) return 'https://www.walmart.com/ip/' + id;
+  return '';
+}
+async function rvoLoadTitles() {
+  var skus = [];
+  RVO.rows.forEach(function (r) { if (rvoWeird(r)) skus.push.apply(skus, [r.sku].concat(r.from || [])); });
+  RVO.titles = {};
+  if (!skus.length) { RVO.titlesState = 'none'; rvoRender(); return; }
+  RVO.titlesState = 'loading'; rvoRender();
+  try {
+    var res = await wFetch(W + '/reorder/fix/listing-titles', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ skus: skus }) });
+    var d = await res.json(); if (!d.ok) throw new Error(d.error || 'Failed');
+    RVO.titles = d.titles || {}; RVO.titlesState = 'done';
+  } catch (e) { RVO.titlesState = 'error: ' + e.message; }
+  rvoRender();
+}
+function rvoWeirdRows() {
+  return RVO.rows.filter(rvoWeird).sort(function (a, b) { return b.soldPcs - a.soldPcs; });
+}
+function rvoWeirdTable() {
+  var out = [['Part # (as sold)', 'From', 'Sold (pcs)', 'Sales by channel', 'Channel', 'Listing ID', 'Listing title / description', 'Link', 'Right part # (fill in)']];
+  rvoWeirdRows().forEach(function (r) {
+    var ch = Object.keys(r.channels || {}).map(function (c) { return c + ' ' + r.channels[c]; }).join(' · ');
+    var ts = rvoTitlesOf(r);
+    if (!ts.length) ts = [{ platform: '', listingId: r.asin || '', title: r.description || '' }];
+    ts.forEach(function (t) { out.push([r.sku, (r.from || []).join(', '), r.soldPcs, ch, t.platform, t.listingId, t.title, rvoListingUrl(t) || (r.asin ? 'https://www.amazon.com/dp/' + r.asin : ''), '']); });
+  });
+  return out;
+}
+function rvoWeirdCopy() {
+  if (!RVO.loaded) { alert('Press Calculate first.'); return; }
+  var t = rvoWeirdTable(); if (t.length < 2) { alert('No weird part #s right now.'); return; }
+  var txt = t.map(function (r) { return r.map(function (c) { return String(c == null ? '' : c).replace(/[\t\n\r]+/g, ' '); }).join('\t'); }).join('\n');
+  var done = function () { showToast('Copied ' + (t.length - 1) + ' lines — paste into a sheet'); };
+  if (navigator.clipboard && navigator.clipboard.writeText) navigator.clipboard.writeText(txt).then(done, function () { rvoWeirdCsv(); });
+  else rvoWeirdCsv();
+}
+function rvoWeirdCsv() {
+  if (!RVO.loaded) { alert('Press Calculate first.'); return; }
+  var t = rvoWeirdTable(); if (t.length < 2) { alert('No weird part #s right now.'); return; }
+  var csv = t.map(function (r) { return r.map(function (c) { c = String(c == null ? '' : c); return /[",\n]/.test(c) ? '"' + c.replace(/"/g, '""') + '"' : c; }).join(','); }).join('\r\n');
+  var a = document.createElement('a');
+  a.href = URL.createObjectURL(new Blob(['\ufeff' + csv], { type: 'text/csv' }));
+  a.download = 'weird-part-numbers-' + new Date().toISOString().slice(0, 10) + '.csv';
+  document.body.appendChild(a); a.click(); a.remove();
+}
+function rvoCopyText(txt) {
+  if (navigator.clipboard && navigator.clipboard.writeText) navigator.clipboard.writeText(txt).then(function () { showToast('Copied'); }, function () { prompt('Copy:', txt); });
+  else prompt('Copy:', txt);
+}
 function rvoDaysSel() {
   var v = document.getElementById('rvo-days-sel').value, c = v === 'custom';
   document.getElementById('rvo-days').style.display = c ? '' : 'none';
@@ -3716,13 +3782,14 @@ async function rvoLoad() {
     var r = await wFetch(W + '/reorder/vendor-order?' + q);
     var d = await r.json();
     if (!d.ok) throw new Error(d.error || 'Failed');
-    RVO.loaded = true; RVO.rows = d.rows || []; RVO.meta = d; RVO.edits = {}; RVO.off = {};
+    RVO.loaded = true; RVO.rows = d.rows || []; RVO.meta = d; RVO.edits = {}; RVO.off = {}; RVO.titles = {}; RVO.titlesState = '';
     var sel = g('rvo-vendor'), cur = sel.value;
     sel.innerHTML = '<option value="">All vendors</option>' + (d.vendors || []).map(function (v) { return '<option value="' + escHtml(v) + '">' + escHtml(v) + '</option>'; }).join('') + '<option value="__none">(no vendor in SKU Mgr)</option>';
     if (cur) sel.value = cur;
     rvoRenderIncoming(d.incomingTitles || []);
     g('rvo-cat').innerHTML = (d.catalog || []).length ? d.catalog.map(function (c) { return '<b>' + escHtml(c.vendor) + '</b> ' + fmt0(c.n) + ' part #s <span style="opacity:.7">(' + escHtml(String(c.at || '').slice(0, 10)) + ')</span>'; }).join(' · ') : 'none imported yet — import JQ / EFF info sheets for descriptions, UPCs and FBA ASINs';
     rvoRender();
+    rvoLoadTitles();
   } catch (e) { g('rvo-wrap').innerHTML = '<div style="padding:20px;color:var(--red);font-size:13px">✗ ' + escHtml(e.message) + '</div>'; }
 }
 function rvoQty(r) { return RVO.edits[r.sku] != null ? RVO.edits[r.sku] : r.orderUnits; }
@@ -3732,8 +3799,10 @@ function rvoVisible() {
   return RVO.rows.filter(function (r) {
     if (v === '__none' ? r.vendor : (v && r.vendor !== v)) return false;
     var mergedTxt = (r.merged || []).map(function (m) { return m.part + ' ' + m.from.join(' '); }).join(' ');
-    if (q && (r.sku + ' ' + (r.from || []).join(' ') + ' ' + mergedTxt + ' ' + (r.asin || '') + ' ' + (r.description || '').toUpperCase()).indexOf(q) === -1) return false;
+    var lt = rvoTitlesOf(r).map(function (t) { return t.title; }).join(' ').toUpperCase();
+    if (q && (r.sku + ' ' + (r.from || []).join(' ') + ' ' + mergedTxt + ' ' + (r.asin || '') + ' ' + (r.description || '').toUpperCase() + ' ' + lt).indexOf(q) === -1) return false;
     if (q && mergedTxt.indexOf(q) !== -1) return true; // found through a corrected part # — show even if nothing to order
+    if (document.getElementById('rvo-weird').checked) return rvoWeird(r);
     if (document.getElementById('rvo-problems').checked) return (r.issues || []).length > 0;
     return all || r.orderUnits > 0 || RVO.edits[r.sku] > 0;
   });
@@ -3755,9 +3824,16 @@ function rvoCols() {
         + ((r.from || []).length ? '<div style="font-size:10.5px;color:var(--text3);font-family:var(--mono)">from: ' + r.from.map(escHtml).join(', ') + '</div>' : '')
         + (Object.keys(r.channels || {}).length ? '<div style="font-size:10.5px;color:var(--text3)" title="Units sold in the window, by channel">Sales: ' + Object.keys(r.channels).map(function (c) { return c + ' ' + fmt0(r.channels[c]); }).join(' · ') + '</div>' : '')
         + (r.merged || []).map(function (m) { return '<div style="font-size:10.5px;color:#1A56DB;font-family:var(--mono)" title="Not ordered as its own part # — its sales are counted in this row">+ sales of ' + escHtml(m.part) + (m.from.length ? ' (from ' + m.from.map(escHtml).join(', ') + ')' : '') + '</div>'; }).join('')
-        + (iss.length ? '<div style="font-size:10.5px;color:var(--red);white-space:normal">⚠ ' + iss.map(escHtml).join(' · ') + '</div>' : ''); } },
+        + (iss.length ? '<div style="font-size:10.5px;color:var(--red);white-space:normal">⚠ ' + iss.map(escHtml).join(' · ') + '</div>' : '')
+        + (rvoWeird(r) ? rvoTitlesOf(r).map(function (t) { var u = rvoListingUrl(t);
+            return '<div style="font-size:10.5px;white-space:normal;margin-top:3px;padding:3px 5px;background:var(--bg3);border-radius:5px" title="Listing title — use it to find the right part #">'
+              + '<b>' + escHtml(t.platform) + '</b> ' + (u ? '<a href="' + u + '" target="_blank" rel="noopener">' + escHtml(t.title) + '</a>' : escHtml(t.title))
+              + ' <button data-t="' + escHtml(t.title).replace(/"/g, '&quot;') + '" onclick="rvoCopyText(this.dataset.t)" title="Copy this title" style="border:none;background:none;cursor:pointer;padding:0 2px;font-size:11px">📋</button></div>'; }).join('')
+            + (RVO.titlesState === 'loading' ? '<div style="font-size:10.5px;color:var(--text3)">Finding listing title…</div>'
+              : RVO.titlesState === 'done' && !rvoTitlesOf(r).length ? '<div style="font-size:10.5px;color:var(--text3)">No listing title found</div>' : '') : ''); } },
     { k: 'asin', label: 'FBA ASIN', w: 110, sort: function (r) { return r.asin || '~'; }, cell: function (r) { return r.asin ? '<a href="https://www.amazon.com/dp/' + encodeURIComponent(r.asin) + '" target="_blank" rel="noopener" style="font-family:var(--mono)">' + escHtml(r.asin) + '</a>' : '—'; } },
-    { k: 'desc', label: 'Description', w: 220, sort: function (r) { return (r.description || '~').toUpperCase(); }, cell: function (r) { return miss(r.description); }, wrap: true },
+    { k: 'desc', label: 'Description', w: 220, sort: function (r) { return (r.description || '~').toUpperCase(); }, cell: function (r) { if (r.description) return escHtml(r.description); var t = rvoTitlesOf(r)[0];
+      return t ? '<i title="Not saved yet — from the ' + escHtml(t.platform) + ' listing. ✏️ to save it.">' + escHtml(t.title) + '</i><div style="font-size:10px;color:var(--text3)">from ' + escHtml(t.platform) + ' listing</div>' : miss(''); }, wrap: true },
     { k: 'vendor', label: 'Vendor', w: 80, sort: function (r) { return r.vendor || '~'; }, cell: function (r) { return miss(r.vendor); } },
     { k: 'oupc', label: 'Outside box UPC', w: 150, sort: function (r) { return r.outsideUpc || '~'; }, cell: function (r) { return '<span style="font-family:var(--mono)">' + miss(r.outsideUpc) + '</span>'; } },
     { k: 'iupc', label: 'Inside bag UPC', w: 150, sort: function (r) { return r.insideUpc || '~'; }, cell: function (r) { return '<span style="font-family:var(--mono)">' + miss(r.insideUpc) + '</span>'; } },
@@ -4096,11 +4172,13 @@ function rvoOpenEdit(i) {
   var r = RVO.rows[i]; if (!r) return; RVO_EDIT = r;
   var raws = (r.from && r.from.length) ? r.from : [r.sku];
   document.getElementById('rvo-e-from').innerHTML = 'Showing as <b style="font-family:var(--mono)">' + escHtml(r.sku) + '</b>' + (r.from && r.from.length ? ' · from: <span style="font-family:var(--mono)">' + r.from.map(escHtml).join(', ') + '</span>' : '')
-    + (r.issues && r.issues.length ? '<div style="color:var(--red);margin-top:4px">⚠ ' + r.issues.map(escHtml).join(' · ') + '</div>' : '');
-  var vals = { part: r.sku, description: r.description, outside_upc: r.outsideUpc, inside_upc: r.insideUpc, vendor: r.vendor, asin: r.asin, case_qty: r.caseQty || '' };
+    + (r.issues && r.issues.length ? '<div style="color:var(--red);margin-top:4px">⚠ ' + r.issues.map(escHtml).join(' · ') + '</div>' : '')
+    + rvoTitlesOf(r).map(function (t) { var u = rvoListingUrl(t); return '<div style="margin-top:4px;font-size:12px">📝 <b>' + escHtml(t.platform) + ' listing:</b> ' + (u ? '<a href="' + u + '" target="_blank" rel="noopener">' + escHtml(t.title) + '</a>' : escHtml(t.title)) + '</div>'; }).join('');
+  var lt = rvoTitlesOf(r)[0];
+  var vals = { part: r.sku, description: r.description || (lt ? lt.title : ''), outside_upc: r.outsideUpc, inside_upc: r.insideUpc, vendor: r.vendor, asin: r.asin, case_qty: r.caseQty || '' };
   document.getElementById('rvo-e-fields').innerHTML = RVO_FIELDS.map(function (f) {
     return '<label style="display:block;font-size:11px;font-weight:700;color:var(--text3);text-transform:uppercase;margin-top:8px">' + f[1] + '</label>'
-      + '<input id="rvo-e-' + f[0] + '" value="' + escHtml(vals[f[0]] == null ? '' : String(vals[f[0]])) + '" ' + (f[0] === 'case_qty' ? 'type="number" min="0"' : '')
+      + '<input id="rvo-e-' + f[0] + '" value="' + escHtml(vals[f[0]] == null ? '' : String(vals[f[0]])).replace(/"/g, '&quot;') + '" ' + (f[0] === 'case_qty' ? 'type="number" min="0"' : '')
       + ' style="width:100%;box-sizing:border-box;padding:7px 9px;margin-top:3px;border:1.5px solid var(--border);border-radius:7px;font-size:13px;' + (/part|upc|asin/.test(f[0]) ? 'font-family:var(--mono)' : '') + '">'
       + (f[0] === 'part' ? '<div style="font-size:11px;color:var(--text3);margin-top:2px">Change it to the right part # — ' + raws.map(escHtml).join(', ') + ' will be read as this from now on.</div>' : '');
   }).join('');
