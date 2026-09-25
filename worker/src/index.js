@@ -1061,9 +1061,26 @@ async function reorderCatalogImport(request, env, session) {
 async function reorderSaveFix(request, env, session) {
   await reorderFixTables(env);
   const b = await request.json().catch(() => ({}));
+  const r = await reorderSaveFixOne(env, b, _roWho(session));
+  return _roResp(r, r.ok ? 200 : 400);
+}
+// POST /reorder/fix/batch { items: [ same body as /reorder/fix, … ] } — the
+// table's "💾 Save all": every row edited in place saved in one request.
+async function reorderSaveFixBatch(request, env, session) {
+  await reorderFixTables(env);
+  const b = await request.json().catch(() => ({}));
+  const who = _roWho(session), results = [];
+  for (const it of (Array.isArray(b.items) ? b.items : []).slice(0, 300)) {
+    try { results.push({ key: it.key, ...(await reorderSaveFixOne(env, it || {}, who)) }); }
+    catch (e) { results.push({ key: it && it.key, ok: false, error: String(e.message || e).slice(0, 200) }); }
+  }
+  return _roResp({ ok: results.every(r => r.ok), results });
+}
+// One row's fix. Fields not sent keep what was saved before.
+async function reorderSaveFixOne(env, b, who) {
   const part = reorderCleanPart(b.part);
-  if (!part) return _roResp({ ok: false, error: 'Part # required' }, 400);
-  const who = _roWho(session), now = new Date().toISOString();
+  if (!part) return { ok: false, error: 'Part # required' };
+  const now = new Date().toISOString();
   const before = await env.DB.prepare('SELECT * FROM reorder_fix WHERE part = ?').bind(part).first() || {};
   for (const raw0 of (Array.isArray(b.raws) ? b.raws : []).slice(0, 20)) {
     const raw = String(raw0 || '').trim().toUpperCase();
@@ -1077,7 +1094,9 @@ async function reorderSaveFix(request, env, session) {
     if (raw === part) await env.DB.prepare('DELETE FROM reorder_alias WHERE raw = ?').bind(raw).run();
     else await env.DB.prepare(`INSERT INTO reorder_alias (raw, part, by_user, updated_at) VALUES (?,?,?,?) ON CONFLICT(raw) DO UPDATE SET part = excluded.part, by_user = excluded.by_user, updated_at = excluded.updated_at`).bind(raw, part, who, now).run();
   }
-  const f = b.fields || {}, t = v => { v = (v == null ? '' : String(v)).trim(); return v ? v.slice(0, 300) : null; };
+  const f0 = b.fields || {}, has = k => Object.prototype.hasOwnProperty.call(f0, k);
+  const f = {}; ['description', 'outside_upc', 'inside_upc', 'vendor', 'asin', 'case_qty'].forEach(k => { f[k] = has(k) ? f0[k] : before[k]; });
+  const t = v => { v = (v == null ? '' : String(v)).trim(); return v ? v.slice(0, 300) : null; };
   const cq = parseFloat(f.case_qty);
   const vals = [t(f.description), t(f.outside_upc), t(f.inside_upc), t(f.vendor), t(f.asin) && t(f.asin).toUpperCase(), Number.isFinite(cq) && cq > 0 ? cq : null];
   if (vals.every(v => v == null)) await env.DB.prepare('DELETE FROM reorder_fix WHERE part = ?').bind(part).run();
@@ -1091,10 +1110,10 @@ async function reorderSaveFix(request, env, session) {
     // "was" = the saved fix, else what the page showed (vendor sheet / SKU Mgr).
     const shown = (b.was && b.was[k] != null) ? String(b.was[k]) : '';
     const a = before[k] != null ? String(before[k]) : shown, z = vals[i] == null ? '' : String(vals[i]);
-    if (a !== z && Object.prototype.hasOwnProperty.call(f, k)) changes.push(`${lab[k] || k}: ${a || '—'} → ${z || '(cleared)'}`);
+    if (a !== z && has(k)) changes.push(`${lab[k] || k}: ${a || '—'} → ${z || '(cleared)'}`);
   });
   if (changes.length) await reorderLog(env, who, 'edit', part, changes.join(' · '));
-  return _roResp({ ok: true, part });
+  return { ok: true, part };
 }
 
 // ── GET /reorder/vendor-order — Reorder Planner → "🧾 Reorder" tab ──────────
@@ -4074,6 +4093,7 @@ export default {
         const fixes = (await env.DB.prepare('SELECT * FROM reorder_fix ORDER BY updated_at DESC').all()).results || [];
         return _roResp({ ok: true, aliases, fixes });
       }
+      if (url.pathname === '/reorder/fix/batch' && method === 'POST') return await reorderSaveFixBatch(request, env, roCs || session);
       if (url.pathname === '/reorder/fix' && method === 'POST') {
         return await reorderSaveFix(request, env, roCs || session);
       }
