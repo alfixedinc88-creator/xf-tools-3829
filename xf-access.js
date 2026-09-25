@@ -177,3 +177,173 @@ window.addEventListener('pageshow', function (e) { if (e.persisted) location.rel
   load();
   setInterval(tick, 1500);
 })();
+
+// ── ⌨️ On-screen keyboard for sign-in ─────────────────────────────────────────
+// A phone paired with a Bluetooth barcode scanner treats the scanner as a
+// keyboard, so the phone's own keyboard stops popping up — nobody can type
+// their username / password. Every sign-in box (username, password, and the
+// password re-check boxes) gets a "⌨️ Keyboard" link that opens this
+// keyboard. Once used, it opens by itself on those boxes (remembered per
+// phone) until someone closes it with ✕.
+(function () {
+  var SEL = 'input[autocomplete="username"], input[type="password"]';
+  var PREF = 'xf_osk';
+  var kb = null, target = null, shift = 0, sym = false, lastShift = 0, lifted = null;
+  var ROWS = [['1','2','3','4','5','6','7','8','9','0'], ['q','w','e','r','t','y','u','i','o','p'], ['a','s','d','f','g','h','j','k','l'], ['⇧','z','x','c','v','b','n','m','⌫'], ['?123','@','.','space','⏎','✕']];
+  var SYM = [['1','2','3','4','5','6','7','8','9','0'], ['!','@','#','$','%','^','&','*','(',')'], ['-','_','=','+','/','\\',':',';','\''], ['"',',','.','?','~','`','[',']','⌫'], ['ABC','{','}','space','⏎','✕']];
+  function pref(v) { try { if (v === undefined) return localStorage.getItem(PREF) === '1'; localStorage.setItem(PREF, v ? '1' : '0'); } catch (e) {} return false; }
+  function visible(el) { return !!(el && el.offsetParent !== null); }
+  function css() {
+    if (document.getElementById('xf-osk-css')) return;
+    var s = document.createElement('style'); s.id = 'xf-osk-css';
+    s.textContent = '#xf-osk{position:fixed;left:0;right:0;bottom:0;z-index:2147483000;background:#d1d5db;padding:6px 4px calc(6px + env(safe-area-inset-bottom));box-shadow:0 -4px 16px rgba(0,0,0,.18);user-select:none;-webkit-user-select:none;touch-action:manipulation;font-family:system-ui,-apple-system,sans-serif}'
+      + '#xf-osk .r{display:flex;gap:5px;justify-content:center;margin:0 auto 6px;max-width:560px}'
+      + '#xf-osk button{flex:1 1 0;min-width:0;height:44px;border:none;border-radius:7px;background:#fff;color:#111;font-size:19px;box-shadow:0 1px 0 rgba(0,0,0,.25);padding:0;cursor:pointer}'
+      + '#xf-osk button:active{background:#9ca3af}'
+      + '#xf-osk button.w{background:#aeb4bd;font-size:15px}#xf-osk button.on{background:#1a56db;color:#fff}'
+      + '#xf-osk button.sp{flex:4 1 0}#xf-osk button.go{flex:1.6 1 0;background:#1a56db;color:#fff;font-weight:700;font-size:15px;white-space:nowrap}'
+      + '#xf-osk .hd{display:flex;align-items:center;gap:8px;max-width:560px;margin:0 auto 6px;font-size:13px;color:#374151;padding:0 4px}'
+      + '#xf-osk .hd b{flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}'
+      + '.xf-osk-link{display:inline-block;margin:-6px 0 10px;font-size:13px;color:#1a56db;background:none;border:none;padding:4px 0;cursor:pointer;text-decoration:underline}';
+    document.head.appendChild(s);
+  }
+  function label(el) {
+    if (!el) return '';
+    var what = el.type === 'password' ? 'Password' : 'Username';
+    var v = el.type === 'password' ? el.value.replace(/./g, '•') : el.value;
+    return what + ': ' + (v || '…');
+  }
+  function draw() {
+    if (!kb) return;
+    var rows = sym ? SYM : ROWS, up = shift > 0;
+    kb.innerHTML = '<div class="hd"><b id="xf-osk-lb"></b></div>' + rows.map(function (r) {
+      return '<div class="r">' + r.map(function (k) {
+        var t = k, c = '';
+        if (k === 'space') { t = 'space'; c = 'sp w'; }
+        else if (k === '⏎') { t = target && target.type === 'password' ? 'Sign In' : 'Next'; c = 'go'; }
+        else if (k === '⇧') { c = 'w' + (shift ? ' on' : ''); t = shift === 2 ? '⇪' : '⇧'; }
+        else if (k === '⌫' || k === '✕' || k === '?123' || k === 'ABC') c = 'w';
+        else if (up && k.length === 1) t = k.toUpperCase();
+        return '<button type="button" data-k="' + k.replace(/"/g, '&quot;') + '" class="' + c + '">' + t.replace(/&/g, '&amp;').replace(/</g, '&lt;') + '</button>';
+      }).join('') + '</div>';
+    }).join('');
+    var lb = document.getElementById('xf-osk-lb'); if (lb) lb.textContent = label(target);
+  }
+  function type(ch) {
+    if (!target) return;
+    try {
+      var a = target.selectionStart, b = target.selectionEnd;
+      if (a == null) throw 0;
+      target.setRangeText(ch, a, b, 'end');
+    } catch (e) { target.value += ch; }
+    target.dispatchEvent(new Event('input', { bubbles: true }));
+  }
+  function back() {
+    if (!target) return;
+    try {
+      var a = target.selectionStart, b = target.selectionEnd;
+      if (a == null) throw 0;
+      if (a === b && a > 0) a--;
+      target.setRangeText('', a, b, 'end');
+    } catch (e) { target.value = target.value.slice(0, -1); }
+    target.dispatchEvent(new Event('input', { bubbles: true }));
+  }
+  function box(el) { // the sign-in card around a box
+    var p = el; for (var i = 0; i < 6 && p && p.parentElement; i++) { p = p.parentElement; if (p.querySelector('button:not(.xf-osk-link)')) return p; }
+    return el.parentElement;
+  }
+  function enter() {
+    if (!target) return;
+    var card = box(target);
+    if (target.type !== 'password') {
+      var pw = card && card.querySelector('input[type="password"]');
+      if (pw && visible(pw)) { focus(pw); return; }
+    }
+    var btns = card ? [].slice.call(card.querySelectorAll('button')).filter(function (x) { return !x.classList.contains('xf-osk-link') && visible(x) && !x.disabled; }) : [];
+    var go = btns.filter(function (x) { return /sign\s*in|log\s*in|login|confirm|verify|unlock|continue|ok\b|submit/i.test(x.textContent); })[0] || btns[0];
+    hide(true);
+    if (go) go.click();
+    else target.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', keyCode: 13, which: 13, bubbles: true }));
+  }
+  function press(k) {
+    if (k === '⌫') back();
+    else if (k === '⇧') { var now = Date.now(); shift = shift === 0 ? (now - lastShift < 350 ? 2 : 1) : (shift === 1 && now - lastShift < 350 ? 2 : 0); lastShift = now; }
+    else if (k === '?123') sym = true;
+    else if (k === 'ABC') sym = false;
+    else if (k === 'space') type(' ');
+    else if (k === '⏎') { enter(); return; }
+    else if (k === '✕') { pref(false); hide(); return; }
+    else { type(shift && k.length === 1 ? k.toUpperCase() : k); if (shift === 1) shift = 0; }
+    draw();
+  }
+  function lift(on) { // move a centred sign-in card up so the keyboard doesn't cover it
+    if (lifted) { lifted.el.style.paddingBottom = lifted.pb; lifted = null; }
+    if (!on || !target || !kb) return;
+    var p = target;
+    while (p && p !== document.body) { if (getComputedStyle(p).position === 'fixed') break; p = p.parentElement; }
+    if (p && p !== document.body) { lifted = { el: p, pb: p.style.paddingBottom }; p.style.paddingBottom = kb.offsetHeight + 'px'; }
+    else { try { target.scrollIntoView({ block: 'center' }); } catch (e) {} }
+  }
+  function show(el) {
+    css();
+    if (target && target !== el && target.dataset.xfOskIm != null) { target.setAttribute('inputmode', target.dataset.xfOskIm); if (!target.dataset.xfOskIm) target.removeAttribute('inputmode'); delete target.dataset.xfOskIm; }
+    target = el;
+    if (el.dataset.xfOskIm == null) { el.dataset.xfOskIm = el.getAttribute('inputmode') || ''; el.setAttribute('inputmode', 'none'); } // no double keyboard
+    if (!kb) {
+      kb = document.createElement('div'); kb.id = 'xf-osk';
+      kb.addEventListener('pointerdown', function (e) { var b = e.target.closest('button'); e.preventDefault(); e.xfOsk = 1; if (b) press(b.getAttribute('data-k')); });
+      kb.addEventListener('mousedown', function (e) { e.preventDefault(); }); // keep focus in the sign-in box
+      document.body.appendChild(kb);
+    }
+    kb.style.display = ''; draw(); place(); lift(true);
+  }
+  // Pin to what's actually on screen (some pages are wider than the phone).
+  function place() {
+    if (!kb || kb.style.display === 'none') return;
+    var v = window.visualViewport;
+    if (!v) return;
+    kb.style.right = 'auto'; kb.style.bottom = 'auto';
+    kb.style.width = v.width + 'px'; kb.style.left = v.offsetLeft + 'px';
+    kb.style.top = (v.offsetTop + v.height - kb.offsetHeight) + 'px';
+  }
+  if (window.visualViewport) { visualViewport.addEventListener('resize', place); visualViewport.addEventListener('scroll', place); }
+  window.addEventListener('scroll', place, { passive: true });
+  function hide(keepPref) {
+    if (kb) kb.style.display = 'none';
+    lift(false);
+    if (target && target.dataset.xfOskIm != null) { if (target.dataset.xfOskIm) target.setAttribute('inputmode', target.dataset.xfOskIm); else target.removeAttribute('inputmode'); delete target.dataset.xfOskIm; }
+    target = null;
+  }
+  function focus(el) { try { el.focus({ preventScroll: true }); } catch (e) { el.focus(); } show(el); }
+  function isBox(el) { return el && el.matches && el.matches(SEL) && !el.readOnly && !el.disabled; }
+  // "⌨️ Keyboard" link under each password box (and under a username box with no password box after it).
+  function links() {
+    [].slice.call(document.querySelectorAll(SEL)).forEach(function (el) {
+      if (el.dataset.xfOsk) return; el.dataset.xfOsk = '1';
+      if (el.type !== 'password') { var c = box(el); if (c && c.querySelector('input[type="password"]')) return; }
+      css();
+      var a = document.createElement('button'); a.type = 'button'; a.className = 'xf-osk-link'; a.textContent = '⌨️ Keyboard';
+      a.title = 'On-screen keyboard — use it when a scanner is connected and the phone keyboard doesn\'t come up';
+      a.addEventListener('pointerdown', function (e) { e.preventDefault(); });
+      a.addEventListener('click', function (e) {
+        e.preventDefault(); pref(true);
+        var c = box(el), u = c && c.querySelector('input[autocomplete="username"]');
+        focus(u && visible(u) && !u.value ? u : el);
+      });
+      el.insertAdjacentElement('afterend', a);
+    });
+  }
+  document.addEventListener('focusin', function (e) {
+    var el = e.target;
+    if (isBox(el)) { if (kb && kb.style.display !== 'none') show(el); else if (pref()) show(el); }
+    else if (kb && kb.style.display !== 'none' && !(kb.contains(el))) hide(true);
+  });
+  // Hide when the sign-in box goes away (signed in) or someone taps elsewhere.
+  setInterval(function () { if (target && !visible(target)) hide(true); }, 700);
+  document.addEventListener('pointerdown', function (e) {
+    if (e.xfOsk || !kb || kb.style.display === 'none' || kb.contains(e.target) || isBox(e.target) || (e.target.closest && e.target.closest('.xf-osk-link'))) return;
+    hide(true);
+  });
+  function start() { links(); setInterval(links, 2000); }
+  if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', start); else start();
+})();
