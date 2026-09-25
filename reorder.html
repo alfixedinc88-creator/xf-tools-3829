@@ -3751,7 +3751,9 @@ function rvoCols() {
     { k: 'sku', label: 'Part #', w: 190, sort: function (r) { return r.sku; }, cell: function (r) { var iss = r.issues || [];
       return '<b style="font-family:var(--mono)">' + escHtml(r.sku) + '</b>' + (r.fbaSku ? ' <span title="Sent to FBA" style="font-size:10px;color:#b45309">FBA</span>' : '')
         + (r.fixed ? ' <span title="Has your saved fixes" style="font-size:10px;color:var(--green)">✎</span>' : '')
+        + (r.amazonCode ? ' <span title="A code Amazon made up when the listing was created without our part #. Open the ASIN to see the listing, then ✏️ to map it to the right part #." style="font-size:10px;color:#b45309;border:1px solid #fcd34d;border-radius:4px;padding:0 3px">Amazon seller SKU</span>' : '')
         + ((r.from || []).length ? '<div style="font-size:10.5px;color:var(--text3);font-family:var(--mono)">from: ' + r.from.map(escHtml).join(', ') + '</div>' : '')
+        + (Object.keys(r.channels || {}).length ? '<div style="font-size:10.5px;color:var(--text3)" title="Units sold in the window, by channel">Sales: ' + Object.keys(r.channels).map(function (c) { return c + ' ' + fmt0(r.channels[c]); }).join(' · ') + '</div>' : '')
         + (r.merged || []).map(function (m) { return '<div style="font-size:10.5px;color:#1A56DB;font-family:var(--mono)" title="Not ordered as its own part # — its sales are counted in this row">+ sales of ' + escHtml(m.part) + (m.from.length ? ' (from ' + m.from.map(escHtml).join(', ') + ')' : '') + '</div>'; }).join('')
         + (iss.length ? '<div style="font-size:10.5px;color:var(--red);white-space:normal">⚠ ' + iss.map(escHtml).join(' · ') + '</div>' : ''); } },
     { k: 'asin', label: 'FBA ASIN', w: 110, sort: function (r) { return r.asin || '~'; }, cell: function (r) { return r.asin ? '<a href="https://www.amazon.com/dp/' + encodeURIComponent(r.asin) + '" target="_blank" rel="noopener" style="font-family:var(--mono)">' + escHtml(r.asin) + '</a>' : '—'; } },

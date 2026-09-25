@@ -1138,6 +1138,13 @@ async function reorderVendorOrder(env, url) {
   };
   const cat = {}; (await all('SELECT * FROM reorder_vendor_catalog ORDER BY vendor')).forEach(r => { const k = U(r.part); if (!cat[k]) cat[k] = r; });
   const fixes = {}; (await all('SELECT * FROM reorder_fix')).forEach(r => { fixes[U(r.part)] = r; });
+  // ASIN for any SKU Amazon knows — incl. Amazon's own auto seller SKUs like
+  // "0H-9TMH-JBU7" (sales report + FBA inventory report), so those rows can
+  // link to the listing too. Keyed by the raw SKU and by the corrected part #.
+  const asinOf = {}, amzName = {};
+  const addAsin = (sku, asin, name) => { if (!sku || !asin) return; [U(sku), P(sku)].forEach(k => { if (!asinOf[k]) asinOf[k] = String(asin).trim(); if (name && !amzName[k]) amzName[k] = name; }); };
+  (await all(`SELECT sku, MAX(asin) AS asin FROM amazon_sales_weekly WHERE asin IS NOT NULL AND asin != '' GROUP BY sku`)).forEach(r => addAsin(r.sku, r.asin));
+  (await all('SELECT sku, asin, product_name FROM amazon_fba_inventory')).forEach(r => addAsin(r.sku, r.asin, r.product_name));
   const incoming = {}; // part → { title: units }
   (await all('SELECT title, part, qty FROM reorder_incoming')).forEach(r => { const k = P(r.part); (incoming[k] = incoming[k] || {})[r.title] = (incoming[k][r.title] || 0) + (r.qty || 0); });
   const incUnitsOf = k => Object.values(incoming[k] || {}).reduce((a, x) => a + x, 0);
@@ -1145,12 +1152,14 @@ async function reorderVendorOrder(env, url) {
 
   const fba = await all('SELECT sku, asin, available, product_name FROM fba_catalog');
   const sales = {}; // exact SKU → { amz, other } in units (listing orders)
-  const chans = [['amazon_sales_weekly', 'amz'], ['ebay_sales_weekly', 'other'], ['walmart_sales_weekly', 'other'], ['shopify_sales_weekly', 'other']];
+  const chans = [['amazon_sales_weekly', 'amz', 'Amazon'], ['ebay_sales_weekly', 'other', 'eBay'], ['walmart_sales_weekly', 'other', 'Walmart'], ['shopify_sales_weekly', 'other', 'Shopify']];
+  const chanUnits = {}; // part # → { Amazon: units, eBay: … } — where a row's sales came from
   let dataFrom = null;
-  for (const [t, k] of chans) {
+  for (const [t, k, label] of chans) {
     for (const r of await all(`SELECT sku, SUM(units_ordered) AS u FROM ${t} WHERE period_start >= ? GROUP BY sku`, since)) {
       const s = P(r.sku); if (!s) continue;
       (sales[s] = sales[s] || { amz: 0, other: 0 })[k] += r.u || 0;
+      const cu = chanUnits[s] = chanUnits[s] || {}; cu[label] = (cu[label] || 0) + (r.u || 0);
     }
     const m = await all(`SELECT MIN(period_start) AS m FROM ${t}`);
     if (m[0] && m[0].m && (!dataFrom || m[0].m < dataFrom)) dataFrom = m[0].m;
@@ -1252,8 +1261,10 @@ async function reorderVendorOrder(env, url) {
       const row = {
         sku: t.sku, baseSku: b, fbaSku: t.fbaSku, packSize: ps,
         from: [...(fromMap[t.sku] || [])],
-        asin: pick(fx.asin, t.asin, ct.asin),
-        description: pick(fx.description, ct.description, sm.name, bo.name, prodName[b], t.fbaName),
+        asin: pick(fx.asin, t.asin, ct.asin, asinOf[t.sku], ...[...(fromMap[t.sku] || [])].map(r => asinOf[r])),
+        description: pick(fx.description, ct.description, sm.name, bo.name, prodName[b], t.fbaName, amzName[t.sku]),
+        channels: chanUnits[t.sku] || {},
+        amazonCode: /^[0-9A-Z]{2}-[0-9A-Z]{4}-[0-9A-Z]{4}$/.test(t.sku),
         vendor: pick(fx.vendor, ct.vendor, sm.vendor, bo.vendor),
         outsideUpc: pick(fx.outside_upc, ct.outside_upc, u.outside_upc), insideUpc: pick(fx.inside_upc, ct.inside_upc, u.inside_upc),
         itemNo: pick(ct.item_no), caseSrc, fixed: !!fixes[t.sku],
