@@ -2089,6 +2089,9 @@ body { display:flex; flex-direction:column; min-height:100vh; background:var(--b
       <div style="display:flex;gap:12px;align-items:center;flex-wrap:wrap;margin-bottom:10px;font-size:12px;color:var(--text3)">
         <label style="display:flex;align-items:center;gap:5px">Vendor:
           <select id="rvo-vendor" onchange="rvoRender()" style="font-size:12px;padding:4px 6px;border-radius:6px;border:1px solid var(--border);min-width:140px"><option value="">All vendors</option></select></label>
+        <label style="display:flex;align-items:center;gap:5px" title="FBA = part #s we send to Amazon FBA · Not FBA = everything else (sold only on eBay / Walmart / Shopify / FBM)">Listings:
+          <select id="rvo-fbaf" onchange="rvoRender()" style="font-size:12px;padding:4px 6px;border-radius:6px;border:1px solid var(--border)">
+            <option value="">All</option><option value="fba">FBA listings only</option><option value="nofba">Not in FBA only</option></select></label>
         <label style="display:flex;align-items:center;gap:5px">Search:
           <input type="text" id="rvo-q" placeholder="Part #, e.g. 27-3-1" oninput="rvoRender()" style="width:150px;font-size:12px;padding:4px 8px;border-radius:6px;border:1px solid var(--border);font-family:var(--mono)"></label>
         <label style="display:flex;align-items:center;gap:5px"><input type="checkbox" id="rvo-all" onchange="rvoRender()"> Show parts that don't need ordering</label>
@@ -3798,6 +3801,8 @@ function rvoVisible() {
   var all = document.getElementById('rvo-all').checked;
   return RVO.rows.filter(function (r) {
     if (v === '__none' ? r.vendor : (v && r.vendor !== v)) return false;
+    var ff = document.getElementById('rvo-fbaf').value;
+    if ((ff === 'fba' && !r.fbaSku) || (ff === 'nofba' && r.fbaSku)) return false;
     var mergedTxt = (r.merged || []).map(function (m) { return m.part + ' ' + m.from.join(' '); }).concat((r.sameAsin || []).map(function (x) { return x.sku; })).join(' ');
     var lt = rvoTitlesOf(r).map(function (t) { return t.title; }).join(' ').toUpperCase();
     if (q && (r.sku + ' ' + (r.from || []).join(' ') + ' ' + mergedTxt + ' ' + (r.asin || '') + ' ' + (r.description || '').toUpperCase() + ' ' + lt).indexOf(q) === -1) return false;
