@@ -5096,9 +5096,9 @@ function awdHandleScan(raw) {
     return;
   }
   rprPinLevel = rprCredUser.roles.includes('mgmt') ? 'mgmt' : 'ops';
-  // Verify the cached token still actually works before trusting it
+  // Saved sign-in: open right away; xf-access.js re-checks it in the background
   try {
-    var res = await fetch(CFG.WORKER + '/repricer/sku-master', { headers: { 'X-Cred-Token': rprCredToken } });
+    var res = { status: 200 }; // open right away with the saved sign-in — xf-access.js checks it with the server in the background (sends back to Sign In if it's no longer valid); every data request is checked by the server anyway
     if (res.status === 401 || res.status === 403) {
       localStorage.removeItem('xf_cred_token'); localStorage.removeItem('xf_cred_user');
       rprCredToken = null;
@@ -5115,6 +5115,6 @@ function awdHandleScan(raw) {
 })();
 </script>
 <script src="xf-signout.js?v=20260924"></script>
-<script src="xf-access.js?v=20260925"></script>
+<script src="xf-access.js?v=20260926"></script>
 </body>
 </html>

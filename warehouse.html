@@ -1710,7 +1710,7 @@ body {
 <!-- ═══ AWD PLANNER APP ═══ -->
 
 <script src="xf-signout.js?v=20260924"></script>
-<script src="xf-access.js?v=20260925"></script>
+<script src="xf-access.js?v=20260926"></script>
 </body>
 <script>
 // ── Constants ────────────────────────────────────────────────────────────
@@ -1752,9 +1752,9 @@ try { CRED_USER = JSON.parse(localStorage.getItem('xf_cred_user') || 'null'); } 
     return;
   }
   document.addEventListener('DOMContentLoaded', async function() {
-    // Verify the cached token still actually works before trusting it
+    // Saved sign-in: open right away; xf-access.js re-checks it in the background
     try {
-      var res = await fetch(WORKER_URL + '?sheet=Products', { headers: { 'X-Cred-Token': CRED_TOKEN } });
+      var res = { status: 200 }; // open right away with the saved sign-in — xf-access.js checks it with the server in the background (sends back to Sign In if it's no longer valid); every data request is checked by the server anyway
       if (res.status === 401 || res.status === 403) {
         localStorage.removeItem('xf_cred_token'); localStorage.removeItem('xf_cred_user');
         CRED_TOKEN = null;

@@ -266,6 +266,14 @@ window.ldashCredLogin = async function() {
     btn.disabled = false; btn.textContent = 'Sign In';
   }
 };
+// Already signed in (mgmt) on this device → open straight away; xf-access.js
+// re-checks the sign-in with the server in the background.
+document.addEventListener('DOMContentLoaded', function () {
+  if (!LD_CRED_TOKEN || !LD_CRED_USER || !LD_CRED_USER.roles || !LD_CRED_USER.roles.includes('mgmt')) return;
+  document.getElementById('ldash-cred-gate').style.display = 'none';
+  document.getElementById('ldash-app').style.display = 'flex';
+  if (typeof ldashOnLaunch === 'function') ldashOnLaunch();
+});
 </script>
 
 <script>
@@ -657,6 +665,6 @@ window.ldashCredLogin = async function() {
 </script>
 
 <script src="xf-signout.js?v=20260924"></script>
-<script src="xf-access.js?v=20260925"></script>
+<script src="xf-access.js?v=20260926"></script>
 </body>
 </html>

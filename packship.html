@@ -2254,17 +2254,24 @@ var psBatchClosed = { ALL: null };
 
 // Called by main app launchApp('packship')
 window.psOnLaunch = function() {
-  // Deliberately always shows the sign-in overlay on open, not restored
-  // from a cached token - this is a genuinely shared device between
-  // shifts/workers, so every open should be a real, fresh identity check
-  // rather than silently continuing as whoever last signed in (possibly
-  // on a different app entirely, via the shared credential token).
-  document.getElementById('ps-signin-overlay').style.display = 'flex';
+  // Already signed in on this device (any page) → straight in, no second
+  // sign-in. Scans are credited to whoever is signed in, so on a shared
+  // phone the next person taps 🚪 Sign Out first. xf-access.js re-checks
+  // the saved sign-in with the server in the background.
+  var r = (psCredUser && psCredUser.roles) || [];
+  var resume = !!(psCredToken && (r.includes('mobile') || r.includes('ops') || r.includes('mgmt')));
+  document.getElementById('ps-signin-overlay').style.display = resume ? 'none' : 'flex';
   document.getElementById('ps-tb-date').textContent = new Date().toLocaleDateString('en-US', { weekday:'short', month:'short', day:'numeric' });
   // Wire up events only once
   if (!window._psEventsWired) {
     _psWireEvents();
     window._psEventsWired = true;
+  }
+  if (resume) {
+    psRole = r.includes('mgmt') ? 'mgmt' : 'mobile';
+    psInitials = psCredUser.displayName || '';
+    if (psRole === 'mgmt') ['status','gaps','undelivered','vsync','valerts','autolabel'].forEach(function(t){ _psUnlockedTabs[t] = true; });
+    _psLaunchInner();
   }
 };
 
@@ -8461,5 +8468,5 @@ window.psAlSlipAdd = async function() {
   psAlLoadSlips();
 };
 </script>
-<script src="xf-access.js?v=20260925"></script>
+<script src="xf-access.js?v=20260926"></script>
 </html>
