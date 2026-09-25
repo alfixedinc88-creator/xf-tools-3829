@@ -1300,6 +1300,62 @@ async function reorderVendorOrder(env, url) {
     vendors: [...vendors].sort(), catalog: catCounts, incomingTitles, rows }), { headers: { 'Content-Type': 'application/json' } }));
 }
 
+// POST /reorder/fix/listing-titles { skus: [...] } → { titles: { SKU: [{platform, listingId, title}] } }
+// The listing title(s) behind part #s that look wrong (no FBA listing), so
+// they're easy to identify and fix. Sources: the channel SKU sheets (same as
+// Sold Out search), Listing Watch, the FBA inventory report, and — for
+// Amazon's own seller SKUs like "0H-9TMH-JBU7" still without a title — a live
+// Amazon Listings API look-up.
+async function reorderListingTitles(request, env) {
+  const b = await request.json().catch(() => ({}));
+  const norm = s => String(s || '').trim().toUpperCase().replace(/^-+|-+$/g, '');
+  const want = new Set((Array.isArray(b.skus) ? b.skus : []).map(norm).filter(Boolean).slice(0, 1500));
+  const out = {};
+  const add = (sku, platform, listingId, title) => {
+    sku = norm(sku); title = String(title || '').trim();
+    if (!want.has(sku) || !title) return;
+    const l = out[sku] = out[sku] || [];
+    if (!l.some(x => x.platform === platform && x.title === title)) l.push({ platform, listingId: String(listingId || '').trim(), title: title.slice(0, 300) });
+  };
+  if (!want.size) return _roResp({ ok: true, titles: out });
+  const errors = [];
+  try {
+    const token = await getToken(env);
+    const defs = [['eBay', 'EbaySKU', 0], ['Amazon', 'AmazonSKU', 0], ['Walmart', 'WalmartSKU', 0], ['Shopify', 'ShopifySKU', null]];
+    const u = SHEETS_URL + '/' + env.SHEET_ID + '/values:batchGet?' + defs.map(d => 'ranges=' + encodeURIComponent(d[1] + '!A2:C20000')).join('&');
+    const d = await (await fetch(u, { headers: { Authorization: 'Bearer ' + token } })).json();
+    (d.valueRanges || []).forEach((vr, i) => {
+      const [plat, , idCol] = defs[i];
+      (vr.values || []).forEach(row => add(row[2], plat, idCol == null ? '' : row[idCol], row[1]));
+    });
+  } catch (e) { errors.push('SKU sheets: ' + String(e.message || e).slice(0, 120)); }
+  try {
+    (await env.DB.prepare(`SELECT platform, listing_id, sku, title FROM lw_alerts WHERE title IS NOT NULL AND title != ''`).all()).results
+      .forEach(r => add(r.sku, r.platform, r.listing_id, r.title));
+  } catch (_) {}
+  try {
+    (await env.DB.prepare(`SELECT sku, asin, product_name FROM amazon_fba_inventory WHERE product_name IS NOT NULL AND product_name != ''`).all()).results
+      .forEach(r => add(r.sku, 'Amazon', r.asin, r.product_name));
+  } catch (_) {}
+  // Amazon Listings API for Amazon-looking SKUs nothing above named (max 20 per call).
+  const amz = [...want].filter(s => !out[s] && /^[0-9A-Z]{2}-[0-9A-Z]{4}-[0-9A-Z]{4}$/.test(s)).slice(0, 20);
+  if (amz.length && env.AMAZON_SELLER_ID) {
+    try {
+      const token = await getAmazonToken(env);
+      const mid = env.AMAZON_MARKETPLACE_ID || 'ATVPDKIKX0DER';
+      for (const sku of amz) {
+        const r = await fetch(`https://sellingpartnerapi-na.amazon.com/listings/2021-08-01/items/${encodeURIComponent(env.AMAZON_SELLER_ID)}/${encodeURIComponent(sku)}?marketplaceIds=${mid}&includedData=summaries`,
+          { headers: { 'x-amz-access-token': token } });
+        if (!r.ok) continue;
+        const it = await r.json().catch(() => ({}));
+        const sm = (it.summaries || []).find(x => x.marketplaceId === mid) || (it.summaries || [])[0] || {};
+        add(sku, 'Amazon', sm.asin || '', sm.itemName || '');
+      }
+    } catch (e) { errors.push('Amazon: ' + String(e.message || e).slice(0, 120)); }
+  }
+  return _roResp({ ok: true, titles: out, errors });
+}
+
 async function reorderRecommendationsHandler(env, days) {
   try {
     const result = await reorderComputeRecommendations(env, days);
@@ -3994,6 +4050,7 @@ export default {
         await reorderLog(env, _roWho(roCs || session), action, b.part || '', b.detail || '');
         return _roResp({ ok: true });
       }
+      if (url.pathname === '/reorder/fix/listing-titles' && method === 'POST') return await reorderListingTitles(request, env);
       if (url.pathname === '/reorder/fix/list' && method === 'GET') {
         await reorderFixTables(env);
         const aliases = (await env.DB.prepare('SELECT raw, part, by_user, updated_at FROM reorder_alias ORDER BY updated_at DESC').all()).results || [];
