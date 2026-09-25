@@ -1154,12 +1154,27 @@ async function reorderVendorOrder(env, url) {
   const sales = {}; // exact SKU → { amz, other } in units (listing orders)
   const chans = [['amazon_sales_weekly', 'amz', 'Amazon'], ['ebay_sales_weekly', 'other', 'eBay'], ['walmart_sales_weekly', 'other', 'Walmart'], ['shopify_sales_weekly', 'other', 'Shopify']];
   const chanUnits = {}; // part # → { Amazon: units, eBay: … } — where a row's sales came from
+  // Same ASIN as an FBA listing = same product: an FBM listing with a weird
+  // SKU (e.g. "F8-IW6Y-ZZSG" on B075134V6B, whose FBA SKU is "27-1-1=1-")
+  // has its Amazon sales counted on that FBA SKU. A part # someone saved
+  // with ✏️ for that SKU still wins.
+  const fbaSkuOfAsin = {}, sameAsin = {}; // FBA part # → { fbmSku: { units, asin } }
+  fba.forEach(r => { const a = String(r.asin || '').trim(), k = P(r.sku); if (!a || !k) return;
+    if (!fbaSkuOfAsin[a] || (!reorderIsProperFormat(fbaSkuOfAsin[a]) && reorderIsProperFormat(k))) fbaSkuOfAsin[a] = k; });
+  const fbaSkuStrs = new Set(fba.map(r => P(r.sku)));
   let dataFrom = null;
   for (const [t, k, label] of chans) {
     for (const r of await all(`SELECT sku, SUM(units_ordered) AS u FROM ${t} WHERE period_start >= ? GROUP BY sku`, since)) {
-      const s = P(r.sku); if (!s) continue;
+      let s = P(r.sku), lab = label; if (!s) continue;
+      if (k === 'amz' && !fbaSkuStrs.has(s) && !alias[U(r.sku)] && !alias[reorderCleanPart(U(r.sku))]) {
+        const a = asinOf[U(r.sku)], to = a && fbaSkuOfAsin[a];
+        if (to && to !== s) {
+          const x = (sameAsin[to] = sameAsin[to] || {})[s] = sameAsin[to][s] || { units: 0, asin: a };
+          x.units += r.u || 0; s = to; lab = 'Amazon FBM';
+        }
+      }
       (sales[s] = sales[s] || { amz: 0, other: 0 })[k] += r.u || 0;
-      const cu = chanUnits[s] = chanUnits[s] || {}; cu[label] = (cu[label] || 0) + (r.u || 0);
+      const cu = chanUnits[s] = chanUnits[s] || {}; cu[lab] = (cu[lab] || 0) + (r.u || 0);
     }
     const m = await all(`SELECT MIN(period_start) AS m FROM ${t}`);
     if (m[0] && m[0].m && (!dataFrom || m[0].m < dataFrom)) dataFrom = m[0].m;
@@ -1256,6 +1271,7 @@ async function reorderVendorOrder(env, url) {
       if (!countOtherPacks && otherPcs > 0) notes.push(`${Math.round(otherPcs)} pcs in other packs of ${b} not counted`);
       if (!countOtherPacks && otherIncPcs > 0) notes.push(`${Math.round(otherIncPcs)} pcs on the way in other packs of ${b} not counted`);
       if (incUnits > 0) notes.push(`${Math.round(incUnits)} on the way subtracted`);
+      Object.entries(sameAsin[t.sku] || {}).forEach(([fs, x]) => notes.push(`Incl. ${Math.round(x.units)} sold FBM as ${fs} (same ASIN ${x.asin})`));
       const u = upc[t.sku] || {};
       const pick = (...v) => { for (const x of v) if (x != null && String(x).trim() !== '') return String(x).trim(); return ''; };
       const row = {
@@ -1264,6 +1280,7 @@ async function reorderVendorOrder(env, url) {
         asin: pick(fx.asin, t.asin, ct.asin, asinOf[t.sku], ...[...(fromMap[t.sku] || [])].map(r => asinOf[r])),
         description: pick(fx.description, ct.description, sm.name, bo.name, prodName[b], t.fbaName, amzName[t.sku]),
         channels: chanUnits[t.sku] || {},
+        sameAsin: Object.entries(sameAsin[t.sku] || {}).map(([sku, x]) => ({ sku, units: Math.round(x.units), asin: x.asin })),
         amazonCode: /^[0-9A-Z]{2}-[0-9A-Z]{4}-[0-9A-Z]{4}$/.test(t.sku),
         vendor: pick(fx.vendor, ct.vendor, sm.vendor, bo.vendor),
         outsideUpc: pick(fx.outside_upc, ct.outside_upc, u.outside_upc), insideUpc: pick(fx.inside_upc, ct.inside_upc, u.inside_upc),

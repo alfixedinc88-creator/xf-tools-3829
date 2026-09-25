@@ -3798,7 +3798,7 @@ function rvoVisible() {
   var all = document.getElementById('rvo-all').checked;
   return RVO.rows.filter(function (r) {
     if (v === '__none' ? r.vendor : (v && r.vendor !== v)) return false;
-    var mergedTxt = (r.merged || []).map(function (m) { return m.part + ' ' + m.from.join(' '); }).join(' ');
+    var mergedTxt = (r.merged || []).map(function (m) { return m.part + ' ' + m.from.join(' '); }).concat((r.sameAsin || []).map(function (x) { return x.sku; })).join(' ');
     var lt = rvoTitlesOf(r).map(function (t) { return t.title; }).join(' ').toUpperCase();
     if (q && (r.sku + ' ' + (r.from || []).join(' ') + ' ' + mergedTxt + ' ' + (r.asin || '') + ' ' + (r.description || '').toUpperCase() + ' ' + lt).indexOf(q) === -1) return false;
     if (q && mergedTxt.indexOf(q) !== -1) return true; // found through a corrected part # — show even if nothing to order
@@ -3823,6 +3823,7 @@ function rvoCols() {
         + (r.amazonCode ? ' <span title="A code Amazon made up when the listing was created without our part #. Open the ASIN to see the listing, then ✏️ to map it to the right part #." style="font-size:10px;color:#b45309;border:1px solid #fcd34d;border-radius:4px;padding:0 3px">Amazon seller SKU</span>' : '')
         + ((r.from || []).length ? '<div style="font-size:10.5px;color:var(--text3);font-family:var(--mono)">from: ' + r.from.map(escHtml).join(', ') + '</div>' : '')
         + (Object.keys(r.channels || {}).length ? '<div style="font-size:10.5px;color:var(--text3)" title="Units sold in the window, by channel">Sales: ' + Object.keys(r.channels).map(function (c) { return c + ' ' + fmt0(r.channels[c]); }).join(' · ') + '</div>' : '')
+        + (r.sameAsin || []).map(function (x) { return '<div style="font-size:10.5px;color:#1A56DB;font-family:var(--mono)" title="FBM listing on the same ASIN as this FBA listing — its Amazon sales are counted in this row">+ FBM ' + escHtml(x.sku) + ': ' + fmt0(x.units) + ' sold (same ASIN ' + escHtml(x.asin) + ')</div>'; }).join('')
         + (r.merged || []).map(function (m) { return '<div style="font-size:10.5px;color:#1A56DB;font-family:var(--mono)" title="Not ordered as its own part # — its sales are counted in this row">+ sales of ' + escHtml(m.part) + (m.from.length ? ' (from ' + m.from.map(escHtml).join(', ') + ')' : '') + '</div>'; }).join('')
         + (iss.length ? '<div style="font-size:10.5px;color:var(--red);white-space:normal">⚠ ' + iss.map(escHtml).join(' · ') + '</div>' : '')
         + (rvoWeird(r) ? rvoTitlesOf(r).map(function (t) { var u = rvoListingUrl(t);
