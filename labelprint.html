@@ -109,15 +109,17 @@ window.lpCredLogin = async function() {
     LP_CRED_TOKEN = null; window.LP_CRED_TOKEN = null;
     return; // login gate already visible by default
   }
-  // Verify the cached token still actually works before trusting it
+  // Saved sign-in: open right away; xf-access.js re-checks it in the background
   try {
-    var res = await fetch('https://xfitting-lookup.alfixedinc88.workers.dev?sheet=Products', { headers: { 'X-Cred-Token': LP_CRED_TOKEN } });
+    var res = { status: 200 }; // open right away with the saved sign-in — xf-access.js checks it with the server in the background (sends back to Sign In if it's no longer valid); every data request is checked by the server anyway
     if (res.status === 401 || res.status === 403) {
       localStorage.removeItem('xf_cred_token'); localStorage.removeItem('xf_cred_user');
       LP_CRED_TOKEN = null; window.LP_CRED_TOKEN = null;
       return;
     }
   } catch(e) { return; }
+  // This script sits above the sign-in box — wait for the page to be built.
+  if (document.readyState === 'loading') await new Promise(function (ok) { document.addEventListener('DOMContentLoaded', ok); });
   document.getElementById('lp-cred-gate').style.display = 'none';
   document.getElementById('labelprint-app').style.display = 'flex';
 })();
@@ -663,6 +665,6 @@ window.lpCredLogin = async function() {
 
 
 <script src="xf-signout.js?v=20260924"></script>
-<script src="xf-access.js?v=20260925"></script>
+<script src="xf-access.js?v=20260926"></script>
 </body>
 </html>

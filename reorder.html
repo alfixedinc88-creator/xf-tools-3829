@@ -5152,9 +5152,9 @@ function salesToast(msg, type) {
     if (pinScreen) pinScreen.style.display = 'flex';
     return;
   }
-  // Verify the cached token still actually works before trusting it
+  // Saved sign-in: open right away; xf-access.js re-checks it in the background
   try {
-    var res = await fetch(WORKER_URL + '?sheet=Products', { headers: { 'X-Cred-Token': MGMT_CRED_TOKEN } });
+    var res = { status: 200 }; // open right away with the saved sign-in — xf-access.js checks it with the server in the background (sends back to Sign In if it's no longer valid); every data request is checked by the server anyway
     if (res.status === 401 || res.status === 403) {
       localStorage.removeItem('xf_cred_token'); localStorage.removeItem('xf_cred_user');
       MGMT_CRED_TOKEN = null;
@@ -5172,6 +5172,6 @@ function salesToast(msg, type) {
 })();
 </script>
 <script src="xf-signout.js?v=20260924"></script>
-<script src="xf-access.js?v=20260925"></script>
+<script src="xf-access.js?v=20260926"></script>
 </body>
 </html>

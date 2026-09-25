@@ -8453,12 +8453,12 @@ window.invCredLogin = async function() {
     INV_CRED_TOKEN = null;
     return; // login gate already visible by default
   }
-  // Verify the cached token still actually works before trusting it.
+  // Saved sign-in: open right away; xf-access.js re-checks it in the background
   // /inventory/prefixes is mgmt-only, so a 403 here just means this
   // logged-in user isn't mgmt - NOT that the token itself is invalid.
   // Only a 401 means "log out and show the gate again".
   try {
-    var res = await fetch('https://xfitting-lookup.alfixedinc88.workers.dev/inventory/prefixes', { headers: { 'X-Cred-Token': INV_CRED_TOKEN } });
+    var res = { status: 200 }; // open right away with the saved sign-in — xf-access.js checks it with the server in the background (sends back to Sign In if it's no longer valid); every data request is checked by the server anyway
     if (res.status === 401) {
       localStorage.removeItem('xf_cred_token'); localStorage.removeItem('xf_cred_user');
       INV_CRED_TOKEN = null;
@@ -8837,6 +8837,6 @@ window.invCredLogin = async function() {
   };
 })();
 </script>
-<script src="xf-access.js?v=20260925"></script>
+<script src="xf-access.js?v=20260926"></script>
 </body>
 </html>

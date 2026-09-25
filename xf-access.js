@@ -159,7 +159,16 @@ window.addEventListener('pageshow', function (e) { if (e.persisted) location.rel
     if (!t) { blocked = []; lastToken = ''; apply(); return; }
     if (loading) return; loading = true;
     fetch(WORKER + '/auth/access', { headers: { 'X-Cred-Token': t } })
-      .then(function (r) { return r.ok ? r.json() : { blocked: [] }; })
+      .then(function (r) {
+        // Pages open straight away with the saved sign-in; this is the check.
+        // Signed out / expired → forget it and reload, which shows Sign In.
+        if (r.status === 401 && token() === t) {
+          try { localStorage.removeItem('xf_cred_token'); localStorage.removeItem('xf_cred_user'); sessionStorage.removeItem('xf_access'); } catch (e) {}
+          location.reload();
+          return { blocked: [] };
+        }
+        return r.ok ? r.json() : { blocked: [] };
+      })
       .then(function (d) {
         blocked = d.blocked || []; lastToken = t;
         try { sessionStorage.setItem('xf_access', JSON.stringify({ token: t, blocked: blocked, at: Date.now() })); } catch (e) {}

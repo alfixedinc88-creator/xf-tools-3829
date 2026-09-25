@@ -138,7 +138,7 @@ document.addEventListener('DOMContentLoaded', async function() {
     return;
   }
   try {
-    var res = await fetch(RPO_WORKER + '/inventory/receive-preview', { headers: { 'X-Cred-Token': RPO_CRED_TOKEN } });
+    var res = { status: 200 }; // open right away with the saved sign-in — xf-access.js checks it with the server in the background (sends back to Sign In if it's no longer valid); every data request is checked by the server anyway
     if (res.status === 401 || res.status === 403) {
       localStorage.removeItem('xf_cred_token'); localStorage.removeItem('xf_cred_user');
       rpoShowLoginGate();
@@ -946,6 +946,6 @@ document.addEventListener('DOMContentLoaded', async function() {
 
 
 <script src="xf-signout.js?v=20260924"></script>
-<script src="xf-access.js?v=20260925"></script>
+<script src="xf-access.js?v=20260926"></script>
 </body>
 </html>
