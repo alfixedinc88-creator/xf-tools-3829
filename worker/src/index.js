@@ -21744,10 +21744,24 @@ async function lwStep(env, { pages, trigger }) {
   let autoFixes = 0;
   for (const plat of LW_PLATFORMS) {
     const ps = st.platforms[plat];
-    for (let n = 0; n < pages && !ps.done; n++) {
+    // Walmart's "next page" cursor expires after a short time, so reading a
+    // page or two per cron tick (minutes apart) ran into "Invalid or expired
+    // nextCursor". Walmart is read page after page in one go instead (25 s
+    // per step, longer after a restart); an expired cursor restarts Walmart
+    // from the first page (max 3 times per pass) instead of stopping.
+    const wm = plat === 'Walmart', t0 = Date.now();
+    const more = n => wm ? Date.now() - t0 < Math.min(120000, 25000 * ((ps.restarts || 0) + 1)) : n < pages;
+    for (let n = 0; more(n) && !ps.done; n++) {
       let pg;
       try { pg = await LW_PAGERS[plat](env, ps.cursor); }
-      catch (e) { ps.error = String(e.message || e).slice(0, 300); ps.done = true; break; }
+      catch (e) {
+        const msg = String(e.message || e);
+        if (wm && ps.cursor && /nextCursor|expired/i.test(msg) && (ps.restarts || 0) < 3) {
+          ps.restarts = (ps.restarts || 0) + 1; ps.cursor = null; ps.scanned = 0; ps.low = 0;
+          continue;
+        }
+        ps.error = msg.slice(0, 300); ps.done = true; break;
+      }
       ps.cursor = pg.next; ps.done = pg.done; ps.scanned += pg.items.length;
       const low = pg.items.filter(i => i.qty < cfg.threshold);
       ps.low += low.length;
