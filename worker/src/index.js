@@ -1342,6 +1342,60 @@ async function reorderVendorOrder(env, url) {
 // Sold Out search), Listing Watch, the FBA inventory report, and — for
 // Amazon's own seller SKUs like "0H-9TMH-JBU7" still without a title — a live
 // Amazon Listings API look-up.
+// ── Part # suggestions for weird SKUs (Reorder tab) ──────────────────────────
+// Words of a title that say WHAT the item is (sizes like 1/4, 3/8, 90, and
+// words like elbow / tee / brass / npt) — pack words and filler dropped so
+// "10 pcs" vs "2 pack" doesn't decide the match.
+const RO_STOP = new Set('a an and the for with of to in on by x pc pcs piece pieces pack packs pk lot set count ct qty new free fast shipping size inch inches in. each per quality high premium'.split(' '));
+function reorderTokens(text) {
+  const t = String(text || '').toLowerCase().replace(/["”″]/g, ' in ').replace(/(\d)\s*-\s*(\d+\/\d+)/g, '$1-$2');
+  const out = new Set();
+  for (const w of t.split(/[^a-z0-9\/.\-]+/)) {
+    const x = w.replace(/^[.\-]+|[.\-]+$/g, '');
+    if (!x || RO_STOP.has(x) || x.length > 20) continue;
+    if (/^\d+$/.test(x) && x.length > 3) continue; // long numbers = UPCs / item ids
+    out.add(x);
+  }
+  return [...out];
+}
+// Pieces in a listing from its title: "10 pcs", "Pack of 10", "10-Pack", "(Pack of 25)", "Set of 5", "Qty 4".
+function reorderPackFromTitle(text) {
+  const t = String(text || '');
+  const pats = [/pack\s*of\s*(\d{1,4})/i, /set\s*of\s*(\d{1,4})/i, /(\d{1,4})\s*[- ]?\s*(?:pcs|pc|pieces?|pk|packs?|count|ct)\b/i, /qty[:\s]*(\d{1,4})\b/i, /lot\s*of\s*(\d{1,4})/i];
+  for (const re of pats) { const m = t.match(re); if (m && +m[1] > 0) return +m[1]; }
+  return 0;
+}
+// docs: [{ text, base, sku, src }] with proper part #s; queries: { SKU: [titles] }.
+// TF-IDF overlap, best document per base part, top 3 bases per SKU.
+function reorderSuggestParts(queries, docs) {
+  const N = docs.length || 1, df = {}, index = {};
+  const toks = docs.map((d, i) => { const tk = reorderTokens(d.text); tk.forEach(w => { df[w] = (df[w] || 0) + 1; (index[w] = index[w] || []).push(i); }); return tk; });
+  const idf = w => Math.log(1 + N / (df[w] || 0.5));
+  const norm = toks.map(tk => Math.sqrt(tk.reduce((a, w) => a + idf(w) ** 2, 0)) || 1);
+  const out = {};
+  for (const sku in queries) {
+    const titles = queries[sku] || []; if (!titles.length) continue;
+    const q = [...new Set(titles.flatMap(reorderTokens))];
+    const qn = Math.sqrt(q.reduce((a, w) => a + idf(w) ** 2, 0)) || 1;
+    const score = {};
+    for (const w of q) {
+      const list = index[w]; if (!list || list.length > N * 0.2) continue; // too common to tell items apart
+      const wt = idf(w) ** 2;
+      for (const i of list) score[i] = (score[i] || 0) + wt;
+    }
+    const best = {};
+    for (const i in score) {
+      const d = docs[i], sc = score[i] / (qn * norm[i]);
+      if (!best[d.base] || sc > best[d.base].score) best[d.base] = { score: sc, doc: d };
+    }
+    const pack = titles.map(reorderPackFromTitle).find(n => n > 0) || 0;
+    out[sku] = Object.entries(best).sort((a, b) => b[1].score - a[1].score).slice(0, 3).filter(([, v]) => v.score >= 0.25)
+      .map(([base, v]) => ({ base, part: base + '=' + (pack || 1) + '+', pack, packGuessed: !pack, score: Math.round(v.score * 100),
+        matchedText: v.doc.text.slice(0, 200), matchedSku: v.doc.sku, matchedSrc: v.doc.src }));
+  }
+  return out;
+}
+
 async function reorderListingTitles(request, env) {
   const b = await request.json().catch(() => ({}));
   const norm = s => String(s || '').trim().toUpperCase().replace(/^-+|-+$/g, '');
@@ -1355,6 +1409,14 @@ async function reorderListingTitles(request, env) {
   };
   if (!want.size) return _roResp({ ok: true, titles: out });
   const errors = [];
+  // Every listing / product name we have under a PROPER part # — what the
+  // weird ones' titles are compared against for suggestions.
+  const docs = [];
+  const addDoc = (sku, text, src) => {
+    const k = reorderCleanPart(String(sku || '').toUpperCase()); text = String(text || '').trim();
+    if (!text || !reorderIsProperFormat(k)) return;
+    docs.push({ text, base: reorderGetBaseSku(k), sku: k, src });
+  };
   try {
     const token = await getToken(env);
     const defs = [['eBay', 'EbaySKU', 0], ['Amazon', 'AmazonSKU', 0], ['Walmart', 'WalmartSKU', 0], ['Shopify', 'ShopifySKU', null]];
@@ -1362,7 +1424,7 @@ async function reorderListingTitles(request, env) {
     const d = await (await fetch(u, { headers: { Authorization: 'Bearer ' + token } })).json();
     (d.valueRanges || []).forEach((vr, i) => {
       const [plat, , idCol] = defs[i];
-      (vr.values || []).forEach(row => add(row[2], plat, idCol == null ? '' : row[idCol], row[1]));
+      (vr.values || []).forEach(row => { add(row[2], plat, idCol == null ? '' : row[idCol], row[1]); addDoc(row[2], row[1], plat + ' listing'); });
     });
   } catch (e) { errors.push('SKU sheets: ' + String(e.message || e).slice(0, 120)); }
   try {
@@ -1389,7 +1451,22 @@ async function reorderListingTitles(request, env) {
       }
     } catch (e) { errors.push('Amazon: ' + String(e.message || e).slice(0, 120)); }
   }
-  return _roResp({ ok: true, titles: out, errors });
+  // Suggestions: also SKU Mgr / products / vendor sheet / FBA names.
+  const q = async sql => { try { return (await env.DB.prepare(sql).all()).results || []; } catch (_) { return []; } };
+  (await q(`SELECT part_num, name FROM master_list WHERE name IS NOT NULL AND name != ''`)).forEach(r => addDoc(r.part_num, r.name, 'SKU Mgr'));
+  (await q(`SELECT base_sku, name FROM products WHERE name IS NOT NULL AND name != ''`)).forEach(r => addDoc(r.base_sku, r.name, 'Products'));
+  (await q(`SELECT part, description, vendor FROM reorder_vendor_catalog WHERE description IS NOT NULL AND description != ''`)).forEach(r => addDoc(r.part, r.description, (r.vendor || 'Vendor') + ' sheet'));
+  const fbaRows = await q(`SELECT sku, asin, product_name FROM fba_catalog`);
+  fbaRows.forEach(r => addDoc(r.sku, r.product_name, 'FBA'));
+  const queries = {};
+  for (const sku of want) if (!reorderIsProperFormat(reorderCleanPart(sku)) && out[sku]) queries[sku] = out[sku].map(t => t.title);
+  const suggestions = reorderSuggestParts(queries, docs);
+  // The FBA listing(s) of each suggested part, to open and compare.
+  const fbaByBase = {};
+  fbaRows.forEach(r => { const k = reorderCleanPart(String(r.sku || '').toUpperCase()); if (!reorderIsProperFormat(k)) return;
+    (fbaByBase[reorderGetBaseSku(k)] = fbaByBase[reorderGetBaseSku(k)] || []).push({ sku: k, asin: r.asin || '', name: r.product_name || '' }); });
+  for (const sku in suggestions) suggestions[sku].forEach(sg => { sg.fba = (fbaByBase[sg.base] || []).slice(0, 3); });
+  return _roResp({ ok: true, titles: out, suggestions, errors });
 }
 
 async function reorderRecommendationsHandler(env, days) {
