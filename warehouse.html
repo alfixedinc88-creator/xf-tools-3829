@@ -1650,6 +1650,7 @@ body {
         </div>
         <button class="btn-go" onclick="doSearch('search')">Search</button>
         <button class="btn-x" onclick="clearPane('search')">&times;</button>
+        <button class="btn-go wp-can" onclick="wpOpen()" style="display:none;background:#0e7f3e" title="Add a product to the Products list">&#10133; New product</button>
       </div>
       <div class="result-meta" id="meta-search"></div>
       <div id="res-search"><div class="placeholder"><span class="placeholder-icon">&#128269;</span><h3>Item Search</h3><p>Searches base SKUs. Set <b style="color:var(--accent)">Count</b> to calculate total weight.</p></div></div>
@@ -2124,6 +2125,7 @@ function getWarehouseName(baseSkuStr) {
 }
 
 function doSearch(tab) {
+  if (tab === 'search') wpShowButtons();
   const raw = document.getElementById('inp-' + tab).value.trim();
   pages[tab] = 1;
   if (!raw) { clearPane(tab); return; }
@@ -2324,7 +2326,10 @@ function cardSearch(r) {
   return `<div class="card">
     <div class="card-top">
       <div><div class="card-sku">${r.sku || '—'}</div></div>
+      <div style="display:flex;gap:6px;align-items:center">
       ${r.warehouseName ? `<span class="badge badge-purple">${r.warehouseName}</span>` : ''}
+      ${wpCan() ? `<button onclick="wpOpen(this.dataset.sku)" data-sku="${wpAttr(r.sku)}" title="Edit this product" style="border:1px solid var(--border);background:var(--bg2);border-radius:6px;padding:2px 7px;cursor:pointer;font-size:12px">✏️ Edit</button>` : ''}
+      </div>
     </div>
     <div class="card-name">${r.name || '—'}</div>
     <div class="fields">
@@ -2333,6 +2338,63 @@ function cardSearch(r) {
     </div>
   </div>`;
 }
+
+// ─── ADD / EDIT PRODUCT (Item Search) ────────────────
+// Writes the Products sheet (and its D1 copy) through the worker; ops and
+// managers only. SKU, name, warehouse short name, unit weight, keywords.
+function wpCan() { var r = (CRED_USER && CRED_USER.roles) || []; return r.indexOf('mgmt') >= 0 || r.indexOf('ops') >= 0; }
+function wpAttr(v) { return String(v == null ? '' : v).replace(/&/g, '&amp;').replace(/"/g, '&quot;').replace(/</g, '&lt;'); }
+var WP_ORIG = '';
+function wpOpen(sku) {
+  var p = sku ? (DB.products.find(function (x) { return x.sku.toUpperCase() === String(sku).toUpperCase(); }) || { sku: sku }) : {};
+  WP_ORIG = sku ? p.sku : '';
+  var m = document.getElementById('wp-modal');
+  if (!m) {
+    m = document.createElement('div'); m.id = 'wp-modal';
+    m.style.cssText = 'display:none;position:fixed;inset:0;background:rgba(0,0,0,.45);z-index:9998;align-items:center;justify-content:center;padding:16px';
+    m.innerHTML = '<div style="background:var(--bg2,#fff);color:var(--text,#111);border-radius:12px;padding:18px;width:100%;max-width:440px;box-shadow:0 12px 40px rgba(0,0,0,.25)">'
+      + '<div id="wp-title" style="font-weight:700;font-size:16px;margin-bottom:10px"></div>'
+      + [['sku', 'SKU (base part #, e.g. 27-3-1)'], ['name', 'Product name'], ['warehouseName', 'Warehouse name (short code on labels)'], ['weight', 'Unit weight (lbs)'], ['keywords', 'Keywords (other words people search with)']].map(function (f) {
+        return '<label style="display:block;font-size:11px;font-weight:700;color:var(--text3,#666);text-transform:uppercase;margin-top:8px">' + f[1] + '</label>'
+          + '<input id="wp-' + f[0] + '"' + (f[0] === 'weight' ? ' type="number" step="any" min="0"' : '') + ' style="width:100%;box-sizing:border-box;padding:8px 10px;margin-top:3px;border:1.5px solid var(--border,#ddd);border-radius:7px;font-size:14px;' + (f[0] === 'sku' ? 'font-family:var(--mono);text-transform:uppercase' : '') + '">';
+      }).join('')
+      + '<div id="wp-err" style="color:#c52a1a;font-size:12px;margin-top:8px;min-height:16px"></div>'
+      + '<div style="display:flex;gap:8px;justify-content:flex-end;margin-top:8px"><button class="btn-x" style="width:auto;padding:0 14px" onclick="wpClose()">Cancel</button><button class="btn-go" id="wp-save" onclick="wpSave()">Save</button></div></div>';
+    m.addEventListener('click', function (e) { if (e.target === m) wpClose(); });
+    document.body.appendChild(m);
+  }
+  document.getElementById('wp-title').textContent = sku ? '✏️ Edit product — ' + p.sku : '➕ New product';
+  ['sku', 'name', 'warehouseName', 'weight', 'keywords'].forEach(function (k) { document.getElementById('wp-' + k).value = p[k] || ''; });
+  document.getElementById('wp-err').textContent = '';
+  m.style.display = 'flex';
+  document.getElementById(sku ? 'wp-name' : 'wp-sku').focus();
+}
+function wpClose() { var m = document.getElementById('wp-modal'); if (m) m.style.display = 'none'; }
+async function wpSave() {
+  var v = function (k) { return document.getElementById('wp-' + k).value.trim(); };
+  var body = { origSku: WP_ORIG, sku: v('sku').toUpperCase(), name: v('name'), warehouseName: v('warehouseName'), weight: v('weight'), keywords: v('keywords') };
+  var err = document.getElementById('wp-err'), btn = document.getElementById('wp-save');
+  if (!body.sku || !body.name) { err.textContent = 'SKU and product name are required.'; return; }
+  btn.disabled = true; btn.textContent = 'Saving…'; err.textContent = '';
+  try {
+    var r = await wFetch(WORKER_URL + '/inventory/product/save', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
+    var d = await r.json();
+    if (!d.ok) throw new Error(d.error || 'Save failed');
+    // Update this page's list right away (no full reload).
+    var p = d.product, i = DB.products.findIndex(function (x) { return x.sku.toUpperCase() === (WP_ORIG || p.sku).toUpperCase(); });
+    var rec = { sku: p.sku, name: p.name, warehouseName: p.warehouseName, weight: p.weight, keywords: p.keywords };
+    if (i >= 0) DB.products[i] = Object.assign({}, DB.products[i], rec); else DB.products.push(rec);
+    wpClose();
+    if (typeof showToast === 'function') showToast(d.added ? 'Added ' + p.sku : 'Saved ' + p.sku);
+    var inp = document.getElementById('inp-search');
+    if (d.added || !inp.value.trim()) inp.value = p.sku; // show the new product
+    doSearch('search');
+  } catch (e) { err.textContent = e.message; }
+  btn.disabled = false; btn.textContent = 'Save';
+}
+function wpShowButtons() { document.querySelectorAll('.wp-can').forEach(function (b) { b.style.display = wpCan() ? '' : 'none'; }); }
+document.addEventListener('DOMContentLoaded', wpShowButtons);
+setTimeout(wpShowButtons, 1500);
 
 // ─── CARD: AWD LOOKUP ─────────────────────────────────
 // Label (col B) is pre-built. Show primary location first, then any additional locations.
@@ -2515,6 +2577,7 @@ window.oosSetFilter = function(f, btn) {
 // TABS
 // ═══════════════════════════════════════════════════════
 function switchTab(tab) {
+  try { wpShowButtons(); } catch (e) {}
   activeTab = tab;
   ['locator','search','awd','oos'].forEach(t => {
     document.getElementById('pane-' + t).style.display = t === tab ? 'block' : 'none';
