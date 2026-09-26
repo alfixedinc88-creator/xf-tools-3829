@@ -14313,7 +14313,13 @@ async function shipOrderLookup(url, env) {
   if (todayOnly) { cutoff = todayStr; }
   else { const days = parseInt(daysParam) || 7; cutoff = new Date(Date.now() - days * 86400000).toISOString().slice(0,10); }
 
-  const rowsResult = todayOnly
+  // A whole tracking number (what Packing / Picking send after a scan) →
+  // just that label's rows via the index, instead of reading every order of
+  // the last 7 days (with all their items) to search them one by one.
+  const isTracking = /^[A-Z0-9]{18,34}$/.test(qStripped);
+  const rowsResult = isTracking
+    ? await env.DB.prepare(`SELECT * FROM ship_manifest_log WHERE UPPER(tracking) = ?` + (todayOnly ? ` AND date = ?` : ` AND date >= ?`)).bind(qStripped, todayOnly ? todayStr : cutoff).all()
+    : todayOnly
     ? await env.DB.prepare(`SELECT * FROM ship_manifest_log WHERE date = ?`).bind(todayStr).all()
     : await env.DB.prepare(`SELECT * FROM ship_manifest_log WHERE date >= ?`).bind(cutoff).all();
   const rows = rowsResult.results || [];
@@ -14890,6 +14896,14 @@ async function ensureShipD1Tables(env) {
     )
   `).run().catch(()=>{});
   await env.DB.prepare(`CREATE INDEX IF NOT EXISTS idx_pull_batch_status ON inventory_pull_batch(status)`).run().catch(()=>{});
+  // Every scan / pick / 20-second Packing refresh looks these tables up with
+  // UPPER(tracking) = ?, which a plain tracking index can't serve — so each
+  // one read the WHOLE table (all history), and with several packers that
+  // piled up into "D1 DB is overloaded". Same expression-index fix the
+  // smaller log tables above already have.
+  await env.DB.prepare(`CREATE INDEX IF NOT EXISTS idx_manifest_log_tracking_upper ON ship_manifest_log(UPPER(tracking))`).run().catch(()=>{});
+  await env.DB.prepare(`CREATE INDEX IF NOT EXISTS idx_scan_log_tracking_upper ON ship_scan_log(UPPER(tracking))`).run().catch(()=>{});
+  await env.DB.prepare(`CREATE INDEX IF NOT EXISTS idx_pick_log_tracking_upper ON ship_pick_log(UPPER(tracking))`).run().catch(()=>{});
   _shipD1Ready = true;
 }
 
