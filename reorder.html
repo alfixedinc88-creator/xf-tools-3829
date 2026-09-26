@@ -3857,12 +3857,13 @@ function rvoListingUrl(t) {
 }
 async function rvoLoadTitles() {
   var skus = [];
-  RVO.rows.forEach(function (r) { if (rvoWeird(r)) skus.push.apply(skus, [r.sku].concat(r.from || [])); });
+  var asins = {};
+  RVO.rows.forEach(function (r) { if (rvoWeird(r)) { skus.push.apply(skus, [r.sku].concat(r.from || [])); if (r.asin) [r.sku].concat(r.from || []).forEach(function (k) { asins[k] = r.asin; }); } });
   RVO.titles = {};
   if (!skus.length) { RVO.titlesState = 'none'; rvoRender(); return; }
   RVO.titlesState = 'loading'; rvoRender();
   try {
-    var res = await wFetch(W + '/reorder/fix/listing-titles', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ skus: skus }) });
+    var res = await wFetch(W + '/reorder/fix/listing-titles', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ skus: skus, asins: asins }) });
     var d = await res.json(); if (!d.ok) throw new Error(d.error || 'Failed');
     RVO.titles = d.titles || {}; RVO.sugg = d.suggestions || {}; RVO.titlesState = 'done';
   } catch (e) { RVO.titlesState = 'error: ' + e.message; }

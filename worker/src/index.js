@@ -1408,6 +1408,12 @@ async function reorderListingTitles(request, env) {
     if (!l.some(x => x.platform === platform && x.title === title)) l.push({ platform, listingId: String(listingId || '').trim(), title: title.slice(0, 300) });
   };
   if (!want.size) return _roResp({ ok: true, titles: out });
+  // ASIN of each SKU (sent by the page, from the Amazon sales / FBA reports).
+  const asinOf = {};
+  Object.entries(b.asins || {}).forEach(([k, a]) => { k = norm(k); a = String(a || '').trim().toUpperCase(); if (want.has(k) && /^[A-Z0-9]{10}$/.test(a)) asinOf[k] = a; });
+  // Titles Amazon gave us before (by ASIN / seller SKU) — kept so they're not asked for again.
+  await env.DB.prepare(`CREATE TABLE IF NOT EXISTS reorder_title_cache (sku TEXT PRIMARY KEY, platform TEXT, listing_id TEXT, title TEXT, updated_at TEXT)`).run().catch(() => {});
+  const cacheNew = [];
   const errors = [];
   // Every listing / product name we have under a PROPER part # — what the
   // weird ones' titles are compared against for suggestions.
@@ -1431,25 +1437,64 @@ async function reorderListingTitles(request, env) {
     (await env.DB.prepare(`SELECT platform, listing_id, sku, title FROM lw_alerts WHERE title IS NOT NULL AND title != ''`).all()).results
       .forEach(r => add(r.sku, r.platform, r.listing_id, r.title));
   } catch (_) {}
+  try { // every active listing Listing Watch has read (eBay / Amazon FBM / Shopify)
+    (await env.DB.prepare(`SELECT platform, listing_id, sku, title FROM listing_titles WHERE title IS NOT NULL AND title != ''`).all()).results
+      .forEach(r => { add(r.sku, r.platform, r.listing_id, r.title); addDoc(r.sku, r.title, r.platform + ' listing'); });
+  } catch (_) {}
   try {
     (await env.DB.prepare(`SELECT sku, asin, product_name FROM amazon_fba_inventory WHERE product_name IS NOT NULL AND product_name != ''`).all()).results
       .forEach(r => add(r.sku, 'Amazon', r.asin, r.product_name));
   } catch (_) {}
-  // Amazon Listings API for Amazon-looking SKUs nothing above named (max 20 per call).
-  const amz = [...want].filter(s => !out[s] && /^[0-9A-Z]{2}-[0-9A-Z]{4}-[0-9A-Z]{4}$/.test(s)).slice(0, 20);
-  if (amz.length && env.AMAZON_SELLER_ID) {
+  try {
+    const miss = [...want].filter(k => !out[k]);
+    for (let i = 0; i < miss.length; i += 90) {
+      const ch = miss.slice(i, i + 90);
+      ((await env.DB.prepare(`SELECT * FROM reorder_title_cache WHERE sku IN (${ch.map(() => '?').join(',')})`).bind(...ch).all()).results || [])
+        .forEach(r => add(r.sku, r.platform || 'Amazon', r.listing_id, r.title));
+    }
+  } catch (_) {}
+  const amzTitle = (sku, asin, title) => { if (!title) return; add(sku, 'Amazon', asin, title); cacheNew.push([sku, 'Amazon', asin || '', String(title).slice(0, 300)]); };
+  if (env.AMAZON_SELLER_ID) {
+    let token = null;
+    const mid = env.AMAZON_MARKETPLACE_ID || 'ATVPDKIKX0DER';
+    const sleep = ms => new Promise(r => setTimeout(r, ms));
+    // 1) By ASIN — Amazon catalog, 20 ASINs a call (the title buyers see on the listing).
+    const byAsin = {};
+    [...want].filter(k => !out[k] && asinOf[k]).forEach(k => { (byAsin[asinOf[k]] = byAsin[asinOf[k]] || []).push(k); });
+    const asins = Object.keys(byAsin).slice(0, 400);
     try {
-      const token = await getAmazonToken(env);
-      const mid = env.AMAZON_MARKETPLACE_ID || 'ATVPDKIKX0DER';
+      if (asins.length) token = await getAmazonToken(env);
+      for (let i = 0; i < asins.length; i += 20) {
+        if (i) await sleep(550); // catalog API: 2 requests / second
+        const ids = asins.slice(i, i + 20);
+        const r = await fetch(`https://sellingpartnerapi-na.amazon.com/catalog/2022-04-01/items?identifiers=${ids.join(',')}&identifiersType=ASIN&marketplaceIds=${mid}&includedData=summaries`,
+          { headers: { 'x-amz-access-token': token } });
+        if (!r.ok) { errors.push('Amazon catalog: HTTP ' + r.status + ' ' + (await r.text().catch(() => '')).slice(0, 150)); break; }
+        const d = await r.json().catch(() => ({}));
+        for (const it of (d.items || [])) {
+          const sm = (it.summaries || []).find(x => x.marketplaceId === mid) || (it.summaries || [])[0] || {};
+          (byAsin[it.asin] || []).forEach(k => amzTitle(k, it.asin, sm.itemName || ''));
+        }
+      }
+    } catch (e) { errors.push('Amazon catalog: ' + String(e.message || e).slice(0, 120)); }
+    // 2) Amazon's own seller SKUs ("0H-9TMH-JBU7") still without a title — Listings API.
+    const amz = [...want].filter(s => !out[s] && /^[0-9A-Z]{2}-[0-9A-Z]{4}-[0-9A-Z]{4}$/.test(s)).slice(0, 40);
+    try {
+      if (amz.length && !token) token = await getAmazonToken(env);
       for (const sku of amz) {
         const r = await fetch(`https://sellingpartnerapi-na.amazon.com/listings/2021-08-01/items/${encodeURIComponent(env.AMAZON_SELLER_ID)}/${encodeURIComponent(sku)}?marketplaceIds=${mid}&includedData=summaries`,
           { headers: { 'x-amz-access-token': token } });
         if (!r.ok) continue;
         const it = await r.json().catch(() => ({}));
         const sm = (it.summaries || []).find(x => x.marketplaceId === mid) || (it.summaries || [])[0] || {};
-        add(sku, 'Amazon', sm.asin || '', sm.itemName || '');
+        amzTitle(sku, sm.asin || '', sm.itemName || '');
       }
     } catch (e) { errors.push('Amazon: ' + String(e.message || e).slice(0, 120)); }
+  }
+  for (const c of cacheNew) {
+    await env.DB.prepare(`INSERT INTO reorder_title_cache (sku, platform, listing_id, title, updated_at) VALUES (?,?,?,?,?)
+      ON CONFLICT(sku) DO UPDATE SET platform = excluded.platform, listing_id = excluded.listing_id, title = excluded.title, updated_at = excluded.updated_at`)
+      .bind(...c, new Date().toISOString()).run().catch(() => {});
   }
   // Suggestions: also SKU Mgr / products / vendor sheet / FBA names.
   const q = async sql => { try { return (await env.DB.prepare(sql).all()).results || []; } catch (_) { return []; } };
@@ -21813,6 +21858,18 @@ async function lwAutoFix(env, cfg, a) {
 }
 
 // One step: a page (or `pages` pages) from every channel still going.
+// Every listing's title as Listing Watch reads it (all channels, every few
+// hours) — the Reorder tab uses these to name weird SKUs.
+async function lwSaveTitles(env, plat, items) {
+  try {
+    await env.DB.prepare(`CREATE TABLE IF NOT EXISTS listing_titles (platform TEXT NOT NULL, listing_id TEXT NOT NULL, sku TEXT NOT NULL, title TEXT, updated_at TEXT, PRIMARY KEY (platform, listing_id, sku))`).run();
+    const now = new Date().toISOString();
+    const st = items.filter(i => i.sku && i.title).map(i => env.DB.prepare(`INSERT OR REPLACE INTO listing_titles (platform, listing_id, sku, title, updated_at) VALUES (?,?,?,?,?)`)
+      .bind(plat, String(i.listingId || ''), String(i.sku).trim().toUpperCase(), String(i.title).slice(0, 300), now));
+    for (let k = 0; k < st.length; k += 50) await env.DB.batch(st.slice(k, k + 50));
+  } catch (_) {}
+}
+
 async function lwStep(env, { pages, trigger }) {
   await lwEnsureTables(env);
   const cfg = await lwConfig(env);
@@ -21840,6 +21897,7 @@ async function lwStep(env, { pages, trigger }) {
         ps.error = msg.slice(0, 300); ps.done = true; break;
       }
       ps.cursor = pg.next; ps.done = pg.done; ps.scanned += pg.items.length;
+      await lwSaveTitles(env, plat, pg.items);
       const low = pg.items.filter(i => i.qty < cfg.threshold);
       ps.low += low.length;
       if (!low.length) continue;
