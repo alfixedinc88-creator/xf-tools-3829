@@ -5287,24 +5287,26 @@ window.psSwitchTab = function(name) {
   if (window._psUspsRunInterval) { clearInterval(window._psUspsRunInterval); window._psUspsRunInterval = null; }
   if (name === 'scan' || name === 'progress') {
     window._psRefreshInterval = setInterval(function() {
+      if (document.hidden) return; // screen off / other tab — don't keep the database busy
       psLoadScans();
       if (name === 'scan') { _psLoadPrintStatus(); psLoadCancelOrders(); }
     }, 20000);
   }
   if (name === 'picking') {
     window._psPickRefreshInterval = setInterval(function() {
+      if (document.hidden) return;
       psLoadPicks();
       _psLoadPrintStatus();
       psLoadCancelOrders();
     }, 20000);
   }
   if (name === 'printlog') {
-    window._psPlRefreshInterval = setInterval(psPlLoadToday, 30000);
+    window._psPlRefreshInterval = setInterval(function () { if (!document.hidden) psPlLoadToday(); }, 30000);
     // "Printing as" needs to feel live — someone at the station changes it
     // right before printing and can't be waiting around, so this checks
     // much faster (2s) than the full print-log refresh above. It's a tiny
     // request (just the name), so polling this often is cheap.
-    window._psPlOperatorPollInterval = setInterval(psPlPollOperator, 2000);
+    window._psPlOperatorPollInterval = setInterval(function () { if (!document.hidden) psPlPollOperator(); }, 2000);
   }
   if (name === 'closebatch') {
     // Re-fetches (catches a run started/ended from another device) and
