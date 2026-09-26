@@ -73,9 +73,7 @@ window.addEventListener('pageshow', function (e) { if (e.persisted) location.rel
       { key: 'calculator', label: '🧮 Price Calculator', sel: '#tab-calculator', needs: 'Mgmt' }] },
     { key: 'labelprint', file: 'labelprint.html', name: '🏷️ Label Printer', needs: 'Ops / Mobile / Mgmt', card: card('labelprint.html'), tabs: [] },
     { key: 'reorder', file: 'reorder.html', name: '📦 Reorder Planner', needs: 'Mgmt', card: card('reorder.html'), tabs: [
-      { key: 'upload', label: 'Upload Reports', sel: '#ro-tab-upload' },
-      { key: 'jq', label: 'JQ Vendor', sel: '#ro-tab-jq' },
-      { key: 'eff', label: 'EFF Vendor', sel: '#ro-tab-eff' },
+      { key: 'reorder', label: '🧾 Reorder', sel: '#ro-tab-reorder' },
       { key: 'po', label: '📦 PO Cases', sel: '#ro-tab-po' },
       { key: 'ai', label: '✦ AI Insights', sel: '#ro-tab-ai' },
       { key: 'skumap', label: '🔗 SKU Map', sel: '#ro-tab-skumap' },
