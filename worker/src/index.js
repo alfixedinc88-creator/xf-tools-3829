@@ -4274,6 +4274,7 @@ export default {
       if (path === '/inventory/lookup' && method === 'GET')  return await inventoryLookup(url, env);
       if (path === '/inventory/search' && method === 'GET')  return await inventoryNameSearch(url, env);
       if (path === '/inventory/log'    && method === 'POST') return await inventoryLog(request, env);
+      if (path === '/inventory/product/save' && method === 'POST') return await warehouseProductSave(request, env, session);
       if (path === '/inventory/transfer' && method === 'POST') return await inventoryTransferLog(request, env);
       // receive-preview / receive-apply moved up to the credential-based
       // check earlier in the router (ReceivePO no longer sends the old
@@ -10083,6 +10084,60 @@ async function updateCogsFromMaster(request, env) {
 // ══════════════════════════════════════════════════════════════════════════
 
 // POST /inventory/import-products
+// POST /inventory/product/save — Warehouse → Item Search "➕ New product" / "✏️ Edit".
+// Products live in the "Products" sheet (A product id · B SKU · C name ·
+// D warehouse short name · E unit weight · F (left as is) · G keywords);
+// the D1 `products` table is a copy of it. { origSku } empty = new product.
+async function warehouseProductSave(request, env, session) {
+  const J = (o, st) => cors(new Response(JSON.stringify(o), { status: st || 200, headers: { 'Content-Type': 'application/json' } }));
+  const roles = (session && session.roles) || [];
+  if (!(roles.includes('mgmt') || roles.includes('ops') || session.pin_level === 'mgmt')) return J({ ok: false, error: 'Ops or management access required' }, 403);
+  const b = await request.json().catch(() => ({}));
+  const t = v => String(v == null ? '' : v).trim();
+  const sku = t(b.sku).toUpperCase(), orig = t(b.origSku).toUpperCase();
+  const name = t(b.name).slice(0, 300), whName = t(b.warehouseName).slice(0, 80), keywords = t(b.keywords).slice(0, 500);
+  const weight = t(b.weight);
+  if (!sku) return J({ ok: false, error: 'SKU is required' }, 400);
+  if (!name) return J({ ok: false, error: 'Product name is required' }, 400);
+  if (weight && !(parseFloat(weight) >= 0)) return J({ ok: false, error: 'Weight must be a number' }, 400);
+  const data = await invSheetGet(env, 'Products!A1:G5000');
+  if (data.error) return J({ ok: false, error: 'Products sheet: ' + (data.error.message || 'read failed') }, 500);
+  const rows = data.values || [];
+  const rowOf = k => { for (let i = 1; i < rows.length; i++) if (t((rows[i] || [])[1]).toUpperCase() === k) return i; return -1; };
+  const at = orig ? rowOf(orig) : -1;
+  if (orig && at < 0) return J({ ok: false, error: `"${orig}" isn't in the Products sheet any more — refresh and try again` }, 404);
+  const clash = rowOf(sku);
+  if (clash >= 0 && clash !== at) return J({ ok: false, error: `SKU ${sku} already exists` + (t(rows[clash][2]) ? ` (${t(rows[clash][2])})` : '') }, 409);
+  const cs = await verifyCredSession(request.headers.get('X-Cred-Token'), env).catch(() => null);
+  const who = String((cs && (cs.displayName || cs.username)) || (session && session.userId) || 'unknown');
+  let res, before = null;
+  if (at >= 0) {
+    const r = rows[at] || [];
+    before = { sku: t(r[1]), name: t(r[2]), warehouseName: t(r[3]), weight: t(r[4]), keywords: t(r[6]) };
+    const n = at + 1;
+    res = await invSheetUpdate(env, `Products!B${n}:E${n}`, [[sku, name, whName, weight]]);
+    if (!res.error) res = await invSheetUpdate(env, `Products!G${n}`, [[keywords]]);
+  } else {
+    res = await invSheetAppend(env, 'Products!A:G', [['', sku, name, whName, weight, '', keywords]]);
+  }
+  if (res && res.error) return J({ ok: false, error: 'Products sheet: ' + (res.error.message || 'write failed') }, 500);
+  // Keep the D1 copy in step.
+  try {
+    const now = new Date().toISOString();
+    if (orig) await env.DB.prepare('DELETE FROM products WHERE UPPER(sku) = ?').bind(orig).run();
+    await env.DB.prepare('DELETE FROM products WHERE UPPER(sku) = ?').bind(sku).run();
+    await env.DB.prepare('INSERT INTO products (product_id, sku, base_sku, name, warehouse_name, weight, updated_at) VALUES (?,?,?,?,?,?,?)')
+      .bind(at >= 0 ? t(rows[at][0]) : '', sku, sku.split('=')[0].trim(), name, whName, parseFloat(weight) || 0, now).run();
+  } catch (_) {}
+  try {
+    await env.DB.prepare(`CREATE TABLE IF NOT EXISTS product_edit_log (id INTEGER PRIMARY KEY AUTOINCREMENT, ts TEXT, by_user TEXT, action TEXT, sku TEXT, detail TEXT)`).run();
+    const after = { sku, name, warehouseName: whName, weight, keywords };
+    const detail = before ? Object.keys(after).filter(k => before[k] !== after[k]).map(k => `${k}: ${before[k] || '—'} → ${after[k] || '(cleared)'}`).join(' · ') : `${name} · ${whName} · ${weight || '—'} lb`;
+    await env.DB.prepare('INSERT INTO product_edit_log (ts, by_user, action, sku, detail) VALUES (?,?,?,?,?)').bind(new Date().toISOString(), who, before ? 'edit' : 'add', sku, detail.slice(0, 1000)).run();
+  } catch (_) {}
+  return J({ ok: true, added: at < 0, product: { sku, name, warehouseName: whName, weight, keywords } });
+}
+
 async function importProducts(request, env) {
   if (!env.DB) return cors(new Response(JSON.stringify({ error: 'D1 not available' }),
     { status: 503, headers: { 'Content-Type': 'application/json' } }));
