@@ -1748,19 +1748,21 @@ body { display:flex; flex-direction:column; min-height:100vh; background:var(--b
     </div>
   </div>
   <div class="sales-tab-bar">
-    <button class="sales-tab-btn active" id="ro-tab-upload" onclick="roTab('upload')">Upload Reports</button>
-    <button class="sales-tab-btn" id="ro-tab-jq" onclick="roTab('jq')">JQ Vendor <span class="sales-tab-badge" id="jq-badge" style="display:none">0</span></button>
-    <button class="sales-tab-btn" id="ro-tab-eff" onclick="roTab('eff')">EFF Vendor <span class="sales-tab-badge" id="eff-badge" style="display:none">0</span></button>
+    <!-- Upload Reports / JQ Vendor / EFF Vendor tabs retired (owner's request) — kept hidden
+         because PO Cases / AI Insights still read the data they load. -->
+    <button class="sales-tab-btn" id="ro-tab-upload" onclick="roTab('upload')" style="display:none">Upload Reports</button>
+    <button class="sales-tab-btn" id="ro-tab-jq" onclick="roTab('jq')" style="display:none">JQ Vendor <span class="sales-tab-badge" id="jq-badge" style="display:none">0</span></button>
+    <button class="sales-tab-btn" id="ro-tab-eff" onclick="roTab('eff')" style="display:none">EFF Vendor <span class="sales-tab-badge" id="eff-badge" style="display:none">0</span></button>
     <button class="sales-tab-btn" id="ro-tab-po" onclick="roTab('po')">📦 PO Cases</button>
     <button class="sales-tab-btn" id="ro-tab-ai" onclick="roTab('ai')">✦ AI Insights</button>
     <button class="sales-tab-btn" id="ro-tab-skumap" onclick="roTab('skumap')">🔗 SKU Map</button>
     <button class="sales-tab-btn" id="ro-tab-podash" onclick="roTab('podash')">🎯 PO Recommendations</button>
-    <button class="sales-tab-btn" id="ro-tab-reorder" onclick="roTab('reorder')">🧾 Reorder</button>
+    <button class="sales-tab-btn active" id="ro-tab-reorder" onclick="roTab('reorder')">🧾 Reorder</button>
   </div>
   <div class="sales-body">
 
     <!-- Upload Tab -->
-    <div class="sales-panel active" id="ro-panel-upload">
+    <div class="sales-panel" id="ro-panel-upload">
       <div class="sales-section-header">
         <div>
           <div class="sales-section-title">Upload Sales Reports</div>
@@ -2062,7 +2064,7 @@ body { display:flex; flex-direction:column; min-height:100vh; background:var(--b
     </div>
 
     <!-- Reorder Tab — what to order from each vendor (FBA part numbers only) -->
-    <div class="sales-panel" id="ro-panel-reorder">
+    <div class="sales-panel active" id="ro-panel-reorder">
       <div class="sales-section-header">
         <div>
           <div class="sales-section-title">🧾 Reorder — what to order from each vendor</div>
@@ -2270,6 +2272,7 @@ async function salesLaunchApp(name) {
   var appKey = name === 'reorder' ? 'ro' : 'db';
   document.getElementById(appId).style.display = 'flex';
   document.getElementById(appId).style.flexDirection = 'column';
+  if (name === 'reorder') roTab('reorder'); // 🧾 Reorder is the first tab now
   setStatus(appKey, 'loading', 'Loading...');
   try {
     await salesLoadWarehouseStock();
@@ -2922,9 +2925,6 @@ function buildReorderRows() {
   RO.eff = buildVendorRows(CALC.effVendor, 'Part Number', 'eff');
   renderVendor('jq');
   renderVendor('eff');
-  if (document.getElementById('reorder-app').style.display !== 'none') {
-    roTab('jq');
-  }
   if (document.getElementById('ro-panel-po') &&
       document.getElementById('ro-panel-po').className.includes('active')) {
     renderPOCases();
@@ -5205,6 +5205,6 @@ function salesToast(msg, type) {
 })();
 </script>
 <script src="xf-signout.js?v=20260924"></script>
-<script src="xf-access.js?v=20260926"></script>
+<script src="xf-access.js?v=20260927"></script>
 </body>
 </html>
