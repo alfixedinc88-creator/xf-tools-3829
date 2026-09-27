@@ -1132,6 +1132,15 @@ async function reorderSaveFixOne(env, b, who) {
 //      cases from SKU Mgr's "Each Case Qty", with a note when rounded.
 // Plus vendor (SKU Mgr), outside-box / inside-bag UPC (upc table) and the
 // description, so the page can filter by vendor and download a CSV.
+// One name per vendor on the Reorder tab — SKU Mgr / sheets spell some of
+// them differently (owner's list): eff = EFF; jq, #1, WU = JQ; CUTTER = YAO.
+const REORDER_VENDOR_ALIAS = { 'EFF': 'EFF', 'JQ': 'JQ', '#1': 'JQ', 'WU': 'JQ', 'CUTTER': 'YAO', 'YAO': 'YAO' };
+function reorderVendorName(v) {
+  const t = String(v == null ? '' : v).trim();
+  if (!t) return '';
+  return REORDER_VENDOR_ALIAS[t.toUpperCase()] || t;
+}
+
 async function reorderVendorOrder(env, url) {
   const num = (k, d, lo, hi) => { const v = parseFloat(url.searchParams.get(k)); return Number.isFinite(v) ? Math.min(hi, Math.max(lo, v)) : d; };
   const days = Math.round(num('days', 90, 7, 730));
@@ -1167,7 +1176,8 @@ async function reorderVendorOrder(env, url) {
   const incoming = {}; // part → { title: units }
   (await all('SELECT title, part, qty FROM reorder_incoming')).forEach(r => { const k = P(r.part); (incoming[k] = incoming[k] || {})[r.title] = (incoming[k][r.title] || 0) + (r.qty || 0); });
   const incUnitsOf = k => Object.values(incoming[k] || {}).reduce((a, x) => a + x, 0);
-  const incomingTitles = await all('SELECT title, COUNT(*) AS parts, SUM(qty) AS units, MAX(vendor) AS vendor, MAX(updated_at) AS at FROM reorder_incoming GROUP BY title ORDER BY MIN(updated_at)');
+  const incomingTitles = (await all('SELECT title, COUNT(*) AS parts, SUM(qty) AS units, MAX(vendor) AS vendor, MAX(updated_at) AS at FROM reorder_incoming GROUP BY title ORDER BY MIN(updated_at)'))
+    .map(t => ({ ...t, vendor: reorderVendorName(t.vendor) }));
 
   const fba = await all('SELECT sku, asin, available, product_name FROM fba_catalog');
   const sales = {}; // exact SKU → { amz, other } in units (listing orders)
@@ -1207,13 +1217,13 @@ async function reorderVendorOrder(env, url) {
     const o = bySku[s] = bySku[s] || { units: 0, caseQty: 0, vendor: '', name: '' };
     o.units += (parseFloat(r.cases) || 0) * (parseFloat(r.units_per_case) || 0);
     o.caseQty = Math.max(o.caseQty, parseFloat(r.units_per_case) || 0);
-    if (!o.vendor && r.vendor) o.vendor = String(r.vendor).trim();
+    if (!o.vendor && r.vendor) o.vendor = reorderVendorName(r.vendor);
     if (!o.name && r.name) o.name = String(r.name).trim();
     const bo = byBase[b] = byBase[b] || { vendor: '', name: '', skus: new Set() };
-    if (!bo.vendor && r.vendor) bo.vendor = String(r.vendor).trim();
+    if (!bo.vendor && r.vendor) bo.vendor = reorderVendorName(r.vendor);
     if (!bo.name && r.name) bo.name = String(r.name).trim();
     bo.skus.add(s);
-    if (r.vendor) vendors.add(String(r.vendor).trim());
+    if (r.vendor) vendors.add(reorderVendorName(r.vendor));
   }
   const upcRows = await all('SELECT sku, inside_upc, outside_upc FROM upc');
   const upc = {}; upcRows.forEach(r => { upc[P(r.sku)] = r; });
@@ -1301,7 +1311,7 @@ async function reorderVendorOrder(env, url) {
         channels: chanUnits[t.sku] || {},
         sameAsin: Object.entries(sameAsin[t.sku] || {}).map(([sku, x]) => ({ sku, units: Math.round(x.units), asin: x.asin })),
         amazonCode: /^[0-9A-Z]{2}-[0-9A-Z]{4}-[0-9A-Z]{4}$/.test(t.sku),
-        vendor: pick(fx.vendor, ct.vendor, sm.vendor, bo.vendor),
+        vendor: reorderVendorName(pick(fx.vendor, ct.vendor, sm.vendor, bo.vendor)),
         outsideUpc: pick(fx.outside_upc, ct.outside_upc, u.outside_upc), insideUpc: pick(fx.inside_upc, ct.inside_upc, u.inside_upc),
         itemNo: pick(ct.item_no), caseSrc, fixed: !!fixes[t.sku],
         soldPcs: Math.round(demandPcs), monthlyPcs: Math.round(monthlyPcs * 10) / 10,
@@ -1329,9 +1339,14 @@ async function reorderVendorOrder(env, url) {
     onRows.forEach(r => { (r.merged = r.merged || []).push({ part, from: [...fromMap[part]] }); });
   }
   rows.sort((a, c) => reorderSortRank(a.baseSku) - reorderSortRank(c.baseSku) || a.sku.localeCompare(c.sku));
-  Object.values(cat).forEach(r => { if (r.vendor) vendors.add(String(r.vendor).trim()); });
-  Object.values(fixes).forEach(r => { if (r.vendor) vendors.add(String(r.vendor).trim()); });
-  const catCounts = await all('SELECT vendor, COUNT(*) AS n, MAX(updated_at) AS at FROM reorder_vendor_catalog GROUP BY vendor');
+  Object.values(cat).forEach(r => { if (r.vendor) vendors.add(reorderVendorName(r.vendor)); });
+  Object.values(fixes).forEach(r => { if (r.vendor) vendors.add(reorderVendorName(r.vendor)); });
+  const catMerged = {};
+  (await all('SELECT vendor, COUNT(*) AS n, MAX(updated_at) AS at FROM reorder_vendor_catalog GROUP BY vendor')).forEach(r => {
+    const k = reorderVendorName(r.vendor) || r.vendor, c = catMerged[k] = catMerged[k] || { vendor: k, n: 0, at: '' };
+    c.n += r.n || 0; if (String(r.at || '') > c.at) c.at = r.at;
+  });
+  const catCounts = Object.values(catMerged);
   return cors(new Response(JSON.stringify({ ok: true, days, cover, lead, countFba, countOtherPacks, dataFrom,
     vendors: [...vendors].sort(), catalog: catCounts, incomingTitles, rows }), { headers: { 'Content-Type': 'application/json' } }));
 }
