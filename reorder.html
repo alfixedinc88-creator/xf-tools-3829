@@ -3993,7 +3993,8 @@ function rvoCols() {
     cols.push({ k: 'inc' + n, label: '🚢 ' + escHtml(t.title), tip: 'On the way — ' + t.title + ' (units of this part #)', w: 130, num: true,
       sort: function (r) { return (r.incoming || {})[t.title] || 0; }, cell: function (r) { var v = (r.incoming || {})[t.title]; return v ? '<b style="color:#1A56DB">' + fmt0(v) + '</b>' : '<span style="color:var(--text3)">—</span>'; } });
   });
-  if (titles.length) cols.push({ k: 'incTot', label: 'On the way', tip: 'All titles together — subtracted from Need', w: 100, num: true, sort: function (r) { return r.incomingUnits || 0; }, cell: function (r) { return r.incomingUnits ? '<b>' + fmt0(r.incomingUnits) + '</b>' : '—'; } });
+  if (titles.length) cols.push({ k: 'incTot', label: 'On the way', tip: 'All titles together — subtracted from Need', w: 100, num: true, sort: function (r) { return (r.incomingUnits || 0) + (r.otherIncUnits || 0); }, cell: function (r) { return (r.incomingUnits ? '<b>' + fmt0(r.incomingUnits) + '</b>' : (r.otherIncUnits ? '' : '—'))
+    + (r.otherIncUnits ? '<div style="font-size:10px;color:#1A56DB" title="Share of other pack sizes of ' + escHtml(r.baseSku) + ' on the way (' + fmt0(r.otherIncPcs) + ' pcs), split between this part\'s rows by sales">+' + fmt0(r.otherIncUnits) + ' other packs</div>' : ''); } });
   cols.push(
     { k: 'need', label: 'Need', tip: 'Units of this part # (after stock, FBA and on the way)', w: 70, num: true, sort: function (r) { return r.needUnits; }, cell: function (r) { return fmt0(r.needUnits); } },
     { k: 'case', label: 'Case qty', tip: 'Units of this part # per case', w: 90, num: true, sort: function (r) { return r.caseQty || 0; }, cell: function (r) { if (rvoInlOn()) return rvoInlBox(r, 'case_qty', '64px'); return r.caseQty ? fmt0(r.caseQty) + (r.caseSrc && r.caseSrc !== 'SKU Mgr' ? '<div style="font-size:10px;color:var(--text3)">' + escHtml(r.caseSrc) + '</div>' : '') : '—'; } },
@@ -4150,21 +4151,21 @@ async function rvoCheck(title, file) {
   body.innerHTML = '<div style="font-size:12px;color:var(--text3)">Checking…</div>';
   var d = await (await wFetch(W + '/reorder/fix/incoming-lines?title=' + encodeURIComponent(title))).json();
   if (!d.ok) { body.innerHTML = '<div style="color:var(--red)">✗ ' + escHtml(d.error || 'Failed') + '</div>'; return; }
-  var bySku = {}, byBase = {}, other = !!(RVO.meta && RVO.meta.countOtherPacks);
+  var bySku = {}, byBase = {};
   RVO.rows.forEach(function (r) { bySku[r.sku] = r; (byBase[r.baseSku] = byBase[r.baseSku] || []).push(r); });
   var sum = { own: [0, 0], otherOn: [0, 0], otherOff: [0, 0], none: [0, 0] };
   d.lines.forEach(function (l) {
     var k = l.readAs, base = k.split('=')[0], q = rvoNum(l.qty);
     if (bySku[k]) { l.where = 'own'; l.whereTxt = 'Own row ' + k + (k !== l.part ? ' (corrected)' : ''); }
-    else if (byBase[base]) { l.where = other ? 'otherOn' : 'otherOff';
-      l.whereTxt = (other ? 'Counted in ' : 'NOT counted (other pack size) — would go to ') + byBase[base].map(function (r) { return r.sku; }).join(', ') + (other ? ' (other pack size)' : ' · tick "Count other pack sizes" or map it'); }
+    else if (byBase[base]) { var tg = byBase[base]; l.where = 'otherOn';
+      l.whereTxt = 'Counted as ' + base + ' (other pack size) — ' + (tg.length > 1 ? 'shared by sales between ' : 'in ') + tg.map(function (r) { return r.sku + (tg.length > 1 && r.share != null ? ' ' + Math.round(r.share * 100) + '%' : ''); }).join(', '); }
     else { l.where = 'none'; l.whereTxt = 'Not in the order list — no sales in this window and not an FBA part # (map it if it\'s a different name)'; }
     sum[l.where][0]++; sum[l.where][1] += q;
   });
   var saved = d.lines.reduce(function (a, l) { return a + rvoNum(l.qty); }, 0), savedCases = d.lines.reduce(function (a, l) { return a + rvoNum(l.cases); }, 0);
   var counted = sum.own[1] + sum.otherOn[1];
   var ok = function (b) { return b ? '<b style="color:var(--green)">✓</b>' : '<b style="color:var(--red)">⚠</b>'; };
-  var line = function (label, n, u, st) { return '<tr><td style="padding:4px 10px">' + label + '</td><td style="padding:4px 10px;text-align:right">' + fmt0(n) + '</td><td style="padding:4px 10px;text-align:right;' + (st || '') + '">' + fmt0(u) + '</td></tr>'; };
+  var line = function (label, n, u, st, w) { return '<tr' + (w ? ' onclick="rvoCkFilter(\'' + w + '\')" style="cursor:pointer" title="Click to see only these lines (click again for all)"' : '') + '><td style="padding:4px 10px' + (w ? ';text-decoration:underline dotted' : '') + '">' + label + '</td><td style="padding:4px 10px;text-align:right">' + fmt0(n) + '</td><td style="padding:4px 10px;text-align:right;' + (st || '') + '">' + fmt0(u) + '</td></tr>'; };
   var h = '<table style="font-size:13px;border-collapse:collapse;margin-bottom:10px"><thead><tr><th style="text-align:left;padding:4px 10px"></th><th style="padding:4px 10px">Lines</th><th style="padding:4px 10px">Units</th></tr></thead><tbody>';
   if (file) {
     var skU = (file.skipped || []).reduce(function (a, k) { return a + rvoNum(k.qty); }, 0);
@@ -4172,10 +4173,10 @@ async function rvoCheck(title, file) {
     if (file.skipped && file.skipped.length) h += line('↳ skipped (see below)', file.skipped.length, skU, 'color:var(--red)');
   }
   h += line('Saved as "' + escHtml(title) + '"' + (savedCases ? ' · ' + fmt0(savedCases) + ' cases' : ''), d.lines.length, saved, 'font-weight:700')
-    + line('↳ own row in the order list', sum.own[0], sum.own[1], 'color:var(--green)')
-    + (sum.otherOn[0] ? line('↳ counted in another pack\'s row', sum.otherOn[0], sum.otherOn[1], 'color:var(--green)') : '')
-    + (sum.otherOff[0] ? line('↳ other pack size, NOT counted', sum.otherOff[0], sum.otherOff[1], 'color:#b45309') : '')
-    + (sum.none[0] ? line('↳ not in the order list', sum.none[0], sum.none[1], 'color:var(--red)') : '')
+    + line('↳ own row in the order list', sum.own[0], sum.own[1], 'color:var(--green)', sum.own[0] ? 'own' : '')
+    + (sum.otherOn[0] ? line('↳ other pack size, counted in the part\'s rows', sum.otherOn[0], sum.otherOn[1], 'color:var(--green)', 'otherOn') : '')
+    + (sum.otherOff[0] ? line('↳ other pack size, NOT counted', sum.otherOff[0], sum.otherOff[1], 'color:#b45309', 'otherOff') : '')
+    + (sum.none[0] ? line('↳ not in the order list', sum.none[0], sum.none[1], 'color:var(--red)', 'none') : '')
     + line('Subtracted from what to order', sum.own[0] + sum.otherOn[0], counted, 'font-weight:700') + '</tbody></table>';
   var old = d.lines.filter(function (l) { return !l.src_rows; }).length;
   if (!d.lines.length) h = '<div style="font-size:13px;padding:10px;background:#FEF6E7;border-radius:8px;margin-bottom:10px">Nothing is saved under "' + escHtml(title) + '" (no lines with a quantity). Import the shipment file again with this Title — it needs a <b>Qty</b> or <b>Cases</b> column.</div>' + h;
@@ -4187,10 +4188,11 @@ async function rvoCheck(title, file) {
   if (file && file.fromCases) h += '<div style="font-size:12px;color:var(--text3);margin-bottom:6px">' + file.fromCases + ' line(s) had no Qty — worked out from Cases × Master Carton pcs.</div>';
   if (file) h += rvoSkippedHtml(file.skipped);
   var col = { own: 'var(--green)', otherOn: 'var(--green)', otherOff: '#b45309', none: 'var(--red)' };
+  h += '<div id="rvo-ck-filt" style="display:none;font-size:12px;margin:0 0 6px;padding:6px 10px;background:var(--bg3);border-radius:8px"></div>';
   h += '<div style="max-height:50vh;overflow:auto;border:1px solid var(--border);border-radius:8px"><table style="font-size:12px;border-collapse:collapse;width:100%"><thead style="position:sticky;top:0;background:var(--bg3)"><tr>'
     + ['File row', 'Part # in file', 'Read as', 'Qty', 'Cases', 'Where it went', ''].map(function (x) { return '<th style="text-align:left;padding:6px 8px">' + x + '</th>'; }).join('') + '</tr></thead><tbody>'
     + d.lines.map(function (l, i) {
-      return '<tr style="border-top:1px solid var(--border)"><td style="padding:5px 8px;color:var(--text3)">' + escHtml(l.src_rows || '') + '</td>'
+      return '<tr class="rvo-ck-l" data-w="' + l.where + '" style="border-top:1px solid var(--border)"><td style="padding:5px 8px;color:var(--text3)">' + escHtml(l.src_rows || '') + '</td>'
         + '<td style="padding:5px 8px;font-family:var(--mono)">' + escHtml(l.raw_part || l.part) + '</td>'
         + '<td style="padding:5px 8px;font-family:var(--mono);font-weight:700">' + escHtml(l.readAs) + '</td>'
         + '<td style="padding:5px 8px;text-align:right">' + fmt0(l.qty) + '</td><td style="padding:5px 8px;text-align:right">' + (l.cases ? fmt0(l.cases) : '') + '</td>'
@@ -4198,7 +4200,21 @@ async function rvoCheck(title, file) {
         + '<td style="padding:5px 8px">' + (l.where !== 'own' ? '<button class="btn btn-secondary" style="font-size:11px;padding:2px 8px;white-space:nowrap" onclick="rvoMapLine(' + i + ')">Map to part #</button>' : '') + '</td></tr>';
     }).join('') + '</tbody></table></div>';
   body.innerHTML = h;
-  RVO_CK = { title: title, lines: d.lines, file: file };
+  RVO_CK = { title: title, lines: d.lines, file: file, filter: (RVO_CK && RVO_CK.title === title) ? RVO_CK.filter : '' };
+  rvoCkFilter(RVO_CK.filter, true);
+}
+// Click a group in the Import check totals (own row / other pack size /
+// not in the order list) to list only that group's lines; again for all.
+var RVO_CK_LABEL = { own: 'own row in the order list', otherOn: 'other pack size, counted', otherOff: 'other pack size, NOT counted', none: 'not in the order list' };
+function rvoCkFilter(w, keep) {
+  if (!RVO_CK) return;
+  if (!keep && RVO_CK.filter === w) w = '';
+  RVO_CK.filter = w || '';
+  var n = 0;
+  document.querySelectorAll('#rvo-ck-body tr.rvo-ck-l').forEach(function (tr) { var on = !w || tr.getAttribute('data-w') === w; tr.style.display = on ? '' : 'none'; if (on) n++; });
+  var f = document.getElementById('rvo-ck-filt');
+  if (f) { f.style.display = w ? 'block' : 'none';
+    f.innerHTML = w ? 'Showing only <b>' + escHtml(RVO_CK_LABEL[w] || w) + '</b> (' + n + ' line' + (n === 1 ? '' : 's') + ') · <a href="#" onclick="rvoCkFilter(\'\');return false">show all</a>' : ''; }
 }
 function rvoSkippedHtml(sk) {
   if (!sk || !sk.length) return '';

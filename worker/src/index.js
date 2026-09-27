@@ -1272,17 +1272,25 @@ async function reorderVendorOrder(env, url) {
       targets = [{ sku: best, asin: '', demand: total, fbaAvailPieces: 0, fbaSku: false }];
     }
     const bo = byBase[b] || { skus: new Set() };
+    // Other packs of the part (not FBA part #s, e.g. 23-5-4=25 next to the
+    // FBA rows 23-5-4=100 / =50 / …) are shared out across this part's rows
+    // by their sales, so each piece is counted once — not once per row.
+    const dSum = targets.reduce((a, x) => a + (x.demand || 0), 0);
     for (const t of targets) {
+      const share = targets.length === 1 ? 1 : dSum > 0 ? (t.demand || 0) / dSum : 1 / targets.length;
       const ps = pack(t.sku), sm = bySku[t.sku] || { units: 0, caseQty: 0 };
       const demandPcs = t.demand, monthlyPcs = demandPcs / months;
       const ownPcs = sm.units * ps;
       let otherPcs = 0, otherIncPcs = 0;
       [...bo.skus].forEach(s => { if (s !== t.sku && !fbaSkuSet.has(s) && bySku[s]) otherPcs += bySku[s].units * pack(s); });
-      // On the way (every imported title): this part # always counts; other
-      // packs of the part only with "Count other pack sizes".
+      // On the way (every imported title): this part # and its share of any
+      // other pack of the part on the way always count (new stock ordered in
+      // a pack size with no FBA listing is still stock of this part); other
+      // packs on the shelf only with "Count other pack sizes".
       for (const k in incoming) if (k !== t.sku && !fbaSkuSet.has(k) && U(reorderGetBaseSku(k)) === b) otherIncPcs += incUnitsOf(k) * pack(k);
+      otherPcs *= share; otherIncPcs *= share;
       const incUnits = incUnitsOf(t.sku);
-      const stockPcs = ownPcs + incUnits * ps + (countOtherPacks ? otherPcs + otherIncPcs : 0) + (countFba ? t.fbaAvailPieces : 0);
+      const stockPcs = ownPcs + incUnits * ps + otherIncPcs + (countOtherPacks ? otherPcs : 0) + (countFba ? t.fbaAvailPieces : 0);
       const needPcs = Math.max(0, monthlyPcs * (lead + cover) - stockPcs);
       const needUnits = Math.ceil(needPcs / ps - 1e-9);
       const ct = cat[t.sku] || {}, fx = fixes[t.sku] || {};
@@ -1298,7 +1306,7 @@ async function reorderVendorOrder(env, url) {
       } else if (needUnits > 0) notes.push('No case qty in SKU Mgr — not rounded');
       if (!t.fbaSku) notes.push('No FBA listing — best-selling pack');
       if (!countOtherPacks && otherPcs > 0) notes.push(`${Math.round(otherPcs)} pcs in other packs of ${b} not counted`);
-      if (!countOtherPacks && otherIncPcs > 0) notes.push(`${Math.round(otherIncPcs)} pcs on the way in other packs of ${b} not counted`);
+      if (otherIncPcs > 0) notes.push(`${Math.round(otherIncPcs)} pcs on the way in other packs of ${b} subtracted` + (share < 1 ? ` (this row's ${Math.round(share * 100)}% share, by sales)` : ''));
       if (incUnits > 0) notes.push(`${Math.round(incUnits)} on the way subtracted`);
       Object.entries(sameAsin[t.sku] || {}).forEach(([fs, x]) => notes.push(`Incl. ${Math.round(x.units)} sold FBM as ${fs} (same ASIN ${x.asin})`));
       const u = upc[t.sku] || {};
@@ -1318,6 +1326,7 @@ async function reorderVendorOrder(env, url) {
         stockUnits: Math.round(sm.units * 100) / 100, stockPcs: Math.round(ownPcs), otherPackPcs: Math.round(otherPcs),
         fbaPcs: Math.round(t.fbaAvailPieces), needUnits, caseQty, cases, orderUnits, note: notes.join(' · '),
         incoming: incoming[t.sku] || {}, incomingUnits: Math.round(incUnits),
+        otherIncPcs: Math.round(otherIncPcs), otherIncUnits: Math.round(otherIncPcs / ps * 10) / 10, share: Math.round(share * 1000) / 1000,
       };
       row.issues = [];
       if (!reorderIsProperFormat(row.sku)) row.issues.push('Part # looks wrong');
