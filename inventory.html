@@ -1145,7 +1145,11 @@ window.invCredLogin = async function() {
   </div>
 
   <div class="icard" style="margin-top:14px">
-    <div class="icard-label">Inventory Log History</div>
+    <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin-bottom:6px">
+      <div class="icard-label" style="margin:0;flex:1">Inventory Log History</div>
+      <button onclick="histRecoverCheck()" title="Find Stock In / Stock Out entries that are in the Google Sheet log but never reached the database (e.g. saved while the database was busy)" style="padding:6px 10px;background:var(--bg2);border:1.5px solid var(--border);border-radius:8px;font-size:12px;cursor:pointer">🔎 Missed entries?</button>
+    </div>
+    <div id="hist-recover" style="display:none;margin-bottom:10px;padding:10px;border:1.5px solid var(--orange);background:var(--orange-bg);border-radius:8px;font-size:12.5px"></div>
 
     <!-- Filters -->
     <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-bottom:10px">
@@ -5279,6 +5283,33 @@ window.invCredLogin = async function() {
         histRender(d.rows, d.count, d.source);
       })
       .catch(function() { if (res) res.innerHTML = '<div style="color:var(--red);padding:12px">Load failed</div>'; });
+  };
+
+  // 🔎 Missed entries? — Stock In/Out in the Google Sheet log (last 3 days)
+  // that never reached the database; Restore puts them in Review as Pending.
+  window.histRecoverCheck = function() {
+    var box = g('hist-recover'); box.style.display = 'block'; box.innerHTML = 'Checking the last 3 days…';
+    wFetch(W + '/inventory/recover-check?days=3').then(function(r) { return r.json(); }).then(function(d) {
+      if (!d.ok) { box.innerHTML = '⚠ ' + (d.error || 'Check failed'); return; }
+      if (!d.missing.length) { box.innerHTML = '✓ Nothing missing — all ' + d.checked + ' Stock In/Out entries from the last 3 days are in the database.'; return; }
+      var fmt = function(iso) { return new Date(iso).toLocaleString('en-US', { timeZone: 'America/New_York', month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' }); };
+      box.innerHTML = '<b>' + d.missing.length + ' entr' + (d.missing.length === 1 ? 'y' : 'ies') + ' never reached the database:</b>'
+        + '<div style="max-height:220px;overflow:auto;margin:6px 0;font-family:var(--mono);font-size:11.5px">' + d.missing.map(function(m) {
+          return fmt(m.ts) + ' · ' + m.type + ' · ' + m.part + ' @ ' + m.loc + ' · ' + m.cases + ' cs · ' + (m.initials || '');
+        }).join('<br>') + '</div>'
+        + '<button onclick="histRecoverApply()" style="padding:6px 12px;background:var(--accent);color:#fff;border:none;border-radius:7px;font-weight:700;cursor:pointer">Restore ' + d.missing.length + ' → Review</button>'
+        + ' <span style="color:var(--text3)">They come back as Pending; approve them in Review to update stock.</span>';
+    }).catch(function() { box.innerHTML = '⚠ Check failed — try again'; });
+  };
+  window.histRecoverApply = function() {
+    var box = g('hist-recover'); box.innerHTML = 'Restoring…';
+    wFetch(W + '/inventory/recover-check', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ apply: true, days: 3 }) })
+      .then(function(r) { return r.json(); }).then(function(d) {
+        if (!d.ok) { box.innerHTML = '⚠ ' + (d.error || 'Restore failed'); return; }
+        box.innerHTML = '✓ Restored ' + d.restored + ' entr' + (d.restored === 1 ? 'y' : 'ies') + ' — open <b>Review</b> to approve them.';
+        if (typeof histLoad === 'function') histLoad();
+        if (typeof invFetchPendingCount === 'function') invFetchPendingCount();
+      }).catch(function() { box.innerHTML = '⚠ Restore failed — try again'; });
   };
 
   function histRender(rows, count, source) {

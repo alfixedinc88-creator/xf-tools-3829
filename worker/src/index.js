@@ -2205,14 +2205,18 @@ async function inventoryLog(request, env) {
   let d1Id = null;
   let appendedRow = null;
 
-  // 1. Write to D1 first — this is the source of truth
+  // 1. Write to D1 first — this is the source of truth. A busy database
+  // ("D1 DB is overloaded") used to be caught here and the request still
+  // answered ok:true, so the phone showed the pick as saved while it never
+  // reached the database (not in History, stock never taken off). Now it's
+  // tried 3 times, and if it still fails the phone is told it was NOT saved
+  // so the item stays on the list with "retry".
+  let d1Err = null;
   if (env.DB) {
+    await invLogEnsureColumns(env);
+    for (let attempt = 0; attempt < 3 && !d1Id; attempt++) {
+    if (attempt) await new Promise(r => setTimeout(r, attempt * 400));
     try {
-      // Safety net for an existing deployment where these columns don't
-      // exist yet — no-op once they've been added. Same pattern used for
-      // product_catalog's columns elsewhere in this file.
-      await env.DB.prepare('ALTER TABLE inventory_log ADD COLUMN added_at TEXT').run().catch(()=>{});
-      await env.DB.prepare('ALTER TABLE inventory_log ADD COLUMN grabbed_at TEXT').run().catch(()=>{});
       const d1Result = await env.DB.prepare(
         `INSERT INTO inventory_log
            (sheet_row,timestamp,type,part_num,location,cases,initials,notes,status,
@@ -2229,7 +2233,14 @@ async function inventoryLog(request, env) {
         masterId || null, addedAt || null, grabbedAt || null
       ).run();
       d1Id = d1Result.meta?.last_row_id || null;
-    } catch(e) { console.error('[D1] log insert failed:', e.message); }
+    } catch(e) { d1Err = e; console.error('[D1] log insert failed (try ' + (attempt + 1) + '):', e.message); }
+    }
+    if (!d1Id) {
+      // Let a retry of this same request go through (it wasn't saved).
+      if (_requestId) await env.DB.prepare('DELETE FROM processed_requests WHERE request_id=?').bind(_requestId).run().catch(() => {});
+      return cors(new Response(JSON.stringify({ ok: false, error: 'Not saved — the database was busy (' + String(d1Err && d1Err.message || 'no id').slice(0, 120) + '). Please tap retry.' }),
+        { status: 503, headers: { 'Content-Type': 'application/json' } }));
+    }
   }
 
   // 1b. Auto-approve, if the Review tab's mode is set to "Auto" — reuses
@@ -4397,6 +4408,10 @@ export default {
       if (path === '/inventory/history' && method === 'GET') {
         if (session.pin_level !== 'mgmt') return cors(new Response(JSON.stringify({error:'Management access required'}),{status:403,headers:{'Content-Type':'application/json'}}));
         return await inventoryHistory(url, env);
+      }
+      if (path === '/inventory/recover-check' && (method === 'GET' || method === 'POST')) {
+        if (session.pin_level !== 'mgmt') return cors(new Response(JSON.stringify({error:'Management access required'}),{status:403,headers:{'Content-Type':'application/json'}}));
+        return await inventoryRecoverFromSheet(request, url, env);
       }
       if (path === '/inventory/history-summary' && method === 'GET') {
         if (session.pin_level !== 'mgmt') return cors(new Response(JSON.stringify({error:'Management access required'}),{status:403,headers:{'Content-Type':'application/json'}}));
@@ -9476,6 +9491,66 @@ async function inventorySkuRow(request, env) {
 // expiry. So this report can go back as far as data exists, not just 30
 // days; the dropdown just offers common ranges, and days=9999 is accepted
 // for "everything."
+// Item names for History rows that don't carry one: products by base SKU,
+// then master_list by part #, each a single IN (...) query.
+async function invHistoryFillNames(env, rows) {
+  const need = rows.filter(r => !r.name && r.part_num);
+  if (!need.length) return;
+  const base = pn => String(pn).split('=')[0].trim().toUpperCase();
+  const byBase = {}, byPart = {};
+  const bases = [...new Set(need.map(r => base(r.part_num)))], parts = [...new Set(need.map(r => String(r.part_num).toUpperCase()))];
+  for (let i = 0; i < bases.length; i += 90) {
+    const ch = bases.slice(i, i + 90);
+    (await d1All(env, `SELECT UPPER(sku) AS k, name FROM products WHERE UPPER(sku) IN (${ch.map(() => '?').join(',')})`, ch).catch(() => []))
+      .forEach(r => { if (r.name && !byBase[r.k]) byBase[r.k] = r.name; });
+  }
+  const left = parts.filter(p => !byBase[base(p)]);
+  for (let i = 0; i < left.length; i += 90) {
+    const ch = left.slice(i, i + 90);
+    (await d1All(env, `SELECT UPPER(part_num) AS k, name FROM master_list WHERE UPPER(part_num) IN (${ch.map(() => '?').join(',')}) AND name != ''`, ch).catch(() => []))
+      .forEach(r => { if (r.name && !byPart[r.k]) byPart[r.k] = r.name; });
+  }
+  need.forEach(r => { r.name = byBase[base(r.part_num)] || byPart[String(r.part_num).toUpperCase()] || ''; });
+}
+
+// GET /inventory/recover-check?days=3  → entries in the Inventory_Log sheet
+// (every Stock In/Out is also copied there) that never made it into the
+// database — e.g. saved while the database was overloaded, when the phone
+// was still told "saved". POST {apply:true, days} puts them back as
+// Pending with a [RECOVERED] note, so a manager approves them in Review
+// (that's when the stock is actually taken off / added).
+async function inventoryRecoverFromSheet(request, url, env) {
+  const J = (o, st) => cors(new Response(JSON.stringify(o), { status: st || 200, headers: { 'Content-Type': 'application/json' } }));
+  const b = request.method === 'POST' ? await request.json().catch(() => ({})) : {};
+  const days = Math.min(30, Math.max(1, parseInt(b.days || url.searchParams.get('days') || '3', 10) || 3));
+  const cutoff = new Date(Date.now() - days * 86400000).toISOString();
+  await invLogEnsureColumns(env);
+  const colA = await invSheetGet(env, 'Inventory_Log!A2:A200000').catch(() => ({ values: [] }));
+  if (colA.error) return J({ ok: false, error: 'Inventory_Log sheet: ' + (colA.error.message || 'read failed') }, 500);
+  const total = (colA.values || []).length;
+  const start = Math.max(2, total - 4000 + 2);
+  const data = total ? await invSheetGet(env, `Inventory_Log!A${start}:R${total + 1}`).catch(() => ({ values: [] })) : { values: [] };
+  const toIso = v => { const d = new Date(v); return isNaN(d.getTime()) ? '' : d.toISOString(); };
+  const sheetRows = (data.values || []).map(r => ({ ts: toIso(r[0]), type: String(r[1] || '').toUpperCase(), part: String(r[2] || '').trim(), loc: String(r[3] || '').trim(),
+    cases: parseFloat(r[4]) || 0, initials: String(r[5] || ''), notes: String(r[6] || ''), overwrite: String(r[10] || ''), isNew: String(r[11]).toUpperCase() === 'TRUE',
+    isPlaceholder: String(r[12]).toUpperCase() === 'TRUE', rowIndex: String(r[13] || ''), sku: String(r[14] || ''), name: String(r[17] || '') }))
+    .filter(r => r.ts && r.ts >= cutoff && r.part && (r.type === 'IN' || r.type === 'OUT'));
+  const have = new Set(((await env.DB.prepare('SELECT timestamp, type, UPPER(part_num) AS p, UPPER(location) AS l FROM inventory_log WHERE timestamp >= ?').bind(cutoff).all()).results || [])
+    .map(r => [toIso(r.timestamp), r.type, r.p, r.l].join('|')));
+  const missing = sheetRows.filter(r => !have.has([r.ts, r.type, r.part.toUpperCase(), r.loc.toUpperCase()].join('|')));
+  if (!b.apply) return J({ ok: true, days, checked: sheetRows.length, missing: missing.slice(0, 500) });
+  let restored = 0;
+  for (const r of missing.slice(0, 500)) {
+    try {
+      await env.DB.prepare(`INSERT INTO inventory_log (sheet_row,timestamp,type,part_num,location,cases,initials,notes,status,verified_by,verified_at,overwrite_loc,is_new,is_placeholder,master_row_index,sku,transfer_id,paired_location,name)
+        VALUES (0,?,?,?,?,?,?,?,'Pending','','',?,?,?,?,?,'','',?)`)
+        .bind(r.ts, r.type, r.part, r.loc, r.cases, r.initials, ('[RECOVERED] ' + r.notes).trim(), r.overwrite, r.isNew ? 1 : 0, r.isPlaceholder ? 1 : 0, r.rowIndex, r.sku, r.name).run();
+      restored++;
+    } catch (e) { console.error('[recover] insert failed', e.message); }
+  }
+  return J({ ok: true, days, restored, missing: missing.length });
+}
+
 async function inventoryHistorySummary(url, env) {
   try {
     if (!env.DB) return cors(new Response(JSON.stringify({ ok: false, error: 'D1 unavailable' }), { status: 500, headers: { 'Content-Type': 'application/json' } }));
@@ -9520,17 +9595,24 @@ async function inventoryHistorySummary(url, env) {
       SUM(CASE WHEN type='IN'  AND notes LIKE '%[AUDIT]%' THEN cases ELSE 0 END) as audit_cases_in,
       SUM(CASE WHEN type='OUT' AND notes LIKE '%[AUDIT]%' THEN cases ELSE 0 END) as audit_cases_out`;
 
-    const totals = await d1First(env,
-      `SELECT ${bucketSql} FROM inventory_log WHERE ${timeCond}`, timeParams
+    await invLogEnsureColumns(env);
+    let totals, byPerson;
+    try {
+    totals = await d1Strict(env,
+      `SELECT ${bucketSql} FROM inventory_log WHERE ${timeCond}`, timeParams, true
     );
 
-    const byPerson = await d1All(env,
+    byPerson = await d1Strict(env,
       `SELECT UPPER(TRIM(initials)) as initials, ${bucketSql}
        FROM inventory_log
        WHERE ${timeCond} AND TRIM(initials) != ''
        GROUP BY UPPER(TRIM(initials))
        ORDER BY (transfers+audits+stock_in+stock_out) DESC`, timeParams
     );
+    } catch (e) {
+      return cors(new Response(JSON.stringify({ ok: false, error: 'Report couldn\'t load — the database was busy (' + String(e.message || '').slice(0, 120) + '). Tap Refresh.' }),
+        { status: 503, headers: { 'Content-Type': 'application/json' } }));
+    }
 
     // Starting/Ending Cases — inventory_log only records CHANGES, not daily
     // snapshots, so this is reconstructed by working backward from the
@@ -9703,6 +9785,30 @@ async function inventoryCancelEntry(request, env) {
   return cors(new Response(JSON.stringify({ ok: true, newCases }), { headers: { 'Content-Type': 'application/json' } }));
 }
 
+// inventory_log columns added over time + the timestamp index History and
+// the Activity Report filter on — once per worker instance (these used to
+// run 2–7 ALTERs on every Stock In/Out and every History load).
+// Like d1All / d1First but a failed query is NOT turned into "no rows" —
+// retried twice, then thrown, so History / the Activity Report can say the
+// database was busy instead of showing an empty day.
+async function d1Strict(env, sql, params, first) {
+  let err;
+  for (let a = 0; a < 3; a++) {
+    if (a) await new Promise(r => setTimeout(r, a * 300));
+    try { const st = env.DB.prepare(sql).bind(...(params || [])); return first ? await st.first() : ((await st.all()).results || []); }
+    catch (e) { err = e; }
+  }
+  throw err;
+}
+let _invLogReady = false;
+async function invLogEnsureColumns(env) {
+  if (_invLogReady || !env.DB) return;
+  for (const c of ['added_at TEXT', 'grabbed_at TEXT', 'total_before REAL', 'total_after REAL', 'total_warning TEXT', 'cancelled_at TEXT', 'cancelled_by TEXT'])
+    await env.DB.prepare('ALTER TABLE inventory_log ADD COLUMN ' + c).run().catch(() => {});
+  await env.DB.prepare('CREATE INDEX IF NOT EXISTS idx_inventory_log_timestamp ON inventory_log(timestamp)').run().catch(() => {});
+  _invLogReady = true;
+}
+
 async function inventoryHistory(url, env) {
   try {
     const days     = parseInt(url.searchParams.get('days') || '7');
@@ -9724,31 +9830,17 @@ async function inventoryHistory(url, env) {
         // hasn't been migrated yet, silently falls through to the Sheets
         // fallback, and History appears completely empty even though the
         // D1 data is untouched. No-ops once the columns already exist.
-        await env.DB.prepare('ALTER TABLE inventory_log ADD COLUMN added_at TEXT').run().catch(()=>{});
-        await env.DB.prepare('ALTER TABLE inventory_log ADD COLUMN grabbed_at TEXT').run().catch(()=>{});
-        await env.DB.prepare('ALTER TABLE inventory_log ADD COLUMN total_before REAL').run().catch(()=>{});
-        await env.DB.prepare('ALTER TABLE inventory_log ADD COLUMN total_after REAL').run().catch(()=>{});
-        await env.DB.prepare('ALTER TABLE inventory_log ADD COLUMN total_warning TEXT').run().catch(()=>{});
-        await env.DB.prepare('ALTER TABLE inventory_log ADD COLUMN cancelled_at TEXT').run().catch(()=>{});
-        await env.DB.prepare('ALTER TABLE inventory_log ADD COLUMN cancelled_by TEXT').run().catch(()=>{});
-        // NAME FIX: some log rows (e.g. the "Receive PO" insert paths below)
-        // never wrote a `name` at all, so l.name is blank for them and History
-        // showed an empty Item cell. Instead of leaving it blank, fall back
-        // the same way invPending/SKU Manager already do: match the part
-        // number's prefix before "=" (the base SKU — the number after "="
-        // is just a pack-size/qty suffix, not a different item) against the
-        // products catalog, then against master_list, to recover the name.
+        await invLogEnsureColumns(env);
+        // Plain, index-friendly query (the item name used to be looked up
+        // per row with a full scan of master_list inside the SQL — on a busy
+        // database that timed out and History quietly showed the OLD Google
+        // Sheet log instead, i.e. none of today's entries). Missing names are
+        // filled in below with two small look-ups.
         let sql = `SELECT l.id,l.sheet_row,l.timestamp,l.type,l.part_num,l.location,l.cases,l.initials,
                           l.notes,l.status,l.verified_by,l.verified_at,l.added_at,l.grabbed_at,
                           l.total_before,l.total_after,l.total_warning,l.cancelled_at,l.cancelled_by,
-                          COALESCE(NULLIF(l.name,''), p.name,
-                            (SELECT m.name FROM master_list m
-                              WHERE UPPER(m.part_num) = UPPER(l.part_num)
-                                 OR (m.base_sku != '' AND UPPER(m.base_sku) = UPPER(SUBSTR(l.part_num, 1, INSTR(l.part_num||'=','=')-1)))
-                              LIMIT 1), '') as name
+                          COALESCE(l.name,'') as name
                    FROM inventory_log l
-                   LEFT JOIN products p
-                     ON UPPER(SUBSTR(l.part_num, 1, INSTR(l.part_num||'=','=')-1)) = UPPER(p.sku)
                    WHERE l.timestamp >= ?`;
         const params = [cutoff];
 
@@ -9761,7 +9853,8 @@ async function inventoryHistory(url, env) {
         }
         sql += ' ORDER BY l.timestamp DESC LIMIT 500';
 
-        const rows = await d1All(env, sql, params);
+        const rows = await d1Strict(env, sql, params);
+        await invHistoryFillNames(env, rows);
         // Total active cases in stock
         const totalRow = await d1First(env, 'SELECT SUM(cases) as total FROM master_list WHERE cases > 0');
         const totalCases = totalRow?.total || 0;
@@ -9769,10 +9862,17 @@ async function inventoryHistory(url, env) {
           ok: true, rows, count: rows.length, source: 'd1',
           cutoff, days, totalCases
         }), { headers: { 'Content-Type': 'application/json' } }));
-      } catch(e) { console.error('[D1] history:', e.message); }
+      } catch(e) {
+        console.error('[D1] history:', e.message);
+        // Don't fall back to the old Sheet log — it doesn't have everything
+        // (it's only a best-effort copy) and made it look like nothing
+        // happened today. Say the database was busy instead.
+        return cors(new Response(JSON.stringify({ ok: false, error: 'History couldn\'t load — the database was busy (' + String(e.message || '').slice(0, 120) + '). Tap Refresh.' }),
+          { status: 503, headers: { 'Content-Type': 'application/json' } }));
+      }
     }
 
-    // Sheets fallback — read recent log rows
+    // Sheets fallback (only when there's no database at all) — read recent log rows
     const countData = await invSheetGet(env, 'Inventory_Log!H2:H60000').catch(()=>({values:[]}));
     const totalRows = (countData.values||[]).length;
     const startRow  = Math.max(2, totalRows - 1999 + 2);
