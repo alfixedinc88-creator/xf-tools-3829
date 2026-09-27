@@ -4300,6 +4300,7 @@ export default {
       if (path === '/inventory/lookup' && method === 'GET')  return await inventoryLookup(url, env);
       if (path === '/inventory/search' && method === 'GET')  return await inventoryNameSearch(url, env);
       if (path === '/inventory/log'    && method === 'POST') return await inventoryLog(request, env);
+      if (path.startsWith('/inventory/pull/')) return await inventoryPullRoute(path, method, request, env);
       if (path === '/inventory/product/save' && method === 'POST') return await warehouseProductSave(request, env, session);
       if (path === '/inventory/transfer' && method === 'POST') return await inventoryTransferLog(request, env);
       // receive-preview / receive-apply moved up to the credential-based
@@ -9822,6 +9823,48 @@ async function invLogEnsureColumns(env) {
     await env.DB.prepare('ALTER TABLE inventory_log ADD COLUMN ' + c).run().catch(() => {});
   await env.DB.prepare('CREATE INDEX IF NOT EXISTS idx_inventory_log_timestamp ON inventory_log(timestamp)').run().catch(() => {});
   _invLogReady = true;
+}
+
+// ── Stock Out pull list per person (Inventory) ─────────────────────────────
+// The pull list used to live only in the browser, so someone who put items
+// on it and moved to another computer lost their un-grabbed items. Now each
+// signed-in person's list is kept here too (whole list, as the page has it).
+// GET  /inventory/pull/mine          → { items, updatedAt }
+// POST /inventory/pull/mine {items}  → save
+// GET  /inventory/pull/all           → admin / owner: everyone's un-grabbed items
+async function inventoryPullRoute(path, method, request, env) {
+  const J = (o, st) => cors(new Response(JSON.stringify(o), { status: st || 200, headers: { 'Content-Type': 'application/json' } }));
+  const cs = await verifyCredSession(request.headers.get('X-Cred-Token'), env).catch(() => null);
+  if (!cs || !cs.userId) return J({ ok: false, error: 'Sign in required' }, 401);
+  await env.DB.prepare(`CREATE TABLE IF NOT EXISTS inventory_pull_user (user_id INTEGER PRIMARY KEY, username TEXT, display_name TEXT, items TEXT NOT NULL DEFAULT '[]', updated_at TEXT)`).run().catch(() => {});
+  if (path === '/inventory/pull/mine' && method === 'GET') {
+    const r = await env.DB.prepare('SELECT items, updated_at FROM inventory_pull_user WHERE user_id = ?').bind(cs.userId).first();
+    let items = []; try { items = JSON.parse((r && r.items) || '[]'); } catch (_) {}
+    return J({ ok: true, items, updatedAt: (r && r.updated_at) || null });
+  }
+  if (path === '/inventory/pull/mine' && method === 'POST') {
+    const b = await request.json().catch(() => ({}));
+    const items = Array.isArray(b.items) ? b.items.slice(0, 500) : [];
+    const json = JSON.stringify(items);
+    if (json.length > 400000) return J({ ok: false, error: 'Pull list too big' }, 413);
+    const now = new Date().toISOString();
+    await env.DB.prepare(`INSERT INTO inventory_pull_user (user_id, username, display_name, items, updated_at) VALUES (?,?,?,?,?)
+      ON CONFLICT(user_id) DO UPDATE SET username = excluded.username, display_name = excluded.display_name, items = excluded.items, updated_at = excluded.updated_at`)
+      .bind(cs.userId, cs.username || '', cs.displayName || '', json, now).run();
+    return J({ ok: true, updatedAt: now });
+  }
+  if (path === '/inventory/pull/all' && method === 'GET') {
+    if (!(cs.roles || []).includes('admin')) return J({ ok: false, error: 'Admin access required' }, 403);
+    const rows = (await env.DB.prepare('SELECT user_id, username, display_name, items, updated_at FROM inventory_pull_user ORDER BY display_name').all()).results || [];
+    const people = rows.map(r => {
+      let items = []; try { items = JSON.parse(r.items || '[]'); } catch (_) {}
+      const ungrabbed = items.filter(i => i && !i.grabbed && !i.submitted && !i.noneFound)
+        .map(i => ({ partNum: i.partNum || '', name: i.name || '', location: i.location || '', cases: i.cases, addedAt: i.addedAt || null }));
+      return { userId: r.user_id, username: r.username, displayName: r.display_name || r.username, updatedAt: r.updated_at, total: items.length, ungrabbed };
+    }).filter(p => p.ungrabbed.length);
+    return J({ ok: true, people });
+  }
+  return J({ ok: false, error: 'Not found' }, 404);
 }
 
 async function inventoryHistory(url, env) {

@@ -527,6 +527,15 @@ window.invCredLogin = async function() {
     <button class="isubmit sin" id="inv-submit-btn" onclick="invSubmit()">Submit Stock In</button>
   </div>
 
+  <!-- Admin / owner: everyone's un-grabbed pull list items (Stock Out only) -->
+  <div class="icard" id="inv-allpull-card" style="display:none">
+    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px">
+      <div class="icard-label" style="margin:0">👥 Everyone's Un-grabbed Items</div>
+      <button onclick="invLoadAllPulls()" style="background:none;border:none;color:var(--text3);font-size:12px;cursor:pointer;padding:4px 8px">↻ Refresh</button>
+    </div>
+    <div id="inv-allpull-list"></div>
+  </div>
+
   <!-- Pull List (Stock Out only) -->
   <div class="icard" id="inv-pulllist-card" style="display:none">
     <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px">
@@ -1242,7 +1251,27 @@ window.invCredLogin = async function() {
   var invFlashTimer = null;
   var _invQrLib = false;
   var invItemMap = {};  // rowIndex -> item for verify
-  var invPullList = JSON.parse(localStorage.getItem('xfitting_pulllist') || '[]');
+  // Pull list is kept per person: a local copy under a per-user key (so a
+  // shared computer never shows one person's list to the next), plus the
+  // server copy (/inventory/pull/mine) so it follows the person to any
+  // computer they sign in on.
+  function invPullKey() {
+    return (INV_CRED_USER && INV_CRED_USER.userId) ? 'xfitting_pulllist_' + INV_CRED_USER.userId : 'xfitting_pulllist';
+  }
+  function invReadLocalPull() {
+    try {
+      var raw = localStorage.getItem(invPullKey());
+      // One-time move of the old shared-key list onto the signed-in person.
+      if (raw == null && invPullKey() !== 'xfitting_pulllist') {
+        raw = localStorage.getItem('xfitting_pulllist');
+        if (raw != null) { localStorage.setItem(invPullKey(), raw); localStorage.removeItem('xfitting_pulllist'); }
+      }
+      var arr = JSON.parse(raw || '[]');
+      return Array.isArray(arr) ? arr : [];
+    } catch (e) { return []; }
+  }
+  var invPullList = invReadLocalPull();
+  var invPullSyncTimer = null, invPullEditedSinceLoad = false;
 
   function g(id) { return document.getElementById(id); }
 
@@ -1421,6 +1450,8 @@ window.invCredLogin = async function() {
     g("inv-submit-btn").className   = "isubmit " + (mode === "in" ? "sin" : "sout");
     // Pull list card: show in out mode, hide in in mode
     g("inv-pulllist-card").style.display = mode === "out" ? "block" : "none";
+    var apc = g("inv-allpull-card");
+    if (apc) apc.style.display = (mode === "out" && apc.getAttribute('data-admin')) ? "block" : "none";
     // Stock Out For (Shelving / Big Company) — only meaningful in Stock
     // Out mode, so only shown there. Doesn't reset back to Shelving on
     // every mode flip; invStockOutDest keeps whatever was last picked.
@@ -3130,6 +3161,7 @@ window.invCredLogin = async function() {
     // trying to keep several pieces of static HTML in sync with a default
     // that isn't "in" anymore.
     invSwitchTab('stockout');
+    invLoadPullListFromServer();
   };
 
   window.invFetchPendingCount = function() {
@@ -3859,8 +3891,77 @@ window.invCredLogin = async function() {
 
   // ── PULL LIST FUNCTIONS ──────────────────────────────────────────
   function invSavePullList() {
-    localStorage.setItem('xfitting_pulllist', JSON.stringify(invPullList));
+    try { localStorage.setItem(invPullKey(), JSON.stringify(invPullList)); } catch (e) {}
+    invPullEditedSinceLoad = true;
+    invQueuePullSync();
   }
+  // Save the whole list to the person's account ~1s after the last change
+  // (a burst of scans becomes one request).
+  function invQueuePullSync() {
+    if (!INV_CRED_USER || !INV_CRED_USER.userId) return;
+    clearTimeout(invPullSyncTimer);
+    invPullSyncTimer = setTimeout(invPushPullList, 1000);
+  }
+  function invPushPullList() {
+    invPullSyncTimer = null;
+    wFetch(W + '/inventory/pull/mine', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ items: invPullList })
+    }).then(function(r) { return r.json(); }).then(function(d) {
+      if (!d || !d.ok) console.warn('[INV] pull list save failed', d);
+    }).catch(function(e) { console.warn('[INV] pull list save failed', e); });
+  }
+  // After sign-in: load this person's list from their account. The server
+  // copy wins; if the account has no list yet, the local one is uploaded.
+  function invLoadPullListFromServer() {
+    if (!INV_CRED_USER || !INV_CRED_USER.userId) return;
+    invPullList = invReadLocalPull();
+    invPullEditedSinceLoad = false;
+    invRenderPullList();
+    wFetch(W + '/inventory/pull/mine').then(function(r) { return r.json(); }).then(function(d) {
+      if (!d || !d.ok) return;
+      if (invPullEditedSinceLoad) { invQueuePullSync(); return; } // they already changed it — keep theirs
+      if (d.updatedAt) {
+        invPullList = Array.isArray(d.items) ? d.items : [];
+        try { localStorage.setItem(invPullKey(), JSON.stringify(invPullList)); } catch (e) {}
+        invRenderPullList();
+      } else if (invPullList.length) {
+        invPushPullList();
+      }
+    }).catch(function(e) { console.warn('[INV] pull list load failed', e); });
+    invLoadAllPulls();
+  }
+
+  function invPullEsc(v) {
+    return String(v == null ? '' : v).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;').replace(/'/g,'&#39;');
+  }
+  // Admin / owner: everyone's un-grabbed items, by person.
+  window.invLoadAllPulls = function() {
+    var card = g('inv-allpull-card');
+    if (!card) return;
+    var isAdmin = !!(INV_CRED_USER && INV_CRED_USER.roles && INV_CRED_USER.roles.indexOf('admin') >= 0);
+    card.setAttribute('data-admin', isAdmin ? '1' : '');
+    card.style.display = (isAdmin && invMode === 'out') ? 'block' : 'none';
+    if (!isAdmin) return;
+    var box = g('inv-allpull-list');
+    box.innerHTML = "<div class='iempty'>Loading…</div>";
+    wFetch(W + '/inventory/pull/all').then(function(r) { return r.json(); }).then(function(d) {
+      if (!d || !d.ok) { box.innerHTML = "<div class='iempty'>Load failed</div>"; return; }
+      if (!d.people.length) { box.innerHTML = "<div class='iempty'>Nobody has un-grabbed items</div>"; return; }
+      box.innerHTML = d.people.map(function(p) {
+        var rows = p.ungrabbed.map(function(i) {
+          return "<div style='display:flex;gap:8px;justify-content:space-between;padding:4px 0;border-top:1px solid var(--border);font-size:12px'>" +
+            "<div><b>" + invPullEsc(i.partNum) + "</b>" + (i.name ? " <span style='color:var(--text3)'>" + invPullEsc(i.name) + "</span>" : "") + "</div>" +
+            "<div style='white-space:nowrap;color:var(--text3)'>" + invPullEsc(i.location || '') + (i.cases != null && i.cases !== '' ? " · " + invPullEsc(String(i.cases)) + " cs" : "") +
+            (i.addedAt ? " · " + invPullEsc(invFmtStamp(i.addedAt)) : "") + "</div></div>";
+        }).join('');
+        return "<details style='margin-bottom:6px'><summary style='cursor:pointer;font-weight:600;padding:4px 0'>" +
+          invPullEsc(p.displayName || p.username || ('User ' + p.userId)) + " — " + p.ungrabbed.length + " un-grabbed" +
+          (p.updatedAt ? " <span style='font-weight:400;font-size:11px;color:var(--text3)'>(updated " + invPullEsc(invFmtStamp(p.updatedAt)) + ")</span>" : "") +
+          "</summary>" + rows + "</details>";
+      }).join('');
+    }).catch(function() { box.innerHTML = "<div class='iempty'>Load failed</div>"; });
+  };
 
   // Small helper — consistent time format for pull-list Added/Grabbed stamps
   // (same format History's table already uses, so it reads the same way).
