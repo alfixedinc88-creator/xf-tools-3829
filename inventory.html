@@ -995,6 +995,8 @@ window.invCredLogin = async function() {
       style="width:100%;padding:9px;background:var(--bg2);border:1.5px dashed var(--border);border-radius:8px;font-size:13px;font-weight:700;color:var(--accent);cursor:pointer;font-family:var(--sans);margin-bottom:12px">+ Add New Row</button>
 
     <!-- Results -->
+    <!-- Ordered / on the way / received-and-unpacking for the searched part (Reorder imports) -->
+    <div id="skumgr-incoming" style="display:none;margin-bottom:10px"></div>
     <div id="skumgr-results"></div>
   </div>
 </div>
@@ -5594,6 +5596,33 @@ window.invCredLogin = async function() {
         + ' <span style="color:var(--text3)">· ' + (l.receivedAt === '0000-00-00' ? 'before tracking' : l.source === 'received' ? (l.title || 'received') : 'added ' + String(l.receivedAt || '').slice(5, 10)) + '</span></div>';
     }).join('') + '</div>';
   }
+  // 🏭 / 🚢 What's coming for the searched part # (imported on Reorder):
+  // not stock yet — SKU Mgr cases change only at 📦 Received.
+  window.skumgrLoadIncoming = function(q) {
+    var box = g('skumgr-incoming'); if (!box) return;
+    box.style.display = 'none'; box.innerHTML = '';
+    wFetch(W + '/inventory/incoming?q=' + encodeURIComponent(q)).then(function(r) { return r.json(); }).then(function(d) {
+      if (!d || !d.ok || !d.items.length) return;
+      var e = function(v) { return String(v == null ? '' : v).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;'); };
+      var n = function(v) { return (Math.round((parseFloat(v) || 0) * 100) / 100).toLocaleString(); };
+      var icon = { 'ordered': '🏭', 'on the way': '🚢', 'received — unpacking': '📦' };
+      box.style.display = 'block';
+      box.innerHTML = '<div style="border:1.5px solid #BFDBFE;background:#EFF6FF;border-radius:10px;padding:8px 10px;font-size:12px">'
+        + '<div style="font-weight:700;margin-bottom:4px;color:#1A56DB">Coming in for ' + e(d.q) + ' <span style="font-weight:400;color:var(--text3)">(from Reorder imports — not in stock or in the inventory value until 📦 Received)</span></div>'
+        + d.items.map(function(it) {
+          var pals = it.pallets.length ? '<div style="margin:2px 0 0 18px;color:var(--text2)">' + it.pallets.map(function(p) {
+              return '🧱 ' + e(p.pallet) + ': ' + n(p.cases) + ' box' + (p.cases === 1 ? '' : 'es') + (p.moved ? ' (' + n(Math.min(p.moved, p.cases)) + ' moved to shelves)' : ''); }).join(' · ') + '</div>' : '';
+          return '<div style="padding:4px 0;border-top:1px solid #DBEAFE">' + (icon[it.status] || '•') + ' <b style="font-family:var(--mono)">' + e(it.part) + '</b>'
+            + (it.filePart ? ' <span style="color:var(--text3)">(sheet: ' + e(it.filePart) + ')</span>' : '')
+            + ' — <b>' + e(it.status) + '</b> · ' + e(it.title) + (it.vendor ? ' · ' + e(it.vendor) : '')
+            + (it.units ? ' · ' + n(it.units) + ' units' : '') + (it.cases ? ' · ' + n(it.cases) + ' boxes' : '') + (it.pieces ? ' · ' + n(it.pieces) + ' pcs' : '')
+            + (it.status === 'received — unpacking' ? ' · ' + n(it.movedToShelves) + ' of ' + n(it.cases) + ' boxes moved off the pallets with 🚢 Container here' : '')
+            + (it.price > 0 ? ' · $' + (+it.price).toFixed(3) + '/pc' : it.status !== 'received — unpacking' ? ' · <span style="color:var(--red)">no price</span>' : '')
+            + pals + '</div>';
+        }).join('') + '</div>';
+    }).catch(function() {});
+  };
+
   // 💰 Owner only — the server refuses anyone else.
   window.skumgrLoadValue = function() {
     var box = g('skumgr-value'); if (!box) return;
@@ -5605,6 +5634,7 @@ window.invCredLogin = async function() {
       var money = function(v) { return '$' + (+v).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 }); };
       box.innerHTML = '<div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap"><b>💰 Total inventory value (vendor price): <span style="font-size:17px;color:var(--green)">' + money(d.value) + '</span></b>'
         + '<span style="color:var(--text3);font-size:12px">' + (+d.pieces).toLocaleString() + ' pieces · ' + (+d.cases).toLocaleString() + ' cases · ' + d.spots + ' spots · owner only</span>'
+        + '<span style="color:var(--text3);font-size:11px">Only stock in SKU Mgr — orders and containers count once 📦 Received.</span>'
         + '<span style="flex:1"></span><button onclick="skumgrLoadValue()" style="background:none;border:1px solid var(--border);border-radius:6px;padding:3px 8px;font-size:11px;cursor:pointer">↻</button></div>'
         + (d.byVendor.length ? '<div style="font-size:12px;margin-top:4px">' + d.byVendor.map(function(v) { return '<b>' + String(v.vendor).replace(/</g, '&lt;') + '</b> ' + money(v.value); }).join(' · ') + '</div>' : '')
         + (d.noPrice.spots ? '<div style="font-size:12px;color:var(--red);margin-top:4px">Not in the total — no price: ' + d.noPrice.spots + ' spots (' + d.noPrice.cases + ' cases)<span title="' + d.noPrice.parts.join(', ').replace(/"/g, '&quot;') + '" style="text-decoration:underline dotted;cursor:help"> which?</span></div>' : '')
@@ -5628,6 +5658,7 @@ window.invCredLogin = async function() {
         .catch(function() { if (res) res.innerHTML = '<div style="color:var(--red);padding:12px">Search failed</div>'; });
       return;
     }
+    skumgrLoadIncoming(q);
     wFetch(W + '/inventory/sku-search?q=' + encodeURIComponent(q) + '&sort=asc' + (_skumgrInStockOnly ? '&instock=1' : ''))
       .then(function(r) { return r.json(); })
       .then(function(d) {

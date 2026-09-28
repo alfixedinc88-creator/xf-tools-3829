@@ -1197,7 +1197,7 @@ async function reorderIncomingTake(request, env, session) {
   const b = await request.json().catch(() => ({}));
   const from = String(b.from || '').trim(), to = String(b.to || '').trim();
   if (!from || !to || from === to) return _roResp({ ok: false, error: 'Pick the order this container was made for' }, 400);
-  const rowsOf = async title => { const m = {}; ((await env.DB.prepare('SELECT part, qty, vendor FROM reorder_incoming WHERE title = ?').bind(title).all()).results || []).forEach(r => { m[r.part] = r; }); return m; };
+  const rowsOf = async title => { const m = {}; ((await env.DB.prepare('SELECT part, qty, vendor, cases FROM reorder_incoming WHERE title = ?').bind(title).all()).results || []).forEach(r => { m[r.part] = r; }); return m; };
   const F = await rowsOf(from), T = await rowsOf(to), prev = {};
   ((await env.DB.prepare('SELECT part, units FROM reorder_take WHERE from_title = ? AND to_title = ?').bind(from, to).all()).results || []).forEach(r => { prev[r.part] = r.units; });
   const sum = m => Object.values(m).reduce((a, r) => a + (r.qty || 0), 0);
@@ -1211,7 +1211,9 @@ async function reorderIncomingTake(request, env, session) {
     if (Math.abs(delta) < 1e-9) continue;
     const left = fromNow - delta;
     if (left <= 1e-9) await env.DB.prepare('DELETE FROM reorder_incoming WHERE title = ? AND part = ?').bind(from, part).run();
-    else if (F[part]) await env.DB.prepare('UPDATE reorder_incoming SET qty = ?, updated_at = ? WHERE title = ? AND part = ?').bind(left, now, from, part).run();
+    // Boxes still to come shrink with the units (📦 Received stocks in by boxes).
+    else if (F[part]) await env.DB.prepare('UPDATE reorder_incoming SET qty = ?, cases = ?, updated_at = ? WHERE title = ? AND part = ?')
+      .bind(left, F[part].cases > 0 && fromNow > 0 ? Math.round(F[part].cases * left / fromNow * 100) / 100 : F[part].cases, now, from, part).run();
     else await env.DB.prepare('INSERT INTO reorder_incoming (title, part, qty, vendor, updated_at) VALUES (?,?,?,?,?)').bind(from, part, left, T[part].vendor || '', now).run();
     if (target > 0) await env.DB.prepare(`INSERT INTO reorder_take (from_title, to_title, part, units) VALUES (?,?,?,?)
       ON CONFLICT(from_title, to_title, part) DO UPDATE SET units = excluded.units`).bind(from, to, part, target).run();
@@ -3113,6 +3115,45 @@ async function inventoryCostValue(request, env) {
     byVendor: Object.entries(byVendor).map(([vendor, v]) => ({ vendor, value: Math.round(v * 100) / 100 })).sort((a, b) => b.value - a.value), noPrice, noEa, asOf: new Date().toISOString() }), { headers: { 'Content-Type': 'application/json' } }));
 }
 
+// GET /inventory/incoming?q=27-2-2 — SKU Mgr: everything imported on the
+// Reorder page for this part (or base part): ordered (vendor still making),
+// on the water (shipped container — with its pallets), or received and still
+// being unpacked (pallet boxes not all moved to shelves yet). Not stock:
+// SKU Mgr cases (and the owner's value) only change at 📦 Received.
+async function inventoryIncomingFor(url, env) {
+  await reorderFixTables(env);
+  const q = reorderCleanPart(url.searchParams.get('q') || '');
+  if (!q) return cors(new Response(JSON.stringify({ ok: false, error: 'Part # required' }), { status: 400, headers: { 'Content-Type': 'application/json' } }));
+  const alias = {}; ((await env.DB.prepare('SELECT raw, part FROM reorder_alias').all()).results || []).forEach(a => { alias[String(a.raw).toUpperCase()] = String(a.part).toUpperCase(); });
+  const real = p => alias[p] || p;
+  const match = p => { const r = real(p); return r === q || r.split('=')[0] === q || p === q || p.split('=')[0] === q; };
+  const like = q.split('=')[0] + '%';
+  const stage = {}; ((await env.DB.prepare('SELECT title, stage FROM reorder_title').all()).results || []).forEach(r => { stage[r.title] = r.stage; });
+  const inc = ((await env.DB.prepare('SELECT title, part, qty, cases, vendor, price, price_src, updated_at FROM reorder_incoming WHERE part LIKE ? OR part IN (SELECT raw FROM reorder_alias)').bind(like).all()).results || []).filter(r => match(r.part));
+  const pal = ((await env.DB.prepare('SELECT id, title, vendor, pallet, po, part, cases, pcs, units FROM reorder_pallet WHERE part LIKE ? OR part IN (SELECT raw FROM reorder_alias)').bind(like).all()).results || []).filter(r => match(r.part));
+  const moved = {};
+  if (pal.length) {
+    const ids = pal.map(p => p.id);
+    for (let i = 0; i < ids.length; i += 90) {
+      const chunk = ids.slice(i, i + 90);
+      ((await env.DB.prepare(_PALLET_MOVED_SQL + ` AND m.pallet_id IN (${chunk.map(() => '?').join(',')}) GROUP BY m.pallet_id`).bind(...chunk).all()).results || []).forEach(m => { moved[m.pallet_id] = m.moved || 0; });
+    }
+  }
+  const key = (t, p) => t + '|' + real(p), items = {};
+  inc.forEach(r => { items[key(r.title, r.part)] = { title: r.title, part: real(r.part), filePart: real(r.part) !== r.part ? r.part : '', vendor: reorderVendorName(r.vendor), status: stage[r.title] === 'production' ? 'ordered' : 'on the way',
+    stage: stage[r.title] || '', units: r.qty, cases: r.cases, pieces: r.qty * reorderExtractPackSize(real(r.part)), price: r.price, priceSrc: r.price_src, updatedAt: r.updated_at, pallets: [] }; });
+  pal.forEach(p => { const k = key(p.title, p.part);
+    if (!items[k]) items[k] = { title: p.title, part: real(p.part), filePart: '', vendor: reorderVendorName(p.vendor), status: 'received — unpacking', stage: 'shipped', units: 0, cases: 0, pieces: 0, price: null, pallets: [] };
+    items[k].pallets.push({ pallet: p.pallet, po: p.po || '', cases: p.cases, pcs: p.pcs, moved: moved[p.id] || 0 }); });
+  const list = Object.values(items).map(it => {
+    if (it.status === 'received — unpacking') { it.cases = it.pallets.reduce((a, p) => a + p.cases, 0); it.pieces = it.pallets.reduce((a, p) => a + (p.pcs || 0), 0); }
+    it.movedToShelves = it.pallets.reduce((a, p) => a + Math.min(p.moved, p.cases), 0);
+    return it;
+  }).filter(it => it.status !== 'received — unpacking' || it.movedToShelves < it.cases - 1e-9)
+    .sort((a, b) => a.part.localeCompare(b.part) || String(a.title).localeCompare(String(b.title)));
+  return cors(new Response(JSON.stringify({ ok: true, q, items: list }), { headers: { 'Content-Type': 'application/json' } }));
+}
+
 // ── 🚢 Container here (Inventory → Transfer) ─────────────────────────────
 // Boxes moved off a pallet line = its pallet_move rows whose transfer wasn't
 // rejected in Review (the OUT log row's status), so counts follow the real
@@ -4975,7 +5016,7 @@ export default {
         // these specific paths require mgmt — everything else falls through to 404
         const mgmtPaths = ['/inventory/pending','/inventory/verify','/inventory/transfer/verify',
           '/inventory/audit-mode','/inventory/review-mode','/inventory/prefixes','/inventory/rename-locations',
-          '/inventory/cancel-entry', '/inventory/cost/spots', '/inventory/cost/value'];
+          '/inventory/cancel-entry', '/inventory/cost/spots', '/inventory/cost/value', '/inventory/incoming'];
         if (mgmtPaths.some(p => path === p)) {
           return cors(new Response(JSON.stringify({ error: 'Management access required' }), {
             status: 403, headers: { 'Content-Type': 'application/json' }
@@ -4989,6 +5030,7 @@ export default {
       // 💲 price batches (mgmt, gated above); the total value is owner only (checked inside).
       if (path === '/inventory/cost/spots' && method === 'GET') return await inventoryCostSpots(env);
       if (path === '/inventory/cost/value' && method === 'GET') return await inventoryCostValue(request, env);
+      if (path === '/inventory/incoming' && method === 'GET') return await inventoryIncomingFor(url, env);
       // audit-mode POST + other mgmt routes
       if (path === '/inventory/audit-mode'      && method === 'POST') return await inventoryAuditModeSet(request, env);
       if (path === '/inventory/review-mode'     && method === 'POST') return await inventoryReviewModeSet(request, env);
