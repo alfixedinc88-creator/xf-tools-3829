@@ -1063,7 +1063,8 @@ async function reorderCatalogImport(request, env, session) {
         const real = alias[k] || k;
         const fx = await env.DB.prepare('SELECT case_qty FROM reorder_fix WHERE part = ?').bind(real).first();
         let cq = fx && parseFloat(fx.case_qty) > 0 ? parseFloat(fx.case_qty) : 0;
-        if (!cq) { const m = await d1First(env, 'SELECT MAX(units_per_case) AS u FROM master_list WHERE UPPER(part_num) = ?', [real]); cq = m && parseFloat(m.u) > 0 ? parseFloat(m.u) : 0; }
+        // SKU Mgr Ea/Case = pieces per case → units of this part # per case = ÷ pack size.
+        if (!cq) { const m = await d1First(env, 'SELECT MAX(units_per_case) AS u FROM master_list WHERE UPPER(part_num) = ?', [real]); cq = m && parseFloat(m.u) > 0 ? parseFloat(m.u) / reorderExtractPackSize(real) : 0; }
         if (!cq) { const c = await env.DB.prepare('SELECT MAX(case_pcs) AS p FROM reorder_vendor_catalog WHERE part = ?').bind(real).first();
           if (c && parseFloat(c.p) > 0) cq = Math.max(1, Math.round(parseFloat(c.p) / reorderExtractPackSize(real))); }
         caseQtyOf[k] = cq;
@@ -1359,15 +1360,18 @@ async function reorderVendorOrder(env, url) {
     if (m[0] && m[0].m && (!dataFrom || m[0].m < dataFrom)) dataFrom = m[0].m;
   }
 
-  // SKU Mgr: stock (cases × each-case-qty, in units of that SKU), case qty, vendor, name.
+  // SKU Mgr: stock, case qty, vendor, name. SKU Mgr's Ea/Case is the total
+  // PIECES in a case, whatever the bag size (27-2-2=10 and 27-2-2=2XX both
+  // 100 in a 100-piece box), so units of this part # = cases × Ea/Case ÷
+  // pack size (1 case of 27-2-2=10 = 10 bags, not 100).
   const ml = await all(`SELECT part_num, base_sku, name, vendor, cases, units_per_case FROM master_list WHERE part_num != ''`);
   const bySku = {}, byBase = {}, vendors = new Set();
   for (const r of ml) {
     const s = P(r.part_num), b = U(reorderGetBaseSku(s));
     const o = bySku[s] = bySku[s] || { units: 0, caseQty: 0, vendor: '', name: '', vendors: new Set() };
     if (r.vendor) o.vendors.add(reorderVendorName(r.vendor));
-    o.units += (parseFloat(r.cases) || 0) * (parseFloat(r.units_per_case) || 0);
-    o.caseQty = Math.max(o.caseQty, parseFloat(r.units_per_case) || 0);
+    o.units += (parseFloat(r.cases) || 0) * (parseFloat(r.units_per_case) || 0) / pack(s);
+    o.caseQty = Math.max(o.caseQty, (parseFloat(r.units_per_case) || 0) / pack(s));
     if (!o.vendor && r.vendor) o.vendor = reorderVendorName(r.vendor);
     if (!o.name && r.name) o.name = String(r.name).trim();
     const bo = byBase[b] = byBase[b] || { vendor: '', name: '', skus: new Set() };
