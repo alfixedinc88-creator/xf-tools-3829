@@ -1044,7 +1044,7 @@ function _roResp(body, status) { return cors(new Response(JSON.stringify(body), 
 async function reorderCatalogImport(request, env, session) {
   await reorderFixTables(env);
   const b = await request.json().catch(() => ({}));
-  const vendor = String(b.vendor || '').trim().slice(0, 40);
+  const vendor = reorderVendorName(String(b.vendor || '').trim()).slice(0, 40);
   if (!vendor) return _roResp({ ok: false, error: 'Vendor name required' }, 400);
   const rows = (Array.isArray(b.rows) ? b.rows : []).slice(0, 1000);
   const title = String(b.title || '').trim().slice(0, 60);
@@ -1266,6 +1266,7 @@ async function reorderSaveFixOne(env, b, who) {
   }
   const f0 = b.fields || {}, has = k => Object.prototype.hasOwnProperty.call(f0, k);
   const f = {}; ['description', 'outside_upc', 'inside_upc', 'vendor', 'asin', 'case_qty'].forEach(k => { f[k] = has(k) ? f0[k] : before[k]; });
+  if (f.vendor) f.vendor = vendorUnmask(f.vendor);
   const t = v => { v = (v == null ? '' : String(v)).trim(); return v ? v.slice(0, 300) : null; };
   const cq = parseFloat(f.case_qty);
   const vals = [t(f.description), t(f.outside_upc), t(f.inside_upc), t(f.vendor), t(f.asin) && t(f.asin).toUpperCase(), Number.isFinite(cq) && cq > 0 ? cq : null];
@@ -1304,7 +1305,51 @@ async function reorderSaveFixOne(env, b, who) {
 // description, so the page can filter by vendor and download a CSV.
 // One name per vendor on the Reorder tab — SKU Mgr / sheets spell some of
 // them differently (owner's list): eff = EFF; jq, #1, WU = JQ; CUTTER = YAO.
-const REORDER_VENDOR_ALIAS = { 'EFF': 'EFF', 'JQ': 'JQ', '#1': 'JQ', 'WU': 'JQ', 'CUTTER': 'YAO', 'YAO': 'YAO' };
+const REORDER_VENDOR_ALIAS = { 'EFF': 'EFF', 'JQ': 'JQ', '#1': 'JQ', 'WU': 'JQ', 'CUTTER': 'YAO', 'YAO': 'YAO', '#2': 'EFF', '#3': 'YAO' };
+// Vendor codes: everyone except the owner sees #1 / #2 / #3 instead of the
+// vendor's name — done on every JSON reply on the way out (vendorMaskResponse),
+// so the names never reach a non-owner's browser. Typed back in, the codes
+// mean the real vendor (REORDER_VENDOR_ALIAS / vendorUnmask).
+const VENDOR_CODE = { JQ: '#1', EFF: '#2', YAO: '#3' };
+function vendorUnmask(v) { const t = String(v == null ? '' : v).trim(); return ({ '#1': 'JQ', '#2': 'EFF', '#3': 'YAO' })[t] || v; }
+function vendorCode(v) {
+  if (typeof v !== 'string' || !v.trim()) return v;
+  if (v.indexOf(',') >= 0) return v.split(',').map(x => vendorCode(x.trim())).join(',');
+  const n = String(reorderVendorName(v.trim())).toUpperCase();
+  return VENDOR_CODE[n] || v;
+}
+function vendorCodeText(s) {
+  return typeof s === 'string' ? s.replace(/\b(JQ|WU)\b/g, '#1').replace(/\bEFF\b/gi, '#2').replace(/\b(YAO|CUTTER)\b/gi, '#3') : s;
+}
+const _VENDOR_KEYS = new Set(['vendor', 'vendors', 'lastVendor', 'vendor_name', 'vendorName']);
+const _VENDOR_TEXT_KEYS = new Set(['vendorSrc', 'detail']);
+function vendorMaskValue(x, depth) {
+  if (depth > 12 || x == null) return x;
+  if (Array.isArray(x)) return x.map(v => vendorMaskValue(v, depth + 1));
+  if (typeof x !== 'object') return x;
+  for (const k of Object.keys(x)) {
+    const v = x[k];
+    if (_VENDOR_KEYS.has(k)) x[k] = Array.isArray(v) ? v.map(vendorCode) : vendorCode(v);
+    else if (_VENDOR_TEXT_KEYS.has(k)) x[k] = vendorCodeText(v);
+    else if (v && typeof v === 'object') x[k] = vendorMaskValue(v, depth + 1);
+  }
+  return x;
+}
+async function vendorMaskResponse(request, env, res) {
+  try {
+    if (!res || !(res.headers.get('Content-Type') || '').includes('application/json')) return res;
+    const text = await res.clone().text();
+    const path = new URL(request.url).pathname, sheetRows = path === '/inventory/master-list';
+    if (!sheetRows && !/"(vendors?|lastVendor|vendor_?[nN]ame|vendorSrc)"\s*:/.test(text) && !/"detail"\s*:/.test(text)) return res;
+    const tok = request.headers.get('X-Cred-Token');
+    if (tok) { const cs = await verifyCredSession(tok, env).catch(() => null); if (cs && (cs.roles || []).includes('owner')) return res; }
+    let data; try { data = JSON.parse(text); } catch (_) { return res; }
+    vendorMaskValue(data, 0);
+    if (sheetRows && Array.isArray(data.values)) data.values.forEach((r, i) => { if (i > 0 && Array.isArray(r)) r[12] = vendorCode(r[12]); });
+    const h = new Headers(res.headers); h.delete('Content-Length');
+    return new Response(JSON.stringify(data), { status: res.status, statusText: res.statusText, headers: h });
+  } catch (e) { console.error('[vendor-mask]', e.message); return res; }
+}
 function reorderVendorName(v) {
   const t = String(v == null ? '' : v).trim();
   if (!t) return '';
@@ -4415,7 +4460,7 @@ async function batchUpdateSheets(env, sheetId, requests) {
 
 let _currentOrigin = "*";
 
-export default {
+const _app = {
   async fetch(request, env, ctx) {
     const url    = new URL(request.url);
     const method = request.method;
@@ -10007,7 +10052,7 @@ async function inventorySkuRow(request, env) {
     const isUpdate = mode === 'update' && (d1Id || sheetRow);
 
     if (isUpdate) {
-      const result = await _invApplySkuRowUpdate(env, { sheetRow, d1Id, partNum, location, cases, name, sku, unitsPerCase, vendor, price, prevNotes });
+      const result = await _invApplySkuRowUpdate(env, { sheetRow, d1Id, partNum, location, cases, name, sku, unitsPerCase, vendor: vendorUnmask(vendor), price, prevNotes });
       if (!result.ok) {
         return cors(new Response(JSON.stringify(result), { status: result.status || 500, headers: { 'Content-Type': 'application/json' } }));
       }
@@ -10015,7 +10060,7 @@ async function inventorySkuRow(request, env) {
         { headers: { 'Content-Type': 'application/json' } }));
 
     } else {
-      const result = await _invApplySkuRowInsert(env, { partNum, location, cases, name, sku, unitsPerCase, vendor, price, prevNotes });
+      const result = await _invApplySkuRowInsert(env, { partNum, location, cases, name, sku, unitsPerCase, vendor: vendorUnmask(vendor), price, prevNotes });
       if (!result.ok) {
         return cors(new Response(JSON.stringify(result), { status: result.status || 500, headers: { 'Content-Type': 'application/json' } }));
       }
@@ -22849,3 +22894,9 @@ async function soldoutAddListing(request, env) {
     [new Date().toISOString(), String(b.by || '').slice(0, 40), b.platform, id, sku, title, null, 1, 'Added to ' + tab]);
   return _soResp({ ok: true, tab, row: (d.updates && d.updates.updatedRange) || '' });
 }
+
+// Every reply goes through the vendor-code mask (owner sees real names).
+export default {
+  async fetch(request, env, ctx) { return await vendorMaskResponse(request, env, await _app.fetch(request, env, ctx)); },
+  async scheduled(event, env, ctx) { return await _app.scheduled(event, env, ctx); },
+};
