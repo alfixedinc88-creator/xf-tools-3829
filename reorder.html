@@ -2122,7 +2122,7 @@ body { display:flex; flex-direction:column; min-height:100vh; background:var(--b
           <select id="rvo-imp-from" style="font-size:12px;padding:4px 6px;border-radius:6px;border:1px solid var(--border);max-width:180px"></select></label>
         <input type="file" id="rvo-imp-file" accept=".xlsx,.xls,.csv" style="display:none" onchange="rvoImport(this)">
         <button class="btn btn-secondary" style="font-size:12px" onclick="rvoPickFile()">⬆ Import vendor sheet</button>
-        <button class="btn btn-secondary" style="font-size:12px" onclick="rvoTemplate()" title="The layout for the Stage picked: 🚢 Shipped container (pallet, boxes, pieces, price) · 🏭 Ordered (part #, cases, price) · none = vendor info sheet">📄 Download template</button>
+        <button class="btn btn-secondary" style="font-size:12px" id="rvo-tmpl-btn" onclick="rvoTemplate()" title="The layout for the Stage picked: 🚢 Shipped container (pallet, boxes, pieces, price, weight) · 🏭 Ordered (part #, cases, price, weight) · none = vendor info sheet (UPCs, price, weight)">📄 Download template: vendor info</button>
       </div>
       <div id="rvo-inc" style="display:none;flex-wrap:wrap;gap:8px;align-items:center;margin:-4px 0 10px;padding:8px 10px;background:#EFF6FF;border-radius:8px;font-size:12px"></div>
       <details id="rvo-hist-box" style="margin-bottom:6px" ontoggle="if(this.open)rvoLoadHistory()"><summary style="font-size:12px;color:var(--text2);cursor:pointer;font-weight:700">🕘 History — who changed what on this page</summary>
@@ -4166,7 +4166,8 @@ async function rvoCheck(title, file) {
   document.getElementById('rvo-ck-title').textContent = '📋 Import check — ' + (title || 'vendor info');
   box.style.display = 'flex';
   if (!title) { // plain info import: only what was read / skipped
-    body.innerHTML = '<div style="font-size:13px">Read <b>' + fmt0(file.parts) + '</b> part #s from ' + escHtml(file.file) + ' as vendor <b>' + escHtml(file.vendor) + '</b> (descriptions, UPCs, ASINs, carton sizes).</div>' + rvoSkippedHtml(file.skipped);
+    body.innerHTML = '<div style="font-size:13px">Read <b>' + fmt0(file.parts) + '</b> part #s from ' + escHtml(file.file) + ' as vendor <b>' + escHtml(file.vendor) + '</b> (descriptions, UPCs, ASINs, carton sizes, prices).</div>'
+      + (file.weights ? rvoWeightsHtml(file.weights) : '') + rvoSkippedHtml(file.skipped);
     RVO_CK = { title: '', lines: [], file: file }; return;
   }
   body.innerHTML = '<div style="font-size:12px;color:var(--text3)">Checking…</div>';
@@ -4209,6 +4210,7 @@ async function rvoCheck(title, file) {
   if (file && file.fromCases) h += '<div style="font-size:12px;color:var(--text3);margin-bottom:6px">' + file.fromCases + ' line(s) had no Qty — worked out from Cases × Master Carton pcs.</div>';
   if (file && file.packing) h += rvoPackingHtml(file.packing, saved);
   else if (file && file.prices) h += rvoPricesHtml(file.prices);
+  if (file && !file.packing && file.weights) h += rvoWeightsHtml(file.weights);
   if (file) h += rvoSkippedHtml(file.skipped);
   var col = { own: 'var(--green)', otherOn: 'var(--green)', otherOff: '#b45309', none: 'var(--red)' };
   h += '<div id="rvo-ck-filt" style="display:none;font-size:12px;margin:0 0 6px;padding:6px 10px;background:var(--bg3);border-radius:8px"></div>';
@@ -4262,11 +4264,7 @@ function rvoPackingHtml(p, savedUnits) {
       + (t.ok ? '<b style="color:var(--green)">✓ adds up</b>' : '<b style="color:var(--red)">✗ does not add up</b>')
       + (t.notOnOrder && t.notOnOrder.length ? '<div style="margin-top:4px;color:#b45309">Shipped more than ordered / not on that order (' + t.notOnOrder.length + '): ' + t.notOnOrder.slice(0, 40).map(function (x) { return escHtml(x.part) + ' ' + fmt0(x.shipped - x.fromOrder); }).join(', ') + '</div>' : '') + '</div>'; }
   if (rd.prices) h += rvoPricesHtml(rd.prices);
-  if (p.weights) { var wt = p.weights;
-    h += '<div style="font-size:12px;margin:0 0 8px;padding:8px 10px;background:var(--bg3);border-radius:8px">⚖ <b>Weight each (lb)</b> — only filled where a product had no weight: '
-      + (wt.ok ? '<b>' + wt.filled.length + '</b> filled, ' + wt.kept.length + ' already had a weight (kept), ' + wt.noProduct.length + ' not in Products (add them on Warehouse → Item Search)' : '<span style="color:var(--red)">not saved — ' + escHtml(wt.error || '') + '</span>')
-      + (wt.ok && wt.filled.length ? '<details style="margin-top:4px"><summary style="cursor:pointer">Filled</summary>' + wt.filled.map(function (x) { return '<div><span style="font-family:var(--mono)">' + escHtml(x.base) + '</span> ' + x.lb + ' lb — ' + escHtml(x.from) + '</div>'; }).join('') + '</details>' : '')
-      + (wt.ok && wt.noProduct.length ? '<details style="margin-top:4px"><summary style="cursor:pointer">Not in Products</summary>' + wt.noProduct.map(function (x) { return '<div><span style="font-family:var(--mono)">' + escHtml(x.base) + '</span> ' + x.lb + ' lb</div>'; }).join('') + '</details>' : '') + '</div>'; }
+  if (p.weights) h += rvoWeightsHtml(p.weights);
   if (rd.warn.length) h += '<details style="font-size:12px;margin:0 0 8px"><summary style="cursor:pointer;color:#b45309">⚠ ' + rd.warn.length + ' line(s) to check when it arrives</summary>'
     + rd.warn.slice(0, 200).map(function (w) { return '<div>row ' + escHtml(String(w.row)) + ': <span style="font-family:var(--mono)">' + escHtml(w.part) + '</span> — ' + escHtml(w.why) + '</div>'; }).join('') + '</details>';
   return h;
@@ -4282,6 +4280,23 @@ function rvoPricesHtml(q) {
   if (q.changes && q.changes.length) h += '<details style="margin-top:4px" open><summary style="cursor:pointer">' + q.changes.length + ' price change(s) vs the vendor sheet — new stock keeps the new price, stock already here keeps its old price</summary>'
     + q.changes.slice(0, 300).map(function (x) { return '<div><span style="font-family:var(--mono)">' + escHtml(x.part) + '</span> $' + x.old + ' → <b>$' + x.new + '</b></div>'; }).join('') + '</details>';
   return h + '</div>';
+}
+// ⚖ What an import did with weights (lb per piece, only for products with none).
+function rvoWeightsHtml(wt) {
+  return '<div style="font-size:12px;margin:0 0 8px;padding:8px 10px;background:var(--bg3);border-radius:8px">⚖ <b>Weight each (lb)</b> — only filled where a product had no weight: '
+    + (wt.ok ? '<b>' + wt.filled.length + '</b> filled, ' + wt.kept.length + ' already had a weight (kept), ' + wt.noProduct.length + ' not in Products (add them on Warehouse → Item Search)' : '<span style="color:var(--red)">not saved — ' + escHtml(wt.error || '') + '</span>')
+    + (wt.ok && wt.filled.length ? '<details style="margin-top:4px"><summary style="cursor:pointer">Filled</summary>' + wt.filled.map(function (x) { return '<div><span style="font-family:var(--mono)">' + escHtml(x.base) + '</span> ' + x.lb + ' lb — ' + escHtml(x.from) + '</div>'; }).join('') + '</details>' : '')
+    + (wt.ok && wt.kept.length ? '<details style="margin-top:4px"><summary style="cursor:pointer">Kept (already had a weight)</summary>' + wt.kept.map(function (x) { return '<div><span style="font-family:var(--mono)">' + escHtml(x.base) + '</span> has ' + x.have + ' lb (sheet said ' + x.lb + ' lb)</div>'; }).join('') + '</details>' : '')
+    + (wt.ok && wt.noProduct.length ? '<details style="margin-top:4px"><summary style="cursor:pointer">Not in Products</summary>' + wt.noProduct.map(function (x) { return '<div><span style="font-family:var(--mono)">' + escHtml(x.base) + '</span> ' + x.lb + ' lb</div>'; }).join('') + '</details>' : '') + '</div>';
+}
+// Weight each (lb) per base part from import rows: [{ clean, lb, pcs(weight for averaging), from }].
+function rvoWeightsByBase(list) {
+  var by = {}; list.forEach(function (x) { if (!(x.lb > 0)) return; var b = x.clean.split('=')[0], w = by[b] = by[b] || { s: 0, n: 0, from: x.from }; var k = x.pcs > 0 ? x.pcs : 1; w.s += x.lb * k; w.n += k; });
+  return Object.keys(by).map(function (b) { return { base: b, lb: Math.round(by[b].s / by[b].n * 10000) / 10000, from: by[b].from }; });
+}
+async function rvoSaveWeights(title, file, items) {
+  if (!items.length) return null;
+  return await (await wFetch(W + '/reorder/fix/weights', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ title: title, file: file, items: items }) })).json().catch(function (e) { return { ok: false, error: e.message }; });
 }
 function rvoSkippedHtml(sk) {
   if (!sk || !sk.length) return '';
@@ -4310,7 +4325,7 @@ async function rvoTemplate() {
     await rvoLoadXlsx();
     // Template for the Stage picked next to the import (none = vendor info sheet).
     var stage = (document.getElementById('rvo-imp-stage') || {}).value || '';
-    var head, ex, how, name, widths, textCells = [], formulas = [];
+    var head, ex, how, name, widths, textCells = [], fx = null;
     var common = [[''], ['Importing', 'Reorder tab → Vendor (#1 / #2 / #3 or the vendor name) → Title → Stage → ⬆ Import vendor sheet'],
       ['', '• after importing, the 📋 Import check shows where every line went and that the totals match (also 🔍 Check on each title)'],
       ['', '• when it arrives, press 📦 Received — it goes into SKU Mgr at GARAGE with its price; then move it to shelves with Transfer (🚢 Container here shows each pallet)'],
@@ -4323,7 +4338,7 @@ async function rvoTemplate() {
         ['2', 'PO-001', '27-4-7=1', '1 x 3/4 push fit elbow', '61404', 20, 1000, 50, 3.62, 178, ''],
         ['TOTAL', '', '2 pallets', '', '', 43, 3300, '', '', 376, '']];
       widths = [10, 12, 16, 34, 10, 12, 16, 12, 14, 11, 16];
-      formulas = [2, 3, 4];
+      fx = { col: 'K', kg: 'J', pcs: 'G', kgIdx: 9, pcsIdx: 6, rows: [2, 3, 4] };
       how = [['🚢 Shipped container — packing list (every box, which pallet it is on, and the price)'], [''],
         ['Pallet', 'Required. Pallet # / name as written on the pallet. Write it on the first row of each pallet — the rows under it are on the same pallet.'],
         ['PO', 'Optional. When the same pallet # is used again for another PO (PO A pallets 1–6, PO B pallets 1–5), the PO keeps them apart.'],
@@ -4340,21 +4355,25 @@ async function rvoTemplate() {
         [''], ['Also works', 'The vendor\'s own packing list (#2 CIPL, #1 detailed packing list) can be imported as it is — no need to copy it into this template.']].concat(common);
     } else if (stage === 'production') {
       name = 'Order_template.xlsx';
-      head = ['Part #', 'Description', 'Item No.', 'Cases', 'Qty', 'Price per piece'];
-      ex = [['27-2-2=10', '3/4" PUSH FIT COUPLING', '61302', 25, '', 1.76], ['27-4-7=1', '1 x 3/4 push fit elbow', '61404', '', 1000, 3.62]];
-      widths = [16, 34, 10, 8, 10, 14];
+      head = ['Part #', 'Description', 'Item No.', 'Cases', 'Qty', 'Price per piece', 'Master Carton (pcs)', 'Carton G.W. (kg)', 'Weight each (lb)'];
+      ex = [['27-2-2=10', '3/4" PUSH FIT COUPLING', '61302', 25, '', 1.76, 100, 8.6, ''], ['27-4-7=1', '1 x 3/4 push fit elbow', '61404', '', 1000, 3.62, 50, 8.9, '']];
+      widths = [16, 34, 10, 8, 10, 14, 18, 16, 16];
+      fx = { col: 'I', kg: 'H', pcs: 'G', kgIdx: 7, pcsIdx: 6, rows: [2, 3] };
       how = [['🏭 Ordered — vendor still making it (no pallets yet)'], [''],
         ['Part #', 'Required. Our part number, one row per pack size.'],
         ['Cases', 'Boxes ordered. Units = Cases × SKU Mgr Ea/Case (pieces per box) ÷ pack size. A part # with no known case size is NOT counted (shown in red).'],
         ['Qty', 'Or give units of the part # directly (27-2-2=10: 1 unit = 1 bag of 10). Qty wins over Cases.'],
         ['Price per piece', 'Price per single piece. Empty = imported and shown in red.'],
+        ['Master Carton (pcs) / Carton G.W. (kg)', 'Pieces in one carton and the gross weight of one full carton in KG (from the vendor). Optional — used only to work out the weight.'],
+        ['Weight each (lb)', 'Weight of ONE piece in POUNDS = Carton G.W. (kg) ÷ Master Carton (pcs) × 2.20462 (1 kg = 2.20462 lb). The column already has this formula — just fill the two columns before it (or type the lb yourself). Saved on the product (Products sheet / Warehouse → Item Search) ONLY when it has no weight yet — an existing weight is never changed.'],
         ['', 'Counts as on the way right away, so Reorder does not order it again. When the container ships, import its packing list with Stage 🚢 and pick this order in "Made for order" — the shipped part comes off this order (never counted twice).']].concat(common);
     } else {
       name = 'Vendor_sheet_template.xlsx';
-      head = ['Part #', 'Description', 'Item No.', 'Outside Box UPC Code', 'Inside Bag UPC Code', 'FBA ASIN', 'Inner Bag (pcs)', 'Master Carton (pcs)', 'Price per piece'];
-      ex = [['27-3-1=10X', '1/2" PUSH FIT BALL VALVE', '61801', '810139932345', '810139932376', 'B07NMNSYJD', 10, 200, 3.26],
-        ['27-3-1=1XX', '', '', '840428916817', '840428916732', '', 1, 200, 3.26]];
-      widths = [18, 34, 10, 22, 22, 14, 14, 18, 14];
+      head = ['Part #', 'Description', 'Item No.', 'Outside Box UPC Code', 'Inside Bag UPC Code', 'FBA ASIN', 'Inner Bag (pcs)', 'Master Carton (pcs)', 'Price per piece', 'Carton G.W. (kg)', 'Weight each (lb)'];
+      ex = [['27-3-1=10X', '1/2" PUSH FIT BALL VALVE', '61801', '810139932345', '810139932376', 'B07NMNSYJD', 10, 200, 3.26, 19.5, ''],
+        ['27-3-1=1XX', '', '', '840428916817', '840428916732', '', 1, 200, 3.26, 19.5, '']];
+      widths = [18, 34, 10, 22, 22, 14, 14, 18, 14, 16, 16];
+      fx = { col: 'K', kg: 'J', pcs: 'H', kgIdx: 9, pcsIdx: 7, rows: [2, 3] };
       textCells = ['D2', 'E2', 'D3', 'E3'];
       how = [['Vendor info sheet (no Title / no Stage) — descriptions, UPCs, ASINs, carton sizes, price'], [''],
         ['Part #', 'Required. Our part number, e.g. 27-3-1=10X (one row per pack size).'],
@@ -4364,6 +4383,8 @@ async function rvoTemplate() {
         ['FBA ASIN', 'Amazon ASIN this part # is sent to FBA for (optional).'],
         ['Inner Bag (pcs) / Master Carton (pcs)', 'Pieces in one bag / in one carton (optional; carton sets the case size when SKU Mgr has none).'],
         ['Price per piece', 'Optional. The vendor\'s current price per single piece (kept on the vendor sheet; an import without it never wipes it).'],
+        ['Carton G.W. (kg)', 'Gross weight of one full master carton in KG (from the vendor packing list / spec). Optional — used only to work out the weight.'],
+        ['Weight each (lb)', 'Weight of ONE piece in POUNDS = Carton G.W. (kg) ÷ Master Carton (pcs) × 2.20462 (1 kg = 2.20462 lb). The column already has this formula — just fill Carton G.W. (or type the lb yourself). Saved on the product (Products sheet / Warehouse → Item Search) ONLY when it has no weight yet — an existing weight is never changed.'],
         [''], ['For orders / containers', 'Pick a Stage (🏭 Ordered or 🚢 Shipped container) next to the import first, then 📄 Download template gives that layout.']].concat(common);
     }
     var wb = XLSX.utils.book_new();
@@ -4371,8 +4392,9 @@ async function rvoTemplate() {
     ws['!cols'] = widths.map(function (w) { return { wch: w }; });
     textCells.forEach(function (a) { if (ws[a]) { ws[a].t = 's'; ws[a].v = String(ws[a].v); } });
     // "Weight each (lb)" = G.W. (kg) ÷ Pieces × 2.20462, as a live formula.
-    formulas.forEach(function (r) { var row = ex[r - 2] || [], kg = parseFloat(row[9]) || 0, pcs = parseFloat(row[6]) || 0;
-      ws['K' + r] = { t: 'n', v: kg > 0 && pcs > 0 ? Math.round(kg / pcs * 2.20462 * 10000) / 10000 : 0, f: 'IF(AND(J' + r + '>0,G' + r + '>0),ROUND(J' + r + '/G' + r + '*2.20462,4),"")' }; });
+    // "Weight each (lb)" = G.W. (kg) ÷ pieces × 2.20462, as a live formula.
+    if (fx) fx.rows.forEach(function (r) { var row = ex[r - 2] || [], kg = parseFloat(row[fx.kgIdx]) || 0, pcs = parseFloat(row[fx.pcsIdx]) || 0;
+      ws[fx.col + r] = { t: 'n', v: kg > 0 && pcs > 0 ? Math.round(kg / pcs * 2.20462 * 10000) / 10000 : 0, f: 'IF(AND(' + fx.kg + r + '>0,' + fx.pcs + r + '>0),ROUND(' + fx.kg + r + '/' + fx.pcs + r + '*2.20462,4),"")' }; });
     XLSX.utils.book_append_sheet(wb, ws, stage === 'shipped' ? 'Packing list' : stage === 'production' ? 'Order' : 'Vendor sheet');
     var hw = XLSX.utils.aoa_to_sheet(how); hw['!cols'] = [{ wch: 40 }, { wch: 110 }];
     XLSX.utils.book_append_sheet(wb, hw, 'How to');
@@ -4507,7 +4529,8 @@ function rvoParseSheet(aoa, opt) {
         inn: find(/(inside|inner|plastic).*upc/) >= 0 ? find(/(inside|inner|plastic).*upc/) : find(/upc/, /out ?side/),
         asin: find(/asin/), innerPcs: find(/inner bag/), casePcs: find(/master carton|each case/),
         qty: find(/^(order )?(q'?ty|quantity)\b|^qty/), cases: find(/^(cartons?|cases?|ctns?)( shipped| qty)?$|^# ?of (cartons|cases)/),
-        price: find(/price|unit cost|^cost/, /total|amount|retail|sell/) };
+        price: find(/price|unit cost|^cost/, /total|amount|retail|sell/),
+        wlb: find(/weight.*(lb|each)|lb.*weight/), gw: find(/g\.? ?w|gross/) };
       hr = i;
     }
   }
@@ -4528,6 +4551,10 @@ function rvoParseSheet(aoa, opt) {
     out.push({ part: part, item_no: it || item, description: d || desc, outside_upc: cell(row, 'out'), inside_upc: cell(row, 'inn'),
       asin: /^B0[A-Z0-9]{8}$/i.test(cell(row, 'asin')) ? cell(row, 'asin') : '', inner_pcs: cell(row, 'innerPcs'), case_pcs: cell(row, 'casePcs'), qty: qv, cases: cv,
       price: rvoNum(String(cell(row, 'price')).replace(/[$\s]/g, '')) || '', row: r + 1 });
+    // ⚖ Weight each (lb): the sheet's own column, else Carton G.W. (kg) ÷ Master Carton (pcs) × 2.20462.
+    var o2 = out[out.length - 1], wl = rvoNum(cell(row, 'wlb')), gwk = rvoNum(cell(row, 'gw')), cp = rvoNum(o2.case_pcs);
+    o2.weight_lb = wl > 0 ? wl : (gwk > 0 && cp > 0 ? gwk / cp * 2.20462 : 0);
+    o2.weight_from = wl > 0 ? 'Weight each (lb) column' : o2.weight_lb > 0 ? gwk + ' kg carton G.W. ÷ ' + cp + ' pcs × 2.20462' : '';
     // No Qty but cases shipped + pieces per carton → units = cases × carton pcs ÷ pack size.
     var o = out[out.length - 1];
     if (!hasNum(o.qty) && hasNum(o.cases) && hasNum(o.case_pcs)) {
@@ -4547,6 +4574,8 @@ function rvoStageUi() {
   sel.innerHTML = '<option value="">— none (not ordered here) —</option>' + prod.map(function (t) { return '<option value="' + escHtml(t.title) + '">' + escHtml(t.title) + ' (' + fmt0(t.units) + ' units)</option>'; }).join('');
   if (cur) sel.value = cur;
   wrap.style.display = st.value === 'shipped' ? 'flex' : 'none';
+  var tb = document.getElementById('rvo-tmpl-btn');
+  if (tb) tb.textContent = '📄 Download template: ' + (st.value === 'shipped' ? '🚢 container' : st.value === 'production' ? '🏭 order' : 'vendor info');
 }
 // 🚢 Vendor packing list (CIPL): one line per part # per pallet with
 // cartons (CTN/CTNS) and pieces (QTY/PCS). Handles a 2-row header (merged
@@ -4754,7 +4783,7 @@ async function rvoImportShipped(f, wb, vendor, title) {
   }
   var weights = null;
   if (pk.weights.length) {
-    weights = await (await wFetch(W + '/reorder/fix/weights', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ title: title, file: f.name, items: pk.weights }) })).json().catch(function (e) { return { ok: false, error: e.message }; });
+    weights = await rvoSaveWeights(title, f.name, pk.weights);
     if (!weights.ok) alert('⚠ Weights were not saved: ' + (weights.error || 'error') + ' (everything else was imported)');
   }
   var take = null;
@@ -4803,6 +4832,8 @@ async function rvoImport(input) {
       saved = d.total; (d.noCaseQty || []).forEach(function (k) { noCase.push(k); }); (d.fromCases || []).forEach(function (k) { caseLines.push(k); });
       (d.priceChanges || []).forEach(function (k) { priceChanges.push(k); });
     }
+    var weights = await rvoSaveWeights(title || ('vendor sheet ' + vendor), f.name, rvoWeightsByBase(rows.filter(function (r) { return r.weight_lb > 0; }).map(function (r) { return { clean: rvoClean(r.part), lb: r.weight_lb, pcs: 1, from: r.weight_from }; })));
+    if (weights && !weights.ok) alert('⚠ Weights were not saved: ' + (weights.error || 'error') + ' (everything else was imported)');
     showToast(title ? 'On the way "' + title + '" saved' : 'Imported ' + vendor + ': ' + saved + ' part #s');
     if (title) document.getElementById('rvo-imp-title').value = '';
     await rvoLoad(); if (document.getElementById('rvo-hist-box').open) rvoLoadHistory();
@@ -4814,7 +4845,7 @@ async function rvoImport(input) {
       fromCases: rows.filter(function (r) { return r.qtyFrom === 'cases'; }).length,
       dups: rows.filter(function (r) { return r.dup; }).length,
       skipped: skipped.concat(noCase.map(function (k) { return { row: k.row, part: k.part, qty: '', cases: k.cases, why: 'NOT counted — no case size for this part # (set ✏️ Case qty or SKU Mgr units per case, then import again)' }; })),
-      caseUnits: caseLines,
+      caseUnits: caseLines, weights: weights,
       prices: title ? { sheets: [], priced: rows.filter(function (r) { return !r.dup && r.price > 0; }).length, missing: rows.filter(function (r) { return !r.dup && !(r.price > 0) && rvoNum(r.qtyTot || r.qty) > 0; }).map(function (r) { return rvoClean(r.part); }), notExact: [], changes: priceChanges } : null });
     if (title && stage === 'production') { var np = rows.filter(function (r) { return !r.dup && !(r.price > 0); }); if (np.length) alert('⚠ ' + np.length + ' line(s) have NO price (shown in red in the check): ' + np.slice(0, 20).map(function (r) { return r.part; }).join(', ') + (np.length > 20 ? ', …' : '') + '\nAdd a Price column (per piece) and import again to fill them in.'); }
     if (noCase.length) alert('⚠ ' + noCase.length + ' line(s) NOT counted — no case size known: ' + noCase.map(function (k) { return k.part; }).join(', ') + '\nSet their Case qty (✏️) and import again.');
