@@ -1018,8 +1018,13 @@ async function reorderFixTables(env) {
   await env.DB.prepare(`CREATE TABLE IF NOT EXISTS reorder_incoming (title TEXT NOT NULL, part TEXT NOT NULL, qty REAL NOT NULL,
     vendor TEXT, updated_at TEXT, PRIMARY KEY (title, part))`).run();
   // Where each on-the-way line came from (file row, part # as written, cases shipped) — for the 📋 Import check.
-  for (const col of ['raw_part TEXT', 'src_rows TEXT', 'cases REAL'])
+  for (const col of ['raw_part TEXT', 'src_rows TEXT', 'cases REAL', 'price REAL', 'price_src TEXT'])
     await env.DB.prepare(`ALTER TABLE reorder_incoming ADD COLUMN ${col}`).run().catch(() => {});
+  // 💲 Vendor price per piece: latest on the vendor sheet (catalog), every change in history.
+  for (const col of ['price REAL', 'price_at TEXT', 'price_title TEXT'])
+    await env.DB.prepare(`ALTER TABLE reorder_vendor_catalog ADD COLUMN ${col}`).run().catch(() => {});
+  await env.DB.prepare(`CREATE TABLE IF NOT EXISTS reorder_price_history (id INTEGER PRIMARY KEY AUTOINCREMENT, vendor TEXT, part TEXT,
+    old_price REAL, price REAL, title TEXT, file TEXT, at TEXT)`).run();
   await env.DB.prepare(`CREATE TABLE IF NOT EXISTS reorder_history (id INTEGER PRIMARY KEY AUTOINCREMENT, ts TEXT NOT NULL,
     by_user TEXT, action TEXT, part TEXT, detail TEXT)`).run();
   _reorderFixReady = true;
@@ -1043,6 +1048,9 @@ async function reorderCatalogImport(request, env, session) {
   if (!vendor) return _roResp({ ok: false, error: 'Vendor name required' }, 400);
   const rows = (Array.isArray(b.rows) ? b.rows : []).slice(0, 1000);
   const title = String(b.title || '').trim().slice(0, 60);
+  // Prices already on the vendor sheet — read before an info-sheet replace,
+  // so a re-imported info sheet without prices never wipes them.
+  const priceWas = {}; ((await env.DB.prepare('SELECT part, price, price_at, price_title FROM reorder_vendor_catalog WHERE vendor = ? AND price > 0').bind(vendor).all().catch(() => ({ results: [] }))).results || []).forEach(x => { priceWas[x.part] = x; });
   // A titled (shipment) import only adds / updates — never wipes the vendor's info.
   if (b.replace && !title) await env.DB.prepare('DELETE FROM reorder_vendor_catalog WHERE vendor = ?').bind(vendor).run();
   let incParts = 0, incUnits = 0;
@@ -1063,7 +1071,8 @@ async function reorderCatalogImport(request, env, session) {
         const real = alias[k] || k;
         const fx = await env.DB.prepare('SELECT case_qty FROM reorder_fix WHERE part = ?').bind(real).first();
         let cq = fx && parseFloat(fx.case_qty) > 0 ? parseFloat(fx.case_qty) : 0;
-        if (!cq) { const m = await d1First(env, 'SELECT MAX(units_per_case) AS u FROM master_list WHERE UPPER(part_num) = ?', [real]); cq = m && parseFloat(m.u) > 0 ? parseFloat(m.u) : 0; }
+        // SKU Mgr Ea/Case = pieces per case → units of this part # per case = ÷ pack size.
+        if (!cq) { const m = await d1First(env, 'SELECT MAX(units_per_case) AS u FROM master_list WHERE UPPER(part_num) = ?', [real]); cq = m && parseFloat(m.u) > 0 ? parseFloat(m.u) / reorderExtractPackSize(real) : 0; }
         if (!cq) { const c = await env.DB.prepare('SELECT MAX(case_pcs) AS p FROM reorder_vendor_catalog WHERE part = ?').bind(real).first();
           if (c && parseFloat(c.p) > 0) cq = Math.max(1, Math.round(parseFloat(c.p) / reorderExtractPackSize(real))); }
         caseQtyOf[k] = cq;
@@ -1071,9 +1080,26 @@ async function reorderCatalogImport(request, env, session) {
     }
   }
   const stmts = [];
+  // 💲 Price per piece from this file → the vendor sheet (catalog) keeps the
+  // newest price; each change goes to reorder_price_history.
+  const oldPrice = {}; Object.keys(priceWas).forEach(k => { oldPrice[k] = priceWas[k].price; });
+  const priceStmts = [], priceChanges = [];
   let kept = 0;
   for (const r of rows) {
     const part = reorderCleanPart(r.part);
+    const pr = num(r.price);
+    if (part && pr > 0) {
+      const was = oldPrice[part];
+      priceStmts.push(env.DB.prepare('UPDATE reorder_vendor_catalog SET price = ?, price_at = ?, price_title = ? WHERE vendor = ? AND part = ?').bind(pr, now, title || t(b.file), vendor, part));
+      if (!(Math.abs((was || 0) - pr) < 1e-9)) {
+        priceStmts.push(env.DB.prepare('INSERT INTO reorder_price_history (vendor, part, old_price, price, title, file, at) VALUES (?,?,?,?,?,?,?)').bind(vendor, part, was == null ? null : was, pr, title, t(b.file), now));
+        if (was > 0) priceChanges.push({ part, old: was, new: pr });
+      }
+      oldPrice[part] = pr;
+    } else if (part && priceWas[part] && !title) {
+      const w = priceWas[part]; // info sheet without a price for it: keep the price we had
+      priceStmts.push(env.DB.prepare('UPDATE reorder_vendor_catalog SET price = ?, price_at = ?, price_title = ? WHERE vendor = ? AND part = ?').bind(w.price, w.price_at, w.price_title, vendor, part));
+    }
     if (!part || /^[.=]/.test(part)) continue;
     kept++;
     let q = num(r.qty);
@@ -1085,10 +1111,11 @@ async function reorderCatalogImport(request, env, session) {
     if (title && q > 0) {
       incParts++; incUnits += q;
       const cs = num(r.cases);
-      stmts.push(env.DB.prepare(`INSERT INTO reorder_incoming (title, part, qty, vendor, updated_at, raw_part, src_rows, cases) VALUES (?,?,?,?,?,?,?,?)
+      stmts.push(env.DB.prepare(`INSERT INTO reorder_incoming (title, part, qty, vendor, updated_at, raw_part, src_rows, cases, price, price_src) VALUES (?,?,?,?,?,?,?,?,?,?)
         ON CONFLICT(title, part) DO UPDATE SET qty = excluded.qty, vendor = excluded.vendor, updated_at = excluded.updated_at,
-        raw_part = excluded.raw_part, src_rows = excluded.src_rows, cases = excluded.cases`)
-        .bind(title, part, q, vendor, now, t(r.raw || r.part), t(r.src_rows), Number.isFinite(cs) ? cs : null));
+        raw_part = excluded.raw_part, src_rows = excluded.src_rows, cases = excluded.cases,
+        price = COALESCE(excluded.price, price), price_src = COALESCE(excluded.price_src, price_src)`)
+        .bind(title, part, q, vendor, now, t(r.raw || r.part), t(r.src_rows), Number.isFinite(cs) ? cs : null, pr > 0 ? pr : null, pr > 0 ? (t(r.price_src) || 'file') : null));
     }
     // A container's packing list only adds part #s the vendor sheet doesn't
     // have yet — it never overwrites descriptions / UPCs from info sheets.
@@ -1103,14 +1130,15 @@ async function reorderCatalogImport(request, env, session) {
       .bind(vendor, part, t(r.item_no), t(r.description), t(r.outside_upc), t(r.inside_upc), t(r.asin).toUpperCase(), n(r.inner_pcs), n(r.case_pcs), t(r.part), now));
   }
   for (let i = 0; i < stmts.length; i += 50) await env.DB.batch(stmts.slice(i, i + 50));
+  for (let i = 0; i < priceStmts.length; i += 50) await env.DB.batch(priceStmts.slice(i, i + 50));
   const c = await env.DB.prepare('SELECT COUNT(*) AS n FROM reorder_vendor_catalog WHERE vendor = ?').bind(vendor).first();
   if (title) {
     const it = await env.DB.prepare('SELECT COUNT(*) AS n, SUM(qty) AS u FROM reorder_incoming WHERE title = ?').bind(title).first() || {};
     if (b.last) await reorderLog(env, _roWho(session), 'incoming', title, `On the way "${title}" (${vendor}${b.file ? ', ' + String(b.file).slice(0, 80) : ''}): now ${it.n || 0} part #s, ${Math.round(it.u || 0)} units`);
-    return _roResp({ ok: true, vendor, title, stage, saved: kept, incoming: incParts, incomingUnitsSent: incUnits, incomingParts: it.n || 0, incomingUnits: Math.round(it.u || 0), total: c ? c.n : kept, noCaseQty, fromCases });
+    return _roResp({ ok: true, vendor, title, stage, saved: kept, incoming: incParts, incomingUnitsSent: incUnits, incomingParts: it.n || 0, incomingUnits: Math.round(it.u || 0), total: c ? c.n : kept, noCaseQty, fromCases, priceChanges });
   }
   if (b.last) await reorderLog(env, _roWho(session), 'import', '', `Imported vendor sheet ${vendor}${b.file ? ' (' + String(b.file).slice(0, 80) + ')' : ''}: ${c ? c.n : kept} part #s`);
-  return _roResp({ ok: true, vendor, saved: kept, total: c ? c.n : kept });
+  return _roResp({ ok: true, vendor, saved: kept, total: c ? c.n : kept, priceChanges });
 }
 
 // POST /reorder/fix/pallets { title, vendor, file, lines:[{ pallet, po, part, raw, description, cases, pcs, units, pcsPerCtn, row }] }
@@ -1359,15 +1387,18 @@ async function reorderVendorOrder(env, url) {
     if (m[0] && m[0].m && (!dataFrom || m[0].m < dataFrom)) dataFrom = m[0].m;
   }
 
-  // SKU Mgr: stock (cases × each-case-qty, in units of that SKU), case qty, vendor, name.
+  // SKU Mgr: stock, case qty, vendor, name. SKU Mgr's Ea/Case is the total
+  // PIECES in a case, whatever the bag size (27-2-2=10 and 27-2-2=2XX both
+  // 100 in a 100-piece box), so units of this part # = cases × Ea/Case ÷
+  // pack size (1 case of 27-2-2=10 = 10 bags, not 100).
   const ml = await all(`SELECT part_num, base_sku, name, vendor, cases, units_per_case FROM master_list WHERE part_num != ''`);
   const bySku = {}, byBase = {}, vendors = new Set();
   for (const r of ml) {
     const s = P(r.part_num), b = U(reorderGetBaseSku(s));
     const o = bySku[s] = bySku[s] || { units: 0, caseQty: 0, vendor: '', name: '', vendors: new Set() };
     if (r.vendor) o.vendors.add(reorderVendorName(r.vendor));
-    o.units += (parseFloat(r.cases) || 0) * (parseFloat(r.units_per_case) || 0);
-    o.caseQty = Math.max(o.caseQty, parseFloat(r.units_per_case) || 0);
+    o.units += (parseFloat(r.cases) || 0) * (parseFloat(r.units_per_case) || 0) / pack(s);
+    o.caseQty = Math.max(o.caseQty, (parseFloat(r.units_per_case) || 0) / pack(s));
     if (!o.vendor && r.vendor) o.vendor = reorderVendorName(r.vendor);
     if (!o.name && r.name) o.name = String(r.name).trim();
     const bo = byBase[b] = byBase[b] || { vendor: '', name: '', skus: new Set() };
@@ -2543,8 +2574,12 @@ async function inventoryVerify(request, env) {
   if (tracksQuantity) {
     try { totalBefore = await getMasterListGrandTotal(env); } catch(e) {}
   }
+  // 💲 price batches: settle the spot before and after (old price used up first).
+  const costSpots = isApprove && env.DB && item.partNum ? [item.location, item.overwriteLocation].filter(Boolean) : [];
+  for (const l of costSpots) await costSafe(() => costReconcile(env, item.partNum, l));
 
   const result = await inventoryVerifyInner(request, env);
+  for (const l of costSpots) await costSafe(() => costReconcile(env, item.partNum, l));
 
   if (tracksQuantity && totalBefore !== null) {
     try {
@@ -2925,6 +2960,159 @@ async function inventoryVerifyInner(request, env) {
 // POST /inventory/transfer
 // Logs a transfer as two linked Inventory_Log rows (TRANSFER_OUT + TRANSFER_IN), both Pending.
 // Col P = TransferId links the pair. Col Q = PairedLocation (destination on OUT row, source on IN row).
+// ── 💲 Price batches per spot (part # × location) ─────────────────────────
+// SKU Mgr (master_list) stays the ONLY source of how many cases are at a
+// spot; cost_layer only says at what price (per piece) those cases were
+// bought. The batches at a spot are always forced to add up to SKU Mgr's
+// cases there: fewer cases → the OLDEST batches are used up first (first
+// in, first out); more cases than the batches → a new batch at the row's
+// SKU Mgr price. Stock already here before price tracking = one batch at
+// the row's price, dated before everything else. A received container adds
+// its own batch at the container's price; a transfer carries batches along
+// (oldest first). Stock Out / In / Transfer / Audit screens still only see
+// the total per spot.
+let _costReady = false;
+async function costTables(env) {
+  if (_costReady) return;
+  await env.DB.prepare(`CREATE TABLE IF NOT EXISTS cost_layer (id INTEGER PRIMARY KEY AUTOINCREMENT, part TEXT NOT NULL, location TEXT NOT NULL,
+    cases REAL NOT NULL, price REAL, received_at TEXT NOT NULL, source TEXT, title TEXT)`).run();
+  await env.DB.prepare('CREATE INDEX IF NOT EXISTS idx_cost_layer_spot ON cost_layer(part, location)').run();
+  _costReady = true;
+}
+const _costKey = v => String(v == null ? '' : v).trim().toUpperCase();
+const _COST_OLD = '0000-00-00';
+// Plan the writes that make `layers` (oldest first) add up to `target`.
+function costPlan(layers, target, rowPrice, now) {
+  const eps = 1e-9, ops = [];
+  target = Math.max(0, parseFloat(target) || 0);
+  let sum = layers.reduce((a, l) => a + (l.cases || 0), 0);
+  if (sum > target + eps) {
+    let excess = sum - target;
+    for (const l of layers) {
+      if (excess <= eps) break;
+      const take = Math.min(l.cases, excess); excess -= take;
+      const left = l.cases - take;
+      ops.push(left <= eps ? { del: l.id } : { upd: l.id, cases: left });
+    }
+  } else if (sum < target - eps) {
+    ops.push({ ins: true, cases: target - sum, price: rowPrice > 0 ? rowPrice : null,
+      received_at: layers.length ? now : _COST_OLD, source: layers.length ? 'stock added (SKU Mgr price)' : 'before price tracking (SKU Mgr price)' });
+  }
+  return ops;
+}
+async function costApply(env, part, loc, ops) {
+  for (const o of ops) {
+    if (o.del) await env.DB.prepare('DELETE FROM cost_layer WHERE id = ?').bind(o.del).run();
+    else if (o.upd) await env.DB.prepare('UPDATE cost_layer SET cases = ? WHERE id = ?').bind(o.cases, o.upd).run();
+    else if (o.ins) await env.DB.prepare('INSERT INTO cost_layer (part, location, cases, price, received_at, source, title) VALUES (?,?,?,?,?,?,?)')
+      .bind(part, loc, o.cases, o.price, o.received_at, o.source, o.title || null).run();
+  }
+}
+async function costSpotMaster(env, part, loc) {
+  const m = await env.DB.prepare('SELECT SUM(cases) AS c, MAX(price) AS p FROM master_list WHERE UPPER(TRIM(part_num)) = ? AND UPPER(TRIM(location)) = ?').bind(part, loc).first();
+  return { cases: m && m.c > 0 ? m.c : 0, price: m ? parseFloat(m.p) || 0 : 0 };
+}
+async function costLayers(env, part, loc) {
+  return (await env.DB.prepare('SELECT * FROM cost_layer WHERE part = ? AND location = ? ORDER BY received_at, id').bind(part, loc).all()).results || [];
+}
+// Make one spot's batches add up to SKU Mgr's cases there.
+async function costReconcile(env, part, loc) {
+  await costTables(env);
+  part = _costKey(part); loc = _costKey(loc);
+  if (!part || !loc) return;
+  const m = await costSpotMaster(env, part, loc);
+  const layers = await costLayers(env, part, loc);
+  if (!layers.length && !(m.cases > 0)) return;
+  await costApply(env, part, loc, costPlan(layers, m.cases, m.price, new Date().toISOString()));
+}
+// Never let price bookkeeping break a stock operation.
+async function costSafe(fn) { try { await fn(); } catch (e) { console.error('[cost]', e.message); } }
+// A transfer (after it's approved): move `cases` from → to, oldest batches first, keeping their price and date.
+async function costMove(env, part, from, to, cases) {
+  await costTables(env);
+  part = _costKey(part); from = _costKey(from); to = _costKey(to);
+  let left = parseFloat(cases) || 0;
+  for (const l of await costLayers(env, part, from)) {
+    if (left <= 1e-9) break;
+    const take = Math.min(l.cases, left); left -= take;
+    if (l.cases - take <= 1e-9) await env.DB.prepare('DELETE FROM cost_layer WHERE id = ?').bind(l.id).run();
+    else await env.DB.prepare('UPDATE cost_layer SET cases = ? WHERE id = ?').bind(l.cases - take, l.id).run();
+    await env.DB.prepare('INSERT INTO cost_layer (part, location, cases, price, received_at, source, title) VALUES (?,?,?,?,?,?,?)')
+      .bind(part, to, take, l.price, l.received_at, l.source, l.title).run();
+  }
+}
+// A received container: the newest `cases` at the spot get the container's price.
+async function costMarkReceived(env, part, loc, cases, price, title) {
+  await costTables(env);
+  part = _costKey(part); loc = _costKey(loc);
+  let left = parseFloat(cases) || 0;
+  const layers = (await costLayers(env, part, loc)).reverse(); // newest first
+  const now = new Date().toISOString();
+  for (const l of layers) {
+    if (left <= 1e-9) break;
+    const take = Math.min(l.cases, left); left -= take;
+    if (l.cases - take <= 1e-9) await env.DB.prepare('DELETE FROM cost_layer WHERE id = ?').bind(l.id).run();
+    else await env.DB.prepare('UPDATE cost_layer SET cases = ? WHERE id = ?').bind(l.cases - take, l.id).run();
+    await env.DB.prepare('INSERT INTO cost_layer (part, location, cases, price, received_at, source, title) VALUES (?,?,?,?,?,?,?)')
+      .bind(part, loc, take, price > 0 ? price : null, now, 'received', title || null).run();
+  }
+}
+// Every spot that has batches, made to add up to SKU Mgr — in bulk (one
+// read of each table, writes only where a spot is off).
+async function costReconcileAll(env) {
+  await costTables(env);
+  const layers = (await env.DB.prepare('SELECT * FROM cost_layer ORDER BY received_at, id').all()).results || [];
+  if (!layers.length) return {};
+  const bySpot = {};
+  layers.forEach(l => { (bySpot[l.part + '|' + l.location] = bySpot[l.part + '|' + l.location] || []).push(l); });
+  const master = {};
+  (await d1All(env, 'SELECT UPPER(TRIM(part_num)) AS p, UPPER(TRIM(location)) AS l, SUM(cases) AS c, MAX(price) AS pr FROM master_list GROUP BY 1, 2'))
+    .forEach(r => { master[r.p + '|' + r.l] = { cases: r.c > 0 ? r.c : 0, price: parseFloat(r.pr) || 0 }; });
+  const now = new Date().toISOString();
+  let fixed = 0;
+  for (const k of Object.keys(bySpot)) {
+    const [part, loc] = k.split('|'), m = master[k] || { cases: 0, price: 0 };
+    const ops = costPlan(bySpot[k], m.cases, m.price, now);
+    if (ops.length) { fixed++; await costApply(env, part, loc, ops); }
+  }
+  if (!fixed) return bySpot;
+  const again = {};
+  ((await env.DB.prepare('SELECT * FROM cost_layer ORDER BY received_at, id').all()).results || []).forEach(l => { (again[l.part + '|' + l.location] = again[l.part + '|' + l.location] || []).push(l); });
+  return again;
+}
+// GET /inventory/cost/spots — batches of every spot that has them (SKU Mgr shows the split).
+async function inventoryCostSpots(env) {
+  const bySpot = await costReconcileAll(env);
+  const spots = Object.values(bySpot).map(ls => ({ part: ls[0].part, location: ls[0].location,
+    layers: ls.map(l => ({ cases: l.cases, price: l.price, receivedAt: l.received_at, source: l.source, title: l.title })) }));
+  return cors(new Response(JSON.stringify({ ok: true, spots }), { headers: { 'Content-Type': 'application/json' } }));
+}
+// GET /inventory/cost/value — OWNER ONLY: total inventory value at vendor
+// price = pieces (cases × Ea/Case) × price per piece, batch by batch.
+async function inventoryCostValue(request, env) {
+  const cs = await verifyCredSession(request.headers.get('X-Cred-Token'), env).catch(() => null);
+  if (!cs || !(cs.roles || []).includes('owner')) return cors(new Response(JSON.stringify({ ok: false, error: 'Owner only' }), { status: 403, headers: { 'Content-Type': 'application/json' } }));
+  const bySpot = await costReconcileAll(env);
+  const rows = await d1All(env, `SELECT UPPER(TRIM(part_num)) AS p, UPPER(TRIM(location)) AS l, SUM(cases) AS c, MAX(units_per_case) AS u, MAX(price) AS pr, MAX(vendor) AS v
+    FROM master_list WHERE part_num != '' AND cases > 0 GROUP BY 1, 2`);
+  let value = 0, pieces = 0, cases = 0;
+  const byVendor = {}, noPrice = { spots: 0, cases: 0, parts: [] }, noEa = { spots: 0, cases: 0, parts: [] };
+  for (const r of rows) {
+    cases += r.c;
+    const ea = parseFloat(r.u) || 0;
+    if (!(ea > 0)) { noEa.spots++; noEa.cases += r.c; if (noEa.parts.length < 100) noEa.parts.push(r.p + ' @ ' + r.l); continue; }
+    const batches = bySpot[r.p + '|' + r.l] || [{ cases: r.c, price: parseFloat(r.pr) || 0 }];
+    let spotNoPrice = 0;
+    for (const bt of batches) {
+      if (bt.price > 0) { const v = bt.cases * ea * bt.price; value += v; pieces += bt.cases * ea; const vn = reorderVendorName(r.v) || '(no vendor)'; byVendor[vn] = (byVendor[vn] || 0) + v; }
+      else spotNoPrice += bt.cases;
+    }
+    if (spotNoPrice > 0) { noPrice.spots++; noPrice.cases += spotNoPrice; if (noPrice.parts.length < 100) noPrice.parts.push(r.p + ' @ ' + r.l); }
+  }
+  return cors(new Response(JSON.stringify({ ok: true, value: Math.round(value * 100) / 100, pieces, cases, spots: rows.length,
+    byVendor: Object.entries(byVendor).map(([vendor, v]) => ({ vendor, value: Math.round(v * 100) / 100 })).sort((a, b) => b.value - a.value), noPrice, noEa, asOf: new Date().toISOString() }), { headers: { 'Content-Type': 'application/json' } }));
+}
+
 // ── 🚢 Container here (Inventory → Transfer) ─────────────────────────────
 // Boxes moved off a pallet line = its pallet_move rows whose transfer wasn't
 // rejected in Review (the OUT log row's status), so counts follow the real
@@ -3179,8 +3367,16 @@ async function inventoryTransferVerify(request, env) {
   if (tracksQuantity) {
     try { totalBefore = await getMasterListGrandTotal(env); } catch(e) {}
   }
+  // 💲 price batches travel with the boxes (oldest first).
+  const cPart = tracksQuantity && peek.inItem ? peek.outItem.partNum : null, cFrom = cPart && peek.outItem.location, cTo = cPart && peek.inItem.location;
+  if (cPart && cFrom && cTo) { await costSafe(() => costReconcile(env, cPart, cFrom)); await costSafe(() => costReconcile(env, cPart, cTo)); }
 
   const result = await inventoryTransferVerifyInner(request, env);
+  if (cPart && cFrom && cTo) {
+    const ok = await result.clone().json().then(d => !!d.ok).catch(() => false);
+    if (ok) await costSafe(() => costMove(env, cPart, cFrom, cTo, peek.outItem.cases));
+    await costSafe(() => costReconcile(env, cPart, cFrom)); await costSafe(() => costReconcile(env, cPart, cTo));
+  }
 
   if (tracksQuantity && totalBefore !== null) {
     try {
@@ -4430,7 +4626,7 @@ export default {
         await reorderFixTables(env);
         const title = (url.searchParams.get('title') || '').trim();
         const alias = {}; ((await env.DB.prepare('SELECT raw, part FROM reorder_alias').all()).results || []).forEach(r => { alias[String(r.raw).toUpperCase()] = String(r.part).toUpperCase(); });
-        const lines = ((await env.DB.prepare('SELECT part, qty, vendor, raw_part, src_rows, cases, updated_at FROM reorder_incoming WHERE title = ? ORDER BY rowid').bind(title).all()).results || [])
+        const lines = ((await env.DB.prepare('SELECT part, qty, vendor, raw_part, src_rows, cases, price, price_src, updated_at FROM reorder_incoming WHERE title = ? ORDER BY rowid').bind(title).all()).results || [])
           .map(r => ({ ...r, readAs: alias[String(r.part).toUpperCase()] || String(r.part).toUpperCase() }));
         return _roResp({ ok: true, title, lines });
       }
@@ -4450,10 +4646,11 @@ export default {
         const results = [];
         for (const ln of (Array.isArray(b.lines) ? b.lines : []).slice(0, 8)) {
           const key = reorderCleanPart(ln.key || ln.part), part = reorderCleanPart(ln.part), cases = parseFloat(ln.cases);
-          const have = await env.DB.prepare('SELECT qty FROM reorder_incoming WHERE title = ? AND part = ?').bind(title, key).first();
+          const have = await env.DB.prepare('SELECT qty, price FROM reorder_incoming WHERE title = ? AND part = ?').bind(title, key).first();
           if (!have) { results.push({ key, ok: true, skipped: 'already received' }); continue; }
           if (!(cases > 0)) { results.push({ key, ok: false, error: 'Cases to add must be more than 0' }); continue; }
           try {
+            await costSafe(() => costReconcile(env, part, loc)); // stock already here keeps its old price
             const ex = await d1First(env, 'SELECT id, name FROM master_list WHERE UPPER(part_num) = ? AND UPPER(location) = ? LIMIT 1', [part, loc]);
             const note = `[RECEIVED] ${title} — ${have.qty} units`;
             const logBody = { type: 'IN', partNum: part, sku: part, name: String(ln.description || (ex && ex.name) || '').slice(0, 200),
@@ -4469,6 +4666,8 @@ export default {
               const vd = await vr.json().catch(() => ({}));
               if (!vd.ok) throw new Error('Logged as Stock In but not approved (' + (vd.error || 'verify failed') + ') — approve it in Inventory → Review');
             }
+            // 💲 these cases carry the container's price (per piece); the rest of the spot keeps its own.
+            await costSafe(async () => { await costReconcile(env, part, loc); await costMarkReceived(env, part, loc, cases, have.price, title); });
             await env.DB.prepare('DELETE FROM reorder_incoming WHERE title = ? AND part = ?').bind(title, key).run();
             await reorderLog(env, who, 'received', part, `Received "${title}": ${cases} case(s) of ${part} (${have.qty} units) → SKU Mgr @ ${loc}`);
             results.push({ key, ok: true, cases, location: loc, isNew: !ex });
@@ -4482,6 +4681,19 @@ export default {
         await reorderFixTables(env);
         const b = await request.json().catch(() => ({}));
         const title = String(b.title || '').trim();
+        // Only some part #s (a re-imported container's packing list doesn't have them).
+        const only = Array.isArray(b.parts) ? [...new Set(b.parts.map(x => reorderCleanPart(x)).filter(Boolean))].slice(0, 2000) : null;
+        if (only && only.length) {
+          let n = 0, u = 0;
+          for (const part of only) {
+            const r = await env.DB.prepare('SELECT qty FROM reorder_incoming WHERE title = ? AND part = ?').bind(title, part).first();
+            if (!r) continue;
+            await env.DB.prepare('DELETE FROM reorder_incoming WHERE title = ? AND part = ?').bind(title, part).run();
+            n++; u += r.qty || 0;
+          }
+          await reorderLog(env, _roWho(roCs || session), 'incoming', title, `Removed ${n} part #s (${Math.round(u)} units) from on-the-way "${title}"${b.reason ? ' — ' + String(b.reason).slice(0, 100) : ''}: ${only.slice(0, 60).join(', ')}`);
+          return _roResp({ ok: true, removed: n, units: u });
+        }
         const it = await env.DB.prepare('SELECT COUNT(*) AS n, SUM(qty) AS u FROM reorder_incoming WHERE title = ?').bind(title).first() || {};
         await env.DB.prepare('DELETE FROM reorder_incoming WHERE title = ?').bind(title).run();
         await reorderLog(env, _roWho(roCs || session), 'incoming', title, `Removed on-the-way "${title}" (${it.n || 0} part #s, ${Math.round(it.u || 0)} units)${b.reason ? ' — ' + String(b.reason).slice(0, 100) : ''}`);
@@ -4763,7 +4975,7 @@ export default {
         // these specific paths require mgmt — everything else falls through to 404
         const mgmtPaths = ['/inventory/pending','/inventory/verify','/inventory/transfer/verify',
           '/inventory/audit-mode','/inventory/review-mode','/inventory/prefixes','/inventory/rename-locations',
-          '/inventory/cancel-entry'];
+          '/inventory/cancel-entry', '/inventory/cost/spots', '/inventory/cost/value'];
         if (mgmtPaths.some(p => path === p)) {
           return cors(new Response(JSON.stringify({ error: 'Management access required' }), {
             status: 403, headers: { 'Content-Type': 'application/json' }
@@ -4774,6 +4986,9 @@ export default {
       if (path === '/inventory/pending'         && method === 'GET')  return await inventoryPending(env);
       if (path === '/inventory/verify'          && method === 'POST') return await inventoryVerify(request, env);
       if (path === '/inventory/transfer/verify' && method === 'POST') return await inventoryTransferVerify(request, env);
+      // 💲 price batches (mgmt, gated above); the total value is owner only (checked inside).
+      if (path === '/inventory/cost/spots' && method === 'GET') return await inventoryCostSpots(env);
+      if (path === '/inventory/cost/value' && method === 'GET') return await inventoryCostValue(request, env);
       // audit-mode POST + other mgmt routes
       if (path === '/inventory/audit-mode'      && method === 'POST') return await inventoryAuditModeSet(request, env);
       if (path === '/inventory/review-mode'     && method === 'POST') return await inventoryReviewModeSet(request, env);
