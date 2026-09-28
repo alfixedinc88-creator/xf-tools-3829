@@ -984,6 +984,9 @@ async function reorderFixTables(env) {
   await env.DB.prepare(`CREATE TABLE IF NOT EXISTS reorder_vendor_catalog (vendor TEXT NOT NULL, part TEXT NOT NULL, item_no TEXT, description TEXT,
     outside_upc TEXT, inside_upc TEXT, asin TEXT, inner_pcs REAL, case_pcs REAL, raw_part TEXT, updated_at TEXT, PRIMARY KEY (vendor, part))`).run();
   await env.DB.prepare(`CREATE TABLE IF NOT EXISTS reorder_alias (raw TEXT PRIMARY KEY, part TEXT NOT NULL, by_user TEXT, updated_at TEXT)`).run();
+  // Vendor each part # was last ordered from (recorded when a vendor order
+  // CSV is downloaded) — the default vendor for a part # several vendors sell.
+  await env.DB.prepare(`CREATE TABLE IF NOT EXISTS reorder_last_vendor (part TEXT PRIMARY KEY, vendor TEXT NOT NULL, at TEXT)`).run();
   await env.DB.prepare(`CREATE TABLE IF NOT EXISTS reorder_fix (part TEXT PRIMARY KEY, description TEXT, outside_upc TEXT, inside_upc TEXT,
     vendor TEXT, asin TEXT, case_qty REAL, by_user TEXT, updated_at TEXT)`).run();
   // History of everything done on the tab (fixes, part # corrections,
@@ -1164,7 +1167,7 @@ async function reorderVendorOrder(env, url) {
     if (r && out !== r) (fromMap[out] = fromMap[out] || new Set()).add(r);
     return out;
   };
-  const cat = {}; (await all('SELECT * FROM reorder_vendor_catalog ORDER BY vendor')).forEach(r => { const k = U(r.part); if (!cat[k]) cat[k] = r; });
+  const cat = {}, catAll = {}; (await all('SELECT * FROM reorder_vendor_catalog ORDER BY vendor')).forEach(r => { const k = U(r.part); if (!cat[k]) cat[k] = r; (catAll[k] = catAll[k] || []).push(r); });
   const fixes = {}; (await all('SELECT * FROM reorder_fix')).forEach(r => { fixes[U(r.part)] = r; });
   // ASIN for any SKU Amazon knows — incl. Amazon's own auto seller SKUs like
   // "0H-9TMH-JBU7" (sales report + FBA inventory report), so those rows can
@@ -1175,6 +1178,12 @@ async function reorderVendorOrder(env, url) {
   (await all('SELECT sku, asin, product_name FROM amazon_fba_inventory')).forEach(r => addAsin(r.sku, r.asin, r.product_name));
   const incoming = {}; // part → { title: units }
   (await all('SELECT title, part, qty FROM reorder_incoming')).forEach(r => { const k = P(r.part); (incoming[k] = incoming[k] || {})[r.title] = (incoming[k][r.title] || 0) + (r.qty || 0); });
+  // Vendor last ordered from, per part #: the newest of an on-the-way title's
+  // vendor and a downloaded vendor order (reorder_last_vendor).
+  const lastV = {};
+  const setLast = (part, v, at) => { const k = P(part), vn = reorderVendorName(String(v || '').trim()); if (!k || !vn) return; at = String(at || ''); if (!lastV[k] || at > lastV[k].at) lastV[k] = { v: vn, at }; };
+  (await all('SELECT part, vendor, updated_at FROM reorder_incoming')).forEach(r => setLast(r.part, r.vendor, r.updated_at));
+  (await all('SELECT part, vendor, at FROM reorder_last_vendor')).forEach(r => setLast(r.part, r.vendor, r.at));
   const incUnitsOf = k => Object.values(incoming[k] || {}).reduce((a, x) => a + x, 0);
   const incomingTitles = (await all('SELECT title, COUNT(*) AS parts, SUM(qty) AS units, MAX(vendor) AS vendor, MAX(updated_at) AS at FROM reorder_incoming GROUP BY title ORDER BY MIN(updated_at)'))
     .map(t => ({ ...t, vendor: reorderVendorName(t.vendor) }));
@@ -1214,7 +1223,8 @@ async function reorderVendorOrder(env, url) {
   const bySku = {}, byBase = {}, vendors = new Set();
   for (const r of ml) {
     const s = P(r.part_num), b = U(reorderGetBaseSku(s));
-    const o = bySku[s] = bySku[s] || { units: 0, caseQty: 0, vendor: '', name: '' };
+    const o = bySku[s] = bySku[s] || { units: 0, caseQty: 0, vendor: '', name: '', vendors: new Set() };
+    if (r.vendor) o.vendors.add(reorderVendorName(r.vendor));
     o.units += (parseFloat(r.cases) || 0) * (parseFloat(r.units_per_case) || 0);
     o.caseQty = Math.max(o.caseQty, parseFloat(r.units_per_case) || 0);
     if (!o.vendor && r.vendor) o.vendor = reorderVendorName(r.vendor);
@@ -1293,7 +1303,22 @@ async function reorderVendorOrder(env, url) {
       const stockPcs = ownPcs + incUnits * ps + otherIncPcs + (countOtherPacks ? otherPcs : 0) + (countFba ? t.fbaAvailPieces : 0);
       const needPcs = Math.max(0, monthlyPcs * (lead + cover) - stockPcs);
       const needUnits = Math.ceil(needPcs / ps - 1e-9);
-      const ct = cat[t.sku] || {}, fx = fixes[t.sku] || {};
+      const fx = fixes[t.sku] || {};
+      // One vendor per part # (never on two vendors' orders). Picked with
+      // the row's vendor menu / ✏️ wins, then the vendor it was last ordered
+      // from, then SKU Mgr, then a vendor info sheet.
+      const vn = v => reorderVendorName(String(v || '').trim());
+      const lv = lastV[t.sku];
+      let vendor = '', vendorSrc = '';
+      if (vn(fx.vendor)) { vendor = vn(fx.vendor); vendorSrc = 'picked'; }
+      else if (lv) { vendor = lv.v; vendorSrc = 'last order'; }
+      else if (vn(sm.vendor)) { vendor = vn(sm.vendor); vendorSrc = 'SKU Mgr'; }
+      else if (cat[t.sku] && vn(cat[t.sku].vendor)) { vendor = vn(cat[t.sku].vendor); vendorSrc = 'info sheet'; }
+      else if (vn(bo.vendor)) { vendor = vn(bo.vendor); vendorSrc = 'SKU Mgr (other pack)'; }
+      const vendors = new Set();
+      [fx.vendor, lv && lv.v, ...(sm.vendors || []), ...(catAll[t.sku] || []).map(c => c.vendor)].forEach(v => { v = vn(v); if (v) vendors.add(v); });
+      // Description / UPCs / carton from the chosen vendor's info sheet.
+      const ct = (catAll[t.sku] || []).find(c => vn(c.vendor) === vendor) || cat[t.sku] || {};
       // Case qty in units of this part #: a fix wins, then SKU Mgr, then the
       // vendor sheet's carton (EFF "Master carton (pcs)" is pieces → ÷ pack).
       let caseQty = parseFloat(fx.case_qty) || sm.caseQty || 0, caseSrc = fx.case_qty ? 'fix' : sm.caseQty ? 'SKU Mgr' : '';
@@ -1319,7 +1344,7 @@ async function reorderVendorOrder(env, url) {
         channels: chanUnits[t.sku] || {},
         sameAsin: Object.entries(sameAsin[t.sku] || {}).map(([sku, x]) => ({ sku, units: Math.round(x.units), asin: x.asin })),
         amazonCode: /^[0-9A-Z]{2}-[0-9A-Z]{4}-[0-9A-Z]{4}$/.test(t.sku),
-        vendor: reorderVendorName(pick(fx.vendor, ct.vendor, sm.vendor, bo.vendor)),
+        vendor, vendorSrc, vendors: [...vendors].sort(), lastVendor: lv ? lv.v : '',
         outsideUpc: pick(fx.outside_upc, ct.outside_upc, u.outside_upc), insideUpc: pick(fx.inside_upc, ct.inside_upc, u.inside_upc),
         itemNo: pick(ct.item_no), caseSrc, fixed: !!fixes[t.sku],
         soldPcs: Math.round(demandPcs), monthlyPcs: Math.round(monthlyPcs * 10) / 10,
@@ -4251,6 +4276,18 @@ export default {
         return _roResp({ ok: true, aliases, fixes });
       }
       if (url.pathname === '/reorder/fix/batch' && method === 'POST') return await reorderSaveFixBatch(request, env, roCs || session);
+      if (url.pathname === '/reorder/fix/last-vendor' && method === 'POST') {
+        // { items: [{ part, vendor }] } — the rows of a downloaded vendor order.
+        await reorderFixTables(env);
+        const b = await request.json().catch(() => ({})), now = new Date().toISOString();
+        const items = (Array.isArray(b.items) ? b.items : []).slice(0, 2000)
+          .map(it => ({ part: reorderCleanPart(String((it && it.part) || '').toUpperCase()), vendor: reorderVendorName(String((it && it.vendor) || '').trim()) }))
+          .filter(it => it.part && it.vendor);
+        for (let i = 0; i < items.length; i += 50)
+          await env.DB.batch(items.slice(i, i + 50).map(it => env.DB.prepare(`INSERT INTO reorder_last_vendor (part, vendor, at) VALUES (?,?,?)
+            ON CONFLICT(part) DO UPDATE SET vendor = excluded.vendor, at = excluded.at`).bind(it.part, it.vendor, now)));
+        return _roResp({ ok: true, saved: items.length });
+      }
       if (url.pathname === '/reorder/fix' && method === 'POST') {
         return await reorderSaveFix(request, env, roCs || session);
       }
