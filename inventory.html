@@ -5239,6 +5239,24 @@ window.invCredLogin = async function() {
       });
   };
 
+  // History's "before → after" cell. New rows (total_scope 'part') are the
+  // total of THAT part # only; older rows were the whole warehouse, where
+  // anyone else's change in the same second showed up as a ⚠.
+  // ℹ (orange) = adds up, a shelf's count was corrected; ⚠ (red) = doesn't add up.
+  window.histTotalHtml = function(r, prefix) {
+    if (r.total_before === null || r.total_before === undefined) return '';
+    var part = r.total_scope === 'part', w = String(r.total_warning || ''), info = w.charAt(0) === '\u2139';
+    var title = part ? 'Total cases of ' + (r.part_num || 'this part #') + ' (every shelf) before → after' : 'Whole-warehouse total before → after (old check)';
+    var badge = '';
+    if (w) {
+      var txt = part ? w : w + '\n\n(Old whole-warehouse check: this usually means someone else\'s entry was saved in the same second — not a problem with this entry. New entries are checked per part #.)';
+      var attr = JSON.stringify(txt).replace(/&/g, '&amp;').replace(/'/g, '&#39;').replace(/</g, '&lt;');
+      var head = JSON.stringify(info ? '\u2139 Count corrected' : part ? '\u26a0 Does not add up' : '\u26a0 Old warning').replace(/'/g, '&#39;');
+      badge = ' <span onclick=\'histShowFullNote(' + attr + ', ' + head + ')\' title="Click for details" style="color:' + (info ? 'var(--orange)' : part ? 'var(--red)' : 'var(--text3)') + ';font-weight:700;cursor:pointer;text-decoration:underline dotted">' + (info ? '\u2139' : '\u26a0') + '</span>';
+    }
+    return '<span title="' + title + '">' + (prefix || '') + Number(r.total_before).toLocaleString() + ' → ' + Number(r.total_after).toLocaleString() + (part ? '' : ' <span style="font-size:10px;color:var(--text3)">(whole wh.)</span>') + '</span>' + badge;
+  };
+
   window.histShowFullNote = function(text, title) {
     var titleEl = g('hist-note-title');
     if (titleEl) titleEl.textContent = title || 'Full Note';
@@ -5454,7 +5472,7 @@ window.invCredLogin = async function() {
       + '<th style="' + thS + '">By</th>'
       + '<th style="' + thS + '">Status</th>'
       + '<th style="' + thS + '">Notes</th>'
-      + '<th style="' + thS + '" title="Warehouse-wide total before → after this change">Total Before → After</th>'
+      + '<th style="' + thS + '" title="Cases of this part # (every shelf) before → after this change. Older rows: whole warehouse.">Part Total Before → After</th>'
       + '<th style="' + thS + '"></th>'
       + '</tr></thead><tbody>';
 
@@ -5486,10 +5504,7 @@ window.invCredLogin = async function() {
       // them with). A red ⚠ means the after-total didn't match what this
       // change alone should have produced — usually another change landed
       // at almost the same instant.
-      var totalCell = (r.total_before !== null && r.total_before !== undefined)
-        ? (Number(r.total_before).toLocaleString() + ' → ' + Number(r.total_after).toLocaleString()
-           + (r.total_warning ? ' <span onclick=\'histShowFullNote(' + JSON.stringify(r.total_warning) + ', "⚠ Warning")\' style="color:var(--red);font-weight:700;cursor:pointer;text-decoration:underline dotted">⚠</span>' : ''))
-        : '<span style="color:var(--text3)">—</span>';
+      var totalCell = histTotalHtml(r) || '<span style="color:var(--text3)">—</span>';
       // Cancel — only offered on a Verified plain Stock In/Out entry that
       // hasn't already been cancelled (see invCancelHistoryEntry / the
       // worker's /inventory/cancel-entry for what actually happens: the
@@ -5515,7 +5530,7 @@ window.invCredLogin = async function() {
         + '<td style="' + td + 'text-align:right;font-family:var(--mono);font-weight:700">' + (r.cases||0) + '</td>'
         + '<td style="' + td + 'font-family:var(--mono);color:var(--text2)">' + (r.initials||'') + '</td>'
         + '<td style="' + td + 'white-space:nowrap"><span style="font-size:10px;font-weight:700;color:' + stCol + '">' + (r.status||'') + '</span></td>'
-        + '<td style="' + td + 'color:var(--text3);max-width:160px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;cursor:pointer;text-decoration:underline dotted" title="Click to see full note" onclick=\'histShowFullNote(' + JSON.stringify(r.notes||'') + ')\'>' + (notes || '—') + '</td>'
+        + '<td style="' + td + 'color:var(--text3);max-width:160px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;cursor:pointer;text-decoration:underline dotted" title="Click to see full note" onclick=\'histShowFullNote(' + JSON.stringify(r.notes||'').replace(/&/g, '&amp;').replace(/'/g, '&#39;').replace(/</g, '&lt;') + ')\'>' + (notes || '—') + '</td>'
         + '<td style="' + td + 'font-family:var(--mono);white-space:nowrap;font-size:11px">' + totalCell + '</td>'
         + '<td style="' + td + 'white-space:nowrap">' + cancelCell + '</td>'
         + '</tr>';
@@ -6153,8 +6168,7 @@ window.invCredLogin = async function() {
         ? '<div style="font-family:var(--mono);font-weight:700;font-size:11px;color:var(--text)">' + (r.part_num||'') + (r.location ? ' @ ' + r.location : '') + '</div>'
         : '';
       var totalLine = (r.total_before !== null && r.total_before !== undefined)
-        ? '<div style="font-family:var(--mono);font-size:11px;color:var(--text3);margin-top:2px">Total: ' + Number(r.total_before).toLocaleString() + ' → ' + Number(r.total_after).toLocaleString()
-          + (r.total_warning ? ' <span onclick=\'alert(' + JSON.stringify(String(r.total_warning)) + ')\' style="color:var(--red);font-weight:700;cursor:pointer;text-decoration:underline dotted">⚠</span>' : '') + '</div>'
+        ? '<div style="font-family:var(--mono);font-size:11px;color:var(--text3);margin-top:2px">' + histTotalHtml(r, 'Total: ') + '</div>'
         : '';
       return '<div style="padding:8px 0;border-bottom:1px solid var(--border)">'
         + partLocLine

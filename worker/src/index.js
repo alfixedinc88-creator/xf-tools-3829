@@ -2790,6 +2790,33 @@ async function ensureTotalTrackingColumns(env) {
   await env.DB.prepare('ALTER TABLE inventory_log ADD COLUMN total_before REAL').run().catch(()=>{});
   await env.DB.prepare('ALTER TABLE inventory_log ADD COLUMN total_after REAL').run().catch(()=>{});
   await env.DB.prepare('ALTER TABLE inventory_log ADD COLUMN total_warning TEXT').run().catch(()=>{});
+  await env.DB.prepare('ALTER TABLE inventory_log ADD COLUMN total_scope TEXT').run().catch(()=>{});
+}
+// History's "before → after" check, per PART # (every shelf of that part,
+// any number of cases). It used to be the whole warehouse, so anyone else's
+// scan, pick or SKU Mgr edit landing in the same second showed up as a
+// "⚠ another change may have landed" warning on an entry that was fine.
+// total_scope = 'part' marks rows recorded this way (older rows = warehouse).
+async function invPartCases(env, part) {
+  const r = await d1First(env, 'SELECT SUM(cases) AS t FROM master_list WHERE UPPER(part_num)=?', [String(part || '').trim().toUpperCase()]);
+  return parseFloat(r?.t) || 0;
+}
+// Cases on the one shelf row an entry works on (masterId first, like the approve code).
+async function invRowCases(env, masterId, part, loc) {
+  const id = parseInt(masterId) || null;
+  if (id) { const r = await d1First(env, 'SELECT cases FROM master_list WHERE id=?', [id]).catch(() => null); if (r) return parseFloat(r.cases) || 0; }
+  if (!part || !loc) return null;
+  const r = await d1First(env, 'SELECT cases FROM master_list WHERE UPPER(part_num)=? AND UPPER(location)=? ORDER BY cases DESC LIMIT 1',
+    [String(part).trim().toUpperCase(), String(loc).trim().toUpperCase()]).catch(() => null);
+  return r ? (parseFloat(r.cases) || 0) : null;
+}
+const _n = v => Math.round(v * 1000) / 1000;
+// "ℹ …" = the numbers add up, but a shelf had a different count than the
+// system (shown, never hidden). "⚠ …" = they do NOT add up.
+async function invSaveTotals(env, ids, before, after, note) {
+  await ensureTotalTrackingColumns(env);
+  for (const id of ids.filter(Boolean))
+    await env.DB.prepare('UPDATE inventory_log SET total_before=?, total_after=?, total_warning=?, total_scope=? WHERE id=?').bind(before, after, note || null, 'part', id).run();
 }
 async function getMasterListGrandTotal(env) {
   const r = await d1First(env, 'SELECT SUM(cases) as total FROM master_list WHERE cases > 0');
@@ -2822,9 +2849,11 @@ async function inventoryVerify(request, env) {
   const isApprove = action && String(action).toLowerCase() !== 'reject' && action !== 'Rejected';
   const tracksQuantity = isApprove && (type === 'IN' || type === 'OUT') && !!env.DB;
 
-  let totalBefore = null;
-  if (tracksQuantity) {
-    try { totalBefore = await getMasterListGrandTotal(env); } catch(e) {}
+  const partNum = String(item.partNum || '').trim().toUpperCase();
+  const shelf = item.overwriteLocation || item.location;
+  let totalBefore = null, rowBefore = null;
+  if (tracksQuantity && partNum) {
+    try { totalBefore = await invPartCases(env, partNum); rowBefore = await invRowCases(env, item.masterId, partNum, shelf); } catch(e) { totalBefore = null; }
   }
   // 💲 price batches: settle the spot before and after (old price used up first).
   const costSpots = isApprove && env.DB && item.partNum ? [item.location, item.overwriteLocation].filter(Boolean) : [];
@@ -2837,21 +2866,23 @@ async function inventoryVerify(request, env) {
     try {
       const resultData = await result.clone().json().catch(() => ({}));
       if (resultData.ok) {
-        const totalAfter = await getMasterListGrandTotal(env);
-        // What the total SHOULD be if this approval was the only thing
-        // that changed it — IN adds, OUT subtracts, same direction the
-        // approve logic itself applies.
-        const expectedAfter = type === 'IN' ? totalBefore + casesAmt : totalBefore - casesAmt;
-        const mismatch = Math.abs(totalAfter - expectedAfter) > 0.001;
-        const d1Id = item.d1Id || null;
-        if (d1Id) {
-          await ensureTotalTrackingColumns(env);
-          await env.DB.prepare('UPDATE inventory_log SET total_before=?, total_after=?, total_warning=? WHERE id=?')
-            .bind(totalBefore, totalAfter,
-              mismatch ? ('Expected total ' + expectedAfter + ' but found ' + totalAfter + ' \u2014 another change may have landed at the same time') : null,
-              d1Id)
-            .run();
+        const totalAfter = await invPartCases(env, partNum);
+        // What this part # total SHOULD be: IN adds, OUT takes off — but a
+        // shelf never goes below 0, so taking more than the system had there
+        // (or "none found") only takes off what the system had.
+        const noneFound = String(item.notes || '').includes('[NONE FOUND ON SHELF]');
+        let change = type === 'IN' ? casesAmt : -casesAmt, info = null;
+        if (type === 'OUT' && rowBefore !== null && (noneFound || rowBefore < casesAmt - 1e-9)) {
+          change = -rowBefore;
+          if (Math.abs(rowBefore - casesAmt) > 1e-9) info = noneFound
+            ? `\u2139 None found on the shelf: the system had ${_n(rowBefore)} case(s) of ${partNum} at ${shelf} \u2014 set to 0 (count corrected).`
+            : `\u2139 Took ${_n(casesAmt)} but the system only had ${_n(rowBefore)} case(s) of ${partNum} at ${shelf} \u2014 the shelf went to 0, not below. ${_n(casesAmt - rowBefore)} case(s) were never in the system (count corrected).`;
         }
+        const expectedAfter = totalBefore + change;
+        const note = Math.abs(totalAfter - expectedAfter) > 0.001
+          ? `\u26a0 ${partNum} total should be ${_n(totalBefore)} ${change < 0 ? '\u2212' : '+'} ${_n(Math.abs(change))} = ${_n(expectedAfter)}, but it is ${_n(totalAfter)}. Another change to ${partNum} landed at the same moment, or the entry hit a different shelf \u2014 check ${partNum}'s shelves.`
+          : info;
+        await invSaveTotals(env, [item.d1Id], totalBefore, totalAfter, note);
       }
     } catch(e) { console.error('[verify-totals] failed:', e.message); }
   }
@@ -3654,9 +3685,11 @@ async function inventoryTransferVerify(request, env) {
   const isApprove = peek.action && String(peek.action).toLowerCase() !== 'reject' && peek.action !== 'Rejected';
   const tracksQuantity = isApprove && !!peek.outItem && !!env.DB;
 
-  let totalBefore = null;
-  if (tracksQuantity) {
-    try { totalBefore = await getMasterListGrandTotal(env); } catch(e) {}
+  const xPart = tracksQuantity ? String(peek.outItem.partNum || '').trim().toUpperCase() : '';
+  const xCases = tracksQuantity ? (parseFloat(peek.outItem.cases) || 0) : 0;
+  let totalBefore = null, fromBefore = null;
+  if (tracksQuantity && xPart) {
+    try { totalBefore = await invPartCases(env, xPart); fromBefore = await invRowCases(env, peek.outItem.masterId, xPart, peek.outItem.location); } catch(e) { totalBefore = null; }
   }
   // 💲 price batches travel with the boxes (oldest first).
   const cPart = tracksQuantity && peek.inItem ? peek.outItem.partNum : null, cFrom = cPart && peek.outItem.location, cTo = cPart && peek.inItem.location;
@@ -3673,24 +3706,19 @@ async function inventoryTransferVerify(request, env) {
     try {
       const resultData = await result.clone().json().catch(() => ({}));
       if (resultData.ok) {
-        const totalAfter = await getMasterListGrandTotal(env);
-        const mismatch = Math.abs(totalAfter - totalBefore) > 0.001;
-        const warning = mismatch
-          ? ('Transfer should never change the total \u2014 was ' + totalBefore + ', now ' + totalAfter)
+        const totalAfter = await invPartCases(env, xPart);
+        // A transfer only moves boxes: the part # total stays the same —
+        // unless the FROM shelf had fewer in the system than were moved: it
+        // goes to 0 (not below) and TO still gets every box moved, so the
+        // total goes up by the boxes the system didn't know about.
+        const extra = fromBefore !== null ? Math.max(0, xCases - fromBefore) : 0;
+        const from = peek.outItem.location || '', to = (peek.inItem && peek.inItem.location) || peek.outItem.pairedLocation || '';
+        const expectedAfter = totalBefore + extra;
+        const note = Math.abs(totalAfter - expectedAfter) > 0.001
+          ? `\u26a0 A transfer should leave ${xPart}'s total at ${_n(expectedAfter)}, but it is ${_n(totalAfter)} (was ${_n(totalBefore)}). Another change to ${xPart} landed at the same moment \u2014 check ${xPart}'s shelves.`
+          : extra > 1e-9 ? `\u2139 Moved ${_n(xCases)} from ${from} to ${to}, but the system only had ${_n(fromBefore)} case(s) of ${xPart} at ${from} \u2014 ${from} went to 0 and ${to} got all ${_n(xCases)}, so ${xPart}'s total went up by ${_n(extra)} (the shelf had more than the system said; count corrected).`
           : null;
-        const outD1Id = peek.outItem.d1Id || null;
-        const inD1Id = peek.inItem ? (peek.inItem.d1Id || null) : null;
-        if (outD1Id || inD1Id) {
-          await ensureTotalTrackingColumns(env);
-          if (outD1Id) {
-            await env.DB.prepare('UPDATE inventory_log SET total_before=?, total_after=?, total_warning=? WHERE id=?')
-              .bind(totalBefore, totalAfter, warning, outD1Id).run();
-          }
-          if (inD1Id) {
-            await env.DB.prepare('UPDATE inventory_log SET total_before=?, total_after=?, total_warning=? WHERE id=?')
-              .bind(totalBefore, totalAfter, warning, inD1Id).run();
-          }
-        }
+        await invSaveTotals(env, [peek.outItem.d1Id, peek.inItem && peek.inItem.d1Id], totalBefore, totalAfter, note);
       }
     } catch(e) { console.error('[transfer-verify-totals] failed:', e.message); }
   }
@@ -10569,15 +10597,20 @@ async function inventoryCancelEntry(request, env) {
     return cors(new Response(JSON.stringify({ ok: false, error: 'Could not find the matching row in Master List to reverse \u2014 it may have been merged or renamed since' }), { status: 404, headers: { 'Content-Type': 'application/json' } }));
   }
 
-  const totalBefore = await getMasterListGrandTotal(env);
+  const cPart = String(entry.part_num || '').trim().toUpperCase();
+  const totalBefore = await invPartCases(env, cPart);
   const oldCases = parseFloat(row.cases) || 0;
   const newCases = Math.max(0, oldCases + delta);
   const ts = new Date().toISOString();
 
   await env.DB.prepare('UPDATE master_list SET cases=?, updated_at=? WHERE id=?').bind(newCases, ts, row.id).run();
-  const totalAfter = await getMasterListGrandTotal(env);
-  const expectedAfter = totalBefore !== null ? totalBefore + delta : null;
-  const mismatch = expectedAfter !== null && Math.abs(totalAfter - expectedAfter) > 0.001;
+  const totalAfter = await invPartCases(env, cPart);
+  const applied = newCases - oldCases; // a shelf never goes below 0
+  const expectedAfter = totalBefore + applied;
+  const mismatch = Math.abs(totalAfter - expectedAfter) > 0.001;
+  const totalNote = mismatch
+    ? `\u26a0 ${cPart} total should be ${_n(expectedAfter)}, but it is ${_n(totalAfter)} (was ${_n(totalBefore)}). Another change to ${cPart} landed at the same moment \u2014 check ${cPart}'s shelves.`
+    : Math.abs(applied - delta) > 1e-9 ? `\u2139 Reversing took off ${_n(-delta)} but the shelf only had ${_n(oldCases)} \u2014 it went to 0, not below (count corrected).` : null;
 
   let origWhen = entry.timestamp || '';
   try { origWhen = new Date(entry.timestamp).toLocaleString('en-US', { timeZone: 'America/New_York' }); } catch(e) {}
@@ -10588,12 +10621,12 @@ async function inventoryCancelEntry(request, env) {
     `INSERT INTO inventory_log
        (sheet_row,timestamp,type,part_num,location,cases,initials,notes,status,
         verified_by,verified_at,overwrite_loc,is_new,is_placeholder,
-        master_row_index,sku,transfer_id,paired_location,name,total_before,total_after,total_warning)
-     VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`
+        master_row_index,sku,transfer_id,paired_location,name,total_before,total_after,total_warning,total_scope)
+     VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`
   ).bind(
     0, ts, reverseType, entry.part_num, entry.location, casesNum, cancelledBy || 'OPS',
     cancelNote, 'Verified', cancelledBy || 'OPS', ts, '', 0, 0, row.id, entry.sku || '', '', '', entry.name || '',
-    totalBefore, totalAfter, mismatch ? ('Expected total ' + expectedAfter + ' but found ' + totalAfter) : null
+    totalBefore, totalAfter, totalNote, 'part'
   ).run();
 
   await env.DB.prepare('UPDATE inventory_log SET cancelled_at=?, cancelled_by=? WHERE id=?')
@@ -10622,7 +10655,7 @@ async function d1Strict(env, sql, params, first) {
 let _invLogReady = false;
 async function invLogEnsureColumns(env) {
   if (_invLogReady || !env.DB) return;
-  for (const c of ['added_at TEXT', 'grabbed_at TEXT', 'total_before REAL', 'total_after REAL', 'total_warning TEXT', 'cancelled_at TEXT', 'cancelled_by TEXT'])
+  for (const c of ['added_at TEXT', 'grabbed_at TEXT', 'total_before REAL', 'total_after REAL', 'total_warning TEXT', 'total_scope TEXT', 'cancelled_at TEXT', 'cancelled_by TEXT'])
     await env.DB.prepare('ALTER TABLE inventory_log ADD COLUMN ' + c).run().catch(() => {});
   await env.DB.prepare('CREATE INDEX IF NOT EXISTS idx_inventory_log_timestamp ON inventory_log(timestamp)').run().catch(() => {});
   _invLogReady = true;
@@ -10699,7 +10732,7 @@ async function inventoryHistory(url, env) {
         // filled in below with two small look-ups.
         let sql = `SELECT l.id,l.sheet_row,l.timestamp,l.type,l.part_num,l.location,l.cases,l.initials,
                           l.notes,l.status,l.verified_by,l.verified_at,l.added_at,l.grabbed_at,
-                          l.total_before,l.total_after,l.total_warning,l.cancelled_at,l.cancelled_by,
+                          l.total_before,l.total_after,l.total_warning,l.total_scope,l.cancelled_at,l.cancelled_by,
                           COALESCE(l.name,'') as name
                    FROM inventory_log l
                    WHERE l.timestamp >= ?`;
