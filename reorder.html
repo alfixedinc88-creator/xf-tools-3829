@@ -2109,7 +2109,7 @@ body { display:flex; flex-direction:column; min-height:100vh; background:var(--b
       <div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap;margin-bottom:10px;padding:8px 10px;background:var(--bg3);border-radius:8px;font-size:12px;color:var(--text3)">
         <b style="color:var(--text2)">Vendor sheets:</b> <span id="rvo-cat">—</span>
         <span style="flex:1"></span>
-        <label style="display:flex;align-items:center;gap:5px">Vendor <input type="text" id="rvo-imp-vendor" placeholder="JQ / EFF" style="width:70px;font-size:12px;padding:4px 6px;border-radius:6px;border:1px solid var(--border)"></label>
+        <label style="display:flex;align-items:center;gap:5px">Vendor <input type="text" id="rvo-imp-vendor" placeholder="#1 / #2 / #3" style="width:70px;font-size:12px;padding:4px 6px;border-radius:6px;border:1px solid var(--border)"></label>
         <label style="display:flex;align-items:center;gap:5px" title="Leave empty for a plain info sheet. Give a title for a shipment / order on the way (its Qty column) — same title again merges into it, a new title gets its own column.">Title
           <input type="text" id="rvo-imp-title" list="rvo-title-list" placeholder="e.g. Container Oct 15 (optional)" style="width:190px;font-size:12px;padding:4px 6px;border-radius:6px;border:1px solid var(--border)"></label>
         <datalist id="rvo-title-list"></datalist>
@@ -2122,7 +2122,7 @@ body { display:flex; flex-direction:column; min-height:100vh; background:var(--b
           <select id="rvo-imp-from" style="font-size:12px;padding:4px 6px;border-radius:6px;border:1px solid var(--border);max-width:180px"></select></label>
         <input type="file" id="rvo-imp-file" accept=".xlsx,.xls,.csv" style="display:none" onchange="rvoImport(this)">
         <button class="btn btn-secondary" style="font-size:12px" onclick="rvoPickFile()">⬆ Import vendor sheet</button>
-        <button class="btn btn-secondary" style="font-size:12px" onclick="rvoTemplate()" title="Download an empty sheet in the layout the importer reads">📄 Download template</button>
+        <button class="btn btn-secondary" style="font-size:12px" onclick="rvoTemplate()" title="The layout for the Stage picked: 🚢 Shipped container (pallet, boxes, pieces, price) · 🏭 Ordered (part #, cases, price) · none = vendor info sheet">📄 Download template</button>
       </div>
       <div id="rvo-inc" style="display:none;flex-wrap:wrap;gap:8px;align-items:center;margin:-4px 0 10px;padding:8px 10px;background:#EFF6FF;border-radius:8px;font-size:12px"></div>
       <details id="rvo-hist-box" style="margin-bottom:6px" ontoggle="if(this.open)rvoLoadHistory()"><summary style="font-size:12px;color:var(--text2);cursor:pointer;font-weight:700">🕘 History — who changed what on this page</summary>
@@ -4303,33 +4303,68 @@ function rvoCheckCsv() {
 async function rvoTemplate() {
   try {
     await rvoLoadXlsx();
-    var head = ['Part #', 'Description', 'Item No.', 'Outside Box UPC Code', 'Inside Bag UPC Code', 'FBA ASIN', 'Inner Bag (pcs)', 'Master Carton (pcs)', 'Qty', 'Cases'];
-    var ex = [
-      ['27-3-1=10X', '1/2" PUSH FIT BALL VALVE', '61801', '810139932345', '810139932376', 'B07NMNSYJD', 10, 200, 60, 3],
-      ['27-3-1=1XX', '', '', '840428916817', '840428916732', '', 1, 200, 60, 1]];
-    var how = [['How to fill in the vendor sheet'], [''],
-      ['Part #', 'Required. Our part number, e.g. 27-3-1=10X (one row per pack size).'],
-      ['Description', 'Product name. Write it once on the first row of a product — the rows under it use the same one.'],
-      ['Item No.', 'Vendor\'s item number (optional).'],
-      ['Outside Box UPC Code / Inside Bag UPC Code', 'Type them as text so leading zeros stay (format the column as Text).'],
-      ['FBA ASIN', 'Amazon ASIN this part # is sent to FBA for (optional).'],
-      ['Inner Bag (pcs) / Master Carton (pcs)', 'Pieces in one bag / in one carton (optional; carton sets the case size when SKU Mgr has none).'],
-      ['Qty', 'Only for a shipment / order on the way: units of this part # coming. Leave empty for a plain info sheet.'],
-      ['Cases', 'Cartons of this part # in the shipment (optional). If Qty is empty, Qty = Cases × Master Carton (pcs) ÷ pack size.'],
-      [''], ['Importing', 'Reorder tab → type Vendor (same name as in SKU Mgr) → Title:'],
-      ['', '• no Title = vendor info (descriptions, UPCs, ASINs) — replaces that vendor\'s info'],
-      ['', '• a Title (e.g. "Container Oct 15") = on the way: Qty is subtracted from what to order'],
-      ['', '• same Title again = merged into it; a new Title = its own column'],
-      ['', '• after importing, the 📋 Import check shows where every line went and that the unit totals match (also 🔍 Check on each title)'],
-      ['', '• when it arrives, press 📦 Received — it goes into SKU Mgr at GARAGE (move it to shelves with Transfer); 🗑 Remove only for a cancelled / wrong import']];
+    // Template for the Stage picked next to the import (none = vendor info sheet).
+    var stage = (document.getElementById('rvo-imp-stage') || {}).value || '';
+    var head, ex, how, name, widths, textCells = [];
+    var common = [[''], ['Importing', 'Reorder tab → Vendor (#1 / #2 / #3 or the vendor name) → Title → Stage → ⬆ Import vendor sheet'],
+      ['', '• after importing, the 📋 Import check shows where every line went and that the totals match (also 🔍 Check on each title)'],
+      ['', '• when it arrives, press 📦 Received — it goes into SKU Mgr at GARAGE with its price; then move it to shelves with Transfer (🚢 Container here shows each pallet)'],
+      ['', '• 🗑 Remove only for a cancelled / wrong import']];
+    if (stage === 'shipped') {
+      name = 'Container_packing_list_template.xlsx';
+      head = ['Pallet', 'PO', 'Part #', 'Description', 'Item No.', 'Boxes (CTN)', 'Pieces (QTY PCS)', 'Pcs per box', 'Price per piece'];
+      ex = [['1', 'PO-001', '27-2-2=10', '3/4" PUSH FIT COUPLING', '61302', 20, 2000, 100, 1.76],
+        ['', '', '27-2-2=2XX', '', '', 3, 300, 100, 1.76],
+        ['2', 'PO-001', '27-4-7=1', '1 x 3/4 push fit elbow', '61404', 20, 1000, 50, 3.62],
+        ['TOTAL', '', '2 pallets', '', '', 43, 3300, '', '']];
+      widths = [10, 12, 16, 34, 10, 12, 16, 12, 14];
+      how = [['🚢 Shipped container — packing list (every box, which pallet it is on, and the price)'], [''],
+        ['Pallet', 'Required. Pallet # / name as written on the pallet. Write it on the first row of each pallet — the rows under it are on the same pallet.'],
+        ['PO', 'Optional. When the same pallet # is used again for another PO (PO A pallets 1–6, PO B pallets 1–5), the PO keeps them apart.'],
+        ['Part #', 'Required. Our part number, one row per pack size (and per pallet).'],
+        ['Description / Item No.', 'Optional. Written once on the first row of a product is enough.'],
+        ['Boxes (CTN)', 'Required. Boxes (cartons) of this part # on this pallet — what Transfer moves off the pallet.'],
+        ['Pieces (QTY PCS)', 'Required. Single pieces (fittings) of this part # on this pallet. Units of the part # = pieces ÷ pack size (27-2-2=10: 2000 pcs = 200 bags).'],
+        ['Pcs per box', 'Optional. Checked against Boxes × Pcs per box = Pieces (a difference is listed to count on arrival).'],
+        ['Price per piece', 'Price paid per single piece. It becomes the vendor sheet price and the cost of these boxes when 📦 Received. Empty = shown in red. (A vendor packing list with an invoice sheet in the same file is priced from the invoice.)'],
+        ['TOTAL row', 'Optional but recommended: a last row starting "TOTAL" with the pallet count ("2 pallets"), total boxes and total pieces — the import refuses the file if the lines do not add up to it.'],
+        [''], ['Also works', 'The vendor\'s own packing list (#2 CIPL, #1 detailed packing list) can be imported as it is — no need to copy it into this template.']].concat(common);
+    } else if (stage === 'production') {
+      name = 'Order_template.xlsx';
+      head = ['Part #', 'Description', 'Item No.', 'Cases', 'Qty', 'Price per piece'];
+      ex = [['27-2-2=10', '3/4" PUSH FIT COUPLING', '61302', 25, '', 1.76], ['27-4-7=1', '1 x 3/4 push fit elbow', '61404', '', 1000, 3.62]];
+      widths = [16, 34, 10, 8, 10, 14];
+      how = [['🏭 Ordered — vendor still making it (no pallets yet)'], [''],
+        ['Part #', 'Required. Our part number, one row per pack size.'],
+        ['Cases', 'Boxes ordered. Units = Cases × SKU Mgr Ea/Case (pieces per box) ÷ pack size. A part # with no known case size is NOT counted (shown in red).'],
+        ['Qty', 'Or give units of the part # directly (27-2-2=10: 1 unit = 1 bag of 10). Qty wins over Cases.'],
+        ['Price per piece', 'Price per single piece. Empty = imported and shown in red.'],
+        ['', 'Counts as on the way right away, so Reorder does not order it again. When the container ships, import its packing list with Stage 🚢 and pick this order in "Made for order" — the shipped part comes off this order (never counted twice).']].concat(common);
+    } else {
+      name = 'Vendor_sheet_template.xlsx';
+      head = ['Part #', 'Description', 'Item No.', 'Outside Box UPC Code', 'Inside Bag UPC Code', 'FBA ASIN', 'Inner Bag (pcs)', 'Master Carton (pcs)', 'Price per piece'];
+      ex = [['27-3-1=10X', '1/2" PUSH FIT BALL VALVE', '61801', '810139932345', '810139932376', 'B07NMNSYJD', 10, 200, 3.26],
+        ['27-3-1=1XX', '', '', '840428916817', '840428916732', '', 1, 200, 3.26]];
+      widths = [18, 34, 10, 22, 22, 14, 14, 18, 14];
+      textCells = ['D2', 'E2', 'D3', 'E3'];
+      how = [['Vendor info sheet (no Title / no Stage) — descriptions, UPCs, ASINs, carton sizes, price'], [''],
+        ['Part #', 'Required. Our part number, e.g. 27-3-1=10X (one row per pack size).'],
+        ['Description', 'Product name. Write it once on the first row of a product — the rows under it use the same one.'],
+        ['Item No.', 'Vendor\'s item number (optional).'],
+        ['Outside Box UPC Code / Inside Bag UPC Code', 'Type them as text so leading zeros stay (format the column as Text).'],
+        ['FBA ASIN', 'Amazon ASIN this part # is sent to FBA for (optional).'],
+        ['Inner Bag (pcs) / Master Carton (pcs)', 'Pieces in one bag / in one carton (optional; carton sets the case size when SKU Mgr has none).'],
+        ['Price per piece', 'Optional. The vendor\'s current price per single piece (kept on the vendor sheet; an import without it never wipes it).'],
+        [''], ['For orders / containers', 'Pick a Stage (🏭 Ordered or 🚢 Shipped container) next to the import first, then 📄 Download template gives that layout.']].concat(common);
+    }
     var wb = XLSX.utils.book_new();
     var ws = XLSX.utils.aoa_to_sheet([head].concat(ex));
-    ws['!cols'] = [18, 34, 10, 22, 22, 14, 14, 18, 8, 8].map(function (w) { return { wch: w }; });
-    ['D2', 'E2', 'D3', 'E3'].forEach(function (a) { if (ws[a]) { ws[a].t = 's'; ws[a].v = String(ws[a].v); } });
-    XLSX.utils.book_append_sheet(wb, ws, 'Vendor sheet');
-    var hw = XLSX.utils.aoa_to_sheet(how); hw['!cols'] = [{ wch: 40 }, { wch: 100 }];
+    ws['!cols'] = widths.map(function (w) { return { wch: w }; });
+    textCells.forEach(function (a) { if (ws[a]) { ws[a].t = 's'; ws[a].v = String(ws[a].v); } });
+    XLSX.utils.book_append_sheet(wb, ws, stage === 'shipped' ? 'Packing list' : stage === 'production' ? 'Order' : 'Vendor sheet');
+    var hw = XLSX.utils.aoa_to_sheet(how); hw['!cols'] = [{ wch: 40 }, { wch: 110 }];
     XLSX.utils.book_append_sheet(wb, hw, 'How to');
-    XLSX.writeFile(wb, 'Vendor_sheet_template.xlsx');
+    XLSX.writeFile(wb, name);
   } catch (e) { alert('Could not make the template: ' + e.message); }
 }
 
@@ -4433,7 +4468,7 @@ async function rvoSaveEdit() {
 // cleans part #s ("==", trailing "_"), skips blank / "." part rows.
 function rvoPickFile() {
   var v = document.getElementById('rvo-imp-vendor');
-  if (!v.value.trim()) { alert('Type the vendor name first (e.g. JQ or EFF) — use the same name as in SKU Mgr.'); v.focus(); return; }
+  if (!v.value.trim()) { alert('Type the vendor first (#1, #2 or #3) — the same vendor as in SKU Mgr.'); v.focus(); return; }
   document.getElementById('rvo-imp-file').click();
 }
 function rvoLoadXlsx() {
@@ -4519,15 +4554,20 @@ function rvoParsePacking(aoa, merges) {
   var hr = -1;
   for (var i = 0; i < Math.min(aoa.length, 60) && hr < 0; i++) if ((aoa[i] || []).some(function (c) { return /^(pallet|plt)\b/i.test(norm(c)); })) hr = i;
   if (hr < 0) return null;
-  var width = Math.max((aoa[hr] || []).length, (aoa[hr + 1] || []).length), H = [];
-  for (var c = 0; c < width; c++) H.push((norm(filled(hr, c)) + ' ' + norm(filled(hr + 1, c))).toLowerCase().trim());
+  // A second header row (EFF: "Part Number / CTN / QTY" under "Total") is
+  // text only — a row with numbers is already data, not header.
+  var sub = (aoa[hr + 1] || []).some(function (c) { return norm(c) !== ''; }) && !(aoa[hr + 1] || []).some(function (c) { return typeof c === 'number'; });
+  var width = Math.max((aoa[hr] || []).length, sub ? (aoa[hr + 1] || []).length : 0), H = [];
+  for (var c = 0; c < width; c++) H.push((norm(filled(hr, c)) + (sub ? ' ' + norm(filled(hr + 1, c)) : '')).toLowerCase().trim());
   var find = function (re, not) { for (var c = 0; c < H.length; c++) if (re.test(H[c]) && !(not && not.test(H[c]))) return c; return -1; };
   var C = { pallet: find(/^(pallet|plt)\b/), part: find(/part ?(#|number|no)|cus\.? ?no|xf ?code/), desc: find(/desc/), item: find(/item ?no|jq code/),
-    perCtn: find(/(pcs?|qty) ?\/ ?ctn|per ctn/), ctn: find(/\bctns?\b|cartons?/, /(pcs?|qty) ?\/ ?ctn|per ctn/), po: find(/^po\b|\bpo\/no/) };
-  C.pcs = find(/total.*(q'?ty|pcs)|(q'?ty|pcs).*total/, /\/ ?ctn/);
-  if (C.pcs < 0) C.pcs = find(/q'?ty|quantity|\bpcs\b/, /\/ ?ctn|per ctn|total/);
+    perCtn: find(/(pcs?|qty) ?\/ ?(ctn|box)|per (ctn|carton|box)/), ctn: find(/\bctns?\b|cartons?|\bboxes\b/, /(pcs?|qty) ?\/ ?(ctn|box)|per (ctn|carton|box)/), po: find(/^po\b|\bpo\/no/),
+    price: find(/price/, /total|amount/) };
+  C.pcs = find(/total.*(q'?ty|pcs)|(q'?ty|pcs).*total/, /\/ ?(ctn|box)|per (ctn|carton|box)/);
+  if (C.pcs < 0) C.pcs = find(/q'?ty|quantity|\bpcs\b|pieces/, /\/ ?(ctn|box)|per (ctn|carton|box)|total/);
   if (C.perCtn < 0) { var q2 = find(/^q'?ty$/); if (q2 >= 0 && q2 !== C.pcs) C.perCtn = q2; }
-  if (C.part < 0 || C.ctn < 0 || C.pcs < 0) throw new Error('Packing list: found the pallet column but not ' + [C.part < 0 ? 'Part #' : '', C.ctn < 0 ? 'CTN (cartons)' : '', C.pcs < 0 ? 'QTY (pieces)' : ''].filter(Boolean).join(' / '));
+  // Not a packing list after all (e.g. a "How to" sheet mentioning Pallet): say why, skip it.
+  if (C.part < 0 || C.ctn < 0 || C.pcs < 0) return { notPacking: 'has a Pallet column but no ' + [C.part < 0 ? 'Part #' : '', C.ctn < 0 ? 'Boxes / CTN' : '', C.pcs < 0 ? 'Pieces / QTY' : ''].filter(Boolean).join(' / ') + ' column' };
   var lines = [], skipped = [], warn = [], totals = null, pallet = '', po = '', desc = '', item = '', seen = {}, lastBase = null, curKey = '';
   for (var r = hr + 1; r < aoa.length; r++) {
     var row = aoa[r] || [], txt = row.map(norm).join(' ');
@@ -4560,7 +4600,8 @@ function rvoParsePacking(aoa, merges) {
     if (per > 0 && Math.abs(per * ctn - pcs) > 0.001) warn.push({ row: r + 1, part: part, why: 'sheet disagrees with itself: ' + fmt0(ctn) + ' cartons × ' + fmt0(per) + ' pcs/carton = ' + fmt0(per * ctn) + ', but QTY says ' + fmt0(pcs) + ' pcs — counted ' + fmt0(pcs) + ' pcs in ' + fmt0(ctn) + ' boxes (QTY is what adds up to the sheet total). Count it when unpacking.' });
     if (Math.abs(units - Math.round(units)) > 0.001) warn.push({ row: r + 1, part: part, why: fmt0(pcs) + ' pcs ÷ pack of ' + pk + ' = ' + units.toFixed(2) + ' units (not whole packs)' });
     lines.push({ pallet: key, po: C.po >= 0 ? po : '', part: part, clean: clean, description: norm(row[C.desc]) || desc, item_no: (C.item >= 0 ? norm(row[C.item]) : '') || item,
-      cases: ctn, pcs: pcs, units: Math.round(units * 1000) / 1000, pcsPerCtn: per || (pcs / ctn), row: r + 1 });
+      cases: ctn, pcs: pcs, units: Math.round(units * 1000) / 1000, pcsPerCtn: per || (pcs / ctn), row: r + 1,
+      price: C.price >= 0 ? num(String(row[C.price]).replace(/[$\s]/g, '')) || 0 : 0 });
   }
   return { lines: lines, skipped: skipped, warn: warn, totals: totals };
 }
@@ -4609,7 +4650,7 @@ function rvoReadPacking(wb) {
   var out = { lines: [], skipped: [], warn: [], totals: [], sheets: [], ignored: [] };
   wb.SheetNames.forEach(function (n) {
     var ws = wb.Sheets[n], got = rvoParsePacking(XLSX.utils.sheet_to_json(ws, { header: 1, raw: true, defval: '' }), ws['!merges'] || []);
-    if (!got) { out.ignored.push(n); return; }
+    if (!got || got.notPacking) { out.ignored.push(n); if (got) (out.why = out.why || []).push(n.trim() + ': ' + got.notPacking); return; }
     var tag = wb.SheetNames.length > 1 ? n.trim() + ' ' : '';
     got.lines.forEach(function (l) { l.row = tag + l.row; out.lines.push(l); });
     got.skipped.forEach(function (k) { k.row = tag + k.row; out.skipped.push(k); });
@@ -4617,7 +4658,7 @@ function rvoReadPacking(wb) {
     if (got.totals) out.totals.push(Object.assign({ sheet: n.trim() }, got.totals));
     out.sheets.push(n.trim());
   });
-  if (!out.sheets.length) throw new Error('No packing list found — a shipped container needs the vendor\'s packing list with a Pallet / PLT NO. column');
+  if (!out.sheets.length) throw new Error('No packing list found — a shipped container needs a sheet with Pallet, Part #, Boxes (CTN) and Pieces (QTY) columns (📄 Download template with Stage 🚢)' + (out.why ? '\n' + out.why.join('\n') : ''));
   var sum = function (k) { return out.lines.reduce(function (a, l) { return a + l[k]; }, 0); };
   out.pallets = Object.keys(out.lines.reduce(function (a, l) { a[l.pallet] = 1; return a; }, {})).length;
   out.ctns = sum('cases'); out.pcs = sum('pcs'); out.units = sum('units');
@@ -4637,12 +4678,14 @@ async function rvoImportShipped(f, wb, vendor, title) {
   // One on-the-way line per part # (all its pallets together).
   var by = {}, rows = [];
   pk.lines.forEach(function (l) {
-    var r = by[l.clean]; if (!r) { r = by[l.clean] = { part: l.part, raw: l.part, qty: 0, cases: 0, pcs: 0, description: l.description, item_no: l.item_no, case_pcs: l.pcsPerCtn, src_rows: [] }; rows.push(r); }
+    var r = by[l.clean]; if (!r) { r = by[l.clean] = { part: l.part, raw: l.part, qty: 0, cases: 0, pcs: 0, description: l.description, item_no: l.item_no, case_pcs: l.pcsPerCtn, src_rows: [], sheetPrice: 0 }; rows.push(r); }
+    if (l.price > 0 && !r.sheetPrice) r.sheetPrice = l.price;
     r.qty += l.units; r.cases += l.cases; r.pcs += l.pcs; r.src_rows.push(l.row);
   });
   rows.forEach(function (r) { r.qty = Math.round(r.qty * 1000) / 1000; r.src_rows = r.src_rows.join(', '); r.row = r.src_rows; });
   var PR = rvoReadInvoicePrices(wb, pk.sheets);
-  rows.forEach(function (r) { var got = rvoPriceFor(PR, rvoClean(r.part), r.item_no); r.price = got ? got.price : ''; r.price_src = got ? got.src : ''; });
+  rows.forEach(function (r) { var got = r.sheetPrice > 0 ? { price: r.sheetPrice, src: 'invoice' } : rvoPriceFor(PR, rvoClean(r.part), r.item_no); r.price = got ? got.price : ''; r.price_src = got ? got.src : ''; });
+  if (rows.some(function (r) { return r.sheetPrice > 0; }) && PR.sheets.indexOf('packing list price column') < 0) PR.sheets.unshift('packing list price column');
   pk.prices = { sheets: PR.sheets, priced: rows.filter(function (r) { return r.price > 0; }).length, missing: rows.filter(function (r) { return !(r.price > 0); }).map(function (r) { return r.part; }),
     notExact: rows.filter(function (r) { return r.price > 0 && r.price_src !== 'invoice'; }).map(function (r) { return { part: r.part, price: r.price, src: r.price_src }; }) };
   var from = document.getElementById('rvo-imp-from').value;
