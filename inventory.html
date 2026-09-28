@@ -603,6 +603,16 @@ window.invCredLogin = async function() {
       <button class="ixfr-mode-btn ixfr-active" id="xfr-mode-code" onclick="xfrSetSearchMode('code')">SKU / Part# / UPC</button>
       <button class="ixfr-mode-btn" id="xfr-mode-name" onclick="xfrSetSearchMode('name')">Product Name</button>
       <button class="ixfr-mode-btn" id="xfr-mode-loc" onclick="xfrSetSearchMode('loc')">&#x1F4CD; Location</button>
+      <button class="ixfr-mode-btn" id="xfr-mode-cont" onclick="xfrSetSearchMode('cont')" title="A container arrived: find what is on each pallet and move the boxes to the shelves">🚢 Container here</button>
+    </div>
+    <!-- 🚢 Container here: pallets of shipped containers (from the vendor packing list imported on Reorder) -->
+    <div id="xfr-cont-wrap" style="display:none">
+      <div class="isearch-row">
+        <input class="isearch-inp" id="xfr-cont-q" type="text" placeholder="Pallet #, container, part # or item name…" onkeydown="if(event.key==='Enter')xfrContSearch()">
+        <button class="isearch-btn" onclick="xfrContSearch()">Go</button>
+      </div>
+      <div id="xfr-cont-list" style="margin-top:8px"></div>
+      <div id="xfr-cont-pallets" style="margin-top:8px"></div>
     </div>
     <div class="isearch-row">
       <input class="isearch-inp" id="xfr-search-inp" type="text" placeholder="Part#, UPC, or name…" onkeydown="if(event.key==='Enter')xfrSearch()">
@@ -6393,7 +6403,14 @@ window.invCredLogin = async function() {
     var searchRow = inp && inp.closest ? inp.closest('.isearch-row') : null;
     var camBtn = g('xfr-cam-btn');
     var locWrap = g('xfr-loc-scan-wrap');
-    if (mode === 'loc') {
+    if (g('xfr-mode-cont')) g('xfr-mode-cont').className = 'ixfr-mode-btn' + (mode === 'cont' ? ' ixfr-active' : '');
+    var contWrap = g('xfr-cont-wrap'); if (contWrap) contWrap.style.display = mode === 'cont' ? 'block' : 'none';
+    if (mode === 'cont') {
+      if (searchRow) searchRow.style.display = 'none';
+      if (camBtn) camBtn.style.display = 'none';
+      if (locWrap) locWrap.style.display = 'none';
+      xfrContLoad();
+    } else if (mode === 'loc') {
       if (searchRow) searchRow.style.display = 'none';
       if (camBtn) camBtn.style.display = 'none';
       if (locWrap) locWrap.style.display = 'block';
@@ -6405,6 +6422,108 @@ window.invCredLogin = async function() {
       if (inp) inp.placeholder = mode === 'name' ? 'Type product name…' : 'Part#, UPC, or barcode…';
     }
     var nr = g('xfr-name-results'); if (nr) nr.style.display = 'none';
+  };
+
+  // ── 🚢 Container here ─────────────────────────────────────────────
+  // Pallets of shipped containers (vendor packing list, imported on the
+  // Reorder page). Type a pallet # (or container / part # / name) to see
+  // what's on it; "Add to cart" moves that pallet's boxes from where the
+  // container was stocked in (GARAGE) through the normal Transfer cart. A
+  // pallet line never lets more boxes off than it has — boxes moved vs on
+  // the pallet must match.
+  var xfrCont = { lines: [], title: '', q: '' };
+  function xfrEsc(v) { return String(v == null ? '' : v).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;').replace(/'/g,'&#39;'); }
+  function xfrN(v) { var n = parseFloat(v) || 0; return Math.round(n * 100) / 100; }
+  window.xfrContLoad = function() {
+    var box = g('xfr-cont-list'); if (!box) return;
+    box.style.display = ''; var pb = g('xfr-cont-pallets'); if (pb) pb.innerHTML = ''; xfrCont.title = ''; xfrCont.q = '';
+    box.innerHTML = "<div class='iempty'>Loading containers…</div>";
+    wFetch(W + '/inventory/containers').then(function(r) { return r.json(); }).then(function(d) {
+      if (!d.ok) { box.innerHTML = "<div class='iempty'>Load failed</div>"; return; }
+      xfrCont.containers = d.containers;
+      if (!d.containers.length) { box.innerHTML = "<div class='iempty'>No containers with pallets yet — import the shipped container's packing list on Reorder Planner → Reorder (Stage: 🚢 Shipped container).</div>"; return; }
+      box.innerHTML = '<div style="font-size:11px;font-weight:700;letter-spacing:.5px;text-transform:uppercase;color:var(--text3);margin-bottom:6px">Containers</div>'
+        + d.containers.map(function(c, i) {
+          var done = c.cases > 0 && c.moved >= c.cases;
+          return '<div class="iloc-opt" style="display:flex;align-items:center;gap:8px" onclick="xfrContOpen(' + i + ')">'
+            + '<div style="flex:1;min-width:0"><div style="font-weight:700">🚢 ' + xfrEsc(c.title) + '</div>'
+            + '<div style="font-size:11px;color:var(--text3)">' + xfrEsc(c.vendors || '') + ' · ' + c.pallets + ' pallets · ' + xfrN(c.moved) + ' / ' + xfrN(c.cases) + ' boxes moved'
+            + (c.notStockedIn ? ' · <span style="color:var(--orange)">not stocked in yet (' + c.notStockedIn + ' part #s still On the way)</span>' : '') + '</div></div>'
+            + '<span class="iloc-badge ' + (done ? 'ex' : '') + '">' + (done ? '✓ Done' : 'Open') + '</span></div>';
+        }).join('');
+    }).catch(function() { box.innerHTML = "<div class='iempty'>Load failed</div>"; });
+  };
+  window.xfrContOpen = function(i) { var c = (xfrCont.containers || [])[i]; if (!c) return; xfrCont.title = c.title; xfrCont.q = ''; g('xfr-cont-q').value = ''; xfrContFetch(); };
+  window.xfrContSearch = function() { var q = (g('xfr-cont-q').value || '').trim(); if (!q) { xfrContLoad(); return; } xfrCont.q = q; xfrCont.title = ''; xfrContFetch(); };
+  function xfrContFetch() {
+    var box = g('xfr-cont-pallets'); box.innerHTML = "<div class='iempty'>Loading pallets…</div>";
+    var lst = g('xfr-cont-list'); if (lst) lst.style.display = 'none';
+    var qs = xfrCont.title ? 'title=' + encodeURIComponent(xfrCont.title) : 'q=' + encodeURIComponent(xfrCont.q);
+    wFetch(W + '/inventory/containers/pallets?' + qs).then(function(r) { return r.json(); }).then(function(d) {
+      if (!d.ok) { box.innerHTML = "<div class='iempty'>" + xfrEsc(d.error || 'Load failed') + "</div>"; return; }
+      xfrCont.lines = d.lines; xfrContRender();
+    }).catch(function() { box.innerHTML = "<div class='iempty'>Load failed</div>"; });
+  }
+  function xfrInCart(id) { return xfrCart.filter(function(x) { return x.palletLineId === id; }).reduce(function(a, x) { return a + (parseFloat(x.cases) || 0); }, 0); }
+  function xfrContRender() {
+    var box = g('xfr-cont-pallets'), lines = xfrCont.lines;
+    if (!lines.length) { box.innerHTML = '<div style="margin-bottom:6px"><a href="#" onclick="xfrContLoad();return false" style="font-size:12px">← All containers</a></div>' + "<div class='iempty'>Nothing found" + (xfrCont.q ? ' for "' + xfrEsc(xfrCont.q) + '"' : '') + "</div>"; return; }
+    var groups = [], by = {};
+    lines.forEach(function(l) { var k = l.title + '|' + l.vendor + '|' + l.pallet; if (!by[k]) { by[k] = { title: l.title, vendor: l.vendor, pallet: l.pallet, lines: [] }; groups.push(by[k]); } by[k].lines.push(l); });
+    box.innerHTML = '<div style="margin-bottom:6px"><a href="#" onclick="xfrContLoad();return false" style="font-size:12px">← All containers</a></div>'
+      + (xfrCont.title ? '<div style="font-size:13px;font-weight:700;margin-bottom:6px">🚢 ' + xfrEsc(xfrCont.title) + ' — ' + groups.length + ' pallets</div>' : '<div style="font-size:12px;color:var(--text3);margin-bottom:6px">' + groups.length + ' pallet(s) matching "' + xfrEsc(xfrCont.q) + '"</div>')
+      + groups.map(function(gp) {
+        var tot = gp.lines.reduce(function(a, l) { return a + l.cases; }, 0), mv = gp.lines.reduce(function(a, l) { return a + l.moved; }, 0);
+        var over = gp.lines.some(function(l) { return l.over > 0; }), done = mv >= tot && !over;
+        return '<details style="border:1.5px solid ' + (over ? 'var(--red)' : done ? 'var(--green)' : 'var(--border)') + ';border-radius:10px;padding:8px 10px;margin-bottom:8px"' + (groups.length <= 3 || xfrCont.q ? ' open' : '') + '>'
+          + '<summary style="cursor:pointer;font-weight:700;font-size:14px">🧱 Pallet ' + xfrEsc(gp.pallet)
+          + ' <span style="font-weight:400;font-size:12px;color:var(--text3)">' + (xfrCont.title ? '' : xfrEsc(gp.title) + ' · ') + xfrEsc(gp.vendor) + ' · ' + gp.lines.length + ' part #s · '
+          + '<b style="color:' + (over ? 'var(--red)' : done ? 'var(--green)' : 'var(--text)') + '">' + xfrN(mv) + ' / ' + xfrN(tot) + ' boxes moved' + (done ? ' ✓' : over ? ' ✗ more than on the pallet' : '') + '</b></span></summary>'
+          + gp.lines.map(function(l) {
+            var inCart = xfrInCart(l.id), left = Math.max(0, l.left - inCart);
+            var stock = (l.stock || []).map(function(s) { return xfrEsc(s.location) + ' ' + xfrN(s.cases); }).join(', ');
+            return '<div style="border-top:1px solid var(--border);padding:7px 0;display:flex;gap:8px;align-items:center;flex-wrap:wrap">'
+              + '<div style="flex:1;min-width:150px"><div style="font-family:var(--mono);font-weight:700">' + xfrEsc(l.part) + (l.filePart ? ' <span style="font-weight:400;color:var(--text3);font-size:11px">(sheet: ' + xfrEsc(l.filePart) + ')</span>' : '') + '</div>'
+              + '<div style="font-size:11px;color:var(--text3)">' + xfrEsc(l.description) + '</div>'
+              + '<div style="font-size:12px;margin-top:2px"><b>' + xfrN(l.cases) + '</b> boxes on pallet · ' + xfrN(l.moved) + ' moved' + (inCart ? ' · ' + xfrN(inCart) + ' in cart' : '') + ' · <b style="color:' + (left > 0 ? 'var(--accent)' : 'var(--green)') + '">' + xfrN(left) + ' left</b>'
+              + (l.over > 0 ? ' · <b style="color:var(--red)">' + xfrN(l.over) + ' too many moved</b>' : '') + '</div>'
+              + '<div style="font-size:11px;color:var(--text3)">In stock: ' + (stock || '<span style="color:var(--orange)">nowhere yet — stock in the container first (Reorder → 📦 Received)</span>') + '</div></div>'
+              + (left > 0 ? '<input type="number" id="xfr-cont-n-' + l.id + '" value="' + xfrN(left) + '" min="0.5" step="0.5" max="' + xfrN(left) + '" style="width:64px;padding:6px;border:1.5px solid var(--border);border-radius:7px;background:var(--bg);color:var(--text);font-size:14px">'
+                + '<button class="isearch-btn" onclick="xfrContAdd(' + l.id + ')">➕ Cart</button>' : '<span style="color:var(--green);font-weight:700;font-size:12px">✓ All moved</span>')
+              + '</div>';
+          }).join('') + '</details>';
+      }).join('');
+  }
+  // Add a pallet line's boxes to the Transfer cart, from where the part is
+  // stocked (GARAGE — where 📦 Received puts a container — if it's there).
+  window.xfrContAdd = function(id) {
+    var l = xfrCont.lines.filter(function(x) { return x.id === id; })[0]; if (!l) return;
+    var n = parseFloat((g('xfr-cont-n-' + id) || {}).value || 0), left = l.left - xfrInCart(id);
+    if (!(n > 0)) { invFlash('Enter number of boxes', 'error'); return; }
+    if (n > left + 1e-9) { invFlash('Pallet ' + l.pallet + ' only has ' + xfrN(left) + ' box(es) of ' + l.part + ' left', 'error'); return; }
+    var locs = (l.stock || []).filter(function(s) { return parseFloat(s.cases) > 0; });
+    if (!locs.length) { invFlash(l.part + ' is not in stock anywhere yet — stock the container in first (Reorder → 📦 Received)', 'error'); return; }
+    var from = locs.filter(function(s) { return String(s.location).toUpperCase() === 'GARAGE'; })[0];
+    if (!from) {
+      var pick = prompt(l.part + ' is not in GARAGE. Take it from which location?\n' + locs.map(function(s, i) { return (i + 1) + ') ' + s.location + ' — ' + xfrN(s.cases) + ' cases'; }).join('\n'), '1');
+      from = locs[(parseInt(pick, 10) || 0) - 1]; if (!from) return;
+    }
+    wFetch(W + '/inventory/lookup?code=' + encodeURIComponent(l.part)).then(function(r) { return r.json(); }).then(function(d) {
+      var row = (d.locations || []).filter(function(x) { return String(x.partNum || '').toUpperCase() === l.part.toUpperCase() && String(x.location || '').toUpperCase() === String(from.location).toUpperCase(); })[0];
+      if (!row) { invFlash('Could not find ' + l.part + ' at ' + from.location, 'error'); return; }
+      var have = parseFloat(row.adjustedCases != null ? row.adjustedCases : row.cases) || 0;
+      if (n > have + 1e-9) { invFlash('Only ' + xfrN(have) + ' case(s) of ' + l.part + ' at ' + row.location, 'error'); return; }
+      xfrCart.push({
+        partNum: l.part, sku: d.sku || l.part, name: d.name || l.description || '',
+        fromLocation: row.location, fromRowIndex: row.rowIndex, fromMasterId: row.masterId || null,
+        cases: n, initials: (INV_CRED_USER && INV_CRED_USER.displayName) || 'OPS',
+        toLocation: '', toRowIndex: null, isNewLocation: false,
+        addedAt: new Date().toISOString(), grabbedAt: null,
+        palletLineId: l.id, palletLabel: l.title + ' · Pallet ' + l.pallet
+      });
+      xfrSaveCart(); xfrRenderCart(); xfrContRender();
+      invFlash('Added: ' + l.part + ' ×' + n + ' from pallet ' + l.pallet + ' — set where it goes in the cart', 'success');
+    }).catch(function() { invFlash('Lookup failed', 'error'); });
   };
 
   window.xfrSearch = function() {
@@ -6983,6 +7102,7 @@ window.invCredLogin = async function() {
         + '<div class="xfr-cart-item-meta">'
           + '📍 From: <strong>' + item.fromLocation + '</strong>'
           + ' &nbsp;·  📦 ' + item.cases + ' cases'
+          + (item.palletLabel ? '<br><span style="color:var(--purple);font-weight:600">🧱 ' + String(item.palletLabel).replace(/</g, '&lt;') + '</span>' : '')
           + (item.name ? '<br><span style="color:var(--text3)">' + item.name + '</span>' : '')
         + '</div>'
         + '<div style="font-size:11px;font-weight:600;color:var(--text2);margin-bottom:5px">To Location:</div>'
@@ -7234,6 +7354,7 @@ window.invCredLogin = async function() {
       if (idx >= items.length) {
         invFlash('All ' + items.length + ' transfer(s) logged ✓', 'success');
         xfrCart = []; xfrSaveCart(); xfrRenderCart();
+        if (xfrSearchMode === 'cont' && (xfrCont.title || xfrCont.q)) xfrContFetch();
         var cn = g('xfr-cart-notes'); if (cn) cn.value = '';
         if (btn) { btn.disabled = false; btn.textContent = '🔁 Submit All Transfers'; }
         invFetchPendingCount();
@@ -7250,12 +7371,16 @@ window.invCredLogin = async function() {
           toLocation: item.toLocation, toRowIndex: item.toRowIndex,
           isNewLocation: !!item.isNewLocation,
           cases: item.cases, initials: item.initials, notes: notes,
+          palletLineId: item.palletLineId || null,
           addedAt: item.addedAt || null,
           grabbedAt: item.grabbedAt || null
         })
       }).then(function(r) { return r.json(); })
         .then(function(d) {
-          if (d.ok) { submitNext(); }
+          if (d.ok) {
+            if (item.palletLineId && d.palletRecorded === false) invFlash('⚠ ' + item.partNum + ' moved, but not counted on its pallet — tell the office', 'error');
+            submitNext();
+          }
           else {
             invFlash('Failed on ' + item.partNum + ': ' + (d.error || 'unknown'), 'error');
             if (btn) { btn.disabled = false; btn.textContent = '🔁 Submit All Transfers'; }

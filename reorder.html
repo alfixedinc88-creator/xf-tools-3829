@@ -2113,6 +2113,13 @@ body { display:flex; flex-direction:column; min-height:100vh; background:var(--b
         <label style="display:flex;align-items:center;gap:5px" title="Leave empty for a plain info sheet. Give a title for a shipment / order on the way (its Qty column) — same title again merges into it, a new title gets its own column.">Title
           <input type="text" id="rvo-imp-title" list="rvo-title-list" placeholder="e.g. Container Oct 15 (optional)" style="width:190px;font-size:12px;padding:4px 6px;border-radius:6px;border:1px solid var(--border)"></label>
         <datalist id="rvo-title-list"></datalist>
+        <label style="display:flex;align-items:center;gap:5px" title="Only for a titled import (on the way)">Stage
+          <select id="rvo-imp-stage" onchange="rvoStageUi()" style="font-size:12px;padding:4px 6px;border-radius:6px;border:1px solid var(--border)">
+            <option value="">— pick (titled import) —</option>
+            <option value="production">🏭 Ordered — vendor still making (Part # + cases, no pallets)</option>
+            <option value="shipped">🚢 Shipped container (packing list with pallets)</option></select></label>
+        <label id="rvo-imp-from-wrap" style="display:none;align-items:center;gap:5px" title="The order (still being made) this container was made for — its shipped units come off that order so they're only counted once">Made for order
+          <select id="rvo-imp-from" style="font-size:12px;padding:4px 6px;border-radius:6px;border:1px solid var(--border);max-width:180px"></select></label>
         <input type="file" id="rvo-imp-file" accept=".xlsx,.xls,.csv" style="display:none" onchange="rvoImport(this)">
         <button class="btn btn-secondary" style="font-size:12px" onclick="rvoPickFile()">⬆ Import vendor sheet</button>
         <button class="btn btn-secondary" style="font-size:12px" onclick="rvoTemplate()" title="Download an empty sheet in the layout the importer reads">📄 Download template</button>
@@ -4064,12 +4071,15 @@ function rvoRender() {
 function rvoResetWidths() { RVO_W = {}; try { localStorage.removeItem('rvo_widths'); } catch (e) {} rvoRender(); }
 function rvoRenderIncoming(titles) {
   var box = document.getElementById('rvo-inc');
+  RVO.incTitles = titles; rvoStageUi();
   document.getElementById('rvo-title-list').innerHTML = titles.map(function (t) { return '<option value="' + escHtml(t.title) + '">'; }).join('');
   if (!titles.length) { box.style.display = 'none'; return; }
   box.style.display = 'flex';
   box.innerHTML = '<b style="color:#1A56DB">🚢 On the way (subtracted from what to order):</b>' + titles.map(function (t) {
     return '<span style="display:inline-flex;align-items:center;gap:6px;background:#fff;border:1px solid #BFDBFE;border-radius:14px;padding:3px 4px 3px 10px">'
-      + '<b>' + escHtml(t.title) + '</b> <span style="color:var(--text3)">' + escHtml(t.vendor || '') + ' · ' + fmt0(t.parts) + ' part #s · ' + fmt0(t.units) + ' units</span>'
+      + (t.stage === 'production' ? '<span title="Ordered — vendor still making it">🏭</span>' : t.stage === 'shipped' ? '<span title="Shipped container">🚢</span>' : '')
+      + '<b>' + escHtml(t.title) + '</b> <span style="color:var(--text3)">' + escHtml(t.vendor || '') + ' · ' + fmt0(t.parts) + ' part #s · ' + fmt0(t.units) + ' units'
+      + (t.pallets ? ' · 🧱 ' + fmt0(t.pallets) + ' pallets' : '') + '</span>'
       + '<button onclick="rvoCheck(\'' + escHtml(t.title).replace(/'/g, "\\'") + '\')" title="Where did every line of this shipment go?" style="border:none;background:#DBEAFE;border-radius:10px;padding:2px 8px;font-size:11px;cursor:pointer">🔍 Check</button>'
       + '<button onclick="rvoReceive(\'' + escHtml(t.title).replace(/'/g, "\\'") + '\')" title="It arrived — stock it into SKU Mgr (GARAGE) and take it off On the way" style="border:none;background:#D1FAE5;color:#065F46;border-radius:10px;padding:2px 8px;font-size:11px;font-weight:700;cursor:pointer">📦 Received</button>'
       + '<button onclick="rvoRemoveTitle(\'' + escHtml(t.title).replace(/'/g, "\\'") + '\')" title="Cancelled or imported by mistake — take it off On the way without touching SKU Mgr" style="border:none;background:#FEE2E2;color:#991B1B;border-radius:10px;padding:2px 8px;font-size:11px;cursor:pointer">🗑 Remove</button></span>';
@@ -4197,6 +4207,7 @@ async function rvoCheck(title, file) {
   h += '<div style="font-size:13px;margin-bottom:10px">' + (file ? ok(fileOk) + ' File units ' + (fileOk ? '= saved units' : '≠ saved units — difference ' + fmt0(file.units - saved)) + ' &nbsp; ' : '')
     + ok(counted === saved) + ' Saved units ' + (counted === saved ? '= units subtracted from the order' : '— ' + fmt0(saved - counted) + ' units are not counted (orange / red lines below)') + '</div>';
   if (file && file.fromCases) h += '<div style="font-size:12px;color:var(--text3);margin-bottom:6px">' + file.fromCases + ' line(s) had no Qty — worked out from Cases × Master Carton pcs.</div>';
+  if (file && file.packing) h += rvoPackingHtml(file.packing, saved);
   if (file) h += rvoSkippedHtml(file.skipped);
   var col = { own: 'var(--green)', otherOn: 'var(--green)', otherOff: '#b45309', none: 'var(--red)' };
   h += '<div id="rvo-ck-filt" style="display:none;font-size:12px;margin:0 0 6px;padding:6px 10px;background:var(--bg3);border-radius:8px"></div>';
@@ -4226,6 +4237,26 @@ function rvoCkFilter(w, keep) {
   var f = document.getElementById('rvo-ck-filt');
   if (f) { f.style.display = w ? 'block' : 'none';
     f.innerHTML = w ? 'Showing only <b>' + escHtml(RVO_CK_LABEL[w] || w) + '</b> (' + n + ' line' + (n === 1 ? '' : 's') + ') · <a href="#" onclick="rvoCkFilter(\'\');return false">show all</a>' : ''; }
+}
+// 🚢 Shipped container check: pallets / boxes / pieces — sheet TOTAL row vs
+// read from the lines vs saved — and what came off the order it was made for.
+function rvoPackingHtml(p, savedUnits) {
+  var rd = p.read, sv = p.saved || {}, ck = rd.check;
+  var cell = function (a, b) { return a == null ? '—' : fmt0(a) + (b == null ? '' : (Math.abs(a - b) < 0.001 ? ' <b style="color:var(--green)">✓</b>' : ' <b style="color:var(--red)">✗</b>')); };
+  var row = function (lab, sheet, read, save) { return '<tr><td style="padding:4px 10px">' + lab + '</td><td style="padding:4px 10px;text-align:right">' + (sheet == null ? '—' : fmt0(sheet)) + '</td><td style="padding:4px 10px;text-align:right">' + cell(read, sheet) + '</td><td style="padding:4px 10px;text-align:right">' + cell(save, read) + '</td></tr>'; };
+  var h = '<div style="font-size:13px;font-weight:700;margin:4px 0 6px">🧱 Pallets (' + escHtml(rd.sheets.join(', ')) + ')</div>'
+    + '<table style="font-size:13px;border-collapse:collapse;margin-bottom:8px"><thead><tr><th></th><th style="padding:4px 10px">Sheet TOTAL row</th><th style="padding:4px 10px">Read from lines</th><th style="padding:4px 10px">Saved</th></tr></thead><tbody>'
+    + row('Pallets', ck.pallets, rd.pallets, sv.pallets) + row('Boxes (cartons)', ck.ctns, rd.ctns, sv.cases) + row('Pieces', ck.pcs, rd.pcs, sv.pcs)
+    + row('Units of the part #s (pieces ÷ pack size)', null, Math.round(rd.units * 1000) / 1000, savedUnits) + '</tbody></table>';
+  if (rd.ignored.length) h += '<div style="font-size:12px;color:var(--text3);margin-bottom:6px">Ignored sheets (no pallet column — invoice / customs copies of the same goods, so not counted again): ' + escHtml(rd.ignored.join(', ')) + '</div>';
+  if (sv.keptWithMoves && sv.keptWithMoves.length) h += '<div style="font-size:12px;color:#b45309;margin-bottom:6px">Kept (boxes already moved off them, not in this file any more): ' + escHtml(sv.keptWithMoves.join(', ')) + '</div>';
+  if (p.take) { var t = p.take;
+    h += '<div style="font-size:12px;margin:0 0 8px;padding:8px 10px;background:' + (t.ok ? '#ECFDF5' : '#FDF0EE') + ';border-radius:8px">🏭 Order <b>' + escHtml(p.from) + '</b>: ' + fmt0(t.fromBefore) + ' units before − ' + fmt0(t.taken) + ' shipped in this container = <b>' + fmt0(t.fromAfter) + '</b> still being made '
+      + (t.ok ? '<b style="color:var(--green)">✓ adds up</b>' : '<b style="color:var(--red)">✗ does not add up</b>')
+      + (t.notOnOrder && t.notOnOrder.length ? '<div style="margin-top:4px;color:#b45309">Shipped more than ordered / not on that order (' + t.notOnOrder.length + '): ' + t.notOnOrder.slice(0, 40).map(function (x) { return escHtml(x.part) + ' ' + fmt0(x.shipped - x.fromOrder); }).join(', ') + '</div>' : '') + '</div>'; }
+  if (rd.warn.length) h += '<details style="font-size:12px;margin:0 0 8px"><summary style="cursor:pointer;color:#b45309">⚠ ' + rd.warn.length + ' line(s) to check when it arrives</summary>'
+    + rd.warn.slice(0, 200).map(function (w) { return '<div>row ' + escHtml(String(w.row)) + ': <span style="font-family:var(--mono)">' + escHtml(w.part) + '</span> — ' + escHtml(w.why) + '</div>'; }).join('') + '</details>';
+  return h;
 }
 function rvoSkippedHtml(sk) {
   if (!sk || !sk.length) return '';
@@ -4396,13 +4427,14 @@ function rvoLoadXlsx() {
 function rvoClean(x) { return String(x || '').trim().toUpperCase().replace(/\s*=\s*/g, '=').replace(/=+/g, '=').replace(/[_\-.\s]+$/, ''); }
 function rvoPack(x) { var m = String(x).split('=').pop().match(/^(\d+)/); return String(x).indexOf('=') >= 0 && m ? parseInt(m[1], 10) || 1 : 1; }
 function rvoNum(x) { var n = parseFloat(String(x == null ? '' : x).replace(/,/g, '')); return isFinite(n) ? n : 0; }
-function rvoParseSheet(aoa) {
+function rvoParseSheet(aoa, opt) {
+  opt = opt || {};
   var norm = function (x) { return String(x == null ? '' : x).replace(/\s+/g, ' ').trim(); };
   var hr = -1, H = null;
   for (var i = 0; i < Math.min(aoa.length, 80) && hr < 0; i++) {
     var cells = (aoa[i] || []).map(function (c) { return norm(c).toLowerCase(); });
     var partCol = cells.findIndex(function (c) { return /^(x )?part ?(#|number|no\.?)$/.test(c); });
-    if (partCol >= 0 && cells.some(function (c) { return /upc/.test(c); })) {
+    if (partCol >= 0 && (cells.some(function (c) { return /upc/.test(c); }) || (opt.noUpc && cells.some(function (c) { return /^(order )?(q'?ty|quantity)\b|^qty|^(cartons?|cases?|ctns?)\b/.test(c); })))) {
       var find = function (re, not) { return cells.findIndex(function (c) { return re.test(c) && !(not && not.test(c)); }); };
       H = { part: partCol, desc: find(/desc/), item: find(/item no/), out: find(/out ?side.*upc/),
         inn: find(/(inside|inner|plastic).*upc/) >= 0 ? find(/(inside|inner|plastic).*upc/) : find(/upc/, /out ?side/),
@@ -4411,7 +4443,7 @@ function rvoParseSheet(aoa) {
       hr = i;
     }
   }
-  if (hr < 0) throw new Error('Could not find the header row (needs a "Part #" / "Part Number" column and a UPC column)');
+  if (hr < 0) throw new Error(opt.noUpc ? 'Could not find the header row (needs a "Part #" column and a Qty or Cases column)' : 'Could not find the header row (needs a "Part #" / "Part Number" column and a UPC column)');
   var out = [], desc = '', item = '', skipped = [];
   var cell = function (row, k) { var c = H[k]; if (c == null || c < 0) return ''; var v = row[c]; if (typeof v === 'number') return Number.isInteger(v) ? String(v) : String(v); return norm(v); };
   for (var r = hr + 1; r < aoa.length; r++) {
@@ -4437,6 +4469,136 @@ function rvoParseSheet(aoa) {
   out.hasQty = H.qty >= 0 || H.cases >= 0; out.skipped = skipped; out.hasCases = H.cases >= 0;
   return out;
 }
+// Stage of a titled import. A shipped container can say which order (still
+// being made) it was made for — its units come off that order.
+function rvoStageUi() {
+  var st = document.getElementById('rvo-imp-stage'), wrap = document.getElementById('rvo-imp-from-wrap'), sel = document.getElementById('rvo-imp-from');
+  if (!st || !wrap) return;
+  var cur = sel.value, prod = (RVO.incTitles || []).filter(function (t) { return t.stage === 'production'; });
+  sel.innerHTML = '<option value="">— none (not ordered here) —</option>' + prod.map(function (t) { return '<option value="' + escHtml(t.title) + '">' + escHtml(t.title) + ' (' + fmt0(t.units) + ' units)</option>'; }).join('');
+  if (cur) sel.value = cur;
+  wrap.style.display = st.value === 'shipped' ? 'flex' : 'none';
+}
+// 🚢 Vendor packing list (CIPL): one line per part # per pallet with
+// cartons (CTN/CTNS) and pieces (QTY/PCS). Handles a 2-row header (merged
+// "Total" over CTN / QTY), pallet # written only on a pallet's first row,
+// the same pallet # used again for another PO (EFF: PO A pallets 1–6, PO B
+// pallets 1–5 → "PO A · 1" and "PO B · 1"), and the sheet's own TOTAL row
+// (pallets / cartons / pieces) to check against. Pieces → units of the part
+// # by its pack size (27-2-2=10: 2000 pcs = 200 units).
+function rvoParsePacking(aoa, merges) {
+  var norm = function (x) { return String(x == null ? '' : x).replace(/\s+/g, ' ').trim(); };
+  var num = function (x) { var n = parseFloat(String(x == null ? '' : x).replace(/,/g, '')); return isFinite(n) ? n : 0; };
+  var filled = function (r, c) { // header cells: value of a merged range
+    var v = (aoa[r] || [])[c]; if (v !== '' && v != null) return v;
+    for (var i = 0; i < (merges || []).length; i++) { var m = merges[i]; if (r >= m.s.r && r <= m.e.r && c >= m.s.c && c <= m.e.c) return (aoa[m.s.r] || [])[m.s.c]; }
+    return '';
+  };
+  var hr = -1;
+  for (var i = 0; i < Math.min(aoa.length, 60) && hr < 0; i++) if ((aoa[i] || []).some(function (c) { return /^(pallet|plt)\b/i.test(norm(c)); })) hr = i;
+  if (hr < 0) return null;
+  var width = Math.max((aoa[hr] || []).length, (aoa[hr + 1] || []).length), H = [];
+  for (var c = 0; c < width; c++) H.push((norm(filled(hr, c)) + ' ' + norm(filled(hr + 1, c))).toLowerCase().trim());
+  var find = function (re, not) { for (var c = 0; c < H.length; c++) if (re.test(H[c]) && !(not && not.test(H[c]))) return c; return -1; };
+  var C = { pallet: find(/^(pallet|plt)\b/), part: find(/part ?(#|number|no)|cus\.? ?no|xf ?code/), desc: find(/desc/), item: find(/item ?no|jq code/),
+    perCtn: find(/(pcs?|qty) ?\/ ?ctn|per ctn/), ctn: find(/\bctns?\b|cartons?/, /(pcs?|qty) ?\/ ?ctn|per ctn/), po: find(/^po\b|\bpo\/no/) };
+  C.pcs = find(/total.*(q'?ty|pcs)|(q'?ty|pcs).*total/, /\/ ?ctn/);
+  if (C.pcs < 0) C.pcs = find(/q'?ty|quantity|\bpcs\b/, /\/ ?ctn|per ctn|total/);
+  if (C.perCtn < 0) { var q2 = find(/^q'?ty$/); if (q2 >= 0 && q2 !== C.pcs) C.perCtn = q2; }
+  if (C.part < 0 || C.ctn < 0 || C.pcs < 0) throw new Error('Packing list: found the pallet column but not ' + [C.part < 0 ? 'Part #' : '', C.ctn < 0 ? 'CTN (cartons)' : '', C.pcs < 0 ? 'QTY (pieces)' : ''].filter(Boolean).join(' / '));
+  var lines = [], skipped = [], warn = [], totals = null, pallet = '', po = '', desc = '', item = '', seen = {}, lastBase = null, curKey = '';
+  for (var r = hr + 1; r < aoa.length; r++) {
+    var row = aoa[r] || [], txt = row.map(norm).join(' ');
+    if (/^\s*total\b/i.test(norm(row[C.pallet])) || /托|\bpkgs\b|^\s*total\b/i.test(norm(row[C.pallet]) + ' ' + norm(row[1]))) {
+      var pm = txt.match(/(\d+)\s*(pkgs?|托|pallets?|plts?)/i);
+      totals = { row: r + 1, pallets: pm ? parseInt(pm[1], 10) : null, ctns: num(row[C.ctn]) || null, pcs: num(row[C.pcs]) || null };
+      break;
+    }
+    var pv = norm(row[C.pallet]);
+    if (pv && !/^(pallet|plt)/i.test(pv)) { pallet = String(typeof row[C.pallet] === 'number' ? row[C.pallet] : pv); }
+    if (C.po >= 0 && norm(row[C.po])) po = norm(row[C.po]);
+    var part = norm(row[C.part]), ctn = num(row[C.ctn]), pcs = num(row[C.pcs]);
+    if (norm(row[C.desc])) desc = norm(row[C.desc]);
+    if (C.item >= 0 && norm(row[C.item])) item = norm(row[C.item]);
+    if (!part || /part|cus\.? ?no/i.test(part)) { if (ctn > 0 || pcs > 0) skipped.push({ row: r + 1, part: '', qty: pcs, cases: ctn, why: 'has cartons / pieces but no Part #' }); continue; }
+    if (!pallet) { skipped.push({ row: r + 1, part: part, qty: pcs, cases: ctn, why: 'no pallet # above this line' }); continue; }
+    if (/\//.test(part)) { skipped.push({ row: r + 1, part: part, qty: pcs, cases: ctn, why: 'several part #s in one cell' }); continue; }
+    if (!(ctn > 0)) { skipped.push({ row: r + 1, part: part, qty: pcs, cases: ctn, why: 'no cartons (CTN)' }); continue; }
+    if (!(pcs > 0)) { skipped.push({ row: r + 1, part: part, qty: pcs, cases: ctn, why: 'no pieces (QTY)' }); continue; }
+    // Pallet key: PO + pallet # when the sheet has a PO column; a pallet #
+    // seen again after other pallets = a different pallet → "(2)".
+    var base = (po && C.po >= 0 ? po + ' · ' : '') + pallet;
+    if (base !== lastBase) { // a new pallet starts here
+      curKey = base;
+      if (seen[base]) { var k = 2; while (seen[base + ' (' + k + ')']) k++; curKey = base + ' (' + k + ')'; }
+      seen[curKey] = 1; lastBase = base;
+    }
+    var key = curKey;
+    var clean = rvoClean(part), pk = rvoPack(clean), per = C.perCtn >= 0 ? num(row[C.perCtn]) : 0, units = pcs / pk;
+    if (per > 0 && Math.abs(per * ctn - pcs) > 0.001) warn.push({ row: r + 1, part: part, why: 'sheet disagrees with itself: ' + fmt0(ctn) + ' cartons × ' + fmt0(per) + ' pcs/carton = ' + fmt0(per * ctn) + ', but QTY says ' + fmt0(pcs) + ' pcs — counted ' + fmt0(pcs) + ' pcs in ' + fmt0(ctn) + ' boxes (QTY is what adds up to the sheet total). Count it when unpacking.' });
+    if (Math.abs(units - Math.round(units)) > 0.001) warn.push({ row: r + 1, part: part, why: fmt0(pcs) + ' pcs ÷ pack of ' + pk + ' = ' + units.toFixed(2) + ' units (not whole packs)' });
+    lines.push({ pallet: key, po: C.po >= 0 ? po : '', part: part, clean: clean, description: norm(row[C.desc]) || desc, item_no: (C.item >= 0 ? norm(row[C.item]) : '') || item,
+      cases: ctn, pcs: pcs, units: Math.round(units * 1000) / 1000, pcsPerCtn: per || (pcs / ctn), row: r + 1 });
+  }
+  return { lines: lines, skipped: skipped, warn: warn, totals: totals };
+}
+// Every sheet with a pallet column; other sheets (invoice / customs copies
+// of the same goods) are ignored so nothing is counted twice.
+function rvoReadPacking(wb) {
+  var out = { lines: [], skipped: [], warn: [], totals: [], sheets: [], ignored: [] };
+  wb.SheetNames.forEach(function (n) {
+    var ws = wb.Sheets[n], got = rvoParsePacking(XLSX.utils.sheet_to_json(ws, { header: 1, raw: true, defval: '' }), ws['!merges'] || []);
+    if (!got) { out.ignored.push(n); return; }
+    var tag = wb.SheetNames.length > 1 ? n.trim() + ' ' : '';
+    got.lines.forEach(function (l) { l.row = tag + l.row; out.lines.push(l); });
+    got.skipped.forEach(function (k) { k.row = tag + k.row; out.skipped.push(k); });
+    got.warn.forEach(function (w) { w.row = tag + w.row; out.warn.push(w); });
+    if (got.totals) out.totals.push(Object.assign({ sheet: n.trim() }, got.totals));
+    out.sheets.push(n.trim());
+  });
+  if (!out.sheets.length) throw new Error('No packing list found — a shipped container needs the vendor\'s packing list with a Pallet / PLT NO. column');
+  var sum = function (k) { return out.lines.reduce(function (a, l) { return a + l[k]; }, 0); };
+  out.pallets = Object.keys(out.lines.reduce(function (a, l) { a[l.pallet] = 1; return a; }, {})).length;
+  out.ctns = sum('cases'); out.pcs = sum('pcs'); out.units = sum('units');
+  // The sheet's own TOTAL row must match what was read — boxes and pieces.
+  var tp = out.totals.reduce(function (a, t) { return a + (t.pallets || 0); }, 0), tc = out.totals.reduce(function (a, t) { return a + (t.ctns || 0); }, 0), tq = out.totals.reduce(function (a, t) { return a + (t.pcs || 0); }, 0);
+  out.check = { hasTotals: out.totals.length > 0, pallets: tp || null, ctns: tc || null, pcs: tq || null };
+  out.check.ok = !out.check.hasTotals || ((!tc || Math.abs(tc - out.ctns) < 0.001) && (!tq || Math.abs(tq - out.pcs) < 0.001) && (!tp || tp === out.pallets));
+  return out;
+}
+async function rvoImportShipped(f, wb, vendor, title) {
+  var pk = rvoReadPacking(wb), ck = pk.check;
+  var line = function (lab, a, b) { return lab + ': sheet total ' + (b == null ? '—' : fmt0(b)) + ' · read ' + fmt0(a) + (b == null ? '' : (Math.abs(a - b) < 0.001 ? '  ✓' : '  ✗ DIFFERENT')); };
+  var summary = line('Pallets', pk.pallets, ck.pallets) + '\n' + line('Boxes (cartons)', pk.ctns, ck.ctns) + '\n' + line('Pieces', pk.pcs, ck.pcs);
+  if (!ck.ok) { alert('⚠ The packing list doesn\'t add up — NOT imported.\n\n' + summary + '\n\n' + (pk.skipped.length ? pk.skipped.length + ' line(s) skipped: ' + pk.skipped.slice(0, 8).map(function (k) { return 'row ' + k.row + ' ' + (k.part || '') + ' (' + k.why + ')'; }).join('; ') : '') + '\nFix the sheet (or tell us which number is right) and import again.'); return; }
+  // One on-the-way line per part # (all its pallets together).
+  var by = {}, rows = [];
+  pk.lines.forEach(function (l) {
+    var r = by[l.clean]; if (!r) { r = by[l.clean] = { part: l.part, raw: l.part, qty: 0, cases: 0, pcs: 0, description: l.description, item_no: l.item_no, case_pcs: l.pcsPerCtn, src_rows: [] }; rows.push(r); }
+    r.qty += l.units; r.cases += l.cases; r.pcs += l.pcs; r.src_rows.push(l.row);
+  });
+  rows.forEach(function (r) { r.qty = Math.round(r.qty * 1000) / 1000; r.src_rows = r.src_rows.join(', '); r.row = r.src_rows; });
+  var from = document.getElementById('rvo-imp-from').value;
+  if (!confirm('🚢 Shipped container "' + title + '" from ' + f.name + ' (vendor ' + vendor + ')\n\n' + summary + '\n\n' + rows.length + ' part #s · ' + fmt0(pk.units) + ' units → on the way, with the pallet of every box.'
+    + (pk.ignored.length ? '\nIgnored sheets (no pallet column — invoice / customs copies): ' + pk.ignored.join(', ') : '')
+    + (from ? '\n\nMade for order "' + from + '": the shipped units come off that order (counted once).' : '\n\nNot linked to an order still being made. If it was, pick it in "Made for order" first — or it counts twice.'))) return;
+  var saved = null;
+  for (var i = 0; i < rows.length; i += 400) {
+    var d = await (await wFetch(W + '/reorder/vendor-catalog/import', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ vendor: vendor, title: title, stage: 'shipped', last: i + 400 >= rows.length, file: f.name, rows: rows.slice(i, i + 400) }) })).json();
+    if (!d.ok) throw new Error(d.error || 'Import failed');
+  }
+  var pd = await (await wFetch(W + '/reorder/fix/pallets', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ title: title, vendor: vendor, file: f.name,
+    lines: pk.lines.map(function (l) { return { pallet: l.pallet, po: l.po, part: l.part, raw: l.part, description: l.description, cases: l.cases, pcs: l.pcs, units: l.units, pcsPerCtn: l.pcsPerCtn, row: l.row }; }) }) })).json();
+  if (!pd.ok) throw new Error('On the way saved, but pallets failed: ' + (pd.error || 'error') + ' — import again');
+  var take = null;
+  if (from) { take = await (await wFetch(W + '/reorder/fix/incoming-take', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ from: from, to: title }) })).json();
+    if (!take.ok) alert('⚠ Taking the shipped units off "' + from + '" failed: ' + (take.error || 'error')); }
+  showToast('🚢 "' + title + '" saved — ' + fmt0(pd.pallets) + ' pallets, ' + fmt0(pd.cases) + ' boxes');
+  document.getElementById('rvo-imp-title').value = '';
+  await rvoLoad(); if (document.getElementById('rvo-hist-box').open) rvoLoadHistory();
+  rvoCheck(title, { file: f.name, vendor: vendor, parts: rows.length, lines: pk.lines.length, units: pk.units, cases: pk.ctns, fromCases: 0, dups: pk.lines.length - rows.length, skipped: pk.skipped,
+    packing: { read: pk, saved: pd, take: take, from: from } });
+}
 async function rvoImport(input) {
   var f = input.files && input.files[0]; input.value = ''; if (!f) return;
   var vendor = document.getElementById('rvo-imp-vendor').value.trim();
@@ -4444,8 +4606,11 @@ async function rvoImport(input) {
     showToast('Reading ' + f.name + '…');
     await rvoLoadXlsx();
     var wb = XLSX.read(await f.arrayBuffer(), { type: 'array' });
+    var title0 = document.getElementById('rvo-imp-title').value.trim(), stage = title0 ? document.getElementById('rvo-imp-stage').value : '';
+    if (title0 && !stage) throw new Error('Pick the Stage first: 🏭 Ordered (vendor still making) or 🚢 Shipped container');
+    if (stage === 'shipped') return await rvoImportShipped(f, wb, vendor, title0);
     var rows = [], lastErr = null, hasQty = false, skipped = [], multi = wb.SheetNames.length > 1;
-    wb.SheetNames.forEach(function (n) { try { var got = rvoParseSheet(XLSX.utils.sheet_to_json(wb.Sheets[n], { header: 1, raw: true, defval: '' }));
+    wb.SheetNames.forEach(function (n) { try { var got = rvoParseSheet(XLSX.utils.sheet_to_json(wb.Sheets[n], { header: 1, raw: true, defval: '' }), { noUpc: !!title0 });
       hasQty = hasQty || got.hasQty; got.forEach(function (g) { g.row = (multi ? n + ' ' : '') + g.row; });
       got.skipped.forEach(function (k) { k.row = (multi ? n + ' ' : '') + k.row; skipped.push(k); }); rows = rows.concat(got); } catch (e) { lastErr = e; } });
     if (!rows.length) throw lastErr || new Error('No part numbers found');
@@ -4464,21 +4629,25 @@ async function rvoImport(input) {
         + withQty.length + ' part #s with a quantity will count as on the way and be subtracted from what to order.'
         + (exists ? '\nSame part #s get the new quantity; others in "' + title + '" stay.' : ''))) return;
     } else if (!confirm('Import ' + rows.length + ' rows from ' + f.name + ' as vendor "' + vendor + '"?\n\nThis replaces what was imported before for ' + vendor + '. Your ✏️ fixes are kept.\n\n(To record a shipment / order on the way, type a Title first.)')) return;
-    var saved = 0;
+    var saved = 0, noCase = [], caseLines = [];
     for (var i = 0; i < rows.length; i += 400) {
-      var res = await wFetch(W + '/reorder/vendor-catalog/import', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ vendor: vendor, title: title, replace: i === 0, last: i + 400 >= rows.length, file: f.name, rows: rows.slice(i, i + 400) }) });
+      var res = await wFetch(W + '/reorder/vendor-catalog/import', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ vendor: vendor, title: title, stage: stage, replace: i === 0, last: i + 400 >= rows.length, file: f.name, rows: rows.slice(i, i + 400) }) });
       var d = await res.json(); if (!d.ok) throw new Error(d.error || 'Import failed');
-      saved = d.total;
+      saved = d.total; (d.noCaseQty || []).forEach(function (k) { noCase.push(k); }); (d.fromCases || []).forEach(function (k) { caseLines.push(k); });
     }
     showToast(title ? 'On the way "' + title + '" saved' : 'Imported ' + vendor + ': ' + saved + ' part #s');
     if (title) document.getElementById('rvo-imp-title').value = '';
     await rvoLoad(); if (document.getElementById('rvo-hist-box').open) rvoLoadHistory();
+    caseLines.forEach(function (k) { rows.forEach(function (r) { if (!r.dup && rvoClean(r.part) === k.part && !(rvoNum(r.qty) > 0)) { r.fileQty = k.units; r.qtyFrom = 'cases'; } }); });
     var fileLines = rows.filter(function (r) { return rvoNum(r.fileQty != null ? r.fileQty : r.qty) > 0; });
     rvoCheck(title, { file: f.name, vendor: vendor, parts: rows.length, lines: fileLines.length,
       units: fileLines.reduce(function (a, r) { return a + rvoNum(r.fileQty != null ? r.fileQty : r.qty); }, 0),
       cases: rows.reduce(function (a, r) { return a + rvoNum(r.dup ? 0 : r.cases); }, 0),
       fromCases: rows.filter(function (r) { return r.qtyFrom === 'cases'; }).length,
-      dups: rows.filter(function (r) { return r.dup; }).length, skipped: skipped });
+      dups: rows.filter(function (r) { return r.dup; }).length,
+      skipped: skipped.concat(noCase.map(function (k) { return { row: k.row, part: k.part, qty: '', cases: k.cases, why: 'NOT counted — no case size for this part # (set ✏️ Case qty or SKU Mgr units per case, then import again)' }; })),
+      caseUnits: caseLines });
+    if (noCase.length) alert('⚠ ' + noCase.length + ' line(s) NOT counted — no case size known: ' + noCase.map(function (k) { return k.part; }).join(', ') + '\nSet their Case qty (✏️) and import again.');
   } catch (e) { alert('Import failed: ' + e.message); }
 }
 function rvoEdit(sku, v) { var n = parseInt(v, 10); RVO.edits[sku] = n >= 0 ? n : 0; rvoRender(); }
