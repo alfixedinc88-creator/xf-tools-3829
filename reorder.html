@@ -2122,7 +2122,7 @@ body { display:flex; flex-direction:column; min-height:100vh; background:var(--b
           <select id="rvo-imp-from" style="font-size:12px;padding:4px 6px;border-radius:6px;border:1px solid var(--border);max-width:180px"></select></label>
         <input type="file" id="rvo-imp-file" accept=".xlsx,.xls,.csv" style="display:none" onchange="rvoImport(this)">
         <button class="btn btn-secondary" style="font-size:12px" onclick="rvoPickFile()">⬆ Import vendor sheet</button>
-        <button class="btn btn-secondary" style="font-size:12px" id="rvo-tmpl-btn" onclick="rvoTemplate()" title="The layout for the Stage picked: 🚢 Shipped container (pallet, boxes, pieces, price, weight) · 🏭 Ordered (part #, cases, price, weight) · none = vendor info sheet (UPCs, price, weight)">📄 Download template: vendor info</button>
+        <button class="btn btn-secondary" style="font-size:12px" id="rvo-tmpl-btn" onclick="rvoTemplate()" title="The layout for the Stage picked: 🚢 Shipped container (pallet, boxes, pieces, price, weight each in lb) · 🏭 Ordered (part #, cases, price, weight each in lb) · none = vendor info sheet (UPCs, price, weight each in lb)">📄 Download template: vendor info</button>
       </div>
       <div id="rvo-inc" style="display:none;flex-wrap:wrap;gap:8px;align-items:center;margin:-4px 0 10px;padding:8px 10px;background:#EFF6FF;border-radius:8px;font-size:12px"></div>
       <details id="rvo-hist-box" style="margin-bottom:6px" ontoggle="if(this.open)rvoLoadHistory()"><summary style="font-size:12px;color:var(--text2);cursor:pointer;font-weight:700">🕘 History — who changed what on this page</summary>
@@ -4325,20 +4325,19 @@ async function rvoTemplate() {
     await rvoLoadXlsx();
     // Template for the Stage picked next to the import (none = vendor info sheet).
     var stage = (document.getElementById('rvo-imp-stage') || {}).value || '';
-    var head, ex, how, name, widths, textCells = [], fx = null;
+    var head, ex, how, name, widths, textCells = [];
     var common = [[''], ['Importing', 'Reorder tab → Vendor (#1 / #2 / #3 or the vendor name) → Title → Stage → ⬆ Import vendor sheet'],
       ['', '• after importing, the 📋 Import check shows where every line went and that the totals match (also 🔍 Check on each title)'],
       ['', '• when it arrives, press 📦 Received — it goes into SKU Mgr at GARAGE with its price; then move it to shelves with Transfer (🚢 Container here shows each pallet)'],
       ['', '• 🗑 Remove only for a cancelled / wrong import']];
     if (stage === 'shipped') {
       name = 'Container_packing_list_template.xlsx';
-      head = ['Pallet', 'PO', 'Part #', 'Description', 'Item No.', 'Boxes (CTN)', 'Pieces (QTY PCS)', 'Pcs per box', 'Price per piece', 'G.W. (kg)', 'Weight each (lb)'];
-      ex = [['1', 'PO-001', '27-2-2=10', '3/4" PUSH FIT COUPLING', '61302', 20, 2000, 100, 1.76, 172, ''],
-        ['', '', '27-2-2=2XX', '', '', 3, 300, 100, 1.76, 26, ''],
-        ['2', 'PO-001', '27-4-7=1', '1 x 3/4 push fit elbow', '61404', 20, 1000, 50, 3.62, 178, ''],
-        ['TOTAL', '', '2 pallets', '', '', 43, 3300, '', '', 376, '']];
-      widths = [10, 12, 16, 34, 10, 12, 16, 12, 14, 11, 16];
-      fx = { col: 'K', kg: 'J', pcs: 'G', kgIdx: 9, pcsIdx: 6, rows: [2, 3, 4] };
+      head = ['Pallet', 'PO', 'Part #', 'Description', 'Item No.', 'Boxes (CTN)', 'Pieces (QTY PCS)', 'Pcs per box', 'Price per piece', 'Weight each (lb)'];
+      ex = [['1', 'PO-001', '27-2-2=10', '3/4" PUSH FIT COUPLING', '61302', 20, 2000, 100, 1.76, 0.19],
+        ['', '', '27-2-2=2XX', '', '', 3, 300, 100, 1.76, 0.19],
+        ['2', 'PO-001', '27-4-7=1', '1 x 3/4 push fit elbow', '61404', 20, 1000, 50, 3.62, 0.39],
+        ['TOTAL', '', '2 pallets', '', '', 43, 3300, '', '', '']];
+      widths = [10, 12, 16, 34, 10, 12, 16, 12, 14, 16];
       how = [['🚢 Shipped container — packing list (every box, which pallet it is on, and the price)'], [''],
         ['Pallet', 'Required. Pallet # / name as written on the pallet. Write it on the first row of each pallet — the rows under it are on the same pallet.'],
         ['PO', 'Optional. When the same pallet # is used again for another PO (PO A pallets 1–6, PO B pallets 1–5), the PO keeps them apart.'],
@@ -4348,32 +4347,27 @@ async function rvoTemplate() {
         ['Pieces (QTY PCS)', 'Required. Single pieces (fittings) of this part # on this pallet. Units of the part # = pieces ÷ pack size (27-2-2=10: 2000 pcs = 200 bags).'],
         ['Pcs per box', 'Optional. Checked against Boxes × Pcs per box = Pieces (a difference is listed to count on arrival).'],
         ['Price per piece', 'Price paid per single piece. It becomes the vendor sheet price and the cost of these boxes when 📦 Received. Empty = shown in red. (A vendor packing list with an invoice sheet in the same file is priced from the invoice.)'],
-        ['G.W. (kg)', 'Gross weight in KG of this line (all its boxes together) — copy it from the vendor packing list ("G.W." / "Total G.W.").'],
-        ['Weight each (lb)', 'Weight of ONE piece in POUNDS = G.W. (kg) ÷ Pieces (QTY PCS) × 2.20462 (1 kg = 2.20462 lb). The column already has this formula — just fill G.W. (kg). Example: 172 kg ÷ 2000 pcs × 2.20462 = 0.1896 lb.'],
-        ['', 'The weight is saved on the product (Products sheet / Warehouse → Item Search) ONLY when the product has no weight yet — an existing weight is never changed. Several lines of one part are averaged by pieces. The vendor\'s own packing list works the same way (its G.W. column).'],
+        ['Weight each (lb)', 'Optional. Weight of ONE piece, already in POUNDS (lb) — type it as it is, nothing is converted. Saved on the product (Products sheet / Warehouse → Item Search) ONLY when the product has no weight yet — an existing weight is never changed.'],
         ['TOTAL row', 'Optional but recommended: a last row starting "TOTAL" with the pallet count ("2 pallets"), total boxes and total pieces — the import refuses the file if the lines do not add up to it.'],
         [''], ['Also works', 'The vendor\'s own packing list (#2 CIPL, #1 detailed packing list) can be imported as it is — no need to copy it into this template.']].concat(common);
     } else if (stage === 'production') {
       name = 'Order_template.xlsx';
-      head = ['Part #', 'Description', 'Item No.', 'Cases', 'Qty', 'Price per piece', 'Master Carton (pcs)', 'Carton G.W. (kg)', 'Weight each (lb)'];
-      ex = [['27-2-2=10', '3/4" PUSH FIT COUPLING', '61302', 25, '', 1.76, 100, 8.6, ''], ['27-4-7=1', '1 x 3/4 push fit elbow', '61404', '', 1000, 3.62, 50, 8.9, '']];
-      widths = [16, 34, 10, 8, 10, 14, 18, 16, 16];
-      fx = { col: 'I', kg: 'H', pcs: 'G', kgIdx: 7, pcsIdx: 6, rows: [2, 3] };
+      head = ['Part #', 'Description', 'Item No.', 'Cases', 'Qty', 'Price per piece', 'Weight each (lb)'];
+      ex = [['27-2-2=10', '3/4" PUSH FIT COUPLING', '61302', 25, '', 1.76, 0.19], ['27-4-7=1', '1 x 3/4 push fit elbow', '61404', '', 1000, 3.62, 0.39]];
+      widths = [16, 34, 10, 8, 10, 14, 16];
       how = [['🏭 Ordered — vendor still making it (no pallets yet)'], [''],
         ['Part #', 'Required. Our part number, one row per pack size.'],
         ['Cases', 'Boxes ordered. Units = Cases × SKU Mgr Ea/Case (pieces per box) ÷ pack size. A part # with no known case size is NOT counted (shown in red).'],
         ['Qty', 'Or give units of the part # directly (27-2-2=10: 1 unit = 1 bag of 10). Qty wins over Cases.'],
         ['Price per piece', 'Price per single piece. Empty = imported and shown in red.'],
-        ['Master Carton (pcs) / Carton G.W. (kg)', 'Pieces in one carton and the gross weight of one full carton in KG (from the vendor). Optional — used only to work out the weight.'],
-        ['Weight each (lb)', 'Weight of ONE piece in POUNDS = Carton G.W. (kg) ÷ Master Carton (pcs) × 2.20462 (1 kg = 2.20462 lb). The column already has this formula — just fill the two columns before it (or type the lb yourself). Saved on the product (Products sheet / Warehouse → Item Search) ONLY when it has no weight yet — an existing weight is never changed.'],
+        ['Weight each (lb)', 'Optional. Weight of ONE piece, already in POUNDS (lb) — type it as it is, nothing is converted. Saved on the product (Products sheet / Warehouse → Item Search) ONLY when the product has no weight yet — an existing weight is never changed.'],
         ['', 'Counts as on the way right away, so Reorder does not order it again. When the container ships, import its packing list with Stage 🚢 and pick this order in "Made for order" — the shipped part comes off this order (never counted twice).']].concat(common);
     } else {
       name = 'Vendor_sheet_template.xlsx';
-      head = ['Part #', 'Description', 'Item No.', 'Outside Box UPC Code', 'Inside Bag UPC Code', 'FBA ASIN', 'Inner Bag (pcs)', 'Master Carton (pcs)', 'Price per piece', 'Carton G.W. (kg)', 'Weight each (lb)'];
-      ex = [['27-3-1=10X', '1/2" PUSH FIT BALL VALVE', '61801', '810139932345', '810139932376', 'B07NMNSYJD', 10, 200, 3.26, 19.5, ''],
-        ['27-3-1=1XX', '', '', '840428916817', '840428916732', '', 1, 200, 3.26, 19.5, '']];
-      widths = [18, 34, 10, 22, 22, 14, 14, 18, 14, 16, 16];
-      fx = { col: 'K', kg: 'J', pcs: 'H', kgIdx: 9, pcsIdx: 7, rows: [2, 3] };
+      head = ['Part #', 'Description', 'Item No.', 'Outside Box UPC Code', 'Inside Bag UPC Code', 'FBA ASIN', 'Inner Bag (pcs)', 'Master Carton (pcs)', 'Price per piece', 'Weight each (lb)'];
+      ex = [['27-3-1=10X', '1/2" PUSH FIT BALL VALVE', '61801', '810139932345', '810139932376', 'B07NMNSYJD', 10, 200, 3.26, 0.21],
+        ['27-3-1=1XX', '', '', '840428916817', '840428916732', '', 1, 200, 3.26, 0.21]];
+      widths = [18, 34, 10, 22, 22, 14, 14, 18, 14, 16];
       textCells = ['D2', 'E2', 'D3', 'E3'];
       how = [['Vendor info sheet (no Title / no Stage) — descriptions, UPCs, ASINs, carton sizes, price'], [''],
         ['Part #', 'Required. Our part number, e.g. 27-3-1=10X (one row per pack size).'],
@@ -4383,18 +4377,13 @@ async function rvoTemplate() {
         ['FBA ASIN', 'Amazon ASIN this part # is sent to FBA for (optional).'],
         ['Inner Bag (pcs) / Master Carton (pcs)', 'Pieces in one bag / in one carton (optional; carton sets the case size when SKU Mgr has none).'],
         ['Price per piece', 'Optional. The vendor\'s current price per single piece (kept on the vendor sheet; an import without it never wipes it).'],
-        ['Carton G.W. (kg)', 'Gross weight of one full master carton in KG (from the vendor packing list / spec). Optional — used only to work out the weight.'],
-        ['Weight each (lb)', 'Weight of ONE piece in POUNDS = Carton G.W. (kg) ÷ Master Carton (pcs) × 2.20462 (1 kg = 2.20462 lb). The column already has this formula — just fill Carton G.W. (or type the lb yourself). Saved on the product (Products sheet / Warehouse → Item Search) ONLY when it has no weight yet — an existing weight is never changed.'],
+        ['Weight each (lb)', 'Optional. Weight of ONE piece, already in POUNDS (lb) — type it as it is, nothing is converted. Saved on the product (Products sheet / Warehouse → Item Search) ONLY when the product has no weight yet — an existing weight is never changed.'],
         [''], ['For orders / containers', 'Pick a Stage (🏭 Ordered or 🚢 Shipped container) next to the import first, then 📄 Download template gives that layout.']].concat(common);
     }
     var wb = XLSX.utils.book_new();
     var ws = XLSX.utils.aoa_to_sheet([head].concat(ex));
     ws['!cols'] = widths.map(function (w) { return { wch: w }; });
     textCells.forEach(function (a) { if (ws[a]) { ws[a].t = 's'; ws[a].v = String(ws[a].v); } });
-    // "Weight each (lb)" = G.W. (kg) ÷ Pieces × 2.20462, as a live formula.
-    // "Weight each (lb)" = G.W. (kg) ÷ pieces × 2.20462, as a live formula.
-    if (fx) fx.rows.forEach(function (r) { var row = ex[r - 2] || [], kg = parseFloat(row[fx.kgIdx]) || 0, pcs = parseFloat(row[fx.pcsIdx]) || 0;
-      ws[fx.col + r] = { t: 'n', v: kg > 0 && pcs > 0 ? Math.round(kg / pcs * 2.20462 * 10000) / 10000 : 0, f: 'IF(AND(' + fx.kg + r + '>0,' + fx.pcs + r + '>0),ROUND(' + fx.kg + r + '/' + fx.pcs + r + '*2.20462,4),"")' }; });
     XLSX.utils.book_append_sheet(wb, ws, stage === 'shipped' ? 'Packing list' : stage === 'production' ? 'Order' : 'Vendor sheet');
     var hw = XLSX.utils.aoa_to_sheet(how); hw['!cols'] = [{ wch: 40 }, { wch: 110 }];
     XLSX.utils.book_append_sheet(wb, hw, 'How to');
@@ -4530,7 +4519,7 @@ function rvoParseSheet(aoa, opt) {
         asin: find(/asin/), innerPcs: find(/inner bag/), casePcs: find(/master carton|each case/),
         qty: find(/^(order )?(q'?ty|quantity)\b|^qty/), cases: find(/^(cartons?|cases?|ctns?)( shipped| qty)?$|^# ?of (cartons|cases)/),
         price: find(/price|unit cost|^cost/, /total|amount|retail|sell/),
-        wlb: find(/weight.*(lb|each)|lb.*weight/), gw: find(/g\.? ?w|gross/) };
+        wlb: find(/weight.*(lb|each)|lb.*weight/) };
       hr = i;
     }
   }
@@ -4551,10 +4540,8 @@ function rvoParseSheet(aoa, opt) {
     out.push({ part: part, item_no: it || item, description: d || desc, outside_upc: cell(row, 'out'), inside_upc: cell(row, 'inn'),
       asin: /^B0[A-Z0-9]{8}$/i.test(cell(row, 'asin')) ? cell(row, 'asin') : '', inner_pcs: cell(row, 'innerPcs'), case_pcs: cell(row, 'casePcs'), qty: qv, cases: cv,
       price: rvoNum(String(cell(row, 'price')).replace(/[$\s]/g, '')) || '', row: r + 1 });
-    // ⚖ Weight each (lb): the sheet's own column, else Carton G.W. (kg) ÷ Master Carton (pcs) × 2.20462.
-    var o2 = out[out.length - 1], wl = rvoNum(cell(row, 'wlb')), gwk = rvoNum(cell(row, 'gw')), cp = rvoNum(o2.case_pcs);
-    o2.weight_lb = wl > 0 ? wl : (gwk > 0 && cp > 0 ? gwk / cp * 2.20462 : 0);
-    o2.weight_from = wl > 0 ? 'Weight each (lb) column' : o2.weight_lb > 0 ? gwk + ' kg carton G.W. ÷ ' + cp + ' pcs × 2.20462' : '';
+    // ⚖ Weight each (lb) — one piece, already in lb as typed.
+    var o2 = out[out.length - 1]; o2.weight_lb = rvoNum(cell(row, 'wlb')); o2.weight_from = o2.weight_lb > 0 ? 'Weight each (lb) column' : '';
     // No Qty but cases shipped + pieces per carton → units = cases × carton pcs ÷ pack size.
     var o = out[out.length - 1];
     if (!hasNum(o.qty) && hasNum(o.cases) && hasNum(o.case_pcs)) {
@@ -4604,8 +4591,6 @@ function rvoParsePacking(aoa, merges) {
   var C = { pallet: find(/^(pallet|plt)\b/), part: find(/part ?(#|number|no)|cus\.? ?no|xf ?code/), desc: find(/desc/), item: find(/item ?no|jq code/),
     perCtn: find(/(pcs?|qty) ?\/ ?(ctn|box)|per (ctn|carton|box)/), ctn: find(/\bctns?\b|cartons?|\bboxes\b/, /(pcs?|qty) ?\/ ?(ctn|box)|per (ctn|carton|box)/), po: find(/^po\b|\bpo\/no/),
     price: find(/price/, /total|amount/),
-    // Gross weight of the line (kg): the "Total G.W." when the sheet also has a per-carton G.W. (EFF), else G.W. (JQ).
-    gw: (function () { var t = find(/total.*g\.? ?w|g\.? ?w.*total/); return t >= 0 ? t : find(/\bg\.? ?w\b|gross/); })(),
     wlb: find(/weight.*(lb|each)|lb.*weight/) };
   C.pcs = find(/total.*(q'?ty|pcs)|(q'?ty|pcs).*total/, /\/ ?(ctn|box)|per (ctn|carton|box)/);
   if (C.pcs < 0) C.pcs = find(/q'?ty|quantity|\bpcs\b|pieces/, /\/ ?(ctn|box)|per (ctn|carton|box)|total/);
@@ -4646,7 +4631,7 @@ function rvoParsePacking(aoa, merges) {
     lines.push({ pallet: key, po: C.po >= 0 ? po : '', part: part, clean: clean, description: norm(row[C.desc]) || desc, item_no: (C.item >= 0 ? norm(row[C.item]) : '') || item,
       cases: ctn, pcs: pcs, units: Math.round(units * 1000) / 1000, pcsPerCtn: per || (pcs / ctn), row: r + 1,
       price: C.price >= 0 ? num(String(row[C.price]).replace(/[$\s]/g, '')) || 0 : 0,
-      gwKg: C.gw >= 0 ? num(row[C.gw]) || 0 : 0, wlb: C.wlb >= 0 ? num(row[C.wlb]) || 0 : 0 });
+      wlb: C.wlb >= 0 ? num(row[C.wlb]) || 0 : 0 });
   }
   return { lines: lines, skipped: skipped, warn: warn, totals: totals };
 }
@@ -4731,14 +4716,8 @@ async function rvoImportShipped(f, wb, vendor, title) {
   var PR = rvoReadInvoicePrices(wb, pk.sheets);
   rows.forEach(function (r) { var got = r.sheetPrice > 0 ? { price: r.sheetPrice, src: 'invoice' } : rvoPriceFor(PR, rvoClean(r.part), r.item_no); r.price = got ? got.price : ''; r.price_src = got ? got.src : ''; });
   if (rows.some(function (r) { return r.sheetPrice > 0; }) && PR.sheets.indexOf('packing list price column') < 0) PR.sheets.unshift('packing list price column');
-  // ⚖ Weight each (lb) per base part: the sheet's own "Weight each (lb)", else
-  // total G.W. (kg) ÷ pieces × 2.20462 — only saved where the product has none.
-  var wb2 = {};
-  pk.lines.forEach(function (l) { var b = l.clean.split('=')[0], w = wb2[b] = wb2[b] || { lbPcs: 0, lbN: 0, kg: 0, pcs: 0, desc: l.description };
-    if (l.wlb > 0) { w.lbPcs += l.wlb * l.pcs; w.lbN += l.pcs; } else if (l.gwKg > 0) { w.kg += l.gwKg; w.pcs += l.pcs; } });
-  pk.weights = Object.keys(wb2).map(function (b) { var w = wb2[b];
-    var lb = w.lbN > 0 ? w.lbPcs / w.lbN : w.pcs > 0 ? w.kg / w.pcs * 2.20462 : 0;
-    return lb > 0 ? { base: b, lb: Math.round(lb * 10000) / 10000, from: w.lbN > 0 ? 'Weight each (lb) column' : fmt0(Math.round(w.kg * 100) / 100) + ' kg G.W. ÷ ' + fmt0(w.pcs) + ' pcs × 2.20462', desc: w.desc } : null; }).filter(Boolean);
+  // ⚖ Weight each (lb) per base part, as typed in the sheet (already in lb, one piece) — only saved where the product has none.
+  pk.weights = rvoWeightsByBase(pk.lines.filter(function (l) { return l.wlb > 0; }).map(function (l) { return { clean: l.clean, lb: l.wlb, pcs: l.pcs, from: 'Weight each (lb) column' }; }));
   pk.prices = { sheets: PR.sheets, priced: rows.filter(function (r) { return r.price > 0; }).length, missing: rows.filter(function (r) { return !(r.price > 0); }).map(function (r) { return r.part; }),
     notExact: rows.filter(function (r) { return r.price > 0 && r.price_src !== 'invoice'; }).map(function (r) { return { part: r.part, price: r.price, src: r.price_src }; }) };
   var from = document.getElementById('rvo-imp-from').value;
