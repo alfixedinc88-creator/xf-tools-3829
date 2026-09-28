@@ -987,6 +987,27 @@ async function reorderFixTables(env) {
   // Vendor each part # was last ordered from (recorded when a vendor order
   // CSV is downloaded) — the default vendor for a part # several vendors sell.
   await env.DB.prepare(`CREATE TABLE IF NOT EXISTS reorder_last_vendor (part TEXT PRIMARY KEY, vendor TEXT NOT NULL, at TEXT)`).run();
+  // Stage of an on-the-way title: 'production' (ordered — vendor still
+  // making it, no pallets yet) or 'shipped' (container on the water, with
+  // its packing list's pallets).
+  await env.DB.prepare(`CREATE TABLE IF NOT EXISTS reorder_title (title TEXT PRIMARY KEY, stage TEXT, updated_at TEXT)`).run();
+  // Units a shipped container took over from the order it was made for, so
+  // the same boxes are never on the way twice (order 100, 60 shipped →
+  // order keeps 40, container has 60).
+  await env.DB.prepare(`CREATE TABLE IF NOT EXISTS reorder_take (from_title TEXT NOT NULL, to_title TEXT NOT NULL, part TEXT NOT NULL,
+    units REAL NOT NULL, PRIMARY KEY (from_title, to_title, part))`).run();
+  // Which pallet every box of a shipped container is on (vendor packing
+  // list) — Inventory → Transfer → 🚢 Container here. One row per pallet ×
+  // part #; cases = boxes (cartons).
+  await env.DB.prepare(`CREATE TABLE IF NOT EXISTS reorder_pallet (id INTEGER PRIMARY KEY AUTOINCREMENT, title TEXT NOT NULL, vendor TEXT NOT NULL,
+    file TEXT, pallet TEXT NOT NULL, po TEXT, part TEXT NOT NULL, raw_part TEXT, description TEXT, cases REAL NOT NULL, pcs REAL, units REAL,
+    pcs_per_ctn REAL, src_row TEXT, updated_at TEXT)`).run();
+  await env.DB.prepare('CREATE UNIQUE INDEX IF NOT EXISTS ux_reorder_pallet ON reorder_pallet(title, vendor, pallet, part)').run();
+  // Boxes taken off a pallet: one row per transfer, tied to the transfer's
+  // OUT log row — a transfer rejected in Review stops counting.
+  await env.DB.prepare(`CREATE TABLE IF NOT EXISTS pallet_move (id INTEGER PRIMARY KEY AUTOINCREMENT, pallet_id INTEGER NOT NULL, cases REAL NOT NULL,
+    to_location TEXT, out_log_id INTEGER, transfer_id TEXT, by_user TEXT, at TEXT)`).run();
+  await env.DB.prepare('CREATE INDEX IF NOT EXISTS idx_pallet_move_pid ON pallet_move(pallet_id)').run();
   await env.DB.prepare(`CREATE TABLE IF NOT EXISTS reorder_fix (part TEXT PRIMARY KEY, description TEXT, outside_upc TEXT, inside_upc TEXT,
     vendor TEXT, asin TEXT, case_qty REAL, by_user TEXT, updated_at TEXT)`).run();
   // History of everything done on the tab (fixes, part # corrections,
@@ -1026,21 +1047,53 @@ async function reorderCatalogImport(request, env, session) {
   if (b.replace && !title) await env.DB.prepare('DELETE FROM reorder_vendor_catalog WHERE vendor = ?').bind(vendor).run();
   let incParts = 0, incUnits = 0;
   const now = new Date().toISOString(), t = v => (v == null ? '' : String(v)).trim().slice(0, 300), n = v => { const x = parseFloat(v); return Number.isFinite(x) ? x : null; };
+  const num = v => parseFloat(String(v == null ? '' : v).replace(/,/g, ''));
+  const stage = title && (b.stage === 'shipped' || b.stage === 'production') ? b.stage : '';
+  if (stage) await env.DB.prepare(`INSERT INTO reorder_title (title, stage, updated_at) VALUES (?,?,?)
+    ON CONFLICT(title) DO UPDATE SET stage = excluded.stage, updated_at = excluded.updated_at`).bind(title, stage, now).run();
+  // An order the vendor is still making can be given as cases only: units =
+  // cases × units per case (✏️ case qty → SKU Mgr → vendor sheet carton).
+  // A line with no case size is NOT guessed — it's sent back as not counted.
+  const caseQtyOf = {}, noCaseQty = [], fromCases = [];
+  if (title) {
+    const need = [...new Set(rows.filter(r => !(num(r.qty) > 0) && num(r.cases) > 0).map(r => reorderCleanPart(r.part)).filter(Boolean))];
+    if (need.length) {
+      const alias = {}; ((await env.DB.prepare('SELECT raw, part FROM reorder_alias').all()).results || []).forEach(a => { alias[String(a.raw).toUpperCase()] = String(a.part).toUpperCase(); });
+      for (const k of need) {
+        const real = alias[k] || k;
+        const fx = await env.DB.prepare('SELECT case_qty FROM reorder_fix WHERE part = ?').bind(real).first();
+        let cq = fx && parseFloat(fx.case_qty) > 0 ? parseFloat(fx.case_qty) : 0;
+        if (!cq) { const m = await d1First(env, 'SELECT MAX(units_per_case) AS u FROM master_list WHERE UPPER(part_num) = ?', [real]); cq = m && parseFloat(m.u) > 0 ? parseFloat(m.u) : 0; }
+        if (!cq) { const c = await env.DB.prepare('SELECT MAX(case_pcs) AS p FROM reorder_vendor_catalog WHERE part = ?').bind(real).first();
+          if (c && parseFloat(c.p) > 0) cq = Math.max(1, Math.round(parseFloat(c.p) / reorderExtractPackSize(real))); }
+        caseQtyOf[k] = cq;
+      }
+    }
+  }
   const stmts = [];
   let kept = 0;
   for (const r of rows) {
     const part = reorderCleanPart(r.part);
     if (!part || /^[.=]/.test(part)) continue;
     kept++;
-    const q = parseFloat(String(r.qty == null ? '' : r.qty).replace(/,/g, ''));
+    let q = num(r.qty);
+    if (title && !(q > 0) && num(r.cases) > 0) {
+      const cq = caseQtyOf[part] || 0;
+      if (cq > 0) { q = num(r.cases) * cq; fromCases.push({ part, cases: num(r.cases), caseQty: cq, units: q }); }
+      else noCaseQty.push({ part, cases: num(r.cases), row: t(r.src_rows || r.row) });
+    }
     if (title && q > 0) {
       incParts++; incUnits += q;
-      const cs = parseFloat(String(r.cases == null ? '' : r.cases).replace(/,/g, ''));
+      const cs = num(r.cases);
       stmts.push(env.DB.prepare(`INSERT INTO reorder_incoming (title, part, qty, vendor, updated_at, raw_part, src_rows, cases) VALUES (?,?,?,?,?,?,?,?)
         ON CONFLICT(title, part) DO UPDATE SET qty = excluded.qty, vendor = excluded.vendor, updated_at = excluded.updated_at,
         raw_part = excluded.raw_part, src_rows = excluded.src_rows, cases = excluded.cases`)
         .bind(title, part, q, vendor, now, t(r.raw || r.part), t(r.src_rows), Number.isFinite(cs) ? cs : null));
     }
+    // A container's packing list only adds part #s the vendor sheet doesn't
+    // have yet — it never overwrites descriptions / UPCs from info sheets.
+    if (stage === 'shipped') { stmts.push(env.DB.prepare(`INSERT INTO reorder_vendor_catalog (vendor, part, item_no, description, case_pcs, raw_part, updated_at)
+      VALUES (?,?,?,?,?,?,?) ON CONFLICT(vendor, part) DO NOTHING`).bind(vendor, part, t(r.item_no), t(r.description), n(r.case_pcs), t(r.part), now)); continue; }
     stmts.push(env.DB.prepare(`INSERT INTO reorder_vendor_catalog (vendor, part, item_no, description, outside_upc, inside_upc, asin, inner_pcs, case_pcs, raw_part, updated_at)
       VALUES (?,?,?,?,?,?,?,?,?,?,?) ON CONFLICT(vendor, part) DO UPDATE SET
       item_no = COALESCE(NULLIF(excluded.item_no,''), item_no), description = COALESCE(NULLIF(excluded.description,''), description),
@@ -1054,10 +1107,94 @@ async function reorderCatalogImport(request, env, session) {
   if (title) {
     const it = await env.DB.prepare('SELECT COUNT(*) AS n, SUM(qty) AS u FROM reorder_incoming WHERE title = ?').bind(title).first() || {};
     if (b.last) await reorderLog(env, _roWho(session), 'incoming', title, `On the way "${title}" (${vendor}${b.file ? ', ' + String(b.file).slice(0, 80) : ''}): now ${it.n || 0} part #s, ${Math.round(it.u || 0)} units`);
-    return _roResp({ ok: true, vendor, title, saved: kept, incoming: incParts, incomingParts: it.n || 0, incomingUnits: Math.round(it.u || 0), total: c ? c.n : kept });
+    return _roResp({ ok: true, vendor, title, stage, saved: kept, incoming: incParts, incomingUnitsSent: incUnits, incomingParts: it.n || 0, incomingUnits: Math.round(it.u || 0), total: c ? c.n : kept, noCaseQty, fromCases });
   }
   if (b.last) await reorderLog(env, _roWho(session), 'import', '', `Imported vendor sheet ${vendor}${b.file ? ' (' + String(b.file).slice(0, 80) + ')' : ''}: ${c ? c.n : kept} part #s`);
   return _roResp({ ok: true, vendor, saved: kept, total: c ? c.n : kept });
+}
+
+// POST /reorder/fix/pallets { title, vendor, file, lines:[{ pallet, po, part, raw, description, cases, pcs, units, pcsPerCtn, row }] }
+// A shipped container's packing list: which pallet each box is on. The
+// whole file in one request. Same pallet + part # again = updated (its id —
+// and the boxes already moved off it — stay); a line no longer in the file
+// is removed unless boxes were already moved off it (then kept, reported).
+async function reorderSavePallets(request, env, session) {
+  await reorderFixTables(env);
+  const b = await request.json().catch(() => ({}));
+  const title = String(b.title || '').trim().slice(0, 60), vendor = reorderVendorName(String(b.vendor || '').trim()).slice(0, 40);
+  if (!title || !vendor) return _roResp({ ok: false, error: 'Title and vendor required' }, 400);
+  const lines = (Array.isArray(b.lines) ? b.lines : []).slice(0, 5000);
+  if (!lines.length) return _roResp({ ok: false, error: 'No pallet lines' }, 400);
+  const now = new Date().toISOString(), t = (v, n) => String(v == null ? '' : v).trim().slice(0, n || 200), f = v => { const x = parseFloat(v); return Number.isFinite(x) ? x : null; };
+  const keep = new Set(), stmts = [];
+  for (const l of lines) {
+    const pallet = t(l.pallet, 80), part = reorderCleanPart(l.part), cases = f(l.cases);
+    if (!pallet || !part || !(cases > 0)) continue;
+    keep.add(pallet + '|' + part);
+    stmts.push(env.DB.prepare(`INSERT INTO reorder_pallet (title, vendor, file, pallet, po, part, raw_part, description, cases, pcs, units, pcs_per_ctn, src_row, updated_at)
+      VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?) ON CONFLICT(title, vendor, pallet, part) DO UPDATE SET file = excluded.file, po = excluded.po,
+      raw_part = excluded.raw_part, description = excluded.description, cases = excluded.cases, pcs = excluded.pcs, units = excluded.units,
+      pcs_per_ctn = excluded.pcs_per_ctn, src_row = excluded.src_row, updated_at = excluded.updated_at`)
+      .bind(title, vendor, t(b.file, 120), pallet, t(l.po, 60), part, t(l.raw || l.part, 80), t(l.description, 200), cases, f(l.pcs), f(l.units), f(l.pcsPerCtn), t(l.row, 40), now));
+  }
+  for (let i = 0; i < stmts.length; i += 50) await env.DB.batch(stmts.slice(i, i + 50));
+  const old = (await env.DB.prepare(`SELECT p.id, p.pallet, p.part, (SELECT COUNT(*) FROM pallet_move m WHERE m.pallet_id = p.id) AS moves
+    FROM reorder_pallet p WHERE p.title = ? AND p.vendor = ?`).bind(title, vendor).all()).results || [];
+  const keptWithMoves = [];
+  for (const o of old) {
+    if (keep.has(o.pallet + '|' + o.part)) continue;
+    if (o.moves > 0) { keptWithMoves.push(o.pallet + ' ' + o.part); continue; }
+    await env.DB.prepare('DELETE FROM reorder_pallet WHERE id = ?').bind(o.id).run();
+  }
+  // The container's on-the-way line for each part # = all its pallets
+  // (every vendor in this container) — so on the way and pallets always match.
+  const parts = [...new Set(lines.map(l => reorderCleanPart(l.part)).filter(Boolean))];
+  for (const part of parts) {
+    const sm = await env.DB.prepare('SELECT SUM(units) AS u, SUM(cases) AS c FROM reorder_pallet WHERE title = ? AND part = ?').bind(title, part).first();
+    if (sm && sm.u > 0) await env.DB.prepare('UPDATE reorder_incoming SET qty = ?, cases = ? WHERE title = ? AND part = ?').bind(sm.u, sm.c, title, part).run();
+  }
+  const tot = await env.DB.prepare('SELECT COUNT(*) AS lines, COUNT(DISTINCT pallet) AS pallets, SUM(cases) AS cases, SUM(pcs) AS pcs, SUM(units) AS units FROM reorder_pallet WHERE title = ? AND vendor = ?').bind(title, vendor).first() || {};
+  await reorderLog(env, _roWho(session), 'pallets', title, `Pallets for "${title}" (${vendor}${b.file ? ', ' + t(b.file, 80) : ''}): ${tot.pallets || 0} pallets, ${tot.cases || 0} boxes, ${tot.pcs || 0} pcs`
+    + (keptWithMoves.length ? ` · kept (boxes already moved): ${keptWithMoves.join(', ')}` : ''));
+  return _roResp({ ok: true, title, vendor, lines: tot.lines || 0, pallets: tot.pallets || 0, cases: tot.cases || 0, pcs: tot.pcs || 0, units: tot.units || 0, keptWithMoves });
+}
+
+// POST /reorder/fix/incoming-take { from, to } — a shipped container (`to`)
+// was made for an order still listed as being made (`from`): the shipped
+// units come off that order, part # by part #, so they're on the way once.
+// Safe to repeat (it remembers what it already took): order 100, container
+// 60 → order 40 + container 60 = 100, same total as before.
+async function reorderIncomingTake(request, env, session) {
+  await reorderFixTables(env);
+  const b = await request.json().catch(() => ({}));
+  const from = String(b.from || '').trim(), to = String(b.to || '').trim();
+  if (!from || !to || from === to) return _roResp({ ok: false, error: 'Pick the order this container was made for' }, 400);
+  const rowsOf = async title => { const m = {}; ((await env.DB.prepare('SELECT part, qty, vendor FROM reorder_incoming WHERE title = ?').bind(title).all()).results || []).forEach(r => { m[r.part] = r; }); return m; };
+  const F = await rowsOf(from), T = await rowsOf(to), prev = {};
+  ((await env.DB.prepare('SELECT part, units FROM reorder_take WHERE from_title = ? AND to_title = ?').bind(from, to).all()).results || []).forEach(r => { prev[r.part] = r.units; });
+  const sum = m => Object.values(m).reduce((a, r) => a + (r.qty || 0), 0);
+  const fromBefore = sum(F), toTotal = sum(T), now = new Date().toISOString();
+  const lines = [], notOnOrder = [];
+  let moved = 0;
+  for (const part of Object.keys(T)) {
+    const shipped = T[part].qty || 0, already = prev[part] || 0, fromNow = F[part] ? F[part].qty || 0 : 0;
+    const target = Math.min(fromNow + already, shipped), delta = target - already;
+    if (shipped > target) notOnOrder.push({ part, shipped, fromOrder: target });
+    if (Math.abs(delta) < 1e-9) continue;
+    const left = fromNow - delta;
+    if (left <= 1e-9) await env.DB.prepare('DELETE FROM reorder_incoming WHERE title = ? AND part = ?').bind(from, part).run();
+    else if (F[part]) await env.DB.prepare('UPDATE reorder_incoming SET qty = ?, updated_at = ? WHERE title = ? AND part = ?').bind(left, now, from, part).run();
+    else await env.DB.prepare('INSERT INTO reorder_incoming (title, part, qty, vendor, updated_at) VALUES (?,?,?,?,?)').bind(from, part, left, T[part].vendor || '', now).run();
+    if (target > 0) await env.DB.prepare(`INSERT INTO reorder_take (from_title, to_title, part, units) VALUES (?,?,?,?)
+      ON CONFLICT(from_title, to_title, part) DO UPDATE SET units = excluded.units`).bind(from, to, part, target).run();
+    else await env.DB.prepare('DELETE FROM reorder_take WHERE from_title = ? AND to_title = ? AND part = ?').bind(from, to, part).run();
+    moved += delta; lines.push({ part, took: delta, orderLeft: Math.max(0, left) });
+  }
+  const fromAfter = sum(await rowsOf(from));
+  const ok = Math.abs(fromBefore - moved - fromAfter) < 1e-6;
+  await reorderLog(env, _roWho(session), 'take', to, `"${to}" shipped from order "${from}": ${Math.round(moved)} units taken off the order (order ${Math.round(fromBefore)} → ${Math.round(fromAfter)}; container ${Math.round(toTotal)})`
+    + (notOnOrder.length ? ` · shipped more than ordered / not on the order: ${notOnOrder.map(x => x.part).join(', ')}` : '') + (ok ? '' : ' · ⚠ TOTALS DO NOT MATCH'));
+  return _roResp({ ok, error: ok ? undefined : 'Totals do not match — check History', from, to, fromBefore, fromAfter, toTotal, taken: moved, lines, notOnOrder });
 }
 
 // POST { raws:[…], part, fields:{description, outside_upc, inside_upc, vendor, asin, case_qty} }
@@ -1187,8 +1324,10 @@ async function reorderVendorOrder(env, url) {
   (await all('SELECT part, vendor, updated_at FROM reorder_incoming')).forEach(r => setLast(r.part, r.vendor, r.updated_at));
   (await all('SELECT part, vendor, at FROM reorder_last_vendor')).forEach(r => setLast(r.part, r.vendor, r.at));
   const incUnitsOf = k => Object.values(incoming[k] || {}).reduce((a, x) => a + x, 0);
+  const stageOf = {}; (await all('SELECT title, stage FROM reorder_title')).forEach(r => { stageOf[r.title] = r.stage; });
+  const palletsOf = {}; (await all('SELECT title, COUNT(DISTINCT vendor || \'|\' || pallet) AS n FROM reorder_pallet GROUP BY title')).forEach(r => { palletsOf[r.title] = r.n; });
   const incomingTitles = (await all('SELECT title, COUNT(*) AS parts, SUM(qty) AS units, MAX(vendor) AS vendor, MAX(updated_at) AS at FROM reorder_incoming GROUP BY title ORDER BY MIN(updated_at)'))
-    .map(t => ({ ...t, vendor: reorderVendorName(t.vendor) }));
+    .map(t => ({ ...t, vendor: reorderVendorName(t.vendor), stage: stageOf[t.title] || '', pallets: palletsOf[t.title] || 0 }));
 
   const fba = await all('SELECT sku, asin, available, product_name FROM fba_catalog');
   const sales = {}; // exact SKU → { amz, other } in units (listing orders)
@@ -2786,6 +2925,67 @@ async function inventoryVerifyInner(request, env) {
 // POST /inventory/transfer
 // Logs a transfer as two linked Inventory_Log rows (TRANSFER_OUT + TRANSFER_IN), both Pending.
 // Col P = TransferId links the pair. Col Q = PairedLocation (destination on OUT row, source on IN row).
+// ── 🚢 Container here (Inventory → Transfer) ─────────────────────────────
+// Boxes moved off a pallet line = its pallet_move rows whose transfer wasn't
+// rejected in Review (the OUT log row's status), so counts follow the real
+// transfers.
+const _PALLET_MOVED_SQL = `SELECT m.pallet_id, SUM(m.cases) AS moved FROM pallet_move m LEFT JOIN inventory_log l ON l.id = m.out_log_id
+  WHERE COALESCE(l.status, '') != 'Rejected'`;
+async function palletLineLeft(env, id) {
+  const p = await env.DB.prepare('SELECT id, title, vendor, pallet, part, cases FROM reorder_pallet WHERE id = ?').bind(id).first();
+  if (!p) return null;
+  const m = await env.DB.prepare(_PALLET_MOVED_SQL + ' AND m.pallet_id = ? GROUP BY m.pallet_id').bind(id).first();
+  const moved = m ? m.moved || 0 : 0;
+  return { ...p, moved, left: Math.max(0, (p.cases || 0) - moved) };
+}
+async function inventoryContainers(env) {
+  await reorderFixTables(env);
+  const rows = (await env.DB.prepare(`SELECT title, GROUP_CONCAT(DISTINCT vendor) AS vendors, COUNT(DISTINCT vendor || '|' || pallet) AS pallets,
+    COUNT(*) AS lines, SUM(cases) AS cases, MAX(updated_at) AS at FROM reorder_pallet GROUP BY title ORDER BY at DESC`).all()).results || [];
+  const moved = {}; ((await env.DB.prepare(`SELECT p.title, SUM(x.moved) AS moved FROM (${_PALLET_MOVED_SQL} GROUP BY m.pallet_id) x
+    JOIN reorder_pallet p ON p.id = x.pallet_id GROUP BY p.title`).all()).results || []).forEach(r => { moved[r.title] = r.moved || 0; });
+  const onWay = {}; ((await env.DB.prepare('SELECT title, COUNT(*) AS n FROM reorder_incoming GROUP BY title').all()).results || []).forEach(r => { onWay[r.title] = r.n; });
+  return cors(new Response(JSON.stringify({ ok: true, containers: rows.map(r => ({ ...r, moved: moved[r.title] || 0, notStockedIn: onWay[r.title] || 0 })) }), { headers: { 'Content-Type': 'application/json' } }));
+}
+// GET /inventory/containers/pallets?title=&q= — pallet lines of a container
+// (or of every container matching q: container name, pallet #, PO, part #,
+// item name), with boxes moved / left and where that part # is in stock.
+async function inventoryContainerPallets(url, env) {
+  await reorderFixTables(env);
+  const title = (url.searchParams.get('title') || '').trim(), q = (url.searchParams.get('q') || '').trim().toUpperCase();
+  const where = [], args = [];
+  if (title) { where.push('p.title = ?'); args.push(title); }
+  if (q) {
+    const like = '%' + q + '%';
+    where.push(`(UPPER(p.title) LIKE ? OR UPPER(p.pallet) LIKE ? OR UPPER(COALESCE(p.po,'')) LIKE ? OR UPPER(p.part) LIKE ? OR UPPER(COALESCE(p.raw_part,'')) LIKE ? OR UPPER(COALESCE(p.description,'')) LIKE ?)`);
+    args.push(like, like, like, like, like, like);
+  }
+  if (!where.length) return cors(new Response(JSON.stringify({ ok: false, error: 'Pick a container or type something to search' }), { status: 400, headers: { 'Content-Type': 'application/json' } }));
+  const rows = (await env.DB.prepare(`SELECT p.* FROM reorder_pallet p WHERE ${where.join(' AND ')} ORDER BY p.title, p.vendor, p.id LIMIT 2000`).bind(...args).all()).results || [];
+  const moved = {};
+  if (rows.length) {
+    const ids = rows.map(r => r.id);
+    for (let i = 0; i < ids.length; i += 90) {
+      const chunk = ids.slice(i, i + 90);
+      ((await env.DB.prepare(_PALLET_MOVED_SQL + ` AND m.pallet_id IN (${chunk.map(() => '?').join(',')}) GROUP BY m.pallet_id`).bind(...chunk).all()).results || [])
+        .forEach(m => { moved[m.pallet_id] = m.moved || 0; });
+    }
+  }
+  // Part # as SKU Mgr knows it (part # corrections on the Reorder page), and where it's in stock.
+  const alias = {}; ((await env.DB.prepare('SELECT raw, part FROM reorder_alias').all()).results || []).forEach(a => { alias[String(a.raw).toUpperCase()] = String(a.part).toUpperCase(); });
+  const real = p => alias[p] || p;
+  const parts = [...new Set(rows.map(r => real(r.part)))], stock = {};
+  for (let i = 0; i < parts.length; i += 90) {
+    const chunk = parts.slice(i, i + 90);
+    (await d1All(env, `SELECT UPPER(part_num) AS p, location, cases FROM master_list WHERE UPPER(part_num) IN (${chunk.map(() => '?').join(',')}) AND cases > 0`, chunk))
+      .forEach(r => { (stock[r.p] = stock[r.p] || []).push({ location: r.location, cases: r.cases }); });
+  }
+  const lines = rows.map(r => { const mv = moved[r.id] || 0, pn = real(r.part);
+    return { id: r.id, title: r.title, vendor: r.vendor, pallet: r.pallet, po: r.po || '', part: pn, filePart: r.part !== pn ? r.part : '', description: r.description || '',
+      cases: r.cases, pcs: r.pcs, units: r.units, pcsPerCtn: r.pcs_per_ctn, moved: mv, left: Math.max(0, (r.cases || 0) - mv), over: Math.max(0, mv - (r.cases || 0)), stock: stock[pn] || [] }; });
+  return cors(new Response(JSON.stringify({ ok: true, lines, truncated: rows.length >= 2000 }), { headers: { 'Content-Type': 'application/json' } }));
+}
+
 async function inventoryTransferLog(request, env) {
   try {
     const body = await request.json().catch(() => ({}));
@@ -2800,6 +3000,16 @@ async function inventoryTransferLog(request, env) {
 
     if (!partNum || !fromLocation || !toLocation || !cases) {
       return cors(new Response(JSON.stringify({ error: 'Missing required fields' }), { status: 400, headers: { 'Content-Type': 'application/json' } }));
+    }
+    // Boxes taken off a container pallet (🚢 Container here): never more
+    // than are left on that pallet line, so pallet counts always add up.
+    const palletLineId = parseInt(body.palletLineId, 10) || 0;
+    if (palletLineId) {
+      await reorderFixTables(env);
+      const pl = await palletLineLeft(env, palletLineId);
+      if (!pl) return cors(new Response(JSON.stringify({ ok: false, error: 'That pallet line no longer exists — reopen 🚢 Container here' }), { status: 400, headers: { 'Content-Type': 'application/json' } }));
+      if ((parseFloat(cases) || 0) > pl.left + 1e-9) return cors(new Response(JSON.stringify({ ok: false,
+        error: `Pallet ${pl.pallet} only has ${pl.left} box(es) of ${pl.part} left (${pl.cases} on the pallet, ${pl.moved} already moved)` }), { status: 400, headers: { 'Content-Type': 'application/json' } }));
     }
 
     // Use the actual Grabbed moment (or Added, if never confirmed) as this
@@ -2931,7 +3141,16 @@ async function inventoryTransferLog(request, env) {
       }
     } catch(e) { console.error('[auto-approve] transfer threw:', e.message); }
 
-    const transferLogResponseBody = { ok: true, transferId, outD1Id, inD1Id, autoApproved };
+    let palletRecorded = null;
+    if (palletLineId) {
+      palletRecorded = false;
+      try {
+        await env.DB.prepare('INSERT INTO pallet_move (pallet_id, cases, to_location, out_log_id, transfer_id, by_user, at) VALUES (?,?,?,?,?,?,?)')
+          .bind(palletLineId, parseFloat(cases) || 0, String(toLocation).slice(0, 40), outD1Id || null, transferId, String(initials || '').slice(0, 40), new Date().toISOString()).run();
+        palletRecorded = true;
+      } catch (e) { console.error('[pallet_move] insert failed:', e.message); }
+    }
+    const transferLogResponseBody = { ok: true, transferId, outD1Id, inD1Id, autoApproved, palletRecorded };
     if (_requestId) await recordRequestResult(env, _requestId, transferLogResponseBody);
     return cors(new Response(JSON.stringify(transferLogResponseBody), { headers: { 'Content-Type': 'application/json' } }));
   } catch (err) {
@@ -4284,6 +4503,14 @@ export default {
         return _roResp({ ok: true, aliases, fixes });
       }
       if (url.pathname === '/reorder/fix/batch' && method === 'POST') return await reorderSaveFixBatch(request, env, roCs || session);
+      if (url.pathname === '/reorder/fix/pallets' && method === 'POST') return await reorderSavePallets(request, env, roCs || session);
+      if (url.pathname === '/reorder/fix/incoming-take' && method === 'POST') return await reorderIncomingTake(request, env, roCs || session);
+      if (url.pathname === '/reorder/fix/titles' && method === 'GET') {
+        await reorderFixTables(env);
+        const rows = (await env.DB.prepare('SELECT title, stage FROM reorder_title').all()).results || [];
+        const pal = (await env.DB.prepare('SELECT title, COUNT(DISTINCT vendor || \'|\' || pallet) AS pallets, SUM(cases) AS cases FROM reorder_pallet GROUP BY title').all()).results || [];
+        return _roResp({ ok: true, titles: rows, pallets: pal });
+      }
       if (url.pathname === '/reorder/fix/last-vendor' && method === 'POST') {
         // { items: [{ part, vendor }] } — the rows of a downloaded vendor order.
         await reorderFixTables(env);
@@ -4357,6 +4584,8 @@ export default {
       if (path.startsWith('/inventory/pull/')) return await inventoryPullRoute(path, method, request, env);
       if (path === '/inventory/product/save' && method === 'POST') return await warehouseProductSave(request, env, session);
       if (path === '/inventory/transfer' && method === 'POST') return await inventoryTransferLog(request, env);
+      if (path === '/inventory/containers' && method === 'GET') return await inventoryContainers(env);
+      if (path === '/inventory/containers/pallets' && method === 'GET') return await inventoryContainerPallets(url, env);
       // receive-preview / receive-apply moved up to the credential-based
       // check earlier in the router (ReceivePO no longer sends the old
       // PIN session token at all) - this block would never be reached
