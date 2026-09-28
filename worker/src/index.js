@@ -1187,6 +1187,48 @@ async function reorderSavePallets(request, env, session) {
   return _roResp({ ok: true, title, vendor, lines: tot.lines || 0, pallets: tot.pallets || 0, cases: tot.cases || 0, pcs: tot.pcs || 0, units: tot.units || 0, keptWithMoves });
 }
 
+// POST /reorder/fix/weights { title, file, items: [{ base, lb, from }] } —
+// weight of one piece (lb), from a container's packing list (G.W. kg ÷
+// pieces × 2.20462). Written to the Products sheet (column E) and its D1
+// copy ONLY for products with no weight yet; an existing weight is kept.
+async function reorderFillWeights(request, env, session) {
+  await reorderFixTables(env);
+  const b = await request.json().catch(() => ({}));
+  const items = (Array.isArray(b.items) ? b.items : []).slice(0, 3000)
+    .map(x => ({ base: String((x && x.base) || '').trim().toUpperCase(), lb: Math.round((parseFloat(x && x.lb) || 0) * 10000) / 10000, from: String((x && x.from) || '').slice(0, 120) }))
+    .filter(x => x.base && x.lb > 0);
+  if (!items.length) return _roResp({ ok: true, filled: [], kept: [], noProduct: [] });
+  const data = await invSheetGet(env, 'Products!A1:E5000');
+  if (data.error) return _roResp({ ok: false, error: 'Products sheet: ' + (data.error.message || 'read failed') }, 500);
+  const rows = data.values || [], rowOf = {};
+  for (let i = 1; i < rows.length; i++) { const k = String((rows[i] || [])[1] || '').trim().toUpperCase(); if (k && !(k in rowOf)) rowOf[k] = i; }
+  const filled = [], kept = [], noProduct = [], updates = [];
+  for (const it of items) {
+    const i = rowOf[it.base];
+    if (i == null) { noProduct.push(it); continue; }
+    const have = parseFloat((rows[i] || [])[4]);
+    if (have > 0) { kept.push({ ...it, have }); continue; }
+    updates.push({ range: `Products!E${i + 1}`, values: [[it.lb]] });
+    filled.push(it);
+  }
+  if (updates.length) {
+    const token = await getToken(env);
+    const resp = await fetch(`${SHEETS_URL}/${env.SHEET_ID}/values:batchUpdate`, { method: 'POST',
+      headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' }, body: JSON.stringify({ valueInputOption: 'RAW', data: updates }) });
+    if (!resp.ok) { const r = await resp.json().catch(() => ({})); return _roResp({ ok: false, error: 'Products sheet: ' + ((r.error && r.error.message) || 'write failed') }, 500); }
+    for (const it of filled) await env.DB.prepare('UPDATE products SET weight = ?, updated_at = ? WHERE UPPER(sku) = ? AND (weight IS NULL OR weight = 0)')
+      .bind(it.lb, new Date().toISOString(), it.base).run().catch(() => {});
+    try {
+      await env.DB.prepare(`CREATE TABLE IF NOT EXISTS product_edit_log (id INTEGER PRIMARY KEY AUTOINCREMENT, ts TEXT, by_user TEXT, action TEXT, sku TEXT, detail TEXT)`).run();
+      const who = _roWho(session), ts = new Date().toISOString();
+      for (const it of filled) await env.DB.prepare('INSERT INTO product_edit_log (ts, by_user, action, sku, detail) VALUES (?,?,?,?,?)')
+        .bind(ts, who, 'edit', it.base, `weight: — → ${it.lb} lb (from "${String(b.title || '').slice(0, 60)}" packing list: ${it.from})`).run();
+    } catch (_) {}
+  }
+  await reorderLog(env, _roWho(session), 'weights', String(b.title || ''), `Weight each (lb) from "${String(b.title || '')}" packing list: ${filled.length} filled, ${kept.length} kept (had a weight), ${noProduct.length} not in Products`);
+  return _roResp({ ok: true, filled, kept, noProduct });
+}
+
 // POST /reorder/fix/incoming-take { from, to } — a shipped container (`to`)
 // was made for an order still listed as being made (`from`): the shipped
 // units come off that order, part # by part #, so they're on the way once.
@@ -4803,6 +4845,7 @@ const _app = {
       if (url.pathname === '/reorder/fix/batch' && method === 'POST') return await reorderSaveFixBatch(request, env, roCs || session);
       if (url.pathname === '/reorder/fix/pallets' && method === 'POST') return await reorderSavePallets(request, env, roCs || session);
       if (url.pathname === '/reorder/fix/incoming-take' && method === 'POST') return await reorderIncomingTake(request, env, roCs || session);
+      if (url.pathname === '/reorder/fix/weights' && method === 'POST') return await reorderFillWeights(request, env, roCs || session);
       if (url.pathname === '/reorder/fix/titles' && method === 'GET') {
         await reorderFixTables(env);
         const rows = (await env.DB.prepare('SELECT title, stage FROM reorder_title').all()).results || [];
