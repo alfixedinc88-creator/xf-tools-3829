@@ -897,6 +897,8 @@ window.invCredLogin = async function() {
   <div class="icard">
     <div class="icard-label">SKU Manager</div>
     <div style="font-size:12px;color:var(--text3);margin-bottom:10px">Search by base SKU to view and edit all variants. Management PIN required.</div>
+    <!-- 💰 Owner only (server-checked): total inventory value at vendor price -->
+    <div id="skumgr-value" style="display:none;margin-bottom:10px;padding:10px 12px;border:1.5px solid var(--green);border-radius:10px;background:var(--bg2);font-size:13px"></div>
 
     <!-- Search mode toggle -->
     <div style="display:flex;gap:6px;margin-bottom:8px">
@@ -1387,7 +1389,7 @@ window.invCredLogin = async function() {
       return;
     }
     if (tab === "history") { histLoad(); histLoadReport(); }
-    if (tab === "skumgr") { skumgrAutoLoad(); }
+    if (tab === "skumgr") { skumgrAutoLoad(); skumgrLoadCost(); skumgrLoadValue(); }
     if (tab === "soldout" && typeof soLoadLog === 'function') { soLoadLog(); if (typeof lwLoad === 'function') lwLoad(); setTimeout(function(){ var q = g('so-q'); if (q) q.focus(); }, 50); }
   };
 
@@ -5562,6 +5564,54 @@ window.invCredLogin = async function() {
       });
   };
 
+  // ── 💲 Price batches ────────────────────────────────────────────────────
+  // A spot can hold stock bought at different prices (old stock + a new
+  // container). Stock Out / In / Transfer / Audit only see the total; here
+  // the cases are split by price (per piece). Oldest price is used up first.
+  var _skumgrCost = {};
+  function skumgrCostKey(part, loc) { return String(part || '').trim().toUpperCase() + '|' + String(loc || '').trim().toUpperCase(); }
+  function skumgrBatchLabel(l) {
+    if (l.receivedAt === '0000-00-00') return 'before price tracking';
+    var d = String(l.receivedAt || '').slice(0, 10);
+    if (l.source === 'received') return 'received' + (l.title ? ' ' + l.title : '') + ' ' + d;
+    return 'added ' + d;
+  }
+  window.skumgrLoadCost = function() {
+    wFetch(W + '/inventory/cost/spots').then(function(r) { return r.json(); }).then(function(d) {
+      if (!d || !d.ok) return;
+      _skumgrCost = {}; d.spots.forEach(function(sp) { _skumgrCost[skumgrCostKey(sp.part, sp.location)] = sp.layers; });
+      if (_skumgrRows && _skumgrRows.length && typeof skumgrApplySortAndRender === 'function') skumgrApplySortAndRender();
+    }).catch(function() {});
+  };
+  function skumgrCostHtml(row) {
+    var ls = _skumgrCost[skumgrCostKey(row.part_num, row.location)];
+    if (!ls || !ls.length) return '';
+    var rp = parseFloat(row.price) || 0;
+    if (ls.length === 1 && ls[0].price != null && Math.abs(ls[0].price - rp) < 1e-6) return '';
+    return '<div style="font-size:10px;font-weight:400;line-height:1.35;margin-top:2px;white-space:nowrap" title="Oldest first — the oldest price is used up first">' + ls.map(function(l) {
+      return '<div title="' + skumgrBatchLabel(l).replace(/"/g, '&quot;') + '">' + (Math.round(l.cases * 100) / 100) + ' cs @ '
+        + (l.price != null ? '$' + (+l.price).toFixed(3) : '<b style="color:var(--red)">no price</b>')
+        + ' <span style="color:var(--text3)">· ' + (l.receivedAt === '0000-00-00' ? 'before tracking' : l.source === 'received' ? (l.title || 'received') : 'added ' + String(l.receivedAt || '').slice(5, 10)) + '</span></div>';
+    }).join('') + '</div>';
+  }
+  // 💰 Owner only — the server refuses anyone else.
+  window.skumgrLoadValue = function() {
+    var box = g('skumgr-value'); if (!box) return;
+    var isOwner = !!(INV_CRED_USER && INV_CRED_USER.roles && INV_CRED_USER.roles.indexOf('owner') >= 0);
+    if (!isOwner) { box.style.display = 'none'; box.innerHTML = ''; return; }
+    box.style.display = 'block'; box.innerHTML = '💰 Inventory value — calculating…';
+    wFetch(W + '/inventory/cost/value').then(function(r) { return r.json(); }).then(function(d) {
+      if (!d || !d.ok) { box.innerHTML = '💰 Inventory value — ' + ((d && d.error) || 'failed'); return; }
+      var money = function(v) { return '$' + (+v).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 }); };
+      box.innerHTML = '<div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap"><b>💰 Total inventory value (vendor price): <span style="font-size:17px;color:var(--green)">' + money(d.value) + '</span></b>'
+        + '<span style="color:var(--text3);font-size:12px">' + (+d.pieces).toLocaleString() + ' pieces · ' + (+d.cases).toLocaleString() + ' cases · ' + d.spots + ' spots · owner only</span>'
+        + '<span style="flex:1"></span><button onclick="skumgrLoadValue()" style="background:none;border:1px solid var(--border);border-radius:6px;padding:3px 8px;font-size:11px;cursor:pointer">↻</button></div>'
+        + (d.byVendor.length ? '<div style="font-size:12px;margin-top:4px">' + d.byVendor.map(function(v) { return '<b>' + String(v.vendor).replace(/</g, '&lt;') + '</b> ' + money(v.value); }).join(' · ') + '</div>' : '')
+        + (d.noPrice.spots ? '<div style="font-size:12px;color:var(--red);margin-top:4px">Not in the total — no price: ' + d.noPrice.spots + ' spots (' + d.noPrice.cases + ' cases)<span title="' + d.noPrice.parts.join(', ').replace(/"/g, '&quot;') + '" style="text-decoration:underline dotted;cursor:help"> which?</span></div>' : '')
+        + (d.noEa.spots ? '<div style="font-size:12px;color:var(--red);margin-top:2px">Not in the total — no Ea/Case: ' + d.noEa.spots + ' spots (' + d.noEa.cases + ' cases)<span title="' + d.noEa.parts.join(', ').replace(/"/g, '&quot;') + '" style="text-decoration:underline dotted;cursor:help"> which?</span></div>' : '');
+    }).catch(function() { box.innerHTML = '💰 Inventory value — failed'; });
+  };
+
   window.skumgrSearch = function() {
     var q = ((g('skumgr-search-inp') && g('skumgr-search-inp').value) || '').trim().toUpperCase();
     if (!q) { invFlash('Enter a ' + (_skumgrMode === 'loc' ? 'location' : 'base SKU') + ' to search', 'error'); return; }
@@ -5702,7 +5752,7 @@ window.invCredLogin = async function() {
         + '<td style="' + td + 'font-family:var(--mono);font-weight:700;white-space:nowrap">' + (row.part_num||'') + '</td>'
         + '<td style="' + td + 'color:var(--text2);max-width:150px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">' + (row.name||'—') + '</td>'
         + '<td style="' + td + 'font-family:var(--mono);white-space:nowrap">' + (row.location||'—') + '</td>'
-        + '<td style="' + td + 'text-align:right;font-family:var(--mono);font-weight:700">' + (row.cases !== undefined && row.cases !== null ? row.cases : '—') + '</td>'
+        + '<td style="' + td + 'text-align:right;font-family:var(--mono);font-weight:700">' + (row.cases !== undefined && row.cases !== null ? row.cases : '—') + skumgrCostHtml(row) + '</td>'
         + '<td style="' + td + 'text-align:right;font-family:var(--mono);color:var(--text2)">' + (row.units_per_case||'—') + '</td>'
         + '<td style="' + td + 'text-align:right;font-family:var(--mono);color:var(--text2)">' + (row.price ? '$' + parseFloat(row.price).toFixed(2) : '—') + '</td>'
         + '<td style="' + td + 'color:var(--text2)">' + (row.vendor||'—') + '</td>'
@@ -6126,27 +6176,43 @@ window.invCredLogin = async function() {
   window.skumgrExportMasterList = function() {
     var status = g('skumgr-export-status');
     if (status) status.textContent = 'Loading…';
-    wFetch(W + '/inventory/master-list')
-      .then(function(r) { return r.json(); })
-      .then(function(d) {
+    var isOwner = !!(INV_CRED_USER && INV_CRED_USER.roles && INV_CRED_USER.roles.indexOf('owner') >= 0);
+    Promise.all([
+      wFetch(W + '/inventory/master-list').then(function(r) { return r.json(); }),
+      wFetch(W + '/inventory/cost/spots').then(function(r) { return r.json(); }).catch(function() { return { ok: false }; })
+    ]).then(function(res) {
+        var d = res[0], cost = {}, costOk = res[1] && res[1].ok;
+        if (costOk) res[1].spots.forEach(function(sp) { cost[skumgrCostKey(sp.part, sp.location)] = sp.layers; });
         var rows = (d && d.values) || [];
         if (!rows.length) { if (status) status.textContent = 'No data returned'; return; }
-        // Skip the raw Sheets-style header row (has blank spacer columns);
-        // write a clean header instead. Data rows keep the same column order.
-        var headers = ['SKU','Name','Part#','Location','Cases','Each Case Qty','Notes','Vendor','Price','Total'];
+        // One line per price batch: a spot with old + new price stock
+        // gives two lines (cases split, each at its own price). Value $ is
+        // the owner's only (pieces = cases × Ea/Case, × price per piece).
+        var headers = ['SKU','Name','Part#','Location','Cases','Each Case Qty','Notes','Vendor','Price (per piece)','Price batch'].concat(isOwner ? ['Value $'] : []);
         var csv = headers.map(function(h){ return '"' + h.replace(/"/g,'""') + '"'; }).join(',') + '\n';
-        var exportedCount = 0;
-        for (var i = 1; i < rows.length; i++) {
-          var r = rows[i];
-          // Source array layout: [ , , , SKU, Name, , Part#, Location, Cases, EachCaseQty, Notes, , Vendor, Price, Total ]
-          // BUGFIX: this used to always export every row regardless of the
-          // "In Stock Only" toggle up top — the export never checked it at
-          // all, so turning that filter on only affected what you could
-          // see on screen, not what actually got downloaded.
-          if (_skumgrInStockOnly && (parseFloat(r[8]) || 0) <= 0) continue;
-          var out = [r[3], r[4], r[6], r[7], r[8], r[9], r[10], r[12], r[13], r[14]];
+        var exportedCount = 0, spotRows = {}, split = 0, bad = [];
+        for (var i = 1; i < rows.length; i++) { var k = skumgrCostKey(rows[i][6], rows[i][7]); spotRows[k] = (spotRows[k] || 0) + 1; }
+        var line = function (r, cases, price, batch) {
+          var out = [r[3], r[4], r[6], r[7], cases, r[9], r[10], r[12], price, batch];
+          if (isOwner) out.push(price !== '' && price != null ? Math.round((parseFloat(cases) || 0) * (parseFloat(r[9]) || 0) * price * 100) / 100 : '');
           csv += out.map(function(v){ return '"' + String(v==null?'':v).replace(/"/g,'""') + '"'; }).join(',') + '\n';
           exportedCount++;
+        };
+        for (var i = 1; i < rows.length; i++) {
+          var r = rows[i];
+          if (_skumgrInStockOnly && (parseFloat(r[8]) || 0) <= 0) continue;
+          var ls = cost[skumgrCostKey(r[6], r[7])];
+          if (ls && ls.length && spotRows[skumgrCostKey(r[6], r[7])] === 1) {
+            // Batches must add up to this spot's cases — or the row is written whole.
+            var sum = ls.reduce(function(a, l) { return a + l.cases; }, 0);
+            if (Math.abs(sum - (parseFloat(r[8]) || 0)) < 1e-6) {
+              if (ls.length > 1) split++;
+              ls.forEach(function(l) { line(r, Math.round(l.cases * 1000) / 1000, l.price != null ? l.price : '', skumgrBatchLabel(l)); });
+              continue;
+            }
+            bad.push(r[6] + ' @ ' + r[7]);
+          }
+          line(r, r[8], r[13] || '', '');
         }
         var blob = new Blob([csv], { type: 'text/csv' });
         var url  = URL.createObjectURL(blob);
@@ -6154,7 +6220,8 @@ window.invCredLogin = async function() {
         var stamp = new Date().toISOString().slice(0,10);
         a.href = url; a.download = 'xfitting-master-list-' + (_skumgrInStockOnly ? 'in-stock-' : '') + stamp + '.csv'; a.click();
         URL.revokeObjectURL(url);
-        if (status) status.textContent = '✓ ' + exportedCount + ' rows exported' + (_skumgrInStockOnly ? ' (in stock only)' : '') + ' (source: ' + (d.source||'d1') + ')';
+        if (status) status.textContent = '✓ ' + exportedCount + ' lines exported' + (_skumgrInStockOnly ? ' (in stock only)' : '') + (split ? ' · ' + split + ' spot(s) split by price' : '')
+          + (costOk ? '' : ' · ⚠ price batches not loaded') + (bad.length ? ' · ⚠ batches did not add up (written whole): ' + bad.join(', ') : '') + ' (source: ' + (d.source||'d1') + ')';
       })
       .catch(function(e) { if (status) status.textContent = 'Error: ' + e.message; });
   };
