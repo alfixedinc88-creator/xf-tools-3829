@@ -9205,7 +9205,7 @@ window.invCredLogin = async function() {
       if (run !== soQtyRun) return; // a newer search / re-check took over
       var chunk = list.slice(s, s + 8);
       var d = await call('/inventory/soldout/qty', { method: 'POST',
-        body: { items: chunk.map(function (i) { var r = soRows[i]; return { platform: r.platform, listingId: r.listingId, sku: r.sku }; }) } });
+        body: { items: chunk.map(function (i) { var r = soRows[i]; return { platform: r.platform, listingId: r.listingId, sku: r.sku, title: r.title }; }) } });
       if (run !== soQtyRun) return;
       chunk.forEach(function (i, k) { soShowQty(i, d.ok === false ? { error: d.error || 'Could not read quantity' } : (d.results || [])[k]); });
     }

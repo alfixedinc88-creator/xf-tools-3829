@@ -22633,14 +22633,58 @@ async function _soWalmart(env, it, qty) {
   return { ok: r.ok, error: r.ok ? null : JSON.stringify(d.errors || d).slice(0, 300) };
 }
 
+// Find the Shopify variant(s) for a Sold Out row. Shopify's search can miss
+// an exact SKU (a product added minutes ago isn't searchable yet; "=" / "-"
+// in a SKU), so: exact SKU search, then the SKU without quotes, then the
+// product ID from the sheet, then the title. A product found whose SKU is
+// NOT this SKU is reported plainly (so "Now: ?" always says why).
+const _SO_SHOPIFY_VARIANT = `id sku title product { id title } inventoryItem { id
+  inventoryLevels(first: 10) { edges { node { location { id name } quantities(names: ["available"]) { name quantity } } } } }`;
+async function _soShopifyFind(env, it) {
+  const want = String(it.sku || '').trim().toUpperCase();
+  const same = v => String(v.sku || '').trim().toUpperCase() === want;
+  const seen = [];
+  const bySearch = async q => {
+    const d = await shopifyGraphQL(env, `query($q: String!) { productVariants(first: 20, query: $q) { edges { node { ${_SO_SHOPIFY_VARIANT} } } } }`, { q });
+    return ((d.productVariants && d.productVariants.edges) || []).map(e => e.node);
+  };
+  if (want) {
+    for (const q of [`sku:${JSON.stringify(it.sku)}`, `sku:${String(it.sku).trim()}`]) {
+      const vs = await bySearch(q).catch(() => []);
+      const hit = vs.filter(same); if (hit.length) return { variants: hit };
+      vs.forEach(v => seen.push(v));
+    }
+  }
+  // The product itself: by its ID on the ShopifySKU sheet, else by title.
+  const pid = String(it.listingId || '').trim();
+  let prods = [];
+  if (/^\d{6,}$/.test(pid) || /^gid:\/\/shopify\/Product\//.test(pid)) {
+    const d = await shopifyGraphQL(env, `query($id: ID!) { product(id: $id) { id title variants(first: 50) { edges { node { ${_SO_SHOPIFY_VARIANT} } } } } }`,
+      { id: pid.startsWith('gid:') ? pid : 'gid://shopify/Product/' + pid }).catch(() => ({}));
+    if (d.product) prods.push(d.product);
+  }
+  const title = String(it.title || (!/^\d+$/.test(pid) && pid !== it.sku ? pid : '') || '').trim();
+  if (!prods.length && title) {
+    const d = await shopifyGraphQL(env, `query($q: String!) { products(first: 5, query: $q) { edges { node { id title variants(first: 50) { edges { node { ${_SO_SHOPIFY_VARIANT} } } } } } } }`,
+      { q: `title:${JSON.stringify(title.slice(0, 120))}` }).catch(() => ({}));
+    prods = ((d.products && d.products.edges) || []).map(e => e.node);
+  }
+  const pv = prods.flatMap(p => ((p.variants && p.variants.edges) || []).map(e => ({ ...e.node, product: { id: p.id, title: p.title } })));
+  const hit = pv.filter(same); if (hit.length) return { variants: hit };
+  const near = [...seen, ...pv];
+  if (near.length) {
+    const t = near[0].product && near[0].product.title;
+    const skus = [...new Set(near.map(v => String(v.sku || '').trim() || '(blank)'))].slice(0, 5).join(', ');
+    return { variants: [], error: `Shopify has "${String(t || '').slice(0, 60)}" but its SKU is ${skus} — not ${it.sku}. Set the variant's SKU to ${it.sku} in Shopify (Products → the product → SKU).` };
+  }
+  return { variants: [], error: `Shopify has no product with SKU ${it.sku}${title ? ' or title "' + title.slice(0, 50) + '"' : ''}. If it was just added, wait a few minutes and ↻ re-check; else check the SKU on the Shopify product.` };
+}
+
 async function _soShopify(env, it, qty) {
   if (!it.sku) return { ok: false, error: 'No SKU on the ShopifySKU sheet row' };
-  const q = `query($q: String!) { productVariants(first: 10, query: $q) { edges { node { id sku inventoryItem { id
-    inventoryLevels(first: 10) { edges { node { location { id name } quantities(names: ["available"]) { name quantity } } } } } } } } }`;
-  const d = await shopifyGraphQL(env, q, { q: `sku:${JSON.stringify(it.sku)}` });
-  const variants = ((d.productVariants && d.productVariants.edges) || []).map(e => e.node)
-    .filter(v => String(v.sku || '').toUpperCase() === String(it.sku).toUpperCase());
-  if (!variants.length) return { ok: false, error: `No Shopify variant with SKU ${it.sku}` };
+  const f = await _soShopifyFind(env, it);
+  const variants = f.variants;
+  if (!variants.length) return { ok: false, error: f.error };
   const quantities = [];
   for (const v of variants) {
     const levels = ((v.inventoryItem && v.inventoryItem.inventoryLevels && v.inventoryItem.inventoryLevels.edges) || []).map(e => e.node);
@@ -22754,12 +22798,9 @@ async function _soQtyWalmart(env, it) {
 
 async function _soQtyShopify(env, it) {
   if (!it.sku) return { error: 'No SKU on the ShopifySKU sheet row' };
-  const q = `query($q: String!) { productVariants(first: 10, query: $q) { edges { node { sku inventoryItem {
-    inventoryLevels(first: 10) { edges { node { location { name } quantities(names: ["available"]) { name quantity } } } } } } } } }`;
-  const d = await shopifyGraphQL(env, q, { q: `sku:${JSON.stringify(it.sku)}` });
-  const variants = ((d.productVariants && d.productVariants.edges) || []).map(e => e.node)
-    .filter(v => String(v.sku || '').toUpperCase() === String(it.sku).toUpperCase());
-  if (!variants.length) return { error: `No Shopify variant with SKU ${it.sku}` };
+  const f = await _soShopifyFind(env, it);
+  const variants = f.variants;
+  if (!variants.length) return { error: f.error };
   const levels = [];
   variants.forEach(v => ((v.inventoryItem && v.inventoryItem.inventoryLevels && v.inventoryItem.inventoryLevels.edges) || [])
     .forEach(e => levels.push({ loc: e.node.location.name, qty: ((e.node.quantities || []).find(x => x.name === 'available') || {}).quantity || 0 })));

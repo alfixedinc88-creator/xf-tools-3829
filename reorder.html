@@ -2136,6 +2136,7 @@ body { display:flex; flex-direction:column; min-height:100vh; background:var(--b
         <label style="display:flex;align-items:center;gap:5px"><input type="checkbox" id="rvo-problems" onchange="rvoRender()"> Only rows with ⚠ problems</label>
         <label style="display:flex;align-items:center;gap:5px" title="Part #s more than one vendor sells — check which vendor each one goes to before downloading"><input type="checkbox" id="rvo-multiv" onchange="rvoRender()"> Only parts with 🔀 more than one vendor</label>
         <label style="display:flex;align-items:center;gap:5px" title="Part #s that don't look like ours and have no FBA listing — each shows its listing title so you can find the right part #"><input type="checkbox" id="rvo-weird" onchange="rvoRender()"> Only weird part #s (no FBA)</label>
+        <button class="btn" style="font-size:12px;border-color:#1d4ed8;color:#1d4ed8;font-weight:700" onclick="roTab('listings');window.scrollTo(0,0)" title="Every eBay / Amazon / Walmart / Shopify listing that isn't under one of our part #s — with link, sales, suggested part # and fix in place">🔗 All listings NOT under our SKU (4 channels) →</button>
         <button class="btn" style="font-size:12px" onclick="rvoWeirdCopy()" title="Copy every weird part # with its listing title(s) — paste into Excel / Google Sheets">📋 Copy weird list</button>
         <button class="btn" style="font-size:12px" onclick="rvoWeirdCsv()" title="Same list as a CSV file">⬇ Weird list CSV</button>
         <span style="flex:1"></span>
