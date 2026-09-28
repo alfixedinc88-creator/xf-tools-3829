@@ -1305,8 +1305,9 @@ async function reorderVendorOrder(env, url) {
       const needUnits = Math.ceil(needPcs / ps - 1e-9);
       const fx = fixes[t.sku] || {};
       // One vendor per part # (never on two vendors' orders). Picked with
-      // the row's vendor menu / ✏️ wins, then the vendor it was last ordered
-      // from, then SKU Mgr, then a vendor info sheet.
+      // the row's vendor menu / ✏️ wins; then JQ if both JQ and EFF sell it;
+      // then the vendor it was last ordered from, then SKU Mgr, then a
+      // vendor info sheet.
       const vn = v => reorderVendorName(String(v || '').trim());
       const lv = lastV[t.sku];
       let vendor = '', vendorSrc = '';
@@ -1317,6 +1318,8 @@ async function reorderVendorOrder(env, url) {
       else if (vn(bo.vendor)) { vendor = vn(bo.vendor); vendorSrc = 'SKU Mgr (other pack)'; }
       const vendors = new Set();
       [fx.vendor, lv && lv.v, ...(sm.vendors || []), ...(catAll[t.sku] || []).map(c => c.vendor)].forEach(v => { v = vn(v); if (v) vendors.add(v); });
+      // Sold by both JQ and EFF → JQ (owner's rule), unless picked on the row.
+      if (vendorSrc !== 'picked' && vendors.has('JQ') && vendors.has('EFF')) { vendor = 'JQ'; vendorSrc = 'JQ over EFF'; }
       // Description / UPCs / carton from the chosen vendor's info sheet.
       const ct = (catAll[t.sku] || []).find(c => vn(c.vendor) === vendor) || cat[t.sku] || {};
       // Case qty in units of this part #: a fix wins, then SKU Mgr, then the
