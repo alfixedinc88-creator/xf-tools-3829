@@ -63,6 +63,12 @@
   window.xfSignOut = async function () {
     if (busy) return;
     var n = userName();
+    // Inventory entries saved on this phone without WiFi (inventory.html outbox).
+    var waiting = 0;
+    try { var u = JSON.parse(localStorage.getItem('xf_cred_user') || 'null');
+      var ob = JSON.parse(localStorage.getItem('xf_inv_outbox_' + ((u && u.userId) || 'anon')) || '[]');
+      waiting = ob.filter(function (x) { return x && x.state !== 'sent'; }).length; } catch (e) {}
+    if (waiting && !confirm('⚠ ' + waiting + ' inventory entr' + (waiting === 1 ? 'y is' : 'ies are') + ' still saved on this phone, waiting for WiFi.\n\nThey stay on this phone and send when ' + (n || 'you') + ' signs in here again with WiFi. Better: open Inventory with WiFi first so they send now.\n\nSign out anyway?')) return;
     if (!confirm('Sign out' + (n ? ' ' + n : '') + '?\n\nThis signs you out of every XFitting page on this device.')) return;
     busy = true;
     var t = token();
