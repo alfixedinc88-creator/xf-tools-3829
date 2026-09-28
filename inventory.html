@@ -95,6 +95,206 @@ async function wFetch(url, opts) {
   return r;
 }
 
+// ── 📶 Saved on this phone (outbox) ─────────────────────────────────────
+// Back in the containers there's often no WiFi. Every Stock In / Stock Out
+// / Transfer / Audit entry goes through invPost(): it is written to this
+// phone FIRST (localStorage, per person), then sent. No WiFi → it stays
+// here and is sent by itself when WiFi is back (every 20 s, when the phone
+// comes back online, when the page opens). Every entry carries its own id
+// (_requestId), so the server never saves it twice, even if it's sent
+// again. After sending, the phone asks the server whether the entry is
+// really in History (/inventory/outbox/check); if not, it sends it again.
+// The bar at the top shows anything still waiting — never silently lost.
+var INV_OB_W = 'https://xfitting-lookup.alfixedinc88.workers.dev';
+var INV_OB_OLD_MS = 6 * 86400000; // the server remembers ids for 7 days
+var invObBusy = false, invObTimer = null, invObJustSaved = 0;
+function invObKey() { var u = INV_CRED_USER || null; try { u = u || JSON.parse(localStorage.getItem('xf_cred_user') || 'null'); } catch (e) {} return 'xf_inv_outbox_' + ((u && u.userId) || 'anon'); }
+function invObRead() { try { var a = JSON.parse(localStorage.getItem(invObKey()) || '[]'); return Array.isArray(a) ? a : []; } catch (e) { return []; } }
+function invObWrite(a) { try { localStorage.setItem(invObKey(), JSON.stringify(a)); } catch (e) {} invObRender(); invObSchedule(); }
+function invObPatch(id, fn) { var a = invObRead(); a.forEach(function (x) { if (x.id === id) fn(x); }); invObWrite(a); }
+function invObDrop(id) { invObWrite(invObRead().filter(function (x) { return x.id !== id; })); }
+function invObNewId() { try { if (crypto.randomUUID) return crypto.randomUUID(); } catch (e) {} return 'ob-' + Date.now() + '-' + Math.random().toString(36).slice(2, 10); }
+function invObLabel(path, b) {
+  var what = path.indexOf('transfer') >= 0 ? 'Transfer' : /\[AUDIT\]/.test(b.notes || '') ? 'Audit' : b.type === 'IN' ? 'Stock In' : b.type === 'OUT' ? (b.noneFound ? 'None found' : 'Stock Out') : (b.type || 'Entry');
+  var where = path.indexOf('transfer') >= 0 ? (b.fromLocation || '') + ' → ' + (b.toLocation || '') : (b.location || '');
+  return what + ' ' + (b.partNum || '') + ' × ' + (b.cases != null ? b.cases : '?') + (where ? ' @ ' + where : '');
+}
+function invJsonResp(o, st) { return new Response(JSON.stringify(o), { status: st || 200, headers: { 'Content-Type': 'application/json' } }); }
+// after(d) → { path, body } run right after the entry is saved (Audit's
+// approve), with d = the saved entry. Built now with placeholders so it can
+// wait on the phone too.
+function invObAfter(after) {
+  if (!after) return null;
+  var t = after({ rowIndex: '@@ROW@@', d1Id: '@@D1@@' });
+  return t ? { path: t.path, body: JSON.stringify(t.body) } : null;
+}
+function invObFill(tpl, d) { return tpl.replace(/"@@ROW@@"/g, JSON.stringify(d.rowIndex || null)).replace(/"@@D1@@"/g, JSON.stringify(d.d1Id || null)); }
+// Same shape as wFetch(url, opts): resolves to a Response.
+async function invPost(url, opts, after) {
+  var path = url.replace(INV_OB_W, '');
+  var body = {}; try { body = JSON.parse((opts && opts.body) || '{}'); } catch (e) {}
+  var id = invObNewId(); body._requestId = id; body._outbox = true;
+  var ent = { id: id, path: path, body: body, after: invObAfter(after), label: invObLabel(path, body), by: (INV_CRED_USER && INV_CRED_USER.displayName) || '',
+    createdAt: Date.now(), tries: 0, state: 'sending', error: '' };
+  var a = invObRead(); a.push(ent); invObWrite(a);
+  var r = await invObSend(ent, true);
+  if (r.status === 'waiting') return invJsonResp({ ok: true, queued: true, offline: true, requestId: id,
+    message: 'No WiFi — saved on this phone. It sends by itself when WiFi is back.' }, 202);
+  return invJsonResp(r.data || { ok: false, error: 'Failed' }, r.http || 200);
+}
+// One try. → { status: 'saved' | 'waiting' | 'failed', data, http }
+async function invObSend(ent, first) {
+  invObPatch(ent.id, function (x) { x.tries = (x.tries || 0) + 1; x.lastTry = Date.now(); });
+  var r, d = null;
+  try { r = await wFetch(INV_OB_W + ent.path, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(ent.body) }); }
+  catch (e) {
+    var why = e && e.message === 'Unauthorized' ? 'Sign in again to send it' : 'No WiFi';
+    invObPatch(ent.id, function (x) { x.state = 'waiting'; x.error = why; });
+    return { status: 'waiting' };
+  }
+  try { d = await r.json(); } catch (e) { d = null; }
+  if (d && d.queued) { // an older phone queue (service worker before v5) took it: that queue sends it —
+    invObDrop(ent.id);  // never both, or it could be saved twice
+    try { if (navigator.serviceWorker && navigator.serviceWorker.controller) navigator.serviceWorker.controller.postMessage({ type: 'ONLINE' }); } catch (e) {}
+    return { status: 'waiting' };
+  }
+  if (r.ok && d && d.ok !== false && !d.error) {
+    var after = null;
+    if (ent.after) after = await invObRunAfter(ent, d);
+    invObPatch(ent.id, function (x) { x.state = x.state === 'after-waiting' ? 'after-waiting' : 'sent'; x.sentAt = Date.now(); x.result = d; x.error = ''; });
+    if (after) d._after = after;
+    return { status: 'saved', data: d, http: r.status };
+  }
+  if (r.status >= 500 || r.status === 429) { // server busy — try again later
+    invObPatch(ent.id, function (x) { x.state = 'waiting'; x.error = (d && d.error) || ('Server busy (' + r.status + ')'); });
+    if (!first) return { status: 'waiting' };
+    return { status: 'waiting' };
+  }
+  // The server said no (e.g. missing part #). First try: the screen shows
+  // the error as before, so it isn't kept. Later try: kept, shown in red.
+  if (first) invObDrop(ent.id);
+  else invObPatch(ent.id, function (x) { x.state = 'failed'; x.error = (d && d.error) || ('Rejected (' + r.status + ')'); });
+  return { status: 'failed', data: d || { ok: false, error: 'Rejected (' + r.status + ')' }, http: r.status };
+}
+async function invObRunAfter(ent, d) {
+  var tpl = ent.after; if (!tpl) return null;
+  try {
+    var r = await wFetch(INV_OB_W + tpl.path, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: invObFill(tpl.body, d) });
+    var v = await r.json().catch(function () { return {}; });
+    invObPatch(ent.id, function (x) { x.state = 'sent'; x.afterDone = true; });
+    return v;
+  } catch (e) {
+    invObPatch(ent.id, function (x) { x.state = 'after-waiting'; x.error = 'Saved — approve step waiting for WiFi'; x.result = d; });
+    return null;
+  }
+}
+// The background loop: send what's waiting (oldest first), then check that
+// what was sent is really in History.
+async function invObTick() {
+  if (invObBusy || !INV_CRED_TOKEN) return;
+  invObBusy = true;
+  try {
+    var list = invObRead().sort(function (a, b) { return a.createdAt - b.createdAt; });
+    for (var i = 0; i < list.length; i++) {
+      var x = list[i];
+      if (x.state === 'waiting' || x.state === 'sending') {
+        if (Date.now() - x.createdAt > INV_OB_OLD_MS) { invObPatch(x.id, function (y) { y.state = 'old'; }); continue; }
+        if (x.state === 'sending' && Date.now() - (x.lastTry || 0) < 60000) continue; // its first try is still going
+        var r = await invObSend(x, false);
+        if (r.status === 'waiting') break; // still no WiFi — try again later, in order
+      } else if (x.state === 'after-waiting' && x.result) {
+        if (!(await invObRunAfter(x, x.result))) break;
+      }
+    }
+    var sent = invObRead().filter(function (x) { return x.state === 'sent'; });
+    if (sent.length) {
+      var res = await wFetch(INV_OB_W + '/inventory/outbox/check', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ ids: sent.map(function (x) { return x.id; }) }) });
+      var cd = await res.json();
+      if (cd && cd.ok) {
+        var saved = 0;
+        var a = invObRead().filter(function (x) {
+          var st = cd.results && cd.results[x.id];
+          if (x.state === 'sent' && st && st.state === 'saved') { saved++; return false; }
+          if (x.state === 'sent' && st && st.state === 'missing') { x.state = 'waiting'; x.error = 'Not in History — sending again'; }
+          return true;
+        });
+        invObWrite(a);
+        if (saved) { invObJustSaved += saved; if (!a.some(function (x) { return x.state !== 'old' && x.state !== 'failed'; })) { showToast('✓ ' + invObJustSaved + ' saved entr' + (invObJustSaved === 1 ? 'y' : 'ies') + ' sent — they\'re in History'); invObJustSaved = 0; }
+          if (typeof invLoadPending === 'function') try { invLoadPending(); } catch (e) {} }
+      }
+    }
+  } catch (e) { /* still offline */ }
+  invObBusy = false;
+  invObRender(); invObSchedule();
+}
+function invObSchedule() {
+  clearTimeout(invObTimer);
+  var a = invObRead().filter(function (x) { return x.state !== 'failed' && x.state !== 'old'; });
+  if (a.length) invObTimer = setTimeout(invObTick, 20000);
+}
+window.addEventListener('online', function () {
+  setTimeout(invObTick, 1500);
+  // the service worker's own queue (older phones) sends too
+  try { if (navigator.serviceWorker && navigator.serviceWorker.controller) navigator.serviceWorker.controller.postMessage({ type: 'ONLINE' }); } catch (e) {}
+});
+// Keep this page usable after a refresh with no WiFi (same service worker as the home page).
+try { if ('serviceWorker' in navigator && location.protocol === 'https:') navigator.serviceWorker.register('/xf-tools-3829/sw.js').catch(function () {}); } catch (e) {}
+document.addEventListener('visibilitychange', function () { if (!document.hidden) setTimeout(invObTick, 500); });
+// The bar at the top of the page.
+function invObRender() {
+  var a = invObRead(), bar = document.getElementById('inv-ob-bar');
+  if (!a.length) { if (bar) bar.style.display = 'none'; return; }
+  if (!bar) {
+    bar = document.createElement('div'); bar.id = 'inv-ob-bar';
+    bar.style.cssText = 'position:sticky;top:0;z-index:900;padding:8px 12px;font-size:13px;font-weight:700;cursor:pointer;border-bottom:1px solid rgba(0,0,0,.1)';
+    bar.onclick = invObShow;
+    document.body.insertBefore(bar, document.body.firstChild);
+  }
+  var n = function (st) { return a.filter(function (x) { return st.indexOf(x.state) >= 0; }).length; };
+  var wait = n(['waiting', 'sending', 'after-waiting']), chk = n(['sent']), bad = n(['failed', 'old']);
+  bar.style.display = 'block';
+  bar.style.background = bad ? '#FDF0EE' : wait ? '#FFF7ED' : '#EEF4FF';
+  bar.style.color = bad ? '#b91c1c' : wait ? '#9a3412' : '#1e40af';
+  bar.innerHTML = (bad ? '✗ ' + bad + ' entr' + (bad === 1 ? 'y' : 'ies') + ' NOT saved — tap to see. ' : '')
+    + (wait ? '📶 ' + wait + ' entr' + (wait === 1 ? 'y' : 'ies') + ' saved on this phone, waiting for WiFi — they send by themselves. Don\'t clear this phone. ' : '')
+    + (chk ? '⏳ Checking ' + chk + ' in History… ' : '') + '<span style="text-decoration:underline">details</span>';
+}
+function invObShow() {
+  var a = invObRead().sort(function (x, y) { return x.createdAt - y.createdAt; });
+  var ST = { waiting: '📶 waiting for WiFi', sending: '📶 sending', 'after-waiting': '📶 saved — approve step waiting', sent: '⏳ checking History', failed: '✗ NOT saved', old: '✗ waited over 6 days — check History, then send or discard' };
+  var box = document.getElementById('inv-ob-modal');
+  if (!box) { box = document.createElement('div'); box.id = 'inv-ob-modal'; document.body.appendChild(box);
+    box.onclick = function (e) { if (e.target === box) box.style.display = 'none'; }; }
+  box.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,.45);z-index:999;display:flex;align-items:center;justify-content:center;padding:14px';
+  var esc = function (v) { return String(v == null ? '' : v).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;'); };
+  box.innerHTML = '<div style="background:var(--bg,#fff);color:var(--text,#111);border-radius:12px;max-width:560px;width:100%;max-height:85vh;overflow:auto;padding:14px">'
+    + '<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px"><b>Saved on this phone</b><button onclick="document.getElementById(\'inv-ob-modal\').style.display=\'none\'" style="border:none;background:none;font-size:22px;cursor:pointer">&times;</button></div>'
+    + '<div style="font-size:12px;color:#666;margin-bottom:8px">Entries made without WiFi. Each one is sent by itself when WiFi is back, then checked in History. The same entry is never counted twice, even if it is sent again.</div>'
+    + (a.length ? a.map(function (x) {
+      return '<div style="border-top:1px solid #eee;padding:8px 0;font-size:13px"><b>' + esc(x.label) + '</b>'
+        + '<div style="font-size:12px;color:' + (x.state === 'failed' || x.state === 'old' ? '#b91c1c' : '#9a3412') + '">' + (ST[x.state] || x.state) + (x.error && x.state !== 'sent' ? ' — ' + esc(x.error) : '') + '</div>'
+        + '<div style="font-size:11px;color:#888">' + esc(x.by) + ' · ' + new Date(x.createdAt).toLocaleString() + ' · tries: ' + (x.tries || 0) + '</div>'
+        + '<div style="margin-top:4px;display:flex;gap:6px">'
+        + (x.state !== 'sent' ? '<button onclick="invObRetry(\'' + x.id + '\')" style="font-size:12px;padding:4px 10px;border-radius:6px;border:1px solid #1d4ed8;background:#1d4ed8;color:#fff;cursor:pointer">Send now</button>' : '')
+        + (x.state === 'failed' || x.state === 'old' ? '<button onclick="invObDiscard(\'' + x.id + '\')" style="font-size:12px;padding:4px 10px;border-radius:6px;border:1px solid #b91c1c;background:#fff;color:#b91c1c;cursor:pointer">Discard</button>' : '')
+        + '</div></div>'; }).join('') : '<div style="color:#15803d;font-weight:700">✓ Nothing waiting — everything is in History.</div>')
+    + '</div>';
+}
+window.invObRetry = function (id) {
+  invObPatch(id, function (x) {
+    if (x.state === 'old') x.createdAt = Date.now(); // a person checked History and chose to send it
+    if (x.state !== 'after-waiting') x.state = 'waiting';
+    x.lastTry = 0;
+  });
+  invObTick().then(invObShow);
+};
+window.invObDiscard = function (id) {
+  var x = invObRead().filter(function (y) { return y.id === id; })[0]; if (!x) return;
+  if (!confirm('Discard this entry?\n\n' + x.label + '\n\nIt will NOT be saved. Only do this if it is already in History or was a mistake.')) return;
+  invObDrop(id); invObShow();
+};
+window.invObPending = function () { return invObRead().filter(function (x) { return x.state !== 'sent'; }).length; };
+
 // ── Credential login ──────────────────────────────────────────────────────
 window.invCredLogin = async function() {
   var username = document.getElementById('inv-cred-username').value.trim();
@@ -1249,6 +1449,16 @@ window.invCredLogin = async function() {
 
 (function() {
   var W = "https://xfitting-lookup.alfixedinc88.workers.dev";
+  // Audit: save the entry, then approve it — with no WiFi both wait on the
+  // phone together (see invPost). verifyFor(d) builds the approve from the
+  // saved entry d. Resolves to the saved entry; d._after = the approve's
+  // answer, d.queued = saved on the phone only (no WiFi yet).
+  function invLogAndApprove(body, verifyFor) {
+    return invPost(W + '/inventory/log', { method: 'POST', body: JSON.stringify(body) },
+      verifyFor ? function (d) { return { path: '/inventory/verify', body: verifyFor(d) }; } : null)
+      .then(function (r) { return r.json(); });
+  }
+  var INV_OFFLINE_MSG = '📶 No WiFi — saved on this phone. It sends by itself when WiFi is back.';
   var invMode = "out"; // Stock Out is now the default landing tab (see invOnLogin, which calls invSwitchTab('stockout') to fully initialize this)
   var invPart = null;
   var invSelLoc = null;
@@ -2378,7 +2588,7 @@ window.invCredLogin = async function() {
     var initials = (INV_CRED_USER && INV_CRED_USER.displayName) || 'OPS';
 
     var submitEntry = function(type, cases, notes, cb) {
-      wFetch(W + '/inventory/log', {
+      invPost(W + '/inventory/log', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -2486,7 +2696,7 @@ window.invCredLogin = async function() {
 
     var submitEntry = function(type, cases, notes, cb) {
       var fullNotes = userNotes ? (notes + " — " + userNotes) : notes;
-      wFetch(W + "/inventory/log", {
+      invPost(W + "/inventory/log", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
@@ -2820,7 +3030,7 @@ window.invCredLogin = async function() {
     btn.disabled = true;
     btn.textContent = "Saving…";
     function doSubmit() {
-      wFetch(W + "/inventory/log", {
+      invPost(W + "/inventory/log", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
@@ -2839,7 +3049,7 @@ window.invCredLogin = async function() {
         })
       }).then(function(r) { return r.json(); })
         .then(function(d) {
-          if (d.ok) { invFlash("Logged — pending approval", "success"); invReset(false); invFetchPendingCount(); }
+          if (d.ok) { invFlash(d.queued ? INV_OFFLINE_MSG : "Logged — pending approval", d.queued ? "warn" : "success"); invReset(false); invFetchPendingCount(); }
           else { invFlash("Error: " + (d.error || "unknown"), "error"); }
         })
         .catch(function(err) {
@@ -3076,7 +3286,7 @@ window.invCredLogin = async function() {
     btn.textContent = "Saving…";
 
     function doQuickAddSubmit(name, sku) {
-      wFetch(W + "/inventory/log", {
+      invPost(W + "/inventory/log", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
@@ -3148,6 +3358,8 @@ window.invCredLogin = async function() {
   }
 
   window.invOnLogin = function() {
+    // 📶 Anything saved on this phone without WiFi: show it and send it now.
+    try { invObRender(); setTimeout(invObTick, 800); } catch (e) {}
     // A mgmt-role login already has full access - no separate step-up
     // should ever be required for Review/SKU Mgr/History. Without this,
     // invUnlocked stayed false for anyone who logged in as mgmt directly
@@ -3904,9 +4116,19 @@ window.invCredLogin = async function() {
 
 
   // ── PULL LIST FUNCTIONS ──────────────────────────────────────────
+  // "_dirty" = this phone changed the list and the account copy doesn't have
+  // it yet (no WiFi). While dirty, the phone's list wins and keeps being
+  // sent — an old account copy can never put grabbed items back to un-grabbed.
+  function invPullDirty(v) {
+    try { if (v === undefined) return localStorage.getItem(invPullKey() + '_dirty') === '1';
+      if (v) localStorage.setItem(invPullKey() + '_dirty', '1'); else localStorage.removeItem(invPullKey() + '_dirty'); } catch (e) {}
+    return !!v;
+  }
+  window.invPullDirty = invPullDirty;
   function invSavePullList() {
     try { localStorage.setItem(invPullKey(), JSON.stringify(invPullList)); } catch (e) {}
     invPullEditedSinceLoad = true;
+    invPullDirty(true);
     invQueuePullSync();
   }
   // Save the whole list to the person's account ~1s after the last change
@@ -3922,9 +4144,17 @@ window.invCredLogin = async function() {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ items: invPullList })
     }).then(function(r) { return r.json(); }).then(function(d) {
-      if (!d || !d.ok) console.warn('[INV] pull list save failed', d);
-    }).catch(function(e) { console.warn('[INV] pull list save failed', e); });
+      if (!d || !d.ok) { console.warn('[INV] pull list save failed', d); invPullRetryLater(); return; }
+      if (!invPullSyncTimer) invPullDirty(false); // saved (and nothing newer waiting)
+    }).catch(function(e) { console.warn('[INV] pull list save failed', e); invPullRetryLater(); });
   }
+  // No WiFi: keep trying (the list stays marked as not saved to the account).
+  var invPullRetryTimer = null;
+  function invPullRetryLater() {
+    clearTimeout(invPullRetryTimer);
+    invPullRetryTimer = setTimeout(function() { if (invPullDirty()) invPushPullList(); }, 20000);
+  }
+  window.addEventListener('online', function() { if (invPullDirty()) setTimeout(invPushPullList, 1500); });
   // After sign-in: load this person's list from their account. The server
   // copy wins; if the account has no list yet, the local one is uploaded.
   function invLoadPullListFromServer() {
@@ -3935,6 +4165,8 @@ window.invCredLogin = async function() {
     wFetch(W + '/inventory/pull/mine').then(function(r) { return r.json(); }).then(function(d) {
       if (!d || !d.ok) return;
       if (invPullEditedSinceLoad) { invQueuePullSync(); return; } // they already changed it — keep theirs
+      // This phone has changes the account never got (no WiFi): keep them and send them now.
+      if (invPullDirty() && invPullList.length) { invPushPullList(); return; }
       if (d.updatedAt) {
         invPullList = Array.isArray(d.items) ? d.items : [];
         try { localStorage.setItem(invPullKey(), JSON.stringify(invPullList)); } catch (e) {}
@@ -4134,7 +4366,7 @@ window.invCredLogin = async function() {
     var initials = (INV_CRED_USER && INV_CRED_USER.displayName) || 'OPS';
 
     invFlash('Saving correction…', 'success');
-    wFetch(W + '/inventory/log', {
+    invPost(W + '/inventory/log', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
@@ -4303,7 +4535,11 @@ window.invCredLogin = async function() {
     // left the shelf as far as the system's concerned (see
     // invTogglePullCheck for why un-checking a submitted item is blocked).
     var statusLine;
-    if (item.submitted) {
+    var onPhone = item.submitted && item.queuedId && invObRead().some(function(x) { return x.id === item.queuedId; });
+    if (onPhone) {
+      statusLine = "<div style='font-size:11px;color:#9a3412;margin-top:4px;font-weight:700'>📶 "
+        + (item.noneFound ? "None Found" : item.cases + " cases") + " — saved on this phone, sends when WiFi is back</div>";
+    } else if (item.submitted) {
       statusLine = "<div style='font-size:11px;color:var(--green);margin-top:4px;font-weight:600'>✓ "
         + (item.noneFound ? "None Found — submitted for review" : "Submitted — " + item.cases + " cases")
         + "</div>";
@@ -5016,7 +5252,7 @@ window.invCredLogin = async function() {
     itemNotes = (destTag + itemNotes).trim();
     var entryTs = item.grabbedAt || item.addedAt || new Date().toISOString();
 
-    wFetch(W + "/inventory/log", {
+    invPost(W + "/inventory/log", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
@@ -5035,6 +5271,8 @@ window.invCredLogin = async function() {
         if (d.ok) {
           item.submitted = true;
           item.submitError = null;
+          item.queuedId = d.queued ? d.requestId : null; // saved on the phone, sends when WiFi is back
+          if (d.queued) invFlash(INV_OFFLINE_MSG, 'warn');
         } else {
           item.submitError = d.error || "Submit failed";
         }
@@ -7473,7 +7711,7 @@ window.invCredLogin = async function() {
         return;
       }
       var item = items[idx++];
-      wFetch(W + '/inventory/transfer', {
+      invPost(W + '/inventory/transfer', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -7491,6 +7729,7 @@ window.invCredLogin = async function() {
         .then(function(d) {
           if (d.ok) {
             if (item.palletLineId && d.palletRecorded === false) invFlash('⚠ ' + item.partNum + ' moved, but not counted on its pallet — tell the office', 'error');
+            if (d.queued) invFlash(INV_OFFLINE_MSG, 'warn');
             submitNext();
           }
           else {
@@ -7817,16 +8056,10 @@ window.invCredLogin = async function() {
         location: loc.location, cases: 0,
         initials: initials, notes: confirmNote,
         rowIndex: loc.rowIndex, isNew: false, overwriteLocation: false };
-      wFetch(W + '/inventory/log', { method: 'POST', body: JSON.stringify(confirmBody) })
-        .then(function(r) { return r.json(); })
-        .then(function(d) {
-          if (d && d.rowIndex) {
-            wFetch(W + '/inventory/verify', { method: 'POST',
-              body: JSON.stringify({ rowIndex: d.rowIndex, action: 'Approved', verifiedBy: initials,
-                item: Object.assign({}, confirmBody, { notes: confirmNote }) })
-            }).catch(function(){});
-          }
-        }).catch(function(){});
+      invLogAndApprove(confirmBody, function(d) {
+        return { rowIndex: d.rowIndex, action: 'Approved', verifiedBy: initials,
+          item: Object.assign({}, confirmBody, { notes: confirmNote, rowIndex: d.rowIndex, d1Id: d.d1Id }) };
+      }).then(function(d) { if (d && d.queued) invFlash(INV_OFFLINE_MSG, 'warn'); }).catch(function(){});
       invFlash('Count matches — confirmed ✓', 'success');
       var rowEl = g('inv-audit-loc-' + idx);
       if (rowEl) { rowEl.style.borderColor = '#0891B2'; rowEl.style.background = '#E0F2FE'; }
@@ -7841,16 +8074,24 @@ window.invCredLogin = async function() {
       initials: initials, notes: note,
       rowIndex: loc.rowIndex, isNew: false, overwriteLocation: false };
     if (invAuditAutoMode) {
-      wFetch(W + '/inventory/log', { method: 'POST', body: JSON.stringify(body) })
-        .then(function(r) { return r.json(); })
+      // Approve exactly the entry just logged (same type / part # / shelf /
+      // cases). It used to name partNum / location / cases, which don't exist
+      // here, and always approve as a new Stock In — so it never went through.
+      invLogAndApprove(body, function(d) {
+        return { rowIndex: d.rowIndex, action: 'Approved', verifiedBy: initials,
+          item: Object.assign({}, body, { rowIndex: d.rowIndex, d1Id: d.d1Id, overwriteLocation: '' }) };
+      })
         .then(function(d) {
-          if (!d || !d.rowIndex) { invFlash('Log failed', 'error'); return null; }
-          return wFetch(W + '/inventory/verify', { method: 'POST',
-            body: JSON.stringify({ rowIndex: d.rowIndex, action: 'Approved', verifiedBy: initials,
-              item: { type: 'IN', partNum: partNum, sku: partNum.split('=')[0].trim(),
-                      location: location, cases: cases, rowIndex: d.rowIndex,
-                      isNew: true, notes: note, d1Id: d.d1Id } })
-          }).then(function(r) { return r.json(); });
+          if (d && d.queued) {
+            invFlash(INV_OFFLINE_MSG, 'warn');
+            if (rowEl) { rowEl.style.borderColor = 'var(--orange)'; rowEl.style.background = 'var(--orange-bg)'; if (countInp) countInp.disabled = true; }
+            setTimeout(invAuditAutoReturn, 1500);
+            return null;
+          }
+          if (!d || !d.rowIndex) { invFlash('Log failed' + (d && d.error ? ': ' + d.error : ''), 'error'); return null; }
+          if (!d._after) { invFlash('Saved — the approve step waits for WiFi (📶 bar at the top)', 'warn'); return null; }
+          if (d._after.error) { invFlash('Auto-verify failed: ' + d._after.error, 'error'); return null; }
+          return d._after;
         })
         .then(function(v) {
           if (!v) return;
@@ -7862,10 +8103,10 @@ window.invCredLogin = async function() {
         })
         .catch(function(e) { invFlash('Error: ' + e.message, 'error'); });
     } else {
-      wFetch(W + '/inventory/log', { method: 'POST', body: JSON.stringify(body) })
-        .then(function(r) { return r.json(); })
-        .then(function() {
-          invFlash('Queued for review: ' + loc.location, 'success');
+      invLogAndApprove(body, null)
+        .then(function(d) {
+          if (d && d.ok === false) { invFlash('Error: ' + (d.error || 'not saved'), 'error'); return; }
+          invFlash(d && d.queued ? INV_OFFLINE_MSG : 'Queued for review: ' + loc.location, d && d.queued ? 'warn' : 'success');
           if (rowEl) { rowEl.style.borderColor = 'var(--orange)'; rowEl.style.background = 'var(--orange-bg)';
           setTimeout(invAuditAutoReturn, 1500);
             rowEl.style.opacity = '0.75';
@@ -7903,15 +8144,16 @@ window.invCredLogin = async function() {
     var saveBtn = g('inv-audit-movesave-' + idx);
     if (saveBtn) saveBtn.disabled = true;
     // MOVE always auto-approves — no review queue needed for location corrections
-    wFetch(W + '/inventory/log', { method: 'POST', body: JSON.stringify(body) })
-      .then(function(r) { return r.json(); })
+    invLogAndApprove(body, function(d) {
+      return { rowIndex: d.rowIndex, action: 'Approved', verifiedBy: initials,
+        item: { type: 'MOVE', partNum: loc.partNum, location: loc.location,
+                overwriteLocation: newLoc, cases: body.cases, rowIndex: loc.rowIndex } };
+    })
       .then(function(d) {
-        if (!d || !d.rowIndex) { invFlash('Log failed', 'error'); if(saveBtn) saveBtn.disabled=false; return null; }
-        return wFetch(W + '/inventory/verify', { method: 'POST',
-          body: JSON.stringify({ rowIndex: d.rowIndex, action: 'Approved', verifiedBy: initials,
-            item: { type: 'MOVE', partNum: loc.partNum, location: loc.location,
-                    overwriteLocation: newLoc, cases: body.cases, rowIndex: loc.rowIndex } })
-        }).then(function(r) { return r.json(); });
+        if (d && d.queued) { invFlash(INV_OFFLINE_MSG, 'warn'); var mf0 = g('inv-audit-moveform-' + idx); if (mf0) mf0.style.display = 'none'; return null; }
+        if (!d || !d.rowIndex) { invFlash('Log failed' + (d && d.error ? ': ' + d.error : ''), 'error'); if(saveBtn) saveBtn.disabled=false; return null; }
+        if (!d._after) { invFlash('Saved — the move is approved when WiFi is back (📶 bar at the top)', 'warn'); return null; }
+        return d._after;
       })
       .then(function(v) {
         if (!v) { invFlash('Verify failed — no response', 'error'); if(saveBtn) saveBtn.disabled=false; return; }
@@ -8494,18 +8736,10 @@ window.invCredLogin = async function() {
         location: item.location, cases: 0,
         initials: initials, notes: confirmNote,
         rowIndex: item.rowIndex, isNew: false, overwriteLocation: false };
-      wFetch(W + '/inventory/log', { method: 'POST', body: JSON.stringify(confirmBody) })
-        .then(function(r) { return r.json(); })
-        .then(function(d) {
-          // Auto-verify confirmation regardless of rowIndex value
-          var ri = (d && d.rowIndex) ? d.rowIndex : 0;
-          if (ri || ri === 0) {
-            wFetch(W + '/inventory/verify', { method: 'POST',
-              body: JSON.stringify({ rowIndex: ri, action: 'Approved', verifiedBy: initials,
-                item: Object.assign({}, confirmBody, { rowIndex: ri, notes: confirmNote }) })
-            }).catch(function(){});
-          }
-        }).catch(function(){});
+      invLogAndApprove(confirmBody, function(d) {
+        return { rowIndex: d.rowIndex, action: 'Approved', verifiedBy: initials,
+          item: Object.assign({}, confirmBody, { rowIndex: d.rowIndex, d1Id: d.d1Id, notes: confirmNote }) };
+      }).then(function(d) { if (d && d.queued) invFlash(INV_OFFLINE_MSG, 'warn'); }).catch(function(){});
       invFlash('Count matches — confirmed ✓', 'success');
       if (rowEl) { rowEl.style.borderColor = '#0891B2'; rowEl.style.background = '#E0F2FE'; }
       if (inp) inp.disabled = true;
@@ -8518,24 +8752,23 @@ window.invCredLogin = async function() {
       rowIndex: item.rowIndex, isNew: false, overwriteLocation: false };
     if (inp) inp.disabled = true;
     if (invAuditAutoMode) {
-      wFetch(W + '/inventory/log', { method: 'POST', body: JSON.stringify(body) })
-        .then(function(r) { return r.json(); })
+      invLogAndApprove(body, function(d) {
+        // Send full item so worker has everything it needs to update Master_List
+        var verifyItem = {
+          type: type, partNum: item.partNum, location: item.location,
+          cases: String(Math.abs(diff)), rowIndex: d.rowIndex, d1Id: d.d1Id,
+          sku: item.partNum.split('=')[0].trim(),
+          name: item.name || '', notes: note,
+          isNew: 'FALSE', isPlaceholder: 'FALSE',
+          overwriteLocation: ''
+        };
+        return { rowIndex: d.rowIndex, action: 'Approved', verifiedBy: initials, item: verifyItem };
+      })
         .then(function(d) {
-          if (!d) { invFlash('Log failed', 'error'); if(inp) inp.disabled=false; return null; }
-          var logRowIndex = d.rowIndex || 0;
-          // Send full item so worker has everything it needs to update Master_List
-          var verifyItem = {
-            type: type, partNum: item.partNum, location: item.location,
-            cases: String(Math.abs(diff)), rowIndex: logRowIndex,
-            sku: item.partNum.split('=')[0].trim(),
-            name: item.name || '', notes: note,
-            isNew: 'FALSE', isPlaceholder: 'FALSE',
-            overwriteLocation: ''
-          };
-          return wFetch(W + '/inventory/verify', { method: 'POST',
-            body: JSON.stringify({ rowIndex: logRowIndex, action: 'Approved',
-              verifiedBy: initials, item: verifyItem })
-          }).then(function(r) { return r.json(); });
+          if (d && d.queued) { invFlash(INV_OFFLINE_MSG, 'warn'); if (rowEl) { rowEl.style.borderColor = 'var(--orange)'; rowEl.style.background = 'var(--orange-bg)'; } return null; }
+          if (!d || d.ok === false) { invFlash('Log failed' + (d && d.error ? ': ' + d.error : ''), 'error'); if(inp) inp.disabled=false; return null; }
+          if (!d._after) { invFlash('Saved — the approve step waits for WiFi (📶 bar at the top)', 'warn'); return null; }
+          return d._after;
         })
         .then(function(v) {
           if (!v) return;
@@ -8548,10 +8781,10 @@ window.invCredLogin = async function() {
           }
         }).catch(function(e) { invFlash('Error: ' + e.message, 'error'); if(inp) inp.disabled=false; });
     } else {
-      wFetch(W + '/inventory/log', { method: 'POST', body: JSON.stringify(body) })
-        .then(function(r) { return r.json(); })
-        .then(function() {
-          invFlash('Queued: ' + item.location, 'success');
+      invLogAndApprove(body, null)
+        .then(function(d) {
+          if (d && d.ok === false) { invFlash('Error: ' + (d.error || 'not saved'), 'error'); if(inp) inp.disabled=false; return; }
+          invFlash(d && d.queued ? INV_OFFLINE_MSG : 'Queued: ' + item.location, d && d.queued ? 'warn' : 'success');
           if (rowEl) { rowEl.style.borderColor = 'var(--orange)'; rowEl.style.background = 'var(--orange-bg)'; rowEl.style.opacity='0.75'; }
         }).catch(function(e) { invFlash('Error: ' + e.message, 'error'); if(inp) inp.disabled=false; });
     }
@@ -8576,21 +8809,16 @@ window.invCredLogin = async function() {
       location: location, cases: cases, initials: initials, notes: note,
       rowIndex: null, isNew: true, overwriteLocation: false };
     if (resEl) resEl.innerHTML = '<div style="color:var(--text3);font-size:12px">Logging…</div>';
-    wFetch(W + '/inventory/log', { method: 'POST', body: JSON.stringify(body) })
-      .then(function(r) { return r.json(); })
+    invLogAndApprove(body, invAuditAutoMode ? function(d) {
+      return { rowIndex: d.rowIndex, action: 'Approved', verifiedBy: initials,
+        item: { type: 'IN', partNum: partNum, sku: partNum.split('=')[0].trim(),
+                location: location, cases: cases, rowIndex: d.rowIndex,
+                isNew: true, notes: note, d1Id: d.d1Id } };
+    } : null)
       .then(function(d) {
-        if (invAuditAutoMode && d && d.rowIndex) {
-          return wFetch(W + '/inventory/verify', { method: 'POST',
-            body: JSON.stringify({ rowIndex: d.rowIndex, action: 'Approved', verifiedBy: initials,
-              item: { type: 'IN', partNum: partNum, sku: partNum.split('=')[0].trim(),
-                      location: location, cases: cases, rowIndex: d.rowIndex,
-                      isNew: true, notes: note, d1Id: d.d1Id } })
-          }).then(function(r) { return r.json(); });
-        }
-        return d;
-      })
-      .then(function() {
-        if (resEl) resEl.innerHTML = '<div style="color:var(--green);font-size:12px;font-weight:600">✓ Logged: ' + partNum + ' ×' + cases + ' at ' + location + (invAuditAutoMode ? '' : ' (pending review)') + '</div>';
+        if (d && d.ok === false) { if (resEl) resEl.innerHTML = '<div style="color:var(--red);font-size:12px">Error: ' + (d.error || 'not saved') + '</div>'; return; }
+        if (resEl) resEl.innerHTML = d && d.queued ? '<div style="color:#9a3412;font-size:12px;font-weight:600">' + INV_OFFLINE_MSG + '</div>'
+          : '<div style="color:var(--green);font-size:12px;font-weight:600">✓ Logged: ' + partNum + ' ×' + cases + ' at ' + location + (invAuditAutoMode ? '' : ' (pending review)') + '</div>';
         var partInp = g('audloc-add-part'); if (partInp) partInp.value = '';
         var casInp  = g('audloc-add-cases'); if (casInp) casInp.value = '';
       })
@@ -8631,21 +8859,16 @@ window.invCredLogin = async function() {
         location: loc2, cases: cases2, initials: init2, notes: note2,
         rowIndex: null, isNew: true, overwriteLocation: false };
       logBtn.disabled = true;
-      wFetch(W + '/inventory/log', { method: 'POST', body: JSON.stringify(body2) })
-        .then(function(r) { return r.json(); })
+      invLogAndApprove(body2, invAuditAutoMode ? function(d) {
+        return { rowIndex: d.rowIndex, action: 'Approved', verifiedBy: init2,
+          item: { type: 'IN', partNum: item.partNum, sku: item.partNum.split('=')[0].trim(),
+                  location: loc2, cases: cases2, rowIndex: d.rowIndex,
+                  isNew: true, notes: note2, d1Id: d.d1Id } };
+      } : null)
         .then(function(d) {
-          if (invAuditAutoMode && d && d.rowIndex) {
-            return wFetch(W + '/inventory/verify', { method: 'POST',
-              body: JSON.stringify({ rowIndex: d.rowIndex, action: 'Approved', verifiedBy: init2,
-                item: { type: 'IN', partNum: item.partNum, sku: item.partNum.split('=')[0].trim(),
-                        location: loc2, cases: cases2, rowIndex: d.rowIndex,
-                        isNew: true, notes: note2, d1Id: d.d1Id } })
-            }).then(function(r) { return r.json(); });
-          }
-          return d;
-        })
-        .then(function() {
-          resEl2.innerHTML = '<div style="color:var(--green);font-size:11px;font-weight:600">✓ Logged ' + cases2 + ' at ' + loc2 + (invAuditAutoMode ? '' : ' — pending review') + '</div>';
+          if (d && d.ok === false) { resEl2.innerHTML = '<div style="color:var(--red);font-size:11px">Error: ' + (d.error || 'not saved') + '</div>'; logBtn.disabled = false; return; }
+          resEl2.innerHTML = d && d.queued ? '<div style="color:#9a3412;font-size:11px;font-weight:600">' + INV_OFFLINE_MSG + '</div>'
+            : '<div style="color:var(--green);font-size:11px;font-weight:600">✓ Logged ' + cases2 + ' at ' + loc2 + (invAuditAutoMode ? '' : ' — pending review') + '</div>';
           prompt.querySelector('.wtr-log-btn').style.display = 'none';
           prompt.querySelector('button:last-of-type').style.display = 'none';
         })

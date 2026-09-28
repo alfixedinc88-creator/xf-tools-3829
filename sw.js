@@ -1,4 +1,9 @@
-/* XFitting Service Worker — v4
+/* XFitting Service Worker — v5
+   v5 (2026-09-28): requests from the Inventory page's own outbox
+   ("_outbox": true) are not queued here too; an id already on a request
+   is kept. The worker has checked _requestId for duplicates since v4's
+   follow-up, so a replay is never counted twice.
+
    Network-first for app shell. Auto-detects new build ID and forces reload.
    Queues failed Worker API calls when offline and replays on reconnect.
 
@@ -22,7 +27,7 @@
      clearly rather than implying it's already solved.
 */
 
-const CACHE_VERSION = 'v115-feat-20260723-offlinequeue';
+const CACHE_VERSION = 'v116-inv-outbox-20260928';
 const CACHE_NAME    = 'xfitting-shell-' + CACHE_VERSION;
 const WORKER_URL    = 'https://xfitting-lookup.alfixedinc88.workers.dev';
 
@@ -52,7 +57,9 @@ self.addEventListener('activate', e => {
     caches.keys().then(keys =>
       Promise.all(
         keys
-          .filter(k => k !== CACHE_NAME && !k.startsWith('xfitting-meta-'))
+          // keep the offline queue ('xfitting-meta') — it used to be deleted
+          // here on every update, losing anything still waiting in it
+          .filter(k => k !== CACHE_NAME && k !== 'xfitting-meta' && !k.startsWith('xfitting-meta-'))
           .map(k => {
             console.log('[XF SW] Deleting old cache:', k);
             return caches.delete(k);
@@ -118,10 +125,17 @@ self.addEventListener('message', e => {
 
 // ── POST queueing for offline ─────────────────────────────────────────────────
 async function handleWorkerPost(request) {
+  // The Inventory page keeps its own "saved on this phone" outbox (v5): its
+  // requests carry "_outbox": true and must NOT also be queued here, or the
+  // same entry would wait in two places.
+  const copy = request.clone();
   try {
     return await fetch(request);
   } catch {
     const url = new URL(request.url);
+    let pageOutbox = false;
+    try { pageOutbox = !!JSON.parse(await copy.text())._outbox; } catch { /* not JSON */ }
+    if (pageOutbox) throw new Error('Network unavailable');
     if (QUEUEABLE_PATHS.includes(url.pathname)) {
       const queueItem = await queueRequest(request);
       return new Response(JSON.stringify({
@@ -141,7 +155,8 @@ function makeRequestId() {
 
 async function queueRequest(request) {
   const rawBody = await request.text();
-  const requestId = makeRequestId();
+  let requestId = makeRequestId();
+  try { const b = JSON.parse(rawBody); if (b && b._requestId) requestId = String(b._requestId); } catch { /* keep the new id */ }
 
   // Embed the requestId into the JSON body itself (not just tracked
   // locally) so that once the worker adds a matching dedup check, this
@@ -151,7 +166,7 @@ async function queueRequest(request) {
   let bodyWithId = rawBody;
   try {
     const parsed = JSON.parse(rawBody);
-    parsed._requestId = requestId;
+    parsed._requestId = requestId; // an id the page already set is kept (same id = never counted twice)
     bodyWithId = JSON.stringify(parsed);
   } catch { /* body wasn't JSON — leave it unmodified, id is still tracked locally below */ }
 

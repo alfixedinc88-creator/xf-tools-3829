@@ -2818,6 +2818,35 @@ async function invSaveTotals(env, ids, before, after, note) {
   for (const id of ids.filter(Boolean))
     await env.DB.prepare('UPDATE inventory_log SET total_before=?, total_after=?, total_warning=?, total_scope=? WHERE id=?').bind(before, after, note || null, 'part', id).run();
 }
+// True when this exact log entry (same id, part # and type) is already Verified.
+async function invAlreadyVerified(env, id, part, type, loc) {
+  id = parseInt(id) || 0; if (!id || !part) return false;
+  const r = await d1First(env, 'SELECT status, part_num, type, location FROM inventory_log WHERE id=?', [id]).catch(() => null);
+  const U = v => String(v || '').trim().toUpperCase();
+  return !!(r && r.status === 'Verified' && U(r.part_num) === U(part) && U(r.type) === U(type) && (loc == null || U(r.location) === U(loc)));
+}
+// POST /inventory/outbox/check { ids:[requestId…] } — for entries a phone
+// saved while it had no WiFi and sent later: did each one really reach
+// History? saved = in History (with its log ids) · processing = arriving
+// right now · missing = never arrived (the phone sends it again, same id,
+// so it can never be counted twice).
+async function inventoryOutboxCheck(request, env) {
+  const b = await request.json().catch(() => ({}));
+  const ids = (Array.isArray(b.ids) ? b.ids : []).map(x => String(x || '').slice(0, 80)).filter(Boolean).slice(0, 200);
+  await ensureProcessedRequestsTable(env);
+  const out = {};
+  for (const id of ids) {
+    const r = await d1First(env, 'SELECT endpoint, response_json FROM processed_requests WHERE request_id=?', [id]).catch(() => null);
+    if (!r) { out[id] = { state: 'missing' }; continue; }
+    if (!r.response_json) { out[id] = { state: 'processing' }; continue; }
+    let res = {}; try { res = JSON.parse(r.response_json); } catch (_) {}
+    const logIds = [res.d1Id, res.outD1Id, res.inD1Id].map(x => parseInt(x) || 0).filter(Boolean);
+    let found = 0;
+    for (const lid of logIds) if (await d1First(env, 'SELECT id FROM inventory_log WHERE id=?', [lid]).catch(() => null)) found++;
+    out[id] = found && found === logIds.length ? { state: 'saved', result: res } : { state: 'missing', lost: logIds };
+  }
+  return cors(new Response(JSON.stringify({ ok: true, results: out }), { headers: { 'Content-Type': 'application/json' } }));
+}
 async function getMasterListGrandTotal(env) {
   const r = await d1First(env, 'SELECT SUM(cases) as total FROM master_list WHERE cases > 0');
   return r?.total || 0;
@@ -2847,6 +2876,13 @@ async function inventoryVerify(request, env) {
   const type = (item.type || '').toUpperCase();
   const casesAmt = parseFloat(item.cases) || 0;
   const isApprove = action && String(action).toLowerCase() !== 'reject' && action !== 'Rejected';
+  // Never approve the same entry twice (a second approve would add / take
+  // its cases again): a phone re-sending after no WiFi, a double tap, or
+  // Audit approving an entry the Auto review mode already approved.
+  if (isApprove && env.DB) {
+    const done = await invAlreadyVerified(env, item.d1Id || peek.rowIndex, item.partNum, type, item.location);
+    if (done) return cors(new Response(JSON.stringify({ ok: true, alreadyVerified: true }), { headers: { 'Content-Type': 'application/json' } }));
+  }
   const tracksQuantity = isApprove && (type === 'IN' || type === 'OUT') && !!env.DB;
 
   const partNum = String(item.partNum || '').trim().toUpperCase();
@@ -3683,6 +3719,10 @@ async function inventoryTransferVerify(request, env) {
   let peek = {};
   try { peek = await request.clone().json(); } catch(e) {}
   const isApprove = peek.action && String(peek.action).toLowerCase() !== 'reject' && peek.action !== 'Rejected';
+  if (isApprove && env.DB && peek.outItem) {
+    const done = await invAlreadyVerified(env, peek.outItem.d1Id, peek.outItem.partNum, 'TRANSFER_OUT', peek.outItem.location);
+    if (done) return cors(new Response(JSON.stringify({ ok: true, alreadyVerified: true }), { headers: { 'Content-Type': 'application/json' } }));
+  }
   const tracksQuantity = isApprove && !!peek.outItem && !!env.DB;
 
   const xPart = tracksQuantity ? String(peek.outItem.partNum || '').trim().toUpperCase() : '';
@@ -5114,6 +5154,7 @@ const _app = {
       if (path === '/inventory/lookup' && method === 'GET')  return await inventoryLookup(url, env);
       if (path === '/inventory/search' && method === 'GET')  return await inventoryNameSearch(url, env);
       if (path === '/inventory/log'    && method === 'POST') return await inventoryLog(request, env);
+      if (path === '/inventory/outbox/check' && method === 'POST') return await inventoryOutboxCheck(request, env);
       if (path.startsWith('/inventory/pull/')) return await inventoryPullRoute(path, method, request, env);
       if (path === '/inventory/product/save' && method === 'POST') return await warehouseProductSave(request, env, session);
       if (path === '/inventory/transfer' && method === 'POST') return await inventoryTransferLog(request, env);
@@ -9823,8 +9864,13 @@ async function d1UpdateLogStatus(env, sheetRow, status, verifiedBy, ts, partNum,
         const r = await env.DB.prepare(
           'UPDATE inventory_log SET status=?,verified_by=?,verified_at=? WHERE id=?'
         ).bind(status, verifiedBy||'', ts||'', d1Id).run();
-        console.log('[D1] id update result — id:', d1Id, 'changes:', r?.changes, 'meta:', JSON.stringify(r?.meta||{}));
-        if (r && r.changes > 0) return r;
+        // D1 puts the count in r.meta.changes (r.changes is undefined), so
+        // this used to look like "not found" every time and fall through to
+        // the guesses below — which could mark ANOTHER pending entry Verified
+        // without its cases ever being counted.
+        const n1 = r?.meta?.changes ?? r?.changes ?? 0;
+        console.log('[D1] id update result — id:', d1Id, 'changes:', n1);
+        if (n1 > 0) return r;
       } catch(e) {
         console.error('[D1] id update THREW:', e.message, 'id:', d1Id, 'status:', status);
       }
@@ -9835,7 +9881,7 @@ async function d1UpdateLogStatus(env, sheetRow, status, verifiedBy, ts, partNum,
       const r2 = await env.DB.prepare(
         'UPDATE inventory_log SET status=?,verified_by=?,verified_at=? WHERE sheet_row=?'
       ).bind(status, verifiedBy||'', ts||'', sheetRow).run();
-      if (r2 && r2.changes > 0) return r2;
+      if ((r2?.meta?.changes ?? r2?.changes ?? 0) > 0) return r2;
     }
 
     // Fallback 2: composite key — for old entries with sheet_row=0
