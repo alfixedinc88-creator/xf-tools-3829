@@ -2118,7 +2118,7 @@ body { display:flex; flex-direction:column; min-height:100vh; background:var(--b
             <option value="">— pick (titled import) —</option>
             <option value="production">🏭 Ordered — vendor still making (Part # + cases, no pallets)</option>
             <option value="shipped">🚢 Shipped container (packing list with pallets)</option></select></label>
-        <label id="rvo-imp-from-wrap" style="display:none;align-items:center;gap:5px" title="The order (still being made) this container was made for — its shipped units come off that order so they're only counted once">Made for order
+        <label id="rvo-imp-from-wrap" style="display:none;align-items:center;gap:5px" title="The order(s) still being made that this container was shipped from — its units come off them so they're counted once. All open orders = oldest order first (first in, first out), same vendor only.">Made for order
           <select id="rvo-imp-from" style="font-size:12px;padding:4px 6px;border-radius:6px;border:1px solid var(--border);max-width:180px"></select></label>
         <input type="file" id="rvo-imp-file" accept=".xlsx,.xls,.csv" style="display:none" onchange="rvoImport(this)">
         <button class="btn btn-secondary" style="font-size:12px" onclick="rvoPickFile()">⬆ Import vendor sheet</button>
@@ -4077,7 +4077,7 @@ function rvoRenderIncoming(titles) {
   box.style.display = 'flex';
   box.innerHTML = '<b style="color:#1A56DB">🚢 On the way (subtracted from what to order):</b>' + titles.map(function (t) {
     return '<span style="display:inline-flex;align-items:center;gap:6px;background:#fff;border:1px solid #BFDBFE;border-radius:14px;padding:3px 4px 3px 10px">'
-      + (t.stage === 'production' ? '<span title="Ordered — vendor still making it">🏭</span>' : t.stage === 'shipped' ? '<span title="Shipped container">🚢</span>' : '')
+      + (t.stage === 'production' ? '<span title="Ordered ' + escHtml(t.orderDate || '') + ' — vendor still making it">🏭</span>' : t.stage === 'shipped' ? '<span title="Shipped container">🚢</span>' : '')
       + '<b>' + escHtml(t.title) + '</b> <span style="color:var(--text3)">' + escHtml(t.vendor || '') + ' · ' + fmt0(t.parts) + ' part #s · ' + fmt0(t.units) + ' units'
       + (t.pallets ? ' · 🧱 ' + fmt0(t.pallets) + ' pallets' : '') + '</span>'
       + '<button onclick="rvoCheck(\'' + escHtml(t.title).replace(/'/g, "\\'") + '\')" title="Where did every line of this shipment go?" style="border:none;background:#DBEAFE;border-radius:10px;padding:2px 8px;font-size:11px;cursor:pointer">🔍 Check</button>'
@@ -4260,9 +4260,14 @@ function rvoPackingHtml(p, savedUnits) {
   if (rd.ignored.length) h += '<div style="font-size:12px;color:var(--text3);margin-bottom:6px">Ignored sheets (no pallet column — invoice / customs copies of the same goods, so not counted again): ' + escHtml(rd.ignored.join(', ')) + '</div>';
   if (sv.keptWithMoves && sv.keptWithMoves.length) h += '<div style="font-size:12px;color:#b45309;margin-bottom:6px">Kept (boxes already moved off them, not in this file any more): ' + escHtml(sv.keptWithMoves.join(', ')) + '</div>';
   if (p.take) { var t = p.take;
-    h += '<div style="font-size:12px;margin:0 0 8px;padding:8px 10px;background:' + (t.ok ? '#ECFDF5' : '#FDF0EE') + ';border-radius:8px">🏭 Order <b>' + escHtml(p.from) + '</b>: ' + fmt0(t.fromBefore) + ' units before − ' + fmt0(t.taken) + ' shipped in this container = <b>' + fmt0(t.fromAfter) + '</b> still being made '
+    var used = (t.orders || []).filter(function (o) { return o.taken > 0; });
+    h += '<div style="font-size:12px;margin:0 0 8px;padding:8px 10px;background:' + (t.ok ? '#ECFDF5' : '#FDF0EE') + ';border-radius:8px">🏭 <b>Orders still being made</b> — '
+      + (p.from === '*' ? 'oldest first (first in, first out)' : 'order "' + escHtml(p.from) + '"') + ': ' + fmt0(t.taken) + ' units of this container came off them '
       + (t.ok ? '<b style="color:var(--green)">✓ adds up</b>' : '<b style="color:var(--red)">✗ does not add up</b>')
-      + (t.notOnOrder && t.notOnOrder.length ? '<div style="margin-top:4px;color:#b45309">Shipped more than ordered / not on that order (' + t.notOnOrder.length + '): ' + t.notOnOrder.slice(0, 40).map(function (x) { return escHtml(x.part) + ' ' + fmt0(x.shipped - x.fromOrder); }).join(', ') + '</div>' : '') + '</div>'; }
+      + (used.length ? '<table style="border-collapse:collapse;margin-top:4px"><tr><th style="text-align:left;padding:2px 8px">Order</th><th style="padding:2px 8px">Date</th><th style="padding:2px 8px">Before</th><th style="padding:2px 8px">Shipped now</th><th style="padding:2px 8px">Still being made</th></tr>'
+        + used.map(function (o) { return '<tr><td style="padding:2px 8px">' + escHtml(o.title) + '</td><td style="padding:2px 8px">' + escHtml(o.date) + '</td><td style="padding:2px 8px;text-align:right">' + fmt0(o.before) + '</td><td style="padding:2px 8px;text-align:right">−' + fmt0(o.taken) + '</td><td style="padding:2px 8px;text-align:right"><b>' + fmt0(o.after) + '</b></td></tr>'; }).join('') + '</table>' : '')
+      + ((t.lines || []).length ? '<details style="margin-top:4px"><summary style="cursor:pointer">Part by part</summary>' + t.lines.map(function (x) { return '<div><span style="font-family:var(--mono)">' + escHtml(x.part) + '</span> ' + fmt0(x.took) + ' from "' + escHtml(x.order) + '" (' + escHtml(x.orderDate) + ') → ' + fmt0(x.orderLeft) + ' left on it</div>'; }).join('') + '</details>' : '')
+      + (t.notOnOrder && t.notOnOrder.length ? '<div style="margin-top:4px;color:#b45309">Shipped more than ordered / not on an open order (' + t.notOnOrder.length + '): ' + t.notOnOrder.slice(0, 40).map(function (x) { return escHtml(x.part) + ' ' + fmt0(x.shipped - x.fromOrder); }).join(', ') + '</div>' : '') + '</div>'; }
   if (rd.prices) h += rvoPricesHtml(rd.prices);
   if (p.weights) h += rvoWeightsHtml(p.weights);
   if (rd.warn.length) h += '<details style="font-size:12px;margin:0 0 8px"><summary style="cursor:pointer;color:#b45309">⚠ ' + rd.warn.length + ' line(s) to check when it arrives</summary>'
@@ -4557,9 +4562,12 @@ function rvoParseSheet(aoa, opt) {
 function rvoStageUi() {
   var st = document.getElementById('rvo-imp-stage'), wrap = document.getElementById('rvo-imp-from-wrap'), sel = document.getElementById('rvo-imp-from');
   if (!st || !wrap) return;
-  var cur = sel.value, prod = (RVO.incTitles || []).filter(function (t) { return t.stage === 'production'; });
-  sel.innerHTML = '<option value="">— none (not ordered here) —</option>' + prod.map(function (t) { return '<option value="' + escHtml(t.title) + '">' + escHtml(t.title) + ' (' + fmt0(t.units) + ' units)</option>'; }).join('');
-  if (cur) sel.value = cur;
+  var cur = sel.value, prod = (RVO.incTitles || []).filter(function (t) { return t.stage === 'production'; })
+    .sort(function (a, b) { return String(a.orderDate || '').localeCompare(String(b.orderDate || '')); });
+  // Default: every open order of this vendor, oldest first (first in, first out).
+  sel.innerHTML = (prod.length ? '<option value="*">All open orders — oldest first (FIFO)</option>' : '') + '<option value="">— none (not ordered here) —</option>'
+    + prod.map(function (t) { return '<option value="' + escHtml(t.title) + '">only: ' + escHtml(t.title) + (t.orderDate ? ' · ' + escHtml(t.orderDate) : '') + ' (' + fmt0(t.units) + ' units)</option>'; }).join('');
+  if (cur && [].some.call(sel.options, function (o) { return o.value === cur; })) sel.value = cur;
   wrap.style.display = st.value === 'shipped' ? 'flex' : 'none';
   var tb = document.getElementById('rvo-tmpl-btn');
   if (tb) tb.textContent = '📄 Download template: ' + (st.value === 'shipped' ? '🚢 container' : st.value === 'production' ? '🏭 order' : 'vendor info');
@@ -4740,7 +4748,8 @@ async function rvoImportShipped(f, wb, vendor, title) {
     + '\n• Not on the packing list: ' + cmp.onlyOld.length + (cmp.onlyOld.length ? ' (' + cmp.onlyOld.slice(0, 12).map(function (c) { return c.part; }).join(', ') + (cmp.onlyOld.length > 12 ? ', …' : '') + ') — you\'ll be asked next' : '') : '';
   if (!confirm('🚢 Shipped container "' + title + '" from ' + f.name + ' (vendor ' + vendor + ')\n\n' + summary + priceTxt() + cmpTxt + '\n\n' + rows.length + ' part #s · ' + fmt0(pk.units) + ' units → on the way, with the pallet of every box.'
     + (pk.ignored.length ? '\nIgnored sheets (no pallet column — invoice / customs copies): ' + pk.ignored.join(', ') : '')
-    + (from ? '\n\nMade for order "' + from + '": the shipped units come off that order (counted once).' : '\n\nNot linked to an order still being made. If it was, pick it in "Made for order" first — or it counts twice.'))) return;
+    + (from === '*' ? '\n\nMade for: ALL open orders of this vendor, OLDEST FIRST — each part # comes off the oldest order first, then the next (counted once).'
+      : from ? '\n\nMade for order "' + from + '" only: the shipped units come off that order (counted once).' : '\n\nNot linked to an order still being made. If it was, pick it in "Made for order" first — or it counts twice.'))) return;
   var priceChanges = [];
   for (var i = 0; i < rows.length; i += 400) {
     var d = await (await wFetch(W + '/reorder/vendor-catalog/import', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ vendor: vendor, title: title, stage: 'shipped', last: i + 400 >= rows.length, file: f.name, rows: rows.slice(i, i + 400) }) })).json();

@@ -996,6 +996,10 @@ async function reorderFixTables(env) {
   // order keeps 40, container has 60).
   await env.DB.prepare(`CREATE TABLE IF NOT EXISTS reorder_take (from_title TEXT NOT NULL, to_title TEXT NOT NULL, part TEXT NOT NULL,
     units REAL NOT NULL, PRIMARY KEY (from_title, to_title, part))`).run();
+  await env.DB.prepare('ALTER TABLE reorder_take ADD COLUMN cases REAL').run().catch(() => {});
+  // When an order was first imported (never moves on re-import) — its place in line for FIFO.
+  await env.DB.prepare('ALTER TABLE reorder_title ADD COLUMN created_at TEXT').run().catch(() => {});
+  await env.DB.prepare('UPDATE reorder_title SET created_at = updated_at WHERE created_at IS NULL').run().catch(() => {});
   // Which pallet every box of a shipped container is on (vendor packing
   // list) — Inventory → Transfer → 🚢 Container here. One row per pallet ×
   // part #; cases = boxes (cartons).
@@ -1057,8 +1061,8 @@ async function reorderCatalogImport(request, env, session) {
   const now = new Date().toISOString(), t = v => (v == null ? '' : String(v)).trim().slice(0, 300), n = v => { const x = parseFloat(v); return Number.isFinite(x) ? x : null; };
   const num = v => parseFloat(String(v == null ? '' : v).replace(/,/g, ''));
   const stage = title && (b.stage === 'shipped' || b.stage === 'production') ? b.stage : '';
-  if (stage) await env.DB.prepare(`INSERT INTO reorder_title (title, stage, updated_at) VALUES (?,?,?)
-    ON CONFLICT(title) DO UPDATE SET stage = excluded.stage, updated_at = excluded.updated_at`).bind(title, stage, now).run();
+  if (stage) await env.DB.prepare(`INSERT INTO reorder_title (title, stage, updated_at, created_at) VALUES (?,?,?,?)
+    ON CONFLICT(title) DO UPDATE SET stage = excluded.stage, updated_at = excluded.updated_at`).bind(title, stage, now, now).run();
   // An order the vendor is still making can be given as cases only: units =
   // cases × units per case (✏️ case qty → SKU Mgr → vendor sheet carton).
   // A line with no case size is NOT guessed — it's sent back as not counted.
@@ -1229,44 +1233,80 @@ async function reorderFillWeights(request, env, session) {
   return _roResp({ ok: true, filled, kept, noProduct });
 }
 
+// An order's date for first-in-first-out: a date in its title ("order 4/1/26")
+// if there is one, else when it was first imported.
+function reorderOrderDate(title, createdAt) {
+  const m = String(title || '').match(/(\d{1,2})[\/.-](\d{1,2})[\/.-](\d{2,4})/);
+  if (m) { let y = parseInt(m[3], 10); if (y < 100) y += 2000; const mo = parseInt(m[1], 10), d = parseInt(m[2], 10);
+    if (mo >= 1 && mo <= 12 && d >= 1 && d <= 31) return `${y}-${String(mo).padStart(2, '0')}-${String(d).padStart(2, '0')}`; }
+  return String(createdAt || '').slice(0, 10) || '9999-12-31';
+}
 // POST /reorder/fix/incoming-take { from, to } — a shipped container (`to`)
-// was made for an order still listed as being made (`from`): the shipped
-// units come off that order, part # by part #, so they're on the way once.
-// Safe to repeat (it remembers what it already took): order 100, container
-// 60 → order 40 + container 60 = 100, same total as before.
+// comes off the orders still being made, part # by part #, so its units are
+// on the way once. from = '*' → every open 🏭 order of the same vendor,
+// OLDEST FIRST (first in, first out): order 4/1 500 + order 5/1 500, 400
+// shipped → 4/1 keeps 100, 5/1 keeps 500. from = a title → only that order.
+// Safe to repeat: what this container took before is put back first, then
+// taken again — never taken twice.
 async function reorderIncomingTake(request, env, session) {
   await reorderFixTables(env);
   const b = await request.json().catch(() => ({}));
   const from = String(b.from || '').trim(), to = String(b.to || '').trim();
-  if (!from || !to || from === to) return _roResp({ ok: false, error: 'Pick the order this container was made for' }, 400);
+  if (!from || !to || from === to) return _roResp({ ok: false, error: 'Pick the order(s) this container was made for' }, 400);
+  const now = new Date().toISOString(), vn = v => reorderVendorName(String(v || '').trim()).toUpperCase();
   const rowsOf = async title => { const m = {}; ((await env.DB.prepare('SELECT part, qty, vendor, cases FROM reorder_incoming WHERE title = ?').bind(title).all()).results || []).forEach(r => { m[r.part] = r; }); return m; };
-  const F = await rowsOf(from), T = await rowsOf(to), prev = {};
-  ((await env.DB.prepare('SELECT part, units FROM reorder_take WHERE from_title = ? AND to_title = ?').bind(from, to).all()).results || []).forEach(r => { prev[r.part] = r.units; });
-  const sum = m => Object.values(m).reduce((a, r) => a + (r.qty || 0), 0);
-  const fromBefore = sum(F), toTotal = sum(T), now = new Date().toISOString();
-  const lines = [], notOnOrder = [];
-  let moved = 0;
-  for (const part of Object.keys(T)) {
-    const shipped = T[part].qty || 0, already = prev[part] || 0, fromNow = F[part] ? F[part].qty || 0 : 0;
-    const target = Math.min(fromNow + already, shipped), delta = target - already;
-    if (shipped > target) notOnOrder.push({ part, shipped, fromOrder: target });
-    if (Math.abs(delta) < 1e-9) continue;
-    const left = fromNow - delta;
-    if (left <= 1e-9) await env.DB.prepare('DELETE FROM reorder_incoming WHERE title = ? AND part = ?').bind(from, part).run();
-    // Boxes still to come shrink with the units (📦 Received stocks in by boxes).
-    else if (F[part]) await env.DB.prepare('UPDATE reorder_incoming SET qty = ?, cases = ?, updated_at = ? WHERE title = ? AND part = ?')
-      .bind(left, F[part].cases > 0 && fromNow > 0 ? Math.round(F[part].cases * left / fromNow * 100) / 100 : F[part].cases, now, from, part).run();
-    else await env.DB.prepare('INSERT INTO reorder_incoming (title, part, qty, vendor, updated_at) VALUES (?,?,?,?,?)').bind(from, part, left, T[part].vendor || '', now).run();
-    if (target > 0) await env.DB.prepare(`INSERT INTO reorder_take (from_title, to_title, part, units) VALUES (?,?,?,?)
-      ON CONFLICT(from_title, to_title, part) DO UPDATE SET units = excluded.units`).bind(from, to, part, target).run();
-    else await env.DB.prepare('DELETE FROM reorder_take WHERE from_title = ? AND to_title = ? AND part = ?').bind(from, to, part).run();
-    moved += delta; lines.push({ part, took: delta, orderLeft: Math.max(0, left) });
+  const T = await rowsOf(to);
+  // 1) Put back what this container took before.
+  const prev = (await env.DB.prepare('SELECT from_title, part, units, cases FROM reorder_take WHERE to_title = ?').bind(to).all()).results || [];
+  for (const p of prev) {
+    const r = await env.DB.prepare('SELECT qty, cases FROM reorder_incoming WHERE title = ? AND part = ?').bind(p.from_title, p.part).first();
+    if (r) await env.DB.prepare('UPDATE reorder_incoming SET qty = ?, cases = ? WHERE title = ? AND part = ?')
+      .bind(r.qty + p.units, p.cases != null ? (r.cases || 0) + p.cases : (r.cases > 0 && r.qty > 0 ? Math.round(r.cases * (r.qty + p.units) / r.qty * 100) / 100 : r.cases), p.from_title, p.part).run();
+    else await env.DB.prepare('INSERT INTO reorder_incoming (title, part, qty, vendor, cases, updated_at) VALUES (?,?,?,?,?,?)')
+      .bind(p.from_title, p.part, p.units, (T[p.part] && T[p.part].vendor) || '', p.cases, now).run();
   }
-  const fromAfter = sum(await rowsOf(from));
-  const ok = Math.abs(fromBefore - moved - fromAfter) < 1e-6;
-  await reorderLog(env, _roWho(session), 'take', to, `"${to}" shipped from order "${from}": ${Math.round(moved)} units taken off the order (order ${Math.round(fromBefore)} → ${Math.round(fromAfter)}; container ${Math.round(toTotal)})`
-    + (notOnOrder.length ? ` · shipped more than ordered / not on the order: ${notOnOrder.map(x => x.part).join(', ')}` : '') + (ok ? '' : ' · ⚠ TOTALS DO NOT MATCH'));
-  return _roResp({ ok, error: ok ? undefined : 'Totals do not match — check History', from, to, fromBefore, fromAfter, toTotal, taken: moved, lines, notOnOrder });
+  await env.DB.prepare('DELETE FROM reorder_take WHERE to_title = ?').bind(to).run();
+  // 2) The orders to take from, oldest first.
+  let orders;
+  if (from === '*') {
+    orders = ((await env.DB.prepare(`SELECT title, created_at, updated_at FROM reorder_title WHERE stage = 'production' AND title != ?`).bind(to).all()).results || [])
+      .map(o => ({ title: o.title, date: reorderOrderDate(o.title, o.created_at || o.updated_at) }))
+      .sort((a, c) => a.date.localeCompare(c.date) || a.title.localeCompare(c.title));
+  } else {
+    const o = await env.DB.prepare('SELECT created_at, updated_at FROM reorder_title WHERE title = ?').bind(from).first();
+    orders = [{ title: from, date: reorderOrderDate(from, o && (o.created_at || o.updated_at)) }];
+  }
+  for (const o of orders) { o.rows = await rowsOf(o.title); o.before = Object.values(o.rows).reduce((a, r) => a + (r.qty || 0), 0); o.taken = 0; }
+  const lines = [], notOnOrder = [];
+  let taken = 0;
+  for (const part of Object.keys(T)) {
+    const shipped = T[part].qty || 0, cv = vn(T[part].vendor);
+    let need = shipped;
+    for (const o of orders) {
+      if (need <= 1e-9) break;
+      const r = o.rows[part];
+      if (!r || !(r.qty > 0)) continue;
+      if (from === '*' && cv && vn(r.vendor) && vn(r.vendor) !== cv) continue; // another vendor's order
+      const take = Math.min(r.qty, need), left = r.qty - take;
+      const tCases = r.cases > 0 ? Math.round(r.cases * take / r.qty * 100) / 100 : null;
+      if (left <= 1e-9) await env.DB.prepare('DELETE FROM reorder_incoming WHERE title = ? AND part = ?').bind(o.title, part).run();
+      else await env.DB.prepare('UPDATE reorder_incoming SET qty = ?, cases = ?, updated_at = ? WHERE title = ? AND part = ?')
+        .bind(left, r.cases > 0 ? Math.round((r.cases - tCases) * 100) / 100 : r.cases, now, o.title, part).run();
+      await env.DB.prepare('INSERT INTO reorder_take (from_title, to_title, part, units, cases) VALUES (?,?,?,?,?)').bind(o.title, to, part, take, tCases).run();
+      r.qty = left; need -= take; o.taken += take; taken += take;
+      lines.push({ part, order: o.title, orderDate: o.date, took: take, orderLeft: left });
+    }
+    if (need > 1e-9) notOnOrder.push({ part, shipped, fromOrder: shipped - need });
+  }
+  // 3) Totals: orders before − taken = orders after, order by order.
+  let ok = true;
+  for (const o of orders) { o.after = Object.values(await rowsOf(o.title)).reduce((a, r) => a + (r.qty || 0), 0); if (Math.abs(o.before - o.taken - o.after) > 1e-6) ok = false; delete o.rows; }
+  const used = orders.filter(o => o.taken > 0), fromBefore = orders.reduce((a, o) => a + o.before, 0), fromAfter = orders.reduce((a, o) => a + o.after, 0);
+  const toTotal = Object.values(T).reduce((a, r) => a + (r.qty || 0), 0);
+  await reorderLog(env, _roWho(session), 'take', to, `"${to}" shipped from ${from === '*' ? 'open orders, oldest first' : 'order "' + from + '"'}: ${Math.round(taken)} units taken off `
+    + (used.length ? used.map(o => `"${o.title}" (${o.date}) ${Math.round(o.before)} → ${Math.round(o.after)}`).join(', ') : 'no order')
+    + ` (container ${Math.round(toTotal)})` + (notOnOrder.length ? ` · shipped more than ordered / not on an order: ${notOnOrder.length} part #s` : '') + (ok ? '' : ' · ⚠ TOTALS DO NOT MATCH'));
+  return _roResp({ ok, error: ok ? undefined : 'Totals do not match — check History', from, to, fromBefore, fromAfter, toTotal, taken, orders, lines, notOnOrder });
 }
 
 // POST { raws:[…], part, fields:{description, outside_upc, inside_upc, vendor, asin, case_qty} }
@@ -1441,10 +1481,10 @@ async function reorderVendorOrder(env, url) {
   (await all('SELECT part, vendor, updated_at FROM reorder_incoming')).forEach(r => setLast(r.part, r.vendor, r.updated_at));
   (await all('SELECT part, vendor, at FROM reorder_last_vendor')).forEach(r => setLast(r.part, r.vendor, r.at));
   const incUnitsOf = k => Object.values(incoming[k] || {}).reduce((a, x) => a + x, 0);
-  const stageOf = {}; (await all('SELECT title, stage FROM reorder_title')).forEach(r => { stageOf[r.title] = r.stage; });
+  const stageOf = {}, dateOf = {}; (await all('SELECT title, stage, created_at, updated_at FROM reorder_title')).forEach(r => { stageOf[r.title] = r.stage; dateOf[r.title] = reorderOrderDate(r.title, r.created_at || r.updated_at); });
   const palletsOf = {}; (await all('SELECT title, COUNT(DISTINCT vendor || \'|\' || pallet) AS n FROM reorder_pallet GROUP BY title')).forEach(r => { palletsOf[r.title] = r.n; });
   const incomingTitles = (await all('SELECT title, COUNT(*) AS parts, SUM(qty) AS units, MAX(vendor) AS vendor, MAX(updated_at) AS at FROM reorder_incoming GROUP BY title ORDER BY MIN(updated_at)'))
-    .map(t => ({ ...t, vendor: reorderVendorName(t.vendor), stage: stageOf[t.title] || '', pallets: palletsOf[t.title] || 0 }));
+    .map(t => ({ ...t, vendor: reorderVendorName(t.vendor), stage: stageOf[t.title] || '', orderDate: dateOf[t.title] || '', pallets: palletsOf[t.title] || 0 }));
 
   const fba = await all('SELECT sku, asin, available, product_name FROM fba_catalog');
   const sales = {}; // exact SKU → { amz, other } in units (listing orders)
