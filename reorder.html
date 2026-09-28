@@ -1758,6 +1758,7 @@ body { display:flex; flex-direction:column; min-height:100vh; background:var(--b
     <button class="sales-tab-btn" id="ro-tab-skumap" onclick="roTab('skumap')">🔗 SKU Map</button>
     <button class="sales-tab-btn" id="ro-tab-podash" onclick="roTab('podash')">🎯 PO Recommendations</button>
     <button class="sales-tab-btn active" id="ro-tab-reorder" onclick="roTab('reorder')">🧾 Reorder</button>
+    <button class="sales-tab-btn" id="ro-tab-listings" onclick="roTab('listings')" title="Every eBay / Amazon / Walmart / Shopify listing that isn't under one of our part #s">🔗 Listings → our SKU</button>
   </div>
   <div class="sales-body">
 
@@ -2007,6 +2008,40 @@ body { display:flex; flex-direction:column; min-height:100vh; background:var(--b
     </div>
 
   <!-- SKU Map Tab -->
+    <div class="sales-panel" id="ro-panel-listings">
+      <div class="sales-section-header">
+        <div>
+          <div class="sales-section-title">🔗 Every listing under our SKU</div>
+          <div class="sales-section-sub">All 4 channels (channel SKU sheets, Listing Watch, FBA reports, and every SKU that sold). A listing that isn't under one of our part #s has its sales missed by 🧾 Reorder — so we keep ordering what already sold out.
+            Type the right part # (or ✔ Use a 💡 suggestion) and 💾 Save all. Same fix as ✏️ on the Reorder tab — every fix saved there already counts here.</div>
+        </div>
+        <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
+          <button class="btn btn-secondary" style="font-size:12px" onclick="rlsLoad()">↻ Refresh</button>
+          <button class="btn btn-secondary" style="font-size:12px" onclick="rlsCsv()">⬇ CSV</button>
+          <button class="btn btn-primary" id="rls-save" style="font-size:12px" onclick="rlsSave()" disabled>💾 Save all</button>
+        </div>
+      </div>
+      <div id="rls-counts" style="margin:6px 0 10px"></div>
+      <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;font-size:12px;margin-bottom:8px">
+        <select id="rls-status" onchange="rlsRender()" style="font-size:12px;padding:4px 6px;border-radius:6px;border:1px solid var(--border)">
+          <option value="todo">Not under our SKU yet</option>
+          <option value="weird">— not our part # format</option>
+          <option value="notinmgr">— our format, not in SKU Mgr</option>
+          <option value="nosku">— no SKU on the listing</option>
+          <option value="mapped">Already mapped by you — check</option>
+          <option value="all">All of the above</option>
+        </select>
+        <select id="rls-plat" onchange="rlsRender()" style="font-size:12px;padding:4px 6px;border-radius:6px;border:1px solid var(--border)">
+          <option value="">All channels</option><option>eBay</option><option>Amazon</option><option>Walmart</option><option>Shopify</option>
+        </select>
+        <label style="display:flex;align-items:center;gap:4px"><input type="checkbox" id="rls-sold" onchange="rlsRender()"> Only ones that sold</label>
+        <input id="rls-q" type="text" placeholder="Search SKU / title / listing id" oninput="rlsRender()" style="flex:1;min-width:180px;font-size:12px;padding:5px 8px;border-radius:6px;border:1px solid var(--border)">
+        <span id="rls-pend" style="color:#b45309;font-weight:700"></span>
+      </div>
+      <div id="rls-status-msg" style="font-size:12px;color:var(--text3);padding:4px 0"></div>
+      <datalist id="rls-parts"></datalist>
+      <div id="rls-wrap" style="overflow-x:auto"></div>
+    </div>
     <div class="sales-panel" id="ro-panel-skumap">
       <div class="sales-section-header">
         <div>
@@ -4903,9 +4938,153 @@ function rvoCsv() {
     .then(function () { if (document.getElementById('rvo-hist-box').open) rvoLoadHistory(); }).catch(function () {});
 }
 
+// ─── 🔗 LISTINGS → OUR SKU ───────────────────────────────────────────────────
+// Every channel listing not under one of our part #s (GET /reorder/fix/listings).
+// A fix is a part # correction (raw SKU → part #), saved with the same
+// /reorder/fix/batch as ✏️ on the Reorder tab, so Reorder counts the
+// listing's sales under the right part # from then on.
+var RLS = { loaded: false, groups: [], counts: {}, ours: {}, pend: {}, show: 300 };
+var RLS_ST = { weird: ['Not our part #', '#b91c1c', '#FDF0EE'], notinmgr: ['Not in SKU Mgr', '#b45309', '#FFF7ED'], nosku: ['No SKU on listing', '#b91c1c', '#FDF0EE'], mapped: ['Mapped by you', '#15803d', '#ECFDF5'] };
+var RLS_PC = { eBay: '#0064D2', Amazon: '#b45309', Walmart: '#0071CE', Shopify: '#5E8E3E' };
+async function rlsLoad() {
+  if (Object.keys(RLS.pend).length && !confirm('You have ' + Object.keys(RLS.pend).length + ' unsaved part # fix(es). Reload and lose them?')) return;
+  var msg = document.getElementById('rls-status-msg');
+  msg.textContent = 'Reading every listing on eBay, Amazon, Walmart and Shopify…';
+  try {
+    var res = await wFetch(W + '/reorder/fix/listings?days=365');
+    var d = await res.json(); if (!d.ok) throw new Error(d.error || 'Failed');
+    RLS.loaded = true; RLS.groups = d.groups || []; RLS.counts = d.counts || {}; RLS.pend = {}; RLS.days = d.days; RLS.show = 300;
+    RLS.ours = {}; RLS.bases = {}; (d.ourParts || []).forEach(function (p) { RLS.ours[p] = 1; RLS.bases[p.split('=')[0]] = 1; });
+    document.getElementById('rls-parts').innerHTML = (d.ourParts || []).map(function (p) { return '<option value="' + escHtml(p) + '">'; }).join('');
+    msg.innerHTML = (d.errors || []).length ? '<span style="color:var(--red)">⚠ ' + d.errors.map(escHtml).join(' · ') + '</span>' : '';
+  } catch (e) { msg.innerHTML = '<span style="color:var(--red)">✗ ' + escHtml(e.message) + '</span>'; return; }
+  rlsCounts(); rlsRender();
+}
+function rlsCounts() {
+  var c = RLS.counts, P = ['eBay', 'Amazon', 'Walmart', 'Shopify'], tot = { listings: 0, ok: 0, mapped: 0, weird: 0, notinmgr: 0, nosku: 0 };
+  var cell = function (v, col) { return '<td style="padding:4px 10px;text-align:right' + (v && col ? ';color:' + col + ';font-weight:700' : '') + '">' + fmt0(v) + '</td>'; };
+  var row = function (name, x) { var bad = x.weird + x.notinmgr + x.nosku;
+    return '<tr><td style="padding:4px 10px;font-weight:700">' + name + '</td>' + cell(x.listings) + cell(x.ok) + cell(x.mapped, '#15803d') + cell(bad, '#b91c1c')
+      + '<td style="padding:4px 10px;text-align:right">' + (x.ok + x.mapped + bad === x.listings ? '<b style="color:var(--green)">✓</b>' : '<b style="color:var(--red)">✗</b>') + '</td></tr>'; };
+  var h = '<table style="font-size:12px;border-collapse:collapse;background:var(--bg3);border-radius:8px"><thead><tr><th></th><th style="padding:4px 10px">Listings</th><th style="padding:4px 10px">Under our SKU</th><th style="padding:4px 10px">Mapped by you</th><th style="padding:4px 10px">NOT under our SKU</th><th style="padding:4px 10px" title="Under + mapped + not = listings">Adds up</th></tr></thead><tbody>';
+  P.forEach(function (p) { var x = c[p]; if (!x) return; Object.keys(tot).forEach(function (k) { tot[k] += x[k] || 0; }); h += row(p, x); });
+  document.getElementById('rls-counts').innerHTML = h + row('All channels', tot) + '</tbody></table>';
+}
+function rlsUrl(l, sku) {
+  var id = String(l.listingId || ''), a = l.asin || '';
+  if (l.platform === 'eBay' && /^\d{9,}$/.test(id)) return 'https://www.ebay.com/itm/' + id;
+  if (l.platform === 'Amazon' && /^[A-Z0-9]{10}$/.test(a || id)) return 'https://www.amazon.com/dp/' + (a || id);
+  if (l.platform === 'Walmart' && /^\d{5,}$/.test(id)) return 'https://www.walmart.com/ip/' + id;
+  if (l.platform === 'Shopify') return /^\d{6,}$/.test(id) ? 'https://admin.shopify.com/store/093304-8e/products/' + id : (sku ? 'https://admin.shopify.com/store/093304-8e/products?query=' + encodeURIComponent(sku) : '');
+  return '';
+}
+function rlsVisible() {
+  var st = document.getElementById('rls-status').value, pl = document.getElementById('rls-plat').value;
+  var onlySold = document.getElementById('rls-sold').checked, q = (document.getElementById('rls-q').value || '').trim().toUpperCase();
+  return RLS.groups.filter(function (g) {
+    if (st === 'todo' ? g.status === 'mapped' : st !== 'all' && g.status !== st) return false;
+    if (pl && !g.listings.some(function (l) { return l.platform === pl; })) return false;
+    if (onlySold && !g.soldTotal) return false;
+    if (q && (g.sku + ' ' + g.readAs + ' ' + g.listings.map(function (l) { return l.listingId + ' ' + l.title + ' ' + l.asin; }).join(' ')).toUpperCase().indexOf(q) === -1) return false;
+    return true;
+  });
+}
+// What a typed part # means: '' fine, else a warning.
+function rlsCheck(v) {
+  v = String(v || '').trim().toUpperCase(); if (!v) return '';
+  if (!/^\d+(-\d+){1,3}(&\d+)?(=\d+.*)?$/.test(v)) return 'not our part # format (e.g. 27-3-1=10X)';
+  if (!RLS.ours[v]) return RLS.bases[v.split('=')[0]] ? 'new pack size — not in SKU Mgr yet' : 'base ' + v.split('=')[0] + ' is not in SKU Mgr';
+  return '';
+}
+function rlsRender() {
+  if (!RLS.loaded) return;
+  var rows = rlsVisible(), gi = function (g) { return RLS.groups.indexOf(g); };
+  var sold = rows.reduce(function (a, g) { return a + (g.soldTotal || 0); }, 0);
+  var h = '<div style="font-size:12px;color:var(--text3);margin-bottom:6px"><b>' + fmt0(rows.length) + '</b> SKU' + (rows.length === 1 ? '' : 's') + ' · <b>' + fmt0(rows.reduce(function (a, g) { return a + g.listings.length; }, 0)) + '</b> listings · <b>' + fmt0(sold) + '</b> units sold on these listings in the last ' + (RLS.days || 365) + ' days' + (document.getElementById('rls-status').value === 'mapped' ? ' (counted under the part # they\'re mapped to — check they\'re right)' : '') + '. Most sold first.</div>';
+  if (!rows.length) { document.getElementById('rls-wrap').innerHTML = h + '<div style="padding:16px;color:var(--green);font-weight:700">✓ Nothing here.</div>'; rlsBar(); return; }
+  h += '<table style="border-collapse:collapse;width:100%;min-width:980px;font-size:12px"><thead><tr style="background:var(--bg3)">'
+    + '<th style="padding:6px 8px;text-align:left;width:190px">SKU on the listing</th><th style="padding:6px 8px;text-align:left">Listing(s) — open to check</th><th style="padding:6px 8px;text-align:right;width:80px">Sold</th>'
+    + '<th style="padding:6px 8px;text-align:left;width:220px">Right part #</th><th style="padding:6px 8px;text-align:left;width:280px">💡 Suggested</th></tr></thead><tbody>';
+  rows.slice(0, RLS.show).forEach(function (g) {
+    var i = gi(g), st = RLS_ST[g.status] || ['', '', ''], pend = RLS.pend[g.sku];
+    var val = pend != null ? pend : (g.mappedTo || ''), warn = rlsCheck(val);
+    h += '<tr style="border-top:1px solid var(--border);vertical-align:top' + (pend != null ? ';background:#FFFBEB' : '') + '">'
+      + '<td style="padding:6px 8px"><b style="font-family:var(--mono);word-break:break-all">' + (g.sku ? escHtml(g.sku) : '<i style="color:var(--red)">(none)</i>') + '</b>'
+      + '<div><span style="font-size:10px;font-weight:700;color:' + st[1] + ';background:' + st[2] + ';border-radius:4px;padding:0 4px">' + st[0] + '</span></div>'
+      + (g.status === 'mapped' ? '<div style="font-size:10.5px;color:var(--text3)">by ' + escHtml(g.mappedBy || '?') + ' ' + escHtml(String(g.mappedAt || '').slice(0, 10)) + '</div>' : '') + '</td>'
+      + '<td style="padding:6px 8px">' + g.listings.map(function (l) { var u = rlsUrl(l, g.sku), t = l.title || '(no title — open the listing)';
+        return '<div style="margin-bottom:3px"><b style="color:' + (RLS_PC[l.platform] || 'inherit') + '">' + escHtml(l.platform) + '</b> '
+          + (u ? '<a href="' + u + '" target="_blank" rel="noopener">' + escHtml(t) + '</a>' : escHtml(t))
+          + ' <span style="font-family:var(--mono);font-size:10.5px;color:var(--text3)">' + escHtml(l.listingId || '') + (l.asin && l.asin !== l.listingId ? ' · ' + escHtml(l.asin) : '') + ' · ' + escHtml((l.src || []).join(', ')) + '</span>'
+          + (l.title ? ' <button data-t="' + escHtml(l.title).replace(/"/g, '&quot;') + '" onclick="rvoCopyText(this.dataset.t)" title="Copy the title" style="border:none;background:none;cursor:pointer;padding:0 2px;font-size:11px">📋</button>' : '') + '</div>'; }).join('') + '</td>'
+      + '<td style="padding:6px 8px;text-align:right;white-space:nowrap">' + (g.soldTotal ? '<b>' + fmt0(g.soldTotal) + '</b>' + Object.keys(g.sold).map(function (p) { return '<div style="font-size:10.5px;color:var(--text3)">' + escHtml(p) + ' ' + fmt0(g.sold[p]) + '</div>'; }).join('') : '<span style="color:var(--text3)">—</span>') + '</td>'
+      + '<td style="padding:6px 8px">' + (g.sku
+        ? '<input list="rls-parts" value="' + escHtml(val) + '" placeholder="e.g. 27-3-1=10X" oninput="rlsEdit(' + i + ',this.value)" onchange="rlsRender()" style="width:170px;font-family:var(--mono);font-size:12px;padding:4px 6px;border-radius:5px;border:1.5px solid ' + (warn ? '#b45309' : pend != null ? '#b45309' : 'var(--border)') + '">'
+          + (g.status === 'mapped' ? ' <button onclick="rlsEdit(' + i + ',\'\',1)" title="Take this correction off — the listing goes back to its own SKU" style="font-size:11px;border:1px solid var(--border);background:var(--bg2);border-radius:5px;cursor:pointer">↩ undo</button>' : '')
+          + (warn ? '<div style="font-size:10.5px;color:#b45309">⚠ ' + escHtml(warn) + '</div>' : '')
+          + (pend === '' && g.status === 'mapped' ? '<div style="font-size:10.5px;color:#b45309">correction will be taken off</div>' : '')
+        : '<div style="font-size:11px;color:var(--red)">No SKU on this listing — put the right part # as the SKU on ' + escHtml(g.listings[0].platform) + ' (or the ' + escHtml({ eBay: 'EbaySKU', Amazon: 'AmazonSKU', Walmart: 'WalmartSKU', Shopify: 'ShopifySKU' }[g.listings[0].platform] || '') + ' sheet). Until then its sales can\'t be counted.</div>') + '</td>'
+      + '<td style="padding:6px 8px">' + (g.suggestions || []).map(function (sg, n) {
+        return '<div style="font-size:10.5px;margin-bottom:3px;padding:3px 5px;border:1px dashed #86efac;background:#f0fdf4;border-radius:6px;color:#14532d" title="' + escHtml(sg.why || '') + '">'
+          + '<b style="font-family:var(--mono);font-size:12px">' + escHtml(sg.part) + '</b> ' + sg.score + '%'
+          + (g.sku ? ' <button onclick="rlsUse(' + i + ',' + n + ')" style="border:1px solid #16a34a;background:#16a34a;color:#fff;border-radius:5px;padding:0 6px;cursor:pointer;font-size:11px">✔ Use</button>' : '')
+          + (sg.inMgr ? '' : ' <span style="color:#b45309">not in SKU Mgr</span>') + (sg.packGuessed ? ' <span style="color:#b45309" title="No piece count in the title">pieces?</span>' : '')
+          + '<div style="color:var(--text3);white-space:normal">' + escHtml(sg.why || '') + '</div>'
+          + (/^same ASIN/.test(sg.why || '') ? '<div style="color:#14532d;white-space:normal">🧾 Reorder already counts its Amazon sales here (same ASIN) — map it so Sold Out finds it too.</div>' : '') + '</div>'; }).join('') + '</td></tr>';
+  });
+  h += '</tbody></table>';
+  if (rows.length > RLS.show) h += '<button class="btn btn-secondary" style="margin-top:8px;font-size:12px" onclick="RLS.show+=300;rlsRender()">Show more (' + fmt0(rows.length - RLS.show) + ' left)</button>';
+  document.getElementById('rls-wrap').innerHTML = h;
+  rlsBar();
+}
+function rlsEdit(i, v, redraw) {
+  var g = RLS.groups[i]; if (!g) return;
+  v = String(v || '').trim().toUpperCase();
+  if (v === (g.mappedTo || '') && !(redraw && g.status === 'mapped')) delete RLS.pend[g.sku]; else RLS.pend[g.sku] = v;
+  if (redraw) rlsRender(); else rlsBar();
+}
+function rlsUse(i, n) { var g = RLS.groups[i], sg = g && (g.suggestions || [])[n]; if (!sg) return; RLS.pend[g.sku] = sg.part; rlsRender(); }
+function rlsBar() {
+  var n = Object.keys(RLS.pend).length;
+  document.getElementById('rls-save').disabled = !n;
+  document.getElementById('rls-pend').textContent = n ? n + ' unsaved' : '';
+}
+async function rlsSave() {
+  var keys = Object.keys(RLS.pend); if (!keys.length) return;
+  var bad = keys.filter(function (k) { return RLS.pend[k] && !/^\d+(-\d+){1,3}(&\d+)?(=\d+.*)?$/.test(RLS.pend[k]); });
+  if (bad.length) { alert('Not our part # format — fix these first:\n' + bad.map(function (k) { return k + ' → ' + RLS.pend[k]; }).join('\n')); return; }
+  var warn = keys.filter(function (k) { return RLS.pend[k] && rlsCheck(RLS.pend[k]); });
+  if (warn.length && !confirm(warn.length + ' part #s are not in SKU Mgr:\n' + warn.slice(0, 20).map(function (k) { return k + ' → ' + RLS.pend[k] + ' (' + rlsCheck(RLS.pend[k]) + ')'; }).join('\n') + '\n\nSave anyway?')) return;
+  var btn = document.getElementById('rls-save'); btn.disabled = true; btn.textContent = 'Saving…';
+  var items = keys.map(function (k) { return { key: k, raws: [k], part: RLS.pend[k] || k, fields: {} }; }), failed = [];
+  try {
+    for (var s = 0; s < items.length; s += 250) {
+      var res = await wFetch(W + '/reorder/fix/batch', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ items: items.slice(s, s + 250) }) });
+      var d = await res.json();
+      (d.results || []).forEach(function (r) { if (r.ok) delete RLS.pend[r.key]; else failed.push(r.key + ': ' + (r.error || 'failed')); });
+      if (!d.results) throw new Error(d.error || 'Failed');
+    }
+  } catch (e) { failed.push(e.message); }
+  btn.textContent = '💾 Save all';
+  showToast('Saved ' + (keys.length - Object.keys(RLS.pend).length) + ' part # fix(es)' + (failed.length ? ' — ' + failed.length + ' failed' : ''));
+  if (failed.length) { alert('Not saved (still here — try again):\n' + failed.join('\n')); rlsBar(); return; }
+  RVO.loaded = false; // 🧾 Reorder recalculates with the fixes next time it's opened
+  await rlsLoad();
+}
+function rlsCsv() {
+  if (!RLS.loaded) return;
+  var out = [['SKU on the listing', 'Status', 'Channel', 'Listing ID', 'ASIN', 'Title', 'Link', 'Sold (' + (RLS.days || 365) + ' days)', 'Mapped to', 'Suggested part #', 'Match %', 'Why', 'Right part # (fill in)']];
+  rlsVisible().forEach(function (g) { var sg = (g.suggestions || [])[0] || {};
+    g.listings.forEach(function (l) { out.push([g.sku, (RLS_ST[g.status] || [''])[0], l.platform, l.listingId, l.asin, l.title, rlsUrl(l, g.sku), g.soldTotal, g.mappedTo, sg.part || '', sg.score != null ? sg.score : '', sg.why || '', RLS.pend[g.sku] || '']); }); });
+  var csv = out.map(function (r) { return r.map(function (c) { c = String(c == null ? '' : c); return /[",\n]/.test(c) ? '"' + c.replace(/"/g, '""') + '"' : c; }).join(','); }).join('\n');
+  var a = document.createElement('a'); a.href = URL.createObjectURL(new Blob([csv], { type: 'text/csv' }));
+  a.download = 'listings-not-under-our-sku-' + new Date().toISOString().slice(0, 10) + '.csv'; a.click();
+}
+window.addEventListener('beforeunload', function (e) { if (Object.keys(RLS.pend).length) { e.preventDefault(); e.returnValue = ''; } });
+
 // ─── TAB SWITCHERS ───────────────────────────────────────────────────────────
 function roTab(name) {
-  ['upload','jq','eff','po','ai','skumap','podash','reorder'].forEach(function(t){
+  ['upload','jq','eff','po','ai','skumap','podash','reorder','listings'].forEach(function(t){
     document.getElementById('ro-tab-'+t).className='sales-tab-btn'+(t===name?' active':'');
     document.getElementById('ro-panel-'+t).className='sales-panel'+(t===name?' active':'');
   });
@@ -4913,6 +5092,7 @@ function roTab(name) {
   if (name==='skumap') loadUnmappedSkus();
   if (name==='podash' && !document.getElementById('podash-wrap').dataset.loaded) loadPORecommendations();
   if (name==='reorder' && !RVO.loaded) rvoLoad();
+  if (name==='listings' && !RLS.loaded) rlsLoad();
   if (name==='ai' && CALC.jqVendor.length && !document.getElementById('ro-ai-auto-body').dataset.loaded) {
     runAutoInsights('ro');
   }

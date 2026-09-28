@@ -1870,6 +1870,129 @@ async function reorderListingTitles(request, env) {
   return _roResp({ ok: true, titles: out, suggestions, errors });
 }
 
+// GET /reorder/fix/listings?days=365 — Reorder Planner → "🔗 Listings" tab.
+// Every listing on eBay / Amazon / Walmart / Shopify (channel SKU sheets,
+// Listing Watch, the FBA reports, and every SKU that sold) and whether it is
+// under one of OUR part #s. A listing whose SKU isn't ours gets its sales
+// missed by Reorder (we keep ordering what already sold), so each one is
+// shown with its link, sales and suggested part #s. The fix is the same
+// part # correction as the Reorder tab's ✏️ (reorder_alias: raw SKU → part #),
+// so every correction already saved there counts here too.
+//   status: ok        — our part # (SKU Mgr base), as it is / auto-cleaned
+//           mapped    — corrected to our part # (✏️ / this tab) — to check
+//           weird     — not our part # format
+//           notinmgr  — our format, but the base isn't in SKU Mgr / Products
+//           nosku     — the listing has no SKU at all
+async function reorderListingsCheck(env, url) {
+  await reorderFixTables(env);
+  const days = Math.min(730, Math.max(7, parseInt(url.searchParams.get('days') || '365', 10) || 365));
+  const since = new Date(Date.now() - days * 86400000).toISOString().slice(0, 10);
+  const U = s => String(s || '').trim().toUpperCase().replace(/^-+|-+$/g, '');
+  const q = async (sql, ...b) => { try { return (await env.DB.prepare(sql).bind(...b).all()).results || []; } catch (_) { return []; } };
+  const PLAT = { ebay: 'eBay', amazon: 'Amazon', walmart: 'Walmart', shopify: 'Shopify' };
+  const plat = p => PLAT[String(p || '').toLowerCase()] || String(p || '');
+  const errors = [];
+  const alias = {}, aliasInfo = {};
+  (await q('SELECT raw, part, by_user, updated_at FROM reorder_alias')).forEach(r => { alias[U(r.raw)] = U(r.part); aliasInfo[U(r.raw)] = { by: r.by_user || '', at: r.updated_at || '' }; });
+  // Ours: SKU Mgr part #s and their bases (+ Products base SKUs).
+  const ourParts = new Set(), ourBases = new Set(), partsOfBase = {};
+  (await q('SELECT part_num, base_sku, name FROM master_list')).forEach(r => {
+    const p = reorderCleanPart(U(r.part_num)); if (!p) return;
+    ourParts.add(p); const b = reorderGetBaseSku(p); ourBases.add(b); if (r.base_sku) ourBases.add(U(r.base_sku));
+    (partsOfBase[b] = partsOfBase[b] || new Set()).add(p);
+  });
+  (await q('SELECT base_sku FROM products')).forEach(r => { if (r.base_sku) ourBases.add(U(r.base_sku)); });
+  const isOurs = part => reorderIsProperFormat(part) && (ourParts.has(part) || ourBases.has(reorderGetBaseSku(part)));
+
+  // ── Every listing, one per channel + listing id + SKU ──
+  const L = {};
+  const addL = (platform, listingId, sku, title, src, asin) => {
+    platform = plat(platform); const raw = U(sku); listingId = String(listingId || '').trim();
+    if (!platform || (!raw && !listingId)) return null;
+    const key = platform + '|' + (listingId || '') + '|' + raw;
+    const l = L[key] = L[key] || { platform, listingId, sku: raw, title: '', src: [], asin: '' };
+    if (title && !l.title) l.title = String(title).trim().slice(0, 300);
+    if (src && !l.src.includes(src)) l.src.push(src);
+    if (asin && !l.asin) l.asin = String(asin).trim().toUpperCase();
+    return l;
+  };
+  const docs = []; // titles under PROPER part #s — what suggestions compare against
+  const addDoc = (sku, text, src) => { const k = reorderCleanPart(U(sku)); text = String(text || '').trim(); if (text && reorderIsProperFormat(k)) docs.push({ text, base: reorderGetBaseSku(k), sku: k, src }); };
+  let oldMap = {};
+  try {
+    const token = await getToken(env);
+    const defs = [['eBay', 'EbaySKU'], ['Amazon', 'AmazonSKU'], ['Walmart', 'WalmartSKU'], ['Shopify', 'ShopifySKU']];
+    const u = SHEETS_URL + '/' + env.SHEET_ID + '/values:batchGet?' + defs.map(d => 'ranges=' + encodeURIComponent(d[1] + '!A2:C20000')).join('&');
+    const d = await (await fetch(u, { headers: { Authorization: 'Bearer ' + token } })).json();
+    if (d.error) throw new Error(d.error.message);
+    (d.valueRanges || []).forEach((vr, i) => { const [p] = defs[i];
+      (vr.values || []).forEach(row => { addL(p, row[0], row[2], row[1], 'SKU sheet', p === 'Amazon' ? row[0] : ''); addDoc(row[2], row[1], p + ' listing'); }); });
+    // Old eBay "SKU Map" tab (channel SKU → part #) — offered as a suggestion.
+    const mr = await (await fetch(`${SHEETS_URL}/${env.SALES_SHEET_ID || env.SHEET_ID}/values/${encodeURIComponent('SKU_Map!A2:B')}`, { headers: { Authorization: 'Bearer ' + token } })).json().catch(() => ({}));
+    (mr.values || []).forEach(r => { const a = U(r[0]), b = reorderCleanPart(U(r[1])); if (a && b) oldMap[a] = b; });
+  } catch (e) { errors.push('Channel SKU sheets: ' + String(e.message || e).slice(0, 150)); }
+  (await q(`SELECT platform, listing_id, sku, title FROM listing_titles`)).forEach(r => { addL(r.platform, r.listing_id, r.sku, r.title, 'Listing Watch', plat(r.platform) === 'Amazon' ? r.listing_id : ''); addDoc(r.sku, r.title, plat(r.platform) + ' listing'); });
+  const fba = await q('SELECT sku, asin, product_name FROM fba_catalog');
+  fba.forEach(r => { addL('Amazon', r.asin, r.sku, r.product_name, 'FBA', r.asin); addDoc(r.sku, r.product_name, 'FBA'); });
+  (await q('SELECT sku, asin, product_name FROM amazon_fba_inventory')).forEach(r => addL('Amazon', r.asin, r.sku, r.product_name, 'FBA inventory', r.asin));
+  // Units sold per channel + SKU in the window (listing orders, not pieces).
+  const sold = {}, soldTot = {}, have = new Set(Object.values(L).map(l => l.platform + '|' + l.sku));
+  for (const [t, p] of [['amazon_sales_weekly', 'Amazon'], ['ebay_sales_weekly', 'eBay'], ['walmart_sales_weekly', 'Walmart'], ['shopify_sales_weekly', 'Shopify']]) {
+    const rows = p === 'Amazon'
+      ? await q(`SELECT sku, SUM(units_ordered) AS u, MAX(asin) AS asin FROM ${t} WHERE period_start >= ? GROUP BY sku`, since)
+      : await q(`SELECT sku, SUM(units_ordered) AS u FROM ${t} WHERE period_start >= ? GROUP BY sku`, since);
+    rows.forEach(r => { const k = U(r.sku); if (!k) return; const u = +r.u || 0;
+      sold[p + '|' + k] = (sold[p + '|' + k] || 0) + u; soldTot[p] = (soldTot[p] || 0) + u;
+      if (!have.has(p + '|' + k)) { have.add(p + '|' + k); addL(p, r.asin || '', k, '', 'sales', r.asin || ''); } });
+  }
+  // Suggestion names from SKU Mgr / Products / vendor sheets.
+  (await q(`SELECT part_num, name FROM master_list WHERE name IS NOT NULL AND name != ''`)).forEach(r => addDoc(r.part_num, r.name, 'SKU Mgr'));
+  (await q(`SELECT base_sku, name FROM products WHERE name IS NOT NULL AND name != ''`)).forEach(r => addDoc(r.base_sku, r.name, 'Products'));
+  (await q(`SELECT part, description, vendor FROM reorder_vendor_catalog WHERE description IS NOT NULL AND description != ''`)).forEach(r => addDoc(r.part, r.description, 'Vendor sheet'));
+  const fbaOfAsin = {};
+  fba.forEach(r => { const k = alias[U(r.sku)] || reorderCleanPart(U(r.sku)), a = U(r.asin); if (a && isOurs(k) && !fbaOfAsin[a]) fbaOfAsin[a] = k; });
+
+  // ── Status per listing, grouped by the SKU as written ──
+  const groups = {}, counts = {};
+  for (const l of Object.values(L)) {
+    const raw = l.sku, clean = reorderCleanPart(raw), mapped = alias[raw] || alias[clean] || '';
+    const part = mapped || clean;
+    let status;
+    if (!raw) status = 'nosku';
+    else if (isOurs(part)) status = mapped && mapped !== raw ? 'mapped' : 'ok';
+    else if (reorderIsProperFormat(part)) status = 'notinmgr';
+    else status = 'weird';
+    const c = counts[l.platform] = counts[l.platform] || { listings: 0, ok: 0, mapped: 0, weird: 0, notinmgr: 0, nosku: 0 };
+    c.listings++; c[status]++;
+    if (status === 'ok') continue;
+    const gk = raw || ('(no SKU) ' + l.platform + ' ' + l.listingId);
+    const g = groups[gk] = groups[gk] || { sku: raw, status, readAs: part, mappedTo: mapped, mappedBy: (aliasInfo[raw] || aliasInfo[clean] || {}).by || '', mappedAt: (aliasInfo[raw] || aliasInfo[clean] || {}).at || '', listings: [], sold: {}, soldTotal: 0, suggestions: [] };
+    g.listings.push({ platform: l.platform, listingId: l.listingId, title: l.title, asin: l.asin, src: l.src });
+  }
+  Object.values(groups).forEach(g => {
+    if (!g.sku) return;
+    [...new Set(g.listings.map(x => x.platform))].forEach(p => { const u = sold[p + '|' + g.sku] || 0; if (u) { g.sold[p] = u; g.soldTotal += u; } });
+  });
+  // ── Suggestions: old SKU Map, same ASIN as our FBA listing, then titles ──
+  const partFor = (base, pack) => { const ps = [...(partsOfBase[base] || [])].filter(x => reorderExtractPackSize(x) === (pack || 1)).sort((a, b) => a.length - b.length || a.localeCompare(b)); return ps[0] || ''; };
+  const todo = Object.values(groups).filter(g => g.status !== 'mapped').sort((a, b) => b.soldTotal - a.soldTotal);
+  const queries = {};
+  todo.slice(0, 3000).forEach((g, i) => { const t = g.listings.map(x => x.title).filter(Boolean); if (t.length) queries['#' + i] = t; });
+  let sug = {};
+  try { sug = reorderSuggestParts(queries, docs); } catch (e) { errors.push('Suggestions: ' + String(e.message || e).slice(0, 120)); }
+  todo.forEach((g, i) => {
+    const out = [], seen = new Set();
+    const push = s => { if (!s.part || seen.has(s.part) || s.part === g.sku || s.part === g.readAs) return; seen.add(s.part); s.inMgr = ourParts.has(s.part); out.push(s); };
+    if (g.sku && oldMap[g.sku] && isOurs(oldMap[g.sku])) push({ part: oldMap[g.sku], score: 100, why: 'old SKU Map tab' });
+    g.listings.forEach(x => { const a = x.asin || (x.platform === 'Amazon' ? U(x.listingId) : ''); if (a && fbaOfAsin[a]) push({ part: fbaOfAsin[a], score: 100, why: 'same ASIN ' + a + ' as our FBA listing' }); });
+    (sug['#' + i] || []).forEach(s => { const ex = partFor(s.base, s.pack); push({ part: ex || s.base + '=' + (s.pack || 1), score: s.score, packGuessed: s.packGuessed && !ex,
+      why: 'title matches ' + s.matchedSrc + ' ' + s.matchedSku + ': ' + s.matchedText.slice(0, 120) }); });
+    g.suggestions = out.slice(0, 3);
+  });
+  const list = Object.values(groups).sort((a, b) => (a.status === 'mapped') - (b.status === 'mapped') || b.soldTotal - a.soldTotal || a.sku.localeCompare(b.sku));
+  return _roResp({ ok: true, days, since, counts, soldTotal: soldTot, groups: list, ourParts: [...ourParts].sort(), errors });
+}
+
 async function reorderRecommendationsHandler(env, days) {
   try {
     const result = await reorderComputeRecommendations(env, days);
@@ -4876,6 +4999,7 @@ const _app = {
         return _roResp({ ok: true });
       }
       if (url.pathname === '/reorder/fix/listing-titles' && method === 'POST') return await reorderListingTitles(request, env);
+      if (url.pathname === '/reorder/fix/listings' && method === 'GET') return await reorderListingsCheck(env, url);
       if (url.pathname === '/reorder/fix/list' && method === 'GET') {
         await reorderFixTables(env);
         const aliases = (await env.DB.prepare('SELECT raw, part, by_user, updated_at FROM reorder_alias ORDER BY updated_at DESC').all()).results || [];
@@ -5766,22 +5890,33 @@ async function repricerSkuLookup(url, env) {
       { name: 'eBay',    rows: (vrs[0] && vrs[0].values) || [], idCol: 0, titleCol: 1, skuCol: 2 },
       { name: 'Amazon',  rows: (vrs[1] && vrs[1].values) || [], idCol: 0, titleCol: 1, skuCol: 2 },
       { name: 'Walmart', rows: (vrs[2] && vrs[2].values) || [], idCol: 0, titleCol: 1, skuCol: 2 },
-      { name: 'Shopify', rows: (vrs[3] && vrs[3].values) || [], idCol: 1, titleCol: 1, skuCol: 2 },
+      { name: 'Shopify', rows: (vrs[3] && vrs[3].values) || [], idCol: 0, titleCol: 1, skuCol: 2 },
     ];
     const results = [];
     const seen = new Set();
+    // Listings whose SKU was corrected to one of our part #s (Reorder ✏️ /
+    // 🔗 Listings tab) are found under that part # too.
+    const alias = {};
+    try { ((await env.DB.prepare('SELECT raw, part FROM reorder_alias').all()).results || []).forEach(a => { alias[String(a.raw).trim().toUpperCase()] = String(a.part).trim().toUpperCase(); }); } catch (_) {}
     for (const plat of platformDefs) {
       for (const row of plat.rows) {
         const rawSku  = String(row[plat.skuCol] || '').trim().toUpperCase().replace(/^-+|-+$/g, '');
-        const base    = rawSku.split('=')[0].trim().replace(/^-+|-+$/g, '');
+        const mappedTo = alias[rawSku] || '';
+        const base    = (mappedTo || rawSku).split('=')[0].trim().replace(/^-+|-+$/g, '');
         if (!base.includes(q) && base !== q) continue;
-        const listingId = String(row[plat.idCol] || '').trim();
         const title     = String(row[plat.titleCol] || '').trim();
-        if (!listingId) continue;
-        const dedupKey = plat.name + '|' + listingId;
+        // Shopify / Walmart quantities go by SKU, and their ID is optional on
+        // "+ Add a listing" — a row with only a SKU (no product ID, no title)
+        // must still be found. Shopify keeps showing the title as its ID when
+        // no product ID was filled in (what it always showed).
+        let listingId = String(row[plat.idCol] || '').trim();
+        if (!listingId && (plat.name === 'Shopify' || plat.name === 'Walmart')) listingId = (plat.name === 'Shopify' && title) || rawSku;
+        if (!listingId || !rawSku) continue;
+        // Shopify / Walmart: one row per SKU (two pack sizes can share a title).
+        const dedupKey = plat.name + '|' + listingId + (plat.name === 'Shopify' || plat.name === 'Walmart' ? '|' + rawSku : '');
         if (seen.has(dedupKey)) continue;
         seen.add(dedupKey);
-        results.push({ platform: plat.name, listingId, title, sku: rawSku, baseSku: base });
+        results.push({ platform: plat.name, listingId, title, sku: rawSku, baseSku: base, mappedTo: mappedTo || undefined });
       }
     }
     return cors(new Response(JSON.stringify({ ok: true, results, count: results.length }), { headers: { 'Content-Type': 'application/json' } }));
