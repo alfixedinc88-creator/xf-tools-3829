@@ -2099,6 +2099,7 @@ body { display:flex; flex-direction:column; min-height:100vh; background:var(--b
         <label style="display:flex;align-items:center;gap:5px" title="Change part #, description, vendor, UPCs, ASIN and case qty right in the table, then 💾 Save all"><input type="checkbox" id="rvo-inline" onchange="rvoInlToggle(this.checked)"> ✏️ Edit in table</label>
         <label style="display:flex;align-items:center;gap:5px"><input type="checkbox" id="rvo-all" onchange="rvoRender()"> Show parts that don't need ordering</label>
         <label style="display:flex;align-items:center;gap:5px"><input type="checkbox" id="rvo-problems" onchange="rvoRender()"> Only rows with ⚠ problems</label>
+        <label style="display:flex;align-items:center;gap:5px" title="Part #s more than one vendor sells — check which vendor each one goes to before downloading"><input type="checkbox" id="rvo-multiv" onchange="rvoRender()"> Only parts with 🔀 more than one vendor</label>
         <label style="display:flex;align-items:center;gap:5px" title="Part #s that don't look like ours and have no FBA listing — each shows its listing title so you can find the right part #"><input type="checkbox" id="rvo-weird" onchange="rvoRender()"> Only weird part #s (no FBA)</label>
         <button class="btn" style="font-size:12px" onclick="rvoWeirdCopy()" title="Copy every weird part # with its listing title(s) — paste into Excel / Google Sheets">📋 Copy weird list</button>
         <button class="btn" style="font-size:12px" onclick="rvoWeirdCsv()" title="Same list as a CSV file">⬇ Weird list CSV</button>
@@ -3712,7 +3713,7 @@ function skusTableSortBy(col) {
 // Numbers come from GET /reorder/vendor-order (see reorderVendorOrder in the
 // worker). Order quantities can be edited / unticked here; the CSV uses
 // what's on screen for the chosen vendor.
-var RVO = { loaded: false, rows: [], edits: {}, off: {}, meta: null, titles: {}, sugg: {}, titlesState: '', pend: {} };
+var RVO = { loaded: false, rows: [], edits: {}, off: {}, meta: null, titles: {}, sugg: {}, titlesState: '', pend: {}, picks: {} };
 // ✏️ Edit in table: cells become boxes; changes wait in RVO.pend (by row
 // index) until 💾 Save all sends them in one request.
 var RVO_INL_F = { part: 'sku', description: 'description', vendor: 'vendor', outside_upc: 'outsideUpc', inside_upc: 'insideUpc', asin: 'asin', case_qty: 'caseQty' };
@@ -3917,7 +3918,8 @@ async function rvoLoad() {
   if (Object.keys(RVO.pend).length && !confirm('You have unsaved changes in the table. Recalculate anyway and lose them?\n(Cancel, then 💾 Save all first.)')) return;
   RVO.pend = {}; rvoInlBar();
   var q = 'days=' + encodeURIComponent(g('rvo-days').value) + '&cover=' + encodeURIComponent(g('rvo-cover').value) + '&lead=' + encodeURIComponent(g('rvo-lead').value)
-    + '&fbaStock=' + (g('rvo-fba').checked ? 1 : 0) + '&otherPacks=' + (g('rvo-other').checked ? 1 : 0);
+    + '&fbaStock=' + (g('rvo-fba').checked ? 1 : 0) + '&otherPacks=' + (g('rvo-other').checked ? 1 : 0)
+    + (Object.keys(RVO.picks).length ? '&picks=' + encodeURIComponent(JSON.stringify(RVO.picks)) : '');
   g('rvo-wrap').innerHTML = '<div style="padding:20px;color:var(--text3);font-size:13px">Calculating…</div>';
   try {
     var r = await wFetch(W + '/reorder/vendor-order?' + q);
@@ -3945,6 +3947,7 @@ function rvoVisible() {
     var lt = rvoTitlesOf(r).map(function (t) { return t.title; }).join(' ').toUpperCase();
     if (q && (r.sku + ' ' + (r.from || []).join(' ') + ' ' + mergedTxt + ' ' + (r.asin || '') + ' ' + (r.description || '').toUpperCase() + ' ' + lt).indexOf(q) === -1) return false;
     if (q && mergedTxt.indexOf(q) !== -1) return true; // found through a corrected part # — show even if nothing to order
+    if (document.getElementById('rvo-multiv').checked && (r.vendors || []).length < 2) return false;
     if (document.getElementById('rvo-weird').checked) return rvoWeird(r);
     if (document.getElementById('rvo-problems').checked) return (r.issues || []).length > 0;
     return all || r.orderUnits > 0 || RVO.edits[r.sku] > 0;
@@ -3979,7 +3982,15 @@ function rvoCols() {
     { k: 'asin', label: 'FBA ASIN', w: 110, sort: function (r) { return r.asin || '~'; }, cell: function (r) { if (rvoInlOn()) return rvoInlBox(r, 'asin'); return r.asin ? '<a href="https://www.amazon.com/dp/' + encodeURIComponent(r.asin) + '" target="_blank" rel="noopener" style="font-family:var(--mono)">' + escHtml(r.asin) + '</a>' : '—'; } },
     { k: 'desc', label: 'Description', w: 220, sort: function (r) { return (r.description || '~').toUpperCase(); }, cell: function (r) { if (rvoInlOn()) return rvoInlBox(r, 'description'); if (r.description) return escHtml(r.description); var t = rvoTitlesOf(r)[0];
       return t ? '<i title="Not saved yet — from the ' + escHtml(t.platform) + ' listing. ✏️ to save it.">' + escHtml(t.title) + '</i><div style="font-size:10px;color:var(--text3)">from ' + escHtml(t.platform) + ' listing</div>' : miss(''); }, wrap: true },
-    { k: 'vendor', label: 'Vendor', w: 80, sort: function (r) { return r.vendor || '~'; }, cell: function (r) { return rvoInlOn() ? rvoInlBox(r, 'vendor') : miss(r.vendor); } },
+    { k: 'vendor', label: 'Vendor', w: 110, sort: function (r) { return r.vendor || '~'; }, cell: function (r) {
+      if (rvoInlOn()) return rvoInlBox(r, 'vendor');
+      var vs = r.vendors || [];
+      if (vs.length < 2) return miss(r.vendor) + (r.vendorSrc === 'last order' ? '<div style="font-size:10px;color:var(--text3)">last order</div>' : '');
+      // Sold by more than one vendor: pick which vendor's order this part # goes on (remembered).
+      return '<select onchange="rvoPickVendor(\'' + escHtml(r.sku).replace(/'/g, "\\'") + '\', this.value)" title="Sold by ' + vs.length + ' vendors — pick which vendor to order it from this time. It goes only on that vendor\'s order." style="font-size:11px;padding:1px 2px;border-radius:4px;border:1px solid #b45309;max-width:100px">'
+        + (r.vendor ? '' : '<option value="">— pick —</option>')
+        + vs.map(function (v) { return '<option value="' + escHtml(v) + '"' + (v === r.vendor ? ' selected' : '') + '>' + escHtml(v) + '</option>'; }).join('') + '</select>'
+        + '<div style="font-size:10px;color:#b45309">🔀 ' + vs.length + ' vendors' + (r.vendorSrc ? ' · ' + escHtml(r.vendorSrc) : '') + '</div>'; } },
     { k: 'oupc', label: 'Outside box UPC', w: 150, sort: function (r) { return r.outsideUpc || '~'; }, cell: function (r) { return rvoInlOn() ? rvoInlBox(r, 'outside_upc') : '<span style="font-family:var(--mono)">' + miss(r.outsideUpc) + '</span>'; } },
     { k: 'iupc', label: 'Inside bag UPC', w: 150, sort: function (r) { return r.insideUpc || '~'; }, cell: function (r) { return rvoInlOn() ? rvoInlBox(r, 'inside_upc') : '<span style="font-family:var(--mono)">' + miss(r.insideUpc) + '</span>'; } },
     { k: 'sold', label: 'Sold (pcs)', tip: 'Pieces sold in the window, all channels, this part number\'s share', w: 100, num: true, sort: function (r) { return r.soldPcs; }, cell: function (r) { return fmt0(r.soldPcs); } },
@@ -4473,11 +4484,38 @@ async function rvoImport(input) {
 function rvoEdit(sku, v) { var n = parseInt(v, 10); RVO.edits[sku] = n >= 0 ? n : 0; rvoRender(); }
 function rvoToggle(sku, on) { if (on) delete RVO.off[sku]; else RVO.off[sku] = 1; rvoRender(); }
 function rvoAll(on) { rvoVisible().forEach(function (r) { if (on) delete RVO.off[r.sku]; else RVO.off[r.sku] = 1; }); rvoRender(); }
+// Pick which vendor a part # sold by several vendors is ordered from for
+// THIS order only (not saved — next time the usual default comes back:
+// JQ over EFF, then the vendor last ordered from). Recalculates so the
+// description / UPCs / carton come from that vendor's info sheet, keeping
+// quantities typed by hand and unticked rows.
+async function rvoPickVendor(sku, v) {
+  if (!v) return;
+  RVO.picks[sku] = v;
+  var keep = { edits: RVO.edits, off: RVO.off };
+  await rvoLoad(); RVO.edits = keep.edits; RVO.off = keep.off; rvoRender();
+  showToast(sku + ' → ' + v + ' for this order');
+}
+// Totals check for vendor orders: every part # to order is on exactly one
+// vendor's order, and the vendors' totals add up to the whole order.
+function rvoVendorCheck() {
+  var all = RVO.rows.filter(function (r) { return !RVO.off[r.sku] && rvoQty(r) > 0; });
+  var seen = {}, dup = [], by = {}, total = 0;
+  all.forEach(function (r) { if (seen[r.sku]) dup.push(r.sku); seen[r.sku] = 1;
+    var k = r.vendor || '(no vendor)', q = rvoQty(r); by[k] = by[k] || { parts: 0, units: 0 }; by[k].parts++; by[k].units += q; total += q; });
+  var sum = Object.keys(by).reduce(function (a, k) { return a + by[k].units; }, 0);
+  return { ok: !dup.length && sum === total, dup: dup, by: by, total: total, sum: sum, parts: all.length,
+    text: Object.keys(by).sort().map(function (k) { return k + ' ' + fmt0(by[k].units) + ' (' + by[k].parts + ' part #s)'; }).join(' + ') + ' = ' + fmt0(sum) + ' units · whole order ' + fmt0(total) + ' units' };
+}
 function rvoCsv() {
   if (!RVO.loaded) { alert('Press Calculate first.'); return; }
   var v = document.getElementById('rvo-vendor').value;
   var rows = rvoVisible().filter(function (r) { return !RVO.off[r.sku] && rvoQty(r) > 0; });
   if (!rows.length) { alert('Nothing to order for this selection.'); return; }
+  var ck = rvoVendorCheck();
+  if (!ck.ok) { alert('⚠ Totals don\'t match — not downloading.\n' + (ck.dup.length ? 'On more than one row: ' + ck.dup.join(', ') + '\n' : '') + ck.text); return; }
+  var unpicked = rows.filter(function (r) { return (r.vendors || []).length > 1 && !r.vendor; });
+  if (unpicked.length) { alert('Pick a vendor first for: ' + unpicked.map(function (r) { return r.sku; }).join(', ')); return; }
   if (!v && !confirm('No vendor picked — download every vendor in one file?')) return;
   var cell = function (x) { x = String(x == null ? '' : x); return /[",\n]/.test(x) ? '"' + x.replace(/"/g, '""') + '"' : x; };
   var upcCell = function (x) { return x ? '"=""' + String(x).replace(/"/g, '') + '"""' : ''; }; // keeps leading zeros / no 1.2E+11 in Excel
@@ -4492,14 +4530,17 @@ function rvoCsv() {
   var blob = new Blob(['﻿' + lines.join('\r\n')], { type: 'text/csv;charset=utf-8' });
   var a = document.createElement('a'); a.href = URL.createObjectURL(blob); a.download = name; document.body.appendChild(a); a.click();
   setTimeout(function () { URL.revokeObjectURL(a.href); a.remove(); }, 500);
-  showToast('Downloaded ' + name + ' (' + rows.length + ' part numbers)');
+  showToast('Downloaded ' + name + ' (' + rows.length + ' part numbers) · ✓ totals match: ' + ck.text);
+  // Remember the vendor each part # was ordered from — next time a part #
+  // several vendors sell defaults to this vendor.
+  wFetch(W + '/reorder/fix/last-vendor', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ items: rows.filter(function (r) { return r.vendor; }).map(function (r) { return { part: r.sku, vendor: r.vendor }; }) }) }).catch(function () {});
   // Record it in 🕘 History, with any quantities changed by hand / unticked.
   var tot = rows.reduce(function (a, r) { return a + rvoQty(r); }, 0);
   var hand = rows.filter(function (r) { return RVO.edits[r.sku] != null; }).map(function (r) { return r.sku + ' ' + r.orderUnits + '→' + rvoQty(r); });
   var skipped = rvoVisible().filter(function (r) { return RVO.off[r.sku] && r.orderUnits > 0; }).map(function (r) { return r.sku; });
   var m = RVO.meta || {};
   var detail = 'Downloaded ' + name + ': ' + rows.length + ' part #s, ' + tot + ' units (window ' + m.days + ' d, lead ' + m.lead + ' mo, cover ' + m.cover + ' mo)'
-    + (hand.length ? ' · changed by hand: ' + hand.join(', ') : '') + (skipped.length ? ' · left out: ' + skipped.join(', ') : '');
+    + (hand.length ? ' · changed by hand: ' + hand.join(', ') : '') + (skipped.length ? ' · left out: ' + skipped.join(', ') : '') + ' · vendor totals: ' + ck.text;
   wFetch(W + '/reorder/fix/log', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ action: 'download', part: v && v !== '__none' ? v : '', detail: detail }) })
     .then(function () { if (document.getElementById('rvo-hist-box').open) rvoLoadHistory(); }).catch(function () {});
 }
