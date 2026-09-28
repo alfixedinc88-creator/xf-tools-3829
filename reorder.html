@@ -3713,7 +3713,7 @@ function skusTableSortBy(col) {
 // Numbers come from GET /reorder/vendor-order (see reorderVendorOrder in the
 // worker). Order quantities can be edited / unticked here; the CSV uses
 // what's on screen for the chosen vendor.
-var RVO = { loaded: false, rows: [], edits: {}, off: {}, meta: null, titles: {}, sugg: {}, titlesState: '', pend: {} };
+var RVO = { loaded: false, rows: [], edits: {}, off: {}, meta: null, titles: {}, sugg: {}, titlesState: '', pend: {}, picks: {} };
 // ✏️ Edit in table: cells become boxes; changes wait in RVO.pend (by row
 // index) until 💾 Save all sends them in one request.
 var RVO_INL_F = { part: 'sku', description: 'description', vendor: 'vendor', outside_upc: 'outsideUpc', inside_upc: 'insideUpc', asin: 'asin', case_qty: 'caseQty' };
@@ -3918,7 +3918,8 @@ async function rvoLoad() {
   if (Object.keys(RVO.pend).length && !confirm('You have unsaved changes in the table. Recalculate anyway and lose them?\n(Cancel, then 💾 Save all first.)')) return;
   RVO.pend = {}; rvoInlBar();
   var q = 'days=' + encodeURIComponent(g('rvo-days').value) + '&cover=' + encodeURIComponent(g('rvo-cover').value) + '&lead=' + encodeURIComponent(g('rvo-lead').value)
-    + '&fbaStock=' + (g('rvo-fba').checked ? 1 : 0) + '&otherPacks=' + (g('rvo-other').checked ? 1 : 0);
+    + '&fbaStock=' + (g('rvo-fba').checked ? 1 : 0) + '&otherPacks=' + (g('rvo-other').checked ? 1 : 0)
+    + (Object.keys(RVO.picks).length ? '&picks=' + encodeURIComponent(JSON.stringify(RVO.picks)) : '');
   g('rvo-wrap').innerHTML = '<div style="padding:20px;color:var(--text3);font-size:13px">Calculating…</div>';
   try {
     var r = await wFetch(W + '/reorder/vendor-order?' + q);
@@ -3986,7 +3987,7 @@ function rvoCols() {
       var vs = r.vendors || [];
       if (vs.length < 2) return miss(r.vendor) + (r.vendorSrc === 'last order' ? '<div style="font-size:10px;color:var(--text3)">last order</div>' : '');
       // Sold by more than one vendor: pick which vendor's order this part # goes on (remembered).
-      return '<select onchange="rvoPickVendor(\'' + escHtml(r.sku).replace(/'/g, "\\'") + '\', this.value)" title="Sold by ' + vs.length + ' vendors — this part # goes only on the order of the vendor picked here" style="font-size:11px;padding:1px 2px;border-radius:4px;border:1px solid #b45309;max-width:100px">'
+      return '<select onchange="rvoPickVendor(\'' + escHtml(r.sku).replace(/'/g, "\\'") + '\', this.value)" title="Sold by ' + vs.length + ' vendors — pick which vendor to order it from this time. It goes only on that vendor\'s order." style="font-size:11px;padding:1px 2px;border-radius:4px;border:1px solid #b45309;max-width:100px">'
         + (r.vendor ? '' : '<option value="">— pick —</option>')
         + vs.map(function (v) { return '<option value="' + escHtml(v) + '"' + (v === r.vendor ? ' selected' : '') + '>' + escHtml(v) + '</option>'; }).join('') + '</select>'
         + '<div style="font-size:10px;color:#b45309">🔀 ' + vs.length + ' vendors' + (r.vendorSrc ? ' · ' + escHtml(r.vendorSrc) : '') + '</div>'; } },
@@ -4483,19 +4484,17 @@ async function rvoImport(input) {
 function rvoEdit(sku, v) { var n = parseInt(v, 10); RVO.edits[sku] = n >= 0 ? n : 0; rvoRender(); }
 function rvoToggle(sku, on) { if (on) delete RVO.off[sku]; else RVO.off[sku] = 1; rvoRender(); }
 function rvoAll(on) { rvoVisible().forEach(function (r) { if (on) delete RVO.off[r.sku]; else RVO.off[r.sku] = 1; }); rvoRender(); }
-// Pick which vendor a part # sold by several vendors is ordered from — saved
-// as that part #'s vendor (same as ✏️), so it stays picked next time.
+// Pick which vendor a part # sold by several vendors is ordered from for
+// THIS order only (not saved — next time the usual default comes back:
+// JQ over EFF, then the vendor last ordered from). Recalculates so the
+// description / UPCs / carton come from that vendor's info sheet, keeping
+// quantities typed by hand and unticked rows.
 async function rvoPickVendor(sku, v) {
-  var r = RVO.rows.filter(function (x) { return x.sku === sku; })[0]; if (!r || !v) return;
-  try {
-    var d = await (await wFetch(W + '/reorder/fix', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ part: sku, fields: { vendor: v }, was: { vendor: r.vendor || '' } }) })).json();
-    if (!d.ok) throw new Error(d.error || 'Failed');
-    showToast(sku + ' → ordered from ' + v);
-    // Recalculate (description / UPCs / carton size come from that vendor's
-    // info sheet), keeping quantities typed by hand and unticked rows.
-    var keep = { edits: RVO.edits, off: RVO.off };
-    await rvoLoad(); RVO.edits = keep.edits; RVO.off = keep.off; rvoRender();
-  } catch (e) { alert('Could not save: ' + e.message); rvoRender(); }
+  if (!v) return;
+  RVO.picks[sku] = v;
+  var keep = { edits: RVO.edits, off: RVO.off };
+  await rvoLoad(); RVO.edits = keep.edits; RVO.off = keep.off; rvoRender();
+  showToast(sku + ' → ' + v + ' for this order');
 }
 // Totals check for vendor orders: every part # to order is on exactly one
 // vendor's order, and the vendors' totals add up to the whole order.

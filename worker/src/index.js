@@ -1150,6 +1150,8 @@ async function reorderVendorOrder(env, url) {
   const cover = num('cover', 3, 0.5, 24), lead = num('lead', 3, 0, 12);
   const countFba = url.searchParams.get('fbaStock') !== '0';
   const countOtherPacks = url.searchParams.get('otherPacks') === '1';
+  // Vendor picked on a row for this order only (not saved): { "PART#": "JQ" }.
+  let picks = {}; try { const o = JSON.parse(url.searchParams.get('picks') || '{}'); if (o && typeof o === 'object') for (const k in o) picks[String(k).trim().toUpperCase()] = reorderVendorName(String(o[k] || '').trim()); } catch (_) { picks = {}; }
   const since = new Date(Date.now() - days * 86400000).toISOString().slice(0, 10);
   const all = async (sql, ...b) => { try { return (await env.DB.prepare(sql).bind(...b).all()).results || []; } catch (_) { return []; } };
   const U = s => String(s || '').trim().toUpperCase();
@@ -1304,8 +1306,9 @@ async function reorderVendorOrder(env, url) {
       const needPcs = Math.max(0, monthlyPcs * (lead + cover) - stockPcs);
       const needUnits = Math.ceil(needPcs / ps - 1e-9);
       const fx = fixes[t.sku] || {};
-      // One vendor per part # (never on two vendors' orders). Picked with
-      // the row's vendor menu / ✏️ wins; then JQ if both JQ and EFF sell it;
+      // One vendor per part # (never on two vendors' orders). The row's
+      // vendor menu (this order only) wins, then a vendor saved with ✏️;
+      // then JQ if both JQ and EFF sell it;
       // then the vendor it was last ordered from, then SKU Mgr, then a
       // vendor info sheet.
       const vn = v => reorderVendorName(String(v || '').trim());
@@ -1318,8 +1321,10 @@ async function reorderVendorOrder(env, url) {
       else if (vn(bo.vendor)) { vendor = vn(bo.vendor); vendorSrc = 'SKU Mgr (other pack)'; }
       const vendors = new Set();
       [fx.vendor, lv && lv.v, ...(sm.vendors || []), ...(catAll[t.sku] || []).map(c => c.vendor)].forEach(v => { v = vn(v); if (v) vendors.add(v); });
-      // Sold by both JQ and EFF → JQ (owner's rule), unless picked on the row.
+      // Sold by both JQ and EFF → JQ (owner's rule), unless a vendor was saved with ✏️.
       if (vendorSrc !== 'picked' && vendors.has('JQ') && vendors.has('EFF')) { vendor = 'JQ'; vendorSrc = 'JQ over EFF'; }
+      // Picked on the row for this order only — wins over everything.
+      if (picks[t.sku] && vendors.has(picks[t.sku])) { vendor = picks[t.sku]; vendorSrc = 'this order'; }
       // Description / UPCs / carton from the chosen vendor's info sheet.
       const ct = (catAll[t.sku] || []).find(c => vn(c.vendor) === vendor) || cat[t.sku] || {};
       // Case qty in units of this part #: a fix wins, then SKU Mgr, then the
