@@ -1949,8 +1949,14 @@ async function reorderListingsCheck(env, url) {
   (await q(`SELECT part_num, name FROM master_list WHERE name IS NOT NULL AND name != ''`)).forEach(r => addDoc(r.part_num, r.name, 'SKU Mgr'));
   (await q(`SELECT base_sku, name FROM products WHERE name IS NOT NULL AND name != ''`)).forEach(r => addDoc(r.base_sku, r.name, 'Products'));
   (await q(`SELECT part, description, vendor FROM reorder_vendor_catalog WHERE description IS NOT NULL AND description != ''`)).forEach(r => addDoc(r.part, r.description, 'Vendor sheet'));
+  // Our FBA part # on each ASIN (FBA catalog + FBA inventory report), cleaned
+  // ("24-4-7=2-" → "24-4-7=2"): an FBM listing on the same ASIN is the same
+  // product, so it goes under that part #. A part # in SKU Mgr wins.
   const fbaOfAsin = {};
-  fba.forEach(r => { const k = alias[U(r.sku)] || reorderCleanPart(U(r.sku)), a = U(r.asin); if (a && isOurs(k) && !fbaOfAsin[a]) fbaOfAsin[a] = k; });
+  const fbaInv = await q('SELECT sku, asin FROM amazon_fba_inventory');
+  [...fba, ...fbaInv].forEach(r => { const k = alias[U(r.sku)] || reorderCleanPart(U(r.sku)), a = U(r.asin);
+    if (!a || !reorderIsProperFormat(k)) return;
+    if (!fbaOfAsin[a] || (isOurs(k) && !isOurs(fbaOfAsin[a]))) fbaOfAsin[a] = k; });
 
   // ── Status per listing, grouped by the SKU as written ──
   const groups = {}, counts = {};
@@ -1984,7 +1990,7 @@ async function reorderListingsCheck(env, url) {
     const out = [], seen = new Set();
     const push = s => { if (!s.part || seen.has(s.part) || s.part === g.sku || s.part === g.readAs) return; seen.add(s.part); s.inMgr = ourParts.has(s.part); out.push(s); };
     if (g.sku && oldMap[g.sku] && isOurs(oldMap[g.sku])) push({ part: oldMap[g.sku], score: 100, why: 'old SKU Map tab' });
-    g.listings.forEach(x => { const a = x.asin || (x.platform === 'Amazon' ? U(x.listingId) : ''); if (a && fbaOfAsin[a]) push({ part: fbaOfAsin[a], score: 100, why: 'same ASIN ' + a + ' as our FBA listing' }); });
+    g.listings.forEach(x => { const a = x.asin || (x.platform === 'Amazon' ? U(x.listingId) : ''); if (a && fbaOfAsin[a] && fbaOfAsin[a] !== g.readAs) push({ part: fbaOfAsin[a], score: 100, sameAsin: a, why: 'same ASIN ' + a + ' as our FBA listing' }); });
     (sug['#' + i] || []).forEach(s => { const ex = partFor(s.base, s.pack); push({ part: ex || s.base + '=' + (s.pack || 1), score: s.score, packGuessed: s.packGuessed && !ex,
       why: 'title matches ' + s.matchedSrc + ' ' + s.matchedSku + ': ' + s.matchedText.slice(0, 120) }); });
     g.suggestions = out.slice(0, 3);

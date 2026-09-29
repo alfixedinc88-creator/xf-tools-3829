@@ -2018,6 +2018,7 @@ body { display:flex; flex-direction:column; min-height:100vh; background:var(--b
         <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
           <button class="btn btn-secondary" style="font-size:12px" onclick="rlsLoad()">↻ Refresh</button>
           <button class="btn btn-secondary" style="font-size:12px" onclick="rlsCsv()">⬇ CSV</button>
+          <button class="btn" id="rls-asin" style="font-size:12px;display:none;border-color:#b45309;color:#b45309;font-weight:700" onclick="rlsSameAsinAll()" title="Amazon listings on the same ASIN as our FBA listing — use the FBA listing's part #">⚡ Same ASIN as FBA</button>
           <button class="btn btn-primary" id="rls-save" style="font-size:12px" onclick="rlsSave()" disabled>💾 Save all</button>
         </div>
       </div>
@@ -5045,7 +5046,22 @@ function rlsEdit(i, v, redraw) {
   if (redraw) rlsRender(); else rlsBar();
 }
 function rlsUse(i, n) { var g = RLS.groups[i], sg = g && (g.suggestions || [])[n]; if (!sg) return; RLS.pend[g.sku] = sg.part; rlsRender(); }
+// Amazon listings on the same ASIN as our FBA listing: the FBA listing's
+// part # (cleaned, e.g. 24-4-7=2- → 24-4-7=2), all at once.
+function rlsSameAsinList() {
+  return RLS.groups.filter(function (g) { return g.sku && g.status !== 'mapped' && RLS.pend[g.sku] == null && (g.suggestions || []).some(function (x) { return x.sameAsin; }); })
+    .map(function (g) { return { g: g, sg: g.suggestions.filter(function (x) { return x.sameAsin; })[0] }; });
+}
+async function rlsSameAsinAll() {
+  var l = rlsSameAsinList(); if (!l.length) { alert('No Amazon listings left on the same ASIN as an FBA listing.'); return; }
+  if (!confirm('Put ' + l.length + ' Amazon listing(s) under the part # of the FBA listing on the same ASIN?\n\n' + l.slice(0, 25).map(function (x) { return x.g.sku + ' → ' + x.sg.part + '  (ASIN ' + x.sg.sameAsin + ')'; }).join('\n') + (l.length > 25 ? '\n… and ' + (l.length - 25) + ' more' : '') + '\n\nSaved like ✏️ on the Reorder tab (↩ undo on each one under "Already mapped by you").')) return;
+  l.forEach(function (x) { RLS.pend[x.g.sku] = x.sg.part; });
+  rlsRender();
+  await rlsSave();
+}
 function rlsBar() {
+  var ab = document.getElementById('rls-asin');
+  if (ab) { var n0 = RLS.loaded ? rlsSameAsinList().length : 0; ab.style.display = n0 ? '' : 'none'; ab.textContent = '⚡ ' + n0 + ' Amazon listing' + (n0 === 1 ? '' : 's') + ' on the same ASIN as FBA → use its part #'; }
   var n = Object.keys(RLS.pend).length;
   document.getElementById('rls-save').disabled = !n;
   document.getElementById('rls-pend').textContent = n ? n + ' unsaved' : '';
