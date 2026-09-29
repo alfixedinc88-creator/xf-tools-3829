@@ -1,5 +1,20 @@
 # XFitting tools: rules for every change
 
+## Why this app exists (the main point — keep it in mind for every change)
+
+In the owner's words: all the app we are doing is **to save time**, and to
+**keep everything in record**, so if we have issues we can find out where the
+issue came from, and to **see what our workers are doing every day**, to make
+sure they are doing their job and no one is just playing around.
+
+So every feature should:
+- save the workers steps and walking (the system decides / pre-fills, fewer
+  taps, lists in walking order: Front BO → 2FL → FRONT, Middle BSMT → PR →
+  GARAGE, Back C1 → C2 → BARN → C3 → C4 → C5);
+- leave a record of who did what and when (History / logs), never a silent
+  change;
+- make problems easy to trace back to where they started.
+
 ## Inventory numbers must always add up (most important rule)
 
 Inventory counts are the most important data in this repo. A double count or
