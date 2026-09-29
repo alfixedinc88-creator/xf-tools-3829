@@ -6055,9 +6055,15 @@ async function rSheetUpdate(env, range, values) {
 
 // ── Repricer route dispatcher ─────────────────────────────────────────────────
 // GET /repricer/sku-lookup?q=<baseSku>
-async function repricerSkuLookup(url, env) {
+// opts.exact (Sold Out): only listings whose parent part # IS the one typed
+// — "5-3-4" finds 5-3-4=2, 5-3-4=10X…, never 25-3-4 or 5-3-41. The
+// Repricer keeps the old "contains" search.
+async function repricerSkuLookup(url, env, opts) {
   try {
-    const q = (url.searchParams.get('q') || '').trim().toUpperCase().replace(/^-+|-+$/g, '');
+    const exact = !!(opts && opts.exact);
+    let q = (url.searchParams.get('q') || '').trim().toUpperCase().replace(/^-+|-+$/g, '');
+    if (exact) q = q.split('=')[0].trim(); // a whole part # typed → its parent
+    const hit = base => exact ? base === q : (base.includes(q) || base === q);
     if (!q || q.length < 2) return cors(new Response(JSON.stringify({ ok: false, error: 'Query too short' }), { status: 400, headers: { 'Content-Type': 'application/json' } }));
     const token = await getToken(env);
     const ranges = ['EbaySKU!A2:C20000','AmazonSKU!A2:C20000','WalmartSKU!A2:C20000','ShopifySKU!A2:C20000'];
@@ -6082,7 +6088,7 @@ async function repricerSkuLookup(url, env) {
         const rawSku  = String(row[plat.skuCol] || '').trim().toUpperCase().replace(/^-+|-+$/g, '');
         const mappedTo = alias[rawSku] || '';
         const base    = (mappedTo || rawSku).split('=')[0].trim().replace(/^-+|-+$/g, '');
-        if (!base.includes(q) && base !== q) continue;
+        if (!hit(base)) continue;
         const title     = String(row[plat.titleCol] || '').trim();
         // Shopify / Walmart quantities go by SKU, and their ID is optional on
         // "+ Add a listing" — a row with only a SKU (no product ID, no title)
@@ -6103,7 +6109,7 @@ async function repricerSkuLookup(url, env) {
     // correction — so a listing never added to a sheet isn't missed.
     try {
       const haveId = new Set(results.map(r => r.platform + '|' + r.listingId)), haveSku = new Set(results.map(r => r.platform + '|' + r.sku));
-      const raws = Object.keys(alias).filter(k => alias[k].split('=')[0].includes(q));
+      const raws = Object.keys(alias).filter(k => hit(alias[k].split('=')[0].trim()));
       const like = '%' + q.replace(/[%_]/g, '') + '%';
       const live = ((await env.DB.prepare(`SELECT platform, listing_id, sku, title FROM listing_titles WHERE UPPER(sku) LIKE ?`
         + (raws.length ? ` OR UPPER(sku) IN (${raws.slice(0, 200).map(() => '?').join(',')})` : '') + ' LIMIT 500').bind(like, ...raws.slice(0, 200)).all()).results) || [];
@@ -6112,7 +6118,7 @@ async function repricerSkuLookup(url, env) {
         const rawSku = String(r.sku || '').trim().toUpperCase().replace(/^-+|-+$/g, '');
         const mappedTo = alias[rawSku] || '';
         const base = (mappedTo || rawSku).split('=')[0].trim().replace(/^-+|-+$/g, '');
-        if (!rawSku || (!base.includes(q) && base !== q)) continue;
+        if (!rawSku || !hit(base)) continue;
         const listingId = String(r.listing_id || '').trim() || rawSku;
         if (haveId.has(platform + '|' + listingId) || haveSku.has(platform + '|' + rawSku)) continue;
         haveId.add(platform + '|' + listingId); haveSku.add(platform + '|' + rawSku);
@@ -22668,7 +22674,7 @@ function _soResp(body, status) {
 }
 
 async function soldoutLookup(url, env) {
-  const r = await repricerSkuLookup(url, env);
+  const r = await repricerSkuLookup(url, env, { exact: true });
   return r; // same results shape: { ok, results:[{platform, listingId, title, sku, baseSku}], count }
 }
 
