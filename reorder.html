@@ -4958,7 +4958,8 @@ async function rlsLoad() {
     RLS.loaded = true; RLS.groups = d.groups || []; RLS.counts = d.counts || {}; RLS.pend = {}; RLS.days = d.days; RLS.show = 300;
     RLS.ours = {}; RLS.bases = {}; (d.ourParts || []).forEach(function (p) { RLS.ours[p] = 1; RLS.bases[p.split('=')[0]] = 1; });
     document.getElementById('rls-parts').innerHTML = (d.ourParts || []).map(function (p) { return '<option value="' + escHtml(p) + '">'; }).join('');
-    msg.innerHTML = (d.errors || []).length ? '<span style="color:var(--red)">⚠ ' + d.errors.map(escHtml).join(' · ') + '</span>' : '';
+    msg.innerHTML = ((d.autoSaved || []).length ? '<span style="color:var(--green);font-weight:700">⚡ ' + d.autoSaved.length + ' Amazon listing(s) on the same ASIN as our FBA listing were put under its part # just now (see "Already mapped by you").</span> ' : '')
+      + ((d.errors || []).length ? '<span style="color:var(--red)">⚠ ' + d.errors.map(escHtml).join(' · ') + '</span>' : '');
   } catch (e) { msg.innerHTML = '<span style="color:var(--red)">✗ ' + escHtml(e.message) + '</span>'; return; }
   rlsCounts(); rlsRender();
 }
