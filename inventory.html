@@ -1721,6 +1721,8 @@ window.invCredLogin = async function() {
     var companyBtn  = g('inv-stockoutdest-company');
     if (shelvingBtn) shelvingBtn.className = 'imode-btn' + (dest === 'shelving' ? ' min' : '');
     if (companyBtn)  companyBtn.className  = 'imode-btn' + (dest === 'company'  ? ' mout' : '');
+    // Re-order the spots already on screen for the new choice.
+    if (invMode === 'out' && invPart && g('inv-loc-card') && g('inv-loc-card').style.display !== 'none') invShowLocs();
   };
 
   function invLoadQR() {
@@ -2339,8 +2341,7 @@ window.invCredLogin = async function() {
         return totalCasesOf(b) - totalCasesOf(a);
       }
 
-      // Shelving (or Big Company with no "=" target given): most stock
-      // first, tie-broken by the higher suffix.
+      // Big Company with no "=" target: most stock first, then higher suffix.
       var aCases = totalCasesOf(a), bCases = totalCasesOf(b);
       if (bCases !== aCases) return bCases - aCases;
       return suffixOf(b) - suffixOf(a);
@@ -2354,6 +2355,48 @@ window.invCredLogin = async function() {
     var sorted = [];
     order.forEach(function(pn) { sorted = sorted.concat(byVariant[pn]); });
     return sorted;
+  }
+
+  // Stock Out → Shelving: the system picks. Rules, in order:
+  //   1. Bags that are NOT for FBA come first. Our FBA listings' part #s
+  //      (e.g. 27-3-1=2XX) go last — they're kept for FBA.
+  //   2. When an FBA part # is running low here (≤ INV_FBA_LOW_CASES
+  //      cases on the shelves), the other bags of the SAME count (e.g.
+  //      27-3-1=2) are kept for FBA too — just cover the label, no rebag.
+  //   3. Oldest first: "=2" before "=2X" before "=2XX" (fewer letters =
+  //      older), then the variant with the most stock, then — inside one
+  //      variant — the spot with the FEWEST cases (use up half-empty spots).
+  // Each spot gets loc._pick = { tier, why } for the screen.
+  var INV_FBA_LOW_CASES = 2;
+  function invPickForShelving(locs) {
+    function availOf(l) { return l.adjustedCases !== undefined ? l.adjustedCases : (parseFloat(l.cases) || 0); }
+    function pnOf(l) { return String(l.partNum || invPart.partNum || '').toUpperCase(); }
+    function packOf(pn) { var m = /=(\d+)/.exec(pn); return m ? parseInt(m[1], 10) : 1; }
+    function ageOf(pn) { var t = pn.split('=')[1] || ''; return (t.replace(/^\d+/, '').match(/[A-Z]/g) || []).length; }
+    var fba = {}; ((invPart && invPart.fbaParts) || []).forEach(function(f) { fba[String(f.part).toUpperCase()] = f; });
+    var stockOf = {}; locs.forEach(function(l) { stockOf[pnOf(l)] = (stockOf[pnOf(l)] || 0) + availOf(l); });
+    // FBA part #s low on our shelves → keep their bag size for FBA.
+    var keepPack = {};
+    Object.keys(fba).forEach(function(f) { if ((stockOf[f] || 0) <= INV_FBA_LOW_CASES) keepPack[packOf(f)] = f; });
+    function tierOf(pn) { return fba[pn] ? 2 : (keepPack[packOf(pn)] ? 1 : 0); }
+    locs.forEach(function(l) {
+      var pn = pnOf(l), t = tierOf(pn);
+      l._pick = { tier: t, why: t === 2 ? 'FBA bag — kept for FBA'
+        : t === 1 ? 'Same bag as FBA ' + keepPack[packOf(pn)] + ' (' + (stockOf[keepPack[packOf(pn)]] || 0) + ' cases left) — kept for FBA: cover the label, no rebag'
+        : 'Not an FBA bag' + (ageOf(pn) ? '' : ' · oldest') };
+    });
+    return locs.slice().sort(function(a, b) {
+      var pa = pnOf(a), pb = pnOf(b);
+      if (a._pick.tier !== b._pick.tier) return a._pick.tier - b._pick.tier;
+      if (ageOf(pa) !== ageOf(pb)) return ageOf(pa) - ageOf(pb);
+      if (pa !== pb) {
+        if (invSearchedExactVariant && pa === invSearchedExactVariant) return -1;
+        if (invSearchedExactVariant && pb === invSearchedExactVariant) return 1;
+        if (stockOf[pb] !== stockOf[pa]) return stockOf[pb] - stockOf[pa];
+        return pa < pb ? -1 : 1;
+      }
+      return availOf(a) - availOf(b);
+    });
   }
 
   function invShowLocs() {
@@ -2373,7 +2416,7 @@ window.invCredLogin = async function() {
           return avail <= 0 && !l.isPlaceholder;
         })
       : [];
-    if (invMode === "out") locs = invSortLocsForOut(locs);
+    if (invMode === "out") locs = invStockOutDest === 'shelving' ? invPickForShelving(locs) : invSortLocsForOut(locs);
     invSelLoc = null;
     invVariantRowInfo = [];
     var list = g("inv-loc-list");
@@ -2427,7 +2470,17 @@ window.invCredLogin = async function() {
         // search-results list, since this is now the same underlying view.
         var caseId = "inv-var-cases-" + i;
         invVariantRowInfo[i] = { loc: loc, partNum: loc.partNum || invPart.partNum };
-        el.innerHTML = "<div style='display:flex;justify-content:space-between;align-items:center'>"
+        var pk = loc._pick, pickHtml = '';
+        if (pk && invStockOutDest === 'shelving') {
+          if (i === 0) {
+            pickHtml = "<div style='margin:-10px -12px 8px;padding:6px 12px;background:" + (pk.tier ? "var(--orange-bg)" : "var(--green-bg)") + ";color:" + (pk.tier ? "var(--orange)" : "var(--green)") + ";font-size:12px;font-weight:800;border-radius:8px 8px 0 0'>👉 GET THIS ONE"
+              + (pk.tier ? " — only FBA bags left here" : "") + "<div style='font-weight:600;font-size:11px'>" + pk.why + "</div></div>";
+            el.style.border = '2px solid ' + (pk.tier ? 'var(--orange)' : 'var(--green)');
+          } else if (pk.tier) {
+            pickHtml = "<div style='font-size:11px;font-weight:700;color:var(--orange);margin-bottom:4px'>⛔ " + pk.why + "</div>";
+          }
+        }
+        el.innerHTML = pickHtml + "<div style='display:flex;justify-content:space-between;align-items:center'>"
           + "<div>" + partLabelHtml
           + "<div class='iloc-name'>" + loc.location + "</div>"
           + "<div class='iloc-cases' style='" + casesStyle + "'>" + casesLabel + "</div></div></div>"

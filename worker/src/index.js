@@ -1883,8 +1883,65 @@ async function reorderListingTitles(request, env) {
 //           weird     — not our part # format
 //           notinmgr  — our format, but the base isn't in SKU Mgr / Products
 //           nosku     — the listing has no SKU at all
+// Amazon listings on the same ASIN as our FBA listing are the same product:
+// they go under the FBA listing's part # automatically (cleaned, e.g. FBA
+// "24-4-7=2-" on B09J971GGC → the FBM listing reads as 24-4-7=2). Only when
+// that ASIN has ONE FBA part # (two different ones = a person picks), never
+// over a correction someone already saved, never for a SKU that is already
+// one of our part #s. Saved like the Reorder tab's ✏️ (reorder_alias), by
+// "Auto (same ASIN)", each one in History — undo on the Listings tab.
+// Runs hourly (cron) and whenever the Listings tab opens.
+async function reorderAutoSameAsin(env) {
+  await reorderFixTables(env);
+  const U = s => String(s || '').trim().toUpperCase().replace(/^-+|-+$/g, '');
+  const q = async sql => { try { return (await env.DB.prepare(sql).all()).results || []; } catch (_) { return []; } };
+  const alias = {}; (await q('SELECT raw, part FROM reorder_alias')).forEach(r => { alias[U(r.raw)] = U(r.part); });
+  const ourParts = new Set(), ourBases = new Set();
+  (await q('SELECT part_num, base_sku FROM master_list')).forEach(r => { const p = reorderCleanPart(U(r.part_num)); if (!p) return; ourParts.add(p); ourBases.add(reorderGetBaseSku(p)); if (r.base_sku) ourBases.add(U(r.base_sku)); });
+  (await q('SELECT base_sku FROM products')).forEach(r => { if (r.base_sku) ourBases.add(U(r.base_sku)); });
+  const isOurs = k => reorderIsProperFormat(k) && (ourParts.has(k) || ourBases.has(reorderGetBaseSku(k)));
+  // FBA part #(s) on each ASIN
+  const fbaParts = {}, fbaSkus = new Set();
+  for (const r of [...await q('SELECT sku, asin FROM fba_catalog'), ...await q(`SELECT sku, asin FROM amazon_fba_inventory WHERE afn_listing_exists = 'Yes'`)]) {
+    const a = U(r.asin), raw = U(r.sku); if (!a || !raw) continue;
+    fbaSkus.add(raw);
+    const k = alias[raw] || reorderCleanPart(raw); if (!reorderIsProperFormat(k)) continue;
+    (fbaParts[a] = fbaParts[a] || new Set()).add(k);
+  }
+  const partOf = a => { const all = [...(fbaParts[a] || [])], ours = all.filter(isOurs);
+    return ours.length === 1 ? ours[0] : (!ours.length && all.length === 1 ? all[0] : null); };
+  // Every Amazon listing we know with its ASIN: AmazonSKU sheet, Listing Watch, sales, FBA report (FBM rows).
+  const cand = [];
+  try {
+    const token = await getToken(env);
+    const d = await (await fetch(`${SHEETS_URL}/${env.SHEET_ID}/values/${encodeURIComponent('AmazonSKU!A2:C20000')}`, { headers: { Authorization: 'Bearer ' + token } })).json();
+    (d.values || []).forEach(r => cand.push([r[2], r[0]]));
+  } catch (_) {}
+  (await q(`SELECT sku, listing_id AS asin FROM listing_titles WHERE LOWER(platform) = 'amazon'`)).forEach(r => cand.push([r.sku, r.asin]));
+  (await q(`SELECT sku, MAX(asin) AS asin FROM amazon_sales_weekly WHERE asin IS NOT NULL AND asin != '' GROUP BY sku`)).forEach(r => cand.push([r.sku, r.asin]));
+  (await q(`SELECT sku, asin FROM amazon_fba_inventory WHERE afn_listing_exists IS NULL OR afn_listing_exists != 'Yes'`)).forEach(r => cand.push([r.sku, r.asin]));
+  const saved = [], now = new Date().toISOString(), done = new Set();
+  for (const [s0, a0] of cand) {
+    const raw = U(s0), a = U(a0);
+    if (!raw || !/^[A-Z0-9]{10}$/.test(a) || done.has(raw) || fbaSkus.has(raw)) continue;
+    done.add(raw);
+    const clean = reorderCleanPart(raw);
+    if (alias[raw] || alias[clean] || isOurs(clean)) continue; // already decided / already ours
+    const part = partOf(a); if (!part || part === clean || part === raw) continue;
+    const r = await env.DB.prepare('INSERT INTO reorder_alias (raw, part, by_user, updated_at) VALUES (?,?,?,?) ON CONFLICT(raw) DO NOTHING')
+      .bind(raw, part, 'Auto (same ASIN)', now).run().catch(() => null);
+    if ((r?.meta?.changes ?? r?.changes ?? 0) > 0) {
+      alias[raw] = part; saved.push({ raw, part, asin: a });
+      await reorderLog(env, 'Auto (same ASIN)', 'part', part, `Part # corrected: ${raw} → ${part} (same ASIN ${a} as our FBA listing)`);
+    }
+  }
+  return saved;
+}
+
 async function reorderListingsCheck(env, url) {
   await reorderFixTables(env);
+  let autoSaved = [];
+  try { autoSaved = await reorderAutoSameAsin(env); } catch (_) {}
   const days = Math.min(730, Math.max(7, parseInt(url.searchParams.get('days') || '365', 10) || 365));
   const since = new Date(Date.now() - days * 86400000).toISOString().slice(0, 10);
   const U = s => String(s || '').trim().toUpperCase().replace(/^-+|-+$/g, '');
@@ -1952,11 +2009,17 @@ async function reorderListingsCheck(env, url) {
   // Our FBA part # on each ASIN (FBA catalog + FBA inventory report), cleaned
   // ("24-4-7=2-" → "24-4-7=2"): an FBM listing on the same ASIN is the same
   // product, so it goes under that part #. A part # in SKU Mgr wins.
-  const fbaOfAsin = {};
-  const fbaInv = await q('SELECT sku, asin FROM amazon_fba_inventory');
-  [...fba, ...fbaInv].forEach(r => { const k = alias[U(r.sku)] || reorderCleanPart(U(r.sku)), a = U(r.asin);
-    if (!a || !reorderIsProperFormat(k)) return;
-    if (!fbaOfAsin[a] || (isOurs(k) && !isOurs(fbaOfAsin[a]))) fbaOfAsin[a] = k; });
+  // Same rule as the hourly auto step (reorderAutoSameAsin): one FBA part #
+  // on the ASIN → that one; two different ones → shown, a person picks.
+  const fbaPartsOf = {}, fbaSkuSet = new Set();
+  const fbaInv = await q(`SELECT sku, asin FROM amazon_fba_inventory WHERE afn_listing_exists = 'Yes'`); // FBM rows are in this report too
+  [...fba, ...fbaInv].forEach(r => { const raw = U(r.sku), k = alias[raw] || reorderCleanPart(raw), a = U(r.asin);
+    if (!a || !raw) return; fbaSkuSet.add(raw);
+    if (reorderIsProperFormat(k)) (fbaPartsOf[a] = fbaPartsOf[a] || new Set()).add(k); });
+  const fbaOfAsin = {}, fbaChoices = {};
+  Object.keys(fbaPartsOf).forEach(a => { const all = [...fbaPartsOf[a]], ours = all.filter(isOurs);
+    const one = ours.length === 1 ? ours[0] : (!ours.length && all.length === 1 ? all[0] : null);
+    if (one) fbaOfAsin[a] = one; else fbaChoices[a] = ours.length ? ours : all; });
 
   // ── Status per listing, grouped by the SKU as written ──
   const groups = {}, counts = {};
@@ -1990,13 +2053,15 @@ async function reorderListingsCheck(env, url) {
     const out = [], seen = new Set();
     const push = s => { if (!s.part || seen.has(s.part) || s.part === g.sku || s.part === g.readAs) return; seen.add(s.part); s.inMgr = ourParts.has(s.part); out.push(s); };
     if (g.sku && oldMap[g.sku] && isOurs(oldMap[g.sku])) push({ part: oldMap[g.sku], score: 100, why: 'old SKU Map tab' });
-    g.listings.forEach(x => { const a = x.asin || (x.platform === 'Amazon' ? U(x.listingId) : ''); if (a && fbaOfAsin[a] && fbaOfAsin[a] !== g.readAs) push({ part: fbaOfAsin[a], score: 100, sameAsin: a, why: 'same ASIN ' + a + ' as our FBA listing' }); });
+    if (!fbaSkuSet.has(g.sku)) g.listings.forEach(x => { const a = x.asin || (x.platform === 'Amazon' ? U(x.listingId) : ''); if (!a) return;
+      if (fbaOfAsin[a] && fbaOfAsin[a] !== g.readAs) push({ part: fbaOfAsin[a], score: 100, sameAsin: a, why: 'same ASIN ' + a + ' as our FBA listing' });
+      else (fbaChoices[a] || []).forEach(k => push({ part: k, score: 90, why: 'one of ' + fbaChoices[a].length + ' different FBA part #s on ASIN ' + a + ' — pick the right one' })); });
     (sug['#' + i] || []).forEach(s => { const ex = partFor(s.base, s.pack); push({ part: ex || s.base + '=' + (s.pack || 1), score: s.score, packGuessed: s.packGuessed && !ex,
       why: 'title matches ' + s.matchedSrc + ' ' + s.matchedSku + ': ' + s.matchedText.slice(0, 120) }); });
     g.suggestions = out.slice(0, 3);
   });
   const list = Object.values(groups).sort((a, b) => (a.status === 'mapped') - (b.status === 'mapped') || b.soldTotal - a.soldTotal || a.sku.localeCompare(b.sku));
-  return _roResp({ ok: true, days, since, counts, soldTotal: soldTot, groups: list, ourParts: [...ourParts].sort(), errors });
+  return _roResp({ ok: true, days, since, counts, soldTotal: soldTot, groups: list, ourParts: [...ourParts].sort(), autoSaved, errors });
 }
 
 async function reorderRecommendationsHandler(env, days) {
@@ -2342,9 +2407,33 @@ async function inventoryLookup(url, env) {
     loc.adjustedCases = Math.max(0, (parseFloat(loc.cases) || 0) - pending);
   }
 
+  // Our FBA listings' part #s for this item (cleaned, and through part #
+  // corrections) — Stock Out → Shelving keeps these (and the same bag size
+  // when they run low) for FBA, so they don't have to be rebagged.
+  const fbaParts = [];
+  if (env.DB && baseSku) {
+    try {
+      const B = String(baseSku).toUpperCase();
+      const alias = {}; ((await env.DB.prepare('SELECT raw, part FROM reorder_alias').all().catch(() => ({ results: [] }))).results || [])
+        .forEach(a => { alias[String(a.raw).toUpperCase()] = String(a.part).toUpperCase(); });
+      const rows = [
+        ...(((await env.DB.prepare('SELECT sku, available FROM fba_catalog').all().catch(() => ({ results: [] }))).results) || []),
+        ...(((await env.DB.prepare(`SELECT sku, NULL AS available FROM amazon_fba_inventory WHERE afn_listing_exists = 'Yes'`).all().catch(() => ({ results: [] }))).results) || []),
+      ];
+      const seen = {};
+      for (const r of rows) {
+        const raw = String(r.sku || '').trim().toUpperCase(); if (!raw) continue;
+        const part = alias[raw] || reorderCleanPart(raw);
+        if (reorderGetBaseSku(part) !== B || !reorderIsProperFormat(part)) continue;
+        if (!seen[part]) { seen[part] = { part, fbaSku: raw, atAmazon: null }; fbaParts.push(seen[part]); }
+        if (r.available != null) seen[part].atAmazon = (seen[part].atAmazon || 0) + (parseFloat(r.available) || 0);
+      }
+    } catch (_) {}
+  }
+
   return cors(new Response(JSON.stringify({
     partNum, sku: sku || partNum, name, baseSku,
-    insideUpc, outsideUpc, locations, variants, isMultiVariant
+    insideUpc, outsideUpc, locations, variants, isMultiVariant, fbaParts
   }), { headers: { 'Content-Type': 'application/json' } }));
 }
 
@@ -5525,6 +5614,8 @@ const _app = {
     // window a phone might realistically be offline and replaying its
     // queue, no need to keep these indefinitely.
     if (now.getUTCHours() === 0 && min === 0) ctx.waitUntil(cleanProcessedRequests(env));
+    // Amazon FBM listings on the same ASIN as our FBA listing → its part #, hourly.
+    if (min === 0) ctx.waitUntil(reorderAutoSameAsin(env).catch(e => console.error('[auto same ASIN]', e.message)));
     // Archive Scan_Log/Manifest_Log rows older than 45 days, runs at midnight
     // UTC. shipArchiveLogs existed as a manual-trigger-only route with
     // nobody actually calling it, which let Manifest_Log grow past 10,000
