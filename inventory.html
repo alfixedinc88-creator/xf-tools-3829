@@ -6301,19 +6301,27 @@ window.invCredLogin = async function() {
     }).catch(function() {});
   };
 
-  // 💰 Owner only — the server refuses anyone else.
+  // 💰 Owner only — the server refuses anyone else. Hidden until the owner
+  // taps it (nothing is fetched before that), and hidden again every time
+  // SKU Mgr is opened, so it never sits on screen for anyone to see.
   window.skumgrLoadValue = function() {
     var box = g('skumgr-value'); if (!box) return;
     var isOwner = !!(INV_CRED_USER && INV_CRED_USER.roles && INV_CRED_USER.roles.indexOf('owner') >= 0);
     if (!isOwner) { box.style.display = 'none'; box.innerHTML = ''; return; }
-    box.style.display = 'block'; box.innerHTML = '💰 Inventory value — calculating…';
+    box.style.display = 'block';
+    box.innerHTML = '<button onclick="skumgrShowValue()" style="background:none;border:none;padding:0;font-size:13px;font-weight:700;color:var(--text2);cursor:pointer">💰 Inventory value (owner only) — <span style="text-decoration:underline">tap to show</span></button>';
+  };
+  window.skumgrShowValue = function() {
+    var box = g('skumgr-value'); if (!box) return;
+    box.innerHTML = '💰 Inventory value — calculating…';
     wFetch(W + '/inventory/cost/value').then(function(r) { return r.json(); }).then(function(d) {
       if (!d || !d.ok) { box.innerHTML = '💰 Inventory value — ' + ((d && d.error) || 'failed'); return; }
       var money = function(v) { return '$' + (+v).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 }); };
       box.innerHTML = '<div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap"><b>💰 Total inventory value (vendor price): <span style="font-size:17px;color:var(--green)">' + money(d.value) + '</span></b>'
         + '<span style="color:var(--text3);font-size:12px">' + (+d.pieces).toLocaleString() + ' pieces · ' + (+d.cases).toLocaleString() + ' cases · ' + d.spots + ' spots · owner only</span>'
         + '<span style="color:var(--text3);font-size:11px">Only stock in SKU Mgr — orders and containers count once 📦 Received.</span>'
-        + '<span style="flex:1"></span><button onclick="skumgrLoadValue()" style="background:none;border:1px solid var(--border);border-radius:6px;padding:3px 8px;font-size:11px;cursor:pointer">↻</button></div>'
+        + '<span style="flex:1"></span><button onclick="skumgrShowValue()" title="Refresh" style="background:none;border:1px solid var(--border);border-radius:6px;padding:3px 8px;font-size:11px;cursor:pointer">↻</button>'
+        + '<button onclick="skumgrLoadValue()" style="background:none;border:1px solid var(--border);border-radius:6px;padding:3px 8px;font-size:11px;cursor:pointer">🙈 Hide</button></div>'
         + (d.byVendor.length ? '<div style="font-size:12px;margin-top:4px">' + d.byVendor.map(function(v) { return '<b>' + String(v.vendor).replace(/</g, '&lt;') + '</b> ' + money(v.value); }).join(' · ') + '</div>' : '')
         + (d.noPrice.spots ? '<div style="font-size:12px;color:var(--red);margin-top:4px">Not in the total — no price: ' + d.noPrice.spots + ' spots (' + d.noPrice.cases + ' cases)<span title="' + d.noPrice.parts.join(', ').replace(/"/g, '&quot;') + '" style="text-decoration:underline dotted;cursor:help"> which?</span></div>' : '')
         + (d.noEa.spots ? '<div style="font-size:12px;color:var(--red);margin-top:2px">Not in the total — no Ea/Case: ' + d.noEa.spots + ' spots (' + d.noEa.cases + ' cases)<span title="' + d.noEa.parts.join(', ').replace(/"/g, '&quot;') + '" style="text-decoration:underline dotted;cursor:help"> which?</span></div>' : '');
