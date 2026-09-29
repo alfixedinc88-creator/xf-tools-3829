@@ -613,6 +613,13 @@ window.invCredLogin = async function() {
       <button class="ixfr-mode-btn" id="inv-smode-name" onclick="invSetScanMode('name')">Product Name</button>
       <button class="ixfr-mode-btn" id="inv-smode-loc" onclick="invSetScanMode('loc')">&#x1F4CD; Location</button>
     </div>
+    <div id="inv-need-wrap" style="display:flex;gap:8px;align-items:center;margin-bottom:8px">
+      <label for="inv-need-cases" style="font-size:12px;font-weight:700;color:var(--text2);white-space:nowrap">Cases needed</label>
+      <input id="inv-need-cases" type="number" min="0.5" step="0.5" inputmode="decimal" placeholder="e.g. 2"
+        style="width:80px;padding:8px 10px;border:1.5px solid var(--border);border-radius:7px;background:var(--bg);color:var(--text);font-size:15px;font-weight:700;font-family:var(--mono)"
+        onkeydown="if(event.key==='Enter'){event.preventDefault();var s=document.getElementById('inv-search-inp');if(s)s.focus();}">
+      <span style="font-size:11px;color:var(--text3);line-height:1.3">then scan / type the part # — the system picks the spot and puts it on your Pull List (Shelving)</span>
+    </div>
     <div class="isearch-row">
       <input class="isearch-inp" id="inv-search-inp" type="text" placeholder="Part# or barcode…" onkeydown="if(event.key==='Enter')invScanSearch()">
       <button class="isearch-btn" onclick="invScanSearch()">Go</button>
@@ -2109,9 +2116,95 @@ window.invCredLogin = async function() {
     g("inv-detail-card").style.display = "none";
     var gb = g("inv-grab-banner"); if (gb) { gb.style.display = "none"; gb.innerHTML = ""; }
     _invFetchLookupRaw(code)
-      .then(function(d) { _invRenderLookupResult(code, d); })
+      .then(function(d) { _invRenderLookupResult(code, d); invMaybeAutoPick(d); })
       .catch(function() { invFlash("Lookup failed", "error"); });
   };
+
+  // "Cases needed" + scan (Stock Out → Shelving): the system decides where
+  // to get them and puts them on the Pull List as un-grabbed — no picking.
+  //   • One spot that has them all is best (never 2 spots when 1 will do).
+  //   • Bags not for FBA first, oldest first (invPickForShelving's order);
+  //     then bags kept for a low FBA part #; FBA bags last.
+  //   • Only FBA bags left → take from the FBA part # that has the most
+  //     stock for how fast it sells on Amazon (last 90 days), one case at a
+  //     time, so no FBA part # runs out while another has too much.
+  //   • Not enough anywhere → takes what there is and says how many short.
+  // Cases already on the Pull List (not grabbed yet) are not given twice.
+  function invMaybeAutoPick(d) {
+    var inp = g('inv-need-cases');
+    var need = inp ? parseFloat(inp.value) : 0;
+    if (!(need > 0) || invMode !== 'out' || !d || !d.partNum) return;
+    if (invStockOutDest !== 'shelving') { invFlash('Cases needed picks the spot for Shelving — for Big Company, choose the spot below', 'warn'); return; }
+    var plan = invPlanShelvingPull(need);
+    if (!plan.takes.length) { invFlash('No cases of ' + (d.baseSku || d.partNum) + ' on the shelves — nothing added', 'error'); return; }
+    plan.takes.forEach(function(t) {
+      var key = t.partNum + '|' + t.loc.location, ex = null;
+      invPullList.forEach(function(x) { if (x.key === key && !x.grabbed && !x.noneFound && !x.submitted) ex = x; });
+      var any = invPullList.some(function(x) { return x.key === key; });
+      if (ex) { ex.cases = (parseFloat(ex.cases) || 0) + t.cases; invSavePullList(); }
+      else if (any) { // same spot already grabbed earlier — its own new row
+        invPullList.push({ key: key, partNum: t.partNum, sku: invPart.sku || t.partNum, name: invPart.name || '', location: t.loc.location, cases: String(t.cases),
+          systemCases: t.loc.adjustedCases !== undefined ? t.loc.adjustedCases : (parseFloat(t.loc.cases) || 0), rowIndex: t.loc.rowIndex,
+          isPlaceholder: false, masterRowIndex: t.loc.rowIndex, masterId: t.loc.masterId || null, addedAt: new Date().toISOString(), sourceStockoutId: null });
+        invSavePullList();
+      } else {
+        invPart = Object.assign({}, invPart, { partNum: t.partNum });
+        invPullListPendingCases = t.cases; invPullListPendingCasesInputEl = null;
+        invAddToPullList(invPart, t.loc);
+        invPullListPendingCases = null;
+      }
+    });
+    invRenderPullList();
+    var got = plan.takes.reduce(function(a, t) { return a + t.cases; }, 0);
+    var msg = '✓ On your Pull List: ' + plan.takes.map(function(t) { return t.cases + ' × ' + t.partNum + ' @ ' + t.loc.location; }).join(' + ');
+    if (got < need) invFlash(msg + ' — ⚠ only ' + got + ' of ' + need + ' cases on the shelves (' + (need - got) + ' short)', 'warn');
+    else invFlash(msg, plan.takes.some(function(t) { return t.tier === 2; }) ? 'warn' : 'success');
+    if (inp) inp.value = '';
+    var si = g('inv-search-inp'); if (si) si.value = '';
+    // Ready for the next item: cases first, then scan.
+    g('inv-result-card').style.display = 'none'; g('inv-loc-card').style.display = 'none';
+    if (inp) inp.focus();
+  }
+  // → { takes:[{loc, partNum, cases, tier}] } — never more than a spot has.
+  function invPlanShelvingPull(need) {
+    function availOf(l) { return l.adjustedCases !== undefined ? l.adjustedCases : (parseFloat(l.cases) || 0); }
+    function pnOf(l) { return String(l.partNum || invPart.partNum || '').toUpperCase(); }
+    var onList = {}; invPullList.forEach(function(x) { if (!x.grabbed && !x.noneFound && !x.submitted) onList[x.key] = (onList[x.key] || 0) + (parseFloat(x.cases) || 0); });
+    var locs = ((invPart && invPart.locations) || []).filter(function(l) { return !l.isPlaceholder; }).map(function(l) {
+      return Object.assign({}, l, { _left: Math.max(0, availOf(l) - (onList[pnOf(l) + '|' + l.location] || 0)) });
+    }).filter(function(l) { return l._left > 0; });
+    var ranked = invPickForShelving(locs), takes = [], left = need;
+    var take = function(l, n) { n = Math.round(n * 100) / 100; if (n <= 0) return; l._left -= n; left = Math.round((left - n) * 100) / 100;
+      var ex = takes.filter(function(t) { return t.loc === l; })[0]; if (ex) ex.cases += n; else takes.push({ loc: l, partNum: pnOf(l), cases: n, tier: l._pick.tier }); };
+    [0, 1].forEach(function(tier) {
+      if (left <= 0) return;
+      var c = ranked.filter(function(l) { return l._pick.tier === tier; });
+      var one = c.filter(function(l) { return l._left >= left; })[0]; // one spot has them all
+      if (one) { take(one, left); return; }
+      // Must split: fewest spots — biggest first (still oldest first on ties).
+      c.slice().sort(function(a, b) { return b._left - a._left; }).forEach(function(l) { if (left > 0) take(l, Math.min(l._left, left)); });
+    });
+    if (left > 0) {
+      // Only FBA bags left: keep every FBA part # stocked for how fast it
+      // sells — each case comes off the one with the most days of stock.
+      var fba = {}; ((invPart && invPart.fbaParts) || []).forEach(function(f) { fba[String(f.part).toUpperCase()] = f; });
+      var c = ranked.filter(function(l) { return l._pick.tier === 2; });
+      var stock = {}; c.forEach(function(l) { stock[pnOf(l)] = (stock[pnOf(l)] || 0) + l._left; });
+      var perDay = function(pn) { var f = fba[pn]; return f && f.sold90 > 0 ? f.sold90 / 90 : 0; };
+      var days = function(pn) { var r = perDay(pn); return r > 0 ? stock[pn] / r : Infinity; };
+      while (left > 0.001) {
+        var parts = Object.keys(stock).filter(function(pn) { return stock[pn] > 0.001; });
+        if (!parts.length) break;
+        parts.sort(function(a, b) { var da = days(a), db = days(b); return da === db ? stock[b] - stock[a] : db - da; });
+        var pn = parts[0], n = Math.min(1, left, stock[pn]);
+        // Its spot: one that still has some — the fullest one (fewest spots).
+        var spot = c.filter(function(l) { return pnOf(l) === pn && l._left > 0.001; }).sort(function(a, b) { return b._left - a._left; })[0];
+        n = Math.min(n, spot._left);
+        take(spot, n); stock[pn] -= n;
+      }
+    }
+    return { takes: takes, short: Math.max(0, left) };
+  }
 
   // Raw fetch only — no UI side effects — so invStockoutGo's bin→SKU
   // fallback (below) can try more than one code before deciding what to
