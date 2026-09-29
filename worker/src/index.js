@@ -5988,6 +5988,27 @@ async function repricerSkuLookup(url, env) {
         results.push({ platform: plat.name, listingId, title, sku: rawSku, baseSku: base, mappedTo: mappedTo || undefined });
       }
     }
+    // Live listings Listing Watch read on the channels (all 4, every few
+    // hours) that aren't on the SKU sheets — found by their SKU or by a part #
+    // correction — so a listing never added to a sheet isn't missed.
+    try {
+      const haveId = new Set(results.map(r => r.platform + '|' + r.listingId)), haveSku = new Set(results.map(r => r.platform + '|' + r.sku));
+      const raws = Object.keys(alias).filter(k => alias[k].split('=')[0].includes(q));
+      const like = '%' + q.replace(/[%_]/g, '') + '%';
+      const live = ((await env.DB.prepare(`SELECT platform, listing_id, sku, title FROM listing_titles WHERE UPPER(sku) LIKE ?`
+        + (raws.length ? ` OR UPPER(sku) IN (${raws.slice(0, 200).map(() => '?').join(',')})` : '') + ' LIMIT 500').bind(like, ...raws.slice(0, 200)).all()).results) || [];
+      for (const r of live) {
+        const platform = ({ ebay: 'eBay', amazon: 'Amazon', walmart: 'Walmart', shopify: 'Shopify' })[String(r.platform || '').toLowerCase()] || r.platform;
+        const rawSku = String(r.sku || '').trim().toUpperCase().replace(/^-+|-+$/g, '');
+        const mappedTo = alias[rawSku] || '';
+        const base = (mappedTo || rawSku).split('=')[0].trim().replace(/^-+|-+$/g, '');
+        if (!rawSku || (!base.includes(q) && base !== q)) continue;
+        const listingId = String(r.listing_id || '').trim() || rawSku;
+        if (haveId.has(platform + '|' + listingId) || haveSku.has(platform + '|' + rawSku)) continue;
+        haveId.add(platform + '|' + listingId); haveSku.add(platform + '|' + rawSku);
+        results.push({ platform, listingId, title: String(r.title || ''), sku: rawSku, baseSku: base, mappedTo: mappedTo || undefined, notOnSheet: true });
+      }
+    } catch (_) { /* Listing Watch hasn't read the channels yet */ }
     return cors(new Response(JSON.stringify({ ok: true, results, count: results.length }), { headers: { 'Content-Type': 'application/json' } }));
   } catch(e) {
     return cors(new Response(JSON.stringify({ ok: false, error: e.message }), { status: 500, headers: { 'Content-Type': 'application/json' } }));
@@ -23014,8 +23035,10 @@ async function lwSaveTitles(env, plat, items) {
   try {
     await env.DB.prepare(`CREATE TABLE IF NOT EXISTS listing_titles (platform TEXT NOT NULL, listing_id TEXT NOT NULL, sku TEXT NOT NULL, title TEXT, updated_at TEXT, PRIMARY KEY (platform, listing_id, sku))`).run();
     const now = new Date().toISOString();
-    const st = items.filter(i => i.sku && i.title).map(i => env.DB.prepare(`INSERT OR REPLACE INTO listing_titles (platform, listing_id, sku, title, updated_at) VALUES (?,?,?,?,?)`)
-      .bind(plat, String(i.listingId || ''), String(i.sku).trim().toUpperCase(), String(i.title).slice(0, 300), now));
+    // Every live listing with a SKU — also without a title (Walmart's report
+    // has none), so Sold Out / the Listings tab see every listing.
+    const st = items.filter(i => i.sku).map(i => env.DB.prepare(`INSERT OR REPLACE INTO listing_titles (platform, listing_id, sku, title, updated_at) VALUES (?,?,?,?,?)`)
+      .bind(plat, String(i.listingId || ''), String(i.sku).trim().toUpperCase(), String(i.title || '').slice(0, 300), now));
     for (let k = 0; k < st.length; k += 50) await env.DB.batch(st.slice(k, k + 50));
   } catch (_) {}
 }
