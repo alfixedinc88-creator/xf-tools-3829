@@ -2643,12 +2643,14 @@ function _psScanProductCardHtml(li, ctx) {
   // because the "No Stock" stockout-report context below still records it.
   var noStockHtml = '';
   if (ctx && ctx.showNoStock) {
-    var idx = window._psPickStockoutCtx.push({ tracking: ctx.tracking, orderNum: ctx.orderNum || '', sku: li.s || '', bin: bin }) - 1;
+    var idx = window._psPickStockoutCtx.push({ tracking: ctx.tracking, orderNum: ctx.orderNum || '', sku: li.s || '', bin: bin, pieces: total }) - 1;
     noStockHtml = '<div style="margin-top:6px;display:flex;align-items:center;gap:6px;padding:6px 8px;border:1.5px solid var(--red);background:var(--red-bg);border-radius:7px">'
       +   '<input type="checkbox" id="ps-nostock-chk-' + idx + '" style="width:16px;height:16px;cursor:pointer;accent-color:var(--red);flex-shrink:0">'
       +   '<label for="ps-nostock-chk-' + idx + '" style="font-size:11px;font-weight:700;color:var(--red);flex:1;cursor:pointer">⚠ No Stock</label>'
-      +   '<input type="number" id="ps-nostock-qty-' + idx + '" value="' + qty + '" min="1" title="How many are needed" style="width:46px;padding:3px 4px;border:1.5px solid var(--red);border-radius:5px;font-size:11px;font-family:var(--mono);text-align:center;background:var(--bg2);color:var(--text)">'
-      + '</div>';
+      +   '<input type="number" id="ps-nostock-qty-' + idx + '" value="' + PS_NOSTOCK_MIN_CASES + '" min="1" title="Cases to bring" oninput="this.dataset.touched=1" style="width:46px;padding:3px 4px;border:1.5px solid var(--red);border-radius:5px;font-size:11px;font-family:var(--mono);text-align:center;background:var(--bg2);color:var(--text)">'
+      +   '<span style="font-size:10px;font-weight:700;color:var(--red)">cs</span>'
+      + '</div>'
+      + '<div id="ps-nostock-hint-' + idx + '" style="font-size:10px;color:var(--text3);margin-top:3px"></div>';
   }
   return '<div class="ps-scan-product-item">'
     + imgHtml
@@ -5568,7 +5570,45 @@ function _psRenderPickProduct(tracking, items, orderNum, showNoStock) {
     var btn = subEl && subEl.querySelector('button');
     if (btn) { btn.disabled = false; btn.textContent = '⚠ Report Selected as Out of Stock'; }
     itEl.scrollIntoView({ behavior: 'smooth', block: 'center' });
+    _psNostockSuggestCases();
   }
+}
+
+// "No Stock" asks for CASES (Inventory's Stock Out Reports pick them onto
+// the Pull List). Starts at 2; once we know how many pieces a case holds,
+// it's the cases this order needs + 2 extra for the shelf, e.g. order 200
+// pcs, 50 pcs a case → 4 + 2 = 6. An order that fits in one case → 2.
+// The picker can still change it; a number they typed is never replaced.
+var PS_NOSTOCK_MIN_CASES = 2, PS_NOSTOCK_EXTRA_CASES = 2;
+function _psNostockCasesFor(pieces, perCase) {
+  if (!(perCase > 0) || !(pieces > 0)) return PS_NOSTOCK_MIN_CASES;
+  var forOrder = Math.ceil(pieces / perCase);
+  return forOrder <= 1 ? PS_NOSTOCK_MIN_CASES : forOrder + PS_NOSTOCK_EXTRA_CASES;
+}
+function _psNostockSuggestCases() {
+  var list = window._psPickStockoutCtx || [];
+  if (!list.length) return;
+  fetch(PS_WORKER + '/ship/stock-check', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', 'X-Cred-Token': psCredToken },
+    body: JSON.stringify({ items: list.map(function(c) { return { sku: c.sku, bin: c.bin }; }) })
+  }).then(function(r) { return r.json(); }).then(function(d) {
+    if (list !== window._psPickStockoutCtx) return; // another order is showing now
+    ((d && d.results) || []).forEach(function(r, i) {
+      var c = list[i], per = parseFloat(r && r.piecesPerCase) || 0;
+      var inp = document.getElementById('ps-nostock-qty-' + i), hint = document.getElementById('ps-nostock-hint-' + i);
+      if (!c || !inp) return;
+      var n = _psNostockCasesFor(c.pieces, per);
+      if (!inp.dataset.touched) inp.value = n;
+      if (hint) {
+        if (!per) hint.textContent = 'Case size not on file: 2 cases';
+        else {
+          var forOrder = Math.ceil(c.pieces / per);
+          hint.textContent = 'Order ' + c.pieces + ' pcs, ' + per + ' pcs/case: ' + (forOrder <= 1 ? '1 case + 1 extra = 2' : forOrder + ' cases + 2 extra = ' + n);
+        }
+      }
+    });
+  }).catch(function() {}); // keeps the 2-case start
 }
 
 // Hides and empties the Picking tab's item card entirely — used when the
@@ -5694,7 +5734,7 @@ function _psShowNostockConfirmModal(selected, realSel, noStockSel, btn, subEl) {
       +   '<div style="font-size:14px;font-weight:800;color:var(--red);display:flex;align-items:center;gap:6px">⚠️ Report to Inventory</div>'
       +   '<div style="font-size:11px;color:var(--red);opacity:.85;margin-top:2px">' + realSel.length + ' item' + (realSel.length !== 1 ? 's' : '') + ' — goes to Inventory\'s Stock Out Reports</div>'
       +   '<div style="margin-top:8px;font-family:var(--mono);font-size:12.5px;color:var(--text)">'
-      +     realSel.map(function(s){ return '<div style="padding:2px 0">• ' + (s.ctx.bin || s.ctx.sku) + ' × ' + s.qty + '</div>'; }).join('')
+      +     realSel.map(function(s){ return '<div style="padding:2px 0">• ' + (s.ctx.bin || s.ctx.sku) + ' × ' + s.qty + ' cs</div>'; }).join('')
       +   '</div>'
       + '</div>';
   }
@@ -5703,7 +5743,7 @@ function _psShowNostockConfirmModal(selected, realSel, noStockSel, btn, subEl) {
       +   '<div style="font-size:14px;font-weight:800;color:var(--purple);display:flex;align-items:center;gap:6px">🚫 No Stock Found</div>'
       +   '<div style="font-size:11px;color:var(--purple);opacity:.85;margin-top:2px">' + noStockSel.length + ' item' + (noStockSel.length !== 1 ? 's' : '') + ' — already showed empty in our records, nothing new goes to Inventory</div>'
       +   '<div style="margin-top:8px;font-family:var(--mono);font-size:12.5px;color:var(--text)">'
-      +     noStockSel.map(function(s){ return '<div style="padding:2px 0">• ' + (s.ctx.bin || s.ctx.sku) + ' × ' + s.qty + '</div>'; }).join('')
+      +     noStockSel.map(function(s){ return '<div style="padding:2px 0">• ' + (s.ctx.bin || s.ctx.sku) + ' × ' + s.qty + ' cs</div>'; }).join('')
       +   '</div>'
       + '</div>';
   }
