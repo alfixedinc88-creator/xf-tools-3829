@@ -4252,11 +4252,12 @@ async function rvoCheck(title, file) {
   var col = { own: 'var(--green)', otherOn: 'var(--green)', otherOff: '#b45309', none: 'var(--red)' };
   h += '<div id="rvo-ck-filt" style="display:none;font-size:12px;margin:0 0 6px;padding:6px 10px;background:var(--bg3);border-radius:8px"></div>';
   h += '<div style="max-height:50vh;overflow:auto;border:1px solid var(--border);border-radius:8px"><table style="font-size:12px;border-collapse:collapse;width:100%"><thead style="position:sticky;top:0;background:var(--bg3)"><tr>'
-    + ['File row', 'Part # in file', 'Read as', 'Qty', 'Cases', 'Where it went', ''].map(function (x) { return '<th style="text-align:left;padding:6px 8px">' + x + '</th>'; }).join('') + '</tr></thead><tbody>'
+    + ['File row', 'Part # in file', 'Read as', 'Description', 'Qty', 'Cases', 'Where it went', ''].map(function (x) { return '<th style="text-align:left;padding:6px 8px">' + x + '</th>'; }).join('') + '</tr></thead><tbody>'
     + d.lines.map(function (l, i) {
       return '<tr class="rvo-ck-l" data-w="' + l.where + '" style="border-top:1px solid var(--border)"><td style="padding:5px 8px;color:var(--text3)">' + escHtml(l.src_rows || '') + '</td>'
         + '<td style="padding:5px 8px;font-family:var(--mono)">' + escHtml(l.raw_part || l.part) + '</td>'
         + '<td style="padding:5px 8px;font-family:var(--mono);font-weight:700">' + escHtml(l.readAs) + '</td>'
+        + '<td style="padding:5px 8px;min-width:160px;max-width:320px">' + (l.description ? escHtml(l.description) : '<span style="color:var(--text3)">—</span>') + '</td>'
         + '<td style="padding:5px 8px;text-align:right">' + fmt0(l.qty) + '</td><td style="padding:5px 8px;text-align:right">' + (l.cases ? fmt0(l.cases) : '') + '</td>'
         + '<td style="padding:5px 8px;color:' + col[l.where] + '">' + escHtml(l.whereTxt) + '</td>'
         + '<td style="padding:5px 8px">' + (l.where !== 'own' ? '<button class="btn btn-secondary" style="font-size:11px;padding:2px 8px;white-space:nowrap" onclick="rvoMapLine(' + i + ')">Map to part #</button>' : '') + '</td></tr>';
