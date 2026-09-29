@@ -2407,9 +2407,33 @@ async function inventoryLookup(url, env) {
     loc.adjustedCases = Math.max(0, (parseFloat(loc.cases) || 0) - pending);
   }
 
+  // Our FBA listings' part #s for this item (cleaned, and through part #
+  // corrections) — Stock Out → Shelving keeps these (and the same bag size
+  // when they run low) for FBA, so they don't have to be rebagged.
+  const fbaParts = [];
+  if (env.DB && baseSku) {
+    try {
+      const B = String(baseSku).toUpperCase();
+      const alias = {}; ((await env.DB.prepare('SELECT raw, part FROM reorder_alias').all().catch(() => ({ results: [] }))).results || [])
+        .forEach(a => { alias[String(a.raw).toUpperCase()] = String(a.part).toUpperCase(); });
+      const rows = [
+        ...(((await env.DB.prepare('SELECT sku, available FROM fba_catalog').all().catch(() => ({ results: [] }))).results) || []),
+        ...(((await env.DB.prepare(`SELECT sku, NULL AS available FROM amazon_fba_inventory WHERE afn_listing_exists = 'Yes'`).all().catch(() => ({ results: [] }))).results) || []),
+      ];
+      const seen = {};
+      for (const r of rows) {
+        const raw = String(r.sku || '').trim().toUpperCase(); if (!raw) continue;
+        const part = alias[raw] || reorderCleanPart(raw);
+        if (reorderGetBaseSku(part) !== B || !reorderIsProperFormat(part)) continue;
+        if (!seen[part]) { seen[part] = { part, fbaSku: raw, atAmazon: null }; fbaParts.push(seen[part]); }
+        if (r.available != null) seen[part].atAmazon = (seen[part].atAmazon || 0) + (parseFloat(r.available) || 0);
+      }
+    } catch (_) {}
+  }
+
   return cors(new Response(JSON.stringify({
     partNum, sku: sku || partNum, name, baseSku,
-    insideUpc, outsideUpc, locations, variants, isMultiVariant
+    insideUpc, outsideUpc, locations, variants, isMultiVariant, fbaParts
   }), { headers: { 'Content-Type': 'application/json' } }));
 }
 
