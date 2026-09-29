@@ -618,7 +618,7 @@ window.invCredLogin = async function() {
       <input id="inv-need-cases" type="number" min="0.5" step="0.5" inputmode="decimal" placeholder="e.g. 2"
         style="width:80px;padding:8px 10px;border:1.5px solid var(--border);border-radius:7px;background:var(--bg);color:var(--text);font-size:15px;font-weight:700;font-family:var(--mono)"
         onkeydown="if(event.key==='Enter'){event.preventDefault();var s=document.getElementById('inv-search-inp');if(s)s.focus();}">
-      <span style="font-size:11px;color:var(--text3);line-height:1.3">then scan / type the part # — the system picks the spot and puts it on your Pull List (Shelving)</span>
+      <span style="font-size:11px;color:var(--text3);line-height:1.3">then scan / type the part # — the system picks the spot and puts it on your Pull List (Shelving; blank = 1 case)</span>
     </div>
     <div class="isearch-row">
       <input class="isearch-inp" id="inv-search-inp" type="text" placeholder="Part# or barcode…" onkeydown="if(event.key==='Enter')invScanSearch()">
@@ -2133,10 +2133,25 @@ window.invCredLogin = async function() {
   function invMaybeAutoPick(d) {
     var inp = g('inv-need-cases');
     var need = inp ? parseFloat(inp.value) : 0;
-    if (!(need > 0) || invMode !== 'out' || !d || !d.partNum) return;
-    if (invStockOutDest !== 'shelving') { invFlash('Cases needed picks the spot for Shelving — for Big Company, choose the spot below', 'warn'); return; }
-    var plan = invPlanShelvingPull(need);
-    if (!plan.takes.length) { invFlash('No cases of ' + (d.baseSku || d.partNum) + ' on the shelves — nothing added', 'error'); return; }
+    if (invMode !== 'out' || !d || !d.partNum) return;
+    if (invStockOutDest !== 'shelving') { if (need > 0) invFlash('Cases needed picks the spot for Shelving — for Big Company, choose the spot below', 'warn'); return; }
+    // Shelving always picks for the picker; no number typed = 1 case.
+    var typed = need > 0; if (!typed) need = 1;
+    var plan;
+    try { plan = invPlanShelvingPull(need); }
+    catch (e) { invFlash('Could not pick a spot (' + e.message + ') — choose one below', 'error'); return; }
+    if (!plan.takes.length) {
+      // Nothing free to take: say exactly why (on the shelves, waiting for
+      // approval, already on a Pull List). The list below stays for
+      // "found it on the shelf / somewhere else".
+      var shelf = 0, pend = 0, listed = 0;
+      (d.locations || []).forEach(function(l) { if (l.isPlaceholder) return; shelf += parseFloat(l.cases) || 0; pend += parseFloat(l.pendingCases) || 0; });
+      invPullList.forEach(function(x) { if (!x.grabbed && !x.noneFound && !x.submitted && String(x.partNum || '').split('=')[0].toUpperCase() === String(d.baseSku || d.partNum).split('=')[0].toUpperCase()) listed += parseFloat(x.cases) || 0; });
+      invFlash('Nothing free to grab for ' + (d.baseSku || d.partNum) + ': ' + shelf + ' case(s) on the shelves'
+        + (pend ? ', ' + pend + ' already taken (waiting for approval)' : '') + (listed ? ', ' + listed + ' already on your Pull List' : '')
+        + '. Found some anyway? Use "found it" below.', 'error');
+      return;
+    }
     plan.takes.forEach(function(t) {
       var key = t.partNum + '|' + t.loc.location, ex = null;
       invPullList.forEach(function(x) { if (x.key === key && !x.grabbed && !x.noneFound && !x.submitted) ex = x; });
@@ -2156,7 +2171,7 @@ window.invCredLogin = async function() {
     });
     invRenderPullList();
     var got = plan.takes.reduce(function(a, t) { return a + t.cases; }, 0);
-    var msg = '✓ On your Pull List: ' + plan.takes.map(function(t) { return t.cases + ' × ' + t.partNum + ' @ ' + t.loc.location; }).join(' + ');
+    var msg = '✓ On your Pull List: ' + plan.takes.map(function(t) { return t.cases + ' × ' + t.partNum + ' @ ' + t.loc.location; }).join(' + ') + (typed ? '' : ' (no number typed — 1 case; change it on the list)');
     if (got < need) invFlash(msg + ' — ⚠ only ' + got + ' of ' + need + ' cases on the shelves (' + (need - got) + ' short)', 'warn');
     else invFlash(msg, plan.takes.some(function(t) { return t.tier === 2; }) ? 'warn' : 'success');
     if (inp) inp.value = '';
@@ -4591,13 +4606,30 @@ window.invCredLogin = async function() {
   // areas first, then middle, then back — so working through the list top
   // to bottom means walking a real route instead of crisscrossing back and
   // forth. Anything with a prefix not in this list sorts to the very end.
-  var INV_PULL_AREA_ORDER = ['FRONT=','2FL=','BO=','BSMT=','PR=','GARAGE=','C1=','C2=','BARN=','C3=','C4=','C5='];
+  // Front: BO → 2FL → FRONT · Middle: BSMT → PR → GARAGE · Back: C1 → C2 →
+  // BARN → C3 → C4 → C5 (the owner's walking order).
+  var INV_PULL_AREA_ORDER = ['BO=','2FL=','FRONT=','BSMT=','PR=','GARAGE=','C1=','C2=','BARN=','C3=','C4=','C5='];
+  var INV_PULL_ZONE = { 'BO=': 'Front', '2FL=': 'Front', 'FRONT=': 'Front', 'BSMT=': 'Middle', 'PR=': 'Middle', 'GARAGE=': 'Middle',
+    'C1=': 'Back', 'C2=': 'Back', 'BARN=': 'Back', 'C3=': 'Back', 'C4=': 'Back', 'C5=': 'Back' };
   function invPullLocationRank(location) {
     var loc = (location || '').toUpperCase();
     for (var i = 0; i < INV_PULL_AREA_ORDER.length; i++) {
       if (loc.indexOf(INV_PULL_AREA_ORDER[i]) === 0) return i;
     }
     return INV_PULL_AREA_ORDER.length;
+  }
+  function invPullZoneOf(location) { var r = invPullLocationRank(location); return r < INV_PULL_AREA_ORDER.length ? INV_PULL_ZONE[INV_PULL_AREA_ORDER[r]] + ' · ' + INV_PULL_AREA_ORDER[r].replace('=', '') : 'Other'; }
+  // Inside an area, the spot code reads like a part #: aisle-row-column
+  // (23-4-5 = aisle 23, shelf row 4, column 5). Walk each aisle once:
+  // aisle, then column along the aisle, then row (same column = same stop).
+  function invPullWalkCompare(a, b) {
+    var ra = invPullLocationRank(a), rb = invPullLocationRank(b);
+    if (ra !== rb) return ra - rb;
+    var na = String(a || '').toUpperCase().split('=').slice(1).join('=').match(/\d+/g) || [];
+    var nb = String(b || '').toUpperCase().split('=').slice(1).join('=').match(/\d+/g) || [];
+    var ka = [+na[0] || 0, +na[2] || 0, +na[1] || 0], kb = [+nb[0] || 0, +nb[2] || 0, +nb[1] || 0];
+    for (var i = 0; i < 3; i++) if (ka[i] !== kb[i]) return ka[i] - kb[i];
+    return String(a || '').localeCompare(String(b || ''));
   }
 
   // Which of the three sections are expanded — Ungrabbed starts open since
@@ -5197,7 +5229,7 @@ window.invCredLogin = async function() {
     // Ungrabbed only — walk order front → middle → back, so working
     // straight down the list is an actual efficient route, not backtracking.
     ungrabbedIdx.sort(function(a, b) {
-      return invPullLocationRank(invPullList[a].location) - invPullLocationRank(invPullList[b].location);
+      return invPullWalkCompare(invPullList[a].location, invPullList[b].location) || String(invPullList[a].partNum).localeCompare(String(invPullList[b].partNum));
     });
     // Drop any stale selections — an item that got grabbed/removed since
     // it was checked for saving shouldn't still count toward "N selected".
@@ -5266,7 +5298,20 @@ window.invCredLogin = async function() {
       if (indices.length === 0) {
         body.innerHTML = "<div style='padding:8px 4px;color:var(--text3);font-size:12px'>None</div>";
       } else {
-        indices.forEach(function(i) { body.appendChild(invBuildPullRow(invPullList[i], i, key === 'ungrabbed' && invPullSaveModeActive)); });
+        var lastZone = null, stop = 0;
+        indices.forEach(function(i) {
+          if (key === 'ungrabbed') {
+            // Area headers + stop numbers: work straight down = one walk.
+            var z = invPullZoneOf(invPullList[i].location);
+            if (z !== lastZone) { lastZone = z; var zh = document.createElement('div');
+              zh.style.cssText = 'margin:8px 0 2px;font-size:11px;font-weight:800;letter-spacing:.4px;text-transform:uppercase;color:var(--accent)';
+              zh.textContent = '📍 ' + z; body.appendChild(zh); }
+            stop++;
+          }
+          var row = invBuildPullRow(invPullList[i], i, key === 'ungrabbed' && invPullSaveModeActive);
+          if (key === 'ungrabbed') { var sn = document.createElement('div'); sn.style.cssText = 'position:absolute;left:2px;top:2px;font-size:9px;font-weight:800;color:var(--accent);background:var(--bg);border-radius:4px;padding:0 3px;pointer-events:none'; sn.textContent = '#' + stop; row.style.position = 'relative'; row.appendChild(sn); }
+          body.appendChild(row);
+        });
       }
       section.appendChild(body);
       el.appendChild(section);
