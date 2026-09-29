@@ -2926,6 +2926,12 @@ async function invSaveTotals(env, ids, before, after, note) {
   for (const id of ids.filter(Boolean))
     await env.DB.prepare('UPDATE inventory_log SET total_before=?, total_after=?, total_warning=?, total_scope=? WHERE id=?').bind(before, after, note || null, 'part', id).run();
 }
+// The approve went through but its before → after couldn't be worked out:
+// say so on the History row (never a blank cell nobody can explain).
+async function invSaveTotalsFailed(env, ids, why) {
+  try { await invSaveTotals(env, ids, null, null, `\u26a0 Total not recorded \u2014 ${String(why || 'unknown error').slice(0, 200)}. The entry itself was approved; check the part #'s shelves in SKU Mgr.`); }
+  catch (e) { console.error('[totals] could not save the failure note:', e.message); }
+}
 // True when this exact log entry (same id, part # and type) is already Verified.
 async function invAlreadyVerified(env, id, part, type, loc) {
   id = parseInt(id) || 0; if (!id || !part) return false;
@@ -3006,10 +3012,11 @@ async function inventoryVerify(request, env) {
   const result = await inventoryVerifyInner(request, env);
   for (const l of costSpots) await costSafe(() => costReconcile(env, item.partNum, l));
 
-  if (tracksQuantity && totalBefore !== null) {
+  if (tracksQuantity) {
+    const resultData = await result.clone().json().catch(() => ({}));
     try {
-      const resultData = await result.clone().json().catch(() => ({}));
-      if (resultData.ok) {
+      if (resultData.ok && totalBefore === null) await invSaveTotalsFailed(env, [item.d1Id], partNum ? `couldn't read ${partNum}'s total before approving` : 'the entry has no part #');
+      else if (resultData.ok) {
         const totalAfter = await invPartCases(env, partNum);
         // What this part # total SHOULD be: IN adds, OUT takes off — but a
         // shelf never goes below 0, so taking more than the system had there
@@ -3028,7 +3035,7 @@ async function inventoryVerify(request, env) {
           : info;
         await invSaveTotals(env, [item.d1Id], totalBefore, totalAfter, note);
       }
-    } catch(e) { console.error('[verify-totals] failed:', e.message); }
+    } catch(e) { console.error('[verify-totals] failed:', e.message); if (resultData.ok) await invSaveTotalsFailed(env, [item.d1Id], e.message); }
   }
 
   return result;
@@ -3850,10 +3857,12 @@ async function inventoryTransferVerify(request, env) {
     await costSafe(() => costReconcile(env, cPart, cFrom)); await costSafe(() => costReconcile(env, cPart, cTo));
   }
 
-  if (tracksQuantity && totalBefore !== null) {
+  if (tracksQuantity) {
+    const resultData = await result.clone().json().catch(() => ({}));
+    const xIds = [peek.outItem.d1Id, peek.inItem && peek.inItem.d1Id];
     try {
-      const resultData = await result.clone().json().catch(() => ({}));
-      if (resultData.ok) {
+      if (resultData.ok && totalBefore === null) await invSaveTotalsFailed(env, xIds, xPart ? `couldn't read ${xPart}'s total before approving` : 'the transfer has no part #');
+      else if (resultData.ok) {
         const totalAfter = await invPartCases(env, xPart);
         // A transfer only moves boxes: the part # total stays the same —
         // unless the FROM shelf had fewer in the system than were moved: it
@@ -3868,7 +3877,7 @@ async function inventoryTransferVerify(request, env) {
           : null;
         await invSaveTotals(env, [peek.outItem.d1Id, peek.inItem && peek.inItem.d1Id], totalBefore, totalAfter, note);
       }
-    } catch(e) { console.error('[transfer-verify-totals] failed:', e.message); }
+    } catch(e) { console.error('[transfer-verify-totals] failed:', e.message); if (resultData.ok) await invSaveTotalsFailed(env, xIds, e.message); }
   }
 
   return result;
@@ -10666,14 +10675,18 @@ async function inventoryHistorySummary(url, env) {
     const totalRow = await d1First(env, 'SELECT SUM(cases) as total FROM master_list WHERE cases > 0');
     const currentTotal = totalRow?.total || 0;
 
-    const duringNet = (totals?.cases_in||0) + (totals?.audit_cases_in||0) - (totals?.cases_out||0) - (totals?.audit_cases_out||0);
+    // Only APPROVED (Verified) entries moved cases on the shelves — a
+    // Pending or Rejected Stock In/Out never touched master_list, so counting
+    // it made the Starting number wrong by its cases. (The activity counts
+    // above still count every entry: that's who did what.)
+    const netSql = `SUM(CASE WHEN status='Verified' AND type='IN' THEN cases ELSE 0 END) - SUM(CASE WHEN status='Verified' AND type='OUT' THEN cases ELSE 0 END) AS net`;
+    const during = await d1First(env, `SELECT ${netSql} FROM inventory_log WHERE ${timeCond}`, timeParams);
+    const duringNet = parseFloat(during?.net) || 0;
 
     let afterNet = 0;
     if (cutoffEnd) {
-      const after = await d1First(env,
-        `SELECT ${bucketSql} FROM inventory_log WHERE timestamp >= ?`, [cutoffEnd]
-      );
-      afterNet = (after?.cases_in||0) + (after?.audit_cases_in||0) - (after?.cases_out||0) - (after?.audit_cases_out||0);
+      const after = await d1First(env, `SELECT ${netSql} FROM inventory_log WHERE timestamp >= ?`, [cutoffEnd]);
+      afterNet = parseFloat(after?.net) || 0;
     }
     const endingCases = currentTotal - afterNet;
     const startingCases = endingCases - duringNet;
