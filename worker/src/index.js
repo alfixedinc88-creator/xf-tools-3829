@@ -17035,9 +17035,35 @@ async function shipStockCheck(request, env) {
     results.push({
       sku: (it && it.sku) || '', bin: (it && it.bin) || '',
       cases, noStockFound: cases !== null && cases <= 0,
+      piecesPerCase: await _psPiecesPerCase(env, it && it.bin, it && it.sku),
     });
   }
   return cors(new Response(JSON.stringify({ ok: true, results }), { headers: { 'Content-Type': 'application/json' } }));
+}
+
+// Pieces in one case for a picked item, so the Picking tab can say how many
+// cases a "No Stock" report needs (order pieces ÷ pieces per case). The
+// exact part # wins; otherwise the bin's part # family. When the family has
+// several case sizes, the smallest one that has stock is used (then the
+// smallest of any), so the cases asked for always cover the order. 0 = not
+// known.
+async function _psPiecesPerCase(env, bin, sku) {
+  if (!env.DB) return 0;
+  const s = String(sku || '').trim().toUpperCase(), b = String(bin || '').trim().toUpperCase();
+  try {
+    if (s) {
+      const ex = await d1First(env, 'SELECT MAX(units_per_case) AS u FROM master_list WHERE UPPER(TRIM(part_num)) IN (?, ?) AND units_per_case > 0', [s, s.replace(/-+$/, '')]);
+      if (ex && parseFloat(ex.u) > 0) return parseFloat(ex.u);
+    }
+    if (b && _psIsFamilyCode(b)) {
+      const fam = 'SELECT MIN(units_per_case) AS u FROM (' + _PS_FAMILY_SQL('units_per_case, cases') + ') WHERE units_per_case > 0';
+      const inStock = await d1First(env, fam + ' AND cases > 0', _psFamilyParams(b));
+      if (inStock && parseFloat(inStock.u) > 0) return parseFloat(inStock.u);
+      const any = await d1First(env, fam, _psFamilyParams(b));
+      if (any && parseFloat(any.u) > 0) return parseFloat(any.u);
+    }
+  } catch (e) { console.error('[Ship] pieces-per-case lookup failed for', bin, sku, e.message); }
+  return 0;
 }
 
 // ── POST /ship/stockout ──────────────────────────────────────────────────────

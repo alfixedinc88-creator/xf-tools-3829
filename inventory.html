@@ -2191,13 +2191,17 @@ window.invCredLogin = async function() {
   //     time, so no FBA part # runs out while another has too much.
   //   • Not enough anywhere → takes what there is and says how many short.
   // Cases already on the Pull List (not grabbed yet) are not given twice.
-  function invMaybeAutoPick(d) {
+  // fromReport = { id, cases } when this came from tapping a Stock Out
+  // Report: the report's case count is used and every row it adds is tagged
+  // with the report, so grabbing it resolves the report.
+  function invMaybeAutoPick(d, fromReport) {
     var inp = g('inv-need-cases');
-    var need = inp ? parseFloat(inp.value) : 0;
+    var need = fromReport ? fromReport.cases : (inp ? parseFloat(inp.value) : 0);
     if (invMode !== 'out' || !d || !d.partNum) return;
     if (invStockOutDest !== 'shelving') { if (need > 0) invFlash('Cases needed picks the spot for Shelving — for Big Company, choose the spot below', 'warn'); return; }
     // Shelving always picks for the picker; no number typed = 1 case.
     var typed = need > 0; if (!typed) need = 1;
+    var srcId = fromReport ? fromReport.id : null;
     var plan;
     try { plan = invPlanShelvingPull(need); }
     catch (e) { invFlash('Could not pick a spot (' + e.message + ') — choose one below', 'error'); return; }
@@ -2217,22 +2221,23 @@ window.invCredLogin = async function() {
       var key = t.partNum + '|' + t.loc.location, ex = null;
       invPullList.forEach(function(x) { if (x.key === key && !x.grabbed && !x.noneFound && !x.submitted) ex = x; });
       var any = invPullList.some(function(x) { return x.key === key; });
-      if (ex) { ex.cases = (parseFloat(ex.cases) || 0) + t.cases; invSavePullList(); }
+      if (ex) { ex.cases = (parseFloat(ex.cases) || 0) + t.cases; if (srcId && !ex.sourceStockoutId) ex.sourceStockoutId = srcId; invSavePullList(); }
       else if (any) { // same spot already grabbed earlier — its own new row
         invPullList.push({ key: key, partNum: t.partNum, sku: invPart.sku || t.partNum, name: invPart.name || '', location: t.loc.location, cases: String(t.cases),
           systemCases: t.loc.adjustedCases !== undefined ? t.loc.adjustedCases : (parseFloat(t.loc.cases) || 0), rowIndex: t.loc.rowIndex,
-          isPlaceholder: false, masterRowIndex: t.loc.rowIndex, masterId: t.loc.masterId || null, addedAt: new Date().toISOString(), sourceStockoutId: null });
+          isPlaceholder: false, masterRowIndex: t.loc.rowIndex, masterId: t.loc.masterId || null, addedAt: new Date().toISOString(), sourceStockoutId: srcId });
         invSavePullList();
       } else {
         invPart = Object.assign({}, invPart, { partNum: t.partNum });
         invPullListPendingCases = t.cases; invPullListPendingCasesInputEl = null;
+        _invPendingStockoutSourceId = srcId;
         invAddToPullList(invPart, t.loc);
         invPullListPendingCases = null;
       }
     });
     invRenderPullList();
     var got = plan.takes.reduce(function(a, t) { return a + t.cases; }, 0);
-    var msg = '✓ On your Pull List: ' + plan.takes.map(function(t) { return t.cases + ' × ' + t.partNum + ' @ ' + t.loc.location; }).join(' + ') + (typed ? '' : ' (no number typed — 1 case; change it on the list)');
+    var msg = '✓ On your Pull List' + (fromReport ? ' (Stock Out Report)' : '') + ': ' + plan.takes.map(function(t) { return t.cases + ' × ' + t.partNum + ' @ ' + t.loc.location; }).join(' + ') + (typed ? '' : ' (no number typed — 1 case; change it on the list)');
     if (got < need) invFlash(msg + ' — ⚠ only ' + got + ' of ' + need + ' cases on the shelves (' + (need - got) + ' short)', 'warn');
     else invFlash(msg, plan.takes.some(function(t) { return t.tier === 2; }) ? 'warn' : 'success');
     if (inp) inp.value = '';
@@ -3686,7 +3691,7 @@ window.invCredLogin = async function() {
       // the detail line, so it's the second thing anyone sees after the
       // bin — this is the number they need to grab.
       var qty = s.quantity != null ? (parseInt(s.quantity, 10) || 1) : 1;
-      var qtyBadge = '<span style="font-size:10px;font-weight:700;color:var(--red);background:var(--red-bg);border-radius:10px;padding:2px 7px;flex-shrink:0">Need ' + qty + '</span>';
+      var qtyBadge = '<span style="font-size:10px;font-weight:700;color:var(--red);background:var(--red-bg);border-radius:10px;padding:2px 7px;flex-shrink:0">Need ' + qty + ' cs</span>';
       // One-time click — once used, the headline stops being clickable
       // entirely (not just grayed out) so the same report can't get
       // searched/added to the Pull List a second time by accident.
@@ -3735,7 +3740,7 @@ window.invCredLogin = async function() {
             + '<span style="font-size:10px;font-weight:700;color:var(--green)">✓ Resolved</span>'
             + '</div>'
             + '<div style="color:var(--text3);font-size:11px;margin-top:2px">'
-            + 'Need ' + qty + (s.sku ? ' · ' + s.sku : '') + (s.orderNum ? ' · Order ' + s.orderNum : '')
+            + 'Need ' + qty + ' cs' + (s.sku ? ' · ' + s.sku : '') + (s.orderNum ? ' · Order ' + s.orderNum : '')
             + '</div>'
             + '<div style="color:var(--text3);font-size:11px;margin-top:2px">Reported by ' + (s.reportedBy || '?') + (when ? ' · ' + when : '') + '</div>'
             + '<div style="color:var(--text3);font-size:11px;margin-top:2px">Resolved by ' + (s.resolvedBy || '?') + (resolvedWhen ? ' · ' + resolvedWhen : '') + '</div>'
@@ -3814,7 +3819,16 @@ window.invCredLogin = async function() {
     var gb = g('inv-grab-banner');
     if (gb) { gb.style.display = "none"; gb.innerHTML = ""; }
 
-    _invLookupWithFallback(primary, fallback, inp);
+    // The system picks the spot, same as "Cases needed" + scan: the
+    // report's cases go straight onto the Pull List (Shelving rules —
+    // oldest first, FBA bags last, one spot when one spot has them all).
+    // The "choose location" list still shows below for "found it".
+    var repQty = s.quantity != null ? (parseInt(s.quantity, 10) || 1) : 1;
+    _invLookupWithFallback(primary, fallback, inp, function(d) {
+      if (invMode !== 'out') return;
+      if (invStockOutDest !== 'shelving') invSetStockOutDest('shelving');
+      invMaybeAutoPick(d, { id: s.id, cases: repQty });
+    });
 
     // Set AFTER kicking off the lookup(s) above (which reset this exact
     // value at their own start) — the next item pushed to the Pull List
@@ -3828,7 +3842,7 @@ window.invCredLogin = async function() {
     // have to work out how many boxes to grab" part.
     if (gb) {
       var qty = s.quantity != null ? (parseInt(s.quantity, 10) || 1) : 1;
-      gb.textContent = '📦 Grab ' + qty + (s.orderNum ? ' for Order ' + s.orderNum : '');
+      gb.textContent = '📦 Grab ' + qty + ' case' + (qty === 1 ? '' : 's') + (s.orderNum ? ' for Order ' + s.orderNum : '');
       gb.style.display = 'block';
     }
     // Locks the headline (one-time click) and keeps the manual "viewed"
@@ -3850,17 +3864,20 @@ window.invCredLogin = async function() {
   // does, renders the primary attempt's result — the same "no stock on
   // record" state the tool always showed, still tied to what the picker
   // actually reported.
-  function _invLookupWithFallback(primaryCode, fallbackCode, searchInp) {
+  // onDone(d) runs after whichever result is shown (Stock Out Reports use
+  // it to auto-pick the spot).
+  function _invLookupWithFallback(primaryCode, fallbackCode, searchInp, onDone) {
+    var show = function(code, d) { _invRenderLookupResult(code, d); if (onDone) onDone(d); };
     _invFetchLookupRaw(primaryCode).then(function(d1) {
-      if (_invHasRealStock(d1) || !fallbackCode) { _invRenderLookupResult(primaryCode, d1); return; }
+      if (_invHasRealStock(d1) || !fallbackCode) { show(primaryCode, d1); return; }
       _invFetchLookupRaw(fallbackCode).then(function(d2) {
         if (_invHasRealStock(d2)) {
           if (searchInp) searchInp.value = fallbackCode;
-          _invRenderLookupResult(fallbackCode, d2);
+          show(fallbackCode, d2);
         } else {
-          _invRenderLookupResult(primaryCode, d1);
+          show(primaryCode, d1);
         }
-      }).catch(function() { _invRenderLookupResult(primaryCode, d1); });
+      }).catch(function() { show(primaryCode, d1); });
     }).catch(function() { invFlash("Lookup failed", "error"); });
   }
 
