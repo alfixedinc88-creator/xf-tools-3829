@@ -15,6 +15,39 @@ So every feature should:
   change;
 - make problems easy to trace back to where they started.
 
+## Stock Out pick rules (the system picks for the picker)
+
+Two Stock Out tabs, Shelving first:
+- **Stock Out Shelving** = our own shelves. Search by the parent part #
+  (e.g. 30-3-4). The exact part # and bag count don't matter much.
+- **Stock Out Big Company** = ships to our Amazon warehouse for ONE FBA
+  listing. Search the WHOLE part # (e.g. 30-3-4=10X). Part # and bag count
+  matter: least packing / rebagging, none is best.
+
+**Rule #1, always first, on BOTH tabs, before any other rule or example:**
+save FBA bags for their own FBA listing.
+- Finish the bags with no FBA listing first.
+- When an FBA part # is low, keep the other bags of the same count for it.
+- If only FBA bags are left, look at Amazon sales history and even them out:
+  never empty FBA #1 while FBA #2 still has a lot (later we would have to
+  open #2 and rebag it for #1).
+- For Big Company, the part # asked for is its own listing, so it comes first.
+
+Then Shelving: oldest first (fewer letters after the pack number = older),
+one spot rather than two.
+
+Then Big Company, least rebag work:
+1. The same part # (e.g. =10X).
+2. The same bag count with other letters (=5 / =5X for =5XX): just cover
+   the label, no rebag.
+3. Put 2 bags into one (=50 + =50 for =100).
+4. Cut ONE bigger bag (=100 for =2 or =5), biggest first, then smaller.
+5. Put 3–5 bags into one (=25 ×4 for =100; =5 ×5 for =25 when only =2
+   and =5 are left).
+6. Many small bags (=2 ×50 for =100) or mixed sizes: last, too much rebag.
+Big Company counts pieces (Each/Case), so a case of =100 is never counted
+as a case of =10X.
+
 ## Inventory numbers must always add up (most important rule)
 
 Inventory counts are the most important data in this repo. A double count or
