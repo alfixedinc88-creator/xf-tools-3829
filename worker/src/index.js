@@ -2425,8 +2425,21 @@ async function inventoryLookup(url, env) {
         const raw = String(r.sku || '').trim().toUpperCase(); if (!raw) continue;
         const part = alias[raw] || reorderCleanPart(raw);
         if (reorderGetBaseSku(part) !== B || !reorderIsProperFormat(part)) continue;
-        if (!seen[part]) { seen[part] = { part, fbaSku: raw, atAmazon: null }; fbaParts.push(seen[part]); }
+        if (!seen[part]) { seen[part] = { part, fbaSku: raw, atAmazon: null, raws: new Set([part]), sold90: 0 }; fbaParts.push(seen[part]); }
+        seen[part].raws.add(raw);
         if (r.available != null) seen[part].atAmazon = (seen[part].atAmazon || 0) + (parseFloat(r.available) || 0);
+      }
+      // Amazon units sold in the last 90 days per FBA part # (its SKUs and
+      // any SKU corrected to it) — Stock Out keeps each FBA part # stocked
+      // in line with how fast it sells.
+      Object.keys(alias).forEach(raw => { if (seen[alias[raw]]) seen[alias[raw]].raws.add(raw); });
+      const since = new Date(Date.now() - 90 * 86400000).toISOString().slice(0, 10);
+      for (const f of fbaParts) {
+        const raws = [...f.raws].slice(0, 50);
+        const r = await env.DB.prepare(`SELECT SUM(units_ordered) AS u FROM amazon_sales_weekly WHERE period_start >= ? AND UPPER(sku) IN (${raws.map(() => '?').join(',')})`)
+          .bind(since, ...raws).first().catch(() => null);
+        f.sold90 = (r && parseFloat(r.u)) || 0;
+        delete f.raws;
       }
     } catch (_) {}
   }
