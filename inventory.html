@@ -492,7 +492,8 @@ window.invCredLogin = async function() {
 </div>
 
 <div class="itabs">
-  <button class="itab iactive" id="inv-tab-stockout" onclick="invSwitchTab('stockout')">📤 Stock Out</button>
+  <button class="itab iactive" id="inv-tab-stockout" onclick="invSwitchTab('stockout')">🏬 Stock Out Shelving</button>
+  <button class="itab" id="inv-tab-stockoutco" onclick="invSwitchTab('stockoutco')">🏢 Stock Out Big Company</button>
   <button class="itab" id="inv-tab-scan" onclick="invSwitchTab('scan')">📦 Stock In / Found on Shelf</button>
   <button class="itab" id="inv-tab-transfer" onclick="invSwitchTab('transfer')">Transfer</button>
   <button class="itab" id="inv-tab-audit" onclick="invSwitchTab('audit')">🔍 Audit</button>
@@ -620,7 +621,7 @@ window.invCredLogin = async function() {
       <input id="inv-need-cases" type="text" inputmode="decimal" autocomplete="off" placeholder="e.g. 2"
         style="width:80px;padding:8px 10px;border:1.5px solid var(--border);border-radius:7px;background:var(--bg);color:var(--text);font-size:15px;font-weight:700;font-family:var(--mono)"
         onkeydown="invNeedKey(event)" onfocus="invNeedPadShow(true)" onblur="invNeedPadShow(false)">
-      <span style="font-size:11px;color:var(--text3);line-height:1.3">then scan / type the part # — the system picks the spot and puts it on your Pull List (Shelving; blank = 1 case)</span>
+      <span id="inv-need-help" style="font-size:11px;color:var(--text3);line-height:1.3">then scan / type the part # — the system picks the spot and puts it on your Pull List (Shelving; blank = 1 case)</span>
     </div>
     <!-- On-screen number pad: a phone paired with a Bluetooth scanner thinks
          a keyboard is plugged in and hides its own keyboard, so tapping
@@ -1586,7 +1587,9 @@ window.invCredLogin = async function() {
     // "scan" (Stock In) and "stockout" (Stock Out) share the same
     // underlying panel and logic — only the forced invMode differs. See
     // invSetMode for the Stock In/Out UI split that already existed here.
-    var scanPanelActive = (tab === "scan" || tab === "stockout");
+    // Stock Out has two tabs (same panel): Shelving and Big Company — the
+    // tab sets invStockOutDest (see invSetStockOutDest).
+    var scanPanelActive = (tab === "scan" || tab === "stockout" || tab === "stockoutco");
     g("inv-panel-scan").className      = "ipanel" + (scanPanelActive ? " iactive" : "");
     g("inv-panel-transfer").className  = "ipanel" + (tab === "transfer" ? " iactive" : "");
     g("inv-panel-review").className    = "ipanel" + (tab === "review"   ? " iactive" : "");
@@ -1597,15 +1600,17 @@ window.invCredLogin = async function() {
     g("inv-tab-soldout").className     = "itab"   + (tab === "soldout"  ? " iactive" : "");
     g("inv-tab-scan").className        = "itab"   + (tab === "scan"     ? " iactive" : "");
     g("inv-tab-stockout").className    = "itab"   + (tab === "stockout" ? " iactive" : "");
+    g("inv-tab-stockoutco").className  = "itab"   + (tab === "stockoutco" ? " iactive" : "");
     g("inv-tab-transfer").className    = "itab"   + (tab === "transfer" ? " iactive" : "");
     g("inv-tab-review").className      = "itab"   + (tab === "review"   ? " iactive" : "");
     g("inv-tab-audit").className       = "itab"   + (tab === "audit"    ? " iactive" : "");
     g("inv-tab-skumgr").className      = "itab"   + (tab === "skumgr"   ? " iactive" : "");
     g("inv-tab-history").className     = "itab"   + (tab === "history"  ? " iactive" : "");
     if (scanPanelActive) {
-      invSetMode(tab === "stockout" ? "out" : "in");
+      invSetMode(tab === "scan" ? "in" : "out");
+      if (tab !== "scan") invSetStockOutDest(tab === "stockoutco" ? "company" : "shelving");
       invFetchStockoutCount();
-      if (tab === "stockout" && typeof invUpdateSavedBatchCount === 'function') invUpdateSavedBatchCount();
+      if (tab !== "scan" && typeof invUpdateSavedBatchCount === 'function') invUpdateSavedBatchCount();
     }
     if (tab === "review") {
       // Always restore correct visibility when switching to review tab
@@ -1707,12 +1712,12 @@ window.invCredLogin = async function() {
     // Out mode, so only shown there. Doesn't reset back to Shelving on
     // every mode flip; invStockOutDest keeps whatever was last picked.
     var destCard = g("inv-stockout-dest-card");
-    if (destCard) destCard.style.display = mode === "out" ? "block" : "none";
+    if (destCard) destCard.style.display = "none"; // the two Stock Out tabs decide now
     // Stock Out Reports (Pack & Ship "no stock" flags) — Stock Out only.
     // This card lives in the shared panel both tabs use, so without this
     // it would show up on Stock In too, which doesn't make sense there.
     var stockoutReportsCard = g("inv-stockout-card");
-    if (stockoutReportsCard) stockoutReportsCard.style.display = mode === "out" ? "block" : "none";
+    if (stockoutReportsCard) stockoutReportsCard.style.display = (mode === "out" && invStockOutDest === 'shelving') ? "block" : "none";
     // QTY per Case only makes sense when receiving stock in (setting the
     // case-pack size for a new item/location) — meaningless when pulling
     // stock out, so hidden there.
@@ -1744,6 +1749,18 @@ window.invCredLogin = async function() {
   var invStockOutDest = 'shelving';
   window.invSetStockOutDest = function(dest) {
     invStockOutDest = dest;
+    // Keep the two Stock Out tabs, the reports card and the Cases needed
+    // wording in step with the choice.
+    if (invMode === 'out') {
+      var t1 = g('inv-tab-stockout'), t2 = g('inv-tab-stockoutco');
+      if (t1) t1.className = 'itab' + (dest === 'shelving' ? ' iactive' : '');
+      if (t2) t2.className = 'itab' + (dest === 'company' ? ' iactive' : '');
+      var rc = g('inv-stockout-card'); if (rc) rc.style.display = dest === 'shelving' ? 'block' : 'none';
+    }
+    var nh = g('inv-need-help');
+    if (nh) nh.textContent = dest === 'company'
+      ? 'then scan / type the WHOLE part # (e.g. 30-3-4=10X) — the system picks the bags with the least rebagging and puts them on your Pull List (blank = 1 case)'
+      : 'then scan / type the part # — the system picks the spot and puts it on your Pull List (Shelving; blank = 1 case)';
     var shelvingBtn = g('inv-stockoutdest-shelving');
     var companyBtn  = g('inv-stockoutdest-company');
     if (shelvingBtn) shelvingBtn.className = 'imode-btn' + (dest === 'shelving' ? ' min' : '');
@@ -2198,12 +2215,16 @@ window.invCredLogin = async function() {
     var inp = g('inv-need-cases');
     var need = fromReport ? fromReport.cases : (inp ? parseFloat(inp.value) : 0);
     if (invMode !== 'out' || !d || !d.partNum) return;
-    if (invStockOutDest !== 'shelving') { if (need > 0) invFlash('Cases needed picks the spot for Shelving — for Big Company, choose the spot below', 'warn'); return; }
-    // Shelving always picks for the picker; no number typed = 1 case.
+    var company = invStockOutDest === 'company';
+    // Big Company ships to our Amazon warehouse for one FBA listing, so the
+    // exact part # (bag count) matters: it must be searched whole.
+    var target = company ? (invSearchedExactVariant || (String(d.partNum).indexOf('=') >= 0 ? String(d.partNum).toUpperCase() : null)) : null;
+    if (company && !target) { invFlash('Big Company: scan or type the WHOLE part # (e.g. ' + (d.baseSku || d.partNum) + '=10X) — the bag count matters here', 'warn'); return; }
+    // The system always picks for the picker; no number typed = 1 case.
     var typed = need > 0; if (!typed) need = 1;
     var srcId = fromReport ? fromReport.id : null;
     var plan;
-    try { plan = invPlanShelvingPull(need); }
+    try { plan = company ? invPlanCompanyPull(target, need) : invPlanShelvingPull(need); }
     catch (e) { invFlash('Could not pick a spot (' + e.message + ') — choose one below', 'error'); return; }
     if (!plan.takes.length) {
       // Nothing free to take: say exactly why (on the shelves, waiting for
@@ -2214,31 +2235,43 @@ window.invCredLogin = async function() {
       invPullList.forEach(function(x) { if (!x.grabbed && !x.noneFound && !x.submitted && String(x.partNum || '').split('=')[0].toUpperCase() === String(d.baseSku || d.partNum).split('=')[0].toUpperCase()) listed += parseFloat(x.cases) || 0; });
       invFlash('Nothing free to grab for ' + (d.baseSku || d.partNum) + ': ' + shelf + ' case(s) on the shelves'
         + (pend ? ', ' + pend + ' already taken (waiting for approval)' : '') + (listed ? ', ' + listed + ' already on your Pull List' : '')
+        + (company && plan.noSize.length ? '. Case size (Each/Case) not on file for ' + plan.noSize.join(', ') + ' — set it in SKU Mgr' : '')
         + '. Found some anyway? Use "found it" below.', 'error');
       return;
     }
+    var dest = invStockOutDest;
+    var tag = function(x, t) { x.dest = dest; if (company) { x.forPart = target; x.how = t.how; } };
     plan.takes.forEach(function(t) {
       var key = t.partNum + '|' + t.loc.location, ex = null;
-      invPullList.forEach(function(x) { if (x.key === key && !x.grabbed && !x.noneFound && !x.submitted) ex = x; });
+      // Shelving and Big Company rows never merge — they go different places.
+      invPullList.forEach(function(x) { if (x.key === key && !x.grabbed && !x.noneFound && !x.submitted && (x.dest || 'shelving') === dest && (!company || x.forPart === target)) ex = x; });
       var any = invPullList.some(function(x) { return x.key === key; });
       if (ex) { ex.cases = (parseFloat(ex.cases) || 0) + t.cases; if (srcId && !ex.sourceStockoutId) ex.sourceStockoutId = srcId; invSavePullList(); }
-      else if (any) { // same spot already grabbed earlier — its own new row
+      else if (any) { // same spot already on the list (grabbed, or the other tab's) — its own new row
         invPullList.push({ key: key, partNum: t.partNum, sku: invPart.sku || t.partNum, name: invPart.name || '', location: t.loc.location, cases: String(t.cases),
           systemCases: t.loc.adjustedCases !== undefined ? t.loc.adjustedCases : (parseFloat(t.loc.cases) || 0), rowIndex: t.loc.rowIndex,
           isPlaceholder: false, masterRowIndex: t.loc.rowIndex, masterId: t.loc.masterId || null, addedAt: new Date().toISOString(), sourceStockoutId: srcId });
+        tag(invPullList[invPullList.length - 1], t);
         invSavePullList();
       } else {
         invPart = Object.assign({}, invPart, { partNum: t.partNum });
         invPullListPendingCases = t.cases; invPullListPendingCasesInputEl = null;
         _invPendingStockoutSourceId = srcId;
+        var before = invPullList.length;
         invAddToPullList(invPart, t.loc);
         invPullListPendingCases = null;
+        if (invPullList.length > before) { tag(invPullList.filter(function(x) { return x.key === key && x.dest === dest && !x.grabbed && !x.submitted; }).pop(), t); invSavePullList(); }
       }
     });
     invRenderPullList();
     var got = plan.takes.reduce(function(a, t) { return a + t.cases; }, 0);
-    var msg = '✓ On your Pull List' + (fromReport ? ' (Stock Out Report)' : '') + ': ' + plan.takes.map(function(t) { return t.cases + ' × ' + t.partNum + ' @ ' + t.loc.location; }).join(' + ') + (typed ? '' : ' (no number typed — 1 case; change it on the list)');
-    if (got < need) invFlash(msg + ' — ⚠ only ' + got + ' of ' + need + ' cases on the shelves (' + (need - got) + ' short)', 'warn');
+    var msg = '✓ On your Pull List' + (fromReport ? ' (Stock Out Report)' : '') + (company ? ' for Big Company ' + target + ' × ' + need : '') + ': '
+      + plan.takes.map(function(t) { return t.cases + ' × ' + t.partNum + ' @ ' + t.loc.location + (company && t.how ? ' (' + t.how + ')' : ''); }).join(' + ') + (typed ? '' : ' (no number typed — 1 case; change it on the list)');
+    if (company) {
+      if (plan.short > 0.001) invFlash(msg + ' — ⚠ ' + plan.short + (plan.byPieces ? ' pcs' : ' cases') + ' short' + (plan.noSize.length ? ' (Each/Case not on file for ' + plan.noSize.join(', ') + ')' : ''), 'warn');
+      else invFlash(msg, plan.takes.some(function(t) { return t.tier > 0 || t.how; }) ? 'warn' : 'success');
+    }
+    else if (got < need) invFlash(msg + ' — ⚠ only ' + got + ' of ' + need + ' cases on the shelves (' + (need - got) + ' short)', 'warn');
     else invFlash(msg, plan.takes.some(function(t) { return t.tier === 2; }) ? 'warn' : 'success');
     if (inp) inp.value = '';
     var si = g('inv-search-inp'); if (si) si.value = '';
@@ -2285,6 +2318,124 @@ window.invCredLogin = async function() {
       }
     }
     return { takes: takes, short: Math.max(0, left) };
+  }
+
+  // Stock Out → Big Company (ships to our Amazon warehouse for ONE FBA
+  // listing, so the part # and the bag count matter). Rule #1 first, same
+  // as Shelving: never use another FBA listing's bags while anything else
+  // will do — non-FBA bags first, then bags kept for a low FBA part #, FBA
+  // bags last (evened out by Amazon sales). The part # asked for is its
+  // own listing, so it always comes first. Then least rebag work:
+  //   same part # → same bag count (=5 / =5X for =5XX: cover the label)
+  //   → put 2 bags in one (=50+=50 for =100) → cut ONE bigger bag (=100 for
+  //   =2 or =5, biggest first) → put 4–5 bags in one (=25×4 for =100,
+  //   =5×5 for =25) → more bags in one → mixing sizes (most work).
+  // Inside the same work: oldest first (fewer letters), then most stock.
+  // loc._pick = { tier, score, why, how } for the screen and the Pull List.
+  function invRankForCompany(locs, target) {
+    var T = String(target || '').toUpperCase();
+    function availOf(l) { return l.adjustedCases !== undefined ? l.adjustedCases : (parseFloat(l.cases) || 0); }
+    function pnOf(l) { return String(l.partNum || invPart.partNum || '').toUpperCase(); }
+    function packOf(pn) { var m = /=(\d+)/.exec(pn); return m ? parseInt(m[1], 10) : 1; }
+    function ageOf(pn) { var t = pn.split('=')[1] || ''; return (t.replace(/^\d+/, '').match(/[A-Z]/g) || []).length; }
+    var P = packOf(T);
+    var fba = {}; ((invPart && invPart.fbaParts) || []).forEach(function(f) { fba[String(f.part).toUpperCase()] = f; });
+    var stockOf = {}; locs.forEach(function(l) { stockOf[pnOf(l)] = (stockOf[pnOf(l)] || 0) + availOf(l); });
+    var keepPack = {};
+    Object.keys(fba).forEach(function(f) { if (f !== T && (stockOf[f] || 0) <= INV_FBA_LOW_CASES) keepPack[packOf(f)] = f; });
+    function bag(pn) {
+      var q = packOf(pn);
+      if (pn === T) return { score: 0, how: '' };
+      if (q === P) return { score: 1, how: 'same bag count — just cover the label with ' + T };
+      if (q < P && P % q === 0) { var k = P / q; return { score: k === 2 ? 2 : k <= 5 ? 4 : 5 + k, how: 'put ' + k + ' bags of =' + q + ' into one =' + P + ' bag' }; }
+      if (q > P) return { score: q % P === 0 ? 3 : 3.5, how: 'cut one =' + q + ' bag into =' + P + (q % P === 0 ? ' bags (' + (q / P) + ' per bag)' : ' (' + (q % P) + ' left over per bag)') };
+      return { score: 100, how: 'mix bag sizes to make =' + P + ' — most rebag work' };
+    }
+    locs.forEach(function(l) {
+      var pn = pnOf(l), b = bag(pn);
+      var tier = pn === T ? -1 : fba[pn] ? 2 : (keepPack[packOf(pn)] ? 1 : 0);
+      var note = tier === 2 ? 'FBA bag of ' + pn + ' — kept for its own listing'
+        : tier === 1 ? 'same bag as FBA ' + keepPack[packOf(pn)] + ' (' + (stockOf[keepPack[packOf(pn)]] || 0) + ' cases left) — kept for FBA'
+        : '';
+      l._pick = { tier: tier, score: b.score, how: b.how,
+        why: pn === T ? 'The exact part # (' + T + ')' : [b.how.charAt(0).toUpperCase() + b.how.slice(1), note].filter(Boolean).join(' · ') };
+    });
+    return locs.slice().sort(function(a, b) {
+      var pa = pnOf(a), pb = pnOf(b), A = a._pick, B = b._pick;
+      if (A.tier !== B.tier) return A.tier - B.tier;
+      if (A.score !== B.score) return A.score - B.score;
+      var qa = packOf(pa), qb = packOf(pb);
+      if (qa !== qb) return qa > P && qb > P ? qb - qa : qb - qa; // bigger bag first (fewer bags to cut / combine)
+      if (ageOf(pa) !== ageOf(pb)) return ageOf(pa) - ageOf(pb);
+      if (pa !== pb) return stockOf[pb] !== stockOf[pa] ? stockOf[pb] - stockOf[pa] : (pa < pb ? -1 : 1);
+      return availOf(b) - availOf(a);
+    });
+  }
+
+  // Big Company plan for `need` cases of part # `target`. Counted in PIECES
+  // (Each/Case) so a case of =100 isn't taken as a case of =10X: need ×
+  // pieces a case of the target, then whole cases from the ranked bags until
+  // that many pieces are covered. When the target's case size isn't on file,
+  // it falls back to cases, and only the same bag count counts 1:1.
+  // → { takes:[{loc, partNum, cases, tier, how, pieces}], short, byPieces, noSize:[part #] }
+  function invPlanCompanyPull(target, need) {
+    var T = String(target).toUpperCase();
+    function availOf(l) { return l.adjustedCases !== undefined ? l.adjustedCases : (parseFloat(l.cases) || 0); }
+    function pnOf(l) { return String(l.partNum || invPart.partNum || '').toUpperCase(); }
+    function packOf(pn) { var m = /=(\d+)/.exec(pn); return m ? parseInt(m[1], 10) : 1; }
+    var all = (invPart && invPart.locations) || [], upc = {};
+    all.forEach(function(l) { var u = parseFloat(l.eachQty) || 0, pn = pnOf(l); if (u > (upc[pn] || 0)) upc[pn] = u; });
+    var P = packOf(T), upcT = upc[T] || 0;
+    if (!upcT) Object.keys(upc).forEach(function(pn) { if (packOf(pn) === P && upc[pn] > upcT) upcT = upc[pn]; });
+    var byPieces = upcT > 0;
+    var onList = {}; invPullList.forEach(function(x) { if (!x.grabbed && !x.noneFound && !x.submitted) onList[x.key] = (onList[x.key] || 0) + (parseFloat(x.cases) || 0); });
+    var locs = all.filter(function(l) { return !l.isPlaceholder; }).map(function(l) {
+      return Object.assign({}, l, { _left: Math.max(0, availOf(l) - (onList[pnOf(l) + '|' + l.location] || 0)) });
+    }).filter(function(l) { return l._left > 0; });
+    // What one case of a spot is worth, in pieces (or cases when sizes unknown).
+    var noSize = {};
+    var unitOf = function(l) { var pn = pnOf(l);
+      if (!byPieces) return packOf(pn) === P ? 1 : 0;
+      var u = upc[pn] || (packOf(pn) === P ? upcT : 0); if (!u) noSize[pn] = 1; return u; };
+    var ranked = invRankForCompany(locs, T).filter(function(l) { return unitOf(l) > 0; });
+    var left = byPieces ? need * upcT : need, takes = [];
+    var take = function(l, n) { n = Math.round(n * 100) / 100; if (n <= 0) return; var u = unitOf(l); l._left = Math.round((l._left - n) * 100) / 100; left = Math.round((left - n * u) * 100) / 100;
+      var ex = takes.filter(function(t) { return t.loc === l; })[0];
+      if (ex) { ex.cases += n; ex.pieces += n * u; } else takes.push({ loc: l, partNum: pnOf(l), cases: n, tier: l._pick.tier, how: l._pick.how, pieces: n * u }); };
+    var casesFor = function(l) { return Math.min(l._left, Math.ceil(left / unitOf(l) - 1e-9)); };
+    // Tiers -1 (the part # itself), 0 (not FBA), 1 (kept for a low FBA part #):
+    // part # by part # in rank order; one spot that has them all, else the
+    // fullest spots first.
+    [-1, 0, 1].forEach(function(tier) {
+      var parts = []; ranked.forEach(function(l) { if (l._pick.tier === tier && parts.indexOf(pnOf(l)) < 0) parts.push(pnOf(l)); });
+      parts.forEach(function(pn) {
+        if (left <= 0.001) return;
+        var c = ranked.filter(function(l) { return pnOf(l) === pn && l._left > 0; });
+        var want = Math.ceil(left / unitOf(c[0]) - 1e-9);
+        var one = c.filter(function(l) { return l._left >= want; }).sort(function(a, b) { return a._left - b._left; })[0];
+        if (one) { take(one, want); return; }
+        c.slice().sort(function(a, b) { return b._left - a._left; }).forEach(function(l) { if (left > 0.001) take(l, casesFor(l)); });
+      });
+    });
+    if (left > 0.001) {
+      // Only other FBA listings' bags left: even them out by Amazon sales —
+      // each case comes off the FBA part # with the most days of stock.
+      var fba = {}; ((invPart && invPart.fbaParts) || []).forEach(function(f) { fba[String(f.part).toUpperCase()] = f; });
+      var c = ranked.filter(function(l) { return l._pick.tier === 2; });
+      var stock = {}; c.forEach(function(l) { stock[pnOf(l)] = (stock[pnOf(l)] || 0) + l._left; });
+      var perDay = function(pn) { var f = fba[pn]; return f && f.sold90 > 0 ? f.sold90 / 90 : 0; };
+      var days = function(pn) { var r = perDay(pn); return r > 0 ? stock[pn] / r : Infinity; };
+      while (left > 0.001) {
+        var parts = Object.keys(stock).filter(function(pn) { return stock[pn] > 0.001; });
+        if (!parts.length) break;
+        parts.sort(function(a, b) { var da = days(a), db = days(b); return da === db ? stock[b] - stock[a] : db - da; });
+        var pn = parts[0];
+        var spot = c.filter(function(l) { return pnOf(l) === pn && l._left > 0.001; }).sort(function(a, b) { return b._left - a._left; })[0];
+        var n = Math.min(1, spot._left);
+        take(spot, n); stock[pn] -= n;
+      }
+    }
+    return { takes: takes, short: Math.max(0, left), byPieces: byPieces, needPieces: byPieces ? need * upcT : null, noSize: Object.keys(noSize) };
   }
 
   // Raw fetch only — no UI side effects — so invStockoutGo's bin→SKU
@@ -2590,7 +2741,8 @@ window.invCredLogin = async function() {
           return avail <= 0 && !l.isPlaceholder;
         })
       : [];
-    if (invMode === "out") locs = invStockOutDest === 'shelving' ? invPickForShelving(locs) : invSortLocsForOut(locs);
+    if (invMode === "out") locs = invStockOutDest === 'shelving' ? invPickForShelving(locs)
+      : (invSearchedExactVariant ? invRankForCompany(locs, invSearchedExactVariant) : invSortLocsForOut(locs));
     invSelLoc = null;
     invVariantRowInfo = [];
     var list = g("inv-loc-list");
@@ -2645,12 +2797,13 @@ window.invCredLogin = async function() {
         var caseId = "inv-var-cases-" + i;
         invVariantRowInfo[i] = { loc: loc, partNum: loc.partNum || invPart.partNum };
         var pk = loc._pick, pickHtml = '';
-        if (pk && invStockOutDest === 'shelving') {
+        if (pk) {
           if (i === 0) {
-            pickHtml = "<div style='margin:-10px -12px 8px;padding:6px 12px;background:" + (pk.tier ? "var(--orange-bg)" : "var(--green-bg)") + ";color:" + (pk.tier ? "var(--orange)" : "var(--green)") + ";font-size:12px;font-weight:800;border-radius:8px 8px 0 0'>👉 GET THIS ONE"
-              + (pk.tier ? " — only FBA bags left here" : "") + "<div style='font-weight:600;font-size:11px'>" + pk.why + "</div></div>";
-            el.style.border = '2px solid ' + (pk.tier ? 'var(--orange)' : 'var(--green)');
-          } else if (pk.tier) {
+            var warnPk = pk.tier > 0;
+            pickHtml = "<div style='margin:-10px -12px 8px;padding:6px 12px;background:" + (warnPk ? "var(--orange-bg)" : "var(--green-bg)") + ";color:" + (warnPk ? "var(--orange)" : "var(--green)") + ";font-size:12px;font-weight:800;border-radius:8px 8px 0 0'>👉 GET THIS ONE"
+              + (warnPk ? " — only FBA bags left here" : "") + "<div style='font-weight:600;font-size:11px'>" + pk.why + "</div></div>";
+            el.style.border = '2px solid ' + (warnPk ? 'var(--orange)' : 'var(--green)');
+          } else if (pk.tier > 0 || invStockOutDest === 'company') {
             pickHtml = "<div style='font-size:11px;font-weight:700;color:var(--orange);margin-bottom:4px'>⛔ " + pk.why + "</div>";
           }
         }
@@ -3826,7 +3979,7 @@ window.invCredLogin = async function() {
     var repQty = s.quantity != null ? (parseInt(s.quantity, 10) || 1) : 1;
     _invLookupWithFallback(primary, fallback, inp, function(d) {
       if (invMode !== 'out') return;
-      if (invStockOutDest !== 'shelving') invSetStockOutDest('shelving');
+      if (invStockOutDest !== 'shelving') invSwitchTab('stockout');
       invMaybeAutoPick(d, { id: s.id, cases: repQty });
     });
 
@@ -4501,7 +4654,7 @@ window.invCredLogin = async function() {
     // Check for duplicate
     var key = part.partNum + '|' + loc.location;
     var existingIdx = -1;
-    for (var qi = 0; qi < invPullList.length; qi++) { if (invPullList[qi].key === key) { existingIdx = qi; break; } }
+    for (var qi = 0; qi < invPullList.length; qi++) { if (invPullList[qi].key === key && (invPullList[qi].dest || 'shelving') === invStockOutDest) { existingIdx = qi; break; } }
     if (existingIdx >= 0) {
       // BUGFIX (real report: "click on 29-1-1, finish pull, Stock Out Report
       // didn't auto-clear, had to hit Resolved by hand"): this used to
@@ -4551,7 +4704,8 @@ window.invCredLogin = async function() {
       // the moment this item gets Grabbed or marked None Found (see
       // invTogglePullCheck / invMarkNoneFound). Cleared right after use so
       // it only ever tags the one add it was actually meant for.
-      sourceStockoutId: _invPendingStockoutSourceId || null
+      sourceStockoutId: _invPendingStockoutSourceId || null,
+      dest: invStockOutDest // Shelving or Big Company — the tab it was added from
     });
     _invPendingStockoutSourceId = null;
     // Sort numerically by location
@@ -4779,6 +4933,8 @@ window.invCredLogin = async function() {
     // Found (see invTogglePullCheck / invMarkNoneFound), so this badge is
     // the visible reminder of that connection while it's still sitting
     // here ungrabbed.
+    var coBadge = item.dest === 'company' ? " <span style='background:var(--purple-bg,var(--bg3));color:var(--purple,var(--accent));font-size:10px;font-weight:700;padding:1px 6px;border-radius:4px;border:1px solid var(--purple,var(--accent));font-family:var(--sans)'>🏢 BIG CO" + (item.forPart ? ' → ' + item.forPart : '') + "</span>"
+      + (item.how ? "<div style='font-size:11px;font-weight:600;color:var(--purple,var(--accent));font-family:var(--sans);margin-top:2px'>" + item.how + "</div>" : "") : "";
     var stockoutBadge = item.sourceStockoutId ? " <span style='background:var(--accent-bg,var(--bg3));color:var(--accent);font-size:10px;font-weight:700;padding:1px 6px;border-radius:4px;border:1px solid var(--accent);font-family:var(--sans)'>📋 STOCK OUT REPORT</span>" : "";
     var sysCasesHtml = item.systemCases !== undefined
       ? " <span onclick='invPromptSystemCorrection(" + i + ")' title='System shows " + item.systemCases + " — tap to correct' "
@@ -4824,7 +4980,7 @@ window.invCredLogin = async function() {
     }
     infoDiv.innerHTML =
       "<div class='ipull-loc'>" + item.location + "</div>" +
-      "<div class='ipull-pn'>" + item.partNum + fossBadge + noneBadge + stockoutBadge + "</div>" +
+      "<div class='ipull-pn'>" + item.partNum + fossBadge + noneBadge + stockoutBadge + coBadge + "</div>" +
       "<div class='ipull-name'>" + (item.name || '') + "</div>" +
       (item.addedAt ? "<div style='font-size:10px;color:var(--text3);margin-top:2px'>Added " + invFmtStamp(item.addedAt) + (item.grabbedAt ? " &nbsp;·&nbsp; Grabbed " + invFmtStamp(item.grabbedAt) : "") + "</div>" : "") +
       resumeNotesHtml +
@@ -5517,7 +5673,7 @@ window.invCredLogin = async function() {
       : item.foundOnShelf
         ? ('[FOUND ON SHELF] ' + notes).trim()
         : notes;
-    var destTag = invStockOutDest === 'company' ? '[BIG COMPANY] ' : '[SHELVING] ';
+    var destTag = (item.dest || invStockOutDest) === 'company' ? '[BIG COMPANY' + (item.forPart ? ' for ' + item.forPart : '') + '] ' : '[SHELVING] ';
     itemNotes = (destTag + itemNotes).trim();
     var entryTs = item.grabbedAt || item.addedAt || new Date().toISOString();
 
