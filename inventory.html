@@ -5907,7 +5907,14 @@ window.invCredLogin = async function() {
   // anyone else's change in the same second showed up as a ⚠.
   // ℹ (orange) = adds up, a shelf's count was corrected; ⚠ (red) = doesn't add up.
   window.histTotalHtml = function(r, prefix) {
-    if (r.total_before === null || r.total_before === undefined) return '';
+    if (r.total_before === null || r.total_before === undefined) {
+      // No numbers: say why instead of a blank that looks like a bug.
+      var wn = String(r.total_warning || '');
+      if (wn) return '<span onclick=\'histShowFullNote(' + JSON.stringify(wn).replace(/&/g, '&amp;').replace(/'/g, '&#39;').replace(/</g, '&lt;') + ', "\u26a0 Total not recorded")\' title="Click for details" style="color:var(--red);font-weight:700;cursor:pointer;text-decoration:underline dotted">' + (prefix || '') + '\u26a0 not recorded</span>';
+      var st = String(r.status || '').toLowerCase(), ty = String(r.type || '').toUpperCase();
+      if (st === 'pending' && /^(IN|OUT|TRANSFER_OUT|TRANSFER_IN)$/.test(ty)) return '<span title="Before → after is worked out when this entry is approved in Review" style="color:var(--text3)">' + (prefix || '') + 'after approval</span>';
+      return '';
+    }
     var part = r.total_scope === 'part', w = String(r.total_warning || ''), info = w.charAt(0) === '\u2139';
     var title = part ? 'Total cases of ' + (r.part_num || 'this part #') + ' (every shelf) before → after' : 'Whole-warehouse total before → after (old check)';
     var badge = '';
@@ -6838,8 +6845,9 @@ window.invCredLogin = async function() {
       var partLocLine = includePartLoc
         ? '<div style="font-family:var(--mono);font-weight:700;font-size:11px;color:var(--text)">' + (r.part_num||'') + (r.location ? ' @ ' + r.location : '') + '</div>'
         : '';
-      var totalLine = (r.total_before !== null && r.total_before !== undefined)
-        ? '<div style="font-family:var(--mono);font-size:11px;color:var(--text3);margin-top:2px">' + histTotalHtml(r, 'Total: ') + '</div>'
+      var totalHtml = histTotalHtml(r, 'Total: ');
+      var totalLine = totalHtml
+        ? '<div style="font-family:var(--mono);font-size:11px;color:var(--text3);margin-top:2px">' + totalHtml + '</div>'
         : '';
       return '<div style="padding:8px 0;border-bottom:1px solid var(--border)">'
         + partLocLine

@@ -15,6 +15,25 @@ So every feature should:
   change;
 - make problems easy to trace back to where they started.
 
+## Don't change what already works
+
+Anything the owner asked for before that is working stays exactly as it is.
+Don't change, move, rename, hide or remove it unless the owner asks for
+that change.
+- Before a change, list the features it touches and check each one still
+  works afterwards (re-run the earlier tests for them).
+- If a change has to touch something that works, say so plainly in the PR
+  and in the report to the owner, before it is merged.
+
+## History must always show the totals
+
+Inventory → History shows, for every approved Stock In / Stock Out /
+Transfer row, the **Part Total Before → After** (cases of that part #, every
+shelf), and the report at the top shows the day's **Starting → Ending
+cases**. Never leave the total blank without a reason:
+- Pending rows say "after approval".
+- If the total couldn't be worked out, the row says "⚠ not recorded" and why.
+
 ## Stock Out pick rules (the system picks for the picker)
 
 Two Stock Out tabs, Shelving first:
