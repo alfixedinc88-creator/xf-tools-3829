@@ -4237,7 +4237,7 @@ async function rvoReceiveGo() {
         title: RVO_RC.title, location: loc, lines: chunk.map(function (l) { return { key: l.part, part: l.readAs, cases: rvoNum(l.addCases), description: l.description }; }) }) })).json();
       if (!d.ok) throw new Error(d.error || 'Failed');
       chunk.forEach(function (l, k) { var r = d.results[k] || {};
-        if (r.ok) { l.done = true; ok++; l.res = '<span style="color:var(--green);font-weight:700">✓ ' + (r.skipped ? 'already received' : rvoNum(l.addCases) + ' case(s) → ' + escHtml(loc) + (r.isNew ? ' (new row)' : '')) + '</span>'; }
+        if (r.ok) { l.done = true; ok++; l.res = '<span style="color:var(--green);font-weight:700">✓ ' + (r.skipped ? 'already received' : (r.converted ? rvoNum(r.boxes) + ' box(es) × ' + rvoNum(r.perCtn) + ' pcs = ' + rvoNum(r.cases) + ' case(s)' : rvoNum(r.cases != null ? r.cases : l.addCases) + ' case(s)') + ' → ' + escHtml(loc) + (r.isNew ? ' (new row' + (r.perCtn ? ', ' + rvoNum(r.perCtn) + ' pcs/case' : '') + ')' : '')) + '</span>'; }
         else { fail++; l.res = '<span style="color:var(--red)">✗ ' + escHtml(r.error || 'Failed') + '</span>'; } });
     } catch (e) { chunk.forEach(function (l) { fail++; l.res = '<span style="color:var(--red)">✗ ' + escHtml(e.message) + '</span>'; }); }
     rvoRcRender();
