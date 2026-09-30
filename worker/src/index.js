@@ -1271,6 +1271,30 @@ async function reorderOrdersStatus(env) {
       orderedPcs: sum('orderedPcs'), shippedPcs: sum('shippedPcs'), leftPcs: sum('leftPcs'),
       fullyShipped: !lines.some(l => l.left > 1e-9), containers: Object.values(cont), lines });
   }
+  // Description of each line, read-only — same sources as the 📋 Import
+  // check: a fix typed on the tab, the vendor's sheet (that vendor first),
+  // a container's packing list, then the item name in SKU Mgr.
+  try {
+    const U = v => String(v || '').trim().toUpperCase();
+    const alias = {}; ((await env.DB.prepare('SELECT raw, part FROM reorder_alias').all()).results || []).forEach(r => { alias[U(r.raw)] = U(r.part); });
+    const parts = [...new Set(out.flatMap(o => o.lines.flatMap(l => [U(l.part), alias[U(l.part)]])).filter(Boolean))];
+    const fix = {}, cat = {}, catAny = {}, pal = {}, ml = {};
+    for (let i = 0; i < parts.length; i += 90) {
+      const ch = parts.slice(i, i + 90), q = ch.map(() => '?').join(',');
+      ((await env.DB.prepare(`SELECT part, description FROM reorder_fix WHERE UPPER(part) IN (${q}) AND TRIM(COALESCE(description,'')) != ''`).bind(...ch).all()).results || []).forEach(r => { fix[U(r.part)] = r.description; });
+      ((await env.DB.prepare(`SELECT vendor, part, description FROM reorder_vendor_catalog WHERE UPPER(part) IN (${q}) AND TRIM(COALESCE(description,'')) != '' ORDER BY updated_at DESC`).bind(...ch).all()).results || [])
+        .forEach(r => { const k = U(reorderVendorName(r.vendor)) + '|' + U(r.part); cat[k] = cat[k] || r.description; catAny[U(r.part)] = catAny[U(r.part)] || r.description; });
+      ((await env.DB.prepare(`SELECT part, description FROM reorder_pallet WHERE UPPER(part) IN (${q}) AND TRIM(COALESCE(description,'')) != ''`).bind(...ch).all()).results || []).forEach(r => { pal[U(r.part)] = pal[U(r.part)] || r.description; });
+      ((await env.DB.prepare(`SELECT part_num, name FROM master_list WHERE UPPER(part_num) IN (${q}) AND TRIM(COALESCE(name,'')) != ''`).bind(...ch).all()).results || []).forEach(r => { ml[U(r.part_num)] = ml[U(r.part_num)] || r.name; });
+    }
+    for (const o of out) {
+      const v = U(o.vendor);
+      for (const l of o.lines) {
+        const ks = [U(l.part), alias[U(l.part)]].filter(Boolean), pick = m => ks.map(k => m[k]).find(Boolean);
+        l.description = pick(fix) || ks.map(k => cat[v + '|' + k]).find(Boolean) || pick(catAny) || pick(pal) || pick(ml) || '';
+      }
+    }
+  } catch (e) { console.error('[orders-status] descriptions:', e.message); }
   out.sort((a, c) => a.orderDate.localeCompare(c.orderDate) || a.title.localeCompare(c.title));
   return _roResp({ ok: true, orders: out });
 }
