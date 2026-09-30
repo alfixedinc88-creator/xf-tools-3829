@@ -3383,6 +3383,8 @@ async function inventoryVerifyInner(request, env) {
           }
         } catch(e) { console.error('[D1] isNew inherit lookup:', e.message); }
       }
+      // Container 📦 Received sends the packing list's pieces per box — use it, not the family's biggest.
+      if (parseFloat(item.unitsPerCase) > 0) inheritJ = String(parseFloat(item.unitsPerCase));
       // D1 lookups above are sufficient — no Sheets fallback needed
       // Write G:O — same structure as transfer verify new rows
       // G=PartNum, H=Location, I=Cases, J=UnitsPerCase, K=Note, L=TotalQty, M=Vendor, N=Price, O=TotalValue
@@ -3811,7 +3813,7 @@ async function inventoryPalletsReceived(env) {
   const at = {};
   (await d1All(env, `SELECT UPPER(TRIM(part_num)) AS p, UPPER(TRIM(location)) AS l, notes FROM inventory_log
     WHERE type = 'IN' AND notes LIKE '[RECEIVED] %' AND COALESCE(status, '') != 'Rejected'`)).forEach(r => {
-    const m = String(r.notes || '').match(/^\[RECEIVED\] (.*) — /); if (m) at[m[1] + '|' + r.p] = r.l; });
+    const m = String(r.notes || '').match(/^\[RECEIVED\] (.*?) — [\d.,]+ units/); if (m) at[m[1] + '|' + r.p] = r.l; });
   const lines = [];
   rows.forEach(r => {
     const mv = Math.min(moved[r.id] || 0, r.cases || 0), left = (r.cases || 0) - mv;
@@ -5383,10 +5385,23 @@ const _app = {
           if (!(cases > 0)) { results.push({ key, ok: false, error: 'Cases to add must be more than 0' }); continue; }
           try {
             await costSafe(() => costReconcile(env, part, loc)); // stock already here keeps its old price
-            const ex = await d1First(env, 'SELECT id, name FROM master_list WHERE UPPER(part_num) = ? AND UPPER(location) = ? LIMIT 1', [part, loc]);
-            const note = `[RECEIVED] ${title} — ${have.qty} units`;
+            const ex = await d1First(env, 'SELECT id, name, units_per_case FROM master_list WHERE UPPER(part_num) = ? AND UPPER(location) = ? LIMIT 1', [part, loc]);
+            // Pieces per carton of THIS container (packing list), so SKU Mgr's
+            // cases × Each/Case = the pieces that really arrived. A new row
+            // gets that Each/Case (it used to copy the biggest Each/Case of
+            // any pack size of the part); a row already there with another
+            // case size gets the boxes converted to its case size.
+            const pk = await env.DB.prepare('SELECT SUM(pcs) AS p, SUM(cases) AS c FROM reorder_pallet WHERE title = ? AND UPPER(part) IN (?, ?)').bind(title, key, part).first().catch(() => null);
+            const perCtn = pk && pk.c > 0 && pk.p > 0 ? Math.round(pk.p / pk.c * 1000) / 1000 : 0;
+            const exUpc = ex ? (parseFloat(ex.units_per_case) || 0) : 0;
+            let addCases = cases, conv = '';
+            if (ex && perCtn > 0 && exUpc > 0 && Math.abs(perCtn - exUpc) > 1e-9) {
+              addCases = Math.round(cases * perCtn / exUpc * 100) / 100;
+              conv = ` — ${cases} box(es) × ${perCtn} pcs = ${Math.round(cases * perCtn)} pcs = ${addCases} case(s) of ${exUpc} pcs at ${loc}`;
+            }
+            const note = `[RECEIVED] ${title} — ${have.qty} units${perCtn ? ` · ${cases} box(es) × ${perCtn} pcs` : ''}${conv}`;
             const logBody = { type: 'IN', partNum: part, sku: part, name: String(ln.description || (ex && ex.name) || '').slice(0, 200),
-              location: loc, cases, initials, notes: note, isNew: !ex, masterId: ex ? ex.id : null };
+              location: loc, cases: addCases, initials, notes: note, isNew: !ex, masterId: ex ? ex.id : null };
             const lr = await inventoryLog(new Request('https://internal/inventory/log', { method: 'POST', body: JSON.stringify(logBody) }), env);
             const ld = await lr.json().catch(() => ({}));
             if (!ld.ok) throw new Error(ld.error || 'Stock In failed');
@@ -5394,15 +5409,16 @@ const _app = {
               const vr = await inventoryVerify(new Request('https://internal/inventory/verify', { method: 'POST', body: JSON.stringify({
                 rowIndex: ld.d1Id, action: 'Approved',
                 item: { type: 'IN', partNum: part, location: loc, overwriteLocation: '', isPlaceholder: false, isNew: !ex,
-                  cases, sku: part, notes: note, masterId: ex ? ex.id : null, d1Id: ld.d1Id } }) }), env);
+                  cases: addCases, sku: part, notes: note, masterId: ex ? ex.id : null, d1Id: ld.d1Id, unitsPerCase: !ex && perCtn > 0 ? perCtn : undefined } }) }), env);
               const vd = await vr.json().catch(() => ({}));
               if (!vd.ok) throw new Error('Logged as Stock In but not approved (' + (vd.error || 'verify failed') + ') — approve it in Inventory → Review');
             }
+            if (!ex && perCtn > 0) await env.DB.prepare('UPDATE master_list SET units_per_case = ? WHERE UPPER(part_num) = ? AND UPPER(location) = ?').bind(perCtn, part, loc).run();
             // 💲 these cases carry the container's price (per piece); the rest of the spot keeps its own.
-            await costSafe(async () => { await costReconcile(env, part, loc); await costMarkReceived(env, part, loc, cases, have.price, title); });
+            await costSafe(async () => { await costReconcile(env, part, loc); await costMarkReceived(env, part, loc, addCases, have.price, title); });
             await env.DB.prepare('DELETE FROM reorder_incoming WHERE title = ? AND part = ?').bind(title, key).run();
-            await reorderLog(env, who, 'received', part, `Received "${title}": ${cases} case(s) of ${part} (${have.qty} units) → SKU Mgr @ ${loc}`);
-            results.push({ key, ok: true, cases, location: loc, isNew: !ex });
+            await reorderLog(env, who, 'received', part, `Received "${title}": ${cases} box(es) of ${part} (${have.qty} units) → SKU Mgr @ ${loc}${conv ? ' as ' + addCases + ' case(s) of ' + exUpc + ' pcs' : ''}`);
+            results.push({ key, ok: true, cases: addCases, boxes: cases, perCtn, converted: !!conv, location: loc, isNew: !ex });
           } catch (e) { results.push({ key, ok: false, error: String(e.message || e).slice(0, 300) }); }
         }
         const left = await env.DB.prepare('SELECT COUNT(*) AS n FROM reorder_incoming WHERE title = ?').bind(title).first();
