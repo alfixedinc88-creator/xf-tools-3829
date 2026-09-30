@@ -2142,6 +2142,21 @@ body {
       <div class="ps-stat-card"><div class="ps-stat-num" id="ps-pl-usps-count">0</div><div class="ps-stat-label">USPS</div></div>
     </div>
 
+    <!-- 📦 Ship-day count: labels are counted for the day they get picked /
+         packed / shipped, not the day they were printed. Cut-off: Mon–Fri
+         5:30 PM, Saturday 4:00 PM; anything later (and all of Sunday) goes
+         to the next work day (Saturday evening + Sunday → Monday). "Printed
+         Today" above stays the plain calendar count. See psShipDayOf. -->
+    <div class="ps-card" id="ps-pl-shipday" style="margin-top:12px">
+      <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap">
+        <div style="font-size:13px;font-weight:700">📦 Ship-day count</div>
+        <div style="font-size:11px;color:var(--text3)">cut-off Mon–Fri 5:30 PM · Sat 4:00 PM · Sat evening + Sunday → Monday</div>
+        <div style="flex:1"></div>
+        <input type="date" class="ps-scan-summary-date-input" id="ps-pl-shipday-date" onchange="psPlLoadShipDay(this.value)" title="Pick a ship day">
+      </div>
+      <div id="ps-pl-shipday-body" style="margin-top:8px;font-size:13px;color:var(--text3)">Loading…</div>
+    </div>
+
     <!-- "Double Print Warning" — a tracking got printed again more than 3
          minutes after its last print (see SHIP_PRINT_DUPLICATE_WARN_SECONDS
          server-side), far enough apart it's very unlikely to be the fixed
@@ -3610,6 +3625,76 @@ window.psPlSetOperator = async function() {
   } catch(e) { _psToast('Failed to set name: ' + e.message, 'error'); }
 };
 
+// ── 📦 Ship-day count ─────────────────────────────────────────────────────
+// Which day a label printed at `iso` gets picked / packed / shipped
+// (warehouse time, America/New_York): Mon–Fri after 5:30 PM → next day
+// (Friday → Saturday); Saturday after 4:00 PM → Monday; Sunday → Monday.
+// Every print belongs to exactly one ship day.
+var PS_SHIPDAY_CUTOFF = { weekday: 17 * 60 + 30, saturday: 16 * 60 };
+function _psNyParts(iso) {
+  var d = new Date(iso), o = {};
+  new Intl.DateTimeFormat('en-US', { timeZone: 'America/New_York', year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', hour12: false, weekday: 'short' })
+    .formatToParts(d).forEach(function(p) { o[p.type] = p.value; });
+  return { key: o.year + '-' + o.month + '-' + o.day, mins: (parseInt(o.hour, 10) % 24) * 60 + parseInt(o.minute, 10), wd: o.weekday };
+}
+function _psKeyAdd(key, days) {
+  var p = key.split('-'), d = new Date(Date.UTC(+p[0], +p[1] - 1, +p[2] + days));
+  return d.toISOString().slice(0, 10);
+}
+function _psKeyWd(key) { var p = key.split('-'); return new Date(Date.UTC(+p[0], +p[1] - 1, +p[2])).getUTCDay(); } // 0 = Sun
+window.psShipDayOf = function(iso) {
+  var t = _psNyParts(iso), wd = _psKeyWd(t.key);
+  if (wd === 0) return _psKeyAdd(t.key, 1);                                        // Sunday → Monday
+  if (wd === 6) return t.mins >= PS_SHIPDAY_CUTOFF.saturday ? _psKeyAdd(t.key, 2) : t.key; // Sat after 4 PM → Monday
+  return t.mins >= PS_SHIPDAY_CUTOFF.weekday ? _psKeyAdd(t.key, 1) : t.key;        // Mon–Fri after 5:30 PM → next day
+};
+// Calendar days whose prints can land on ship day `key` (the day before it,
+// back to Saturday for a Monday).
+function _psShipDaySourceDays(key) {
+  var wd = _psKeyWd(key);
+  return wd === 1 ? [_psKeyAdd(key, -2), _psKeyAdd(key, -1), key] : [_psKeyAdd(key, -1), key];
+}
+var _psPlShipDayKey = null, _psPlShipDayRun = 0;
+window.psPlLoadShipDay = async function(key) {
+  if (!key) key = psShipDayOf(new Date().toISOString());
+  if (_psKeyWd(key) === 0) key = _psKeyAdd(key, 1); // no ship day on Sunday
+  _psPlShipDayKey = key;
+  var inp = document.getElementById('ps-pl-shipday-date'); if (inp && inp.value !== key) inp.value = key;
+  var body = document.getElementById('ps-pl-shipday-body'); if (!body) return;
+  var run = ++_psPlShipDayRun, days = _psShipDaySourceDays(key), all = [];
+  try {
+    for (var i = 0; i < days.length; i++) {
+      var r = await fetch(PS_WORKER + '/ship/print-log?date=' + days[i], { headers: { 'X-Cred-Token': psCredToken } });
+      var d = await r.json();
+      if (!d.ok) throw new Error(d.error || 'load failed');
+      (d.scans || []).forEach(function(s) { all.push(s); });
+    }
+  } catch (e) { if (run === _psPlShipDayRun) body.innerHTML = '<span style="color:var(--red)">Couldn\'t load the print log (' + e.message + ')</span>'; return; }
+  if (run !== _psPlShipDayRun) return;
+  var mine = [], later = [], seen = {};
+  all.forEach(function(s) {
+    if (!s.timestamp || seen[s.tracking + '|' + s.timestamp]) return; seen[s.tracking + '|' + s.timestamp] = 1;
+    var sd = psShipDayOf(s.timestamp);
+    if (sd === key) mine.push(s); else if (sd > key && _psNyParts(s.timestamp).key === key) later.push(s);
+  });
+  var carried = mine.filter(function(s) { return _psNyParts(s.timestamp).key !== key; });
+  var sameDay = mine.length - carried.length;
+  var cnt = function(list, c) { return list.filter(function(s) { return s.carrier === c; }).length; };
+  var fmtDay = function(k) { var p = k.split('-'); return new Date(Date.UTC(+p[0], +p[1] - 1, +p[2])).toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric', timeZone: 'UTC' }); };
+  var byWho = {}; mine.forEach(function(s) { var w = s.operatorName || 'Unassigned'; byWho[w] = (byWho[w] || 0) + 1; });
+  var wd = _psKeyWd(key), cut = wd === 6 ? '4:00 PM' : '5:30 PM';
+  body.innerHTML = '<div style="display:flex;align-items:baseline;gap:10px;flex-wrap:wrap;color:var(--text)">'
+    + '<span style="font-size:26px;font-weight:800">' + mine.length + '</span>'
+    + '<span>labels to pack / ship on <b>' + fmtDay(key) + '</b></span>'
+    + '<span class="ps-badge ps-badge-ups">' + cnt(mine, 'UPS') + ' UPS</span><span class="ps-badge ps-badge-usps">' + cnt(mine, 'USPS') + ' USPS</span></div>'
+    + '<div style="margin-top:6px;line-height:1.6">'
+    + '• ' + carried.length + ' printed before, after the last cut-off' + (carried.length ? ' (' + days.slice(0, -1).map(function(k) { var n = carried.filter(function(s) { return _psNyParts(s.timestamp).key === k; }).length; return n ? fmtDay(k) + ': ' + n : ''; }).filter(Boolean).join(', ') + ')' : '') + '<br>'
+    + '• ' + sameDay + ' printed on ' + fmtDay(key) + ' before ' + cut + '<br>'
+    + '• ' + later.length + ' printed on ' + fmtDay(key) + ' after ' + cut + ' → counted for ' + fmtDay(psShipDayOf(later.length ? later[0].timestamp : key + 'T23:59:00-04:00')) + ', not this day'
+    + '</div>'
+    + (Object.keys(byWho).length ? '<div style="margin-top:4px;font-size:12px">Printed by: ' + Object.keys(byWho).sort(function(a, b) { return byWho[b] - byWho[a]; }).map(function(w) { return '<b>' + w.replace(/</g, '&lt;') + '</b> ' + byWho[w]; }).join(' · ') + '</div>' : '');
+};
+
 // Load today's print log from sheet on tab open
 window.psPlLoadToday = async function() {
   try {
@@ -3625,6 +3710,7 @@ window.psPlLoadToday = async function() {
     }
     if (data.ok) _psPlShowOperator(data.operatorName);
   } catch(e) { console.log('[PL] load error:', e.message); }
+  psPlLoadShipDay(_psPlShipDayKey); // keeps whatever ship day is picked
   psFetchPrintDupeCount();
   psPlStartRefocus();
 };
