@@ -10744,7 +10744,7 @@ async function inventoryHistorySummary(url, env) {
       const range = nyDateRangeUTC(dateParam);
       cutoffStart = range.start; cutoffEnd = range.end;
     } else {
-      cutoffStart = days >= 9999 ? '1970-01-01T00:00:00.000Z' : new Date(Date.now() - days * 24 * 60 * 60 * 1000).toISOString();
+      cutoffStart = days >= 9999 ? '1970-01-01T00:00:00.000Z' : nyDaysStartUTC(days);
       cutoffEnd = null; // no upper bound — up through now
     }
     const timeCond = cutoffEnd ? 'timestamp >= ? AND timestamp < ?' : 'timestamp >= ?';
@@ -10868,6 +10868,15 @@ async function inventoryHistorySummary(url, env) {
 // "Sep 12" in the report always means Sep 12 in the warehouse's own local
 // time, not UTC midnight (which would be 4-5 hours off and could show the
 // wrong day's data near midnight).
+// "Today" / "Last N days" in History: from midnight (warehouse time,
+// America/New_York) N−1 days ago up to now — Today = since midnight today,
+// not the last 24 hours (which pulled in yesterday afternoon / evening).
+function nyDaysStartUTC(days) {
+  const n = Math.max(1, parseInt(days, 10) || 1);
+  const today = new Date().toLocaleDateString('en-CA', { timeZone: 'America/New_York' });
+  const d = new Date(today + 'T12:00:00Z'); d.setUTCDate(d.getUTCDate() - (n - 1));
+  return nyDateRangeUTC(d.toISOString().slice(0, 10)).start;
+}
 function nyDateRangeUTC(dateStr) {
   const noonUTC = new Date(dateStr + 'T12:00:00Z');
   const parts = new Intl.DateTimeFormat('en-US', { timeZone: 'America/New_York', timeZoneName: 'shortOffset' }).formatToParts(noonUTC);
@@ -11051,7 +11060,7 @@ async function inventoryHistory(url, env) {
     const locF     = (url.searchParams.get('location') || '').toUpperCase();
     const statusF  = (url.searchParams.get('status') || '').toLowerCase(); // pending|verified|rejected|all
 
-    const cutoff = new Date(Date.now() - days * 24 * 60 * 60 * 1000).toISOString();
+    const cutoff = days >= 9999 ? '1970-01-01T00:00:00.000Z' : nyDaysStartUTC(days);
 
     if (env.DB) {
       try {
