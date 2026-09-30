@@ -1,0 +1,25 @@
+# Cloudflare Worker: xfitting-profit (Profit Check, profit.html)
+# A SEPARATE worker from xfitting-lookup (the root wrangler.toml), so the big
+# main worker doesn't grow. Deployed by its own Cloudflare Workers Build:
+#   root directory "/", deploy command:
+#   npx wrangler deploy -c profit-worker/wrangler.toml
+# ("main" below is relative to this file.)
+
+name = "xfitting-profit"
+main = "src/index.js"
+compatibility_date = "2024-01-01"
+
+# Plain-text variables set in the dashboard stay as they are on deploy.
+# Secrets (Amazon keys) are set in the dashboard, never in this file.
+keep_vars = true
+
+# Same D1 database as the main worker. This worker only READS the existing
+# tables and only WRITES its own profit_* tables.
+[[d1_databases]]
+binding = "DB"
+database_name = "xfitting-d1"
+database_id = "50823e63-c8ea-4f0c-b576-8289506b61fc"
+
+# Daily pull of Amazon fees + orders, 09:07 UTC (early morning in the US).
+[triggers]
+crons = ["7 9 * * *"]
