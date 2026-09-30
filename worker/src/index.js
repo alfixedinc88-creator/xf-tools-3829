@@ -3922,6 +3922,49 @@ async function inventoryContainerSoldOut(url, env) {
   return J({ ok: true, title, lines });
 }
 
+// POST /inventory/containers/delete { title, reason, confirmReceived } —
+// 🗑 a container put in by mistake (e.g. imported twice): removes its pallet
+// lines so it stops showing in 🚢 Container here. Management only, logged in
+// Reorder → History with who / why / what. Never touches SKU Mgr stock:
+// refused while it's still On the way (remove it on Reorder first — that
+// also puts back what it took from its orders) or once boxes were moved off
+// its pallets. If it was 📦 Received, that stock is already in SKU Mgr, so it
+// asks first (fix that stock with a Stock Out, which History records).
+async function inventoryContainerDelete(request, env, session) {
+  await reorderFixTables(env);
+  const J = (o, st) => cors(new Response(JSON.stringify(o), { status: st || 200, headers: { 'Content-Type': 'application/json' } }));
+  if (!session || session.pin_level !== 'mgmt') return J({ ok: false, error: 'Management access required' }, 403);
+  const b = await request.json().catch(() => ({}));
+  const title = String(b.title || '').trim(), reason = String(b.reason || '').trim().slice(0, 200);
+  if (!title) return J({ ok: false, error: 'Pick a container' }, 400);
+  if (!reason) return J({ ok: false, error: 'Say why it is being deleted (e.g. "imported twice")' }, 400);
+  const rows = (await env.DB.prepare('SELECT id, vendor, pallet, part, cases FROM reorder_pallet WHERE title = ?').bind(title).all()).results || [];
+  if (!rows.length) return J({ ok: false, error: 'No pallets found for "' + title + '"' }, 404);
+  const onWay = await env.DB.prepare('SELECT COUNT(*) AS n FROM reorder_incoming WHERE title = ?').bind(title).first();
+  if (onWay && onWay.n > 0) return J({ ok: false, error: `"${title}" is still On the way on Reorder (${onWay.n} part #s). Remove it there first (Reorder → On the way → ✕), then delete it here.` });
+  const moved = {};
+  for (let i = 0; i < rows.length; i += 90) {
+    const ids = rows.slice(i, i + 90).map(r => r.id);
+    ((await env.DB.prepare(_PALLET_MOVED_SQL + ` AND m.pallet_id IN (${ids.map(() => '?').join(',')}) GROUP BY m.pallet_id`).bind(...ids).all()).results || [])
+      .forEach(m => { if (m.moved > 0) moved[m.pallet_id] = m.moved; });
+  }
+  const mv = rows.filter(r => moved[r.id]);
+  if (mv.length) return J({ ok: false, error: `Boxes were already moved off ${mv.length} pallet line(s) of "${title}" (${mv.slice(0, 10).map(r => 'pallet ' + r.pallet + ' ' + r.part + ': ' + moved[r.id]).join(', ')}) — those moves are real stock in History, so it can't be deleted.` });
+  const head = '[RECEIVED] ' + title + ' \u2014 ';
+  const got = [];
+  (await d1All(env, `SELECT part_num, location, cases, notes FROM inventory_log WHERE type = 'IN' AND notes LIKE '[RECEIVED] %' AND COALESCE(status, '') != 'Rejected'`))
+    .forEach(r => { if (String(r.notes || '').startsWith(head)) got.push({ part: r.part_num, location: r.location, cases: r.cases }); });
+  if (got.length && !b.confirmReceived) return J({ ok: false, needConfirm: true, received: got,
+    error: `"${title}" was 📦 Received — ${got.length} part #(s) were stocked into SKU Mgr (${got.slice(0, 10).map(g => g.part + ' ' + g.cases + ' @ ' + g.location).join(', ')}). Deleting the pallets does NOT take that stock out. If it was a double, fix SKU Mgr with a Stock Out first.` });
+  const boxes = rows.reduce((a, r) => a + (parseFloat(r.cases) || 0), 0), pallets = new Set(rows.map(r => r.vendor + '|' + r.pallet)).size;
+  const dels = rows.map(r => env.DB.prepare('DELETE FROM reorder_pallet WHERE id = ?').bind(r.id));
+  await d1Batch(env, dels);
+  await reorderLog(env, _roWho(session), 'pallets', title, `🗑 Deleted container "${title}" from Container here — ${reason}: ${pallets} pallets, ${rows.length} lines, ${Math.round(boxes * 100) / 100} boxes`
+    + (got.length ? ` · it had been 📦 Received (${got.length} part #s stocked in — SKU Mgr stock NOT changed by this)` : '')
+    + ` · ${rows.slice(0, 80).map(r => r.pallet + ':' + r.part + '×' + r.cases).join(', ')}`);
+  return J({ ok: true, title, pallets, lines: rows.length, boxes, received: got });
+}
+
 async function inventoryTransferLog(request, env) {
   try {
     const body = await request.json().catch(() => ({}));
@@ -5641,6 +5684,7 @@ const _app = {
       if (path === '/inventory/containers/pallets' && method === 'GET') return await inventoryContainerPallets(url, env);
       if (path === '/inventory/pallets/received' && method === 'GET') return await inventoryPalletsReceived(env);
       if (path === '/inventory/containers/soldout' && method === 'GET') return await inventoryContainerSoldOut(url, env);
+      if (path === '/inventory/containers/delete' && method === 'POST') return await inventoryContainerDelete(request, env, session);
       // receive-preview / receive-apply moved up to the credential-based
       // check earlier in the router (ReceivePO no longer sends the old
       // PIN session token at all) - this block would never be reached

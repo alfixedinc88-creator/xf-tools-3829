@@ -157,5 +157,34 @@ check('no name on that part #: uses the name of another pack size of the same pa
 check('the report never changes a count', shelf() === shelfBeforeReport, { before: shelfBeforeReport, after: shelf() });
 check('the report needs a sign-in', (await call('/inventory/containers/soldout?title=' + encodeURIComponent(CT))).status === 401, null);
 
+console.log('\nContainer here → 🗑 Delete a container put in by mistake');
+const mkCont = async (T, part) => {
+  await post('/reorder/vendor-catalog/import', { vendor: 'KW', title: T, stage: 'shipped', last: true, file: 'dup.xlsx', rows: [{ part, raw: part, qty: 50, cases: 5, pcs: 500, case_pcs: 100, src_rows: '5', description: 'dup' }] });
+  await post('/reorder/fix/pallets', { title: T, vendor: 'KW', file: 'dup.xlsx', lines: [{ pallet: '1', part, raw: part, cases: 5, pcs: 500, units: 50, pcsPerCtn: 100, row: '5' }] });
+};
+const hasCont = async T => ((await get('/inventory/containers')).containers || []).some(c => c.title === T);
+const shelfBeforeDel = shelf();
+await mkCont('Container DUP', '60-4-4=1');
+const d0 = await post('/inventory/containers/delete', { title: 'Container DUP', reason: 'imported twice' });
+check('still On the way: not deleted (remove it on Reorder first)', !d0.ok && /On the way/.test(d0.error) && await hasCont('Container DUP'), d0);
+await post('/reorder/fix/incoming-remove', { title: 'Container DUP', reason: 'imported twice' });
+check('removed on Reorder but pallets still listed (what the owner saw)', await hasCont('Container DUP'), null);
+const dNo = await (await call('/inventory/containers/delete', { method: 'POST', headers: { 'X-Cred-Token': pk.token, 'Content-Type': 'application/json' }, body: JSON.stringify({ title: 'Container DUP', reason: 'x' }) })).status;
+check('only management can delete a container', dNo === 403, dNo);
+const d1 = await post('/inventory/containers/delete', { title: 'Container DUP', reason: 'imported twice' });
+check('delete removes it from Container here, SKU Mgr unchanged', d1.ok && d1.boxes === 5 && !(await hasCont('Container DUP')) && shelf() === shelfBeforeDel, { d1, shelf: shelf(), before: shelfBeforeDel });
+check('delete is logged in Reorder → History with who and why', sq.prepare("SELECT COUNT(*) n FROM reorder_history WHERE detail LIKE '%Deleted container \"Container DUP\"%imported twice%'").get().n === 1, sq.prepare('SELECT * FROM reorder_history ORDER BY id DESC LIMIT 2').all());
+const dR = await post('/inventory/containers/delete', { title: CT, reason: 'test' });
+check('a 📦 Received container asks first (its stock is in SKU Mgr), nothing deleted', !dR.ok && dR.needConfirm && dR.received.length === 2 && await hasCont(CT), dR);
+const shelfR = shelf();
+const dR2 = await post('/inventory/containers/delete', { title: CT, reason: 'test', confirmReceived: true });
+check('after confirming, only the pallets go — SKU Mgr stock stays the same', dR2.ok && !(await hasCont(CT)) && shelf() === shelfR, { dR2, before: shelfR, after: shelf() });
+await mkCont('Container MOVED', '60-5-5=1');
+await post('/reorder/fix/incoming-remove', { title: 'Container MOVED', reason: 'test' });
+const mvId = sq.prepare("SELECT id FROM reorder_pallet WHERE title = 'Container MOVED'").get().id;
+sq.prepare('INSERT INTO pallet_move (pallet_id, cases, to_location, at) VALUES (?,?,?,?)').run(mvId, 2, 'C1=1-1-1', new Date().toISOString());
+const dM = await post('/inventory/containers/delete', { title: 'Container MOVED', reason: 'test' });
+check('boxes already moved off a pallet: not deleted', !dM.ok && /already moved/.test(dM.error) && await hasCont('Container MOVED'), dM);
+
 console.log('\n' + (failed ? '❌ ' + failed + ' check(s) FAILED' : '✅ all ' + passed + ' checks passed') + '\n');
 process.exit(failed ? 1 : 0);
