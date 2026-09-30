@@ -5104,6 +5104,26 @@ const _app = {
         const alias = {}; ((await env.DB.prepare('SELECT raw, part FROM reorder_alias').all()).results || []).forEach(r => { alias[String(r.raw).toUpperCase()] = String(r.part).toUpperCase(); });
         const lines = ((await env.DB.prepare('SELECT part, qty, vendor, raw_part, src_rows, cases, price, price_src, updated_at FROM reorder_incoming WHERE title = ? ORDER BY rowid').bind(title).all()).results || [])
           .map(r => ({ ...r, readAs: alias[String(r.part).toUpperCase()] || String(r.part).toUpperCase() }));
+        // Description of each line, read-only: a fix typed on the tab first,
+        // then this shipment's packing list, the vendor's sheet (that vendor
+        // first), then the item name in SKU Mgr.
+        try {
+          const U = v => String(v || '').trim().toUpperCase();
+          const parts = [...new Set(lines.flatMap(l => [U(l.part), U(l.readAs)]).filter(Boolean))];
+          const fix = {}, pal = {}, cat = {}, catAny = {}, ml = {};
+          for (let i = 0; i < parts.length; i += 90) {
+            const ch = parts.slice(i, i + 90), q = ch.map(() => '?').join(',');
+            ((await env.DB.prepare(`SELECT part, description FROM reorder_fix WHERE UPPER(part) IN (${q}) AND TRIM(COALESCE(description,'')) != ''`).bind(...ch).all()).results || []).forEach(r => { fix[U(r.part)] = r.description; });
+            ((await env.DB.prepare(`SELECT part, description FROM reorder_pallet WHERE title = ? AND UPPER(part) IN (${q}) AND TRIM(COALESCE(description,'')) != ''`).bind(title, ...ch).all()).results || []).forEach(r => { pal[U(r.part)] = pal[U(r.part)] || r.description; });
+            ((await env.DB.prepare(`SELECT vendor, part, description FROM reorder_vendor_catalog WHERE UPPER(part) IN (${q}) AND TRIM(COALESCE(description,'')) != '' ORDER BY updated_at DESC`).bind(...ch).all()).results || []).forEach(r => { cat[U(r.vendor) + '|' + U(r.part)] = cat[U(r.vendor) + '|' + U(r.part)] || r.description; catAny[U(r.part)] = catAny[U(r.part)] || r.description; });
+            ((await env.DB.prepare(`SELECT part_num, name FROM master_list WHERE UPPER(part_num) IN (${q}) AND TRIM(COALESCE(name,'')) != ''`).bind(...ch).all()).results || []).forEach(r => { ml[U(r.part_num)] = ml[U(r.part_num)] || r.name; });
+          }
+          for (const l of lines) {
+            const ks = [U(l.part), U(l.readAs)], v = U(l.vendor);
+            const pick = m => ks.map(k => m[k]).find(Boolean);
+            l.description = pick(fix) || pick(pal) || ks.map(k => cat[v + '|' + k]).find(Boolean) || pick(catAny) || pick(ml) || '';
+          }
+        } catch (e) { console.error('[incoming-lines] descriptions:', e.message); }
         return _roResp({ ok: true, title, lines });
       }
       if (url.pathname === '/reorder/fix/incoming-receive' && method === 'POST') {
