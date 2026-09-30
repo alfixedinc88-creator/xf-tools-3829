@@ -1241,6 +1241,57 @@ function reorderOrderDate(title, createdAt) {
     if (mo >= 1 && mo <= 12 && d >= 1 && d <= 31) return `${y}-${String(mo).padStart(2, '0')}-${String(d).padStart(2, '0')}`; }
   return String(createdAt || '').slice(0, 10) || '9999-12-31';
 }
+// GET /reorder/fix/orders-status — every 🏭 order: per part # what was
+// ordered (still on the order + what containers took off it), shipped (by
+// which container) and still left, so the office sees what the vendor still
+// owes; an order with nothing left is fully shipped. Units of the part #
+// (bags); pieces = units × pack size.
+async function reorderOrdersStatus(env) {
+  await reorderFixTables(env);
+  const orders = (await env.DB.prepare(`SELECT title, created_at, updated_at FROM reorder_title WHERE stage = 'production'`).all()).results || [];
+  const inc = (await env.DB.prepare(`SELECT title, part, qty, vendor FROM reorder_incoming`).all()).results || [];
+  const takes = (await env.DB.prepare('SELECT from_title, to_title, part, units FROM reorder_take').all()).results || [];
+  const stage = {}; ((await env.DB.prepare('SELECT title, stage FROM reorder_title').all()).results || []).forEach(r => { stage[r.title] = r.stage; });
+  const onWay = new Set(inc.map(r => r.title));
+  const vendorOf = {}; inc.forEach(r => { if (r.vendor) vendorOf[r.title] = reorderVendorName(r.vendor); });
+  const out = [];
+  for (const o of orders) {
+    const L = {}, line = p => (L[p] = L[p] || { part: p, pack: reorderExtractPackSize(p), left: 0, shipped: 0, by: {} });
+    inc.filter(r => r.title === o.title).forEach(r => { line(r.part).left += r.qty || 0; });
+    const cont = {};
+    takes.filter(t => t.from_title === o.title).forEach(t => { const l = line(t.part); l.shipped += t.units || 0; l.by[t.to_title] = (l.by[t.to_title] || 0) + (t.units || 0);
+      const c = cont[t.to_title] = cont[t.to_title] || { title: t.to_title, units: 0, pcs: 0, status: onWay.has(t.to_title) ? 'on the way' : 'received' }; c.units += t.units || 0; c.pcs += (t.units || 0) * l.pack; });
+    const lines = Object.values(L).map(l => ({ part: l.part, pack: l.pack, ordered: l.left + l.shipped, shipped: l.shipped, left: l.left,
+      orderedPcs: (l.left + l.shipped) * l.pack, shippedPcs: l.shipped * l.pack, leftPcs: l.left * l.pack, by: l.by })).sort((a, c) => a.part.localeCompare(c.part));
+    if (!lines.length) continue; // removed / never had lines
+    const sum = k => lines.reduce((a, l) => a + l[k], 0);
+    const vendor = vendorOf[o.title] || Object.keys(cont).map(k => vendorOf[k]).find(Boolean) || '';
+    out.push({ title: o.title, orderDate: reorderOrderDate(o.title, o.created_at || o.updated_at), vendor, parts: lines.length,
+      partsLeft: lines.filter(l => l.left > 1e-9).length, ordered: sum('ordered'), shipped: sum('shipped'), left: sum('left'),
+      orderedPcs: sum('orderedPcs'), shippedPcs: sum('shippedPcs'), leftPcs: sum('leftPcs'),
+      fullyShipped: !lines.some(l => l.left > 1e-9), containers: Object.values(cont), lines });
+  }
+  out.sort((a, c) => a.orderDate.localeCompare(c.orderDate) || a.title.localeCompare(c.title));
+  return _roResp({ ok: true, orders: out });
+}
+// Put back on its orders everything container `to` took off them (its
+// reorder_take rows), then forget those takes. Used before a container is
+// taken again (re-import) and when it is 🗑 Removed (cancelled / wrong
+// import) — so an order never stays short for a container that's gone.
+// T = the container's own lines by part # (for the vendor of a line put back
+// on an order that no longer has it). Returns what went back.
+async function reorderPutBackTakes(env, to, T, now) {
+  const prev = (await env.DB.prepare('SELECT from_title, part, units, cases FROM reorder_take WHERE to_title = ?').bind(to).all()).results || [];
+  for (const p of prev) {
+    const r = await env.DB.prepare('SELECT qty, cases FROM reorder_incoming WHERE title = ? AND part = ?').bind(p.from_title, p.part).first();
+    if (r) await env.DB.prepare('UPDATE reorder_incoming SET qty = ?, cases = ? WHERE title = ? AND part = ?')
+      .bind(r.qty + p.units, p.cases != null ? (r.cases || 0) + p.cases : (r.cases > 0 && r.qty > 0 ? Math.round(r.cases * (r.qty + p.units) / r.qty * 100) / 100 : r.cases), p.from_title, p.part).run();
+    else await env.DB.prepare('INSERT INTO reorder_incoming (title, part, qty, vendor, cases, updated_at) VALUES (?,?,?,?,?,?)')
+      .bind(p.from_title, p.part, p.units, (T[p.part] && T[p.part].vendor) || '', p.cases, now).run();
+  }
+  await env.DB.prepare('DELETE FROM reorder_take WHERE to_title = ?').bind(to).run();
+  return prev;
+}
 // POST /reorder/fix/incoming-take { from, to } — a shipped container (`to`)
 // comes off the orders still being made, part # by part #, so its units are
 // on the way once. from = '*' → every open 🏭 order of the same vendor,
@@ -1257,15 +1308,7 @@ async function reorderIncomingTake(request, env, session) {
   const rowsOf = async title => { const m = {}; ((await env.DB.prepare('SELECT part, qty, vendor, cases FROM reorder_incoming WHERE title = ?').bind(title).all()).results || []).forEach(r => { m[r.part] = r; }); return m; };
   const T = await rowsOf(to);
   // 1) Put back what this container took before.
-  const prev = (await env.DB.prepare('SELECT from_title, part, units, cases FROM reorder_take WHERE to_title = ?').bind(to).all()).results || [];
-  for (const p of prev) {
-    const r = await env.DB.prepare('SELECT qty, cases FROM reorder_incoming WHERE title = ? AND part = ?').bind(p.from_title, p.part).first();
-    if (r) await env.DB.prepare('UPDATE reorder_incoming SET qty = ?, cases = ? WHERE title = ? AND part = ?')
-      .bind(r.qty + p.units, p.cases != null ? (r.cases || 0) + p.cases : (r.cases > 0 && r.qty > 0 ? Math.round(r.cases * (r.qty + p.units) / r.qty * 100) / 100 : r.cases), p.from_title, p.part).run();
-    else await env.DB.prepare('INSERT INTO reorder_incoming (title, part, qty, vendor, cases, updated_at) VALUES (?,?,?,?,?,?)')
-      .bind(p.from_title, p.part, p.units, (T[p.part] && T[p.part].vendor) || '', p.cases, now).run();
-  }
-  await env.DB.prepare('DELETE FROM reorder_take WHERE to_title = ?').bind(to).run();
+  await reorderPutBackTakes(env, to, T, now);
   // 2) The orders to take from, oldest first.
   let orders;
   if (from === '*') {
@@ -5221,9 +5264,19 @@ const _app = {
           return _roResp({ ok: true, removed: n, units: u });
         }
         const it = await env.DB.prepare('SELECT COUNT(*) AS n, SUM(qty) AS u FROM reorder_incoming WHERE title = ?').bind(title).first() || {};
+        // A container removed (cancelled / wrong import): what it took off
+        // its orders goes back on them — the order is owed those units again.
+        const T = {}; ((await env.DB.prepare('SELECT part, vendor FROM reorder_incoming WHERE title = ?').bind(title).all()).results || []).forEach(r => { T[r.part] = r; });
+        const back = await reorderPutBackTakes(env, title, T, new Date().toISOString());
         await env.DB.prepare('DELETE FROM reorder_incoming WHERE title = ?').bind(title).run();
-        await reorderLog(env, _roWho(roCs || session), 'incoming', title, `Removed on-the-way "${title}" (${it.n || 0} part #s, ${Math.round(it.u || 0)} units)${b.reason ? ' — ' + String(b.reason).slice(0, 100) : ''}`);
-        return _roResp({ ok: true });
+        // An order removed: containers that took from it no longer put units back into it.
+        const dropped = await env.DB.prepare('SELECT COUNT(*) AS n FROM reorder_take WHERE from_title = ?').bind(title).first();
+        if (dropped && dropped.n) await env.DB.prepare('DELETE FROM reorder_take WHERE from_title = ?').bind(title).run();
+        const backBy = {}; back.forEach(p => { backBy[p.from_title] = (backBy[p.from_title] || 0) + (p.units || 0); });
+        const backTxt = Object.keys(backBy).map(k => `"${k}" +${Math.round(backBy[k])}`).join(', ');
+        await reorderLog(env, _roWho(roCs || session), 'incoming', title, `Removed on-the-way "${title}" (${it.n || 0} part #s, ${Math.round(it.u || 0)} units)${b.reason ? ' — ' + String(b.reason).slice(0, 100) : ''}`
+          + (backTxt ? ` · put back on the order(s) it was taken from: ${backTxt} units` : ''));
+        return _roResp({ ok: true, putBack: Object.keys(backBy).map(k => ({ order: k, units: backBy[k] })) });
       }
       if (url.pathname === '/reorder/fix/log' && method === 'POST') {
         // Things done only in the page (CSV download with hand-changed qtys).
@@ -5243,6 +5296,7 @@ const _app = {
       }
       if (url.pathname === '/reorder/fix/batch' && method === 'POST') return await reorderSaveFixBatch(request, env, roCs || session);
       if (url.pathname === '/reorder/fix/pallets' && method === 'POST') return await reorderSavePallets(request, env, roCs || session);
+      if (url.pathname === '/reorder/fix/orders-status' && method === 'GET') return await reorderOrdersStatus(env);
       if (url.pathname === '/reorder/fix/incoming-take' && method === 'POST') return await reorderIncomingTake(request, env, roCs || session);
       if (url.pathname === '/reorder/fix/weights' && method === 'POST') return await reorderFillWeights(request, env, roCs || session);
       if (url.pathname === '/reorder/fix/titles' && method === 'GET') {

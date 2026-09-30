@@ -2162,6 +2162,7 @@ body { display:flex; flex-direction:column; min-height:100vh; background:var(--b
         <button class="btn btn-secondary" style="font-size:12px" id="rvo-tmpl-btn" onclick="rvoTemplate()" title="The layout for the Stage picked: 🚢 Shipped container (pallet, boxes, pieces, price, weight each in lb) · 🏭 Ordered (part #, cases, price, weight each in lb) · none = vendor info sheet (UPCs, price, weight each in lb)">📄 Download template: vendor info</button>
       </div>
       <div id="rvo-inc" style="display:none;flex-wrap:wrap;gap:8px;align-items:center;margin:-4px 0 10px;padding:8px 10px;background:#EFF6FF;border-radius:8px;font-size:12px"></div>
+      <div id="rvo-ord" style="display:none;margin:-4px 0 10px;padding:8px 10px;background:#FFFBEB;border:1px solid #FDE68A;border-radius:8px;font-size:12px"></div>
       <details id="rvo-hist-box" style="margin-bottom:6px" ontoggle="if(this.open)rvoLoadHistory()"><summary style="font-size:12px;color:var(--text2);cursor:pointer;font-weight:700">🕘 History — who changed what on this page</summary>
         <div style="margin:6px 0"><input type="text" id="rvo-hist-q" placeholder="Search part #, name, text…" oninput="clearTimeout(window._rvoHq);window._rvoHq=setTimeout(rvoLoadHistory,300)" style="width:220px;font-size:12px;padding:4px 8px;border-radius:6px;border:1px solid var(--border)"></div>
         <div id="rvo-hist" style="max-height:320px;overflow:auto"></div></details>
@@ -3974,6 +3975,7 @@ async function rvoLoad() {
     sel.innerHTML = '<option value="">All vendors</option>' + (d.vendors || []).map(function (v) { return '<option value="' + escHtml(v) + '">' + escHtml(v) + '</option>'; }).join('') + '<option value="__none">(no vendor in SKU Mgr)</option>';
     if (cur) sel.value = cur;
     rvoRenderIncoming(d.incomingTitles || []);
+    rvoLoadOrders();
     g('rvo-cat').innerHTML = (d.catalog || []).length ? d.catalog.map(function (c) { return '<b>' + escHtml(c.vendor) + '</b> ' + fmt0(c.n) + ' part #s <span style="opacity:.7">(' + escHtml(String(c.at || '').slice(0, 10)) + ')</span>'; }).join(' · ') : 'none imported yet — import JQ / EFF info sheets for descriptions, UPCs and FBA ASINs';
     rvoRender();
     rvoLoadTitles();
@@ -4122,11 +4124,59 @@ function rvoRenderIncoming(titles) {
       + '<button onclick="rvoRemoveTitle(\'' + escHtml(t.title).replace(/'/g, "\\'") + '\')" title="Cancelled or imported by mistake — take it off On the way without touching SKU Mgr" style="border:none;background:#FEE2E2;color:#991B1B;border-radius:10px;padding:2px 8px;font-size:11px;cursor:pointer">🗑 Remove</button></span>';
   }).join('') + ' <span style="flex:1"></span><button onclick="rvoResetWidths()" class="btn btn-secondary" style="font-size:11px;padding:2px 8px">↔ Reset column widths</button>';
 }
+// 🏭 Orders: what each order has shipped (by which container) and what the
+// vendor still owes; fully shipped orders move to their own list.
+var RVO_ORD = [];
+async function rvoLoadOrders() {
+  var box = document.getElementById('rvo-ord'); if (!box) return;
+  try {
+    var d = await (await wFetch(W + '/reorder/fix/orders-status')).json();
+    if (!d.ok) throw new Error(d.error || 'Failed');
+    RVO_ORD = d.orders || [];
+  } catch (e) { box.style.display = 'block'; box.innerHTML = '<span style="color:var(--red)">🏭 Orders: could not load — ' + escHtml(e.message) + '</span>'; return; }
+  var open = RVO_ORD.filter(function (o) { return !o.fullyShipped; }), done = RVO_ORD.filter(function (o) { return o.fullyShipped; });
+  if (!RVO_ORD.length) { box.style.display = 'none'; return; }
+  var q = function (t) { return escHtml(t).replace(/'/g, "\\'"); };
+  var chip = function (o) {
+    return '<div style="padding:4px 0;border-top:1px solid #FDE68A"><b>🏭 ' + escHtml(o.title) + '</b> <span style="color:var(--text3)">' + escHtml(o.vendor || '') + (o.orderDate ? ' · ' + escHtml(o.orderDate) : '') + '</span>'
+      + ' · ordered <b>' + fmt0(o.orderedPcs) + '</b> pcs · shipped <b>' + fmt0(o.shippedPcs) + '</b>'
+      + (o.containers.length ? ' <span style="color:var(--text3)">(' + o.containers.map(function (c) { return (c.status === 'received' ? '📦 ' : '🚢 ') + escHtml(c.title) + ' ' + fmt0(c.pcs); }).join(', ') + ')</span>' : '')
+      + ' · ' + (o.fullyShipped ? '<b style="color:var(--green)">✅ all shipped</b>' : 'left <b style="color:#B45309">' + fmt0(o.leftPcs) + '</b> pcs (' + o.partsLeft + ' part #' + (o.partsLeft === 1 ? '' : 's') + ')')
+      + ' <button onclick="rvoOrderDetail(\'' + q(o.title) + '\')" style="border:none;background:#FEF3C7;border-radius:10px;padding:2px 8px;font-size:11px;cursor:pointer">📋 ' + (o.fullyShipped ? 'Details' : 'What\'s left') + '</button></div>';
+  };
+  box.style.display = 'block';
+  box.innerHTML = '<b style="color:#92400E">🏭 Orders — shipped and still owed by the vendor</b>'
+    + (open.length ? open.map(chip).join('') : '<div style="padding:4px 0;color:var(--text3)">No open orders.</div>')
+    + (done.length ? '<details style="margin-top:4px"><summary style="cursor:pointer;color:var(--green);font-weight:700">✅ Fully shipped orders (' + done.length + ')</summary>' + done.map(chip).join('') + '</details>' : '');
+}
+function rvoOrderDetail(title) {
+  var o = RVO_ORD.filter(function (x) { return x.title === title; })[0]; if (!o) return;
+  RVO_CK = null;
+  document.getElementById('rvo-ck-title').textContent = '🏭 ' + title + (o.fullyShipped ? ' — ✅ fully shipped' : ' — what\'s left');
+  var ok = Math.abs(o.orderedPcs - o.shippedPcs - o.leftPcs) < 0.001;
+  var td = function (x, st) { return '<td style="padding:5px 8px;' + (st || '') + '">' + x + '</td>'; };
+  var lines = o.lines.slice().sort(function (a, b) { return (b.left > 0) - (a.left > 0) || a.part.localeCompare(b.part); });
+  document.getElementById('rvo-ck-body').innerHTML = '<div style="font-size:13px;margin-bottom:8px">' + escHtml(o.vendor || '') + (o.orderDate ? ' · ordered ' + escHtml(o.orderDate) : '') + ' · ' + o.parts + ' part #s</div>'
+    + '<table style="font-size:13px;border-collapse:collapse;margin-bottom:8px"><tr><td style="padding:3px 10px">Ordered</td><td style="padding:3px 10px;text-align:right"><b>' + fmt0(o.orderedPcs) + '</b> pcs</td><td style="padding:3px 10px;color:var(--text3)">' + fmt0(o.ordered) + ' units</td></tr>'
+    + o.containers.map(function (c) { return '<tr><td style="padding:3px 10px">− shipped in ' + (c.status === 'received' ? '📦 ' : '🚢 ') + escHtml(c.title) + ' <span style="color:var(--text3)">(' + c.status + ')</span></td><td style="padding:3px 10px;text-align:right">' + fmt0(c.pcs) + ' pcs</td><td style="padding:3px 10px;color:var(--text3)">' + fmt0(c.units) + ' units</td></tr>'; }).join('')
+    + '<tr style="border-top:1px solid var(--border)"><td style="padding:3px 10px"><b>= Still owed by the vendor</b></td><td style="padding:3px 10px;text-align:right"><b style="color:' + (o.leftPcs > 0 ? '#B45309' : 'var(--green)') + '">' + fmt0(o.leftPcs) + '</b> pcs</td><td style="padding:3px 10px;color:var(--text3)">' + fmt0(o.left) + ' units</td></tr></table>'
+    + '<div style="font-size:13px;margin-bottom:10px">' + (ok ? '<b style="color:var(--green)">✓</b> Ordered = shipped + still owed' : '<b style="color:var(--red)">⚠ Ordered ≠ shipped + still owed — check History</b>') + '</div>'
+    + '<div style="max-height:50vh;overflow:auto;border:1px solid var(--border);border-radius:8px"><table style="font-size:12px;border-collapse:collapse;width:100%"><thead style="position:sticky;top:0;background:var(--bg3)"><tr>'
+    + ['Part #', 'Ordered pcs', 'Shipped pcs', 'In container', 'Still owed pcs', 'Still owed units'].map(function (x) { return '<th style="text-align:left;padding:6px 8px">' + x + '</th>'; }).join('') + '</tr></thead><tbody>'
+    + lines.map(function (l) {
+      return '<tr style="border-top:1px solid var(--border)">' + td('<b style="font-family:var(--mono)">' + escHtml(l.part) + '</b>')
+        + td(fmt0(l.orderedPcs), 'text-align:right') + td(fmt0(l.shippedPcs), 'text-align:right')
+        + td(Object.keys(l.by).map(function (k) { return escHtml(k) + ' ' + fmt0(l.by[k] * l.pack); }).join(', ') || '<span style="color:var(--text3)">—</span>', 'color:var(--text3)')
+        + td(l.left > 0 ? '<b style="color:#B45309">' + fmt0(l.leftPcs) + '</b>' : '<span style="color:var(--green)">✓ 0</span>', 'text-align:right')
+        + td(l.left > 0 ? fmt0(l.left) : '', 'text-align:right;color:var(--text3)') + '</tr>';
+    }).join('') + '</tbody></table></div>';
+  document.getElementById('rvo-check').style.display = 'flex';
+}
 async function rvoRemoveTitle(title) {
-  if (!confirm('Remove "' + title + '" from On the way?\n\nUse this only if the shipment was CANCELLED or imported by mistake. SKU Mgr is not changed.\n\nIf it ARRIVED, press 📦 Received instead — that puts it into SKU Mgr.')) return;
+  if (!confirm('Remove "' + title + '" from On the way?\n\nUse this only if the shipment was CANCELLED or imported by mistake. SKU Mgr is not changed.\nA container\'s units taken off an order (Made for order / FIFO) go back on that order.\n\nTo replace a container with a newer packing list, DON\'T remove it — import the new file with the SAME Title.\nIf it ARRIVED, press 📦 Received instead — that puts it into SKU Mgr.')) return;
   var d = await (await wFetch(W + '/reorder/fix/incoming-remove', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ title: title }) })).json();
   if (!d.ok) { alert(d.error || 'Failed'); return; }
-  showToast('Removed "' + title + '"'); rvoLoad(); if (document.getElementById('rvo-hist-box').open) rvoLoadHistory();
+  showToast('Removed "' + title + '"' + ((d.putBack || []).length ? ' — put back on ' + d.putBack.map(function (p) { return '"' + p.order + '" ' + fmt0(p.units) + ' units'; }).join(', ') : '')); rvoLoad(); if (document.getElementById('rvo-hist-box').open) rvoLoadHistory();
 }
 
 // 📦 Received — stock a whole on-the-way title into SKU Mgr (GARAGE).
