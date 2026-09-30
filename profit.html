@@ -1,0 +1,517 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>XFitting — Profit Check</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700;800&family=DM+Mono:wght@400;500&display=swap" rel="stylesheet">
+  <style>
+:root {
+  --bg:#f4f5f7; --bg2:#ffffff; --bg3:#f0f1f3; --bg4:#e8eaed; --border:#dde0e6; --border2:#c8cbd4;
+  --text:#1a1d23; --text2:#4a5060; --text3:#8a90a0; --accent:#1a56db; --accent-bg:#eef2fd;
+  --green:#0e7f3e; --green-bg:#e8f7ee; --red:#c52a1a; --red-bg:#fdf0ee; --orange:#b45309; --orange-bg:#fef3e2;
+  --yellow:#8a6d00; --yellow-bg:#fff8d6; --purple:#6d28d9; --purple-bg:#f2effe;
+  --mono:'DM Mono', monospace; --sans:'DM Sans', sans-serif;
+  --shadow:0 1px 3px rgba(0,0,0,0.08), 0 1px 2px rgba(0,0,0,0.04);
+}
+*, *::before, *::after { box-sizing:border-box; margin:0; padding:0; }
+body { min-height:100vh; background:var(--bg); font-family:var(--sans); color:var(--text); font-size:14px; }
+#pf-app { display:none; flex-direction:column; min-height:100vh; }
+.topbar { background:var(--bg2); border-bottom:1px solid var(--border); height:56px; display:flex; align-items:center; justify-content:space-between; padding:0 24px; position:sticky; top:0; z-index:200; }
+.topbar-left { display:flex; align-items:center; gap:12px; }
+.topbar-right { display:flex; align-items:center; gap:8px; }
+.tb-logo { font-family:var(--mono); font-size:11px; letter-spacing:3px; color:var(--accent); font-weight:500; }
+.tb-name { font-weight:700; font-size:15px; }
+.btn { font-family:inherit; font-size:13px; font-weight:600; padding:7px 14px; border-radius:8px; border:1px solid var(--border); background:var(--bg2); color:var(--text2); cursor:pointer; }
+.btn:hover { border-color:var(--border2); background:var(--bg3); }
+.btn-primary { background:var(--accent); color:#fff; border-color:var(--accent); }
+.btn-primary:hover { background:#1246c0; }
+.btn:disabled { opacity:.55; cursor:default; }
+.wrap { max-width:1400px; width:100%; margin:0 auto; padding:18px 24px 60px; }
+.controls { display:flex; flex-wrap:wrap; gap:10px; align-items:center; margin-bottom:14px; }
+.seg { display:inline-flex; border:1px solid var(--border); border-radius:8px; overflow:hidden; background:var(--bg2); }
+.seg button { font-family:inherit; font-size:13px; padding:7px 14px; border:none; background:transparent; color:var(--text2); cursor:pointer; font-weight:600; }
+.seg button.on { background:var(--accent); color:#fff; }
+input[type=text], input[type=number], select { font-family:inherit; font-size:13px; padding:7px 11px; border:1px solid var(--border); border-radius:8px; background:var(--bg2); color:var(--text); }
+#pf-search { width:260px; }
+.cards { display:grid; grid-template-columns:repeat(auto-fit, minmax(150px, 1fr)); gap:10px; margin-bottom:14px; }
+.card { background:var(--bg2); border:1px solid var(--border); border-radius:10px; padding:12px 14px; box-shadow:var(--shadow); }
+.card .lbl { font-size:11px; color:var(--text3); text-transform:uppercase; letter-spacing:.8px; font-weight:600; }
+.card .val { font-size:20px; font-weight:700; margin-top:4px; font-family:var(--mono); }
+.card .sub { font-size:11.5px; color:var(--text3); margin-top:2px; }
+.notes { display:flex; flex-direction:column; gap:8px; margin-bottom:14px; }
+.note { border-radius:9px; padding:10px 14px; font-size:13px; line-height:1.5; border:1px solid var(--border); background:var(--bg2); }
+.note.red { background:var(--red-bg); border-color:#f3c9c3; color:#7a1d12; }
+.note.yellow { background:var(--yellow-bg); border-color:#f0e2a0; color:#5c4a00; }
+.note.green { background:var(--green-bg); border-color:#bfe5cd; color:#0b5a2d; }
+.note.blue { background:var(--accent-bg); border-color:#cddaf8; color:#173d99; }
+.note details summary { cursor:pointer; font-weight:600; }
+.tablewrap { background:var(--bg2); border:1px solid var(--border); border-radius:10px; overflow:auto; box-shadow:var(--shadow); }
+table { border-collapse:collapse; width:100%; }
+th, td { padding:8px 10px; text-align:right; white-space:nowrap; border-bottom:1px solid var(--bg4); font-size:13px; }
+th { position:sticky; top:0; background:var(--bg3); font-size:11.5px; color:var(--text2); text-transform:uppercase; letter-spacing:.5px; cursor:pointer; user-select:none; z-index:1; }
+th.l, td.l { text-align:left; }
+td.num { font-family:var(--mono); }
+tbody tr.row { cursor:pointer; }
+tbody tr.row:hover td { background:#f7f9fd; }
+tr.loss td.st { border-left:4px solid var(--red); }
+tr.thin td.st { border-left:4px solid #e0b400; }
+tr.good td.st { border-left:4px solid var(--green); }
+tr.nocost td.st { border-left:4px solid var(--border2); }
+.pill { display:inline-block; font-size:11px; font-weight:700; padding:2px 8px; border-radius:20px; }
+.pill.loss { background:var(--red-bg); color:var(--red); }
+.pill.thin { background:var(--yellow-bg); color:var(--yellow); }
+.pill.good { background:var(--green-bg); color:var(--green); }
+.pill.nocost { background:var(--bg4); color:var(--text2); }
+.neg { color:var(--red); }
+.warn { color:var(--orange); font-size:12px; white-space:normal; }
+td.sku { white-space:normal; min-width:170px; max-width:300px; }
+th { white-space:normal; }
+tfoot td { font-weight:700; background:var(--bg3); border-top:2px solid var(--border2); }
+tr.detail > td { background:#fafbfd; padding:14px 16px; text-align:left; white-space:normal; }
+.detail-inner { position:sticky; left:16px; width:min(1320px, calc(100vw - 90px)); }
+.detail-grid { display:grid; grid-template-columns: minmax(0, 2fr) minmax(280px, 1fr); gap:16px; }
+.mini th, .mini td { font-size:12px; padding:5px 7px; }
+.mini th { position:static; cursor:default; }
+.box { background:var(--bg2); border:1px solid var(--border); border-radius:10px; padding:12px 14px; }
+.box h4 { font-size:13px; margin-bottom:8px; }
+.kv { display:grid; grid-template-columns:auto auto; gap:3px 12px; font-size:13px; margin-top:8px; }
+.kv div:nth-child(even) { text-align:right; font-family:var(--mono); }
+.panel { background:var(--bg2); border:1px solid var(--border); border-radius:10px; padding:14px 16px; margin-top:14px; }
+.panel h3 { font-size:14px; margin-bottom:8px; }
+.muted { color:var(--text3); font-size:12px; }
+.mono { font-family:var(--mono); }
+#pf-toast { position:fixed; bottom:24px; left:50%; transform:translateX(-50%); background:#1a1d23; color:#fff; font-size:12.5px; padding:10px 18px; border-radius:100px; opacity:0; transition:opacity .3s; z-index:9999; pointer-events:none; }
+@media (max-width: 800px) { .detail-grid { grid-template-columns: 1fr; } #pf-search { width:100%; } .wrap { padding:14px 12px 60px; } .topbar { padding:0 12px; } }
+  </style>
+</head>
+<body>
+<div id="pf-login" style="display:none;position:fixed;inset:0;background:var(--bg);z-index:8000;align-items:center;justify-content:center;flex-direction:column">
+  <div style="text-align:center;max-width:340px;width:100%;padding:0 20px">
+    <div style="font-family:var(--mono);font-size:10px;letter-spacing:4px;color:var(--text3);text-transform:uppercase;margin-bottom:28px"><span style="color:var(--accent)">XF</span>ITTING — Profit Check</div>
+    <div style="font-size:20px;font-weight:600;margin-bottom:6px">Management Access Required</div>
+    <div style="font-size:13px;color:var(--text2);margin-bottom:28px">Sign in with your XFitting credentials</div>
+    <input id="pf-user" type="text" placeholder="Username" autocomplete="username" style="width:100%;padding:11px 14px;border:1.5px solid var(--border);border-radius:9px;font-size:14px;margin-bottom:10px">
+    <input id="pf-pass" type="password" placeholder="Password" autocomplete="current-password" style="width:100%;padding:11px 14px;border:1.5px solid var(--border);border-radius:9px;font-family:inherit;font-size:14px;margin-bottom:14px" onkeydown="if(event.key==='Enter')pfLogin()">
+    <button id="pf-login-btn" onclick="pfLogin()" style="width:100%;padding:12px;border:none;border-radius:9px;background:var(--accent);color:#fff;font-family:inherit;font-weight:600;font-size:14px;cursor:pointer">Sign In</button>
+    <div id="pf-login-err" style="color:var(--red);font-size:12px;margin-top:16px;font-family:var(--mono);min-height:16px"></div>
+    <a href="index.html" style="display:inline-block;margin-top:14px;font-size:12.5px;color:var(--text3);text-decoration:none">← Back to Launcher</a>
+  </div>
+</div>
+
+<div id="pf-app">
+  <div class="topbar">
+    <div class="topbar-left">
+      <div class="tb-logo">XFITTING</div>
+      <div class="tb-name">Profit Check</div>
+    </div>
+    <div class="topbar-right">
+      <button class="btn" onclick="location.reload()" title="Reload this page">🔄 Refresh</button>
+      <button class="btn" data-xf-signout onclick="xfSignOut()">🚪 Sign Out</button>
+      <button class="btn" onclick="window.xfGoHome ? xfGoHome() : (location.href='index.html')">← Apps</button>
+    </div>
+  </div>
+
+  <div class="wrap">
+    <div class="note blue" style="margin-bottom:14px">
+      <b>Do we make or lose money on each listing?</b> Amazon only for now. For every listing: what the buyer paid,
+      minus Amazon's fees, minus the shipping label (FBM orders), minus what the product cost us.
+      <span class="pill loss">Red</span> = losing money, <span class="pill thin">Yellow</span> = thin margin (under <b id="pf-thin-lbl">15</b>%),
+      <span class="pill good">Green</span> = good. Worst listings are at the top. Click a row to see its orders and try a new price.
+      This page only reads. It never changes a live price.
+    </div>
+
+    <div class="controls">
+      <div class="seg" id="pf-days">
+        <button data-d="30" class="on" onclick="pfSetDays(30)">Last 30 days</button>
+        <button data-d="90" onclick="pfSetDays(90)">Last 90 days</button>
+      </div>
+      <input id="pf-search" type="text" placeholder="Search SKU or part # (e.g. 30-3-4)" oninput="pfRender()">
+      <select id="pf-filter" onchange="pfRender()">
+        <option value="">All listings</option>
+        <option value="loss">🔴 Losing money</option>
+        <option value="thin">🟡 Thin margin</option>
+        <option value="good">🟢 Good</option>
+        <option value="nocost">⚠ No cost on file</option>
+      </select>
+      <select id="pf-mkt" onchange="pfRender()"><option value="">All marketplaces</option></select>
+      <span id="pf-status" class="muted"></span>
+    </div>
+
+    <div class="cards" id="pf-cards"></div>
+    <div class="notes" id="pf-notes"></div>
+
+    <div class="tablewrap">
+      <table id="pf-table">
+        <thead><tr>
+          <th class="l" data-k="status">Status</th>
+          <th class="l" data-k="sku">SKU</th>
+          <th class="l" data-k="marketplace">Market</th>
+          <th data-k="units">Units</th>
+          <th data-k="revenue">Revenue</th>
+          <th data-k="fees">Amazon fees</th>
+          <th data-k="label">Ship labels</th>
+          <th data-k="cost">Product cost</th>
+          <th data-k="profit">Profit</th>
+          <th data-k="perUnit">Profit / unit</th>
+          <th data-k="margin">Margin %</th>
+        </tr></thead>
+        <tbody id="pf-body"><tr><td colspan="11" class="l muted">Loading…</td></tr></tbody>
+        <tfoot id="pf-foot"></tfoot>
+      </table>
+    </div>
+
+    <div class="panel">
+      <h3>⚙ Settings</h3>
+      <div class="controls" style="margin-bottom:6px">
+        <label>Thin margin under <input id="pf-set-thin" type="number" min="0" max="90" step="1" style="width:70px"> %</label>
+        <label>Product cost =
+          <select id="pf-set-basis">
+            <option value="landed">Landed cost (unit price × 1.5)</option>
+            <option value="unit">Unit price only</option>
+            <option value="batch">Average price of the stock batches on the shelf now</option>
+          </select>
+        </label>
+        <button class="btn btn-primary" onclick="pfSaveSettings()">Save</button>
+      </div>
+      <div class="muted" id="pf-set-note"></div>
+    </div>
+
+    <div class="panel">
+      <h3>🔄 Amazon data</h3>
+      <div class="muted" id="pf-sync-info" style="margin-bottom:8px"></div>
+      <div class="controls" style="margin-bottom:6px">
+        <button class="btn" id="pf-sync-btn" onclick="pfSync(false)">Pull new Amazon data now</button>
+        <button class="btn" id="pf-sync90-btn" onclick="pfSync(true)">Pull the last 90 days again</button>
+        <span id="pf-sync-msg" class="muted"></span>
+      </div>
+      <details><summary class="muted" style="cursor:pointer">History (who pulled data / changed settings)</summary><div id="pf-log" class="muted" style="margin-top:6px"></div></details>
+    </div>
+  </div>
+</div>
+<div id="pf-toast"></div>
+
+<script>
+var WORKER_URL = 'https://xfitting-lookup.alfixedinc88.workers.dev';   // sign-in (same login as every page)
+var PROFIT_URL = 'https://xfitting-profit.alfixedinc88.workers.dev';   // this page's own worker
+var TOKEN = localStorage.getItem('xf_cred_token') || null;
+var USER = null; try { USER = JSON.parse(localStorage.getItem('xf_cred_user') || 'null'); } catch (e) {}
+var DAYS = 30, DATA = null, SORT = { k: null, dir: 1 }, OPEN = null;
+
+function esc(s) { return String(s == null ? '' : s).replace(/[&<>"']/g, function (c) { return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]; }); }
+function money(v, cur) { if (v == null) return '—'; var s = (v < 0 ? '−' : '') + '$' + Math.abs(v).toFixed(2).replace(/\B(?=(\d{3})+(?!\d))/g, ','); return cur && cur !== 'USD' ? s + ' ' + cur : s; }
+function mcls(v) { return v != null && v < 0 ? ' neg' : ''; }
+function toast(m) { var t = document.getElementById('pf-toast'); t.textContent = m; t.style.opacity = '1'; clearTimeout(t._h); t._h = setTimeout(function () { t.style.opacity = '0'; }, 3500); }
+var STATUS = { loss: ['loss', '🔴 Losing'], thin: ['thin', '🟡 Thin'], good: ['good', '🟢 Good'], nocost: ['nocost', '⚠ No cost'] };
+var RANK = { loss: 0, nocost: 1, thin: 2, good: 3 };
+
+function showLogin() { document.getElementById('pf-app').style.display = 'none'; document.getElementById('pf-login').style.display = 'flex'; }
+function signedOut() { TOKEN = null; USER = null; localStorage.removeItem('xf_cred_token'); localStorage.removeItem('xf_cred_user'); showLogin(); }
+
+// The main worker's /auth/access keeps the shared sign-in alive while this page is used (this page's own worker only reads it).
+var _lastPing = Date.now();
+function keepAlive() { if (Date.now() - _lastPing < 5 * 60000) return; _lastPing = Date.now(); fetch(WORKER_URL + '/auth/access', { headers: { 'X-Cred-Token': TOKEN || '' } }).catch(function () {}); }
+
+async function api(path, opts) {
+  opts = opts || {};
+  opts.headers = Object.assign({ 'Content-Type': 'application/json' }, opts.headers || {}, { 'X-Cred-Token': TOKEN || '' });
+  keepAlive();
+  var r;
+  try { r = await fetch(PROFIT_URL + path, opts); }
+  catch (e) { throw new Error('Cannot reach the profit worker (xfitting-profit). Has it been created in Cloudflare yet?'); }
+  if (r.status === 401) { signedOut(); throw new Error('Please sign in again'); }
+  var d = await r.json().catch(function () { return { ok: false, error: 'Bad reply (' + r.status + ')' }; });
+  if (r.status === 403) throw new Error(d.error || 'Management access required');
+  if (!d.ok) throw new Error(d.error || 'Request failed');
+  return d;
+}
+
+window.pfLogin = async function () {
+  var u = document.getElementById('pf-user').value.trim(), p = document.getElementById('pf-pass').value;
+  var err = document.getElementById('pf-login-err'), btn = document.getElementById('pf-login-btn');
+  err.textContent = '';
+  if (!u || !p) { err.textContent = 'Enter your username and password.'; return; }
+  btn.disabled = true; btn.textContent = 'Signing in…';
+  try {
+    var res = await fetch(WORKER_URL + '/auth/login', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ username: u, password: p }) });
+    var d = await res.json();
+    if (!res.ok) { err.textContent = d.error || 'Login failed'; return; }
+    if (!d.roles.includes('mgmt')) { err.textContent = 'This account does not have access to Profit Check.'; return; }
+    TOKEN = d.token; USER = { displayName: d.displayName, roles: d.roles, userId: d.userId };
+    localStorage.setItem('xf_cred_token', d.token); localStorage.setItem('xf_cred_user', JSON.stringify(USER));
+    _lastPing = Date.now();
+    openApp();
+  } catch (e) { err.textContent = 'Connection error — try again.'; }
+  finally { btn.disabled = false; btn.textContent = 'Sign In'; }
+};
+
+function openApp() {
+  document.getElementById('pf-login').style.display = 'none';
+  document.getElementById('pf-app').style.display = 'flex';
+  load();
+}
+
+function pfSetDays(d) {
+  DAYS = d; OPEN = null;
+  document.querySelectorAll('#pf-days button').forEach(function (b) { b.classList.toggle('on', +b.dataset.d === d); });
+  load();
+}
+
+async function load() {
+  var st = document.getElementById('pf-status');
+  st.textContent = 'Loading…';
+  try {
+    DATA = await api('/profit/summary?days=' + DAYS);
+    st.textContent = '';
+    var mk = document.getElementById('pf-mkt'), cur = mk.value, seen = {};
+    mk.innerHTML = '<option value="">All marketplaces</option>';
+    DATA.rows.forEach(function (r) { if (!seen[r.marketplace]) { seen[r.marketplace] = 1; mk.innerHTML += '<option>' + esc(r.marketplace) + '</option>'; } });
+    mk.value = seen[cur] ? cur : '';
+    document.getElementById('pf-thin-lbl').textContent = DATA.settings.thinPct;
+    document.getElementById('pf-set-thin').value = DATA.settings.thinPct;
+    document.getElementById('pf-set-basis').value = DATA.settings.costBasis;
+    document.getElementById('pf-set-note').innerHTML = (!DATA.settings.costBasisChosen || !DATA.settings.thinPctChosen)
+      ? '⚠ These are starting values (thin margin 15 %, landed cost). Pick yours and press Save.' : '';
+    renderCards(); renderNotes(); pfRender(); renderSync();
+  } catch (e) {
+    st.textContent = '';
+    document.getElementById('pf-body').innerHTML = '<tr><td colspan="11" class="l neg">⚠ ' + esc(e.message) + '</td></tr>';
+  }
+}
+
+function renderCards() {
+  var h = '';
+  DATA.totals.forEach(function (t) {
+    var c = t.currency, cur = DATA.totals.length > 1 ? ' (' + c + ')' : '';
+    h += card('Revenue' + cur, money(t.revenue, c), t.units + ' units sold' + (t.refundedUnits ? ', ' + t.refundedUnits + ' refunded' : ''))
+      + card('Amazon fees' + cur, money(t.fees, c), t.revenue ? Math.round(t.fees / t.revenue * 100) + '% of revenue' : '')
+      + card('Shipping labels' + cur, money(t.label, c), 'FBM orders only')
+      + card('Product cost' + cur, money(t.cost, c), costBasisName())
+      + card('Profit' + cur, '<span class="' + mcls(t.profit) + '">' + money(t.profit, c) + '</span>', t.margin != null ? t.margin + '% margin' : '')
+      + card('Totals check' + cur, t.checkOk ? '✅ match' : '❌ mismatch', t.checkOk ? 'rows add up to the Amazon lines' : 'rows ≠ lines — tell Claude');
+  });
+  if (!DATA.totals.length) h = card('No Amazon data yet', '—', 'Press “Pull new Amazon data now” below');
+  document.getElementById('pf-cards').innerHTML = h;
+  function card(l, v, s) { return '<div class="card"><div class="lbl">' + l + '</div><div class="val">' + v + '</div><div class="sub">' + s + '</div></div>'; }
+}
+function costBasisName() { return { landed: 'landed cost (unit × 1.5)', unit: 'unit price', batch: 'avg of shelf batches' }[DATA.settings.costBasis] || ''; }
+
+function renderNotes() {
+  var h = [];
+  DATA.totals.forEach(function (t) {
+    if (t.noCostListings) h.push('<div class="note red">⚠ <b>' + t.noCostListings + ' listing(s) have no cost on file</b> (' + money(t.noCostRevenue, t.currency) + ' revenue). Their profit is <b>not counted</b> in the Profit total above. Add their part # cost in SKU Mgr / COGS, or map old Amazon SKUs to a part # in Reorder Planner → 🔗 SKU Map. Filter: “⚠ No cost on file”.</div>');
+    if (t.currency !== 'USD') h.push('<div class="note yellow">⚠ Sales in ' + esc(t.currency) + ' are shown separately. Product cost and labels are in USD, so the profit on these rows is only a rough guide.</div>');
+  });
+  if (DATA.pending.count) {
+    var rows = DATA.pending.orders.map(function (o) { return '<tr><td class="l mono">' + esc(o.order_id) + '</td><td class="l">' + esc((o.purchase_date || '').slice(0, 10)) + '</td><td class="l">' + esc(o.status) + '</td><td class="l">' + (o.channel === 'AFN' ? 'FBA' : 'FBM') + '</td><td class="num">' + money(o.order_total, o.currency) + '</td></tr>'; }).join('');
+    h.push('<div class="note yellow"><details><summary>🕐 ' + DATA.pending.count + ' order(s) (' + money(DATA.pending.total) + ') have no Amazon fees posted yet — not counted until they are</summary>'
+      + '<div class="muted" style="margin:6px 0">Amazon posts the fees when an order ships. These show up in the table after the next data pull once Amazon has posted them.</div>'
+      + '<table class="mini"><tr><th class="l">Order</th><th class="l">Ordered</th><th class="l">Status</th><th class="l">Type</th><th>Order total</th></tr>' + rows + '</table></details></div>');
+  }
+  if (DATA.other.length) {
+    var sum = 0, rows2 = DATA.other.map(function (o) { sum += o.amount; return '<tr><td class="l">' + esc(o.list) + '</td><td class="l">' + esc(o.type) + '</td><td class="num">' + o.n + '</td><td class="num' + mcls(o.amount) + '">' + money(o.amount, o.currency) + '</td></tr>'; }).join('');
+    h.push('<div class="note"><details><summary>🧾 Other Amazon money not tied to one order: <span class="' + mcls(sum) + '">' + money(Math.round(sum * 100) / 100) + '</span> (storage, subscription, reimbursements…) — shown here, not inside the listing rows</summary>'
+      + '<table class="mini" style="margin-top:6px"><tr><th class="l">Kind</th><th class="l">Type</th><th>Count</th><th>Amount</th></tr>' + rows2 + '</table></details></div>');
+  }
+  var guessed = DATA.rows.reduce(function (a, r) { return a + r.channelGuessed; }, 0), nolabel = DATA.rows.reduce(function (a, r) { return a + r.fbmNoLabel; }, 0);
+  if (nolabel) h.push('<div class="note yellow">⚠ ' + nolabel + ' FBM order line(s) have <b>no shipping label cost on file</b> (Pack &amp; Ship → Auto Label → Label costs). Their label is counted as $0, so their profit may be too high. Rows show “⚠ no label”.</div>');
+  if (guessed) h.push('<div class="note yellow">⚠ ' + guessed + ' order line(s): the Orders pull hasn\'t said yet whether they were FBA or FBM, so they are treated as FBM.</div>');
+  if (DATA.cancelled) h.push('<div class="note">' + DATA.cancelled + ' cancelled order(s) in this period are left out (no money moved).</div>');
+  h.push('<div class="note">ℹ Refunds take the money (and the fees Amazon gives back) off the listing. The product cost is <b>not</b> given back, because we don\'t know if the item came back sellable. Tax is not counted as revenue: Amazon collects it and pays it to the states.</div>');
+  document.getElementById('pf-notes').innerHTML = h.join('');
+}
+
+function visibleRows() {
+  var q = document.getElementById('pf-search').value.trim().toUpperCase();
+  var f = document.getElementById('pf-filter').value, m = document.getElementById('pf-mkt').value;
+  var rows = DATA.rows.filter(function (r) {
+    if (f && r.status !== f) return false;
+    if (m && r.marketplace !== m) return false;
+    if (q && (r.sku.toUpperCase().indexOf(q) === -1 && (r.part || '').indexOf(q) === -1)) return false;
+    return true;
+  });
+  if (SORT.k) {
+    rows.sort(function (a, b) {
+      var x = a[SORT.k], y = b[SORT.k];
+      if (SORT.k === 'status') { x = RANK[x]; y = RANK[y]; }
+      if (x == null && y == null) return 0; if (x == null) return 1; if (y == null) return -1;
+      return (typeof x === 'string' ? x.localeCompare(y) : x - y) * SORT.dir;
+    });
+  } else {
+    // Worst first: losing money (biggest loss first), no cost, thin, good.
+    rows.sort(function (a, b) { return RANK[a.status] - RANK[b.status] || (a.profit == null ? a.profitBeforeCost : a.profit) - (b.profit == null ? b.profitBeforeCost : b.profit); });
+  }
+  return rows;
+}
+
+function pfRender() {
+  if (!DATA) return;
+  var rows = visibleRows(), h = '';
+  rows.forEach(function (r) {
+    var s = STATUS[r.status], warn = [];
+    if (r.noCostUnits) warn.push(r.part ? '⚠ no cost on file for ' + esc(r.base) : '⚠ no cost on file (SKU not mapped to a part #)');
+    if (r.fbmNoLabel) warn.push('⚠ no label ×' + r.fbmNoLabel);
+    if (r.channelGuessed) warn.push('FBM guessed ×' + r.channelGuessed);
+    h += '<tr class="row ' + s[0] + '" data-key="' + esc(r.key) + '" onclick="pfToggle(this.dataset.key)">'
+      + '<td class="l st"><span class="pill ' + s[0] + '">' + s[1] + '</span></td>'
+      + '<td class="l sku"><b class="mono">' + esc(r.sku) + '</b>' + (r.part && r.part !== r.sku.toUpperCase() ? ' <span class="muted">→ ' + esc(r.part) + '</span>' : '')
+      + (warn.length ? '<div class="warn">' + warn.join(' · ') + '</div>' : '') + '</td>'
+      + '<td class="l">' + esc(r.marketplace) + '<div class="muted">' + (r.fbaUnits && r.fbmUnits ? 'FBA+FBM' : r.fbaUnits ? 'FBA' : 'FBM') + '</div></td>'
+      + '<td class="num">' + r.units + (r.refundedUnits ? '<div class="warn">↩ ' + r.refundedUnits + ' refunded</div>' : '') + '</td>'
+      + '<td class="num' + mcls(r.revenue) + '">' + money(r.revenue, r.currency) + '</td>'
+      + '<td class="num">' + money(r.fees, r.currency) + '</td>'
+      + '<td class="num">' + money(r.label, r.currency) + '</td>'
+      + '<td class="num">' + (r.noCostUnits ? '<span class="warn">⚠ no cost</span>' : money(r.cost)) + '</td>'
+      + '<td class="num' + mcls(r.profit) + '"><b>' + (r.profit == null ? '<span class="warn">not counted</span>' : money(r.profit, r.currency)) + '</b></td>'
+      + '<td class="num' + mcls(r.perUnit) + '">' + money(r.perUnit, r.currency) + '</td>'
+      + '<td class="num' + mcls(r.margin) + '">' + (r.margin == null ? '—' : r.margin + '%') + '</td></tr>';
+    if (OPEN === r.key) h += '<tr class="detail"><td colspan="11" id="pf-detail">Loading orders…</td></tr>';
+  });
+  if (!rows.length) h = '<tr><td colspan="11" class="l muted">' + (DATA.rows.length ? 'No listings match.' : 'No Amazon orders with fees in this period yet.') + '</td></tr>';
+  document.getElementById('pf-body').innerHTML = h;
+  // Footer = the sum of the rows shown above (per currency).
+  var byCur = {};
+  rows.forEach(function (r) {
+    var t = byCur[r.currency] = byCur[r.currency] || { n: 0, units: 0, revenue: 0, fees: 0, label: 0, cost: 0, profit: 0, nc: 0 };
+    t.n++; t.units += r.units; t.revenue += r.revenue; t.fees += r.fees; t.label += r.label; t.cost += r.cost;
+    if (r.profit == null) t.nc++; else t.profit += r.profit;
+  });
+  document.getElementById('pf-foot').innerHTML = Object.keys(byCur).map(function (c) {
+    var t = byCur[c]; var base = t.revenue - rows.filter(function (r) { return r.currency === c && r.profit == null; }).reduce(function (a, r) { return a + r.revenue; }, 0);
+    return '<tr><td class="l" colspan="3">Total of ' + t.n + ' row(s) shown' + (t.nc ? ' <span class="warn">(' + t.nc + ' with no cost: not in Profit)</span>' : '') + '</td>'
+      + '<td class="num">' + t.units + '</td><td class="num">' + money(t.revenue, c) + '</td><td class="num">' + money(t.fees, c) + '</td><td class="num">' + money(t.label, c) + '</td>'
+      + '<td class="num">' + money(t.cost, c) + '</td><td class="num' + mcls(t.profit) + '">' + money(Math.round(t.profit * 100) / 100, c) + '</td><td></td>'
+      + '<td class="num">' + (base > 0 ? Math.round(t.profit / base * 1000) / 10 + '%' : '—') + '</td></tr>';
+  }).join('');
+  document.querySelectorAll('#pf-table thead th').forEach(function (th) {
+    th.textContent = th.textContent.replace(/ [▲▼]$/, '') + (SORT.k === th.dataset.k ? (SORT.dir > 0 ? ' ▲' : ' ▼') : '');
+  });
+  if (OPEN) loadDetail(OPEN);
+}
+
+document.querySelectorAll('#pf-table thead th').forEach(function (th) {
+  th.addEventListener('click', function () {
+    var k = th.dataset.k;
+    if (SORT.k === k) { if (SORT.dir === 1) SORT.dir = -1; else SORT.k = null; } else { SORT.k = k; SORT.dir = 1; }
+    pfRender();
+  });
+});
+
+window.pfToggle = function (key) { OPEN = OPEN === key ? null : key; pfRender(); };
+
+var _detailCache = {};
+async function loadDetail(key) {
+  var cell = document.getElementById('pf-detail'); if (!cell) return;
+  var ck = DAYS + '|' + key;
+  try {
+    var d = _detailCache[ck] || (_detailCache[ck] = await api('/profit/orders?days=' + DAYS + '&key=' + encodeURIComponent(key)));
+    cell = document.getElementById('pf-detail'); if (!cell || OPEN !== key) return;
+    var r = d.row || {};
+    var lines = d.lines.map(function (l) {
+      var fd = Object.keys(l.fee_detail || {}).map(function (k) { return k + ' ' + money(l.fee_detail[k]); }).join(', ');
+      return '<tr><td class="l">' + esc((l.posted_date || '').slice(0, 10)) + '</td><td class="l mono">' + esc(l.order_id) + '</td>'
+        + '<td class="l">' + (l.kind === 'R' ? '<span class="neg">↩ Refund</span>' : 'Sold') + '</td><td class="l">' + (l.channel === 'AFN' ? 'FBA' : 'FBM') + '</td>'
+        + '<td class="num">' + l.qty + '</td><td class="num' + mcls(l.revenue) + '">' + money(l.revenue) + '</td>'
+        + '<td class="num" title="' + esc(fd) + '">' + money(l.fees) + '</td><td class="num">' + money(l.label) + '</td><td class="num">' + money(l.cost) + '</td>'
+        + '<td class="num' + mcls(l.profit) + '"><b>' + (l.profit == null ? '<span class="warn">no cost</span>' : money(l.profit)) + '</b></td>'
+        + '<td class="l warn">' + esc((l.flags || []).join(', ')) + '</td></tr>';
+    }).join('');
+    var fba = r.fbaUnits >= r.fbmUnits;
+    cell.innerHTML = '<div class="detail-inner"><div class="detail-grid"><div style="min-width:0">'
+      + '<div class="muted" style="margin-bottom:6px">Part # <b class="mono">' + esc(r.part || '— not mapped') + '</b> · ' + r.pack + ' piece(s) per unit · cost per piece '
+      + (r.costPerPiece != null ? '<b class="mono">$' + r.costPerPiece.toFixed(4) + '</b> (' + esc(r.costSrc) + ')' : '<span class="warn">⚠ no cost on file</span>')
+      + ' · Amazon fees: referral ' + money(r.referral) + ', FBA ' + money(r.fba) + ', other ' + money(r.otherFees) + '</div>'
+      + '<div style="overflow:auto;max-height:420px"><table class="mini"><tr><th class="l">Posted</th><th class="l">Order</th><th class="l">Type</th><th class="l">Ship</th><th>Qty</th><th>Revenue</th><th>Fees</th><th>Label</th><th>Cost</th><th>Profit</th><th class="l"></th></tr>' + lines + '</table></div>'
+      + '<div class="muted" style="margin-top:6px">Hover over a fee to see Amazon\'s breakdown.</div></div>'
+      + '<div class="box"><h4>💡 Try a price</h4><div class="muted">Asks Amazon what the fees would be at this price. Read-only: it does not change the live price.</div>'
+      + '<div class="controls" style="margin:8px 0 0">'
+      + '<label>Price $ <input id="tp-price" type="number" step="0.01" min="0" style="width:90px" value="' + (r.units ? (d.lines.filter(function (l) { return l.kind === 'S'; }).slice(0, 1).map(function (l) { return (l.item_price / l.qty).toFixed(2); })[0] || '') : '') + '"></label>'
+      + '<select id="tp-ch"><option value="AFN"' + (fba ? ' selected' : '') + '>FBA</option><option value="MFN"' + (fba ? '' : ' selected') + '>FBM</option></select>'
+      + '<label>Shipping charged $ <input id="tp-ship" type="number" step="0.01" min="0" style="width:70px" value="0"></label>'
+      + '<label title="FBM only. Leave empty to use this SKU\'s average label">Label $ <input id="tp-label" type="number" step="0.01" min="0" style="width:70px" placeholder="avg"></label>'
+      + '<button class="btn btn-primary" onclick="pfTry(OPEN)">Check</button></div>'
+      + '<div id="tp-out"></div></div></div></div>';
+  } catch (e) { if (cell) cell.innerHTML = '<span class="neg">⚠ ' + esc(e.message) + '</span>'; }
+}
+
+window.pfTry = async function (key) {
+  var r = DATA.rows.find(function (x) { return x.key === key; }), out = document.getElementById('tp-out');
+  out.innerHTML = '<div class="muted" style="margin-top:8px">Asking Amazon…</div>';
+  try {
+    var d = await api('/profit/try-price', { method: 'POST', body: JSON.stringify({
+      sku: r.sku, marketplace: r.marketplace, currency: r.currency, price: +document.getElementById('tp-price').value,
+      channel: document.getElementById('tp-ch').value, shipping: +document.getElementById('tp-ship').value || 0, label: document.getElementById('tp-label').value,
+    }) });
+    var fd = d.feeDetail.map(function (f) { return '<div>&nbsp;&nbsp;' + esc(f.type) + '</div><div>' + money(f.amount) + '</div>'; }).join('');
+    var cls = d.profit == null ? 'nocost' : d.profit < 0 ? 'loss' : d.margin < DATA.settings.thinPct ? 'thin' : 'good';
+    out.innerHTML = '<div class="kv">'
+      + '<div>Price + shipping charged</div><div>' + money(d.revenue) + '</div>'
+      + '<div>Amazon fees (' + d.channel + ')</div><div>−' + money(d.fees) + '</div>' + fd
+      + '<div>Shipping label <span class="muted">(' + esc(d.labelSrc) + ')</span></div><div>−' + money(d.label) + '</div>'
+      + '<div>Product cost <span class="muted">(' + d.pieces + ' pcs × ' + (d.costPerPiece != null ? '$' + (+d.costPerPiece).toFixed(4) : '?') + ', ' + esc(d.costSrc) + ')</span></div><div>' + (d.cost == null ? '⚠ no cost' : '−' + money(d.cost)) + '</div>'
+      + '<div><b>Profit per unit</b></div><div><b class="' + mcls(d.profit) + '">' + (d.profit == null ? 'not known' : money(d.profit)) + '</b></div>'
+      + '<div>Margin</div><div>' + (d.margin == null ? '—' : d.margin + '%') + '</div></div>'
+      + '<div style="margin-top:8px"><span class="pill ' + cls + '">' + STATUS[cls][1] + '</span></div>';
+  } catch (e) { out.innerHTML = '<div class="neg" style="margin-top:8px">⚠ ' + esc(e.message) + '</div>'; }
+};
+
+window.pfSaveSettings = async function () {
+  try {
+    var d = await api('/profit/settings', { method: 'POST', body: JSON.stringify({ thinPct: +document.getElementById('pf-set-thin').value, costBasis: document.getElementById('pf-set-basis').value }) });
+    toast(d.changes.length ? 'Saved: ' + d.changes.join('; ') : 'Saved (no change)');
+    _detailCache = {}; load();
+  } catch (e) { toast('⚠ ' + e.message); }
+};
+
+function renderSync() {
+  var s = DATA.sync || {}, sec = DATA.secrets || {};
+  var missing = Object.keys(sec).filter(function (k) { return !sec[k] && k !== 'AMAZON_SELLER_ID'; });
+  document.getElementById('pf-sync-info').innerHTML =
+    'Amazon fees pulled up to: <b>' + (s.fin_synced_to ? new Date(s.fin_synced_to).toLocaleString() : 'never') + '</b>'
+    + (s.fin_synced_from ? ' (from ' + new Date(s.fin_synced_from).toLocaleDateString() + ')' : '')
+    + ' · Orders up to: <b>' + (s.ord_synced_to ? new Date(s.ord_synced_to).toLocaleString() : 'never') + '</b>'
+    + (s.finMore || s.ordMore ? ' · <span class="warn">a pull is part-way done: press “Pull new Amazon data now” to carry on</span>' : '')
+    + ' · Pulls by itself every morning.'
+    + (missing.length ? '<div class="neg" style="margin-top:4px">⚠ Missing secrets on the xfitting-profit worker: ' + missing.join(', ') + '</div>' : '');
+  document.getElementById('pf-log').innerHTML = (DATA.log || []).map(function (l) {
+    return '<div>' + esc(new Date(l.ts).toLocaleString()) + ' · <b>' + esc(l.by_user || '') + '</b> · ' + esc(l.action) + ' · <span class="mono">' + esc(String(l.detail || '').slice(0, 220)) + '</span></div>';
+  }).join('') || 'Nothing yet.';
+}
+
+window.pfSync = async function (restart) {
+  var b1 = document.getElementById('pf-sync-btn'), b2 = document.getElementById('pf-sync90-btn'), msg = document.getElementById('pf-sync-msg');
+  b1.disabled = b2.disabled = true;
+  var lines = 0, orders = 0, first = true, finMore = true, ordMore = true;
+  try {
+    // Amazon lets us read about one page every 2 seconds, so a long pull goes in steps.
+    for (var i = 0; i < 40; i++) {
+      msg.textContent = 'Pulling from Amazon… ' + lines + ' order lines, ' + orders + ' orders so far';
+      var d = await api('/profit/sync', { method: 'POST', body: JSON.stringify({ restart: restart && first, days: 90, finances: finMore, orders: ordMore }) });
+      first = false;
+      finMore = !!(d.finances && d.finances.more); ordMore = !!(d.orders && d.orders.more);
+      if (!finMore && !ordMore) d.more = false;
+      if (d.finances && d.finances.error) throw new Error(d.finances.error);
+      lines += (d.finances && d.finances.lines) || 0; orders += (d.orders && d.orders.orders) || 0;
+      if (d.orders && d.orders.error) msg.textContent = 'Orders: ' + d.orders.error;
+      if (!d.more) break;
+    }
+    msg.textContent = '✅ Done: ' + lines + ' order lines, ' + orders + ' orders.';
+    _detailCache = {}; load();
+  } catch (e) { msg.textContent = '⚠ ' + e.message; }
+  finally { b1.disabled = b2.disabled = false; }
+};
+
+(function () {
+  if (!TOKEN || !USER || !USER.roles || !USER.roles.includes('mgmt')) {
+    localStorage.removeItem('xf_cred_token'); localStorage.removeItem('xf_cred_user'); TOKEN = null;
+    showLogin(); return;
+  }
+  // Saved sign-in: open right away; every request is checked by the server, and xf-access.js re-checks the sign-in in the background.
+  openApp();
+})();
+</script>
+<script src="xf-signout.js?v=20260924"></script>
+<script src="xf-access.js?v=20260927"></script>
+</body>
+</html>
