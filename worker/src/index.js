@@ -4738,6 +4738,26 @@ async function inventoryReceiveApply(request, env) {
       d1Row = await d1First(env, 'SELECT * FROM master_list WHERE sheet_row = ? AND UPPER(part_num) = ?', [rowIndex, partNum.toUpperCase()]);
     }
 
+    // History "Part Total Before → After" for this Receive PO entry (the
+    // row is written as already Verified, so it never goes through
+    // inventoryVerify, which records it for everything else).
+    const partU = partNum.toUpperCase();
+    let totalBefore = null;
+    try { await ensureTotalTrackingColumns(env); totalBefore = await invPartCases(env, partU); } catch (e) { totalBefore = null; }
+    const recordTotals = async (logRes, oldRowCases, oldLoc) => {
+      const id = logRes && logRes.meta && logRes.meta.last_row_id;
+      if (!id) return;
+      if (totalBefore === null) return invSaveTotalsFailed(env, [id], `couldn't read ${partU}'s total before receiving`);
+      try {
+        const after = await invPartCases(env, partU), old = parseFloat(oldRowCases) || 0, expected = totalBefore - old + casesNum;
+        const note = Math.abs(after - expected) > 0.001
+          ? `\u26a0 ${partU} total should be ${_n(totalBefore)}${old ? ' \u2212 ' + _n(old) : ''} + ${_n(casesNum)} = ${_n(expected)}, but it is ${_n(after)}. Another change to ${partU} landed at the same moment \u2014 check ${partU}'s shelves.`
+          : old > 0 ? `\u2139 Receive PO reused ${partU}'s row at ${oldLoc || '?'} that still showed ${_n(old)} case(s): it now shows ${_n(casesNum)} at ${palletWithDate}, so the ${_n(old)} old case(s) are no longer counted. Check ${oldLoc || 'that shelf'}.`
+          : null;
+        await invSaveTotals(env, [id], totalBefore, after, note);
+      } catch (e) { await invSaveTotalsFailed(env, [id], e.message); }
+    };
+
     if (!d1Row) {
       // ── INSERT path — no existing blank-cases row found ─────────────────
       // Insert new row into D1 master_list directly
@@ -4755,7 +4775,7 @@ async function inventoryReceiveApply(request, env) {
 
       // Write inventory_log for new insert
       const logNoteNew = `[RECEIVE PO NEW] Pallet: ${palletWithDate}${vendor ? ' · Vendor: ' + vendor : ''}${priceNum != null ? ' · Price: $' + priceNum.toFixed(3) : ''}`;
-      await env.DB.prepare(
+      const logResNew = await env.DB.prepare(
         `INSERT INTO inventory_log
          (sheet_row, timestamp, type, part_num, location, cases, initials, notes,
           status, verified_by, verified_at, is_new, is_placeholder, master_row_index, sku)
@@ -4763,6 +4783,7 @@ async function inventoryReceiveApply(request, env) {
       ).bind(ts, 'IN', partNum.toUpperCase(), palletWithDate, casesNum,
              initials || 'MGMT', logNoteNew, 'Verified', initials || 'MGMT', ts, bs
       ).run();
+      await recordTotals(logResNew, 0, '');
 
       // Update cogs if price provided
       if (logPrice && priceNum != null) {
@@ -4802,7 +4823,7 @@ async function inventoryReceiveApply(request, env) {
 
     // ── 2. Write inventory_log entry (IN, auto-verified) ────────────────
     const logNote = `[RECEIVE PO] Pallet: ${palletWithDate}${vendor ? ' · Vendor: ' + vendor : ''}${priceNum != null ? ' · Price: $' + priceNum.toFixed(3) : ''}`;
-    await env.DB.prepare(
+    const logRes = await env.DB.prepare(
       `INSERT INTO inventory_log
        (sheet_row, timestamp, type, part_num, location, cases, initials, notes,
         status, verified_by, verified_at, is_new, is_placeholder, master_row_index, sku)
@@ -4814,6 +4835,7 @@ async function inventoryReceiveApply(request, env) {
       'Verified', initials || 'MGMT', ts,
       d1Row.sheet_row || 0, bs
     ).run();
+    await recordTotals(logRes, d1Row.cases, oldLocation);
 
     // ── 3. Update cogs + cogs_history if price provided ──────────────────
     if (logPrice && priceNum != null) {

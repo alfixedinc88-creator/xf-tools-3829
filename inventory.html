@@ -5913,6 +5913,13 @@ window.invCredLogin = async function() {
       if (wn) return '<span onclick=\'histShowFullNote(' + JSON.stringify(wn).replace(/&/g, '&amp;').replace(/'/g, '&#39;').replace(/</g, '&lt;') + ', "\u26a0 Total not recorded")\' title="Click for details" style="color:var(--red);font-weight:700;cursor:pointer;text-decoration:underline dotted">' + (prefix || '') + '\u26a0 not recorded</span>';
       var st = String(r.status || '').toLowerCase(), ty = String(r.type || '').toUpperCase();
       if (st === 'pending' && /^(IN|OUT|TRANSFER_OUT|TRANSFER_IN)$/.test(ty)) return '<span title="Before → after is worked out when this entry is approved in Review" style="color:var(--text3)">' + (prefix || '') + 'after approval</span>';
+      // Approved but nothing saved: say so (never a bare blank) — older
+      // entries, or a screen that approved without recording it.
+      if (st === 'verified' && /^(IN|OUT|TRANSFER_OUT|TRANSFER_IN)$/.test(ty)) {
+        var why = 'The before \u2192 after was not saved for this entry' + (r.timestamp ? ' (' + String(r.timestamp).slice(0, 10) + ')' : '') + '. It was approved before totals were recorded, or by a screen that did not record them'
+          + (/\[RECEIVE PO/.test(r.notes || '') ? ' (Receive PO \u2014 recorded from now on)' : '') + '. If this is a NEW entry, send the part # and time so it can be traced.';
+        return '<span onclick=\'histShowFullNote(' + JSON.stringify(why).replace(/&/g, '&amp;').replace(/'/g, '&#39;').replace(/</g, '&lt;') + ', "Total not recorded")\' title="Click for why" style="color:var(--text3);cursor:pointer;text-decoration:underline dotted">' + (prefix || '') + 'not recorded</span>';
+      }
       return '';
     }
     var part = r.total_scope === 'part', w = String(r.total_warning || ''), info = w.charAt(0) === '\u2139';
