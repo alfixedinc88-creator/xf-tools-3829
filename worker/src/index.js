@@ -3863,6 +3863,48 @@ async function inventoryContainerPallets(url, env) {
   return cors(new Response(JSON.stringify({ ok: true, lines, truncated: rows.length >= 2000 }), { headers: { 'Content-Type': 'application/json' } }));
 }
 
+// GET /inventory/containers/soldout?title= — 🔥 which pallets of a container
+// carry part #s we were SOLD OUT of (0 cases of that part # on every shelf
+// right before 📦 Received — read from History's Part Total Before, never
+// guessed; a part # not received yet uses what SKU Mgr has now). So the guy
+// can put those pallets up front first. Read only: never changes any count.
+async function inventoryContainerSoldOut(url, env) {
+  await reorderFixTables(env);
+  const J = (o, st) => cors(new Response(JSON.stringify(o), { status: st || 200, headers: { 'Content-Type': 'application/json' } }));
+  const title = (url.searchParams.get('title') || '').trim();
+  if (!title) return J({ ok: false, error: 'Pick a container' }, 400);
+  const rows = (await env.DB.prepare('SELECT * FROM reorder_pallet WHERE title = ? ORDER BY vendor, id LIMIT 5000').bind(title).all()).results || [];
+  const moved = {};
+  ((await env.DB.prepare(_PALLET_MOVED_SQL + ' GROUP BY m.pallet_id').all()).results || []).forEach(m => { moved[m.pallet_id] = m.moved || 0; });
+  const alias = {}; ((await env.DB.prepare('SELECT raw, part FROM reorder_alias').all()).results || []).forEach(a => { alias[String(a.raw).toUpperCase()] = String(a.part).toUpperCase(); });
+  const real = p => alias[String(p).toUpperCase()] || String(p).toUpperCase();
+  const onWay = new Set(((await env.DB.prepare('SELECT part FROM reorder_incoming WHERE title = ?').bind(title).all()).results || []).map(r => String(r.part).toUpperCase()));
+  // Its 📦 Received Stock In per part #: Part Total Before (cases of that part #, every shelf).
+  await ensureTotalTrackingColumns(env);
+  const head = '[RECEIVED] ' + title + ' \u2014 ', rcv = {};
+  (await d1All(env, `SELECT UPPER(TRIM(part_num)) AS p, location, status, total_before, total_warning, notes FROM inventory_log
+    WHERE type = 'IN' AND notes LIKE '[RECEIVED] %' AND COALESCE(status, '') != 'Rejected' ORDER BY id`)).forEach(r => {
+    if (String(r.notes || '').startsWith(head) && !rcv[r.p]) rcv[r.p] = r; });
+  const parts = [...new Set(rows.map(r => real(r.part)))], now = {};
+  for (let i = 0; i < parts.length; i += 90) {
+    const chunk = parts.slice(i, i + 90);
+    (await d1All(env, `SELECT UPPER(part_num) AS p, SUM(cases) AS c FROM master_list WHERE UPPER(part_num) IN (${chunk.map(() => '?').join(',')}) GROUP BY UPPER(part_num)`, chunk))
+      .forEach(r => { now[r.p] = parseFloat(r.c) || 0; });
+  }
+  const lines = rows.map(r => {
+    const part = real(r.part), rc = rcv[part], mv = Math.min(moved[r.id] || 0, r.cases || 0);
+    let before = null, basis, received = false, location = '';
+    if (rc && rc.status === 'Verified' && rc.total_before != null) { before = parseFloat(rc.total_before) || 0; basis = 'history'; received = true; location = rc.location || ''; }
+    else if (rc) { basis = 'unknown'; received = true; location = rc.location || ''; } // received but its before → after wasn't recorded
+    else if (onWay.has(String(r.part).toUpperCase()) || onWay.has(part)) { before = now[part] || 0; basis = 'now'; }
+    else basis = 'unknown';
+    return { id: r.id, vendor: r.vendor, pallet: r.pallet, po: r.po || '', part, description: r.description || '', boxes: r.cases || 0, moved: mv,
+      left: Math.max(0, (r.cases || 0) - mv), pcs: r.pcs || 0, pcsPerCtn: r.pcs_per_ctn || 0, stockBefore: before, basis, received, location,
+      soldOut: before != null && before <= 1e-9, stockNow: now[part] || 0 };
+  });
+  return J({ ok: true, title, lines });
+}
+
 async function inventoryTransferLog(request, env) {
   try {
     const body = await request.json().catch(() => ({}));
@@ -5581,6 +5623,7 @@ const _app = {
       if (path === '/inventory/containers' && method === 'GET') return await inventoryContainers(env);
       if (path === '/inventory/containers/pallets' && method === 'GET') return await inventoryContainerPallets(url, env);
       if (path === '/inventory/pallets/received' && method === 'GET') return await inventoryPalletsReceived(env);
+      if (path === '/inventory/containers/soldout' && method === 'GET') return await inventoryContainerSoldOut(url, env);
       // receive-preview / receive-apply moved up to the credential-based
       // check earlier in the router (ReceivePO no longer sends the old
       // PIN session token at all) - this block would never be reached

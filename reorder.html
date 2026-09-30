@@ -2181,6 +2181,8 @@ body { display:flex; flex-direction:column; min-height:100vh; background:var(--b
           <label style="font-size:12px;font-weight:700">Location <input id="rvo-rc-loc" value="GARAGE" style="width:140px;margin-left:6px;padding:5px 8px;border:1.5px solid var(--border);border-radius:6px;font-family:var(--mono);text-transform:uppercase"></label>
           <div id="rvo-rc-body" style="margin-top:10px"></div>
           <div style="display:flex;gap:8px;margin-top:12px;align-items:center"><span id="rvo-rc-sum" style="flex:1;font-size:13px"></span>
+            <button class="btn btn-secondary" onclick="soldOutPalletsReport(RVO_RC.title,'csv')" title="Which pallets carry part #s we were sold out of — put those up front first">🔥 Sold-out pallets ⬇</button>
+            <button class="btn btn-secondary" onclick="soldOutPalletsReport(RVO_RC.title,'print')" title="Same report, to print">🖨</button>
             <button class="btn btn-secondary" onclick="document.getElementById('rvo-recv').style.display='none'">Close</button>
             <button class="btn btn-primary" id="rvo-rc-go" onclick="rvoReceiveGo()">📦 Stock in to SKU Mgr</button></div>
         </div>
@@ -4217,6 +4219,60 @@ function rvoRcSum() {
   var miss = L.filter(function (l) { return !(rvoNum(l.addCases) > 0); }).length;
   document.getElementById('rvo-rc-sum').innerHTML = !L.length ? '<b style="color:var(--green)">✓ All lines stocked in.</b>' : '<b>' + L.length + '</b> lines to stock in · <b>' + (Math.round(cs * 100) / 100) + '</b> cases · ' + fmt0(un) + ' units'
     + (miss ? ' · <span style="color:var(--red)">' + miss + ' line(s) need the number of cases</span>' : '');
+}
+// 🔥 Sold-out pallets report — which pallets of a container carry part #s we
+// were sold out of (0 cases on every shelf right before 📦 Received, from
+// History's Part Total Before), so those pallets go up front first.
+// how: 'csv' downloads it, 'print' opens a page to print. Read only.
+async function soldOutPalletsReport(title, how) {
+  var E = function (v) { return String(v == null ? '' : v).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;'); };
+  var N = function (v) { return Math.round((parseFloat(v) || 0) * 100) / 100; };
+  var win = how === 'print' ? window.open('', '_blank') : null;
+  var d;
+  try { d = await (await wFetch(W + '/inventory/containers/soldout?title=' + encodeURIComponent(title))).json(); }
+  catch (e) { d = { ok: false, error: e.message }; }
+  if (!d.ok) { if (win) win.close(); alert('Sold-out report failed: ' + (d.error || 'unknown error')); return; }
+  var natural = function (a, b) { return String(a).localeCompare(String(b), undefined, { numeric: true }); };
+  var sold = d.lines.filter(function (l) { return l.soldOut && l.left > 0; });
+  var unknown = d.lines.filter(function (l) { return l.basis === 'unknown' && l.left > 0; });
+  var movedSold = d.lines.filter(function (l) { return l.soldOut && !(l.left > 0); });
+  var pal = {}, pals = [];
+  sold.forEach(function (l) { var k = (l.vendor || '') + '|' + l.pallet;
+    if (!pal[k]) { pal[k] = { vendor: l.vendor || '', pallet: l.pallet, parts: [], boxes: 0 }; pals.push(pal[k]); }
+    pal[k].parts.push(l.part); pal[k].boxes += l.left; });
+  pals.sort(function (a, b) { return b.parts.length - a.parts.length || natural(a.pallet, b.pallet); });
+  sold.sort(function (a, b) { return natural(a.pallet, b.pallet) || natural(a.part, b.part); });
+  var when = new Date().toLocaleString('en-US', { timeZone: 'America/New_York' });
+  var basisTxt = function (l) { return l.basis === 'history' ? 'History: before 📦 Received' : l.basis === 'now' ? 'SKU Mgr now (not received yet)' : '⚠ not recorded'; };
+  var palletCols = ['Pallet', 'Vendor', 'Sold-out part #s on it', 'Their boxes left on it'];
+  var palletRows = pals.map(function (p) { return [p.pallet, p.vendor, p.parts.join(', '), N(p.boxes)]; });
+  var lineCols = ['Pallet', 'Part #', 'Description', 'Boxes on pallet', 'Boxes left on pallet', 'Cases on shelves before', 'Stocked in at', 'Stock from'];
+  var lineRows = sold.map(function (l) { return [l.pallet, l.part, l.description, N(l.boxes), N(l.left), N(l.stockBefore), l.location || '', basisTxt(l)]; });
+  var unkRows = unknown.map(function (l) { return [l.pallet, l.part, l.description, N(l.boxes), N(l.left), '?', l.location || '', basisTxt(l)]; });
+  var head = '🔥 Sold-out pallets — ' + title;
+  var note = pals.length + ' pallet(s) to put up front · ' + sold.length + ' sold-out line(s)'
+    + (movedSold.length ? ' · ' + movedSold.length + ' sold-out line(s) already moved off their pallet (not listed)' : '')
+    + (unknown.length ? ' · ⚠ ' + unknown.length + ' line(s) could not be checked (listed at the bottom)' : '');
+  if (how === 'print') {
+    var tbl = function (cols, rows) { return '<table><thead><tr>' + cols.map(function (c) { return '<th>' + E(c) + '</th>'; }).join('') + '</tr></thead><tbody>'
+      + rows.map(function (r) { return '<tr>' + r.map(function (c) { return '<td>' + E(c) + '</td>'; }).join('') + '</tr>'; }).join('') + '</tbody></table>'; };
+    win.document.write('<!doctype html><meta charset="utf-8"><title>' + E(head) + '</title><style>body{font:13px system-ui,sans-serif;margin:16px;color:#111}h1{font-size:18px;margin:0 0 4px}h2{font-size:15px;margin:18px 0 6px}'
+      + 'table{border-collapse:collapse;width:100%}th,td{border:1px solid #999;padding:5px 7px;text-align:left;vertical-align:top}th{background:#eee}td:nth-child(2){white-space:nowrap}.big td:first-child{font-size:18px;font-weight:700}.m{color:#555;font-size:12px}@media print{button{display:none}}</style>'
+      + '<button onclick="print()" style="float:right;padding:8px 14px;font-size:14px">🖨 Print</button><h1>' + E(head) + '</h1><div class="m">' + E(when) + ' · ' + E(note) + '</div>'
+      + (pals.length ? '<h2>Put these pallets up front first</h2><div class="big">' + tbl(palletCols, palletRows) + '</div><h2>What is on them</h2>' + tbl(lineCols, lineRows)
+        : '<h2>✓ Nothing on this container was sold out.</h2>')
+      + (unkRows.length ? '<h2>⚠ Could not check (History has no before total)</h2>' + tbl(lineCols, unkRows) : ''));
+    win.document.close(); return;
+  }
+  var q = function (v) { v = String(v == null ? '' : v); return /[",\n]/.test(v) ? '"' + v.replace(/"/g, '""') + '"' : v; };
+  var csv = [[head], [when], [note], [], ['PUT THESE PALLETS UP FRONT FIRST'], palletCols].concat(palletRows)
+    .concat([[], ['WHAT IS ON THEM'], lineCols]).concat(lineRows)
+    .concat(unkRows.length ? [[], ['COULD NOT CHECK (History has no before total)'], lineCols].concat(unkRows) : [])
+    .map(function (r) { return r.map(q).join(','); }).join('\r\n');
+  var a = document.createElement('a');
+  a.href = URL.createObjectURL(new Blob(['﻿' + csv], { type: 'text/csv;charset=utf-8' }));
+  a.download = 'sold-out-pallets-' + title.replace(/[^\w-]+/g, '_') + '.csv';
+  document.body.appendChild(a); a.click(); setTimeout(function () { URL.revokeObjectURL(a.href); a.remove(); }, 1000);
 }
 async function rvoReceiveGo() {
   var loc = (document.getElementById('rvo-rc-loc').value || 'GARAGE').trim().toUpperCase();
