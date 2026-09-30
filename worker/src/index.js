@@ -3891,6 +3891,23 @@ async function inventoryContainerSoldOut(url, env) {
     (await d1All(env, `SELECT UPPER(part_num) AS p, SUM(cases) AS c FROM master_list WHERE UPPER(part_num) IN (${chunk.map(() => '?').join(',')}) GROUP BY UPPER(part_num)`, chunk))
       .forEach(r => { now[r.p] = parseFloat(r.c) || 0; });
   }
+  // Name (SKU Mgr / products) and description (packing list → Reorder fix → vendor sheet), so it's easy to tell what's in it.
+  const nm = {}, desc = {}, U = v => String(v || '').trim().toUpperCase();
+  const pick = async (sql, args, fn) => { try { (await d1All(env, sql, args)).forEach(fn); } catch (e) { /* table not there yet */ } };
+  for (let i = 0; i < parts.length; i += 90) {
+    const chunk = parts.slice(i, i + 90), qs = chunk.map(() => '?').join(',');
+    await pick(`SELECT UPPER(part_num) AS p, name FROM master_list WHERE UPPER(part_num) IN (${qs}) AND COALESCE(name, '') != ''`, chunk, r => { if (!nm[r.p]) nm[r.p] = r.name; });
+    await pick(`SELECT UPPER(sku) AS p, COALESCE(NULLIF(warehouse_name, ''), name) AS name FROM products WHERE UPPER(sku) IN (${qs})`, chunk, r => { if (!nm[r.p] && r.name) nm[r.p] = r.name; });
+    // Still no name: another pack size of the same parent part # (e.g. 27-2-2=1 for 27-2-2=10).
+    const noName = chunk.filter(p => !nm[p]), baseOf = p => String(p).split('=')[0];
+    if (noName.length) {
+      const bases = [...new Set(noName.map(baseOf))], byBase = {};
+      await pick(`SELECT UPPER(base_sku) AS b, name FROM master_list WHERE UPPER(base_sku) IN (${bases.map(() => '?').join(',')}) AND COALESCE(name, '') != ''`, bases, r => { if (!byBase[r.b]) byBase[r.b] = r.name; });
+      noName.forEach(p => { if (byBase[baseOf(p)]) nm[p] = byBase[baseOf(p)]; });
+    }
+    await pick(`SELECT UPPER(part) AS p, description FROM reorder_fix WHERE UPPER(part) IN (${qs}) AND COALESCE(description, '') != ''`, chunk, r => { if (!desc[r.p]) desc[r.p] = r.description; });
+    await pick(`SELECT UPPER(part) AS p, description FROM reorder_vendor_catalog WHERE UPPER(part) IN (${qs}) AND COALESCE(description, '') != '' ORDER BY updated_at DESC`, chunk, r => { if (!desc[r.p]) desc[r.p] = r.description; });
+  }
   const lines = rows.map(r => {
     const part = real(r.part), rc = rcv[part], mv = Math.min(moved[r.id] || 0, r.cases || 0);
     let before = null, basis, received = false, location = '';
@@ -3898,7 +3915,7 @@ async function inventoryContainerSoldOut(url, env) {
     else if (rc) { basis = 'unknown'; received = true; location = rc.location || ''; } // received but its before → after wasn't recorded
     else if (onWay.has(String(r.part).toUpperCase()) || onWay.has(part)) { before = now[part] || 0; basis = 'now'; }
     else basis = 'unknown';
-    return { id: r.id, vendor: r.vendor, pallet: r.pallet, po: r.po || '', part, description: r.description || '', boxes: r.cases || 0, moved: mv,
+    return { id: r.id, vendor: r.vendor, pallet: r.pallet, po: r.po || '', part, name: nm[part] || '', description: r.description || desc[part] || desc[U(r.part)] || '', boxes: r.cases || 0, moved: mv,
       left: Math.max(0, (r.cases || 0) - mv), pcs: r.pcs || 0, pcsPerCtn: r.pcs_per_ctn || 0, stockBefore: before, basis, received, location,
       soldOut: before != null && before <= 1e-9, stockNow: now[part] || 0 };
   });
