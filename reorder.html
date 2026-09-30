@@ -4956,14 +4956,19 @@ async function rvoPickVendor(sku, v) {
 }
 // Totals check for vendor orders: every part # to order is on exactly one
 // vendor's order, and the vendors' totals add up to the whole order.
+// Units with up to 2 decimals (half bags from a case size that isn't whole bags), no float junk.
+function fmtU(n) { return (Math.round((+n || 0) * 100) / 100).toLocaleString('en-US', { maximumFractionDigits: 2 }); }
 function rvoVendorCheck() {
   var all = RVO.rows.filter(function (r) { return !RVO.off[r.sku] && rvoQty(r) > 0; });
   var seen = {}, dup = [], by = {}, total = 0;
   all.forEach(function (r) { if (seen[r.sku]) dup.push(r.sku); seen[r.sku] = 1;
     var k = r.vendor || '(no vendor)', q = rvoQty(r); by[k] = by[k] || { parts: 0, units: 0 }; by[k].parts++; by[k].units += q; total += q; });
   var sum = Object.keys(by).reduce(function (a, k) { return a + by[k].units; }, 0);
-  return { ok: !dup.length && sum === total, dup: dup, by: by, total: total, sum: sum, parts: all.length,
-    text: Object.keys(by).sort().map(function (k) { return k + ' ' + fmt0(by[k].units) + ' (' + by[k].parts + ' part #s)'; }).join(' + ') + ' = ' + fmt0(sum) + ' units · whole order ' + fmt0(total) + ' units' };
+  // Case sizes that aren't whole bags (SKU Mgr 25 pcs/case for a =10 bag =
+  // 2.5 bags) give decimals; adding them in another order differs in the
+  // last decimal place — equal within 0.001 unit is equal.
+  return { ok: !dup.length && Math.abs(sum - total) < 0.001, dup: dup, by: by, total: total, sum: sum, parts: all.length,
+    text: Object.keys(by).sort().map(function (k) { return k + ' ' + fmtU(by[k].units) + ' (' + by[k].parts + ' part #s)'; }).join(' + ') + ' = ' + fmtU(sum) + ' units · whole order ' + fmtU(total) + ' units' };
 }
 function rvoCsv() {
   if (!RVO.loaded) { alert('Press Calculate first.'); return; }
@@ -4980,9 +4985,9 @@ function rvoCsv() {
   var head = ['Part #', 'Outside Box UPC Code', 'Inside Bag UPC Code', 'Description', 'Order Qty', 'Cases', 'Qty per Case', 'Note', 'FBA ASIN'];
   var lines = [head.join(',')];
   rows.forEach(function (r) {
-    var q = rvoQty(r), cases = r.caseQty ? Math.ceil(q / r.caseQty) : '';
+    var q = Math.round(rvoQty(r) * 1000) / 1000, cases = r.caseQty ? Math.ceil(q / r.caseQty - 1e-9) : '';
     var note = (RVO.edits[r.sku] != null ? 'Qty changed by hand' : (/Rounded up/.test(r.note) ? r.note.split(' · ').filter(function (n) { return /Rounded up/.test(n); })[0] : ''));
-    lines.push([cell(r.sku), upcCell(r.outsideUpc), upcCell(r.insideUpc), cell(r.description), q, cases, r.caseQty || '', cell(note), cell(r.asin || '')].join(','));
+    lines.push([cell(r.sku), upcCell(r.outsideUpc), upcCell(r.insideUpc), cell(r.description), q, cases, r.caseQty ? Math.round(r.caseQty * 1000) / 1000 : '', cell(note), cell(r.asin || '')].join(','));
   });
   var name = (v && v !== '__none' ? v.replace(/[^A-Za-z0-9_-]+/g, '_') : 'ALL') + '_PO_' + new Date().toISOString().slice(0, 10) + '.csv';
   var blob = new Blob(['﻿' + lines.join('\r\n')], { type: 'text/csv;charset=utf-8' });
