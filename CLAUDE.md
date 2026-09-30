@@ -24,6 +24,12 @@ that change.
   works afterwards (re-run the earlier tests for them).
 - If a change has to touch something that works, say so plainly in the PR
   and in the report to the owner, before it is merged.
+- Run `node tests/keep-working.test.mjs` before every PR. It runs on every
+  PR too ("Keep-working checks"); a ❌ means something that worked broke —
+  fix it, never delete or loosen the check.
+- Every time the owner reports something broken and it gets fixed, add a
+  check for it to `tests/keep-working.test.mjs` in the same PR, so it can't
+  quietly break again.
 
 ## History must always show the totals
 
@@ -33,6 +39,10 @@ shelf), and the report at the top shows the day's **Starting → Ending
 cases**. Never leave the total blank without a reason:
 - Pending rows say "after approval".
 - If the total couldn't be worked out, the row says "⚠ not recorded" and why.
+- Every screen that approves or writes an approved Stock In / Out / Transfer
+  (Review, auto-approve, Audit, Receive PO, Reorder 📦 Received, Cancel)
+  must record the before → after. A new one must too.
+- "Today" / "Last N days" start at midnight New York time, not "24 hours ago".
 
 ## Stock Out pick rules (the system picks for the picker)
 
