@@ -2350,6 +2350,110 @@ async function buildPendingMap(env) {
   } catch(e) { return {}; }
 }
 
+// ── 🖼 Product photos: one per parent part # (base SKU) ─────────────────────
+// product_photo: base_sku → url. source 'picking' / 'veeqo' = filled in
+// automatically (only where there's no photo yet); 'manual' = set on
+// Inventory → Product Photos and never replaced automatically (an empty
+// manual url = "no photo", on purpose). Falls back to the listing photo in
+// product_catalog.image_url_1.
+async function productPhotoTable(env) {
+  await env.DB.prepare('CREATE TABLE IF NOT EXISTS product_photo (base_sku TEXT PRIMARY KEY, url TEXT, source TEXT, set_by TEXT, updated_at TEXT)').run();
+}
+async function productPhotoMap(env, bases) {
+  const out = {}; if (!env.DB) return out;
+  const B = [...new Set((bases || []).map(b => String(b || '').split('=')[0].trim().toUpperCase()).filter(Boolean))];
+  if (!B.length) return out;
+  await productPhotoTable(env);
+  for (let i = 0; i < B.length; i += 90) {
+    const ch = B.slice(i, i + 90), q = ch.map(() => '?').join(',');
+    ((await env.DB.prepare(`SELECT base_sku, url FROM product_photo WHERE UPPER(base_sku) IN (${q})`).bind(...ch).all()).results || [])
+      .forEach(r => { out[String(r.base_sku).toUpperCase()] = r.url || ''; });
+    const need = ch.filter(b => !(b in out));
+    if (need.length) {
+      try {
+        ((await env.DB.prepare(`SELECT base_sku, image_url_1 FROM product_catalog WHERE UPPER(base_sku) IN (${need.map(() => '?').join(',')}) AND TRIM(COALESCE(image_url_1,'')) != '' ORDER BY pack_qty ASC`).bind(...need).all()).results || [])
+          .forEach(r => { const k = String(r.base_sku).toUpperCase(); if (!out[k]) out[k] = r.image_url_1; });
+      } catch (_) { /* no product_catalog table */ }
+    }
+  }
+  Object.keys(out).forEach(k => { if (!out[k]) delete out[k]; });
+  return out;
+}
+async function productPhotoRemember(env, map, source) {
+  if (!env.DB) return 0;
+  await productPhotoTable(env);
+  const now = new Date().toISOString(), stmts = [];
+  for (const [b, url] of Object.entries(map)) {
+    const u = String(url || '').trim(); if (!/^https?:\/\//i.test(u)) continue;
+    stmts.push(env.DB.prepare('INSERT OR IGNORE INTO product_photo (base_sku, url, source, set_by, updated_at) VALUES (?,?,?,?,?)').bind(String(b).toUpperCase(), u, source, source, now));
+  }
+  let added = 0;
+  for (let i = 0; i < stmts.length; i += 50) { const rs = await env.DB.batch(stmts.slice(i, i + 50)); (rs || []).forEach(r => { added += (r && r.meta && r.meta.changes) || 0; }); }
+  return added;
+}
+// Photos already sitting in saved orders (ship_manifest_log.line_items:
+// s = sku, b = bin = parent part #, i = photo), last `days` days.
+async function productPhotoBackfill(env, days) {
+  if (!env.DB) return 0;
+  const since = new Date(Date.now() - (days || 60) * 86400000).toISOString().slice(0, 10), found = {};
+  let rows = [];
+  try { rows = (await env.DB.prepare("SELECT line_items FROM ship_manifest_log WHERE date >= ? AND line_items LIKE '%http%' ORDER BY date DESC LIMIT 5000").bind(since).all()).results || []; } catch (_) { return 0; }
+  for (const r of rows) {
+    let li = []; try { li = JSON.parse(r.line_items || '[]'); } catch (_) {}
+    for (const o of li) {
+      if (!o || !o.i) continue;
+      const sku = String(o.s || '').trim().toUpperCase(), bin = String(o.b || '').trim().toUpperCase();
+      const base = /^\d+(-\d+)+(=|$)/.test(sku) ? sku.split('=')[0] : (_psIsFamilyCode(bin) ? bin : '');
+      if (base && !found[base]) found[base] = o.i;
+    }
+  }
+  return productPhotoRemember(env, found, 'picking');
+}
+let _photoBackfillDone = false;
+async function productPhotoSave(request, env) {
+  const b = await request.json().catch(() => ({}));
+  const base = String(b.baseSku || '').split('=')[0].trim().toUpperCase();
+  const url = String(b.imageUrl || '').trim();
+  if (!base) return cors(new Response(JSON.stringify({ ok: false, error: 'baseSku required' }), { status: 400, headers: { 'Content-Type': 'application/json' } }));
+  if (url && !/^https?:\/\//i.test(url)) return cors(new Response(JSON.stringify({ ok: false, error: 'The photo link must start with http:// or https://' }), { status: 400, headers: { 'Content-Type': 'application/json' } }));
+  await productPhotoTable(env);
+  await env.DB.prepare(`INSERT INTO product_photo (base_sku, url, source, set_by, updated_at) VALUES (?,?,?,?,?)
+    ON CONFLICT(base_sku) DO UPDATE SET url = excluded.url, source = excluded.source, set_by = excluded.set_by, updated_at = excluded.updated_at`)
+    .bind(base, url, 'manual', String(b.editedBy || '').slice(0, 40), new Date().toISOString()).run();
+  return cors(new Response(JSON.stringify({ ok: true, baseSku: base, photo: url }), { headers: { 'Content-Type': 'application/json' } }));
+}
+async function productPhotoSearch(url, env) {
+  const q = String(url.searchParams.get('q') || '').trim().toUpperCase();
+  if (q.length < 2) return cors(new Response(JSON.stringify({ ok: false, error: 'Type at least 2 characters' }), { status: 400, headers: { 'Content-Type': 'application/json' } }));
+  const like = '%' + q.replace(/[%_]/g, '') + '%';
+  const rows = await d1All(env, `SELECT UPPER(TRIM(base_sku)) AS b, MAX(name) AS name FROM master_list WHERE TRIM(COALESCE(base_sku,'')) != '' AND (UPPER(base_sku) LIKE ? OR UPPER(part_num) LIKE ? OR UPPER(name) LIKE ?) GROUP BY 1 ORDER BY 1 LIMIT 40`, [like, like, like]);
+  const bases = rows.map(r => r.b), photos = await productPhotoMap(env, bases), cat = {};
+  try { for (let i = 0; i < bases.length; i += 90) { const ch = bases.slice(i, i + 90);
+    ((await env.DB.prepare(`SELECT DISTINCT UPPER(base_sku) b FROM product_catalog WHERE UPPER(base_sku) IN (${ch.map(() => '?').join(',')})`).bind(...ch).all()).results || []).forEach(r => { cat[r.b] = 1; }); } } catch (_) {}
+  return cors(new Response(JSON.stringify({ ok: true, results: rows.map(r => ({ baseSku: r.b, name: r.name || '', photo: photos[r.b] || '', inCatalog: !!cat[r.b] })) }), { headers: { 'Content-Type': 'application/json' } }));
+}
+// One page of Veeqo products → photos for part #s that have none yet.
+async function productPhotoSyncVeeqo(request, env) {
+  const b = await request.json().catch(() => ({}));
+  const page = Math.max(1, parseInt(b.page, 10) || 1), size = 100;
+  const fromOrders = page === 1 ? await productPhotoBackfill(env, 180).catch(() => 0) : 0; // Picking orders first
+  let prods;
+  try { prods = await veeqoFetch(env, `/products?page=${page}&page_size=${size}`); }
+  catch (e) { return cors(new Response(JSON.stringify({ ok: false, error: e.message }), { headers: { 'Content-Type': 'application/json' } })); }
+  const list = Array.isArray(prods) ? prods : (prods.products || []), found = {};
+  for (const p of list) {
+    const pImg = p.main_image_src || (p.images && p.images[0] && (p.images[0].src || p.images[0].url)) || '';
+    for (const sb of (p.sellables || [])) {
+      const img = sb.image_url || sb.main_image_src || pImg; if (!img) continue;
+      const sku = String(sb.sku_code || '').trim().toUpperCase(), loc = String(((sb.stock_entries || [])[0] || {}).location || '').trim().toUpperCase();
+      const base = /^\d+(-\d+)+(=|$)/.test(sku) ? sku.split('=')[0] : (_psIsFamilyCode(loc) ? loc : '');
+      if (base && !found[base]) found[base] = img;
+    }
+  }
+  const created = fromOrders + await productPhotoRemember(env, found, 'veeqo');
+  return cors(new Response(JSON.stringify({ ok: true, page, created, updated: 0, skipped: Object.keys(found).length - created, hasMore: list.length >= size }), { headers: { 'Content-Type': 'application/json' } }));
+}
+
 async function inventoryLookup(url, env) {
   const code = (url.searchParams.get('code') || '').trim().toUpperCase();
   if (!code) return cors(new Response(JSON.stringify({ error: 'No code provided' }), { status: 400, headers: { 'Content-Type': 'application/json' } }));
@@ -2522,9 +2626,11 @@ async function inventoryLookup(url, env) {
     } catch (_) {}
   }
 
+  let photo = '';
+  try { photo = (await productPhotoMap(env, [baseSku]))[baseSku] || ''; } catch (_) {}
   return cors(new Response(JSON.stringify({
     partNum, sku: sku || partNum, name, baseSku,
-    insideUpc, outsideUpc, locations, variants, isMultiVariant, fbaParts
+    insideUpc, outsideUpc, locations, variants, isMultiVariant, fbaParts, photo
   }), { headers: { 'Content-Type': 'application/json' } }));
 }
 
@@ -5433,6 +5539,23 @@ const _app = {
       const path = url.pathname;
       // lookup + log: any valid session
       if (path === '/inventory/lookup' && method === 'GET')  return await inventoryLookup(url, env);
+      // 🖼 One photo per parent part # (see productPhotoMap): read by any
+      // valid session; set / search / Veeqo sync by management.
+      if (path === '/inventory/photos' && method === 'GET') {
+        const bases = String(url.searchParams.get('bases') || '').split(',').map(x => x.trim()).filter(Boolean).slice(0, 300);
+        let photos = await productPhotoMap(env, bases);
+        if (!_photoBackfillDone && bases.some(b => !photos[String(b).split('=')[0].toUpperCase()])) {
+          _photoBackfillDone = true; // once per Worker start: photos from recent Picking orders
+          try { await productPhotoBackfill(env, 60); photos = await productPhotoMap(env, bases); } catch (e) { console.error("[photo] backfill:", e.message); }
+        }
+        return cors(new Response(JSON.stringify({ ok: true, photos }), { headers: { 'Content-Type': 'application/json' } }));
+      }
+      if ((path === '/inventory/product-photo' && method === 'POST') || path === '/inventory/product-photo-search' || (path === '/inventory/sync-photos-from-veeqo' && method === 'POST')) {
+        if (session.pin_level !== 'mgmt') return cors(new Response(JSON.stringify({ ok: false, error: 'Management access required' }), { status: 403, headers: { 'Content-Type': 'application/json' } }));
+        if (path === '/inventory/product-photo') return await productPhotoSave(request, env);
+        if (path === '/inventory/product-photo-search') return await productPhotoSearch(url, env);
+        return await productPhotoSyncVeeqo(request, env);
+      }
       if (path === '/inventory/search' && method === 'GET')  return await inventoryNameSearch(url, env);
       if (path === '/inventory/log'    && method === 'POST') return await inventoryLog(request, env);
       if (path === '/inventory/outbox/check' && method === 'POST') return await inventoryOutboxCheck(request, env);
@@ -20296,6 +20419,19 @@ async function veeqoExtractLineItems(env, order, allocation) {
 
     out.push({ s: sku, q: qty, b: bin, i: img, _binSrc: binSrc || 'none_found' });
   }
+  // 🖼 Remember each item's photo for its parent part # (Inventory → Stock
+  // Out shows it). Only fills a part # that has no photo yet.
+  try {
+    const found = {};
+    for (const o of out) {
+      if (!o.i) continue;
+      const fromSku = /^\d+(-\d+)+(=|$)/.test(o.s) ? o.s.split('=')[0] : '';
+      const fromBin = String(o._binSrc).startsWith('veeqo') && _psIsFamilyCode(String(o.b).toUpperCase()) ? o.b : '';
+      const base = String(fromSku || fromBin).trim().toUpperCase();
+      if (base && !found[base]) found[base] = o.i;
+    }
+    if (Object.keys(found).length) await productPhotoRemember(env, found, 'picking');
+  } catch (e) { console.error('[photo] remember from picking failed:', e.message); }
   return out;
 }
 

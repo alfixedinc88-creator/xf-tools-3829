@@ -2474,6 +2474,7 @@ window.invCredLogin = async function() {
     g("inv-result-part").textContent = d.isMultiVariant ? d.baseSku : d.partNum;
     g("inv-result-sku").textContent   = d.sku && d.sku !== d.partNum ? d.sku : "";
     g("inv-result-name").textContent  = d.name || "";
+    if (d.baseSku && d.photo) _invPhotoCache[String(d.baseSku).toUpperCase()] = d.photo;
     var photoEl = g("inv-result-photo");
     if (photoEl) {
       if (d.photo) { photoEl.src = d.photo; photoEl.style.display = "block"; }
@@ -4978,13 +4979,19 @@ window.invCredLogin = async function() {
         return "<div style='font-size:10px;color:var(--accent);margin-top:2px'>+" + n.cases + " from Saved For Later — saved by " + (n.savedBy || '?') + (n.savedAt ? ' · ' + invFmtStamp(n.savedAt) : '') + "</div>";
       }).join("");
     }
-    infoDiv.innerHTML =
+    var infoHtml =
       "<div class='ipull-loc'>" + item.location + "</div>" +
       "<div class='ipull-pn'>" + item.partNum + fossBadge + noneBadge + stockoutBadge + coBadge + "</div>" +
       "<div class='ipull-name'>" + (item.name || '') + "</div>" +
       (item.addedAt ? "<div style='font-size:10px;color:var(--text3);margin-top:2px'>Added " + invFmtStamp(item.addedAt) + (item.grabbedAt ? " &nbsp;·&nbsp; Grabbed " + invFmtStamp(item.grabbedAt) : "") + "</div>" : "") +
       resumeNotesHtml +
       statusLine;
+    // 🖼 Product photo (one per parent part #, from Picking / Product Photos)
+    // — the picker sees what to look for. Tap to see it bigger.
+    var photoUrl = invPhotoOf(item.partNum);
+    infoDiv.innerHTML = photoUrl
+      ? "<div style='display:flex;gap:10px;align-items:flex-start'><img src='" + String(photoUrl).replace(/'/g, '%27') + "' alt='' loading='lazy' onclick='invPhotoBig(this.src)' onerror=\"this.style.display='none'\" style='width:64px;height:64px;object-fit:cover;border-radius:8px;border:1px solid var(--border);flex-shrink:0;cursor:zoom-in;background:#fff'><div style='min-width:0;flex:1'>" + infoHtml + "</div></div>"
+      : infoHtml;
 
     var removeBtn = document.createElement("button");
     removeBtn.innerHTML = "&times;";
@@ -5421,7 +5428,33 @@ window.invCredLogin = async function() {
       });
   };
 
+  // 🖼 Photos by parent part # (e.g. 23-2-3 for 23-2-3=2XX), loaded once
+  // per page for what's on the Pull List. '' = asked, none on file.
+  var _invPhotoCache = {}, _invPhotoAsked = {};
+  function invPhotoBase(pn) { return String(pn || '').split('=')[0].trim().toUpperCase(); }
+  function invPhotoOf(pn) { return _invPhotoCache[invPhotoBase(pn)] || ''; }
+  function invPhotoLoadFor(items) {
+    var need = [];
+    items.forEach(function(x) { var b = invPhotoBase(x.partNum); if (b && !(b in _invPhotoCache) && !_invPhotoAsked[b]) { _invPhotoAsked[b] = 1; need.push(b); } });
+    if (!need.length) return;
+    wFetch(W + '/inventory/photos?bases=' + encodeURIComponent(need.join(',')))
+      .then(function(r) { return r.json(); })
+      .then(function(d) {
+        var got = (d && d.photos) || {};
+        need.forEach(function(b) { _invPhotoCache[b] = got[b] || ''; });
+        if (Object.keys(got).length) invRenderPullList();
+      }).catch(function() { need.forEach(function(b) { delete _invPhotoAsked[b]; }); });
+  }
+  window.invPhotoBig = function(src) {
+    var ov = document.createElement('div');
+    ov.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,.8);display:flex;align-items:center;justify-content:center;z-index:99999;cursor:zoom-out';
+    ov.innerHTML = '<img src="' + String(src).replace(/"/g, '%22') + '" style="max-width:92vw;max-height:88vh;border-radius:10px;background:#fff">';
+    ov.onclick = function() { ov.remove(); };
+    document.body.appendChild(ov);
+  };
+
   function invRenderPullList() {
+    invPhotoLoadFor(invPullList);
     var el = g("inv-pulllist-items");
     var prog = g("inv-pull-progress");
     if (!el) return;
