@@ -2462,6 +2462,23 @@ window.invCredLogin = async function() {
     });
   }
 
+  // A scanned UPC that isn't linked to a part # yet: ask for the part #
+  // once, link it (so every later scan finds it), then look up that part #.
+  // Never stocks anything in under the barcode itself.
+  window.invAskUpcPart = function(upc) {
+    var part = prompt('UPC ' + upc + ' is not linked to a part # yet.\n\nType its part # (e.g. 31-1-2=5XX) — next time this UPC scans straight to it:', '');
+    if (part == null) return;
+    part = part.trim().toUpperCase();
+    if (!part) return;
+    wFetch(W + '/inventory/upc-link', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ upc: upc, part: part }) })
+      .then(function(r) { return r.json(); }).then(function(d) {
+        if (!d.ok) { invFlash(d.error || 'Could not link the UPC', 'error'); return; }
+        invFlash('✓ UPC ' + upc + ' → ' + part, 'success');
+        var inp = g('inv-search-inp'); if (inp) inp.value = part;
+        invLookup(part);
+      }).catch(function() { invFlash('Could not link the UPC', 'error'); });
+  };
+
   // Renders a successful (or not-found) /inventory/lookup response for the
   // given search code — the part window.invLookup used to do inline.
   // Pulled out so invStockoutGo's fallback path (below) can call it once,
@@ -2469,7 +2486,9 @@ window.invCredLogin = async function() {
   // of duplicating this whole block.
   function _invRenderLookupResult(code, d) {
     invSearchedExactVariant = code.indexOf('=') >= 0 ? code.trim().toUpperCase() : null;
+    if (!d.partNum && d.upcNotLinked) { invAskUpcPart(d.code || code); return; }
     if (!d.partNum) { invFlash("Not found: " + code, "error"); return; }
+    if (d.upcNotLinked) invFlash("⚠ " + code + " is a UPC saved as a part # — Stock Out this row and Stock In the real part # to fix it", "error");
     invPart = d;
     g("inv-result-part").textContent = d.isMultiVariant ? d.baseSku : d.partNum;
     g("inv-result-sku").textContent   = d.sku && d.sku !== d.partNum ? d.sku : "";

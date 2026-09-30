@@ -2454,6 +2454,38 @@ async function productPhotoSyncVeeqo(request, env) {
   return cors(new Response(JSON.stringify({ ok: true, page, created, updated: 0, skipped: Object.keys(found).length - created, hasMore: list.length >= size }), { headers: { 'Content-Type': 'application/json' } }));
 }
 
+// 11–14 digits = a UPC / EAN / GTIN barcode, never one of our part #s.
+function isUpcLike(v) { return /^\d{11,14}$/.test(String(v || '').trim()); }
+// UPC → part #, from every place D1 keeps UPCs. Leading zeros are ignored
+// (a scanner may read 012345678905 or 12345678905 for the same label).
+async function upcToPart(env, code) {
+  const z = String(code || '').replace(/\D/g, '').replace(/^0+/, '');
+  if (!z) return null;
+  const q = async (sql) => { try { const r = await d1First(env, sql, [z, z]); return r && r.p ? String(r.p).trim().toUpperCase() : null; } catch (e) { return null; } };
+  await env.DB.prepare('CREATE TABLE IF NOT EXISTS upc_link (upc TEXT PRIMARY KEY, part TEXT NOT NULL, by_user TEXT, at TEXT)').run().catch(() => {});
+  return await q(`SELECT part AS p FROM upc_link WHERE LTRIM(upc, '0') = ? OR LTRIM(upc, '0') = ? LIMIT 1`)
+    || await q(`SELECT sku AS p FROM upc WHERE LTRIM(REPLACE(outside_upc, ' ', ''), '0') = ? OR LTRIM(REPLACE(inside_upc, ' ', ''), '0') = ? LIMIT 1`)
+    || await q(`SELECT part AS p FROM reorder_fix WHERE LTRIM(REPLACE(outside_upc, ' ', ''), '0') = ? OR LTRIM(REPLACE(inside_upc, ' ', ''), '0') = ? LIMIT 1`)
+    || await q(`SELECT part AS p FROM reorder_vendor_catalog WHERE LTRIM(REPLACE(outside_upc, ' ', ''), '0') = ? OR LTRIM(REPLACE(inside_upc, ' ', ''), '0') = ? ORDER BY updated_at DESC LIMIT 1`);
+}
+// POST /inventory/upc-link { upc, part } — Stock In: "this UPC is part #…".
+// The part # must already be real (in SKU Mgr, the UPC list or products);
+// kept with who linked it and when.
+async function inventoryUpcLink(request, env, session) {
+  const J = (o, st) => cors(new Response(JSON.stringify(o), { status: st || 200, headers: { 'Content-Type': 'application/json' } }));
+  const b = await request.json().catch(() => ({}));
+  const upc = String(b.upc || '').replace(/\D/g, ''), part = String(b.part || '').trim().toUpperCase();
+  if (!isUpcLike(upc)) return J({ ok: false, error: 'That is not a UPC barcode' }, 400);
+  if (!part || isUpcLike(part)) return J({ ok: false, error: 'Type the part # (e.g. 31-1-2=5XX), not a barcode' }, 400);
+  const real = await d1First(env, `SELECT 1 AS x FROM master_list WHERE UPPER(TRIM(part_num)) = ? UNION SELECT 1 FROM upc WHERE UPPER(TRIM(sku)) = ? LIMIT 1`, [part, part]).catch(() => null)
+    || await d1First(env, 'SELECT 1 AS x FROM products WHERE UPPER(TRIM(sku)) = ? LIMIT 1', [part]).catch(() => null);
+  if (!real) return J({ ok: false, error: `Part # "${part}" isn't in SKU Mgr or the UPC list — check the spelling` }, 400);
+  await env.DB.prepare('CREATE TABLE IF NOT EXISTS upc_link (upc TEXT PRIMARY KEY, part TEXT NOT NULL, by_user TEXT, at TEXT)').run();
+  const who = String((session && (session.displayName || session.username)) || '').slice(0, 40);
+  await env.DB.prepare('INSERT INTO upc_link (upc, part, by_user, at) VALUES (?,?,?,?) ON CONFLICT(upc) DO UPDATE SET part = excluded.part, by_user = excluded.by_user, at = excluded.at')
+    .bind(upc, part, who, new Date().toISOString()).run();
+  return J({ ok: true, upc, part });
+}
 async function inventoryLookup(url, env) {
   const code = (url.searchParams.get('code') || '').trim().toUpperCase();
   if (!code) return cors(new Response(JSON.stringify({ error: 'No code provided' }), { status: 400, headers: { 'Content-Type': 'application/json' } }));
@@ -2466,7 +2498,7 @@ async function inventoryLookup(url, env) {
   let sku     = null;
 
   // Normalize to digits-only for UPC comparison (handles spaces, dashes, leading zeros)
-  const normalize = s => String(s || '').replace(/\D/g, '');
+  const normalize = s => String(s || '').replace(/\D/g, '').replace(/^0+/, ''); // a scanner may add/drop a leading 0
   const codeNorm  = normalize(code);
   let insideUpc  = null;
   let outsideUpc = null;
@@ -2504,6 +2536,22 @@ async function inventoryLookup(url, env) {
     }
   }
 
+  // Not in the UPC sheet (it only reads the first 5,000 rows, and a
+  // scanner can add/drop a leading 0): try the UPCs we keep in D1 — the
+  // UPC table, UPCs linked at Stock In, Reorder fixes and vendor sheets.
+  let upcNotLinked = false;
+  if (!partNum && isUpcLike(code) && env.DB) {
+    const found = await upcToPart(env, code);
+    if (found) { partNum = found; sku = found; }
+  }
+  // Still not found: a UPC-looking code is NOT a part # — say so (Stock In
+  // asks for the part # and links it) instead of making rows named after
+  // the barcode. Rows already made that way still show, so they can be fixed.
+  if (!partNum && isUpcLike(code)) {
+    upcNotLinked = true;
+    const bad = env.DB ? await d1First(env, 'SELECT id FROM master_list WHERE UPPER(TRIM(part_num)) = ? LIMIT 1', [code]).catch(() => null) : null;
+    if (!bad) return cors(new Response(JSON.stringify({ partNum: null, upcNotLinked: true, code, locations: [] }), { headers: { 'Content-Type': 'application/json' } }));
+  }
   // If not found in UPC sheet, treat the code itself as a part number
   if (!partNum) partNum = code;
 
@@ -2630,7 +2678,7 @@ async function inventoryLookup(url, env) {
   try { photo = (await productPhotoMap(env, [baseSku]))[baseSku] || ''; } catch (_) {}
   return cors(new Response(JSON.stringify({
     partNum, sku: sku || partNum, name, baseSku,
-    insideUpc, outsideUpc, locations, variants, isMultiVariant, fbaParts, photo
+    insideUpc, outsideUpc, locations, variants, isMultiVariant, fbaParts, photo, upcNotLinked
   }), { headers: { 'Content-Type': 'application/json' } }));
 }
 
@@ -2926,6 +2974,12 @@ async function inventoryLog(request, env) {
 
   if (!type || !partNum || !location || cases === undefined || cases === null || cases === '') {
     return cors(new Response(JSON.stringify({ error: 'Missing required fields' }), { status: 400, headers: { 'Content-Type': 'application/json' } }));
+  }
+  // A scanned UPC barcode is never a part # — stocking it in made SKU Mgr
+  // rows named "0123456789012". Ask for the part # instead (Stock In links
+  // the UPC to it once, so the next scan finds it).
+  if (type === 'IN' && isUpcLike(partNum)) {
+    return cors(new Response(JSON.stringify({ ok: false, error: `"${String(partNum).trim()}" is a UPC barcode, not a part #. Scan it again and type its part # (e.g. 31-1-2=5XX) when asked — the UPC is then linked so it finds the part # next time.` }), { status: 400, headers: { 'Content-Type': 'application/json' } }));
   }
 
   let ts = new Date().toISOString();
@@ -5657,6 +5711,7 @@ const _app = {
       const path = url.pathname;
       // lookup + log: any valid session
       if (path === '/inventory/lookup' && method === 'GET')  return await inventoryLookup(url, env);
+      if (path === '/inventory/upc-link' && method === 'POST') return await inventoryUpcLink(request, env, session);
       // 🖼 One photo per parent part # (see productPhotoMap): read by any
       // valid session; set / search / Veeqo sync by management.
       if (path === '/inventory/photos' && method === 'GET') {

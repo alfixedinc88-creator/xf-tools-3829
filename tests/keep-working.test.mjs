@@ -200,5 +200,28 @@ console.log('\nPack & Ship: Printed Today tiles don\'t flood Veeqo');
   check('2 asks at the same moment share one pull', veeqoCalls - first === 2, veeqoCalls - first);
 }
 
+console.log('\nStock In: a scanned UPC never becomes the part #');
+{
+sq.exec("CREATE TABLE IF NOT EXISTS upc (id INTEGER PRIMARY KEY AUTOINCREMENT, variant_id TEXT, sku TEXT NOT NULL, base_sku TEXT NOT NULL, inside_upc TEXT, outside_upc TEXT, updated_at TEXT)");
+sq.prepare("INSERT INTO upc (sku, base_sku, inside_upc, outside_upc) VALUES ('31-1-2=5XX','31-1-2','','012345678905')").run();
+sq.prepare("INSERT INTO master_list (base_sku, name, part_num, location, cases, units_per_case) VALUES ('31-1-2','elbow','31-1-2=5XX','C3=1-1-1',2,50), ('32-2-2','tee','32-2-2=10','C3=1-1-2',1,100)").run();
+const u1 = await get('/inventory/lookup?code=012345678905');
+check('UPC in the UPC list → its part # (31-1-2=5XX)', u1.partNum === '31-1-2=5XX' && u1.locations.some(l => l.location === 'C3=1-1-1'), { partNum: u1.partNum });
+const u2 = await get('/inventory/lookup?code=12345678905');
+check('same UPC with the leading 0 dropped by the scanner → same part #', u2.partNum === '31-1-2=5XX', u2.partNum);
+const u3 = await get('/inventory/lookup?code=098765432109');
+check('unknown UPC: no part # made from the barcode (asks instead)', u3.partNum === null && u3.upcNotLinked === true, u3);
+const shelfUpc = shelf();
+const bad = await (await call('/inventory/log', { method: 'POST', headers: H, body: JSON.stringify({ type: 'IN', partNum: '098765432109', sku: '098765432109', location: 'GARAGE', cases: 3, initials: 'TS', isNew: true }) })).json();
+check('Stock In with a barcode as the part # is refused, SKU Mgr unchanged', bad.ok === false && /UPC barcode/.test(bad.error) && shelf() === shelfUpc && !sq.prepare("SELECT COUNT(*) n FROM master_list WHERE part_num = '098765432109'").get().n, bad);
+const lk1 = await post('/inventory/upc-link', { upc: '098765432109', part: 'NOPE-1=1' });
+check('linking a UPC to a part # that does not exist is refused', lk1.ok === false, lk1);
+const lk2 = await post('/inventory/upc-link', { upc: '098765432109', part: '32-2-2=10' });
+const u4 = await get('/inventory/lookup?code=098765432109');
+check('after linking once, the UPC scans straight to its part #', lk2.ok && u4.partNum === '32-2-2=10', { lk2, partNum: u4.partNum });
+const u5 = await get('/inventory/lookup?code=31-1-2%3D5XX');
+check('typing the part # still works as before', u5.partNum === '31-1-2=5XX', u5.partNum);
+}
+
 console.log('\n' + (failed ? '❌ ' + failed + ' check(s) FAILED' : '✅ all ' + passed + ' checks passed') + '\n');
 process.exit(failed ? 1 : 0);
