@@ -6296,7 +6296,8 @@ window.invCredLogin = async function() {
         + '<div style="font-weight:700;margin-bottom:4px;color:#1A56DB">Coming in for ' + e(d.q) + ' <span style="font-weight:400;color:var(--text3)">(from Reorder imports — not in stock or in the inventory value until 📦 Received)</span></div>'
         + d.items.map(function(it) {
           var pals = it.pallets.length ? '<div style="margin:2px 0 0 18px;color:var(--text2)">' + it.pallets.map(function(p) {
-              return '🧱 ' + e(p.pallet) + ': ' + n(p.cases) + ' box' + (p.cases === 1 ? '' : 'es') + (p.moved ? ' (' + n(Math.min(p.moved, p.cases)) + ' moved to shelves)' : ''); }).join(' · ') + '</div>' : '';
+              return '<div>🧱 <b>Pallet ' + e(p.pallet) + '</b>: ' + n(p.cases) + ' box' + (p.cases === 1 ? '' : 'es') + (p.pcs ? ' · ' + n(p.pcs) + ' pcs' : '')
+                + (p.moved ? ' (' + n(Math.min(p.moved, p.cases)) + ' moved to shelves)' : '') + '</div>'; }).join('') + '</div>' : '';
           return '<div style="padding:4px 0;border-top:1px solid #DBEAFE">' + (icon[it.status] || '•') + ' <b style="font-family:var(--mono)">' + e(it.part) + '</b>'
             + (it.filePart ? ' <span style="color:var(--text3)">(sheet: ' + e(it.filePart) + ')</span>' : '')
             + ' — <b>' + e(it.status) + '</b> · ' + e(it.title) + (it.vendor ? ' · ' + e(it.vendor) : '')

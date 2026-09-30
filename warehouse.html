@@ -1813,7 +1813,36 @@ window.credLogin = async function() {
 
 // ── Main app globals ──
 const SHEET_NAMES = { master:'Master_List', products:'Products', awd:'AWD_Master', upc:'UPC', oos:'Out_of_Stock' };
-const DB = { master:[], products:[], awdMaster:[], upc:[], oos:[] };
+const DB = { master:[], products:[], awdMaster:[], upc:[], oos:[], pallets:{} };
+
+// 🧱 Boxes of a 📦 Received container still on their pallet (part # + spot →
+// pallet lines), so Item Locator says which pallet at GARAGE to open. Read
+// only — it never changes a count. Loaded with the sheets and every refresh.
+function whLoadPallets() {
+  if (!CRED_TOKEN) return Promise.resolve();
+  return wFetch(W + '/inventory/pallets/received').then(function(r) { return r.json(); }).then(function(d) {
+    if (!d || !d.ok) return;
+    var m = {};
+    (d.lines || []).forEach(function(l) { var k = String(l.part).toUpperCase() + '|' + String(l.location).toUpperCase(); (m[k] = m[k] || []).push(l); });
+    var same = JSON.stringify(m) === JSON.stringify(DB.pallets);
+    DB.pallets = m;
+    if (same) return; // nothing new — don't redraw (keeps the page you're on)
+    var inp = document.getElementById('inp-locator');
+    if (activeTab === 'locator' && inp && inp.value.trim()) doSearch('locator');
+  }).catch(function() {});
+}
+function whPalletHtml(r) {
+  var ls = DB.pallets[String(r.partNum || '').toUpperCase() + '|' + String(r.location || '').toUpperCase()];
+  if (!ls || !ls.length) return '';
+  var e = function(v) { return String(v == null ? '' : v).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;'); };
+  var n = function(v) { return (Math.round((parseFloat(v) || 0) * 100) / 100).toLocaleString(); };
+  return '<div class="field wide"><div class="field-lbl">🧱 Still on the pallet (📦 Received, not on a shelf yet)</div><div class="field-val">'
+    + ls.map(function(l) {
+      return '<div><b>Pallet ' + e(l.pallet) + '</b> · ' + n(l.left) + ' box' + (l.left === 1 ? '' : 'es')
+        + (l.moved ? ' <span style="color:var(--text3)">(of ' + n(l.cases) + ', ' + n(l.moved) + ' moved to shelves)</span>' : '')
+        + ' <span style="color:var(--text3)">· ' + e(l.title) + '</span></div>';
+    }).join('') + '</div></div>';
+}
 let countAmt = 1;
 let activeTab = 'locator';
 let pages = { locator:1, search:1, awd:1 };
@@ -2030,6 +2059,7 @@ async function loadAllSheets() {
     document.getElementById('tb-sub').textContent = 'Live - ' + DB.master.length.toLocaleString() + ' rows';
     showToast('Loaded - ' + DB.master.length.toLocaleString() + ' master, ' + DB.products.length.toLocaleString() + ' products, ' + DB.awdMaster.length.toLocaleString() + ' AWD');
     renderOOS();
+    whLoadPallets();
   } catch(e) {
     console.error('[XFITTING] loadAllSheets error:', e);
     showLoading(false);
@@ -2072,6 +2102,7 @@ setInterval(function() {
     var now = new Date().toLocaleTimeString([], { hour:'2-digit', minute:'2-digit' });
     setSyncLabel('Synced ' + now, false);
     console.log('[XFITTING] Background refresh complete — ' + DB.master.length + ' master rows');
+    whLoadPallets();
   }).catch(function() {
     // Silent fail — never interrupt the user
   }).finally(function() {
@@ -2316,6 +2347,7 @@ function cardLocator(r) {
         <div class="field-val">${r.totalQty || '—'}</div>
       </div>
 
+      ${whPalletHtml(r)}
       ${upcStr ? `<div class="field wide"><div class="field-lbl">UPC — Individual / Case</div><div class="field-val muted">${upcStr}</div></div>` : ''}
     </div>
   </div>`;

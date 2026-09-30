@@ -3608,6 +3608,36 @@ async function inventoryContainers(env) {
   const onWay = {}; ((await env.DB.prepare('SELECT title, COUNT(*) AS n FROM reorder_incoming GROUP BY title').all()).results || []).forEach(r => { onWay[r.title] = r.n; });
   return cors(new Response(JSON.stringify({ ok: true, containers: rows.map(r => ({ ...r, moved: moved[r.title] || 0, notStockedIn: onWay[r.title] || 0 })) }), { headers: { 'Content-Type': 'application/json' } }));
 }
+// GET /inventory/pallets/received — Warehouse Lookup → Item Locator: the
+// boxes of a 📦 Received container still on their pallet (not yet moved to a
+// shelf with 🚢 Container here), with the spot they were stocked in at
+// (GARAGE by default — read from the Received Stock In, never guessed from a
+// container still on the water). Only shows where boxes are; never changes
+// or adds to any count.
+async function inventoryPalletsReceived(env) {
+  await reorderFixTables(env);
+  const rows = (await env.DB.prepare(`SELECT p.id, p.title, p.pallet, p.po, p.part, p.cases, p.pcs FROM reorder_pallet p
+    WHERE NOT EXISTS (SELECT 1 FROM reorder_incoming i WHERE i.title = p.title AND i.part = p.part) ORDER BY p.title, p.id LIMIT 5000`).all()).results || [];
+  if (!rows.length) return cors(new Response(JSON.stringify({ ok: true, lines: [] }), { headers: { 'Content-Type': 'application/json' } }));
+  const moved = {};
+  ((await env.DB.prepare(_PALLET_MOVED_SQL + ' GROUP BY m.pallet_id').all()).results || []).forEach(m => { moved[m.pallet_id] = m.moved || 0; });
+  const alias = {}; ((await env.DB.prepare('SELECT raw, part FROM reorder_alias').all()).results || []).forEach(a => { alias[String(a.raw).toUpperCase()] = String(a.part).toUpperCase(); });
+  const real = p => alias[String(p).toUpperCase()] || String(p).toUpperCase();
+  // Where each received part # was stocked in: its approved "[RECEIVED] <title> — …" Stock In.
+  const at = {};
+  (await d1All(env, `SELECT UPPER(TRIM(part_num)) AS p, UPPER(TRIM(location)) AS l, notes FROM inventory_log
+    WHERE type = 'IN' AND notes LIKE '[RECEIVED] %' AND COALESCE(status, '') != 'Rejected'`)).forEach(r => {
+    const m = String(r.notes || '').match(/^\[RECEIVED\] (.*) — /); if (m) at[m[1] + '|' + r.p] = r.l; });
+  const lines = [];
+  rows.forEach(r => {
+    const mv = Math.min(moved[r.id] || 0, r.cases || 0), left = (r.cases || 0) - mv;
+    if (!(left > 1e-9)) return;
+    const part = real(r.part), loc = at[r.title + '|' + part];
+    if (!loc) return; // not stocked in by 📦 Received (e.g. removed) — nothing on a shelf to point at
+    lines.push({ part, location: loc, title: r.title, pallet: r.pallet, po: r.po || '', cases: r.cases, moved: mv, left, pcs: r.pcs });
+  });
+  return cors(new Response(JSON.stringify({ ok: true, lines }), { headers: { 'Content-Type': 'application/json' } }));
+}
 // GET /inventory/containers/pallets?title=&q= — pallet lines of a container
 // (or of every container matching q: container name, pallet #, PO, part #,
 // item name), with boxes moved / left and where that part # is in stock.
@@ -5297,6 +5327,7 @@ const _app = {
       if (path === '/inventory/transfer' && method === 'POST') return await inventoryTransferLog(request, env);
       if (path === '/inventory/containers' && method === 'GET') return await inventoryContainers(env);
       if (path === '/inventory/containers/pallets' && method === 'GET') return await inventoryContainerPallets(url, env);
+      if (path === '/inventory/pallets/received' && method === 'GET') return await inventoryPalletsReceived(env);
       // receive-preview / receive-apply moved up to the credential-based
       // check earlier in the router (ReceivePO no longer sends the old
       // PIN session token at all) - this block would never be reached
