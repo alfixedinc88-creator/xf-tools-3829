@@ -21216,6 +21216,39 @@ async function veeqoBackfillWeight(request, env, url) {
 // (unlike labels-today, which is bounded by created_at_min so it only ever
 // sees ~a day's worth) — MAX_PAGES caps that at 2,000 orders/status. Raise
 // it if a single day's order volume can exceed that.
+// Pack & Ship's Scan / Picking tabs ask for these tiles every 20s on every
+// open screen, and each ask pulls up to 40 pages of orders from Veeqo — with
+// a few stations open that was hundreds of Veeqo API calls a minute, slowing
+// Veeqo (and its label printing) down. Now every screen shares one pull per
+// VPS_TTL_MS: kept in this worker's memory and in Cloudflare's cache (shared
+// across worker copies); asks that arrive while a pull is running wait for
+// it instead of starting their own. Only good results are kept.
+const VPS_TTL_MS = 120000;
+const _vpsMem = {}, _vpsInflight = {};
+async function veeqoPrintStatusCached(env, date) {
+  const now = Date.now(), m = _vpsMem[date];
+  if (m && now - m.at < VPS_TTL_MS) return { ...m.data, cachedAt: new Date(m.at).toISOString() };
+  const ckey = new Request('https://cache.internal/veeqo-print-status?date=' + encodeURIComponent(date));
+  const cache = (typeof caches !== 'undefined' && caches.default) ? caches.default : null;
+  if (cache) {
+    try {
+      const hit = await cache.match(ckey);
+      if (hit) { const j = await hit.json(); if (j && j.data && now - j.at < VPS_TTL_MS) { _vpsMem[date] = j; return { ...j.data, cachedAt: new Date(j.at).toISOString() }; } }
+    } catch (e) { /* cache miss — pull below */ }
+  }
+  if (!_vpsInflight[date]) {
+    _vpsInflight[date] = (async () => {
+      const data = await veeqoPrintStatus(env, date);
+      if (data && data.ok) {
+        const entry = { at: Date.now(), data };
+        _vpsMem[date] = entry;
+        if (cache) await cache.put(ckey, new Response(JSON.stringify(entry), { headers: { 'Content-Type': 'application/json', 'Cache-Control': 'max-age=' + Math.round(VPS_TTL_MS / 1000) } })).catch(() => {});
+      }
+      return data;
+    })().finally(() => { delete _vpsInflight[date]; });
+  }
+  return await _vpsInflight[date];
+}
 async function veeqoPrintStatus(env, date) {
   const PAGE_SIZE = 100;
   const MAX_PAGES = 20; // 2,000 orders/status ceiling — raise if needed
@@ -21713,8 +21746,7 @@ async function handleVeeqoRoute(url, method, request, env, session) {
   if (path === '/veeqo/print-status' && method === 'GET') {
     try {
       const date = url.searchParams.get('date') || shipTodayKey();
-      const result = await veeqoPrintStatus(env, date);
-      return veeqoResp(result);
+      return veeqoResp(await veeqoPrintStatusCached(env, date));
     } catch(e) { return veeqoResp({ ok: false, error: e.message }, 500); }
   }
 

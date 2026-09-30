@@ -186,5 +186,19 @@ sq.prepare('INSERT INTO pallet_move (pallet_id, cases, to_location, at) VALUES (
 const dM = await post('/inventory/containers/delete', { title: 'Container MOVED', reason: 'test' });
 check('boxes already moved off a pallet: not deleted', !dM.ok && /already moved/.test(dM.error) && await hasCont('Container MOVED'), dM);
 
+console.log('\nPack & Ship: Printed Today tiles don\'t flood Veeqo');
+{
+  const realFetch = globalThis.fetch; let veeqoCalls = 0;
+  globalThis.fetch = async (u, o) => { if (String(u).includes('api.veeqo.com')) { veeqoCalls++; return new Response('[]', { headers: { 'Content-Type': 'application/json' } }); } return realFetch(u, o); };
+  env.VEEQO_API_KEY = 'test';
+  const ps = [];
+  for (let i = 0; i < 3; i++) ps.push(await get('/veeqo/print-status?date=' + nyToday));
+  const first = veeqoCalls;
+  await Promise.all([get('/veeqo/print-status?date=2020-01-01'), get('/veeqo/print-status?date=2020-01-01')]);
+  globalThis.fetch = realFetch; delete env.VEEQO_API_KEY;
+  check('3 screens asking = 1 Veeqo pull (2 calls), same numbers', ps.every(p => p.ok && p.printedToday && p.printedToday.total === 0) && first === 2, { first, ps: ps.map(p => p.ok) });
+  check('2 asks at the same moment share one pull', veeqoCalls - first === 2, veeqoCalls - first);
+}
+
 console.log('\n' + (failed ? '❌ ' + failed + ' check(s) FAILED' : '✅ all ' + passed + ' checks passed') + '\n');
 process.exit(failed ? 1 : 0);
