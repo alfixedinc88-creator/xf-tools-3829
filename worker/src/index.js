@@ -1172,19 +1172,19 @@ async function reorderSavePallets(request, env, session) {
   for (let i = 0; i < stmts.length; i += 50) await env.DB.batch(stmts.slice(i, i + 50));
   const old = (await env.DB.prepare(`SELECT p.id, p.pallet, p.part, (SELECT COUNT(*) FROM pallet_move m WHERE m.pallet_id = p.id) AS moves
     FROM reorder_pallet p WHERE p.title = ? AND p.vendor = ?`).bind(title, vendor).all()).results || [];
-  const keptWithMoves = [];
+  const keptWithMoves = [], dels = [];
   for (const o of old) {
     if (keep.has(o.pallet + '|' + o.part)) continue;
     if (o.moves > 0) { keptWithMoves.push(o.pallet + ' ' + o.part); continue; }
-    await env.DB.prepare('DELETE FROM reorder_pallet WHERE id = ?').bind(o.id).run();
+    dels.push(env.DB.prepare('DELETE FROM reorder_pallet WHERE id = ?').bind(o.id));
   }
+  await d1Batch(env, dels);
   // The container's on-the-way line for each part # = all its pallets
   // (every vendor in this container) — so on the way and pallets always match.
   const parts = [...new Set(lines.map(l => reorderCleanPart(l.part)).filter(Boolean))];
-  for (const part of parts) {
-    const sm = await env.DB.prepare('SELECT SUM(units) AS u, SUM(cases) AS c FROM reorder_pallet WHERE title = ? AND part = ?').bind(title, part).first();
-    if (sm && sm.u > 0) await env.DB.prepare('UPDATE reorder_incoming SET qty = ?, cases = ? WHERE title = ? AND part = ?').bind(sm.u, sm.c, title, part).run();
-  }
+  const sums = {}; ((await env.DB.prepare('SELECT part, SUM(units) AS u, SUM(cases) AS c FROM reorder_pallet WHERE title = ? GROUP BY part').bind(title).all()).results || []).forEach(r => { sums[r.part] = r; });
+  await d1Batch(env, parts.filter(part => sums[part] && sums[part].u > 0)
+    .map(part => env.DB.prepare('UPDATE reorder_incoming SET qty = ?, cases = ? WHERE title = ? AND part = ?').bind(sums[part].u, sums[part].c, title, part)));
   const tot = await env.DB.prepare('SELECT COUNT(*) AS lines, COUNT(DISTINCT pallet) AS pallets, SUM(cases) AS cases, SUM(pcs) AS pcs, SUM(units) AS units FROM reorder_pallet WHERE title = ? AND vendor = ?').bind(title, vendor).first() || {};
   await reorderLog(env, _roWho(session), 'pallets', title, `Pallets for "${title}" (${vendor}${b.file ? ', ' + t(b.file, 80) : ''}): ${tot.pallets || 0} pallets, ${tot.cases || 0} boxes, ${tot.pcs || 0} pcs`
     + (keptWithMoves.length ? ` · kept (boxes already moved): ${keptWithMoves.join(', ')}` : ''));
@@ -1274,6 +1274,10 @@ async function reorderOrdersStatus(env) {
   out.sort((a, c) => a.orderDate.localeCompare(c.orderDate) || a.title.localeCompare(c.title));
   return _roResp({ ok: true, orders: out });
 }
+// Run statements in D1 batches of 50 — one call per batch, so a big
+// container (600+ part #s) stays far under the Worker's ~1,000 D1 calls per
+// request (one call per line used to stop the import half way).
+async function d1Batch(env, stmts) { for (let i = 0; i < stmts.length; i += 50) await env.DB.batch(stmts.slice(i, i + 50)); }
 // Put back on its orders everything container `to` took off them (its
 // reorder_take rows), then forget those takes. Used before a container is
 // taken again (re-import) and when it is 🗑 Removed (cancelled / wrong
@@ -1282,14 +1286,20 @@ async function reorderOrdersStatus(env) {
 // on an order that no longer has it). Returns what went back.
 async function reorderPutBackTakes(env, to, T, now) {
   const prev = (await env.DB.prepare('SELECT from_title, part, units, cases FROM reorder_take WHERE to_title = ?').bind(to).all()).results || [];
+  // Each order's lines read once (not one read per line).
+  const cur = {};
+  for (const ft of [...new Set(prev.map(p => p.from_title))])
+    ((await env.DB.prepare('SELECT part, qty, cases FROM reorder_incoming WHERE title = ?').bind(ft).all()).results || []).forEach(r => { cur[ft + '|' + r.part] = r; });
+  const stmts = [];
   for (const p of prev) {
-    const r = await env.DB.prepare('SELECT qty, cases FROM reorder_incoming WHERE title = ? AND part = ?').bind(p.from_title, p.part).first();
-    if (r) await env.DB.prepare('UPDATE reorder_incoming SET qty = ?, cases = ? WHERE title = ? AND part = ?')
-      .bind(r.qty + p.units, p.cases != null ? (r.cases || 0) + p.cases : (r.cases > 0 && r.qty > 0 ? Math.round(r.cases * (r.qty + p.units) / r.qty * 100) / 100 : r.cases), p.from_title, p.part).run();
-    else await env.DB.prepare('INSERT INTO reorder_incoming (title, part, qty, vendor, cases, updated_at) VALUES (?,?,?,?,?,?)')
-      .bind(p.from_title, p.part, p.units, (T[p.part] && T[p.part].vendor) || '', p.cases, now).run();
+    const r = cur[p.from_title + '|' + p.part];
+    if (r) stmts.push(env.DB.prepare('UPDATE reorder_incoming SET qty = ?, cases = ? WHERE title = ? AND part = ?')
+      .bind(r.qty + p.units, p.cases != null ? (r.cases || 0) + p.cases : (r.cases > 0 && r.qty > 0 ? Math.round(r.cases * (r.qty + p.units) / r.qty * 100) / 100 : r.cases), p.from_title, p.part));
+    else stmts.push(env.DB.prepare('INSERT INTO reorder_incoming (title, part, qty, vendor, cases, updated_at) VALUES (?,?,?,?,?,?)')
+      .bind(p.from_title, p.part, p.units, (T[p.part] && T[p.part].vendor) || '', p.cases, now));
   }
-  await env.DB.prepare('DELETE FROM reorder_take WHERE to_title = ?').bind(to).run();
+  stmts.push(env.DB.prepare('DELETE FROM reorder_take WHERE to_title = ?').bind(to));
+  await d1Batch(env, stmts);
   return prev;
 }
 // POST /reorder/fix/incoming-take { from, to } — a shipped container (`to`)
@@ -1320,7 +1330,7 @@ async function reorderIncomingTake(request, env, session) {
     orders = [{ title: from, date: reorderOrderDate(from, o && (o.created_at || o.updated_at)) }];
   }
   for (const o of orders) { o.rows = await rowsOf(o.title); o.before = Object.values(o.rows).reduce((a, r) => a + (r.qty || 0), 0); o.taken = 0; }
-  const lines = [], notOnOrder = [];
+  const lines = [], notOnOrder = [], writes = [];
   let taken = 0;
   for (const part of Object.keys(T)) {
     const shipped = T[part].qty || 0, cv = vn(T[part].vendor);
@@ -1332,15 +1342,16 @@ async function reorderIncomingTake(request, env, session) {
       if (from === '*' && cv && vn(r.vendor) && vn(r.vendor) !== cv) continue; // another vendor's order
       const take = Math.min(r.qty, need), left = r.qty - take;
       const tCases = r.cases > 0 ? Math.round(r.cases * take / r.qty * 100) / 100 : null;
-      if (left <= 1e-9) await env.DB.prepare('DELETE FROM reorder_incoming WHERE title = ? AND part = ?').bind(o.title, part).run();
-      else await env.DB.prepare('UPDATE reorder_incoming SET qty = ?, cases = ?, updated_at = ? WHERE title = ? AND part = ?')
-        .bind(left, r.cases > 0 ? Math.round((r.cases - tCases) * 100) / 100 : r.cases, now, o.title, part).run();
-      await env.DB.prepare('INSERT INTO reorder_take (from_title, to_title, part, units, cases) VALUES (?,?,?,?,?)').bind(o.title, to, part, take, tCases).run();
+      if (left <= 1e-9) writes.push(env.DB.prepare('DELETE FROM reorder_incoming WHERE title = ? AND part = ?').bind(o.title, part));
+      else writes.push(env.DB.prepare('UPDATE reorder_incoming SET qty = ?, cases = ?, updated_at = ? WHERE title = ? AND part = ?')
+        .bind(left, r.cases > 0 ? Math.round((r.cases - tCases) * 100) / 100 : r.cases, now, o.title, part));
+      writes.push(env.DB.prepare('INSERT INTO reorder_take (from_title, to_title, part, units, cases) VALUES (?,?,?,?,?)').bind(o.title, to, part, take, tCases));
       r.qty = left; need -= take; o.taken += take; taken += take;
       lines.push({ part, order: o.title, orderDate: o.date, took: take, orderLeft: left });
     }
     if (need > 1e-9) notOnOrder.push({ part, shipped, fromOrder: shipped - need });
   }
+  await d1Batch(env, writes);
   // 3) Totals: orders before − taken = orders after, order by order.
   let ok = true;
   for (const o of orders) { o.after = Object.values(await rowsOf(o.title)).reduce((a, r) => a + (r.qty || 0), 0); if (Math.abs(o.before - o.taken - o.after) > 1e-6) ok = false; delete o.rows; }
@@ -5254,12 +5265,15 @@ const _app = {
         const only = Array.isArray(b.parts) ? [...new Set(b.parts.map(x => reorderCleanPart(x)).filter(Boolean))].slice(0, 2000) : null;
         if (only && only.length) {
           let n = 0, u = 0;
+          const have = {}; ((await env.DB.prepare('SELECT part, qty FROM reorder_incoming WHERE title = ?').bind(title).all()).results || []).forEach(r => { have[r.part] = r; });
+          const dels = [];
           for (const part of only) {
-            const r = await env.DB.prepare('SELECT qty FROM reorder_incoming WHERE title = ? AND part = ?').bind(title, part).first();
+            const r = have[part];
             if (!r) continue;
-            await env.DB.prepare('DELETE FROM reorder_incoming WHERE title = ? AND part = ?').bind(title, part).run();
+            dels.push(env.DB.prepare('DELETE FROM reorder_incoming WHERE title = ? AND part = ?').bind(title, part));
             n++; u += r.qty || 0;
           }
+          await d1Batch(env, dels);
           await reorderLog(env, _roWho(roCs || session), 'incoming', title, `Removed ${n} part #s (${Math.round(u)} units) from on-the-way "${title}"${b.reason ? ' — ' + String(b.reason).slice(0, 100) : ''}: ${only.slice(0, 60).join(', ')}`);
           return _roResp({ ok: true, removed: n, units: u });
         }
