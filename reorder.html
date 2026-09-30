@@ -4162,9 +4162,10 @@ function rvoOrderDetail(title) {
     + '<tr style="border-top:1px solid var(--border)"><td style="padding:3px 10px"><b>= Still owed by the vendor</b></td><td style="padding:3px 10px;text-align:right"><b style="color:' + (o.leftPcs > 0 ? '#B45309' : 'var(--green)') + '">' + fmt0(o.leftPcs) + '</b> pcs</td><td style="padding:3px 10px;color:var(--text3)">' + fmt0(o.left) + ' units</td></tr></table>'
     + '<div style="font-size:13px;margin-bottom:10px">' + (ok ? '<b style="color:var(--green)">✓</b> Ordered = shipped + still owed' : '<b style="color:var(--red)">⚠ Ordered ≠ shipped + still owed — check History</b>') + '</div>'
     + '<div style="max-height:50vh;overflow:auto;border:1px solid var(--border);border-radius:8px"><table style="font-size:12px;border-collapse:collapse;width:100%"><thead style="position:sticky;top:0;background:var(--bg3)"><tr>'
-    + ['Part #', 'Ordered pcs', 'Shipped pcs', 'In container', 'Still owed pcs', 'Still owed units'].map(function (x) { return '<th style="text-align:left;padding:6px 8px">' + x + '</th>'; }).join('') + '</tr></thead><tbody>'
+    + ['Part #', 'Description', 'Ordered pcs', 'Shipped pcs', 'In container', 'Still owed pcs', 'Still owed units'].map(function (x) { return '<th style="text-align:left;padding:6px 8px">' + x + '</th>'; }).join('') + '</tr></thead><tbody>'
     + lines.map(function (l) {
-      return '<tr style="border-top:1px solid var(--border)">' + td('<b style="font-family:var(--mono)">' + escHtml(l.part) + '</b>')
+      return '<tr style="border-top:1px solid var(--border)">' + td('<b style="font-family:var(--mono)">' + escHtml(l.part) + '</b>', 'white-space:nowrap')
+        + td(l.description ? escHtml(l.description) : '<span style="color:var(--text3)">—</span>', 'min-width:160px;max-width:320px')
         + td(fmt0(l.orderedPcs), 'text-align:right') + td(fmt0(l.shippedPcs), 'text-align:right')
         + td(Object.keys(l.by).map(function (k) { return escHtml(k) + ' ' + fmt0(l.by[k] * l.pack); }).join(', ') || '<span style="color:var(--text3)">—</span>', 'color:var(--text3)')
         + td(l.left > 0 ? '<b style="color:#B45309">' + fmt0(l.leftPcs) + '</b>' : '<span style="color:var(--green)">✓ 0</span>', 'text-align:right')
