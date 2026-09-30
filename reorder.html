@@ -4239,16 +4239,16 @@ async function soldOutPalletsReport(title, how) {
   var pal = {}, pals = [];
   sold.forEach(function (l) { var k = (l.vendor || '') + '|' + l.pallet;
     if (!pal[k]) { pal[k] = { vendor: l.vendor || '', pallet: l.pallet, parts: [], boxes: 0 }; pals.push(pal[k]); }
-    pal[k].parts.push(l.part); pal[k].boxes += l.left; });
+    pal[k].parts.push(l.part + (l.name || l.description ? ' — ' + (l.name || l.description) : '')); pal[k].boxes += l.left; });
   pals.sort(function (a, b) { return b.parts.length - a.parts.length || natural(a.pallet, b.pallet); });
   sold.sort(function (a, b) { return natural(a.pallet, b.pallet) || natural(a.part, b.part); });
   var when = new Date().toLocaleString('en-US', { timeZone: 'America/New_York' });
   var basisTxt = function (l) { return l.basis === 'history' ? 'History: before 📦 Received' : l.basis === 'now' ? 'SKU Mgr now (not received yet)' : '⚠ not recorded'; };
-  var palletCols = ['Pallet', 'Vendor', 'Sold-out part #s on it', 'Their boxes left on it'];
-  var palletRows = pals.map(function (p) { return [p.pallet, p.vendor, p.parts.join(', '), N(p.boxes)]; });
-  var lineCols = ['Pallet', 'Part #', 'Description', 'Boxes on pallet', 'Boxes left on pallet', 'Cases on shelves before', 'Stocked in at', 'Stock from'];
-  var lineRows = sold.map(function (l) { return [l.pallet, l.part, l.description, N(l.boxes), N(l.left), N(l.stockBefore), l.location || '', basisTxt(l)]; });
-  var unkRows = unknown.map(function (l) { return [l.pallet, l.part, l.description, N(l.boxes), N(l.left), '?', l.location || '', basisTxt(l)]; });
+  var palletCols = ['Pallet', 'Vendor', 'Sold-out items on it', 'Their boxes left on it'];
+  var palletRows = pals.map(function (p) { return [p.pallet, p.vendor, p.parts.join('\n'), N(p.boxes)]; });
+  var lineCols = ['Pallet', 'Part #', 'Name', 'Description', 'Boxes on pallet', 'Boxes left on pallet', 'Cases on shelves before', 'Stocked in at', 'Stock from'];
+  var lineRows = sold.map(function (l) { return [l.pallet, l.part, l.name || '', l.description, N(l.boxes), N(l.left), N(l.stockBefore), l.location || '', basisTxt(l)]; });
+  var unkRows = unknown.map(function (l) { return [l.pallet, l.part, l.name || '', l.description, N(l.boxes), N(l.left), '?', l.location || '', basisTxt(l)]; });
   var head = '🔥 Sold-out pallets — ' + title;
   var note = pals.length + ' pallet(s) to put up front · ' + sold.length + ' sold-out line(s)'
     + (movedSold.length ? ' · ' + movedSold.length + ' sold-out line(s) already moved off their pallet (not listed)' : '')
@@ -4257,7 +4257,7 @@ async function soldOutPalletsReport(title, how) {
     var tbl = function (cols, rows) { return '<table><thead><tr>' + cols.map(function (c) { return '<th>' + E(c) + '</th>'; }).join('') + '</tr></thead><tbody>'
       + rows.map(function (r) { return '<tr>' + r.map(function (c) { return '<td>' + E(c) + '</td>'; }).join('') + '</tr>'; }).join('') + '</tbody></table>'; };
     win.document.write('<!doctype html><meta charset="utf-8"><title>' + E(head) + '</title><style>body{font:13px system-ui,sans-serif;margin:16px;color:#111}h1{font-size:18px;margin:0 0 4px}h2{font-size:15px;margin:18px 0 6px}'
-      + 'table{border-collapse:collapse;width:100%}th,td{border:1px solid #999;padding:5px 7px;text-align:left;vertical-align:top}th{background:#eee}td:nth-child(2){white-space:nowrap}.big td:first-child{font-size:18px;font-weight:700}.m{color:#555;font-size:12px}@media print{button{display:none}}</style>'
+      + 'table{border-collapse:collapse;width:100%}th,td{border:1px solid #999;padding:5px 7px;text-align:left;vertical-align:top}th{background:#eee}td{white-space:pre-line}td:nth-child(2){white-space:nowrap}.big td:first-child{font-size:18px;font-weight:700}.m{color:#555;font-size:12px}@media print{button{display:none}}</style>'
       + '<button onclick="print()" style="float:right;padding:8px 14px;font-size:14px">🖨 Print</button><h1>' + E(head) + '</h1><div class="m">' + E(when) + ' · ' + E(note) + '</div>'
       + (pals.length ? '<h2>Put these pallets up front first</h2><div class="big">' + tbl(palletCols, palletRows) + '</div><h2>What is on them</h2>' + tbl(lineCols, lineRows)
         : '<h2>✓ Nothing on this container was sold out.</h2>')
