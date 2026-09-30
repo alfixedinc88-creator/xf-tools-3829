@@ -4316,8 +4316,12 @@ function rvoPackingHtml(p, savedUnits) {
 function rvoPricesHtml(q) {
   var h = '<div style="font-size:12px;margin:0 0 8px;padding:8px 10px;background:var(--bg3);border-radius:8px">💲 <b>Prices</b> (per piece)'
     + (q.sheets && q.sheets.length ? ' from ' + escHtml(q.sheets.join(', ')) : '') + ': <b>' + fmt0(q.priced) + '</b> part #s priced'
-    + (q.missing.length ? ', <b style="color:var(--red)">' + q.missing.length + ' with NO price</b>' : '') + '.';
-  if (q.missing.length) h += '<div style="color:var(--red);margin-top:4px">No price: ' + q.missing.map(escHtml).join(', ') + '</div>';
+    + (q.missing.length ? (q.ordered ? ', ' + q.missing.length + ' with no price yet' : ', <b style="color:var(--red)">' + q.missing.length + ' with NO price</b>') : '') + '.';
+  // 🏭 Ordered: prices often aren't set yet — the quantities still count as
+  // on the way; the prices come with the shipped container's invoice.
+  if (q.missing.length) h += q.ordered
+    ? '<div style="color:var(--text3);margin-top:4px">✓ Quantities saved and counted as on the way. No price yet (fine for an order — the price comes when it ships, or import this order again with a Price column): ' + q.missing.map(escHtml).join(', ') + '</div>'
+    : '<div style="color:var(--red);margin-top:4px">No price: ' + q.missing.map(escHtml).join(', ') + '</div>';
   if (q.notExact && q.notExact.length) h += '<details style="margin-top:4px"><summary style="cursor:pointer;color:#b45309">' + q.notExact.length + ' priced by item code / other pack size (part # not on the invoice — check)</summary>'
     + q.notExact.map(function (x) { return '<div><span style="font-family:var(--mono)">' + escHtml(x.part) + '</span> $' + x.price + ' — ' + escHtml(x.src) + '</div>'; }).join('') + '</details>';
   if (q.changes && q.changes.length) h += '<details style="margin-top:4px" open><summary style="cursor:pointer">' + q.changes.length + ' price change(s) vs the vendor sheet — new stock keeps the new price, stock already here keeps its old price</summary>'
@@ -4872,8 +4876,8 @@ async function rvoImport(input) {
       dups: rows.filter(function (r) { return r.dup; }).length,
       skipped: skipped.concat(noCase.map(function (k) { return { row: k.row, part: k.part, qty: '', cases: k.cases, why: 'NOT counted — no case size for this part # (set ✏️ Case qty or SKU Mgr units per case, then import again)' }; })),
       caseUnits: caseLines, weights: weights,
-      prices: title ? { sheets: [], priced: rows.filter(function (r) { return !r.dup && r.price > 0; }).length, missing: rows.filter(function (r) { return !r.dup && !(r.price > 0) && rvoNum(r.qtyTot || r.qty) > 0; }).map(function (r) { return rvoClean(r.part); }), notExact: [], changes: priceChanges } : null });
-    if (title && stage === 'production') { var np = rows.filter(function (r) { return !r.dup && !(r.price > 0); }); if (np.length) alert('⚠ ' + np.length + ' line(s) have NO price (shown in red in the check): ' + np.slice(0, 20).map(function (r) { return r.part; }).join(', ') + (np.length > 20 ? ', …' : '') + '\nAdd a Price column (per piece) and import again to fill them in.'); }
+      prices: title ? { ordered: stage === 'production', sheets: [], priced: rows.filter(function (r) { return !r.dup && r.price > 0; }).length, missing: rows.filter(function (r) { return !r.dup && !(r.price > 0) && rvoNum(r.qtyTot || r.qty) > 0; }).map(function (r) { return rvoClean(r.part); }), notExact: [], changes: priceChanges } : null });
+    if (title && stage === 'production') { var np = rows.filter(function (r) { return !r.dup && !(r.price > 0); }); if (np.length) alert('✓ Order "' + title + '" saved — its quantities count as on the way, so the next order won\'t order them again.\n\n' + np.length + ' line(s) have no price yet: ' + np.slice(0, 20).map(function (r) { return r.part; }).join(', ') + (np.length > 20 ? ', …' : '') + '\nThat\'s fine for an order: the price comes with the shipped container. (Or import this order again with a Price column when the vendor sends prices.)'); }
     if (noCase.length) alert('⚠ ' + noCase.length + ' line(s) NOT counted — no case size known: ' + noCase.map(function (k) { return k.part; }).join(', ') + '\nSet their Case qty (✏️) and import again.');
   } catch (e) { alert('Import failed: ' + e.message); }
 }
