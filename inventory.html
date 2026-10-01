@@ -869,6 +869,8 @@ window.invCredLogin = async function() {
       <input class="isearch-inp" id="xfr-search-inp" type="text" placeholder="Part#, UPC, or name…" onkeydown="if(event.key==='Enter')xfrSearch()">
       <button class="isearch-btn" onclick="xfrSearch()">Go</button>
     </div>
+    <!-- SKU / Part# / UPC: what to scan next (box → spot → cases → put away from the cart) -->
+    <div id="xfr-steps" style="display:none;margin:8px 0 4px"></div>
     <button class="icam-btn" id="xfr-cam-btn" onclick="xfrToggleCam()">&#x1F4F7; Scan Barcode</button>
     <div id="xfr-reader-wrap" style="display:none"><div id="xfr-qr-reader"></div></div>
     <div id="xfr-name-results" style="display:none;margin-top:10px"></div>
@@ -1680,6 +1682,7 @@ window.invCredLogin = async function() {
         if (content) content.style.display = 'none';
       }
     }
+    if (tab === "transfer" && window.xfrStepsRender) window.xfrStepsRender();
     if (tab === "audit") { invAuditLoadMode(); invPopulateAllPrefixDropdowns(); if(typeof invLoadPrefixes==='function') invLoadPrefixes(); }
     if ((tab === "skumgr" || tab === "history" || tab === "soldout" || tab === "location") && !invUnlocked) {
       window._skumgrPendingTab = tab; // remember which tab to open after unlock
@@ -7610,6 +7613,7 @@ window.invCredLogin = async function() {
     var fl = g('xfr-fel-loc'); if (fl) fl.value = '';
     var ff = g('xfr-fel-found'); if (ff) ff.value = '';
     if (xfrCamRunning) xfrStopCam();
+    xfrStepsRender();
   }
 
   window.xfrSetSearchMode = function(mode) {
@@ -7640,7 +7644,29 @@ window.invCredLogin = async function() {
       if (inp) inp.placeholder = mode === 'name' ? 'Type product name…' : 'Part#, UPC, or barcode…';
     }
     var nr = g('xfr-name-results'); if (nr) nr.style.display = 'none';
+    xfrStepsRender();
   };
+  // SKU / Part# / UPC mode: a step guide + the scan box says what to scan next.
+  function xfrFormOpen() { var f = document.querySelector('#xfr-from-list [id^="xfr-loc-form-"]'); return !!(f && [].some.call(document.querySelectorAll('#xfr-from-list [id^="xfr-loc-form-"]'), function(x) { return x.style.display !== 'none'; })); }
+  function xfrStepsRender() {
+    var el = g('xfr-steps'), inp = g('xfr-search-inp'); if (!el) return;
+    if (xfrSearchMode !== 'code') { el.style.display = 'none'; return; }
+    var felOpen = g('xfr-found-elsewhere-wrap') && g('xfr-found-elsewhere-wrap').style.display !== 'none';
+    var step = !xfrPart ? 1 : (xfrFormOpen() || felOpen) ? 3 : 2;
+    var st = function(n, txt) { var on = n === step, done = n < step;
+      return '<div style="display:flex;gap:8px;align-items:center;padding:7px 10px;margin-bottom:4px;border-radius:9px;font-size:13px;font-weight:' + (on ? '800' : '600') + ';border:2px solid ' + (on ? 'var(--accent)' : 'transparent') + ';background:' + (on ? 'var(--accent-bg,#eef2ff)' : 'var(--bg3)') + ';color:' + (done ? 'var(--green)' : on ? 'var(--text)' : 'var(--text3)') + '">'
+        + '<span style="font-size:15px">' + (done ? '✅' : n + '️⃣') + '</span><span style="flex:1">' + txt + '</span></div>'; };
+    var item = xfrPart ? xfrE(xfrPart.isMultiVariant ? xfrPart.baseSku : xfrPart.partNum) : '';
+    el.style.display = 'block';
+    el.innerHTML = st(1, xfrPart ? 'Box scanned: <b style="font-family:var(--mono)">' + item + '</b> <a href="#" onclick="xfrStartOver();return false" style="font-size:11px;margin-left:6px">✕ start over</a>' : 'Scan the box — outside or inside UPC (or type the part #)')
+      + st(2, 'Scan the SPOT label you are grabbing from (or tap the spot below)')
+      + st(3, 'Type how many cases · tick <b>No more of this item left in this spot</b> if it is empty now · <b>+ Add to Cart</b>')
+      + st(4, 'At the new spot: in the 🛒 cart below tap <b>📷 Put away</b> → scan the box → how many → scan the spot');
+    if (inp) inp.placeholder = step === 1 ? '1️⃣ Scan the box (UPC) or type part #' : step === 2 ? '2️⃣ Now scan the SPOT label you grab from' : 'Scan another box to grab more';
+  }
+  window.xfrStartOver = function() { xfrResetLookup(); var si = g('xfr-search-inp'); if (si) si.focus(); };
+  window.xfrStepsRender = xfrStepsRender;
+  setTimeout(xfrStepsRender, 0);
 
   // ── 📍 Location Plan ─────────────────────────────────────────────
   // Every parent part # with its name; management types where it goes (an
@@ -8501,6 +8527,7 @@ window.invCredLogin = async function() {
         }
         g('xfr-result-card').style.display = 'block';
         if (xfrSearchMode === 'code') { var si = g('xfr-search-inp'); if (si) { si.value = ''; si.focus(); } }
+        setTimeout(xfrStepsRender, 0);
         if (d.isMultiVariant && d.variants && d.variants.length > 1) {
           xfrShowVariantPicker(d.variants);
         } else {
@@ -8668,6 +8695,7 @@ window.invCredLogin = async function() {
           g('xfr-found-elsewhere-wrap').style.display = 'none';
           xfrLoadInlineSuggestions(idx, xfrPart.partNum, xfrFromLoc.location);
         }
+        xfrStepsRender();
       }; })(i, el);
       list.appendChild(el);
     });
@@ -8688,6 +8716,7 @@ window.invCredLogin = async function() {
       fBtn.classList.add('isel');
       g('xfr-found-elsewhere-wrap').style.display = 'block';
       g('xfr-fel-loc').focus();
+      xfrStepsRender();
     };
     list.appendChild(fBtn);
 
