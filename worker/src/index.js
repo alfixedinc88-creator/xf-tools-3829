@@ -2454,6 +2454,11 @@ async function productPhotoSyncVeeqo(request, env) {
   return cors(new Response(JSON.stringify({ ok: true, page, created, updated: 0, skipped: Object.keys(found).length - created, hasMore: list.length >= size }), { headers: { 'Content-Type': 'application/json' } }));
 }
 
+// A "C" stuck right after the parent part # (bin labels / Pack & Ship
+// reports like "27-3-4C" or "25-3-2c=10") is not part of it: 27-3-4C → 27-3-4,
+// 25-3-2C=10 → 25-3-2=10. Only a C directly after the digits-and-dashes
+// parent; letters after "=" (=5XX) are left alone.
+function stripParentC(v) { return String(v || '').replace(/^(\s*\d+(?:-\d+)+)[cC](?=\s*$|=)/, '$1'); }
 // 11–14 digits = a UPC / EAN / GTIN barcode, never one of our part #s.
 function isUpcLike(v) { return /^\d{11,14}$/.test(String(v || '').trim()); }
 // UPC → part #, from every place D1 keeps UPCs. Leading zeros are ignored
@@ -2487,7 +2492,7 @@ async function inventoryUpcLink(request, env, session) {
   return J({ ok: true, upc, part });
 }
 async function inventoryLookup(url, env) {
-  const code = (url.searchParams.get('code') || '').trim().toUpperCase();
+  const code = stripParentC((url.searchParams.get('code') || '').trim().toUpperCase());
   if (!code) return cors(new Response(JSON.stringify({ error: 'No code provided' }), { status: 400, headers: { 'Content-Type': 'application/json' } }));
 
   // 1. Look up in UPC sheet: col A=SKU, col B=PartNum/variant, col C=inside UPC, col D=outside UPC
@@ -18158,7 +18163,7 @@ async function inventoryGetStockouts(url, env) {
   const out = rows.map(r => ({
     id: r.id, date: r.date, timestamp: r.timestamp,
     tracking: r.tracking || '', orderNum: r.order_num || '',
-    sku: r.sku || '', binLocation: r.bin_location || '', carrier: r.carrier || '',
+    sku: stripParentC(r.sku || ''), binLocation: stripParentC(r.bin_location || ''), carrier: r.carrier || '',
     reportedBy: r.reported_by || '', status: r.status || 'open',
     resolvedBy: r.resolved_by || '', resolvedAt: r.resolved_at || '',
     quantity: r.quantity != null ? r.quantity : 1, // pre-quantity-column rows read back as 1
