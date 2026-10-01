@@ -375,7 +375,10 @@ console.log('\n📍 Location Plan: where each parent goes; Container here tells 
   // 🚢 Container here: 2 suggested spots per item (plan first, then where most of the parent is), + each line's move history
   const rc = await post('/inventory/containers/pallet-recs', { parts: ['70-1-1=5', '70-2-2=10', '70-9-9=1'], fromLoc: 'GARAGE' });
   const r5 = rc.recs['70-1-1=5'], r10 = rc.recs['70-2-2=10'], r9 = rc.recs['70-9-9=1'];
-  check('suggested spots: 70-1-1 (plan BSMT) → BSMT shelf first; 70-2-2 (exact plan C5=1-1-1) → that spot; no plan + no stock → empty shelves; never more than 2', rc.ok && r5.plan === 'BSMT' && r5.recs[0].location === 'BSMT=1-1-1' && r10.recs[0].location === 'C5=1-1-1' && r10.recs[0].why === '📍 plan spot' && !r9.plan && r9.recs.length === 2 && r9.recs.every(x => /empty/.test(x.why)) && [r5, r10, r9].every(r => r.recs.length <= 2), rc);
+  check('suggested spots (owner: no "empty shelf in BARN" — the plan note says it): plan BSMT with no BSMT stock → no extra spots; exact plan C5=1-1-1 → none; no plan + no stock → 2 empty shelves', rc.ok && r5.plan === 'BSMT' && r5.recs.length === 0 && r10.plan === 'C5=1-1-1' && r10.recs.length === 0 && !r9.plan && r9.recs.length === 2 && r9.recs.every(x => /empty/.test(x.why)), rc);
+  await post('/inventory/location-plan', { items: [{ base: '70-1-1', plan: 'C1' }] });
+  const rcC1 = await post('/inventory/containers/pallet-recs', { parts: ['70-1-1=5'], fromLoc: 'GARAGE' });
+  check('plan C1 → only C1 shelves already holding 70-1-1, most first (3 then 2), never more than 2', rcC1.recs['70-1-1=5'].recs.map(x => x.location).join() === 'C1=1-1-1,C1=1-1-2', rcC1);
   await post('/inventory/location-plan', { items: [{ base: '70-1-1', plan: '' }] });
   const rcN = await post('/inventory/containers/pallet-recs', { parts: ['70-1-1=5'], fromLoc: 'GARAGE' });
   check('no plan: the shelf holding the most of the same parent (any pack size) comes first', rcN.recs['70-1-1=5'].recs[0].location === 'C1=1-1-1' && /has 3 cases of 70-1-1/.test(rcN.recs['70-1-1=5'].recs[0].why), rcN);
