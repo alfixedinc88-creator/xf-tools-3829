@@ -333,6 +333,33 @@ console.log('\nC part #s (27-3-4C=2X) keep their own part # but share the parent
   check('no double count: parent 27-3-4 shelves total 3 (C4) + 4 (C part #) + 6 = 13 cases, each shelf once', cases === 13 && a.locations.length === 3, { cases, locs: a.locations });
 }
 
+console.log('\n📍 Location Plan: where each parent goes; Container here tells them');
+{
+  await get('/inventory/location-plan'); // makes the tables
+  sq.prepare("INSERT INTO reorder_pallet (title, vendor, pallet, part, description, cases, updated_at) VALUES ('LP SHIP','KW','1','70-1-1=5','plug',2,?), ('LP SHIP','KW','1','70-2-2=10','cap',4,?)").run(new Date().toISOString(), new Date().toISOString());
+  sq.prepare("INSERT INTO master_list (base_sku, name, part_num, location, cases, units_per_case) VALUES ('70-1-1','1/2 Plug','70-1-1=5','C1=1-1-1',3,100)").run();
+  sq.prepare("INSERT OR IGNORE INTO locations (location, prefix, active) VALUES ('BARN=1-1-1','BARN=',1), ('C5=1-1-1','C5=',1)").run();
+  const shelf0 = shelf();
+  const L = await get('/inventory/location-plan');
+  const p1 = (L.parents || []).find(p => p.base === '70-1-1'), p2 = (L.parents || []).find(p => p.base === '70-2-2');
+  check('lists every parent part # with its name, where it is now, and boxes on the containers', L.ok && p1 && p1.name === '1/2 Plug' && p1.spots[0].location === 'C1=1-1-1' && p1.ships.some(x => x.title === 'LP SHIP' && x.left === 2) && p2 && p2.name === 'cap' && L.containers.some(c => c.title === 'LP SHIP' && c.parents === 2), { p1, p2, c: L.containers });
+  const no = await call('/inventory/location-plan', { method: 'POST', headers: { 'X-Cred-Token': pk.token, 'Content-Type': 'application/json' }, body: JSON.stringify({ base: '70-1-1', plan: 'BARN' }) });
+  check('only management can set the plan', no.status === 403, no.status);
+  const sv = await post('/inventory/location-plan', { items: [{ base: '70-1-1=5', plan: 'barn' }, { base: '70-2-2', plan: 'C5=1-1-1' }] });
+  const bad = await post('/inventory/location-plan', { base: '70-2-2', plan: 'BARN 1 2' });
+  const lg = await get('/inventory/location-plan/log?base=70-1-1');
+  check('saves BARN (any pack size → its parent) and an exact spot; a bad one is refused; who/when is kept', sv.ok && sv.saved.length === 2 && !bad.ok && lg.log.length === 1 && lg.log[0].new_plan === 'BARN' && lg.log[0].by_user === 'TS', { sv, bad, lg });
+  const s1 = await get('/inventory/suggest-location?usePlan=1&partNum=70-1-1%3D5&fromLoc=GARAGE');
+  const s0 = await get('/inventory/suggest-location?partNum=70-1-1%3D5&fromLoc=GARAGE');
+  check('Container here (usePlan): "goes to BARN", BARN shelves first', s1.plan === 'BARN' && !s1.planExact && s1.emptyNearby[0] === 'BARN=1-1-1', s1);
+  check('other screens (no usePlan) get the same answer as before', !s0.plan && s0.existing[0].location === 'C1=1-1-1' && !s0.emptyNearby.length, s0);
+  const s2 = await get('/inventory/suggest-location?usePlan=1&partNum=70-2-2%3D10&fromLoc=GARAGE');
+  check('an exact spot plan is sent as the exact spot', s2.plan === 'C5=1-1-1' && s2.planExact, s2);
+  await post('/inventory/location-plan', { base: '70-1-1', plan: '' });
+  check('clearing a plan removes it (and is kept in the log); counts never change', !(await get('/inventory/location-plan')).parents.find(p => p.base === '70-1-1').plan && (await get('/inventory/location-plan/log?base=70-1-1')).log.length === 2 && shelf() === shelf0, null);
+  check('the plan needs a sign-in', (await call('/inventory/location-plan')).status === 401, null);
+}
+
 console.log('\n🧪 Test switch: ON → do anything → OFF puts everything back');
 {
   const dump = () => JSON.stringify({ ml: sq.prepare('SELECT * FROM master_list ORDER BY id').all(), log: sq.prepare('SELECT * FROM inventory_log ORDER BY id').all() });

@@ -42,6 +42,7 @@ window.addEventListener('pageshow', function (e) { if (e.persisted) location.rel
       { key: 'audit', label: '🔍 Audit', sel: '#inv-tab-audit' },
       { key: 'review', label: 'Review', sel: '#inv-tab-review', needs: 'Mgmt' },
       { key: 'skumgr', label: '📋 SKU Mgr', sel: '#inv-tab-skumgr', needs: 'Mgmt' },
+      { key: 'location', label: '📍 Location Plan', sel: '#inv-tab-location', needs: 'Mgmt' },
       { key: 'history', label: '📜 History', sel: '#inv-tab-history', needs: 'Mgmt' },
       { key: 'soldout', label: '🚫 Sold Out', sel: '#inv-tab-soldout', needs: 'Mgmt' }] },
     { key: 'packship', file: 'packship.html', name: '📦 Pack & Ship', needs: 'any sign-in', card: card('packship.html'), tabs: [
@@ -374,5 +375,93 @@ window.addEventListener('pageshow', function (e) { if (e.persisted) location.rel
     hide(true);
   });
   function start() { links(); setInterval(links, 2000); }
+  if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', start); else start();
+})();
+
+// ── 🔇 Scanner phone: no pop-up keyboard ─────────────────────────────────────
+// On a phone with a built-in scanner the phone keyboard covers half the screen
+// every time a scan box is focused. Turned on per phone (⌨️ button, bottom
+// left, touch screens only): typing boxes stop opening the keyboard
+// (inputmode="none") but scans still go in. Tap ⌨️ → "Show keyboard" to type
+// in the box you're on; it goes back to hidden when you leave that box.
+// Sign-in boxes are left alone (they have their own ⌨️ Keyboard).
+(function () {
+  if (!(window.matchMedia && window.matchMedia('(pointer: coarse)').matches)) return;
+  var PREF = 'xf_nokb', last = null, open = null;
+  var TYPES = /^(text|search|number|tel|email|url)$/i;
+  function on(v) { try { if (v === undefined) return localStorage.getItem(PREF) === '1'; localStorage.setItem(PREF, v ? '1' : '0'); } catch (e) {} return false; }
+  function isBox(el) {
+    if (!el || !el.matches) return false;
+    if (el.matches('input[autocomplete="username"], input[type="password"], #xf-nokb-pop *')) return false;
+    if (el.tagName === 'TEXTAREA') return true;
+    return el.tagName === 'INPUT' && TYPES.test(el.getAttribute('type') || 'text');
+  }
+  function mute(el) {
+    if (el === open) return;
+    if (el.dataset.xfKbIm == null) el.dataset.xfKbIm = el.getAttribute('inputmode') || '';
+    el.setAttribute('inputmode', 'none');
+  }
+  function unmute(el) {
+    if (el.dataset.xfKbIm == null) return;
+    if (el.dataset.xfKbIm) el.setAttribute('inputmode', el.dataset.xfKbIm); else el.removeAttribute('inputmode');
+    delete el.dataset.xfKbIm;
+  }
+  function all(fn) { [].slice.call(document.querySelectorAll('input, textarea')).forEach(function (el) { if (isBox(el)) fn(el); }); }
+  function apply() { if (on()) all(mute); else all(unmute); btn(); }
+  function btn() {
+    var b = document.getElementById('xf-nokb');
+    if (!b) {
+      b = document.createElement('button'); b.id = 'xf-nokb'; b.type = 'button';
+      b.style.cssText = 'position:fixed;left:10px;bottom:10px;z-index:2147482000;width:42px;height:42px;border-radius:50%;border:1.5px solid #9ca3af;background:rgba(255,255,255,.92);font-size:20px;line-height:1;box-shadow:0 2px 8px rgba(0,0,0,.2);padding:0;cursor:pointer;touch-action:manipulation';
+      b.addEventListener('pointerdown', function (e) { e.preventDefault(); }); // keep focus in the scan box
+      b.addEventListener('click', function (e) { e.preventDefault(); menu(); });
+      document.body.appendChild(b);
+    }
+    b.textContent = on() ? '⌨️' : '⌨';
+    b.title = on() ? 'Keyboard is hidden for scanning — tap to show it' : 'Keyboard settings for this phone';
+    b.style.opacity = on() ? '1' : '.55';
+  }
+  function close() { var p = document.getElementById('xf-nokb-pop'); if (p) p.remove(); }
+  function menu() {
+    if (document.getElementById('xf-nokb-pop')) { close(); return; }
+    var p = document.createElement('div'); p.id = 'xf-nokb-pop';
+    p.style.cssText = 'position:fixed;left:10px;bottom:60px;z-index:2147482001;background:#fff;color:#111;border:1px solid #d1d5db;border-radius:12px;box-shadow:0 6px 20px rgba(0,0,0,.25);padding:8px;width:250px;font:14px system-ui,sans-serif';
+    var B = function (txt, fn, main) { var x = document.createElement('button'); x.type = 'button'; x.textContent = txt;
+      x.style.cssText = 'display:block;width:100%;text-align:left;margin:3px 0;padding:11px 10px;border-radius:8px;border:none;font-size:14px;font-weight:600;cursor:pointer;' + (main ? 'background:#1a56db;color:#fff' : 'background:#f3f4f6;color:#111');
+      x.addEventListener('pointerdown', function (e) { e.preventDefault(); }); x.addEventListener('click', function (e) { e.preventDefault(); close(); fn(); }); p.appendChild(x); };
+    if (on()) {
+      B('⌨️ Show keyboard to type' + (last && document.contains(last) ? '' : ' (tap a box first)'), show, true);
+      B('Always show the keyboard on this phone', function () { on(false); apply(); });
+    } else {
+      B('🔇 Hide the keyboard on this phone (scanner phone — scans still work)', function () { on(true); apply(); if (document.activeElement && isBox(document.activeElement)) { document.activeElement.blur(); } }, true);
+    }
+    B('Cancel', function () {});
+    document.body.appendChild(p);
+  }
+  // Show the keyboard for the box you're on (until you leave it).
+  function show() {
+    var el = (document.activeElement && isBox(document.activeElement)) ? document.activeElement : last;
+    if (!el || !document.contains(el)) { alert('Tap the box you want to type in first, then ⌨️ → Show keyboard.'); return; }
+    open = el; unmute(el);
+    try { el.blur(); } catch (e) {}
+    setTimeout(function () { try { el.focus(); if (el.setSelectionRange && /^(text|search|tel|url)$/i.test(el.type)) el.setSelectionRange(el.value.length, el.value.length); } catch (e) {} }, 30);
+  }
+  document.addEventListener('focusin', function (e) {
+    var el = e.target; if (!isBox(el)) return;
+    last = el; if (on() && el !== open) mute(el);
+  });
+  document.addEventListener('focusout', function (e) {
+    var el = e.target; if (el !== open) return;
+    setTimeout(function () { if (document.activeElement !== el) { open = null; if (on()) mute(el); } }, 50);
+  });
+  document.addEventListener('pointerdown', function (e) { var p = document.getElementById('xf-nokb-pop'); if (p && !p.contains(e.target) && e.target.id !== 'xf-nokb') close(); });
+  var queued = false;
+  function start() {
+    apply();
+    new MutationObserver(function () { // new boxes drawn later (lists, popups): hide their keyboard too
+      if (!on() || queued) return; queued = true;
+      setTimeout(function () { queued = false; all(function (el) { if (el.dataset.xfKbIm == null && el !== open) mute(el); }); }, 150);
+    }).observe(document.body, { childList: true, subtree: true });
+  }
   if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', start); else start();
 })();

@@ -506,6 +506,7 @@ window.invCredLogin = async function() {
   <button class="itab" id="inv-tab-audit" onclick="invSwitchTab('audit')">🔍 Audit</button>
   <button class="itab" id="inv-tab-review" onclick="invSwitchTab('review')">Review<span class="ibadge" id="inv-pending-badge" style="display:none">0</span></button>
   <button class="itab" id="inv-tab-skumgr" onclick="invSwitchTab('skumgr')">&#x1F4CB; SKU Mgr</button>
+  <button class="itab" id="inv-tab-location" onclick="invSwitchTab('location')">📍 Location Plan</button>
   <button class="itab" id="inv-tab-history" onclick="invSwitchTab('history')">&#x1F4DC; History</button>
   <button class="itab" id="inv-tab-soldout" onclick="invSwitchTab('soldout')">🚫 Sold Out</button>
 </div>
@@ -1144,6 +1145,26 @@ window.invCredLogin = async function() {
   </div>
 </div>
 
+<div class="ipanel" id="inv-panel-location">
+  <div class="icard">
+    <div class="icard-label">📍 Location Plan</div>
+    <div style="font-size:12px;color:var(--text3);margin-bottom:10px;line-height:1.5">Where each parent part # should go. Type an <b>area</b> (BARN, C1, C5…) or one <b>exact spot</b> (C1=1-2-3). When someone scans the outside box in Transfer → 🚢 Container here, it tells them where to put it, and puts the spots in that area first. Saved as you type; every change is kept with who and when.</div>
+    <div id="lp-chips" style="display:flex;flex-wrap:wrap;gap:6px;margin-bottom:8px"></div>
+    <div style="display:flex;gap:6px;flex-wrap:wrap;align-items:center;margin-bottom:8px">
+      <input id="lp-q" type="text" placeholder="Search part # or name" autocomplete="off" oninput="lpRender()" style="flex:1;min-width:160px;padding:8px 10px;border:1.5px solid var(--border);border-radius:8px;background:var(--bg);color:var(--text);font-size:14px">
+      <label style="font-size:12px;display:flex;align-items:center;gap:4px;white-space:nowrap"><input type="checkbox" id="lp-noplan" onchange="lpRender()"> No plan yet</label>
+    </div>
+    <div style="display:flex;gap:6px;flex-wrap:wrap;align-items:center;margin-bottom:10px;padding:8px;border:1px dashed var(--border);border-radius:8px">
+      <span style="font-size:12px">Set every part # shown <b>without a plan</b> to</span>
+      <input id="lp-bulk" type="text" list="lp-areas" placeholder="BARN" autocomplete="off" style="width:110px;padding:6px 8px;border:1.5px solid var(--border);border-radius:7px;background:var(--bg);color:var(--text);font-family:var(--mono);text-transform:uppercase">
+      <button type="button" onclick="lpBulk()" style="padding:6px 12px;border-radius:7px;border:none;background:var(--accent);color:#fff;font-weight:700;cursor:pointer">Apply</button>
+    </div>
+    <datalist id="lp-areas"></datalist>
+    <div id="lp-count" style="font-size:12px;color:var(--text3);margin-bottom:6px"></div>
+    <div id="lp-list"><div class="iempty">Loading…</div></div>
+  </div>
+</div>
+
 <div class="ipanel" id="inv-panel-skumgr">
   <div class="icard">
     <div class="icard-label">SKU Manager</div>
@@ -1618,6 +1639,8 @@ window.invCredLogin = async function() {
     g("inv-panel-review").className    = "ipanel" + (tab === "review"   ? " iactive" : "");
     g("inv-panel-audit").className     = "ipanel" + (tab === "audit"    ? " iactive" : "");
     g("inv-panel-skumgr").className    = "ipanel" + (tab === "skumgr"   ? " iactive" : "");
+    g("inv-panel-location").className  = "ipanel" + (tab === "location" ? " iactive" : "");
+    g("inv-tab-location").className    = "itab"   + (tab === "location" ? " iactive" : "");
     g("inv-panel-history").className   = "ipanel" + (tab === "history"  ? " iactive" : "");
     g("inv-panel-soldout").className   = "ipanel" + (tab === "soldout"  ? " iactive" : "");
     g("inv-tab-soldout").className     = "itab"   + (tab === "soldout"  ? " iactive" : "");
@@ -1650,13 +1673,14 @@ window.invCredLogin = async function() {
       }
     }
     if (tab === "audit") { invAuditLoadMode(); invPopulateAllPrefixDropdowns(); if(typeof invLoadPrefixes==='function') invLoadPrefixes(); }
-    if ((tab === "skumgr" || tab === "history" || tab === "soldout") && !invUnlocked) {
+    if ((tab === "skumgr" || tab === "history" || tab === "soldout" || tab === "location") && !invUnlocked) {
       window._skumgrPendingTab = tab; // remember which tab to open after unlock
       invSwitchTab('review');
       return;
     }
     if (tab === "history") { histLoad(); histLoadReport(); }
     if (tab === "skumgr") { skumgrAutoLoad(); skumgrLoadCost(); skumgrLoadValue(); }
+    if (tab === "location") lpLoad();
     if (tab === "soldout" && typeof soLoadLog === 'function') { soLoadLog(); if (typeof lwLoad === 'function') lwLoad(); setTimeout(function(){ var q = g('so-q'); if (q) q.focus(); }, 50); }
   };
 
@@ -7609,6 +7633,83 @@ window.invCredLogin = async function() {
     var nr = g('xfr-name-results'); if (nr) nr.style.display = 'none';
   };
 
+  // ── 📍 Location Plan ─────────────────────────────────────────────
+  // Every parent part # with its name; management types where it goes (an
+  // area like BARN / C1, or an exact spot). 🚢 Container here shows it when a
+  // box is scanned. Filter to the parts on the containers to do those first.
+  var LP = { parents: [], containers: [], view: 'ships', saving: {} };
+  function lpE(v) { return String(v == null ? '' : v).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;').replace(/'/g,'&#39;'); }
+  function lpN(v) { return Math.round((parseFloat(v) || 0) * 100) / 100; }
+  function lpClean(v) { return String(v || '').trim().toUpperCase().replace(/\s*=\s*/g, '=').replace(/=$/, ''); }
+  window.lpLoad = function() {
+    var dl = g('lp-areas'); if (dl) dl.innerHTML = INV_PREFIXES.map(function(p) { return '<option value="' + lpE(p.replace(/=$/, '')) + '">'; }).join('');
+    g('lp-list').innerHTML = "<div class='iempty'>Loading…</div>";
+    wFetch(W + '/inventory/location-plan').then(function(r) { return r.json(); }).then(function(d) {
+      if (!d.ok) { g('lp-list').innerHTML = "<div class='iempty'>Load failed: " + lpE(d.error || '') + "</div>"; return; }
+      LP.parents = d.parents || []; LP.containers = d.containers || [];
+      if (!LP.containers.length && LP.view === 'ships') LP.view = 'all';
+      lpRender();
+    }).catch(function() { g('lp-list').innerHTML = "<div class='iempty'>Load failed</div>"; });
+  };
+  window.lpView = function(v) { LP.view = v; lpRender(); };
+  function lpShown() {
+    var q = String((g('lp-q') || {}).value || '').trim().toUpperCase(), noPlan = (g('lp-noplan') || {}).checked;
+    return LP.parents.filter(function(p) {
+      if (LP.view === 'ships' && !p.ships.length) return false;
+      if (LP.view.indexOf('c:') === 0 && !p.ships.some(function(s) { return s.title === LP.view.slice(2); })) return false;
+      if (noPlan && p.plan) return false;
+      if (q && p.base.indexOf(q) < 0 && String(p.name || '').toUpperCase().indexOf(q) < 0) return false;
+      return true;
+    });
+  }
+  window.lpRender = function() {
+    var inShips = LP.parents.filter(function(p) { return p.ships.length; });
+    var chip = function(v, label) { var on = LP.view === v;
+      return '<button type="button" onclick="lpView(' + lpE(JSON.stringify(v)) + ')" style="padding:6px 10px;border-radius:999px;font-size:12px;cursor:pointer;border:1.5px solid ' + (on ? 'var(--accent)' : 'var(--border)') + ';background:' + (on ? 'var(--accent)' : 'var(--bg)') + ';color:' + (on ? '#fff' : 'var(--text)') + '">' + label + '</button>'; };
+    g('lp-chips').innerHTML = (LP.containers.length ? chip('ships', '🚢 On the containers (' + inShips.length + ')') : '')
+      + LP.containers.map(function(c) { var n = LP.parents.filter(function(p) { return p.ships.some(function(s) { return s.title === c.title; }); });
+          var planned = n.filter(function(p) { return p.plan; }).length;
+          return chip('c:' + c.title, lpE(c.title) + (c.received ? '' : ' (on the way)') + ' · ' + planned + '/' + n.length + ' planned'); }).join('')
+      + chip('all', 'All parts (' + LP.parents.length + ')');
+    var rows = lpShown(), MAX = 300;
+    var planned = rows.filter(function(p) { return p.plan; }).length;
+    g('lp-count').textContent = rows.length + ' part #s · ' + planned + ' with a plan · ' + (rows.length - planned) + ' without' + (rows.length > MAX ? ' · showing the first ' + MAX + ' — search to find others' : '');
+    g('lp-list').innerHTML = rows.length ? rows.slice(0, MAX).map(function(p) {
+      var now = p.spots.length ? p.spots.map(function(s) { return lpE(s.location) + ' (' + lpN(s.cases) + ')'; }).join(', ') + (p.cases ? '' : '') : '<span style="color:var(--orange)">not on a shelf</span>';
+      var ships = p.ships.map(function(s) { return '🚢 ' + lpE(s.title) + ': <b>' + lpN(s.left) + '</b> box(es)'; }).join(' · ');
+      return '<div style="display:flex;gap:8px;align-items:center;padding:8px;border:1.5px solid ' + (p.plan ? 'var(--green)' : 'var(--border)') + ';border-radius:9px;margin-bottom:6px;background:var(--bg)">'
+        + '<div style="flex:1;min-width:0"><div style="font-family:var(--mono);font-weight:800">' + lpE(p.base) + '</div>'
+        + '<div style="font-size:12px;color:var(--text2);white-space:nowrap;overflow:hidden;text-overflow:ellipsis">' + lpE(p.name || '') + '</div>'
+        + '<div style="font-size:11px;color:var(--text3)">Now: ' + now + '</div>'
+        + (ships ? '<div style="font-size:11px;color:var(--accent)">' + ships + '</div>' : '')
+        + (p.plan && p.planBy ? '<div style="font-size:10px;color:var(--text3)">plan by ' + lpE(p.planBy) + '</div>' : '') + '</div>'
+        + '<input type="text" list="lp-areas" value="' + lpE(p.plan) + '" placeholder="BARN / C1…" data-base="' + lpE(p.base) + '" onchange="lpSave(this)" onkeydown="if(event.key===\'Enter\')this.blur()" autocomplete="off" style="width:110px;padding:8px;border:1.5px solid var(--border);border-radius:8px;background:var(--bg);color:var(--text);font-family:var(--mono);font-weight:700;text-transform:uppercase">'
+        + '</div>';
+    }).join('') : "<div class='iempty'>Nothing here</div>";
+  };
+  function lpPost(items, done) {
+    wFetch(W + '/inventory/location-plan', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ items: items }) })
+      .then(function(r) { return r.json(); }).then(function(d) {
+        (d.saved || []).forEach(function(x) { var p = LP.parents.filter(function(q) { return q.base === x.base; })[0]; if (p) { p.plan = x.plan; p.planBy = (INV_CRED_USER && INV_CRED_USER.displayName) || ''; } });
+        if (d.ok === false) invFlash(d.error || 'Not saved', 'error');
+        done(d);
+      }).catch(function() { invFlash('Not saved — network error', 'error'); done({ ok: false }); });
+  }
+  window.lpSave = function(el) {
+    var base = el.getAttribute('data-base'), plan = lpClean(el.value); el.value = plan;
+    if (plan && !/^[A-Z0-9]+(=[A-Z0-9-]+)?$/.test(plan)) { invFlash('Use an area (BARN, C1) or a spot (C1=1-2-3)', 'error'); return; }
+    lpPost([{ base: base, plan: plan }], function(d) { if (d.ok !== false) { invFlash('✓ ' + base + (plan ? ' → ' + plan : ' — plan cleared'), 'success'); lpRender(); } });
+  };
+  window.lpBulk = function() {
+    var plan = lpClean((g('lp-bulk') || {}).value);
+    if (!plan) { invFlash('Type the area first (e.g. BARN)', 'error'); return; }
+    if (!/^[A-Z0-9]+(=[A-Z0-9-]+)?$/.test(plan)) { invFlash('Use an area (BARN, C1) or a spot (C1=1-2-3)', 'error'); return; }
+    var rows = lpShown().filter(function(p) { return !p.plan; });
+    if (!rows.length) { invFlash('Every part # shown already has a plan', 'error'); return; }
+    if (!confirm('Set ' + rows.length + ' part #s (the ones shown with no plan) to ' + plan + '?')) return;
+    lpPost(rows.map(function(p) { return { base: p.base, plan: plan }; }), function(d) { if (d.ok !== false) { invFlash('✓ ' + (d.saved || []).length + ' part #s → ' + plan, 'success'); lpRender(); } });
+  };
+
   // ── 🚢 Container here ─────────────────────────────────────────────
   // Pallets of shipped containers (vendor packing list, imported on the
   // Reorder page). Type a pallet # (or container / part # / name) to see
@@ -7829,11 +7930,12 @@ window.invCredLogin = async function() {
     var l = xfrGo.lines.filter(function(x) { return x.id === id; })[0]; if (!l) return;
     xfrGo.sel = { id: id, n: l.left }; xfrGo.sug = null; xfrGoRender();
     var from = xfrGoFrom(l);
-    wFetch(W + '/inventory/suggest-location?partNum=' + encodeURIComponent(l.part) + '&fromLoc=' + encodeURIComponent(from ? from.location : ''))
+    wFetch(W + '/inventory/suggest-location?usePlan=1&partNum=' + encodeURIComponent(l.part) + '&fromLoc=' + encodeURIComponent(from ? from.location : ''))
       .then(function(r) { return r.json(); }).then(function(d) {
         if (!xfrGo.sel || xfrGo.sel.id !== id) return;
         var skip = function(loc) { return /^GARAGE\b/i.test(loc); };
-        xfrGo.sug = { existing: ((d && d.existing) || []).filter(function(x) { return !skip(x.location); }), empty: ((d && d.emptyNearby) || []).concat((d && d.emptyOther) || []).filter(function(x) { return !skip(x); }) };
+        xfrGo.sug = { existing: ((d && d.existing) || []).filter(function(x) { return !skip(x.location); }), empty: ((d && d.emptyNearby) || []).concat((d && d.emptyOther) || []).filter(function(x) { return !skip(x); }),
+          plan: (d && d.plan) || '', planExact: !!(d && d.planExact) };
         xfrGoRender();
       }).catch(function() { xfrGo.sug = { existing: [], empty: [] }; xfrGoRender(); });
   };
@@ -7866,6 +7968,7 @@ window.invCredLogin = async function() {
           + '<span style="font-size:12px">box(es)</span></div></div></div>'
           + '<div style="font-size:12px;font-weight:700;margin:10px 0 6px">Put them at:</div>'
           + (!sug ? '<div style="font-size:12px;color:var(--text3)">Finding the best spot…</div>'
+            : sug.plan ? xfrGoPlanDests(sug, dest)
             : (best ? dest(best.location, 'Most of this item is here (' + xfrN(best.cases) + ' cases)', true) : '<div style="font-size:12px;color:var(--orange);margin-bottom:6px">No shelf has this item yet — pick an empty shelf or scan a spot</div>')
               + sug.existing.slice(1, 4).map(function(x) { return dest(x.location, 'Also has this item (' + xfrN(x.cases) + ' cases)', false); }).join('')
               + sug.empty.slice(0, best ? 2 : 4).map(function(x) { return dest(x, 'Empty shelf', !best && x === sug.empty[0]); }).join(''))
@@ -7882,6 +7985,24 @@ window.invCredLogin = async function() {
     if (xfrGo.moved.length) h += '<div style="margin-top:8px;font-size:12px;color:var(--green)">' + xfrGo.moved.slice(-6).map(function(t) { return '✓ ' + xfrE(t); }).join('<br>') + '</div>';
     el.innerHTML = h;
   };
+  // 📍 Location Plan set for this parent: say where it goes; its spots first.
+  function xfrGoPlanDests(sug, dest) {
+    var P = sug.plan, area = P.indexOf('=') >= 0 ? P.split('=')[0] + '=' : P + '=';
+    var inA = function(loc) { loc = String(loc).toUpperCase(); return sug.planExact ? loc === P : loc.indexOf(area) === 0; };
+    var h = '<div style="padding:10px;border-radius:10px;background:#fef3c7;color:#92400e;font-weight:800;font-size:16px;margin-bottom:8px">📍 Plan: goes to ' + xfrE(P) + '</div>';
+    if (sug.planExact) {
+      h += dest(P, 'The plan spot', true);
+      sug.existing.filter(function(x) { return !inA(x.location); }).slice(0, 2).forEach(function(x) { h += dest(x.location, 'Not the plan — also has this item (' + xfrN(x.cases) + ' cases)', false); });
+      return h;
+    }
+    var ex = sug.existing.filter(function(x) { return inA(x.location); }), em = sug.empty.filter(inA), first = true;
+    ex.slice(0, 3).forEach(function(x) { h += dest(x.location, 'In ' + xfrE(P) + ' · has this item (' + xfrN(x.cases) + ' cases)', first); first = false; });
+    em.slice(0, ex.length ? 2 : 4).forEach(function(x) { h += dest(x, 'In ' + xfrE(P) + ' · empty shelf', first); first = false; });
+    if (first) h += '<div style="font-size:12px;color:var(--orange);margin-bottom:6px">No free shelf found in ' + xfrE(P) + ' — scan the ' + xfrE(P) + ' spot you put it on</div>';
+    var other = sug.existing.filter(function(x) { return !inA(x.location); }).slice(0, 2);
+    if (other.length) h += '<div style="font-size:11px;color:var(--text3);margin:6px 0 4px">Not in the plan:</div>' + other.map(function(x) { return dest(x.location, 'Also has this item (' + xfrN(x.cases) + ' cases)', false); }).join('');
+    return h;
+  }
   // Move the picked item's boxes off the pallet to `toLoc` now (a normal
   // Transfer, counted against the pallet line — never more than it has).
   window.xfrGoMove = function(toLoc) {
@@ -10600,6 +10721,6 @@ window.invCredLogin = async function() {
   };
 })();
 </script>
-<script src="xf-access.js?v=20261001"></script>
+<script src="xf-access.js?v=20261001c"></script>
 </body>
 </html>
