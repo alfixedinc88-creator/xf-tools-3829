@@ -316,7 +316,21 @@ console.log('\nVendor #1/#2 box + bag UPC list (data/upc) — scanner finds the 
   check('box UPC 00810097206540 → 24-1-2=1, bag UPC 00810097206533 → 24-1-2=1', await t('00810097206540', '24-1-2=1') && await t('00810097206533', '24-1-2=1'), null);
   check('UPC typed into the sheet as a number (840428904241.0) still found → 26-5-2=2X', await t('840428904241', '26-5-2=2X'), null);
   check('updated list: new 202-4-10=2XX box 840428935962 and 43-4-12=2X bag 840428945053 scan to them', await t('840428935962', '202-4-10=2XX') && await t('840428945053', '43-4-12=2X'), null);
+  check('3rd file: 27-3-1=1W.1C box 840428927486 → 27-3-1=1W.1C; 28-4-1C=2X box 810139931782 → 28-4-1C=2X (its own part #), 28-4-1=2X box 810139931720 → 28-4-1=2X; 61853-K=1X box 00840428943714 → 61853-K=1X', await t('840428927486', '27-3-1=1W.1C') && await t('810139931782', '28-4-1C=2X') && await t('810139931720', '28-4-1=2X') && await t('28-4-1C%3D2X', '28-4-1C=2X') && await t('00840428943714', '61853-K=1X'), null);
+  check('".=2X" rows are not saved (their UPC 00840428942359 finds nothing)', (await get('/inventory/lookup?code=00840428942359')).partNum == null, null);
   check('a part # with two box UPCs (4-2-3=10) — both scan to it', await t('840428900175', '4-2-3=10') && await t('00810139935872', '4-2-3=10'), null);
+}
+
+console.log('\nC part #s (27-3-4C=2X) keep their own part # but share the parent 27-3-4');
+{
+  sq.prepare("INSERT INTO master_list (base_sku, name, part_num, location, cases, units_per_case) VALUES ('27-3-4C','elbow C','27-3-4C=2X','C3=1-1-1',4,200), ('27-3-4','elbow','27-3-4=5','C3=1-1-2',6,100)").run();
+  const a = await get('/inventory/lookup?code=27-3-4');
+  const parts = (a.locations || []).map(l => l.partNum || l.part || l.sku);
+  check('Stock Out lookup of parent 27-3-4 shows both 27-3-4=5 and 27-3-4C=2X shelves', a.baseSku === '27-3-4' && JSON.stringify(a.locations).includes('27-3-4C=2X') && JSON.stringify(a.locations).includes('27-3-4=5'), { base: a.baseSku, parts });
+  const c = await get('/inventory/lookup?code=27-3-4C%3D2X');
+  check('looking up 27-3-4C=2X keeps its own part #, parent 27-3-4', c.partNum === '27-3-4C=2X' && c.baseSku === '27-3-4', { partNum: c.partNum, base: c.baseSku });
+  const cases = (a.locations || []).reduce((n, l) => n + (parseFloat(l.cases) || 0), 0);
+  check('no double count: parent 27-3-4 shelves total 3 (C4) + 4 (C part #) + 6 = 13 cases, each shelf once', cases === 13 && a.locations.length === 3, { cases, locs: a.locations });
 }
 
 console.log('\n' + (failed ? '❌ ' + failed + ' check(s) FAILED' : '✅ all ' + passed + ' checks passed') + '\n');

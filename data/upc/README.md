@@ -1,27 +1,35 @@
 # Box / bag UPC codes (vendors #1 and #2)
 
-From the owner, 2026-10-01: `vendor-1-2-box-bag-upc.xlsx`. It was updated the same day: tab #1 gained 12 part #s (202-4-10, 31-1-3, 31-1-5, 43-4-11 and 43-4-12 pack sizes). Both tabs are read.
+From the owner: `vendor-1-2-box-bag-upc.xlsx`. The latest version (2026-10-01, 3rd file) has two tabs:
 
-- `vendor-1-2-box-bag-upc.xlsx`: the file exactly as received.
-- `vendor-1-2-box-bag-upc.csv`: the cleaned list: part #, outside box UPC, inside bag UPC.
-  It has 475 part #s (476 rows, because `4-2-3=10` has two UPC sets). UPCs saved as numbers ("840428904241.0") were turned back into digits.
-- `worker/src/vendor-upc.js`: the same list, built into the Worker. A scanned box or bag
-  UPC finds its part # (Inventory lookup, Transfer → 🚢 Container here). Container here's
-  "no box UPC" list counts these as having one.
+- **#1**: the full list (about 3,100 rows).
+- **#2**: the earlier list.
 
-Rebuild the `.csv` and `.js` from a new file the same way, so that every scan keeps working. The previous file is in git history.
+Both tabs are read. Earlier versions are in git history.
 
-## Not saved: these rows need fixing in the file
+- `vendor-1-2-box-bag-upc.csv`: the cleaned list, with these columns:
+  - part #;
+  - outside box UPC;
+  - inside bag UPC;
+  - the part # as written in the file, when it was changed.
 
-| Row | What's there | Why |
+  It has 2,815 part #s in 2,819 rows. A few part #s have two UPC sets (old and new packaging), and both scan to the part #.
+- `worker/src/vendor-upc.js`: the same list, built into the Worker. A scanned box or bag UPC finds its part # (Inventory lookup, Transfer → 🚢 Container here). Container here's "no box UPC" list counts these as having one.
+
+## Cleaning rules (applied the same way every time)
+
+- UPCs saved as numbers (`840428904241.0`) are turned back into digits. Leading zeros are ignored when scanning.
+- A **C part #** with its own UPCs, like `28-4-1C=2X` or `28-2-1&2C=2`, is **its own part #** (owner). It is kept as written and is not merged with `28-4-1=2X`. Typing or scanning `28-4-1C=2X` keeps the C too. A stray "c" after a parent (`27-3-4c` in a Stock Out Report) is still dropped.
+- A trailing `-` is dropped (`30-3-5=25-` → `30-3-5=25`).
+- Kept as written: `=1W.1C` / `=10W.2C` style pack sizes, and `61853-K=1X` style part #s.
+
+## Skipped (owner: skip these)
+
+| What | Rows | Why |
 |---|---|---|
-| 43–46, 53–56 | UPCs only (840428904746… 840428904814) | no part # |
-| 460, 462 | UPCs only (00810139937920, 00810139937951) | no part # |
-| 96 | `201-2-9=10-` · B08JKXRRDQ / X002NLKDCZ | an Amazon ASIN / FNSKU, not UPCs |
-| 172 | `5-1-1=5` | no UPC |
-| 196 | `5-3-1=5` · "no fba" | no UPC |
-| 344 | `23-5-3=25` | no UPC |
+| no part # (UPCs only) | 95 | can't tell which item |
+| `.=2X`, `.=5X`, `.=10X`, `.=1X` | 52 | no parent part # |
+| part # with a note, no UPC (`25-6-4=50X/100X`, `29-1-1=2XX/5XX`) | 4 | note only. These part #s get their UPCs from other rows |
+| no UPC | 11 | `10-2-1=1`, `28-4-4=1X`, `25-6-3=10`, `201-3-6=10`, `29-3-7=5`, `29-3-6=25`, `26-4-5=100` (tab #1) · `5-1-1=5`, `5-3-1=5`, `23-5-3=25` (tab #2) · `201-2-9=10-` has an Amazon ASIN/FNSKU, not UPCs |
 
-Notes:
-- Row 433 `23-6-4=25` has only a bag UPC.
-- `4-2-3=10` appears twice with two different UPC sets (rows 280 and 281). Both scan to `4-2-3=10`.
+Rebuild the `.csv` and `.js` from a new file with the same rules, so that every scan keeps working.

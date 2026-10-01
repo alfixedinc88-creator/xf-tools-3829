@@ -817,9 +817,15 @@ function reorderSortRank(baseSku) {
   return idx !== undefined ? idx : 99999; // unknown base SKUs sort to the end, not the start
 }
 
+// Parent of a part #: before the "=", and a C right after the parent's
+// numbers belongs to the same parent (owner: 27-3-4C=2X is its own part #
+// with its own UPC, but its parent is 27-3-4 — Stock Out and the Reorder
+// Planner group it with 27-3-4). 28-2-1&2C=2 → 28-2-1&2.
 function reorderGetBaseSku(sku) {
-  return sku.includes('=') ? sku.split('=')[0] : sku;
+  const b = sku.includes('=') ? sku.split('=')[0] : sku;
+  return b.replace(/^(\s*\d+(?:-\d+)+(?:&\d+)?)[cC](\s*)$/, '$1$2');
 }
+function parentOf(p) { return reorderGetBaseSku(String(p || '')).trim().toUpperCase(); }
 
 // Real, established part-number format: digits-digits-digits(&digits)=qty
 // Distinguishes real SKUs from randomized legacy Amazon MSKU codes.
@@ -2412,7 +2418,7 @@ async function productPhotoTable(env) {
 }
 async function productPhotoMap(env, bases) {
   const out = {}; if (!env.DB) return out;
-  const B = [...new Set((bases || []).map(b => String(b || '').split('=')[0].trim().toUpperCase()).filter(Boolean))];
+  const B = [...new Set((bases || []).map(b => parentOf(b)).filter(Boolean))];
   if (!B.length) return out;
   await productPhotoTable(env);
   for (let i = 0; i < B.length; i += 90) {
@@ -2509,7 +2515,13 @@ async function productPhotoSyncVeeqo(request, env) {
 // reports like "27-3-4C" or "25-3-2c=10") is not part of it: 27-3-4C → 27-3-4,
 // 25-3-2C=10 → 25-3-2=10. Only a C directly after the digits-and-dashes
 // parent; letters after "=" (=5XX) are left alone.
-function stripParentC(v) { return String(v || '').replace(/^(\s*\d+(?:-\d+)+)[cC](?=\s*$|=)/, '$1'); }
+// …unless that C part # is a real one of its own (e.g. 28-4-1C=2X has its
+// own UPCs in the vendor UPC list) — then it stays as written.
+function stripParentC(v) {
+  const s = String(v || '');
+  if (vendorUpcMap().allParts.has(s.trim().toUpperCase())) return s;
+  return s.replace(/^(\s*\d+(?:-\d+)+)[cC](?=\s*$|=)/, '$1');
+}
 // 11–14 digits = a UPC / EAN / GTIN barcode, never one of our part #s.
 function isUpcLike(v) { return /^\d{11,14}$/.test(String(v || '').trim()); }
 // Box / bag UPCs from the vendor UPC list built into the Worker
@@ -2517,13 +2529,13 @@ function isUpcLike(v) { return /^\d{11,14}$/.test(String(v || '').trim()); }
 let _vendorUpc = null;
 function vendorUpcMap() {
   if (_vendorUpc) return _vendorUpc;
-  const byUpc = new Map(), boxParts = new Set();
+  const byUpc = new Map(), boxParts = new Set(), allParts = new Set();
   for (const [part, out, inn] of VENDOR_UPC) {
-    const P = String(part).toUpperCase();
+    const P = String(part).toUpperCase(); allParts.add(P);
     for (const u of [out, inn]) { const z = String(u || '').replace(/\D/g, '').replace(/^0+/, ''); if (z && !byUpc.has(z)) byUpc.set(z, P); }
     if (out) boxParts.add(P);
   }
-  return (_vendorUpc = { byUpc, boxParts });
+  return (_vendorUpc = { byUpc, boxParts, allParts });
 }
 // UPC → part #, from every place D1 keeps UPCs. Leading zeros are ignored
 // (a scanner may read 012345678905 or 12345678905 for the same label).
@@ -2557,7 +2569,10 @@ async function inventoryUpcLink(request, env, session) {
   return J({ ok: true, upc, part });
 }
 async function inventoryLookup(url, env) {
-  const code = stripParentC((url.searchParams.get('code') || '').trim().toUpperCase());
+  const rawCode = (url.searchParams.get('code') || '').trim().toUpperCase();
+  let code = stripParentC(rawCode);
+  // A C part # that SKU Mgr really has (its own item) is kept as written.
+  if (code !== rawCode && env.DB && await d1First(env, 'SELECT 1 AS x FROM master_list WHERE UPPER(TRIM(part_num)) = ? LIMIT 1', [rawCode]).catch(() => null)) code = rawCode;
   if (!code) return cors(new Response(JSON.stringify({ error: 'No code provided' }), { status: 400, headers: { 'Content-Type': 'application/json' } }));
 
   // 1. Look up in UPC sheet: col A=SKU, col B=PartNum/variant, col C=inside UPC, col D=outside UPC
@@ -2655,7 +2670,7 @@ async function inventoryLookup(url, env) {
 
   // Derive base SKU from the resolved part number
   // Use sku col A first if available, else partNum col B, strip after '='
-  const baseSku = ((sku || partNum || '').split('=')[0]).trim().toUpperCase();
+  const baseSku = parentOf(sku || partNum || '');
 
   const locations  = [];
   const partNums   = new Set();
@@ -2665,9 +2680,9 @@ async function inventoryLookup(url, env) {
     const r        = mlRows[i];
     const rowPart  = String(r[6] || '').trim();
     const rowSku   = String(r[3] || '').trim().toUpperCase();
-    const rowBase  = rowSku.split('=')[0].trim().toUpperCase();
+    const rowBase  = parentOf(rowSku);
     const rowPartUp = rowPart.toUpperCase();
-    const rowPartBase = rowPartUp.split('=')[0].trim();
+    const rowPartBase = parentOf(rowPartUp);
 
     // Match: exact part number, OR same base SKU (from either SKU col or PartNum col)
     const matchExact    = rowPartUp  === partNum.toUpperCase();

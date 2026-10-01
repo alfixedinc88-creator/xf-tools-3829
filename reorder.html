@@ -4323,7 +4323,7 @@ async function rvoCheck(title, file) {
   // the same pieces the vendor sheet orders. Units stay what Reorder counts.
   var sum = { own: [0, 0, 0], otherOn: [0, 0, 0], otherOff: [0, 0, 0], none: [0, 0, 0] };
   d.lines.forEach(function (l) {
-    var k = l.readAs, base = k.split('=')[0], q = rvoNum(l.qty);
+    var k = l.readAs, base = rvoParent(k), q = rvoNum(l.qty);
     l.pcs = q * rvoPack(rvoClean(l.part));
     if (bySku[k]) { l.where = 'own'; l.whereTxt = 'Own row ' + k + (k !== l.part ? ' (corrected)' : ''); }
     else if (byBase[base]) { var tg = byBase[base]; l.where = 'otherOn';
@@ -4580,7 +4580,7 @@ async function rvoLoadFixes() {
     var rowOf = {}; RVO.rows.forEach(function (r) { rowOf[r.sku] = r; });
     var where = function (part) {
       if (rowOf[part]) return 'own row';
-      var b = part.split('=')[0], on = RVO.rows.filter(function (r) { return r.baseSku === b; }).map(function (r) { return r.sku; });
+      var b = rvoParent(part), on = RVO.rows.filter(function (r) { return rvoParent(r.baseSku) === b; }).map(function (r) { return r.sku; });
       return on.length ? 'counted in ' + on.join(', ') : 'no sales in this window';
     };
     document.getElementById('rvo-fixes-n').textContent = '(' + (d.aliases.length + d.fixes.length) + ')';
@@ -4663,6 +4663,9 @@ function rvoLoadXlsx() {
 // Same clean-up as the worker's reorderCleanPart ("4-2-3==2" → "4-2-3=2", "24-4-7=1__" → "24-4-7=1").
 function rvoClean(x) { return String(x || '').trim().toUpperCase().replace(/\s*=\s*/g, '=').replace(/=+/g, '=').replace(/[_\-.\s]+$/, ''); }
 function rvoPack(x) { var m = String(x).split('=').pop().match(/^(\d+)/); return String(x).indexOf('=') >= 0 && m ? parseInt(m[1], 10) || 1 : 1; }
+// Parent of a part #: before "=", and a C right after the parent's numbers
+// is the same parent (27-3-4C=2X → 27-3-4) — same rule as the Worker.
+function rvoParent(p) { return String(p || '').split('=')[0].trim().toUpperCase().replace(/^(\d+(?:-\d+)+(?:&\d+)?)C$/, '$1'); }
 function rvoNum(x) { var n = parseFloat(String(x == null ? '' : x).replace(/,/g, '')); return isFinite(n) ? n : 0; }
 function rvoParseSheet(aoa, opt) {
   opt = opt || {};
@@ -4820,7 +4823,7 @@ function rvoReadInvoicePrices(wb, skip) {
       var cellParts = norm(row[H.part]); if (!cellParts || !(pr > 0)) continue;
       got++;
       if (item) P.byItem[item] = pr;
-      cellParts.split('/').forEach(function (x) { var k = rvoClean(x); if (!k) return; P.byPart[k] = pr; var b = k.split('=')[0]; (P.byBase[b] = P.byBase[b] || {})[pr] = 1; });
+      cellParts.split('/').forEach(function (x) { var k = rvoClean(x); if (!k) return; P.byPart[k] = pr; var b = rvoParent(k); (P.byBase[b] = P.byBase[b] || {})[pr] = 1; });
     }
     if (got) P.sheets.push(n.trim());
   });
@@ -4832,7 +4835,7 @@ function rvoPriceFor(P, clean, itemNo) {
   if (it) { if (P.byItem[it] > 0) return { price: P.byItem[it], src: 'item code ' + it };
     var keys = Object.keys(P.byItem).filter(function (k) { return k.length >= 4 && it.indexOf(k) === 0; }).sort(function (a, b) { return b.length - a.length; });
     if (keys.length) return { price: P.byItem[keys[0]], src: 'item code ' + keys[0] }; }
-  var bp = Object.keys(P.byBase[clean.split('=')[0]] || {});
+  var bp = Object.keys(P.byBase[rvoParent(clean)] || {});
   if (bp.length === 1) return { price: parseFloat(bp[0]), src: 'same part, other pack size' };
   return null;
 }
@@ -5080,7 +5083,7 @@ async function rlsLoad() {
     var res = await wFetch(W + '/reorder/fix/listings?days=365');
     var d = await res.json(); if (!d.ok) throw new Error(d.error || 'Failed');
     RLS.loaded = true; RLS.groups = d.groups || []; RLS.counts = d.counts || {}; RLS.pend = {}; RLS.days = d.days; RLS.show = 300;
-    RLS.ours = {}; RLS.bases = {}; (d.ourParts || []).forEach(function (p) { RLS.ours[p] = 1; RLS.bases[p.split('=')[0]] = 1; });
+    RLS.ours = {}; RLS.bases = {}; (d.ourParts || []).forEach(function (p) { RLS.ours[p] = 1; RLS.bases[rvoParent(p)] = 1; });
     document.getElementById('rls-parts').innerHTML = (d.ourParts || []).map(function (p) { return '<option value="' + escHtml(p) + '">'; }).join('');
     msg.innerHTML = ((d.autoSaved || []).length ? '<span style="color:var(--green);font-weight:700">⚡ ' + d.autoSaved.length + ' Amazon listing(s) on the same ASIN as our FBA listing were put under its part # just now (see "Already mapped by you").</span> ' : '')
       + ((d.errors || []).length ? '<span style="color:var(--red)">⚠ ' + d.errors.map(escHtml).join(' · ') + '</span>' : '');
@@ -5120,7 +5123,7 @@ function rlsVisible() {
 function rlsCheck(v) {
   v = String(v || '').trim().toUpperCase(); if (!v) return '';
   if (!/^\d+(-\d+){1,3}(&\d+)?(=\d+.*)?$/.test(v)) return 'not our part # format (e.g. 27-3-1=10X)';
-  if (!RLS.ours[v]) return RLS.bases[v.split('=')[0]] ? 'new pack size — not in SKU Mgr yet' : 'base ' + v.split('=')[0] + ' is not in SKU Mgr';
+  if (!RLS.ours[v]) return RLS.bases[rvoParent(v)] ? 'new pack size — not in SKU Mgr yet' : 'base ' + rvoParent(v) + ' is not in SKU Mgr';
   return '';
 }
 function rlsRender() {
