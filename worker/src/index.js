@@ -4121,6 +4121,8 @@ async function inventoryContainerDelete(request, env, session) {
   await reorderFixTables(env);
   const J = (o, st) => cors(new Response(JSON.stringify(o), { status: st || 200, headers: { 'Content-Type': 'application/json' } }));
   if (!session || session.pin_level !== 'mgmt') return J({ ok: false, error: 'Management access required' }, 403);
+  // Container info (delete, …) is changed by Admins only (owner's rule).
+  if (!(session.roles || []).some(r => r === 'admin' || r === 'owner')) return J({ ok: false, error: 'Only Admins can delete a container' }, 403);
   const b = await request.json().catch(() => ({}));
   const title = String(b.title || '').trim(), reason = String(b.reason || '').trim().slice(0, 200);
   if (!title) return J({ ok: false, error: 'Pick a container' }, 400);
