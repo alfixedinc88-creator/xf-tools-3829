@@ -390,6 +390,26 @@ console.log('\n📍 Location Plan: where each parent goes; Container here tells 
   sq.prepare('DELETE FROM pallet_move WHERE pallet_id = ?').run(lpId);
 }
 
+console.log('\nTransfer: grab 3, "no more of this item left in this spot" → spot set to 0, History kept');
+{
+  sq.prepare("INSERT INTO master_list (base_sku, name, part_num, location, cases, units_per_case) VALUES ('80-1-1','cap','80-1-1=5','C1=2-2-2',8,100), ('80-1-1','cap','80-1-1=5','C1=2-2-3',4,100)").run();
+  const sid = sq.prepare("SELECT id FROM master_list WHERE part_num='80-1-1=5' AND location='C1=2-2-2'").get().id;
+  const tot = () => sq.prepare("SELECT SUM(cases) t FROM master_list WHERE part_num='80-1-1=5'").get().t;
+  const before = tot();
+  const sc = await get('/inventory/spot-check?part=80-1-1%3D5&location=C1%3D2-2-2');
+  check('spot check: 8 on record at C1=2-2-2; the next spot C1=2-2-3 (4) is listed to check', sc.ok && sc.recorded === 8 && sc.others[0].location === 'C1=2-2-3' && sc.others[0].cases === 4, sc);
+  await post('/inventory/review-mode', { mode: 'auto' });
+  const tr = await post('/inventory/transfer', { partNum: '80-1-1=5', sku: '80-1-1=5', fromLocation: 'C1=2-2-2', fromMasterId: sid, toLocation: 'BARN=9-9-9', isNewLocation: true, cases: 3, initials: 'TS', notes: '[SCAN PUT-AWAY]' });
+  const nf = await post('/inventory/log', { type: 'OUT', partNum: '80-1-1=5', location: 'C1=2-2-2', cases: 0, initials: 'TS', masterId: sid, noneFound: true,
+    notes: '[NONE FOUND ON SHELF] [TRANSFER] C1=2-2-2 checked empty after taking 3 — 5 of the 8 on record not found' });
+  const at = l => (sq.prepare("SELECT SUM(cases) c FROM master_list WHERE part_num='80-1-1=5' AND location=?").get(l).c) || 0;
+  const after = tot();
+  check('8 at C1=2-2-2, take 3 → BARN, rest not found: C1=2-2-2 = 0, BARN = 3, C1=2-2-3 still 4; part total ' + before + ' → ' + (before - 5) + ' (exactly the 5 not found)', tr.ok !== false && nf.ok && at('C1=2-2-2') === 0 && at('BARN=9-9-9') === 3 && at('C1=2-2-3') === 4 && after === before - 5, { before, after, c1: at('C1=2-2-2'), barn: at('BARN=9-9-9'), tr, nf });
+  const h = sq.prepare("SELECT type, cases, status, notes, total_before b, total_after a FROM inventory_log WHERE part_num='80-1-1=5' ORDER BY id").all();
+  check('History keeps it: the transfer and "[NONE FOUND ON SHELF] … 5 of the 8 not found", with the part total before → after', h.some(r => /TRANSFER/.test(r.type)) && h.some(r => /NONE FOUND/.test(r.notes) && /5 of the 8/.test(r.notes) && r.status === 'Verified' && r.b === before && r.a === before - 5), h);
+  await post('/inventory/review-mode', { mode: 'manual' });
+}
+
 console.log('\n🧪 Test switch: ON → do anything → OFF puts everything back');
 {
   const dump = () => JSON.stringify({ ml: sq.prepare('SELECT * FROM master_list ORDER BY id').all(), log: sq.prepare('SELECT * FROM inventory_log ORDER BY id').all() });

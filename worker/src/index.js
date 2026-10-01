@@ -4920,6 +4920,27 @@ async function palletRecs(request, env) {
   return J({ ok: true, recs: out });
 }
 
+// GET /inventory/spot-check?part=&location= — Transfer "no more of this
+// item at this spot?": what SKU Mgr has for that part # at that spot, its
+// last History entries there, and the other spots holding the same part #
+// (to check the next column). Read only.
+async function inventorySpotCheck(url, env) {
+  const J = (o, st) => cors(new Response(JSON.stringify(o), { status: st || 200, headers: { 'Content-Type': 'application/json' } }));
+  const part = String(url.searchParams.get('part') || '').trim().toUpperCase(), loc = String(url.searchParams.get('location') || '').trim().toUpperCase();
+  if (!part || !loc) return J({ ok: false, error: 'part and location needed' }, 400);
+  const here = await d1First(env, 'SELECT SUM(cases) AS c FROM master_list WHERE UPPER(TRIM(part_num)) = ? AND UPPER(TRIM(location)) = ?', [part, loc]);
+  const history = await d1All(env, `SELECT timestamp, type, cases, initials, status, notes FROM inventory_log
+    WHERE UPPER(TRIM(part_num)) = ? AND UPPER(TRIM(location)) = ? ORDER BY id DESC LIMIT 5`, [part, loc]);
+  const others = await d1All(env, `SELECT location, SUM(cases) AS cases FROM master_list WHERE UPPER(TRIM(part_num)) = ? AND cases > 0
+    AND UPPER(TRIM(location)) != ? AND TRIM(COALESCE(location,'')) != '' GROUP BY UPPER(TRIM(location)) ORDER BY location`, [part, loc]);
+  // Nearest first: same area, then the closest shelf numbers.
+  const nums = l => (String(l).split('=')[1] || '').split('-').map(n => parseInt(n, 10) || 0);
+  const area = l => String(l).split('=')[0], me = nums(loc);
+  others.sort((a, b) => (area(a.location) !== area(loc)) - (area(b.location) !== area(loc))
+    || nums(a.location).reduce((t, n, i) => t + Math.abs(n - (me[i] || 0)), 0) - nums(b.location).reduce((t, n, i) => t + Math.abs(n - (me[i] || 0)), 0));
+  return J({ ok: true, part, location: loc, recorded: (here && parseFloat(here.c)) || 0, history, others: others.slice(0, 6) });
+}
+
 // GET /inventory/suggest-location?partNum=26-2-1=2&fromLoc=BARN=1-1-1
 // GET /inventory/suggest-location?partNum=X&fromLoc=Y
 // Rebuilt on D1 — was reading Master_List!G2:I15000 + a separate LocationID
@@ -6460,6 +6481,7 @@ const _app = {
       if (path === '/inventory/location-plan' && method === 'POST') return await locationPlanSave(request, env, session);
       if (path === '/inventory/location-plan/log' && method === 'GET') return await locationPlanLog(url, env);
       if (path === '/inventory/containers/pallet-recs' && method === 'POST') return await palletRecs(request, env);
+      if (path === '/inventory/spot-check' && method === 'GET') return await inventorySpotCheck(url, env);
       if (path === '/inventory/prefixes'           && method === 'GET')  return await inventoryGetPrefixes(env);
       // mgmt-only routes
       if (session.pin_level !== 'mgmt') {
