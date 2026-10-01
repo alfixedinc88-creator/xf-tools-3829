@@ -1434,16 +1434,26 @@ window.invCredLogin = async function() {
          after) the period. See inventoryHistorySummary for the exact math
          and its one caveat (manual SKU Manager "Edit" overrides). -->
     <div style="font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.4px;color:var(--text3);margin-bottom:8px">Cases In Stock</div>
-    <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-bottom:14px">
+    <!-- Started With + Total In − Total Out = Ended With (approved cases only, so it always adds up) -->
+    <div style="display:grid;grid-template-columns:repeat(4,1fr);gap:8px;margin-bottom:6px">
       <div style="background:var(--bg2);border-radius:8px;padding:10px;text-align:center">
         <div style="font-size:9px;font-weight:700;text-transform:uppercase;letter-spacing:.4px;color:var(--text3)">Started With</div>
         <div id="hist-rt-start" style="font-size:20px;font-weight:800;font-family:var(--mono);color:var(--text)">—</div>
       </div>
+      <div style="background:var(--bg2);border-radius:8px;padding:10px;text-align:center" title="Approved cases IN: Stock In, Receive, audit fixes up, cancelled Stock Outs">
+        <div style="font-size:9px;font-weight:700;text-transform:uppercase;letter-spacing:.4px;color:var(--text3)">+ Total In</div>
+        <div id="hist-rt-total-in" style="font-size:20px;font-weight:800;font-family:var(--mono);color:var(--green)">—</div>
+      </div>
+      <div style="background:var(--bg2);border-radius:8px;padding:10px;text-align:center" title="Approved cases OUT: Stock Out, audit fixes down, cancelled Stock Ins">
+        <div style="font-size:9px;font-weight:700;text-transform:uppercase;letter-spacing:.4px;color:var(--text3)">− Total Out</div>
+        <div id="hist-rt-total-out" style="font-size:20px;font-weight:800;font-family:var(--mono);color:var(--red)">—</div>
+      </div>
       <div style="background:var(--bg2);border-radius:8px;padding:10px;text-align:center">
-        <div style="font-size:9px;font-weight:700;text-transform:uppercase;letter-spacing:.4px;color:var(--text3)">Ended With</div>
+        <div style="font-size:9px;font-weight:700;text-transform:uppercase;letter-spacing:.4px;color:var(--text3)">= Ended With</div>
         <div id="hist-rt-end" style="font-size:20px;font-weight:800;font-family:var(--mono);color:var(--text)">—</div>
       </div>
     </div>
+    <div id="hist-rt-check" style="font-size:11px;color:var(--text3);margin-bottom:14px"></div>
 
     <!-- Overall totals -->
     <div style="font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.4px;color:var(--text3);margin-bottom:8px">Overall Totals</div>
@@ -1461,6 +1471,12 @@ window.invCredLogin = async function() {
       <div style="background:var(--bg2);border-radius:8px;padding:10px;text-align:center">
         <div style="font-size:9px;font-weight:700;text-transform:uppercase;letter-spacing:.4px;color:var(--text3)">Transfers</div>
         <div id="hist-rt-xfr" style="font-size:20px;font-weight:800;font-family:var(--mono);color:var(--purple)">—</div>
+        <div id="hist-rt-xfr-cases" style="font-size:10px;color:var(--text3);font-family:var(--mono)"></div>
+      </div>
+      <div style="background:var(--bg2);border-radius:8px;padding:10px;text-align:center" title="Inventory → Transfer → 🚢 Container here: boxes moved off pallets, pallets worked on, pallets emptied">
+        <div style="font-size:9px;font-weight:700;text-transform:uppercase;letter-spacing:.4px;color:var(--text3)">🚢 Container here</div>
+        <div id="hist-rt-ctr" style="font-size:20px;font-weight:800;font-family:var(--mono);color:var(--purple)">—</div>
+        <div id="hist-rt-ctr-sub" style="font-size:10px;color:var(--text3);font-family:var(--mono)"></div>
       </div>
       <div style="background:var(--bg2);border-radius:8px;padding:10px;text-align:center">
         <div style="font-size:9px;font-weight:700;text-transform:uppercase;letter-spacing:.4px;color:var(--text3)">Audits</div>
@@ -6402,6 +6418,8 @@ window.invCredLogin = async function() {
     if (g('hist-rt-out-cases')) g('hist-rt-out-cases').textContent = '';
     if (g('hist-rt-start')) g('hist-rt-start').textContent = '…';
     if (g('hist-rt-end'))   g('hist-rt-end').textContent   = '…';
+    ['hist-rt-total-in','hist-rt-total-out','hist-rt-ctr'].forEach(function(id){ var e=g(id); if(e) e.textContent = '…'; });
+    ['hist-rt-check','hist-rt-xfr-cases','hist-rt-ctr-sub'].forEach(function(id){ var e=g(id); if(e) e.textContent = ''; });
 
     var qs = dateVal ? ('date=' + encodeURIComponent(dateVal)) : ('days=' + days);
 
@@ -6426,6 +6444,21 @@ window.invCredLogin = async function() {
         if (g('hist-rt-out-cases')) g('hist-rt-out-cases').textContent = (t.casesOut||0).toLocaleString() + ' cases';
         if (g('hist-rt-start')) g('hist-rt-start').textContent = (d.startingCases !== undefined ? Number(d.startingCases).toLocaleString() : '—');
         if (g('hist-rt-end'))   g('hist-rt-end').textContent   = (d.endingCases   !== undefined ? Number(d.endingCases).toLocaleString()   : '—');
+        // Started + In − Out = Ended (approved cases) — shown so anyone can check it adds up.
+        var ap = d.approved || {}, pd = d.pending || {}, fmt = function(v) { return (Math.round((Number(v) || 0) * 1000) / 1000).toLocaleString(); };
+        if (g('hist-rt-total-in'))  g('hist-rt-total-in').textContent  = d.approved ? fmt(ap.casesIn) : '—';
+        if (g('hist-rt-total-out')) g('hist-rt-total-out').textContent = d.approved ? fmt(ap.casesOut) : '—';
+        if (g('hist-rt-check') && d.approved) {
+          var adds = Math.abs((Number(d.startingCases) || 0) + (ap.casesIn || 0) - (ap.casesOut || 0) - (Number(d.endingCases) || 0)) < 1e-6;
+          g('hist-rt-check').innerHTML = (adds ? '<span style="color:var(--green);font-weight:700">✓ ' : '<span style="color:var(--red);font-weight:700">⚠ ')
+            + fmt(d.startingCases) + ' + ' + fmt(ap.casesIn) + ' − ' + fmt(ap.casesOut) + ' = ' + fmt(d.endingCases) + (adds ? '' : ' does not add up') + '</span>'
+            + ' · cases, approved entries only (Stock In / Out, Receive, audit fixes, cancels). Transfers only move cases between spots.'
+            + ((pd.casesIn || pd.casesOut) ? ' <span style="color:var(--orange);font-weight:700">Waiting for approval (not counted yet): +' + fmt(pd.casesIn) + ' in · −' + fmt(pd.casesOut) + ' out</span>' : '');
+        }
+        if (g('hist-rt-xfr-cases')) g('hist-rt-xfr-cases').textContent = fmt(d.transferCases) + ' cases moved';
+        var ct = d.container;
+        if (g('hist-rt-ctr')) g('hist-rt-ctr').textContent = ct && !ct.error ? fmt(ct.cases) + ' cases' : '—';
+        if (g('hist-rt-ctr-sub')) g('hist-rt-ctr-sub').textContent = ct && !ct.error ? ct.pallets + ' pallet' + (ct.pallets === 1 ? '' : 's') + ' worked on · ' + ct.palletsFinished + ' emptied' : (ct && ct.error ? 'could not load' : '');
 
         var people = d.byPerson || [];
         if (!peopleEl) return;
@@ -6441,8 +6474,11 @@ window.invCredLogin = async function() {
           + '<th style="' + thS + '">Initials</th>'
           + '<th style="' + thS + ';text-align:right">In</th>'
           + '<th style="' + thS + ';text-align:right">Out</th>'
+          + '<th style="' + thS + ';text-align:right">Cases In</th>'
           + '<th style="' + thS + ';text-align:right">Cases Out</th>'
           + '<th style="' + thS + ';text-align:right">Transfers</th>'
+          + '<th style="' + thS + ';text-align:right">Xfer Cases</th>'
+          + '<th style="' + thS + ';text-align:right" title="🚢 Container here: boxes moved off pallets · pallets worked on (emptied)">🚢 Cases / Pallets</th>'
           + '<th style="' + thS + ';text-align:right">Audits</th>'
           + '<th style="' + thS + ';text-align:right">Total</th>'
           + '</tr></thead><tbody>';
@@ -6452,8 +6488,11 @@ window.invCredLogin = async function() {
             + '<td style="' + tdS + ';font-weight:700">' + (p.initials || '—') + '</td>'
             + '<td style="' + tdS + ';text-align:right;color:var(--green)">' + p.stockIn + '</td>'
             + '<td style="' + tdS + ';text-align:right;color:var(--red)">' + p.stockOut + '</td>'
+            + '<td style="' + tdS + ';text-align:right;color:var(--green);font-weight:700">' + (p.casesIn||0).toLocaleString() + '</td>'
             + '<td style="' + tdS + ';text-align:right;color:var(--red);font-weight:700">' + (p.casesOut||0).toLocaleString() + '</td>'
             + '<td style="' + tdS + ';text-align:right;color:var(--purple)">' + p.transfers + '</td>'
+            + '<td style="' + tdS + ';text-align:right;color:var(--purple);font-weight:700">' + (p.transferCases||0).toLocaleString() + '</td>'
+            + '<td style="' + tdS + ';text-align:right;color:var(--purple)">' + (p.container ? (p.container.cases||0).toLocaleString() + ' / ' + p.container.pallets + (p.container.palletsFinished ? ' (' + p.container.palletsFinished + ' emptied)' : '') : '—') + '</td>'
             + '<td style="' + tdS + ';text-align:right;color:var(--accent)">' + p.audits + '</td>'
             + '<td style="' + tdS + ';text-align:right;font-weight:800">' + p.total + '</td>'
             + '</tr>';

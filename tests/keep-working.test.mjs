@@ -458,6 +458,39 @@ console.log('\nScanner phones: "hide the keyboard" also works on boxes that open
   check('every page loads the same (new) xf-access.js version', v && pages.every(h => h.includes('xf-access.js?v=' + v)), v);
 }
 
+console.log('\nHistory report: Total In / Total Out add up; Transfers show cases; 🚢 Container here shows cases and pallets');
+{
+  // Owner: "History still not showing total in and total out", "Transfers: I want to see how many cases",
+  // "Container here: how many cases and how many pallets they done".
+  const s0 = await get('/inventory/history-summary?days=1');
+  const ap0 = s0.approved || {};
+  check('report shows Total In and Total Out (approved cases), and Started + In − Out = Ended',
+    s0.ok && typeof ap0.casesIn === 'number' && typeof ap0.casesOut === 'number' && Math.abs(s0.startingCases + ap0.casesIn - ap0.casesOut - s0.endingCases) < 1e-9 && s0.endingCases === shelf(),
+    { start: s0.startingCases, approved: s0.approved, end: s0.endingCases, shelf: shelf() });
+  const ts = new Date().toISOString();
+  sq.exec(`INSERT INTO master_list (id, sku, base_sku, name, part_num, location, cases, units_per_case, sheet_row) VALUES
+    (9201, 'HC-1', 'HC-1', 'Hist cap', 'HC-1=5', 'GARAGE', 10, 5, 0), (9202, 'HC-2', 'HC-2', 'Hist plug', 'HC-2=5', 'GARAGE', 10, 5, 0)`);
+  sq.prepare(`INSERT INTO reorder_pallet (title, vendor, pallet, part, description, cases, updated_at) VALUES
+    ('HIST CT','KW','1','HC-1=5','cap',2,?), ('HIST CT','KW','1','HC-2=5','plug',1,?), ('HIST CT','KW','2','HC-1=5','cap',3,?)`).run(ts, ts, ts);
+  const pid = (pl, part) => sq.prepare("SELECT id FROM reorder_pallet WHERE title='HIST CT' AND pallet=? AND part=?").get(pl, part).id;
+  const all0 = shelf(), x0 = s0.transferCases || 0;
+  const mv = (part, mid, to, n, line) => post('/inventory/transfer', { partNum: part, sku: part, fromLocation: 'GARAGE', fromMasterId: mid, toLocation: to, isNewLocation: true,
+    cases: n, initials: 'HS', notes: line ? '[CONTAINER SCAN] HIST CT · Pallet x' : 'plain', palletLineId: line || undefined });
+  await mv('HC-1=5', 9201, 'C1=7-1-1', 2, pid('1', 'HC-1=5'));   // pallet 1: 2 of 3 boxes
+  await mv('HC-2=5', 9202, 'C1=7-1-2', 1, pid('1', 'HC-2=5'));   // pallet 1: last box → emptied
+  await mv('HC-1=5', 9201, 'C1=7-1-3', 1, pid('2', 'HC-1=5'));   // pallet 2: 1 of 3 boxes
+  await mv('HC-1=5', 9201, 'BARN=7-1-1', 2, 0);                  // a plain transfer, not Container here
+  const s1 = await get('/inventory/history-summary?days=1');
+  const hs = (s1.byPerson || []).find(p => p.initials === 'HS') || {};
+  check('Transfers show cases moved: +6 (2 + 1 + 1 + 2), and HS has 4 transfers / 6 cases', (s1.transferCases - x0) === 6 && hs.transfers === 4 && hs.transferCases === 6, { before: x0, after: s1.transferCases, hs });
+  check('🚢 Container here: 4 cases, 2 pallets worked on, 1 emptied (overall and for HS)',
+    s1.container && s1.container.cases === 4 && s1.container.pallets === 2 && s1.container.palletsFinished === 1
+      && hs.container && hs.container.cases === 4 && hs.container.pallets === 2 && hs.container.palletsFinished === 1, { all: s1.container, hs: hs.container });
+  check('transfers do not change the warehouse total, and the report still adds up', shelf() === all0 && Math.abs(s1.startingCases + s1.approved.casesIn - s1.approved.casesOut - s1.endingCases) < 1e-9,
+    { shelf: shelf(), all0, s1: [s1.startingCases, s1.approved, s1.endingCases] });
+  sq.exec("DELETE FROM master_list WHERE part_num IN ('HC-1=5','HC-2=5'); DELETE FROM reorder_pallet WHERE title='HIST CT'");
+}
+
 console.log('\nSKU Mgr: the parent follows the Part #, wrong parents can be fixed, every edit is in History');
 {
   // Owner: "search 30-1-8 in SKU Mgr but 24-3-1 pops up, Part # 24-3-1=10XX" — the row's Part # was changed

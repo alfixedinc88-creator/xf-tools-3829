@@ -11800,6 +11800,41 @@ async function inventoryRecoverFromSheet(request, url, env) {
   return J({ ok: true, days, restored, missing: missing.length });
 }
 
+// History report: 🚢 Container here work in a period — boxes moved off
+// pallets, pallets worked on, pallets finished (emptied by that move). Comes
+// from pallet_move (each move is tied to its Transfer log line); a transfer
+// rejected in Review doesn't count.
+async function histContainerReport(env, timeCond, timeParams) {
+  await reorderFixTables(env);
+  const tc = timeCond.replace(/timestamp/g, 'l.timestamp');
+  const moves = await d1All(env, `SELECT m.id, m.cases, l.timestamp AS at, UPPER(TRIM(COALESCE(NULLIF(l.initials,''), m.by_user, ''))) AS who,
+      p.title, p.vendor, p.pallet
+    FROM pallet_move m JOIN inventory_log l ON l.id = m.out_log_id JOIN reorder_pallet p ON p.id = m.pallet_id
+    WHERE COALESCE(l.status,'') != 'Rejected' AND ${tc} ORDER BY l.timestamp, m.id`, timeParams);
+  const total = { moves: 0, cases: 0, pallets: 0, palletsFinished: 0 }, byPerson = {};
+  const P = w => (byPerson[w] = byPerson[w] || { moves: 0, cases: 0, pallets: 0, palletsFinished: 0, _p: new Set() });
+  const palletsAll = new Set();
+  for (const m of moves) {
+    const k = m.title + '|' + m.vendor + '|' + m.pallet, p = P(m.who || '?');
+    total.moves++; total.cases += parseFloat(m.cases) || 0; palletsAll.add(k);
+    p.moves++; p.cases += parseFloat(m.cases) || 0; p._p.add(k);
+  }
+  total.pallets = palletsAll.size;
+  // Finished = every box on the pallet moved, and the last box moved in this period (credited to whoever moved it).
+  for (const k of palletsAll) {
+    const [title, vendor, pallet] = k.split('|');
+    const t = await d1First(env, 'SELECT SUM(cases) AS boxes FROM reorder_pallet WHERE title=? AND vendor=? AND pallet=?', [title, vendor, pallet]);
+    const all = await d1All(env, `SELECT m.cases, l.timestamp AS at, UPPER(TRIM(COALESCE(NULLIF(l.initials,''), m.by_user, ''))) AS who
+      FROM pallet_move m JOIN reorder_pallet p ON p.id = m.pallet_id LEFT JOIN inventory_log l ON l.id = m.out_log_id
+      WHERE p.title=? AND p.vendor=? AND p.pallet=? AND COALESCE(l.status,'') != 'Rejected' ORDER BY l.timestamp, m.id`, [title, vendor, pallet]);
+    const boxes = parseFloat(t?.boxes) || 0;
+    let sum = 0, doneBy = null, doneAt = null;
+    for (const m of all) { sum += parseFloat(m.cases) || 0; if (!doneBy && boxes > 0 && sum >= boxes - 1e-9) { doneBy = m.who || '?'; doneAt = m.at; } }
+    if (doneBy && moves.some(m => m.at === doneAt)) { total.palletsFinished++; P(doneBy).palletsFinished++; }
+  }
+  for (const w in byPerson) { byPerson[w].pallets = byPerson[w]._p.size; delete byPerson[w]._p; }
+  return { total, byPerson };
+}
 async function inventoryHistorySummary(url, env) {
   try {
     if (!env.DB) return cors(new Response(JSON.stringify({ ok: false, error: 'D1 unavailable' }), { status: 500, headers: { 'Content-Type': 'application/json' } }));
@@ -11836,6 +11871,7 @@ async function inventoryHistorySummary(url, env) {
     // to be included in that math or the starting number would be wrong.
     const bucketSql = `
       SUM(CASE WHEN type='TRANSFER_OUT' THEN 1 ELSE 0 END) as transfers,
+      SUM(CASE WHEN type='TRANSFER_OUT' AND COALESCE(status,'') != 'Rejected' THEN cases ELSE 0 END) as transfer_cases,
       SUM(CASE WHEN type IN ('IN','OUT') AND notes LIKE '%[AUDIT]%' THEN 1 ELSE 0 END) as audits,
       SUM(CASE WHEN type='IN'  AND notes NOT LIKE '%[AUDIT]%' THEN 1 ELSE 0 END) as stock_in,
       SUM(CASE WHEN type='OUT' AND notes NOT LIKE '%[AUDIT]%' THEN 1 ELSE 0 END) as stock_out,
@@ -11890,8 +11926,18 @@ async function inventoryHistorySummary(url, env) {
     // it made the Starting number wrong by its cases. (The activity counts
     // above still count every entry: that's who did what.)
     const netSql = `SUM(CASE WHEN status='Verified' AND type='IN' THEN cases ELSE 0 END) - SUM(CASE WHEN status='Verified' AND type='OUT' THEN cases ELSE 0 END) AS net`;
-    const during = await d1First(env, `SELECT ${netSql} FROM inventory_log WHERE ${timeCond}`, timeParams);
+    // Total In / Total Out = the approved cases in and out (Stock In / Out,
+    // Receive, audit fixes, cancels) — exactly what moves Started With to
+    // Ended With, so Started + In − Out = Ended always adds up. Waiting for
+    // approval is shown apart (not counted yet).
+    const during = await d1First(env, `SELECT ${netSql},
+        SUM(CASE WHEN status='Verified' AND type='IN' THEN cases ELSE 0 END) AS a_in,
+        SUM(CASE WHEN status='Verified' AND type='OUT' THEN cases ELSE 0 END) AS a_out,
+        SUM(CASE WHEN status='Pending' AND type='IN' THEN cases ELSE 0 END) AS p_in,
+        SUM(CASE WHEN status='Pending' AND type='OUT' THEN cases ELSE 0 END) AS p_out
+      FROM inventory_log WHERE ${timeCond}`, timeParams);
     const duringNet = parseFloat(during?.net) || 0;
+    const container = await histContainerReport(env, timeCond, timeParams).catch(e => ({ error: e.message }));
 
     let afterNet = 0;
     if (cutoffEnd) {
@@ -11912,9 +11958,15 @@ async function inventoryHistorySummary(url, env) {
         casesOut: totals?.cases_out || 0
       },
       startingCases, endingCases,
+      approved: { casesIn: parseFloat(during?.a_in) || 0, casesOut: parseFloat(during?.a_out) || 0 },
+      pending: { casesIn: parseFloat(during?.p_in) || 0, casesOut: parseFloat(during?.p_out) || 0 },
+      transferCases: totals?.transfer_cases || 0,
+      container: container.error ? { error: container.error } : container.total,
       byPerson: (byPerson || []).map(r => ({
         initials: r.initials,
         transfers: r.transfers || 0,
+        transferCases: r.transfer_cases || 0,
+        container: (container.byPerson || {})[r.initials] || null,
         audits: r.audits || 0,
         stockIn: r.stock_in || 0,
         stockOut: r.stock_out || 0,
