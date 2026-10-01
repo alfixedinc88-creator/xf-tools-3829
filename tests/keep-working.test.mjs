@@ -458,5 +458,56 @@ console.log('\nScanner phones: "hide the keyboard" also works on boxes that open
   check('every page loads the same (new) xf-access.js version', v && pages.every(h => h.includes('xf-access.js?v=' + v)), v);
 }
 
+console.log('\nSKU Mgr: the parent follows the Part #, wrong parents can be fixed, every edit is in History');
+{
+  // Owner: "search 30-1-8 in SKU Mgr but 24-3-1 pops up, Part # 24-3-1=10XX" — the row's Part # was changed
+  // in SKU Mgr, but its parent stayed 30-1-8 (Save sent the old parent, the update never touched base_sku).
+  sq.exec(`INSERT INTO master_list (id, sku, base_sku, name, part_num, location, cases, units_per_case, sheet_row) VALUES
+    (9101, '30-1-8', '30-1-8', 'Coupler', '30-1-8=10XX', 'BARN=9-1-1', 5, 10, 0),
+    (9102, '30-1-8', '30-1-8', 'Coupler', '30-1-8=10XX', 'C1=9-1-1', 2, 10, 0),
+    (9103, '24-3-1', '24-3-1', 'Big Tee', '24-3-1=10XX', 'C2=9-1-1', 4, 10, 0),
+    (9104, '30-1-8', '30-1-8', 'Coupler', '24-3-1=10XX', 'C3=9-1-1', 3, 10, 0),
+    (9105, '30-1-8', '30-1-8', 'Coupler', '30-1-8=2XX', 'C4=9-1-1', 6, 50, 0)`);
+  const pt = p => sq.prepare('SELECT SUM(cases) t FROM master_list WHERE part_num=?').get(p).t || 0;
+  const all0 = shelf(), a0 = pt('30-1-8=10XX'), b0 = pt('24-3-1=10XX');
+  const lastEdit = () => sq.prepare("SELECT * FROM inventory_log WHERE type='EDIT' ORDER BY id DESC LIMIT 1").get();
+  const parts = async q => ((await get('/inventory/sku-search?q=' + q)).results || []).map(r => r.part_num + '@' + r.location);
+  check('before: the wrong-parent row 24-3-1=10XX shows when searching 30-1-8 (the reported problem)', (await parts('30-1-8')).includes('24-3-1=10XX@C3=9-1-1'), await parts('30-1-8'));
+
+  // 1) Change a row's Part # in SKU Mgr — even an old page that still sends the old parent.
+  const ed = await post('/inventory/sku-row', { mode: 'update', d1Id: 9102, sheetRow: 0, partNum: '24-3-1=10XX', name: 'Coupler', location: 'C1=9-1-1', cases: 2, sku: '30-1-8', unitsPerCase: 10, price: 0, vendor: '', prevNotes: '' });
+  const r2 = sq.prepare('SELECT sku, base_sku FROM master_list WHERE id=9102').get(), e1 = lastEdit();
+  check('Part # changed 30-1-8=10XX → 24-3-1=10XX: parent goes with it (24-3-1), not left on 30-1-8', ed.ok && r2.base_sku === '24-3-1' && r2.sku === '24-3-1', r2);
+  check('…and it no longer shows when searching 30-1-8; it shows under 24-3-1', !(await parts('30-1-8')).includes('24-3-1=10XX@C1=9-1-1') && (await parts('24-3-1')).includes('24-3-1=10XX@C1=9-1-1'), await parts('30-1-8'));
+  check('…History has the edit: who, Part # old → new, Parent old → new, 24-3-1=10XX total ' + b0 + ' → ' + (b0 + 2) + ', 30-1-8=10XX ' + a0 + ' → ' + (a0 - 2),
+    e1 && e1.initials === 'TS' && e1.status === 'Verified' && /\[SKU MGR EDIT\]/.test(e1.notes) && /Part #: 30-1-8=10XX → 24-3-1=10XX/.test(e1.notes) && /Parent: 30-1-8 → 24-3-1/.test(e1.notes)
+      && e1.total_before === b0 && e1.total_after === b0 + 2 && !e1.total_warning && new RegExp('30-1-8=10XX total ' + a0 + ' → ' + (a0 - 2)).test(e1.notes)
+      && pt('24-3-1=10XX') === b0 + 2 && pt('30-1-8=10XX') === a0 - 2 && shelf() === all0, e1);
+
+  // 2) Saving with nothing changed adds no History line; a cases change is recorded old → new with the Part Total.
+  const n0 = sq.prepare("SELECT COUNT(*) n FROM inventory_log WHERE type='EDIT'").get().n;
+  await post('/inventory/sku-row', { mode: 'update', d1Id: 9102, sheetRow: 0, partNum: '24-3-1=10XX', name: 'Coupler', location: 'C1=9-1-1', cases: 2, unitsPerCase: 10, price: 0, vendor: '', prevNotes: '' });
+  check('Save with nothing changed → no extra History line', sq.prepare("SELECT COUNT(*) n FROM inventory_log WHERE type='EDIT'").get().n === n0, null);
+  await post('/inventory/sku-row', { mode: 'update', d1Id: 9101, sheetRow: 0, partNum: '30-1-8=10XX', name: 'Coupler', location: 'BARN=9-1-1', cases: 6, unitsPerCase: 10, price: 0, vendor: 'Secret Vendor Co', prevNotes: '' });
+  const e2 = lastEdit();
+  check('cases 5 → 6 in SKU Mgr → History "Cases: 5 → 6", 30-1-8=10XX total ' + (a0 - 2) + ' → ' + (a0 - 1) + '; vendor name not written to History',
+    /Cases: 5 → 6/.test(e2.notes) && e2.total_before === a0 - 2 && e2.total_after === a0 - 1 && /Vendor changed/.test(e2.notes) && !/Secret/.test(e2.notes) && shelf() === all0 + 1, e2);
+
+  // 3) 🧬 Parent ≠ Part #: lists only the wrong row, fixes only what's ticked, cases untouched, recorded.
+  sq.exec("INSERT INTO products (sku, name) VALUES ('24-3-1', 'Big Tee')"); // 24-3-1 rows now say Big Tee and Coupler → name comes from the products list
+  const mm = await get('/inventory/parent-mismatch');
+  const mine = (mm.rows || []).filter(r => r.id >= 9101 && r.id <= 9105);
+  check('🧬 list: only 24-3-1=10XX @ C3 (parent 30-1-8 → 24-3-1, name Coupler → Big Tee)', mm.ok && mine.length === 1 && mine[0].id === 9104 && mine[0].parentNow === '30-1-8' && mine[0].parentRight === '24-3-1' && mine[0].nameRight === 'Big Tee', mine);
+  const b1 = pt('24-3-1=10XX'), all1 = shelf();
+  const fx = await post('/inventory/parent-mismatch', { ids: [9104] });
+  const r4 = sq.prepare('SELECT sku, base_sku, name, cases FROM master_list WHERE id=9104').get(), e3 = lastEdit();
+  check('fix: parent 24-3-1, name Big Tee, cases still 3; 24-3-1=10XX total ' + b1 + ' → ' + b1 + ' (unchanged), warehouse total unchanged',
+    fx.ok && fx.count === 1 && r4.base_sku === '24-3-1' && r4.sku === '24-3-1' && r4.name === 'Big Tee' && r4.cases === 3 && pt('24-3-1=10XX') === b1 && shelf() === all1, { fx, r4 });
+  check('…History "[PARENT FIX]" by TS with Parent 30-1-8 → 24-3-1 and total ' + b1 + ' → ' + b1, /\[PARENT FIX\] 24-3-1=10XX @ C3=9-1-1/.test(e3.notes) && /Parent: 30-1-8 → 24-3-1/.test(e3.notes) && e3.initials === 'TS' && e3.total_before === b1 && e3.total_after === b1 && !e3.total_warning, e3);
+  check('…list now clean, and searching 30-1-8 shows only 30-1-8 parts', !((await get('/inventory/parent-mismatch')).rows || []).some(r => r.id >= 9101 && r.id <= 9105) && (await parts('30-1-8')).every(x => x.startsWith('30-1-8')), await parts('30-1-8'));
+  check('the 🧬 fix needs a sign-in', (await call('/inventory/parent-mismatch')).status === 401, null);
+  sq.exec("DELETE FROM master_list WHERE id BETWEEN 9101 AND 9105; DELETE FROM products WHERE sku='24-3-1'");
+}
+
 console.log('\n' + (failed ? '❌ ' + failed + ' check(s) FAILED' : '✅ all ' + passed + ' checks passed') + '\n');
 process.exit(failed ? 1 : 0);

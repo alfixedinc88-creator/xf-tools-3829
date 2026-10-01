@@ -826,6 +826,9 @@ function reorderGetBaseSku(sku) {
   return b.replace(/^(\s*\d+(?:-\d+)+(?:&\d+)?)[cC](\s*)$/, '$1$2');
 }
 function parentOf(p) { return reorderGetBaseSku(String(p || '')).trim().toUpperCase(); }
+// master_list's own parent (SKU / base_sku column): the Part # before "=",
+// kept as-is (27-3-4C stays 27-3-4C here; parentOf() is the one that folds C).
+function mlParent(p) { return String(p || '').split('=')[0].trim().toUpperCase(); }
 
 // Real, established part-number format: digits-digits-digits(&digits)=qty
 // Distinguishes real SKUs from randomized legacy Amazon MSKU codes.
@@ -4537,7 +4540,7 @@ async function inventoryTransferVerifyInner(request, env) {
     const cases        = parseFloat(outItem.cases) || 0;
     const sku          = (outItem.sku || '').trim();
     const isNewLoc     = inItem ? (inItem.isNew === 'TRUE' || inItem.isNew === true) : false;
-    const baseSku      = sku.split('=')[0].trim().toUpperCase() || partNum.split('=')[0].trim();
+    const baseSku      = mlParent(partNum) || mlParent(sku); // parent follows the Part # (a wrong one on the source row must not spread)
 
     // 1. Find FROM row in D1 — no Sheets read needed
     // BUGFIX: this previously ALWAYS resolved by text-matching
@@ -4623,7 +4626,7 @@ async function inventoryTransferVerifyInner(request, env) {
       await env.DB.prepare(
         `INSERT INTO master_list (sku,base_sku,name,part_num,location,cases,units_per_case,vendor,price,prev_notes,sheet_row,updated_at)
          VALUES (?,?,?,?,?,?,?,?,?,?,?,?)`
-      ).bind(sku, baseSku, fromName, partNum, toLocation, cases,
+      ).bind(baseSku, baseSku, fromName, partNum, toLocation, cases,
              parseFloat(fromJ)||0, fromM, parseFloat(fromN)||0, newK, newRowNum, ts).run();
       // Auto-register new TO location
       if (toLocation && env.DB) {
@@ -6444,9 +6447,13 @@ const _app = {
         if (session.pin_level !== 'mgmt') return cors(new Response(JSON.stringify({error:'Management access required'}),{status:403,headers:{'Content-Type':'application/json'}}));
         return await inventorySkuSearch(url, env);
       }
+      if (path === '/inventory/parent-mismatch' && (method === 'GET' || method === 'POST')) {
+        if (session.pin_level !== 'mgmt') return cors(new Response(JSON.stringify({error:'Management access required'}),{status:403,headers:{'Content-Type':'application/json'}}));
+        return await invParentMismatch(request, env, session);
+      }
       if (path === '/inventory/sku-row' && method === 'POST') {
         if (session.pin_level !== 'mgmt') return cors(new Response(JSON.stringify({error:'Management access required'}),{status:403,headers:{'Content-Type':'application/json'}}));
-        return await inventorySkuRow(request, env);
+        return await inventorySkuRow(request, env, session);
       }
       // GET /inventory/sku-row-check?id=123 — diagnostic: read one row's
       // CURRENT raw D1 state directly, bypassing every cache/search layer.
@@ -11135,7 +11142,7 @@ async function inventoryD1Migrate(request, env) {
         const partNum = String(r[6]||'').trim().toUpperCase();
         const sku     = String(r[3]||'').trim();
         if (!partNum && !sku) return null;
-        const baseSku = (sku||partNum).split('=')[0].trim().toUpperCase();
+        const baseSku = mlParent(partNum || sku); // parent follows the Part #
         return env.DB.prepare(
           `INSERT INTO master_list (sku,base_sku,name,part_num,location,cases,units_per_case,vendor,price,prev_notes,sheet_row,updated_at)
            VALUES (?,?,?,?,?,?,?,?,?,?,?,?)`
@@ -11395,13 +11402,24 @@ async function _invApplySkuRowUpdate(env, fields) {
   const unitsPerCaseN = parseFloat(unitsPerCase) || 0;
   const priceN        = parseFloat(price) || 0;
   const ts            = new Date().toISOString();
+  // The parent (SKU / base_sku) always follows the Part #. It used to keep
+  // the row's OLD parent when the Part # was changed (30-1-8=10XX edited to
+  // 24-3-1=10XX stayed under 30-1-8, so searching 30-1-8 showed 24-3-1).
+  const parent        = mlParent(partNum);
+  // The row as it was, for History (who changed what, old → new).
+  let before = null;
+  if (env.DB) {
+    before = d1Id
+      ? await d1First(env, 'SELECT * FROM master_list WHERE id=?', [d1Id]).catch(() => null)
+      : await d1First(env, 'SELECT * FROM master_list WHERE sheet_row=? AND sheet_row > 0', [sheetRow]).catch(() => null);
+  }
 
   // Only touch Sheets if this row actually has a real Sheets row number —
   // sheet_row=0 means this row was never written to Sheets, so there's
   // nothing there to update (skip, don't create a stray Sheets row).
   if (sheetRow) {
     await invSheetUpdate(env, `Master_List!D${sheetRow}:N${sheetRow}`, [[
-      sku || partNum.split('=')[0].trim(),
+      parent,
       name || '',
       '', // col F unused
       partNum.toUpperCase(),
@@ -11424,18 +11442,18 @@ async function _invApplySkuRowUpdate(env, fields) {
   if (env.DB) {
     if (d1Id) {
       d1Result = await d1Run(env,
-        `UPDATE master_list SET sku=?,name=?,part_num=?,location=?,cases=?,
+        `UPDATE master_list SET sku=?,base_sku=?,name=?,part_num=?,location=?,cases=?,
          units_per_case=?,vendor=?,price=?,prev_notes=?,updated_at=?
          WHERE id=?`,
-        [sku||partNum.split('=')[0].trim(), name||'', partNum.toUpperCase(),
+        [parent, parent, name||'', partNum.toUpperCase(),
          location, casesNum, unitsPerCaseN, vendor||'', priceN, prevNotes||'', ts, d1Id]
       );
     } else {
       d1Result = await d1Run(env,
-        `UPDATE master_list SET sku=?,name=?,part_num=?,location=?,cases=?,
+        `UPDATE master_list SET sku=?,base_sku=?,name=?,part_num=?,location=?,cases=?,
          units_per_case=?,vendor=?,price=?,prev_notes=?,updated_at=?
          WHERE sheet_row=?`,
-        [sku||partNum.split('=')[0].trim(), name||'', partNum.toUpperCase(),
+        [parent, parent, name||'', partNum.toUpperCase(),
          location, casesNum, unitsPerCaseN, vendor||'', priceN, prevNotes||'', ts, sheetRow]
       );
     }
@@ -11450,7 +11468,7 @@ async function _invApplySkuRowUpdate(env, fields) {
     }
   }
   await invalidateMasterListCache(env);
-  return { ok: true, sheetRow, d1Id, d1Changes: d1Result?.meta?.changes ?? d1Result?.changes ?? 0 };
+  return { ok: true, sheetRow, d1Id, d1Changes: d1Result?.meta?.changes ?? d1Result?.changes ?? 0, before };
 }
 
 // Shared "append a brand-new row to master_list" path — writes Sheets first
@@ -11471,7 +11489,7 @@ async function _invApplySkuRowInsert(env, fields) {
   const ts            = new Date().toISOString();
   const newRow = [
     '', '', '', // A B C
-    sku || partNum.split('=')[0].trim(), // D = SKU
+    mlParent(partNum), // D = SKU (the parent always follows the Part #)
     name || '',                           // E = Name
     '',                                   // F
     partNum.toUpperCase(),                // G = PartNum
@@ -11490,12 +11508,12 @@ async function _invApplySkuRowInsert(env, fields) {
 
   let newD1Id = null;
   if (env.DB && newSheetRow) {
-    const baseSku = (sku || partNum).split('=')[0].trim().toUpperCase();
+    const baseSku = mlParent(partNum); // parent always follows the Part #
     const insertResult = await d1Run(env,
       `INSERT INTO master_list (sku,base_sku,name,part_num,location,cases,
        units_per_case,vendor,price,prev_notes,sheet_row,updated_at)
        VALUES (?,?,?,?,?,?,?,?,?,?,?,?)`,
-      [sku||baseSku, baseSku, name||'', partNum.toUpperCase(), location,
+      [baseSku, baseSku, name||'', partNum.toUpperCase(), location,
        casesNum, unitsPerCaseN, vendor||'', priceN, prevNotes||'', newSheetRow, ts]
     );
     newD1Id = insertResult?.meta?.last_row_id || null;
@@ -11507,11 +11525,12 @@ async function _invApplySkuRowInsert(env, fields) {
 // POST /inventory/sku-row — update existing row OR insert new row
 // Body: { mode: 'update'|'insert', sheetRow, partNum, location, cases,
 //         name, sku, unitsPerCase, vendor, price, prevNotes }
-async function inventorySkuRow(request, env) {
+async function inventorySkuRow(request, env, session) {
   try {
     const body = await request.json().catch(() => ({}));
     const { mode, sheetRow, d1Id, partNum, location, cases,
             name, sku, unitsPerCase, vendor, price, prevNotes } = body;
+    const who = String((session && (session.displayName || session.username)) || body.editedBy || 'MGMT').trim().slice(0, 40);
 
     if (!partNum || !location || cases === undefined || cases === null) {
       return cors(new Response(JSON.stringify({ error: 'partNum, location, cases required' }),
@@ -11529,18 +11548,22 @@ async function inventorySkuRow(request, env) {
     const isUpdate = mode === 'update' && (d1Id || sheetRow);
 
     if (isUpdate) {
+      const tot = await skuMgrTotalsBefore(env, d1Id, sheetRow, partNum);
       const result = await _invApplySkuRowUpdate(env, { sheetRow, d1Id, partNum, location, cases, name, sku, unitsPerCase, vendor: vendorUnmask(vendor), price, prevNotes });
       if (!result.ok) {
         return cors(new Response(JSON.stringify(result), { status: result.status || 500, headers: { 'Content-Type': 'application/json' } }));
       }
+      await skuMgrLogEdit(env, who, result.before, d1Id, sheetRow, tot).catch(e => console.error('[skumgr history]', e.message));
       return cors(new Response(JSON.stringify({ ok: true, mode: 'update', sheetRow, d1Id, d1Changes: result.d1Changes }),
         { headers: { 'Content-Type': 'application/json' } }));
 
     } else {
+      const tot = await skuMgrTotalsBefore(env, null, null, partNum);
       const result = await _invApplySkuRowInsert(env, { partNum, location, cases, name, sku, unitsPerCase, vendor: vendorUnmask(vendor), price, prevNotes });
       if (!result.ok) {
         return cors(new Response(JSON.stringify(result), { status: result.status || 500, headers: { 'Content-Type': 'application/json' } }));
       }
+      await skuMgrLogAdd(env, who, { partNum, location, cases, name }, tot).catch(e => console.error('[skumgr history]', e.message));
       return cors(new Response(JSON.stringify({ ok: true, mode: 'insert', sheetRow: result.sheetRow }),
         { headers: { 'Content-Type': 'application/json' } }));
     }
@@ -11548,6 +11571,154 @@ async function inventorySkuRow(request, env) {
     return cors(new Response(JSON.stringify({ error: e.message || 'sku-row failed' }),
       { status: 500, headers: { 'Content-Type': 'application/json' } }));
   }
+}
+
+// ── SKU Mgr edits → History ────────────────────────────────────────────────
+// Every SKU Mgr Save / Add (and the 🧬 parent fix) leaves an EDIT line in
+// Inventory → History: who, when, and old → new for each field changed, plus
+// the Part Total before → after. EDIT lines are not Stock In / Out, so the
+// day's Starting → Ending math (IN/OUT only) is unchanged by them.
+const SKUMGR_FIELDS = [
+  ['part_num', 'Part #'], ['base_sku', 'Parent'], ['name', 'Name'], ['location', 'Location'],
+  ['cases', 'Cases'], ['units_per_case', 'Ea/Case'], ['price', 'Price'], ['vendor', 'Vendor'], ['prev_notes', 'Notes']
+];
+async function skuMgrTotalsBefore(env, d1Id, sheetRow, newPart) {
+  if (!env.DB) return null;
+  try {
+    const row = d1Id ? await d1First(env, 'SELECT part_num FROM master_list WHERE id=?', [d1Id])
+      : sheetRow ? await d1First(env, 'SELECT part_num FROM master_list WHERE sheet_row=? AND sheet_row > 0', [sheetRow]) : null;
+    const oldPart = String((row && row.part_num) || '').trim().toUpperCase();
+    const np = String(newPart || '').trim().toUpperCase();
+    return { oldPart, newPart: np, oldBefore: oldPart ? await invPartCases(env, oldPart) : 0, newBefore: await invPartCases(env, np) };
+  } catch (e) { return { err: e.message }; }
+}
+function _skuMgrVal(k, v) {
+  if (v === null || v === undefined) return '';
+  if (k === 'cases' || k === 'units_per_case' || k === 'price') return String(parseFloat(v) || 0);
+  return String(v).trim();
+}
+async function _skuMgrInsertLog(env, who, r, notes, tot, extraWarn) {
+  await invLogEnsureColumns(env);
+  await ensureTotalTrackingColumns(env);
+  const ts = new Date().toISOString();
+  let before = null, after = null, warn = extraWarn || null;
+  if (tot && !tot.err) {
+    before = tot.newBefore; after = await invPartCases(env, tot.newPart);
+  } else {
+    warn = '⚠ Total not recorded — ' + String((tot && tot.err) || 'no database').slice(0, 160);
+  }
+  await env.DB.prepare(
+    `INSERT INTO inventory_log
+       (sheet_row,timestamp,type,part_num,location,cases,initials,notes,status,
+        verified_by,verified_at,overwrite_loc,is_new,is_placeholder,
+        master_row_index,sku,transfer_id,paired_location,name,total_before,total_after,total_warning,total_scope)
+     VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`
+  ).bind(0, ts, 'EDIT', String(r.part_num || '').toUpperCase(), r.location || '', parseFloat(r.cases) || 0, who,
+    notes.slice(0, 1500), 'Verified', who, ts, '', 0, 0, r.id || 0, mlParent(r.part_num), '', '', r.name || '',
+    before, after, warn, 'part').run();
+}
+async function skuMgrLogEdit(env, who, old, d1Id, sheetRow, tot) {
+  if (!env.DB) return;
+  const now = d1Id ? await d1First(env, 'SELECT * FROM master_list WHERE id=?', [d1Id])
+    : await d1First(env, 'SELECT * FROM master_list WHERE sheet_row=? AND sheet_row > 0', [sheetRow]);
+  if (!now) return;
+  const o = old || {};
+  const changes = [];
+  for (const [k, label] of SKUMGR_FIELDS) {
+    const a = _skuMgrVal(k, o[k]), b = _skuMgrVal(k, now[k]);
+    if (a.toUpperCase() === b.toUpperCase()) continue;
+    // Vendor names stay hidden (workers can read History): say it changed, not to what.
+    changes.push(k === 'vendor' ? 'Vendor changed' : label + ': ' + (a || '(blank)') + ' → ' + (b || '(blank)'));
+  }
+  if (!changes.length) return; // Saved with nothing changed — nothing to record
+  let notes = '[SKU MGR EDIT] ' + changes.join(' · ');
+  let warn = null;
+  if (tot && !tot.err) {
+    const oldCases = parseFloat(o.cases) || 0, newCases = parseFloat(now.cases) || 0;
+    const samePart = tot.oldPart === tot.newPart;
+    const newAfter = await invPartCases(env, tot.newPart);
+    const expNew = tot.newBefore + newCases - (samePart ? oldCases : 0);
+    if (!samePart && tot.oldPart) {
+      const oldAfter = await invPartCases(env, tot.oldPart), expOld = tot.oldBefore - oldCases;
+      notes += ' · ' + tot.oldPart + ' total ' + _n(tot.oldBefore) + ' → ' + _n(oldAfter) + ' (moved to ' + tot.newPart + ')';
+      if (Math.abs(oldAfter - expOld) > 1e-9) warn = '⚠ ' + tot.oldPart + ' total should be ' + _n(expOld) + ', but it is ' + _n(oldAfter) + '. Another change landed at the same moment — check its shelves.';
+    }
+    if (Math.abs(newAfter - expNew) > 1e-9) warn = '⚠ ' + tot.newPart + ' total should be ' + _n(expNew) + ', but it is ' + _n(newAfter) + ' (was ' + _n(tot.newBefore) + '). Another change landed at the same moment — check its shelves.';
+  }
+  await _skuMgrInsertLog(env, who, now, notes, tot, warn);
+}
+async function skuMgrLogAdd(env, who, f, tot) {
+  if (!env.DB) return;
+  const part = String(f.partNum || '').trim().toUpperCase();
+  const now = await d1First(env, 'SELECT * FROM master_list WHERE UPPER(part_num)=? AND UPPER(location)=? ORDER BY id DESC LIMIT 1',
+    [part, String(f.location || '').trim().toUpperCase()]).catch(() => null);
+  const r = now || { part_num: part, location: f.location, cases: f.cases, name: f.name };
+  await _skuMgrInsertLog(env, who, r, '[SKU MGR ADD] New row: ' + part + ' @ ' + (r.location || '') + ', ' + (parseFloat(r.cases) || 0) + ' cases', tot, null);
+}
+
+// ── 🧬 Parent doesn't match Part # — find and fix ─────────────────────────
+// A row's parent (SKU / base_sku) must be its Part # before "=". Rows where it
+// isn't show up under the wrong parent (search, parent totals, price, name).
+// GET lists them (nothing changes); POST {ids} fixes the ones ticked: parent
+// → the Part #'s own, name → that parent's name when one is known, and each
+// fix goes into History. Cases are never touched (the Part # total is the
+// same before and after — recorded on the History line to prove it).
+async function invParentMismatchList(env) {
+  const rows = await d1All(env, `SELECT id, sheet_row, sku, base_sku, part_num, location, cases, name, price FROM master_list WHERE TRIM(COALESCE(part_num,'')) != ''`, []);
+  const bad = rows.filter(r => {
+    const p = mlParent(r.part_num);
+    return p && (String(r.base_sku || '').trim().toUpperCase() !== p || (String(r.sku || '').trim() && mlParent(r.sku) !== p));
+  });
+  if (!bad.length) return [];
+  // The right name for each correct parent — only when it's certain: every
+  // row already under that parent has the same name, else the products list.
+  // Not sure → the name is left alone (shown, never guessed).
+  const parents = [...new Set(bad.map(r => mlParent(r.part_num)))];
+  const nameOf = {}, mlNames = {};
+  for (let i = 0; i < parents.length; i += 80) {
+    const ch = parents.slice(i, i + 80), q = ch.map(() => '?').join(',');
+    (await d1All(env, `SELECT UPPER(base_sku) b, name FROM master_list WHERE UPPER(base_sku) IN (${q}) AND COALESCE(name,'') != '' AND (UPPER(part_num) LIKE UPPER(base_sku) || '=%' OR UPPER(part_num) = UPPER(base_sku))`, ch).catch(() => []))
+      .forEach(r => { (mlNames[r.b] = mlNames[r.b] || new Set()).add(String(r.name).trim()); });
+    (await d1All(env, `SELECT UPPER(sku) b, name FROM products WHERE UPPER(sku) IN (${q}) AND COALESCE(name,'') != ''`, ch).catch(() => []))
+      .forEach(r => { if (!nameOf[r.b]) nameOf[r.b] = r.name; });
+  }
+  for (const b in mlNames) if (mlNames[b].size === 1) nameOf[b] = [...mlNames[b]][0];
+  return bad.map(r => {
+    const p = mlParent(r.part_num), nm = nameOf[p] || '';
+    return { id: r.id, sheetRow: r.sheet_row || 0, partNum: r.part_num, location: r.location, cases: parseFloat(r.cases) || 0,
+      parentNow: String(r.base_sku || '').trim().toUpperCase() || String(r.sku || '').trim().toUpperCase(), parentRight: p,
+      nameNow: r.name || '', nameRight: nm && nm !== r.name ? nm : '' };
+  }).sort((a, b) => String(a.partNum).localeCompare(String(b.partNum)) || String(a.location).localeCompare(String(b.location)));
+}
+async function invParentMismatch(request, env, session) {
+  const J = (o, st) => cors(new Response(JSON.stringify(o), { status: st || 200, headers: { 'Content-Type': 'application/json' } }));
+  if (!env.DB) return J({ ok: false, error: 'No database' }, 500);
+  try {
+    if (request.method === 'GET') { const list = await invParentMismatchList(env); return J({ ok: true, rows: list, count: list.length }); }
+    const b = await request.json().catch(() => ({}));
+    const want = new Set((b.ids || []).map(x => parseInt(x)).filter(Boolean));
+    if (!want.size) return J({ ok: false, error: 'Tick at least one row' }, 400);
+    const who = String((session && (session.displayName || session.username)) || b.editedBy || 'MGMT').trim().slice(0, 40);
+    const list = (await invParentMismatchList(env)).filter(r => want.has(r.id));
+    const fixed = [];
+    for (const r of list) {
+      const part = String(r.partNum).trim().toUpperCase();
+      const before = await invPartCases(env, part);
+      const newName = r.nameRight || r.nameNow;
+      await env.DB.prepare('UPDATE master_list SET sku=?, base_sku=?, name=?, updated_at=? WHERE id=?')
+        .bind(r.parentRight, r.parentRight, newName, new Date().toISOString(), r.id).run();
+      if (r.sheetRow) await invSheetUpdate(env, `Master_List!D${r.sheetRow}:E${r.sheetRow}`, [[r.parentRight, newName]]).catch(() => {});
+      const after = await invPartCases(env, part);
+      const notes = '[PARENT FIX] ' + part + ' @ ' + r.location + ' · Parent: ' + (r.parentNow || '(blank)') + ' → ' + r.parentRight
+        + (r.nameRight ? ' · Name: ' + (r.nameNow || '(blank)') + ' → ' + r.nameRight : '') + ' · cases not changed (' + _n(r.cases) + ')';
+      await _skuMgrInsertLog(env, who, { id: r.id, part_num: part, location: r.location, cases: r.cases, name: newName }, notes,
+        { newPart: part, newBefore: before },
+        Math.abs(after - before) > 1e-9 ? '⚠ ' + part + ' total should stay ' + _n(before) + ', but it is ' + _n(after) + '. Another change landed at the same moment — check its shelves.' : null);
+      fixed.push({ id: r.id, partNum: part, location: r.location, from: r.parentNow, to: r.parentRight, totalBefore: before, totalAfter: after });
+    }
+    await invalidateMasterListCache(env);
+    return J({ ok: true, fixed, count: fixed.length });
+  } catch (e) { return J({ ok: false, error: e.message }, 500); }
 }
 
 // GET /inventory/history
