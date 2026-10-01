@@ -278,6 +278,12 @@ a.ri-b{color:#4a5060}
 .ri-tab.on:focus-visible{outline:3px solid #1a56db;outline-offset:2px}
 .ri-tab.off{color:#b8bdc7;background:#f3f4f6;cursor:not-allowed}
 .ri-tab.off .e{filter:grayscale(1);opacity:.5}
+.xm-modes{display:grid;grid-template-columns:repeat(4,1fr);gap:6px;margin:14px 0}
+.xm-mode{border:1.5px solid #dde0e6;border-radius:10px;padding:10px 4px;font:600 13px 'DM Sans',sans-serif;background:#f3f4f6;color:#6b7280;text-align:center;text-decoration:none;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:2px;min-height:56px;line-height:1.2}
+.xm-mode.on{color:#7c3aed;border-color:#c4b5fd;background:#fff;cursor:pointer}
+.xm-mode.on.sel{background:#f3e8ff;border-color:#7c3aed}
+.xm-mode.off{color:#b8bdc7;cursor:not-allowed}
+.xm-mode .rp-soon{font-size:9px}
 
 footer{margin-top:40px;color:var(--ink3);font-size:14px}
 @media (max-width:420px){.brand{font-size:17px}.seg button{padding:7px 10px;font-size:14px}}
@@ -1271,17 +1277,27 @@ footer{margin-top:40px;color:var(--ink3);font-size:14px}
 
   <!-- TRANSFER → CONTAINER HERE -->
   <div class="wrap" id="inv-transfer" hidden>
+    <!-- the 4 Transfer modes, like the app; only the ready ones open -->
+    <div class="xm-modes" id="xm-modes" role="tablist"></div>
+    <div class="rp-intro" id="xm-intro">
+      <div class="rp-intro-ico" aria-hidden="true">👆</div>
+      <div>
+        <h2><span class="en">Tap a Transfer mode to learn it</span><span class="es">Toca un modo de Transfer para aprenderlo</span></h2>
+        <p><span class="en">Same 4 buttons as in the app. <b>🚢 Container here</b> is ready. Grey ones are coming soon.</span><span class="es">Los mismos 4 botones de la app. <b>🚢 Container here</b> ya está lista. Los grises vienen pronto.</span></p>
+      </div>
+    </div>
+    <div id="xm-container" hidden>
     <header class="lesson-head">
       <div class="eyebrow"><span class="en">Inventory → Transfer tab → 🚢 Container here</span><span class="es">Inventory → pestaña Transfer → 🚢 Container here</span></div>
       <h2 class="lesson-title"><span class="en">Container here: put a container away</span><span class="es">Container here: guardar un contenedor</span></h2>
       <p class="lede2"><span class="en">When a container arrives and the office clicks <b>📦 Received</b>, its pallets show up here. For every box: <b>scan the box → put it on the shelf → scan the shelf label</b>. The app moves it and counts it off its pallet, so every box is on record.</span><span class="es">Cuando llega un contenedor y la oficina le da <b>📦 Received</b>, sus pallets aparecen aquí. Para cada caja: <b>escanea la caja → ponla en el estante → escanea la etiqueta del estante</b>. La app la mueve y la descuenta de su pallet, así cada caja queda registrada.</span></p>
       <nav class="jump">
-        <a href="#app-inventory-transfer" onclick="return jumpTo('ct1')">1 · <span class="en">Open it</span><span class="es">Ábrelo</span></a>
-        <a href="#app-inventory-transfer" onclick="return jumpTo('ct2')">2 · <span class="en">Scan a box</span><span class="es">Escanea una caja</span></a>
-        <a href="#app-inventory-transfer" onclick="return jumpTo('ct3')">3 · <span class="en">The pallet</span><span class="es">El pallet</span></a>
-        <a href="#app-inventory-transfer" onclick="return jumpTo('ct4')">4 · <span class="en">Put it away</span><span class="es">Guárdala</span></a>
-        <a href="#app-inventory-transfer" onclick="return jumpTo('ct5')">5 · <span class="en">Done</span><span class="es">Listo</span></a>
-        <a href="#app-inventory-transfer" onclick="return jumpTo('ct6')">6 · <span class="en">Red = stop</span><span class="es">Rojo = alto</span></a>
+        <a href="#app-inventory-transfer-container" onclick="return jumpTo('ct1')">1 · <span class="en">Open it</span><span class="es">Ábrelo</span></a>
+        <a href="#app-inventory-transfer-container" onclick="return jumpTo('ct2')">2 · <span class="en">Scan a box</span><span class="es">Escanea una caja</span></a>
+        <a href="#app-inventory-transfer-container" onclick="return jumpTo('ct3')">3 · <span class="en">The pallet</span><span class="es">El pallet</span></a>
+        <a href="#app-inventory-transfer-container" onclick="return jumpTo('ct4')">4 · <span class="en">Put it away</span><span class="es">Guárdala</span></a>
+        <a href="#app-inventory-transfer-container" onclick="return jumpTo('ct5')">5 · <span class="en">Done</span><span class="es">Listo</span></a>
+        <a href="#app-inventory-transfer-container" onclick="return jumpTo('ct6')">6 · <span class="en">Red = stop</span><span class="es">Rojo = alto</span></a>
       </nav>
       <p class="zoomtip">🔍 <span class="en">Tap any picture to make it bigger.</span><span class="es">Toca cualquier foto para verla más grande.</span></p>
     </header>
@@ -1349,6 +1365,7 @@ footer{margin-top:40px;color:var(--ink3);font-size:14px}
       </div>
     </section>
     <p class="fine"><span class="en">Screens show test data.</span><span class="es">Las pantallas muestran datos de prueba.</span></p>
+    </div>
   </div>
 
   <!-- SOLD OUT -->
@@ -1490,7 +1507,8 @@ var VIEWS = {
   'app-inventory-stockout':    { el:'view-inv', sec:'stockout',     back:'#app', en:'Inventory Guide',   es:'Guía de Inventory' },
   'app-inventory-stockin':     { el:'view-inv', sec:'stockin',      back:'#app', en:'Inventory Guide',   es:'Guía de Inventory' },
   'app-inventory-soldout':     { el:'view-inv', sec:'soldout',      back:'#app', en:'Inventory Guide',   es:'Guía de Inventory' },
-  'app-inventory-transfer':    { el:'view-inv', sec:'transfer',     back:'#app', en:'Inventory Guide',   es:'Guía de Inventory' }
+  'app-inventory-transfer':    { el:'view-inv', sec:'transfer',     back:'#app', en:'Inventory Guide',   es:'Guía de Inventory' },
+  'app-inventory-transfer-container': { el:'view-inv', sec:'transfer', sub:'container', back:'#app-inventory-transfer', en:'Inventory Guide', es:'Guía de Inventory' }
 };
 function showView(){
   var v = (location.hash || '').replace('#','');
@@ -1509,6 +1527,7 @@ function showView(){
     ['stockout','stockin','soldout','transfer'].forEach(function(s){ document.getElementById('inv-' + s).hidden = (s !== cfg.sec); });
     document.getElementById('inv-intro').hidden = !!cfg.sec;
     renderInvTabs(cfg.sec);
+    if (cfg.sec === 'transfer') renderXfrModes(cfg.sub || '');
   }
   window.scrollTo(0, 0);
 }
@@ -1562,6 +1581,18 @@ function renderTabs(sel){
 // ── Practice Inventory tab bar (matches inventory.html) ──
 var INV_TABS = [['stockout','📤','Stock Out'],['stockin','📦','Stock In / Found on Shelf'],['transfer','','Transfer'],['audit','🔍','Audit'],['review','','Review'],['skumgr','📋','SKU Mgr'],['history','📜','History'],['soldout','🚫','Sold Out']];
 var INV_READY = { stockout:'#app-inventory-stockout', stockin:'#app-inventory-stockin', soldout:'#app-inventory-soldout', transfer:'#app-inventory-transfer' };
+// ── Transfer's 4 modes (matches inventory.html): only ready ones open ──
+var XFR_MODES = [['code','','SKU / Part# / UPC'],['name','','Product Name'],['loc','📍','Location'],['container','🚢','Container here']];
+var XFR_READY = { container:'#app-inventory-transfer-container' };
+function renderXfrModes(sel){
+  document.getElementById('xm-modes').innerHTML = XFR_MODES.map(function(m){
+    var ready = XFR_READY[m[0]];
+    if (ready) return '<a role="tab" aria-selected="' + (sel===m[0]) + '" class="xm-mode on' + (sel===m[0]?' sel':'') + '" href="' + ready + '">' + (m[1] ? '<span>' + m[1] + '</span>' : '') + m[2] + '</a>';
+    return '<button type="button" role="tab" aria-disabled="true" class="xm-mode off" onclick="soon()">' + (m[1] ? '<span style="filter:grayscale(1);opacity:.5">' + m[1] + '</span>' : '') + m[2] + ' <span class="rp-soon">SOON</span></button>';
+  }).join('');
+  document.getElementById('xm-intro').hidden = !!sel;
+  document.getElementById('xm-container').hidden = sel !== 'container';
+}
 function renderInvTabs(sel){
   document.getElementById('ri-tabs').innerHTML = INV_TABS.map(function(t){
     var ready = INV_READY[t[0]];
