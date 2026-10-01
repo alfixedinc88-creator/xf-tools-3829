@@ -7939,6 +7939,10 @@ window.invCredLogin = async function() {
   window.xfrBoxScan = function(code) {
     code = String(code || '').trim(); if (!code) return;
     var box = g('xfr-cont-box'); if (box) box.value = '';
+    if (xfrGo.focus && xfrIsLoc(code)) { // a shelf label: the picked item's boxes go there
+      if (!xfrGo.sel) { invFlash('Scan a box first, then the shelf label', 'error'); xfrGoBox(); return; }
+      xfrGoMove(code.toUpperCase()); return;
+    }
     xfrResolve(code, function(part) {
       if (xfrGo.focus) { // inside a pallet: pick the item on it
         var l = xfrGo.lines.filter(function(x) { return x.part === part && x.left > 0; })[0];
@@ -7971,6 +7975,8 @@ window.invCredLogin = async function() {
     }).catch(function() { invFlash('Load failed', 'error'); });
   }
   // Open one pallet in scan & go mode (optionally with an item picked).
+  // Every item gets its 2 suggested spots up front (📍 plan first, then where
+  // most of the same parent part # is, then empty shelves).
   window.xfrGoOpen = function(title, vendor, pallet, selId) {
     xfrGo.focus = { title: title, vendor: vendor, pallet: pallet }; xfrGo.sel = null; xfrGo.sug = null;
     var tl = g('xfr-cont-tools'); if (tl) tl.style.display = 'none';
@@ -7979,90 +7985,115 @@ window.invCredLogin = async function() {
     var el = g('xfr-cont-go'); if (el) el.innerHTML = "<div class='iempty'>Loading pallet…</div>";
     wFetch(W + '/inventory/containers/pallets?title=' + encodeURIComponent(title)).then(function(r) { return r.json(); }).then(function(d) {
       xfrGo.lines = ((d && d.lines) || []).filter(function(l) { return l.pallet === pallet && l.vendor === vendor; });
-      xfrLoadPhotos(xfrGo.lines.map(function(l) { return l.part; }), function() {
-        if (selId) xfrGoSelect(selId); else { xfrGoRender(); xfrGoBox(); }
+      var open = xfrGo.lines.filter(function(l) { return l.left > 0; }), from = open.length ? xfrGoFrom(open[0]) : null;
+      var parts = open.map(function(l) { return l.part; }).filter(function(p, i, a) { return a.indexOf(p) === i; });
+      var recsP = parts.length ? wFetch(W + '/inventory/containers/pallet-recs', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ parts: parts, fromLoc: from ? from.location : 'GARAGE' }) })
+        .then(function(r) { return r.json(); }).then(function(x) { xfrGo.recs = (x && x.recs) || {}; }).catch(function() { xfrGo.recs = {}; }) : Promise.resolve(xfrGo.recs = {});
+      recsP.then(function() {
+        xfrLoadPhotos(xfrGo.lines.map(function(l) { return l.part; }), function() {
+          if (selId) xfrGoSelect(selId); else { xfrGoRender(); xfrGoBox(); }
+        });
       });
     }).catch(function() { if (el) el.innerHTML = "<div class='iempty'>Load failed</div>"; });
   };
   window.xfrGoBack = function() { xfrGoReset(); xfrContLoad(); xfrGoBox(); };
-  // Item picked (scanned or tapped): boxes left + where to put it.
+  window.xfrGoReload = function() { if (xfrGo.focus) xfrGoOpen(xfrGo.focus.title, xfrGo.focus.vendor, xfrGo.focus.pallet); };
+  // Item picked (scanned or tapped): boxes left + its 2 suggested spots.
   window.xfrGoSelect = function(id) {
     var l = xfrGo.lines.filter(function(x) { return x.id === id; })[0]; if (!l) return;
-    xfrGo.sel = { id: id, n: l.left }; xfrGo.sug = null; xfrGoRender();
-    var from = xfrGoFrom(l);
-    wFetch(W + '/inventory/suggest-location?usePlan=1&partNum=' + encodeURIComponent(l.part) + '&fromLoc=' + encodeURIComponent(from ? from.location : ''))
-      .then(function(r) { return r.json(); }).then(function(d) {
-        if (!xfrGo.sel || xfrGo.sel.id !== id) return;
-        var skip = function(loc) { return /^GARAGE\b/i.test(loc); };
-        xfrGo.sug = { existing: ((d && d.existing) || []).filter(function(x) { return !skip(x.location); }), empty: ((d && d.emptyNearby) || []).concat((d && d.emptyOther) || []).filter(function(x) { return !skip(x); }),
-          plan: (d && d.plan) || '', planExact: !!(d && d.planExact), planPart: (d && d.planPart) || '' };
-        xfrGoRender();
-      }).catch(function() { xfrGo.sug = { existing: [], empty: [] }; xfrGoRender(); });
+    xfrGo.sel = { id: id, n: l.left }; xfrGoRender(); xfrGoBox();
   };
+  window.xfrGoUnselect = function() { xfrGo.sel = null; xfrGoRender(); xfrGoBox(); };
+  window.xfrGoToggleDone = function() { xfrGo.showDone = !xfrGo.showDone; xfrGoRender(); };
   function xfrGoFrom(l) { // where the container was stocked in: GARAGE first, else the spot with the most
     var st = (l.stock || []).filter(function(s) { return parseFloat(s.cases) > 0; });
     return st.filter(function(s) { return /^GARAGE$/i.test(s.location); })[0] || st.sort(function(a, b) { return b.cases - a.cases; })[0] || null;
   }
+  // A scanned shelf label (not a box): C1=1-2-3, BARN=…, GARAGE.
+  function xfrIsLoc(code) {
+    var up = String(code || '').trim().toUpperCase(); if (!up) return false;
+    if (/^GARAGE$/.test(up)) return true;
+    return (typeof INV_PREFIXES !== 'undefined' ? INV_PREFIXES : []).some(function(p) { return up.indexOf(p) === 0; }) || /^[A-Z][A-Z0-9]*=\d/.test(up);
+  }
+  function xfrGoRecs(l) { return (xfrGo.recs && xfrGo.recs[l.part]) || { plan: '', recs: [] }; }
+  function xfrNat(a, b) { return String(a).localeCompare(String(b), undefined, { numeric: true }); }
+  // Boxes on this line vs. what's still in the stock-in spot (GARAGE).
+  function xfrGoLineWarn(l) {
+    if (l.over > 0) return '⚠ ' + xfrN(l.over) + ' more box(es) moved than the pallet had';
+    if (!(l.left > 0)) return '';
+    var f = xfrGoFrom(l), have = f ? parseFloat(f.cases) || 0 : 0;
+    if (!f) return '⚠ not in stock anywhere — stock the container in first (Reorder → 📦 Received)';
+    if (have + 1e-9 < l.left) return '⚠ pallet says ' + xfrN(l.left) + ' left but ' + xfrE(f.location) + ' only has ' + xfrN(have) + ' — tell the office';
+    return '';
+  }
   window.xfrGoRender = function() {
     var el = g('xfr-cont-go'); if (!el || !xfrGo.focus) return;
     var f = xfrGo.focus, sel = xfrGo.sel, L = xfrGo.lines;
-    var left = L.reduce(function(a, l) { return a + l.left; }, 0);
-    var h = '<div style="margin-bottom:6px"><a href="#" onclick="xfrGoBack();return false" style="font-size:12px">← All containers</a></div>'
-      + '<div style="font-size:15px;font-weight:800;margin-bottom:2px">🧱 Pallet ' + xfrE(f.pallet) + ' <span style="font-size:12px;font-weight:400;color:var(--text3)">' + xfrE(f.title) + ' · ' + xfrN(left) + ' box(es) left</span></div>'
-      + '<div style="font-size:12px;color:var(--accent);font-weight:700;margin-bottom:8px">Scan a box on this pallet ↑</div>';
+    var tot = 0, mv = 0, left = 0, warns = 0;
+    L.forEach(function(l) { tot += +l.cases || 0; mv += +l.moved || 0; left += +l.left || 0; if (xfrGoLineWarn(l)) warns++; });
+    var match = Math.abs(tot - mv - left) < 1e-6 && !L.some(function(l) { return l.over > 0; });
+    var h = '<div style="margin-bottom:6px;display:flex;justify-content:space-between"><a href="#" onclick="xfrGoBack();return false" style="font-size:12px">← All containers</a><a href="#" onclick="xfrGoReload();return false" style="font-size:12px">↻ Refresh</a></div>'
+      + '<div style="font-size:15px;font-weight:800;margin-bottom:2px">🧱 Pallet ' + xfrE(f.pallet) + ' <span style="font-size:12px;font-weight:400;color:var(--text3)">' + xfrE(f.title) + '</span></div>'
+      + '<div style="font-size:12px;margin-bottom:4px;padding:6px 8px;border-radius:8px;background:' + (match && !warns ? 'var(--bg3)' : '#fee2e2') + ';color:' + (match && !warns ? 'var(--text2)' : '#991b1b') + ';font-weight:700">'
+      + (match ? '✓' : '⚠') + ' On the pallet ' + xfrN(tot) + ' = moved ' + xfrN(mv) + ' + left ' + xfrN(left)
+      + (match ? '' : ' — DOES NOT MATCH, tell the office') + (warns ? ' · ⚠ ' + warns + ' item(s) need a look' : '') + '</div>'
+      + '<div style="font-size:12px;color:var(--accent);font-weight:700;margin-bottom:8px">' + (sel ? 'Put the boxes away, then scan the shelf label ↑' : 'Scan a box on this pallet ↑') + '</div>';
     if (sel) {
       var l = L.filter(function(x) { return x.id === sel.id; })[0];
       if (l) {
-        var sug = xfrGo.sug, best = sug && sug.existing[0];
-        var dest = function(loc, sub, primary) {
-          return '<button type="button" onclick="xfrGoMove(' + xfrE(JSON.stringify(loc)) + ')" style="display:block;width:100%;text-align:left;margin-bottom:6px;padding:' + (primary ? '14px' : '9px') + ' 12px;border-radius:10px;border:' + (primary ? '2px solid var(--green);background:var(--green-bg,#dcfce7)' : '1.5px solid var(--border);background:var(--bg3)') + ';color:var(--text);cursor:pointer">'
-            + '<div style="font-size:' + (primary ? '17' : '14') + 'px;font-weight:800;font-family:var(--mono)">' + (primary ? '✓ Move here → ' : '') + xfrE(loc) + '</div><div style="font-size:11px;color:var(--text3)">' + sub + '</div></button>';
-        };
+        var R = xfrGoRecs(l), w = xfrGoLineWarn(l);
         h += '<div style="border:2px solid var(--accent);border-radius:12px;padding:10px;margin-bottom:10px">'
           + '<div style="display:flex;gap:10px;align-items:flex-start">' + xfrThumb(l.part, true)
           + '<div style="flex:1;min-width:0"><div style="font-family:var(--mono);font-weight:800;font-size:18px">' + xfrE(l.part) + '</div>'
           + '<div style="font-size:12px;color:var(--text3)">' + xfrE(l.description || '') + '</div>'
           + '<div style="margin-top:6px;font-size:14px"><b style="font-size:20px;color:var(--accent)">' + xfrN(l.left) + '</b> box(es) of it on this pallet</div>'
-          + '<div style="display:flex;align-items:center;gap:6px;margin-top:6px"><span style="font-size:12px">Move</span>'
+          + '<div style="display:flex;align-items:center;gap:6px;margin-top:6px"><span style="font-size:12px">Moving</span>'
           + '<input id="xfr-go-n" type="number" min="0.5" step="1" value="' + xfrN(sel.n) + '" max="' + xfrN(l.left) + '" style="width:70px;padding:6px;border:1.5px solid var(--border);border-radius:7px;background:var(--bg);color:var(--text);font-size:15px;font-weight:700" oninput="xfrGoSetN(this.value)">'
           + '<span style="font-size:12px">box(es)</span></div></div></div>'
-          + '<div style="font-size:12px;font-weight:700;margin:10px 0 6px">Put them at:</div>'
-          + (!sug ? '<div style="font-size:12px;color:var(--text3)">Finding the best spot…</div>'
-            : sug.plan ? xfrGoPlanDests(sug, dest)
-            : (best ? dest(best.location, 'Most of this item is here (' + xfrN(best.cases) + ' cases)', true) : '<div style="font-size:12px;color:var(--orange);margin-bottom:6px">No shelf has this item yet — pick an empty shelf or scan a spot</div>')
-              + sug.existing.slice(1, 4).map(function(x) { return dest(x.location, 'Also has this item (' + xfrN(x.cases) + ' cases)', false); }).join('')
-              + sug.empty.slice(0, best ? 2 : 4).map(function(x) { return dest(x, 'Empty shelf', !best && x === sug.empty[0]); }).join(''))
-          + '<input id="xfr-go-loc" type="text" autocomplete="off" placeholder="…or scan the spot label" style="width:100%;box-sizing:border-box;margin-top:4px;padding:9px 10px;border:1.5px solid var(--border);border-radius:8px;background:var(--bg);color:var(--text);font-size:14px;font-family:var(--mono)" onkeydown="if(event.key===\'Enter\'&&this.value.trim())xfrGoMove(this.value.trim().toUpperCase())">'
+          + (w ? '<div style="margin-top:8px;font-size:12px;font-weight:700;color:#b91c1c">' + w + '</div>' : '')
+          + (R.plan ? '<div style="margin-top:8px;padding:8px 10px;border-radius:10px;background:#fef3c7;color:#92400e;font-weight:800;font-size:15px">📍 Plan: ' + (R.planLevel === 'part' ? xfrE(l.part) + ' ' : '') + 'goes to ' + xfrE(R.plan) + (R.planLevel === 'part' ? '<div style="font-size:11px;font-weight:600">This pack size has its own plan</div>' : '') + '</div>' : '')
+          + '<div style="font-size:12px;font-weight:700;margin:10px 0 4px">Suggested spots:</div>'
+          + (R.recs.length ? R.recs.map(function(r, i) { return '<div style="padding:8px 10px;margin-bottom:5px;border-radius:9px;border:1.5px solid ' + (i ? 'var(--border)' : 'var(--green)') + ';background:' + (i ? 'var(--bg3)' : 'var(--green-bg,#dcfce7)') + '"><span style="font-family:var(--mono);font-weight:800;font-size:' + (i ? '14' : '17') + 'px">' + (i ? '2. ' : '1. ') + xfrE(r.location) + '</span> <span style="font-size:11px;color:var(--text3)">' + xfrE(r.why) + '</span></div>'; }).join('')
+            : '<div style="font-size:12px;color:var(--orange);margin-bottom:6px">No suggestion — put it on a free shelf and scan its label</div>')
+          + '<div style="margin-top:8px;padding:9px;border-radius:9px;background:var(--bg3);font-size:13px;font-weight:700;text-align:center">📷 Move the boxes, then scan the shelf label in the box above</div>'
+          + '<div style="display:flex;gap:6px;margin-top:6px"><input id="xfr-go-loc" type="text" autocomplete="off" placeholder="Label won\'t scan? Type the spot" style="flex:1;min-width:0;padding:8px 10px;border:1.5px solid var(--border);border-radius:8px;background:var(--bg);color:var(--text);font-size:13px;font-family:var(--mono)" onkeydown="if(event.key===\'Enter\'&&this.value.trim())xfrGoMove(this.value.trim().toUpperCase())">'
+          + '<button type="button" onclick="xfrGoUnselect()" style="padding:8px 10px;border-radius:8px;border:1.5px solid var(--border);background:var(--bg);color:var(--text2);cursor:pointer;font-size:12px">✕ Not this one</button></div>'
           + '</div>';
       }
     }
-    h += L.map(function(l) {
-      var on = sel && sel.id === l.id;
-      return '<div onclick="xfrGoSelect(' + l.id + ')" style="display:flex;gap:8px;align-items:center;padding:7px;border-radius:9px;margin-bottom:5px;cursor:pointer;border:1.5px solid ' + (on ? 'var(--accent)' : 'var(--border)') + ';background:' + (l.left > 0 ? 'var(--bg)' : 'var(--bg3)') + ';opacity:' + (l.left > 0 ? '1' : '.55') + '">'
-        + xfrThumb(l.part) + '<div style="flex:1;min-width:0"><div style="font-family:var(--mono);font-weight:700">' + xfrE(l.part) + '</div><div style="font-size:11px;color:var(--text3);white-space:nowrap;overflow:hidden;text-overflow:ellipsis">' + xfrE(l.description || '') + '</div></div>'
-        + '<div style="text-align:right;font-size:12px">' + (l.left > 0 ? '<b style="color:var(--accent);font-size:15px">' + xfrN(l.left) + '</b> left' : '<b style="color:var(--green)">✓ moved</b>') + '</div></div>';
-    }).join('');
-    if (xfrGo.moved.length) h += '<div style="margin-top:8px;font-size:12px;color:var(--green)">' + xfrGo.moved.slice(-6).map(function(t) { return '✓ ' + xfrE(t); }).join('<br>') + '</div>';
+    // 📦 To move — by suggested spot, then part #, then most boxes first.
+    var open = L.filter(function(l) { return l.left > 0; }).map(function(l) { var R = xfrGoRecs(l); return { l: l, key: R.plan || (R.recs[0] && R.recs[0].location) || '~' }; });
+    open.sort(function(a, b) { return xfrNat(a.key, b.key) || xfrNat(a.l.part, b.l.part) || b.l.left - a.l.left; });
+    h += '<div style="font-size:12px;font-weight:800;letter-spacing:.4px;text-transform:uppercase;color:var(--text2);margin:6px 0">📦 To move · ' + open.length + ' item(s) · ' + xfrN(left) + ' box(es)</div>';
+    var lastKey = null;
+    h += open.length ? open.map(function(o) {
+      var l = o.l, R = xfrGoRecs(l), on = sel && sel.id === l.id, w = xfrGoLineWarn(l), head = '';
+      if (o.key !== lastKey) { lastKey = o.key; head = '<div style="font-size:12px;font-weight:800;color:var(--accent);margin:8px 0 4px">→ ' + (o.key === '~' ? 'No spot suggested yet' : xfrE(o.key)) + '</div>'; }
+      return head + '<div onclick="xfrGoSelect(' + l.id + ')" style="display:flex;gap:8px;align-items:center;padding:7px;border-radius:9px;margin-bottom:5px;cursor:pointer;border:1.5px solid ' + (on ? 'var(--accent)' : w ? '#f87171' : 'var(--border)') + ';background:var(--bg)">'
+        + xfrThumb(l.part) + '<div style="flex:1;min-width:0"><div style="font-family:var(--mono);font-weight:700">' + xfrE(l.part) + '</div>'
+        + '<div style="font-size:11px;color:var(--text3);white-space:nowrap;overflow:hidden;text-overflow:ellipsis">' + xfrE(l.description || '') + '</div>'
+        + '<div style="font-size:11px;color:var(--green);font-family:var(--mono)">' + (R.recs.length ? R.recs.map(function(r) { return xfrE(r.location); }).join(' · ') : '') + '</div>'
+        + (w ? '<div style="font-size:11px;color:#b91c1c;font-weight:700">' + w + '</div>' : '') + '</div>'
+        + '<div style="text-align:right;font-size:12px"><b style="color:var(--accent);font-size:16px">' + xfrN(l.left) + '</b><div>left</div></div></div>';
+    }).join('') : '<div class="iempty">✓ Everything on this pallet has been moved</div>';
+    // ✓ Transferred — folded so the screen stays clear; tap to see the history.
+    var done = L.filter(function(l) { return l.moved > 0; });
+    if (done.some(function(l) { return l.over > 0; })) xfrGo.showDone = true;
+    if (done.length) {
+      h += '<button type="button" onclick="xfrGoToggleDone()" style="width:100%;margin-top:10px;padding:10px;border-radius:9px;border:1.5px solid var(--green);background:var(--bg3);color:var(--text);font-size:13px;font-weight:700;cursor:pointer;text-align:left">'
+        + (xfrGo.showDone ? '▾' : '▸') + ' ✓ Transferred · ' + done.length + ' item(s) · ' + xfrN(mv) + ' box(es)</button>';
+      if (xfrGo.showDone) h += done.sort(function(a, b) { return xfrNat(a.part, b.part); }).map(function(l) {
+        return '<div style="padding:7px 9px;border-radius:8px;margin-top:5px;border:1px solid var(--border);background:var(--bg)">'
+          + '<div style="display:flex;justify-content:space-between"><b style="font-family:var(--mono)">' + xfrE(l.part) + '</b><span style="font-size:12px;color:var(--green);font-weight:700">' + xfrN(l.moved) + ' of ' + xfrN(l.cases) + ' moved</span></div>'
+          + (l.over > 0 ? '<div style="font-size:11px;color:#b91c1c;font-weight:700">' + xfrGoLineWarn(l) + '</div>' : '')
+          + (l.moves || []).map(function(m) { var t = ''; try { t = new Date(m.at).toLocaleString('en-US', { timeZone: 'America/New_York', month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' }); } catch (e) {}
+              return '<div style="font-size:11px;color:var(--text3)">' + xfrN(m.cases) + ' → <b style="font-family:var(--mono);color:var(--text)">' + xfrE(m.to) + '</b> · ' + xfrE(m.by) + ' · ' + xfrE(t) + (m.pending ? ' · <span style="color:var(--orange)">waiting approval</span>' : '') + '</div>'; }).join('')
+          + '</div>';
+      }).join('');
+    }
+    if (xfrGo.moved.length) h += '<div style="margin-top:8px;font-size:12px;color:var(--green)">' + xfrGo.moved.slice(-4).map(function(t) { return '✓ ' + xfrE(t); }).join('<br>') + '</div>';
     el.innerHTML = h;
   };
-  // 📍 Location Plan set for this parent: say where it goes; its spots first.
-  function xfrGoPlanDests(sug, dest) {
-    var P = sug.plan, area = P.indexOf('=') >= 0 ? P.split('=')[0] + '=' : P + '=';
-    var inA = function(loc) { loc = String(loc).toUpperCase(); return sug.planExact ? loc === P : loc.indexOf(area) === 0; };
-    var h = '<div style="padding:10px;border-radius:10px;background:#fef3c7;color:#92400e;font-weight:800;font-size:16px;margin-bottom:8px">📍 Plan: ' + (sug.planPart ? xfrE(sug.planPart) + ' ' : '') + 'goes to ' + xfrE(P) + (sug.planPart ? '<div style="font-size:11px;font-weight:600">This pack size has its own plan</div>' : '') + '</div>';
-    if (sug.planExact) {
-      h += dest(P, 'The plan spot', true);
-      sug.existing.filter(function(x) { return !inA(x.location); }).slice(0, 2).forEach(function(x) { h += dest(x.location, 'Not the plan — also has this item (' + xfrN(x.cases) + ' cases)', false); });
-      return h;
-    }
-    var ex = sug.existing.filter(function(x) { return inA(x.location); }), em = sug.empty.filter(inA), first = true;
-    ex.slice(0, 3).forEach(function(x) { h += dest(x.location, 'In ' + xfrE(P) + ' · has this item (' + xfrN(x.cases) + ' cases)', first); first = false; });
-    em.slice(0, ex.length ? 2 : 4).forEach(function(x) { h += dest(x, 'In ' + xfrE(P) + ' · empty shelf', first); first = false; });
-    if (first) h += '<div style="font-size:12px;color:var(--orange);margin-bottom:6px">No free shelf found in ' + xfrE(P) + ' — scan the ' + xfrE(P) + ' spot you put it on</div>';
-    var other = sug.existing.filter(function(x) { return !inA(x.location); }).slice(0, 2);
-    if (other.length) h += '<div style="font-size:11px;color:var(--text3);margin:6px 0 4px">Not in the plan:</div>' + other.map(function(x) { return dest(x.location, 'Also has this item (' + xfrN(x.cases) + ' cases)', false); }).join('');
-    return h;
-  }
   // Move the picked item's boxes off the pallet to `toLoc` now (a normal
   // Transfer, counted against the pallet line — never more than it has).
   window.xfrGoMove = function(toLoc) {

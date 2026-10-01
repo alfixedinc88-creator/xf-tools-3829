@@ -4010,9 +4010,20 @@ async function inventoryContainerPallets(url, env) {
     (await d1All(env, `SELECT UPPER(part_num) AS p, location, cases FROM master_list WHERE UPPER(part_num) IN (${chunk.map(() => '?').join(',')}) AND cases > 0`, chunk))
       .forEach(r => { (stock[r.p] = stock[r.p] || []).push({ location: r.location, cases: r.cases }); });
   }
+  // One container opened: each line's transfers (who, how many, where, when) for the ✓ Transferred list.
+  const moves = {};
+  if (title && rows.length) {
+    const ids = rows.map(r => r.id);
+    for (let i = 0; i < ids.length; i += 90) {
+      const chunk = ids.slice(i, i + 90);
+      (await d1All(env, `SELECT m.pallet_id, m.cases, m.to_location, m.by_user, m.at, l.status FROM pallet_move m LEFT JOIN inventory_log l ON l.id = m.out_log_id
+        WHERE COALESCE(l.status, '') != 'Rejected' AND m.pallet_id IN (${chunk.map(() => '?').join(',')}) ORDER BY m.id`, chunk))
+        .forEach(m => { (moves[m.pallet_id] = moves[m.pallet_id] || []).push({ cases: m.cases, to: m.to_location || '', by: m.by_user || '', at: m.at || '', pending: m.status === 'Pending' }); });
+    }
+  }
   const lines = rows.map(r => { const mv = moved[r.id] || 0, pn = real(r.part);
     return { id: r.id, title: r.title, vendor: r.vendor, pallet: r.pallet, po: r.po || '', part: pn, filePart: r.part !== pn ? r.part : '', description: r.description || '',
-      cases: r.cases, pcs: r.pcs, units: r.units, pcsPerCtn: r.pcs_per_ctn, moved: mv, left: Math.max(0, (r.cases || 0) - mv), over: Math.max(0, mv - (r.cases || 0)), stock: stock[pn] || [] }; });
+      cases: r.cases, pcs: r.pcs, units: r.units, pcsPerCtn: r.pcs_per_ctn, moved: mv, left: Math.max(0, (r.cases || 0) - mv), over: Math.max(0, mv - (r.cases || 0)), stock: stock[pn] || [], moves: moves[r.id] || [] }; });
   return cors(new Response(JSON.stringify({ ok: true, lines, truncated: rows.length >= 2000 }), { headers: { 'Content-Type': 'application/json' } }));
 }
 
@@ -4865,6 +4876,46 @@ async function locationPlanLog(url, env) {
   const rows = base ? await d1All(env, "SELECT * FROM location_plan_log WHERE base = ? OR base LIKE ? ORDER BY id DESC LIMIT 100", [base, base + '=%'])
     : await d1All(env, 'SELECT * FROM location_plan_log ORDER BY id DESC LIMIT 200');
   return cors(new Response(JSON.stringify({ ok: true, log: rows }), { headers: { 'Content-Type': 'application/json' } }));
+}
+
+// POST /inventory/containers/pallet-recs { parts: [...], fromLoc } — 🚢 Container
+// here: 2 suggested spots per item on a pallet (shown, not tapped — the
+// guy scans the shelf label he really used). Order: the 📍 Location Plan
+// spot / area first; then the shelves already holding the most of the same
+// parent part #; then empty shelves (in the plan area if there is one).
+// Read only.
+async function palletRecs(request, env) {
+  const J = (o, st) => cors(new Response(JSON.stringify(o), { status: st || 200, headers: { 'Content-Type': 'application/json' } }));
+  const body = await request.json().catch(() => ({}));
+  const parts = [...new Set((body.parts || []).map(p => String(p || '').trim().toUpperCase()).filter(Boolean))].slice(0, 200);
+  const fromLoc = String(body.fromLoc || '').trim().toUpperCase();
+  const skip = l => !l || /^GARAGE\b/i.test(l) || l === fromLoc;
+  const parents = [...new Set(parts.map(p => parentOf(p)).filter(Boolean))];
+  const held = {}; // parent → { location: cases }
+  for (let i = 0; i < parents.length; i += 40) {
+    const ch = parents.slice(i, i + 40);
+    (await d1All(env, `SELECT part_num, base_sku, location, cases FROM master_list WHERE cases > 0 AND location != '' AND (${ch.map(() => 'UPPER(part_num) LIKE ?').join(' OR ')})`, ch.map(p => p + '%')))
+      .forEach(r => { const b = parentOf(r.base_sku || r.part_num); if (!ch.includes(b)) return; const L = String(r.location).trim().toUpperCase(); if (skip(L)) return;
+        const h = held[b] = held[b] || {}; h[L] = (h[L] || 0) + (parseFloat(r.cases) || 0); });
+  }
+  const empty = (await d1All(env, `SELECT l.location FROM locations l LEFT JOIN master_list m ON UPPER(m.location) = UPPER(l.location)
+    WHERE l.active = 1 GROUP BY l.location HAVING COALESCE(SUM(CASE WHEN m.cases > 0 THEN m.cases ELSE 0 END), 0) = 0 ORDER BY l.prefix, l.location`))
+    .map(r => String(r.location).toUpperCase()).filter(l => !skip(l));
+  const out = {};
+  for (const part of parts) {
+    const b = parentOf(part), at = await locationPlanForAt(env, part), plan = at.plan;
+    const area = plan ? (plan.includes('=') ? plan.split('=')[0] + '=' : plan + '=') : '';
+    const inPlan = l => !plan || (plan.includes('=') ? l === plan : l.startsWith(area));
+    const recs = [], add = (location, why) => { if (recs.length < 2 && !recs.some(r => r.location === location)) recs.push({ location, why }); };
+    if (plan && plan.includes('=')) add(plan, '📍 plan spot');
+    const has = Object.entries(held[b] || {}).sort((x, y) => y[1] - x[1]);
+    has.filter(([l]) => plan && inPlan(l)).forEach(([l, c]) => add(l, 'has ' + Math.round(c * 100) / 100 + ' cases of ' + b));
+    if (plan) empty.filter(inPlan).forEach(l => add(l, 'empty shelf in ' + plan));
+    if (!plan) has.forEach(([l, c]) => add(l, 'has ' + Math.round(c * 100) / 100 + ' cases of ' + b));
+    if (!plan) empty.forEach(l => add(l, 'empty shelf'));
+    out[part] = { plan, planLevel: at.level, recs };
+  }
+  return J({ ok: true, recs: out });
 }
 
 // GET /inventory/suggest-location?partNum=26-2-1=2&fromLoc=BARN=1-1-1
@@ -6406,6 +6457,7 @@ const _app = {
       if (path === '/inventory/location-plan' && method === 'GET')  return await locationPlanList(env);
       if (path === '/inventory/location-plan' && method === 'POST') return await locationPlanSave(request, env, session);
       if (path === '/inventory/location-plan/log' && method === 'GET') return await locationPlanLog(url, env);
+      if (path === '/inventory/containers/pallet-recs' && method === 'POST') return await palletRecs(request, env);
       if (path === '/inventory/prefixes'           && method === 'GET')  return await inventoryGetPrefixes(env);
       // mgmt-only routes
       if (session.pin_level !== 'mgmt') {
