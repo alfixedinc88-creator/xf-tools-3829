@@ -1482,7 +1482,20 @@ function vendorCodeText(s) {
   return typeof s === 'string' ? s.replace(/\b(JQ|WU)\b/g, '#1').replace(/\bEFF\b/gi, '#2').replace(/\b(YAO|CUTTER)\b/gi, '#3') : s;
 }
 const _VENDOR_KEYS = new Set(['vendor', 'vendors', 'lastVendor', 'vendor_name', 'vendorName']);
-const _VENDOR_TEXT_KEYS = new Set(['vendorSrc', 'detail']);
+const _VENDOR_OLD_TEXT_KEYS = new Set(['vendorSrc', 'detail']);
+// Titles / notes / file names: the vendor names only — never "cutter" (a
+// product can be a Pipe Cutter).
+function vendorCodeTextSafe(s) {
+  if (typeof s !== 'string') return s;
+  const m = { JQ: '#1', WU: '#1', EFF: '#2', YAO: '#3' };
+  return s.replace(/\bWU(?=\d)|\b(JQ|EFF|YAO)(?=\d)/gi, x => (x === 'WU' || /^(JQ|EFF|YAO)$/i.test(x)) ? m[x.toUpperCase()] + '-' : x)
+    .replace(/\bWU\b/g, '#1').replace(/\bJQ\b/gi, '#1').replace(/\bEFF\b/gi, '#2').replace(/\bYAO\b/gi, '#3');
+}
+// Free text that can carry a vendor's name (container titles like "JQ 9/15",
+// packing-list file names, History notes "[RECEIVED] <title> — …"). Kept to
+// these keys on purpose: names/addresses/product titles are never touched.
+const _VENDOR_TEXT_KEYS = new Set(['vendorSrc', 'detail', 'title', 'titles', 'notes', 'note', 'file', 'files', 'incoming',
+  'from', 'to', 'fromTitle', 'toTitle', 'from_title', 'to_title', 'containerTitle', 'container']);
 function vendorMaskValue(x, depth) {
   if (depth > 12 || x == null) return x;
   if (Array.isArray(x)) return x.map(v => vendorMaskValue(v, depth + 1));
@@ -1490,7 +1503,8 @@ function vendorMaskValue(x, depth) {
   for (const k of Object.keys(x)) {
     const v = x[k];
     if (_VENDOR_KEYS.has(k)) x[k] = Array.isArray(v) ? v.map(vendorCode) : vendorCode(v);
-    else if (_VENDOR_TEXT_KEYS.has(k)) x[k] = vendorCodeText(v);
+    else if (_VENDOR_TEXT_KEYS.has(k)) { const f = _VENDOR_OLD_TEXT_KEYS.has(k) ? vendorCodeText : vendorCodeTextSafe;
+      x[k] = Array.isArray(v) ? v.map(f) : (v && typeof v === 'object') ? vendorMaskValue(v, depth + 1) : f(v); }
     else if (v && typeof v === 'object') x[k] = vendorMaskValue(v, depth + 1);
   }
   return x;
@@ -1500,7 +1514,8 @@ async function vendorMaskResponse(request, env, res) {
     if (!res || !(res.headers.get('Content-Type') || '').includes('application/json')) return res;
     const text = await res.clone().text();
     const path = new URL(request.url).pathname, sheetRows = path === '/inventory/master-list';
-    if (!sheetRows && !/"(vendors?|lastVendor|vendor_?[nN]ame|vendorSrc)"\s*:/.test(text) && !/"detail"\s*:/.test(text)) return res;
+    if (!sheetRows && !/"(vendors?|lastVendor|vendor_?[nN]ame|vendorSrc)"\s*:/.test(text) && !/"detail"\s*:/.test(text)
+      && !/\b(JQ|WU|EFF|YAO|CUTTER)/i.test(text)) return res;
     const tok = request.headers.get('X-Cred-Token');
     if (tok) { const cs = await verifyCredSession(tok, env).catch(() => null); if (cs && (cs.roles || []).includes('owner')) return res; }
     let data; try { data = JSON.parse(text); } catch (_) { return res; }
@@ -1509,6 +1524,41 @@ async function vendorMaskResponse(request, env, res) {
     const h = new Headers(res.headers); h.delete('Content-Length');
     return new Response(JSON.stringify(data), { status: res.status, statusText: res.statusText, headers: h });
   } catch (e) { console.error('[vendor-mask]', e.message); return res; }
+}
+// A non-owner sees container titles with the vendor's name swapped for its
+// code ("JQ 9/15" → "#1 9/15") and sends that back (?title= / {title, from,
+// to}). Put the real title back before the request is handled: a title
+// that exists as written is kept; otherwise the stored title whose coded
+// form matches it.
+async function vendorUnmaskTitle(env, t, cache) {
+  if (typeof t !== 'string' || !/#[123]\b/.test(t)) return t;
+  if (!cache.titles) {
+    cache.titles = [];
+    for (const sql of ['SELECT DISTINCT title FROM reorder_pallet', 'SELECT DISTINCT title FROM reorder_incoming', 'SELECT title FROM reorder_title'])
+      try { ((await env.DB.prepare(sql).all()).results || []).forEach(r => { if (r.title) cache.titles.push(r.title); }); } catch (_) {}
+  }
+  if (cache.titles.includes(t)) return t;
+  return cache.titles.find(x => vendorCodeTextSafe(x) === t) || t;
+}
+async function vendorUnmaskRequest(request, env) {
+  try {
+    const url = new URL(request.url), cache = {};
+    const qt = url.searchParams.get('title');
+    let changed = false, body = null;
+    if (qt && /#[123]\b/.test(qt)) { const real = await vendorUnmaskTitle(env, qt, cache); if (real !== qt) { url.searchParams.set('title', real); changed = true; } }
+    if (request.method !== 'GET' && request.method !== 'HEAD' && (request.headers.get('Content-Type') || '').includes('application/json')) {
+      const text = await request.clone().text();
+      if (/#[123]\b/.test(text) && text.length < 2000000) {
+        const b = JSON.parse(text);
+        if (b && typeof b === 'object' && !Array.isArray(b)) for (const k of ['title', 'from', 'to']) {
+          const real = await vendorUnmaskTitle(env, b[k], cache);
+          if (real !== b[k]) { b[k] = real; changed = true; body = b; }
+        }
+      }
+    }
+    if (!changed) return request;
+    return new Request(url.toString(), { method: request.method, headers: request.headers, body: body ? JSON.stringify(body) : (request.method === 'GET' || request.method === 'HEAD' ? undefined : await request.clone().text()) });
+  } catch (e) { return request; }
 }
 function reorderVendorName(v) {
   const t = String(v == null ? '' : v).trim();
@@ -4072,6 +4122,74 @@ async function inventorySoldOutLabelLog(request, env, session) {
   return cors(new Response(JSON.stringify({ ok: true }), { headers: { 'Content-Type': 'application/json' } }));
 }
 
+// Part #s (exact) on 📦 Received container pallets that still have boxes
+// on them, with their name — for 🚢 Container here's box scan.
+async function receivedPalletParts(env) {
+  await reorderFixTables(env);
+  const got = await receivedContainerTitles(env);
+  const rows = ((await env.DB.prepare('SELECT id, title, pallet, part, cases FROM reorder_pallet').all()).results || []).filter(r => got.has(r.title));
+  const moved = {}; ((await env.DB.prepare(_PALLET_MOVED_SQL + ' GROUP BY m.pallet_id').all()).results || []).forEach(m => { moved[m.pallet_id] = m.moved || 0; });
+  const alias = {}; ((await env.DB.prepare('SELECT raw, part FROM reorder_alias').all()).results || []).forEach(a => { alias[String(a.raw).toUpperCase()] = String(a.part).toUpperCase(); });
+  const by = {};
+  rows.forEach(r => {
+    const left = Math.max(0, (r.cases || 0) - (moved[r.id] || 0)); if (!(left > 0)) return;
+    const part = alias[String(r.part).toUpperCase()] || String(r.part).toUpperCase();
+    const x = by[part] = by[part] || { part, boxesLeft: 0, pallets: 0, titles: new Set() };
+    x.boxesLeft += left; x.pallets++; x.titles.add(r.title);
+  });
+  return by;
+}
+// GET /inventory/containers/missing-upc — part #s on received pallets (boxes
+// still on them) with no OUTSIDE box UPC on file anywhere (UPC sheet,
+// vendor sheets, Reorder fixes, UPCs linked at the scanner), so a box scan
+// can't find them. Fill them in (POST /inventory/upc-link) before moving.
+async function inventoryContainersMissingUpc(env) {
+  const J = o => cors(new Response(JSON.stringify(o), { headers: { 'Content-Type': 'application/json' } }));
+  const by = await receivedPalletParts(env), parts = Object.keys(by);
+  const has = {}, inside = {}, name = {};
+  const q = async (sql, f) => { for (let i = 0; i < parts.length; i += 90) { const ch = parts.slice(i, i + 90);
+    try { (await d1All(env, sql.replace('IN ()', 'IN (' + ch.map(() => '?').join(',') + ')'), ch)).forEach(f); } catch (_) {} } };
+  await env.DB.prepare('CREATE TABLE IF NOT EXISTS upc_link (upc TEXT PRIMARY KEY, part TEXT NOT NULL, by_user TEXT, at TEXT)').run().catch(() => {});
+  await q("SELECT UPPER(sku) AS p, outside_upc AS o, inside_upc AS i FROM upc WHERE UPPER(sku) IN ()", r => { if (String(r.o || '').trim()) has[r.p] = String(r.o).trim(); if (String(r.i || '').trim()) inside[r.p] = String(r.i).trim(); });
+  await q("SELECT UPPER(part) AS p, outside_upc AS o, inside_upc AS i FROM reorder_vendor_catalog WHERE UPPER(part) IN ()", r => { if (!has[r.p] && String(r.o || '').trim()) has[r.p] = String(r.o).trim(); if (!inside[r.p] && String(r.i || '').trim()) inside[r.p] = String(r.i).trim(); });
+  await q("SELECT UPPER(part) AS p, outside_upc AS o FROM reorder_fix WHERE UPPER(part) IN ()", r => { if (!has[r.p] && String(r.o || '').trim()) has[r.p] = String(r.o).trim(); });
+  await q("SELECT UPPER(part) AS p, upc AS o FROM upc_link WHERE UPPER(part) IN ()", r => { if (!has[r.p]) has[r.p] = String(r.o).trim(); });
+  await q("SELECT UPPER(part_num) AS p, name FROM master_list WHERE UPPER(part_num) IN () AND COALESCE(name,'') != ''", r => { if (!name[r.p]) name[r.p] = r.name; });
+  const missing = parts.filter(p => !has[p]).sort().map(p => ({ part: p, name: name[p] || '', insideUpc: inside[p] || '', boxesLeft: by[p].boxesLeft, pallets: by[p].pallets, titles: [...by[p].titles] }));
+  return J({ ok: true, total: parts.length, withUpc: parts.length - missing.length, missing });
+}
+// POST /inventory/containers/fill-photos — Admins: find a photo for every
+// part # on received pallets that has none yet: first from saved Picking
+// orders, then from Veeqo by part #. Never replaces a photo already set.
+async function inventoryContainersFillPhotos(env, session) {
+  const J = (o, st) => cors(new Response(JSON.stringify(o), { status: st || 200, headers: { 'Content-Type': 'application/json' } }));
+  if (!(session && (session.roles || []).includes('admin'))) return J({ ok: false, error: 'Only Admins can change product photos' }, 403);
+  const by = await receivedPalletParts(env);
+  const bases = [...new Set(Object.keys(by).map(p => p.split('=')[0]))];
+  let have = await productPhotoMap(env, bases);
+  let fromOrders = 0, fromVeeqo = 0;
+  if (bases.some(b => !have[b])) { fromOrders = await productPhotoBackfill(env, 365).catch(() => 0); have = await productPhotoMap(env, bases); }
+  const need = bases.filter(b => !have[b]).slice(0, 40), found = {};
+  if (need.length && (env.VEEQO_API_KEY || '').trim()) {
+    for (const b of need) {
+      try {
+        const res = await veeqoFetch(env, `/products?query=${encodeURIComponent(b)}&page_size=10`);
+        const list = Array.isArray(res) ? res : (res.products || []);
+        for (const pr of list) {
+          const pImg = pr.main_image_src || (pr.images && pr.images[0] && (pr.images[0].src || pr.images[0].url)) || '';
+          for (const sb of (pr.sellables || [])) {
+            if (String(sb.sku_code || '').trim().toUpperCase().split('=')[0] !== b) continue;
+            const img = sb.image_url || sb.main_image_src || pImg; if (img && !found[b]) found[b] = img;
+          }
+        }
+      } catch (_) { /* keep going */ }
+    }
+    fromVeeqo = await productPhotoRemember(env, found, 'veeqo');
+  }
+  have = await productPhotoMap(env, bases);
+  return J({ ok: true, items: bases.length, withPhoto: bases.filter(b => have[b]).length, fromOrders, fromVeeqo, stillMissing: bases.filter(b => !have[b]) });
+}
+
 async function inventoryTransferLog(request, env) {
   try {
     const body = await request.json().catch(() => ({}));
@@ -5779,6 +5897,9 @@ const _app = {
       }
       if ((path === '/inventory/product-photo' && method === 'POST') || path === '/inventory/product-photo-search' || (path === '/inventory/sync-photos-from-veeqo' && method === 'POST')) {
         if (session.pin_level !== 'mgmt') return cors(new Response(JSON.stringify({ ok: false, error: 'Management access required' }), { status: 403, headers: { 'Content-Type': 'application/json' } }));
+        // Changing photos (by hand or from Veeqo): Admins only.
+        if (path !== '/inventory/product-photo-search' && !(session.roles || []).includes('admin'))
+          return cors(new Response(JSON.stringify({ ok: false, error: 'Only Admins can change product photos' }), { status: 403, headers: { 'Content-Type': 'application/json' } }));
         if (path === '/inventory/product-photo') return await productPhotoSave(request, env);
         if (path === '/inventory/product-photo-search') return await productPhotoSearch(url, env);
         return await productPhotoSyncVeeqo(request, env);
@@ -5796,6 +5917,8 @@ const _app = {
       if (path === '/inventory/incoming' && method === 'GET') return await inventoryIncoming(url, env);
       if (path === '/inventory/soldout-label' && method === 'POST') return await inventorySoldOutLabelLog(request, env, session);
       if (path === '/inventory/containers/delete' && method === 'POST') return await inventoryContainerDelete(request, env, session);
+      if (path === '/inventory/containers/missing-upc' && method === 'GET') return await inventoryContainersMissingUpc(env);
+      if (path === '/inventory/containers/fill-photos' && method === 'POST') return await inventoryContainersFillPhotos(env, session);
       // receive-preview / receive-apply moved up to the credential-based
       // check earlier in the router (ReceivePO no longer sends the old
       // PIN session token at all) - this block would never be reached
@@ -23986,6 +24109,6 @@ async function soldoutAddListing(request, env) {
 
 // Every reply goes through the vendor-code mask (owner sees real names).
 export default {
-  async fetch(request, env, ctx) { return await vendorMaskResponse(request, env, await _app.fetch(request, env, ctx)); },
+  async fetch(request, env, ctx) { request = await vendorUnmaskRequest(request, env); return await vendorMaskResponse(request, env, await _app.fetch(request, env, ctx)); },
   async scheduled(event, env, ctx) { return await _app.scheduled(event, env, ctx); },
 };
