@@ -333,5 +333,36 @@ console.log('\nC part #s (27-3-4C=2X) keep their own part # but share the parent
   check('no double count: parent 27-3-4 shelves total 3 (C4) + 4 (C part #) + 6 = 13 cases, each shelf once', cases === 13 && a.locations.length === 3, { cases, locs: a.locations });
 }
 
+console.log('\n🧪 Test switch: ON → do anything → OFF puts everything back');
+{
+  const dump = () => JSON.stringify({ ml: sq.prepare('SELECT * FROM master_list ORDER BY id').all(), log: sq.prepare('SELECT * FROM inventory_log ORDER BY id').all() });
+  const before = dump(), shelf0 = shelf(), logN0 = sq.prepare('SELECT COUNT(*) n FROM inventory_log').get().n;
+  const pkOn = await call('/admin/test-mode/on', { method: 'POST', headers: { 'X-Cred-Token': pk.token, 'Content-Type': 'application/json' }, body: '{}' });
+  check('only Admins can turn test on (Ops 403)', pkOn.status === 403, pkOn.status);
+  const on = await post('/admin/test-mode/on', {});
+  const acc = await get('/auth/access');
+  check('Admin turns test on; every page is told (banner)', on.ok && acc.test && acc.test.on && acc.test.by === 'TS', { on, test: acc.test });
+  let sheetWrites = 0; const f0 = globalThis.fetch;
+  globalThis.fetch = async (u, o) => { if (String(u).includes('sheets') && o && /PUT|POST/.test(o.method || '')) sheetWrites++; return f0(u, o); };
+  await post('/inventory/review-mode', { mode: 'auto' });
+  const tr = await post('/inventory/transfer', { partNum: '23-2-3=2', sku: '23-2-3=2', fromLocation: 'A1=1-1-1', fromMasterId: 1, toLocation: 'GARAGE', isNewLocation: true, cases: 1, initials: 'TS', notes: 'test' });
+  const si = await post('/inventory/log', { type: 'IN', partNum: '40-1-1=1', sku: '40-1-1=1', location: 'C1=1-1-1', cases: 7, initials: 'TS', notes: '', masterId: 3 });
+  globalThis.fetch = f0;
+  const changed = dump() !== before;
+  check('during the test everything works as usual (transfer + stock in are saved)', changed && tr.success !== false && si.autoApproved && shelf() === shelf0 + 7, { tr, si: si.autoApproved, shelf: shelf(), shelf0 });
+  check('during the test the Google Sheet is not written', sheetWrites === 0, sheetWrites);
+  const blk = await call('/inventory/soldout/set-qty', { method: 'POST', headers: H, body: '{}' });
+  check('during the test marketplace changes are blocked', blk.status === 423, blk.status);
+  const off = await post('/admin/test-mode/off', {});
+  const logN1 = sq.prepare('SELECT COUNT(*) n FROM inventory_log').get().n;
+  check('turning test off puts SKU Mgr + History back exactly (shelf ' + shelf0 + ' cases, ' + logN0 + ' log rows)', off.ok && dump() === before && shelf() === shelf0 && logN1 === logN0, { off, shelf: shelf(), shelf0, logN1, logN0 });
+  const st = await get('/admin/test-mode');
+  const snaps = sq.prepare("SELECT COUNT(*) n FROM sqlite_master WHERE name LIKE 'tmsnap__%'").get().n;
+  check('still signed in after; the test is on record (on + off, who, what was put back); copies cleaned up', !st.on && st.log.length >= 2 && st.log[0].action === 'off' && st.log[0].by_user === 'TS' && JSON.parse(st.log[0].detail).erased.inventory_log && snaps === 0, { st, snaps });
+  const acc2 = await get('/auth/access');
+  check('after off: banner gone, marketplace changes allowed again', acc2.test && acc2.test.on === false && (await call('/inventory/soldout/set-qty', { method: 'POST', headers: H, body: '{}' })).status !== 423, acc2.test);
+  await post('/inventory/review-mode', { mode: 'manual' });
+}
+
 console.log('\n' + (failed ? '❌ ' + failed + ' check(s) FAILED' : '✅ all ' + passed + ' checks passed') + '\n');
 process.exit(failed ? 1 : 0);

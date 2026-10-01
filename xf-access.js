@@ -169,12 +169,34 @@ window.addEventListener('pageshow', function (e) { if (e.persisted) location.rel
       })
       .then(function (d) {
         blocked = d.blocked || []; lastToken = t;
+        testBanner(d.test);
         try { sessionStorage.setItem('xf_access', JSON.stringify({ token: t, blocked: blocked, at: Date.now() })); } catch (e) {}
         apply();
       })
       .catch(function () {})
       .then(function () { loading = false; });
   }
+
+  // 🧪 Test switch (Admin → 🧪 Test): while it's on, every page shows an
+  // orange frame and a note — anything done now is erased when it's turned off.
+  function testBanner(tm) {
+    try { sessionStorage.setItem('xf_test', tm && tm.on ? JSON.stringify(tm) : ''); } catch (e) {}
+    var el = document.getElementById('xf-test-banner');
+    if (!(tm && tm.on)) { if (el) el.remove(); var fr = document.getElementById('xf-test-frame'); if (fr) fr.remove(); return; }
+    if (!document.body) { document.addEventListener('DOMContentLoaded', function () { testBanner(tm); }); return; }
+    if (!document.getElementById('xf-test-frame')) {
+      var f = document.createElement('div'); f.id = 'xf-test-frame';
+      f.style.cssText = 'position:fixed;inset:0;border:5px solid #f59e0b;pointer-events:none;z-index:2147483646';
+      document.body.appendChild(f);
+    }
+    if (!el) { el = document.createElement('div'); el.id = 'xf-test-banner'; document.body.appendChild(el); }
+    el.style.cssText = 'position:fixed;left:50%;bottom:10px;transform:translateX(-50%);z-index:2147483647;background:#f59e0b;color:#111;font:700 12px/1.3 system-ui,sans-serif;padding:7px 14px;border-radius:999px;box-shadow:0 2px 10px rgba(0,0,0,.3);max-width:calc(100vw - 32px);text-align:center;pointer-events:none';
+    var when = ''; try { when = new Date(tm.at).toLocaleString('en-US', { timeZone: 'America/New_York', month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' }); } catch (e) {}
+    el.textContent = '🧪 TEST MODE — erased when turned off' + (tm.by ? ' · ' + tm.by + (when ? ' ' + when : '') : '');
+  }
+  try { var tm0 = sessionStorage.getItem('xf_test'); if (tm0) testBanner(JSON.parse(tm0)); } catch (e) {}
+  setInterval(function () { if (token()) load(); }, 60000);
+  window.xfAccessRefresh = load;
 
   function tick() {
     if (token() !== lastToken) load();
