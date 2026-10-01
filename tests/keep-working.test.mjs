@@ -449,6 +449,10 @@ console.log('\nScanner phones: "hide the keyboard" also works on boxes that open
   // Owner: "Transfer → scan the box always pops the keyboard, even with hiding on" — the Put away
   // popup focused its box before the setting reached it. The box must be keyboard-off BEFORE focus.
   check('keyboard-off is set before a box gets focus (page code .focus(), a tap) and right when a popup draws it', /HTMLElement\.prototype\.focus = function/.test(xa) && /addEventListener\(ev, function \(e\)[\s\S]{0,120}mute\(el\)/.test(xa) && /m\.addedNodes/.test(xa), null);
+  // Owner: "when scan the box the keyboard will not pop up, but next step keyboard will pop up" — the cases box
+  // after scanning the spot is type=number, and phones ignore inputmode="none" on number boxes. While hidden,
+  // number boxes must become text boxes (turned back on ⌨️ Show keyboard), and page code can't switch it back on.
+  check('keyboard-off also covers number boxes (cases / how many) and boxes whose inputmode the page changes later', /function mute\(el\)[\s\S]{0,400}\^number\$[\s\S]{0,120}setAttribute\('type', 'text'\)/.test(xa) && /function unmute\(el\)[\s\S]{0,120}xfKbType/.test(xa) && /attributeFilter: \['inputmode', 'type'\]/.test(xa), null);
   const pages = ['inventory.html', 'packship.html', 'warehouse.html'].map(f => readFileSync(fileURLToPath(new URL('../' + f, import.meta.url)), 'utf8'));
   const v = (pages[0].match(/xf-access\.js\?v=([\w]+)/) || [])[1];
   check('every page loads the same (new) xf-access.js version', v && pages.every(h => h.includes('xf-access.js?v=' + v)), v);
