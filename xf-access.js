@@ -396,12 +396,17 @@ window.addEventListener('pageshow', function (e) { if (e.persisted) location.rel
     if (el.tagName === 'TEXTAREA') return true;
     return el.tagName === 'INPUT' && TYPES.test(el.getAttribute('type') || 'text');
   }
+  // Number boxes (how many cases…) ignore inputmode="none" — phones always
+  // open the keyboard for them. While hidden they become plain text boxes
+  // (the number typed or scanned stays the same) and turn back on unhide.
   function mute(el) {
     if (el === open) return;
     if (el.dataset.xfKbIm == null) el.dataset.xfKbIm = el.getAttribute('inputmode') || '';
+    if (/^number$/i.test(el.getAttribute('type') || '')) { el.dataset.xfKbType = 'number'; try { el.setAttribute('type', 'text'); } catch (e) {} }
     el.setAttribute('inputmode', 'none');
   }
   function unmute(el) {
+    if (el.dataset.xfKbType) { try { el.setAttribute('type', el.dataset.xfKbType); } catch (e) {} delete el.dataset.xfKbType; }
     if (el.dataset.xfKbIm == null) return;
     if (el.dataset.xfKbIm) el.setAttribute('inputmode', el.dataset.xfKbIm); else el.removeAttribute('inputmode');
     delete el.dataset.xfKbIm;
@@ -485,9 +490,13 @@ window.addEventListener('pageshow', function (e) { if (e.persisted) location.rel
         if (isBox(n) && n !== open) mute(n);
         if (n.querySelectorAll) [].forEach.call(n.querySelectorAll('input, textarea'), function (el) { if (isBox(el) && el !== open && el.dataset.xfKbIm == null) mute(el); });
       }); });
+      muts.forEach(function (m) { // page code changed a muted box's inputmode / type back: hide again
+        var t = m.target; if (m.type !== 'attributes' || t === open || !isBox(t)) return;
+        if (t.getAttribute('inputmode') !== 'none' || /^number$/i.test(t.getAttribute('type') || '')) mute(t);
+      });
       if (queued) return; queued = true; // boxes made by innerHTML on an existing node
       setTimeout(function () { queued = false; all(function (el) { if (el.dataset.xfKbIm == null && el !== open) mute(el); }); }, 150);
-    }).observe(document.body, { childList: true, subtree: true });
+    }).observe(document.body, { childList: true, subtree: true, attributes: true, attributeFilter: ['inputmode', 'type'] });
   }
   if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', start); else start();
 })();
