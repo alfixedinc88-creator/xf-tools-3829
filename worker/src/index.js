@@ -6497,6 +6497,7 @@ const _app = {
       if (path === '/inventory/location-plan/log' && method === 'GET') return await locationPlanLog(url, env);
       if (path === '/inventory/containers/pallet-recs' && method === 'POST') return await palletRecs(request, env);
       if (path === '/inventory/containers/pallet-open' && method === 'POST') return await palletOpenLog(request, env, session);
+      if (path === '/inventory/containers/where' && method === 'POST') return await palletWhere(request, env);
       if (path === '/inventory/spot-check' && method === 'GET') return await inventorySpotCheck(url, env);
       if (path === '/inventory/prefixes'           && method === 'GET')  return await inventoryGetPrefixes(env);
       // mgmt-only routes
@@ -11811,6 +11812,48 @@ async function inventoryRecoverFromSheet(request, url, env) {
 // rejected in Review doesn't count.
 // POST /inventory/containers/pallet-open {title, vendor, pallet} — a pallet
 // was opened in 🚢 Container here (who, when). Nothing else changes.
+// POST /inventory/containers/where {parts:[...]} — for Stock Out: which
+// pallets of a 📦 Received container still hold boxes of each part # (boxes
+// left = on the packing list − moved off in 🚢 Container here), and the spot
+// the container was stocked into (its [RECEIVED] Stock In). Read only.
+async function palletWhere(request, env) {
+  const J = (o, st) => cors(new Response(JSON.stringify(o), { status: st || 200, headers: { 'Content-Type': 'application/json' } }));
+  const b = await request.json().catch(() => ({}));
+  const want = [...new Set((b.parts || []).map(p => String(p || '').trim().toUpperCase()).filter(Boolean))].slice(0, 300);
+  if (!want.length) return J({ ok: true, where: {} });
+  await reorderFixTables(env);
+  const alias = {}, back = {};
+  ((await env.DB.prepare('SELECT raw, part FROM reorder_alias').all()).results || []).forEach(a => {
+    const r = String(a.raw).toUpperCase(), p = String(a.part).toUpperCase(); alias[r] = p; (back[p] = back[p] || []).push(r); });
+  const look = [...new Set(want.concat(...want.map(p => back[p] || [])))];
+  const rows = [];
+  for (let i = 0; i < look.length; i += 90) {
+    const ch = look.slice(i, i + 90);
+    rows.push(...await d1All(env, `SELECT id, title, vendor, pallet, part, cases FROM reorder_pallet WHERE UPPER(part) IN (${ch.map(() => '?').join(',')})`, ch));
+  }
+  if (!rows.length) return J({ ok: true, where: {} });
+  const got = await receivedContainerTitles(env);
+  const live = rows.filter(r => got.has(r.title));
+  const moved = {};
+  for (let i = 0; i < live.length; i += 90) {
+    const ch = live.slice(i, i + 90).map(r => r.id);
+    ((await env.DB.prepare(_PALLET_MOVED_SQL + ` AND m.pallet_id IN (${ch.map(() => '?').join(',')}) GROUP BY m.pallet_id`).bind(...ch).all()).results || [])
+      .forEach(m => { moved[m.pallet_id] = m.moved || 0; });
+  }
+  // Where each container's part # was stocked in (📦 Received → its Stock In spot).
+  const rcvLoc = {};
+  (await d1All(env, `SELECT UPPER(TRIM(part_num)) AS p, location, notes FROM inventory_log WHERE type = 'IN' AND notes LIKE '[RECEIVED] %' AND COALESCE(status,'') != 'Rejected' ORDER BY id`))
+    .forEach(r => { const t = String(r.notes || '').slice(11).split(' \u2014 ')[0]; const k = t + '|' + r.p; if (!rcvLoc[k]) rcvLoc[k] = r.location || ''; });
+  const where = {};
+  for (const r of live) {
+    const part = alias[String(r.part).toUpperCase()] || String(r.part).toUpperCase();
+    const left = Math.max(0, (parseFloat(r.cases) || 0) - (moved[r.id] || 0));
+    if (left <= 0 || want.indexOf(part) < 0) continue;
+    (where[part] = where[part] || []).push({ title: r.title, vendor: r.vendor, pallet: r.pallet, left: Math.round(left * 1000) / 1000,
+      location: rcvLoc[r.title + '|' + part] || rcvLoc[r.title + '|' + String(r.part).toUpperCase()] || '' });
+  }
+  return J({ ok: true, where });
+}
 async function palletOpenLog(request, env, session) {
   const b = await request.json().catch(() => ({}));
   const J = (o, st) => cors(new Response(JSON.stringify(o), { status: st || 200, headers: { 'Content-Type': 'application/json' } }));

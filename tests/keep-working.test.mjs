@@ -133,6 +133,16 @@ check('container Received: History has Before → After (8 → 48, 0 → 10)', r
 const pr2 = await get('/inventory/pallets/received');
 const kwp = (pr2.lines || pr2.pallets || pr2.rows || []).filter(x => x.title === CT);
 check('container Received: every pallet line is still listed, at GARAGE', kwp.length === 3 && kwp.every(x => x.location === 'GARAGE'), pr2);
+// Owner: "when we do the inventory out / stock out reports, let them know which pallet that inventory is on".
+const wh = await post('/inventory/containers/where', { parts: ['60-1-1=10', '60-2-2=1', '99-9-9=1'] });
+const w1 = (wh.where || {})['60-1-1=10'] || [], w2 = (wh.where || {})['60-2-2=1'] || [];
+check('Stock Out: which pallet — 60-1-1=10 on pallets 1 (12 boxes) and 2 (8), 60-2-2=1 on pallet 2 (10), all stocked in at GARAGE; unknown part: none',
+  wh.ok && w1.length === 2 && w1.some(x => x.pallet === '1' && x.left === 12) && w1.some(x => x.pallet === '2' && x.left === 8) && w2.length === 1 && w2[0].pallet === '2' && w2[0].left === 10
+    && w1.concat(w2).every(x => x.location === 'GARAGE' && x.title === CT) && !(wh.where || {})['99-9-9=1'], wh);
+check('which pallet needs a sign-in', (await call('/inventory/containers/where', { method: 'POST', body: '{"parts":["60-1-1=10"]}' })).status === 401, null);
+const invH = (await import('node:fs')).readFileSync(fileURLToPath(new URL('../inventory.html', import.meta.url)), 'utf8');
+check('Stock Out pull list, its spot list and Stock Out Reports all show the pallet', /ipull-loc'>" \+ item\.location \+ "<\/div>" \+ invPalletSpan\(item\.partNum/.test(invH)
+  && /iloc-name'>" \+ loc\.location \+ "<\/div>" \+ invPalletSpan\(/.test(invH) && /s\.sku \? invPalletSpan\(s\.sku, ''\)/.test(invH), null);
 const again = await post('/reorder/fix/incoming-receive', { title: CT, location: 'GARAGE', lines: rcvLines });
 check('container Received twice: nothing added the 2nd time', pcs('60-1-1=10') === pcsBefore[0] + 4000 && again.results.every(r => r.skipped), again);
 

@@ -2926,7 +2926,7 @@ window.invCredLogin = async function() {
         }
         el.innerHTML = pickHtml + "<div style='display:flex;justify-content:space-between;align-items:center'>"
           + "<div>" + partLabelHtml
-          + "<div class='iloc-name'>" + loc.location + "</div>"
+          + "<div class='iloc-name'>" + loc.location + "</div>" + invPalletSpan(loc.partNum || invPart.partNum, loc.location)
           + "<div class='iloc-cases' style='" + casesStyle + "'>" + casesLabel + "</div></div></div>"
           + "<div style='margin-top:10px;padding-top:10px;border-top:1px solid var(--border)'>"
           + "<div style='font-size:11px;font-weight:700;color:var(--text3);margin-bottom:4px'>CASES TO PULL</div>"
@@ -3931,6 +3931,58 @@ window.invCredLogin = async function() {
       }).catch(function() {});
   };
 
+  // ── 🚢 Which pallet is it on? ─────────────────────────────────────────
+  // Boxes of a 📦 Received container that are still on their pallet (not
+  // moved off in Transfer → 🚢 Container here). Stock Out shows it under the
+  // spot ("🚢 On pallet 3 · <container> · 4 boxes left") so the picker knows
+  // where the boxes really are. A spot shows only the pallets of the
+  // container stocked into THAT spot; Stock Out Reports show every pallet.
+  // Each place just drops an empty marker (invPalletSpan); one lookup fills
+  // them all in (watching the page for new markers).
+  var _invPalWhere = {}, _invPalAt = {}, _invPalBusy = false, _invPalQueued = false;
+  window.invPalletSpan = function(part, loc) {
+    part = String(part || '').trim().toUpperCase(); if (!part) return '';
+    return "<div class='inv-pal' data-part='" + invEsc(part) + "' data-loc='" + invEsc(String(loc || '').trim().toUpperCase()) + "' style='display:none'></div>";
+  };
+  function invPalletPaint(el) {
+    var part = el.getAttribute('data-part'), loc = el.getAttribute('data-loc');
+    var list = (_invPalWhere[part] || []).filter(function(e) {
+      var at = String(e.location || '').toUpperCase();
+      return !loc || at === loc || (!at && loc === 'GARAGE');
+    });
+    if (!list.length) { el.style.display = 'none'; el.innerHTML = ''; return; }
+    el.innerHTML = list.map(function(e) {
+      return '🚢 On pallet <b>' + invEsc(e.pallet) + '</b> · ' + invEsc(e.title) + ' · ' + (Math.round((parseFloat(e.left) || 0) * 100) / 100) + ' box' + (e.left === 1 ? '' : 'es') + ' left'
+        + (!loc && e.location ? ' · in ' + invEsc(e.location) : '');
+    }).join('<br>');
+    el.style.cssText = 'display:block;font-size:11px;font-weight:700;color:var(--purple);margin-top:2px';
+  }
+  window.invPalletFill = function() {
+    var els = [].slice.call(document.querySelectorAll('.inv-pal'));
+    if (!els.length) return;
+    var now = Date.now(), need = [];
+    els.forEach(function(el) { var p = el.getAttribute('data-part'); if (!(now - (_invPalAt[p] || 0) < 120000) && need.indexOf(p) < 0) need.push(p); });
+    if (!need.length || _invPalBusy) { els.forEach(invPalletPaint); if (need.length) _invPalQueued = true; return; }
+    _invPalBusy = true;
+    need.forEach(function(p) { _invPalAt[p] = now; });
+    wFetch(W + '/inventory/containers/where', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ parts: need }) })
+      .then(function(r) { return r.json(); })
+      .then(function(d) { need.forEach(function(p) { _invPalWhere[p] = (d && d.where && d.where[p]) || []; }); })
+      .catch(function() { need.forEach(function(p) { _invPalAt[p] = 0; }); })
+      .then(function() { _invPalBusy = false; [].forEach.call(document.querySelectorAll('.inv-pal'), invPalletPaint); if (_invPalQueued) { _invPalQueued = false; invPalletFill(); } });
+  };
+  (function() {
+    var t = null;
+    var go = function() { clearTimeout(t); t = setTimeout(invPalletFill, 120); };
+    var start = function() { new MutationObserver(function(muts) {
+      for (var i = 0; i < muts.length; i++) for (var j = 0; j < muts[i].addedNodes.length; j++) {
+        var n = muts[i].addedNodes[j];
+        if (n.nodeType === 1 && (n.classList.contains('inv-pal') || (n.querySelector && n.querySelector('.inv-pal')))) { go(); return; }
+      }
+    }).observe(document.body, { childList: true, subtree: true }); };
+    if (document.body) start(); else document.addEventListener('DOMContentLoaded', start);
+  })();
+
   function invRenderStockoutList() {
     var wrap = g("inv-stockout-list");
     if (!wrap) return;
@@ -3983,6 +4035,7 @@ window.invCredLogin = async function() {
         +   (s.tracking ? s.tracking + ' · ' : '')
         +   'reported by ' + (s.reportedBy || '?') + (when ? ' · ' + when : '')
         + '</div>'
+        + (s.sku ? invPalletSpan(s.sku, '') : '')
         + '</div>';
     }).join('');
   }
@@ -5096,7 +5149,7 @@ window.invCredLogin = async function() {
       }).join("");
     }
     var infoHtml =
-      "<div class='ipull-loc'>" + item.location + "</div>" +
+      "<div class='ipull-loc'>" + item.location + "</div>" + invPalletSpan(item.partNum, item.location) +
       "<div class='ipull-pn'>" + item.partNum + fossBadge + noneBadge + stockoutBadge + coBadge + "</div>" +
       "<div class='ipull-name'>" + (item.name || '') + "</div>" +
       (item.addedAt ? "<div style='font-size:10px;color:var(--text3);margin-top:2px'>Added " + invFmtStamp(item.addedAt) + (item.grabbedAt ? " &nbsp;·&nbsp; Grabbed " + invFmtStamp(item.grabbedAt) : "") + "</div>" : "") +
