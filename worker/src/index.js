@@ -817,9 +817,15 @@ function reorderSortRank(baseSku) {
   return idx !== undefined ? idx : 99999; // unknown base SKUs sort to the end, not the start
 }
 
+// Parent of a part #: before the "=", and a C right after the parent's
+// numbers belongs to the same parent (owner: 27-3-4C=2X is its own part #
+// with its own UPC, but its parent is 27-3-4 — Stock Out and the Reorder
+// Planner group it with 27-3-4). 28-2-1&2C=2 → 28-2-1&2.
 function reorderGetBaseSku(sku) {
-  return sku.includes('=') ? sku.split('=')[0] : sku;
+  const b = sku.includes('=') ? sku.split('=')[0] : sku;
+  return b.replace(/^(\s*\d+(?:-\d+)+(?:&\d+)?)[cC](\s*)$/, '$1$2');
 }
+function parentOf(p) { return reorderGetBaseSku(String(p || '')).trim().toUpperCase(); }
 
 // Real, established part-number format: digits-digits-digits(&digits)=qty
 // Distinguishes real SKUs from randomized legacy Amazon MSKU codes.
@@ -2412,7 +2418,7 @@ async function productPhotoTable(env) {
 }
 async function productPhotoMap(env, bases) {
   const out = {}; if (!env.DB) return out;
-  const B = [...new Set((bases || []).map(b => String(b || '').split('=')[0].trim().toUpperCase()).filter(Boolean))];
+  const B = [...new Set((bases || []).map(b => parentOf(b)).filter(Boolean))];
   if (!B.length) return out;
   await productPhotoTable(env);
   for (let i = 0; i < B.length; i += 90) {
@@ -2664,7 +2670,7 @@ async function inventoryLookup(url, env) {
 
   // Derive base SKU from the resolved part number
   // Use sku col A first if available, else partNum col B, strip after '='
-  const baseSku = ((sku || partNum || '').split('=')[0]).trim().toUpperCase();
+  const baseSku = parentOf(sku || partNum || '');
 
   const locations  = [];
   const partNums   = new Set();
@@ -2674,9 +2680,9 @@ async function inventoryLookup(url, env) {
     const r        = mlRows[i];
     const rowPart  = String(r[6] || '').trim();
     const rowSku   = String(r[3] || '').trim().toUpperCase();
-    const rowBase  = rowSku.split('=')[0].trim().toUpperCase();
+    const rowBase  = parentOf(rowSku);
     const rowPartUp = rowPart.toUpperCase();
-    const rowPartBase = rowPartUp.split('=')[0].trim();
+    const rowPartBase = parentOf(rowPartUp);
 
     // Match: exact part number, OR same base SKU (from either SKU col or PartNum col)
     const matchExact    = rowPartUp  === partNum.toUpperCase();

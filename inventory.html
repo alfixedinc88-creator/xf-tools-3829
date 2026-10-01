@@ -130,6 +130,9 @@ function invObAfter(after) {
 }
 function invObFill(tpl, d) { return tpl.replace(/"@@ROW@@"/g, JSON.stringify(d.rowIndex || null)).replace(/"@@D1@@"/g, JSON.stringify(d.d1Id || null)); }
 // Same shape as wFetch(url, opts): resolves to a Response.
+// Parent of a part #: before "=", and a C right after the parent's numbers
+// is the same parent (27-3-4C=2X → 27-3-4) — same rule as the Worker.
+function invParent(p) { return String(p || '').split('=')[0].trim().toUpperCase().replace(/^(\d+(?:-\d+)+(?:&\d+)?)C$/, '$1'); }
 async function invPost(url, opts, after) {
   var path = url.replace(INV_OB_W, '');
   var body = {}; try { body = JSON.parse((opts && opts.body) || '{}'); } catch (e) {}
@@ -2252,7 +2255,7 @@ window.invCredLogin = async function() {
       // "found it on the shelf / somewhere else".
       var shelf = 0, pend = 0, listed = 0;
       (d.locations || []).forEach(function(l) { if (l.isPlaceholder) return; shelf += parseFloat(l.cases) || 0; pend += parseFloat(l.pendingCases) || 0; });
-      invPullList.forEach(function(x) { if (!x.grabbed && !x.noneFound && !x.submitted && String(x.partNum || '').split('=')[0].toUpperCase() === String(d.baseSku || d.partNum).split('=')[0].toUpperCase()) listed += parseFloat(x.cases) || 0; });
+      invPullList.forEach(function(x) { if (!x.grabbed && !x.noneFound && !x.submitted && invParent(x.partNum) === invParent(d.baseSku || d.partNum)) listed += parseFloat(x.cases) || 0; });
       invFlash('Nothing free to grab for ' + (d.baseSku || d.partNum) + ': ' + shelf + ' case(s) on the shelves'
         + (pend ? ', ' + pend + ' already taken (waiting for approval)' : '') + (listed ? ', ' + listed + ' already on your Pull List' : '')
         + (company && plan.noSize.length ? '. Case size (Each/Case) not on file for ' + plan.noSize.join(', ') + ' — set it in SKU Mgr' : '')
@@ -5471,7 +5474,7 @@ window.invCredLogin = async function() {
   // 🖼 Photos by parent part # (e.g. 23-2-3 for 23-2-3=2XX), loaded once
   // per page for what's on the Pull List. '' = asked, none on file.
   var _invPhotoCache = {}, _invPhotoAsked = {};
-  function invPhotoBase(pn) { return String(pn || '').split('=')[0].trim().toUpperCase(); }
+  function invPhotoBase(pn) { return invParent(pn); }
   function invPhotoOf(pn) { return _invPhotoCache[invPhotoBase(pn)] || ''; }
   function invPhotoLoadFor(items) {
     var need = [];
@@ -5761,7 +5764,7 @@ window.invCredLogin = async function() {
   var _invSo = null;
   window.invSoldOutOpen = function(d) {
     var part = String(d.isMultiVariant ? d.baseSku : (invSearchedExactVariant || d.partNum || d.baseSku) || '').toUpperCase();
-    var base = String(d.baseSku || part).split('=')[0].toUpperCase();
+    var base = invParent(d.baseSku || part);
     _invSo = { part: part, base: base, name: d.name || '', incoming: null, date: new Date().toLocaleDateString('en-US', { timeZone: 'America/New_York' }) };
     invSoldOutRender();
     wFetch(W + '/inventory/incoming?base=' + encodeURIComponent(base)).then(function(r) { return r.json(); }).then(function(x) {
@@ -5911,10 +5914,10 @@ window.invCredLogin = async function() {
       invPullList.forEach(function(x, i) { if (!x.grabbed && !x.noneFound && !x.submitted) open.push(i); });
       open.sort(function(a, b) { return invLocSort(invPullList[a].location) - invLocSort(invPullList[b].location) || String(invPullList[a].location).localeCompare(String(invPullList[b].location)); });
       if (!d || !d.partNum) { invGrabWarn(code, null, open); return; }
-      var pn = String(d.partNum).toUpperCase(), base = String(d.baseSku || pn).split('=')[0].toUpperCase();
+      var pn = String(d.partNum).toUpperCase(), base = invParent(d.baseSku || pn);
       var exact = open.filter(function(i) { return String(invPullList[i].partNum).toUpperCase() === pn; });
       if (!exact.length && pn.indexOf('=') < 0) {
-        var fam = open.filter(function(i) { return String(invPullList[i].partNum).split('=')[0].toUpperCase() === base; });
+        var fam = open.filter(function(i) { return invParent(invPullList[i].partNum) === base; });
         var sizes = {}; fam.forEach(function(i) { sizes[String(invPullList[i].partNum).toUpperCase()] = 1; });
         if (Object.keys(sizes).length === 1) exact = fam;
       }
@@ -5931,8 +5934,8 @@ window.invCredLogin = async function() {
   };
   function invGrabWarn(code, d, open) {
     var pn = d && d.partNum ? String(d.partNum).toUpperCase() : '';
-    var base = d ? String(d.baseSku || pn).split('=')[0].toUpperCase() : '';
-    var same = open.filter(function(i) { return base && String(invPullList[i].partNum).split('=')[0].toUpperCase() === base; });
+    var base = d ? invParent(d.baseSku || pn) : '';
+    var same = open.filter(function(i) { return base && invParent(invPullList[i].partNum) === base; });
     var opts = (same.length ? same : open).slice(0, 6);
     try { if (navigator.vibrate) navigator.vibrate([200, 100, 200]); } catch (e) {}
     invModal('inv-grab-modal', '<div style="font-size:17px;font-weight:800;color:var(--red)">⚠ Wrong box!</div>'
@@ -6002,7 +6005,7 @@ window.invCredLogin = async function() {
       var pn = d && d.partNum ? String(d.partNum).toUpperCase() : '';
       if (!pn) { say('Box ' + box + ' is not a part # we know — scan its part # label'); return; }
       if (pn.indexOf('=') < 0) { // parent only: fine if one pack size of it is here
-        var fam = rowsHere.filter(function(r) { return String(r.partNum).split('=')[0].toUpperCase() === pn; });
+        var fam = rowsHere.filter(function(r) { return invParent(r.partNum) === invParent(pn); });
         if (fam.length === 1) pn = String(fam[0].partNum).toUpperCase();
         else { say('Scan the box label with the full part # (e.g. ' + pn + '=10)'); return; }
       }
@@ -7723,7 +7726,7 @@ window.invCredLogin = async function() {
   var xfrPhotos = {};
   function xfrIsAdmin() { return !!(INV_CRED_USER && (INV_CRED_USER.roles || []).indexOf('admin') >= 0); }
   function xfrE(v) { return String(v == null ? '' : v).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;').replace(/'/g, '&#39;'); }
-  function xfrBase(p) { return String(p || '').split('=')[0].toUpperCase(); }
+  function xfrBase(p) { return invParent(p); }
   function xfrLoadPhotos(parts, cb) {
     var need = []; parts.forEach(function(p) { var b = xfrBase(p); if (b && !(b in xfrPhotos) && need.indexOf(b) < 0) need.push(b); });
     if (!need.length) { if (cb) cb(); return; }
