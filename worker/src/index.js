@@ -3844,10 +3844,22 @@ async function palletLineLeft(env, id) {
   const moved = m ? m.moved || 0 : 0;
   return { ...p, moved, left: Math.max(0, (p.cases || 0) - moved) };
 }
+// Titles of containers that were 📦 Received on Reorder (an approved — not
+// rejected — "[RECEIVED] <title> — N units" Stock In for at least one line).
+async function receivedContainerTitles(env) {
+  const t = new Set();
+  (await d1All(env, `SELECT notes FROM inventory_log WHERE type = 'IN' AND notes LIKE '[RECEIVED] %' AND COALESCE(status, '') != 'Rejected'`).catch(() => []))
+    .forEach(r => { const m = String(r.notes || '').match(/^\[RECEIVED\] (.*?) — [\d.,]+ units/); if (m) t.add(m[1]); });
+  return t;
+}
+// 🚢 Container here lists only containers already 📦 Received on Reorder —
+// one still on the water (or never received) stays on the Reorder page.
 async function inventoryContainers(env) {
   await reorderFixTables(env);
-  const rows = (await env.DB.prepare(`SELECT title, GROUP_CONCAT(DISTINCT vendor) AS vendors, COUNT(DISTINCT vendor || '|' || pallet) AS pallets,
-    COUNT(*) AS lines, SUM(cases) AS cases, MAX(updated_at) AS at FROM reorder_pallet GROUP BY title ORDER BY at DESC`).all()).results || [];
+  const got = await receivedContainerTitles(env);
+  const rows = ((await env.DB.prepare(`SELECT title, GROUP_CONCAT(DISTINCT vendor) AS vendors, COUNT(DISTINCT vendor || '|' || pallet) AS pallets,
+    COUNT(*) AS lines, SUM(cases) AS cases, MAX(updated_at) AS at FROM reorder_pallet GROUP BY title ORDER BY at DESC`).all()).results || [])
+    .filter(r => got.has(r.title));
   const moved = {}; ((await env.DB.prepare(`SELECT p.title, SUM(x.moved) AS moved FROM (${_PALLET_MOVED_SQL} GROUP BY m.pallet_id) x
     JOIN reorder_pallet p ON p.id = x.pallet_id GROUP BY p.title`).all()).results || []).forEach(r => { moved[r.title] = r.moved || 0; });
   const onWay = {}; ((await env.DB.prepare('SELECT title, COUNT(*) AS n FROM reorder_incoming GROUP BY title').all()).results || []).forEach(r => { onWay[r.title] = r.n; });
@@ -3897,7 +3909,9 @@ async function inventoryContainerPallets(url, env) {
     args.push(like, like, like, like, like, like);
   }
   if (!where.length) return cors(new Response(JSON.stringify({ ok: false, error: 'Pick a container or type something to search' }), { status: 400, headers: { 'Content-Type': 'application/json' } }));
-  const rows = (await env.DB.prepare(`SELECT p.* FROM reorder_pallet p WHERE ${where.join(' AND ')} ORDER BY p.title, p.vendor, p.id LIMIT 2000`).bind(...args).all()).results || [];
+  let rows = (await env.DB.prepare(`SELECT p.* FROM reorder_pallet p WHERE ${where.join(' AND ')} ORDER BY p.title, p.vendor, p.id LIMIT 2000`).bind(...args).all()).results || [];
+  // Searching (no container picked): only containers already 📦 Received, same as the list.
+  if (!title) { const got = await receivedContainerTitles(env); rows = rows.filter(r => got.has(r.title)); }
   const moved = {};
   if (rows.length) {
     const ids = rows.map(r => r.id);
