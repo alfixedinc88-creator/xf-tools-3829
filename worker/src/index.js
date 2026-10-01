@@ -1022,6 +1022,10 @@ async function reorderFixTables(env) {
   await env.DB.prepare(`CREATE TABLE IF NOT EXISTS pallet_move (id INTEGER PRIMARY KEY AUTOINCREMENT, pallet_id INTEGER NOT NULL, cases REAL NOT NULL,
     to_location TEXT, out_log_id INTEGER, transfer_id TEXT, by_user TEXT, at TEXT)`).run();
   await env.DB.prepare('CREATE INDEX IF NOT EXISTS idx_pallet_move_pid ON pallet_move(pallet_id)').run();
+  // When someone opened a pallet in 🚢 Container here — the start of "how long
+  // that pallet took" (open → its last box moved) in History's report.
+  await env.DB.prepare(`CREATE TABLE IF NOT EXISTS pallet_open (id INTEGER PRIMARY KEY AUTOINCREMENT, title TEXT, vendor TEXT, pallet TEXT, by_user TEXT, at TEXT)`).run();
+  await env.DB.prepare('CREATE INDEX IF NOT EXISTS idx_pallet_open_k ON pallet_open(title, vendor, pallet)').run();
   await env.DB.prepare(`CREATE TABLE IF NOT EXISTS reorder_fix (part TEXT PRIMARY KEY, description TEXT, outside_upc TEXT, inside_upc TEXT,
     vendor TEXT, asin TEXT, case_qty REAL, by_user TEXT, updated_at TEXT)`).run();
   // History of everything done on the tab (fixes, part # corrections,
@@ -6492,6 +6496,7 @@ const _app = {
       if (path === '/inventory/location-plan' && method === 'POST') return await locationPlanSave(request, env, session);
       if (path === '/inventory/location-plan/log' && method === 'GET') return await locationPlanLog(url, env);
       if (path === '/inventory/containers/pallet-recs' && method === 'POST') return await palletRecs(request, env);
+      if (path === '/inventory/containers/pallet-open' && method === 'POST') return await palletOpenLog(request, env, session);
       if (path === '/inventory/spot-check' && method === 'GET') return await inventorySpotCheck(url, env);
       if (path === '/inventory/prefixes'           && method === 'GET')  return await inventoryGetPrefixes(env);
       // mgmt-only routes
@@ -11804,6 +11809,18 @@ async function inventoryRecoverFromSheet(request, url, env) {
 // pallets, pallets worked on, pallets finished (emptied by that move). Comes
 // from pallet_move (each move is tied to its Transfer log line); a transfer
 // rejected in Review doesn't count.
+// POST /inventory/containers/pallet-open {title, vendor, pallet} — a pallet
+// was opened in 🚢 Container here (who, when). Nothing else changes.
+async function palletOpenLog(request, env, session) {
+  const b = await request.json().catch(() => ({}));
+  const J = (o, st) => cors(new Response(JSON.stringify(o), { status: st || 200, headers: { 'Content-Type': 'application/json' } }));
+  if (!b.title || !b.pallet) return J({ ok: false, error: 'title and pallet required' }, 400);
+  await reorderFixTables(env);
+  const who = String((session && (session.displayName || session.username)) || b.by || '').trim().slice(0, 40);
+  await env.DB.prepare('INSERT INTO pallet_open (title, vendor, pallet, by_user, at) VALUES (?,?,?,?,?)')
+    .bind(String(b.title).slice(0, 200), String(vendorUnmask(b.vendor || '') || '').slice(0, 80), String(b.pallet).slice(0, 40), who, new Date().toISOString()).run();
+  return J({ ok: true });
+}
 async function histContainerReport(env, timeCond, timeParams) {
   await reorderFixTables(env);
   const tc = timeCond.replace(/timestamp/g, 'l.timestamp');
@@ -11820,6 +11837,7 @@ async function histContainerReport(env, timeCond, timeParams) {
     p.moves++; p.cases += parseFloat(m.cases) || 0; p._p.add(k);
   }
   total.pallets = palletsAll.size;
+  const palletList = [], done = [], perMins = {};
   // Finished = every box on the pallet moved, and the last box moved in this period (credited to whoever moved it).
   for (const k of palletsAll) {
     const [title, vendor, pallet] = k.split('|');
@@ -11830,9 +11848,28 @@ async function histContainerReport(env, timeCond, timeParams) {
     const boxes = parseFloat(t?.boxes) || 0;
     let sum = 0, doneBy = null, doneAt = null;
     for (const m of all) { sum += parseFloat(m.cases) || 0; if (!doneBy && boxes > 0 && sum >= boxes - 1e-9) { doneBy = m.who || '?'; doneAt = m.at; } }
-    if (doneBy && moves.some(m => m.at === doneAt)) { total.palletsFinished++; P(doneBy).palletsFinished++; }
+    const finished = !!(doneBy && moves.some(m => m.at === doneAt));
+    if (finished) { total.palletsFinished++; P(doneBy).palletsFinished++; }
+    // Open → close: from the last time it was opened before its first box
+    // moved (older pallets with no open on record: from the first box) to
+    // the box that emptied it; not emptied yet = time so far (last box moved).
+    const first = all[0], last = all[all.length - 1];
+    if (!first || !first.at) continue;
+    const vc = String(vendorCode(vendor) || '').toUpperCase(); // opened from a masked screen: compare vendors by code (#1 = JQ / WU)
+    const op = ((await d1All(env, 'SELECT at, by_user, vendor FROM pallet_open WHERE title=? AND pallet=? AND at <= ? ORDER BY at DESC LIMIT 20', [title, pallet, first.at]).catch(() => [])) || [])
+      .find(o => String(o.vendor || '') === vendor || String(vendorCode(o.vendor) || '').toUpperCase() === vc) || null;
+    const startAt = (op && op.at) || first.at, endAt = doneAt || last.at;
+    const mins = Math.max(0, Math.round((Date.parse(endAt) - Date.parse(startAt)) / 600) / 100);
+    const people = [...new Set(all.map(m => m.who || '?'))];
+    palletList.push({ title, vendor, pallet, boxes, moved: Math.round(sum * 1000) / 1000, moves: all.length, people,
+      openedAt: startAt, openedBy: op ? String(op.by_user || '').toUpperCase() : '', fromOpen: !!op, closedAt: finished ? doneAt : null, lastMoveAt: last.at, minutes: mins, finished });
+    if (finished) { done.push(mins); for (const w of people) (perMins[w] = perMins[w] || []).push(mins); }
   }
-  for (const w in byPerson) { byPerson[w].pallets = byPerson[w]._p.size; delete byPerson[w]._p; }
+  const avg = a => a.length ? Math.round(a.reduce((x, y) => x + y, 0) / a.length * 10) / 10 : null;
+  total.avgMinutes = avg(done);
+  for (const w in byPerson) { byPerson[w].pallets = byPerson[w]._p.size; delete byPerson[w]._p; byPerson[w].avgMinutes = avg(perMins[w] || []); }
+  palletList.sort((a, b) => String(b.closedAt || b.lastMoveAt).localeCompare(String(a.closedAt || a.lastMoveAt)));
+  total.palletList = palletList.slice(0, 200);
   return { total, byPerson };
 }
 async function inventoryHistorySummary(url, env) {

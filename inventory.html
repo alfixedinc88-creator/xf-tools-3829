@@ -1483,6 +1483,8 @@ window.invCredLogin = async function() {
         <div id="hist-rt-audit" style="font-size:20px;font-weight:800;font-family:var(--mono);color:var(--accent)">—</div>
       </div>
     </div>
+    <!-- 🚢 Each pallet: how long it took, open → last box moved (closed) -->
+    <div id="hist-report-pallets" style="margin-top:14px"></div>
   </div>
 
   <div class="icard" style="margin-top:14px">
@@ -6400,6 +6402,37 @@ window.invCredLogin = async function() {
     if (modal) modal.style.display = 'flex';
   };
 
+  // Minutes → "45 min" / "1 h 20 min".
+  function histMins(m) {
+    m = Math.round(Number(m) || 0);
+    return m < 60 ? m + ' min' : Math.floor(m / 60) + ' h' + (m % 60 ? ' ' + (m % 60) + ' min' : '');
+  }
+  // 🚢 Each pallet worked on in the period: who, boxes, opened → closed (last box moved), how long.
+  function histRenderPallets(list) {
+    var el = g('hist-report-pallets'); if (!el) return;
+    if (!list.length) { el.innerHTML = ''; return; }
+    var t = function(iso) { return iso ? new Date(iso).toLocaleString('en-US', { timeZone: 'America/New_York', month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit', hour12: true }) : ''; };
+    var thS = 'padding:6px 8px;text-align:left;font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.4px;color:var(--text3);white-space:nowrap;border-bottom:2px solid var(--border);background:var(--bg2)';
+    var tdS = 'padding:6px 8px;border-bottom:1px solid var(--border);white-space:nowrap;font-size:12px';
+    var html = '<details' + (list.length <= 8 ? ' open' : '') + '><summary style="cursor:pointer;font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.4px;color:var(--text3);margin-bottom:8px">🚢 Each pallet — how long, open → close (' + list.length + ')</summary>'
+      + '<div style="overflow-x:auto;border:1.5px solid var(--border);border-radius:10px"><table style="width:100%;border-collapse:collapse">'
+      + '<thead><tr><th style="' + thS + '">Container</th><th style="' + thS + '">Pallet</th><th style="' + thS + ';text-align:right">Time</th><th style="' + thS + '">Who</th><th style="' + thS + ';text-align:right">Boxes</th>'
+      + '<th style="' + thS + '">Opened</th><th style="' + thS + '">Closed</th></tr></thead><tbody>';
+    list.forEach(function(p, i) {
+      var bg = i % 2 === 0 ? 'var(--bg)' : 'var(--bg2)';
+      html += '<tr style="background:' + bg + '">'
+        + '<td style="' + tdS + '">' + invEsc(p.title) + '</td>'
+        + '<td style="' + tdS + ';font-family:var(--mono);font-weight:700">' + invEsc(p.pallet) + '</td>'
+        + '<td style="' + tdS + ';text-align:right;font-family:var(--mono);font-weight:800;color:' + (p.finished ? 'var(--purple)' : 'var(--orange)') + '" title="' + (p.finished ? 'Opened → last box moved' : 'Opened → latest box moved so far') + '">' + histMins(p.minutes) + (p.finished ? '' : ' so far') + '</td>'
+        + '<td style="' + tdS + ';font-family:var(--mono)">' + invEsc((p.people || []).join(', ')) + '</td>'
+        + '<td style="' + tdS + ';text-align:right;font-family:var(--mono)">' + p.moved + ' / ' + p.boxes + '</td>'
+        + '<td style="' + tdS + '" title="' + (p.fromOpen ? 'Opened in Container here' + (p.openedBy ? ' by ' + invEsc(p.openedBy) : '') : 'No open on record (older) — from the first box moved') + '">' + t(p.openedAt) + (p.fromOpen ? '' : ' <span style="color:var(--text3)">(1st box)</span>') + '</td>'
+        + '<td style="' + tdS + '">' + (p.finished ? t(p.closedAt) : '<span style="color:var(--orange);font-weight:700">not finished</span>') + '</td>'
+        + '</tr>';
+    });
+    el.innerHTML = html + '</tbody></table></div></details>';
+  }
+
   window.histLoadReport = function() {
     var sel = (g('hist-report-days') && g('hist-report-days').value) || '1';
     var dateVal = (g('hist-report-date') && g('hist-report-date').value) || '';
@@ -6420,6 +6453,7 @@ window.invCredLogin = async function() {
     if (g('hist-rt-end'))   g('hist-rt-end').textContent   = '…';
     ['hist-rt-total-in','hist-rt-total-out','hist-rt-ctr'].forEach(function(id){ var e=g(id); if(e) e.textContent = '…'; });
     ['hist-rt-check','hist-rt-xfr-cases','hist-rt-ctr-sub'].forEach(function(id){ var e=g(id); if(e) e.textContent = ''; });
+    if (g('hist-report-pallets')) g('hist-report-pallets').innerHTML = '';
 
     var qs = dateVal ? ('date=' + encodeURIComponent(dateVal)) : ('days=' + days);
 
@@ -6458,7 +6492,9 @@ window.invCredLogin = async function() {
         if (g('hist-rt-xfr-cases')) g('hist-rt-xfr-cases').textContent = fmt(d.transferCases) + ' cases moved';
         var ct = d.container;
         if (g('hist-rt-ctr')) g('hist-rt-ctr').textContent = ct && !ct.error ? fmt(ct.cases) + ' cases' : '—';
-        if (g('hist-rt-ctr-sub')) g('hist-rt-ctr-sub').textContent = ct && !ct.error ? ct.pallets + ' pallet' + (ct.pallets === 1 ? '' : 's') + ' worked on · ' + ct.palletsFinished + ' emptied' : (ct && ct.error ? 'could not load' : '');
+        if (g('hist-rt-ctr-sub')) g('hist-rt-ctr-sub').textContent = ct && !ct.error ? ct.pallets + ' pallet' + (ct.pallets === 1 ? '' : 's') + ' worked on · ' + ct.palletsFinished + ' emptied'
+          + (ct.avgMinutes != null ? ' · avg ' + histMins(ct.avgMinutes) + ' per pallet' : '') : (ct && ct.error ? 'could not load' : '');
+        histRenderPallets(ct && !ct.error ? (ct.palletList || []) : []);
 
         var people = d.byPerson || [];
         if (!peopleEl) return;
@@ -6492,7 +6528,7 @@ window.invCredLogin = async function() {
             + '<td style="' + tdS + ';text-align:right;color:var(--red);font-weight:700">' + (p.casesOut||0).toLocaleString() + '</td>'
             + '<td style="' + tdS + ';text-align:right;color:var(--purple)">' + p.transfers + '</td>'
             + '<td style="' + tdS + ';text-align:right;color:var(--purple);font-weight:700">' + (p.transferCases||0).toLocaleString() + '</td>'
-            + '<td style="' + tdS + ';text-align:right;color:var(--purple)">' + (p.container ? (p.container.cases||0).toLocaleString() + ' / ' + p.container.pallets + (p.container.palletsFinished ? ' (' + p.container.palletsFinished + ' emptied)' : '') : '—') + '</td>'
+            + '<td style="' + tdS + ';text-align:right;color:var(--purple)">' + (p.container ? (p.container.cases||0).toLocaleString() + ' / ' + p.container.pallets + (p.container.palletsFinished ? ' (' + p.container.palletsFinished + ' emptied)' : '') + (p.container.avgMinutes != null ? ' · avg ' + histMins(p.container.avgMinutes) : '') : '—') + '</td>'
             + '<td style="' + tdS + ';text-align:right;color:var(--accent)">' + p.audits + '</td>'
             + '<td style="' + tdS + ';text-align:right;font-weight:800">' + p.total + '</td>'
             + '</tr>';
@@ -8114,6 +8150,11 @@ window.invCredLogin = async function() {
   // Every item gets its 2 suggested spots up front (📍 plan first, then where
   // most of the same parent part # is, then empty shelves).
   window.xfrGoOpen = function(title, vendor, pallet, selId) {
+    var pf = xfrGo.focus;
+    // A different pallet opened: put it on record (History → how long each pallet took, open → last box moved).
+    if (!pf || pf.title !== title || pf.vendor !== vendor || pf.pallet !== pallet)
+      wFetch(W + '/inventory/containers/pallet-open', { method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ title: title, vendor: vendor, pallet: pallet, by: (INV_CRED_USER && INV_CRED_USER.displayName) || '' }) }).catch(function() {});
     xfrGo.focus = { title: title, vendor: vendor, pallet: pallet }; xfrGo.sel = null; xfrGo.sug = null;
     var tl = g('xfr-cont-tools'); if (tl) tl.style.display = 'none';
     var lst = g('xfr-cont-list'); if (lst) lst.style.display = 'none';
