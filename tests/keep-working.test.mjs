@@ -190,6 +190,15 @@ await post('/reorder/fix/incoming-remove', { title: 'Container DUP', reason: 'im
 check('never 📦 Received (e.g. a double removed on Reorder): not shown in Container here', !(await hasCont('Container DUP')) && palletsOf('Container DUP') === 1, null);
 const dNo = await (await call('/inventory/containers/delete', { method: 'POST', headers: { 'X-Cred-Token': pk.token, 'Content-Type': 'application/json' }, body: JSON.stringify({ title: 'Container DUP', reason: 'x' }) })).status;
 check('only management can delete a container', dNo === 403, dNo);
+// Owner: "for Inventory → Transfer the container info like Delete container — only Admin level can change it".
+const um = sq.prepare('INSERT INTO cred_users (username, password_hash, display_name, active, created_at) VALUES (?,?,?,1,?)').run('manager1', hex(salt) + ':' + hex(new Uint8Array(bits)), 'MG', new Date().toISOString());
+for (const role of ['mgmt', 'ops']) sq.prepare('INSERT INTO cred_user_roles (user_id, role) VALUES (?,?)').run(um.lastInsertRowid, role);
+const mg = await (await call('/auth/login', { method: 'POST', body: '{"username":"manager1","password":"password1"}' })).json();
+const dMg = await call('/inventory/containers/delete', { method: 'POST', headers: { 'X-Cred-Token': mg.token, 'Content-Type': 'application/json' }, body: JSON.stringify({ title: 'Container DUP', reason: 'x' }) });
+const invHt = (await import('node:fs')).readFileSync(fileURLToPath(new URL('../inventory.html', import.meta.url)), 'utf8');
+check('a manager who is not an Admin can\'t delete a container (403, pallets stay); the screen shows 🗑 Delete container and the box-UPC fill-in to Admins only',
+  dMg.status === 403 && palletsOf('Container DUP') === 1 && /\(xfrIsAdmin\(\) \? '<button class="isearch-btn"[^\n]*xfrContDelete\(\)/.test(invHt)
+    && /window\.xfrMissingUpcSave = function\(i\) \{\n    if \(!xfrIsAdmin\(\)\)/.test(invHt) && /window\.xfrContDelete = function[^\n]*\n[^\n]*\n    if \(!xfrIsAdmin\(\)\)/.test(invHt), dMg.status);
 const d1 = await post('/inventory/containers/delete', { title: 'Container DUP', reason: 'imported twice' });
 check('delete removes its pallets, SKU Mgr unchanged', d1.ok && d1.boxes === 5 && palletsOf('Container DUP') === 0 && shelf() === shelfBeforeDel, { d1, shelf: shelf(), before: shelfBeforeDel });
 check('delete is logged in Reorder → History with who and why', sq.prepare("SELECT COUNT(*) n FROM reorder_history WHERE detail LIKE '%Deleted container \"Container DUP\"%imported twice%'").get().n === 1, sq.prepare('SELECT * FROM reorder_history ORDER BY id DESC LIMIT 2').all());

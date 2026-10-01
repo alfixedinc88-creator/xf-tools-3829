@@ -8239,6 +8239,7 @@ window.invCredLogin = async function() {
   // is in SKU Mgr and is NOT taken out by this). Logged with who and why.
   window.xfrContDelete = function(confirmReceived, reason) {
     var t = xfrCont.title; if (!t) return;
+    if (!xfrIsAdmin()) { invFlash('Only Admins can delete a container', 'error'); return; }
     if (!confirmReceived) {
       reason = prompt('Delete container "' + t + '" and all its pallets from Container here?\n\nWhy? (saved in Reorder → History)', 'Imported twice by mistake');
       if (reason == null) return; reason = reason.trim();
@@ -8283,7 +8284,7 @@ window.invCredLogin = async function() {
   // that item first — one tap (or a scanned spot label) moves the boxes.
   var xfrGo = { focus: null, lines: [], sel: null, sug: null, moved: [] };
   var xfrPhotos = {};
-  function xfrIsAdmin() { return !!(INV_CRED_USER && (INV_CRED_USER.roles || []).indexOf('admin') >= 0); }
+  function xfrIsAdmin() { var r = (INV_CRED_USER && INV_CRED_USER.roles) || []; return r.indexOf('admin') >= 0 || r.indexOf('owner') >= 0; }
   function xfrE(v) { return String(v == null ? '' : v).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;').replace(/'/g, '&#39;'); }
   function xfrBase(p) { return invParent(p); }
   function xfrLoadPhotos(parts, cb) {
@@ -8540,7 +8541,7 @@ window.invCredLogin = async function() {
       xfrCont.missingUpc = d.missing || [];
       var n = xfrCont.missingUpc.length;
       el.innerHTML = (d.total ? '<button type="button" onclick="xfrMissingUpcOpen()" style="width:100%;margin-bottom:6px;padding:9px;border-radius:8px;border:1.5px solid ' + (n ? 'var(--orange)' : 'var(--green)') + ';background:' + (n ? 'var(--orange-bg)' : 'var(--bg3)') + ';color:var(--text);font-size:12px;font-weight:700;cursor:pointer">'
-          + (n ? '⚠ ' + n + ' of ' + d.total + ' items on the pallets have no box UPC — fill them in' : '✓ All ' + d.total + ' items on the pallets have a box UPC') + '</button>' : '')
+          + (n ? '⚠ ' + n + ' of ' + d.total + ' items on the pallets have no box UPC' + (xfrIsAdmin() ? ' — fill them in' : ' (an Admin fills them in)') : '✓ All ' + d.total + ' items on the pallets have a box UPC') + '</button>' : '')
         + (xfrIsAdmin() && d.total ? '<button type="button" onclick="xfrFillPhotos(this)" style="width:100%;padding:8px;border-radius:8px;border:1.5px solid var(--border);background:var(--bg3);color:var(--text2);font-size:12px;font-weight:700;cursor:pointer">📷 Find photos for the pallet items (Admins)</button>' : '')
         + '<div id="xfr-missing-upc"></div>';
     }).catch(function() { el.innerHTML = ''; });
@@ -8551,16 +8552,17 @@ window.invCredLogin = async function() {
     if (box.innerHTML) { box.innerHTML = ''; return; }
     if (!L.length) { box.innerHTML = '<div class="iempty">Nothing missing ✓</div>'; return; }
     xfrLoadPhotos(L.map(function(x) { return x.part; }), function() {
-      box.innerHTML = '<div style="font-size:12px;color:var(--text3);margin:4px 0 8px">Type or scan the <b>outside box</b> UPC for each — saved for good, the next box scan finds it.</div>'
+      box.innerHTML = '<div style="font-size:12px;color:var(--text3);margin:4px 0 8px">' + (xfrIsAdmin() ? 'Type or scan the <b>outside box</b> UPC for each — saved for good, the next box scan finds it.' : 'Only Admins can fill these in.') + '</div>'
         + L.map(function(x, i) {
           return '<div style="display:flex;gap:8px;align-items:center;padding:7px 0;border-bottom:1px solid var(--border)">' + xfrThumb(x.part)
             + '<div style="flex:1;min-width:0"><div style="font-family:var(--mono);font-weight:700">' + xfrE(x.part) + '</div><div style="font-size:11px;color:var(--text3)">' + xfrE(x.name) + ' · ' + xfrN(x.boxesLeft) + ' box(es) on ' + x.pallets + ' pallet(s)' + (x.insideUpc ? ' · bag UPC ' + xfrE(x.insideUpc) : '') + '</div>'
-            + '<div style="display:flex;gap:6px;margin-top:4px"><input id="xfr-mu-' + i + '" type="text" inputmode="numeric" placeholder="Box UPC" style="flex:1;min-width:0;padding:6px 8px;border:1.5px solid var(--border);border-radius:6px;background:var(--bg);color:var(--text);font-family:var(--mono)" onkeydown="if(event.key===\'Enter\')xfrMissingUpcSave(' + i + ')">'
-            + '<button type="button" class="isearch-btn" style="min-height:0;padding:6px 12px;font-size:13px" onclick="xfrMissingUpcSave(' + i + ')">Save</button></div></div></div>';
+            + (!xfrIsAdmin() ? '' : '<div style="display:flex;gap:6px;margin-top:4px"><input id="xfr-mu-' + i + '" type="text" inputmode="numeric" placeholder="Box UPC" style="flex:1;min-width:0;padding:6px 8px;border:1.5px solid var(--border);border-radius:6px;background:var(--bg);color:var(--text);font-family:var(--mono)" onkeydown="if(event.key===\'Enter\')xfrMissingUpcSave(' + i + ')">'
+            + '<button type="button" class="isearch-btn" style="min-height:0;padding:6px 12px;font-size:13px" onclick="xfrMissingUpcSave(' + i + ')">Save</button></div>') + '</div></div>';
         }).join('');
     });
   };
   window.xfrMissingUpcSave = function(i) {
+    if (!xfrIsAdmin()) { invFlash('Only Admins can fill in box UPCs here', 'error'); return; }
     var x = (xfrCont.missingUpc || [])[i], inp = g('xfr-mu-' + i); if (!x || !inp) return;
     var upc = (inp.value || '').replace(/\D/g, '');
     if (upc.length < 11) { invFlash('Type the full box UPC (11–14 digits)', 'error'); return; }
@@ -8605,7 +8607,7 @@ window.invCredLogin = async function() {
         + '<div style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:8px"><button class="isearch-btn" onclick="xfrContSoldOut(\'csv\')">🔥 Sold-out pallets ⬇</button>'
         + '<button class="isearch-btn" onclick="xfrContSoldOut(\'print\')">🖨 Print it</button>'
         + '<span style="font-size:11px;color:var(--text3);align-self:center">Pallets with part #s we were sold out of — put them up front first</span>'
-        + '<button class="isearch-btn" style="margin-left:auto;background:var(--bg);color:var(--red);border:1.5px solid var(--red)" onclick="xfrContDelete()" title="Put in by mistake (e.g. imported twice)? Remove its pallets — management only">🗑 Delete container</button></div>' : '<div style="font-size:12px;color:var(--text3);margin-bottom:6px">' + groups.length + ' pallet(s) matching "' + xfrEsc(xfrCont.q) + '"</div>')
+        + (xfrIsAdmin() ? '<button class="isearch-btn" style="margin-left:auto;background:var(--bg);color:var(--red);border:1.5px solid var(--red)" onclick="xfrContDelete()" title="Put in by mistake (e.g. imported twice)? Remove its pallets — Admins only">🗑 Delete container</button>' : '') + '</div>' : '<div style="font-size:12px;color:var(--text3);margin-bottom:6px">' + groups.length + ' pallet(s) matching "' + xfrEsc(xfrCont.q) + '"</div>')
       + groups.map(function(gp) {
         var tot = gp.lines.reduce(function(a, l) { return a + l.cases; }, 0), mv = gp.lines.reduce(function(a, l) { return a + l.moved; }, 0);
         var over = gp.lines.some(function(l) { return l.over > 0; }), done = mv >= tot && !over;
