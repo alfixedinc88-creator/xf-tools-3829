@@ -446,6 +446,26 @@ window.addEventListener('pageshow', function (e) { if (e.persisted) location.rel
     try { el.blur(); } catch (e) {}
     setTimeout(function () { try { el.focus(); if (el.setSelectionRange && /^(text|search|tel|url)$/i.test(el.type)) el.setSelectionRange(el.value.length, el.value.length); } catch (e) {} }, 30);
   }
+  // Mute BEFORE the box gets focus — once the phone has opened its keyboard,
+  // changing inputmode is too late. Three ways a box gets focus:
+  // the page's own code (.focus() — scan boxes, popups), a tap, and Tab.
+  var _focus = HTMLElement.prototype.focus;
+  HTMLElement.prototype.focus = function () {
+    try { if (on() && this !== open && isBox(this)) mute(this); } catch (e) {}
+    return _focus.apply(this, arguments);
+  };
+  ['touchstart', 'pointerdown', 'mousedown'].forEach(function (ev) {
+    document.addEventListener(ev, function (e) {
+      var el = e.target; if (on() && el !== open && isBox(el)) { mute(el); guard(el); }
+    }, true);
+  });
+  // Some phones still pop the keyboard for a box focused by a tap: keep it
+  // read-only for a moment as it gets focus (scans arrive after that).
+  function guard(el) {
+    if (el.readOnly || el.dataset.xfKbRo) return;
+    el.dataset.xfKbRo = '1'; el.readOnly = true;
+    setTimeout(function () { el.readOnly = false; delete el.dataset.xfKbRo; }, 120);
+  }
   document.addEventListener('focusin', function (e) {
     var el = e.target; if (!isBox(el)) return;
     last = el; if (on() && el !== open) mute(el);
@@ -458,8 +478,14 @@ window.addEventListener('pageshow', function (e) { if (e.persisted) location.rel
   var queued = false;
   function start() {
     apply();
-    new MutationObserver(function () { // new boxes drawn later (lists, popups): hide their keyboard too
-      if (!on() || queued) return; queued = true;
+    new MutationObserver(function (muts) { // new boxes drawn later (lists, popups): hide their keyboard right away
+      if (!on()) return;
+      muts.forEach(function (m) { [].forEach.call(m.addedNodes || [], function (n) {
+        if (n.nodeType !== 1) return;
+        if (isBox(n) && n !== open) mute(n);
+        if (n.querySelectorAll) [].forEach.call(n.querySelectorAll('input, textarea'), function (el) { if (isBox(el) && el !== open && el.dataset.xfKbIm == null) mute(el); });
+      }); });
+      if (queued) return; queued = true; // boxes made by innerHTML on an existing node
       setTimeout(function () { queued = false; all(function (el) { if (el.dataset.xfKbIm == null && el !== open) mute(el); }); }, 150);
     }).observe(document.body, { childList: true, subtree: true });
   }
