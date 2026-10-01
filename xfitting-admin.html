@@ -155,6 +155,7 @@
       <div class="ad-tab" id="ad-tab-levels" style="display:none" onclick="adSwitchTab('levels')">🎚️ Levels</div>
       <div class="ad-tab" id="ad-tab-pages" onclick="adSwitchTab('pages')">🧩 Pages &amp; Tabs</div>
       <div class="ad-tab" id="ad-tab-activity" onclick="adSwitchTab('activity')">📊 Activity</div>
+      <div class="ad-tab" id="ad-tab-test" onclick="adSwitchTab('test')">🧪 Test</div>
     </div>
 
     <div id="ad-panel-users">
@@ -211,6 +212,26 @@
           </select>
         </div>
         <div id="ad-activity-table-wrap"><div class="ad-empty">Loading…</div></div>
+      </div>
+    </div>
+
+    <div id="ad-panel-test" style="display:none">
+      <div class="ad-card">
+        <div class="ad-card-header"><h2>🧪 Test switch</h2></div>
+        <div id="ad-tm-status" style="font-size:14px;margin-bottom:12px">Loading…</div>
+        <div style="font-size:12.5px;color:var(--text3);line-height:1.6;margin-bottom:14px">
+          <b>ON:</b> a copy of all the app's data is saved. Everything works as usual, so you can try out Transfer, Stock In / Out, Receive, Reorder…<br>
+          <b>OFF:</b> everything goes back to exactly how it was when the test started. All stock, logs, History, containers, pallets made during the test are erased.<br>
+          While it's on, every page shows an orange frame and a <b>🧪 TEST MODE</b> note. Things that can't be erased are blocked: changing Amazon / eBay / Walmart / Shopify listings, prices or quantities, buying or cancelling labels, sending messages, and writing to the Google Sheet.<br>
+          <b>Not erased:</b> people &amp; passwords, sales and FBA stock that come in from the marketplaces, and the record below.<br>
+          <b style="color:#b45309">⚠ Real work done by anyone while test is on is erased too — use it when nobody is doing real stock work or shipping.</b>
+        </div>
+        <button class="ad-btn" id="ad-tm-btn" style="width:auto" onclick="adTestToggle()">…</button>
+        <div id="ad-tm-result" style="font-size:13px;margin-top:12px"></div>
+      </div>
+      <div class="ad-card">
+        <div class="ad-card-header"><h2>Record of tests</h2></div>
+        <div id="ad-tm-log"><div class="ad-empty">Loading…</div></div>
       </div>
     </div>
   </div>
@@ -347,13 +368,14 @@ function adShowDenied() {
 }
 
 window.adSwitchTab = function(name) {
-  ['users','levels','pages','activity'].forEach(function(n) {
+  ['users','levels','pages','activity','test'].forEach(function(n) {
     ge('ad-tab-' + n).classList.toggle('active', n === name);
     ge('ad-panel-' + n).style.display = (n === name) ? 'block' : 'none';
   });
   if (name === 'activity') adLoadActivity();
   if (name === 'levels') adRenderLevels();
   if (name === 'pages') adLoadPages();
+  if (name === 'test') adLoadTest();
 };
 
 var ROLE_LABELS = { admin:'Admin', mgmt:'Mgmt', ops:'Ops', mobile:'Mobile', price:'Price', owner:'Owner' };
@@ -743,6 +765,52 @@ window.adLoadActivity = async function() {
   ge('ad-activity-table-wrap').innerHTML = '<table class="ad-table"><thead><tr><th>Time</th><th>User</th><th>Action</th><th>Details</th></tr></thead><tbody>' + html + '</tbody></table>';
 };
 
+// ── 🧪 Test switch ──
+function adNY(iso) { try { return new Date(iso).toLocaleString('en-US', { timeZone:'America/New_York', month:'short', day:'numeric', hour:'numeric', minute:'2-digit', hour12:true }); } catch(e) { return iso || ''; } }
+function adEsc(v) { return String(v == null ? '' : v).replace(/[&<>"]/g, function(c){ return { '&':'&amp;', '<':'&lt;', '>':'&gt;', '"':'&quot;' }[c]; }); }
+AD.test = null;
+window.adLoadTest = async function() {
+  var r = await adFetch('/admin/test-mode');
+  if (r.status !== 200) { ge('ad-tm-status').textContent = 'Could not load: ' + (r.data.error || r.status); return; }
+  var t = AD.test = r.data;
+  ge('ad-tm-status').innerHTML = t.on
+    ? '<span style="background:#f59e0b;color:#111;padding:4px 10px;border-radius:8px;font-weight:700">🧪 TEST IS ON</span> since ' + adNY(t.startedAt) + ' by <b>' + adEsc(t.startedBy) + '</b>'
+    : '<span style="background:var(--bg3);padding:4px 10px;border-radius:8px;font-weight:700">Test is OFF</span> — everything is real';
+  var b = ge('ad-tm-btn');
+  b.textContent = t.on ? '⏹ Turn test OFF (erase everything done in the test)' : '▶ Turn test ON';
+  b.className = 'ad-btn' + (t.on ? ' ad-btn-danger' : '');
+  var rows = (t.log || []).map(function(l) {
+    var d = {}; try { d = JSON.parse(l.detail || '{}'); } catch(e) {}
+    var what = l.action === 'on' ? '▶ Turned ON — saved ' + (d.tables || 0) + ' tables'
+      : '⏹ Turned OFF — started ' + adNY(d.startedAt) + ' by ' + adEsc(d.startedBy) + '. Put back: ' +
+        (Object.keys(d.erased || {}).map(function(k){ return adEsc(k) + ' ' + d.erased[k].during + '→' + d.erased[k].before; }).join(', ') || 'nothing had changed') +
+        ((d.mismatch || []).length ? ' <b style="color:#dc2626">⚠ did not match: ' + adEsc(d.mismatch.join(', ')) + '</b>' : '');
+    return '<tr><td class="ad-mono" style="font-size:11px;color:var(--text3);white-space:nowrap">' + adNY(l.at) + '</td><td>' + adEsc(l.by_user) + '</td><td style="font-size:12.5px">' + what + '</td></tr>';
+  }).join('');
+  ge('ad-tm-log').innerHTML = rows ? '<table class="ad-table"><thead><tr><th>Time</th><th>Who</th><th>What</th></tr></thead><tbody>' + rows + '</tbody></table>' : '<div class="ad-empty">No tests yet.</div>';
+};
+window.adTestToggle = async function() {
+  var on = AD.test && AD.test.on;
+  if (on) {
+    if (!confirm('Turn test OFF?\n\nEverything done since ' + adNY(AD.test.startedAt) + ' (stock, transfers, History, containers…) will be ERASED and the app goes back to how it was then.\n\nMake sure every phone is online so nothing is still waiting to send.')) return;
+  } else {
+    if (!confirm('Turn test ON?\n\nA copy of all data is saved now. When you turn test OFF, everything done in between is erased — by anyone.\n\nOnly do this when nobody is doing real stock work or shipping.')) return;
+  }
+  var b = ge('ad-tm-btn'); b.disabled = true; b.textContent = on ? 'Putting everything back…' : 'Saving a copy…';
+  var r = await adFetch('/admin/test-mode/' + (on ? 'off' : 'on'), { method: 'POST', body: '{}' });
+  b.disabled = false;
+  if (r.status !== 200 || r.data.ok === false) {
+    ge('ad-tm-result').innerHTML = '<span style="color:#dc2626">⚠ ' + adEsc(r.data.error || ('Failed (' + r.status + ')')) + '</span>';
+    adToast(r.data.error || 'Failed', 'err');
+  } else {
+    var n = Object.keys(r.data.erased || {}).length;
+    ge('ad-tm-result').textContent = on ? '✅ Test is off — everything is back to how it was (' + n + ' tables put back).' : '✅ Test is on — go try it out. Turn it off here when you are done.';
+    adToast(on ? 'Test is off — data put back' : 'Test is on', 'ok');
+  }
+  try { sessionStorage.removeItem('xf_test'); if (window.xfAccessRefresh) window.xfAccessRefresh(); } catch(e) {}
+  await adLoadTest();
+};
+
 // ── On load: if a token already exists, verify it still works before showing the gate ──
 (async function adInit() {
   if (!AD.token) return;
@@ -763,6 +831,6 @@ window.adLoadActivity = async function() {
   }
 })();
 </script>
-<script src="xf-access.js?v=20260927"></script>
+<script src="xf-access.js?v=20261001"></script>
 </body>
 </html>

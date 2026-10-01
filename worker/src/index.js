@@ -5452,6 +5452,7 @@ async function getMasterListSheetId(env) {
 
 // Helper: Sheets batchUpdate (for insertDimension)
 async function batchUpdateSheets(env, sheetId, requests) {
+  if (sheetId === env.SHEET_ID && await testModeOn(env)) return { testMode: true, replies: [] }; // 🧪 no Sheet writes during a test
   const token = await getToken(env);
   const r = await fetch(`https://sheets.googleapis.com/v4/spreadsheets/${sheetId}:batchUpdate`, {
     method: 'POST',
@@ -5463,6 +5464,137 @@ async function batchUpdateSheets(env, sheetId, requests) {
     throw new Error(e.error?.message || `batchUpdate failed ${r.status}`);
   }
   return r.json();
+}
+
+// ── 🧪 Test switch (Admin → 🧪 Test) ─────────────────────────────────────────
+// ON: a copy of every table is saved (tmsnap__<table>). Everything works as
+// usual. OFF: every table is put back exactly as it was when the test
+// started, so nothing done during the test stays. The tables below are NOT
+// put back: sign-ins / people (nobody gets signed out), the test's own
+// record, and data that comes in from Amazon / eBay / Walmart / Shopify
+// (sales, FBA stock), which the test can't change and would be lost.
+// While it's on, things that would change the real world outside the app
+// (marketplace listings / prices / quantities, buying or cancelling labels,
+// sending messages, Google Sheet writes) are blocked or skipped.
+const TM_PREFIX = 'tmsnap__';
+const TM_KEEP = new Set([
+  'test_mode', 'test_mode_log', 'cred_users', 'cred_user_roles', 'cred_levels', 'cred_sessions',
+  'cred_login_attempts', 'access_rules', 'processed_requests', 'user_activity_log',
+  'amazon_sales_weekly', 'amazon_sales_pending', 'ebay_sales_weekly', 'walmart_sales_weekly',
+  'shopify_sales_weekly', 'amazon_fba_inventory', 'amazon_title_tracking', 'fba_catalog',
+  'channel_cancel_seen', 'reorder_title_cache', 'listing_titles', 'lw_kv', 'lw_alerts',
+  'listing_qty_log', 'autolabel_log', 'ship_usps_run_log',
+]);
+// Routes that change things outside the app (can't be erased afterwards).
+const TM_BLOCK = new Set([
+  '/amazon/listing-create', '/amazon/update-price', '/amazon/variation-create', '/amazon/titles-feed-submit',
+  '/ebay/listing-publish', '/ebay/variation-publish', '/ebay/offer-delete', '/ebay/update-price', '/ebay/location-create',
+  '/ebay-msg/send', '/msg/send', '/msg/reply', '/shopify/listing-create',
+  '/repricer/price-change', '/repricer/auto-reprice', '/repricer/queue-action',
+  '/ship/cancel-label', '/ship/cancel-order', '/ship/cancel-order-confirm',
+  '/veeqo/autolabel/run', '/veeqo/autolabel/test-buy',
+  '/inventory/soldout/set-qty', '/inventory/soldout/add-listing',
+]);
+function tmJ(o, status) { return cors(new Response(JSON.stringify(o), { status: status || 200, headers: { 'Content-Type': 'application/json' } })); }
+let _tmCache = { at: 0, on: null };
+async function tmEnsure(env) {
+  await env.DB.prepare('CREATE TABLE IF NOT EXISTS test_mode (id INTEGER PRIMARY KEY, started_by TEXT, started_at TEXT, tables TEXT)').run();
+  await env.DB.prepare('CREATE TABLE IF NOT EXISTS test_mode_log (id INTEGER PRIMARY KEY AUTOINCREMENT, action TEXT, by_user TEXT, at TEXT, detail TEXT)').run();
+}
+async function tmState(env) {
+  if (!env.DB) return null;
+  try { await tmEnsure(env); return await env.DB.prepare('SELECT started_by, started_at, tables FROM test_mode WHERE id = 1').first(); }
+  catch (_) { return null; }
+}
+// Is the test switch on? (cached for 5 s — checked on every Sheet write)
+async function testModeOn(env) {
+  if (Date.now() - _tmCache.at < 5000 && _tmCache.on !== null) return _tmCache.on;
+  const s = await tmState(env);
+  _tmCache = { at: Date.now(), on: !!s };
+  return !!s;
+}
+async function tmTables(env) {
+  const r = await env.DB.prepare(`SELECT name FROM sqlite_master WHERE type = 'table' AND name NOT LIKE 'sqlite_%' AND name NOT LIKE '_cf_%' AND name NOT LIKE 'd1_%' AND name NOT LIKE '${TM_PREFIX}%'`).all();
+  return (r.results || []).map(x => x.name).filter(n => !TM_KEEP.has(n) && /^[A-Za-z0-9_]+$/.test(n));
+}
+async function tmCount(env, t) {
+  const r = await env.DB.prepare(`SELECT COUNT(*) AS n FROM "${t}"`).first().catch(() => null);
+  return r ? Number(r.n) || 0 : 0;
+}
+async function tmCols(env, t) {
+  const r = await env.DB.prepare(`PRAGMA table_info("${t}")`).all().catch(() => ({ results: [] }));
+  return (r.results || []).map(c => c.name);
+}
+function tmWho(s) { return (s && (s.displayName || s.username)) || '?'; }
+
+// GET /admin/test-mode — on/off, who started it, and the record of past tests.
+async function adminTestModeGet(env) {
+  const s = await tmState(env);
+  const log = env.DB ? ((await env.DB.prepare('SELECT action, by_user, at, detail FROM test_mode_log ORDER BY id DESC LIMIT 30').all().catch(() => ({ results: [] }))).results || []) : [];
+  return tmJ({ ok: true, on: !!s, startedBy: s ? s.started_by : null, startedAt: s ? s.started_at : null, log });
+}
+
+// POST /admin/test-mode/on — save a copy of every table, then turn it on.
+async function adminTestModeOn(env, session) {
+  if (!env.DB) return tmJ({ ok: false, error: 'No database' }, 500);
+  if (await tmState(env)) return tmJ({ ok: false, error: 'Test is already on' }, 409);
+  const tables = await tmTables(env);
+  const old = await env.DB.prepare(`SELECT name FROM sqlite_master WHERE type = 'table' AND name LIKE '${TM_PREFIX}%'`).all();
+  const stmts = (old.results || []).map(x => env.DB.prepare(`DROP TABLE IF EXISTS "${x.name}"`));
+  for (const t of tables) stmts.push(env.DB.prepare(`CREATE TABLE "${TM_PREFIX + t}" AS SELECT * FROM "${t}"`));
+  const at = new Date().toISOString(), by = tmWho(session);
+  stmts.push(env.DB.prepare('INSERT INTO test_mode (id, started_by, started_at, tables) VALUES (1, ?, ?, ?)').bind(by, at, JSON.stringify(tables)));
+  try { await env.DB.batch(stmts); }
+  catch (e) { return tmJ({ ok: false, error: 'Could not save a copy (' + e.message + ') — test is NOT on' }, 500); }
+  const counts = {}; for (const t of tables) counts[t] = await tmCount(env, TM_PREFIX + t);
+  await env.DB.prepare('INSERT INTO test_mode_log (action, by_user, at, detail) VALUES (?,?,?,?)').bind('on', by, at, JSON.stringify({ tables: tables.length, rows: counts })).run();
+  _tmCache = { at: 0, on: null };
+  return tmJ({ ok: true, on: true, startedBy: by, startedAt: at, tables: tables.length });
+}
+
+// POST /admin/test-mode/off — put every table back to when the test started.
+async function adminTestModeOff(env, session) {
+  if (!env.DB) return tmJ({ ok: false, error: 'No database' }, 500);
+  const s = await tmState(env);
+  if (!s) return tmJ({ ok: false, error: 'Test is not on' }, 409);
+  const saved = JSON.parse(s.tables || '[]');
+  const savedSet = new Set(saved);
+  const now = await tmTables(env);
+  const stmts = [env.DB.prepare('PRAGMA defer_foreign_keys = on')];
+  const changed = {};
+  for (const t of saved) {
+    const snap = TM_PREFIX + t;
+    const sc = await tmCols(env, snap);
+    if (!sc.length) return tmJ({ ok: false, error: 'The saved copy of ' + t + ' is missing — nothing was changed, test is still on' }, 500);
+    const tc = new Set(await tmCols(env, t));
+    const before = await tmCount(env, snap), during = await tmCount(env, t);
+    if (!tc.size) { // table was dropped during the test: make it again from the copy
+      stmts.push(env.DB.prepare(`CREATE TABLE "${t}" AS SELECT * FROM "${snap}"`));
+    } else {
+      const cols = sc.filter(c => tc.has(c)).map(c => `"${c}"`).join(', ');
+      stmts.push(env.DB.prepare(`DELETE FROM "${t}"`));
+      stmts.push(env.DB.prepare(`INSERT INTO "${t}" (${cols}) SELECT ${cols} FROM "${snap}"`));
+    }
+    if (before !== during) changed[t] = { before, during };
+  }
+  // Tables made during the test didn't exist before it: empty them.
+  for (const t of now) if (!savedSet.has(t)) {
+    const during = await tmCount(env, t);
+    stmts.push(env.DB.prepare(`DELETE FROM "${t}"`));
+    if (during) changed[t] = { before: 0, during };
+  }
+  stmts.push(env.DB.prepare('DELETE FROM test_mode WHERE id = 1'));
+  try { await env.DB.batch(stmts); } // all or nothing
+  catch (e) { return tmJ({ ok: false, error: 'Could not put the data back (' + e.message + ') — nothing was changed, test is still on' }, 500); }
+  // Check every table matches its saved copy before dropping the copies.
+  const bad = [];
+  for (const t of saved) if (await tmCount(env, t) !== await tmCount(env, TM_PREFIX + t)) bad.push(t);
+  if (!bad.length) await env.DB.batch(saved.map(t => env.DB.prepare(`DROP TABLE IF EXISTS "${TM_PREFIX + t}"`)));
+  const at = new Date().toISOString(), by = tmWho(session);
+  await env.DB.prepare('INSERT INTO test_mode_log (action, by_user, at, detail) VALUES (?,?,?,?)')
+    .bind('off', by, at, JSON.stringify({ startedBy: s.started_by, startedAt: s.started_at, erased: changed, mismatch: bad })).run();
+  _tmCache = { at: 0, on: null };
+  return tmJ({ ok: !bad.length, on: false, erased: changed, mismatch: bad, error: bad.length ? 'Some tables did not match their saved copy: ' + bad.join(', ') + ' (copies kept)' : undefined });
 }
 
 let _currentOrigin = "*";
@@ -5489,6 +5621,11 @@ const _app = {
       });
     }
 
+    // 🧪 Test switch on: nothing that changes the real world outside the app.
+    if (method === 'POST' && TM_BLOCK.has(url.pathname) && await testModeOn(env)) {
+      return cors(new Response(JSON.stringify({ ok: false, success: false, testMode: true, error: '🧪 Test mode is on — this would change things outside the app for real (marketplace / labels / messages), so it is blocked until an Admin turns test off.' }), { status: 423, headers: { 'Content-Type': 'application/json' } }));
+    }
+
     // /auth — no token needed
     if (url.pathname === '/auth' && method === 'POST') {
       return handleAuth(request, env);
@@ -5505,7 +5642,8 @@ const _app = {
     if (url.pathname === '/auth/access' && method === 'GET') {
       const s = await verifyCredSession(request.headers.get('X-Cred-Token'), env);
       if (!s) return cors(new Response(JSON.stringify({ ok: false, error: 'Not signed in' }), { status: 401, headers: { 'Content-Type': 'application/json' } }));
-      return cors(new Response(JSON.stringify({ ok: true, level: s.level, blocked: await accessBlockedFor(env, s.userId, s.level) }), { headers: { 'Content-Type': 'application/json' } }));
+      const tm = await tmState(env);
+      return cors(new Response(JSON.stringify({ ok: true, level: s.level, blocked: await accessBlockedFor(env, s.userId, s.level), test: tm ? { on: true, by: tm.started_by, at: tm.started_at } : { on: false } }), { headers: { 'Content-Type': 'application/json' } }));
     }
 
     // ── Admin routes — all require a valid credential session with the
@@ -5527,6 +5665,9 @@ const _app = {
       if (url.pathname === '/admin/access/save' && method === 'POST')         return await adminSaveAccess(request, env, credSession);
       if (url.pathname === '/admin/activity' && method === 'GET')             return await adminGetActivity(url, env);
       if (url.pathname === '/admin/usps-runs' && method === 'GET')            return await adminGetUspsRuns(url, env);
+      if (url.pathname === '/admin/test-mode' && method === 'GET')            return await adminTestModeGet(env);
+      if (url.pathname === '/admin/test-mode/on' && method === 'POST')        return await adminTestModeOn(env, credSession);
+      if (url.pathname === '/admin/test-mode/off' && method === 'POST')       return await adminTestModeOff(env, credSession);
       return cors(new Response(JSON.stringify({ error: 'Admin route not found' }), { status: 404, headers: { 'Content-Type': 'application/json' } }));
     }
 
@@ -6372,14 +6513,15 @@ const _app = {
     // Auto Label + channel cancellation watch — runs on EVERY cron tick
     // but returns right away when both switches are off (the default), and
     // throttles itself to minRunGapMinutes otherwise. See autolabelCron().
-    ctx.waitUntil(autolabelCron(env).then(
+    const testOn = await testModeOn(env).catch(() => false); // 🧪 no label buying / listing changes during a test
+    if (!testOn) ctx.waitUntil(autolabelCron(env).then(
       r => { if (!r || !r.skipped) console.log('[cron] autolabel', JSON.stringify(r)); },
       e => console.error('[cron] autolabel FAILED', e && e.message)
     ));
     // Listing Watch — low / sold-out listings while SKU Mgr still has stock.
     // Runs every tick while its switch is on: a page per channel at a time,
     // a new full pass every `everyHours`. See lwCron().
-    ctx.waitUntil(lwCron(env).then(
+    if (!testOn) ctx.waitUntil(lwCron(env).then(
       r => { if (!r || !r.skipped) console.log('[cron] listing watch', JSON.stringify(r)); },
       e => console.error('[cron] listing watch FAILED', e && e.message)
     ));
@@ -15561,6 +15703,9 @@ async function invSheetGet(env, range) {
 }
 
 async function invSheetUpdate(env, range, values) {
+  // 🧪 Test switch on: the Sheet copy is left as it was (the data goes back
+  // when test is turned off).
+  if (await testModeOn(env)) return { testMode: true, updatedRange: range };
   const token = await getToken(env);
   const [tab, cells] = range.split('!');
   const enc = cells ? encodeURIComponent(tab) + '!' + cells : encodeURIComponent(tab);
@@ -15573,6 +15718,10 @@ async function invSheetUpdate(env, range, values) {
 }
 
 async function invSheetAppend(env, range, values) {
+  if (await testModeOn(env)) { // 🧪 test: no Sheet write; a made-up row number far below the real rows
+    const tab = range.split('!')[0], n = 900000 + Math.floor(Math.random() * 90000);
+    return { testMode: true, updates: { updatedRange: tab + '!A' + n + ':A' + n } };
+  }
   const token = await getToken(env);
   const [tab, cells] = range.split('!');
   const enc = cells ? encodeURIComponent(tab) + '!' + cells : encodeURIComponent(tab);
