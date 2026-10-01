@@ -1,3 +1,4 @@
+import VENDOR_UPC from './vendor-upc.js';
 // xfitting-worker-v16.js
 // ─────────────────────────────────────────────────────────────────────────────
 // WHAT CHANGED FROM v15 (Veeqo Integration):
@@ -2511,6 +2512,19 @@ async function productPhotoSyncVeeqo(request, env) {
 function stripParentC(v) { return String(v || '').replace(/^(\s*\d+(?:-\d+)+)[cC](?=\s*$|=)/, '$1'); }
 // 11–14 digits = a UPC / EAN / GTIN barcode, never one of our part #s.
 function isUpcLike(v) { return /^\d{11,14}$/.test(String(v || '').trim()); }
+// Box / bag UPCs from the vendor UPC list built into the Worker
+// (worker/src/vendor-upc.js, from data/upc/). Leading zeros ignored.
+let _vendorUpc = null;
+function vendorUpcMap() {
+  if (_vendorUpc) return _vendorUpc;
+  const byUpc = new Map(), boxParts = new Set();
+  for (const [part, out, inn] of VENDOR_UPC) {
+    const P = String(part).toUpperCase();
+    for (const u of [out, inn]) { const z = String(u || '').replace(/\D/g, '').replace(/^0+/, ''); if (z && !byUpc.has(z)) byUpc.set(z, P); }
+    if (out) boxParts.add(P);
+  }
+  return (_vendorUpc = { byUpc, boxParts });
+}
 // UPC → part #, from every place D1 keeps UPCs. Leading zeros are ignored
 // (a scanner may read 012345678905 or 12345678905 for the same label).
 async function upcToPart(env, code) {
@@ -2519,6 +2533,7 @@ async function upcToPart(env, code) {
   const q = async (sql) => { try { const r = await d1First(env, sql, [z, z]); return r && r.p ? String(r.p).trim().toUpperCase() : null; } catch (e) { return null; } };
   await env.DB.prepare('CREATE TABLE IF NOT EXISTS upc_link (upc TEXT PRIMARY KEY, part TEXT NOT NULL, by_user TEXT, at TEXT)').run().catch(() => {});
   return await q(`SELECT part AS p FROM upc_link WHERE LTRIM(upc, '0') = ? OR LTRIM(upc, '0') = ? LIMIT 1`)
+    || vendorUpcMap().byUpc.get(z) || null
     || await q(`SELECT sku AS p FROM upc WHERE LTRIM(REPLACE(outside_upc, ' ', ''), '0') = ? OR LTRIM(REPLACE(inside_upc, ' ', ''), '0') = ? LIMIT 1`)
     || await q(`SELECT part AS p FROM reorder_fix WHERE LTRIM(REPLACE(outside_upc, ' ', ''), '0') = ? OR LTRIM(REPLACE(inside_upc, ' ', ''), '0') = ? LIMIT 1`)
     || await q(`SELECT part AS p FROM reorder_vendor_catalog WHERE LTRIM(REPLACE(outside_upc, ' ', ''), '0') = ? OR LTRIM(REPLACE(inside_upc, ' ', ''), '0') = ? ORDER BY updated_at DESC LIMIT 1`);
@@ -4176,6 +4191,7 @@ async function inventoryContainersMissingUpc(env) {
   await q("SELECT UPPER(part) AS p, outside_upc AS o FROM reorder_fix WHERE UPPER(part) IN ()", r => { if (!has[r.p] && String(r.o || '').trim()) has[r.p] = String(r.o).trim(); });
   await q("SELECT UPPER(part) AS p, upc AS o FROM upc_link WHERE UPPER(part) IN ()", r => { if (!has[r.p]) has[r.p] = String(r.o).trim(); });
   await q("SELECT UPPER(part_num) AS p, name FROM master_list WHERE UPPER(part_num) IN () AND COALESCE(name,'') != ''", r => { if (!name[r.p]) name[r.p] = r.name; });
+  const vb = vendorUpcMap().boxParts; parts.forEach(p => { if (!has[p] && vb.has(p)) has[p] = 'vendor list'; });
   const missing = parts.filter(p => !has[p]).sort().map(p => ({ part: p, name: name[p] || '', insideUpc: inside[p] || '', boxesLeft: by[p].boxesLeft, pallets: by[p].pallets, titles: [...by[p].titles] }));
   return J({ ok: true, total: parts.length, withUpc: parts.length - missing.length, missing });
 }
