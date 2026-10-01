@@ -42,6 +42,7 @@ window.addEventListener('pageshow', function (e) { if (e.persisted) location.rel
       { key: 'audit', label: '🔍 Audit', sel: '#inv-tab-audit' },
       { key: 'review', label: 'Review', sel: '#inv-tab-review', needs: 'Mgmt' },
       { key: 'skumgr', label: '📋 SKU Mgr', sel: '#inv-tab-skumgr', needs: 'Mgmt' },
+      { key: 'location', label: '📍 Location Plan', sel: '#inv-tab-location', needs: 'Mgmt' },
       { key: 'history', label: '📜 History', sel: '#inv-tab-history', needs: 'Mgmt' },
       { key: 'soldout', label: '🚫 Sold Out', sel: '#inv-tab-soldout', needs: 'Mgmt' }] },
     { key: 'packship', file: 'packship.html', name: '📦 Pack & Ship', needs: 'any sign-in', card: card('packship.html'), tabs: [

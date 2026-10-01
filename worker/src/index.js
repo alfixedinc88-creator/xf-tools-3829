@@ -4764,6 +4764,90 @@ async function inventoryLocationSearch(url, env) {
   }
 }
 
+// 📍 Location Plan (Inventory → 📍 Location Plan): where each parent part #
+// should go — an area (BARN, C1, C5…) or one exact spot (C1=1-2-3). Set by
+// management; 🚢 Container here shows it when a box is scanned and puts the
+// spots in that area first. Every change is kept (location_plan_log).
+async function locationPlanTables(env) {
+  await env.DB.prepare('CREATE TABLE IF NOT EXISTS location_plan (base TEXT PRIMARY KEY, plan TEXT, updated_by TEXT, updated_at TEXT)').run();
+  await env.DB.prepare('CREATE TABLE IF NOT EXISTS location_plan_log (id INTEGER PRIMARY KEY AUTOINCREMENT, base TEXT, old_plan TEXT, new_plan TEXT, by_user TEXT, at TEXT)').run();
+}
+function locationPlanClean(v) {
+  return String(v || '').trim().toUpperCase().replace(/\s*=\s*/g, '=').replace(/=$/, '');
+}
+async function locationPlanFor(env, part) {
+  const b = parentOf(part); if (!b) return '';
+  try { await locationPlanTables(env); const r = await env.DB.prepare('SELECT plan FROM location_plan WHERE base = ?').bind(b).first(); return (r && r.plan) || ''; }
+  catch (_) { return ''; }
+}
+// GET /inventory/location-plan — every parent part # with its name, the plan,
+// where it is now, and boxes still on each container's pallets.
+async function locationPlanList(env) {
+  await locationPlanTables(env); await reorderFixTables(env);
+  const P = {};
+  const get = (b) => (P[b] = P[b] || { base: b, name: '', plan: '', cases: 0, spots: {}, ships: {} });
+  (await d1All(env, 'SELECT base_sku, part_num, name, location, cases FROM master_list')).forEach(r => {
+    const b = parentOf(r.base_sku || r.part_num); if (!b) return;
+    const p = get(b); if (!p.name && r.name) p.name = String(r.name).trim();
+    const c = parseFloat(r.cases) || 0;
+    if (c > 0 && r.location) { p.cases += c; const L = String(r.location).trim().toUpperCase(); p.spots[L] = (p.spots[L] || 0) + c; }
+  });
+  const alias = {}; (await d1All(env, 'SELECT raw, part FROM reorder_alias')).forEach(a => { alias[String(a.raw).toUpperCase()] = String(a.part).toUpperCase(); });
+  const moved = {}; (await d1All(env, _PALLET_MOVED_SQL + ' GROUP BY m.pallet_id')).forEach(m => { moved[m.pallet_id] = m.moved || 0; });
+  const got = await receivedContainerTitles(env);
+  const conts = {};
+  (await d1All(env, 'SELECT id, title, part, description, cases FROM reorder_pallet')).forEach(r => {
+    const part = alias[String(r.part).toUpperCase()] || String(r.part).toUpperCase();
+    const b = parentOf(part); if (!b) return;
+    const left = (r.cases || 0) - Math.min(moved[r.id] || 0, r.cases || 0);
+    const c = conts[r.title] = conts[r.title] || { title: r.title, received: got.has(r.title), left: 0, parents: new Set() };
+    if (!(left > 1e-9)) return;
+    const p = get(b); if (!p.name && r.description) p.name = String(r.description).trim();
+    p.ships[r.title] = (p.ships[r.title] || 0) + left; c.left += left; c.parents.add(b);
+  });
+  (await d1All(env, 'SELECT base, plan, updated_by, updated_at FROM location_plan')).forEach(r => {
+    const p = get(String(r.base).toUpperCase()); p.plan = r.plan || ''; p.planBy = r.updated_by || ''; p.planAt = r.updated_at || '';
+  });
+  const parents = Object.values(P).map(p => ({
+    base: p.base, name: p.name, plan: p.plan, planBy: p.planBy || '', planAt: p.planAt || '', cases: Math.round(p.cases * 100) / 100,
+    spots: Object.entries(p.spots).sort((a, b) => b[1] - a[1]).slice(0, 3).map(([location, cases]) => ({ location, cases })),
+    ships: Object.entries(p.ships).map(([title, left]) => ({ title, left: Math.round(left * 100) / 100 })),
+  })).sort((a, b) => a.base.localeCompare(b.base, undefined, { numeric: true }));
+  const containers = Object.values(conts).filter(c => c.left > 1e-9)
+    .map(c => ({ title: c.title, received: c.received, left: Math.round(c.left * 100) / 100, parents: c.parents.size }));
+  return cors(new Response(JSON.stringify({ ok: true, parents, containers }), { headers: { 'Content-Type': 'application/json' } }));
+}
+// POST /inventory/location-plan { base, plan } or { items: [{ base, plan }] } — management only.
+async function locationPlanSave(request, env, session) {
+  if (!session || session.pin_level !== 'mgmt') return cors(new Response(JSON.stringify({ ok: false, error: 'Management access required' }), { status: 403, headers: { 'Content-Type': 'application/json' } }));
+  await locationPlanTables(env);
+  const body = await request.json().catch(() => ({}));
+  const items = Array.isArray(body.items) ? body.items : [{ base: body.base, plan: body.plan }];
+  const by = (session.displayName || session.username || '').trim() || '?', at = new Date().toISOString();
+  const saved = [], bad = [];
+  for (const it of items.slice(0, 2000)) {
+    const base = parentOf(it && it.base), plan = locationPlanClean(it && it.plan);
+    if (!base) continue;
+    if (plan && !/^[A-Z0-9]+(=[A-Z0-9-]+)?$/.test(plan)) { bad.push(base + ': ' + plan); continue; }
+    const old = await env.DB.prepare('SELECT plan FROM location_plan WHERE base = ?').bind(base).first();
+    const oldPlan = (old && old.plan) || '';
+    if (oldPlan === plan) continue;
+    if (plan) await env.DB.prepare('INSERT INTO location_plan (base, plan, updated_by, updated_at) VALUES (?,?,?,?) ON CONFLICT(base) DO UPDATE SET plan = excluded.plan, updated_by = excluded.updated_by, updated_at = excluded.updated_at').bind(base, plan, by, at).run();
+    else await env.DB.prepare('DELETE FROM location_plan WHERE base = ?').bind(base).run();
+    await env.DB.prepare('INSERT INTO location_plan_log (base, old_plan, new_plan, by_user, at) VALUES (?,?,?,?,?)').bind(base, oldPlan, plan, by, at).run();
+    saved.push({ base, plan });
+  }
+  return cors(new Response(JSON.stringify({ ok: !bad.length, saved, bad, error: bad.length ? 'Not a spot or area: ' + bad.join(', ') + ' (use BARN, C1, or C1=1-2-3)' : undefined }), { headers: { 'Content-Type': 'application/json' } }));
+}
+// GET /inventory/location-plan/log?base= — who changed the plan, when.
+async function locationPlanLog(url, env) {
+  await locationPlanTables(env);
+  const base = parentOf(url.searchParams.get('base') || '');
+  const rows = base ? await d1All(env, 'SELECT * FROM location_plan_log WHERE base = ? ORDER BY id DESC LIMIT 100', [base])
+    : await d1All(env, 'SELECT * FROM location_plan_log ORDER BY id DESC LIMIT 200');
+  return cors(new Response(JSON.stringify({ ok: true, log: rows }), { headers: { 'Content-Type': 'application/json' } }));
+}
+
 // GET /inventory/suggest-location?partNum=26-2-1=2&fromLoc=BARN=1-1-1
 // GET /inventory/suggest-location?partNum=X&fromLoc=Y
 // Rebuilt on D1 — was reading Master_List!G2:I15000 + a separate LocationID
@@ -4823,7 +4907,22 @@ async function inventorySuggestLocation(url, env) {
       });
     } else { other = emptyLocs; }
 
-    return cors(new Response(JSON.stringify({ ok: true, existing, emptyNearby: nearby.slice(0,10), emptyOther: other.slice(0,5) }), { headers: { 'Content-Type': 'application/json' } }));
+    // 📍 Location Plan (only when asked: 🚢 Container here sends usePlan=1).
+    // The planned area's spots come first: shelves already holding this item
+    // in that area, then empty shelves in that area. Nothing else changes.
+    let plan = '', inPlan = null;
+    if (url.searchParams.get('usePlan') === '1') {
+      plan = await locationPlanFor(env, partNum);
+      if (plan) {
+        const area = plan.includes('=') ? plan.split('=')[0] + '=' : plan + '=';
+        inPlan = l => plan.includes('=') ? String(l).toUpperCase() === plan : String(l).toUpperCase().startsWith(area);
+        existing.sort((a, b) => (inPlan(b.location) ? 1 : 0) - (inPlan(a.location) ? 1 : 0));
+        const areaEmpty = emptyLocs.filter(l => inPlan(l) && !(fromLoc && l === fromLoc));
+        nearby = areaEmpty.concat(nearby.filter(l => !inPlan(l)));
+        other = other.filter(l => !inPlan(l));
+      }
+    }
+    return cors(new Response(JSON.stringify({ ok: true, existing, emptyNearby: nearby.slice(0,10), emptyOther: other.slice(0,5), plan, planExact: !!(plan && plan.includes('=')) }), { headers: { 'Content-Type': 'application/json' } }));
   } catch(e) {
     return cors(new Response(JSON.stringify({ ok: false, error: e.message }), { status: 500, headers: { 'Content-Type': 'application/json' } }));
   }
@@ -6285,6 +6384,9 @@ const _app = {
       if (path === '/inventory/location-list'      && method === 'GET')  return await inventoryLocationList(env);
       if (path === '/inventory/location-prefixes'  && method === 'GET')  return await inventoryLocationPrefixes(env);
       if (path === '/inventory/suggest-location'   && method === 'GET')  return await inventorySuggestLocation(url, env);
+      if (path === '/inventory/location-plan' && method === 'GET')  return await locationPlanList(env);
+      if (path === '/inventory/location-plan' && method === 'POST') return await locationPlanSave(request, env, session);
+      if (path === '/inventory/location-plan/log' && method === 'GET') return await locationPlanLog(url, env);
       if (path === '/inventory/prefixes'           && method === 'GET')  return await inventoryGetPrefixes(env);
       // mgmt-only routes
       if (session.pin_level !== 'mgmt') {
