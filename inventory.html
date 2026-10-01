@@ -7645,7 +7645,7 @@ window.invCredLogin = async function() {
   // Every parent part # with its name; management types where it goes (an
   // area like BARN / C1, or an exact spot). 🚢 Container here shows it when a
   // box is scanned. Filter to the parts on the containers to do those first.
-  var LP = { parents: [], containers: [], view: 'ships', saving: {}, sel: {} };
+  var LP = { parents: [], containers: [], view: 'ships', saving: {}, sel: {}, open: {} };
   function lpE(v) { return String(v == null ? '' : v).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;').replace(/'/g,'&#39;'); }
   function lpN(v) { return Math.round((parseFloat(v) || 0) * 100) / 100; }
   function lpClean(v) { return String(v || '').trim().toUpperCase().replace(/\s*=\s*/g, '=').replace(/=$/, ''); }
@@ -7666,7 +7666,10 @@ window.invCredLogin = async function() {
       if (LP.view === 'ships' && !p.ships.length) return false;
       if (LP.view.indexOf('c:') === 0 && !p.ships.some(function(s) { return s.title === LP.view.slice(2); })) return false;
       if (noPlan && p.plan) return false;
-      if (q && p.base.indexOf(q) < 0 && String(p.name || '').toUpperCase().indexOf(q) < 0) return false;
+      if (q && p.base.indexOf(q) < 0 && String(p.name || '').toUpperCase().indexOf(q) < 0) {
+        if (!(p.vars || []).some(function(v) { return v.part.indexOf(q) >= 0; })) return false;
+        if (q.indexOf('=') >= 0) LP.open[p.base] = 1; // searched a pack size → show its pack sizes
+      }
       return true;
     });
   }
@@ -7696,8 +7699,36 @@ window.invCredLogin = async function() {
         + (ships ? '<div style="font-size:11px;color:var(--accent)">' + ships + '</div>' : '')
         + (p.plan && p.planBy ? '<div style="font-size:10px;color:var(--text3)">plan by ' + lpE(p.planBy) + '</div>' : '') + '</div>'
         + '<input type="text" list="lp-areas" value="' + lpE(p.plan) + '" placeholder="BARN / C1…" data-base="' + lpE(p.base) + '" onchange="lpSave(this)" onkeydown="if(event.key===\'Enter\')this.blur()" autocomplete="off" style="width:110px;padding:8px;border:1.5px solid var(--border);border-radius:8px;background:var(--bg);color:var(--text);font-family:var(--mono);font-weight:700;text-transform:uppercase">'
-        + '</div>';
+        + '</div>' + lpVarsHtml(p);
     }).join('') : "<div class='iempty'>Nothing here</div>";
+  };
+  // Pack sizes: a plan for one pack size (23-3-1=10 → PR) wins over the
+  // parent's plan (23-3-1 → BSMT) when that box is scanned.
+  function lpVarsHtml(p) {
+    var vs = p.vars || [], own = vs.filter(function(v) { return v.plan; }).length, open = !!LP.open[p.base];
+    if (!vs.length) return '';
+    var h = '<div style="margin:-4px 0 8px 30px">'
+      + '<button type="button" onclick="lpToggleVars(' + lpE(JSON.stringify(p.base)) + ')" style="font-size:12px;padding:4px 10px;border-radius:7px;border:1.5px solid var(--border);background:var(--bg3);color:var(--text);cursor:pointer">'
+      + (open ? '▾' : '▸') + ' Pack sizes (' + vs.length + ')' + (own ? ' · <b style="color:var(--accent)">' + own + ' with their own plan</b>' : '') + '</button>';
+    if (open) h += vs.map(function(v) {
+      return '<div style="display:flex;gap:8px;align-items:center;padding:6px 8px;margin-top:5px;border:1.5px ' + (v.plan ? 'solid var(--accent)' : 'dashed var(--border)') + ';border-radius:8px;background:var(--bg)">'
+        + '<div style="flex:1;min-width:0"><div style="font-family:var(--mono);font-weight:700">' + lpE(v.part) + '</div>'
+        + '<div style="font-size:11px;color:var(--text3)">' + lpN(v.cases) + ' cases on shelves' + (v.left ? ' · <span style="color:var(--accent)">🚢 ' + lpN(v.left) + ' box(es) on the containers</span>' : '') + (v.plan && v.planBy ? ' · by ' + lpE(v.planBy) : '') + '</div></div>'
+        + '<input type="text" list="lp-areas" value="' + lpE(v.plan) + '" placeholder="' + lpE(p.plan ? 'same: ' + p.plan : 'same as parent') + '" data-part="' + lpE(v.part) + '" onchange="lpSavePart(this)" onkeydown="if(event.key===\'Enter\')this.blur()" autocomplete="off" style="width:110px;padding:7px;border:1.5px solid var(--border);border-radius:8px;background:var(--bg);color:var(--text);font-family:var(--mono);font-weight:700;text-transform:uppercase">'
+        + '</div>';
+    }).join('');
+    return h + '</div>';
+  }
+  window.lpToggleVars = function(base) { if (LP.open[base]) delete LP.open[base]; else LP.open[base] = 1; lpRender(); };
+  window.lpSavePart = function(el) {
+    var part = el.getAttribute('data-part'), plan = lpClean(el.value); el.value = plan;
+    if (plan && !/^[A-Z0-9]+(=[A-Z0-9-]+)?$/.test(plan)) { invFlash('Use an area (PR, BSMT) or a spot (C1=1-2-3)', 'error'); return; }
+    wFetch(W + '/inventory/location-plan', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ items: [{ part: part, plan: plan }] }) })
+      .then(function(r) { return r.json(); }).then(function(d) {
+        if (d.ok === false) { invFlash(d.error || 'Not saved', 'error'); return; }
+        LP.parents.forEach(function(p) { (p.vars || []).forEach(function(v) { if (v.part === part) { v.plan = plan; v.planBy = (INV_CRED_USER && INV_CRED_USER.displayName) || ''; } }); });
+        invFlash('✓ ' + part + (plan ? ' → ' + plan + ' (only this pack size)' : ' — back to the parent plan'), 'success'); lpRender();
+      }).catch(function() { invFlash('Not saved — network error', 'error'); });
   };
   function lpPost(items, done) {
     wFetch(W + '/inventory/location-plan', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ items: items }) })
@@ -7964,7 +7995,7 @@ window.invCredLogin = async function() {
         if (!xfrGo.sel || xfrGo.sel.id !== id) return;
         var skip = function(loc) { return /^GARAGE\b/i.test(loc); };
         xfrGo.sug = { existing: ((d && d.existing) || []).filter(function(x) { return !skip(x.location); }), empty: ((d && d.emptyNearby) || []).concat((d && d.emptyOther) || []).filter(function(x) { return !skip(x); }),
-          plan: (d && d.plan) || '', planExact: !!(d && d.planExact) };
+          plan: (d && d.plan) || '', planExact: !!(d && d.planExact), planPart: (d && d.planPart) || '' };
         xfrGoRender();
       }).catch(function() { xfrGo.sug = { existing: [], empty: [] }; xfrGoRender(); });
   };
@@ -8018,7 +8049,7 @@ window.invCredLogin = async function() {
   function xfrGoPlanDests(sug, dest) {
     var P = sug.plan, area = P.indexOf('=') >= 0 ? P.split('=')[0] + '=' : P + '=';
     var inA = function(loc) { loc = String(loc).toUpperCase(); return sug.planExact ? loc === P : loc.indexOf(area) === 0; };
-    var h = '<div style="padding:10px;border-radius:10px;background:#fef3c7;color:#92400e;font-weight:800;font-size:16px;margin-bottom:8px">📍 Plan: goes to ' + xfrE(P) + '</div>';
+    var h = '<div style="padding:10px;border-radius:10px;background:#fef3c7;color:#92400e;font-weight:800;font-size:16px;margin-bottom:8px">📍 Plan: ' + (sug.planPart ? xfrE(sug.planPart) + ' ' : '') + 'goes to ' + xfrE(P) + (sug.planPart ? '<div style="font-size:11px;font-weight:600">This pack size has its own plan</div>' : '') + '</div>';
     if (sug.planExact) {
       h += dest(P, 'The plan spot', true);
       sug.existing.filter(function(x) { return !inA(x.location); }).slice(0, 2).forEach(function(x) { h += dest(x.location, 'Not the plan — also has this item (' + xfrN(x.cases) + ' cases)', false); });

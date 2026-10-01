@@ -358,6 +358,20 @@ console.log('\n📍 Location Plan: where each parent goes; Container here tells 
   await post('/inventory/location-plan', { base: '70-1-1', plan: '' });
   check('clearing a plan removes it (and is kept in the log); counts never change', !(await get('/inventory/location-plan')).parents.find(p => p.base === '70-1-1').plan && (await get('/inventory/location-plan/log?base=70-1-1')).log.length === 2 && shelf() === shelf0, null);
   check('the plan needs a sign-in', (await call('/inventory/location-plan')).status === 401, null);
+  // one pack size gets its own plan: 70-1-1=10 → PR, the rest of 70-1-1 → BSMT
+  sq.prepare("INSERT INTO master_list (base_sku, name, part_num, location, cases, units_per_case) VALUES ('70-1-1','1/2 Plug','70-1-1=10','C1=1-1-2',2,50)").run();
+  sq.prepare("INSERT OR IGNORE INTO locations (location, prefix, active) VALUES ('PR=1-1-1','PR=',1), ('BSMT=1-1-1','BSMT=',1)").run();
+  const pv = await post('/inventory/location-plan', { items: [{ base: '70-1-1', plan: 'BSMT' }, { part: '70-1-1=10', plan: 'pr' }] });
+  const a10 = await get('/inventory/suggest-location?usePlan=1&partNum=70-1-1%3D10&fromLoc=GARAGE');
+  const a5 = await get('/inventory/suggest-location?usePlan=1&partNum=70-1-1%3D5&fromLoc=GARAGE');
+  check('70-1-1=10 → PR (its own plan); 70-1-1=5 → BSMT (the parent plan)', pv.ok && a10.plan === 'PR' && a10.planLevel === 'part' && a10.planPart === '70-1-1=10' && a10.emptyNearby[0] === 'PR=1-1-1' && a5.plan === 'BSMT' && a5.planLevel === 'parent' && a5.emptyNearby[0] === 'BSMT=1-1-1', { a10, a5 });
+  const Lv = (await get('/inventory/location-plan')).parents.find(p => p.base === '70-1-1');
+  check('the list shows the parent plan and each pack size with its own plan', Lv.plan === 'BSMT' && Lv.vars.some(v => v.part === '70-1-1=10' && v.plan === 'PR' && v.cases === 2) && Lv.vars.some(v => v.part === '70-1-1=5' && !v.plan && v.left === 2), Lv);
+  const lg2 = await get('/inventory/location-plan/log?base=70-1-1');
+  await post('/inventory/location-plan', { items: [{ part: '70-1-1=10', plan: '' }] });
+  const a10b = await get('/inventory/suggest-location?usePlan=1&partNum=70-1-1%3D10&fromLoc=GARAGE');
+  const badPart = await post('/inventory/location-plan', { items: [{ part: '70-1-1', plan: 'PR' }] });
+  check('pack-size change is in the parent\'s log; clearing it goes back to the parent plan; a part # with no pack size is refused', lg2.log.some(l => l.base === '70-1-1=10' && l.new_plan === 'PR') && a10b.plan === 'BSMT' && a10b.planLevel === 'parent' && !badPart.ok && shelf() === shelf0 + 2, { a10b, badPart });
 }
 
 console.log('\n🧪 Test switch: ON → do anything → OFF puts everything back');
