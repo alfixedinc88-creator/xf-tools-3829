@@ -268,5 +268,35 @@ console.log('\nStock Out: Sold Out label + None Found count');
   check('None Found count: SKU Mgr changes only by the counted difference, with History before → after', nf.ok && nfRow.status === 'Verified' ? (nfRow.b === 1 && nfRow.a === 3 && shelf() === shelfNf + 2) : (nfRow.status === 'Pending' && shelf() === shelfNf), { nfRow, shelf: shelf(), shelfNf });
 }
 
+console.log('\nVendor names hidden from workers · box UPCs · photos (Admins)');
+{
+  const T = 'JQ 1002';
+  await post('/reorder/vendor-catalog/import', { vendor: 'JQ', title: T, stage: 'shipped', last: true, file: 'jq-1002.xlsx', rows: [{ part: '33-3-3=10', raw: '33-3-3=10', qty: 30, cases: 3, pcs: 300, case_pcs: 100, src_rows: '5', description: 'tee' }] });
+  await post('/reorder/fix/pallets', { title: T, vendor: 'JQ', file: 'jq-1002.xlsx', lines: [{ pallet: '1', part: '33-3-3=10', raw: '33-3-3=10', cases: 3, pcs: 300, units: 30, pcsPerCtn: 100, row: '5' }] });
+  await post('/reorder/fix/incoming-receive', { title: T, location: 'GARAGE', lines: [{ key: '33-3-3=10', part: '33-3-3=10', cases: 3, description: 'tee' }] });
+  const cl = await get('/inventory/containers');
+  const hs = await get('/inventory/history?days=1&status=all');
+  check('a worker (not the owner) sees "#1 1002", never the vendor name', cl.containers.some(c => c.title === '#1 1002') && !/\bJQ\b/.test(JSON.stringify(cl)) && !hs.rows.some(r => /\bJQ\b/.test(r.notes || '')), cl.containers.map(c => c.title));
+  const byMasked = await get('/inventory/containers/pallets?title=' + encodeURIComponent('#1 1002'));
+  check('opening "#1 1002" still finds the real container', byMasked.ok && byMasked.lines.length === 1 && byMasked.lines[0].part === '33-3-3=10', byMasked);
+  const own = sq.prepare('INSERT INTO cred_users (username, password_hash, display_name, active, created_at) VALUES (?,?,?,1,?)').run('owner1', hex(salt) + ':' + hex(new Uint8Array(bits)), 'OW', new Date().toISOString());
+  for (const role of ['mgmt', 'owner']) sq.prepare('INSERT INTO cred_user_roles (user_id, role) VALUES (?,?)').run(own.lastInsertRowid, role);
+  const ol = await (await call('/auth/login', { method: 'POST', body: '{"username":"owner1","password":"password1"}' })).json();
+  const oc = await (await call('/inventory/containers', { headers: { 'X-Cred-Token': ol.token } })).json();
+  check('the owner still sees the real name', oc.containers.some(c => c.title === T), oc.containers.map(c => c.title));
+  const mu = await get('/inventory/containers/missing-upc');
+  check('Container here lists pallet items with no box UPC (33-3-3=10 has none)', mu.ok && mu.missing.some(x => x.part === '33-3-3=10'), mu);
+  await post('/inventory/upc-link', { upc: '00810097207066', part: '33-3-3=10' });
+  const mu2 = await get('/inventory/containers/missing-upc');
+  const lk = await get('/inventory/lookup?code=00810097207066');
+  check('after saving its box UPC: not missing anymore, and the box scan finds 33-3-3=10', !mu2.missing.some(x => x.part === '33-3-3=10') && lk.partNum === '33-3-3=10', { mu2: mu2.missing.map(x => x.part), lk: lk.partNum });
+  const mg = sq.prepare('INSERT INTO cred_users (username, password_hash, display_name, active, created_at) VALUES (?,?,?,1,?)').run('mgr1', hex(salt) + ':' + hex(new Uint8Array(bits)), 'MG', new Date().toISOString());
+  sq.prepare('INSERT INTO cred_user_roles (user_id, role) VALUES (?,?)').run(mg.lastInsertRowid, 'mgmt');
+  const ml = await (await call('/auth/login', { method: 'POST', body: '{"username":"mgr1","password":"password1"}' })).json();
+  const pm = await call('/inventory/product-photo', { method: 'POST', headers: { 'X-Cred-Token': ml.token, 'Content-Type': 'application/json' }, body: JSON.stringify({ baseSku: '33-3-3', imageUrl: 'https://x/y.jpg' }) });
+  const pa = await post('/inventory/product-photo', { baseSku: '33-3-3', imageUrl: 'https://img.example/tee33.jpg', editedBy: 'TS' });
+  check('only Admins change product photos (manager 403, Admin saves)', pm.status === 403 && pa.ok !== false && (await get('/inventory/photos?bases=33-3-3')).photos['33-3-3'] === 'https://img.example/tee33.jpg', { mgr: pm.status, pa });
+}
+
 console.log('\n' + (failed ? '❌ ' + failed + ' check(s) FAILED' : '✅ all ' + passed + ' checks passed') + '\n');
 process.exit(failed ? 1 : 0);

@@ -53,6 +53,14 @@ var RPO_WORKER = 'https://xfitting-lookup.alfixedinc88.workers.dev';
 var RPO_CRED_TOKEN = localStorage.getItem('xf_cred_token') || null;
 var RPO_CRED_USER  = null;
 try { RPO_CRED_USER = JSON.parse(localStorage.getItem('xf_cred_user') || 'null'); } catch(e) {}
+// Vendor names show as codes (#1 JQ · #2 EFF · #3 Yao) to everyone but the
+// owner — on screen only; the real vendor is still what gets saved.
+function rpoIsOwner() { return !!(RPO_CRED_USER && (RPO_CRED_USER.roles || []).indexOf('owner') >= 0); }
+function rpoVc(t) { if (t == null || rpoIsOwner()) return t;
+  var m = { JQ: '#1', WU: '#1', EFF: '#2', YAO: '#3' };
+  return String(t).replace(/\b(JQ|WU|EFF|YAO)(?=\d)/gi, function(x) { return m[x.toUpperCase()] + '-'; }).replace(/\b(JQ|WU|EFF|YAO)\b/gi, function(x) { return m[x.toUpperCase()]; }); }
+function rpoMaskStatic() { if (rpoIsOwner()) return; document.querySelectorAll('.rpo-vn').forEach(function(el) { el.textContent = rpoVc(el.textContent); }); }
+document.addEventListener('DOMContentLoaded', rpoMaskStatic);
 
 function rpoShowLoginGate() {
   var gate = document.getElementById('rpo-cred-gate');
@@ -84,7 +92,7 @@ window.rpoCredLogin = async function() {
     if (!res.ok) { err.textContent = data.error || 'Login failed'; return; }
     if (!data.roles.includes('mgmt')) { err.textContent = 'This account does not have management access.'; return; }
     RPO_CRED_TOKEN = data.token;
-    RPO_CRED_USER = { displayName: data.displayName, roles: data.roles, userId: data.userId };
+    RPO_CRED_USER = { displayName: data.displayName, roles: data.roles, userId: data.userId }; rpoMaskStatic();
     localStorage.setItem('xf_cred_token', data.token);
     localStorage.setItem('xf_cred_user', JSON.stringify(RPO_CRED_USER));
     rpoShowApp();
@@ -228,10 +236,10 @@ document.addEventListener('DOMContentLoaded', async function() {
 
     <div style="margin-bottom:14px">
       <div class="rpo-label" style="margin-bottom:8px">Vendor for this shipment <span style="color:var(--red)">*</span></div>
-      <p style="font-size:12px;color:var(--text3);margin-bottom:10px;line-height:1.4">Pallet-name auto-detection isn't reliable when a JQ shipment uses plain numbered pallets — pick the real vendor here to override it completely for this upload.</p>
+      <p style="font-size:12px;color:var(--text3);margin-bottom:10px;line-height:1.4">Pallet-name auto-detection isn't reliable when a <span class="rpo-vn">JQ</span> shipment uses plain numbered pallets — pick the real vendor here to override it completely for this upload.</p>
       <div style="display:flex;gap:8px">
-        <button type="button" id="rpo-vendor-jq" class="rpo-vendor-btn" onclick="rpoSetVendor('JQ')" style="flex:1;padding:12px;border:2px solid var(--border);border-radius:8px;background:var(--bg2);font-weight:600;cursor:pointer;font-family:inherit">JQ</button>
-        <button type="button" id="rpo-vendor-eff" class="rpo-vendor-btn" onclick="rpoSetVendor('EFF')" style="flex:1;padding:12px;border:2px solid var(--border);border-radius:8px;background:var(--bg2);font-weight:600;cursor:pointer;font-family:inherit">EFF</button>
+        <button type="button" id="rpo-vendor-jq" class="rpo-vendor-btn" onclick="rpoSetVendor('JQ')" style="flex:1;padding:12px;border:2px solid var(--border);border-radius:8px;background:var(--bg2);font-weight:600;cursor:pointer;font-family:inherit"><span class="rpo-vn">JQ</span></button>
+        <button type="button" id="rpo-vendor-eff" class="rpo-vendor-btn" onclick="rpoSetVendor('EFF')" style="flex:1;padding:12px;border:2px solid var(--border);border-radius:8px;background:var(--bg2);font-weight:600;cursor:pointer;font-family:inherit"><span class="rpo-vn">EFF</span></button>
         <button type="button" id="rpo-vendor-mixed" class="rpo-vendor-btn" onclick="rpoSetVendor('AUTO')" style="flex:1;padding:12px;border:2px solid var(--border);border-radius:8px;background:var(--bg2);font-weight:600;cursor:pointer;font-family:inherit">Mixed (auto-detect)</button>
       </div>
     </div>
@@ -747,7 +755,7 @@ document.addEventListener('DOMContentLoaded', async function() {
         return '<div style="display:flex;align-items:center;gap:10px;padding:7px 0;border-bottom:1px solid var(--border);flex-wrap:wrap">'
           + '<span class="rpo-mono" style="font-size:13px;font-weight:700;color:var(--text);min-width:140px">' + item.partNum + '</span>'
           + '<span style="font-size:12px;color:var(--text3);flex:1">' + (item.desc || '—') + '</span>'
-          + '<span class="rpo-mono" style="font-size:11px;color:var(--text3)">' + item.pallet + '</span>'
+          + '<span class="rpo-mono" style="font-size:11px;color:var(--text3)">' + rpoVc(item.pallet) + '</span>'
           + '<span class="rpo-badge rpo-badge-err">\u2717 Not in Catalog</span>'
           + '</div>';
       }).join('');
@@ -809,11 +817,11 @@ document.addEventListener('DOMContentLoaded', async function() {
 
       tr.innerHTML = '<td class="rpo-mono">' + item.partNum + '</td>'
         + '<td style="font-size:12px;color:var(--text2);max-width:180px">' + (item.desc || '\u2014') + '</td>'
-        + '<td class="rpo-mono" style="font-size:11px">' + item.pallet + '</td>'
-        + '<td><span style="font-size:11px;font-weight:700;color:' + (item.vendor==='JQ'?'var(--accent)':'var(--orange)') + '">' + item.vendor + '</span></td>'
+        + '<td class="rpo-mono" style="font-size:11px">' + rpoVc(item.pallet) + '</td>'
+        + '<td><span style="font-size:11px;font-weight:700;color:' + (item.vendor==='JQ'?'var(--accent)':'var(--orange)') + '">' + rpoVc(item.vendor) + '</span></td>'
         + '<td class="rpo-mono" style="text-align:right">' + (item.cases || '\u2014') + '</td>'
         + '<td class="rpo-mono" style="text-align:right">' + (item.upc || '\u2014') + '</td>'
-        + '<td><span class="rpo-new-loc rpo-mono">' + item.pallet + '</span></td>'
+        + '<td><span class="rpo-new-loc rpo-mono">' + rpoVc(item.pallet) + '</span></td>'
         + '<td>' + colKHtml + '</td>'
         + '<td style="text-align:right">' + oldPriceHtml + '</td>'
         + '<td style="text-align:right">' + newPriceHtml + '</td>'
