@@ -163,16 +163,17 @@ const mkCont = async (T, part) => {
   await post('/reorder/fix/pallets', { title: T, vendor: 'KW', file: 'dup.xlsx', lines: [{ pallet: '1', part, raw: part, cases: 5, pcs: 500, units: 50, pcsPerCtn: 100, row: '5' }] });
 };
 const hasCont = async T => ((await get('/inventory/containers')).containers || []).some(c => c.title === T);
+const palletsOf = T => sq.prepare('SELECT COUNT(*) n FROM reorder_pallet WHERE title = ?').get(T).n;
 const shelfBeforeDel = shelf();
 await mkCont('Container DUP', '60-4-4=1');
 const d0 = await post('/inventory/containers/delete', { title: 'Container DUP', reason: 'imported twice' });
-check('still On the way: not deleted (remove it on Reorder first)', !d0.ok && /On the way/.test(d0.error) && await hasCont('Container DUP'), d0);
+check('still On the way: not deleted (remove it on Reorder first)', !d0.ok && /On the way/.test(d0.error) && palletsOf('Container DUP') === 1, d0);
 await post('/reorder/fix/incoming-remove', { title: 'Container DUP', reason: 'imported twice' });
-check('removed on Reorder but pallets still listed (what the owner saw)', await hasCont('Container DUP'), null);
+check('never 📦 Received (e.g. a double removed on Reorder): not shown in Container here', !(await hasCont('Container DUP')) && palletsOf('Container DUP') === 1, null);
 const dNo = await (await call('/inventory/containers/delete', { method: 'POST', headers: { 'X-Cred-Token': pk.token, 'Content-Type': 'application/json' }, body: JSON.stringify({ title: 'Container DUP', reason: 'x' }) })).status;
 check('only management can delete a container', dNo === 403, dNo);
 const d1 = await post('/inventory/containers/delete', { title: 'Container DUP', reason: 'imported twice' });
-check('delete removes it from Container here, SKU Mgr unchanged', d1.ok && d1.boxes === 5 && !(await hasCont('Container DUP')) && shelf() === shelfBeforeDel, { d1, shelf: shelf(), before: shelfBeforeDel });
+check('delete removes its pallets, SKU Mgr unchanged', d1.ok && d1.boxes === 5 && palletsOf('Container DUP') === 0 && shelf() === shelfBeforeDel, { d1, shelf: shelf(), before: shelfBeforeDel });
 check('delete is logged in Reorder → History with who and why', sq.prepare("SELECT COUNT(*) n FROM reorder_history WHERE detail LIKE '%Deleted container \"Container DUP\"%imported twice%'").get().n === 1, sq.prepare('SELECT * FROM reorder_history ORDER BY id DESC LIMIT 2').all());
 const dR = await post('/inventory/containers/delete', { title: CT, reason: 'test' });
 check('a 📦 Received container asks first (its stock is in SKU Mgr), nothing deleted', !dR.ok && dR.needConfirm && dR.received.length === 2 && await hasCont(CT), dR);
@@ -184,7 +185,7 @@ await post('/reorder/fix/incoming-remove', { title: 'Container MOVED', reason: '
 const mvId = sq.prepare("SELECT id FROM reorder_pallet WHERE title = 'Container MOVED'").get().id;
 sq.prepare('INSERT INTO pallet_move (pallet_id, cases, to_location, at) VALUES (?,?,?,?)').run(mvId, 2, 'C1=1-1-1', new Date().toISOString());
 const dM = await post('/inventory/containers/delete', { title: 'Container MOVED', reason: 'test' });
-check('boxes already moved off a pallet: not deleted', !dM.ok && /already moved/.test(dM.error) && await hasCont('Container MOVED'), dM);
+check('boxes already moved off a pallet: not deleted', !dM.ok && /already moved/.test(dM.error) && palletsOf('Container MOVED') === 1, dM);
 
 console.log('\nPack & Ship: Printed Today tiles don\'t flood Veeqo');
 {
@@ -236,6 +237,22 @@ console.log('\nStock Out Reports: a "c" after the parent part # is dropped (27-3
   check('looking up 27-3-4c finds parent 27-3-4', lc.baseSku === '27-3-4' && lc.locations.some(l => l.partNum === '27-3-4=5'), { baseSku: lc.baseSku, partNum: lc.partNum });
   const lx = await get('/inventory/lookup?code=31-1-2%3D5XX');
   check('letters after "=" are left alone (31-1-2=5XX)', lx.partNum === '31-1-2=5XX', lx.partNum);
+}
+
+console.log('\nContainer here: only containers already 📦 Received on Reorder');
+{
+  const T1 = 'Container ONWATER';
+  await post('/reorder/vendor-catalog/import', { vendor: 'KW', title: T1, stage: 'shipped', last: true, file: 'w.xlsx', rows: [{ part: '60-6-6=1', raw: '60-6-6=1', qty: 10, cases: 1, pcs: 100, case_pcs: 100, src_rows: '5', description: 'x' }] });
+  await post('/reorder/fix/pallets', { title: T1, vendor: 'KW', file: 'w.xlsx', lines: [{ pallet: '1', part: '60-6-6=1', raw: '60-6-6=1', cases: 1, pcs: 100, units: 100, pcsPerCtn: 100, row: '5' }] });
+  const before = await hasCont(T1);
+  const srch = await get('/inventory/containers/pallets?q=ONWATER');
+  await post('/reorder/fix/incoming-receive', { title: T1, location: 'GARAGE', lines: [{ key: '60-6-6=1', part: '60-6-6=1', cases: 1, description: 'x' }] });
+  const after = await hasCont(T1);
+  const srch2 = await get('/inventory/containers/pallets?q=ONWATER');
+  check('still on the way: not in Container here (list or search)', !before && srch.lines.length === 0, { before, n: srch.lines.length });
+  check('after 📦 Received: shows in Container here (list and search)', after && srch2.lines.length === 1, { after, n: srch2.lines.length });
+  const byTitle = await get('/inventory/containers/pallets?title=' + encodeURIComponent('Container KW-TEST2'));
+  check('opening a container by name (Reorder sold-out report) still works before receiving', byTitle.ok && byTitle.lines.length === 2, byTitle.lines && byTitle.lines.length);
 }
 
 console.log('\n' + (failed ? '❌ ' + failed + ' check(s) FAILED' : '✅ all ' + passed + ' checks passed') + '\n');

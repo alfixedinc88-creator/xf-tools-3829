@@ -7370,7 +7370,7 @@ window.invCredLogin = async function() {
     wFetch(W + '/inventory/containers').then(function(r) { return r.json(); }).then(function(d) {
       if (!d.ok) { box.innerHTML = "<div class='iempty'>Load failed</div>"; return; }
       xfrCont.containers = d.containers;
-      if (!d.containers.length) { box.innerHTML = "<div class='iempty'>No containers with pallets yet — import the shipped container's packing list on Reorder Planner → Reorder (Stage: 🚢 Shipped container).</div>"; return; }
+      if (!d.containers.length) { box.innerHTML = "<div class='iempty'>No received containers yet — a container shows here after you click 📦 Received on it in Reorder Planner → Reorder.</div>"; return; }
       box.innerHTML = '<div style="font-size:11px;font-weight:700;letter-spacing:.5px;text-transform:uppercase;color:var(--text3);margin-bottom:6px">Containers</div>'
         + d.containers.map(function(c, i) {
           var done = c.cases > 0 && c.moved >= c.cases;
