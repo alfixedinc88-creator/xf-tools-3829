@@ -442,5 +442,17 @@ console.log('\n🧪 Test switch: ON → do anything → OFF puts everything back
   await post('/inventory/review-mode', { mode: 'manual' });
 }
 
+console.log('\nScanner phones: "hide the keyboard" also works on boxes that open by themselves');
+{
+  const { readFileSync } = await import('node:fs');
+  const xa = readFileSync(fileURLToPath(new URL('../xf-access.js', import.meta.url)), 'utf8');
+  // Owner: "Transfer → scan the box always pops the keyboard, even with hiding on" — the Put away
+  // popup focused its box before the setting reached it. The box must be keyboard-off BEFORE focus.
+  check('keyboard-off is set before a box gets focus (page code .focus(), a tap) and right when a popup draws it', /HTMLElement\.prototype\.focus = function/.test(xa) && /addEventListener\(ev, function \(e\)[\s\S]{0,120}mute\(el\)/.test(xa) && /m\.addedNodes/.test(xa), null);
+  const pages = ['inventory.html', 'packship.html', 'warehouse.html'].map(f => readFileSync(fileURLToPath(new URL('../' + f, import.meta.url)), 'utf8'));
+  const v = (pages[0].match(/xf-access\.js\?v=([\w]+)/) || [])[1];
+  check('every page loads the same (new) xf-access.js version', v && pages.every(h => h.includes('xf-access.js?v=' + v)), v);
+}
+
 console.log('\n' + (failed ? '❌ ' + failed + ' check(s) FAILED' : '✅ all ' + passed + ' checks passed') + '\n');
 process.exit(failed ? 1 : 0);
