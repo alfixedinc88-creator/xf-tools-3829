@@ -315,6 +315,7 @@ console.log('\nVendor #1/#2 box + bag UPC list (data/upc) — scanner finds the 
   const t = async (code, part) => (await get('/inventory/lookup?code=' + code)).partNum === part;
   check('box UPC 00810097206540 → 24-1-2=1, bag UPC 00810097206533 → 24-1-2=1', await t('00810097206540', '24-1-2=1') && await t('00810097206533', '24-1-2=1'), null);
   check('UPC typed into the sheet as a number (840428904241.0) still found → 26-5-2=2X', await t('840428904241', '26-5-2=2X'), null);
+  check('updated list: new 202-4-10=2XX box 840428935962 and 43-4-12=2X bag 840428945053 scan to them', await t('840428935962', '202-4-10=2XX') && await t('840428945053', '43-4-12=2X'), null);
   check('a part # with two box UPCs (4-2-3=10) — both scan to it', await t('840428900175', '4-2-3=10') && await t('00810139935872', '4-2-3=10'), null);
 }
 
