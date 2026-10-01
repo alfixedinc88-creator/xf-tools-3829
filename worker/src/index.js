@@ -4879,18 +4879,19 @@ async function locationPlanLog(url, env) {
 }
 
 // POST /inventory/containers/pallet-recs { parts: [...], fromLoc } — 🚢 Container
-// here: 2 suggested spots per item on a pallet (shown, not tapped — the
-// guy scans the shelf label he really used). With a 📍 Location Plan: the
-// shelves in that area already holding the same parent part # (the plan
-// note itself says the area / spot). No plan: the shelves holding the most
-// of the same parent part #, then empty shelves.
+// here: 2 suggested shelves per item on a pallet (shown, not tapped — the
+// guy scans the shelf label he really used): shelves already holding the
+// same parent part # (most first), then empty shelves — inside the 📍 plan
+// area when there is one. Never an area name with no shelf number.
 // Read only.
 async function palletRecs(request, env) {
   const J = (o, st) => cors(new Response(JSON.stringify(o), { status: st || 200, headers: { 'Content-Type': 'application/json' } }));
   const body = await request.json().catch(() => ({}));
   const parts = [...new Set((body.parts || []).map(p => String(p || '').trim().toUpperCase()).filter(Boolean))].slice(0, 200);
   const fromLoc = String(body.fromLoc || '').trim().toUpperCase();
-  const skip = l => !l || /^GARAGE\b/i.test(l) || l === fromLoc;
+  // Only real shelves (C1=1-2-3); an area name saved as a location ("BARN=")
+  // is never suggested (owner: "BARN= empty shelf in BARN" is no help).
+  const skip = l => !l || /^GARAGE\b/i.test(l) || l === fromLoc || !/^[A-Z0-9]+=\d+(-\d+)*$/.test(l);
   const parents = [...new Set(parts.map(p => parentOf(p)).filter(Boolean))];
   const held = {}; // parent → { location: cases }
   for (let i = 0; i < parents.length; i += 40) {
@@ -4908,11 +4909,14 @@ async function palletRecs(request, env) {
     const area = plan ? (plan.includes('=') ? plan.split('=')[0] + '=' : plan + '=') : '';
     const inPlan = l => !plan || (plan.includes('=') ? l === plan : l.startsWith(area));
     const recs = [], add = (location, why) => { if (recs.length < 2 && !recs.some(r => r.location === location)) recs.push({ location, why }); };
-    // With a plan, the "📍 Plan: goes to BARN" note already says where; only
-    // the shelves in that area that already hold this item are added (owner:
-    // "empty shelf in BARN" just repeats the plan).
+    // With a plan area (📍 Plan: goes to BARN): BARN shelves already holding
+    // this item, then empty BARN shelves — 2 real shelves. An exact plan spot
+    // is the plan note itself, nothing more to suggest.
     const has = Object.entries(held[b] || {}).sort((x, y) => y[1] - x[1]);
-    has.filter(([l]) => plan && !plan.includes('=') && inPlan(l)).forEach(([l, c]) => add(l, 'has ' + Math.round(c * 100) / 100 + ' cases of ' + b));
+    if (plan && !plan.includes('=')) {
+      has.filter(([l]) => inPlan(l)).forEach(([l, c]) => add(l, 'has ' + Math.round(c * 100) / 100 + ' cases of ' + b));
+      empty.filter(inPlan).forEach(l => add(l, 'empty shelf'));
+    }
     if (!plan) has.forEach(([l, c]) => add(l, 'has ' + Math.round(c * 100) / 100 + ' cases of ' + b));
     if (!plan) empty.forEach(l => add(l, 'empty shelf'));
     out[part] = { plan, planLevel: at.level, recs };

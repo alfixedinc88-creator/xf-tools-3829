@@ -8053,7 +8053,7 @@ window.invCredLogin = async function() {
           + '<span style="font-size:12px">box(es)</span></div></div></div>'
           + (w ? '<div style="margin-top:8px;font-size:12px;font-weight:700;color:#b91c1c">' + w + '</div>' : '')
           + (R.plan ? '<div style="margin-top:8px;padding:8px 10px;border-radius:10px;background:#fef3c7;color:#92400e;font-weight:800;font-size:15px">📍 Plan: ' + (R.planLevel === 'part' ? xfrE(l.part) + ' ' : '') + 'goes to ' + xfrE(R.plan) + (R.planLevel === 'part' ? '<div style="font-size:11px;font-weight:600">This pack size has its own plan</div>' : '') + '</div>' : '')
-          + (R.recs.length || !R.plan ? '<div style="font-size:12px;font-weight:700;margin:10px 0 4px">' + (R.plan ? 'Shelves in ' + xfrE(R.plan) + ' that already have it:' : 'Suggested spots:') + '</div>' : '')
+          + (R.recs.length || !R.plan ? '<div style="font-size:12px;font-weight:700;margin:10px 0 4px">Suggested spots:</div>' : '')
           + (R.recs.length ? R.recs.map(function(r, i) { return '<div style="padding:8px 10px;margin-bottom:5px;border-radius:9px;border:1.5px solid ' + (i ? 'var(--border)' : 'var(--green)') + ';background:' + (i ? 'var(--bg3)' : 'var(--green-bg,#dcfce7)') + '"><span style="font-family:var(--mono);font-weight:800;font-size:' + (i ? '14' : '17') + 'px">' + (i ? '2. ' : '1. ') + xfrE(r.location) + '</span> <span style="font-size:11px;color:var(--text3)">' + xfrE(r.why) + '</span></div>'; }).join('')
             : R.plan ? '' : '<div style="font-size:12px;color:var(--orange);margin-bottom:6px">No suggestion — put it on a free shelf and scan its label</div>')
           + '<div style="margin-top:8px;padding:9px;border-radius:9px;background:var(--bg3);font-size:13px;font-weight:700;text-align:center">📷 Move the boxes, then scan the shelf label in the box above</div>'
@@ -8954,7 +8954,7 @@ window.invCredLogin = async function() {
       .then(function(r) { return r.json(); }).then(function(d) {
         var R = (d && d.recs && d.recs[String(item.partNum).toUpperCase()]) || { plan: '', recs: [] }, el = g('xfr-put-sug'); if (!el) return;
         el.innerHTML = (R.plan ? '<div style="padding:7px 10px;border-radius:9px;background:#fef3c7;color:#92400e;font-weight:800;font-size:14px;margin-bottom:4px">📍 Plan: goes to ' + E(R.plan) + '</div>' : '')
-          + (R.recs.length ? '<div>' + (R.plan ? 'Shelves in ' + E(R.plan) + ' that already have it: ' : 'Suggested: ') + R.recs.map(function(r) { return '<b style="font-family:var(--mono);color:var(--green)">' + E(r.location) + '</b>'; }).join(' · ') + '</div>' : '');
+          + (R.recs.length ? '<div>Suggested: ' + R.recs.map(function(r) { return '<b style="font-family:var(--mono);color:var(--green)">' + E(r.location) + '</b>'; }).join(' · ') + '</div>' : '');
       }).catch(function() {});
   };
   window.xfrPutBox = function(code) {
