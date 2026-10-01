@@ -62,6 +62,14 @@ save FBA bags for their own FBA listing.
   open #2 and rebag it for #1).
 - For Big Company, the part # asked for is its own listing, so it comes first.
 
+**Boxes still on a container's pallets come last, on both tabs.** A spot whose
+cases are all still on a 📦 Received container's pallets (not moved off in 🚢
+Container here) is hard to get at (pallets stand against each other). Use every
+shelf spot first, FBA bags on shelves included, then the pallets (Rule #1 and
+the rules below still apply among the pallets). On the Pull List the picker can
+grab whatever box on the pallet is easiest and scan it (🔁 Replace) to swap the
+item for it — same item (parent part #) only, recorded in the Stock Out notes.
+
 Then Shelving: oldest first (fewer letters after the pack number = older),
 one spot rather than two.
 
