@@ -316,7 +316,7 @@ console.log('\nVendor #1/#2 box + bag UPC list (data/upc) — scanner finds the 
   check('box UPC 00810097206540 → 24-1-2=1, bag UPC 00810097206533 → 24-1-2=1', await t('00810097206540', '24-1-2=1') && await t('00810097206533', '24-1-2=1'), null);
   check('UPC typed into the sheet as a number (840428904241.0) still found → 26-5-2=2X', await t('840428904241', '26-5-2=2X'), null);
   check('updated list: new 202-4-10=2XX box 840428935962 and 43-4-12=2X bag 840428945053 scan to them', await t('840428935962', '202-4-10=2XX') && await t('840428945053', '43-4-12=2X'), null);
-  check('3rd file: 27-3-1=1W.1C box 840428927486 → 27-3-1=1W.1C; 28-4-1C=2X box 810139931782 → 28-4-1=2X (C dropped); 61853-K=1X box 00840428943714 → 61853-K=1X', await t('840428927486', '27-3-1=1W.1C') && await t('810139931782', '28-4-1=2X') && await t('00840428943714', '61853-K=1X'), null);
+  check('3rd file: 27-3-1=1W.1C box 840428927486 → 27-3-1=1W.1C; 28-4-1C=2X box 810139931782 → 28-4-1C=2X (its own part #), 28-4-1=2X box 810139931720 → 28-4-1=2X; 61853-K=1X box 00840428943714 → 61853-K=1X', await t('840428927486', '27-3-1=1W.1C') && await t('810139931782', '28-4-1C=2X') && await t('810139931720', '28-4-1=2X') && await t('28-4-1C%3D2X', '28-4-1C=2X') && await t('00840428943714', '61853-K=1X'), null);
   check('".=2X" rows are not saved (their UPC 00840428942359 finds nothing)', (await get('/inventory/lookup?code=00840428942359')).partNum == null, null);
   check('a part # with two box UPCs (4-2-3=10) — both scan to it', await t('840428900175', '4-2-3=10') && await t('00810139935872', '4-2-3=10'), null);
 }

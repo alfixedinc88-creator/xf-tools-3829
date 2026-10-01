@@ -13,13 +13,13 @@ Both tabs are read. Earlier versions are in git history.
   - inside bag UPC;
   - the part # as written in the file, when it was changed.
 
-  It has 2,806 part #s in 2,819 rows. A few part #s have two UPC sets (old and new packaging), and both scan to the part #.
+  It has 2,815 part #s in 2,819 rows. A few part #s have two UPC sets (old and new packaging), and both scan to the part #.
 - `worker/src/vendor-upc.js`: the same list, built into the Worker. A scanned box or bag UPC finds its part # (Inventory lookup, Transfer → 🚢 Container here). Container here's "no box UPC" list counts these as having one.
 
 ## Cleaning rules (applied the same way every time)
 
 - UPCs saved as numbers (`840428904241.0`) are turned back into digits. Leading zeros are ignored when scanning.
-- A **C right after the parent part #** is dropped (the owner's rule). For example `28-4-1C=2X` → `28-4-1=2X` and `28-2-1&2C=2` → `28-2-1&2=2`. The CSV keeps the part # as written.
+- A **C part #** with its own UPCs, like `28-4-1C=2X` or `28-2-1&2C=2`, is **its own part #** (owner). It is kept as written and is not merged with `28-4-1=2X`. Typing or scanning `28-4-1C=2X` keeps the C too. A stray "c" after a parent (`27-3-4c` in a Stock Out Report) is still dropped.
 - A trailing `-` is dropped (`30-3-5=25-` → `30-3-5=25`).
 - Kept as written: `=1W.1C` / `=10W.2C` style pack sizes, and `61853-K=1X` style part #s.
 
