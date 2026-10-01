@@ -255,5 +255,18 @@ console.log('\nContainer here: only containers already 📦 Received on Reorder'
   check('opening a container by name (Reorder sold-out report) still works before receiving', byTitle.ok && byTitle.lines.length === 2, byTitle.lines && byTitle.lines.length);
 }
 
+console.log('\nStock Out: Sold Out label + None Found count');
+{
+  const inc = await get('/inventory/incoming?base=60-1-1');
+  check('"coming soon" for the Sold Out label lists what is on the way for that parent', inc.ok && inc.lines.some(l => l.part === '60-1-1=10' && l.title === 'Container KW-TEST2'), inc);
+  const lb = await post('/inventory/soldout-label', { part: '60-3-3=1', base: '60-3-3', name: 'tee', incoming: 'x', how: 'browser' });
+  const lr = sq.prepare('SELECT by_user, part FROM soldout_label_log ORDER BY id DESC LIMIT 1').get();
+  check('every Sold Out label printed is recorded with who printed it', lb.ok && lr && lr.by_user === 'TS' && lr.part === '60-3-3=1', lr);
+  const shelfNf = shelf();
+  const nf = await post('/inventory/log', { type: 'IN', partNum: '32-2-2=10', sku: '32-2-2', location: 'C3=1-1-2', cases: 2, initials: 'TS', notes: '[AUDIT] [NONE FOUND COUNT] System: 1 → Actual: 3 (diff: +2)', masterId: sq.prepare("SELECT id FROM master_list WHERE part_num='32-2-2=10'").get().id });
+  const nfRow = row(nf.d1Id);
+  check('None Found count: SKU Mgr changes only by the counted difference, with History before → after', nf.ok && nfRow.status === 'Verified' ? (nfRow.b === 1 && nfRow.a === 3 && shelf() === shelfNf + 2) : (nfRow.status === 'Pending' && shelf() === shelfNf), { nfRow, shelf: shelf(), shelfNf });
+}
+
 console.log('\n' + (failed ? '❌ ' + failed + ' check(s) FAILED' : '✅ all ' + passed + ' checks passed') + '\n');
 process.exit(failed ? 1 : 0);

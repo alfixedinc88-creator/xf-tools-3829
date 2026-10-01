@@ -4038,6 +4038,40 @@ async function inventoryContainerDelete(request, env, session) {
   return J({ ok: true, title, pallets, lines: rows.length, boxes, received: got });
 }
 
+// GET /inventory/incoming?base=27-3-4 — what's on the way for a parent part #
+// (Reorder → On the way: ordered / shipped containers), for the 🏷 Sold Out
+// label: "more coming soon". Read only.
+async function inventoryIncoming(url, env) {
+  await reorderFixTables(env);
+  const J = o => cors(new Response(JSON.stringify(o), { headers: { 'Content-Type': 'application/json' } }));
+  const base = stripParentC(String(url.searchParams.get('base') || '').trim().toUpperCase()).split('=')[0];
+  if (!base) return J({ ok: false, error: 'base required' });
+  const alias = {}; ((await env.DB.prepare('SELECT raw, part FROM reorder_alias').all()).results || []).forEach(a => { alias[String(a.raw).toUpperCase()] = String(a.part).toUpperCase(); });
+  const stage = {}; ((await env.DB.prepare('SELECT title, stage FROM reorder_title').all()).results || []).forEach(t => { stage[t.title] = t.stage || ''; });
+  const rows = ((await env.DB.prepare('SELECT title, part, qty, cases, updated_at FROM reorder_incoming WHERE UPPER(part) LIKE ?').bind(base + '%').all()).results || [])
+    .concat(((await env.DB.prepare(`SELECT i.title, i.part, i.qty, i.cases, i.updated_at FROM reorder_incoming i JOIN reorder_alias a ON UPPER(a.raw) = UPPER(i.part) WHERE UPPER(a.part) LIKE ?`).bind(base + '%').all()).results || []));
+  const seen = new Set(), lines = [];
+  rows.forEach(r => {
+    const part = alias[String(r.part).toUpperCase()] || String(r.part).toUpperCase();
+    if (reorderGetBaseSku(part) !== base) return;
+    const k = r.title + '|' + r.part; if (seen.has(k)) return; seen.add(k);
+    lines.push({ title: r.title, part, units: r.qty || 0, cases: r.cases || null, stage: stage[r.title] || '', updatedAt: r.updated_at || '' });
+  });
+  lines.sort((a, b) => (a.stage === 'shipped' ? 0 : 1) - (b.stage === 'shipped' ? 0 : 1) || String(b.updatedAt).localeCompare(String(a.updatedAt)));
+  return J({ ok: true, base, lines });
+}
+// POST /inventory/soldout-label { part, base, name, location, incoming } —
+// keeps a record of every 🏷 Sold Out label printed (who, when, what).
+async function inventorySoldOutLabelLog(request, env, session) {
+  const b = await request.json().catch(() => ({}));
+  await env.DB.prepare(`CREATE TABLE IF NOT EXISTS soldout_label_log (id INTEGER PRIMARY KEY AUTOINCREMENT, at TEXT, by_user TEXT, part TEXT, base TEXT, name TEXT, location TEXT, incoming TEXT, how TEXT)`).run();
+  const t = (v, n) => String(v == null ? '' : v).slice(0, n || 200);
+  const who = t((session && (session.displayName || session.username)) || b.by || '', 40);
+  await env.DB.prepare('INSERT INTO soldout_label_log (at, by_user, part, base, name, location, incoming, how) VALUES (?,?,?,?,?,?,?,?)')
+    .bind(new Date().toISOString(), who, t(b.part, 60), t(b.base, 40), t(b.name), t(b.location, 60), t(b.incoming, 300), t(b.how, 20)).run();
+  return cors(new Response(JSON.stringify({ ok: true }), { headers: { 'Content-Type': 'application/json' } }));
+}
+
 async function inventoryTransferLog(request, env) {
   try {
     const body = await request.json().catch(() => ({}));
@@ -5455,7 +5489,8 @@ const _app = {
         // (e.g. AWD needs 'ops') is enforced at that app's own frontend
         // login check, not here - same pattern ReceivePO already uses.
         const pinLevel = credSession.roles.includes('mgmt') ? 'mgmt' : 'ops';
-        session = { pin_level: pinLevel, userId: credSession.userId, roles: credSession.roles };
+        session = { pin_level: pinLevel, userId: credSession.userId, roles: credSession.roles,
+          displayName: credSession.displayName || '', username: credSession.username || '' }; // who did it, for the records
       }
     }
     if (!session) {
@@ -5758,6 +5793,8 @@ const _app = {
       if (path === '/inventory/containers/pallets' && method === 'GET') return await inventoryContainerPallets(url, env);
       if (path === '/inventory/pallets/received' && method === 'GET') return await inventoryPalletsReceived(env);
       if (path === '/inventory/containers/soldout' && method === 'GET') return await inventoryContainerSoldOut(url, env);
+      if (path === '/inventory/incoming' && method === 'GET') return await inventoryIncoming(url, env);
+      if (path === '/inventory/soldout-label' && method === 'POST') return await inventorySoldOutLabelLog(request, env, session);
       if (path === '/inventory/containers/delete' && method === 'POST') return await inventoryContainerDelete(request, env, session);
       // receive-preview / receive-apply moved up to the credential-based
       // check earlier in the router (ReceivePO no longer sends the old

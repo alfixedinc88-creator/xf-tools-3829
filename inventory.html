@@ -369,6 +369,8 @@ window.invCredLogin = async function() {
 #inv-app .isearch-btn{padding:12px 16px;border-radius:8px;background:var(--accent);color:#fff;border:none;font-size:15px;font-weight:700;cursor:pointer;font-family:'DM Sans',sans-serif;min-height:44px;min-width:52px}
 #inv-app .inv-need-key{padding:10px 0;min-height:44px;border-radius:8px;border:1.5px solid var(--border);background:var(--bg);color:var(--text);font-size:18px;font-weight:700;font-family:var(--mono);cursor:pointer;touch-action:manipulation}
 #inv-app .inv-need-key:active{background:var(--accent);color:#fff}
+.inv-x-btn{flex-shrink:0;width:34px;height:34px;border-radius:50%;border:1.5px solid var(--border);background:var(--bg3);color:var(--text2);font-size:15px;font-weight:800;cursor:pointer;line-height:1;padding:0}
+.inv-x-btn:active{background:var(--red-bg);color:var(--red);border-color:var(--red)}
 #inv-app .icam-btn{width:100%;padding:14px;border-radius:8px;background:var(--accent);color:#fff;border:none;font-size:15px;font-weight:700;cursor:pointer;font-family:'DM Sans',sans-serif;transition:background .2s;margin-top:10px;min-height:48px}
 #inv-app .icam-btn.scanning{background:var(--red)}
 #inv-app #inv-reader-wrap{display:none;border-radius:10px;overflow:hidden;background:#000;min-height:160px;margin-top:10px}
@@ -621,6 +623,7 @@ window.invCredLogin = async function() {
       <input id="inv-need-cases" type="text" inputmode="decimal" autocomplete="off" placeholder="e.g. 2"
         style="width:80px;padding:8px 10px;border:1.5px solid var(--border);border-radius:7px;background:var(--bg);color:var(--text);font-size:15px;font-weight:700;font-family:var(--mono)"
         onkeydown="invNeedKey(event)" onfocus="invNeedPadShow(true)" onblur="invNeedPadShow(false)">
+      <button type="button" class="inv-x-btn" title="Clear — start this item again" onmousedown="event.preventDefault()" onclick="invClearNeedAndScan()">&#x2715;</button>
       <span id="inv-need-help" style="font-size:11px;color:var(--text3);line-height:1.3">then scan / type the part # — the system picks the spot and puts it on your Pull List (Shelving; blank = 1 case)</span>
     </div>
     <!-- On-screen number pad: a phone paired with a Bluetooth scanner thinks
@@ -643,6 +646,7 @@ window.invCredLogin = async function() {
     </div>
     <div class="isearch-row">
       <input class="isearch-inp" id="inv-search-inp" type="text" placeholder="Part# or barcode…" onkeydown="if(event.key==='Enter')invScanSearch()" onblur="invNeedPadShow(false)">
+      <button type="button" class="inv-x-btn" title="Clear — start this item again" onmousedown="event.preventDefault()" onclick="invClearNeedAndScan()">&#x2715;</button>
       <button class="isearch-btn" onclick="invScanSearch()">Go</button>
     </div>
     <button class="icam-btn" id="inv-cam-btn" onclick="invToggleCam()">&#x1F4F7; Start Camera</button>
@@ -2237,6 +2241,7 @@ window.invCredLogin = async function() {
         + (pend ? ', ' + pend + ' already taken (waiting for approval)' : '') + (listed ? ', ' + listed + ' already on your Pull List' : '')
         + (company && plan.noSize.length ? '. Case size (Each/Case) not on file for ' + plan.noSize.join(', ') + ' — set it in SKU Mgr' : '')
         + '. Found some anyway? Use "found it" below.', 'error');
+      if (shelf - pend - listed <= 0.001) invSoldOutOpen(d);
       return;
     }
     var dest = invStockOutDest;
@@ -5542,6 +5547,17 @@ window.invCredLogin = async function() {
       // row, Select All, Save/Cancel) show up — asked for specifically so
       // the normal Ungrabbed view doesn't have selection checkboxes
       // cluttering every row all the time, only when actually requested.
+      // Ungrabbed: scan the box before grabbing it — right box → Grabbed,
+      // wrong box → a warning with options (see invGrabScan).
+      if (key === 'ungrabbed' && indices.length > 0 && open && !invPullSaveModeActive) {
+        var gsBar = document.createElement("div");
+        gsBar.style.cssText = "margin-top:6px;display:flex;gap:6px;align-items:center";
+        gsBar.innerHTML = "<input id='inv-grab-scan' type='text' autocomplete='off' placeholder='📷 Scan the box you grab…' "
+          + "style='flex:1;min-width:0;padding:9px 10px;border:1.5px solid var(--accent);border-radius:8px;background:var(--bg);color:var(--text);font-size:14px;font-family:var(--mono)' "
+          + "onkeydown=\"if(event.key==='Enter'){invGrabScan(this.value);}\">"
+          + "<button type='button' class='inv-x-btn' title='Clear' onclick=\"var x=document.getElementById('inv-grab-scan');x.value='';x.focus()\">&#x2715;</button>";
+        section.appendChild(gsBar);
+      }
       if (key === 'ungrabbed' && indices.length > 0 && open) {
         var saveBar = document.createElement("div");
         saveBar.style.cssText = "margin-top:6px;display:flex;flex-direction:column;gap:6px";
@@ -5695,6 +5711,249 @@ window.invCredLogin = async function() {
     invRenderPullList();
     invSubmitOnePullItem(i); // submits immediately, same as Grabbed
     invFlash('None Found logged — sent for review', 'warn');
+    invNfCountOpen(invPullList[i]);
+  };
+
+  // ── ✕ next to "Cases needed" / "Part# or barcode": one tap clears both
+  // and starts the item again from "Cases needed". Nothing is logged.
+  window.invClearNeedAndScan = function() {
+    var n = g('inv-need-cases'), si = g('inv-search-inp');
+    if (n) n.value = ''; if (si) si.value = '';
+    ['inv-result-card', 'inv-loc-card', 'inv-detail-card'].forEach(function(id) { var el = g(id); if (el) el.style.display = 'none'; });
+    var gb = g('inv-grab-banner'); if (gb) { gb.style.display = 'none'; gb.innerHTML = ''; }
+    if (n) n.focus();
+  };
+
+  // Small modal used by the three helpers below.
+  function invModal(id, html) {
+    var m = g(id);
+    if (!m) { m = document.createElement('div'); m.id = id; document.body.appendChild(m); }
+    m.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,.5);z-index:10050;display:flex;align-items:flex-start;justify-content:center;padding:24px 14px;overflow:auto';
+    m.innerHTML = '<div style="background:var(--bg2);color:var(--text);border-radius:14px;padding:16px;width:440px;max-width:100%;box-shadow:0 10px 36px rgba(0,0,0,.3)">' + html + '</div>';
+    return m;
+  }
+  function invModalClose(id) { var m = g(id); if (m) m.remove(); }
+  function invEsc(v) { return String(v == null ? '' : v).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;'); }
+  function invMe() { return (INV_CRED_USER && INV_CRED_USER.displayName) || 'OPS'; }
+
+  // ── 🏷 Sold Out label: a scan found nothing left to grab → offer to print
+  // a Sold Out label (item, name, date, who, what's coming from Reorder → On
+  // the way). Prints straight to a Zebra printer when Zebra Browser Print is
+  // running on this device; otherwise opens the print window (WiFi printer).
+  // Every label printed is recorded (who / when / what). Then back to
+  // "Cases needed" for the next scan.
+  var _invSo = null;
+  window.invSoldOutOpen = function(d) {
+    var part = String(d.isMultiVariant ? d.baseSku : (invSearchedExactVariant || d.partNum || d.baseSku) || '').toUpperCase();
+    var base = String(d.baseSku || part).split('=')[0].toUpperCase();
+    _invSo = { part: part, base: base, name: d.name || '', incoming: null, date: new Date().toLocaleDateString('en-US', { timeZone: 'America/New_York' }) };
+    invSoldOutRender();
+    wFetch(W + '/inventory/incoming?base=' + encodeURIComponent(base)).then(function(r) { return r.json(); }).then(function(x) {
+      if (!_invSo || _invSo.base !== base) return;
+      _invSo.incoming = (x && x.ok) ? x.lines : []; invSoldOutRender();
+    }).catch(function() { if (_invSo) { _invSo.incoming = []; invSoldOutRender(); } });
+  };
+  function invSoldOutComing() {
+    var L = _invSo && _invSo.incoming;
+    if (L == null) return 'checking Reorder…';
+    if (!L.length) return 'Nothing on order yet';
+    var st = function(s) { return s === 'shipped' ? 'on the water' : s === 'production' ? 'in production' : 'ordered'; };
+    return L.slice(0, 2).map(function(l) { return l.part + ' × ' + Math.round(l.units) + ' (' + st(l.stage) + ': ' + l.title + ')'; }).join('; ') + (L.length > 2 ? ' +' + (L.length - 2) + ' more' : '');
+  }
+  function invSoldOutRender() {
+    if (!_invSo) return;
+    var c = invSoldOutComing(), soon = _invSo.incoming && _invSo.incoming.length;
+    invModal('inv-so-modal', '<div style="font-size:17px;font-weight:800;color:var(--red);margin-bottom:6px">🏷 Sold out — print the Sold Out label</div>'
+      + '<div style="font-size:12px;color:var(--text3);margin-bottom:10px">Nothing left to grab. Print the label and put it on the spot.</div>'
+      + '<div style="border:2px dashed var(--border);border-radius:10px;padding:10px 12px;font-size:13px;line-height:1.5">'
+      + '<div style="font-size:20px;font-weight:900;letter-spacing:1px">SOLD OUT</div>'
+      + '<div style="font-family:var(--mono);font-weight:800;font-size:16px">' + invEsc(_invSo.part) + '</div>'
+      + (_invSo.name ? '<div>' + invEsc(_invSo.name) + '</div>' : '')
+      + '<div>Date: <b>' + invEsc(_invSo.date) + '</b> · By: <b>' + invEsc(invMe()) + '</b></div>'
+      + '<div style="color:' + (soon ? 'var(--green)' : 'var(--text3)') + '">' + (soon ? 'Coming soon: ' : '') + '<b>' + invEsc(c) + '</b></div></div>'
+      + '<div style="display:flex;gap:8px;margin-top:12px"><button class="isearch-btn" style="background:var(--accent);color:#fff;border:none;border-radius:8px;font-weight:700;cursor:pointer;flex:1;padding:12px;font-size:15px" onclick="invSoldOutPrint()">🖨 Print label</button>'
+      + '<button style="padding:12px 14px;border-radius:8px;border:1.5px solid var(--border);background:var(--bg3);color:var(--text2);font-weight:700;cursor:pointer" onclick="invSoldOutDone()">Not now</button></div>'
+      + '<div id="inv-so-status" style="font-size:12px;color:var(--text3);margin-top:8px"></div>');
+  }
+  window.invSoldOutDone = function() { _invSo = null; invModalClose('inv-so-modal'); invClearNeedAndScan(); };
+  function invSoldOutZpl(so, coming) {
+    var st = {}; try { st = JSON.parse(localStorage.getItem('lp_settings') || '{}'); } catch (e) {}
+    var w = parseInt(st['lp-set-width'], 10) || 406, h = parseInt(st['lp-set-height'], 10) || 203;
+    var z = function(v) { return String(v || '').replace(/[\^~\\]/g, ' '); };
+    var k = h / 203;
+    return ['^XA', '^PW' + w, '^LL' + h, '^CI28',
+      '^FO8,' + Math.round(4 * k) + '^A0N,' + Math.round(38 * k) + ',' + Math.round(38 * k) + '^FDSOLD OUT^FS',
+      '^FO8,' + Math.round(44 * k) + '^A0N,' + Math.round(30 * k) + ',' + Math.round(30 * k) + '^FD' + z(so.part) + '^FS',
+      '^FO8,' + Math.round(78 * k) + '^FB' + (w - 16) + ',2,0,L^A0N,' + Math.round(19 * k) + ',' + Math.round(19 * k) + '^FD' + z(so.name) + '^FS',
+      '^FO8,' + Math.round(122 * k) + '^A0N,' + Math.round(19 * k) + ',' + Math.round(19 * k) + '^FD' + z(so.date + '  by ' + invMe()) + '^FS',
+      '^FO8,' + Math.round(146 * k) + '^FB' + (w - 16) + ',2,0,L^A0N,' + Math.round(18 * k) + ',' + Math.round(18 * k) + '^FD' + z('Coming: ' + coming) + '^FS',
+      '^XZ'].join('\n');
+  }
+  function invSoldOutHtml(so, coming) {
+    return '<!doctype html><html><head><meta charset="utf-8"><title>Sold Out ' + invEsc(so.part) + '</title><style>@page{margin:0.2in}'
+      + 'body{font-family:Arial,Helvetica,sans-serif;margin:0;color:#000}.lb{border:3px solid #000;border-radius:8px;padding:10px 14px;width:3.6in}'
+      + '.so{font-size:34px;font-weight:900;letter-spacing:2px}.pt{font-family:monospace;font-size:24px;font-weight:800}.nm{font-size:14px;margin:2px 0}.sm{font-size:13px}'
+      + '</style></head><body><div class="lb"><div class="so">SOLD OUT</div><div class="pt">' + invEsc(so.part) + '</div>'
+      + (so.name ? '<div class="nm">' + invEsc(so.name) + '</div>' : '')
+      + '<div class="sm">Date: <b>' + invEsc(so.date) + '</b> &nbsp; By: <b>' + invEsc(invMe()) + '</b></div>'
+      + '<div class="sm">Coming: <b>' + invEsc(coming) + '</b></div></div></body></html>';
+  }
+  window.invSoldOutPrint = function() {
+    var so = _invSo; if (!so) return;
+    var coming = invSoldOutComing(), st = g('inv-so-status');
+    var log = function(how) {
+      wFetch(W + '/inventory/soldout-label', { method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ part: so.part, base: so.base, name: so.name, incoming: coming, how: how }) }).catch(function() {});
+    };
+    var viaBrowser = function() {
+      var f = document.createElement('iframe');
+      f.style.cssText = 'position:fixed;right:0;bottom:0;width:0;height:0;border:0;visibility:hidden';
+      document.body.appendChild(f);
+      f.contentDocument.open(); f.contentDocument.write(invSoldOutHtml(so, coming)); f.contentDocument.close();
+      setTimeout(function() { try { f.contentWindow.focus(); f.contentWindow.print(); } catch (e) {} setTimeout(function() { f.remove(); var n = g('inv-need-cases'); if (n) n.focus(); }, 1500); }, 300);
+      log('browser'); invFlash('🏷 Sold Out label sent to print', 'success'); invSoldOutDone();
+    };
+    if (st) st.textContent = 'Looking for a Zebra printer…';
+    var ctl = typeof AbortController !== 'undefined' ? new AbortController() : null;
+    var t = setTimeout(function() { if (ctl) ctl.abort(); }, 1200);
+    fetch('http://localhost:9100/available', { mode: 'cors', signal: ctl ? ctl.signal : undefined })
+      .then(function(r) { return r.json(); }).then(function(x) {
+        clearTimeout(t);
+        var ps = (x && x.printer) || []; if (!ps.length) throw new Error('no printer');
+        var p = ps.filter(function(q) { return /zp|450|zebra/i.test(q.name || ''); })[0] || ps[0];
+        return fetch('http://localhost:9100/write', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ device: p, data: invSoldOutZpl(so, coming) }) })
+          .then(function() { log('zebra'); invFlash('🏷 Sold Out label printed on ' + (p.name || 'Zebra'), 'success'); invSoldOutDone(); });
+      }).catch(function() { clearTimeout(t); viaBrowser(); });
+  };
+
+  // ── Ungrabbed: scan the box before grabbing it. Right box → it goes to
+  // Grabbed (and is submitted, same as ticking it). Wrong box → a warning
+  // with options; nothing is grabbed until the picker chooses.
+  window.invGrabScan = function(code) {
+    code = String(code || '').trim(); var inp = g('inv-grab-scan');
+    if (!code) return;
+    if (inp) { inp.value = ''; inp.disabled = true; }
+    _invFetchLookupRaw(code).then(function(d) {
+      if (inp) { inp.disabled = false; }
+      var open = [];
+      invPullList.forEach(function(x, i) { if (!x.grabbed && !x.noneFound && !x.submitted) open.push(i); });
+      open.sort(function(a, b) { return invLocSort(invPullList[a].location) - invLocSort(invPullList[b].location) || String(invPullList[a].location).localeCompare(String(invPullList[b].location)); });
+      if (!d || !d.partNum) { invGrabWarn(code, null, open); return; }
+      var pn = String(d.partNum).toUpperCase(), base = String(d.baseSku || pn).split('=')[0].toUpperCase();
+      var exact = open.filter(function(i) { return String(invPullList[i].partNum).toUpperCase() === pn; });
+      if (!exact.length && pn.indexOf('=') < 0) {
+        var fam = open.filter(function(i) { return String(invPullList[i].partNum).split('=')[0].toUpperCase() === base; });
+        var sizes = {}; fam.forEach(function(i) { sizes[String(invPullList[i].partNum).toUpperCase()] = 1; });
+        if (Object.keys(sizes).length === 1) exact = fam;
+      }
+      if (exact.length) {
+        var i = exact[0], it = invPullList[i];
+        it.scanNote = '[BOX SCANNED]';
+        invTogglePullCheck(i);
+        invFlash('✓ Right box — ' + it.partNum + ' @ ' + it.location + ' grabbed', 'success');
+        setTimeout(function() { var x = g('inv-grab-scan'); if (x) x.focus(); }, 50);
+        return;
+      }
+      invGrabWarn(code, d, open);
+    }).catch(function() { if (inp) inp.disabled = false; invFlash('Lookup failed — try again', 'error'); });
+  };
+  function invGrabWarn(code, d, open) {
+    var pn = d && d.partNum ? String(d.partNum).toUpperCase() : '';
+    var base = d ? String(d.baseSku || pn).split('=')[0].toUpperCase() : '';
+    var same = open.filter(function(i) { return base && String(invPullList[i].partNum).split('=')[0].toUpperCase() === base; });
+    var opts = (same.length ? same : open).slice(0, 6);
+    try { if (navigator.vibrate) navigator.vibrate([200, 100, 200]); } catch (e) {}
+    invModal('inv-grab-modal', '<div style="font-size:17px;font-weight:800;color:var(--red)">⚠ Wrong box!</div>'
+      + '<div style="font-size:13px;margin:6px 0 10px">You scanned <b style="font-family:var(--mono)">' + invEsc(pn || code) + '</b>' + (d && d.name ? ' (' + invEsc(d.name) + ')' : '') + (pn ? '' : ' — not a part # we know')
+      + ' — that is <b>not</b> on your Ungrabbed list. Put it back.</div>'
+      + '<button class="isearch-btn" style="background:var(--accent);color:#fff;border:none;border-radius:8px;font-weight:700;cursor:pointer;width:100%;padding:12px;font-size:15px;margin-bottom:10px" onclick="invGrabWarnClose()">↩ Put it back — scan again</button>'
+      + (opts.length ? '<div style="font-size:12px;color:var(--text3);margin-bottom:6px">Sure it\'s the right box and only its label is wrong? Mark that item grabbed (recorded as a scan mismatch):</div>'
+        + opts.map(function(i) { var it = invPullList[i]; return '<button style="display:block;width:100%;text-align:left;margin-bottom:6px;padding:8px 10px;border-radius:8px;border:1.5px solid var(--orange);background:var(--orange-bg);color:var(--text);cursor:pointer;font-size:13px" onclick="invGrabWarnUse(' + i + ',\'' + invEsc(pn || code).replace(/'/g, '') + '\')">It\'s really <b style="font-family:var(--mono)">' + invEsc(it.partNum) + '</b> @ ' + invEsc(it.location) + ' · ' + invEsc(it.cases) + ' cs</button>'; }).join('') : ''));
+  }
+  window.invGrabWarnClose = function() { invModalClose('inv-grab-modal'); var x = g('inv-grab-scan'); if (x) x.focus(); };
+  window.invGrabWarnUse = function(i, scanned) {
+    var it = invPullList[i]; if (!it) return;
+    if (!confirm('Mark ' + it.partNum + ' @ ' + it.location + ' as grabbed?\n\nThe box scanned as ' + scanned + ' — this is saved with the entry so it can be checked.')) return;
+    it.scanNote = '[SCAN MISMATCH: box scanned as ' + scanned + ' — picker confirmed ' + it.partNum + ']';
+    invModalClose('inv-grab-modal');
+    invTogglePullCheck(i);
+    setTimeout(function() { var x = g('inv-grab-scan'); if (x) x.focus(); }, 50);
+  };
+
+  // ── None Found → "what IS in this spot?": shows what the system has at
+  // that spot; the picker scans a box, types its cases, and scans the spot's
+  // label (must be this spot). Each one is saved as an Audit count (System
+  // a → Actual b), sent to Review like None Found — never applied silently.
+  var _invNf = null;
+  window.invNfCountOpen = function(item) {
+    if (!item || !item.location) return;
+    _invNf = { loc: String(item.location), nfPart: String(item.partNum || '').toUpperCase(), rows: null, saved: [] };
+    invNfRender();
+    wFetch(W + '/inventory/location-search?loc=' + encodeURIComponent(_invNf.loc)).then(function(r) { return r.json(); }).then(function(x) {
+      if (!_invNf) return;
+      _invNf.rows = ((x && x.results) || []).filter(function(r) { return String(r.location).toUpperCase() === _invNf.loc.toUpperCase(); });
+      invNfRender();
+    }).catch(function() { if (_invNf) { _invNf.rows = []; invNfRender(); } });
+  };
+  function invNfRender() {
+    var n = _invNf; if (!n) return;
+    var keep = {}; ['inv-nf-box', 'inv-nf-cases', 'inv-nf-loc'].forEach(function(id) { var el = g(id); if (el) keep[id] = el.value; });
+    var rows = n.rows == null ? '<div style="font-size:12px;color:var(--text3)">Loading…</div>'
+      : !n.rows.length ? '<div style="font-size:12px;color:var(--text3)">Nothing on record here.</div>'
+      : n.rows.map(function(r) { return '<div style="display:flex;justify-content:space-between;gap:8px;font-size:13px;padding:3px 0;border-bottom:1px solid var(--border)"><span><b style="font-family:var(--mono)">' + invEsc(r.partNum) + '</b> <span style="color:var(--text3)">' + invEsc(r.name) + '</span></span><b>' + invEsc(r.cases) + ' cs</b></div>'; }).join('');
+    var ip = 'width:100%;padding:9px 10px;border:1.5px solid var(--border);border-radius:8px;background:var(--bg);color:var(--text);font-size:14px;font-family:var(--mono);box-sizing:border-box';
+    invModal('inv-nf-modal', '<div style="font-size:16px;font-weight:800">None Found at <span style="font-family:var(--mono)">' + invEsc(n.loc) + '</span> — what IS here?</div>'
+      + '<div style="font-size:12px;color:var(--text3);margin:4px 0 8px">System has here:</div>' + rows
+      + '<div style="display:flex;flex-direction:column;gap:8px;margin-top:12px">'
+      + '<input id="inv-nf-box" placeholder="1) Scan the box barcode" autocomplete="off" style="' + ip + '" onkeydown="if(event.key===\'Enter\'){var c=document.getElementById(\'inv-nf-cases\');if(c)c.focus();}">'
+      + '<input id="inv-nf-cases" placeholder="2) How many cases are here?" inputmode="decimal" autocomplete="off" style="' + ip + '" onkeydown="if(event.key===\'Enter\'){var c=document.getElementById(\'inv-nf-loc\');if(c)c.focus();}">'
+      + '<input id="inv-nf-loc" placeholder="3) Scan this spot\'s label (' + invEsc(n.loc) + ')" autocomplete="off" style="' + ip + '" onkeydown="if(event.key===\'Enter\')invNfSave()">'
+      + '</div><div id="inv-nf-status" style="font-size:12px;margin-top:6px"></div>'
+      + (n.saved.length ? '<div style="margin-top:8px;font-size:12px;color:var(--green)">' + n.saved.map(function(t) { return '✓ ' + invEsc(t); }).join('<br>') + '</div>' : '')
+      + '<div style="display:flex;gap:8px;margin-top:12px"><button class="isearch-btn" style="background:var(--accent);color:#fff;border:none;border-radius:8px;font-weight:700;cursor:pointer;flex:1;padding:11px;font-size:14px" onclick="invNfSave()">Save count</button>'
+      + '<button style="padding:11px 14px;border-radius:8px;border:1.5px solid var(--border);background:var(--bg3);color:var(--text2);font-weight:700;cursor:pointer" onclick="invNfClose()">' + (n.saved.length ? 'Done' : 'Skip') + '</button></div>');
+    Object.keys(keep).forEach(function(id) { var el = g(id); if (el) el.value = keep[id]; });
+    var first = g(keep['inv-nf-box'] ? (keep['inv-nf-cases'] ? 'inv-nf-loc' : 'inv-nf-cases') : 'inv-nf-box'); if (first) first.focus();
+  }
+  window.invNfClose = function() { _invNf = null; invModalClose('inv-nf-modal'); };
+  window.invNfSave = function() {
+    var n = _invNf; if (!n) return;
+    var st = g('inv-nf-status'), say = function(t, ok) { if (st) { st.style.color = ok ? 'var(--green)' : 'var(--red)'; st.textContent = t; } };
+    var box = (g('inv-nf-box').value || '').trim(), cases = parseFloat(g('inv-nf-cases').value), spot = (g('inv-nf-loc').value || '').trim().toUpperCase();
+    if (!box) { say('Scan the box barcode first'); g('inv-nf-box').focus(); return; }
+    if (!(cases >= 0)) { say('Type how many cases are here'); g('inv-nf-cases').focus(); return; }
+    if (!spot) { say('Scan this spot\'s label'); g('inv-nf-loc').focus(); return; }
+    if (spot.replace(/\s+/g, '') !== n.loc.toUpperCase().replace(/\s+/g, '')) { say('That label is ' + spot + ', not ' + n.loc + ' — scan the label on THIS spot'); g('inv-nf-loc').value = ''; g('inv-nf-loc').focus(); return; }
+    say('Saving…', true);
+    _invFetchLookupRaw(box).then(function(d) {
+      var rowsHere = n.rows || [];
+      var pn = d && d.partNum ? String(d.partNum).toUpperCase() : '';
+      if (!pn) { say('Box ' + box + ' is not a part # we know — scan its part # label'); return; }
+      if (pn.indexOf('=') < 0) { // parent only: fine if one pack size of it is here
+        var fam = rowsHere.filter(function(r) { return String(r.partNum).split('=')[0].toUpperCase() === pn; });
+        if (fam.length === 1) pn = String(fam[0].partNum).toUpperCase();
+        else { say('Scan the box label with the full part # (e.g. ' + pn + '=10)'); return; }
+      }
+      if (pn === n.nfPart) { say(pn + ' is the item you marked None Found. If it IS here, a manager must Reject that None Found in Review — don\'t count it here.'); return; }
+      var row = rowsHere.filter(function(r) { return String(r.partNum).toUpperCase() === pn; })[0];
+      var sys = row ? (parseFloat(row.casesNum != null ? row.casesNum : row.cases) || 0) : 0;
+      var diff = Math.round((cases - sys) * 100) / 100, me = invMe();
+      var note = row
+        ? (diff === 0 ? '[AUDIT] [NONE FOUND COUNT] Confirmed: ' + sys + ' cases verified correct at ' + n.loc
+          : '[AUDIT] [NONE FOUND COUNT] System: ' + sys + ' → Actual: ' + cases + ' (diff: ' + (diff > 0 ? '+' : '') + diff + ')')
+        : '[AUDIT] [NONE FOUND COUNT] Found on shelf — not previously listed at ' + n.loc;
+      var body = { type: (row && diff < 0) ? 'OUT' : 'IN', partNum: pn, sku: pn.split('=')[0], name: (d && d.name) || (row && row.name) || '',
+        location: row ? row.location : n.loc, cases: row ? Math.abs(diff) : cases, initials: me, notes: note,
+        rowIndex: row ? row.rowIndex : null, masterId: row ? row.masterId : null, isNew: !row, isPlaceholder: false, overwriteLocation: '' };
+      if (!row && !(cases > 0)) { say('0 cases of ' + pn + ' and none on record — nothing to save', true); return; }
+      return invPost(W + '/inventory/log', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) })
+        .then(function(r) { return r.json(); }).then(function(x) {
+          if (!x || x.ok === false) { say('Not saved: ' + ((x && x.error) || 'error')); return; }
+          n.saved.push(pn + ' × ' + cases + ' at ' + n.loc + (row ? (diff === 0 ? ' (matches)' : ' (system ' + sys + ')') : ' (new here)') + (x.queued ? ' — sends when WiFi is back' : ' — sent for review'));
+          ['inv-nf-box', 'inv-nf-cases', 'inv-nf-loc'].forEach(function(id) { var el = g(id); if (el) el.value = ''; });
+          invNfRender(); if (typeof invFetchPendingCount === 'function') invFetchPendingCount();
+        });
+    }).catch(function(e) { say('Not saved: ' + (e && e.message || 'network error')); });
   };
 
   window.invClearPullList = function() {
@@ -5726,7 +5985,7 @@ window.invCredLogin = async function() {
         ? ('[FOUND ON SHELF] ' + notes).trim()
         : notes;
     var destTag = (item.dest || invStockOutDest) === 'company' ? '[BIG COMPANY' + (item.forPart ? ' for ' + item.forPart : '') + '] ' : '[SHELVING] ';
-    itemNotes = (destTag + itemNotes).trim();
+    itemNotes = (destTag + itemNotes + (item.scanNote ? ' ' + item.scanNote : '')).trim();
     var entryTs = item.grabbedAt || item.addedAt || new Date().toISOString();
 
     invPost(W + "/inventory/log", {
