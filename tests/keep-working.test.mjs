@@ -486,9 +486,23 @@ console.log('\nHistory report: Total In / Total Out add up; Transfers show cases
   check('🚢 Container here: 4 cases, 2 pallets worked on, 1 emptied (overall and for HS)',
     s1.container && s1.container.cases === 4 && s1.container.pallets === 2 && s1.container.palletsFinished === 1
       && hs.container && hs.container.cases === 4 && hs.container.pallets === 2 && hs.container.palletsFinished === 1, { all: s1.container, hs: hs.container });
+  // Owner: "a time frame how long it takes them to transfer 1 pallet — each pallet, from open to close".
+  const op = await post('/inventory/containers/pallet-open', { title: 'HIST CT', vendor: 'KW', pallet: '1' });
+  const base = Date.now() - 30 * 60000, at = m => new Date(base + m * 60000).toISOString();
+  sq.prepare("UPDATE pallet_open SET at=? WHERE title='HIST CT' AND pallet='1'").run(at(0));               // opened at 0
+  const outIds = sq.prepare("SELECT m.out_log_id id, p.pallet, p.part FROM pallet_move m JOIN reorder_pallet p ON p.id = m.pallet_id WHERE p.title='HIST CT' ORDER BY m.id").all();
+  const setT = (i, m) => sq.prepare('UPDATE inventory_log SET timestamp=? WHERE id=?').run(at(m), outIds[i].id);
+  setT(0, 10); setT(1, 25); setT(2, 20);                                                                   // pallet 1: boxes at 10 and 25 min (emptied); pallet 2: one box at 20
+  const s2 = await get('/inventory/history-summary?days=1');
+  const pl = (s2.container && s2.container.palletList) || [], p1 = pl.find(x => x.pallet === '1') || {}, p2 = pl.find(x => x.pallet === '2') || {};
+  check('open is recorded (who, when) — Container here → pallet opened', op.ok && sq.prepare("SELECT by_user FROM pallet_open WHERE title='HIST CT'").get().by_user === 'TS', op);
+  check('pallet 1: opened → last box moved = 25 min, finished, by HS; pallet 2: not finished, 0 min so far (no open on record → from 1st box)',
+    p1.finished === true && p1.minutes === 25 && p1.fromOpen === true && p1.moved === 3 && p1.boxes === 3 && p1.people.join() === 'HS'
+      && p2.finished === false && p2.minutes === 0 && p2.fromOpen === false, { p1, p2 });
+  check('average per emptied pallet: 25 min (overall and for HS)', s2.container.avgMinutes === 25 && ((s2.byPerson || []).find(p => p.initials === 'HS') || {}).container.avgMinutes === 25, { all: s2.container.avgMinutes });
   check('transfers do not change the warehouse total, and the report still adds up', shelf() === all0 && Math.abs(s1.startingCases + s1.approved.casesIn - s1.approved.casesOut - s1.endingCases) < 1e-9,
     { shelf: shelf(), all0, s1: [s1.startingCases, s1.approved, s1.endingCases] });
-  sq.exec("DELETE FROM master_list WHERE part_num IN ('HC-1=5','HC-2=5'); DELETE FROM reorder_pallet WHERE title='HIST CT'");
+  sq.exec("DELETE FROM master_list WHERE part_num IN ('HC-1=5','HC-2=5'); DELETE FROM reorder_pallet WHERE title='HIST CT'; DELETE FROM pallet_open WHERE title='HIST CT'");
 }
 
 console.log('\nSKU Mgr: the parent follows the Part #, wrong parents can be fixed, every edit is in History');
