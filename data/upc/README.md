@@ -1,15 +1,15 @@
 # Box / bag UPC codes (vendors #1 and #2)
 
-From the owner, 2026-10-01: `vendor-1-2-box-bag-upc.xlsx` (tabs #1 and #2 are the same list).
+From the owner, 2026-10-01: `vendor-1-2-box-bag-upc.xlsx`. It was updated the same day: tab #1 gained 12 part #s (202-4-10, 31-1-3, 31-1-5, 43-4-11 and 43-4-12 pack sizes). Both tabs are read.
 
 - `vendor-1-2-box-bag-upc.xlsx`: the file exactly as received.
 - `vendor-1-2-box-bag-upc.csv`: the cleaned list: part #, outside box UPC, inside bag UPC.
-  It has 464 part #s. UPCs saved as numbers ("840428904241.0") were turned back into digits.
+  It has 475 part #s (476 rows, because `4-2-3=10` has two UPC sets). UPCs saved as numbers ("840428904241.0") were turned back into digits.
 - `worker/src/vendor-upc.js`: the same list, built into the Worker. A scanned box or bag
   UPC finds its part # (Inventory lookup, Transfer → 🚢 Container here). Container here's
   "no box UPC" list counts these as having one.
 
-Rebuild the `.js` from a new file the same way, so that every scan keeps working.
+Rebuild the `.csv` and `.js` from a new file the same way, so that every scan keeps working. The previous file is in git history.
 
 ## Not saved: these rows need fixing in the file
 
