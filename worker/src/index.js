@@ -4110,11 +4110,32 @@ async function inventoryIncoming(url, env) {
   lines.sort((a, b) => (a.stage === 'shipped' ? 0 : 1) - (b.stage === 'shipped' ? 0 : 1) || String(b.updatedAt).localeCompare(String(a.updatedAt)));
   return J({ ok: true, base, lines });
 }
+async function soldoutLabelTable(env) {
+  await env.DB.prepare(`CREATE TABLE IF NOT EXISTS soldout_label_log (id INTEGER PRIMARY KEY AUTOINCREMENT, at TEXT, by_user TEXT, part TEXT, base TEXT, name TEXT, location TEXT, incoming TEXT, how TEXT)`).run();
+  for (const col of ['printed_at TEXT', 'printed_by TEXT'])
+    await env.DB.prepare(`ALTER TABLE soldout_label_log ADD COLUMN ${col}`).run().catch(() => {});
+}
+// 🏷 Sold Out labels sent from a phone to the office PC (how = 'queue'):
+// GET /inventory/soldout-label/queue — the ones not printed yet.
+// POST /inventory/soldout-label/printed { ids } — printed on the PC (who / when kept).
+async function inventorySoldOutLabelQueue(env) {
+  await soldoutLabelTable(env);
+  const rows = await d1All(env, "SELECT id, at, by_user, part, base, name, incoming FROM soldout_label_log WHERE how = 'queue' AND printed_at IS NULL ORDER BY id LIMIT 200");
+  return cors(new Response(JSON.stringify({ ok: true, labels: rows }), { headers: { 'Content-Type': 'application/json' } }));
+}
+async function inventorySoldOutLabelPrinted(request, env, session) {
+  await soldoutLabelTable(env);
+  const b = await request.json().catch(() => ({}));
+  const ids = (Array.isArray(b.ids) ? b.ids : []).map(x => parseInt(x, 10)).filter(x => x > 0).slice(0, 200);
+  const who = String((session && (session.displayName || session.username)) || b.by || '').slice(0, 40), now = new Date().toISOString();
+  await d1Batch(env, ids.map(id => env.DB.prepare("UPDATE soldout_label_log SET printed_at = ?, printed_by = ? WHERE id = ? AND printed_at IS NULL").bind(now, who, id)));
+  return cors(new Response(JSON.stringify({ ok: true, printed: ids.length }), { headers: { 'Content-Type': 'application/json' } }));
+}
 // POST /inventory/soldout-label { part, base, name, location, incoming } —
 // keeps a record of every 🏷 Sold Out label printed (who, when, what).
 async function inventorySoldOutLabelLog(request, env, session) {
   const b = await request.json().catch(() => ({}));
-  await env.DB.prepare(`CREATE TABLE IF NOT EXISTS soldout_label_log (id INTEGER PRIMARY KEY AUTOINCREMENT, at TEXT, by_user TEXT, part TEXT, base TEXT, name TEXT, location TEXT, incoming TEXT, how TEXT)`).run();
+  await soldoutLabelTable(env);
   const t = (v, n) => String(v == null ? '' : v).slice(0, n || 200);
   const who = t((session && (session.displayName || session.username)) || b.by || '', 40);
   await env.DB.prepare('INSERT INTO soldout_label_log (at, by_user, part, base, name, location, incoming, how) VALUES (?,?,?,?,?,?,?,?)')
@@ -5916,6 +5937,8 @@ const _app = {
       if (path === '/inventory/containers/soldout' && method === 'GET') return await inventoryContainerSoldOut(url, env);
       if (path === '/inventory/incoming' && method === 'GET') return await inventoryIncoming(url, env);
       if (path === '/inventory/soldout-label' && method === 'POST') return await inventorySoldOutLabelLog(request, env, session);
+      if (path === '/inventory/soldout-label/queue' && method === 'GET') return await inventorySoldOutLabelQueue(env);
+      if (path === '/inventory/soldout-label/printed' && method === 'POST') return await inventorySoldOutLabelPrinted(request, env, session);
       if (path === '/inventory/containers/delete' && method === 'POST') return await inventoryContainerDelete(request, env, session);
       if (path === '/inventory/containers/missing-upc' && method === 'GET') return await inventoryContainersMissingUpc(env);
       if (path === '/inventory/containers/fill-photos' && method === 'POST') return await inventoryContainersFillPhotos(env, session);

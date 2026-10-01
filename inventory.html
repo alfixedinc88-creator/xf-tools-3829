@@ -535,6 +535,13 @@ window.invCredLogin = async function() {
        to the picking queue. Tapping a SKU below runs the exact same lookup
        as typing it into "Scan or Search" (invLookup), so bin location etc.
        shows through the app's normal Scan flow. -->
+  <!-- 🏷 Sold Out labels sent from the phones — print them here (office PC). -->
+  <div class="icard" id="inv-solabel-card" style="display:none;border:2px solid var(--red)">
+    <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap">
+      <div style="flex:1;min-width:180px"><div style="font-weight:800;color:var(--red)">🏷 Sold Out labels to print</div><div id="inv-solabel-txt" style="font-size:12px;color:var(--text2)"></div></div>
+      <button class="isearch-btn" onclick="invSoldOutPrintQueue()">🖨 Print all</button>
+    </div>
+  </div>
   <div class="icard" id="inv-stockout-card">
     <div style="display:flex;justify-content:space-between;align-items:center;cursor:pointer" onclick="invToggleStockoutList()">
       <div class="icard-label" style="margin-bottom:0">⚠️ Stock Out Reports<span class="ibadge" id="inv-stockout-badge" style="display:none">0</span></div>
@@ -5780,8 +5787,9 @@ window.invCredLogin = async function() {
       + (_invSo.name ? '<div>' + invEsc(_invSo.name) + '</div>' : '')
       + '<div>Date: <b>' + invEsc(_invSo.date) + '</b> · By: <b>' + invEsc(invMe()) + '</b></div>'
       + '<div style="color:' + (soon ? 'var(--green)' : 'var(--text3)') + '">' + (soon ? 'Coming soon: ' : '') + '<b>' + invEsc(c) + '</b></div></div>'
-      + '<div style="display:flex;gap:8px;margin-top:12px"><button class="isearch-btn" style="background:var(--accent);color:#fff;border:none;border-radius:8px;font-weight:700;cursor:pointer;flex:1;padding:12px;font-size:15px" onclick="invSoldOutPrint()">🖨 Print label</button>'
-      + '<button style="padding:12px 14px;border-radius:8px;border:1.5px solid var(--border);background:var(--bg3);color:var(--text2);font-weight:700;cursor:pointer" onclick="invSoldOutDone()">Not now</button></div>'
+      + '<button class="isearch-btn" style="background:var(--accent);color:#fff;border:none;border-radius:8px;font-weight:700;cursor:pointer;width:100%;margin-top:12px;padding:13px;font-size:15px" onclick="invSoldOutQueue()">📨 Send to the office PC to print</button>'
+      + '<div style="display:flex;gap:8px;margin-top:8px"><button style="flex:1;padding:10px;border-radius:8px;border:1.5px solid var(--border);background:var(--bg3);color:var(--text2);font-weight:700;cursor:pointer" onclick="invSoldOutPrint()">🖨 Print on this device</button>'
+      + '<button style="padding:10px 14px;border-radius:8px;border:1.5px solid var(--border);background:var(--bg3);color:var(--text2);font-weight:700;cursor:pointer" onclick="invSoldOutDone()">Not now</button></div>'
       + '<div id="inv-so-status" style="font-size:12px;color:var(--text3);margin-top:8px"></div>');
   }
   window.invSoldOutDone = function() { _invSo = null; invModalClose('inv-so-modal'); invClearNeedAndScan(); };
@@ -5807,6 +5815,61 @@ window.invCredLogin = async function() {
       + '<div class="sm">Date: <b>' + invEsc(so.date) + '</b> &nbsp; By: <b>' + invEsc(invMe()) + '</b></div>'
       + '<div class="sm">Coming: <b>' + invEsc(coming) + '</b></div></div></body></html>';
   }
+  // 📨 Send the label to the office PC (printed there from the
+  // "🏷 Sold Out labels to print" bar) — nothing to set up on the phone.
+  window.invSoldOutQueue = function() {
+    var so = _invSo; if (!so) return;
+    var coming = invSoldOutComing();
+    wFetch(W + '/inventory/soldout-label', { method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ part: so.part, base: so.base, name: so.name, incoming: coming, how: 'queue' }) })
+      .then(function(r) { return r.json(); }).then(function(d) {
+        if (d && d.ok === false) { invFlash(d.error || 'Not sent', 'error'); return; }
+        invFlash('📨 Sold Out label sent — print it on the office PC', 'success'); invSoldOutDone(); invSoldOutQueueLoad();
+      }).catch(function() { invFlash('Not sent — no WiFi? Try again', 'error'); });
+  };
+  // The office PC: "🏷 N Sold Out labels to print" → one click prints them
+  // all (one label per page) on the PC's printer, then marks them printed.
+  var _invSoQueue = [];
+  window.invSoldOutQueueLoad = function() {
+    wFetch(W + '/inventory/soldout-label/queue').then(function(r) { return r.json(); }).then(function(d) {
+      _invSoQueue = (d && d.labels) || [];
+      var c = g('inv-solabel-card'), n = _invSoQueue.length;
+      if (!c) return;
+      c.style.display = n ? '' : 'none';
+      var t = g('inv-solabel-txt'); if (t) t.textContent = n + ' Sold Out label' + (n === 1 ? '' : 's') + ' waiting to print: ' + _invSoQueue.slice(0, 4).map(function(l) { return l.part; }).join(', ') + (n > 4 ? '…' : '');
+    }).catch(function() {});
+  };
+  function invSoldOutLabelsHtml(list) {
+    var day = function(iso) { try { return new Date(iso).toLocaleDateString('en-US', { timeZone: 'America/New_York' }); } catch (e) { return ''; } };
+    return '<!doctype html><html><head><meta charset="utf-8"><title>Sold Out labels</title><style>@page{margin:0.2in}'
+      + 'body{font-family:Arial,Helvetica,sans-serif;margin:0;color:#000}.lb{border:3px solid #000;border-radius:8px;padding:10px 14px;width:3.6in;page-break-after:always;margin-bottom:0.2in}.lb:last-child{page-break-after:auto}'
+      + '.so{font-size:34px;font-weight:900;letter-spacing:2px}.pt{font-family:monospace;font-size:24px;font-weight:800}.nm{font-size:14px;margin:2px 0}.sm{font-size:13px}'
+      + '</style></head><body>' + list.map(function(l) {
+        return '<div class="lb"><div class="so">SOLD OUT</div><div class="pt">' + invEsc(l.part) + '</div>'
+          + (l.name ? '<div class="nm">' + invEsc(l.name) + '</div>' : '')
+          + '<div class="sm">Date: <b>' + invEsc(day(l.at)) + '</b> &nbsp; By: <b>' + invEsc(l.by_user || '') + '</b></div>'
+          + '<div class="sm">Coming: <b>' + invEsc(l.incoming || '') + '</b></div></div>';
+      }).join('') + '</body></html>';
+  }
+  window.invSoldOutPrintQueue = function() {
+    var list = _invSoQueue.slice(); if (!list.length) return;
+    var f = document.createElement('iframe');
+    f.style.cssText = 'position:fixed;right:0;bottom:0;width:0;height:0;border:0;visibility:hidden';
+    document.body.appendChild(f);
+    f.contentDocument.open(); f.contentDocument.write(invSoldOutLabelsHtml(list)); f.contentDocument.close();
+    setTimeout(function() {
+      try { f.contentWindow.focus(); f.contentWindow.print(); } catch (e) {}
+      setTimeout(function() {
+        f.remove();
+        if (!confirm('Did the ' + list.length + ' Sold Out label' + (list.length === 1 ? '' : 's') + ' print OK?\n\nOK = take them off the list · Cancel = keep them to print again')) return;
+        wFetch(W + '/inventory/soldout-label/printed', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ ids: list.map(function(l) { return l.id; }) }) })
+          .then(function() { invFlash('✓ ' + list.length + ' label(s) printed', 'success'); invSoldOutQueueLoad(); }).catch(function() {});
+      }, 800);
+    }, 300);
+  };
+  setTimeout(function() { if (typeof invSoldOutQueueLoad === 'function') invSoldOutQueueLoad(); }, 2000);
+  setInterval(function() { if (!document.hidden) invSoldOutQueueLoad(); }, 60000);
+
   window.invSoldOutPrint = function() {
     var so = _invSo; if (!so) return;
     var coming = invSoldOutComing(), st = g('inv-so-status');

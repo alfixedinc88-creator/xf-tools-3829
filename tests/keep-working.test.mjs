@@ -298,5 +298,17 @@ console.log('\nVendor names hidden from workers · box UPCs · photos (Admins)')
   check('only Admins change product photos (manager 403, Admin saves)', pm.status === 403 && pa.ok !== false && (await get('/inventory/photos?bases=33-3-3')).photos['33-3-3'] === 'https://img.example/tee33.jpg', { mgr: pm.status, pa });
 }
 
+console.log('\nSold Out labels: phone → office PC print queue');
+{
+  await post('/inventory/soldout-label', { part: '60-3-3=1', base: '60-3-3', name: 'tee', incoming: 'x', how: 'queue' });
+  const q1 = await get('/inventory/soldout-label/queue');
+  const mine = (q1.labels || []).filter(l => l.part === '60-3-3=1');
+  check('a label sent from the phone waits for the office PC (with who sent it)', q1.ok && mine.length === 1 && mine[0].by_user === 'TS', q1);
+  await post('/inventory/soldout-label/printed', { ids: mine.map(l => l.id) });
+  const q2 = await get('/inventory/soldout-label/queue');
+  const pr = sq.prepare('SELECT printed_at, printed_by FROM soldout_label_log WHERE id = ?').get(mine[0].id);
+  check('once printed on the PC it leaves the list, with who printed it on record', !(q2.labels || []).some(l => l.id === mine[0].id) && pr.printed_at && pr.printed_by === 'TS', { q2, pr });
+}
+
 console.log('\n' + (failed ? '❌ ' + failed + ' check(s) FAILED' : '✅ all ' + passed + ' checks passed') + '\n');
 process.exit(failed ? 1 : 0);
