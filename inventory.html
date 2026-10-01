@@ -2366,10 +2366,10 @@ window.invCredLogin = async function() {
       + plan.takes.map(function(t) { return t.cases + ' × ' + t.partNum + ' @ ' + t.loc.location + (company && t.how ? ' (' + t.how + ')' : ''); }).join(' + ') + (typed ? '' : ' (no number typed — 1 case; change it on the list)');
     if (company) {
       if (plan.short > 0.001) invFlash(msg + ' — ⚠ ' + plan.short + (plan.byPieces ? ' pcs' : ' cases') + ' short' + (plan.noSize.length ? ' (Each/Case not on file for ' + plan.noSize.join(', ') + ')' : ''), 'warn');
-      else invFlash(msg, plan.takes.some(function(t) { return t.tier > 0 || t.how; }) ? 'warn' : 'success');
+      else invFlash(msg, plan.takes.some(function(t) { return t.tier > 0 || t.how || t.pallet; }) ? 'warn' : 'success');
     }
     else if (got < need) invFlash(msg + ' — ⚠ only ' + got + ' of ' + need + ' cases on the shelves (' + (need - got) + ' short)', 'warn');
-    else invFlash(msg, plan.takes.some(function(t) { return t.tier === 2; }) ? 'warn' : 'success');
+    else invFlash(msg, plan.takes.some(function(t) { return t.tier === 2 || t.pallet; }) ? 'warn' : 'success');
     if (inp) inp.value = '';
     var si = g('inv-search-inp'); if (si) si.value = '';
     // Ready for the next item: cases first, then scan.
@@ -2384,9 +2384,13 @@ window.invCredLogin = async function() {
     var locs = ((invPart && invPart.locations) || []).filter(function(l) { return !l.isPlaceholder; }).map(function(l) {
       return Object.assign({}, l, { _left: Math.max(0, availOf(l) - (onList[pnOf(l) + '|' + l.location] || 0)) });
     }).filter(function(l) { return l._left > 0; });
-    var ranked = invPickForShelving(locs), takes = [], left = need;
+    var rankedAll = invPickForShelving(locs), takes = [], left = need;
     var take = function(l, n) { n = Math.round(n * 100) / 100; if (n <= 0) return; l._left -= n; left = Math.round((left - n) * 100) / 100;
-      var ex = takes.filter(function(t) { return t.loc === l; })[0]; if (ex) ex.cases += n; else takes.push({ loc: l, partNum: pnOf(l), cases: n, tier: l._pick.tier }); };
+      var ex = takes.filter(function(t) { return t.loc === l; })[0]; if (ex) ex.cases += n; else takes.push({ loc: l, partNum: pnOf(l), cases: n, tier: l._pick.tier, pallet: !!l._pick.pallet }); };
+    // Shelf spots first (all the rules below), then spots still on pallets (same rules).
+    [false, true].forEach(function(onPal) {
+    if (left <= 0) return;
+    var ranked = rankedAll.filter(function(l) { return !!l._pick.pallet === onPal; });
     [0, 1].forEach(function(tier) {
       if (left <= 0) return;
       var c = ranked.filter(function(l) { return l._pick.tier === tier; });
@@ -2414,6 +2418,7 @@ window.invCredLogin = async function() {
         take(spot, n); stock[pn] -= n;
       }
     }
+    });
     return { takes: takes, short: Math.max(0, left) };
   }
 
@@ -2454,11 +2459,14 @@ window.invCredLogin = async function() {
       var note = tier === 2 ? 'FBA bag of ' + pn + ' — kept for its own listing'
         : tier === 1 ? 'same bag as FBA ' + keepPack[packOf(pn)] + ' (' + (stockOf[keepPack[packOf(pn)]] || 0) + ' cases left) — kept for FBA'
         : '';
-      l._pick = { tier: tier, score: b.score, how: b.how,
-        why: pn === T ? 'The exact part # (' + T + ')' : [b.how.charAt(0).toUpperCase() + b.how.slice(1), note].filter(Boolean).join(' · ') };
+      var pal = invOnPallet(l);
+      l._pick = { tier: tier, score: b.score, how: b.how, pallet: pal,
+        why: (pn === T ? 'The exact part # (' + T + ')' : [b.how.charAt(0).toUpperCase() + b.how.slice(1), note].filter(Boolean).join(' · '))
+          + (pal ? ' · 🚢 still on a pallet — used last (hard to get at)' : '') };
     });
     return locs.slice().sort(function(a, b) {
       var pa = pnOf(a), pb = pnOf(b), A = a._pick, B = b._pick;
+      if (A.pallet !== B.pallet) return A.pallet ? 1 : -1; // shelves before pallets
       if (A.tier !== B.tier) return A.tier - B.tier;
       if (A.score !== B.score) return A.score - B.score;
       var qa = packOf(pa), qb = packOf(pb);
@@ -2494,12 +2502,16 @@ window.invCredLogin = async function() {
     var unitOf = function(l) { var pn = pnOf(l);
       if (!byPieces) return packOf(pn) === P ? 1 : 0;
       var u = upc[pn] || (packOf(pn) === P ? upcT : 0); if (!u) noSize[pn] = 1; return u; };
-    var ranked = invRankForCompany(locs, T).filter(function(l) { return unitOf(l) > 0; });
+    var rankedAll = invRankForCompany(locs, T).filter(function(l) { return unitOf(l) > 0; });
     var left = byPieces ? need * upcT : need, takes = [];
     var take = function(l, n) { n = Math.round(n * 100) / 100; if (n <= 0) return; var u = unitOf(l); l._left = Math.round((l._left - n) * 100) / 100; left = Math.round((left - n * u) * 100) / 100;
       var ex = takes.filter(function(t) { return t.loc === l; })[0];
-      if (ex) { ex.cases += n; ex.pieces += n * u; } else takes.push({ loc: l, partNum: pnOf(l), cases: n, tier: l._pick.tier, how: l._pick.how, pieces: n * u }); };
+      if (ex) { ex.cases += n; ex.pieces += n * u; } else takes.push({ loc: l, partNum: pnOf(l), cases: n, tier: l._pick.tier, how: l._pick.how, pieces: n * u, pallet: !!l._pick.pallet }); };
     var casesFor = function(l) { return Math.min(l._left, Math.ceil(left / unitOf(l) - 1e-9)); };
+    // Shelf spots first (all the rules below), then spots still on pallets (same rules).
+    [false, true].forEach(function(onPal) {
+    if (left <= 0.001) return;
+    var ranked = rankedAll.filter(function(l) { return !!l._pick.pallet === onPal; });
     // Tiers -1 (the part # itself), 0 (not FBA), 1 (kept for a low FBA part #):
     // part # by part # in rank order; one spot that has them all, else the
     // fullest spots first.
@@ -2532,6 +2544,7 @@ window.invCredLogin = async function() {
         take(spot, n); stock[pn] -= n;
       }
     }
+    });
     return { takes: takes, short: Math.max(0, left), byPieces: byPieces, needPieces: byPieces ? need * upcT : null, noSize: Object.keys(noSize) };
   }
 
@@ -2810,6 +2823,14 @@ window.invCredLogin = async function() {
   //      variant — the spot with the FEWEST cases (use up half-empty spots).
   // Each spot gets loc._pick = { tier, why } for the screen.
   var INV_FBA_LOW_CASES = 2;
+  // A spot whose cases are all still on a 📦 Received container's pallets
+  // (not moved off in 🚢 Container here). Owner: pallets stand against each
+  // other and are hard to get at — use every shelf spot first, FBA bags on
+  // shelves included, and these last (the FBA rules still apply among them).
+  function invOnPallet(l) {
+    var avail = l.adjustedCases !== undefined ? l.adjustedCases : (parseFloat(l.cases) || 0);
+    return (parseFloat(l.palletBoxes) || 0) > 0 && avail <= (parseFloat(l.palletBoxes) || 0) + 1e-9;
+  }
   function invPickForShelving(locs) {
     function availOf(l) { return l.adjustedCases !== undefined ? l.adjustedCases : (parseFloat(l.cases) || 0); }
     function pnOf(l) { return String(l.partNum || invPart.partNum || '').toUpperCase(); }
@@ -2822,13 +2843,14 @@ window.invCredLogin = async function() {
     Object.keys(fba).forEach(function(f) { if ((stockOf[f] || 0) <= INV_FBA_LOW_CASES) keepPack[packOf(f)] = f; });
     function tierOf(pn) { return fba[pn] ? 2 : (keepPack[packOf(pn)] ? 1 : 0); }
     locs.forEach(function(l) {
-      var pn = pnOf(l), t = tierOf(pn);
-      l._pick = { tier: t, why: t === 2 ? 'FBA bag — kept for FBA'
+      var pn = pnOf(l), t = tierOf(pn), pal = invOnPallet(l);
+      l._pick = { tier: t, pallet: pal, why: (t === 2 ? 'FBA bag — kept for FBA'
         : t === 1 ? 'Same bag as FBA ' + keepPack[packOf(pn)] + ' (' + (stockOf[keepPack[packOf(pn)]] || 0) + ' cases left) — kept for FBA: cover the label, no rebag'
-        : 'Not an FBA bag' + (ageOf(pn) ? '' : ' · oldest') };
+        : 'Not an FBA bag' + (ageOf(pn) ? '' : ' · oldest')) + (pal ? ' · 🚢 still on a pallet — used last (hard to get at)' : '') };
     });
     return locs.slice().sort(function(a, b) {
       var pa = pnOf(a), pb = pnOf(b);
+      if (a._pick.pallet !== b._pick.pallet) return a._pick.pallet ? 1 : -1; // shelves (even FBA bags) before pallets
       if (a._pick.tier !== b._pick.tier) return a._pick.tier - b._pick.tier;
       if (ageOf(pa) !== ageOf(pb)) return ageOf(pa) - ageOf(pb);
       if (pa !== pb) {
@@ -3940,9 +3962,10 @@ window.invCredLogin = async function() {
   // Each place just drops an empty marker (invPalletSpan); one lookup fills
   // them all in (watching the page for new markers).
   var _invPalWhere = {}, _invPalAt = {}, _invPalBusy = false, _invPalQueued = false;
-  window.invPalletSpan = function(part, loc) {
+  window.invPalletSpan = function(part, loc, pullIdx) {
     part = String(part || '').trim().toUpperCase(); if (!part) return '';
-    return "<div class='inv-pal' data-part='" + invEsc(part) + "' data-loc='" + invEsc(String(loc || '').trim().toUpperCase()) + "' style='display:none'></div>";
+    return "<div class='inv-pal' data-part='" + invEsc(part) + "' data-loc='" + invEsc(String(loc || '').trim().toUpperCase()) + "'"
+      + (pullIdx != null ? " data-idx='" + pullIdx + "'" : '') + " style='display:none'></div>";
   };
   function invPalletPaint(el) {
     var part = el.getAttribute('data-part'), loc = el.getAttribute('data-loc');
@@ -3951,10 +3974,18 @@ window.invCredLogin = async function() {
       return !loc || at === loc || (!at && loc === 'GARAGE');
     });
     if (!list.length) { el.style.display = 'none'; el.innerHTML = ''; return; }
+    var idx = el.getAttribute('data-idx');
     el.innerHTML = list.map(function(e) {
       return '🚢 On pallet <b>' + invEsc(e.pallet) + '</b> · ' + invEsc(e.title) + ' · ' + (Math.round((parseFloat(e.left) || 0) * 100) / 100) + ' box' + (e.left === 1 ? '' : 'es') + ' left'
         + (!loc && e.location ? ' · in ' + invEsc(e.location) : '');
-    }).join('<br>');
+    }).join('<br>')
+      // Un-grabbed Pull List item still on a pallet: grab whatever box you can reach, then scan it here to swap the item for it.
+      + (idx != null ? "<div style='display:flex;gap:6px;margin-top:5px' onclick='event.stopPropagation()'>"
+        + "<input id='inv-pal-rep-" + idx + "' type='text' autocomplete='off' placeholder='📷 Grabbed another box? Scan it to replace' "
+        + "style='flex:1;min-width:0;padding:7px 9px;border:1.5px solid var(--purple);border-radius:7px;background:var(--bg);color:var(--text);font-size:13px;font-family:var(--mono)' "
+        + "onkeydown=\"if(event.key==='Enter'){event.preventDefault();invPalletReplace(" + idx + ",this.value);}\">"
+        + "<button type='button' onclick=\"var x=document.getElementById('inv-pal-rep-" + idx + "');invPalletReplace(" + idx + ",x?x.value:'')\" "
+        + "style='padding:7px 10px;border-radius:7px;border:1.5px solid var(--purple);background:var(--bg3);color:var(--purple);font-size:12px;font-weight:800;cursor:pointer;white-space:nowrap'>🔁 Replace</button></div>" : '');
     el.style.cssText = 'display:block;font-size:11px;font-weight:700;color:var(--purple);margin-top:2px';
   }
   window.invPalletFill = function() {
@@ -3970,6 +4001,49 @@ window.invCredLogin = async function() {
       .then(function(d) { need.forEach(function(p) { _invPalWhere[p] = (d && d.where && d.where[p]) || []; }); })
       .catch(function() { need.forEach(function(p) { _invPalAt[p] = 0; }); })
       .then(function() { _invPalBusy = false; [].forEach.call(document.querySelectorAll('.inv-pal'), invPalletPaint); if (_invPalQueued) { _invPalQueued = false; invPalletFill(); } });
+  };
+  // 🔁 Replace: the picker grabbed a different box off the pallet (the one
+  // asked for was hard to reach) and scans it. Same item (same parent part #)
+  // → the Pull List item becomes that box — its part # and spot — and is
+  // marked Grabbed, with a note saying what it replaced (History). The same
+  // part # → just Grabbed. A different item → refused.
+  window.invPalletReplace = function(i, code) {
+    var it = invPullList[i]; code = String(code || '').trim();
+    if (!it || !code) { invFlash('Scan the box you grabbed', 'error'); return; }
+    if (it.grabbed || it.submitted || it.noneFound) { invFlash('That item is already done', 'warn'); return; }
+    var inp = g('inv-pal-rep-' + i); if (inp) { inp.value = ''; inp.disabled = true; }
+    var U = function(v) { return String(v || '').trim().toUpperCase(); };
+    var avail = function(l) { return l.adjustedCases !== undefined ? l.adjustedCases : (parseFloat(l.cases) || 0); };
+    _invFetchLookupRaw(code).then(function(d) {
+      if (inp) inp.disabled = false;
+      if (!d || !d.partNum) { invFlash('✗ ' + code + ' — not a part # we know. Scan the box label.', 'error'); return; }
+      var L = U(it.location), locs = (d.locations || []).filter(function(l) { return !l.isPlaceholder && avail(l) > 0; });
+      var pn = U(d.partNum);
+      if (pn.indexOf('=') < 0) { // scanned the parent: only one size of it at this spot → that one
+        var here = locs.filter(function(l) { return U(l.location) === L; }), sizes = {};
+        here.forEach(function(l) { sizes[U(l.partNum)] = 1; });
+        if (Object.keys(sizes).length !== 1) { invFlash('Scan the box\'s own label (the part # with "=")', 'error'); return; }
+        pn = Object.keys(sizes)[0];
+      }
+      if (invParent(pn) !== invParent(it.partNum)) {
+        try { if (navigator.vibrate) navigator.vibrate([200, 100, 200]); } catch (e) {}
+        invFlash('✗ ' + pn + ' is a different item — this one is ' + it.partNum + '. Put it back.', 'error'); return;
+      }
+      if (pn === U(it.partNum)) { it.scanNote = (/^\[NONE FOUND AT/.test(it.scanNote || '') ? it.scanNote + ' ' : '') + '[BOX SCANNED]'; invTogglePullCheck(i); invFlash('✓ Right box — ' + it.partNum + ' @ ' + it.location + ' grabbed', 'success'); return; }
+      var at = locs.filter(function(l) { return U(l.partNum) === pn && U(l.location) === L; })[0]
+        || locs.filter(function(l) { return U(l.partNum) === pn && (parseFloat(l.palletBoxes) || 0) > 0; })[0];
+      if (!at) { invFlash(pn + ' is not on record at ' + it.location + ' — log it with Stock In / Found on Shelf first', 'error'); return; }
+      if (it.dest === 'company' && !confirm('Big Company asked for ' + (it.forPart || it.partNum) + '.\nUse ' + pn + ' instead?')) return;
+      var was = it.partNum + ' @ ' + it.location, n = parseFloat(it.cases) || 1, have = avail(at);
+      if (n > have) { invFlash('Only ' + have + ' case(s) of ' + pn + ' at ' + at.location + ' — set to ' + have, 'warn'); n = have; }
+      it.key = pn + '|' + at.location; it.partNum = pn; it.sku = d.sku || pn; if (d.name) it.name = d.name;
+      it.location = at.location; it.cases = String(n); it.systemCases = have;
+      it.rowIndex = at.rowIndex; it.masterRowIndex = at.rowIndex; it.masterId = at.masterId || null; it.isPlaceholder = false;
+      it.scanNote = '[REPLACED: asked for ' + was + ' — grabbed ' + pn + ' @ ' + at.location + ' instead (easier to reach)]';
+      invSavePullList();
+      invTogglePullCheck(i);
+      invFlash('🔁 Replaced ' + was + ' → ' + n + ' × ' + pn + ' @ ' + at.location + ' — grabbed', 'success');
+    }).catch(function() { if (inp) inp.disabled = false; invFlash('Lookup failed — try again', 'error'); });
   };
   (function() {
     var t = null;
@@ -4707,6 +4781,17 @@ window.invCredLogin = async function() {
       body: JSON.stringify({ items: invPullList })
     }).then(function(r) { return r.json(); }).then(function(d) {
       if (!d || !d.ok) { console.warn('[INV] pull list save failed', d); invPullRetryLater(); return; }
+      if (d.removed && d.removed.length) { // an Admin deleted these un-grabbed items — drop them here too
+        var gone = {}; d.removed.forEach(function(id) { gone[id] = 1; });
+        var idOf = function(i) { return String(i.key || (i.partNum || '') + '|' + (i.location || '')).toUpperCase() + '|' + String(i.addedAt || ''); };
+        var before = invPullList.length;
+        invPullList = invPullList.filter(function(i) { return !(!i.grabbed && !i.submitted && !i.noneFound && gone[idOf(i)]); });
+        if (invPullList.length !== before) {
+          try { localStorage.setItem(invPullKey(), JSON.stringify(invPullList)); } catch (e) {}
+          invRenderPullList();
+          invFlash('🗑 ' + (before - invPullList.length) + ' un-grabbed item(s) were deleted by ' + (d.removedBy || 'an Admin'), 'warn');
+        }
+      }
       if (!invPullSyncTimer) invPullDirty(false); // saved (and nothing newer waiting)
     }).catch(function(e) { console.warn('[INV] pull list save failed', e); invPullRetryLater(); });
   }
@@ -4747,7 +4832,7 @@ window.invCredLogin = async function() {
   window.invLoadAllPulls = function() {
     var card = g('inv-allpull-card');
     if (!card) return;
-    var isAdmin = !!(INV_CRED_USER && INV_CRED_USER.roles && INV_CRED_USER.roles.indexOf('admin') >= 0);
+    var isAdmin = !!(INV_CRED_USER && INV_CRED_USER.roles && (INV_CRED_USER.roles.indexOf('admin') >= 0 || INV_CRED_USER.roles.indexOf('owner') >= 0));
     card.setAttribute('data-admin', isAdmin ? '1' : '');
     card.style.display = (isAdmin && invMode === 'out') ? 'block' : 'none';
     if (!isAdmin) return;
@@ -4756,19 +4841,55 @@ window.invCredLogin = async function() {
     wFetch(W + '/inventory/pull/all').then(function(r) { return r.json(); }).then(function(d) {
       if (!d || !d.ok) { box.innerHTML = "<div class='iempty'>Load failed</div>"; return; }
       if (!d.people.length) { box.innerHTML = "<div class='iempty'>Nobody has un-grabbed items</div>"; return; }
-      box.innerHTML = d.people.map(function(p) {
-        var rows = p.ungrabbed.map(function(i) {
-          return "<div style='display:flex;gap:8px;justify-content:space-between;padding:4px 0;border-top:1px solid var(--border);font-size:12px'>" +
-            "<div><b>" + invPullEsc(i.partNum) + "</b>" + (i.name ? " <span style='color:var(--text3)'>" + invPullEsc(i.name) + "</span>" : "") + "</div>" +
-            "<div style='white-space:nowrap;color:var(--text3)'>" + invPullEsc(i.location || '') + (i.cases != null && i.cases !== '' ? " · " + invPullEsc(String(i.cases)) + " cs" : "") +
-            (i.addedAt ? " · " + invPullEsc(invFmtStamp(i.addedAt)) : "") + "</div></div>";
+      _invAllPulls = d.people;
+      var delBtn = "font-size:11px;font-weight:700;padding:3px 8px;border-radius:6px;border:1.5px solid var(--red);background:var(--red-bg);color:var(--red);cursor:pointer;white-space:nowrap";
+      box.innerHTML = d.people.map(function(p, pi) {
+        var rows = p.ungrabbed.map(function(i, ii) {
+          return "<div style='display:flex;gap:8px;justify-content:space-between;align-items:center;padding:4px 0;border-top:1px solid var(--border);font-size:12px'>" +
+            "<div style='min-width:0'><b>" + invPullEsc(i.partNum) + "</b>" + (i.name ? " <span style='color:var(--text3)'>" + invPullEsc(i.name) + "</span>" : "") +
+            "<div style='color:var(--text3)'>" + invPullEsc(i.location || '') + (i.cases != null && i.cases !== '' ? " · " + invPullEsc(String(i.cases)) + " cs" : "") +
+            (i.addedAt ? " · " + invPullEsc(invFmtStamp(i.addedAt)) : "") + "</div></div>" +
+            "<button style='" + delBtn + "' title='Delete this un-grabbed item from their list (recorded)' onclick='invAllPullDelete(" + pi + "," + ii + ")'>🗑 Delete</button></div>";
         }).join('');
         return "<details style='margin-bottom:6px'><summary style='cursor:pointer;font-weight:600;padding:4px 0'>" +
           invPullEsc(p.displayName || p.username || ('User ' + p.userId)) + " — " + p.ungrabbed.length + " un-grabbed" +
           (p.updatedAt ? " <span style='font-weight:400;font-size:11px;color:var(--text3)'>(updated " + invPullEsc(invFmtStamp(p.updatedAt)) + ")</span>" : "") +
-          "</summary>" + rows + "</details>";
-      }).join('');
+          "</summary>" + rows +
+          "<div style='text-align:right;padding:6px 0'><button style='" + delBtn + "' onclick='invAllPullDelete(" + pi + ",-1)'>🗑 Delete all " + p.ungrabbed.length + " un-grabbed</button></div></details>";
+      }).join('') + "<div style='text-align:right;margin-top:4px'><span onclick='invAllPullDeleteLog()' style='font-size:11px;color:var(--text3);text-decoration:underline dotted;cursor:pointer'>📜 Deleted items record</span></div>";
     }).catch(function() { box.innerHTML = "<div class='iempty'>Load failed</div>"; });
+  };
+
+  // Admin and up: delete un-grabbed items from someone's list (ii = -1: all
+  // of them). The server keeps a record (who, whose, what) and stops their
+  // phone from putting them back.
+  var _invAllPulls = [];
+  window.invAllPullDelete = function(pi, ii) {
+    var p = _invAllPulls[pi]; if (!p) return;
+    var name = p.displayName || p.username || ('User ' + p.userId);
+    var items = ii < 0 ? p.ungrabbed : [p.ungrabbed[ii]];
+    if (!items.length || !items[0]) return;
+    var what = items.map(function(i) { return i.partNum + ' @ ' + (i.location || '') + (i.cases ? ' · ' + i.cases + ' cs' : ''); });
+    if (!confirm('Delete from ' + name + "'s Un-grabbed list?\n\n" + what.slice(0, 15).join('\n') + (what.length > 15 ? '\n…and ' + (what.length - 15) + ' more' : '')
+      + '\n\nNothing on the shelves changes. This is recorded (who, when, what).')) return;
+    var body = ii < 0 ? { userId: p.userId, all: true } : { userId: p.userId, ids: [items[0].id] };
+    wFetch(W + '/inventory/pull/delete', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) })
+      .then(function(r) { return r.json(); }).then(function(d) {
+        if (!d || !d.ok) { invFlash((d && d.error) || 'Delete failed', 'error'); return; }
+        invFlash('🗑 Deleted ' + d.deleted + ' un-grabbed item' + (d.deleted === 1 ? '' : 's') + ' from ' + name + "'s list (recorded)", 'success');
+        if (INV_CRED_USER && String(INV_CRED_USER.userId) === String(p.userId)) invLoadPullListFromServer(); else invLoadAllPulls();
+      }).catch(function() { invFlash('Delete failed — network error', 'error'); });
+  };
+  window.invAllPullDeleteLog = function() {
+    wFetch(W + '/inventory/pull/delete-log').then(function(r) { return r.json(); }).then(function(d) {
+      var rows = (d && d.log) || [];
+      invModal('inv-pulldel-modal', '<div style="display:flex;justify-content:space-between;align-items:center"><div style="font-size:16px;font-weight:800">📜 Deleted un-grabbed items</div>'
+        + '<button onclick="document.getElementById(\'inv-pulldel-modal\').remove()" style="background:none;border:none;font-size:20px;cursor:pointer;color:var(--text3)">&times;</button></div>'
+        + (rows.length ? rows.map(function(x) {
+          return '<div style="padding:6px 0;border-bottom:1px solid var(--border);font-size:12px"><b>' + invEsc(x.by || '?') + '</b> deleted from <b>' + invEsc(x.who || '?') + '</b>\'s list · ' + invEsc(invFmtStamp(x.at))
+            + '<div style="color:var(--text3)">' + x.items.map(function(i) { return invEsc(i.partNum + ' @ ' + (i.location || '') + (i.cases ? ' · ' + i.cases + ' cs' : '')); }).join('<br>') + '</div></div>';
+        }).join('') : '<div style="padding:10px 0;color:var(--text3)">Nothing deleted yet.</div>'));
+    }).catch(function() { invFlash('Could not load the record', 'error'); });
   };
 
   // Small helper — consistent time format for pull-list Added/Grabbed stamps
@@ -5149,7 +5270,7 @@ window.invCredLogin = async function() {
       }).join("");
     }
     var infoHtml =
-      "<div class='ipull-loc'>" + item.location + "</div>" + invPalletSpan(item.partNum, item.location) +
+      "<div class='ipull-loc'>" + item.location + "</div>" + invPalletSpan(item.partNum, item.location, (!item.grabbed && !item.noneFound && !item.submitted) ? i : null) +
       "<div class='ipull-pn'>" + item.partNum + fossBadge + noneBadge + stockoutBadge + coBadge + "</div>" +
       "<div class='ipull-name'>" + (item.name || '') + "</div>" +
       (item.addedAt ? "<div style='font-size:10px;color:var(--text3);margin-top:2px'>Added " + invFmtStamp(item.addedAt) + (item.grabbedAt ? " &nbsp;·&nbsp; Grabbed " + invFmtStamp(item.grabbedAt) : "") + "</div>" : "") +
@@ -5845,18 +5966,70 @@ window.invCredLogin = async function() {
     invRenderPullList();
   };
 
+  // None Found: if the same item (parent part #) is still in stock at
+  // another spot, offer ONE more spot first (picked by the same Stock Out
+  // rules: shelves before pallets, FBA bags last). Two options:
+  //   📍 grab it there instead — this spot is still logged None Found (so
+  //      its count gets fixed in Review) and the other spot is put on the
+  //      Pull List with the same cases;
+  //   ✗ None Found — as before.
   window.invMarkNoneFound = function(i) {
-    if (!invPullList[i]) return;
-    invPullList[i].noneFound = true;
-    invPullList[i].cases = 0;
-    invPullList[i].grabbed = true;
-    invPullList[i].grabbedAt = new Date().toISOString();
-    invAutoResolveStockoutIfNeeded(invPullList[i]);
+    var it = invPullList[i]; if (!it) return;
+    var U = function(v) { return String(v || '').trim().toUpperCase(); };
+    var avail = function(l) { return l.adjustedCases !== undefined ? l.adjustedCases : (parseFloat(l.cases) || 0); };
+    invFlash('Checking other spots…', 'success');
+    _invFetchLookupRaw(invParent(it.partNum)).then(function(d) {
+      var onList = {}; invPullList.forEach(function(x) { if (!x.grabbed && !x.noneFound && !x.submitted) onList[U(x.partNum) + '|' + U(x.location)] = (onList[U(x.partNum) + '|' + U(x.location)] || 0) + (parseFloat(x.cases) || 0); });
+      var tried = {}; invPullList.forEach(function(x) { if (x.noneFound) tried[U(x.partNum) + '|' + U(x.location)] = 1; });
+      var locs = ((d && d.locations) || []).filter(function(l) {
+        var k = U(l.partNum) + '|' + U(l.location);
+        return !l.isPlaceholder && U(l.location) !== U(it.location) && !tried[k] && avail(l) - (onList[k] || 0) > 0;
+      });
+      if (it.dest === 'company') locs = locs.filter(function(l) { return U(l.partNum) === U(it.forPart || it.partNum); }); // Big Company: the same part #
+      if (!locs.length) { invNoneFoundNow(i); return; }
+      var keep = invPart; invPart = d; var ranked;
+      try { ranked = it.dest === 'company' ? invRankForCompany(locs, it.forPart || it.partNum) : invPickForShelving(locs); } finally { invPart = keep; }
+      var best = ranked[0], k = U(best.partNum) + '|' + U(best.location);
+      var left = Math.round((avail(best) - (onList[k] || 0)) * 100) / 100, n = Math.min(parseFloat(it.cases) || 1, left);
+      _invNfAlt = { i: i, loc: best, d: d, n: n };
+      invModal('inv-nfalt-modal', '<div style="font-size:16px;font-weight:800">Not at <span style="font-family:var(--mono)">' + invEsc(it.location) + '</span>?</div>'
+        + '<div style="font-size:13px;margin:6px 0 12px">We still have <b style="font-family:var(--mono)">' + invEsc(best.partNum) + '</b> at <b style="font-family:var(--mono)">' + invEsc(best.location) + '</b> — ' + left + ' case' + (left === 1 ? '' : 's')
+        + (best._pick && best._pick.pallet ? ' <span style="color:var(--purple);font-weight:700">(🚢 on a pallet)</span>' : '') + '.</div>'
+        + '<button style="display:block;width:100%;padding:12px;margin-bottom:8px;border:none;border-radius:9px;background:var(--accent);color:#fff;font-size:15px;font-weight:800;cursor:pointer" onclick="invNoneFoundAlt()">📍 Grab ' + n + ' at ' + invEsc(best.location) + ' instead</button>'
+        + '<button style="display:block;width:100%;padding:11px;margin-bottom:8px;border:1.5px solid var(--red);border-radius:9px;background:var(--red-bg);color:var(--red);font-size:14px;font-weight:800;cursor:pointer" onclick="invModalClose(\'inv-nfalt-modal\');invNoneFoundNow(' + i + ')">✗ None Found</button>'
+        + '<button style="display:block;width:100%;padding:9px;border:1px solid var(--border);border-radius:9px;background:var(--bg3);color:var(--text2);font-size:13px;cursor:pointer" onclick="invModalClose(\'inv-nfalt-modal\')">Cancel</button>'
+        + '<div style="font-size:11px;color:var(--text3);margin-top:8px">Either way ' + invEsc(it.location) + ' is logged None Found, so its count gets fixed in Review.</div>');
+    }).catch(function() { invNoneFoundNow(i); });
+  };
+  var _invNfAlt = null;
+  window.invModalClose = invModalClose;
+  window.invNoneFoundAlt = function() {
+    var a = _invNfAlt; _invNfAlt = null; invModalClose('inv-nfalt-modal');
+    if (!a || !invPullList[a.i]) return;
+    var it = invPullList[a.i], l = a.loc;
+    var add = { key: l.partNum + '|' + l.location, partNum: l.partNum, sku: (a.d && a.d.sku) || l.partNum, name: (a.d && a.d.name) || it.name || '', location: l.location, cases: String(a.n),
+      systemCases: l.adjustedCases !== undefined ? l.adjustedCases : (parseFloat(l.cases) || 0), rowIndex: l.rowIndex, isPlaceholder: false, masterRowIndex: l.rowIndex, masterId: l.masterId || null,
+      addedAt: new Date().toISOString(), sourceStockoutId: it.sourceStockoutId || null, dest: it.dest || 'shelving', forPart: it.forPart, how: it.how,
+      scanNote: '[NONE FOUND AT ' + it.location + ' — grabbed here instead]' };
+    invNoneFoundNow(a.i, true);
+    invPullList.push(add);
+    invSavePullList(); invRenderPullList();
+    invFlash('📍 ' + it.location + ' logged None Found — now grab ' + a.n + ' × ' + l.partNum + ' at ' + l.location, 'warn');
+  };
+  // None Found (as before): logged and sent to Review; then "what IS here?".
+  window.invNoneFoundNow = function(i, skipCount) {
+    var item = invPullList[i]; if (!item) return;
+    item.noneFound = true;
+    item.cases = 0;
+    item.grabbed = true;
+    item.grabbedAt = new Date().toISOString();
+    invAutoResolveStockoutIfNeeded(item);
     invSavePullList();
-    invRenderPullList();
-    invSubmitOnePullItem(i); // submits immediately, same as Grabbed
+    invRenderPullList(); // can re-sort the list — find the item again
+    invSubmitOnePullItem(invPullList.indexOf(item)); // submits immediately, same as Grabbed
+    if (skipCount) return;
     invFlash('None Found logged — sent for review', 'warn');
-    invNfCountOpen(invPullList[i]);
+    invNfCountOpen(item);
   };
 
   // ── ✕ next to "Cases needed" / "Part# or barcode": one tap clears both
@@ -6049,7 +6222,7 @@ window.invCredLogin = async function() {
       }
       if (exact.length) {
         var i = exact[0], it = invPullList[i];
-        it.scanNote = '[BOX SCANNED]';
+        it.scanNote = (/^\[NONE FOUND AT/.test(it.scanNote || '') ? it.scanNote + ' ' : '') + '[BOX SCANNED]';
         invTogglePullCheck(i);
         invFlash('✓ Right box — ' + it.partNum + ' @ ' + it.location + ' grabbed', 'success');
         setTimeout(function() { var x = g('inv-grab-scan'); if (x) x.focus(); }, 50);

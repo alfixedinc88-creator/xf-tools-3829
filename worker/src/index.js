@@ -2766,6 +2766,22 @@ async function inventoryLookup(url, env) {
     } catch (_) {}
   }
 
+  // Boxes still on a 📦 Received container's pallets at each spot (not moved
+  // off in 🚢 Container here yet) — Stock Out picks shelf spots before these:
+  // pallets stacked against each other are hard to get at.
+  if (env.DB && locations.length) {
+    try {
+      const where = await palletWhereFor(env, [...new Set(locations.map(l => String(l.partNum || '').toUpperCase()))]);
+      for (const loc of locations) {
+        const L = String(loc.location || '').toUpperCase();
+        const n = (where[String(loc.partNum || '').toUpperCase()] || [])
+          .filter(e => { const at = String(e.location || '').toUpperCase(); return at === L || (!at && L === 'GARAGE'); })
+          .reduce((a, e) => a + (parseFloat(e.left) || 0), 0);
+        if (n > 0) loc.palletBoxes = Math.round(n * 1000) / 1000;
+      }
+    } catch (_) {}
+  }
+
   let photo = '';
   try { photo = (await productPhotoMap(env, [baseSku]))[baseSku] || ''; } catch (_) {}
   return cors(new Response(JSON.stringify({
@@ -11819,8 +11835,13 @@ async function inventoryRecoverFromSheet(request, url, env) {
 async function palletWhere(request, env) {
   const J = (o, st) => cors(new Response(JSON.stringify(o), { status: st || 200, headers: { 'Content-Type': 'application/json' } }));
   const b = await request.json().catch(() => ({}));
-  const want = [...new Set((b.parts || []).map(p => String(p || '').trim().toUpperCase()).filter(Boolean))].slice(0, 300);
-  if (!want.length) return J({ ok: true, where: {} });
+  return J({ ok: true, where: await palletWhereFor(env, b.parts || []) });
+}
+// { PART: [{title, vendor, pallet, left, location}] } — shared by the route
+// above and /inventory/lookup (Stock Out picks spots still on pallets last).
+async function palletWhereFor(env, parts) {
+  const want = [...new Set((parts || []).map(p => String(p || '').trim().toUpperCase()).filter(Boolean))].slice(0, 300);
+  if (!want.length) return {};
   await reorderFixTables(env);
   const alias = {}, back = {};
   ((await env.DB.prepare('SELECT raw, part FROM reorder_alias').all()).results || []).forEach(a => {
@@ -11831,7 +11852,7 @@ async function palletWhere(request, env) {
     const ch = look.slice(i, i + 90);
     rows.push(...await d1All(env, `SELECT id, title, vendor, pallet, part, cases FROM reorder_pallet WHERE UPPER(part) IN (${ch.map(() => '?').join(',')})`, ch));
   }
-  if (!rows.length) return J({ ok: true, where: {} });
+  if (!rows.length) return {};
   const got = await receivedContainerTitles(env);
   const live = rows.filter(r => got.has(r.title));
   const moved = {};
@@ -11852,7 +11873,7 @@ async function palletWhere(request, env) {
     (where[part] = where[part] || []).push({ title: r.title, vendor: r.vendor, pallet: r.pallet, left: Math.round(left * 1000) / 1000,
       location: rcvLoc[r.title + '|' + part] || rcvLoc[r.title + '|' + String(r.part).toUpperCase()] || '' });
   }
-  return J({ ok: true, where });
+  return where;
 }
 async function palletOpenLog(request, env, session) {
   const b = await request.json().catch(() => ({}));
@@ -12220,6 +12241,13 @@ async function inventoryPullRoute(path, method, request, env) {
   const cs = await verifyCredSession(request.headers.get('X-Cred-Token'), env).catch(() => null);
   if (!cs || !cs.userId) return J({ ok: false, error: 'Sign in required' }, 401);
   await env.DB.prepare(`CREATE TABLE IF NOT EXISTS inventory_pull_user (user_id INTEGER PRIMARY KEY, username TEXT, display_name TEXT, items TEXT NOT NULL DEFAULT '[]', updated_at TEXT)`).run().catch(() => {});
+  // Items an Admin deleted from someone's Un-grabbed list: remembered so the
+  // person's phone can't put them back on its next save (it still has them).
+  await env.DB.prepare(`ALTER TABLE inventory_pull_user ADD COLUMN removed TEXT`).run().catch(() => {});
+  await env.DB.prepare(`CREATE TABLE IF NOT EXISTS inventory_pull_delete_log (id INTEGER PRIMARY KEY AUTOINCREMENT, by_user TEXT, user_id INTEGER, user_name TEXT, items TEXT, at TEXT)`).run().catch(() => {});
+  const pullId = i => String((i && i.key) || ((i && i.partNum) || '') + '|' + ((i && i.location) || '')).toUpperCase() + '|' + String((i && i.addedAt) || '');
+  const isOpen = i => i && !i.grabbed && !i.submitted && !i.noneFound;
+  const isAdminUp = (cs.roles || []).includes('admin') || (cs.roles || []).includes('owner');
   if (path === '/inventory/pull/mine' && method === 'GET') {
     const r = await env.DB.prepare('SELECT items, updated_at FROM inventory_pull_user WHERE user_id = ?').bind(cs.userId).first();
     let items = []; try { items = JSON.parse((r && r.items) || '[]'); } catch (_) {}
@@ -12227,22 +12255,55 @@ async function inventoryPullRoute(path, method, request, env) {
   }
   if (path === '/inventory/pull/mine' && method === 'POST') {
     const b = await request.json().catch(() => ({}));
-    const items = Array.isArray(b.items) ? b.items.slice(0, 500) : [];
+    let items = Array.isArray(b.items) ? b.items.slice(0, 500) : [];
+    // Drop un-grabbed items an Admin deleted (the phone still had them) and tell the phone.
+    const prev = await env.DB.prepare('SELECT removed FROM inventory_pull_user WHERE user_id = ?').bind(cs.userId).first().catch(() => null);
+    let gone = []; try { gone = JSON.parse((prev && prev.removed) || '[]'); } catch (_) {}
+    const goneSet = new Set(gone.map(r => r.id)), dropped = [];
+    if (goneSet.size) items = items.filter(i => { if (isOpen(i) && goneSet.has(pullId(i))) { dropped.push(pullId(i)); return false; } return true; });
     const json = JSON.stringify(items);
     if (json.length > 400000) return J({ ok: false, error: 'Pull list too big' }, 413);
     const now = new Date().toISOString();
     await env.DB.prepare(`INSERT INTO inventory_pull_user (user_id, username, display_name, items, updated_at) VALUES (?,?,?,?,?)
       ON CONFLICT(user_id) DO UPDATE SET username = excluded.username, display_name = excluded.display_name, items = excluded.items, updated_at = excluded.updated_at`)
       .bind(cs.userId, cs.username || '', cs.displayName || '', json, now).run();
-    return J({ ok: true, updatedAt: now });
+    const by = dropped.length ? (gone.find(r => r.id === dropped[0]) || {}).by || '' : '';
+    return J({ ok: true, updatedAt: now, removed: dropped, removedBy: by });
+  }
+  // POST /inventory/pull/delete {userId, ids:[...]} or {userId, all:true} — Admin and up
+  // delete un-grabbed items from that person's list. Recorded (who, whose, what).
+  if (path === '/inventory/pull/delete' && method === 'POST') {
+    if (!isAdminUp) return J({ ok: false, error: 'Admin access required' }, 403);
+    const b = await request.json().catch(() => ({}));
+    const uid = parseInt(b.userId, 10);
+    const r = uid ? await env.DB.prepare('SELECT user_id, username, display_name, items, removed FROM inventory_pull_user WHERE user_id = ?').bind(uid).first() : null;
+    if (!r) return J({ ok: false, error: 'No pull list for that person' }, 404);
+    let items = [], gone = []; try { items = JSON.parse(r.items || '[]'); } catch (_) {} try { gone = JSON.parse(r.removed || '[]'); } catch (_) {}
+    const want = new Set((b.ids || []).map(x => String(x).toUpperCase()));
+    const del = items.filter(i => isOpen(i) && (b.all === true || want.has(pullId(i).toUpperCase())));
+    if (!del.length) return J({ ok: false, error: 'Nothing to delete (already grabbed or gone)' }, 409);
+    const delIds = new Set(del.map(pullId)), by = String(cs.displayName || cs.username || '').slice(0, 40), now = new Date().toISOString();
+    items = items.filter(i => !(isOpen(i) && delIds.has(pullId(i))));
+    gone = gone.concat([...delIds].map(id => ({ id, by, at: now }))).slice(-500);
+    await env.DB.prepare('UPDATE inventory_pull_user SET items = ?, removed = ?, updated_at = ? WHERE user_id = ?').bind(JSON.stringify(items), JSON.stringify(gone), now, uid).run();
+    const what = del.map(i => ({ partNum: i.partNum || '', location: i.location || '', cases: i.cases, addedAt: i.addedAt || null }));
+    await env.DB.prepare('INSERT INTO inventory_pull_delete_log (by_user, user_id, user_name, items, at) VALUES (?,?,?,?,?)')
+      .bind(by, uid, r.display_name || r.username || '', JSON.stringify(what), now).run();
+    return J({ ok: true, deleted: what.length, items: what });
+  }
+  // GET /inventory/pull/delete-log — the record of those deletes (Admin and up).
+  if (path === '/inventory/pull/delete-log' && method === 'GET') {
+    if (!isAdminUp) return J({ ok: false, error: 'Admin access required' }, 403);
+    const rows = (await env.DB.prepare('SELECT by_user, user_name, items, at FROM inventory_pull_delete_log ORDER BY id DESC LIMIT 50').all()).results || [];
+    return J({ ok: true, log: rows.map(x => { let it = []; try { it = JSON.parse(x.items || '[]'); } catch (_) {} return { by: x.by_user, who: x.user_name, at: x.at, items: it }; }) });
   }
   if (path === '/inventory/pull/all' && method === 'GET') {
-    if (!(cs.roles || []).includes('admin')) return J({ ok: false, error: 'Admin access required' }, 403);
+    if (!isAdminUp) return J({ ok: false, error: 'Admin access required' }, 403);
     const rows = (await env.DB.prepare('SELECT user_id, username, display_name, items, updated_at FROM inventory_pull_user ORDER BY display_name').all()).results || [];
     const people = rows.map(r => {
       let items = []; try { items = JSON.parse(r.items || '[]'); } catch (_) {}
       const ungrabbed = items.filter(i => i && !i.grabbed && !i.submitted && !i.noneFound)
-        .map(i => ({ partNum: i.partNum || '', name: i.name || '', location: i.location || '', cases: i.cases, addedAt: i.addedAt || null }));
+        .map(i => ({ id: pullId(i), partNum: i.partNum || '', name: i.name || '', location: i.location || '', cases: i.cases, addedAt: i.addedAt || null }));
       return { userId: r.user_id, username: r.username, displayName: r.display_name || r.username, updatedAt: r.updated_at, total: items.length, ungrabbed };
     }).filter(p => p.ungrabbed.length);
     return J({ ok: true, people });

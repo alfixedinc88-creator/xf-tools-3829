@@ -139,8 +139,16 @@ const w1 = (wh.where || {})['60-1-1=10'] || [], w2 = (wh.where || {})['60-2-2=1'
 check('Stock Out: which pallet — 60-1-1=10 on pallets 1 (12 boxes) and 2 (8), 60-2-2=1 on pallet 2 (10), all stocked in at GARAGE; unknown part: none',
   wh.ok && w1.length === 2 && w1.some(x => x.pallet === '1' && x.left === 12) && w1.some(x => x.pallet === '2' && x.left === 8) && w2.length === 1 && w2[0].pallet === '2' && w2[0].left === 10
     && w1.concat(w2).every(x => x.location === 'GARAGE' && x.title === CT) && !(wh.where || {})['99-9-9=1'], wh);
-check('which pallet needs a sign-in', (await call('/inventory/containers/where', { method: 'POST', body: '{"parts":["60-1-1=10"]}' })).status === 401, null);
 const invH = (await import('node:fs')).readFileSync(fileURLToPath(new URL('../inventory.html', import.meta.url)), 'utf8');
+// Owner: "use the FBA one on location first if the rest is still on pallets — pallets are hard to get at".
+const lkP = await get('/inventory/lookup?code=' + encodeURIComponent('60-1-1=10'));
+const lkG = (lkP.locations || []).find(l => l.location === 'GARAGE'), lkC = (lkP.locations || []).find(l => l.location === 'C1=1-1-2');
+check('Stock Out lookup marks boxes still on pallets per spot: GARAGE 60-1-1=10 has 20 on pallets, the shelf spot none', lkG && lkG.palletBoxes === 20 && lkC && !lkC.palletBoxes, { lkG, lkC });
+check('Stock Out picks shelf spots (FBA bags too) before spots still on pallets, on both tabs; Pull List 🔁 Replace; None Found offers one more spot',
+  /function invOnPallet\(l\)/.test(invH) && (invH.match(/\[false, true\]\.forEach\(function\(onPal\)/g) || []).length === 2 && /if \(a\._pick\.pallet !== b\._pick\.pallet\)/.test(invH)
+  && /if \(A\.pallet !== B\.pallet\)/.test(invH) && /window\.invPalletReplace = function/.test(invH) && /\[REPLACED: asked for /.test(invH)
+  && /window\.invNoneFoundAlt = function/.test(invH) && /window\.invNoneFoundNow = function/.test(invH), null);
+check('which pallet needs a sign-in', (await call('/inventory/containers/where', { method: 'POST', body: '{"parts":["60-1-1=10"]}' })).status === 401, null);
 check('Stock Out pull list, its spot list and Stock Out Reports all show the pallet', /ipull-loc'>" \+ item\.location \+ "<\/div>" \+ invPalletSpan\(item\.partNum/.test(invH)
   && /iloc-name'>" \+ loc\.location \+ "<\/div>" \+ invPalletSpan\(/.test(invH) && /s\.sku \? invPalletSpan\(s\.sku, ''\)/.test(invH), null);
 const again = await post('/reorder/fix/incoming-receive', { title: CT, location: 'GARAGE', lines: rcvLines });
@@ -513,6 +521,29 @@ console.log('\nHistory report: Total In / Total Out add up; Transfers show cases
   check('transfers do not change the warehouse total, and the report still adds up', shelf() === all0 && Math.abs(s1.startingCases + s1.approved.casesIn - s1.approved.casesOut - s1.endingCases) < 1e-9,
     { shelf: shelf(), all0, s1: [s1.startingCases, s1.approved, s1.endingCases] });
   sq.exec("DELETE FROM master_list WHERE part_num IN ('HC-1=5','HC-2=5'); DELETE FROM reorder_pallet WHERE title='HIST CT'; DELETE FROM pallet_open WHERE title='HIST CT'");
+}
+
+console.log('\nEveryone\'s Un-grabbed items: Admin and up can delete them (recorded, and the phone can\'t bring them back)');
+{
+  // Owner: "Everyone's un-grabbed items — Admins and up can delete the un-grabbed from that account".
+  const mine = [{ key: '23-2-3=2|A1=1-1-1', partNum: '23-2-3=2', location: 'A1=1-1-1', cases: '1', addedAt: '2026-10-01T09:00:00.000Z' },
+                { key: '23-2-3=2|B1=1-1-1', partNum: '23-2-3=2', location: 'B1=1-1-1', cases: '2', addedAt: '2026-10-01T09:01:00.000Z' },
+                { key: '40-1-1=1|C1=1-1-1', partNum: '40-1-1=1', location: 'C1=1-1-1', cases: '1', addedAt: '2026-10-01T09:02:00.000Z', grabbed: true, submitted: true }];
+  await post('/inventory/pull/mine', { items: mine });
+  const all = await get('/inventory/pull/all'), me = (all.people || []).find(p => p.displayName === 'TS') || {};
+  check('Everyone\'s list shows my 2 un-grabbed items with an id each', me.ungrabbed && me.ungrabbed.length === 2 && me.ungrabbed.every(i => i.id), me);
+  const d1 = await post('/inventory/pull/delete', { userId: me.userId, ids: [me.ungrabbed[0].id] });
+  const left = JSON.parse(sq.prepare('SELECT items FROM inventory_pull_user WHERE user_id=?').get(me.userId).items);
+  check('Admin deletes 1 un-grabbed item → 1 un-grabbed + the grabbed one stay', d1.ok && d1.deleted === 1 && left.length === 2 && left.some(i => i.grabbed), { d1, left });
+  const back = await post('/inventory/pull/mine', { items: mine });
+  const left2 = JSON.parse(sq.prepare('SELECT items FROM inventory_pull_user WHERE user_id=?').get(me.userId).items);
+  check('the phone saving its old list can\'t put it back, and is told to drop it', back.ok && back.removed.length === 1 && left2.length === 2 && !left2.some(i => i.location === 'A1=1-1-1'), { back, left2 });
+  const d2 = await post('/inventory/pull/delete', { userId: me.userId, all: true });
+  const log = await get('/inventory/pull/delete-log');
+  check('"Delete all" removes only the un-grabbed (grabbed stays); every delete is recorded (who, whose, what)', d2.ok && d2.deleted === 1
+    && JSON.parse(sq.prepare('SELECT items FROM inventory_pull_user WHERE user_id=?').get(me.userId).items).length === 1 && log.log.length === 2 && log.log.every(x => x.by === 'TS' && x.who === 'TS'), log);
+  check('deleting needs a sign-in', (await call('/inventory/pull/delete', { method: 'POST', body: '{}' })).status === 401, null);
+  await post('/inventory/pull/mine', { items: [] });
 }
 
 console.log('\nSKU Mgr: the parent follows the Part #, wrong parents can be fixed, every edit is in History');
