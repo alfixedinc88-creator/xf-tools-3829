@@ -8889,7 +8889,7 @@ window.invCredLogin = async function() {
         + '<div style="font-size:13px;font-weight:800;margin-bottom:6px">3️⃣ Cases you are grabbing</div>'
         + '<div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap">'
         + '<input id="xfr-grab-n" type="number" min="0.5" step="1" value="' + have + '" style="width:90px;padding:10px;border:2px solid var(--accent);border-radius:9px;background:var(--bg);color:var(--text);font-size:18px;font-weight:800;font-family:var(--mono)">'
-        + '<div style="font-size:13px">in the system: <b style="font-size:17px">' + have + '</b>' + (pend > 0 ? ' <span style="font-size:11px;color:var(--orange)">(' + xfrN(pend) + ' waiting approval)</span>' : '') + '</div></div>'
+        + '<div onclick="xfrGrabFixSystem()" title="Tap to correct what the system has here" style="font-size:13px;cursor:pointer">in the system: <b style="font-size:17px;text-decoration:underline dotted">' + have + '</b> <span style="font-size:11px;color:var(--accent)">✏️ fix</span>' + (pend > 0 ? ' <span style="font-size:11px;color:var(--orange)">(' + xfrN(pend) + ' waiting approval)</span>' : '') + '</div></div>'
         + '<label style="display:flex;gap:8px;align-items:center;margin-top:10px;font-size:13px;font-weight:700;color:var(--red);cursor:pointer"><input type="checkbox" id="xfr-grab-empty" style="width:22px;height:22px;flex-shrink:0"> No more of this item left in this spot</label>'
         + '<button type="button" onclick="xfrGrabAdd()" style="margin-top:10px;width:100%;padding:12px;border-radius:9px;border:none;background:var(--purple);color:#fff;font-size:15px;font-weight:800;cursor:pointer">+ Add to Cart</button>';
     }
@@ -8908,6 +8908,34 @@ window.invCredLogin = async function() {
     xfrShowGrab();
   };
   window.xfrGrabPick = function(i) { xfrGrab.pick = i; xfrShowGrab(); };
+  // ✏️ "in the system" is wrong: correct it first, same as Stock Out
+  // (an [AUDIT] correction, approved right away, kept in History).
+  window.xfrGrabFixSystem = function() {
+    var G = xfrGrab, l = G.rows[G.pick || 0]; if (!l || !xfrPart) return;
+    var oldVal = xfrRowCases(l), partNum = l.partNum || xfrPart.partNum;
+    var input = window.prompt('System shows ' + oldVal + ' case(s) of ' + partNum + ' at ' + l.location + ' (BEFORE you grab any).\nWhat do you actually see on the shelf right now, before grabbing?', oldVal);
+    if (input === null) return;
+    var newVal = parseFloat(input);
+    if (isNaN(newVal) || newVal < 0) { invFlash('Enter a valid number', 'error'); return; }
+    if (newVal === oldVal) { invFlash('No change', 'warn'); return; }
+    var diff = newVal - oldVal;
+    invFlash('Saving correction…', 'success');
+    invPost(W + '/inventory/log', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({
+      type: diff > 0 ? 'IN' : 'OUT', partNum: partNum, sku: xfrPart.sku || partNum, name: xfrPart.name || '',
+      location: l.location, cases: Math.abs(diff), initials: (INV_CRED_USER && INV_CRED_USER.displayName) || 'OPS',
+      notes: '[AUDIT] [TRANSFER CORRECTION] ' + oldVal + ' → ' + newVal,
+      isNew: false, isPlaceholder: !!l.isPlaceholder, masterRowIndex: l.rowIndex, masterId: l.masterId || null, immediateApprove: true }) })
+      .then(function(r) { return r.json(); }).then(function(d) {
+        if (!d || !d.ok) { invFlash('Correction failed: ' + ((d && d.error) || 'unknown'), 'error'); return; }
+        var pend = parseFloat(l.pendingCases) || 0;
+        l.adjustedCases = newVal; l.cases = newVal + pend;
+        invFlash('✓ Corrected ' + l.location + ': ' + oldVal + ' → ' + newVal, 'success');
+        xfrShowGrab();
+      }).catch(function(err) {
+        if (isUnauthorized(err)) invReauth(function() { xfrGrabFixSystem(); }, function() {});
+        else invFlash('Correction failed — network error', 'error');
+      });
+  };
   window.xfrGrabClear = function() { xfrGrab = { loc: '', rows: [] }; xfrShowGrab(); };
   window.xfrGrabAdd = function() {
     var G = xfrGrab, l = G.rows[G.pick || 0]; if (!l || !xfrPart) return;
