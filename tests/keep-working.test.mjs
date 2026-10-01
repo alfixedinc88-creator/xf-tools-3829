@@ -373,9 +373,10 @@ console.log('\n📍 Location Plan: where each parent goes; Container here tells 
   const badPart = await post('/inventory/location-plan', { items: [{ part: '70-1-1', plan: 'PR' }] });
   check('pack-size change is in the parent\'s log; clearing it goes back to the parent plan; a part # with no pack size is refused', lg2.log.some(l => l.base === '70-1-1=10' && l.new_plan === 'PR') && a10b.plan === 'BSMT' && a10b.planLevel === 'parent' && !badPart.ok && shelf() === shelf0 + 2, { a10b, badPart });
   // 🚢 Container here: 2 suggested spots per item (plan first, then where most of the parent is), + each line's move history
+  sq.prepare("INSERT OR IGNORE INTO locations (location, prefix, active) VALUES ('BSMT=','BSMT=',1), ('C1=','C1=',1)").run(); // area names saved as locations: never suggested
   const rc = await post('/inventory/containers/pallet-recs', { parts: ['70-1-1=5', '70-2-2=10', '70-9-9=1'], fromLoc: 'GARAGE' });
   const r5 = rc.recs['70-1-1=5'], r10 = rc.recs['70-2-2=10'], r9 = rc.recs['70-9-9=1'];
-  check('suggested spots (owner: no "empty shelf in BARN" — the plan note says it): plan BSMT with no BSMT stock → no extra spots; exact plan C5=1-1-1 → none; no plan + no stock → 2 empty shelves', rc.ok && r5.plan === 'BSMT' && r5.recs.length === 0 && r10.plan === 'C5=1-1-1' && r10.recs.length === 0 && !r9.plan && r9.recs.length === 2 && r9.recs.every(x => /empty/.test(x.why)), rc);
+  check('suggested spots are real shelves: plan BSMT, no BSMT stock → empty shelf BSMT=1-1-1 (never the bare "BSMT="); exact plan C5=1-1-1 → none; no plan + no stock → 2 empty shelves; at most 2', rc.ok && r5.plan === 'BSMT' && r5.recs[0].location === 'BSMT=1-1-1' && r5.recs[0].why === 'empty shelf' && r10.plan === 'C5=1-1-1' && r10.recs.length === 0 && !r9.plan && r9.recs.length === 2 && r9.recs.every(x => /empty/.test(x.why)) && [r5, r9].every(r => r.recs.every(x => /=\d/.test(x.location)) && r.recs.length <= 2), rc);
   await post('/inventory/location-plan', { items: [{ base: '70-1-1', plan: 'C1' }] });
   const rcC1 = await post('/inventory/containers/pallet-recs', { parts: ['70-1-1=5'], fromLoc: 'GARAGE' });
   check('plan C1 → only C1 shelves already holding 70-1-1, most first (3 then 2), never more than 2', rcC1.recs['70-1-1=5'].recs.map(x => x.location).join() === 'C1=1-1-1,C1=1-1-2', rcC1);
