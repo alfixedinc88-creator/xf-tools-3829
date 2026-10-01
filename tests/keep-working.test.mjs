@@ -372,6 +372,19 @@ console.log('\n📍 Location Plan: where each parent goes; Container here tells 
   const a10b = await get('/inventory/suggest-location?usePlan=1&partNum=70-1-1%3D10&fromLoc=GARAGE');
   const badPart = await post('/inventory/location-plan', { items: [{ part: '70-1-1', plan: 'PR' }] });
   check('pack-size change is in the parent\'s log; clearing it goes back to the parent plan; a part # with no pack size is refused', lg2.log.some(l => l.base === '70-1-1=10' && l.new_plan === 'PR') && a10b.plan === 'BSMT' && a10b.planLevel === 'parent' && !badPart.ok && shelf() === shelf0 + 2, { a10b, badPart });
+  // 🚢 Container here: 2 suggested spots per item (plan first, then where most of the parent is), + each line's move history
+  const rc = await post('/inventory/containers/pallet-recs', { parts: ['70-1-1=5', '70-2-2=10', '70-9-9=1'], fromLoc: 'GARAGE' });
+  const r5 = rc.recs['70-1-1=5'], r10 = rc.recs['70-2-2=10'], r9 = rc.recs['70-9-9=1'];
+  check('suggested spots: 70-1-1 (plan BSMT) → BSMT shelf first; 70-2-2 (exact plan C5=1-1-1) → that spot; no plan + no stock → empty shelves; never more than 2', rc.ok && r5.plan === 'BSMT' && r5.recs[0].location === 'BSMT=1-1-1' && r10.recs[0].location === 'C5=1-1-1' && r10.recs[0].why === '📍 plan spot' && !r9.plan && r9.recs.length === 2 && r9.recs.every(x => /empty/.test(x.why)) && [r5, r10, r9].every(r => r.recs.length <= 2), rc);
+  await post('/inventory/location-plan', { items: [{ base: '70-1-1', plan: '' }] });
+  const rcN = await post('/inventory/containers/pallet-recs', { parts: ['70-1-1=5'], fromLoc: 'GARAGE' });
+  check('no plan: the shelf holding the most of the same parent (any pack size) comes first', rcN.recs['70-1-1=5'].recs[0].location === 'C1=1-1-1' && /has 3 cases of 70-1-1/.test(rcN.recs['70-1-1=5'].recs[0].why), rcN);
+  const lpId = sq.prepare("SELECT id FROM reorder_pallet WHERE title = 'LP SHIP' AND part = '70-1-1=5'").get().id;
+  sq.prepare('INSERT INTO pallet_move (pallet_id, cases, to_location, by_user, at) VALUES (?,?,?,?,?)').run(lpId, 1, 'C1=1-1-1', 'TS', new Date().toISOString());
+  const pl = await get('/inventory/containers/pallets?title=LP%20SHIP');
+  const ln = pl.lines.find(l => l.id === lpId);
+  check('a pallet line shows its transfers (how many, where, who) and moved + left = on the pallet', ln.moves.length === 1 && ln.moves[0].to === 'C1=1-1-1' && ln.moves[0].by === 'TS' && ln.moved + ln.left === ln.cases && ln.left === 1, ln);
+  sq.prepare('DELETE FROM pallet_move WHERE pallet_id = ?').run(lpId);
 }
 
 console.log('\n🧪 Test switch: ON → do anything → OFF puts everything back');
