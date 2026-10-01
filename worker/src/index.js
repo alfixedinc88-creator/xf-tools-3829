@@ -4880,9 +4880,10 @@ async function locationPlanLog(url, env) {
 
 // POST /inventory/containers/pallet-recs { parts: [...], fromLoc } — 🚢 Container
 // here: 2 suggested spots per item on a pallet (shown, not tapped — the
-// guy scans the shelf label he really used). Order: the 📍 Location Plan
-// spot / area first; then the shelves already holding the most of the same
-// parent part #; then empty shelves (in the plan area if there is one).
+// guy scans the shelf label he really used). With a 📍 Location Plan: the
+// shelves in that area already holding the same parent part # (the plan
+// note itself says the area / spot). No plan: the shelves holding the most
+// of the same parent part #, then empty shelves.
 // Read only.
 async function palletRecs(request, env) {
   const J = (o, st) => cors(new Response(JSON.stringify(o), { status: st || 200, headers: { 'Content-Type': 'application/json' } }));
@@ -4907,10 +4908,11 @@ async function palletRecs(request, env) {
     const area = plan ? (plan.includes('=') ? plan.split('=')[0] + '=' : plan + '=') : '';
     const inPlan = l => !plan || (plan.includes('=') ? l === plan : l.startsWith(area));
     const recs = [], add = (location, why) => { if (recs.length < 2 && !recs.some(r => r.location === location)) recs.push({ location, why }); };
-    if (plan && plan.includes('=')) add(plan, '📍 plan spot');
+    // With a plan, the "📍 Plan: goes to BARN" note already says where; only
+    // the shelves in that area that already hold this item are added (owner:
+    // "empty shelf in BARN" just repeats the plan).
     const has = Object.entries(held[b] || {}).sort((x, y) => y[1] - x[1]);
-    has.filter(([l]) => plan && inPlan(l)).forEach(([l, c]) => add(l, 'has ' + Math.round(c * 100) / 100 + ' cases of ' + b));
-    if (plan) empty.filter(inPlan).forEach(l => add(l, 'empty shelf in ' + plan));
+    has.filter(([l]) => plan && !plan.includes('=') && inPlan(l)).forEach(([l, c]) => add(l, 'has ' + Math.round(c * 100) / 100 + ' cases of ' + b));
     if (!plan) has.forEach(([l, c]) => add(l, 'has ' + Math.round(c * 100) / 100 + ' cases of ' + b));
     if (!plan) empty.forEach(l => add(l, 'empty shelf'));
     out[part] = { plan, planLevel: at.level, recs };
