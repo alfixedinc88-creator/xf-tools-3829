@@ -9,6 +9,8 @@
 // something the owner reported, add a check for it here.
 import { DatabaseSync } from 'node:sqlite';
 import { fileURLToPath } from 'node:url';
+import { createRequire } from 'node:module';
+const require0 = createRequire(import.meta.url);
 
 const workerPath = fileURLToPath(new URL('../worker/src/index.js', import.meta.url));
 let failed = 0, passed = 0;
@@ -129,7 +131,10 @@ check('container Received: SKU Mgr pieces go up by exactly the packing list (4,0
 const newRow = sq.prepare("SELECT cases, units_per_case u FROM master_list WHERE part_num='60-2-2=1' AND location='GARAGE'").get();
 check('container Received: a new spot gets Each/Case = pieces per box (100)', newRow && newRow.u === 100 && newRow.cases === 10, newRow);
 const rl = sq.prepare("SELECT part_num, status, total_before b, total_after a FROM inventory_log WHERE notes LIKE '[RECEIVED] Container KW-TEST%' ORDER BY id").all();
-check('container Received: History has Before → After (8 → 48, 0 → 10)', rl.length === 2 && rl.every(r => r.status === 'Verified') && rl[0].b === 8 && rl[0].a === 48 && rl[1].b === 0 && rl[1].a === 10, rl);
+check('container Received: History has Before → After (8 → 28, 0 → 10)', rl.length === 2 && rl.every(r => r.status === 'Verified') && rl[0].b === 8 && rl[0].a === 28 && rl[1].b === 0 && rl[1].a === 10, rl);
+// Owner: "we have to stay at 100% match on quantities, can't change any numbers" — boxes of 200 pcs are never turned into cases of 100.
+const gRows = sq.prepare("SELECT cases, units_per_case u FROM master_list WHERE part_num='60-1-1=10' AND location='GARAGE' ORDER BY id").all();
+check('container Received: GARAGE keeps its 5 cases of 100 pcs; the 20 boxes of 200 pcs get their own row (20 × 200)', gRows.length === 2 && gRows[0].cases === 5 && gRows[0].u === 100 && gRows[1].cases === 20 && gRows[1].u === 200, gRows);
 const pr2 = await get('/inventory/pallets/received');
 const kwp = (pr2.lines || pr2.pallets || pr2.rows || []).filter(x => x.title === CT);
 check('container Received: every pallet line is still listed, at GARAGE', kwp.length === 3 && kwp.every(x => x.location === 'GARAGE'), pr2);
@@ -691,7 +696,9 @@ console.log('\nSKU Mgr: the parent follows the Part #, wrong parents can be fixe
   check('Stock In / Found on Shelf has no area drop-down (quick add, + Add New Location); the scanned label is the whole location',
     !/id="inv-qa-prefix"|id="inv-newloc-prefix"/.test(ih) && /var location = invFullSpotLabel\(qaShelf\)/.test(ih) && /var newLoc = invFullSpotLabel\(newLocRaw\)/.test(ih)
       && full(' c1=5-1-3 ') === 'C1=5-1-3' && full('2FL=11-2-10') === '2FL=11-2-10' && full('BARN=5-1') === 'BARN=5-1' && full('5-1-3') === '' && full('') === '' && full('=5-1') === '', fn ? null : 'invFullSpotLabel not found');
-  check('…other tabs keep their area drop-downs (Stock Out location search + found elsewhere, Transfer, Audit)', /id="inv-fel-prefix"/.test(ih) && /id="inv-loc-scan-prefix"/.test(ih) && /id="xfr-loc-scan-prefix"/.test(ih) && /id="inv-audit-loc-prefix"/.test(ih), null);
+  // Owner (later): "Stock Out location search — yes, remove that also, all of our spot barcodes come with the main location".
+  check('Stock Out location search: no area drop-down either; the scanned label is the whole spot', !/id="inv-loc-scan-prefix"/.test(ih) && /loc = \(g\('inv-loc-scan-shelf'\)/.test(ih), null);
+  check('…the other tabs keep their area drop-downs (Stock Out found elsewhere, Transfer, Audit)', /id="inv-fel-prefix"/.test(ih) && /id="xfr-loc-scan-prefix"/.test(ih) && /id="inv-audit-loc-prefix"/.test(ih), null);
 }
 
 // Owner: "Container here — scanning the outside box takes a while for the pallet to pop up, and after we scan
@@ -738,9 +745,10 @@ console.log('\n🚢 Container here: fast scan & move, extra boxes found on a pal
   const e2 = await post('/inventory/containers/extra', { title: T, vendor: 'KW', pallet: '7', part: '61-1-1=5', boxes: 4, pcsPerBox: 25, toLocation: 'GARAGE' });
   const it3 = ((await get('/inventory/pending')).items || []).find(x => x.d1Id === e2.d1Id);
   await post('/inventory/verify', { rowIndex: it3.rowIndex, action: 'Approved', item: it3 });
-  check('extra 4 boxes × 25 pcs into a spot of 50-pc cases = 100 pcs = +2 cases (GARAGE ' + g1 + ' → ' + sq.prepare('SELECT cases FROM master_list WHERE id = ?').get(gid).cases + '), pieces +100, pallet count unchanged',
-    e2.ok && e2.converted && e2.cases === 2 && sq.prepare('SELECT cases FROM master_list WHERE id = ?').get(gid).cases === g1 + 2 && pc() === p1 + 100 && moved() === mv0
-      && /\[EXTRA ON PALLET\] Container FAST · Pallet 7 — 4 extra box\(es\) × 25 pcs = 100 pcs = 2 case\(s\) of 50 pcs at GARAGE/.test(sq.prepare('SELECT notes FROM inventory_log WHERE id = ?').get(e2.d1Id).notes), e2);
+  const own = sq.prepare("SELECT cases, units_per_case u FROM master_list WHERE part_num='61-1-1=5' AND location='GARAGE' AND units_per_case=25").get();
+  check('extra 4 boxes × 25 pcs at GARAGE (its cases are 50 pcs): box quantities never change — own row 4 × 25, the 50-pc row stays ' + g1 + ', pieces +100, pallet count unchanged',
+    e2.ok && e2.ownRow && e2.cases === 4 && own && own.cases === 4 && sq.prepare('SELECT cases FROM master_list WHERE id = ?').get(gid).cases === g1 && pc() === p1 + 100 && moved() === mv0
+      && /\[EXTRA ON PALLET\] Container FAST · Pallet 7 — 4 extra box\(es\) × 25 pcs \(own row: GARAGE also has 61-1-1=5 in boxes of 50 pcs\)/.test(sq.prepare('SELECT notes FROM inventory_log WHERE id = ?').get(e2.d1Id).notes), { e2, own });
   const pv2 = await get('/inventory/containers/pallet-view?title=' + encodeURIComponent(T) + '&vendor=KW&pallet=7');
   check('…both extras show on pallet 7, with who and where', pv2.extras.length === 2 && pv2.extras.every(x => x.by === 'TS') && pv2.extras.map(x => x.toLoc).join() === 'C1=6-1-2,GARAGE', pv2.extras);
   const bad = await Promise.all([{ pcsPerBox: 0 }, { toLocation: '6-1-3' }, { part: '99-9-9=9' }, { boxes: 0 }].map(o => post('/inventory/containers/extra', { title: T, vendor: 'KW', pallet: '7', part: '61-1-1=5', boxes: 1, pcsPerBox: 50, toLocation: 'C1=6-1-3', ...o })));
@@ -753,6 +761,76 @@ console.log('\n🚢 Container here: fast scan & move, extra boxes found on a pal
     /function xfrGoLocalMatch\(code\)/.test(ih) && /checkHave: true/.test(ih) && /Extra box found on this pallet \(not on its list\)/.test(ih) && /window\.xfrExtraSave = function/.test(ih), null);
   check('screen: 📋 Not done yet on each pallet; the main one kept (smaller); box UPCs / photos / search and sold-out / print folded under ⚙ More',
     /📋 Not done yet on this pallet: /.test(ih) && /window\.xfrContPalLeft = function/.test(ih) && /id="xfr-cont-more"/.test(ih) && /⚙ More: 🔥 sold-out pallets · 🖨 print/.test(ih), null);
+}
+
+// Owner: "we transfer or any other thing we do must stay at same box quantities, 100% match, can't change any numbers"
+// + "two different pcs on the same column → one extra step in Stock Out to confirm the right box"
+// + "boxes taken off a pallet in Stock Out: boxes left go down, with a history of when, who, how many".
+console.log('\nBox sizes never change · Transfer touches only its own row · Stock Out off a pallet');
+{
+  await post('/inventory/review-mode', { mode: 'auto' });
+  sq.exec(`INSERT INTO master_list (id, base_sku, name, part_num, location, cases, units_per_case, sheet_row) VALUES
+    (9201, '62-1-1', 'nut', '62-1-1=40', 'GARAGE', 10, 40, 0), (9202, '62-1-1', 'nut', '62-1-1=40', 'C1=9-2-1', 2, 20, 0),
+    (9203, '62-2-2', 'bolt', '62-2-2=1', 'C1=9-2-2', 5, 10, 0), (9204, '62-1-1', 'nut', '62-1-1=40', 'C1=9-2-3', 1, 40, 0)`);
+  const C = id => sq.prepare('SELECT cases FROM master_list WHERE id = ?').get(id).cases;
+  const readFileSync0 = () => require0('node:fs').readFileSync(fileURLToPath(new URL('../inventory.html', import.meta.url)), 'utf8');
+  const pcs = p => sq.prepare('SELECT SUM(cases * units_per_case) t FROM master_list WHERE part_num = ?').get(p).t || 0;
+  const p0 = pcs('62-1-1=40'), other0 = C(9203), allRows0 = sq.prepare('SELECT SUM(cases) t FROM master_list WHERE id NOT IN (9201,9202,9203,9204)').get().t;
+  // the same box size: adds to that row only (rows made in D1 all have sheet_row 0 — every one of them used to get the cases)
+  const t1 = await post('/inventory/transfer', { partNum: '62-1-1=40', sku: '62-1-1=40', fromLocation: 'GARAGE', fromMasterId: 9201, toLocation: 'C1=9-2-3', cases: 3, initials: 'TS', notes: '' });
+  check('Transfer 3 × 62-1-1=40 GARAGE → C1=9-2-3 (same 40-pc boxes): GARAGE 10 → ' + C(9201) + ', C1=9-2-3 1 → ' + C(9204) + '; no other row changes (another item stays ' + other0 + ')',
+    t1.autoApproved && C(9201) === 7 && C(9204) === 4 && C(9202) === 2 && C(9203) === other0 && sq.prepare('SELECT SUM(cases) t FROM master_list WHERE id NOT IN (9201,9202,9203,9204)').get().t === allRows0 && pcs('62-1-1=40') === p0,
+    sq.prepare('SELECT id, location, cases FROM master_list WHERE id BETWEEN 9201 AND 9204').all());
+  // another box size at the destination: its own row, numbers unchanged
+  const t2 = await post('/inventory/transfer', { partNum: '62-1-1=40', sku: '62-1-1=40', fromLocation: 'GARAGE', fromMasterId: 9201, toLocation: 'C1=9-2-1', cases: 5, initials: 'TS', notes: '' });
+  const own = sq.prepare("SELECT cases, units_per_case u FROM master_list WHERE part_num = '62-1-1=40' AND location = 'C1=9-2-1' ORDER BY id").all();
+  check('5 cases of 40 pcs onto a shelf of 20-pc cases: stay 5 cases of 40 pcs (own row), the 20-pc row stays 2; pieces ' + p0 + ' = ' + pcs('62-1-1=40'),
+    t2.autoApproved && own.length === 2 && own[0].cases === 2 && own[0].u === 20 && own[1].cases === 5 && own[1].u === 40 && C(9201) === 2 && pcs('62-1-1=40') === p0, own);
+  const h2 = sq.prepare("SELECT total_before b, total_after a, total_warning w FROM inventory_log WHERE type = 'TRANSFER_IN' ORDER BY id DESC LIMIT 1").get();
+  check('…History: part total unchanged, no ⚠ warning', h2.b === h2.a && !h2.w, h2);
+  // Stock Out takes from the exact row picked (a spot can hold 2 box sizes now)
+  sq.exec(`INSERT INTO master_list (id, base_sku, name, part_num, location, cases, units_per_case, sheet_row) VALUES
+    (9211, '64-1-1', 'tee', '64-1-1=5', 'C2=9-1-1', 8, 20, 0), (9212, '64-1-1', 'tee', '64-1-1=5', 'C2=9-1-1', 4, 40, 0), (9213, '64-1-1', 'tee', '64-1-1=5', 'BARN=9-1-1', 6, 20, 77)`);
+  const so1 = await post('/inventory/log', { type: 'OUT', partNum: '64-1-1=5', sku: '64-1-1=5', location: 'C2=9-1-1', cases: 1, initials: 'PK', notes: '[SHELVING]', masterId: 9212 });
+  check('Stock Out of the 40-pc box (row picked): only that row goes down (4 → 3); the 20-pc row stays 8', so1.autoApproved && C(9212) === 3 && C(9211) === 8 && C(9213) === 6, [C(9211), C(9212), C(9213)]);
+  const so2 = await post('/inventory/log', { type: 'OUT', partNum: '64-1-1=5', sku: '64-1-1=5', location: 'C2=9-1-1', cases: 2, initials: 'PK', notes: '[SHELVING]' });
+  check('a Stock Out with no row id at a spot whose rows have no sheet row: taken at THAT spot (C2 8 → 6), never another spot\'s row (BARN stays 6)', so2.autoApproved && C(9211) === 6 && C(9213) === 6 && C(9212) === 3, [C(9211), C(9212), C(9213)]);
+  const pk = readFileSync0();
+  check('Pull List sends the picked row\'s id with the Stock Out', /masterId: item\.masterId \|\| null, \/\/ the exact SKU Mgr row picked/.test(pk), null);
+  // Stock Out: 2 box sizes at one spot → extra confirm step (screen)
+  const { readFileSync } = await import('node:fs');
+  const ih = readFileSync(fileURLToPath(new URL('../inventory.html', import.meta.url)), 'utf8');
+  check('Stock Out: a spot with 2 box sizes of the same part # → its own Pull List item per size, "📦 Grab the box of N pcs" and a confirm before Grabbed (noted in History)',
+    /function invBoxSizes\(partNum, location\)/.test(ih) && /var key = invPullItemKey\(part\.partNum, loc\)/.test(ih) && (ih.match(/function invPullKey\(/g) || []).length === 1 && /📦 Grab the box of /.test(ih) && /comes in 2 box sizes here/.test(ih) && /\[BOX SIZE CHECKED: /.test(ih), null);
+  check('Container here: a box UPC not saved yet is typed in by Admins only', /if \(!xfrIsAdmin\(\)\) \{ invFlash\('Box UPC ' \+ code \+ ' is not saved yet/.test(ih), null);
+  // Stock Out off a pallet
+  const T = 'Container PAL-OUT';
+  await post('/reorder/vendor-catalog/import', { vendor: 'KW', title: T, stage: 'shipped', last: true, file: 'po.xlsx', rows: [{ part: '63-1-1=10', raw: '63-1-1=10', qty: 60, cases: 6, pcs: 600, case_pcs: 100, src_rows: '5', description: 'cap' }] });
+  await post('/reorder/fix/pallets', { title: T, vendor: 'KW', file: 'po.xlsx', lines: [
+    { pallet: 'A', part: '63-1-1=10', raw: '63-1-1=10', cases: 4, pcs: 400, units: 40, pcsPerCtn: 100, row: '5' },
+    { pallet: 'B', part: '63-1-1=10', raw: '63-1-1=10', cases: 2, pcs: 200, units: 20, pcsPerCtn: 100, row: '5' } ] });
+  sq.exec("INSERT INTO master_list (base_sku, name, part_num, location, cases, units_per_case) VALUES ('63-1-1', 'cap', '63-1-1=10', 'GARAGE', 3, 100)"); // 3 loose boxes already in GARAGE
+  await post('/reorder/fix/incoming-receive', { title: T, location: 'GARAGE', lines: [{ key: '63-1-1=10', part: '63-1-1=10', cases: 6, description: 'cap' }] });
+  const left = async () => { const w = ((await post('/inventory/containers/where', { parts: ['63-1-1=10'] })).where || {})['63-1-1=10'] || []; return Object.fromEntries(w.map(x => [x.pallet, x.left])); };
+  const gid = sq.prepare("SELECT id FROM master_list WHERE part_num = '63-1-1=10' AND location = 'GARAGE' ORDER BY id LIMIT 1").get().id;
+  const g0 = sq.prepare("SELECT SUM(cases) t FROM master_list WHERE part_num = '63-1-1=10' AND location = 'GARAGE'").get().t;
+  check('setup: GARAGE has ' + g0 + ' boxes of 63-1-1=10 (3 loose + 6 on pallets A 4 / B 2)', g0 === 9 && JSON.stringify(await left()) === '{"A":4,"B":2}', await left());
+  const crBefore = JSON.stringify((await get('/inventory/history-summary?days=1')).container);
+  const o1 = await post('/inventory/log', { type: 'OUT', partNum: '63-1-1=10', sku: '63-1-1=10', location: 'GARAGE', cases: 2, initials: 'PK', notes: '[SHELVING]', masterId: gid });
+  check('Stock Out 2 from GARAGE: the 3 loose boxes cover it — pallets stay A 4 / B 2', o1.ok && JSON.stringify(await left()) === '{"A":4,"B":2}', await left());
+  const o2 = await post('/inventory/log', { type: 'OUT', partNum: '63-1-1=10', sku: '63-1-1=10', location: 'GARAGE', cases: 3, initials: 'PK', notes: '[SHELVING]', masterId: gid });
+  const l2 = await left();
+  check('Stock Out 3 more: 1 loose left, so 2 came off a pallet — pallet B (fewest left) 2 → 0, A stays 4; GARAGE 9 → 4 = boxes left on pallets (4)',
+    o2.ok && l2.A === 4 && !l2.B && sq.prepare("SELECT SUM(cases) t FROM master_list WHERE part_num = '63-1-1=10' AND location = 'GARAGE'").get().t === 4, l2);
+  const crAfter = JSON.stringify((await get('/inventory/history-summary?days=1')).container);
+  check('…boxes taken by a Stock Out are not counted as 🚢 Container here work in the History report', crBefore === crAfter && crBefore !== undefined, { crBefore, crAfter });
+  const bid = sq.prepare("SELECT id FROM reorder_pallet WHERE title = ? AND pallet = 'B'").get(T).id;
+  const hs = await get('/inventory/containers/line-history?id=' + bid);
+  check('🕘 pallet B history: PK took 2 box(es) → 🛒 Stock Out, with the time', hs.ok && hs.moves.length === 1 && hs.moves[0].by === 'PK' && hs.moves[0].cases === 2 && hs.moves[0].kind === 'stockout' && !!hs.moves[0].at, hs);
+  const cx = await post('/inventory/cancel-entry', { id: o2.d1Id, cancelledBy: 'TS' });
+  check('…that Stock Out cancelled → its boxes are back in GARAGE and on pallet B (2 again)', cx.ok && JSON.stringify(await left()) === '{"A":4,"B":2}' && sq.prepare("SELECT SUM(cases) t FROM master_list WHERE part_num = '63-1-1=10' AND location = 'GARAGE'").get().t === 7, await left());
+  check('pallet history needs a sign-in', (await call('/inventory/containers/line-history?id=' + bid)).status === 401, null);
+  await post('/inventory/review-mode', { mode: 'manual' });
 }
 
 console.log('\n' + (failed ? '❌ ' + failed + ' check(s) FAILED' : '✅ all ' + passed + ' checks passed') + '\n');

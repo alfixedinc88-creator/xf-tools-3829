@@ -1022,6 +1022,11 @@ async function reorderFixTables(env) {
   await env.DB.prepare(`CREATE TABLE IF NOT EXISTS pallet_move (id INTEGER PRIMARY KEY AUTOINCREMENT, pallet_id INTEGER NOT NULL, cases REAL NOT NULL,
     to_location TEXT, out_log_id INTEGER, transfer_id TEXT, by_user TEXT, at TEXT)`).run();
   await env.DB.prepare('CREATE INDEX IF NOT EXISTS idx_pallet_move_pid ON pallet_move(pallet_id)').run();
+  // kind: '' = moved in 🚢 Container here; 'stockout' / 'transfer' = boxes
+  // taken off the pallet by a Stock Out / a Transfer from the spot the
+  // container was stocked into (palletTakeOut).
+  await env.DB.prepare('ALTER TABLE pallet_move ADD COLUMN kind TEXT').run().catch(() => {});
+  await env.DB.prepare('ALTER TABLE inventory_log ADD COLUMN cancelled_at TEXT').run().catch(() => {});
   // When someone opened a pallet in 🚢 Container here — the start of "how long
   // that pallet took" (open → its last box moved) in History's report.
   await env.DB.prepare(`CREATE TABLE IF NOT EXISTS pallet_open (id INTEGER PRIMARY KEY AUTOINCREMENT, title TEXT, vendor TEXT, pallet TEXT, by_user TEXT, at TEXT)`).run();
@@ -3104,8 +3109,9 @@ async function inventoryLog(request, env) {
   let autoStockNote = notes || '';
   if ((type === 'IN' || type === 'OUT') && !isNew && !isPlaceholder && env.DB) {
     try {
-      const currentRow = await d1First(env,
-        'SELECT cases FROM master_list WHERE UPPER(part_num)=? AND UPPER(location)=? LIMIT 1',
+      const currentRow = (masterId && await d1First(env, 'SELECT cases FROM master_list WHERE id = ? AND UPPER(part_num) = ?', [parseInt(masterId) || 0, partNum.toUpperCase()]))
+        || await d1First(env,
+        'SELECT cases FROM master_list WHERE UPPER(part_num)=? AND UPPER(location)=? ORDER BY cases DESC, id ASC LIMIT 1',
         [partNum.toUpperCase(), (overwriteLocation || location).toUpperCase()]
       );
       if (currentRow !== null && currentRow.cases !== undefined) {
@@ -3188,6 +3194,11 @@ async function inventoryLog(request, env) {
   // inventoryTransferLog's own auto-approve below). If this fails for any
   // reason, the entry simply stays Pending for manual review — same as
   // today — so a failure here can never block the original log write.
+  // 🚢 Boxes taken off a container's pallets by this Stock Out → pallet's boxes left go down.
+  if (d1Id && String(type).toUpperCase() === 'OUT' && !/\[NONE FOUND/.test(String(autoStockNote || ''))) {
+    try { await palletTakeOut(env, { part: partNum, location, cases, logId: d1Id, masterId, who: initials, kind: 'stockout', toLocation: 'STOCK OUT' }); }
+    catch (e) { console.error('[pallet take] stock out:', e.message); }
+  }
   let autoApproved = false;
   if (d1Id && (type === 'IN' || type === 'OUT')) {
     try {
@@ -3203,7 +3214,9 @@ async function inventoryLog(request, env) {
             isNew: (isNew===true||isNew==='TRUE'),
             cases: parseFloat(cases) || 0,
             sku: sku || '', notes: autoStockNote || '',
-            masterId: masterId || null, d1Id
+            masterId: masterId || null, d1Id,
+            // A new row made for boxes of a known size (container Received, extra boxes): its Each/Case.
+            unitsPerCase: (parseFloat(body._boxPcs) || 0) > 0 ? parseFloat(body._boxPcs) : undefined
           }
         };
         const verifyResp = await inventoryVerify(
@@ -3469,7 +3482,7 @@ async function inventoryVerifyInner(request, env) {
     // Use D1 to find sheet_row instead of reading 15k rows from Sheets
     // Falls back to full Sheets read if D1 unavailable or row not found
     let mlRows = [];
-    let liveRowFromD1 = null;
+    let liveRowFromD1 = null, liveIdFromD1 = null;
     if (env.DB) {
       try {
         // ORDER BY cases DESC, id ASC — if a duplicate row exists for this exact
@@ -3481,12 +3494,16 @@ async function inventoryVerifyInner(request, env) {
         // TWO DIFFERENT rows instead of the same row twice — the exact bug
         // this fixes (4 cases, two OUT-2 approvals, ends at 2 instead of 0).
         const d1Row = await d1First(env,
-          `SELECT sheet_row FROM master_list
+          `SELECT id, sheet_row FROM master_list
            WHERE UPPER(part_num)=? AND UPPER(location)=?
            ORDER BY cases DESC, id ASC LIMIT 1`,
           [partNum.toUpperCase(), (overwriteLocation || location).toUpperCase()]
         );
         if (d1Row && d1Row.sheet_row) liveRowFromD1 = d1Row.sheet_row;
+        // No masterId sent: still target THIS spot's row by its id. A row made
+        // in D1 has sheet_row 0, and the old fallback then took the newest row
+        // of the part # anywhere — another spot's row.
+        if (d1Row && d1Row.id) liveIdFromD1 = d1Row.id;
       } catch(e) { console.error('[D1] verify lookup:', e.message); }
     }
     // For isNew path we still need mlRows from Sheets — lazy load only if needed
@@ -3652,6 +3669,7 @@ async function inventoryVerifyInner(request, env) {
       // tiebreak (the legacy fallback below) can silently update the
       // WRONG row if the worker intentionally chose the smaller one.
       let targetId = (item.masterId && env.DB) ? (parseInt(item.masterId) || null) : null;
+      if (!targetId && liveIdFromD1) targetId = liveIdFromD1;
       let resolvedRowIndex = null;
 
       if (!targetId) {
@@ -3963,7 +3981,7 @@ async function inventoryIncomingFor(url, env) {
 // rejected in Review (the OUT log row's status), so counts follow the real
 // transfers.
 const _PALLET_MOVED_SQL = `SELECT m.pallet_id, SUM(m.cases) AS moved FROM pallet_move m LEFT JOIN inventory_log l ON l.id = m.out_log_id
-  WHERE COALESCE(l.status, '') != 'Rejected'`;
+  WHERE COALESCE(l.status, '') != 'Rejected' AND l.cancelled_at IS NULL`;
 async function palletLineLeft(env, id) {
   const p = await env.DB.prepare('SELECT id, title, vendor, pallet, part, cases FROM reorder_pallet WHERE id = ?').bind(id).first();
   if (!p) return null;
@@ -4069,8 +4087,9 @@ async function containerPalletLines(env, o) {
   const parts = [...new Set(rows.map(r => real(r.part)))], stock = {};
   for (let i = 0; i < parts.length; i += 90) {
     const chunk = parts.slice(i, i + 90);
-    (await d1All(env, `SELECT id, sheet_row, name, UPPER(part_num) AS p, location, cases FROM master_list WHERE UPPER(part_num) IN (${chunk.map(() => '?').join(',')}) AND cases > 0`, chunk))
-      .forEach(r => { (stock[r.p] = stock[r.p] || []).push(o.detail ? { location: r.location, cases: r.cases, masterId: r.id, rowIndex: r.sheet_row || 0, name: r.name || '' } : { location: r.location, cases: r.cases }); });
+    (await d1All(env, `SELECT id, sheet_row, name, UPPER(part_num) AS p, location, cases, units_per_case FROM master_list WHERE UPPER(part_num) IN (${chunk.map(() => '?').join(',')}) AND cases > 0`, chunk))
+      .forEach(r => { (stock[r.p] = stock[r.p] || []).push(o.detail ? { location: r.location, cases: r.cases, pcs: parseFloat(r.units_per_case) || 0, masterId: r.id, rowIndex: r.sheet_row || 0, name: r.name || '' }
+        : { location: r.location, cases: r.cases, pcs: parseFloat(r.units_per_case) || 0, masterId: r.id }); });
   }
   if (o.detail && parts.length) {
     const pm = await buildPendingMap(env);
@@ -4082,9 +4101,9 @@ async function containerPalletLines(env, o) {
     const ids = rows.map(r => r.id);
     for (let i = 0; i < ids.length; i += 90) {
       const chunk = ids.slice(i, i + 90);
-      (await d1All(env, `SELECT m.pallet_id, m.cases, m.to_location, m.by_user, m.at, l.status FROM pallet_move m LEFT JOIN inventory_log l ON l.id = m.out_log_id
-        WHERE COALESCE(l.status, '') != 'Rejected' AND m.pallet_id IN (${chunk.map(() => '?').join(',')}) ORDER BY m.id`, chunk))
-        .forEach(m => { (moves[m.pallet_id] = moves[m.pallet_id] || []).push({ cases: m.cases, to: m.to_location || '', by: m.by_user || '', at: m.at || '', pending: m.status === 'Pending' }); });
+      (await d1All(env, `SELECT m.pallet_id, m.cases, m.to_location, m.by_user, m.at, l.status, m.kind FROM pallet_move m LEFT JOIN inventory_log l ON l.id = m.out_log_id
+        WHERE COALESCE(l.status, '') != 'Rejected' AND l.cancelled_at IS NULL AND m.pallet_id IN (${chunk.map(() => '?').join(',')}) ORDER BY m.id`, chunk))
+        .forEach(m => { (moves[m.pallet_id] = moves[m.pallet_id] || []).push({ cases: m.cases, to: m.to_location || '', by: m.by_user || '', at: m.at || '', pending: m.status === 'Pending', kind: m.kind || '' }); });
     }
   }
   const lines = rows.map(r => { const mv = moved[r.id] || 0, pn = real(r.part);
@@ -4163,8 +4182,8 @@ async function inventoryContainerScan(url, env) {
 // pcsPerBox, toLocation } — boxes found on a pallet that are not on its
 // packing list: a Stock In of those boxes at the spot they went to (Review
 // as usual), kept with the pallet. The pallet's own counts don't change.
-// Pieces always add up: boxes × pcs per box; a spot that already has the
-// part in another case size gets the same pieces as cases of its size.
+// Box quantities never change (owner): the boxes go on the row of the same
+// pcs per box at that spot, or a new row of their own.
 async function inventoryPalletExtra(request, env, session) {
   const J = (o, st) => cors(new Response(JSON.stringify(o), { status: st || 200, headers: { 'Content-Type': 'application/json' } }));
   const b = await request.json().catch(() => ({}));
@@ -4185,23 +4204,17 @@ async function inventoryPalletExtra(request, env, session) {
     || await d1First(env, 'SELECT sku AS name FROM upc WHERE UPPER(TRIM(sku)) = ? LIMIT 1', [part]).catch(() => null);
   if (!known) return J({ ok: false, error: `Part # "${part}" isn't in SKU Mgr or the UPC list — check the box label` }, 400);
   const who = String((session && (session.displayName || session.username)) || b.initials || '').slice(0, 40);
-  const ex = await d1First(env, 'SELECT id, name, units_per_case FROM master_list WHERE UPPER(TRIM(part_num)) = ? AND UPPER(TRIM(location)) = ? ORDER BY cases DESC LIMIT 1', [part, loc]);
-  const exU = ex ? parseFloat(ex.units_per_case) || 0 : 0;
-  let cases = boxes, conv = '';
-  if (ex && exU > 0 && Math.abs(exU - pcs) > 1e-9) {
-    cases = Math.round(boxes * pcs / exU * 1000) / 1000;
-    conv = ` = ${Math.round(boxes * pcs * 1000) / 1000} pcs = ${cases} case(s) of ${exU} pcs at ${loc}`;
-  }
-  const note = `[EXTRA ON PALLET] ${title} · Pallet ${pallet} — ${boxes} extra box(es) × ${pcs} pcs${conv}`;
+  const ex = await d1First(env, 'SELECT id, name, units_per_case FROM master_list WHERE UPPER(TRIM(part_num)) = ? AND UPPER(TRIM(location)) = ? AND ABS(COALESCE(units_per_case, 0) - ?) < 0.0001 ORDER BY cases DESC LIMIT 1', [part, loc, pcs]);
+  const other = ex ? null : await d1First(env, 'SELECT units_per_case AS u FROM master_list WHERE UPPER(TRIM(part_num)) = ? AND UPPER(TRIM(location)) = ? AND cases > 0 LIMIT 1', [part, loc]);
+  const cases = boxes;
+  const note = `[EXTRA ON PALLET] ${title} · Pallet ${pallet} — ${boxes} extra box(es) × ${pcs} pcs` + (other ? ` (own row: ${loc} also has ${part} in boxes of ${other.u || '?'} pcs)` : '');
   const lr = await inventoryLog(new Request('https://internal/inventory/log', { method: 'POST', body: JSON.stringify({ type: 'IN', partNum: part, sku: part,
-    name: String((ex && ex.name) || (known && known.name) || '').slice(0, 200), location: loc, cases, initials: who || 'OPS', notes: note, isNew: !ex, masterId: ex ? ex.id : null }) }), env);
+    name: String((ex && ex.name) || (known && known.name) || '').slice(0, 200), location: loc, cases, initials: who || 'OPS', notes: note, isNew: !ex, masterId: ex ? ex.id : null, _boxPcs: ex ? 0 : pcs }) }), env);
   const ld = await lr.json().catch(() => ({}));
   if (!ld.ok) return J({ ok: false, error: ld.error || 'Stock In failed' }, 500);
   await env.DB.prepare('INSERT INTO pallet_extra (title, vendor, pallet, part, boxes, pcs_per_box, cases, to_location, log_id, by_user, at) VALUES (?,?,?,?,?,?,?,?,?,?,?)')
     .bind(title, pr.vendor, pallet, part, boxes, pcs, cases, loc, ld.d1Id || null, who, new Date().toISOString()).run();
-  // A new spot made right away (auto approve): its Each/Case = pieces per box.
-  if (!ex && ld.autoApproved) await env.DB.prepare('UPDATE master_list SET units_per_case = ? WHERE UPPER(TRIM(part_num)) = ? AND UPPER(TRIM(location)) = ? AND COALESCE(units_per_case, 0) != ?').bind(pcs, part, loc, pcs).run();
-  return J({ ok: true, part, cases, boxes, pcsPerBox: pcs, converted: !!conv, location: loc, d1Id: ld.d1Id, autoApproved: !!ld.autoApproved });
+  return J({ ok: true, part, cases, boxes, pcsPerBox: pcs, ownRow: !!other, location: loc, d1Id: ld.d1Id, autoApproved: !!ld.autoApproved });
 }
 
 // GET /inventory/containers/soldout?title= — 🔥 which pallets of a container
@@ -4570,6 +4583,11 @@ async function inventoryTransferLog(request, env) {
       }), { status: 500, headers: { 'Content-Type': 'application/json' } }));
     }
 
+    // A Transfer of boxes still on a container's pallets (not from 🚢 Container here) → pallet's boxes left go down.
+    if (!palletLineId && outD1Id) {
+      try { await palletTakeOut(env, { part: partNum, location: fromLocation, cases, logId: outD1Id, masterId: fromMasterId, who: initials, kind: 'transfer', toLocation, transferId }); }
+      catch (e) { console.error('[pallet take] transfer:', e.message); }
+    }
     // Auto-approve, mirroring inventoryLog's — reuses inventoryTransferVerify
     // exactly as a manual Review-tab approve would, so a failure here just
     // leaves the pair Pending for manual review same as always.
@@ -4793,9 +4811,16 @@ async function inventoryTransferVerifyInner(request, env) {
     }
 
     // 2. Find TO row in D1
+    // The row at the destination with the SAME box size (Each/Case) as the
+    // boxes moved. Owner: box quantities never change — 5 cases of 40 pcs
+    // moved onto a shelf of 20-pc cases stay 5 cases of 40 pcs (their own
+    // row at that spot), never "5 cases of 20". Found by id, so only that
+    // one row changes (it used to be matched by sheet_row, and rows made
+    // in D1 all have sheet_row 0, so every one of them got the cases).
     const d1ToRow = isNewLoc ? null : await d1First(env,
-      'SELECT sheet_row, cases FROM master_list WHERE UPPER(part_num)=? AND UPPER(location)=? LIMIT 1',
-      [partNum, toLocation.toUpperCase()]
+      `SELECT id, sheet_row, cases FROM master_list WHERE UPPER(TRIM(part_num))=? AND UPPER(TRIM(location))=?
+         AND ABS(COALESCE(units_per_case, 0) - ?) < 0.0001 ORDER BY id LIMIT 1`,
+      [partNum, toLocation.trim().toUpperCase(), parseFloat(fromJ) || 0]
     ).catch(()=>null);
 
     if (isNewLoc || !d1ToRow) {
@@ -4830,10 +4855,12 @@ async function inventoryTransferVerifyInner(request, env) {
       invSetPurpleCell(env, newRowNum).catch(()=>{});
     } else {
       // Existing TO row — add cases atomically
-      await env.DB.prepare('UPDATE master_list SET cases = cases + ?, updated_at = ? WHERE sheet_row = ?')
-        .bind(cases, ts, d1ToRow.sheet_row).run();
-      invSheetUpdate(env, `Master_List!I${d1ToRow.sheet_row}`, [[(parseFloat(d1ToRow.cases)||0) + cases]]).catch(()=>{});
-      invSetPurpleCell(env, d1ToRow.sheet_row).catch(()=>{});
+      await env.DB.prepare('UPDATE master_list SET cases = cases + ?, updated_at = ? WHERE id = ?')
+        .bind(cases, ts, d1ToRow.id).run();
+      if (d1ToRow.sheet_row > 0) {
+        invSheetUpdate(env, `Master_List!I${d1ToRow.sheet_row}`, [[(parseFloat(d1ToRow.cases)||0) + cases]]).catch(()=>{});
+        invSetPurpleCell(env, d1ToRow.sheet_row).catch(()=>{});
+      }
     }
 
     // 3. Mark both log rows Verified in D1 — fire-and-forget Sheets
@@ -6308,23 +6335,21 @@ const _app = {
           if (!(cases > 0)) { results.push({ key, ok: false, error: 'Cases to add must be more than 0' }); continue; }
           try {
             await costSafe(() => costReconcile(env, part, loc)); // stock already here keeps its old price
-            const ex = await d1First(env, 'SELECT id, name, units_per_case FROM master_list WHERE UPPER(part_num) = ? AND UPPER(location) = ? LIMIT 1', [part, loc]);
             // Pieces per carton of THIS container (packing list), so SKU Mgr's
-            // cases × Each/Case = the pieces that really arrived. A new row
-            // gets that Each/Case (it used to copy the biggest Each/Case of
-            // any pack size of the part); a row already there with another
-            // case size gets the boxes converted to its case size.
+            // cases × Each/Case = the pieces that really arrived. Owner: box
+            // quantities never change — the boxes go on the row of the same
+            // Each/Case at that spot, or a new row of their own (a row there
+            // with another case size keeps its own count).
             const pk = await env.DB.prepare('SELECT SUM(pcs) AS p, SUM(cases) AS c FROM reorder_pallet WHERE title = ? AND UPPER(part) IN (?, ?)').bind(title, key, part).first().catch(() => null);
             const perCtn = pk && pk.c > 0 && pk.p > 0 ? Math.round(pk.p / pk.c * 1000) / 1000 : 0;
+            const ex = perCtn > 0
+              ? await d1First(env, 'SELECT id, name, units_per_case FROM master_list WHERE UPPER(part_num) = ? AND UPPER(location) = ? AND ABS(COALESCE(units_per_case, 0) - ?) < 0.0001 ORDER BY id LIMIT 1', [part, loc, perCtn])
+              : await d1First(env, 'SELECT id, name, units_per_case FROM master_list WHERE UPPER(part_num) = ? AND UPPER(location) = ? LIMIT 1', [part, loc]);
             const exUpc = ex ? (parseFloat(ex.units_per_case) || 0) : 0;
-            let addCases = cases, conv = '';
-            if (ex && perCtn > 0 && exUpc > 0 && Math.abs(perCtn - exUpc) > 1e-9) {
-              addCases = Math.round(cases * perCtn / exUpc * 100) / 100;
-              conv = ` — ${cases} box(es) × ${perCtn} pcs = ${Math.round(cases * perCtn)} pcs = ${addCases} case(s) of ${exUpc} pcs at ${loc}`;
-            }
+            const addCases = cases, conv = '';
             const note = `[RECEIVED] ${title} — ${have.qty} units${perCtn ? ` · ${cases} box(es) × ${perCtn} pcs` : ''}${conv}`;
             const logBody = { type: 'IN', partNum: part, sku: part, name: String(ln.description || (ex && ex.name) || '').slice(0, 200),
-              location: loc, cases: addCases, initials, notes: note, isNew: !ex, masterId: ex ? ex.id : null };
+              location: loc, cases: addCases, initials, notes: note, isNew: !ex, masterId: ex ? ex.id : null, _boxPcs: !ex && perCtn > 0 ? perCtn : 0 };
             const lr = await inventoryLog(new Request('https://internal/inventory/log', { method: 'POST', body: JSON.stringify(logBody) }), env);
             const ld = await lr.json().catch(() => ({}));
             if (!ld.ok) throw new Error(ld.error || 'Stock In failed');
@@ -6336,7 +6361,6 @@ const _app = {
               const vd = await vr.json().catch(() => ({}));
               if (!vd.ok) throw new Error('Logged as Stock In but not approved (' + (vd.error || 'verify failed') + ') — approve it in Inventory → Review');
             }
-            if (!ex && perCtn > 0) await env.DB.prepare('UPDATE master_list SET units_per_case = ? WHERE UPPER(part_num) = ? AND UPPER(location) = ?').bind(perCtn, part, loc).run();
             // 💲 these cases carry the container's price (per piece); the rest of the spot keeps its own.
             await costSafe(async () => { await costReconcile(env, part, loc); await costMarkReceived(env, part, loc, addCases, have.price, title); });
             await env.DB.prepare('DELETE FROM reorder_incoming WHERE title = ? AND part = ?').bind(title, key).run();
@@ -6508,6 +6532,7 @@ const _app = {
       if (path === '/inventory/containers' && method === 'GET') return await inventoryContainers(env);
       if (path === '/inventory/containers/pallets' && method === 'GET') return await inventoryContainerPallets(url, env);
       if (path === '/inventory/containers/pallet-view' && method === 'GET') return await inventoryPalletView(url, env);
+      if (path === '/inventory/containers/line-history' && method === 'GET') return await palletLineHistory(url, env);
       if (path === '/inventory/containers/scan' && method === 'GET') return await inventoryContainerScan(url, env);
       if (path === '/inventory/containers/extra' && method === 'POST') return await inventoryPalletExtra(request, env, session);
       if (path === '/inventory/pallets/received' && method === 'GET') return await inventoryPalletsReceived(env);
@@ -12057,7 +12082,7 @@ async function palletWhereFor(env, parts) {
   const rows = [];
   for (let i = 0; i < look.length; i += 90) {
     const ch = look.slice(i, i + 90);
-    rows.push(...await d1All(env, `SELECT id, title, vendor, pallet, part, cases FROM reorder_pallet WHERE UPPER(part) IN (${ch.map(() => '?').join(',')})`, ch));
+    rows.push(...await d1All(env, `SELECT id, title, vendor, pallet, part, cases, pcs, pcs_per_ctn FROM reorder_pallet WHERE UPPER(part) IN (${ch.map(() => '?').join(',')})`, ch));
   }
   if (!rows.length) return {};
   const got = await receivedContainerTitles(env);
@@ -12077,10 +12102,60 @@ async function palletWhereFor(env, parts) {
     const part = alias[String(r.part).toUpperCase()] || String(r.part).toUpperCase();
     const left = Math.max(0, (parseFloat(r.cases) || 0) - (moved[r.id] || 0));
     if (left <= 0 || want.indexOf(part) < 0) continue;
-    (where[part] = where[part] || []).push({ title: r.title, vendor: r.vendor, pallet: r.pallet, left: Math.round(left * 1000) / 1000,
+    const per = parseFloat(r.pcs_per_ctn) > 0 ? parseFloat(r.pcs_per_ctn) : (parseFloat(r.cases) > 0 && parseFloat(r.pcs) > 0 ? Math.round(r.pcs / r.cases * 1000) / 1000 : 0);
+    (where[part] = where[part] || []).push({ id: r.id, pcsPerBox: per, title: r.title, vendor: r.vendor, pallet: r.pallet, left: Math.round(left * 1000) / 1000,
       location: rcvLoc[r.title + '|' + part] || rcvLoc[r.title + '|' + String(r.part).toUpperCase()] || '' });
   }
   return where;
+}
+// A Stock Out (or a Transfer) from the spot a 📦 Received container was
+// stocked into: when the loose boxes there (not on a pallet) can't cover it,
+// the rest came off that container's pallets — their "boxes left" go down
+// (owner). Boxes on pallets are never more than the spot has. Recorded in
+// pallet_move with the entry (who, when, how many): a rejected or cancelled
+// entry stops counting by itself. Box sizes are kept apart: only pallets
+// whose boxes are the same pcs as the row taken from. Pallets with the
+// fewest boxes left go first (empty a pallet sooner).
+async function palletTakeOut(env, o) {
+  const P = String(o.part || '').trim().toUpperCase(), L = String(o.location || '').trim().toUpperCase(), n = parseFloat(o.cases) || 0;
+  if (!P || !L || !(n > 0) || !o.logId || !env.DB) return [];
+  await reorderFixTables(env);
+  let here = ((await palletWhereFor(env, [P]))[P] || []).filter(e => { const at = String(e.location || '').trim().toUpperCase(); return at === L || (!at && L === 'GARAGE'); });
+  if (!here.length) return [];
+  const row = o.masterId ? await d1First(env, 'SELECT units_per_case AS u FROM master_list WHERE id = ?', [o.masterId]) : null;
+  const u = row ? parseFloat(row.u) || 0 : 0;
+  if (u > 0) here = here.filter(e => !(e.pcsPerBox > 0) || Math.abs(e.pcsPerBox - u) < 1e-6);
+  if (!here.length) return [];
+  const spot = await d1First(env, `SELECT SUM(cases) AS c FROM master_list WHERE UPPER(TRIM(part_num)) = ? AND UPPER(TRIM(location)) = ? AND cases > 0`
+    + (u > 0 ? ' AND ABS(COALESCE(units_per_case, 0) - ?) < 0.0001' : ''), u > 0 ? [P, L, u] : [P, L]);
+  // Other entries already taking from this spot (waiting for approval) — not this one.
+  const pend = await d1First(env, `SELECT SUM(cases) AS c FROM inventory_log WHERE status = 'Pending' AND type IN ('OUT','TRANSFER_OUT') AND cases > 0
+    AND UPPER(TRIM(part_num)) = ? AND UPPER(TRIM(location)) = ? AND id != ?`, [P, L, o.logId]);
+  const onPal = here.reduce((a, e) => a + (parseFloat(e.left) || 0), 0);
+  const avail = Math.max(0, (spot ? parseFloat(spot.c) || 0 : 0) - (pend ? parseFloat(pend.c) || 0 : 0));
+  let take = Math.min(onPal, Math.max(0, n - Math.max(0, avail - onPal)));
+  const out = [];
+  for (const e of here.sort((a, b) => a.left - b.left)) {
+    if (!(take > 1e-9)) break;
+    const t = Math.min(take, parseFloat(e.left) || 0); if (!(t > 0)) continue;
+    await env.DB.prepare('INSERT INTO pallet_move (pallet_id, cases, to_location, out_log_id, transfer_id, by_user, at, kind) VALUES (?,?,?,?,?,?,?,?)')
+      .bind(e.id, Math.round(t * 1000) / 1000, String(o.toLocation || 'STOCK OUT').slice(0, 40), o.logId, o.transferId || null, String(o.who || '').slice(0, 40), new Date().toISOString(), o.kind || 'stockout').run();
+    out.push({ title: e.title, pallet: e.pallet, cases: t });
+    take -= t;
+  }
+  return out;
+}
+// GET /inventory/containers/line-history?id= — every box taken off one
+// pallet line: who, when, how many, where to (Container here move, Stock
+// Out, Transfer), and whether it was rejected / cancelled. Read only.
+async function palletLineHistory(url, env) {
+  await reorderFixTables(env);
+  const id = parseInt(url.searchParams.get('id'), 10) || 0;
+  const line = await d1First(env, 'SELECT id, title, vendor, pallet, part, cases FROM reorder_pallet WHERE id = ?', [id]);
+  if (!line) return cors(new Response(JSON.stringify({ ok: false, error: 'Pallet line not found' }), { status: 404, headers: { 'Content-Type': 'application/json' } }));
+  const moves = await d1All(env, `SELECT m.cases, m.to_location AS toLoc, COALESCE(NULLIF(l.initials, ''), m.by_user, '') AS by, COALESCE(l.timestamp, m.at) AS at, COALESCE(m.kind, '') AS kind,
+      l.status, l.cancelled_at AS cancelledAt FROM pallet_move m LEFT JOIN inventory_log l ON l.id = m.out_log_id WHERE m.pallet_id = ? ORDER BY COALESCE(l.timestamp, m.at), m.id`, [id]);
+  return cors(new Response(JSON.stringify({ ok: true, line, moves }), { headers: { 'Content-Type': 'application/json' } }));
 }
 async function palletOpenLog(request, env, session) {
   const b = await request.json().catch(() => ({}));
@@ -12098,7 +12173,7 @@ async function histContainerReport(env, timeCond, timeParams) {
   const moves = await d1All(env, `SELECT m.id, m.cases, l.timestamp AS at, UPPER(TRIM(COALESCE(NULLIF(l.initials,''), m.by_user, ''))) AS who,
       p.title, p.vendor, p.pallet
     FROM pallet_move m JOIN inventory_log l ON l.id = m.out_log_id JOIN reorder_pallet p ON p.id = m.pallet_id
-    WHERE COALESCE(l.status,'') != 'Rejected' AND ${tc} ORDER BY l.timestamp, m.id`, timeParams);
+    WHERE COALESCE(l.status,'') != 'Rejected' AND COALESCE(m.kind, '') = '' AND ${tc} ORDER BY l.timestamp, m.id`, timeParams); // Container here moves only (not boxes taken by a Stock Out / Transfer)
   const total = { moves: 0, cases: 0, pallets: 0, palletsFinished: 0 }, byPerson = {};
   const P = w => (byPerson[w] = byPerson[w] || { moves: 0, cases: 0, pallets: 0, palletsFinished: 0, _p: new Set() });
   const palletsAll = new Set();

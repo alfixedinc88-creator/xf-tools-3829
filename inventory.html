@@ -668,9 +668,8 @@ window.invCredLogin = async function() {
     <div id="inv-loc-scan-wrap" style="display:none;margin-top:8px">
       <div style="display:flex;gap:6px;align-items:center;margin-bottom:6px">
         <button class="icam-btn" id="inv-loc-scan-cam-btn" onclick="invLocScanToggleCam()" style="padding:6px 10px;white-space:nowrap;font-size:12px">&#x1F4F7; Scan</button>
-        <select id="inv-loc-scan-prefix" style="padding:6px 8px;border:1.5px solid var(--border);border-radius:7px;background:var(--bg);color:var(--text);font-size:13px;font-family:var(--mono)"></select>
-        <input id="inv-loc-scan-shelf" type="text" placeholder="e.g. 5-1 or 5-1-3" autocomplete="off" style="flex:1;padding:6px 10px;border:1.5px solid var(--border);border-radius:7px;background:var(--bg);color:var(--text);font-size:13px;font-family:var(--mono)" oninput="invLocScanDebounce()" onkeydown="if(event.key==='Enter'){clearTimeout(window._locScanTimer);invLocScanSearch();}">
-        <button class="isearch-btn" onclick="invLocScanSearch()">Go</button>
+        <input id="inv-loc-scan-shelf" type="text" placeholder="Scan the spot label, e.g. BARN=5-1" autocomplete="off" style="flex:1;padding:6px 10px;border:1.5px solid var(--border);border-radius:7px;background:var(--bg);color:var(--text);font-size:13px;font-family:var(--mono)" oninput="invLocScanDebounce()" onkeydown="if(event.key==='Enter'){clearTimeout(window._locScanTimer);invLocScanSearch(null, null, true);}">
+        <button class="isearch-btn" onclick="invLocScanSearch(null, null, true)">Go</button>
       </div>
       <div id="inv-loc-scan-reader-wrap" style="display:none;border-radius:8px;overflow:hidden;background:#000;min-height:120px;margin-bottom:8px"><div id="inv-loc-scan-qr-reader"></div></div>
       <div id="inv-loc-scan-results"></div>
@@ -1755,7 +1754,7 @@ window.invCredLogin = async function() {
   window.invFullSpotLabel = invFullSpotLabel;
 
   function invPopulateAllPrefixDropdowns() {
-    ['inv-fel-prefix','xfr-fel-prefix','inv-audit-loc-prefix','audloc-add-loc-prefix','inv-loc-scan-prefix','xfr-loc-scan-prefix'].forEach(function(id) {
+    ['inv-fel-prefix','xfr-fel-prefix','inv-audit-loc-prefix','audloc-add-loc-prefix','xfr-loc-scan-prefix'].forEach(function(id) {
       var el = g(id); if (!el) return;
       var cur = el.value; el.innerHTML = invPrefixOptionsHTML(false); if (cur) el.value = cur;
     });
@@ -2048,16 +2047,9 @@ window.invCredLogin = async function() {
         { fps: 10, qrbox: { width: 280, height: 90 } },
         function(code) {
           invLocScanStopCam();
-          // Parse prefix=shelf from barcode (e.g. BARN=5-1-3)
-          var eqIdx = code.indexOf('=');
-          if (eqIdx > 0) {
-            var pfxEl = g('inv-loc-scan-prefix'); var shfEl = g('inv-loc-scan-shelf');
-            if (pfxEl) pfxEl.value = code.slice(0, eqIdx + 1);
-            if (shfEl) shfEl.value = code.slice(eqIdx + 1);
-          } else {
-            var shfEl = g('inv-loc-scan-shelf'); if (shfEl) shfEl.value = code;
-          }
-          invLocScanSearch();
+          // The spot label already has the area (e.g. BARN=5-1-3)
+          var shfEl = g('inv-loc-scan-shelf'); if (shfEl) shfEl.value = String(code).trim().toUpperCase();
+          invLocScanSearch(null, null, true);
         },
         function() {}
       ).then(function() {
@@ -2087,14 +2079,17 @@ window.invCredLogin = async function() {
     window._locScanTimer = setTimeout(invLocScanSearch, 500);
   };
 
-  window.invLocScanSearch = function(overrideLoc, fallbackCode) {
+  window.invLocScanSearch = function(overrideLoc, fallbackCode, asked) {
     var loc;
     if (overrideLoc) {
       loc = overrideLoc.trim().toUpperCase();
     } else {
-      var pfx   = (g('inv-loc-scan-prefix') && g('inv-loc-scan-prefix').value) || '';
-      var shelf = (g('inv-loc-scan-shelf') && g('inv-loc-scan-shelf').value || '').trim();
-      loc = shelf ? (pfx + shelf).toUpperCase() : '';
+      // No area drop-down (owner): the spot label has the area in it (C1=5-1-3).
+      loc = (g('inv-loc-scan-shelf') && g('inv-loc-scan-shelf').value || '').trim().toUpperCase().replace(/\s+/g, '');
+      if (loc && loc.indexOf('=') < 0 && loc !== 'GARAGE') {
+        if (asked) invFlash('Scan the spot label — it has the area too, e.g. C1=' + loc, 'error');
+        return;
+      }
     }
     if (!loc || loc.length < 2) return;
     var res = g('inv-loc-scan-results');
@@ -2351,7 +2346,7 @@ window.invCredLogin = async function() {
     var dest = invStockOutDest;
     var tag = function(x, t) { x.dest = dest; if (company) { x.forPart = target; x.how = t.how; } };
     plan.takes.forEach(function(t) {
-      var key = t.partNum + '|' + t.loc.location, ex = null;
+      var key = invPullItemKey(t.partNum, t.loc), ex = null;
       // Shelving and Big Company rows never merge — they go different places.
       invPullList.forEach(function(x) { if (x.key === key && !x.grabbed && !x.noneFound && !x.submitted && (x.dest || 'shelving') === dest && (!company || x.forPart === target)) ex = x; });
       var any = invPullList.some(function(x) { return x.key === key; });
@@ -2360,6 +2355,7 @@ window.invCredLogin = async function() {
         invPullList.push({ key: key, partNum: t.partNum, sku: invPart.sku || t.partNum, name: invPart.name || '', location: t.loc.location, cases: String(t.cases),
           systemCases: t.loc.adjustedCases !== undefined ? t.loc.adjustedCases : (parseFloat(t.loc.cases) || 0), rowIndex: t.loc.rowIndex,
           isPlaceholder: false, masterRowIndex: t.loc.rowIndex, masterId: t.loc.masterId || null, addedAt: new Date().toISOString(), sourceStockoutId: srcId });
+        invTagBoxSize(invPullList[invPullList.length - 1], t.loc);
         tag(invPullList[invPullList.length - 1], t);
         invSavePullList();
       } else {
@@ -3974,7 +3970,9 @@ window.invCredLogin = async function() {
     var idx = el.getAttribute('data-idx');
     el.innerHTML = list.map(function(e) {
       return '🚢 On pallet <b>' + invEsc(e.pallet) + '</b> · ' + invEsc(e.title) + ' · ' + (Math.round((parseFloat(e.left) || 0) * 100) / 100) + ' box' + (e.left === 1 ? '' : 'es') + ' left'
-        + (!loc && e.location ? ' · in ' + invEsc(e.location) : '');
+        + (!loc && e.location ? ' · in ' + invEsc(e.location) : '')
+        + (e.id ? " <a href='#' onclick='event.stopPropagation();invPalletHist(" + (+e.id) + ");return false' style='font-size:11px;color:var(--accent);white-space:nowrap'>🕘 " + (_invPalHist[e.id] && _invPalHist[e.id].open ? 'hide' : 'who took boxes') + "</a>" : '')
+        + (e.id && _invPalHist[e.id] && _invPalHist[e.id].open ? invPalletHistHtml(_invPalHist[e.id]) : '');
     }).join('<br>')
       // Un-grabbed Pull List item still on a pallet: grab whatever box you can reach, then scan it here to swap the item for it.
       + (idx != null ? "<div style='display:flex;gap:6px;margin-top:5px' onclick='event.stopPropagation()'>"
@@ -3984,6 +3982,34 @@ window.invCredLogin = async function() {
         + "<button type='button' onclick=\"var x=document.getElementById('inv-pal-rep-" + idx + "');invPalletReplace(" + idx + ",x?x.value:'')\" "
         + "style='padding:7px 10px;border-radius:7px;border:1.5px solid var(--purple);background:var(--bg3);color:var(--purple);font-size:12px;font-weight:800;cursor:pointer;white-space:nowrap'>🔁 Replace</button></div>" : '');
     el.style.cssText = 'display:block;font-size:11px;font-weight:700;color:var(--purple);margin-top:2px';
+  }
+  // 🕘 Boxes taken off a pallet: who, when, how many, where (owner).
+  var _invPalHist = {};
+  window.invPalletHist = function(id) {
+    var h = _invPalHist[id] = _invPalHist[id] || { open: false, rows: null };
+    h.open = !h.open;
+    var repaint = function() { [].forEach.call(document.querySelectorAll('.inv-pal'), invPalletPaint); };
+    if (h.open && !h.rows) {
+      h.rows = 'loading'; repaint();
+      wFetch(W + '/inventory/containers/line-history?id=' + id).then(function(r) { return r.json(); })
+        .then(function(d) { h.rows = (d && d.ok) ? d.moves : []; h.line = d && d.line; }).catch(function() { h.rows = null; h.open = false; invFlash('Could not load the pallet history', 'error'); })
+        .then(repaint);
+      return;
+    }
+    if (!h.open) h.rows = null; // fresh next time
+    repaint();
+  };
+  function invPalletHistHtml(h) {
+    if (h.rows === 'loading') return "<div style='font-weight:400;color:var(--text3)'>Loading…</div>";
+    var R = h.rows || [];
+    if (!R.length) return "<div style='font-weight:400;color:var(--text3)'>No boxes taken off this pallet yet</div>";
+    return "<div style='margin:3px 0 2px;padding:5px 7px;border-radius:7px;background:var(--bg3);font-weight:400;color:var(--text2)'>" + (h.line ? 'On the pallet: ' + h.line.cases + ' box(es)<br>' : '')
+      + R.map(function(m) { var t = ''; try { t = new Date(m.at).toLocaleString('en-US', { timeZone: 'America/New_York', month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' }); } catch (e) {}
+        var off = m.status === 'Rejected' || m.cancelledAt;
+        return "<div" + (off ? " style='text-decoration:line-through;opacity:.6'" : '') + ">" + invEsc(t) + ' · <b>' + invEsc(m.by || '?') + '</b> · ' + m.cases + ' box(es) → '
+          + (m.kind === 'stockout' ? '🛒 Stock Out' : invEsc(m.toLoc || '') + (m.kind === 'transfer' ? ' (Transfer)' : ' (Container here)'))
+          + (m.status === 'Pending' ? " · <span style='color:var(--orange)'>waiting approval</span>" : '') + (m.status === 'Rejected' ? ' · rejected' : '') + (m.cancelledAt ? ' · cancelled' : '') + '</div>'; }).join('')
+      + '</div>';
   }
   window.invPalletFill = function() {
     var els = [].slice.call(document.querySelectorAll('.inv-pal'));
@@ -4938,9 +4964,32 @@ window.invCredLogin = async function() {
     _invDupPullPending = null;
   };
 
+  // Box sizes (pieces per case) the same part # has at one spot. Owner: box
+  // quantities are never changed, so a spot can hold 5 cases of 40 pcs AND
+  // 5 cases of 20 pcs of the same part # — the picker must check the box.
+  function invBoxSizes(partNum, location) {
+    var U = function(v) { return String(v || '').trim().toUpperCase(); }, P = U(partNum), L = U(location), out = [];
+    ((invPart && invPart.locations) || []).forEach(function(l) {
+      if (l.isPlaceholder || !((parseFloat(l.cases) || 0) > 0) || U(l.partNum || (invPart && invPart.partNum)) !== P || U(l.location) !== L) return;
+      var u = parseFloat(l.eachQty) || 0; if (out.indexOf(u) < 0) out.push(u);
+    });
+    return out;
+  }
+  // Pull List key: one item per box size when the spot has more than one.
+  function invPullItemKey(partNum, loc) {
+    var sz = invBoxSizes(partNum, loc.location);
+    return partNum + '|' + loc.location + (sz.length > 1 ? '|' + (parseFloat(loc.eachQty) || 0) + 'pcs' : '');
+  }
+  function invTagBoxSize(item, loc) {
+    if (!item) return item;
+    var sz = invBoxSizes(item.partNum, item.location), me = parseFloat(loc && loc.eachQty) || 0;
+    if (sz.length > 1) { item.boxPcs = me; item.otherPcs = sz.filter(function(u) { return u !== me; }); }
+    return item;
+  }
+  window.invBoxSizes = invBoxSizes;
   function invAddToPullList(part, loc) {
     // Check for duplicate
-    var key = part.partNum + '|' + loc.location;
+    var key = invPullItemKey(part.partNum, loc);
     var existingIdx = -1;
     for (var qi = 0; qi < invPullList.length; qi++) { if (invPullList[qi].key === key && (invPullList[qi].dest || 'shelving') === invStockOutDest) { existingIdx = qi; break; } }
     if (existingIdx >= 0) {
@@ -4995,6 +5044,7 @@ window.invCredLogin = async function() {
       sourceStockoutId: _invPendingStockoutSourceId || null,
       dest: invStockOutDest // Shelving or Big Company — the tab it was added from
     });
+    invTagBoxSize(invPullList[invPullList.length - 1], loc);
     _invPendingStockoutSourceId = null;
     // Sort numerically by location
     invPullList.sort(function(a, b) {
@@ -5269,6 +5319,7 @@ window.invCredLogin = async function() {
     var infoHtml =
       "<div class='ipull-loc'>" + item.location + "</div>" + invPalletSpan(item.partNum, item.location, (!item.grabbed && !item.noneFound && !item.submitted) ? i : null) +
       "<div class='ipull-pn'>" + item.partNum + fossBadge + noneBadge + stockoutBadge + coBadge + "</div>" +
+      (item.otherPcs && item.otherPcs.length ? "<div style='font-size:12px;font-weight:800;color:#b45309;background:#fef3c7;border-radius:6px;padding:3px 7px;margin:2px 0'>📦 Grab the box of " + item.boxPcs + " pcs — this spot also has " + item.partNum + " in boxes of " + item.otherPcs.join(' / ') + " pcs. Check the box label.</div>" : "") +
       "<div class='ipull-name'>" + (item.name || '') + "</div>" +
       (item.addedAt ? "<div style='font-size:10px;color:var(--text3);margin-top:2px'>Added " + invFmtStamp(item.addedAt) + (item.grabbedAt ? " &nbsp;·&nbsp; Grabbed " + invFmtStamp(item.grabbedAt) : "") + "</div>" : "") +
       resumeNotesHtml +
@@ -5926,6 +5977,13 @@ window.invCredLogin = async function() {
       invFlash('Already submitted — use the system count link to correct a mistake', 'warn');
       return;
     }
+    // Two box sizes of this part # at this spot: one more step — confirm the box.
+    var bx = invPullList[i];
+    if (!bx.grabbed && bx.otherPcs && bx.otherPcs.length && !bx.boxConfirmed) {
+      if (!confirm(bx.partNum + ' @ ' + bx.location + ' comes in 2 box sizes here.\n\nIs the box you grabbed ' + bx.boxPcs + ' pcs?\n(The other boxes are ' + bx.otherPcs.join(' / ') + ' pcs.)\n\nOK = yes, ' + bx.boxPcs + ' pcs · Cancel = check again')) { invFlash('Check the box label — grab the box of ' + bx.boxPcs + ' pcs', 'warn'); return; }
+      bx.boxConfirmed = true;
+      bx.scanNote = (bx.scanNote ? bx.scanNote + ' ' : '') + '[BOX SIZE CHECKED: ' + bx.boxPcs + ' pcs]';
+    }
     invPullList[i].grabbed = !invPullList[i].grabbed;
     invPullList[i].grabbedAt = invPullList[i].grabbed ? new Date().toISOString() : null;
     if (invPullList[i].grabbed) {
@@ -6366,6 +6424,7 @@ window.invCredLogin = async function() {
         type: "OUT", partNum: item.partNum, sku: item.sku, name: item.name,
         location: item.location, cases: item.cases, initials: initials,
         notes: itemNotes, rowIndex: item.rowIndex, masterRowIndex: item.masterRowIndex,
+        masterId: item.masterId || null, // the exact SKU Mgr row picked (a spot can hold 2 box sizes)
         isPlaceholder: false, isNew: false, overwriteLocation: "",
         clientTimestamp: entryTs,
         addedAt: item.addedAt || null,
@@ -8331,6 +8390,8 @@ window.invCredLogin = async function() {
     wFetch(W + '/inventory/lookup?code=' + encodeURIComponent(code)).then(function(r) { return r.json(); }).then(function(d) {
       if (d && d.partNum) { cb(String(d.partNum).toUpperCase(), d); return; }
       if (d && d.upcNotLinked) {
+        // Saving a box UPC is for Admins only (owner); everyone else types the part # from the label.
+        if (!xfrIsAdmin()) { invFlash('Box UPC ' + code + ' is not saved yet — type the part # from the box label in the scan box. An Admin saves the UPC (⚙ More → box UPCs).', 'error'); xfrGoBox(); return; }
         var part = prompt('Box UPC ' + code + ' is not saved yet.\n\nType the part # on the box label (e.g. 5-3-2=2) — it is saved so the next scan finds it:', '');
         if (!part) { xfrGoBox(); return; }
         wFetch(W + '/inventory/upc-link', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ upc: code, part: part.trim().toUpperCase() }) })
@@ -8455,8 +8516,16 @@ window.invCredLogin = async function() {
   window.xfrGoToggleDone = function() { xfrGo.showDone = !xfrGo.showDone; xfrGoRender(); };
   function xfrGoFrom(l) { // where the container was stocked in: GARAGE first, else the spot with the most
     var st = (l.stock || []).filter(function(s) { return parseFloat(s.cases) > 0; });
-    return st.filter(function(s) { return /^GARAGE$/i.test(s.location); })[0] || st.sort(function(a, b) { return b.cases - a.cases; })[0] || null;
+    // Box sizes are never mixed (owner): take the pallet's boxes from the row
+    // of the same pieces per box when that spot has more than one size.
+    var per = xfrLinePcs(l), same = function(s) { return per > 0 && Math.abs((parseFloat(s.pcs) || 0) - per) < 1e-6; };
+    var gar = st.filter(function(s) { return /^GARAGE$/i.test(s.location); });
+    var hit = gar.filter(same)[0]; if (hit) return hit;
+    if (gar.length && (!per || !gar.some(function(s) { return parseFloat(s.pcs) > 0; }))) return gar[0]; // sizes not on file: as before
+    hit = st.filter(same).sort(function(a, b) { return b.cases - a.cases; })[0]; if (hit) return hit;
+    return gar[0] || st.sort(function(a, b) { return b.cases - a.cases; })[0] || null;
   }
+  function xfrLinePcs(l) { return +l.pcsPerCtn > 0 ? +l.pcsPerCtn : (+l.cases > 0 && +l.pcs > 0 ? Math.round(l.pcs / l.cases * 1000) / 1000 : 0); }
   // A scanned shelf label (not a box): C1=1-2-3, BARN=…, GARAGE.
   function xfrIsLoc(code) {
     var up = String(code || '').trim().toUpperCase(); if (!up) return false;
@@ -8537,7 +8606,7 @@ window.invCredLogin = async function() {
           + '<div style="display:flex;justify-content:space-between"><b style="font-family:var(--mono)">' + xfrE(l.part) + '</b><span style="font-size:12px;color:var(--green);font-weight:700">' + xfrN(l.moved) + ' of ' + xfrN(l.cases) + ' moved</span></div>'
           + (l.over > 0 ? '<div style="font-size:11px;color:#b91c1c;font-weight:700">' + xfrGoLineWarn(l) + '</div>' : '')
           + (l.moves || []).map(function(m) { var t = ''; try { t = new Date(m.at).toLocaleString('en-US', { timeZone: 'America/New_York', month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' }); } catch (e) {}
-              return '<div style="font-size:11px;color:var(--text3)">' + xfrN(m.cases) + ' → <b style="font-family:var(--mono);color:var(--text)">' + xfrE(m.to) + '</b> · ' + xfrE(m.by) + ' · ' + xfrE(t) + (m.pending ? ' · <span style="color:var(--orange)">waiting approval</span>' : '') + '</div>'; }).join('')
+              return '<div style="font-size:11px;color:var(--text3)">' + xfrN(m.cases) + ' → <b style="font-family:var(--mono);color:var(--text)">' + (m.kind === 'stockout' ? '🛒 Stock Out' : xfrE(m.to) + (m.kind === 'transfer' ? ' (Transfer tab)' : '')) + '</b> · ' + xfrE(m.by) + ' · ' + xfrE(t) + (m.pending ? ' · <span style="color:var(--orange)">waiting approval</span>' : '') + '</div>'; }).join('')
           + '</div>';
       }).join('');
     }
@@ -8612,7 +8681,7 @@ window.invCredLogin = async function() {
       part: E.part, boxes: b, pcsPerBox: p, toLocation: loc, initials: (INV_CRED_USER && INV_CRED_USER.displayName) || '' }) })
       .then(function(r) { return r.json(); }).then(function(d) {
         if (!d || !d.ok) { invFlash('Not saved: ' + ((d && d.error) || 'error'), 'error'); xfrGoBox(); return; }
-        invFlash('✓ Extra ' + b + ' box(es) of ' + d.part + ' → ' + d.location + (d.converted ? ' (' + xfrN(d.cases) + ' case(s) of that spot\'s size)' : '') + (d.autoApproved ? '' : ' — waiting approval'), 'success');
+        invFlash('✓ Extra ' + b + ' box(es) of ' + d.part + ' → ' + d.location + (d.ownRow ? ' (own row — that spot also has another box size)' : '') + (d.autoApproved ? '' : ' — waiting approval'), 'success');
         xfrGo.extra = null; invFetchPendingCount(); xfrGoRender(); xfrGoBox(); xfrGoRefresh();
       }).catch(function() { invFlash('Not saved — network error', 'error'); })
       .finally(function() { xfrGo.busy = false; });
@@ -8663,7 +8732,8 @@ window.invCredLogin = async function() {
       return;
     }
     wFetch(W + '/inventory/lookup?code=' + encodeURIComponent(l.part)).then(function(r) { return r.json(); }).then(function(d) {
-      var row = (d.locations || []).filter(function(x) { return String(x.partNum || '').toUpperCase() === l.part.toUpperCase() && String(x.location || '').toUpperCase() === String(from.location).toUpperCase(); })[0];
+      var rows = (d.locations || []).filter(function(x) { return String(x.partNum || '').toUpperCase() === l.part.toUpperCase() && String(x.location || '').toUpperCase() === String(from.location).toUpperCase(); });
+      var row = (from.masterId && rows.filter(function(x) { return String(x.masterId) === String(from.masterId); })[0]) || rows[0];
       if (!row) { invFlash('Could not find ' + l.part + ' at ' + from.location, 'error'); return; }
       var have = parseFloat(row.adjustedCases != null ? row.adjustedCases : row.cases) || 0;
       if (n > have + 1e-9) { invFlash('Only ' + xfrN(have) + ' case(s) of ' + l.part + ' at ' + row.location + ' (some may be waiting for approval)', 'error'); return; }
@@ -8823,13 +8893,14 @@ window.invCredLogin = async function() {
     if (n > left + 1e-9) { invFlash('Pallet ' + l.pallet + ' only has ' + xfrN(left) + ' box(es) of ' + l.part + ' left', 'error'); return; }
     var locs = (l.stock || []).filter(function(s) { return parseFloat(s.cases) > 0; });
     if (!locs.length) { invFlash(l.part + ' is not in stock anywhere yet — stock the container in first (Reorder → 📦 Received)', 'error'); return; }
-    var from = locs.filter(function(s) { return String(s.location).toUpperCase() === 'GARAGE'; })[0];
+    var from = xfrGoFrom(l); if (from && String(from.location).toUpperCase() !== 'GARAGE') from = null;
     if (!from) {
       var pick = prompt(l.part + ' is not in GARAGE. Take it from which location?\n' + locs.map(function(s, i) { return (i + 1) + ') ' + s.location + ' — ' + xfrN(s.cases) + ' cases'; }).join('\n'), '1');
       from = locs[(parseInt(pick, 10) || 0) - 1]; if (!from) return;
     }
     wFetch(W + '/inventory/lookup?code=' + encodeURIComponent(l.part)).then(function(r) { return r.json(); }).then(function(d) {
-      var row = (d.locations || []).filter(function(x) { return String(x.partNum || '').toUpperCase() === l.part.toUpperCase() && String(x.location || '').toUpperCase() === String(from.location).toUpperCase(); })[0];
+      var rows = (d.locations || []).filter(function(x) { return String(x.partNum || '').toUpperCase() === l.part.toUpperCase() && String(x.location || '').toUpperCase() === String(from.location).toUpperCase(); });
+      var row = (from.masterId && rows.filter(function(x) { return String(x.masterId) === String(from.masterId); })[0]) || rows[0];
       if (!row) { invFlash('Could not find ' + l.part + ' at ' + from.location, 'error'); return; }
       var have = parseFloat(row.adjustedCases != null ? row.adjustedCases : row.cases) || 0;
       if (n > have + 1e-9) { invFlash('Only ' + xfrN(have) + ' case(s) of ' + l.part + ' at ' + row.location, 'error'); return; }
