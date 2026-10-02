@@ -868,5 +868,19 @@ console.log('\nHistory: pieces (start → end, in / out, whole inventory per ent
   await post('/inventory/review-mode', { mode: 'manual' });
 }
 
+// Owner: "using phone to test Transfer → Container here, try to scan, but it says load failed".
+console.log('\nContainer here: a failed fast load never stops the scan');
+{
+  const { readFileSync } = await import('node:fs');
+  const ih = readFileSync(fileURLToPath(new URL('../inventory.html', import.meta.url)), 'utf8');
+  check('pallet-view fails (network / old Worker / server error) → the pallet loads the old way (pallets + suggested spots + photos)',
+    /var legacy = function\(\) \{/.test(ih) && /why = \(d && d\.error\) \|\| 'pallet-view not ok'; return legacy\(\);/.test(ih) && /return legacy\(\); \}\);/.test(ih), null);
+  check('the fast box scan fails → the full lookup as before; nothing shows a bare "Load failed" — it says what failed',
+    /fast scan failed:/.test(ih) && /Pallets did not load: /.test(ih) && /Pallet did not load: /.test(ih) && /Screen error: /.test(ih), null);
+  const wk = readFileSync(fileURLToPath(new URL('../worker/src/index.js', import.meta.url)), 'utf8');
+  check('server: photos / suggested spots / box UPCs failing never stop the pallet from showing; the scan still returns its pallets if the pallet view fails',
+    /soft\(productPhotoMap\(env, parts\), \{\}, 'photos'\)/.test(wk) && /out\.viewError = /.test(wk), null);
+}
+
 console.log('\n' + (failed ? '❌ ' + failed + ' check(s) FAILED' : '✅ all ' + passed + ' checks passed') + '\n');
 process.exit(failed ? 1 : 0);

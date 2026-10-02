@@ -8452,7 +8452,7 @@ window.invCredLogin = async function() {
         return;
       }
       invFlash('Not found: ' + code, 'error'); xfrGoBox();
-    }).catch(function() { invFlash('Lookup failed', 'error'); xfrGoBox(); });
+    }).catch(function(e) { invFlash('Lookup failed: ' + ((e && e.message) || 'network') + ' — scan again', 'error'); xfrGoBox(); });
   }
   window.xfrBoxScan = function(code) {
     code = String(code || '').trim(); if (!code) return;
@@ -8492,16 +8492,18 @@ window.invCredLogin = async function() {
   // only one). Not known there (e.g. a box UPC not saved yet) → the full
   // lookup as before, which also asks for the part # and saves the UPC.
   function xfrFastScan(code, cb) {
-    wFetch(W + '/inventory/containers/scan?code=' + encodeURIComponent(code)).then(function(r) { return r.json(); }).then(function(d) {
-      if (d && d.ok && d.part) { cb(String(d.part).toUpperCase(), d); return; }
-      xfrResolve(code, function(part) { cb(part, null); });
-    }).catch(function() { xfrResolve(code, function(part) { cb(part, null); }); });
+    wFetch(W + '/inventory/containers/scan?code=' + encodeURIComponent(code)).then(function(r) { return r.json(); })
+      .catch(function(e) { if (/Unauthorized/.test(e && e.message)) throw e; console.warn('[Container here] fast scan failed:', e && e.message); return null; })
+      .then(function(d) {
+        if (d && d.ok && d.part) { cb(String(d.part).toUpperCase(), d.view && !d.view.ok ? { ok: true, part: d.part, lines: d.lines } : d); return; }
+        xfrResolve(code, function(part) { cb(part, null); });
+      }).catch(function(e) { console.error(e); invFlash('Scan did not work: ' + ((e && e.message) || 'error') + ' — scan again', 'error'); xfrGoBox(); });
   }
   // Pallets (of received containers) that still have boxes of `part`.
   function xfrFindPallets(part, fromPallet) {
     wFetch(W + '/inventory/containers/pallets?q=' + encodeURIComponent(part)).then(function(r) { return r.json(); }).then(function(d) {
       xfrShowPallets(part, (d && d.lines) || [], fromPallet);
-    }).catch(function() { invFlash('Load failed', 'error'); });
+    }).catch(function(e) { invFlash('Pallets did not load: ' + ((e && e.message) || 'network') + ' — scan again', 'error'); });
   }
   function xfrShowPallets(part, lines, fromPallet) {
     {
@@ -8541,17 +8543,41 @@ window.invCredLogin = async function() {
     var pb = g('xfr-cont-pallets'); if (pb) pb.innerHTML = '';
     var el = g('xfr-cont-go'); if (el && !silent) el.innerHTML = "<div class='iempty'>Loading pallet…</div>";
     // One trip: the pallet's lines + suggested spots + photos + box UPCs.
-    var vp = view ? Promise.resolve(view) : wFetch(W + '/inventory/containers/pallet-view?title=' + encodeURIComponent(title) + '&vendor=' + encodeURIComponent(vendor) + '&pallet=' + encodeURIComponent(pallet)).then(function(r) { return r.json(); });
+    // If that fails (old Worker, network, a server error), load it the old
+    // way (pallets + suggested spots + photos) so the scan still works — and
+    // say what went wrong instead of a bare "Load failed".
+    var why = '';
+    var json = function(r) { return r.json().catch(function() { throw new Error('HTTP ' + r.status); }); };
+    var legacy = function() {
+      return wFetch(W + '/inventory/containers/pallets?title=' + encodeURIComponent(title)).then(json).then(function(d) {
+        if (!d || !d.ok) throw new Error((d && d.error) || 'pallets did not load');
+        var lines = (d.lines || []).filter(function(l) { return l.pallet === pallet && l.vendor === vendor; });
+        var open = lines.filter(function(l) { return l.left > 0; }), from = open.length ? xfrGoFrom(open[0]) : null;
+        var parts = open.map(function(l) { return l.part; }).filter(function(x, i, a) { return a.indexOf(x) === i; });
+        var recsP = parts.length ? wFetch(W + '/inventory/containers/pallet-recs', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ parts: parts, fromLoc: from ? from.location : 'GARAGE' }) })
+          .then(json).then(function(x) { return (x && x.recs) || {}; }).catch(function() { return {}; }) : Promise.resolve({});
+        return recsP.then(function(recs) {
+          return new Promise(function(res) { xfrLoadPhotos(lines.map(function(l) { return l.part; }), function() { res({ ok: true, lines: lines, recs: recs, photos: {}, upcs: {}, extras: [], legacy: true }); }); });
+        });
+      });
+    };
+    var vp = view ? Promise.resolve(view) : wFetch(W + '/inventory/containers/pallet-view?title=' + encodeURIComponent(title) + '&vendor=' + encodeURIComponent(vendor) + '&pallet=' + encodeURIComponent(pallet)).then(json)
+      .then(function(d) { if (d && d.ok) return d; why = (d && d.error) || 'pallet-view not ok'; return legacy(); })
+      .catch(function(e) { if (/Unauthorized/.test(e && e.message)) throw e; why = why || (e && e.message) || 'network'; return legacy(); });
     vp.then(function(d) {
       if (!d || !d.ok) { if (el && !silent) el.innerHTML = "<div class='iempty'>" + xfrE((d && d.error) || 'Load failed') + "</div>"; return; }
+      if (why) console.warn('[Container here] fast pallet load failed (' + why + ') — loaded the old way');
       var f = xfrGo.focus; if (!f || f.title !== title || f.pallet !== pallet) return; // another pallet opened meanwhile
       xfrGo.lines = (d.lines || []).filter(function(l) { return l.pallet === pallet && l.vendor === vendor; });
       if (!xfrGo.lines.length) xfrGo.lines = d.lines || [];
       xfrGo.recs = d.recs || {}; xfrGo.upcs = d.upcs || {}; xfrGo.extras = d.extras || [];
       var ph = d.photos || {};
       xfrGo.lines.forEach(function(l) { var b = xfrBase(l.part); if (b && !(b in xfrPhotos)) xfrPhotos[b] = ph[b] || ''; });
-      if (selId && !silent) xfrGoSelect(selId); else { xfrGoRender(); if (!silent) xfrGoBox(); }
-    }).catch(function() { if (el && !silent) el.innerHTML = "<div class='iempty'>Load failed</div>"; });
+      try { if (selId && !silent) xfrGoSelect(selId); else { xfrGoRender(); if (!silent) xfrGoBox(); } }
+      catch (e) { console.error(e); if (el) el.innerHTML = "<div class='iempty' style='color:var(--red)'>Screen error: " + xfrE(e && e.message || e) + " — send this to the office</div>"; }
+    }).catch(function(e) {
+      if (el && !silent) el.innerHTML = "<div class='iempty' style='color:var(--red)'>Pallet did not load: " + xfrE((e && e.message) || 'network') + (why && why !== (e && e.message) ? ' (' + xfrE(why) + ')' : '') + " — tap ↻ or scan again</div>";
+    });
   };
   window.xfrGoBack = function() { xfrGoReset(); xfrContLoad(); xfrGoBox(); };
   window.xfrGoReload = function() { if (xfrGo.focus) xfrGoOpen(xfrGo.focus.title, xfrGo.focus.vendor, xfrGo.focus.pallet); };

@@ -4132,7 +4132,7 @@ async function containerPalletLines(env, o) {
         : { location: r.location, cases: r.cases, pcs: parseFloat(r.units_per_case) || 0, masterId: r.id }); });
   }
   if (o.detail && parts.length) {
-    const pm = await buildPendingMap(env);
+    const pm = await buildPendingMap(env).catch(() => ({}));
     Object.keys(stock).forEach(p => stock[p].forEach(s => { s.pending = pm[p + '|' + String(s.location || '').toUpperCase()] || 0; }));
   }
   // One container opened: each line's transfers (who, how many, where, when) for the ✓ Transferred list.
@@ -4180,13 +4180,16 @@ async function palletViewData(env, title, vendor, pallet) {
   if (open.length) { const st = (open[0].stock || []).filter(s => parseFloat(s.cases) > 0);
     const f = st.filter(s => /^GARAGE$/i.test(s.location))[0] || st.sort((a, b) => b.cases - a.cases)[0]; if (f) fromLoc = f.location; }
   const v = lines[0] ? lines[0].vendor : vendor;
+  // Each extra is optional: one failing never stops the pallet from showing.
+  const soft = (p, dflt, what) => Promise.resolve(p).catch(e => { console.error('[pallet-view] ' + what + ':', e && e.message); warn.push(what); return dflt; });
+  const warn = [];
   const [recs, photos, upcs, extras] = await Promise.all([
-    openParts.length ? palletRecsFor(env, openParts, fromLoc) : {},
-    productPhotoMap(env, parts).catch(() => ({})),
-    partBoxUpcs(env, parts).catch(() => ({})),
+    soft(openParts.length ? palletRecsFor(env, openParts, fromLoc) : {}, {}, 'suggested spots'),
+    soft(productPhotoMap(env, parts), {}, 'photos'),
+    soft(partBoxUpcs(env, parts), {}, 'box UPCs'),
     d1All(env, `SELECT e.id, e.part, e.boxes, e.pcs_per_box AS pcs, e.cases, e.to_location AS toLoc, e.by_user AS by, e.at, l.status FROM pallet_extra e
       LEFT JOIN inventory_log l ON l.id = e.log_id WHERE e.title = ? AND e.vendor = ? AND e.pallet = ? ORDER BY e.id`, [title, v, String(pallet)]).catch(() => [])]);
-  return { ok: true, lines, recs, photos, upcs, extras };
+  return { ok: true, lines, recs, photos, upcs, extras, warn };
 }
 // GET /inventory/containers/pallet-view?title=&vendor=&pallet=
 async function inventoryPalletView(url, env) {
@@ -4215,7 +4218,10 @@ async function inventoryContainerScan(url, env) {
   const { lines } = await containerPalletLines(env, { q: part });
   const ls = lines.filter(l => got.has(l.title) && String(l.part).toUpperCase() === part && l.left > 0);
   const out = { ok: true, part, lines: ls };
-  if (ls.length === 1) out.view = await palletViewData(env, ls[0].title, ls[0].vendor, ls[0].pallet);
+  if (ls.length === 1) {
+    try { out.view = await palletViewData(env, ls[0].title, ls[0].vendor, ls[0].pallet); }
+    catch (e) { console.error('[container scan] pallet view:', e.message); out.viewError = String(e.message || e).slice(0, 200); } // the screen loads the pallet itself
+  }
   return J(out);
 }
 // POST /inventory/containers/extra { title, vendor, pallet, part, boxes,
