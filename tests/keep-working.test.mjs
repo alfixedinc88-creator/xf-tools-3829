@@ -735,16 +735,14 @@ console.log('\n🚢 Container here: fast scan & move, extra boxes found on a pal
   // ➕ extra boxes found on the pallet
   const p0 = pc(), mv0 = moved();
   const e1 = await post('/inventory/containers/extra', { title: T, vendor: 'KW', pallet: '7', part: '61-1-1=5', boxes: 2, pcsPerBox: 50, toLocation: 'c1=6-1-2' });
-  check('extra 2 boxes × 50 pcs → new spot C1=6-1-2: a Stock In waiting for approval; nothing counted yet', e1.ok && !e1.autoApproved && pc() === p0 && sq.prepare('SELECT status FROM inventory_log WHERE id = ?').get(e1.d1Id).status === 'Pending', e1);
-  const it2 = ((await get('/inventory/pending')).items || []).find(x => x.d1Id === e1.d1Id);
-  await post('/inventory/verify', { rowIndex: it2.rowIndex, action: 'Approved', item: it2 });
+  // Owner (later): "we add those boxes to our SKU Mgr too, so we can start using them" — approved right away, even with Review on manual.
+  check('extra 2 boxes × 50 pcs → new spot C1=6-1-2 (Review on manual): in SKU Mgr right away, Stock In Verified, by TS', e1.ok && e1.autoApproved && !e1.warn
+    && sq.prepare('SELECT status FROM inventory_log WHERE id = ?').get(e1.d1Id).status === 'Verified' && sq.prepare('SELECT initials FROM inventory_log WHERE id = ?').get(e1.d1Id).initials === 'TS', e1);
   const nr = sq.prepare("SELECT cases, units_per_case u FROM master_list WHERE part_num='61-1-1=5' AND location='C1=6-1-2'").get(), lg = row(e1.d1Id);
-  check('…approved: C1=6-1-2 has 2 cases of 50 pcs (Each/Case from the box), pieces ' + p0 + ' → ' + pc() + ' (+100); History ' + lg.b + ' → ' + lg.a,
+  check('…C1=6-1-2 has 2 cases of 50 pcs (Each/Case from the box), pieces ' + p0 + ' → ' + pc() + ' (+100); History ' + lg.b + ' → ' + lg.a,
     nr && nr.cases === 2 && nr.u === 50 && pc() === p0 + 100 && lg.a - lg.b === 2 && moved() === mv0, { nr, lg, p: pc() });
   const p1 = pc(), g1 = sq.prepare('SELECT cases FROM master_list WHERE id = ?').get(gid).cases;
   const e2 = await post('/inventory/containers/extra', { title: T, vendor: 'KW', pallet: '7', part: '61-1-1=5', boxes: 4, pcsPerBox: 25, toLocation: 'GARAGE' });
-  const it3 = ((await get('/inventory/pending')).items || []).find(x => x.d1Id === e2.d1Id);
-  await post('/inventory/verify', { rowIndex: it3.rowIndex, action: 'Approved', item: it3 });
   const own = sq.prepare("SELECT cases, units_per_case u FROM master_list WHERE part_num='61-1-1=5' AND location='GARAGE' AND units_per_case=25").get();
   check('extra 4 boxes × 25 pcs at GARAGE (its cases are 50 pcs): box quantities never change — own row 4 × 25, the 50-pc row stays ' + g1 + ', pieces +100, pallet count unchanged',
     e2.ok && e2.ownRow && e2.cases === 4 && own && own.cases === 4 && sq.prepare('SELECT cases FROM master_list WHERE id = ?').get(gid).cases === g1 && pc() === p1 + 100 && moved() === mv0
@@ -880,6 +878,14 @@ console.log('\nContainer here: a failed fast load never stops the scan');
   const wk = readFileSync(fileURLToPath(new URL('../worker/src/index.js', import.meta.url)), 'utf8');
   check('server: photos / suggested spots / box UPCs failing never stop the pallet from showing; the scan still returns its pallets if the pallet view fails',
     /soft\(productPhotoMap\(env, parts\), \{\}, 'photos'\)/.test(wk) && /out\.viewError = /.test(wk), null);
+}
+
+// Owner: "Extra Items found at the bottom of each pallet … we add those boxes to our SKU Mgr too, so we can start using them".
+{
+  const { readFileSync } = await import('node:fs');
+  const ih = readFileSync(fileURLToPath(new URL('../inventory.html', import.meta.url)), 'utf8');
+  check('➕ Extra items found on this pallet: at the bottom of an opened pallet and of every pallet in the container list (opens that pallet ready to scan)',
+    (ih.match(/➕ Extra items found on this pallet<\/button>/g) || []).length === 2 && /window\.xfrExtraOnPallet = function\(btn\)/.test(ih) && /xfrGo\.pendingExtra === title/.test(ih), null);
 }
 
 console.log('\n' + (failed ? '❌ ' + failed + ' check(s) FAILED' : '✅ all ' + passed + ' checks passed') + '\n');
