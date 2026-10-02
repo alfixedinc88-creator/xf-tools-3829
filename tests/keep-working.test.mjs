@@ -196,6 +196,9 @@ for (const role of ['mgmt', 'ops']) sq.prepare('INSERT INTO cred_user_roles (use
 const mg = await (await call('/auth/login', { method: 'POST', body: '{"username":"manager1","password":"password1"}' })).json();
 const dMg = await call('/inventory/containers/delete', { method: 'POST', headers: { 'X-Cred-Token': mg.token, 'Content-Type': 'application/json' }, body: JSON.stringify({ title: 'Container DUP', reason: 'x' }) });
 const invHt = (await import('node:fs')).readFileSync(fileURLToPath(new URL('../inventory.html', import.meta.url)), 'utf8');
+// Owner: "Container here — after opening the pallets, click somewhere to show all the items not done yet / nowhere yet".
+check('Container here: 📋 Not done yet button shows only items still left on the pallets (all pallets), flags "nowhere yet", and toggles back',
+  /window\.xfrContToggleLeft = function/.test(invHt) && /📋 Not done yet: /.test(invHt) && /nowhere yet<\/span>/.test(invHt) && /if \(onlyLeft\) groups = groups\.map/.test(invHt), null);
 check('a manager who is not an Admin can\'t delete a container (403, pallets stay); the screen shows 🗑 Delete container and the box-UPC fill-in to Admins only',
   dMg.status === 403 && palletsOf('Container DUP') === 1 && /\(xfrIsAdmin\(\) \? '<button class="isearch-btn"[^\n]*xfrContDelete\(\)/.test(invHt)
     && /window\.xfrMissingUpcSave = function\(i\) \{\n    if \(!xfrIsAdmin\(\)\)/.test(invHt) && /window\.xfrContDelete = function[^\n]*\n[^\n]*\n    if \(!xfrIsAdmin\(\)\)/.test(invHt), dMg.status);
