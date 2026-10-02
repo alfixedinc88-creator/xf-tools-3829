@@ -3245,6 +3245,8 @@ async function ensureTotalTrackingColumns(env) {
   await env.DB.prepare('ALTER TABLE inventory_log ADD COLUMN total_after REAL').run().catch(()=>{});
   await env.DB.prepare('ALTER TABLE inventory_log ADD COLUMN total_warning TEXT').run().catch(()=>{});
   await env.DB.prepare('ALTER TABLE inventory_log ADD COLUMN total_scope TEXT').run().catch(()=>{});
+  await env.DB.prepare('ALTER TABLE inventory_log ADD COLUMN wh_before REAL').run().catch(()=>{});
+  await env.DB.prepare('ALTER TABLE inventory_log ADD COLUMN wh_after REAL').run().catch(()=>{});
 }
 // History's "before → after" check, per PART # (every shelf of that part,
 // any number of cases). It used to be the whole warehouse, so anyone else's
@@ -3267,10 +3269,23 @@ async function invRowCases(env, masterId, part, loc) {
 const _n = v => Math.round(v * 1000) / 1000;
 // "ℹ …" = the numbers add up, but a shelf had a different count than the
 // system (shown, never hidden). "⚠ …" = they do NOT add up.
+// Whole inventory (all cases, every part #, every shelf) — the same number
+// History's report shows as Ended With.
+async function invWarehouseCases(env) {
+  const r = await d1First(env, 'SELECT SUM(cases) AS t FROM master_list WHERE cases > 0', []);
+  return _n(parseFloat(r?.t) || 0);
+}
 async function invSaveTotals(env, ids, before, after, note) {
   await ensureTotalTrackingColumns(env);
+  // Whole-inventory before → after too: after = the total right now (this
+  // change is already on the shelves), before = after − this entry's own
+  // change, so the two always differ by exactly what this entry did.
+  let whA = null, whB = null;
+  if (before != null && after != null) {
+    try { whA = await invWarehouseCases(env); whB = _n(whA - (after - before)); } catch (_) {}
+  }
   for (const id of ids.filter(Boolean))
-    await env.DB.prepare('UPDATE inventory_log SET total_before=?, total_after=?, total_warning=?, total_scope=? WHERE id=?').bind(before, after, note || null, 'part', id).run();
+    await env.DB.prepare('UPDATE inventory_log SET total_before=?, total_after=?, total_warning=?, total_scope=?, wh_before=?, wh_after=? WHERE id=?').bind(before, after, note || null, 'part', whB, whA, id).run();
 }
 // The approve went through but its before → after couldn't be worked out:
 // say so on the History row (never a blank cell nobody can explain).
@@ -11613,7 +11628,7 @@ async function skuMgrTotalsBefore(env, d1Id, sheetRow, newPart) {
       : sheetRow ? await d1First(env, 'SELECT part_num FROM master_list WHERE sheet_row=? AND sheet_row > 0', [sheetRow]) : null;
     const oldPart = String((row && row.part_num) || '').trim().toUpperCase();
     const np = String(newPart || '').trim().toUpperCase();
-    return { oldPart, newPart: np, oldBefore: oldPart ? await invPartCases(env, oldPart) : 0, newBefore: await invPartCases(env, np) };
+    return { oldPart, newPart: np, oldBefore: oldPart ? await invPartCases(env, oldPart) : 0, newBefore: await invPartCases(env, np), wh: await invWarehouseCases(env) };
   } catch (e) { return { err: e.message }; }
 }
 function _skuMgrVal(k, v) {
@@ -11625,9 +11640,10 @@ async function _skuMgrInsertLog(env, who, r, notes, tot, extraWarn) {
   await invLogEnsureColumns(env);
   await ensureTotalTrackingColumns(env);
   const ts = new Date().toISOString();
-  let before = null, after = null, warn = extraWarn || null;
+  let before = null, after = null, warn = extraWarn || null, whB = null, whA = null;
   if (tot && !tot.err) {
     before = tot.newBefore; after = await invPartCases(env, tot.newPart);
+    if (tot.wh != null) { whB = tot.wh; whA = await invWarehouseCases(env); }
   } else {
     warn = '⚠ Total not recorded — ' + String((tot && tot.err) || 'no database').slice(0, 160);
   }
@@ -11635,11 +11651,11 @@ async function _skuMgrInsertLog(env, who, r, notes, tot, extraWarn) {
     `INSERT INTO inventory_log
        (sheet_row,timestamp,type,part_num,location,cases,initials,notes,status,
         verified_by,verified_at,overwrite_loc,is_new,is_placeholder,
-        master_row_index,sku,transfer_id,paired_location,name,total_before,total_after,total_warning,total_scope)
-     VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`
+        master_row_index,sku,transfer_id,paired_location,name,total_before,total_after,total_warning,total_scope,wh_before,wh_after)
+     VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`
   ).bind(0, ts, 'EDIT', String(r.part_num || '').toUpperCase(), r.location || '', parseFloat(r.cases) || 0, who,
     notes.slice(0, 1500), 'Verified', who, ts, '', 0, 0, r.id || 0, mlParent(r.part_num), '', '', r.name || '',
-    before, after, warn, 'part').run();
+    before, after, warn, 'part', whB, whA).run();
 }
 async function skuMgrLogEdit(env, who, old, d1Id, sheetRow, tot) {
   if (!env.DB) return;
@@ -11727,7 +11743,7 @@ async function invParentMismatch(request, env, session) {
     const fixed = [];
     for (const r of list) {
       const part = String(r.partNum).trim().toUpperCase();
-      const before = await invPartCases(env, part);
+      const before = await invPartCases(env, part), whBefore = await invWarehouseCases(env);
       const newName = r.nameRight || r.nameNow;
       await env.DB.prepare('UPDATE master_list SET sku=?, base_sku=?, name=?, updated_at=? WHERE id=?')
         .bind(r.parentRight, r.parentRight, newName, new Date().toISOString(), r.id).run();
@@ -11736,7 +11752,7 @@ async function invParentMismatch(request, env, session) {
       const notes = '[PARENT FIX] ' + part + ' @ ' + r.location + ' · Parent: ' + (r.parentNow || '(blank)') + ' → ' + r.parentRight
         + (r.nameRight ? ' · Name: ' + (r.nameNow || '(blank)') + ' → ' + r.nameRight : '') + ' · cases not changed (' + _n(r.cases) + ')';
       await _skuMgrInsertLog(env, who, { id: r.id, part_num: part, location: r.location, cases: r.cases, name: newName }, notes,
-        { newPart: part, newBefore: before },
+        { newPart: part, newBefore: before, wh: whBefore },
         Math.abs(after - before) > 1e-9 ? '⚠ ' + part + ' total should stay ' + _n(before) + ', but it is ' + _n(after) + '. Another change landed at the same moment — check its shelves.' : null);
       fixed.push({ id: r.id, partNum: part, location: r.location, from: r.parentNow, to: r.parentRight, totalBefore: before, totalAfter: after });
     }
@@ -12202,6 +12218,8 @@ async function inventoryCancelEntry(request, env) {
     ? `\u26a0 ${cPart} total should be ${_n(expectedAfter)}, but it is ${_n(totalAfter)} (was ${_n(totalBefore)}). Another change to ${cPart} landed at the same moment \u2014 check ${cPart}'s shelves.`
     : Math.abs(applied - delta) > 1e-9 ? `\u2139 Reversing took off ${_n(-delta)} but the shelf only had ${_n(oldCases)} \u2014 it went to 0, not below (count corrected).` : null;
 
+  await ensureTotalTrackingColumns(env);
+  const whCancelAfter = await invWarehouseCases(env).catch(() => null);
   let origWhen = entry.timestamp || '';
   try { origWhen = new Date(entry.timestamp).toLocaleString('en-US', { timeZone: 'America/New_York' }); } catch(e) {}
   const cancelNote = '[CANCELLED ENTRY #' + id + '] Reversing ' + origType + ' of ' + casesNum + ' cases at '
@@ -12211,12 +12229,12 @@ async function inventoryCancelEntry(request, env) {
     `INSERT INTO inventory_log
        (sheet_row,timestamp,type,part_num,location,cases,initials,notes,status,
         verified_by,verified_at,overwrite_loc,is_new,is_placeholder,
-        master_row_index,sku,transfer_id,paired_location,name,total_before,total_after,total_warning,total_scope)
-     VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`
+        master_row_index,sku,transfer_id,paired_location,name,total_before,total_after,total_warning,total_scope,wh_before,wh_after)
+     VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`
   ).bind(
     0, ts, reverseType, entry.part_num, entry.location, casesNum, cancelledBy || 'OPS',
     cancelNote, 'Verified', cancelledBy || 'OPS', ts, '', 0, 0, row.id, entry.sku || '', '', '', entry.name || '',
-    totalBefore, totalAfter, totalNote, 'part'
+    totalBefore, totalAfter, totalNote, 'part', whCancelAfter == null ? null : _n(whCancelAfter - applied), whCancelAfter
   ).run();
 
   await env.DB.prepare('UPDATE inventory_log SET cancelled_at=?, cancelled_by=? WHERE id=?')
@@ -12245,7 +12263,7 @@ async function d1Strict(env, sql, params, first) {
 let _invLogReady = false;
 async function invLogEnsureColumns(env) {
   if (_invLogReady || !env.DB) return;
-  for (const c of ['added_at TEXT', 'grabbed_at TEXT', 'total_before REAL', 'total_after REAL', 'total_warning TEXT', 'total_scope TEXT', 'cancelled_at TEXT', 'cancelled_by TEXT'])
+  for (const c of ['added_at TEXT', 'grabbed_at TEXT', 'total_before REAL', 'total_after REAL', 'total_warning TEXT', 'total_scope TEXT', 'cancelled_at TEXT', 'cancelled_by TEXT', 'wh_before REAL', 'wh_after REAL'])
     await env.DB.prepare('ALTER TABLE inventory_log ADD COLUMN ' + c).run().catch(() => {});
   await env.DB.prepare('CREATE INDEX IF NOT EXISTS idx_inventory_log_timestamp ON inventory_log(timestamp)').run().catch(() => {});
   _invLogReady = true;
@@ -12362,7 +12380,7 @@ async function inventoryHistory(url, env) {
         // filled in below with two small look-ups.
         let sql = `SELECT l.id,l.sheet_row,l.timestamp,l.type,l.part_num,l.location,l.cases,l.initials,
                           l.notes,l.status,l.verified_by,l.verified_at,l.added_at,l.grabbed_at,
-                          l.total_before,l.total_after,l.total_warning,l.total_scope,l.cancelled_at,l.cancelled_by,
+                          l.total_before,l.total_after,l.total_warning,l.total_scope,l.cancelled_at,l.cancelled_by,l.wh_before,l.wh_after,
                           COALESCE(l.name,'') as name
                    FROM inventory_log l
                    WHERE l.timestamp >= ?`;

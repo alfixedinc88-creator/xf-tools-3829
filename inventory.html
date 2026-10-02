@@ -6624,7 +6624,10 @@ window.invCredLogin = async function() {
         ? '<div title="Pieces = cases × ' + r.each + ' each per case (SKU Mgr)" style="font-size:11px;color:var(--text2);white-space:nowrap">= ' + pc(r.total_before) + ' → ' + pc(r.total_after) + ' pcs</div>'
         : r.each_note ? '<div style="font-size:10px;color:var(--text3);white-space:nowrap" title="Pieces can\'t be worked out">pcs: ' + invEsc(r.each_note) + '</div>' : '';
     }
-    return '<span title="' + title + '">' + (prefix || '') + Number(r.total_before).toLocaleString() + ' → ' + Number(r.total_after).toLocaleString() + (part ? ' cs' : ' <span style="font-size:10px;color:var(--text3)">(whole wh.)</span>') + '</span>' + badge + pcs;
+    // Whole inventory (all cases, every part #) before → after this entry — recorded from Oct 2 2026 on.
+    var wh = r.wh_before != null && r.wh_after != null
+      ? '<div title="All cases in the warehouse (every part #, every shelf) before → after this entry" style="font-size:11px;color:var(--accent);white-space:nowrap">Whole inventory: ' + Number(r.wh_before).toLocaleString() + ' → ' + Number(r.wh_after).toLocaleString() + ' cs</div>' : '';
+    return '<span title="' + title + '">' + (prefix || '') + Number(r.total_before).toLocaleString() + ' → ' + Number(r.total_after).toLocaleString() + (part ? ' cs' : ' <span style="font-size:10px;color:var(--text3)">(whole wh.)</span>') + '</span>' + badge + pcs + wh;
   };
 
   window.histShowFullNote = function(text, title) {
@@ -6899,7 +6902,7 @@ window.invCredLogin = async function() {
       + '<th style="' + thS + '">By</th>'
       + '<th style="' + thS + '">Status</th>'
       + '<th style="' + thS + '">Notes</th>'
-      + '<th style="' + thS + '" title="Cases (and pieces = cases × Each/Case) of this part # on every shelf, before → after this change. Older rows: whole warehouse.">Part Total Before → After<div style="font-weight:400;text-transform:none">cases · pieces</div></th>'
+      + '<th style="' + thS + '" title="Cases (and pieces = cases × Each/Case) of this part # on every shelf, before → after this change. Older rows: whole warehouse.">Part Total Before → After<div style="font-weight:400;text-transform:none">cases · pieces · whole inventory</div></th>'
       + '<th style="' + thS + '"></th>'
       + '</tr></thead><tbody>';
 
