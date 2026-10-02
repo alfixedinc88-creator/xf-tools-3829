@@ -8573,6 +8573,7 @@ window.invCredLogin = async function() {
       xfrGo.recs = d.recs || {}; xfrGo.upcs = d.upcs || {}; xfrGo.extras = d.extras || [];
       var ph = d.photos || {};
       xfrGo.lines.forEach(function(l) { var b = xfrBase(l.part); if (b && !(b in xfrPhotos)) xfrPhotos[b] = ph[b] || ''; });
+      if (xfrGo.pendingExtra === title + '|' + vendor + '|' + pallet) { xfrGo.pendingExtra = null; xfrGo.extra = { part: '', boxes: '', pcs: '', fromList: false }; }
       try { if (selId && !silent) xfrGoSelect(selId); else { xfrGoRender(); if (!silent) xfrGoBox(); } }
       catch (e) { console.error(e); if (el) el.innerHTML = "<div class='iempty' style='color:var(--red)'>Screen error: " + xfrE(e && e.message || e) + " — send this to the office</div>"; }
     }).catch(function(e) {
@@ -8696,11 +8697,19 @@ window.invCredLogin = async function() {
         + '</div>';
     }
     if (xfrGo.moved.length) h += '<div style="margin-top:8px;font-size:12px;color:var(--green)">' + xfrGo.moved.slice(-4).map(function(t) { return '✓ ' + xfrE(t); }).join('<br>') + '</div>';
+    // ➕ at the bottom too (owner): found a box that isn't on this pallet's list.
+    if (!xfrGo.extra) h += '<button type="button" onclick="xfrExtraStart();window.scrollTo(0,0)" style="width:100%;margin-top:12px;padding:11px;border-radius:9px;border:2px dashed var(--orange);background:var(--orange-bg);color:var(--orange);font-size:14px;font-weight:800;cursor:pointer">➕ Extra items found on this pallet</button>';
     el.innerHTML = h;
   };
   // ➕ Extra box found on a pallet (not on its packing list): scan the box,
   // how many extra boxes, pieces in each, then scan the shelf label they went
   // to — a Stock In there (Review as usual), kept with this pallet.
+  // From the container's pallet list: open that pallet, then start ➕ Extra items found.
+  window.xfrExtraOnPallet = function(btn) {
+    var t = btn.getAttribute('data-t'), v = btn.getAttribute('data-v'), pl = btn.getAttribute('data-p');
+    xfrGo.pendingExtra = t + '|' + v + '|' + pl;
+    xfrGoOpen(t, v, pl); window.scrollTo(0, 0);
+  };
   window.xfrExtraStart = function() { xfrGo.extra = { part: '', boxes: '', pcs: '', fromList: false }; xfrGo.sel = null; xfrGoRender(); xfrGoBox(); };
   window.xfrExtraCancel = function() { xfrGo.extra = null; xfrGoRender(); xfrGoBox(); };
   window.xfrExtraRescan = function() { if (xfrGo.extra) xfrGo.extra.part = ''; xfrGoRender(); xfrGoBox(); };
@@ -8757,7 +8766,7 @@ window.invCredLogin = async function() {
       part: E.part, boxes: b, pcsPerBox: p, toLocation: loc, initials: (INV_CRED_USER && INV_CRED_USER.displayName) || '' }) })
       .then(function(r) { return r.json(); }).then(function(d) {
         if (!d || !d.ok) { invFlash('Not saved: ' + ((d && d.error) || 'error'), 'error'); xfrGoBox(); return; }
-        invFlash('✓ Extra ' + b + ' box(es) of ' + d.part + ' → ' + d.location + (d.ownRow ? ' (own row — that spot also has another box size)' : '') + (d.autoApproved ? '' : ' — waiting approval'), 'success');
+        invFlash('✓ Extra ' + b + ' box(es) of ' + d.part + ' → ' + d.location + (d.ownRow ? ' (own row — that spot also has another box size)' : '') + (d.autoApproved ? ' — added to SKU Mgr' : ' — waiting approval') + (d.warn ? ' · ' + d.warn : ''), d.warn ? 'warn' : 'success');
         xfrGo.extra = null; invFetchPendingCount(); xfrGoRender(); xfrGoBox(); xfrGoRefresh();
       }).catch(function() { invFlash('Not saved — network error', 'error'); })
       .finally(function() { xfrGo.busy = false; });
@@ -8955,7 +8964,9 @@ window.invCredLogin = async function() {
               + (left > 0 ? '<input type="number" id="xfr-cont-n-' + l.id + '" value="' + xfrN(left) + '" min="0.5" step="0.5" max="' + xfrN(left) + '" style="width:64px;padding:6px;border:1.5px solid var(--border);border-radius:7px;background:var(--bg);color:var(--text);font-size:14px">'
                 + '<button class="isearch-btn" onclick="xfrContAdd(' + l.id + ')">➕ Cart</button>' : '<span style="color:var(--green);font-weight:700;font-size:12px">✓ All moved</span>')
               + '</div>';
-          }).join('') + '</details>';
+          }).join('')
+          + '<button type="button" data-t="' + xfrEsc(gp.title) + '" data-v="' + xfrEsc(gp.vendor) + '" data-p="' + xfrEsc(gp.pallet) + '" onclick="xfrExtraOnPallet(this)" style="width:100%;margin-top:8px;padding:9px;border-radius:8px;border:1.5px dashed var(--orange);background:var(--bg);color:var(--orange);font-size:13px;font-weight:800;cursor:pointer">➕ Extra items found on this pallet</button>'
+          + '</details>';
       }).join('');
   }
   window.xfrContToggleLeft = function() { xfrCont.onlyLeft = !xfrCont.onlyLeft; xfrContRender(); };

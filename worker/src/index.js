@@ -4226,8 +4226,9 @@ async function inventoryContainerScan(url, env) {
 }
 // POST /inventory/containers/extra { title, vendor, pallet, part, boxes,
 // pcsPerBox, toLocation } — boxes found on a pallet that are not on its
-// packing list: a Stock In of those boxes at the spot they went to (Review
-// as usual), kept with the pallet. The pallet's own counts don't change.
+// packing list: a Stock In of those boxes at the spot they went to, added to
+// SKU Mgr right away (owner), kept with the pallet. The pallet's own counts
+// don't change.
 // Box quantities never change (owner): the boxes go on the row of the same
 // pcs per box at that spot, or a new row of their own.
 async function inventoryPalletExtra(request, env, session) {
@@ -4260,7 +4261,19 @@ async function inventoryPalletExtra(request, env, session) {
   if (!ld.ok) return J({ ok: false, error: ld.error || 'Stock In failed' }, 500);
   await env.DB.prepare('INSERT INTO pallet_extra (title, vendor, pallet, part, boxes, pcs_per_box, cases, to_location, log_id, by_user, at) VALUES (?,?,?,?,?,?,?,?,?,?,?)')
     .bind(title, pr.vendor, pallet, part, boxes, pcs, cases, loc, ld.d1Id || null, who, new Date().toISOString()).run();
-  return J({ ok: true, part, cases, boxes, pcsPerBox: pcs, ownRow: !!other, location: loc, d1Id: ld.d1Id, autoApproved: !!ld.autoApproved });
+  // Owner: the boxes go into SKU Mgr right away so they can be used — approved
+  // here like 📦 Received (History keeps who / when / where, and Cancel undoes it).
+  let approved = !!ld.autoApproved, approveError = '';
+  if (!approved && ld.d1Id) {
+    const vr = await inventoryVerify(new Request('https://internal/inventory/verify', { method: 'POST', body: JSON.stringify({
+      rowIndex: ld.d1Id, action: 'Approved',
+      item: { type: 'IN', partNum: part, location: loc, overwriteLocation: '', isPlaceholder: false, isNew: !ex, cases, sku: part, notes: note,
+        masterId: ex ? ex.id : null, d1Id: ld.d1Id, unitsPerCase: ex ? undefined : pcs } }) }), env);
+    const vd = await vr.json().catch(() => ({}));
+    approved = !!vd.ok; if (!approved) approveError = vd.error || 'approve failed';
+  }
+  return J({ ok: true, part, cases, boxes, pcsPerBox: pcs, ownRow: !!other, location: loc, d1Id: ld.d1Id, autoApproved: approved,
+    warn: approveError ? 'Logged, but not added to SKU Mgr yet (' + approveError + ') — approve it in Inventory → Review' : '' });
 }
 
 // GET /inventory/containers/soldout?title= — 🔥 which pallets of a container
