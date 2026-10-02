@@ -558,6 +558,24 @@ console.log('\nEveryone\'s Un-grabbed items: Admin and up can delete them (recor
   await post('/inventory/pull/mine', { items: [] });
 }
 
+console.log('\nHistory: Part Total in pieces too (cases × Each/Case)');
+{
+  // Owner: "Inventory → History → Inventory Log History: why still not showing total pieces before and total pieces left".
+  sq.exec(`INSERT INTO master_list (id, sku, base_sku, name, part_num, location, cases, units_per_case, sheet_row) VALUES
+    (9301,'PC-1','PC-1','pc','PC-1=10','A1=9-9-1',5,10,0), (9302,'PC-1','PC-1','pc','PC-1=10','A1=9-9-2',3,10,0),
+    (9303,'PC-2','PC-2','pc','PC-2=5','A1=9-9-3',4,5,0), (9304,'PC-2','PC-2','pc','PC-2=5','A1=9-9-4',2,6,0)`);
+  const now = new Date().toISOString();
+  sq.prepare(`INSERT INTO inventory_log (timestamp,type,part_num,location,cases,initials,notes,status,total_before,total_after,total_scope) VALUES (?,?,?,?,?,?,?,?,?,?,?)`).run(now, 'OUT', 'PC-1=10', 'A1=9-9-1', 2, 'PCT', '', 'Verified', 10, 8, 'part');
+  sq.prepare(`INSERT INTO inventory_log (timestamp,type,part_num,location,cases,initials,notes,status,total_before,total_after,total_scope) VALUES (?,?,?,?,?,?,?,?,?,?,?)`).run(now, 'OUT', 'PC-2=5', 'A1=9-9-3', 1, 'PCT', '', 'Verified', 7, 6, 'part');
+  const hp = await get('/inventory/history?days=1&initials=PCT&status=all');
+  const r1 = hp.rows.find(r => r.part_num === 'PC-1=10'), r2 = hp.rows.find(r => r.part_num === 'PC-2=5');
+  check('PC-1=10 (Each/Case 10 on every shelf): 10 → 8 cases = 100 → 80 pieces', r1 && r1.each === 10 && r1.total_before * r1.each === 100 && r1.total_after * r1.each === 80, r1);
+  check('PC-2=5 (Each/Case 5 on one shelf, 6 on another): no guessed pieces — says why', r2 && !r2.each && /differs between shelves/.test(r2.each_note || ''), r2);
+  const invHp = (await import('node:fs')).readFileSync(fileURLToPath(new URL('../inventory.html', import.meta.url)), 'utf8');
+  check('History table shows the pieces line (= before → after pcs) under the cases', /' pcs<\/div>'/.test(invHp) && /Part Total Before → After<div[^>]*>cases · pieces/.test(invHp), null);
+  sq.exec("DELETE FROM master_list WHERE id BETWEEN 9301 AND 9304; DELETE FROM inventory_log WHERE initials='PCT'");
+}
+
 console.log('\nSKU Mgr: the parent follows the Part #, wrong parents can be fixed, every edit is in History');
 {
   // Owner: "search 30-1-8 in SKU Mgr but 24-3-1 pops up, Part # 24-3-1=10XX" — the row's Part # was changed

@@ -6616,7 +6616,15 @@ window.invCredLogin = async function() {
       var head = JSON.stringify(info ? '\u2139 Count corrected' : part ? '\u26a0 Does not add up' : '\u26a0 Old warning').replace(/'/g, '&#39;');
       badge = ' <span onclick=\'histShowFullNote(' + attr + ', ' + head + ')\' title="Click for details" style="color:' + (info ? 'var(--orange)' : part ? 'var(--red)' : 'var(--text3)') + ';font-weight:700;cursor:pointer;text-decoration:underline dotted">' + (info ? '\u2139' : '\u26a0') + '</span>';
     }
-    return '<span title="' + title + '">' + (prefix || '') + Number(r.total_before).toLocaleString() + ' → ' + Number(r.total_after).toLocaleString() + (part ? '' : ' <span style="font-size:10px;color:var(--text3)">(whole wh.)</span>') + '</span>' + badge;
+    // Pieces too: cases × the part #'s Each/Case (SKU Mgr), or why not.
+    var pcs = '';
+    if (part) {
+      var pc = function(c) { return (Math.round(Number(c) * Number(r.each) * 100) / 100).toLocaleString(); };
+      pcs = r.each > 0
+        ? '<div title="Pieces = cases × ' + r.each + ' each per case (SKU Mgr)" style="font-size:11px;color:var(--text2);white-space:nowrap">= ' + pc(r.total_before) + ' → ' + pc(r.total_after) + ' pcs</div>'
+        : r.each_note ? '<div style="font-size:10px;color:var(--text3);white-space:nowrap" title="Pieces can\'t be worked out">pcs: ' + invEsc(r.each_note) + '</div>' : '';
+    }
+    return '<span title="' + title + '">' + (prefix || '') + Number(r.total_before).toLocaleString() + ' → ' + Number(r.total_after).toLocaleString() + (part ? ' cs' : ' <span style="font-size:10px;color:var(--text3)">(whole wh.)</span>') + '</span>' + badge + pcs;
   };
 
   window.histShowFullNote = function(text, title) {
@@ -6891,7 +6899,7 @@ window.invCredLogin = async function() {
       + '<th style="' + thS + '">By</th>'
       + '<th style="' + thS + '">Status</th>'
       + '<th style="' + thS + '">Notes</th>'
-      + '<th style="' + thS + '" title="Cases of this part # (every shelf) before → after this change. Older rows: whole warehouse.">Part Total Before → After</th>'
+      + '<th style="' + thS + '" title="Cases (and pieces = cases × Each/Case) of this part # on every shelf, before → after this change. Older rows: whole warehouse.">Part Total Before → After<div style="font-weight:400;text-transform:none">cases · pieces</div></th>'
       + '<th style="' + thS + '"></th>'
       + '</tr></thead><tbody>';
 
