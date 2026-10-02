@@ -576,6 +576,27 @@ console.log('\nHistory: Part Total in pieces too (cases × Each/Case)');
   sq.exec("DELETE FROM master_list WHERE id BETWEEN 9301 AND 9304; DELETE FROM inventory_log WHERE initials='PCT'");
 }
 
+console.log('\nHistory: whole-inventory total before → after on every row');
+{
+  // Owner: "History total before and after — I want the total of the whole inventory too, like right now 17,562; take one case → 17,561".
+  const whole = () => sq.prepare('SELECT SUM(cases) t FROM master_list WHERE cases > 0').get().t;
+  const wrow = id => sq.prepare('SELECT wh_before b, wh_after a, total_before tb, total_after ta FROM inventory_log WHERE id=?').get(id);
+  await post('/inventory/review-mode', { mode: 'auto' });
+  const w0 = whole();
+  const o1 = await post('/inventory/log', { type: 'OUT', partNum: '23-2-3=2', sku: '23-2-3=2', location: 'B1=1-1-1', cases: 1, initials: 'WH', notes: '', masterId: 2 });
+  const r1 = wrow(o1.d1Id);
+  check('Stock Out 1 case → whole inventory ' + w0 + ' → ' + (w0 - 1) + ' (and the part total still kept)', o1.autoApproved && r1.b === w0 && r1.a === w0 - 1 && r1.a === whole() && r1.tb - r1.ta === 1, { r1, w0, now: whole() });
+  const i1 = await post('/inventory/log', { type: 'IN', partNum: '23-2-3=2', sku: '23-2-3=2', location: 'B1=1-1-1', cases: 3, initials: 'WH', notes: '', masterId: 2 });
+  const r2 = wrow(i1.d1Id);
+  check('next Stock In 3 cases starts where the last one ended: ' + (w0 - 1) + ' → ' + (w0 + 2), r2.b === r1.a && r2.a === w0 + 2 && r2.a === whole(), r2);
+  const cx = await post('/inventory/cancel-entry', { id: i1.d1Id, cancelledBy: 'WH' });
+  const cr = sq.prepare("SELECT wh_before b, wh_after a FROM inventory_log WHERE notes LIKE '[CANCELLED ENTRY #" + i1.d1Id + "]%'").get();
+  check('Cancel that Stock In: whole inventory ' + (w0 + 2) + ' → ' + (w0 - 1) + ' on the cancel line', cx.ok && cr && cr.b === w0 + 2 && cr.a === w0 - 1 && cr.a === whole(), { cx, cr });
+  const hw = await get('/inventory/history?days=1&initials=WH&status=all');
+  check('History sends wh_before / wh_after with each row', hw.rows.some(r => r.wh_before === w0 && r.wh_after === w0 - 1), hw.rows.map(r => [r.type, r.wh_before, r.wh_after]));
+  await post('/inventory/review-mode', { mode: 'manual' });
+}
+
 console.log('\nSKU Mgr: the parent follows the Part #, wrong parents can be fixed, every edit is in History');
 {
   // Owner: "search 30-1-8 in SKU Mgr but 24-3-1 pops up, Part # 24-3-1=10XX" — the row's Part # was changed
@@ -611,6 +632,7 @@ console.log('\nSKU Mgr: the parent follows the Part #, wrong parents can be fixe
   check('cases 5 → 6 in SKU Mgr → History "Cases: 5 → 6", 30-1-8=10XX total ' + (a0 - 2) + ' → ' + (a0 - 1) + '; vendor name not written to History',
     /Cases: 5 → 6/.test(e2.notes) && e2.total_before === a0 - 2 && e2.total_after === a0 - 1 && /Vendor changed/.test(e2.notes) && !/Secret/.test(e2.notes) && shelf() === all0 + 1, e2);
 
+  check('SKU Mgr cases 5 → 6 → whole inventory +1 on its History line', e2.wh_after - e2.wh_before === 1 && e2.wh_after === sq.prepare('SELECT SUM(cases) t FROM master_list WHERE cases > 0').get().t, e2);
   // 3) 🧬 Parent ≠ Part #: lists only the wrong row, fixes only what's ticked, cases untouched, recorded.
   sq.exec("INSERT INTO products (sku, name) VALUES ('24-3-1', 'Big Tee')"); // 24-3-1 rows now say Big Tee and Coupler → name comes from the products list
   const mm = await get('/inventory/parent-mismatch');
