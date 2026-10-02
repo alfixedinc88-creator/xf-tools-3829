@@ -12182,8 +12182,19 @@ async function inventoryCancelEntry(request, env) {
     return cors(new Response(JSON.stringify({ ok: false, error: 'Only Stock In / Stock Out entries can be cancelled this way' }), { status: 400, headers: { 'Content-Type': 'application/json' } }));
   }
 
-  const casesNum = parseFloat(entry.cases) || 0;
+  let casesNum = parseFloat(entry.cases) || 0;
   const reverseType = origType === 'IN' ? 'OUT' : 'IN';
+  // A None Found entry is logged with 0 cases, but on approval it set the
+  // spot to 0 — what it took off is on its History line ("the system had N
+  // case(s) … set to 0"), else its Part Total before − after. Cancel puts
+  // exactly that back.
+  const isNoneFound = origType === 'OUT' && /\[NONE FOUND ON SHELF\]/.test(String(entry.notes || ''));
+  if (isNoneFound) {
+    const m = /the system had ([\d.]+) case/.exec(String(entry.total_warning || ''));
+    const took = m ? parseFloat(m[1]) : (entry.total_before != null && entry.total_after != null ? _n(entry.total_before - entry.total_after) : 0);
+    if (!(took > 0)) return cors(new Response(JSON.stringify({ ok: false, error: 'This None Found took nothing off (the system already had 0 there) \u2014 nothing to put back' }), { status: 400, headers: { 'Content-Type': 'application/json' } }));
+    casesNum = took;
+  }
   const delta = reverseType === 'IN' ? casesNum : -casesNum; // effect the reversal has on master_list.cases
 
   // Locate the exact master_list row — prefer master_id (unambiguous, the
@@ -12191,13 +12202,25 @@ async function inventoryCancelEntry(request, env) {
   // by part_num+location text, which could theoretically hit a different
   // row if a rename or merge happened since.
   let row = entry.master_id
-    ? await d1First(env, 'SELECT id, cases FROM master_list WHERE id=?', [entry.master_id])
+    ? await d1First(env, 'SELECT id, cases, location FROM master_list WHERE id=?', [entry.master_id])
     : null;
   if (!row) {
     row = await d1First(env,
-      'SELECT id, cases FROM master_list WHERE UPPER(part_num)=? AND UPPER(location)=? LIMIT 1',
-      [String(entry.part_num || '').toUpperCase(), String(entry.location || '').toUpperCase()]
+      'SELECT id, cases, location FROM master_list WHERE UPPER(TRIM(part_num))=? AND UPPER(TRIM(location))=? ORDER BY cases DESC LIMIT 1',
+      [String(entry.part_num || '').trim().toUpperCase(), String(entry.location || '').trim().toUpperCase()]
     );
+  }
+  let recreated = false;
+  if (!row && reverseType === 'IN' && entry.part_num && entry.location) {
+    // The spot's row is gone (e.g. it went to 0 and was cleaned up): putting
+    // cases back needs it, so make it again — Each/Case, name, price from the
+    // part #'s other shelves. Recorded on the cancel line.
+    const pn = String(entry.part_num).trim().toUpperCase(), parent = mlParent(pn);
+    const like = await d1First(env, 'SELECT name, units_per_case, price, vendor FROM master_list WHERE UPPER(part_num)=? ORDER BY units_per_case DESC LIMIT 1', [pn]).catch(() => null);
+    const ins = await env.DB.prepare(`INSERT INTO master_list (sku, base_sku, name, part_num, location, cases, units_per_case, vendor, price, prev_notes, sheet_row, updated_at)
+      VALUES (?,?,?,?,?,?,?,?,?,?,?,?)`).bind(parent, parent, (like && like.name) || entry.name || '', pn, String(entry.location).trim(), 0,
+      (like && like.units_per_case) || 0, (like && like.vendor) || '', (like && like.price) || 0, '[RE-CREATED by Cancel of entry #' + id + ']', 0, new Date().toISOString()).run();
+    row = { id: ins.meta.last_row_id, cases: 0 }; recreated = true;
   }
   if (!row) {
     return cors(new Response(JSON.stringify({ ok: false, error: 'Could not find the matching row in Master List to reverse \u2014 it may have been merged or renamed since' }), { status: 404, headers: { 'Content-Type': 'application/json' } }));
@@ -12209,7 +12232,11 @@ async function inventoryCancelEntry(request, env) {
   const newCases = Math.max(0, oldCases + delta);
   const ts = new Date().toISOString();
 
-  await env.DB.prepare('UPDATE master_list SET cases=?, updated_at=? WHERE id=?').bind(newCases, ts, row.id).run();
+  // A spot that went to 0 has its location cleared (the spot is freed) —
+  // putting cases back puts the spot back too, or they'd sit "nowhere".
+  const relocate = newCases > 0 && !String(row.location || '').trim() && String(entry.location || '').trim();
+  if (relocate) await env.DB.prepare('UPDATE master_list SET cases=?, location=?, updated_at=? WHERE id=?').bind(newCases, String(entry.location).trim(), ts, row.id).run();
+  else await env.DB.prepare('UPDATE master_list SET cases=?, updated_at=? WHERE id=?').bind(newCases, ts, row.id).run();
   const totalAfter = await invPartCases(env, cPart);
   const applied = newCases - oldCases; // a shelf never goes below 0
   const expectedAfter = totalBefore + applied;
@@ -12222,8 +12249,8 @@ async function inventoryCancelEntry(request, env) {
   const whCancelAfter = await invWarehouseCases(env).catch(() => null);
   let origWhen = entry.timestamp || '';
   try { origWhen = new Date(entry.timestamp).toLocaleString('en-US', { timeZone: 'America/New_York' }); } catch(e) {}
-  const cancelNote = '[CANCELLED ENTRY #' + id + '] Reversing ' + origType + ' of ' + casesNum + ' cases at '
-    + entry.location + ', originally logged by ' + (entry.initials || '?') + ' on ' + origWhen;
+  const cancelNote = '[CANCELLED ENTRY #' + id + '] Reversing ' + (isNoneFound ? 'None Found — putting back the ' + casesNum + ' case(s) it set to 0' : origType + ' of ' + casesNum + ' cases') + ' at '
+    + entry.location + ', originally logged by ' + (entry.initials || '?') + ' on ' + origWhen + (recreated ? ' (the spot\'s SKU Mgr row was gone — made again)' : '');
 
   await env.DB.prepare(
     `INSERT INTO inventory_log
