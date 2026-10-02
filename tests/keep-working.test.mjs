@@ -597,6 +597,39 @@ console.log('\nHistory: whole-inventory total before → after on every row');
   await post('/inventory/review-mode', { mode: 'manual' });
 }
 
+console.log('\nHistory: Cancel works on a None Found (puts back what it set to 0)');
+{
+  // Owner: None Found at GARAGE for 26-1-2=2X was a mistake (3 → 0 cs); Cancel said "Could not find the matching row in Master List".
+  sq.exec(`INSERT INTO master_list (id, sku, base_sku, name, part_num, location, cases, units_per_case, sheet_row) VALUES
+    (9401,'26-1-2','26-1-2','ball valve','26-1-2=2X','GARAGE',3,50,0), (9402,'26-1-2','26-1-2','ball valve','26-1-2=2X','C1=9-4-1',2,50,0)`);
+  const pt = () => sq.prepare("SELECT SUM(cases) t FROM master_list WHERE part_num='26-1-2=2X'").get().t;
+  const whole = () => sq.prepare('SELECT SUM(cases) t FROM master_list WHERE cases > 0').get().t;
+  await post('/inventory/review-mode', { mode: 'auto' });
+  const nf = async () => post('/inventory/log', { type: 'OUT', partNum: '26-1-2=2X', sku: '26-1-2=2X', location: 'GARAGE', cases: 0, initials: 'NF', notes: '[SHELVING] [NONE FOUND ON SHELF]', noneFound: true, masterId: 9401 });
+  const w0 = whole();
+  const n1 = await nf();
+  const g = () => (sq.prepare("SELECT cases FROM master_list WHERE part_num='26-1-2=2X' AND location='GARAGE'").get() || {}).cases;
+  const r9401 = () => sq.prepare('SELECT cases, location FROM master_list WHERE id=9401').get();
+  check('None Found approved: GARAGE 3 → 0 (spot freed: its location cleared — why Cancel used to fail), part total 5 → 2', n1.autoApproved && r9401().cases === 0 && r9401().location === '' && pt() === 2, { n1, r: r9401(), pt: pt() });
+  const c1 = await post('/inventory/cancel-entry', { id: n1.d1Id, cancelledBy: 'NF' });
+  const cl = sq.prepare("SELECT type, cases, notes, total_before b, total_after a, wh_before wb, wh_after wa FROM inventory_log WHERE notes LIKE '[CANCELLED ENTRY #" + n1.d1Id + "]%'").get();
+  check('Cancel the None Found → the same row back at GARAGE with 3, part total 2 → 5, whole inventory back to ' + w0 + ', recorded "putting back the 3 case(s)"',
+    c1.ok && g() === 3 && r9401().location === 'GARAGE' && pt() === 5 && whole() === w0 && cl && cl.type === 'IN' && cl.cases === 3 && cl.b === 2 && cl.a === 5 && cl.wa === w0 && /putting back the 3 case/.test(cl.notes), { c1, cl, g: g() });
+  // Spot row gone after the None Found → Cancel makes it again (Each/Case from the other shelf)
+  const n2 = await nf();
+  sq.exec('DELETE FROM master_list WHERE id=9401');
+  const c2 = await post('/inventory/cancel-entry', { id: n2.d1Id, cancelledBy: 'NF' });
+  const re = sq.prepare("SELECT cases, units_per_case u, base_sku FROM master_list WHERE part_num='26-1-2=2X' AND location='GARAGE'").get();
+  check('spot row gone → Cancel makes GARAGE again with 3 cases, Each/Case 50, parent 26-1-2; part total 2 → 5', c2.ok && re && re.cases === 3 && re.u === 50 && re.base_sku === '26-1-2' && pt() === 5, { c2, re });
+  // A None Found where the system already had 0 → nothing to put back
+  sq.exec("UPDATE master_list SET cases=0 WHERE part_num='26-1-2=2X' AND location='GARAGE'");
+  const n3 = await nf();
+  const c3 = await post('/inventory/cancel-entry', { id: n3.d1Id, cancelledBy: 'NF' });
+  check('None Found when the system already had 0 → Cancel says nothing to put back, nothing changes', !c3.ok && /nothing to put back/.test(c3.error) && g() === 0, c3);
+  await post('/inventory/review-mode', { mode: 'manual' });
+  sq.exec("DELETE FROM master_list WHERE part_num='26-1-2=2X'");
+}
+
 console.log('\nSKU Mgr: the parent follows the Part #, wrong parents can be fixed, every edit is in History');
 {
   // Owner: "search 30-1-8 in SKU Mgr but 24-3-1 pops up, Part # 24-3-1=10XX" — the row's Part # was changed
