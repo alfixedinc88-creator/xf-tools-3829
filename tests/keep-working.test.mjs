@@ -682,5 +682,17 @@ console.log('\nSKU Mgr: the parent follows the Part #, wrong parents can be fixe
   sq.exec("DELETE FROM master_list WHERE id BETWEEN 9101 AND 9105; DELETE FROM products WHERE sku='24-3-1'");
 }
 
+// Owner: "Stock In / Found on Shelf — take off the location drop-down (2FL= C1=), we scan the spot; the spot label already has 2FL= or C1= in it".
+{
+  const { readFileSync } = await import('node:fs');
+  const ih = readFileSync(fileURLToPath(new URL('../inventory.html', import.meta.url)), 'utf8');
+  const fn = (ih.match(/function invFullSpotLabel\(v\) \{[\s\S]*?\n  \}/) || [''])[0];
+  const full = fn ? new Function(fn + '; return invFullSpotLabel;')() : () => 'missing';
+  check('Stock In / Found on Shelf has no area drop-down (quick add, + Add New Location); the scanned label is the whole location',
+    !/id="inv-qa-prefix"|id="inv-newloc-prefix"/.test(ih) && /var location = invFullSpotLabel\(qaShelf\)/.test(ih) && /var newLoc = invFullSpotLabel\(newLocRaw\)/.test(ih)
+      && full(' c1=5-1-3 ') === 'C1=5-1-3' && full('2FL=11-2-10') === '2FL=11-2-10' && full('BARN=5-1') === 'BARN=5-1' && full('5-1-3') === '' && full('') === '' && full('=5-1') === '', fn ? null : 'invFullSpotLabel not found');
+  check('…other tabs keep their area drop-downs (Stock Out location search + found elsewhere, Transfer, Audit)', /id="inv-fel-prefix"/.test(ih) && /id="inv-loc-scan-prefix"/.test(ih) && /id="xfr-loc-scan-prefix"/.test(ih) && /id="inv-audit-loc-prefix"/.test(ih), null);
+}
+
 console.log('\n' + (failed ? '❌ ' + failed + ' check(s) FAILED' : '✅ all ' + passed + ' checks passed') + '\n');
 process.exit(failed ? 1 : 0);
