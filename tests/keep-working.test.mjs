@@ -694,5 +694,66 @@ console.log('\nSKU Mgr: the parent follows the Part #, wrong parents can be fixe
   check('…other tabs keep their area drop-downs (Stock Out location search + found elsewhere, Transfer, Audit)', /id="inv-fel-prefix"/.test(ih) && /id="inv-loc-scan-prefix"/.test(ih) && /id="xfr-loc-scan-prefix"/.test(ih) && /id="inv-audit-loc-prefix"/.test(ih), null);
 }
 
+// Owner: "Container here — scanning the outside box takes a while for the pallet to pop up, and after we scan
+// the location it takes a while too" / "extra box found on the pallet: scan the outside box, how many extra
+// cases, pieces per case, scan the location" / "Not done yet in each pallet; keep the front page short".
+console.log('\n🚢 Container here: fast scan & move, extra boxes found on a pallet, Not done yet per pallet');
+{
+  const T = 'Container FAST';
+  await post('/inventory/review-mode', { mode: 'manual' });
+  await post('/reorder/vendor-catalog/import', { vendor: 'KW', title: T, stage: 'shipped', last: true, file: 'f.xlsx', rows: [{ part: '61-1-1=5', raw: '61-1-1=5', qty: 50, cases: 10, pcs: 500, case_pcs: 50, src_rows: '5', description: 'cap' }] });
+  await post('/reorder/fix/pallets', { title: T, vendor: 'KW', file: 'f.xlsx', lines: [{ pallet: '7', part: '61-1-1=5', raw: '61-1-1=5', cases: 10, pcs: 500, units: 50, pcsPerCtn: 50, row: '5' }] });
+  await post('/reorder/fix/incoming-receive', { title: T, location: 'GARAGE', lines: [{ key: '61-1-1=5', part: '61-1-1=5', cases: 10, description: 'cap' }] });
+  await post('/inventory/upc-link', { upc: '081234500001', part: '61-1-1=5' });
+  const pc = () => sq.prepare("SELECT SUM(cases * units_per_case) t FROM master_list WHERE part_num = '61-1-1=5'").get().t || 0;
+  const moved = () => sq.prepare("SELECT COALESCE(SUM(m.cases), 0) n FROM pallet_move m JOIN reorder_pallet p ON p.id = m.pallet_id WHERE p.title = ?").get(T).n;
+  const sc = await get('/inventory/containers/scan?code=081234500001');
+  check('box scan in ONE trip: outside box UPC → 61-1-1=5, its pallet 7 and that pallet ready to show (spots with their SKU Mgr row, suggested shelves, box UPCs)',
+    sc.ok && sc.part === '61-1-1=5' && sc.lines.length === 1 && sc.view && sc.view.ok && sc.view.lines.length === 1 && sc.view.lines[0].stock.some(x => x.location === 'GARAGE' && x.masterId && x.pending === 0)
+      && (sc.view.upcs['61-1-1=5'] || []).includes('81234500001') && !!sc.view.recs['61-1-1=5'], sc);
+  check('…a box UPC not saved yet → part: null, so the screen still asks for the part # (as before)', (await get('/inventory/containers/scan?code=099999999999')).part === null, null);
+  check('…the 2 suggested shelves are the same as before (pallet-recs)', JSON.stringify(sc.view.recs['61-1-1=5']) === JSON.stringify((await post('/inventory/containers/pallet-recs', { parts: ['61-1-1=5'], fromLoc: 'GARAGE' })).recs['61-1-1=5']), null);
+  const pv = await get('/inventory/containers/pallet-view?title=' + encodeURIComponent(T) + '&vendor=KW&pallet=7');
+  check('opening a pallet is ONE trip (pallet-view: lines + suggested shelves + photos + box UPCs + extras)', pv.ok && pv.lines.length === 1 && pv.recs && pv.photos && pv.upcs && Array.isArray(pv.extras), pv);
+  // scan & go move without a lookup: the Worker re-checks the spot has the cases
+  const gid = sq.prepare("SELECT id FROM master_list WHERE part_num='61-1-1=5' AND location='GARAGE'").get().id, lid = sc.lines[0].id;
+  sq.prepare('UPDATE master_list SET cases = 2 WHERE id = ?').run(gid);
+  const m0 = moved();
+  const tm = await post('/inventory/transfer', { partNum: '61-1-1=5', sku: '61-1-1=5', fromLocation: 'GARAGE', fromMasterId: gid, toLocation: 'C1=6-1-1', cases: 3, initials: 'TS', notes: '[CONTAINER SCAN] ' + T + ' · Pallet 7', palletLineId: lid, checkHave: true });
+  check('scan & go move: the spot only has 2 → moving 3 is refused, nothing logged, pallet unchanged', !tm.ok && /Only 2 case/.test(tm.error) && moved() === m0, tm);
+  sq.prepare('UPDATE master_list SET cases = 10 WHERE id = ?').run(gid);
+  const ok1 = await post('/inventory/transfer', { partNum: '61-1-1=5', sku: '61-1-1=5', fromLocation: 'GARAGE', fromMasterId: gid, toLocation: 'C1=6-1-1', cases: 3, initials: 'TS', notes: '[CONTAINER SCAN] ' + T + ' · Pallet 7', palletLineId: lid, checkHave: true });
+  const tm2 = await post('/inventory/transfer', { partNum: '61-1-1=5', sku: '61-1-1=5', fromLocation: 'GARAGE', fromMasterId: gid, toLocation: 'C1=6-1-1', cases: 7.5, initials: 'TS', notes: '', palletLineId: lid, checkHave: true });
+  check('…3 moves (pallet 3 moved); then 7.5 more is refused — 3 are waiting for approval, so only 7 are free', ok1.ok && moved() === m0 + 3 && !tm2.ok, { ok1, tm2 });
+  // ➕ extra boxes found on the pallet
+  const p0 = pc(), mv0 = moved();
+  const e1 = await post('/inventory/containers/extra', { title: T, vendor: 'KW', pallet: '7', part: '61-1-1=5', boxes: 2, pcsPerBox: 50, toLocation: 'c1=6-1-2' });
+  check('extra 2 boxes × 50 pcs → new spot C1=6-1-2: a Stock In waiting for approval; nothing counted yet', e1.ok && !e1.autoApproved && pc() === p0 && sq.prepare('SELECT status FROM inventory_log WHERE id = ?').get(e1.d1Id).status === 'Pending', e1);
+  const it2 = ((await get('/inventory/pending')).items || []).find(x => x.d1Id === e1.d1Id);
+  await post('/inventory/verify', { rowIndex: it2.rowIndex, action: 'Approved', item: it2 });
+  const nr = sq.prepare("SELECT cases, units_per_case u FROM master_list WHERE part_num='61-1-1=5' AND location='C1=6-1-2'").get(), lg = row(e1.d1Id);
+  check('…approved: C1=6-1-2 has 2 cases of 50 pcs (Each/Case from the box), pieces ' + p0 + ' → ' + pc() + ' (+100); History ' + lg.b + ' → ' + lg.a,
+    nr && nr.cases === 2 && nr.u === 50 && pc() === p0 + 100 && lg.a - lg.b === 2 && moved() === mv0, { nr, lg, p: pc() });
+  const p1 = pc(), g1 = sq.prepare('SELECT cases FROM master_list WHERE id = ?').get(gid).cases;
+  const e2 = await post('/inventory/containers/extra', { title: T, vendor: 'KW', pallet: '7', part: '61-1-1=5', boxes: 4, pcsPerBox: 25, toLocation: 'GARAGE' });
+  const it3 = ((await get('/inventory/pending')).items || []).find(x => x.d1Id === e2.d1Id);
+  await post('/inventory/verify', { rowIndex: it3.rowIndex, action: 'Approved', item: it3 });
+  check('extra 4 boxes × 25 pcs into a spot of 50-pc cases = 100 pcs = +2 cases (GARAGE ' + g1 + ' → ' + sq.prepare('SELECT cases FROM master_list WHERE id = ?').get(gid).cases + '), pieces +100, pallet count unchanged',
+    e2.ok && e2.converted && e2.cases === 2 && sq.prepare('SELECT cases FROM master_list WHERE id = ?').get(gid).cases === g1 + 2 && pc() === p1 + 100 && moved() === mv0
+      && /\[EXTRA ON PALLET\] Container FAST · Pallet 7 — 4 extra box\(es\) × 25 pcs = 100 pcs = 2 case\(s\) of 50 pcs at GARAGE/.test(sq.prepare('SELECT notes FROM inventory_log WHERE id = ?').get(e2.d1Id).notes), e2);
+  const pv2 = await get('/inventory/containers/pallet-view?title=' + encodeURIComponent(T) + '&vendor=KW&pallet=7');
+  check('…both extras show on pallet 7, with who and where', pv2.extras.length === 2 && pv2.extras.every(x => x.by === 'TS') && pv2.extras.map(x => x.toLoc).join() === 'C1=6-1-2,GARAGE', pv2.extras);
+  const bad = await Promise.all([{ pcsPerBox: 0 }, { toLocation: '6-1-3' }, { part: '99-9-9=9' }, { boxes: 0 }].map(o => post('/inventory/containers/extra', { title: T, vendor: 'KW', pallet: '7', part: '61-1-1=5', boxes: 1, pcsPerBox: 50, toLocation: 'C1=6-1-3', ...o })));
+  check('extra refused without pieces per box, without a full shelf label, for an unknown part #, or 0 boxes', bad.every(x => !x.ok), bad.map(x => x.error));
+  check('box scan, pallet view and extra need a sign-in', (await call('/inventory/containers/scan?code=1')).status === 401 && (await call('/inventory/containers/pallet-view?title=x&pallet=1')).status === 401
+    && (await call('/inventory/containers/extra', { method: 'POST', body: '{}' })).status === 401, null);
+  const { readFileSync } = await import('node:fs');
+  const ih = readFileSync(fileURLToPath(new URL('../inventory.html', import.meta.url)), 'utf8');
+  check('screen: a box of the open pallet is matched on the phone; a move does not look the part up again; ➕ Extra box button',
+    /function xfrGoLocalMatch\(code\)/.test(ih) && /checkHave: true/.test(ih) && /Extra box found on this pallet \(not on its list\)/.test(ih) && /window\.xfrExtraSave = function/.test(ih), null);
+  check('screen: 📋 Not done yet on each pallet; the main one kept (smaller); box UPCs / photos / search and sold-out / print folded under ⚙ More',
+    /📋 Not done yet on this pallet: /.test(ih) && /window\.xfrContPalLeft = function/.test(ih) && /id="xfr-cont-more"/.test(ih) && /⚙ More: 🔥 sold-out pallets · 🖨 print/.test(ih), null);
+}
+
 console.log('\n' + (failed ? '❌ ' + failed + ' check(s) FAILED' : '✅ all ' + passed + ' checks passed') + '\n');
 process.exit(failed ? 1 : 0);

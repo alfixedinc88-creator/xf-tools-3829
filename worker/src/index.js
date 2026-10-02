@@ -1026,6 +1026,10 @@ async function reorderFixTables(env) {
   // that pallet took" (open → its last box moved) in History's report.
   await env.DB.prepare(`CREATE TABLE IF NOT EXISTS pallet_open (id INTEGER PRIMARY KEY AUTOINCREMENT, title TEXT, vendor TEXT, pallet TEXT, by_user TEXT, at TEXT)`).run();
   await env.DB.prepare('CREATE INDEX IF NOT EXISTS idx_pallet_open_k ON pallet_open(title, vendor, pallet)').run();
+  // Extra boxes found on a pallet (not on its packing list): a Stock In at
+  // the spot they went to (log_id), kept with the pallet they came off.
+  await env.DB.prepare(`CREATE TABLE IF NOT EXISTS pallet_extra (id INTEGER PRIMARY KEY AUTOINCREMENT, title TEXT, vendor TEXT, pallet TEXT, part TEXT,
+    boxes REAL, pcs_per_box REAL, cases REAL, to_location TEXT, log_id INTEGER, by_user TEXT, at TEXT)`).run();
   await env.DB.prepare(`CREATE TABLE IF NOT EXISTS reorder_fix (part TEXT PRIMARY KEY, description TEXT, outside_upc TEXT, inside_upc TEXT,
     vendor TEXT, asin TEXT, case_qty REAL, by_user TEXT, updated_at TEXT)`).run();
   // History of everything done on the tab (fixes, part # corrections,
@@ -3562,6 +3566,11 @@ async function inventoryVerifyInner(request, env) {
       }
       // Container 📦 Received sends the packing list's pieces per box — use it, not the family's biggest.
       if (parseFloat(item.unitsPerCase) > 0) inheritJ = String(parseFloat(item.unitsPerCase));
+      // Extra boxes found on a pallet: Each/Case = the pieces per box they counted.
+      else if (parseInt(item.d1Id) > 0) {
+        const pe = await d1First(env, 'SELECT pcs_per_box FROM pallet_extra WHERE log_id = ? LIMIT 1', [parseInt(item.d1Id)]).catch(() => null);
+        if (pe && parseFloat(pe.pcs_per_box) > 0) inheritJ = String(parseFloat(pe.pcs_per_box));
+      }
       // D1 lookups above are sufficient — no Sheets fallback needed
       // Write G:O — same structure as transfer verify new rows
       // G=PartNum, H=Location, I=Cases, J=UnitsPerCase, K=Note, L=TotalQty, M=Vendor, N=Price, O=TotalValue
@@ -4019,6 +4028,17 @@ async function inventoryPalletsReceived(env) {
 async function inventoryContainerPallets(url, env) {
   await reorderFixTables(env);
   const title = (url.searchParams.get('title') || '').trim(), q = (url.searchParams.get('q') || '').trim().toUpperCase();
+  if (!title && !q) return cors(new Response(JSON.stringify({ ok: false, error: 'Pick a container or type something to search' }), { status: 400, headers: { 'Content-Type': 'application/json' } }));
+  const r = await containerPalletLines(env, { title, q });
+  return cors(new Response(JSON.stringify({ ok: true, lines: r.lines, truncated: r.truncated }), { headers: { 'Content-Type': 'application/json' } }));
+}
+// Pallet lines of a container (title), of every received container matching
+// q, and/or of one pallet (pallet + vendor). detail: each stock spot also
+// gets its SKU Mgr row (masterId, rowIndex, name) and the cases waiting for
+// approval to leave it (pending) — what a move needs, so 🚢 scan & go
+// doesn't have to look the part up again.
+async function containerPalletLines(env, o) {
+  const title = o.title || '', q = o.q || '';
   const where = [], args = [];
   if (title) { where.push('p.title = ?'); args.push(title); }
   if (q) {
@@ -4026,8 +4046,12 @@ async function inventoryContainerPallets(url, env) {
     where.push(`(UPPER(p.title) LIKE ? OR UPPER(p.pallet) LIKE ? OR UPPER(COALESCE(p.po,'')) LIKE ? OR UPPER(p.part) LIKE ? OR UPPER(COALESCE(p.raw_part,'')) LIKE ? OR UPPER(COALESCE(p.description,'')) LIKE ?)`);
     args.push(like, like, like, like, like, like);
   }
-  if (!where.length) return cors(new Response(JSON.stringify({ ok: false, error: 'Pick a container or type something to search' }), { status: 400, headers: { 'Content-Type': 'application/json' } }));
+  if (o.pallet) { where.push('p.pallet = ?'); args.push(String(o.pallet)); }
+  if (!where.length) return { lines: [], truncated: false };
   let rows = (await env.DB.prepare(`SELECT p.* FROM reorder_pallet p WHERE ${where.join(' AND ')} ORDER BY p.title, p.vendor, p.id LIMIT 2000`).bind(...args).all()).results || [];
+  // One pallet: its vendor as stored, or as a screen shows it (#1 for a non-owner).
+  if (o.pallet && o.vendor != null) { const v = String(o.vendor), vu = String(vendorUnmask(v));
+    rows = rows.filter(r => r.vendor === v || r.vendor === vu || String(vendorCode(r.vendor || '')) === v); }
   // Searching (no container picked): only containers already 📦 Received, same as the list.
   if (!title) { const got = await receivedContainerTitles(env); rows = rows.filter(r => got.has(r.title)); }
   const moved = {};
@@ -4045,8 +4069,12 @@ async function inventoryContainerPallets(url, env) {
   const parts = [...new Set(rows.map(r => real(r.part)))], stock = {};
   for (let i = 0; i < parts.length; i += 90) {
     const chunk = parts.slice(i, i + 90);
-    (await d1All(env, `SELECT UPPER(part_num) AS p, location, cases FROM master_list WHERE UPPER(part_num) IN (${chunk.map(() => '?').join(',')}) AND cases > 0`, chunk))
-      .forEach(r => { (stock[r.p] = stock[r.p] || []).push({ location: r.location, cases: r.cases }); });
+    (await d1All(env, `SELECT id, sheet_row, name, UPPER(part_num) AS p, location, cases FROM master_list WHERE UPPER(part_num) IN (${chunk.map(() => '?').join(',')}) AND cases > 0`, chunk))
+      .forEach(r => { (stock[r.p] = stock[r.p] || []).push(o.detail ? { location: r.location, cases: r.cases, masterId: r.id, rowIndex: r.sheet_row || 0, name: r.name || '' } : { location: r.location, cases: r.cases }); });
+  }
+  if (o.detail && parts.length) {
+    const pm = await buildPendingMap(env);
+    Object.keys(stock).forEach(p => stock[p].forEach(s => { s.pending = pm[p + '|' + String(s.location || '').toUpperCase()] || 0; }));
   }
   // One container opened: each line's transfers (who, how many, where, when) for the ✓ Transferred list.
   const moves = {};
@@ -4062,7 +4090,118 @@ async function inventoryContainerPallets(url, env) {
   const lines = rows.map(r => { const mv = moved[r.id] || 0, pn = real(r.part);
     return { id: r.id, title: r.title, vendor: r.vendor, pallet: r.pallet, po: r.po || '', part: pn, filePart: r.part !== pn ? r.part : '', description: r.description || '',
       cases: r.cases, pcs: r.pcs, units: r.units, pcsPerCtn: r.pcs_per_ctn, moved: mv, left: Math.max(0, (r.cases || 0) - mv), over: Math.max(0, mv - (r.cases || 0)), stock: stock[pn] || [], moves: moves[r.id] || [] }; });
-  return cors(new Response(JSON.stringify({ ok: true, lines, truncated: rows.length >= 2000 }), { headers: { 'Content-Type': 'application/json' } }));
+  return { lines, truncated: rows.length >= 2000 };
+}
+// Outside box UPCs (digits, no leading 0s) of each part # — so a box scanned
+// on an open pallet is matched on the phone, with no trip to the server.
+async function partBoxUpcs(env, parts) {
+  const want = new Set(parts.map(p => String(p || '').toUpperCase())), out = {};
+  const z = u => String(u || '').replace(/\D/g, '').replace(/^0+/, '');
+  const add = (p, u) => { p = String(p || '').trim().toUpperCase(); const d = z(u); if (!want.has(p) || !d) return; const a = out[p] = out[p] || []; if (a.indexOf(d) < 0) a.push(d); };
+  const L = [...want];
+  await env.DB.prepare('CREATE TABLE IF NOT EXISTS upc_link (upc TEXT PRIMARY KEY, part TEXT NOT NULL, by_user TEXT, at TEXT)').run().catch(() => {});
+  for (let i = 0; i < L.length; i += 90) {
+    const ch = L.slice(i, i + 90), qs = ch.map(() => '?').join(',');
+    for (const sql of [`SELECT sku AS p, outside_upc AS u FROM upc WHERE UPPER(TRIM(sku)) IN (${qs})`, `SELECT part AS p, upc AS u FROM upc_link WHERE UPPER(TRIM(part)) IN (${qs})`,
+      `SELECT part AS p, outside_upc AS u FROM reorder_fix WHERE UPPER(TRIM(part)) IN (${qs})`, `SELECT part AS p, outside_upc AS u FROM reorder_vendor_catalog WHERE UPPER(TRIM(part)) IN (${qs})`])
+      try { (await d1All(env, sql, ch)).forEach(r => add(r.p, r.u)); } catch (_) {}
+  }
+  for (const [part, outU] of VENDOR_UPC) add(part, outU);
+  return out;
+}
+// One pallet, everything the scan & go screen needs in one trip: its lines
+// (with spots, moves, extras), the 2 suggested shelves per item, photos and
+// box UPCs. Read only.
+async function palletViewData(env, title, vendor, pallet) {
+  await reorderFixTables(env);
+  const { lines } = await containerPalletLines(env, { title, vendor, pallet, detail: true });
+  const open = lines.filter(l => l.left > 0), parts = [...new Set(lines.map(l => l.part))], openParts = [...new Set(open.map(l => l.part))];
+  // Where the container was stocked in: GARAGE first, else the spot with the most (same as the screen).
+  let fromLoc = 'GARAGE';
+  if (open.length) { const st = (open[0].stock || []).filter(s => parseFloat(s.cases) > 0);
+    const f = st.filter(s => /^GARAGE$/i.test(s.location))[0] || st.sort((a, b) => b.cases - a.cases)[0]; if (f) fromLoc = f.location; }
+  const v = lines[0] ? lines[0].vendor : vendor;
+  const [recs, photos, upcs, extras] = await Promise.all([
+    openParts.length ? palletRecsFor(env, openParts, fromLoc) : {},
+    productPhotoMap(env, parts).catch(() => ({})),
+    partBoxUpcs(env, parts).catch(() => ({})),
+    d1All(env, `SELECT e.id, e.part, e.boxes, e.pcs_per_box AS pcs, e.cases, e.to_location AS toLoc, e.by_user AS by, e.at, l.status FROM pallet_extra e
+      LEFT JOIN inventory_log l ON l.id = e.log_id WHERE e.title = ? AND e.vendor = ? AND e.pallet = ? ORDER BY e.id`, [title, v, String(pallet)]).catch(() => [])]);
+  return { ok: true, lines, recs, photos, upcs, extras };
+}
+// GET /inventory/containers/pallet-view?title=&vendor=&pallet=
+async function inventoryPalletView(url, env) {
+  const title = (url.searchParams.get('title') || '').trim(), pallet = (url.searchParams.get('pallet') || '').trim();
+  if (!title || !pallet) return cors(new Response(JSON.stringify({ ok: false, error: 'title and pallet needed' }), { status: 400, headers: { 'Content-Type': 'application/json' } }));
+  const d = await palletViewData(env, title, url.searchParams.get('vendor') || '', pallet);
+  return cors(new Response(JSON.stringify(d), { headers: { 'Content-Type': 'application/json' } }));
+}
+// GET /inventory/containers/scan?code= — 🚢 Container here box scan in one
+// trip: the part # (typed, or an outside/inside box UPC D1 knows) and the
+// received pallets still holding it; when only one pallet has it, that
+// pallet's view too. part: null = not known here (the screen falls back to
+// the full lookup, which also asks to save an unknown box UPC). Read only.
+async function inventoryContainerScan(url, env) {
+  const J = o => cors(new Response(JSON.stringify(o), { headers: { 'Content-Type': 'application/json' } }));
+  const code = (url.searchParams.get('code') || '').trim().toUpperCase();
+  if (!code) return J({ ok: false, error: 'Nothing scanned' });
+  await reorderFixTables(env);
+  let part = null;
+  const alias = await d1First(env, 'SELECT part FROM reorder_alias WHERE UPPER(raw) = ? LIMIT 1', [code]).catch(() => null);
+  if (alias && alias.part) part = String(alias.part).toUpperCase();
+  if (!part && await d1First(env, `SELECT 1 AS x FROM reorder_pallet WHERE UPPER(part) = ? UNION SELECT 1 FROM master_list WHERE UPPER(TRIM(part_num)) = ? LIMIT 1`, [code, code]).catch(() => null)) part = code;
+  if (!part && isUpcLike(code)) part = await upcToPart(env, code);
+  if (!part) return J({ ok: true, part: null, lines: [] });
+  const got = await receivedContainerTitles(env);
+  const { lines } = await containerPalletLines(env, { q: part });
+  const ls = lines.filter(l => got.has(l.title) && String(l.part).toUpperCase() === part && l.left > 0);
+  const out = { ok: true, part, lines: ls };
+  if (ls.length === 1) out.view = await palletViewData(env, ls[0].title, ls[0].vendor, ls[0].pallet);
+  return J(out);
+}
+// POST /inventory/containers/extra { title, vendor, pallet, part, boxes,
+// pcsPerBox, toLocation } — boxes found on a pallet that are not on its
+// packing list: a Stock In of those boxes at the spot they went to (Review
+// as usual), kept with the pallet. The pallet's own counts don't change.
+// Pieces always add up: boxes × pcs per box; a spot that already has the
+// part in another case size gets the same pieces as cases of its size.
+async function inventoryPalletExtra(request, env, session) {
+  const J = (o, st) => cors(new Response(JSON.stringify(o), { status: st || 200, headers: { 'Content-Type': 'application/json' } }));
+  const b = await request.json().catch(() => ({}));
+  await reorderFixTables(env);
+  const title = String(b.title || '').trim(), pallet = String(b.pallet || '').trim(), part = String(b.part || '').trim().toUpperCase();
+  const loc = String(b.toLocation || '').trim().toUpperCase().replace(/\s+/g, '');
+  const boxes = parseFloat(b.boxes) || 0, pcs = parseFloat(b.pcsPerBox) || 0;
+  if (!title || !pallet) return J({ ok: false, error: 'Open the pallet first' }, 400);
+  if (!part || isUpcLike(part)) return J({ ok: false, error: 'Scan the box (or type its part #)' }, 400);
+  if (!(boxes > 0)) return J({ ok: false, error: 'How many extra boxes?' }, 400);
+  if (!(pcs > 0)) return J({ ok: false, error: 'How many pieces in each box?' }, 400);
+  if (!/^[A-Z0-9]+=\S+$/.test(loc) && loc !== 'GARAGE') return J({ ok: false, error: 'Scan the shelf label they went to (e.g. C1=1-2-3)' }, 400);
+  const rows = await d1All(env, 'SELECT vendor, description FROM reorder_pallet WHERE title = ? AND pallet = ?', [title, pallet]);
+  const v = String(b.vendor || ''), vu = String(vendorUnmask(v));
+  const pr = rows.filter(r => r.vendor === v || r.vendor === vu || String(vendorCode(r.vendor || '')) === v)[0];
+  if (!pr) return J({ ok: false, error: 'That pallet is not on file — reopen 🚢 Container here' }, 400);
+  const known = await d1First(env, `SELECT name FROM master_list WHERE UPPER(TRIM(part_num)) = ? UNION ALL SELECT description FROM reorder_pallet WHERE UPPER(part) = ? UNION ALL SELECT name FROM products WHERE UPPER(TRIM(sku)) = ? LIMIT 1`, [part, part, part]).catch(() => null)
+    || await d1First(env, 'SELECT sku AS name FROM upc WHERE UPPER(TRIM(sku)) = ? LIMIT 1', [part]).catch(() => null);
+  if (!known) return J({ ok: false, error: `Part # "${part}" isn't in SKU Mgr or the UPC list — check the box label` }, 400);
+  const who = String((session && (session.displayName || session.username)) || b.initials || '').slice(0, 40);
+  const ex = await d1First(env, 'SELECT id, name, units_per_case FROM master_list WHERE UPPER(TRIM(part_num)) = ? AND UPPER(TRIM(location)) = ? ORDER BY cases DESC LIMIT 1', [part, loc]);
+  const exU = ex ? parseFloat(ex.units_per_case) || 0 : 0;
+  let cases = boxes, conv = '';
+  if (ex && exU > 0 && Math.abs(exU - pcs) > 1e-9) {
+    cases = Math.round(boxes * pcs / exU * 1000) / 1000;
+    conv = ` = ${Math.round(boxes * pcs * 1000) / 1000} pcs = ${cases} case(s) of ${exU} pcs at ${loc}`;
+  }
+  const note = `[EXTRA ON PALLET] ${title} · Pallet ${pallet} — ${boxes} extra box(es) × ${pcs} pcs${conv}`;
+  const lr = await inventoryLog(new Request('https://internal/inventory/log', { method: 'POST', body: JSON.stringify({ type: 'IN', partNum: part, sku: part,
+    name: String((ex && ex.name) || (known && known.name) || '').slice(0, 200), location: loc, cases, initials: who || 'OPS', notes: note, isNew: !ex, masterId: ex ? ex.id : null }) }), env);
+  const ld = await lr.json().catch(() => ({}));
+  if (!ld.ok) return J({ ok: false, error: ld.error || 'Stock In failed' }, 500);
+  await env.DB.prepare('INSERT INTO pallet_extra (title, vendor, pallet, part, boxes, pcs_per_box, cases, to_location, log_id, by_user, at) VALUES (?,?,?,?,?,?,?,?,?,?,?)')
+    .bind(title, pr.vendor, pallet, part, boxes, pcs, cases, loc, ld.d1Id || null, who, new Date().toISOString()).run();
+  // A new spot made right away (auto approve): its Each/Case = pieces per box.
+  if (!ex && ld.autoApproved) await env.DB.prepare('UPDATE master_list SET units_per_case = ? WHERE UPPER(TRIM(part_num)) = ? AND UPPER(TRIM(location)) = ? AND COALESCE(units_per_case, 0) != ?').bind(pcs, part, loc, pcs).run();
+  return J({ ok: true, part, cases, boxes, pcsPerBox: pcs, converted: !!conv, location: loc, d1Id: ld.d1Id, autoApproved: !!ld.autoApproved });
 }
 
 // GET /inventory/containers/soldout?title= — 🔥 which pallets of a container
@@ -4317,6 +4456,17 @@ async function inventoryTransferLog(request, env) {
       if (!pl) return cors(new Response(JSON.stringify({ ok: false, error: 'That pallet line no longer exists — reopen 🚢 Container here' }), { status: 400, headers: { 'Content-Type': 'application/json' } }));
       if ((parseFloat(cases) || 0) > pl.left + 1e-9) return cors(new Response(JSON.stringify({ ok: false,
         error: `Pallet ${pl.pallet} only has ${pl.left} box(es) of ${pl.part} left (${pl.cases} on the pallet, ${pl.moved} already moved)` }), { status: 400, headers: { 'Content-Type': 'application/json' } }));
+      // 🚢 scan & go moves without looking the part up again: check here that
+      // the spot still has the cases (minus what is waiting for approval).
+      if (body.checkHave) {
+        const P = String(partNum).trim().toUpperCase(), F = String(fromLocation).trim().toUpperCase();
+        const fr = (fromMasterId && await d1First(env, 'SELECT cases FROM master_list WHERE id = ? AND UPPER(TRIM(part_num)) = ?', [fromMasterId, P]))
+          || await d1First(env, 'SELECT cases FROM master_list WHERE UPPER(TRIM(part_num)) = ? AND UPPER(TRIM(location)) = ? ORDER BY cases DESC LIMIT 1', [P, F]);
+        const pend = await d1First(env, `SELECT SUM(cases) AS c FROM inventory_log WHERE status = 'Pending' AND type IN ('OUT','TRANSFER_OUT') AND cases > 0 AND UPPER(part_num) = ? AND UPPER(location) = ?`, [P, F]);
+        const have = Math.max(0, (fr ? parseFloat(fr.cases) || 0 : 0) - (pend ? parseFloat(pend.c) || 0 : 0));
+        if ((parseFloat(cases) || 0) > have + 1e-9) return cors(new Response(JSON.stringify({ ok: false,
+          error: `Only ${Math.round(have * 1000) / 1000} case(s) of ${P} at ${fromLocation} (some may be waiting for approval)` }), { status: 400, headers: { 'Content-Type': 'application/json' } }));
+      }
     }
 
     // Use the actual Grabbed moment (or Added, if never confirmed) as this
@@ -4927,8 +5077,11 @@ async function locationPlanLog(url, env) {
 async function palletRecs(request, env) {
   const J = (o, st) => cors(new Response(JSON.stringify(o), { status: st || 200, headers: { 'Content-Type': 'application/json' } }));
   const body = await request.json().catch(() => ({}));
-  const parts = [...new Set((body.parts || []).map(p => String(p || '').trim().toUpperCase()).filter(Boolean))].slice(0, 200);
-  const fromLoc = String(body.fromLoc || '').trim().toUpperCase();
+  return J({ ok: true, recs: await palletRecsFor(env, body.parts || [], body.fromLoc) });
+}
+async function palletRecsFor(env, partsIn, fromLocIn) {
+  const parts = [...new Set((partsIn || []).map(p => String(p || '').trim().toUpperCase()).filter(Boolean))].slice(0, 200);
+  const fromLoc = String(fromLocIn || '').trim().toUpperCase();
   // Only real shelves (C1=1-2-3); an area name saved as a location ("BARN=")
   // is never suggested (owner: "BARN= empty shelf in BARN" is no help).
   const skip = l => !l || /^GARAGE\b/i.test(l) || l === fromLoc || !/^[A-Z0-9]+=\d+(-\d+)*$/.test(l);
@@ -4940,12 +5093,25 @@ async function palletRecs(request, env) {
       .forEach(r => { const b = parentOf(r.base_sku || r.part_num); if (!ch.includes(b)) return; const L = String(r.location).trim().toUpperCase(); if (skip(L)) return;
         const h = held[b] = held[b] || {}; h[L] = (h[L] || 0) + (parseFloat(r.cases) || 0); });
   }
-  const empty = (await d1All(env, `SELECT l.location FROM locations l LEFT JOIN master_list m ON UPPER(m.location) = UPPER(l.location)
-    WHERE l.active = 1 GROUP BY l.location HAVING COALESCE(SUM(CASE WHEN m.cases > 0 THEN m.cases ELSE 0 END), 0) = 0 ORDER BY l.prefix, l.location`))
-    .map(r => String(r.location).toUpperCase()).filter(l => !skip(l));
+  // Empty shelves: active spots with no cases (two plain reads — joining every
+  // spot to every SKU Mgr row by UPPER() was what made a pallet slow to open).
+  const full = new Set((await d1All(env, `SELECT UPPER(location) AS l FROM master_list WHERE cases > 0 GROUP BY UPPER(location)`)).map(r => r.l));
+  const empty = (await d1All(env, `SELECT location FROM locations WHERE active = 1 ORDER BY prefix, location`))
+    .filter(r => !full.has(String(r.location).toUpperCase())).map(r => String(r.location).toUpperCase()).filter(l => !skip(l));
+  // 📍 plans of every part # and parent at once (same rule as locationPlanForAt).
+  const plans = {};
+  try {
+    await locationPlanTables(env);
+    const keys = [...new Set(parts.concat(parents))];
+    for (let i = 0; i < keys.length; i += 90) { const ch = keys.slice(i, i + 90);
+      (await d1All(env, `SELECT base, plan FROM location_plan WHERE base IN (${ch.map(() => '?').join(',')})`, ch)).forEach(r => { plans[r.base] = r.plan; }); }
+  } catch (_) {}
+  const planAt = part => { const b = parentOf(part), P = String(part || '').trim().toUpperCase(); if (!b) return { plan: '', level: '' };
+    if (P.includes('=') && plans[P]) return { plan: plans[P], level: 'part' };
+    return { plan: plans[b] || '', level: plans[b] ? 'parent' : '' }; };
   const out = {};
   for (const part of parts) {
-    const b = parentOf(part), at = await locationPlanForAt(env, part), plan = at.plan;
+    const b = parentOf(part), at = planAt(part), plan = at.plan;
     const area = plan ? (plan.includes('=') ? plan.split('=')[0] + '=' : plan + '=') : '';
     const inPlan = l => !plan || (plan.includes('=') ? l === plan : l.startsWith(area));
     const recs = [], add = (location, why) => { if (recs.length < 2 && !recs.some(r => r.location === location)) recs.push({ location, why }); };
@@ -4961,7 +5127,7 @@ async function palletRecs(request, env) {
     if (!plan) empty.forEach(l => add(l, 'empty shelf'));
     out[part] = { plan, planLevel: at.level, recs };
   }
-  return J({ ok: true, recs: out });
+  return out;
 }
 
 // GET /inventory/spot-check?part=&location= — Transfer "no more of this
@@ -6341,6 +6507,9 @@ const _app = {
       if (path === '/inventory/transfer' && method === 'POST') return await inventoryTransferLog(request, env);
       if (path === '/inventory/containers' && method === 'GET') return await inventoryContainers(env);
       if (path === '/inventory/containers/pallets' && method === 'GET') return await inventoryContainerPallets(url, env);
+      if (path === '/inventory/containers/pallet-view' && method === 'GET') return await inventoryPalletView(url, env);
+      if (path === '/inventory/containers/scan' && method === 'GET') return await inventoryContainerScan(url, env);
+      if (path === '/inventory/containers/extra' && method === 'POST') return await inventoryPalletExtra(request, env, session);
       if (path === '/inventory/pallets/received' && method === 'GET') return await inventoryPalletsReceived(env);
       if (path === '/inventory/containers/soldout' && method === 'GET') return await inventoryContainerSoldOut(url, env);
       if (path === '/inventory/incoming' && method === 'GET') return await inventoryIncoming(url, env);
