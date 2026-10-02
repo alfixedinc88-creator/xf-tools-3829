@@ -1455,7 +1455,28 @@ window.invCredLogin = async function() {
         <div id="hist-rt-end" style="font-size:20px;font-weight:800;font-family:var(--mono);color:var(--text)">—</div>
       </div>
     </div>
-    <div id="hist-rt-check" style="font-size:11px;color:var(--text3);margin-bottom:14px"></div>
+    <div id="hist-rt-check" style="font-size:11px;color:var(--text3);margin-bottom:10px"></div>
+    <!-- The same in PIECES (cases × Each/Case of each box) -->
+    <div style="font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.4px;color:var(--text3);margin-bottom:8px">Pieces In Stock</div>
+    <div style="display:grid;grid-template-columns:repeat(4,1fr);gap:8px;margin-bottom:6px">
+      <div style="background:var(--bg2);border-radius:8px;padding:10px;text-align:center">
+        <div style="font-size:9px;font-weight:700;text-transform:uppercase;letter-spacing:.4px;color:var(--text3)">Started With</div>
+        <div id="hist-rp-start" style="font-size:17px;font-weight:800;font-family:var(--mono);color:var(--text)">—</div>
+      </div>
+      <div style="background:var(--bg2);border-radius:8px;padding:10px;text-align:center" title="Approved pieces IN">
+        <div style="font-size:9px;font-weight:700;text-transform:uppercase;letter-spacing:.4px;color:var(--text3)">+ Pcs In</div>
+        <div id="hist-rp-in" style="font-size:17px;font-weight:800;font-family:var(--mono);color:var(--green)">—</div>
+      </div>
+      <div style="background:var(--bg2);border-radius:8px;padding:10px;text-align:center" title="Approved pieces OUT">
+        <div style="font-size:9px;font-weight:700;text-transform:uppercase;letter-spacing:.4px;color:var(--text3)">− Pcs Out</div>
+        <div id="hist-rp-out" style="font-size:17px;font-weight:800;font-family:var(--mono);color:var(--red)">—</div>
+      </div>
+      <div style="background:var(--bg2);border-radius:8px;padding:10px;text-align:center">
+        <div style="font-size:9px;font-weight:700;text-transform:uppercase;letter-spacing:.4px;color:var(--text3)">= Ended With</div>
+        <div id="hist-rp-end" style="font-size:17px;font-weight:800;font-family:var(--mono);color:var(--text)">—</div>
+      </div>
+    </div>
+    <div id="hist-rp-check" style="font-size:11px;color:var(--text3);margin-bottom:14px"></div>
 
     <!-- Overall totals -->
     <div style="font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.4px;color:var(--text3);margin-bottom:8px">Overall Totals</div>
@@ -6683,6 +6704,10 @@ window.invCredLogin = async function() {
     // Whole inventory (all cases, every part #) before → after this entry — recorded from Oct 2 2026 on.
     var wh = r.wh_before != null && r.wh_after != null
       ? '<div title="All cases in the warehouse (every part #, every shelf) before → after this entry" style="font-size:11px;color:var(--accent);white-space:nowrap">Whole inventory: ' + Number(r.wh_before).toLocaleString() + ' → ' + Number(r.wh_after).toLocaleString() + ' cs</div>' : '';
+    // …and in pieces (cases × Each/Case) — recorded from Oct 2 2026 on.
+    if (r.wh_pcs_before != null && r.wh_pcs_after != null)
+      wh += '<div title="All pieces in the warehouse before → after this entry (cases × Each/Case of every box)' + (r.pcs_each ? ' · this box: ' + r.pcs_each + ' pcs' : '') + '" style="font-size:11px;color:var(--accent);white-space:nowrap">= ' + Number(r.wh_pcs_before).toLocaleString() + ' → ' + Number(r.wh_pcs_after).toLocaleString() + ' pcs'
+        + (r.pcs_each && r.wh_pcs_after !== r.wh_pcs_before ? ' (' + (r.wh_pcs_after > r.wh_pcs_before ? '+' : '−') + Math.abs(Math.round((r.wh_pcs_after - r.wh_pcs_before) * 1000) / 1000).toLocaleString() + ')' : '') + '</div>';
     return '<span title="' + title + '">' + (prefix || '') + Number(r.total_before).toLocaleString() + ' → ' + Number(r.total_after).toLocaleString() + (part ? ' cs' : ' <span style="font-size:10px;color:var(--text3)">(whole wh.)</span>') + '</span>' + badge + pcs + wh;
   };
 
@@ -6744,6 +6769,8 @@ window.invCredLogin = async function() {
     if (g('hist-rt-out-cases')) g('hist-rt-out-cases').textContent = '';
     if (g('hist-rt-start')) g('hist-rt-start').textContent = '…';
     if (g('hist-rt-end'))   g('hist-rt-end').textContent   = '…';
+    ['hist-rp-start','hist-rp-in','hist-rp-out','hist-rp-end'].forEach(function(id){ var e=g(id); if(e) e.textContent = '…'; });
+    if (g('hist-rp-check')) g('hist-rp-check').innerHTML = '';
     ['hist-rt-total-in','hist-rt-total-out','hist-rt-ctr'].forEach(function(id){ var e=g(id); if(e) e.textContent = '…'; });
     ['hist-rt-check','hist-rt-xfr-cases','hist-rt-ctr-sub'].forEach(function(id){ var e=g(id); if(e) e.textContent = ''; });
     if (g('hist-report-pallets')) g('hist-report-pallets').innerHTML = '';
@@ -6783,6 +6810,29 @@ window.invCredLogin = async function() {
             + ((pd.casesIn || pd.casesOut) ? ' <span style="color:var(--orange);font-weight:700">Waiting for approval (not counted yet): +' + fmt(pd.casesIn) + ' in · −' + fmt(pd.casesOut) + ' out</span>' : '');
         }
         if (g('hist-rt-xfr-cases')) g('hist-rt-xfr-cases').textContent = fmt(d.transferCases) + ' cases moved';
+        // Pieces (owner): Started + In − Out = Ended, and pieces on each card.
+        var P = d.pieces || null, P0 = P && !P.error;
+        if (g('hist-rp-start')) g('hist-rp-start').textContent = P0 ? fmt(P.starting) : '—';
+        if (g('hist-rp-in'))    g('hist-rp-in').textContent    = P0 ? fmt(P.in) : '—';
+        if (g('hist-rp-out'))   g('hist-rp-out').textContent   = P0 ? fmt(P.out) : '—';
+        if (g('hist-rp-end'))   g('hist-rp-end').textContent   = P0 ? fmt(P.ending) : '—';
+        if (g('hist-rp-check')) {
+          if (!P0) g('hist-rp-check').innerHTML = P && P.error ? '<span style="color:var(--red)">Pieces could not be worked out: ' + invEsc(P.error) + '</span>' : '';
+          else {
+            var padds = Math.abs((Number(P.starting) || 0) + (Number(P.in) || 0) - (Number(P.out) || 0) - (Number(P.ending) || 0)) < 0.01;
+            g('hist-rp-check').innerHTML = (padds ? '<span style="color:var(--green);font-weight:700">✓ ' : '<span style="color:var(--red);font-weight:700">⚠ ')
+              + fmt(P.starting) + ' + ' + fmt(P.in) + ' − ' + fmt(P.out) + ' = ' + fmt(P.ending) + ' pcs' + (padds ? '' : ' does not add up') + '</span>'
+              + ' · pieces = cases × Each/Case of each box (SKU Mgr).'
+              + ((P.pendingIn || P.pendingOut) ? ' <span style="color:var(--orange);font-weight:700">Waiting for approval: +' + fmt(P.pendingIn) + ' in · −' + fmt(P.pendingOut) + ' out pcs</span>' : '')
+              + (P.unknownEntries ? ' <span style="color:var(--red);font-weight:700">' + P.unknownEntries + ' approved entr' + (P.unknownEntries === 1 ? 'y' : 'ies') + ' (' + fmt(P.unknownCases) + ' cases) have no Each/Case — their pieces are not counted.</span>' : '')
+              + (P.noEachCasesNow ? ' <span style="color:var(--red);font-weight:700">' + fmt(P.noEachCasesNow) + ' cases on the shelves have no Each/Case in SKU Mgr — not counted in pieces.</span>' : '');
+          }
+        }
+        if (P0) {
+          if (g('hist-rt-in-cases'))  g('hist-rt-in-cases').textContent  = (t.casesIn||0).toLocaleString()  + ' cases · ' + fmt(P.stockIn) + ' pcs';
+          if (g('hist-rt-out-cases')) g('hist-rt-out-cases').textContent = (t.casesOut||0).toLocaleString() + ' cases · ' + fmt(P.stockOut) + ' pcs';
+          if (g('hist-rt-xfr-cases')) g('hist-rt-xfr-cases').textContent = fmt(d.transferCases) + ' cases · ' + fmt(P.transfers) + ' pcs moved';
+        }
         var ct = d.container;
         if (g('hist-rt-ctr')) g('hist-rt-ctr').textContent = ct && !ct.error ? fmt(ct.cases) + ' cases' : '—';
         if (g('hist-rt-ctr-sub')) g('hist-rt-ctr-sub').textContent = ct && !ct.error ? ct.pallets + ' pallet' + (ct.pallets === 1 ? '' : 's') + ' worked on · ' + ct.palletsFinished + ' emptied'
