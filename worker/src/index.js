@@ -11766,6 +11766,26 @@ async function invParentMismatch(request, env, session) {
 // for "everything."
 // Item names for History rows that don't carry one: products by base SKU,
 // then master_list by part #, each a single IN (...) query.
+// History's Part Total in PIECES too: pieces = cases × the part #'s Each/Case
+// (SKU Mgr). Only when every shelf of that part # has the same Each/Case —
+// otherwise the row says why there are no pieces (never a guessed number).
+async function invHistoryFillEach(env, rows) {
+  const parts = [...new Set(rows.filter(r => r.total_before != null && r.total_scope === 'part' && r.part_num).map(r => String(r.part_num).toUpperCase()))];
+  const info = {};
+  for (let i = 0; i < parts.length; i += 90) {
+    const ch = parts.slice(i, i + 90);
+    (await d1All(env, `SELECT UPPER(part_num) AS k, MIN(COALESCE(units_per_case,0)) AS mn, MAX(COALESCE(units_per_case,0)) AS mx FROM master_list
+      WHERE UPPER(part_num) IN (${ch.map(() => '?').join(',')}) GROUP BY UPPER(part_num)`, ch).catch(() => []))
+      .forEach(r => { info[r.k] = r; });
+  }
+  for (const r of rows) {
+    if (r.total_before == null || r.total_scope !== 'part' || !r.part_num) continue;
+    const x = info[String(r.part_num).toUpperCase()];
+    const mn = x ? parseFloat(x.mn) || 0 : 0, mx = x ? parseFloat(x.mx) || 0 : 0;
+    if (mn > 0 && mn === mx) r.each = mn;
+    else r.each_note = !x ? 'not in SKU Mgr anymore' : mx <= 0 ? 'Each/Case not on file in SKU Mgr' : 'Each/Case differs between shelves (' + (mn || 0) + ' / ' + mx + ')';
+  }
+}
 async function invHistoryFillNames(env, rows) {
   const need = rows.filter(r => !r.name && r.part_num);
   if (!need.length) return;
@@ -12359,6 +12379,7 @@ async function inventoryHistory(url, env) {
 
         const rows = await d1Strict(env, sql, params);
         await invHistoryFillNames(env, rows);
+        await invHistoryFillEach(env, rows).catch(e => console.error('[history] each:', e.message));
         // Total active cases in stock
         const totalRow = await d1First(env, 'SELECT SUM(cases) as total FROM master_list WHERE cases > 0');
         const totalCases = totalRow?.total || 0;
