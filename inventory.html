@@ -598,8 +598,7 @@ window.invCredLogin = async function() {
     <div class="ifield" style="margin-top:10px">
       <label>Location</label>
       <div style="display:flex;gap:6px;align-items:center">
-        <select id="inv-qa-prefix" style="padding:8px;border:1.5px solid var(--border);border-radius:7px;background:var(--bg);color:var(--text);font-size:13px;font-family:var(--mono)"><option value="2FL=">2FL=</option><option value="BARN=">BARN=</option><option value="BSMT=">BSMT=</option><option value="BO=">BO=</option><option value="C1=">C1=</option><option value="C2=">C2=</option><option value="C3=">C3=</option><option value="C4=">C4=</option><option value="C5=">C5=</option><option value="FRONT=">FRONT=</option><option value="PR=">PR=</option></select>
-        <input id="inv-qa-shelf" type="text" placeholder="e.g. 11-2-10" autocomplete="off" style="flex:1;padding:8px 10px;border:1.5px solid var(--border);border-radius:7px;background:var(--bg);color:var(--text);font-size:13px;font-family:var(--mono)">
+        <input id="inv-qa-shelf" type="text" placeholder="Scan the spot label, e.g. C1=11-2-10" autocomplete="off" style="flex:1;padding:8px 10px;border:1.5px solid var(--border);border-radius:7px;background:var(--bg);color:var(--text);font-size:13px;font-family:var(--mono)">
         <button class="icam-btn" id="inv-qa-loc-cam-btn" onclick="invQaScanLocation()" style="width:auto;min-height:0;padding:8px 10px;font-size:15px;margin-top:0;white-space:nowrap;flex-shrink:0">📷</button>
       </div>
     </div>
@@ -715,7 +714,7 @@ window.invCredLogin = async function() {
     <div id="inv-loc-list"></div>
     <div id="inv-newloc-wrap" style="display:none;margin-top:8px">
       <div class="ifield"><label>New Location Name</label>
-        <div style="display:flex;gap:6px;margin-top:6px;align-items:center"><select id="inv-newloc-prefix" style="padding:6px 8px;border:1.5px solid var(--border);border-radius:7px;background:var(--bg);color:var(--text);font-size:13px;font-family:var(--mono)"><option value="2FL=">2FL=</option><option value="BARN=">BARN=</option><option value="BSMT=">BSMT=</option><option value="BO=">BO=</option><option value="C1=">C1=</option><option value="C2=">C2=</option><option value="C3=">C3=</option><option value="C4=">C4=</option><option value="C5=">C5=</option><option value="FRONT=">FRONT=</option><option value="PR=">PR=</option></select><button class="icam-btn" id="inv-newloc-cam-btn" onclick="invNewLocToggleCam()" style="padding:6px 10px;white-space:nowrap;font-size:12px">&#x1F4F7;</button><input id="inv-newloc-shelf" type="text" placeholder="e.g. 5-1-3" autocomplete="off" style="flex:1;padding:6px 10px;border:1.5px solid var(--border);border-radius:7px;background:var(--bg);color:var(--text);font-size:13px;font-family:var(--mono)"></div>
+        <div style="display:flex;gap:6px;margin-top:6px;align-items:center"><button class="icam-btn" id="inv-newloc-cam-btn" onclick="invNewLocToggleCam()" style="padding:6px 10px;white-space:nowrap;font-size:12px">&#x1F4F7;</button><input id="inv-newloc-shelf" type="text" placeholder="Scan the spot label, e.g. C1=5-1-3" autocomplete="off" style="flex:1;padding:6px 10px;border:1.5px solid var(--border);border-radius:7px;background:var(--bg);color:var(--text);font-size:13px;font-family:var(--mono)"></div>
         <div id="inv-newloc-reader-wrap" style="display:none;border-radius:8px;overflow:hidden;background:#000;min-height:120px;margin-top:6px"><div id="inv-newloc-qr-reader"></div></div>
       </div>
         <div id="inv-newloc-suggest" style="margin-top:6px;padding:6px 0;font-size:12px"></div>
@@ -1741,8 +1740,18 @@ window.invCredLogin = async function() {
     return blank + INV_PREFIXES.map(function(p){ return '<option value="' + p + '">' + p + '</option>'; }).join('');
   }
 
+  // Stock In / Found on Shelf has no area drop-down any more (owner: "we
+  // going to have to scan the location spot, location spot already have
+  // that 2fl= or c1= in it"). The spot label is the whole location, area
+  // included (C1=5-1-3). Returns '' when the area part is missing.
+  function invFullSpotLabel(v) {
+    var loc = String(v || '').trim().toUpperCase().replace(/\s+/g, '');
+    return /^[A-Z0-9]+=\S+/.test(loc) ? loc : '';
+  }
+  window.invFullSpotLabel = invFullSpotLabel;
+
   function invPopulateAllPrefixDropdowns() {
-    ['inv-newloc-prefix','inv-fel-prefix','xfr-fel-prefix','inv-audit-loc-prefix','audloc-add-loc-prefix','inv-loc-scan-prefix','xfr-loc-scan-prefix','inv-qa-prefix'].forEach(function(id) {
+    ['inv-fel-prefix','xfr-fel-prefix','inv-audit-loc-prefix','audloc-add-loc-prefix','inv-loc-scan-prefix','xfr-loc-scan-prefix'].forEach(function(id) {
       var el = g(id); if (!el) return;
       var cur = el.value; el.innerHTML = invPrefixOptionsHTML(false); if (cur) el.value = cur;
     });
@@ -1963,9 +1972,8 @@ window.invCredLogin = async function() {
       invPickLocDirect(existing);
       invFlash("Location matched: " + existing.location, "success");
     } else {
-      var pfxEl = g('inv-newloc-prefix'); var shfEl = g('inv-newloc-shelf');
-      if (pfxEl && prefix) pfxEl.value = prefix;
-      if (shfEl) shfEl.value = shelf;
+      var shfEl = g('inv-newloc-shelf');
+      if (shfEl) shfEl.value = fullLoc;
       invPickNew();
       invFlash("New location: " + fullLoc + " — enter Cases to finish", "success");
     }
@@ -3458,15 +3466,8 @@ window.invCredLogin = async function() {
           if (now - invNewLocLastScan < 2000) return;
           invNewLocLastScan = now;
           invNewLocStopCam();
-          var eqIdx = code.indexOf('=');
-          if (eqIdx > 0) {
-            var pfxEl = g('inv-newloc-prefix'); var shfEl = g('inv-newloc-shelf');
-            if (pfxEl) pfxEl.value = code.slice(0, eqIdx + 1);
-            if (shfEl) { shfEl.value = code.slice(eqIdx + 1); shfEl.focus(); }
-          } else {
-            var shfEl = g('inv-newloc-shelf');
-            if (shfEl) { shfEl.value = code; shfEl.focus(); }
-          }
+          var shfEl = g('inv-newloc-shelf');
+          if (shfEl) { shfEl.value = String(code).trim().toUpperCase(); shfEl.focus(); }
         },
         function() {}
       ).then(function() {
@@ -3537,13 +3538,12 @@ window.invCredLogin = async function() {
     var initials = (INV_CRED_USER && INV_CRED_USER.displayName) || "OPS";
     var notes    = g("inv-notes").value.trim();
     var unitsPerCase = (g("inv-units-per-case") && g("inv-units-per-case").value) ? parseFloat(g("inv-units-per-case").value) : 0;
-    var newLocPrefix = (g("inv-newloc-prefix") || {value:""}).value || "";
-    var newLocShelf  = (g("inv-newloc-shelf")  || {value:""}).value.trim();
-    var newLoc = newLocPrefix && newLocShelf ? newLocPrefix + newLocShelf : newLocShelf;
+    var newLocRaw = (g("inv-newloc-shelf") || {value:""}).value.trim();
+    var newLoc = invFullSpotLabel(newLocRaw);
     if (!invPart)   { invFlash("No item selected", "error"); return; }
     if (!invSelLoc) { invFlash("Select a location first", "error"); return; }
     if (!cases || cases < 0.1) { invFlash("Enter number of cases", "error"); return; }
-    if (invSelLoc.isNew && !newLoc) { invFlash("Enter new location name", "error"); return; }
+    if (invSelLoc.isNew && !newLoc) { invFlash(newLocRaw ? "Scan the spot label — it has the area too, e.g. C1=" + newLocRaw.toUpperCase() : "Scan the new location's spot label", "error"); return; }
     var location = invSelLoc.isNew ? newLoc : invSelLoc.location;
     var btn = g("inv-submit-btn");
     btn.disabled = true;
@@ -3727,14 +3727,8 @@ window.invCredLogin = async function() {
           if (now - invQaLocLastScan < 2000) return;
           invQaLocLastScan = now;
           invQaStopLocCam();
-          var eqIdx = code.indexOf('=');
-          var pfxEl = g('inv-qa-prefix'); var shfEl = g('inv-qa-shelf');
-          if (eqIdx > 0) {
-            if (pfxEl) pfxEl.value = code.slice(0, eqIdx + 1);
-            if (shfEl) shfEl.value = code.slice(eqIdx + 1);
-          } else if (shfEl) {
-            shfEl.value = code;
-          }
+          var shfEl = g('inv-qa-shelf');
+          if (shfEl) shfEl.value = String(code).trim().toUpperCase();
         },
         function() {}
       ).then(function() {
@@ -3790,13 +3784,12 @@ window.invCredLogin = async function() {
 
   window.invQuickAddSubmit = function() {
     var partNum  = (g("inv-qa-partnum")  && g("inv-qa-partnum").value.trim().toUpperCase())  || "";
-    var qaPrefix = (g("inv-qa-prefix") && g("inv-qa-prefix").value) || "";
     var qaShelf  = (g("inv-qa-shelf")  && g("inv-qa-shelf").value.trim().toUpperCase()) || "";
-    var location = qaShelf ? (qaPrefix + qaShelf) : "";
+    var location = invFullSpotLabel(qaShelf);
     var cases    = parseFloat(g("inv-qa-cases") && g("inv-qa-cases").value);
     var upc      = (g("inv-qa-upc") && g("inv-qa-upc").value) ? parseFloat(g("inv-qa-upc").value) : 0;
     if (!partNum)  { invFlash("Enter a Part #", "error"); return; }
-    if (!location) { invFlash("Enter a Location", "error"); return; }
+    if (!location) { invFlash(qaShelf ? "Scan the spot label — it has the area too, e.g. C1=" + qaShelf : "Scan the Location spot label", "error"); return; }
     if (!cases || cases < 0.1) { invFlash("Enter QTY Case", "error"); return; }
 
     var initials = (INV_CRED_USER && INV_CRED_USER.displayName) || "OPS";
