@@ -3264,6 +3264,11 @@ async function ensureTotalTrackingColumns(env) {
   await env.DB.prepare('ALTER TABLE inventory_log ADD COLUMN total_scope TEXT').run().catch(()=>{});
   await env.DB.prepare('ALTER TABLE inventory_log ADD COLUMN wh_before REAL').run().catch(()=>{});
   await env.DB.prepare('ALTER TABLE inventory_log ADD COLUMN wh_after REAL').run().catch(()=>{});
+  // Pieces too (owner): the Each/Case of the box this entry moved, and the
+  // whole inventory in pieces before → after it.
+  await env.DB.prepare('ALTER TABLE inventory_log ADD COLUMN pcs_each REAL').run().catch(()=>{});
+  await env.DB.prepare('ALTER TABLE inventory_log ADD COLUMN wh_pcs_before REAL').run().catch(()=>{});
+  await env.DB.prepare('ALTER TABLE inventory_log ADD COLUMN wh_pcs_after REAL').run().catch(()=>{});
 }
 // History's "before → after" check, per PART # (every shelf of that part,
 // any number of cases). It used to be the whole warehouse, so anyone else's
@@ -3292,17 +3297,52 @@ async function invWarehouseCases(env) {
   const r = await d1First(env, 'SELECT SUM(cases) AS t FROM master_list WHERE cases > 0', []);
   return _n(parseFloat(r?.t) || 0);
 }
+// Whole inventory in PIECES: cases × Each/Case of every line with cases.
+// Lines with no Each/Case on file can't be counted in pieces — their cases
+// come back as `noEach` so the screen says so (never dropped silently).
+async function invWarehousePcs(env) {
+  const r = await d1First(env, `SELECT SUM(CASE WHEN COALESCE(units_per_case,0) > 0 THEN cases * units_per_case ELSE 0 END) AS p,
+    SUM(CASE WHEN COALESCE(units_per_case,0) > 0 THEN 0 ELSE cases END) AS n FROM master_list WHERE cases > 0`, []);
+  return { pcs: _n(parseFloat(r?.p) || 0), noEach: _n(parseFloat(r?.n) || 0) };
+}
+// Each/Case of the box an entry moved: its own SKU Mgr line (masterId),
+// else the one size that part # has at that spot, else the one size the
+// part # has anywhere. 0 = not known (several sizes, or none on file).
+function invEachFinder(rows) {
+  const byId = {}, byPL = {}, byP = {};
+  const U = v => String(v || '').trim().toUpperCase(), add = (m, k, u) => { (m[k] = m[k] || new Set()).add(u); };
+  for (const r of rows) { const u = parseFloat(r.units_per_case) || 0; byId[r.id] = u; if (u > 0) { add(byPL, U(r.part_num) + '|' + U(r.location), u); add(byP, U(r.part_num), u); } }
+  const one = s => s && s.size === 1 ? [...s][0] : 0;
+  return e => {
+    if (parseFloat(e.pcs_each) > 0) return parseFloat(e.pcs_each);
+    if (e.master_id && e.master_id in byId) return byId[e.master_id]; // its own line (0 = no Each/Case on that line → not counted)
+    return one(byPL[U(e.part_num) + '|' + U(e.location)]) || one(byP[U(e.part_num)]) || 0;
+  };
+}
 async function invSaveTotals(env, ids, before, after, note) {
   await ensureTotalTrackingColumns(env);
   // Whole-inventory before → after too: after = the total right now (this
   // change is already on the shelves), before = after − this entry's own
   // change, so the two always differ by exactly what this entry did.
-  let whA = null, whB = null;
+  let whA = null, whB = null, each = null, pA = null, pB = null;
   if (before != null && after != null) {
     try { whA = await invWarehouseCases(env); whB = _n(whA - (after - before)); } catch (_) {}
+    // Same in pieces: this entry's cases × the Each/Case of its box.
+    try {
+      const e = await d1First(env, 'SELECT part_num, location, master_id FROM inventory_log WHERE id = ?', [ids.filter(Boolean)[0]]);
+      if (e) {
+        const rows = await d1All(env, 'SELECT id, part_num, location, units_per_case FROM master_list WHERE UPPER(TRIM(part_num)) = ?', [String(e.part_num || '').trim().toUpperCase()]);
+        each = invEachFinder(rows)(e) || null;
+        const w = await invWarehousePcs(env);
+        pA = w.pcs;
+        pB = each ? _n(pA - (after - before) * each) : (after === before ? pA : null);
+      }
+    } catch (_) {}
   }
-  for (const id of ids.filter(Boolean))
+  for (const id of ids.filter(Boolean)) {
     await env.DB.prepare('UPDATE inventory_log SET total_before=?, total_after=?, total_warning=?, total_scope=?, wh_before=?, wh_after=? WHERE id=?').bind(before, after, note || null, 'part', whB, whA, id).run();
+    if (pA != null) await env.DB.prepare('UPDATE inventory_log SET pcs_each=?, wh_pcs_before=?, wh_pcs_after=? WHERE id=?').bind(each, pB, pB == null ? null : pA, id).run().catch(() => {});
+  }
 }
 // The approve went through but its before → after couldn't be worked out:
 // say so on the History row (never a blank cell nobody can explain).
@@ -12330,6 +12370,32 @@ async function inventoryHistorySummary(url, env) {
     const endingCases = currentTotal - afterNet;
     const startingCases = endingCases - duringNet;
 
+    // The same in PIECES (owner): each entry's cases × the Each/Case of the
+    // box it moved. An entry whose Each/Case isn't known is listed apart
+    // (its pieces not counted) — never dropped silently.
+    const pcs = { inAll: 0, outAll: 0, xfr: 0, aIn: 0, aOut: 0, pIn: 0, pOut: 0, afterNet: 0, unknown: 0, unknownCases: 0 };
+    try {
+      const finder = invEachFinder(await d1All(env, 'SELECT id, part_num, location, units_per_case FROM master_list'));
+      const ents = await d1All(env, `SELECT id, type, status, notes, part_num, location, cases, master_id, pcs_each FROM inventory_log
+        WHERE ${timeCond} AND type IN ('IN','OUT','TRANSFER_OUT')`, timeParams);
+      for (const e of ents) {
+        const c = parseFloat(e.cases) || 0, u = finder(e), audit = /\[AUDIT\]/.test(e.notes || '');
+        if (!(u > 0)) { if (e.type !== 'TRANSFER_OUT' && e.status === 'Verified') { pcs.unknown++; pcs.unknownCases += c; } continue; }
+        const p = c * u;
+        if (e.type === 'TRANSFER_OUT') { if (e.status !== 'Rejected') pcs.xfr += p; continue; }
+        if (!audit) { if (e.type === 'IN') pcs.inAll += p; else pcs.outAll += p; }
+        if (e.status === 'Verified') { if (e.type === 'IN') pcs.aIn += p; else pcs.aOut += p; }
+        if (e.status === 'Pending') { if (e.type === 'IN') pcs.pIn += p; else pcs.pOut += p; }
+      }
+      if (cutoffEnd) {
+        for (const e of await d1All(env, `SELECT type, part_num, location, cases, master_id, pcs_each FROM inventory_log WHERE timestamp >= ? AND status = 'Verified' AND type IN ('IN','OUT')`, [cutoffEnd])) {
+          const u = finder(e); if (u > 0) pcs.afterNet += (e.type === 'IN' ? 1 : -1) * (parseFloat(e.cases) || 0) * u;
+        }
+      }
+    } catch (e) { pcs.error = String(e.message || e).slice(0, 120); }
+    const wPcs = await invWarehousePcs(env).catch(() => ({ pcs: 0, noEach: 0 }));
+    const endingPcs = _n(wPcs.pcs - pcs.afterNet), startingPcs = _n(endingPcs - (pcs.aIn - pcs.aOut));
+
     return cors(new Response(JSON.stringify({
       ok: true, days, date: dateParam || null, cutoff: cutoffStart,
       totals: {
@@ -12341,6 +12407,8 @@ async function inventoryHistorySummary(url, env) {
         casesOut: totals?.cases_out || 0
       },
       startingCases, endingCases,
+      pieces: pcs.error ? { error: pcs.error } : { starting: startingPcs, ending: endingPcs, in: _n(pcs.aIn), out: _n(pcs.aOut), pendingIn: _n(pcs.pIn), pendingOut: _n(pcs.pOut),
+        stockIn: _n(pcs.inAll), stockOut: _n(pcs.outAll), transfers: _n(pcs.xfr), unknownEntries: pcs.unknown, unknownCases: _n(pcs.unknownCases), noEachCasesNow: wPcs.noEach },
       approved: { casesIn: parseFloat(during?.a_in) || 0, casesOut: parseFloat(during?.a_out) || 0 },
       pending: { casesIn: parseFloat(during?.p_in) || 0, casesOut: parseFloat(during?.p_out) || 0 },
       transferCases: totals?.transfer_cases || 0,
@@ -12534,7 +12602,7 @@ async function d1Strict(env, sql, params, first) {
 let _invLogReady = false;
 async function invLogEnsureColumns(env) {
   if (_invLogReady || !env.DB) return;
-  for (const c of ['added_at TEXT', 'grabbed_at TEXT', 'total_before REAL', 'total_after REAL', 'total_warning TEXT', 'total_scope TEXT', 'cancelled_at TEXT', 'cancelled_by TEXT', 'wh_before REAL', 'wh_after REAL'])
+  for (const c of ['added_at TEXT', 'grabbed_at TEXT', 'total_before REAL', 'total_after REAL', 'total_warning TEXT', 'total_scope TEXT', 'cancelled_at TEXT', 'cancelled_by TEXT', 'wh_before REAL', 'wh_after REAL', 'pcs_each REAL', 'wh_pcs_before REAL', 'wh_pcs_after REAL'])
     await env.DB.prepare('ALTER TABLE inventory_log ADD COLUMN ' + c).run().catch(() => {});
   await env.DB.prepare('CREATE INDEX IF NOT EXISTS idx_inventory_log_timestamp ON inventory_log(timestamp)').run().catch(() => {});
   _invLogReady = true;
@@ -12652,6 +12720,7 @@ async function inventoryHistory(url, env) {
         let sql = `SELECT l.id,l.sheet_row,l.timestamp,l.type,l.part_num,l.location,l.cases,l.initials,
                           l.notes,l.status,l.verified_by,l.verified_at,l.added_at,l.grabbed_at,
                           l.total_before,l.total_after,l.total_warning,l.total_scope,l.cancelled_at,l.cancelled_by,l.wh_before,l.wh_after,
+                          l.pcs_each,l.wh_pcs_before,l.wh_pcs_after,
                           COALESCE(l.name,'') as name
                    FROM inventory_log l
                    WHERE l.timestamp >= ?`;

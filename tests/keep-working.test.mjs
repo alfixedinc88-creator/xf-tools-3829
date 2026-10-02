@@ -833,5 +833,40 @@ console.log('\nBox sizes never change · Transfer touches only its own row · St
   await post('/inventory/review-mode', { mode: 'manual' });
 }
 
+// Owner: "History — total pcs too: Started With / Ended With in pieces, pieces in and out, and pieces under Whole inventory on each entry".
+console.log('\nHistory: pieces (start → end, in / out, whole inventory per entry)');
+{
+  await post('/inventory/review-mode', { mode: 'auto' });
+  sq.exec(`INSERT INTO master_list (id, base_sku, name, part_num, location, cases, units_per_case, sheet_row) VALUES
+    (9301, '65-1-1', 'cap', '65-1-1=50', 'C3=1-1-1', 4, 50, 0), (9302, '65-1-1', 'cap', '65-1-1=50', 'C3=1-1-2', 2, 25, 0),
+    (9303, '65-2-2', 'plug', '65-2-2=1', 'C3=1-1-3', 3, 0, 0)`);
+  const W = () => sq.prepare('SELECT SUM(CASE WHEN COALESCE(units_per_case,0) > 0 THEN cases * units_per_case ELSE 0 END) p FROM master_list WHERE cases > 0').get().p;
+  const s0 = await get('/inventory/history-summary?days=1');
+  const w0 = W();
+  const a = await post('/inventory/log', { type: 'IN', partNum: '65-1-1=50', sku: '65-1-1=50', location: 'C3=1-1-1', cases: 2, initials: 'TS', notes: '', masterId: 9301 });
+  const w1 = W();
+  const b = await post('/inventory/log', { type: 'OUT', partNum: '65-1-1=50', sku: '65-1-1=50', location: 'C3=1-1-2', cases: 1, initials: 'TS', notes: '[SHELVING]', masterId: 9302 });
+  const c = await post('/inventory/log', { type: 'OUT', partNum: '65-2-2=1', sku: '65-2-2=1', location: 'C3=1-1-3', cases: 1, initials: 'TS', notes: '[SHELVING]', masterId: 9303 });
+  const L = id => sq.prepare('SELECT pcs_each e, wh_pcs_before b, wh_pcs_after a FROM inventory_log WHERE id = ?').get(id);
+  const la = L(a.d1Id), lb = L(b.d1Id), lc = L(c.d1Id);
+  check('Stock In 2 boxes of 50 pcs: whole inventory ' + w0 + ' → ' + (w0 + 100) + ' pcs on its History line (+100)', la.e === 50 && la.b === w0 && la.a === w0 + 100 && w1 === w0 + 100, la);
+  check('Stock Out 1 box of 25 pcs (other size, own line): whole inventory −25 pcs', lb.e === 25 && lb.b === w0 + 100 && lb.a === w0 + 75, lb);
+  check('Stock Out from a line with no Each/Case: pieces not recorded (never a made-up number)', lc.e == null && lc.b == null && lc.a == null, lc);
+  const s1 = await get('/inventory/history-summary?days=1'), P = s1.pieces || {};
+  check('report: Started + Pcs In − Pcs Out = Ended (pieces), Ended = pieces on the shelves now (' + W() + ')',
+    Math.abs(P.starting + P.in - P.out - P.ending) < 0.01 && P.ending === W(), P);
+  check('report: today\'s pieces in +100 and out +25 more than before; the entry with no Each/Case is listed apart (1 entry, 1 case), and the shelves\' cases with no Each/Case are named',
+    Math.abs(P.in - (s0.pieces.in + 100)) < 0.01 && Math.abs(P.out - (s0.pieces.out + 25)) < 0.01 && P.unknownEntries === s0.pieces.unknownEntries + 1 && P.noEachCasesNow >= 2, { before: s0.pieces, after: P });
+  check('report: Stock In / Stock Out cards have pieces too', P.stockIn >= 100 && P.stockOut >= 25, P);
+  const h = await get('/inventory/history?days=1&status=all');
+  const ha = (h.rows || []).find(r => r.id === a.d1Id || r.d1Id === a.d1Id);
+  check('History list sends whole-inventory pieces with each entry', ha && ha.wh_pcs_after === w0 + 100 && ha.pcs_each === 50, ha);
+  const { readFileSync } = await import('node:fs');
+  const ih = readFileSync(fileURLToPath(new URL('../inventory.html', import.meta.url)), 'utf8');
+  check('screen: "Pieces In Stock" (Started With + Pcs In − Pcs Out = Ended With) under the cases; pieces under "Whole inventory" on each entry',
+    /Pieces In Stock/.test(ih) && /id="hist-rp-start"/.test(ih) && /id="hist-rp-end"/.test(ih) && /r\.wh_pcs_before != null && r\.wh_pcs_after != null/.test(ih), null);
+  await post('/inventory/review-mode', { mode: 'manual' });
+}
+
 console.log('\n' + (failed ? '❌ ' + failed + ' check(s) FAILED' : '✅ all ' + passed + ' checks passed') + '\n');
 process.exit(failed ? 1 : 0);
