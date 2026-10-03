@@ -7041,7 +7041,9 @@ window.invCredLogin = async function() {
       + '<th style="' + thS + '">Status</th>'
       + '<th style="' + thS + '">Notes</th>'
       + '<th style="' + thS + '" title="Cases (and pieces = cases × Each/Case) of this part # on every shelf, before → after this change. Older rows: whole warehouse.">Part Total Before → After<div style="font-weight:400;text-transform:none">cases · pieces · whole inventory</div></th>'
-      + '<th style="' + thS + '"></th>'
+      // Cancel stays pinned on the right (owner: "the Cancel button is gone again" —
+      // the wider Part Total column pushed it off the screen on phones).
+      + '<th style="' + thS + ';position:sticky;right:0;z-index:1;box-shadow:-2px 0 4px rgba(0,0,0,.08)">Cancel</th>'
       + '</tr></thead><tbody>';
 
     rows.forEach(function(r, idx) {
@@ -7100,7 +7102,7 @@ window.invCredLogin = async function() {
         + '<td style="' + td + 'white-space:nowrap"><span style="font-size:10px;font-weight:700;color:' + stCol + '">' + (r.status||'') + '</span></td>'
         + '<td style="' + td + 'color:var(--text3);max-width:160px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;cursor:pointer;text-decoration:underline dotted" title="Click to see full note" onclick=\'histShowFullNote(' + JSON.stringify(r.notes||'').replace(/&/g, '&amp;').replace(/'/g, '&#39;').replace(/</g, '&lt;') + ')\'>' + (notes || '—') + '</td>'
         + '<td style="' + td + 'font-family:var(--mono);white-space:nowrap;font-size:11px">' + totalCell + '</td>'
-        + '<td style="' + td + 'white-space:nowrap">' + cancelCell + '</td>'
+        + '<td style="' + td + 'white-space:nowrap;position:sticky;right:0;background:' + bg + ';box-shadow:-2px 0 4px rgba(0,0,0,.08)">' + cancelCell + '</td>'
         + '</tr>';
     });
 
