@@ -571,6 +571,11 @@ async function adminResetPassword(request, env, session) {
   // Reset password also invalidates all existing sessions for this user -
   // a compromised or forgotten password shouldn't leave old sessions valid.
   await env.DB.prepare(`DELETE FROM cred_sessions WHERE user_id = ?`).bind(userId).run();
+  // …and clears the "too many failed attempts" lock (owner: "reset Yola's
+  // password, why still not working?" — after the wrong tries she stayed
+  // locked out for 15 minutes even with the new password).
+  const un = await env.DB.prepare(`SELECT username FROM cred_users WHERE id = ?`).bind(userId).first();
+  if (un) await env.DB.prepare(`DELETE FROM cred_login_attempts WHERE username = ?`).bind(String(un.username).trim().toLowerCase()).run().catch(() => {});
   return cors(new Response(JSON.stringify({ ok: true }), { headers: { 'Content-Type': 'application/json' } }));
 }
 
