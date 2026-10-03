@@ -1035,6 +1035,11 @@ async function reorderFixTables(env) {
   // the spot they went to (log_id), kept with the pallet they came off.
   await env.DB.prepare(`CREATE TABLE IF NOT EXISTS pallet_extra (id INTEGER PRIMARY KEY AUTOINCREMENT, title TEXT, vendor TEXT, pallet TEXT, part TEXT,
     boxes REAL, pcs_per_box REAL, cases REAL, to_location TEXT, log_id INTEGER, by_user TEXT, at TEXT)`).run();
+  // ⚠ A box whose UPC doesn't match the part # it scanned as (owner): the
+  // worker confirms it on the pallet; the office sees it on the container
+  // (who / when / what was scanned) until someone marks it fixed.
+  await env.DB.prepare(`CREATE TABLE IF NOT EXISTS pallet_upc_issue (id INTEGER PRIMARY KEY AUTOINCREMENT, title TEXT, vendor TEXT, pallet TEXT,
+    line_id INTEGER, part TEXT, code TEXT, note TEXT, by_user TEXT, at TEXT, fixed_by TEXT, fixed_at TEXT)`).run();
   await env.DB.prepare(`CREATE TABLE IF NOT EXISTS reorder_fix (part TEXT PRIMARY KEY, description TEXT, outside_upc TEXT, inside_upc TEXT,
     vendor TEXT, asin TEXT, case_qty REAL, by_user TEXT, updated_at TEXT)`).run();
   // History of everything done on the tab (fixes, part # corrections,
@@ -2429,8 +2434,102 @@ async function buildPendingMap(env) {
 // Inventory → Product Photos and never replaced automatically (an empty
 // manual url = "no photo", on purpose). Falls back to the listing photo in
 // product_catalog.image_url_1.
+let _photoColsOk = false;
 async function productPhotoTable(env) {
   await env.DB.prepare('CREATE TABLE IF NOT EXISTS product_photo (base_sku TEXT PRIMARY KEY, url TEXT, source TEXT, set_by TEXT, updated_at TEXT)').run();
+  if (_photoColsOk) return;
+  // ✓ Confirmed photos (Location Plan → 🖼 Photos): kept forever, never
+  // replaced automatically. Every photo change is kept in product_photo_log.
+  for (const c of ['confirmed_by TEXT', 'confirmed_at TEXT']) await env.DB.prepare('ALTER TABLE product_photo ADD COLUMN ' + c).run().catch(() => {});
+  await env.DB.prepare(`CREATE TABLE IF NOT EXISTS product_photo_log (id INTEGER PRIMARY KEY AUTOINCREMENT, base_sku TEXT, old_url TEXT, new_url TEXT,
+    action TEXT, by_user TEXT, at TEXT)`).run();
+  _photoColsOk = true;
+}
+async function productPhotoLog(env, base, oldUrl, newUrl, action, by) {
+  await env.DB.prepare('INSERT INTO product_photo_log (base_sku, old_url, new_url, action, by_user, at) VALUES (?,?,?,?,?,?)')
+    .bind(base, oldUrl || '', newUrl || '', action, String(by || '').slice(0, 40), new Date().toISOString()).run().catch(() => {});
+}
+// Every day (cron) and on 🖼 Photos → ↻: the newest photo of each parent in
+// Pack & Ship orders (Veeqo — fixed before every print, so it's the right
+// one). A parent whose photo is NOT ✓ confirmed (and not set by hand) takes
+// the newer photo; confirmed ones never change. Each change is logged.
+async function productPhotoDailyRefresh(env, days) {
+  if (!env.DB) return { checked: 0, updated: 0, added: 0 };
+  await productPhotoTable(env);
+  const since = new Date(Date.now() - (days || 2) * 86400000).toISOString().slice(0, 10), newest = {};
+  let rows = [];
+  try { rows = (await env.DB.prepare("SELECT line_items FROM ship_manifest_log WHERE date >= ? AND line_items LIKE '%http%' ORDER BY date DESC, rowid DESC LIMIT 5000").bind(since).all()).results || []; } catch (_) { return { checked: 0, updated: 0, added: 0 }; }
+  for (const r of rows) {
+    let li = []; try { li = JSON.parse(r.line_items || '[]'); } catch (_) {}
+    for (const o of li) {
+      if (!o || !o.i || !/^https?:\/\//i.test(String(o.i))) continue;
+      const sku = String(o.s || '').trim().toUpperCase(), bin = String(o.b || '').trim().toUpperCase();
+      const base = /^\d+(-\d+)+(=|$)/.test(sku) ? sku.split('=')[0] : (_psIsFamilyCode(bin) ? bin : '');
+      if (base && !newest[base]) newest[base] = String(o.i).trim();
+    }
+  }
+  const bases = Object.keys(newest); let updated = 0, added = 0;
+  const cur = {};
+  for (let i = 0; i < bases.length; i += 90) { const ch = bases.slice(i, i + 90);
+    ((await env.DB.prepare(`SELECT base_sku, url, source, confirmed_at FROM product_photo WHERE UPPER(base_sku) IN (${ch.map(() => '?').join(',')})`).bind(...ch).all()).results || [])
+      .forEach(r => { cur[String(r.base_sku).toUpperCase()] = r; }); }
+  const now = new Date().toISOString();
+  for (const b of bases) {
+    const c = cur[b], u = newest[b];
+    if (!c) { await env.DB.prepare('INSERT OR IGNORE INTO product_photo (base_sku, url, source, set_by, updated_at) VALUES (?,?,?,?,?)').bind(b, u, 'picking', 'Pack & Ship', now).run(); await productPhotoLog(env, b, '', u, 'auto', 'Pack & Ship'); added++; continue; }
+    if (c.confirmed_at || c.source === 'manual' || (c.url || '') === u) continue;
+    await env.DB.prepare('UPDATE product_photo SET url = ?, source = ?, set_by = ?, updated_at = ? WHERE base_sku = ? AND confirmed_at IS NULL').bind(u, 'picking', 'Pack & Ship', now, c.base_sku).run();
+    await productPhotoLog(env, b, c.url, u, 'auto', 'Pack & Ship'); updated++;
+  }
+  return { checked: bases.length, updated, added };
+}
+// GET /inventory/photo-review — every parent part # with the photo the
+// Inventory screens use, where it came from, and ✓ confirmed by / when.
+async function productPhotoReview(env) {
+  await productPhotoTable(env);
+  const P = {};
+  (await d1All(env, 'SELECT base_sku, part_num, name, cases FROM master_list')).forEach(r => {
+    const b = parentOf(r.base_sku || r.part_num); if (!b) return;
+    const p = P[b] = P[b] || { base: b, name: '', cases: 0 };
+    if (!p.name && r.name) p.name = String(r.name).trim();
+    p.cases += parseFloat(r.cases) > 0 ? parseFloat(r.cases) : 0;
+  });
+  const rows = {}; (await d1All(env, 'SELECT * FROM product_photo')).forEach(r => { rows[String(r.base_sku).toUpperCase()] = r; });
+  const cat = {}; try { (await d1All(env, "SELECT UPPER(base_sku) b, image_url_1 u FROM product_catalog WHERE TRIM(COALESCE(image_url_1,'')) != '' ORDER BY pack_qty ASC")).forEach(r => { if (!cat[r.b]) cat[r.b] = r.u; }); } catch (_) {}
+  const last = {}; (await d1All(env, 'SELECT base_sku, old_url, action, by_user, at FROM product_photo_log ORDER BY id')).forEach(r => { last[String(r.base_sku).toUpperCase()] = r; });
+  Object.keys(rows).forEach(b => { if (!P[b]) P[b] = { base: b, name: '', cases: 0 }; });
+  const items = Object.values(P).map(p => {
+    const r = rows[p.base], url = r ? (r.url || '') : (cat[p.base] || '');
+    const src = r ? (r.source === 'manual' ? 'set by hand' + (r.set_by ? ' (' + r.set_by + ')' : '') : r.source === 'veeqo' ? 'Veeqo' : 'Pack & Ship order') : url ? 'listing photo' : '';
+    const l = last[p.base];
+    return { base: p.base, name: p.name, cases: Math.round(p.cases * 100) / 100, url, source: src, at: r ? r.updated_at : '', confirmedBy: (r && r.confirmed_by) || '', confirmedAt: (r && r.confirmed_at) || '',
+      lastChange: l && l.action === 'auto' ? { from: l.old_url || '', at: l.at } : null };
+  });
+  return cors(new Response(JSON.stringify({ ok: true, items }), { headers: { 'Content-Type': 'application/json' } }));
+}
+// POST /inventory/photo-confirm { base, url } ✓ keep this photo forever · { base, undo: true } — management.
+async function productPhotoConfirm(request, env, session) {
+  const J = (o, st) => cors(new Response(JSON.stringify(o), { status: st || 200, headers: { 'Content-Type': 'application/json' } }));
+  if (!session || session.pin_level !== 'mgmt') return J({ ok: false, error: 'Management access required' }, 403);
+  await productPhotoTable(env);
+  const b = await request.json().catch(() => ({}));
+  const base = parentOf(String(b.base || '').trim().toUpperCase()), who = String(session.displayName || session.username || '').slice(0, 40), now = new Date().toISOString();
+  if (!base) return J({ ok: false, error: 'Which part #?' }, 400);
+  const cur = await d1First(env, 'SELECT url, confirmed_at FROM product_photo WHERE base_sku = ?', [base]);
+  if (b.undo) {
+    await env.DB.prepare('UPDATE product_photo SET confirmed_by = NULL, confirmed_at = NULL WHERE base_sku = ?').bind(base).run();
+    await productPhotoLog(env, base, cur && cur.url, cur && cur.url, 'unconfirm', who);
+    return J({ ok: true, base, confirmed: false });
+  }
+  const url = String(b.url || '').trim();
+  if (!/^https?:\/\//i.test(url)) return J({ ok: false, error: 'No photo to confirm — add one first (✏️, Admins)' }, 400);
+  // The photo on the screen must still be the one on file (it may have just been updated).
+  const shown = cur ? (cur.url || '') : ((await productPhotoMap(env, [base]))[base] || '');
+  if (shown !== url) return J({ ok: false, error: 'This photo just changed — tap ↻ and check the new one', current: shown }, 409);
+  if (cur) await env.DB.prepare('UPDATE product_photo SET confirmed_by = ?, confirmed_at = ? WHERE base_sku = ?').bind(who, now, base).run();
+  else await env.DB.prepare('INSERT INTO product_photo (base_sku, url, source, set_by, updated_at, confirmed_by, confirmed_at) VALUES (?,?,?,?,?,?,?)').bind(base, url, 'listing', 'listing', now, who, now).run();
+  await productPhotoLog(env, base, url, url, 'confirm', who);
+  return J({ ok: true, base, confirmed: true, confirmedBy: who, confirmedAt: now });
 }
 async function productPhotoMap(env, bases) {
   const out = {}; if (!env.DB) return out;
@@ -2490,9 +2589,15 @@ async function productPhotoSave(request, env) {
   if (!base) return cors(new Response(JSON.stringify({ ok: false, error: 'baseSku required' }), { status: 400, headers: { 'Content-Type': 'application/json' } }));
   if (url && !/^https?:\/\//i.test(url)) return cors(new Response(JSON.stringify({ ok: false, error: 'The photo link must start with http:// or https://' }), { status: 400, headers: { 'Content-Type': 'application/json' } }));
   await productPhotoTable(env);
+  const before = await d1First(env, 'SELECT url FROM product_photo WHERE base_sku = ?', [base]).catch(() => null);
+  // A new photo by hand goes back to "Not confirmed" (check it in 🖼 Photos);
+  // set by hand, so it's never replaced automatically.
   await env.DB.prepare(`INSERT INTO product_photo (base_sku, url, source, set_by, updated_at) VALUES (?,?,?,?,?)
-    ON CONFLICT(base_sku) DO UPDATE SET url = excluded.url, source = excluded.source, set_by = excluded.set_by, updated_at = excluded.updated_at`)
+    ON CONFLICT(base_sku) DO UPDATE SET url = excluded.url, source = excluded.source, set_by = excluded.set_by, updated_at = excluded.updated_at,
+      confirmed_by = CASE WHEN product_photo.url = excluded.url THEN product_photo.confirmed_by END,
+      confirmed_at = CASE WHEN product_photo.url = excluded.url THEN product_photo.confirmed_at END`)
     .bind(base, url, 'manual', String(b.editedBy || '').slice(0, 40), new Date().toISOString()).run();
+  await productPhotoLog(env, base, before && before.url, url, 'manual', b.editedBy);
   return cors(new Response(JSON.stringify({ ok: true, baseSku: base, photo: url }), { headers: { 'Content-Type': 'application/json' } }));
 }
 async function productPhotoSearch(url, env) {
@@ -3372,9 +3477,11 @@ async function inventoryOutboxCheck(request, env) {
     if (!r) { out[id] = { state: 'missing' }; continue; }
     if (!r.response_json) { out[id] = { state: 'processing' }; continue; }
     let res = {}; try { res = JSON.parse(r.response_json); } catch (_) {}
-    const logIds = [res.d1Id, res.outD1Id, res.inD1Id].map(x => parseInt(x) || 0).filter(Boolean);
+    // a ⚠ UPC report is kept in its own table (it changes no stock)
+    const tbl = r.endpoint === 'inventory/containers/upc-issue' ? 'pallet_upc_issue' : 'inventory_log';
+    const logIds = (tbl === 'inventory_log' ? [res.d1Id, res.outD1Id, res.inD1Id] : [res.issueId]).map(x => parseInt(x) || 0).filter(Boolean);
     let found = 0;
-    for (const lid of logIds) if (await d1First(env, 'SELECT id FROM inventory_log WHERE id=?', [lid]).catch(() => null)) found++;
+    for (const lid of logIds) if (await d1First(env, `SELECT id FROM ${tbl} WHERE id=?`, [lid]).catch(() => null)) found++;
     out[id] = found && found === logIds.length ? { state: 'saved', result: res } : { state: 'missing', lost: logIds };
   }
   return cors(new Response(JSON.stringify({ ok: true, results: out }), { headers: { 'Content-Type': 'application/json' } }));
@@ -4048,7 +4155,8 @@ async function inventoryContainers(env) {
   const moved = {}; ((await env.DB.prepare(`SELECT p.title, SUM(x.moved) AS moved FROM (${_PALLET_MOVED_SQL} GROUP BY m.pallet_id) x
     JOIN reorder_pallet p ON p.id = x.pallet_id GROUP BY p.title`).all()).results || []).forEach(r => { moved[r.title] = r.moved || 0; });
   const onWay = {}; ((await env.DB.prepare('SELECT title, COUNT(*) AS n FROM reorder_incoming GROUP BY title').all()).results || []).forEach(r => { onWay[r.title] = r.n; });
-  return cors(new Response(JSON.stringify({ ok: true, containers: rows.map(r => ({ ...r, moved: moved[r.title] || 0, notStockedIn: onWay[r.title] || 0 })) }), { headers: { 'Content-Type': 'application/json' } }));
+  const upc = {}; (await d1All(env, 'SELECT title, COUNT(*) AS n FROM pallet_upc_issue WHERE fixed_at IS NULL GROUP BY title')).forEach(r => { upc[r.title] = r.n; });
+  return cors(new Response(JSON.stringify({ ok: true, containers: rows.map(r => ({ ...r, moved: moved[r.title] || 0, notStockedIn: onWay[r.title] || 0, upcIssues: upc[r.title] || 0 })) }), { headers: { 'Content-Type': 'application/json' } }));
 }
 // GET /inventory/pallets/received — Warehouse Lookup → Item Locator: the
 // boxes of a 📦 Received container still on their pallet (not yet moved to a
@@ -4088,7 +4196,59 @@ async function inventoryContainerPallets(url, env) {
   const title = (url.searchParams.get('title') || '').trim(), q = (url.searchParams.get('q') || '').trim().toUpperCase();
   if (!title && !q) return cors(new Response(JSON.stringify({ ok: false, error: 'Pick a container or type something to search' }), { status: 400, headers: { 'Content-Type': 'application/json' } }));
   const r = await containerPalletLines(env, { title, q });
-  return cors(new Response(JSON.stringify({ ok: true, lines: r.lines, truncated: r.truncated }), { headers: { 'Content-Type': 'application/json' } }));
+  const upcIssues = title ? await upcIssueList(env, title, false) : [];
+  return cors(new Response(JSON.stringify({ ok: true, lines: r.lines, truncated: r.truncated, upcIssues }), { headers: { 'Content-Type': 'application/json' } }));
+}
+// ⚠ UPC doesn't match — the reports on a container, with what helps track it
+// down: the item (name, SKU / part #, the packing list line), the code that
+// was scanned and which part # that code is saved for, the UPCs on file for
+// the part, who reported it and when.
+async function upcIssueList(env, title, withFixed) {
+  const rows = await d1All(env, `SELECT * FROM pallet_upc_issue WHERE title = ?${withFixed ? '' : ' AND fixed_at IS NULL'} ORDER BY id DESC LIMIT 300`, [title]);
+  const out = [];
+  for (const r of rows) {
+    const part = String(r.part || '').toUpperCase(), code = String(r.code || '').toUpperCase(), z = code.replace(/^0+/, '');
+    const line = r.line_id ? await d1First(env, 'SELECT raw_part, description, cases, pcs, pcs_per_ctn, po FROM reorder_pallet WHERE id = ?', [r.line_id]).catch(() => null) : null;
+    const name = await d1First(env, 'SELECT name FROM master_list WHERE UPPER(TRIM(part_num)) = ? AND COALESCE(name, \'\') != \'\' LIMIT 1', [part]).catch(() => null);
+    const onFile = await d1All(env, 'SELECT sku, inside_upc, outside_upc FROM upc WHERE UPPER(TRIM(sku)) = ?', [part]);
+    const fix = await d1First(env, 'SELECT inside_upc, outside_upc FROM reorder_fix WHERE part = ?', [part]).catch(() => null);
+    const codeIs = z && /^\d{6,}$/.test(z) ? (await d1All(env, `SELECT DISTINCT sku FROM upc WHERE LTRIM(TRIM(inside_upc), '0') = ? OR LTRIM(TRIM(outside_upc), '0') = ?`, [z, z])).map(x => x.sku) : [];
+    out.push({ id: r.id, title: r.title, vendor: r.vendor, pallet: r.pallet, lineId: r.line_id, part, code: r.code || '', note: r.note || '', by: r.by_user || '', at: r.at,
+      fixedBy: r.fixed_by || '', fixedAt: r.fixed_at || '',
+      name: (name && name.name) || (line && line.description) || '', filePart: (line && line.raw_part) || '', po: (line && line.po) || '',
+      boxes: line ? line.cases : null, pcsPerBox: line ? (line.pcs_per_ctn || (line.cases ? Math.round((line.pcs || 0) / line.cases * 100) / 100 : null)) : null,
+      upcsOnFile: onFile.map(u => ({ sku: u.sku, inside: u.inside_upc || '', outside: u.outside_upc || '' })).concat(fix && (fix.inside_upc || fix.outside_upc) ? [{ sku: part + ' (Reorder fix)', inside: fix.inside_upc || '', outside: fix.outside_upc || '' }] : []),
+      codeSavedFor: codeIs });
+  }
+  return out;
+}
+// POST /inventory/containers/upc-issue — report a box whose UPC doesn't match
+// its part # (from the phone's outbox: never saved twice).
+// { title, vendor, pallet, lineId, part, code, note } · { fix: id } marks one fixed (management).
+async function inventoryUpcIssue(request, env, session) {
+  const J = (o, st) => cors(new Response(JSON.stringify(o), { status: st || 200, headers: { 'Content-Type': 'application/json' } }));
+  const b = await request.json().catch(() => ({}));
+  await reorderFixTables(env);
+  const who = String((session && (session.displayName || session.username)) || b.initials || '').slice(0, 40);
+  if (b.fix) {
+    const roles = (session && session.roles) || [];
+    if (!roles.some(r => r === 'mgmt' || r === 'admin' || r === 'owner')) return J({ ok: false, error: 'Only management can mark it fixed' }, 403);
+    const r = await env.DB.prepare('UPDATE pallet_upc_issue SET fixed_by = ?, fixed_at = ? WHERE id = ? AND fixed_at IS NULL').bind(who, new Date().toISOString(), parseInt(b.fix, 10) || 0).run();
+    return J({ ok: true, fixed: (r.meta && r.meta.changes) || 0 });
+  }
+  const rid = b._requestId ? String(b._requestId).slice(0, 80) : '';
+  if (rid) { const claim = await claimRequestId(env, rid, 'inventory/containers/upc-issue'); if (claim.isDuplicate) return J(claim.cachedResponse || { ok: true, duplicate: true }); }
+  const fail = async (o, st) => { if (rid) await env.DB.prepare('DELETE FROM processed_requests WHERE request_id=?').bind(rid).run().catch(() => {}); return J(o, st); };
+  const title = String(b.title || '').trim(), pallet = String(b.pallet || '').trim(), part = String(b.part || '').trim().toUpperCase();
+  if (!title || !pallet || !part) return fail({ ok: false, error: 'Open the pallet and pick the item first' }, 400);
+  const v = String(b.vendor || ''), vu = String(vendorUnmask(v));
+  const pr = (await d1All(env, 'SELECT vendor FROM reorder_pallet WHERE title = ? AND pallet = ?', [title, pallet])).filter(r => r.vendor === v || r.vendor === vu || String(vendorCode(r.vendor || '')) === v)[0];
+  if (!pr) return fail({ ok: false, error: 'That pallet is not on file — reopen 🚢 Container here' }, 400);
+  const r = await env.DB.prepare('INSERT INTO pallet_upc_issue (title, vendor, pallet, line_id, part, code, note, by_user, at) VALUES (?,?,?,?,?,?,?,?,?)')
+    .bind(title, pr.vendor, pallet, parseInt(b.lineId, 10) || null, part.slice(0, 80), String(b.code || '').trim().toUpperCase().slice(0, 80), String(b.note || '').slice(0, 300), who, new Date().toISOString()).run();
+  const res = { ok: true, issueId: r.meta && r.meta.last_row_id };
+  if (rid) await recordRequestResult(env, rid, res);
+  return J(res);
 }
 // Pallet lines of a container (title), of every received container matching
 // q, and/or of one pallet (pallet + vendor). detail: each stock spot also
@@ -4189,7 +4349,9 @@ async function palletViewData(env, title, vendor, pallet) {
     soft(partBoxUpcs(env, parts), {}, 'box UPCs'),
     d1All(env, `SELECT e.id, e.part, e.boxes, e.pcs_per_box AS pcs, e.cases, e.to_location AS toLoc, e.by_user AS by, e.at, l.status FROM pallet_extra e
       LEFT JOIN inventory_log l ON l.id = e.log_id WHERE e.title = ? AND e.vendor = ? AND e.pallet = ? ORDER BY e.id`, [title, v, String(pallet)]).catch(() => [])]);
-  return { ok: true, lines, recs, photos, upcs, extras, warn };
+  // ⚠ UPC reports still open on this pallet (line ids) — the item says "reported"
+  const upcIssueLines = (await d1All(env, 'SELECT DISTINCT line_id FROM pallet_upc_issue WHERE title = ? AND vendor = ? AND pallet = ? AND fixed_at IS NULL', [title, v, String(pallet)]).catch(() => [])).map(r => r.line_id).filter(Boolean);
+  return { ok: true, lines, recs, photos, upcs, extras, upcIssueLines, warn };
 }
 // GET /inventory/containers/pallet-view?title=&vendor=&pallet=
 async function inventoryPalletView(url, env) {
@@ -4534,17 +4696,18 @@ async function inventoryTransferLog(request, env) {
       if (!pl) return cors(new Response(JSON.stringify({ ok: false, error: 'That pallet line no longer exists — reopen 🚢 Container here' }), { status: 400, headers: { 'Content-Type': 'application/json' } }));
       if ((parseFloat(cases) || 0) > pl.left + 1e-9) return cors(new Response(JSON.stringify({ ok: false,
         error: `Pallet ${pl.pallet} only has ${pl.left} box(es) of ${pl.part} left (${pl.cases} on the pallet, ${pl.moved} already moved)` }), { status: 400, headers: { 'Content-Type': 'application/json' } }));
-      // 🚢 scan & go moves without looking the part up again: check here that
-      // the spot still has the cases (minus what is waiting for approval).
-      if (body.checkHave) {
-        const P = String(partNum).trim().toUpperCase(), F = String(fromLocation).trim().toUpperCase();
-        const fr = (fromMasterId && await d1First(env, 'SELECT cases FROM master_list WHERE id = ? AND UPPER(TRIM(part_num)) = ?', [fromMasterId, P]))
-          || await d1First(env, 'SELECT cases FROM master_list WHERE UPPER(TRIM(part_num)) = ? AND UPPER(TRIM(location)) = ? ORDER BY cases DESC LIMIT 1', [P, F]);
-        const pend = await d1First(env, `SELECT SUM(cases) AS c FROM inventory_log WHERE status = 'Pending' AND type IN ('OUT','TRANSFER_OUT') AND cases > 0 AND UPPER(part_num) = ? AND UPPER(location) = ?`, [P, F]);
-        const have = Math.max(0, (fr ? parseFloat(fr.cases) || 0 : 0) - (pend ? parseFloat(pend.c) || 0 : 0));
-        if ((parseFloat(cases) || 0) > have + 1e-9) return cors(new Response(JSON.stringify({ ok: false,
-          error: `Only ${Math.round(have * 1000) / 1000} case(s) of ${P} at ${fromLocation} (some may be waiting for approval)` }), { status: 400, headers: { 'Content-Type': 'application/json' } }));
-      }
+    }
+    // Scan & go moves (🚢 Container here, 📷 Put away from the cart) are sent
+    // without looking the part up again: check here that the spot still has
+    // the cases (minus what is waiting for approval).
+    if (body.checkHave) {
+      const P = String(partNum).trim().toUpperCase(), F = String(fromLocation).trim().toUpperCase();
+      const fr = (fromMasterId && await d1First(env, 'SELECT cases FROM master_list WHERE id = ? AND UPPER(TRIM(part_num)) = ?', [fromMasterId, P]))
+        || await d1First(env, 'SELECT cases FROM master_list WHERE UPPER(TRIM(part_num)) = ? AND UPPER(TRIM(location)) = ? ORDER BY cases DESC LIMIT 1', [P, F]);
+      const pend = await d1First(env, `SELECT SUM(cases) AS c FROM inventory_log WHERE status = 'Pending' AND type IN ('OUT','TRANSFER_OUT') AND cases > 0 AND UPPER(part_num) = ? AND UPPER(location) = ?`, [P, F]);
+      const have = Math.max(0, (fr ? parseFloat(fr.cases) || 0 : 0) - (pend ? parseFloat(pend.c) || 0 : 0));
+      if ((parseFloat(cases) || 0) > have + 1e-9) return cors(new Response(JSON.stringify({ ok: false,
+        error: `Only ${Math.round(have * 1000) / 1000} case(s) of ${P} at ${fromLocation} (some may be waiting for approval)` }), { status: 400, headers: { 'Content-Type': 'application/json' } }));
     }
 
     // Use the actual Grabbed moment (or Added, if never confirmed) as this
@@ -4851,6 +5014,13 @@ async function inventoryTransferVerifyInner(request, env) {
     const fromN = String(d1FromRow.price || '');
     const fromName = String(d1FromRow.name || outItem.name || '');
 
+    // Never move more than the FROM spot has: it would be cut to 0 while the
+    // full count is added at the TO spot — boxes out of nothing (old total +
+    // added − taken must equal the new total). Stays Pending until the count
+    // is fixed (Audit / Found on Shelf), then it can be approved.
+    if (cases > (parseFloat(d1FromRow.cases) || 0) + 1e-9) {
+      return cors(new Response(JSON.stringify({ ok: false, error: `Only ${Math.round((parseFloat(d1FromRow.cases) || 0) * 1000) / 1000} case(s) of ${partNum} at ${fromLocation} — can't move ${cases}. Fix the count there first (Audit / Found on Shelf), then approve.` }), { status: 409, headers: { 'Content-Type': 'application/json' } }));
+    }
     // 1. Subtract cases from FROM — atomic SQL, resolved by id (see above)
     await env.DB.prepare(`UPDATE master_list SET cases = MAX(0, cases - ?), updated_at = ? WHERE ${fromWhereClause}`)
       .bind(cases, ts, fromWhereValue).run();
@@ -6600,6 +6770,8 @@ const _app = {
       if (path === '/inventory/containers/line-history' && method === 'GET') return await palletLineHistory(url, env);
       if (path === '/inventory/containers/scan' && method === 'GET') return await inventoryContainerScan(url, env);
       if (path === '/inventory/containers/extra' && method === 'POST') return await inventoryPalletExtra(request, env, session);
+      if (path === '/inventory/containers/upc-issue' && method === 'POST') return await inventoryUpcIssue(request, env, session);
+      if (path === '/inventory/containers/upc-issues' && method === 'GET') { await reorderFixTables(env); return cors(new Response(JSON.stringify({ ok: true, issues: await upcIssueList(env, (url.searchParams.get('title') || '').trim(), url.searchParams.get('all') === '1') }), { headers: { 'Content-Type': 'application/json' } })); }
       if (path === '/inventory/pallets/received' && method === 'GET') return await inventoryPalletsReceived(env);
       if (path === '/inventory/containers/soldout' && method === 'GET') return await inventoryContainerSoldOut(url, env);
       if (path === '/inventory/incoming' && method === 'GET') return await inventoryIncoming(url, env);
@@ -6787,6 +6959,16 @@ const _app = {
       if (path === '/inventory/location-plan' && method === 'GET')  return await locationPlanList(env);
       if (path === '/inventory/location-plan' && method === 'POST') return await locationPlanSave(request, env, session);
       if (path === '/inventory/location-plan/log' && method === 'GET') return await locationPlanLog(url, env);
+      // 🖼 Location Plan → Photos: review / ✓ confirm parent photos (management).
+      if (path === '/inventory/photo-review' && method === 'GET') {
+        if (session.pin_level !== 'mgmt') return cors(new Response(JSON.stringify({ ok: false, error: 'Management access required' }), { status: 403, headers: { 'Content-Type': 'application/json' } }));
+        return await productPhotoReview(env);
+      }
+      if (path === '/inventory/photo-confirm' && method === 'POST') return await productPhotoConfirm(request, env, session);
+      if (path === '/inventory/photo-refresh' && method === 'POST') {
+        if (session.pin_level !== 'mgmt') return cors(new Response(JSON.stringify({ ok: false, error: 'Management access required' }), { status: 403, headers: { 'Content-Type': 'application/json' } }));
+        return cors(new Response(JSON.stringify({ ok: true, ...(await productPhotoDailyRefresh(env, 7)) }), { headers: { 'Content-Type': 'application/json' } }));
+      }
       if (path === '/inventory/containers/pallet-recs' && method === 'POST') return await palletRecs(request, env);
       if (path === '/inventory/containers/pallet-open' && method === 'POST') return await palletOpenLog(request, env, session);
       if (path === '/inventory/containers/where' && method === 'POST') return await palletWhere(request, env);
@@ -6979,6 +7161,8 @@ const _app = {
     // window a phone might realistically be offline and replaying its
     // queue, no need to keep these indefinitely.
     if (now.getUTCHours() === 0 && min === 0) ctx.waitUntil(cleanProcessedRequests(env));
+    // 🖼 Daily: parent photos not ✓ confirmed take the newest Pack & Ship order photo.
+    if (hr === 11 && min === 0) ctx.waitUntil(productPhotoDailyRefresh(env, 2).catch(e => console.error('[photo refresh]', e.message)));
     // Amazon FBM listings on the same ASIN as our FBA listing → its part #, hourly.
     if (min === 0) ctx.waitUntil(reorderAutoSameAsin(env).catch(e => console.error('[auto same ASIN]', e.message)));
     // Archive Scan_Log/Manifest_Log rows older than 45 days, runs at midnight
