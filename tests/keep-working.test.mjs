@@ -888,5 +888,32 @@ console.log('\nContainer here: a failed fast load never stops the scan');
     (ih.match(/➕ Extra items found on this pallet<\/button>/g) || []).length === 2 && /window\.xfrExtraOnPallet = function\(btn\)/.test(ih) && /xfrGo\.pendingExtra === title/.test(ih), null);
 }
 
+// Owner: "Container here — keyboards keep popping up; 1 suggested spot; not on this pallet → Extra package / Cancel;
+// extra boxes 1–8 / More, pieces 100…1000 / Other, then scan the spot; no waiting after the spot scan; WiFi down → resent later".
+console.log('\nContainer here: no keyboard, tap buttons, no waiting, WiFi-safe');
+{
+  const { readFileSync } = await import('node:fs');
+  const ih = readFileSync(fileURLToPath(new URL('../inventory.html', import.meta.url)), 'utf8');
+  const names = [...ih.matchAll(/\n\s*function\s+((?:inv|xfr)[\w$]*)\s*\(/g), ...ih.matchAll(/\n\s*window\.((?:inv|xfr)[\w$]*)\s*=\s*function/g)].map(m => m[1]);
+  const dup = names.filter((n, i) => names.indexOf(n) !== i);
+  check('no two page functions share a name (one silently replaces the other — it broke the Pull List key and a pop-up)', dup.length === 0, dup);
+  check('scan box never opens the phone keyboard; ⌨ types on purpose; Moving is − N + with a number pad; no typing boxes in the steps',
+    /id="xfr-cont-box" type="text" inputmode="none"/.test(ih) && /window\.xfrTypeOn = function/.test(ih) && /window\.xfrGoStep = function/.test(ih) && /window\.xfrKeypad = function/.test(ih)
+      && !/id="xfr-go-loc"|id="xfr-ex-boxes"|id="xfr-ex-pcs"|id="xfr-ex-loc"|id="xfr-ex-part"/.test(ih), null);
+  check('one suggested spot', /R\.recs\.slice\(0, 1\)/.test(ih) && /Suggested spot:/.test(ih), null);
+  check('a box not on the pallet → pop-up: ➕ Extra package found on this pallet / Cancel', /function xfrNotOnPallet\(part, lines\)/.test(ih) && /➕ Extra package found on this pallet<\/button>/.test(ih), null);
+  check('extra boxes: 1–8 + More…, pieces 100 150 200 250 300 500 1000 + Other…, then scan the spot', /\[1, 2, 3, 4, 5, 6, 7, 8\]/.test(ih) && /\[100, 150, 200, 250, 300, 500, 1000\]/.test(ih) && /More…/.test(ih) && /Other…/.test(ih), null);
+  check('no waiting: the move and the extra show at once and save through the phone outbox (WiFi down → sent later, never twice)',
+    /invPost\(W \+ '\/inventory\/containers\/extra'/.test(ih) && /function xfrGoAddPhoneQueue\(\)/.test(ih) && /No waiting \(owner\): the screen moves on right away/.test(ih), null);
+  const T = 'Container FAST';
+  const rid = 'kw-extra-dup-1';
+  const before = sq.prepare("SELECT COUNT(*) n FROM inventory_log WHERE notes LIKE '[EXTRA ON PALLET]%'").get().n;
+  const d1 = await post('/inventory/containers/extra', { title: T, vendor: 'KW', pallet: '7', part: '61-1-1=5', boxes: 1, pcsPerBox: 50, toLocation: 'C1=6-1-9', _requestId: rid });
+  const d2 = await post('/inventory/containers/extra', { title: T, vendor: 'KW', pallet: '7', part: '61-1-1=5', boxes: 1, pcsPerBox: 50, toLocation: 'C1=6-1-9', _requestId: rid });
+  const oc = await post('/inventory/outbox/check', { ids: [rid] });
+  check('extra sent twice from the outbox (same id): saved once, and the outbox check says "saved"', d1.ok && d2.ok && sq.prepare("SELECT COUNT(*) n FROM inventory_log WHERE notes LIKE '[EXTRA ON PALLET]%'").get().n === before + 1
+    && sq.prepare("SELECT cases FROM master_list WHERE location = 'C1=6-1-9'").get().cases === 1 && oc.results[rid].state === 'saved', { d1, d2, oc });
+}
+
 console.log('\n' + (failed ? '❌ ' + failed + ' check(s) FAILED' : '✅ all ' + passed + ' checks passed') + '\n');
 process.exit(failed ? 1 : 0);

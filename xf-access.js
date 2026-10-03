@@ -392,7 +392,7 @@ window.addEventListener('pageshow', function (e) { if (e.persisted) location.rel
   function on(v) { try { if (v === undefined) return localStorage.getItem(PREF) === '1'; localStorage.setItem(PREF, v ? '1' : '0'); } catch (e) {} return false; }
   function isBox(el) {
     if (!el || !el.matches) return false;
-    if (el.matches('input[autocomplete="username"], input[type="password"], #xf-nokb-pop *')) return false;
+    if (el.matches('input[autocomplete="username"], input[type="password"], #xf-nokb-pop *, [data-kb-typing]')) return false; // ⌨ "type it" on purpose (Container here)
     if (el.tagName === 'TEXTAREA') return true;
     return el.tagName === 'INPUT' && TYPES.test(el.getAttribute('type') || 'text');
   }

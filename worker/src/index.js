@@ -4235,21 +4235,25 @@ async function inventoryPalletExtra(request, env, session) {
   const J = (o, st) => cors(new Response(JSON.stringify(o), { status: st || 200, headers: { 'Content-Type': 'application/json' } }));
   const b = await request.json().catch(() => ({}));
   await reorderFixTables(env);
+  // Sent from the phone's outbox (no WiFi → sent again later): never saved twice.
+  const rid = b._requestId ? String(b._requestId).slice(0, 80) : '';
+  if (rid) { const claim = await claimRequestId(env, rid, 'inventory/containers/extra'); if (claim.isDuplicate) return J(claim.cachedResponse || { ok: true, duplicate: true }); }
+  const fail = async (o, st) => { if (rid) await env.DB.prepare('DELETE FROM processed_requests WHERE request_id=?').bind(rid).run().catch(() => {}); return J(o, st); };
   const title = String(b.title || '').trim(), pallet = String(b.pallet || '').trim(), part = String(b.part || '').trim().toUpperCase();
   const loc = String(b.toLocation || '').trim().toUpperCase().replace(/\s+/g, '');
   const boxes = parseFloat(b.boxes) || 0, pcs = parseFloat(b.pcsPerBox) || 0;
-  if (!title || !pallet) return J({ ok: false, error: 'Open the pallet first' }, 400);
-  if (!part || isUpcLike(part)) return J({ ok: false, error: 'Scan the box (or type its part #)' }, 400);
-  if (!(boxes > 0)) return J({ ok: false, error: 'How many extra boxes?' }, 400);
-  if (!(pcs > 0)) return J({ ok: false, error: 'How many pieces in each box?' }, 400);
-  if (!/^[A-Z0-9]+=\S+$/.test(loc) && loc !== 'GARAGE') return J({ ok: false, error: 'Scan the shelf label they went to (e.g. C1=1-2-3)' }, 400);
+  if (!title || !pallet) return fail({ ok: false, error: 'Open the pallet first' }, 400);
+  if (!part || isUpcLike(part)) return fail({ ok: false, error: 'Scan the box (or type its part #)' }, 400);
+  if (!(boxes > 0)) return fail({ ok: false, error: 'How many extra boxes?' }, 400);
+  if (!(pcs > 0)) return fail({ ok: false, error: 'How many pieces in each box?' }, 400);
+  if (!/^[A-Z0-9]+=\S+$/.test(loc) && loc !== 'GARAGE') return fail({ ok: false, error: 'Scan the shelf label they went to (e.g. C1=1-2-3)' }, 400);
   const rows = await d1All(env, 'SELECT vendor, description FROM reorder_pallet WHERE title = ? AND pallet = ?', [title, pallet]);
   const v = String(b.vendor || ''), vu = String(vendorUnmask(v));
   const pr = rows.filter(r => r.vendor === v || r.vendor === vu || String(vendorCode(r.vendor || '')) === v)[0];
-  if (!pr) return J({ ok: false, error: 'That pallet is not on file — reopen 🚢 Container here' }, 400);
+  if (!pr) return fail({ ok: false, error: 'That pallet is not on file — reopen 🚢 Container here' }, 400);
   const known = await d1First(env, `SELECT name FROM master_list WHERE UPPER(TRIM(part_num)) = ? UNION ALL SELECT description FROM reorder_pallet WHERE UPPER(part) = ? UNION ALL SELECT name FROM products WHERE UPPER(TRIM(sku)) = ? LIMIT 1`, [part, part, part]).catch(() => null)
     || await d1First(env, 'SELECT sku AS name FROM upc WHERE UPPER(TRIM(sku)) = ? LIMIT 1', [part]).catch(() => null);
-  if (!known) return J({ ok: false, error: `Part # "${part}" isn't in SKU Mgr or the UPC list — check the box label` }, 400);
+  if (!known) return fail({ ok: false, error: `Part # "${part}" isn't in SKU Mgr or the UPC list — check the box label` }, 400);
   const who = String((session && (session.displayName || session.username)) || b.initials || '').slice(0, 40);
   const ex = await d1First(env, 'SELECT id, name, units_per_case FROM master_list WHERE UPPER(TRIM(part_num)) = ? AND UPPER(TRIM(location)) = ? AND ABS(COALESCE(units_per_case, 0) - ?) < 0.0001 ORDER BY cases DESC LIMIT 1', [part, loc, pcs]);
   const other = ex ? null : await d1First(env, 'SELECT units_per_case AS u FROM master_list WHERE UPPER(TRIM(part_num)) = ? AND UPPER(TRIM(location)) = ? AND cases > 0 LIMIT 1', [part, loc]);
@@ -4258,7 +4262,7 @@ async function inventoryPalletExtra(request, env, session) {
   const lr = await inventoryLog(new Request('https://internal/inventory/log', { method: 'POST', body: JSON.stringify({ type: 'IN', partNum: part, sku: part,
     name: String((ex && ex.name) || (known && known.name) || '').slice(0, 200), location: loc, cases, initials: who || 'OPS', notes: note, isNew: !ex, masterId: ex ? ex.id : null, _boxPcs: ex ? 0 : pcs }) }), env);
   const ld = await lr.json().catch(() => ({}));
-  if (!ld.ok) return J({ ok: false, error: ld.error || 'Stock In failed' }, 500);
+  if (!ld.ok) return fail({ ok: false, error: ld.error || 'Stock In failed' }, 500);
   await env.DB.prepare('INSERT INTO pallet_extra (title, vendor, pallet, part, boxes, pcs_per_box, cases, to_location, log_id, by_user, at) VALUES (?,?,?,?,?,?,?,?,?,?,?)')
     .bind(title, pr.vendor, pallet, part, boxes, pcs, cases, loc, ld.d1Id || null, who, new Date().toISOString()).run();
   // Owner: the boxes go into SKU Mgr right away so they can be used — approved
@@ -4272,8 +4276,10 @@ async function inventoryPalletExtra(request, env, session) {
     const vd = await vr.json().catch(() => ({}));
     approved = !!vd.ok; if (!approved) approveError = vd.error || 'approve failed';
   }
-  return J({ ok: true, part, cases, boxes, pcsPerBox: pcs, ownRow: !!other, location: loc, d1Id: ld.d1Id, autoApproved: approved,
-    warn: approveError ? 'Logged, but not added to SKU Mgr yet (' + approveError + ') — approve it in Inventory → Review' : '' });
+  const res = { ok: true, part, cases, boxes, pcsPerBox: pcs, ownRow: !!other, location: loc, d1Id: ld.d1Id, autoApproved: approved,
+    warn: approveError ? 'Logged, but not added to SKU Mgr yet (' + approveError + ') — approve it in Inventory → Review' : '' };
+  if (rid) await recordRequestResult(env, rid, res);
+  return J(res);
 }
 
 // GET /inventory/containers/soldout?title= — 🔥 which pallets of a container
