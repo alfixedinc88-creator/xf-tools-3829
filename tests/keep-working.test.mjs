@@ -915,5 +915,66 @@ console.log('\nContainer here: no keyboard, tap buttons, no waiting, WiFi-safe')
     && sq.prepare("SELECT cases FROM master_list WHERE location = 'C1=6-1-9'").get().cases === 1 && oc.results[rid].state === 'saved', { d1, d2, oc });
 }
 
+console.log('\nTransfer SKU/Part#/UPC: scan → spot → tap how many → cart → scan box / how many / spot; never more than the spot has');
+{
+  const { readFileSync } = await import('node:fs');
+  const ih = readFileSync(fileURLToPath(new URL('../inventory.html', import.meta.url)), 'utf8');
+  check('no 1–4 explanation list — one line says what to scan now', /Scan the box you need to move/.test(ih) && !/st\(4, 'At the new spot/.test(ih), null);
+  check('scan box has no phone keyboard (⌨ to type); Product Name still types', /id="xfr-search-inp" type="text" inputmode="none"/.test(ih) && /id="xfr-search-kb"/.test(ih) && /if \(mode === 'name'\) \{ inp\.removeAttribute\('inputmode'\)/.test(ih), null);
+  check('how many boxes: buttons 1–10 + More… (number pad), no typing boxes in grab / put-away', /function xfrNumGrid\(fn, max\)/.test(ih) && /\[1,2,3,4,5,6,7,8,9,10\]/.test(ih) && /xfrNumGrid\('xfrGrabAdd', have\)/.test(ih) && /xfrNumGrid\('xfrPutN', item\.cases\)/.test(ih)
+    && !/id="xfr-grab-n"|id="xfr-grab-loc"|id="xfr-put-n"|id="xfr-put-loc"|id="xfr-put-box"/.test(ih) && /id="xfr-put-scan" type="text" inputmode="none"/.test(ih), null);
+  check('put-away: no waiting, through the phone outbox, Worker re-checks the spot (checkHave), refused → back in the cart',
+    /\[SCAN PUT-AWAY\]'\)\.trim\(\), checkHave: true/.test(ih) && /refused: the boxes go back in the cart/.test(ih) && /function xfrLkCache\(code, d\)/.test(ih), null);
+  // Inventory rule: a transfer can never move more than its FROM spot has
+  // (it used to cut FROM to 0 and still add the full count at TO — boxes out of nothing).
+  const fromRow = sq.prepare("SELECT id, cases FROM master_list WHERE part_num = '61-1-1=5' AND location = 'C1=6-1-9'").get();
+  const pcsAll = () => sq.prepare('SELECT SUM(cases * COALESCE(units_per_case, 0)) t FROM master_list').get().t;
+  const casesAll = () => sq.prepare('SELECT SUM(cases) t FROM master_list').get().t;
+  const p0 = pcsAll(), c0 = casesAll();
+  const ch = await post('/inventory/transfer', { partNum: '61-1-1=5', sku: '61-1-1=5', fromLocation: 'C1=6-1-9', fromMasterId: fromRow.id, toLocation: 'C1=6-1-8', isNewLocation: true, cases: fromRow.cases + 4, initials: 'KW', checkHave: true });
+  check('put-away of more boxes than the spot has → refused by the Worker (checkHave), nothing logged', ch.ok === false && /Only .* case\(s\) of 61-1-1=5/.test(ch.error || ''), ch);
+  const t = await post('/inventory/transfer', { partNum: '61-1-1=5', sku: '61-1-1=5', fromLocation: 'C1=6-1-9', fromMasterId: fromRow.id, toLocation: 'C1=6-1-8', isNewLocation: true, cases: fromRow.cases + 4, initials: 'KW' });
+  const v = await post('/inventory/transfer/verify', { action: 'Approved', outItem: { partNum: '61-1-1=5', location: 'C1=6-1-9', cases: fromRow.cases + 4, rowIndex: t.outD1Id, d1Id: t.outD1Id, masterId: fromRow.id }, inItem: { location: 'C1=6-1-8', isNew: true, rowIndex: t.inD1Id, d1Id: t.inD1Id } });
+  check('approving a transfer of ' + (fromRow.cases + 4) + ' from a spot with ' + fromRow.cases + ' is refused — cases ' + c0 + ' = ' + casesAll() + ', pieces ' + p0 + ' = ' + pcsAll(),
+    v.ok === false && /can't move/.test(v.error || '') && casesAll() === c0 && pcsAll() === p0 && !sq.prepare("SELECT 1 FROM master_list WHERE location = 'C1=6-1-8'").get(), { v, c: casesAll(), p: pcsAll() });
+}
+
+console.log('\nContainer here: ⚠ box UPC doesn\'t match its part # (confirm → on the container until fixed)');
+{
+  const { readFileSync } = await import('node:fs');
+  const ih = readFileSync(fileURLToPath(new URL('../inventory.html', import.meta.url)), 'utf8');
+  check('warning first (UPC code is not matching with SKU?) with Confirm / Cancel; sent through the phone outbox',
+    /UPC code is not matching with SKU\?/.test(ih) && /onclick="xfrUpcConfirm\(\)"/.test(ih) && /invPost\(W \+ '\/inventory\/containers\/upc-issue'/.test(ih), null);
+  const rid = 'kw-upc-dup-1', T = 'Container FAST';
+  const line = sq.prepare("SELECT id, part FROM reorder_pallet WHERE title = ? AND pallet = '7' LIMIT 1").get(T);
+  const u1 = await post('/inventory/containers/upc-issue', { title: T, vendor: 'KW', pallet: '7', lineId: line && line.id, part: (line && line.part) || '61-1-1=5', code: '00999000111222', _requestId: rid });
+  const u2 = await post('/inventory/containers/upc-issue', { title: T, vendor: 'KW', pallet: '7', lineId: line && line.id, part: (line && line.part) || '61-1-1=5', code: '00999000111222', _requestId: rid });
+  const oc = await post('/inventory/outbox/check', { ids: [rid] });
+  check('report sent twice (same id): saved once, who / when / scanned code kept; outbox check says "saved"', u1.ok && u2.ok && sq.prepare("SELECT COUNT(*) n FROM pallet_upc_issue WHERE code = '00999000111222'").get().n === 1 && oc.results[rid].state === 'saved', { u1, u2, oc });
+  const cl = await get('/inventory/containers');
+  const cp = await get('/inventory/containers/pallets?title=' + encodeURIComponent(T));
+  check('shows on the container (⚠ count) and in its pallets list, with the item, pallet and scanned code', (cl.containers.find(c => c.title === T) || {}).upcIssues === 1
+    && cp.upcIssues.length === 1 && cp.upcIssues[0].pallet === '7' && cp.upcIssues[0].code === '00999000111222' && cp.upcIssues[0].by, { c: cl.containers.find(c => c.title === T), u: cp.upcIssues });
+  await post('/inventory/containers/upc-issue', { fix: u1.issueId });
+  check('✓ Fixed → off the container, kept in the record', !(await get('/inventory/containers/pallets?title=' + encodeURIComponent(T))).upcIssues.length && sq.prepare('SELECT fixed_at FROM pallet_upc_issue WHERE id = ?').get(u1.issueId).fixed_at, null);
+}
+
+console.log('\nLocation Plan → 🖼 Photos: ✓ confirmed photos never change; the rest take the newest Pack & Ship photo daily');
+{
+  const ins = (t, items) => sq.prepare('INSERT INTO ship_manifest_log (date, tracking, line_items) VALUES (?,?,?)').run(nyToday, t, JSON.stringify(items));
+  ins('1ZKWPH1', [{ s: '77-1-1=2', q: 1, b: '77-1-1', i: 'https://img.example/a1.jpg' }, { s: '77-1-2=2', q: 1, b: '77-1-2', i: 'https://img.example/b1.jpg' }]);
+  await post('/inventory/photo-refresh', {});
+  const c = await post('/inventory/photo-confirm', { base: '77-1-1', url: 'https://img.example/a1.jpg' });
+  ins('1ZKWPH2', [{ s: '77-1-1=2', q: 1, b: '77-1-1', i: 'https://img.example/a2.jpg' }, { s: '77-1-2=2', q: 1, b: '77-1-2', i: 'https://img.example/b2.jpg' }]);
+  await post('/inventory/photo-refresh', {});
+  const ph = await get('/inventory/photos?bases=77-1-1,77-1-2');
+  check('confirmed photo kept (a1), not confirmed takes the newer one (b1 → b2)', c.ok && ph.photos['77-1-1'] === 'https://img.example/a1.jpg' && ph.photos['77-1-2'] === 'https://img.example/b2.jpg', { c, ph });
+  check('every change is in the record', sq.prepare("SELECT COUNT(*) n FROM product_photo_log WHERE base_sku = '77-1-2' AND old_url = 'https://img.example/b1.jpg' AND new_url = 'https://img.example/b2.jpg'").get().n === 1, null);
+  const rv = await get('/inventory/photo-review');
+  check('Photos list: confirmed by / when, and Not confirmed ones', rv.ok && rv.items.some(i => i.base === '77-1-1' && i.confirmedAt && i.confirmedBy) && rv.items.some(i => i.base === '77-1-2' && !i.confirmedAt), null);
+  const pr = await call('/inventory/photo-confirm', { method: 'POST', headers: { 'X-Cred-Token': pk.token, 'Content-Type': 'application/json' }, body: JSON.stringify({ base: '77-1-2', url: 'https://img.example/b2.jpg' }) });
+  check('only management can confirm', pr.status === 403, pr.status);
+}
+
 console.log('\n' + (failed ? '❌ ' + failed + ' check(s) FAILED' : '✅ all ' + passed + ' checks passed') + '\n');
 process.exit(failed ? 1 : 0);
