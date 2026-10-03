@@ -290,7 +290,7 @@ window.addEventListener('pageshow', function (e) { if (e.persisted) location.rel
       if (pw && visible(pw)) { focus(pw); return; }
     }
     var btns = card ? [].slice.call(card.querySelectorAll('button')).filter(function (x) { return !x.classList.contains('xf-osk-link') && visible(x) && !x.disabled; }) : [];
-    var go = btns.filter(function (x) { return /sign\s*in|log\s*in|login|confirm|verify|unlock|continue|ok\b|submit/i.test(x.textContent); })[0] || btns[0];
+    var go = btns.filter(function (x) { return /sign\s*in|log\s*in|login|confirm|verify|unlock|continue|ok\b|submit|entrar|iniciar|confirmar|verificar|desbloquear|continuar|aceptar|enviar/i.test(x.textContent); })[0] || btns[0];
     hide(true);
     if (go) go.click();
     else target.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', keyCode: 13, which: 13, bubbles: true }));
