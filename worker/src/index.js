@@ -1045,6 +1045,12 @@ async function reorderFixTables(env) {
   // count changes (it was already counted there); who / when / where kept.
   await env.DB.prepare(`CREATE TABLE IF NOT EXISTS pallet_recheck (id INTEGER PRIMARY KEY AUTOINCREMENT, title TEXT, vendor TEXT, pallet TEXT,
     line_id INTEGER, part TEXT, code TEXT, location TEXT, by_user TEXT, at TEXT)`).run();
+  // ✅ This pallet is done (owner): a box the pallet list has but nobody can
+  // find on the pallet — the worker checked and confirmed it's short. Only a
+  // record (who / when / how many / what was moved where): no count changes;
+  // the office checks it (Audit) and marks it ✓ Fixed.
+  await env.DB.prepare(`CREATE TABLE IF NOT EXISTS pallet_short (id INTEGER PRIMARY KEY AUTOINCREMENT, title TEXT, vendor TEXT, pallet TEXT,
+    line_id INTEGER, part TEXT, cases REAL, moved REAL, short REAL, note TEXT, by_user TEXT, at TEXT, fixed_by TEXT, fixed_at TEXT)`).run();
   await env.DB.prepare(`CREATE TABLE IF NOT EXISTS reorder_fix (part TEXT PRIMARY KEY, description TEXT, outside_upc TEXT, inside_upc TEXT,
     vendor TEXT, asin TEXT, case_qty REAL, by_user TEXT, updated_at TEXT)`).run();
   // History of everything done on the tab (fixes, part # corrections,
@@ -3483,8 +3489,8 @@ async function inventoryOutboxCheck(request, env) {
     if (!r.response_json) { out[id] = { state: 'processing' }; continue; }
     let res = {}; try { res = JSON.parse(r.response_json); } catch (_) {}
     // a ⚠ UPC report is kept in its own table (it changes no stock)
-    const tbl = r.endpoint === 'inventory/containers/upc-issue' ? 'pallet_upc_issue' : r.endpoint === 'inventory/containers/recheck' ? 'pallet_recheck' : 'inventory_log';
-    const logIds = (tbl === 'inventory_log' ? [res.d1Id, res.outD1Id, res.inD1Id] : tbl === 'pallet_recheck' ? [res.checkId] : [res.issueId]).map(x => parseInt(x) || 0).filter(Boolean);
+    const tbl = r.endpoint === 'inventory/containers/upc-issue' ? 'pallet_upc_issue' : r.endpoint === 'inventory/containers/recheck' ? 'pallet_recheck' : r.endpoint === 'inventory/containers/short' ? 'pallet_short' : 'inventory_log';
+    const logIds = (tbl === 'inventory_log' ? [res.d1Id, res.outD1Id, res.inD1Id] : tbl === 'pallet_recheck' ? [res.checkId] : tbl === 'pallet_short' ? [res.shortId] : [res.issueId]).map(x => parseInt(x) || 0).filter(Boolean);
     let found = 0;
     for (const lid of logIds) if (await d1First(env, `SELECT id FROM ${tbl} WHERE id=?`, [lid]).catch(() => null)) found++;
     out[id] = found && found === logIds.length ? { state: 'saved', result: res } : { state: 'missing', lost: logIds };
@@ -4208,7 +4214,8 @@ async function inventoryContainerPallets(url, env) {
   const extras = title ? await d1All(env, `SELECT e.id, e.vendor, e.pallet, e.part, e.boxes, e.pcs_per_box AS pcs, e.to_location AS toLoc, e.by_user AS by, e.at, l.status FROM pallet_extra e
     LEFT JOIN inventory_log l ON l.id = e.log_id WHERE e.title = ? ORDER BY e.id`, [title]).catch(() => []) : [];
   const rechecks = title ? await d1All(env, 'SELECT vendor, pallet, line_id AS lineId, part, location, by_user AS by, at FROM pallet_recheck WHERE title = ? ORDER BY id', [title]).catch(() => []) : [];
-  return cors(new Response(JSON.stringify({ ok: true, lines: r.lines, truncated: r.truncated, upcIssues, extras, rechecks }), { headers: { 'Content-Type': 'application/json' } }));
+  const shorts = title ? await palletShortList(env, title) : [];
+  return cors(new Response(JSON.stringify({ ok: true, lines: r.lines, truncated: r.truncated, upcIssues, extras, rechecks, shorts }), { headers: { 'Content-Type': 'application/json' } }));
 }
 // ⚠ UPC doesn't match — the reports on a container, with what helps track it
 // down: the item (name, SKU / part #, the packing list line), the code that
@@ -4252,6 +4259,53 @@ async function inventoryPalletRecheck(request, env, session) {
   const r = await env.DB.prepare('INSERT INTO pallet_recheck (title, vendor, pallet, line_id, part, code, location, by_user, at) VALUES (?,?,?,?,?,?,?,?,?)')
     .bind(title, pr.vendor, pallet, parseInt(b.lineId, 10) || null, part.slice(0, 80), String(b.code || '').trim().toUpperCase().slice(0, 80), loc.slice(0, 60), who, new Date().toISOString()).run();
   const res = { ok: true, checkId: r.meta && r.meta.last_row_id };
+  if (rid) await recordRequestResult(env, rid, res);
+  return J(res);
+}
+// Open "short" reports on a container (✓ Fixed ones are left out).
+async function palletShortList(env, title) {
+  return d1All(env, 'SELECT id, vendor, pallet, line_id AS lineId, part, cases, moved, short, note, by_user AS by, at FROM pallet_short WHERE title = ? AND fixed_at IS NULL ORDER BY id', [title]).catch(() => []);
+}
+// POST /inventory/containers/short { title, vendor, pallet, lineId, part, short, note }
+// — ✅ This pallet is done: the worker looked and the pallet really has fewer
+// boxes than its list. A record only (no count changes, the office checks it).
+// The Worker works out cases / moved from the pallet itself. From the phone's
+// outbox (saved once). { fix: id } marks one fixed (management).
+async function inventoryPalletShort(request, env, session) {
+  const J = (o, st) => cors(new Response(JSON.stringify(o), { status: st || 200, headers: { 'Content-Type': 'application/json' } }));
+  const b = await request.json().catch(() => ({}));
+  await reorderFixTables(env);
+  const who = String((session && (session.displayName || session.username)) || b.initials || '').slice(0, 40);
+  if (b.fix) {
+    const roles = (session && session.roles) || [];
+    if (!roles.some(r => r === 'mgmt' || r === 'admin' || r === 'owner')) return J({ ok: false, error: 'Only management can mark it fixed' }, 403);
+    const r = await env.DB.prepare('UPDATE pallet_short SET fixed_by = ?, fixed_at = ? WHERE id = ? AND fixed_at IS NULL').bind(who, new Date().toISOString(), parseInt(b.fix, 10) || 0).run();
+    return J({ ok: true, fixed: (r.meta && r.meta.changes) || 0 });
+  }
+  const rid = b._requestId ? String(b._requestId).slice(0, 80) : '';
+  if (rid) { const claim = await claimRequestId(env, rid, 'inventory/containers/short'); if (claim.isDuplicate) return J(claim.cachedResponse || { ok: true, duplicate: true }); }
+  const fail = async (o, st) => { if (rid) await env.DB.prepare('DELETE FROM processed_requests WHERE request_id=?').bind(rid).run().catch(() => {}); return J(o, st); };
+  const title = String(b.title || '').trim(), pallet = String(b.pallet || '').trim(), lineId = parseInt(b.lineId, 10) || 0;
+  if (!title || !pallet || !lineId) return fail({ ok: false, error: 'Open the pallet first' }, 400);
+  const line = await d1First(env, 'SELECT id, vendor, part, cases FROM reorder_pallet WHERE id = ? AND title = ? AND pallet = ?', [lineId, title, pallet]);
+  if (!line) return fail({ ok: false, error: 'That item is not on this pallet — reopen 🚢 Container here' }, 400);
+  const mv = await d1First(env, _PALLET_MOVED_SQL + ' AND m.pallet_id = ? GROUP BY m.pallet_id', [lineId]).catch(() => null);
+  const cases = +line.cases || 0, moved = +((mv && mv.moved) || 0), left = Math.max(0, cases - moved);
+  const short = Math.min(left, Math.max(0, parseFloat(b.short) || left));
+  if (!(short > 0)) return fail({ ok: false, error: 'Nothing left on the pallet for ' + line.part + ' — all its boxes are moved' }, 400);
+  // Already reported (same item, still open) → keep the one record, up to date.
+  const open = await d1First(env, 'SELECT id FROM pallet_short WHERE line_id = ? AND fixed_at IS NULL', [lineId]);
+  let shortId;
+  if (open) {
+    await env.DB.prepare('UPDATE pallet_short SET cases = ?, moved = ?, short = ?, note = ?, by_user = ?, at = ? WHERE id = ?')
+      .bind(cases, moved, short, String(b.note || '').slice(0, 200), who, new Date().toISOString(), open.id).run();
+    shortId = open.id;
+  } else {
+    const r = await env.DB.prepare('INSERT INTO pallet_short (title, vendor, pallet, line_id, part, cases, moved, short, note, by_user, at) VALUES (?,?,?,?,?,?,?,?,?,?,?)')
+      .bind(title, line.vendor, pallet, lineId, String(line.part).toUpperCase(), cases, moved, short, String(b.note || '').slice(0, 200), who, new Date().toISOString()).run();
+    shortId = r.meta && r.meta.last_row_id;
+  }
+  const res = { ok: true, shortId, part: line.part, cases, moved, short };
   if (rid) await recordRequestResult(env, rid, res);
   return J(res);
 }
@@ -4385,7 +4439,8 @@ async function palletViewData(env, title, vendor, pallet) {
   // ⚠ UPC reports still open on this pallet (line ids) — the item says "reported"
   const upcIssueLines = (await d1All(env, 'SELECT DISTINCT line_id FROM pallet_upc_issue WHERE title = ? AND vendor = ? AND pallet = ? AND fixed_at IS NULL', [title, v, String(pallet)]).catch(() => [])).map(r => r.line_id).filter(Boolean);
   const rechecks = await d1All(env, 'SELECT line_id AS lineId, part, location, by_user AS by, at FROM pallet_recheck WHERE title = ? AND vendor = ? AND pallet = ? ORDER BY id', [title, v, String(pallet)]).catch(() => []);
-  return { ok: true, lines, recs, photos, upcs, extras, upcIssueLines, rechecks, warn };
+  const shorts = (await palletShortList(env, title)).filter(x => x.vendor === v && String(x.pallet) === String(pallet));
+  return { ok: true, lines, recs, photos, upcs, extras, upcIssueLines, rechecks, shorts, warn };
 }
 // GET /inventory/containers/pallet-view?title=&vendor=&pallet=
 async function inventoryPalletView(url, env) {
@@ -6806,6 +6861,7 @@ const _app = {
       if (path === '/inventory/containers/extra' && method === 'POST') return await inventoryPalletExtra(request, env, session);
       if (path === '/inventory/containers/upc-issue' && method === 'POST') return await inventoryUpcIssue(request, env, session);
       if (path === '/inventory/containers/recheck' && method === 'POST') return await inventoryPalletRecheck(request, env, session);
+      if (path === '/inventory/containers/short' && method === 'POST') return await inventoryPalletShort(request, env, session);
       if (path === '/inventory/containers/upc-issues' && method === 'GET') { await reorderFixTables(env); return cors(new Response(JSON.stringify({ ok: true, issues: await upcIssueList(env, (url.searchParams.get('title') || '').trim(), url.searchParams.get('all') === '1') }), { headers: { 'Content-Type': 'application/json' } })); }
       if (path === '/inventory/pallets/received' && method === 'GET') return await inventoryPalletsReceived(env);
       if (path === '/inventory/containers/soldout' && method === 'GET') return await inventoryContainerSoldOut(url, env);
