@@ -1133,5 +1133,14 @@ console.log('\nContainer here: ✅ This pallet is done — what is not moved, sh
   check('…needs a sign-in', (await call('/inventory/containers/short', { method: 'POST', body: '{}' })).status === 401, null);
 }
 
+console.log('\nHistory: the Cancel button stays on screen (pinned right, phones too)');
+{
+  const { readFileSync } = await import('node:fs');
+  const ih = readFileSync(fileURLToPath(new URL('../inventory.html', import.meta.url)), 'utf8');
+  check('Cancel is offered on a Verified Stock In / Out and its column is pinned to the right edge (not pushed off by the wide Part Total column)',
+    /r\.status === 'Verified' && \(typ === 'IN' \|\| typ === 'OUT'\) && r\.id\) \{\s*cancelCell = '<button onclick="invCancelHistoryEntry\(/.test(ih)
+      && /position:sticky;right:0;z-index:1[^']*>Cancel<\/th>'/.test(ih) && /white-space:nowrap;position:sticky;right:0;background:' \+ bg \+ '[^>]*>' \+ cancelCell \+ '<\/td>'/.test(ih), null);
+}
+
 console.log('\n' + (failed ? '❌ ' + failed + ' check(s) FAILED' : '✅ all ' + passed + ' checks passed') + '\n');
 process.exit(failed ? 1 : 0);
