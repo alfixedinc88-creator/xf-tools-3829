@@ -27,7 +27,7 @@
      clearly rather than implying it's already solved.
 */
 
-const CACHE_VERSION = 'v144-transfer-scroll-fix-put-first-x-20261003';
+const CACHE_VERSION = 'v145-training-transfer-20261003';
 const CACHE_NAME    = 'xfitting-shell-' + CACHE_VERSION;
 const WORKER_URL    = 'https://xfitting-lookup.alfixedinc88.workers.dev';
 
