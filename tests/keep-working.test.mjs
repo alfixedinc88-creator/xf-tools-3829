@@ -1101,5 +1101,37 @@ console.log('\nVeeqo: keep stock up (at or below 88 → 888) so labels can print
   globalThis.fetch = realFetch; delete env.VEEQO_API_KEY;
 }
 
+console.log('\nContainer here: ✅ This pallet is done — what is not moved, short on record, ➕ More / ✓ Finish all');
+{
+  const { readFileSync } = await import('node:fs');
+  const ih = readFileSync(fileURLToPath(new URL('../inventory.html', import.meta.url)), 'utf8');
+  check('pallet screen: "✅ This pallet is done" → not moved (where / who / when / how many), 📷 Found it / ✗ Not on the pallet; matched → ➕ More in the pallet / ✓ Finish all',
+    /This pallet is done — check it/.test(ih) && /window\.xfrPalDone = function/.test(ih) && /Found it — move it/.test(ih) && /Not on the pallet/.test(ih)
+      && /More in the pallet/.test(ih) && /Finish all — next pallet/.test(ih) && /xfrPalMore = function\(\) \{[^}]*xfrExtraStart\(\)/.test(ih) && /xfrPalFinish = function\(\) \{[\s\S]{0,300}?xfrGoBack\(\)/.test(ih), null);
+  check('…pops up by itself at the last box moved', /if \(!xfrPalState\(\)\.unchecked\.length\) xfrPalDone\(\);/.test(ih), null);
+  check('…short goes through the phone outbox (no WiFi → saved on the phone)', /invPost\(W \+ '\/inventory\/containers\/short'/.test(ih), null);
+  const T = 'Container FAST', line = sq.prepare("SELECT id, cases FROM reorder_pallet WHERE title = ? AND pallet = '7'").get(T);
+  const mv = sq.prepare("SELECT COALESCE(SUM(m.cases), 0) n FROM pallet_move m LEFT JOIN inventory_log l ON l.id = m.out_log_id WHERE m.pallet_id = ? AND COALESCE(l.status, '') != 'Rejected' AND l.cancelled_at IS NULL").get(line.id).n;
+  const left = line.cases - mv;
+  const cases0 = sq.prepare('SELECT SUM(cases) t FROM master_list').get().t, logs0 = sq.prepare('SELECT COUNT(*) n FROM inventory_log').get().n, rid = 'kw-short-dup-1';
+  const pkH = { 'X-Cred-Token': (await (await call('/auth/login', { method: 'POST', body: '{"username":"picker","password":"password1"}' })).json()).token, 'Content-Type': 'application/json' };
+  const sh = b => call('/inventory/containers/short', { method: 'POST', headers: pkH, body: JSON.stringify(b) }).then(r => r.json());
+  const s1 = await sh({ title: T, vendor: 'KW', pallet: '7', lineId: line.id, short: 999, _requestId: rid });
+  const s2 = await sh({ title: T, vendor: 'KW', pallet: '7', lineId: line.id, short: 999, _requestId: rid });
+  const rows = sq.prepare('SELECT * FROM pallet_short WHERE line_id = ?').all(line.id), oc = await post('/inventory/outbox/check', { ids: [rid] });
+  check('✗ Not on the pallet (a worker, sent twice): kept once — pallet list / moved / short worked out by the Worker (never more than is left), who / when; outbox check "saved"',
+    left > 0 && s1.ok && s2.ok && rows.length === 1 && rows[0].cases === line.cases && rows[0].moved === mv && rows[0].short === left && rows[0].by_user === 'PK' && rows[0].at && oc.results[rid].state === 'saved', { left, s1, s2, rows, oc });
+  check('…a short changes NO inventory number (SKU Mgr total and History unchanged)', sq.prepare('SELECT SUM(cases) t FROM master_list').get().t === cases0 && sq.prepare('SELECT COUNT(*) n FROM inventory_log').get().n === logs0, null);
+  const cp = await get('/inventory/containers/pallets?title=' + encodeURIComponent(T)), pv = await get('/inventory/containers/pallet-view?title=' + encodeURIComponent(T) + '&vendor=KW&pallet=7');
+  check('…shown on the container (next to the pallet) and on the pallet screen', cp.shorts.some(x => x.lineId === line.id && x.short === left && x.by === 'PK') && pv.shorts.some(x => x.lineId === line.id), { s: cp.shorts, v: pv.shorts });
+  const bad = await sh({ title: T, vendor: 'KW', pallet: '9', lineId: line.id });
+  check('…an item not on that pallet is refused', bad.ok === false, bad);
+  const fixPk = await call('/inventory/containers/short', { method: 'POST', headers: pkH, body: JSON.stringify({ fix: rows[0].id }) });
+  check('…only management marks it ✓ Fixed', fixPk.status === 403, fixPk.status);
+  const fx = await post('/inventory/containers/short', { fix: rows[0].id });
+  check('…✓ Fixed → off the container, kept in the record (who / when)', fx.ok && !(await get('/inventory/containers/pallets?title=' + encodeURIComponent(T))).shorts.length && !!sq.prepare('SELECT fixed_at FROM pallet_short WHERE id = ?').get(rows[0].id).fixed_at, fx);
+  check('…needs a sign-in', (await call('/inventory/containers/short', { method: 'POST', body: '{}' })).status === 401, null);
+}
+
 console.log('\n' + (failed ? '❌ ' + failed + ' check(s) FAILED' : '✅ all ' + passed + ' checks passed') + '\n');
 process.exit(failed ? 1 : 0);

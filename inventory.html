@@ -115,6 +115,7 @@ function invObPatch(id, fn) { var a = invObRead(); a.forEach(function (x) { if (
 function invObDrop(id) { invObWrite(invObRead().filter(function (x) { return x.id !== id; })); }
 function invObNewId() { try { if (crypto.randomUUID) return crypto.randomUUID(); } catch (e) {} return 'ob-' + Date.now() + '-' + Math.random().toString(36).slice(2, 10); }
 function invObLabel(path, b) {
+  if (path.indexOf('containers/short') >= 0) return '📉 Short on pallet ' + (b.pallet || '') + ': ' + (b.part || '') + ' × ' + (b.short || '?') + ' box(es) not on the pallet';
   if (path.indexOf('containers/recheck') >= 0) return 'Box put at ' + (b.location || '') + ' (already counted): ' + (b.part || '') + ' · Pallet ' + (b.pallet || '');
   if (path.indexOf('containers/upc-issue') >= 0) return '⚠ UPC doesn\'t match: ' + (b.part || '') + ' (scanned ' + (b.code || '?') + ') · Pallet ' + (b.pallet || '');
   if (path.indexOf('containers/extra') >= 0) return 'Extra on pallet ' + (b.pallet || '') + ': ' + (b.part || '') + ' × ' + (b.boxes || '?') + ' box(es) of ' + (b.pcsPerBox || '?') + ' pcs @ ' + (b.toLocation || '');
@@ -8747,6 +8748,97 @@ window.invCredLogin = async function() {
         xfrGoRender();
       }).catch(function() { rc.status = 'Failed'; xfrGoRender(); });
   };
+  // ✅ This pallet is done (owner): before leaving a pallet, check it.
+  // Anything still not moved → say what (how many, and what was moved
+  // already: where, who, when) and let them look: 📷 Found it → move it, or
+  // ✗ Not on the pallet → recorded as short (no count changes, the office
+  // checks it). Too many moved / moves not saved / extras are listed too.
+  // Everything matched → ➕ More in the pallet (Extra items found) or
+  // ✓ Finish all (back to 🚢 Container here to scan the next pallet).
+  function xfrMoveRowsHtml(l) {
+    var pcs = xfrLinePcs(l), mv = l.moves || [];
+    if (!mv.length) return '<div style="font-size:12px;color:var(--text3)">Nothing moved yet</div>';
+    return mv.map(function(m) {
+      return '<div style="font-size:12px;margin-top:2px"><b>' + xfrN(m.cases) + '</b> box(es)' + (pcs ? ' · ' + xfrN(m.cases * pcs) + ' pcs' : '') + ' → <b style="font-family:var(--mono)">' + (m.kind === 'stockout' ? '🛒 Stock Out' : xfrE(m.to)) + '</b>'
+        + ' <span style="color:var(--text3)">· by ' + xfrE(m.by || '?') + ' · ' + xfrE(xfrT(m.at)) + '</span>'
+        + (m.failed ? ' · <b style="color:var(--red)">✗ NOT moved</b>' : m.phone ? ' · <span style="color:var(--orange)">📶 on this phone</span>' : m.pending ? ' · <span style="color:var(--orange)">waiting approval</span>' : '') + '</div>'; }).join('');
+  }
+  function xfrGoShortOf(l) { return (xfrGo.shorts || []).filter(function(x) { return x.lineId === l.id && x.status !== 'Failed'; })[0] || null; }
+  function xfrPalState() {
+    var L = xfrGo.lines || [];
+    var left = L.filter(function(l) { return l.left > 0; });
+    var shorted = left.filter(function(l) { var x = xfrGoShortOf(l); return x && +x.short + 1e-9 >= +l.left; });
+    return { left: left, shorted: shorted, unchecked: left.filter(function(l) { return shorted.indexOf(l) < 0; }),
+      over: L.filter(function(l) { return l.over > 0; }), failed: L.filter(function(l) { return (l.moves || []).some(function(m) { return m.failed; }); }) };
+  }
+  window.xfrPalDone = function() {
+    var f = xfrGo.focus; if (!f || !(xfrGo.lines || []).length) return;
+    var S = xfrPalState(), E = xfrE;
+    if (!S.left.length && !S.over.length && !S.failed.length) { xfrPalAllMatched(); return; }
+    try { navigator.vibrate && navigator.vibrate([200, 100, 200]); } catch (e) {}
+    var tot = 0, mv = 0, lf = 0; xfrGo.lines.forEach(function(l) { tot += +l.cases || 0; mv += +l.moved || 0; lf += +l.left || 0; });
+    var card = function(color, l, extra) {
+      return '<div style="border:1.5px solid ' + color + ';border-radius:10px;padding:8px 9px;margin-bottom:7px"><div style="display:flex;gap:8px;align-items:center">' + xfrThumb(l.part)
+        + '<div style="flex:1;min-width:0"><div style="font-family:var(--mono);font-weight:800;font-size:16px">' + E(l.part) + '</div><div style="font-size:11px;color:var(--text3)">' + E(l.description || '') + '</div>'
+        + '<div style="font-size:12px">Pallet list <b>' + xfrN(l.cases) + '</b> · moved <b>' + xfrN(l.moved) + '</b>' + (l.left > 0 ? ' · <b style="color:var(--red)">' + xfrN(l.left) + ' not moved</b>' : '') + (l.over > 0 ? ' · <b style="color:var(--red)">' + xfrN(l.over) + ' too many</b>' : '') + '</div></div></div>'
+        + xfrMoveRowsHtml(l) + (extra || '') + '</div>';
+    };
+    var h = '<div style="display:flex;justify-content:space-between;align-items:center"><div style="font-weight:800;font-size:17px;color:var(--orange)">🧱 Pallet ' + E(f.pallet) + ' — not finished yet</div>'
+      + '<button type="button" onclick="xfrPopupClose()" style="background:none;border:none;font-size:24px;color:var(--text3);cursor:pointer">&times;</button></div>'
+      + '<div style="font-size:12px;color:var(--text2);margin:2px 0 6px">Pallet list ' + xfrN(tot) + ' box(es) = moved ' + xfrN(mv) + ' + not moved ' + xfrN(lf) + '</div>';
+    if (S.unchecked.length) h += '<div style="font-weight:800;color:var(--red);margin:8px 0 2px">📦 Still not moved (' + S.unchecked.length + ' item' + (S.unchecked.length === 1 ? '' : 's') + ')</div>'
+      + '<div style="font-size:12px;font-weight:700;margin-bottom:6px">Look on the pallet for each one, then tap:</div>'
+      + S.unchecked.map(function(l) { return card('var(--red)', l, '<div style="display:flex;gap:6px;margin-top:7px">'
+          + '<button type="button" onclick="xfrPalFound(' + l.id + ')" style="flex:1;padding:11px 6px;border-radius:10px;border:none;background:var(--green);color:#fff;font-size:14px;font-weight:800;cursor:pointer">📷 Found it — move it</button>'
+          + '<button type="button" onclick="xfrPalShort(' + l.id + ')" style="flex:1;padding:11px 6px;border-radius:10px;border:none;background:var(--red);color:#fff;font-size:14px;font-weight:800;cursor:pointer">✗ Not on the pallet<div style="font-size:11px;font-weight:600">' + xfrN(l.left) + ' short</div></button></div>'); }).join('');
+    if (S.shorted.length) h += '<div style="font-weight:800;color:var(--orange);margin:10px 0 4px">📉 Short — checked, not on the pallet (' + S.shorted.length + ')</div>'
+      + S.shorted.map(function(l) { var x = xfrGoShortOf(l); return card('var(--orange)', l, '<div style="font-size:12px;font-weight:700;color:var(--orange);margin-top:4px">📉 ' + xfrN(x.short) + ' short · checked by ' + E(x.by || '?') + ' · ' + E(xfrT(x.at))
+          + (x.status === 'Phone' ? ' · 📶 saved on this phone' : x.status === 'Saving' ? ' · saving…' : '') + ' — the office will check it</div>'); }).join('');
+    if (S.over.length) h += '<div style="font-weight:800;color:var(--red);margin:10px 0 4px">✗ Too many moved — check these spots</div>'
+      + S.over.map(function(l) { return card('var(--red)', l); }).join('');
+    if (S.failed.length) h += '<div style="font-weight:800;color:var(--red);margin:10px 0 4px">✗ Moves NOT saved — scan those boxes again</div>'
+      + S.failed.map(function(l) { return card('var(--red)', l); }).join('');
+    var EX = (xfrGo.extras || []).filter(function(e) { return e.status !== 'Rejected'; });
+    if (EX.length) h += '<div style="font-weight:800;color:var(--orange);margin:10px 0 4px">➕ Extra found on this pallet</div>'
+      + EX.map(function(e) { return '<div style="font-size:12px;margin-bottom:3px"><b style="font-family:var(--mono)">' + E(e.part) + '</b> ' + xfrN(e.boxes) + ' box(es) × ' + xfrN(e.pcs) + ' pcs → <b style="font-family:var(--mono)">' + E(e.toLoc) + '</b> · ' + E(e.by || '?') + ' · ' + E(xfrT(e.at)) + '</div>'; }).join('');
+    if (!S.unchecked.length && !S.failed.length) h += '<div style="font-size:12px;color:var(--text2);margin:10px 0 6px">Everything else is moved. The office will check the ' + (S.shorted.length ? 'short' : '') + (S.shorted.length && S.over.length ? ' and ' : '') + (S.over.length ? 'too many moved' : '') + '.</div>' + xfrPalNextBtns();
+    else h += '<button type="button" onclick="xfrPopupClose()" style="width:100%;margin-top:10px;padding:13px;border-radius:12px;border:1.5px solid var(--border);background:var(--bg);color:var(--text2);font-size:15px;font-weight:700;cursor:pointer">↩ Keep working on this pallet</button>';
+    xfrPopup(h);
+  };
+  function xfrPalNextBtns() {
+    return '<button type="button" onclick="xfrPalMore()" style="width:100%;padding:15px;border-radius:12px;border:none;background:var(--orange);color:#fff;font-size:17px;font-weight:800;cursor:pointer;margin-bottom:8px">➕ More in the pallet<div style="font-size:12px;font-weight:600">boxes not on its list → Extra items found on this pallet</div></button>'
+      + '<button type="button" onclick="xfrPalFinish()" style="width:100%;padding:15px;border-radius:12px;border:none;background:var(--green);color:#fff;font-size:17px;font-weight:800;cursor:pointer;margin-bottom:8px">✓ Finish all — next pallet<div style="font-size:12px;font-weight:600">back to 🚢 Container here, scan a box on the new pallet</div></button>'
+      + '<button type="button" onclick="xfrPopupClose()" style="width:100%;padding:11px;border-radius:12px;border:1.5px solid var(--border);background:var(--bg);color:var(--text2);font-size:14px;font-weight:700;cursor:pointer">Stay on this pallet</button>';
+  }
+  function xfrPalAllMatched() {
+    var f = xfrGo.focus, tot = 0, mv = 0; xfrGo.lines.forEach(function(l) { tot += +l.cases || 0; mv += +l.moved || 0; });
+    var EX = (xfrGo.extras || []).filter(function(e) { return e.status !== 'Rejected'; }), exB = EX.reduce(function(a, e) { return a + (+e.boxes || 0); }, 0);
+    try { navigator.vibrate && navigator.vibrate(150); } catch (e) {}
+    xfrPopup('<div style="text-align:center;margin-bottom:10px"><div style="font-size:40px">✅</div><div style="font-weight:800;font-size:18px;color:var(--green)">Pallet ' + xfrE(f.pallet) + ' — everything matched</div>'
+      + '<div style="font-size:13px;color:var(--text2)">' + xfrN(xfrGo.lines.length) + ' item(s) · pallet list ' + xfrN(tot) + ' box(es) = moved ' + xfrN(mv) + (exB ? ' · ➕ ' + xfrN(exB) + ' extra box(es) found' : '') + '</div></div>'
+      + xfrPalNextBtns());
+  }
+  window.xfrPalFound = function(id) { var m = g('xfr-modal'); if (m) m.remove(); xfrGo.extra = null; xfrGoSelect(id); window.scrollTo(0, 0); };
+  window.xfrPalMore = function() { var m = g('xfr-modal'); if (m) m.remove(); xfrExtraStart(); window.scrollTo(0, 0); };
+  window.xfrPalFinish = function() { var m = g('xfr-modal'); if (m) m.remove(); var f = xfrGo.focus;
+    invFlash('✓ Pallet ' + (f ? f.pallet : '') + ' finished — scan a box on the next pallet', 'success'); xfrGoBack(); window.scrollTo(0, 0); };
+  // ✗ Not on the pallet: recorded as short (who / when / how many) — no
+  // count changes. Saved through the phone's outbox (no WiFi → sends later).
+  window.xfrPalShort = function(id) {
+    var f = xfrGo.focus, l = (xfrGo.lines || []).filter(function(x) { return x.id === id; })[0]; if (!f || !l || !(l.left > 0)) return;
+    var who = (INV_CRED_USER && INV_CRED_USER.displayName) || '';
+    var x = { lineId: l.id, part: l.part, cases: l.cases, moved: l.moved, short: l.left, by: who, at: new Date().toISOString(), status: 'Saving' };
+    xfrGo.shorts = (xfrGo.shorts || []).filter(function(y) { return y.lineId !== l.id; }); xfrGo.shorts.push(x);
+    invFlash('📉 ' + l.part + ': ' + xfrN(l.left) + ' short — recorded, the office will check it', 'warn');
+    xfrGoRender(); xfrPalDone();
+    invPost(W + '/inventory/containers/short', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ title: f.title, vendor: f.vendor, pallet: f.pallet,
+      lineId: l.id, part: l.part, short: l.left, initials: who }) })
+      .then(function(r) { return r.json(); }).then(function(d) {
+        x.status = !d || !d.ok ? 'Failed' : d.queued ? 'Phone' : 'Saved';
+        if (x.status === 'Failed') invFlash('✗ Short NOT saved: ' + ((d && d.error) || 'error') + ' — tap ✅ This pallet is done again', 'error');
+        xfrGoRender(); if (g('xfr-modal') && xfrGo.focus === f) xfrPalDone();
+      }).catch(function() { x.status = 'Failed'; xfrGoRender(); if (g('xfr-modal') && xfrGo.focus === f) xfrPalDone(); });
+  };
   // Box scan in one trip (part # + the pallets that have it + that pallet when
   // only one). Not known there (e.g. a box UPC not saved yet) → the full
   // lookup as before, which also asks for the part # and saves the UPC.
@@ -8833,6 +8925,9 @@ window.invCredLogin = async function() {
       var keepRc = (xfrGo.rechecks || []).filter(function(r) { return r.status === 'Saving' || r.status === 'Failed'; })
         .filter(function(r) { return xfrGo.lines.some(function(l) { return l.id === r.lineId; }); });
       xfrGo.rechecks = (d.rechecks || []).concat(keepRc);
+      var keepSh = (xfrGo.shorts || []).filter(function(r) { return r.status === 'Saving' || r.status === 'Failed'; })
+        .filter(function(r) { return xfrGo.lines.some(function(l) { return l.id === r.lineId; }) && !(d.shorts || []).some(function(y) { return y.lineId === r.lineId; }); });
+      xfrGo.shorts = (d.shorts || []).concat(keepSh);
       // ⚠ UPC reports open on the Worker; one the office marked fixed is cleared here too
       var UR = xfrGo.upcReported = xfrGo.upcReported || {}, openU = d.upcIssueLines || [];
       xfrGo.lines.forEach(function(l) { if (UR[l.id] === 'sent' && openU.indexOf(l.id) < 0) delete UR[l.id]; });
@@ -8841,7 +8936,8 @@ window.invCredLogin = async function() {
       var ph = d.photos || {};
       xfrGo.lines.forEach(function(l) { var b = xfrBase(l.part); if (b && !(b in xfrPhotos)) xfrPhotos[b] = ph[b] || ''; });
       if (xfrGo.pendingExtra === title + '|' + vendor + '|' + pallet) { xfrGo.pendingExtra = null; xfrGo.extra = { step: 'box', part: '', boxes: 0, pcs: 0, listPcs: 0 }; }
-      try { if (selId && !silent) xfrGoSelect(selId); else { xfrGoRender(); if (!silent) xfrGoBox(); } }
+      try { if (selId && !silent) xfrGoSelect(selId); else { xfrGoRender(); if (!silent) xfrGoBox(); }
+        if (xfrGo.doneCheck) { xfrGo.doneCheck = false; if (!xfrPalState().unchecked.length) xfrPalDone(); } }
       catch (e) { console.error(e); if (el) el.innerHTML = "<div class='iempty' style='color:var(--red)'>Screen error: " + xfrE(e && e.message || e) + " — send this to the office</div>"; }
     }).catch(function(e) {
       // No WiFi but this pallet is already on the screen: keep it (with what's waiting on the phone).
@@ -8868,6 +8964,9 @@ window.invCredLogin = async function() {
         (l.moves = l.moves || []).push({ cases: c, to: b.toLocation, by: b.initials || '', at: b.addedAt || '', pending: true, phone: true });
       } else if (x.path === '/inventory/containers/extra' && b.title === f.title && String(b.pallet) === String(f.pallet)) {
         xfrGo.extras.push({ part: b.part, boxes: b.boxes, pcs: b.pcsPerBox, toLoc: b.toLocation, by: b.initials || '', at: new Date(x.createdAt || Date.now()).toISOString(), status: 'Phone' });
+      } else if (x.path === '/inventory/containers/short' && b.title === f.title && String(b.pallet) === String(f.pallet)) {
+        xfrGo.shorts = (xfrGo.shorts || []).filter(function(y) { return y.lineId !== b.lineId; });
+        xfrGo.shorts.push({ lineId: b.lineId, part: b.part, short: b.short, by: b.initials || '', at: new Date(x.createdAt || Date.now()).toISOString(), status: 'Phone' });
       } else if (x.path === '/inventory/containers/recheck' && b.title === f.title && String(b.pallet) === String(f.pallet)) {
         (xfrGo.rechecks = xfrGo.rechecks || []).push({ lineId: b.lineId, part: b.part, location: b.location, by: b.initials || '', at: new Date(x.createdAt || Date.now()).toISOString(), status: 'Phone' });
       }
@@ -8923,6 +9022,8 @@ window.invCredLogin = async function() {
       + (match ? '✓' : '⚠') + ' On the pallet ' + xfrN(tot) + ' = moved ' + xfrN(mv) + ' + left ' + xfrN(left)
       + (match ? '' : ' — DOES NOT MATCH, tell the office') + (warns ? ' · ⚠ ' + warns + ' item(s) need a look' : '') + '</div>'
       + '<div style="font-size:12px;color:var(--accent);font-weight:700;margin-bottom:8px">' + (xfrGo.extra ? (!xfrGo.extra.part ? '➕ Extra package: scan the box ↑' : xfrGo.extra.step === 'loc' ? '➕ Extra package: put them away, then scan the shelf label ↑' : '➕ Extra package: tap below') : sel ? 'Put the boxes away, then scan the shelf label ↑' : 'Scan a box on this pallet ↑') + '</div>';
+    var doneBtn = function(mt) { return '<button type="button" onclick="xfrPalDone()" style="width:100%;margin:' + mt + ' 0 8px;padding:10px;border-radius:9px;border:2px solid var(--green);background:var(--green-bg,#dcfce7);color:var(--green);font-size:14px;font-weight:800;cursor:pointer">✅ This pallet is done — check it</button>'; };
+    if (!xfrGo.extra && !sel) h += doneBtn('0');
     if (xfrGo.extra) h += xfrExtraPanel();
     else if (!sel) h += '<button type="button" onclick="xfrExtraStart()" style="width:100%;margin-bottom:8px;padding:8px;border-radius:9px;border:1.5px dashed var(--orange);background:var(--bg);color:var(--orange);font-size:13px;font-weight:700;cursor:pointer">➕ Extra box found on this pallet (not on its list)</button>';
     if (sel && !xfrGo.extra) {
@@ -8964,7 +9065,8 @@ window.invCredLogin = async function() {
         + xfrThumb(l.part) + '<div style="flex:1;min-width:0"><div style="font-family:var(--mono);font-weight:700">' + xfrE(l.part) + '</div>'
         + '<div style="font-size:11px;color:var(--text3);white-space:nowrap;overflow:hidden;text-overflow:ellipsis">' + xfrE(l.description || '') + '</div>'
         + '<div style="font-size:11px;color:var(--green);font-family:var(--mono)">' + (R.recs.length ? xfrE(R.recs[0].location) : '') + '</div>'
-        + (w ? '<div style="font-size:11px;color:#b91c1c;font-weight:700">' + w + '</div>' : '') + '</div>'
+        + (w ? '<div style="font-size:11px;color:#b91c1c;font-weight:700">' + w + '</div>' : '')
+        + (xfrGoShortOf(l) ? '<div style="font-size:11px;color:var(--orange);font-weight:700">📉 ' + xfrN(xfrGoShortOf(l).short) + ' short — checked by ' + xfrE(xfrGoShortOf(l).by || '?') + ', not on the pallet</div>' : '') + '</div>'
         + '<div style="text-align:right;font-size:12px"><b style="color:var(--accent);font-size:16px">' + xfrN(l.left) + '</b><div>left</div></div></div>';
     }).join('') : '<div class="iempty">✓ Everything on this pallet has been moved</div>';
     // ✓ Transferred — folded so the screen stays clear; tap to see the history.
@@ -8997,6 +9099,7 @@ window.invCredLogin = async function() {
     }
     if (xfrGo.moved.length) h += '<div style="margin-top:8px;font-size:12px;color:var(--green)">' + xfrGo.moved.slice(-4).map(function(t) { return '✓ ' + xfrE(t); }).join('<br>') + '</div>';
     // ➕ at the bottom too (owner): found a box that isn't on this pallet's list.
+    if (!xfrGo.extra && !sel) h += doneBtn('12px');
     if (!xfrGo.extra) h += '<button type="button" onclick="xfrExtraStart();window.scrollTo(0,0)" style="width:100%;margin-top:12px;padding:11px;border-radius:9px;border:2px dashed var(--orange);background:var(--orange-bg);color:var(--orange);font-size:14px;font-weight:800;cursor:pointer">➕ Extra items found on this pallet</button>';
     el.innerHTML = h;
   };
@@ -9127,6 +9230,8 @@ window.invCredLogin = async function() {
       if (xfrGo.sel && xfrGo.sel.id === l.id) xfrGo.sel = null;
       invFlash('✓ Moved ' + n + ' × ' + l.part + ' → ' + toLoc, 'success');
       xfrGoRender(); xfrGoBox();
+      // The last box of the pallet (owner): matched → ➕ More / ✓ Finish all; not → what's off.
+      if (!xfrPalState().unchecked.length) xfrPalDone();
       xfrGo.inflight = (xfrGo.inflight || 0) + 1;
       invPost(W + '/inventory/transfer', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({
         partNum: l.part, sku: l.part, name: from.name || l.description || '',
@@ -9164,6 +9269,7 @@ window.invCredLogin = async function() {
           else invFlash(x.queued ? INV_OFFLINE_MSG : '✓ Moved ' + n + ' × ' + l.part + ' → ' + toLoc, x.queued ? 'warn' : 'success');
           xfrGo.moved.push(n + ' × ' + l.part + ' → ' + toLoc);
           invFetchPendingCount();
+          xfrGo.doneCheck = true;
           xfrGoOpen(xfrGo.focus.title, xfrGo.focus.vendor, xfrGo.focus.pallet);
         });
     }).catch(function() { invFlash('Not moved — network error', 'error'); });
@@ -9229,7 +9335,7 @@ window.invCredLogin = async function() {
     var qs = xfrCont.title ? 'title=' + encodeURIComponent(xfrCont.title) : 'q=' + encodeURIComponent(xfrCont.q);
     wFetch(W + '/inventory/containers/pallets?' + qs).then(function(r) { return r.json(); }).then(function(d) {
       if (!d.ok) { box.innerHTML = "<div class='iempty'>" + xfrEsc(d.error || 'Load failed') + "</div>"; return; }
-      xfrCont.lines = d.lines; xfrCont.upcIssues = d.upcIssues || []; xfrCont.extras = d.extras || []; xfrCont.rechecks = d.rechecks || []; xfrContRender(); xfrLoadPhotos(d.lines.map(function(l) { return l.part; }), function() { if (xfrCont.lines === d.lines) xfrContRender(); });
+      xfrCont.lines = d.lines; xfrCont.upcIssues = d.upcIssues || []; xfrCont.extras = d.extras || []; xfrCont.rechecks = d.rechecks || []; xfrCont.shorts = d.shorts || []; xfrContRender(); xfrLoadPhotos(d.lines.map(function(l) { return l.part; }), function() { if (xfrCont.lines === d.lines) xfrContRender(); });
     }).catch(function() { box.innerHTML = "<div class='iempty'>Load failed</div>"; });
   }
   // ⚠ The box UPCs reported as not matching their part # on this container:
@@ -9244,7 +9350,7 @@ window.invCredLogin = async function() {
     return { over: allL.filter(function(l) { return l.over > 0; }),
       extras: (xfrCont.extras || []).filter(function(e) { return same(e) && e.status !== 'Rejected'; }),
       upc: (xfrCont.upcIssues || []).filter(same),
-      rechecks: (xfrCont.rechecks || []).filter(same) };
+      rechecks: (xfrCont.rechecks || []).filter(same), shorts: (xfrCont.shorts || []).filter(same) };
   }
   function xfrPalIssueBadges(gp, allL) {
     var I = xfrPalIssues(gp, allL), k = xfrEsc(JSON.stringify(gp.title + '|' + gp.vendor + '|' + gp.pallet)), out = [];
@@ -9253,6 +9359,7 @@ window.invCredLogin = async function() {
     if (I.extras.length) out.push(b('var(--orange)', '➕ ' + xfrN(I.extras.reduce(function(a, e) { return a + (+e.boxes || 0); }, 0)) + ' extra box(es) found'));
     if (I.upc.length) out.push(b('var(--red)', '⚠ ' + I.upc.length + ' UPC not matching'));
     if (I.rechecks.length) out.push(b('var(--orange)', '🔎 ' + I.rechecks.length + ' scanned again'));
+    if (I.shorts.length) out.push(b('var(--red)', '📉 ' + xfrN(I.shorts.reduce(function(a, x) { return a + (+x.short || 0); }, 0)) + ' box(es) short'));
     return out.join('');
   }
   function xfrT(iso) { try { return iso ? new Date(iso).toLocaleString('en-US', { timeZone: 'America/New_York', month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' }) : ''; } catch (e) { return ''; } }
@@ -9275,7 +9382,15 @@ window.invCredLogin = async function() {
     if (I.rechecks.length) h += sec('var(--orange)', '🔎 Box scanned again after all were moved', I.rechecks.map(function(r) {
       return card('var(--orange)', '<b style="font-family:var(--mono)">' + E(r.part) + '</b> · 1 box put at <b style="font-family:var(--mono)">' + E(r.location) + '</b> (already counted there)'
         + '<div style="font-size:11px;color:var(--text3)">' + E(r.by || '?') + ' · ' + E(xfrT(r.at)) + '</div>'); }).join(''));
-    if (!I.over.length && !I.extras.length && !I.upc.length && !I.rechecks.length) h += '<div class="iempty">✓ Nothing wrong on this pallet</div>';
+    var mgS = ((INV_CRED_USER && INV_CRED_USER.roles) || []).some(function(r) { return r === 'mgmt' || r === 'admin' || r === 'owner'; });
+    if (I.shorts.length) h += sec('var(--red)', '📉 Short — checked, not on the pallet', I.shorts.map(function(x) {
+      var l = allL.filter(function(y) { return y.id === x.lineId; })[0];
+      return card('var(--red)', '<div style="display:flex;gap:8px;align-items:center">' + xfrThumb(x.part) + '<div><b style="font-family:var(--mono)">' + E(x.part) + '</b>'
+        + '<div style="font-size:12px">Pallet list <b>' + xfrN(x.cases) + '</b> · moved <b>' + xfrN(x.moved) + '</b> · <b style="color:var(--red)">' + xfrN(x.short) + ' short</b></div>'
+        + '<div style="font-size:11px;color:var(--text3)">checked by ' + E(x.by || '?') + ' · ' + E(xfrT(x.at)) + '</div></div></div>'
+        + ((l && l.moves) || []).map(function(m) { return '<div style="font-size:11px;color:var(--text3)">' + xfrN(m.cases) + ' → <b style="font-family:var(--mono);color:var(--text)">' + (m.kind === 'stockout' ? '🛒 Stock Out' : E(m.to)) + '</b> · ' + E(m.by) + ' · ' + E(xfrT(m.at)) + '</div>'; }).join('')
+        + (mgS ? '<button type="button" onclick="xfrShortFix(' + x.id + ')" style="margin-top:6px;padding:7px 12px;border-radius:8px;border:1.5px solid var(--green);background:var(--bg);color:var(--green);font-size:12px;font-weight:800;cursor:pointer">✓ Fixed</button>' : '')); }).join(''));
+    if (!I.over.length && !I.extras.length && !I.upc.length && !I.rechecks.length && !I.shorts.length) h += '<div class="iempty">✓ Nothing wrong on this pallet</div>';
     xfrPopup(h);
   };
   window.xfrUpcList = function(pallet) {
@@ -9297,6 +9412,14 @@ window.invCredLogin = async function() {
           + '<div style="font-size:11px;color:var(--text3);margin-top:4px">Reported by ' + E(u.by || '?') + ' · ' + E(xfrFmtT(u.at)) + '</div>'
           + (mg ? '<button type="button" onclick="xfrUpcFix(' + u.id + ')" style="margin-top:6px;padding:7px 12px;border-radius:8px;border:1.5px solid var(--green);background:var(--bg);color:var(--green);font-size:12px;font-weight:800;cursor:pointer">✓ Fixed</button>' : '')
           + '</div>'; }).join('') : '<div class="iempty">Nothing open</div>'));
+  };
+  window.xfrShortFix = function(id) {
+    wFetch(W + '/inventory/containers/short', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ fix: id }) })
+      .then(function(r) { return r.json(); }).then(function(d) {
+        if (!d.ok) { invFlash(d.error || 'Not saved', 'error'); return; }
+        xfrCont.shorts = (xfrCont.shorts || []).filter(function(x) { return x.id !== id; });
+        invFlash('✓ Marked fixed', 'success'); xfrPopupClose(); xfrContRender();
+      }).catch(function() { invFlash('Not saved — no WiFi?', 'error'); });
   };
   window.xfrUpcFix = function(id) {
     wFetch(W + '/inventory/containers/upc-issue', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ fix: id }) })
