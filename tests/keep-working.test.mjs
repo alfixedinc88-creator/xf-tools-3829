@@ -1055,11 +1055,22 @@ console.log('\nVeeqo: keep stock up (at or below 88 → 888) so labels can print
   check('settings must make sense ("at or below" lower than "set to")', bad.status === 400, bad.status);
   await post('/veeqo/stock-topup', { on: false });
   stock[11].available_stock_level = 5;
-  const cronTick = async () => { const ps = []; await worker.scheduled({ scheduledTime: Date.parse('2026-10-03T15:30:00Z') }, env, { waitUntil(p) { ps.push(Promise.resolve(p).catch(() => {})); } }); await Promise.all(ps); };
-  const n0 = puts.length; await cronTick();
-  check('switched off → the 30-minute timer changes nothing', puts.length === n0, puts);
-  await post('/veeqo/stock-topup', { on: true }); await cronTick();
-  check('switched on → the timer sets it back up by itself (5 available → 890 + … so 888 available)', puts.length === n0 + 1 && puts[puts.length - 1].id === 11 && puts[puts.length - 1].to === 890, puts.slice(n0));
+  const cronTick = async (iso) => { const ps = []; await worker.scheduled({ scheduledTime: Date.parse(iso) }, env, { waitUntil(p) { ps.push(Promise.resolve(p).catch(() => {})); } }); await Promise.all(ps); };
+  const n0 = puts.length; await cronTick('2026-10-04T07:00:00Z'); // 3 AM New York
+  check('switched off → nothing, even at 3 AM', puts.length === n0, puts);
+  await post('/veeqo/stock-topup', { on: true });
+  await cronTick('2026-10-04T15:30:00Z'); // 11:30 AM New York
+  check('on, but not 3 AM → waits (once a day, not every 30 min)', puts.length === n0, puts.slice(n0));
+  await cronTick('2026-10-04T07:00:00Z'); // 3 AM New York (EDT)
+  check('3 AM New York → checks every item and sets it back up by itself (5 available → 890, so 888 available)', puts.length === n0 + 1 && puts[puts.length - 1].id === 11 && puts[puts.length - 1].to === 890, puts.slice(n0));
+  stock[14].available_stock_level = 1;
+  await cronTick('2026-10-04T07:30:00Z');
+  check('…only once that day (3:30 AM does not start another check)', puts.length === n0 + 1, puts.slice(n0));
+  await cronTick('2026-10-05T07:00:00Z');
+  check('…and again the next day at 3 AM', puts.length === n0 + 2 && puts[puts.length - 1].id === 14, puts.slice(n0));
+  sq.prepare("DELETE FROM app_config WHERE key = 'veeqo_stock_topup'").run(); stock[12].available_stock_level = 10;
+  await cronTick('2026-10-05T15:30:00Z');
+  check('right after it is first turned on (deployed) → one check right away, any time of day', puts.some(p => p.id === 12), puts.slice(n0));
   const pkt = (await (await call('/auth/login', { method: 'POST', body: '{"username":"picker","password":"password1"}' })).json()).token;
   const pk2 = await call('/veeqo/stock-topup', { headers: { 'X-Cred-Token': pkt } });
   check('management only (a picker is refused)', pk2.status === 401 || pk2.status === 403, pk2.status);

@@ -1975,7 +1975,7 @@ body {
           <div style="font-size:13px;font-weight:700;color:var(--text)">📦 Keep Veeqo stock up</div>
           <label style="display:flex;align-items:center;gap:6px;font-size:13px;font-weight:700;cursor:pointer"><input type="checkbox" id="ps-vstock-on" onchange="psVstockSave()" style="width:20px;height:20px"> <span id="ps-vstock-onlbl">On</span></label>
         </div>
-        <div style="font-size:12px;color:var(--text2);margin:6px 0 10px;line-height:1.5">Veeqo won't print a label for an item that ran out. Every 30 minutes the system checks every item in Veeqo: when its stock is <b>at or below</b> the first number, it is set to the second one — no more "Add inventory" by hand. Only use this while store stock sync is <b>off</b> in Veeqo (the stores never see this number).</div>
+        <div style="font-size:12px;color:var(--text2);margin:6px 0 10px;line-height:1.5">Veeqo won't print a label for an item that ran out. <b>Every day at 3 AM</b> (New York time) the system checks every item in Veeqo: when its stock is <b>at or below</b> the first number, it is set to the second one — no more "Add inventory" by hand. <b>▶ Check now</b> checks every item right away. Only use this while store stock sync is <b>off</b> in Veeqo (the stores never see this number).</div>
         <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin-bottom:10px;font-size:13px">
           At or below <input type="number" id="ps-vstock-below" min="0" style="width:80px;padding:6px 8px;border:1.5px solid var(--border2);border-radius:7px;font-family:var(--mono)">
           → set to <input type="number" id="ps-vstock-to" min="1" style="width:90px;padding:6px 8px;border:1.5px solid var(--border2);border-radius:7px;font-family:var(--mono)">
@@ -7809,7 +7809,7 @@ window.psVstockLoad = async function() {
     document.getElementById('ps-vstock-to').value = d.config.to;
     var lr = d.lastRun;
     document.getElementById('ps-vstock-status').innerHTML = (lr ? 'Last check ' + psVsE(psVsT(lr.at)) + ' (' + psVsE(lr.by) + '): ' + lr.checked + ' item(s) looked at · <b style="color:var(--green)">' + lr.updated + ' set to ' + psVsE(d.config.to) + '</b>' + (lr.failed ? ' · <b style="color:var(--red)">' + lr.failed + ' failed</b>' : '') : 'Not run yet')
-      + (d.lastFullPass ? ' · every item checked ' + psVsE(psVsT(d.lastFullPass)) : '') + (d.lastError ? '<br><span style="color:var(--red)">⚠ ' + psVsE(d.lastError) + '</span>' : '');
+      + (d.passActive ? ' · <b>checking every item now…</b> (page ' + psVsE(d.nextPage) + ')' : d.lastFullPass ? ' · every item checked ' + psVsE(psVsT(d.lastFullPass)) + ' · next: 3 AM' : '') + (d.lastError ? '<br><span style="color:var(--red)">⚠ ' + psVsE(d.lastError) + '</span>' : '');
     document.getElementById('ps-vstock-log').innerHTML = (d.log || []).length ? '<table style="width:100%;border-collapse:collapse">' + d.log.map(function(x) {
       return '<tr style="border-top:1px solid var(--border2)"><td style="padding:4px 6px;white-space:nowrap;color:var(--text3)">' + psVsE(psVsT(x.ts)) + '</td>'
         + (x.sku ? '<td style="padding:4px 6px;font-family:var(--mono);font-weight:700">' + psVsE(x.sku) + '</td><td style="padding:4px 6px">' + (x.new_physical != null ? psVsE(x.old_available) + ' → <b>' + psVsE(x.new_physical - (x.old_physical - x.old_available)) + '</b>' : '<b style="color:var(--red)">' + psVsE(x.note) + '</b>') + '</td>'

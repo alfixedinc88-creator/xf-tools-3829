@@ -7239,8 +7239,9 @@ const _app = {
     // but returns right away when both switches are off (the default), and
     // throttles itself to minRunGapMinutes otherwise. See autolabelCron().
     const testOn = await testModeOn(env).catch(() => false); // 🧪 no label buying / listing changes during a test
-    // 📦 Keep Veeqo stock up (88 → 888), a few pages of products per tick.
-    if (!testOn) ctx.waitUntil(vstockRun(env, {}).then(
+    // 📦 Keep Veeqo stock up (88 → 888): once after it's turned on, then daily at 3 AM New York
+    // (a full pass, a few pages of products per tick until done).
+    if (!testOn) ctx.waitUntil(vstockRun(env, { now: event.scheduledTime || Date.now() }).then(
       r => { if (r && r.updated) console.log('[cron] veeqo stock top-up', JSON.stringify({ checked: r.checked, updated: r.updated, failed: r.failed })); },
       e => console.error('[cron] veeqo stock top-up FAILED', e && e.message)));
     if (!testOn) ctx.waitUntil(autolabelCron(env).then(
@@ -23557,13 +23558,13 @@ async function handleVeeqoRoute(url, method, request, env, session) {
   if (path === '/veeqo/stock-topup' && method === 'GET') {
     const c = await vstockLoad(env);
     const log = await d1All(env, 'SELECT * FROM veeqo_stock_log ORDER BY id DESC LIMIT 200');
-    return veeqoResp({ ok: true, config: { on: !!c.on, below: c.below, to: c.to }, lastRun: c.lastRun || null, lastFullPass: c.lastFullPass || null, lastError: c.lastError || '', log });
+    return veeqoResp({ ok: true, config: { on: !!c.on, below: c.below, to: c.to }, lastRun: c.lastRun || null, lastFullPass: c.lastFullPass || null, passActive: !!c.passActive, nextPage: c.page || 1, lastError: c.lastError || '', log });
   }
   if (path === '/veeqo/stock-topup' && method === 'POST') {
     const b = await request.json().catch(() => ({}));
     const c = await vstockLoad(env), who = String(session.displayName || session.username || 'mgmt').slice(0, 40);
     if (b.run) {
-      try { return veeqoResp(await vstockRun(env, { manual: true, by: who, maxPages: 15, maxUpdates: 100, fromStart: !!b.fromStart })); }
+      try { return veeqoResp(await vstockRun(env, { manual: true, by: who, maxPages: 15, maxUpdates: 100 })); }
       catch (e) { return veeqoResp({ ok: false, error: e.message }, 500); }
     }
     const below = b.below != null ? parseInt(b.below, 10) : c.below, to = b.to != null ? parseInt(b.to, 10) : c.to;
@@ -24440,6 +24441,9 @@ async function autolabelSaveLastRun(env, result) {
 // Runs on the cron a few pages of products at a time (cursor in app_config),
 // and from Pack & Ship → 🔄 Veeqo Sync. Every change is kept in
 // veeqo_stock_log (item, old → new, when, who / auto).
+// When (owner): once right after it's first turned on, then once a day at
+// 3 AM New York time — a full pass over every item, spread over the cron
+// ticks until it reaches the last page. ▶ Check now starts a full pass too.
 const VSTOCK_KEY = 'veeqo_stock_topup';
 const VSTOCK_DEFAULTS = { on: true, below: 88, to: 888 };
 async function vstockTables(env) {
@@ -24458,7 +24462,16 @@ async function vstockRun(env, o) {
   const c = await vstockLoad(env);
   if (!c.on && !o.manual) return { skipped: 'off' };
   if (!(env.VEEQO_API_KEY || '').trim()) return { skipped: 'no Veeqo key' };
-  const below = Number(c.below), to = Number(c.to), maxPages = o.maxPages || 6, maxUpdates = o.maxUpdates || 40, by = o.by || 'auto';
+  const now = o.now ? new Date(o.now) : new Date();
+  const nyDay = now.toLocaleDateString('en-CA', { timeZone: 'America/New_York' });
+  const nyHour = parseInt(new Intl.DateTimeFormat('en-US', { timeZone: 'America/New_York', hour: '2-digit', hourCycle: 'h23' }).format(now), 10);
+  if (!c.passActive) {
+    // A full pass starts: the first time ever, every day at 3 AM (New York), or on ▶ Check now.
+    const first = !c.lastFullPass && !c.firstStarted, at3 = nyHour === 3 && c.lastPassDay !== nyDay;
+    if (!(o.manual || first || at3)) return { skipped: 'waits for 3 AM' };
+    c.passActive = true; c.page = 1; c.firstStarted = true; if (at3) c.lastPassDay = nyDay;
+  }
+  const below = Number(c.below), to = Number(c.to), maxPages = o.maxPages || 10, maxUpdates = o.maxUpdates || 60, by = o.by || 'auto';
   if (!(to > below)) return { skipped: 'bad settings' };
   let page = o.fromStart ? 1 : (parseInt(c.page, 10) || 1), checked = 0, updated = 0, failed = 0, wrapped = false;
   const changes = [];
@@ -24492,7 +24505,7 @@ async function vstockRun(env, o) {
         }
       }
     }
-    if (list.length < 100) { page = 1; wrapped = true; c.lastFullPass = new Date().toISOString(); break; }
+    if (list.length < 100) { page = 1; wrapped = true; c.passActive = false; c.lastFullPass = new Date().toISOString(); break; }
     page++;
   }
   c.page = page;
