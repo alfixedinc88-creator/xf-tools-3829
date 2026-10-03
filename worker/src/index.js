@@ -4202,7 +4202,13 @@ async function inventoryContainerPallets(url, env) {
   if (!title && !q) return cors(new Response(JSON.stringify({ ok: false, error: 'Pick a container or type something to search' }), { status: 400, headers: { 'Content-Type': 'application/json' } }));
   const r = await containerPalletLines(env, { title, q });
   const upcIssues = title ? await upcIssueList(env, title, false) : [];
-  return cors(new Response(JSON.stringify({ ok: true, lines: r.lines, truncated: r.truncated, upcIssues }), { headers: { 'Content-Type': 'application/json' } }));
+  // Everything else that's "not right" on each pallet (owner): extra boxes
+  // found and boxes scanned again after all were moved (too many moved is on
+  // each line as over).
+  const extras = title ? await d1All(env, `SELECT e.id, e.vendor, e.pallet, e.part, e.boxes, e.pcs_per_box AS pcs, e.to_location AS toLoc, e.by_user AS by, e.at, l.status FROM pallet_extra e
+    LEFT JOIN inventory_log l ON l.id = e.log_id WHERE e.title = ? ORDER BY e.id`, [title]).catch(() => []) : [];
+  const rechecks = title ? await d1All(env, 'SELECT vendor, pallet, line_id AS lineId, part, location, by_user AS by, at FROM pallet_recheck WHERE title = ? ORDER BY id', [title]).catch(() => []) : [];
+  return cors(new Response(JSON.stringify({ ok: true, lines: r.lines, truncated: r.truncated, upcIssues, extras, rechecks }), { headers: { 'Content-Type': 'application/json' } }));
 }
 // ⚠ UPC doesn't match — the reports on a container, with what helps track it
 // down: the item (name, SKU / part #, the packing list line), the code that

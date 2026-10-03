@@ -992,5 +992,20 @@ console.log('\nContainer here: pallet stays open on "Show every item"; a box sca
     && oc.results[rid].state === 'saved' && sq.prepare('SELECT SUM(cases) t FROM master_list').get().t === cases0, { r1, r2, oc });
 }
 
+console.log('\nContainer here: every issue next to the pallet · Transfer: a spot with nothing on record');
+{
+  const { readFileSync } = await import('node:fs');
+  const ih = readFileSync(fileURLToPath(new URL('../inventory.html', import.meta.url)), 'utf8');
+  check('each pallet shows its issues next to "not done" (too many moved, extra boxes, UPC not matching, scanned again) and a tap lists them',
+    /xfrPalIssueBadges\(gp, allL\) \+ '<\/span><\/summary>'/.test(ih) && /too many moved/.test(ih) && /extra box\(es\) found/.test(ih) && /scanned again/.test(ih) && /window\.xfrPalIssueList = function/.test(ih), null);
+  const cp = await get('/inventory/containers/pallets?title=' + encodeURIComponent('Container FAST'));
+  check('the pallets list sends the extras and the "scanned again" records with who / when', Array.isArray(cp.extras) && cp.extras.some(e => e.pallet === '7' && e.by) && Array.isArray(cp.rechecks) && cp.rechecks.some(r => r.pallet === '7' && r.location === 'C1=6-1-9'), { e: cp.extras, r: cp.rechecks });
+  check('Transfer: nothing on record at the scanned spot → a spot right next to it with the same part # is offered (Yes / No / Cancel)',
+    /function xfrNear\(a, b\)/.test(ih) && /function xfrGrabNotHere\(loc\)/.test(ih) && /Nothing on record at /.test(ih) && /Double check the label/.test(ih), null);
+  check('…No / nothing next to it → pieces per box, how many boxes (buttons) → Stock In [FOUND ON SHELF] [TRANSFER], approved, through the outbox, then move like normal',
+    /window\.xfrFoundPcs = function/.test(ih) && /xfrNumGrid\('xfrFoundBoxes', null\)/.test(ih) && /'\[FOUND ON SHELF\] \[TRANSFER\] '/.test(ih) && /invLogAndApprove\(body, function\(d\) \{\s*return \{ rowIndex: d\.rowIndex, action: 'Approved', verifiedBy: by,/.test(ih), null);
+  check('…the move keeps a note when the spot used is not the one scanned', /'\[SCANNED ' \+ G\.scanned \+ ' — on record at '/.test(ih), null);
+}
+
 console.log('\n' + (failed ? '❌ ' + failed + ' check(s) FAILED' : '✅ all ' + passed + ' checks passed') + '\n');
 process.exit(failed ? 1 : 0);

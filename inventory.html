@@ -9204,13 +9204,55 @@ window.invCredLogin = async function() {
     var qs = xfrCont.title ? 'title=' + encodeURIComponent(xfrCont.title) : 'q=' + encodeURIComponent(xfrCont.q);
     wFetch(W + '/inventory/containers/pallets?' + qs).then(function(r) { return r.json(); }).then(function(d) {
       if (!d.ok) { box.innerHTML = "<div class='iempty'>" + xfrEsc(d.error || 'Load failed') + "</div>"; return; }
-      xfrCont.lines = d.lines; xfrCont.upcIssues = d.upcIssues || []; xfrContRender(); xfrLoadPhotos(d.lines.map(function(l) { return l.part; }), function() { if (xfrCont.lines === d.lines) xfrContRender(); });
+      xfrCont.lines = d.lines; xfrCont.upcIssues = d.upcIssues || []; xfrCont.extras = d.extras || []; xfrCont.rechecks = d.rechecks || []; xfrContRender(); xfrLoadPhotos(d.lines.map(function(l) { return l.part; }), function() { if (xfrCont.lines === d.lines) xfrContRender(); });
     }).catch(function() { box.innerHTML = "<div class='iempty'>Load failed</div>"; });
   }
   // ⚠ The box UPCs reported as not matching their part # on this container:
   // which item, its name / SKU / part # on the packing list, the code that was
   // scanned (and which part # that code is saved for), the UPCs on file, who
   // and when. Management marks one ✓ Fixed once it's sorted out.
+  // Everything wrong on one pallet (owner) — shown right next to "📋 N not
+  // done": too many moved, extra boxes found, box UPC not matching, a box
+  // scanned again after all were moved. Tap any to see the details.
+  function xfrPalIssues(gp, allL) {
+    var same = function(x) { return String(x.pallet) === String(gp.pallet) && (!x.vendor || x.vendor === gp.vendor); };
+    return { over: allL.filter(function(l) { return l.over > 0; }),
+      extras: (xfrCont.extras || []).filter(function(e) { return same(e) && e.status !== 'Rejected'; }),
+      upc: (xfrCont.upcIssues || []).filter(same),
+      rechecks: (xfrCont.rechecks || []).filter(same) };
+  }
+  function xfrPalIssueBadges(gp, allL) {
+    var I = xfrPalIssues(gp, allL), k = xfrEsc(JSON.stringify(gp.title + '|' + gp.vendor + '|' + gp.pallet)), out = [];
+    var b = function(color, txt) { return ' <b data-issue="1" style="color:' + color + ';cursor:pointer;text-decoration:underline dotted" onclick="event.preventDefault();event.stopPropagation();xfrPalIssueList(' + k + ')">· ' + txt + '</b>'; };
+    if (I.over.length) out.push(b('var(--red)', '✗ ' + I.over.length + ' too many moved'));
+    if (I.extras.length) out.push(b('var(--orange)', '➕ ' + xfrN(I.extras.reduce(function(a, e) { return a + (+e.boxes || 0); }, 0)) + ' extra box(es) found'));
+    if (I.upc.length) out.push(b('var(--red)', '⚠ ' + I.upc.length + ' UPC not matching'));
+    if (I.rechecks.length) out.push(b('var(--orange)', '🔎 ' + I.rechecks.length + ' scanned again'));
+    return out.join('');
+  }
+  function xfrT(iso) { try { return iso ? new Date(iso).toLocaleString('en-US', { timeZone: 'America/New_York', month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' }) : ''; } catch (e) { return ''; } }
+  window.xfrPalIssueList = function(key) {
+    var gp = null, allL = [];
+    (xfrCont.lines || []).forEach(function(l) { if (l.title + '|' + l.vendor + '|' + l.pallet === key) { gp = gp || { title: l.title, vendor: l.vendor, pallet: l.pallet }; allL.push(l); } });
+    if (!gp) return;
+    var I = xfrPalIssues(gp, allL), E = xfrE, sec = function(color, title, body) { return '<div style="font-weight:800;color:' + color + ';margin:10px 0 4px">' + title + '</div>' + body; };
+    var card = function(color, html) { return '<div style="border:1.5px solid ' + color + ';border-radius:10px;padding:7px 9px;margin-bottom:6px">' + html + '</div>'; };
+    var h = '<div style="display:flex;justify-content:space-between;align-items:center"><div style="font-weight:800;font-size:16px">🧱 Pallet ' + E(gp.pallet) + ' — what\'s not right</div>'
+      + '<button type="button" onclick="xfrPopupClose()" style="background:none;border:none;font-size:22px;color:var(--text3);cursor:pointer">&times;</button></div>';
+    if (I.over.length) h += sec('var(--red)', '✗ Too many moved (' + I.over.length + ')', I.over.map(function(l) {
+      return card('var(--red)', '<div style="display:flex;gap:8px;align-items:center">' + xfrThumb(l.part) + '<div><b style="font-family:var(--mono)">' + E(l.part) + '</b> <span style="font-size:12px;color:var(--text3)">' + E(l.description || '') + '</span>'
+        + '<div style="font-size:12px"><b>' + xfrN(l.cases) + '</b> on the pallet · <b>' + xfrN(l.moved) + '</b> moved · <b style="color:var(--red)">' + xfrN(l.over) + ' too many</b></div></div></div>'
+        + (l.moves || []).map(function(m) { return '<div style="font-size:11px;color:var(--text3)">' + xfrN(m.cases) + ' → <b style="font-family:var(--mono);color:var(--text)">' + (m.kind === 'stockout' ? '🛒 Stock Out' : E(m.to)) + '</b> · ' + E(m.by) + ' · ' + E(xfrT(m.at)) + (m.pending ? ' · waiting approval' : '') + '</div>'; }).join('')); }).join(''));
+    if (I.extras.length) h += sec('var(--orange)', '➕ Extra boxes found (not on the packing list)', I.extras.map(function(e) {
+      return card('var(--orange)', '<b style="font-family:var(--mono)">' + E(e.part) + '</b> · ' + xfrN(e.boxes) + ' box(es) × ' + xfrN(e.pcs) + ' pcs → <b style="font-family:var(--mono)">' + E(e.toLoc) + '</b>'
+        + '<div style="font-size:11px;color:var(--text3)">' + E(e.by || '?') + ' · ' + E(xfrT(e.at)) + (e.status === 'Pending' ? ' · waiting approval' : '') + '</div>'); }).join(''));
+    if (I.upc.length) h += sec('var(--red)', '⚠ Box UPC not matching the part #', '<button type="button" onclick="xfrUpcList(' + E(JSON.stringify(gp.pallet)) + ')" style="width:100%;padding:9px;border-radius:9px;border:1.5px solid var(--red);background:var(--bg);color:var(--red);font-weight:800;cursor:pointer">See the ' + I.upc.length + ' UPC report(s) — item, codes, who, ✓ Fixed</button>');
+    if (I.rechecks.length) h += sec('var(--orange)', '🔎 Box scanned again after all were moved', I.rechecks.map(function(r) {
+      return card('var(--orange)', '<b style="font-family:var(--mono)">' + E(r.part) + '</b> · 1 box put at <b style="font-family:var(--mono)">' + E(r.location) + '</b> (already counted there)'
+        + '<div style="font-size:11px;color:var(--text3)">' + E(r.by || '?') + ' · ' + E(xfrT(r.at)) + '</div>'); }).join(''));
+    if (!I.over.length && !I.extras.length && !I.upc.length && !I.rechecks.length) h += '<div class="iempty">✓ Nothing wrong on this pallet</div>';
+    xfrPopup(h);
+  };
   window.xfrUpcList = function(pallet) {
     var L = (xfrCont.upcIssues || []).filter(function(u) { return pallet == null || u.pallet === pallet; });
     var mg = ((INV_CRED_USER && INV_CRED_USER.roles) || []).some(function(r) { return r === 'mgmt' || r === 'admin' || r === 'owner'; });
@@ -9292,8 +9334,7 @@ window.invCredLogin = async function() {
           + ' <span style="font-weight:400;font-size:12px;color:var(--text3)">' + (xfrCont.title ? '' : xfrEsc(gp.title) + ' · ') + xfrEsc(gp.vendor) + ' · ' + (onlyLeft ? gp.lines.length + ' of ' + allL.length + ' part #s not done · ' : allL.length + ' part #s · ')
           + '<b style="color:' + (over ? 'var(--red)' : done ? 'var(--green)' : 'var(--text)') + '">' + xfrN(mv) + ' / ' + xfrN(tot) + ' boxes moved' + (done ? ' ✓' : over ? ' ✗ more than on the pallet' : '') + '</b>'
           + (pOpen.length ? ' <b style="color:' + (lot ? 'var(--red)' : 'var(--orange)') + '">· 📋 ' + pOpen.length + ' not done</b>' : '')
-          + (function() { var n = (xfrCont.upcIssues || []).filter(function(u) { return u.pallet === gp.pallet && u.vendor === gp.vendor; }).length;
-              return n ? ' <b style="color:var(--red);cursor:pointer" onclick="event.preventDefault();xfrUpcList(' + xfrEsc(JSON.stringify(gp.pallet)) + ')">· ⚠ ' + n + ' UPC not matching</b>' : ''; })() + '</span></summary>'
+          + xfrPalIssueBadges(gp, allL) + '</span></summary>'
           + pBtn
           + shown.map(function(l) {
             var inCart = xfrInCart(l.id), left = Math.max(0, l.left - inCart);
@@ -9965,7 +10006,17 @@ window.invCredLogin = async function() {
     var rows = G.rows;
     h = '<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px"><div style="font-size:15px;font-weight:800">📍 Grabbing from <span style="font-family:var(--mono)">' + E(G.loc) + '</span></div>'
       + '<a href="#" onclick="xfrGrabClear();return false" style="font-size:12px">✕ other spot</a></div>';
-    if (!rows.length) {
+    if (!rows.length && G.found) {
+      var F = G.found, big = 'padding:13px 0;border-radius:11px;border:1.5px solid var(--border);background:var(--bg3);color:var(--text);font-size:18px;font-weight:800;cursor:pointer;touch-action:manipulation';
+      var known = []; (xfrPart.locations || []).forEach(function(l) { var q = parseFloat(l.eachQty); if (q > 0 && String(l.partNum || '').toUpperCase() === String(xfrPart.partNum).toUpperCase() && known.indexOf(q) < 0) known.push(q); });
+      h += '<div style="padding:8px 10px;border-radius:9px;background:var(--orange-bg,#fff7ed);color:var(--orange);font-size:13px;font-weight:700;margin-bottom:8px">📦 ' + E(xfrPart.partNum) + ' found at ' + E(G.loc) + ' — not on record. It is stocked in here first (Found on Shelf, kept in History), then you move it.</div>';
+      if (F.step === 'pcs') h += '<div style="font-size:15px;font-weight:800;margin-bottom:6px">How many pieces in each box?</div>'
+        + known.map(function(q) { return '<button type="button" onclick="xfrFoundPcs(' + q + ')" style="' + big + ';width:100%;margin-bottom:7px;border-color:var(--green);background:var(--green-bg,#dcfce7)">' + xfrN(q) + ' <span style="font-size:12px;font-weight:600">(its box size on record — check the label)</span></button>'; }).join('')
+        + '<div style="display:grid;grid-template-columns:repeat(4,1fr);gap:7px">' + [100, 150, 200, 250, 300, 500, 1000].map(function(q) { return '<button type="button" onclick="xfrFoundPcs(' + q + ')" style="' + big + '">' + q + '</button>'; }).join('')
+        + '<button type="button" onclick="xfrFoundPcs(\'other\')" style="' + big + ';font-size:15px">Other…</button></div>';
+      else h += '<div style="font-size:13px;margin-bottom:6px"><b>' + xfrN(F.pcs) + '</b> pcs per box <a href="#" onclick="xfrFoundBack();return false" style="font-size:12px">change</a></div>'
+        + '<div style="font-size:15px;font-weight:800;margin-bottom:6px">How many boxes are at ' + E(G.loc) + '?</div>' + xfrNumGrid('xfrFoundBoxes', null);
+    } else if (!rows.length) {
       h += '<div style="padding:10px;border-radius:9px;background:var(--orange-bg,#fff7ed);color:var(--orange);font-size:13px;font-weight:700">' + E(xfrPart.partNum) + ' is not on record at ' + E(G.loc) + ' (0 in the system). Stock it in first with 📦 Stock In / Found on Shelf, or scan the right spot.</div>';
     } else if (rows.length > 1 && G.pick == null) {
       h += '<div style="font-size:12px;font-weight:700;margin-bottom:6px">Which one?</div>' + rows.map(function(l, i) {
@@ -9991,7 +10042,80 @@ window.invCredLogin = async function() {
     var exact = rows.filter(function(l) { return String(l.partNum || '').toUpperCase() === String(xfrPart.partNum || '').toUpperCase(); });
     if (exact.length && !xfrPart.isMultiVariant) rows = exact;
     xfrGrab = { loc: up, rows: rows, pick: rows.length === 1 ? 0 : null };
+    if (!rows.length) { xfrGrabNotHere(up); return; }
     xfrShowGrab();
+  };
+  // ── Nothing on record at the scanned spot (owner) ──
+  // A spot right next to it (one number off: C1=1-1-1 ↔ C1=1-1-2) with the
+  // same part # (same box size)? Ask: is it that one? Yes → grab from that
+  // spot. No / none next to it → how many pieces per box, how many boxes →
+  // Stock In (Found on Shelf, approved, in History) at the scanned spot, then
+  // move them like normal.
+  function xfrNear(a, b) {
+    a = String(a || '').toUpperCase(); b = String(b || '').toUpperCase();
+    var ia = a.indexOf('='), ib = b.indexOf('='); if (ia < 0 || ib < 0 || a.slice(0, ia) !== b.slice(0, ib)) return false;
+    var pa = a.slice(ia + 1).split('-'), pb = b.slice(ib + 1).split('-'), diff = 0;
+    if (pa.length !== pb.length) return false;
+    for (var i = 0; i < pa.length; i++) { if (pa[i] === pb[i]) continue; var x = parseInt(pa[i], 10), y = parseInt(pb[i], 10);
+      if (isNaN(x) || isNaN(y) || Math.abs(x - y) !== 1 || String(x) !== pa[i] || String(y) !== pb[i]) return false; diff++; }
+    return diff === 1;
+  }
+  function xfrGrabNotHere(loc) {
+    var part = String(xfrPart.partNum || '').toUpperCase();
+    var near = (xfrPart.locations || []).filter(function(l) { return String(l.partNum || part).toUpperCase() === part && parseFloat(l.cases) > 0 && xfrNear(loc, l.location); });
+    xfrGrab.near = near;
+    if (!near.length) { xfrFoundStart(loc, ''); return; }
+    var E = xfrE;
+    try { navigator.vibrate && navigator.vibrate([200, 100, 200]); } catch (e) {}
+    xfrShowGrab();
+    xfrPopup('<div style="font-weight:800;color:var(--orange);font-size:16px;margin-bottom:6px">⚠ Nothing on record at ' + E(loc) + '</div>'
+      + '<div style="font-size:14px;margin-bottom:8px">But right next to it:</div>'
+      + near.map(function(l, i) { return '<div style="padding:8px 10px;border-radius:9px;background:var(--bg3);margin-bottom:6px;font-size:14px"><b style="font-family:var(--mono)">' + E(l.location) + '</b> has <b>' + xfrRowCases(l) + '</b> case(s) of <b style="font-family:var(--mono)">' + E(l.partNum || part) + '</b>'
+          + (parseFloat(l.eachQty) > 0 ? ' · ' + xfrN(l.eachQty) + ' pcs per box' : '') + '</div>'; }).join('')
+      + '<div style="font-size:13px;font-weight:700;color:var(--orange);margin-bottom:10px">Double check the label: is the box you have that one?</div>'
+      + near.map(function(l, i) { return '<button type="button" onclick="xfrGrabNear(' + i + ')" style="width:100%;padding:14px;border-radius:12px;border:none;background:var(--green);color:#fff;font-size:15px;font-weight:800;cursor:pointer;margin-bottom:8px">✓ Yes — it\'s the ' + xfrRowCases(l) + ' at ' + E(l.location) + '</button>'; }).join('')
+      + '<button type="button" onclick="xfrPopupClose();xfrFoundStart(' + E(JSON.stringify(loc)) + ', \'no\')" style="width:100%;padding:14px;border-radius:12px;border:none;background:var(--orange);color:#fff;font-size:15px;font-weight:800;cursor:pointer;margin-bottom:8px">✗ No — a different box (found here)</button>'
+      + '<button type="button" onclick="xfrPopupClose();xfrGrabClear()" style="width:100%;padding:13px;border-radius:12px;border:1.5px solid var(--border);background:var(--bg);color:var(--text2);font-size:15px;font-weight:700;cursor:pointer">Cancel — scan the spot again</button>');
+  }
+  window.xfrGrabNear = function(i) {
+    var G = xfrGrab, l = (G.near || [])[i]; xfrPopupClose(); if (!l) return;
+    xfrGrab = { loc: String(l.location).toUpperCase(), rows: [l], pick: 0, scanned: G.loc };
+    invFlash('✓ Using ' + l.location + ' (' + xfrRowCases(l) + ' case(s)) — scanned ' + G.loc, 'success');
+    xfrShowGrab();
+  };
+  window.xfrFoundStart = function(loc, why) {
+    xfrGrab = { loc: loc, rows: [], found: { step: 'pcs', pcs: 0, why: why || '', near: (xfrGrab && xfrGrab.near) || [] } };
+    xfrShowGrab();
+  };
+  window.xfrFoundPcs = function(n) {
+    var F = xfrGrab.found; if (!F) return;
+    if (n === 'other') { xfrKeypad('How many pieces in each box?', '', function(v) { xfrFoundPcs(v); }); return; }
+    F.pcs = parseFloat(n) || 0; F.step = 'boxes'; xfrShowGrab();
+  };
+  window.xfrFoundBack = function() { var F = xfrGrab.found; if (F) { F.step = 'pcs'; xfrShowGrab(); } };
+  window.xfrFoundBoxes = function(n) {
+    var G = xfrGrab, F = G.found; if (!F || !xfrPart) return;
+    if (n === 'more') { xfrKeypad('How many boxes are at ' + G.loc + '?', '', function(v) { xfrFoundBoxes(v); }); return; }
+    n = parseFloat(n) || 0; if (!(n > 0) || !(F.pcs > 0)) return;
+    var part = String(xfrPart.partNum || '').toUpperCase(), loc = G.loc, by = (INV_CRED_USER && INV_CRED_USER.displayName) || 'OPS';
+    var zero = (xfrPart.locations || []).filter(function(l) { return String(l.partNum || part).toUpperCase() === part && String(l.location || '').toUpperCase() === loc && Math.abs((parseFloat(l.eachQty) || 0) - F.pcs) < 1e-6; })[0];
+    var note = '[FOUND ON SHELF] [TRANSFER] ' + xfrN(n) + ' box(es) × ' + xfrN(F.pcs) + ' pcs found at ' + loc + ' — not on record'
+      + (F.near.length ? ' (said NOT the ' + F.near.map(function(l) { return xfrRowCases(l) + ' at ' + l.location; }).join(', ') + ')' : '');
+    var body = { type: 'IN', partNum: part, sku: xfrPart.sku || part, name: xfrPart.name || '', location: loc, cases: n, initials: by, notes: note,
+      isNew: !zero, isPlaceholder: false, masterRowIndex: zero ? zero.rowIndex : null, masterId: zero ? (zero.masterId || null) : null, _boxPcs: zero ? 0 : F.pcs };
+    // No waiting: the boxes can be moved right away; the Stock In is saved
+    // (and approved) through the phone outbox — no WiFi → sent later, once.
+    xfrGrab = { loc: loc, rows: [{ partNum: part, location: loc, cases: n, eachQty: F.pcs, masterId: zero ? zero.masterId : null, rowIndex: zero ? zero.rowIndex : null, found: true }], pick: 0 };
+    invFlash('✓ ' + xfrN(n) + ' box(es) of ' + part + ' found at ' + loc + ' — stocked in. Now tap how many you move.', 'success');
+    xfrShowGrab();
+    invLogAndApprove(body, function(d) {
+      return { rowIndex: d.rowIndex, action: 'Approved', verifiedBy: by,
+        item: Object.assign({}, body, { rowIndex: d.rowIndex, d1Id: d.d1Id, overwriteLocation: '', unitsPerCase: zero ? undefined : F.pcs }) };
+    }).then(function(d) {
+      if (!d || d.ok === false) { invFlash('✗ Stock In NOT saved: ' + ((d && d.error) || 'error') + ' — scan the spot again', 'error');
+        xfrCart = xfrCart.filter(function(c) { return !(c.foundAt === loc && c.partNum === part && !c.toLocation); }); xfrSaveCart(); xfrRenderCart(); xfrGrabClear(); return; }
+      if (d.queued) invFlash('📶 No WiFi — the Stock In at ' + loc + ' is saved on this phone. It sends by itself when WiFi is back.', 'warn');
+    }).catch(function() { invFlash('⚠ Not sure the Stock In was sent — check 📶 Waiting to send', 'error'); });
   };
   window.xfrGrabPick = function(i) { xfrGrab.pick = i; xfrShowGrab(); };
   // ✏️ "in the system" is wrong: correct it first, same as Stock Out
@@ -10035,7 +10159,8 @@ window.invCredLogin = async function() {
       fromMasterId: l.masterId || null, cases: cases, initials: (INV_CRED_USER && INV_CRED_USER.displayName) || 'OPS',
       toLocation: '', toRowIndex: null, isNewLocation: false, addedAt: now, grabbedAt: now,
       // what this box scans as — put-away checks the box on the phone (works with no WiFi)
-      codes: [xfrPart._code, xfrPart.upc, xfrPart.sku, partNum].filter(Boolean).map(function(c) { return String(c).toUpperCase(); }) };
+      codes: [xfrPart._code, xfrPart.upc, xfrPart.sku, partNum].filter(Boolean).map(function(c) { return String(c).toUpperCase(); }),
+      foundAt: l.found ? l.location : '', note: G.scanned ? '[SCANNED ' + G.scanned + ' — on record at ' + l.location + ']' : '' };
     var leftover = Math.round((have - cases) * 100) / 100;
     if ((g('xfr-grab-empty') || {}).checked && leftover > 0) { xfrFromLoc = Object.assign({}, l, { cases: have }); xfrEmptyConfirm(item, leftover); return; }
     xfrPushCartItem(item);
@@ -10232,7 +10357,7 @@ window.invCredLogin = async function() {
     if (toLoc === String(item.fromLocation).toUpperCase()) { P.msg = 'That is where you grabbed it (' + xfrE(toLoc) + ')'; xfrPutDraw(); return; }
     if (!(n > 0)) { P.step = 'n'; xfrPutDraw(); return; }
     if (n > item.cases + 1e-9) { invFlash('The cart only has ' + xfrN(item.cases) + ' case(s) of ' + item.partNum, 'error'); return; }
-    var notes = ((g('xfr-cart-notes') || {}).value || '').trim(), now = new Date().toISOString();
+    var notes = (((g('xfr-cart-notes') || {}).value || '').trim() + (item.note ? ' ' + item.note : '')).trim(), now = new Date().toISOString();
     var left = Math.round((item.cases - n) * 100) / 100, k = xfrCart.indexOf(item), gone = !(left > 1e-9);
     if (gone) { if (k >= 0) xfrCart.splice(k, 1); } else item.cases = left;
     xfrSaveCart(); xfrRenderCart(); xfrModalClose('xfr-put-modal'); xfrPut = null;
