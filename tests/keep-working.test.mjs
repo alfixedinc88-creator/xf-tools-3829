@@ -976,5 +976,21 @@ console.log('\nLocation Plan → 🖼 Photos: ✓ confirmed photos never change;
   check('only management can confirm', pr.status === 403, pr.status);
 }
 
+console.log('\nContainer here: pallet stays open on "Show every item"; a box scanned again after all moved');
+{
+  const { readFileSync } = await import('node:fs');
+  const ih = readFileSync(fileURLToPath(new URL('../inventory.html', import.meta.url)), 'utf8');
+  check('a pallet stays open once opened (Show every item does not fold it); not done on top, moved at the bottom',
+    /ontoggle="xfrContPalOpen\(this\)"/.test(ih) && /\(xfrCont\.palOpen \|\| \{\}\)\[pk\] \? ' open'/.test(ih) && /not done on top, all moved at the bottom/.test(ih), null);
+  check('scanned again after all moved → where it went (boxes, pcs, who, when), ✓ Confirm move to that spot / ➕ Extra box found / Cancel, through the outbox',
+    /function xfrAllMoved\(l\)/.test(ih) && /Already moved — all/.test(ih) && /Confirm — move this box to/.test(ih) && /invPost\(W \+ '\/inventory\/containers\/recheck'/.test(ih), null);
+  const T = 'Container FAST', rid = 'kw-recheck-dup-1', cases0 = sq.prepare('SELECT SUM(cases) t FROM master_list').get().t;
+  const r1 = await post('/inventory/containers/recheck', { title: T, vendor: 'KW', pallet: '7', part: '61-1-1=5', location: 'C1=6-1-9', _requestId: rid });
+  const r2 = await post('/inventory/containers/recheck', { title: T, vendor: 'KW', pallet: '7', part: '61-1-1=5', location: 'C1=6-1-9', _requestId: rid });
+  const oc = await post('/inventory/outbox/check', { ids: [rid] });
+  check('✓ Confirm sent twice (same id): kept once (who / when / spot), outbox check "saved", no count changes', r1.ok && r2.ok && sq.prepare("SELECT COUNT(*) n FROM pallet_recheck WHERE location = 'C1=6-1-9'").get().n === 1
+    && oc.results[rid].state === 'saved' && sq.prepare('SELECT SUM(cases) t FROM master_list').get().t === cases0, { r1, r2, oc });
+}
+
 console.log('\n' + (failed ? '❌ ' + failed + ' check(s) FAILED' : '✅ all ' + passed + ' checks passed') + '\n');
 process.exit(failed ? 1 : 0);
