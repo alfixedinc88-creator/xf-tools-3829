@@ -1101,6 +1101,38 @@ console.log('\nVeeqo: keep stock up (at or below 88 → 888) so labels can print
   globalThis.fetch = realFetch; delete env.VEEQO_API_KEY;
 }
 
+// Owner: "keep Veeqo stock up still gets 'Feature not available on your current plan' — I changed some to Infinity; show me which listing has the error and if it is set to Infinity or not".
+console.log('\nVeeqo: 🔍 Check every item — Infinite or not, and which ones had an error (read-only)');
+{
+  const realFetch = globalThis.fetch; let writes = 0, prodCalls = 0;
+  const page = n => Array.from({ length: n }, (_, i) => ({ id: 500 + i, title: 'Item ' + i, sellables: [{ id: 5000 + i, sku_code: 'S-' + i, stock_entries: [{ warehouse_id: 346371, physical_stock_level: i === 1 ? 5 : 900, allocated_stock_level: 0, available_stock_level: i === 1 ? 5 : 900, infinite: i === 0 }] }] }));
+  globalThis.fetch = async (u, o) => { u = String(u);
+    if (o && o.method && o.method !== 'GET') { writes++; return new Response('{}'); }
+    if (u.includes('api.veeqo.com/warehouses')) return new Response(JSON.stringify([{ id: 346371, name: 'Main' }]));
+    if (u.includes('api.veeqo.com/products')) { prodCalls++; const pg = +(u.match(/page=(\d+)/) || [])[1]; return new Response(JSON.stringify(pg <= 3 ? page(100) : pg === 4 ? page(2) : [])); }
+    return realFetch(u, o); };
+  env.VEEQO_API_KEY = 'k';
+  const ins = sq.prepare('INSERT INTO veeqo_stock_log (ts, sku, sellable_id, warehouse_id, old_physical, old_available, new_physical, by_user, note) VALUES (?,?,?,?,?,?,?,?,?)');
+  ins.run('2026-10-03T19:02:00Z', 'S-0', 5000, 346371, 0, 0, null, 'Chen', 'FAILED: HTTP 403: {"error_messages":"Feature not available on your current plan"} (warehouse 346371)');
+  ins.run('2026-10-03T19:02:01Z', 'S-1', 5001, 346371, 5, 5, null, 'Chen', 'FAILED: HTTP 403: {"error_messages":"Feature not available on your current plan"} (warehouse 346371)');
+  const a = await get('/veeqo/stock-topup/items?page=1'), b = await get('/veeqo/stock-topup/items?page=' + a.next);
+  const items = a.items.concat(b.items), f = (sku) => items.find(x => x.sku === sku), last = Object.fromEntries((a.lastResult || []).map(x => [x.s + ':' + x.w, x]));
+  check('reads every item, page by page (302 rows over 2 calls), with the warehouse name', a.ok && !a.done && a.next === 4 && b.done && items.length === 302 && a.warehouses['346371'] === 'Main', { n: items.length, a: a.done, b: b.done });
+  check('shows Infinite yes/no and what is available (S-0 Infinite, S-1 5 left, not Infinite)', f('S-0').infinite === true && f('S-1').infinite === false && f('S-1').available === 5, [f('S-0'), f('S-1')]);
+  check('shows the last error for each item (S-0 and S-1 failed with "current plan")', last['5000:346371'] && last['5000:346371'].failed && /current plan/.test(last['5001:346371'].note), a.lastResult);
+  check('only looks — nothing is changed in Veeqo', writes === 0, writes);
+  const pkt = (await (await call('/auth/login', { method: 'POST', body: '{"username":"picker","password":"password1"}' })).json()).token;
+  const pk = await call('/veeqo/stock-topup/items?page=1', { headers: { 'X-Cred-Token': pkt } });
+  check('management only (a picker is refused)', pk.status === 401 || pk.status === 403, pk.status);
+  const { readFileSync } = await import('node:fs');
+  const ps = readFileSync(fileURLToPath(new URL('../packship.html', import.meta.url)), 'utf8');
+  const kindSrc = (ps.match(/function psVsiKind\(it\) \{[\s\S]*?\n\}/) || [''])[0], lastSrc = (ps.match(/function psVsiLast\(it\) \{[^\n]*\}/) || [''])[0];
+  const kind = new Function('PS_VSI', lastSrc + kindSrc + '; return psVsiKind;')({ below: 88, last: last });
+  check('screen: "🔍 Check every item" button; an item that failed but is now Infinite counts as fixed (♾), a failed one not Infinite stays ⚠',
+    /onclick="psVsiLoad\(\)"/.test(ps) && /\/veeqo\/stock-topup\/items\?page=/.test(ps) && kind(f('S-0')) === 'inf' && kind(f('S-1')) === 'err' && kind(f('S-2')) === 'ok', null);
+  globalThis.fetch = realFetch; delete env.VEEQO_API_KEY;
+}
+
 console.log('\nContainer here: ✅ This pallet is done — what is not moved, short on record, ➕ More / ✓ Finish all');
 {
   const { readFileSync } = await import('node:fs');
@@ -1172,6 +1204,40 @@ console.log('\nPhone outbox never signs a worker out · passwords of 4 numbers')
   await call('/admin/users/reset-password', { method: 'POST', headers: OH, body: JSON.stringify({ userId: c4.d.userId, newPassword: '4321' }) });
   const li3 = await call('/auth/login', { method: 'POST', body: '{"username":"pin4","password":"4321"}' });
   check('locked after 10 wrong tries → Reset password unlocks: the new password works right away', locked.status === 429 && li3.status === 200 && !!(await li3.json()).token, { locked: locked.status, after: li3.status });
+}
+
+// Owner: "under XFitting Admin → Users I can delete the user we don't use no more".
+console.log('\nAdmin → Users: Remove a user who no longer works here (name stays on old records)');
+{
+  const own = await (await call('/auth/login', { method: 'POST', body: '{"username":"owner1","password":"password1"}' })).json();
+  const OH = { 'X-Cred-Token': own.token, 'Content-Type': 'application/json' };
+  const P = async (p, b, h) => { const r = await call(p, { method: 'POST', headers: h || OH, body: JSON.stringify(b) }); return { st: r.status, d: await r.json() }; };
+  const mk = await P('/admin/users/create', { username: 'leftjob', password: '4321', displayName: 'LJ', roles: ['ops'] });
+  const li = await (await call('/auth/login', { method: 'POST', body: '{"username":"leftjob","password":"4321"}' })).json();
+  sq.prepare("INSERT INTO inventory_log (timestamp, type, part_num, cases, initials, status) VALUES ('2026-01-01','IN','23-2-3=2',1,'LJ','Verified')").run();
+  const logsBefore = sq.prepare('SELECT COUNT(*) n FROM inventory_log').get().n;
+  const rm = await P('/admin/users/remove', { userId: mk.d.userId });
+  const old = await call('/inventory/containers', { headers: { 'X-Cred-Token': li.token } });
+  const li2 = await (await call('/auth/login', { method: 'POST', body: '{"username":"leftjob","password":"4321"}' })).json();
+  const list = await (await call('/admin/users/list', { headers: OH })).json();
+  const lj = list.users.find(x => x.username === 'leftjob');
+  check('Remove: signed out right away, can\'t sign in, marked removed (row kept, records untouched)',
+    rm.st === 200 && old.status === 401 && !li2.token && !!lj && !!lj.removedAt && lj.removedBy === 'owner1' && !lj.active
+      && sq.prepare('SELECT COUNT(*) n FROM inventory_log').get().n === logsBefore, { rm, old: old.status, lj });
+  const again = await P('/admin/users/create', { username: 'leftjob', password: '4321', displayName: 'X', roles: [] });
+  const en = await P('/admin/users/toggle-active', { userId: mk.d.userId, active: true });
+  const self = await P('/admin/users/remove', { userId: own.userId || sq.prepare("SELECT id FROM cred_users WHERE username='owner1'").get().id });
+  const logged = sq.prepare("SELECT COUNT(*) n FROM user_activity_log WHERE action_type='admin_user_removed'").get().n;
+  check('a removed username can\'t be reused or Enabled until Restored; you can\'t remove yourself; the remove is logged',
+    again.st === 409 && /Restore/.test(again.d.error) && en.st === 400 && self.st === 400 && logged >= 1, { again, en, self, logged });
+  const rs = await P('/admin/users/restore', { userId: mk.d.userId });
+  const en2 = await P('/admin/users/toggle-active', { userId: mk.d.userId, active: true });
+  const li3 = await (await call('/auth/login', { method: 'POST', body: '{"username":"leftjob","password":"4321"}' })).json();
+  check('Restore → back on the list (Disabled), Enable → can sign in again', rs.st === 200 && en2.st === 200 && !!li3.token, { rs, en2 });
+  const { readFileSync } = await import('node:fs');
+  const ah = readFileSync(fileURLToPath(new URL('../xfitting-admin.html', import.meta.url)), 'utf8');
+  check('Users tab: 🗑 Remove button on each user, removed users hidden behind "Show removed users" with Restore',
+    /onclick="adRemoveUser\(' \+ u\.id/.test(ah) && /removed users \('/.test(ah) && /adRestoreUser\(' \+ u\.id/.test(ah) && /AD\.users\.filter\(function\(u\)\{ return !u\.removedAt; \}\)/.test(ah), null);
 }
 
 console.log('\n' + (failed ? '❌ ' + failed + ' check(s) FAILED' : '✅ all ' + passed + ' checks passed') + '\n');

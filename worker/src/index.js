@@ -244,6 +244,10 @@ async function ensureCredLevelTables(env) {
       .bind(l.key, l.name, l.rank, JSON.stringify(l.roles)).run().catch(()=>{});
   }
   await env.DB.prepare(`ALTER TABLE cred_users ADD COLUMN level TEXT`).run().catch(()=>{});
+  // Removed users (Admin → Users → Remove): the row stays so old History /
+  // logs still show who did what; deleted_at hides it from the Users list.
+  await env.DB.prepare(`ALTER TABLE cred_users ADD COLUMN deleted_at TEXT`).run().catch(()=>{});
+  await env.DB.prepare(`ALTER TABLE cred_users ADD COLUMN deleted_by TEXT`).run().catch(()=>{});
   _credLevelTablesReady = true;
 }
 
@@ -471,7 +475,7 @@ async function logUserActivity(env, userId, actionType, metadata) {
 async function adminListUsers(env, session) {
   await ensureCredAuthTables(env);
   const levels = await credGetLevels(env);
-  const users = await env.DB.prepare(`SELECT id, username, display_name, active, created_at, last_login, level FROM cred_users ORDER BY username ASC`).all();
+  const users = await env.DB.prepare(`SELECT id, username, display_name, active, created_at, last_login, level, deleted_at, deleted_by FROM cred_users ORDER BY username ASC`).all();
   const rolesRes = await env.DB.prepare(`SELECT user_id, role FROM cred_user_roles`).all();
   const rolesByUser = {};
   for (const r of (rolesRes.results || [])) {
@@ -486,6 +490,7 @@ async function adminListUsers(env, session) {
       id: u.id, username: u.username, displayName: u.display_name,
       active: !!u.active, createdAt: u.created_at, lastLogin: u.last_login,
       level: u.level || null, extraRoles: extra, roles: [...eff],
+      removedAt: u.deleted_at || null, removedBy: u.deleted_by || null,
     };
   });
   const ownerCount = result.filter(u => u.level === 'owner' && u.active).length;
@@ -517,7 +522,11 @@ async function adminCreateUser(request, env, session) {
     return cors(new Response(JSON.stringify({ ok: false, error: 'Password must be at least 4 characters (a 4-digit number is OK)' }), { status: 400, headers: { 'Content-Type': 'application/json' } }));
   }
   const uname = username.trim().toLowerCase();
-  const existing = await env.DB.prepare(`SELECT id FROM cred_users WHERE username = ?`).bind(uname).first();
+  await ensureCredLevelTables(env);
+  const existing = await env.DB.prepare(`SELECT id, deleted_at FROM cred_users WHERE username = ?`).bind(uname).first();
+  if (existing && existing.deleted_at) {
+    return cors(new Response(JSON.stringify({ ok: false, error: 'A removed user already has this username — open "Show removed users" and Restore them instead' }), { status: 409, headers: { 'Content-Type': 'application/json' } }));
+  }
   if (existing) {
     return cors(new Response(JSON.stringify({ ok: false, error: 'Username already exists' }), { status: 409, headers: { 'Content-Type': 'application/json' } }));
   }
@@ -685,9 +694,12 @@ async function adminToggleActive(request, env, session) {
     return cors(new Response(JSON.stringify({ ok: false, error: 'userId and active (boolean) required' }), { status: 400, headers: { 'Content-Type': 'application/json' } }));
   }
   await ensureCredLevelTables(env);
-  const t = await env.DB.prepare(`SELECT level, active FROM cred_users WHERE id = ?`).bind(userId).first();
+  const t = await env.DB.prepare(`SELECT level, active, deleted_at FROM cred_users WHERE id = ?`).bind(userId).first();
   if (t && (t.level === 'admin' || t.level === 'owner') && !(await credCanActAsOwner(env, session))) {
     return cors(new Response(JSON.stringify({ ok: false, error: 'Only an Owner can disable or enable an Admin or Owner' }), { status: 403, headers: { 'Content-Type': 'application/json' } }));
+  }
+  if (t && t.deleted_at && active) {
+    return cors(new Response(JSON.stringify({ ok: false, error: 'This user was removed — Restore them first' }), { status: 400, headers: { 'Content-Type': 'application/json' } }));
   }
   if (t && t.level === 'owner' && t.active && !active && (await credOwnerCount(env)) <= 1) {
     return cors(new Response(JSON.stringify({ ok: false, error: 'This is the last Owner — make someone else Owner first' }), { status: 403, headers: { 'Content-Type': 'application/json' } }));
@@ -699,6 +711,43 @@ async function adminToggleActive(request, env, session) {
     await env.DB.prepare(`DELETE FROM cred_sessions WHERE user_id = ?`).bind(userId).run();
   }
   return cors(new Response(JSON.stringify({ ok: true }), { headers: { 'Content-Type': 'application/json' } }));
+}
+
+// POST /admin/users/remove   { userId }
+// POST /admin/users/restore  { userId }
+// Remove = take someone who no longer works here off the Users list. It is
+// NOT a hard delete: the cred_users row stays so History, logs and the
+// activity log still show their name, and the username can't be reused by
+// someone else. They are signed out and can't sign in. Restore puts them
+// back on the list, still Disabled until someone presses Enable.
+async function adminRemoveUser(request, env, session, restore) {
+  await ensureCredAuthTables(env);
+  await ensureCredLevelTables(env);
+  const J = (o, status) => cors(new Response(JSON.stringify(o), { status: status || 200, headers: { 'Content-Type': 'application/json' } }));
+  const body = await request.json().catch(() => ({}));
+  const userId = parseInt(body.userId);
+  if (!userId) return J({ ok: false, error: 'userId required' }, 400);
+  const t = await env.DB.prepare(`SELECT id, username, level, active, deleted_at FROM cred_users WHERE id = ?`).bind(userId).first();
+  if (!t) return J({ ok: false, error: 'User not found' }, 404);
+  if ((t.level === 'admin' || t.level === 'owner') && !(await credCanActAsOwner(env, session))) {
+    return J({ ok: false, error: 'Only an Owner can remove or restore an Admin or Owner' }, 403);
+  }
+  const now = new Date().toISOString();
+  if (restore) {
+    if (!t.deleted_at) return J({ ok: false, error: 'This user is not removed' }, 400);
+    await env.DB.prepare(`UPDATE cred_users SET deleted_at = NULL, deleted_by = NULL, active = 0 WHERE id = ?`).bind(userId).run();
+    await logUserActivity(env, session.userId, 'admin_user_restored', { userId, username: t.username, by: session.username });
+    return J({ ok: true });
+  }
+  if (t.deleted_at) return J({ ok: false, error: 'Already removed' }, 400);
+  if (userId === session.userId) return J({ ok: false, error: 'You can’t remove yourself' }, 400);
+  if (t.level === 'owner' && t.active && (await credOwnerCount(env)) <= 1) {
+    return J({ ok: false, error: 'This is the last Owner — make someone else Owner first' }, 403);
+  }
+  await env.DB.prepare(`UPDATE cred_users SET active = 0, deleted_at = ?, deleted_by = ? WHERE id = ?`).bind(now, session.username, userId).run();
+  await env.DB.prepare(`DELETE FROM cred_sessions WHERE user_id = ?`).bind(userId).run();
+  await logUserActivity(env, session.userId, 'admin_user_removed', { userId, username: t.username, by: session.username });
+  return J({ ok: true });
 }
 
 // GET /admin/activity?userId=&days=30 — raw activity log, optionally
@@ -6420,6 +6469,8 @@ const _app = {
       if (url.pathname === '/admin/users/reset-password' && method === 'POST') return await adminResetPassword(request, env, credSession);
       if (url.pathname === '/admin/users/update-roles' && method === 'POST')  return await adminUpdateRoles(request, env, credSession);
       if (url.pathname === '/admin/users/toggle-active' && method === 'POST') return await adminToggleActive(request, env, credSession);
+      if (url.pathname === '/admin/users/remove' && method === 'POST')        return await adminRemoveUser(request, env, credSession, false);
+      if (url.pathname === '/admin/users/restore' && method === 'POST')       return await adminRemoveUser(request, env, credSession, true);
       if (url.pathname === '/admin/levels/update' && method === 'POST')       return await adminUpdateLevels(request, env, credSession);
       if (url.pathname === '/admin/access' && method === 'GET')               return await adminGetAccess(env);
       if (url.pathname === '/admin/access/save' && method === 'POST')         return await adminSaveAccess(request, env, credSession);
@@ -23623,6 +23674,15 @@ async function handleVeeqoRoute(url, method, request, env, session) {
     const log = await d1All(env, 'SELECT * FROM veeqo_stock_log ORDER BY id DESC LIMIT 200');
     return veeqoResp({ ok: true, config: { on: !!c.on, below: c.below, to: c.to }, lastRun: c.lastRun || null, lastFullPass: c.lastFullPass || null, passActive: !!c.passActive, nextPage: c.page || 1, lastError: c.lastError || '', log });
   }
+  // GET /veeqo/stock-topup/items?page=N — read-only list of every Veeqo item
+  // per warehouse: is it set to Infinite, how much is available, and the
+  // last time the top-up failed for it. Changes nothing in Veeqo. Reads 3
+  // Veeqo pages (300 products) per call; the page asks again with `next`
+  // until `done`.
+  if (path === '/veeqo/stock-topup/items' && method === 'GET') {
+    try { return veeqoResp(await vstockItems(env, parseInt(url.searchParams.get('page'), 10) || 1)); }
+    catch (e) { return veeqoResp({ ok: false, error: e.message }, 500); }
+  }
   if (path === '/veeqo/stock-topup' && method === 'POST') {
     const b = await request.json().catch(() => ({}));
     const c = await vstockLoad(env), who = String(session.displayName || session.username || 'mgmt').slice(0, 40);
@@ -24604,6 +24664,40 @@ async function vstockRun(env, o) {
   c.lastRun = { at: new Date().toISOString(), by, checked, updated, failed, wrapped, stopped, firstError, skippedWarehouses: skippedWh };
   await vstockSave(env, c);
   return { ok: true, checked, updated, failed, wrapped, stopped, firstError, skippedWarehouses: skippedWh, nextPage: page, changes };
+}
+
+// Read-only: every Veeqo stock entry with Infinite yes/no + last top-up
+// failure, for Pack & Ship → 📦 Keep Veeqo stock up → 🔍 Check every item.
+async function vstockItems(env, page) {
+  const c = await vstockLoad(env), below = Number(c.below);
+  const PER_CALL = 3;
+  const out = { ok: true, below, items: [], done: false, next: page };
+  if (page === 1) {
+    out.warehouses = {};
+    try { const w = await veeqoFetch(env, '/warehouses?page_size=100'); for (const x of (Array.isArray(w) ? w : [])) out.warehouses[x.id] = x.name || ''; } catch (_) {}
+    // Latest top-up result per item + warehouse (FAILED note or the last change).
+    const rows = await d1All(env, `SELECT l.sellable_id, l.warehouse_id, l.ts, l.note, l.new_physical FROM veeqo_stock_log l
+      JOIN (SELECT sellable_id, warehouse_id, MAX(id) mid FROM veeqo_stock_log WHERE sellable_id IS NOT NULL GROUP BY sellable_id, warehouse_id) m ON m.mid = l.id`);
+    out.lastResult = rows.map(r => ({ s: r.sellable_id, w: r.warehouse_id, ts: r.ts, failed: /^FAILED/.test(r.note || ''), note: String(r.note || '').slice(0, 200), to: r.new_physical }));
+  }
+  for (let n = 0; n < PER_CALL; n++) {
+    const r = await veeqoFetch(env, `/products?page=${out.next}&page_size=100`);
+    const list = Array.isArray(r) ? r : (r.products || []);
+    for (const p of list) {
+      for (const sb of (p.sellables || [])) {
+        for (const se of (sb.stock_entries || [])) {
+          if (!se) continue;
+          const phys = Number(se.physical_stock_level) || 0, alloc = Math.max(0, Number(se.allocated_stock_level) || 0);
+          out.items.push({ productId: p.id, sellableId: sb.id, sku: String(sb.sku_code || '').slice(0, 80), title: String(p.title || sb.title || '').slice(0, 120),
+            warehouseId: se.warehouse_id || (se.warehouse && se.warehouse.id) || null, infinite: !!se.infinite,
+            available: se.available_stock_level != null ? Number(se.available_stock_level) : phys - alloc, physical: phys, allocated: alloc });
+        }
+      }
+    }
+    if (list.length < 100) { out.done = true; break; }
+    out.next++;
+  }
+  return out;
 }
 
 async function autolabelCron(env) {

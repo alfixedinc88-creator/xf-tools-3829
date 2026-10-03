@@ -413,7 +413,11 @@ window.adLoadUsers = async function() {
 
   if (!AD.users.length) { ge('ad-users-table-wrap').innerHTML = '<div class="ad-empty">No users yet.</div>'; return; }
 
-  var rows = AD.users.map(function(u) {
+  // Removed users stay in the database (their name stays on old History /
+  // logs) but are hidden here unless "Show removed users" is on.
+  var removed = AD.users.filter(function(u){ return u.removedAt; });
+  var shown = AD.users.filter(function(u){ return !u.removedAt; });
+  var rows = shown.map(function(u) {
     var lastLogin = u.lastLogin ? new Date(u.lastLogin).toLocaleString('en-US', { timeZone:'America/New_York', month:'short', day:'numeric', hour:'numeric', minute:'2-digit', hour12:true }) : '—';
     return '<tr>'
       + '<td><span class="ad-dot ' + (u.active?'ad-dot-active':'ad-dot-inactive') + '"></span>' + u.username + '</td>'
@@ -423,12 +427,42 @@ window.adLoadUsers = async function() {
       + '<td style="white-space:nowrap">'
       +   '<button class="ad-btn ad-btn-outline ad-btn-sm" onclick="adOpenEditModal(' + u.id + ')">Edit</button> '
       +   '<button class="ad-btn ad-btn-outline ad-btn-sm" onclick="adOpenResetModal(' + u.id + ')">Reset PW</button> '
-      +   '<button class="ad-btn ad-btn-sm ' + (u.active?'ad-btn-danger':'ad-btn-green') + '" onclick="adToggleActive(' + u.id + ',' + (!u.active) + ')">' + (u.active?'Disable':'Enable') + '</button>'
+      +   '<button class="ad-btn ad-btn-sm ' + (u.active?'ad-btn-danger':'ad-btn-green') + '" onclick="adToggleActive(' + u.id + ',' + (!u.active) + ')">' + (u.active?'Disable':'Enable') + '</button> '
+      +   '<button class="ad-btn ad-btn-outline ad-btn-sm" style="color:var(--red,#c0392b)" title="No longer works here — take off this list (their name stays on old History)" onclick="adRemoveUser(' + u.id + ')">🗑 Remove</button>'
       + '</td>'
       + '</tr>';
   }).join('');
 
-  ge('ad-users-table-wrap').innerHTML = '<table class="ad-table"><thead><tr><th>Username</th><th>Name</th><th>Level</th><th>Last Login</th><th>Actions</th></tr></thead><tbody>' + rows + '</tbody></table>';
+  var html = '<table class="ad-table"><thead><tr><th>Username</th><th>Name</th><th>Level</th><th>Last Login</th><th>Actions</th></tr></thead><tbody>' + rows + '</tbody></table>';
+  if (removed.length) {
+    html += '<div style="margin-top:12px"><a href="#" style="font-size:12.5px;color:var(--text3)" onclick="AD.showRemoved=!AD.showRemoved;adLoadUsers();return false">' + (AD.showRemoved ? '▾ Hide' : '▸ Show') + ' removed users (' + removed.length + ')</a></div>';
+    if (AD.showRemoved) {
+      html += '<table class="ad-table" style="margin-top:8px;opacity:.75"><thead><tr><th>Username</th><th>Name</th><th>Removed</th><th>By</th><th></th></tr></thead><tbody>'
+        + removed.map(function(u) {
+            var when = new Date(u.removedAt).toLocaleString('en-US', { timeZone:'America/New_York', month:'short', day:'numeric', year:'numeric', hour:'numeric', minute:'2-digit', hour12:true });
+            return '<tr><td>' + u.username + '</td><td class="ad-mono">' + u.displayName + '</td><td class="ad-mono" style="font-size:11px">' + when + '</td><td class="ad-mono" style="font-size:11px">' + (u.removedBy || '—') + '</td>'
+              + '<td><button class="ad-btn ad-btn-outline ad-btn-sm" onclick="adRestoreUser(' + u.id + ')">Restore</button></td></tr>';
+          }).join('') + '</tbody></table>';
+    }
+  }
+  ge('ad-users-table-wrap').innerHTML = html;
+};
+
+window.adRemoveUser = async function(userId) {
+  var u = AD.users.find(function(x){ return x.id === userId; });
+  if (!u) return;
+  if (!confirm('Remove ' + u.displayName + ' (' + u.username + ')?\n\nThey are signed out, can’t sign in, and come off this list. Their name stays on old History and logs. You can Restore them later under "Show removed users".')) return;
+  var r = await adFetch('/admin/users/remove', { method:'POST', body: JSON.stringify({ userId: userId }) });
+  if (r.status !== 200) { adToast('Failed: ' + (r.data.error||''), 'err'); return; }
+  adToast('User removed', 'ok');
+  adLoadUsers();
+};
+
+window.adRestoreUser = async function(userId) {
+  var r = await adFetch('/admin/users/restore', { method:'POST', body: JSON.stringify({ userId: userId }) });
+  if (r.status !== 200) { adToast('Failed: ' + (r.data.error||''), 'err'); return; }
+  adToast('User restored — press Enable to let them sign in again', 'ok');
+  adLoadUsers();
 };
 
 window.adOpenCreateModal = function() {
