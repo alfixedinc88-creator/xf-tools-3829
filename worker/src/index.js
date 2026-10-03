@@ -244,6 +244,10 @@ async function ensureCredLevelTables(env) {
       .bind(l.key, l.name, l.rank, JSON.stringify(l.roles)).run().catch(()=>{});
   }
   await env.DB.prepare(`ALTER TABLE cred_users ADD COLUMN level TEXT`).run().catch(()=>{});
+  // Removed users (Admin → Users → Remove): the row stays so old History /
+  // logs still show who did what; deleted_at hides it from the Users list.
+  await env.DB.prepare(`ALTER TABLE cred_users ADD COLUMN deleted_at TEXT`).run().catch(()=>{});
+  await env.DB.prepare(`ALTER TABLE cred_users ADD COLUMN deleted_by TEXT`).run().catch(()=>{});
   _credLevelTablesReady = true;
 }
 
@@ -471,7 +475,7 @@ async function logUserActivity(env, userId, actionType, metadata) {
 async function adminListUsers(env, session) {
   await ensureCredAuthTables(env);
   const levels = await credGetLevels(env);
-  const users = await env.DB.prepare(`SELECT id, username, display_name, active, created_at, last_login, level FROM cred_users ORDER BY username ASC`).all();
+  const users = await env.DB.prepare(`SELECT id, username, display_name, active, created_at, last_login, level, deleted_at, deleted_by FROM cred_users ORDER BY username ASC`).all();
   const rolesRes = await env.DB.prepare(`SELECT user_id, role FROM cred_user_roles`).all();
   const rolesByUser = {};
   for (const r of (rolesRes.results || [])) {
@@ -486,6 +490,7 @@ async function adminListUsers(env, session) {
       id: u.id, username: u.username, displayName: u.display_name,
       active: !!u.active, createdAt: u.created_at, lastLogin: u.last_login,
       level: u.level || null, extraRoles: extra, roles: [...eff],
+      removedAt: u.deleted_at || null, removedBy: u.deleted_by || null,
     };
   });
   const ownerCount = result.filter(u => u.level === 'owner' && u.active).length;
@@ -517,7 +522,11 @@ async function adminCreateUser(request, env, session) {
     return cors(new Response(JSON.stringify({ ok: false, error: 'Password must be at least 4 characters (a 4-digit number is OK)' }), { status: 400, headers: { 'Content-Type': 'application/json' } }));
   }
   const uname = username.trim().toLowerCase();
-  const existing = await env.DB.prepare(`SELECT id FROM cred_users WHERE username = ?`).bind(uname).first();
+  await ensureCredLevelTables(env);
+  const existing = await env.DB.prepare(`SELECT id, deleted_at FROM cred_users WHERE username = ?`).bind(uname).first();
+  if (existing && existing.deleted_at) {
+    return cors(new Response(JSON.stringify({ ok: false, error: 'A removed user already has this username — open "Show removed users" and Restore them instead' }), { status: 409, headers: { 'Content-Type': 'application/json' } }));
+  }
   if (existing) {
     return cors(new Response(JSON.stringify({ ok: false, error: 'Username already exists' }), { status: 409, headers: { 'Content-Type': 'application/json' } }));
   }
@@ -680,9 +689,12 @@ async function adminToggleActive(request, env, session) {
     return cors(new Response(JSON.stringify({ ok: false, error: 'userId and active (boolean) required' }), { status: 400, headers: { 'Content-Type': 'application/json' } }));
   }
   await ensureCredLevelTables(env);
-  const t = await env.DB.prepare(`SELECT level, active FROM cred_users WHERE id = ?`).bind(userId).first();
+  const t = await env.DB.prepare(`SELECT level, active, deleted_at FROM cred_users WHERE id = ?`).bind(userId).first();
   if (t && (t.level === 'admin' || t.level === 'owner') && !(await credCanActAsOwner(env, session))) {
     return cors(new Response(JSON.stringify({ ok: false, error: 'Only an Owner can disable or enable an Admin or Owner' }), { status: 403, headers: { 'Content-Type': 'application/json' } }));
+  }
+  if (t && t.deleted_at && active) {
+    return cors(new Response(JSON.stringify({ ok: false, error: 'This user was removed — Restore them first' }), { status: 400, headers: { 'Content-Type': 'application/json' } }));
   }
   if (t && t.level === 'owner' && t.active && !active && (await credOwnerCount(env)) <= 1) {
     return cors(new Response(JSON.stringify({ ok: false, error: 'This is the last Owner — make someone else Owner first' }), { status: 403, headers: { 'Content-Type': 'application/json' } }));
@@ -694,6 +706,43 @@ async function adminToggleActive(request, env, session) {
     await env.DB.prepare(`DELETE FROM cred_sessions WHERE user_id = ?`).bind(userId).run();
   }
   return cors(new Response(JSON.stringify({ ok: true }), { headers: { 'Content-Type': 'application/json' } }));
+}
+
+// POST /admin/users/remove   { userId }
+// POST /admin/users/restore  { userId }
+// Remove = take someone who no longer works here off the Users list. It is
+// NOT a hard delete: the cred_users row stays so History, logs and the
+// activity log still show their name, and the username can't be reused by
+// someone else. They are signed out and can't sign in. Restore puts them
+// back on the list, still Disabled until someone presses Enable.
+async function adminRemoveUser(request, env, session, restore) {
+  await ensureCredAuthTables(env);
+  await ensureCredLevelTables(env);
+  const J = (o, status) => cors(new Response(JSON.stringify(o), { status: status || 200, headers: { 'Content-Type': 'application/json' } }));
+  const body = await request.json().catch(() => ({}));
+  const userId = parseInt(body.userId);
+  if (!userId) return J({ ok: false, error: 'userId required' }, 400);
+  const t = await env.DB.prepare(`SELECT id, username, level, active, deleted_at FROM cred_users WHERE id = ?`).bind(userId).first();
+  if (!t) return J({ ok: false, error: 'User not found' }, 404);
+  if ((t.level === 'admin' || t.level === 'owner') && !(await credCanActAsOwner(env, session))) {
+    return J({ ok: false, error: 'Only an Owner can remove or restore an Admin or Owner' }, 403);
+  }
+  const now = new Date().toISOString();
+  if (restore) {
+    if (!t.deleted_at) return J({ ok: false, error: 'This user is not removed' }, 400);
+    await env.DB.prepare(`UPDATE cred_users SET deleted_at = NULL, deleted_by = NULL, active = 0 WHERE id = ?`).bind(userId).run();
+    await logUserActivity(env, session.userId, 'admin_user_restored', { userId, username: t.username, by: session.username });
+    return J({ ok: true });
+  }
+  if (t.deleted_at) return J({ ok: false, error: 'Already removed' }, 400);
+  if (userId === session.userId) return J({ ok: false, error: 'You can’t remove yourself' }, 400);
+  if (t.level === 'owner' && t.active && (await credOwnerCount(env)) <= 1) {
+    return J({ ok: false, error: 'This is the last Owner — make someone else Owner first' }, 403);
+  }
+  await env.DB.prepare(`UPDATE cred_users SET active = 0, deleted_at = ?, deleted_by = ? WHERE id = ?`).bind(now, session.username, userId).run();
+  await env.DB.prepare(`DELETE FROM cred_sessions WHERE user_id = ?`).bind(userId).run();
+  await logUserActivity(env, session.userId, 'admin_user_removed', { userId, username: t.username, by: session.username });
+  return J({ ok: true });
 }
 
 // GET /admin/activity?userId=&days=30 — raw activity log, optionally
@@ -6415,6 +6464,8 @@ const _app = {
       if (url.pathname === '/admin/users/reset-password' && method === 'POST') return await adminResetPassword(request, env, credSession);
       if (url.pathname === '/admin/users/update-roles' && method === 'POST')  return await adminUpdateRoles(request, env, credSession);
       if (url.pathname === '/admin/users/toggle-active' && method === 'POST') return await adminToggleActive(request, env, credSession);
+      if (url.pathname === '/admin/users/remove' && method === 'POST')        return await adminRemoveUser(request, env, credSession, false);
+      if (url.pathname === '/admin/users/restore' && method === 'POST')       return await adminRemoveUser(request, env, credSession, true);
       if (url.pathname === '/admin/levels/update' && method === 'POST')       return await adminUpdateLevels(request, env, credSession);
       if (url.pathname === '/admin/access' && method === 'GET')               return await adminGetAccess(env);
       if (url.pathname === '/admin/access/save' && method === 'POST')         return await adminSaveAccess(request, env, credSession);

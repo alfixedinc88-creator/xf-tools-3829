@@ -1168,5 +1168,39 @@ console.log('\nPhone outbox never signs a worker out · passwords of 4 numbers')
   check('reset to 4 numbers ("5678"): the old sign-in stops (401 → the phone asks to sign in), the new one works', rs.status === 200 && old.status === 401 && !!li2.token, { rs: rs.status, old: old.status });
 }
 
+// Owner: "under XFitting Admin → Users I can delete the user we don't use no more".
+console.log('\nAdmin → Users: Remove a user who no longer works here (name stays on old records)');
+{
+  const own = await (await call('/auth/login', { method: 'POST', body: '{"username":"owner1","password":"password1"}' })).json();
+  const OH = { 'X-Cred-Token': own.token, 'Content-Type': 'application/json' };
+  const P = async (p, b, h) => { const r = await call(p, { method: 'POST', headers: h || OH, body: JSON.stringify(b) }); return { st: r.status, d: await r.json() }; };
+  const mk = await P('/admin/users/create', { username: 'leftjob', password: '4321', displayName: 'LJ', roles: ['ops'] });
+  const li = await (await call('/auth/login', { method: 'POST', body: '{"username":"leftjob","password":"4321"}' })).json();
+  sq.prepare("INSERT INTO inventory_log (timestamp, type, part_num, cases, initials, status) VALUES ('2026-01-01','IN','23-2-3=2',1,'LJ','Verified')").run();
+  const logsBefore = sq.prepare('SELECT COUNT(*) n FROM inventory_log').get().n;
+  const rm = await P('/admin/users/remove', { userId: mk.d.userId });
+  const old = await call('/inventory/containers', { headers: { 'X-Cred-Token': li.token } });
+  const li2 = await (await call('/auth/login', { method: 'POST', body: '{"username":"leftjob","password":"4321"}' })).json();
+  const list = await (await call('/admin/users/list', { headers: OH })).json();
+  const lj = list.users.find(x => x.username === 'leftjob');
+  check('Remove: signed out right away, can\'t sign in, marked removed (row kept, records untouched)',
+    rm.st === 200 && old.status === 401 && !li2.token && !!lj && !!lj.removedAt && lj.removedBy === 'owner1' && !lj.active
+      && sq.prepare('SELECT COUNT(*) n FROM inventory_log').get().n === logsBefore, { rm, old: old.status, lj });
+  const again = await P('/admin/users/create', { username: 'leftjob', password: '4321', displayName: 'X', roles: [] });
+  const en = await P('/admin/users/toggle-active', { userId: mk.d.userId, active: true });
+  const self = await P('/admin/users/remove', { userId: own.userId || sq.prepare("SELECT id FROM cred_users WHERE username='owner1'").get().id });
+  const logged = sq.prepare("SELECT COUNT(*) n FROM user_activity_log WHERE action_type='admin_user_removed'").get().n;
+  check('a removed username can\'t be reused or Enabled until Restored; you can\'t remove yourself; the remove is logged',
+    again.st === 409 && /Restore/.test(again.d.error) && en.st === 400 && self.st === 400 && logged >= 1, { again, en, self, logged });
+  const rs = await P('/admin/users/restore', { userId: mk.d.userId });
+  const en2 = await P('/admin/users/toggle-active', { userId: mk.d.userId, active: true });
+  const li3 = await (await call('/auth/login', { method: 'POST', body: '{"username":"leftjob","password":"4321"}' })).json();
+  check('Restore → back on the list (Disabled), Enable → can sign in again', rs.st === 200 && en2.st === 200 && !!li3.token, { rs, en2 });
+  const { readFileSync } = await import('node:fs');
+  const ah = readFileSync(fileURLToPath(new URL('../xfitting-admin.html', import.meta.url)), 'utf8');
+  check('Users tab: 🗑 Remove button on each user, removed users hidden behind "Show removed users" with Restore',
+    /onclick="adRemoveUser\(' \+ u\.id/.test(ah) && /removed users \('/.test(ah) && /adRestoreUser\(' \+ u\.id/.test(ah) && /AD\.users\.filter\(function\(u\)\{ return !u\.removedAt; \}\)/.test(ah), null);
+}
+
 console.log('\n' + (failed ? '❌ ' + failed + ' check(s) FAILED' : '✅ all ' + passed + ' checks passed') + '\n');
 process.exit(failed ? 1 : 0);
