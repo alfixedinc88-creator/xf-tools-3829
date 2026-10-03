@@ -1142,5 +1142,31 @@ console.log('\nHistory: the Cancel button stays on screen (pinned right, phones 
       && /position:sticky;right:0;z-index:1[^']*>Cancel<\/th>'/.test(ih) && /white-space:nowrap;position:sticky;right:0;background:' \+ bg \+ '[^>]*>' \+ cancelCell \+ '<\/td>'/.test(ih), null);
 }
 
+// Owner: "one of my guys keeps getting logged out, the phone says 'approve step waiting for WiFi' — it might be after I reset his password;
+// and passwords can be 4 numbers, not 8".
+console.log('\nPhone outbox never signs a worker out · passwords of 4 numbers');
+{
+  const { readFileSync } = await import('node:fs');
+  const ih = readFileSync(fileURLToPath(new URL('../inventory.html', import.meta.url)), 'utf8');
+  const runAfter = (ih.match(/async function invObRunAfter\(ent, d\) \{[\s\S]*?\n\}/) || [''])[0], send = (ih.match(/async function invObSend\(ent, first\) \{[\s\S]*?\n\}/) || [''])[0];
+  const obFetch = (ih.match(/async function invObFetch\(url, opts\) \{[\s\S]*?\n\}/) || [''])[0];
+  check('the outbox sends with invObFetch (signs out only on 401 — a 403 "only a manager approves" never signs the worker out), not wFetch',
+    /if \(r\.status === 401\) \{ invCredSignedOut\(\);/.test(obFetch) && !/403/.test(obFetch.replace(/\/\/[^\n]*/g, '')) && /invObFetch\(INV_OB_W \+ tpl\.path/.test(runAfter) && /r\.status === 403/.test(runAfter) && /invObFetch\(INV_OB_W \+ ent\.path/.test(send) && !/wFetch\(/.test(runAfter + send), null);
+  const isLoc = (ih.match(/function xfrIsLoc\(code\) \{[\s\S]*?\n  \}/) || [''])[0];
+  const L = new Function('INV_PREFIXES', isLoc + '; return xfrIsLoc;')(['BARN=', 'C1=', '2FL=']);
+  check('a bare area prefix ("BARN=") is not a spot; BARN=2-2-2, C1=5-1-1 and GARAGE are', !L('BARN=') && !L('c1=') && L('BARN=2-2-2') && L('C1=5-1-1') && L('GARAGE'), null);
+  sq.prepare("INSERT INTO cred_user_roles (user_id, role) SELECT id, 'admin' FROM cred_users WHERE username = 'owner1'").run();
+  const own = await (await call('/auth/login', { method: 'POST', body: '{"username":"owner1","password":"password1"}' })).json();
+  const OH = { 'X-Cred-Token': own.token, 'Content-Type': 'application/json' };
+  const mk = async (u, pw) => { const r = await call('/admin/users/create', { method: 'POST', headers: OH, body: JSON.stringify({ username: u, password: pw, displayName: u.toUpperCase(), roles: ['ops'] }) }); return { st: r.status, d: await r.json() }; };
+  const c3 = await mk('pin3', '123'), c4 = await mk('pin4', '1234');
+  const li = await (await call('/auth/login', { method: 'POST', body: '{"username":"pin4","password":"1234"}' })).json();
+  check('a password of 4 numbers works (create "1234" → can sign in); 3 is too short', c3.st === 400 && /at least 4/.test(c3.d.error) && c4.st === 200 && c4.d.ok && !!li.token, { c3, c4, li: !!li.token });
+  const rs = await call('/admin/users/reset-password', { method: 'POST', headers: OH, body: JSON.stringify({ userId: c4.d.userId, newPassword: '5678' }) });
+  const old = await call('/inventory/containers', { headers: { 'X-Cred-Token': li.token } });
+  const li2 = await (await call('/auth/login', { method: 'POST', body: '{"username":"pin4","password":"5678"}' })).json();
+  check('reset to 4 numbers ("5678"): the old sign-in stops (401 → the phone asks to sign in), the new one works', rs.status === 200 && old.status === 401 && !!li2.token, { rs: rs.status, old: old.status });
+}
+
 console.log('\n' + (failed ? '❌ ' + failed + ' check(s) FAILED' : '✅ all ' + passed + ' checks passed') + '\n');
 process.exit(failed ? 1 : 0);

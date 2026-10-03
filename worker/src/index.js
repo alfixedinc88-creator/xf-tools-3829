@@ -512,8 +512,9 @@ async function adminCreateUser(request, env, session) {
   if (!username || !password || !displayName) {
     return cors(new Response(JSON.stringify({ ok: false, error: 'username, password, and displayName required' }), { status: 400, headers: { 'Content-Type': 'application/json' } }));
   }
-  if (password.length < 8) {
-    return cors(new Response(JSON.stringify({ ok: false, error: 'Password must be at least 8 characters' }), { status: 400, headers: { 'Content-Type': 'application/json' } }));
+  // Owner: a 4-digit number is OK (sign-in still locks after too many wrong tries).
+  if (String(password).length < 4) {
+    return cors(new Response(JSON.stringify({ ok: false, error: 'Password must be at least 4 characters (a 4-digit number is OK)' }), { status: 400, headers: { 'Content-Type': 'application/json' } }));
   }
   const uname = username.trim().toLowerCase();
   const existing = await env.DB.prepare(`SELECT id FROM cred_users WHERE username = ?`).bind(uname).first();
@@ -549,8 +550,9 @@ async function adminResetPassword(request, env, session) {
   if (!userId || !newPassword) {
     return cors(new Response(JSON.stringify({ ok: false, error: 'userId and newPassword required' }), { status: 400, headers: { 'Content-Type': 'application/json' } }));
   }
-  if (newPassword.length < 8) {
-    return cors(new Response(JSON.stringify({ ok: false, error: 'Password must be at least 8 characters' }), { status: 400, headers: { 'Content-Type': 'application/json' } }));
+  // Owner: a 4-digit number is OK (sign-in still locks after too many wrong tries).
+  if (String(newPassword).length < 4) {
+    return cors(new Response(JSON.stringify({ ok: false, error: 'Password must be at least 4 characters (a 4-digit number is OK)' }), { status: 400, headers: { 'Content-Type': 'application/json' } }));
   }
   const hash = await hashPassword(newPassword);
   const result = await env.DB.prepare(`UPDATE cred_users SET password_hash = ? WHERE id = ?`).bind(hash, userId).run();

@@ -83,15 +83,31 @@ async function wFetch(url, opts) {
   });
   var r = await fetch(url, opts);
   if (r.status === 401 || r.status === 403) {
-    INV_CRED_TOKEN = null;
-    localStorage.removeItem('xf_cred_token');
-    localStorage.removeItem('xf_cred_user');
-    var gate = document.getElementById('inv-cred-gate');
-    if (gate) gate.style.display = 'flex';
-    var app = document.getElementById('inv-app');
-    if (app) app.style.display = 'none';
+    invCredSignedOut();
     throw new Error('Unauthorized');
   }
+  return r;
+}
+function invCredSignedOut() {
+  INV_CRED_TOKEN = null;
+  localStorage.removeItem('xf_cred_token');
+  localStorage.removeItem('xf_cred_user');
+  var gate = document.getElementById('inv-cred-gate');
+  if (gate) gate.style.display = 'flex';
+  var app = document.getElementById('inv-app');
+  if (app) app.style.display = 'none';
+}
+// The phone outbox's own fetch (owner: "my guy keeps getting logged out"): a
+// 403 is "not allowed for this person" (e.g. the approve step of a Stock In
+// made by a worker — only a manager approves) — the entry stays saved and
+// waits in Review; it must NEVER sign the person out (the outbox retries
+// every 20 s, so it signed them out again and again). Only a 401 (sign-in
+// expired, e.g. after a password reset) signs out.
+async function invObFetch(url, opts) {
+  opts = opts || {};
+  opts.headers = Object.assign({}, opts.headers || {}, { 'X-Cred-Token': INV_CRED_TOKEN || '' });
+  var r = await fetch(url, opts);
+  if (r.status === 401) { invCredSignedOut(); throw new Error('Unauthorized'); }
   return r;
 }
 
@@ -153,7 +169,7 @@ async function invPost(url, opts, after) {
 async function invObSend(ent, first) {
   invObPatch(ent.id, function (x) { x.tries = (x.tries || 0) + 1; x.lastTry = Date.now(); });
   var r, d = null;
-  try { r = await wFetch(INV_OB_W + ent.path, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(ent.body) }); }
+  try { r = await invObFetch(INV_OB_W + ent.path, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(ent.body) }); }
   catch (e) {
     var why = e && e.message === 'Unauthorized' ? 'Sign in again to send it' : 'No WiFi';
     invObPatch(ent.id, function (x) { x.state = 'waiting'; x.error = why; });
@@ -186,12 +202,17 @@ async function invObSend(ent, first) {
 async function invObRunAfter(ent, d) {
   var tpl = ent.after; if (!tpl) return null;
   try {
-    var r = await wFetch(INV_OB_W + tpl.path, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: invObFill(tpl.body, d) });
+    var r = await invObFetch(INV_OB_W + tpl.path, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: invObFill(tpl.body, d) });
     var v = await r.json().catch(function () { return {}; });
+    if (r.status === 403) { // only a manager approves: the entry is saved, it waits in Review
+      invObPatch(ent.id, function (x) { x.state = 'sent'; x.afterDone = false; x.error = ''; x.note = 'Saved — a manager approves it in Review'; });
+      return { ok: false, needsManager: true, error: 'Saved — a manager approves it in Review' };
+    }
     invObPatch(ent.id, function (x) { x.state = 'sent'; x.afterDone = true; });
     return v;
   } catch (e) {
-    invObPatch(ent.id, function (x) { x.state = 'after-waiting'; x.error = 'Saved — approve step waiting for WiFi'; x.result = d; });
+    var signIn = e && e.message === 'Unauthorized';
+    invObPatch(ent.id, function (x) { x.state = 'after-waiting'; x.error = signIn ? 'Saved — sign in again to send the approve step' : 'Saved — approve step waiting for WiFi'; x.result = d; });
     return null;
   }
 }
@@ -215,7 +236,7 @@ async function invObTick() {
     }
     var sent = invObRead().filter(function (x) { return x.state === 'sent'; });
     if (sent.length) {
-      var res = await wFetch(INV_OB_W + '/inventory/outbox/check', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ ids: sent.map(function (x) { return x.id; }) }) });
+      var res = await invObFetch(INV_OB_W + '/inventory/outbox/check', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ ids: sent.map(function (x) { return x.id; }) }) });
       var cd = await res.json();
       if (cd && cd.ok) {
         var saved = 0;
@@ -8999,7 +9020,8 @@ window.invCredLogin = async function() {
   function xfrIsLoc(code) {
     var up = String(code || '').trim().toUpperCase(); if (!up) return false;
     if (/^GARAGE$/.test(up)) return true;
-    return (typeof INV_PREFIXES !== 'undefined' ? INV_PREFIXES : []).some(function(p) { return up.indexOf(p) === 0; }) || /^[A-Z][A-Z0-9]*=\d/.test(up);
+    // A bare area prefix ("BARN=") is not a spot — the full label has the spot after the "=".
+    return (typeof INV_PREFIXES !== 'undefined' ? INV_PREFIXES : []).some(function(p) { return up.indexOf(p) === 0 && (up.length > p.length || !/=$/.test(p)); }) || /^[A-Z][A-Z0-9]*=\d/.test(up);
   }
   function xfrGoRecs(l) { return (xfrGo.recs && xfrGo.recs[l.part]) || { plan: '', recs: [] }; }
   function xfrNat(a, b) { return String(a).localeCompare(String(b), undefined, { numeric: true }); }
