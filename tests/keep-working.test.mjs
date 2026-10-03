@@ -1101,6 +1101,38 @@ console.log('\nVeeqo: keep stock up (at or below 88 → 888) so labels can print
   globalThis.fetch = realFetch; delete env.VEEQO_API_KEY;
 }
 
+// Owner: "keep Veeqo stock up still gets 'Feature not available on your current plan' — I changed some to Infinity; show me which listing has the error and if it is set to Infinity or not".
+console.log('\nVeeqo: 🔍 Check every item — Infinite or not, and which ones had an error (read-only)');
+{
+  const realFetch = globalThis.fetch; let writes = 0, prodCalls = 0;
+  const page = n => Array.from({ length: n }, (_, i) => ({ id: 500 + i, title: 'Item ' + i, sellables: [{ id: 5000 + i, sku_code: 'S-' + i, stock_entries: [{ warehouse_id: 346371, physical_stock_level: i === 1 ? 5 : 900, allocated_stock_level: 0, available_stock_level: i === 1 ? 5 : 900, infinite: i === 0 }] }] }));
+  globalThis.fetch = async (u, o) => { u = String(u);
+    if (o && o.method && o.method !== 'GET') { writes++; return new Response('{}'); }
+    if (u.includes('api.veeqo.com/warehouses')) return new Response(JSON.stringify([{ id: 346371, name: 'Main' }]));
+    if (u.includes('api.veeqo.com/products')) { prodCalls++; const pg = +(u.match(/page=(\d+)/) || [])[1]; return new Response(JSON.stringify(pg <= 3 ? page(100) : pg === 4 ? page(2) : [])); }
+    return realFetch(u, o); };
+  env.VEEQO_API_KEY = 'k';
+  const ins = sq.prepare('INSERT INTO veeqo_stock_log (ts, sku, sellable_id, warehouse_id, old_physical, old_available, new_physical, by_user, note) VALUES (?,?,?,?,?,?,?,?,?)');
+  ins.run('2026-10-03T19:02:00Z', 'S-0', 5000, 346371, 0, 0, null, 'Chen', 'FAILED: HTTP 403: {"error_messages":"Feature not available on your current plan"} (warehouse 346371)');
+  ins.run('2026-10-03T19:02:01Z', 'S-1', 5001, 346371, 5, 5, null, 'Chen', 'FAILED: HTTP 403: {"error_messages":"Feature not available on your current plan"} (warehouse 346371)');
+  const a = await get('/veeqo/stock-topup/items?page=1'), b = await get('/veeqo/stock-topup/items?page=' + a.next);
+  const items = a.items.concat(b.items), f = (sku) => items.find(x => x.sku === sku), last = Object.fromEntries((a.lastResult || []).map(x => [x.s + ':' + x.w, x]));
+  check('reads every item, page by page (302 rows over 2 calls), with the warehouse name', a.ok && !a.done && a.next === 4 && b.done && items.length === 302 && a.warehouses['346371'] === 'Main', { n: items.length, a: a.done, b: b.done });
+  check('shows Infinite yes/no and what is available (S-0 Infinite, S-1 5 left, not Infinite)', f('S-0').infinite === true && f('S-1').infinite === false && f('S-1').available === 5, [f('S-0'), f('S-1')]);
+  check('shows the last error for each item (S-0 and S-1 failed with "current plan")', last['5000:346371'] && last['5000:346371'].failed && /current plan/.test(last['5001:346371'].note), a.lastResult);
+  check('only looks — nothing is changed in Veeqo', writes === 0, writes);
+  const pkt = (await (await call('/auth/login', { method: 'POST', body: '{"username":"picker","password":"password1"}' })).json()).token;
+  const pk = await call('/veeqo/stock-topup/items?page=1', { headers: { 'X-Cred-Token': pkt } });
+  check('management only (a picker is refused)', pk.status === 401 || pk.status === 403, pk.status);
+  const { readFileSync } = await import('node:fs');
+  const ps = readFileSync(fileURLToPath(new URL('../packship.html', import.meta.url)), 'utf8');
+  const kindSrc = (ps.match(/function psVsiKind\(it\) \{[\s\S]*?\n\}/) || [''])[0], lastSrc = (ps.match(/function psVsiLast\(it\) \{[^\n]*\}/) || [''])[0];
+  const kind = new Function('PS_VSI', lastSrc + kindSrc + '; return psVsiKind;')({ below: 88, last: last });
+  check('screen: "🔍 Check every item" button; an item that failed but is now Infinite counts as fixed (♾), a failed one not Infinite stays ⚠',
+    /onclick="psVsiLoad\(\)"/.test(ps) && /\/veeqo\/stock-topup\/items\?page=/.test(ps) && kind(f('S-0')) === 'inf' && kind(f('S-1')) === 'err' && kind(f('S-2')) === 'ok', null);
+  globalThis.fetch = realFetch; delete env.VEEQO_API_KEY;
+}
+
 console.log('\nContainer here: ✅ This pallet is done — what is not moved, short on record, ➕ More / ✓ Finish all');
 {
   const { readFileSync } = await import('node:fs');

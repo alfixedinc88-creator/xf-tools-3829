@@ -23669,6 +23669,15 @@ async function handleVeeqoRoute(url, method, request, env, session) {
     const log = await d1All(env, 'SELECT * FROM veeqo_stock_log ORDER BY id DESC LIMIT 200');
     return veeqoResp({ ok: true, config: { on: !!c.on, below: c.below, to: c.to }, lastRun: c.lastRun || null, lastFullPass: c.lastFullPass || null, passActive: !!c.passActive, nextPage: c.page || 1, lastError: c.lastError || '', log });
   }
+  // GET /veeqo/stock-topup/items?page=N — read-only list of every Veeqo item
+  // per warehouse: is it set to Infinite, how much is available, and the
+  // last time the top-up failed for it. Changes nothing in Veeqo. Reads 3
+  // Veeqo pages (300 products) per call; the page asks again with `next`
+  // until `done`.
+  if (path === '/veeqo/stock-topup/items' && method === 'GET') {
+    try { return veeqoResp(await vstockItems(env, parseInt(url.searchParams.get('page'), 10) || 1)); }
+    catch (e) { return veeqoResp({ ok: false, error: e.message }, 500); }
+  }
   if (path === '/veeqo/stock-topup' && method === 'POST') {
     const b = await request.json().catch(() => ({}));
     const c = await vstockLoad(env), who = String(session.displayName || session.username || 'mgmt').slice(0, 40);
@@ -24650,6 +24659,40 @@ async function vstockRun(env, o) {
   c.lastRun = { at: new Date().toISOString(), by, checked, updated, failed, wrapped, stopped, firstError, skippedWarehouses: skippedWh };
   await vstockSave(env, c);
   return { ok: true, checked, updated, failed, wrapped, stopped, firstError, skippedWarehouses: skippedWh, nextPage: page, changes };
+}
+
+// Read-only: every Veeqo stock entry with Infinite yes/no + last top-up
+// failure, for Pack & Ship → 📦 Keep Veeqo stock up → 🔍 Check every item.
+async function vstockItems(env, page) {
+  const c = await vstockLoad(env), below = Number(c.below);
+  const PER_CALL = 3;
+  const out = { ok: true, below, items: [], done: false, next: page };
+  if (page === 1) {
+    out.warehouses = {};
+    try { const w = await veeqoFetch(env, '/warehouses?page_size=100'); for (const x of (Array.isArray(w) ? w : [])) out.warehouses[x.id] = x.name || ''; } catch (_) {}
+    // Latest top-up result per item + warehouse (FAILED note or the last change).
+    const rows = await d1All(env, `SELECT l.sellable_id, l.warehouse_id, l.ts, l.note, l.new_physical FROM veeqo_stock_log l
+      JOIN (SELECT sellable_id, warehouse_id, MAX(id) mid FROM veeqo_stock_log WHERE sellable_id IS NOT NULL GROUP BY sellable_id, warehouse_id) m ON m.mid = l.id`);
+    out.lastResult = rows.map(r => ({ s: r.sellable_id, w: r.warehouse_id, ts: r.ts, failed: /^FAILED/.test(r.note || ''), note: String(r.note || '').slice(0, 200), to: r.new_physical }));
+  }
+  for (let n = 0; n < PER_CALL; n++) {
+    const r = await veeqoFetch(env, `/products?page=${out.next}&page_size=100`);
+    const list = Array.isArray(r) ? r : (r.products || []);
+    for (const p of list) {
+      for (const sb of (p.sellables || [])) {
+        for (const se of (sb.stock_entries || [])) {
+          if (!se) continue;
+          const phys = Number(se.physical_stock_level) || 0, alloc = Math.max(0, Number(se.allocated_stock_level) || 0);
+          out.items.push({ productId: p.id, sellableId: sb.id, sku: String(sb.sku_code || '').slice(0, 80), title: String(p.title || sb.title || '').slice(0, 120),
+            warehouseId: se.warehouse_id || (se.warehouse && se.warehouse.id) || null, infinite: !!se.infinite,
+            available: se.available_stock_level != null ? Number(se.available_stock_level) : phys - alloc, physical: phys, allocated: alloc });
+        }
+      }
+    }
+    if (list.length < 100) { out.done = true; break; }
+    out.next++;
+  }
+  return out;
 }
 
 async function autolabelCron(env) {
