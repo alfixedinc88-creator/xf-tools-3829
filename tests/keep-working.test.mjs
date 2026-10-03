@@ -1002,9 +1002,22 @@ console.log('\nContainer here: every issue next to the pallet · Transfer: a spo
   check('the pallets list sends the extras and the "scanned again" records with who / when', Array.isArray(cp.extras) && cp.extras.some(e => e.pallet === '7' && e.by) && Array.isArray(cp.rechecks) && cp.rechecks.some(r => r.pallet === '7' && r.location === 'C1=6-1-9'), { e: cp.extras, r: cp.rechecks });
   check('Transfer: nothing on record at the scanned spot → a spot right next to it with the same part # is offered (Yes / No / Cancel)',
     /function xfrNear\(a, b\)/.test(ih) && /function xfrGrabNotHere\(loc\)/.test(ih) && /Nothing on record at /.test(ih) && /Double check the label/.test(ih), null);
-  check('…No / nothing next to it → pieces per box, how many boxes (buttons) → Stock In [FOUND ON SHELF] [TRANSFER], approved, through the outbox, then move like normal',
+  // Owner changed this (after #145): how many boxes, then pieces per box → into the cart; the
+  // Stock In [FOUND ON SHELF] [TRANSFER] is made (approved, through the outbox) where it's put away.
+  check('…No / nothing next to it → how many boxes, pieces per box (buttons) → cart; Stock In [FOUND ON SHELF] [TRANSFER] when put away, approved, through the outbox',
     /window\.xfrFoundPcs = function/.test(ih) && /xfrNumGrid\('xfrFoundBoxes', null\)/.test(ih) && /'\[FOUND ON SHELF\] \[TRANSFER\] '/.test(ih) && /invLogAndApprove\(body, function\(d\) \{\s*return \{ rowIndex: d\.rowIndex, action: 'Approved', verifiedBy: by,/.test(ih), null);
   check('…the move keeps a note when the spot used is not the one scanned', /'\[SCANNED ' \+ G\.scanned \+ ' — on record at '/.test(ih), null);
+}
+
+console.log('\nTransfer: scroll to the scan box · found box → cart first · scan bar in the cart');
+{
+  const { readFileSync } = await import('node:fs');
+  const ih = readFileSync(fileURLToPath(new URL('../inventory.html', import.meta.url)), 'utf8');
+  check('after a scan the screen scrolls to the scan box (mode buttons out of view)', /window\.xfrScrollWork = function/.test(ih) && /setTimeout\(xfrScrollWork, 60\)/.test(ih), null);
+  check('found box: boxes first, then pieces; no "not on record / stocked in here first" note; into the cart, not SKU Mgr',
+    /found: \{ step: 'boxes'/.test(ih) && !/It is stocked in here first/.test(ih) && /found: true, foundAt: G\.loc, pcs: F\.pcs/.test(ih) && /item\.found \? xfrFoundPost\(item, toLoc, n\)/.test(ih), null);
+  check('scan bar in the 🛒 cart (no keyboard) → opens that box\'s cart item with a main spot + 1 more',
+    /id="xfr-cart-scan" type="text" inputmode="none"/.test(ih) && /window\.xfrCartScan = function/.test(ih) && /📍 Main spot: /.test(ih), null);
 }
 
 console.log('\n' + (failed ? '❌ ' + failed + ' check(s) FAILED' : '✅ all ' + passed + ' checks passed') + '\n');
