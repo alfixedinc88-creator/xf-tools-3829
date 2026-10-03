@@ -901,6 +901,7 @@ window.invCredLogin = async function() {
       <button type="button" id="xfr-result-photo-edit" class="xfr-ph-edit" style="display:none" title="Change photo (Admins)" onclick="xfrPhotoEdit(xfrPart && (xfrPart.baseSku || String(xfrPart.partNum||'').split('=')[0]))">✏️</button>
       <div style="flex:1;min-width:0"><div class="iresult-part" id="xfr-result-part"></div></div>
       <div id="xfr-result-sku" style="font-size:11px;font-weight:600;font-family:var(--mono);color:var(--text3);padding-top:3px"></div>
+      <button type="button" id="xfr-result-x" title="Close — scan another box" onclick="xfrStartOver()" style="flex-shrink:0;width:36px;height:36px;border-radius:50%;border:1.5px solid var(--border);background:var(--bg3);color:var(--text2);font-size:18px;font-weight:800;cursor:pointer;line-height:1">&#x2715;</button>
     </div>
     <div class="iresult-name" id="xfr-result-name"></div>
   </div>
@@ -8191,13 +8192,17 @@ window.invCredLogin = async function() {
   window.xfrScrollWork = function() {
     if (xfrSearchMode !== 'code') return;
     var inp = g('xfr-search-inp'), row = inp && inp.closest ? inp.closest('.isearch-row') : inp; if (!row) return;
-    var y = row.getBoundingClientRect().top + (window.scrollY || window.pageYOffset || 0) - 8;
+    // the bars that stay at the top of the screen (Inventory bar, 📶 waiting bar) must not cover it
+    var cover = 0; ['#inv-app .itopbar', '#inv-ob-bar'].forEach(function(q) { var e = document.querySelector(q); if (e && e.offsetParent !== null) cover = Math.max(cover, e.getBoundingClientRect().height); });
+    var y = row.getBoundingClientRect().top + (window.scrollY || window.pageYOffset || 0) - cover - 10;
     // short page: add just enough room below so the scan box can reach the top
     var pnl = g('inv-panel-transfer'), need = y + window.innerHeight - document.documentElement.scrollHeight;
     if (pnl && need > 0) pnl.style.paddingBottom = ((parseFloat(pnl.style.paddingBottom) || 0) + need + 4) + 'px';
     try { window.scrollTo({ top: Math.max(0, y), behavior: 'smooth' }); } catch (e) { window.scrollTo(0, Math.max(0, y)); }
   };
-  window.xfrStartOver = function() { xfrResetLookup(); var si = g('xfr-search-inp'); if (si) si.focus(); };
+  // ✕ / start over: close the scanned item, ready to scan the next box (no keyboard).
+  window.xfrStartOver = function() { window._xfrPutLast = false; xfrResetLookup(); var si = g('xfr-search-inp');
+    if (si) { si.value = ''; if (!si.hasAttribute('data-kb-typing') && xfrSearchMode !== 'name') si.setAttribute('inputmode', 'none'); si.focus(); } setTimeout(xfrScrollWork, 60); };
   window.xfrStepsRender = xfrStepsRender;
   setTimeout(xfrStepsRender, 0);
 
@@ -10339,22 +10344,23 @@ window.invCredLogin = async function() {
   function xfrPutDraw() {
     var P = xfrPut; if (!P) return; var item = P.item, E = xfrE;
     var stepLine = function(txt) { return '<div style="margin-top:10px;padding:9px 11px;border-radius:10px;border:2px solid var(--accent);background:var(--accent-bg,#eef2ff);font-size:15px;font-weight:800">' + txt + '</div>'; };
-    var body = P.step === 'box' ? stepLine('1. 📷 Scan the box')
-      : P.step === 'n' ? '<div style="margin-top:8px;font-size:13px;font-weight:700;color:var(--green)">✓ Right box: ' + E(item.partNum) + '</div>'
-          + '<div style="font-size:15px;font-weight:800;margin:8px 0 6px">2. How many boxes are you putting here?</div>' + xfrNumGrid('xfrPutN', item.cases)
-      : '<div style="margin-top:8px;font-size:13px;font-weight:700;color:var(--green)">✓ Right box: ' + E(item.partNum) + ' · <b>' + xfrN(P.n) + '</b> box(es) <a href="#" onclick="xfrPutBack();return false" style="font-size:12px">change</a></div>'
-          + stepLine('3. 📷 Put them on the shelf, then scan the spot label');
-    xfrModal('xfr-put-modal', '<div style="display:flex;justify-content:space-between;align-items:flex-start;gap:8px"><div><div style="font-family:var(--mono);font-size:18px;font-weight:800">' + E(item.partNum) + '</div>'
+    var scanBox = '<div style="display:flex;gap:6px;align-items:center;margin-top:8px">'
+      + '<input id="xfr-put-scan" type="text" inputmode="none" autocomplete="off" placeholder="' + (P.step === 'loc' ? '📷 Scan the spot label…' : '📷 Scan here…') + '" onkeydown="if(event.key===\'Enter\'&&this.value.trim())xfrPutScan(this.value.trim())" onblur="xfrKbOff(this)" style="flex:1;min-width:0;box-sizing:border-box;padding:10px;border:2px solid var(--accent);border-radius:9px;background:var(--bg);color:var(--text);font-size:15px;font-family:var(--mono)">'
+      + '<button type="button" class="inv-x-btn" title="Label won\'t scan? Type it" onclick="xfrKbOn(\'xfr-put-scan\')" style="font-size:15px">&#x2328;</button></div>';
+    // Owner: right after the box, "How many boxes are you putting here?" comes
+    // first; tap a number → scan the spot label → saved by itself.
+    var body = P.step === 'box' ? stepLine('📷 Scan the box') + scanBox
+      : P.step === 'n' ? '<div style="font-size:16px;font-weight:800;margin:10px 0 6px">How many boxes are you putting here?</div>' + xfrNumGrid('xfrPutN', item.cases) + scanBox
+      : '<div style="margin-top:8px;font-size:13px;font-weight:700;color:var(--green)"><b>' + xfrN(P.n) + '</b> box(es) <a href="#" onclick="xfrPutBack();return false" style="font-size:12px">change</a></div>'
+          + stepLine('📷 Put them on the shelf, then scan the spot label') + scanBox;
+    xfrModal('xfr-put-modal', '<div style="display:flex;justify-content:space-between;align-items:flex-start;gap:8px"><div><div style="font-family:var(--mono);font-size:18px;font-weight:800">' + E(item.partNum) + (P.step !== 'box' ? ' <span style="font-size:12px;color:var(--green)">✓ right box</span>' : '') + '</div>'
       + '<div style="font-size:12px;color:var(--text3)">' + E(item.name || '') + '</div>'
       + '<div style="font-size:13px;margin-top:2px">From <b>' + E(item.fromLocation) + '</b> · <b>' + xfrN(item.cases) + '</b> case(s) in the cart</div></div>'
       + '<button type="button" onclick="xfrPutClose()" style="background:none;border:none;font-size:22px;color:var(--text3);cursor:pointer">&times;</button></div>'
-      + '<div id="xfr-put-sug" style="margin:8px 0;font-size:12px;color:var(--text3)">' + (P.sug || '') + '</div>'
-      + '<div style="display:flex;gap:6px;align-items:center">'
-      + '<input id="xfr-put-scan" type="text" inputmode="none" autocomplete="off" placeholder="📷 Scan here…" onkeydown="if(event.key===\'Enter\'&&this.value.trim())xfrPutScan(this.value.trim())" onblur="xfrKbOff(this)" style="flex:1;min-width:0;box-sizing:border-box;padding:10px;border:2px solid var(--accent);border-radius:9px;background:var(--bg);color:var(--text);font-size:15px;font-family:var(--mono)">'
-      + '<button type="button" class="inv-x-btn" title="Label won\'t scan? Type it" onclick="xfrKbOn(\'xfr-put-scan\')" style="font-size:15px">&#x2328;</button></div>'
       + (P.msg ? '<div style="font-size:13px;font-weight:700;margin-top:6px;color:var(--red)">' + P.msg + '</div>' : '')
       + body
-      + '<button type="button" onclick="xfrPutClose();xfrOpenPicker(' + xfrCart.indexOf(item) + ')" style="width:100%;margin-top:12px;padding:9px;border-radius:9px;border:1.5px solid var(--border);background:var(--bg);color:var(--text2);font-size:12px;cursor:pointer">Pick the spot from a list instead</button>');
+      + '<div id="xfr-put-sug" style="margin:8px 0;font-size:12px;color:var(--text3)">' + (P.sug || '') + '</div>'
+      + '<button type="button" onclick="xfrPutClose();xfrOpenPicker(' + xfrCart.indexOf(item) + ')" style="width:100%;margin-top:6px;padding:9px;border-radius:9px;border:1.5px solid var(--border);background:var(--bg);color:var(--text2);font-size:12px;cursor:pointer">Pick the spot from a list instead</button>');
     setTimeout(xfrRefocus, 30);
   }
   window.xfrPutClose = function() { xfrModalClose('xfr-put-modal'); xfrPut = null; xfrRefocus(); };
