@@ -940,6 +940,11 @@ window.invCredLogin = async function() {
       <div class="icard-label" style="margin:0">🛒 Transfer Cart <span id="xfr-cart-count" style="font-size:11px;font-weight:700;background:var(--purple-bg);color:var(--purple);padding:1px 7px;border-radius:10px;margin-left:4px"></span></div>
       <button onclick="xfrClearCart()" style="background:none;border:none;color:var(--text3);font-size:12px;cursor:pointer;padding:4px 8px">Clear All</button>
     </div>
+    <!-- At the new spot: scan the box here → its cart item opens (main spot + 1 more), how many, scan the spot -->
+    <div class="isearch-row" style="margin-bottom:8px">
+      <input class="isearch-inp" id="xfr-cart-scan" type="text" inputmode="none" autocomplete="off" placeholder="📷 At the new spot? Scan the box to put it away…" style="border-color:var(--purple)" onkeydown="if(event.key==='Enter'&&this.value.trim())xfrCartScan(this.value)" onblur="xfrKbOff(this)">
+      <button type="button" class="inv-x-btn" title="Label won't scan? Type it" onclick="xfrKbOn('xfr-cart-scan')" style="font-size:15px">&#x2328;</button>
+    </div>
     <div id="xfr-cart-items"></div>
     <div style="margin-top:10px">
       <div class="ifield"><label style="font-size:10px">Notes (optional)</label><input id="xfr-cart-notes" type="text" placeholder="e.g. Reorganizing shelf B3"></div>
@@ -8174,12 +8179,24 @@ window.invCredLogin = async function() {
     var line = function(txt) { return '<div style="padding:9px 11px;border-radius:10px;border:2px solid var(--accent);background:var(--accent-bg,#eef2ff);font-size:15px;font-weight:800">' + txt + '</div>'; };
     el.style.display = 'block';
     el.innerHTML = step === 1 ? line('📷 Scan the box you need to move')
-        + (waiting ? '<div style="font-size:12px;color:var(--text2);margin-top:5px">🛒 At the new spot? Tap the item in the cart below.</div>' : '')
+        + (waiting ? '<div style="font-size:12px;color:var(--text2);margin-top:5px">🛒 At the new spot? Scan the box in the cart\'s scan bar below.</div>' : '')
       : step === 2 ? line('📷 Now scan the spot you grab <span style="font-family:var(--mono)">' + item + '</span> from')
         + '<a href="#" onclick="xfrStartOver();return false" style="display:inline-block;font-size:12px;margin-top:5px">✕ start over</a>'
       : '<a href="#" onclick="xfrStartOver();return false" style="font-size:12px">✕ start over</a>';
     if (inp) inp.placeholder = step === 1 ? '📷 Scan the box (outside / inside UPC)…' : step === 2 ? '📷 Scan the spot label you grab from…' : '📷 Scan another box to grab more…';
   }
+  // Owner: after a scan, the screen scrolls down to the scan box — the mode
+  // buttons above it (SKU / Product Name / Location / Container here) are
+  // not needed any more.
+  window.xfrScrollWork = function() {
+    if (xfrSearchMode !== 'code') return;
+    var inp = g('xfr-search-inp'), row = inp && inp.closest ? inp.closest('.isearch-row') : inp; if (!row) return;
+    var y = row.getBoundingClientRect().top + (window.scrollY || window.pageYOffset || 0) - 8;
+    // short page: add just enough room below so the scan box can reach the top
+    var pnl = g('inv-panel-transfer'), need = y + window.innerHeight - document.documentElement.scrollHeight;
+    if (pnl && need > 0) pnl.style.paddingBottom = ((parseFloat(pnl.style.paddingBottom) || 0) + need + 4) + 'px';
+    try { window.scrollTo({ top: Math.max(0, y), behavior: 'smooth' }); } catch (e) { window.scrollTo(0, Math.max(0, y)); }
+  };
   window.xfrStartOver = function() { xfrResetLookup(); var si = g('xfr-search-inp'); if (si) si.focus(); };
   window.xfrStepsRender = xfrStepsRender;
   setTimeout(xfrStepsRender, 0);
@@ -8541,6 +8558,9 @@ window.invCredLogin = async function() {
   window.xfrRefocus = function() {
     if (g('xfr-put-modal')) { var p = g('xfr-put-scan'); if (p && document.activeElement !== p) { if (!p.hasAttribute('data-kb-typing')) p.setAttribute('inputmode', 'none'); p.focus(); } return; }
     if (xfrSearchMode === 'cont') { xfrGoBox(); return; }
+    // putting boxes away and more are waiting in the cart → the cart's scan bar
+    var cs = g('xfr-cart-scan');
+    if (cs && xfrSearchMode === 'code' && window._xfrPutLast && xfrCart.some(function(c) { return !c.toLocation; })) { if (!cs.hasAttribute('data-kb-typing')) cs.setAttribute('inputmode', 'none'); cs.focus(); return; }
     var si = g('xfr-search-inp'); if (si && xfrSearchMode === 'code') { if (!si.hasAttribute('data-kb-typing')) si.setAttribute('inputmode', 'none'); si.focus(); }
   };
   window.xfrTypeOff = function(x) { setTimeout(function() { if (document.activeElement === x) return; x.removeAttribute('data-kb-typing'); x.setAttribute('inputmode', 'none'); }, 60); };
@@ -9395,8 +9415,8 @@ window.invCredLogin = async function() {
     if (!val) return;
     if (xfrSearchMode === 'name') { xfrNameSearch(val); }
     else if (xfrSearchMode === 'loc') { xfrLocScanSearch(); }
-    else if (xfrPart && xfrIsLoc(val)) { xfrGrabSet(val); }
-    else { xfrLookup(val); }
+    else if (xfrPart && xfrIsLoc(val)) { window._xfrPutLast = false; xfrGrabSet(val); }
+    else { window._xfrPutLast = false; xfrLookup(val); }
   };
 
   // ── Transfer location scan ────────────────────────────────────────────────
@@ -9631,6 +9651,7 @@ window.invCredLogin = async function() {
         if (!d.partNum) { invFlash('Not found: ' + code, 'error'); return; }
         d._code = String(code).trim().toUpperCase();
         xfrPart = d;
+        setTimeout(xfrScrollWork, 60);
         // Build xfrKnownLocs grouped by location — picker expects { location, variants:[{partNum,cases}] }
         var locMap = {};
         (d.locations || []).forEach(function(l) {
@@ -9937,6 +9958,7 @@ window.invCredLogin = async function() {
     invFlash('Added: ' + item.partNum + ' ×' + item.cases + (item.emptySpot ? ' · ' + item.emptySpot.location + ' will be set to 0' : ''), 'success');
     xfrResetLookup();
     var si = g('xfr-search-inp'); if (si) { si.value = ''; si.focus(); }
+    setTimeout(xfrScrollWork, 60);
   }
   function xfrModal(id, html) {
     var m = g(id); if (!m) { m = document.createElement('div'); m.id = id; document.body.appendChild(m); }
@@ -10009,13 +10031,12 @@ window.invCredLogin = async function() {
     if (!rows.length && G.found) {
       var F = G.found, big = 'padding:13px 0;border-radius:11px;border:1.5px solid var(--border);background:var(--bg3);color:var(--text);font-size:18px;font-weight:800;cursor:pointer;touch-action:manipulation';
       var known = []; (xfrPart.locations || []).forEach(function(l) { var q = parseFloat(l.eachQty); if (q > 0 && String(l.partNum || '').toUpperCase() === String(xfrPart.partNum).toUpperCase() && known.indexOf(q) < 0) known.push(q); });
-      h += '<div style="padding:8px 10px;border-radius:9px;background:var(--orange-bg,#fff7ed);color:var(--orange);font-size:13px;font-weight:700;margin-bottom:8px">📦 ' + E(xfrPart.partNum) + ' found at ' + E(G.loc) + ' — not on record. It is stocked in here first (Found on Shelf, kept in History), then you move it.</div>';
-      if (F.step === 'pcs') h += '<div style="font-size:15px;font-weight:800;margin-bottom:6px">How many pieces in each box?</div>'
+      if (F.step === 'boxes') h += '<div style="font-size:15px;font-weight:800;margin-bottom:6px">How many boxes are you moving?</div>' + xfrNumGrid('xfrFoundBoxes', null);
+      else h += '<div style="font-size:13px;margin-bottom:6px"><b>' + xfrN(F.boxes) + '</b> box(es) <a href="#" onclick="xfrFoundBack();return false" style="font-size:12px">change</a></div>'
+        + '<div style="font-size:15px;font-weight:800;margin-bottom:6px">How many pieces in each box?</div>'
         + known.map(function(q) { return '<button type="button" onclick="xfrFoundPcs(' + q + ')" style="' + big + ';width:100%;margin-bottom:7px;border-color:var(--green);background:var(--green-bg,#dcfce7)">' + xfrN(q) + ' <span style="font-size:12px;font-weight:600">(its box size on record — check the label)</span></button>'; }).join('')
         + '<div style="display:grid;grid-template-columns:repeat(4,1fr);gap:7px">' + [100, 150, 200, 250, 300, 500, 1000].map(function(q) { return '<button type="button" onclick="xfrFoundPcs(' + q + ')" style="' + big + '">' + q + '</button>'; }).join('')
         + '<button type="button" onclick="xfrFoundPcs(\'other\')" style="' + big + ';font-size:15px">Other…</button></div>';
-      else h += '<div style="font-size:13px;margin-bottom:6px"><b>' + xfrN(F.pcs) + '</b> pcs per box <a href="#" onclick="xfrFoundBack();return false" style="font-size:12px">change</a></div>'
-        + '<div style="font-size:15px;font-weight:800;margin-bottom:6px">How many boxes are at ' + E(G.loc) + '?</div>' + xfrNumGrid('xfrFoundBoxes', null);
     } else if (!rows.length) {
       h += '<div style="padding:10px;border-radius:9px;background:var(--orange-bg,#fff7ed);color:var(--orange);font-size:13px;font-weight:700">' + E(xfrPart.partNum) + ' is not on record at ' + E(G.loc) + ' (0 in the system). Stock it in first with 📦 Stock In / Found on Shelf, or scan the right spot.</div>';
     } else if (rows.length > 1 && G.pick == null) {
@@ -10042,6 +10063,7 @@ window.invCredLogin = async function() {
     var exact = rows.filter(function(l) { return String(l.partNum || '').toUpperCase() === String(xfrPart.partNum || '').toUpperCase(); });
     if (exact.length && !xfrPart.isMultiVariant) rows = exact;
     xfrGrab = { loc: up, rows: rows, pick: rows.length === 1 ? 0 : null };
+    setTimeout(xfrScrollWork, 60);
     if (!rows.length) { xfrGrabNotHere(up); return; }
     xfrShowGrab();
   };
@@ -10084,39 +10106,43 @@ window.invCredLogin = async function() {
     xfrShowGrab();
   };
   window.xfrFoundStart = function(loc, why) {
-    xfrGrab = { loc: loc, rows: [], found: { step: 'pcs', pcs: 0, why: why || '', near: (xfrGrab && xfrGrab.near) || [] } };
+    xfrGrab = { loc: loc, rows: [], found: { step: 'boxes', boxes: 0, pcs: 0, why: why || '', near: (xfrGrab && xfrGrab.near) || [] } };
     xfrShowGrab();
   };
-  window.xfrFoundPcs = function(n) {
-    var F = xfrGrab.found; if (!F) return;
-    if (n === 'other') { xfrKeypad('How many pieces in each box?', '', function(v) { xfrFoundPcs(v); }); return; }
-    F.pcs = parseFloat(n) || 0; F.step = 'boxes'; xfrShowGrab();
-  };
-  window.xfrFoundBack = function() { var F = xfrGrab.found; if (F) { F.step = 'pcs'; xfrShowGrab(); } };
   window.xfrFoundBoxes = function(n) {
-    var G = xfrGrab, F = G.found; if (!F || !xfrPart) return;
+    var G = xfrGrab, F = G.found; if (!F) return;
     if (n === 'more') { xfrKeypad('How many boxes are at ' + G.loc + '?', '', function(v) { xfrFoundBoxes(v); }); return; }
-    n = parseFloat(n) || 0; if (!(n > 0) || !(F.pcs > 0)) return;
-    var part = String(xfrPart.partNum || '').toUpperCase(), loc = G.loc, by = (INV_CRED_USER && INV_CRED_USER.displayName) || 'OPS';
-    var zero = (xfrPart.locations || []).filter(function(l) { return String(l.partNum || part).toUpperCase() === part && String(l.location || '').toUpperCase() === loc && Math.abs((parseFloat(l.eachQty) || 0) - F.pcs) < 1e-6; })[0];
-    var note = '[FOUND ON SHELF] [TRANSFER] ' + xfrN(n) + ' box(es) × ' + xfrN(F.pcs) + ' pcs found at ' + loc + ' — not on record'
-      + (F.near.length ? ' (said NOT the ' + F.near.map(function(l) { return xfrRowCases(l) + ' at ' + l.location; }).join(', ') + ')' : '');
-    var body = { type: 'IN', partNum: part, sku: xfrPart.sku || part, name: xfrPart.name || '', location: loc, cases: n, initials: by, notes: note,
-      isNew: !zero, isPlaceholder: false, masterRowIndex: zero ? zero.rowIndex : null, masterId: zero ? (zero.masterId || null) : null, _boxPcs: zero ? 0 : F.pcs };
-    // No waiting: the boxes can be moved right away; the Stock In is saved
-    // (and approved) through the phone outbox — no WiFi → sent later, once.
-    xfrGrab = { loc: loc, rows: [{ partNum: part, location: loc, cases: n, eachQty: F.pcs, masterId: zero ? zero.masterId : null, rowIndex: zero ? zero.rowIndex : null, found: true }], pick: 0 };
-    invFlash('✓ ' + xfrN(n) + ' box(es) of ' + part + ' found at ' + loc + ' — stocked in. Now tap how many you move.', 'success');
-    xfrShowGrab();
-    invLogAndApprove(body, function(d) {
-      return { rowIndex: d.rowIndex, action: 'Approved', verifiedBy: by,
-        item: Object.assign({}, body, { rowIndex: d.rowIndex, d1Id: d.d1Id, overwriteLocation: '', unitsPerCase: zero ? undefined : F.pcs }) };
-    }).then(function(d) {
-      if (!d || d.ok === false) { invFlash('✗ Stock In NOT saved: ' + ((d && d.error) || 'error') + ' — scan the spot again', 'error');
-        xfrCart = xfrCart.filter(function(c) { return !(c.foundAt === loc && c.partNum === part && !c.toLocation); }); xfrSaveCart(); xfrRenderCart(); xfrGrabClear(); return; }
-      if (d.queued) invFlash('📶 No WiFi — the Stock In at ' + loc + ' is saved on this phone. It sends by itself when WiFi is back.', 'warn');
-    }).catch(function() { invFlash('⚠ Not sure the Stock In was sent — check 📶 Waiting to send', 'error'); });
+    F.boxes = parseFloat(n) || 0; if (!(F.boxes > 0)) return; F.step = 'pcs'; xfrShowGrab();
   };
+  window.xfrFoundBack = function() { var F = xfrGrab.found; if (F) { F.step = 'boxes'; xfrShowGrab(); } };
+  // Pieces per box tapped → straight into the 🛒 cart. Nothing goes into SKU
+  // Mgr yet (owner): when it's put away, a Stock In [FOUND ON SHELF] is made
+  // at the spot it goes to (approved, in History: found where, how many).
+  window.xfrFoundPcs = function(n) {
+    var G = xfrGrab, F = G.found; if (!F || !xfrPart) return;
+    if (n === 'other') { xfrKeypad('How many pieces in each box?', '', function(v) { xfrFoundPcs(v); }); return; }
+    F.pcs = parseFloat(n) || 0; if (!(F.pcs > 0) || !(F.boxes > 0)) return;
+    var part = String(xfrPart.partNum || '').toUpperCase(), now = new Date().toISOString();
+    xfrPushCartItem({ partNum: part, sku: xfrPart.sku || part, name: xfrPart.name || '', fromLocation: G.loc, fromRowIndex: null, fromMasterId: null,
+      cases: F.boxes, initials: (INV_CRED_USER && INV_CRED_USER.displayName) || 'OPS', toLocation: '', toRowIndex: null, isNewLocation: false, addedAt: now, grabbedAt: now,
+      codes: [xfrPart._code, xfrPart.upc, xfrPart.sku, part].filter(Boolean).map(function(c) { return String(c).toUpperCase(); }),
+      found: true, foundAt: G.loc, pcs: F.pcs,
+      notNear: F.near.map(function(l) { return xfrRowCases(l) + ' at ' + l.location; }).join(', '),
+      locs: (xfrPart.locations || []).filter(function(l) { return String(l.partNum || part).toUpperCase() === part; }).map(function(l) { return { location: String(l.location || '').toUpperCase(), eachQty: parseFloat(l.eachQty) || 0, masterId: l.masterId || null, rowIndex: l.rowIndex || null }; }) });
+  };
+  // A found box put away at toLoc: one Stock In there (approved right away,
+  // through the phone outbox). History: found how many where, put where.
+  function xfrFoundPost(item, toLoc, n) {
+    var ex = (item.locs || []).filter(function(l) { return l.location === toLoc && Math.abs(l.eachQty - item.pcs) < 1e-6; })[0];
+    var by = (INV_CRED_USER && INV_CRED_USER.displayName) || item.initials || 'OPS';
+    var body = { type: 'IN', partNum: item.partNum, sku: item.sku || item.partNum, name: item.name || '', location: toLoc, cases: n, initials: by,
+      notes: '[FOUND ON SHELF] [TRANSFER] ' + xfrN(n) + ' box(es) × ' + xfrN(item.pcs) + ' pcs found at ' + item.foundAt + ' — not on record → put at ' + toLoc + (item.notNear ? ' (said NOT the ' + item.notNear + ')' : ''),
+      isNew: !ex, isPlaceholder: false, masterRowIndex: ex ? ex.rowIndex : null, masterId: ex ? ex.masterId : null, _boxPcs: ex ? 0 : item.pcs };
+    return invLogAndApprove(body, function(d) {
+      return { rowIndex: d.rowIndex, action: 'Approved', verifiedBy: by,
+        item: Object.assign({}, body, { rowIndex: d.rowIndex, d1Id: d.d1Id, overwriteLocation: '', unitsPerCase: ex ? undefined : item.pcs }) };
+    });
+  }
   window.xfrGrabPick = function(i) { xfrGrab.pick = i; xfrShowGrab(); };
   // ✏️ "in the system" is wrong: correct it first, same as Stock Out
   // (an [AUDIT] correction, approved right away, kept in History).
@@ -10254,6 +10280,7 @@ window.invCredLogin = async function() {
         + '</div>'
         + '<div class="xfr-cart-item-meta">'
           + '📍 From: <strong>' + item.fromLocation + '</strong>'
+          + (item.found ? ' <span style="color:var(--orange);font-weight:700">(found — not on record · ' + xfrN(item.pcs) + ' pcs per box; goes into SKU Mgr when put away)</span>' : '')
           + ' &nbsp;·  📦 ' + item.cases + ' cases'
           + (item.palletLabel ? '<br><span style="color:var(--purple);font-weight:600">🧱 ' + String(item.palletLabel).replace(/</g, '&lt;') + '</span>' : '')
           + (item.name ? '<br><span style="color:var(--text3)">' + item.name + '</span>' : '')
@@ -10277,16 +10304,35 @@ window.invCredLogin = async function() {
   // the cart has: the rest stay in the cart for another spot.
   var xfrPut = null;
   // One scan box in the pop-up (no keyboard): box → how many (buttons) → spot.
-  window.xfrPutOpen = function(i) {
+  // Scan a box in the cart's scan bar: its cart item opens with the box
+  // already checked — main spot + 1 more, how many, scan the spot.
+  window.xfrCartScan = function(code) {
+    var x = g('xfr-cart-scan'); if (x) x.value = '';
+    var up = String(code || '').trim().toUpperCase(); if (!up) return;
+    var open = xfrCart.filter(function(c) { return !c.toLocation; });
+    var pick = function(part) { return open.filter(function(c) { return part ? String(c.partNum).toUpperCase() === part : (String(c.partNum).toUpperCase() === up || (c.codes || []).indexOf(up) >= 0); })[0]; };
+    var go = function(it) { if (!it) return false; xfrPutOpen(xfrCart.indexOf(it), true); return true; };
+    if (xfrIsLoc(up)) { invFlash('Scan the box first (then the spot)', 'error'); return; }
+    if (go(pick())) return;
+    var c = xfrLkCache(up); if (c && c.d && c.d.partNum && go(pick(String(c.d.partNum).toUpperCase()))) return;
+    wFetch(W + '/inventory/lookup?code=' + encodeURIComponent(up)).then(function(r) { return r.json(); }).then(function(d) {
+      if (d && d.partNum) xfrLkCache(up, d);
+      if (!(d && d.partNum && go(pick(String(d.partNum).toUpperCase())))) invFlash((d && d.partNum ? d.partNum : up) + ' is not in the cart — grab it first (scan it in the scan box at the top)', 'error');
+    }).catch(function() { invFlash('📶 No WiFi — can\'t check this label. Scan the label you scanned when you grabbed it.', 'error'); });
+  };
+  window.xfrPutOpen = function(i, boxScanned) {
     var item = xfrCart[i]; if (!item) return;
-    xfrPut = { item: item, i: i, step: 'box', n: 0, sug: '', msg: '' };
+    window._xfrPutLast = true;
+    xfrPut = { item: item, i: i, step: boxScanned ? 'n' : 'box', n: 0, sug: '', msg: '' };
     xfrPutDraw();
     wFetch(W + '/inventory/containers/pallet-recs', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ parts: [item.partNum], fromLoc: item.fromLocation }) })
       .then(function(r) { return r.json(); }).then(function(d) {
         if (!xfrPut || xfrPut.item !== item) return;
         var E = xfrE, R = (d && d.recs && d.recs[String(item.partNum).toUpperCase()]) || { plan: '', recs: [] };
-        xfrPut.sug = (R.plan ? '<div style="padding:7px 10px;border-radius:9px;background:#fef3c7;color:#92400e;font-weight:800;font-size:14px;margin-bottom:4px">📍 Plan: goes to ' + E(R.plan) + '</div>' : '')
-          + (R.recs.length ? '<div>Suggested spot: <b style="font-family:var(--mono);color:var(--green)">' + E(R.recs[0].location) + '</b></div>' : '');
+        // Owner: one main spot + 1 more (the plan first, else the best spot).
+        var main = R.plan || (R.recs[0] && R.recs[0].location) || '', more = R.plan ? (R.recs[0] && R.recs[0].location) : (R.recs[1] && R.recs[1].location);
+        xfrPut.sug = (main ? '<div style="padding:8px 10px;border-radius:9px;background:#fef3c7;color:#92400e;font-weight:800;font-size:15px;margin-bottom:4px">📍 Main spot: <span style="font-family:var(--mono)">' + E(main) + '</span></div>' : '')
+          + (more && more !== main ? '<div style="font-size:13px">Or: <b style="font-family:var(--mono);color:var(--green)">' + E(more) + '</b></div>' : '');
         var el = g('xfr-put-sug'); if (el) el.innerHTML = xfrPut.sug;
       }).catch(function() {});
   };
@@ -10354,7 +10400,7 @@ window.invCredLogin = async function() {
     var item = P.item, toLoc = String(code || '').trim().toUpperCase(), n = P.n;
     if (P.step !== 'loc') { invFlash('Scan the box first', 'error'); return; }
     if (!xfrIsLoc(toLoc)) { P.msg = 'That is not a spot label: ' + xfrE(toLoc); xfrPutDraw(); return; }
-    if (toLoc === String(item.fromLocation).toUpperCase()) { P.msg = 'That is where you grabbed it (' + xfrE(toLoc) + ')'; xfrPutDraw(); return; }
+    if (toLoc === String(item.fromLocation).toUpperCase() && !item.found) { P.msg = 'That is where you grabbed it (' + xfrE(toLoc) + ')'; xfrPutDraw(); return; }
     if (!(n > 0)) { P.step = 'n'; xfrPutDraw(); return; }
     if (n > item.cases + 1e-9) { invFlash('The cart only has ' + xfrN(item.cases) + ' case(s) of ' + item.partNum, 'error'); return; }
     var notes = (((g('xfr-cart-notes') || {}).value || '').trim() + (item.note ? ' ' + item.note : '')).trim(), now = new Date().toISOString();
@@ -10363,13 +10409,13 @@ window.invCredLogin = async function() {
     xfrSaveCart(); xfrRenderCart(); xfrModalClose('xfr-put-modal'); xfrPut = null;
     invFlash('✓ ' + xfrN(n) + ' × ' + item.partNum + ' → ' + toLoc + (gone ? '' : ' · ' + xfrN(left) + ' still in the cart'), 'success');
     xfrRefocus();
-    invPost(W + '/inventory/transfer', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({
+    (item.found ? xfrFoundPost(item, toLoc, n) : invPost(W + '/inventory/transfer', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({
       partNum: item.partNum, sku: item.sku, name: item.name || '',
       fromLocation: item.fromLocation, fromRowIndex: item.fromRowIndex, fromMasterId: item.fromMasterId || null,
       toLocation: toLoc, toRowIndex: null, isNewLocation: true,
       cases: n, initials: item.initials, notes: (notes + ' [SCAN PUT-AWAY]').trim(), checkHave: true,
       palletLineId: item.palletLineId || null, addedAt: item.addedAt || null, grabbedAt: item.grabbedAt || item.addedAt || now }) })
-      .then(function(r) { return r.json(); }).then(function(d) {
+      .then(function(r) { return r.json(); })).then(function(d) {
         if (!d || !d.ok) { // refused: the boxes go back in the cart, in red
           var back = xfrCart.indexOf(item);
           if (back >= 0) item.cases = Math.round((item.cases + n) * 100) / 100;
@@ -10642,7 +10688,7 @@ window.invCredLogin = async function() {
         return;
       }
       var item = items[idx++];
-      invPost(W + '/inventory/transfer', {
+      (item.found ? xfrFoundPost(item, String(item.toLocation).toUpperCase(), item.cases).then(function(d) { return { json: function() { return d || { ok: false }; } }; }) : invPost(W + '/inventory/transfer', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -10656,7 +10702,7 @@ window.invCredLogin = async function() {
           addedAt: item.addedAt || null,
           grabbedAt: item.grabbedAt || null
         })
-      }).then(function(r) { return r.json(); })
+      })).then(function(r) { return r.json(); })
         .then(function(d) {
           if (d.ok) {
             if (item.emptySpot) xfrPostEmptySpot(item);
