@@ -1020,5 +1020,15 @@ console.log('\nTransfer: scroll to the scan box · found box → cart first · s
     /id="xfr-cart-scan" type="text" inputmode="none"/.test(ih) && /window\.xfrCartScan = function/.test(ih) && /📍 Main spot: /.test(ih), null);
 }
 
+console.log('\nTransfer: scan bar stays in view · put-away asks how many first · ✕ on the scanned item');
+{
+  const { readFileSync } = await import('node:fs');
+  const ih = readFileSync(fileURLToPath(new URL('../inventory.html', import.meta.url)), 'utf8');
+  check('the scroll stops below the bars at the top of the screen, so the scan bar still shows', /\['#inv-app \.itopbar', '#inv-ob-bar'\]\.forEach/.test(ih) && /- cover - 10/.test(ih), null);
+  check('put-away pop-up: "How many boxes are you putting here?" first, then scan the spot label (saved by itself)',
+    /P\.step === 'n' \? '<div style="font-size:16px;font-weight:800;margin:10px 0 6px">How many boxes are you putting here\?<\/div>' \+ xfrNumGrid\('xfrPutN', item\.cases\)/.test(ih) && /stepLine\('📷 Put them on the shelf, then scan the spot label'\)/.test(ih), null);
+  check('✕ on the scanned item closes it, ready for the next box', /id="xfr-result-x"[^>]*onclick="xfrStartOver\(\)"/.test(ih), null);
+}
+
 console.log('\n' + (failed ? '❌ ' + failed + ' check(s) FAILED' : '✅ all ' + passed + ' checks passed') + '\n');
 process.exit(failed ? 1 : 0);
