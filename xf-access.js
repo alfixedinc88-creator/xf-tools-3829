@@ -37,6 +37,7 @@ window.addEventListener('pageshow', function (e) { if (e.persisted) location.rel
     { key: 'upc', file: 'upc.html', name: '🏷️ UPC Barcodes', needs: 'Ops / Mobile / Mgmt', card: card('upc.html'), tabs: [] },
     { key: 'inventory', file: 'inventory.html', name: '📋 Inventory', needs: 'Ops / Mobile / Mgmt', card: card('inventory.html'), tabs: [
       { key: 'stockout', label: '📤 Stock Out', sel: '#inv-tab-stockout' },
+      { key: 'check', label: '✅ Checking', sel: '#inv-tab-check' },
       { key: 'scan', label: '📦 Stock In / Found on Shelf', sel: '#inv-tab-scan' },
       { key: 'transfer', label: 'Transfer', sel: '#inv-tab-transfer' },
       { key: 'audit', label: '🔍 Audit', sel: '#inv-tab-audit' },

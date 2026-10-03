@@ -526,6 +526,7 @@ window.invCredLogin = async function() {
 <div class="itabs">
   <button class="itab iactive" id="inv-tab-stockout" onclick="invSwitchTab('stockout')">🏬 Stock Out Shelving</button>
   <button class="itab" id="inv-tab-stockoutco" onclick="invSwitchTab('stockoutco')">🏢 Stock Out Big Company</button>
+  <button class="itab" id="inv-tab-check" onclick="invSwitchTab('check')">✅ Checking</button>
   <button class="itab" id="inv-tab-scan" onclick="invSwitchTab('scan')">📦 Stock In / Found on Shelf</button>
   <button class="itab" id="inv-tab-transfer" onclick="invSwitchTab('transfer')">Transfer</button>
   <button class="itab" id="inv-tab-audit" onclick="invSwitchTab('audit')">🔍 Audit</button>
@@ -650,11 +651,8 @@ window.invCredLogin = async function() {
   </div>
   <div class="icard" id="inv-scansearch-card">
     <div class="icard-label">Scan or Search</div>
-    <div style="display:flex;gap:6px;margin-bottom:10px;flex-wrap:wrap">
-      <button class="ixfr-mode-btn ixfr-active" id="inv-smode-code" onclick="invSetScanMode('code')">SKU / Part# / UPC</button>
-      <button class="ixfr-mode-btn" id="inv-smode-name" onclick="invSetScanMode('name')">Product Name</button>
-      <button class="ixfr-mode-btn" id="inv-smode-loc" onclick="invSetScanMode('loc')">&#x1F4CD; Location</button>
-    </div>
+    <!-- One box (owner): part # / UPC / product name all go in the same box — no
+         "Product Name" / "Location" buttons any more (a spot is looked up on ✅ Checking). -->
     <div id="inv-need-wrap" style="display:flex;gap:8px;align-items:center;margin-bottom:8px">
       <label for="inv-need-cases" style="font-size:12px;font-weight:700;color:var(--text2);white-space:nowrap">Cases needed</label>
       <input id="inv-need-cases" type="text" inputmode="decimal" autocomplete="off" placeholder="e.g. 2"
@@ -682,7 +680,7 @@ window.invCredLogin = async function() {
       <button type="button" class="inv-need-key" onmousedown="event.preventDefault()" onclick="invNeedPadKey('clear')">C</button>
     </div>
     <div class="isearch-row">
-      <input class="isearch-inp" id="inv-search-inp" type="text" placeholder="Part# or barcode…" onkeydown="if(event.key==='Enter')invScanSearch()" onblur="invNeedPadShow(false)">
+      <input class="isearch-inp" id="inv-search-inp" type="text" placeholder="Part #, barcode or product name…" onkeydown="if(event.key==='Enter')invScanSearch()" onblur="invNeedPadShow(false)">
       <button type="button" class="inv-x-btn" title="Clear — start this item again" onmousedown="event.preventDefault()" onclick="invClearNeedAndScan()">&#x2715;</button>
       <button class="isearch-btn" onclick="invScanSearch()">Go</button>
     </div>
@@ -868,9 +866,8 @@ window.invCredLogin = async function() {
     <div class="icard-label">Transfer Stock</div>
     <div style="font-size:12px;color:var(--text3);margin-bottom:10px;line-height:1.5">Grab items from locations and add to cart. Set the destination when you arrive at the shelf.</div>
     <div style="display:flex;gap:6px;margin-bottom:10px;flex-wrap:wrap">
-      <button class="ixfr-mode-btn ixfr-active" id="xfr-mode-code" onclick="xfrSetSearchMode('code')">SKU / Part# / UPC</button>
-      <button class="ixfr-mode-btn" id="xfr-mode-name" onclick="xfrSetSearchMode('name')">Product Name</button>
-      <button class="ixfr-mode-btn" id="xfr-mode-loc" onclick="xfrSetSearchMode('loc')">&#x1F4CD; Location</button>
+      <!-- Owner: only these two — "SKU / Part# / UPC" also finds a product name (⌨ to type it). -->
+      <button class="ixfr-mode-btn ixfr-active" id="xfr-mode-code" onclick="xfrSetSearchMode('code')">SKU / Part# / UPC / Name</button>
       <button class="ixfr-mode-btn" id="xfr-mode-cont" onclick="xfrSetSearchMode('cont')" title="A container arrived: find what is on each pallet and move the boxes to the shelves">🚢 Container here</button>
     </div>
     <!-- 🚢 Container here: pallets of shipped containers (from the vendor packing list imported on Reorder) -->
@@ -1026,6 +1023,24 @@ window.invCredLogin = async function() {
   </div>
 </div>
 
+<!-- ✅ Checking (owner): scan a box UPC / part # / spot label, or type a name — see
+     everything: where it is, how many cases, who put it there and when. A spot can be
+     counted right here (same as 🔍 Audit), "None found", or "Something else found". -->
+<div class="ipanel" id="inv-panel-check">
+  <div class="icard">
+    <div class="icard-label">✅ Checking</div>
+    <div style="font-size:12px;color:var(--text3);margin-bottom:10px;line-height:1.5">Scan a box barcode, a part #, or a spot label — or type a product name (⌨). It shows everything we have and where.</div>
+    <div class="isearch-row">
+      <input class="isearch-inp" id="ck-inp" type="text" inputmode="none" autocomplete="off" placeholder="📷 Scan UPC / part # / spot, or ⌨ type a name…" onkeydown="if(event.key==='Enter')ckGo()" onblur="xfrKbOff(this)">
+      <button type="button" class="inv-x-btn" title="Type it (part # or name)" onclick="xfrKbOn('ck-inp')" style="font-size:15px">&#x2328;</button>
+      <button type="button" class="inv-x-btn" title="Clear — start over" onmousedown="event.preventDefault()" onclick="ckClear()">&#x2715;</button>
+      <button class="isearch-btn" onclick="ckGo()">Go</button>
+    </div>
+    <button class="icam-btn" id="ck-cam-btn" onclick="ckToggleCam()">&#x1F4F7; Scan Barcode</button>
+    <div id="ck-reader-wrap" style="display:none"><div id="ck-qr-reader"></div></div>
+  </div>
+  <div id="ck-out"></div>
+</div>
 <div class="ipanel" id="inv-panel-audit">
 
   <!-- Approval mode card -->
@@ -1760,6 +1775,8 @@ window.invCredLogin = async function() {
     var scanPanelActive = (tab === "scan" || tab === "stockout" || tab === "stockoutco");
     g("inv-panel-scan").className      = "ipanel" + (scanPanelActive ? " iactive" : "");
     g("inv-panel-transfer").className  = "ipanel" + (tab === "transfer" ? " iactive" : "");
+    g("inv-panel-check").className     = "ipanel" + (tab === "check"    ? " iactive" : "");
+    g("inv-tab-check").className       = "itab"   + (tab === "check"    ? " iactive" : "");
     g("inv-panel-review").className    = "ipanel" + (tab === "review"   ? " iactive" : "");
     g("inv-panel-audit").className     = "ipanel" + (tab === "audit"    ? " iactive" : "");
     g("inv-panel-skumgr").className    = "ipanel" + (tab === "skumgr"   ? " iactive" : "");
@@ -1797,6 +1814,7 @@ window.invCredLogin = async function() {
       }
     }
     if (tab === "transfer" && window.xfrStepsRender) window.xfrStepsRender();
+    if (tab === "check") { invAuditLoadMode(); setTimeout(function() { var x = g('ck-inp'); if (x) x.focus(); }, 60); }
     if (tab === "audit") { invAuditLoadMode(); invPopulateAllPrefixDropdowns(); if(typeof invLoadPrefixes==='function') invLoadPrefixes(); }
     if ((tab === "skumgr" || tab === "history" || tab === "soldout" || tab === "location") && !invUnlocked) {
       window._skumgrPendingTab = tab; // remember which tab to open after unlock
@@ -2071,8 +2089,8 @@ window.invCredLogin = async function() {
 
   window.invSetScanMode = function(mode) {
     invScanSearchMode = mode;
-    g('inv-smode-code').className = 'ixfr-mode-btn' + (mode === 'code' ? ' ixfr-active' : '');
-    g('inv-smode-name').className = 'ixfr-mode-btn' + (mode === 'name' ? ' ixfr-active' : '');
+    if (g('inv-smode-code')) g('inv-smode-code').className = 'ixfr-mode-btn' + (mode === 'code' ? ' ixfr-active' : '');
+    if (g('inv-smode-name')) g('inv-smode-name').className = 'ixfr-mode-btn' + (mode === 'name' ? ' ixfr-active' : '');
     if (g('inv-smode-loc')) g('inv-smode-loc').className = 'ixfr-mode-btn' + (mode === 'loc' ? ' ixfr-active' : '');
     var inp = g('inv-search-inp');
     // Show/hide location scan panel vs regular search row
@@ -2088,7 +2106,7 @@ window.invCredLogin = async function() {
       if (searchRow) searchRow.style.display = '';
       if (camBtn) camBtn.style.display = '';
       if (locWrap) locWrap.style.display = 'none';
-      if (inp) inp.placeholder = mode === 'name' ? 'Type product name…' : 'Part# or barcode…';
+      if (inp) inp.placeholder = mode === 'name' ? 'Type product name…' : 'Part #, barcode or product name…';
     }
     var nr = g('inv-name-results'); if (nr) nr.style.display = 'none';
     g('inv-result-card').style.display = 'none';
@@ -2101,8 +2119,11 @@ window.invCredLogin = async function() {
     if (!val) return;
     if (invScanSearchMode === 'name') { invScanNameSearch(val); }
     else if (invScanSearchMode === 'loc') { invLocScanSearch(); }
-    else { invLookup(val); }
+    else { invLookup(val, true); }
   };
+  // One box for part # / UPC / name: the part # / UPC lookup always goes first;
+  // only when nothing matches and the text has letters is it searched as a name.
+  window.invNameFallback = function(code, d) { return !!(d && !d.partNum && !d.upcNotLinked && /[a-z]{2}/i.test(String(code || ''))); };
 
   // ── Location scan for stock in/out — same as audit location search ──────────
   var _invLocScanHtml5 = null;
@@ -2317,7 +2338,7 @@ window.invCredLogin = async function() {
     // own locations to the top of the list, and as the target for Big
     // Company's substitution math below.
 
-  window.invLookup = function(code) {
+  window.invLookup = function(code, byName) {
     if (!code) return;
     // Reset here, not just when a Stock Out Report is tapped — every
     // ordinary search must start clean, so a stray leftover tag from an
@@ -2330,7 +2351,7 @@ window.invCredLogin = async function() {
     g("inv-detail-card").style.display = "none";
     var gb = g("inv-grab-banner"); if (gb) { gb.style.display = "none"; gb.innerHTML = ""; }
     _invFetchLookupRaw(code)
-      .then(function(d) { _invRenderLookupResult(code, d); invMaybeAutoPick(d); })
+      .then(function(d) { if (byName && invNameFallback(code, d)) { invScanNameSearch(code); return; } _invRenderLookupResult(code, d); invMaybeAutoPick(d); })
       .catch(function() { invFlash("Lookup failed", "error"); });
   };
 
@@ -8162,7 +8183,7 @@ window.invCredLogin = async function() {
   window.xfrSetSearchMode = function(mode) {
     xfrSearchMode = mode;
     g('xfr-mode-code').className = 'ixfr-mode-btn' + (mode === 'code' ? ' ixfr-active' : '');
-    g('xfr-mode-name').className = 'ixfr-mode-btn' + (mode === 'name' ? ' ixfr-active' : '');
+    if (g('xfr-mode-name')) g('xfr-mode-name').className = 'ixfr-mode-btn' + (mode === 'name' ? ' ixfr-active' : '');
     if (g('xfr-mode-loc')) g('xfr-mode-loc').className = 'ixfr-mode-btn' + (mode === 'loc' ? ' ixfr-active' : '');
     var inp = g('xfr-search-inp');
     var searchRow = inp && inp.closest ? inp.closest('.isearch-row') : null;
@@ -8184,7 +8205,7 @@ window.invCredLogin = async function() {
       if (searchRow) searchRow.style.display = '';
       if (camBtn) camBtn.style.display = '';
       if (locWrap) locWrap.style.display = 'none';
-      if (inp) inp.placeholder = mode === 'name' ? 'Type product name…' : 'Part#, UPC, or barcode…';
+      if (inp) inp.placeholder = mode === 'name' ? 'Type product name…' : 'Part#, UPC, or name… (⌨ to type)';
     }
     if (inp) { if (mode === 'name') { inp.removeAttribute('inputmode'); inp.removeAttribute('data-kb-typing'); } else if (!inp.hasAttribute('data-kb-typing')) inp.setAttribute('inputmode', 'none'); }
     var kb = g('xfr-search-kb'); if (kb) kb.style.display = mode === 'name' ? 'none' : '';
@@ -9568,7 +9589,7 @@ window.invCredLogin = async function() {
     if (xfrSearchMode === 'name') { xfrNameSearch(val); }
     else if (xfrSearchMode === 'loc') { xfrLocScanSearch(); }
     else if (xfrPart && xfrIsLoc(val)) { window._xfrPutLast = false; xfrGrabSet(val); }
-    else { window._xfrPutLast = false; xfrLookup(val); }
+    else { window._xfrPutLast = false; xfrLookup(val, true); }
   };
 
   // ── Transfer location scan ────────────────────────────────────────────────
@@ -9788,7 +9809,7 @@ window.invCredLogin = async function() {
     try { localStorage.setItem(k, JSON.stringify(m)); } catch (e) {}
     return null;
   }
-  window.xfrLookup = function(code) {
+  window.xfrLookup = function(code, byName) {
     if (!code) return;
     ['xfr-result-card','xfr-from-card','xfr-name-results']
       .forEach(function(id) { var el = g(id); if (el) el.style.display = 'none'; });
@@ -9800,6 +9821,7 @@ window.invCredLogin = async function() {
         return c.d;
       })
       .then(function(d) {
+        if (byName && invNameFallback(code, d) && !xfrIsLoc(String(code).trim().toUpperCase())) { xfrNameSearch(code); return; }
         if (!d.partNum) { invFlash('Not found: ' + code, 'error'); return; }
         d._code = String(code).trim().toUpperCase();
         xfrPart = d;
@@ -12165,6 +12187,285 @@ window.invCredLogin = async function() {
     g('inv-rename-confirm').style.display = 'none';
     invRenamePending = null;
   };
+
+  // ══ ✅ Checking ══════════════════════════════════════════════════════════
+  // One box: a spot label → what is on that spot / row now (count it, None
+  // found, Something else found); a box UPC or part # → every spot that part
+  // is on (an exact part # like 8-8-8=8 shows only that one, with a button
+  // for the whole family; a parent like 8-8-8 shows the whole family); a
+  // name → pick from the matches. Who put it there + when comes from
+  // /inventory/check-spots (read-only). Counts save exactly like 🔍 Audit
+  // ([AUDIT] IN/OUT of the difference; Audit Auto/Manual mode decides if a
+  // manager approves it in Review), so History keeps Before → After totals.
+  var CK = { kind: '', d: null, exact: '', all: false, loc: '', rows: [], spots: {}, other: null, saved: [] };
+  function ckE(v) { return xfrEsc(v); }
+  function ckT(iso) { return iso ? xfrFmtT(iso) : ''; }
+  function ckNum(v) { var n = parseFloat(v); return isNaN(n) ? 0 : n; }
+  function ckNow(l) { return l.adjustedCases !== undefined && l.adjustedCases !== null ? ckNum(l.adjustedCases) : ckNum(l.cases); }
+  function ckOut(html) { g('ck-out').innerHTML = html; }
+  function ckBy() { return (INV_CRED_USER && INV_CRED_USER.displayName) || 'OPS'; }
+  var CK_TYPE = { IN: 'Stock In', OUT: 'Stock Out', TRANSFER_IN: 'Transfer in', TRANSFER_OUT: 'Transfer out', MOVE: 'Move' };
+  function ckWho(part, loc) {
+    var s = CK.spots[String(part).toUpperCase() + '|' + String(loc).toUpperCase()];
+    if (!s) return '<span style="color:var(--text3)">who / when: …</span>';
+    if (!s.put) return '<span style="color:var(--text3)">who put it here: not on record</span>';
+    var p = s.put;
+    return 'Put here by <b>' + ckE(p.by || '?') + '</b> · ' + ckE(ckT(p.timestamp)) + ' · ' + ckE(CK_TYPE[p.type] || p.type) + ' ' + ckE(xfrN(p.cases)) + ' case(s)'
+      + (p.status === 'Pending' ? ' <span style="color:var(--orange)">(waiting for approval)</span>' : '');
+  }
+  function ckLoadSpots(pairs, then) {
+    if (!pairs.length) { then(); return; }
+    wFetch(W + '/inventory/check-spots', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ pairs: pairs }) })
+      .then(function(r) { return r.json(); })
+      .then(function(d) {
+        if (d && d.spots) Object.keys(d.spots).forEach(function(k) { CK.spots[k] = d.spots[k]; });
+        if (d && d.ok) pairs.forEach(function(p) { var k = String(p.part).toUpperCase() + '|' + String(p.location).toUpperCase(); if (!CK.spots[k]) CK.spots[k] = { put: null, last: [] }; });
+        then();
+      })
+      .catch(function() { then(); });
+  }
+  window.ckClear = function() { CK.kind = ''; CK.other = null; ckOut(''); var x = g('ck-inp'); if (x) { x.value = ''; x.focus(); } };
+  window.ckGo = function(v) {
+    var inp = g('ck-inp');
+    v = String(v != null ? v : (inp && inp.value) || '').trim();
+    if (inp) inp.value = '';
+    if (!v) return;
+    if (CK.other) { ckOtherScan(v); return; }
+    var V = v.toUpperCase();
+    if (xfrIsLoc(V)) ckLoc(V); else ckCode(v);
+  };
+
+  // ── a part # / UPC / name ──
+  function ckCode(v, all) {
+    var V = String(v).trim().toUpperCase();
+    ckOut('<div class="icard" style="color:var(--text3)">Looking up ' + ckE(V) + '…</div>');
+    wFetch(W + '/inventory/lookup?code=' + encodeURIComponent(V)).then(function(r) { return r.json(); }).then(function(d) {
+      if (!d || !d.partNum) {
+        if (d && d.upcNotLinked) { ckOut('<div class="icard" style="color:var(--red)">⚠ Barcode ' + ckE(V) + ' is not linked to a part # yet. Type the part # instead.</div>'); return; }
+        if (/[a-z]{2}/i.test(v)) { ckName(v); return; }
+        ckOut('<div class="icard" style="color:var(--red)">Not found: ' + ckE(V) + '</div>'); return;
+      }
+      CK.kind = 'part'; CK.d = d;
+      // An exact part # (has "=") or a box barcode → that one part # only; a parent → the whole family.
+      CK.exact = (/=/.test(V) || /^\d{11,14}$/.test(V)) ? String(d.partNum).toUpperCase() : '';
+      CK.all = !!all || !CK.exact;
+      var pairs = (d.locations || []).filter(function(l) { return l.location; }).map(function(l) { return { part: l.partNum || d.partNum, location: l.location }; });
+      ckRenderPart();
+      ckLoadSpots(pairs, ckRenderPart);
+    }).catch(function() { ckOut('<div class="icard" style="color:var(--red)">Lookup failed — check WiFi and try again</div>'); });
+  }
+  window.ckShowAll = function(on) { CK.all = !!on; ckRenderPart(); };
+  function ckRenderPart() {
+    var d = CK.d; if (!d || CK.kind !== 'part') return;
+    var rows = (d.locations || []).filter(function(l) { return l.location && (CK.all || String(l.partNum || d.partNum).toUpperCase() === CK.exact); });
+    var groups = {}, order = [];
+    rows.forEach(function(l) { var p = String(l.partNum || d.partNum).toUpperCase(); if (!groups[p]) { groups[p] = []; order.push(p); } groups[p].push(l); });
+    order.sort();
+    var famCount = {}; (d.locations || []).forEach(function(l) { famCount[String(l.partNum || d.partNum).toUpperCase()] = 1; });
+    (d.variants || []).forEach(function(v) { famCount[String(v).toUpperCase()] = 1; });
+    var nFam = Object.keys(famCount).length, totCases = 0, totPcs = 0, hidden = 0;
+    var h = '<div class="icard">'
+      + '<div style="font-size:16px;font-weight:800;font-family:var(--mono)">' + ckE(CK.all ? (d.baseSku || invParent(d.partNum)) + ' — all part #s' : CK.exact) + '</div>'
+      + (d.name ? '<div style="font-size:13px;color:var(--text2);margin:2px 0 6px">' + ckE(d.name) + '</div>' : '')
+      + (CK.exact && nFam > 1 ? (CK.all
+          ? '<button class="ps-btn-sm ixfr-mode-btn" onclick="ckShowAll(false)">Only ' + ckE(CK.exact) + '</button>'
+          : '<button class="ixfr-mode-btn" onclick="ckShowAll(true)">👪 Show all the family (' + nFam + ' part #s)</button>') : '')
+      + '</div>';
+    if (!order.length) h += '<div class="icard" style="color:var(--text3)">No spot on record for this part #.</div>';
+    order.forEach(function(p) {
+      var list = groups[p].slice().sort(function(a, b) { return invPullWalkCompare(a.location, b.location); });
+      var each = ckNum((list[0] || {}).eachQty), gCases = 0, body = '';
+      list.forEach(function(l) {
+        var now = ckNow(l), pend = ckNum(l.pendingCases);
+        if (now <= 0 && pend <= 0) { hidden++; return; }
+        gCases += now; totCases += now; totPcs += now * (ckNum(l.eachQty) || 0);
+        body += '<div style="padding:7px 0;border-top:1px solid var(--border)">'
+          + '<div style="display:flex;justify-content:space-between;gap:8px;align-items:center">'
+          + '<a href="#" onclick="ckLoc(\'' + ckE(String(l.location).toUpperCase()) + '\');return false" style="font-family:var(--mono);font-weight:700">📍 ' + ckE(l.location) + '</a>'
+          + '<span style="font-weight:800;font-family:var(--mono)">' + ckE(xfrN(now)) + ' case(s)' + (l.eachQty ? ' <span style="font-weight:400;color:var(--text3)">× ' + ckE(xfrN(l.eachQty)) + ' pcs</span>' : '') + '</span></div>'
+          + (pend ? '<div style="font-size:11px;color:var(--orange)">' + ckE(xfrN(pend)) + ' case(s) waiting for approval</div>' : '')
+          + (l.palletBoxes ? '<div style="font-size:11px;color:var(--text3)">📦 still on a container pallet</div>' : '')
+          + '<div style="font-size:11.5px;color:var(--text2);margin-top:2px">' + ckWho(l.partNum || d.partNum, l.location) + '</div></div>';
+      });
+      h += '<div class="icard"><div style="display:flex;justify-content:space-between;font-weight:800"><span style="font-family:var(--mono)">' + ckE(p) + '</span><span>' + ckE(xfrN(gCases)) + ' case(s)' + (each ? ' · ' + ckE(xfrN(gCases * each)) + ' pcs' : '') + '</span></div>'
+        + (body || '<div style="color:var(--text3);font-size:12px;padding-top:6px">None on the shelves now</div>') + '</div>';
+    });
+    if (order.length) h += '<div style="font-size:12px;color:var(--text2);padding:0 4px">Total shown: <b>' + ckE(xfrN(totCases)) + ' case(s)</b>' + (totPcs ? ' · ' + ckE(xfrN(totPcs)) + ' pcs' : '') + (hidden ? ' · ' + hidden + ' empty spot(s) not shown' : '') + '</div>';
+    ckOut(h);
+  }
+  function ckName(q) {
+    var words = String(q).toLowerCase().split(/\s+/).filter(Boolean), out = {};
+    function show(list) {
+      if (!list.length) { ckOut('<div class="icard" style="color:var(--red)">No product name matches "' + ckE(q) + '"</div>'); return; }
+      ckOut('<div class="icard"><div class="icard-label">Pick one</div>' + list.slice(0, 30).map(function(x) {
+        return '<div style="padding:8px 0;border-top:1px solid var(--border);cursor:pointer" onclick="ckGo(\'' + ckE(x.base) + '\')"><b style="font-family:var(--mono)">' + ckE(x.base) + '</b> — ' + ckE(x.name) + '</div>';
+      }).join('') + '</div>');
+    }
+    if (DB.master && DB.master.length) {
+      DB.master.forEach(function(m) {
+        var nm = String(m.name || ''), pn = String(m.partNum || m.sku || '');
+        if (!nm || !pn) return;
+        var low = nm.toLowerCase();
+        if (words.every(function(w) { return low.indexOf(w) !== -1; })) { var b = invParent(pn); if (!out[b]) out[b] = { base: b, name: nm }; }
+      });
+      (DB.products || []).forEach(function(pr) {
+        var hay = (String(pr.name || '') + ' ' + String(pr.keywords || '')).toLowerCase(), b = invParent(pr.sku);
+        if (b && words.every(function(w) { return hay.indexOf(w) !== -1; }) && !out[b]) out[b] = { base: b, name: pr.name || '' };
+      });
+      var loc = Object.keys(out).map(function(k) { return out[k]; });
+      if (loc.length) { show(loc); return; }
+    }
+    wFetch(W + '/inventory/search?name=' + encodeURIComponent(q)).then(function(r) { return r.json(); })
+      .then(function(d) { show((d.results || []).map(function(x) { return { base: x.baseSku, name: x.name }; })); })
+      .catch(function() { ckOut('<div class="icard" style="color:var(--red)">Search failed</div>'); });
+  }
+
+  // ── a spot / row ──
+  window.ckLoc = function(loc) {
+    CK.kind = 'loc'; CK.loc = String(loc).toUpperCase(); CK.other = null;
+    ckOut('<div class="icard" style="color:var(--text3)">Looking at ' + ckE(CK.loc) + '…</div>');
+    wFetch(W + '/inventory/location-search?loc=' + encodeURIComponent(CK.loc)).then(function(r) { return r.json(); }).then(function(d) {
+      CK.rows = ((d && d.results) || []).filter(function(r) { return ckNow(r) > 0 || ckNum(r.pendingCases) > 0; })
+        .sort(function(a, b) { return invPullWalkCompare(a.location, b.location) || String(a.partNum).localeCompare(String(b.partNum)); });
+      ckRenderLoc();
+      ckLoadSpots(CK.rows.map(function(r) { return { part: r.partNum, location: r.location }; }), ckRenderLoc);
+    }).catch(function() { ckOut('<div class="icard" style="color:var(--red)">Could not load ' + ckE(CK.loc) + ' — check WiFi</div>'); });
+  };
+  function ckRenderLoc() {
+    if (CK.kind !== 'loc') return;
+    var h = '<div class="icard"><div style="font-size:16px;font-weight:800;font-family:var(--mono)">📍 ' + ckE(CK.loc) + '</div>'
+      + '<div style="font-size:12px;color:var(--text2);margin-top:2px">' + CK.rows.length + ' item(s) on record here now. Count each one: fix the number and tap ✓, or ✗ None found.'
+      + (invAuditAutoMode ? '' : ' <b>Changes go to Review for a manager to approve.</b>') + '</div></div>';
+    CK.rows.forEach(function(r, i) {
+      var now = ckNow(r), done = r._ck;
+      h += '<div class="icard" id="ck-row-' + i + '" style="' + (done ? 'border-color:#0891B2;background:#E0F2FE' : '') + '">'
+        + '<div style="display:flex;justify-content:space-between;gap:8px"><b style="font-family:var(--mono)">' + ckE(r.partNum) + '</b><span style="font-family:var(--mono);color:var(--text3)">' + ckE(r.location) + '</span></div>'
+        + (r.name ? '<div style="font-size:12px;color:var(--text2)">' + ckE(r.name) + '</div>' : '')
+        + '<div style="font-size:11.5px;color:var(--text2);margin:3px 0">' + ckWho(r.partNum, r.location) + '</div>'
+        + (ckNum(r.pendingCases) ? '<div style="font-size:11px;color:var(--orange)">' + ckE(xfrN(r.pendingCases)) + ' case(s) waiting for approval</div>' : '')
+        + (done ? '<div style="font-weight:700;color:#0891B2;margin-top:4px">✓ ' + ckE(done) + '</div>'
+          : '<div style="display:flex;gap:6px;align-items:center;flex-wrap:wrap;margin-top:6px">'
+            + '<span style="font-size:12px;color:var(--text3)">System:</span>'
+            + '<input id="ck-cnt-' + i + '" type="number" inputmode="decimal" min="0" step="any" value="' + ckE(xfrN(now)) + '" style="width:80px;padding:7px 8px;border:1.5px solid var(--border);border-radius:7px;font-size:15px;font-weight:700;font-family:var(--mono)"> case(s)'
+            + '<button class="isearch-btn" onclick="ckSaveCount(' + i + ')">✓ Save</button>'
+            + '<button class="isearch-btn" style="background:var(--red)" onclick="ckNoneFound(' + i + ')">✗ None found</button></div>')
+        + '</div>';
+    });
+    h += '<button class="icam-btn" style="background:var(--orange-bg);color:var(--orange);border-color:var(--orange)" onclick="ckOtherStart()">➕ Something else found on this spot</button>';
+    ckOut(h);
+  }
+  window.ckNoneFound = function(i) { var x = g('ck-cnt-' + i); if (x) x.value = '0'; ckSaveCount(i, true); };
+  // Same entries as 🔍 Audit (invAuditSubmitRow): equal → a 0-case [AUDIT] Confirmed;
+  // different → [AUDIT] IN / OUT of the difference.
+  window.ckSaveCount = function(i, none) {
+    var r = CK.rows[i]; if (!r || r._ck) return;
+    var actual = parseFloat((g('ck-cnt-' + i) || {}).value);
+    if (isNaN(actual) || actual < 0) { invFlash('Enter a valid count (0 or more)', 'error'); return; }
+    var cur = ckNow(r), diff = Math.round((actual - cur) * 1000) / 1000, by = ckBy();
+    var note = diff === 0 ? '[AUDIT] Confirmed: ' + cur + ' cases verified correct (✅ Checking)'
+      : '[AUDIT] ' + (none ? '[NONE FOUND] ' : '') + 'System: ' + cur + ' → Actual: ' + actual + ' (diff: ' + (diff > 0 ? '+' : '') + diff.toFixed(1) + ') (✅ Checking)';
+    var body = { type: diff > 0 ? 'IN' : (diff < 0 ? 'OUT' : 'IN'), partNum: r.partNum, sku: String(r.partNum).split('=')[0].trim(), name: '',
+      location: r.location, cases: Math.abs(diff), initials: by, notes: note,
+      rowIndex: r.rowIndex, masterId: r.masterId || null, isNew: false, overwriteLocation: false };
+    var approve = (diff === 0 || invAuditAutoMode) ? function(d) {
+      return { rowIndex: d.rowIndex, action: 'Approved', verifiedBy: by, item: Object.assign({}, body, { rowIndex: d.rowIndex, d1Id: d.d1Id, overwriteLocation: '' }) };
+    } : null;
+    r._ck = 'Saving…'; ckRenderLoc();
+    invLogAndApprove(body, approve).then(function(d) {
+      if (d && d.ok === false) { r._ck = ''; ckRenderLoc(); invFlash('Error: ' + (d.error || 'not saved'), 'error'); return; }
+      var msg = diff === 0 ? 'Count matches — confirmed' : (none ? 'None found' : 'Counted ' + actual) + ' (was ' + cur + ')';
+      if (d && d.queued) msg += ' — 📶 saved on the phone';
+      else if (diff !== 0 && !approve) msg += ' — waiting for a manager in Review';
+      else if (approve && d && d._after && d._after.error) msg += ' — saved, a manager approves it in Review';
+      r._ck = msg; ckRenderLoc();
+      invFlash(msg, d && d.queued ? 'warn' : 'success');
+    }).catch(function(e) { r._ck = ''; ckRenderLoc(); invFlash('Error: ' + e.message, 'error'); });
+  };
+
+  // ── ➕ Something else found: scan the box → how many boxes / pieces → scan the spot (saves) → next box ──
+  window.ckOtherStart = function() { CK.other = { at: CK.loc, step: 'box' }; CK.saved = []; ckRenderOther(); };
+  window.ckOtherStop = function() { CK.other = null; if (CK.loc) ckLoc(CK.loc); else ckClear(); };
+  function ckRenderOther() {
+    var o = CK.other; if (!o) return;
+    var h = '<div class="icard" style="border-color:var(--orange)"><div class="icard-label">➕ Something else found at ' + ckE(o.at) + '</div>';
+    if (o.step === 'box') h += '<div style="font-size:15px;font-weight:800;margin:6px 0">1️⃣ Scan the box barcode (or type the part #)</div>';
+    else {
+      h += '<div style="font-family:var(--mono);font-weight:800;font-size:15px">' + ckE(o.part) + '</div>' + (o.name ? '<div style="font-size:12px;color:var(--text2)">' + ckE(o.name) + '</div>' : '')
+        + '<div style="display:flex;gap:10px;flex-wrap:wrap;margin:8px 0;align-items:center">'
+        + '<label style="font-size:13px;font-weight:700">2️⃣ Boxes <input id="ck-o-n" type="number" inputmode="decimal" min="0" step="any" value="' + ckE(o.n || '') + '" onkeydown="if(event.key===\'Enter\'){var p=document.getElementById(\'ck-o-pcs\');if(p)p.focus();}" style="width:70px;padding:7px;border:1.5px solid var(--border);border-radius:7px;font-size:15px;font-weight:700"></label>'
+        + '<label style="font-size:13px;font-weight:700">Pieces per box <input id="ck-o-pcs" type="number" inputmode="decimal" min="0" step="any" value="' + ckE(o.pcs || '') + '" onkeydown="if(event.key===\'Enter\')ckOtherReady()" style="width:80px;padding:7px;border:1.5px solid var(--border);border-radius:7px;font-size:15px;font-weight:700"></label></div>'
+        + (o.step === 'loc' ? '<div style="font-size:15px;font-weight:800;color:var(--accent)">3️⃣ Scan the spot label — it saves by itself</div>'
+          : '<button class="isearch-btn" onclick="ckOtherReady()">Next → scan the spot</button>');
+    }
+    if (CK.saved.length) h += '<div style="margin-top:10px;font-size:12px">' + CK.saved.map(function(x) { return '<div style="color:var(--green)">✓ ' + ckE(x) + '</div>'; }).join('') + '</div>';
+    h += '<div style="margin-top:10px"><button class="ixfr-mode-btn" onclick="ckOtherStop()">Done — back to ' + ckE(o.at) + '</button></div></div>';
+    ckOut(h);
+    if (o.step === 'count') setTimeout(function() { var x = g('ck-o-n'); if (x) x.focus(); }, 50);
+    else setTimeout(function() { var x = g('ck-inp'); if (x) x.focus(); }, 50);
+  }
+  window.ckOtherReady = function() {
+    var o = CK.other; if (!o) return;
+    o.n = parseFloat((g('ck-o-n') || {}).value); o.pcs = parseFloat((g('ck-o-pcs') || {}).value);
+    if (!(o.n > 0)) { invFlash('How many boxes?', 'error'); return; }
+    if (!(o.pcs > 0)) { invFlash('How many pieces in each box?', 'error'); return; }
+    o.step = 'loc'; ckRenderOther();
+  };
+  function ckOtherScan(v) {
+    var o = CK.other, V = String(v).trim().toUpperCase();
+    if (o.step === 'box' || (o.step === 'count' && !xfrIsLoc(V))) {
+      if (xfrIsLoc(V)) { invFlash('Scan the box first', 'error'); return; }
+      wFetch(W + '/inventory/lookup?code=' + encodeURIComponent(V)).then(function(r) { return r.json(); }).then(function(d) {
+        if (!d || !d.partNum) { invFlash(d && d.upcNotLinked ? 'Barcode not linked to a part # — type the part #' : 'Not found: ' + V, 'error'); return; }
+        var part = String(d.partNum).toUpperCase();
+        var mine = (d.locations || []).filter(function(l) { return String(l.partNum || d.partNum).toUpperCase() === part; });
+        o.part = part; o.name = d.name || ''; o.sku = d.sku || part; o.locs = mine; o.n = '';
+        o.pcs = (mine.filter(function(l) { return ckNum(l.eachQty) > 0; })[0] || {}).eachQty || '';
+        o.step = 'count'; ckRenderOther();
+      }).catch(function() { invFlash('Lookup failed — check WiFi', 'error'); });
+      return;
+    }
+    if (o.step === 'count') { ckOtherReady(); if (o.step !== 'loc') return; }
+    if (!xfrIsLoc(V)) { invFlash('That is not a spot label — scan the spot', 'error'); return; }
+    ckOtherSave(V);
+  }
+  function ckOtherSave(toLoc) {
+    var o = CK.other, n = o.n, pcs = o.pcs, by = ckBy();
+    var ex = (o.locs || []).filter(function(l) { return String(l.location).toUpperCase() === toLoc && Math.abs(ckNum(l.eachQty) - pcs) < 1e-6; })[0];
+    var body = { type: 'IN', partNum: o.part, sku: o.sku, name: o.name, location: toLoc, cases: n, initials: by,
+      notes: '[AUDIT] [CHECKING] Something else found at ' + o.at + ': ' + xfrN(n) + ' box(es) × ' + xfrN(pcs) + ' pcs → at ' + toLoc,
+      isNew: !ex, isPlaceholder: false, rowIndex: ex ? ex.rowIndex : null, masterRowIndex: ex ? ex.rowIndex : null, masterId: ex ? ex.masterId : null, _boxPcs: ex ? 0 : pcs, overwriteLocation: false };
+    var label = o.part + ' × ' + xfrN(n) + ' box(es) of ' + xfrN(pcs) + ' pcs → ' + toLoc;
+    invLogAndApprove(body, invAuditAutoMode ? function(d) {
+      return { rowIndex: d.rowIndex, action: 'Approved', verifiedBy: by,
+        item: Object.assign({}, body, { rowIndex: d.rowIndex, d1Id: d.d1Id, overwriteLocation: '', unitsPerCase: ex ? undefined : pcs }) };
+    } : null).then(function(d) {
+      if (d && d.ok === false) { invFlash('Error: ' + (d.error || 'not saved'), 'error'); return; }
+      CK.saved.unshift(label + (d && d.queued ? ' (📶 on the phone)' : invAuditAutoMode ? '' : ' (waiting for review)'));
+      invFlash('Saved: ' + label, d && d.queued ? 'warn' : 'success');
+      CK.other = { at: o.at, step: 'box' }; ckRenderOther();
+    }).catch(function(e) { invFlash('Error: ' + e.message, 'error'); });
+  }
+
+  // 📷 camera — same scanner library as the other tabs
+  var _ckQr = null, _ckCam = false;
+  window.ckToggleCam = function() {
+    var btn = g('ck-cam-btn');
+    if (_ckCam) { ckStopCam(); return; }
+    btn.textContent = '⏳'; btn.disabled = true;
+    invLoadQR().then(function() {
+      g('ck-reader-wrap').style.display = 'block';
+      _ckQr = new Html5Qrcode('ck-qr-reader');
+      return _ckQr.start({ facingMode: 'environment' }, { fps: 10, qrbox: { width: 280, height: 110 } },
+        function(code) { ckStopCam(); ckGo(code); }, function() {});
+    }).then(function() { _ckCam = true; btn.textContent = '⏹ Stop'; btn.className = 'icam-btn scanning'; btn.disabled = false; })
+      .catch(function() { invFlash('Camera error — check permissions', 'error'); ckStopCam(); });
+  };
+  function ckStopCam() {
+    if (_ckQr && _ckCam) _ckQr.stop().catch(function() {});
+    _ckQr = null; _ckCam = false;
+    var w = g('ck-reader-wrap'); if (w) w.style.display = 'none';
+    var btn = g('ck-cam-btn'); if (btn) { btn.textContent = '📷 Scan Barcode'; btn.className = 'icam-btn'; btn.disabled = false; }
+  }
 
 })();
 </script>
