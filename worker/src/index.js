@@ -7239,6 +7239,10 @@ const _app = {
     // but returns right away when both switches are off (the default), and
     // throttles itself to minRunGapMinutes otherwise. See autolabelCron().
     const testOn = await testModeOn(env).catch(() => false); // 🧪 no label buying / listing changes during a test
+    // 📦 Keep Veeqo stock up (88 → 888), a few pages of products per tick.
+    if (!testOn) ctx.waitUntil(vstockRun(env, {}).then(
+      r => { if (r && r.updated) console.log('[cron] veeqo stock top-up', JSON.stringify({ checked: r.checked, updated: r.updated, failed: r.failed })); },
+      e => console.error('[cron] veeqo stock top-up FAILED', e && e.message)));
     if (!testOn) ctx.waitUntil(autolabelCron(env).then(
       r => { if (!r || !r.skipped) console.log('[cron] autolabel', JSON.stringify(r)); },
       e => console.error('[cron] autolabel FAILED', e && e.message)
@@ -23549,6 +23553,28 @@ async function handleVeeqoRoute(url, method, request, env, session) {
     } catch(e) { return veeqoResp({ error: e.message }, 500); }
   }
 
+  // 📦 Keep Veeqo stock up: settings, log, run now (mgmt only, like the rest above)
+  if (path === '/veeqo/stock-topup' && method === 'GET') {
+    const c = await vstockLoad(env);
+    const log = await d1All(env, 'SELECT * FROM veeqo_stock_log ORDER BY id DESC LIMIT 200');
+    return veeqoResp({ ok: true, config: { on: !!c.on, below: c.below, to: c.to }, lastRun: c.lastRun || null, lastFullPass: c.lastFullPass || null, lastError: c.lastError || '', log });
+  }
+  if (path === '/veeqo/stock-topup' && method === 'POST') {
+    const b = await request.json().catch(() => ({}));
+    const c = await vstockLoad(env), who = String(session.displayName || session.username || 'mgmt').slice(0, 40);
+    if (b.run) {
+      try { return veeqoResp(await vstockRun(env, { manual: true, by: who, maxPages: 15, maxUpdates: 100, fromStart: !!b.fromStart })); }
+      catch (e) { return veeqoResp({ ok: false, error: e.message }, 500); }
+    }
+    const below = b.below != null ? parseInt(b.below, 10) : c.below, to = b.to != null ? parseInt(b.to, 10) : c.to;
+    if (!(below >= 0) || !(to > below) || to > 99999) return veeqoResp({ ok: false, error: 'Set "at or below" lower than "set to" (e.g. 88 → 888)' }, 400);
+    const next = { ...c, on: b.on != null ? !!b.on : c.on, below, to };
+    await vstockSave(env, next);
+    await env.DB.prepare('INSERT INTO veeqo_stock_log (ts, sku, title, by_user, note) VALUES (?,?,?,?,?)')
+      .bind(new Date().toISOString(), '', '', who, `Settings: ${next.on ? 'ON' : 'OFF'} · at or below ${below} → set to ${to}`).run();
+    return veeqoResp({ ok: true, config: { on: next.on, below, to } });
+  }
+
   // Auto Label + channel cancellation watch (mgmt only, like the rest above)
   if (path.startsWith('/veeqo/autolabel/')) {
     try {
@@ -24406,6 +24432,75 @@ async function autolabelSaveLastRun(env, result) {
 }
 
 // Called from scheduled() on every cron tick; returns quickly when off.
+// ── 📦 Keep Veeqo stock up (owner) ────────────────────────────────────
+// Veeqo won't let a label print once an item's stock runs out, so someone
+// had to "Add inventory" by hand. Stock sync to the stores is OFF (owner
+// confirmed), so Veeqo's number is only used inside Veeqo: when an item's
+// available stock is at or below `below` (88), set it back to `to` (888).
+// Runs on the cron a few pages of products at a time (cursor in app_config),
+// and from Pack & Ship → 🔄 Veeqo Sync. Every change is kept in
+// veeqo_stock_log (item, old → new, when, who / auto).
+const VSTOCK_KEY = 'veeqo_stock_topup';
+const VSTOCK_DEFAULTS = { on: true, below: 88, to: 888 };
+async function vstockTables(env) {
+  await autolabelEnsureTables(env);
+  await env.DB.prepare(`CREATE TABLE IF NOT EXISTS veeqo_stock_log (id INTEGER PRIMARY KEY AUTOINCREMENT, ts TEXT, sku TEXT, title TEXT,
+    sellable_id INTEGER, warehouse_id INTEGER, old_physical REAL, old_available REAL, new_physical REAL, by_user TEXT, note TEXT)`).run();
+}
+async function vstockLoad(env) {
+  await vstockTables(env);
+  let c = {}; try { c = JSON.parse(await autolabelGetKey(env, VSTOCK_KEY) || '{}') || {}; } catch (_) {}
+  return { ...VSTOCK_DEFAULTS, page: 1, ...c };
+}
+async function vstockSave(env, c) { await autolabelSetKey(env, VSTOCK_KEY, JSON.stringify(c)); }
+async function vstockRun(env, o) {
+  o = o || {};
+  const c = await vstockLoad(env);
+  if (!c.on && !o.manual) return { skipped: 'off' };
+  if (!(env.VEEQO_API_KEY || '').trim()) return { skipped: 'no Veeqo key' };
+  const below = Number(c.below), to = Number(c.to), maxPages = o.maxPages || 6, maxUpdates = o.maxUpdates || 40, by = o.by || 'auto';
+  if (!(to > below)) return { skipped: 'bad settings' };
+  let page = o.fromStart ? 1 : (parseInt(c.page, 10) || 1), checked = 0, updated = 0, failed = 0, wrapped = false;
+  const changes = [];
+  for (let n = 0; n < maxPages && updated + failed < maxUpdates; n++) {
+    let list;
+    try { const r = await veeqoFetch(env, `/products?page=${page}&page_size=100`); list = Array.isArray(r) ? r : (r.products || []); }
+    catch (e) { c.lastError = String(e.message || e).slice(0, 200); break; }
+    for (const p of list) {
+      for (const sb of (p.sellables || [])) {
+        for (const se of (sb.stock_entries || [])) {
+          if (!se || se.infinite) continue;
+          checked++;
+          const phys = Number(se.physical_stock_level) || 0, alloc = Math.max(0, Number(se.allocated_stock_level) || 0);
+          const avail = se.available_stock_level != null ? Number(se.available_stock_level) : phys - alloc;
+          if (avail > below) continue;
+          if (updated + failed >= maxUpdates) continue;
+          const newPhys = to + alloc; // so what's available becomes `to`
+          const wid = se.warehouse_id || (se.warehouse && se.warehouse.id);
+          const sku = String(sb.sku_code || '').slice(0, 80), title = String(p.title || sb.title || '').slice(0, 120);
+          try {
+            await veeqoFetch(env, `/sellables/${sb.id}/warehouses/${wid}/stock_entry`, { method: 'PUT', body: JSON.stringify({ stock_entry: { physical_stock_level: newPhys, infinite: false } }) });
+            updated++;
+            await env.DB.prepare('INSERT INTO veeqo_stock_log (ts, sku, title, sellable_id, warehouse_id, old_physical, old_available, new_physical, by_user, note) VALUES (?,?,?,?,?,?,?,?,?,?)')
+              .bind(new Date().toISOString(), sku, title, sb.id || null, wid || null, phys, avail, newPhys, by, '').run();
+            changes.push({ sku, from: avail, to: newPhys - alloc });
+          } catch (e) {
+            failed++;
+            await env.DB.prepare('INSERT INTO veeqo_stock_log (ts, sku, title, sellable_id, warehouse_id, old_physical, old_available, new_physical, by_user, note) VALUES (?,?,?,?,?,?,?,?,?,?)')
+              .bind(new Date().toISOString(), sku, title, sb.id || null, wid || null, phys, avail, null, by, 'FAILED: ' + String(e.message || e).slice(0, 180)).run().catch(() => {});
+          }
+        }
+      }
+    }
+    if (list.length < 100) { page = 1; wrapped = true; c.lastFullPass = new Date().toISOString(); break; }
+    page++;
+  }
+  c.page = page;
+  c.lastRun = { at: new Date().toISOString(), by, checked, updated, failed, wrapped };
+  await vstockSave(env, c);
+  return { ok: true, checked, updated, failed, wrapped, nextPage: page, changes };
+}
+
 async function autolabelCron(env) {
   const cfg = await autolabelLoadConfig(env);
   if (cfg.mode === 'off' && !cfg.cancelWatch) return { skipped: 'off' };

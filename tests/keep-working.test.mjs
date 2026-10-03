@@ -1030,5 +1030,41 @@ console.log('\nTransfer: scan bar stays in view · put-away asks how many first 
   check('✕ on the scanned item closes it, ready for the next box', /id="xfr-result-x"[^>]*onclick="xfrStartOver\(\)"/.test(ih), null);
 }
 
+console.log('\nVeeqo: keep stock up (at or below 88 → 888) so labels can print');
+{
+  const realFetch = globalThis.fetch, puts = [];
+  const stock = { 11: { physical_stock_level: 90, allocated_stock_level: 2, available_stock_level: 88 }, 12: { physical_stock_level: 500, allocated_stock_level: 0, available_stock_level: 500 },
+    13: { physical_stock_level: 0, allocated_stock_level: 0, available_stock_level: 0, infinite: true }, 14: { physical_stock_level: 3, allocated_stock_level: 3, available_stock_level: 0 } };
+  const prods = () => [{ id: 1, title: 'Tee', sellables: [{ id: 11, sku_code: '23-2-3=2', stock_entries: [{ warehouse_id: 5, ...stock[11] }] }, { id: 12, sku_code: '40-1-1=1', stock_entries: [{ warehouse_id: 5, ...stock[12] }] }] },
+    { id: 2, title: 'Plug', sellables: [{ id: 13, sku_code: '7-7-7=1', stock_entries: [{ warehouse_id: 5, ...stock[13] }] }, { id: 14, sku_code: '8-8-8=2', stock_entries: [{ warehouse_id: 5, ...stock[14] }] }] }];
+  globalThis.fetch = async (u, o) => { u = String(u);
+    if (u.includes('api.veeqo.com/products')) return new Response(JSON.stringify(/page=1&/.test(u) ? prods() : []), { headers: { 'Content-Type': 'application/json' } });
+    const m = u.match(/api\.veeqo\.com\/sellables\/(\d+)\/warehouses\/(\d+)\/stock_entry/);
+    if (m && o && o.method === 'PUT') { const b = JSON.parse(o.body).stock_entry; puts.push({ id: +m[1], wh: +m[2], to: b.physical_stock_level });
+      const e = stock[m[1]]; e.physical_stock_level = b.physical_stock_level; e.available_stock_level = b.physical_stock_level - e.allocated_stock_level; return new Response('{}'); }
+    return realFetch(u, o); };
+  env.VEEQO_API_KEY = 'k';
+  const r1 = await post('/veeqo/stock-topup', { run: true });
+  check('at or below 88 → set so 888 are available (88 with 2 on orders → 890; 0 with 3 on orders → 891); 500 and infinite left alone',
+    r1.ok && puts.length === 2 && puts.some(p => p.id === 11 && p.wh === 5 && p.to === 890) && puts.some(p => p.id === 14 && p.to === 891), { r1, puts });
+  const lg = await get('/veeqo/stock-topup');
+  check('every change is on record (item, old → new, who / when)', lg.log.filter(x => x.sku).length === 2 && lg.log.some(x => x.sku === '23-2-3=2' && x.old_available === 88 && x.new_physical === 890 && x.by_user && x.ts), lg.log);
+  const r2 = await post('/veeqo/stock-topup', { run: true });
+  check('checking again changes nothing (now 888 available)', r2.ok && r2.updated === 0 && puts.length === 2, r2);
+  const bad = await call('/veeqo/stock-topup', { method: 'POST', headers: H, body: JSON.stringify({ below: 900, to: 888 }) });
+  check('settings must make sense ("at or below" lower than "set to")', bad.status === 400, bad.status);
+  await post('/veeqo/stock-topup', { on: false });
+  stock[11].available_stock_level = 5;
+  const cronTick = async () => { const ps = []; await worker.scheduled({ scheduledTime: Date.parse('2026-10-03T15:30:00Z') }, env, { waitUntil(p) { ps.push(Promise.resolve(p).catch(() => {})); } }); await Promise.all(ps); };
+  const n0 = puts.length; await cronTick();
+  check('switched off → the 30-minute timer changes nothing', puts.length === n0, puts);
+  await post('/veeqo/stock-topup', { on: true }); await cronTick();
+  check('switched on → the timer sets it back up by itself (5 available → 890 + … so 888 available)', puts.length === n0 + 1 && puts[puts.length - 1].id === 11 && puts[puts.length - 1].to === 890, puts.slice(n0));
+  const pkt = (await (await call('/auth/login', { method: 'POST', body: '{"username":"picker","password":"password1"}' })).json()).token;
+  const pk2 = await call('/veeqo/stock-topup', { headers: { 'X-Cred-Token': pkt } });
+  check('management only (a picker is refused)', pk2.status === 401 || pk2.status === 403, pk2.status);
+  globalThis.fetch = realFetch; delete env.VEEQO_API_KEY;
+}
+
 console.log('\n' + (failed ? '❌ ' + failed + ' check(s) FAILED' : '✅ all ' + passed + ' checks passed') + '\n');
 process.exit(failed ? 1 : 0);

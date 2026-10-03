@@ -1967,6 +1967,25 @@ body {
           <div class="ps-stat-val" style="font-size:13px;letter-spacing:0" id="ps-vl-synctime">—</div>
         </div>
       </div>
+      <!-- 📦 Keep Veeqo stock up: at or below 88 → set to 888 (owner). Store
+           stock sync is OFF, so this number is only used inside Veeqo — it just
+           keeps labels printable. Every change is listed below. -->
+      <div class="ps-card" style="margin-bottom:12px" id="ps-vstock-card">
+        <div style="display:flex;justify-content:space-between;align-items:center;gap:10px;flex-wrap:wrap">
+          <div style="font-size:13px;font-weight:700;color:var(--text)">📦 Keep Veeqo stock up</div>
+          <label style="display:flex;align-items:center;gap:6px;font-size:13px;font-weight:700;cursor:pointer"><input type="checkbox" id="ps-vstock-on" onchange="psVstockSave()" style="width:20px;height:20px"> <span id="ps-vstock-onlbl">On</span></label>
+        </div>
+        <div style="font-size:12px;color:var(--text2);margin:6px 0 10px;line-height:1.5">Veeqo won't print a label for an item that ran out. Every 30 minutes the system checks every item in Veeqo: when its stock is <b>at or below</b> the first number, it is set to the second one — no more "Add inventory" by hand. Only use this while store stock sync is <b>off</b> in Veeqo (the stores never see this number).</div>
+        <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin-bottom:10px;font-size:13px">
+          At or below <input type="number" id="ps-vstock-below" min="0" style="width:80px;padding:6px 8px;border:1.5px solid var(--border2);border-radius:7px;font-family:var(--mono)">
+          → set to <input type="number" id="ps-vstock-to" min="1" style="width:90px;padding:6px 8px;border:1.5px solid var(--border2);border-radius:7px;font-family:var(--mono)">
+          <button class="ps-btn-sm" onclick="psVstockSave()">Save</button>
+          <button class="ps-btn-sm" id="ps-vstock-run-btn" onclick="psVstockRun()">▶ Check now</button>
+        </div>
+        <div id="ps-vstock-status" style="font-size:12px;color:var(--text3);font-family:var(--mono);margin-bottom:6px"></div>
+        <details><summary style="cursor:pointer;font-size:12px;font-weight:700;color:var(--text2)">Changes made (newest first)</summary>
+          <div id="ps-vstock-log" style="margin-top:6px;max-height:320px;overflow:auto;font-size:12px"></div></details>
+      </div>
       <!-- Manifest sync card -->
       <div class="ps-card" style="margin-bottom:12px">
         <div style="font-size:13px;font-weight:700;color:var(--text);margin-bottom:4px">Today's Manifest</div>
@@ -7563,6 +7582,7 @@ function _psUploadStatusToSheet(rows) {
 
 function psVeeqoOnUnlock() {
   psVeeqoCheckStatus();
+  psVstockLoad();
   psVeeqoLoadLabels();
   var wdinp = document.getElementById('ps-vsync-weight-date');
   if (wdinp && !wdinp.value) { var tk = psTodayKey(); wdinp.value = tk; wdinp.max = tk; }
@@ -7774,6 +7794,46 @@ function psCheckArchiveReminder() {
   _psArchiveChecked = true;
   psArchiveUpdateUI();
 }
+
+// ── 📦 Keep Veeqo stock up ──
+function psVsE(v) { return String(v == null ? '' : v).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;'); }
+function psVsT(iso) { try { return iso ? new Date(iso).toLocaleString('en-US', { timeZone: 'America/New_York', month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' }) : ''; } catch (e) { return iso || ''; } }
+window.psVstockLoad = async function() {
+  if (!psCredToken) return;
+  try {
+    var r = await fetch(PS_WORKER + '/veeqo/stock-topup', { headers: { 'X-Cred-Token': psCredToken } }), d = await r.json();
+    if (!d.ok) { document.getElementById('ps-vstock-status').textContent = '✗ ' + (d.error || 'Load failed'); return; }
+    document.getElementById('ps-vstock-on').checked = !!d.config.on;
+    document.getElementById('ps-vstock-onlbl').textContent = d.config.on ? 'On' : 'Off';
+    document.getElementById('ps-vstock-below').value = d.config.below;
+    document.getElementById('ps-vstock-to').value = d.config.to;
+    var lr = d.lastRun;
+    document.getElementById('ps-vstock-status').innerHTML = (lr ? 'Last check ' + psVsE(psVsT(lr.at)) + ' (' + psVsE(lr.by) + '): ' + lr.checked + ' item(s) looked at · <b style="color:var(--green)">' + lr.updated + ' set to ' + psVsE(d.config.to) + '</b>' + (lr.failed ? ' · <b style="color:var(--red)">' + lr.failed + ' failed</b>' : '') : 'Not run yet')
+      + (d.lastFullPass ? ' · every item checked ' + psVsE(psVsT(d.lastFullPass)) : '') + (d.lastError ? '<br><span style="color:var(--red)">⚠ ' + psVsE(d.lastError) + '</span>' : '');
+    document.getElementById('ps-vstock-log').innerHTML = (d.log || []).length ? '<table style="width:100%;border-collapse:collapse">' + d.log.map(function(x) {
+      return '<tr style="border-top:1px solid var(--border2)"><td style="padding:4px 6px;white-space:nowrap;color:var(--text3)">' + psVsE(psVsT(x.ts)) + '</td>'
+        + (x.sku ? '<td style="padding:4px 6px;font-family:var(--mono);font-weight:700">' + psVsE(x.sku) + '</td><td style="padding:4px 6px">' + (x.new_physical != null ? psVsE(x.old_available) + ' → <b>' + psVsE(x.new_physical - (x.old_physical - x.old_available)) + '</b>' : '<b style="color:var(--red)">' + psVsE(x.note) + '</b>') + '</td>'
+          : '<td colspan="2" style="padding:4px 6px;color:var(--text2)">' + psVsE(x.note) + '</td>')
+        + '<td style="padding:4px 6px;color:var(--text3)">' + psVsE(x.by_user) + '</td></tr>'; }).join('') + '</table>' : '<div style="color:var(--text3)">No changes yet</div>';
+  } catch (e) { document.getElementById('ps-vstock-status').textContent = '✗ Load failed'; }
+};
+window.psVstockSave = async function() {
+  var body = { on: document.getElementById('ps-vstock-on').checked, below: document.getElementById('ps-vstock-below').value, to: document.getElementById('ps-vstock-to').value };
+  try {
+    var r = await fetch(PS_WORKER + '/veeqo/stock-topup', { method: 'POST', headers: { 'X-Cred-Token': psCredToken, 'Content-Type': 'application/json' }, body: JSON.stringify(body) }), d = await r.json();
+    if (!d.ok) { _psToast(d.error || 'Not saved', 'error'); return; }
+    _psToast('Saved: ' + (d.config.on ? 'On' : 'Off') + ' · at or below ' + d.config.below + ' → ' + d.config.to); psVstockLoad();
+  } catch (e) { _psToast('Not saved — network error', 'error'); }
+};
+window.psVstockRun = async function() {
+  var btn = document.getElementById('ps-vstock-run-btn'); btn.disabled = true; btn.textContent = '⏳ Checking…';
+  try {
+    var r = await fetch(PS_WORKER + '/veeqo/stock-topup', { method: 'POST', headers: { 'X-Cred-Token': psCredToken, 'Content-Type': 'application/json' }, body: JSON.stringify({ run: true }) }), d = await r.json();
+    if (d.ok) _psToast('Checked ' + d.checked + ' item(s) · ' + d.updated + ' set back up' + (d.failed ? ' · ' + d.failed + ' failed' : ''), d.failed ? 'error' : undefined);
+    else _psToast(d.error || d.skipped || 'Not run', 'error');
+  } catch (e) { _psToast('Check failed — network error', 'error'); }
+  btn.disabled = false; btn.textContent = '▶ Check now'; psVstockLoad();
+};
 
 window.psVeeqoSyncManifest = async function() {
   var btn = document.getElementById('ps-vsync-manifest-btn');
