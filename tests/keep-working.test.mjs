@@ -1074,6 +1074,30 @@ console.log('\nVeeqo: keep stock up (at or below 88 → 888) so labels can print
   const pkt = (await (await call('/auth/login', { method: 'POST', body: '{"username":"picker","password":"password1"}' })).json()).token;
   const pk2 = await call('/veeqo/stock-topup', { headers: { 'X-Cred-Token': pkt } });
   check('management only (a picker is refused)', pk2.status === 401 || pk2.status === 403, pk2.status);
+  // Owner: "run one right now have 100 failed" — empty replies count as done, 429 waits, refusals stop + say why, nothing skipped.
+  sq.prepare("DELETE FROM app_config WHERE key = 'veeqo_stock_topup'").run();
+  const many = (n, wh) => Array.from({ length: n }, (_, i) => ({ id: 100 + i, title: 'P' + i, sellables: [{ id: 1000 + i, sku_code: 'X-' + i, stock_entries: [{ warehouse_id: wh === 'each' ? 50 + i : wh, physical_stock_level: 0, allocated_stock_level: 0, available_stock_level: 0 }] }] }));
+  let mode = 'empty', puts2 = [], hits429 = 0;
+  globalThis.fetch = async (u, o) => { u = String(u);
+    if (u.includes('api.veeqo.com/products')) return new Response(JSON.stringify(/page=1&/.test(u) ? many(mode === 'empty' || mode === '429' ? 3 : 30, mode === 'refuse2' ? 'each' : 9) : []), { headers: { 'Content-Type': 'application/json' } });
+    if (/stock_entry/.test(u) && o && o.method === 'PUT') {
+      if (mode === 'refuse' || mode === 'refuse2') return new Response('{"error":"not allowed"}', { status: 403 });
+      if (mode === '429' && hits429++ === 0) return new Response('slow down', { status: 429, headers: { 'retry-after': '1' } });
+      puts2.push(u); return new Response(null, { status: 204 }); }
+    return realFetch(u, o); };
+  env.VEEQO_API_KEY = 'k';
+  const runNow = () => post('/veeqo/stock-topup', { run: true });
+  const e1 = await runNow();
+  check('Veeqo saves but answers with an empty reply → counted as done, not "failed"', e1.ok && e1.updated === 3 && e1.failed === 0 && puts2.length === 3, e1);
+  mode = '429'; puts2 = []; sq.prepare("DELETE FROM app_config WHERE key = 'veeqo_stock_topup'").run();
+  const e2 = await runNow();
+  check('Veeqo says "too many requests" → waits and tries again (not failed)', e2.ok && e2.updated === 3 && e2.failed === 0, e2);
+  mode = 'refuse'; sq.prepare("DELETE FROM app_config WHERE key = 'veeqo_stock_topup'").run();
+  const e3 = await runNow(), g3 = await get('/veeqo/stock-topup');
+  check('Veeqo refuses every change → stops early (not 100 tries) and shows why', e3.ok && e3.failed <= 10 && e3.failed >= 5 && /403/.test(e3.firstError) && /403/.test(g3.lastRun.firstError || '') && (e3.skippedWarehouses || []).length === 1, e3);
+  mode = 'refuse2'; sq.prepare("DELETE FROM app_config WHERE key = 'veeqo_stock_topup'").run();
+  const e4 = await runNow(), g4 = await get('/veeqo/stock-topup');
+  check('…refused everywhere → stops after 10 in a row, shows why, and checks that page again next time (no item skipped)', e4.ok && e4.failed === 10 && e4.stopped === 'errors' && /403/.test(g4.lastError) && g4.passActive === true && e4.nextPage === 1, { e4, lastError: g4.lastError, passActive: g4.passActive });
   globalThis.fetch = realFetch; delete env.VEEQO_API_KEY;
 }
 
