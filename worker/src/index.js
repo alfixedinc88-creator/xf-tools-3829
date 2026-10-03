@@ -24457,6 +24457,24 @@ async function vstockLoad(env) {
   return { ...VSTOCK_DEFAULTS, page: 1, ...c };
 }
 async function vstockSave(env, c) { await autolabelSetKey(env, VSTOCK_KEY, JSON.stringify(c)); }
+// One stock change in Veeqo. A 2xx with an empty / non-JSON body still counts
+// as done (Veeqo saved it). Too many requests (429) → wait, then try once more.
+async function vstockPut(env, sellableId, wid, physical, wait) {
+  const path = `/sellables/${sellableId}/warehouses/${wid}/stock_entry`;
+  const body = JSON.stringify({ stock_entry: { physical_stock_level: physical, infinite: false } });
+  for (let attempt = 0; ; attempt++) {
+    const res = await fetch(VEEQO_BASE + path, { method: 'PUT', body, headers: {
+      'x-api-key': (env.VEEQO_API_KEY || '').trim(), 'Accept': 'application/json', 'Content-Type': 'application/json' } });
+    if (res.ok) { await res.text().catch(() => ''); return; }
+    const txt = await res.text().catch(() => '');
+    if (res.status === 429 && attempt < 2) {
+      const ra = Math.min(10, Math.max(1, parseFloat(res.headers.get('retry-after')) || 2));
+      await (wait || vstockSleep)(ra * 1000); continue;
+    }
+    const err = new Error(`HTTP ${res.status}: ${txt.replace(/\s+/g, ' ').slice(0, 160)}`); err.status = res.status; throw err;
+  }
+}
+const vstockSleep = ms => new Promise(r => setTimeout(r, ms));
 async function vstockRun(env, o) {
   o = o || {};
   const c = await vstockLoad(env);
@@ -24473,9 +24491,10 @@ async function vstockRun(env, o) {
   }
   const below = Number(c.below), to = Number(c.to), maxPages = o.maxPages || 10, maxUpdates = o.maxUpdates || 60, by = o.by || 'auto';
   if (!(to > below)) return { skipped: 'bad settings' };
-  let page = o.fromStart ? 1 : (parseInt(c.page, 10) || 1), checked = 0, updated = 0, failed = 0, wrapped = false;
-  const changes = [];
-  for (let n = 0; n < maxPages && updated + failed < maxUpdates; n++) {
+  let page = o.fromStart ? 1 : (parseInt(c.page, 10) || 1), checked = 0, updated = 0, failed = 0, wrapped = false, stopped = '', inARow = 0, firstError = '';
+  const changes = [], whFails = {}, whSkipped = {}, wait = o.wait || vstockSleep;
+  c.lastError = '';
+  for (let n = 0; n < maxPages && updated + failed < maxUpdates && !stopped; n++) {
     let list;
     try { const r = await veeqoFetch(env, `/products?page=${page}&page_size=100`); list = Array.isArray(r) ? r : (r.products || []); }
     catch (e) { c.lastError = String(e.message || e).slice(0, 200); break; }
@@ -24487,31 +24506,41 @@ async function vstockRun(env, o) {
           const phys = Number(se.physical_stock_level) || 0, alloc = Math.max(0, Number(se.allocated_stock_level) || 0);
           const avail = se.available_stock_level != null ? Number(se.available_stock_level) : phys - alloc;
           if (avail > below) continue;
-          if (updated + failed >= maxUpdates) continue;
+          if (updated + failed >= maxUpdates || stopped) { stopped = stopped || 'limit'; continue; }
           const newPhys = to + alloc; // so what's available becomes `to`
           const wid = se.warehouse_id || (se.warehouse && se.warehouse.id);
           const sku = String(sb.sku_code || '').slice(0, 80), title = String(p.title || sb.title || '').slice(0, 120);
+          if (whSkipped[wid]) continue; // Veeqo keeps refusing this warehouse this run — don't hammer it
           try {
-            await veeqoFetch(env, `/sellables/${sb.id}/warehouses/${wid}/stock_entry`, { method: 'PUT', body: JSON.stringify({ stock_entry: { physical_stock_level: newPhys, infinite: false } }) });
-            updated++;
+            if (updated + failed > 0) await wait(250); // stay under Veeqo's rate limit
+            await vstockPut(env, sb.id, wid, newPhys, wait);
+            updated++; inARow = 0;
             await env.DB.prepare('INSERT INTO veeqo_stock_log (ts, sku, title, sellable_id, warehouse_id, old_physical, old_available, new_physical, by_user, note) VALUES (?,?,?,?,?,?,?,?,?,?)')
               .bind(new Date().toISOString(), sku, title, sb.id || null, wid || null, phys, avail, newPhys, by, '').run();
             changes.push({ sku, from: avail, to: newPhys - alloc });
           } catch (e) {
-            failed++;
+            failed++; inARow++;
+            const msg = String(e.message || e).slice(0, 180);
+            if (!firstError) firstError = `${sku} (warehouse ${wid}): ${msg}`;
             await env.DB.prepare('INSERT INTO veeqo_stock_log (ts, sku, title, sellable_id, warehouse_id, old_physical, old_available, new_physical, by_user, note) VALUES (?,?,?,?,?,?,?,?,?,?)')
-              .bind(new Date().toISOString(), sku, title, sb.id || null, wid || null, phys, avail, null, by, 'FAILED: ' + String(e.message || e).slice(0, 180)).run().catch(() => {});
+              .bind(new Date().toISOString(), sku, title, sb.id || null, wid || null, phys, avail, null, by, 'FAILED: ' + msg + ` (warehouse ${wid})`).run().catch(() => {});
+            whFails[wid] = (whFails[wid] || 0) + 1;
+            if (whFails[wid] >= 5 && e.status && e.status !== 429) whSkipped[wid] = msg;
+            if (inARow >= 10) stopped = 'errors'; // Veeqo refuses everything — stop, show why
           }
         }
       }
     }
+    if (stopped) break; // stopped part-way through this page → next run starts this page again (nothing skipped)
     if (list.length < 100) { page = 1; wrapped = true; c.passActive = false; c.lastFullPass = new Date().toISOString(); break; }
     page++;
   }
   c.page = page;
-  c.lastRun = { at: new Date().toISOString(), by, checked, updated, failed, wrapped };
+  const skippedWh = Object.keys(whSkipped).map(w => `warehouse ${w}: ${whSkipped[w]}`);
+  if (stopped === 'errors') c.lastError = `Stopped after 10 failures in a row — Veeqo said: ${firstError}`;
+  c.lastRun = { at: new Date().toISOString(), by, checked, updated, failed, wrapped, stopped, firstError, skippedWarehouses: skippedWh };
   await vstockSave(env, c);
-  return { ok: true, checked, updated, failed, wrapped, nextPage: page, changes };
+  return { ok: true, checked, updated, failed, wrapped, stopped, firstError, skippedWarehouses: skippedWh, nextPage: page, changes };
 }
 
 async function autolabelCron(env) {

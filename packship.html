@@ -7809,7 +7809,10 @@ window.psVstockLoad = async function() {
     document.getElementById('ps-vstock-to').value = d.config.to;
     var lr = d.lastRun;
     document.getElementById('ps-vstock-status').innerHTML = (lr ? 'Last check ' + psVsE(psVsT(lr.at)) + ' (' + psVsE(lr.by) + '): ' + lr.checked + ' item(s) looked at · <b style="color:var(--green)">' + lr.updated + ' set to ' + psVsE(d.config.to) + '</b>' + (lr.failed ? ' · <b style="color:var(--red)">' + lr.failed + ' failed</b>' : '') : 'Not run yet')
-      + (d.passActive ? ' · <b>checking every item now…</b> (page ' + psVsE(d.nextPage) + ')' : d.lastFullPass ? ' · every item checked ' + psVsE(psVsT(d.lastFullPass)) + ' · next: 3 AM' : '') + (d.lastError ? '<br><span style="color:var(--red)">⚠ ' + psVsE(d.lastError) + '</span>' : '');
+      + (d.passActive ? ' · <b>checking every item now…</b> (page ' + psVsE(d.nextPage) + ')' : d.lastFullPass ? ' · every item checked ' + psVsE(psVsT(d.lastFullPass)) + ' · next: 3 AM' : '') + (d.lastError ? '<br><span style="color:var(--red)">⚠ ' + psVsE(d.lastError) + '</span>' : '')
+      + (lr && lr.failed && lr.firstError && !d.lastError ? '<br><span style="color:var(--red)">Why it failed (Veeqo said): ' + psVsE(lr.firstError) + '</span>' : '')
+      + (lr && lr.skippedWarehouses && lr.skippedWarehouses.length ? '<br><span style="color:var(--red)">Skipped (Veeqo refuses changes there): ' + psVsE(lr.skippedWarehouses.join(' · ')) + '</span>' : '')
+      + (lr && lr.stopped === 'limit' && d.passActive ? '<br><span style="color:var(--text2)">More items to check — it keeps going by itself every 30 min, or tap ▶ Check now again.</span>' : '');
     document.getElementById('ps-vstock-log').innerHTML = (d.log || []).length ? '<table style="width:100%;border-collapse:collapse">' + d.log.map(function(x) {
       return '<tr style="border-top:1px solid var(--border2)"><td style="padding:4px 6px;white-space:nowrap;color:var(--text3)">' + psVsE(psVsT(x.ts)) + '</td>'
         + (x.sku ? '<td style="padding:4px 6px;font-family:var(--mono);font-weight:700">' + psVsE(x.sku) + '</td><td style="padding:4px 6px">' + (x.new_physical != null ? psVsE(x.old_available) + ' → <b>' + psVsE(x.new_physical - (x.old_physical - x.old_available)) + '</b>' : '<b style="color:var(--red)">' + psVsE(x.note) + '</b>') + '</td>'
@@ -7829,7 +7832,7 @@ window.psVstockRun = async function() {
   var btn = document.getElementById('ps-vstock-run-btn'); btn.disabled = true; btn.textContent = '⏳ Checking…';
   try {
     var r = await fetch(PS_WORKER + '/veeqo/stock-topup', { method: 'POST', headers: { 'X-Cred-Token': psCredToken, 'Content-Type': 'application/json' }, body: JSON.stringify({ run: true }) }), d = await r.json();
-    if (d.ok) _psToast('Checked ' + d.checked + ' item(s) · ' + d.updated + ' set back up' + (d.failed ? ' · ' + d.failed + ' failed' : ''), d.failed ? 'error' : undefined);
+    if (d.ok) _psToast('Checked ' + d.checked + ' item(s) · ' + d.updated + ' set back up' + (d.failed ? ' · ' + d.failed + ' failed' + (d.stopped === 'errors' ? ' — stopped, see why below' : '') : ''), d.failed ? 'error' : undefined);
     else _psToast(d.error || d.skipped || 'Not run', 'error');
   } catch (e) { _psToast('Check failed — network error', 'error'); }
   btn.disabled = false; btn.textContent = '▶ Check now'; psVstockLoad();
