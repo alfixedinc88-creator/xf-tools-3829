@@ -115,6 +115,7 @@ function invObPatch(id, fn) { var a = invObRead(); a.forEach(function (x) { if (
 function invObDrop(id) { invObWrite(invObRead().filter(function (x) { return x.id !== id; })); }
 function invObNewId() { try { if (crypto.randomUUID) return crypto.randomUUID(); } catch (e) {} return 'ob-' + Date.now() + '-' + Math.random().toString(36).slice(2, 10); }
 function invObLabel(path, b) {
+  if (path.indexOf('containers/recheck') >= 0) return 'Box put at ' + (b.location || '') + ' (already counted): ' + (b.part || '') + ' · Pallet ' + (b.pallet || '');
   if (path.indexOf('containers/upc-issue') >= 0) return '⚠ UPC doesn\'t match: ' + (b.part || '') + ' (scanned ' + (b.code || '?') + ') · Pallet ' + (b.pallet || '');
   if (path.indexOf('containers/extra') >= 0) return 'Extra on pallet ' + (b.pallet || '') + ': ' + (b.part || '') + ' × ' + (b.boxes || '?') + ' box(es) of ' + (b.pcsPerBox || '?') + ' pcs @ ' + (b.toLocation || '');
   var what = path.indexOf('transfer') >= 0 ? 'Transfer' : /\[AUDIT\]/.test(b.notes || '') ? 'Audit' : b.type === 'IN' ? 'Stock In' : b.type === 'OUT' ? (b.noneFound ? 'None found' : 'Stock Out') : (b.type || 'Entry');
@@ -8651,11 +8652,14 @@ window.invCredLogin = async function() {
     }
     // On an open pallet: its own boxes are matched on the phone (part # or
     // outside box UPC) — no wait at all.
-    if (xfrGo.focus) { var hit = xfrGoLocalMatch(code); if (hit) { xfrGoSelect(hit.id); return; } }
+    if (xfrGo.focus) { var hit = xfrGoLocalMatch(code); if (hit) { xfrGoSelect(hit.id); return; }
+      var dn = xfrGoDoneMatch(code); if (dn) { xfrAllMoved(dn); return; } } // every box of it moved already
     xfrFastScan(code, function(part, d) {
       if (xfrGo.focus) { // inside a pallet: pick the item on it
         var l = xfrGo.lines.filter(function(x) { return x.part === part && x.left > 0; })[0];
         if (l) { xfrGoSelect(l.id); return; }
+        var dl = xfrGo.lines.filter(function(x) { return x.part === part && x.moved > 0; })[0];
+        if (dl) { xfrAllMoved(dl); return; }
         xfrNotOnPallet(part, d && d.lines);
         return;
       }
@@ -8675,6 +8679,49 @@ window.invCredLogin = async function() {
     if (parts.length !== 1) return null;
     return xfrGo.lines.filter(function(l) { return l.part === parts[0] && l.left > 0; })[0] || null;
   }
+  // A line of this pallet whose boxes are ALL moved already (none left), matched on the phone.
+  function xfrGoDoneMatch(code) {
+    var up = String(code || '').trim().toUpperCase(), z = /^\d{11,14}$/.test(up) ? up.replace(/^0+/, '') : '';
+    var U = xfrGo.upcs || {}, parts = [], ok = function(l) { return !(l.left > 0) && l.moved > 0; };
+    xfrGo.lines.forEach(function(l) { if (ok(l) && (l.part === up || (z && (U[l.part] || []).indexOf(z) >= 0)) && parts.indexOf(l.part) < 0) parts.push(l.part); });
+    if (parts.length !== 1 || xfrGo.lines.some(function(l) { return l.part === parts[0] && l.left > 0; })) return null;
+    return xfrGo.lines.filter(function(l) { return l.part === parts[0] && ok(l); })[0] || null;
+  }
+  // A box scanned again after every box of it was moved (owner): say where
+  // they went (how many, pieces, who, when) and ask them to go check. Then:
+  // ✓ put this box at that spot (it was already counted there — no count
+  // changes, kept on record), or ➕ Extra box found on this pallet.
+  function xfrAllMoved(l) {
+    try { navigator.vibrate && navigator.vibrate([200, 100, 200]); } catch (e) {}
+    var E = xfrE, pcs = xfrLinePcs(l), mv = (l.moves || []).filter(function(m) { return !m.failed; });
+    var locs = []; mv.forEach(function(m) { if (m.kind !== 'stockout' && m.to && locs.indexOf(String(m.to).toUpperCase()) < 0) locs.push(String(m.to).toUpperCase()); });
+    xfrGo.modalPart = l.part; xfrGo.recheckLine = l.id;
+    xfrLoadPhotos([l.part], function() {
+      xfrPopup('<div style="display:flex;gap:10px;align-items:center;margin-bottom:8px">' + xfrThumb(l.part) + '<div><div style="font-weight:800;color:var(--orange);font-size:16px">⚠ Already moved — all ' + xfrN(l.cases) + ' box(es)</div>'
+        + '<div style="font-family:var(--mono);font-weight:800;font-size:18px">' + E(l.part) + '</div><div style="font-size:12px;color:var(--text3)">' + E(l.description || '') + '</div></div></div>'
+        + mv.map(function(m) { var t = ''; try { t = new Date(m.at).toLocaleString('en-US', { timeZone: 'America/New_York', month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' }); } catch (e) {}
+            return '<div style="font-size:13px;padding:6px 8px;border-radius:8px;background:var(--bg3);margin-bottom:4px"><b>' + xfrN(m.cases) + '</b> box(es)' + (pcs ? ' · ' + xfrN(m.cases * pcs) + ' pcs' : '') + ' → <b style="font-family:var(--mono)">' + (m.kind === 'stockout' ? '🛒 Stock Out' : E(m.to)) + '</b>'
+              + '<div style="font-size:11px;color:var(--text3)">by ' + E(m.by || '?') + ' · ' + E(t) + '</div></div>'; }).join('')
+        + '<div style="font-size:13px;font-weight:700;color:var(--orange);margin:6px 0 10px">Go to ' + (locs.length ? locs.map(E).join(' / ') : 'the spot') + ' and check the boxes are there.</div>'
+        + locs.map(function(L) { return '<button type="button" data-loc="' + E(L) + '" onclick="xfrRecheckOk(this.getAttribute(\'data-loc\'))" style="width:100%;padding:14px;border-radius:12px;border:none;background:var(--green);color:#fff;font-size:15px;font-weight:800;cursor:pointer;margin-bottom:8px">✓ Confirm — move this box to ' + E(L) + '<div style="font-size:11px;font-weight:600">it was already counted there — no count changes</div></button>'; }).join('')
+        + '<button type="button" onclick="xfrExtraFromModal()" style="width:100%;padding:14px;border-radius:12px;border:none;background:var(--orange);color:#fff;font-size:16px;font-weight:800;cursor:pointer;margin-bottom:8px">➕ Extra box found on this pallet</button>'
+        + '<button type="button" onclick="xfrPopupClose()" style="width:100%;padding:13px;border-radius:12px;border:1.5px solid var(--border);background:var(--bg);color:var(--text2);font-size:15px;font-weight:700;cursor:pointer">Cancel</button>');
+    });
+  }
+  window.xfrRecheckOk = function(loc) {
+    var f = xfrGo.focus, id = xfrGo.recheckLine, l = xfrGo.lines.filter(function(x) { return x.id === id; })[0];
+    xfrPopupClose(); if (!f || !l) return;
+    var rc = { lineId: l.id, part: l.part, location: loc, by: (INV_CRED_USER && INV_CRED_USER.displayName) || '', at: new Date().toISOString(), status: 'Saving' };
+    (xfrGo.rechecks = xfrGo.rechecks || []).push(rc); xfrGo.showDone = true;
+    invFlash('✓ ' + l.part + ': box put at ' + loc + ' — already counted there, kept on record', 'success'); xfrGoRender();
+    invPost(W + '/inventory/containers/recheck', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ title: f.title, vendor: f.vendor, pallet: f.pallet,
+      lineId: l.id, part: l.part, code: xfrGo.lastCode || '', location: loc, initials: rc.by }) })
+      .then(function(r) { return r.json(); }).then(function(d) {
+        rc.status = !d || !d.ok ? 'Failed' : d.queued ? 'Phone' : 'Saved';
+        if (rc.status === 'Failed') invFlash('✗ NOT saved: ' + ((d && d.error) || 'error') + ' — scan the box again', 'error');
+        xfrGoRender();
+      }).catch(function() { rc.status = 'Failed'; xfrGoRender(); });
+  };
   // Box scan in one trip (part # + the pallets that have it + that pallet when
   // only one). Not known there (e.g. a box UPC not saved yet) → the full
   // lookup as before, which also asks for the part # and saves the UPC.
@@ -8758,6 +8805,9 @@ window.invCredLogin = async function() {
       xfrGo.lines = (d.lines || []).filter(function(l) { return l.pallet === pallet && l.vendor === vendor; });
       if (!xfrGo.lines.length) xfrGo.lines = d.lines || [];
       xfrGo.recs = d.recs || {}; xfrGo.upcs = d.upcs || {}; xfrGo.extras = d.extras || [];
+      var keepRc = (xfrGo.rechecks || []).filter(function(r) { return r.status === 'Saving' || r.status === 'Failed'; })
+        .filter(function(r) { return xfrGo.lines.some(function(l) { return l.id === r.lineId; }); });
+      xfrGo.rechecks = (d.rechecks || []).concat(keepRc);
       // ⚠ UPC reports open on the Worker; one the office marked fixed is cleared here too
       var UR = xfrGo.upcReported = xfrGo.upcReported || {}, openU = d.upcIssueLines || [];
       xfrGo.lines.forEach(function(l) { if (UR[l.id] === 'sent' && openU.indexOf(l.id) < 0) delete UR[l.id]; });
@@ -8793,6 +8843,8 @@ window.invCredLogin = async function() {
         (l.moves = l.moves || []).push({ cases: c, to: b.toLocation, by: b.initials || '', at: b.addedAt || '', pending: true, phone: true });
       } else if (x.path === '/inventory/containers/extra' && b.title === f.title && String(b.pallet) === String(f.pallet)) {
         xfrGo.extras.push({ part: b.part, boxes: b.boxes, pcs: b.pcsPerBox, toLoc: b.toLocation, by: b.initials || '', at: new Date(x.createdAt || Date.now()).toISOString(), status: 'Phone' });
+      } else if (x.path === '/inventory/containers/recheck' && b.title === f.title && String(b.pallet) === String(f.pallet)) {
+        (xfrGo.rechecks = xfrGo.rechecks || []).push({ lineId: b.lineId, part: b.part, location: b.location, by: b.initials || '', at: new Date(x.createdAt || Date.now()).toISOString(), status: 'Phone' });
       }
     });
   }
@@ -8902,6 +8954,9 @@ window.invCredLogin = async function() {
           + (l.over > 0 ? '<div style="font-size:11px;color:#b91c1c;font-weight:700">' + xfrGoLineWarn(l) + '</div>' : '')
           + (l.moves || []).map(function(m) { var t = ''; try { t = new Date(m.at).toLocaleString('en-US', { timeZone: 'America/New_York', month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' }); } catch (e) {}
               return '<div style="font-size:11px;color:var(--text3)">' + xfrN(m.cases) + ' → <b style="font-family:var(--mono);color:var(--text)">' + (m.kind === 'stockout' ? '🛒 Stock Out' : xfrE(m.to) + (m.kind === 'transfer' ? ' (Transfer tab)' : '')) + '</b> · ' + xfrE(m.by) + ' · ' + xfrE(t) + (m.failed ? ' · <b style="color:var(--red)">✗ NOT moved</b>' : m.phone ? ' · <span style="color:var(--orange)">📶 saved on this phone — sends when WiFi is back</span>' : m.saving ? ' · <span style="color:var(--text3)">saving…</span>' : m.pending ? ' · <span style="color:var(--orange)">waiting approval</span>' : '') + '</div>'; }).join('')
+          + (xfrGo.rechecks || []).filter(function(r) { return r.lineId === l.id; }).map(function(r) { var t = ''; try { t = new Date(r.at).toLocaleString('en-US', { timeZone: 'America/New_York', month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' }); } catch (e) {}
+              return '<div style="font-size:11px;color:var(--text3)">🔎 1 box scanned again → put at <b style="font-family:var(--mono);color:var(--text)">' + xfrE(r.location) + '</b> (already counted there) · ' + xfrE(r.by) + ' · ' + xfrE(t)
+                + (r.status === 'Failed' ? ' · <b style="color:var(--red)">✗ NOT saved</b>' : r.status === 'Phone' ? ' · <span style="color:var(--orange)">📶 saved on this phone — sends when WiFi is back</span>' : r.status === 'Saving' ? ' · <span style="color:var(--text3)">saving…</span>' : '') + '</div>'; }).join('')
           + '</div>';
       }).join('');
     }
@@ -9224,12 +9279,15 @@ window.invCredLogin = async function() {
         var pk = gp.title + '|' + gp.vendor + '|' + gp.pallet, pOpen = allL.filter(function(l) { return leftOf(l) > 0; });
         var pBoxes = pOpen.reduce(function(a, l) { return a + leftOf(l); }, 0), pNowhere = pOpen.filter(nowhere).length;
         var pOnly = !onlyLeft && !!(xfrCont.palLeft || {})[pk], shown = pOnly ? gp.lines.filter(function(l) { return leftOf(l) > 0; }) : gp.lines;
+        // Owner: not done on top, all moved at the bottom (same order otherwise).
+        shown = shown.map(function(l, i) { return { l: l, i: i }; }).sort(function(a, b) { return (leftOf(b.l) > 0) - (leftOf(a.l) > 0) || a.i - b.i; }).map(function(x) { return x.l; });
         var lot = tot > 0 && pBoxes / tot >= 0.5;
         var pBtn = pOpen.length && !onlyLeft ? '<button type="button" data-pk="' + xfrEsc(pk) + '" onclick="xfrContPalLeft(this.getAttribute(\'data-pk\'))" style="width:100%;margin:6px 0 2px;padding:7px 9px;border-radius:8px;border:1.5px solid ' + (lot ? 'var(--red)' : 'var(--orange)')
           + ';background:' + (pOnly ? 'var(--orange-bg)' : 'var(--bg3)') + ';color:' + (lot ? 'var(--red)' : 'var(--orange)') + ';font-size:12px;font-weight:800;cursor:pointer;text-align:left">'
           + (pOnly ? '✕ Show every item on this pallet' : '📋 Not done yet on this pallet: ' + pOpen.length + ' item' + (pOpen.length === 1 ? '' : 's') + ' · ' + xfrN(pBoxes) + ' box' + (pBoxes === 1 ? '' : 'es')
             + (pNowhere ? ' · ' + pNowhere + ' nowhere yet' : '') + ' — tap to see only those') + '</button>' : '';
-        return '<details style="border:1.5px solid ' + (over ? 'var(--red)' : done ? 'var(--green)' : 'var(--border)') + ';border-radius:10px;padding:8px 10px;margin-bottom:8px"' + (groups.length <= 3 || xfrCont.q || onlyLeft || pOnly ? ' open' : '') + '>'
+        // stays open once opened (owner: "Show every item" must not fold the pallet back up)
+        return '<details data-pk="' + xfrEsc(pk) + '" ontoggle="xfrContPalOpen(this)" style="border:1.5px solid ' + (over ? 'var(--red)' : done ? 'var(--green)' : 'var(--border)') + ';border-radius:10px;padding:8px 10px;margin-bottom:8px"' + (groups.length <= 3 || xfrCont.q || onlyLeft || pOnly || (xfrCont.palOpen || {})[pk] ? ' open' : '') + '>'
           + '<summary style="cursor:pointer;font-weight:700;font-size:14px">🧱 Pallet ' + xfrEsc(gp.pallet)
           + ' <span style="font-weight:400;font-size:12px;color:var(--text3)">' + (xfrCont.title ? '' : xfrEsc(gp.title) + ' · ') + xfrEsc(gp.vendor) + ' · ' + (onlyLeft ? gp.lines.length + ' of ' + allL.length + ' part #s not done · ' : allL.length + ' part #s · ')
           + '<b style="color:' + (over ? 'var(--red)' : done ? 'var(--green)' : 'var(--text)') + '">' + xfrN(mv) + ' / ' + xfrN(tot) + ' boxes moved' + (done ? ' ✓' : over ? ' ✗ more than on the pallet' : '') + '</b>'
@@ -9256,7 +9314,8 @@ window.invCredLogin = async function() {
       }).join('');
   }
   window.xfrContToggleLeft = function() { xfrCont.onlyLeft = !xfrCont.onlyLeft; xfrContRender(); };
-  window.xfrContPalLeft = function(pk) { var m = xfrCont.palLeft = xfrCont.palLeft || {}; m[pk] = !m[pk]; xfrContRender(); };
+  window.xfrContPalLeft = function(pk) { var m = xfrCont.palLeft = xfrCont.palLeft || {}; m[pk] = !m[pk]; (xfrCont.palOpen = xfrCont.palOpen || {})[pk] = true; xfrContRender(); };
+  window.xfrContPalOpen = function(d) { var pk = d.getAttribute('data-pk'); if (pk) (xfrCont.palOpen = xfrCont.palOpen || {})[pk] = d.open; };
   // Add a pallet line's boxes to the Transfer cart, from where the part is
   // stocked (GARAGE — where 📦 Received puts a container — if it's there).
   window.xfrContAdd = function(id) {
