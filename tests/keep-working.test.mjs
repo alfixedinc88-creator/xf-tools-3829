@@ -1166,6 +1166,12 @@ console.log('\nPhone outbox never signs a worker out · passwords of 4 numbers')
   const old = await call('/inventory/containers', { headers: { 'X-Cred-Token': li.token } });
   const li2 = await (await call('/auth/login', { method: 'POST', body: '{"username":"pin4","password":"5678"}' })).json();
   check('reset to 4 numbers ("5678"): the old sign-in stops (401 → the phone asks to sign in), the new one works', rs.status === 200 && old.status === 401 && !!li2.token, { rs: rs.status, old: old.status });
+  // Owner: "reset Yola's password, why still not working?" — 10 wrong tries locked her out; the reset must unlock her.
+  for (let i = 0; i < 10; i++) await call('/auth/login', { method: 'POST', body: '{"username":"pin4","password":"0000"}' });
+  const locked = await call('/auth/login', { method: 'POST', body: '{"username":"pin4","password":"5678"}' });
+  await call('/admin/users/reset-password', { method: 'POST', headers: OH, body: JSON.stringify({ userId: c4.d.userId, newPassword: '4321' }) });
+  const li3 = await call('/auth/login', { method: 'POST', body: '{"username":"pin4","password":"4321"}' });
+  check('locked after 10 wrong tries → Reset password unlocks: the new password works right away', locked.status === 429 && li3.status === 200 && !!(await li3.json()).token, { locked: locked.status, after: li3.status });
 }
 
 console.log('\n' + (failed ? '❌ ' + failed + ' check(s) FAILED' : '✅ all ' + passed + ' checks passed') + '\n');
