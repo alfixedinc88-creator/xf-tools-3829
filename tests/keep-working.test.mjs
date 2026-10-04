@@ -1863,5 +1863,35 @@ console.log('\nAuto Label: buying sends the rate\'s id (its name) as service_typ
   check('…any other refusal: no second try, and what was sent is kept to show on the screen', c.sent.length === 1 && err && (err.tries || []).length === 1 && /Address invalid/.test(err.tries[0].error), { sent: c.sent.length, err: err && err.tries });
 }
 
+// Owner: "label already purchased (Veeqo shows it) but no label got printed" — Veeqo DirectPrint doesn't print labels bought through the app.
+console.log('\nAuto Label: every bought label goes on the 🖨 Printer station list and prints from there');
+{
+  const { readFileSync } = await import('node:fs');
+  const ws = readFileSync(workerPath, 'utf8');
+  check('both ways of buying (auto run and Test buy) put the label on the print list', (ws.match(/await autolabelQueueLabel\(env, o, /g) || []).length >= 2, null);
+  const realFetch = globalThis.fetch; let mode = 'url'; const asked = [];
+  const order = { id: 77, number: '111-5929074-3731428', channel: { name: 'Amazon' }, allocations: [{ id: 1612650312, shipment: { tracking_number: { tracking_number: '9400111' }, label_url: 'https://labels.example/l/1612650312.pdf' } }] };
+  globalThis.fetch = async (u, o) => { u = String(u); asked.push(u);
+    if (u.includes('api.veeqo.com/orders')) return new Response(JSON.stringify([order]), { headers: { 'Content-Type': 'application/json' } });
+    if (u.startsWith('https://labels.example/')) return mode === 'url' ? new Response('%PDF-1.4 fake label', { headers: { 'Content-Type': 'application/pdf' } }) : new Response('gone', { status: 404 });
+    if (u.includes('api.veeqo.com/shipping/labels/')) return mode === 'none' ? new Response('{"error":"not found"}', { status: 404, headers: { 'Content-Type': 'application/json' } }) : new Response('{}', { headers: { 'Content-Type': 'application/json' } });
+    return realFetch(u, o); };
+  env.VEEQO_API_KEY = 'k';
+  const add = await post('/veeqo/autolabel/label-add', { order: '111-5929074-3731428' });
+  const lst = await get('/veeqo/autolabel/labels?status=new');
+  const L = (lst.labels || []).find(x => x.tracking === '9400111') || {};
+  check('+ Add label for an order (bought earlier): it goes on the list, ⏳ waiting, with order # and tracking', add.ok && add.added === 1 && L.id && L.order_number === '111-5929074-3731428' && !L.printed_at, { add, lst });
+  const f = await call('/veeqo/autolabel/label-file?id=' + L.id, { headers: H });
+  check('…the Printer station gets the label file itself (PDF) from what Veeqo gave', f.status === 200 && /application\/pdf/.test(f.headers.get('content-type')) && (await f.text()).startsWith('%PDF'), f.status);
+  const pr = await post('/veeqo/autolabel/labels-printed', { ids: [L.id] });
+  const row = sq.prepare('SELECT printed_at, printed_by, print_count FROM label_print_queue WHERE id = ?').get(L.id);
+  check('…printed → on record (who / when / how many times), off the waiting list', pr.ok && row.printed_at && row.printed_by && row.print_count === 1 && !(await get('/veeqo/autolabel/labels?status=new')).labels.some(x => x.id === L.id), row);
+  mode = 'none'; await post('/veeqo/autolabel/label-add', { order: '111-5929074-3731428' });
+  const L2 = (await get('/veeqo/autolabel/labels?status=new')).labels.find(x => x.tracking === '9400111');
+  const f2 = await call('/veeqo/autolabel/label-file?id=' + L2.id, { headers: H }); const j2 = await f2.json();
+  check('…Veeqo gives no label file → it stays on the list in red with what each place said (never lost)', f2.status === 502 && j2.tried.length >= 2 && !!sq.prepare('SELECT last_error FROM label_print_queue WHERE id = ?').get(L2.id).last_error && (await get('/veeqo/autolabel/labels?status=new')).labels.some(x => x.id === L2.id), j2);
+  globalThis.fetch = realFetch; delete env.VEEQO_API_KEY;
+}
+
 console.log('\n' + (failed ? '❌ ' + failed + ' check(s) FAILED' : '✅ all ' + passed + ' checks passed') + '\n');
 process.exit(failed ? 1 : 0);

@@ -24126,6 +24126,14 @@ async function autolabelEnsureTables(env) {
     )
   `).run().catch(()=>{});
   await env.DB.prepare('CREATE INDEX IF NOT EXISTS idx_slip_printed ON packing_slip_queue(printed_at)').run().catch(()=>{});
+  // Shipping labels bought by Auto Label, waiting for the 🖨 Printer station
+  // (owner: "label already purchased … but no label got printed" — Veeqo's
+  // DirectPrint doesn't print labels bought through the API). source = what
+  // Veeqo answered at the buy (where the label file is found).
+  await env.DB.prepare(`CREATE TABLE IF NOT EXISTS label_print_queue (id INTEGER PRIMARY KEY AUTOINCREMENT,
+    order_id TEXT, alloc_id TEXT, order_number TEXT, channel TEXT, tracking TEXT, carrier TEXT, service TEXT,
+    source TEXT, created_at TEXT NOT NULL, printed_at TEXT, printed_by TEXT, print_count INTEGER DEFAULT 0, last_error TEXT)`).run().catch(()=>{});
+  await env.DB.prepare('CREATE INDEX IF NOT EXISTS idx_label_printed ON label_print_queue(printed_at)').run().catch(()=>{});
   await ensureShipD1Tables(env); // ship_order_cancel_log
   _autolabelTablesReady = true;
 }
@@ -24687,6 +24695,71 @@ function autolabelSlipWanted(items, rule) {
   return rule === 'multi_qty' ? pieces > 1 : skus.size > 1;
 }
 
+// Queues a bought shipping label for the 🖨 Printer station.
+async function autolabelQueueLabel(env, o, allocId, tracking, carrier, service, source) {
+  try {
+    await d1Run(env, `INSERT INTO label_print_queue (order_id, alloc_id, order_number, channel, tracking, carrier, service, source, created_at) VALUES (?,?,?,?,?,?,?,?,?)`,
+      [String(o.id || ''), String(allocId || ''), o.number || '', veeqoExtractChannel(o), tracking || '', carrier || '', service || '',
+       JSON.stringify(source || {}).slice(0, 20000), new Date().toISOString()]);
+    return true;
+  } catch (e) { console.error('[autolabel] label queue failed', e.message); return false; }
+}
+// Every https URL inside Veeqo's answer that looks like a label file
+// (a key with "label" / "pdf" / "url", or a .pdf / .png link), plus any
+// base64 PDF / PNG text — the label is fetched from the first that works.
+function _labelFindSources(obj) {
+  const urls = [], b64 = [], seen = new Set();
+  const walk = (v, key, d) => {
+    if (d > 8 || v == null) return;
+    if (typeof v === 'string') {
+      const k = String(key || '').toLowerCase();
+      if (/^https?:\/\//i.test(v) && (/label|pdf|url|document/.test(k) || /\.(pdf|png|zpl)(\?|$)/i.test(v) || /label/i.test(v)) && !seen.has(v)) { seen.add(v); urls.push(v); }
+      else if (/^(JVBERi0|iVBORw0K)/.test(v) && v.length > 200) b64.push(v);
+      return;
+    }
+    if (Array.isArray(v)) { v.forEach(x => walk(x, key, d + 1)); return; }
+    if (typeof v === 'object') for (const k of Object.keys(v)) walk(v[k], k, d + 1);
+  };
+  walk(obj, '', 0);
+  return { urls, b64 };
+}
+// The label file (PDF or image) for one queued label → { bytes, type } or
+// { error, tried: [...] } saying what each place answered.
+async function autolabelLabelFile(env, row) {
+  const key = (env.VEEQO_API_KEY || '').trim(), tried = [];
+  let src = {}; try { src = JSON.parse(row.source || '{}'); } catch (_) {}
+  const take = async (u, withKey) => {
+    try {
+      const r = await fetch(u, { headers: withKey ? { 'x-api-key': key, 'Accept': 'application/pdf, image/*, application/json' } : { 'Accept': 'application/pdf, image/*, */*' } });
+      const ct = (r.headers.get('content-type') || '').toLowerCase();
+      if (r.ok && /application\/pdf|image\//.test(ct)) return { bytes: await r.arrayBuffer(), type: ct.split(';')[0] };
+      const txt = await r.text().catch(() => '');
+      tried.push({ url: u.replace(/([?&](X-Amz-[^=]+|signature|token)=)[^&]+/gi, '$1…'), status: r.status, type: ct, said: txt.slice(0, 300) });
+      if (r.ok && /json/.test(ct)) { let j = null; try { j = JSON.parse(txt); } catch (_) {} return { json: j }; }
+      if (r.ok && /^%PDF/.test(txt)) return { bytes: new TextEncoder().encode(txt).buffer, type: 'application/pdf' };
+    } catch (e) { tried.push({ url: u, error: String(e.message || e).slice(0, 200) }); }
+    return null;
+  };
+  const fromB64 = (b) => { const bin = atob(b.replace(/\s+/g, '')); const u8 = new Uint8Array(bin.length); for (let i = 0; i < bin.length; i++) u8[i] = bin.charCodeAt(i); return { bytes: u8.buffer, type: /^JVBERi0/.test(b) ? 'application/pdf' : 'image/png' }; };
+  const tryJson = async (j) => {
+    const f = _labelFindSources(j);
+    if (f.b64.length) return fromB64(f.b64[0]);
+    for (const u of f.urls.slice(0, 4)) { const r = await take(u, /api\.veeqo\.com/.test(u)); if (r && r.bytes) return r; }
+    return null;
+  };
+  // 1. What Veeqo answered at the buy  2. Veeqo's label endpoint for the allocation
+  let got = await tryJson(src);
+  if (got) return got;
+  if (row.alloc_id) {
+    for (const u of [`${VEEQO_BASE}/shipping/labels/${row.alloc_id}`, `${VEEQO_BASE}/shipping/labels/${row.alloc_id}?format=pdf`]) {
+      const r = await take(u, true);
+      if (r && r.bytes) return r;
+      if (r && r.json) { got = await tryJson(r.json); if (got) return got; }
+    }
+  }
+  return { error: 'Veeqo did not give the label file', tried };
+}
+
 // Queues one packing slip for a package whose label was just bought.
 async function autolabelQueueSlip(env, cfg, o, alloc, tracking, carrier, boxNo, boxCount) {
   try {
@@ -24869,6 +24942,7 @@ async function autolabelRun(env, opts = {}) {
                   buysLeft--;
                   tracks.push(b.tracking);
                   await autolabelLog(env, { ...logBase, action: 'bought', tracking: b.tracking });
+                  await autolabelQueueLabel(env, o, p.alloc.id, b.tracking, pk.carrier, pk.service, b.response);
                   if (await autolabelQueueSlip(env, cfg, o, p.alloc, b.tracking, pk.carrier, allocs.indexOf(p.alloc) + 1, allocs.length)) row.slip = true;
                 } catch (e) {
                   row.decision = 'buy_failed';
@@ -25144,6 +25218,7 @@ async function handleAutolabelRoute(path, method, url, request, env, session) {
     try {
       const r = await autolabelBuy(env, o, allocs[0].id, choice.pick);
       await autolabelLog(env, { ...logBase, action: 'bought', tracking: r.tracking });
+      await autolabelQueueLabel(env, o, allocs[0].id, r.tracking, choice.pick.carrier, choice.pick.service, r.response);
       await autolabelQueueSlip(env, cfg, o, allocs[0], r.tracking, choice.pick.carrier, 1, 1);
       await autolabelSetKey(env, AUTOLABEL_VERIFIED_KEY, 'yes');
       return veeqoResp({ ok: true, order: o.number, carrier: choice.pick.carrier, service: choice.pick.service,
@@ -25255,6 +25330,49 @@ async function handleAutolabelRoute(path, method, url, request, env, session) {
         [now, String(b.by || '').slice(0, 40), id]);
     }
     return veeqoResp({ ok: true, marked: ids.length });
+  }
+
+  // ── Shipping labels for the 🖨 Printer station ──
+  // GET ?status=new|printed&limit= -> labels bought by Auto Label.
+  if (path === '/veeqo/autolabel/labels' && method === 'GET') {
+    const printed = url.searchParams.get('status') === 'printed';
+    const limit = Math.min(200, parseInt(url.searchParams.get('limit')) || 50);
+    const rows = await d1All(env, `SELECT id, order_number, channel, tracking, carrier, service, created_at, printed_at, printed_by, print_count, last_error
+      FROM label_print_queue WHERE printed_at IS ${printed ? 'NOT ' : ''}NULL ORDER BY id ${printed ? 'DESC' : 'ASC'} LIMIT ?`, [limit]);
+    return veeqoResp({ ok: true, labels: rows });
+  }
+  // GET ?id= -> the label file itself (PDF / image), fetched from Veeqo.
+  if (path === '/veeqo/autolabel/label-file' && method === 'GET') {
+    const row = await d1First(env, 'SELECT * FROM label_print_queue WHERE id = ?', [parseInt(url.searchParams.get('id')) || 0]);
+    if (!row) return veeqoResp({ ok: false, error: 'Label not found' }, 404);
+    const f = await autolabelLabelFile(env, row);
+    if (!f.bytes) {
+      await d1Run(env, 'UPDATE label_print_queue SET last_error = ? WHERE id = ?', [String(f.error).slice(0, 300), row.id]);
+      return veeqoResp({ ok: false, error: f.error, tried: f.tried }, 502);
+    }
+    return new Response(f.bytes, { headers: { 'Content-Type': f.type, 'Access-Control-Allow-Origin': _currentOrigin || '*', 'Cache-Control': 'no-store' } });
+  }
+  // POST { ids:[...], by } -> printed (who / when / how many times).
+  if (path === '/veeqo/autolabel/labels-printed' && method === 'POST') {
+    const b = await request.json().catch(() => ({}));
+    const ids = (Array.isArray(b.ids) ? b.ids : []).map(n => parseInt(n)).filter(n => n > 0).slice(0, 200);
+    const now = new Date().toISOString(), by = String((session && (session.displayName || session.username)) || b.by || '').slice(0, 40);
+    for (const id of ids) await d1Run(env, `UPDATE label_print_queue SET printed_at=COALESCE(printed_at, ?), printed_by=COALESCE(printed_by, ?), print_count=COALESCE(print_count,0)+1, last_error=NULL WHERE id=?`, [now, by, id]);
+    return veeqoResp({ ok: true, marked: ids.length });
+  }
+  // POST { order } -> put an order's bought label(s) on the list by hand
+  // (e.g. the test buy before the station printed labels).
+  if (path === '/veeqo/autolabel/label-add' && method === 'POST') {
+    const b = await request.json().catch(() => ({}));
+    const number = String(b.order || '').trim();
+    if (!number) return veeqoResp({ ok: false, error: 'order is required' }, 400);
+    const res = await veeqoFetch(env, `/orders?query=${encodeURIComponent(number)}&page_size=10&page=1`).catch(() => []);
+    const o = (Array.isArray(res) ? res : []).find(x => autolabelOrderNum(x.number) === autolabelOrderNum(number));
+    if (!o) return veeqoResp({ ok: false, error: `Order ${number} not found in Veeqo` });
+    const allocs = (o.allocations || []).filter(a => _psAllocTrackingNumber(a));
+    if (!allocs.length) return veeqoResp({ ok: false, error: 'This order has no label in Veeqo yet' });
+    for (const a of allocs) await autolabelQueueLabel(env, o, a.id, _psAllocTrackingNumber(a), veeqoExtractCarrier(o), '', a);
+    return veeqoResp({ ok: true, order: o.number, added: allocs.length });
   }
 
   // POST { order } -> queue a slip by hand for an order that already has a

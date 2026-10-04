@@ -435,7 +435,7 @@ body {
 }
 
   </style>
-<script src="xf-lang.js?v=20261004b"></script>
+<script src="xf-lang.js?v=20261005a"></script>
 </head>
 <body>
 <style>
@@ -1804,7 +1804,7 @@ body {
         <div style="font-size:13px;font-weight:700;color:var(--text);margin-bottom:6px">🤖 Auto Label</div>
         <div style="font-size:12px;color:var(--text3);margin-bottom:10px;line-height:1.5">
           Waits after an order comes in, holds same name + address orders for merging, picks USPS or UPS by the rules below, and never buys a label for a cancelled order.
-          Labels print through Veeqo's <b>DirectPrint</b> as soon as they're bought.
+          Bought labels print on the <b>🖨 Printer station</b> (see 🏷️ Shipping labels below).
         </div>
         <div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:8px" id="ps-al-mode-btns">
           <button class="ps-btn-sm" data-mode="off" onclick="psAlSetMode('off')">⏸ Off</button>
@@ -1866,6 +1866,27 @@ body {
         <div id="ps-al-channels" style="font-size:12px;margin-bottom:8px"></div>
         <div id="ps-al-counts" style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:10px"></div>
         <div id="ps-al-orders" style="overflow-x:auto"></div>
+      </div>
+
+      <!-- Shipping labels (owner: bought labels must print — DirectPrint doesn't print labels bought through the app) -->
+      <div class="ps-card" style="margin-bottom:16px" id="ps-al-label-card">
+        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px">
+          <div style="font-size:13px;font-weight:700;color:var(--text)">🏷️ Shipping labels <span id="ps-al-label-count" style="font-family:var(--mono);color:var(--accent)"></span></div>
+          <button class="ps-btn-sm" onclick="psAlLoadLabels()">↻ Refresh</button>
+        </div>
+        <div style="font-size:12px;color:var(--text3);margin-bottom:10px;line-height:1.5">
+          Every label Auto Label buys waits here and prints by itself on the <b>🖨 Printer station</b> (the checkbox under Packing slips), every minute, labels first then slips.
+          Put a 4×6 label printer on that computer (with <span style="font-family:var(--mono)">--kiosk-printing</span>, set it as the default printer).
+        </div>
+        <div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap;margin-bottom:10px">
+          <button class="ps-btn-primary" style="width:auto;padding:8px 18px" onclick="psAlPrintNewLabels()">🖨 Print new labels now</button>
+          <span id="ps-al-label-msg" style="font-size:12px;color:var(--text2);font-family:var(--mono)"></span>
+        </div>
+        <div style="display:flex;gap:6px;align-items:center;flex-wrap:wrap;margin-bottom:10px">
+          <input class="ps-field-input" id="ps-al-label-order" placeholder="Order number" style="max-width:220px;margin:0;font-family:var(--mono);font-size:13px;padding:7px 10px">
+          <button class="ps-btn-sm" onclick="psAlLabelAdd()">+ Add label for an order (already bought)</button>
+        </div>
+        <div id="ps-al-label-list" style="font-size:12px"></div>
       </div>
 
       <!-- Packing slips -->
@@ -8474,6 +8495,7 @@ async function _psAlFetch(path, opts) {
 function psAlOnUnlock() {
   psAlLoadConfig();
   psAlLoadLog();
+  psAlLoadLabels();
   psAlLoadReweigh();
   psAlLoadCosts();
   psAlLoadSlips();
@@ -8619,7 +8641,7 @@ window.psAlTestBuy = async function() {
   var num = document.getElementById('ps-al-order').value.trim();
   var out = document.getElementById('ps-al-tool-result');
   if (!num) { out.textContent = 'Type an order number first.'; return; }
-  if (!confirm('Buy a REAL label in Veeqo for order ' + num + ' now?\n\nThis costs money. If DirectPrint is on, it prints right away.')) return;
+  if (!confirm('Buy a REAL label in Veeqo for order ' + num + ' now?\n\nThis costs money. The label prints on the 🖨 Printer station.')) return;
   out.textContent = 'Buying…';
   var d = await _psAlFetch('/veeqo/autolabel/test-buy', { method:'POST', body:{ order: num } });
   if (d.ok === false) { out.textContent = '✗ ' + (d.error || 'Failed') + (d.sentToVeeqo ? '\n\nRate used (send this to Claude):\n' + JSON.stringify(d.sentToVeeqo, null, 2).slice(0, 9000) : ''); return; }
@@ -8848,13 +8870,98 @@ window.psAlPrintNewSlips = async function(silent) {
   finally { _psAlSlipBusy = false; }
 };
 
+// ── 🏷️ Shipping labels (Printer station) ──────────────────────────────
+// Labels Auto Label bought (GET /veeqo/autolabel/labels) print here: the
+// label file comes from Veeqo through /veeqo/autolabel/label-file (PDF or a
+// 4×6 image), prints through a hidden frame, then is marked printed (who /
+// when / how many times). A label Veeqo won't give stays on the list in red
+// with what Veeqo said, so nothing is lost.
+var _psAlLabelBusy = false, _psAlLabelRecent = [];
+window.psAlStationTick = async function() { await psAlPrintNewLabels(true); await psAlPrintNewSlips(true); };
+async function _psAlLabelBlob(id) {
+  var r = await fetch(PS_WORKER + '/veeqo/autolabel/label-file?id=' + encodeURIComponent(id), { headers: { 'X-Cred-Token': psCredToken } });
+  var ct = (r.headers.get('content-type') || '').toLowerCase();
+  if (r.ok && /application\/pdf|image\//.test(ct)) return { blob: await r.blob(), type: ct };
+  var d = await r.json().catch(function() { return { error: 'HTTP ' + r.status }; });
+  var e = new Error(d.error || ('HTTP ' + r.status)); e.tried = d.tried; throw e;
+}
+function _psAlPrintLabelBlob(f) {
+  return new Promise(function(resolve) {
+    var url = URL.createObjectURL(f.blob), fr = document.createElement('iframe');
+    fr.style.cssText = 'position:fixed;right:0;bottom:0;width:4in;height:6in;border:0;visibility:hidden';
+    var go = function() { setTimeout(function() { try { fr.contentWindow.focus(); fr.contentWindow.print(); } catch (e) { console.error(e); } setTimeout(function() { fr.remove(); URL.revokeObjectURL(url); resolve(); }, 1500); }, 400); };
+    document.body.appendChild(fr);
+    if (/pdf/.test(f.type)) { fr.onload = go; fr.src = url; }
+    else {
+      fr.contentDocument.open();
+      fr.contentDocument.write('<!doctype html><html><head><style>@page{size:4in 6in;margin:0}html,body{margin:0}img{width:4in;height:6in;object-fit:contain;display:block}</style></head><body><img src="' + url + '"></body></html>');
+      fr.contentDocument.close();
+      var img = fr.contentDocument.querySelector('img'); if (img.complete) go(); else { img.onload = go; img.onerror = go; }
+    }
+  });
+}
+async function _psAlPrintOneLabel(l) {
+  var f = await _psAlLabelBlob(l.id);
+  await _psAlPrintLabelBlob(f);
+  await _psAlFetch('/veeqo/autolabel/labels-printed', { method: 'POST', body: { ids: [l.id], by: psInitials || '' } });
+}
+window.psAlPrintNewLabels = async function(silent) {
+  if (_psAlLabelBusy) return;
+  _psAlLabelBusy = true;
+  var msg = document.getElementById('ps-al-label-msg'), done = 0, bad = [];
+  try {
+    var d = await _psAlFetch('/veeqo/autolabel/labels?status=new&limit=50');
+    if (d.ok === false) { if (msg) msg.textContent = '✗ ' + (d.error || 'Failed'); return; }
+    var list = d.labels || [];
+    if (!list.length) { if (msg && !silent) msg.textContent = 'No new labels.'; return; }
+    for (var i = 0; i < list.length; i++) {
+      try { await _psAlPrintOneLabel(list[i]); done++; }
+      catch (e) { bad.push(list[i].order_number + ': ' + e.message); window._psAlLabelLastTried = e.tried || null; }
+    }
+    if (msg) msg.textContent = (done ? '✓ Printed ' + done + ' label' + (done === 1 ? '' : 's') + ' at ' + new Date().toLocaleTimeString() : '') + (bad.length ? (done ? ' · ' : '') + '✗ ' + bad.length + ' not printed — see the list' : '');
+  } catch (e) { if (msg) msg.textContent = '✗ ' + e.message; }
+  finally { _psAlLabelBusy = false; psAlLoadLabels(); }
+};
+window.psAlLoadLabels = async function() {
+  var box = document.getElementById('ps-al-label-list'); if (!box) return;
+  var all = await Promise.all([_psAlFetch('/veeqo/autolabel/labels?status=new&limit=200'), _psAlFetch('/veeqo/autolabel/labels?status=printed&limit=30')]);
+  var fresh = (all[0] && all[0].labels) || [];
+  document.getElementById('ps-al-label-count').textContent = fresh.length ? '(' + fresh.length + ' waiting)' : '';
+  _psAlLabelRecent = fresh.concat((all[1] && all[1].labels) || []);
+  var e = _psAlEsc;
+  box.innerHTML = _psAlLabelRecent.length ? _psAlLabelRecent.map(function(l, i) {
+    return '<div style="padding:5px 0;border-bottom:1px solid var(--border)"><div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">'
+      + '<span style="min-width:70px;font-weight:700;color:' + (l.printed_at ? 'var(--text3)' : l.last_error ? 'var(--red)' : 'var(--accent)') + '">' + (l.printed_at ? '✓ Printed' + (l.print_count > 1 ? ' ×' + l.print_count : '') : l.last_error ? '✗ Not printed' : '⏳ Waiting') + '</span>'
+      + '<span style="font-family:var(--mono)">' + e(l.order_number) + '</span><span>' + e(l.channel) + '</span>'
+      + '<span>' + e([l.carrier, l.service].filter(Boolean).join(' ')) + '</span><span style="font-family:var(--mono);color:var(--text3)">' + e(l.tracking || '') + '</span>'
+      + '<span style="color:var(--text3)">' + e(new Date(l.printed_at || l.created_at).toLocaleString()) + (l.printed_by ? ' · ' + e(l.printed_by) : '') + '</span>'
+      + '<button class="ps-btn-sm" style="margin-left:auto" onclick="psAlReprintLabel(' + i + ')">' + (l.printed_at ? 'Reprint' : 'Print') + '</button></div>'
+      + (l.last_error && !l.printed_at ? '<div style="color:var(--red);font-size:11px;margin-top:2px">' + e(l.last_error) + ' — tap Print to see what Veeqo said (send it to Claude)</div>' : '') + '</div>';
+  }).join('') : '<div style="color:var(--text3)">No labels yet.</div>';
+};
+window.psAlReprintLabel = async function(i) {
+  var l = _psAlLabelRecent[i]; if (!l) return;
+  var msg = document.getElementById('ps-al-label-msg');
+  try { await _psAlPrintOneLabel(l); if (msg) msg.textContent = '✓ Printed ' + l.order_number; }
+  catch (e) { if (msg) msg.textContent = '✗ ' + l.order_number + ': ' + e.message + (e.tried ? '\n' + JSON.stringify(e.tried).slice(0, 1500) : ''); if (msg) msg.style.whiteSpace = 'pre-wrap'; }
+  psAlLoadLabels();
+};
+window.psAlLabelAdd = async function() {
+  var inp = document.getElementById('ps-al-label-order'), num = (inp.value || '').trim();
+  if (!num) { _psToast('Type an order number first', 'err'); return; }
+  var d = await _psAlFetch('/veeqo/autolabel/label-add', { method: 'POST', body: { order: num } });
+  if (d.ok === false) { _psToast(d.error || 'Not added', 'err'); return; }
+  inp.value = ''; _psToast('Added ' + d.added + ' label' + (d.added === 1 ? '' : 's') + ' for ' + d.order + ' — the Printer station prints it');
+  psAlLoadLabels();
+};
+
 window.psAlSlipStation = function(on) {
   try { localStorage.setItem('xf_slip_station', on ? '1' : ''); } catch (_) {}
   if (_psAlSlipTimer) { clearInterval(_psAlSlipTimer); _psAlSlipTimer = null; }
   if (on) {
-    psAlPrintNewSlips(true);
-    _psAlSlipTimer = setInterval(function(){ psAlPrintNewSlips(true); }, 60000);
-    _psToast('Printer station on — new packing slips print every minute while this page is open');
+    psAlStationTick();
+    _psAlSlipTimer = setInterval(psAlStationTick, 60000);
+    _psToast('Printer station on — new shipping labels and packing slips print every minute while this page is open');
   }
 };
 
