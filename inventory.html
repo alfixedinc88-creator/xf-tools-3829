@@ -12334,7 +12334,7 @@ window.invCredLogin = async function() {
   function ckRenderLoc() {
     if (CK.kind !== 'loc') return;
     var h = '<div class="icard"><div style="font-size:16px;font-weight:800;font-family:var(--mono)">📍 ' + ckE(CK.loc) + '</div>'
-      + '<div style="font-size:12px;color:var(--text2);margin-top:2px">' + CK.rows.length + ' item(s) on record here now. Count each one: fix the number and tap ✓, or ✗ None found.'
+      + '<div style="font-size:12px;color:var(--text2);margin-top:2px">' + CK.rows.length + ' item(s) on record here now. Count each one: tap ✓ Correct, the number you see, or ✗ None found.'
       + (invAuditAutoMode ? '' : ' <b>Changes go to Review for a manager to approve.</b>') + '</div></div>';
     CK.rows.forEach(function(r, i) {
       var now = ckNow(r), done = r._ck;
@@ -12344,22 +12344,35 @@ window.invCredLogin = async function() {
         + '<div style="font-size:11.5px;color:var(--text2);margin:3px 0">' + ckWho(r.partNum, r.location) + '</div>'
         + (ckNum(r.pendingCases) ? '<div style="font-size:11px;color:var(--orange)">' + ckE(xfrN(r.pendingCases)) + ' case(s) waiting for approval</div>' : '')
         + (done ? '<div style="font-weight:700;color:#0891B2;margin-top:4px">✓ ' + ckE(done) + '</div>'
-          : '<div style="display:flex;gap:6px;align-items:center;flex-wrap:wrap;margin-top:6px">'
-            + '<span style="font-size:12px;color:var(--text3)">System:</span>'
-            + '<input id="ck-cnt-' + i + '" type="number" inputmode="decimal" min="0" step="any" value="' + ckE(xfrN(now)) + '" style="width:80px;padding:7px 8px;border:1.5px solid var(--border);border-radius:7px;font-size:15px;font-weight:700;font-family:var(--mono)"> case(s)'
-            + '<button class="isearch-btn" onclick="ckSaveCount(' + i + ')">✓ Save</button>'
-            + '<button class="isearch-btn" style="background:var(--red)" onclick="ckNoneFound(' + i + ')">✗ None found</button></div>')
+          : '<div style="display:flex;gap:6px;align-items:center;flex-wrap:wrap;margin:6px 0">'
+            + '<span style="font-size:13px;color:var(--text2)">System: <b style="font-size:17px;font-family:var(--mono);color:var(--text)">' + ckE(xfrN(now)) + '</b> case(s)</span>'
+            + '<button class="isearch-btn" style="background:var(--green)" onclick="ckPick(' + i + ',\'ok\')">✓ Correct</button>'
+            + '<button class="isearch-btn" style="background:var(--red)" onclick="ckNoneFound(' + i + ')">✗ None found</button></div>'
+            + '<div style="font-size:12px;color:var(--text3);margin-bottom:4px">Not right? Tap how many cases you see:</div>' + ckGrid('ckPick(' + i + ',', now))
         + '</div>';
     });
     h += '<button class="icam-btn" style="background:var(--orange-bg);color:var(--orange);border-color:var(--orange)" onclick="ckOtherStart()">➕ Something else found on this spot</button>';
     ckOut(h);
   }
-  window.ckNoneFound = function(i) { var x = g('ck-cnt-' + i); if (x) x.value = '0'; ckSaveCount(i, true); };
+  // Our own number buttons (1–9 + More…) — the phone keyboard never comes up.
+  function ckGrid(call, cur) {
+    var b = 'padding:12px 0;border-radius:10px;border:1.5px solid var(--border);background:var(--bg3);color:var(--text);font-size:19px;font-weight:800;cursor:pointer;touch-action:manipulation';
+    return '<div style="display:grid;grid-template-columns:repeat(5,1fr);gap:6px">'
+      + [1,2,3,4,5,6,7,8,9].map(function(n) { return '<button type="button" onclick="' + call + n + ')" style="' + b + (cur != null && Math.abs(n - cur) < 1e-9 ? ';border-color:var(--green)' : '') + '">' + n + '</button>'; }).join('')
+      + '<button type="button" onclick="' + call + '\'more\')" style="' + b + ';font-size:14px">More…</button></div>';
+  }
+  window.ckPick = function(i, n) {
+    var r = CK.rows[i]; if (!r || r._ck) return;
+    if (n === 'ok') { ckSaveCount(i, false, ckNow(r)); return; }
+    if (n === 'more') { xfrKeypad('How many cases of ' + r.partNum + ' at ' + r.location + '? (system: ' + xfrN(ckNow(r)) + ')', '', function(v) { ckSaveCount(i, false, v); }, true); return; }
+    ckSaveCount(i, false, n);
+  };
+  window.ckNoneFound = function(i) { ckSaveCount(i, true, 0); };
   // Same entries as 🔍 Audit (invAuditSubmitRow): equal → a 0-case [AUDIT] Confirmed;
   // different → [AUDIT] IN / OUT of the difference.
-  window.ckSaveCount = function(i, none) {
+  window.ckSaveCount = function(i, none, actual) {
     var r = CK.rows[i]; if (!r || r._ck) return;
-    var actual = parseFloat((g('ck-cnt-' + i) || {}).value);
+    actual = parseFloat(actual);
     if (isNaN(actual) || actual < 0) { invFlash('Enter a valid count (0 or more)', 'error'); return; }
     var cur = ckNow(r), diff = Math.round((actual - cur) * 1000) / 1000, by = ckBy();
     var note = diff === 0 ? '[AUDIT] Confirmed: ' + cur + ' cases verified correct (✅ Checking)'
@@ -12391,28 +12404,33 @@ window.invCredLogin = async function() {
     if (o.step === 'box') h += '<div style="font-size:15px;font-weight:800;margin:6px 0">1️⃣ Scan the box barcode (or type the part #)</div>';
     else {
       h += '<div style="font-family:var(--mono);font-weight:800;font-size:15px">' + ckE(o.part) + '</div>' + (o.name ? '<div style="font-size:12px;color:var(--text2)">' + ckE(o.name) + '</div>' : '')
-        + '<div style="display:flex;gap:10px;flex-wrap:wrap;margin:8px 0;align-items:center">'
-        + '<label style="font-size:13px;font-weight:700">2️⃣ Boxes <input id="ck-o-n" type="number" inputmode="decimal" min="0" step="any" value="' + ckE(o.n || '') + '" onkeydown="if(event.key===\'Enter\'){var p=document.getElementById(\'ck-o-pcs\');if(p)p.focus();}" style="width:70px;padding:7px;border:1.5px solid var(--border);border-radius:7px;font-size:15px;font-weight:700"></label>'
-        + '<label style="font-size:13px;font-weight:700">Pieces per box <input id="ck-o-pcs" type="number" inputmode="decimal" min="0" step="any" value="' + ckE(o.pcs || '') + '" onkeydown="if(event.key===\'Enter\')ckOtherReady()" style="width:80px;padding:7px;border:1.5px solid var(--border);border-radius:7px;font-size:15px;font-weight:700"></label></div>'
-        + (o.step === 'loc' ? '<div style="font-size:15px;font-weight:800;color:var(--accent)">3️⃣ Scan the spot label — it saves by itself</div>'
-          : '<button class="isearch-btn" onclick="ckOtherReady()">Next → scan the spot</button>');
+        + '<div style="font-size:13px;margin:8px 0">Pieces per box: <b style="font-size:16px;font-family:var(--mono)">' + (o.pcs ? ckE(xfrN(o.pcs)) : '?') + '</b> '
+        + '<button type="button" class="ixfr-mode-btn" onclick="ckOtherPcsAsk()">✏️ Change</button></div>'
+        + (o.step === 'loc'
+          ? '<div style="font-size:14px;margin-bottom:6px">Boxes: <b style="font-size:16px;font-family:var(--mono)">' + ckE(xfrN(o.n)) + '</b> <button type="button" class="ixfr-mode-btn" onclick="ckOtherBack()">✏️ Change</button></div>'
+            + '<div style="font-size:15px;font-weight:800;color:var(--accent)">3️⃣ Scan the spot label — it saves by itself</div>'
+          : '<div style="font-size:15px;font-weight:800;margin-bottom:6px">2️⃣ How many boxes?</div>' + ckGrid('ckOtherN(', null));
     }
     if (CK.saved.length) h += '<div style="margin-top:10px;font-size:12px">' + CK.saved.map(function(x) { return '<div style="color:var(--green)">✓ ' + ckE(x) + '</div>'; }).join('') + '</div>';
     h += '<div style="margin-top:10px"><button class="ixfr-mode-btn" onclick="ckOtherStop()">Done — back to ' + ckE(o.at) + '</button></div></div>';
     ckOut(h);
-    if (o.step === 'count') setTimeout(function() { var x = g('ck-o-n'); if (x) x.focus(); }, 50);
-    else setTimeout(function() { var x = g('ck-inp'); if (x) x.focus(); }, 50);
+    setTimeout(function() { var x = g('ck-inp'); if (x) x.focus(); }, 50);
   }
-  window.ckOtherReady = function() {
+  window.ckOtherN = function(n) {
     var o = CK.other; if (!o) return;
-    o.n = parseFloat((g('ck-o-n') || {}).value); o.pcs = parseFloat((g('ck-o-pcs') || {}).value);
-    if (!(o.n > 0)) { invFlash('How many boxes?', 'error'); return; }
-    if (!(o.pcs > 0)) { invFlash('How many pieces in each box?', 'error'); return; }
+    if (n === 'more') { xfrKeypad('How many boxes of ' + o.part + '?', '', function(v) { ckOtherN(v); }); return; }
+    o.n = parseFloat(n);
+    if (!(o.n > 0)) return;
+    if (!(parseFloat(o.pcs) > 0)) { ckOtherPcsAsk(true); return; }
     o.step = 'loc'; ckRenderOther();
   };
+  window.ckOtherBack = function() { var o = CK.other; if (!o) return; o.step = 'count'; ckRenderOther(); };
+  window.ckOtherPcsSet = function(v) { var o = CK.other; if (!o || !(parseFloat(v) > 0)) return; o.pcs = parseFloat(v); if (o.n > 0 && o.step === 'count') o.step = 'loc'; ckRenderOther(); };
+  window.ckOtherPcsAsk = function() { var o = CK.other; if (!o) return; xfrKeypad('How many pieces in each box of ' + o.part + '?', o.pcs || '', ckOtherPcsSet); };
   function ckOtherScan(v) {
     var o = CK.other, V = String(v).trim().toUpperCase();
     if (o.step === 'box' || (o.step === 'count' && !xfrIsLoc(V))) {
+      if (o.step === 'count' && /^\d{1,4}$/.test(V)) { ckOtherN(V); return; } // a number typed in the box = how many boxes
       if (xfrIsLoc(V)) { invFlash('Scan the box first', 'error'); return; }
       wFetch(W + '/inventory/lookup?code=' + encodeURIComponent(V)).then(function(r) { return r.json(); }).then(function(d) {
         if (!d || !d.partNum) { invFlash(d && d.upcNotLinked ? 'Barcode not linked to a part # — type the part #' : 'Not found: ' + V, 'error'); return; }
@@ -12424,7 +12442,7 @@ window.invCredLogin = async function() {
       }).catch(function() { invFlash('Lookup failed — check WiFi', 'error'); });
       return;
     }
-    if (o.step === 'count') { ckOtherReady(); if (o.step !== 'loc') return; }
+    if (o.step === 'count') { invFlash('Tap how many boxes first', 'error'); return; }
     if (!xfrIsLoc(V)) { invFlash('That is not a spot label — scan the spot', 'error'); return; }
     ckOtherSave(V);
   }
