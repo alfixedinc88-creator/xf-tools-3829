@@ -1370,6 +1370,13 @@ console.log('\nStock Out / Transfer: one search box (part # / UPC / name) · ✅
   check('…the row shows the new size and who changed it', /· 12 pcs \/ case/.test(el('ck-out').innerHTML) && /Pieces per case 10 → 12 by/.test(el('ck-out').innerHTML), null);
   const stale = await post('/inventory/pack-change', { masterId: pl.master_id, partNum: '77-7-1=10', location: 'C2=1-1-2', from: 10, to: 20 });
   check('a stale change (someone else already changed it) is refused — nothing changes', stale.ok === false && /now 12/.test(stale.error) && cs('77-7-1=10', 'C2=1-1-2') === '7×12' && pcs() === 214, stale);
+  // Owner: "Checking a part #: in order =old, =1, 1x, 1xx, 1xxx, =2, 2x … =10, =10x, =10xx, =11 … then 20, 21 … 30, 31…".
+  const cmpSrc = (ckSrc.match(/  function ckPackKey\(p\) \{[\s\S]*?\n  function ckPartCompare\(a, b\) \{[\s\S]*?\n  \}/) || [''])[0];
+  const ckCmp = new Function(cmpSrc + '; return ckPartCompare;')();
+  const mixed = ['9-9-9=20', '9-9-9=10X', '9-9-9=2', '9-9-9=1XXX', '9-9-9=OLD', '9-9-9=11', '9-9-9=1', '9-9-9=10', '9-9-9=3XX', '9-9-9=1X', '9-9-9=10XX', '9-9-9=2X', '9-9-9=31', '9-9-9=1XX', '9-9-9=21', '9-9-9=30', '9-9-9=3', '9-9-9=3X'];
+  const want = ['OLD', '1', '1X', '1XX', '1XXX', '2', '2X', '3', '3X', '3XX', '10', '10X', '10XX', '11', '20', '21', '30', '31'];
+  const got = mixed.slice().sort(ckCmp).map(p => p.split('=')[1]);
+  check('part #s in pack order: =OLD, =1, =1X, =1XX, =1XXX, =2, =2X, =3 … =10, =10X, =10XX, =11, =20, =21, =30, =31', got.join() === want.join() && /order\.sort\(ckPartCompare\)/.test(ckSrc), got);
   const sp = await post('/inventory/check-spots', { pairs: [{ part: '77-7-1=10', location: 'c2=1-1-1' }] });
   check('who put it there (read-only route): last Stock In at the spot', sp.ok && sp.spots['77-7-1=10|C2=1-1-1'] && sp.spots['77-7-1=10|C2=1-1-1'].put.by && sp.spots['77-7-1=10|C2=1-1-1'].last.length === 3, sp);
   const sp2 = await post('/inventory/check-spots', { pairs: [{ part: '77-7-1=10', location: 'C2=1-1-2' }] });

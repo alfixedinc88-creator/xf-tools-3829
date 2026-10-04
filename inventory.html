@@ -12246,6 +12246,21 @@ window.invCredLogin = async function() {
   function ckNum(v) { var n = parseFloat(v); return isNaN(n) ? 0 : n; }
   function ckNow(l) { return l.adjustedCases !== undefined && l.adjustedCases !== null ? ckNum(l.adjustedCases) : ckNum(l.cases); }
   function ckOut(html) { g('ck-out').innerHTML = html; }
+  // Part #s in pack order (owner): =OLD (no pack number) first, then =1, =1X,
+  // =1XX, =1XXX, =2 … =10, =10X, =11 … =20, =21 … — by the number after "=",
+  // then fewer letters first (fewer letters = older), then A–Z.
+  function ckPackKey(p) {
+    var t = String(p || '').toUpperCase(), i = t.indexOf('='), suf = i < 0 ? '' : t.slice(i + 1).trim();
+    var m = suf.match(/^(\d+(?:\.\d+)?)(.*)$/);
+    return { base: i < 0 ? t : t.slice(0, i), n: m ? parseFloat(m[1]) : -1, rest: m ? m[2] : suf };
+  }
+  function ckPartCompare(a, b) {
+    var x = ckPackKey(a), y = ckPackKey(b);
+    if (x.base !== y.base) return x.base < y.base ? -1 : 1;
+    if (x.n !== y.n) return x.n - y.n;
+    if (x.rest.length !== y.rest.length) return x.rest.length - y.rest.length;
+    return x.rest < y.rest ? -1 : x.rest > y.rest ? 1 : 0;
+  }
   // 🖼 Product photo (one per parent part #, same photos as the Pull List / Transfer). Tap = big.
   CK.photo = {};
   function ckPhotoLoad(parts) {
@@ -12326,7 +12341,7 @@ window.invCredLogin = async function() {
     var rows = (d.locations || []).filter(function(l) { return l.location && (CK.all || String(l.partNum || d.partNum).toUpperCase() === CK.exact); });
     var groups = {}, order = [];
     rows.forEach(function(l) { var p = String(l.partNum || d.partNum).toUpperCase(); if (!groups[p]) { groups[p] = []; order.push(p); } groups[p].push(l); });
-    order.sort();
+    order.sort(ckPartCompare);
     var famCount = {}; (d.locations || []).forEach(function(l) { famCount[String(l.partNum || d.partNum).toUpperCase()] = 1; });
     (d.variants || []).forEach(function(v) { famCount[String(v).toUpperCase()] = 1; });
     var nFam = Object.keys(famCount).length, totCases = 0, totPcs = 0, hidden = 0;
@@ -12395,7 +12410,7 @@ window.invCredLogin = async function() {
     ckOut('<div class="icard" style="color:var(--text3)">Looking at ' + ckE(CK.loc) + '…</div>');
     wFetch(W + '/inventory/location-search?loc=' + encodeURIComponent(CK.loc)).then(function(r) { return r.json(); }).then(function(d) {
       CK.rows = ((d && d.results) || []).filter(function(r) { return ckNow(r) > 0 || ckNum(r.pendingCases) > 0; })
-        .sort(function(a, b) { return invPullWalkCompare(a.location, b.location) || String(a.partNum).localeCompare(String(b.partNum)); });
+        .sort(function(a, b) { return invPullWalkCompare(a.location, b.location) || ckPartCompare(a.partNum, b.partNum); });
       ckRenderLoc();
       ckPhotoLoad(CK.rows.map(function(r) { return r.partNum; }));
       ckLoadSpots(CK.rows.map(function(r) { return { part: r.partNum, location: r.location }; }), ckRenderLoc);
