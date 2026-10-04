@@ -5569,31 +5569,40 @@ function partnumWhy(raw) {
   if (/^\d{1,7}$/.test(t.replace(/\s/g, ''))) { why.push('numonly'); return why; }        // e.g. 2490
   if (/^[A-Z]/i.test(t.trim()) && !/^OLD$/i.test(t.trim())) { why.push('letters'); return why; } // e.g. EFFMM-04-LF (a vendor's own code)
   if (t !== t.trim() || /\s/.test(t.trim()) || /[a-z]/.test(t) || /[^0-9A-Za-z\-=&.\s]/.test(t)) why.push('chars');
-  const eq = (P.match(/=/g) || []).length;
+  const Pn = P.replace(/\s+/g, ''); // spaces are reported above ('chars'); the shape is checked without them
+  const eq = (Pn.match(/=/g) || []).length;
   if (!eq) why.push('noeq');
-  else if (eq > 1 || /=$/.test(P) || /^=/.test(P) || /^-|--|-=/.test(P)) why.push('twoeq');
+  else if (eq > 1 || /=$/.test(Pn) || /^=/.test(Pn) || /^-|--|-=/.test(Pn)) why.push('twoeq');
   else {
-    const suf = P.split('=')[1];
+    const suf = Pn.split('=')[1];
     if (!/^(OLD|\d+(\.\d+)?(X{1,4}|W\.\dC|J|N)?)$/.test(suf)) why.push('suffix');
     // Our part #s are #-#-#=# (owner) — three numbers before "=" (an "&2" or a "C" at the end is OK, e.g. 28-2-1&2C).
-    if (!/^\d+-\d+-\d+(&\d+)?C?$/.test(P.split('=')[0])) why.push('base');
+    if (!/^\d+-\d+-\d+(&\d+)?C?$/.test(Pn.split('=')[0])) why.push('base');
   }
   return why;
 }
 async function inventoryPartnumCheck(env) {
-  const rows = await d1All(env, `SELECT id, part_num, location, cases, units_per_case FROM master_list WHERE TRIM(COALESCE(part_num,'')) != ''`);
+  const rows = await d1All(env, `SELECT id, part_num, name, location, cases, units_per_case FROM master_list WHERE TRIM(COALESCE(part_num,'')) != ''`);
   const cats = { upc: [], numonly: [], letters: [], chars: [], noeq: [], twoeq: [], suffix: [], base: [], dupes: [] };
-  const spell = {};
+  const spell = {}, byId = {};
   for (const r of rows) {
     const row = { id: r.id, partNum: r.part_num, location: r.location || '', cases: Number(r.cases) || 0 };
-    for (const w of partnumWhy(r.part_num)) cats[w].push(row);
+    const why = partnumWhy(r.part_num);
+    for (const w of why) cats[w].push(row);
+    if (why.length) byId[r.id] = { ...row, name: String(r.name || '').slice(0, 80), each: Number(r.units_per_case) || 0, why: why.slice() };
     const key = String(r.part_num).toUpperCase().replace(/\s+/g, '');
     (spell[key] = spell[key] || {})[r.part_num] = (spell[key][r.part_num] || []).concat(row);
   }
-  for (const k of Object.keys(spell)) { const forms = Object.keys(spell[k]); if (forms.length > 1) forms.forEach(f => cats.dupes.push(...spell[k][f])); }
+  for (const k of Object.keys(spell)) { const forms = Object.keys(spell[k]); if (forms.length > 1) forms.forEach(f => spell[k][f].forEach(x => {
+    cats.dupes.push(x);
+    const full = rows.find(r => r.id === x.id) || {};
+    (byId[x.id] = byId[x.id] || { ...x, name: String(full.name || '').slice(0, 80), each: Number(full.units_per_case) || 0, why: [] }).why.push('dupes');
+  })); }
   const out = {};
   for (const c of Object.keys(cats)) out[c] = { count: cats[c].length, cases: Math.round(cats[c].reduce((t, x) => t + x.cases, 0) * 100) / 100, rows: cats[c].slice(0, 300) };
-  return cors(new Response(JSON.stringify({ ok: true, total: rows.length, cats: out }), { headers: { 'Content-Type': 'application/json' } }));
+  // One flat list (every odd row once, with all its reasons) for the table view.
+  const list = Object.values(byId).slice(0, 5000);
+  return cors(new Response(JSON.stringify({ ok: true, total: rows.length, cats: out, list }), { headers: { 'Content-Type': 'application/json' } }));
 }
 
 // POST /inventory/barcode-label { sku, name, copies } — 🏷 Barcode designer:
