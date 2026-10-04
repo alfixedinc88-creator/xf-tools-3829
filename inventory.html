@@ -131,6 +131,7 @@ function invObPatch(id, fn) { var a = invObRead(); a.forEach(function (x) { if (
 function invObDrop(id) { invObWrite(invObRead().filter(function (x) { return x.id !== id; })); }
 function invObNewId() { try { if (crypto.randomUUID) return crypto.randomUUID(); } catch (e) {} return 'ob-' + Date.now() + '-' + Math.random().toString(36).slice(2, 10); }
 function invObLabel(path, b) {
+  if (path.indexOf('recount/column-done') >= 0) return '📋 Recount: column ' + (b.location || '') + ' done (' + (b.items || 0) + ' item(s))';
   if (path.indexOf('containers/short') >= 0) return '📉 Short on pallet ' + (b.pallet || '') + ': ' + (b.part || '') + ' × ' + (b.short || '?') + ' box(es) not on the pallet';
   if (path.indexOf('containers/recheck') >= 0) return 'Box put at ' + (b.location || '') + ' (already counted): ' + (b.part || '') + ' · Pallet ' + (b.pallet || '');
   if (path.indexOf('containers/upc-issue') >= 0) return '⚠ UPC doesn\'t match: ' + (b.part || '') + ' (scanned ' + (b.code || '?') + ') · Pallet ' + (b.pallet || '');
@@ -1071,6 +1072,7 @@ window.invCredLogin = async function() {
     <div class="isearch-row">
       <input class="isearch-inp" id="rc-inp" type="text" inputmode="none" autocomplete="off" placeholder="📷 Scan the column label, then each box" onkeydown="if(event.key==='Enter')rcGo()" onblur="xfrKbOff(this)">
       <button type="button" class="inv-x-btn" title="Label won't scan? Type it" onclick="xfrKbOn('rc-inp')" style="font-size:15px">&#x2328;</button>
+      <button type="button" class="inv-x-btn" title="Clear — scan again" onmousedown="event.preventDefault()" onclick="rcClear()">&#x2715;</button>
       <button class="isearch-btn" onclick="rcGo()">Go</button>
     </div>
     <button class="icam-btn" id="rc-cam-btn" onclick="rcToggleCam()">&#x1F4F7; Scan Barcode</button>
@@ -1847,7 +1849,7 @@ window.invCredLogin = async function() {
     }
     if (tab === "transfer" && window.xfrStepsRender) window.xfrStepsRender();
     if (tab === "check") { invAuditLoadMode(); ckLoadSizes(); setTimeout(function() { var x = g('ck-inp'); if (x) x.focus(); }, 60); }
-    if (tab === "audit") { ckLoadSizes(); rcStatus(); invAuditLoadMode(); invPopulateAllPrefixDropdowns(); if(typeof invLoadPrefixes==='function') invLoadPrefixes(); }
+    if (tab === "audit") { ckLoadSizes(); rcStatus(); rcRestore(); invAuditLoadMode(); invPopulateAllPrefixDropdowns(); if(typeof invLoadPrefixes==='function') invLoadPrefixes(); }
     if ((tab === "skumgr" || tab === "history" || tab === "soldout" || tab === "location") && !invUnlocked) {
       window._skumgrPendingTab = tab; // remember which tab to open after unlock
       invSwitchTab('review');
@@ -12740,6 +12742,47 @@ window.invCredLogin = async function() {
   // decides Review), so History keeps Part Total Before → After.
   var RC = { loc: '', rows: [], extra: [], cur: null, checking: false, done: false, status: null, aisle: null };
   function rcOut(h) { var o = g('rc-out'); if (o) o.innerHTML = h; }
+  // The column in progress is kept on this phone (survives a reload, a dead
+  // battery screen, no WiFi), so nothing counted is lost or counted twice.
+  function rcStateKey() { return 'xf_rc_state_' + ((INV_CRED_USER && (INV_CRED_USER.userId || INV_CRED_USER.username || INV_CRED_USER.displayName)) || ''); }
+  function rcSaveState() {
+    try {
+      if (!RC.loc) { localStorage.removeItem(rcStateKey()); return; }
+      localStorage.setItem(rcStateKey(), JSON.stringify({ loc: RC.loc, rows: RC.rows, extra: RC.extra, checking: RC.checking, done: RC.done, at: Date.now() }));
+    } catch (e) {}
+  }
+  window.rcRestore = function() {
+    if (RC.loc) return;
+    var st = null; try { st = JSON.parse(localStorage.getItem(rcStateKey()) || 'null'); } catch (e) {}
+    if (!st || !st.loc || st.done) return;
+    RC.loc = st.loc; RC.rows = st.rows || []; RC.extra = st.extra || []; RC.checking = !!st.checking; RC.done = false; RC.cur = null;
+    // A save that was still going when the page closed went through the phone outbox — it is not lost.
+    RC.rows.forEach(function(r) { if (r._rc) r._rc.saving = false; }); RC.extra.forEach(function(x) { x.saving = false; });
+    rcRender(); rcStatus(rcAisleOf(RC.loc));
+    invFlash('Back to ' + RC.loc + ' — carry on where you left off', 'warn');
+  };
+  // Offline: what this phone saw before (column contents, box lookups).
+  function rcCache(kind, key, d) {
+    var k = 'xf_rc_cache_' + kind, m = {}; try { m = JSON.parse(localStorage.getItem(k) || '{}') || {}; } catch (e) {}
+    key = String(key || '').trim().toUpperCase(); if (!key) return null;
+    if (d === undefined) return m[key] || null;
+    m[key] = { d: d, at: Date.now() };
+    var ks = Object.keys(m); if (ks.length > 400) ks.sort(function(a, b) { return m[a].at - m[b].at; }).slice(0, ks.length - 400).forEach(function(x) { delete m[x]; });
+    try { localStorage.setItem(k, JSON.stringify(m)); } catch (e) {}
+    return null;
+  }
+  function rcFetchJson(url, kind, key) {
+    return wFetch(url).then(function(r) { return r.json(); }).then(function(d) { if (d && (d.ok !== false)) rcCache(kind, key, d); return d; }, function(err) {
+      var c = rcCache(kind, key); if (!c) throw err;
+      invFlash('📶 No WiFi — using what this phone saw ' + xfrFmtT(new Date(c.at).toISOString()) + '. Counts are saved on the phone.', 'warn');
+      return c.d;
+    });
+  }
+  window.rcClear = function() {
+    var x = g('rc-inp'); if (x) { x.value = ''; x.removeAttribute('data-kb-typing'); x.setAttribute('inputmode', 'none'); }
+    if (RC.cur) { RC.cur = null; rcRender(); }
+    if (x) x.focus();
+  };
   function rcAisleOf(loc) { var L = String(loc || '').toUpperCase(), i = L.indexOf('='); if (i < 0) return L; var n = L.slice(i + 1).split('-')[0]; return L.slice(0, i + 1) + n; }
   function rcKey(part, pcs) { return String(part).toUpperCase() + '|' + xfrN(pcs); }
   window.rcStatus = function(aisle) {
@@ -12772,20 +12815,47 @@ window.invCredLogin = async function() {
     if (!RC.loc || RC.done) { invFlash('Scan the column label first', 'error'); return; }
     rcBox(V);
   };
+  // Columns finished on this phone (last 24 h) — a column whose counts are still
+  // waiting on the phone (no WiFi yet) can't be counted again: the system's
+  // number is still the old one, so a second count would count it twice.
+  function rcDoneKey() { return 'xf_rc_done_' + ((INV_CRED_USER && (INV_CRED_USER.userId || INV_CRED_USER.username || INV_CRED_USER.displayName)) || ''); }
+  function rcDoneGet() { try { return JSON.parse(localStorage.getItem(rcDoneKey()) || '{}') || {}; } catch (e) { return {}; } }
+  function rcDoneMark(loc) { var m = rcDoneGet(), now = Date.now(); m[loc] = now; Object.keys(m).forEach(function(k) { if (now - m[k] > 86400000) delete m[k]; }); try { localStorage.setItem(rcDoneKey(), JSON.stringify(m)); } catch (e) {} }
+  function rcWaitingFor(loc) {
+    if (typeof invObRead !== 'function') return 0;
+    return invObRead().filter(function(x) { return x.state !== 'sent' && x.state !== 'old' && x.body && String(x.body.location || '').toUpperCase() === loc; }).length;
+  }
   function rcStart(loc) {
+    var waiting = rcWaitingFor(loc), doneAt = rcDoneGet()[loc];
+    if (waiting) { invFlash('📶 ' + loc + ' has ' + waiting + ' count(s) still waiting on this phone for WiFi — recount it after they are sent', 'error'); return; }
+    if (doneAt && Date.now() - doneAt < 86400000 && !confirm(loc + ' was already recounted on this phone at ' + xfrFmtT(new Date(doneAt).toISOString()) + '.\n\nRecount it again?')) return;
     RC = { loc: loc, rows: [], extra: [], cur: null, checking: false, done: false, status: RC.status, aisle: null };
     rcOut('<div class="icard" style="color:var(--text3)">Looking at ' + ckE(loc) + '…</div>');
-    wFetch(W + '/inventory/location-search?loc=' + encodeURIComponent(loc)).then(function(r) { return r.json(); }).then(function(d) {
+    rcFetchJson(W + '/inventory/location-search?loc=' + encodeURIComponent(loc), 'loc', loc).then(function(d) {
       RC.rows = ((d && d.results) || []).filter(function(r) { return ckNow(r) > 0 || ckNum(r.pendingCases) > 0; })
         .sort(function(a, b) { return invPullWalkCompare(a.location, b.location) || ckPartCompare(a.partNum, b.partNum); });
       rcRender();
       ckPhotoLoad(RC.rows.map(function(r) { return r.partNum; }));
       rcStatus(rcAisleOf(loc));
-    }).catch(function() { rcOut('<div class="icard" style="color:var(--red)">Could not load ' + ckE(loc) + ' — check WiFi</div>'); });
+      // Keep each part # here (and its box UPCs) on the phone, so a box still scans if WiFi drops.
+      RC.rows.map(function(r) { return String(r.partNum).toUpperCase(); }).filter(function(p, i, a) { return a.indexOf(p) === i; }).forEach(function(p) {
+        if (rcCache('lk', p)) return;
+        wFetch(W + '/inventory/lookup?code=' + encodeURIComponent(p)).then(function(r) { return r.json(); }).then(function(d) {
+          if (!d || !d.partNum) return; rcCache('lk', p, d);
+          [d.insideUpc, d.outsideUpc].forEach(function(u) { u = String(u || '').replace(/\D/g, ''); if (u) { rcCache('lk', u, d); rcCache('lk', u.replace(/^0+/, ''), d); } });
+        }).catch(function() {});
+      });
+    }).catch(function() { RC.loc = ''; rcOut('<div class="icard" style="color:var(--red)">📶 No WiFi, and ' + ckE(loc) + ' was never opened on this phone — wait for WiFi, then scan it again</div>'); });
   }
   // A box was scanned: which part #? → how many cases → pieces per box (saves).
   function rcBox(code) {
-    wFetch(W + '/inventory/lookup?code=' + encodeURIComponent(code)).then(function(r) { return r.json(); }).then(function(d) {
+    var lk = rcCache('lk', code) || rcCache('lk', String(code).replace(/^0+/, ''));
+    rcFetchJson(W + '/inventory/lookup?code=' + encodeURIComponent(code), 'lk', code).catch(function(e) {
+      // No WiFi and never seen on this phone: a part # typed with "=" still works (it is on record here or a new line).
+      if (/=/.test(code)) return { partNum: code, name: '', sku: code, locations: [] };
+      if (lk) return lk.d;
+      throw e;
+    }).then(function(d) {
       if (!d || !d.partNum) { invFlash(d && d.upcNotLinked ? 'Barcode ' + code + ' is not linked to a part # — ⌨ type the part #' : 'Not found: ' + code, 'error'); return; }
       var part = String(d.partNum).toUpperCase();
       var here = RC.rows.filter(function(r) { return String(r.partNum).toUpperCase() === part; });
@@ -12793,7 +12863,7 @@ window.invCredLogin = async function() {
       RC.cur = { part: part, name: d.name || '', sku: d.sku || part, here: here, usual: known.length ? ckNum(known[0].eachQty) : 0, n: null, found: null };
       ckPhotoLoad([part]);
       rcRender();
-    }).catch(function() { invFlash('Lookup failed — check WiFi', 'error'); });
+    }).catch(function() { invFlash('📶 No WiFi and this box was never seen on this phone — ⌨ type its part # (e.g. 23-2-3=2)', 'error'); });
   }
   window.rcCases = function(n) {
     if (!RC.cur) return;
@@ -12884,20 +12954,22 @@ window.invCredLogin = async function() {
     var counted = RC.rows.filter(function(r) { return r._rc; }), changed = counted.filter(function(r) { return Math.abs(r._rc.n - ckNow(r)) > 1e-9; }).length + RC.extra.length;
     var detail = counted.map(function(r) { return { part: r.partNum, pcs: ckNum(r.eachQty), system: ckNow(r), counted: r._rc.n }; })
       .concat(RC.extra.map(function(x) { return { part: x.part, pcs: x.pcs, system: 0, counted: x.n, new: true }; }));
-    wFetch(W + '/inventory/recount/column-done', { method: 'POST', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ location: RC.loc, items: counted.length + RC.extra.length, changed: changed, detail: detail }) })
+    // Through the phone outbox: no WiFi → saved on the phone and sent by itself later (only once).
+    invPost(W + '/inventory/recount/column-done', { method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ location: RC.loc, items: counted.length + RC.extra.length, changed: changed, detail: detail, doneAt: new Date().toISOString() }) })
       .then(function(r) { return r.json(); }).then(function(d) {
         if (!d || !d.ok) { invFlash('Could not mark the column done — try ✅ again', 'error'); return; }
-        RC.done = true; RC.checking = false; rcRender(); rcStatus(rcAisleOf(RC.loc));
-        invFlash('✅ ' + RC.loc + ' done — scan the next column', 'success');
+        RC.done = true; RC.checking = false; rcDoneMark(RC.loc); rcRender(); rcStatus(rcAisleOf(RC.loc));
+        invFlash(d.queued ? '✅ ' + RC.loc + ' done — 📶 saved on the phone, it sends when WiFi is back. Scan the next column' : '✅ ' + RC.loc + ' done — scan the next column', d.queued ? 'warn' : 'success');
         var inp = g('rc-inp'); if (inp) inp.focus();
-      }).catch(function() { invFlash('Could not mark the column done (WiFi?) — try ✅ again', 'error'); });
+      }).catch(function() { invFlash('Could not mark the column done — try ✅ again', 'error'); });
   }
   window.rcStop = function() {
     if (!confirm('Stop ' + RC.loc + ' without finishing? What you counted is saved, but the column is NOT marked done.')) return;
-    RC = { loc: '', rows: [], extra: [], cur: null, checking: false, done: false, status: RC.status, aisle: null }; rcOut(''); rcStatus();
+    RC = { loc: '', rows: [], extra: [], cur: null, checking: false, done: false, status: RC.status, aisle: null }; rcSaveState(); rcOut(''); rcStatus();
   };
   window.rcRender = function() {
+    rcSaveState();
     if (!RC.loc) { rcOut(''); return; }
     var left = RC.rows.filter(function(r) { return !r._rc; }).length;
     var h = '<div class="icard"><div style="display:flex;justify-content:space-between;align-items:center;gap:8px"><div style="font-size:17px;font-weight:800;font-family:var(--mono)">📍 ' + ckE(RC.loc) + '</div>'

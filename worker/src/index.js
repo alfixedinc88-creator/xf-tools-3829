@@ -3545,8 +3545,8 @@ async function inventoryOutboxCheck(request, env) {
     if (!r.response_json) { out[id] = { state: 'processing' }; continue; }
     let res = {}; try { res = JSON.parse(r.response_json); } catch (_) {}
     // a ⚠ UPC report is kept in its own table (it changes no stock)
-    const tbl = r.endpoint === 'inventory/containers/upc-issue' ? 'pallet_upc_issue' : r.endpoint === 'inventory/containers/recheck' ? 'pallet_recheck' : r.endpoint === 'inventory/containers/short' ? 'pallet_short' : 'inventory_log';
-    const logIds = (tbl === 'inventory_log' ? [res.d1Id, res.outD1Id, res.inD1Id] : tbl === 'pallet_recheck' ? [res.checkId] : tbl === 'pallet_short' ? [res.shortId] : [res.issueId]).map(x => parseInt(x) || 0).filter(Boolean);
+    const tbl = r.endpoint === 'inventory/containers/upc-issue' ? 'pallet_upc_issue' : r.endpoint === 'inventory/containers/recheck' ? 'pallet_recheck' : r.endpoint === 'inventory/containers/short' ? 'pallet_short' : r.endpoint === 'inventory/recount/column-done' ? 'recount_columns' : 'inventory_log';
+    const logIds = (tbl === 'inventory_log' ? [res.d1Id, res.outD1Id, res.inD1Id] : tbl === 'pallet_recheck' ? [res.checkId] : tbl === 'pallet_short' ? [res.shortId] : tbl === 'recount_columns' ? [res.columnId] : [res.issueId]).map(x => parseInt(x) || 0).filter(Boolean);
     let found = 0;
     for (const lid of logIds) if (await d1First(env, `SELECT id FROM ${tbl} WHERE id=?`, [lid]).catch(() => null)) found++;
     out[id] = found && found === logIds.length ? { state: 'saved', result: res } : { state: 'missing', lost: logIds };
@@ -5635,13 +5635,20 @@ async function recountStatus(url, env) {
 async function recountColumnDone(request, env, session) {
   await recountTables(env);
   const b = await request.json().catch(() => ({}));
+  const J = (o, st) => cors(new Response(JSON.stringify(o), { status: st || 200, headers: { 'Content-Type': 'application/json' } }));
   const loc = String(b.location || '').trim().toUpperCase();
-  if (!loc) return cors(new Response(JSON.stringify({ ok: false, error: 'location needed' }), { status: 400, headers: { 'Content-Type': 'application/json' } }));
-  const ts = new Date().toISOString(), by = (session && (session.displayName || session.username)) || '?';
-  await env.DB.prepare('INSERT INTO recount_columns (ts, round_start, location, by_user, items, changed, detail) VALUES (?,?,?,?,?,?,?)')
+  if (!loc) return J({ ok: false, error: 'location needed' }, 400);
+  // Sent through the phone outbox (no WiFi → saved on the phone, sent later):
+  // the same request id is only ever saved once.
+  const rid = b._requestId ? String(b._requestId).slice(0, 80) : '';
+  if (rid) { const claim = await claimRequestId(env, rid, 'inventory/recount/column-done'); if (claim.isDuplicate) return J(claim.cachedResponse || { ok: true, duplicate: true }); }
+  const ts = b.doneAt && !isNaN(Date.parse(b.doneAt)) ? new Date(b.doneAt).toISOString() : new Date().toISOString(), by = (session && (session.displayName || session.username)) || '?';
+  const ins = await env.DB.prepare('INSERT INTO recount_columns (ts, round_start, location, by_user, items, changed, detail) VALUES (?,?,?,?,?,?,?)')
     .bind(ts, await recountRoundStart(env), loc, by, parseInt(b.items, 10) || 0, parseInt(b.changed, 10) || 0, JSON.stringify(b.detail || []).slice(0, 8000)).run();
   if (session && session.userId) await logUserActivity(env, session.userId, 'recount_column', { location: loc, items: b.items, changed: b.changed });
-  return cors(new Response(JSON.stringify({ ok: true, ts, by }), { headers: { 'Content-Type': 'application/json' } }));
+  const res = { ok: true, ts, by, columnId: ins.meta.last_row_id };
+  if (rid) await recordRequestResult(env, rid, res);
+  return J(res);
 }
 // POST /inventory/recount/new-round (mgmt) — start a new recount (every column to do again).
 async function recountNewRound(env, session) {
