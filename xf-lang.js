@@ -80,7 +80,7 @@
   // UPCs, location codes (C1=11-2-10, BARN=…), plain numbers.
   var DATA = /^(?:[\d\s.,:$%#+\/×x-]+|[A-Z0-9]{1,6}=\S*|\d+(?:-\d+){1,3}[A-Za-z]*(?:=\S*)?|\d{8,14}|[A-Z]{1,4}\d[\w-]*)$/;
   var LETTER = /[A-Za-z]/;
-  var DECOR = /^([^A-Za-z0-9À-ɏ]*)([\s\S]*?)([^A-Za-z0-9À-ɏ)]*)$/;
+  var DECOR = /^([^A-Za-z0-9À-ÖØ-öø-ɏ]*)([\s\S]*?)([^A-Za-z0-9À-ÖØ-öø-ɏ)]*)$/; // letters incl. á é ñ — not × ÷
 
   function caseLike(src, out) {
     if (src.length > 1 && src === src.toUpperCase() && src !== src.toLowerCase()) return out.toUpperCase();
