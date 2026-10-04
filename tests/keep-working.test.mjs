@@ -1260,6 +1260,7 @@ console.log('\nStock Out / Transfer: one search box (part # / UPC / name) · ✅
   // Run the page's own ✅ Checking code against the real Worker (fake screen, real saves).
   sq.prepare("INSERT INTO master_list (base_sku, name, part_num, location, cases, units_per_case) VALUES ('77-7-1','Cap 1/2','77-7-1=10','C2=1-1-1',5,10), ('77-7-1','Cap 1/2','77-7-1=10','BARN=2-1-1',3,10), ('77-7-1','Cap 1/2','77-7-1=2X','C2=1-1-1',4,2), ('77-7-1','Cap 1/2','77-7-1=10','C2=1-1-2',7,10), ('77-7-1','Cap 1/2','77-7-1=5','C1=9-9-9',2,5)").run();
   sq.prepare("INSERT INTO inventory_log (timestamp, type, part_num, location, cases, initials, notes, status, verified_by) VALUES ('2026-09-20T14:00:00Z','IN','77-7-1=10','C2=1-1-1',5,'Maria','','Verified','TS')").run();
+  const ckNowT = l => (l.adjustedCases !== undefined && l.adjustedCases !== null ? parseFloat(l.adjustedCases) : parseFloat(l.cases)) || 0;
   const pcs = () => sq.prepare("SELECT SUM(cases * units_per_case) p FROM master_list WHERE base_sku = '77-7-1' OR part_num LIKE '77-7-1=%'").get().p;
   const cs = (part, loc) => sq.prepare('SELECT cases c, units_per_case u FROM master_list WHERE part_num = ? AND location = ? ORDER BY id').all(part, loc).map(x => x.c + '×' + x.u).join(',');
   const pcs0 = pcs(); // 5×10 + 3×10 + 4×2 + 7×10 + 2×5 = 168
@@ -1326,14 +1327,28 @@ console.log('\nStock Out / Transfer: one search box (part # / UPC / name) · ✅
   // Owner: "the count needs our own number box 1–9 + More… (our number pad) — we always try to hide the phone keyboard".
   check('Checking: counts and boxes use our own buttons 1–9 + More… (our number pad), never the phone keyboard (no number inputs)',
     !/id="ck-cnt-/.test(ckSrc) && !/id="ck-o-n"/.test(ckSrc) && !/id="ck-o-pcs"/.test(ckSrc) && !/type="number"/.test(ckSrc)
-      && /\[1,2,3,4,5,6,7,8,9\]\.map/.test(ckSrc) && /if \(n === 'more'\) \{ xfrKeypad\(/.test(ckSrc) && /ckGrid\('ckPick\(' \+ i \+ ',', now\)/.test(ckSrc) && /ckGrid\('ckOtherN\(', null\)/.test(ckSrc), null);
+      && /\[1,2,3,4,5,6,7,8,9\]\.map/.test(ckSrc) && /if \(n === 'more'\) \{ xfrKeypad\(/.test(ckSrc) && /ckGrid\('ckPick\(' \+ i \+ ',', now, true\)/.test(ckSrc) && /ckGrid\('ckOtherN\(', null\)/.test(ckSrc), null);
   // Owner: "under Checking show how many pieces in that case also".
   ck = mk(true); w = globalThis.__ckWin;
   w.ckGo('C2=1-1-1'); await settle(); await settle(); const hp = el('ck-out').innerHTML;
   w.ckGo('77-7-1=10'); await settle(); await settle(); const hq = el('ck-out').innerHTML;
-  check('Checking shows pieces per case: a spot → "77-7-1=10 · 10 pcs / case", "System: 3 case(s) × 10 pcs = 30 pcs" (the 25-pc row too); a part # → "× 10 pcs/case = 30 pcs"',
-    /77-7-1=10 <span[^>]*>· 10 pcs \/ case/.test(hp) && /<b[^>]*>3<\/b> case\(s\) × <b[^>]*>10<\/b> pcs = 30 pcs/.test(hp) && /· 25 pcs \/ case/.test(hp) && /<b[^>]*>2<\/b> case\(s\) × <b[^>]*>25<\/b> pcs = 50 pcs/.test(hp)
-      && /× 10 pcs\/case = 30 pcs/.test(hq) && /× 25 pcs\/case = 50 pcs/.test(hq), { hp: hp.slice(0, 600) });
+  // Owner (later): on a spot, no "System: … × … pcs = … pcs" line and no spot label on each row (it's at the top) —
+  // the system's number stands out in the 1–9 buttons (big, green, ✓ SYSTEM); tapping it = correct.
+  check('Checking shows pieces per case: a spot → "77-7-1=10 · 10 pcs / case" (the 25-pc row too); a part # → "× 10 pcs/case = 30 pcs"',
+    /77-7-1=10 <span[^>]*>· 10 pcs \/ case/.test(hp) && /· 25 pcs \/ case/.test(hp) && /× 10 pcs\/case = 30 pcs/.test(hq) && /× 25 pcs\/case = 50 pcs/.test(hq), { hp: hp.slice(0, 600) });
+  const sysBtns = hp.match(/<button type="button" data-sys="1" onclick="ckPick\((\d+),(\d+(?:\.\d+)?)\)"[^>]*>(?:<div[^>]*>✓ SYSTEM<\/div>)?/g) || [];
+  check('a spot: no "System: … pcs" line, no ✓ Correct button, no spot label repeated on each row; the system number is the big green "✓ SYSTEM" button (3 and 2 here)',
+    !/System: <b/.test(hp) && !/✓ Correct/.test(hp) && !/📍 <span>C2=1-1-1<\/span>/.test(hp) && sysBtns.length === 2 && /ckPick\(\d+,3\)/.test(sysBtns.join()) && /ckPick\(\d+,2\)/.test(sysBtns.join()) && /✗ None found/.test(hp), { sysBtns, hp: hp.slice(0, 900) });
+  w.ckGo('C2=1-1'); await settle(); await settle(); const hr = el('ck-out').innerHTML;
+  check('…a whole row (C2=1-1) still shows the spot on rows that are not C2=1-1 itself', /📍 <span>C2=1-1-1<\/span>/.test(hr) && /📍 <span>C2=1-1-2<\/span>/.test(hr), null);
+  w.ckGo('C2=1-1-1'); await settle(); await settle();
+  const pc0 = pcs(), nRows = ck.CK.rows.length;
+  ck.CK.rows.forEach((r, i) => w.ckPick(i, ckNowT(r))); await settle(); await settle(); await settle();
+  const hd = el('ck-out').innerHTML;
+  check('tap the green (system) number on each item = correct (nothing changes); when every item is counted → "✅ All counted — scan the next spot"',
+    nRows === 2 && pcs() === pc0 && /✅ All counted at C2=1-1-1 — scan the next spot/.test(hd) && (hd.match(/Count matches — confirmed/g) || []).length === 2, { nRows, hd: hd.slice(0, 500) });
+  check('product photo on each item (tap = big), on the part # view and on Something else found', /function ckPic\(part, px\)/.test(ckSrc) && /ckPic\(r\.partNum\)/.test(ckSrc) && /ckPic\(d\.partNum, 84\)/.test(ckSrc) && /ckPic\(o\.part\)/.test(ckSrc) && /onclick="invPhotoBig\(this\.src\)"/.test(ckSrc), null);
+
   // Owner: "able to edit the case pieces — the case quantities we have most as set numbers, then More… to type (our own pad, no phone keyboard)".
   const sz = await get('/inventory/pack-sizes');
   check('✏️ pieces per case: the quick buttons are the sizes we have most (from the shelf rows)', sz.ok && sz.sizes.length >= 3 && sz.sizes.length <= 9 && sz.sizes.includes(10) && sz.sizes.every((x, i, a) => i === 0 || a[i - 1] < x), sz);
