@@ -24134,6 +24134,8 @@ async function autolabelEnsureTables(env) {
     order_id TEXT, alloc_id TEXT, order_number TEXT, channel TEXT, tracking TEXT, carrier TEXT, service TEXT,
     source TEXT, created_at TEXT NOT NULL, printed_at TEXT, printed_by TEXT, print_count INTEGER DEFAULT 0, last_error TEXT)`).run().catch(()=>{});
   await env.DB.prepare('CREATE INDEX IF NOT EXISTS idx_label_printed ON label_print_queue(printed_at)').run().catch(()=>{});
+  // What is in the box (SKU, qty, bin) — printed on a 4×6 sticker right after the label (owner).
+  await env.DB.prepare('ALTER TABLE label_print_queue ADD COLUMN items TEXT').run().catch(()=>{});
   await ensureShipD1Tables(env); // ship_order_cancel_log
   _autolabelTablesReady = true;
 }
@@ -24698,11 +24700,20 @@ function autolabelSlipWanted(items, rule) {
 // Queues a bought shipping label for the 🖨 Printer station.
 async function autolabelQueueLabel(env, o, allocId, tracking, carrier, service, source) {
   try {
-    await d1Run(env, `INSERT INTO label_print_queue (order_id, alloc_id, order_number, channel, tracking, carrier, service, source, created_at) VALUES (?,?,?,?,?,?,?,?,?)`,
+    const items = await autolabelBoxItems(env, o, allocId);
+    await d1Run(env, `INSERT INTO label_print_queue (order_id, alloc_id, order_number, channel, tracking, carrier, service, source, created_at, items) VALUES (?,?,?,?,?,?,?,?,?,?)`,
       [String(o.id || ''), String(allocId || ''), o.number || '', veeqoExtractChannel(o), tracking || '', carrier || '', service || '',
-       JSON.stringify(source || {}).slice(0, 20000), new Date().toISOString()]);
+       JSON.stringify(source || {}).slice(0, 20000), new Date().toISOString(), JSON.stringify(items)]);
     return true;
   } catch (e) { console.error('[autolabel] label queue failed', e.message); return false; }
+}
+// What is in one box (allocation) of an order: SKU, qty, Veeqo bin, pieces.
+async function autolabelBoxItems(env, o, allocId) {
+  try {
+    const alloc = (o.allocations || []).find(a => String(a.id) === String(allocId)) || (o.allocations || [])[0] || null;
+    const li = await veeqoExtractLineItems(env, o, alloc);
+    return (li || []).map(i => ({ sku: i.s || '', qty: parseInt(i.q) || 0, bin: i.b || '', pieces: (parseInt(i.q) || 0) * _psWeightSkuMultiplier(i.s) }));
+  } catch (e) { return []; }
 }
 // Every https URL inside Veeqo's answer that is the LABEL file (a key with
 // "label" / "pdf" / "document", or a link with "label" in it), plus any
@@ -25362,9 +25373,22 @@ async function handleAutolabelRoute(path, method, url, request, env, session) {
   if (path === '/veeqo/autolabel/labels' && method === 'GET') {
     const printed = url.searchParams.get('status') === 'printed';
     const limit = Math.min(200, parseInt(url.searchParams.get('limit')) || 50);
-    const rows = await d1All(env, `SELECT id, order_number, channel, tracking, carrier, service, created_at, printed_at, printed_by, print_count, last_error
+    const rows = await d1All(env, `SELECT id, order_number, channel, tracking, carrier, service, created_at, printed_at, printed_by, print_count, last_error, items
       FROM label_print_queue WHERE printed_at IS ${printed ? 'NOT ' : ''}NULL ORDER BY id ${printed ? 'DESC' : 'ASC'} LIMIT ?`, [limit]);
-    return veeqoResp({ ok: true, labels: rows });
+    return veeqoResp({ ok: true, labels: rows.map(r => { let items = []; try { items = JSON.parse(r.items || '[]') || []; } catch (_) {} return { ...r, items }; }) });
+  }
+  // GET ?id= -> what is in that box (SKU, qty, bin); a label queued before
+  // this was kept gets it from Veeqo once, then it is saved.
+  if (path === '/veeqo/autolabel/label-items' && method === 'GET') {
+    const row = await d1First(env, 'SELECT id, order_number, alloc_id, items FROM label_print_queue WHERE id = ?', [parseInt(url.searchParams.get('id')) || 0]);
+    if (!row) return veeqoResp({ ok: false, error: 'Label not found' }, 404);
+    let items = []; try { items = JSON.parse(row.items || '[]') || []; } catch (_) {}
+    if (!items.length && row.order_number) {
+      const res = await veeqoFetch(env, `/orders?query=${encodeURIComponent(row.order_number)}&page_size=10&page=1`).catch(() => []);
+      const o = (Array.isArray(res) ? res : []).find(x => autolabelOrderNum(x.number) === autolabelOrderNum(row.order_number));
+      if (o) { items = await autolabelBoxItems(env, o, row.alloc_id); if (items.length) await d1Run(env, 'UPDATE label_print_queue SET items = ? WHERE id = ?', [JSON.stringify(items), row.id]); }
+    }
+    return veeqoResp({ ok: true, items });
   }
   // GET ?id= -> the label file itself (PDF / image), fetched from Veeqo.
   if (path === '/veeqo/autolabel/label-file' && method === 'GET') {
