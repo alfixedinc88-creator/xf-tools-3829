@@ -1610,8 +1610,15 @@ console.log('\nTest mode bar at the bottom · 🏷 Barcode designer');
   ['8', '-', '8', '-', '8', '=', '8', 'X', 'X'].forEach(k => bwin.bdKey(k)); const typed1 = bx.value;
   bwin.bdKey('⌫'); bwin.bdKey('⌫'); bwin.bdKey('⌫'); bwin.bdKey('=OLD'); const typed2 = bx.value;
   check('Barcode designer: our own keypad (1–9, 0, -, =, X, =OLD, ⌫, C) + ⌨ More; the box keeps the phone keyboard hidden; taps type 8-8-8=8XX, ⌫ ⌫ ⌫ + =OLD → 8-8-8=OLD',
-    ['1','2','3','4','5','6','7','8','9','0','-','=','X','=OLD','⌫','C'].every(k => pad.includes(`onclick="bdKey('${k}')"`)) && /⌨ More/.test(pad)
+    ['1','2','3','4','5','6','7','8','9','0','-','=','X','=OLD','⌫','CLR'].every(k => pad.includes(`onclick="bdKey('${k}')"`)) && /⌨ More/.test(pad)
       && /id="bd-sku" type="text" inputmode="none"/.test(ih) && typed1 === '8-8-8=8XX' && typed2 === '8-8-8=OLD', { typed1, typed2 });
+  // Owner: "add all that to our keypad" — the other characters our part #s use (vendor list): & C K W W.1C W.2C J N; Clear is its own key (C is a letter now).
+  bwin.bdKey('CLR'); ['2','8','-','2','-','1','&','2','=','1','0','W.1C'].forEach(k => bwin.bdKey(k)); const t3 = bx.value;
+  bwin.bdKey('CLR'); ['6','1','8','5','3','-','K','=','5','X'].forEach(k => bwin.bdKey(k)); const t4 = bx.value;
+  bwin.bdKey('CLR'); ['2','8','-','4','-','1','C','=','2','W.2C'].forEach(k => bwin.bdKey(k)); const t5 = bx.value;
+  check('keypad also has & C K W W.1C W.2C J N (+ Clear): taps type 28-2-1&2=10W.1C, 61853-K=5X, 28-4-1C=2W.2C',
+    ['&','C','K','W','W.1C','W.2C','J','N'].every(k => pad.includes(`onclick="bdKey('${k}')"`)) && />Clear<\/button>/.test(pad)
+      && t3 === '28-2-1&2=10W.1C' && t4 === '61853-K=5X' && t5 === '28-4-1C=2W.2C', { t3, t4, t5 });
   // Owner: "also including info of who and when print the label".
   const labF = new Function('xfrEsc', src + '; return bdLabelHtml;')(v => String(v))('8-8-8=8', 1, 'Plug', 'Printed by Ana · Oct 4, 2026');
   const bl = await post('/inventory/barcode-label', { sku: '8-8-8=8', name: 'Plug', copies: 3 });
