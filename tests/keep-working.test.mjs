@@ -1873,12 +1873,15 @@ console.log('\nAuto Label: every bought label goes on the 🖨 Printer station l
   // The allocation also carries its items with their product photos (owner: "Reprint only printed the product photos").
   const order = { id: 77, number: '111-5929074-3731428', channel: { name: 'Amazon' }, allocations: [{ id: 1612650312,
     line_items: [{ quantity: 1, sellable: { sku_code: '5-3-2=2', image_url: 'https://photos.example/elbow.jpg', product: { main_image_src: 'https://photos.example/elbow-big.jpg' } } }],
-    shipment: { tracking_number: { tracking_number: '9400111' }, label_url: 'https://labels.example/l/1612650312.pdf' } }] };
+    shipment: { id: 555, tracking_number: { tracking_number: '9400111' }, label_url: 'https://labels.example/l/1612650312.pdf',
+      tracking_url: 'https://tools.usps.com/go/TrackConfirmAction?tRef=fullpage&tLc=2&tLabels=9400111%2C' } }] };
   globalThis.fetch = async (u, o) => { u = String(u); asked.push(u);
     if (u.includes('api.veeqo.com/orders')) return new Response(JSON.stringify([order]), { headers: { 'Content-Type': 'application/json' } });
     if (u.startsWith('https://photos.example/')) return new Response('JPEGDATA', { headers: { 'Content-Type': 'image/jpeg' } });
     if (u.startsWith('https://labels.example/')) return mode === 'url' ? new Response('%PDF-1.4 fake label', { headers: { 'Content-Type': 'application/pdf' } }) : new Response('gone', { status: 404 });
-    if (u.includes('api.veeqo.com/shipping/labels/')) return mode === 'none' ? new Response('{"error":"not found"}', { status: 404, headers: { 'Content-Type': 'application/json' } }) : new Response('{}', { headers: { 'Content-Type': 'application/json' } });
+    if (u.startsWith('https://tools.usps.com/')) return new Response('Access Denied', { status: 403, headers: { 'Content-Type': 'text/html' } });
+    if (u.includes('api.veeqo.com/shipping/labels/555') && mode === 'ship') return new Response('%PDF-1.4 label by shipment', { headers: { 'Content-Type': 'application/pdf' } });
+    if (u.includes('api.veeqo.com/shipping/')) return mode === 'none' || mode === 'ship' ? new Response('{"error":"not found"}', { status: 404, headers: { 'Content-Type': 'application/json' } }) : new Response('{}', { headers: { 'Content-Type': 'application/json' } });
     return realFetch(u, o); };
   env.VEEQO_API_KEY = 'k';
   const add = await post('/veeqo/autolabel/label-add', { order: '111-5929074-3731428' });
@@ -1894,6 +1897,11 @@ console.log('\nAuto Label: every bought label goes on the 🖨 Printer station l
   const L2 = (await get('/veeqo/autolabel/labels?status=new')).labels.find(x => x.tracking === '9400111');
   const f2 = await call('/veeqo/autolabel/label-file?id=' + L2.id, { headers: H }); const j2 = await f2.json();
   check('…never the product photo: no label file from Veeqo → nothing printed (not the item\'s photo)', !asked.some(u => u.startsWith('https://photos.example/')), asked.filter(u => /photos\.example/.test(u)));
+  check('…never a carrier tracking page (tools.usps.com … tLabels=…) taken for the label', !asked.some(u => u.startsWith('https://tools.usps.com/')), asked.filter(u => /usps\.com/.test(u)));
+  check('…asks Veeqo by the SHIPMENT id (owner: /shipping/labels/<allocation> → 404)', asked.some(u => u.includes('/shipping/labels/555')), asked.filter(u => /shipping\//.test(u)));
+  mode = 'ship'; const f3 = await call('/veeqo/autolabel/label-file?id=' + L2.id, { headers: H });
+  check('…Veeqo has it under the shipment → the label PDF prints', f3.status === 200 && (await f3.text()).includes('label by shipment'), f3.status);
+  mode = 'none';
   check('…Veeqo gives no label file → it stays on the list in red with what each place said (never lost)', f2.status === 502 && j2.tried.length >= 2 && !!sq.prepare('SELECT last_error FROM label_print_queue WHERE id = ?').get(L2.id).last_error && (await get('/veeqo/autolabel/labels?status=new')).labels.some(x => x.id === L2.id), j2);
   globalThis.fetch = realFetch; delete env.VEEQO_API_KEY;
 }

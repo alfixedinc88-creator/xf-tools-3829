@@ -24717,7 +24717,8 @@ function _labelFindSources(obj) {
     if (d > 8 || v == null) return;
     const k = String(key || '').toLowerCase();
     if (typeof v === 'string') {
-      if (/^https?:\/\//i.test(v) && !/image|photo|thumbnail|\.(jpe?g|gif|webp)(\?|$)/i.test(k + ' ' + v)
+      // …nor a carrier's tracking page (owner: tools.usps.com/go/TrackConfirmAction?…tLabels=… → 403)
+      if (/^https?:\/\//i.test(v) && !/image|photo|thumbnail|\.(jpe?g|gif|webp)(\?|$)/i.test(k + ' ' + v) && !/track/i.test(k + ' ' + v)
           && (/label|pdf|document/.test(k) || /label/i.test(v)) && !seen.has(v)) { seen.add(v); urls.push(v); }
       else if (/^(JVBERi0|iVBORw0K)/.test(v) && v.length > 200 && /label|document|data|file|pdf|content/.test(k)) b64.push(v);
       return;
@@ -24752,11 +24753,20 @@ async function autolabelLabelFile(env, row) {
     for (const u of f.urls.slice(0, 4)) { const r = await take(u, /api\.veeqo\.com/.test(u)); if (r && r.bytes) return r; }
     return null;
   };
-  // 1. What Veeqo answered at the buy  2. Veeqo's label endpoint for the allocation
+  // 1. What Veeqo answered at the buy  2. Veeqo's label endpoints — by the
+  // SHIPMENT id first (owner's reprint: /shipping/labels/<allocation> → 404),
+  // then the allocation id.
   let got = await tryJson(src);
   if (got) return got;
-  if (row.alloc_id) {
-    for (const u of [`${VEEQO_BASE}/shipping/labels/${row.alloc_id}`, `${VEEQO_BASE}/shipping/labels/${row.alloc_id}?format=pdf`]) {
+  const shipIds = [];
+  const addId = (x) => { x = x != null ? String(x) : ''; if (/^\d+$/.test(x) && x !== String(row.alloc_id) && !shipIds.includes(x)) shipIds.push(x); };
+  if (src && src.shipment && typeof src.shipment === 'object') addId(src.shipment.id);
+  if (src && (src.tracking_number || src.carrier_id || src.allocation_id)) addId(src.id);
+  const cands = [];
+  for (const id of shipIds) cands.push(`${VEEQO_BASE}/shipping/labels/${id}`, `${VEEQO_BASE}/shipping/shipments/${id}/label`, `${VEEQO_BASE}/shipping/labels?shipment_ids[]=${id}`);
+  if (row.alloc_id) cands.push(`${VEEQO_BASE}/shipping/labels?allocation_ids[]=${row.alloc_id}`);
+  if (cands.length || row.alloc_id) {
+    for (const u of cands.concat(row.alloc_id ? [`${VEEQO_BASE}/shipping/labels/${row.alloc_id}`] : [])) {
       const r = await take(u, true);
       if (r && r.bytes) return r;
       if (r && r.json) { got = await tryJson(r.json); if (got) return got; }
