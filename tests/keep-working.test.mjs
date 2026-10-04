@@ -1268,13 +1268,13 @@ console.log('\nStock Out / Transfer: one search box (part # / UPC / name) · ✅
   const xIsLoc = (ih.match(/function xfrIsLoc\(code\) \{[\s\S]*?\n  \}/) || [''])[0], xParent = (ih.match(/function invParent\(p\) \{[^\n]*/) || [''])[0];
   const xEsc = (ih.match(/function xfrEsc\(v\) \{[^\n]*/) || [''])[0], xN = (ih.match(/function xfrN\(v\) \{[^\n]*/) || [''])[0], xT = (ih.match(/function xfrFmtT\(iso\) \{[^\n]*/) || [''])[0];
   const ckSrc = (ih.match(/  \/\/ ══ ✅ Checking ═+[\s\S]*?(?=\n  \/\/ 📷 camera)/) || [''])[0];
-  const flashes = [];
+  const flashes = [], popups = [], pads = [];
   const wFetch = (u, o) => call(u, { ...(o || {}), headers: { ...H, ...((o && o.headers) || {}) } });
   const logAndApprove = async (body, verifyFor) => { const d = await post('/inventory/log', body); if (verifyFor && d && d.ok !== false) d._after = await post('/inventory/verify', verifyFor(d)); return d; };
-  const mk = auto => new Function('window', 'g', 'W', 'wFetch', 'invLogAndApprove', 'invFlash', 'INV_CRED_USER', 'invAuditAutoMode', 'DB', 'INV_PREFIXES', 'invPullWalkCompare', 'setTimeout',
+  const mk = auto => new Function('window', 'g', 'W', 'wFetch', 'invLogAndApprove', 'invFlash', 'INV_CRED_USER', 'invAuditAutoMode', 'DB', 'INV_PREFIXES', 'invPullWalkCompare', 'setTimeout', 'xfrPopup', 'xfrPopupClose', 'xfrKeypad',
     xIsLoc + '\n' + xParent + '\n' + xEsc + '\n' + xN + '\n' + xT + '\n' + ckSrc + '\nreturn { CK: CK };')(
     (globalThis.__ckWin = globalThis), el, '', wFetch, logAndApprove, (m, t) => flashes.push(m), { displayName: 'Ana' }, auto, { master: [], products: [] },
-    ['BARN=', 'C1=', 'C2=', '2FL='], (a, b) => String(a).localeCompare(String(b)), () => 0);
+    ['BARN=', 'C1=', 'C2=', '2FL='], (a, b) => String(a).localeCompare(String(b)), () => 0, h => { popups.push(h); }, () => {}, (t, v, cb) => { pads.push(t); });
   const settle = () => new Promise(r => setTimeout(r, 60));
   let ck = mk(true), w = globalThis.__ckWin;
   check('the Checking code is found and loads', ckSrc.length > 2000 && typeof w.ckGo === 'function', ckSrc.length);
@@ -1334,8 +1334,31 @@ console.log('\nStock Out / Transfer: one search box (part # / UPC / name) · ✅
   check('Checking shows pieces per case: a spot → "77-7-1=10 · 10 pcs / case", "System: 3 case(s) × 10 pcs = 30 pcs" (the 25-pc row too); a part # → "× 10 pcs/case = 30 pcs"',
     /77-7-1=10 <span[^>]*>· 10 pcs \/ case/.test(hp) && /<b[^>]*>3<\/b> case\(s\) × <b[^>]*>10<\/b> pcs = 30 pcs/.test(hp) && /· 25 pcs \/ case/.test(hp) && /<b[^>]*>2<\/b> case\(s\) × <b[^>]*>25<\/b> pcs = 50 pcs/.test(hp)
       && /× 10 pcs\/case = 30 pcs/.test(hq) && /× 25 pcs\/case = 50 pcs/.test(hq), { hp: hp.slice(0, 600) });
+  // Owner: "able to edit the case pieces — the case quantities we have most as set numbers, then More… to type (our own pad, no phone keyboard)".
+  const sz = await get('/inventory/pack-sizes');
+  check('✏️ pieces per case: the quick buttons are the sizes we have most (from the shelf rows)', sz.ok && sz.sizes.length >= 3 && sz.sizes.length <= 9 && sz.sizes.includes(10) && sz.sizes.every((x, i, a) => i === 0 || a[i - 1] < x), sz);
+  ck = mk(true); w = globalThis.__ckWin;
+  w.ckGo('C2=1-1-2'); await settle(); await settle();
+  const iP = ck.CK.rows.findIndex(r => r.partNum === '77-7-1=10');
+  popups.length = 0; w.ckPackAsk('loc', iP);
+  check('…tap ✏️ → our own buttons (common sizes + More…), no phone keyboard', popups.length === 1 && /More…/.test(popups[0]) && /ckPackPick\('loc',/.test(popups[0]) && !/<input/.test(popups[0]), popups[0] && popups[0].slice(0, 300));
+  w.ckPackPick('loc', iP, 'more');
+  check('…More… opens our number pad', pads.length >= 1 && /Pieces in each case of 77-7-1=10 at C2=1-1-2/.test(pads[pads.length - 1]), pads);
+  popups.length = 0; w.ckPackPick('loc', iP, 12);
+  check('…a size asks to confirm with the pieces before → after (7 cases: 70 → 84 pcs)', /10 → <b>12<\/b> pcs per case/.test(popups[0] || '') && /70 → <b>84<\/b> pcs/.test(popups[0] || ''), popups[0]);
+  const pB = pcs();
+  await w.ckPackSave('loc', iP, 12); await settle();
+  const pl = sq.prepare("SELECT master_id, part_num, location, cases, from_pcs, to_pcs, by_user FROM pack_change_log ORDER BY id DESC").get();
+  check('✓ Yes → only that shelf row changes (C2=1-1-2: 7 cases × 10 → 12), cases stay, kept on record (who / old → new)', cs('77-7-1=10', 'C2=1-1-2') === '7×12' && cs('77-7-1=10', 'C2=1-1-1') === '3×10,2×25'
+    && pl && pl.part_num === '77-7-1=10' && pl.location === 'C2=1-1-2' && pl.cases === 7 && pl.from_pcs === 10 && pl.to_pcs === 12 && pl.by_user === 'TS', pl);
+  check('numbers add up: pieces change by exactly cases × (new − old) = 7 × 2 = +14 (200 → 214)', pB === 200 && pcs() === 214, { pB, now: pcs() });
+  check('…the row shows the new size and who changed it', /· 12 pcs \/ case/.test(el('ck-out').innerHTML) && /Pieces per case 10 → 12 by/.test(el('ck-out').innerHTML), null);
+  const stale = await post('/inventory/pack-change', { masterId: pl.master_id, partNum: '77-7-1=10', location: 'C2=1-1-2', from: 10, to: 20 });
+  check('a stale change (someone else already changed it) is refused — nothing changes', stale.ok === false && /now 12/.test(stale.error) && cs('77-7-1=10', 'C2=1-1-2') === '7×12' && pcs() === 214, stale);
   const sp = await post('/inventory/check-spots', { pairs: [{ part: '77-7-1=10', location: 'c2=1-1-1' }] });
   check('who put it there (read-only route): last Stock In at the spot', sp.ok && sp.spots['77-7-1=10|C2=1-1-1'] && sp.spots['77-7-1=10|C2=1-1-1'].put.by && sp.spots['77-7-1=10|C2=1-1-1'].last.length === 3, sp);
+  const sp2 = await post('/inventory/check-spots', { pairs: [{ part: '77-7-1=10', location: 'C2=1-1-2' }] });
+  check('…and the last ✏️ pieces-per-case change at the spot (who / when / old → new)', sp2.spots['77-7-1=10|C2=1-1-2'] && sp2.spots['77-7-1=10|C2=1-1-2'].pack && sp2.spots['77-7-1=10|C2=1-1-2'].pack.to === 12 && sp2.spots['77-7-1=10|C2=1-1-2'].pack.by === 'TS', sp2);
   delete globalThis.__ckWin; Object.keys(globalThis).filter(k => /^ck[A-Z]/.test(k)).forEach(k => delete globalThis[k]);
 }
 

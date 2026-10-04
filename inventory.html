@@ -1814,7 +1814,7 @@ window.invCredLogin = async function() {
       }
     }
     if (tab === "transfer" && window.xfrStepsRender) window.xfrStepsRender();
-    if (tab === "check") { invAuditLoadMode(); setTimeout(function() { var x = g('ck-inp'); if (x) x.focus(); }, 60); }
+    if (tab === "check") { invAuditLoadMode(); ckLoadSizes(); setTimeout(function() { var x = g('ck-inp'); if (x) x.focus(); }, 60); }
     if (tab === "audit") { invAuditLoadMode(); invPopulateAllPrefixDropdowns(); if(typeof invLoadPrefixes==='function') invLoadPrefixes(); }
     if ((tab === "skumgr" || tab === "history" || tab === "soldout" || tab === "location") && !invUnlocked) {
       window._skumgrPendingTab = tab; // remember which tab to open after unlock
@@ -12208,6 +12208,11 @@ window.invCredLogin = async function() {
   function ckWho(part, loc) {
     var s = CK.spots[String(part).toUpperCase() + '|' + String(loc).toUpperCase()];
     if (!s) return '<span style="color:var(--text3)">who / when: …</span>';
+    var pk = s.pack ? '<br>✏️ Pieces per case ' + ckE(xfrN(s.pack.from)) + ' → ' + ckE(xfrN(s.pack.to)) + ' by <b>' + ckE(s.pack.by) + '</b> · ' + ckE(ckT(s.pack.timestamp)) : '';
+    if (pk) return ckWhoPut(s) + pk;
+    return ckWhoPut(s);
+  }
+  function ckWhoPut(s) {
     if (!s.put) return '<span style="color:var(--text3)">who put it here: not on record</span>';
     var p = s.put;
     return 'Put here by <b>' + ckE(p.by || '?') + '</b> · ' + ckE(ckT(p.timestamp)) + ' · ' + ckE(CK_TYPE[p.type] || p.type) + ' ' + ckE(xfrN(p.cases)) + ' case(s)'
@@ -12264,6 +12269,7 @@ window.invCredLogin = async function() {
     var famCount = {}; (d.locations || []).forEach(function(l) { famCount[String(l.partNum || d.partNum).toUpperCase()] = 1; });
     (d.variants || []).forEach(function(v) { famCount[String(v).toUpperCase()] = 1; });
     var nFam = Object.keys(famCount).length, totCases = 0, totPcs = 0, hidden = 0;
+    CK.prow = [];
     var h = '<div class="icard">'
       + '<div style="font-size:16px;font-weight:800;font-family:var(--mono)">' + ckE(CK.all ? (d.baseSku || invParent(d.partNum)) + ' — all part #s' : CK.exact) + '</div>'
       + (d.name ? '<div style="font-size:13px;color:var(--text2);margin:2px 0 6px">' + ckE(d.name) + '</div>' : '')
@@ -12279,10 +12285,12 @@ window.invCredLogin = async function() {
         var now = ckNow(l), pend = ckNum(l.pendingCases);
         if (now <= 0 && pend <= 0) { hidden++; return; }
         gCases += now; totCases += now; totPcs += now * (ckNum(l.eachQty) || 0);
+        var pi = CK.prow.length; CK.prow.push(Object.assign({}, l, { partNum: l.partNum || d.partNum }));
         body += '<div style="padding:7px 0;border-top:1px solid var(--border)">'
           + '<div style="display:flex;justify-content:space-between;gap:8px;align-items:center">'
           + '<a href="#" onclick="ckLoc(\'' + ckE(String(l.location).toUpperCase()) + '\');return false" style="font-family:var(--mono);font-weight:700">📍 ' + ckE(l.location) + '</a>'
           + '<span style="font-weight:800;font-family:var(--mono)">' + ckE(xfrN(now)) + ' case(s)' + (ckNum(l.eachQty) > 0 ? ' <span style="font-weight:400;color:var(--text2)">× ' + ckE(xfrN(l.eachQty)) + ' pcs/case = ' + ckE(xfrN(now * ckNum(l.eachQty))) + ' pcs</span>' : '') + '</span></div>'
+          + '<div style="text-align:right"><button type="button" class="ixfr-mode-btn" style="padding:4px 9px;font-size:12px" onclick="ckPackAsk(\'part\',' + pi + ')">✏️ pcs / case</button></div>'
           + (pend ? '<div style="font-size:11px;color:var(--orange)">' + ckE(xfrN(pend)) + ' case(s) waiting for approval</div>' : '')
           + (l.palletBoxes ? '<div style="font-size:11px;color:var(--text3)">📦 still on a container pallet</div>' : '')
           + '<div style="font-size:11.5px;color:var(--text2);margin-top:2px">' + ckWho(l.partNum || d.partNum, l.location) + '</div></div>';
@@ -12339,7 +12347,8 @@ window.invCredLogin = async function() {
     CK.rows.forEach(function(r, i) {
       var now = ckNow(r), done = r._ck;
       h += '<div class="icard" id="ck-row-' + i + '" style="' + (done ? 'border-color:#0891B2;background:#E0F2FE' : '') + '">'
-        + '<div style="display:flex;justify-content:space-between;gap:8px"><b style="font-family:var(--mono)">' + ckE(r.partNum) + (ckNum(r.eachQty) > 0 ? ' <span style="font-weight:700;color:var(--accent)">· ' + ckE(xfrN(r.eachQty)) + ' pcs / case</span>' : '') + '</b><span style="font-family:var(--mono);color:var(--text3)">' + ckE(r.location) + '</span></div>'
+        + '<div style="display:flex;justify-content:space-between;gap:8px"><b style="font-family:var(--mono)">' + ckE(r.partNum) + ' <span style="font-weight:700;color:var(--accent)">· ' + (ckNum(r.eachQty) > 0 ? ckE(xfrN(r.eachQty)) : '?') + ' pcs / case</span>'
+          + ' <button type="button" class="ixfr-mode-btn" style="padding:3px 8px;font-size:12px" onclick="ckPackAsk(\'loc\',' + i + ')">✏️</button></b><span style="font-family:var(--mono);color:var(--text3)">' + ckE(r.location) + '</span></div>'
         + (r.name ? '<div style="font-size:12px;color:var(--text2)">' + ckE(r.name) + '</div>' : '')
         + '<div style="font-size:11.5px;color:var(--text2);margin:3px 0">' + ckWho(r.partNum, r.location) + '</div>'
         + (ckNum(r.pendingCases) ? '<div style="font-size:11px;color:var(--orange)">' + ckE(xfrN(r.pendingCases)) + ' case(s) waiting for approval</div>' : '')
@@ -12427,7 +12436,67 @@ window.invCredLogin = async function() {
   };
   window.ckOtherBack = function() { var o = CK.other; if (!o) return; o.step = 'count'; ckRenderOther(); };
   window.ckOtherPcsSet = function(v) { var o = CK.other; if (!o || !(parseFloat(v) > 0)) return; o.pcs = parseFloat(v); if (o.n > 0 && o.step === 'count') o.step = 'loc'; ckRenderOther(); };
-  window.ckOtherPcsAsk = function() { var o = CK.other; if (!o) return; xfrKeypad('How many pieces in each box of ' + o.part + '?', o.pcs || '', ckOtherPcsSet); };
+  window.ckOtherPcsAsk = function() { var o = CK.other; if (!o) return; ckSizePopup('How many pieces in each box of ' + o.part + '?', o.pcs, 'ckOtherPcsPick('); };
+  window.ckOtherPcsPick = function(v) {
+    if (v === 'more') { var o = CK.other; xfrKeypad('How many pieces in each box of ' + (o ? o.part : '') + '?', '', ckOtherPcsSet); return; }
+    xfrPopupClose(); ckOtherPcsSet(v);
+  };
+
+  // ── ✏️ pieces per case: our own buttons (the 9 sizes we have most) + More… ──
+  CK.sizes = [1, 2, 5, 10, 20, 25, 50, 100, 200];
+  window.ckLoadSizes = function() {
+    if (CK.sizesLoaded) return;
+    wFetch(W + '/inventory/pack-sizes').then(function(r) { return r.json(); })
+      .then(function(d) { if (d && d.sizes && d.sizes.length) { CK.sizes = d.sizes; CK.sizesLoaded = true; } }).catch(function() {});
+  };
+  function ckSizePopup(title, cur, call) {
+    var b = 'padding:13px 0;border-radius:10px;border:1.5px solid var(--border);background:var(--bg3);color:var(--text);font-size:18px;font-weight:800;cursor:pointer;touch-action:manipulation';
+    xfrPopup('<div style="font-weight:800;font-size:15px;margin-bottom:8px">' + ckE(title) + '</div>'
+      + '<div style="display:grid;grid-template-columns:repeat(5,1fr);gap:6px">'
+      + CK.sizes.slice(0, 9).map(function(n) { return '<button type="button" onclick="' + call + n + ')" style="' + b + (cur != null && Math.abs(n - ckNum(cur)) < 1e-9 ? ';border-color:var(--green)' : '') + '">' + ckE(xfrN(n)) + '</button>'; }).join('')
+      + '<button type="button" onclick="' + call + '\'more\')" style="' + b + ';font-size:14px">More…</button></div>'
+      + '<button type="button" onclick="xfrPopupClose()" style="width:100%;margin-top:10px;padding:12px;border-radius:10px;border:1.5px solid var(--border);background:var(--bg);color:var(--text2);font-size:15px;font-weight:700;cursor:pointer">Cancel</button>');
+  }
+  function ckPackRow(kind, i) { return kind === 'loc' ? CK.rows[i] : (CK.prow || [])[i]; }
+  window.ckPackAsk = function(kind, i) {
+    var r = ckPackRow(kind, i); if (!r) return;
+    if (!r.masterId) { invFlash('This row can only be changed in SKU Mgr', 'error'); return; }
+    ckSizePopup('Pieces in each case of ' + r.partNum + ' at ' + r.location + '? (now: ' + (ckNum(r.eachQty) > 0 ? xfrN(r.eachQty) : '?') + ')', r.eachQty, 'ckPackPick(\'' + kind + '\',' + i + ',');
+  };
+  window.ckPackPick = function(kind, i, v) {
+    var r = ckPackRow(kind, i); if (!r) return;
+    if (v === 'more') { xfrKeypad('Pieces in each case of ' + r.partNum + ' at ' + r.location + '?', '', function(n) { ckPackConfirm(kind, i, n); }); return; }
+    ckPackConfirm(kind, i, v);
+  };
+  window.ckPackConfirm = function(kind, i, v) {
+    var r = ckPackRow(kind, i); if (!r) return;
+    var from = ckNum(r.eachQty), to = ckNum(v), c = ckNow(r);
+    if (!(to > 0)) return;
+    if (Math.abs(from - to) < 1e-9) { xfrPopupClose(); invFlash('No change — already ' + xfrN(to) + ' pcs per case', 'warn'); return; }
+    xfrPopup('<div style="font-weight:800;font-size:16px;margin-bottom:6px">Change pieces per case?</div>'
+      + '<div style="font-family:var(--mono);font-weight:800">' + ckE(r.partNum) + ' · ' + ckE(r.location) + '</div>'
+      + '<div style="font-size:15px;margin:8px 0">' + ckE(xfrN(from)) + ' → <b>' + ckE(xfrN(to)) + '</b> pcs per case</div>'
+      + '<div style="font-size:13px;color:var(--text2);margin-bottom:10px">' + ckE(xfrN(c)) + ' case(s): ' + ckE(xfrN(c * from)) + ' → <b>' + ckE(xfrN(c * to)) + '</b> pcs (cases stay the same). Saved with your name and the time.</div>'
+      + '<button type="button" onclick="ckPackSave(\'' + kind + '\',' + i + ',' + to + ')" style="width:100%;padding:15px;border-radius:12px;border:none;background:var(--accent);color:#fff;font-size:17px;font-weight:800;cursor:pointer;margin-bottom:8px">✓ Yes, change it</button>'
+      + '<button type="button" onclick="xfrPopupClose()" style="width:100%;padding:13px;border-radius:12px;border:1.5px solid var(--border);background:var(--bg);color:var(--text2);font-size:15px;font-weight:700;cursor:pointer">Cancel</button>');
+  };
+  window.ckPackSave = function(kind, i, to) {
+    var r = ckPackRow(kind, i); if (!r) return;
+    xfrPopupClose();
+    var from = ckNum(r.eachQty);
+    return wFetch(W + '/inventory/pack-change', { method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ masterId: r.masterId, partNum: r.partNum, location: r.location, from: from, to: to }) })
+      .then(function(res) { return res.json(); }).then(function(d) {
+        if (!d || !d.ok) { invFlash('Not changed: ' + ((d && d.error) || 'error'), 'error'); return; }
+        r.eachQty = to;
+        if (kind === 'part' && CK.d) (CK.d.locations || []).forEach(function(l) { if (l.masterId === r.masterId) l.eachQty = to; });
+        var k = String(r.partNum).toUpperCase() + '|' + String(r.location).toUpperCase();
+        CK.spots[k] = CK.spots[k] || { put: null, last: [] };
+        CK.spots[k].pack = { timestamp: new Date().toISOString(), from: from, to: to, by: ckBy() };
+        invFlash('Changed: ' + r.partNum + ' at ' + r.location + ' — ' + xfrN(from) + ' → ' + xfrN(to) + ' pcs per case', 'success');
+        if (kind === 'loc') ckRenderLoc(); else ckRenderPart();
+      }).catch(function() { invFlash('Not changed — check WiFi and try again', 'error'); });
+  };
   function ckOtherScan(v) {
     var o = CK.other, V = String(v).trim().toUpperCase();
     if (o.step === 'box' || (o.step === 'count' && !xfrIsLoc(V))) {
