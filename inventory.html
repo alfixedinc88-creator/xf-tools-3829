@@ -13101,22 +13101,23 @@ window.invCredLogin = async function() {
       + '<button type="button" onclick="xfrPopupClose()" style="width:100%;padding:12px;border-radius:12px;border:1.5px solid var(--border);background:var(--bg);color:var(--text2);font-size:15px;font-weight:700;cursor:pointer">Close</button>');
     setTimeout(function() { var x = g('bd-sku'); if (x) x.focus(); }, 50);
   };
-  // Our own keypad for part #s (owner): 1–9, 0, "-", "=", "X", "=OLD", ⌫, C — the
-  // phone keyboard stays hidden; ⌨ More opens it only for another letter.
+  // Our own keypad for part #s (owner): 1–9, 0, "-", "=", "X", "=OLD", ⌫, Clear, and
+  // the other characters our part #s use (vendor list: & C K W W.1C W.2C J N) —
+  // the phone keyboard stays hidden; ⌨ More opens it only for anything else.
   function bdPad() {
     var b = 'padding:11px 0;border-radius:10px;border:1.5px solid var(--border);background:var(--bg3);color:var(--text);font-size:19px;font-weight:800;cursor:pointer;touch-action:manipulation;font-family:var(--mono)';
-    var keys = ['1', '2', '3', '-', '4', '5', '6', '=', '7', '8', '9', 'X', '=OLD', '0', '⌫', 'C'];
+    var keys = ['1', '2', '3', '-', '4', '5', '6', '=', '7', '8', '9', 'X', '=OLD', '0', '⌫', 'CLR', '&', 'C', 'K', 'W', 'W.1C', 'W.2C', 'J', 'N'];
     return '<div style="display:grid;grid-template-columns:repeat(4,1fr);gap:6px;margin-top:8px">'
       + keys.map(function(k) {
-          var st = k === 'C' ? ';color:var(--red)' : k === '=OLD' ? ';font-size:15px' : (k === '-' || k === '=' || k === 'X') ? ';background:var(--accent-bg,#e8efff);color:var(--accent)' : '';
-          return '<button type="button" onmousedown="event.preventDefault()" onclick="bdKey(\'' + k + '\')" style="' + b + st + '">' + k + '</button>';
+          var st = k === 'CLR' ? ';color:var(--red);font-size:14px' : (k === '=OLD' || k.length > 2) ? ';font-size:15px' : (k === '-' || k === '=' || k === 'X') ? ';background:var(--accent-bg,#e8efff);color:var(--accent)' : '';
+          return '<button type="button" onmousedown="event.preventDefault()" onclick="bdKey(\'' + k + '\')" style="' + b + st + '">' + (k === 'CLR' ? 'Clear' : k) + '</button>';
         }).join('')
       + '</div><button type="button" onclick="xfrKbOn(\'bd-sku\')" style="' + b + ';width:100%;margin-top:6px;font-size:14px;font-family:inherit">⌨ More (other letters)</button>';
   }
   window.bdKey = function(k) {
     var x = g('bd-sku'); if (!x) return;
     var v = x.value || '';
-    if (k === '⌫') v = v.slice(0, -1); else if (k === 'C') v = '';
+    if (k === '⌫') v = v.slice(0, -1); else if (k === 'CLR') v = '';
     else if (k === '=OLD') v = v.replace(/=.*$/, '') + '=OLD'; // =OLD replaces what comes after "="
     else v += k;
     x.value = v; bdPreview();
