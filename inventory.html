@@ -611,7 +611,8 @@ window.invCredLogin = async function() {
     <div class="ifield">
       <label>Part # or Barcode</label>
       <div style="display:flex;gap:6px">
-        <input id="inv-qa-partnum" type="text" placeholder="e.g. 23-2-3=25" autocomplete="off" style="flex:1" onblur="invQuickAddPrefillUpc()">
+        <input id="inv-qa-partnum" type="text" inputmode="none" placeholder="📷 Scan the box (or ⌨ type the part #)" autocomplete="off" style="flex:1" onblur="invQuickAddPrefillUpc();xfrKbOff(this)" onkeydown="if(event.key==='Enter'){invQuickAddPrefillUpc();var x=document.getElementById('inv-qa-shelf');if(x)x.focus();}">
+        <button type="button" class="inv-x-btn" title="Label won't scan? Type it" onclick="xfrKbOn('inv-qa-partnum')" style="font-size:15px;flex-shrink:0">&#x2328;</button>
         <button class="icam-btn" id="inv-qa-partnum-cam-btn" onclick="invQaScanPartNum()" style="width:auto;min-height:0;padding:8px 10px;font-size:15px;margin-top:0;white-space:nowrap;flex-shrink:0">📷</button>
       </div>
     </div>
@@ -622,18 +623,20 @@ window.invCredLogin = async function() {
     <div id="inv-qa-name-display" style="display:none;font-size:13px;color:var(--text2);margin-top:6px;padding:7px 10px;background:var(--bg3);border-radius:7px;align-items:center;gap:8px"><img id="inv-qa-photo" src="" alt="" style="display:none;width:36px;height:36px;object-fit:cover;border-radius:6px;border:1px solid var(--border);flex-shrink:0" onerror="this.style.display='none'"><span id="inv-qa-name-text" style="flex:1"></span><button type="button" onclick="invQuickAddClearSearch()" title="Close and search a new item" style="background:none;border:none;color:var(--text3);font-size:18px;cursor:pointer;line-height:1;padding:0 2px;flex-shrink:0">&times;</button></div>
 
     <div class="ifield" style="margin-top:10px">
-      <label>Location</label>
+      <label>Spot where you put it</label>
       <div style="display:flex;gap:6px;align-items:center">
-        <input id="inv-qa-shelf" type="text" placeholder="Scan the spot label, e.g. C1=11-2-10" autocomplete="off" style="flex:1;padding:8px 10px;border:1.5px solid var(--border);border-radius:7px;background:var(--bg);color:var(--text);font-size:13px;font-family:var(--mono)">
+        <input id="inv-qa-shelf" type="text" inputmode="none" placeholder="📷 Scan the spot where you are putting it" autocomplete="off" onblur="xfrKbOff(this)" style="flex:1;padding:8px 10px;border:1.5px solid var(--border);border-radius:7px;background:var(--bg);color:var(--text);font-size:13px;font-family:var(--mono)">
+        <button type="button" class="inv-x-btn" title="Label won't scan? Type it" onclick="xfrKbOn('inv-qa-shelf')" style="font-size:15px;flex-shrink:0">&#x2328;</button>
         <button class="icam-btn" id="inv-qa-loc-cam-btn" onclick="invQaScanLocation()" style="width:auto;min-height:0;padding:8px 10px;font-size:15px;margin-top:0;white-space:nowrap;flex-shrink:0">📷</button>
       </div>
     </div>
     <div id="inv-qa-loc-reader-wrap" style="display:none;border-radius:8px;overflow:hidden;background:#000;min-height:120px;margin-top:6px"><div id="inv-qa-loc-qr-reader"></div></div>
 
-    <div class="ifield-row" style="margin-top:10px">
-      <div class="ifield" style="flex:1"><label>QTY Case</label><input id="inv-qa-cases" type="number" min="0.1" step="0.5" placeholder="0"></div>
-      <div class="ifield" style="flex:1"><label>QTY per Case</label><input id="inv-qa-upc" type="number" min="0" step="1" placeholder="e.g. 12"></div>
-    </div>
+    <!-- QTY Case / QTY per Case: our own buttons, never the phone keyboard (owner).
+         The hidden fields hold the values, so saving works exactly as before. -->
+    <input id="inv-qa-cases" type="hidden" value=""><input id="inv-qa-upc" type="hidden" value="">
+    <div class="ifield" style="margin-top:10px"><label>QTY Case <span id="inv-qa-cases-show" style="font-size:15px;font-weight:800;color:var(--text);margin-left:6px"></span></label><div id="inv-qa-cases-pad"></div></div>
+    <div class="ifield" style="margin-top:10px"><label>QTY per Case <span id="inv-qa-upc-show" style="font-size:15px;font-weight:800;color:var(--text);margin-left:6px"></span></label><div id="inv-qa-upc-pad"></div></div>
     <button class="isubmit sin" id="inv-qa-submit-btn" onclick="invQuickAddSubmit()">Submit Stock In</button>
   </div>
   <!-- Quick Add / Stock In History — who put how many cases into where,
@@ -1794,6 +1797,7 @@ window.invCredLogin = async function() {
     g("inv-tab-skumgr").className      = "itab"   + (tab === "skumgr"   ? " iactive" : "");
     g("inv-tab-history").className     = "itab"   + (tab === "history"  ? " iactive" : "");
     if (scanPanelActive) {
+      if (tab === "scan") { ckLoadSizes(); setTimeout(invQaPadsRender, 0); }
       invSetMode(tab === "scan" ? "in" : "out");
       if (tab !== "scan") invSetStockOutDest(tab === "stockoutco" ? "company" : "shelving");
       invFetchStockoutCount();
@@ -3709,9 +3713,44 @@ window.invCredLogin = async function() {
     var shelfInp = g("inv-qa-shelf"); if (shelfInp) shelfInp.value = "";
     var casesInp = g("inv-qa-cases"); if (casesInp) casesInp.value = "";
     var upcInp = g("inv-qa-upc"); if (upcInp) upcInp.value = "";
+    invQaRec = 0; invQaPadsRender();
     var nameDisplay = g("inv-qa-name-display"); if (nameDisplay) nameDisplay.style.display = "none";
     var photoEl = g("inv-qa-photo"); if (photoEl) { photoEl.style.display = "none"; photoEl.src = ""; }
     if (partnumInp) partnumInp.focus();
+  };
+
+  // ── QTY Case / QTY per Case buttons (our own, no phone keyboard) ──
+  // QTY per Case: this item's usual size first (big, green "✓ this item"),
+  // then the box sizes we have most (same list as ✅ Checking), then More….
+  var invQaRec = 0;
+  function invQaPadsRender() {
+    var c = g('inv-qa-cases'), u = g('inv-qa-upc'), cp = g('inv-qa-cases-pad'), up = g('inv-qa-upc-pad');
+    if (!c || !u || !cp || !up) return;
+    var cv = parseFloat(c.value), uv = parseFloat(u.value);
+    var b = 'padding:11px 0;border-radius:10px;border:1.5px solid var(--border);background:var(--bg3);color:var(--text);font-size:18px;font-weight:800;cursor:pointer;touch-action:manipulation';
+    var on = ';border:3px solid var(--accent);background:var(--accent-bg,#e8efff);color:var(--accent)';
+    var grid = function(list, cur, call) {
+      return '<div style="display:grid;grid-template-columns:repeat(5,1fr);gap:6px">' + list.map(function(n) {
+        return '<button type="button" onclick="' + call + '(' + n + ')" style="' + b + (cur === n ? on : '') + '">' + xfrN(n) + '</button>'; }).join('')
+        + '<button type="button" onclick="' + call + '(\'more\')" style="' + b + ';font-size:14px">More…</button></div>';
+    };
+    var ci = [1,2,3,4,5,6,7,8,9];
+    cp.innerHTML = grid(ci, cv, 'invQaCases') + (cv > 0 && ci.indexOf(cv) < 0 ? '<div style="margin-top:4px;font-size:13px;color:var(--accent);font-weight:800">' + xfrN(cv) + ' case(s) (More…)</div>' : '');
+    var sizes = (CK.sizes || []).filter(function(n) { return n !== invQaRec; }).slice(0, invQaRec > 0 ? 8 : 9);
+    up.innerHTML = (invQaRec > 0 ? '<button type="button" onclick="invQaUpc(' + invQaRec + ')" style="' + b + ';width:100%;margin-bottom:6px;font-size:20px;border:3px solid var(--green);background:var(--green-bg,#dcfce7);color:var(--green)' + (uv === invQaRec ? ';box-shadow:0 0 0 3px var(--accent)' : '') + '">✓ ' + xfrN(invQaRec) + ' pcs — this item</button>' : '')
+      + grid(sizes, uv === invQaRec ? null : uv, 'invQaUpc') + (uv > 0 && sizes.indexOf(uv) < 0 && uv !== invQaRec ? '<div style="margin-top:4px;font-size:13px;color:var(--accent);font-weight:800">' + xfrN(uv) + ' pcs (More…)</div>' : '');
+    var cs = g('inv-qa-cases-show'), us = g('inv-qa-upc-show');
+    if (cs) cs.textContent = cv > 0 ? '= ' + xfrN(cv) : '';
+    if (us) us.textContent = uv > 0 ? '= ' + xfrN(uv) + ' pcs' + (cv > 0 ? ' · ' + xfrN(cv * uv) + ' pcs in all' : '') : '';
+  }
+  window.invQaPadsRender = invQaPadsRender;
+  window.invQaCases = function(n) {
+    if (n === 'more') { xfrKeypad('QTY Case — how many cases?', '', function(v) { invQaCases(v); }); return; }
+    var c = g('inv-qa-cases'); if (c) c.value = n; invQaPadsRender();
+  };
+  window.invQaUpc = function(n) {
+    if (n === 'more') { xfrKeypad('QTY per Case — how many pieces in each case?', '', function(v) { invQaUpc(v); }); return; }
+    var u = g('inv-qa-upc'); if (u) u.value = n; invQaPadsRender();
   };
 
   window.invQuickAddPrefillUpc = function() {
@@ -3752,6 +3791,10 @@ window.invCredLogin = async function() {
           }
           if (knownUpc > 0) upcField.value = knownUpc;
         }
+        invQaRec = 0;
+        (d && d.locations || []).some(function(l) { var v = parseFloat(l.eachQty); if (v > 0 && String(l.partNum || '').toUpperCase() === partNum) { invQaRec = v; return true; } return false; });
+        if (!invQaRec) (d && d.locations || []).some(function(l) { var v = parseFloat(l.eachQty); if (v > 0) { invQaRec = v; return true; } return false; });
+        invQaPadsRender();
       })
       .catch(function() {});
   };
@@ -3906,7 +3949,7 @@ window.invCredLogin = async function() {
           if (d.ok) {
             invFlash("✓ Logged — pending approval", "success");
             g("inv-qa-partnum").value = ""; g("inv-qa-shelf").value = "";
-            g("inv-qa-cases").value = ""; g("inv-qa-upc").value = "";
+            g("inv-qa-cases").value = ""; g("inv-qa-upc").value = ""; invQaRec = 0; invQaPadsRender();
             var nameDisplay = g("inv-qa-name-display"); if (nameDisplay) nameDisplay.style.display = "none";
             var qaPhotoEl = g("inv-qa-photo"); if (qaPhotoEl) { qaPhotoEl.style.display = "none"; qaPhotoEl.src = ""; }
             invFetchPendingCount();
@@ -12484,7 +12527,7 @@ window.invCredLogin = async function() {
   window.ckLoadSizes = function() {
     if (CK.sizesLoaded) return;
     wFetch(W + '/inventory/pack-sizes').then(function(r) { return r.json(); })
-      .then(function(d) { if (d && d.sizes && d.sizes.length) { CK.sizes = d.sizes; CK.sizesLoaded = true; } }).catch(function() {});
+      .then(function(d) { if (d && d.sizes && d.sizes.length) { CK.sizes = d.sizes; CK.sizesLoaded = true; if (window.invQaPadsRender) invQaPadsRender(); } }).catch(function() {});
   };
   function ckSizePopup(title, cur, call) {
     var b = 'padding:13px 0;border-radius:10px;border:1.5px solid var(--border);background:var(--bg3);color:var(--text);font-size:18px;font-weight:800;cursor:pointer;touch-action:manipulation';
