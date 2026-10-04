@@ -613,6 +613,7 @@ window.invCredLogin = async function() {
       <div style="display:flex;gap:6px">
         <input id="inv-qa-partnum" type="text" inputmode="none" placeholder="📷 Scan the box (or ⌨ type the part #)" autocomplete="off" style="flex:1" onblur="invQuickAddPrefillUpc();xfrKbOff(this)" onkeydown="if(event.key==='Enter'){invQuickAddPrefillUpc();var x=document.getElementById('inv-qa-shelf');if(x)x.focus();}">
         <button type="button" class="inv-x-btn" title="Label won't scan? Type it" onclick="xfrKbOn('inv-qa-partnum')" style="font-size:15px;flex-shrink:0">&#x2328;</button>
+        <button type="button" class="inv-x-btn" title="Clear — scan again" onmousedown="event.preventDefault()" onclick="invQaClear('part')" style="flex-shrink:0">&#x2715;</button>
         <button class="icam-btn" id="inv-qa-partnum-cam-btn" onclick="invQaScanPartNum()" style="width:auto;min-height:0;padding:8px 10px;font-size:15px;margin-top:0;white-space:nowrap;flex-shrink:0">📷</button>
       </div>
     </div>
@@ -627,6 +628,7 @@ window.invCredLogin = async function() {
       <div style="display:flex;gap:6px;align-items:center">
         <input id="inv-qa-shelf" type="text" inputmode="none" placeholder="📷 Scan the spot where you are putting it" autocomplete="off" onblur="xfrKbOff(this)" style="flex:1;padding:8px 10px;border:1.5px solid var(--border);border-radius:7px;background:var(--bg);color:var(--text);font-size:13px;font-family:var(--mono)">
         <button type="button" class="inv-x-btn" title="Label won't scan? Type it" onclick="xfrKbOn('inv-qa-shelf')" style="font-size:15px;flex-shrink:0">&#x2328;</button>
+        <button type="button" class="inv-x-btn" title="Clear — scan again" onmousedown="event.preventDefault()" onclick="invQaClear('spot')" style="flex-shrink:0">&#x2715;</button>
         <button class="icam-btn" id="inv-qa-loc-cam-btn" onclick="invQaScanLocation()" style="width:auto;min-height:0;padding:8px 10px;font-size:15px;margin-top:0;white-space:nowrap;flex-shrink:0">📷</button>
       </div>
     </div>
@@ -3772,6 +3774,20 @@ window.invCredLogin = async function() {
     if (us) us.textContent = uv > 0 ? '= ' + xfrN(uv) + ' pcs' + (cv > 0 ? ' · ' + xfrN(cv * uv) + ' pcs in all' : '') : '';
   }
   window.invQaPadsRender = invQaPadsRender;
+  // ✕ on a scan box: empty it and get it ready for the next scan — the phone
+  // keyboard stays hidden (inputmode none). ✕ on the part # also clears its
+  // name / photo / pieces, since those belonged to the old box.
+  window.invQaClear = function(which) {
+    var x = g(which === 'spot' ? 'inv-qa-shelf' : 'inv-qa-partnum'); if (!x) return;
+    x.value = ''; x.removeAttribute('data-kb-typing'); x.setAttribute('inputmode', 'none');
+    if (which !== 'spot') {
+      invQaRec = 0; var u = g('inv-qa-upc'); if (u) u.value = '';
+      var nd = g('inv-qa-name-display'); if (nd) nd.style.display = 'none';
+      var ph = g('inv-qa-photo'); if (ph) { ph.style.display = 'none'; ph.src = ''; }
+      invQaPadsRender();
+    }
+    x.focus();
+  };
   window.invQaCases = function(n) {
     if (n === 'more') { xfrKeypad('QTY Case — how many cases?', '', function(v) { invQaCases(v); }); return; }
     var c = g('inv-qa-cases'); if (c) c.value = n; invQaPadsRender();

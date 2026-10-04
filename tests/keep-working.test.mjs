@@ -1534,5 +1534,15 @@ console.log('\nAudit tab: only the 📋 Full recount on screen');
       && /<div class="icard" id="rc-card" style="border:2px solid var\(--accent\)">/.test(panel), null);
 }
 
+// Owner: "Stock In: put an ✕ on each scan bar so we can delete it and start again (no phone keyboard)".
+console.log('\nStock In: ✕ on each scan box');
+{
+  const { readFileSync } = await import('node:fs');
+  const ih = readFileSync(fileURLToPath(new URL('../inventory.html', import.meta.url)), 'utf8');
+  check('✕ next to Part # / Barcode and next to the spot; it empties the box, keeps the phone keyboard hidden (inputmode none) and is ready to scan again',
+    /onclick="invQaClear\('part'\)"/.test(ih) && /onclick="invQaClear\('spot'\)"/.test(ih)
+      && /window\.invQaClear = function\(which\) \{[\s\S]*?x\.value = ''; x\.removeAttribute\('data-kb-typing'\); x\.setAttribute\('inputmode', 'none'\);[\s\S]*?x\.focus\(\);/.test(ih), null);
+}
+
 console.log('\n' + (failed ? '❌ ' + failed + ' check(s) FAILED' : '✅ all ' + passed + ' checks passed') + '\n');
 process.exit(failed ? 1 : 0);
