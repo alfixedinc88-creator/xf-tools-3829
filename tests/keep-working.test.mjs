@@ -1603,6 +1603,15 @@ console.log('\nTest mode bar at the bottom · 🏷 Barcode designer');
   check('🏷 Barcode designer at the bottom of the Audit tab; the label is 2" × 1" (one per page, no margins), Code 128, part # printed under the bars; 3 copies → 3 labels',
     /id="rc-out"><\/div>\s*<!-- 🏷 Barcode designer[\s\S]*?onclick="bdOpen\(\)"[^>]*>🏷 Barcode designer<\/button>/.test(ih) && /@page\{size:2in 1in;margin:0\}/.test(lab)
       && (lab.match(/<div class="l"><svg class="b"><\/svg><div class="t">8-8-8=8<\/div><\/div>/g) || []).length === 3 && /format: 'CODE128'/.test(ih), lab.slice(0, 200));
+  // Owner: "barcode designer: our own keypad with the numbers, '-', '=', 'X', '=OLD', 1 to 9 and more (no phone keyboard)".
+  const padSrc = (ih.match(/  function bdPad\(\) \{[\s\S]*?\n  \}/) || [''])[0], keySrc = (ih.match(/  window\.bdKey = function\(k\) \{[\s\S]*?\n  \};/) || [''])[0];
+  const pad = new Function(padSrc + '; return bdPad();')();
+  const bx = { value: '' }, bwin = {}; new Function('window', 'g', 'bdPreview', keySrc)(bwin, () => bx, () => {});
+  ['8', '-', '8', '-', '8', '=', '8', 'X', 'X'].forEach(k => bwin.bdKey(k)); const typed1 = bx.value;
+  bwin.bdKey('⌫'); bwin.bdKey('⌫'); bwin.bdKey('⌫'); bwin.bdKey('=OLD'); const typed2 = bx.value;
+  check('Barcode designer: our own keypad (1–9, 0, -, =, X, =OLD, ⌫, C) + ⌨ More; the box keeps the phone keyboard hidden; taps type 8-8-8=8XX, ⌫ ⌫ ⌫ + =OLD → 8-8-8=OLD',
+    ['1','2','3','4','5','6','7','8','9','0','-','=','X','=OLD','⌫','C'].every(k => pad.includes(`onclick="bdKey('${k}')"`)) && /⌨ More/.test(pad)
+      && /id="bd-sku" type="text" inputmode="none"/.test(ih) && typed1 === '8-8-8=8XX' && typed2 === '8-8-8=OLD', { typed1, typed2 });
   // Owner: "also including info of who and when print the label".
   const labF = new Function('xfrEsc', src + '; return bdLabelHtml;')(v => String(v))('8-8-8=8', 1, 'Plug', 'Printed by Ana · Oct 4, 2026');
   const bl = await post('/inventory/barcode-label', { sku: '8-8-8=8', name: 'Plug', copies: 3 });
