@@ -1,0 +1,235 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>XFitting — Lights</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700;800&family=DM+Mono:wght@400;500&display=swap" rel="stylesheet">
+  <style>
+:root {
+  --bg:#f4f5f7; --bg2:#ffffff; --bg3:#f0f1f3; --border:#dde0e6; --text:#1a1d23; --text2:#4a5060; --text3:#8a90a0;
+  --accent:#1a56db; --accent-bg:#eef2fd; --green:#0e7f3e; --green-bg:#e8f7ee; --red:#c52a1a; --red-bg:#fdf0ee;
+  --orange:#b45309; --orange-bg:#fef3e2; --yellow:#f5b301; --mono:'DM Mono', monospace; --sans:'DM Sans', sans-serif;
+}
+*, *::before, *::after { box-sizing:border-box; margin:0; padding:0; }
+body { background:var(--bg); font-family:var(--sans); color:var(--text); min-height:100vh; }
+.lt-header { display:flex; align-items:center; gap:10px; padding:12px 16px; background:var(--bg2); border-bottom:1px solid var(--border); flex-wrap:wrap; }
+.lt-title { font-size:18px; font-weight:800; }
+.lt-btn { padding:8px 12px; border-radius:9px; border:1.5px solid var(--border); background:var(--bg2); color:var(--text2); font-weight:700; font-size:13px; cursor:pointer; font-family:inherit; }
+.lt-wrap { max-width:760px; margin:0 auto; padding:14px 16px 40px; }
+.lt-card { background:var(--bg2); border:1.5px solid var(--border); border-radius:14px; padding:14px; margin-bottom:12px; }
+.lt-label { font-size:11px; font-weight:800; letter-spacing:.6px; text-transform:uppercase; color:var(--text3); margin-bottom:8px; }
+.lt-row { display:flex; gap:10px; align-items:center; }
+.lt-bulb { width:46px; height:46px; border-radius:50%; display:flex; align-items:center; justify-content:center; font-size:24px; flex-shrink:0; background:var(--bg3); }
+.lt-bulb.on { background:#fff3c4; box-shadow:0 0 18px 4px rgba(245,179,1,.55); }
+.lt-big { flex:1; padding:15px 0; border-radius:12px; border:none; font-size:17px; font-weight:800; cursor:pointer; font-family:inherit; }
+.lt-on { background:var(--yellow); color:#1a1d23; }
+.lt-off { background:#2b2f38; color:#fff; }
+.lt-in { width:100%; padding:10px; border:1.5px solid var(--border); border-radius:9px; font-size:14px; font-family:inherit; margin-top:4px; }
+.lt-small { font-size:12px; color:var(--text2); }
+  </style>
+<script src="xf-lang.js?v=20261004b"></script>
+</head>
+<body>
+
+<script>
+var LT_W = 'https://xfitting-lookup.alfixedinc88.workers.dev';
+var LT_TOKEN = localStorage.getItem('xf_cred_token') || null;
+var LT_USER = null; try { LT_USER = JSON.parse(localStorage.getItem('xf_cred_user') || 'null'); } catch (e) {}
+function ltOkRole(u) { return !!(u && u.roles && (u.roles.includes('ops') || u.roles.includes('mobile') || u.roles.includes('mgmt'))); }
+async function ltFetch(url, opts) {
+  opts = opts || {};
+  opts.headers = Object.assign({}, opts.headers || {}, { 'X-Cred-Token': LT_TOKEN || '' });
+  var r = await fetch(url, opts);
+  if (r.status === 401) { localStorage.removeItem('xf_cred_token'); localStorage.removeItem('xf_cred_user'); LT_TOKEN = null; ltGate(true); throw new Error('Unauthorized'); }
+  return r;
+}
+function ltGate(show) {
+  var g = document.getElementById('lt-gate'), a = document.getElementById('lt-app');
+  if (g) g.style.display = show ? 'flex' : 'none';
+  if (a) a.style.display = show ? 'none' : 'block';
+}
+window.ltLogin = async function() {
+  var u = document.getElementById('lt-user').value.trim(), p = document.getElementById('lt-pass').value, err = document.getElementById('lt-err');
+  err.textContent = '';
+  if (!u || !p) { err.textContent = 'Enter your username and password.'; return; }
+  try {
+    var r = await fetch(LT_W + '/auth/login', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ username: u, password: p }) });
+    var d = await r.json();
+    if (!r.ok) { err.textContent = d.error || 'Login failed'; return; }
+    LT_USER = { displayName: d.displayName, roles: d.roles, userId: d.userId };
+    if (!ltOkRole(LT_USER)) { err.textContent = 'This account does not have access to Lights.'; return; }
+    LT_TOKEN = d.token;
+    localStorage.setItem('xf_cred_token', d.token); localStorage.setItem('xf_cred_user', JSON.stringify(LT_USER));
+    ltGate(false); ltLoad();
+  } catch (e) { err.textContent = 'Connection error — try again.'; }
+};
+</script>
+
+<div id="lt-gate" style="display:flex;min-height:100vh;align-items:center;justify-content:center">
+  <div class="lt-card" style="max-width:360px;width:100%;margin:0 20px;text-align:center">
+    <div style="font-size:30px">💡</div>
+    <div style="font-size:18px;font-weight:800;margin:4px 0 12px">Lights — Sign In</div>
+    <input id="lt-user" class="lt-in" placeholder="Username" autocomplete="username">
+    <input id="lt-pass" class="lt-in" type="password" placeholder="Password" autocomplete="current-password" onkeydown="if(event.key==='Enter')ltLogin()">
+    <button class="lt-big lt-on" style="width:100%;margin-top:10px" onclick="ltLogin()">Sign In</button>
+    <div id="lt-err" style="color:var(--red);font-size:13px;margin-top:8px"></div>
+    <a href="index.html" style="display:inline-block;margin-top:12px;font-size:12.5px;color:var(--text3)">← Back to Apps</a>
+  </div>
+</div>
+
+<div id="lt-app" style="display:none">
+  <div class="lt-header">
+    <div class="lt-title">💡 Lights</div>
+    <div style="margin-left:auto;display:flex;gap:8px;flex-wrap:wrap">
+      <button class="lt-btn" onclick="ltLoad()">🔄 Refresh</button>
+      <button class="lt-btn" data-xf-signout onclick="xfSignOut()">🚪 Sign Out</button>
+      <button class="lt-btn" onclick="window.xfGoHome ? xfGoHome() : (location.href='index.html')">← Apps</button>
+    </div>
+  </div>
+  <div class="lt-wrap">
+    <div class="lt-card">
+      <div class="lt-label">All lights</div>
+      <div class="lt-row"><button class="lt-big lt-on" onclick="ltSet(null, true)">💡 All ON</button><button class="lt-big lt-off" onclick="ltSet(null, false)">⚫ All OFF</button></div>
+    </div>
+    <div id="lt-list"></div>
+    <div id="lt-setup"></div>
+    <div class="lt-card">
+      <div class="lt-label">Who turned what on / off</div>
+      <div id="lt-log" class="lt-small">…</div>
+    </div>
+  </div>
+</div>
+
+<script>
+(function() {
+  var LT = { lights: [], manager: false, kinds: {}, found: null };
+  function e(v) { return String(v == null ? '' : v).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;'); }
+  function t(iso) { try { return iso ? new Date(iso).toLocaleString('en-US', { timeZone: 'America/New_York', month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' }) : ''; } catch (x) { return iso || ''; } }
+  function flash(msg, bad) {
+    var f = document.createElement('div');
+    f.textContent = msg;
+    f.style.cssText = 'position:fixed;left:50%;top:14px;transform:translateX(-50%);z-index:99999;padding:10px 16px;border-radius:10px;font-weight:700;font-size:14px;box-shadow:0 4px 16px rgba(0,0,0,.2);background:' + (bad ? 'var(--red)' : 'var(--green)') + ';color:#fff;max-width:92vw';
+    document.body.appendChild(f); setTimeout(function() { f.remove(); }, 3500);
+  }
+  var KIND = { govee: 'Govee', lifx: 'LIFX', webhook: 'Smart plug / link' };
+
+  window.ltLoad = function() {
+    ltFetch(LT_W + '/lights/list').then(function(r) { return r.json(); }).then(function(d) {
+      if (!d.ok) { flash(d.error || 'Could not load', true); return; }
+      LT.lights = d.lights; LT.manager = d.manager; LT.kinds = d.kinds; ltRender();
+    }).catch(function() {});
+    ltFetch(LT_W + '/lights/log').then(function(r) { return r.json(); }).then(function(d) {
+      var el = document.getElementById('lt-log');
+      el.innerHTML = (d.log || []).length ? (d.log || []).slice(0, 40).map(function(x) {
+        return '<div style="padding:4px 0;border-top:1px solid var(--border)">' + e(t(x.ts)) + ' · <b>' + e(x.by_user) + '</b> · ' + e(x.name) + ' · '
+          + (x.action === 'on' ? '💡 ON' : x.action === 'off' ? '⚫ OFF' : e(x.action)) + (x.ok ? '' : ' <span style="color:var(--red)">✗ ' + e(x.detail) + '</span>') + '</div>';
+      }).join('') : 'Nothing yet.';
+    }).catch(function() {});
+  };
+
+  function ltRender() {
+    var list = document.getElementById('lt-list');
+    if (!LT.lights.length) list.innerHTML = '<div class="lt-card lt-small">No lights added yet.' + (LT.manager ? ' Add one below.' : ' Ask a manager to add the lights.') + '</div>';
+    else list.innerHTML = LT.lights.map(function(L) {
+      return '<div class="lt-card"><div class="lt-row" style="margin-bottom:10px"><div class="lt-bulb' + (L.on ? ' on' : '') + '">' + (L.on ? '💡' : '⚫') + '</div>'
+        + '<div style="flex:1;min-width:0"><div style="font-size:16px;font-weight:800">' + e(L.name) + '</div>'
+        + '<div class="lt-small">' + (L.area ? e(L.area) + ' · ' : '') + e(KIND[L.provider] || L.provider)
+        + (L.lastAt ? ' · ' + (L.on ? 'ON' : 'OFF') + ' by ' + e(L.lastBy) + ', ' + e(t(L.lastAt)) : '') + '</div></div>'
+        + (LT.manager ? '<button class="lt-btn" title="Change" onclick="ltEdit(' + L.id + ')">✏️</button><button class="lt-btn" title="Remove" onclick="ltRemove(' + L.id + ')">🗑</button>' : '') + '</div>'
+        + '<div class="lt-row"><button class="lt-big lt-on" onclick="ltSet(' + L.id + ', true)">ON</button><button class="lt-big lt-off" onclick="ltSet(' + L.id + ', false)">OFF</button></div></div>';
+    }).join('');
+    ltRenderSetup();
+  }
+
+  window.ltSet = function(id, on) {
+    ltFetch(LT_W + '/lights/set', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(id == null ? { all: true, on: on } : { id: id, on: on }) })
+      .then(function(r) { return r.json(); }).then(function(d) {
+        var bad = (d.results || []).filter(function(x) { return !x.ok; });
+        if (d.error) flash(d.error, true);
+        else if (bad.length) flash('✗ ' + bad.map(function(x) { return x.name + ': ' + x.detail; }).join(' · '), true);
+        else flash((on ? '💡 ON: ' : '⚫ OFF: ') + (d.results || []).map(function(x) { return x.name; }).join(', '));
+        ltLoad();
+      }).catch(function() { flash('Could not reach the lights — check WiFi', true); });
+  };
+
+  // ── Managers: add / change / remove ──
+  function ltRenderSetup() {
+    var el = document.getElementById('lt-setup');
+    if (!LT.manager) { el.innerHTML = ''; return; }
+    var f = LT.form || { provider: 'webhook' };
+    var found = LT.found;
+    el.innerHTML = '<div class="lt-card"><div class="lt-label">' + (f.id ? '✏️ Change a light' : '➕ Add a light (managers)') + '</div>'
+      + '<div class="lt-small" style="margin-bottom:8px">Govee: ' + (LT.kinds.govee ? '✅ connected' : 'not connected (Worker secret <b>GOVEE_API_KEY</b>)')
+      + ' · LIFX: ' + (LT.kinds.lifx ? '✅ connected' : 'not connected (Worker secret <b>LIFX_TOKEN</b>)') + ' · Any other light: a smart plug / switch with an ON and an OFF web link.</div>'
+      + '<div class="lt-row" style="gap:6px;flex-wrap:wrap;margin-bottom:8px">'
+      + ['govee', 'lifx', 'webhook'].map(function(k) { var on = f.provider === k;
+          return '<button class="lt-btn" style="' + (on ? 'border-color:var(--accent);color:var(--accent);background:var(--accent-bg)' : '') + '" onclick="ltForm({provider:\'' + k + '\'})">' + KIND[k] + '</button>'; }).join('')
+      + '</div>'
+      + '<label class="lt-small">Name<input id="lt-f-name" class="lt-in" value="' + e(f.name || '') + '" placeholder="e.g. Aisle C1 light"></label>'
+      + '<label class="lt-small" style="display:block;margin-top:6px">Where (optional)<input id="lt-f-area" class="lt-in" value="' + e(f.area || '') + '" placeholder="e.g. C1, BARN, Packing table"></label>'
+      + (f.provider === 'webhook'
+        ? '<label class="lt-small" style="display:block;margin-top:6px">ON link<input id="lt-f-on" class="lt-in" value="' + e(f.onUrl || '') + '" placeholder="https://…"></label>'
+          + '<label class="lt-small" style="display:block;margin-top:6px">OFF link<input id="lt-f-off" class="lt-in" value="' + e(f.offUrl || '') + '" placeholder="https://…"></label>'
+          + '<details style="margin-top:6px"><summary class="lt-small" style="cursor:pointer">More (method / body — e.g. Shelly Cloud)</summary>'
+          + '<label class="lt-small">Method<select id="lt-f-method" class="lt-in"><option' + (f.method === 'GET' ? '' : ' selected') + '>POST</option><option' + (f.method === 'GET' ? ' selected' : '') + '>GET</option></select></label>'
+          + '<label class="lt-small">ON body<input id="lt-f-onb" class="lt-in" value="' + e(f.onBody || '') + '" placeholder="e.g. id=…&auth_key=…&channel=0&turn=on"></label>'
+          + '<label class="lt-small">OFF body<input id="lt-f-offb" class="lt-in" value="' + e(f.offBody || '') + '" placeholder="e.g. id=…&auth_key=…&channel=0&turn=off"></label></details>'
+        : '<div style="margin-top:8px"><button class="lt-btn" onclick="ltFind()">🔍 Find my ' + KIND[f.provider] + ' lights</button>'
+          + (f.device ? ' <span class="lt-small">Picked: <b>' + e(f.pickedName || f.device) + '</b></span>' : '') + '</div>'
+          + (found ? '<div style="margin-top:6px">' + (found.errors || []).map(function(x) { return '<div style="color:var(--red);font-size:12px">' + e(x) + '</div>'; }).join('')
+            + found.found.filter(function(x) { return x.provider === f.provider; }).map(function(x, i) {
+                return '<div class="lt-row" style="padding:5px 0;border-top:1px solid var(--border)"><div style="flex:1"><b>' + e(x.name) + '</b> <span class="lt-small">' + e(x.sku || '') + '</span></div>'
+                  + (x.added ? '<span class="lt-small">✓ added</span>' : '<button class="lt-btn" onclick="ltPick(' + i + ')">Pick</button>') + '</div>'; }).join('') + '</div>' : ''))
+      + '<div class="lt-row" style="margin-top:10px"><button class="lt-big lt-on" onclick="ltSave()">' + (f.id ? '✓ Save changes' : '➕ Add light') + '</button>'
+      + (f.id ? '<button class="lt-big" style="background:var(--bg3)" onclick="LT_FORM_RESET()">Cancel</button>' : '') + '</div></div>';
+  }
+  window.LT_FORM_RESET = function() { LT.form = null; ltRenderSetup(); };
+  function readForm() {
+    var f = LT.form || { provider: 'webhook' }, v = function(id) { var x = document.getElementById(id); return x ? x.value : undefined; };
+    if (v('lt-f-name') !== undefined) f.name = v('lt-f-name');
+    if (v('lt-f-area') !== undefined) f.area = v('lt-f-area');
+    if (v('lt-f-on') !== undefined) f.onUrl = v('lt-f-on').trim();
+    if (v('lt-f-off') !== undefined) f.offUrl = v('lt-f-off').trim();
+    if (v('lt-f-method') !== undefined) f.method = v('lt-f-method');
+    if (v('lt-f-onb') !== undefined) f.onBody = v('lt-f-onb');
+    if (v('lt-f-offb') !== undefined) f.offBody = v('lt-f-offb');
+    LT.form = f; return f;
+  }
+  window.ltForm = function(o) { var f = readForm(); if (o.provider !== f.provider) { f.provider = o.provider; f.device = ''; f.sku = ''; } ltRenderSetup(); };
+  window.ltFind = function() {
+    readForm();
+    ltFetch(LT_W + '/lights/discover').then(function(r) { return r.json(); }).then(function(d) { LT.found = d; ltRenderSetup(); }).catch(function() { flash('Could not look for lights', true); });
+  };
+  window.ltPick = function(i) {
+    var f = readForm(), list = LT.found.found.filter(function(x) { return x.provider === f.provider; }), x = list[i]; if (!x) return;
+    f.device = x.device; f.sku = x.sku; f.pickedName = x.name; if (!f.name) f.name = x.name; ltRenderSetup();
+  };
+  window.ltSave = function() {
+    var f = readForm();
+    ltFetch(LT_W + '/lights/save', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(f) })
+      .then(function(r) { return r.json(); }).then(function(d) {
+        if (!d.ok) { flash(d.error || 'Not saved', true); return; }
+        flash(f.id ? 'Saved' : 'Light added'); LT.form = null; LT.found = null; ltLoad();
+      }).catch(function() { flash('Not saved — check WiFi', true); });
+  };
+  window.ltEdit = function(id) {
+    var L = LT.lights.filter(function(x) { return x.id === id; })[0]; if (!L) return;
+    LT.form = { id: L.id, provider: L.provider, name: L.name, area: L.area, device: L.device, sku: L.sku, pickedName: L.device, onUrl: L.onUrl, offUrl: L.offUrl, method: L.method, onBody: L.onBody, offBody: L.offBody };
+    ltRenderSetup(); document.getElementById('lt-setup').scrollIntoView({ behavior: 'smooth' });
+  };
+  window.ltRemove = function(id) {
+    var L = LT.lights.filter(function(x) { return x.id === id; })[0]; if (!L || !confirm('Remove "' + L.name + '" from the app? (The light itself is not touched.)')) return;
+    ltFetch(LT_W + '/lights/remove', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ id: id }) })
+      .then(function(r) { return r.json(); }).then(function(d) { if (!d.ok) flash(d.error || 'Not removed', true); else { flash('Removed'); ltLoad(); } });
+  };
+
+  if (LT_TOKEN && ltOkRole(LT_USER)) { ltGate(false); ltLoad(); }
+})();
+</script>
+
+<script src="xf-signout.js?v=20260924"></script>
+<script src="xf-access.js?v=20261004y"></script>
+</body>
+</html>

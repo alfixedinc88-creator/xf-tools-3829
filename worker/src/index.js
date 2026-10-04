@@ -1,4 +1,5 @@
 import VENDOR_UPC from './vendor-upc.js';
+import { handleLights } from './lights.js';
 // xfitting-worker-v16.js
 // ─────────────────────────────────────────────────────────────────────────────
 // WHAT CHANGED FROM v15 (Veeqo Integration):
@@ -7104,6 +7105,12 @@ const _app = {
     }
 
     // ── Sold Out: change listing quantities on the marketplaces (mgmt only) ──
+    // 💡 Lights page (worker/src/lights.js): any sign-in switches, management sets up.
+    if (url.pathname.startsWith('/lights/')) {
+      const credSession = await verifyCredSession(request.headers.get('X-Cred-Token'), env);
+      if (!credSession) return cors(new Response(JSON.stringify({ ok: false, error: 'Sign in first' }), { status: 401, headers: { 'Content-Type': 'application/json' } }));
+      return await handleLights(url, method, request, env, credSession, { cors, logUserActivity });
+    }
     if (url.pathname.startsWith('/inventory/soldout/')) {
       const credSession = await verifyCredSession(request.headers.get('X-Cred-Token'), env);
       if (!credSession || !credSession.roles.includes('mgmt')) {
