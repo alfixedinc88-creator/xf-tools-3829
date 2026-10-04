@@ -12344,7 +12344,7 @@ window.invCredLogin = async function() {
     order.sort(ckPartCompare);
     var famCount = {}; (d.locations || []).forEach(function(l) { famCount[String(l.partNum || d.partNum).toUpperCase()] = 1; });
     (d.variants || []).forEach(function(v) { famCount[String(v).toUpperCase()] = 1; });
-    var nFam = Object.keys(famCount).length, totCases = 0, totPcs = 0, hidden = 0;
+    var nFam = Object.keys(famCount).length, totCases = 0, totPcs = 0, hidden = 0, noPcs = 0, gh = '';
     CK.prow = [];
     var h = '<div class="icard"><div style="display:flex;gap:12px;align-items:flex-start">' + ckPic(d.partNum, 84) + '<div style="flex:1;min-width:0">'
       + '<div style="font-size:16px;font-weight:800;font-family:var(--mono)">' + ckE(CK.all ? (d.baseSku || invParent(d.partNum)) + ' — all part #s' : CK.exact) + '</div>'
@@ -12353,28 +12353,37 @@ window.invCredLogin = async function() {
           ? '<button class="ps-btn-sm ixfr-mode-btn" onclick="ckShowAll(false)">Only ' + ckE(CK.exact) + '</button>'
           : '<button class="ixfr-mode-btn" onclick="ckShowAll(true)">👪 Show all the family (' + nFam + ' part #s)</button>') : '')
       + '</div>';
-    if (!order.length) h += '<div class="icard" style="color:var(--text3)">No spot on record for this part #.</div>';
+    if (!order.length) gh += '<div class="icard" style="color:var(--text3)">No spot on record for this part #.</div>';
     order.forEach(function(p) {
       var list = groups[p].slice().sort(function(a, b) { return invPullWalkCompare(a.location, b.location); });
-      var each = ckNum((list[0] || {}).eachQty), gCases = 0, body = '';
+      var gCases = 0, gPcs = 0, gNoPcs = 0, body = '';
       list.forEach(function(l) {
         var now = ckNow(l), pend = ckNum(l.pendingCases);
         if (now <= 0 && pend <= 0) { hidden++; return; }
-        gCases += now; totCases += now; totPcs += now * (ckNum(l.eachQty) || 0);
+        var lp = now * ckNum(l.eachQty); // pieces = cases × that spot's pieces per case
+        gCases += now; totCases += now; gPcs += lp; totPcs += lp;
+        if (now > 0 && !(ckNum(l.eachQty) > 0)) { gNoPcs += now; noPcs += now; }
         var pi = CK.prow.length; CK.prow.push(Object.assign({}, l, { partNum: l.partNum || d.partNum }));
         body += '<div style="padding:7px 0;border-top:1px solid var(--border)">'
           + '<div style="display:flex;justify-content:space-between;gap:8px;align-items:center">'
-          + '<a href="#" onclick="ckLoc(\'' + ckE(String(l.location).toUpperCase()) + '\');return false" style="font-family:var(--mono);font-weight:700">📍 ' + ckE(l.location) + '</a>'
-          + '<span style="font-weight:800;font-family:var(--mono)">' + ckE(xfrN(now)) + ' case(s)' + (ckNum(l.eachQty) > 0 ? ' <span style="font-weight:400;color:var(--text2)">× ' + ckE(xfrN(l.eachQty)) + ' pcs/case = ' + ckE(xfrN(now * ckNum(l.eachQty))) + ' pcs</span>' : '') + '</span></div>'
-          + '<div style="text-align:right"><button type="button" class="ixfr-mode-btn" style="padding:4px 9px;font-size:12px" onclick="ckPackAsk(\'part\',' + pi + ')">✏️ pcs / case</button></div>'
+          + '<a href="#" onclick="ckLoc(\'' + ckE(String(l.location).toUpperCase()) + '\');return false" style="font-family:var(--mono);font-weight:700;white-space:nowrap">📍 ' + ckE(l.location) + '</a>'
+          + '<span style="font-weight:800;font-family:var(--mono);white-space:nowrap">' + ckE(xfrN(now)) + ' case(s)</span></div>'
+          + '<div style="text-align:right;font-size:12.5px;color:var(--text2);font-family:var(--mono)">' + (ckNum(l.eachQty) > 0 ? '× ' + ckE(xfrN(l.eachQty)) + ' pcs/case = ' + ckE(xfrN(now * ckNum(l.eachQty))) + ' pcs' : '<span style="color:var(--red)">⚠ no pcs/case</span>') + '</div>'
           + (pend ? '<div style="font-size:11px;color:var(--orange)">' + ckE(xfrN(pend)) + ' case(s) waiting for approval</div>' : '')
           + (l.palletBoxes ? '<div style="font-size:11px;color:var(--text3)">📦 still on a container pallet</div>' : '')
           + '<div style="font-size:11.5px;color:var(--text2);margin-top:2px">' + ckWho(l.partNum || d.partNum, l.location) + '</div></div>';
       });
-      h += '<div class="icard"><div style="display:flex;justify-content:space-between;font-weight:800"><span style="font-family:var(--mono)">' + ckE(p) + '</span><span>' + ckE(xfrN(gCases)) + ' case(s)' + (each ? ' · ' + ckE(xfrN(gCases * each)) + ' pcs' : '') + '</span></div>'
+      gh += '<div class="icard"><div style="display:flex;justify-content:space-between;font-weight:800"><span style="font-family:var(--mono)">' + ckE(p) + '</span><span>' + ckE(xfrN(gCases)) + ' case(s) · ' + ckE(xfrN(gPcs)) + ' pcs</span></div>'
+        + (gNoPcs ? '<div style="font-size:11px;color:var(--red)">⚠ ' + ckE(xfrN(gNoPcs)) + ' case(s) have no pcs/case — not counted in pcs</div>' : '')
         + (body || '<div style="color:var(--text3);font-size:12px;padding-top:6px">None on the shelves now</div>') + '</div>';
     });
-    if (order.length) h += '<div style="font-size:12px;color:var(--text2);padding:0 4px">Total shown: <b>' + ckE(xfrN(totCases)) + ' case(s)</b>' + (totPcs ? ' · ' + ckE(xfrN(totPcs)) + ' pcs' : '') + (hidden ? ' · ' + hidden + ' empty spot(s) not shown' : '') + '</div>';
+    // 👪 All the family: total cases + total pieces of every part # in the family, at the top.
+    if (CK.all && order.length) h += '<div class="icard" style="border:2px solid var(--accent);background:var(--accent-bg,#e8efff)">'
+      + '<div style="font-size:12px;font-weight:800;color:var(--accent);letter-spacing:.3px">👪 FAMILY TOTAL · ' + order.length + ' part #s</div>'
+      + '<div style="font-size:22px;font-weight:800;font-family:var(--mono);margin-top:2px">' + ckE(xfrN(totCases)) + ' case(s) · ' + ckE(xfrN(totPcs)) + ' pcs</div>'
+      + (noPcs ? '<div style="font-size:12px;color:var(--red);font-weight:700">⚠ ' + ckE(xfrN(noPcs)) + ' case(s) have no pcs/case — not counted in the pcs</div>' : '') + '</div>';
+    h += gh;
+    if (order.length) h += '<div style="font-size:12px;color:var(--text2);padding:0 4px">Total shown: <b>' + ckE(xfrN(totCases)) + ' case(s)</b> · ' + ckE(xfrN(totPcs)) + ' pcs' + (hidden ? ' · ' + hidden + ' empty spot(s) not shown' : '') + '</div>';
     ckOut(h);
   }
   function ckName(q) {
