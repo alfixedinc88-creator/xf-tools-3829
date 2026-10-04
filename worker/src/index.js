@@ -5558,6 +5558,43 @@ async function inventorySpotCheck(url, env) {
   return J({ ok: true, part, location: loc, recorded: (here && parseFloat(here.c)) || 0, history, others: others.slice(0, 6) });
 }
 
+// GET /inventory/partnum-check (mgmt, READ-ONLY) — SKU Mgr → 🧹 Check part #s:
+// part #s that look wrong, grouped by why, so the owner can clean them up
+// with Edit. "Normal" follows the vendor list (2,819 part #s): numbers / -
+// / & / C / K before "=", and after it a pack number with X…, W.1C, W.2C,
+// J or N — or OLD. Nothing is changed here.
+function partnumWhy(raw) {
+  const t = String(raw || ''), P = t.trim().toUpperCase(), why = [];
+  if (/^\d{8,14}$/.test(t.replace(/\s/g, ''))) { why.push('upc'); return why; }
+  if (/^\d{1,7}$/.test(t.replace(/\s/g, ''))) { why.push('numonly'); return why; }        // e.g. 2490
+  if (/^[A-Z]/i.test(t.trim()) && !/^OLD$/i.test(t.trim())) { why.push('letters'); return why; } // e.g. EFFMM-04-LF (a vendor's own code)
+  if (t !== t.trim() || /\s/.test(t.trim()) || /[a-z]/.test(t) || /[^0-9A-Za-z\-=&.\s]/.test(t)) why.push('chars');
+  const eq = (P.match(/=/g) || []).length;
+  if (!eq) why.push('noeq');
+  else if (eq > 1 || /=$/.test(P) || /^=/.test(P) || /^-|--|-=/.test(P)) why.push('twoeq');
+  else {
+    const suf = P.split('=')[1];
+    if (!/^(OLD|\d+(\.\d+)?(X{1,4}|W\.\dC|J|N)?)$/.test(suf)) why.push('suffix');
+    if (!/^\d+(-[0-9A-Z]+)*(&\d+)?C?$/.test(P.split('=')[0])) why.push('base');
+  }
+  return why;
+}
+async function inventoryPartnumCheck(env) {
+  const rows = await d1All(env, `SELECT id, part_num, location, cases, units_per_case FROM master_list WHERE TRIM(COALESCE(part_num,'')) != ''`);
+  const cats = { upc: [], numonly: [], letters: [], chars: [], noeq: [], twoeq: [], suffix: [], base: [], dupes: [] };
+  const spell = {};
+  for (const r of rows) {
+    const row = { id: r.id, partNum: r.part_num, location: r.location || '', cases: Number(r.cases) || 0 };
+    for (const w of partnumWhy(r.part_num)) cats[w].push(row);
+    const key = String(r.part_num).toUpperCase().replace(/\s+/g, '');
+    (spell[key] = spell[key] || {})[r.part_num] = (spell[key][r.part_num] || []).concat(row);
+  }
+  for (const k of Object.keys(spell)) { const forms = Object.keys(spell[k]); if (forms.length > 1) forms.forEach(f => cats.dupes.push(...spell[k][f])); }
+  const out = {};
+  for (const c of Object.keys(cats)) out[c] = { count: cats[c].length, cases: Math.round(cats[c].reduce((t, x) => t + x.cases, 0) * 100) / 100, rows: cats[c].slice(0, 300) };
+  return cors(new Response(JSON.stringify({ ok: true, total: rows.length, cats: out }), { headers: { 'Content-Type': 'application/json' } }));
+}
+
 // POST /inventory/barcode-label { sku, name, copies } — 🏷 Barcode designer:
 // every label print is kept (who / when / part # / how many) in
 // barcode_label_log and the user activity log.
@@ -7315,6 +7352,7 @@ const _app = {
       if (path === '/inventory/containers/where' && method === 'POST') return await palletWhere(request, env);
       if (path === '/inventory/spot-check' && method === 'GET') return await inventorySpotCheck(url, env);
       if (path === '/inventory/check-spots' && method === 'POST') return await inventoryCheckSpots(request, env);
+      if (path === '/inventory/partnum-check' && method === 'GET' && session.pin_level === 'mgmt') return await inventoryPartnumCheck(env);
       if (path === '/inventory/barcode-label' && method === 'POST') return await inventoryBarcodeLabelLog(request, env, session);
       if (path === '/inventory/pack-sizes' && method === 'GET') return await inventoryPackSizes(env);
       if (path === '/inventory/cancel-own' && method === 'POST') return await inventoryCancelOwn(request, env, session);
@@ -7331,7 +7369,7 @@ const _app = {
         // these specific paths require mgmt — everything else falls through to 404
         const mgmtPaths = ['/inventory/pending','/inventory/verify','/inventory/transfer/verify',
           '/inventory/audit-mode','/inventory/review-mode','/inventory/prefixes','/inventory/rename-locations',
-          '/inventory/cancel-entry', '/inventory/cost/spots', '/inventory/cost/value', '/inventory/incoming'];
+          '/inventory/cancel-entry', '/inventory/cost/spots', '/inventory/cost/value', '/inventory/incoming', '/inventory/partnum-check'];
         if (mgmtPaths.some(p => path === p)) {
           return cors(new Response(JSON.stringify({ error: 'Management access required' }), {
             status: 403, headers: { 'Content-Type': 'application/json' }

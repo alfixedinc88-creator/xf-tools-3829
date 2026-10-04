@@ -1653,5 +1653,25 @@ console.log('\nWarehouse Lookup: exact part # first · product photos');
       && /\$\{whPhotoHtml\(r\.partNum\)\}/.test(wh) && /\$\{whPhotoHtml\(r\.sku\)\}/.test(wh) && /wFetch\(W \+ '\/inventory\/photos\?bases='/.test(wh), null);
 }
 
+// Owner: "SKU Mgr has a lot of weird part #s (like EFFMM-04-LF, 2490) — I'll clean them up when I have time".
+console.log('\nSKU Mgr: 🧹 Check part #s (read-only)');
+{
+  sq.prepare(`INSERT INTO master_list (base_sku, name, part_num, location, cases, units_per_case) VALUES
+    ('EFFMM','x','EFFMM-04-LF','C5=1-1-1',2,1), ('2490','x','2490','C5=1-1-2',1,1), ('x','x','012345678905','C5=1-1-3',1,1), ('30-9-9','x','30-9-9 =10x','C5=1-1-4',1,10),
+    ('30-9-9','x','30-9-9=10X','C5=1-1-5',3,10), ('30-9-8','x','30-9-8','C5=1-1-6',1,1), ('30-9-7','x','30-9-7==10','C5=1-1-7',1,1), ('30-9-6','x','30-9-6=10Q','C5=1-1-8',1,1),
+    ('27-3-1','x','27-3-1=10W.1C','C5=1-1-9',1,10), ('28-2-1&2C','x','28-2-1&2C=10','C5=1-2-1',1,10), ('61853-K','x','61853-K=5X','C5=1-2-2',1,5), ('8-8-8','x','8-8-8=OLD','C5=1-2-3',1,1)`).run();
+  const before = sq.prepare('SELECT COUNT(*) n, SUM(cases) c FROM master_list').get();
+  const pc = await get('/inventory/partnum-check');
+  const has = (c, p) => pc.cats[c].rows.some(r => r.partNum === p);
+  const normal = ['30-9-9=10X', '27-3-1=10W.1C', '28-2-1&2C=10', '61853-K=5X', '8-8-8=OLD'].filter(p => Object.keys(pc.cats).some(c => c !== 'dupes' && has(c, p)));
+  check('flags odd part #s by why: EFFMM-04-LF (vendor code), 2490 (just a number), a UPC, "30-9-9 =10x" (spaces / lowercase) + same part # written two ways, no "=", "==", odd ending',
+    pc.ok && has('letters', 'EFFMM-04-LF') && has('numonly', '2490') && has('upc', '012345678905') && has('chars', '30-9-9 =10x') && has('dupes', '30-9-9 =10x') && has('dupes', '30-9-9=10X')
+      && has('noeq', '30-9-8') && has('twoeq', '30-9-7==10') && has('suffix', '30-9-6=10Q') && normal.length === 0, { normal, cats: Object.fromEntries(Object.entries(pc.cats).map(([k, v]) => [k, v.rows.map(r => r.partNum)])) });
+  const after = sq.prepare('SELECT COUNT(*) n, SUM(cases) c FROM master_list').get();
+  const pkt5 = (await (await call('/auth/login', { method: 'POST', body: '{"username":"picker","password":"password1"}' })).json()).token;
+  const pw = await call('/inventory/partnum-check', { headers: { 'X-Cred-Token': pkt5 } });
+  check('…normal ones (W.1C, &2C, -K, =OLD) are not flagged; it changes nothing (same rows, same cases); managers only', before.n === after.n && before.c === after.c && pw.status === 403, { before, after, w: pw.status });
+}
+
 console.log('\n' + (failed ? '❌ ' + failed + ' check(s) FAILED' : '✅ all ' + passed + ' checks passed') + '\n');
 process.exit(failed ? 1 : 0);
