@@ -435,7 +435,7 @@ body {
 }
 
   </style>
-<script src="xf-lang.js?v=20261004a"></script>
+<script src="xf-lang.js?v=20261004b"></script>
 </head>
 <body>
 <style>
@@ -1118,12 +1118,12 @@ body {
 <div class="ps-tabbar">
   <div class="ps-tabitem active" id="ps-tab-picking"  onclick="psSwitchTab('picking')">🧺 Picking</div>
   <div class="ps-tabitem"        id="ps-tab-scan"     onclick="psSwitchTab('scan')">📦 Packing</div>
+  <div class="ps-tabitem"        id="ps-tab-labelcheck"  onclick="psSwitchTab('labelcheck')">🏷️ Label Check</div>
   <div class="ps-tabitem"        id="ps-tab-closebatch" onclick="psSwitchTab('closebatch')">🚐 Close Batch</div>
   <div class="ps-tabitem"        id="ps-tab-cancellation" onclick="psSwitchTab('cancellation')">🗑️ Cancellation <span class="ps-tab-badge" id="ps-cancelorder-badge" style="display:none">0</span></div>
   <div class="ps-tabitem"        id="ps-tab-progress" onclick="psSwitchTab('progress')">📊 Progress</div>
   <div class="ps-tabitem"        id="ps-tab-lookup"      onclick="psSwitchTab('lookup')">🔍 Lookup</div>
   <div class="ps-tabitem"        id="ps-tab-orderlookup" onclick="psSwitchTab('orderlookup')">📋 Order Lookup</div>
-  <div class="ps-tabitem"        id="ps-tab-labelcheck"  onclick="psSwitchTab('labelcheck')">🏷️ Label Check</div>
   <div class="ps-tabitem"        id="ps-tab-status"      onclick="psSwitchTab('status')">📡 Status Check</div>
   <div class="ps-tabitem"        id="ps-tab-gaps"     onclick="psSwitchTab('gaps')">⚠️ Gap Report <span class="ps-tab-badge" id="ps-gap-badge" style="display:none">0</span></div>
   <div class="ps-tabitem"        id="ps-tab-undelivered" onclick="psSwitchTab('undelivered')">📦 Undelivered Report</div>
@@ -4411,6 +4411,65 @@ window.psLcClear = function() { var x = document.getElementById('ps-lc-input'); 
 window.psLcKeyboard = function() { var x = document.getElementById('ps-lc-input'); if (!x) return; x.setAttribute('data-typing', '1'); x.setAttribute('inputmode', 'text'); x.blur(); setTimeout(function() { x.focus(); }, 30); };
 function psLcE(v) { return String(v == null ? '' : v).replace(/[&<>"']/g, function(c) { return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]; }); }
 function psLcN(v) { var n = +v || 0; return Math.round(n * 100) / 100; }
+// ⚠ Shelf empty — need to grab (owner): same as Picking → 🚫 No Inventory.
+// Check the items whose shelf has nothing, set how many cases to bring
+// (suggested: what the order needs + 2 extra, like Picking), then send:
+// the same stock check, the same red / purple confirm screen and the same
+// POST /ship/stockout per item (Inventory's Stock Out Reports, or "No Stock
+// Found" when our records already say 0). Who / when are on record there.
+window._psLcGrabCtx = [];
+function psLcGrabRow(it, d, o) {
+  var i = window._psLcGrabCtx.push({ tracking: d.tracking, orderNum: (o && o.orderNum) || '', sku: it.sku || it.partNum || '', bin: it.bin || it.parent || '',
+    pieces: _psSkuMultiplier(it.sku || it.partNum || '') * (it.qty || 1), perCase: +it.pcsPerCase || 0 }) - 1;
+  return '<div style="margin-top:8px;display:flex;align-items:center;gap:6px;padding:7px 9px;border:1.5px solid var(--red);background:var(--red-bg);border-radius:8px">'
+    + '<input type="checkbox" id="ps-lc-grab-chk-' + i + '" style="width:20px;height:20px;cursor:pointer;accent-color:var(--red);flex-shrink:0">'
+    + '<label for="ps-lc-grab-chk-' + i + '" style="font-size:12px;font-weight:800;color:var(--red);flex:1;cursor:pointer">⚠ Shelf empty — need to grab</label>'
+    + '<button type="button" onclick="psLcGrabStep(' + i + ',-1)" style="width:30px;height:30px;border-radius:7px;border:1.5px solid var(--red);background:var(--bg2);color:var(--red);font-weight:800;cursor:pointer">−</button>'
+    + '<span id="ps-lc-grab-qty-' + i + '" data-v="' + PS_NOSTOCK_MIN_CASES + '" style="min-width:28px;text-align:center;font-family:var(--mono);font-weight:800;font-size:14px">' + PS_NOSTOCK_MIN_CASES + '</span>'
+    + '<button type="button" onclick="psLcGrabStep(' + i + ',1)" style="width:30px;height:30px;border-radius:7px;border:1.5px solid var(--red);background:var(--bg2);color:var(--red);font-weight:800;cursor:pointer">+</button>'
+    + '<span style="font-size:11px;font-weight:700;color:var(--red)">cs</span></div>'
+    + '<div id="ps-lc-grab-hint-' + i + '" style="font-size:10px;color:var(--text3);margin-top:3px"></div>';
+}
+// ± instead of a number box: no phone keyboard.
+window.psLcGrabStep = function(i, d) {
+  var el = document.getElementById('ps-lc-grab-qty-' + i); if (!el) return;
+  var v = Math.max(1, (parseInt(el.getAttribute('data-v'), 10) || 1) + d);
+  el.setAttribute('data-v', v); el.setAttribute('data-touched', '1'); el.textContent = v;
+  var chk = document.getElementById('ps-lc-grab-chk-' + i); if (chk) chk.checked = true;
+};
+function psLcSuggestCases() {
+  (window._psLcGrabCtx || []).forEach(function(c, i) {
+    var el = document.getElementById('ps-lc-grab-qty-' + i), hint = document.getElementById('ps-lc-grab-hint-' + i);
+    if (!el || el.getAttribute('data-touched')) return;
+    var n = _psNostockCasesFor(c.pieces, c.perCase);
+    el.setAttribute('data-v', n); el.textContent = n;
+    if (hint) {
+      if (!c.perCase) hint.textContent = 'Case size not on file: 2 cases';
+      else { var f = Math.ceil(c.pieces / c.perCase); hint.textContent = 'Order ' + c.pieces + ' pcs, ' + c.perCase + ' pcs/case: ' + (f <= 1 ? '1 case + 1 extra = 2' : f + ' cases + 2 extra = ' + n); }
+    }
+  });
+}
+window.psLcGrabSubmit = function() {
+  var list = window._psLcGrabCtx || [], selected = [];
+  list.forEach(function(c, i) {
+    var chk = document.getElementById('ps-lc-grab-chk-' + i); if (!chk || !chk.checked) return;
+    var q = parseInt((document.getElementById('ps-lc-grab-qty-' + i) || {}).getAttribute ? document.getElementById('ps-lc-grab-qty-' + i).getAttribute('data-v') : 1, 10) || 1;
+    selected.push({ ctx: c, qty: q });
+  });
+  if (!selected.length) { _psToast('Check the item(s) whose shelf is empty first', 'err'); return; }
+  var wrap = document.getElementById('ps-lc-grab-wrap'), btn = wrap && wrap.querySelector('button');
+  if (btn) { btn.disabled = true; btn.textContent = 'Checking stock…'; }
+  fetch(PS_WORKER + '/ship/stock-check', { method: 'POST', headers: { 'Content-Type': 'application/json', 'X-Cred-Token': psCredToken },
+    body: JSON.stringify({ items: selected.map(function(x) { return { sku: x.ctx.sku, bin: x.ctx.bin }; }) }) })
+    .then(function(r) { return r.json(); }).then(function(cd) {
+      var res = (cd && cd.results) || [], none = [], real = [];
+      selected.forEach(function(x, i) { if (res[i] && res[i].noStockFound) none.push(x); else real.push(x); });
+      if (btn) btn.textContent = '⚠ Shelf empty — send checked items to grab';
+      window._psNostockFrom = 'labelcheck';
+      _psShowNostockConfirmModal(selected, real, none, btn, wrap);
+    }).catch(function(e) { if (btn) { btn.disabled = false; btn.textContent = '⚠ Shelf empty — send checked items to grab'; } _psToast('Stock check failed — ' + e.message, 'err'); });
+};
+
 window.psLabelCheck = async function() {
   var inp = document.getElementById('ps-lc-input'), st = document.getElementById('ps-lc-status'), out = document.getElementById('ps-lc-result');
   var q = (inp.value || '').trim();
@@ -4431,6 +4490,7 @@ window.psLabelCheck = async function() {
       psLcFocus(); return;
     }
     var o = d.order;
+    window._psLcGrabCtx = [];
     st.textContent = '✓ ' + d.items.length + ' item line' + (d.items.length === 1 ? '' : 's') + ' · ' + N(d.totalQty) + ' total in this package';
     var head = '<div class="ps-card" style="margin-bottom:12px">'
       + '<div style="display:flex;justify-content:space-between;gap:8px;flex-wrap:wrap"><div style="font-family:var(--mono);font-size:16px;font-weight:800">#' + E(o.orderNum || '—') + '</div>'
@@ -4458,9 +4518,12 @@ window.psLabelCheck = async function() {
         + '<div style="font-size:12px;margin-top:4px">📍 ' + spots + (it.spots.length ? ' <span style="color:var(--text3)">· ' + N(it.totalCases) + ' cs in all</span>' : '') + '</div>'
         + (upcs ? '<div style="font-size:11px;color:var(--text3);font-family:var(--mono);margin-top:4px">UPC ' + upcs + '</div>' : '')
         + (!it.exactMatch ? '<div style="font-size:11px;color:var(--orange);margin-top:3px">⚠ This SKU is not a part # in SKU Mgr — showing its parent\'s spots</div>' : '')
+        + psLcGrabRow(it, d, o)
         + '</div></div></div>';
     }).join('') : '<div class="ps-card" style="color:var(--text3)">No item list for this order — run 🔄 Veeqo Sync to fill it in.</div>';
-    out.innerHTML = head + items + hist;
+    out.innerHTML = head + items + (window._psLcGrabCtx.length ? '<div id="ps-lc-grab-wrap" style="margin:2px 0 14px"><button onclick="psLcGrabSubmit()" style="width:100%;padding:12px;border:none;border-radius:8px;background:var(--red);color:#fff;font-weight:800;font-size:14px;cursor:pointer">⚠ Shelf empty — send checked items to grab</button>'
+      + '<div style="font-size:11px;color:var(--text3);margin-top:4px">Same as Picking → 🚫 No Inventory: it goes to Inventory\'s Stock Out Reports (or "No Stock Found" when our records already show 0), and this order comes off today\'s picked list until it\'s restocked.</div></div>' : '') + hist;
+    psLcSuggestCases();
   } catch (e) { st.textContent = '✗ Could not look it up — ' + e.message; }
   psLcFocus();
 };
@@ -5972,7 +6035,8 @@ window._psNostockConfirmCancel = function() {
   document.getElementById('ps-nostock-confirm-overlay').style.display = 'none';
   var p = _psNostockPending;
   _psNostockPending = null;
-  if (p && p.btn) { p.btn.disabled = false; p.btn.textContent = '⚠ Report Selected as Out of Stock'; }
+  if (p && p.btn) { p.btn.disabled = false; p.btn.textContent = window._psNostockFrom === 'labelcheck' ? '⚠ Shelf empty — send checked items to grab' : '⚠ Report Selected as Out of Stock'; }
+  window._psNostockFrom = null;
 };
 
 window._psNostockConfirmAccept = function() {
@@ -6006,9 +6070,13 @@ window._psNostockConfirmAccept = function() {
     psRenderPickList();
     _psPickDropFromSummary(tracking);
     window._psPickNoStockDate = null;
+    if (window._psNostockFrom === 'labelcheck') { // 🏷️ Label Check: leave the Picking card alone, say it was sent
+      if (subEl) subEl.innerHTML = '<div style="padding:10px;border-radius:8px;background:var(--green-bg,#dcfce7);color:var(--green);font-weight:800;font-size:13px">✓ Sent: ' + selected.map(function(s) { return (s.ctx.bin || s.ctx.sku) + ' × ' + s.qty + ' cs'; }).join(', ') + ' — by ' + (psInitials || '?') + '</div>';
+    } else {
     var wrap = document.getElementById('ps-pick-product-wrap');
     if (wrap) wrap.style.display = 'none';
     if (subEl) subEl.style.display = 'none';
+    }
     psFetchNostockCount();
     // (Chime + spoken "No Stock Found" alert already played when the
     // Confirm Report screen came up — see _psShowNostockConfirmModal —
@@ -6027,6 +6095,7 @@ window._psNostockConfirmAccept = function() {
     _psToast('Report failed — ' + e.message, 'err');
   }).finally(function() {
     _psNostockPending = null;
+    window._psNostockFrom = null;
   });
 };
 
