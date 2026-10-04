@@ -3710,4 +3710,28 @@ XFLang.add({
   "After": "Después"
 });
 
+// ── Pack & Ship (packship.html) — 🏷️ Label Check
+XFLang.add({
+  "Label Check": "Revisar etiqueta",
+  "Label Check — what's in this package?": "Revisar etiqueta — ¿qué hay en este paquete?",
+  "Scan the tracking barcode on the shipping label. Shows every item in that package: photo, part #, name, how many, pieces per box, where it is on the shelves, box UPC — and who picked, packed and printed it.": "Escanea el código de rastreo de la etiqueta de envío. Muestra cada artículo del paquete: foto, part #, nombre, cuántos, piezas por caja, dónde está en los estantes, UPC de la caja — y quién lo recogió, empacó e imprimió.",
+  "Scan the label's tracking barcode…": "Escanea el código de rastreo de la etiqueta…",
+  "Looking up {}": "Buscando {}",
+  "item line": "línea de artículo",
+  "item lines": "líneas de artículos",
+  "total in this package": "en total en este paquete",
+  "No order found for this label": "No hay pedido para esta etiqueta",
+  "The order list may not have this label yet — run 🔄 Veeqo Sync, or check the number with 📋 Order Lookup.": "La lista de pedidos quizás aún no tiene esta etiqueta — usa 🔄 Veeqo Sync, o revisa el número en 📋 Buscar pedido.",
+  "What happened to this package": "Qué pasó con este paquete",
+  "listing SKU": "SKU del anuncio",
+  "Parent": "Padre",
+  "Veeqo bin": "bin de Veeqo",
+  "cs in all": "cajas en total",
+  "none on the shelves in SKU Mgr": "nada en los estantes en SKU Mgr",
+  "This SKU is not a part # in SKU Mgr — showing its parent's spots": "Este SKU no es un part # en SKU Mgr — se muestran los lugares de su padre",
+  "No item list for this order — run 🔄 Veeqo Sync to fill it in.": "Este pedido no tiene lista de artículos — usa 🔄 Veeqo Sync para llenarla.",
+  "This label is also on the list for {} — showing the newest": "Esta etiqueta también está en la lista del {} — se muestra la más reciente",
+  "Could not look it up": "No se pudo buscar"
+});
+
 XFLang._ready();
