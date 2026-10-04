@@ -1775,5 +1775,60 @@ console.log('\nPack & Ship → 🏷️ Label Check next to 📦 Packing, with "�
   check('Picking → No Inventory itself is unchanged (still hides the Picking card after sending)', /var wrap = document\.getElementById\('ps-pick-product-wrap'\);\s*if \(wrap\) wrap\.style\.display = 'none';/.test(ph), null);
 }
 
+// Owner: "install a light — any kind — our app turns it on when we want" (💡 Lights page).
+console.log('\n💡 Lights: turn warehouse lights on / off from the app');
+{
+  const realFetch = globalThis.fetch, calls = [];
+  globalThis.fetch = async (u, o) => { u = String(u);
+    if (u.includes('openapi.api.govee.com') || u.includes('api.lifx.com') || u.includes('plug.example.com')) {
+      calls.push({ u, method: (o && o.method) || 'GET', body: o && o.body, h: (o && o.headers) || {} });
+      if (u.endsWith('/user/devices')) return new Response(JSON.stringify({ code: 200, data: [{ sku: 'H6008', device: 'AA:BB', deviceName: 'Bulb C1' }] }));
+      if (u.endsWith('/lights/all')) return new Response(JSON.stringify([{ id: 'd073', label: 'Barn strip', power: 'off', product: { name: 'LIFX Z' } }]));
+      if (u.includes('/device/control')) return new Response(JSON.stringify({ code: 200, msg: 'success' }));
+      if (u.includes('api.lifx.com') && o && o.method === 'PUT') return new Response(JSON.stringify({ results: [{ id: 'd073', status: 'ok' }] }), { status: 207 });
+      if (u.includes('plug.example.com/broken')) return new Response('nope', { status: 500 });
+      return new Response('ok');
+    }
+    return realFetch(u, o); };
+  env.GOVEE_API_KEY = 'gk'; env.LIFX_TOKEN = 'lt';
+  const pk = (await (await call('/auth/login', { method: 'POST', body: '{"username":"picker","password":"password1"}' })).json()).token;
+  const PH = { 'X-Cred-Token': pk, 'Content-Type': 'application/json' };
+  const asWorker = async (p, b) => (await call(p, b ? { method: 'POST', headers: PH, body: JSON.stringify(b) } : { headers: PH })).json();
+  const disc = await get('/lights/discover');
+  check('manager: "Find my lights" lists the Govee and LIFX lights on the account', disc.ok && disc.found.some(x => x.provider === 'govee' && x.device === 'AA:BB') && disc.found.some(x => x.provider === 'lifx' && x.device === 'd073'), disc);
+  const a1 = await post('/lights/save', { provider: 'govee', name: 'Aisle C1', area: 'C1', device: 'AA:BB', sku: 'H6008' });
+  const a2 = await post('/lights/save', { provider: 'lifx', name: 'Barn strip', area: 'BARN', device: 'd073' });
+  const a3 = await post('/lights/save', { provider: 'webhook', name: 'Packing lamp', onUrl: 'https://plug.example.com/on?k=SECRET', offUrl: 'https://plug.example.com/off?k=SECRET', method: 'POST', onBody: 'turn=on', offBody: 'turn=off' });
+  const bad = await post('/lights/save', { provider: 'webhook', name: 'x', onUrl: 'https://plug.example.com/on' });
+  const wAdd = await asWorker('/lights/save', { provider: 'webhook', name: 'mine', onUrl: 'https://a', offUrl: 'https://b' });
+  check('manager adds Govee / LIFX / any plug (ON + OFF link); a link missing → refused; a worker can\'t add lights', a1.ok && a2.ok && a3.ok && bad.ok === false && wAdd.ok === false, { a1, a2, a3, bad, wAdd });
+  calls.length = 0;
+  const on1 = await asWorker('/lights/set', { id: a1.id, on: true });
+  const gv = calls.find(c => c.u.includes('/device/control')), gb = gv && JSON.parse(gv.body);
+  check('a worker taps ON → Govee is told powerSwitch 1 for that bulb (with the Govee key)', on1.ok && gv && gv.h['Govee-API-Key'] === 'gk' && gb.payload.device === 'AA:BB' && gb.payload.sku === 'H6008' && gb.payload.capability.value === 1, { on1, gb });
+  calls.length = 0;
+  const off2 = await asWorker('/lights/set', { id: a2.id, on: false });
+  const lx = calls.find(c => c.u.includes('/lights/id:d073/state'));
+  check('OFF on a LIFX light → PUT power "off" (with the LIFX token)', off2.ok && lx && lx.method === 'PUT' && JSON.parse(lx.body).power === 'off' && lx.h.Authorization === 'Bearer lt', { off2, lx });
+  calls.length = 0;
+  const all = await asWorker('/lights/set', { all: true, on: true });
+  check('All ON → every light (Govee, LIFX and the plug link with its ON body)', all.ok && all.results.length === 3 && calls.some(c => c.u === 'https://plug.example.com/on?k=SECRET' && c.body === 'turn=on'), all);
+  await post('/lights/save', { id: a3.id, provider: 'webhook', name: 'Packing lamp', onUrl: 'https://plug.example.com/broken', offUrl: 'https://plug.example.com/off?k=SECRET' });
+  const brk = await asWorker('/lights/set', { id: a3.id, on: true });
+  const listW = await asWorker('/lights/list'), listM = await get('/lights/list');
+  const lg = await asWorker('/lights/log');
+  check('a light that does not answer → says why (not saved as ON); the list shows ON / OFF + who / when; plug links (they can hold a key) only for managers',
+    brk.ok === false && /HTTP 500/.test(brk.results[0].detail) && listW.lights.find(x => x.id === a1.id).on === true && listW.lights.find(x => x.id === a2.id).on === true
+      && !('onUrl' in listW.lights[0]) && listM.lights.some(x => x.onUrl) && !JSON.stringify(listW).includes('SECRET'), { listW: listW.lights });
+  check('every switch is kept: who / when / which light / on-off / worked or not', lg.ok && lg.log.length >= 6 && lg.log.some(x => x.name === 'Aisle C1' && x.action === 'on' && x.by_user && x.ok === 1) && lg.log.some(x => x.ok === 0 && /HTTP 500/.test(x.detail)), lg.log.slice(0, 4));
+  const no = await call('/lights/list');
+  const rm = await post('/lights/remove', { id: a2.id });
+  check('no sign-in → refused; a manager can remove a light', no.status === 401 && rm.ok && !(await get('/lights/list')).lights.some(x => x.id === a2.id), no.status);
+  const { readFileSync } = await import('node:fs');
+  const ix = readFileSync(fileURLToPath(new URL('../index.html', import.meta.url)), 'utf8'), lh = readFileSync(fileURLToPath(new URL('../lights.html', import.meta.url)), 'utf8');
+  check('💡 Lights box on the front page; the page has ON / OFF per light and All ON / All OFF', /onclick="window\.location\.href='lights\.html'"/.test(ix) && /ltSet\(null, true\)/.test(lh) && /ltSet\(null, false\)/.test(lh) && /\/lights\/set/.test(lh), null);
+  globalThis.fetch = realFetch; delete env.GOVEE_API_KEY; delete env.LIFX_TOKEN;
+}
+
 console.log('\n' + (failed ? '❌ ' + failed + ' check(s) FAILED' : '✅ all ' + passed + ' checks passed') + '\n');
 process.exit(failed ? 1 : 0);
