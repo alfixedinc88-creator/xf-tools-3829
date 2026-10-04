@@ -5595,6 +5595,63 @@ async function inventoryCheckSpots(request, env) {
   return J({ ok: true, spots });
 }
 
+// ── 🔍 Audit → 📋 Full recount (about once a year), column by column ─────
+// The counts themselves are normal [AUDIT] entries (same as Checking / Audit,
+// so History keeps Before → After). These tables only keep which columns are
+// done in this recount round, by whom and when, so the team can plan aisle
+// by aisle and nothing is skipped.
+async function recountTables(env) {
+  await env.DB.prepare(`CREATE TABLE IF NOT EXISTS recount_columns (id INTEGER PRIMARY KEY AUTOINCREMENT, ts TEXT, round_start TEXT,
+    location TEXT, by_user TEXT, items INTEGER, changed INTEGER, detail TEXT)`).run();
+  await env.DB.prepare('CREATE TABLE IF NOT EXISTS recount_meta (key TEXT PRIMARY KEY, value TEXT)').run();
+}
+async function recountRoundStart(env) {
+  const r = await d1First(env, "SELECT value FROM recount_meta WHERE key = 'round_start'");
+  if (r && r.value) return r.value;
+  // No round started yet → this calendar year, from midnight New York time (Jan 1, 00:00 EST = 05:00 UTC).
+  const y = new Date().toLocaleDateString('en-CA', { timeZone: 'America/New_York' }).slice(0, 4);
+  return y + '-01-01T05:00:00.000Z';
+}
+// GET /inventory/recount/status?aisle=C1=11 — this round: how many spots are
+// done overall, and every spot in that aisle (on record / registered) with
+// done (who / when) or not yet.
+async function recountStatus(url, env) {
+  await recountTables(env);
+  const J = o => cors(new Response(JSON.stringify(o), { headers: { 'Content-Type': 'application/json' } }));
+  const roundStart = await recountRoundStart(env);
+  const aisle = String(url.searchParams.get('aisle') || '').trim().toUpperCase();
+  const done = await d1All(env, 'SELECT location, MAX(ts) AS ts, by_user FROM recount_columns WHERE ts >= ? GROUP BY UPPER(location)', [roundStart]);
+  const doneMap = {}; for (const d of done) doneMap[String(d.location).toUpperCase()] = { ts: d.ts, by: d.by_user };
+  const allSpots = await d1All(env, `SELECT COUNT(DISTINCT UPPER(TRIM(location))) AS n FROM master_list WHERE cases > 0 AND TRIM(COALESCE(location,'')) != ''`);
+  let spots = [];
+  if (aisle) {
+    const a = await d1All(env, `SELECT DISTINCT UPPER(TRIM(location)) AS l FROM master_list WHERE (UPPER(TRIM(location)) = ? OR UPPER(TRIM(location)) LIKE ?) AND TRIM(COALESCE(location,'')) != ''`, [aisle, aisle + '-%']);
+    const b = await d1All(env, `SELECT DISTINCT UPPER(TRIM(location)) AS l FROM locations WHERE (UPPER(TRIM(location)) = ? OR UPPER(TRIM(location)) LIKE ?)`, [aisle, aisle + '-%']).catch(() => []);
+    spots = [...new Set([...a, ...(b || [])].map(x => x.l))].map(l => ({ location: l, done: doneMap[l] || null }));
+  }
+  return J({ ok: true, roundStart, doneCount: done.length, spotsWithStock: (allSpots[0] && allSpots[0].n) || 0, aisle, spots });
+}
+// POST /inventory/recount/column-done { location, items, changed, detail } — a column is finished.
+async function recountColumnDone(request, env, session) {
+  await recountTables(env);
+  const b = await request.json().catch(() => ({}));
+  const loc = String(b.location || '').trim().toUpperCase();
+  if (!loc) return cors(new Response(JSON.stringify({ ok: false, error: 'location needed' }), { status: 400, headers: { 'Content-Type': 'application/json' } }));
+  const ts = new Date().toISOString(), by = (session && (session.displayName || session.username)) || '?';
+  await env.DB.prepare('INSERT INTO recount_columns (ts, round_start, location, by_user, items, changed, detail) VALUES (?,?,?,?,?,?,?)')
+    .bind(ts, await recountRoundStart(env), loc, by, parseInt(b.items, 10) || 0, parseInt(b.changed, 10) || 0, JSON.stringify(b.detail || []).slice(0, 8000)).run();
+  if (session && session.userId) await logUserActivity(env, session.userId, 'recount_column', { location: loc, items: b.items, changed: b.changed });
+  return cors(new Response(JSON.stringify({ ok: true, ts, by }), { headers: { 'Content-Type': 'application/json' } }));
+}
+// POST /inventory/recount/new-round (mgmt) — start a new recount (every column to do again).
+async function recountNewRound(env, session) {
+  await recountTables(env);
+  const ts = new Date().toISOString();
+  await env.DB.prepare("INSERT INTO recount_meta (key, value) VALUES ('round_start', ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value").bind(ts).run();
+  if (session && session.userId) await logUserActivity(env, session.userId, 'recount_new_round', { at: ts });
+  return cors(new Response(JSON.stringify({ ok: true, roundStart: ts }), { headers: { 'Content-Type': 'application/json' } }));
+}
+
 // GET /inventory/pack-sizes — ✅ Checking quick buttons: the 9 "pieces per
 // case" we have most often (by number of shelf rows), smallest first.
 async function inventoryPackSizes(env) {
@@ -7202,6 +7259,12 @@ const _app = {
       if (path === '/inventory/spot-check' && method === 'GET') return await inventorySpotCheck(url, env);
       if (path === '/inventory/check-spots' && method === 'POST') return await inventoryCheckSpots(request, env);
       if (path === '/inventory/pack-sizes' && method === 'GET') return await inventoryPackSizes(env);
+      if (path === '/inventory/recount/status' && method === 'GET') return await recountStatus(url, env);
+      if (path === '/inventory/recount/column-done' && method === 'POST') return await recountColumnDone(request, env, session);
+      if (path === '/inventory/recount/new-round' && method === 'POST') {
+        if (session.pin_level !== 'mgmt') return cors(new Response(JSON.stringify({ ok: false, error: 'Management access required' }), { status: 403, headers: { 'Content-Type': 'application/json' } }));
+        return await recountNewRound(env, session);
+      }
       if (path === '/inventory/pack-change' && method === 'POST') return await inventoryPackChange(request, env, session);
       if (path === '/inventory/prefixes'           && method === 'GET')  return await inventoryGetPrefixes(env);
       // mgmt-only routes
