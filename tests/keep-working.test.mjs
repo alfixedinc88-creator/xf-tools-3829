@@ -1603,6 +1603,18 @@ console.log('\nTest mode bar at the bottom · 🏷 Barcode designer');
   check('🏷 Barcode designer at the bottom of the Audit tab; the label is 2" × 1" (one per page, no margins), Code 128, part # printed under the bars; 3 copies → 3 labels',
     /id="rc-out"><\/div>\s*<!-- 🏷 Barcode designer[\s\S]*?onclick="bdOpen\(\)"[^>]*>🏷 Barcode designer<\/button>/.test(ih) && /@page\{size:2in 1in;margin:0\}/.test(lab)
       && (lab.match(/<div class="l"><svg class="b"><\/svg><div class="t">8-8-8=8<\/div><\/div>/g) || []).length === 3 && /format: 'CODE128'/.test(ih), lab.slice(0, 200));
+  // Owner: "also including info of who and when print the label".
+  const labF = new Function('xfrEsc', src + '; return bdLabelHtml;')(v => String(v))('8-8-8=8', 1, 'Plug', 'Printed by Ana · Oct 4, 2026');
+  const bl = await post('/inventory/barcode-label', { sku: '8-8-8=8', name: 'Plug', copies: 3 });
+  const blRow = sq.prepare('SELECT sku, copies, by_user, ts FROM barcode_label_log ORDER BY id DESC').get();
+  check('who / when on the label ("Printed by Ana · Oct 4, 2026", tiny at the bottom) and every print kept on record (who / when / part # / how many)',
+    /<div class="n">Plug<\/div><div class="f">Printed by Ana · Oct 4, 2026<\/div>/.test(labF) && bl.ok && blRow.sku === '8-8-8=8' && blRow.copies === 3 && blRow.by_user === 'TS' && !!blRow.ts
+      && /wFetch\(W \+ '\/inventory\/barcode-label'/.test(ih) && /var foot = 'Printed' \+ \(who \? ' by ' \+ who : ''\)/.test(ih), { blRow });
+  // Owner: "can it also match up the product name too?"
+  const labN = new Function('xfrEsc', src + '; return bdLabelHtml;')(v => String(v).replace(/</g, '&lt;'))('30-3-4=10X', 1, 'Tee 3/4" (10 pcs)');
+  check('…the part # is matched to its product name (SKU Mgr) as you type ("⚠ not in SKU Mgr" if not), and the name prints small under the part #',
+    /<div class="t">30-3-4=10X<\/div><div class="n">Tee 3\/4(?:"|&quot;) \(10 pcs\)<\/div>/.test(labN) && /wFetch\(W \+ '\/inventory\/lookup\?code=' \+ encodeURIComponent\(sku\)\)/.test(ih)
+      && /is not in SKU Mgr — check the part #/.test(ih) && /var nm = BD\.nameFor === sku \? BD\.name : '';/.test(ih) && /bdLabelHtml\(sku, BD\.copies, nm, foot\)/.test(ih), labN.slice(-200));
 }
 
 console.log('\n' + (failed ? '❌ ' + failed + ' check(s) FAILED' : '✅ all ' + passed + ' checks passed') + '\n');

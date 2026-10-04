@@ -5558,6 +5558,21 @@ async function inventorySpotCheck(url, env) {
   return J({ ok: true, part, location: loc, recorded: (here && parseFloat(here.c)) || 0, history, others: others.slice(0, 6) });
 }
 
+// POST /inventory/barcode-label { sku, name, copies } — 🏷 Barcode designer:
+// every label print is kept (who / when / part # / how many) in
+// barcode_label_log and the user activity log.
+async function inventoryBarcodeLabelLog(request, env, session) {
+  const J = (o, st) => cors(new Response(JSON.stringify(o), { status: st || 200, headers: { 'Content-Type': 'application/json' } }));
+  const b = await request.json().catch(() => ({}));
+  const sku = String(b.sku || '').trim().toUpperCase().slice(0, 60), copies = Math.max(1, Math.min(500, parseInt(b.copies, 10) || 1));
+  if (!sku) return J({ ok: false, error: 'sku needed' }, 400);
+  await env.DB.prepare('CREATE TABLE IF NOT EXISTS barcode_label_log (id INTEGER PRIMARY KEY AUTOINCREMENT, ts TEXT, sku TEXT, name TEXT, copies INTEGER, by_user TEXT)').run();
+  const ts = new Date().toISOString(), by = (session && (session.displayName || session.username)) || '?';
+  const ins = await env.DB.prepare('INSERT INTO barcode_label_log (ts, sku, name, copies, by_user) VALUES (?,?,?,?,?)').bind(ts, sku, String(b.name || '').slice(0, 120), copies, by).run();
+  if (session && session.userId) await logUserActivity(env, session.userId, 'barcode_label', { sku, copies });
+  return J({ ok: true, id: ins.meta.last_row_id, ts, by });
+}
+
 // POST /inventory/check-spots { pairs: [{ part, location }] } — Inventory →
 // ✅ Checking (read-only, any sign-in): for each part # at each spot, who
 // put it there and when (the last Stock In / Transfer in / Move that added
@@ -7300,6 +7315,7 @@ const _app = {
       if (path === '/inventory/containers/where' && method === 'POST') return await palletWhere(request, env);
       if (path === '/inventory/spot-check' && method === 'GET') return await inventorySpotCheck(url, env);
       if (path === '/inventory/check-spots' && method === 'POST') return await inventoryCheckSpots(request, env);
+      if (path === '/inventory/barcode-label' && method === 'POST') return await inventoryBarcodeLabelLog(request, env, session);
       if (path === '/inventory/pack-sizes' && method === 'GET') return await inventoryPackSizes(env);
       if (path === '/inventory/cancel-own' && method === 'POST') return await inventoryCancelOwn(request, env, session);
       if (path === '/inventory/recount/status' && method === 'GET') return await recountStatus(url, env);
