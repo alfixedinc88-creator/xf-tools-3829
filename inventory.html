@@ -636,7 +636,9 @@ window.invCredLogin = async function() {
          The hidden fields hold the values, so saving works exactly as before. -->
     <input id="inv-qa-cases" type="hidden" value=""><input id="inv-qa-upc" type="hidden" value="">
     <div class="ifield" style="margin-top:10px"><label>QTY Case <span id="inv-qa-cases-show" style="font-size:15px;font-weight:800;color:var(--text);margin-left:6px"></span></label><div id="inv-qa-cases-pad"></div></div>
-    <div class="ifield" style="margin-top:10px"><label>QTY per Case <span id="inv-qa-upc-show" style="font-size:15px;font-weight:800;color:var(--text);margin-left:6px"></span></label><div id="inv-qa-upc-pad"></div></div>
+    <div class="ifield" style="margin-top:10px"><label>QTY per Case <span id="inv-qa-upc-show" style="font-size:15px;font-weight:800;color:var(--text);margin-left:6px"></span> <span style="font-size:11px;color:var(--text3);font-weight:600">— tap = saved</span></label><div id="inv-qa-upc-pad"></div></div>
+    <!-- My Stock In today (this phone): tap ✕ Cancel to undo a mistake (see /inventory/cancel-own). -->
+    <div id="inv-qa-mine" style="margin-top:12px"></div>
     <button class="isubmit sin" id="inv-qa-submit-btn" onclick="invQuickAddSubmit()">Submit Stock In</button>
   </div>
   <!-- Quick Add / Stock In History — who put how many cases into where,
@@ -1816,7 +1818,7 @@ window.invCredLogin = async function() {
     g("inv-tab-skumgr").className      = "itab"   + (tab === "skumgr"   ? " iactive" : "");
     g("inv-tab-history").className     = "itab"   + (tab === "history"  ? " iactive" : "");
     if (scanPanelActive) {
-      if (tab === "scan") { ckLoadSizes(); setTimeout(invQaPadsRender, 0); }
+      if (tab === "scan") { ckLoadSizes(); setTimeout(function() { invQaPadsRender(); invQaMineRender(); }, 0); }
       invSetMode(tab === "scan" ? "in" : "out");
       if (tab !== "scan") invSetStockOutDest(tab === "stockoutco" ? "company" : "shelving");
       invFetchStockoutCount();
@@ -2701,7 +2703,8 @@ window.invCredLogin = async function() {
   // A scanned UPC that isn't linked to a part # yet: ask for the part #
   // once, link it (so every later scan finds it), then look up that part #.
   // Never stocks anything in under the barcode itself.
-  window.invAskUpcPart = function(upc) {
+  // then(part) → after linking, give the part # back (Stock In); no then → Stock Out lookup as before.
+  window.invAskUpcPart = function(upc, then) {
     var part = prompt('UPC ' + upc + ' is not linked to a part # yet.\n\nType its part # (e.g. 31-1-2=5XX) — next time this UPC scans straight to it:', '');
     if (part == null) return;
     part = part.trim().toUpperCase();
@@ -2710,6 +2713,7 @@ window.invCredLogin = async function() {
       .then(function(r) { return r.json(); }).then(function(d) {
         if (!d.ok) { invFlash(d.error || 'Could not link the UPC', 'error'); return; }
         invFlash('✓ UPC ' + upc + ' → ' + part, 'success');
+        if (then) { then(part); return; }
         var inp = g('inv-search-inp'); if (inp) inp.value = part;
         invLookup(part);
       }).catch(function() { invFlash('Could not link the UPC', 'error'); });
@@ -3767,9 +3771,13 @@ window.invCredLogin = async function() {
     if (n === 'more') { xfrKeypad('QTY Case — how many cases?', '', function(v) { invQaCases(v); }); return; }
     var c = g('inv-qa-cases'); if (c) c.value = n; invQaPadsRender();
   };
+  // Tapping the pieces is the last step: it saves (when part #, spot and cases are in).
   window.invQaUpc = function(n) {
     if (n === 'more') { xfrKeypad('QTY per Case — how many pieces in each case?', '', function(v) { invQaUpc(v); }); return; }
     var u = g('inv-qa-upc'); if (u) u.value = n; invQaPadsRender();
+    var miss = !(g('inv-qa-partnum') || {}).value ? 'Scan the box first' : !(g('inv-qa-shelf') || {}).value ? 'Scan the spot where you put it' : !(parseFloat((g('inv-qa-cases') || {}).value) > 0) ? 'Tap QTY Case' : '';
+    if (miss) { invFlash(miss + ' — then tap the pieces to save', 'warn'); return; }
+    if (window.invQuickAddSubmit) invQuickAddSubmit();
   };
 
   window.invQuickAddPrefillUpc = function() {
@@ -3789,6 +3797,9 @@ window.invCredLogin = async function() {
         // don't show a name/photo that no longer matches what's typed in.
         var stillSame = (g("inv-qa-partnum") && g("inv-qa-partnum").value.trim().toUpperCase()) === partNum;
         if (!stillSame) return;
+        // A box UPC was scanned → put its part # in the box (Stock In saves part #s, not UPCs).
+        if (d && d.partNum && String(d.partNum).toUpperCase() !== partNum && /^\d{8,14}$/.test(partNum)) { g("inv-qa-partnum").value = String(d.partNum).toUpperCase(); partNum = String(d.partNum).toUpperCase(); invFlash('Barcode ' + d.code + ' → part # ' + partNum, 'success'); }
+        if (d && !d.partNum && d.upcNotLinked) invAskUpcPart(partNum, function(part) { var pi = g("inv-qa-partnum"); if (pi) pi.value = part; invQuickAddPrefillUpc(); });
         var nameText = g("inv-qa-name-text");
         if (d && d.name) {
           if (nameText) nameText.textContent = d.name;
@@ -3966,7 +3977,8 @@ window.invCredLogin = async function() {
       }).then(function(r) { return r.json(); })
         .then(function(d) {
           if (d.ok) {
-            invFlash("✓ Logged — pending approval", "success");
+            invQaMineAdd({ id: d.d1Id || null, part: partNum, loc: location, cases: cases, pcs: upc || 0, at: new Date().toISOString() });
+            invFlash(d.queued ? INV_OFFLINE_MSG : (d.autoApproved ? "✓ Saved: " : "✓ Saved — pending approval: ") + partNum + " × " + cases + " → " + location, d.queued ? "warn" : "success");
             g("inv-qa-partnum").value = ""; g("inv-qa-shelf").value = "";
             g("inv-qa-cases").value = ""; g("inv-qa-upc").value = ""; invQaRec = 0; invQaPadsRender();
             var nameDisplay = g("inv-qa-name-display"); if (nameDisplay) nameDisplay.style.display = "none";
@@ -3991,8 +4003,45 @@ window.invCredLogin = async function() {
 
     wFetch(W + "/inventory/lookup?code=" + encodeURIComponent(partNum))
       .then(function(r) { return r.json(); })
-      .then(function(d) { doQuickAddSubmit(d && d.name, d && d.sku); })
+      .then(function(d) {
+        // Scanned a box UPC → save its part # (a UPC is never saved as a part #).
+        if (d && d.partNum && String(d.partNum).toUpperCase() !== partNum) { partNum = String(d.partNum).toUpperCase(); var pi = g("inv-qa-partnum"); if (pi) pi.value = partNum; }
+        else if (d && !d.partNum && (d.upcNotLinked || /^\d{11,14}$/.test(partNum))) { invFlash('Barcode ' + partNum + ' is not linked to a part # yet — ⌨ type the part #', 'error'); btn.disabled = false; btn.textContent = "Submit Stock In"; return; }
+        doQuickAddSubmit(d && d.name, d && d.sku);
+      })
       .catch(function() { doQuickAddSubmit("", ""); });
+  };
+
+  // ── My Stock In today (this phone): what was saved, with ✕ Cancel for a mistake ──
+  function invQaMineKey() { return 'xf_qa_mine_' + ((INV_CRED_USER && (INV_CRED_USER.username || INV_CRED_USER.displayName)) || ''); }
+  function invQaMineGet() { try { return JSON.parse(localStorage.getItem(invQaMineKey()) || '[]') || []; } catch (e) { return []; } }
+  function invQaMineSet(a) { try { localStorage.setItem(invQaMineKey(), JSON.stringify(a.slice(0, 30))); } catch (e) {} }
+  window.invQaMineAdd = function(x) { var a = invQaMineGet(); a.unshift(x); invQaMineSet(a); invQaMineRender(); };
+  window.invQaMineRender = function() {
+    var box = g('inv-qa-mine'); if (!box) return;
+    var today = new Date().toLocaleDateString('en-CA', { timeZone: 'America/New_York' });
+    var a = invQaMineGet().filter(function(x) { return new Date(x.at).toLocaleDateString('en-CA', { timeZone: 'America/New_York' }) === today; }).slice(0, 10);
+    if (!a.length) { box.innerHTML = ''; return; }
+    box.innerHTML = '<div style="font-size:12px;font-weight:800;color:var(--text2);margin-bottom:4px">My Stock In today — made a mistake? tap ✕ Cancel</div>'
+      + a.map(function(x) {
+        var t = new Date(x.at).toLocaleTimeString('en-US', { timeZone: 'America/New_York', hour: 'numeric', minute: '2-digit' });
+        var st = x.cancelled ? '<span style="color:var(--red);font-weight:700">✕ cancelled</span>'
+          : !x.id ? '<span style="color:var(--orange)">📶 on the phone — sends when WiFi is back</span>'
+          : '<button type="button" onclick="invQaMineCancel(' + x.id + ')" style="padding:6px 10px;border-radius:8px;border:1.5px solid var(--red);background:var(--bg);color:var(--red);font-weight:800;cursor:pointer">✕ Cancel</button>';
+        return '<div style="display:flex;justify-content:space-between;align-items:center;gap:8px;padding:6px 0;border-top:1px solid var(--border);font-size:12.5px' + (x.cancelled ? ';opacity:.6;text-decoration:line-through' : '') + '">'
+          + '<div><b style="font-family:var(--mono)">' + xfrEsc(x.part) + '</b> × ' + xfrN(x.cases) + ' case(s)' + (x.pcs ? ' × ' + xfrN(x.pcs) + ' pcs' : '') + ' → <span style="font-family:var(--mono)">' + xfrEsc(x.loc) + '</span><div style="font-size:11px;color:var(--text3)">' + t + '</div></div>'
+          + '<div style="flex-shrink:0;text-decoration:none">' + st + '</div></div>';
+      }).join('');
+  };
+  window.invQaMineCancel = function(id) {
+    var a = invQaMineGet(), x = a.filter(function(e) { return e.id === id; })[0]; if (!x) return;
+    if (!confirm('Cancel this Stock In?\n\n' + x.part + ' × ' + x.cases + ' case(s) → ' + x.loc)) return;
+    wFetch(W + '/inventory/cancel-own', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ id: id }) })
+      .then(function(r) { return r.json(); }).then(function(d) {
+        if (!d || !d.ok) { invFlash('Not cancelled: ' + ((d && d.error) || 'error'), 'error'); return; }
+        x.cancelled = true; invQaMineSet(a); invQaMineRender(); invFetchPendingCount();
+        invFlash('✕ Cancelled: ' + x.part + ' × ' + x.cases + ' → ' + x.loc, 'success');
+      }).catch(function() { invFlash('Not cancelled — check WiFi', 'error'); });
   };
 
   window.invCloseResult = function() {

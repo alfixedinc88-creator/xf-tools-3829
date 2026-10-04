@@ -5652,6 +5652,41 @@ async function recountNewRound(env, session) {
   return cors(new Response(JSON.stringify({ ok: true, roundStart: ts }), { headers: { 'Content-Type': 'application/json' } }));
 }
 
+// POST /inventory/cancel-own { id } — Stock In → "My Stock In today" → ✕ Cancel:
+// a worker undoes THEIR OWN Stock In made by mistake. Waiting for approval →
+// it is cancelled (Rejected; nothing on the shelf changed). Already approved →
+// only within 30 minutes, and through the same Cancel managers use (reverses
+// it, History keeps Part Total Before → After); older → ask a manager.
+async function inventoryCancelOwn(request, env, session) {
+  const J = (o, st) => cors(new Response(JSON.stringify(o), { status: st || 200, headers: { 'Content-Type': 'application/json' } }));
+  const b = await request.json().catch(() => ({}));
+  const id = parseInt(b.id, 10);
+  if (!id) return J({ ok: false, error: 'id required' }, 400);
+  await env.DB.prepare('ALTER TABLE inventory_log ADD COLUMN cancelled_at TEXT').run().catch(() => {});
+  await env.DB.prepare('ALTER TABLE inventory_log ADD COLUMN cancelled_by TEXT').run().catch(() => {});
+  const e = await d1First(env, 'SELECT id, type, status, initials, timestamp, notes, cancelled_at, cancelled_by FROM inventory_log WHERE id = ?', [id]);
+  if (!e) return J({ ok: false, error: 'Entry not found' }, 404);
+  const me = String((session && (session.displayName || session.username)) || '').trim().toUpperCase();
+  if (!me || String(e.initials || '').trim().toUpperCase() !== me) return J({ ok: false, error: 'Only the person who saved it can cancel it here — ask a manager' }, 403);
+  if (String(e.type || '').toUpperCase() !== 'IN') return J({ ok: false, error: 'Only a Stock In can be cancelled here' }, 400);
+  if (e.cancelled_at) return J({ ok: false, error: 'Already cancelled by ' + (e.cancelled_by || 'someone') }, 409);
+  const by = (session.displayName || session.username) + ' (own mistake)';
+  if (e.status === 'Pending') {
+    const ts = new Date().toISOString();
+    await env.DB.prepare(`UPDATE inventory_log SET status = 'Rejected', verified_by = ?, verified_at = ?, cancelled_at = ?, cancelled_by = ?,
+      notes = COALESCE(notes, '') || ' | [CANCELLED — own mistake, before approval]' WHERE id = ? AND status = 'Pending'`).bind(by, ts, ts, by, id).run();
+    if (session.userId) await logUserActivity(env, session.userId, 'stockin_cancel_own', { id, status: 'Pending' });
+    return J({ ok: true, cancelled: 'pending' });
+  }
+  if (e.status !== 'Verified') return J({ ok: false, error: 'This entry is ' + e.status + ' — nothing to cancel' }, 400);
+  const age = Date.now() - Date.parse(e.timestamp || '');
+  if (!(age >= 0 && age <= 30 * 60000)) return J({ ok: false, error: 'Approved more than 30 minutes ago — ask a manager to cancel it in History' }, 403);
+  const res = await inventoryCancelEntry(new Request('https://cancel-own/', { method: 'POST', body: JSON.stringify({ id, cancelledBy: by }) }), env);
+  const d = await res.json().catch(() => ({}));
+  if (d && d.ok && session.userId) await logUserActivity(env, session.userId, 'stockin_cancel_own', { id, status: 'Verified' });
+  return J(Object.assign({ cancelled: d && d.ok ? 'reversed' : undefined }, d), res.status);
+}
+
 // GET /inventory/pack-sizes — ✅ Checking quick buttons: the 9 "pieces per
 // case" we have most often (by number of shelf rows), smallest first.
 async function inventoryPackSizes(env) {
@@ -7259,6 +7294,7 @@ const _app = {
       if (path === '/inventory/spot-check' && method === 'GET') return await inventorySpotCheck(url, env);
       if (path === '/inventory/check-spots' && method === 'POST') return await inventoryCheckSpots(request, env);
       if (path === '/inventory/pack-sizes' && method === 'GET') return await inventoryPackSizes(env);
+      if (path === '/inventory/cancel-own' && method === 'POST') return await inventoryCancelOwn(request, env, session);
       if (path === '/inventory/recount/status' && method === 'GET') return await recountStatus(url, env);
       if (path === '/inventory/recount/column-done' && method === 'POST') return await recountColumnDone(request, env, session);
       if (path === '/inventory/recount/new-round' && method === 'POST') {
