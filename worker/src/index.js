@@ -24627,16 +24627,33 @@ async function autolabelBuy(env, order, allocationId, quote) {
   // service_type" (real test on an Amazon Shipping rate). On Veeqo rates the
   // service code lives in `name` (the readable one is `title`), so that's
   // what service_type gets when the rate has no explicit service_type.
+  // Real test buy (order 114-8029574-6577065, Amazon Shipping USPS Ground
+  // Advantage $8.17): sending the rate's service_id ("USPS_PTP_GAH") as
+  // service_type → HTTP 400 "Rate not found for shipmentId: prb…, rateId:
+  // USPS_PTP_GAH". Veeqo looks the rate up by its id, which is the rate's
+  // `name` ("amazon_shipping_v2-<uuid>") — so `name` goes first now.
   if (shipment.service_type == null) {
-    const code = q.service_code || q.service_id || q.name;
+    const code = q.service_code || q.name || q.service_id;
     if (code != null && code !== '') shipment.service_type = code;
   }
   const carrierSlug = typeof q.carrier === 'string' ? q.carrier : ((q.carrier && q.carrier.slug) || q.carrier_slug || quote.source);
-  const body = { carrier: carrierSlug, shipment };
-  const resp = await veeqoFetch(env, '/shipping/shipments', { method: 'POST', body: JSON.stringify(body) });
-  const tnObj = resp && (resp.tracking_number || (resp.shipment && resp.shipment.tracking_number));
-  const tracking = tnObj && typeof tnObj === 'object' ? (tnObj.tracking_number || '') : (tnObj || '');
-  return { tracking: String(tracking || '').toUpperCase(), response: resp, requestBody: body };
+  // If Veeqo still can't find the rate, try once more without service_id (a
+  // refused buy buys nothing, so trying again can never buy twice).
+  const tries = [{ carrier: carrierSlug, shipment }];
+  if (shipment.service_id != null) { const s2 = { ...shipment }; delete s2.service_id; tries.push({ carrier: carrierSlug, shipment: s2 }); }
+  const sent = [];
+  for (let i = 0; i < tries.length; i++) {
+    const body = tries[i];
+    try {
+      const resp = await veeqoFetch(env, '/shipping/shipments', { method: 'POST', body: JSON.stringify(body) });
+      const tnObj = resp && (resp.tracking_number || (resp.shipment && resp.shipment.tracking_number));
+      const tracking = tnObj && typeof tnObj === 'object' ? (tnObj.tracking_number || '') : (tnObj || '');
+      return { tracking: String(tracking || '').toUpperCase(), response: resp, requestBody: body, tries: sent.concat([{ body, ok: true }]) };
+    } catch (e) {
+      sent.push({ body, error: String(e.message || e).slice(0, 300) });
+      if (!(i + 1 < tries.length && /HTTP 400/.test(e.message || '') && /rate not found/i.test(e.message || ''))) { e.tries = sent; throw e; }
+    }
+  }
 }
 
 // ── Packing slips ────────────────────────────────────────────────────────
@@ -25112,7 +25129,7 @@ async function handleAutolabelRoute(path, method, url, request, env, session) {
         price: choice.pick.price, tracking: r.tracking, veeqoResponse: r.response });
     } catch (e) {
       await autolabelLog(env, { ...logBase, action: 'buy_failed', detail: e.message });
-      return veeqoResp({ ok: false, error: e.message, sentToVeeqo: { chosenRate: choice.pick.raw } });
+      return veeqoResp({ ok: false, error: e.message, sentToVeeqo: { requests: e.tries || [], chosenRate: choice.pick.raw } });
     }
   }
 
