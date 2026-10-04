@@ -1174,5 +1174,25 @@ console.log('\nPhone outbox never signs a worker out · passwords of 4 numbers')
   check('locked after 10 wrong tries → Reset password unlocks: the new password works right away', locked.status === 429 && li3.status === 200 && !!(await li3.json()).token, { locked: locked.status, after: li3.status });
 }
 
+// Owner: "Pack & Ship — one more tab: scan the shipping label tracking number, show everything in that package".
+console.log('\nPack & Ship → 🏷️ Label Check: scan a label → every item in the package');
+{
+  await get('/ship/print-log?date=' + nyToday);
+  const cols = sq.prepare('PRAGMA table_info(ship_manifest_log)').all().map(c => c.name);
+  const row = { date: '2026-09-20', tracking: '1Z999AA1LABELCHK01', order_num: 'LC-1', channel: 'Amazon', carrier: 'UPS', customer_name: 'Jane Doe', line_items: JSON.stringify([{ s: '61-1-1=5', q: 2, b: '61-1-1' }]) };
+  const k = Object.keys(row).filter(x => cols.includes(x));
+  sq.prepare('INSERT INTO ship_manifest_log (' + k.join(',') + ') VALUES (' + k.map(() => '?').join(',') + ')').run(...k.map(x => row[x]));
+  const c0 = sq.prepare('SELECT SUM(cases) t FROM master_list').get().t, l0 = sq.prepare('SELECT COUNT(*) n FROM inventory_log').get().n;
+  const pk = await get('/ship/package?tracking=1z999aa1labelchk01');
+  const it = (pk.items || [])[0] || {}, have = sq.prepare("SELECT location, cases FROM master_list WHERE part_num = '61-1-1=5' AND cases > 0").all();
+  check('label of any date → its order (LC-1 · Amazon · Jane Doe) and each item: part #, how many, pieces per box, shelf spots with cases (same as SKU Mgr)',
+    pk.ok && pk.found && pk.order.orderNum === 'LC-1' && pk.order.customerName === 'Jane Doe' && it.partNum === '61-1-1=5' && it.qty === 2 && it.pcsPerCase > 0
+      && have.length > 0 && have.every(h => it.spots.some(x => x.location === String(h.location).toUpperCase() && x.cases === h.cases)) && Array.isArray(pk.history), { pk, have });
+  const nf = await get('/ship/package?tracking=1Z000000NOTALABEL0');
+  check('…an unknown label → found: false (the screen says so)', nf.ok && nf.found === false, nf);
+  check('…read-only: no inventory number or History row changes', sq.prepare('SELECT SUM(cases) t FROM master_list').get().t === c0 && sq.prepare('SELECT COUNT(*) n FROM inventory_log').get().n === l0, null);
+  check('…needs a sign-in', (await call('/ship/package?tracking=1Z999AA1LABELCHK01')).status === 401, null);
+}
+
 console.log('\n' + (failed ? '❌ ' + failed + ' check(s) FAILED' : '✅ all ' + passed + ' checks passed') + '\n');
 process.exit(failed ? 1 : 0);

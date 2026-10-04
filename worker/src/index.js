@@ -17712,6 +17712,52 @@ async function shipOrderLookup(url, env) {
   return cors(new Response(JSON.stringify({ ok: true, q: raw, results: results.slice(0,50), debug: debugInfo }), { headers: { 'Content-Type': 'application/json' } }));
 }
 
+// ── GET /ship/package?tracking= ──────────────────────────────────────────
+// 🏷️ Label Check (owner): scan a shipping label → what is in that package,
+// every item with all we know about it (photo, part #, name, how many,
+// pieces per box, the shelf spots that have it and their cases, box UPCs),
+// plus the order (order #, channel, customer, ship date, carrier) and the
+// package's activity (picked / packed / printed, by whom, when). Any date —
+// a package can come back weeks later. Read-only: changes nothing.
+async function shipPackageCheck(url, env) {
+  await ensureShipD1Tables(env);
+  const J = (o, st) => cors(new Response(JSON.stringify(o), { status: st || 200, headers: { 'Content-Type': 'application/json' } }));
+  const raw = (url.searchParams.get('tracking') || '').trim();
+  const t = normalizeShipTracking(raw).replace(/[\s-]/g, '');
+  if (t.length < 8) return J({ ok: false, error: 'Scan the tracking barcode on the label' }, 400);
+  let rows = (await env.DB.prepare('SELECT * FROM ship_manifest_log WHERE UPPER(tracking) = ? ORDER BY date DESC LIMIT 5').bind(t).all()).results || [];
+  // A USPS barcode scanned without the "420 + ZIP" part stripped, or a label with extra digits: match the end.
+  if (!rows.length && t.length >= 20) rows = (await env.DB.prepare("SELECT * FROM ship_manifest_log WHERE UPPER(tracking) LIKE ? ORDER BY date DESC LIMIT 5").bind('%' + t.slice(-20)).all()).results || [];
+  let history = [];
+  try { const h = await (await shipTrackingHistory(new URL('https://x/ship/tracking-history?tracking=' + encodeURIComponent(t)), env)).json(); history = (h && h.events) || []; } catch (_) {}
+  if (!rows.length) return J({ ok: true, found: false, tracking: t, carrier: detectShipCarrier(t), history });
+  const r = rows[0];
+  let lines = []; try { lines = JSON.parse(r.line_items || '[]') || []; } catch (_) {}
+  const up = x => String(x || '').trim().toUpperCase();
+  const photos = await productPhotoMap(env, lines.map(li => li.b || li.s)).catch(() => ({}));
+  const items = [];
+  for (const li of lines) {
+    const sku = up(li.s), bin = up(li.b), qty = parseFloat(li.q) || 1;
+    const exact = sku ? await d1All(env, 'SELECT part_num, name, location, cases, units_per_case FROM master_list WHERE UPPER(TRIM(part_num)) IN (?, ?) ORDER BY cases DESC', [sku, sku.replace(/-+$/, '')]).catch(() => []) : [];
+    const fam = !exact.length && bin && _psIsFamilyCode(bin) ? await d1All(env, _PS_FAMILY_SQL('part_num, name, location, cases, units_per_case') + ' ORDER BY cases DESC', _psFamilyParams(bin)).catch(() => []) : [];
+    const src = exact.length ? exact : fam;
+    const partNum = exact.length ? up(exact[0].part_num) : '';
+    const name = (src.find(x => x.name) || {}).name || '';
+    const pcs = await _psPiecesPerCase(env, bin, sku).catch(() => 0);
+    const parent = partNum ? mlParent(partNum) : (bin || mlParent(sku));
+    const spots = src.filter(x => parseFloat(x.cases) > 0 && x.location).slice(0, 8)
+      .map(x => ({ location: up(x.location), cases: parseFloat(x.cases) || 0, partNum: up(x.part_num), pcs: parseFloat(x.units_per_case) || 0 }));
+    const upcs = partNum ? await d1All(env, 'SELECT sku, inside_upc, outside_upc FROM upc WHERE UPPER(TRIM(sku)) = ? LIMIT 5', [partNum]).catch(() => []) : [];
+    items.push({ sku: li.s || '', qty, bin: li.b || '', image: li.i || photos[parentOf(parent)] || '', partNum, parent, name, pcsPerCase: pcs,
+      exactMatch: !!exact.length, spots, totalCases: src.reduce((a, x) => a + (parseFloat(x.cases) || 0), 0),
+      upcs: upcs.map(u => ({ inside: u.inside_upc || '', outside: u.outside_upc || '' })) });
+  }
+  return J({ ok: true, found: true, tracking: r.tracking || t, otherDates: rows.slice(1).map(x => x.date),
+    order: { date: r.date || '', orderNum: r.order_num || '', channel: r.channel || '', carrier: r.carrier || detectShipCarrier(t), service: r.service || '',
+      customerName: r.customer_name || '', city: r.city || '', state: r.ship_to_state || '', zip: r.zip || '', status: r.reconcile_status || '', weightLb: r.weight_lb != null ? r.weight_lb : null },
+    items, totalQty: items.reduce((a, x) => a + x.qty, 0), history });
+}
+
 // Small display-only date/time formatter used inside a couple of the
 // timeline "detail" strings below (e.g. "originally picked Sep 16 3:14 PM")
 // — NOT used for the `at` field on each event, which the frontend formats
@@ -17878,6 +17924,7 @@ async function handleShipRoute(url, method, request, env, session, ctx) {
     if (path === '/ship/lookup'       && method === 'GET')  return await shipLookup(url, env);
     if (path === '/ship/order-lookup' && method === 'GET')  return await shipOrderLookup(url, env);
     if (path === '/ship/tracking-history' && method === 'GET') return await shipTrackingHistory(url, env);
+    if (path === '/ship/package' && method === 'GET') return await shipPackageCheck(url, env);
     if (path === '/ship/manifest'     && method === 'GET')  return await shipGetManifest(url, env);
     if (path === '/ship/status-upload'&& method === 'POST') return await shipStatusUpload(request, env);
     if (path === '/ship/print-log'    && method === 'POST') return await shipPrintLog(request, env);
