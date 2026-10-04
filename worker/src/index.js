@@ -5583,7 +5583,57 @@ async function inventoryCheckSpots(request, env) {
     if (s.last.length < 3) s.last.push(e);
     if (!s.put && (r.type === 'IN' || r.type === 'TRANSFER_IN' || r.type === 'MOVE') && Number(r.cases) > 0) s.put = e;
   }
+  // Last ✏️ pieces-per-case change at each spot (pack_change_log), if any.
+  const packs = await d1All(env, `SELECT ts, UPPER(TRIM(part_num)) AS part, UPPER(TRIM(location)) AS location, from_pcs, to_pcs, by_user FROM pack_change_log
+    WHERE UPPER(TRIM(part_num)) IN (${parts.map(() => '?').join(',')}) ORDER BY id DESC LIMIT 500`, parts).catch(() => []);
+  for (const r of (packs || [])) {
+    const k = r.part + '|' + r.location;
+    if (!want.has(k)) continue;
+    const s = spots[k] || (spots[k] = { put: null, last: [] });
+    if (!s.pack) s.pack = { timestamp: r.ts, from: r.from_pcs, to: r.to_pcs, by: r.by_user || '' };
+  }
   return J({ ok: true, spots });
+}
+
+// GET /inventory/pack-sizes — ✅ Checking quick buttons: the 9 "pieces per
+// case" we have most often (by number of shelf rows), smallest first.
+async function inventoryPackSizes(env) {
+  const rows = await d1All(env, `SELECT CAST(units_per_case AS REAL) AS u, COUNT(*) AS n FROM master_list
+    WHERE CAST(units_per_case AS REAL) > 0 GROUP BY CAST(units_per_case AS REAL) ORDER BY n DESC LIMIT 9`);
+  const sizes = rows.map(r => Number(r.u)).filter(u => u > 0).sort((a, b) => a - b);
+  return cors(new Response(JSON.stringify({ ok: true, sizes }), { headers: { 'Content-Type': 'application/json' } }));
+}
+
+// POST /inventory/pack-change { masterId, partNum, location, from, to } —
+// ✅ Checking ✏️ pieces per case: fixes the pieces in each case of ONE shelf
+// row (cases stay the same, so pieces = cases × new size). Refused if the row
+// is not that part # / spot or its size is no longer `from` (someone else
+// changed it). Every change is kept in pack_change_log (who / when / old →
+// new / cases) and the user activity log — never a silent change.
+async function inventoryPackChange(request, env, session) {
+  const J = (o, st) => cors(new Response(JSON.stringify(o), { status: st || 200, headers: { 'Content-Type': 'application/json' } }));
+  const b = await request.json().catch(() => ({}));
+  const id = parseInt(b.masterId, 10), to = Number(b.to), from = Number(b.from);
+  const part = String(b.partNum || '').trim().toUpperCase(), loc = String(b.location || '').trim().toUpperCase();
+  if (!id || !part || !loc) return J({ ok: false, error: 'masterId, partNum and location needed' }, 400);
+  if (!(to > 0) || to > 100000) return J({ ok: false, error: 'Pieces per case must be more than 0' }, 400);
+  const row = await d1First(env, 'SELECT id, part_num, location, cases, units_per_case, sheet_row FROM master_list WHERE id = ?', [id]);
+  if (!row || String(row.part_num || '').trim().toUpperCase() !== part || String(row.location || '').trim().toUpperCase() !== loc)
+    return J({ ok: false, error: 'That shelf row is not ' + part + ' at ' + loc + ' any more — check again' }, 409);
+  const cur = Number(row.units_per_case) || 0;
+  if (Math.abs(cur - (from || 0)) > 1e-9) return J({ ok: false, error: 'Pieces per case is now ' + cur + ' (changed by someone else) — check again' }, 409);
+  if (Math.abs(cur - to) < 1e-9) return J({ ok: true, unchanged: true, from: cur, to });
+  await env.DB.prepare(`CREATE TABLE IF NOT EXISTS pack_change_log (id INTEGER PRIMARY KEY AUTOINCREMENT, ts TEXT, master_id INTEGER,
+    part_num TEXT, location TEXT, cases REAL, from_pcs REAL, to_pcs REAL, by_user TEXT, note TEXT)`).run();
+  const ts = new Date().toISOString(), by = (session && (session.displayName || session.username)) || '?', cases = Number(row.cases) || 0;
+  await env.DB.batch([
+    env.DB.prepare('UPDATE master_list SET units_per_case = ?, updated_at = ? WHERE id = ?').bind(to, ts, id),
+    env.DB.prepare('INSERT INTO pack_change_log (ts, master_id, part_num, location, cases, from_pcs, to_pcs, by_user, note) VALUES (?,?,?,?,?,?,?,?,?)')
+      .bind(ts, id, part, loc, cases, cur, to, by, '✅ Checking: ' + cases + ' case(s) × ' + cur + ' → ' + to + ' pcs = ' + (cases * cur) + ' → ' + (cases * to) + ' pcs'),
+  ]);
+  if (row.sheet_row > 0) await invSheetUpdate(env, `Master_List!J${row.sheet_row}`, [[to]]).catch(() => {});
+  if (session && session.userId) await logUserActivity(env, session.userId, 'pack_change', { masterId: id, part, location: loc, cases, from: cur, to });
+  return J({ ok: true, from: cur, to, cases, piecesBefore: cases * cur, piecesAfter: cases * to });
 }
 
 // GET /inventory/suggest-location?partNum=26-2-1=2&fromLoc=BARN=1-1-1
@@ -7151,6 +7201,8 @@ const _app = {
       if (path === '/inventory/containers/where' && method === 'POST') return await palletWhere(request, env);
       if (path === '/inventory/spot-check' && method === 'GET') return await inventorySpotCheck(url, env);
       if (path === '/inventory/check-spots' && method === 'POST') return await inventoryCheckSpots(request, env);
+      if (path === '/inventory/pack-sizes' && method === 'GET') return await inventoryPackSizes(env);
+      if (path === '/inventory/pack-change' && method === 'POST') return await inventoryPackChange(request, env, session);
       if (path === '/inventory/prefixes'           && method === 'GET')  return await inventoryGetPrefixes(env);
       // mgmt-only routes
       if (session.pin_level !== 'mgmt') {
