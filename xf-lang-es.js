@@ -3731,7 +3731,11 @@ XFLang.add({
   "This SKU is not a part # in SKU Mgr — showing its parent's spots": "Este SKU no es un part # en SKU Mgr — se muestran los lugares de su padre",
   "No item list for this order — run 🔄 Veeqo Sync to fill it in.": "Este pedido no tiene lista de artículos — usa 🔄 Veeqo Sync para llenarla.",
   "This label is also on the list for {} — showing the newest": "Esta etiqueta también está en la lista del {} — se muestra la más reciente",
-  "Could not look it up": "No se pudo buscar"
+  "Could not look it up": "No se pudo buscar",
+  "Shelf empty — need to grab": "Estante vacío — hay que traer",
+  "Shelf empty — send checked items to grab": "Estante vacío — enviar lo marcado para traer",
+  "Check the item(s) whose shelf is empty first": "Primero marca los artículos con el estante vacío",
+  "Sent: {}": "Enviado: {}"
 });
 
 XFLang._ready();

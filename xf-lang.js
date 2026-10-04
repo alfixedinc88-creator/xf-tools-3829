@@ -20,7 +20,7 @@
 // top), then bump DICT_V below.
 (function () {
   var KEY = 'xf_lang', TRAINING_KEY = 'picker-lang';
-  var DICT_V = '20261004a';
+  var DICT_V = '20261004b';
   var get = function (k) { try { return localStorage.getItem(k); } catch (e) { return null; } };
   var put = function (k, v) { try { localStorage.setItem(k, v); } catch (e) {} };
 

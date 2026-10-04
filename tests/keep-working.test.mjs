@@ -1763,5 +1763,17 @@ console.log('\n🌐 English / Español switch (xf-lang.js + xf-lang-es.js)');
   check('an <option> with no value keeps its English value when its text is translated', /nodeName === 'OPTION' && !el\.hasAttribute\('value'\)/.test(engine), null);
 }
 
+// Owner: "move Label Check right next to Packing; add a button for the picker to grab, like Picking → No Inventory".
+console.log('\nPack & Ship → 🏷️ Label Check next to 📦 Packing, with "⚠ Shelf empty — need to grab"');
+{
+  const { readFileSync } = await import('node:fs');
+  const ph = readFileSync(fileURLToPath(new URL('../packship.html', import.meta.url)), 'utf8');
+  check('Label Check tab sits right after Packing', /id="ps-tab-scan"[^\n]*\n\s*<div class="ps-tabitem"\s+id="ps-tab-labelcheck"/.test(ph), null);
+  const sub = (ph.match(/window\.psLcGrabSubmit = function\(\) \{[\s\S]*?\n\};/) || [''])[0];
+  check('"⚠ Shelf empty — need to grab" uses the same stock check + confirm screen as Picking → No Inventory (then POST /ship/stockout)',
+    /Shelf empty — need to grab/.test(ph) && /\/ship\/stock-check/.test(sub) && /_psShowNostockConfirmModal\(selected, real, none, btn, wrap\)/.test(sub), null);
+  check('Picking → No Inventory itself is unchanged (still hides the Picking card after sending)', /var wrap = document\.getElementById\('ps-pick-product-wrap'\);\s*if \(wrap\) wrap\.style\.display = 'none';/.test(ph), null);
+}
+
 console.log('\n' + (failed ? '❌ ' + failed + ' check(s) FAILED' : '✅ all ' + passed + ' checks passed') + '\n');
 process.exit(failed ? 1 : 0);
