@@ -1288,7 +1288,7 @@ console.log('\nStock Out / Transfer: one search box (part # / UPC / name) · ✅
     && /Put here by <b>Maria<\/b>/.test(el('ck-out').innerHTML) && /✗ None found/.test(el('ck-out').innerHTML) && /Something else found on this spot/.test(el('ck-out').innerHTML), { rowsAt, html: el('ck-out').innerHTML.slice(0, 300) });
   // change the number: 5 → 3 (auto mode: approved right away, History keeps Before → After)
   const iA = ck.CK.rows.findIndex(r => r.partNum === '77-7-1=10' && r.location === 'C2=1-1-1');
-  el('ck-cnt-' + iA).value = '3'; w.ckSaveCount(iA); await settle(); await settle();
+  w.ckPick(iA, 3); await settle(); await settle(); // tap "3" on our own number buttons
   const outRow = sq.prepare("SELECT type, cases, notes, status, total_before b, total_after a FROM inventory_log WHERE part_num='77-7-1=10' AND notes LIKE '%Checking%' ORDER BY id DESC").get();
   check('count 5 → 3: an [AUDIT] Stock Out of 2, approved, shelf now 3, History 15 → 13 cases', cs('77-7-1=10', 'C2=1-1-1') === '3×10' && outRow && outRow.type === 'OUT' && outRow.cases === 2
     && /^\[AUDIT\] System: 5 → Actual: 3/.test(outRow.notes) && outRow.status === 'Verified' && outRow.b === 15 && outRow.a === 13, outRow);
@@ -1300,10 +1300,10 @@ console.log('\nStock Out / Transfer: one search box (part # / UPC / name) · ✅
   // ➕ Something else found: scan box → 2 boxes × 25 pcs (new box size) → scan the spot → saved → next box
   w.ckOtherStart(); w.ckGo('77-7-1=10'); await settle(); await settle();
   check('➕ Something else found → scan the box → asks boxes + pieces (pieces pre-filled from the part #)', ck.CK.other.step === 'count' && ck.CK.other.part === '77-7-1=10' && Number(ck.CK.other.pcs) === 10, ck.CK.other);
-  el('ck-o-n').value = '2'; el('ck-o-pcs').value = '25'; w.ckGo('C2=1-1-1'); await settle(); await settle();
+  w.ckOtherPcsSet(25); w.ckOtherN(2); w.ckGo('C2=1-1-1'); await settle(); await settle(); // ✏️ pieces 25 (our keypad), tap "2" boxes, scan the spot
   check('…scan the spot → saves by itself (2 boxes × 25 pcs = a new 25-pc row at C2=1-1-1, the 10-pc row unchanged) and starts over at "scan the box"',
     cs('77-7-1=10', 'C2=1-1-1') === '3×10,2×25' && ck.CK.other && ck.CK.other.step === 'box' && ck.CK.saved.length === 1, { c: cs('77-7-1=10', 'C2=1-1-1'), o: ck.CK.other });
-  w.ckGo('77-7-1=10'); await settle(); await settle(); el('ck-o-n').value = '1'; el('ck-o-pcs').value = '10'; w.ckGo('BARN=2-1-1'); await settle(); await settle();
+  w.ckGo('77-7-1=10'); await settle(); await settle(); w.ckOtherN(1); w.ckGo('BARN=2-1-1'); await settle(); await settle(); // pieces pre-filled 10
   check('…next box: 1 × 10 pcs scanned at BARN=2-1-1 → added to the 10-pc row there (3 → 4), not a new row', cs('77-7-1=10', 'BARN=2-1-1') === '4×10' && ck.CK.saved.length === 2, cs('77-7-1=10', 'BARN=2-1-1'));
   // numbers add up: 158 pcs − 2 boxes×10 − 4 boxes×2 + 2×25 + 1×10 = 190
   const pcs1 = pcs();
@@ -1320,9 +1320,13 @@ console.log('\nStock Out / Transfer: one search box (part # / UPC / name) · ✅
   ck = mk(false); w = globalThis.__ckWin;
   w.ckGo('BARN=2-1-1'); await settle(); await settle();
   const iC = ck.CK.rows.findIndex(r => r.partNum === '77-7-1=10');
-  el('ck-cnt-' + iC).value = '1'; w.ckSaveCount(iC); await settle(); await settle();
+  w.ckPick(iC, 1); await settle(); await settle();
   const pend2 = sq.prepare("SELECT status FROM inventory_log WHERE part_num='77-7-1=10' AND location='BARN=2-1-1' ORDER BY id DESC").get();
   check('Audit mode Manual → a count change goes to Review (Pending); the shelf is not changed until a manager approves', pend2.status === 'Pending' && cs('77-7-1=10', 'BARN=2-1-1') === '4×10' && pcs() === 200, pend2);
+  // Owner: "the count needs our own number box 1–9 + More… (our number pad) — we always try to hide the phone keyboard".
+  check('Checking: counts and boxes use our own buttons 1–9 + More… (our number pad), never the phone keyboard (no number inputs)',
+    !/id="ck-cnt-/.test(ckSrc) && !/id="ck-o-n"/.test(ckSrc) && !/id="ck-o-pcs"/.test(ckSrc) && !/type="number"/.test(ckSrc)
+      && /\[1,2,3,4,5,6,7,8,9\]\.map/.test(ckSrc) && /if \(n === 'more'\) \{ xfrKeypad\(/.test(ckSrc) && /ckGrid\('ckPick\(' \+ i \+ ',', now\)/.test(ckSrc) && /ckGrid\('ckOtherN\(', null\)/.test(ckSrc), null);
   const sp = await post('/inventory/check-spots', { pairs: [{ part: '77-7-1=10', location: 'c2=1-1-1' }] });
   check('who put it there (read-only route): last Stock In at the spot', sp.ok && sp.spots['77-7-1=10|C2=1-1-1'] && sp.spots['77-7-1=10|C2=1-1-1'].put.by && sp.spots['77-7-1=10|C2=1-1-1'].last.length === 3, sp);
   delete globalThis.__ckWin; Object.keys(globalThis).filter(k => /^ck[A-Z]/.test(k)).forEach(k => delete globalThis[k]);
