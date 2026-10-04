@@ -3735,7 +3735,14 @@ XFLang.add({
   "Shelf empty — need to grab": "Estante vacío — hay que traer",
   "Shelf empty — send checked items to grab": "Estante vacío — enviar lo marcado para traer",
   "Check the item(s) whose shelf is empty first": "Primero marca los artículos con el estante vacío",
-  "Sent: {}": "Enviado: {}"
+  "Sent: {}": "Enviado: {}",
+  "Shipping labels": "Etiquetas de envío",
+  "Print new labels now": "Imprimir etiquetas nuevas ahora",
+  "Add label for an order (already bought)": "Agregar etiqueta de un pedido (ya comprada)",
+  "No labels yet.": "Aún no hay etiquetas.",
+  "No new labels.": "No hay etiquetas nuevas.",
+  "Not printed": "No impresa",
+  "Reprint": "Reimprimir"
 });
 
 XFLang._ready();
