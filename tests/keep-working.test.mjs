@@ -1669,6 +1669,15 @@ console.log('\nSKU Mgr: 🧹 Check part #s (read-only)');
     pc.ok && has('letters', 'EFFMM-04-LF') && has('numonly', '2490') && has('upc', '012345678905') && has('chars', '30-9-9 =10x') && has('dupes', '30-9-9 =10x') && has('dupes', '30-9-9=10X')
       && has('noeq', '30-9-8') && has('twoeq', '30-9-7==10') && has('suffix', '30-9-6=10Q') && normal.length === 0
       && has('base', '30-4=10') && has('base', '30-3-4-2=10') && has('base', '61853-K=5X'), { normal, cats: Object.fromEntries(Object.entries(pc.cats).map(([k, v]) => [k, v.rows.map(r => r.partNum)])) });
+  // Owner: "I want columns so I can see all the weird part #s and go there to check".
+  const L = pc.list || [], li = p => L.find(r => r.partNum === p);
+  const { readFileSync: rfs3 } = await import('node:fs');
+  const ih3 = rfs3(fileURLToPath(new URL('../inventory.html', import.meta.url)), 'utf8');
+  check('table view: every odd row once, with all its reasons (spaces + written two ways), spot, cases, pcs/case; columns Spot · Part # · Name · Cases · Pcs/case · What looks wrong; walking order; filter, 🖨 print, ⬇ Excel',
+    li('EFFMM-04-LF') && li('EFFMM-04-LF').location === 'C5=1-1-1' && li('EFFMM-04-LF').cases === 2 && li('30-9-9 =10x') && li('30-9-9 =10x').why.join() === 'chars,dupes' && li('30-9-9 =10x').each === 10
+      && L.filter(r => r.partNum === '30-9-9 =10x').length === 1 && !li('8-8-8=OLD')
+      && />Spot<\/th><th[^>]*>Part #<\/th><th[^>]*>Name<\/th><th[^>]*;text-align:right">Cases<\/th><th[^>]*;text-align:right">Pcs\/case<\/th><th[^>]*>What looks wrong<\/th>/.test(ih3)
+      && /invPullWalkCompare\(wk\(a\.location\), wk\(b\.location\)\)/.test(ih3) && /l === 'GARAGE' \? 'GARAGE=' : l/.test(ih3) && /onclick="skumgrPnPrint\(\)"/.test(ih3) && /onclick="skumgrPnCsv\(\)"/.test(ih3) && /skumgrPnFilter\(/.test(ih3), L.slice(0, 4));
   const after = sq.prepare('SELECT COUNT(*) n, SUM(cases) c FROM master_list').get();
   const pkt5 = (await (await call('/auth/login', { method: 'POST', body: '{"username":"picker","password":"password1"}' })).json()).token;
   const pw = await call('/inventory/partnum-check', { headers: { 'X-Cred-Token': pkt5 } });

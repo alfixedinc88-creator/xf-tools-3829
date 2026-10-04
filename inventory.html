@@ -7919,24 +7919,73 @@ window.invCredLogin = async function() {
     suffix: ['🔤 Unusual ending after "="', 'Normal: a number + X, XX…, W.1C, W.2C, J, N — or OLD.'],
     base: ['🔤 Not #-#-# before "="', 'Our part #s are #-#-#=# (e.g. 30-3-4=10X; 28-2-1&2C=10 is OK too). e.g. "30-4=10", "30-3-4-2=10", "61853-K=5X".']
   };
+  // Table view (owner): every odd part # as a row — Part # · Name · Spot ·
+  // Cases · Pcs/case · What looks wrong — in walking order by spot, so it can
+  // be checked aisle by aisle. Filter by why, 🖨 print it, ⬇ download it.
+  var SKU_PN = { list: [], filter: 'all' };
   window.skumgrPartnumCheck = function() {
     var panel = g('skumgr-pncheck-panel'), out = g('skumgr-pncheck-out'); if (!panel || !out) return;
     panel.style.display = 'block'; out.innerHTML = 'Checking every part #…';
     wFetch(W + '/inventory/partnum-check').then(function(r) { return r.json(); }).then(function(d) {
       if (!d || !d.ok) { out.textContent = 'Error: ' + ((d && d.error) || 'unknown'); return; }
-      var order = ['letters', 'numonly', 'upc', 'chars', 'dupes', 'noeq', 'twoeq', 'suffix', 'base'], any = 0;
-      var h = '<div style="margin-bottom:8px;color:var(--text2)">Checked <b>' + d.total + '</b> rows. Tap a part # to open it in SKU Mgr and fix it with ✏️ Edit.</div>';
-      order.forEach(function(c) {
-        var x = d.cats[c]; if (!x || !x.count) return; any += x.count;
-        h += '<details style="border-top:1px solid var(--border);padding:6px 0"><summary style="cursor:pointer;font-weight:800">' + SKU_PN_WHY[c][0] + ' — ' + x.count + ' row(s) · ' + xfrN(x.cases) + ' case(s)</summary>'
-          + '<div style="color:var(--text3);margin:4px 0">' + SKU_PN_WHY[c][1] + (x.count > x.rows.length ? ' (first ' + x.rows.length + ' shown)' : '') + '</div>'
-          + x.rows.map(function(r) {
-              return '<div style="display:flex;justify-content:space-between;gap:8px;padding:3px 0"><a href="#" onclick="skumgrPnOpen(this.dataset.p);return false" data-p="' + invEsc(r.partNum) + '" style="font-family:var(--mono);font-weight:700;white-space:pre">"' + invEsc(r.partNum) + '"</a>'
-                + '<span style="color:var(--text2);font-family:var(--mono)">' + invEsc(r.location || '—') + ' · ' + xfrN(r.cases) + ' cs</span></div>';
-            }).join('') + '</details>';
-      });
-      out.innerHTML = any ? h : '✓ Every part # looks normal.';
+      // Walking order; a plain "GARAGE" spot walks with GARAGE= (Middle), no spot goes last.
+      var wk = function(l) { l = String(l || '').trim().toUpperCase(); return !l ? 'ZZZ' : l === 'GARAGE' ? 'GARAGE=' : l; };
+      SKU_PN.list = (d.list || []).slice().sort(function(a, b) { return invPullWalkCompare(wk(a.location), wk(b.location)) || String(a.partNum).localeCompare(String(b.partNum)); });
+      SKU_PN.total = d.total; SKU_PN.filter = 'all';
+      skumgrPnRender();
     }).catch(function() { out.textContent = 'Check failed — network error'; });
+  };
+  function skumgrPnRows() { return SKU_PN.list.filter(function(r) { return SKU_PN.filter === 'all' || r.why.indexOf(SKU_PN.filter) >= 0; }); }
+  function skumgrPnWhyText(r) { return r.why.map(function(w) { return (SKU_PN_WHY[w] || [w])[0]; }).join(' · '); }
+  window.skumgrPnFilter = function(f) { SKU_PN.filter = f; skumgrPnRender(); };
+  window.skumgrPnRender = function() {
+    var out = g('skumgr-pncheck-out'); if (!out) return;
+    if (!SKU_PN.list.length) { out.innerHTML = '✓ Every part # looks normal.'; return; }
+    var counts = {}; SKU_PN.list.forEach(function(r) { r.why.forEach(function(w) { counts[w] = (counts[w] || 0) + 1; }); });
+    var order = ['letters', 'numonly', 'upc', 'chars', 'dupes', 'noeq', 'twoeq', 'suffix', 'base'];
+    var chip = function(k, label, n) { var on = SKU_PN.filter === k;
+      return '<button type="button" onclick="skumgrPnFilter(\'' + k + '\')" style="padding:5px 10px;border-radius:999px;border:1.5px solid ' + (on ? 'var(--orange)' : 'var(--border)') + ';background:' + (on ? 'var(--orange)' : 'var(--bg3)') + ';color:' + (on ? '#fff' : 'var(--text)') + ';font-size:12px;font-weight:700;cursor:pointer">' + label + ' (' + n + ')</button>'; };
+    var rows = skumgrPnRows(), cases = rows.reduce(function(t, r) { return t + (r.cases || 0); }, 0);
+    var th = 'text-align:left;padding:6px 8px;border-bottom:2px solid var(--border);font-size:11px;text-transform:uppercase;letter-spacing:.4px;color:var(--text3);position:sticky;top:0;background:var(--bg2)';
+    var td = 'padding:6px 8px;border-bottom:1px solid var(--border);vertical-align:top';
+    out.innerHTML = '<div style="margin-bottom:8px;color:var(--text2)">Checked <b>' + SKU_PN.total + '</b> rows — <b>' + SKU_PN.list.length + '</b> look wrong. In walking order by spot; tap a part # to open it in SKU Mgr and fix it with ✏️ Edit.</div>'
+      + '<div style="display:flex;flex-wrap:wrap;gap:6px;margin-bottom:8px">' + chip('all', 'All', SKU_PN.list.length)
+      + order.filter(function(k) { return counts[k]; }).map(function(k) { return chip(k, SKU_PN_WHY[k][0], counts[k]); }).join('') + '</div>'
+      + '<div style="display:flex;gap:8px;margin-bottom:8px;flex-wrap:wrap"><button type="button" onclick="skumgrPnPrint()" style="padding:7px 12px;border-radius:8px;border:1.5px solid var(--accent);background:var(--bg);color:var(--accent);font-weight:700;cursor:pointer">🖨 Print this list</button>'
+      + '<button type="button" onclick="skumgrPnCsv()" style="padding:7px 12px;border-radius:8px;border:1.5px solid var(--green);background:var(--bg);color:var(--green);font-weight:700;cursor:pointer">⬇ Download (Excel)</button>'
+      + '<span style="align-self:center;color:var(--text3)">' + rows.length + ' row(s) · ' + xfrN(cases) + ' case(s)</span></div>'
+      + '<div style="max-height:520px;overflow:auto;border:1px solid var(--border);border-radius:8px"><table style="width:100%;border-collapse:collapse;font-size:12.5px">'
+      + '<thead><tr><th style="' + th + '">Spot</th><th style="' + th + '">Part #</th><th style="' + th + '">Name</th><th style="' + th + ';text-align:right">Cases</th><th style="' + th + ';text-align:right">Pcs/case</th><th style="' + th + '">What looks wrong</th></tr></thead><tbody>'
+      + rows.map(function(r) {
+          return '<tr><td style="' + td + ';font-family:var(--mono);white-space:nowrap">' + invEsc(r.location || '—') + '</td>'
+            + '<td style="' + td + '"><a href="#" onclick="skumgrPnOpen(this.dataset.p);return false" data-p="' + invEsc(r.partNum) + '" style="font-family:var(--mono);font-weight:700;white-space:pre">' + invEsc(r.partNum) + '</a></td>'
+            + '<td style="' + td + ';color:var(--text2)">' + invEsc(r.name || '') + '</td>'
+            + '<td style="' + td + ';text-align:right;font-family:var(--mono)">' + xfrN(r.cases) + '</td>'
+            + '<td style="' + td + ';text-align:right;font-family:var(--mono)">' + (r.each ? xfrN(r.each) : '—') + '</td>'
+            + '<td style="' + td + ';color:var(--orange);font-weight:600">' + invEsc(skumgrPnWhyText(r)) + '</td></tr>';
+        }).join('') + '</tbody></table></div>';
+  };
+  // ⬇ Excel / 🖨 print: the rows shown now (same order, same columns).
+  function skumgrPnCsvText() {
+    var q = function(v) { v = String(v == null ? '' : v); return /[",\n]/.test(v) ? '"' + v.replace(/"/g, '""') + '"' : v; };
+    return ['Spot,Part #,Name,Cases,Pcs/case,What looks wrong'].concat(skumgrPnRows().map(function(r) {
+      return [r.location, r.partNum, r.name, r.cases, r.each || '', skumgrPnWhyText(r).replace(/[^\x20-\x7E·—]/g, '').trim()].map(q).join(','); })).join('\r\n');
+  }
+  window.skumgrPnCsvText = skumgrPnCsvText;
+  window.skumgrPnCsv = function() {
+    var a = document.createElement('a');
+    a.href = URL.createObjectURL(new Blob(['﻿' + skumgrPnCsvText()], { type: 'text/csv' }));
+    a.download = 'odd-part-numbers-' + new Date().toLocaleDateString('en-CA', { timeZone: 'America/New_York' }) + '.csv';
+    document.body.appendChild(a); a.click(); setTimeout(function() { URL.revokeObjectURL(a.href); a.remove(); }, 1000);
+  };
+  window.skumgrPnPrint = function() {
+    var rows = skumgrPnRows(), w = window.open('', '_blank'); if (!w) { invFlash('Allow pop-ups to print', 'error'); return; }
+    w.document.write('<!doctype html><html><head><meta charset="utf-8"><title>Part #s to check</title><style>body{font:12px Arial,sans-serif;margin:16px}table{width:100%;border-collapse:collapse}th,td{border:1px solid #999;padding:4px 6px;text-align:left}th{background:#eee}td.n{text-align:right}.m{font-family:monospace;font-weight:700}td.ok{width:40px}</style></head><body>'
+      + '<h3 style="margin:0 0 6px">Part #s to check — ' + rows.length + ' row(s) · ' + new Date().toLocaleDateString('en-US', { timeZone: 'America/New_York' }) + '</h3>'
+      + '<table><tr><th>Spot</th><th>Part #</th><th>Name</th><th>Cases</th><th>Pcs/case</th><th>What looks wrong</th><th>✓</th></tr>'
+      + rows.map(function(r) { return '<tr><td class="m">' + invEsc(r.location || '—') + '</td><td class="m">' + invEsc(r.partNum) + '</td><td>' + invEsc(r.name || '') + '</td><td class="n">' + xfrN(r.cases) + '</td><td class="n">' + (r.each ? xfrN(r.each) : '') + '</td><td>' + invEsc(skumgrPnWhyText(r)) + '</td><td class="ok"></td></tr>'; }).join('')
+      + '</table></body></html>');
+    w.document.close(); w.focus(); setTimeout(function() { w.print(); }, 300);
   };
   window.skumgrPnOpen = function(p) {
     var inp = g('skumgr-search-inp'); if (!inp) return;
