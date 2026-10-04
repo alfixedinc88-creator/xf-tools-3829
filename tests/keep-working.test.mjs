@@ -1633,5 +1633,25 @@ console.log('\nTest mode bar at the bottom · 🏷 Barcode designer');
       && /is not in SKU Mgr — check the part #/.test(ih) && /var nm = BD\.nameFor === sku \? BD\.name : '';/.test(ih) && /bdLabelHtml\(sku, BD\.copies, nm, foot\)/.test(ih), labN.slice(-200));
 }
 
+// Owner: "Warehouse Lookup → Item Locator / Item Search: searching a part # shows the exact match first, then the rest;
+// each item with its product photo (the same photo as Inventory — change it in Location Plan and it changes here too)".
+console.log('\nWarehouse Lookup: exact part # first · product photos');
+{
+  const { readFileSync } = await import('node:fs');
+  const wh = readFileSync(fileURLToPath(new URL('../warehouse.html', import.meta.url)), 'utf8');
+  const src = ['whParent', 'whRank', 'whPackKey', 'whCompare'].map(n => (wh.match(new RegExp('function ' + n + '\\([^)]*\\) \\{[\\s\\S]*?\\n\\}')) || [''])[0]).join('\n');
+  const cmp = new Function(src + '; return whCompare;')();
+  const rows = ['30-3-4=2', '30-3-4=10XX', '30-3-4=10X', '30-3-45=10X', '130-3-4=10X', 'TEE 30-3-4', '30-3-4=1', '30-3-4=10', '30-3-4=OLD'].map(p => ({ p }));
+  const o1 = rows.slice().sort(cmp('30-3-4=10X', r => r.p, () => '')).map(r => r.p);
+  const o2 = rows.slice().sort(cmp('30-3-4', r => r.p, () => '')).map(r => r.p);
+  check('search 30-3-4=10X → 30-3-4=10X first, then its family in pack order (=OLD, =1, =2, =10, =10XX), then the rest',
+    o1[0] === '30-3-4=10X' && o1.slice(1, 6).join() === '30-3-4=OLD,30-3-4=1,30-3-4=2,30-3-4=10,30-3-4=10XX' && o1.indexOf('30-3-45=10X') > 5, o1);
+  check('search 30-3-4 → the 30-3-4 family first, in pack order (=OLD, =1, =2, =10, =10X, =10XX), not 30-3-45 / 130-3-4',
+    o2.slice(0, 6).join() === '30-3-4=OLD,30-3-4=1,30-3-4=2,30-3-4=10,30-3-4=10X,30-3-4=10XX' && o2.indexOf('30-3-45=10X') > 5 && o2.indexOf('130-3-4=10X') > 5, o2);
+  check('Item Locator and Item Search are sorted that way, and every card has the product photo (same /inventory/photos as Inventory; tap = big)',
+    /results\.sort\(whCompare\(raw, r => r\.partNum, r => r\.location\)\)/.test(wh) && /results\.sort\(whCompare\(raw, r => r\.sku, \(\) => ''\)\)/.test(wh)
+      && /\$\{whPhotoHtml\(r\.partNum\)\}/.test(wh) && /\$\{whPhotoHtml\(r\.sku\)\}/.test(wh) && /wFetch\(W \+ '\/inventory\/photos\?bases='/.test(wh), null);
+}
+
 console.log('\n' + (failed ? '❌ ' + failed + ' check(s) FAILED' : '✅ all ' + passed + ' checks passed') + '\n');
 process.exit(failed ? 1 : 0);
