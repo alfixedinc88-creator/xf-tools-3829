@@ -1893,6 +1893,13 @@ console.log('\nAuto Label: every bought label goes on the 🖨 Printer station l
   const lst = await get('/veeqo/autolabel/labels?status=new');
   const L = (lst.labels || []).find(x => x.tracking === '9400111') || {};
   check('+ Add label for an order (bought earlier): it goes on the list, ⏳ waiting, with order # and tracking', add.ok && add.added === 1 && L.id && L.order_number === '111-5929074-3731428' && !L.printed_at, { add, lst });
+  // Owner: "bin location, quantities, SKU under the shipping label" — kept with the label, printed on a sticker after it.
+  check('…the label keeps what is in that box (SKU, qty) for the sticker printed after it', Array.isArray(L.items) && L.items.some(i => i.sku === '5-3-2=2' && i.qty === 1), L.items);
+  sq.prepare("UPDATE label_print_queue SET items = NULL WHERE id = ?").run(L.id);
+  const li = await get('/veeqo/autolabel/label-items?id=' + L.id);
+  check('…a label queued before that was kept gets its items from Veeqo once (then saved)', li.ok && li.items.some(i => i.sku === '5-3-2=2') && /5-3-2=2/.test(sq.prepare('SELECT items FROM label_print_queue WHERE id = ?').get(L.id).items || ''), li);
+  const ph = readFileSync(fileURLToPath(new URL('../packship.html', import.meta.url)), 'utf8');
+  check('…the Printer station prints the label, then the 4×6 "Bin · SKU · Qty" sticker, then marks it printed', /await _psAlPrintLabelBlob\(f\);[\s\S]{0,300}await _psAlPrintHtml\(_psAlBoxStripHtml\(l, items\)\);[\s\S]{0,200}labels-printed/.test(ph) && /<th>Bin<\/th><th>SKU<\/th>/.test(ph), null);
   const f = await call('/veeqo/autolabel/label-file?id=' + L.id, { headers: H });
   check('…the Printer station gets the label file itself (PDF) from what Veeqo gave', f.status === 200 && /application\/pdf/.test(f.headers.get('content-type')) && (await f.text()).startsWith('%PDF'), f.status);
   const pr = await post('/veeqo/autolabel/labels-printed', { ids: [L.id] });
