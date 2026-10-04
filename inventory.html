@@ -12203,6 +12203,23 @@ window.invCredLogin = async function() {
   function ckNum(v) { var n = parseFloat(v); return isNaN(n) ? 0 : n; }
   function ckNow(l) { return l.adjustedCases !== undefined && l.adjustedCases !== null ? ckNum(l.adjustedCases) : ckNum(l.cases); }
   function ckOut(html) { g('ck-out').innerHTML = html; }
+  // 🖼 Product photo (one per parent part #, same photos as the Pull List / Transfer). Tap = big.
+  CK.photo = {};
+  function ckPhotoLoad(parts) {
+    var need = [];
+    parts.forEach(function(p) { var b = invParent(p); if (b && !(b in CK.photo)) { CK.photo[b] = null; need.push(b); } });
+    if (!need.length) return;
+    wFetch(W + '/inventory/photos?bases=' + encodeURIComponent(need.join(','))).then(function(r) { return r.json(); }).then(function(d) {
+      var got = (d && d.photos) || {}, any = false;
+      need.forEach(function(b) { CK.photo[b] = got[b] || ''; if (got[b]) any = true; });
+      if (any) { if (CK.other) ckRenderOther(); else if (CK.kind === 'loc') ckRenderLoc(); else if (CK.kind === 'part') ckRenderPart(); }
+    }).catch(function() { need.forEach(function(b) { delete CK.photo[b]; }); });
+  }
+  function ckPic(part, px) {
+    var u = CK.photo[invParent(part)], sz = 'width:' + (px || 56) + 'px;height:' + (px || 56) + 'px;border-radius:9px;flex-shrink:0;';
+    return u ? '<img src="' + ckE(u) + '" alt="" onclick="invPhotoBig(this.src)" style="' + sz + 'object-fit:cover;background:#fff;border:1px solid var(--border);cursor:zoom-in" onerror="this.style.visibility=\'hidden\'">'
+      : '<div style="' + sz + 'background:var(--bg3);border:1px dashed var(--border);display:flex;align-items:center;justify-content:center;font-size:10px;color:var(--text3)">' + (u === '' ? 'no photo' : '') + '</div>';
+  }
   function ckBy() { return (INV_CRED_USER && INV_CRED_USER.displayName) || 'OPS'; }
   var CK_TYPE = { IN: 'Stock In', OUT: 'Stock Out', TRANSFER_IN: 'Transfer in', TRANSFER_OUT: 'Transfer out', MOVE: 'Move' };
   function ckWho(part, loc) {
@@ -12256,6 +12273,7 @@ window.invCredLogin = async function() {
       CK.all = !!all || !CK.exact;
       var pairs = (d.locations || []).filter(function(l) { return l.location; }).map(function(l) { return { part: l.partNum || d.partNum, location: l.location }; });
       ckRenderPart();
+      ckPhotoLoad([d.partNum]);
       ckLoadSpots(pairs, ckRenderPart);
     }).catch(function() { ckOut('<div class="icard" style="color:var(--red)">Lookup failed — check WiFi and try again</div>'); });
   }
@@ -12270,9 +12288,9 @@ window.invCredLogin = async function() {
     (d.variants || []).forEach(function(v) { famCount[String(v).toUpperCase()] = 1; });
     var nFam = Object.keys(famCount).length, totCases = 0, totPcs = 0, hidden = 0;
     CK.prow = [];
-    var h = '<div class="icard">'
+    var h = '<div class="icard"><div style="display:flex;gap:12px;align-items:flex-start">' + ckPic(d.partNum, 84) + '<div style="flex:1;min-width:0">'
       + '<div style="font-size:16px;font-weight:800;font-family:var(--mono)">' + ckE(CK.all ? (d.baseSku || invParent(d.partNum)) + ' — all part #s' : CK.exact) + '</div>'
-      + (d.name ? '<div style="font-size:13px;color:var(--text2);margin:2px 0 6px">' + ckE(d.name) + '</div>' : '')
+      + (d.name ? '<div style="font-size:13px;color:var(--text2);margin:2px 0 6px">' + ckE(d.name) + '</div>' : '') + '</div></div>'
       + (CK.exact && nFam > 1 ? (CK.all
           ? '<button class="ps-btn-sm ixfr-mode-btn" onclick="ckShowAll(false)">Only ' + ckE(CK.exact) + '</button>'
           : '<button class="ixfr-mode-btn" onclick="ckShowAll(true)">👪 Show all the family (' + nFam + ' part #s)</button>') : '')
@@ -12336,40 +12354,59 @@ window.invCredLogin = async function() {
       CK.rows = ((d && d.results) || []).filter(function(r) { return ckNow(r) > 0 || ckNum(r.pendingCases) > 0; })
         .sort(function(a, b) { return invPullWalkCompare(a.location, b.location) || String(a.partNum).localeCompare(String(b.partNum)); });
       ckRenderLoc();
+      ckPhotoLoad(CK.rows.map(function(r) { return r.partNum; }));
       ckLoadSpots(CK.rows.map(function(r) { return { part: r.partNum, location: r.location }; }), ckRenderLoc);
     }).catch(function() { ckOut('<div class="icard" style="color:var(--red)">Could not load ' + ckE(CK.loc) + ' — check WiFi</div>'); });
   };
   function ckRenderLoc() {
     if (CK.kind !== 'loc') return;
     var h = '<div class="icard"><div style="font-size:16px;font-weight:800;font-family:var(--mono)">📍 ' + ckE(CK.loc) + '</div>'
-      + '<div style="font-size:12px;color:var(--text2);margin-top:2px">' + CK.rows.length + ' item(s) on record here now. Count each one: tap ✓ Correct, the number you see, or ✗ None found.'
+      + '<div style="font-size:12px;color:var(--text2);margin-top:2px">' + CK.rows.length + ' item(s) on record here now. Tap how many cases you see — the <b style="color:var(--green)">green</b> number is what the system has. It saves right away.'
       + (invAuditAutoMode ? '' : ' <b>Changes go to Review for a manager to approve.</b>') + '</div></div>';
+    var left = CK.rows.filter(function(r) { return !r._ck; }).length;
+    if (CK.rows.length && !left) h += '<div class="icard" style="border-color:var(--green);background:var(--green-bg,#dcfce7);font-size:16px;font-weight:800;color:var(--green)">✅ All counted at ' + ckE(CK.loc) + ' — scan the next spot</div>';
     CK.rows.forEach(function(r, i) {
-      var now = ckNow(r), done = r._ck;
+      var now = ckNow(r), done = r._ck, here = String(r.location).toUpperCase() === CK.loc;
       h += '<div class="icard" id="ck-row-' + i + '" style="' + (done ? 'border-color:#0891B2;background:#E0F2FE' : '') + '">'
+        + '<div style="display:flex;gap:10px;align-items:flex-start">' + ckPic(r.partNum) + '<div style="flex:1;min-width:0">'
         + '<div style="display:flex;justify-content:space-between;gap:8px"><b style="font-family:var(--mono)">' + ckE(r.partNum) + ' <span style="font-weight:700;color:var(--accent)">· ' + (ckNum(r.eachQty) > 0 ? ckE(xfrN(r.eachQty)) : '?') + ' pcs / case</span>'
-          + ' <button type="button" class="ixfr-mode-btn" style="padding:3px 8px;font-size:12px" onclick="ckPackAsk(\'loc\',' + i + ')">✏️</button></b><span style="font-family:var(--mono);color:var(--text3)">' + ckE(r.location) + '</span></div>'
+          + ' <button type="button" class="ixfr-mode-btn" style="padding:3px 8px;font-size:12px" onclick="ckPackAsk(\'loc\',' + i + ')">✏️</button></b></div>'
+          + (here ? '' : '<div style="font-family:var(--mono);font-weight:700;font-size:12.5px;color:var(--text2)">📍 <span>' + ckE(r.location) + '</span></div>')
         + (r.name ? '<div style="font-size:12px;color:var(--text2)">' + ckE(r.name) + '</div>' : '')
         + '<div style="font-size:11.5px;color:var(--text2);margin:3px 0">' + ckWho(r.partNum, r.location) + '</div>'
         + (ckNum(r.pendingCases) ? '<div style="font-size:11px;color:var(--orange)">' + ckE(xfrN(r.pendingCases)) + ' case(s) waiting for approval</div>' : '')
+        + '</div></div>'
         + (done ? '<div style="font-weight:700;color:#0891B2;margin-top:4px">✓ ' + ckE(done) + '</div>'
-          : '<div style="display:flex;gap:6px;align-items:center;flex-wrap:wrap;margin:6px 0">'
-            + '<span style="font-size:13px;color:var(--text2)">System: <b style="font-size:17px;font-family:var(--mono);color:var(--text)">' + ckE(xfrN(now)) + '</b> case(s)'
-            + (ckNum(r.eachQty) > 0 ? ' × <b style="font-family:var(--mono);color:var(--text)">' + ckE(xfrN(r.eachQty)) + '</b> pcs = ' + ckE(xfrN(now * ckNum(r.eachQty))) + ' pcs' : '') + '</span>'
-            + '<button class="isearch-btn" style="background:var(--green)" onclick="ckPick(' + i + ',\'ok\')">✓ Correct</button>'
-            + '<button class="isearch-btn" style="background:var(--red)" onclick="ckNoneFound(' + i + ')">✗ None found</button></div>'
-            + '<div style="font-size:12px;color:var(--text3);margin-bottom:4px">Not right? Tap how many cases you see:</div>' + ckGrid('ckPick(' + i + ',', now))
+          : '<div style="margin-top:6px">' + ckGrid('ckPick(' + i + ',', now, true) + '</div>'
+            + '<button type="button" onclick="ckNoneFound(' + i + ')" style="width:100%;margin-top:6px;padding:11px;border-radius:10px;border:1.5px solid var(--red);background:var(--bg);color:var(--red);font-size:15px;font-weight:800;cursor:pointer">✗ None found</button>')
         + '</div>';
     });
     h += '<button class="icam-btn" style="background:var(--orange-bg);color:var(--orange);border-color:var(--orange)" onclick="ckOtherStart()">➕ Something else found on this spot</button>';
     ckOut(h);
   }
   // Our own number buttons (1–9 + More…) — the phone keyboard never comes up.
-  function ckGrid(call, cur) {
+  // sys = true: cur is the system's number — it stands out (big, green, "✓ system");
+  // tapping it means "correct". Not 1–9 (e.g. 12 or 2.5)? It gets its own big button first.
+  function ckGrid(call, cur, sys) {
     var b = 'padding:12px 0;border-radius:10px;border:1.5px solid var(--border);background:var(--bg3);color:var(--text);font-size:19px;font-weight:800;cursor:pointer;touch-action:manipulation';
-    return '<div style="display:grid;grid-template-columns:repeat(5,1fr);gap:6px">'
-      + [1,2,3,4,5,6,7,8,9].map(function(n) { return '<button type="button" onclick="' + call + n + ')" style="' + b + (cur != null && Math.abs(n - cur) < 1e-9 ? ';border-color:var(--green)' : '') + '">' + n + '</button>'; }).join('')
+    var hi = ';border:3px solid var(--green);background:var(--green-bg,#dcfce7);color:var(--green);font-size:26px;padding:4px 0;line-height:1.1';
+    var tag = '<div style="font-size:10px;font-weight:800;letter-spacing:.3px">✓ SYSTEM</div>';
+    var inGrid = sys && cur != null && cur >= 1 && cur <= 9 && Math.round(cur) === cur;
+    return (sys && cur != null && cur > 0 && !inGrid
+        ? '<button type="button" data-sys="1" onclick="' + call + cur + ')" style="' + b + hi + ';width:100%;margin-bottom:6px">' + tag + ckE(xfrN(cur)) + ' case(s)</button>' : '')
+      + '<div style="display:grid;grid-template-columns:repeat(5,1fr);gap:6px">'
+      + [1,2,3,4,5,6,7,8,9].map(function(n) {
+          var me = cur != null && Math.abs(n - cur) < 1e-9;
+          return '<button type="button"' + (me && sys ? ' data-sys="1"' : '') + ' onclick="' + call + n + ')" style="' + b + (me ? (sys ? hi : ';border-color:var(--green)') : '') + '">' + (me && sys ? tag : '') + n + '</button>'; }).join('')
       + '<button type="button" onclick="' + call + '\'more\')" style="' + b + ';font-size:14px">More…</button></div>';
+  }
+  // Fewer steps: after a count, go to the next item not counted yet; when the
+  // spot is done, the scan box is ready for the next spot (no tap needed).
+  function ckNext() {
+    var j = -1; CK.rows.some(function(r, k) { if (!r._ck) { j = k; return true; } return false; });
+    var x = j >= 0 ? g('ck-row-' + j) : null;
+    if (x && x.scrollIntoView) x.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    if (j < 0) { var inp = g('ck-inp'); if (inp) { if (inp.scrollIntoView) inp.scrollIntoView({ behavior: 'smooth', block: 'start' }); inp.focus(); } }
   }
   window.ckPick = function(i, n) {
     var r = CK.rows[i]; if (!r || r._ck) return;
@@ -12393,7 +12430,7 @@ window.invCredLogin = async function() {
     var approve = (diff === 0 || invAuditAutoMode) ? function(d) {
       return { rowIndex: d.rowIndex, action: 'Approved', verifiedBy: by, item: Object.assign({}, body, { rowIndex: d.rowIndex, d1Id: d.d1Id, overwriteLocation: '' }) };
     } : null;
-    r._ck = 'Saving…'; ckRenderLoc();
+    r._ck = 'Saving…'; ckRenderLoc(); ckNext();
     invLogAndApprove(body, approve).then(function(d) {
       if (d && d.ok === false) { r._ck = ''; ckRenderLoc(); invFlash('Error: ' + (d.error || 'not saved'), 'error'); return; }
       var msg = diff === 0 ? 'Count matches — confirmed' : (none ? 'None found' : 'Counted ' + actual) + ' (was ' + cur + ')';
@@ -12413,7 +12450,7 @@ window.invCredLogin = async function() {
     var h = '<div class="icard" style="border-color:var(--orange)"><div class="icard-label">➕ Something else found at ' + ckE(o.at) + '</div>';
     if (o.step === 'box') h += '<div style="font-size:15px;font-weight:800;margin:6px 0">1️⃣ Scan the box barcode (or type the part #)</div>';
     else {
-      h += '<div style="font-family:var(--mono);font-weight:800;font-size:15px">' + ckE(o.part) + '</div>' + (o.name ? '<div style="font-size:12px;color:var(--text2)">' + ckE(o.name) + '</div>' : '')
+      h += '<div style="display:flex;gap:10px;align-items:center">' + ckPic(o.part) + '<div><div style="font-family:var(--mono);font-weight:800;font-size:15px">' + ckE(o.part) + '</div>' + (o.name ? '<div style="font-size:12px;color:var(--text2)">' + ckE(o.name) + '</div>' : '') + '</div></div>'
         + '<div style="font-size:13px;margin:8px 0">Pieces per box: <b style="font-size:16px;font-family:var(--mono)">' + (o.pcs ? ckE(xfrN(o.pcs)) : '?') + '</b> '
         + '<button type="button" class="ixfr-mode-btn" onclick="ckOtherPcsAsk()">✏️ Change</button></div>'
         + (o.step === 'loc'
@@ -12508,7 +12545,7 @@ window.invCredLogin = async function() {
         var mine = (d.locations || []).filter(function(l) { return String(l.partNum || d.partNum).toUpperCase() === part; });
         o.part = part; o.name = d.name || ''; o.sku = d.sku || part; o.locs = mine; o.n = '';
         o.pcs = (mine.filter(function(l) { return ckNum(l.eachQty) > 0; })[0] || {}).eachQty || '';
-        o.step = 'count'; ckRenderOther();
+        o.step = 'count'; ckRenderOther(); ckPhotoLoad([part]);
       }).catch(function() { invFlash('Lookup failed — check WiFi', 'error'); });
       return;
     }
