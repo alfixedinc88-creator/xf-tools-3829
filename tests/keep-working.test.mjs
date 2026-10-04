@@ -1459,8 +1459,9 @@ console.log('\nStock In / Found on Shelf: our own buttons for QTY Case / QTY per
     /var cases    = parseFloat\(g\("inv-qa-cases"\) && g\("inv-qa-cases"\)\.value\);/.test(ih) && /var upc      = \(g\("inv-qa-upc"\) && g\("inv-qa-upc"\)\.value\) \? parseFloat\(g\("inv-qa-upc"\)\.value\) : 0;/.test(ih) && /isNew: true, isPlaceholder: false, unitsPerCase: upc \|\| 0/.test(ih), null);
   const src = (ih.match(/  var invQaRec = 0;[\s\S]*?\n  window\.invQaUpc = function\(n\) \{[\s\S]*?\n  \};/) || [''])[0];
   const els = {}, el = id => els[id] || (els[id] = { value: '', innerHTML: '', textContent: '' }), pads = [];
-  const api = new Function('window', 'g', 'CK', 'xfrN', 'xfrKeypad', src + '\nreturn { setRec: v => { invQaRec = v; }, render: invQaPadsRender };')(
-    globalThis, el, { sizes: [1, 2, 5, 10, 20, 25, 50, 100, 200] }, v => Math.round((parseFloat(v) || 0) * 100) / 100, (t, v, cb) => pads.push({ t, cb }));
+  const qaFlash = [];
+  const api = new Function('window', 'g', 'CK', 'xfrN', 'xfrKeypad', 'invFlash', src + '\nreturn { setRec: v => { invQaRec = v; }, render: invQaPadsRender };')(
+    globalThis, el, { sizes: [1, 2, 5, 10, 20, 25, 50, 100, 200] }, v => Math.round((parseFloat(v) || 0) * 100) / 100, (t, v, cb) => pads.push({ t, cb }), m => qaFlash.push(m));
   api.setRec(25); api.render();
   const up0 = el('inv-qa-upc-pad').innerHTML, cp0 = el('inv-qa-cases-pad').innerHTML;
   check('QTY Case: 1–9 + More…; QTY per Case: this item\'s size first (✓ 25 pcs — this item), then the common sizes (not 25 again) + More…',
@@ -1470,7 +1471,54 @@ console.log('\nStock In / Found on Shelf: our own buttons for QTY Case / QTY per
   check('tap 3 cases + "✓ 25 this item" → the fields hold 3 and 25 (shows "= 25 pcs · 75 pcs in all")', el('inv-qa-cases').value === 3 && el('inv-qa-upc').value === 25 && /75 pcs in all/.test(el('inv-qa-upc-show').textContent), { c: el('inv-qa-cases').value, u: el('inv-qa-upc').value });
   globalThis.invQaUpc('more'); pads[pads.length - 1].cb(36); globalThis.invQaCases('more'); pads[pads.length - 1].cb(12);
   check('More… opens our number pad (36 pcs / 12 cases typed there)', pads.length === 2 && el('inv-qa-upc').value === 36 && el('inv-qa-cases').value === 12 && /36 pcs \(More…\)/.test(el('inv-qa-upc-pad').innerHTML), null);
-  ['invQaCases', 'invQaUpc', 'invQaPadsRender'].forEach(k => delete globalThis[k]);
+  // Owner: "when we select the pieces (last step) it saves by itself" — only when the part #, the spot and the cases are in.
+  let submits = 0; globalThis.invQuickAddSubmit = () => { submits++; };
+  el('inv-qa-partnum').value = ''; el('inv-qa-shelf').value = ''; globalThis.invQaUpc(10);
+  check('tap the pieces with no box scanned yet → not saved, says what is missing', submits === 0 && /Scan the box first/.test(qaFlash[qaFlash.length - 1] || ''), qaFlash);
+  el('inv-qa-partnum').value = '23-2-3=2'; el('inv-qa-shelf').value = 'A1=1-1-1'; globalThis.invQaCases(3); globalThis.invQaUpc(10);
+  check('box + spot + cases in → tapping the pieces saves (Submit runs by itself)', submits === 1 && el('inv-qa-upc').value === 10, submits);
+  ['invQaCases', 'invQaUpc', 'invQaPadsRender', 'invQuickAddSubmit'].forEach(k => delete globalThis[k]);
+  // Owner: "Stock In must scan in with the UPC code (got '… is a UPC barcode, not part #') — do both, always save it as the part #".
+  check('Stock In: a scanned box UPC is turned into its part # (in the box, and again on Submit) — never saved as a UPC',
+    /if \(d && d\.partNum && String\(d\.partNum\)\.toUpperCase\(\) !== partNum\) \{ partNum = String\(d\.partNum\)\.toUpperCase\(\);/.test(ih)
+      && /A box UPC was scanned → put its part # in the box/.test(ih) && /invAskUpcPart\(partNum, function\(part\) \{ var pi = g\("inv-qa-partnum"\); if \(pi\) pi\.value = part;/.test(ih) && /Barcode ' \+ partNum \+ ' is not linked to a part # yet/.test(ih), null);
+  const lkUpc = await get('/inventory/lookup?code=012345678905');
+  check('…the lookup Stock In uses gives the part # for a UPC (or says it is not linked)', lkUpc && (lkUpc.partNum || lkUpc.upcNotLinked), lkUpc);
+}
+
+// Owner: "Stock In: tap the pieces = saved; a history under it so a mistake can be cancelled".
+console.log('\nStock In: My Stock In today → ✕ Cancel my own mistake');
+{
+  await post('/inventory/review-mode', { mode: 'manual' });
+  sq.prepare("INSERT INTO master_list (base_sku, name, part_num, location, cases, units_per_case) VALUES ('66-1-1','Bushing','66-1-1=10','C4=2-2-2',4,10)").run();
+  const upcL = await post('/inventory/upc-link', { upc: '076543210987', part: '66-1-1=10' });
+  const lk = await get('/inventory/lookup?code=076543210987');
+  check('a box UPC linked to its part # → the lookup gives the part # (Stock In saves 66-1-1=10, not the UPC)', lk.partNum && String(lk.partNum).toUpperCase() === '66-1-1=10', { upcL, lk: lk.partNum });
+  const bad = await call('/inventory/log', { method: 'POST', headers: H, body: JSON.stringify({ type: 'IN', partNum: '076543210987', location: 'C4=2-2-2', cases: 1, initials: 'TS' }) });
+  check('…a UPC is never saved as a part # (the Worker still refuses it)', bad.status === 400, bad.status);
+  const shelf = () => sq.prepare("SELECT SUM(cases) c FROM master_list WHERE part_num = '66-1-1=10'").get().c;
+  const s0 = shelf();
+  const a = await post('/inventory/log', { type: 'IN', partNum: '66-1-1=10', sku: '66-1-1', location: 'C4=2-2-2', cases: 2, initials: 'TS', isNew: true, unitsPerCase: 10 });
+  const ca = await post('/inventory/cancel-own', { id: a.d1Id });
+  const ra = sq.prepare('SELECT status, cancelled_by FROM inventory_log WHERE id = ?').get(a.d1Id);
+  check('✕ Cancel before approval → the entry is cancelled (Rejected, who kept), the shelf never changed', ca.ok && ca.cancelled === 'pending' && ra.status === 'Rejected' && /own mistake/.test(ra.cancelled_by) && shelf() === s0, { ca, ra });
+  const b = await post('/inventory/log', { type: 'IN', partNum: '66-1-1=10', sku: '66-1-1', location: 'C4=2-2-2', cases: 3, initials: 'TS', isNew: true, unitsPerCase: 10 });
+  const pendB = (await get('/inventory/pending')).items.find(x => x.d1Id === b.d1Id);
+  await post('/inventory/verify', { rowIndex: pendB.rowIndex, action: 'Approved', item: pendB });
+  const s1 = shelf();
+  const cb = await post('/inventory/cancel-own', { id: b.d1Id });
+  const rc = sq.prepare("SELECT type, cases, total_before tb, total_after ta FROM inventory_log WHERE notes LIKE '%' || ? || '%' ORDER BY id DESC").get('#' + b.d1Id);
+  check('✕ Cancel after approval (within 30 min) → reversed by the same Cancel managers use: shelf 4 → 7 → 4, History keeps Before → After',
+    s0 === 4 && s1 === 7 && cb.ok && shelf() === 4 && (!rc || (rc.type === 'OUT' && rc.cases === 3)), { s0, s1, cb, now: shelf(), rc });
+  const c2 = await post('/inventory/log', { type: 'IN', partNum: '66-1-1=10', location: 'C4=2-2-2', cases: 1, initials: 'SOMEONE' });
+  const cx = await post('/inventory/cancel-own', { id: c2.d1Id });
+  check('someone else\'s Stock In can\'t be cancelled here (ask a manager)', cx.ok === false && /Only the person who saved it/.test(cx.error), cx);
+  const again = await post('/inventory/cancel-own', { id: a.d1Id });
+  check('…and one already cancelled can\'t be cancelled twice', again.ok === false, again);
+  const { readFileSync } = await import('node:fs');
+  const ih = readFileSync(fileURLToPath(new URL('../inventory.html', import.meta.url)), 'utf8');
+  check('screen: "My Stock In today" under Stock In with ✕ Cancel (saved on this phone, today, New York time)',
+    /<div id="inv-qa-mine"/.test(ih) && /My Stock In today — made a mistake\? tap ✕ Cancel/.test(ih) && /wFetch\(W \+ '\/inventory\/cancel-own'/.test(ih) && /invQaMineAdd\(\{ id: d\.d1Id \|\| null, part: partNum/.test(ih), null);
 }
 
 console.log('\n' + (failed ? '❌ ' + failed + ' check(s) FAILED' : '✅ all ' + passed + ' checks passed') + '\n');
