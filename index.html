@@ -915,6 +915,11 @@ body {
   margin-top:16px;font-size:12px;color:var(--red);font-weight:600;
   min-height:18px;transition:opacity .2s;
 }
+/* English / Español switch (xf-lang.js) */
+.xf-lang-switch { display:inline-flex;align-items:center;border:1.5px solid #dfe2e7;border-radius:999px;overflow:hidden;background:#fff;font-size:13px; }
+.xf-lang-switch span { padding:0 4px 0 10px; }
+.xf-lang-switch button { border:none;background:transparent;padding:7px 13px;font-family:inherit;font-size:13px;font-weight:600;color:#4b5563;cursor:pointer; }
+.xf-lang-switch button[aria-pressed="true"] { background:#1a56db;color:#fff; }
 @keyframes pinShake {
   0%,100%{transform:translateX(0)}
   20%{transform:translateX(-8px)}
@@ -1252,6 +1257,7 @@ input[type=checkbox]{width:15px;height:15px;cursor:pointer;accent-color:var(--bl
 
 })();
 </script>
+<script src="xf-lang.js?v=20261003a"></script>
 </head>
 <body>
 <script>document.body.style.visibility="visible";</script>
@@ -1272,6 +1278,7 @@ input[type=checkbox]{width:15px;height:15px;cursor:pointer;accent-color:var(--bl
     <input id="launcher-cred-password" type="password" placeholder="Password" autocomplete="current-password" style="width:100%;padding:11px 14px;border:1.5px solid #dfe2e7;border-radius:9px;font-family:inherit;font-size:14px;margin-bottom:14px;box-sizing:border-box;">
     <button id="launcher-cred-login-btn" onclick="launcherCredLogin()" style="width:100%;padding:12px;border:none;border-radius:9px;background:#1a56db;color:#fff;font-family:inherit;font-weight:600;font-size:14px;cursor:pointer;">Sign In</button>
     <div class="pin-error" id="pin-error"></div>
+    <div style="margin-top:10px"><div class="xf-lang-switch" data-no-xl role="group" aria-label="Language / Idioma"><span>🌐</span><button type="button" data-xf-lang="en" aria-pressed="true" onclick="XFLang.set('en')">English</button><button type="button" data-xf-lang="es" aria-pressed="false" onclick="XFLang.set('es')">Español</button></div></div>
   </div>
 </div>
 
@@ -1287,6 +1294,7 @@ input[type=checkbox]{width:15px;height:15px;cursor:pointer;accent-color:var(--bl
       <span data-xf-signout-name></span>
       <button onclick="location.reload()" style="background:#fff;border:1px solid var(--border);color:var(--text2);font-size:12px;font-weight:600;padding:7px 14px;border-radius:8px;cursor:pointer;font-family:inherit" title="Reload this page">🔄 Refresh</button><button data-xf-signout onclick="xfSignOut()" style="background:#fff;border:1px solid var(--border);color:var(--text2);font-size:12px;font-weight:600;padding:7px 14px;border-radius:8px;cursor:pointer;font-family:inherit">🚪 Sign Out</button>
     </div>
+    <div style="display:flex;justify-content:center;margin-top:10px"><div class="xf-lang-switch" data-no-xl role="group" aria-label="Language / Idioma"><span>🌐</span><button type="button" data-xf-lang="en" aria-pressed="true" onclick="XFLang.set('en')">English</button><button type="button" data-xf-lang="es" aria-pressed="false" onclick="XFLang.set('es')">Español</button></div></div>
 
     <div class="launcher-section-label">🏭 Warehouse</div>
     <div class="launcher-grid">
@@ -1917,8 +1925,8 @@ function showToast(msg) {
             + msgStatusBadge(m.status)
             + '<span style="margin-left:auto;font-size:11px;color:var(--text3);font-family:var(--mono);">' + msgFmtTime(m.timestamp) + '</span>'
             + '</div>'
-            + '<div style="font-size:13px;color:var(--text);">' + escHtml(m.body||'') + '</div>'
-            + (m.reply ? '<div style="margin-top:8px;padding:8px 10px;background:var(--green-bg);border-radius:6px;font-size:12px;color:var(--green);"><strong>Reply:</strong> ' + escHtml(m.reply) + '</div>' : '')
+            + '<div data-no-xl style="font-size:13px;color:var(--text);">' + escHtml(m.body||'') + '</div>'
+            + (m.reply ? '<div style="margin-top:8px;padding:8px 10px;background:var(--green-bg);border-radius:6px;font-size:12px;color:var(--green);"><strong>Reply:</strong> <span data-no-xl>' + escHtml(m.reply) + '</span></div>' : '')
             + '</div>';
         }).join('');
       }).catch(function() {
@@ -2003,8 +2011,8 @@ function showToast(msg) {
         + '<div style="display:flex;align-items:center;gap:8px;margin-bottom:6px;">'
         + '<span style="font-family:var(--mono);font-weight:700;font-size:13px;background:var(--bg2);border-radius:6px;padding:2px 8px;color:var(--text);">' + escHtml(m.initials||'?') + '</span>'
         + '</div>'
-        + '<div style="font-size:14px;color:var(--text);line-height:1.5;">' + escHtml(m.body||'') + '</div>'
-        + (m.reply ? '<div class="msg-reply-thread"><span style="font-size:11px;font-weight:700;color:var(--green);font-family:var(--mono);">REPLY</span><div style="font-size:13px;color:var(--text);margin-top:4px;">' + escHtml(m.reply) + '</div></div>' : '')
+        + '<div data-no-xl style="font-size:14px;color:var(--text);line-height:1.5;">' + escHtml(m.body||'') + '</div>'
+        + (m.reply ? '<div class="msg-reply-thread"><span style="font-size:11px;font-weight:700;color:var(--green);font-family:var(--mono);">REPLY</span><div data-no-xl style="font-size:13px;color:var(--text);margin-top:4px;">' + escHtml(m.reply) + '</div></div>' : '')
         + '<div class="msg-actions">'
         + (m.status !== 'archived' ? '<button class="btn-reply" onclick="msgInboxOpenReply(\'' + m.id + '\')">💬 Reply</button>' : '')
         + (m.status !== 'archived' ? '<button class="btn-archive" onclick="msgInboxSetStatus(\'' + m.id + '\',\'archived\')">Archive</button>' : '')
@@ -2020,7 +2028,7 @@ function showToast(msg) {
     if (!m) return;
     document.getElementById('msg-reply-context').innerHTML =
       '<strong>' + escHtml(m.initials) + '</strong> · ' + escHtml(m.category) + ' · ' + msgFmtTime(m.timestamp)
-      + '<div style="margin-top:6px;font-size:13px;color:var(--text);">' + escHtml(m.body) + '</div>';
+      + '<div data-no-xl style="margin-top:6px;font-size:13px;color:var(--text);">' + escHtml(m.body) + '</div>';
     document.getElementById('msg-reply-input').value = '';
     document.getElementById('msg-reply-modal').style.display = 'flex';
   };
@@ -3473,5 +3481,5 @@ function showToast(msg) {
 
 
 <script src="xf-signout.js?v=20260924"></script>
-<script src="xf-access.js?v=20261004a"></script>
+<script src="xf-access.js?v=20261004x"></script>
 </html>

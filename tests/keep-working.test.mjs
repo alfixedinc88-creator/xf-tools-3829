@@ -1684,5 +1684,64 @@ console.log('\nSKU Mgr: 🧹 Check part #s (read-only)');
   check('…our part #s are #-#-#=#: 30-4=10, 30-3-4-2=10, 61853-K=5X → "not #-#-# before ="; normal ones (W.1C, &2C, =OLD) are not flagged; it changes nothing (same rows, same cases); managers only', before.n === after.n && before.c === after.c && pw.status === 403, { before, after, w: pw.status });
 }
 
+console.log('\n🌐 English / Español switch (xf-lang.js + xf-lang-es.js)');
+{
+  const { readFileSync, readdirSync } = await import('node:fs');
+  const vm = await import('node:vm');
+  const rf = f => readFileSync(fileURLToPath(new URL('../' + f, import.meta.url)), 'utf8');
+  const engine = rf('xf-lang.js'), dict = rf('xf-lang-es.js');
+  // A tiny fake browser: records whatever the engine does to the page.
+  const boot = (store, path = '/xf-tools-3829/inventory.html') => {
+    const did = { write: [], observers: 0, alert: null };
+    const alert0 = function () {};
+    const ctx = { localStorage: { getItem: k => (k in store ? store[k] : null), setItem: (k, v) => { store[k] = String(v); } },
+      location: { pathname: path, reload() { did.reload = true; } },
+      document: { readyState: 'loading', write: h => did.write.push(h), addEventListener() {}, querySelectorAll: () => [],
+        createElement: () => ({}), head: { appendChild() {} }, documentElement: { lang: 'en' }, createTreeWalker: () => ({ nextNode: () => null }) },
+      MutationObserver: function () { did.observers++; this.observe = () => {}; }, alert: alert0, confirm: alert0, prompt: alert0, Map, WeakMap };
+    ctx.window = ctx; vm.createContext(ctx); vm.runInContext(engine, ctx);
+    did.alertWrapped = ctx.alert !== alert0;
+    return { ctx, did };
+  };
+  const pages = readdirSync(fileURLToPath(new URL('../', import.meta.url))).filter(f => f.endsWith('.html'));
+  const v = (rf('index.html').match(/xf-lang\.js\?v=(\w+)/) || [])[1];
+  check('every page loads xf-lang.js (same version) in <head>, before the page draws', !!v && pages.length >= 15 && pages.every(f => { const h = rf(f); const i = h.indexOf('xf-lang.js?v=' + v); return i > 0 && i < h.indexOf('</head>'); }), pages.filter(f => !rf(f).includes('xf-lang.js?v=' + v)));
+  const ix = rf('index.html');
+  const pin = ix.slice(ix.indexOf('id="pin-screen"'), ix.indexOf('<!-- ═══ LAUNCHER'));
+  const lau = ix.slice(ix.indexOf('<div id="launcher"'), ix.indexOf('launcher-section-label', ix.indexOf('<div id="launcher"')));
+  const sw = h => /data-xf-lang="en"[^>]*onclick="XFLang\.set\('en'\)"[^>]*>English</.test(h) && /data-xf-lang="es"[^>]*onclick="XFLang\.set\('es'\)"[^>]*>Español</.test(h);
+  check('front page: English / Español switch on the Sign In card AND on the launcher (switch before signing in)', sw(pin) && sw(lau), null);
+  // English = the page exactly as before: nothing loaded, watched or wrapped.
+  for (const store of [{}, { xf_lang: 'en' }]) {
+    const { ctx, did } = boot(store);
+    check('English (' + (store.xf_lang ? 'chosen' : 'default') + '): no dictionary loaded, page not watched, pop-ups untouched, text unchanged',
+      ctx.XFLang.lang === 'en' && did.write.length === 0 && did.observers === 0 && !did.alertWrapped && ctx.XFLang.t('Sign In') === 'Sign In', { did, lang: ctx.XFLang.lang });
+  }
+  // Spanish: the dictionary is loaded on every page that has xf-lang.js.
+  const es = boot({ xf_lang: 'es' });
+  check('Español: the dictionary (xf-lang-es.js) loads', es.did.write.length === 1 && /src="xf-lang-es\.js\?v=\w+"/.test(es.did.write[0]), es.did.write);
+  vm.runInContext(dict, es.ctx);
+  const t = es.ctx.XFLang.t;
+  check('Español: words are swapped (Sign In → Entrar) and the page is watched for new text', t('Sign In') === 'Entrar' && es.did.observers === 1 && t('📤 Stock Out') !== '📤 Stock Out', [t('Sign In'), t('📤 Stock Out')]);
+  // Data must never be translated — part #s, UPCs, locations, names, numbers.
+  const data = ['30-3-4=10X', '30-3-4', '27-3-4C=2X', '30-3-4=5XX', '23-2-3=2', 'C1=11-2-10', 'BARN=1-1-2-1', 'GARAGE=2-1-1', 'BSMT=1-1-1', '2FL=3-2-1', 'FRONT', 'BO', '2FL', 'MIDDLE', 'BSMT', 'PR', 'GARAGE', 'BACK', 'C1', 'C2', 'BARN', 'C3', 'C4', 'C5',
+    'Front', 'Middle', 'Back', 'Barn', 'Garage', '012345678905', '0012345678905', 'X001ABC123', 'B0C1234567', 'MR', 'TS', 'Maria', 'Jose', '100', '3.5', '12/25'];
+  const changed = data.filter(s => t(s) !== s);
+  check('Español: part #s, UPCs, location codes, names and numbers are never translated', changed.length === 0, changed);
+  const keys = []; vm.runInContext('XFLang.add = (function (add) { return function (d) { __keys.push.apply(__keys, Object.keys(d)); return add(d); }; })(XFLang.add);', Object.assign(es.ctx, { __keys: keys })); vm.runInContext(dict, es.ctx);
+  const bad = keys.filter(k => /^(front|middle|back|barn|garage|basement|bsmt|bo|2fl|pr|c[1-5])$/i.test(k.trim()) || /\d+-\d+(-\d+)?(=|$)|[A-Z0-9]+=\d|\b\d{8,14}\b/.test(k));
+  check('the dictionary has no part #, UPC or location as a word to translate', keys.length > 500 && bad.length === 0, { n: keys.length, bad });
+  check('Español: mixed text keeps the data (only the words change)', /30-3-4=10X/.test(t('Stock Out 30-3-4=10X')) && /C1=11-2-10/.test(t('Location: C1=11-2-10')), [t('Stock Out 30-3-4=10X'), t('Location: C1=11-2-10')]);
+  check('people\'s own words (chat messages, customer drafts) are marked never-translate', (ix.match(/data-no-xl/g) || []).length >= 7 && /cs-draft-box/.test(engine) && /em-thread-bubble/.test(engine), null);
+  // Training keeps its own English/Spanish and follows the switch both ways.
+  const tr0 = { xf_lang: 'es', 'picker-lang': 'en' }; boot(tr0, '/xf-tools-3829/training.html');
+  const tr1 = boot({ xf_lang: 'es' }, '/xf-tools-3829/training.html');
+  check('Training follows the switch (picker-lang kept in sync) and translates itself (no dictionary load there)', tr0['picker-lang'] === 'es' && tr1.did.write.length === 0 && tr1.did.observers === 0 && /window\.setLang = function \(l\) \{ orig\(l\); put\(KEY/.test(engine), tr0);
+  const sw1 = { xf_lang: 'en' }; const b = boot(sw1); b.ctx.XFLang.set('es');
+  check('switching sets both xf_lang and picker-lang; back to English reloads the page (exact original English)', sw1.xf_lang === 'es' && sw1['picker-lang'] === 'es' && (() => { const st = { xf_lang: 'es' }; const x = boot(st); x.ctx.XFLang.set('en'); return st.xf_lang === 'en' && x.did.reload; })(), sw1);
+  check('on-screen keyboard Enter still finds the Sign In / Confirm button in Spanish', /entrar\|iniciar\|confirmar/.test(rf('xf-access.js')), null);
+  check('an <option> with no value keeps its English value when its text is translated', /nodeName === 'OPTION' && !el\.hasAttribute\('value'\)/.test(engine), null);
+}
+
 console.log('\n' + (failed ? '❌ ' + failed + ' check(s) FAILED' : '✅ all ' + passed + ' checks passed') + '\n');
 process.exit(failed ? 1 : 0);
