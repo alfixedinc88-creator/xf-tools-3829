@@ -24637,13 +24637,32 @@ async function autolabelBuy(env, order, allocationId, quote) {
     if (code != null && code !== '') shipment.service_type = code;
   }
   const carrierSlug = typeof q.carrier === 'string' ? q.carrier : ((q.carrier && q.carrier.slug) || q.carrier_slug || quote.source);
-  // If Veeqo still can't find the rate, try once more without service_id (a
-  // refused buy buys nothing, so trying again can never buy twice).
+  // Real test buy (order 111-5929074-3731428, Amazon Shipping USPS Ground
+  // Advantage $5.72) → HTTP 400 INVALID_VALUE_ADDED_SERVICES: the rate offers
+  // a "Confirmation" choice (shipping_service_options key
+  // value_added_service__VAS_GROUP_ID_CONFIRMATION: Delivery confirmation $0 /
+  // Signature confirmation $4.15) and none was picked. Pick the free one
+  // (never a paid extra), sent under the option's own key.
+  const vas = {};
+  for (const opt of (Array.isArray(q.shipping_service_options) ? q.shipping_service_options : [])) {
+    if (!opt || !/^value_added_service/.test(String(opt.key || '')) || opt.type !== 'select' || !Array.isArray(opt.values)) continue;
+    const free = opt.values.find(v => v && v.value != null && !(parseFloat(v.price) > 0));
+    if (free) vas[opt.key] = free.value;
+  }
+  Object.assign(shipment, vas);
+  // A refused buy buys nothing, so trying again can never buy twice:
+  // "Rate not found" → once more without service_id; value added services
+  // refused → once more with them sent as a value_added_services list.
   const tries = [{ carrier: carrierSlug, shipment }];
-  if (shipment.service_id != null) { const s2 = { ...shipment }; delete s2.service_id; tries.push({ carrier: carrierSlug, shipment: s2 }); }
+  if (shipment.service_id != null) { const s2 = { ...shipment }; delete s2.service_id; tries.push({ carrier: carrierSlug, shipment: s2, when: /rate not found/i }); }
+  if (Object.keys(vas).length) {
+    const s3 = { ...shipment }; Object.keys(vas).forEach(k => delete s3[k]);
+    s3.value_added_services = Object.keys(vas).map(k => ({ id: vas[k] }));
+    tries.push({ carrier: carrierSlug, shipment: s3, when: /VALUE_ADDED_SERVICES/i });
+  }
   const sent = [];
   for (let i = 0; i < tries.length; i++) {
-    const body = tries[i];
+    const body = { carrier: tries[i].carrier, shipment: tries[i].shipment };
     try {
       const resp = await veeqoFetch(env, '/shipping/shipments', { method: 'POST', body: JSON.stringify(body) });
       const tnObj = resp && (resp.tracking_number || (resp.shipment && resp.shipment.tracking_number));
@@ -24651,7 +24670,9 @@ async function autolabelBuy(env, order, allocationId, quote) {
       return { tracking: String(tracking || '').toUpperCase(), response: resp, requestBody: body, tries: sent.concat([{ body, ok: true }]) };
     } catch (e) {
       sent.push({ body, error: String(e.message || e).slice(0, 300) });
-      if (!(i + 1 < tries.length && /HTTP 400/.test(e.message || '') && /rate not found/i.test(e.message || ''))) { e.tries = sent; throw e; }
+      const msg = String(e.message || ''), next = tries.slice(i + 1).findIndex(t => /HTTP 400/.test(msg) && t.when && t.when.test(msg));
+      if (next < 0) { e.tries = sent; throw e; }
+      i += next; // skip to the try that answers this refusal
     }
   }
 }

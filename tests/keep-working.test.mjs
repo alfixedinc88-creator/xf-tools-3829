@@ -1849,6 +1849,17 @@ console.log('\nAuto Label: buying sends the rate\'s id (its name) as service_typ
   check('…"Rate not found" → tries once more without service_id (a refused buy buys nothing, so never twice)', b.sent.length === 2 && b.sent[1].shipment.service_id === undefined && r2.tracking === '1Z9', b.sent);
   const c = mk(() => { throw new Error('Veeqo /shipping/shipments → HTTP 422: {"error_messages":["Address invalid"]}'); });
   let err = null; try { await c.buy({}, {}, 555, { raw: rate }); } catch (e) { err = e; }
+  // Owner, 2nd test buy (order 111-5929074-3731428, $5.72): HTTP 400 INVALID_VALUE_ADDED_SERVICES — the rate's "Confirmation" choice wasn't picked.
+  const vasRate = { ...rate, name: 'amazon_shipping_v2-d528156e-cf83-47ea-b303-cc5192bd7200', service_id: 'USPS_PTP_GAL', remote_shipment_id: 'prb6fa420e0',
+    shipping_service_options: [{ key: 'value_added_service__VAS_GROUP_ID_CONFIRMATION', type: 'select', values: [{ value: 'DELIVERY_CONFIRMATION', price: 0 }, { value: 'SIGNATURE_CONFIRMATION', price: 4.15 }] },
+      { key: 'liability_amount', type: 'number', values: [] }] };
+  const v = mk(() => ({ tracking_number: '9400222' }));
+  await v.buy({}, {}, 1612650312, { raw: vasRate });
+  check('the rate\'s "Confirmation" choice is picked: the FREE one (Delivery confirmation), never the $4.15 Signature, no insurance',
+    v.sent.length === 1 && v.sent[0].shipment.value_added_service__VAS_GROUP_ID_CONFIRMATION === 'DELIVERY_CONFIRMATION' && !JSON.stringify(v.sent[0]).includes('SIGNATURE') && v.sent[0].shipment.liability_amount === undefined, v.sent);
+  const w = mk((body, n) => { if (n === 1) throw new Error('Veeqo /shipping/shipments → HTTP 400: {"error_messages":["InvalidRequestException, errorCode: INVALID_VALUE_ADDED_SERVICES, errorMessage: The requested value added services are invalid."]}'); return { tracking_number: '9400333' }; });
+  const r4 = await w.buy({}, {}, 1612650312, { raw: vasRate });
+  check('…value added services refused → one more try with them as a list (skips the "Rate not found" try); bought once', w.sent.length === 2 && JSON.stringify(w.sent[1].shipment.value_added_services) === '[{"id":"DELIVERY_CONFIRMATION"}]' && w.sent[1].shipment.service_id === 'USPS_PTP_GAL' && r4.tracking === '9400333', w.sent);
   check('…any other refusal: no second try, and what was sent is kept to show on the screen', c.sent.length === 1 && err && (err.tries || []).length === 1 && /Address invalid/.test(err.tries[0].error), { sent: c.sent.length, err: err && err.tries });
 }
 
