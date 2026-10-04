@@ -1240,5 +1240,93 @@ console.log('\nAdmin → Users: Remove a user who no longer works here (name sta
     /onclick="adRemoveUser\(' \+ u\.id/.test(ah) && /removed users \('/.test(ah) && /adRestoreUser\(' \+ u\.id/.test(ah) && /AD\.users\.filter\(function\(u\)\{ return !u\.removedAt; \}\)/.test(ah), null);
 }
 
+// Owner: "Stock Out Shelving: merge Product name into SKU/Part#/UPC, take off Location · Transfer: only SKU/Part#/UPC (+ name) and
+// Container here · new ✅ Checking tab: scan UPC / SKU / name / location → see everything; on a spot: change the number, None found,
+// Something else found (scan box → boxes → pieces → scan spot → saves by itself → next)".
+console.log('\nStock Out / Transfer: one search box (part # / UPC / name) · ✅ Checking tab');
+{
+  const { readFileSync } = await import('node:fs');
+  const ih = readFileSync(fileURLToPath(new URL('../inventory.html', import.meta.url)), 'utf8');
+  check('Stock Out: no "Product Name" / "Location" buttons — one box for part #, barcode or name (name searched when no part # / UPC matches)',
+    !/id="inv-smode-name"/.test(ih) && !/id="inv-smode-loc"/.test(ih) && /id="inv-search-inp" type="text" placeholder="Part #, barcode or product name…"/.test(ih)
+      && /else \{ invLookup\(val, true\); \}/.test(ih) && /if \(byName && invNameFallback\(code, d\)\) \{ invScanNameSearch\(code\); return; \}/.test(ih), null);
+  check('Transfer: only "SKU / Part# / UPC / Name" and "🚢 Container here" (no Product Name / Location buttons); a name typed (⌨) is searched by name',
+    /id="xfr-mode-code"[^>]*>SKU \/ Part# \/ UPC \/ Name</.test(ih) && /id="xfr-mode-cont"/.test(ih) && !/id="xfr-mode-name"/.test(ih) && !/id="xfr-mode-loc"/.test(ih)
+      && /xfrLookup\(val, true\)/.test(ih) && /if \(byName && invNameFallback\(code, d\) && !xfrIsLoc\(/.test(ih), null);
+  const fb = new Function('window', (ih.match(/window\.invNameFallback = function[^\n]*/) || [''])[0] + '; return window.invNameFallback;')({});
+  check('…a part # / UPC always goes first; only "not found" text with letters is searched as a name', fb('elbow', {}) && fb('Tee 1/2', { partNum: null }) && !fb('30-3-4', {}) && !fb('012345678905', {}) && !fb('tee', { partNum: '23-2-3=2' }) && !fb('tee', { upcNotLinked: true }), null);
+  check('✅ Checking tab sits right after Stock Out Big Company', /id="inv-tab-stockoutco"[^\n]*\n\s*<button class="itab" id="inv-tab-check" onclick="invSwitchTab\('check'\)">✅ Checking<\/button>/.test(ih) && /id="inv-panel-check"/.test(ih), null);
+
+  // Run the page's own ✅ Checking code against the real Worker (fake screen, real saves).
+  sq.prepare("INSERT INTO master_list (base_sku, name, part_num, location, cases, units_per_case) VALUES ('77-7-1','Cap 1/2','77-7-1=10','C2=1-1-1',5,10), ('77-7-1','Cap 1/2','77-7-1=10','BARN=2-1-1',3,10), ('77-7-1','Cap 1/2','77-7-1=2X','C2=1-1-1',4,2), ('77-7-1','Cap 1/2','77-7-1=10','C2=1-1-2',7,10), ('77-7-1','Cap 1/2','77-7-1=5','C1=9-9-9',2,5)").run();
+  sq.prepare("INSERT INTO inventory_log (timestamp, type, part_num, location, cases, initials, notes, status, verified_by) VALUES ('2026-09-20T14:00:00Z','IN','77-7-1=10','C2=1-1-1',5,'Maria','','Verified','TS')").run();
+  const pcs = () => sq.prepare("SELECT SUM(cases * units_per_case) p FROM master_list WHERE base_sku = '77-7-1' OR part_num LIKE '77-7-1=%'").get().p;
+  const cs = (part, loc) => sq.prepare('SELECT cases c, units_per_case u FROM master_list WHERE part_num = ? AND location = ? ORDER BY id').all(part, loc).map(x => x.c + '×' + x.u).join(',');
+  const pcs0 = pcs(); // 5×10 + 3×10 + 4×2 + 7×10 + 2×5 = 168
+  await post('/inventory/review-mode', { mode: 'manual' });
+  const els = {}, el = id => els[id] || (els[id] = { id, value: '', innerHTML: '', style: {}, focus() {}, set textContent(v) {}, className: '' });
+  const xIsLoc = (ih.match(/function xfrIsLoc\(code\) \{[\s\S]*?\n  \}/) || [''])[0], xParent = (ih.match(/function invParent\(p\) \{[^\n]*/) || [''])[0];
+  const xEsc = (ih.match(/function xfrEsc\(v\) \{[^\n]*/) || [''])[0], xN = (ih.match(/function xfrN\(v\) \{[^\n]*/) || [''])[0], xT = (ih.match(/function xfrFmtT\(iso\) \{[^\n]*/) || [''])[0];
+  const ckSrc = (ih.match(/  \/\/ ══ ✅ Checking ═+[\s\S]*?(?=\n  \/\/ 📷 camera)/) || [''])[0];
+  const flashes = [];
+  const wFetch = (u, o) => call(u, { ...(o || {}), headers: { ...H, ...((o && o.headers) || {}) } });
+  const logAndApprove = async (body, verifyFor) => { const d = await post('/inventory/log', body); if (verifyFor && d && d.ok !== false) d._after = await post('/inventory/verify', verifyFor(d)); return d; };
+  const mk = auto => new Function('window', 'g', 'W', 'wFetch', 'invLogAndApprove', 'invFlash', 'INV_CRED_USER', 'invAuditAutoMode', 'DB', 'INV_PREFIXES', 'invPullWalkCompare', 'setTimeout',
+    xIsLoc + '\n' + xParent + '\n' + xEsc + '\n' + xN + '\n' + xT + '\n' + ckSrc + '\nreturn { CK: CK };')(
+    (globalThis.__ckWin = globalThis), el, '', wFetch, logAndApprove, (m, t) => flashes.push(m), { displayName: 'Ana' }, auto, { master: [], products: [] },
+    ['BARN=', 'C1=', 'C2=', '2FL='], (a, b) => String(a).localeCompare(String(b)), () => 0);
+  const settle = () => new Promise(r => setTimeout(r, 60));
+  let ck = mk(true), w = globalThis.__ckWin;
+  check('the Checking code is found and loads', ckSrc.length > 2000 && typeof w.ckGo === 'function', ckSrc.length);
+
+  // a spot → what is there now, who put it there and when
+  w.ckGo('C2=1-1'); await settle(); await settle();
+  const rowsRow = ck.CK.rows.length;
+  w.ckGo('C2=1-1-1'); await settle(); await settle();
+  const rowsAt = ck.CK.rows.map(r => r.partNum + '@' + r.location).sort();
+  check('scan a spot → what is there now + who put it there and when; scan a row (C2=1-1) → every spot in it', rowsRow === 3 && rowsAt.join() === '77-7-1=10@C2=1-1-1,77-7-1=2X@C2=1-1-1'
+    && /Put here by <b>Maria<\/b>/.test(el('ck-out').innerHTML) && /✗ None found/.test(el('ck-out').innerHTML) && /Something else found on this spot/.test(el('ck-out').innerHTML), { rowsAt, html: el('ck-out').innerHTML.slice(0, 300) });
+  // change the number: 5 → 3 (auto mode: approved right away, History keeps Before → After)
+  const iA = ck.CK.rows.findIndex(r => r.partNum === '77-7-1=10' && r.location === 'C2=1-1-1');
+  el('ck-cnt-' + iA).value = '3'; w.ckSaveCount(iA); await settle(); await settle();
+  const outRow = sq.prepare("SELECT type, cases, notes, status, total_before b, total_after a FROM inventory_log WHERE part_num='77-7-1=10' AND notes LIKE '%Checking%' ORDER BY id DESC").get();
+  check('count 5 → 3: an [AUDIT] Stock Out of 2, approved, shelf now 3, History 15 → 13 cases', cs('77-7-1=10', 'C2=1-1-1') === '3×10' && outRow && outRow.type === 'OUT' && outRow.cases === 2
+    && /^\[AUDIT\] System: 5 → Actual: 3/.test(outRow.notes) && outRow.status === 'Verified' && outRow.b === 15 && outRow.a === 13, outRow);
+  // None found on =2X → 0
+  const iB = ck.CK.rows.findIndex(r => r.partNum === '77-7-1=2X');
+  w.ckNoneFound(iB); await settle(); await settle();
+  const nf = sq.prepare("SELECT type, cases, notes FROM inventory_log WHERE part_num='77-7-1=2X' ORDER BY id DESC").get();
+  check('✗ None found → that item at that spot goes to 0 (an [AUDIT] [NONE FOUND] Stock Out of all 4)', !sq.prepare("SELECT SUM(cases) c FROM master_list WHERE part_num='77-7-1=2X'").get().c && nf.type === 'OUT' && nf.cases === 4 && /\[NONE FOUND\]/.test(nf.notes), nf);
+  // ➕ Something else found: scan box → 2 boxes × 25 pcs (new box size) → scan the spot → saved → next box
+  w.ckOtherStart(); w.ckGo('77-7-1=10'); await settle(); await settle();
+  check('➕ Something else found → scan the box → asks boxes + pieces (pieces pre-filled from the part #)', ck.CK.other.step === 'count' && ck.CK.other.part === '77-7-1=10' && Number(ck.CK.other.pcs) === 10, ck.CK.other);
+  el('ck-o-n').value = '2'; el('ck-o-pcs').value = '25'; w.ckGo('C2=1-1-1'); await settle(); await settle();
+  check('…scan the spot → saves by itself (2 boxes × 25 pcs = a new 25-pc row at C2=1-1-1, the 10-pc row unchanged) and starts over at "scan the box"',
+    cs('77-7-1=10', 'C2=1-1-1') === '3×10,2×25' && ck.CK.other && ck.CK.other.step === 'box' && ck.CK.saved.length === 1, { c: cs('77-7-1=10', 'C2=1-1-1'), o: ck.CK.other });
+  w.ckGo('77-7-1=10'); await settle(); await settle(); el('ck-o-n').value = '1'; el('ck-o-pcs').value = '10'; w.ckGo('BARN=2-1-1'); await settle(); await settle();
+  check('…next box: 1 × 10 pcs scanned at BARN=2-1-1 → added to the 10-pc row there (3 → 4), not a new row', cs('77-7-1=10', 'BARN=2-1-1') === '4×10' && ck.CK.saved.length === 2, cs('77-7-1=10', 'BARN=2-1-1'));
+  // numbers add up: 158 pcs − 2 boxes×10 − 4 boxes×2 + 2×25 + 1×10 = 190
+  const pcs1 = pcs();
+  check('numbers add up: 168 pcs − 20 (count 5→3) − 8 (None found) + 50 (2×25) + 10 (1×10) = 200 pcs', pcs0 === 168 && pcs1 === 200, { pcs0, pcs1 });
+  // a part # / UPC → every spot; exact part # shows only that one, with a family button
+  w.ckOtherStop(); await settle(); await settle();
+  w.ckGo('77-7-1=10'); await settle(); await settle();
+  const h1 = el('ck-out').innerHTML;
+  w.ckShowAll(true); const h2 = el('ck-out').innerHTML;
+  w.ckGo('77-7-1'); await settle(); await settle(); const h3 = el('ck-out').innerHTML;
+  check('scan 77-7-1=10 → only that part # (every spot, cases, pcs, who / when) + "👪 Show all the family"; the button / the parent 77-7-1 → all part #s',
+    /BARN=2-1-1/.test(h1) && !/77-7-1=5</.test(h1) && /Show all the family \(3 part #s\)/.test(h1) && /Put here by/.test(h1) && /77-7-1=5</.test(h2) && /C1=9-9-9/.test(h2) && /all part #s/.test(h3), { h1: h1.slice(0, 200) });
+  // manual Audit mode → a count change waits for a manager (nothing changes until approved)
+  ck = mk(false); w = globalThis.__ckWin;
+  w.ckGo('BARN=2-1-1'); await settle(); await settle();
+  const iC = ck.CK.rows.findIndex(r => r.partNum === '77-7-1=10');
+  el('ck-cnt-' + iC).value = '1'; w.ckSaveCount(iC); await settle(); await settle();
+  const pend2 = sq.prepare("SELECT status FROM inventory_log WHERE part_num='77-7-1=10' AND location='BARN=2-1-1' ORDER BY id DESC").get();
+  check('Audit mode Manual → a count change goes to Review (Pending); the shelf is not changed until a manager approves', pend2.status === 'Pending' && cs('77-7-1=10', 'BARN=2-1-1') === '4×10' && pcs() === 200, pend2);
+  const sp = await post('/inventory/check-spots', { pairs: [{ part: '77-7-1=10', location: 'c2=1-1-1' }] });
+  check('who put it there (read-only route): last Stock In at the spot', sp.ok && sp.spots['77-7-1=10|C2=1-1-1'] && sp.spots['77-7-1=10|C2=1-1-1'].put.by && sp.spots['77-7-1=10|C2=1-1-1'].last.length === 3, sp);
+  delete globalThis.__ckWin; Object.keys(globalThis).filter(k => /^ck[A-Z]/.test(k)).forEach(k => delete globalThis[k]);
+}
+
 console.log('\n' + (failed ? '❌ ' + failed + ' check(s) FAILED' : '✅ all ' + passed + ' checks passed') + '\n');
 process.exit(failed ? 1 : 0);

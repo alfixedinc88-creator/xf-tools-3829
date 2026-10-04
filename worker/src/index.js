@@ -5558,6 +5558,34 @@ async function inventorySpotCheck(url, env) {
   return J({ ok: true, part, location: loc, recorded: (here && parseFloat(here.c)) || 0, history, others: others.slice(0, 6) });
 }
 
+// POST /inventory/check-spots { pairs: [{ part, location }] } — Inventory →
+// ✅ Checking (read-only, any sign-in): for each part # at each spot, who
+// put it there and when (the last Stock In / Transfer in / Move that added
+// cases, Rejected and Cancelled left out), plus the last 3 entries of any
+// kind. One query for all the part #s; matched to the spot here.
+async function inventoryCheckSpots(request, env) {
+  const J = (o, st) => cors(new Response(JSON.stringify(o), { status: st || 200, headers: { 'Content-Type': 'application/json' } }));
+  const body = await request.json().catch(() => ({}));
+  const U = v => String(v || '').trim().toUpperCase();
+  const pairs = (Array.isArray(body.pairs) ? body.pairs : []).slice(0, 200).map(p => ({ part: U(p && p.part), location: U(p && p.location) })).filter(p => p.part && p.location);
+  if (!pairs.length) return J({ ok: true, spots: {} });
+  const parts = [...new Set(pairs.map(p => p.part))].slice(0, 100);
+  const want = new Set(pairs.map(p => p.part + '|' + p.location));
+  const rows = await d1All(env, `SELECT id, timestamp, type, UPPER(TRIM(part_num)) AS part, UPPER(TRIM(location)) AS location, cases, initials, status, verified_by, verified_at, notes
+    FROM inventory_log WHERE UPPER(TRIM(part_num)) IN (${parts.map(() => '?').join(',')}) AND cancelled_at IS NULL AND COALESCE(status,'') != 'Rejected'
+    ORDER BY id DESC LIMIT 5000`, parts);
+  const spots = {};
+  for (const r of rows) {
+    const k = r.part + '|' + r.location;
+    if (!want.has(k)) continue;
+    const s = spots[k] || (spots[k] = { put: null, last: [] });
+    const e = { timestamp: r.timestamp, type: r.type, cases: r.cases, by: r.initials || '', status: r.status || '', approvedBy: r.verified_by || '', notes: String(r.notes || '').slice(0, 140) };
+    if (s.last.length < 3) s.last.push(e);
+    if (!s.put && (r.type === 'IN' || r.type === 'TRANSFER_IN' || r.type === 'MOVE') && Number(r.cases) > 0) s.put = e;
+  }
+  return J({ ok: true, spots });
+}
+
 // GET /inventory/suggest-location?partNum=26-2-1=2&fromLoc=BARN=1-1-1
 // GET /inventory/suggest-location?partNum=X&fromLoc=Y
 // Rebuilt on D1 — was reading Master_List!G2:I15000 + a separate LocationID
@@ -7122,6 +7150,7 @@ const _app = {
       if (path === '/inventory/containers/pallet-open' && method === 'POST') return await palletOpenLog(request, env, session);
       if (path === '/inventory/containers/where' && method === 'POST') return await palletWhere(request, env);
       if (path === '/inventory/spot-check' && method === 'GET') return await inventorySpotCheck(url, env);
+      if (path === '/inventory/check-spots' && method === 'POST') return await inventoryCheckSpots(request, env);
       if (path === '/inventory/prefixes'           && method === 'GET')  return await inventoryGetPrefixes(env);
       // mgmt-only routes
       if (session.pin_level !== 'mgmt') {
