@@ -8978,23 +8978,26 @@ function _psAlBlankBand(cv, minH) {
   return best;
 }
 // Writes the box contents into the blank strip → true when every line fits.
+// Why it couldn't write on the label (shown on the screen), '' = written.
+window._psAlStampWhy = '';
 function _psAlStampLabel(cv, items) {
-  if (!items.length) return false;
-  var W = cv.width, H = cv.height;
-  if (Math.abs(W / H - 4 / 6) > 0.04) return false; // only a 4×6 label
+  var W = cv.width, H = cv.height, no = function(why) { window._psAlStampWhy = why + ' (label ' + W + '×' + H + ')'; return false; };
+  if (!items.length) return no('no item list for this box');
+  if (Math.abs(W / H - 4 / 6) > 0.04) return no('not a 4×6 label'); // only a 4×6 label
   var pad = Math.round(W * 0.012), minFs = Math.round(W * 0.03);
-  var band = _psAlBlankBand(cv, Math.ceil(items.length * minFs * 1.25) + 2 * pad); if (!band) return false;
+  var band = _psAlBlankBand(cv, Math.ceil(items.length * minFs * 1.25) + 2 * pad); if (!band) return no('no blank strip at the bottom big enough for ' + items.length + ' line(s)');
   var y0 = band.y0 + pad, y1 = band.y1 - pad, h = y1 - y0;
   var fs = Math.min(Math.round(W * 0.055), Math.floor(h / (items.length * 1.25)));
-  if (fs < minFs) return false; // too small to read → the sticker instead
+  if (fs < minFs) return no('text would be too small'); // too small to read → the sticker instead
   var ctx = cv.getContext('2d'); ctx.fillStyle = '#000'; ctx.textBaseline = 'top';
   var maxW = W * 0.88, x = W * 0.06;
   for (var i = 0; i < items.length; i++) {
     var it = items[i], line = (it.bin || '—') + '   ' + (it.sku || '') + '   ×' + (it.qty || 0), size = fs;
     do { ctx.font = 'bold ' + size + 'px monospace'; size--; } while (ctx.measureText(line).width > maxW && size > 8);
-    if (ctx.measureText(line).width > maxW) return false;
+    if (ctx.measureText(line).width > maxW) return no('a line is too long: ' + line);
     ctx.fillText(line, x, y0 + i * fs * 1.25);
   }
+  window._psAlStampWhy = '';
   return true;
 }
 function _psAlPrintCanvas(cv) {
@@ -9004,8 +9007,12 @@ async function _psAlPrintOneLabel(l) {
   var f = await _psAlLabelBlob(l.id);
   var items = (l.items || []).length ? l.items : (((await _psAlFetch('/veeqo/autolabel/label-items?id=' + encodeURIComponent(l.id))) || {}).items || []);
   var stamped = false;
+  window._psAlStampWhy = '';
   try { var cv = await _psAlLabelCanvas(f); if (_psAlStampLabel(cv, items)) { await _psAlPrintCanvas(cv); stamped = true; } }
-  catch (e) { console.warn('[label] could not write on the label, printing the sticker instead:', e && e.message); }
+  catch (e) { window._psAlStampWhy = 'could not open the label file (' + f.type + '): ' + ((e && e.message) || e); console.warn('[label] could not write on the label, printing the sticker instead:', e && e.message); }
+  // What happened, on the screen (owner: "still not showing any sku, bin location, quantities").
+  window._psAlLastNote = l.order_number + ': ' + (stamped ? 'bin · SKU · qty written at the bottom of the label (' + items.length + ' line' + (items.length === 1 ? '' : 's') + ')'
+    : 'label printed as it is + a separate sticker — why: ' + (window._psAlStampWhy || 'unknown') + ' · file: ' + f.type);
   if (!stamped) {
     await _psAlPrintLabelBlob(f);
     await _psAlPrintHtml(_psAlBoxStripHtml(l, items));
@@ -9016,17 +9023,17 @@ async function _psAlPrintOneLabel(l) {
 window.psAlPrintNewLabels = async function(silent) {
   if (_psAlLabelBusy) return;
   _psAlLabelBusy = true;
-  var msg = document.getElementById('ps-al-label-msg'), done = 0, bad = [];
+  var msg = document.getElementById('ps-al-label-msg'), done = 0, bad = [], notes = [];
   try {
     var d = await _psAlFetch('/veeqo/autolabel/labels?status=new&limit=50');
     if (d.ok === false) { if (msg) msg.textContent = '✗ ' + (d.error || 'Failed'); return; }
     var list = d.labels || [];
     if (!list.length) { if (msg && !silent) msg.textContent = 'No new labels.'; return; }
     for (var i = 0; i < list.length; i++) {
-      try { await _psAlPrintOneLabel(list[i]); done++; }
+      try { await _psAlPrintOneLabel(list[i]); done++; if (window._psAlLastNote) notes.push(window._psAlLastNote); }
       catch (e) { bad.push(list[i].order_number + ': ' + e.message); window._psAlLabelLastTried = e.tried || null; }
     }
-    if (msg) msg.textContent = (done ? '✓ Printed ' + done + ' label' + (done === 1 ? '' : 's') + ' at ' + new Date().toLocaleTimeString() : '') + (bad.length ? (done ? ' · ' : '') + '✗ ' + bad.length + ' not printed — see the list' : '');
+    if (msg) { msg.style.whiteSpace = 'pre-wrap'; msg.textContent = (done ? '✓ Printed ' + done + ' label' + (done === 1 ? '' : 's') + ' at ' + new Date().toLocaleTimeString() : '') + (bad.length ? (done ? ' · ' : '') + '✗ ' + bad.length + ' not printed — see the list' : '') + (notes.length ? '\n' + notes.join('\n') : ''); }
   } catch (e) { if (msg) msg.textContent = '✗ ' + e.message; }
   finally { _psAlLabelBusy = false; psAlLoadLabels(); }
 };
@@ -9044,13 +9051,14 @@ window.psAlLoadLabels = async function() {
       + '<span>' + e([l.carrier, l.service].filter(Boolean).join(' ')) + '</span><span style="font-family:var(--mono);color:var(--text3)">' + e(l.tracking || '') + '</span>'
       + '<span style="color:var(--text3)">' + e(new Date(l.printed_at || l.created_at).toLocaleString()) + (l.printed_by ? ' · ' + e(l.printed_by) : '') + '</span>'
       + '<button class="ps-btn-sm" style="margin-left:auto" onclick="psAlReprintLabel(' + i + ')">' + (l.printed_at ? 'Reprint' : 'Print') + '</button></div>'
+      + '<div style="font-size:11px;font-family:var(--mono);color:var(--text2);margin-top:2px">📦 ' + ((l.items || []).length ? l.items.map(function(it) { return e((it.bin || '—') + ' · ' + it.sku + ' ×' + it.qty); }).join('  |  ') : '<span style="color:var(--orange)">no item list yet (it is fetched from Veeqo when printed)</span>') + '</div>'
       + (l.last_error && !l.printed_at ? '<div style="color:var(--red);font-size:11px;margin-top:2px">' + e(l.last_error) + ' — tap Print to see what Veeqo said (send it to Claude)</div>' : '') + '</div>';
   }).join('') : '<div style="color:var(--text3)">No labels yet.</div>';
 };
 window.psAlReprintLabel = async function(i) {
   var l = _psAlLabelRecent[i]; if (!l) return;
   var msg = document.getElementById('ps-al-label-msg');
-  try { await _psAlPrintOneLabel(l); if (msg) msg.textContent = '✓ Printed ' + l.order_number; }
+  try { await _psAlPrintOneLabel(l); if (msg) { msg.style.whiteSpace = 'pre-wrap'; msg.textContent = '✓ Printed ' + (window._psAlLastNote || l.order_number); } }
   catch (e) { if (msg) msg.textContent = '✗ ' + l.order_number + ': ' + e.message + (e.tried ? '\n' + JSON.stringify(e.tried).slice(0, 1500) : ''); if (msg) msg.style.whiteSpace = 'pre-wrap'; }
   psAlLoadLabels();
 };
