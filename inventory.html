@@ -1080,6 +1080,9 @@ window.invCredLogin = async function() {
   </div>
   <div id="rc-out"></div>
 
+  <!-- 🏷 Barcode designer (owner): type a part # (e.g. 8-8-8=8) → prints a 2" × 1" thermal label (Code 128). -->
+  <button type="button" id="bd-open-btn" onclick="bdOpen()" style="width:100%;padding:13px;border-radius:12px;border:1.5px solid var(--border);background:var(--bg2);color:var(--text);font-size:15px;font-weight:800;cursor:pointer">🏷 Barcode designer</button>
+
   <details id="inv-audit-old" style="display:none;border:1px solid var(--border);border-radius:12px;padding:8px 10px;background:var(--bg2)">
   <summary style="cursor:pointer;font-size:13px;font-weight:700;color:var(--text2)">🔧 Other audit tools (search a part # / a location)</summary>
   <!-- Search card -->
@@ -13052,6 +13055,74 @@ window.invCredLogin = async function() {
   }
   // ══ end 📋 Full recount ═══
 
+  // ══ 🏷 Barcode designer (Audit tab): a part # → 2" × 1" thermal label ══
+  // Code 128 (handles part #s like 8-8-8=8 or 30-3-4=10X), the part # printed
+  // big under the bars. One label per page, page = 2in × 1in, no margins.
+  var BD = { copies: 1 };
+  function bdLoadLib(cb) {
+    if (typeof JsBarcode !== 'undefined') { cb(); return; }
+    var sc = document.createElement('script');
+    sc.src = 'https://cdn.jsdelivr.net/npm/jsbarcode@3.11.5/dist/JsBarcode.all.min.js';
+    sc.onload = cb; sc.onerror = function() { invFlash('Could not load the barcode maker — check WiFi', 'error'); };
+    document.head.appendChild(sc);
+  }
+  function bdClean(v) { return String(v || '').trim().toUpperCase().replace(/\s+/g, ''); }
+  function bdLabelHtml(sku, copies) {
+    var one = '<div class="l"><svg class="b"></svg><div class="t">' + xfrEsc(sku) + '</div></div>';
+    return '<!doctype html><html><head><meta charset="utf-8"><title>' + xfrEsc(sku) + '</title><style>'
+      + '@page{size:2in 1in;margin:0}html,body{margin:0;padding:0}'
+      + '.l{width:2in;height:1in;box-sizing:border-box;padding:.05in .08in;display:flex;flex-direction:column;align-items:center;justify-content:center;overflow:hidden;page-break-after:always;break-after:page}'
+      + '.l:last-child{page-break-after:auto;break-after:auto}'
+      + 'svg.b{width:1.84in;height:.6in;display:block}.t{font:800 15pt/1 Arial,Helvetica,sans-serif;margin-top:.04in;letter-spacing:.5px;white-space:nowrap}'
+      + '</style></head><body>' + new Array(copies + 1).join(one) + '</body></html>';
+  }
+  window.bdLabelHtml = bdLabelHtml;
+  function bdDraw(target, sku) {
+    JsBarcode(target, sku, { format: 'CODE128', displayValue: false, margin: 0, height: 60, width: 2 });
+  }
+  window.bdOpen = function() {
+    bdLoadLib(function() {});
+    BD.copies = 1;
+    xfrPopup('<div style="font-weight:800;font-size:16px;margin-bottom:6px">🏷 Barcode designer</div>'
+      + '<div style="font-size:12px;color:var(--text2);margin-bottom:8px">Type or scan the part # — prints a 2" × 1" label on the thermal printer.</div>'
+      + '<input id="bd-sku" type="text" autocomplete="off" placeholder="e.g. 8-8-8=8" oninput="bdPreview()" onkeydown="if(event.key===\'Enter\')bdPrint()" style="width:100%;box-sizing:border-box;padding:12px;border:2px solid var(--accent);border-radius:10px;font-size:20px;font-weight:800;font-family:var(--mono);text-transform:uppercase">'
+      + '<div id="bd-prev" style="margin:10px auto;width:2in;height:1in;border:1px dashed var(--border);border-radius:6px;background:#fff;display:flex;flex-direction:column;align-items:center;justify-content:center;overflow:hidden"><span style="color:#999;font-size:12px">preview</span></div>'
+      + '<div style="font-size:13px;font-weight:800;margin-bottom:6px">How many labels? <span id="bd-n" style="color:var(--accent)">1</span></div>'
+      + '<div style="display:grid;grid-template-columns:repeat(5,1fr);gap:6px;margin-bottom:10px">'
+      + [1, 2, 5, 10].map(function(n) { return '<button type="button" onclick="bdCopies(' + n + ')" style="padding:11px 0;border-radius:10px;border:1.5px solid var(--border);background:var(--bg3);font-size:17px;font-weight:800;cursor:pointer">' + n + '</button>'; }).join('')
+      + '<button type="button" onclick="bdCopies(\'more\')" style="padding:11px 0;border-radius:10px;border:1.5px solid var(--border);background:var(--bg3);font-size:13px;font-weight:800;cursor:pointer">More…</button></div>'
+      + '<button type="button" onclick="bdPrint()" style="width:100%;padding:15px;border-radius:12px;border:none;background:var(--accent);color:#fff;font-size:17px;font-weight:800;cursor:pointer;margin-bottom:8px">🖨 Print label</button>'
+      + '<button type="button" onclick="xfrPopupClose()" style="width:100%;padding:12px;border-radius:12px;border:1.5px solid var(--border);background:var(--bg);color:var(--text2);font-size:15px;font-weight:700;cursor:pointer">Close</button>');
+    setTimeout(function() { var x = g('bd-sku'); if (x) x.focus(); }, 50);
+  };
+  window.bdCopies = function(n) {
+    if (n === 'more') { var keep = (g('bd-sku') || {}).value || ''; xfrKeypad('How many labels?', '', function(v) { BD.copies = Math.max(1, Math.min(200, Math.round(v))); bdOpen(); setTimeout(function() { var x = g('bd-sku'); if (x) { x.value = keep; bdPreview(); } var c = g('bd-n'); if (c) c.textContent = BD.copies; }, 80); }); return; }
+    BD.copies = n; var c = g('bd-n'); if (c) c.textContent = n;
+  };
+  window.bdPreview = function() {
+    var sku = bdClean((g('bd-sku') || {}).value), box = g('bd-prev'); if (!box) return;
+    if (!sku) { box.innerHTML = '<span style="color:#999;font-size:12px">preview</span>'; return; }
+    bdLoadLib(function() {
+      box.innerHTML = '<svg id="bd-prev-svg" style="width:1.84in;height:.6in"></svg><div style="font:800 15pt/1 Arial,sans-serif;color:#000;margin-top:3px">' + xfrEsc(sku) + '</div>';
+      try { bdDraw('#bd-prev-svg', sku); } catch (e) { box.innerHTML = '<span style="color:var(--red);font-size:12px">Can\'t make a barcode from that</span>'; }
+    });
+  };
+  window.bdPrint = function() {
+    var sku = bdClean((g('bd-sku') || {}).value);
+    if (!sku) { invFlash('Type the part # first', 'error'); return; }
+    bdLoadLib(function() {
+      var f = document.createElement('iframe');
+      f.style.cssText = 'position:fixed;right:0;bottom:0;width:0;height:0;border:0';
+      document.body.appendChild(f);
+      var d = f.contentDocument; d.open(); d.write(bdLabelHtml(sku, BD.copies)); d.close();
+      try { d.querySelectorAll('svg.b').forEach(function(el) { bdDraw(el, sku); }); }
+      catch (e) { f.remove(); invFlash('Can\'t make a barcode from "' + sku + '"', 'error'); return; }
+      setTimeout(function() { f.contentWindow.focus(); f.contentWindow.print(); setTimeout(function() { f.remove(); }, 60000); }, 150);
+      invFlash('🖨 Printing ' + BD.copies + ' label(s): ' + sku, 'success');
+    });
+  };
+  // ══ end 🏷 Barcode designer ═══
+
   // 📷 camera — same scanner library as the other tabs
   var _ckQr = null, _ckCam = false;
   window.ckToggleCam = function() {
@@ -13467,6 +13538,6 @@ window.invCredLogin = async function() {
   };
 })();
 </script>
-<script src="xf-access.js?v=20261001e"></script>
+<script src="xf-access.js?v=20261004a"></script>
 </body>
 </html>

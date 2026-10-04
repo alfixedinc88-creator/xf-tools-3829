@@ -1589,5 +1589,21 @@ console.log('\nStock In: ✕ on each scan box');
       && /window\.invQaClear = function\(which\) \{[\s\S]*?x\.value = ''; x\.removeAttribute\('data-kb-typing'\); x\.setAttribute\('inputmode', 'none'\);[\s\S]*?x\.focus\(\);/.test(ih), null);
 }
 
+// Owner: "1) test mode bar all the way at the bottom, not blocking anything; 2) Audit: 🏷 Barcode designer — type a part # (8-8-8=8) → 1 × 2 thermal label".
+console.log('\nTest mode bar at the bottom · 🏷 Barcode designer');
+{
+  const { readFileSync } = await import('node:fs');
+  const xa = readFileSync(fileURLToPath(new URL('../xf-access.js', import.meta.url)), 'utf8');
+  check('test mode: a thin bar at the very bottom (full width), the page gets room for it, no orange frame over the screen, clicks go through',
+    /el\.style\.cssText = 'position:fixed;left:0;right:0;bottom:0;height:22px;[^']*pointer-events:none'/.test(xa) && /document\.body\.style\.paddingBottom = '26px'/.test(xa)
+      && !/border:5px solid #f59e0b/.test(xa) && /fr0\.remove\(\)/.test(xa), null);
+  const ih = readFileSync(fileURLToPath(new URL('../inventory.html', import.meta.url)), 'utf8');
+  const src = (ih.match(/  function bdLabelHtml\(sku, copies\) \{[\s\S]*?\n  \}/) || [''])[0];
+  const lab = new Function('xfrEsc', src + '; return bdLabelHtml;')(v => String(v).replace(/</g, '&lt;'))('8-8-8=8', 3);
+  check('🏷 Barcode designer at the bottom of the Audit tab; the label is 2" × 1" (one per page, no margins), Code 128, part # printed under the bars; 3 copies → 3 labels',
+    /id="rc-out"><\/div>\s*<!-- 🏷 Barcode designer[\s\S]*?onclick="bdOpen\(\)"[^>]*>🏷 Barcode designer<\/button>/.test(ih) && /@page\{size:2in 1in;margin:0\}/.test(lab)
+      && (lab.match(/<div class="l"><svg class="b"><\/svg><div class="t">8-8-8=8<\/div><\/div>/g) || []).length === 3 && /format: 'CODE128'/.test(ih), lab.slice(0, 200));
+}
+
 console.log('\n' + (failed ? '❌ ' + failed + ' check(s) FAILED' : '✅ all ' + passed + ' checks passed') + '\n');
 process.exit(failed ? 1 : 0);
