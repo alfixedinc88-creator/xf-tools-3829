@@ -132,6 +132,7 @@ function invObPatch(id, fn) { var a = invObRead(); a.forEach(function (x) { if (
 function invObDrop(id) { invObWrite(invObRead().filter(function (x) { return x.id !== id; })); }
 function invObNewId() { try { if (crypto.randomUUID) return crypto.randomUUID(); } catch (e) {} return 'ob-' + Date.now() + '-' + Math.random().toString(36).slice(2, 10); }
 function invObLabel(path, b) {
+  if (path.indexOf('recount/column-done') >= 0) return '📋 Recount: column ' + (b.location || '') + ' done (' + (b.items || 0) + ' item(s))';
   if (path.indexOf('containers/short') >= 0) return '📉 Short on pallet ' + (b.pallet || '') + ': ' + (b.part || '') + ' × ' + (b.short || '?') + ' box(es) not on the pallet';
   if (path.indexOf('containers/recheck') >= 0) return 'Box put at ' + (b.location || '') + ' (already counted): ' + (b.part || '') + ' · Pallet ' + (b.pallet || '');
   if (path.indexOf('containers/upc-issue') >= 0) return '⚠ UPC doesn\'t match: ' + (b.part || '') + ' (scanned ' + (b.code || '?') + ') · Pallet ' + (b.pallet || '');
@@ -527,6 +528,7 @@ window.invCredLogin = async function() {
 <div class="itabs">
   <button class="itab iactive" id="inv-tab-stockout" onclick="invSwitchTab('stockout')">🏬 Stock Out Shelving</button>
   <button class="itab" id="inv-tab-stockoutco" onclick="invSwitchTab('stockoutco')">🏢 Stock Out Big Company</button>
+  <button class="itab" id="inv-tab-check" onclick="invSwitchTab('check')">✅ Checking</button>
   <button class="itab" id="inv-tab-scan" onclick="invSwitchTab('scan')">📦 Stock In / Found on Shelf</button>
   <button class="itab" id="inv-tab-transfer" onclick="invSwitchTab('transfer')">Transfer</button>
   <button class="itab" id="inv-tab-audit" onclick="invSwitchTab('audit')">🔍 Audit</button>
@@ -611,7 +613,9 @@ window.invCredLogin = async function() {
     <div class="ifield">
       <label>Part # or Barcode</label>
       <div style="display:flex;gap:6px">
-        <input id="inv-qa-partnum" type="text" placeholder="e.g. 23-2-3=25" autocomplete="off" style="flex:1" onblur="invQuickAddPrefillUpc()">
+        <input id="inv-qa-partnum" type="text" inputmode="none" placeholder="📷 Scan the box (or ⌨ type the part #)" autocomplete="off" style="flex:1" onblur="invQuickAddPrefillUpc();xfrKbOff(this)" onkeydown="if(event.key==='Enter'){invQuickAddPrefillUpc();var x=document.getElementById('inv-qa-shelf');if(x)x.focus();}">
+        <button type="button" class="inv-x-btn" title="Label won't scan? Type it" onclick="xfrKbOn('inv-qa-partnum')" style="font-size:15px;flex-shrink:0">&#x2328;</button>
+        <button type="button" class="inv-x-btn" title="Clear — scan again" onmousedown="event.preventDefault()" onclick="invQaClear('part')" style="flex-shrink:0">&#x2715;</button>
         <button class="icam-btn" id="inv-qa-partnum-cam-btn" onclick="invQaScanPartNum()" style="width:auto;min-height:0;padding:8px 10px;font-size:15px;margin-top:0;white-space:nowrap;flex-shrink:0">📷</button>
       </div>
     </div>
@@ -622,18 +626,23 @@ window.invCredLogin = async function() {
     <div id="inv-qa-name-display" style="display:none;font-size:13px;color:var(--text2);margin-top:6px;padding:7px 10px;background:var(--bg3);border-radius:7px;align-items:center;gap:8px"><img id="inv-qa-photo" src="" alt="" style="display:none;width:36px;height:36px;object-fit:cover;border-radius:6px;border:1px solid var(--border);flex-shrink:0" onerror="this.style.display='none'"><span id="inv-qa-name-text" style="flex:1"></span><button type="button" onclick="invQuickAddClearSearch()" title="Close and search a new item" style="background:none;border:none;color:var(--text3);font-size:18px;cursor:pointer;line-height:1;padding:0 2px;flex-shrink:0">&times;</button></div>
 
     <div class="ifield" style="margin-top:10px">
-      <label>Location</label>
+      <label>Spot where you put it</label>
       <div style="display:flex;gap:6px;align-items:center">
-        <input id="inv-qa-shelf" type="text" placeholder="Scan the spot label, e.g. C1=11-2-10" autocomplete="off" style="flex:1;padding:8px 10px;border:1.5px solid var(--border);border-radius:7px;background:var(--bg);color:var(--text);font-size:13px;font-family:var(--mono)">
+        <input id="inv-qa-shelf" type="text" inputmode="none" placeholder="📷 Scan the spot where you are putting it" autocomplete="off" onblur="xfrKbOff(this)" style="flex:1;padding:8px 10px;border:1.5px solid var(--border);border-radius:7px;background:var(--bg);color:var(--text);font-size:13px;font-family:var(--mono)">
+        <button type="button" class="inv-x-btn" title="Label won't scan? Type it" onclick="xfrKbOn('inv-qa-shelf')" style="font-size:15px;flex-shrink:0">&#x2328;</button>
+        <button type="button" class="inv-x-btn" title="Clear — scan again" onmousedown="event.preventDefault()" onclick="invQaClear('spot')" style="flex-shrink:0">&#x2715;</button>
         <button class="icam-btn" id="inv-qa-loc-cam-btn" onclick="invQaScanLocation()" style="width:auto;min-height:0;padding:8px 10px;font-size:15px;margin-top:0;white-space:nowrap;flex-shrink:0">📷</button>
       </div>
     </div>
     <div id="inv-qa-loc-reader-wrap" style="display:none;border-radius:8px;overflow:hidden;background:#000;min-height:120px;margin-top:6px"><div id="inv-qa-loc-qr-reader"></div></div>
 
-    <div class="ifield-row" style="margin-top:10px">
-      <div class="ifield" style="flex:1"><label>QTY Case</label><input id="inv-qa-cases" type="number" min="0.1" step="0.5" placeholder="0"></div>
-      <div class="ifield" style="flex:1"><label>QTY per Case</label><input id="inv-qa-upc" type="number" min="0" step="1" placeholder="e.g. 12"></div>
-    </div>
+    <!-- QTY Case / QTY per Case: our own buttons, never the phone keyboard (owner).
+         The hidden fields hold the values, so saving works exactly as before. -->
+    <input id="inv-qa-cases" type="hidden" value=""><input id="inv-qa-upc" type="hidden" value="">
+    <div class="ifield" style="margin-top:10px"><label>QTY Case <span id="inv-qa-cases-show" style="font-size:15px;font-weight:800;color:var(--text);margin-left:6px"></span></label><div id="inv-qa-cases-pad"></div></div>
+    <div class="ifield" style="margin-top:10px"><label>QTY per Case <span id="inv-qa-upc-show" style="font-size:15px;font-weight:800;color:var(--text);margin-left:6px"></span> <span style="font-size:11px;color:var(--text3);font-weight:600">— tap = saved</span></label><div id="inv-qa-upc-pad"></div></div>
+    <!-- My Stock In today (this phone): tap ✕ Cancel to undo a mistake (see /inventory/cancel-own). -->
+    <div id="inv-qa-mine" style="margin-top:12px"></div>
     <button class="isubmit sin" id="inv-qa-submit-btn" onclick="invQuickAddSubmit()">Submit Stock In</button>
   </div>
   <!-- Quick Add / Stock In History — who put how many cases into where,
@@ -651,11 +660,8 @@ window.invCredLogin = async function() {
   </div>
   <div class="icard" id="inv-scansearch-card">
     <div class="icard-label">Scan or Search</div>
-    <div style="display:flex;gap:6px;margin-bottom:10px;flex-wrap:wrap">
-      <button class="ixfr-mode-btn ixfr-active" id="inv-smode-code" onclick="invSetScanMode('code')">SKU / Part# / UPC</button>
-      <button class="ixfr-mode-btn" id="inv-smode-name" onclick="invSetScanMode('name')">Product Name</button>
-      <button class="ixfr-mode-btn" id="inv-smode-loc" onclick="invSetScanMode('loc')">&#x1F4CD; Location</button>
-    </div>
+    <!-- One box (owner): part # / UPC / product name all go in the same box — no
+         "Product Name" / "Location" buttons any more (a spot is looked up on ✅ Checking). -->
     <div id="inv-need-wrap" style="display:flex;gap:8px;align-items:center;margin-bottom:8px">
       <label for="inv-need-cases" style="font-size:12px;font-weight:700;color:var(--text2);white-space:nowrap">Cases needed</label>
       <input id="inv-need-cases" type="text" inputmode="decimal" autocomplete="off" placeholder="e.g. 2"
@@ -683,7 +689,7 @@ window.invCredLogin = async function() {
       <button type="button" class="inv-need-key" onmousedown="event.preventDefault()" onclick="invNeedPadKey('clear')">C</button>
     </div>
     <div class="isearch-row">
-      <input class="isearch-inp" id="inv-search-inp" type="text" placeholder="Part# or barcode…" onkeydown="if(event.key==='Enter')invScanSearch()" onblur="invNeedPadShow(false)">
+      <input class="isearch-inp" id="inv-search-inp" type="text" placeholder="Part #, barcode or product name…" onkeydown="if(event.key==='Enter')invScanSearch()" onblur="invNeedPadShow(false)">
       <button type="button" class="inv-x-btn" title="Clear — start this item again" onmousedown="event.preventDefault()" onclick="invClearNeedAndScan()">&#x2715;</button>
       <button class="isearch-btn" onclick="invScanSearch()">Go</button>
     </div>
@@ -869,9 +875,8 @@ window.invCredLogin = async function() {
     <div class="icard-label">Transfer Stock</div>
     <div style="font-size:12px;color:var(--text3);margin-bottom:10px;line-height:1.5">Grab items from locations and add to cart. Set the destination when you arrive at the shelf.</div>
     <div style="display:flex;gap:6px;margin-bottom:10px;flex-wrap:wrap">
-      <button class="ixfr-mode-btn ixfr-active" id="xfr-mode-code" onclick="xfrSetSearchMode('code')">SKU / Part# / UPC</button>
-      <button class="ixfr-mode-btn" id="xfr-mode-name" onclick="xfrSetSearchMode('name')">Product Name</button>
-      <button class="ixfr-mode-btn" id="xfr-mode-loc" onclick="xfrSetSearchMode('loc')">&#x1F4CD; Location</button>
+      <!-- Owner: only these two — "SKU / Part# / UPC" also finds a product name (⌨ to type it). -->
+      <button class="ixfr-mode-btn ixfr-active" id="xfr-mode-code" onclick="xfrSetSearchMode('code')">SKU / Part# / UPC / Name</button>
       <button class="ixfr-mode-btn" id="xfr-mode-cont" onclick="xfrSetSearchMode('cont')" title="A container arrived: find what is on each pallet and move the boxes to the shelves">🚢 Container here</button>
     </div>
     <!-- 🚢 Container here: pallets of shipped containers (from the vendor packing list imported on Reorder) -->
@@ -1027,10 +1032,28 @@ window.invCredLogin = async function() {
   </div>
 </div>
 
+<!-- ✅ Checking (owner): scan a box UPC / part # / spot label, or type a name — see
+     everything: where it is, how many cases, who put it there and when. A spot can be
+     counted right here (same as 🔍 Audit), "None found", or "Something else found". -->
+<div class="ipanel" id="inv-panel-check">
+  <div class="icard">
+    <div class="icard-label">✅ Checking</div>
+    <div style="font-size:12px;color:var(--text3);margin-bottom:10px;line-height:1.5">Scan a box barcode, a part #, or a spot label — or type a product name (⌨). It shows everything we have and where.</div>
+    <div class="isearch-row">
+      <input class="isearch-inp" id="ck-inp" type="text" inputmode="none" autocomplete="off" placeholder="📷 Scan UPC / part # / spot, or ⌨ type a name…" onkeydown="if(event.key==='Enter')ckGo()" onblur="xfrKbOff(this)">
+      <button type="button" class="inv-x-btn" title="Type it (part # or name)" onclick="xfrKbOn('ck-inp')" style="font-size:15px">&#x2328;</button>
+      <button type="button" class="inv-x-btn" title="Clear — start over" onmousedown="event.preventDefault()" onclick="ckClear()">&#x2715;</button>
+      <button class="isearch-btn" onclick="ckGo()">Go</button>
+    </div>
+    <button class="icam-btn" id="ck-cam-btn" onclick="ckToggleCam()">&#x1F4F7; Scan Barcode</button>
+    <div id="ck-reader-wrap" style="display:none"><div id="ck-qr-reader"></div></div>
+  </div>
+  <div id="ck-out"></div>
+</div>
 <div class="ipanel" id="inv-panel-audit">
 
-  <!-- Approval mode card -->
-  <div class="icard">
+  <!-- Approval mode card — off the screen (owner); the mode is still read (Manual / Auto) and saved as before. -->
+  <div class="icard" id="inv-audit-mode-card" style="display:none">
     <div class="icard-label">Approval Mode</div>
     <div style="display:flex;justify-content:space-between;align-items:center">
       <div style="font-size:12px;color:var(--text3)" id="inv-audit-mode-desc">Manual &#x2014; corrections go to Review queue</div>
@@ -1041,6 +1064,28 @@ window.invCredLogin = async function() {
     </div>
   </div>
 
+  <!-- 📋 Full recount (owner): about once a year, column by column — scan the column,
+       scan each box type, tap cases + pieces (saves), ✅ Done → anything not scanned:
+       Found / None found. A column must be finished before the next one. -->
+  <div class="icard" id="rc-card" style="border:2px solid var(--accent)">
+    <div class="icard-label">📋 Full recount — column by column</div>
+    <div id="rc-progress" style="font-size:12px;color:var(--text2);margin-bottom:8px">Scan the column label to start.</div>
+    <div class="isearch-row">
+      <input class="isearch-inp" id="rc-inp" type="text" inputmode="none" autocomplete="off" placeholder="📷 Scan the column label, then each box" onkeydown="if(event.key==='Enter')rcGo()" onblur="xfrKbOff(this)">
+      <button type="button" class="inv-x-btn" title="Label won't scan? Type it" onclick="xfrKbOn('rc-inp')" style="font-size:15px">&#x2328;</button>
+      <button type="button" class="inv-x-btn" title="Clear — scan again" onmousedown="event.preventDefault()" onclick="rcClear()">&#x2715;</button>
+      <button class="isearch-btn" onclick="rcGo()">Go</button>
+    </div>
+    <button class="icam-btn" id="rc-cam-btn" onclick="rcToggleCam()">&#x1F4F7; Scan Barcode</button>
+    <div id="rc-reader-wrap" style="display:none"><div id="rc-qr-reader"></div></div>
+  </div>
+  <div id="rc-out"></div>
+
+  <!-- 🏷 Barcode designer (owner): type a part # (e.g. 8-8-8=8) → prints a 2" × 1" thermal label (Code 128). -->
+  <button type="button" id="bd-open-btn" onclick="bdOpen()" style="width:100%;padding:13px;border-radius:12px;border:1.5px solid var(--border);background:var(--bg2);color:var(--text);font-size:15px;font-weight:800;cursor:pointer">🏷 Barcode designer</button>
+
+  <details id="inv-audit-old" style="display:none;border:1px solid var(--border);border-radius:12px;padding:8px 10px;background:var(--bg2)">
+  <summary style="cursor:pointer;font-size:13px;font-weight:700;color:var(--text2)">🔧 Other audit tools (search a part # / a location)</summary>
   <!-- Search card -->
   <div class="icard" id="inv-audit-search-card">
     <div class="icard-label">Search to Audit</div>
@@ -1089,7 +1134,12 @@ window.invCredLogin = async function() {
     </div>
     <div id="inv-audit-loc-list"></div>
   </div>
+  </details>
 
+  <!-- Owner: off the Audit tab — Location Prefixes, Product Photos, Export Location List,
+       Rename Locations (and above: Approval Mode, Other audit tools). Kept in the page,
+       hidden, so everything that uses them (prefix lists, photos) works as before. -->
+  <div id="inv-audit-hidden" style="display:none">
   <!-- Location Prefixes card -->
   <div class="icard" id="inv-prefix-card" style="margin-bottom:12px">
     <div class="icard-label">&#x1F3F7; Location Prefixes</div>
@@ -1163,6 +1213,7 @@ window.invCredLogin = async function() {
     </div>
     <div id="inv-rename-result" style="margin-top:10px"></div>
   </div>
+  </div><!-- /inv-audit-hidden -->
 
 </div>
 
@@ -1260,6 +1311,16 @@ window.invCredLogin = async function() {
         style="padding:6px 14px;border-radius:6px;border:1.5px solid var(--red);background:var(--bg3);color:var(--red);font-size:12px;font-weight:700;cursor:pointer">= Fix Double "=" in Locations</button>
       <button id="skumgr-parent-btn" onclick="skumgrCheckParents()" title="Rows whose parent (SKU) is not their Part # before the = — they show up under the wrong item"
         style="padding:6px 14px;border-radius:6px;border:1.5px solid var(--red);background:var(--bg3);color:var(--red);font-size:12px;font-weight:700;cursor:pointer">🧬 Parent ≠ Part #</button>
+      <button id="skumgr-pncheck-btn" onclick="skumgrPartnumCheck()" title="Part #s that look wrong — read-only list to clean up with Edit"
+        style="padding:6px 14px;border-radius:6px;border:1.5px solid var(--orange);background:var(--bg3);color:var(--orange);font-size:12px;font-weight:700;cursor:pointer">🧹 Check part #s</button>
+    </div>
+    <!-- 🧹 Check part #s (owner): READ-ONLY list of odd part #s, grouped by why — tap one to open it in SKU Mgr and fix it with Edit. -->
+    <div id="skumgr-pncheck-panel" style="display:none;border:1.5px solid var(--orange);border-radius:10px;padding:12px;margin-bottom:12px;background:var(--bg2)">
+      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px">
+        <div style="font-size:13px;font-weight:800;color:var(--orange)">🧹 Part #s that look wrong (nothing is changed here)</div>
+        <button onclick="document.getElementById('skumgr-pncheck-panel').style.display='none'" style="border:none;background:none;font-size:18px;cursor:pointer;color:var(--text3)">&times;</button>
+      </div>
+      <div id="skumgr-pncheck-out" style="font-size:12.5px"></div>
     </div>
     <div id="skumgr-export-status" style="font-size:12px;color:var(--text3);margin-bottom:8px"></div>
     <!-- Fix Double Equals preview/confirm panel — hidden until checked -->
@@ -1761,6 +1822,8 @@ window.invCredLogin = async function() {
     var scanPanelActive = (tab === "scan" || tab === "stockout" || tab === "stockoutco");
     g("inv-panel-scan").className      = "ipanel" + (scanPanelActive ? " iactive" : "");
     g("inv-panel-transfer").className  = "ipanel" + (tab === "transfer" ? " iactive" : "");
+    g("inv-panel-check").className     = "ipanel" + (tab === "check"    ? " iactive" : "");
+    g("inv-tab-check").className       = "itab"   + (tab === "check"    ? " iactive" : "");
     g("inv-panel-review").className    = "ipanel" + (tab === "review"   ? " iactive" : "");
     g("inv-panel-audit").className     = "ipanel" + (tab === "audit"    ? " iactive" : "");
     g("inv-panel-skumgr").className    = "ipanel" + (tab === "skumgr"   ? " iactive" : "");
@@ -1778,6 +1841,7 @@ window.invCredLogin = async function() {
     g("inv-tab-skumgr").className      = "itab"   + (tab === "skumgr"   ? " iactive" : "");
     g("inv-tab-history").className     = "itab"   + (tab === "history"  ? " iactive" : "");
     if (scanPanelActive) {
+      if (tab === "scan") { ckLoadSizes(); setTimeout(function() { invQaPadsRender(); invQaMineRender(); }, 0); }
       invSetMode(tab === "scan" ? "in" : "out");
       if (tab !== "scan") invSetStockOutDest(tab === "stockoutco" ? "company" : "shelving");
       invFetchStockoutCount();
@@ -1798,7 +1862,8 @@ window.invCredLogin = async function() {
       }
     }
     if (tab === "transfer" && window.xfrStepsRender) window.xfrStepsRender();
-    if (tab === "audit") { invAuditLoadMode(); invPopulateAllPrefixDropdowns(); if(typeof invLoadPrefixes==='function') invLoadPrefixes(); }
+    if (tab === "check") { invAuditLoadMode(); ckLoadSizes(); setTimeout(function() { var x = g('ck-inp'); if (x) x.focus(); }, 60); }
+    if (tab === "audit") { ckLoadSizes(); rcStatus(); rcRestore(); invAuditLoadMode(); invPopulateAllPrefixDropdowns(); if(typeof invLoadPrefixes==='function') invLoadPrefixes(); }
     if ((tab === "skumgr" || tab === "history" || tab === "soldout" || tab === "location") && !invUnlocked) {
       window._skumgrPendingTab = tab; // remember which tab to open after unlock
       invSwitchTab('review');
@@ -2072,8 +2137,8 @@ window.invCredLogin = async function() {
 
   window.invSetScanMode = function(mode) {
     invScanSearchMode = mode;
-    g('inv-smode-code').className = 'ixfr-mode-btn' + (mode === 'code' ? ' ixfr-active' : '');
-    g('inv-smode-name').className = 'ixfr-mode-btn' + (mode === 'name' ? ' ixfr-active' : '');
+    if (g('inv-smode-code')) g('inv-smode-code').className = 'ixfr-mode-btn' + (mode === 'code' ? ' ixfr-active' : '');
+    if (g('inv-smode-name')) g('inv-smode-name').className = 'ixfr-mode-btn' + (mode === 'name' ? ' ixfr-active' : '');
     if (g('inv-smode-loc')) g('inv-smode-loc').className = 'ixfr-mode-btn' + (mode === 'loc' ? ' ixfr-active' : '');
     var inp = g('inv-search-inp');
     // Show/hide location scan panel vs regular search row
@@ -2089,7 +2154,7 @@ window.invCredLogin = async function() {
       if (searchRow) searchRow.style.display = '';
       if (camBtn) camBtn.style.display = '';
       if (locWrap) locWrap.style.display = 'none';
-      if (inp) inp.placeholder = mode === 'name' ? 'Type product name…' : 'Part# or barcode…';
+      if (inp) inp.placeholder = mode === 'name' ? 'Type product name…' : 'Part #, barcode or product name…';
     }
     var nr = g('inv-name-results'); if (nr) nr.style.display = 'none';
     g('inv-result-card').style.display = 'none';
@@ -2102,8 +2167,11 @@ window.invCredLogin = async function() {
     if (!val) return;
     if (invScanSearchMode === 'name') { invScanNameSearch(val); }
     else if (invScanSearchMode === 'loc') { invLocScanSearch(); }
-    else { invLookup(val); }
+    else { invLookup(val, true); }
   };
+  // One box for part # / UPC / name: the part # / UPC lookup always goes first;
+  // only when nothing matches and the text has letters is it searched as a name.
+  window.invNameFallback = function(code, d) { return !!(d && !d.partNum && !d.upcNotLinked && /[a-z]{2}/i.test(String(code || ''))); };
 
   // ── Location scan for stock in/out — same as audit location search ──────────
   var _invLocScanHtml5 = null;
@@ -2318,7 +2386,7 @@ window.invCredLogin = async function() {
     // own locations to the top of the list, and as the target for Big
     // Company's substitution math below.
 
-  window.invLookup = function(code) {
+  window.invLookup = function(code, byName) {
     if (!code) return;
     // Reset here, not just when a Stock Out Report is tapped — every
     // ordinary search must start clean, so a stray leftover tag from an
@@ -2331,7 +2399,7 @@ window.invCredLogin = async function() {
     g("inv-detail-card").style.display = "none";
     var gb = g("inv-grab-banner"); if (gb) { gb.style.display = "none"; gb.innerHTML = ""; }
     _invFetchLookupRaw(code)
-      .then(function(d) { _invRenderLookupResult(code, d); invMaybeAutoPick(d); })
+      .then(function(d) { if (byName && invNameFallback(code, d)) { invScanNameSearch(code); return; } _invRenderLookupResult(code, d); invMaybeAutoPick(d); })
       .catch(function() { invFlash("Lookup failed", "error"); });
   };
 
@@ -2658,7 +2726,8 @@ window.invCredLogin = async function() {
   // A scanned UPC that isn't linked to a part # yet: ask for the part #
   // once, link it (so every later scan finds it), then look up that part #.
   // Never stocks anything in under the barcode itself.
-  window.invAskUpcPart = function(upc) {
+  // then(part) → after linking, give the part # back (Stock In); no then → Stock Out lookup as before.
+  window.invAskUpcPart = function(upc, then) {
     var part = prompt('UPC ' + upc + ' is not linked to a part # yet.\n\nType its part # (e.g. 31-1-2=5XX) — next time this UPC scans straight to it:', '');
     if (part == null) return;
     part = part.trim().toUpperCase();
@@ -2667,6 +2736,7 @@ window.invCredLogin = async function() {
       .then(function(r) { return r.json(); }).then(function(d) {
         if (!d.ok) { invFlash(d.error || 'Could not link the UPC', 'error'); return; }
         invFlash('✓ UPC ' + upc + ' → ' + part, 'success');
+        if (then) { then(part); return; }
         var inp = g('inv-search-inp'); if (inp) inp.value = part;
         invLookup(part);
       }).catch(function() { invFlash('Could not link the UPC', 'error'); });
@@ -3689,9 +3759,62 @@ window.invCredLogin = async function() {
     var shelfInp = g("inv-qa-shelf"); if (shelfInp) shelfInp.value = "";
     var casesInp = g("inv-qa-cases"); if (casesInp) casesInp.value = "";
     var upcInp = g("inv-qa-upc"); if (upcInp) upcInp.value = "";
+    invQaRec = 0; invQaPadsRender();
     var nameDisplay = g("inv-qa-name-display"); if (nameDisplay) nameDisplay.style.display = "none";
     var photoEl = g("inv-qa-photo"); if (photoEl) { photoEl.style.display = "none"; photoEl.src = ""; }
     if (partnumInp) partnumInp.focus();
+  };
+
+  // ── QTY Case / QTY per Case buttons (our own, no phone keyboard) ──
+  // QTY per Case: this item's usual size first (big, green "✓ this item"),
+  // then the box sizes we have most (same list as ✅ Checking), then More….
+  var invQaRec = 0;
+  function invQaPadsRender() {
+    var c = g('inv-qa-cases'), u = g('inv-qa-upc'), cp = g('inv-qa-cases-pad'), up = g('inv-qa-upc-pad');
+    if (!c || !u || !cp || !up) return;
+    var cv = parseFloat(c.value), uv = parseFloat(u.value);
+    var b = 'padding:11px 0;border-radius:10px;border:1.5px solid var(--border);background:var(--bg3);color:var(--text);font-size:18px;font-weight:800;cursor:pointer;touch-action:manipulation';
+    var on = ';border:3px solid var(--accent);background:var(--accent-bg,#e8efff);color:var(--accent)';
+    var grid = function(list, cur, call) {
+      return '<div style="display:grid;grid-template-columns:repeat(5,1fr);gap:6px">' + list.map(function(n) {
+        return '<button type="button" onclick="' + call + '(' + n + ')" style="' + b + (cur === n ? on : '') + '">' + xfrN(n) + '</button>'; }).join('')
+        + '<button type="button" onclick="' + call + '(\'more\')" style="' + b + ';font-size:14px">More…</button></div>';
+    };
+    var ci = [1,2,3,4,5,6,7,8,9];
+    cp.innerHTML = grid(ci, cv, 'invQaCases') + (cv > 0 && ci.indexOf(cv) < 0 ? '<div style="margin-top:4px;font-size:13px;color:var(--accent);font-weight:800">' + xfrN(cv) + ' case(s) (More…)</div>' : '');
+    var sizes = (CK.sizes || []).filter(function(n) { return n !== invQaRec; }).slice(0, invQaRec > 0 ? 8 : 9);
+    up.innerHTML = (invQaRec > 0 ? '<button type="button" onclick="invQaUpc(' + invQaRec + ')" style="' + b + ';width:100%;margin-bottom:6px;font-size:20px;border:3px solid var(--green);background:var(--green-bg,#dcfce7);color:var(--green)' + (uv === invQaRec ? ';box-shadow:0 0 0 3px var(--accent)' : '') + '">✓ ' + xfrN(invQaRec) + ' pcs — this item</button>' : '')
+      + grid(sizes, uv === invQaRec ? null : uv, 'invQaUpc') + (uv > 0 && sizes.indexOf(uv) < 0 && uv !== invQaRec ? '<div style="margin-top:4px;font-size:13px;color:var(--accent);font-weight:800">' + xfrN(uv) + ' pcs (More…)</div>' : '');
+    var cs = g('inv-qa-cases-show'), us = g('inv-qa-upc-show');
+    if (cs) cs.textContent = cv > 0 ? '= ' + xfrN(cv) : '';
+    if (us) us.textContent = uv > 0 ? '= ' + xfrN(uv) + ' pcs' + (cv > 0 ? ' · ' + xfrN(cv * uv) + ' pcs in all' : '') : '';
+  }
+  window.invQaPadsRender = invQaPadsRender;
+  // ✕ on a scan box: empty it and get it ready for the next scan — the phone
+  // keyboard stays hidden (inputmode none). ✕ on the part # also clears its
+  // name / photo / pieces, since those belonged to the old box.
+  window.invQaClear = function(which) {
+    var x = g(which === 'spot' ? 'inv-qa-shelf' : 'inv-qa-partnum'); if (!x) return;
+    x.value = ''; x.removeAttribute('data-kb-typing'); x.setAttribute('inputmode', 'none');
+    if (which !== 'spot') {
+      invQaRec = 0; var u = g('inv-qa-upc'); if (u) u.value = '';
+      var nd = g('inv-qa-name-display'); if (nd) nd.style.display = 'none';
+      var ph = g('inv-qa-photo'); if (ph) { ph.style.display = 'none'; ph.src = ''; }
+      invQaPadsRender();
+    }
+    x.focus();
+  };
+  window.invQaCases = function(n) {
+    if (n === 'more') { xfrKeypad('QTY Case — how many cases?', '', function(v) { invQaCases(v); }); return; }
+    var c = g('inv-qa-cases'); if (c) c.value = n; invQaPadsRender();
+  };
+  // Tapping the pieces is the last step: it saves (when part #, spot and cases are in).
+  window.invQaUpc = function(n) {
+    if (n === 'more') { xfrKeypad('QTY per Case — how many pieces in each case?', '', function(v) { invQaUpc(v); }); return; }
+    var u = g('inv-qa-upc'); if (u) u.value = n; invQaPadsRender();
+    var miss = !(g('inv-qa-partnum') || {}).value ? 'Scan the box first' : !(g('inv-qa-shelf') || {}).value ? 'Scan the spot where you put it' : !(parseFloat((g('inv-qa-cases') || {}).value) > 0) ? 'Tap QTY Case' : '';
+    if (miss) { invFlash(miss + ' — then tap the pieces to save', 'warn'); return; }
+    if (window.invQuickAddSubmit) invQuickAddSubmit();
   };
 
   window.invQuickAddPrefillUpc = function() {
@@ -3711,6 +3834,9 @@ window.invCredLogin = async function() {
         // don't show a name/photo that no longer matches what's typed in.
         var stillSame = (g("inv-qa-partnum") && g("inv-qa-partnum").value.trim().toUpperCase()) === partNum;
         if (!stillSame) return;
+        // A box UPC was scanned → put its part # in the box (Stock In saves part #s, not UPCs).
+        if (d && d.partNum && String(d.partNum).toUpperCase() !== partNum && /^\d{8,14}$/.test(partNum)) { g("inv-qa-partnum").value = String(d.partNum).toUpperCase(); partNum = String(d.partNum).toUpperCase(); invFlash('Barcode ' + d.code + ' → part # ' + partNum, 'success'); }
+        if (d && !d.partNum && d.upcNotLinked) invAskUpcPart(partNum, function(part) { var pi = g("inv-qa-partnum"); if (pi) pi.value = part; invQuickAddPrefillUpc(); });
         var nameText = g("inv-qa-name-text");
         if (d && d.name) {
           if (nameText) nameText.textContent = d.name;
@@ -3732,6 +3858,10 @@ window.invCredLogin = async function() {
           }
           if (knownUpc > 0) upcField.value = knownUpc;
         }
+        invQaRec = 0;
+        (d && d.locations || []).some(function(l) { var v = parseFloat(l.eachQty); if (v > 0 && String(l.partNum || '').toUpperCase() === partNum) { invQaRec = v; return true; } return false; });
+        if (!invQaRec) (d && d.locations || []).some(function(l) { var v = parseFloat(l.eachQty); if (v > 0) { invQaRec = v; return true; } return false; });
+        invQaPadsRender();
       })
       .catch(function() {});
   };
@@ -3884,9 +4014,10 @@ window.invCredLogin = async function() {
       }).then(function(r) { return r.json(); })
         .then(function(d) {
           if (d.ok) {
-            invFlash("✓ Logged — pending approval", "success");
+            invQaMineAdd({ id: d.d1Id || null, part: partNum, loc: location, cases: cases, pcs: upc || 0, at: new Date().toISOString() });
+            invFlash(d.queued ? INV_OFFLINE_MSG : (d.autoApproved ? "✓ Saved: " : "✓ Saved — pending approval: ") + partNum + " × " + cases + " → " + location, d.queued ? "warn" : "success");
             g("inv-qa-partnum").value = ""; g("inv-qa-shelf").value = "";
-            g("inv-qa-cases").value = ""; g("inv-qa-upc").value = "";
+            g("inv-qa-cases").value = ""; g("inv-qa-upc").value = ""; invQaRec = 0; invQaPadsRender();
             var nameDisplay = g("inv-qa-name-display"); if (nameDisplay) nameDisplay.style.display = "none";
             var qaPhotoEl = g("inv-qa-photo"); if (qaPhotoEl) { qaPhotoEl.style.display = "none"; qaPhotoEl.src = ""; }
             invFetchPendingCount();
@@ -3909,8 +4040,45 @@ window.invCredLogin = async function() {
 
     wFetch(W + "/inventory/lookup?code=" + encodeURIComponent(partNum))
       .then(function(r) { return r.json(); })
-      .then(function(d) { doQuickAddSubmit(d && d.name, d && d.sku); })
+      .then(function(d) {
+        // Scanned a box UPC → save its part # (a UPC is never saved as a part #).
+        if (d && d.partNum && String(d.partNum).toUpperCase() !== partNum) { partNum = String(d.partNum).toUpperCase(); var pi = g("inv-qa-partnum"); if (pi) pi.value = partNum; }
+        else if (d && !d.partNum && (d.upcNotLinked || /^\d{11,14}$/.test(partNum))) { invFlash('Barcode ' + partNum + ' is not linked to a part # yet — ⌨ type the part #', 'error'); btn.disabled = false; btn.textContent = "Submit Stock In"; return; }
+        doQuickAddSubmit(d && d.name, d && d.sku);
+      })
       .catch(function() { doQuickAddSubmit("", ""); });
+  };
+
+  // ── My Stock In today (this phone): what was saved, with ✕ Cancel for a mistake ──
+  function invQaMineKey() { return 'xf_qa_mine_' + ((INV_CRED_USER && (INV_CRED_USER.username || INV_CRED_USER.displayName)) || ''); }
+  function invQaMineGet() { try { return JSON.parse(localStorage.getItem(invQaMineKey()) || '[]') || []; } catch (e) { return []; } }
+  function invQaMineSet(a) { try { localStorage.setItem(invQaMineKey(), JSON.stringify(a.slice(0, 30))); } catch (e) {} }
+  window.invQaMineAdd = function(x) { var a = invQaMineGet(); a.unshift(x); invQaMineSet(a); invQaMineRender(); };
+  window.invQaMineRender = function() {
+    var box = g('inv-qa-mine'); if (!box) return;
+    var today = new Date().toLocaleDateString('en-CA', { timeZone: 'America/New_York' });
+    var a = invQaMineGet().filter(function(x) { return new Date(x.at).toLocaleDateString('en-CA', { timeZone: 'America/New_York' }) === today; }).slice(0, 10);
+    if (!a.length) { box.innerHTML = ''; return; }
+    box.innerHTML = '<div style="font-size:12px;font-weight:800;color:var(--text2);margin-bottom:4px">My Stock In today — made a mistake? tap ✕ Cancel</div>'
+      + a.map(function(x) {
+        var t = new Date(x.at).toLocaleTimeString('en-US', { timeZone: 'America/New_York', hour: 'numeric', minute: '2-digit' });
+        var st = x.cancelled ? '<span style="color:var(--red);font-weight:700">✕ cancelled</span>'
+          : !x.id ? '<span style="color:var(--orange)">📶 on the phone — sends when WiFi is back</span>'
+          : '<button type="button" onclick="invQaMineCancel(' + x.id + ')" style="padding:6px 10px;border-radius:8px;border:1.5px solid var(--red);background:var(--bg);color:var(--red);font-weight:800;cursor:pointer">✕ Cancel</button>';
+        return '<div style="display:flex;justify-content:space-between;align-items:center;gap:8px;padding:6px 0;border-top:1px solid var(--border);font-size:12.5px' + (x.cancelled ? ';opacity:.6;text-decoration:line-through' : '') + '">'
+          + '<div><b style="font-family:var(--mono)">' + xfrEsc(x.part) + '</b> × ' + xfrN(x.cases) + ' case(s)' + (x.pcs ? ' × ' + xfrN(x.pcs) + ' pcs' : '') + ' → <span style="font-family:var(--mono)">' + xfrEsc(x.loc) + '</span><div style="font-size:11px;color:var(--text3)">' + t + '</div></div>'
+          + '<div style="flex-shrink:0;text-decoration:none">' + st + '</div></div>';
+      }).join('');
+  };
+  window.invQaMineCancel = function(id) {
+    var a = invQaMineGet(), x = a.filter(function(e) { return e.id === id; })[0]; if (!x) return;
+    if (!confirm('Cancel this Stock In?\n\n' + x.part + ' × ' + x.cases + ' case(s) → ' + x.loc)) return;
+    wFetch(W + '/inventory/cancel-own', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ id: id }) })
+      .then(function(r) { return r.json(); }).then(function(d) {
+        if (!d || !d.ok) { invFlash('Not cancelled: ' + ((d && d.error) || 'error'), 'error'); return; }
+        x.cancelled = true; invQaMineSet(a); invQaMineRender(); invFetchPendingCount();
+        invFlash('✕ Cancelled: ' + x.part + ' × ' + x.cases + ' → ' + x.loc, 'success');
+      }).catch(function() { invFlash('Not cancelled — check WiFi', 'error'); });
   };
 
   window.invCloseResult = function() {
@@ -7739,6 +7907,93 @@ window.invCredLogin = async function() {
   // the "=" (e.g. Part # 24-3-1=10XX still under parent 30-1-8, so it showed
   // up when searching 30-1-8). Lists them first; only ticked rows are fixed,
   // and every fix is written to History. Cases are never changed.
+
+  // 🧹 Check part #s (SKU Mgr, read-only): odd part #s grouped by why.
+  var SKU_PN_WHY = {
+    upc: ['📟 A barcode (UPC) saved as a part #', 'Stock Out this row and Stock In the real part #.'],
+    numonly: ['🔢 Just a number', 'e.g. "2490" — not one of our part #s; find the real part # and fix it.'],
+    letters: ['🏷 A vendor\'s code or a name, not our part #', 'e.g. "EFFMM-04-LF" — find our part # for it (our part #s start with a number, like 30-3-4=10X).'],
+    chars: ['✏️ Spaces, lowercase or odd symbols', 'e.g. "30-3-4 =10x" or "30-3-4=10X " — Edit it to the clean part #.'],
+    dupes: ['👯 The same part # written two ways', 'e.g. "30-3-4=10X" and "30-3-4=10x" — they count as two items. Make them the same.'],
+    noeq: ['❓ No "=" (no pack size)', 'e.g. "30-3-4" — add the pack: 30-3-4=10X.'],
+    twoeq: ['⚠ Two "=", or starts / ends with "=" or "-"', 'e.g. "30-3-4==10" or "30-3-4=".'],
+    suffix: ['🔤 Unusual ending after "="', 'Normal: a number + X, XX…, W.1C, W.2C, J, N — or OLD.'],
+    base: ['🔤 Not #-#-# before "="', 'Our part #s are #-#-#=# (e.g. 30-3-4=10X; 28-2-1&2C=10 is OK too). e.g. "30-4=10", "30-3-4-2=10", "61853-K=5X".']
+  };
+  // Table view (owner): every odd part # as a row — Part # · Name · Spot ·
+  // Cases · Pcs/case · What looks wrong — in walking order by spot, so it can
+  // be checked aisle by aisle. Filter by why, 🖨 print it, ⬇ download it.
+  var SKU_PN = { list: [], filter: 'all' };
+  window.skumgrPartnumCheck = function() {
+    var panel = g('skumgr-pncheck-panel'), out = g('skumgr-pncheck-out'); if (!panel || !out) return;
+    panel.style.display = 'block'; out.innerHTML = 'Checking every part #…';
+    wFetch(W + '/inventory/partnum-check').then(function(r) { return r.json(); }).then(function(d) {
+      if (!d || !d.ok) { out.textContent = 'Error: ' + ((d && d.error) || 'unknown'); return; }
+      // Walking order; a plain "GARAGE" spot walks with GARAGE= (Middle), no spot goes last.
+      var wk = function(l) { l = String(l || '').trim().toUpperCase(); return !l ? 'ZZZ' : l === 'GARAGE' ? 'GARAGE=' : l; };
+      SKU_PN.list = (d.list || []).slice().sort(function(a, b) { return invPullWalkCompare(wk(a.location), wk(b.location)) || String(a.partNum).localeCompare(String(b.partNum)); });
+      SKU_PN.total = d.total; SKU_PN.filter = 'all';
+      skumgrPnRender();
+    }).catch(function() { out.textContent = 'Check failed — network error'; });
+  };
+  function skumgrPnRows() { return SKU_PN.list.filter(function(r) { return SKU_PN.filter === 'all' || r.why.indexOf(SKU_PN.filter) >= 0; }); }
+  function skumgrPnWhyText(r) { return r.why.map(function(w) { return (SKU_PN_WHY[w] || [w])[0]; }).join(' · '); }
+  window.skumgrPnFilter = function(f) { SKU_PN.filter = f; skumgrPnRender(); };
+  window.skumgrPnRender = function() {
+    var out = g('skumgr-pncheck-out'); if (!out) return;
+    if (!SKU_PN.list.length) { out.innerHTML = '✓ Every part # looks normal.'; return; }
+    var counts = {}; SKU_PN.list.forEach(function(r) { r.why.forEach(function(w) { counts[w] = (counts[w] || 0) + 1; }); });
+    var order = ['letters', 'numonly', 'upc', 'chars', 'dupes', 'noeq', 'twoeq', 'suffix', 'base'];
+    var chip = function(k, label, n) { var on = SKU_PN.filter === k;
+      return '<button type="button" onclick="skumgrPnFilter(\'' + k + '\')" style="padding:5px 10px;border-radius:999px;border:1.5px solid ' + (on ? 'var(--orange)' : 'var(--border)') + ';background:' + (on ? 'var(--orange)' : 'var(--bg3)') + ';color:' + (on ? '#fff' : 'var(--text)') + ';font-size:12px;font-weight:700;cursor:pointer">' + label + ' (' + n + ')</button>'; };
+    var rows = skumgrPnRows(), cases = rows.reduce(function(t, r) { return t + (r.cases || 0); }, 0);
+    var th = 'text-align:left;padding:6px 8px;border-bottom:2px solid var(--border);font-size:11px;text-transform:uppercase;letter-spacing:.4px;color:var(--text3);position:sticky;top:0;background:var(--bg2)';
+    var td = 'padding:6px 8px;border-bottom:1px solid var(--border);vertical-align:top';
+    out.innerHTML = '<div style="margin-bottom:8px;color:var(--text2)">Checked <b>' + SKU_PN.total + '</b> rows — <b>' + SKU_PN.list.length + '</b> look wrong. In walking order by spot; tap a part # to open it in SKU Mgr and fix it with ✏️ Edit.</div>'
+      + '<div style="display:flex;flex-wrap:wrap;gap:6px;margin-bottom:8px">' + chip('all', 'All', SKU_PN.list.length)
+      + order.filter(function(k) { return counts[k]; }).map(function(k) { return chip(k, SKU_PN_WHY[k][0], counts[k]); }).join('') + '</div>'
+      + '<div style="display:flex;gap:8px;margin-bottom:8px;flex-wrap:wrap"><button type="button" onclick="skumgrPnPrint()" style="padding:7px 12px;border-radius:8px;border:1.5px solid var(--accent);background:var(--bg);color:var(--accent);font-weight:700;cursor:pointer">🖨 Print this list</button>'
+      + '<button type="button" onclick="skumgrPnCsv()" style="padding:7px 12px;border-radius:8px;border:1.5px solid var(--green);background:var(--bg);color:var(--green);font-weight:700;cursor:pointer">⬇ Download (Excel)</button>'
+      + '<span style="align-self:center;color:var(--text3)">' + rows.length + ' row(s) · ' + xfrN(cases) + ' case(s)</span></div>'
+      + '<div style="max-height:520px;overflow:auto;border:1px solid var(--border);border-radius:8px"><table style="width:100%;border-collapse:collapse;font-size:12.5px">'
+      + '<thead><tr><th style="' + th + '">Spot</th><th style="' + th + '">Part #</th><th style="' + th + '">Name</th><th style="' + th + ';text-align:right">Cases</th><th style="' + th + ';text-align:right">Pcs/case</th><th style="' + th + '">What looks wrong</th></tr></thead><tbody>'
+      + rows.map(function(r) {
+          return '<tr><td style="' + td + ';font-family:var(--mono);white-space:nowrap">' + invEsc(r.location || '—') + '</td>'
+            + '<td style="' + td + '"><a href="#" onclick="skumgrPnOpen(this.dataset.p);return false" data-p="' + invEsc(r.partNum) + '" style="font-family:var(--mono);font-weight:700;white-space:pre">' + invEsc(r.partNum) + '</a></td>'
+            + '<td style="' + td + ';color:var(--text2)">' + invEsc(r.name || '') + '</td>'
+            + '<td style="' + td + ';text-align:right;font-family:var(--mono)">' + xfrN(r.cases) + '</td>'
+            + '<td style="' + td + ';text-align:right;font-family:var(--mono)">' + (r.each ? xfrN(r.each) : '—') + '</td>'
+            + '<td style="' + td + ';color:var(--orange);font-weight:600">' + invEsc(skumgrPnWhyText(r)) + '</td></tr>';
+        }).join('') + '</tbody></table></div>';
+  };
+  // ⬇ Excel / 🖨 print: the rows shown now (same order, same columns).
+  function skumgrPnCsvText() {
+    var q = function(v) { v = String(v == null ? '' : v); return /[",\n]/.test(v) ? '"' + v.replace(/"/g, '""') + '"' : v; };
+    return ['Spot,Part #,Name,Cases,Pcs/case,What looks wrong'].concat(skumgrPnRows().map(function(r) {
+      return [r.location, r.partNum, r.name, r.cases, r.each || '', skumgrPnWhyText(r).replace(/[^\x20-\x7E·—]/g, '').trim()].map(q).join(','); })).join('\r\n');
+  }
+  window.skumgrPnCsvText = skumgrPnCsvText;
+  window.skumgrPnCsv = function() {
+    var a = document.createElement('a');
+    a.href = URL.createObjectURL(new Blob(['﻿' + skumgrPnCsvText()], { type: 'text/csv' }));
+    a.download = 'odd-part-numbers-' + new Date().toLocaleDateString('en-CA', { timeZone: 'America/New_York' }) + '.csv';
+    document.body.appendChild(a); a.click(); setTimeout(function() { URL.revokeObjectURL(a.href); a.remove(); }, 1000);
+  };
+  window.skumgrPnPrint = function() {
+    var rows = skumgrPnRows(), w = window.open('', '_blank'); if (!w) { invFlash('Allow pop-ups to print', 'error'); return; }
+    w.document.write('<!doctype html><html><head><meta charset="utf-8"><title>Part #s to check</title><style>body{font:12px Arial,sans-serif;margin:16px}table{width:100%;border-collapse:collapse}th,td{border:1px solid #999;padding:4px 6px;text-align:left}th{background:#eee}td.n{text-align:right}.m{font-family:monospace;font-weight:700}td.ok{width:40px}</style></head><body>'
+      + '<h3 style="margin:0 0 6px">Part #s to check — ' + rows.length + ' row(s) · ' + new Date().toLocaleDateString('en-US', { timeZone: 'America/New_York' }) + '</h3>'
+      + '<table><tr><th>Spot</th><th>Part #</th><th>Name</th><th>Cases</th><th>Pcs/case</th><th>What looks wrong</th><th>✓</th></tr>'
+      + rows.map(function(r) { return '<tr><td class="m">' + invEsc(r.location || '—') + '</td><td class="m">' + invEsc(r.partNum) + '</td><td>' + invEsc(r.name || '') + '</td><td class="n">' + xfrN(r.cases) + '</td><td class="n">' + (r.each ? xfrN(r.each) : '') + '</td><td>' + invEsc(skumgrPnWhyText(r)) + '</td><td class="ok"></td></tr>'; }).join('')
+      + '</table></body></html>');
+    w.document.close(); w.focus(); setTimeout(function() { w.print(); }, 300);
+  };
+  window.skumgrPnOpen = function(p) {
+    var inp = g('skumgr-search-inp'); if (!inp) return;
+    inp.value = String(p || '').trim().split('=')[0].trim();
+    skumgrSearch();
+  };
+
   window.skumgrCheckParents = function() {
     var panel = g('skumgr-parent-panel'), summary = g('skumgr-parent-summary'), list = g('skumgr-parent-list'), btn = g('skumgr-parent-confirm-btn');
     if (panel) panel.style.display = 'block';
@@ -8163,7 +8418,7 @@ window.invCredLogin = async function() {
   window.xfrSetSearchMode = function(mode) {
     xfrSearchMode = mode;
     g('xfr-mode-code').className = 'ixfr-mode-btn' + (mode === 'code' ? ' ixfr-active' : '');
-    g('xfr-mode-name').className = 'ixfr-mode-btn' + (mode === 'name' ? ' ixfr-active' : '');
+    if (g('xfr-mode-name')) g('xfr-mode-name').className = 'ixfr-mode-btn' + (mode === 'name' ? ' ixfr-active' : '');
     if (g('xfr-mode-loc')) g('xfr-mode-loc').className = 'ixfr-mode-btn' + (mode === 'loc' ? ' ixfr-active' : '');
     var inp = g('xfr-search-inp');
     var searchRow = inp && inp.closest ? inp.closest('.isearch-row') : null;
@@ -8185,7 +8440,7 @@ window.invCredLogin = async function() {
       if (searchRow) searchRow.style.display = '';
       if (camBtn) camBtn.style.display = '';
       if (locWrap) locWrap.style.display = 'none';
-      if (inp) inp.placeholder = mode === 'name' ? 'Type product name…' : 'Part#, UPC, or barcode…';
+      if (inp) inp.placeholder = mode === 'name' ? 'Type product name…' : 'Part#, UPC, or name… (⌨ to type)';
     }
     if (inp) { if (mode === 'name') { inp.removeAttribute('inputmode'); inp.removeAttribute('data-kb-typing'); } else if (!inp.hasAttribute('data-kb-typing')) inp.setAttribute('inputmode', 'none'); }
     var kb = g('xfr-search-kb'); if (kb) kb.style.display = mode === 'name' ? 'none' : '';
@@ -9569,7 +9824,7 @@ window.invCredLogin = async function() {
     if (xfrSearchMode === 'name') { xfrNameSearch(val); }
     else if (xfrSearchMode === 'loc') { xfrLocScanSearch(); }
     else if (xfrPart && xfrIsLoc(val)) { window._xfrPutLast = false; xfrGrabSet(val); }
-    else { window._xfrPutLast = false; xfrLookup(val); }
+    else { window._xfrPutLast = false; xfrLookup(val, true); }
   };
 
   // ── Transfer location scan ────────────────────────────────────────────────
@@ -9789,7 +10044,7 @@ window.invCredLogin = async function() {
     try { localStorage.setItem(k, JSON.stringify(m)); } catch (e) {}
     return null;
   }
-  window.xfrLookup = function(code) {
+  window.xfrLookup = function(code, byName) {
     if (!code) return;
     ['xfr-result-card','xfr-from-card','xfr-name-results']
       .forEach(function(id) { var el = g(id); if (el) el.style.display = 'none'; });
@@ -9801,6 +10056,7 @@ window.invCredLogin = async function() {
         return c.d;
       })
       .then(function(d) {
+        if (byName && invNameFallback(code, d) && !xfrIsLoc(String(code).trim().toUpperCase())) { xfrNameSearch(code); return; }
         if (!d.partNum) { invFlash('Not found: ' + code, 'error'); return; }
         d._code = String(code).trim().toUpperCase();
         xfrPart = d;
@@ -12167,6 +12423,876 @@ window.invCredLogin = async function() {
     invRenamePending = null;
   };
 
+  // ══ ✅ Checking ══════════════════════════════════════════════════════════
+  // One box: a spot label → what is on that spot / row now (count it, None
+  // found, Something else found); a box UPC or part # → every spot that part
+  // is on (an exact part # like 8-8-8=8 shows only that one, with a button
+  // for the whole family; a parent like 8-8-8 shows the whole family); a
+  // name → pick from the matches. Who put it there + when comes from
+  // /inventory/check-spots (read-only). Counts save exactly like 🔍 Audit
+  // ([AUDIT] IN/OUT of the difference; Audit Auto/Manual mode decides if a
+  // manager approves it in Review), so History keeps Before → After totals.
+  var CK = { kind: '', d: null, exact: '', all: false, loc: '', rows: [], spots: {}, other: null, saved: [] };
+  function ckE(v) { return xfrEsc(v); }
+  function ckT(iso) { return iso ? xfrFmtT(iso) : ''; }
+  function ckNum(v) { var n = parseFloat(v); return isNaN(n) ? 0 : n; }
+  function ckNow(l) { return l.adjustedCases !== undefined && l.adjustedCases !== null ? ckNum(l.adjustedCases) : ckNum(l.cases); }
+  function ckOut(html) { g('ck-out').innerHTML = html; }
+  // Part #s in pack order (owner): =OLD (no pack number) first, then =1, =1X,
+  // =1XX, =1XXX, =2 … =10, =10X, =11 … =20, =21 … — by the number after "=",
+  // then fewer letters first (fewer letters = older), then A–Z.
+  function ckPackKey(p) {
+    var t = String(p || '').toUpperCase(), i = t.indexOf('='), suf = i < 0 ? '' : t.slice(i + 1).trim();
+    var m = suf.match(/^(\d+(?:\.\d+)?)(.*)$/);
+    return { base: i < 0 ? t : t.slice(0, i), n: m ? parseFloat(m[1]) : -1, rest: m ? m[2] : suf };
+  }
+  function ckPartCompare(a, b) {
+    var x = ckPackKey(a), y = ckPackKey(b);
+    if (x.base !== y.base) return x.base < y.base ? -1 : 1;
+    if (x.n !== y.n) return x.n - y.n;
+    if (x.rest.length !== y.rest.length) return x.rest.length - y.rest.length;
+    return x.rest < y.rest ? -1 : x.rest > y.rest ? 1 : 0;
+  }
+  // 🖼 Product photo (one per parent part #, same photos as the Pull List / Transfer). Tap = big.
+  CK.photo = {};
+  function ckPhotoLoad(parts) {
+    var need = [];
+    parts.forEach(function(p) { var b = invParent(p); if (b && !(b in CK.photo)) { CK.photo[b] = null; need.push(b); } });
+    if (!need.length) return;
+    wFetch(W + '/inventory/photos?bases=' + encodeURIComponent(need.join(','))).then(function(r) { return r.json(); }).then(function(d) {
+      var got = (d && d.photos) || {}, any = false;
+      need.forEach(function(b) { CK.photo[b] = got[b] || ''; if (got[b]) any = true; });
+      if (any) { if (CK.other) ckRenderOther(); else if (CK.kind === 'loc') ckRenderLoc(); else if (CK.kind === 'part') ckRenderPart(); if (window.rcRender && RC.loc) rcRender(); }
+    }).catch(function() { need.forEach(function(b) { delete CK.photo[b]; }); });
+  }
+  function ckPic(part, px) {
+    var u = CK.photo[invParent(part)], sz = 'width:' + (px || 56) + 'px;height:' + (px || 56) + 'px;border-radius:9px;flex-shrink:0;';
+    return u ? '<img src="' + ckE(u) + '" alt="" onclick="invPhotoBig(this.src)" style="' + sz + 'object-fit:cover;background:#fff;border:1px solid var(--border);cursor:zoom-in" onerror="this.style.visibility=\'hidden\'">'
+      : '<div style="' + sz + 'background:var(--bg3);border:1px dashed var(--border);display:flex;align-items:center;justify-content:center;font-size:10px;color:var(--text3)">' + (u === '' ? 'no photo' : '') + '</div>';
+  }
+  function ckBy() { return (INV_CRED_USER && INV_CRED_USER.displayName) || 'OPS'; }
+  var CK_TYPE = { IN: 'Stock In', OUT: 'Stock Out', TRANSFER_IN: 'Transfer in', TRANSFER_OUT: 'Transfer out', MOVE: 'Move' };
+  function ckWho(part, loc) {
+    var s = CK.spots[String(part).toUpperCase() + '|' + String(loc).toUpperCase()];
+    if (!s) return '<span style="color:var(--text3)">who / when: …</span>';
+    var pk = s.pack ? '<br>✏️ Pieces per case ' + ckE(xfrN(s.pack.from)) + ' → ' + ckE(xfrN(s.pack.to)) + ' by <b>' + ckE(s.pack.by) + '</b> · ' + ckE(ckT(s.pack.timestamp)) : '';
+    if (pk) return ckWhoPut(s) + pk;
+    return ckWhoPut(s);
+  }
+  function ckWhoPut(s) {
+    if (!s.put) return '<span style="color:var(--text3)">who put it here: not on record</span>';
+    var p = s.put;
+    return 'Put here by <b>' + ckE(p.by || '?') + '</b> · ' + ckE(ckT(p.timestamp)) + ' · ' + ckE(CK_TYPE[p.type] || p.type) + ' ' + ckE(xfrN(p.cases)) + ' case(s)'
+      + (p.status === 'Pending' ? ' <span style="color:var(--orange)">(waiting for approval)</span>' : '');
+  }
+  function ckLoadSpots(pairs, then) {
+    if (!pairs.length) { then(); return; }
+    wFetch(W + '/inventory/check-spots', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ pairs: pairs }) })
+      .then(function(r) { return r.json(); })
+      .then(function(d) {
+        if (d && d.spots) Object.keys(d.spots).forEach(function(k) { CK.spots[k] = d.spots[k]; });
+        if (d && d.ok) pairs.forEach(function(p) { var k = String(p.part).toUpperCase() + '|' + String(p.location).toUpperCase(); if (!CK.spots[k]) CK.spots[k] = { put: null, last: [] }; });
+        then();
+      })
+      .catch(function() { then(); });
+  }
+  window.ckClear = function() { CK.kind = ''; CK.other = null; ckOut(''); var x = g('ck-inp'); if (x) { x.value = ''; x.focus(); } };
+  window.ckGo = function(v) {
+    var inp = g('ck-inp');
+    v = String(v != null ? v : (inp && inp.value) || '').trim();
+    if (inp) inp.value = '';
+    if (!v) return;
+    if (CK.other) { ckOtherScan(v); return; }
+    var V = v.toUpperCase();
+    if (xfrIsLoc(V)) ckLoc(V); else ckCode(v);
+  };
+
+  // ── a part # / UPC / name ──
+  function ckCode(v, all) {
+    var V = String(v).trim().toUpperCase();
+    ckOut('<div class="icard" style="color:var(--text3)">Looking up ' + ckE(V) + '…</div>');
+    wFetch(W + '/inventory/lookup?code=' + encodeURIComponent(V)).then(function(r) { return r.json(); }).then(function(d) {
+      if (!d || !d.partNum) {
+        if (d && d.upcNotLinked) { ckOut('<div class="icard" style="color:var(--red)">⚠ Barcode ' + ckE(V) + ' is not linked to a part # yet. Type the part # instead.</div>'); return; }
+        if (/[a-z]{2}/i.test(v)) { ckName(v); return; }
+        ckOut('<div class="icard" style="color:var(--red)">Not found: ' + ckE(V) + '</div>'); return;
+      }
+      CK.kind = 'part'; CK.d = d;
+      // An exact part # (has "=") or a box barcode → that one part # only; a parent → the whole family.
+      CK.exact = (/=/.test(V) || /^\d{11,14}$/.test(V)) ? String(d.partNum).toUpperCase() : '';
+      CK.all = !!all || !CK.exact;
+      var pairs = (d.locations || []).filter(function(l) { return l.location; }).map(function(l) { return { part: l.partNum || d.partNum, location: l.location }; });
+      ckRenderPart();
+      ckPhotoLoad([d.partNum]);
+      ckLoadSpots(pairs, ckRenderPart);
+    }).catch(function() { ckOut('<div class="icard" style="color:var(--red)">Lookup failed — check WiFi and try again</div>'); });
+  }
+  window.ckShowAll = function(on) { CK.all = !!on; ckRenderPart(); };
+  function ckRenderPart() {
+    var d = CK.d; if (!d || CK.kind !== 'part') return;
+    var rows = (d.locations || []).filter(function(l) { return l.location && (CK.all || String(l.partNum || d.partNum).toUpperCase() === CK.exact); });
+    var groups = {}, order = [];
+    rows.forEach(function(l) { var p = String(l.partNum || d.partNum).toUpperCase(); if (!groups[p]) { groups[p] = []; order.push(p); } groups[p].push(l); });
+    order.sort(ckPartCompare);
+    var famCount = {}; (d.locations || []).forEach(function(l) { famCount[String(l.partNum || d.partNum).toUpperCase()] = 1; });
+    (d.variants || []).forEach(function(v) { famCount[String(v).toUpperCase()] = 1; });
+    var nFam = Object.keys(famCount).length, totCases = 0, totPcs = 0, hidden = 0, noPcs = 0, gh = '';
+    CK.prow = [];
+    var h = '<div class="icard"><div style="display:flex;gap:12px;align-items:flex-start">' + ckPic(d.partNum, 84) + '<div style="flex:1;min-width:0">'
+      + '<div style="font-size:16px;font-weight:800;font-family:var(--mono)">' + ckE(CK.all ? (d.baseSku || invParent(d.partNum)) + ' — all part #s' : CK.exact) + '</div>'
+      + (d.name ? '<div style="font-size:13px;color:var(--text2);margin:2px 0 6px">' + ckE(d.name) + '</div>' : '') + '</div></div>'
+      + (CK.exact && nFam > 1 ? (CK.all
+          ? '<button class="ps-btn-sm ixfr-mode-btn" onclick="ckShowAll(false)">Only ' + ckE(CK.exact) + '</button>'
+          : '<button class="ixfr-mode-btn" onclick="ckShowAll(true)">👪 Show all the family (' + nFam + ' part #s)</button>') : '')
+      + '</div>';
+    if (!order.length) gh += '<div class="icard" style="color:var(--text3)">No spot on record for this part #.</div>';
+    order.forEach(function(p) {
+      var list = groups[p].slice().sort(function(a, b) { return invPullWalkCompare(a.location, b.location); });
+      var gCases = 0, gPcs = 0, gNoPcs = 0, body = '';
+      list.forEach(function(l) {
+        var now = ckNow(l), pend = ckNum(l.pendingCases);
+        if (now <= 0 && pend <= 0) { hidden++; return; }
+        var lp = now * ckNum(l.eachQty); // pieces = cases × that spot's pieces per case
+        gCases += now; totCases += now; gPcs += lp; totPcs += lp;
+        if (now > 0 && !(ckNum(l.eachQty) > 0)) { gNoPcs += now; noPcs += now; }
+        var pi = CK.prow.length; CK.prow.push(Object.assign({}, l, { partNum: l.partNum || d.partNum }));
+        body += '<div style="padding:7px 0;border-top:1px solid var(--border)">'
+          + '<div style="display:flex;justify-content:space-between;gap:8px;align-items:center">'
+          + '<a href="#" onclick="ckLoc(\'' + ckE(String(l.location).toUpperCase()) + '\');return false" style="font-family:var(--mono);font-weight:700;white-space:nowrap">📍 ' + ckE(l.location) + '</a>'
+          + '<span style="font-weight:800;font-family:var(--mono);white-space:nowrap">' + ckE(xfrN(now)) + ' case(s)</span></div>'
+          + '<div style="text-align:right;font-size:12.5px;color:var(--text2);font-family:var(--mono)">' + (ckNum(l.eachQty) > 0 ? '× ' + ckE(xfrN(l.eachQty)) + ' pcs/case = ' + ckE(xfrN(now * ckNum(l.eachQty))) + ' pcs' : '<span style="color:var(--red)">⚠ no pcs/case</span>') + '</div>'
+          + (pend ? '<div style="font-size:11px;color:var(--orange)">' + ckE(xfrN(pend)) + ' case(s) waiting for approval</div>' : '')
+          + (l.palletBoxes ? '<div style="font-size:11px;color:var(--text3)">📦 still on a container pallet</div>' : '')
+          + '<div style="font-size:11.5px;color:var(--text2);margin-top:2px">' + ckWho(l.partNum || d.partNum, l.location) + '</div></div>';
+      });
+      gh += '<div class="icard"><div style="display:flex;justify-content:space-between;font-weight:800"><span style="font-family:var(--mono)">' + ckE(p) + '</span><span>' + ckE(xfrN(gCases)) + ' case(s) · ' + ckE(xfrN(gPcs)) + ' pcs</span></div>'
+        + (gNoPcs ? '<div style="font-size:11px;color:var(--red)">⚠ ' + ckE(xfrN(gNoPcs)) + ' case(s) have no pcs/case — not counted in pcs</div>' : '')
+        + (body || '<div style="color:var(--text3);font-size:12px;padding-top:6px">None on the shelves now</div>') + '</div>';
+    });
+    // 👪 All the family: total cases + total pieces of every part # in the family, at the top.
+    if (CK.all && order.length) h += '<div class="icard" style="border:2px solid var(--accent);background:var(--accent-bg,#e8efff)">'
+      + '<div style="font-size:12px;font-weight:800;color:var(--accent);letter-spacing:.3px">👪 FAMILY TOTAL · ' + order.length + ' part #s</div>'
+      + '<div style="font-size:22px;font-weight:800;font-family:var(--mono);margin-top:2px">' + ckE(xfrN(totCases)) + ' case(s) · ' + ckE(xfrN(totPcs)) + ' pcs</div>'
+      + (noPcs ? '<div style="font-size:12px;color:var(--red);font-weight:700">⚠ ' + ckE(xfrN(noPcs)) + ' case(s) have no pcs/case — not counted in the pcs</div>' : '') + '</div>';
+    h += gh;
+    if (order.length) h += '<div style="font-size:12px;color:var(--text2);padding:0 4px">Total shown: <b>' + ckE(xfrN(totCases)) + ' case(s)</b> · ' + ckE(xfrN(totPcs)) + ' pcs' + (hidden ? ' · ' + hidden + ' empty spot(s) not shown' : '') + '</div>';
+    ckOut(h);
+  }
+  function ckName(q) {
+    var words = String(q).toLowerCase().split(/\s+/).filter(Boolean), out = {};
+    function show(list) {
+      if (!list.length) { ckOut('<div class="icard" style="color:var(--red)">No product name matches "' + ckE(q) + '"</div>'); return; }
+      ckOut('<div class="icard"><div class="icard-label">Pick one</div>' + list.slice(0, 30).map(function(x) {
+        return '<div style="padding:8px 0;border-top:1px solid var(--border);cursor:pointer" onclick="ckGo(\'' + ckE(x.base) + '\')"><b style="font-family:var(--mono)">' + ckE(x.base) + '</b> — ' + ckE(x.name) + '</div>';
+      }).join('') + '</div>');
+    }
+    if (DB.master && DB.master.length) {
+      DB.master.forEach(function(m) {
+        var nm = String(m.name || ''), pn = String(m.partNum || m.sku || '');
+        if (!nm || !pn) return;
+        var low = nm.toLowerCase();
+        if (words.every(function(w) { return low.indexOf(w) !== -1; })) { var b = invParent(pn); if (!out[b]) out[b] = { base: b, name: nm }; }
+      });
+      (DB.products || []).forEach(function(pr) {
+        var hay = (String(pr.name || '') + ' ' + String(pr.keywords || '')).toLowerCase(), b = invParent(pr.sku);
+        if (b && words.every(function(w) { return hay.indexOf(w) !== -1; }) && !out[b]) out[b] = { base: b, name: pr.name || '' };
+      });
+      var loc = Object.keys(out).map(function(k) { return out[k]; });
+      if (loc.length) { show(loc); return; }
+    }
+    wFetch(W + '/inventory/search?name=' + encodeURIComponent(q)).then(function(r) { return r.json(); })
+      .then(function(d) { show((d.results || []).map(function(x) { return { base: x.baseSku, name: x.name }; })); })
+      .catch(function() { ckOut('<div class="icard" style="color:var(--red)">Search failed</div>'); });
+  }
+
+  // ── a spot / row ──
+  window.ckLoc = function(loc) {
+    CK.kind = 'loc'; CK.loc = String(loc).toUpperCase(); CK.other = null;
+    ckOut('<div class="icard" style="color:var(--text3)">Looking at ' + ckE(CK.loc) + '…</div>');
+    wFetch(W + '/inventory/location-search?loc=' + encodeURIComponent(CK.loc)).then(function(r) { return r.json(); }).then(function(d) {
+      CK.rows = ((d && d.results) || []).filter(function(r) { return ckNow(r) > 0 || ckNum(r.pendingCases) > 0; })
+        .sort(function(a, b) { return invPullWalkCompare(a.location, b.location) || ckPartCompare(a.partNum, b.partNum); });
+      ckRenderLoc();
+      ckPhotoLoad(CK.rows.map(function(r) { return r.partNum; }));
+      ckLoadSpots(CK.rows.map(function(r) { return { part: r.partNum, location: r.location }; }), ckRenderLoc);
+    }).catch(function() { ckOut('<div class="icard" style="color:var(--red)">Could not load ' + ckE(CK.loc) + ' — check WiFi</div>'); });
+  };
+  function ckRenderLoc() {
+    if (CK.kind !== 'loc') return;
+    var h = '<div class="icard"><div style="font-size:16px;font-weight:800;font-family:var(--mono)">📍 ' + ckE(CK.loc) + '</div>'
+      + '<div style="font-size:12px;color:var(--text2);margin-top:2px">' + CK.rows.length + ' item(s) on record here now. Tap how many cases you see — the <b style="color:var(--green)">green</b> number is what the system has. It saves right away.'
+      + (invAuditAutoMode ? '' : ' <b>Changes go to Review for a manager to approve.</b>') + '</div></div>';
+    var left = CK.rows.filter(function(r) { return !r._ck; }).length;
+    if (CK.rows.length && !left) h += '<div class="icard" style="border-color:var(--green);background:var(--green-bg,#dcfce7);font-size:16px;font-weight:800;color:var(--green)">✅ All counted at ' + ckE(CK.loc) + ' — scan the next spot</div>';
+    CK.rows.forEach(function(r, i) {
+      var now = ckNow(r), done = r._ck, here = String(r.location).toUpperCase() === CK.loc;
+      h += '<div class="icard" id="ck-row-' + i + '" style="' + (done ? 'border-color:#0891B2;background:#E0F2FE' : '') + '">'
+        + '<div style="display:flex;gap:10px;align-items:flex-start">' + ckPic(r.partNum) + '<div style="flex:1;min-width:0">'
+        + '<div style="display:flex;justify-content:space-between;gap:8px"><b style="font-family:var(--mono)">' + ckE(r.partNum) + ' <span style="font-weight:700;color:var(--accent)">· ' + (ckNum(r.eachQty) > 0 ? ckE(xfrN(r.eachQty)) : '?') + ' pcs / case</span>'
+          + ' <button type="button" class="ixfr-mode-btn" style="padding:3px 8px;font-size:12px" onclick="ckPackAsk(\'loc\',' + i + ')">✏️</button></b></div>'
+          + (here ? '' : '<div style="font-family:var(--mono);font-weight:700;font-size:12.5px;color:var(--text2)">📍 <span>' + ckE(r.location) + '</span></div>')
+        + (r.name ? '<div style="font-size:12px;color:var(--text2)">' + ckE(r.name) + '</div>' : '')
+        + '<div style="font-size:11.5px;color:var(--text2);margin:3px 0">' + ckWho(r.partNum, r.location) + '</div>'
+        + (ckNum(r.pendingCases) ? '<div style="font-size:11px;color:var(--orange)">' + ckE(xfrN(r.pendingCases)) + ' case(s) waiting for approval</div>' : '')
+        + '</div></div>'
+        + (done ? '<div style="font-weight:700;color:#0891B2;margin-top:4px">✓ ' + ckE(done) + '</div>'
+          : '<div style="margin-top:6px">' + ckGrid('ckPick(' + i + ',', now, true) + '</div>'
+            + '<button type="button" onclick="ckNoneFound(' + i + ')" style="width:100%;margin-top:6px;padding:11px;border-radius:10px;border:1.5px solid var(--red);background:var(--bg);color:var(--red);font-size:15px;font-weight:800;cursor:pointer">✗ None found</button>')
+        + '</div>';
+    });
+    h += '<button class="icam-btn" style="background:var(--orange-bg);color:var(--orange);border-color:var(--orange)" onclick="ckOtherStart()">➕ Something else found on this spot</button>';
+    ckOut(h);
+  }
+  // Our own number buttons (1–9 + More…) — the phone keyboard never comes up.
+  // sys = true: cur is the system's number — it stands out (big, green, "✓ system");
+  // tapping it means "correct". Not 1–9 (e.g. 12 or 2.5)? It gets its own big button first.
+  function ckGrid(call, cur, sys) {
+    var b = 'padding:12px 0;border-radius:10px;border:1.5px solid var(--border);background:var(--bg3);color:var(--text);font-size:19px;font-weight:800;cursor:pointer;touch-action:manipulation';
+    var hi = ';border:3px solid var(--green);background:var(--green-bg,#dcfce7);color:var(--green);font-size:26px;padding:4px 0;line-height:1.1';
+    var tag = '<div style="font-size:10px;font-weight:800;letter-spacing:.3px">✓ SYSTEM</div>';
+    var inGrid = sys && cur != null && cur >= 1 && cur <= 9 && Math.round(cur) === cur;
+    return (sys && cur != null && cur > 0 && !inGrid
+        ? '<button type="button" data-sys="1" onclick="' + call + cur + ')" style="' + b + hi + ';width:100%;margin-bottom:6px">' + tag + ckE(xfrN(cur)) + ' case(s)</button>' : '')
+      + '<div style="display:grid;grid-template-columns:repeat(5,1fr);gap:6px">'
+      + [1,2,3,4,5,6,7,8,9].map(function(n) {
+          var me = cur != null && Math.abs(n - cur) < 1e-9;
+          return '<button type="button"' + (me && sys ? ' data-sys="1"' : '') + ' onclick="' + call + n + ')" style="' + b + (me ? (sys ? hi : ';border-color:var(--green)') : '') + '">' + (me && sys ? tag : '') + n + '</button>'; }).join('')
+      + '<button type="button" onclick="' + call + '\'more\')" style="' + b + ';font-size:14px">More…</button></div>';
+  }
+  // Fewer steps: after a count, go to the next item not counted yet; when the
+  // spot is done, the scan box is ready for the next spot (no tap needed).
+  function ckNext() {
+    var j = -1; CK.rows.some(function(r, k) { if (!r._ck) { j = k; return true; } return false; });
+    var x = j >= 0 ? g('ck-row-' + j) : null;
+    if (x && x.scrollIntoView) x.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    if (j < 0) { var inp = g('ck-inp'); if (inp) { if (inp.scrollIntoView) inp.scrollIntoView({ behavior: 'smooth', block: 'start' }); inp.focus(); } }
+  }
+  window.ckPick = function(i, n) {
+    var r = CK.rows[i]; if (!r || r._ck) return;
+    if (n === 'ok') { ckSaveCount(i, false, ckNow(r)); return; }
+    if (n === 'more') { xfrKeypad('How many cases of ' + r.partNum + ' at ' + r.location + '? (system: ' + xfrN(ckNow(r)) + ')', '', function(v) { ckSaveCount(i, false, v); }, true); return; }
+    ckSaveCount(i, false, n);
+  };
+  window.ckNoneFound = function(i) { ckSaveCount(i, true, 0); };
+  // Same entries as 🔍 Audit (invAuditSubmitRow): equal → a 0-case [AUDIT] Confirmed;
+  // different → [AUDIT] IN / OUT of the difference.
+  window.ckSaveCount = function(i, none, actual) {
+    var r = CK.rows[i]; if (!r || r._ck) return;
+    actual = parseFloat(actual);
+    if (isNaN(actual) || actual < 0) { invFlash('Enter a valid count (0 or more)', 'error'); return; }
+    var cur = ckNow(r), diff = Math.round((actual - cur) * 1000) / 1000, by = ckBy();
+    var note = diff === 0 ? '[AUDIT] Confirmed: ' + cur + ' cases verified correct (✅ Checking)'
+      : '[AUDIT] ' + (none ? '[NONE FOUND] ' : '') + 'System: ' + cur + ' → Actual: ' + actual + ' (diff: ' + (diff > 0 ? '+' : '') + diff.toFixed(1) + ') (✅ Checking)';
+    var body = { type: diff > 0 ? 'IN' : (diff < 0 ? 'OUT' : 'IN'), partNum: r.partNum, sku: String(r.partNum).split('=')[0].trim(), name: '',
+      location: r.location, cases: Math.abs(diff), initials: by, notes: note,
+      rowIndex: r.rowIndex, masterId: r.masterId || null, isNew: false, overwriteLocation: false };
+    var approve = (diff === 0 || invAuditAutoMode) ? function(d) {
+      return { rowIndex: d.rowIndex, action: 'Approved', verifiedBy: by, item: Object.assign({}, body, { rowIndex: d.rowIndex, d1Id: d.d1Id, overwriteLocation: '' }) };
+    } : null;
+    r._ck = 'Saving…'; ckRenderLoc(); ckNext();
+    invLogAndApprove(body, approve).then(function(d) {
+      if (d && d.ok === false) { r._ck = ''; ckRenderLoc(); invFlash('Error: ' + (d.error || 'not saved'), 'error'); return; }
+      var msg = diff === 0 ? 'Count matches — confirmed' : (none ? 'None found' : 'Counted ' + actual) + ' (was ' + cur + ')';
+      if (d && d.queued) msg += ' — 📶 saved on the phone';
+      else if (diff !== 0 && !approve) msg += ' — waiting for a manager in Review';
+      else if (approve && d && d._after && d._after.error) msg += ' — saved, a manager approves it in Review';
+      r._ck = msg; ckRenderLoc();
+      invFlash(msg, d && d.queued ? 'warn' : 'success');
+    }).catch(function(e) { r._ck = ''; ckRenderLoc(); invFlash('Error: ' + e.message, 'error'); });
+  };
+
+  // ── ➕ Something else found: scan the box → how many boxes / pieces → scan the spot (saves) → next box ──
+  window.ckOtherStart = function() { CK.other = { at: CK.loc, step: 'box' }; CK.saved = []; ckRenderOther(); };
+  window.ckOtherStop = function() { CK.other = null; if (CK.loc) ckLoc(CK.loc); else ckClear(); };
+  function ckRenderOther() {
+    var o = CK.other; if (!o) return;
+    var h = '<div class="icard" style="border-color:var(--orange)"><div class="icard-label">➕ Something else found at ' + ckE(o.at) + '</div>';
+    if (o.step === 'box') h += '<div style="font-size:15px;font-weight:800;margin:6px 0">1️⃣ Scan the box barcode (or type the part #)</div>';
+    else {
+      h += '<div style="display:flex;gap:10px;align-items:center">' + ckPic(o.part) + '<div><div style="font-family:var(--mono);font-weight:800;font-size:15px">' + ckE(o.part) + '</div>' + (o.name ? '<div style="font-size:12px;color:var(--text2)">' + ckE(o.name) + '</div>' : '') + '</div></div>'
+        + '<div style="font-size:13px;margin:8px 0">Pieces per box: <b style="font-size:16px;font-family:var(--mono)">' + (o.pcs ? ckE(xfrN(o.pcs)) : '?') + '</b> '
+        + '<button type="button" class="ixfr-mode-btn" onclick="ckOtherPcsAsk()">✏️ Change</button></div>'
+        + (o.step === 'loc'
+          ? '<div style="font-size:14px;margin-bottom:6px">Boxes: <b style="font-size:16px;font-family:var(--mono)">' + ckE(xfrN(o.n)) + '</b> <button type="button" class="ixfr-mode-btn" onclick="ckOtherBack()">✏️ Change</button></div>'
+            + '<div style="font-size:15px;font-weight:800;color:var(--accent)">3️⃣ Scan the spot label — it saves by itself</div>'
+          : '<div style="font-size:15px;font-weight:800;margin-bottom:6px">2️⃣ How many boxes?</div>' + ckGrid('ckOtherN(', null));
+    }
+    if (CK.saved.length) h += '<div style="margin-top:10px;font-size:12px">' + CK.saved.map(function(x) { return '<div style="color:var(--green)">✓ ' + ckE(x) + '</div>'; }).join('') + '</div>';
+    h += '<div style="margin-top:10px"><button class="ixfr-mode-btn" onclick="ckOtherStop()">Done — back to ' + ckE(o.at) + '</button></div></div>';
+    ckOut(h);
+    setTimeout(function() { var x = g('ck-inp'); if (x) x.focus(); }, 50);
+  }
+  window.ckOtherN = function(n) {
+    var o = CK.other; if (!o) return;
+    if (n === 'more') { xfrKeypad('How many boxes of ' + o.part + '?', '', function(v) { ckOtherN(v); }); return; }
+    o.n = parseFloat(n);
+    if (!(o.n > 0)) return;
+    if (!(parseFloat(o.pcs) > 0)) { ckOtherPcsAsk(true); return; }
+    o.step = 'loc'; ckRenderOther();
+  };
+  window.ckOtherBack = function() { var o = CK.other; if (!o) return; o.step = 'count'; ckRenderOther(); };
+  window.ckOtherPcsSet = function(v) { var o = CK.other; if (!o || !(parseFloat(v) > 0)) return; o.pcs = parseFloat(v); if (o.n > 0 && o.step === 'count') o.step = 'loc'; ckRenderOther(); };
+  window.ckOtherPcsAsk = function() { var o = CK.other; if (!o) return; ckSizePopup('How many pieces in each box of ' + o.part + '?', o.pcs, 'ckOtherPcsPick('); };
+  window.ckOtherPcsPick = function(v) {
+    if (v === 'more') { var o = CK.other; xfrKeypad('How many pieces in each box of ' + (o ? o.part : '') + '?', '', ckOtherPcsSet); return; }
+    xfrPopupClose(); ckOtherPcsSet(v);
+  };
+
+  // ── ✏️ pieces per case: our own buttons (the 9 sizes we have most) + More… ──
+  CK.sizes = [1, 2, 5, 10, 20, 25, 50, 100, 200];
+  window.ckLoadSizes = function() {
+    if (CK.sizesLoaded) return;
+    wFetch(W + '/inventory/pack-sizes').then(function(r) { return r.json(); })
+      .then(function(d) { if (d && d.sizes && d.sizes.length) { CK.sizes = d.sizes; CK.sizesLoaded = true; if (window.invQaPadsRender) invQaPadsRender(); } }).catch(function() {});
+  };
+  function ckSizePopup(title, cur, call) {
+    var b = 'padding:13px 0;border-radius:10px;border:1.5px solid var(--border);background:var(--bg3);color:var(--text);font-size:18px;font-weight:800;cursor:pointer;touch-action:manipulation';
+    xfrPopup('<div style="font-weight:800;font-size:15px;margin-bottom:8px">' + ckE(title) + '</div>'
+      + '<div style="display:grid;grid-template-columns:repeat(5,1fr);gap:6px">'
+      + CK.sizes.slice(0, 9).map(function(n) { return '<button type="button" onclick="' + call + n + ')" style="' + b + (cur != null && Math.abs(n - ckNum(cur)) < 1e-9 ? ';border-color:var(--green)' : '') + '">' + ckE(xfrN(n)) + '</button>'; }).join('')
+      + '<button type="button" onclick="' + call + '\'more\')" style="' + b + ';font-size:14px">More…</button></div>'
+      + '<button type="button" onclick="xfrPopupClose()" style="width:100%;margin-top:10px;padding:12px;border-radius:10px;border:1.5px solid var(--border);background:var(--bg);color:var(--text2);font-size:15px;font-weight:700;cursor:pointer">Cancel</button>');
+  }
+  function ckPackRow(kind, i) { return kind === 'loc' ? CK.rows[i] : (CK.prow || [])[i]; }
+  window.ckPackAsk = function(kind, i) {
+    var r = ckPackRow(kind, i); if (!r) return;
+    if (!r.masterId) { invFlash('This row can only be changed in SKU Mgr', 'error'); return; }
+    ckSizePopup('Pieces in each case of ' + r.partNum + ' at ' + r.location + '? (now: ' + (ckNum(r.eachQty) > 0 ? xfrN(r.eachQty) : '?') + ')', r.eachQty, 'ckPackPick(\'' + kind + '\',' + i + ',');
+  };
+  window.ckPackPick = function(kind, i, v) {
+    var r = ckPackRow(kind, i); if (!r) return;
+    if (v === 'more') { xfrKeypad('Pieces in each case of ' + r.partNum + ' at ' + r.location + '?', '', function(n) { ckPackConfirm(kind, i, n); }); return; }
+    ckPackConfirm(kind, i, v);
+  };
+  window.ckPackConfirm = function(kind, i, v) {
+    var r = ckPackRow(kind, i); if (!r) return;
+    var from = ckNum(r.eachQty), to = ckNum(v), c = ckNow(r);
+    if (!(to > 0)) return;
+    if (Math.abs(from - to) < 1e-9) { xfrPopupClose(); invFlash('No change — already ' + xfrN(to) + ' pcs per case', 'warn'); return; }
+    xfrPopup('<div style="font-weight:800;font-size:16px;margin-bottom:6px">Change pieces per case?</div>'
+      + '<div style="font-family:var(--mono);font-weight:800">' + ckE(r.partNum) + ' · ' + ckE(r.location) + '</div>'
+      + '<div style="font-size:15px;margin:8px 0">' + ckE(xfrN(from)) + ' → <b>' + ckE(xfrN(to)) + '</b> pcs per case</div>'
+      + '<div style="font-size:13px;color:var(--text2);margin-bottom:10px">' + ckE(xfrN(c)) + ' case(s): ' + ckE(xfrN(c * from)) + ' → <b>' + ckE(xfrN(c * to)) + '</b> pcs (cases stay the same). Saved with your name and the time.</div>'
+      + '<button type="button" onclick="ckPackSave(\'' + kind + '\',' + i + ',' + to + ')" style="width:100%;padding:15px;border-radius:12px;border:none;background:var(--accent);color:#fff;font-size:17px;font-weight:800;cursor:pointer;margin-bottom:8px">✓ Yes, change it</button>'
+      + '<button type="button" onclick="xfrPopupClose()" style="width:100%;padding:13px;border-radius:12px;border:1.5px solid var(--border);background:var(--bg);color:var(--text2);font-size:15px;font-weight:700;cursor:pointer">Cancel</button>');
+  };
+  window.ckPackSave = function(kind, i, to) {
+    var r = ckPackRow(kind, i); if (!r) return;
+    xfrPopupClose();
+    var from = ckNum(r.eachQty);
+    return wFetch(W + '/inventory/pack-change', { method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ masterId: r.masterId, partNum: r.partNum, location: r.location, from: from, to: to }) })
+      .then(function(res) { return res.json(); }).then(function(d) {
+        if (!d || !d.ok) { invFlash('Not changed: ' + ((d && d.error) || 'error'), 'error'); return; }
+        r.eachQty = to;
+        if (kind === 'part' && CK.d) (CK.d.locations || []).forEach(function(l) { if (l.masterId === r.masterId) l.eachQty = to; });
+        var k = String(r.partNum).toUpperCase() + '|' + String(r.location).toUpperCase();
+        CK.spots[k] = CK.spots[k] || { put: null, last: [] };
+        CK.spots[k].pack = { timestamp: new Date().toISOString(), from: from, to: to, by: ckBy() };
+        invFlash('Changed: ' + r.partNum + ' at ' + r.location + ' — ' + xfrN(from) + ' → ' + xfrN(to) + ' pcs per case', 'success');
+        if (kind === 'loc') ckRenderLoc(); else ckRenderPart();
+      }).catch(function() { invFlash('Not changed — check WiFi and try again', 'error'); });
+  };
+  function ckOtherScan(v) {
+    var o = CK.other, V = String(v).trim().toUpperCase();
+    if (o.step === 'box' || (o.step === 'count' && !xfrIsLoc(V))) {
+      if (o.step === 'count' && /^\d{1,4}$/.test(V)) { ckOtherN(V); return; } // a number typed in the box = how many boxes
+      if (xfrIsLoc(V)) { invFlash('Scan the box first', 'error'); return; }
+      wFetch(W + '/inventory/lookup?code=' + encodeURIComponent(V)).then(function(r) { return r.json(); }).then(function(d) {
+        if (!d || !d.partNum) { invFlash(d && d.upcNotLinked ? 'Barcode not linked to a part # — type the part #' : 'Not found: ' + V, 'error'); return; }
+        var part = String(d.partNum).toUpperCase();
+        var mine = (d.locations || []).filter(function(l) { return String(l.partNum || d.partNum).toUpperCase() === part; });
+        o.part = part; o.name = d.name || ''; o.sku = d.sku || part; o.locs = mine; o.n = '';
+        o.pcs = (mine.filter(function(l) { return ckNum(l.eachQty) > 0; })[0] || {}).eachQty || '';
+        o.step = 'count'; ckRenderOther(); ckPhotoLoad([part]);
+      }).catch(function() { invFlash('Lookup failed — check WiFi', 'error'); });
+      return;
+    }
+    if (o.step === 'count') { invFlash('Tap how many boxes first', 'error'); return; }
+    if (!xfrIsLoc(V)) { invFlash('That is not a spot label — scan the spot', 'error'); return; }
+    ckOtherSave(V);
+  }
+  function ckOtherSave(toLoc) {
+    var o = CK.other, n = o.n, pcs = o.pcs, by = ckBy();
+    var ex = (o.locs || []).filter(function(l) { return String(l.location).toUpperCase() === toLoc && Math.abs(ckNum(l.eachQty) - pcs) < 1e-6; })[0];
+    var body = { type: 'IN', partNum: o.part, sku: o.sku, name: o.name, location: toLoc, cases: n, initials: by,
+      notes: '[AUDIT] [CHECKING] Something else found at ' + o.at + ': ' + xfrN(n) + ' box(es) × ' + xfrN(pcs) + ' pcs → at ' + toLoc,
+      isNew: !ex, isPlaceholder: false, rowIndex: ex ? ex.rowIndex : null, masterRowIndex: ex ? ex.rowIndex : null, masterId: ex ? ex.masterId : null, _boxPcs: ex ? 0 : pcs, overwriteLocation: false };
+    var label = o.part + ' × ' + xfrN(n) + ' box(es) of ' + xfrN(pcs) + ' pcs → ' + toLoc;
+    invLogAndApprove(body, invAuditAutoMode ? function(d) {
+      return { rowIndex: d.rowIndex, action: 'Approved', verifiedBy: by,
+        item: Object.assign({}, body, { rowIndex: d.rowIndex, d1Id: d.d1Id, overwriteLocation: '', unitsPerCase: ex ? undefined : pcs }) };
+    } : null).then(function(d) {
+      if (d && d.ok === false) { invFlash('Error: ' + (d.error || 'not saved'), 'error'); return; }
+      CK.saved.unshift(label + (d && d.queued ? ' (📶 on the phone)' : invAuditAutoMode ? '' : ' (waiting for review)'));
+      invFlash('Saved: ' + label, d && d.queued ? 'warn' : 'success');
+      CK.other = { at: o.at, step: 'box' }; ckRenderOther();
+    }).catch(function(e) { invFlash('Error: ' + e.message, 'error'); });
+  }
+
+
+  // ══ 📋 Full recount (🔍 Audit) ══════════════════════════════════════════
+  // Column by column (about once a year): scan the column label → what is on
+  // record there (photo, part #, pcs / box, system cases). Scan each box type
+  // → tap how many cases → tap pieces per box = saved. The same part # can be
+  // here with different pieces per box: each size is its own line (SKU Mgr
+  // keeps one row per part # + spot + Each/Case). Not on record → saved as a
+  // new line. ✅ Done → anything not scanned: Found (confirm cases + pieces) /
+  // None found (→ 0). The column must be finished before the next one starts.
+  // Saves are the same [AUDIT] entries as Checking / Audit (Audit Auto/Manual
+  // decides Review), so History keeps Part Total Before → After.
+  var RC = { loc: '', rows: [], extra: [], cur: null, checking: false, done: false, status: null, aisle: null };
+  function rcOut(h) { var o = g('rc-out'); if (o) o.innerHTML = h; }
+  // The column in progress is kept on this phone (survives a reload, a dead
+  // battery screen, no WiFi), so nothing counted is lost or counted twice.
+  function rcStateKey() { return 'xf_rc_state_' + ((INV_CRED_USER && (INV_CRED_USER.userId || INV_CRED_USER.username || INV_CRED_USER.displayName)) || ''); }
+  function rcSaveState() {
+    try {
+      if (!RC.loc) { localStorage.removeItem(rcStateKey()); return; }
+      localStorage.setItem(rcStateKey(), JSON.stringify({ loc: RC.loc, rows: RC.rows, extra: RC.extra, checking: RC.checking, done: RC.done, at: Date.now() }));
+    } catch (e) {}
+  }
+  window.rcRestore = function() {
+    if (RC.loc) return;
+    var st = null; try { st = JSON.parse(localStorage.getItem(rcStateKey()) || 'null'); } catch (e) {}
+    if (!st || !st.loc || st.done) return;
+    RC.loc = st.loc; RC.rows = st.rows || []; RC.extra = st.extra || []; RC.checking = !!st.checking; RC.done = false; RC.cur = null;
+    // A save that was still going when the page closed went through the phone outbox — it is not lost.
+    RC.rows.forEach(function(r) { if (r._rc) r._rc.saving = false; }); RC.extra.forEach(function(x) { x.saving = false; });
+    rcRender(); rcStatus(rcAisleOf(RC.loc));
+    invFlash('Back to ' + RC.loc + ' — carry on where you left off', 'warn');
+  };
+  // Offline: what this phone saw before (column contents, box lookups).
+  function rcCache(kind, key, d) {
+    var k = 'xf_rc_cache_' + kind, m = {}; try { m = JSON.parse(localStorage.getItem(k) || '{}') || {}; } catch (e) {}
+    key = String(key || '').trim().toUpperCase(); if (!key) return null;
+    if (d === undefined) return m[key] || null;
+    m[key] = { d: d, at: Date.now() };
+    var ks = Object.keys(m); if (ks.length > 400) ks.sort(function(a, b) { return m[a].at - m[b].at; }).slice(0, ks.length - 400).forEach(function(x) { delete m[x]; });
+    try { localStorage.setItem(k, JSON.stringify(m)); } catch (e) {}
+    return null;
+  }
+  function rcFetchJson(url, kind, key) {
+    return wFetch(url).then(function(r) { return r.json(); }).then(function(d) { if (d && (d.ok !== false)) rcCache(kind, key, d); return d; }, function(err) {
+      var c = rcCache(kind, key); if (!c) throw err;
+      invFlash('📶 No WiFi — using what this phone saw ' + xfrFmtT(new Date(c.at).toISOString()) + '. Counts are saved on the phone.', 'warn');
+      return c.d;
+    });
+  }
+  window.rcClear = function() {
+    var x = g('rc-inp'); if (x) { x.value = ''; x.removeAttribute('data-kb-typing'); x.setAttribute('inputmode', 'none'); }
+    if (RC.cur) { RC.cur = null; rcRender(); }
+    if (x) x.focus();
+  };
+  function rcAisleOf(loc) { var L = String(loc || '').toUpperCase(), i = L.indexOf('='); if (i < 0) return L; var n = L.slice(i + 1).split('-')[0]; return L.slice(0, i + 1) + n; }
+  function rcKey(part, pcs) { return String(part).toUpperCase() + '|' + xfrN(pcs); }
+  window.rcStatus = function(aisle) {
+    wFetch(W + '/inventory/recount/status' + (aisle ? '?aisle=' + encodeURIComponent(aisle) : '')).then(function(r) { return r.json(); }).then(function(d) {
+      if (!d || !d.ok) return;
+      RC.status = d; if (aisle) RC.aisle = d;
+      var p = g('rc-progress');
+      if (p) p.innerHTML = 'This recount (since ' + ckE(xfrFmtT(d.roundStart).split(',')[0]) + '): <b>' + d.doneCount + '</b> column(s) done'
+        + (d.spotsWithStock ? ' of about <b>' + d.spotsWithStock + '</b> spots with stock' : '') + '. ' + (RC.loc ? '' : 'Scan the column label to start.')
+        + (invUnlocked ? ' <a href="#" onclick="rcNewRound();return false" style="font-size:11px;color:var(--text3)">Start a new recount (managers)</a>' : '');
+      if (RC.loc) rcRender();
+    }).catch(function() {});
+  };
+  window.rcNewRound = function() {
+    if (!confirm('Start a NEW recount? Every column will show as "not done" again. (Counts already saved stay.)')) return;
+    wFetch(W + '/inventory/recount/new-round', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}' }).then(function(r) { return r.json(); })
+      .then(function(d) { if (!d || !d.ok) { invFlash('Not started: ' + ((d && d.error) || 'error'), 'error'); return; } invFlash('New recount started', 'success'); rcStatus(RC.loc ? rcAisleOf(RC.loc) : ''); })
+      .catch(function() { invFlash('Not started — check WiFi', 'error'); });
+  };
+  window.rcGo = function(v) {
+    var inp = g('rc-inp');
+    v = String(v != null ? v : (inp && inp.value) || '').trim();
+    if (inp) inp.value = '';
+    if (!v) return;
+    var V = v.toUpperCase();
+    if (xfrIsLoc(V)) {
+      if (RC.loc && !RC.done && V !== RC.loc) { invFlash('Finish ' + RC.loc + ' first — tap ✅ Done with this column', 'error'); return; }
+      rcStart(V); return;
+    }
+    if (!RC.loc || RC.done) { invFlash('Scan the column label first', 'error'); return; }
+    rcBox(V);
+  };
+  // Columns finished on this phone (last 24 h) — a column whose counts are still
+  // waiting on the phone (no WiFi yet) can't be counted again: the system's
+  // number is still the old one, so a second count would count it twice.
+  function rcDoneKey() { return 'xf_rc_done_' + ((INV_CRED_USER && (INV_CRED_USER.userId || INV_CRED_USER.username || INV_CRED_USER.displayName)) || ''); }
+  function rcDoneGet() { try { return JSON.parse(localStorage.getItem(rcDoneKey()) || '{}') || {}; } catch (e) { return {}; } }
+  function rcDoneMark(loc) { var m = rcDoneGet(), now = Date.now(); m[loc] = now; Object.keys(m).forEach(function(k) { if (now - m[k] > 86400000) delete m[k]; }); try { localStorage.setItem(rcDoneKey(), JSON.stringify(m)); } catch (e) {} }
+  function rcWaitingFor(loc) {
+    if (typeof invObRead !== 'function') return 0;
+    return invObRead().filter(function(x) { return x.state !== 'sent' && x.state !== 'old' && x.body && String(x.body.location || '').toUpperCase() === loc; }).length;
+  }
+  function rcStart(loc) {
+    var waiting = rcWaitingFor(loc), doneAt = rcDoneGet()[loc];
+    if (waiting) { invFlash('📶 ' + loc + ' has ' + waiting + ' count(s) still waiting on this phone for WiFi — recount it after they are sent', 'error'); return; }
+    if (doneAt && Date.now() - doneAt < 86400000 && !confirm(loc + ' was already recounted on this phone at ' + xfrFmtT(new Date(doneAt).toISOString()) + '.\n\nRecount it again?')) return;
+    RC = { loc: loc, rows: [], extra: [], cur: null, checking: false, done: false, status: RC.status, aisle: null };
+    rcOut('<div class="icard" style="color:var(--text3)">Looking at ' + ckE(loc) + '…</div>');
+    rcFetchJson(W + '/inventory/location-search?loc=' + encodeURIComponent(loc), 'loc', loc).then(function(d) {
+      RC.rows = ((d && d.results) || []).filter(function(r) { return ckNow(r) > 0 || ckNum(r.pendingCases) > 0; })
+        .sort(function(a, b) { return invPullWalkCompare(a.location, b.location) || ckPartCompare(a.partNum, b.partNum); });
+      rcRender();
+      ckPhotoLoad(RC.rows.map(function(r) { return r.partNum; }));
+      rcStatus(rcAisleOf(loc));
+      // Keep each part # here (and its box UPCs) on the phone, so a box still scans if WiFi drops.
+      RC.rows.map(function(r) { return String(r.partNum).toUpperCase(); }).filter(function(p, i, a) { return a.indexOf(p) === i; }).forEach(function(p) {
+        if (rcCache('lk', p)) return;
+        wFetch(W + '/inventory/lookup?code=' + encodeURIComponent(p)).then(function(r) { return r.json(); }).then(function(d) {
+          if (!d || !d.partNum) return; rcCache('lk', p, d);
+          [d.insideUpc, d.outsideUpc].forEach(function(u) { u = String(u || '').replace(/\D/g, ''); if (u) { rcCache('lk', u, d); rcCache('lk', u.replace(/^0+/, ''), d); } });
+        }).catch(function() {});
+      });
+    }).catch(function() { RC.loc = ''; rcOut('<div class="icard" style="color:var(--red)">📶 No WiFi, and ' + ckE(loc) + ' was never opened on this phone — wait for WiFi, then scan it again</div>'); });
+  }
+  // A box was scanned: which part #? → how many cases → pieces per box (saves).
+  function rcBox(code) {
+    var lk = rcCache('lk', code) || rcCache('lk', String(code).replace(/^0+/, ''));
+    rcFetchJson(W + '/inventory/lookup?code=' + encodeURIComponent(code), 'lk', code).catch(function(e) {
+      // No WiFi and never seen on this phone: a part # typed with "=" still works (it is on record here or a new line).
+      if (/=/.test(code)) return { partNum: code, name: '', sku: code, locations: [] };
+      if (lk) return lk.d;
+      throw e;
+    }).then(function(d) {
+      if (!d || !d.partNum) { invFlash(d && d.upcNotLinked ? 'Barcode ' + code + ' is not linked to a part # — ⌨ type the part #' : 'Not found: ' + code, 'error'); return; }
+      var part = String(d.partNum).toUpperCase();
+      var here = RC.rows.filter(function(r) { return String(r.partNum).toUpperCase() === part; });
+      var known = (d.locations || []).filter(function(l) { return String(l.partNum || '').toUpperCase() === part && ckNum(l.eachQty) > 0; });
+      RC.cur = { part: part, name: d.name || '', sku: d.sku || part, here: here, usual: known.length ? ckNum(known[0].eachQty) : 0, n: null, found: null };
+      ckPhotoLoad([part]);
+      rcRender();
+    }).catch(function() { invFlash('📶 No WiFi and this box was never seen on this phone — ⌨ type its part # (e.g. 23-2-3=2)', 'error'); });
+  }
+  window.rcCases = function(n) {
+    if (!RC.cur) return;
+    if (n === 'more') { xfrKeypad('How many cases of ' + RC.cur.part + '?', '', function(v) { rcCases(v); }, true); return; }
+    RC.cur.n = parseFloat(n); rcRender();
+  };
+  window.rcCancel = function() { RC.cur = null; rcRender(); };
+  window.rcPcs = function(p) {
+    var c = RC.cur; if (!c || c.n == null) return;
+    if (p === 'more') { xfrKeypad('Pieces in each box of ' + c.part + '?', '', function(v) { rcPcs(v); }); return; }
+    p = parseFloat(p); if (!(p > 0)) return;
+    rcSave(c, c.n, p);
+  };
+  function rcBy() { return (INV_CRED_USER && INV_CRED_USER.displayName) || 'OPS'; }
+  // One count on a line that is on record (same as Checking / Audit).
+  function rcCountRow(r, actual, tag) {
+    var cur = ckNow(r), diff = Math.round((actual - cur) * 1000) / 1000, by = rcBy();
+    var note = diff === 0 ? '[AUDIT] Confirmed: ' + cur + ' cases verified correct (📋 Recount)'
+      : '[AUDIT] ' + (tag || '') + 'System: ' + cur + ' → Actual: ' + actual + ' (diff: ' + (diff > 0 ? '+' : '') + diff.toFixed(1) + ') (📋 Recount)';
+    var body = { type: diff < 0 ? 'OUT' : 'IN', partNum: r.partNum, sku: String(r.partNum).split('=')[0].trim(), name: '',
+      location: r.location, cases: Math.abs(diff), initials: by, notes: note, rowIndex: r.rowIndex, masterId: r.masterId || null, isNew: false, overwriteLocation: false };
+    var approve = (diff === 0 || invAuditAutoMode) ? function(d) { return { rowIndex: d.rowIndex, action: 'Approved', verifiedBy: by, item: Object.assign({}, body, { rowIndex: d.rowIndex, d1Id: d.d1Id, overwriteLocation: '' }) }; } : null;
+    return invLogAndApprove(body, approve);
+  }
+  // A box size not on record at this column → a new line (cases × pieces).
+  function rcNewLine(c, n, pcs, loc) {
+    var by = rcBy();
+    var body = { type: 'IN', partNum: c.part, sku: c.sku, name: c.name, location: loc, cases: n, initials: by,
+      notes: '[AUDIT] [RECOUNT] Found at ' + loc + ', not on record: ' + xfrN(n) + ' box(es) × ' + xfrN(pcs) + ' pcs (📋 Recount)',
+      isNew: true, isPlaceholder: false, rowIndex: null, masterRowIndex: null, masterId: null, _boxPcs: pcs, overwriteLocation: false };
+    return invLogAndApprove(body, invAuditAutoMode ? function(d) {
+      return { rowIndex: d.rowIndex, action: 'Approved', verifiedBy: by, item: Object.assign({}, body, { rowIndex: d.rowIndex, d1Id: d.d1Id, overwriteLocation: '', unitsPerCase: pcs }) };
+    } : null);
+  }
+  // In the "not scanned" check: when the last one is resolved, the column is done by itself.
+  function rcAfter() {
+    if (RC.checking && !RC.done && !RC.rows.some(function(x) { return !x._rc || x._rc.saving; }) && !RC.extra.some(function(x) { return x.saving; })) rcFinish();
+  }
+  function rcDone(d, label) {
+    if (d && d.ok === false) { invFlash('Error: ' + (d.error || 'not saved'), 'error'); return false; }
+    invFlash(label + (d && d.queued ? ' — 📶 saved on the phone' : (invAuditAutoMode ? '' : ' — a manager approves it in Review')), d && d.queued ? 'warn' : 'success');
+    return true;
+  }
+  function rcSave(c, n, pcs) {
+    var row = c.found || c.here.filter(function(r) { return Math.abs(ckNum(r.eachQty) - pcs) < 1e-9; })[0];
+    var k = rcKey(c.part, pcs);
+    if (row && row._rc) { invFlash('Already counted here: ' + xfrN(row._rc.n) + ' case(s) of ' + c.part + ' × ' + xfrN(pcs) + ' pcs', 'warn'); RC.cur = null; rcRender(); return; }
+    if (!row && RC.extra.some(function(x) { return x.k === k; })) { invFlash('Already counted here: ' + c.part + ' × ' + xfrN(pcs) + ' pcs', 'warn'); RC.cur = null; rcRender(); return; }
+    var loc = c.found ? c.found.location : RC.loc;
+    RC.cur = null;
+    if (row && Math.abs(ckNum(row.eachQty) - pcs) < 1e-9) {
+      row._rc = { n: n, pcs: pcs, saving: true }; rcRender();
+      rcCountRow(row, n).then(function(d) { row._rc.saving = false; if (!rcDone(d, 'Counted ' + row.partNum + ': ' + xfrN(n) + ' case(s) × ' + xfrN(pcs) + ' pcs')) row._rc = null; rcRender(); rcAfter(); })
+        .catch(function(e) { row._rc = null; rcRender(); invFlash('Error: ' + e.message, 'error'); });
+      return;
+    }
+    // "Found" with a different box size than on record: the old line → 0, the boxes as a new line.
+    var x = { k: k, part: c.part, name: c.name, n: n, pcs: pcs, saving: true };
+    RC.extra.push(x);
+    if (row) row._rc = { n: 0, pcs: ckNum(row.eachQty), saving: true, moved: pcs };
+    rcRender();
+    var first = row ? rcCountRow(row, 0, '[RECOUNT] different box size (' + xfrN(row.eachQty) + ' → ' + xfrN(pcs) + ' pcs) ') : Promise.resolve({ ok: true });
+    first.then(function(d0) {
+      if (row && !rcDone(d0, row.partNum + ' × ' + xfrN(row.eachQty) + ' pcs → 0')) { row._rc = null; RC.extra.pop(); rcRender(); return; }
+      if (row) row._rc.saving = false;
+      return rcNewLine(c, n, pcs, loc).then(function(d) { x.saving = false; if (!rcDone(d, 'New line ' + c.part + ': ' + xfrN(n) + ' case(s) × ' + xfrN(pcs) + ' pcs')) RC.extra = RC.extra.filter(function(e) { return e !== x; }); rcRender(); rcAfter(); });
+    }).catch(function(e) { invFlash('Error: ' + e.message, 'error'); rcRender(); });
+  }
+  // ✅ Done with this column → anything on record not scanned: Found / None found.
+  window.rcCheck = function() {
+    if (RC.rows.some(function(r) { return r._rc && r._rc.saving; }) || RC.extra.some(function(x) { return x.saving; })) { invFlash('Still saving — one moment', 'warn'); return; }
+    RC.checking = true; RC.cur = null;
+    if (!RC.rows.some(function(r) { return !r._rc; })) { rcFinish(); return; }
+    rcRender();
+  };
+  window.rcFound = function(i) {
+    var r = RC.rows[i]; if (!r || r._rc) return;
+    RC.cur = { part: String(r.partNum).toUpperCase(), name: r.name || '', sku: r.partNum, here: [r], usual: ckNum(r.eachQty), n: null, found: r };
+    rcRender();
+  };
+  window.rcNone = function(i) {
+    var r = RC.rows[i]; if (!r || r._rc) return;
+    r._rc = { n: 0, pcs: ckNum(r.eachQty), saving: true }; rcRender();
+    rcCountRow(r, 0, '[NONE FOUND] ').then(function(d) { r._rc.saving = false; if (!rcDone(d, 'None found: ' + r.partNum + ' → 0')) r._rc = null; rcRender(); rcAfter(); })
+      .catch(function(e) { r._rc = null; rcRender(); invFlash('Error: ' + e.message, 'error'); });
+  };
+  function rcFinish() {
+    var counted = RC.rows.filter(function(r) { return r._rc; }), changed = counted.filter(function(r) { return Math.abs(r._rc.n - ckNow(r)) > 1e-9; }).length + RC.extra.length;
+    var detail = counted.map(function(r) { return { part: r.partNum, pcs: ckNum(r.eachQty), system: ckNow(r), counted: r._rc.n }; })
+      .concat(RC.extra.map(function(x) { return { part: x.part, pcs: x.pcs, system: 0, counted: x.n, new: true }; }));
+    // Through the phone outbox: no WiFi → saved on the phone and sent by itself later (only once).
+    invPost(W + '/inventory/recount/column-done', { method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ location: RC.loc, items: counted.length + RC.extra.length, changed: changed, detail: detail, doneAt: new Date().toISOString() }) })
+      .then(function(r) { return r.json(); }).then(function(d) {
+        if (!d || !d.ok) { invFlash('Could not mark the column done — try ✅ again', 'error'); return; }
+        RC.done = true; RC.checking = false; rcDoneMark(RC.loc); rcRender(); rcStatus(rcAisleOf(RC.loc));
+        invFlash(d.queued ? '✅ ' + RC.loc + ' done — 📶 saved on the phone, it sends when WiFi is back. Scan the next column' : '✅ ' + RC.loc + ' done — scan the next column', d.queued ? 'warn' : 'success');
+        var inp = g('rc-inp'); if (inp) inp.focus();
+      }).catch(function() { invFlash('Could not mark the column done — try ✅ again', 'error'); });
+  }
+  window.rcStop = function() {
+    if (!confirm('Stop ' + RC.loc + ' without finishing? What you counted is saved, but the column is NOT marked done.')) return;
+    RC = { loc: '', rows: [], extra: [], cur: null, checking: false, done: false, status: RC.status, aisle: null }; rcSaveState(); rcOut(''); rcStatus();
+  };
+  window.rcRender = function() {
+    rcSaveState();
+    if (!RC.loc) { rcOut(''); return; }
+    var left = RC.rows.filter(function(r) { return !r._rc; }).length;
+    var h = '<div class="icard"><div style="display:flex;justify-content:space-between;align-items:center;gap:8px"><div style="font-size:17px;font-weight:800;font-family:var(--mono)">📍 ' + ckE(RC.loc) + '</div>'
+      + (RC.done ? '' : '<button type="button" class="ixfr-mode-btn" style="padding:4px 9px;font-size:12px;flex:0 0 auto;width:auto" onclick="rcStop()">✕ Stop</button>') + '</div>'
+      + '<div style="font-size:12px;color:var(--text2);margin-top:2px">' + RC.rows.length + ' on record · ' + (RC.rows.length - left) + ' checked' + (RC.extra.length ? ' · ' + RC.extra.length + ' new line(s)' : '') + '</div>';
+    // This aisle: columns done (green) / not yet (grey), in walking order.
+    var A = RC.aisle && RC.aisle.spots;
+    if (A && A.length) {
+      var list = A.slice().sort(function(a, b) { return invPullWalkCompare(a.location, b.location); }), nd = list.filter(function(x) { return x.done; }).length;
+      h += '<div style="font-size:11.5px;color:var(--text2);margin-top:6px">Aisle ' + ckE(rcAisleOf(RC.loc)) + ': <b>' + nd + ' of ' + list.length + '</b> done</div><div style="display:flex;flex-wrap:wrap;gap:4px;margin-top:4px">'
+        + list.map(function(x) { var me = x.location === RC.loc;
+            return '<span title="' + ckE(x.done ? 'done ' + xfrFmtT(x.done.ts) + ' by ' + x.done.by : 'not done yet') + '" style="font-size:11px;font-family:var(--mono);padding:2px 6px;border-radius:6px;'
+              + (x.done ? 'background:var(--green-bg,#dcfce7);color:var(--green)' : me ? 'background:var(--accent);color:#fff' : 'background:var(--bg3);color:var(--text3)') + '">' + (x.done ? '✓ ' : '') + ckE(String(x.location).split('=').slice(1).join('=') || x.location) + '</span>'; }).join('') + '</div>';
+    }
+    h += '</div>';
+    if (RC.done) h += '<div class="icard" style="border-color:var(--green);background:var(--green-bg,#dcfce7);font-size:16px;font-weight:800;color:var(--green)">✅ ' + ckE(RC.loc) + ' done — scan the next column</div>';
+    // The box being counted now
+    var c = RC.cur;
+    if (c) {
+      h += '<div class="icard" style="border:2px solid var(--accent)"><div style="display:flex;gap:10px;align-items:center">' + ckPic(c.part, 64)
+        + '<div style="flex:1;min-width:0"><div style="font-family:var(--mono);font-weight:800;font-size:16px">' + ckE(c.part) + '</div>' + (c.name ? '<div style="font-size:12px;color:var(--text2)">' + ckE(c.name) + '</div>' : '')
+        + (c.found ? '<div style="font-size:12px;color:var(--orange);font-weight:700">Found it — confirm</div>' : !c.here.length ? '<div style="font-size:12px;color:var(--orange);font-weight:700">Not on record at this column — it will be added</div>' : '') + '</div>'
+        + '<button type="button" class="ixfr-mode-btn" style="flex:0 0 auto;width:auto;padding:6px 12px" onclick="rcCancel()">✕</button></div>';
+      if (c.n == null) {
+        var open = c.here.filter(function(r) { return !r._rc; }), sys = open.length === 1 ? ckNow(open[0]) : null;
+        h += '<div style="font-size:15px;font-weight:800;margin:10px 0 6px">1️⃣ How many cases?</div>' + ckGrid('rcCases(', sys, sys != null);
+      } else {
+        var mine = c.here.map(function(r) { return ckNum(r.eachQty); }).filter(function(p) { return p > 0; });
+        if (!mine.length && c.usual > 0) mine = [c.usual];
+        mine = mine.filter(function(p, i, a) { return a.indexOf(p) === i; });
+        var other = (CK.sizes || []).filter(function(p) { return mine.indexOf(p) < 0; }).slice(0, 9);
+        var b = 'padding:12px 0;border-radius:10px;border:1.5px solid var(--border);background:var(--bg3);color:var(--text);font-size:18px;font-weight:800;cursor:pointer;touch-action:manipulation';
+        h += '<div style="font-size:14px;margin:10px 0 6px">Cases: <b style="font-size:17px">' + ckE(xfrN(c.n)) + '</b> <button type="button" class="ixfr-mode-btn" style="padding:3px 8px;font-size:12px;width:auto" onclick="RC.cur.n=null;rcRender()">✏️</button></div>'
+          + '<div style="font-size:15px;font-weight:800;margin-bottom:6px">2️⃣ Pieces per box? <span style="font-size:12px;font-weight:600;color:var(--text3)">(tap = saved)</span></div>'
+          + mine.map(function(p) { return '<button type="button" onclick="rcPcs(' + p + ')" style="' + b + ';width:100%;margin-bottom:6px;font-size:21px;border:3px solid var(--green);background:var(--green-bg,#dcfce7);color:var(--green)">✓ ' + ckE(xfrN(p)) + ' pcs <span style="font-size:12px">' + (c.here.length ? 'on record here' : 'this item') + '</span></button>'; }).join('')
+          + '<div style="display:grid;grid-template-columns:repeat(5,1fr);gap:6px">' + other.map(function(p) { return '<button type="button" onclick="rcPcs(' + p + ')" style="' + b + '">' + ckE(xfrN(p)) + '</button>'; }).join('')
+          + '<button type="button" onclick="rcPcs(\'more\')" style="' + b + ';font-size:14px">More…</button></div>';
+      }
+      h += '</div>';
+    } else if (!RC.done) {
+      h += '<div class="icard" style="font-size:15px;font-weight:800;color:var(--accent)">' + (RC.checking ? '🔎 These were not scanned — look again:' : '📷 Scan a box on this column (each box type once)') + '</div>';
+    }
+    // On record here
+    RC.rows.forEach(function(r, i) {
+      if (RC.checking && !RC.done && r._rc) return;
+      var st = r._rc ? (r._rc.saving ? '⏳ saving…' : r._rc.moved ? '→ 0 (boxes are ' + xfrN(r._rc.moved) + ' pcs — new line)' : '✓ counted ' + xfrN(r._rc.n) + ' case(s)') : '⬜ not scanned yet';
+      h += '<div class="icard" style="' + (r._rc ? 'border-color:#0891B2;background:#E0F2FE' : RC.checking ? 'border-color:var(--orange)' : '') + '"><div style="display:flex;gap:10px;align-items:center">' + ckPic(r.partNum, 48)
+        + '<div style="flex:1;min-width:0"><div style="font-family:var(--mono);font-weight:800">' + ckE(r.partNum) + ' <span style="color:var(--accent)">· ' + (ckNum(r.eachQty) > 0 ? ckE(xfrN(r.eachQty)) : '?') + ' pcs / box</span></div>'
+        + (String(r.location).toUpperCase() !== RC.loc ? '<div style="font-family:var(--mono);font-size:12px;color:var(--text2)">📍 ' + ckE(r.location) + '</div>' : '')
+        + '<div style="font-size:12px;color:var(--text2)">System: ' + ckE(xfrN(ckNow(r))) + ' case(s) · <b>' + ckE(st) + '</b></div></div></div>'
+        + (RC.checking && !r._rc && !RC.done ? '<div style="display:flex;gap:8px;margin-top:8px"><button type="button" onclick="rcFound(' + i + ')" style="flex:1;padding:12px;border-radius:10px;border:none;background:var(--green);color:#fff;font-size:16px;font-weight:800;cursor:pointer">✓ Found</button>'
+          + '<button type="button" onclick="rcNone(' + i + ')" style="flex:1;padding:12px;border-radius:10px;border:1.5px solid var(--red);background:var(--bg);color:var(--red);font-size:16px;font-weight:800;cursor:pointer">✗ None found</button></div>' : '')
+        + '</div>';
+    });
+    RC.extra.forEach(function(x) {
+      h += '<div class="icard" style="border-color:var(--orange);background:var(--orange-bg,#fff7ed)"><div style="display:flex;gap:10px;align-items:center">' + ckPic(x.part, 48)
+        + '<div><div style="font-family:var(--mono);font-weight:800">➕ ' + ckE(x.part) + ' · ' + ckE(xfrN(x.pcs)) + ' pcs / box</div><div style="font-size:12px;color:var(--text2)">New line: <b>' + (x.saving ? '⏳ saving…' : ckE(xfrN(x.n)) + ' case(s)') + '</b></div></div></div></div>';
+    });
+    if (!RC.done && !RC.cur && !RC.checking) h += '<button type="button" onclick="rcCheck()" style="width:100%;padding:16px;border-radius:12px;border:none;background:var(--green);color:#fff;font-size:17px;font-weight:800;cursor:pointer">✅ Done with this column</button>';
+    rcOut(h);
+  };
+
+  var _rcQr = null, _rcCam = false;
+  window.rcToggleCam = function() {
+    var btn = g('rc-cam-btn');
+    if (_rcCam) { rcStopCam(); return; }
+    btn.textContent = '⏳'; btn.disabled = true;
+    invLoadQR().then(function() {
+      g('rc-reader-wrap').style.display = 'block';
+      _rcQr = new Html5Qrcode('rc-qr-reader');
+      return _rcQr.start({ facingMode: 'environment' }, { fps: 10, qrbox: { width: 280, height: 110 } }, function(code) { rcStopCam(); rcGo(code); }, function() {});
+    }).then(function() { _rcCam = true; btn.textContent = '⏹ Stop'; btn.className = 'icam-btn scanning'; btn.disabled = false; })
+      .catch(function() { invFlash('Camera error — check permissions', 'error'); rcStopCam(); });
+  };
+  function rcStopCam() {
+    if (_rcQr && _rcCam) _rcQr.stop().catch(function() {});
+    _rcQr = null; _rcCam = false;
+    var w = g('rc-reader-wrap'); if (w) w.style.display = 'none';
+    var btn = g('rc-cam-btn'); if (btn) { btn.textContent = '📷 Scan Barcode'; btn.className = 'icam-btn'; btn.disabled = false; }
+  }
+  // ══ end 📋 Full recount ═══
+
+  // ══ 🏷 Barcode designer (Audit tab): a part # → 2" × 1" thermal label ══
+  // Code 128 (handles part #s like 8-8-8=8 or 30-3-4=10X), the part # printed
+  // big under the bars. One label per page, page = 2in × 1in, no margins.
+  var BD = { copies: 1, name: '', nameFor: '' };
+  function bdLoadLib(cb) {
+    if (typeof JsBarcode !== 'undefined') { cb(); return; }
+    var sc = document.createElement('script');
+    sc.src = 'https://cdn.jsdelivr.net/npm/jsbarcode@3.11.5/dist/JsBarcode.all.min.js';
+    sc.onload = cb; sc.onerror = function() { invFlash('Could not load the barcode maker — check WiFi', 'error'); };
+    document.head.appendChild(sc);
+  }
+  function bdClean(v) { return String(v || '').trim().toUpperCase().replace(/\s+/g, ''); }
+  // foot = "Printed by Ana · Oct 4, 2026" (tiny, at the bottom of the label).
+  function bdLabelHtml(sku, copies, name, foot) {
+    var one = '<div class="l"><svg class="b"></svg><div class="t">' + xfrEsc(sku) + '</div>' + (name ? '<div class="n">' + xfrEsc(name) + '</div>' : '')
+      + (foot ? '<div class="f">' + xfrEsc(foot) + '</div>' : '') + '</div>';
+    return '<!doctype html><html><head><meta charset="utf-8"><title>' + xfrEsc(sku) + '</title><style>'
+      + '@page{size:2in 1in;margin:0}html,body{margin:0;padding:0}'
+      + '.l{width:2in;height:1in;box-sizing:border-box;padding:.05in .08in;display:flex;flex-direction:column;align-items:center;justify-content:center;overflow:hidden;page-break-after:always;break-after:page}'
+      + '.l:last-child{page-break-after:auto;break-after:auto}'
+      + '.f{font:500 5.5pt/1 Arial,Helvetica,sans-serif;margin-top:.02in;color:#000;white-space:nowrap}'
+      + 'svg.b{width:1.84in;height:' + (name ? (foot ? '.42in' : '.5in') : (foot ? '.52in' : '.6in')) + ';display:block}.t{font:800 ' + (name ? '13pt' : '15pt') + '/1 Arial,Helvetica,sans-serif;margin-top:.03in;letter-spacing:.5px;white-space:nowrap}'
+      + '.n{font:600 7pt/1.1 Arial,Helvetica,sans-serif;margin-top:.02in;max-width:1.84in;text-align:center;overflow:hidden;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical}'
+      + '</style></head><body>' + new Array(copies + 1).join(one) + '</body></html>';
+  }
+  window.bdLabelHtml = bdLabelHtml;
+  function bdDraw(target, sku) {
+    JsBarcode(target, sku, { format: 'CODE128', displayValue: false, margin: 0, height: 60, width: 2 });
+  }
+  window.bdOpen = function() {
+    bdLoadLib(function() {});
+    BD.copies = 1;
+    xfrPopup('<div style="font-weight:800;font-size:16px;margin-bottom:6px">🏷 Barcode designer</div>'
+      + '<div style="font-size:12px;color:var(--text2);margin-bottom:8px">Type or scan the part # — prints a 2" × 1" label on the thermal printer.</div>'
+      + '<input id="bd-sku" type="text" inputmode="none" autocomplete="off" placeholder="e.g. 8-8-8=8" oninput="bdPreview()" onblur="xfrKbOff(this)" onkeydown="if(event.key===\'Enter\')bdPrint()" style="width:100%;box-sizing:border-box;padding:12px;border:2px solid var(--accent);border-radius:10px;font-size:20px;font-weight:800;font-family:var(--mono);text-transform:uppercase">'
+      + bdPad()
+      + '<div id="bd-match" style="font-size:13px;margin-top:6px;min-height:18px"></div>'
+      + '<div id="bd-prev" style="margin:10px auto;width:2in;height:1in;border:1px dashed var(--border);border-radius:6px;background:#fff;display:flex;flex-direction:column;align-items:center;justify-content:center;overflow:hidden"><span style="color:#999;font-size:12px">preview</span></div>'
+      + '<div style="font-size:13px;font-weight:800;margin-bottom:6px">How many labels? <span id="bd-n" style="color:var(--accent)">1</span></div>'
+      + '<div style="display:grid;grid-template-columns:repeat(5,1fr);gap:6px;margin-bottom:10px">'
+      + [1, 2, 5, 10].map(function(n) { return '<button type="button" onclick="bdCopies(' + n + ')" style="padding:11px 0;border-radius:10px;border:1.5px solid var(--border);background:var(--bg3);font-size:17px;font-weight:800;cursor:pointer">' + n + '</button>'; }).join('')
+      + '<button type="button" onclick="bdCopies(\'more\')" style="padding:11px 0;border-radius:10px;border:1.5px solid var(--border);background:var(--bg3);font-size:13px;font-weight:800;cursor:pointer">More…</button></div>'
+      + '<button type="button" onclick="bdPrint()" style="width:100%;padding:15px;border-radius:12px;border:none;background:var(--accent);color:#fff;font-size:17px;font-weight:800;cursor:pointer;margin-bottom:8px">🖨 Print label</button>'
+      + '<button type="button" onclick="xfrPopupClose()" style="width:100%;padding:12px;border-radius:12px;border:1.5px solid var(--border);background:var(--bg);color:var(--text2);font-size:15px;font-weight:700;cursor:pointer">Close</button>');
+    setTimeout(function() { var x = g('bd-sku'); if (x) x.focus(); }, 50);
+  };
+  // Our own keypad for part #s (owner): 1–9, 0, "-", "=", "X", "=OLD", ⌫, Clear, and
+  // the other characters our part #s use (vendor list: & C K W W.1C W.2C J N) —
+  // the phone keyboard stays hidden; ⌨ More opens it only for anything else.
+  function bdPad() {
+    var b = 'padding:11px 0;border-radius:10px;border:1.5px solid var(--border);background:var(--bg3);color:var(--text);font-size:19px;font-weight:800;cursor:pointer;touch-action:manipulation;font-family:var(--mono)';
+    var keys = ['1', '2', '3', '-', '4', '5', '6', '=', '7', '8', '9', 'X', '=OLD', '0', '⌫', 'CLR', '&', 'C', 'K', 'W', 'W.1C', 'W.2C', 'J', 'N'];
+    return '<div style="display:grid;grid-template-columns:repeat(4,1fr);gap:6px;margin-top:8px">'
+      + keys.map(function(k) {
+          var st = k === 'CLR' ? ';color:var(--red);font-size:14px' : (k === '=OLD' || k.length > 2) ? ';font-size:15px' : (k === '-' || k === '=' || k === 'X') ? ';background:var(--accent-bg,#e8efff);color:var(--accent)' : '';
+          return '<button type="button" onmousedown="event.preventDefault()" onclick="bdKey(\'' + k + '\')" style="' + b + st + '">' + (k === 'CLR' ? 'Clear' : k) + '</button>';
+        }).join('')
+      + '</div><button type="button" onclick="xfrKbOn(\'bd-sku\')" style="' + b + ';width:100%;margin-top:6px;font-size:14px;font-family:inherit">⌨ More (other letters)</button>';
+  }
+  window.bdKey = function(k) {
+    var x = g('bd-sku'); if (!x) return;
+    var v = x.value || '';
+    if (k === '⌫') v = v.slice(0, -1); else if (k === 'CLR') v = '';
+    else if (k === '=OLD') v = v.replace(/=.*$/, '') + '=OLD'; // =OLD replaces what comes after "="
+    else v += k;
+    x.value = v; bdPreview();
+  };
+  window.bdCopies = function(n) {
+    if (n === 'more') { var keep = (g('bd-sku') || {}).value || ''; xfrKeypad('How many labels?', '', function(v) { BD.copies = Math.max(1, Math.min(200, Math.round(v))); bdOpen(); setTimeout(function() { var x = g('bd-sku'); if (x) { x.value = keep; bdPreview(); } var c = g('bd-n'); if (c) c.textContent = BD.copies; }, 80); }); return; }
+    BD.copies = n; var c = g('bd-n'); if (c) c.textContent = n;
+  };
+  // Match the part # to its product name (SKU Mgr) — shown here and printed on the label.
+  var _bdTimer = null;
+  function bdMatch(sku) {
+    var m = g('bd-match');
+    if (!sku) { BD.name = ''; BD.nameFor = ''; if (m) m.innerHTML = ''; return; }
+    if (m) m.innerHTML = '<span style="color:var(--text3)">Looking up ' + xfrEsc(sku) + '…</span>';
+    wFetch(W + '/inventory/lookup?code=' + encodeURIComponent(sku)).then(function(r) { return r.json(); }).then(function(d) {
+      if (bdClean((g('bd-sku') || {}).value) !== sku) return;
+      var exact = d && d.partNum && String(d.partNum).toUpperCase() === sku;
+      var known = exact || (d && (d.locations || []).some(function(l) { return String(l.partNum || '').toUpperCase() === sku; }));
+      BD.name = known && d.name ? String(d.name) : ''; BD.nameFor = sku;
+      if (m) m.innerHTML = known ? '✅ <b>' + xfrEsc(BD.name || '(no name in SKU Mgr)') + '</b>'
+        : '<span style="color:var(--orange);font-weight:700">⚠ ' + xfrEsc(sku) + ' is not in SKU Mgr — check the part #</span>';
+      bdPreview(true);
+    }).catch(function() { if (m) m.innerHTML = '<span style="color:var(--text3)">📶 Could not look up the name (WiFi?) — the label prints without it</span>'; });
+  }
+  window.bdPreview = function(fromMatch) {
+    var sku = bdClean((g('bd-sku') || {}).value), box = g('bd-prev'); if (!box) return;
+    if (!fromMatch) { clearTimeout(_bdTimer); _bdTimer = setTimeout(function() { bdMatch(sku); }, 350); }
+    if (!sku) { box.innerHTML = '<span style="color:#999;font-size:12px">preview</span>'; return; }
+    var nm = BD.nameFor === sku ? BD.name : '';
+    bdLoadLib(function() {
+      box.innerHTML = '<svg id="bd-prev-svg" style="width:1.84in;height:' + (nm ? '.5in' : '.6in') + '"></svg><div style="font:800 ' + (nm ? '13pt' : '15pt') + '/1 Arial,sans-serif;color:#000;margin-top:3px">' + xfrEsc(sku) + '</div>'
+        + (nm ? '<div style="font:600 7pt/1.1 Arial,sans-serif;color:#000;margin-top:2px;max-width:1.84in;text-align:center;overflow:hidden;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical">' + xfrEsc(nm) + '</div>' : '');
+      try { bdDraw('#bd-prev-svg', sku); } catch (e) { box.innerHTML = '<span style="color:var(--red);font-size:12px">Can\'t make a barcode from that</span>'; }
+    });
+  };
+  window.bdPrint = function() {
+    var sku = bdClean((g('bd-sku') || {}).value);
+    if (!sku) { invFlash('Type the part # first', 'error'); return; }
+    bdLoadLib(function() {
+      var f = document.createElement('iframe');
+      f.style.cssText = 'position:fixed;right:0;bottom:0;width:0;height:0;border:0';
+      document.body.appendChild(f);
+      var who = (INV_CRED_USER && INV_CRED_USER.displayName) || '';
+      var foot = 'Printed' + (who ? ' by ' + who : '') + ' · ' + new Date().toLocaleDateString('en-US', { timeZone: 'America/New_York', month: 'short', day: 'numeric', year: 'numeric' });
+      var nm = BD.nameFor === sku ? BD.name : '';
+      var d = f.contentDocument; d.open(); d.write(bdLabelHtml(sku, BD.copies, nm, foot)); d.close();
+      // Kept on record: who printed which label, when, how many.
+      wFetch(W + '/inventory/barcode-label', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ sku: sku, name: nm, copies: BD.copies }) }).catch(function() {});
+      try { d.querySelectorAll('svg.b').forEach(function(el) { bdDraw(el, sku); }); }
+      catch (e) { f.remove(); invFlash('Can\'t make a barcode from "' + sku + '"', 'error'); return; }
+      setTimeout(function() { f.contentWindow.focus(); f.contentWindow.print(); setTimeout(function() { f.remove(); }, 60000); }, 150);
+      invFlash('🖨 Printing ' + BD.copies + ' label(s): ' + sku, 'success');
+    });
+  };
+  // ══ end 🏷 Barcode designer ═══
+
+  // 📷 camera — same scanner library as the other tabs
+  var _ckQr = null, _ckCam = false;
+  window.ckToggleCam = function() {
+    var btn = g('ck-cam-btn');
+    if (_ckCam) { ckStopCam(); return; }
+    btn.textContent = '⏳'; btn.disabled = true;
+    invLoadQR().then(function() {
+      g('ck-reader-wrap').style.display = 'block';
+      _ckQr = new Html5Qrcode('ck-qr-reader');
+      return _ckQr.start({ facingMode: 'environment' }, { fps: 10, qrbox: { width: 280, height: 110 } },
+        function(code) { ckStopCam(); ckGo(code); }, function() {});
+    }).then(function() { _ckCam = true; btn.textContent = '⏹ Stop'; btn.className = 'icam-btn scanning'; btn.disabled = false; })
+      .catch(function() { invFlash('Camera error — check permissions', 'error'); ckStopCam(); });
+  };
+  function ckStopCam() {
+    if (_ckQr && _ckCam) _ckQr.stop().catch(function() {});
+    _ckQr = null; _ckCam = false;
+    var w = g('ck-reader-wrap'); if (w) w.style.display = 'none';
+    var btn = g('ck-cam-btn'); if (btn) { btn.textContent = '📷 Scan Barcode'; btn.className = 'icam-btn'; btn.disabled = false; }
+  }
+
 })();
 </script>
 
@@ -12561,6 +13687,6 @@ window.invCredLogin = async function() {
   };
 })();
 </script>
-<script src="xf-access.js?v=20261003l"></script>
+<script src="xf-access.js?v=20261004x"></script>
 </body>
 </html>

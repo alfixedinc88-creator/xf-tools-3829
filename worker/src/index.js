@@ -3545,8 +3545,8 @@ async function inventoryOutboxCheck(request, env) {
     if (!r.response_json) { out[id] = { state: 'processing' }; continue; }
     let res = {}; try { res = JSON.parse(r.response_json); } catch (_) {}
     // a ⚠ UPC report is kept in its own table (it changes no stock)
-    const tbl = r.endpoint === 'inventory/containers/upc-issue' ? 'pallet_upc_issue' : r.endpoint === 'inventory/containers/recheck' ? 'pallet_recheck' : r.endpoint === 'inventory/containers/short' ? 'pallet_short' : 'inventory_log';
-    const logIds = (tbl === 'inventory_log' ? [res.d1Id, res.outD1Id, res.inD1Id] : tbl === 'pallet_recheck' ? [res.checkId] : tbl === 'pallet_short' ? [res.shortId] : [res.issueId]).map(x => parseInt(x) || 0).filter(Boolean);
+    const tbl = r.endpoint === 'inventory/containers/upc-issue' ? 'pallet_upc_issue' : r.endpoint === 'inventory/containers/recheck' ? 'pallet_recheck' : r.endpoint === 'inventory/containers/short' ? 'pallet_short' : r.endpoint === 'inventory/recount/column-done' ? 'recount_columns' : 'inventory_log';
+    const logIds = (tbl === 'inventory_log' ? [res.d1Id, res.outD1Id, res.inD1Id] : tbl === 'pallet_recheck' ? [res.checkId] : tbl === 'pallet_short' ? [res.shortId] : tbl === 'recount_columns' ? [res.columnId] : [res.issueId]).map(x => parseInt(x) || 0).filter(Boolean);
     let found = 0;
     for (const lid of logIds) if (await d1First(env, `SELECT id FROM ${tbl} WHERE id=?`, [lid]).catch(() => null)) found++;
     out[id] = found && found === logIds.length ? { state: 'saved', result: res } : { state: 'missing', lost: logIds };
@@ -5336,7 +5336,7 @@ async function inventoryLocationSearch(url, env) {
           const pending  = pMap[(r.part_num||'').toUpperCase()+'|'+(r.location||'').toUpperCase()] || 0;
           const casesNum = parseFloat(r.cases) || 0;
           mlRows.push({ rowIndex: r.sheet_row||0, masterId: r.id, partNum: r.part_num||'', location: r.location||'',
-            cases: String(r.cases??0), casesNum, name: r.name||'',
+            cases: String(r.cases??0), casesNum, name: r.name||'', eachQty: parseFloat(r.units_per_case) || 0,
             adjustedCases: Math.max(0, casesNum - pending), pendingCases: pending });
         }
         pendingMap = pMap;
@@ -5363,7 +5363,7 @@ async function inventoryLocationSearch(url, env) {
       const name     = String(r[4] || '').trim();
       const pk       = partNum + '|' + loc.toUpperCase();
       const pending  = pendingMap[pk] || 0;
-      results.push({ rowIndex: i+1, partNum, location: loc, cases, casesNum, adjustedCases: Math.max(0, casesNum-pending), pendingCases: pending, name });
+      results.push({ rowIndex: i+1, partNum, location: loc, cases, casesNum, adjustedCases: Math.max(0, casesNum-pending), pendingCases: pending, name, eachQty: parseFloat(r[9]) || 0 });
     }
     results.sort((a,b) => a.location.localeCompare(b.location) || a.partNum.localeCompare(b.partNum));
     return cors(new Response(JSON.stringify({ ok: true, results, count: results.length }), { headers: { 'Content-Type': 'application/json' } }));
@@ -5556,6 +5556,245 @@ async function inventorySpotCheck(url, env) {
   others.sort((a, b) => (area(a.location) !== area(loc)) - (area(b.location) !== area(loc))
     || nums(a.location).reduce((t, n, i) => t + Math.abs(n - (me[i] || 0)), 0) - nums(b.location).reduce((t, n, i) => t + Math.abs(n - (me[i] || 0)), 0));
   return J({ ok: true, part, location: loc, recorded: (here && parseFloat(here.c)) || 0, history, others: others.slice(0, 6) });
+}
+
+// GET /inventory/partnum-check (mgmt, READ-ONLY) — SKU Mgr → 🧹 Check part #s:
+// part #s that look wrong, grouped by why, so the owner can clean them up
+// with Edit. "Normal" = #-#-#=# (owner): three numbers before "=" (an "&2"
+// or a "C" at the end is OK), and after it a pack number with X…, W.1C,
+// W.2C, J or N — or OLD. Nothing is changed here.
+function partnumWhy(raw) {
+  const t = String(raw || ''), P = t.trim().toUpperCase(), why = [];
+  if (/^\d{8,14}$/.test(t.replace(/\s/g, ''))) { why.push('upc'); return why; }
+  if (/^\d{1,7}$/.test(t.replace(/\s/g, ''))) { why.push('numonly'); return why; }        // e.g. 2490
+  if (/^[A-Z]/i.test(t.trim()) && !/^OLD$/i.test(t.trim())) { why.push('letters'); return why; } // e.g. EFFMM-04-LF (a vendor's own code)
+  if (t !== t.trim() || /\s/.test(t.trim()) || /[a-z]/.test(t) || /[^0-9A-Za-z\-=&.\s]/.test(t)) why.push('chars');
+  const Pn = P.replace(/\s+/g, ''); // spaces are reported above ('chars'); the shape is checked without them
+  const eq = (Pn.match(/=/g) || []).length;
+  if (!eq) why.push('noeq');
+  else if (eq > 1 || /=$/.test(Pn) || /^=/.test(Pn) || /^-|--|-=/.test(Pn)) why.push('twoeq');
+  else {
+    const suf = Pn.split('=')[1];
+    if (!/^(OLD|\d+(\.\d+)?(X{1,4}|W\.\dC|J|N)?)$/.test(suf)) why.push('suffix');
+    // Our part #s are #-#-#=# (owner) — three numbers before "=" (an "&2" or a "C" at the end is OK, e.g. 28-2-1&2C).
+    if (!/^\d+-\d+-\d+(&\d+)?C?$/.test(Pn.split('=')[0])) why.push('base');
+  }
+  return why;
+}
+async function inventoryPartnumCheck(env) {
+  const rows = await d1All(env, `SELECT id, part_num, name, location, cases, units_per_case FROM master_list WHERE TRIM(COALESCE(part_num,'')) != ''`);
+  const cats = { upc: [], numonly: [], letters: [], chars: [], noeq: [], twoeq: [], suffix: [], base: [], dupes: [] };
+  const spell = {}, byId = {};
+  for (const r of rows) {
+    const row = { id: r.id, partNum: r.part_num, location: r.location || '', cases: Number(r.cases) || 0 };
+    const why = partnumWhy(r.part_num);
+    for (const w of why) cats[w].push(row);
+    if (why.length) byId[r.id] = { ...row, name: String(r.name || '').slice(0, 80), each: Number(r.units_per_case) || 0, why: why.slice() };
+    const key = String(r.part_num).toUpperCase().replace(/\s+/g, '');
+    (spell[key] = spell[key] || {})[r.part_num] = (spell[key][r.part_num] || []).concat(row);
+  }
+  for (const k of Object.keys(spell)) { const forms = Object.keys(spell[k]); if (forms.length > 1) forms.forEach(f => spell[k][f].forEach(x => {
+    cats.dupes.push(x);
+    const full = rows.find(r => r.id === x.id) || {};
+    (byId[x.id] = byId[x.id] || { ...x, name: String(full.name || '').slice(0, 80), each: Number(full.units_per_case) || 0, why: [] }).why.push('dupes');
+  })); }
+  const out = {};
+  for (const c of Object.keys(cats)) out[c] = { count: cats[c].length, cases: Math.round(cats[c].reduce((t, x) => t + x.cases, 0) * 100) / 100, rows: cats[c].slice(0, 300) };
+  // One flat list (every odd row once, with all its reasons) for the table view.
+  const list = Object.values(byId).slice(0, 5000);
+  return cors(new Response(JSON.stringify({ ok: true, total: rows.length, cats: out, list }), { headers: { 'Content-Type': 'application/json' } }));
+}
+
+// POST /inventory/barcode-label { sku, name, copies } — 🏷 Barcode designer:
+// every label print is kept (who / when / part # / how many) in
+// barcode_label_log and the user activity log.
+async function inventoryBarcodeLabelLog(request, env, session) {
+  const J = (o, st) => cors(new Response(JSON.stringify(o), { status: st || 200, headers: { 'Content-Type': 'application/json' } }));
+  const b = await request.json().catch(() => ({}));
+  const sku = String(b.sku || '').trim().toUpperCase().slice(0, 60), copies = Math.max(1, Math.min(500, parseInt(b.copies, 10) || 1));
+  if (!sku) return J({ ok: false, error: 'sku needed' }, 400);
+  await env.DB.prepare('CREATE TABLE IF NOT EXISTS barcode_label_log (id INTEGER PRIMARY KEY AUTOINCREMENT, ts TEXT, sku TEXT, name TEXT, copies INTEGER, by_user TEXT)').run();
+  const ts = new Date().toISOString(), by = (session && (session.displayName || session.username)) || '?';
+  const ins = await env.DB.prepare('INSERT INTO barcode_label_log (ts, sku, name, copies, by_user) VALUES (?,?,?,?,?)').bind(ts, sku, String(b.name || '').slice(0, 120), copies, by).run();
+  if (session && session.userId) await logUserActivity(env, session.userId, 'barcode_label', { sku, copies });
+  return J({ ok: true, id: ins.meta.last_row_id, ts, by });
+}
+
+// POST /inventory/check-spots { pairs: [{ part, location }] } — Inventory →
+// ✅ Checking (read-only, any sign-in): for each part # at each spot, who
+// put it there and when (the last Stock In / Transfer in / Move that added
+// cases, Rejected and Cancelled left out), plus the last 3 entries of any
+// kind. One query for all the part #s; matched to the spot here.
+async function inventoryCheckSpots(request, env) {
+  const J = (o, st) => cors(new Response(JSON.stringify(o), { status: st || 200, headers: { 'Content-Type': 'application/json' } }));
+  const body = await request.json().catch(() => ({}));
+  const U = v => String(v || '').trim().toUpperCase();
+  const pairs = (Array.isArray(body.pairs) ? body.pairs : []).slice(0, 200).map(p => ({ part: U(p && p.part), location: U(p && p.location) })).filter(p => p.part && p.location);
+  if (!pairs.length) return J({ ok: true, spots: {} });
+  const parts = [...new Set(pairs.map(p => p.part))].slice(0, 100);
+  const want = new Set(pairs.map(p => p.part + '|' + p.location));
+  const rows = await d1All(env, `SELECT id, timestamp, type, UPPER(TRIM(part_num)) AS part, UPPER(TRIM(location)) AS location, cases, initials, status, verified_by, verified_at, notes
+    FROM inventory_log WHERE UPPER(TRIM(part_num)) IN (${parts.map(() => '?').join(',')}) AND cancelled_at IS NULL AND COALESCE(status,'') != 'Rejected'
+    ORDER BY id DESC LIMIT 5000`, parts);
+  const spots = {};
+  for (const r of rows) {
+    const k = r.part + '|' + r.location;
+    if (!want.has(k)) continue;
+    const s = spots[k] || (spots[k] = { put: null, last: [] });
+    const e = { timestamp: r.timestamp, type: r.type, cases: r.cases, by: r.initials || '', status: r.status || '', approvedBy: r.verified_by || '', notes: String(r.notes || '').slice(0, 140) };
+    if (s.last.length < 3) s.last.push(e);
+    if (!s.put && (r.type === 'IN' || r.type === 'TRANSFER_IN' || r.type === 'MOVE') && Number(r.cases) > 0) s.put = e;
+  }
+  // Last ✏️ pieces-per-case change at each spot (pack_change_log), if any.
+  const packs = await d1All(env, `SELECT ts, UPPER(TRIM(part_num)) AS part, UPPER(TRIM(location)) AS location, from_pcs, to_pcs, by_user FROM pack_change_log
+    WHERE UPPER(TRIM(part_num)) IN (${parts.map(() => '?').join(',')}) ORDER BY id DESC LIMIT 500`, parts).catch(() => []);
+  for (const r of (packs || [])) {
+    const k = r.part + '|' + r.location;
+    if (!want.has(k)) continue;
+    const s = spots[k] || (spots[k] = { put: null, last: [] });
+    if (!s.pack) s.pack = { timestamp: r.ts, from: r.from_pcs, to: r.to_pcs, by: r.by_user || '' };
+  }
+  return J({ ok: true, spots });
+}
+
+// ── 🔍 Audit → 📋 Full recount (about once a year), column by column ─────
+// The counts themselves are normal [AUDIT] entries (same as Checking / Audit,
+// so History keeps Before → After). These tables only keep which columns are
+// done in this recount round, by whom and when, so the team can plan aisle
+// by aisle and nothing is skipped.
+async function recountTables(env) {
+  await env.DB.prepare(`CREATE TABLE IF NOT EXISTS recount_columns (id INTEGER PRIMARY KEY AUTOINCREMENT, ts TEXT, round_start TEXT,
+    location TEXT, by_user TEXT, items INTEGER, changed INTEGER, detail TEXT)`).run();
+  await env.DB.prepare('CREATE TABLE IF NOT EXISTS recount_meta (key TEXT PRIMARY KEY, value TEXT)').run();
+}
+async function recountRoundStart(env) {
+  const r = await d1First(env, "SELECT value FROM recount_meta WHERE key = 'round_start'");
+  if (r && r.value) return r.value;
+  // No round started yet → this calendar year, from midnight New York time (Jan 1, 00:00 EST = 05:00 UTC).
+  const y = new Date().toLocaleDateString('en-CA', { timeZone: 'America/New_York' }).slice(0, 4);
+  return y + '-01-01T05:00:00.000Z';
+}
+// GET /inventory/recount/status?aisle=C1=11 — this round: how many spots are
+// done overall, and every spot in that aisle (on record / registered) with
+// done (who / when) or not yet.
+async function recountStatus(url, env) {
+  await recountTables(env);
+  const J = o => cors(new Response(JSON.stringify(o), { headers: { 'Content-Type': 'application/json' } }));
+  const roundStart = await recountRoundStart(env);
+  const aisle = String(url.searchParams.get('aisle') || '').trim().toUpperCase();
+  const done = await d1All(env, 'SELECT location, MAX(ts) AS ts, by_user FROM recount_columns WHERE ts >= ? GROUP BY UPPER(location)', [roundStart]);
+  const doneMap = {}; for (const d of done) doneMap[String(d.location).toUpperCase()] = { ts: d.ts, by: d.by_user };
+  const allSpots = await d1All(env, `SELECT COUNT(DISTINCT UPPER(TRIM(location))) AS n FROM master_list WHERE cases > 0 AND TRIM(COALESCE(location,'')) != ''`);
+  let spots = [];
+  if (aisle) {
+    const a = await d1All(env, `SELECT DISTINCT UPPER(TRIM(location)) AS l FROM master_list WHERE (UPPER(TRIM(location)) = ? OR UPPER(TRIM(location)) LIKE ?) AND TRIM(COALESCE(location,'')) != ''`, [aisle, aisle + '-%']);
+    const b = await d1All(env, `SELECT DISTINCT UPPER(TRIM(location)) AS l FROM locations WHERE (UPPER(TRIM(location)) = ? OR UPPER(TRIM(location)) LIKE ?)`, [aisle, aisle + '-%']).catch(() => []);
+    spots = [...new Set([...a, ...(b || [])].map(x => x.l))].map(l => ({ location: l, done: doneMap[l] || null }));
+  }
+  return J({ ok: true, roundStart, doneCount: done.length, spotsWithStock: (allSpots[0] && allSpots[0].n) || 0, aisle, spots });
+}
+// POST /inventory/recount/column-done { location, items, changed, detail } — a column is finished.
+async function recountColumnDone(request, env, session) {
+  await recountTables(env);
+  const b = await request.json().catch(() => ({}));
+  const J = (o, st) => cors(new Response(JSON.stringify(o), { status: st || 200, headers: { 'Content-Type': 'application/json' } }));
+  const loc = String(b.location || '').trim().toUpperCase();
+  if (!loc) return J({ ok: false, error: 'location needed' }, 400);
+  // Sent through the phone outbox (no WiFi → saved on the phone, sent later):
+  // the same request id is only ever saved once.
+  const rid = b._requestId ? String(b._requestId).slice(0, 80) : '';
+  if (rid) { const claim = await claimRequestId(env, rid, 'inventory/recount/column-done'); if (claim.isDuplicate) return J(claim.cachedResponse || { ok: true, duplicate: true }); }
+  const ts = b.doneAt && !isNaN(Date.parse(b.doneAt)) ? new Date(b.doneAt).toISOString() : new Date().toISOString(), by = (session && (session.displayName || session.username)) || '?';
+  const ins = await env.DB.prepare('INSERT INTO recount_columns (ts, round_start, location, by_user, items, changed, detail) VALUES (?,?,?,?,?,?,?)')
+    .bind(ts, await recountRoundStart(env), loc, by, parseInt(b.items, 10) || 0, parseInt(b.changed, 10) || 0, JSON.stringify(b.detail || []).slice(0, 8000)).run();
+  if (session && session.userId) await logUserActivity(env, session.userId, 'recount_column', { location: loc, items: b.items, changed: b.changed });
+  const res = { ok: true, ts, by, columnId: ins.meta.last_row_id };
+  if (rid) await recordRequestResult(env, rid, res);
+  return J(res);
+}
+// POST /inventory/recount/new-round (mgmt) — start a new recount (every column to do again).
+async function recountNewRound(env, session) {
+  await recountTables(env);
+  const ts = new Date().toISOString();
+  await env.DB.prepare("INSERT INTO recount_meta (key, value) VALUES ('round_start', ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value").bind(ts).run();
+  if (session && session.userId) await logUserActivity(env, session.userId, 'recount_new_round', { at: ts });
+  return cors(new Response(JSON.stringify({ ok: true, roundStart: ts }), { headers: { 'Content-Type': 'application/json' } }));
+}
+
+// POST /inventory/cancel-own { id } — Stock In → "My Stock In today" → ✕ Cancel:
+// a worker undoes THEIR OWN Stock In made by mistake. Waiting for approval →
+// it is cancelled (Rejected; nothing on the shelf changed). Already approved →
+// only within 30 minutes, and through the same Cancel managers use (reverses
+// it, History keeps Part Total Before → After); older → ask a manager.
+async function inventoryCancelOwn(request, env, session) {
+  const J = (o, st) => cors(new Response(JSON.stringify(o), { status: st || 200, headers: { 'Content-Type': 'application/json' } }));
+  const b = await request.json().catch(() => ({}));
+  const id = parseInt(b.id, 10);
+  if (!id) return J({ ok: false, error: 'id required' }, 400);
+  await env.DB.prepare('ALTER TABLE inventory_log ADD COLUMN cancelled_at TEXT').run().catch(() => {});
+  await env.DB.prepare('ALTER TABLE inventory_log ADD COLUMN cancelled_by TEXT').run().catch(() => {});
+  const e = await d1First(env, 'SELECT id, type, status, initials, timestamp, notes, cancelled_at, cancelled_by FROM inventory_log WHERE id = ?', [id]);
+  if (!e) return J({ ok: false, error: 'Entry not found' }, 404);
+  const me = String((session && (session.displayName || session.username)) || '').trim().toUpperCase();
+  if (!me || String(e.initials || '').trim().toUpperCase() !== me) return J({ ok: false, error: 'Only the person who saved it can cancel it here — ask a manager' }, 403);
+  if (String(e.type || '').toUpperCase() !== 'IN') return J({ ok: false, error: 'Only a Stock In can be cancelled here' }, 400);
+  if (e.cancelled_at) return J({ ok: false, error: 'Already cancelled by ' + (e.cancelled_by || 'someone') }, 409);
+  const by = (session.displayName || session.username) + ' (own mistake)';
+  if (e.status === 'Pending') {
+    const ts = new Date().toISOString();
+    await env.DB.prepare(`UPDATE inventory_log SET status = 'Rejected', verified_by = ?, verified_at = ?, cancelled_at = ?, cancelled_by = ?,
+      notes = COALESCE(notes, '') || ' | [CANCELLED — own mistake, before approval]' WHERE id = ? AND status = 'Pending'`).bind(by, ts, ts, by, id).run();
+    if (session.userId) await logUserActivity(env, session.userId, 'stockin_cancel_own', { id, status: 'Pending' });
+    return J({ ok: true, cancelled: 'pending' });
+  }
+  if (e.status !== 'Verified') return J({ ok: false, error: 'This entry is ' + e.status + ' — nothing to cancel' }, 400);
+  const age = Date.now() - Date.parse(e.timestamp || '');
+  if (!(age >= 0 && age <= 30 * 60000)) return J({ ok: false, error: 'Approved more than 30 minutes ago — ask a manager to cancel it in History' }, 403);
+  const res = await inventoryCancelEntry(new Request('https://cancel-own/', { method: 'POST', body: JSON.stringify({ id, cancelledBy: by }) }), env);
+  const d = await res.json().catch(() => ({}));
+  if (d && d.ok && session.userId) await logUserActivity(env, session.userId, 'stockin_cancel_own', { id, status: 'Verified' });
+  return J(Object.assign({ cancelled: d && d.ok ? 'reversed' : undefined }, d), res.status);
+}
+
+// GET /inventory/pack-sizes — ✅ Checking quick buttons: the 9 "pieces per
+// case" we have most often (by number of shelf rows), smallest first.
+async function inventoryPackSizes(env) {
+  const rows = await d1All(env, `SELECT CAST(units_per_case AS REAL) AS u, COUNT(*) AS n FROM master_list
+    WHERE CAST(units_per_case AS REAL) > 0 GROUP BY CAST(units_per_case AS REAL) ORDER BY n DESC LIMIT 9`);
+  const sizes = rows.map(r => Number(r.u)).filter(u => u > 0).sort((a, b) => a - b);
+  return cors(new Response(JSON.stringify({ ok: true, sizes }), { headers: { 'Content-Type': 'application/json' } }));
+}
+
+// POST /inventory/pack-change { masterId, partNum, location, from, to } —
+// ✅ Checking ✏️ pieces per case: fixes the pieces in each case of ONE shelf
+// row (cases stay the same, so pieces = cases × new size). Refused if the row
+// is not that part # / spot or its size is no longer `from` (someone else
+// changed it). Every change is kept in pack_change_log (who / when / old →
+// new / cases) and the user activity log — never a silent change.
+async function inventoryPackChange(request, env, session) {
+  const J = (o, st) => cors(new Response(JSON.stringify(o), { status: st || 200, headers: { 'Content-Type': 'application/json' } }));
+  const b = await request.json().catch(() => ({}));
+  const id = parseInt(b.masterId, 10), to = Number(b.to), from = Number(b.from);
+  const part = String(b.partNum || '').trim().toUpperCase(), loc = String(b.location || '').trim().toUpperCase();
+  if (!id || !part || !loc) return J({ ok: false, error: 'masterId, partNum and location needed' }, 400);
+  if (!(to > 0) || to > 100000) return J({ ok: false, error: 'Pieces per case must be more than 0' }, 400);
+  const row = await d1First(env, 'SELECT id, part_num, location, cases, units_per_case, sheet_row FROM master_list WHERE id = ?', [id]);
+  if (!row || String(row.part_num || '').trim().toUpperCase() !== part || String(row.location || '').trim().toUpperCase() !== loc)
+    return J({ ok: false, error: 'That shelf row is not ' + part + ' at ' + loc + ' any more — check again' }, 409);
+  const cur = Number(row.units_per_case) || 0;
+  if (Math.abs(cur - (from || 0)) > 1e-9) return J({ ok: false, error: 'Pieces per case is now ' + cur + ' (changed by someone else) — check again' }, 409);
+  if (Math.abs(cur - to) < 1e-9) return J({ ok: true, unchanged: true, from: cur, to });
+  await env.DB.prepare(`CREATE TABLE IF NOT EXISTS pack_change_log (id INTEGER PRIMARY KEY AUTOINCREMENT, ts TEXT, master_id INTEGER,
+    part_num TEXT, location TEXT, cases REAL, from_pcs REAL, to_pcs REAL, by_user TEXT, note TEXT)`).run();
+  const ts = new Date().toISOString(), by = (session && (session.displayName || session.username)) || '?', cases = Number(row.cases) || 0;
+  await env.DB.batch([
+    env.DB.prepare('UPDATE master_list SET units_per_case = ?, updated_at = ? WHERE id = ?').bind(to, ts, id),
+    env.DB.prepare('INSERT INTO pack_change_log (ts, master_id, part_num, location, cases, from_pcs, to_pcs, by_user, note) VALUES (?,?,?,?,?,?,?,?,?)')
+      .bind(ts, id, part, loc, cases, cur, to, by, '✅ Checking: ' + cases + ' case(s) × ' + cur + ' → ' + to + ' pcs = ' + (cases * cur) + ' → ' + (cases * to) + ' pcs'),
+  ]);
+  if (row.sheet_row > 0) await invSheetUpdate(env, `Master_List!J${row.sheet_row}`, [[to]]).catch(() => {});
+  if (session && session.userId) await logUserActivity(env, session.userId, 'pack_change', { masterId: id, part, location: loc, cases, from: cur, to });
+  return J({ ok: true, from: cur, to, cases, piecesBefore: cases * cur, piecesAfter: cases * to });
 }
 
 // GET /inventory/suggest-location?partNum=26-2-1=2&fromLoc=BARN=1-1-1
@@ -7122,13 +7361,25 @@ const _app = {
       if (path === '/inventory/containers/pallet-open' && method === 'POST') return await palletOpenLog(request, env, session);
       if (path === '/inventory/containers/where' && method === 'POST') return await palletWhere(request, env);
       if (path === '/inventory/spot-check' && method === 'GET') return await inventorySpotCheck(url, env);
+      if (path === '/inventory/check-spots' && method === 'POST') return await inventoryCheckSpots(request, env);
+      if (path === '/inventory/partnum-check' && method === 'GET' && session.pin_level === 'mgmt') return await inventoryPartnumCheck(env);
+      if (path === '/inventory/barcode-label' && method === 'POST') return await inventoryBarcodeLabelLog(request, env, session);
+      if (path === '/inventory/pack-sizes' && method === 'GET') return await inventoryPackSizes(env);
+      if (path === '/inventory/cancel-own' && method === 'POST') return await inventoryCancelOwn(request, env, session);
+      if (path === '/inventory/recount/status' && method === 'GET') return await recountStatus(url, env);
+      if (path === '/inventory/recount/column-done' && method === 'POST') return await recountColumnDone(request, env, session);
+      if (path === '/inventory/recount/new-round' && method === 'POST') {
+        if (session.pin_level !== 'mgmt') return cors(new Response(JSON.stringify({ ok: false, error: 'Management access required' }), { status: 403, headers: { 'Content-Type': 'application/json' } }));
+        return await recountNewRound(env, session);
+      }
+      if (path === '/inventory/pack-change' && method === 'POST') return await inventoryPackChange(request, env, session);
       if (path === '/inventory/prefixes'           && method === 'GET')  return await inventoryGetPrefixes(env);
       // mgmt-only routes
       if (session.pin_level !== 'mgmt') {
         // these specific paths require mgmt — everything else falls through to 404
         const mgmtPaths = ['/inventory/pending','/inventory/verify','/inventory/transfer/verify',
           '/inventory/audit-mode','/inventory/review-mode','/inventory/prefixes','/inventory/rename-locations',
-          '/inventory/cancel-entry', '/inventory/cost/spots', '/inventory/cost/value', '/inventory/incoming'];
+          '/inventory/cancel-entry', '/inventory/cost/spots', '/inventory/cost/value', '/inventory/incoming', '/inventory/partnum-check'];
         if (mgmtPaths.some(p => path === p)) {
           return cors(new Response(JSON.stringify({ error: 'Management access required' }), {
             status: 403, headers: { 'Content-Type': 'application/json' }

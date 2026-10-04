@@ -128,7 +128,10 @@ exceptions, no matter what else the change does.
   deploys from `main`.
 - Validate Worker changes with
   `cd worker && npx -y wrangler@4 deploy --dry-run --outdir <tmp>`.
-- The "Workers Builds: xfitting-lookup" check is always red on PR branches.
-  That is expected: Cloudflare only builds `main`.
-- The repo owner merges PRs. Merging to `main` deploys the Worker and GitHub
-  Pages.
+- The "Workers Builds: …" checks (xfitting-lookup, xfitting-profit) are
+  always red on PR branches. That is expected: Cloudflare only builds `main`.
+- Merge it yourself (owner's standing OK): when a change is done, open the PR
+  and merge it as soon as the "keep-working" check is green on GitHub — don't
+  wait for the owner to ask. Never merge with keep-working red or pending;
+  fix it first. Merging to `main` deploys the Worker and GitHub Pages, so
+  tell the owner what went live.

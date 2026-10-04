@@ -37,6 +37,7 @@ window.addEventListener('pageshow', function (e) { if (e.persisted) location.rel
     { key: 'upc', file: 'upc.html', name: '🏷️ UPC Barcodes', needs: 'Ops / Mobile / Mgmt', card: card('upc.html'), tabs: [] },
     { key: 'inventory', file: 'inventory.html', name: '📋 Inventory', needs: 'Ops / Mobile / Mgmt', card: card('inventory.html'), tabs: [
       { key: 'stockout', label: '📤 Stock Out', sel: '#inv-tab-stockout' },
+      { key: 'check', label: '✅ Checking', sel: '#inv-tab-check' },
       { key: 'scan', label: '📦 Stock In / Found on Shelf', sel: '#inv-tab-scan' },
       { key: 'transfer', label: 'Transfer', sel: '#inv-tab-transfer' },
       { key: 'audit', label: '🔍 Audit', sel: '#inv-tab-audit' },
@@ -183,15 +184,15 @@ window.addEventListener('pageshow', function (e) { if (e.persisted) location.rel
   function testBanner(tm) {
     try { sessionStorage.setItem('xf_test', tm && tm.on ? JSON.stringify(tm) : ''); } catch (e) {}
     var el = document.getElementById('xf-test-banner');
-    if (!(tm && tm.on)) { if (el) el.remove(); var fr = document.getElementById('xf-test-frame'); if (fr) fr.remove(); return; }
+    var fr0 = document.getElementById('xf-test-frame'); if (fr0) fr0.remove(); // the orange frame is gone (owner: nothing in the way)
+    if (!(tm && tm.on)) { if (el) el.remove(); if (document.body) document.body.style.paddingBottom = document.body.dataset.xfPb || ''; return; }
     if (!document.body) { document.addEventListener('DOMContentLoaded', function () { testBanner(tm); }); return; }
-    if (!document.getElementById('xf-test-frame')) {
-      var f = document.createElement('div'); f.id = 'xf-test-frame';
-      f.style.cssText = 'position:fixed;inset:0;border:5px solid #f59e0b;pointer-events:none;z-index:2147483646';
-      document.body.appendChild(f);
-    }
+    // A thin bar along the very bottom; the page gets that much room at the
+    // bottom, so the bar never covers a button or the last line.
     if (!el) { el = document.createElement('div'); el.id = 'xf-test-banner'; document.body.appendChild(el); }
-    el.style.cssText = 'position:fixed;left:50%;bottom:10px;transform:translateX(-50%);z-index:2147483647;background:#f59e0b;color:#111;font:700 12px/1.3 system-ui,sans-serif;padding:7px 14px;border-radius:999px;box-shadow:0 2px 10px rgba(0,0,0,.3);max-width:calc(100vw - 32px);text-align:center;pointer-events:none';
+    if (document.body.dataset.xfPb == null) document.body.dataset.xfPb = document.body.style.paddingBottom || '';
+    document.body.style.paddingBottom = '26px';
+    el.style.cssText = 'position:fixed;left:0;right:0;bottom:0;height:22px;z-index:2147483647;background:#f59e0b;color:#111;font:700 11px/22px system-ui,sans-serif;padding:0 10px;text-align:center;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;pointer-events:none';
     var when = ''; try { when = new Date(tm.at).toLocaleString('en-US', { timeZone: 'America/New_York', month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' }); } catch (e) {}
     el.textContent = '🧪 TEST MODE — erased when turned off' + (tm.by ? ' · ' + tm.by + (when ? ' ' + when : '') : '');
   }
