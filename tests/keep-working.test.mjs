@@ -1431,6 +1431,8 @@ console.log('\nStock Out / Transfer: one search box (part # / UPC / name) · ✅
   let ho = el('rc-out').innerHTML;
   check('scan the column → everything on record there with photo, pcs / box and system cases (the =10 part # twice: ×10 and ×25), all "not scanned yet"; the aisle shows its columns',
     (ho.match(/⬜ not scanned yet/g) || []).length === 5 && /88-8-1=10 <span[^>]*>· 10 pcs \/ box/.test(ho) && /88-8-1=10 <span[^>]*>· 25 pcs \/ box/.test(ho) && /Aisle C3=4: <b>0 of 2<\/b> done/.test(ho) && /📷 Scan a box on this column/.test(ho), ho.slice(0, 700));
+  // Owner: "Audit — move the location to the bottom and minimize; click to open when we want to see".
+  check('…the aisle\'s column list is at the bottom (after ✅ Done with this column), folded — tap to open', !/"\s+open[\s>]/.test((ho.match(/<details id="rc-aisle"[^>]*>/) || ['" open>'])[0]) && ho.indexOf('id="rc-aisle"') > ho.indexOf('Done with this column') && ho.indexOf('id="rc-aisle"') > ho.lastIndexOf('not scanned yet'), ho.slice(-600));
   // scan a box → cases → pieces (tap = saved)
   w.rcGo('88-8-1=10'); await settle(); await settle(); ho = el('rc-out').innerHTML;
   check('scan a box → 1️⃣ How many cases? (our buttons)', /1️⃣ How many cases\?/.test(ho) && /rcCases\('more'\)/.test(ho) && !/<input/.test(ho), null);
@@ -1881,6 +1883,9 @@ console.log('\nAuto Label: every bought label goes on the 🖨 Printer station l
     if (u.startsWith('https://labels.example/')) return mode === 'url' ? new Response('%PDF-1.4 fake label', { headers: { 'Content-Type': 'application/pdf' } }) : new Response('gone', { status: 404 });
     if (u.startsWith('https://tools.usps.com/')) return new Response('Access Denied', { status: 403, headers: { 'Content-Type': 'text/html' } });
     if (u.includes('api.veeqo.com/shipping/labels/555') && mode === 'ship') return new Response('%PDF-1.4 label by shipment', { headers: { 'Content-Type': 'application/pdf' } });
+    // Real Veeqo (owner): /shipping/labels?shipment_ids[]=<shipment> → {"labels_count":1} as JSON; the PDF when the PDF is asked for.
+    if (/api\.veeqo\.com\/shipping\/labels(\.pdf)?\?shipment_ids\[\]=555/.test(u) && mode === 'list') return (o && o.headers && /^application\/pdf$/.test(o.headers.Accept || '')) && /labels\.pdf/.test(u)
+      ? new Response('%PDF-1.4 label from the label list', { headers: { 'Content-Type': 'application/pdf' } }) : new Response('{"labels_count":1}', { headers: { 'Content-Type': 'application/json' } });
     if (u.includes('api.veeqo.com/shipping/')) return mode === 'none' || mode === 'ship' ? new Response('{"error":"not found"}', { status: 404, headers: { 'Content-Type': 'application/json' } }) : new Response('{}', { headers: { 'Content-Type': 'application/json' } });
     return realFetch(u, o); };
   env.VEEQO_API_KEY = 'k';
@@ -1899,6 +1904,8 @@ console.log('\nAuto Label: every bought label goes on the 🖨 Printer station l
   check('…never the product photo: no label file from Veeqo → nothing printed (not the item\'s photo)', !asked.some(u => u.startsWith('https://photos.example/')), asked.filter(u => /photos\.example/.test(u)));
   check('…never a carrier tracking page (tools.usps.com … tLabels=…) taken for the label', !asked.some(u => u.startsWith('https://tools.usps.com/')), asked.filter(u => /usps\.com/.test(u)));
   check('…asks Veeqo by the SHIPMENT id (owner: /shipping/labels/<allocation> → 404)', asked.some(u => u.includes('/shipping/labels/555')), asked.filter(u => /shipping\//.test(u)));
+  mode = 'list'; const f4 = await call('/veeqo/autolabel/label-file?id=' + L2.id, { headers: H });
+  check('…Veeqo\'s label list for the shipment (it said labels_count: 1) → asked for the PDF, the label prints', f4.status === 200 && (await f4.text()).includes('label from the label list'), f4.status);
   mode = 'ship'; const f3 = await call('/veeqo/autolabel/label-file?id=' + L2.id, { headers: H });
   check('…Veeqo has it under the shipment → the label PDF prints', f3.status === 200 && (await f3.text()).includes('label by shipment'), f3.status);
   mode = 'none';

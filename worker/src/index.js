@@ -24734,9 +24734,9 @@ function _labelFindSources(obj) {
 async function autolabelLabelFile(env, row) {
   const key = (env.VEEQO_API_KEY || '').trim(), tried = [];
   let src = {}; try { src = JSON.parse(row.source || '{}'); } catch (_) {}
-  const take = async (u, withKey) => {
+  const take = async (u, withKey, accept) => {
     try {
-      const r = await fetch(u, { headers: withKey ? { 'x-api-key': key, 'Accept': 'application/pdf, image/*, application/json' } : { 'Accept': 'application/pdf, image/*, */*' } });
+      const r = await fetch(u, { headers: withKey ? { 'x-api-key': key, 'Accept': accept || 'application/pdf, image/*, application/json' } : { 'Accept': accept || 'application/pdf, image/*, */*' } });
       const ct = (r.headers.get('content-type') || '').toLowerCase();
       if (r.ok && /application\/pdf|image\//.test(ct)) return { bytes: await r.arrayBuffer(), type: ct.split(';')[0] };
       const txt = await r.text().catch(() => '');
@@ -24762,8 +24762,18 @@ async function autolabelLabelFile(env, row) {
   const addId = (x) => { x = x != null ? String(x) : ''; if (/^\d+$/.test(x) && x !== String(row.alloc_id) && !shipIds.includes(x)) shipIds.push(x); };
   if (src && src.shipment && typeof src.shipment === 'object') addId(src.shipment.id);
   if (src && (src.tracking_number || src.carrier_id || src.allocation_id)) addId(src.id);
+  // Owner's reprint: /shipping/labels?shipment_ids[]=<shipment> answered
+  // {"labels_count":1} (asked as JSON) — the label is there; ask that same
+  // place for the PDF first.
+  for (const id of shipIds) {
+    for (const u of [`${VEEQO_BASE}/shipping/labels.pdf?shipment_ids[]=${id}`, `${VEEQO_BASE}/shipping/labels?shipment_ids[]=${id}&format=pdf`, `${VEEQO_BASE}/shipping/labels?shipment_ids[]=${id}`]) {
+      const r = await take(u, true, 'application/pdf');
+      if (r && r.bytes) return r;
+      if (r && r.json) { got = await tryJson(r.json); if (got) return got; }
+    }
+  }
   const cands = [];
-  for (const id of shipIds) cands.push(`${VEEQO_BASE}/shipping/labels/${id}`, `${VEEQO_BASE}/shipping/shipments/${id}/label`, `${VEEQO_BASE}/shipping/labels?shipment_ids[]=${id}`);
+  for (const id of shipIds) cands.push(`${VEEQO_BASE}/shipping/labels/${id}`, `${VEEQO_BASE}/shipping/shipments/${id}/label`);
   if (row.alloc_id) cands.push(`${VEEQO_BASE}/shipping/labels?allocation_ids[]=${row.alloc_id}`);
   if (cands.length || row.alloc_id) {
     for (const u of cands.concat(row.alloc_id ? [`${VEEQO_BASE}/shipping/labels/${row.alloc_id}`] : [])) {
