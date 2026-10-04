@@ -12282,7 +12282,7 @@ window.invCredLogin = async function() {
         body += '<div style="padding:7px 0;border-top:1px solid var(--border)">'
           + '<div style="display:flex;justify-content:space-between;gap:8px;align-items:center">'
           + '<a href="#" onclick="ckLoc(\'' + ckE(String(l.location).toUpperCase()) + '\');return false" style="font-family:var(--mono);font-weight:700">📍 ' + ckE(l.location) + '</a>'
-          + '<span style="font-weight:800;font-family:var(--mono)">' + ckE(xfrN(now)) + ' case(s)' + (l.eachQty ? ' <span style="font-weight:400;color:var(--text3)">× ' + ckE(xfrN(l.eachQty)) + ' pcs</span>' : '') + '</span></div>'
+          + '<span style="font-weight:800;font-family:var(--mono)">' + ckE(xfrN(now)) + ' case(s)' + (ckNum(l.eachQty) > 0 ? ' <span style="font-weight:400;color:var(--text2)">× ' + ckE(xfrN(l.eachQty)) + ' pcs/case = ' + ckE(xfrN(now * ckNum(l.eachQty))) + ' pcs</span>' : '') + '</span></div>'
           + (pend ? '<div style="font-size:11px;color:var(--orange)">' + ckE(xfrN(pend)) + ' case(s) waiting for approval</div>' : '')
           + (l.palletBoxes ? '<div style="font-size:11px;color:var(--text3)">📦 still on a container pallet</div>' : '')
           + '<div style="font-size:11.5px;color:var(--text2);margin-top:2px">' + ckWho(l.partNum || d.partNum, l.location) + '</div></div>';
@@ -12339,13 +12339,14 @@ window.invCredLogin = async function() {
     CK.rows.forEach(function(r, i) {
       var now = ckNow(r), done = r._ck;
       h += '<div class="icard" id="ck-row-' + i + '" style="' + (done ? 'border-color:#0891B2;background:#E0F2FE' : '') + '">'
-        + '<div style="display:flex;justify-content:space-between;gap:8px"><b style="font-family:var(--mono)">' + ckE(r.partNum) + '</b><span style="font-family:var(--mono);color:var(--text3)">' + ckE(r.location) + '</span></div>'
+        + '<div style="display:flex;justify-content:space-between;gap:8px"><b style="font-family:var(--mono)">' + ckE(r.partNum) + (ckNum(r.eachQty) > 0 ? ' <span style="font-weight:700;color:var(--accent)">· ' + ckE(xfrN(r.eachQty)) + ' pcs / case</span>' : '') + '</b><span style="font-family:var(--mono);color:var(--text3)">' + ckE(r.location) + '</span></div>'
         + (r.name ? '<div style="font-size:12px;color:var(--text2)">' + ckE(r.name) + '</div>' : '')
         + '<div style="font-size:11.5px;color:var(--text2);margin:3px 0">' + ckWho(r.partNum, r.location) + '</div>'
         + (ckNum(r.pendingCases) ? '<div style="font-size:11px;color:var(--orange)">' + ckE(xfrN(r.pendingCases)) + ' case(s) waiting for approval</div>' : '')
         + (done ? '<div style="font-weight:700;color:#0891B2;margin-top:4px">✓ ' + ckE(done) + '</div>'
           : '<div style="display:flex;gap:6px;align-items:center;flex-wrap:wrap;margin:6px 0">'
-            + '<span style="font-size:13px;color:var(--text2)">System: <b style="font-size:17px;font-family:var(--mono);color:var(--text)">' + ckE(xfrN(now)) + '</b> case(s)</span>'
+            + '<span style="font-size:13px;color:var(--text2)">System: <b style="font-size:17px;font-family:var(--mono);color:var(--text)">' + ckE(xfrN(now)) + '</b> case(s)'
+            + (ckNum(r.eachQty) > 0 ? ' × <b style="font-family:var(--mono);color:var(--text)">' + ckE(xfrN(r.eachQty)) + '</b> pcs = ' + ckE(xfrN(now * ckNum(r.eachQty))) + ' pcs' : '') + '</span>'
             + '<button class="isearch-btn" style="background:var(--green)" onclick="ckPick(' + i + ',\'ok\')">✓ Correct</button>'
             + '<button class="isearch-btn" style="background:var(--red)" onclick="ckNoneFound(' + i + ')">✗ None found</button></div>'
             + '<div style="font-size:12px;color:var(--text3);margin-bottom:4px">Not right? Tap how many cases you see:</div>' + ckGrid('ckPick(' + i + ',', now))

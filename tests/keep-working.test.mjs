@@ -1327,6 +1327,13 @@ console.log('\nStock Out / Transfer: one search box (part # / UPC / name) · ✅
   check('Checking: counts and boxes use our own buttons 1–9 + More… (our number pad), never the phone keyboard (no number inputs)',
     !/id="ck-cnt-/.test(ckSrc) && !/id="ck-o-n"/.test(ckSrc) && !/id="ck-o-pcs"/.test(ckSrc) && !/type="number"/.test(ckSrc)
       && /\[1,2,3,4,5,6,7,8,9\]\.map/.test(ckSrc) && /if \(n === 'more'\) \{ xfrKeypad\(/.test(ckSrc) && /ckGrid\('ckPick\(' \+ i \+ ',', now\)/.test(ckSrc) && /ckGrid\('ckOtherN\(', null\)/.test(ckSrc), null);
+  // Owner: "under Checking show how many pieces in that case also".
+  ck = mk(true); w = globalThis.__ckWin;
+  w.ckGo('C2=1-1-1'); await settle(); await settle(); const hp = el('ck-out').innerHTML;
+  w.ckGo('77-7-1=10'); await settle(); await settle(); const hq = el('ck-out').innerHTML;
+  check('Checking shows pieces per case: a spot → "77-7-1=10 · 10 pcs / case", "System: 3 case(s) × 10 pcs = 30 pcs" (the 25-pc row too); a part # → "× 10 pcs/case = 30 pcs"',
+    /77-7-1=10 <span[^>]*>· 10 pcs \/ case/.test(hp) && /<b[^>]*>3<\/b> case\(s\) × <b[^>]*>10<\/b> pcs = 30 pcs/.test(hp) && /· 25 pcs \/ case/.test(hp) && /<b[^>]*>2<\/b> case\(s\) × <b[^>]*>25<\/b> pcs = 50 pcs/.test(hp)
+      && /× 10 pcs\/case = 30 pcs/.test(hq) && /× 25 pcs\/case = 50 pcs/.test(hq), { hp: hp.slice(0, 600) });
   const sp = await post('/inventory/check-spots', { pairs: [{ part: '77-7-1=10', location: 'c2=1-1-1' }] });
   check('who put it there (read-only route): last Stock In at the spot', sp.ok && sp.spots['77-7-1=10|C2=1-1-1'] && sp.spots['77-7-1=10|C2=1-1-1'].put.by && sp.spots['77-7-1=10|C2=1-1-1'].last.length === 3, sp);
   delete globalThis.__ckWin; Object.keys(globalThis).filter(k => /^ck[A-Z]/.test(k)).forEach(k => delete globalThis[k]);
