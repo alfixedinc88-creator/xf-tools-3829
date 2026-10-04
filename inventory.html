@@ -1048,8 +1048,8 @@ window.invCredLogin = async function() {
 </div>
 <div class="ipanel" id="inv-panel-audit">
 
-  <!-- Approval mode card -->
-  <div class="icard">
+  <!-- Approval mode card — off the screen (owner); the mode is still read (Manual / Auto) and saved as before. -->
+  <div class="icard" id="inv-audit-mode-card" style="display:none">
     <div class="icard-label">Approval Mode</div>
     <div style="display:flex;justify-content:space-between;align-items:center">
       <div style="font-size:12px;color:var(--text3)" id="inv-audit-mode-desc">Manual &#x2014; corrections go to Review queue</div>
@@ -1076,7 +1076,7 @@ window.invCredLogin = async function() {
   </div>
   <div id="rc-out"></div>
 
-  <details id="inv-audit-old" style="border:1px solid var(--border);border-radius:12px;padding:8px 10px;background:var(--bg2)">
+  <details id="inv-audit-old" style="display:none;border:1px solid var(--border);border-radius:12px;padding:8px 10px;background:var(--bg2)">
   <summary style="cursor:pointer;font-size:13px;font-weight:700;color:var(--text2)">🔧 Other audit tools (search a part # / a location)</summary>
   <!-- Search card -->
   <div class="icard" id="inv-audit-search-card">
@@ -1128,6 +1128,10 @@ window.invCredLogin = async function() {
   </div>
   </details>
 
+  <!-- Owner: off the Audit tab — Location Prefixes, Product Photos, Export Location List,
+       Rename Locations (and above: Approval Mode, Other audit tools). Kept in the page,
+       hidden, so everything that uses them (prefix lists, photos) works as before. -->
+  <div id="inv-audit-hidden" style="display:none">
   <!-- Location Prefixes card -->
   <div class="icard" id="inv-prefix-card" style="margin-bottom:12px">
     <div class="icard-label">&#x1F3F7; Location Prefixes</div>
@@ -1201,6 +1205,7 @@ window.invCredLogin = async function() {
     </div>
     <div id="inv-rename-result" style="margin-top:10px"></div>
   </div>
+  </div><!-- /inv-audit-hidden -->
 
 </div>
 

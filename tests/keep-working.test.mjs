@@ -1521,5 +1521,18 @@ console.log('\nStock In: My Stock In today → ✕ Cancel my own mistake');
     /<div id="inv-qa-mine"/.test(ih) && /My Stock In today — made a mistake\? tap ✕ Cancel/.test(ih) && /wFetch\(W \+ '\/inventory\/cancel-own'/.test(ih) && /invQaMineAdd\(\{ id: d\.d1Id \|\| null, part: partNum/.test(ih), null);
 }
 
+// Owner: "Audit tab: take off Approval Mode, Other audit tools, Location Prefixes, Product Photos, Export Location List, Rename Locations".
+console.log('\nAudit tab: only the 📋 Full recount on screen');
+{
+  const { readFileSync } = await import('node:fs');
+  const ih = readFileSync(fileURLToPath(new URL('../inventory.html', import.meta.url)), 'utf8');
+  const panel = (ih.match(/<div class="ipanel" id="inv-panel-audit">[\s\S]*?\n<\/div>\n/) || [''])[0];
+  const hidden = (panel.match(/<div id="inv-audit-hidden" style="display:none">[\s\S]*?<\/div><!-- \/inv-audit-hidden -->/) || [''])[0];
+  check('Approval Mode, Other audit tools, Location Prefixes, Product Photos, Export Location List, Rename Locations are off the screen; the 📋 Full recount card shows',
+    /<div class="icard" id="inv-audit-mode-card" style="display:none">\s*<div class="icard-label">Approval Mode/.test(panel) && /<details id="inv-audit-old" style="display:none;/.test(panel)
+      && /id="inv-prefix-card"/.test(hidden) && /Product Photos/.test(hidden) && /Export Location List/.test(hidden) && /Rename Locations/.test(hidden)
+      && /<div class="icard" id="rc-card" style="border:2px solid var\(--accent\)">/.test(panel), null);
+}
+
 console.log('\n' + (failed ? '❌ ' + failed + ' check(s) FAILED' : '✅ all ' + passed + ' checks passed') + '\n');
 process.exit(failed ? 1 : 0);
