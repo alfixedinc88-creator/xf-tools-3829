@@ -13058,7 +13058,7 @@ window.invCredLogin = async function() {
   // ══ 🏷 Barcode designer (Audit tab): a part # → 2" × 1" thermal label ══
   // Code 128 (handles part #s like 8-8-8=8 or 30-3-4=10X), the part # printed
   // big under the bars. One label per page, page = 2in × 1in, no margins.
-  var BD = { copies: 1 };
+  var BD = { copies: 1, name: '', nameFor: '' };
   function bdLoadLib(cb) {
     if (typeof JsBarcode !== 'undefined') { cb(); return; }
     var sc = document.createElement('script');
@@ -13067,13 +13067,17 @@ window.invCredLogin = async function() {
     document.head.appendChild(sc);
   }
   function bdClean(v) { return String(v || '').trim().toUpperCase().replace(/\s+/g, ''); }
-  function bdLabelHtml(sku, copies) {
-    var one = '<div class="l"><svg class="b"></svg><div class="t">' + xfrEsc(sku) + '</div></div>';
+  // foot = "Printed by Ana · Oct 4, 2026" (tiny, at the bottom of the label).
+  function bdLabelHtml(sku, copies, name, foot) {
+    var one = '<div class="l"><svg class="b"></svg><div class="t">' + xfrEsc(sku) + '</div>' + (name ? '<div class="n">' + xfrEsc(name) + '</div>' : '')
+      + (foot ? '<div class="f">' + xfrEsc(foot) + '</div>' : '') + '</div>';
     return '<!doctype html><html><head><meta charset="utf-8"><title>' + xfrEsc(sku) + '</title><style>'
       + '@page{size:2in 1in;margin:0}html,body{margin:0;padding:0}'
       + '.l{width:2in;height:1in;box-sizing:border-box;padding:.05in .08in;display:flex;flex-direction:column;align-items:center;justify-content:center;overflow:hidden;page-break-after:always;break-after:page}'
       + '.l:last-child{page-break-after:auto;break-after:auto}'
-      + 'svg.b{width:1.84in;height:.6in;display:block}.t{font:800 15pt/1 Arial,Helvetica,sans-serif;margin-top:.04in;letter-spacing:.5px;white-space:nowrap}'
+      + '.f{font:500 5.5pt/1 Arial,Helvetica,sans-serif;margin-top:.02in;color:#000;white-space:nowrap}'
+      + 'svg.b{width:1.84in;height:' + (name ? (foot ? '.42in' : '.5in') : (foot ? '.52in' : '.6in')) + ';display:block}.t{font:800 ' + (name ? '13pt' : '15pt') + '/1 Arial,Helvetica,sans-serif;margin-top:.03in;letter-spacing:.5px;white-space:nowrap}'
+      + '.n{font:600 7pt/1.1 Arial,Helvetica,sans-serif;margin-top:.02in;max-width:1.84in;text-align:center;overflow:hidden;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical}'
       + '</style></head><body>' + new Array(copies + 1).join(one) + '</body></html>';
   }
   window.bdLabelHtml = bdLabelHtml;
@@ -13086,6 +13090,7 @@ window.invCredLogin = async function() {
     xfrPopup('<div style="font-weight:800;font-size:16px;margin-bottom:6px">🏷 Barcode designer</div>'
       + '<div style="font-size:12px;color:var(--text2);margin-bottom:8px">Type or scan the part # — prints a 2" × 1" label on the thermal printer.</div>'
       + '<input id="bd-sku" type="text" autocomplete="off" placeholder="e.g. 8-8-8=8" oninput="bdPreview()" onkeydown="if(event.key===\'Enter\')bdPrint()" style="width:100%;box-sizing:border-box;padding:12px;border:2px solid var(--accent);border-radius:10px;font-size:20px;font-weight:800;font-family:var(--mono);text-transform:uppercase">'
+      + '<div id="bd-match" style="font-size:13px;margin-top:6px;min-height:18px"></div>'
       + '<div id="bd-prev" style="margin:10px auto;width:2in;height:1in;border:1px dashed var(--border);border-radius:6px;background:#fff;display:flex;flex-direction:column;align-items:center;justify-content:center;overflow:hidden"><span style="color:#999;font-size:12px">preview</span></div>'
       + '<div style="font-size:13px;font-weight:800;margin-bottom:6px">How many labels? <span id="bd-n" style="color:var(--accent)">1</span></div>'
       + '<div style="display:grid;grid-template-columns:repeat(5,1fr);gap:6px;margin-bottom:10px">'
@@ -13099,11 +13104,30 @@ window.invCredLogin = async function() {
     if (n === 'more') { var keep = (g('bd-sku') || {}).value || ''; xfrKeypad('How many labels?', '', function(v) { BD.copies = Math.max(1, Math.min(200, Math.round(v))); bdOpen(); setTimeout(function() { var x = g('bd-sku'); if (x) { x.value = keep; bdPreview(); } var c = g('bd-n'); if (c) c.textContent = BD.copies; }, 80); }); return; }
     BD.copies = n; var c = g('bd-n'); if (c) c.textContent = n;
   };
-  window.bdPreview = function() {
+  // Match the part # to its product name (SKU Mgr) — shown here and printed on the label.
+  var _bdTimer = null;
+  function bdMatch(sku) {
+    var m = g('bd-match');
+    if (!sku) { BD.name = ''; BD.nameFor = ''; if (m) m.innerHTML = ''; return; }
+    if (m) m.innerHTML = '<span style="color:var(--text3)">Looking up ' + xfrEsc(sku) + '…</span>';
+    wFetch(W + '/inventory/lookup?code=' + encodeURIComponent(sku)).then(function(r) { return r.json(); }).then(function(d) {
+      if (bdClean((g('bd-sku') || {}).value) !== sku) return;
+      var exact = d && d.partNum && String(d.partNum).toUpperCase() === sku;
+      var known = exact || (d && (d.locations || []).some(function(l) { return String(l.partNum || '').toUpperCase() === sku; }));
+      BD.name = known && d.name ? String(d.name) : ''; BD.nameFor = sku;
+      if (m) m.innerHTML = known ? '✅ <b>' + xfrEsc(BD.name || '(no name in SKU Mgr)') + '</b>'
+        : '<span style="color:var(--orange);font-weight:700">⚠ ' + xfrEsc(sku) + ' is not in SKU Mgr — check the part #</span>';
+      bdPreview(true);
+    }).catch(function() { if (m) m.innerHTML = '<span style="color:var(--text3)">📶 Could not look up the name (WiFi?) — the label prints without it</span>'; });
+  }
+  window.bdPreview = function(fromMatch) {
     var sku = bdClean((g('bd-sku') || {}).value), box = g('bd-prev'); if (!box) return;
+    if (!fromMatch) { clearTimeout(_bdTimer); _bdTimer = setTimeout(function() { bdMatch(sku); }, 350); }
     if (!sku) { box.innerHTML = '<span style="color:#999;font-size:12px">preview</span>'; return; }
+    var nm = BD.nameFor === sku ? BD.name : '';
     bdLoadLib(function() {
-      box.innerHTML = '<svg id="bd-prev-svg" style="width:1.84in;height:.6in"></svg><div style="font:800 15pt/1 Arial,sans-serif;color:#000;margin-top:3px">' + xfrEsc(sku) + '</div>';
+      box.innerHTML = '<svg id="bd-prev-svg" style="width:1.84in;height:' + (nm ? '.5in' : '.6in') + '"></svg><div style="font:800 ' + (nm ? '13pt' : '15pt') + '/1 Arial,sans-serif;color:#000;margin-top:3px">' + xfrEsc(sku) + '</div>'
+        + (nm ? '<div style="font:600 7pt/1.1 Arial,sans-serif;color:#000;margin-top:2px;max-width:1.84in;text-align:center;overflow:hidden;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical">' + xfrEsc(nm) + '</div>' : '');
       try { bdDraw('#bd-prev-svg', sku); } catch (e) { box.innerHTML = '<span style="color:var(--red);font-size:12px">Can\'t make a barcode from that</span>'; }
     });
   };
@@ -13114,7 +13138,12 @@ window.invCredLogin = async function() {
       var f = document.createElement('iframe');
       f.style.cssText = 'position:fixed;right:0;bottom:0;width:0;height:0;border:0';
       document.body.appendChild(f);
-      var d = f.contentDocument; d.open(); d.write(bdLabelHtml(sku, BD.copies)); d.close();
+      var who = (INV_CRED_USER && INV_CRED_USER.displayName) || '';
+      var foot = 'Printed' + (who ? ' by ' + who : '') + ' · ' + new Date().toLocaleDateString('en-US', { timeZone: 'America/New_York', month: 'short', day: 'numeric', year: 'numeric' });
+      var nm = BD.nameFor === sku ? BD.name : '';
+      var d = f.contentDocument; d.open(); d.write(bdLabelHtml(sku, BD.copies, nm, foot)); d.close();
+      // Kept on record: who printed which label, when, how many.
+      wFetch(W + '/inventory/barcode-label', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ sku: sku, name: nm, copies: BD.copies }) }).catch(function() {});
       try { d.querySelectorAll('svg.b').forEach(function(el) { bdDraw(el, sku); }); }
       catch (e) { f.remove(); invFlash('Can\'t make a barcode from "' + sku + '"', 'error'); return; }
       setTimeout(function() { f.contentWindow.focus(); f.contentWindow.print(); setTimeout(function() { f.remove(); }, 60000); }, 150);
