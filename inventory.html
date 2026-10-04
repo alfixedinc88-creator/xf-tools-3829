@@ -7917,7 +7917,7 @@ window.invCredLogin = async function() {
     noeq: ['❓ No "=" (no pack size)', 'e.g. "30-3-4" — add the pack: 30-3-4=10X.'],
     twoeq: ['⚠ Two "=", or starts / ends with "=" or "-"', 'e.g. "30-3-4==10" or "30-3-4=".'],
     suffix: ['🔤 Unusual ending after "="', 'Normal: a number + X, XX…, W.1C, W.2C, J, N — or OLD.'],
-    base: ['🔤 Unusual part before "="', 'Normal: numbers with "-", and & / C / K like 28-2-1&2C or 61853-K.']
+    base: ['🔤 Not #-#-# before "="', 'Our part #s are #-#-#=# (e.g. 30-3-4=10X; 28-2-1&2C=10 is OK too). e.g. "30-4=10", "30-3-4-2=10", "61853-K=5X".']
   };
   window.skumgrPartnumCheck = function() {
     var panel = g('skumgr-pncheck-panel'), out = g('skumgr-pncheck-out'); if (!panel || !out) return;

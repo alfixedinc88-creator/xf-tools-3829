@@ -5560,9 +5560,9 @@ async function inventorySpotCheck(url, env) {
 
 // GET /inventory/partnum-check (mgmt, READ-ONLY) — SKU Mgr → 🧹 Check part #s:
 // part #s that look wrong, grouped by why, so the owner can clean them up
-// with Edit. "Normal" follows the vendor list (2,819 part #s): numbers / -
-// / & / C / K before "=", and after it a pack number with X…, W.1C, W.2C,
-// J or N — or OLD. Nothing is changed here.
+// with Edit. "Normal" = #-#-#=# (owner): three numbers before "=" (an "&2"
+// or a "C" at the end is OK), and after it a pack number with X…, W.1C,
+// W.2C, J or N — or OLD. Nothing is changed here.
 function partnumWhy(raw) {
   const t = String(raw || ''), P = t.trim().toUpperCase(), why = [];
   if (/^\d{8,14}$/.test(t.replace(/\s/g, ''))) { why.push('upc'); return why; }
@@ -5575,7 +5575,8 @@ function partnumWhy(raw) {
   else {
     const suf = P.split('=')[1];
     if (!/^(OLD|\d+(\.\d+)?(X{1,4}|W\.\dC|J|N)?)$/.test(suf)) why.push('suffix');
-    if (!/^\d+(-[0-9A-Z]+)*(&\d+)?C?$/.test(P.split('=')[0])) why.push('base');
+    // Our part #s are #-#-#=# (owner) — three numbers before "=" (an "&2" or a "C" at the end is OK, e.g. 28-2-1&2C).
+    if (!/^\d+-\d+-\d+(&\d+)?C?$/.test(P.split('=')[0])) why.push('base');
   }
   return why;
 }
