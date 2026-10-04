@@ -1830,5 +1830,27 @@ console.log('\n💡 Lights: turn warehouse lights on / off from the app');
   globalThis.fetch = realFetch; delete env.GOVEE_API_KEY; delete env.LIFX_TOKEN;
 }
 
+// Owner: Auto Label → Test buy one label: Veeqo HTTP 400 "Rate not found for shipmentId: prb11408d5b, rateId: USPS_PTP_GAH"
+// (order 114-8029574-6577065, Amazon Shipping USPS Ground Advantage $8.17).
+console.log('\nAuto Label: buying sends the rate\'s id (its name) as service_type');
+{
+  const { readFileSync } = await import('node:fs');
+  const ws = readFileSync(workerPath, 'utf8');
+  const fn = (ws.match(/async function autolabelBuy\(env, order, allocationId, quote\) \{[\s\S]*?\n\}/) || [''])[0];
+  const rate = { carrier: 'amazon_shipping_v2', name: 'amazon_shipping_v2-79c189a3-eb0d-4be3-9bc4-735815421402', title: 'USPS Ground Advantage (1 - 70 lb)',
+    total_net_charge: '8.17', base_rate: '8.17', remote_shipment_id: 'prb11408d5b', sub_carrier_id: 'USPS', service_carrier: 'usps', service_id: 'USPS_PTP_GAH' };
+  const mk = (answer) => { const sent = []; const buy = new Function('veeqoFetch', fn + '; return autolabelBuy;')(async (env, path, o) => { const b = JSON.parse(o.body); sent.push(b); return answer(b, sent.length); }); return { buy, sent }; };
+  const a = mk(() => ({ tracking_number: { tracking_number: '9400111' } }));
+  const r1 = await a.buy({}, {}, 555, { raw: rate });
+  check('the buy asks Veeqo for the rate by its id (service_type = "amazon_shipping_v2-…"), not the USPS_PTP_GAH service code',
+    a.sent.length === 1 && a.sent[0].carrier === 'amazon_shipping_v2' && a.sent[0].shipment.service_type === rate.name && a.sent[0].shipment.remote_shipment_id === 'prb11408d5b' && a.sent[0].shipment.allocation_id === 555 && r1.tracking === '9400111', a.sent);
+  const b = mk((body, n) => { if (n === 1) throw new Error('Veeqo /shipping/shipments → HTTP 400: {"error_messages":["Rate not found for shipmentId: prb11408d5b, rateId: x"]}'); return { tracking_number: '1Z9' }; });
+  const r2 = await b.buy({}, {}, 555, { raw: rate });
+  check('…"Rate not found" → tries once more without service_id (a refused buy buys nothing, so never twice)', b.sent.length === 2 && b.sent[1].shipment.service_id === undefined && r2.tracking === '1Z9', b.sent);
+  const c = mk(() => { throw new Error('Veeqo /shipping/shipments → HTTP 422: {"error_messages":["Address invalid"]}'); });
+  let err = null; try { await c.buy({}, {}, 555, { raw: rate }); } catch (e) { err = e; }
+  check('…any other refusal: no second try, and what was sent is kept to show on the screen', c.sent.length === 1 && err && (err.tries || []).length === 1 && /Address invalid/.test(err.tries[0].error), { sent: c.sent.length, err: err && err.tries });
+}
+
 console.log('\n' + (failed ? '❌ ' + failed + ' check(s) FAILED' : '✅ all ' + passed + ' checks passed') + '\n');
 process.exit(failed ? 1 : 0);

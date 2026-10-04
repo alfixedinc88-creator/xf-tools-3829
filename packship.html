@@ -8622,7 +8622,7 @@ window.psAlTestBuy = async function() {
   if (!confirm('Buy a REAL label in Veeqo for order ' + num + ' now?\n\nThis costs money. If DirectPrint is on, it prints right away.')) return;
   out.textContent = 'Buying…';
   var d = await _psAlFetch('/veeqo/autolabel/test-buy', { method:'POST', body:{ order: num } });
-  if (d.ok === false) { out.textContent = '✗ ' + (d.error || 'Failed') + (d.sentToVeeqo ? '\n\nRate used (send this to Claude):\n' + JSON.stringify(d.sentToVeeqo, null, 2).slice(0, 4000) : ''); return; }
+  if (d.ok === false) { out.textContent = '✗ ' + (d.error || 'Failed') + (d.sentToVeeqo ? '\n\nRate used (send this to Claude):\n' + JSON.stringify(d.sentToVeeqo, null, 2).slice(0, 9000) : ''); return; }
   out.textContent = '✓ Bought ' + d.carrier + ' ' + d.service + ' $' + Number(d.price).toFixed(2) + ' for ' + d.order + (d.tracking ? '\nTracking: ' + d.tracking : '\n(No tracking in the answer — check the order in Veeqo)') + '\n\nAuto mode can now buy labels.';
   _psToast('Label bought for ' + d.order);
   psAlLoadConfig(); psAlLoadLog();
