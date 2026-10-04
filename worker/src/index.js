@@ -5336,7 +5336,7 @@ async function inventoryLocationSearch(url, env) {
           const pending  = pMap[(r.part_num||'').toUpperCase()+'|'+(r.location||'').toUpperCase()] || 0;
           const casesNum = parseFloat(r.cases) || 0;
           mlRows.push({ rowIndex: r.sheet_row||0, masterId: r.id, partNum: r.part_num||'', location: r.location||'',
-            cases: String(r.cases??0), casesNum, name: r.name||'',
+            cases: String(r.cases??0), casesNum, name: r.name||'', eachQty: parseFloat(r.units_per_case) || 0,
             adjustedCases: Math.max(0, casesNum - pending), pendingCases: pending });
         }
         pendingMap = pMap;
@@ -5363,7 +5363,7 @@ async function inventoryLocationSearch(url, env) {
       const name     = String(r[4] || '').trim();
       const pk       = partNum + '|' + loc.toUpperCase();
       const pending  = pendingMap[pk] || 0;
-      results.push({ rowIndex: i+1, partNum, location: loc, cases, casesNum, adjustedCases: Math.max(0, casesNum-pending), pendingCases: pending, name });
+      results.push({ rowIndex: i+1, partNum, location: loc, cases, casesNum, adjustedCases: Math.max(0, casesNum-pending), pendingCases: pending, name, eachQty: parseFloat(r[9]) || 0 });
     }
     results.sort((a,b) => a.location.localeCompare(b.location) || a.partNum.localeCompare(b.partNum));
     return cors(new Response(JSON.stringify({ ok: true, results, count: results.length }), { headers: { 'Content-Type': 'application/json' } }));
