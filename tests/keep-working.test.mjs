@@ -1899,7 +1899,9 @@ console.log('\nAuto Label: every bought label goes on the 🖨 Printer station l
   const li = await get('/veeqo/autolabel/label-items?id=' + L.id);
   check('…a label queued before that was kept gets its items from Veeqo once (then saved)', li.ok && li.items.some(i => i.sku === '5-3-2=2') && /5-3-2=2/.test(sq.prepare('SELECT items FROM label_print_queue WHERE id = ?').get(L.id).items || ''), li);
   const ph = readFileSync(fileURLToPath(new URL('../packship.html', import.meta.url)), 'utf8');
-  check('…the Printer station prints the label, then the 4×6 "Bin · SKU · Qty" sticker, then marks it printed', /await _psAlPrintLabelBlob\(f\);[\s\S]{0,300}await _psAlPrintHtml\(_psAlBoxStripHtml\(l, items\)\);[\s\S]{0,200}labels-printed/.test(ph) && /<th>Bin<\/th><th>SKU<\/th>/.test(ph), null);
+  // Owner, later: "save labels — put it on the same label, at the bottom (like USPS)". The sticker stays for when it doesn't fit.
+  check('…bin · SKU · ×qty is written in the blank strip at the bottom of the label (only all-white rows, a 4×6 label, every line fits)', /if \(_psAlStampLabel\(cv, items\)\) \{ await _psAlPrintCanvas\(cv\); stamped = true; \}/.test(ph) && /function _psAlBlankBand\(cv, minH\)/.test(ph) && /Math\.abs\(W \/ H - 4 \/ 6\) > 0\.04\) return false/.test(ph), null);
+  check('…when it doesn\'t fit there: the label as it is, then the 4×6 "Bin · SKU · Qty" sticker, then marked printed', /if \(!stamped\) \{\s*await _psAlPrintLabelBlob\(f\);\s*await _psAlPrintHtml\(_psAlBoxStripHtml\(l, items\)\);[\s\S]{0,200}labels-printed/.test(ph) && /<th>Bin<\/th><th>SKU<\/th>/.test(ph), null);
   const f = await call('/veeqo/autolabel/label-file?id=' + L.id, { headers: H });
   check('…the Printer station gets the label file itself (PDF) from what Veeqo gave', f.status === 200 && /application\/pdf/.test(f.headers.get('content-type')) && (await f.text()).startsWith('%PDF'), f.status);
   const pr = await post('/veeqo/autolabel/labels-printed', { ids: [L.id] });
