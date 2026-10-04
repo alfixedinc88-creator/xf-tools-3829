@@ -24704,21 +24704,26 @@ async function autolabelQueueLabel(env, o, allocId, tracking, carrier, service, 
     return true;
   } catch (e) { console.error('[autolabel] label queue failed', e.message); return false; }
 }
-// Every https URL inside Veeqo's answer that looks like a label file
-// (a key with "label" / "pdf" / "url", or a .pdf / .png link), plus any
+// Every https URL inside Veeqo's answer that is the LABEL file (a key with
+// "label" / "pdf" / "document", or a link with "label" in it), plus any
 // base64 PDF / PNG text — the label is fetched from the first that works.
+// Owner: "click Reprint, it only printed the product photos" — product /
+// line item parts (sellable, product, line_items, image…) are never looked
+// in, and a plain "…url" key is not enough.
 function _labelFindSources(obj) {
   const urls = [], b64 = [], seen = new Set();
+  const skip = /^(line_items|sellable|sellables|product|products|images?|image_url|main_thumbnail_url|thumbnail|customer|deliver_to|billing_address|buyer_user_profile)$/i;
   const walk = (v, key, d) => {
     if (d > 8 || v == null) return;
+    const k = String(key || '').toLowerCase();
     if (typeof v === 'string') {
-      const k = String(key || '').toLowerCase();
-      if (/^https?:\/\//i.test(v) && (/label|pdf|url|document/.test(k) || /\.(pdf|png|zpl)(\?|$)/i.test(v) || /label/i.test(v)) && !seen.has(v)) { seen.add(v); urls.push(v); }
-      else if (/^(JVBERi0|iVBORw0K)/.test(v) && v.length > 200) b64.push(v);
+      if (/^https?:\/\//i.test(v) && !/image|photo|thumbnail|\.(jpe?g|gif|webp)(\?|$)/i.test(k + ' ' + v)
+          && (/label|pdf|document/.test(k) || /label/i.test(v)) && !seen.has(v)) { seen.add(v); urls.push(v); }
+      else if (/^(JVBERi0|iVBORw0K)/.test(v) && v.length > 200 && /label|document|data|file|pdf|content/.test(k)) b64.push(v);
       return;
     }
     if (Array.isArray(v)) { v.forEach(x => walk(x, key, d + 1)); return; }
-    if (typeof v === 'object') for (const k of Object.keys(v)) walk(v[k], k, d + 1);
+    if (typeof v === 'object') for (const kk of Object.keys(v)) { if (!skip.test(kk)) walk(v[kk], kk, d + 1); }
   };
   walk(obj, '', 0);
   return { urls, b64 };
