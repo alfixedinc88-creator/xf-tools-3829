@@ -435,6 +435,7 @@ body {
 }
 
   </style>
+<script src="xf-lang.js?v=20261004a"></script>
 </head>
 <body>
 <style>
@@ -1610,6 +1611,7 @@ body {
           onkeydown="if(event.key==='Enter'){event.preventDefault();psLabelCheck();}">
         <button class="ps-btn-go" onclick="psLabelCheck()">Check</button>
         <button type="button" class="ps-btn-sm" title="Type it" onclick="psLcKeyboard()">⌨</button>
+        <button type="button" class="ps-btn-sm" title="Clear — start over" onmousedown="event.preventDefault()" onclick="psLcClear()">✕</button>
       </div>
     </div>
     <div id="ps-lc-status" style="font-size:12px;color:var(--text3);font-family:var(--mono);min-height:18px;padding:0 0 8px;"></div>
@@ -2003,6 +2005,22 @@ body {
         <div id="ps-vstock-status" style="font-size:12px;color:var(--text3);font-family:var(--mono);margin-bottom:6px"></div>
         <details><summary style="cursor:pointer;font-size:12px;font-weight:700;color:var(--text2)">Changes made (newest first)</summary>
           <div id="ps-vstock-log" style="margin-top:6px;max-height:320px;overflow:auto;font-size:12px"></div></details>
+        <!-- 🔍 Check every item: read-only list of each Veeqo item — set to Infinite or not, stock, last error. Changes nothing. -->
+        <div style="margin-top:10px;border-top:1px solid var(--border2);padding-top:10px">
+          <button class="ps-btn-sm" id="ps-vsi-btn" onclick="psVsiLoad()">🔍 Check every item (Infinite or not)</button>
+          <span style="font-size:11.5px;color:var(--text3);margin-left:6px">Only looks — changes nothing in Veeqo.</span>
+          <div id="ps-vsi-wrap" style="display:none;margin-top:10px">
+            <div id="ps-vsi-sum" style="font-size:12.5px;margin-bottom:8px;line-height:1.6"></div>
+            <div style="display:flex;gap:6px;flex-wrap:wrap;align-items:center;margin-bottom:8px">
+              <button class="ps-btn-sm" data-vsif="err" onclick="psVsiFilter('err')">⚠ Had an error</button>
+              <button class="ps-btn-sm" data-vsif="low" onclick="psVsiFilter('low')">🔴 Low, not Infinite</button>
+              <button class="ps-btn-sm" data-vsif="inf" onclick="psVsiFilter('inf')">♾ Infinite</button>
+              <button class="ps-btn-sm" data-vsif="all" onclick="psVsiFilter('all')">All</button>
+              <input id="ps-vsi-q" placeholder="Search SKU / name" oninput="psVsiRender()" style="flex:1;min-width:140px;padding:6px 8px;border:1.5px solid var(--border2);border-radius:7px;font-size:13px">
+            </div>
+            <div id="ps-vsi-list" style="max-height:420px;overflow:auto;font-size:12px"></div>
+          </div>
+        </div>
       </div>
       <!-- Manifest sync card -->
       <div class="ps-card" style="margin-bottom:12px">
@@ -4389,6 +4407,7 @@ window.psToggleTrackingHistory = async function(tracking, containerId) {
 // Scan a shipping label → everything in that package (GET /ship/package).
 // The scan box stays ready for the next label; no keyboard unless ⌨.
 function psLcFocus() { var x = document.getElementById('ps-lc-input'); if (x) { if (!x.hasAttribute('data-typing')) x.setAttribute('inputmode', 'none'); x.focus(); } }
+window.psLcClear = function() { var x = document.getElementById('ps-lc-input'); if (x) { x.value = ''; x.removeAttribute('data-typing'); } var st = document.getElementById('ps-lc-status'), out = document.getElementById('ps-lc-result'); if (st) st.textContent = ''; if (out) out.innerHTML = ''; psLcFocus(); };
 window.psLcKeyboard = function() { var x = document.getElementById('ps-lc-input'); if (!x) return; x.setAttribute('data-typing', '1'); x.setAttribute('inputmode', 'text'); x.blur(); setTimeout(function() { x.focus(); }, 30); };
 function psLcE(v) { return String(v == null ? '' : v).replace(/[&<>"']/g, function(c) { return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]; }); }
 function psLcN(v) { var n = +v || 0; return Math.round(n * 100) / 100; }
@@ -7918,6 +7937,67 @@ window.psVstockRun = async function() {
   btn.disabled = false; btn.textContent = '▶ Check now'; psVstockLoad();
 };
 
+// 🔍 Check every item — read-only: Infinite or not, stock, last top-up error.
+var PS_VSI = { items: [], wh: {}, last: {}, below: 88, filter: 'err' };
+window.psVsiLoad = async function() {
+  var btn = document.getElementById('ps-vsi-btn'); btn.disabled = true;
+  document.getElementById('ps-vsi-wrap').style.display = '';
+  PS_VSI.items = []; PS_VSI.wh = {}; PS_VSI.last = {};
+  var page = 1, err = '';
+  try {
+    for (var guard = 0; guard < 60; guard++) {
+      btn.textContent = '⏳ Reading Veeqo… ' + PS_VSI.items.length + ' item(s)';
+      var r = await fetch(PS_WORKER + '/veeqo/stock-topup/items?page=' + page, { headers: { 'X-Cred-Token': psCredToken } }), d = await r.json();
+      if (!d.ok) { err = d.error || 'Load failed'; break; }
+      if (d.warehouses) PS_VSI.wh = d.warehouses;
+      if (d.lastResult) d.lastResult.forEach(function(x) { PS_VSI.last[x.s + ':' + x.w] = x; });
+      PS_VSI.below = d.below;
+      PS_VSI.items = PS_VSI.items.concat(d.items || []);
+      if (d.done) break;
+      page = d.next;
+    }
+  } catch (e) { err = 'network error'; }
+  btn.disabled = false; btn.textContent = '🔄 Check again';
+  if (err) _psToast('Could not read every item: ' + err, 'error');
+  psVsiRender();
+};
+function psVsiLast(it) { return PS_VSI.last[it.sellableId + ':' + it.warehouseId] || null; }
+// "err" = the last top-up for it failed and it is still NOT Infinite (fixed ones drop off by themselves).
+function psVsiKind(it) {
+  var l = psVsiLast(it);
+  if (it.infinite) return 'inf';
+  if (l && l.failed) return 'err';
+  return it.available <= PS_VSI.below ? 'low' : 'ok';
+}
+window.psVsiFilter = function(f) { PS_VSI.filter = f; psVsiRender(); };
+window.psVsiRender = function() {
+  var all = PS_VSI.items, cnt = { err: 0, low: 0, inf: 0, ok: 0 }, fixed = 0;
+  all.forEach(function(it) { var k = psVsiKind(it); cnt[k]++; var l = psVsiLast(it); if (k === 'inf' && l && l.failed) fixed++; });
+  document.getElementById('ps-vsi-sum').innerHTML = '<b>' + all.length + '</b> item(s) in Veeqo (one row per warehouse): '
+    + '<b style="color:var(--red)">⚠ ' + cnt.err + ' had an error and are still not Infinite</b> · '
+    + '<b style="color:var(--orange,#B45309)">🔴 ' + cnt.low + ' low (≤ ' + psVsE(PS_VSI.below) + '), not Infinite</b> · '
+    + '<b style="color:var(--green)">♾ ' + cnt.inf + ' Infinite</b>' + (fixed ? ' (' + fixed + ' of them had an error before — fixed ✓)' : '')
+    + ' · ' + cnt.ok + ' with enough stock';
+  document.querySelectorAll('[data-vsif]').forEach(function(b) { b.style.outline = b.getAttribute('data-vsif') === PS_VSI.filter ? '2px solid var(--accent,#1A56DB)' : ''; });
+  var q = (document.getElementById('ps-vsi-q').value || '').trim().toLowerCase();
+  var rows = all.filter(function(it) {
+    var k = psVsiKind(it);
+    if (PS_VSI.filter === 'low' ? k !== 'low' && k !== 'err' : PS_VSI.filter !== 'all' && k !== PS_VSI.filter) return false;
+    return !q || (it.sku + ' ' + it.title).toLowerCase().indexOf(q) !== -1;
+  }).sort(function(a, b) { return a.sku.localeCompare(b.sku); });
+  document.getElementById('ps-vsi-list').innerHTML = rows.length ? '<table style="width:100%;border-collapse:collapse"><tr style="text-align:left;color:var(--text3)"><th style="padding:4px 6px">SKU</th><th style="padding:4px 6px">Name</th><th style="padding:4px 6px">Warehouse</th><th style="padding:4px 6px">Infinite?</th><th style="padding:4px 6px">Available</th><th style="padding:4px 6px">Last top-up</th></tr>'
+    + rows.map(function(it) {
+      var l = psVsiLast(it), wn = PS_VSI.wh[it.warehouseId];
+      return '<tr style="border-top:1px solid var(--border2)">'
+        + '<td style="padding:4px 6px;font-family:var(--mono);font-weight:700;white-space:nowrap"><a href="https://app.veeqo.com/products/' + encodeURIComponent(it.productId) + '" target="_blank" rel="noopener" title="Open in Veeqo">' + psVsE(it.sku || '(no SKU)') + ' ↗</a></td>'
+        + '<td style="padding:4px 6px">' + psVsE(it.title) + '</td>'
+        + '<td style="padding:4px 6px;white-space:nowrap">' + psVsE(wn ? wn + ' (' + it.warehouseId + ')' : it.warehouseId) + '</td>'
+        + '<td style="padding:4px 6px;white-space:nowrap">' + (it.infinite ? '<b style="color:var(--green)">♾ Yes</b>' : '<b style="color:var(--red)">✗ No</b>') + '</td>'
+        + '<td style="padding:4px 6px;font-family:var(--mono)">' + (it.infinite ? '—' : psVsE(it.available)) + '</td>'
+        + '<td style="padding:4px 6px">' + (l ? '<span style="color:var(--text3)">' + psVsE(psVsT(l.ts)) + '</span> ' + (l.failed ? '<span style="color:var(--red)">' + psVsE(l.note) + '</span>' : '✓ set up') : '<span style="color:var(--text3)">—</span>') + '</td></tr>';
+    }).join('') + '</table>' : '<div style="color:var(--text3);padding:6px">' + (all.length ? 'Nothing here 👍' : 'No items read') + '</div>';
+};
+
 window.psVeeqoSyncManifest = async function() {
   var btn = document.getElementById('ps-vsync-manifest-btn');
   var out = document.getElementById('ps-vsync-manifest-result');
@@ -8750,5 +8830,5 @@ window.psAlSlipAdd = async function() {
   psAlLoadSlips();
 };
 </script>
-<script src="xf-access.js?v=20261001e"></script>
+<script src="xf-access.js?v=20261004x"></script>
 </html>

@@ -1101,6 +1101,38 @@ console.log('\nVeeqo: keep stock up (at or below 88 → 888) so labels can print
   globalThis.fetch = realFetch; delete env.VEEQO_API_KEY;
 }
 
+// Owner: "keep Veeqo stock up still gets 'Feature not available on your current plan' — I changed some to Infinity; show me which listing has the error and if it is set to Infinity or not".
+console.log('\nVeeqo: 🔍 Check every item — Infinite or not, and which ones had an error (read-only)');
+{
+  const realFetch = globalThis.fetch; let writes = 0, prodCalls = 0;
+  const page = n => Array.from({ length: n }, (_, i) => ({ id: 500 + i, title: 'Item ' + i, sellables: [{ id: 5000 + i, sku_code: 'S-' + i, stock_entries: [{ warehouse_id: 346371, physical_stock_level: i === 1 ? 5 : 900, allocated_stock_level: 0, available_stock_level: i === 1 ? 5 : 900, infinite: i === 0 }] }] }));
+  globalThis.fetch = async (u, o) => { u = String(u);
+    if (o && o.method && o.method !== 'GET') { writes++; return new Response('{}'); }
+    if (u.includes('api.veeqo.com/warehouses')) return new Response(JSON.stringify([{ id: 346371, name: 'Main' }]));
+    if (u.includes('api.veeqo.com/products')) { prodCalls++; const pg = +(u.match(/page=(\d+)/) || [])[1]; return new Response(JSON.stringify(pg <= 3 ? page(100) : pg === 4 ? page(2) : [])); }
+    return realFetch(u, o); };
+  env.VEEQO_API_KEY = 'k';
+  const ins = sq.prepare('INSERT INTO veeqo_stock_log (ts, sku, sellable_id, warehouse_id, old_physical, old_available, new_physical, by_user, note) VALUES (?,?,?,?,?,?,?,?,?)');
+  ins.run('2026-10-03T19:02:00Z', 'S-0', 5000, 346371, 0, 0, null, 'Chen', 'FAILED: HTTP 403: {"error_messages":"Feature not available on your current plan"} (warehouse 346371)');
+  ins.run('2026-10-03T19:02:01Z', 'S-1', 5001, 346371, 5, 5, null, 'Chen', 'FAILED: HTTP 403: {"error_messages":"Feature not available on your current plan"} (warehouse 346371)');
+  const a = await get('/veeqo/stock-topup/items?page=1'), b = await get('/veeqo/stock-topup/items?page=' + a.next);
+  const items = a.items.concat(b.items), f = (sku) => items.find(x => x.sku === sku), last = Object.fromEntries((a.lastResult || []).map(x => [x.s + ':' + x.w, x]));
+  check('reads every item, page by page (302 rows over 2 calls), with the warehouse name', a.ok && !a.done && a.next === 4 && b.done && items.length === 302 && a.warehouses['346371'] === 'Main', { n: items.length, a: a.done, b: b.done });
+  check('shows Infinite yes/no and what is available (S-0 Infinite, S-1 5 left, not Infinite)', f('S-0').infinite === true && f('S-1').infinite === false && f('S-1').available === 5, [f('S-0'), f('S-1')]);
+  check('shows the last error for each item (S-0 and S-1 failed with "current plan")', last['5000:346371'] && last['5000:346371'].failed && /current plan/.test(last['5001:346371'].note), a.lastResult);
+  check('only looks — nothing is changed in Veeqo', writes === 0, writes);
+  const pkt = (await (await call('/auth/login', { method: 'POST', body: '{"username":"picker","password":"password1"}' })).json()).token;
+  const pk = await call('/veeqo/stock-topup/items?page=1', { headers: { 'X-Cred-Token': pkt } });
+  check('management only (a picker is refused)', pk.status === 401 || pk.status === 403, pk.status);
+  const { readFileSync } = await import('node:fs');
+  const ps = readFileSync(fileURLToPath(new URL('../packship.html', import.meta.url)), 'utf8');
+  const kindSrc = (ps.match(/function psVsiKind\(it\) \{[\s\S]*?\n\}/) || [''])[0], lastSrc = (ps.match(/function psVsiLast\(it\) \{[^\n]*\}/) || [''])[0];
+  const kind = new Function('PS_VSI', lastSrc + kindSrc + '; return psVsiKind;')({ below: 88, last: last });
+  check('screen: "🔍 Check every item" button; an item that failed but is now Infinite counts as fixed (♾), a failed one not Infinite stays ⚠',
+    /onclick="psVsiLoad\(\)"/.test(ps) && /\/veeqo\/stock-topup\/items\?page=/.test(ps) && kind(f('S-0')) === 'inf' && kind(f('S-1')) === 'err' && kind(f('S-2')) === 'ok', null);
+  globalThis.fetch = realFetch; delete env.VEEQO_API_KEY;
+}
+
 console.log('\nContainer here: ✅ This pallet is done — what is not moved, short on record, ➕ More / ✓ Finish all');
 {
   const { readFileSync } = await import('node:fs');
@@ -1192,6 +1224,543 @@ console.log('\nPack & Ship → 🏷️ Label Check: scan a label → every item 
   check('…an unknown label → found: false (the screen says so)', nf.ok && nf.found === false, nf);
   check('…read-only: no inventory number or History row changes', sq.prepare('SELECT SUM(cases) t FROM master_list').get().t === c0 && sq.prepare('SELECT COUNT(*) n FROM inventory_log').get().n === l0, null);
   check('…needs a sign-in', (await call('/ship/package?tracking=1Z999AA1LABELCHK01')).status === 401, null);
+}
+
+// Owner: "under XFitting Admin → Users I can delete the user we don't use no more".
+console.log('\nAdmin → Users: Remove a user who no longer works here (name stays on old records)');
+{
+  const own = await (await call('/auth/login', { method: 'POST', body: '{"username":"owner1","password":"password1"}' })).json();
+  const OH = { 'X-Cred-Token': own.token, 'Content-Type': 'application/json' };
+  const P = async (p, b, h) => { const r = await call(p, { method: 'POST', headers: h || OH, body: JSON.stringify(b) }); return { st: r.status, d: await r.json() }; };
+  const mk = await P('/admin/users/create', { username: 'leftjob', password: '4321', displayName: 'LJ', roles: ['ops'] });
+  const li = await (await call('/auth/login', { method: 'POST', body: '{"username":"leftjob","password":"4321"}' })).json();
+  sq.prepare("INSERT INTO inventory_log (timestamp, type, part_num, cases, initials, status) VALUES ('2026-01-01','IN','23-2-3=2',1,'LJ','Verified')").run();
+  const logsBefore = sq.prepare('SELECT COUNT(*) n FROM inventory_log').get().n;
+  const rm = await P('/admin/users/remove', { userId: mk.d.userId });
+  const old = await call('/inventory/containers', { headers: { 'X-Cred-Token': li.token } });
+  const li2 = await (await call('/auth/login', { method: 'POST', body: '{"username":"leftjob","password":"4321"}' })).json();
+  const list = await (await call('/admin/users/list', { headers: OH })).json();
+  const lj = list.users.find(x => x.username === 'leftjob');
+  check('Remove: signed out right away, can\'t sign in, marked removed (row kept, records untouched)',
+    rm.st === 200 && old.status === 401 && !li2.token && !!lj && !!lj.removedAt && lj.removedBy === 'owner1' && !lj.active
+      && sq.prepare('SELECT COUNT(*) n FROM inventory_log').get().n === logsBefore, { rm, old: old.status, lj });
+  const again = await P('/admin/users/create', { username: 'leftjob', password: '4321', displayName: 'X', roles: [] });
+  const en = await P('/admin/users/toggle-active', { userId: mk.d.userId, active: true });
+  const self = await P('/admin/users/remove', { userId: own.userId || sq.prepare("SELECT id FROM cred_users WHERE username='owner1'").get().id });
+  const logged = sq.prepare("SELECT COUNT(*) n FROM user_activity_log WHERE action_type='admin_user_removed'").get().n;
+  check('a removed username can\'t be reused or Enabled until Restored; you can\'t remove yourself; the remove is logged',
+    again.st === 409 && /Restore/.test(again.d.error) && en.st === 400 && self.st === 400 && logged >= 1, { again, en, self, logged });
+  const rs = await P('/admin/users/restore', { userId: mk.d.userId });
+  const en2 = await P('/admin/users/toggle-active', { userId: mk.d.userId, active: true });
+  const li3 = await (await call('/auth/login', { method: 'POST', body: '{"username":"leftjob","password":"4321"}' })).json();
+  check('Restore → back on the list (Disabled), Enable → can sign in again', rs.st === 200 && en2.st === 200 && !!li3.token, { rs, en2 });
+  const { readFileSync } = await import('node:fs');
+  const ah = readFileSync(fileURLToPath(new URL('../xfitting-admin.html', import.meta.url)), 'utf8');
+  check('Users tab: 🗑 Remove button on each user, removed users hidden behind "Show removed users" with Restore',
+    /onclick="adRemoveUser\(' \+ u\.id/.test(ah) && /removed users \('/.test(ah) && /adRestoreUser\(' \+ u\.id/.test(ah) && /AD\.users\.filter\(function\(u\)\{ return !u\.removedAt; \}\)/.test(ah), null);
+}
+
+// Owner: "Stock Out Shelving: merge Product name into SKU/Part#/UPC, take off Location · Transfer: only SKU/Part#/UPC (+ name) and
+// Container here · new ✅ Checking tab: scan UPC / SKU / name / location → see everything; on a spot: change the number, None found,
+// Something else found (scan box → boxes → pieces → scan spot → saves by itself → next)".
+console.log('\nStock Out / Transfer: one search box (part # / UPC / name) · ✅ Checking tab');
+{
+  const { readFileSync } = await import('node:fs');
+  const ih = readFileSync(fileURLToPath(new URL('../inventory.html', import.meta.url)), 'utf8');
+  check('Stock Out: no "Product Name" / "Location" buttons — one box for part #, barcode or name (name searched when no part # / UPC matches)',
+    !/id="inv-smode-name"/.test(ih) && !/id="inv-smode-loc"/.test(ih) && /id="inv-search-inp" type="text" placeholder="Part #, barcode or product name…"/.test(ih)
+      && /else \{ invLookup\(val, true\); \}/.test(ih) && /if \(byName && invNameFallback\(code, d\)\) \{ invScanNameSearch\(code\); return; \}/.test(ih), null);
+  check('Transfer: only "SKU / Part# / UPC / Name" and "🚢 Container here" (no Product Name / Location buttons); a name typed (⌨) is searched by name',
+    /id="xfr-mode-code"[^>]*>SKU \/ Part# \/ UPC \/ Name</.test(ih) && /id="xfr-mode-cont"/.test(ih) && !/id="xfr-mode-name"/.test(ih) && !/id="xfr-mode-loc"/.test(ih)
+      && /xfrLookup\(val, true\)/.test(ih) && /if \(byName && invNameFallback\(code, d\) && !xfrIsLoc\(/.test(ih), null);
+  const fb = new Function('window', (ih.match(/window\.invNameFallback = function[^\n]*/) || [''])[0] + '; return window.invNameFallback;')({});
+  check('…a part # / UPC always goes first; only "not found" text with letters is searched as a name', fb('elbow', {}) && fb('Tee 1/2', { partNum: null }) && !fb('30-3-4', {}) && !fb('012345678905', {}) && !fb('tee', { partNum: '23-2-3=2' }) && !fb('tee', { upcNotLinked: true }), null);
+  check('✅ Checking tab sits right after Stock Out Big Company', /id="inv-tab-stockoutco"[^\n]*\n\s*<button class="itab" id="inv-tab-check" onclick="invSwitchTab\('check'\)">✅ Checking<\/button>/.test(ih) && /id="inv-panel-check"/.test(ih), null);
+
+  // Run the page's own ✅ Checking code against the real Worker (fake screen, real saves).
+  sq.prepare("INSERT INTO master_list (base_sku, name, part_num, location, cases, units_per_case) VALUES ('77-7-1','Cap 1/2','77-7-1=10','C2=1-1-1',5,10), ('77-7-1','Cap 1/2','77-7-1=10','BARN=2-1-1',3,10), ('77-7-1','Cap 1/2','77-7-1=2X','C2=1-1-1',4,2), ('77-7-1','Cap 1/2','77-7-1=10','C2=1-1-2',7,10), ('77-7-1','Cap 1/2','77-7-1=5','C1=9-9-9',2,5)").run();
+  sq.prepare("INSERT INTO inventory_log (timestamp, type, part_num, location, cases, initials, notes, status, verified_by) VALUES ('2026-09-20T14:00:00Z','IN','77-7-1=10','C2=1-1-1',5,'Maria','','Verified','TS')").run();
+  const ckNowT = l => (l.adjustedCases !== undefined && l.adjustedCases !== null ? parseFloat(l.adjustedCases) : parseFloat(l.cases)) || 0;
+  const pcs = () => sq.prepare("SELECT SUM(cases * units_per_case) p FROM master_list WHERE base_sku = '77-7-1' OR part_num LIKE '77-7-1=%'").get().p;
+  const cs = (part, loc) => sq.prepare('SELECT cases c, units_per_case u FROM master_list WHERE part_num = ? AND location = ? ORDER BY id').all(part, loc).map(x => x.c + '×' + x.u).join(',');
+  const pcs0 = pcs(); // 5×10 + 3×10 + 4×2 + 7×10 + 2×5 = 168
+  await post('/inventory/review-mode', { mode: 'manual' });
+  const els = {}, el = id => els[id] || (els[id] = { id, value: '', innerHTML: '', style: {}, focus() {}, set textContent(v) {}, className: '' });
+  const xIsLoc = (ih.match(/function xfrIsLoc\(code\) \{[\s\S]*?\n  \}/) || [''])[0], xParent = (ih.match(/function invParent\(p\) \{[^\n]*/) || [''])[0];
+  const xEsc = (ih.match(/function xfrEsc\(v\) \{[^\n]*/) || [''])[0], xN = (ih.match(/function xfrN\(v\) \{[^\n]*/) || [''])[0], xT = (ih.match(/function xfrFmtT\(iso\) \{[^\n]*/) || [''])[0];
+  const ckSrc = (ih.match(/  \/\/ ══ ✅ Checking ═+[\s\S]*?(?=\n  \/\/ 📷 camera)/) || [''])[0];
+  const flashes = [], popups = [], pads = [];
+  // the phone: storage (survives a reload) and the outbox (no WiFi → kept, sent later with the same id)
+  const mem = {}, phoneStore = { getItem: k => (k in mem ? mem[k] : null), setItem: (k, v) => { mem[k] = String(v); }, removeItem: k => { delete mem[k]; } };
+  let wifi = true; const outboxQ = [];
+  const phoneOutbox = async (url, opts) => {
+    const body = JSON.parse(opts.body || '{}'); body._requestId = 'rq-' + Math.random().toString(36).slice(2); const ent = { path: url, body };
+    if (!wifi) { outboxQ.push(ent); return new Response(JSON.stringify({ ok: true, queued: true })); }
+    return call(url, { method: 'POST', headers: H, body: JSON.stringify(body) });
+  };
+  const sendOutbox = async () => { while (outboxQ.length) { const e = outboxQ.shift();
+    if (e.log) { const d = await post('/inventory/log', e.body); if (e.verifyFor && d && d.ok !== false) await post('/inventory/verify', e.verifyFor(d)); continue; }
+    await call(e.path, { method: 'POST', headers: H, body: JSON.stringify(e.body) }); await call(e.path, { method: 'POST', headers: H, body: JSON.stringify(e.body) }); } };
+  const wFetch = (u, o) => wifi ? call(u, { ...(o || {}), headers: { ...H, ...((o && o.headers) || {}) } }) : Promise.reject(new Error('Failed to fetch'));
+  const logAndApprove = async (body, verifyFor) => { if (!wifi) { outboxQ.push({ log: true, body, verifyFor }); return { ok: true, queued: true }; } const d = await post('/inventory/log', body); if (verifyFor && d && d.ok !== false) d._after = await post('/inventory/verify', verifyFor(d)); return d; };
+  const mk = auto => new Function('window', 'g', 'W', 'wFetch', 'invLogAndApprove', 'invFlash', 'INV_CRED_USER', 'invAuditAutoMode', 'DB', 'INV_PREFIXES', 'invPullWalkCompare', 'setTimeout', 'xfrPopup', 'xfrPopupClose', 'xfrKeypad', 'invUnlocked', 'invPost', 'localStorage',
+    xIsLoc + '\n' + xParent + '\n' + xEsc + '\n' + xN + '\n' + xT + '\n' + ckSrc + '\nreturn { CK: CK };')(
+    (globalThis.__ckWin = globalThis), el, '', wFetch, logAndApprove, (m, t) => flashes.push(m), { displayName: 'Ana' }, auto, { master: [], products: [] },
+    ['BARN=', 'C1=', 'C2=', '2FL='], (a, b) => String(a).localeCompare(String(b)), () => 0, h => { popups.push(h); }, () => {}, (t, v, cb) => { pads.push(t); }, false, phoneOutbox, phoneStore);
+  const settle = () => new Promise(r => setTimeout(r, 60));
+  let ck = mk(true), w = globalThis.__ckWin;
+  check('the Checking code is found and loads', ckSrc.length > 2000 && typeof w.ckGo === 'function', ckSrc.length);
+
+  // a spot → what is there now, who put it there and when
+  w.ckGo('C2=1-1'); await settle(); await settle();
+  const rowsRow = ck.CK.rows.length;
+  w.ckGo('C2=1-1-1'); await settle(); await settle();
+  const rowsAt = ck.CK.rows.map(r => r.partNum + '@' + r.location).sort();
+  check('scan a spot → what is there now + who put it there and when; scan a row (C2=1-1) → every spot in it', rowsRow === 3 && rowsAt.join() === '77-7-1=10@C2=1-1-1,77-7-1=2X@C2=1-1-1'
+    && /Put here by <b>Maria<\/b>/.test(el('ck-out').innerHTML) && /✗ None found/.test(el('ck-out').innerHTML) && /Something else found on this spot/.test(el('ck-out').innerHTML), { rowsAt, html: el('ck-out').innerHTML.slice(0, 300) });
+  // change the number: 5 → 3 (auto mode: approved right away, History keeps Before → After)
+  const iA = ck.CK.rows.findIndex(r => r.partNum === '77-7-1=10' && r.location === 'C2=1-1-1');
+  w.ckPick(iA, 3); await settle(); await settle(); // tap "3" on our own number buttons
+  const outRow = sq.prepare("SELECT type, cases, notes, status, total_before b, total_after a FROM inventory_log WHERE part_num='77-7-1=10' AND notes LIKE '%Checking%' ORDER BY id DESC").get();
+  check('count 5 → 3: an [AUDIT] Stock Out of 2, approved, shelf now 3, History 15 → 13 cases', cs('77-7-1=10', 'C2=1-1-1') === '3×10' && outRow && outRow.type === 'OUT' && outRow.cases === 2
+    && /^\[AUDIT\] System: 5 → Actual: 3/.test(outRow.notes) && outRow.status === 'Verified' && outRow.b === 15 && outRow.a === 13, outRow);
+  // None found on =2X → 0
+  const iB = ck.CK.rows.findIndex(r => r.partNum === '77-7-1=2X');
+  w.ckNoneFound(iB); await settle(); await settle();
+  const nf = sq.prepare("SELECT type, cases, notes FROM inventory_log WHERE part_num='77-7-1=2X' ORDER BY id DESC").get();
+  check('✗ None found → that item at that spot goes to 0 (an [AUDIT] [NONE FOUND] Stock Out of all 4)', !sq.prepare("SELECT SUM(cases) c FROM master_list WHERE part_num='77-7-1=2X'").get().c && nf.type === 'OUT' && nf.cases === 4 && /\[NONE FOUND\]/.test(nf.notes), nf);
+  // ➕ Something else found: scan box → 2 boxes × 25 pcs (new box size) → scan the spot → saved → next box
+  w.ckOtherStart(); w.ckGo('77-7-1=10'); await settle(); await settle();
+  check('➕ Something else found → scan the box → asks boxes + pieces (pieces pre-filled from the part #)', ck.CK.other.step === 'count' && ck.CK.other.part === '77-7-1=10' && Number(ck.CK.other.pcs) === 10, ck.CK.other);
+  w.ckOtherPcsSet(25); w.ckOtherN(2); w.ckGo('C2=1-1-1'); await settle(); await settle(); // ✏️ pieces 25 (our keypad), tap "2" boxes, scan the spot
+  check('…scan the spot → saves by itself (2 boxes × 25 pcs = a new 25-pc row at C2=1-1-1, the 10-pc row unchanged) and starts over at "scan the box"',
+    cs('77-7-1=10', 'C2=1-1-1') === '3×10,2×25' && ck.CK.other && ck.CK.other.step === 'box' && ck.CK.saved.length === 1, { c: cs('77-7-1=10', 'C2=1-1-1'), o: ck.CK.other });
+  w.ckGo('77-7-1=10'); await settle(); await settle(); w.ckOtherN(1); w.ckGo('BARN=2-1-1'); await settle(); await settle(); // pieces pre-filled 10
+  check('…next box: 1 × 10 pcs scanned at BARN=2-1-1 → added to the 10-pc row there (3 → 4), not a new row', cs('77-7-1=10', 'BARN=2-1-1') === '4×10' && ck.CK.saved.length === 2, cs('77-7-1=10', 'BARN=2-1-1'));
+  // numbers add up: 158 pcs − 2 boxes×10 − 4 boxes×2 + 2×25 + 1×10 = 190
+  const pcs1 = pcs();
+  check('numbers add up: 168 pcs − 20 (count 5→3) − 8 (None found) + 50 (2×25) + 10 (1×10) = 200 pcs', pcs0 === 168 && pcs1 === 200, { pcs0, pcs1 });
+  // a part # / UPC → every spot; exact part # shows only that one, with a family button
+  w.ckOtherStop(); await settle(); await settle();
+  w.ckGo('77-7-1=10'); await settle(); await settle();
+  const h1 = el('ck-out').innerHTML;
+  w.ckShowAll(true); const h2 = el('ck-out').innerHTML;
+  w.ckGo('77-7-1'); await settle(); await settle(); const h3 = el('ck-out').innerHTML;
+  // Owner: "All the family → show the total cases and total pieces of the whole family; take the ✏️ pcs/case box off the part # search".
+  const famCases = sq.prepare("SELECT SUM(cases) c FROM master_list WHERE part_num LIKE '77-7-1=%'").get().c;
+  check('👪 All the family → FAMILY TOTAL at the top = every shelf row: 18 case(s) · 200 pcs (=10: 3×10 + 2×25 + 4×10 + 7×10, =5: 2×5) — same as the database',
+    /👪 FAMILY TOTAL · \d+ part #s<\/div><div[^>]*>18 case\(s\) · 200 pcs<\/div>/.test(h2) && famCases === 18 && pcs() === 200 && !/FAMILY TOTAL/.test(h1), { famCases, p: pcs() });
+  check('…each part # adds its own spots\' pieces (77-7-1=10: 16 case(s) · 190 pcs — not 16 × 10 = 160)', /77-7-1=10<\/span><span>16 case\(s\) · 190 pcs<\/span>/.test(h2), null);
+  check('no ✏️ pcs/case button on the part # view (it stays on a spot)', !/ckPackAsk\(\\'part\\'/.test(ckSrc) && !/✏️ pcs \/ case/.test(h1 + h2) && /ckPackAsk\(\\'loc\\',/.test(ckSrc), null);
+  check('scan 77-7-1=10 → only that part # (every spot, cases, pcs, who / when) + "👪 Show all the family"; the button / the parent 77-7-1 → all part #s',
+    /BARN=2-1-1/.test(h1) && !/77-7-1=5</.test(h1) && /Show all the family \(3 part #s\)/.test(h1) && /Put here by/.test(h1) && /77-7-1=5</.test(h2) && /C1=9-9-9/.test(h2) && /all part #s/.test(h3), { h1: h1.slice(0, 200) });
+  // manual Audit mode → a count change waits for a manager (nothing changes until approved)
+  ck = mk(false); w = globalThis.__ckWin;
+  w.ckGo('BARN=2-1-1'); await settle(); await settle();
+  const iC = ck.CK.rows.findIndex(r => r.partNum === '77-7-1=10');
+  w.ckPick(iC, 1); await settle(); await settle();
+  const pend2 = sq.prepare("SELECT status FROM inventory_log WHERE part_num='77-7-1=10' AND location='BARN=2-1-1' ORDER BY id DESC").get();
+  check('Audit mode Manual → a count change goes to Review (Pending); the shelf is not changed until a manager approves', pend2.status === 'Pending' && cs('77-7-1=10', 'BARN=2-1-1') === '4×10' && pcs() === 200, pend2);
+  // Owner: "the count needs our own number box 1–9 + More… (our number pad) — we always try to hide the phone keyboard".
+  check('Checking: counts and boxes use our own buttons 1–9 + More… (our number pad), never the phone keyboard (no number inputs)',
+    !/id="ck-cnt-/.test(ckSrc) && !/id="ck-o-n"/.test(ckSrc) && !/id="ck-o-pcs"/.test(ckSrc) && !/type="number"/.test(ckSrc)
+      && /\[1,2,3,4,5,6,7,8,9\]\.map/.test(ckSrc) && /if \(n === 'more'\) \{ xfrKeypad\(/.test(ckSrc) && /ckGrid\('ckPick\(' \+ i \+ ',', now, true\)/.test(ckSrc) && /ckGrid\('ckOtherN\(', null\)/.test(ckSrc), null);
+  // Owner: "under Checking show how many pieces in that case also".
+  ck = mk(true); w = globalThis.__ckWin;
+  w.ckGo('C2=1-1-1'); await settle(); await settle(); const hp = el('ck-out').innerHTML;
+  w.ckGo('77-7-1=10'); await settle(); await settle(); const hq = el('ck-out').innerHTML;
+  // Owner (later): on a spot, no "System: … × … pcs = … pcs" line and no spot label on each row (it's at the top) —
+  // the system's number stands out in the 1–9 buttons (big, green, ✓ SYSTEM); tapping it = correct.
+  check('Checking shows pieces per case: a spot → "77-7-1=10 · 10 pcs / case" (the 25-pc row too); a part # → "× 10 pcs/case = 30 pcs"',
+    /77-7-1=10 <span[^>]*>· 10 pcs \/ case/.test(hp) && /· 25 pcs \/ case/.test(hp) && /× 10 pcs\/case = 30 pcs/.test(hq) && /× 25 pcs\/case = 50 pcs/.test(hq), { hp: hp.slice(0, 600) });
+  const sysBtns = hp.match(/<button type="button" data-sys="1" onclick="ckPick\((\d+),(\d+(?:\.\d+)?)\)"[^>]*>(?:<div[^>]*>✓ SYSTEM<\/div>)?/g) || [];
+  check('a spot: no "System: … pcs" line, no ✓ Correct button, no spot label repeated on each row; the system number is the big green "✓ SYSTEM" button (3 and 2 here)',
+    !/System: <b/.test(hp) && !/✓ Correct/.test(hp) && !/📍 <span>C2=1-1-1<\/span>/.test(hp) && sysBtns.length === 2 && /ckPick\(\d+,3\)/.test(sysBtns.join()) && /ckPick\(\d+,2\)/.test(sysBtns.join()) && /✗ None found/.test(hp), { sysBtns, hp: hp.slice(0, 900) });
+  w.ckGo('C2=1-1'); await settle(); await settle(); const hr = el('ck-out').innerHTML;
+  check('…a whole row (C2=1-1) still shows the spot on rows that are not C2=1-1 itself', /📍 <span>C2=1-1-1<\/span>/.test(hr) && /📍 <span>C2=1-1-2<\/span>/.test(hr), null);
+  w.ckGo('C2=1-1-1'); await settle(); await settle();
+  const pc0 = pcs(), nRows = ck.CK.rows.length;
+  ck.CK.rows.forEach((r, i) => w.ckPick(i, ckNowT(r))); await settle(); await settle(); await settle();
+  const hd = el('ck-out').innerHTML;
+  check('tap the green (system) number on each item = correct (nothing changes); when every item is counted → "✅ All counted — scan the next spot"',
+    nRows === 2 && pcs() === pc0 && /✅ All counted at C2=1-1-1 — scan the next spot/.test(hd) && (hd.match(/Count matches — confirmed/g) || []).length === 2, { nRows, hd: hd.slice(0, 500) });
+  check('product photo on each item (tap = big), on the part # view and on Something else found', /function ckPic\(part, px\)/.test(ckSrc) && /ckPic\(r\.partNum\)/.test(ckSrc) && /ckPic\(d\.partNum, 84\)/.test(ckSrc) && /ckPic\(o\.part\)/.test(ckSrc) && /onclick="invPhotoBig\(this\.src\)"/.test(ckSrc), null);
+
+  // Owner: "able to edit the case pieces — the case quantities we have most as set numbers, then More… to type (our own pad, no phone keyboard)".
+  const sz = await get('/inventory/pack-sizes');
+  check('✏️ pieces per case: the quick buttons are the sizes we have most (from the shelf rows)', sz.ok && sz.sizes.length >= 3 && sz.sizes.length <= 9 && sz.sizes.includes(10) && sz.sizes.every((x, i, a) => i === 0 || a[i - 1] < x), sz);
+  ck = mk(true); w = globalThis.__ckWin;
+  w.ckGo('C2=1-1-2'); await settle(); await settle();
+  const iP = ck.CK.rows.findIndex(r => r.partNum === '77-7-1=10');
+  popups.length = 0; w.ckPackAsk('loc', iP);
+  check('…tap ✏️ → our own buttons (common sizes + More…), no phone keyboard', popups.length === 1 && /More…/.test(popups[0]) && /ckPackPick\('loc',/.test(popups[0]) && !/<input/.test(popups[0]), popups[0] && popups[0].slice(0, 300));
+  w.ckPackPick('loc', iP, 'more');
+  check('…More… opens our number pad', pads.length >= 1 && /Pieces in each case of 77-7-1=10 at C2=1-1-2/.test(pads[pads.length - 1]), pads);
+  popups.length = 0; w.ckPackPick('loc', iP, 12);
+  check('…a size asks to confirm with the pieces before → after (7 cases: 70 → 84 pcs)', /10 → <b>12<\/b> pcs per case/.test(popups[0] || '') && /70 → <b>84<\/b> pcs/.test(popups[0] || ''), popups[0]);
+  const pB = pcs();
+  await w.ckPackSave('loc', iP, 12); await settle();
+  const pl = sq.prepare("SELECT master_id, part_num, location, cases, from_pcs, to_pcs, by_user FROM pack_change_log ORDER BY id DESC").get();
+  check('✓ Yes → only that shelf row changes (C2=1-1-2: 7 cases × 10 → 12), cases stay, kept on record (who / old → new)', cs('77-7-1=10', 'C2=1-1-2') === '7×12' && cs('77-7-1=10', 'C2=1-1-1') === '3×10,2×25'
+    && pl && pl.part_num === '77-7-1=10' && pl.location === 'C2=1-1-2' && pl.cases === 7 && pl.from_pcs === 10 && pl.to_pcs === 12 && pl.by_user === 'TS', pl);
+  check('numbers add up: pieces change by exactly cases × (new − old) = 7 × 2 = +14 (200 → 214)', pB === 200 && pcs() === 214, { pB, now: pcs() });
+  check('…the row shows the new size and who changed it', /· 12 pcs \/ case/.test(el('ck-out').innerHTML) && /Pieces per case 10 → 12 by/.test(el('ck-out').innerHTML), null);
+  const stale = await post('/inventory/pack-change', { masterId: pl.master_id, partNum: '77-7-1=10', location: 'C2=1-1-2', from: 10, to: 20 });
+  check('a stale change (someone else already changed it) is refused — nothing changes', stale.ok === false && /now 12/.test(stale.error) && cs('77-7-1=10', 'C2=1-1-2') === '7×12' && pcs() === 214, stale);
+  // Owner: "Checking a part #: in order =old, =1, 1x, 1xx, 1xxx, =2, 2x … =10, =10x, =10xx, =11 … then 20, 21 … 30, 31…".
+  const cmpSrc = (ckSrc.match(/  function ckPackKey\(p\) \{[\s\S]*?\n  function ckPartCompare\(a, b\) \{[\s\S]*?\n  \}/) || [''])[0];
+  const ckCmp = new Function(cmpSrc + '; return ckPartCompare;')();
+  const mixed = ['9-9-9=20', '9-9-9=10X', '9-9-9=2', '9-9-9=1XXX', '9-9-9=OLD', '9-9-9=11', '9-9-9=1', '9-9-9=10', '9-9-9=3XX', '9-9-9=1X', '9-9-9=10XX', '9-9-9=2X', '9-9-9=31', '9-9-9=1XX', '9-9-9=21', '9-9-9=30', '9-9-9=3', '9-9-9=3X'];
+  const want = ['OLD', '1', '1X', '1XX', '1XXX', '2', '2X', '3', '3X', '3XX', '10', '10X', '10XX', '11', '20', '21', '30', '31'];
+  const got = mixed.slice().sort(ckCmp).map(p => p.split('=')[1]);
+  check('part #s in pack order: =OLD, =1, =1X, =1XX, =1XXX, =2, =2X, =3 … =10, =10X, =10XX, =11, =20, =21, =30, =31', got.join() === want.join() && /order\.sort\(ckPartCompare\)/.test(ckSrc), got);
+  // Owner: "🔍 Audit → full recount (about once a year), column by column: scan the column → see it like Checking (photos);
+  // scan each box at least once, confirm cases + pieces per box (the same part # can have different pieces per box);
+  // not on record → cases + pieces (tap the pieces = saved); ✅ Done → anything not scanned: Found / None found (→ 0);
+  // finish the column before the next one."
+  console.log('\n🔍 Audit → 📋 Full recount, column by column');
+  sq.prepare(`INSERT INTO master_list (base_sku, name, part_num, location, cases, units_per_case) VALUES
+    ('88-8-1','Nipple','88-8-1=10','C3=4-1-1',5,10), ('88-8-1','Nipple','88-8-1=10','C3=4-1-1',3,25), ('88-8-1','Nipple','88-8-1=20','C3=4-1-1',2,20),
+    ('88-8-1','Nipple','88-8-1=5','C3=4-1-1',4,5), ('88-8-1','Nipple','88-8-1=50','C3=4-1-1',1,50), ('88-8-1','Nipple','88-8-1=2','C5=9-9-9',1,2)`).run();
+  sq.prepare("INSERT INTO locations (location, prefix, active, created_at) VALUES ('C3=4-1-2','C3=',1,'2026-01-01')").run();
+  const rpcs = () => sq.prepare("SELECT SUM(cases * units_per_case) p FROM master_list WHERE part_num LIKE '88-8-1=%'").get().p;
+  const rrows = loc => sq.prepare("SELECT part_num p, cases c, units_per_case u FROM master_list WHERE location = ? AND part_num LIKE '88-8-1=%' ORDER BY part_num, units_per_case").all(loc).map(x => x.p.split('=')[1] + ':' + x.c + '×' + x.u).join(' ');
+  const r0 = rpcs(); // 50 + 75 + 40 + 20 + 50 + 2 = 237
+  ck = mk(true); w = globalThis.__ckWin;
+  w.rcGo('C3=4-1-1'); await settle(); await settle(); await settle();
+  let ho = el('rc-out').innerHTML;
+  check('scan the column → everything on record there with photo, pcs / box and system cases (the =10 part # twice: ×10 and ×25), all "not scanned yet"; the aisle shows its columns',
+    (ho.match(/⬜ not scanned yet/g) || []).length === 5 && /88-8-1=10 <span[^>]*>· 10 pcs \/ box/.test(ho) && /88-8-1=10 <span[^>]*>· 25 pcs \/ box/.test(ho) && /Aisle C3=4: <b>0 of 2<\/b> done/.test(ho) && /📷 Scan a box on this column/.test(ho), ho.slice(0, 700));
+  // scan a box → cases → pieces (tap = saved)
+  w.rcGo('88-8-1=10'); await settle(); await settle(); ho = el('rc-out').innerHTML;
+  check('scan a box → 1️⃣ How many cases? (our buttons)', /1️⃣ How many cases\?/.test(ho) && /rcCases\('more'\)/.test(ho) && !/<input/.test(ho), null);
+  w.rcCases(6); ho = el('rc-out').innerHTML;
+  check('…then 2️⃣ Pieces per box: both sizes on record here first (✓ 10 pcs, ✓ 25 pcs), then common sizes + More…', /rcPcs\(10\)[^>]*>✓ 10 pcs/.test(ho) && /rcPcs\(25\)[^>]*>✓ 25 pcs/.test(ho) && /rcPcs\('more'\)/.test(ho), ho.slice(0, 400));
+  w.rcPcs(10); await settle(); await settle();
+  w.rcGo('88-8-1=10'); await settle(); await settle(); w.rcCases(3); w.rcPcs(25); await settle(); await settle();
+  w.rcGo('88-8-1=10'); await settle(); await settle(); w.rcCases(9); w.rcPcs(10); await settle(); await settle();
+  check('=10 ×10: 5 → 6 counted; =10 ×25: 3 confirmed; scanning ×10 again → "Already counted" (no double count)',
+    /10:6×10 10:3×25/.test(rrows('C3=4-1-1')) && flashes.some(f => /Already counted here: 6 case\(s\) of 88-8-1=10 × 10 pcs/.test(f)), rrows('C3=4-1-1'));
+  w.rcGo('88-8-1=2'); await settle(); await settle(); w.rcCases(6); w.rcPcs(2); await settle(); await settle();
+  w.rcGo('88-8-1=20'); await settle(); await settle(); w.rcCases(2); w.rcPcs(20); await settle(); await settle();
+  check('a box not on record at this column (88-8-1=2) → cases + pieces → saved as a new line (6 × 2 pcs)', /2:6×2/.test(rrows('C3=4-1-1')) && /➕ 88-8-1=2 · 2 pcs \/ box/.test(el('rc-out').innerHTML), rrows('C3=4-1-1'));
+  w.rcGo('C3=4-1-2'); await settle();
+  check('scanning the next column before this one is done → "Finish C3=4-1-1 first"', flashes.some(f => /Finish C3=4-1-1 first/.test(f)) && /📍 C3=4-1-1/.test(el('rc-out').innerHTML), null);
+  w.rcCheck(); ho = el('rc-out').innerHTML;
+  check('✅ Done → the ones not scanned (=5, =50) come up with ✓ Found / ✗ None found', /These were not scanned/.test(ho) && (ho.match(/rcFound\(\d+\)/g) || []).length === 2 && (ho.match(/rcNone\(\d+\)/g) || []).length === 2 && /88-8-1=5 /.test(ho) && /88-8-1=50 /.test(ho), ho.slice(0, 500));
+  const iNone = ho.match(/<div[^>]*>88-8-1=5 [\s\S]*?rcNone\((\d+)\)/)[1], iFound = ho.match(/<div[^>]*>88-8-1=50 [\s\S]*?rcFound\((\d+)\)/)[1];
+  w.rcNone(+iNone); await settle(); await settle();
+  check('✗ None found → 0', /5:0×5/.test(rrows('C3=4-1-1')) || !/5:/.test(rrows('C3=4-1-1')), rrows('C3=4-1-1'));
+  w.rcFound(+iFound); w.rcCases(1); w.rcPcs(40); await settle(); await settle(); await settle(); await settle();
+  check('✓ Found with a different box size (system ×50, boxes are ×40) → the ×50 line → 0 and a new ×40 line (1 case)', !/50:[1-9][0-9.]*×50/.test(rrows('C3=4-1-1')) && /50:1×40/.test(rrows('C3=4-1-1')), rrows('C3=4-1-1'));
+  const r1 = rpcs(), col = sq.prepare("SELECT location, by_user, items FROM recount_columns ORDER BY id DESC").get();
+  ho = el('rc-out').innerHTML;
+  check('the last one resolved → the column is done by itself (who / when kept), "✅ C3=4-1-1 done — scan the next column"', col && col.location === 'C3=4-1-1' && col.by_user === 'TS' && col.items === 7 && /✅ C3=4-1-1 done — scan the next column/.test(ho), col);
+  check('numbers add up: 237 pcs + 10 (5→6 ×10) + 12 (new 6×2) − 20 (None found 4×5) − 50 (×50 → 0) + 40 (new 1×40) = 229 pcs', r0 === 237 && r1 === 229, { r0, r1 });
+  const st = await get('/inventory/recount/status?aisle=C3=4');
+  check('aisle C3=4: C3=4-1-1 done (who / when), C3=4-1-2 not yet; the next column can start now', st.ok && st.spots.length === 2 && st.spots.find(x => x.location === 'C3=4-1-1').done.by === 'TS' && !st.spots.find(x => x.location === 'C3=4-1-2').done && st.doneCount >= 1, st);
+  w.rcGo('C3=4-1-2'); await settle(); await settle(); await settle();
+  check('…scan the next column → it opens', /📍 C3=4-1-2/.test(el('rc-out').innerHTML) && /Aisle C3=4: <b>1 of 2<\/b> done/.test(el('rc-out').innerHTML), null);
+  // Owner: "Audit: when there's no WiFi, save it on the phone and send it when WiFi is back — never lose what they counted, or inventory won't match".
+  sq.prepare("INSERT INTO master_list (base_sku, name, part_num, location, cases, units_per_case) VALUES ('88-8-2','Tee','88-8-2=10','C3=4-2-1',4,10), ('88-8-2','Tee','88-8-2=20','C3=4-2-1',2,20)").run();
+  const p2 = () => sq.prepare("SELECT SUM(cases * units_per_case) p FROM master_list WHERE part_num LIKE '88-8-2=%'").get().p;
+  const q0 = p2(); // 4×10 + 2×20 = 80
+  globalThis.confirm = () => true; w.rcStop(); delete globalThis.confirm; // ✕ Stop the open column C3=4-1-2 first (a new one can't start while one is open)
+  w.rcGo('C3=4-2-1'); await settle(); await settle(); await settle(); await settle(); // opened with WiFi: the column + its boxes are kept on the phone
+  wifi = false;
+  w.rcGo('88-8-2=10'); await settle(); await settle(); w.rcCases(5); w.rcPcs(10); await settle();
+  check('📶 no WiFi: a box still scans (from what this phone saw) and the count is saved on the phone — nothing on the shelf yet', outboxQ.length === 1 && outboxQ[0].log && outboxQ[0].body.cases === 1 && p2() === q0, outboxQ.map(x => x.body));
+  // the phone reloads in the middle of the column (screen died, page refreshed…)
+  ck = mk(true); w = globalThis.__ckWin; w.rcRestore(); await settle();
+  let hr2 = el('rc-out').innerHTML;
+  check('…the page reloads mid-column → it comes back to C3=4-2-1 with what was counted (✓ counted 5) — nothing lost', /📍 C3=4-2-1/.test(hr2) && /✓ counted 5 case\(s\)/.test(hr2) && flashes.some(f => /Back to C3=4-2-1/.test(f)), hr2.slice(0, 400));
+  w.rcGo('88-8-2=10'); await settle(); await settle(); w.rcCases(9); w.rcPcs(10); await settle();
+  check('…the same box scanned again after the reload → "Already counted" (never counted twice)', outboxQ.length === 1 && flashes.some(f => /Already counted here: 5 case\(s\) of 88-8-2=10/.test(f)), outboxQ.length);
+  w.rcCheck(); hr2 = el('rc-out').innerHTML;
+  const iN2 = hr2.match(/<div[^>]*>88-8-2=20 [\s\S]*?rcNone\((\d+)\)/)[1];
+  w.rcNone(+iN2); await settle(); await settle(); await settle();
+  const colQ = outboxQ.find(x => !x.log);
+  check('…None found + the column done, still with no WiFi → both saved on the phone ("📶 sends when WiFi is back"), the screen says done', outboxQ.length === 3 && colQ && colQ.body.location === 'C3=4-2-1'
+    && /✅ C3=4-2-1 done/.test(el('rc-out').innerHTML) && flashes.some(f => /📶 saved on the phone, it sends when WiFi is back/.test(f)) && p2() === q0, outboxQ.map(x => x.path || 'log'));
+  const ridCol = colQ.body._requestId;
+  globalThis.invObRead = () => outboxQ.filter(x => x.log).map(x => ({ state: 'waiting', body: x.body }));
+  w.rcGo('C3=4-2-1'); await settle();
+  check('…scanning C3=4-2-1 again while its counts still wait on the phone → refused (it would count them twice)', flashes.some(f => /C3=4-2-1 has 2 count\(s\) still waiting on this phone/.test(f)) && /✅ C3=4-2-1 done/.test(el('rc-out').innerHTML), flashes.slice(-2));
+  delete globalThis.invObRead;
+  wifi = true; await sendOutbox(); await settle();
+  const cols = sq.prepare("SELECT COUNT(*) n FROM recount_columns WHERE location = 'C3=4-2-1'").get().n;
+  const chk = await post('/inventory/outbox/check', { ids: [ridCol] });
+  check('WiFi back → everything sends: shelf 4×10 → 5×10, 2×20 → 0; numbers add up 80 + 10 − 40 = 50 pcs; the column is done once (sent twice, saved once) and the outbox check says "saved"',
+    q0 === 80 && p2() === 50 && cols === 1 && chk.results[ridCol] && chk.results[ridCol].state === 'saved', { q0, now: p2(), cols, chk: chk.results[ridCol] });
+  const { readFileSync: rfs2 } = await import('node:fs');
+  check('✕ next to the recount scan box: empties it, keeps the phone keyboard hidden, closes the box being counted', /onclick="rcClear\(\)"/.test(rfs2(fileURLToPath(new URL('../inventory.html', import.meta.url)), 'utf8'))
+    && /window\.rcClear = function\(\) \{[\s\S]*?x\.setAttribute\('inputmode', 'none'\);[\s\S]*?if \(RC\.cur\) \{ RC\.cur = null; rcRender\(\); \}/.test(ckSrc), null);
+  const pkt3 = (await (await call('/auth/login', { method: 'POST', body: '{"username":"picker","password":"password1"}' })).json()).token;
+  const nrW = await call('/inventory/recount/new-round', { method: 'POST', headers: { 'X-Cred-Token': pkt3, 'Content-Type': 'application/json' }, body: '{}' });
+  const nrM = await post('/inventory/recount/new-round', {}), st2 = await get('/inventory/recount/status?aisle=C3=4');
+  check('only a manager can start a new recount; after it every column shows "not done" again', nrW.status === 403 && nrM.ok && st2.spots.every(x => !x.done), { w: nrW.status, nrM });
+  const { readFileSync: rfs } = await import('node:fs');
+  const ihA = rfs(fileURLToPath(new URL('../inventory.html', import.meta.url)), 'utf8');
+  check('Audit tab: the recount card first; the old part # / location audit tools kept, folded under "🔧 Other audit tools"',
+    /id="rc-card"[\s\S]*?<details id="inv-audit-old"[\s\S]*?id="inv-audit-search-card"[\s\S]*?id="inv-audit-loc-list"><\/div>\s*<\/div>\s*<\/details>/.test(ihA) && /id="rc-inp" type="text" inputmode="none"/.test(ihA), null);
+  const sp = await post('/inventory/check-spots', { pairs: [{ part: '77-7-1=10', location: 'c2=1-1-1' }] });
+  check('who put it there (read-only route): last Stock In at the spot', sp.ok && sp.spots['77-7-1=10|C2=1-1-1'] && sp.spots['77-7-1=10|C2=1-1-1'].put.by && sp.spots['77-7-1=10|C2=1-1-1'].last.length === 3, sp);
+  const sp2 = await post('/inventory/check-spots', { pairs: [{ part: '77-7-1=10', location: 'C2=1-1-2' }] });
+  check('…and the last ✏️ pieces-per-case change at the spot (who / when / old → new)', sp2.spots['77-7-1=10|C2=1-1-2'] && sp2.spots['77-7-1=10|C2=1-1-2'].pack && sp2.spots['77-7-1=10|C2=1-1-2'].pack.to === 12 && sp2.spots['77-7-1=10|C2=1-1-2'].pack.by === 'TS', sp2);
+  delete globalThis.__ckWin; Object.keys(globalThis).filter(k => /^ck[A-Z]/.test(k)).forEach(k => delete globalThis[k]);
+}
+
+// Owner: "Stock In / Found on Shelf: Location → 'spot where you put it'; QTY Case = our own 1–9 + More…; QTY per Case = the
+// recommended size, then the box sizes we use a lot, then More… (type it on our own pad) — no phone keyboard".
+console.log('\nStock In / Found on Shelf: our own buttons for QTY Case / QTY per Case (no phone keyboard)');
+{
+  const { readFileSync } = await import('node:fs');
+  const ih = readFileSync(fileURLToPath(new URL('../inventory.html', import.meta.url)), 'utf8');
+  check('labels + no phone keyboard: "Spot where you put it", part # and spot are scan boxes (⌨ to type), QTY fields are hidden (filled by our buttons)',
+    /<label>Spot where you put it<\/label>/.test(ih) && /id="inv-qa-shelf" type="text" inputmode="none" placeholder="📷 Scan the spot where you are putting it"/.test(ih)
+      && /id="inv-qa-partnum" type="text" inputmode="none"/.test(ih) && /<input id="inv-qa-cases" type="hidden" value=""><input id="inv-qa-upc" type="hidden" value="">/.test(ih)
+      && !/id="inv-qa-cases" type="number"/.test(ih) && !/id="inv-qa-upc" type="number"/.test(ih), null);
+  check('saving is unchanged: Submit still reads QTY Case / QTY per Case from the same fields',
+    /var cases    = parseFloat\(g\("inv-qa-cases"\) && g\("inv-qa-cases"\)\.value\);/.test(ih) && /var upc      = \(g\("inv-qa-upc"\) && g\("inv-qa-upc"\)\.value\) \? parseFloat\(g\("inv-qa-upc"\)\.value\) : 0;/.test(ih) && /isNew: true, isPlaceholder: false, unitsPerCase: upc \|\| 0/.test(ih), null);
+  const src = (ih.match(/  var invQaRec = 0;[\s\S]*?\n  window\.invQaUpc = function\(n\) \{[\s\S]*?\n  \};/) || [''])[0];
+  const els = {}, el = id => els[id] || (els[id] = { value: '', innerHTML: '', textContent: '' }), pads = [];
+  const qaFlash = [];
+  const api = new Function('window', 'g', 'CK', 'xfrN', 'xfrKeypad', 'invFlash', src + '\nreturn { setRec: v => { invQaRec = v; }, render: invQaPadsRender };')(
+    globalThis, el, { sizes: [1, 2, 5, 10, 20, 25, 50, 100, 200] }, v => Math.round((parseFloat(v) || 0) * 100) / 100, (t, v, cb) => pads.push({ t, cb }), m => qaFlash.push(m));
+  api.setRec(25); api.render();
+  const up0 = el('inv-qa-upc-pad').innerHTML, cp0 = el('inv-qa-cases-pad').innerHTML;
+  check('QTY Case: 1–9 + More…; QTY per Case: this item\'s size first (✓ 25 pcs — this item), then the common sizes (not 25 again) + More…',
+    (cp0.match(/onclick="invQaCases\(\d\)"/g) || []).length === 9 && /invQaCases\('more'\)/.test(cp0) && /✓ 25 pcs — this item/.test(up0)
+      && (up0.match(/onclick="invQaUpc\(25\)"/g) || []).length === 1 && /invQaUpc\(200\)/.test(up0) && /invQaUpc\('more'\)/.test(up0), { up0 });
+  globalThis.invQaCases(3); globalThis.invQaUpc(25);
+  check('tap 3 cases + "✓ 25 this item" → the fields hold 3 and 25 (shows "= 25 pcs · 75 pcs in all")', el('inv-qa-cases').value === 3 && el('inv-qa-upc').value === 25 && /75 pcs in all/.test(el('inv-qa-upc-show').textContent), { c: el('inv-qa-cases').value, u: el('inv-qa-upc').value });
+  globalThis.invQaUpc('more'); pads[pads.length - 1].cb(36); globalThis.invQaCases('more'); pads[pads.length - 1].cb(12);
+  check('More… opens our number pad (36 pcs / 12 cases typed there)', pads.length === 2 && el('inv-qa-upc').value === 36 && el('inv-qa-cases').value === 12 && /36 pcs \(More…\)/.test(el('inv-qa-upc-pad').innerHTML), null);
+  // Owner: "when we select the pieces (last step) it saves by itself" — only when the part #, the spot and the cases are in.
+  let submits = 0; globalThis.invQuickAddSubmit = () => { submits++; };
+  el('inv-qa-partnum').value = ''; el('inv-qa-shelf').value = ''; globalThis.invQaUpc(10);
+  check('tap the pieces with no box scanned yet → not saved, says what is missing', submits === 0 && /Scan the box first/.test(qaFlash[qaFlash.length - 1] || ''), qaFlash);
+  el('inv-qa-partnum').value = '23-2-3=2'; el('inv-qa-shelf').value = 'A1=1-1-1'; globalThis.invQaCases(3); globalThis.invQaUpc(10);
+  check('box + spot + cases in → tapping the pieces saves (Submit runs by itself)', submits === 1 && el('inv-qa-upc').value === 10, submits);
+  ['invQaCases', 'invQaUpc', 'invQaPadsRender', 'invQuickAddSubmit'].forEach(k => delete globalThis[k]);
+  // Owner: "Stock In must scan in with the UPC code (got '… is a UPC barcode, not part #') — do both, always save it as the part #".
+  check('Stock In: a scanned box UPC is turned into its part # (in the box, and again on Submit) — never saved as a UPC',
+    /if \(d && d\.partNum && String\(d\.partNum\)\.toUpperCase\(\) !== partNum\) \{ partNum = String\(d\.partNum\)\.toUpperCase\(\);/.test(ih)
+      && /A box UPC was scanned → put its part # in the box/.test(ih) && /invAskUpcPart\(partNum, function\(part\) \{ var pi = g\("inv-qa-partnum"\); if \(pi\) pi\.value = part;/.test(ih) && /Barcode ' \+ partNum \+ ' is not linked to a part # yet/.test(ih), null);
+  const lkUpc = await get('/inventory/lookup?code=012345678905');
+  check('…the lookup Stock In uses gives the part # for a UPC (or says it is not linked)', lkUpc && (lkUpc.partNum || lkUpc.upcNotLinked), lkUpc);
+}
+
+// Owner: "Stock In: tap the pieces = saved; a history under it so a mistake can be cancelled".
+console.log('\nStock In: My Stock In today → ✕ Cancel my own mistake');
+{
+  await post('/inventory/review-mode', { mode: 'manual' });
+  sq.prepare("INSERT INTO master_list (base_sku, name, part_num, location, cases, units_per_case) VALUES ('66-1-1','Bushing','66-1-1=10','C4=2-2-2',4,10)").run();
+  const upcL = await post('/inventory/upc-link', { upc: '076543210987', part: '66-1-1=10' });
+  const lk = await get('/inventory/lookup?code=076543210987');
+  check('a box UPC linked to its part # → the lookup gives the part # (Stock In saves 66-1-1=10, not the UPC)', lk.partNum && String(lk.partNum).toUpperCase() === '66-1-1=10', { upcL, lk: lk.partNum });
+  const bad = await call('/inventory/log', { method: 'POST', headers: H, body: JSON.stringify({ type: 'IN', partNum: '076543210987', location: 'C4=2-2-2', cases: 1, initials: 'TS' }) });
+  check('…a UPC is never saved as a part # (the Worker still refuses it)', bad.status === 400, bad.status);
+  const shelf = () => sq.prepare("SELECT SUM(cases) c FROM master_list WHERE part_num = '66-1-1=10'").get().c;
+  const s0 = shelf();
+  const a = await post('/inventory/log', { type: 'IN', partNum: '66-1-1=10', sku: '66-1-1', location: 'C4=2-2-2', cases: 2, initials: 'TS', isNew: true, unitsPerCase: 10 });
+  const ca = await post('/inventory/cancel-own', { id: a.d1Id });
+  const ra = sq.prepare('SELECT status, cancelled_by FROM inventory_log WHERE id = ?').get(a.d1Id);
+  check('✕ Cancel before approval → the entry is cancelled (Rejected, who kept), the shelf never changed', ca.ok && ca.cancelled === 'pending' && ra.status === 'Rejected' && /own mistake/.test(ra.cancelled_by) && shelf() === s0, { ca, ra });
+  const b = await post('/inventory/log', { type: 'IN', partNum: '66-1-1=10', sku: '66-1-1', location: 'C4=2-2-2', cases: 3, initials: 'TS', isNew: true, unitsPerCase: 10 });
+  const pendB = (await get('/inventory/pending')).items.find(x => x.d1Id === b.d1Id);
+  await post('/inventory/verify', { rowIndex: pendB.rowIndex, action: 'Approved', item: pendB });
+  const s1 = shelf();
+  const cb = await post('/inventory/cancel-own', { id: b.d1Id });
+  const rc = sq.prepare("SELECT type, cases, total_before tb, total_after ta FROM inventory_log WHERE notes LIKE '%' || ? || '%' ORDER BY id DESC").get('#' + b.d1Id);
+  check('✕ Cancel after approval (within 30 min) → reversed by the same Cancel managers use: shelf 4 → 7 → 4, History keeps Before → After',
+    s0 === 4 && s1 === 7 && cb.ok && shelf() === 4 && (!rc || (rc.type === 'OUT' && rc.cases === 3)), { s0, s1, cb, now: shelf(), rc });
+  const c2 = await post('/inventory/log', { type: 'IN', partNum: '66-1-1=10', location: 'C4=2-2-2', cases: 1, initials: 'SOMEONE' });
+  const cx = await post('/inventory/cancel-own', { id: c2.d1Id });
+  check('someone else\'s Stock In can\'t be cancelled here (ask a manager)', cx.ok === false && /Only the person who saved it/.test(cx.error), cx);
+  const again = await post('/inventory/cancel-own', { id: a.d1Id });
+  check('…and one already cancelled can\'t be cancelled twice', again.ok === false, again);
+  const { readFileSync } = await import('node:fs');
+  const ih = readFileSync(fileURLToPath(new URL('../inventory.html', import.meta.url)), 'utf8');
+  check('screen: "My Stock In today" under Stock In with ✕ Cancel (saved on this phone, today, New York time)',
+    /<div id="inv-qa-mine"/.test(ih) && /My Stock In today — made a mistake\? tap ✕ Cancel/.test(ih) && /wFetch\(W \+ '\/inventory\/cancel-own'/.test(ih) && /invQaMineAdd\(\{ id: d\.d1Id \|\| null, part: partNum/.test(ih), null);
+}
+
+// Owner: "Audit tab: take off Approval Mode, Other audit tools, Location Prefixes, Product Photos, Export Location List, Rename Locations".
+console.log('\nAudit tab: only the 📋 Full recount on screen');
+{
+  const { readFileSync } = await import('node:fs');
+  const ih = readFileSync(fileURLToPath(new URL('../inventory.html', import.meta.url)), 'utf8');
+  const panel = (ih.match(/<div class="ipanel" id="inv-panel-audit">[\s\S]*?\n<\/div>\n/) || [''])[0];
+  const hidden = (panel.match(/<div id="inv-audit-hidden" style="display:none">[\s\S]*?<\/div><!-- \/inv-audit-hidden -->/) || [''])[0];
+  check('Approval Mode, Other audit tools, Location Prefixes, Product Photos, Export Location List, Rename Locations are off the screen; the 📋 Full recount card shows',
+    /<div class="icard" id="inv-audit-mode-card" style="display:none">\s*<div class="icard-label">Approval Mode/.test(panel) && /<details id="inv-audit-old" style="display:none;/.test(panel)
+      && /id="inv-prefix-card"/.test(hidden) && /Product Photos/.test(hidden) && /Export Location List/.test(hidden) && /Rename Locations/.test(hidden)
+      && /<div class="icard" id="rc-card" style="border:2px solid var\(--accent\)">/.test(panel), null);
+}
+
+// Owner: "Stock In: put an ✕ on each scan bar so we can delete it and start again (no phone keyboard)".
+console.log('\nStock In: ✕ on each scan box');
+{
+  const { readFileSync } = await import('node:fs');
+  const ih = readFileSync(fileURLToPath(new URL('../inventory.html', import.meta.url)), 'utf8');
+  check('✕ next to Part # / Barcode and next to the spot; it empties the box, keeps the phone keyboard hidden (inputmode none) and is ready to scan again',
+    /onclick="invQaClear\('part'\)"/.test(ih) && /onclick="invQaClear\('spot'\)"/.test(ih)
+      && /window\.invQaClear = function\(which\) \{[\s\S]*?x\.value = ''; x\.removeAttribute\('data-kb-typing'\); x\.setAttribute\('inputmode', 'none'\);[\s\S]*?x\.focus\(\);/.test(ih), null);
+}
+
+// Owner: "1) test mode bar all the way at the bottom, not blocking anything; 2) Audit: 🏷 Barcode designer — type a part # (8-8-8=8) → 1 × 2 thermal label".
+console.log('\nTest mode bar at the bottom · 🏷 Barcode designer');
+{
+  const { readFileSync } = await import('node:fs');
+  const xa = readFileSync(fileURLToPath(new URL('../xf-access.js', import.meta.url)), 'utf8');
+  check('test mode: a thin bar at the very bottom (full width), the page gets room for it, no orange frame over the screen, clicks go through',
+    /el\.style\.cssText = 'position:fixed;left:0;right:0;bottom:0;height:22px;[^']*pointer-events:none'/.test(xa) && /document\.body\.style\.paddingBottom = '26px'/.test(xa)
+      && !/border:5px solid #f59e0b/.test(xa) && /fr0\.remove\(\)/.test(xa), null);
+  const ih = readFileSync(fileURLToPath(new URL('../inventory.html', import.meta.url)), 'utf8');
+  const src = (ih.match(/  function bdLabelHtml\(sku, copies\) \{[\s\S]*?\n  \}/) || [''])[0];
+  const lab = new Function('xfrEsc', src + '; return bdLabelHtml;')(v => String(v).replace(/</g, '&lt;'))('8-8-8=8', 3);
+  check('🏷 Barcode designer at the bottom of the Audit tab; the label is 2" × 1" (one per page, no margins), Code 128, part # printed under the bars; 3 copies → 3 labels',
+    /id="rc-out"><\/div>\s*<!-- 🏷 Barcode designer[\s\S]*?onclick="bdOpen\(\)"[^>]*>🏷 Barcode designer<\/button>/.test(ih) && /@page\{size:2in 1in;margin:0\}/.test(lab)
+      && (lab.match(/<div class="l"><svg class="b"><\/svg><div class="t">8-8-8=8<\/div><\/div>/g) || []).length === 3 && /format: 'CODE128'/.test(ih), lab.slice(0, 200));
+  // Owner: "barcode designer: our own keypad with the numbers, '-', '=', 'X', '=OLD', 1 to 9 and more (no phone keyboard)".
+  const padSrc = (ih.match(/  function bdPad\(\) \{[\s\S]*?\n  \}/) || [''])[0], keySrc = (ih.match(/  window\.bdKey = function\(k\) \{[\s\S]*?\n  \};/) || [''])[0];
+  const pad = new Function(padSrc + '; return bdPad();')();
+  const bx = { value: '' }, bwin = {}; new Function('window', 'g', 'bdPreview', keySrc)(bwin, () => bx, () => {});
+  ['8', '-', '8', '-', '8', '=', '8', 'X', 'X'].forEach(k => bwin.bdKey(k)); const typed1 = bx.value;
+  bwin.bdKey('⌫'); bwin.bdKey('⌫'); bwin.bdKey('⌫'); bwin.bdKey('=OLD'); const typed2 = bx.value;
+  check('Barcode designer: our own keypad (1–9, 0, -, =, X, =OLD, ⌫, C) + ⌨ More; the box keeps the phone keyboard hidden; taps type 8-8-8=8XX, ⌫ ⌫ ⌫ + =OLD → 8-8-8=OLD',
+    ['1','2','3','4','5','6','7','8','9','0','-','=','X','=OLD','⌫','CLR'].every(k => pad.includes(`onclick="bdKey('${k}')"`)) && /⌨ More/.test(pad)
+      && /id="bd-sku" type="text" inputmode="none"/.test(ih) && typed1 === '8-8-8=8XX' && typed2 === '8-8-8=OLD', { typed1, typed2 });
+  // Owner: "add all that to our keypad" — the other characters our part #s use (vendor list): & C K W W.1C W.2C J N; Clear is its own key (C is a letter now).
+  bwin.bdKey('CLR'); ['2','8','-','2','-','1','&','2','=','1','0','W.1C'].forEach(k => bwin.bdKey(k)); const t3 = bx.value;
+  bwin.bdKey('CLR'); ['6','1','8','5','3','-','K','=','5','X'].forEach(k => bwin.bdKey(k)); const t4 = bx.value;
+  bwin.bdKey('CLR'); ['2','8','-','4','-','1','C','=','2','W.2C'].forEach(k => bwin.bdKey(k)); const t5 = bx.value;
+  check('keypad also has & C K W W.1C W.2C J N (+ Clear): taps type 28-2-1&2=10W.1C, 61853-K=5X, 28-4-1C=2W.2C',
+    ['&','C','K','W','W.1C','W.2C','J','N'].every(k => pad.includes(`onclick="bdKey('${k}')"`)) && />Clear<\/button>/.test(pad)
+      && t3 === '28-2-1&2=10W.1C' && t4 === '61853-K=5X' && t5 === '28-4-1C=2W.2C', { t3, t4, t5 });
+  // Owner: "also including info of who and when print the label".
+  const labF = new Function('xfrEsc', src + '; return bdLabelHtml;')(v => String(v))('8-8-8=8', 1, 'Plug', 'Printed by Ana · Oct 4, 2026');
+  const bl = await post('/inventory/barcode-label', { sku: '8-8-8=8', name: 'Plug', copies: 3 });
+  const blRow = sq.prepare('SELECT sku, copies, by_user, ts FROM barcode_label_log ORDER BY id DESC').get();
+  check('who / when on the label ("Printed by Ana · Oct 4, 2026", tiny at the bottom) and every print kept on record (who / when / part # / how many)',
+    /<div class="n">Plug<\/div><div class="f">Printed by Ana · Oct 4, 2026<\/div>/.test(labF) && bl.ok && blRow.sku === '8-8-8=8' && blRow.copies === 3 && blRow.by_user === 'TS' && !!blRow.ts
+      && /wFetch\(W \+ '\/inventory\/barcode-label'/.test(ih) && /var foot = 'Printed' \+ \(who \? ' by ' \+ who : ''\)/.test(ih), { blRow });
+  // Owner: "can it also match up the product name too?"
+  const labN = new Function('xfrEsc', src + '; return bdLabelHtml;')(v => String(v).replace(/</g, '&lt;'))('30-3-4=10X', 1, 'Tee 3/4" (10 pcs)');
+  check('…the part # is matched to its product name (SKU Mgr) as you type ("⚠ not in SKU Mgr" if not), and the name prints small under the part #',
+    /<div class="t">30-3-4=10X<\/div><div class="n">Tee 3\/4(?:"|&quot;) \(10 pcs\)<\/div>/.test(labN) && /wFetch\(W \+ '\/inventory\/lookup\?code=' \+ encodeURIComponent\(sku\)\)/.test(ih)
+      && /is not in SKU Mgr — check the part #/.test(ih) && /var nm = BD\.nameFor === sku \? BD\.name : '';/.test(ih) && /bdLabelHtml\(sku, BD\.copies, nm, foot\)/.test(ih), labN.slice(-200));
+}
+
+// Owner: "Warehouse Lookup → Item Locator / Item Search: searching a part # shows the exact match first, then the rest;
+// each item with its product photo (the same photo as Inventory — change it in Location Plan and it changes here too)".
+console.log('\nWarehouse Lookup: exact part # first · product photos');
+{
+  const { readFileSync } = await import('node:fs');
+  const wh = readFileSync(fileURLToPath(new URL('../warehouse.html', import.meta.url)), 'utf8');
+  const src = ['whParent', 'whRank', 'whPackKey', 'whCompare'].map(n => (wh.match(new RegExp('function ' + n + '\\([^)]*\\) \\{[\\s\\S]*?\\n\\}')) || [''])[0]).join('\n');
+  const cmp = new Function(src + '; return whCompare;')();
+  const rows = ['30-3-4=2', '30-3-4=10XX', '30-3-4=10X', '30-3-45=10X', '130-3-4=10X', 'TEE 30-3-4', '30-3-4=1', '30-3-4=10', '30-3-4=OLD'].map(p => ({ p }));
+  const o1 = rows.slice().sort(cmp('30-3-4=10X', r => r.p, () => '')).map(r => r.p);
+  const o2 = rows.slice().sort(cmp('30-3-4', r => r.p, () => '')).map(r => r.p);
+  check('search 30-3-4=10X → 30-3-4=10X first, then its family in pack order (=OLD, =1, =2, =10, =10XX), then the rest',
+    o1[0] === '30-3-4=10X' && o1.slice(1, 6).join() === '30-3-4=OLD,30-3-4=1,30-3-4=2,30-3-4=10,30-3-4=10XX' && o1.indexOf('30-3-45=10X') > 5, o1);
+  check('search 30-3-4 → the 30-3-4 family first, in pack order (=OLD, =1, =2, =10, =10X, =10XX), not 30-3-45 / 130-3-4',
+    o2.slice(0, 6).join() === '30-3-4=OLD,30-3-4=1,30-3-4=2,30-3-4=10,30-3-4=10X,30-3-4=10XX' && o2.indexOf('30-3-45=10X') > 5 && o2.indexOf('130-3-4=10X') > 5, o2);
+  check('Item Locator and Item Search are sorted that way, and every card has the product photo (same /inventory/photos as Inventory; tap = big)',
+    /results\.sort\(whCompare\(raw, r => r\.partNum, r => r\.location\)\)/.test(wh) && /results\.sort\(whCompare\(raw, r => r\.sku, \(\) => ''\)\)/.test(wh)
+      && /\$\{whPhotoHtml\(r\.partNum\)\}/.test(wh) && /\$\{whPhotoHtml\(r\.sku\)\}/.test(wh) && /wFetch\(W \+ '\/inventory\/photos\?bases='/.test(wh), null);
+}
+
+// Owner: "SKU Mgr has a lot of weird part #s (like EFFMM-04-LF, 2490) — I'll clean them up when I have time".
+console.log('\nSKU Mgr: 🧹 Check part #s (read-only)');
+{
+  sq.prepare(`INSERT INTO master_list (base_sku, name, part_num, location, cases, units_per_case) VALUES
+    ('EFFMM','x','EFFMM-04-LF','C5=1-1-1',2,1), ('2490','x','2490','C5=1-1-2',1,1), ('x','x','012345678905','C5=1-1-3',1,1), ('30-9-9','x','30-9-9 =10x','C5=1-1-4',1,10),
+    ('30-9-9','x','30-9-9=10X','C5=1-1-5',3,10), ('30-9-8','x','30-9-8','C5=1-1-6',1,1), ('30-9-7','x','30-9-7==10','C5=1-1-7',1,1), ('30-9-6','x','30-9-6=10Q','C5=1-1-8',1,1),
+    ('27-3-1','x','27-3-1=10W.1C','C5=1-1-9',1,10), ('28-2-1&2C','x','28-2-1&2C=10','C5=1-2-1',1,10), ('61853-K','x','61853-K=5X','C5=1-2-2',1,5), ('8-8-8','x','8-8-8=OLD','C5=1-2-3',1,1),
+    ('30-4','x','30-4=10','C5=1-2-4',1,10), ('30-3-4-2','x','30-3-4-2=10','C5=1-2-5',1,10)`).run();
+  const before = sq.prepare('SELECT COUNT(*) n, SUM(cases) c FROM master_list').get();
+  const pc = await get('/inventory/partnum-check');
+  const has = (c, p) => pc.cats[c].rows.some(r => r.partNum === p);
+  const normal = ['30-9-9=10X', '27-3-1=10W.1C', '28-2-1&2C=10', '8-8-8=OLD'].filter(p => Object.keys(pc.cats).some(c => c !== 'dupes' && has(c, p)));
+  check('flags odd part #s by why: EFFMM-04-LF (vendor code), 2490 (just a number), a UPC, "30-9-9 =10x" (spaces / lowercase) + same part # written two ways, no "=", "==", odd ending',
+    pc.ok && has('letters', 'EFFMM-04-LF') && has('numonly', '2490') && has('upc', '012345678905') && has('chars', '30-9-9 =10x') && has('dupes', '30-9-9 =10x') && has('dupes', '30-9-9=10X')
+      && has('noeq', '30-9-8') && has('twoeq', '30-9-7==10') && has('suffix', '30-9-6=10Q') && normal.length === 0
+      && has('base', '30-4=10') && has('base', '30-3-4-2=10') && has('base', '61853-K=5X'), { normal, cats: Object.fromEntries(Object.entries(pc.cats).map(([k, v]) => [k, v.rows.map(r => r.partNum)])) });
+  // Owner: "I want columns so I can see all the weird part #s and go there to check".
+  const L = pc.list || [], li = p => L.find(r => r.partNum === p);
+  const { readFileSync: rfs3 } = await import('node:fs');
+  const ih3 = rfs3(fileURLToPath(new URL('../inventory.html', import.meta.url)), 'utf8');
+  check('table view: every odd row once, with all its reasons (spaces + written two ways), spot, cases, pcs/case; columns Spot · Part # · Name · Cases · Pcs/case · What looks wrong; walking order; filter, 🖨 print, ⬇ Excel',
+    li('EFFMM-04-LF') && li('EFFMM-04-LF').location === 'C5=1-1-1' && li('EFFMM-04-LF').cases === 2 && li('30-9-9 =10x') && li('30-9-9 =10x').why.join() === 'chars,dupes' && li('30-9-9 =10x').each === 10
+      && L.filter(r => r.partNum === '30-9-9 =10x').length === 1 && !li('8-8-8=OLD')
+      && />Spot<\/th><th[^>]*>Part #<\/th><th[^>]*>Name<\/th><th[^>]*;text-align:right">Cases<\/th><th[^>]*;text-align:right">Pcs\/case<\/th><th[^>]*>What looks wrong<\/th>/.test(ih3)
+      && /invPullWalkCompare\(wk\(a\.location\), wk\(b\.location\)\)/.test(ih3) && /l === 'GARAGE' \? 'GARAGE=' : l/.test(ih3) && /onclick="skumgrPnPrint\(\)"/.test(ih3) && /onclick="skumgrPnCsv\(\)"/.test(ih3) && /skumgrPnFilter\(/.test(ih3), L.slice(0, 4));
+  const after = sq.prepare('SELECT COUNT(*) n, SUM(cases) c FROM master_list').get();
+  const pkt5 = (await (await call('/auth/login', { method: 'POST', body: '{"username":"picker","password":"password1"}' })).json()).token;
+  const pw = await call('/inventory/partnum-check', { headers: { 'X-Cred-Token': pkt5 } });
+  check('…our part #s are #-#-#=#: 30-4=10, 30-3-4-2=10, 61853-K=5X → "not #-#-# before ="; normal ones (W.1C, &2C, =OLD) are not flagged; it changes nothing (same rows, same cases); managers only', before.n === after.n && before.c === after.c && pw.status === 403, { before, after, w: pw.status });
+}
+
+console.log('\n🌐 English / Español switch (xf-lang.js + xf-lang-es.js)');
+{
+  const { readFileSync, readdirSync } = await import('node:fs');
+  const vm = await import('node:vm');
+  const rf = f => readFileSync(fileURLToPath(new URL('../' + f, import.meta.url)), 'utf8');
+  const engine = rf('xf-lang.js'), dict = rf('xf-lang-es.js');
+  // A tiny fake browser: records whatever the engine does to the page.
+  const boot = (store, path = '/xf-tools-3829/inventory.html') => {
+    const did = { write: [], observers: 0, alert: null };
+    const alert0 = function () {};
+    const ctx = { localStorage: { getItem: k => (k in store ? store[k] : null), setItem: (k, v) => { store[k] = String(v); } },
+      location: { pathname: path, reload() { did.reload = true; } },
+      document: { readyState: 'loading', write: h => did.write.push(h), addEventListener() {}, querySelectorAll: () => [],
+        createElement: () => ({}), head: { appendChild() {} }, documentElement: { lang: 'en' }, createTreeWalker: () => ({ nextNode: () => null }) },
+      MutationObserver: function () { did.observers++; this.observe = () => {}; }, alert: alert0, confirm: alert0, prompt: alert0, Map, WeakMap };
+    ctx.window = ctx; vm.createContext(ctx); vm.runInContext(engine, ctx);
+    did.alertWrapped = ctx.alert !== alert0;
+    return { ctx, did };
+  };
+  const pages = readdirSync(fileURLToPath(new URL('../', import.meta.url))).filter(f => f.endsWith('.html'));
+  const v = (rf('index.html').match(/xf-lang\.js\?v=(\w+)/) || [])[1];
+  check('every page loads xf-lang.js (same version) in <head>, before the page draws', !!v && pages.length >= 15 && pages.every(f => { const h = rf(f); const i = h.indexOf('xf-lang.js?v=' + v); return i > 0 && i < h.indexOf('</head>'); }), pages.filter(f => !rf(f).includes('xf-lang.js?v=' + v)));
+  const ix = rf('index.html');
+  const pin = ix.slice(ix.indexOf('id="pin-screen"'), ix.indexOf('<!-- ═══ LAUNCHER'));
+  const lau = ix.slice(ix.indexOf('<div id="launcher"'), ix.indexOf('launcher-section-label', ix.indexOf('<div id="launcher"')));
+  const sw = h => /data-xf-lang="en"[^>]*onclick="XFLang\.set\('en'\)"[^>]*>English</.test(h) && /data-xf-lang="es"[^>]*onclick="XFLang\.set\('es'\)"[^>]*>Español</.test(h);
+  check('front page: English / Español switch on the Sign In card AND on the launcher (switch before signing in)', sw(pin) && sw(lau), null);
+  // English = the page exactly as before: nothing loaded, watched or wrapped.
+  for (const store of [{}, { xf_lang: 'en' }]) {
+    const { ctx, did } = boot(store);
+    check('English (' + (store.xf_lang ? 'chosen' : 'default') + '): no dictionary loaded, page not watched, pop-ups untouched, text unchanged',
+      ctx.XFLang.lang === 'en' && did.write.length === 0 && did.observers === 0 && !did.alertWrapped && ctx.XFLang.t('Sign In') === 'Sign In', { did, lang: ctx.XFLang.lang });
+  }
+  // Spanish: the dictionary is loaded on every page that has xf-lang.js.
+  const es = boot({ xf_lang: 'es' });
+  check('Español: the dictionary (xf-lang-es.js) loads', es.did.write.length === 1 && /src="xf-lang-es\.js\?v=\w+"/.test(es.did.write[0]), es.did.write);
+  vm.runInContext(dict, es.ctx);
+  const t = es.ctx.XFLang.t;
+  check('Español: words are swapped (Sign In → Entrar) and the page is watched for new text', t('Sign In') === 'Entrar' && es.did.observers === 1 && t('📤 Stock Out') !== '📤 Stock Out', [t('Sign In'), t('📤 Stock Out')]);
+  // Data must never be translated — part #s, UPCs, locations, names, numbers.
+  const data = ['30-3-4=10X', '30-3-4', '27-3-4C=2X', '30-3-4=5XX', '23-2-3=2', 'C1=11-2-10', 'BARN=1-1-2-1', 'GARAGE=2-1-1', 'BSMT=1-1-1', '2FL=3-2-1', 'FRONT', 'BO', '2FL', 'MIDDLE', 'BSMT', 'PR', 'GARAGE', 'BACK', 'C1', 'C2', 'BARN', 'C3', 'C4', 'C5',
+    'Front', 'Middle', 'Back', 'Barn', 'Garage', '012345678905', '0012345678905', 'X001ABC123', 'B0C1234567', 'MR', 'TS', 'Maria', 'Jose', '100', '3.5', '12/25'];
+  const changed = data.filter(s => t(s) !== s);
+  check('Español: part #s, UPCs, location codes, names and numbers are never translated', changed.length === 0, changed);
+  const keys = []; vm.runInContext('XFLang.add = (function (add) { return function (d) { __keys.push.apply(__keys, Object.keys(d)); return add(d); }; })(XFLang.add);', Object.assign(es.ctx, { __keys: keys })); vm.runInContext(dict, es.ctx);
+  const bad = keys.filter(k => /^(front|middle|back|barn|garage|basement|bsmt|bo|2fl|pr|c[1-5])$/i.test(k.trim()) || /\d+-\d+(-\d+)?(=|$)|[A-Z0-9]+=\d|\b\d{8,14}\b/.test(k));
+  check('the dictionary has no part #, UPC or location as a word to translate', keys.length > 500 && bad.length === 0, { n: keys.length, bad });
+  check('Español: mixed text keeps the data (only the words change)', /30-3-4=10X/.test(t('Stock Out 30-3-4=10X')) && /C1=11-2-10/.test(t('Location: C1=11-2-10')), [t('Stock Out 30-3-4=10X'), t('Location: C1=11-2-10')]);
+  check('people\'s own words (chat messages, customer drafts) are marked never-translate', (ix.match(/data-no-xl/g) || []).length >= 7 && /cs-draft-box/.test(engine) && /em-thread-bubble/.test(engine), null);
+  // Training keeps its own English/Spanish and follows the switch both ways.
+  const tr0 = { xf_lang: 'es', 'picker-lang': 'en' }; boot(tr0, '/xf-tools-3829/training.html');
+  const tr1 = boot({ xf_lang: 'es' }, '/xf-tools-3829/training.html');
+  check('Training follows the switch (picker-lang kept in sync) and translates itself (no dictionary load there)', tr0['picker-lang'] === 'es' && tr1.did.write.length === 0 && tr1.did.observers === 0 && /window\.setLang = function \(l\) \{ orig\(l\); put\(KEY/.test(engine), tr0);
+  const sw1 = { xf_lang: 'en' }; const b = boot(sw1); b.ctx.XFLang.set('es');
+  check('switching sets both xf_lang and picker-lang; back to English reloads the page (exact original English)', sw1.xf_lang === 'es' && sw1['picker-lang'] === 'es' && (() => { const st = { xf_lang: 'es' }; const x = boot(st); x.ctx.XFLang.set('en'); return st.xf_lang === 'en' && x.did.reload; })(), sw1);
+  check('on-screen keyboard Enter still finds the Sign In / Confirm button in Spanish', /entrar\|iniciar\|confirmar/.test(rf('xf-access.js')), null);
+  check('an <option> with no value keeps its English value when its text is translated', /nodeName === 'OPTION' && !el\.hasAttribute\('value'\)/.test(engine), null);
 }
 
 console.log('\n' + (failed ? '❌ ' + failed + ' check(s) FAILED' : '✅ all ' + passed + ' checks passed') + '\n');

@@ -980,6 +980,7 @@ body {
   --red:#DC2626;--red-light:#FEF2F2;
   --yellow:#CA8A04;--yellow-light:#FEFCE8;
   </style>
+<script src="xf-lang.js?v=20261004a"></script>
 </head>
 <body>
 <script>document.body.style.visibility="visible";</script>
@@ -1711,7 +1712,7 @@ body {
 <!-- ═══ AWD PLANNER APP ═══ -->
 
 <script src="xf-signout.js?v=20260924"></script>
-<script src="xf-access.js?v=20261001e"></script>
+<script src="xf-access.js?v=20261004x"></script>
 </body>
 <script>
 // ── Constants ────────────────────────────────────────────────────────────
@@ -2140,6 +2141,66 @@ function buildRe(term) {
   return new RegExp(esc.split(/\s+/).join('.*'), 'i');
 }
 
+// Exact part # first (owner): 0 = exactly what was typed · 1 = its family (the
+// part #s under that parent, e.g. 8-8-8 → 8-8-8=…) · 2 = starts with it ·
+// 3 = has it inside · 4 = matched by name only. Inside each: pack order
+// (=OLD, =1, =1X, =1XX … =2 … =10, =10X … =20 …), then location.
+function whParent(p) { return String(p || '').split('=')[0].trim().toUpperCase(); }
+function whRank(q, part) {
+  const P = String(part || '').trim().toUpperCase();
+  if (!P || !q) return 4;
+  if (P === q) return 0;
+  if (whParent(P) === whParent(q) && (q.indexOf('=') < 0 || P.indexOf(q.split('=')[0] + '=') === 0)) return 1;
+  if (P.indexOf(q) === 0) return 2;
+  return P.indexOf(q) >= 0 ? 3 : 4;
+}
+function whPackKey(p) {
+  const t = String(p || '').toUpperCase(), i = t.indexOf('='), suf = i < 0 ? '' : t.slice(i + 1).trim();
+  const m = suf.match(/^(\d+(?:\.\d+)?)(.*)$/);
+  return { base: i < 0 ? t : t.slice(0, i), n: m ? parseFloat(m[1]) : -1, rest: m ? m[2] : suf };
+}
+function whCompare(raw, partOf, locOf) {
+  const q = String(raw || '').trim().toUpperCase().replace(/\s+/g, '');
+  return (a, b) => {
+    const ra = whRank(q, partOf(a)), rb = whRank(q, partOf(b));
+    if (ra !== rb) return ra - rb;
+    const x = whPackKey(partOf(a)), y = whPackKey(partOf(b));
+    if (x.base !== y.base) return x.base < y.base ? -1 : 1;
+    if (x.n !== y.n) return x.n - y.n;
+    if (x.rest.length !== y.rest.length) return x.rest.length - y.rest.length;
+    if (x.rest !== y.rest) return x.rest < y.rest ? -1 : 1;
+    return String(locOf(a) || '').localeCompare(String(locOf(b) || ''));
+  };
+}
+// 🖼 Product photo — one per parent part #, the SAME photos as Inventory /
+// Transfer (/inventory/photos): change it there and it changes here too.
+const WH_PHOTO = {};
+function whPhotoHtml(part) {
+  const b = whParent(part), u = WH_PHOTO[b];
+  return `<img class="wh-ph" data-base="${b.replace(/"/g, '')}" alt="" ${u ? `src="${u}"` : ''} onclick="if(this.src)whPhotoBig(this.src)" onerror="this.removeAttribute('src')"
+    style="width:56px;height:56px;border-radius:9px;object-fit:cover;background:#fff;border:1px solid var(--border);flex-shrink:0;cursor:zoom-in;${u === '' ? 'visibility:hidden' : ''}">`;
+}
+function whPhotoLoad(parts) {
+  const need = [...new Set(parts.map(whParent).filter(b => b && !(b in WH_PHOTO)))];
+  if (!need.length) return;
+  need.forEach(b => { WH_PHOTO[b] = null; });
+  wFetch(W + '/inventory/photos?bases=' + encodeURIComponent(need.join(','))).then(r => r.json()).then(d => {
+    const got = (d && d.photos) || {};
+    need.forEach(b => { WH_PHOTO[b] = got[b] || ''; });
+    document.querySelectorAll('img.wh-ph').forEach(img => {
+      const u = WH_PHOTO[img.dataset.base];
+      if (u) { img.src = u; img.style.visibility = ''; } else if (u === '') img.style.visibility = 'hidden';
+    });
+  }).catch(() => { need.forEach(b => { delete WH_PHOTO[b]; }); });
+}
+function whPhotoBig(src) {
+  const ov = document.createElement('div');
+  ov.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,.8);display:flex;align-items:center;justify-content:center;z-index:99999;cursor:zoom-out';
+  ov.innerHTML = '<img src="' + String(src).replace(/"/g, '%22') + '" style="max-width:92vw;max-height:88vh;border-radius:10px;background:#fff">';
+  ov.onclick = () => ov.remove();
+  document.body.appendChild(ov);
+}
+
 function lookupUPC(partNum) {
   const u = DB.upc.find(r => r.variant.toLowerCase() === partNum.toLowerCase());
   if (!u) return '';
@@ -2171,6 +2232,7 @@ function doSearch(tab) {
       if ((r.casesNum || 0) <= 0) return false;
       return re.test(r.name + ' ' + r.partNum + ' ' + r.sku);
     });
+    results.sort(whCompare(raw, r => r.partNum, r => r.location));
   }
 
   // ── ITEM SEARCH ───────────────────────────────────────
@@ -2183,6 +2245,7 @@ function doSearch(tab) {
         const wt = parseFloat(r.weight) || 0;
         return { ...r, countWeight: (wt && countAmt) ? (wt * countAmt).toFixed(3) : '' };
       });
+    results.sort(whCompare(raw, r => r.sku, () => ''));
   }
 
   // ── AWD LOOKUP ────────────────────────────────────────
@@ -2297,6 +2360,7 @@ function renderCards(tab, results) {
     else if (tab === 'awd')    html += cardAWD(r);
   });
   html += '</div>';
+  if (tab === 'locator' || tab === 'search') setTimeout(() => whPhotoLoad(slice.map(r => tab === 'locator' ? r.partNum : r.sku)), 0);
 
   const totalPages = Math.ceil(total / PER_PAGE);
   if (totalPages > 1) {
@@ -2326,10 +2390,10 @@ function cardLocator(r) {
   const base   = baseSKU(r.partNum);
   return `<div class="card">
     <div class="card-top">
-      <div>
+      <div style="display:flex;gap:10px;align-items:center">${whPhotoHtml(r.partNum)}<div>
         <div class="card-sku">${r.partNum || '—'}</div>
         ${base && base !== r.partNum ? `<div class="card-base">base: ${base}</div>` : ''}
-      </div>
+      </div></div>
       <span class="badge ${cases > 10 ? 'badge-green' : cases > 0 ? 'badge-orange' : 'badge-red'}">${r.cases} cases</span>
     </div>
     <div class="card-name">${r.name || '—'}</div>
@@ -2357,7 +2421,7 @@ function cardLocator(r) {
 function cardSearch(r) {
   return `<div class="card">
     <div class="card-top">
-      <div><div class="card-sku">${r.sku || '—'}</div></div>
+      <div style="display:flex;gap:10px;align-items:center">${whPhotoHtml(r.sku)}<div class="card-sku">${r.sku || '—'}</div></div>
       <div style="display:flex;gap:6px;align-items:center">
       ${r.warehouseName ? `<span class="badge badge-purple">${r.warehouseName}</span>` : ''}
       ${wpCan() ? `<button onclick="wpOpen(this.dataset.sku)" data-sku="${wpAttr(r.sku)}" title="Edit this product" style="border:1px solid var(--border);background:var(--bg2);border-radius:6px;padding:2px 7px;cursor:pointer;font-size:12px">✏️ Edit</button>` : ''}
