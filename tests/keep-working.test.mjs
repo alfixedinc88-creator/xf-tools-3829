@@ -1377,5 +1377,33 @@ console.log('\nStock Out / Transfer: one search box (part # / UPC / name) · ✅
   delete globalThis.__ckWin; Object.keys(globalThis).filter(k => /^ck[A-Z]/.test(k)).forEach(k => delete globalThis[k]);
 }
 
+// Owner: "Stock In / Found on Shelf: Location → 'spot where you put it'; QTY Case = our own 1–9 + More…; QTY per Case = the
+// recommended size, then the box sizes we use a lot, then More… (type it on our own pad) — no phone keyboard".
+console.log('\nStock In / Found on Shelf: our own buttons for QTY Case / QTY per Case (no phone keyboard)');
+{
+  const { readFileSync } = await import('node:fs');
+  const ih = readFileSync(fileURLToPath(new URL('../inventory.html', import.meta.url)), 'utf8');
+  check('labels + no phone keyboard: "Spot where you put it", part # and spot are scan boxes (⌨ to type), QTY fields are hidden (filled by our buttons)',
+    /<label>Spot where you put it<\/label>/.test(ih) && /id="inv-qa-shelf" type="text" inputmode="none" placeholder="📷 Scan the spot where you are putting it"/.test(ih)
+      && /id="inv-qa-partnum" type="text" inputmode="none"/.test(ih) && /<input id="inv-qa-cases" type="hidden" value=""><input id="inv-qa-upc" type="hidden" value="">/.test(ih)
+      && !/id="inv-qa-cases" type="number"/.test(ih) && !/id="inv-qa-upc" type="number"/.test(ih), null);
+  check('saving is unchanged: Submit still reads QTY Case / QTY per Case from the same fields',
+    /var cases    = parseFloat\(g\("inv-qa-cases"\) && g\("inv-qa-cases"\)\.value\);/.test(ih) && /var upc      = \(g\("inv-qa-upc"\) && g\("inv-qa-upc"\)\.value\) \? parseFloat\(g\("inv-qa-upc"\)\.value\) : 0;/.test(ih) && /isNew: true, isPlaceholder: false, unitsPerCase: upc \|\| 0/.test(ih), null);
+  const src = (ih.match(/  var invQaRec = 0;[\s\S]*?\n  window\.invQaUpc = function\(n\) \{[\s\S]*?\n  \};/) || [''])[0];
+  const els = {}, el = id => els[id] || (els[id] = { value: '', innerHTML: '', textContent: '' }), pads = [];
+  const api = new Function('window', 'g', 'CK', 'xfrN', 'xfrKeypad', src + '\nreturn { setRec: v => { invQaRec = v; }, render: invQaPadsRender };')(
+    globalThis, el, { sizes: [1, 2, 5, 10, 20, 25, 50, 100, 200] }, v => Math.round((parseFloat(v) || 0) * 100) / 100, (t, v, cb) => pads.push({ t, cb }));
+  api.setRec(25); api.render();
+  const up0 = el('inv-qa-upc-pad').innerHTML, cp0 = el('inv-qa-cases-pad').innerHTML;
+  check('QTY Case: 1–9 + More…; QTY per Case: this item\'s size first (✓ 25 pcs — this item), then the common sizes (not 25 again) + More…',
+    (cp0.match(/onclick="invQaCases\(\d\)"/g) || []).length === 9 && /invQaCases\('more'\)/.test(cp0) && /✓ 25 pcs — this item/.test(up0)
+      && (up0.match(/onclick="invQaUpc\(25\)"/g) || []).length === 1 && /invQaUpc\(200\)/.test(up0) && /invQaUpc\('more'\)/.test(up0), { up0 });
+  globalThis.invQaCases(3); globalThis.invQaUpc(25);
+  check('tap 3 cases + "✓ 25 this item" → the fields hold 3 and 25 (shows "= 25 pcs · 75 pcs in all")', el('inv-qa-cases').value === 3 && el('inv-qa-upc').value === 25 && /75 pcs in all/.test(el('inv-qa-upc-show').textContent), { c: el('inv-qa-cases').value, u: el('inv-qa-upc').value });
+  globalThis.invQaUpc('more'); pads[pads.length - 1].cb(36); globalThis.invQaCases('more'); pads[pads.length - 1].cb(12);
+  check('More… opens our number pad (36 pcs / 12 cases typed there)', pads.length === 2 && el('inv-qa-upc').value === 36 && el('inv-qa-cases').value === 12 && /36 pcs \(More…\)/.test(el('inv-qa-upc-pad').innerHTML), null);
+  ['invQaCases', 'invQaUpc', 'invQaPadsRender'].forEach(k => delete globalThis[k]);
+}
+
 console.log('\n' + (failed ? '❌ ' + failed + ' check(s) FAILED' : '✅ all ' + passed + ' checks passed') + '\n');
 process.exit(failed ? 1 : 0);
