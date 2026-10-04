@@ -1270,12 +1270,23 @@ console.log('\nStock Out / Transfer: one search box (part # / UPC / name) · ✅
   const xEsc = (ih.match(/function xfrEsc\(v\) \{[^\n]*/) || [''])[0], xN = (ih.match(/function xfrN\(v\) \{[^\n]*/) || [''])[0], xT = (ih.match(/function xfrFmtT\(iso\) \{[^\n]*/) || [''])[0];
   const ckSrc = (ih.match(/  \/\/ ══ ✅ Checking ═+[\s\S]*?(?=\n  \/\/ 📷 camera)/) || [''])[0];
   const flashes = [], popups = [], pads = [];
-  const wFetch = (u, o) => call(u, { ...(o || {}), headers: { ...H, ...((o && o.headers) || {}) } });
-  const logAndApprove = async (body, verifyFor) => { const d = await post('/inventory/log', body); if (verifyFor && d && d.ok !== false) d._after = await post('/inventory/verify', verifyFor(d)); return d; };
-  const mk = auto => new Function('window', 'g', 'W', 'wFetch', 'invLogAndApprove', 'invFlash', 'INV_CRED_USER', 'invAuditAutoMode', 'DB', 'INV_PREFIXES', 'invPullWalkCompare', 'setTimeout', 'xfrPopup', 'xfrPopupClose', 'xfrKeypad', 'invUnlocked',
+  // the phone: storage (survives a reload) and the outbox (no WiFi → kept, sent later with the same id)
+  const mem = {}, phoneStore = { getItem: k => (k in mem ? mem[k] : null), setItem: (k, v) => { mem[k] = String(v); }, removeItem: k => { delete mem[k]; } };
+  let wifi = true; const outboxQ = [];
+  const phoneOutbox = async (url, opts) => {
+    const body = JSON.parse(opts.body || '{}'); body._requestId = 'rq-' + Math.random().toString(36).slice(2); const ent = { path: url, body };
+    if (!wifi) { outboxQ.push(ent); return new Response(JSON.stringify({ ok: true, queued: true })); }
+    return call(url, { method: 'POST', headers: H, body: JSON.stringify(body) });
+  };
+  const sendOutbox = async () => { while (outboxQ.length) { const e = outboxQ.shift();
+    if (e.log) { const d = await post('/inventory/log', e.body); if (e.verifyFor && d && d.ok !== false) await post('/inventory/verify', e.verifyFor(d)); continue; }
+    await call(e.path, { method: 'POST', headers: H, body: JSON.stringify(e.body) }); await call(e.path, { method: 'POST', headers: H, body: JSON.stringify(e.body) }); } };
+  const wFetch = (u, o) => wifi ? call(u, { ...(o || {}), headers: { ...H, ...((o && o.headers) || {}) } }) : Promise.reject(new Error('Failed to fetch'));
+  const logAndApprove = async (body, verifyFor) => { if (!wifi) { outboxQ.push({ log: true, body, verifyFor }); return { ok: true, queued: true }; } const d = await post('/inventory/log', body); if (verifyFor && d && d.ok !== false) d._after = await post('/inventory/verify', verifyFor(d)); return d; };
+  const mk = auto => new Function('window', 'g', 'W', 'wFetch', 'invLogAndApprove', 'invFlash', 'INV_CRED_USER', 'invAuditAutoMode', 'DB', 'INV_PREFIXES', 'invPullWalkCompare', 'setTimeout', 'xfrPopup', 'xfrPopupClose', 'xfrKeypad', 'invUnlocked', 'invPost', 'localStorage',
     xIsLoc + '\n' + xParent + '\n' + xEsc + '\n' + xN + '\n' + xT + '\n' + ckSrc + '\nreturn { CK: CK };')(
     (globalThis.__ckWin = globalThis), el, '', wFetch, logAndApprove, (m, t) => flashes.push(m), { displayName: 'Ana' }, auto, { master: [], products: [] },
-    ['BARN=', 'C1=', 'C2=', '2FL='], (a, b) => String(a).localeCompare(String(b)), () => 0, h => { popups.push(h); }, () => {}, (t, v, cb) => { pads.push(t); }, false);
+    ['BARN=', 'C1=', 'C2=', '2FL='], (a, b) => String(a).localeCompare(String(b)), () => 0, h => { popups.push(h); }, () => {}, (t, v, cb) => { pads.push(t); }, false, phoneOutbox, phoneStore);
   const settle = () => new Promise(r => setTimeout(r, 60));
   let ck = mk(true), w = globalThis.__ckWin;
   check('the Checking code is found and loads', ckSrc.length > 2000 && typeof w.ckGo === 'function', ckSrc.length);
@@ -1430,6 +1441,40 @@ console.log('\nStock Out / Transfer: one search box (part # / UPC / name) · ✅
   check('aisle C3=4: C3=4-1-1 done (who / when), C3=4-1-2 not yet; the next column can start now', st.ok && st.spots.length === 2 && st.spots.find(x => x.location === 'C3=4-1-1').done.by === 'TS' && !st.spots.find(x => x.location === 'C3=4-1-2').done && st.doneCount >= 1, st);
   w.rcGo('C3=4-1-2'); await settle(); await settle(); await settle();
   check('…scan the next column → it opens', /📍 C3=4-1-2/.test(el('rc-out').innerHTML) && /Aisle C3=4: <b>1 of 2<\/b> done/.test(el('rc-out').innerHTML), null);
+  // Owner: "Audit: when there's no WiFi, save it on the phone and send it when WiFi is back — never lose what they counted, or inventory won't match".
+  sq.prepare("INSERT INTO master_list (base_sku, name, part_num, location, cases, units_per_case) VALUES ('88-8-2','Tee','88-8-2=10','C3=4-2-1',4,10), ('88-8-2','Tee','88-8-2=20','C3=4-2-1',2,20)").run();
+  const p2 = () => sq.prepare("SELECT SUM(cases * units_per_case) p FROM master_list WHERE part_num LIKE '88-8-2=%'").get().p;
+  const q0 = p2(); // 4×10 + 2×20 = 80
+  globalThis.confirm = () => true; w.rcStop(); delete globalThis.confirm; // ✕ Stop the open column C3=4-1-2 first (a new one can't start while one is open)
+  w.rcGo('C3=4-2-1'); await settle(); await settle(); await settle(); await settle(); // opened with WiFi: the column + its boxes are kept on the phone
+  wifi = false;
+  w.rcGo('88-8-2=10'); await settle(); await settle(); w.rcCases(5); w.rcPcs(10); await settle();
+  check('📶 no WiFi: a box still scans (from what this phone saw) and the count is saved on the phone — nothing on the shelf yet', outboxQ.length === 1 && outboxQ[0].log && outboxQ[0].body.cases === 1 && p2() === q0, outboxQ.map(x => x.body));
+  // the phone reloads in the middle of the column (screen died, page refreshed…)
+  ck = mk(true); w = globalThis.__ckWin; w.rcRestore(); await settle();
+  let hr2 = el('rc-out').innerHTML;
+  check('…the page reloads mid-column → it comes back to C3=4-2-1 with what was counted (✓ counted 5) — nothing lost', /📍 C3=4-2-1/.test(hr2) && /✓ counted 5 case\(s\)/.test(hr2) && flashes.some(f => /Back to C3=4-2-1/.test(f)), hr2.slice(0, 400));
+  w.rcGo('88-8-2=10'); await settle(); await settle(); w.rcCases(9); w.rcPcs(10); await settle();
+  check('…the same box scanned again after the reload → "Already counted" (never counted twice)', outboxQ.length === 1 && flashes.some(f => /Already counted here: 5 case\(s\) of 88-8-2=10/.test(f)), outboxQ.length);
+  w.rcCheck(); hr2 = el('rc-out').innerHTML;
+  const iN2 = hr2.match(/<div[^>]*>88-8-2=20 [\s\S]*?rcNone\((\d+)\)/)[1];
+  w.rcNone(+iN2); await settle(); await settle(); await settle();
+  const colQ = outboxQ.find(x => !x.log);
+  check('…None found + the column done, still with no WiFi → both saved on the phone ("📶 sends when WiFi is back"), the screen says done', outboxQ.length === 3 && colQ && colQ.body.location === 'C3=4-2-1'
+    && /✅ C3=4-2-1 done/.test(el('rc-out').innerHTML) && flashes.some(f => /📶 saved on the phone, it sends when WiFi is back/.test(f)) && p2() === q0, outboxQ.map(x => x.path || 'log'));
+  const ridCol = colQ.body._requestId;
+  globalThis.invObRead = () => outboxQ.filter(x => x.log).map(x => ({ state: 'waiting', body: x.body }));
+  w.rcGo('C3=4-2-1'); await settle();
+  check('…scanning C3=4-2-1 again while its counts still wait on the phone → refused (it would count them twice)', flashes.some(f => /C3=4-2-1 has 2 count\(s\) still waiting on this phone/.test(f)) && /✅ C3=4-2-1 done/.test(el('rc-out').innerHTML), flashes.slice(-2));
+  delete globalThis.invObRead;
+  wifi = true; await sendOutbox(); await settle();
+  const cols = sq.prepare("SELECT COUNT(*) n FROM recount_columns WHERE location = 'C3=4-2-1'").get().n;
+  const chk = await post('/inventory/outbox/check', { ids: [ridCol] });
+  check('WiFi back → everything sends: shelf 4×10 → 5×10, 2×20 → 0; numbers add up 80 + 10 − 40 = 50 pcs; the column is done once (sent twice, saved once) and the outbox check says "saved"',
+    q0 === 80 && p2() === 50 && cols === 1 && chk.results[ridCol] && chk.results[ridCol].state === 'saved', { q0, now: p2(), cols, chk: chk.results[ridCol] });
+  const { readFileSync: rfs2 } = await import('node:fs');
+  check('✕ next to the recount scan box: empties it, keeps the phone keyboard hidden, closes the box being counted', /onclick="rcClear\(\)"/.test(rfs2(fileURLToPath(new URL('../inventory.html', import.meta.url)), 'utf8'))
+    && /window\.rcClear = function\(\) \{[\s\S]*?x\.setAttribute\('inputmode', 'none'\);[\s\S]*?if \(RC\.cur\) \{ RC\.cur = null; rcRender\(\); \}/.test(ckSrc), null);
   const pkt3 = (await (await call('/auth/login', { method: 'POST', body: '{"username":"picker","password":"password1"}' })).json()).token;
   const nrW = await call('/inventory/recount/new-round', { method: 'POST', headers: { 'X-Cred-Token': pkt3, 'Content-Type': 'application/json' }, body: '{}' });
   const nrM = await post('/inventory/recount/new-round', {}), st2 = await get('/inventory/recount/status?aisle=C3=4');
