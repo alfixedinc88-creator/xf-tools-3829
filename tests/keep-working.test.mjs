@@ -1315,6 +1315,12 @@ console.log('\nStock Out / Transfer: one search box (part # / UPC / name) · ✅
   const h1 = el('ck-out').innerHTML;
   w.ckShowAll(true); const h2 = el('ck-out').innerHTML;
   w.ckGo('77-7-1'); await settle(); await settle(); const h3 = el('ck-out').innerHTML;
+  // Owner: "All the family → show the total cases and total pieces of the whole family; take the ✏️ pcs/case box off the part # search".
+  const famCases = sq.prepare("SELECT SUM(cases) c FROM master_list WHERE part_num LIKE '77-7-1=%'").get().c;
+  check('👪 All the family → FAMILY TOTAL at the top = every shelf row: 18 case(s) · 200 pcs (=10: 3×10 + 2×25 + 4×10 + 7×10, =5: 2×5) — same as the database',
+    /👪 FAMILY TOTAL · \d+ part #s<\/div><div[^>]*>18 case\(s\) · 200 pcs<\/div>/.test(h2) && famCases === 18 && pcs() === 200 && !/FAMILY TOTAL/.test(h1), { famCases, p: pcs() });
+  check('…each part # adds its own spots\' pieces (77-7-1=10: 16 case(s) · 190 pcs — not 16 × 10 = 160)', /77-7-1=10<\/span><span>16 case\(s\) · 190 pcs<\/span>/.test(h2), null);
+  check('no ✏️ pcs/case button on the part # view (it stays on a spot)', !/ckPackAsk\(\\'part\\'/.test(ckSrc) && !/✏️ pcs \/ case/.test(h1 + h2) && /ckPackAsk\(\\'loc\\',/.test(ckSrc), null);
   check('scan 77-7-1=10 → only that part # (every spot, cases, pcs, who / when) + "👪 Show all the family"; the button / the parent 77-7-1 → all part #s',
     /BARN=2-1-1/.test(h1) && !/77-7-1=5</.test(h1) && /Show all the family \(3 part #s\)/.test(h1) && /Put here by/.test(h1) && /77-7-1=5</.test(h2) && /C1=9-9-9/.test(h2) && /all part #s/.test(h3), { h1: h1.slice(0, 200) });
   // manual Audit mode → a count change waits for a manager (nothing changes until approved)
