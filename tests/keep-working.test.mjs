@@ -1272,10 +1272,10 @@ console.log('\nStock Out / Transfer: one search box (part # / UPC / name) · ✅
   const flashes = [], popups = [], pads = [];
   const wFetch = (u, o) => call(u, { ...(o || {}), headers: { ...H, ...((o && o.headers) || {}) } });
   const logAndApprove = async (body, verifyFor) => { const d = await post('/inventory/log', body); if (verifyFor && d && d.ok !== false) d._after = await post('/inventory/verify', verifyFor(d)); return d; };
-  const mk = auto => new Function('window', 'g', 'W', 'wFetch', 'invLogAndApprove', 'invFlash', 'INV_CRED_USER', 'invAuditAutoMode', 'DB', 'INV_PREFIXES', 'invPullWalkCompare', 'setTimeout', 'xfrPopup', 'xfrPopupClose', 'xfrKeypad',
+  const mk = auto => new Function('window', 'g', 'W', 'wFetch', 'invLogAndApprove', 'invFlash', 'INV_CRED_USER', 'invAuditAutoMode', 'DB', 'INV_PREFIXES', 'invPullWalkCompare', 'setTimeout', 'xfrPopup', 'xfrPopupClose', 'xfrKeypad', 'invUnlocked',
     xIsLoc + '\n' + xParent + '\n' + xEsc + '\n' + xN + '\n' + xT + '\n' + ckSrc + '\nreturn { CK: CK };')(
     (globalThis.__ckWin = globalThis), el, '', wFetch, logAndApprove, (m, t) => flashes.push(m), { displayName: 'Ana' }, auto, { master: [], products: [] },
-    ['BARN=', 'C1=', 'C2=', '2FL='], (a, b) => String(a).localeCompare(String(b)), () => 0, h => { popups.push(h); }, () => {}, (t, v, cb) => { pads.push(t); });
+    ['BARN=', 'C1=', 'C2=', '2FL='], (a, b) => String(a).localeCompare(String(b)), () => 0, h => { popups.push(h); }, () => {}, (t, v, cb) => { pads.push(t); }, false);
   const settle = () => new Promise(r => setTimeout(r, 60));
   let ck = mk(true), w = globalThis.__ckWin;
   check('the Checking code is found and loads', ckSrc.length > 2000 && typeof w.ckGo === 'function', ckSrc.length);
@@ -1383,6 +1383,61 @@ console.log('\nStock Out / Transfer: one search box (part # / UPC / name) · ✅
   const want = ['OLD', '1', '1X', '1XX', '1XXX', '2', '2X', '3', '3X', '3XX', '10', '10X', '10XX', '11', '20', '21', '30', '31'];
   const got = mixed.slice().sort(ckCmp).map(p => p.split('=')[1]);
   check('part #s in pack order: =OLD, =1, =1X, =1XX, =1XXX, =2, =2X, =3 … =10, =10X, =10XX, =11, =20, =21, =30, =31', got.join() === want.join() && /order\.sort\(ckPartCompare\)/.test(ckSrc), got);
+  // Owner: "🔍 Audit → full recount (about once a year), column by column: scan the column → see it like Checking (photos);
+  // scan each box at least once, confirm cases + pieces per box (the same part # can have different pieces per box);
+  // not on record → cases + pieces (tap the pieces = saved); ✅ Done → anything not scanned: Found / None found (→ 0);
+  // finish the column before the next one."
+  console.log('\n🔍 Audit → 📋 Full recount, column by column');
+  sq.prepare(`INSERT INTO master_list (base_sku, name, part_num, location, cases, units_per_case) VALUES
+    ('88-8-1','Nipple','88-8-1=10','C3=4-1-1',5,10), ('88-8-1','Nipple','88-8-1=10','C3=4-1-1',3,25), ('88-8-1','Nipple','88-8-1=20','C3=4-1-1',2,20),
+    ('88-8-1','Nipple','88-8-1=5','C3=4-1-1',4,5), ('88-8-1','Nipple','88-8-1=50','C3=4-1-1',1,50), ('88-8-1','Nipple','88-8-1=2','C5=9-9-9',1,2)`).run();
+  sq.prepare("INSERT INTO locations (location, prefix, active, created_at) VALUES ('C3=4-1-2','C3=',1,'2026-01-01')").run();
+  const rpcs = () => sq.prepare("SELECT SUM(cases * units_per_case) p FROM master_list WHERE part_num LIKE '88-8-1=%'").get().p;
+  const rrows = loc => sq.prepare("SELECT part_num p, cases c, units_per_case u FROM master_list WHERE location = ? AND part_num LIKE '88-8-1=%' ORDER BY part_num, units_per_case").all(loc).map(x => x.p.split('=')[1] + ':' + x.c + '×' + x.u).join(' ');
+  const r0 = rpcs(); // 50 + 75 + 40 + 20 + 50 + 2 = 237
+  ck = mk(true); w = globalThis.__ckWin;
+  w.rcGo('C3=4-1-1'); await settle(); await settle(); await settle();
+  let ho = el('rc-out').innerHTML;
+  check('scan the column → everything on record there with photo, pcs / box and system cases (the =10 part # twice: ×10 and ×25), all "not scanned yet"; the aisle shows its columns',
+    (ho.match(/⬜ not scanned yet/g) || []).length === 5 && /88-8-1=10 <span[^>]*>· 10 pcs \/ box/.test(ho) && /88-8-1=10 <span[^>]*>· 25 pcs \/ box/.test(ho) && /Aisle C3=4: <b>0 of 2<\/b> done/.test(ho) && /📷 Scan a box on this column/.test(ho), ho.slice(0, 700));
+  // scan a box → cases → pieces (tap = saved)
+  w.rcGo('88-8-1=10'); await settle(); await settle(); ho = el('rc-out').innerHTML;
+  check('scan a box → 1️⃣ How many cases? (our buttons)', /1️⃣ How many cases\?/.test(ho) && /rcCases\('more'\)/.test(ho) && !/<input/.test(ho), null);
+  w.rcCases(6); ho = el('rc-out').innerHTML;
+  check('…then 2️⃣ Pieces per box: both sizes on record here first (✓ 10 pcs, ✓ 25 pcs), then common sizes + More…', /rcPcs\(10\)[^>]*>✓ 10 pcs/.test(ho) && /rcPcs\(25\)[^>]*>✓ 25 pcs/.test(ho) && /rcPcs\('more'\)/.test(ho), ho.slice(0, 400));
+  w.rcPcs(10); await settle(); await settle();
+  w.rcGo('88-8-1=10'); await settle(); await settle(); w.rcCases(3); w.rcPcs(25); await settle(); await settle();
+  w.rcGo('88-8-1=10'); await settle(); await settle(); w.rcCases(9); w.rcPcs(10); await settle(); await settle();
+  check('=10 ×10: 5 → 6 counted; =10 ×25: 3 confirmed; scanning ×10 again → "Already counted" (no double count)',
+    /10:6×10 10:3×25/.test(rrows('C3=4-1-1')) && flashes.some(f => /Already counted here: 6 case\(s\) of 88-8-1=10 × 10 pcs/.test(f)), rrows('C3=4-1-1'));
+  w.rcGo('88-8-1=2'); await settle(); await settle(); w.rcCases(6); w.rcPcs(2); await settle(); await settle();
+  w.rcGo('88-8-1=20'); await settle(); await settle(); w.rcCases(2); w.rcPcs(20); await settle(); await settle();
+  check('a box not on record at this column (88-8-1=2) → cases + pieces → saved as a new line (6 × 2 pcs)', /2:6×2/.test(rrows('C3=4-1-1')) && /➕ 88-8-1=2 · 2 pcs \/ box/.test(el('rc-out').innerHTML), rrows('C3=4-1-1'));
+  w.rcGo('C3=4-1-2'); await settle();
+  check('scanning the next column before this one is done → "Finish C3=4-1-1 first"', flashes.some(f => /Finish C3=4-1-1 first/.test(f)) && /📍 C3=4-1-1/.test(el('rc-out').innerHTML), null);
+  w.rcCheck(); ho = el('rc-out').innerHTML;
+  check('✅ Done → the ones not scanned (=5, =50) come up with ✓ Found / ✗ None found', /These were not scanned/.test(ho) && (ho.match(/rcFound\(\d+\)/g) || []).length === 2 && (ho.match(/rcNone\(\d+\)/g) || []).length === 2 && /88-8-1=5 /.test(ho) && /88-8-1=50 /.test(ho), ho.slice(0, 500));
+  const iNone = ho.match(/<div[^>]*>88-8-1=5 [\s\S]*?rcNone\((\d+)\)/)[1], iFound = ho.match(/<div[^>]*>88-8-1=50 [\s\S]*?rcFound\((\d+)\)/)[1];
+  w.rcNone(+iNone); await settle(); await settle();
+  check('✗ None found → 0', /5:0×5/.test(rrows('C3=4-1-1')) || !/5:/.test(rrows('C3=4-1-1')), rrows('C3=4-1-1'));
+  w.rcFound(+iFound); w.rcCases(1); w.rcPcs(40); await settle(); await settle(); await settle(); await settle();
+  check('✓ Found with a different box size (system ×50, boxes are ×40) → the ×50 line → 0 and a new ×40 line (1 case)', !/50:[1-9][0-9.]*×50/.test(rrows('C3=4-1-1')) && /50:1×40/.test(rrows('C3=4-1-1')), rrows('C3=4-1-1'));
+  const r1 = rpcs(), col = sq.prepare("SELECT location, by_user, items FROM recount_columns ORDER BY id DESC").get();
+  ho = el('rc-out').innerHTML;
+  check('the last one resolved → the column is done by itself (who / when kept), "✅ C3=4-1-1 done — scan the next column"', col && col.location === 'C3=4-1-1' && col.by_user === 'TS' && col.items === 7 && /✅ C3=4-1-1 done — scan the next column/.test(ho), col);
+  check('numbers add up: 237 pcs + 10 (5→6 ×10) + 12 (new 6×2) − 20 (None found 4×5) − 50 (×50 → 0) + 40 (new 1×40) = 229 pcs', r0 === 237 && r1 === 229, { r0, r1 });
+  const st = await get('/inventory/recount/status?aisle=C3=4');
+  check('aisle C3=4: C3=4-1-1 done (who / when), C3=4-1-2 not yet; the next column can start now', st.ok && st.spots.length === 2 && st.spots.find(x => x.location === 'C3=4-1-1').done.by === 'TS' && !st.spots.find(x => x.location === 'C3=4-1-2').done && st.doneCount >= 1, st);
+  w.rcGo('C3=4-1-2'); await settle(); await settle(); await settle();
+  check('…scan the next column → it opens', /📍 C3=4-1-2/.test(el('rc-out').innerHTML) && /Aisle C3=4: <b>1 of 2<\/b> done/.test(el('rc-out').innerHTML), null);
+  const pkt3 = (await (await call('/auth/login', { method: 'POST', body: '{"username":"picker","password":"password1"}' })).json()).token;
+  const nrW = await call('/inventory/recount/new-round', { method: 'POST', headers: { 'X-Cred-Token': pkt3, 'Content-Type': 'application/json' }, body: '{}' });
+  const nrM = await post('/inventory/recount/new-round', {}), st2 = await get('/inventory/recount/status?aisle=C3=4');
+  check('only a manager can start a new recount; after it every column shows "not done" again', nrW.status === 403 && nrM.ok && st2.spots.every(x => !x.done), { w: nrW.status, nrM });
+  const { readFileSync: rfs } = await import('node:fs');
+  const ihA = rfs(fileURLToPath(new URL('../inventory.html', import.meta.url)), 'utf8');
+  check('Audit tab: the recount card first; the old part # / location audit tools kept, folded under "🔧 Other audit tools"',
+    /id="rc-card"[\s\S]*?<details id="inv-audit-old"[\s\S]*?id="inv-audit-search-card"[\s\S]*?id="inv-audit-loc-list"><\/div>\s*<\/div>\s*<\/details>/.test(ihA) && /id="rc-inp" type="text" inputmode="none"/.test(ihA), null);
   const sp = await post('/inventory/check-spots', { pairs: [{ part: '77-7-1=10', location: 'c2=1-1-1' }] });
   check('who put it there (read-only route): last Stock In at the spot', sp.ok && sp.spots['77-7-1=10|C2=1-1-1'] && sp.spots['77-7-1=10|C2=1-1-1'].put.by && sp.spots['77-7-1=10|C2=1-1-1'].last.length === 3, sp);
   const sp2 = await post('/inventory/check-spots', { pairs: [{ part: '77-7-1=10', location: 'C2=1-1-2' }] });

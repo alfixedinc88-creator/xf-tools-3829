@@ -1058,6 +1058,24 @@ window.invCredLogin = async function() {
     </div>
   </div>
 
+  <!-- 📋 Full recount (owner): about once a year, column by column — scan the column,
+       scan each box type, tap cases + pieces (saves), ✅ Done → anything not scanned:
+       Found / None found. A column must be finished before the next one. -->
+  <div class="icard" id="rc-card" style="border:2px solid var(--accent)">
+    <div class="icard-label">📋 Full recount — column by column</div>
+    <div id="rc-progress" style="font-size:12px;color:var(--text2);margin-bottom:8px">Scan the column label to start.</div>
+    <div class="isearch-row">
+      <input class="isearch-inp" id="rc-inp" type="text" inputmode="none" autocomplete="off" placeholder="📷 Scan the column label, then each box" onkeydown="if(event.key==='Enter')rcGo()" onblur="xfrKbOff(this)">
+      <button type="button" class="inv-x-btn" title="Label won't scan? Type it" onclick="xfrKbOn('rc-inp')" style="font-size:15px">&#x2328;</button>
+      <button class="isearch-btn" onclick="rcGo()">Go</button>
+    </div>
+    <button class="icam-btn" id="rc-cam-btn" onclick="rcToggleCam()">&#x1F4F7; Scan Barcode</button>
+    <div id="rc-reader-wrap" style="display:none"><div id="rc-qr-reader"></div></div>
+  </div>
+  <div id="rc-out"></div>
+
+  <details id="inv-audit-old" style="border:1px solid var(--border);border-radius:12px;padding:8px 10px;background:var(--bg2)">
+  <summary style="cursor:pointer;font-size:13px;font-weight:700;color:var(--text2)">🔧 Other audit tools (search a part # / a location)</summary>
   <!-- Search card -->
   <div class="icard" id="inv-audit-search-card">
     <div class="icard-label">Search to Audit</div>
@@ -1106,6 +1124,7 @@ window.invCredLogin = async function() {
     </div>
     <div id="inv-audit-loc-list"></div>
   </div>
+  </details>
 
   <!-- Location Prefixes card -->
   <div class="icard" id="inv-prefix-card" style="margin-bottom:12px">
@@ -1819,7 +1838,7 @@ window.invCredLogin = async function() {
     }
     if (tab === "transfer" && window.xfrStepsRender) window.xfrStepsRender();
     if (tab === "check") { invAuditLoadMode(); ckLoadSizes(); setTimeout(function() { var x = g('ck-inp'); if (x) x.focus(); }, 60); }
-    if (tab === "audit") { invAuditLoadMode(); invPopulateAllPrefixDropdowns(); if(typeof invLoadPrefixes==='function') invLoadPrefixes(); }
+    if (tab === "audit") { ckLoadSizes(); rcStatus(); invAuditLoadMode(); invPopulateAllPrefixDropdowns(); if(typeof invLoadPrefixes==='function') invLoadPrefixes(); }
     if ((tab === "skumgr" || tab === "history" || tab === "soldout" || tab === "location") && !invUnlocked) {
       window._skumgrPendingTab = tab; // remember which tab to open after unlock
       invSwitchTab('review');
@@ -12270,7 +12289,7 @@ window.invCredLogin = async function() {
     wFetch(W + '/inventory/photos?bases=' + encodeURIComponent(need.join(','))).then(function(r) { return r.json(); }).then(function(d) {
       var got = (d && d.photos) || {}, any = false;
       need.forEach(function(b) { CK.photo[b] = got[b] || ''; if (got[b]) any = true; });
-      if (any) { if (CK.other) ckRenderOther(); else if (CK.kind === 'loc') ckRenderLoc(); else if (CK.kind === 'part') ckRenderPart(); }
+      if (any) { if (CK.other) ckRenderOther(); else if (CK.kind === 'loc') ckRenderLoc(); else if (CK.kind === 'part') ckRenderPart(); if (window.rcRender && RC.loc) rcRender(); }
     }).catch(function() { need.forEach(function(b) { delete CK.photo[b]; }); });
   }
   function ckPic(part, px) {
@@ -12637,6 +12656,259 @@ window.invCredLogin = async function() {
       CK.other = { at: o.at, step: 'box' }; ckRenderOther();
     }).catch(function(e) { invFlash('Error: ' + e.message, 'error'); });
   }
+
+
+  // ══ 📋 Full recount (🔍 Audit) ══════════════════════════════════════════
+  // Column by column (about once a year): scan the column label → what is on
+  // record there (photo, part #, pcs / box, system cases). Scan each box type
+  // → tap how many cases → tap pieces per box = saved. The same part # can be
+  // here with different pieces per box: each size is its own line (SKU Mgr
+  // keeps one row per part # + spot + Each/Case). Not on record → saved as a
+  // new line. ✅ Done → anything not scanned: Found (confirm cases + pieces) /
+  // None found (→ 0). The column must be finished before the next one starts.
+  // Saves are the same [AUDIT] entries as Checking / Audit (Audit Auto/Manual
+  // decides Review), so History keeps Part Total Before → After.
+  var RC = { loc: '', rows: [], extra: [], cur: null, checking: false, done: false, status: null, aisle: null };
+  function rcOut(h) { var o = g('rc-out'); if (o) o.innerHTML = h; }
+  function rcAisleOf(loc) { var L = String(loc || '').toUpperCase(), i = L.indexOf('='); if (i < 0) return L; var n = L.slice(i + 1).split('-')[0]; return L.slice(0, i + 1) + n; }
+  function rcKey(part, pcs) { return String(part).toUpperCase() + '|' + xfrN(pcs); }
+  window.rcStatus = function(aisle) {
+    wFetch(W + '/inventory/recount/status' + (aisle ? '?aisle=' + encodeURIComponent(aisle) : '')).then(function(r) { return r.json(); }).then(function(d) {
+      if (!d || !d.ok) return;
+      RC.status = d; if (aisle) RC.aisle = d;
+      var p = g('rc-progress');
+      if (p) p.innerHTML = 'This recount (since ' + ckE(xfrFmtT(d.roundStart).split(',')[0]) + '): <b>' + d.doneCount + '</b> column(s) done'
+        + (d.spotsWithStock ? ' of about <b>' + d.spotsWithStock + '</b> spots with stock' : '') + '. ' + (RC.loc ? '' : 'Scan the column label to start.')
+        + (invUnlocked ? ' <a href="#" onclick="rcNewRound();return false" style="font-size:11px;color:var(--text3)">Start a new recount (managers)</a>' : '');
+      if (RC.loc) rcRender();
+    }).catch(function() {});
+  };
+  window.rcNewRound = function() {
+    if (!confirm('Start a NEW recount? Every column will show as "not done" again. (Counts already saved stay.)')) return;
+    wFetch(W + '/inventory/recount/new-round', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}' }).then(function(r) { return r.json(); })
+      .then(function(d) { if (!d || !d.ok) { invFlash('Not started: ' + ((d && d.error) || 'error'), 'error'); return; } invFlash('New recount started', 'success'); rcStatus(RC.loc ? rcAisleOf(RC.loc) : ''); })
+      .catch(function() { invFlash('Not started — check WiFi', 'error'); });
+  };
+  window.rcGo = function(v) {
+    var inp = g('rc-inp');
+    v = String(v != null ? v : (inp && inp.value) || '').trim();
+    if (inp) inp.value = '';
+    if (!v) return;
+    var V = v.toUpperCase();
+    if (xfrIsLoc(V)) {
+      if (RC.loc && !RC.done && V !== RC.loc) { invFlash('Finish ' + RC.loc + ' first — tap ✅ Done with this column', 'error'); return; }
+      rcStart(V); return;
+    }
+    if (!RC.loc || RC.done) { invFlash('Scan the column label first', 'error'); return; }
+    rcBox(V);
+  };
+  function rcStart(loc) {
+    RC = { loc: loc, rows: [], extra: [], cur: null, checking: false, done: false, status: RC.status, aisle: null };
+    rcOut('<div class="icard" style="color:var(--text3)">Looking at ' + ckE(loc) + '…</div>');
+    wFetch(W + '/inventory/location-search?loc=' + encodeURIComponent(loc)).then(function(r) { return r.json(); }).then(function(d) {
+      RC.rows = ((d && d.results) || []).filter(function(r) { return ckNow(r) > 0 || ckNum(r.pendingCases) > 0; })
+        .sort(function(a, b) { return invPullWalkCompare(a.location, b.location) || ckPartCompare(a.partNum, b.partNum); });
+      rcRender();
+      ckPhotoLoad(RC.rows.map(function(r) { return r.partNum; }));
+      rcStatus(rcAisleOf(loc));
+    }).catch(function() { rcOut('<div class="icard" style="color:var(--red)">Could not load ' + ckE(loc) + ' — check WiFi</div>'); });
+  }
+  // A box was scanned: which part #? → how many cases → pieces per box (saves).
+  function rcBox(code) {
+    wFetch(W + '/inventory/lookup?code=' + encodeURIComponent(code)).then(function(r) { return r.json(); }).then(function(d) {
+      if (!d || !d.partNum) { invFlash(d && d.upcNotLinked ? 'Barcode ' + code + ' is not linked to a part # — ⌨ type the part #' : 'Not found: ' + code, 'error'); return; }
+      var part = String(d.partNum).toUpperCase();
+      var here = RC.rows.filter(function(r) { return String(r.partNum).toUpperCase() === part; });
+      var known = (d.locations || []).filter(function(l) { return String(l.partNum || '').toUpperCase() === part && ckNum(l.eachQty) > 0; });
+      RC.cur = { part: part, name: d.name || '', sku: d.sku || part, here: here, usual: known.length ? ckNum(known[0].eachQty) : 0, n: null, found: null };
+      ckPhotoLoad([part]);
+      rcRender();
+    }).catch(function() { invFlash('Lookup failed — check WiFi', 'error'); });
+  }
+  window.rcCases = function(n) {
+    if (!RC.cur) return;
+    if (n === 'more') { xfrKeypad('How many cases of ' + RC.cur.part + '?', '', function(v) { rcCases(v); }, true); return; }
+    RC.cur.n = parseFloat(n); rcRender();
+  };
+  window.rcCancel = function() { RC.cur = null; rcRender(); };
+  window.rcPcs = function(p) {
+    var c = RC.cur; if (!c || c.n == null) return;
+    if (p === 'more') { xfrKeypad('Pieces in each box of ' + c.part + '?', '', function(v) { rcPcs(v); }); return; }
+    p = parseFloat(p); if (!(p > 0)) return;
+    rcSave(c, c.n, p);
+  };
+  function rcBy() { return (INV_CRED_USER && INV_CRED_USER.displayName) || 'OPS'; }
+  // One count on a line that is on record (same as Checking / Audit).
+  function rcCountRow(r, actual, tag) {
+    var cur = ckNow(r), diff = Math.round((actual - cur) * 1000) / 1000, by = rcBy();
+    var note = diff === 0 ? '[AUDIT] Confirmed: ' + cur + ' cases verified correct (📋 Recount)'
+      : '[AUDIT] ' + (tag || '') + 'System: ' + cur + ' → Actual: ' + actual + ' (diff: ' + (diff > 0 ? '+' : '') + diff.toFixed(1) + ') (📋 Recount)';
+    var body = { type: diff < 0 ? 'OUT' : 'IN', partNum: r.partNum, sku: String(r.partNum).split('=')[0].trim(), name: '',
+      location: r.location, cases: Math.abs(diff), initials: by, notes: note, rowIndex: r.rowIndex, masterId: r.masterId || null, isNew: false, overwriteLocation: false };
+    var approve = (diff === 0 || invAuditAutoMode) ? function(d) { return { rowIndex: d.rowIndex, action: 'Approved', verifiedBy: by, item: Object.assign({}, body, { rowIndex: d.rowIndex, d1Id: d.d1Id, overwriteLocation: '' }) }; } : null;
+    return invLogAndApprove(body, approve);
+  }
+  // A box size not on record at this column → a new line (cases × pieces).
+  function rcNewLine(c, n, pcs, loc) {
+    var by = rcBy();
+    var body = { type: 'IN', partNum: c.part, sku: c.sku, name: c.name, location: loc, cases: n, initials: by,
+      notes: '[AUDIT] [RECOUNT] Found at ' + loc + ', not on record: ' + xfrN(n) + ' box(es) × ' + xfrN(pcs) + ' pcs (📋 Recount)',
+      isNew: true, isPlaceholder: false, rowIndex: null, masterRowIndex: null, masterId: null, _boxPcs: pcs, overwriteLocation: false };
+    return invLogAndApprove(body, invAuditAutoMode ? function(d) {
+      return { rowIndex: d.rowIndex, action: 'Approved', verifiedBy: by, item: Object.assign({}, body, { rowIndex: d.rowIndex, d1Id: d.d1Id, overwriteLocation: '', unitsPerCase: pcs }) };
+    } : null);
+  }
+  // In the "not scanned" check: when the last one is resolved, the column is done by itself.
+  function rcAfter() {
+    if (RC.checking && !RC.done && !RC.rows.some(function(x) { return !x._rc || x._rc.saving; }) && !RC.extra.some(function(x) { return x.saving; })) rcFinish();
+  }
+  function rcDone(d, label) {
+    if (d && d.ok === false) { invFlash('Error: ' + (d.error || 'not saved'), 'error'); return false; }
+    invFlash(label + (d && d.queued ? ' — 📶 saved on the phone' : (invAuditAutoMode ? '' : ' — a manager approves it in Review')), d && d.queued ? 'warn' : 'success');
+    return true;
+  }
+  function rcSave(c, n, pcs) {
+    var row = c.found || c.here.filter(function(r) { return Math.abs(ckNum(r.eachQty) - pcs) < 1e-9; })[0];
+    var k = rcKey(c.part, pcs);
+    if (row && row._rc) { invFlash('Already counted here: ' + xfrN(row._rc.n) + ' case(s) of ' + c.part + ' × ' + xfrN(pcs) + ' pcs', 'warn'); RC.cur = null; rcRender(); return; }
+    if (!row && RC.extra.some(function(x) { return x.k === k; })) { invFlash('Already counted here: ' + c.part + ' × ' + xfrN(pcs) + ' pcs', 'warn'); RC.cur = null; rcRender(); return; }
+    var loc = c.found ? c.found.location : RC.loc;
+    RC.cur = null;
+    if (row && Math.abs(ckNum(row.eachQty) - pcs) < 1e-9) {
+      row._rc = { n: n, pcs: pcs, saving: true }; rcRender();
+      rcCountRow(row, n).then(function(d) { row._rc.saving = false; if (!rcDone(d, 'Counted ' + row.partNum + ': ' + xfrN(n) + ' case(s) × ' + xfrN(pcs) + ' pcs')) row._rc = null; rcRender(); rcAfter(); })
+        .catch(function(e) { row._rc = null; rcRender(); invFlash('Error: ' + e.message, 'error'); });
+      return;
+    }
+    // "Found" with a different box size than on record: the old line → 0, the boxes as a new line.
+    var x = { k: k, part: c.part, name: c.name, n: n, pcs: pcs, saving: true };
+    RC.extra.push(x);
+    if (row) row._rc = { n: 0, pcs: ckNum(row.eachQty), saving: true, moved: pcs };
+    rcRender();
+    var first = row ? rcCountRow(row, 0, '[RECOUNT] different box size (' + xfrN(row.eachQty) + ' → ' + xfrN(pcs) + ' pcs) ') : Promise.resolve({ ok: true });
+    first.then(function(d0) {
+      if (row && !rcDone(d0, row.partNum + ' × ' + xfrN(row.eachQty) + ' pcs → 0')) { row._rc = null; RC.extra.pop(); rcRender(); return; }
+      if (row) row._rc.saving = false;
+      return rcNewLine(c, n, pcs, loc).then(function(d) { x.saving = false; if (!rcDone(d, 'New line ' + c.part + ': ' + xfrN(n) + ' case(s) × ' + xfrN(pcs) + ' pcs')) RC.extra = RC.extra.filter(function(e) { return e !== x; }); rcRender(); rcAfter(); });
+    }).catch(function(e) { invFlash('Error: ' + e.message, 'error'); rcRender(); });
+  }
+  // ✅ Done with this column → anything on record not scanned: Found / None found.
+  window.rcCheck = function() {
+    if (RC.rows.some(function(r) { return r._rc && r._rc.saving; }) || RC.extra.some(function(x) { return x.saving; })) { invFlash('Still saving — one moment', 'warn'); return; }
+    RC.checking = true; RC.cur = null;
+    if (!RC.rows.some(function(r) { return !r._rc; })) { rcFinish(); return; }
+    rcRender();
+  };
+  window.rcFound = function(i) {
+    var r = RC.rows[i]; if (!r || r._rc) return;
+    RC.cur = { part: String(r.partNum).toUpperCase(), name: r.name || '', sku: r.partNum, here: [r], usual: ckNum(r.eachQty), n: null, found: r };
+    rcRender();
+  };
+  window.rcNone = function(i) {
+    var r = RC.rows[i]; if (!r || r._rc) return;
+    r._rc = { n: 0, pcs: ckNum(r.eachQty), saving: true }; rcRender();
+    rcCountRow(r, 0, '[NONE FOUND] ').then(function(d) { r._rc.saving = false; if (!rcDone(d, 'None found: ' + r.partNum + ' → 0')) r._rc = null; rcRender(); rcAfter(); })
+      .catch(function(e) { r._rc = null; rcRender(); invFlash('Error: ' + e.message, 'error'); });
+  };
+  function rcFinish() {
+    var counted = RC.rows.filter(function(r) { return r._rc; }), changed = counted.filter(function(r) { return Math.abs(r._rc.n - ckNow(r)) > 1e-9; }).length + RC.extra.length;
+    var detail = counted.map(function(r) { return { part: r.partNum, pcs: ckNum(r.eachQty), system: ckNow(r), counted: r._rc.n }; })
+      .concat(RC.extra.map(function(x) { return { part: x.part, pcs: x.pcs, system: 0, counted: x.n, new: true }; }));
+    wFetch(W + '/inventory/recount/column-done', { method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ location: RC.loc, items: counted.length + RC.extra.length, changed: changed, detail: detail }) })
+      .then(function(r) { return r.json(); }).then(function(d) {
+        if (!d || !d.ok) { invFlash('Could not mark the column done — try ✅ again', 'error'); return; }
+        RC.done = true; RC.checking = false; rcRender(); rcStatus(rcAisleOf(RC.loc));
+        invFlash('✅ ' + RC.loc + ' done — scan the next column', 'success');
+        var inp = g('rc-inp'); if (inp) inp.focus();
+      }).catch(function() { invFlash('Could not mark the column done (WiFi?) — try ✅ again', 'error'); });
+  }
+  window.rcStop = function() {
+    if (!confirm('Stop ' + RC.loc + ' without finishing? What you counted is saved, but the column is NOT marked done.')) return;
+    RC = { loc: '', rows: [], extra: [], cur: null, checking: false, done: false, status: RC.status, aisle: null }; rcOut(''); rcStatus();
+  };
+  window.rcRender = function() {
+    if (!RC.loc) { rcOut(''); return; }
+    var left = RC.rows.filter(function(r) { return !r._rc; }).length;
+    var h = '<div class="icard"><div style="display:flex;justify-content:space-between;align-items:center;gap:8px"><div style="font-size:17px;font-weight:800;font-family:var(--mono)">📍 ' + ckE(RC.loc) + '</div>'
+      + (RC.done ? '' : '<button type="button" class="ixfr-mode-btn" style="padding:4px 9px;font-size:12px;flex:0 0 auto;width:auto" onclick="rcStop()">✕ Stop</button>') + '</div>'
+      + '<div style="font-size:12px;color:var(--text2);margin-top:2px">' + RC.rows.length + ' on record · ' + (RC.rows.length - left) + ' checked' + (RC.extra.length ? ' · ' + RC.extra.length + ' new line(s)' : '') + '</div>';
+    // This aisle: columns done (green) / not yet (grey), in walking order.
+    var A = RC.aisle && RC.aisle.spots;
+    if (A && A.length) {
+      var list = A.slice().sort(function(a, b) { return invPullWalkCompare(a.location, b.location); }), nd = list.filter(function(x) { return x.done; }).length;
+      h += '<div style="font-size:11.5px;color:var(--text2);margin-top:6px">Aisle ' + ckE(rcAisleOf(RC.loc)) + ': <b>' + nd + ' of ' + list.length + '</b> done</div><div style="display:flex;flex-wrap:wrap;gap:4px;margin-top:4px">'
+        + list.map(function(x) { var me = x.location === RC.loc;
+            return '<span title="' + ckE(x.done ? 'done ' + xfrFmtT(x.done.ts) + ' by ' + x.done.by : 'not done yet') + '" style="font-size:11px;font-family:var(--mono);padding:2px 6px;border-radius:6px;'
+              + (x.done ? 'background:var(--green-bg,#dcfce7);color:var(--green)' : me ? 'background:var(--accent);color:#fff' : 'background:var(--bg3);color:var(--text3)') + '">' + (x.done ? '✓ ' : '') + ckE(String(x.location).split('=').slice(1).join('=') || x.location) + '</span>'; }).join('') + '</div>';
+    }
+    h += '</div>';
+    if (RC.done) h += '<div class="icard" style="border-color:var(--green);background:var(--green-bg,#dcfce7);font-size:16px;font-weight:800;color:var(--green)">✅ ' + ckE(RC.loc) + ' done — scan the next column</div>';
+    // The box being counted now
+    var c = RC.cur;
+    if (c) {
+      h += '<div class="icard" style="border:2px solid var(--accent)"><div style="display:flex;gap:10px;align-items:center">' + ckPic(c.part, 64)
+        + '<div style="flex:1;min-width:0"><div style="font-family:var(--mono);font-weight:800;font-size:16px">' + ckE(c.part) + '</div>' + (c.name ? '<div style="font-size:12px;color:var(--text2)">' + ckE(c.name) + '</div>' : '')
+        + (c.found ? '<div style="font-size:12px;color:var(--orange);font-weight:700">Found it — confirm</div>' : !c.here.length ? '<div style="font-size:12px;color:var(--orange);font-weight:700">Not on record at this column — it will be added</div>' : '') + '</div>'
+        + '<button type="button" class="ixfr-mode-btn" style="flex:0 0 auto;width:auto;padding:6px 12px" onclick="rcCancel()">✕</button></div>';
+      if (c.n == null) {
+        var open = c.here.filter(function(r) { return !r._rc; }), sys = open.length === 1 ? ckNow(open[0]) : null;
+        h += '<div style="font-size:15px;font-weight:800;margin:10px 0 6px">1️⃣ How many cases?</div>' + ckGrid('rcCases(', sys, sys != null);
+      } else {
+        var mine = c.here.map(function(r) { return ckNum(r.eachQty); }).filter(function(p) { return p > 0; });
+        if (!mine.length && c.usual > 0) mine = [c.usual];
+        mine = mine.filter(function(p, i, a) { return a.indexOf(p) === i; });
+        var other = (CK.sizes || []).filter(function(p) { return mine.indexOf(p) < 0; }).slice(0, 9);
+        var b = 'padding:12px 0;border-radius:10px;border:1.5px solid var(--border);background:var(--bg3);color:var(--text);font-size:18px;font-weight:800;cursor:pointer;touch-action:manipulation';
+        h += '<div style="font-size:14px;margin:10px 0 6px">Cases: <b style="font-size:17px">' + ckE(xfrN(c.n)) + '</b> <button type="button" class="ixfr-mode-btn" style="padding:3px 8px;font-size:12px;width:auto" onclick="RC.cur.n=null;rcRender()">✏️</button></div>'
+          + '<div style="font-size:15px;font-weight:800;margin-bottom:6px">2️⃣ Pieces per box? <span style="font-size:12px;font-weight:600;color:var(--text3)">(tap = saved)</span></div>'
+          + mine.map(function(p) { return '<button type="button" onclick="rcPcs(' + p + ')" style="' + b + ';width:100%;margin-bottom:6px;font-size:21px;border:3px solid var(--green);background:var(--green-bg,#dcfce7);color:var(--green)">✓ ' + ckE(xfrN(p)) + ' pcs <span style="font-size:12px">' + (c.here.length ? 'on record here' : 'this item') + '</span></button>'; }).join('')
+          + '<div style="display:grid;grid-template-columns:repeat(5,1fr);gap:6px">' + other.map(function(p) { return '<button type="button" onclick="rcPcs(' + p + ')" style="' + b + '">' + ckE(xfrN(p)) + '</button>'; }).join('')
+          + '<button type="button" onclick="rcPcs(\'more\')" style="' + b + ';font-size:14px">More…</button></div>';
+      }
+      h += '</div>';
+    } else if (!RC.done) {
+      h += '<div class="icard" style="font-size:15px;font-weight:800;color:var(--accent)">' + (RC.checking ? '🔎 These were not scanned — look again:' : '📷 Scan a box on this column (each box type once)') + '</div>';
+    }
+    // On record here
+    RC.rows.forEach(function(r, i) {
+      if (RC.checking && !RC.done && r._rc) return;
+      var st = r._rc ? (r._rc.saving ? '⏳ saving…' : r._rc.moved ? '→ 0 (boxes are ' + xfrN(r._rc.moved) + ' pcs — new line)' : '✓ counted ' + xfrN(r._rc.n) + ' case(s)') : '⬜ not scanned yet';
+      h += '<div class="icard" style="' + (r._rc ? 'border-color:#0891B2;background:#E0F2FE' : RC.checking ? 'border-color:var(--orange)' : '') + '"><div style="display:flex;gap:10px;align-items:center">' + ckPic(r.partNum, 48)
+        + '<div style="flex:1;min-width:0"><div style="font-family:var(--mono);font-weight:800">' + ckE(r.partNum) + ' <span style="color:var(--accent)">· ' + (ckNum(r.eachQty) > 0 ? ckE(xfrN(r.eachQty)) : '?') + ' pcs / box</span></div>'
+        + (String(r.location).toUpperCase() !== RC.loc ? '<div style="font-family:var(--mono);font-size:12px;color:var(--text2)">📍 ' + ckE(r.location) + '</div>' : '')
+        + '<div style="font-size:12px;color:var(--text2)">System: ' + ckE(xfrN(ckNow(r))) + ' case(s) · <b>' + ckE(st) + '</b></div></div></div>'
+        + (RC.checking && !r._rc && !RC.done ? '<div style="display:flex;gap:8px;margin-top:8px"><button type="button" onclick="rcFound(' + i + ')" style="flex:1;padding:12px;border-radius:10px;border:none;background:var(--green);color:#fff;font-size:16px;font-weight:800;cursor:pointer">✓ Found</button>'
+          + '<button type="button" onclick="rcNone(' + i + ')" style="flex:1;padding:12px;border-radius:10px;border:1.5px solid var(--red);background:var(--bg);color:var(--red);font-size:16px;font-weight:800;cursor:pointer">✗ None found</button></div>' : '')
+        + '</div>';
+    });
+    RC.extra.forEach(function(x) {
+      h += '<div class="icard" style="border-color:var(--orange);background:var(--orange-bg,#fff7ed)"><div style="display:flex;gap:10px;align-items:center">' + ckPic(x.part, 48)
+        + '<div><div style="font-family:var(--mono);font-weight:800">➕ ' + ckE(x.part) + ' · ' + ckE(xfrN(x.pcs)) + ' pcs / box</div><div style="font-size:12px;color:var(--text2)">New line: <b>' + (x.saving ? '⏳ saving…' : ckE(xfrN(x.n)) + ' case(s)') + '</b></div></div></div></div>';
+    });
+    if (!RC.done && !RC.cur && !RC.checking) h += '<button type="button" onclick="rcCheck()" style="width:100%;padding:16px;border-radius:12px;border:none;background:var(--green);color:#fff;font-size:17px;font-weight:800;cursor:pointer">✅ Done with this column</button>';
+    rcOut(h);
+  };
+
+  var _rcQr = null, _rcCam = false;
+  window.rcToggleCam = function() {
+    var btn = g('rc-cam-btn');
+    if (_rcCam) { rcStopCam(); return; }
+    btn.textContent = '⏳'; btn.disabled = true;
+    invLoadQR().then(function() {
+      g('rc-reader-wrap').style.display = 'block';
+      _rcQr = new Html5Qrcode('rc-qr-reader');
+      return _rcQr.start({ facingMode: 'environment' }, { fps: 10, qrbox: { width: 280, height: 110 } }, function(code) { rcStopCam(); rcGo(code); }, function() {});
+    }).then(function() { _rcCam = true; btn.textContent = '⏹ Stop'; btn.className = 'icam-btn scanning'; btn.disabled = false; })
+      .catch(function() { invFlash('Camera error — check permissions', 'error'); rcStopCam(); });
+  };
+  function rcStopCam() {
+    if (_rcQr && _rcCam) _rcQr.stop().catch(function() {});
+    _rcQr = null; _rcCam = false;
+    var w = g('rc-reader-wrap'); if (w) w.style.display = 'none';
+    var btn = g('rc-cam-btn'); if (btn) { btn.textContent = '📷 Scan Barcode'; btn.className = 'icam-btn'; btn.disabled = false; }
+  }
+  // ══ end 📋 Full recount ═══
 
   // 📷 camera — same scanner library as the other tabs
   var _ckQr = null, _ckCam = false;
