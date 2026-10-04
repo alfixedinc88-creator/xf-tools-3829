@@ -1876,7 +1876,7 @@ body {
         </div>
         <div style="font-size:12px;color:var(--text3);margin-bottom:10px;line-height:1.5">
           Every label Auto Label buys waits here and prints by itself on the <b>🖨 Printer station</b> (the checkbox under Packing slips), every minute, labels first then slips.
-          Right after each label a 4×6 sticker prints with what is in that box: <b>bin, SKU, qty</b>.
+          What is in the box (<b>bin · SKU · qty</b>) is written in the blank strip at the bottom of the label, like USPS does; when it doesn't fit there, a separate 4×6 sticker prints right after the label.
           Put a 4×6 label printer on that computer (with <span style="font-family:var(--mono)">--kiosk-printing</span>, set it as the default printer).
         </div>
         <div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap;margin-bottom:10px">
@@ -8927,11 +8927,90 @@ function _psAlPrintHtml(html) {
     setTimeout(function() { try { fr.contentWindow.focus(); fr.contentWindow.print(); } catch (e) { console.error(e); } setTimeout(function() { fr.remove(); resolve(); }, 1000); }, 300);
   });
 }
+// Owner (photo of a USPS label with "24-5-5 / 2,5=3/4x1/2X PO C" at the
+// bottom): "save labels — put it on the same label, at the bottom". The
+// label is drawn on a canvas (PDF via pdf.js, or the image), the blank strip
+// at the bottom is found (only rows that are all white — the barcode and
+// anything printed are never covered) and "bin · SKU · ×qty" is written there.
+// No blank strip, not a 4×6 label, or not every item fits → the label prints
+// as it is plus the separate sticker, as before.
+var _psPdfjsP = null;
+function _psLoadPdfjs() {
+  if (window.pdfjsLib) return Promise.resolve(window.pdfjsLib);
+  if (_psPdfjsP) return _psPdfjsP;
+  _psPdfjsP = new Promise(function(res, rej) {
+    var sc = document.createElement('script'); sc.src = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js';
+    sc.onload = function() { try { window.pdfjsLib.GlobalWorkerOptions.workerSrc = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js'; res(window.pdfjsLib); } catch (e) { rej(e); } };
+    sc.onerror = function() { _psPdfjsP = null; rej(new Error('pdf.js did not load')); };
+    document.head.appendChild(sc);
+  });
+  return _psPdfjsP;
+}
+async function _psAlLabelCanvas(f) {
+  var cv = document.createElement('canvas'), ctx;
+  if (/pdf/.test(f.type)) {
+    var lib = await _psLoadPdfjs();
+    var pdf = await lib.getDocument({ data: await f.blob.arrayBuffer() }).promise, pg = await pdf.getPage(1);
+    var vp = pg.getViewport({ scale: 3 }); // 72 pt × 3 ≈ 216 dpi, close to a 203 dpi label printer
+    cv.width = Math.round(vp.width); cv.height = Math.round(vp.height); ctx = cv.getContext('2d');
+    ctx.fillStyle = '#fff'; ctx.fillRect(0, 0, cv.width, cv.height);
+    await pg.render({ canvasContext: ctx, viewport: vp }).promise;
+  } else {
+    var url = URL.createObjectURL(f.blob), img = new Image();
+    await new Promise(function(r, j) { img.onload = r; img.onerror = function() { j(new Error('label image did not load')); }; img.src = url; });
+    cv.width = img.naturalWidth; cv.height = img.naturalHeight; ctx = cv.getContext('2d');
+    ctx.fillStyle = '#fff'; ctx.fillRect(0, 0, cv.width, cv.height); ctx.drawImage(img, 0, 0); URL.revokeObjectURL(url);
+  }
+  return cv;
+}
+// The LOWEST run of all-white rows (inside a small side margin) in the
+// bottom 30% of the label that is at least minH tall — the strip under the
+// barcode, like USPS. → { y0, y1 } or null.
+function _psAlBlankBand(cv, minH) {
+  var ctx = cv.getContext('2d'), W = cv.width, H = cv.height, x0 = Math.round(W * 0.06), x1 = Math.round(W * 0.94);
+  var top = Math.round(H * 0.7), data = ctx.getImageData(0, top, W, H - top).data, best = null, run0 = -1;
+  var blank = function(r) { for (var x = x0; x < x1; x += 2) { var i = (r * W + x) * 4; if (data[i] < 200 || data[i + 1] < 200 || data[i + 2] < 200) return false; } return true; };
+  for (var r = 0; r <= H - top; r++) {
+    var b = r < H - top && blank(r);
+    if (b && run0 < 0) run0 = r;
+    if (!b && run0 >= 0) { if (r - run0 >= (minH || 1)) best = { y0: top + run0, y1: top + r }; run0 = -1; }
+  }
+  return best;
+}
+// Writes the box contents into the blank strip → true when every line fits.
+function _psAlStampLabel(cv, items) {
+  if (!items.length) return false;
+  var W = cv.width, H = cv.height;
+  if (Math.abs(W / H - 4 / 6) > 0.04) return false; // only a 4×6 label
+  var pad = Math.round(W * 0.012), minFs = Math.round(W * 0.03);
+  var band = _psAlBlankBand(cv, Math.ceil(items.length * minFs * 1.25) + 2 * pad); if (!band) return false;
+  var y0 = band.y0 + pad, y1 = band.y1 - pad, h = y1 - y0;
+  var fs = Math.min(Math.round(W * 0.055), Math.floor(h / (items.length * 1.25)));
+  if (fs < minFs) return false; // too small to read → the sticker instead
+  var ctx = cv.getContext('2d'); ctx.fillStyle = '#000'; ctx.textBaseline = 'top';
+  var maxW = W * 0.88, x = W * 0.06;
+  for (var i = 0; i < items.length; i++) {
+    var it = items[i], line = (it.bin || '—') + '   ' + (it.sku || '') + '   ×' + (it.qty || 0), size = fs;
+    do { ctx.font = 'bold ' + size + 'px monospace'; size--; } while (ctx.measureText(line).width > maxW && size > 8);
+    if (ctx.measureText(line).width > maxW) return false;
+    ctx.fillText(line, x, y0 + i * fs * 1.25);
+  }
+  return true;
+}
+function _psAlPrintCanvas(cv) {
+  return _psAlPrintHtml('<!doctype html><html><head><style>@page{size:4in 6in;margin:0}html,body{margin:0}img{width:4in;height:6in;display:block}</style></head><body><img src="' + cv.toDataURL('image/png') + '"></body></html>');
+}
 async function _psAlPrintOneLabel(l) {
   var f = await _psAlLabelBlob(l.id);
-  await _psAlPrintLabelBlob(f);
   var items = (l.items || []).length ? l.items : (((await _psAlFetch('/veeqo/autolabel/label-items?id=' + encodeURIComponent(l.id))) || {}).items || []);
-  await _psAlPrintHtml(_psAlBoxStripHtml(l, items));
+  var stamped = false;
+  try { var cv = await _psAlLabelCanvas(f); if (_psAlStampLabel(cv, items)) { await _psAlPrintCanvas(cv); stamped = true; } }
+  catch (e) { console.warn('[label] could not write on the label, printing the sticker instead:', e && e.message); }
+  if (!stamped) {
+    await _psAlPrintLabelBlob(f);
+    await _psAlPrintHtml(_psAlBoxStripHtml(l, items));
+  }
+  window._psAlLastStamped = stamped;
   await _psAlFetch('/veeqo/autolabel/labels-printed', { method: 'POST', body: { ids: [l.id], by: psInitials || '' } });
 }
 window.psAlPrintNewLabels = async function(silent) {
