@@ -86,10 +86,7 @@ window.lpCredLogin = async function() {
     });
     var data = await res.json();
     if (!res.ok) { err.textContent = data.error || 'Login failed'; return; }
-    if (!data.roles.includes('ops') && !data.roles.includes('mobile') && !data.roles.includes('mgmt')) {
-      err.textContent = 'This account does not have access to Label Printer.';
-      return;
-    }
+    // Owner: "Label Printer — make sure everyone can use it": any signed-in account.
     LP_CRED_TOKEN = data.token;
     window.LP_CRED_TOKEN = data.token;
     LP_CRED_USER = { displayName: data.displayName, roles: data.roles, userId: data.userId };
@@ -105,7 +102,7 @@ window.lpCredLogin = async function() {
 };
 
 (async function() {
-  if (!LP_CRED_TOKEN || !LP_CRED_USER || !(LP_CRED_USER.roles.includes('ops') || LP_CRED_USER.roles.includes('mobile') || LP_CRED_USER.roles.includes('mgmt'))) {
+  if (!LP_CRED_TOKEN || !LP_CRED_USER) {
     localStorage.removeItem('xf_cred_token'); localStorage.removeItem('xf_cred_user');
     LP_CRED_TOKEN = null; window.LP_CRED_TOKEN = null;
     return; // login gate already visible by default

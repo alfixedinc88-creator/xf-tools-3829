@@ -73,7 +73,7 @@ window.addEventListener('pageshow', function (e) { if (e.persisted) location.rel
       { key: 'skulookup', label: '🔎 SKU Lookup', sel: '#tab-skulookup' },
       { key: 'returns', label: '📦 Returns', sel: '#tab-returns', needs: 'Mgmt' },
       { key: 'calculator', label: '🧮 Price Calculator', sel: '#tab-calculator', needs: 'Mgmt' }] },
-    { key: 'labelprint', file: 'labelprint.html', name: '🏷️ Label Printer', needs: 'Ops / Mobile / Mgmt', card: card('labelprint.html'), tabs: [] },
+    { key: 'labelprint', file: 'labelprint.html', name: '🏷️ Label Printer', needs: 'any sign-in', card: card('labelprint.html'), tabs: [] },
     { key: 'lights', file: 'lights.html', name: '💡 Lights', needs: 'Ops / Mobile / Mgmt', card: card('lights.html'), tabs: [] },
     { key: 'reorder', file: 'reorder.html', name: '📦 Reorder Planner', needs: 'Mgmt', card: card('reorder.html'), tabs: [
       { key: 'reorder', label: '🧾 Reorder', sel: '#ro-tab-reorder' },
