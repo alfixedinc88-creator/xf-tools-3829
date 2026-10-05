@@ -1976,6 +1976,8 @@ body {
           <input class="ps-field-input" id="ps-al-w-lb" type="number" min="0" step="0.01" placeholder="Real lb" style="max-width:110px;margin:0;font-size:13px;padding:7px 10px">
           <button class="ps-btn-sm" onclick="psAlSaveWeightManual()">💾 Save weight</button>
         </div>
+        <div style="font-weight:700;font-size:12px;margin:14px 0 6px">📦 Confirmed boxes (exact SKU × quantity — used every time, whatever Veeqo says)</div>
+        <div id="ps-al-boxes" style="font-size:12px;overflow-x:auto"></div>
         <div style="font-weight:700;font-size:12px;margin:14px 0 6px">Saved real weights</div>
         <div id="ps-al-weights" style="font-size:12px;overflow-x:auto"></div>
       </div>
@@ -8564,6 +8566,7 @@ function psAlOnUnlock() {
   psAlLoadLog();
   psAlLoadLabels();
   psAlLoadReweigh();
+  psAlLoadBoxes();
   psAlLoadLowValue();
   psAlLoadCosts();
   psAlLoadSlips();
@@ -8799,7 +8802,7 @@ function _psAlRenderRun(r) {
         + '<td ' + td + '>' + (o.total != null ? '$' + Number(o.total).toFixed(2) : '') + '</td>'
         + '<td style="padding:6px 8px;border-bottom:1px solid var(--border);vertical-align:top;white-space:nowrap">' + _psAlPkgHtml(o) + '</td>'
         + '<td ' + td + '>' + _psAlEsc(label) + '</td>'
-        + '<td ' + td + '>' + (o.splitBoxes ? _psAlSplitBoxesHtml(o.splitBoxes) : _psAlEsc(o.reason)) + '</td></tr>';
+        + '<td ' + td + '>' + (o.splitBoxes ? _psAlSplitBoxesHtml(o.splitBoxes, o.number) : _psAlEsc(o.reason)) + '</td></tr>';
     }).join('') + '</table>';
   document.querySelectorAll('#ps-al-orders .ps-al-sel').forEach(function(c) { if (keep[c.value]) c.checked = true; });
   if (typeof psAlSelCount === 'function' && document.getElementById('ps-al-buyprint')) psAlSelCount();
@@ -8860,9 +8863,10 @@ function _psAlMergeTag(o) {
 // 33 + 33 + 34 — a label for each box, the pieces must match the order"):
 // the plan per box, and ✂️ Split → splits it in Veeqo (checked), then each
 // box is rate-checked and bought like any other order with 2+ boxes.
-function _psAlSplitBoxesHtml(boxes) {
-  var e = _psAlEsc, tot = 0;
-  var h = boxes.map(function(b, i) { return '<div style="padding:2px 0"><b>Box ' + (i + 1) + '</b> · ' + e(b.lb) + ' lb · ' + b.lines.map(function(l) { tot += l.pieces; return '<span style="font-family:var(--mono)">' + e(l.sku) + '</span> ×' + e(l.qty) + ' = <b>' + e(l.pieces) + ' pcs</b>'; }).join(', ') + '</div>'; }).join('');
+function _psAlSplitBoxesHtml(boxes, num) {
+  var e = _psAlEsc, tot = 0, n = _psAlEsc(String(num || '').replace(/[\\']/g, ''));
+  var h = boxes.map(function(b, i) { return '<div style="padding:2px 0"><button class="ps-btn-sm" style="padding:1px 7px;margin-right:4px" title="Weighed it? Fix this box\'s weight and size — used for this same box every time" onclick="psAlBoxEdit(\'' + n + '\',' + i + ')">✏️</button><b>Box ' + (i + 1) + '</b> · ' + e(b.lb) + ' lb'
+    + (b.confirmed ? ' <span style="color:var(--green);font-weight:700" title="Weighed and confirmed by ' + e(b.confirmed.by) + '">✅</span>' : '') + ' · ' + b.lines.map(function(l) { tot += l.pieces; return '<span style="font-family:var(--mono)">' + e(l.sku) + '</span> ×' + e(l.qty) + ' = <b>' + e(l.pieces) + ' pcs</b>'; }).join(', ') + '</div>'; }).join('');
   return '<div style="font-weight:700;color:var(--purple)">✂️ ' + boxes.length + ' boxes · ' + tot + ' pcs in all</div>' + h;
 }
 function _psAlSplitTag(o) {
@@ -8903,6 +8907,64 @@ window.psAlRateWhy = async function(btn, num) {
   row.innerHTML = '<td></td><td colspan="9" style="padding:8px 10px;background:var(--bg3);font-size:12px;line-height:1.6">' + h + '</td>';
   tr.parentNode.insertBefore(row, tr.nextSibling);
 };
+// 📦 ✏️ a box (owner: "click each box, fix its size and weight — Veeqo is
+// sometimes wrong; once we confirm it, the same SKU with the same quantity
+// always uses our weight, whatever Veeqo says, until we edit it again").
+window.psAlBoxEdit = function(num, idx) {
+  var r = window._psAlRunShown, o = r && (r.orders || []).find(function(x) { return x.number === num; });
+  if (!o) return;
+  var box = idx >= 0 ? (o.splitBoxes || [])[idx] : null;
+  var lines = box ? box.lines.map(function(l) { return { sku: l.sku, qty: l.qty }; }) : (o.items || []).map(function(i) { return { sku: i.sku, qty: i.qty }; });
+  var c = (box ? box.confirmed : o.confirmed) || null, pk = o.pkg || {};
+  var lb = c ? c.lb : box ? box.lb : (o.weightLb != null ? o.weightLb : pk.lb);
+  var d = c && c.l ? [c.l, c.w, c.h] : [pk.l, pk.w, pk.h];
+  var e = _psAlEsc, inp = 'class="ps-field-input" style="margin:0;padding:8px;font-size:16px;width:80px;text-align:center" type="number" min="0" step="0.01" inputmode="decimal"';
+  var ov = document.createElement('div'); ov.id = 'ps-al-boxedit';
+  ov.style.cssText = 'position:fixed;inset:0;z-index:9999;background:rgba(0,0,0,.45);display:flex;align-items:center;justify-content:center;padding:16px';
+  ov.innerHTML = '<div style="background:var(--bg2,#fff);color:var(--text);border-radius:14px;padding:18px;max-width:440px;width:100%;box-shadow:0 10px 40px rgba(0,0,0,.3)">'
+    + '<div style="font-size:16px;font-weight:800;margin-bottom:4px">📦 ' + (box ? 'Box ' + (idx + 1) + ' of ' + o.splitBoxes.length : 'Box') + ' · ' + e(num) + '</div>'
+    + '<div style="font-size:12px;color:var(--text2);margin-bottom:10px">' + lines.map(function(l) { return '<b style="font-family:var(--mono)">' + e(l.sku) + '</b> ×' + e(l.qty); }).join(', ') + '<br>Saved for <b>this same SKU + quantity</b> — every later box like it uses it, whatever Veeqo says, until it is edited again.</div>'
+    + '<div style="font-size:12px;font-weight:700;margin-bottom:4px">Weight (lb)</div><input id="ps-al-be-lb" ' + inp + ' value="' + e(lb != null ? lb : '') + '" style="margin:0;padding:8px;font-size:18px;width:120px;text-align:center;font-weight:800">'
+    + '<div style="font-size:12px;font-weight:700;margin:12px 0 4px">Size (inches) — length × width × height</div>'
+    + '<div style="display:flex;gap:6px;align-items:center"><input id="ps-al-be-l" ' + inp + ' value="' + e(d[0] || '') + '">×<input id="ps-al-be-w" ' + inp + ' value="' + e(d[1] || '') + '">×<input id="ps-al-be-h" ' + inp + ' value="' + e(d[2] || '') + '"></div>'
+    + (c ? '<div style="font-size:11px;color:var(--green);margin-top:8px">✅ Confirmed ' + e(c.lb) + ' lb by ' + e(c.by) + (c.at ? ' · ' + e(new Date(c.at).toLocaleString()) : '') + '</div>' : (box && box.lb != null ? '<div style="font-size:11px;color:var(--text3);margin-top:8px">System: ' + e(box.lb) + ' lb</div>' : ''))
+    + '<div id="ps-al-be-msg" style="font-size:12px;margin-top:8px;color:var(--red)"></div>'
+    + '<div style="display:flex;gap:8px;margin-top:12px;flex-wrap:wrap"><button class="ps-btn-primary" style="width:auto;padding:10px 20px" id="ps-al-be-save">✅ Save — use this weight</button>'
+    + '<button class="ps-btn-sm" onclick="document.getElementById(\'ps-al-boxedit\').remove()">Cancel</button>'
+    + (c ? '<button class="ps-btn-sm" id="ps-al-be-rm" style="margin-left:auto;color:var(--red)">Stop using it</button>' : '') + '</div></div>';
+  document.body.appendChild(ov);
+  var val = function(id) { return document.getElementById(id).value; };
+  var send = async function(body) {
+    var msg = document.getElementById('ps-al-be-msg'); msg.style.color = 'var(--text2)'; msg.textContent = 'Saving…';
+    var res = await _psAlFetch('/veeqo/autolabel/box-confirm', { method: 'POST', body: Object.assign({ lines: lines, order: num, systemLb: box ? (box.systemLb != null ? box.systemLb : box.lb) : o.weightLb, by: psInitials || '' }, body) });
+    if (res.ok === false) { msg.style.color = 'var(--red)'; msg.textContent = '✗ ' + (res.error || 'Not saved'); return; }
+    msg.textContent = 'Saved — checking the order again…';
+    var row = await _psAlFetch('/veeqo/autolabel/rate-one', { method: 'POST', body: { order: num } });
+    ov.remove();
+    if (row && row.ok !== false && row.decision) {
+      var cnt = r.counts; cnt[o.decision] = Math.max(0, (cnt[o.decision] || 0) - 1);
+      ['splitBoxes', 'confirmed', 'carrier', 'service', 'price', 'days', 'slip', 'tracking'].forEach(function(k) { delete o[k]; });
+      Object.keys(row).forEach(function(k) { if (k !== 'ok' && k !== 'order') o[k] = row[k]; });
+      o._checked = true; cnt[o.decision] = (cnt[o.decision] || 0) + 1;
+      _psAlRenderRun(r);
+    }
+    _psToast(body.remove ? 'Box weight no longer used' : '✅ Box saved — ' + (body.weightLb) + ' lb for this SKU + quantity from now on');
+    if (typeof psAlLoadBoxes === 'function') psAlLoadBoxes();
+  };
+  document.getElementById('ps-al-be-save').onclick = function() { send({ weightLb: val('ps-al-be-lb'), lengthIn: val('ps-al-be-l'), widthIn: val('ps-al-be-w'), heightIn: val('ps-al-be-h') }); };
+  var rm = document.getElementById('ps-al-be-rm'); if (rm) rm.onclick = function() { if (confirm('Stop using the confirmed weight for this box? The system weight is used again.')) send({ remove: true }); };
+  setTimeout(function() { var x = document.getElementById('ps-al-be-lb'); if (x) { x.focus(); x.select(); } }, 50);
+};
+// 📦 Confirmed boxes (Re-weigh card): what is saved, by whom, and the last changes.
+window.psAlLoadBoxes = async function() {
+  var box = document.getElementById('ps-al-boxes'); if (!box) return;
+  var d = await _psAlFetch('/veeqo/autolabel/box-confirmed');
+  if (d.ok === false) { box.textContent = '✗ ' + (d.error || 'Failed'); return; }
+  var e = _psAlEsc, th = 'style="text-align:left;padding:4px 6px;font-size:11px;color:var(--text3);border-bottom:1px solid var(--border)"', td = 'style="padding:4px 6px;border-bottom:1px solid var(--border)"';
+  box.innerHTML = (d.boxes || []).length ? '<table style="width:100%;border-collapse:collapse"><tr><th ' + th + '>Box contents (SKU × qty)</th><th ' + th + '>Weight</th><th ' + th + '>Size</th><th ' + th + '>By</th></tr>'
+    + d.boxes.map(function(b) { return '<tr><td ' + td + '><span style="font-family:var(--mono)">' + e(b.box_key.replace(/\|/g, ', ')) + '</span></td><td ' + td + '><b>' + e(b.weight_lb) + ' lb</b></td><td ' + td + '>' + (b.length_in ? e(b.length_in) + '×' + e(b.width_in) + '×' + e(b.height_in) + ' in' : '—') + '</td><td ' + td + '>' + e(b.by_user || '') + ' · ' + e(new Date(b.updated_at).toLocaleDateString()) + '</td></tr>'; }).join('') + '</table>'
+    : '<div style="color:var(--text3)">None yet — tap ✏️ on a box in Last run.</div>';
+};
 var _psAlMergeBusy = false;
 window.psAlMergeBuy = async function(btn, list) {
   if (_psAlMergeBusy) return;
@@ -8928,10 +8990,13 @@ window.psAlMergeBuy = async function(btn, list) {
 };
 function _psAlPkgHtml(o) {
   var p = o.pkg, e = _psAlEsc, h = '';
+  if (o.confirmed) h += '<div style="color:var(--green);font-weight:700" title="Weighed and confirmed by ' + e(o.confirmed.by) + ' — used for this same box every time, whatever Veeqo says">✅ ' + e(Number(o.confirmed.lb).toFixed(2)) + ' lb confirmed' + (o.confirmed.l ? ' · ' + e(o.confirmed.l) + '×' + e(o.confirmed.w) + '×' + e(o.confirmed.h) + ' in' : '') + '</div>';
   if (p && (p.l || p.w || p.h)) h += '<div>📦 ' + e(p.l || '?') + '×' + e(p.w || '?') + '×' + e(p.h || '?') + ' in</div>';
   if (p && p.lb != null) h += '<div>⚖️ ' + e(Number(p.lb).toFixed(2)) + ' lb <span style="color:var(--text3)">Veeqo</span></div>';
   if (o.weightLb != null) h += '<div style="color:var(--text3)">our ' + e(Number(o.weightLb).toFixed(2)) + ' lb</div>';
   if (o.boxes > 1) h += '<div style="color:var(--orange)">' + e(o.boxes) + ' boxes</div>';
+  if (!(o.boxes > 1) && !o.splitBoxes && (o.items || []).length && !{ bought: 1, merged: 1, has_label: 1, cancelled: 1 }[o.decision])
+    h += '<button class="ps-btn-sm" style="margin-top:3px;padding:2px 8px" title="Weighed the box? Fix its weight and size — used for this same SKU + quantity every time" onclick="psAlBoxEdit(\'' + e(String(o.number || '').replace(/[\\']/g, '')) + '\',-1)">✏️ Box</button>';
   return h || '<span style="color:var(--text3)">—</span>';
 }
 // Within each result, in Veeqo bin order (owner: "arrange Last run with the

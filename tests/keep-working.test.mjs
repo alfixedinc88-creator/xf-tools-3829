@@ -2324,7 +2324,7 @@ console.log('\nAuto Label → ✂️ over 20 lb: split into boxes in Veeqo (piec
   const { readFileSync } = await import('node:fs');
   const ph = readFileSync(fileURLToPath(new URL('../packship.html', import.meta.url)), 'utf8');
   check('…Last run: ✂️ Split into N boxes button with each box\'s pieces; ❓ No rate rows have 💲 Why? (every rate Veeqo gave)',
-    /onclick="psAlSplit\(this, /.test(ph) && /_psAlSplitBoxesHtml\(o\.splitBoxes\)/.test(ph) && /onclick="psAlRateWhy\(this, /.test(ph), null);
+    /onclick="psAlSplit\(this, /.test(ph) && /_psAlSplitBoxesHtml\(o\.splitBoxes, o\.number\)/.test(ph) && /onclick="psAlRateWhy\(this, /.test(ph), null);
   await post('/veeqo/autolabel/config', { config: { mode: 'off' } });
   globalThis.fetch = realFetch; delete env.VEEQO_API_KEY;
 }
@@ -2367,6 +2367,62 @@ console.log('\nAuto Label → no-wait times: Mon–Fri 3:50–5 pm, Sat 1–2:15
   globalThis.fetch = realFetch; delete env.VEEQO_API_KEY;
   const ph = readFileSync(fileURLToPath(new URL('../packship.html', import.meta.url)), 'utf8');
   check('…Rules: "No wait at these times (New York)" box, and the rules line says it in plain words', /data-k="noWaitTimes"/.test(ph) && /prints as soon as an order comes in/.test(ph), null);
+}
+
+// Owner: "click each box to fix its size and weight — Veeqo's weight is sometimes wrong. 100 pcs 3/8 pex angle: system 20 lb,
+// we weighed 19.98 lb. Once confirmed, the next 100 pcs 3/8 pex angle always uses 19.98 lb, whatever Veeqo says, until we edit it".
+console.log('\nAuto Label → 📦 confirmed box weight + size: same SKU × quantity always uses it, whatever Veeqo says');
+{
+  const realFetch = globalThis.fetch; const quotedAt = [];
+  const sell = (id, sku, g) => ({ id, sku_code: sku, weight_grams: g, product_title: 'T ' + sku, stock_entries: [{ warehouse_id: 55, location: '41-1-1' }] });
+  const mk = (id, number, s, qty, aid) => ({ id, number, channel: { name: 'eBay', type_code: 'ebay' }, total_price: 300, created_at: new Date(Date.now() - 864e5).toISOString(),
+    deliver_to: { first_name: 'C', last_name: number, address1: number + ' Ave', zip: '10001' }, line_items: [{ quantity: qty, sellable: s }],
+    allocations: [{ id: aid, warehouse: { id: 55 }, line_items: [{ quantity: qty, sellable: s }], allocation_package: { weight: 328, weight_unit: 'oz', depth: 14, width: 12, height: 10, dimensions_unit: 'inches' }, shipment: null }] });
+  const ANG = sell(1301, '100=3/8 ANGLE', 9298.6);   // system: 20.5 lb for 100 pcs (one unit — can't split)
+  const orders = [mk(8301, 'CB-1', ANG, 1, 7301), mk(8302, 'CB-2', ANG, 1, 7302), mk(8303, 'CB-3', ANG, 2, 7303)];
+  const allocOf = id => orders.flatMap(o => o.allocations).find(a => String(a.id) === String(id));
+  globalThis.fetch = async (u, o) => { u = String(u); const m = (o && o.method) || 'GET'; const J = (x, st) => new Response(JSON.stringify(x), { status: st || 200, headers: { 'Content-Type': 'application/json' } });
+    const body = o && o.body ? JSON.parse(o.body) : null; let mm;
+    if (u.includes('api.veeqo.com/orders?')) { if (/status=cancelled/.test(u)) return J([]); const q = decodeURIComponent((u.match(/query=([^&]+)/) || [])[1] || ''); return J(q ? orders.filter(x => x.number === q) : orders); }
+    if ((mm = u.match(/api\.veeqo\.com\/allocations\/(\d+)\/allocation_package$/)) && m === 'PUT') { Object.assign(allocOf(mm[1]).allocation_package, body.allocation_package); return J({}); }
+    if ((mm = u.match(/shipping\/quotes\/amazon_shipping_v2\?allocation_id=(\d+)/))) { const p = allocOf(mm[1]).allocation_package; quotedAt.push({ alloc: +mm[1], oz: +p.weight, dims: [p.depth, p.width, p.height].join('x') });
+      return J([{ title: 'USPS Ground Advantage', name: 'usps-ga', carrier: 'usps', total_net_charge: Math.round((5 + p.weight / 16) * 100) / 100, transit_days: 3 }]); }
+    if (u.includes('api.veeqo.com/')) return J([]);
+    return new Response('{}', { status: 401 }); };
+  env.VEEQO_API_KEY = 'k';
+  await post('/veeqo/autolabel/config', { config: { mode: 'preview', maxBoxLb: 20, noWaitTimes: '' } });
+  const run1 = await post('/veeqo/autolabel/run', {});
+  const D = (r, n) => r.orders.find(x => x.number === n) || {};
+  check('before: Veeqo/system says 20.5 lb for 100 pcs 3/8 pex angle → over 20 lb, held', D(run1, 'CB-1').decision === 'weigh', D(run1, 'CB-1').reason);
+  const c1 = await post('/veeqo/autolabel/box-confirm', { order: 'CB-1', lines: [{ sku: '100=3/8 ANGLE', qty: 1 }], weightLb: 19.98, lengthIn: 12, widthIn: 10, heightIn: 8, systemLb: 20.5 });
+  const r1 = await post('/veeqo/autolabel/rate-one', { order: 'CB-1' });
+  check('✏️ weighed 19.98 lb, 12×10×8 in, saved → the order is 👀 Would buy, rated at 19.98 lb (Veeqo box set to 319.68 oz, 12×10×8 before the rate)',
+    c1.ok && r1.decision === 'would_buy' && r1.confirmed?.lb === 19.98 && quotedAt.some(q => q.alloc === 7301 && q.oz === 319.68 && q.dims === '12x10x8'), { r1, quotedAt });
+  quotedAt.length = 0;
+  const run2 = await post('/veeqo/autolabel/run', {});
+  check('…the NEXT order of 100 pcs 3/8 pex angle uses 19.98 lb too, whatever Veeqo says (its box is set before the rate)',
+    D(run2, 'CB-2').decision === 'would_buy' && D(run2, 'CB-2').confirmed?.lb === 19.98 && quotedAt.some(q => q.alloc === 7302 && q.oz === 319.68), { d: D(run2, 'CB-2'), quotedAt });
+  check('…a different quantity (2 × 100 pcs) is not that box — the system weight is used for it', !D(run2, 'CB-3').confirmed && D(run2, 'CB-3').decision !== 'would_buy', D(run2, 'CB-3'));
+  const lg = sq.prepare("SELECT before_val, after_val, order_number, by_user FROM box_weight_log WHERE box_key = '100=3/8 ANGLE×1' ORDER BY id").all();
+  check('…on record: who, when, before → after (system 20.5 lb → 19.98 lb · 12×10×8 in), from which order', lg.length === 1 && /20\.5/.test(lg[0].before_val) && /19\.98 lb · 12×10×8 in/.test(lg[0].after_val) && lg[0].order_number === 'CB-1' && !!lg[0].by_user, lg);
+  // A split box: 2 × 50 pcs → each box "50=… × 1"; weighed 12.5 lb → the plan uses 12.5 lb.
+  orders.push(mk(8304, 'CB-S', sell(1302, '50=1/2XB(make sure)', 5896.7), 2, 7304));
+  await post('/veeqo/autolabel/box-confirm', { order: 'CB-S', lines: [{ sku: '50=1/2XB(make sure)', qty: 1 }], weightLb: 12.5 });
+  const rs = await post('/veeqo/autolabel/rate-one', { order: 'CB-S' });
+  check('…✂️ split boxes use their confirmed weight too (box of 1 × 50=… weighed 12.5 lb → both boxes 12.5 lb ✅)',
+    rs.decision === 'split' && rs.splitBoxes.length === 2 && rs.splitBoxes.every(b => b.lb === 12.5 && b.confirmed && b.systemLb === 13), rs.splitBoxes);
+  const rm = await post('/veeqo/autolabel/box-confirm', { order: 'CB-1', lines: [{ sku: '100=3/8 ANGLE', qty: 1 }], remove: true });
+  const r3 = await post('/veeqo/autolabel/rate-one', { order: 'CB-2' });
+  check('…"Stop using it" → back to the system weight (held again), and that is on record too', rm.ok && r3.decision === 'weigh' && !r3.confirmed
+    && sq.prepare("SELECT after_val FROM box_weight_log WHERE box_key = '100=3/8 ANGLE×1' ORDER BY id DESC").get()?.after_val === 'removed', r3);
+  check('…bad input refused: no weight, or only part of the size', !(await post('/veeqo/autolabel/box-confirm', { lines: [{ sku: 'X', qty: 1 }], weightLb: 0 })).ok
+    && !(await post('/veeqo/autolabel/box-confirm', { lines: [{ sku: 'X', qty: 1 }], weightLb: 3, lengthIn: 5 })).ok, null);
+  await post('/veeqo/autolabel/config', { config: { mode: 'off', noWaitTimes: 'Mon-Fri 15:50-17:00; Sat 13:00-14:15' } });
+  globalThis.fetch = realFetch; delete env.VEEQO_API_KEY;
+  const { readFileSync } = await import('node:fs');
+  const ph = readFileSync(fileURLToPath(new URL('../packship.html', import.meta.url)), 'utf8');
+  check('…Last run: ✏️ on each ✂️ box and ✏️ Box on a one-box order; a confirmed box shows ✅; list of confirmed boxes in the Re-weigh card',
+    /onclick="psAlBoxEdit\(\\'' \+ n \+ '\\',' \+ i \+ '\)"/.test(ph) && /psAlBoxEdit\(\\'' \+ e\(String\(o\.number/.test(ph) && /lb confirmed/.test(ph) && /id="ps-al-boxes"/.test(ph), null);
 }
 
 // Owner: "Audit — after scanning the column or a box, scroll down to the scan bar (see more info below); on the phone the
