@@ -2214,6 +2214,27 @@ console.log('\nPicking / Packing: a scan shows the WHOLE order (never just part 
     && /key: 'labelprint', file: 'labelprint\.html', name: '🏷️ Label Printer', needs: 'any sign-in'/.test(xa), null);
 }
 
+// Owner: "Print Label — the barcode comes out to the left, put it in the center; and let us pick how many labels to print".
+console.log('\nLabel Printer: barcode in the center of the label; pick how many to print');
+{
+  const { readFileSync } = await import('node:fs');
+  const lp = readFileSync(fileURLToPath(new URL('../labelprint.html', import.meta.url)), 'utf8');
+  const grab = re => (lp.match(re) || [''])[0];
+  const src = grab(/function lpBarcodeLayout\(val, s\) \{[\s\S]*?\n  \}/) + '\n' + grab(/function lpGenZPL\(loc, copies\) \{[\s\S]*?\n  \}/);
+  const S = { width: 406, height: 203, textSize: 24, textY: 6, barHeight: 100, barY: 36, barShift: 0, darkness: 10 };
+  const gen = new Function('lpGetSettings', src + '; return { lpGenZPL, lpBarcodeLayout };')(() => S);
+  const z = gen.lpGenZPL('BARN=1-1-2-1', 3);
+  const fo = z.match(/\^FO(\d+),\d+\^BY(\d)/), w = (11 * 'BARN=1-1-2-1'.length + 35) * 2;
+  check('a location barcode sits in the middle: same space left and right (406-dot label, 334-dot barcode → starts at 36)',
+    fo && +fo[1] === 36 && +fo[2] === 2 && Math.abs(+fo[1] - (406 - (+fo[1] + w))) <= 1, { fo, w });
+  const long = 'BACKROOM=12-34-56-78';
+  const z2 = gen.lpGenZPL(long, 1), fo2 = z2.match(/\^FO(\d+),\d+\^BY(\d)/), w2 = (11 * long.length + 35) * +fo2[2];
+  check('…a long location still fits on the label, centered (thinner bars instead of running off the edge)', +fo2[1] + w2 <= 406 && Math.abs(+fo2[1] - (406 - (+fo2[1] + w2))) <= 1, { fo2, w2 });
+  check('…"How many": 3 → the printer makes 3 of that label (^PQ3); default 1', /\^PQ3\n\^XZ/.test(z) && /\^PQ1\n\^XZ/.test(gen.lpGenZPL('A=1-1-1')), z);
+  check('…a How many box (− / + / 1·2·5·10) on Print Single Label and on Print Selected Labels',
+    /id="lp-single-copies"/.test(lp) && /id="lp-print-copies"/.test(lp) && /var n = lpCopies\('lp-single-copies'\);\s*var zpl = lpGenZPL\(loc, n\);/.test(lp) && /var n = lpCopies\('lp-print-copies'\);/.test(lp), null);
+}
+
 // Owner: "Audit — after scanning the column or a box, scroll down to the scan bar (see more info below); on the phone the
 // Inventory / Refresh / Sign out / Apps bar stays at the top but small — tap to show all".
 console.log('\nInventory: Audit scrolls to the scan bar after a scan; slim top bar on the phone');
