@@ -25606,7 +25606,7 @@ async function autolabelRun(env, opts = {}) {
         else if (!d.ok) { row.decision = d.cancelled ? 'merge' : 'buy_failed'; row.reason = `🧩 ${plan.nums}: ${d.error}`; }
         else {
           row.carrier = d.carrier; row.service = d.service; row.tracking = d.tracking;
-          if (String(o.id) === String(plan.lead.id)) { row.decision = 'bought'; row.price = d.price; row.days = d.days; row.reason = d.reason; row.slip = !!d.slip; }
+          if (String(o.id) === String(plan.lead.id)) { row.decision = 'bought'; row.price = d.price; row.days = d.days; row.reason = d.reason; row.slip = !!d.slip; row.boughtAt = new Date().toISOString(); }
           else if (x.marked) { row.decision = 'merged'; row.reason = `🧩 In one box with ${plan.lead.number} · tracking ${d.tracking}`; }
           else { row.decision = 'merge_fix'; row.reason = `🧩 Label ${d.tracking} was bought on ${plan.lead.number} for this box too, but Veeqo did not mark ${o.number} shipped — mark it shipped by hand in Veeqo with tracking ${d.tracking} (never buy it again)`; }
         }
@@ -25716,7 +25716,7 @@ async function autolabelRun(env, opts = {}) {
             else if (buysLeft < picks.length) { row.decision = 'ready'; row.reason = `${why} — label limit reached for this run/day`; }
             else {
               const tracks = [];
-              row.decision = 'bought'; row.reason = why;
+              row.decision = 'bought'; row.reason = why; row.boughtAt = new Date().toISOString();
               for (const p of picks) {
                 const pk = p.choice.pick;
                 const logBase = { orderId: o.id, allocId: p.alloc.id, orderNumber: o.number, channel: row.channel, customer: row.customer,
@@ -26212,12 +26212,14 @@ async function autolabelLastRunWithBuys(env, lr) {
     lr.counts = lr.counts || {};
     for (const o of lr.orders) {
       const b = by[autolabelOrderNum(o.number)];
+      if (b && !o.boughtAt) o.boughtAt = b.ts; // purchase time on the row (owner)
       if (!b || o.decision === 'bought' || o.decision === 'merged') continue;
       lr.counts[o.decision] = Math.max(0, (lr.counts[o.decision] || 0) - 1); if (!lr.counts[o.decision]) delete lr.counts[o.decision];
       o.wasDecision = o.decision;
       o.decision = b.action;
       o.tracking = b.tracking.join(', '); o.carrier = b.carrier || o.carrier; o.service = b.service || o.service;
       if (b.action === 'bought') o.price = Math.round(b.price * 100) / 100;
+      o.boughtAt = b.ts;
       o.reason = `${b.action === 'merged' ? '🧩 In a merged box' : '✅ Purchased'} ${new Date(b.ts).toLocaleTimeString('en-US', { timeZone: 'America/New_York', hour: 'numeric', minute: '2-digit' })}` + (o.reason ? ' · ' + o.reason : '');
       lr.counts[o.decision] = (lr.counts[o.decision] || 0) + 1;
     }
@@ -26508,7 +26510,10 @@ async function handleAutolabelRoute(path, method, url, request, env, session) {
   if (path === '/veeqo/autolabel/slips' && method === 'GET') {
     const printed = url.searchParams.get('status') === 'printed';
     const limit = Math.min(200, parseInt(url.searchParams.get('limit')) || 50);
-    const rows = await d1All(env,
+    const q = String(url.searchParams.get('q') || '').trim().toUpperCase().replace(/^#/, '');
+    const rows = q.length >= 3
+      ? await d1All(env, `SELECT * FROM packing_slip_queue WHERE UPPER(order_number) LIKE ? OR UPPER(tracking) LIKE ? OR UPPER(ship_to) LIKE ? ORDER BY id DESC LIMIT 50`, ['%' + q + '%', '%' + q + '%', '%' + q + '%'])
+      : await d1All(env,
       `SELECT * FROM packing_slip_queue WHERE printed_at IS ${printed ? 'NOT ' : ''}NULL ORDER BY id ${printed ? 'DESC' : 'ASC'} LIMIT ?`, [limit]);
     return veeqoResp({ ok: true, slips: await autolabelSlipPhotos(env, rows.map(autolabelSlipOut)) });
   }
@@ -26527,10 +26532,16 @@ async function handleAutolabelRoute(path, method, url, request, env, session) {
 
   // ── Shipping labels for the 🖨 Printer station ──
   // GET ?status=new|printed&limit= -> labels bought by Auto Label.
+  // ?q= (owner: "search the order to reprint the label or packing slip") →
+  // every label for that order # / tracking #, printed or not, any day.
   if (path === '/veeqo/autolabel/labels' && method === 'GET') {
     const printed = url.searchParams.get('status') === 'printed';
     const limit = Math.min(200, parseInt(url.searchParams.get('limit')) || 50);
-    const rows = await d1All(env, `SELECT id, order_number, channel, tracking, carrier, service, created_at, printed_at, printed_by, print_count, last_error, items
+    const q = String(url.searchParams.get('q') || '').trim().toUpperCase().replace(/^#/, '');
+    const rows = q.length >= 3
+      ? await d1All(env, `SELECT id, order_number, channel, tracking, carrier, service, created_at, printed_at, printed_by, print_count, last_error, items
+          FROM label_print_queue WHERE UPPER(order_number) LIKE ? OR UPPER(tracking) LIKE ? ORDER BY id DESC LIMIT 50`, ['%' + q + '%', '%' + q + '%'])
+      : await d1All(env, `SELECT id, order_number, channel, tracking, carrier, service, created_at, printed_at, printed_by, print_count, last_error, items
       FROM label_print_queue WHERE printed_at IS ${printed ? 'NOT ' : ''}NULL ORDER BY id ${printed ? 'DESC' : 'ASC'} LIMIT ?`, [limit]);
     return veeqoResp({ ok: true, labels: rows.map(r => { let items = []; try { items = JSON.parse(r.items || '[]') || []; } catch (_) {} return { ...r, items }; }) });
   }

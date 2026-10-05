@@ -1894,6 +1894,11 @@ body {
           <button class="ps-btn-primary" style="width:auto;padding:8px 18px" onclick="psAlPrintNewLabels()">🖨 Print new labels now</button>
           <span id="ps-al-label-msg" style="font-size:12px;color:var(--text2);font-family:var(--mono)"></span>
         </div>
+        <div style="display:flex;gap:6px;align-items:center;flex-wrap:wrap;margin-bottom:6px">
+          <input class="ps-field-input" id="ps-al-find" placeholder="🔎 Find to reprint: order #, tracking (scan the label) or customer" style="max-width:420px;flex:1;margin:0;font-size:13px;padding:8px 10px"
+            oninput="psAlFind(this.value)" onkeydown="if(event.key==='Enter'){event.preventDefault();psAlFind(this.value,true)}">
+        </div>
+        <div id="ps-al-find-res" style="font-size:12px;margin-bottom:10px"></div>
         <div style="display:flex;gap:6px;align-items:center;flex-wrap:wrap;margin-bottom:10px">
           <input class="ps-field-input" id="ps-al-label-order" placeholder="Order number" style="max-width:220px;margin:0;font-family:var(--mono);font-size:13px;padding:7px 10px">
           <button class="ps-btn-sm" onclick="psAlLabelAdd()">+ Add label for an order (already bought)</button>
@@ -8660,6 +8665,7 @@ window.psAlSetMode = function(mode) {
 window.psAlRunPreview = async function() {
   var btn = document.getElementById('ps-al-run-btn');
   btn.disabled = true; btn.textContent = '⏳ Checking Veeqo + channels…';
+  window._psAlBuyMsg = null;
   try {
     var d = await _psAlFetch('/veeqo/autolabel/run', { method:'POST', body:{} });
     if (d.ok === false) { _psToast(d.error || 'Run failed', 'error'); return; }
@@ -8695,7 +8701,7 @@ window.psAlBuyPrint = async function() {
   var lows = sel.filter(function(c) { return c.dataset.low; }).length;
   if (!confirm('Buy REAL labels for ' + sel.length + ' order' + (sel.length === 1 ? '' : 's') + ' now and print them?\n\nAbout $' + known.toFixed(2) + (unknown ? ' + ' + unknown + ' not rate-checked yet' : '') + '. Each order is checked again first (cancelled, already has a label, weight, rates).\nAn order with more than 4 items prints its packing slip right under its label.'
     + (lows ? '\n\n💸 ' + lows + ' low value order' + (lows === 1 ? '' : 's') + ' will be bought anyway and kept on the 💸 Low value list (to check the listing price later).' : ''))) return;
-  _psAlBuyBusy = true;
+  _psAlBuyBusy = true; window._psAlBuyMsg = null;
   var ok = 0, bad = [];
   try {
     for (var i = 0; i < sel.length; i++) {
@@ -8704,7 +8710,7 @@ window.psAlBuyPrint = async function() {
       var d = await _psAlFetch('/veeqo/autolabel/buy-one', { method: 'POST', body: { order: num, by: psInitials || '', allowLow: !!c.dataset.low } });
       c.checked = false; c.disabled = true;
       if (d.ok === false) { bad.push(num + ': ' + (d.error || 'failed')); res.textContent = '❌ Not bought'; res.style.color = 'var(--red)'; res.title = d.error || ''; continue; }
-      ok++; (function(n) { var ro = ((window._psAlRunShown || {}).orders || []).find(function(x) { return x.number === n; }); if (ro) { var rc = window._psAlRunShown.counts; rc[ro.decision] = Math.max(0, (rc[ro.decision] || 0) - 1); ro.decision = 'bought'; rc.bought = (rc.bought || 0) + 1; ro.tracking = d.labels && d.labels[0] && d.labels[0].tracking || ''; } })(num);
+      ok++; (function(n) { var ro = ((window._psAlRunShown || {}).orders || []).find(function(x) { return x.number === n; }); if (ro) { var rc = window._psAlRunShown.counts; rc[ro.decision] = Math.max(0, (rc[ro.decision] || 0) - 1); ro.decision = 'bought'; rc.bought = (rc.bought || 0) + 1; ro.tracking = d.labels && d.labels[0] && d.labels[0].tracking || ''; ro.boughtAt = new Date().toISOString(); } })(num);
       res.textContent = '✅ Bought' + (d.labels && d.labels[0] && d.labels[0].tracking ? ' · ' + d.labels[0].tracking : ''); res.style.color = 'var(--green)';
     }
     psAlSelCount();
@@ -8717,6 +8723,8 @@ window.psAlBuyPrint = async function() {
     }
     msg.textContent = '✓ Bought and sent to the printer: ' + ok + ' of ' + sel.length + (bad.length ? '\n✗ ' + bad.join('\n✗ ') : '');
     msg.style.color = bad.length ? 'var(--orange)' : 'var(--green)';
+    // Redraw: bought rows now show 🕘 Bought + 🖨 Label / 🧾 Slip (the message stays).
+    if (ok && window._psAlRunShown) { window._psAlBuyMsg = { text: msg.textContent, color: msg.style.color }; _psAlRenderRun(window._psAlRunShown); }
     _psToast('Bought ' + ok + ' label' + (ok === 1 ? '' : 's'));
     if (typeof psAlLoadLog === 'function') psAlLoadLog();
     if (lows && typeof psAlLoadLowValue === 'function') psAlLoadLowValue();
@@ -8780,10 +8788,11 @@ function _psAlRenderRun(r) {
   var td = 'style="padding:6px 8px;border-bottom:1px solid var(--border);vertical-align:top"';
   var canBuy = rows.filter(function(o) { return _PS_AL_BUYABLE[o.decision]; }).length;
   var keep = {}; document.querySelectorAll('#ps-al-orders .ps-al-sel').forEach(function(c) { if (c.checked) keep[c.value] = 1; }); // ticks stay after a redraw
-  document.getElementById('ps-al-orders').innerHTML = (canBuy ? '<div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap;margin:0 0 8px">'
-      + '<label style="font-size:12px;font-weight:700;display:flex;align-items:center;gap:4px;cursor:pointer"><input type="checkbox" id="ps-al-sel-all" onchange="psAlSelAll(this.checked)"> Select all (' + canBuy + ')</label>'
-      + '<button class="ps-btn-sm" id="ps-al-buyprint" style="background:var(--accent);color:#fff;border-color:var(--accent);font-weight:700" onclick="psAlBuyPrint()">🖨 Buy &amp; print selected (0)</button>'
-      + '<span id="ps-al-buyprint-msg" style="font-size:12px;white-space:pre-wrap"></span></div>' : '')
+  var bm = window._psAlBuyMsg; // the last Buy & print result stays on the screen after a redraw
+  document.getElementById('ps-al-orders').innerHTML = (canBuy || bm ? '<div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap;margin:0 0 8px">'
+      + (canBuy ? '<label style="font-size:12px;font-weight:700;display:flex;align-items:center;gap:4px;cursor:pointer"><input type="checkbox" id="ps-al-sel-all" onchange="psAlSelAll(this.checked)"> Select all (' + canBuy + ')</label>'
+      + '<button class="ps-btn-sm" id="ps-al-buyprint" style="background:var(--accent);color:#fff;border-color:var(--accent);font-weight:700" onclick="psAlBuyPrint()">🖨 Buy &amp; print selected (0)</button>' : '')
+      + '<span id="ps-al-buyprint-msg" style="font-size:12px;white-space:pre-wrap' + (bm ? ';color:' + bm.color : '') + '">' + (bm ? _psAlEsc(bm.text) : '') + '</span></div>' : '')
     + _psAlTableOpen(th, ['', 'Result', 'Order', 'Channel', 'Customer', 'Items (photo · name · SKU · bin · qty)', 'Total', 'Package', 'Label', 'Why'])
     + rows.map(function(o){
       var L = _PS_AL_LABELS[o.decision] || [o.decision, 'var(--text2)'];
@@ -8801,7 +8810,7 @@ function _psAlRenderRun(r) {
         + '<td style="padding:4px 8px;border-bottom:1px solid var(--border);vertical-align:top;min-width:260px">' + _psAlItemsHtml(o) + '</td>'
         + '<td ' + td + '>' + (o.total != null ? '$' + Number(o.total).toFixed(2) : '') + '</td>'
         + '<td style="padding:6px 8px;border-bottom:1px solid var(--border);vertical-align:top;white-space:nowrap">' + _psAlPkgHtml(o) + '</td>'
-        + '<td ' + td + '>' + _psAlEsc(label) + '</td>'
+        + '<td ' + td + '>' + _psAlEsc(label) + _psAlBoughtTag(o) + '</td>'
         + '<td ' + td + '>' + (o.splitBoxes ? _psAlSplitBoxesHtml(o.splitBoxes, o.number) : _psAlEsc(o.reason)) + '</td></tr>';
     }).join('') + '</table>';
   document.querySelectorAll('#ps-al-orders .ps-al-sel').forEach(function(c) { if (keep[c.value]) c.checked = true; });
@@ -8965,6 +8974,77 @@ window.psAlLoadBoxes = async function() {
     + d.boxes.map(function(b) { return '<tr><td ' + td + '><span style="font-family:var(--mono)">' + e(b.box_key.replace(/\|/g, ', ')) + '</span></td><td ' + td + '><b>' + e(b.weight_lb) + ' lb</b></td><td ' + td + '>' + (b.length_in ? e(b.length_in) + '×' + e(b.width_in) + '×' + e(b.height_in) + ' in' : '—') + '</td><td ' + td + '>' + e(b.by_user || '') + ' · ' + e(new Date(b.updated_at).toLocaleDateString()) + '</td></tr>'; }).join('') + '</table>'
     : '<div style="color:var(--text3)">None yet — tap ✏️ on a box in Last run.</div>';
 };
+// Owner: "purchase time, and click or search an order to reprint the label
+// or the packing slip". Bought rows show when, with 🖨 Label / 🧾 Slip.
+function _psAlBoughtTag(o) {
+  if (!{ bought: 1, merged: 1, merge_fix: 1 }[o.decision]) return '';
+  var e = _psAlEsc, n = e(String(o.number || '').replace(/[\\']/g, ''));
+  return (o.boughtAt ? '<div style="font-size:11px;color:var(--green);font-weight:700;margin-top:2px">🕘 Bought ' + e(new Date(o.boughtAt).toLocaleString([], { month: 'numeric', day: 'numeric', hour: 'numeric', minute: '2-digit' })) + '</div>' : '')
+    + '<div style="display:flex;gap:4px;margin-top:3px;flex-wrap:wrap"><button class="ps-btn-sm" style="padding:2px 8px" onclick="psAlReprintFor(this, \'' + n + '\', \'label\')">🖨 Label</button>'
+    + '<button class="ps-btn-sm" style="padding:2px 8px" onclick="psAlReprintFor(this, \'' + n + '\', \'slip\')">🧾 Slip</button></div>';
+}
+// Reprint everything for one order: its label(s) (+ its slip when the rules say), or its packing slip(s).
+window.psAlReprintFor = async function(btn, q, kind, exact) {
+  var old = btn ? btn.textContent : ''; if (btn) { btn.disabled = true; btn.textContent = '⏳'; }
+  var msg = document.getElementById('ps-al-label-msg');
+  try {
+    var mine = function(x) { var n = String(x.order_number || x.orderNumber || '').toUpperCase(), t = String(x.tracking || '').toUpperCase(), Q = String(q).toUpperCase();
+      return exact ? (n === Q || t === Q) : (n === Q || n.split(' + ').indexOf(Q) >= 0 || t === Q || n.indexOf(Q) >= 0); };
+    if (kind === 'label') {
+      var d = await _psAlFetch('/veeqo/autolabel/labels?q=' + encodeURIComponent(q));
+      var ls = ((d && d.labels) || []).filter(mine);
+      if (!ls.length) { _psToast('No label of ours for ' + q + ' — it may have been bought in Veeqo', 'err'); return; }
+      _psAlBatch = [];
+      for (var i = 0; i < ls.length; i++) await _psAlPrintOneLabel(ls[i], true);
+      await _psAlBatchFlush();
+      _psToast('🖨 Reprinted ' + ls.length + ' label' + (ls.length === 1 ? '' : 's') + ' for ' + q);
+    } else {
+      var s1 = await _psAlFetch('/veeqo/autolabel/slips?q=' + encodeURIComponent(q));
+      var ss = ((s1 && s1.slips) || []).filter(mine);
+      if (!ss.length) { // never had one (items were written on the label) → make it now
+        var add = await _psAlFetch('/veeqo/autolabel/slip-add', { method: 'POST', body: { order: q } });
+        if (add.ok === false) { _psToast(add.error || 'No packing slip for ' + q, 'err'); return; }
+        s1 = await _psAlFetch('/veeqo/autolabel/slips?q=' + encodeURIComponent(q)); ss = ((s1 && s1.slips) || []).filter(mine);
+      }
+      if (!ss.length) { _psToast('No packing slip for ' + q, 'err'); return; }
+      // one slip per box (newest first in the answer)
+      var seen = {}, one = ss.filter(function(x) { var k = (x.tracking || '') + '|' + x.boxNo; if (seen[k]) return false; seen[k] = 1; return true; }).reverse();
+      await _psAlPrintSlips(one);
+      await _psAlMarkPrinted(one.map(function(x) { return x.id; }));
+      _psToast('🧾 Reprinted ' + one.length + ' packing slip' + (one.length === 1 ? '' : 's') + ' for ' + q);
+    }
+    if (typeof psAlLoadLabels === 'function') psAlLoadLabels();
+    if (typeof psAlLoadSlips === 'function') psAlLoadSlips();
+  } catch (e) { _psAlBatch = null; if (msg) { msg.style.whiteSpace = 'pre-wrap'; msg.textContent = '✗ ' + q + ': ' + (e.message || e); } _psToast('Not printed: ' + (e.message || e), 'err'); }
+  finally { if (btn) { btn.disabled = false; btn.textContent = old; } }
+};
+// 🔎 Find an order (order #, tracking — scan the label — or customer) → its labels and slips, each with Reprint.
+var _psAlFindT = null;
+window.psAlFind = function(v, now) {
+  clearTimeout(_psAlFindT);
+  _psAlFindT = setTimeout(async function() {
+    var box = document.getElementById('ps-al-find-res'), q = String(v || '').trim();
+    if (!box) return;
+    if (q.length < 3) { box.innerHTML = ''; return; }
+    box.innerHTML = '<div style="color:var(--text3)">Looking…</div>';
+    var r = await Promise.all([_psAlFetch('/veeqo/autolabel/labels?q=' + encodeURIComponent(q)), _psAlFetch('/veeqo/autolabel/slips?q=' + encodeURIComponent(q))]);
+    var ls = (r[0] && r[0].labels) || [], ss = (r[1] && r[1].slips) || [], e = _psAlEsc;
+    var orders = {}; ls.forEach(function(l) { (orders[l.order_number] = orders[l.order_number] || { labels: [], slips: [] }).labels.push(l); });
+    ss.forEach(function(x) { (orders[x.orderNumber] = orders[x.orderNumber] || { labels: [], slips: [] }).slips.push(x); });
+    var keys = Object.keys(orders);
+    box.innerHTML = keys.length ? keys.map(function(k) {
+      var o = orders[k], l0 = o.labels[0], s0 = o.slips[0], n = e(String(k).replace(/[\\']/g, ''));
+      var who = s0 && s0.shipTo && s0.shipTo.name ? ' · ' + e(s0.shipTo.name) : '';
+      return '<div style="padding:7px 0;border-bottom:1px solid var(--border)"><div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">'
+        + '<b style="font-family:var(--mono)">' + e(k) + '</b>' + who + '<span style="color:var(--text3)">' + e((l0 && l0.channel) || (s0 && s0.channel) || '') + '</span>'
+        + '<button class="ps-btn-sm" style="margin-left:auto" onclick="psAlReprintFor(this, \'' + n + '\', \'label\', true)"' + (o.labels.length ? '' : ' disabled title="No label of ours for this order"') + '>🖨 Reprint label' + (o.labels.length > 1 ? 's (' + o.labels.length + ')' : '') + '</button>'
+        + '<button class="ps-btn-sm" onclick="psAlReprintFor(this, \'' + n + '\', \'slip\', true)">🧾 Reprint slip</button></div>'
+        + o.labels.map(function(l) { return '<div style="font-size:11px;color:var(--text2);margin-top:2px">🏷 ' + e([l.carrier, l.service].filter(Boolean).join(' ')) + ' · <span style="font-family:var(--mono)">' + e(l.tracking || '') + '</span> · 🕘 bought ' + e(new Date(l.created_at).toLocaleString()) + (l.printed_at ? ' · printed ' + (l.print_count > 1 ? l.print_count + '× · last ' : '') + e(new Date(l.printed_at).toLocaleString()) + (l.printed_by ? ' by ' + e(l.printed_by) : '') : ' · not printed yet') + '</div>'; }).join('')
+        + (o.slips.length ? '<div style="font-size:11px;color:var(--text3);margin-top:2px">🧾 ' + o.slips.length + ' packing slip' + (o.slips.length === 1 ? '' : 's') + (o.slips[0].printedAt ? ' · last printed ' + e(new Date(o.slips[0].printedAt).toLocaleString()) : '') + '</div>' : '')
+        + '</div>';
+    }).join('') : '<div style="color:var(--text3)">Nothing found for "' + e(q) + '" — only labels bought through Auto Label are here.</div>';
+  }, now ? 0 : 400);
+};
 var _psAlMergeBusy = false;
 window.psAlMergeBuy = async function(btn, list) {
   if (_psAlMergeBusy) return;
@@ -8977,7 +9057,7 @@ window.psAlMergeBuy = async function(btn, list) {
     var r = window._psAlRunShown;
     if (r) (r.orders || []).forEach(function(x) { if (nums.indexOf(x.number) < 0) return; var c = r.counts; c[x.decision] = Math.max(0, (c[x.decision] || 0) - 1);
       var m = (d.orders || []).find(function(y) { return y.number === x.number; }) || {};
-      x.decision = x.number === nums[0] ? 'bought' : m.marked ? 'merged' : 'merge_fix'; c[x.decision] = (c[x.decision] || 0) + 1; x.tracking = d.tracking; x.carrier = d.carrier; x.service = d.service; if (x.number === nums[0]) x.price = d.price; });
+      x.decision = x.number === nums[0] ? 'bought' : m.marked ? 'merged' : 'merge_fix'; c[x.decision] = (c[x.decision] || 0) + 1; x.tracking = d.tracking; x.boughtAt = new Date().toISOString(); x.carrier = d.carrier; x.service = d.service; if (x.number === nums[0]) x.price = d.price; });
     if (r) _psAlRenderRun(r);
     if (d.error) alert(d.error);
     for (var w = 0; w < 60 && _psAlLabelBusy; w++) await new Promise(function(res) { setTimeout(res, 500); });
