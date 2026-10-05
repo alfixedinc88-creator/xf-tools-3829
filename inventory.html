@@ -379,6 +379,16 @@ window.invCredLogin = async function() {
 #inv-app{-webkit-tap-highlight-color:transparent;-webkit-touch-callout:none}
 #inv-app .itopbar{display:flex;align-items:center;justify-content:space-between;padding:12px 16px;background:var(--bg2);border-bottom:1px solid var(--border);position:sticky;top:0;z-index:100}
 #inv-app .itopbar-title{font-size:15px;font-weight:700;color:var(--text)}
+/* Owner: on the phone the top bar stays at the top but slim — 🔄 Refresh / 🚪 Sign Out / ← Apps
+   fold into ☰ (tap to show them), so Audit / Stock Out / Stock In / Transfer get the screen. */
+#inv-app .itop-more{display:none}
+@media (max-width:700px){
+  #inv-app .itopbar{padding:3px 8px;flex-wrap:wrap;gap:4px}
+  #inv-app .itopbar-title{font-size:13px}
+  #inv-app .itopbar .iback{padding:3px 10px;min-height:28px;font-size:12px}
+  #inv-app .itopbar:not(.open) .iback:not(.itop-more){display:none}
+  #inv-app .itopbar .itop-more{display:inline-block;margin-left:auto;font-size:15px;color:var(--text)}
+}
 #inv-app .iback{background:none;border:1px solid var(--border);color:var(--text3);font-size:12px;padding:8px 14px;border-radius:8px;cursor:pointer;font-family:'DM Sans',sans-serif;min-height:36px}
 #inv-app .itabs{display:flex;gap:6px;padding:10px 12px;background:var(--bg2);border-bottom:1px solid var(--border);overflow-x:auto;-webkit-overflow-scrolling:touch;scrollbar-width:none}
 #inv-app .itabs::-webkit-scrollbar{display:none}
@@ -523,6 +533,7 @@ window.invCredLogin = async function() {
   <button class="iback" id="inv-refresh-btn" onclick="invRefreshPage()" style="margin-left:8px">🔄 Refresh</button>
   <button class="iback" id="inv-signout-btn" onclick="invSignOut()" style="margin-left:8px">🚪 Sign Out</button>
   <button class="iback" onclick="window.xfGoHome ? xfGoHome() : (location.href='index.html')">← Apps</button>
+  <button class="iback itop-more" title="Refresh · Sign Out · Apps" onclick="this.parentNode.classList.toggle('open')">☰</button>
 </div>
 
 <div class="itabs">
@@ -8480,6 +8491,17 @@ window.invCredLogin = async function() {
     if (pnl && need > 0) pnl.style.paddingBottom = ((parseFloat(pnl.style.paddingBottom) || 0) + need + 4) + 'px';
     try { window.scrollTo({ top: Math.max(0, y), behavior: 'smooth' }); } catch (e) { window.scrollTo(0, Math.max(0, y)); }
   };
+  // Same, for any tab: puts a scan bar at the top of the screen (under the bars
+  // that stay at the top), adding room below on a short page.
+  window.invScrollToScan = function(inp, panelId) {
+    var row = inp && inp.closest ? (inp.closest('.isearch-row') || inp) : inp; if (!row || row.offsetParent === null) return;
+    var cover = 0; ['#inv-app .itopbar', '#inv-ob-bar'].forEach(function(q) { var e = document.querySelector(q); if (e && e.offsetParent !== null) cover = Math.max(cover, e.getBoundingClientRect().height); });
+    var y = row.getBoundingClientRect().top + (window.scrollY || window.pageYOffset || 0) - cover - 10;
+    // short page: make the tab tall enough that the scan bar can reach the top
+    var pnl = g(panelId);
+    if (pnl) { var pr = pnl.getBoundingClientRect(), want = y + window.innerHeight - (pr.top + (window.scrollY || 0)); if (pr.height < want) pnl.style.minHeight = Math.ceil(want) + 'px'; }
+    window.scrollTo(0, Math.max(0, y)); // a jump, not smooth: the counts drawing in below would stop a smooth scroll
+  };
   // ✕ / start over: close the scanned item, ready to scan the next box (no keyboard).
   window.xfrStartOver = function() { window._xfrPutLast = false; xfrResetLookup(); var si = g('xfr-search-inp');
     if (si) { si.value = ''; if (!si.hasAttribute('data-kb-typing') && xfrSearchMode !== 'name') si.setAttribute('inputmode', 'none'); si.focus(); } setTimeout(xfrScrollWork, 60); };
@@ -12908,6 +12930,9 @@ window.invCredLogin = async function() {
     v = String(v != null ? v : (inp && inp.value) || '').trim();
     if (inp) inp.value = '';
     if (!v) return;
+    // Owner: after scanning the column or a box, the screen scrolls down so the
+    // scan bar is at the top — the counts below it get the screen.
+    setTimeout(function() { invScrollToScan(inp, 'inv-panel-audit'); }, 60);
     var V = v.toUpperCase();
     if (xfrIsLoc(V)) {
       if (RC.loc && !RC.done && V !== RC.loc) { invFlash('Finish ' + RC.loc + ' first — tap ✅ Done with this column', 'error'); return; }
