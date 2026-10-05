@@ -24144,8 +24144,8 @@ const AUTOLABEL_DEFAULTS = {
   mode: 'off',                 // 'off' | 'preview' | 'auto'
   cancelWatch: false,          // add cancelled-but-already-printed orders to the Cancellation list
   waitMinutes: 30,             // wait this long after the NEWEST order for a person before buying
-  upsMinSavings: 0.80,         // switch USPS -> UPS only if UPS is at least this much cheaper ($)...
-  upsMaxDays: 3,               // ...AND UPS arrives in this many days or less
+  upsMinSavings: 0.70,         // switch USPS -> UPS only if UPS is at least this much cheaper ($)... (owner: $0.70)
+  upsMaxDays: 2,               // ...AND UPS arrives in this many days or less (owner: 2 days)
   uspsOnlyChannels: ['walmart'], // channels that must always ship USPS (name contains)
   lowValueRatio: 0.9,          // hold if the label costs >= this share of the order total (0 = rule off)
   lowValueMaxOrder: 0,         // only apply the low-value rule to orders <= this $ total (0 = every order)
@@ -24234,6 +24234,15 @@ async function autolabelLoadConfig(env) {
   await autolabelEnsureTables(env);
   let saved = {};
   try { saved = JSON.parse(await autolabelGetKey(env, AUTOLABEL_CONFIG_KEY) || '{}') || {}; } catch (_) { saved = {}; }
+  // Owner: "change 3 days to 2 days, 0.80 to 0.70" — once, on the saved rules
+  // too (the page shows these; they can still be changed there afterwards).
+  if ((await autolabelGetKey(env, 'autolabel_rules_ups_2d_070')) !== 'done') {
+    const before = { upsMinSavings: saved.upsMinSavings, upsMaxDays: saved.upsMaxDays };
+    saved.upsMinSavings = 0.70; saved.upsMaxDays = 2;
+    await autolabelSetKey(env, AUTOLABEL_CONFIG_KEY, JSON.stringify(saved));
+    await autolabelSetKey(env, 'autolabel_rules_ups_2d_070', 'done');
+    await autolabelLog(env, { action: 'rules_changed', detail: `UPS rule set by the owner's request: cheaper by $${before.upsMinSavings ?? 0.8} → $0.70, within ${before.upsMaxDays ?? 3} → 2 days` }).catch(() => {});
+  }
   return autolabelCleanConfig({ ...AUTOLABEL_DEFAULTS, ...saved });
 }
 
@@ -25274,6 +25283,14 @@ function autolabelSlipOut(r) {
     boxNo: r.box_no, boxCount: r.box_count, createdAt: r.created_at, printedAt: r.printed_at, printedBy: r.printed_by,
     printCount: r.print_count || 0, shipTo, items };
 }
+// Owner: "packing slip must include the photo of the products" — each item's
+// photo: our saved photo for the part #, else the one Veeqo sent.
+async function autolabelSlipPhotos(env, slips) {
+  const bases = [...new Set(slips.flatMap(sl => (sl.items || []).map(i => parentOf(i.sku || ''))).filter(Boolean))];
+  let ours = {}; try { ours = bases.length ? await productPhotoMap(env, bases) : {}; } catch (_) {}
+  slips.forEach(sl => (sl.items || []).forEach(i => { const u = ours[parentOf(i.sku || '')] || i.img || ''; i.photo = /^https:\/\//i.test(u) ? u : ''; }));
+  return slips;
+}
 // Cancellations across the channels, kept 2 minutes (🖨 Buy & print selected checks each order).
 let _autolabelCancelCache = { at: 0, val: null };
 async function autolabelCancelsCached(env, cfg) {
@@ -25718,7 +25735,7 @@ async function handleAutolabelRoute(path, method, url, request, env, session) {
     const limit = Math.min(200, parseInt(url.searchParams.get('limit')) || 50);
     const rows = await d1All(env,
       `SELECT * FROM packing_slip_queue WHERE printed_at IS ${printed ? 'NOT ' : ''}NULL ORDER BY id ${printed ? 'DESC' : 'ASC'} LIMIT ?`, [limit]);
-    return veeqoResp({ ok: true, slips: rows.map(autolabelSlipOut) });
+    return veeqoResp({ ok: true, slips: await autolabelSlipPhotos(env, rows.map(autolabelSlipOut)) });
   }
 
   // POST { ids:[...], by } -> mark slips as printed.
@@ -25872,6 +25889,8 @@ async function handleAutolabelRoute(path, method, url, request, env, session) {
           const r = await d1Run(env, `UPDATE packing_slip_queue SET printed_at = ?, printed_by = 'on the label' WHERE ${match}`, [now, ...args]);
           slipsSkipped += (r && r.meta && r.meta.changes) || 0;
         } else {
+          // a slip only marked "on the label" earlier (never printed) is needed now (UPS / no room) → it prints
+          await d1Run(env, `UPDATE packing_slip_queue SET printed_at = NULL, printed_by = NULL WHERE printed_by = 'on the label' AND ((tracking != '' AND tracking = ?) OR (order_id = ? AND alloc_id = ?))`, args);
           const have = await d1First(env, `SELECT id FROM packing_slip_queue WHERE (tracking != '' AND tracking = ?) OR (order_id = ? AND alloc_id = ?) LIMIT 1`, args);
           if (have) continue;
           const res = await veeqoFetch(env, `/orders?query=${encodeURIComponent(row.order_number || '')}&page_size=10&page=1`).catch(() => []);
@@ -25895,7 +25914,7 @@ async function handleAutolabelRoute(path, method, url, request, env, session) {
         // Reprint of a label that needs its slip → that slip again (the latest one), even if it printed before.
         if (!got.length && b.reprint && b.needSlip) got = await d1All(env, `SELECT * FROM packing_slip_queue WHERE printed_by != 'on the label' AND ((tracking != '' AND tracking = ?) OR (order_id = ? AND alloc_id = ?)) ORDER BY id DESC LIMIT 1`,
           [row.tracking || '', row.order_id || '', row.alloc_id || '']);
-        slips = slips.concat(got.map(autolabelSlipOut));
+        slips = slips.concat(await autolabelSlipPhotos(env, got.map(autolabelSlipOut)));
       }
     }
     return veeqoResp({ ok: true, marked: ids.length, slipsSkipped, slipsQueued, slips });

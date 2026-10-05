@@ -1911,7 +1911,7 @@ console.log('\nAuto Label: every bought label goes on the 🖨 Printer station l
   // …then: "put it at the back — they grab the item first, then see how many"; then: "4 lines; with the black-and-white quantity no ',' after the SKU; more than 4 → packing slip".
   check('…one line per item: bin, SKU, then the quantity at the back (x2) white on a black box (no "," before it) — bins / SKUs / quantities lined up', /bin: \(it\.bin \|\| '—'\) \+ ',', sku: String\(it\.sku \|\| ''\), qty: 'x' \+ \(it\.qty \|\| 0\) \}/.test(ph) && /ctx\.fillText\(r\.bin, x, yc\); ctx\.fillText\(r\.sku, xs, yc\);/.test(ph) && /ctx\.fillRect\(xq, [^;]+\); \/\/ black box, white quantity\s*ctx\.fillStyle = '#fff'; ctx\.fillText\(r\.qty/.test(ph), null);
   check('…up to 4 lines, as big as fits (not smaller than 2% of the label width); more than 4 → not written on the label', /var _PS_AL_LABEL_MAX_LINES = 4;/.test(ph) && /if \(items\.length > _PS_AL_LABEL_MAX_LINES\) return no\(/.test(ph) && /minFs = Math\.round\(W \* 0\.02\)/.test(ph), null);
-  check('…written on the label (1–4 items) → no packing slip; not written on it (5+ items, or no room / no blank spot) → the packing slip prints with it', /var many = items\.length > _PS_AL_LABEL_MAX_LINES, needSlip = !stamped;/.test(ph) && /skipSlip: stamped, needSlip: needSlip, withSlips: true/.test(ph), null);
+  check('…written on the label (1–4 items) → no packing slip; not written on it (5+ items, or no room / no blank spot) → the packing slip prints with it', /var many = items\.length > _PS_AL_LABEL_MAX_LINES, needSlip = !stamped \|\| isUps, skipSlip = stamped && !isUps;/.test(ph) && /skipSlip: skipSlip, needSlip: needSlip, withSlips: true/.test(ph), null);
   const f = await call('/veeqo/autolabel/label-file?id=' + L.id, { headers: H });
   check('…the Printer station gets the label file itself (PDF) from what Veeqo gave', f.status === 200 && /application\/pdf/.test(f.headers.get('content-type')) && (await f.text()).startsWith('%PDF'), f.status);
   const pr = await post('/veeqo/autolabel/labels-printed', { ids: [L.id] });
@@ -2202,6 +2202,33 @@ console.log('\nAuto Label: when USPS is picked, Why says what UPS offered and wh
     && /UPS \$4\.00 but Veeqo gave no delivery days/.test(d.reason) && /UPS only \$0\.50 cheaper — needs \$0\.80/.test(e.reason) && /USPS only for this channel/.test(f.reason),
     [a.reason, b.reason, c.reason, d.reason, e.reason, f.reason]);
   check('…Last run shows one line: UPS picked N · not picked — no UPS rate / too slow / no delivery days / not cheap enough / USPS-only channel (+ the rule)', /id = 'ps-al-ups-why'/.test(ph8) && /not picked — no UPS rate/.test(ph8), null);
+}
+
+// Owner: "change 3 days to 2 days, 0.80 to 0.70; the rules above Test → the rules right now; UPS → print the packing slip too;
+// the packing slip must include the product photos".
+console.log('\nAuto Label: UPS rule 2 days / $0.70 (saved rules too); UPS → packing slip; slips show product photos; rules shown in plain words');
+{
+  sq.prepare("INSERT INTO app_config (key, value) VALUES ('autolabel_config', ?) ON CONFLICT(key) DO UPDATE SET value=excluded.value").run(JSON.stringify({ mode: 'preview', upsMinSavings: 0.8, upsMaxDays: 3, waitMinutes: 30 }));
+  sq.prepare("DELETE FROM app_config WHERE key = 'autolabel_rules_ups_2d_070'").run();
+  const c1 = await get('/veeqo/autolabel/config');
+  check('the saved rules move to UPS ≥ $0.70 cheaper and ≤ 2 days (once — on record), the rest kept', c1.config.upsMinSavings === 0.7 && c1.config.upsMaxDays === 2 && c1.config.waitMinutes === 30 && c1.config.mode === 'preview'
+    && !!sq.prepare("SELECT 1 x FROM autolabel_log WHERE action = 'rules_changed'").get() && c1.defaults.upsMinSavings === 0.7 && c1.defaults.upsMaxDays === 2, c1.config);
+  await post('/veeqo/autolabel/config', { config: { ...c1.config, upsMaxDays: 4 } });
+  const c2 = await get('/veeqo/autolabel/config');
+  check('…changed again on the page afterwards → kept (the one-time change does not come back)', c2.config.upsMaxDays === 4, c2.config.upsMaxDays);
+  await post('/veeqo/autolabel/config', { config: { ...c2.config, upsMaxDays: 2 } });
+  const { readFileSync } = await import('node:fs');
+  const ph9 = readFileSync(fileURLToPath(new URL('../packship.html', import.meta.url)), 'utf8');
+  const li = sq.prepare("INSERT INTO label_print_queue (order_id, alloc_id, order_number, tracking, carrier, created_at) VALUES ('U1','UA1','U-1','1ZUPS1','UPS',?)").run(new Date().toISOString()).lastInsertRowid;
+  sq.prepare("INSERT INTO packing_slip_queue (order_id, alloc_id, order_number, tracking, items, created_at, printed_at, printed_by) VALUES ('U1','UA1','U-1','1ZUPS1','[]',?,?,'on the label')").run(new Date().toISOString(), new Date().toISOString());
+  const up = await post('/veeqo/autolabel/labels-printed', { ids: [Number(li)], needSlip: true, withSlips: true });
+  check('…a slip marked "on the label" before is printed after all when its label needs it (UPS / no room)', up.ok && up.slips.length === 1 && up.slips[0].orderNumber === 'U-1', up);
+  check('UPS label → its packing slip always prints with it (even when the items are written on the label)', /var isUps = \/UPS\/i\.test\(l\.carrier \|\| ''\) && !\/USPS\/i\.test\(l\.carrier \|\| ''\);/.test(ph9), null);
+  const slipFn = new Function('_psAlEsc', (ph9.match(/function _psAlSlipHtml\(slips\) \{[\s\S]*?\n\}/) || [''])[0] + '; return _psAlSlipHtml;')(v => String(v == null ? '' : v));
+  const sh = slipFn([{ orderNumber: 'Z-1', channel: 'eBay', createdAt: new Date().toISOString(), shipTo: {}, items: [{ sku: '5-3-2=2', qty: 1, bin: '5-3-2', pieces: 2, photo: 'https://photos.example/5.jpg' }, { sku: '9-9-9=1', qty: 1, bin: '9-9-9', pieces: 1, photo: '' }] }]);
+  check('packing slip: a Photo column with each item\'s product photo (black-and-white); the print waits for the photos', /<th class="phh">Photo<\/th>/.test(sh) && /<img class="ph" src="https:\/\/photos\.example\/5\.jpg"/.test(sh) && /filter:grayscale\(1\)/.test(sh)
+    && /photos on the page \(packing slip\) load first/.test(ph9), sh.slice(-600));
+  check('…the Rules box says the rules right now in plain words (carrier rule from the saved $ / days, 1–4 items on the label → no slip, slip for 5+ / no room / UPS)', /<b>📌 The rules right now<\/b>/.test(ph9) && /no room on the label, or the label is <b>UPS<\/b>/.test(ph9), null);
 }
 
 console.log('\n' + (failed ? '❌ ' + failed + ' check(s) FAILED' : '✅ all ' + passed + ' checks passed') + '\n');
