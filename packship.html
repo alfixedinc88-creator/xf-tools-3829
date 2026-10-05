@@ -8487,6 +8487,7 @@ if (typeof psOnLaunch === 'function') psOnLaunch();
 // Worker: /veeqo/autolabel/* (mgmt only). All buying happens on the worker's
 // cron; nothing on this page buys a label except "Test buy ONE label".
 var _psAlConfig = null;
+var _PS_AL_SERVER_NEEDS = 3; // the worker's AUTOLABEL_SERVER_VERSION this page needs
 var _PS_AL_LABELS = {
   bought:     ['✅ Bought', 'var(--green)'],
   buy_failed: ['❌ Buy failed', 'var(--red)'],
@@ -8570,6 +8571,12 @@ function _psAlRenderConfig(d) {
     + (c.maxBoxLb ? ' · boxes over <b>' + c.maxBoxLb + ' lb</b> → weigh / print by hand' : '')
     + (c.lowValueRatio ? ' · hold if the label is <b>' + Math.round(c.lowValueRatio * 100) + '%</b>+ of the order' + (c.lowValueMaxOrder ? ' (orders up to $' + c.lowValueMaxOrder + ')' : '') : '');
   var lines = [];
+  // The server behind this page must be at least this new (see AUTOLABEL_SERVER_VERSION in the worker).
+  var oldServer = !(d.serverVersion >= _PS_AL_SERVER_NEEDS);
+  var warn = document.getElementById('ps-al-server-old');
+  if (!warn) { warn = document.createElement('div'); warn.id = 'ps-al-server-old'; warn.style.cssText = 'display:none;margin:0 0 10px;padding:10px 12px;border-radius:10px;border:2px solid var(--red);color:var(--red);font-size:13px;font-weight:700;line-height:1.5'; var st0 = document.getElementById('ps-al-status'); st0.parentNode.insertBefore(warn, st0); }
+  warn.style.display = oldServer ? 'block' : 'none';
+  warn.innerHTML = '⚠️ The server is still the OLD version (' + _psAlEsc(d.serverVersion || 'before 3') + ', this page needs ' + _PS_AL_SERVER_NEEDS + '). Cloudflare did not finish updating it — merging and printing 💸 Low value won\'t work until it does. Tell the developer (Cloudflare → xfitting-lookup → Deployments).';
   lines.push('Mode: ' + ({ off:'OFF', preview:'PREVIEW ONLY — nothing is bought', auto:'AUTO — buying labels' })[c.mode]);
   if (c.mode === 'auto' && !d.buyVerified) lines.push('⚠ Auto can\'t buy yet — do one "Test buy ONE label" first.');
   if (c.mode === 'auto' && c.autoMerge && !d.mergeVerified) lines.push('🧩 Auto merging is locked until one group is merged by hand: 🧩 Merge & buy on Last run.');
