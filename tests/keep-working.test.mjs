@@ -2167,5 +2167,24 @@ console.log('\nAuto Label: one print (one PDF) for all the labels; the label pho
     && /_psAlBatch = \[\]; \/\/ every label/.test(ph6) && /window\._psAlLastBatchPages = await _psAlBatchFlush\(\);/.test(ph6), one.slice(0, 400));
 }
 
+// Owner: "Last run arranged by the Veeqo bin location; would buy separated by bin location — same aisle stays together
+// (28-1-1 with 28-3-3), mixed aisles → 'would buy mix'; and USPS apart from UPS (test UPS first)".
+console.log('\nAuto Label → Last run: sorted by Veeqo bin; 👀 Would buy grouped by carrier + aisle (mix apart)');
+{
+  const { readFileSync } = await import('node:fs');
+  const ph7 = readFileSync(fileURLToPath(new URL('../packship.html', import.meta.url)), 'utf8');
+  const fn = n => (ph7.match(new RegExp('function ' + n + '\\([^)]*\\) \\{[\\s\\S]*?\\n\\}')) || [''])[0];
+  const lib = new Function(['_psAlSkuKey', '_psAlSkuCmp', '_psAlBinOf', '_psAlAisleOf', '_psAlBinKey', '_psAlGroupOf', '_psAlGroupCmp', '_psAlSortRows'].map(fn).join('\n')
+    + '; return { g: _psAlGroupOf, sort: _psAlSortRows };')();
+  const o = (n, carrier, bins, d) => ({ number: n, decision: d || 'would_buy', carrier, items: bins.map((b, i) => ({ sku: 'S' + i, bin: b })) });
+  const A = o('A', 'USPS', ['28-3-3', '28-1-1']), B = o('B', 'USPS', ['28-1-1']), C = o('C', 'USPS', ['5-3-2', '28-1-1']), D = o('D', 'UPS', ['28-2-2']), E = o('E', 'USPS', ['5-1-1']), H = o('H', 'USPS', ['1-1-1'], 'hold');
+  check('28-1-1 and 28-3-3 → the same group (USPS · aisle 28); 5-3-2 + 28-1-1 → USPS · mix; UPS apart (UPS · aisle 28)',
+    lib.g(A).key === 'USPS|28' && lib.g(B).key === 'USPS|28' && lib.g(C).key === 'USPS|mix' && lib.g(D).key === 'UPS|28' && lib.g(E).key === 'USPS|5', [A, B, C, D, E].map(x => lib.g(x).key));
+  const sorted = lib.sort([D, C, A, H, B, E]).map(x => x.number).join('');
+  check('…order on the screen: USPS aisle 5, USPS aisle 28 (by bin), USPS mix, then UPS; other results after, by bin', sorted === 'EABCDH', sorted);
+  check('…tap 👀 Would buy → one chip per group (USPS · aisle 28 (2) …); tap one → only that group (Select all → Buy & print just those)', /window\.psAlRunGroupPick = function\(k\)/.test(ph7)
+    && /\(!grpK \|\| _psAlGroupOf\(o\)\.key === grpK\)/.test(ph7) && /'🔀 mix'/.test(ph7), null);
+}
+
 console.log('\n' + (failed ? '❌ ' + failed + ' check(s) FAILED' : '✅ all ' + passed + ' checks passed') + '\n');
 process.exit(failed ? 1 : 0);
