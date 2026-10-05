@@ -523,7 +523,9 @@ console.log('\nHistory report: Total In / Total Out add up; Transfers show cases
       && hs.container && hs.container.cases === 4 && hs.container.pallets === 2 && hs.container.palletsFinished === 1, { all: s1.container, hs: hs.container });
   // Owner: "a time frame how long it takes them to transfer 1 pallet — each pallet, from open to close".
   const op = await post('/inventory/containers/pallet-open', { title: 'HIST CT', vendor: 'KW', pallet: '1' });
-  const base = Date.now() - 30 * 60000, at = m => new Date(base + m * 60000).toISOString();
+  // 30 min ago — but never before today's midnight in New York ("Today" starts there; right after midnight the test would cross into yesterday)
+  const nyNow = new Date(new Date().toLocaleString('en-US', { timeZone: 'America/New_York' })), sinceMidnight = (nyNow.getHours() * 60 + nyNow.getMinutes()) * 60000 + nyNow.getSeconds() * 1000;
+  const base = Date.now() - Math.min(30 * 60000, Math.max(0, sinceMidnight - 60000)), at = m => new Date(base + m * 60000).toISOString();
   sq.prepare("UPDATE pallet_open SET at=? WHERE title='HIST CT' AND pallet='1'").run(at(0));               // opened at 0
   const outIds = sq.prepare("SELECT m.out_log_id id, p.pallet, p.part FROM pallet_move m JOIN reorder_pallet p ON p.id = m.pallet_id WHERE p.title='HIST CT' ORDER BY m.id").all();
   const setT = (i, m) => sq.prepare('UPDATE inventory_log SET timestamp=? WHERE id=?').run(at(m), outIds[i].id);
@@ -1902,13 +1904,14 @@ console.log('\nAuto Label: every bought label goes on the 🖨 Printer station l
   // Owner, later: "save labels — put it on the same label, at the bottom (like USPS)". The sticker stays for when it doesn't fit.
   check('…bin · SKU · ×qty is written in the blank strip at the bottom of the label (only all-white rows, a 4×6 label, every line fits)', /if \(_psAlStampLabel\(cv, items\)\) \{ await _psAlPrintCanvas\(cv\); stamped = true; \}/.test(ph) && /function _psAlBlankBand\(cv, minH\)/.test(ph) && /Math\.abs\(W \/ H - 4 \/ 6\) > 0\.04\) return no\('not a 4×6 label'\)/.test(ph), null);
   // Owner, later: "more than 3, print the packing slip with the order" — the sticker is only for ≤3 items (the slip lists the rest).
-  check('…when it doesn\'t fit there: the label as it is, then the 4×6 "Bin · SKU · Qty" sticker (up to 3 items), then marked printed', /if \(!stamped\) \{\s*await _psAlPrintLabelBlob\(f\);\s*if \(!many\) await _psAlPrintHtml\(_psAlBoxStripHtml\(l, items\)\);[\s\S]{0,200}labels-printed/.test(ph) && /<th>Bin<\/th><th>SKU<\/th>/.test(ph), null);
+  // Owner, later: "1–4 items: no packing slip; 5 or more, or when the USPS label has no spot for all the info → print the packing slip with it" (no sticker any more).
+  check('…when it doesn\'t fit there: the label as it is, then ITS packing slip right after it (no separate sticker), then marked printed', /if \(!stamped\) \{\s*await _psAlPrintLabelBlob\(f\);\s*\}[\s\S]{0,200}labels-printed/.test(ph) && !/await _psAlPrintHtml\(_psAlBoxStripHtml\(l, items\)\)/.test(ph), null);
   // Owner: "24-5-5, 2,5=3/4x1/2X PO C on the same line … smaller words to fit 3 lines … 3 items → no packing slip, more than 3 → packing slip with the order".
   // Owner, later: "put x2 before the 5=3/4x1/2X PO C … quantities easy to see … the more lines under the label the better (saves the packing slip)".
   // …then: "put it at the back — they grab the item first, then see how many"; then: "4 lines; with the black-and-white quantity no ',' after the SKU; more than 4 → packing slip".
   check('…one line per item: bin, SKU, then the quantity at the back (x2) white on a black box (no "," before it) — bins / SKUs / quantities lined up', /bin: \(it\.bin \|\| '—'\) \+ ',', sku: String\(it\.sku \|\| ''\), qty: 'x' \+ \(it\.qty \|\| 0\) \}/.test(ph) && /ctx\.fillText\(r\.bin, x, yc\); ctx\.fillText\(r\.sku, xs, yc\);/.test(ph) && /ctx\.fillRect\(xq, [^;]+\); \/\/ black box, white quantity\s*ctx\.fillStyle = '#fff'; ctx\.fillText\(r\.qty/.test(ph), null);
   check('…up to 4 lines, as big as fits (not smaller than 2% of the label width); more than 4 → not written on the label', /var _PS_AL_LABEL_MAX_LINES = 4;/.test(ph) && /if \(items\.length > _PS_AL_LABEL_MAX_LINES\) return no\(/.test(ph) && /minFs = Math\.round\(W \* 0\.02\)/.test(ph), null);
-  check('…written on the label → no packing slip; more than 4 → the packing slip prints with it (no sticker)', /var many = items\.length > _PS_AL_LABEL_MAX_LINES;/.test(ph) && /skipSlip: stamped, needSlip: many/.test(ph), null);
+  check('…written on the label (1–4 items) → no packing slip; not written on it (5+ items, or no room / no blank spot) → the packing slip prints with it', /var many = items\.length > _PS_AL_LABEL_MAX_LINES, needSlip = !stamped;/.test(ph) && /skipSlip: stamped, needSlip: needSlip, withSlips: true/.test(ph), null);
   const f = await call('/veeqo/autolabel/label-file?id=' + L.id, { headers: H });
   check('…the Printer station gets the label file itself (PDF) from what Veeqo gave', f.status === 200 && /application\/pdf/.test(f.headers.get('content-type')) && (await f.text()).startsWith('%PDF'), f.status);
   const pr = await post('/veeqo/autolabel/labels-printed', { ids: [L.id] });
@@ -2022,7 +2025,7 @@ console.log('\nAuto Label → Last run: 🖨 Buy & print selected; a box\'s pack
   check('…5 items (more than 4): the label comes back with ITS packing slip, to print right under it', lp.ok && lp.slips.length === 1 && lp.slips[0].orderNumber === 'E-77' && lp.slips[0].items.length === 5 && lp.slips[0].tracking === '9400777', lp);
   const { readFileSync } = await import('node:fs');
   const ws = readFileSync(workerPath, 'utf8'), ph3 = readFileSync(fileURLToPath(new URL('../packship.html', import.meta.url)), 'utf8');
-  check('…the station prints that slip right after its label (not at the end), then marks it printed', /withSlips: true \} \}\);[\s\S]{0,400}if \(own\.length\) \{\s*await _psAlPrintSlips\(own\);\s*await _psAlMarkPrinted\(/.test(ph3), null);
+  check('…the station prints that slip right after its label (not at the end), then marks it printed', /withSlips: true, reprint: !!reprint \} \}\);[\s\S]{0,400}if \(own\.length\) \{\s*await _psAlPrintSlips\(own\);\s*await _psAlMarkPrinted\(/.test(ph3), null);
   check('…Last run: tap a chip (👀 Would buy) → only those; ☑ Select all; 🖨 Buy & print selected; buying blocked while the test switch is on',
     /onclick="psAlRunFilter\(/.test(ph3) && /id="ps-al-sel-all"/.test(ph3) && /psAlBuyPrint\(\)/.test(ph3) && /'\/veeqo\/autolabel\/order-edit', '\/veeqo\/autolabel\/buy-one'/.test(ws), null);
   check('…"would buy only 10": a preview run keeps rates 1 hour, so each run rate-checks the NEXT orders and all of them show',

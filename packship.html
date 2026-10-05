@@ -9377,7 +9377,7 @@ async function _psAlLoadPics(items, labelId) {
 function _psAlPrintCanvas(cv) {
   return _psAlPrintHtml('<!doctype html><html><head><style>@page{size:4in 6in;margin:0}html,body{margin:0}img{width:4in;height:6in;display:block}</style></head><body><img src="' + cv.toDataURL('image/png') + '"></body></html>');
 }
-async function _psAlPrintOneLabel(l) {
+async function _psAlPrintOneLabel(l, reprint) {
   var f = await _psAlLabelBlob(l.id);
   var items = (l.items || []).length ? l.items : (((await _psAlFetch('/veeqo/autolabel/label-items?id=' + encodeURIComponent(l.id))) || {}).items || []);
   var stamped = false;
@@ -9385,15 +9385,16 @@ async function _psAlPrintOneLabel(l) {
   window._psAlPicWhy = []; window._psAlStampPics = 0;
   if (items.length && items.length <= _PS_AL_LABEL_MAX_LINES) await _psAlLoadPics(items, l.id);
   try { var cv = await _psAlLabelCanvas(f); if (_psAlStampLabel(cv, items)) { await _psAlPrintCanvas(cv); stamped = true; } }
-  catch (e) { window._psAlStampWhy = 'could not open the label file (' + f.type + '): ' + ((e && e.message) || e); console.warn('[label] could not write on the label, printing the sticker instead:', e && e.message); }
+  catch (e) { window._psAlStampWhy = 'could not open the label file (' + f.type + '): ' + ((e && e.message) || e); console.warn('[label] could not write on the label, printing the packing slip with it instead:', e && e.message); }
   // What happened, on the screen (owner: "still not showing any sku, bin location, quantities").
   window._psAlLastNote = l.order_number + ': ' + (stamped ? 'bin · SKU · qty written at the bottom of the label (' + items.length + ' line' + (items.length === 1 ? '' : 's') + ')'
-    : 'label printed as it is' + (items.length > _PS_AL_LABEL_MAX_LINES ? '' : ' + a separate sticker') + ' — why: ' + (window._psAlStampWhy || 'unknown') + ' · file: ' + f.type);
-  // Owner: items written on the label → no packing slip for that box; more
-  // than 4 → the packing slip prints with the order (it lists them, so no
-  // sticker). The server marks / queues the slip (recorded), and the station
-  // prints slips after labels.
-  var many = items.length > _PS_AL_LABEL_MAX_LINES;
+    : 'label printed as it is + its packing slip — why not on the label: ' + (window._psAlStampWhy || 'unknown') + ' · file: ' + f.type);
+  // Owner: "1–4 items written on the label → no packing slip; 5 or more, or
+  // when the USPS label has no spot for all the info → print the packing slip
+  // with it, so the packer knows where to grab". So: not written on the label
+  // (any reason) → its packing slip, right after it (no separate sticker any
+  // more). The server marks / queues the slip (recorded).
+  var many = items.length > _PS_AL_LABEL_MAX_LINES, needSlip = !stamped;
   if (stamped) window._psAlLastNote += ' · no packing slip needed';
   // 📷 on the screen: how many photos went on the label, or why none
   if (stamped) window._psAlLastNote += window._psAlStampPics ? ' · 📷 ' + window._psAlStampPics + ' photo' + (window._psAlStampPics === 1 ? '' : 's') + ' on it'
@@ -9401,10 +9402,9 @@ async function _psAlPrintOneLabel(l) {
   if (many) window._psAlLastNote += ' · ' + items.length + ' items → packing slip prints with it';
   if (!stamped) {
     await _psAlPrintLabelBlob(f);
-    if (!many) await _psAlPrintHtml(_psAlBoxStripHtml(l, items));
   }
   window._psAlLastStamped = stamped;
-  var pr = await _psAlFetch('/veeqo/autolabel/labels-printed', { method: 'POST', body: { ids: [l.id], by: psInitials || '', skipSlip: stamped, needSlip: many, withSlips: true } });
+  var pr = await _psAlFetch('/veeqo/autolabel/labels-printed', { method: 'POST', body: { ids: [l.id], by: psInitials || '', skipSlip: stamped, needSlip: needSlip, withSlips: true, reprint: !!reprint } });
   // Owner: "that packing slip must print under that shipping label, so the
   // picker knows the label comes with the packing slip" — this label's own
   // slip prints right after it, not at the end with the others.
@@ -9455,8 +9455,8 @@ window.psAlLoadLabels = async function() {
 window.psAlReprintLabel = async function(i) {
   var l = _psAlLabelRecent[i]; if (!l) return;
   var msg = document.getElementById('ps-al-label-msg');
-  try { await _psAlPrintOneLabel(l); if (msg) { msg.style.whiteSpace = 'pre-wrap'; msg.textContent = '✓ Printed ' + (window._psAlLastNote || l.order_number); } }
-  catch (e) { if (msg) msg.textContent = '✗ ' + l.order_number + ': ' + e.message + (e.tried ? '\n' + JSON.stringify(e.tried).slice(0, 1500) : ''); if (msg) msg.style.whiteSpace = 'pre-wrap'; }
+  try { _psAlBatch = []; await _psAlPrintOneLabel(l, true); await _psAlBatchFlush(); if (msg) { msg.style.whiteSpace = 'pre-wrap'; msg.textContent = '✓ Printed ' + (window._psAlLastNote || l.order_number); } }
+  catch (e) { _psAlBatch = null; if (msg) msg.textContent = '✗ ' + l.order_number + ': ' + e.message + (e.tried ? '\n' + JSON.stringify(e.tried).slice(0, 1500) : ''); if (msg) msg.style.whiteSpace = 'pre-wrap'; }
   psAlLoadLabels();
 };
 window.psAlLabelAdd = async function() {

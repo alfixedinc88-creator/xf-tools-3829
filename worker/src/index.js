@@ -25883,8 +25883,12 @@ async function handleAutolabelRoute(path, method, url, request, env, session) {
       for (const id of ids) {
         const row = await d1First(env, 'SELECT tracking, order_id, alloc_id FROM label_print_queue WHERE id = ?', [id]);
         if (!row) continue;
-        slips = slips.concat((await d1All(env, `SELECT * FROM packing_slip_queue WHERE printed_at IS NULL AND ((tracking != '' AND tracking = ?) OR (order_id = ? AND alloc_id = ?)) ORDER BY id`,
-          [row.tracking || '', row.order_id || '', row.alloc_id || ''])).map(autolabelSlipOut));
+        let got = await d1All(env, `SELECT * FROM packing_slip_queue WHERE printed_at IS NULL AND ((tracking != '' AND tracking = ?) OR (order_id = ? AND alloc_id = ?)) ORDER BY id`,
+          [row.tracking || '', row.order_id || '', row.alloc_id || '']);
+        // Reprint of a label that needs its slip → that slip again (the latest one), even if it printed before.
+        if (!got.length && b.reprint && b.needSlip) got = await d1All(env, `SELECT * FROM packing_slip_queue WHERE printed_by != 'on the label' AND ((tracking != '' AND tracking = ?) OR (order_id = ? AND alloc_id = ?)) ORDER BY id DESC LIMIT 1`,
+          [row.tracking || '', row.order_id || '', row.alloc_id || '']);
+        slips = slips.concat(got.map(autolabelSlipOut));
       }
     }
     return veeqoResp({ ok: true, marked: ids.length, slipsSkipped, slipsQueued, slips });
