@@ -2702,6 +2702,7 @@ function _psProcessScan(raw) {
     // "not synced yet" case, not this timing bug.
     if (data.lineItems) {
       _psRenderScanProduct(tracking, data.lineItems);
+      _psRecheckItems(tracking, data.lineItems, 'pack');
     } else {
       _psLoadScanProduct(tracking);
     }
@@ -2827,6 +2828,37 @@ function _psRenderScanProduct(tracking, items) {
     moreEl.style.display = 'none';
     moreEl.innerHTML = '';
   }
+}
+
+// Owner: "Picking / Packing don't show the whole order — with more than 1
+// item it sometimes shows only 1, a second scan shows all". The first answer
+// can come from a copy saved before Veeqo had the whole order; the server
+// upgrades it right after. So look again a few seconds later: more items →
+// show them (only while the same label is still on the screen).
+function _psItemsQty(items) { return (items || []).reduce(function(n, i) { return n + (parseFloat(i && i.q) || 0); }, 0); }
+function _psRecheckItems(tracking, shown, mode, orderNum) {
+  var shownQ = _psItemsQty(shown), shownN = (shown || []).length, T = String(tracking || '').toUpperCase();
+  var elId = mode === 'pick' ? 'ps-pick-product-tracking' : 'ps-scan-product-tracking';
+  var still = function() { var el = document.getElementById(elId); return el && String(el.textContent || '').toUpperCase() === T; };
+  [2500, 7000].forEach(function(ms) {
+    setTimeout(async function() {
+      if (!still()) return;
+      if (mode === 'pick') { var sw = document.getElementById('ps-pick-nostock-submit-wrap'); if (sw && sw.style.display === 'block') return; } // No Inventory flow open — leave it
+      try {
+        var r = await fetch(PS_WORKER + '/ship/order-lookup?q=' + encodeURIComponent(tracking) + '&days=7', { headers: { 'X-Cred-Token': psCredToken } });
+        var d = await r.json(), best = null;
+        (d.results || []).forEach(function(o) { if (String(o.tracking || '').toUpperCase() !== T) return;
+          if (!best || _psItemsQty(o.lineItems) > _psItemsQty(best.lineItems)) best = o; });
+        if (!best || !still()) return;
+        var q = _psItemsQty(best.lineItems), n = (best.lineItems || []).length;
+        if (!(q > shownQ || (q === shownQ && n > shownN))) return;
+        shownQ = q; shownN = n;
+        if (mode === 'pick') _psRenderPickProduct(tracking, best.lineItems, best.orderNum || orderNum);
+        else _psRenderScanProduct(tracking, best.lineItems);
+        _psToast('🔄 More items for this order — now showing all ' + n);
+      } catch (e) {}
+    }, ms);
+  });
 }
 
 async function _psLoadScanProduct(tracking) {
@@ -5810,6 +5842,7 @@ function _psProcessPick(raw) {
     // those directly instead of firing a second, separately-racing lookup.
     if (data.lineItems) {
       _psRenderPickProduct(tracking, data.lineItems, data.orderNum);
+      _psRecheckItems(tracking, data.lineItems, 'pick', data.orderNum);
     } else {
       _psLoadPickProduct(tracking);
     }

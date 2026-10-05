@@ -18754,6 +18754,17 @@ async function shipMergeBinFromManifestCache(env, tracking, freshItems) {
   } catch (_) { return freshItems; }
 }
 
+// Owner: "Picking / Packing don't show the whole order now — with more than
+// 1 item it sometimes shows only 1, a second scan shows all". An item list
+// can be saved before Veeqo has the whole order (or from a package view that
+// lists only part of it), and it was never upgraded afterwards. These keep
+// the most complete list: total quantity first, then number of lines.
+function shipItemsQty(items) { return (items || []).reduce((n, i) => n + (parseFloat(i && i.q) || 0), 0); }
+function shipItemsMoreComplete(a, b) { // is list a more complete than list b?
+  const qa = shipItemsQty(a), qb = shipItemsQty(b);
+  return qa > qb || (qa === qb && (a || []).length > (b || []).length);
+}
+
 // ── Order for a scanned label, fast ──────────────────────────────────────────
 // Our own copy first: ship_manifest_log already has the order's items and
 // bins for anything Veeqo Sync (hourly) or an earlier scan/pick saw — one
@@ -18763,10 +18774,13 @@ async function shipLocalOrder(env, clean) {
     const rows = (await env.DB.prepare(
       `SELECT order_num, line_items FROM ship_manifest_log WHERE UPPER(tracking) = ? ORDER BY date DESC, id DESC LIMIT 5`
     ).bind(clean).all()).results || [];
+    // The most complete saved copy (not just the newest one).
+    let best = null;
     for (const r of rows) {
       let items = []; try { items = JSON.parse(r.line_items || '[]'); } catch (_) {}
-      if (Array.isArray(items) && items.length) return { orderNum: String(r.order_num || ''), items };
+      if (Array.isArray(items) && items.length && (!best || shipItemsMoreComplete(items, best.items))) best = { orderNum: String(r.order_num || ''), items };
     }
+    if (best) return best;
   } catch (_) {}
   return null;
 }
@@ -18805,7 +18819,17 @@ async function shipVeeqoOrder(env, clean, date, carrier) {
   const mergedBox = await autolabelMergedBox(env, clean);
   const orderNum = mergedBox ? mergedBox.number : String(matched.order.number || matched.order.id || '');
   const orderAddr = veeqoExtractAddress(matched.order);
-  const rawOrderItems = mergedBox ? mergedBox.items : await veeqoExtractLineItems(env, matched.order, matched.allocation);
+  let rawOrderItems = mergedBox ? mergedBox.items : await veeqoExtractLineItems(env, matched.order, matched.allocation);
+  // One box for the whole order, but its package list is shorter than the
+  // order itself → the whole order is in this box: use the order's items
+  // (keeping the package's bins). A split order (2+ boxes) keeps its own box's items.
+  if (!mergedBox && (matched.order.allocations || []).length <= 1) {
+    const whole = await veeqoExtractLineItems(env, matched.order);
+    if (shipItemsMoreComplete(whole, rawOrderItems)) {
+      const binBy = {}; rawOrderItems.forEach(i => { if (i.s && i.b) binBy[String(i.s).toUpperCase()] = i.b; });
+      rawOrderItems = whole.map(i => (!i.b && binBy[String(i.s).toUpperCase()]) ? { ...i, b: binBy[String(i.s).toUpperCase()] } : i);
+    }
+  }
   const orderItems = await shipMergeBinFromManifestCache(env, clean, rawOrderItems);
   await manifestUpsertScanned(env, date, clean, {
     orderNum, channel: (matched.order.channel && matched.order.channel.name) || '', carrier,
@@ -23143,14 +23167,33 @@ async function veeqoManifestSync(env) {
   // order that a packer already scanned. Same rule as the prior Sheets
   // implementation, preserved exactly.
   const existingRows = (await env.DB.prepare(
-    `SELECT tracking FROM ship_manifest_log WHERE date = ? OR reconcile_status = 'Scanned'`
+    `SELECT id, tracking, line_items, uploaded_by FROM ship_manifest_log WHERE date = ? OR reconcile_status = 'Scanned'`
   ).bind(today).all()).results;
   const existingToday = new Set(existingRows.map(r => (r.tracking || '').trim().toUpperCase()).filter(Boolean));
+  const existingBy = {}; existingRows.forEach(r => { const t = (r.tracking || '').trim().toUpperCase(); if (t) (existingBy[t] = existingBy[t] || []).push(r); });
 
   const newRows = [];
+  let upgraded = 0;
   for (const o of todayOrders) {
     const tracking = veeqoExtractTracking(o);
-    if (existingToday.has(tracking)) continue;
+    if (existingToday.has(tracking)) {
+      // Saved before Veeqo had the whole order? Upgrade it to the full list
+      // (one-box orders only; a merged box keeps its own list of every order).
+      if ((o.allocations || []).length <= 1) {
+        const full = await veeqoExtractLineItems(env, o);
+        for (const r of (existingBy[tracking] || [])) {
+          if (r.uploaded_by === 'autolabel-merge') continue;
+          let have = []; try { have = JSON.parse(r.line_items || '[]') || []; } catch (_) {}
+          if (have.length && shipItemsMoreComplete(full, have)) {
+            const binBy = {}; have.forEach(i => { if (i.s && i.b) binBy[String(i.s).toUpperCase()] = i.b; });
+            const up = full.map(i => (!i.b && binBy[String(i.s).toUpperCase()]) ? { ...i, b: binBy[String(i.s).toUpperCase()] } : i);
+            await env.DB.prepare('UPDATE ship_manifest_log SET line_items = ? WHERE id = ?').bind(JSON.stringify(up), r.id).run();
+            upgraded++;
+          }
+        }
+      }
+      continue;
+    }
     const addr = veeqoExtractAddress(o);
     newRows.push({
       tracking, orderNum: String(o.number || o.id || ''),
@@ -23171,7 +23214,7 @@ async function veeqoManifestSync(env) {
     ).bind(today, r.tracking, r.orderNum, r.channel, r.carrier, r.service, r.shipToState, 'veeqo-sync', 'Pending', r.customerName, r.city, r.zip, r.lineItems, r.address1, r.address2, r.weightLb));
     for (let i = 0; i < stmts.length; i += 100) { await env.DB.batch(stmts.slice(i, i+100)); }
   }
-  return { ok: true, added: newRows.length, total: todayOrders.length, date: today };
+  return { ok: true, added: newRows.length, upgraded, total: todayOrders.length, date: today };
 }
 
 // ── POST or GET /veeqo/backfill-weight ──────────────────────────────────────
@@ -23616,7 +23659,9 @@ async function manifestUpsertScanned(env, today, tracking, orderData) {
       try { existingItems = JSON.parse(existing.line_items || '[]'); } catch (_) {}
       const newItems      = orderData.lineItems || [];
       const needsCustomer = !existing.customer_name && orderData.customerName;
-      const needsItems    = existingItems.length === 0 && newItems.length > 0;
+      // ...or the new list is more complete than the saved one (it was saved
+      // before Veeqo had the whole order) — never replaced by a shorter one.
+      const needsItems    = newItems.length > 0 && shipItemsMoreComplete(newItems, existingItems);
       // Same independent-backfill treatment for the real Veeqo weight
       // (weight_lb) as line_items above — a null on the existing row (never
       // captured, or captured before this column existed) gets filled in

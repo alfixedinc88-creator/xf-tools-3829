@@ -2167,6 +2167,53 @@ console.log('\nAuto Label → 💸 Low value: can be ticked and printed like Wou
   globalThis.fetch = realFetch; delete env.VEEQO_API_KEY;
 }
 
+// Owner: "Packing and Picking somehow don't show the whole order now — with more than 1 item it sometimes shows only 1,
+// I have to scan a second time to see all" + "the Label Printer box — make sure everyone can use it".
+console.log('\nPicking / Packing: a scan shows the WHOLE order (never just part of it); Label Printer for everyone');
+{
+  const realFetch = globalThis.fetch;
+  const sell = (id, sku, bin) => ({ id, sku_code: sku, stock_entries: [{ location: bin }] });
+  const full = [{ id: 1, quantity: 2, sellable: sell(1, '1=ELBOW', '24-5-5') }, { id: 2, quantity: 3, sellable: sell(2, '2=TEE', '23-2-3') }];
+  // Veeqo's package view lists only the first item (one box for the whole order).
+  const ord = t => ({ id: 77001, number: 'W-1', channel: { name: 'eBay' }, deliver_to: { first_name: 'A', last_name: 'B' }, line_items: full,
+    allocations: [{ id: 5001, line_items: [{ id: 1, quantity: 2, sellable: sell(1, '1=ELBOW', '24-5-5'), warehouse_sublocation: { location: '24-5-5' } }],
+      shipment: { id: 9, tracking_number: { tracking_number: t } } }] });
+  globalThis.fetch = async (u) => { u = String(u); const J = x => new Response(JSON.stringify(x), { headers: { 'Content-Type': 'application/json' } });
+    if (u.includes('api.veeqo.com/orders?')) { const q = decodeURIComponent((u.match(/query=([^&]+)/) || [])[1] || ''); return J(/^9400WHOLE/.test(q) ? [ord(q)] : []); }
+    if (u.includes('api.veeqo.com/')) return J([]);
+    return realFetch(u); };
+  env.VEEQO_API_KEY = 'k';
+  const qty = items => (items || []).reduce((n, i) => n + (+i.q || 0), 0);
+  // 1) No saved copy yet → Veeqo look-up: the whole order (2 + 3 = 5), not just the 1 item in the package view.
+  const s1 = await post('/ship/pick', { tracking: '9400WHOLE0001', initials: 'TS' });
+  check('first scan (nothing saved yet): all items of the order show — ELBOW ×2 + TEE ×3 = 5, not just 1 item', s1.lineItems?.length === 2 && qty(s1.lineItems) === 5, s1.lineItems);
+  // 2) A copy saved earlier with only part of the order → the scan's look-up upgrades it; a re-check shows all.
+  sq.prepare('INSERT INTO ship_manifest_log (date, tracking, line_items, uploaded_by) VALUES (?,?,?,?)').run(nyToday, '9400WHOLE0002', JSON.stringify([{ s: '1=ELBOW', q: 2, b: '24-5-5' }]), 'veeqo-sync');
+  await post('/ship/scan', { tracking: '9400WHOLE0002', initials: 'TS' });
+  await new Promise(r => setTimeout(r, 300));
+  const saved = JSON.parse(sq.prepare("SELECT line_items FROM ship_manifest_log WHERE tracking = '9400WHOLE0002'").get().line_items);
+  const lk = await get('/ship/order-lookup?q=9400WHOLE0002&days=7');
+  check('…a copy saved with only part of the order is upgraded to the whole order (2 + 3 = 5), so the re-check shows all', qty(saved) === 5 && saved.length === 2 && qty(lk.results?.[0]?.lineItems) === 5
+    && saved.find(i => i.s === '1=ELBOW')?.b === '24-5-5', saved);
+  // 3) Never downgraded: a fuller saved copy stays.
+  sq.prepare('INSERT INTO ship_manifest_log (date, tracking, line_items, uploaded_by) VALUES (?,?,?,?)').run(nyToday, '9400WHOLE0003', JSON.stringify([{ s: '1=ELBOW', q: 2, b: '24-5-5' }, { s: '2=TEE', q: 3, b: '23-2-3' }, { s: '5=CAP', q: 1, b: '9-9-9' }]), 'autolabel-merge');
+  const s3 = await post('/ship/scan', { tracking: '9400WHOLE0003', initials: 'TS' });
+  await new Promise(r => setTimeout(r, 300));
+  check('…a fuller saved list (e.g. a 🧩 merged box) is never cut down to a shorter one', qty(s3.lineItems) === 6 && qty(JSON.parse(sq.prepare("SELECT line_items FROM ship_manifest_log WHERE tracking = '9400WHOLE0003'").get().line_items)) === 6, s3.lineItems);
+  globalThis.fetch = realFetch; delete env.VEEQO_API_KEY;
+  const { readFileSync } = await import('node:fs');
+  const rd = f => readFileSync(fileURLToPath(new URL('../' + f, import.meta.url)), 'utf8');
+  const ph = rd('packship.html');
+  check('…Picking and Packing look again a few seconds after a scan and show the extra items (same label still on screen)',
+    /_psRenderScanProduct\(tracking, data\.lineItems\);\s*_psRecheckItems\(tracking, data\.lineItems, 'pack'\);/.test(ph)
+    && /_psRenderPickProduct\(tracking, data\.lineItems, data\.orderNum\);\s*_psRecheckItems\(tracking, data\.lineItems, 'pick', data\.orderNum\);/.test(ph), null);
+  const ix = rd('index.html'), lp = rd('labelprint.html'), xa = rd('xf-access.js');
+  const wh = ix.slice(ix.indexOf('🏭 Warehouse</div>'), ix.indexOf('⚡ Operator</div>'));
+  check('Label Printer: its card is in the 🏭 Warehouse group everyone sees (not the managers-only row), and any signed-in account can open it',
+    /labelprint\.html/.test(wh) && !/labelprint\.html/.test(ix.slice(ix.indexOf('⚡ Operator</div>'))) && !/does not have access to Label Printer/.test(lp)
+    && /key: 'labelprint', file: 'labelprint\.html', name: '🏷️ Label Printer', needs: 'any sign-in'/.test(xa), null);
+}
+
 // Owner: "Audit — after scanning the column or a box, scroll down to the scan bar (see more info below); on the phone the
 // Inventory / Refresh / Sign out / Apps bar stays at the top but small — tap to show all".
 console.log('\nInventory: Audit scrolls to the scan bar after a scan; slim top bar on the phone');
