@@ -13203,8 +13203,13 @@ window.invCredLogin = async function() {
   }
   function bdClean(v) { return String(v || '').trim().toUpperCase().replace(/\s+/g, ''); }
   // foot = "Printed by Ana · Oct 4, 2026" (tiny, at the bottom of the label).
-  function bdLabelHtml(sku, copies, name, foot) {
-    var one = '<div class="l"><svg class="b"></svg><div class="t">' + xfrEsc(sku) + '</div>' + (name ? '<div class="n">' + xfrEsc(name) + '</div>' : '')
+  // pic = the product photo (owner: "most time photo means everything"): on
+  // the left, the barcode + part # on the right; printed black-and-white.
+  function bdLabelHtml(sku, copies, name, foot, pic) {
+    var one = pic
+      ? '<div class="l lp"><img class="ph" src="' + xfrEsc(pic) + '" alt=""><div class="r"><svg class="b" style="height:' + (name ? '.36in' : '.44in') + '"></svg><div class="t">' + xfrEsc(sku) + '</div>' + (name ? '<div class="n">' + xfrEsc(name) + '</div>' : '')
+        + (foot ? '<div class="f">' + xfrEsc(foot) + '</div>' : '') + '</div></div>'
+      : '<div class="l"><svg class="b"></svg><div class="t">' + xfrEsc(sku) + '</div>' + (name ? '<div class="n">' + xfrEsc(name) + '</div>' : '')
       + (foot ? '<div class="f">' + xfrEsc(foot) + '</div>' : '') + '</div>';
     return '<!doctype html><html><head><meta charset="utf-8"><title>' + xfrEsc(sku) + '</title><style>'
       + '@page{size:2in 1in;margin:0}html,body{margin:0;padding:0}'
@@ -13213,11 +13218,32 @@ window.invCredLogin = async function() {
       + '.f{font:500 5.5pt/1 Arial,Helvetica,sans-serif;margin-top:.02in;color:#000;white-space:nowrap}'
       + 'svg.b{width:1.84in;height:' + (name ? (foot ? '.42in' : '.5in') : (foot ? '.52in' : '.6in')) + ';display:block}.t{font:800 ' + (name ? '13pt' : '15pt') + '/1 Arial,Helvetica,sans-serif;margin-top:.03in;letter-spacing:.5px;white-space:nowrap}'
       + '.n{font:600 7pt/1.1 Arial,Helvetica,sans-serif;margin-top:.02in;max-width:1.84in;text-align:center;overflow:hidden;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical}'
+      + '.l.lp{flex-direction:row;gap:.05in;padding:.05in .06in}.lp .ph{width:.6in;height:.6in;object-fit:contain;filter:grayscale(1) contrast(1.4);flex-shrink:0}'
+      + '.lp .r{display:flex;flex-direction:column;align-items:center;justify-content:center;width:1.24in;min-width:0}.lp svg.b{width:1.24in}.lp .t{font-size:11pt}.lp .n{max-width:1.24in;font-size:6pt}'
       + '</style></head><body>' + new Array(copies + 1).join(one) + '</body></html>';
+  }
+  // Wait for the photos in a label page before printing (max 4 s).
+  function bdImgsReady(doc) {
+    var imgs = Array.prototype.slice.call(doc.querySelectorAll('img'));
+    return Promise.race([Promise.all(imgs.map(function(im) { return im.complete ? 1 : new Promise(function(r) { im.onload = im.onerror = r; }); })), new Promise(function(r) { setTimeout(r, 4000); })]);
+  }
+  // 📷 Photo on the label: on unless turned off on this phone / PC.
+  BD.withPic = (function() { try { return localStorage.getItem('bd_pic') !== '0'; } catch (e) { return true; } })();
+  BD.pics = {};
+  window.bdPicToggle = function(on) { BD.withPic = !!on; try { localStorage.setItem('bd_pic', on ? '1' : '0'); } catch (e) {} bdPreview(true); };
+  function bdPicFor(sku) { return BD.withPic ? (BD.pics[String(sku).split('=')[0]] || '') : ''; }
+  function bdPicLoad(skus) {
+    var need = skus.map(function(k) { return String(k).split('=')[0]; }).filter(function(b, i, a) { return b && a.indexOf(b) === i && !(b in BD.pics); });
+    if (!need.length) return Promise.resolve();
+    return wFetch(W + '/inventory/photos?bases=' + encodeURIComponent(need.join(','))).then(function(r) { return r.json(); })
+      .then(function(d) { need.forEach(function(b) { BD.pics[b] = ((d && d.photos) || {})[b] || ''; }); }).catch(function() {});
   }
   window.bdLabelHtml = bdLabelHtml;
   function bdDraw(target, sku) {
+    var el = typeof target === 'string' ? document.querySelector(target) : target, st = el ? (el.getAttribute('style') || '') : '';
     JsBarcode(target, sku, { format: 'CODE128', displayValue: false, margin: 0, height: 60, width: 2 });
+    // the barcode maker replaces the size we gave it — put it back (photo labels are narrower)
+    if (el && st) el.setAttribute('style', (el.getAttribute('style') || '') + ';' + st);
   }
   // Tabs (owner): ✏️ Design → 💾 Save (the office PC prints it) ·
   // 🖨 To print (the office PC) · 📍 Where does it go? (scan a printed sticker).
@@ -13255,6 +13281,7 @@ window.invCredLogin = async function() {
       + bdPad()
       + '<div id="bd-match" style="font-size:13px;margin-top:6px;min-height:18px"></div>'
       + '<div id="bd-prev" style="margin:10px auto;width:2in;height:1in;border:1px dashed var(--border);border-radius:6px;background:#fff;display:flex;flex-direction:column;align-items:center;justify-content:center;overflow:hidden"><span style="color:#999;font-size:12px">preview</span></div>'
+      + '<label style="display:flex;align-items:center;gap:6px;font-size:13px;font-weight:700;margin:-4px 0 8px;cursor:pointer"><input type="checkbox" id="bd-pic" style="width:20px;height:20px"' + (BD.withPic ? ' checked' : '') + ' onchange="bdPicToggle(this.checked)"> 📷 Product photo on the label</label>'
       + '<div style="font-size:13px;font-weight:800;margin-bottom:6px">How many labels? <span id="bd-n" style="color:var(--accent)">' + BD.copies + '</span></div>'
       + '<div style="display:grid;grid-template-columns:repeat(5,1fr);gap:6px;margin-bottom:10px">'
       + [1, 2, 5, 10].map(function(n) { return '<button type="button" onclick="bdCopies(' + n + ')" style="padding:11px 0;border-radius:10px;border:1.5px solid var(--border);background:var(--bg3);font-size:17px;font-weight:800;cursor:pointer">' + n + '</button>'; }).join('')
@@ -13320,20 +13347,20 @@ window.invCredLogin = async function() {
   // All waiting jobs → one print (each label 2" × 1"), then "did they print OK?" → marked printed (who / when).
   window.bdPrintQueue = function() {
     var list = _bdQueue.slice(); if (!list.length) return;
-    bdLoadLib(function() {
+    bdLoadLib(function() { (BD.withPic ? bdPicLoad(list.map(function(j) { return j.sku; })) : Promise.resolve()).then(function() {
       var who = (INV_CRED_USER && INV_CRED_USER.displayName) || '';
       var foot = 'Printed' + (who ? ' by ' + who : '') + ' · ' + new Date().toLocaleDateString('en-US', { timeZone: 'America/New_York', month: 'short', day: 'numeric', year: 'numeric' });
-      var bodies = list.map(function(j) { var h = bdLabelHtml(j.sku, j.copies, j.name || '', foot); return { css: h.slice(h.indexOf('<style>') + 7, h.indexOf('</style>')), body: h.slice(h.indexOf('<body>') + 6, h.lastIndexOf('</body>')) }; });
+      var bodies = list.map(function(j) { var h = bdLabelHtml(j.sku, j.copies, j.name || '', foot, bdPicFor(j.sku)); return { css: h.slice(h.indexOf('<style>') + 7, h.indexOf('</style>')), body: h.slice(h.indexOf('<body>') + 6, h.lastIndexOf('</body>')) }; });
       var html = '<!doctype html><html><head><meta charset="utf-8"><title>Barcode labels</title><style>' + bodies[0].css
         + '.l{page-break-after:always;break-after:page}.l:last-child{page-break-after:auto;break-after:auto}</style></head><body>'
-        + bodies.map(function(b, i) { return b.body.replace(/<svg class="b">/g, '<svg class="b" data-j="' + i + '" style="height:' + (list[i].name ? '.42in' : '.52in') + '">'); }).join('') + '</body></html>';
+        + bodies.map(function(b, i) { return b.body.replace(/<svg class="b"( style="[^"]*")?>/g, function(m, st) { return '<svg class="b" data-j="' + i + '"' + (st || ' style="height:' + (list[i].name ? '.42in' : '.52in') + '"') + '>'; }); }).join('') + '</body></html>';
       var f = document.createElement('iframe');
       f.style.cssText = 'position:fixed;right:0;bottom:0;width:0;height:0;border:0';
       document.body.appendChild(f);
       var d = f.contentDocument; d.open(); d.write(html); d.close();
       try { d.querySelectorAll('svg.b').forEach(function(el) { bdDraw(el, list[+el.getAttribute('data-j')].sku); }); }
       catch (e) { f.remove(); invFlash('Can\'t make one of the barcodes', 'error'); return; }
-      setTimeout(function() {
+      bdImgsReady(d).then(function() { setTimeout(function() {
         try { f.contentWindow.focus(); f.contentWindow.print(); } catch (e) {}
         setTimeout(function() {
           f.remove();
@@ -13341,8 +13368,8 @@ window.invCredLogin = async function() {
           wFetch(W + '/inventory/barcode-job/printed', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ ids: list.map(function(j) { return j.id; }) }) })
             .then(function() { invFlash('✓ Printed — scan a sticker in 📍 Where does it go? to see its columns', 'success'); bdQueueLoad(true); }).catch(function() {});
         }, 800);
-      }, 200);
-    });
+      }, 200); });
+    }); });
   };
   // ── 📍 Where does it go? — scan a printed sticker → its columns + how many boxes each ──
   BD.find = null;
@@ -13428,7 +13455,18 @@ window.invCredLogin = async function() {
     if (!fromMatch) { clearTimeout(_bdTimer); _bdTimer = setTimeout(function() { bdMatch(sku); }, 350); }
     if (!sku) { box.innerHTML = '<span style="color:#999;font-size:12px">preview</span>'; return; }
     var nm = BD.nameFor === sku ? BD.name : '';
+    if (BD.withPic && !(sku.split('=')[0] in BD.pics)) bdPicLoad([sku]).then(function() { if (bdClean((g('bd-sku') || {}).value) === sku) bdPreview(true); });
+    var pic = bdPicFor(sku);
     bdLoadLib(function() {
+      if (pic) {
+        box.style.flexDirection = 'row'; box.style.gap = '4px';
+        box.innerHTML = '<img src="' + xfrEsc(pic) + '" alt="" style="width:.6in;height:.6in;object-fit:contain;filter:grayscale(1) contrast(1.4)"><div style="display:flex;flex-direction:column;align-items:center;width:1.24in">'
+          + '<svg id="bd-prev-svg" style="width:1.24in;height:' + (nm ? '.36in' : '.44in') + '"></svg><div style="font:800 11pt/1 Arial,sans-serif;color:#000;margin-top:3px;white-space:nowrap">' + xfrEsc(sku) + '</div>'
+          + (nm ? '<div style="font:600 6pt/1.1 Arial,sans-serif;color:#000;margin-top:2px;max-width:1.24in;text-align:center;overflow:hidden;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical">' + xfrEsc(nm) + '</div>' : '') + '</div>';
+        try { bdDraw('#bd-prev-svg', sku); } catch (e) { box.innerHTML = '<span style="color:var(--red);font-size:12px">Can\'t make a barcode from that</span>'; }
+        return;
+      }
+      box.style.flexDirection = 'column';
       box.innerHTML = '<svg id="bd-prev-svg" style="width:1.84in;height:' + (nm ? '.5in' : '.6in') + '"></svg><div style="font:800 ' + (nm ? '13pt' : '15pt') + '/1 Arial,sans-serif;color:#000;margin-top:3px">' + xfrEsc(sku) + '</div>'
         + (nm ? '<div style="font:600 7pt/1.1 Arial,sans-serif;color:#000;margin-top:2px;max-width:1.84in;text-align:center;overflow:hidden;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical">' + xfrEsc(nm) + '</div>' : '');
       try { bdDraw('#bd-prev-svg', sku); } catch (e) { box.innerHTML = '<span style="color:var(--red);font-size:12px">Can\'t make a barcode from that</span>'; }
@@ -13444,12 +13482,12 @@ window.invCredLogin = async function() {
       var who = (INV_CRED_USER && INV_CRED_USER.displayName) || '';
       var foot = 'Printed' + (who ? ' by ' + who : '') + ' · ' + new Date().toLocaleDateString('en-US', { timeZone: 'America/New_York', month: 'short', day: 'numeric', year: 'numeric' });
       var nm = BD.nameFor === sku ? BD.name : '';
-      var d = f.contentDocument; d.open(); d.write(bdLabelHtml(sku, BD.copies, nm, foot)); d.close();
+      var d = f.contentDocument; d.open(); d.write(bdLabelHtml(sku, BD.copies, nm, foot, bdPicFor(sku))); d.close();
       // Kept on record: who printed which label, when, how many.
       wFetch(W + '/inventory/barcode-label', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ sku: sku, name: nm, copies: BD.copies }) }).catch(function() {});
       try { d.querySelectorAll('svg.b').forEach(function(el) { bdDraw(el, sku); }); }
       catch (e) { f.remove(); invFlash('Can\'t make a barcode from "' + sku + '"', 'error'); return; }
-      setTimeout(function() { f.contentWindow.focus(); f.contentWindow.print(); setTimeout(function() { f.remove(); }, 60000); }, 150);
+      bdImgsReady(d).then(function() { setTimeout(function() { f.contentWindow.focus(); f.contentWindow.print(); setTimeout(function() { f.remove(); }, 60000); }, 150); });
       invFlash('🖨 Printing ' + BD.copies + ' label(s): ' + sku, 'success');
     });
   };

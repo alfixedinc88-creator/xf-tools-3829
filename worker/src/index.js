@@ -7208,6 +7208,21 @@ const _app = {
         }
         return cors(new Response(JSON.stringify({ ok: true, photos }), { headers: { 'Content-Type': 'application/json' } }));
       }
+      // GET ?base=24-5-5 → that part #'s photo itself (the image), from our
+      // photo list — so a label can draw it (shipping label bottom strip,
+      // barcode sticker). Only our own saved photo URLs are fetched.
+      if (path === '/inventory/photo-file' && method === 'GET') {
+        const base = parentOf(url.searchParams.get('base') || '');
+        const u = base ? ((await productPhotoMap(env, [base]))[base] || '') : '';
+        const bad = (st, e) => cors(new Response(JSON.stringify({ ok: false, error: e }), { status: st, headers: { 'Content-Type': 'application/json' } }));
+        if (!/^https:\/\//i.test(u)) return bad(404, 'No photo for ' + (base || '?'));
+        const r = await fetch(u, { cf: { cacheTtl: 86400 } }).catch(() => null);
+        const ct = r ? String(r.headers.get('content-type') || '') : '';
+        if (!r || !r.ok || !/^image\//i.test(ct)) return bad(502, 'The photo did not load');
+        const buf = await r.arrayBuffer();
+        if (buf.byteLength > 5e6) return bad(413, 'Photo too big');
+        return cors(new Response(buf, { headers: { 'Content-Type': ct, 'Cache-Control': 'private, max-age=3600' } }));
+      }
       if ((path === '/inventory/product-photo' && method === 'POST') || path === '/inventory/product-photo-search' || (path === '/inventory/sync-photos-from-veeqo' && method === 'POST')) {
         if (session.pin_level !== 'mgmt') return cors(new Response(JSON.stringify({ ok: false, error: 'Management access required' }), { status: 403, headers: { 'Content-Type': 'application/json' } }));
         // Changing photos (by hand or from Veeqo): Admins only.
