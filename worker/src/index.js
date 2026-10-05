@@ -6607,7 +6607,7 @@ const TM_BLOCK = new Set([
   '/ebay-msg/send', '/msg/send', '/msg/reply', '/shopify/listing-create',
   '/repricer/price-change', '/repricer/auto-reprice', '/repricer/queue-action',
   '/ship/cancel-label', '/ship/cancel-order', '/ship/cancel-order-confirm',
-  '/veeqo/autolabel/run', '/veeqo/autolabel/test-buy', '/veeqo/autolabel/order-edit', '/veeqo/autolabel/buy-one',
+  '/veeqo/autolabel/run', '/veeqo/autolabel/test-buy', '/veeqo/autolabel/order-edit', '/veeqo/autolabel/buy-one', '/veeqo/autolabel/merge-buy',
   '/inventory/soldout/set-qty', '/inventory/soldout/add-listing',
 ]);
 function tmJ(o, status) { return cors(new Response(JSON.stringify(o), { status: status || 200, headers: { 'Content-Type': 'application/json' } })); }
@@ -18801,9 +18801,11 @@ async function shipVeeqoOrder(env, clean, date, carrier) {
   let matched = await find('&status=shipped');
   if (!matched) matched = await find(''); // not marked shipped yet — only when the first answered (no second 8 s wait)
   if (!matched || matched === 'timeout') return null;
-  const orderNum = String(matched.order.number || matched.order.id || '');
+  // 🧩 A merged box (same name + address, one label): every order's items.
+  const mergedBox = await autolabelMergedBox(env, clean);
+  const orderNum = mergedBox ? mergedBox.number : String(matched.order.number || matched.order.id || '');
   const orderAddr = veeqoExtractAddress(matched.order);
-  const rawOrderItems = await veeqoExtractLineItems(env, matched.order, matched.allocation);
+  const rawOrderItems = mergedBox ? mergedBox.items : await veeqoExtractLineItems(env, matched.order, matched.allocation);
   const orderItems = await shipMergeBinFromManifestCache(env, clean, rawOrderItems);
   await manifestUpsertScanned(env, date, clean, {
     orderNum, channel: (matched.order.channel && matched.order.channel.name) || '', carrier,
@@ -24127,10 +24129,14 @@ async function handleVeeqoRoute(url, method, request, env, session) {
 // so turning DirectPrint on in Veeqo is what makes "auto buy" = "auto
 // print". A Cloudflare worker has no way to reach a printer itself.
 //
-// Merging: Veeqo has no public merge API, so a same-person group is held
-// and listed ("merge in Veeqo") instead of merged automatically. Once it's
-// merged in Veeqo, the merged order goes through the normal rules on the
-// next run.
+// Merging (owner: "our own merge — under 20 lb together, just combine the
+// shipment; over 20 lb, put it on the side so I can merge it myself"):
+// Veeqo has no public merge API, so a same-person group that weighs
+// mergeMaxLb or less together becomes ONE box with ONE label — bought on the
+// oldest order (its box weight set to everything together), and the other
+// orders marked shipped in Veeqo with that same tracking # (autolabel_merge
+// keeps every step). Heavier groups (or ones that can't be merged safely)
+// are put aside as "🔗 Merge by hand". See autolabelMergePlan.
 //
 // Rules live in app_config (autolabel_config) as JSON, so new ones can be
 // added without touching the old ones — see AUTOLABEL_DEFAULTS.
@@ -24139,6 +24145,7 @@ async function handleVeeqoRoute(url, method, request, env, session) {
 const AUTOLABEL_CONFIG_KEY   = 'autolabel_config';
 const AUTOLABEL_LASTRUN_KEY  = 'autolabel_last_run';
 const AUTOLABEL_VERIFIED_KEY = 'autolabel_buy_verified';
+const AUTOLABEL_MERGE_VERIFIED_KEY = 'autolabel_merge_verified'; // auto runs merge only after one merge by hand worked
 
 const AUTOLABEL_DEFAULTS = {
   mode: 'off',                 // 'off' | 'preview' | 'auto'
@@ -24150,6 +24157,8 @@ const AUTOLABEL_DEFAULTS = {
   lowValueRatio: 0.9,          // hold if the label costs >= this share of the order total (0 = rule off)
   lowValueMaxOrder: 0,         // only apply the low-value rule to orders <= this $ total (0 = every order)
   skipChannels: [],            // never auto-buy for these channels (name contains)
+  autoMerge: true,             // same name + address, together <= mergeMaxLb -> one box, one label (owner)
+  mergeMaxLb: 20,              // ...over this together -> put aside to merge / split by hand (owner: 20 lb)
   maxBoxLb: 20,                // hold orders whose box would weigh more than this and show how to split them (0 = rule off)
   slipRule: 'multi_sku',       // packing slip with the label: 'multi_sku' (2+ different items) | 'multi_qty' (2+ pieces in total) | 'all' | 'off'
   maxLabelsPerRun: 10,         // most labels one run can buy
@@ -24193,6 +24202,16 @@ async function autolabelEnsureTables(env) {
       est_lb REAL, veeqo_lb REAL, lines TEXT, reason TEXT,
       flagged_at TEXT NOT NULL, updated_at TEXT NOT NULL,
       status TEXT NOT NULL DEFAULT 'open', done_by TEXT, done_at TEXT
+    )
+  `).run().catch(()=>{});
+  // 🧩 Same name + address merged into one box: who / when / which orders /
+  // the one tracking #, and whether each other order got marked shipped.
+  await env.DB.prepare(`
+    CREATE TABLE IF NOT EXISTS autolabel_merge (
+      id INTEGER PRIMARY KEY AUTOINCREMENT, created_at TEXT NOT NULL, updated_at TEXT,
+      lead_id TEXT, lead_number TEXT, lead_alloc TEXT, orders TEXT, items TEXT, weight_lb REAL,
+      tracking TEXT, carrier TEXT, service TEXT, price REAL, carrier_id TEXT,
+      status TEXT NOT NULL, detail TEXT, by_user TEXT, tries INTEGER DEFAULT 0
     )
   `).run().catch(()=>{});
   // Packing slips waiting for the printer station (Auto Label tab ->
@@ -24264,6 +24283,8 @@ function autolabelCleanConfig(c) {
     lowValueMaxOrder:  num(c.lowValueMaxOrder, D.lowValueMaxOrder, 0, 100000),
     skipChannels:      list(c.skipChannels),
     maxBoxLb:          num(c.maxBoxLb, D.maxBoxLb, 0, 150),
+    autoMerge:         c.autoMerge === true || c.autoMerge === 'true',
+    mergeMaxLb:        num(c.mergeMaxLb, D.mergeMaxLb, 1, 150),
     slipRule:          ['multi_sku', 'multi_qty', 'all', 'off'].includes(c.slipRule) ? c.slipRule : D.slipRule,
     maxLabelsPerRun:   Math.round(num(c.maxLabelsPerRun, D.maxLabelsPerRun, 0, 100)),
     maxLabelsPerDay:   Math.round(num(c.maxLabelsPerDay, D.maxLabelsPerDay, 0, 2000)),
@@ -24796,11 +24817,12 @@ function autolabelSlipWanted(items, rule) {
 }
 
 // Queues a bought shipping label for the 🖨 Printer station.
-async function autolabelQueueLabel(env, o, allocId, tracking, carrier, service, source) {
+// merged: { items (Veeqo line items of every order in the box), number ("A + B") }.
+async function autolabelQueueLabel(env, o, allocId, tracking, carrier, service, source, merged) {
   try {
-    const items = await autolabelBoxItems(env, o, allocId);
+    const items = merged ? autolabelLabelItems(merged.items) : await autolabelBoxItems(env, o, allocId);
     await d1Run(env, `INSERT INTO label_print_queue (order_id, alloc_id, order_number, channel, tracking, carrier, service, source, created_at, items) VALUES (?,?,?,?,?,?,?,?,?,?)`,
-      [String(o.id || ''), String(allocId || ''), o.number || '', veeqoExtractChannel(o), tracking || '', carrier || '', service || '',
+      [String(o.id || ''), String(allocId || ''), (merged && merged.number) || o.number || '', veeqoExtractChannel(o), tracking || '', carrier || '', service || '',
        JSON.stringify(source || {}).slice(0, 20000), new Date().toISOString(), JSON.stringify(items)]);
     return true;
   } catch (e) { console.error('[autolabel] label queue failed', e.message); return false; }
@@ -24809,9 +24831,11 @@ async function autolabelQueueLabel(env, o, allocId, tracking, carrier, service, 
 async function autolabelBoxItems(env, o, allocId) {
   try {
     const alloc = (o.allocations || []).find(a => String(a.id) === String(allocId)) || (o.allocations || [])[0] || null;
-    const li = await veeqoExtractLineItems(env, o, alloc);
-    return (li || []).map(i => ({ sku: i.s || '', qty: parseInt(i.q) || 0, bin: i.b || '', pieces: (parseInt(i.q) || 0) * _psWeightSkuMultiplier(i.s), img: /^https:\/\//i.test(i.i || '') ? i.i : '' }));
+    return autolabelLabelItems(await veeqoExtractLineItems(env, o, alloc));
   } catch (e) { return []; }
+}
+function autolabelLabelItems(li) {
+  return (li || []).map(i => ({ sku: i.s || '', qty: parseInt(i.q) || 0, bin: i.b || '', pieces: (parseInt(i.q) || 0) * _psWeightSkuMultiplier(i.s), img: /^https:\/\//i.test(i.i || '') ? i.i : '' }));
 }
 // Every https URL inside Veeqo's answer that is the LABEL file (a key with
 // "label" / "pdf" / "document", or a link with "label" in it), plus any
@@ -24895,13 +24919,13 @@ async function autolabelLabelFile(env, row) {
 }
 
 // Queues one packing slip for a package whose label was just bought.
-async function autolabelQueueSlip(env, cfg, o, alloc, tracking, carrier, boxNo, boxCount) {
+async function autolabelQueueSlip(env, cfg, o, alloc, tracking, carrier, boxNo, boxCount, merged) {
   try {
-    const items = await veeqoExtractLineItems(env, o, alloc);
+    const items = merged ? merged.items : await veeqoExtractLineItems(env, o, alloc);
     if (!autolabelSlipWanted(items, cfg.slipRule)) return false;
     // Product names, when Veeqo sends them, keyed by SKU.
     const titles = {};
-    for (const li of (o.line_items || [])) {
+    for (const li of (merged ? merged.orders : [o]).flatMap(x => x.line_items || [])) {
       const sell = li.sellable || {};
       const t = sell.product_title || sell.full_title || sell.title || (li.product && li.product.title) || '';
       if (sell.sku_code && t) titles[sell.sku_code] = t;
@@ -24915,12 +24939,252 @@ async function autolabelQueueSlip(env, cfg, o, alloc, tracking, carrier, boxNo, 
     await d1Run(env,
       `INSERT INTO packing_slip_queue (order_id, alloc_id, order_number, channel, tracking, carrier, ship_to, items, box_no, box_count, created_at)
        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-      [String(o.id), String(alloc.id), o.number || '', veeqoExtractChannel(o), tracking || '', carrier || '',
+      [String(o.id), String(alloc.id), (merged && merged.number) || o.number || '', veeqoExtractChannel(o), tracking || '', carrier || '',
        JSON.stringify(shipTo),
        JSON.stringify(items.map(i => ({ sku: i.s, qty: i.q, bin: i.b, img: i.i, pieces: (parseInt(i.q) || 0) * _psWeightSkuMultiplier(i.s), title: titles[i.s] || '' }))),
        boxNo || 1, boxCount || 1, new Date().toISOString()]);
     return true;
   } catch (e) { console.error('[autolabel] slip queue failed', e.message); return false; }
+}
+
+// ── 🧩 Same name + address → one box ─────────────────────────────────────
+// Owner: "merge — our own merge: under 20 lb together is easy, just combine
+// the shipment; over 20 lb (we split those into 2 or more boxes, it depends
+// how heavy) put it on the side first so I can merge it myself".
+function autolabelHasLabel(o) {
+  const allocs = o.allocations || [];
+  return allocs.length ? allocs.every(a => _psAllocTrackingNumber(a)) : !!veeqoExtractTracking(o);
+}
+// Every merge still on record (last 30 days), by order id.
+async function autolabelMergeMap(env) {
+  const rows = await d1All(env, `SELECT * FROM autolabel_merge WHERE status != 'failed' AND created_at >= ?`, [new Date(Date.now() - 30 * 864e5).toISOString()]);
+  const map = new Map();
+  for (const r of rows) {
+    try { r.orderList = JSON.parse(r.orders || '[]') || []; } catch (_) { r.orderList = []; }
+    for (const x of r.orderList) map.set(String(x.id), r);
+  }
+  return map;
+}
+// The box Pack & Ship should see for a merged label: every order's items.
+async function autolabelMergedBox(env, tracking) {
+  try {
+    const r = await d1First(env, `SELECT orders, items FROM autolabel_merge WHERE UPPER(tracking) = ? AND status IN ('bought','done','mark_failed') ORDER BY id DESC LIMIT 1`, [String(tracking || '').toUpperCase()]);
+    if (!r) return null;
+    const items = JSON.parse(r.items || '[]'), orders = JSON.parse(r.orders || '[]');
+    return items.length ? { items, number: orders.map(x => x.number).join(' + ') } : null;
+  } catch (_) { return null; }
+}
+// Every order's items in one list (same SKU + bin added up — nothing counted twice, nothing dropped).
+async function autolabelMergeItems(env, orders) {
+  const out = [], at = {};
+  for (const g of orders) {
+    for (const i of await veeqoExtractLineItems(env, g, (g.allocations || [])[0])) {
+      const k = String(i.s || '').toUpperCase() + '|' + String(i.b || '').toUpperCase();
+      if (at[k] != null) out[at[k]] = { ...out[at[k]], q: (parseInt(out[at[k]].q) || 0) + (parseInt(i.q) || 0) };
+      else { at[k] = out.length; out.push({ ...i, q: parseInt(i.q) || 0 }); }
+    }
+  }
+  return out;
+}
+// What to do with one same-person group (orders not cancelled, no label yet):
+// { kind: 'auto' | 'hand' | 'wait', reason, lb, lead (oldest), orders, nums }.
+async function autolabelMergePlan(env, cfg, group, now) {
+  const orders = group.slice().sort((a, b) => ((Date.parse(a.created_at || '') || 0) - (Date.parse(b.created_at || '') || 0)) || (String(a.number) < String(b.number) ? -1 : 1));
+  const nums = orders.map(g => g.number).join(' + ');
+  const plan = { kind: 'hand', reason: '', lb: null, lead: orders[0], orders, nums };
+  const skip = orders.find(g => autolabelChannelMatches(g, cfg.skipChannels));
+  if (skip) { plan.reason = `${skip.number}: channel is on the skip list — merge by hand`; return plan; }
+  const odd = orders.find(g => (g.allocations || []).length !== 1);
+  if (odd) { plan.reason = `${odd.number} is ${(odd.allocations || []).length ? 'in ' + odd.allocations.length + ' boxes' : 'not allocated in Veeqo (stock?)'} — merge by hand`; return plan; }
+  let lb = 0;
+  for (const g of orders) {
+    const w = await autolabelWeighAllocation(env, g, g.allocations[0]);
+    if (w.lb == null) { plan.reason = `No weight for ${g.number} — merge by hand`; return plan; }
+    lb += w.lb;
+  }
+  plan.lb = Math.round(lb * 100) / 100;
+  if (plan.lb > cfg.mergeMaxLb) { plan.reason = `Together ${plan.lb} lb — over ${cfg.mergeMaxLb} lb: put aside for you to merge / split by hand (${nums})`; return plan; }
+  const newest = Math.max(...orders.map(g => Date.parse(g.created_at || '') || 0));
+  const ageMin = newest ? Math.floor((now - newest) / 60000) : null;
+  if (ageMin != null && ageMin < cfg.waitMinutes) { plan.kind = 'wait'; plan.reason = `Waiting — ${cfg.waitMinutes - ageMin} min left, then one box: ${nums} (${plan.lb} lb)`; return plan; }
+  if (!cfg.autoMerge) { plan.reason = `Together ${plan.lb} lb — one box is OK, but auto merge is off: merge by hand (${nums})`; return plan; }
+  plan.kind = 'auto'; plan.reason = `🧩 One box, one label: ${nums} — together ${plan.lb} lb`;
+  return plan;
+}
+// Marks an order shipped in Veeqo with a tracking # we already have (the
+// merged box's label). Called done only once Veeqo shows that tracking on it.
+async function autolabelMarkShipped(env, o, allocId, tracking, carrierId) {
+  const sh = { tracking_number_attributes: { tracking_number: tracking }, notify_customer: false, update_remote_order: true };
+  if (carrierId) sh.carrier_id = carrierId;
+  const tries = [
+    ['POST', '/shipments', { shipment: { ...sh, allocation_id: allocId } }],
+    ['POST', '/shipments', { allocation_id: allocId, order_id: o.id, shipment: sh }],
+    ['POST', `/orders/${o.id}/allocations/${allocId}/shipment`, { shipment: sh }],
+  ];
+  const said = [];
+  for (const [m, pth, body] of tries) {
+    const r = await veeqoWrite(env, m, pth, body);
+    said.push(`${pth} → ${r.status} ${String(r.said || '').slice(0, 120)}`);
+    if (!r.ok) continue;
+    const o2 = await veeqoLiveOrder(env, o.number);
+    const a2 = o2 && (o2.allocations || []).find(a => String(a.id) === String(allocId));
+    if (a2 && String(_psAllocTrackingNumber(a2) || '').toUpperCase() === String(tracking).toUpperCase()) return { ok: true, said };
+  }
+  return { ok: false, said };
+}
+// Buys the ONE label for a merged box and marks the other orders shipped
+// with it. Every step is kept in autolabel_merge + autolabel_log.
+async function autolabelMergeBuy(env, cfg, plan, by, mergeMap) {
+  const { lead, orders, nums } = plan;
+  const leadAlloc = lead.allocations[0];
+  for (const g of orders) if (mergeMap && mergeMap.has(String(g.id))) return { ok: false, error: `${g.number} is already in a merged box` };
+  for (const g of orders) {
+    if (autolabelChannelType(g) !== 'amazon') continue;
+    const amz = await autolabelAmazonBuyerCancel(env, g.number);
+    if (amz.requested) return { ok: false, cancelled: g.number, error: `Amazon buyer asked to cancel ${g.number} — not merging` };
+  }
+  const items = await autolabelMergeItems(env, orders);
+  const now = new Date().toISOString();
+  const list = orders.map(g => ({ id: String(g.id), number: g.number, allocId: String(g.allocations[0].id), channel: veeqoExtractChannel(g), marked: g === lead }));
+  const ins = await d1Run(env, `INSERT INTO autolabel_merge (created_at, updated_at, lead_id, lead_number, lead_alloc, orders, items, weight_lb, status, by_user) VALUES (?,?,?,?,?,?,?,?,?,?)`,
+    [now, now, String(lead.id), lead.number || '', String(leadAlloc.id), JSON.stringify(list), JSON.stringify(items), plan.lb, 'buying', by || 'auto']);
+  const mid = ins && ins.meta && ins.meta.last_row_id;
+  const setRow = (fields) => d1Run(env, `UPDATE autolabel_merge SET ${Object.keys(fields).map(k => k + ' = ?').join(', ')}, updated_at = ? WHERE id = ?`, [...Object.values(fields), new Date().toISOString(), mid]);
+  const fail = async (error, detail) => { await setRow({ status: 'failed', detail: String(detail || error).slice(0, 2000) }); return { ok: false, error }; };
+  const logBase = { orderId: lead.id, allocId: leadAlloc.id, orderNumber: lead.number, channel: veeqoExtractChannel(lead), customer: veeqoExtractCustomerName(lead) };
+
+  // 1) The box weight on the oldest order = everything together (size: the biggest box of the group).
+  const pk = orders.map(g => veeqoLivePackage(g.allocations[0])).filter(p => p.lengthIn && p.widthIn && p.heightIn)
+    .sort((a, b) => b.lengthIn * b.widthIn * b.heightIn - a.lengthIn * a.widthIn * a.heightIn)[0] || {};
+  const want = { allocId: leadAlloc.id, weightLb: plan.lb, lengthIn: pk.lengthIn, widthIn: pk.widthIn, heightIn: pk.heightIn };
+  const before = veeqoLivePackage(leadAlloc), said = [];
+  let saved = false;
+  for (const [m, pth, body] of veeqoEditTries('package', want, lead)) {
+    const r = await veeqoWrite(env, m, pth, body);
+    said.push(`${pth} → ${r.status} ${String(r.said || '').slice(0, 120)}`);
+    if (!r.ok) continue;
+    const o2 = await veeqoLiveOrder(env, lead.number);
+    const a2 = o2 && (o2.allocations || []).find(a => String(a.id) === String(leadAlloc.id));
+    const p2 = a2 ? veeqoLivePackage(a2) : null;
+    if (p2 && p2.weightLb != null && Math.abs(p2.weightLb - plan.lb) < 0.05) { saved = true; break; }
+  }
+  await veeqoEditTable(env);
+  await d1Run(env, 'INSERT INTO veeqo_edit_log (ts, by_user, order_number, order_id, alloc_id, sellable_id, sku, kind, before_val, after_val, ok, detail) VALUES (?,?,?,?,?,?,?,?,?,?,?,?)',
+    [new Date().toISOString(), by || 'auto', lead.number || '', String(lead.id), String(leadAlloc.id), '', '', 'package',
+     `${before.weightLb == null ? '?' : before.weightLb} lb`, `${plan.lb} lb (🧩 merged box ${nums})`, saved ? 1 : 0, saved ? '' : ('NOT saved — Veeqo: ' + said.join(' | ')).slice(0, 1500)]);
+  if (!saved) return fail(`Veeqo did not take the box weight (${plan.lb} lb) for ${lead.number} — nothing bought, merge by hand`, said.join(' | '));
+
+  // 2) Rates for that box, same carrier rules (a USPS-only channel in the box keeps it USPS).
+  const { quotes } = await autolabelGetQuotes(env, leadAlloc.id);
+  const rateOrder = orders.find(g => autolabelChannelMatches(g, cfg.uspsOnlyChannels)) || lead;
+  const choice = autolabelChooseRate(rateOrder, quotes, { ...cfg, lowValueRatio: 0 });
+  if (!choice.pick) return fail(`${choice.reason} — nothing bought`);
+  const total = orders.reduce((n, g) => n + (autolabelOrderTotal(g) || 0), 0);
+  const low = autolabelLowValue({ total_price: total }, choice.pick.price, cfg);
+  if (low) return fail(`${low} — nothing bought`);
+  const p = choice.pick;
+
+  // 3) Buy the one label.
+  let b;
+  try { b = await autolabelBuy(env, lead, leadAlloc.id, p); }
+  catch (e) {
+    await autolabelLog(env, { ...logBase, action: 'buy_failed', carrier: p.carrier, service: p.service, price: p.price, orderTotal: total, reason: `🧩 Merged box ${nums}`, detail: e.message });
+    return fail(String(e.message || e).slice(0, 300));
+  }
+  const tracking = b.tracking;
+  const resp = b.response || {};
+  let carrierId = resp.carrier_id || (resp.shipment && resp.shipment.carrier_id) || (resp.carrier && resp.carrier.id) || null;
+  await setRow({ status: 'bought', tracking, carrier: p.carrier, service: p.service, price: p.price, carrier_id: carrierId ? String(carrierId) : '' });
+  await autolabelLog(env, { ...logBase, action: 'bought', tracking, carrier: p.carrier, service: p.service, price: p.price, orderTotal: total,
+    reason: `🧩 Merged box ${nums} (${plan.lb} lb, ${items.reduce((n, i) => n + (parseInt(i.q) || 0), 0)} items)${by ? ' by ' + by : ''}: ${choice.reason}` });
+  const merged = { items, number: nums, orders };
+  await autolabelQueueLabel(env, lead, leadAlloc.id, tracking, p.carrier, p.service, resp, merged);
+  const slip = await autolabelQueueSlip(env, cfg, lead, leadAlloc, tracking, p.carrier, 1, 1, merged);
+  await autolabelMergeManifest(env, plan, tracking, p.carrier, p.service, items);
+
+  // 4) The other orders: shipped in Veeqo with the same tracking #.
+  if (!carrierId) { const o2 = await veeqoLiveOrder(env, lead.number); const a2 = o2 && (o2.allocations || []).find(a => String(a.id) === String(leadAlloc.id)); const s2 = (a2 && a2.shipment) || {}; carrierId = s2.carrier_id || (s2.carrier && s2.carrier.id) || null; }
+  const notes = [];
+  for (const x of list) {
+    if (x.marked) continue;
+    const g = orders.find(o => String(o.id) === x.id);
+    const m = await autolabelMarkShipped(env, g, x.allocId, tracking, carrierId);
+    x.marked = m.ok;
+    if (!m.ok) notes.push(`${x.number}: ${m.said.join(' | ')}`);
+    await autolabelLog(env, { orderId: g.id, allocId: x.allocId, orderNumber: g.number, channel: x.channel, customer: veeqoExtractCustomerName(g),
+      action: m.ok ? 'merged' : 'merge_mark_failed', tracking, carrier: p.carrier, service: p.service, price: 0, orderTotal: autolabelOrderTotal(g),
+      reason: m.ok ? `🧩 In one box with ${lead.number} — marked shipped with the same tracking` : `🧩 Label ${tracking} bought on ${lead.number}, but Veeqo did not take it for ${g.number} — mark it shipped by hand`,
+      detail: m.ok ? '' : m.said.join(' | ') });
+  }
+  const allMarked = list.every(x => x.marked);
+  await setRow({ status: allMarked ? 'done' : 'mark_failed', orders: JSON.stringify(list), tries: 1, detail: notes.join(' || ').slice(0, 2000) });
+  return { ok: true, allMarked, tracking, carrier: p.carrier, service: p.service, price: p.price, days: p.days, lb: plan.lb, orders: list, slip,
+    reason: `${plan.reason}: ${choice.reason}`,
+    error: allMarked ? undefined : `Label bought (${tracking}), but Veeqo did not mark ${list.filter(x => !x.marked).map(x => x.number).join(', ')} shipped — do it by hand in Veeqo with that tracking #` };
+}
+// The merged box on today's manifest with every order's items, so Picking /
+// Packing see the whole box when they scan the label.
+async function autolabelMergeManifest(env, plan, tracking, carrier, service, items) {
+  try {
+    await ensureShipD1Tables(env);
+    const today = shipTodayKey(), o = plan.lead, addr = veeqoExtractAddress(o);
+    const ex = await d1First(env, 'SELECT id FROM ship_manifest_log WHERE date = ? AND UPPER(tracking) = ?', [today, String(tracking).toUpperCase()]);
+    if (ex) await d1Run(env, 'UPDATE ship_manifest_log SET order_num = ?, line_items = ?, weight_lb = ? WHERE id = ?', [plan.nums, JSON.stringify(items), plan.lb, ex.id]);
+    else await d1Run(env, `INSERT INTO ship_manifest_log (date, tracking, order_num, channel, carrier, service, ship_to_state, uploaded_by, reconcile_status, customer_name, city, zip, line_items, address1, address2, weight_lb)
+      VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`, [today, String(tracking).toUpperCase(), plan.nums, veeqoExtractChannel(o), carrier || '', service || '', (o.deliver_to || {}).state || '',
+      'autolabel-merge', 'Pending', veeqoExtractCustomerName(o), addr.city, addr.zip, JSON.stringify(items), addr.address1, addr.address2, plan.lb]);
+  } catch (e) { console.error('[autolabel] merge manifest', e.message); }
+}
+// A Last run row for an order already in a merged box. An order whose
+// "mark shipped" didn't take is tried again (up to 5 times), never bought.
+async function autolabelMergeRowState(env, o, m, row) {
+  const x = (m.orderList || []).find(y => String(y.id) === String(o.id)) || {};
+  row.mergeKey = m.lead_number; row.mergeWith = (m.orderList || []).filter(y => y.id !== x.id).map(y => `${y.number} (${y.channel})`);
+  if (!m.tracking) {
+    row.decision = 'merge_fix';
+    row.reason = `🧩 A merged label for ${m.lead_number} was being bought when it stopped — check in Veeqo if ${m.lead_number} has a label before doing anything`;
+    return;
+  }
+  row.tracking = m.tracking; row.carrier = m.carrier || ''; row.service = m.service || '';
+  if (!x.marked && (m.tries || 0) < 5) {
+    const r = await autolabelMarkShipped(env, o, x.allocId, m.tracking, m.carrier_id || null);
+    x.marked = r.ok;
+    const allMarked = (m.orderList || []).every(y => y.marked);
+    await d1Run(env, 'UPDATE autolabel_merge SET orders = ?, status = ?, tries = COALESCE(tries,0) + 1, updated_at = ? WHERE id = ?',
+      [JSON.stringify(m.orderList), allMarked ? 'done' : 'mark_failed', new Date().toISOString(), m.id]);
+    m.tries = (m.tries || 0) + 1;
+    if (r.ok) await autolabelLog(env, { orderId: o.id, allocId: x.allocId, orderNumber: o.number, channel: x.channel, customer: veeqoExtractCustomerName(o),
+      action: 'merged', tracking: m.tracking, carrier: m.carrier, service: m.service, price: 0, reason: `🧩 In one box with ${m.lead_number} — marked shipped with the same tracking (try again worked)` });
+  }
+  if (x.marked) { row.decision = 'merged'; row.reason = `🧩 In one box with ${m.lead_number} (${m.orderList.map(y => y.number).join(' + ')}) · tracking ${m.tracking}`; }
+  else { row.decision = 'merge_fix'; row.reason = `🧩 Label ${m.tracking} was bought on ${m.lead_number} for this box too, but Veeqo did not mark ${o.number} shipped — mark it shipped by hand in Veeqo with tracking ${m.tracking} (never buy it again)`; }
+}
+// Last run → 🧩 Merge & buy: the group merged by hand (every check again).
+// The first one that fully works unlocks merging in auto runs.
+async function autolabelMergeByHand(env, nums, by) {
+  const cfg = await autolabelLoadConfig(env);
+  const orders = [];
+  for (const n of nums) {
+    const o = await autolabelFindAwaiting(env, n);
+    if (!o) return { ok: false, error: `No order ${n} waiting for a label in Veeqo` };
+    if (!orders.some(g => String(g.id) === String(o.id))) orders.push(o);
+  }
+  if (orders.length < 2) return { ok: false, error: 'Pick 2 or more orders to merge' };
+  const key = autolabelPersonKey(orders[0]);
+  if (orders.some(g => autolabelPersonKey(g) !== key)) return { ok: false, error: 'These orders are not the same name + address — not merging' };
+  const cancels = await autolabelCancelsCached(env, cfg);
+  for (const g of orders) {
+    if (autolabelHasLabel(g)) return { ok: false, error: `${g.number} already has a label` };
+    const n = autolabelOrderNum(g.number);
+    if (await d1First(env, `SELECT 1 x FROM ship_order_cancel_log WHERE status!='done' AND UPPER(REPLACE(order_num,'#',''))=?`, [n])) return { ok: false, error: `${g.number} is on the Cancellation list — not merging` };
+    const c = cancels.byNum.get(n);
+    if (c) return { ok: false, error: `${g.number} was cancelled on ${c.channel} (${c.state}) — not merging` };
+  }
+  const plan = await autolabelMergePlan(env, { ...cfg, waitMinutes: 0, autoMerge: true }, orders, Date.now());
+  if (plan.kind !== 'auto') return { ok: false, error: plan.reason };
+  const res = await autolabelMergeBuy(env, cfg, plan, by, await autolabelMergeMap(env));
+  if (res.ok && res.allMarked) await autolabelSetKey(env, AUTOLABEL_MERGE_VERIFIED_KEY, 'yes');
+  return res;
 }
 
 // ── The run ──────────────────────────────────────────────────────────────
@@ -24963,6 +25227,11 @@ async function autolabelRun(env, opts = {}) {
   let quotesLeft = cfg.maxQuotesPerRun, cached = null;
   let buysLeft = Math.min(cfg.maxLabelsPerRun, Math.max(0, cfg.maxLabelsPerDay - boughtToday));
   const now = Date.now();
+  // 🧩 Same name + address: merged boxes on record, and one plan per group.
+  const mergeMap = await autolabelMergeMap(env);
+  const mergeVerified = (await autolabelGetKey(env, AUTOLABEL_MERGE_VERIFIED_KEY)) === 'yes';
+  const plans = new Map();
+  const isOpen = g => !cancels.byNum.has(autolabelOrderNum(g.number)) && !listed.has(autolabelOrderNum(g.number)) && !autolabelHasLabel(g) && !mergeMap.has(String(g.id));
 
   for (const o of awaiting) {
     const num = autolabelOrderNum(o.number);
@@ -24983,10 +25252,34 @@ async function autolabelRun(env, opts = {}) {
     else if (autolabelChannelMatches(o, cfg.skipChannels)) { row.decision = 'skipped'; row.reason = 'Channel is on the skip list'; }
     else if (allocs.length && allocs.every(a => _psAllocTrackingNumber(a))) { row.decision = 'has_label'; row.reason = 'Already has a label'; }
     else if (!allocs.length && veeqoExtractTracking(o)) { row.decision = 'has_label'; row.reason = 'Already has a label'; }
-    else if (group.length > 1) {
-      row.decision = 'merge';
-      row.mergeWith = group.filter(g => g.id !== o.id).map(g => `${g.number} (${veeqoExtractChannel(g)})`);
-      row.reason = `Same name + address as ${row.mergeWith.join(', ')} — merge in Veeqo`;
+    else if (mergeMap.has(String(o.id))) await autolabelMergeRowState(env, o, mergeMap.get(String(o.id)), row);
+    else if (group.filter(isOpen).length > 1) {
+      // Owner: under mergeMaxLb together → one box, one label; heavier → put aside to merge by hand.
+      const key = autolabelPersonKey(o);
+      let plan = plans.get(key);
+      if (!plan) { plan = await autolabelMergePlan(env, cfg, group.filter(isOpen), now); plans.set(key, plan); }
+      row.mergeKey = plan.lead.number; row.mergeOrders = plan.orders.map(g => g.number); row.mergeLb = plan.lb;
+      row.mergeWith = plan.orders.filter(g => g.id !== o.id).map(g => `${g.number} (${veeqoExtractChannel(g)})`);
+      if (plan.kind === 'wait') { row.decision = 'waiting'; row.reason = plan.reason; }
+      else if (plan.kind === 'hand') { row.decision = 'merge'; row.reason = plan.reason; }
+      else {
+        if (!plan.done) {
+          if (buy && mergeVerified && buysLeft >= 1) { plan.done = await autolabelMergeBuy(env, cfg, plan, '', mergeMap); if (plan.done.ok) buysLeft--; }
+          else plan.done = { preview: true };
+        }
+        const d = plan.done, x = ((d.orders || []).find(y => y.id === String(o.id))) || {};
+        if (d.preview) {
+          row.decision = 'would_merge';
+          row.reason = plan.reason + (!buy ? '' : !mergeVerified ? ' — tap 🧩 Merge & buy once by hand (Last run) to switch on auto merging' : ' — label limit reached for this run/day');
+        }
+        else if (!d.ok) { row.decision = d.cancelled ? 'merge' : 'buy_failed'; row.reason = `🧩 ${plan.nums}: ${d.error}`; }
+        else {
+          row.carrier = d.carrier; row.service = d.service; row.tracking = d.tracking;
+          if (String(o.id) === String(plan.lead.id)) { row.decision = 'bought'; row.price = d.price; row.days = d.days; row.reason = d.reason; row.slip = !!d.slip; }
+          else if (x.marked) { row.decision = 'merged'; row.reason = `🧩 In one box with ${plan.lead.number} · tracking ${d.tracking}`; }
+          else { row.decision = 'merge_fix'; row.reason = `🧩 Label ${d.tracking} was bought on ${plan.lead.number} for this box too, but Veeqo did not mark ${o.number} shipped — mark it shipped by hand in Veeqo with tracking ${d.tracking} (never buy it again)`; }
+        }
+      }
     }
     else if (ageMin != null && ageMin < cfg.waitMinutes) { row.decision = 'waiting'; row.reason = `Waiting — ${cfg.waitMinutes - ageMin} min left`; }
     else if (!allocs.length) { row.decision = 'hold'; row.reason = 'Not allocated in Veeqo (stock?)'; }
@@ -25105,7 +25398,8 @@ async function autolabelRun(env, opts = {}) {
     result.orders.push(row);
   }
 
-  const order = ['bought', 'buy_failed', 'would_buy', 'cancelled', 'merge', 'weigh', 'fix_veeqo_weight', 'low_value', 'no_rate', 'hold', 'ready', 'waiting', 'skipped', 'has_label'];
+  if (buy && !mergeVerified && result.orders.some(r => r.decision === 'would_merge')) result.notes.push('🧩 Merging is locked until one group is merged by hand: tap 🧩 Merge & buy on a 🧩 Would merge row in Last run.');
+  const order = ['bought', 'merged', 'buy_failed', 'merge_fix', 'would_buy', 'would_merge', 'cancelled', 'merge', 'weigh', 'fix_veeqo_weight', 'low_value', 'no_rate', 'hold', 'ready', 'waiting', 'skipped', 'has_label'];
   result.orders.sort((a, b) => order.indexOf(a.decision) - order.indexOf(b.decision));
   result.finishedAt = new Date().toISOString();
   return result;
@@ -25319,6 +25613,8 @@ async function autolabelBuyByHand(env, number, by) {
   const cfg = await autolabelLoadConfig(env);
   const o = await autolabelFindAwaiting(env, number);
   if (!o) return { ok: false, error: `No order ${number} waiting for a label in Veeqo` };
+  const mg = (await autolabelMergeMap(env)).get(String(o.id));
+  if (mg) return { ok: false, error: `In a merged box with ${mg.lead_number}${mg.tracking ? ' (tracking ' + mg.tracking + ')' : ''} — never bought again` };
   const allocs = o.allocations || [];
   if (!allocs.length) return { ok: false, error: 'Not allocated in Veeqo (stock?)' };
   const bought = new Set((await d1All(env, `SELECT alloc_id FROM autolabel_log WHERE order_id=? AND action='bought'`, [String(o.id)])).map(r => String(r.alloc_id)));
@@ -25539,7 +25835,8 @@ async function handleAutolabelRoute(path, method, url, request, env, session) {
     let lastRun = null;
     try { lastRun = JSON.parse(await autolabelGetKey(env, AUTOLABEL_LASTRUN_KEY) || 'null'); } catch (_) {}
     return veeqoResp({ ok: true, config: await autolabelLoadConfig(env), defaults: AUTOLABEL_DEFAULTS,
-      buyVerified: (await autolabelGetKey(env, AUTOLABEL_VERIFIED_KEY)) === 'yes', lastRun });
+      buyVerified: (await autolabelGetKey(env, AUTOLABEL_VERIFIED_KEY)) === 'yes',
+      mergeVerified: (await autolabelGetKey(env, AUTOLABEL_MERGE_VERIFIED_KEY)) === 'yes', lastRun });
   }
 
   if (path === '/veeqo/autolabel/config' && method === 'POST') {
@@ -25612,6 +25909,29 @@ async function handleAutolabelRoute(path, method, url, request, env, session) {
     if (!number) return veeqoResp({ ok: false, error: 'order is required' }, 400);
     const by = String((session && (session.displayName || session.username)) || b.by || '').slice(0, 40);
     return veeqoResp(await autolabelBuyByHand(env, number, by));
+  }
+  // POST { orders:[numbers] } → Last run → 🧩 Merge & buy: same name + address, one box, one label.
+  if (path === '/veeqo/autolabel/merge-buy' && method === 'POST') {
+    const b = await request.json().catch(() => ({}));
+    const nums = (Array.isArray(b.orders) ? b.orders : []).map(x => String(x || '').trim()).filter(Boolean).slice(0, 10);
+    if (nums.length < 2) return veeqoResp({ ok: false, error: 'orders must list 2 or more order numbers' }, 400);
+    const by = String((session && (session.displayName || session.username)) || b.by || '').slice(0, 40);
+    const res = await autolabelMergeByHand(env, nums, by);
+    // Keep it in the saved Last run, so it stays after a reload.
+    if (res.ok) try {
+      const lr = JSON.parse(await autolabelGetKey(env, AUTOLABEL_LASTRUN_KEY) || 'null');
+      for (const r0 of ((lr && lr.orders) || [])) {
+        const x = (res.orders || []).find(y => autolabelOrderNum(y.number) === autolabelOrderNum(r0.number));
+        if (!x) continue;
+        lr.counts = lr.counts || {};
+        lr.counts[r0.decision] = Math.max(0, (lr.counts[r0.decision] || 0) - 1); if (!lr.counts[r0.decision]) delete lr.counts[r0.decision];
+        r0.decision = x.number === res.orders[0].number ? 'bought' : x.marked ? 'merged' : 'merge_fix';
+        Object.assign(r0, { tracking: res.tracking, carrier: res.carrier, service: res.service }, r0.decision === 'bought' ? { price: res.price, days: res.days, reason: res.reason } : {});
+        lr.counts[r0.decision] = (lr.counts[r0.decision] || 0) + 1;
+      }
+      if (lr) await autolabelSaveLastRun(env, lr);
+    } catch (_) {}
+    return veeqoResp(res);
   }
   if (path === '/veeqo/autolabel/test-buy' && method === 'POST') {
     const b = await request.json().catch(() => ({}));

@@ -1837,6 +1837,8 @@ body {
           <label>…only for orders up to ($, 0 = all)<input class="ps-field-input" data-k="lowValueMaxOrder" type="number" min="0" step="1"></label>
           <label>Never auto-buy channels (comma list)<input class="ps-field-input" data-k="skipChannels" type="text"></label>
           <label>Max box weight (lb, 0 = off)<input class="ps-field-input" data-k="maxBoxLb" type="number" min="0" step="1"></label>
+          <label>Same name + address: one box?<select class="ps-field-input" data-k="autoMerge"><option value="true">Yes — one box, one label</option><option value="false">No — put aside, merge by hand</option></select></label>
+          <label>…only if together up to (lb)<input class="ps-field-input" data-k="mergeMaxLb" type="number" min="1" step="1"></label>
           <label style="display:none">Packing slip with the label<select class="ps-field-input" data-k="slipRule">
             <option value="multi_sku">2+ different items</option><option value="multi_qty">2+ pieces in total</option>
             <option value="all">Every order</option><option value="off">Never</option></select></label>
@@ -8475,7 +8477,10 @@ var _PS_AL_LABELS = {
   buy_failed: ['❌ Buy failed', 'var(--red)'],
   would_buy:  ['👀 Would buy', 'var(--accent)'],
   cancelled:  ['🚫 Cancelled — don\'t print', 'var(--red)'],
-  merge:      ['🔗 Merge in Veeqo', 'var(--purple)'],
+  merged:     ['🧩 Merged — same box', 'var(--green)'],
+  merge_fix:  ['⚠️ Merged — mark shipped in Veeqo', 'var(--red)'],
+  would_merge: ['🧩 Would merge (one box)', 'var(--accent)'],
+  merge:      ['🔗 Merge by hand (put aside)', 'var(--purple)'],
   weigh:      ['⚖️ Over limit — weigh / print by hand', 'var(--purple)'],
   fix_veeqo_weight: ['⚖️ Fix weight in Veeqo', 'var(--orange)'],
   low_value:  ['💸 Low value — check', 'var(--orange)'],
@@ -8544,12 +8549,14 @@ function _psAlRenderConfig(d) {
     + ((c.uspsOnlyChannels || []).length ? ' · always USPS for: ' + _psAlEsc(c.uspsOnlyChannels.join(', ')) : '') + '<br>'
     + '• <b>Bin · SKU · qty</b> written at the bottom of the label for <b>1–4 items</b> (with the product photos) → <b>no packing slip</b><br>'
     + '• <b>Packing slip (with product photos)</b> right after its label when: <b>5+ items</b>, no room on the label, or the label is <b>UPS</b><br>'
-    + '• Waits <b>' + c.waitMinutes + ' min</b> after the newest order · holds same name + address (merge) · never buys for a cancelled order'
+    + '• <b>Same name + address:</b> ' + (c.autoMerge ? 'together up to <b>' + c.mergeMaxLb + ' lb</b> → <b>one box, one label</b> (the other orders get the same tracking #); heavier → <b>put aside</b> (🔗 Merge by hand)' : '<b>put aside</b> (🔗 Merge by hand) — one box is off') + '<br>'
+    + '• Waits <b>' + c.waitMinutes + ' min</b> after the newest order · never buys for a cancelled order'
     + (c.maxBoxLb ? ' · boxes over <b>' + c.maxBoxLb + ' lb</b> → weigh / print by hand' : '')
     + (c.lowValueRatio ? ' · hold if the label is <b>' + Math.round(c.lowValueRatio * 100) + '%</b>+ of the order' + (c.lowValueMaxOrder ? ' (orders up to $' + c.lowValueMaxOrder + ')' : '') : '');
   var lines = [];
   lines.push('Mode: ' + ({ off:'OFF', preview:'PREVIEW ONLY — nothing is bought', auto:'AUTO — buying labels' })[c.mode]);
   if (c.mode === 'auto' && !d.buyVerified) lines.push('⚠ Auto can\'t buy yet — do one "Test buy ONE label" first.');
+  if (c.mode === 'auto' && c.autoMerge && !d.mergeVerified) lines.push('🧩 Auto merging is locked until one group is merged by hand: 🧩 Merge & buy on Last run.');
   if (d.lastRun) {
     lines.push('Last run: ' + new Date(d.lastRun.startedAt).toLocaleString() + ' (' + (d.lastRun.trigger === 'cron' ? 'automatic' : 'by hand') + ')');
   }
@@ -8715,7 +8722,8 @@ function _psAlRenderRun(r) {
       if (o.slip) label += ' · 🧾 slip';
       return '<tr><td ' + td + '>' + (_PS_AL_BUYABLE[o.decision] ? '<input type="checkbox" class="ps-al-sel" style="width:18px;height:18px" value="' + _psAlEsc(o.number) + '" data-price="' + (o.price != null ? o.price : '') + '" onchange="psAlSelCount()">' : '') + '</td>'
         + '<td ' + td + '><span class="ps-al-res" style="color:' + L[1] + ';font-weight:700;white-space:nowrap">' + L[0] + '</span>'
-        + (o.decision === 'would_buy' ? (function(g) { return '<div style="font-size:11px;font-weight:700;color:' + (g.carrier === 'UPS' ? '#7c3aed' : 'var(--text2)') + '">' + _psAlEsc(g.carrier) + ' · ' + (g.aisle === 'mix' ? '🔀 mix' : g.aisle ? 'aisle ' + _psAlEsc(g.aisle) : 'no bin') + '</div>'; })(_psAlGroupOf(o)) : '') + '</td>'
+        + (o.decision === 'would_buy' ? (function(g) { return '<div style="font-size:11px;font-weight:700;color:' + (g.carrier === 'UPS' ? '#7c3aed' : 'var(--text2)') + '">' + _psAlEsc(g.carrier) + ' · ' + (g.aisle === 'mix' ? '🔀 mix' : g.aisle ? 'aisle ' + _psAlEsc(g.aisle) : 'no bin') + '</div>'; })(_psAlGroupOf(o)) : '')
+        + _psAlMergeTag(o) + '</td>'
         + '<td style="padding:6px 8px;border-bottom:1px solid var(--border);vertical-align:top;font-family:var(--mono)"><button class="ps-btn-sm" style="font-family:var(--mono);white-space:nowrap" title="Live Veeqo info: items, photos, bin, SKU, package — and change them" onclick="psAlLive(this, \'' + _psAlEsc(String(o.number || '').replace(/[\\']/g, '')) + '\')">🔎 ' + _psAlEsc(o.number) + '</button></td>'
         + '<td ' + td + '>' + _psAlEsc(o.channel) + '</td>'
         + '<td ' + td + '>' + _psAlEsc(o.customer) + '</td>'
@@ -8770,6 +8778,39 @@ function _psAlItemsHtml(o) {
       + '<div style="font-size:11px;color:var(--text2)">📍 <b style="font-family:var(--mono)">' + e(it.bin || '—') + '</b> · ' + e(it.title || '') + '</div></div></div>';
   }).join('') || '<span style="color:var(--text3)">—</span>';
 }
+// 🧩 Same name + address (owner: "under 20 lb just combine the shipment;
+// over 20 lb put it on the side so I can merge it myself"). The group's
+// orders sit together; the first one has 🧩 Merge & buy (one box, one label).
+function _psAlMergeTag(o) {
+  if (!o.mergeKey) return '';
+  var lead = o.number === o.mergeKey, all = o.mergeOrders || [], e = _psAlEsc;
+  var h = '<div style="font-size:11px;font-weight:700;color:var(--purple);margin-top:2px">🧩 ' + (lead ? 'box of ' + (all.length || '?') + ' orders' : 'goes with ' + e(o.mergeKey)) + (o.mergeLb != null ? ' · ' + e(o.mergeLb) + ' lb together' : '') + '</div>';
+  if (lead && o.decision === 'would_merge' && all.length > 1) h += '<button class="ps-btn-sm" style="margin-top:4px;background:var(--accent);color:#fff;border-color:var(--accent);font-weight:700" onclick="psAlMergeBuy(this, \'' + e(all.join(',').replace(/[\\']/g, '')) + '\')">🧩 Merge &amp; buy (' + all.length + ')</button>';
+  return h;
+}
+var _psAlMergeBusy = false;
+window.psAlMergeBuy = async function(btn, list) {
+  if (_psAlMergeBusy) return;
+  var nums = String(list || '').split(',').filter(Boolean);
+  if (!confirm('Merge ' + nums.join(' + ') + ' into ONE box and buy ONE real label now?\n\nThe box weight in Veeqo is set to everything together, the label is bought on ' + nums[0] + ', and the other order' + (nums.length > 2 ? 's get' : ' gets') + ' marked shipped with the same tracking #. Then it prints (with the packing slip if it has 5+ items).')) return;
+  _psAlMergeBusy = true; btn.disabled = true; btn.textContent = '⏳ Merging…';
+  try {
+    var d = await _psAlFetch('/veeqo/autolabel/merge-buy', { method: 'POST', body: { orders: nums, by: psInitials || '' } });
+    if (d.ok === false) { btn.disabled = false; btn.textContent = '🧩 Merge & buy (' + nums.length + ')'; alert('Not merged — nothing bought:\n' + (d.error || 'failed')); return; }
+    var r = window._psAlRunShown;
+    if (r) (r.orders || []).forEach(function(x) { if (nums.indexOf(x.number) < 0) return; var c = r.counts; c[x.decision] = Math.max(0, (c[x.decision] || 0) - 1);
+      var m = (d.orders || []).find(function(y) { return y.number === x.number; }) || {};
+      x.decision = x.number === nums[0] ? 'bought' : m.marked ? 'merged' : 'merge_fix'; c[x.decision] = (c[x.decision] || 0) + 1; x.tracking = d.tracking; x.carrier = d.carrier; x.service = d.service; if (x.number === nums[0]) x.price = d.price; });
+    if (r) _psAlRenderRun(r);
+    if (d.error) alert(d.error);
+    for (var w = 0; w < 60 && _psAlLabelBusy; w++) await new Promise(function(res) { setTimeout(res, 500); });
+    await psAlPrintNewLabels(false);
+    await psAlPrintNewSlips(true);
+    _psToast('🧩 Merged — one label ' + (d.tracking || ''));
+    if (typeof psAlLoadLog === 'function') psAlLoadLog();
+    psAlLoadConfig();
+  } finally { _psAlMergeBusy = false; }
+};
 function _psAlPkgHtml(o) {
   var p = o.pkg, e = _psAlEsc, h = '';
   if (p && (p.l || p.w || p.h)) h += '<div>📦 ' + e(p.l || '?') + '×' + e(p.w || '?') + '×' + e(p.h || '?') + ' in</div>';
@@ -8812,6 +8853,7 @@ function _psAlSortRows(rows) {
   return rows.map(function(o, i) { return { o: o, i: i }; }).sort(function(a, b) {
     return (grp[a.o.decision] - grp[b.o.decision])
       || (a.o.decision === 'would_buy' ? _psAlGroupCmp(_psAlGroupOf(a.o), _psAlGroupOf(b.o)) : 0)
+      || (a.o.mergeKey || b.o.mergeKey ? String(a.o.mergeKey || '~').localeCompare(String(b.o.mergeKey || '~')) || ((a.o.number === a.o.mergeKey ? 0 : 1) - (b.o.number === b.o.mergeKey ? 0 : 1)) : 0)
       || _psAlSkuCmp(_psAlBinKey(a.o), _psAlBinKey(b.o)) || _psAlSkuCmp(_psAlSkuKey(a.o), _psAlSkuKey(b.o)) || (a.i - b.i);
   }).map(function(x) { return x.o; });
 }
@@ -8966,14 +9008,14 @@ window.psAlLoadLog = async function() {
   var box = document.getElementById('ps-al-log');
   var d = await _psAlFetch('/veeqo/autolabel/log');
   if (d.ok === false) { box.textContent = '✗ ' + (d.error || 'Failed'); return; }
-  var names = { bought:'✅ Bought', buy_failed:'❌ Buy failed', cancel_listed:'🗑️ Added to Cancellation list', config:'⚙️ Settings changed' };
+  var names = { bought:'✅ Bought', buy_failed:'❌ Buy failed', cancel_listed:'🗑️ Added to Cancellation list', config:'⚙️ Settings changed', merged:'🧩 Merged (same box)', merge_mark_failed:'⚠️ Merged — Veeqo not marked shipped' };
   var log = (d.log || []).filter(function(x){ return x.action !== 'config'; }).slice(0, 40);
   var html = log.length ? log.map(function(x){
     return '<div style="padding:5px 0;border-bottom:1px solid var(--border)"><span style="font-family:var(--mono);color:var(--text3)">' + _psAlEsc(new Date(x.ts).toLocaleString()) + '</span> '
       + '<b>' + _psAlEsc(names[x.action] || x.action) + '</b> ' + _psAlEsc(x.order_number) + ' · ' + _psAlEsc(x.channel) + ' · ' + _psAlEsc(x.customer)
       + (x.carrier ? ' · ' + _psAlEsc(x.carrier + ' ' + x.service) + (x.price != null ? ' $' + Number(x.price).toFixed(2) : '') : '')
       + (x.tracking ? ' · <span style="font-family:var(--mono)">' + _psAlEsc(x.tracking) + '</span>' : '')
-      + (x.action === 'buy_failed' ? '<div style="color:var(--red)">' + _psAlEsc(x.detail) + '</div>' : '') + '</div>';
+      + (x.action === 'buy_failed' || x.action === 'merge_mark_failed' ? '<div style="color:var(--red)">' + _psAlEsc(x.detail) + '</div>' : '') + '</div>';
   }).join('') : '<div style="color:var(--text3)">Nothing yet.</div>';
   var canc = (d.cancels || []).slice(0, 40);
   var handled = { added_to_cancel_list:'on Cancellation list', not_printed:'not printed — blocked', not_in_veeqo:'not in Veeqo', already_shipped:'already shipped (older)' };

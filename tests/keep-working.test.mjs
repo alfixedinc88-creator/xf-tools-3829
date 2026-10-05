@@ -2033,6 +2033,92 @@ console.log('\nAuto Label → Last run: 🖨 Buy & print selected; a box\'s pack
   globalThis.fetch = realFetch; delete env.VEEQO_API_KEY;
 }
 
+// Owner: "merge — our own merge: under 20 lb together, just combine the shipment; over 20 lb put it on the
+// side first so I can merge it myself (we split heavy ones into 2 or more boxes)".
+console.log('\nAuto Label → 🧩 same name + address: ≤ 20 lb together → one box, one label; over 20 lb → put aside');
+{
+  const realFetch = globalThis.fetch;
+  const it = (id, sku, q, g, bin) => ({ quantity: q, sellable: { id, sku_code: sku, product_title: 'T ' + sku, weight_grams: g, stock_entries: [{ warehouse_id: 55, location: bin }] } });
+  const old = new Date(Date.now() - 864e5).toISOString(), older = new Date(Date.now() - 2 * 864e5).toISOString();
+  const to = (f, l, a1) => ({ first_name: f, last_name: l, address1: a1, city: 'Austin', state: 'TX', zip: '78701' });
+  const mk = (id, number, created, deliver, items, aid) => ({ id, number, channel: { name: 'eBay', type_code: 'ebay' }, total_price: 40, created_at: created, deliver_to: deliver, line_items: items,
+    allocations: [{ id: aid, line_items: items, shipment: null, allocation_package: { weight: 8, weight_unit: 'oz', depth: 8, width: 6, height: 4, dimensions_unit: 'inches' } }] });
+  // Light pair (Mo Ng): M-1 = 2× 30-3-4=10 + 1× 24-5-5=2 ; M-2 = 3× 30-3-4=10 (same bin) + 1× 40-1-1=1  → 7 pieces of Veeqo qty in one box
+  const orders = [
+    mk(1001, 'M-1', older, to('Mo', 'Ng', '1 Main St'), [it(1, '30-3-4=10', 2, 400, '30-3-4'), it(2, '24-5-5=2', 1, 300, '24-5-5')], 9001),
+    mk(1002, 'M-2', old, to('Mo', 'Ng', '1 Main St'), [it(1, '30-3-4=10', 3, 400, '30-3-4'), it(3, '40-1-1=1', 1, 500, '40-1-1')], 9002),
+    // Heavy pair (Al Bo): 6 kg + 5 kg ≈ 24 lb together
+    mk(1003, 'H-1', older, to('Al', 'Bo', '9 Oak Rd'), [it(4, '50-1-1=1', 2, 3000, '50-1-1')], 9003),
+    mk(1004, 'H-2', old, to('Al', 'Bo', '9 Oak Rd'), [it(5, '50-1-2=1', 1, 5000, '50-1-2')], 9004),
+    // Light pair where Veeqo won't mark the 2nd shipped (Cy Do)
+    mk(1005, 'F-1', older, to('Cy', 'Do', '5 Elm St'), [it(6, '60-1-1=1', 1, 200, '60-1-1')], 9005),
+    mk(1006, 'F-2', old, to('Cy', 'Do', '5 Elm St'), [it(7, '60-1-2=1', 1, 200, '60-1-2')], 9006),
+  ];
+  const allocOf = id => orders.flatMap(o => o.allocations).find(a => String(a.id) === String(id));
+  const bought = [], marks = [];
+  globalThis.fetch = async (u, o) => { u = String(u); const m = (o && o.method) || 'GET'; const J = (x, st) => new Response(JSON.stringify(x), { status: st || 200, headers: { 'Content-Type': 'application/json' } });
+    const body = o && o.body ? JSON.parse(o.body) : null;
+    if (u.includes('api.veeqo.com/orders?')) {
+      if (/status=cancelled/.test(u)) return J([]);
+      const q = decodeURIComponent((u.match(/query=([^&]+)/) || [])[1] || '');
+      const open = x => !(x.allocations || []).every(a => a.shipment);
+      const list = q ? orders.filter(x => x.number === q) : orders;
+      return J(/status=awaiting_fulfillment/.test(u) ? list.filter(open) : list);
+    }
+    let mm;
+    if ((mm = u.match(/api\.veeqo\.com\/allocations\/(\d+)\/allocation_package$/)) && m === 'PUT') { Object.assign(allocOf(mm[1]).allocation_package, body.allocation_package); return J({}); }
+    if ((mm = u.match(/shipping\/quotes\/amazon_shipping_v2\?allocation_id=(\d+)/))) { const w = parseFloat(allocOf(mm[1]).allocation_package.weight) / 16; return J([{ title: 'USPS Ground Advantage', name: 'usps-ga', carrier: 'usps', total_net_charge: Math.round((4 + w) * 100) / 100, transit_days: 3 }]); }
+    if (u.includes('api.veeqo.com/shipping/shipments') && m === 'POST') { const a = allocOf(body.shipment.allocation_id); const tn = 'MRG' + a.id; a.shipment = { id: 77, carrier_id: 3, tracking_number: { tracking_number: tn } }; bought.push({ alloc: a.id, w: a.allocation_package.weight }); return J({ id: 77, carrier_id: 3, tracking_number: { tracking_number: tn } }); }
+    if (u.endsWith('api.veeqo.com/shipments') && m === 'POST') { const sh = body.shipment || {}; const aid = sh.allocation_id || body.allocation_id; marks.push(aid);
+      if (String(aid) === '9006') return J({ error: 'not allowed' }, 422);
+      if (aid) allocOf(aid).shipment = { id: 78, tracking_number: { tracking_number: sh.tracking_number_attributes.tracking_number } }; return J({ id: 78 }); }
+    if (u.includes('api.veeqo.com/')) return J([]);
+    return new Response('{}', { status: 401 }); };
+  env.VEEQO_API_KEY = 'k';
+  await post('/veeqo/autolabel/config', { config: { mode: 'preview' } });
+  const run = await post('/veeqo/autolabel/run', {});
+  const R = n => run.orders.find(x => x.number === n) || {};
+  check('preview: same name + address, 6.18 lb together → 🧩 Would merge (one box, one label), both orders together, nothing bought',
+    R('M-1').decision === 'would_merge' && R('M-2').decision === 'would_merge' && R('M-1').mergeKey === 'M-1' && R('M-2').mergeKey === 'M-1' && R('M-1').mergeLb === 6.18
+    && /One box, one label: M-1 \+ M-2/.test(R('M-1').reason) && bought.length === 0, [R('M-1'), R('M-2')]);
+  check('…over 20 lb together → 🔗 Merge by hand, put aside for the owner (never bought)', R('H-1').decision === 'merge' && R('H-2').decision === 'merge'
+    && /over 20 lb: put aside for you to merge \/ split by hand/.test(R('H-1').reason), [R('H-1').reason, R('H-1').mergeLb]);
+  const r1 = await post('/veeqo/autolabel/merge-buy', { orders: ['M-1', 'M-2'] });
+  const lq = sq.prepare("SELECT order_number, tracking, items FROM label_print_queue WHERE tracking = 'MRG9001'").get();
+  const li = JSON.parse(lq?.items || '[]'), qty = sku => (li.find(x => x.sku === sku) || {}).qty || 0;
+  check('🧩 Merge & buy → box weight in Veeqo set to everything together (6.18 lb = 98.88 oz), ONE label bought on the oldest order',
+    r1.ok && r1.allMarked && bought.length === 1 && bought[0].alloc === 9001 && bought[0].w === 98.88 && r1.tracking === 'MRG9001', { r1, bought });
+  check('…the other order is marked shipped in Veeqo with the SAME tracking #', String(allocOf(9002).shipment?.tracking_number?.tracking_number) === 'MRG9001', allocOf(9002).shipment);
+  // Inventory check: M-1 (2 + 1 = 3) + M-2 (3 + 1 = 4) = 7 in the box; 30-3-4=10: 2 + 3 = 5, nothing twice, nothing dropped.
+  check('…the label lists every item of both orders, counts add up exactly (30-3-4=10: 2 + 3 = 5 · 24-5-5=2: 1 · 40-1-1=1: 1 · total 3 + 4 = 7)',
+    lq && lq.order_number === 'M-1 + M-2' && qty('30-3-4=10') === 5 && qty('24-5-5=2') === 1 && qty('40-1-1=1') === 1 && li.reduce((n, x) => n + x.qty, 0) === 7 && li.length === 3, li);
+  const mf = sq.prepare("SELECT order_num, line_items FROM ship_manifest_log WHERE tracking = 'MRG9001'").get();
+  check('…Picking / Packing see the whole box when they scan the label (manifest has both orders\' items)', mf && mf.order_num === 'M-1 + M-2' && JSON.parse(mf.line_items).reduce((n, x) => n + x.q, 0) === 7, mf);
+  const lg = sq.prepare("SELECT order_number, action, tracking FROM autolabel_log WHERE tracking = 'MRG9001' ORDER BY id").all().map(x => x.order_number + ':' + x.action);
+  check('…on record: who / when / which orders / the one tracking # (autolabel_log + autolabel_merge)', lg.join(',') === 'M-1:bought,M-2:merged'
+    && sq.prepare("SELECT status FROM autolabel_merge WHERE tracking = 'MRG9001'").get()?.status === 'done', lg);
+  check('…the first merge that worked unlocks merging in auto runs', sq.prepare("SELECT value FROM app_config WHERE key = 'autolabel_merge_verified'").get()?.value === 'yes', null);
+  const r2 = await post('/veeqo/autolabel/merge-buy', { orders: ['M-1', 'M-2'] });
+  check('…never bought twice (merging the same orders again is refused)', r2.ok === false && bought.length === 1, r2);
+  const r3 = await post('/veeqo/autolabel/merge-buy', { orders: ['H-1', 'H-2'] });
+  check('…over 20 lb can\'t be merged by the button either (put aside, merge / split by hand)', r3.ok === false && /over 20 lb/.test(r3.error) && bought.length === 1, r3);
+  const r4 = await post('/veeqo/autolabel/merge-buy', { orders: ['F-1', 'F-2'] });
+  check('…Veeqo won\'t mark the other order shipped → said plainly (mark it by hand with the tracking #), kept on record', r4.ok && r4.allMarked === false && /did not mark F-2 shipped/.test(r4.error)
+    && sq.prepare("SELECT status FROM autolabel_merge WHERE tracking = 'MRG9005'").get()?.status === 'mark_failed', r4);
+  const b2 = await post('/veeqo/autolabel/buy-one', { order: 'F-2' });
+  check('…and that order is never bought on its own afterwards (it is in the merged box)', b2.ok === false && /merged box with F-1/.test(b2.error) && bought.length === 2, b2);
+  const run2 = await post('/veeqo/autolabel/run', {});
+  const F2 = run2.orders.find(x => x.number === 'F-2') || {};
+  check('…the next run shows it as ⚠️ mark shipped in Veeqo with that tracking (tries Veeqo again, never buys)', F2.decision === 'merge_fix' && /mark it shipped by hand in Veeqo with tracking MRG9005/.test(F2.reason) && bought.length === 2, F2);
+  const { readFileSync } = await import('node:fs');
+  const ws = readFileSync(workerPath, 'utf8'), ph = readFileSync(fileURLToPath(new URL('../packship.html', import.meta.url)), 'utf8');
+  check('…a scan of a merged label looks up every order\'s items (not just the first order)', /const mergedBox = await autolabelMergedBox\(env, clean\);/.test(ws) && /'\/veeqo\/autolabel\/buy-one', '\/veeqo\/autolabel\/merge-buy'/.test(ws), null);
+  check('…Last run: 🧩 Merge & buy on the first order of a group; the group\'s orders sit together; rules say it in plain words',
+    /onclick="psAlMergeBuy\(this, /.test(ph) && /a\.o\.mergeKey \|\| b\.o\.mergeKey/.test(ph) && /data-k="autoMerge"/.test(ph) && /data-k="mergeMaxLb"/.test(ph) && /one box, one label<\/b>/.test(ph), null);
+  await post('/veeqo/autolabel/config', { config: { mode: 'off' } });
+  globalThis.fetch = realFetch; delete env.VEEQO_API_KEY;
+}
+
 // Owner: "Audit — after scanning the column or a box, scroll down to the scan bar (see more info below); on the phone the
 // Inventory / Refresh / Sign out / Apps bar stays at the top but small — tap to show all".
 console.log('\nInventory: Audit scrolls to the scan bar after a scan; slim top bar on the phone');
