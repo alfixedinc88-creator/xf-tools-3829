@@ -24598,13 +24598,20 @@ function autolabelChooseRate(order, quotes, cfg) {
   } else if (usps && ups && ups.price <= usps.price - cfg.upsMinSavings + 0.001) {
     pick = ups; reason = `UPS $${(usps.price - ups.price).toFixed(2)} cheaper than USPS, ${ups.days} day(s)`;
   } else if (usps) {
-    pick = usps; reason = ups ? `USPS preferred (UPS only $${(usps.price - ups.price).toFixed(2)} cheaper)` : 'USPS preferred';
+    // Owner: "how come I don't see any package ship with UPS?" — always say what UPS offered and why it lost.
+    const upsAny = cheapest(quotes.filter(q => q.carrier === 'UPS'));
+    const why = ups ? `UPS only $${(usps.price - ups.price).toFixed(2)} cheaper — needs $${Number(cfg.upsMinSavings).toFixed(2)}`
+      : !upsAny ? 'UPS: no UPS rate from Veeqo for this box'
+      : upsAny.days == null ? `UPS $${upsAny.price.toFixed(2)} but Veeqo gave no delivery days (needs ${cfg.upsMaxDays} days or less)`
+      : `UPS $${upsAny.price.toFixed(2)} but ${upsAny.days} days (needs ${cfg.upsMaxDays} or less)`;
+    pick = usps; reason = `USPS preferred (${why})`;
   }
+  const upsBest = cheapest(quotes.filter(q => q.carrier === 'UPS'));
   if (!pick) return { pick: null, hold: 'no_rate', reason: usps || !quotes.length ? 'No rates from Veeqo' : 'No USPS rate — pick a service by hand', usps, ups };
 
   const low = autolabelLowValue(order, pick.price, cfg);
-  if (low) return { pick, hold: 'low_value', reason: low, usps, ups };
-  return { pick, hold: null, reason, usps, ups };
+  if (low) return { pick, hold: 'low_value', reason: low, usps, ups, upsBest };
+  return { pick, hold: null, reason, usps, ups, upsBest };
 }
 
 // Low-value rule on the TOTAL label cost of an order (all boxes together).

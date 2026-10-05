@@ -8672,6 +8672,16 @@ function _psAlRenderRun(r) {
   } else grpK = '';
 
   var rows = _psAlSortRows((r.orders || []).filter(function(o){ return o.decision !== 'has_label' && (!flt || o.decision === flt) && (!grpK || _psAlGroupOf(o).key === grpK); }));
+  // Owner: "how come I don't see any package ship with UPS?" — why UPS lost, counted over this run's rate-checked orders.
+  var ups = { won: 0, none: 0, slow: 0, nodays: 0, small: 0, only: 0 };
+  (r.orders || []).forEach(function(o) { var w = String(o.reason || ''); if (!o.carrier) return;
+    if (/UPS/.test(o.carrier) && !/USPS/.test(o.carrier)) ups.won++; else if (/no UPS rate/.test(w)) ups.none++; else if (/no delivery days/.test(w)) ups.nodays++;
+    else if (/UPS \$[\d.]+ but \d+ days/.test(w)) ups.slow++; else if (/UPS only \$/.test(w)) ups.small++; else if (/USPS only for this channel/.test(w)) ups.only++; });
+  var upsLine = document.getElementById('ps-al-ups-why');
+  if (!upsLine) { upsLine = document.createElement('div'); upsLine.id = 'ps-al-ups-why'; upsLine.style.cssText = 'font-size:12px;margin:0 0 8px;color:var(--text2)'; var cc = document.getElementById('ps-al-counts'); cc.parentNode.insertBefore(upsLine, cc.nextSibling); }
+  var anyUps = ups.won + ups.none + ups.slow + ups.nodays + ups.small + ups.only;
+  upsLine.innerHTML = anyUps ? '<b style="color:#7c3aed">UPS:</b> picked ' + ups.won + ' · not picked — no UPS rate ' + ups.none + ' · too slow ' + ups.slow + ' · no delivery days from Veeqo ' + ups.nodays
+    + ' · not cheap enough ' + ups.small + ' · USPS-only channel ' + ups.only + ' <span style="color:var(--text3)">(rule: UPS ≥ $' + Number((typeof _psAlConfig !== "undefined" && _psAlConfig && _psAlConfig.upsMinSavings != null) ? _psAlConfig.upsMinSavings : 0.8).toFixed(2) + ' cheaper and ≤ ' + ((typeof _psAlConfig !== "undefined" && _psAlConfig && _psAlConfig.upsMaxDays) || 3) + ' days — change it in Auto Label settings)</span>' : '';
   if (!rows.length) { document.getElementById('ps-al-orders').innerHTML = '<div style="font-size:12px;color:var(--text3)">' + (r.mode === 'off' ? 'Auto Label is off — only the cancellation check ran.' : 'No orders waiting for a label.') + '</div>'; return; }
   var th = 'style="text-align:left;padding:6px 8px;font-size:11px;color:var(--text3);border-bottom:1px solid var(--border)"';
   var td = 'style="padding:6px 8px;border-bottom:1px solid var(--border);vertical-align:top"';
