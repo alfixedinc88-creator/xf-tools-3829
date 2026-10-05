@@ -5606,6 +5606,72 @@ async function inventoryPartnumCheck(env) {
   return cors(new Response(JSON.stringify({ ok: true, total: rows.length, cats: out, list }), { headers: { 'Content-Type': 'application/json' } }));
 }
 
+// 🏷 Barcode designer → 💾 Save (owner): the phone saves the label (part #,
+// how many, and which column / how many boxes each) — the office PC prints
+// it later; "📍 Where does it go?" scans a printed sticker and shows the
+// columns + boxes. Every step on record (who / when): saved, printed, ✓ done.
+async function barcodeJobTable(env) {
+  await env.DB.prepare(`CREATE TABLE IF NOT EXISTS barcode_label_job (id INTEGER PRIMARY KEY AUTOINCREMENT, ts TEXT, by_user TEXT, sku TEXT, name TEXT,
+    copies INTEGER, spots TEXT, printed_at TEXT, printed_by TEXT, print_count INTEGER DEFAULT 0, request_id TEXT)`).run();
+  await env.DB.prepare('CREATE UNIQUE INDEX IF NOT EXISTS idx_bdjob_req ON barcode_label_job(request_id)').run().catch(() => {});
+}
+function barcodeJobOut(r) { let spots = []; try { spots = JSON.parse(r.spots || '[]') || []; } catch (_) {} return { ...r, spots }; }
+async function inventoryBarcodeJob(path, request, url, env, session) {
+  const J = (o, st) => cors(new Response(JSON.stringify(o), { status: st || 200, headers: { 'Content-Type': 'application/json' } }));
+  await barcodeJobTable(env);
+  const who = String((session && (session.displayName || session.username)) || '?').slice(0, 40), now = new Date().toISOString();
+  if (path === '/inventory/barcode-job' && request.method === 'POST') {
+    const b = await request.json().catch(() => ({}));
+    const sku = String(b.sku || '').trim().toUpperCase().replace(/\s+/g, '').slice(0, 60), copies = parseInt(b.copies, 10);
+    if (!sku) return J({ ok: false, error: 'Part # needed' }, 400);
+    if (!(copies >= 1 && copies <= 500)) return J({ ok: false, error: 'How many labels: 1 to 500' }, 400);
+    const spots = (Array.isArray(b.spots) ? b.spots : []).map(x => ({ loc: String(x.loc || '').trim().toUpperCase().slice(0, 40), boxes: parseInt(x.boxes, 10) }))
+      .filter(x => x.loc && x.boxes >= 1 && x.boxes <= 500).slice(0, 50);
+    if (!spots.length) return J({ ok: false, error: 'Scan at least one column where the stickers go' }, 400);
+    const rid = String(b._requestId || '').slice(0, 80) || null;
+    if (rid) { const had = await env.DB.prepare('SELECT id FROM barcode_label_job WHERE request_id = ?').bind(rid).first(); if (had) return J({ ok: true, id: had.id, duplicate: true }); }
+    const ins = await env.DB.prepare('INSERT INTO barcode_label_job (ts, by_user, sku, name, copies, spots, request_id) VALUES (?,?,?,?,?,?,?)')
+      .bind(now, who, sku, String(b.name || '').slice(0, 120), copies, JSON.stringify(spots), rid).run();
+    if (session && session.userId) await logUserActivity(env, session.userId, 'barcode_job', { sku, copies, spots: spots.length });
+    return J({ ok: true, id: ins.meta.last_row_id });
+  }
+  if (path === '/inventory/barcode-job/queue' && request.method === 'GET') {
+    const rows = ((await env.DB.prepare('SELECT * FROM barcode_label_job WHERE printed_at IS NULL ORDER BY id LIMIT 200').all()).results || []).map(barcodeJobOut);
+    return J({ ok: true, jobs: rows });
+  }
+  if (path === '/inventory/barcode-job/printed' && request.method === 'POST') {
+    const b = await request.json().catch(() => ({}));
+    const ids = (Array.isArray(b.ids) ? b.ids : []).map(x => parseInt(x, 10)).filter(x => x > 0).slice(0, 200);
+    let n = 0;
+    for (const id of ids) {
+      const r = await env.DB.prepare('SELECT * FROM barcode_label_job WHERE id = ?').bind(id).first(); if (!r) continue;
+      await env.DB.prepare('UPDATE barcode_label_job SET printed_at = COALESCE(printed_at, ?), printed_by = COALESCE(printed_by, ?), print_count = COALESCE(print_count, 0) + 1 WHERE id = ?').bind(now, who, id).run();
+      // the print itself goes in the label print record too (who / when / part # / how many)
+      await env.DB.prepare('CREATE TABLE IF NOT EXISTS barcode_label_log (id INTEGER PRIMARY KEY AUTOINCREMENT, ts TEXT, sku TEXT, name TEXT, copies INTEGER, by_user TEXT)').run();
+      await env.DB.prepare('INSERT INTO barcode_label_log (ts, sku, name, copies, by_user) VALUES (?,?,?,?,?)').bind(now, r.sku, r.name || '', r.copies, who).run();
+      n++;
+    }
+    return J({ ok: true, printed: n });
+  }
+  if (path === '/inventory/barcode-job/find' && request.method === 'GET') {
+    const sku = String(url.searchParams.get('sku') || '').trim().toUpperCase().replace(/\s+/g, '');
+    if (!sku) return J({ ok: false, error: 'Scan the sticker' }, 400);
+    const since = new Date(Date.now() - 120 * 864e5).toISOString();
+    const rows = ((await env.DB.prepare('SELECT * FROM barcode_label_job WHERE sku = ? AND ts >= ? ORDER BY id DESC LIMIT 20').bind(sku, since).all()).results || []).map(barcodeJobOut);
+    return J({ ok: true, sku, jobs: rows });
+  }
+  if (path === '/inventory/barcode-job/stuck' && request.method === 'POST') {
+    const b = await request.json().catch(() => ({}));
+    const r = await env.DB.prepare('SELECT * FROM barcode_label_job WHERE id = ?').bind(parseInt(b.id, 10) || 0).first();
+    if (!r) return J({ ok: true, missing: true }); // nothing to mark (an old phone entry) — never block the outbox
+    const loc = String(b.loc || '').trim().toUpperCase(), job = barcodeJobOut(r), sp = job.spots.find(x => x.loc === loc);
+    if (!sp) return J({ ok: false, error: `${loc} is not on this label's list` }, 400);
+    if (!sp.doneAt) { sp.doneAt = now; sp.doneBy = who; }
+    await env.DB.prepare('UPDATE barcode_label_job SET spots = ? WHERE id = ?').bind(JSON.stringify(job.spots), r.id).run();
+    return J({ ok: true, spot: sp });
+  }
+  return J({ ok: false, error: 'not found' }, 404);
+}
 // POST /inventory/barcode-label { sku, name, copies } — 🏷 Barcode designer:
 // every label print is kept (who / when / part # / how many) in
 // barcode_label_log and the user activity log.
@@ -7371,6 +7437,7 @@ const _app = {
       if (path === '/inventory/check-spots' && method === 'POST') return await inventoryCheckSpots(request, env);
       if (path === '/inventory/partnum-check' && method === 'GET' && session.pin_level === 'mgmt') return await inventoryPartnumCheck(env);
       if (path === '/inventory/barcode-label' && method === 'POST') return await inventoryBarcodeLabelLog(request, env, session);
+      if (path === '/inventory/barcode-job' || path.startsWith('/inventory/barcode-job/')) return await inventoryBarcodeJob(path, request, url, env, session);
       if (path === '/inventory/pack-sizes' && method === 'GET') return await inventoryPackSizes(env);
       if (path === '/inventory/cancel-own' && method === 'POST') return await inventoryCancelOwn(request, env, session);
       if (path === '/inventory/recount/status' && method === 'GET') return await recountStatus(url, env);
