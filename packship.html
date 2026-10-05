@@ -1830,6 +1830,7 @@ body {
         <div style="font-size:13px;font-weight:700;color:var(--text);margin-bottom:10px">📐 Rules</div>
         <div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(210px,1fr));gap:10px 14px;font-size:12px;color:var(--text2)" id="ps-al-rules">
           <label>Wait after newest order (min)<input class="ps-field-input" data-k="waitMinutes" type="number" min="0" step="1"></label>
+          <label>No wait at these times (New York)<input class="ps-field-input" data-k="noWaitTimes" type="text" placeholder="Mon-Fri 15:50-17:00; Sat 13:00-14:15"></label>
           <label>UPS must be cheaper by ($)<input class="ps-field-input" data-k="upsMinSavings" type="number" min="0" step="0.05"></label>
           <label>…and arrive within (days)<input class="ps-field-input" data-k="upsMaxDays" type="number" min="1" step="1"></label>
           <label>USPS-only channels (comma list)<input class="ps-field-input" data-k="uspsOnlyChannels" type="text"></label>
@@ -8603,7 +8604,8 @@ function _psAlRenderConfig(d) {
     + '• <b>Bin · SKU · qty</b> written at the bottom of the label for <b>1–4 items</b> (with the product photos) → <b>no packing slip</b><br>'
     + '• <b>Packing slip (with product photos)</b> right after its label when: <b>5+ items</b>, no room on the label, or the label is <b>UPS</b><br>'
     + '• <b>Same name + address:</b> ' + (c.autoMerge ? 'together up to <b>' + c.mergeMaxLb + ' lb</b> → <b>one box, one label</b> (the other orders get the same tracking #); heavier → <b>put aside</b> (🔗 Merge by hand)' : '<b>put aside</b> (🔗 Merge by hand) — one box is off') + '<br>'
-    + '• Waits <b>' + c.waitMinutes + ' min</b> after the newest order · never buys for a cancelled order'
+    + '• Waits <b>' + c.waitMinutes + ' min</b> after the newest order' + (c.noWaitTimes ? ' — <b>except ' + _psAlEsc(c.noWaitTimes) + '</b> (New York time): prints as soon as an order comes in' : '') + '<br>'
+    + '• Never buys for a cancelled order'
     + (c.maxBoxLb ? ' · boxes over <b>' + c.maxBoxLb + ' lb</b> → weigh / print by hand' : '')
     + (c.lowValueRatio ? ' · hold if the label is <b>' + Math.round(c.lowValueRatio * 100) + '%</b>+ of the order' + (c.lowValueMaxOrder ? ' (orders up to $' + c.lowValueMaxOrder + ')' : '') : '');
   var lines = [];

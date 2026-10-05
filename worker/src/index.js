@@ -24206,6 +24206,7 @@ const AUTOLABEL_DEFAULTS = {
   mode: 'off',                 // 'off' | 'preview' | 'auto'
   cancelWatch: false,          // add cancelled-but-already-printed orders to the Cancellation list
   waitMinutes: 30,             // wait this long after the NEWEST order for a person before buying
+  noWaitTimes: 'Mon-Fri 15:50-17:00; Sat 13:00-14:15', // ...except in these New York times: print as soon as an order comes in (owner)
   upsMinSavings: 0.70,         // switch USPS -> UPS only if UPS is at least this much cheaper ($)... (owner: $0.70)
   upsMaxDays: 2,               // ...AND UPS arrives in this many days or less (owner: 2 days)
   uspsOnlyChannels: ['walmart'], // channels that must always ship USPS (name contains)
@@ -24348,6 +24349,7 @@ function autolabelCleanConfig(c) {
     mode: ['off', 'preview', 'auto'].includes(c.mode) ? c.mode : 'off',
     cancelWatch: c.cancelWatch === true || c.cancelWatch === 'true',
     waitMinutes:       num(c.waitMinutes, D.waitMinutes, 0, 1440),
+    noWaitTimes:       autolabelNoWaitClean(c.noWaitTimes == null ? D.noWaitTimes : c.noWaitTimes),
     upsMinSavings:     num(c.upsMinSavings, D.upsMinSavings, 0, 100),
     upsMaxDays:        num(c.upsMaxDays, D.upsMaxDays, 1, 30),
     uspsOnlyChannels:  list(c.uspsOnlyChannels),
@@ -24364,6 +24366,45 @@ function autolabelCleanConfig(c) {
     cancelLookbackDays: Math.round(num(c.cancelLookbackDays, D.cancelLookbackDays, 1, 14)),
     minRunGapMinutes:  num(c.minRunGapMinutes, D.minRunGapMinutes, 1, 1440),
   };
+}
+
+// Owner: "Monday–Friday after 3:50 pm no more half-hour waiting — print as
+// soon as an order comes in, until 5 pm; Saturday 1 pm to 2:15 pm; after that
+// back to the half-hour wait". Written like "Mon-Fri 15:50-17:00; Sat 13:00-14:15"
+// (New York time); days Mon Tue Wed Thu Fri Sat Sun, a range or a list.
+const AUTOLABEL_DAYS = ['sun', 'mon', 'tue', 'wed', 'thu', 'fri', 'sat'];
+function autolabelNoWaitParse(text) {
+  const out = [];
+  for (const part of String(text || '').split(/[;\n]+/)) {
+    const m = part.trim().toLowerCase().match(/^([a-z ,\-]+?)\s+(\d{1,2}):(\d{2})\s*-\s*(\d{1,2}):(\d{2})$/);
+    if (!m) continue;
+    const days = new Set();
+    for (const d of m[1].split(/\s*,\s*/)) {
+      const r = d.split(/\s*-\s*/).map(x => AUTOLABEL_DAYS.indexOf(x.trim().slice(0, 3)));
+      if (r.some(x => x < 0)) { days.clear(); break; }
+      if (r.length === 1) days.add(r[0]); else for (let i = r[0]; ; i = (i + 1) % 7) { days.add(i); if (i === r[1]) break; }
+    }
+    const from = +m[2] * 60 + +m[3], to = +m[4] * 60 + +m[5];
+    if (days.size && from < to && to <= 24 * 60) out.push({ days: [...days], from, to });
+  }
+  return out;
+}
+function autolabelNoWaitText(w) {
+  const hm = n => `${Math.floor(n / 60)}:${String(n % 60).padStart(2, '0')}`;
+  const nm = d => AUTOLABEL_DAYS[d][0].toUpperCase() + AUTOLABEL_DAYS[d].slice(1);
+  const ds = w.days.slice().sort((a, b) => ((a + 6) % 7) - ((b + 6) % 7));
+  const run = ds.length > 2 && ds.every((d, i) => i === 0 || (ds[i - 1] + 1) % 7 === d);
+  return `${run ? nm(ds[0]) + '-' + nm(ds[ds.length - 1]) : ds.map(nm).join(',')} ${hm(w.from)}-${hm(w.to)}`;
+}
+// Keeps only the parts that make sense, written the same way every time.
+function autolabelNoWaitClean(text) { return autolabelNoWaitParse(text).map(autolabelNoWaitText).join('; '); }
+// Is it a no-wait time right now (New York)? → that time as text, else ''.
+function autolabelNoWaitNow(cfg, when) {
+  const p = new Intl.DateTimeFormat('en-US', { timeZone: 'America/New_York', weekday: 'short', hour: '2-digit', minute: '2-digit', hourCycle: 'h23' }).formatToParts(when || new Date());
+  const get = t => (p.find(x => x.type === t) || {}).value || '';
+  const day = AUTOLABEL_DAYS.indexOf(get('weekday').toLowerCase().slice(0, 3)), mins = +get('hour') * 60 + +get('minute');
+  const w = autolabelNoWaitParse(cfg.noWaitTimes).find(x => x.days.includes(day) && mins >= x.from && mins < x.to);
+  return w ? autolabelNoWaitText(w) : '';
 }
 
 async function autolabelLog(env, entry) {
@@ -25417,12 +25458,16 @@ async function autolabelSplitByHand(env, number, by) {
 // opts.buy: actually buy (cron in 'auto' mode only).
 // opts.trigger: 'cron' | 'manual' (just for the saved summary).
 async function autolabelRun(env, opts = {}) {
-  const cfg = await autolabelLoadConfig(env);
+  const cfgSaved = await autolabelLoadConfig(env);
+  // No-wait time (owner): orders print as soon as they come in — no wait for a second order.
+  const noWait = autolabelNoWaitNow(cfgSaved, opts.now || new Date());
+  const cfg = noWait ? { ...cfgSaved, waitMinutes: 0 } : cfgSaved;
   const startedAt = new Date().toISOString();
   const buyVerified = (await autolabelGetKey(env, AUTOLABEL_VERIFIED_KEY)) === 'yes';
   const buy = !!opts.buy && cfg.mode === 'auto' && buyVerified;
   const result = { ok: true, trigger: opts.trigger || 'manual', startedAt, mode: cfg.mode, buying: buy, buyVerified,
                    counts: {}, orders: [], channels: {}, cancelWatch: null, quoteSource: null, notes: [] };
+  if (noWait) { result.noWait = noWait; result.notes.push(`⏩ No-wait time (${noWait}, New York): orders print as soon as they come in — no ${cfgSaved.waitMinutes}-min wait.`); }
   if (opts.buy && cfg.mode === 'auto' && !buyVerified) result.notes.push('Auto mode is on but no label has been test-bought yet — nothing was bought. Use "Test buy ONE label" first.');
 
   // 1) Cancellations from every channel (and Veeqo itself).
