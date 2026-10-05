@@ -24794,7 +24794,7 @@ async function autolabelBoxItems(env, o, allocId) {
   try {
     const alloc = (o.allocations || []).find(a => String(a.id) === String(allocId)) || (o.allocations || [])[0] || null;
     const li = await veeqoExtractLineItems(env, o, alloc);
-    return (li || []).map(i => ({ sku: i.s || '', qty: parseInt(i.q) || 0, bin: i.b || '', pieces: (parseInt(i.q) || 0) * _psWeightSkuMultiplier(i.s) }));
+    return (li || []).map(i => ({ sku: i.s || '', qty: parseInt(i.q) || 0, bin: i.b || '', pieces: (parseInt(i.q) || 0) * _psWeightSkuMultiplier(i.s), img: /^https:\/\//i.test(i.i || '') ? i.i : '' }));
   } catch (e) { return []; }
 }
 // Every https URL inside Veeqo's answer that is the LABEL file (a key with
@@ -25798,6 +25798,42 @@ async function handleAutolabelRoute(path, method, url, request, env, session) {
       if (o) { items = await autolabelBoxItems(env, o, row.alloc_id); if (items.length) await d1Run(env, 'UPDATE label_print_queue SET items = ? WHERE id = ?', [JSON.stringify(items), row.id]); }
     }
     return veeqoResp({ ok: true, items });
+  }
+  // GET ?id=<label>&i=<item #> → that item's photo itself, to draw on the
+  // label (owner: "product photo on the shipping label"): our saved photo for
+  // the part #, else the item's photo from Veeqo (kept with the label). Only
+  // URLs from our own records are fetched.
+  if (path === '/veeqo/autolabel/label-photo' && method === 'GET') {
+    const bad = (st, e) => veeqoResp({ ok: false, error: e }, st);
+    const row = await d1First(env, 'SELECT order_number, alloc_id, items FROM label_print_queue WHERE id = ?', [parseInt(url.searchParams.get('id')) || 0]);
+    if (!row) return bad(404, 'Label not found');
+    let items = []; try { items = JSON.parse(row.items || '[]') || []; } catch (_) {}
+    const it = items[parseInt(url.searchParams.get('i')) || 0];
+    if (!it) return bad(404, 'No such item on this label');
+    const base = parentOf(it.sku || '');
+    const ours = base ? ((await productPhotoMap(env, [base]))[base] || '') : '';
+    let vimg = it.img || '';
+    if (!ours && !vimg && row.order_number) { // a label kept before photos were kept with it: ask Veeqo once, then keep it
+      try {
+        const res = await veeqoFetch(env, `/orders?query=${encodeURIComponent(row.order_number)}&page_size=10&page=1`);
+        const o = (Array.isArray(res) ? res : []).find(x => autolabelOrderNum(x.number) === autolabelOrderNum(row.order_number));
+        const fresh = o ? await autolabelBoxItems(env, o, row.alloc_id) : [];
+        const f = fresh.find(x => String(x.sku).toUpperCase() === String(it.sku).toUpperCase());
+        if (f && f.img) { vimg = f.img; items.forEach(x => { const g = fresh.find(y => String(y.sku).toUpperCase() === String(x.sku).toUpperCase()); if (g && g.img) x.img = g.img; });
+          await d1Run(env, 'UPDATE label_print_queue SET items = ? WHERE id = ?', [JSON.stringify(items), parseInt(url.searchParams.get('id')) || 0]); }
+      } catch (_) {}
+    }
+    const tries = [ours, vimg].filter(u => /^https:\/\//i.test(u || ''));
+    if (!tries.length) return bad(404, `No photo saved for ${base || it.sku} (Inventory → Location Plan → 🖼 Photos)`);
+    for (const u of tries) {
+      const r = await fetch(u, { cf: { cacheTtl: 86400 } }).catch(() => null);
+      const ct = r ? String(r.headers.get('content-type') || '') : '';
+      if (!r || !r.ok || !/^image\//i.test(ct)) continue;
+      const buf = await r.arrayBuffer();
+      if (buf.byteLength > 5e6) continue;
+      return new Response(buf, { headers: { 'Content-Type': ct, 'Access-Control-Allow-Origin': _currentOrigin || '*', 'Cache-Control': 'private, max-age=3600' } });
+    }
+    return bad(502, `The photo for ${base || it.sku} did not load`);
   }
   // GET ?id= -> the label file itself (PDF / image), fetched from Veeqo.
   if (path === '/veeqo/autolabel/label-file' && method === 'GET') {

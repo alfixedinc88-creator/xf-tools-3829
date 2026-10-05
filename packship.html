@@ -9086,6 +9086,7 @@ function _psAlSlipHtml(slips) {
 // Prints the given slips through a hidden iframe; resolves once the print
 // call returns (right away with --kiosk-printing, after the dialog otherwise).
 function _psAlPrintSlips(slips) {
+  if (_psAlBatch) { _psAlBatch.push(_psAlSlipHtml(slips)); return Promise.resolve(); } // one print for the whole batch
   return new Promise(function(resolve){
     var f = document.createElement('iframe');
     f.style.cssText = 'position:fixed;right:0;bottom:0;width:0;height:0;border:0;visibility:hidden';
@@ -9135,6 +9136,11 @@ async function _psAlLabelBlob(id) {
   var e = new Error(d.error || ('HTTP ' + r.status)); e.tried = d.tried; throw e;
 }
 function _psAlPrintLabelBlob(f) {
+  // in a batch: the label as a picture page (PDF drawn by pdf.js) in the one print
+  if (_psAlBatch) return _psAlLabelCanvas(f).then(function(cv) { return _psAlPrintCanvas(cv); }).catch(function() { return _psAlPrintLabelBlobNow(f); });
+  return _psAlPrintLabelBlobNow(f);
+}
+function _psAlPrintLabelBlobNow(f) {
   return new Promise(function(resolve) {
     var url = URL.createObjectURL(f.blob), fr = document.createElement('iframe');
     fr.style.cssText = 'position:fixed;right:0;bottom:0;width:4in;height:6in;border:0;visibility:hidden';
@@ -9166,7 +9172,35 @@ function _psAlBoxStripHtml(l, items) {
       : '<div style="font-size:14px">No item list from Veeqo for this box</div>')
     + '</body></html>';
 }
+// Owner: "when we select more than one, save it into the same PDF" — while a
+// batch is open, every page (label, its sticker, its packing slip) is kept in
+// order and printed ONCE at the end as one document (one PDF / one print job).
+var _psAlBatch = null;
+function _psAlScopeCss(css, sc) {
+  return css.replace(/@page\s*\{[^}]*\}/g, '').replace(/([^{}]+)\{([^{}]*)\}/g, function(m, sel, body) {
+    sel = sel.trim(); if (!sel || sel.charAt(0) === '@') return m;
+    return sel.split(',').map(function(x) { x = x.trim(); return /^(html|body)$/.test(x) ? sc : sc + ' ' + x.replace(/^(html|body)\s+/, ''); }).join(',') + '{' + body + '}';
+  });
+}
+function _psAlCombineHtml(list) {
+  var css = '', body = '';
+  list.forEach(function(h, k) {
+    var st = (h.match(/<style>([\s\S]*?)<\/style>/) || [])[1] || '', bd = (h.match(/<body[^>]*>([\s\S]*)<\/body>/) || [])[1] || h;
+    var slip = /@page\{margin:0\.3in\}/.test(st); // packing slips had a 0.3in margin of their own
+    css += _psAlScopeCss(st, '.pk' + k);
+    body += '<div class="pk' + k + ' pkp"' + (slip ? ' style="padding:.3in"' : '') + '>' + bd + '</div>';
+  });
+  return '<!doctype html><html><head><meta charset="utf-8"><title>Shipping labels</title><style>@page{size:4in 6in;margin:0}html,body{margin:0;padding:0}'
+    + '.pkp{box-sizing:border-box;width:4in;page-break-after:always;break-after:page;overflow:hidden}.pkp:last-child{page-break-after:auto;break-after:auto}' + css + '</style></head><body>' + body + '</body></html>';
+}
+async function _psAlBatchFlush() {
+  var list = _psAlBatch || []; _psAlBatch = null;
+  if (!list.length) return 0;
+  await _psAlPrintHtml(list.length === 1 ? list[0] : _psAlCombineHtml(list));
+  return list.length;
+}
 function _psAlPrintHtml(html) {
+  if (_psAlBatch) { _psAlBatch.push(html); return Promise.resolve(); }
   return new Promise(function(resolve) {
     var fr = document.createElement('iframe');
     fr.style.cssText = 'position:fixed;right:0;bottom:0;width:4in;height:6in;border:0;visibility:hidden';
@@ -9316,24 +9350,28 @@ function _psAlDrawPics(ctx, pics, x, y, S) {
   ctx.putImageData(img, x, y);
   ctx.strokeStyle = '#000'; ctx.lineWidth = 2; ctx.strokeRect(x + 1, y + 1, S - 2, S - 2);
 }
-// Each item's photo (ours, by part #) through our Worker, so it can be drawn
-// on the label. No photo / no WiFi → the label prints without it.
+// Each item's photo through our Worker (our saved photo for the part #, else
+// Veeqo's), so it can be drawn on the label. No photo / no WiFi → the label
+// prints without it, and the screen says why.
 window._psAlPicCache = {};
-async function _psAlLoadPics(items) {
-  await Promise.all((items || []).slice(0, _PS_AL_LABEL_MAX_LINES).map(async function(it) {
-    var base = String(it.sku || '').split('=')[0].trim().toUpperCase(); if (!base) return;
-    if (!(base in _psAlPicCache)) {
-      _psAlPicCache[base] = (async function() {
+async function _psAlLoadPics(items, labelId) {
+  window._psAlPicWhy = [];
+  await Promise.all((items || []).slice(0, _PS_AL_LABEL_MAX_LINES).map(async function(it, idx) {
+    var key = labelId + ':' + idx;
+    if (!(key in _psAlPicCache)) {
+      _psAlPicCache[key] = (async function() {
         try {
-          var ctl = typeof AbortController !== 'undefined' ? new AbortController() : null, t = setTimeout(function() { if (ctl) ctl.abort(); }, 5000);
-          var r = await fetch(PS_WORKER + '/inventory/photo-file?base=' + encodeURIComponent(base), { headers: { 'X-Cred-Token': psCredToken }, signal: ctl ? ctl.signal : undefined });
+          var ctl = typeof AbortController !== 'undefined' ? new AbortController() : null, t = setTimeout(function() { if (ctl) ctl.abort(); }, 8000);
+          var r = await fetch(PS_WORKER + '/veeqo/autolabel/label-photo?id=' + encodeURIComponent(labelId) + '&i=' + idx, { headers: { 'X-Cred-Token': psCredToken }, signal: ctl ? ctl.signal : undefined });
           clearTimeout(t);
-          if (!r.ok || !/^image\//.test(r.headers.get('content-type') || '')) return null;
-          return await createImageBitmap(await r.blob());
-        } catch (e) { return null; }
+          if (!r.ok || !/^image\//.test(r.headers.get('content-type') || '')) { var d = await r.json().catch(function() { return {}; }); return { why: d.error || ('HTTP ' + r.status) }; }
+          return { pic: await createImageBitmap(await r.blob()) };
+        } catch (e) { return { why: 'photo did not load (' + ((e && e.message) || e) + ')' }; }
       })();
     }
-    it._pic = await _psAlPicCache[base];
+    var got = await _psAlPicCache[key];
+    it._pic = got.pic || null;
+    if (!got.pic) { window._psAlPicWhy.push(it.sku + ': ' + got.why); delete _psAlPicCache[key]; }
   }));
 }
 function _psAlPrintCanvas(cv) {
@@ -9344,7 +9382,8 @@ async function _psAlPrintOneLabel(l) {
   var items = (l.items || []).length ? l.items : (((await _psAlFetch('/veeqo/autolabel/label-items?id=' + encodeURIComponent(l.id))) || {}).items || []);
   var stamped = false;
   window._psAlStampWhy = '';
-  if (items.length && items.length <= _PS_AL_LABEL_MAX_LINES) await _psAlLoadPics(items);
+  window._psAlPicWhy = []; window._psAlStampPics = 0;
+  if (items.length && items.length <= _PS_AL_LABEL_MAX_LINES) await _psAlLoadPics(items, l.id);
   try { var cv = await _psAlLabelCanvas(f); if (_psAlStampLabel(cv, items)) { await _psAlPrintCanvas(cv); stamped = true; } }
   catch (e) { window._psAlStampWhy = 'could not open the label file (' + f.type + '): ' + ((e && e.message) || e); console.warn('[label] could not write on the label, printing the sticker instead:', e && e.message); }
   // What happened, on the screen (owner: "still not showing any sku, bin location, quantities").
@@ -9356,6 +9395,9 @@ async function _psAlPrintOneLabel(l) {
   // prints slips after labels.
   var many = items.length > _PS_AL_LABEL_MAX_LINES;
   if (stamped) window._psAlLastNote += ' · no packing slip needed';
+  // 📷 on the screen: how many photos went on the label, or why none
+  if (stamped) window._psAlLastNote += window._psAlStampPics ? ' · 📷 ' + window._psAlStampPics + ' photo' + (window._psAlStampPics === 1 ? '' : 's') + ' on it'
+    : ' · 📷 no photo — ' + ((window._psAlPicWhy || []).join('; ') || 'no room next to the lines');
   if (many) window._psAlLastNote += ' · ' + items.length + ' items → packing slip prints with it';
   if (!stamped) {
     await _psAlPrintLabelBlob(f);
@@ -9382,13 +9424,15 @@ window.psAlPrintNewLabels = async function(silent) {
     if (d.ok === false) { if (msg) msg.textContent = '✗ ' + (d.error || 'Failed'); return; }
     var list = d.labels || [];
     if (!list.length) { if (msg && !silent) msg.textContent = 'No new labels.'; return; }
+    _psAlBatch = []; // every label (+ its sticker / packing slip) in ONE print, in order
     for (var i = 0; i < list.length; i++) {
       try { await _psAlPrintOneLabel(list[i]); done++; if (window._psAlLastNote) notes.push(window._psAlLastNote); }
       catch (e) { bad.push(list[i].order_number + ': ' + e.message); window._psAlLabelLastTried = e.tried || null; }
     }
+    window._psAlLastBatchPages = await _psAlBatchFlush();
     if (msg) { msg.style.whiteSpace = 'pre-wrap'; msg.textContent = (done ? '✓ Printed ' + done + ' label' + (done === 1 ? '' : 's') + ' at ' + new Date().toLocaleTimeString() : '') + (bad.length ? (done ? ' · ' : '') + '✗ ' + bad.length + ' not printed — see the list' : '') + (notes.length ? '\n' + notes.join('\n') : ''); }
   } catch (e) { if (msg) msg.textContent = '✗ ' + e.message; }
-  finally { _psAlLabelBusy = false; psAlLoadLabels(); }
+  finally { if (_psAlBatch) { try { await _psAlBatchFlush(); } catch (e) {} } _psAlLabelBusy = false; psAlLoadLabels(); }
 };
 window.psAlLoadLabels = async function() {
   var box = document.getElementById('ps-al-label-list'); if (!box) return;

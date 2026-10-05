@@ -2117,8 +2117,8 @@ console.log('\nLast run full width with resizable columns · product photo on th
   globalThis.fetch = realFetch;
   const { readFileSync } = await import('node:fs');
   const ph5 = readFileSync(fileURLToPath(new URL('../packship.html', import.meta.url)), 'utf8'), ih3 = readFileSync(fileURLToPath(new URL('../inventory.html', import.meta.url)), 'utf8');
-  check('shipping label: the items\' photos (black-and-white dots) in a square left of the lines; lines first — no room → no photo', /await _psAlLoadPics\(items\);\s*try \{ var cv = await _psAlLabelCanvas\(f\);/.test(ph5)
-    && /if \(plan\.pic\) \{ _psAlDrawPics\(ctx, pics, x0, y0, picW\); x0 \+= picW \+ picGap; \}/.test(ph5) && /for \(var tryPic = picW \? 1 : 0; tryPic >= 0 && !plan; tryPic--\)/.test(ph5) && /\/inventory\/photo-file\?base=/.test(ph5), null);
+  check('shipping label: the items\' photos (black-and-white dots) in a square left of the lines; lines first — no room → no photo', /await _psAlLoadPics\(items, l\.id\);\s*try \{ var cv = await _psAlLabelCanvas\(f\);/.test(ph5)
+    && /if \(plan\.pic\) \{ _psAlDrawPics\(ctx, pics, x0, y0, picW\); x0 \+= picW \+ picGap; \}/.test(ph5) && /for \(var tryPic = picW \? 1 : 0; tryPic >= 0 && !plan; tryPic--\)/.test(ph5) && /\/veeqo\/autolabel\/label-photo\?id=/.test(ph5), null);
   check('Last run: the whole screen width on the PC; drag a column edge to make it wider / smaller (kept on this PC, double-click = normal)', /\.ps-content:has\(#ps-panel-autolabel\.active\) \{ max-width:none; \}/.test(ph5)
     && /onmousedown="psAlColDrag\(event, ' \+ i \+ '\)"/.test(ph5) && /localStorage\.setItem\('ps_al_colw'/.test(ph5) && /table-layout:fixed/.test(ph5), null);
   const src = (ih3.match(/  function bdLabelHtml\(sku, copies, name, foot, pic\) \{[\s\S]*?\n  \}/) || [''])[0];
@@ -2126,6 +2126,42 @@ console.log('\nLast run full width with resizable columns · product photo on th
   const withPic = mk('8-8-8=8', 2, 'Plug', 'Printed by Ana', 'https://photos.example/88.jpg'), noPic = mk('8-8-8=8', 1, 'Plug', 'Printed by Ana');
   check('barcode sticker: 📷 product photo on the left (black-and-white), barcode + part # on the right; photo off → the label as before', (withPic.match(/<div class="l lp"><img class="ph" src="https:\/\/photos\.example\/88\.jpg"/g) || []).length === 2
     && /filter:grayscale\(1\)/.test(withPic) && !/class="ph"/.test(noPic) && /<div class="l"><svg class="b"><\/svg><div class="t">8-8-8=8<\/div>/.test(noPic) && /id="bd-pic"[^>]*onchange="bdPicToggle\(this\.checked\)"/.test(ih3) && /bdImgsReady\(d\)\.then/.test(ih3), withPic.slice(-400));
+}
+
+// Owner: "select more than one → save it into the same PDF (they showed up one by one)" + "shipping label still not showing the product photo".
+console.log('\nAuto Label: one print (one PDF) for all the labels; the label photo = our photo, else Veeqo\'s');
+{
+  const realFetch = globalThis.fetch;
+  const items = [{ quantity: 1, sellable: { id: 801, sku_code: '66-6-6=2', image_url: 'https://veeqo-img.example/66.jpg', stock_entries: [{ location: '6-6-6' }] } }];
+  const ord = { id: 990, number: 'P-1', channel: { name: 'eBay' }, line_items: items, allocations: [{ id: 9901, line_items: items, shipment: { id: 1, tracking_number: { tracking_number: 'TP1' } } }] };
+  globalThis.fetch = async (u, o) => { u = String(u);
+    if (u.includes('api.veeqo.com/orders?')) return new Response(JSON.stringify([ord]), { headers: { 'Content-Type': 'application/json' } });
+    if (u === 'https://veeqo-img.example/66.jpg') return new Response(new Uint8Array([0xff, 0xd8, 0xff, 9]), { headers: { 'Content-Type': 'image/jpeg' } });
+    if (u === 'https://photos.example/77.jpg') return new Response(new Uint8Array([0xff, 0xd8, 0xff, 7, 7]), { headers: { 'Content-Type': 'image/jpeg' } });
+    if (u.includes('api.veeqo.com/')) return new Response('[]', { headers: { 'Content-Type': 'application/json' } });
+    return realFetch(u, o); };
+  env.VEEQO_API_KEY = 'k';
+  await post('/veeqo/autolabel/label-add', { order: 'P-1' });
+  const L = sq.prepare("SELECT id, items FROM label_print_queue WHERE order_number = 'P-1'").get();
+  check('a label keeps each item\'s Veeqo photo with it', /veeqo-img\.example\/66\.jpg/.test(L.items), L.items);
+  const ph = await call('/veeqo/autolabel/label-photo?id=' + L.id + '&i=0', { headers: H });
+  check('…no photo of ours for 66-6-6 → the label uses the Veeqo photo (the image itself)', ph.status === 200 && /image\/jpeg/.test(ph.headers.get('content-type')) && (await ph.arrayBuffer()).byteLength === 4, ph.status);
+  sq.prepare("UPDATE label_print_queue SET items = ? WHERE id = ?").run(JSON.stringify([{ sku: '77-7-7=1', qty: 1, bin: '7-7-7' }]), L.id);
+  const ph2 = await call('/veeqo/autolabel/label-photo?id=' + L.id + '&i=0', { headers: H });
+  check('…our saved photo (Location Plan) comes first', ph2.status === 200 && (await ph2.arrayBuffer()).byteLength === 5, ph2.status);
+  sq.prepare("UPDATE label_print_queue SET items = ? WHERE id = ?").run(JSON.stringify([{ sku: '55-5-5=1', qty: 1, bin: '5-5-5' }]), L.id);
+  const ph3 = await (await call('/veeqo/autolabel/label-photo?id=' + L.id + '&i=0', { headers: H })).json();
+  check('…no photo anywhere → says why (shown on the screen next to the label)', ph3.ok === false && /No photo saved for 55-5-5/.test(ph3.error), ph3);
+  globalThis.fetch = realFetch; delete env.VEEQO_API_KEY;
+  const { readFileSync } = await import('node:fs');
+  const ph6 = readFileSync(fileURLToPath(new URL('../packship.html', import.meta.url)), 'utf8');
+  const scope = new Function(ph6.match(/function _psAlScopeCss\(css, sc\) \{[\s\S]*?\n\}/)[0] + '; ' + ph6.match(/function _psAlCombineHtml\(list\) \{[\s\S]*?\n\}/)[0] + '; return _psAlCombineHtml;')();
+  const one = scope(['<html><head><style>@page{size:4in 6in;margin:0}html,body{margin:0}img{width:4in;height:6in;display:block}</style></head><body><img src="data:a"></body></html>',
+    '<html><head><style>@page{margin:0.3in}body{font-family:Arial}table{width:100%}</style></head><body><div class="pg">SLIP A-1</div></body></html>',
+    '<html><head><style>@page{size:4in 6in;margin:0}html,body{margin:0}img{width:4in}</style></head><body><img src="data:b"></body></html>']);
+  check('…all the labels (+ each one\'s slip right after it) go in ONE document, in order, one page each (one PDF / one print)', (one.match(/class="pk\d pkp"/g) || []).length === 3
+    && one.indexOf('data:a') < one.indexOf('SLIP A-1') && one.indexOf('SLIP A-1') < one.indexOf('data:b') && /\.pk1 table\{width:100%\}/.test(one) && /\.pk0 img\{/.test(one) && (one.match(/@page/g) || []).length === 1
+    && /_psAlBatch = \[\]; \/\/ every label/.test(ph6) && /window\._psAlLastBatchPages = await _psAlBatchFlush\(\);/.test(ph6), one.slice(0, 400));
 }
 
 console.log('\n' + (failed ? '❌ ' + failed + ' check(s) FAILED' : '✅ all ' + passed + ' checks passed') + '\n');
