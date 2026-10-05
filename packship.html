@@ -1837,7 +1837,7 @@ body {
           <label>…only for orders up to ($, 0 = all)<input class="ps-field-input" data-k="lowValueMaxOrder" type="number" min="0" step="1"></label>
           <label>Never auto-buy channels (comma list)<input class="ps-field-input" data-k="skipChannels" type="text"></label>
           <label>Max box weight (lb, 0 = off)<input class="ps-field-input" data-k="maxBoxLb" type="number" min="0" step="1"></label>
-          <label>Packing slip with the label<select class="ps-field-input" data-k="slipRule">
+          <label style="display:none">Packing slip with the label<select class="ps-field-input" data-k="slipRule">
             <option value="multi_sku">2+ different items</option><option value="multi_qty">2+ pieces in total</option>
             <option value="all">Every order</option><option value="off">Never</option></select></label>
           <label>Max labels per run<input class="ps-field-input" data-k="maxLabelsPerRun" type="number" min="0" step="1"></label>
@@ -1846,6 +1846,7 @@ body {
           <label>Cancellation look-back (days)<input class="ps-field-input" data-k="cancelLookbackDays" type="number" min="1" step="1"></label>
           <label>Run at most every (min)<input class="ps-field-input" data-k="minRunGapMinutes" type="number" min="1" step="1"></label>
         </div>
+        <div id="ps-al-rules-now" style="margin-top:12px;padding:10px 12px;border-radius:10px;background:var(--bg3);font-size:12px;color:var(--text);line-height:1.6"></div>
         <div style="display:flex;gap:10px;align-items:center;margin-top:12px;flex-wrap:wrap">
           <button class="ps-btn-primary" style="width:auto;padding:10px 22px" onclick="psAlSaveConfig()">💾 Save rules</button>
           <span id="ps-al-save-result" style="font-size:12px;color:var(--text2);font-family:var(--mono)"></span>
@@ -8536,6 +8537,16 @@ function _psAlRenderConfig(d) {
     else if (Array.isArray(c[k])) inp.value = c[k].join(', ');
     else inp.value = c[k];
   });
+  // Owner: "the rules above Test — change them to whatever the rules are right now": in plain words, from the saved rules.
+  var rn = document.getElementById('ps-al-rules-now');
+  if (rn) rn.innerHTML = '<b>📌 The rules right now</b><br>'
+    + '• <b>Carrier:</b> USPS, unless UPS is at least <b>$' + Number(c.upsMinSavings).toFixed(2) + ' cheaper</b> and arrives in <b>' + c.upsMaxDays + ' day' + (c.upsMaxDays == 1 ? '' : 's') + ' or less</b>'
+    + ((c.uspsOnlyChannels || []).length ? ' · always USPS for: ' + _psAlEsc(c.uspsOnlyChannels.join(', ')) : '') + '<br>'
+    + '• <b>Bin · SKU · qty</b> written at the bottom of the label for <b>1–4 items</b> (with the product photos) → <b>no packing slip</b><br>'
+    + '• <b>Packing slip (with product photos)</b> right after its label when: <b>5+ items</b>, no room on the label, or the label is <b>UPS</b><br>'
+    + '• Waits <b>' + c.waitMinutes + ' min</b> after the newest order · holds same name + address (merge) · never buys for a cancelled order'
+    + (c.maxBoxLb ? ' · boxes over <b>' + c.maxBoxLb + ' lb</b> → weigh / print by hand' : '')
+    + (c.lowValueRatio ? ' · hold if the label is <b>' + Math.round(c.lowValueRatio * 100) + '%</b>+ of the order' + (c.lowValueMaxOrder ? ' (orders up to $' + c.lowValueMaxOrder + ')' : '') : '');
   var lines = [];
   lines.push('Mode: ' + ({ off:'OFF', preview:'PREVIEW ONLY — nothing is bought', auto:'AUTO — buying labels' })[c.mode]);
   if (c.mode === 'auto' && !d.buyVerified) lines.push('⚠ Auto can\'t buy yet — do one "Test buy ONE label" first.');
@@ -9110,21 +9121,23 @@ function _psAlSlipHtml(slips) {
       + '<div class="row"><div class="to"><div class="lbl">SHIP TO</div><b>' + e(t.name) + '</b><br>' + (t.company ? e(t.company) + '<br>' : '')
       + e(t.address1) + (t.address2 ? ', ' + e(t.address2) : '') + '<br>' + e(t.city) + ', ' + e(t.state) + ' ' + e(t.zip) + (t.country && !/^(US|USA|United States)$/i.test(t.country) ? '<br>' + e(t.country) : '') + '</div>'
       + '<div class="trk"><div class="lbl">' + e(sl.carrier || 'TRACKING') + '</div><span>' + e(sl.tracking || '—') + '</span></div></div>'
-      + '<table><tr><th class="ck"></th><th>Qty</th><th>SKU</th><th>Bin</th><th>Item</th><th>Pcs</th></tr>'
-      + items.map(function(i){ return '<tr><td class="ck">☐</td><td class="q">' + e(i.qty) + '</td><td class="m">' + e(i.sku) + '</td><td class="m">' + e(i.bin) + '</td><td>' + e(i.title) + '</td><td class="q">' + e(i.pieces) + '</td></tr>'; }).join('')
+      + '<table><tr><th class="ck"></th><th class="phh">Photo</th><th>Qty</th><th>SKU</th><th>Bin</th><th>Pcs</th></tr>'
+      + items.map(function(i){ return '<tr><td class="ck">☐</td><td class="phc">' + (i.photo ? '<img class="ph" src="' + e(i.photo) + '" alt="">' : '') + '</td><td class="q">' + e(i.qty) + '</td><td class="m">' + e(i.sku) + (i.title ? '<div class="ti">' + e(i.title) + '</div>' : '') + '</td><td class="m">' + e(i.bin) + '</td><td class="q">' + e(i.pieces) + '</td></tr>'; }).join('')
       + '</table><div class="ft">' + items.length + ' item' + (items.length === 1 ? '' : 's') + ' · ' + pcs + ' pieces</div></div>';
   }).join('');
   return '<!doctype html><html><head><meta charset="utf-8"><title>Packing slips</title><style>'
     + '@page{margin:0.3in}body{font-family:Arial,Helvetica,sans-serif;color:#000;margin:0}'
     + '.pg{page-break-after:always;padding:4px}.pg:last-child{page-break-after:auto}'
-    + '.hd{display:flex;justify-content:space-between;align-items:flex-start;border-bottom:2px solid #000;padding-bottom:6px;margin-bottom:8px}'
-    + '.ttl{font-size:20px;font-weight:800;letter-spacing:1px}.sub{font-size:11px}.ord{font-size:18px;font-weight:800;text-align:right;font-family:monospace}'
+    + '.hd{display:flex;flex-wrap:wrap;gap:4px 10px;justify-content:space-between;align-items:flex-start;border-bottom:2px solid #000;padding-bottom:6px;margin-bottom:8px}'
+    + '.ttl{font-size:18px;font-weight:800;letter-spacing:1px}.sub{font-size:11px}.ord{font-size:15px;font-weight:800;text-align:right;font-family:monospace;word-break:break-all}'
     + '.box{font-size:13px;border:2px solid #000;padding:2px 6px;margin:4px 0 0 auto;display:table}'
     + '.row{display:flex;gap:16px;margin-bottom:10px;font-size:13px;line-height:1.35}.to{flex:1}.trk{text-align:right}.trk span{font-family:monospace;font-size:12px}'
     + '.lbl{font-size:10px;font-weight:700;color:#444;letter-spacing:1px}'
     + 'table{width:100%;border-collapse:collapse;font-size:13px}th{text-align:left;border-bottom:1.5px solid #000;font-size:11px;padding:4px}'
-    + 'td{border-bottom:1px solid #999;padding:5px 4px;vertical-align:top}.ck{width:18px;font-size:16px}.q{text-align:right;font-weight:700;white-space:nowrap}.m{font-family:monospace;white-space:nowrap}'
+    + 'td{border-bottom:1px solid #999;padding:4px 3px;vertical-align:top}.ck{width:16px;font-size:15px}.q{text-align:right;font-weight:700;white-space:nowrap}.m{font-family:monospace;word-break:break-all}table{table-layout:fixed;font-size:11.5px}td,th{overflow-wrap:anywhere}'
     + '.ft{margin-top:8px;font-size:12px;font-weight:700;text-align:right}'
+    + '.phc{width:.6in;padding:2px}.ph{width:.58in;height:.58in;object-fit:contain;filter:grayscale(1) contrast(1.3);display:block}.phh{width:.6in}td{vertical-align:middle}'
+    + 'th.ck{width:16px}th:nth-child(3){width:26px}th:nth-child(5){width:.7in}th:nth-child(6){width:30px}.ti{font:600 9.5px/1.2 Arial,sans-serif;word-break:normal;margin-top:2px}td.m{white-space:normal;word-break:break-all;overflow-wrap:anywhere}'
     + '</style></head><body>' + pages + '</body></html>';
 }
 
@@ -9233,7 +9246,7 @@ function _psAlCombineHtml(list) {
     var st = (h.match(/<style>([\s\S]*?)<\/style>/) || [])[1] || '', bd = (h.match(/<body[^>]*>([\s\S]*)<\/body>/) || [])[1] || h;
     var slip = /@page\{margin:0\.3in\}/.test(st); // packing slips had a 0.3in margin of their own
     css += _psAlScopeCss(st, '.pk' + k);
-    body += '<div class="pk' + k + ' pkp"' + (slip ? ' style="padding:.3in"' : '') + '>' + bd + '</div>';
+    body += '<div class="pk' + k + ' pkp"' + (slip ? ' style="padding:.15in"' : '') + '>' + bd + '</div>';
   });
   return '<!doctype html><html><head><meta charset="utf-8"><title>Shipping labels</title><style>@page{size:4in 6in;margin:0}html,body{margin:0;padding:0}'
     + '.pkp{box-sizing:border-box;width:4in;page-break-after:always;break-after:page;overflow:hidden}.pkp:last-child{page-break-after:auto;break-after:auto}' + css + '</style></head><body>' + body + '</body></html>';
@@ -9251,7 +9264,11 @@ function _psAlPrintHtml(html) {
     fr.style.cssText = 'position:fixed;right:0;bottom:0;width:4in;height:6in;border:0;visibility:hidden';
     document.body.appendChild(fr);
     fr.contentDocument.open(); fr.contentDocument.write(html); fr.contentDocument.close();
-    setTimeout(function() { try { fr.contentWindow.focus(); fr.contentWindow.print(); } catch (e) { console.error(e); } setTimeout(function() { fr.remove(); resolve(); }, 1000); }, 300);
+    // photos on the page (packing slip) load first — at most 5 s
+    var imgs = Array.prototype.slice.call(fr.contentDocument.querySelectorAll('img'));
+    Promise.race([Promise.all(imgs.map(function(im) { return im.complete ? 1 : new Promise(function(r) { im.onload = im.onerror = r; }); })), new Promise(function(r) { setTimeout(r, 5000); })]).then(function() {
+      setTimeout(function() { try { fr.contentWindow.focus(); fr.contentWindow.print(); } catch (e) { console.error(e); } setTimeout(function() { fr.remove(); resolve(); }, 1000); }, 300);
+    });
   });
 }
 // Owner (photo of a USPS label with "24-5-5 / 2,5=3/4x1/2X PO C" at the
@@ -9439,8 +9456,11 @@ async function _psAlPrintOneLabel(l, reprint) {
   // with it, so the packer knows where to grab". So: not written on the label
   // (any reason) → its packing slip, right after it (no separate sticker any
   // more). The server marks / queues the slip (recorded).
-  var many = items.length > _PS_AL_LABEL_MAX_LINES, needSlip = !stamped;
-  if (stamped) window._psAlLastNote += ' · no packing slip needed';
+  // Owner, later: "if we print with UPS, print with the packing slip too" — every UPS label gets its slip.
+  var isUps = /UPS/i.test(l.carrier || '') && !/USPS/i.test(l.carrier || '');
+  var many = items.length > _PS_AL_LABEL_MAX_LINES, needSlip = !stamped || isUps, skipSlip = stamped && !isUps;
+  if (isUps) window._psAlLastNote += ' · UPS → packing slip prints with it';
+  if (skipSlip) window._psAlLastNote += ' · no packing slip needed';
   // 📷 on the screen: how many photos went on the label, or why none
   if (stamped) window._psAlLastNote += window._psAlStampPics ? ' · 📷 ' + window._psAlStampPics + ' photo' + (window._psAlStampPics === 1 ? '' : 's') + ' on it'
     : ' · 📷 no photo — ' + ((window._psAlPicWhy || []).join('; ') || 'no room next to the lines');
@@ -9449,7 +9469,7 @@ async function _psAlPrintOneLabel(l, reprint) {
     await _psAlPrintLabelBlob(f);
   }
   window._psAlLastStamped = stamped;
-  var pr = await _psAlFetch('/veeqo/autolabel/labels-printed', { method: 'POST', body: { ids: [l.id], by: psInitials || '', skipSlip: stamped, needSlip: needSlip, withSlips: true, reprint: !!reprint } });
+  var pr = await _psAlFetch('/veeqo/autolabel/labels-printed', { method: 'POST', body: { ids: [l.id], by: psInitials || '', skipSlip: skipSlip, needSlip: needSlip, withSlips: true, reprint: !!reprint } });
   // Owner: "that packing slip must print under that shipping label, so the
   // picker knows the label comes with the packing slip" — this label's own
   // slip prints right after it, not at the end with the others.
