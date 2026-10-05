@@ -1901,7 +1901,11 @@ console.log('\nAuto Label: every bought label goes on the 🖨 Printer station l
   const ph = readFileSync(fileURLToPath(new URL('../packship.html', import.meta.url)), 'utf8');
   // Owner, later: "save labels — put it on the same label, at the bottom (like USPS)". The sticker stays for when it doesn't fit.
   check('…bin · SKU · ×qty is written in the blank strip at the bottom of the label (only all-white rows, a 4×6 label, every line fits)', /if \(_psAlStampLabel\(cv, items\)\) \{ await _psAlPrintCanvas\(cv\); stamped = true; \}/.test(ph) && /function _psAlBlankBand\(cv, minH\)/.test(ph) && /Math\.abs\(W \/ H - 4 \/ 6\) > 0\.04\) return no\('not a 4×6 label'\)/.test(ph), null);
-  check('…when it doesn\'t fit there: the label as it is, then the 4×6 "Bin · SKU · Qty" sticker, then marked printed', /if \(!stamped\) \{\s*await _psAlPrintLabelBlob\(f\);\s*await _psAlPrintHtml\(_psAlBoxStripHtml\(l, items\)\);[\s\S]{0,200}labels-printed/.test(ph) && /<th>Bin<\/th><th>SKU<\/th>/.test(ph), null);
+  // Owner, later: "more than 3, print the packing slip with the order" — the sticker is only for ≤3 items (the slip lists the rest).
+  check('…when it doesn\'t fit there: the label as it is, then the 4×6 "Bin · SKU · Qty" sticker (up to 3 items), then marked printed', /if \(!stamped\) \{\s*await _psAlPrintLabelBlob\(f\);\s*if \(!many\) await _psAlPrintHtml\(_psAlBoxStripHtml\(l, items\)\);[\s\S]{0,200}labels-printed/.test(ph) && /<th>Bin<\/th><th>SKU<\/th>/.test(ph), null);
+  // Owner: "24-5-5, 2,5=3/4x1/2X PO C on the same line … smaller words to fit 3 lines … 3 items → no packing slip, more than 3 → packing slip with the order".
+  check('…one line per item: "bin, SKU ×qty" (e.g. 24-5-5, 2,5=3/4x1/2X PO C ×1), smaller words so 3 lines fit', /return \(it\.bin \|\| '—'\) \+ ', ' \+ \(it\.sku \|\| ''\) \+ ' ×' \+ \(it\.qty \|\| 0\);/.test(ph) && /minFs = Math\.round\(W \* 0\.022\)/.test(ph) && /var _PS_AL_LABEL_MAX_LINES = 3;/.test(ph), null);
+  check('…more than 3 items → not written on the label; the packing slip prints with it', /if \(items\.length > _PS_AL_LABEL_MAX_LINES\) return no\(/.test(ph) && /skipSlip: stamped, needSlip: many/.test(ph), null);
   const f = await call('/veeqo/autolabel/label-file?id=' + L.id, { headers: H });
   check('…the Printer station gets the label file itself (PDF) from what Veeqo gave', f.status === 200 && /application\/pdf/.test(f.headers.get('content-type')) && (await f.text()).startsWith('%PDF'), f.status);
   const pr = await post('/veeqo/autolabel/labels-printed', { ids: [L.id] });
@@ -1919,6 +1923,20 @@ console.log('\nAuto Label: every bought label goes on the 🖨 Printer station l
   check('…Veeqo has it under the shipment → the label PDF prints', f3.status === 200 && (await f3.text()).includes('label by shipment'), f3.status);
   mode = 'none';
   check('…Veeqo gives no label file → it stays on the list in red with what each place said (never lost)', f2.status === 502 && j2.tried.length >= 2 && !!sq.prepare('SELECT last_error FROM label_print_queue WHERE id = ?').get(L2.id).last_error && (await get('/veeqo/autolabel/labels?status=new')).labels.some(x => x.id === L2.id), j2);
+  // Up to 3 items written on the label → that box's packing slip is marked "on the label" (record kept, not printed).
+  await post('/veeqo/autolabel/slip-add', { order: '111-5929074-3731428' });
+  const slipQ = () => sq.prepare("SELECT * FROM packing_slip_queue WHERE order_id = '77' ORDER BY id").all();
+  check('(a packing slip is waiting for that box)', slipQ().length === 1 && !slipQ()[0].printed_at, slipQ());
+  const sk = await post('/veeqo/autolabel/labels-printed', { ids: [L2.id], skipSlip: true });
+  check('…items written on the label → its packing slip is not printed, kept on record as "on the label"', sk.ok && sk.slipsSkipped === 1 && slipQ()[0].printed_at && slipQ()[0].printed_by === 'on the label' && !(await get('/veeqo/autolabel/slips?status=new')).slips?.some(x => x.order_id === '77'), { sk, q: slipQ() });
+  // More than 3 items → the slip prints with the order: queued if it wasn't.
+  sq.prepare("DELETE FROM packing_slip_queue WHERE order_id = '77'").run();
+  const ns = await post('/veeqo/autolabel/labels-printed', { ids: [L2.id], needSlip: true });
+  check('…more than 3 items → a packing slip is queued for that box (prints right after the label)', ns.ok && ns.slipsQueued === 1 && slipQ().length === 1 && !slipQ()[0].printed_at && slipQ()[0].tracking === '9400111', { ns, q: slipQ() });
+  const ns2 = await post('/veeqo/autolabel/labels-printed', { ids: [L2.id], needSlip: true });
+  check('…reprinting that label doesn\'t queue a second slip', ns2.slipsQueued === 0 && slipQ().length === 1, slipQ());
+  const pl = await post('/veeqo/autolabel/labels-printed', { ids: [L2.id] });
+  check('…a plain "printed" (no slip info) leaves the slips alone', pl.ok && slipQ().length === 1 && !slipQ()[0].printed_at, slipQ());
   globalThis.fetch = realFetch; delete env.VEEQO_API_KEY;
 }
 
