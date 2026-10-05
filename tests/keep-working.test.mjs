@@ -2425,6 +2425,27 @@ console.log('\nAuto Label → 📦 confirmed box weight + size: same SKU × quan
     /onclick="psAlBoxEdit\(\\'' \+ n \+ '\\',' \+ i \+ '\)"/.test(ph) && /psAlBoxEdit\(\\'' \+ e\(String\(o\.number/.test(ph) && /lb confirmed/.test(ph) && /id="ps-al-boxes"/.test(ph), null);
 }
 
+// Owner: "purchase time, and able to click or search on the order to reprint the label or packing slip".
+console.log('\nAuto Label → purchase time on bought rows; find an order (order # / tracking / customer) → reprint label or slip');
+{
+  const lf = await get('/veeqo/autolabel/labels?q=E-77'), lt = await get('/veeqo/autolabel/labels?q=9400777');
+  const sf = await get('/veeqo/autolabel/slips?q=E-77'), sc = await get('/veeqo/autolabel/slips?q=bo li');
+  check('🔎 find by order # or by tracking (scanned label) → that order\'s labels, printed or not, any day',
+    lf.labels.length >= 1 && lf.labels.every(l => l.order_number === 'E-77') && lt.labels.some(l => l.tracking === '9400777' && l.order_number === 'E-77') && !!lf.labels[0].printed_at, { lf: lf.labels.length, lt: lt.labels.length });
+  check('…its packing slips too, also by the customer\'s name', sf.slips.some(x => x.orderNumber === 'E-77') && sc.slips.some(x => x.orderNumber === 'E-77'), { sf: sf.slips.length, sc: sc.slips.length });
+  const t0 = new Date(Date.now() - 3600e3).toISOString(), bt = new Date(Date.now() - 600e3).toISOString();
+  sq.prepare("INSERT INTO app_config (key, value) VALUES ('autolabel_last_run', ?) ON CONFLICT(key) DO UPDATE SET value=excluded.value")
+    .run(JSON.stringify({ startedAt: t0, counts: { would_buy: 1 }, orders: [{ number: 'T-9', decision: 'would_buy', price: 5 }] }));
+  sq.prepare("INSERT INTO autolabel_log (ts, date, order_number, action, carrier, service, price, tracking) VALUES (?,?,?,?,?,?,?,?)").run(bt, nyToday, 'T-9', 'bought', 'USPS', 'GA', 5, '9400T9');
+  const c = await get('/veeqo/autolabel/config'), r = c.lastRun.orders.find(o => o.number === 'T-9');
+  check('…a bought row carries its purchase time (from the label record)', r.decision === 'bought' && r.boughtAt === bt, r);
+  const { readFileSync } = await import('node:fs');
+  const ph = readFileSync(fileURLToPath(new URL('../packship.html', import.meta.url)), 'utf8');
+  check('…Last run: bought rows show 🕘 Bought time + 🖨 Label / 🧾 Slip; Shipping labels has the 🔎 find box with Reprint label / Reprint slip',
+    /_psAlEsc\(label\) \+ _psAlBoughtTag\(o\)/.test(ph) && /🕘 Bought/.test(ph) && /onclick="psAlReprintFor\(this, \\'' \+ n \+ '\\', \\'slip\\'\)"/.test(ph)
+    && /id="ps-al-find"[^>]*oninput="psAlFind\(this\.value\)"/.test(ph) && /🧾 Reprint slip/.test(ph), null);
+}
+
 // Owner: "Audit — after scanning the column or a box, scroll down to the scan bar (see more info below); on the phone the
 // Inventory / Refresh / Sign out / Apps bar stays at the top but small — tap to show all".
 console.log('\nInventory: Audit scrolls to the scan bar after a scan; slim top bar on the phone');
