@@ -2255,12 +2255,22 @@ console.log('\nContainer here: a scan is never lost (caught even when the cursor
   const { readFileSync } = await import('node:fs');
   const ih5 = readFileSync(fileURLToPath(new URL('../inventory.html', import.meta.url)), 'utf8');
   check('a scanner scan while the cursor is on a button (not a text box) still goes to the box scan on Container here', /if \(typeof xfrSearchMode === 'undefined' \|\| xfrSearchMode !== 'cont'\) return;/.test(ih5)
-    && /if \(e\.key === 'Enter'\) \{ if \(buf\) \{ e\.preventDefault\(\); var c = buf; buf = ''; clearTimeout\(t\); if \(m\) m\.remove\(\); xfrBoxScan\(c\); \} return; \}/.test(ih5), null);
+    && /if \(e\.key === 'Enter' \|\| e\.keyCode === 13\) \{ if \(buf\) \{ e\.preventDefault\(\); var c = buf; buf = ''; clearTimeout\(t\); if \(m\) m\.remove\(\); xfrBoxScan\(c\); \} return; \}/.test(ih5), null);
   check('…every scan shows under the scan box ("📷 Last scan: … — looking…" → the part #), and a slow answer says "still looking…" after 6 s', /id="xfr-cont-last"/.test(ih5)
     && /xfrScanNote\('📷 Last scan: ' \+ code/.test(ih5) && /still looking… \(slow WiFi\?\)/.test(ih5), null);
   const fnNames = [...ih5.matchAll(/\bfunction (xfr\w+)\(/g)].map(m => m[1]), varNames = new Set([...ih5.matchAll(/\bvar (xfr\w+)\s*=/g)].map(m => m[1]));
   const clash = fnNames.filter(n => varNames.has(n) && !/^xfr(Go|Cont|Put|Cart|Kp)$/.test(n));
   check('…no Transfer function shares its name with a Transfer variable (that would stop every scan)', clash.length === 0, clash);
+}
+
+// Owner (photo): "scan the box — still nothing": the scanned number stayed in the box — that phone's scanner sends no Enter.
+console.log('\nContainer here: a scan works without Enter (the scanner burst ending = the scan); typing by hand still waits for Enter');
+{
+  const { readFileSync } = await import('node:fs');
+  const ih6 = readFileSync(fileURLToPath(new URL('../inventory.html', import.meta.url)), 'utf8');
+  check('the box scan goes when the scanner stops typing (no Enter needed); Enter / keyCode 13 / a line break also work; ⌨ typing waits for Enter',
+    /id="xfr-cont-box"[^>]*oninput="xfrBoxAuto\(this\)"/.test(ih6) && /if\(event\.key==='Enter'\|\|event\.keyCode===13\)\{event\.preventDefault\(\);xfrBoxScanNow\(this\)\}/.test(ih6)
+    && /if \(x\.hasAttribute\('data-kb-typing'\) \|\| v\.trim\(\)\.length < 4\) return;/.test(ih6) && /_xfrAutoT = setTimeout\(function\(\) \{ if \(x\.value === v\) xfrBoxScanNow\(x\); \}, 350\);/.test(ih6), null);
 }
 
 console.log('\n' + (failed ? '❌ ' + failed + ' check(s) FAILED' : '✅ all ' + passed + ' checks passed') + '\n');

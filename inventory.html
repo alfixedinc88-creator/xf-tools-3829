@@ -893,7 +893,7 @@ window.invCredLogin = async function() {
     <!-- 🚢 Container here: pallets of shipped containers (from the vendor packing list imported on Reorder) -->
     <div id="xfr-cont-wrap" style="display:none">
       <div class="isearch-row" style="margin-bottom:8px">
-        <input class="isearch-inp" id="xfr-cont-box" type="text" inputmode="none" autocomplete="off" placeholder="📷 Scan a box (outside UPC)…" style="border-color:var(--accent)" onkeydown="if(event.key==='Enter')xfrBoxScan(this.value)" onblur="xfrTypeOff(this)">
+        <input class="isearch-inp" id="xfr-cont-box" type="text" inputmode="none" autocomplete="off" placeholder="📷 Scan a box (outside UPC)…" style="border-color:var(--accent)" onkeydown="if(event.key==='Enter'||event.keyCode===13){event.preventDefault();xfrBoxScanNow(this)}" oninput="xfrBoxAuto(this)" onblur="xfrTypeOff(this)">
         <button type="button" class="inv-x-btn" title="Label won't scan? Type it" onclick="xfrTypeOn()" style="font-size:15px">&#x2328;</button>
         <button type="button" class="inv-x-btn" title="Clear" onclick="var x=document.getElementById('xfr-cont-box');x.value='';xfrGoBox()">&#x2715;</button>
       </div>
@@ -8988,6 +8988,19 @@ window.invCredLogin = async function() {
   // Every scan shows right under the scan box that it arrived (and what came of it).
   function xfrScanNote(txt, col) { var e = g('xfr-cont-last'); if (e) { e.style.color = col || 'var(--text3)'; e.textContent = txt; } }
   window.xfrScanNote = xfrScanNote;
+  // Owner (photo: the scanned number stays in the box, nothing happens): the
+  // scanner on that phone doesn't send "Enter" after the code. A scan is
+  // typed in one quick burst, so when the box stops changing for a moment it
+  // is taken as a whole scan. Typing by hand (⌨) still waits for Enter.
+  var _xfrAutoT = null;
+  window.xfrBoxScanNow = function(x) { clearTimeout(_xfrAutoT); var v = x.value; if (String(v).trim()) xfrBoxScan(v); };
+  window.xfrBoxAuto = function(x) {
+    clearTimeout(_xfrAutoT);
+    var v = String(x.value || '');
+    if (/[\r\n\t]/.test(v)) { x.value = v.replace(/[\r\n\t]+/g, ''); xfrBoxScanNow(x); return; } // a scanner that adds a line break / tab
+    if (x.hasAttribute('data-kb-typing') || v.trim().length < 4) return;
+    _xfrAutoT = setTimeout(function() { if (x.value === v) xfrBoxScanNow(x); }, 350);
+  };
   window.xfrBoxScan = function(code) {
     code = String(code || '').trim(); if (!code) return;
     xfrScanNote('📷 Last scan: ' + code + ' · ' + new Date().toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit', second: '2-digit' }) + ' — looking…', 'var(--accent)');
@@ -9299,8 +9312,10 @@ window.invCredLogin = async function() {
       if (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT' || (a && a.isContentEditable)) return;
       var m = g('xfr-modal'); if (m && !m.getAttribute('data-scan-closes') && !/Not on this pallet|Already moved/.test(m.textContent)) return; // a number pad / question is open
       if (g('xfr-put-modal')) return;
-      if (e.key === 'Enter') { if (buf) { e.preventDefault(); var c = buf; buf = ''; clearTimeout(t); if (m) m.remove(); xfrBoxScan(c); } return; }
-      if (e.key && e.key.length === 1 && !e.ctrlKey && !e.metaKey && !e.altKey) { buf += e.key; e.preventDefault(); clearTimeout(t); t = setTimeout(function() { buf = ''; }, 400); }
+      if (e.key === 'Enter' || e.keyCode === 13) { if (buf) { e.preventDefault(); var c = buf; buf = ''; clearTimeout(t); if (m) m.remove(); xfrBoxScan(c); } return; }
+      if (e.key && e.key.length === 1 && !e.ctrlKey && !e.metaKey && !e.altKey) { buf += e.key; e.preventDefault(); clearTimeout(t);
+        // no Enter from this scanner → the burst ending is the end of the scan
+        t = setTimeout(function() { var c = buf; buf = ''; if (c.trim().length >= 4) { var mm = g('xfr-modal'); if (mm && (mm.getAttribute('data-scan-closes') || /Not on this pallet|Already moved/.test(mm.textContent))) mm.remove(); xfrBoxScan(c); } }, 350); }
     }, true);
   })();
   window.xfrGoBack = function() { xfrGoReset(); xfrContLoad(); xfrGoBox(); };
