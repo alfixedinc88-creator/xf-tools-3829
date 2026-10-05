@@ -1942,6 +1942,21 @@ body {
         </details>
       </div>
 
+      <!-- 💸 Low value list -->
+      <div class="ps-card" style="margin-bottom:16px">
+        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px;gap:8px;flex-wrap:wrap">
+          <div style="font-size:13px;font-weight:700;color:var(--text)">💸 Low value list — check the listing price</div>
+          <div style="display:flex;gap:6px;align-items:center">
+            <select class="ps-field-input" id="ps-al-lv-status" onchange="psAlLoadLowValue()" style="margin:0;padding:5px 8px;font-size:12px;width:auto"><option value="open">To check</option><option value="checked">Checked</option><option value="all">All</option></select>
+            <button class="ps-btn-sm" onclick="psAlLoadLowValue()">↻ Refresh</button>
+          </div>
+        </div>
+        <div style="font-size:12px;color:var(--text3);margin-bottom:10px;line-height:1.5">
+          Every order where the label cost too much compared to the order (printed anyway or not). Go back to each listing, check / change the price, then tap ✓ Price checked.
+        </div>
+        <div id="ps-al-lowvalue" style="font-size:12px;overflow-x:auto"></div>
+      </div>
+
       <!-- Re-weigh list -->
       <div class="ps-card" style="margin-bottom:16px">
         <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px">
@@ -8511,6 +8526,7 @@ function psAlOnUnlock() {
   psAlLoadLog();
   psAlLoadLabels();
   psAlLoadReweigh();
+  psAlLoadLowValue();
   psAlLoadCosts();
   psAlLoadSlips();
 }
@@ -8609,7 +8625,8 @@ window.psAlRunPreview = async function() {
 // all; an order with more than 4 items prints its packing slip right under
 // its label"). Each order is bought by itself on the server with every check
 // again (cancelled, has a label, weight, rates, low value) and logged.
-var _PS_AL_BUYABLE = { would_buy: 1, ready: 1 };
+// Owner: "low value — let me still select all and print like would buy, but keep the record" → 💸 rows can be ticked too.
+var _PS_AL_BUYABLE = { would_buy: 1, ready: 1, low_value: 1 };
 window.psAlRunFilter = function(k) { window._psAlRunFilter = k; window._psAlRunGroup = ''; if (window._psAlRunShown) _psAlRenderRun(window._psAlRunShown); };
 window.psAlRunGroupPick = function(k) { window._psAlRunGroup = window._psAlRunGroup === k ? '' : k; window._psAlRunAisle = ''; if (window._psAlRunShown) _psAlRenderRun(window._psAlRunShown); };
 window.psAlRunAislePick = function(k) { window._psAlRunAisle = window._psAlRunAisle === k ? '' : k; if (window._psAlRunShown) _psAlRenderRun(window._psAlRunShown); };
@@ -8625,14 +8642,16 @@ window.psAlBuyPrint = async function() {
   var sel = psAlSelCount(), msg = document.getElementById('ps-al-buyprint-msg');
   if (!sel.length) { msg.innerHTML = '<span style="color:var(--red)">Tick the orders to print first (or Select all).</span>'; return; }
   var known = sel.reduce(function(n, c) { return n + (parseFloat(c.dataset.price) || 0); }, 0), unknown = sel.filter(function(c) { return c.dataset.price === ''; }).length;
-  if (!confirm('Buy REAL labels for ' + sel.length + ' order' + (sel.length === 1 ? '' : 's') + ' now and print them?\n\nAbout $' + known.toFixed(2) + (unknown ? ' + ' + unknown + ' not rate-checked yet' : '') + '. Each order is checked again first (cancelled, already has a label, weight, rates).\nAn order with more than 4 items prints its packing slip right under its label.')) return;
+  var lows = sel.filter(function(c) { return c.dataset.low; }).length;
+  if (!confirm('Buy REAL labels for ' + sel.length + ' order' + (sel.length === 1 ? '' : 's') + ' now and print them?\n\nAbout $' + known.toFixed(2) + (unknown ? ' + ' + unknown + ' not rate-checked yet' : '') + '. Each order is checked again first (cancelled, already has a label, weight, rates).\nAn order with more than 4 items prints its packing slip right under its label.'
+    + (lows ? '\n\n💸 ' + lows + ' low value order' + (lows === 1 ? '' : 's') + ' will be bought anyway and kept on the 💸 Low value list (to check the listing price later).' : ''))) return;
   _psAlBuyBusy = true;
   var ok = 0, bad = [];
   try {
     for (var i = 0; i < sel.length; i++) {
       var c = sel[i], num = c.value, res = c.closest('tr').querySelector('.ps-al-res');
       msg.textContent = 'Buying ' + (i + 1) + ' of ' + sel.length + ': ' + num + '…';
-      var d = await _psAlFetch('/veeqo/autolabel/buy-one', { method: 'POST', body: { order: num, by: psInitials || '' } });
+      var d = await _psAlFetch('/veeqo/autolabel/buy-one', { method: 'POST', body: { order: num, by: psInitials || '', allowLow: !!c.dataset.low } });
       c.checked = false; c.disabled = true;
       if (d.ok === false) { bad.push(num + ': ' + (d.error || 'failed')); res.textContent = '❌ Not bought'; res.style.color = 'var(--red)'; res.title = d.error || ''; continue; }
       ok++; (function(n) { var ro = ((window._psAlRunShown || {}).orders || []).find(function(x) { return x.number === n; }); if (ro) { var rc = window._psAlRunShown.counts; rc[ro.decision] = Math.max(0, (rc[ro.decision] || 0) - 1); ro.decision = 'bought'; rc.bought = (rc.bought || 0) + 1; ro.tracking = d.labels && d.labels[0] && d.labels[0].tracking || ''; } })(num);
@@ -8650,6 +8669,7 @@ window.psAlBuyPrint = async function() {
     msg.style.color = bad.length ? 'var(--orange)' : 'var(--green)';
     _psToast('Bought ' + ok + ' label' + (ok === 1 ? '' : 's'));
     if (typeof psAlLoadLog === 'function') psAlLoadLog();
+    if (lows && typeof psAlLoadLowValue === 'function') psAlLoadLowValue();
   } finally { _psAlBuyBusy = false; }
 };
 function _psAlRenderRun(r) {
@@ -8720,7 +8740,7 @@ function _psAlRenderRun(r) {
       var label = o.carrier ? (o.carrier + ' ' + (o.service || '') + (o.price != null ? ' $' + Number(o.price).toFixed(2) : '') + (o.days != null ? ' · ' + o.days + 'd' : '')) : '';
       if (o.tracking) label += ' · ' + o.tracking;
       if (o.slip) label += ' · 🧾 slip';
-      return '<tr><td ' + td + '>' + (_PS_AL_BUYABLE[o.decision] ? '<input type="checkbox" class="ps-al-sel" style="width:18px;height:18px" value="' + _psAlEsc(o.number) + '" data-price="' + (o.price != null ? o.price : '') + '" onchange="psAlSelCount()">' : '') + '</td>'
+      return '<tr><td ' + td + '>' + (_PS_AL_BUYABLE[o.decision] ? '<input type="checkbox" class="ps-al-sel" style="width:18px;height:18px" value="' + _psAlEsc(o.number) + '" data-price="' + (o.price != null ? o.price : '') + '"' + (o.decision === 'low_value' ? ' data-low="1"' : '') + ' onchange="psAlSelCount()">' : '') + '</td>'
         + '<td ' + td + '><span class="ps-al-res" style="color:' + L[1] + ';font-weight:700;white-space:nowrap">' + L[0] + '</span>'
         + (o.decision === 'would_buy' ? (function(g) { return '<div style="font-size:11px;font-weight:700;color:' + (g.carrier === 'UPS' ? '#7c3aed' : 'var(--text2)') + '">' + _psAlEsc(g.carrier) + ' · ' + (g.aisle === 'mix' ? '🔀 mix' : g.aisle ? 'aisle ' + _psAlEsc(g.aisle) : 'no bin') + '</div>'; })(_psAlGroupOf(o)) : '')
         + _psAlMergeTag(o) + '</td>'
@@ -9030,6 +9050,33 @@ window.psAlLoadLog = async function() {
 // ── Re-weigh list ────────────────────────────────────────────────────────
 var _psAlReweigh = [];
 
+window.psAlLoadLowValue = async function() {
+  var box = document.getElementById('ps-al-lowvalue'); if (!box) return;
+  var st = (document.getElementById('ps-al-lv-status') || {}).value || 'open';
+  var d = await _psAlFetch('/veeqo/autolabel/low-value?status=' + st);
+  if (d.ok === false) { box.textContent = '✗ ' + (d.error || 'Failed'); return; }
+  var e = _psAlEsc, rows = d.rows || [];
+  var th = 'style="text-align:left;padding:4px 6px;font-size:11px;color:var(--text3);border-bottom:1px solid var(--border)"';
+  var td = 'style="padding:4px 6px;border-bottom:1px solid var(--border);vertical-align:top"';
+  box.innerHTML = rows.length ? '<table style="width:100%;border-collapse:collapse"><tr><th ' + th + '>Seen</th><th ' + th + '>Order</th><th ' + th + '>Channel</th><th ' + th + '>Items (SKU × qty)</th><th ' + th + '>Order $</th><th ' + th + '>Label $</th><th ' + th + '>%</th><th ' + th + '>Printed?</th><th ' + th + '>Checked</th></tr>'
+    + rows.map(function(r) {
+      return '<tr><td ' + td + '>' + e(new Date(r.first_seen).toLocaleDateString()) + '</td><td ' + td + '><span style="font-family:var(--mono)">' + e(r.order_number) + '</span></td><td ' + td + '>' + e(r.channel) + '</td>'
+        + '<td ' + td + '>' + (r.items || []).map(function(i) { return '<div><b style="font-family:var(--mono)">' + e(i.sku) + '</b> ×' + e(i.qty) + (i.title ? ' <span style="color:var(--text3)">' + e(i.title) + '</span>' : '') + '</div>'; }).join('') + '</td>'
+        + '<td ' + td + '>' + (r.order_total != null ? '$' + Number(r.order_total).toFixed(2) : '?') + '</td><td ' + td + '>' + (r.label_cost != null ? '$' + Number(r.label_cost).toFixed(2) : '?') + ' <span style="color:var(--text3)">' + e(r.carrier) + '</span></td>'
+        + '<td ' + td + '><b style="color:var(--orange)">' + (r.pct != null ? e(r.pct) + '%' : '?') + '</b></td>'
+        + '<td ' + td + '>' + (r.bought_at ? '✅ ' + e(new Date(r.bought_at).toLocaleDateString()) + ' · ' + e(r.bought_by || '') + (r.tracking ? '<div style="font-family:var(--mono);color:var(--text3)">' + e(r.tracking) + '</div>' : '') : '<span style="color:var(--text3)">not yet</span>') + '</td>'
+        + '<td ' + td + '>' + (r.status === 'checked' ? '✓ ' + e(r.checked_by || '') + ' · ' + e(new Date(r.checked_at).toLocaleDateString()) + (r.note ? '<div style="color:var(--text2)">' + e(r.note) + '</div>' : '') + ' <button class="ps-btn-sm" onclick="psAlLowValueChecked(\'' + e(String(r.order_id).replace(/'/g, '')) + '\', true)">Undo</button>'
+          : '<button class="ps-btn-sm" onclick="psAlLowValueChecked(\'' + e(String(r.order_id).replace(/'/g, '')) + '\')">✓ Price checked</button>') + '</td></tr>';
+    }).join('') + '</table>' : '<div style="color:var(--text3)">' + (st === 'open' ? 'Nothing to check.' : 'None.') + '</div>';
+};
+window.psAlLowValueChecked = async function(id, undo) {
+  var note = undo ? '' : prompt('Price checked — what did you do? (e.g. "raised to $12.99", or leave blank)', '');
+  if (note === null) return;
+  var d = await _psAlFetch('/veeqo/autolabel/low-value-checked', { method: 'POST', body: { orderId: id, note: note, undo: !!undo, by: psInitials || '' } });
+  if (d.ok === false) { _psToast(d.error || 'Failed', 'error'); return; }
+  _psToast(undo ? 'Back on the list' : '✓ Price checked — kept on record');
+  psAlLoadLowValue();
+};
 window.psAlLoadReweigh = async function() {
   var box = document.getElementById('ps-al-reweigh');
   var wbox = document.getElementById('ps-al-weights');
