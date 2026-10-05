@@ -2234,5 +2234,19 @@ console.log('\nAuto Label: UPS rule 2 days / $0.70 (saved rules too); UPS → pa
   check('…the Rules box says the rules right now in plain words (carrier rule from the saved $ / days, 1–4 items on the label → no slip, slip for 5+ / no room / UPS)', /<b>📌 The rules right now<\/b>/.test(ph9) && /no room on the label, or the label is <b>UPS<\/b>/.test(ph9), null);
 }
 
+// Owner: "Transfer → Container here: when we scan the box it should bring you to the pallet — not any more". After a pallet
+// was emptied, the "✅ everything matched" pop-up took the cursor (a scan went nowhere), and a box of the same item matched the
+// finished pallet ("Already moved") instead of opening the next pallet.
+console.log('\nContainer here: scanning a box brings you to its pallet (also right after a pallet is finished)');
+{
+  const { readFileSync } = await import('node:fs');
+  const ih4 = readFileSync(fileURLToPath(new URL('../inventory.html', import.meta.url)), 'utf8');
+  check('the "✅ Pallet — everything matched" pop-up keeps the scan box ready, and a scan closes it and carries on', /dm\.setAttribute\('data-scan-closes', '1'\);\s*setTimeout\(xfrGoBox, 60\);/.test(ih4)
+    && /var dm = g\('xfr-modal'\); if \(dm && dm\.getAttribute\('data-scan-closes'\)\) dm\.remove\(\);/.test(ih4), null);
+  check('…pallet finished → a box scanned goes to the pallet that still has boxes of it (1 → opens it; more → "which one")', /if \(xfrGo\.focus && !finished\) \{ var hit = xfrGoLocalMatch\(code\);/.test(ih4)
+    && /if \(oth\.length === 1\) \{ invFlash\('🧱 ' \+ part \+ ' → Pallet ' \+ oth\[0\]\.pallet, 'success'\); xfrGoOpen\(/.test(ih4), null);
+  check('…a box not on the open pallet (it still has boxes) → "🧱 Go to Pallet N — X box(es)" first in the pop-up (one tap)', /">🧱 Go to Pallet ' \+ xfrE\(l\.pallet\) \+ ' — ' \+ xfrN\(l\.left\) \+ ' box\(es\)<\/button>'/.test(ih4), null);
+}
+
 console.log('\n' + (failed ? '❌ ' + failed + ' check(s) FAILED' : '✅ all ' + passed + ' checks passed') + '\n');
 process.exit(failed ? 1 : 0);
