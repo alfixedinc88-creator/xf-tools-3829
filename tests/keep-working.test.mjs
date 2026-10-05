@@ -2151,6 +2151,9 @@ console.log('\nAuto Label → 💸 Low value: can be ticked and printed like Wou
   const needs = +((ph0 => (ph0.match(/var _PS_AL_SERVER_NEEDS = (\d+);/) || [])[1])(readFileSync0(fileURLToPath(new URL('../packship.html', import.meta.url)), 'utf8')));
   check('…the page warns in red when the server is older than it (Cloudflare build failed): server version ≥ what the page needs, and the warning is there',
     cf.serverVersion >= needs && needs >= 3 && /id = 'ps-al-server-old'/.test(readFileSync0(fileURLToPath(new URL('../packship.html', import.meta.url)), 'utf8')), { server: cf.serverVersion, needs });
+  const pageV = +((readFileSync0(fileURLToPath(new URL('../packship.html', import.meta.url)), 'utf8').match(/var _PS_AL_PAGE_VERSION = (\d+);/) || [])[1]);
+  check('…and the other way: a stuck website update (old page, new server) → "This page is an OLD version — refresh"; this page is new enough for this server',
+    cf.pageNeeds >= 4 && pageV >= cf.pageNeeds && /This page is an OLD version/.test(readFileSync0(fileURLToPath(new URL('../packship.html', import.meta.url)), 'utf8')), { pageNeeds: cf.pageNeeds, pageV });
   const l1 = await get('/veeqo/autolabel/low-value?status=open');
   const c1 = await post('/veeqo/autolabel/low-value-checked', { orderId: '990', note: 'raised to $7.99' });
   const l2 = await get('/veeqo/autolabel/low-value?status=open'), l3 = await get('/veeqo/autolabel/low-value?status=checked');
