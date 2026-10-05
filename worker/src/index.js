@@ -25914,12 +25914,50 @@ function veeqoEditRead(kind, view, b) {
   return kind === 'bin' ? it.stockBin || '' : kind === 'sku' ? it.sku || '' : kind === 'photo' ? it.img || '' : '';
 }
 
+// Owner: "as soon as we purchase a label it shows purchased, but after a
+// refresh it goes back to Would buy / Low value and looks like I can buy it
+// again, until Run preview now. Once purchased it should stay purchased —
+// except a label that for some reason was not purchased". Last run is the
+// list the last run saved; every label bought since (by hand, auto, or a
+// 🧩 merged box) is put on it from the label record before it is shown.
+// A buy that failed is not in that record, so it stays as it was.
+async function autolabelLastRunWithBuys(env, lr) {
+  if (!lr || !Array.isArray(lr.orders) || !lr.orders.length || !lr.startedAt) return lr;
+  try {
+    const rows = await d1All(env, `SELECT order_number, action, carrier, service, price, tracking, ts FROM autolabel_log
+      WHERE action IN ('bought','merged') AND ts >= ? ORDER BY id`, [lr.startedAt]);
+    if (!rows.length) return lr;
+    const by = {};
+    for (const r of rows) {
+      const k = autolabelOrderNum(r.order_number);
+      const b = by[k] = by[k] || { action: r.action, carrier: r.carrier, service: r.service, price: 0, tracking: [], ts: r.ts };
+      if (r.action === 'bought') { b.action = 'bought'; b.price += r.price || 0; }
+      if (r.tracking && !b.tracking.includes(r.tracking)) b.tracking.push(r.tracking);
+      b.carrier = b.carrier || r.carrier; b.service = b.service || r.service;
+    }
+    lr.counts = lr.counts || {};
+    for (const o of lr.orders) {
+      const b = by[autolabelOrderNum(o.number)];
+      if (!b || o.decision === 'bought' || o.decision === 'merged') continue;
+      lr.counts[o.decision] = Math.max(0, (lr.counts[o.decision] || 0) - 1); if (!lr.counts[o.decision]) delete lr.counts[o.decision];
+      o.wasDecision = o.decision;
+      o.decision = b.action;
+      o.tracking = b.tracking.join(', '); o.carrier = b.carrier || o.carrier; o.service = b.service || o.service;
+      if (b.action === 'bought') o.price = Math.round(b.price * 100) / 100;
+      o.reason = `${b.action === 'merged' ? '🧩 In a merged box' : '✅ Purchased'} ${new Date(b.ts).toLocaleTimeString('en-US', { timeZone: 'America/New_York', hour: 'numeric', minute: '2-digit' })}` + (o.reason ? ' · ' + o.reason : '');
+      lr.counts[o.decision] = (lr.counts[o.decision] || 0) + 1;
+    }
+  } catch (e) { console.error('[autolabel] last run buys', e.message); }
+  return lr;
+}
+
 async function handleAutolabelRoute(path, method, url, request, env, session) {
   await autolabelEnsureTables(env);
 
   if (path === '/veeqo/autolabel/config' && method === 'GET') {
     let lastRun = null;
     try { lastRun = JSON.parse(await autolabelGetKey(env, AUTOLABEL_LASTRUN_KEY) || 'null'); } catch (_) {}
+    lastRun = await autolabelLastRunWithBuys(env, lastRun);
     return veeqoResp({ ok: true, config: await autolabelLoadConfig(env), defaults: AUTOLABEL_DEFAULTS,
       buyVerified: (await autolabelGetKey(env, AUTOLABEL_VERIFIED_KEY)) === 'yes',
       mergeVerified: (await autolabelGetKey(env, AUTOLABEL_MERGE_VERIFIED_KEY)) === 'yes', serverVersion: AUTOLABEL_SERVER_VERSION, pageNeeds: AUTOLABEL_PAGE_NEEDS, lastRun });
