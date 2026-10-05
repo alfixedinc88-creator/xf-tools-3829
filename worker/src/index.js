@@ -6607,7 +6607,7 @@ const TM_BLOCK = new Set([
   '/ebay-msg/send', '/msg/send', '/msg/reply', '/shopify/listing-create',
   '/repricer/price-change', '/repricer/auto-reprice', '/repricer/queue-action',
   '/ship/cancel-label', '/ship/cancel-order', '/ship/cancel-order-confirm',
-  '/veeqo/autolabel/run', '/veeqo/autolabel/test-buy', '/veeqo/autolabel/order-edit', '/veeqo/autolabel/buy-one', '/veeqo/autolabel/merge-buy',
+  '/veeqo/autolabel/run', '/veeqo/autolabel/test-buy', '/veeqo/autolabel/order-edit', '/veeqo/autolabel/buy-one', '/veeqo/autolabel/merge-buy', '/veeqo/autolabel/split',
   '/inventory/soldout/set-qty', '/inventory/soldout/add-listing',
 ]);
 function tmJ(o, status) { return cors(new Response(JSON.stringify(o), { status: status || 200, headers: { 'Content-Type': 'application/json' } })); }
@@ -24191,6 +24191,7 @@ const AUTOLABEL_CONFIG_KEY   = 'autolabel_config';
 const AUTOLABEL_LASTRUN_KEY  = 'autolabel_last_run';
 const AUTOLABEL_VERIFIED_KEY = 'autolabel_buy_verified';
 const AUTOLABEL_MERGE_VERIFIED_KEY = 'autolabel_merge_verified';
+const AUTOLABEL_SPLIT_VERIFIED_KEY = 'autolabel_split_verified'; // auto runs split only after one split by hand worked
 // Bumped with every Auto Label server change. Pack & Ship compares it with the
 // version it expects and shows a red warning when the server is older (owner:
 // "low value still won't print, merge gone" — Cloudflare's build had failed, so
@@ -24266,6 +24267,13 @@ async function autolabelEnsureTables(env) {
       order_total REAL, label_cost REAL, pct REAL, carrier TEXT, service TEXT, reason TEXT,
       first_seen TEXT NOT NULL, last_seen TEXT NOT NULL, bought_at TEXT, bought_by TEXT, tracking TEXT,
       status TEXT NOT NULL DEFAULT 'open', checked_by TEXT, checked_at TEXT, note TEXT
+    )
+  `).run().catch(()=>{});
+  // ✂️ Orders split into boxes in Veeqo (over the box limit): the plan, who, when, what Veeqo said.
+  await env.DB.prepare(`
+    CREATE TABLE IF NOT EXISTS autolabel_split (
+      id INTEGER PRIMARY KEY AUTOINCREMENT, order_id TEXT, order_number TEXT, plan TEXT,
+      status TEXT, detail TEXT, by_user TEXT, created_at TEXT NOT NULL
     )
   `).run().catch(()=>{});
   // 🧩 Same name + address merged into one box: who / when / which orders /
@@ -24634,6 +24642,8 @@ async function autolabelHandleNewCancels(env, cancels, cfg) {
 const AUTOLABEL_QUOTE_SOURCES = [
   { name: 'amazon_shipping_v2', path: id => `/shipping/quotes/amazon_shipping_v2?allocation_id=${id}&from_allocation_package=true` },
   { name: 'rates',              path: id => `/shipping/rates/${id}` },
+  // Owner: "why no rate? Veeqo has rates for this order" — if the box size saved on the order is refused, ask Veeqo its own way too.
+  { name: 'amazon_shipping_v2 (no box)', path: id => `/shipping/quotes/amazon_shipping_v2?allocation_id=${id}` },
 ];
 
 function autolabelParseQuote(q, source) {
@@ -25268,6 +25278,141 @@ async function autolabelMergeByHand(env, nums, by) {
   return res;
 }
 
+// ── ✂️ Over the box limit → split into boxes ─────────────────────────────
+// Owner: "an order over 20 lb — we split it into 2 boxes (100 pieces = 2 ×
+// 50, 13 lb each), sometimes 3 (33 + 33 + 34 pieces), a label for each box,
+// the pieces must match what the customer ordered". Veeqo splits an order
+// into boxes by whole quantities (one allocation per box), so each Veeqo
+// unit stays whole (a "50=" pack is 50 pieces); a single unit heavier than
+// the limit can't be split there. Fewest boxes that each stay under the
+// limit; each item spread as evenly as possible, the extra ones in the
+// lightest box (ties: the last box) → 33 + 33 + 34.
+function autolabelSplitBoxes(units, maxLb) {
+  if (!units.length) return { ok: false, reason: 'no items' };
+  for (const u of units) {
+    if (u.unitLb == null) return { ok: false, reason: `no weight for ${u.sku}` };
+    if (!u.sellableId) return { ok: false, reason: `Veeqo has no item id for ${u.sku}` };
+    if (u.unitLb > maxLb) return { ok: false, reason: `one ${u.sku} alone weighs ${u.unitLb} lb — Veeqo can't split one unit; list it as smaller packs (e.g. 2 × 50 "make sure")` };
+  }
+  const totalQty = units.reduce((n, u) => n + u.qty, 0);
+  const totalLb = units.reduce((n, u) => n + u.unitLb * u.qty, 0);
+  for (let n = Math.max(2, Math.ceil(totalLb / maxLb - 1e-9)); n <= Math.min(10, totalQty); n++) {
+    const boxes = Array.from({ length: n }, () => ({ lb: 0, lines: [] }));
+    for (const u of units.slice().sort((a, b) => b.unitLb - a.unitLb)) {
+      const base = Math.floor(u.qty / n);
+      const q = boxes.map(() => base);
+      for (let e = u.qty % n; e > 0; e--) {
+        let best = -1;
+        for (let i = n - 1; i >= 0; i--) if (q[i] === base && (best < 0 || boxes[i].lb < boxes[best].lb - 1e-9)) best = i;
+        q[best]++;
+      }
+      q.forEach((k, i) => { if (k > 0) { boxes[i].lines.push({ sku: u.sku, sellableId: u.sellableId, qty: k, pieces: k * _psWeightSkuMultiplier(u.sku) }); boxes[i].lb += k * u.unitLb; } });
+    }
+    if (boxes.every(b => b.lines.length && b.lb <= maxLb + 1e-9))
+      return { ok: true, boxes: boxes.map(b => ({ lb: Math.round(b.lb * 100) / 100, lines: b.lines })) };
+  }
+  return { ok: false, reason: 'no way to split it under the limit' };
+}
+function autolabelBoxesText(plan) {
+  return plan.boxes.map((b, i) => `Box ${i + 1} (${b.lb} lb): ` + b.lines.map(l => `${l.qty} × ${l.sku} = ${l.pieces} pcs`).join(', ')).join(' | ');
+}
+// The order's items as split units: SKU, Veeqo qty, weight of one unit, Veeqo item id.
+async function autolabelSplitUnits(env, o, alloc) {
+  const w = await autolabelWeighAllocation(env, o, alloc);
+  const lines = (alloc.line_items && alloc.line_items.length) ? alloc.line_items : (o.line_items || []);
+  const ids = {};
+  for (const li of lines) { const s = li.sellable || li.product || {}; const sku = s.sku_code || s.sku || ''; if (sku) ids[sku] = { id: s.id || li.sellable_id, q: (ids[sku] ? ids[sku].q : 0) + (parseInt(li.quantity) || 0) }; }
+  const by = {};
+  for (const u of (w.units || [])) {
+    const b = by[u.sku] = by[u.sku] || { sku: u.sku, qty: 0, unitLb: u.unitLb, sellableId: ids[u.sku] && ids[u.sku].id };
+    b.qty += parseInt(u.qty) || 0;
+  }
+  return { weight: w, units: Object.values(by) };
+}
+// Splits the order into the planned boxes in Veeqo: box 1 = the order's own
+// allocation cut down, boxes 2..N = new allocations; each box's weight set.
+// Checked by reading the order back — the boxes together must hold exactly
+// what the order had (nothing twice, nothing dropped), else it is put back.
+async function autolabelSplitDo(env, o, plan, by) {
+  const alloc = (o.allocations || [])[0];
+  const wid = (alloc.warehouse && alloc.warehouse.id) || alloc.warehouse_id || ((alloc.line_items || [])[0] && (alloc.line_items[0].sellable || {}).stock_entries && alloc.line_items[0].sellable.stock_entries[0] && alloc.line_items[0].sellable.stock_entries[0].warehouse_id);
+  const said = [], now = new Date().toISOString();
+  const want = {}; plan.boxes.forEach(b => b.lines.forEach(l => { want[l.sellableId] = (want[l.sellableId] || 0) + l.qty; }));
+  const record = async (status, detail) => {
+    await d1Run(env, `INSERT INTO autolabel_split (order_id, order_number, plan, status, detail, by_user, created_at) VALUES (?,?,?,?,?,?,?)`,
+      [String(o.id), o.number || '', JSON.stringify(plan.boxes), status, String(detail || '').slice(0, 2000), by || 'auto', now]);
+    await autolabelLog(env, { orderId: o.id, allocId: alloc.id, orderNumber: o.number, channel: veeqoExtractChannel(o), customer: veeqoExtractCustomerName(o),
+      action: status === 'done' ? 'split' : 'split_failed', reason: `✂️ ${plan.boxes.length} boxes${by ? ' by ' + by : ''}: ${autolabelBoxesText(plan)}`, detail });
+  };
+  if (!wid) { await record('failed', 'no warehouse on the allocation'); return { ok: false, error: 'Veeqo has no warehouse on this order — split it by hand in Veeqo' }; }
+  const lineAttrs = b => Object.keys(want).map(sid => ({ sellable_id: Number(sid), quantity: (b.lines.find(l => String(l.sellableId) === sid) || {}).qty || 0 }));
+  const allocsNow = async () => { const o2 = await veeqoLiveOrder(env, o.number); return (o2 && o2.allocations) || []; };
+  const qtyOf = a => { const m = {}; (a.line_items || []).forEach(li => { const sid = String((li.sellable && li.sellable.id) || li.sellable_id); m[sid] = (m[sid] || 0) + (parseInt(li.quantity) || 0); }); return m; };
+  const sameBox = (a, b) => Object.keys(want).every(sid => (qtyOf(a)[sid] || 0) === ((b.lines.find(l => String(l.sellableId) === sid) || {}).qty || 0));
+  // 1) Box 1: the order's own allocation, cut down.
+  let ok1 = false;
+  for (const body of [{ line_items_attributes: lineAttrs(plan.boxes[0]) }, { allocation: { line_items_attributes: lineAttrs(plan.boxes[0]) } }]) {
+    const r = await veeqoWrite(env, 'PUT', `/orders/${o.id}/allocations/${alloc.id}`, body);
+    said.push(`box 1 → ${r.status} ${String(r.said || '').slice(0, 120)}`);
+    if (!r.ok) continue;
+    const a1 = (await allocsNow()).find(a => String(a.id) === String(alloc.id));
+    if (a1 && sameBox(a1, plan.boxes[0])) { ok1 = true; break; }
+  }
+  if (!ok1) { await record('failed', said.join(' | ')); return { ok: false, error: 'Veeqo did not take box 1 — nothing changed, split it by hand in Veeqo', said }; }
+  // 2) Boxes 2..N: new allocations.
+  const made = [];
+  for (let i = 1; i < plan.boxes.length; i++) {
+    const r = await veeqoWrite(env, 'POST', `/orders/${o.id}/allocations`, { allocation: { warehouse_id: wid, line_items_attributes: lineAttrs(plan.boxes[i]).filter(x => x.quantity > 0) } });
+    said.push(`box ${i + 1} → ${r.status} ${String(r.said || '').slice(0, 120)}`);
+    if (!r.ok) break;
+    made.push(i);
+  }
+  // 3) Check: the boxes in Veeqo now hold exactly what the order had.
+  const after = await allocsNow();
+  const sum = {}; after.forEach(a => { const q = qtyOf(a); Object.keys(q).forEach(k => { sum[k] = (sum[k] || 0) + q[k]; }); });
+  const exact = after.length === plan.boxes.length && Object.keys(want).every(k => sum[k] === want[k]) && Object.keys(sum).every(k => sum[k] === (want[k] || 0));
+  if (!exact) {
+    // Put it back: remove the new boxes, box 1 back to the whole order.
+    for (const a of after) if (String(a.id) !== String(alloc.id)) { const r = await veeqoWrite(env, 'DELETE', `/orders/${o.id}/allocations/${a.id}`, {}); said.push(`undo box ${a.id} → ${r.status}`); }
+    const full = Object.keys(want).map(sid => ({ sellable_id: Number(sid), quantity: want[sid] }));
+    const r = await veeqoWrite(env, 'PUT', `/orders/${o.id}/allocations/${alloc.id}`, { line_items_attributes: full });
+    said.push(`undo box 1 → ${r.status}`);
+    await record('failed', 'boxes did not add up — put back · ' + said.join(' | '));
+    return { ok: false, error: 'Veeqo did not split it the right way — it was put back as one box. Split it by hand in Veeqo, or try again', said };
+  }
+  // 4) Each box's weight (size: the order's box).
+  const pk = veeqoLivePackage(alloc);
+  const order2 = await veeqoLiveOrder(env, o.number);
+  const boxesOut = [];
+  for (const a of after) {
+    const bi = plan.boxes.findIndex((b, i) => !boxesOut.some(x => x.i === i) && sameBox(a, b));
+    const b = plan.boxes[bi];
+    for (const [m, pth, body] of veeqoEditTries('package', { allocId: a.id, weightLb: b.lb, lengthIn: pk.lengthIn, widthIn: pk.widthIn, heightIn: pk.heightIn }, order2 || o)) {
+      const r = await veeqoWrite(env, m, pth, body); if (r.ok) break;
+    }
+    boxesOut.push({ i: bi, allocId: a.id, lb: b.lb, lines: b.lines });
+  }
+  await record('done', said.join(' | '));
+  return { ok: true, boxes: boxesOut.sort((x, y) => x.i - y.i), text: autolabelBoxesText(plan) };
+}
+// Last run → ✂️ Split into N boxes (by hand). The first one that works
+// switches on splitting in auto runs.
+async function autolabelSplitByHand(env, number, by) {
+  const cfg = await autolabelLoadConfig(env);
+  const o = await autolabelFindAwaiting(env, number);
+  if (!o) return { ok: false, error: `No order ${number} waiting for a label in Veeqo` };
+  const allocs = o.allocations || [];
+  if (allocs.length !== 1) return { ok: false, error: allocs.length ? `Already in ${allocs.length} boxes in Veeqo` : 'Not allocated in Veeqo (stock?)' };
+  if (_psAllocTrackingNumber(allocs[0])) return { ok: false, error: 'This order already has a label' };
+  const { weight, units } = await autolabelSplitUnits(env, o, allocs[0]);
+  if (weight.lb == null || weight.lb <= cfg.maxBoxLb) return { ok: false, error: `${weight.lb ?? '?'} lb — not over ${cfg.maxBoxLb} lb, no split needed` };
+  const plan = autolabelSplitBoxes(units, cfg.maxBoxLb);
+  if (!plan.ok) return { ok: false, error: plan.reason };
+  const res = await autolabelSplitDo(env, o, plan, by);
+  if (res.ok) await autolabelSetKey(env, AUTOLABEL_SPLIT_VERIFIED_KEY, 'yes');
+  return res;
+}
+
 // ── The run ──────────────────────────────────────────────────────────────
 // opts.buy: actually buy (cron in 'auto' mode only).
 // opts.trigger: 'cron' | 'manual' (just for the saved summary).
@@ -25311,6 +25456,7 @@ async function autolabelRun(env, opts = {}) {
   // 🧩 Same name + address: merged boxes on record, and one plan per group.
   const mergeMap = await autolabelMergeMap(env);
   const mergeVerified = (await autolabelGetKey(env, AUTOLABEL_MERGE_VERIFIED_KEY)) === 'yes';
+  const splitVerified = (await autolabelGetKey(env, AUTOLABEL_SPLIT_VERIFIED_KEY)) === 'yes';
   const plans = new Map();
   const isOpen = g => !cancels.byNum.has(autolabelOrderNum(g.number)) && !listed.has(autolabelOrderNum(g.number)) && !autolabelHasLabel(g) && !mergeMap.has(String(g.id));
 
@@ -25383,12 +25529,26 @@ async function autolabelRun(env, opts = {}) {
       const mismatchIdx = weights.findIndex(w => w.anyReal && w.lb != null && w.veeqoLb != null && Math.abs(w.veeqoLb - w.lb) > 0.5);
       const boxes = open.length > 1 ? `${open.length} boxes: ` : '';
 
-      if (heavyIdx >= 0) {
+      // ✂️ One box over the limit by our weight → split it into boxes (owner).
+      const sp = heavyIdx >= 0 && open.length === 1 && allocs.length === 1 && weights[0].lb > max
+        ? autolabelSplitBoxes((await autolabelSplitUnits(env, o, open[0])).units, max) : null;
+      if (sp && sp.ok) {
+        row.splitBoxes = sp.boxes.map(b => ({ lb: b.lb, lines: b.lines.map(l => ({ sku: l.sku, qty: l.qty, pieces: l.pieces })) }));
+        if (buy && splitVerified) {
+          const r = await autolabelSplitDo(env, o, sp, '');
+          row.decision = r.ok ? 'split_done' : 'split';
+          row.reason = r.ok ? `✂️ Split in Veeqo into ${sp.boxes.length} boxes — a label for each on the next run: ${r.text}` : `✂️ ${r.error}`;
+        } else {
+          row.decision = 'split';
+          row.reason = `✂️ ${weights[0].lb} lb — over ${max} lb: split into ${sp.boxes.length} boxes — ${autolabelBoxesText(sp)}` + (buy ? ' — tap ✂️ Split once by hand (Last run) to switch on auto splitting' : '');
+        }
+      }
+      else if (heavyIdx >= 0) {
         const hw = weights[heavyIdx];
         row.decision = 'weigh';
         row.reason = (open.length > 1 ? `Box ${heavyIdx + 1}: ` : '') +
           (hw.lb > max ? `${hw.lb} lb (${hw.source})` : `System ${hw.lb} lb but Veeqo ${hw.veeqoLb} lb`) +
-          ` — over ${max} lb: print by hand in Veeqo, or re-weigh the items`;
+          ` — over ${max} lb: print by hand in Veeqo, or re-weigh the items` + (sp && !sp.ok ? ` (can't split: ${sp.reason})` : '');
         await autolabelQueueReweigh(env, o, hw, row.reason);
       }
       else if (mismatchIdx >= 0) {
@@ -25480,7 +25640,7 @@ async function autolabelRun(env, opts = {}) {
   }
 
   if (buy && !mergeVerified && result.orders.some(r => r.decision === 'would_merge')) result.notes.push('🧩 Merging is locked until one group is merged by hand: tap 🧩 Merge & buy on a 🧩 Would merge row in Last run.');
-  const order = ['bought', 'merged', 'buy_failed', 'merge_fix', 'would_buy', 'would_merge', 'cancelled', 'merge', 'weigh', 'fix_veeqo_weight', 'low_value', 'no_rate', 'hold', 'ready', 'waiting', 'skipped', 'has_label'];
+  const order = ['bought', 'merged', 'buy_failed', 'merge_fix', 'would_buy', 'would_merge', 'split_done', 'split', 'cancelled', 'merge', 'weigh', 'fix_veeqo_weight', 'low_value', 'no_rate', 'hold', 'ready', 'waiting', 'skipped', 'has_label'];
   result.orders.sort((a, b) => order.indexOf(a.decision) - order.indexOf(b.decision));
   result.finishedAt = new Date().toISOString();
   return result;
@@ -26056,6 +26216,14 @@ async function handleAutolabelRoute(path, method, url, request, env, session) {
       if (lr) await autolabelSaveLastRun(env, lr);
     } catch (_) {}
     return veeqoResp(res);
+  }
+  // POST { order } → Last run → ✂️ Split into N boxes (over the box limit): splits it in Veeqo, checked.
+  if (path === '/veeqo/autolabel/split' && method === 'POST') {
+    const b = await request.json().catch(() => ({}));
+    const number = String(b.order || '').trim();
+    if (!number) return veeqoResp({ ok: false, error: 'order is required' }, 400);
+    const by = String((session && (session.displayName || session.username)) || b.by || '').slice(0, 40);
+    return veeqoResp(await autolabelSplitByHand(env, number, by));
   }
   if (path === '/veeqo/autolabel/test-buy' && method === 'POST') {
     const b = await request.json().catch(() => ({}));
