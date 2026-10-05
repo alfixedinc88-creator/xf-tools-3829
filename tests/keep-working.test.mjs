@@ -2030,5 +2030,17 @@ console.log('\nAuto Label → Last run: 🖨 Buy & print selected; a box\'s pack
   globalThis.fetch = realFetch; delete env.VEEQO_API_KEY;
 }
 
+// Owner: "Audit — after scanning the column or a box, scroll down to the scan bar (see more info below); on the phone the
+// Inventory / Refresh / Sign out / Apps bar stays at the top but small — tap to show all".
+console.log('\nInventory: Audit scrolls to the scan bar after a scan; slim top bar on the phone');
+{
+  const { readFileSync } = await import('node:fs');
+  const ih = readFileSync(fileURLToPath(new URL('../inventory.html', import.meta.url)), 'utf8');
+  check('Audit: every scan (column or box) puts the scan bar at the top of the screen', /window\.rcGo = function\(v\) \{[\s\S]{0,400}setTimeout\(function\(\) \{ invScrollToScan\(inp, 'inv-panel-audit'\); \}, 60\);/.test(ih) && /window\.invScrollToScan = function\(inp, panelId\)/.test(ih), null);
+  check('phone: the top bar stays at the top, slim; Refresh / Sign Out / Apps fold into ☰ (tap to show them)', /class="iback itop-more"[^>]*onclick="this\.parentNode\.classList\.toggle\('open'\)"/.test(ih)
+    && /@media \(max-width:700px\)\{[\s\S]{0,400}#inv-app \.itopbar:not\(\.open\) \.iback:not\(\.itop-more\)\{display:none\}/.test(ih) && /#inv-app \.itopbar\{[^}]*position:sticky;top:0/.test(ih)
+    && /id="inv-refresh-btn"/.test(ih) && /id="inv-signout-btn"/.test(ih), null);
+}
+
 console.log('\n' + (failed ? '❌ ' + failed + ' check(s) FAILED' : '✅ all ' + passed + ' checks passed') + '\n');
 process.exit(failed ? 1 : 0);
