@@ -8535,6 +8535,8 @@ var _PS_AL_LABELS = {
   fix_veeqo_weight: ['⚖️ Fix weight in Veeqo', 'var(--orange)'],
   low_value:  ['💸 Low value — check', 'var(--orange)'],
   no_rate:    ['❓ No rate', 'var(--orange)'],
+  split:      ['✂️ Over limit — split into boxes', 'var(--purple)'],
+  split_done: ['✂️ Split — labels next run', 'var(--accent)'],
   hold:       ['✋ Hold', 'var(--orange)'],
   ready:      ['⏭ Ready (next run)', 'var(--text2)'],
   waiting:    ['⏳ Waiting', 'var(--text3)'],
@@ -8786,7 +8788,8 @@ function _psAlRenderRun(r) {
       return '<tr><td ' + td + '>' + (_PS_AL_BUYABLE[o.decision] ? '<input type="checkbox" class="ps-al-sel" style="width:18px;height:18px" value="' + _psAlEsc(o.number) + '" data-price="' + (o.price != null ? o.price : '') + '"' + (o.decision === 'low_value' ? ' data-low="1"' : '') + ' onchange="psAlSelCount()">' : '') + '</td>'
         + '<td ' + td + '><span class="ps-al-res" style="color:' + L[1] + ';font-weight:700;white-space:nowrap">' + L[0] + '</span>'
         + (o.decision === 'would_buy' ? (function(g) { return '<div style="font-size:11px;font-weight:700;color:' + (g.carrier === 'UPS' ? '#7c3aed' : 'var(--text2)') + '">' + _psAlEsc(g.carrier) + ' · ' + (g.aisle === 'mix' ? '🔀 mix' : g.aisle ? 'aisle ' + _psAlEsc(g.aisle) : 'no bin') + '</div>'; })(_psAlGroupOf(o)) : '')
-        + _psAlMergeTag(o) + '</td>'
+        + _psAlMergeTag(o) + _psAlSplitTag(o)
+        + (o.decision === 'no_rate' ? '<button class="ps-btn-sm" style="margin-top:4px;white-space:nowrap" onclick="psAlRateWhy(this, \'' + _psAlEsc(String(o.number || '').replace(/[\\']/g, '')) + '\')">💲 Why?</button>' : '') + '</td>'
         + '<td style="padding:6px 8px;border-bottom:1px solid var(--border);vertical-align:top;font-family:var(--mono)"><button class="ps-btn-sm" style="font-family:var(--mono);white-space:nowrap" title="Live Veeqo info: items, photos, bin, SKU, package — and change them" onclick="psAlLive(this, \'' + _psAlEsc(String(o.number || '').replace(/[\\']/g, '')) + '\')">🔎 ' + _psAlEsc(o.number) + '</button></td>'
         + '<td ' + td + '>' + _psAlEsc(o.channel) + '</td>'
         + '<td ' + td + '>' + _psAlEsc(o.customer) + '</td>'
@@ -8794,7 +8797,7 @@ function _psAlRenderRun(r) {
         + '<td ' + td + '>' + (o.total != null ? '$' + Number(o.total).toFixed(2) : '') + '</td>'
         + '<td style="padding:6px 8px;border-bottom:1px solid var(--border);vertical-align:top;white-space:nowrap">' + _psAlPkgHtml(o) + '</td>'
         + '<td ' + td + '>' + _psAlEsc(label) + '</td>'
-        + '<td ' + td + '>' + _psAlEsc(o.reason) + '</td></tr>';
+        + '<td ' + td + '>' + (o.splitBoxes ? _psAlSplitBoxesHtml(o.splitBoxes) : _psAlEsc(o.reason)) + '</td></tr>';
     }).join('') + '</table>';
   document.querySelectorAll('#ps-al-orders .ps-al-sel').forEach(function(c) { if (keep[c.value]) c.checked = true; });
   if (typeof psAlSelCount === 'function' && document.getElementById('ps-al-buyprint')) psAlSelCount();
@@ -8851,6 +8854,53 @@ function _psAlMergeTag(o) {
   if (lead && o.decision === 'would_merge' && all.length > 1) h += '<button class="ps-btn-sm" style="margin-top:4px;background:var(--accent);color:#fff;border-color:var(--accent);font-weight:700" onclick="psAlMergeBuy(this, \'' + e(all.join(',').replace(/[\\']/g, '')) + '\')">🧩 Merge &amp; buy (' + all.length + ')</button>';
   return h;
 }
+// ✂️ Over the box limit (owner: "over 20 lb we split it — 2 boxes of 50, or
+// 33 + 33 + 34 — a label for each box, the pieces must match the order"):
+// the plan per box, and ✂️ Split → splits it in Veeqo (checked), then each
+// box is rate-checked and bought like any other order with 2+ boxes.
+function _psAlSplitBoxesHtml(boxes) {
+  var e = _psAlEsc, tot = 0;
+  var h = boxes.map(function(b, i) { return '<div style="padding:2px 0"><b>Box ' + (i + 1) + '</b> · ' + e(b.lb) + ' lb · ' + b.lines.map(function(l) { tot += l.pieces; return '<span style="font-family:var(--mono)">' + e(l.sku) + '</span> ×' + e(l.qty) + ' = <b>' + e(l.pieces) + ' pcs</b>'; }).join(', ') + '</div>'; }).join('');
+  return '<div style="font-weight:700;color:var(--purple)">✂️ ' + boxes.length + ' boxes · ' + tot + ' pcs in all</div>' + h;
+}
+function _psAlSplitTag(o) {
+  if (o.decision !== 'split' || !o.splitBoxes) return '';
+  return '<button class="ps-btn-sm" style="margin-top:4px;background:var(--purple);color:#fff;border-color:var(--purple);font-weight:700" onclick="psAlSplit(this, \'' + _psAlEsc(String(o.number || '').replace(/[\\']/g, '')) + '\')">✂️ Split into ' + o.splitBoxes.length + ' boxes</button>';
+}
+window.psAlSplit = async function(btn, num) {
+  var r = window._psAlRunShown, o = r && (r.orders || []).find(function(x) { return x.number === num; });
+  if (!o) return;
+  if (!confirm('Split order ' + num + ' into ' + o.splitBoxes.length + ' boxes in Veeqo?\n\n' + o.splitBoxes.map(function(b, i) { return 'Box ' + (i + 1) + ' (' + b.lb + ' lb): ' + b.lines.map(function(l) { return l.qty + ' × ' + l.sku + ' = ' + l.pieces + ' pcs'; }).join(', '); }).join('\n') + '\n\nNothing is bought yet — then each box gets its own label (Buy & print).')) return;
+  btn.disabled = true; btn.textContent = '⏳ Splitting…';
+  var d = await _psAlFetch('/veeqo/autolabel/split', { method: 'POST', body: { order: num, by: psInitials || '' } });
+  if (d.ok === false) { btn.disabled = false; btn.textContent = '✂️ Split into ' + o.splitBoxes.length + ' boxes'; alert('Not split:\n' + (d.error || 'failed')); return; }
+  var c = r.counts; c[o.decision] = Math.max(0, (c[o.decision] || 0) - 1);
+  o.decision = 'ready'; o.reason = '✂️ Split into ' + d.boxes.length + ' boxes — checking rates…'; o.boxes = d.boxes.length; o._checked = false; delete o.splitBoxes;
+  c.ready = (c.ready || 0) + 1;
+  _psToast('✂️ Split into ' + d.boxes.length + ' boxes in Veeqo');
+  _psAlRenderRun(r); // ⏭ Ready → rate-checked right away → 👀 Would buy (one label per box)
+  if (typeof psAlLoadLog === 'function') psAlLoadLog();
+};
+// ❓ No rate → 💲 Why? — every rate Veeqo offers this order, right under it.
+window.psAlRateWhy = async function(btn, num) {
+  var tr = btn.closest('tr'), nx = tr.nextElementSibling;
+  if (nx && nx.classList.contains('ps-al-why')) { nx.remove(); return; }
+  btn.disabled = true; btn.textContent = '⏳';
+  var d = await _psAlFetch('/veeqo/autolabel/rates?order=' + encodeURIComponent(num));
+  btn.disabled = false; btn.textContent = '💲 Why?';
+  var e = _psAlEsc, h;
+  if (d.ok === false) h = '✗ ' + e(d.error || 'Failed');
+  else {
+    var rates = (d.rates || []).slice().sort(function(a, b) { return a.price - b.price; });
+    h = '<b>Rates Veeqo gave</b> (' + e(d.source || 'none') + ') · weight ' + (d.weightLb != null ? e(d.weightLb) + ' lb' : '?') + (d.veeqoWeightLb != null ? ' · Veeqo ' + e(d.veeqoWeightLb) + ' lb' : '') + '<br>'
+      + (rates.length ? rates.map(function(x) { return e(x.carrier) + ' $' + Number(x.price).toFixed(2) + ' · ' + (x.days != null ? e(x.days) + 'd' : '?d') + ' · ' + e(x.service); }).join('<br>') : '<span style="color:var(--red)">none</span>')
+      + '<br><b>' + (d.hold ? 'Held: ' : 'Rules: ') + e(d.reason || '') + '</b>'
+      + (!rates.length ? '<details><summary>What Veeqo answered</summary><pre style="white-space:pre-wrap;font-size:11px">' + e(JSON.stringify(d.attempts, null, 1).slice(0, 3000)) + '</pre></details>' : '');
+  }
+  var row = document.createElement('tr'); row.className = 'ps-al-why';
+  row.innerHTML = '<td></td><td colspan="9" style="padding:8px 10px;background:var(--bg3);font-size:12px;line-height:1.6">' + h + '</td>';
+  tr.parentNode.insertBefore(row, tr.nextSibling);
+};
 var _psAlMergeBusy = false;
 window.psAlMergeBuy = async function(btn, list) {
   if (_psAlMergeBusy) return;

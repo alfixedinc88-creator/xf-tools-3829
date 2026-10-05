@@ -2257,6 +2257,78 @@ console.log('\nAuto Label → Last run: a purchased label stays "Purchased" afte
     R('P-3').decision === 'would_buy' && c.lastRun.counts.bought === 2 && c.lastRun.counts.would_buy === 1 && !c.lastRun.counts.low_value, c.lastRun.counts);
 }
 
+// Owner: "order over 20 lb — 100 pcs ½ pex ball valve = 26 lb, we split it into 2 boxes of 50 (13 lb each), sometimes 3 boxes
+// (33 + 33 + 34 pieces), 3 × 100 angle valve → 3 boxes, a label for each box; the pieces must match the customer's order".
+console.log('\nAuto Label → ✂️ over 20 lb: split into boxes in Veeqo (pieces add up), a label for each box');
+{
+  const realFetch = globalThis.fetch; const shipments = [];
+  let nextAlloc = 9100, refuseNew = false;
+  const pkg = () => ({ weight: 16, weight_unit: 'oz', depth: 12, width: 10, height: 8, dimensions_unit: 'inches' });
+  const sell = (id, sku, g) => ({ id, sku_code: sku, weight_grams: g, product_title: 'T ' + sku, stock_entries: [{ warehouse_id: 55, location: '30-3-4' }] });
+  const mk = (id, number, s, qty, aid) => ({ id, number, channel: { name: 'eBay', type_code: 'ebay' }, total_price: 400, created_at: new Date(Date.now() - 864e5).toISOString(),
+    deliver_to: { first_name: 'S', last_name: number, address1: number + ' Rd', zip: '10001' }, line_items: [{ quantity: qty, sellable: s }],
+    allocations: [{ id: aid, warehouse: { id: 55 }, line_items: [{ quantity: qty, sellable: s }], allocation_package: pkg(), shipment: null }] });
+  const orders = [
+    mk(8101, 'SP-2', sell(901, '50=1/2XB(make sure)', 5896.7), 2, 7101),   // 2 × 50 pcs, 13 lb each = 26 lb → 2 boxes
+    mk(8103, 'SP-3', sell(903, '1=1/2 BALL(match)', 186), 100, 7103),       // 100 × 0.41 lb = 41 lb → 3 boxes 33/33/34
+    mk(8104, 'SP-A', sell(904, '100=ANGLE', 6804), 3, 7104),                // 3 × 100 pcs, 15 lb each = 45 lb → 3 boxes
+    mk(8105, 'SP-X', sell(905, '100=BIG', 11793), 1, 7105),                 // 1 × 100 pcs = 26 lb in ONE unit → can't split in Veeqo
+  ];
+  const ordOf = id => orders.find(o => String(o.id) === String(id));
+  globalThis.fetch = async (u, o) => { u = String(u); const m = (o && o.method) || 'GET'; const J = (x, st) => new Response(JSON.stringify(x), { status: st || 200, headers: { 'Content-Type': 'application/json' } });
+    const body = o && o.body ? JSON.parse(o.body) : null; let mm;
+    if (u.includes('api.veeqo.com/orders?')) { if (/status=cancelled/.test(u)) return J([]); const q = decodeURIComponent((u.match(/query=([^&]+)/) || [])[1] || '');
+      const open = x => !(x.allocations || []).every(a => a.shipment); const list = q ? orders.filter(x => x.number === q) : orders; return J(/status=awaiting/.test(u) ? list.filter(open) : list); }
+    if ((mm = u.match(/api\.veeqo\.com\/orders\/(\d+)\/allocations\/(\d+)$/))) { const od = ordOf(mm[1]); const a = od.allocations.find(x => String(x.id) === mm[2]);
+      if (m === 'DELETE') { od.allocations = od.allocations.filter(x => x !== a); return J({}); }
+      const li = body.line_items_attributes; if (!li) return J({ error: 'line_items_attributes missing' }, 422);
+      a.line_items = li.filter(x => x.quantity > 0).map(x => ({ quantity: x.quantity, sellable: od.line_items[0].sellable })); return J({ id: a.id }); }
+    if ((mm = u.match(/api\.veeqo\.com\/orders\/(\d+)\/allocations$/)) && m === 'POST' && refuseNew) return J({ error: 'refused' }, 422);
+    if ((mm = u.match(/api\.veeqo\.com\/orders\/(\d+)\/allocations$/)) && m === 'POST') { const od = ordOf(mm[1]);
+      const a = { id: nextAlloc++, warehouse: { id: body.allocation.warehouse_id }, line_items: body.allocation.line_items_attributes.map(x => ({ quantity: x.quantity, sellable: od.line_items[0].sellable })), allocation_package: {}, shipment: null };
+      od.allocations.push(a); return J(a, 201); }
+    if ((mm = u.match(/api\.veeqo\.com\/allocations\/(\d+)\/allocation_package$/))) { for (const od of orders) for (const a of od.allocations) if (String(a.id) === mm[1]) Object.assign(a.allocation_package, body.allocation_package); return J({}); }
+    if (u.includes('/shipping/quotes/amazon_shipping_v2')) return J([{ title: 'USPS Ground Advantage', name: 'usps-ga', carrier: 'usps', total_net_charge: 9.5, transit_days: 3 }]);
+    if (u.includes('api.veeqo.com/shipping/shipments') && m === 'POST') { const aid = body.shipment.allocation_id; shipments.push(aid);
+      for (const od of orders) for (const a of od.allocations) if (a.id === aid) a.shipment = { id: aid, tracking_number: { tracking_number: 'SPL' + aid } }; return J({ id: aid, tracking_number: { tracking_number: 'SPL' + aid } }); }
+    if (u.includes('api.veeqo.com/')) return J([]);
+    return new Response('{}', { status: 401 }); };
+  env.VEEQO_API_KEY = 'k';
+  await post('/veeqo/autolabel/config', { config: { mode: 'preview', maxBoxLb: 20 } });
+  const run = await post('/veeqo/autolabel/run', {});
+  const R = n => run.orders.find(x => x.number === n) || {};
+  const pcs = b => b.lines.reduce((n, l) => n + l.pieces, 0);
+  check('26 lb (2 × "50=1/2XB(make sure)") → ✂️ split into 2 boxes: 50 + 50 pcs, 13 lb each',
+    R('SP-2').decision === 'split' && R('SP-2').splitBoxes.length === 2 && R('SP-2').splitBoxes.map(pcs).join('+') === '50+50' && R('SP-2').splitBoxes.every(b => b.lb === 13), R('SP-2'));
+  check('…41 lb (100 × "1=…(match)") → 3 boxes: 33 + 33 + 34 pcs, each under 20 lb', R('SP-3').splitBoxes?.map(pcs).join('+') === '33+33+34' && R('SP-3').splitBoxes.every(b => b.lb <= 20), R('SP-3').splitBoxes);
+  check('…3 × 100 angle valve (45 lb) → 3 boxes of 100 pcs', R('SP-A').splitBoxes?.map(pcs).join('+') === '100+100+100', R('SP-A').splitBoxes);
+  check('…one 100-pc unit of 26 lb can\'t be split in Veeqo → stays ⚖️ by hand, says why', R('SP-X').decision === 'weigh' && /can't split: one 100=BIG alone weighs/.test(R('SP-X').reason), R('SP-X').reason);
+  const s3 = await post('/veeqo/autolabel/split', { order: 'SP-3' });
+  const al = ordOf(8103).allocations, qs = al.map(a => a.line_items.reduce((n, li) => n + li.quantity, 0));
+  // Inventory check: the 3 boxes in Veeqo hold exactly the 100 ordered — nothing twice, nothing dropped.
+  check('✂️ Split → Veeqo now has 3 boxes of 33 + 33 + 34 = 100 pcs (exactly the order), each box weighed (under 20 lb), on record',
+    s3.ok && al.length === 3 && qs.join('+') === '33+33+34' && qs.reduce((a, b) => a + b, 0) === 100 && al.every(a => parseFloat(a.allocation_package.weight) / 16 <= 20 && parseFloat(a.allocation_package.weight) > 0)
+    && sq.prepare("SELECT status FROM autolabel_split WHERE order_number = 'SP-3'").get()?.status === 'done' && sq.prepare("SELECT value FROM app_config WHERE key = 'autolabel_split_verified'").get()?.value === 'yes', { s3, qs });
+  const b3 = await post('/veeqo/autolabel/buy-one', { order: 'SP-3' });
+  check('…then 🖨 Buy & print → a label for EACH box (3 labels, 3 tracking #s), each box\'s own items on its label',
+    b3.ok && b3.labels.length === 3 && new Set(b3.labels.map(l => l.tracking)).size === 3
+    && sq.prepare("SELECT items FROM label_print_queue WHERE order_number = 'SP-3'").all().map(r => JSON.parse(r.items)[0].qty).sort().join('+') === '33+33+34', b3);
+  refuseNew = true;
+  const f2 = await post('/veeqo/autolabel/split', { order: 'SP-2' });
+  const al2 = ordOf(8101).allocations;
+  check('…Veeqo refuses box 2 → put back as ONE box with all 2 × 50 (nothing lost), said plainly, on record', f2.ok === false && al2.length === 1
+    && al2[0].line_items.reduce((n, li) => n + li.quantity, 0) === 2 && /put back as one box/.test(f2.error) && sq.prepare("SELECT status FROM autolabel_split WHERE order_number = 'SP-2'").get()?.status === 'failed', { f2, al2 });
+  refuseNew = false;
+  const again = await post('/veeqo/autolabel/split', { order: 'SP-3' });
+  check('…never split twice (already in 3 boxes)', again.ok === false, again);
+  const { readFileSync } = await import('node:fs');
+  const ph = readFileSync(fileURLToPath(new URL('../packship.html', import.meta.url)), 'utf8');
+  check('…Last run: ✂️ Split into N boxes button with each box\'s pieces; ❓ No rate rows have 💲 Why? (every rate Veeqo gave)',
+    /onclick="psAlSplit\(this, /.test(ph) && /_psAlSplitBoxesHtml\(o\.splitBoxes\)/.test(ph) && /onclick="psAlRateWhy\(this, /.test(ph), null);
+  await post('/veeqo/autolabel/config', { config: { mode: 'off' } });
+  globalThis.fetch = realFetch; delete env.VEEQO_API_KEY;
+}
+
 // Owner: "Audit — after scanning the column or a box, scroll down to the scan bar (see more info below); on the phone the
 // Inventory / Refresh / Sign out / Apps bar stays at the top but small — tap to show all".
 console.log('\nInventory: Audit scrolls to the scan bar after a scan; slim top bar on the phone');
