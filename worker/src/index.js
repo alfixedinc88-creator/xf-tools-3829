@@ -25407,7 +25407,31 @@ async function handleAutolabelRoute(path, method, url, request, env, session) {
     const ids = (Array.isArray(b.ids) ? b.ids : []).map(n => parseInt(n)).filter(n => n > 0).slice(0, 200);
     const now = new Date().toISOString(), by = String((session && (session.displayName || session.username)) || b.by || '').slice(0, 40);
     for (const id of ids) await d1Run(env, `UPDATE label_print_queue SET printed_at=COALESCE(printed_at, ?), printed_by=COALESCE(printed_by, ?), print_count=COALESCE(print_count,0)+1, last_error=NULL WHERE id=?`, [now, by, id]);
-    return veeqoResp({ ok: true, marked: ids.length });
+    // Owner: up to 3 items are written on the label → that box needs no
+    // packing slip (marked "on the label", kept as a record); more than 3 →
+    // the packing slip prints with the order (queued now if it wasn't).
+    let slipsSkipped = 0, slipsQueued = 0;
+    if (b.skipSlip || b.needSlip) {
+      for (const id of ids) {
+        const row = await d1First(env, 'SELECT * FROM label_print_queue WHERE id = ?', [id]);
+        if (!row) continue;
+        const match = `printed_at IS NULL AND ((tracking != '' AND tracking = ?) OR (order_id = ? AND alloc_id = ?))`, args = [row.tracking || '', row.order_id || '', row.alloc_id || ''];
+        if (b.skipSlip) {
+          const r = await d1Run(env, `UPDATE packing_slip_queue SET printed_at = ?, printed_by = 'on the label' WHERE ${match}`, [now, ...args]);
+          slipsSkipped += (r && r.meta && r.meta.changes) || 0;
+        } else {
+          const have = await d1First(env, `SELECT id FROM packing_slip_queue WHERE (tracking != '' AND tracking = ?) OR (order_id = ? AND alloc_id = ?) LIMIT 1`, args);
+          if (have) continue;
+          const res = await veeqoFetch(env, `/orders?query=${encodeURIComponent(row.order_number || '')}&page_size=10&page=1`).catch(() => []);
+          const o = (Array.isArray(res) ? res : []).find(x => String(x.id) === String(row.order_id) || autolabelOrderNum(x.number) === autolabelOrderNum(row.order_number));
+          if (!o) continue;
+          const allocs = o.allocations || [];
+          const i = Math.max(0, allocs.findIndex(a => String(a.id) === String(row.alloc_id)));
+          if (allocs[i] && await autolabelQueueSlip(env, { slipRule: 'all' }, o, allocs[i], row.tracking || '', row.carrier || '', i + 1, allocs.length)) slipsQueued++;
+        }
+      }
+    }
+    return veeqoResp({ ok: true, marked: ids.length, slipsSkipped, slipsQueued });
   }
   // POST { order } -> put an order's bought label(s) on the list by hand
   // (e.g. the test buy before the station printed labels).

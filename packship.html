@@ -8990,30 +8990,30 @@ function _psAlBlankBand(cv, minH) {
 // Writes the box contents into the blank strip → true when every line fits.
 // Why it couldn't write on the label (shown on the screen), '' = written.
 window._psAlStampWhy = '';
+var _PS_AL_LABEL_MAX_LINES = 3;
 function _psAlStampLabel(cv, items) {
   var W = cv.width, H = cv.height, no = function(why) { window._psAlStampWhy = why + ' (label ' + W + '×' + H + ')'; return false; };
   if (!items.length) return no('no item list for this box');
   if (Math.abs(W / H - 4 / 6) > 0.04) return no('not a 4×6 label'); // only a 4×6 label
-  var pad = Math.round(W * 0.012), minFs = Math.round(W * 0.03);
-  // Like the USPS label in the owner's photo: the bin on one line, the SKU
-  // (× qty) under it — two lines per item; a box with many items gets one
-  // line each ("bin  SKU ×qty") when two don't fit.
-  var two = [], one = [];
-  items.forEach(function(it) { var q = ' ×' + (it.qty || 0); two.push(it.bin || '—', (it.sku || '') + q); one.push((it.bin || '—') + '  ' + (it.sku || '') + q); });
-  var band = _psAlBlankBand(cv, Math.ceil(items.length * minFs * 1.25) + 2 * pad);
+  // Up to 3 items fit at the bottom; more → the packing slip lists them (owner).
+  if (items.length > _PS_AL_LABEL_MAX_LINES) return no('more than ' + _PS_AL_LABEL_MAX_LINES + ' items — the packing slip lists them');
+  var pad = Math.round(W * 0.012), minFs = Math.round(W * 0.022);
+  // Owner: one line per item, like "24-5-5, 2,5=3/4x1/2X PO C ×1" — smaller
+  // words so 3 lines fit in the USPS bottom strip.
+  var lines = items.map(function(it) { return (it.bin || '—') + ', ' + (it.sku || '') + ' ×' + (it.qty || 0); });
+  var band = _psAlBlankBand(cv, Math.ceil(items.length * minFs * 1.2) + 2 * pad);
   if (!band) return no('no blank strip at the bottom big enough for ' + items.length + ' line(s)');
   var y0 = band.y0 + pad, h = band.y1 - pad - y0, x = band.x0, maxW = Math.max(0, band.x1 - band.x0 - pad); // left of any code in the strip
   var ctx = cv.getContext('2d'); ctx.fillStyle = '#000'; ctx.textBaseline = 'top';
-  var fit = function(lines) { // the biggest font (up to 0.055 W) that fits every line → size or 0
-    var fs = Math.min(Math.round(W * 0.055), Math.floor(h / (lines.length * 1.25)));
+  var fit = function(lines) { // the biggest font (up to 0.045 W) that fits every line → size or 0
+    var fs = Math.min(Math.round(W * 0.045), Math.floor(h / (lines.length * 1.2)));
     for (; fs >= minFs; fs--) { ctx.font = 'bold ' + fs + 'px monospace'; if (lines.every(function(t) { return ctx.measureText(t).width <= maxW; })) return fs; }
     return 0;
   };
-  var lines = two, fs = fit(two);
-  if (!fs) { lines = one; fs = fit(one); }
+  var fs = fit(lines);
   if (!fs) return no('the text does not fit next to the codes at the bottom (' + Math.round(maxW) + '×' + Math.round(h) + ' px free)');
   ctx.font = 'bold ' + fs + 'px monospace';
-  lines.forEach(function(t, i) { ctx.fillText(t, x, y0 + i * fs * 1.25); });
+  lines.forEach(function(t, i) { ctx.fillText(t, x, y0 + i * fs * 1.2); });
   window._psAlStampWhy = '';
   return true;
 }
@@ -9029,13 +9029,20 @@ async function _psAlPrintOneLabel(l) {
   catch (e) { window._psAlStampWhy = 'could not open the label file (' + f.type + '): ' + ((e && e.message) || e); console.warn('[label] could not write on the label, printing the sticker instead:', e && e.message); }
   // What happened, on the screen (owner: "still not showing any sku, bin location, quantities").
   window._psAlLastNote = l.order_number + ': ' + (stamped ? 'bin · SKU · qty written at the bottom of the label (' + items.length + ' line' + (items.length === 1 ? '' : 's') + ')'
-    : 'label printed as it is + a separate sticker — why: ' + (window._psAlStampWhy || 'unknown') + ' · file: ' + f.type);
+    : 'label printed as it is' + (items.length > _PS_AL_LABEL_MAX_LINES ? '' : ' + a separate sticker') + ' — why: ' + (window._psAlStampWhy || 'unknown') + ' · file: ' + f.type);
+  // Owner: up to 3 items written on the label → no packing slip for that box;
+  // more than 3 → the packing slip prints with the order (it lists them, so no
+  // sticker). The server marks / queues the slip (recorded), and the station
+  // prints slips after labels.
+  var many = items.length > _PS_AL_LABEL_MAX_LINES;
+  if (stamped) window._psAlLastNote += ' · no packing slip needed';
+  if (many) window._psAlLastNote += ' · ' + items.length + ' items → packing slip prints with it';
   if (!stamped) {
     await _psAlPrintLabelBlob(f);
-    await _psAlPrintHtml(_psAlBoxStripHtml(l, items));
+    if (!many) await _psAlPrintHtml(_psAlBoxStripHtml(l, items));
   }
   window._psAlLastStamped = stamped;
-  await _psAlFetch('/veeqo/autolabel/labels-printed', { method: 'POST', body: { ids: [l.id], by: psInitials || '' } });
+  await _psAlFetch('/veeqo/autolabel/labels-printed', { method: 'POST', body: { ids: [l.id], by: psInitials || '', skipSlip: stamped, needSlip: many } });
 }
 window.psAlPrintNewLabels = async function(silent) {
   if (_psAlLabelBusy) return;
