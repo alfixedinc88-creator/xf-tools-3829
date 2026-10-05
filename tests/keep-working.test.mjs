@@ -1994,5 +1994,41 @@ console.log('\nAuto Label → Last run → 🔎 an order: live Veeqo info, chang
   globalThis.fetch = realFetch; delete env.VEEQO_API_KEY;
 }
 
+// Owner: "Last run — select which ones to print, or all; tap Would buy → all the would buy show; Print → prints all;
+// more than 4 items → the packing slip prints right under that label" + "would buy only shows 10 — show all".
+console.log('\nAuto Label → Last run: 🖨 Buy & print selected; a box\'s packing slip prints right under its label');
+{
+  const realFetch = globalThis.fetch; const bought = [];
+  const items = ['1-1-1=2', '1-1-2=2', '1-1-3=2', '1-1-4=2', '1-1-5=2'].map((sku, i) => ({ quantity: 1, sellable: { id: 600 + i, sku_code: sku, weight_grams: 50, stock_entries: [{ warehouse_id: 55, location: 'B' + i }] } }));
+  let hasLabel = false;
+  const ord = () => ({ id: 950, number: 'E-77', channel: { name: 'eBay', type_code: 'ebay' }, total_price: 60, created_at: new Date(Date.now() - 864e5).toISOString(),
+    deliver_to: { first_name: 'Bo', last_name: 'Li', city: 'Austin', state: 'TX', zip: '78701' }, line_items: items,
+    allocations: [{ id: 8001, line_items: items, shipment: hasLabel ? { id: 1, tracking_number: { tracking_number: '9400777' } } : null }] });
+  globalThis.fetch = async (u, o) => { u = String(u); const m = (o && o.method) || 'GET'; const J = x => new Response(JSON.stringify(x), { headers: { 'Content-Type': 'application/json' } });
+    if (u.includes('api.veeqo.com/orders?')) return J(/status=cancelled/.test(u) ? [] : [ord()]);
+    if (u.includes('api.veeqo.com/shipping/quotes/amazon_shipping_v2')) return J([{ title: 'USPS Ground Advantage', name: 'usps-ga', carrier: 'usps', total_net_charge: 5.1, transit_days: 3 }]);
+    if (u.includes('api.veeqo.com/shipping/shipments') && m === 'POST') { bought.push(JSON.parse(o.body)); hasLabel = true; return J({ id: 1, tracking_number: { tracking_number: '9400777' } }); }
+    if (u.includes('api.veeqo.com/')) return J([]);
+    return new Response('{}', { status: 401 }); };
+  env.VEEQO_API_KEY = 'k';
+  const r1 = await post('/veeqo/autolabel/buy-one', { order: 'E-77' });
+  check('🖨 Buy & print selected → that order\'s label is bought (by hand, every check again) and goes on the print list', r1.ok && bought.length === 1 && r1.labels[0].tracking === '9400777'
+    && sq.prepare("SELECT COUNT(*) n FROM label_print_queue WHERE order_number = 'E-77' AND printed_at IS NULL").get().n === 1
+    && /Bought by hand from Last run/.test(sq.prepare("SELECT reason FROM autolabel_log WHERE order_number = 'E-77' AND action = 'bought'").get()?.reason || ''), { r1, bought: bought.length });
+  const r2 = await post('/veeqo/autolabel/buy-one', { order: 'E-77' });
+  check('…the same order again → not bought twice ("already has a label")', r2.ok === false && /already has a label/.test(r2.error) && bought.length === 1, r2);
+  const L = sq.prepare("SELECT id FROM label_print_queue WHERE order_number = 'E-77'").get();
+  const lp = await post('/veeqo/autolabel/labels-printed', { ids: [L.id], needSlip: true, withSlips: true });
+  check('…5 items (more than 4): the label comes back with ITS packing slip, to print right under it', lp.ok && lp.slips.length === 1 && lp.slips[0].orderNumber === 'E-77' && lp.slips[0].items.length === 5 && lp.slips[0].tracking === '9400777', lp);
+  const { readFileSync } = await import('node:fs');
+  const ws = readFileSync(workerPath, 'utf8'), ph3 = readFileSync(fileURLToPath(new URL('../packship.html', import.meta.url)), 'utf8');
+  check('…the station prints that slip right after its label (not at the end), then marks it printed', /withSlips: true \} \}\);[\s\S]{0,400}if \(own\.length\) \{\s*await _psAlPrintSlips\(own\);\s*await _psAlMarkPrinted\(/.test(ph3), null);
+  check('…Last run: tap a chip (👀 Would buy) → only those; ☑ Select all; 🖨 Buy & print selected; buying blocked while the test switch is on',
+    /onclick="psAlRunFilter\(/.test(ph3) && /id="ps-al-sel-all"/.test(ph3) && /psAlBuyPrint\(\)/.test(ph3) && /'\/veeqo\/autolabel\/order-edit', '\/veeqo\/autolabel\/buy-one'/.test(ws), null);
+  check('…"would buy only 10": a preview run keeps rates 1 hour, so each run rate-checks the NEXT orders and all of them show',
+    /else if \(!buy && \(cached = await autolabelRateCacheGet\(env, o, open\)\)\)/.test(ws) && /await autolabelRateCachePut\(env, o, open, row\);/.test(ws), null);
+  globalThis.fetch = realFetch; delete env.VEEQO_API_KEY;
+}
+
 console.log('\n' + (failed ? '❌ ' + failed + ' check(s) FAILED' : '✅ all ' + passed + ' checks passed') + '\n');
 process.exit(failed ? 1 : 0);

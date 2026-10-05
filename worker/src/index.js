@@ -6541,7 +6541,7 @@ const TM_BLOCK = new Set([
   '/ebay-msg/send', '/msg/send', '/msg/reply', '/shopify/listing-create',
   '/repricer/price-change', '/repricer/auto-reprice', '/repricer/queue-action',
   '/ship/cancel-label', '/ship/cancel-order', '/ship/cancel-order-confirm',
-  '/veeqo/autolabel/run', '/veeqo/autolabel/test-buy', '/veeqo/autolabel/order-edit',
+  '/veeqo/autolabel/run', '/veeqo/autolabel/test-buy', '/veeqo/autolabel/order-edit', '/veeqo/autolabel/buy-one',
   '/inventory/soldout/set-qty', '/inventory/soldout/add-listing',
 ]);
 function tmJ(o, status) { return cors(new Response(JSON.stringify(o), { status: status || 200, headers: { 'Content-Type': 'application/json' } })); }
@@ -24862,7 +24862,7 @@ async function autolabelRun(env, opts = {}) {
   }
 
   const boughtToday = (await d1First(env, `SELECT COUNT(*) AS n FROM autolabel_log WHERE date=? AND action='bought'`, [shipTodayKey()]) || {}).n || 0;
-  let quotesLeft = cfg.maxQuotesPerRun;
+  let quotesLeft = cfg.maxQuotesPerRun, cached = null;
   let buysLeft = Math.min(cfg.maxLabelsPerRun, Math.max(0, cfg.maxLabelsPerDay - boughtToday));
   const now = Date.now();
 
@@ -24923,6 +24923,14 @@ async function autolabelRun(env, opts = {}) {
         row.decision = 'fix_veeqo_weight';
         row.reason = `Real weight ${mw.lb} lb, but Veeqo has ${mw.veeqoLb} lb — fix the product weight in Veeqo (see Re-weigh list), then it prints by itself`;
       }
+      // Owner: "show ALL the would buy, not only 10" — a preview run keeps the
+      // rates it got for an hour, so each run rate-checks the NEXT orders
+      // (up to the per-run limit) and every waiting order ends up shown.
+      else if (!buy && (cached = await autolabelRateCacheGet(env, o, open))) {
+        Object.assign(row, { decision: 'would_buy', carrier: cached.carrier, service: cached.service, price: cached.price, days: cached.days,
+          reason: cached.reason + ` (rates from ${new Date(cached.at).toLocaleTimeString('en-US', { timeZone: 'America/New_York', hour: 'numeric', minute: '2-digit' })})` });
+        if (cached.slip) row.slip = true;
+      }
       else if (quotesLeft <= 0) { row.decision = 'ready'; row.reason = 'Ready — rates checked on a later run'; }
       else {
         quotesLeft--;
@@ -24964,6 +24972,7 @@ async function autolabelRun(env, opts = {}) {
             else if (!buy) {
               row.decision = 'would_buy'; row.reason = why;
               if (cfg.slipRule !== 'off' && autolabelSlipWanted(await veeqoExtractLineItems(env, o, todo[0]), cfg.slipRule)) row.slip = true;
+              await autolabelRateCachePut(env, o, open, row);
             }
             else if (buysLeft < picks.length) { row.decision = 'ready'; row.reason = `${why} — label limit reached for this run/day`; }
             else {
@@ -25166,6 +25175,89 @@ async function autolabelCron(env) {
 }
 
 // Finds one order still awaiting a label by its order number.
+// A packing slip row as the 🖨 station prints it.
+function autolabelSlipOut(r) {
+  let shipTo = {}, items = [];
+  try { shipTo = JSON.parse(r.ship_to || '{}'); } catch (_) {}
+  try { items = JSON.parse(r.items || '[]'); } catch (_) {}
+  return { id: r.id, orderNumber: r.order_number, channel: r.channel, tracking: r.tracking, carrier: r.carrier,
+    boxNo: r.box_no, boxCount: r.box_count, createdAt: r.created_at, printedAt: r.printed_at, printedBy: r.printed_by,
+    printCount: r.print_count || 0, shipTo, items };
+}
+// Cancellations across the channels, kept 2 minutes (🖨 Buy & print selected checks each order).
+let _autolabelCancelCache = { at: 0, val: null };
+async function autolabelCancelsCached(env, cfg) {
+  if (_autolabelCancelCache.val && Date.now() - _autolabelCancelCache.at < 120000) return _autolabelCancelCache.val;
+  const val = await autolabelCollectCancels(env, cfg);
+  _autolabelCancelCache = { at: Date.now(), val };
+  return val;
+}
+// Rates a preview run already got for an order (kept 1 hour, only while its
+// boxes are the same) → shown as 👀 Would buy without asking Veeqo again.
+async function autolabelRateCacheGet(env, o, open) {
+  await env.DB.prepare('CREATE TABLE IF NOT EXISTS autolabel_rate_cache (order_id TEXT PRIMARY KEY, allocs TEXT, at TEXT, row TEXT)').run();
+  const r = await d1First(env, 'SELECT * FROM autolabel_rate_cache WHERE order_id = ?', [String(o.id)]);
+  if (!r || r.allocs !== open.map(a => a.id).join(',') || Date.now() - Date.parse(r.at) > 3600000) return null;
+  try { return { ...JSON.parse(r.row), at: r.at }; } catch (_) { return null; }
+}
+async function autolabelRateCachePut(env, o, open, row) {
+  await env.DB.prepare('CREATE TABLE IF NOT EXISTS autolabel_rate_cache (order_id TEXT PRIMARY KEY, allocs TEXT, at TEXT, row TEXT)').run();
+  await d1Run(env, 'INSERT OR REPLACE INTO autolabel_rate_cache (order_id, allocs, at, row) VALUES (?,?,?,?)', [String(o.id), open.map(a => a.id).join(','), new Date().toISOString(),
+    JSON.stringify({ carrier: row.carrier, service: row.service, price: row.price, days: row.days, reason: row.reason, slip: !!row.slip })]);
+}
+// Last run → 🖨 Buy & print selected: buys ONE order's label(s) now, by hand —
+// every check the auto run does is done again (cancelled, Cancellation list,
+// already has a label, over the weight limit, the carrier rules, low value).
+async function autolabelBuyByHand(env, number, by) {
+  const cfg = await autolabelLoadConfig(env);
+  const o = await autolabelFindAwaiting(env, number);
+  if (!o) return { ok: false, error: `No order ${number} waiting for a label in Veeqo` };
+  const allocs = o.allocations || [];
+  if (!allocs.length) return { ok: false, error: 'Not allocated in Veeqo (stock?)' };
+  const bought = new Set((await d1All(env, `SELECT alloc_id FROM autolabel_log WHERE order_id=? AND action='bought'`, [String(o.id)])).map(r => String(r.alloc_id)));
+  const todo = allocs.filter(a => !_psAllocTrackingNumber(a) && !bought.has(String(a.id)));
+  if (!todo.length) return { ok: false, error: 'This order already has a label' };
+  const listed = await d1First(env, `SELECT 1 x FROM ship_order_cancel_log WHERE status!='done' AND UPPER(REPLACE(order_num,'#',''))=?`, [autolabelOrderNum(o.number)]);
+  if (listed) return { ok: false, error: 'On the Cancellation list — not buying' };
+  const c = (await autolabelCancelsCached(env, cfg)).byNum.get(autolabelOrderNum(o.number));
+  if (c) return { ok: false, error: `Cancelled on ${c.channel} (${c.state}) — not buying` };
+  if (autolabelChannelType(o) === 'amazon') {
+    const amz = await autolabelAmazonBuyerCancel(env, o.number);
+    if (amz.requested) return { ok: false, error: 'Amazon buyer asked to cancel — not buying' };
+  }
+  const picks = [];
+  for (const a of todo) {
+    if (cfg.maxBoxLb > 0) {
+      const wt = await autolabelWeighAllocation(env, o, a);
+      if (wt.lb != null && wt.lb > cfg.maxBoxLb) return { ok: false, error: `${wt.lb} lb — over ${cfg.maxBoxLb} lb: print by hand in Veeqo, or re-weigh it first` };
+    }
+    const q = await autolabelGetQuotes(env, a.id);
+    const choice = autolabelChooseRate(o, q.quotes, { ...cfg, lowValueRatio: 0 });
+    if (!choice.pick) return { ok: false, error: choice.reason };
+    if (choice.hold) return { ok: false, error: `Rules say hold: ${choice.reason}` };
+    picks.push({ alloc: a, choice });
+  }
+  const cost = picks.reduce((n, p) => n + p.choice.pick.price, 0);
+  const low = autolabelLowValue(o, cost, cfg);
+  if (low) return { ok: false, error: low };
+  const out = [];
+  for (const p of picks) {
+    const pk = p.choice.pick;
+    const logBase = { orderId: o.id, allocId: p.alloc.id, orderNumber: o.number, channel: veeqoExtractChannel(o), customer: veeqoExtractCustomerName(o),
+      carrier: pk.carrier, service: pk.service, price: pk.price, orderTotal: autolabelOrderTotal(o), reason: `Bought by hand from Last run (${by || '?'}): ${p.choice.reason}` };
+    try {
+      const r = await autolabelBuy(env, o, p.alloc.id, pk);
+      await autolabelLog(env, { ...logBase, action: 'bought', tracking: r.tracking });
+      await autolabelQueueLabel(env, o, p.alloc.id, r.tracking, pk.carrier, pk.service, r.response);
+      await autolabelQueueSlip(env, cfg, o, p.alloc, r.tracking, pk.carrier, allocs.indexOf(p.alloc) + 1, allocs.length);
+      out.push({ carrier: pk.carrier, service: pk.service, price: pk.price, tracking: r.tracking });
+    } catch (e) {
+      await autolabelLog(env, { ...logBase, action: 'buy_failed', detail: e.message });
+      return { ok: false, error: (out.length ? `${out.length} of ${picks.length} boxes bought, then: ` : '') + String(e.message || e).slice(0, 300), labels: out };
+    }
+  }
+  return { ok: true, order: o.number, labels: out, price: Math.round(cost * 100) / 100 };
+}
 async function autolabelFindAwaiting(env, number) {
   const want = autolabelOrderNum(number);
   const res = await veeqoFetch(env, `/orders?query=${encodeURIComponent(number)}&status=awaiting_fulfillment&page_size=10&page=1`).catch(() => []);
@@ -25323,6 +25415,14 @@ async function handleAutolabelRoute(path, method, url, request, env, session) {
 
   // POST /veeqo/autolabel/test-buy { order } — buys ONE real label by hand,
   // using the same rules. The first success unlocks auto mode.
+  // POST { order } → Last run → 🖨 Buy & print selected: buys that order's label(s) now (all checks again).
+  if (path === '/veeqo/autolabel/buy-one' && method === 'POST') {
+    const b = await request.json().catch(() => ({}));
+    const number = String(b.order || '').trim();
+    if (!number) return veeqoResp({ ok: false, error: 'order is required' }, 400);
+    const by = String((session && (session.displayName || session.username)) || b.by || '').slice(0, 40);
+    return veeqoResp(await autolabelBuyByHand(env, number, by));
+  }
   if (path === '/veeqo/autolabel/test-buy' && method === 'POST') {
     const b = await request.json().catch(() => ({}));
     const number = String(b.order || '').trim();
@@ -25445,14 +25545,7 @@ async function handleAutolabelRoute(path, method, url, request, env, session) {
     const limit = Math.min(200, parseInt(url.searchParams.get('limit')) || 50);
     const rows = await d1All(env,
       `SELECT * FROM packing_slip_queue WHERE printed_at IS ${printed ? 'NOT ' : ''}NULL ORDER BY id ${printed ? 'DESC' : 'ASC'} LIMIT ?`, [limit]);
-    return veeqoResp({ ok: true, slips: rows.map(r => {
-      let shipTo = {}, items = [];
-      try { shipTo = JSON.parse(r.ship_to || '{}'); } catch (_) {}
-      try { items = JSON.parse(r.items || '[]'); } catch (_) {}
-      return { id: r.id, orderNumber: r.order_number, channel: r.channel, tracking: r.tracking, carrier: r.carrier,
-        boxNo: r.box_no, boxCount: r.box_count, createdAt: r.created_at, printedAt: r.printed_at, printedBy: r.printed_by,
-        printCount: r.print_count || 0, shipTo, items };
-    }) });
+    return veeqoResp({ ok: true, slips: rows.map(autolabelSlipOut) });
   }
 
   // POST { ids:[...], by } -> mark slips as printed.
@@ -25581,7 +25674,18 @@ async function handleAutolabelRoute(path, method, url, request, env, session) {
         }
       }
     }
-    return veeqoResp({ ok: true, marked: ids.length, slipsSkipped, slipsQueued });
+    // That label's own packing slip(s), still waiting → the station prints them
+    // right after (under) the label, so the packer knows they go together.
+    let slips = [];
+    if (b.withSlips) {
+      for (const id of ids) {
+        const row = await d1First(env, 'SELECT tracking, order_id, alloc_id FROM label_print_queue WHERE id = ?', [id]);
+        if (!row) continue;
+        slips = slips.concat((await d1All(env, `SELECT * FROM packing_slip_queue WHERE printed_at IS NULL AND ((tracking != '' AND tracking = ?) OR (order_id = ? AND alloc_id = ?)) ORDER BY id`,
+          [row.tracking || '', row.order_id || '', row.alloc_id || ''])).map(autolabelSlipOut));
+      }
+    }
+    return veeqoResp({ ok: true, marked: ids.length, slipsSkipped, slipsQueued, slips });
   }
   // POST { order } -> put an order's bought label(s) on the list by hand
   // (e.g. the test buy before the station printed labels).
