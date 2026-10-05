@@ -8947,12 +8947,18 @@ window.invCredLogin = async function() {
     try { navigator.vibrate && navigator.vibrate([200, 100, 200]); } catch (e) {}
     var f = xfrGo.focus || {}, mine = xfrGo.lines.filter(function(l) { return l.part === part; });
     var others = (lines || []).filter(function(l) { return String(l.part).toUpperCase() === part && l.left > 0 && !(l.title === f.title && l.pallet === f.pallet); });
+    // Owner: "scan the box → it should bring you to the pallet". This pallet is
+    // finished (nothing left on it) → they walked to the next one: open it.
+    var leftHere = xfrGo.lines.some(function(l) { return l.left > 0; });
+    if (others.length === 1 && !leftHere) { invFlash('🧱 ' + part + ' is on Pallet ' + others[0].pallet + ' — opened it', 'success'); xfrGoOpen(others[0].title, others[0].vendor, others[0].pallet, others[0].id); return; }
     xfrGo.modalPart = part;
     xfrLoadPhotos([part], function() {
       xfrPopup('<div style="display:flex;gap:10px;align-items:center;margin-bottom:10px">' + xfrThumb(part) + '<div><div style="font-weight:800;color:var(--orange);font-size:16px">⚠ Not on this pallet</div>'
         + '<div style="font-family:var(--mono);font-weight:800;font-size:18px">' + xfrE(part) + '</div>'
         + '<div style="font-size:12px;color:var(--text3)">' + (mine.length ? 'All its boxes on Pallet ' + xfrE(f.pallet) + ' are moved already' : 'Pallet ' + xfrE(f.pallet) + ' has none of it on its list')
         + (others.length ? ' · on ' + others.map(function(l) { return 'Pallet ' + xfrE(l.pallet) + ' (' + xfrN(l.left) + ')'; }).join(', ') : '') + '</div></div></div>'
+        // …or it is on another pallet → one tap opens that pallet with the item picked
+        + others.map(function(l) { return '<button type="button" onclick="xfrPopupClose();xfrGoOpen(' + xfrE(JSON.stringify(l.title)) + ',' + xfrE(JSON.stringify(l.vendor)) + ',' + xfrE(JSON.stringify(l.pallet)) + ',' + l.id + ')" style="width:100%;padding:16px;border-radius:12px;border:none;background:var(--accent);color:#fff;font-size:17px;font-weight:800;cursor:pointer;margin-bottom:8px">🧱 Go to Pallet ' + xfrE(l.pallet) + ' — ' + xfrN(l.left) + ' box(es)</button>'; }).join('')
         + '<button type="button" onclick="xfrExtraFromModal()" style="width:100%;padding:16px;border-radius:12px;border:none;background:var(--orange);color:#fff;font-size:17px;font-weight:800;cursor:pointer;margin-bottom:8px">➕ Extra package found on this pallet</button>'
         + '<button type="button" onclick="xfrPopupClose()" style="width:100%;padding:14px;border-radius:12px;border:1.5px solid var(--border);background:var(--bg);color:var(--text2);font-size:16px;font-weight:700;cursor:pointer">Cancel</button>');
     });
@@ -8981,6 +8987,11 @@ window.invCredLogin = async function() {
     code = String(code || '').trim(); if (!code) return;
     var box = g('xfr-cont-box'); if (box) box.value = '';
     if (xfrGo.focus && xfrGo.extra) { xfrExtraScan(code); return; } // ➕ extra box found: box, then the shelf label
+    // Owner: "scan the box → it should bring you to the pallet". The "✅ Pallet
+    // done" pop-up must not swallow the scan: a scan closes it and carries on.
+    var dm = g('xfr-modal'); if (dm && dm.getAttribute('data-scan-closes')) dm.remove();
+    // this pallet is finished (nothing left) → a box scanned now is from the next pallet
+    var finished = !!xfrGo.focus && !xfrIsLoc(code) && !xfrGo.lines.some(function(l) { return l.left > 0; });
     if (!xfrIsLoc(code)) xfrGo.lastCode = code.toUpperCase(); // what the box scanned as (for ⚠ UPC doesn't match)
     if (xfrGo.focus && xfrIsLoc(code)) { // a shelf label: the picked item's boxes go there
       if (!xfrGo.sel) { invFlash('Scan a box first, then the shelf label', 'error'); xfrGoBox(); return; }
@@ -8988,9 +8999,14 @@ window.invCredLogin = async function() {
     }
     // On an open pallet: its own boxes are matched on the phone (part # or
     // outside box UPC) — no wait at all.
-    if (xfrGo.focus) { var hit = xfrGoLocalMatch(code); if (hit) { xfrGoSelect(hit.id); return; }
+    if (xfrGo.focus && !finished) { var hit = xfrGoLocalMatch(code); if (hit) { xfrGoSelect(hit.id); return; }
       var dn = xfrGoDoneMatch(code); if (dn) { xfrAllMoved(dn); return; } } // every box of it moved already
     xfrFastScan(code, function(part, d) {
+      if (xfrGo.focus && finished) { // → the pallet(s) that still have boxes of it
+        var f0 = xfrGo.focus, oth = ((d && d.lines) || []).filter(function(l) { return String(l.part).toUpperCase() === part && l.left > 0 && !(l.title === f0.title && l.pallet === f0.pallet); });
+        if (oth.length === 1) { invFlash('🧱 ' + part + ' → Pallet ' + oth[0].pallet, 'success'); xfrGoOpen(oth[0].title, oth[0].vendor, oth[0].pallet, oth[0].id); return; }
+        if (oth.length > 1) { xfrShowPallets(part, oth, false); return; }
+      }
       if (xfrGo.focus) { // inside a pallet: pick the item on it
         var l = xfrGo.lines.filter(function(x) { return x.part === part && x.left > 0; })[0];
         if (l) { xfrGoSelect(l.id); return; }
@@ -9125,8 +9141,12 @@ window.invCredLogin = async function() {
     var EX = (xfrGo.extras || []).filter(function(e) { return e.status !== 'Rejected'; }), exB = EX.reduce(function(a, e) { return a + (+e.boxes || 0); }, 0);
     try { navigator.vibrate && navigator.vibrate(150); } catch (e) {}
     xfrPopup('<div style="text-align:center;margin-bottom:10px"><div style="font-size:40px">✅</div><div style="font-weight:800;font-size:18px;color:var(--green)">Pallet ' + xfrE(f.pallet) + ' — everything matched</div>'
-      + '<div style="font-size:13px;color:var(--text2)">' + xfrN(xfrGo.lines.length) + ' item(s) · pallet list ' + xfrN(tot) + ' box(es) = moved ' + xfrN(mv) + (exB ? ' · ➕ ' + xfrN(exB) + ' extra box(es) found' : '') + '</div></div>'
+      + '<div style="font-size:13px;color:var(--text2)">' + xfrN(xfrGo.lines.length) + ' item(s) · pallet list ' + xfrN(tot) + ' box(es) = moved ' + xfrN(mv) + (exB ? ' · ➕ ' + xfrN(exB) + ' extra box(es) found' : '') + '</div>'
+      + '<div style="font-size:13px;font-weight:700;color:var(--accent);margin-top:6px">📷 Or just scan a box on the next pallet</div></div>'
       + xfrPalNextBtns());
+    // the scanner keeps working under this pop-up: a box scanned goes to its pallet
+    var dm = g('xfr-modal'); if (dm) dm.setAttribute('data-scan-closes', '1');
+    setTimeout(xfrGoBox, 60);
   }
   window.xfrPalFound = function(id) { var m = g('xfr-modal'); if (m) m.remove(); xfrGo.extra = null; xfrGoSelect(id); window.scrollTo(0, 0); };
   window.xfrPalMore = function() { var m = g('xfr-modal'); if (m) m.remove(); xfrExtraStart(); window.scrollTo(0, 0); };
