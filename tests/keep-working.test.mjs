@@ -2073,5 +2073,35 @@ console.log('\nAuto Label → Last run: ⏭ Ready orders checked right away → 
   globalThis.fetch = realFetch; delete env.VEEQO_API_KEY;
 }
 
+// Owner: "barcode designer — after they design the barcode, save it to our system; they print it on the computer later (like the
+// Sold Out labels); ask how many labels, then scan each column it goes to; then on the designer a tab to scan the sticker →
+// where it goes and how many boxes need it at that spot".
+console.log('\n🏷 Barcode designer: 💾 save on the phone → 🖨 print on the computer → 📍 scan the sticker → where it goes');
+{
+  const noSpot = await post('/inventory/barcode-job', { sku: '8-8-8=8', copies: 3, spots: [] });
+  check('💾 Save needs the column(s) the stickers go to', noSpot.ok === false && /column/.test(noSpot.error), noSpot);
+  const sv = await post('/inventory/barcode-job', { sku: '8-8-8=8', name: 'Plug', copies: 5, spots: [{ loc: 'c1=5-2-3', boxes: 3 }, { loc: 'C2=1-1-1', boxes: 2 }], _requestId: 'bd-req-1' });
+  const sv2 = await post('/inventory/barcode-job', { sku: '8-8-8=8', name: 'Plug', copies: 5, spots: [{ loc: 'C1=5-2-3', boxes: 3 }], _requestId: 'bd-req-1' });
+  const q = await get('/inventory/barcode-job/queue');
+  const job = (q.jobs || []).find(j => j.id === sv.id) || {};
+  check('…saved on record (part #, how many, each column + boxes, who / when); sent twice (WiFi) → kept once', sv.ok && sv2.duplicate && sv2.id === sv.id
+    && (q.jobs || []).filter(j => j.sku === '8-8-8=8').length === 1 && job.copies === 5 && job.spots.length === 2 && job.spots[0].loc === 'C1=5-2-3' && job.spots[0].boxes === 3 && job.by_user && job.ts, q);
+  const before = sq.prepare("SELECT COUNT(*) n FROM barcode_label_log WHERE sku = '8-8-8=8'").get().n;
+  const pr = await post('/inventory/barcode-job/printed', { ids: [sv.id] });
+  const after = sq.prepare("SELECT COUNT(*) n FROM barcode_label_log WHERE sku = '8-8-8=8'").get().n;
+  check('…🖨 printed on the computer → off the "to print" list, who / when kept, and in the label print record', pr.printed === 1 && !(await get('/inventory/barcode-job/queue')).jobs.some(j => j.id === sv.id)
+    && after === before + 1 && !!sq.prepare('SELECT printed_by FROM barcode_label_job WHERE id = ?').get(sv.id).printed_by, { pr, before, after });
+  const f = await get('/inventory/barcode-job/find?sku=8-8-8%3D8');
+  check('…📍 scan the sticker → its columns and how many boxes each (and printed by whom)', f.ok && f.jobs[0].spots.map(x => x.loc + ':' + x.boxes).join(',') === 'C1=5-2-3:3,C2=1-1-1:2' && !!f.jobs[0].printed_at, f);
+  const st = await post('/inventory/barcode-job/stuck', { id: sv.id, loc: 'C1=5-2-3' });
+  const f2 = await get('/inventory/barcode-job/find?sku=8-8-8%3D8');
+  check('…✓ Done at a column → on record (who / when), the other column still to do', st.ok && f2.jobs[0].spots[0].doneAt && f2.jobs[0].spots[0].doneBy && !f2.jobs[0].spots[1].doneAt, f2.jobs[0].spots);
+  const { readFileSync } = await import('node:fs');
+  const ih2 = readFileSync(fileURLToPath(new URL('../inventory.html', import.meta.url)), 'utf8');
+  check('…the designer: tabs ✏️ Design / 🖨 To print / 📍 Where does it go?; scan each column → how many boxes (number pad); 💾 Save (WiFi-safe); 🖨 Print here still there; the office PC sees "🏷 Barcode labels to print"',
+    /t\('design', '✏️ Design'\)/.test(ih2) && /t\('where', '📍 Where does it go\?'\)/.test(ih2) && /onkeydown="if\(event\.key===\\'Enter\\'\)bdColScan\(\)"/.test(ih2)
+    && /xfrKeypad\('How many boxes at ' \+ loc/.test(ih2) && /invPost\(W \+ '\/inventory\/barcode-job'/.test(ih2) && /onclick="bdPrint\(\)"[^>]*>🖨 Print label here/.test(ih2) && /id="bd-queue-card"/.test(ih2), null);
+}
+
 console.log('\n' + (failed ? '❌ ' + failed + ' check(s) FAILED' : '✅ all ' + passed + ' checks passed') + '\n');
 process.exit(failed ? 1 : 0);

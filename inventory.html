@@ -1094,6 +1094,13 @@ window.invCredLogin = async function() {
 
   <!-- 🏷 Barcode designer (owner): type a part # (e.g. 8-8-8=8) → prints a 2" × 1" thermal label (Code 128). -->
   <button type="button" id="bd-open-btn" onclick="bdOpen()" style="width:100%;padding:13px;border-radius:12px;border:1.5px solid var(--border);background:var(--bg2);color:var(--text);font-size:15px;font-weight:800;cursor:pointer">🏷 Barcode designer</button>
+  <!-- 🏷 Barcode labels saved on the phones — print them here (office PC). -->
+  <div class="icard" id="bd-queue-card" style="display:none;border:2px solid var(--accent)">
+    <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap">
+      <div style="flex:1;min-width:180px"><div style="font-weight:800;color:var(--accent)">🏷 Barcode labels to print</div><div id="bd-queue-txt" style="font-size:12px;color:var(--text2)"></div></div>
+      <button class="isearch-btn" onclick="bdOpen(false, 'print')">🖨 Print</button>
+    </div>
+  </div>
 
   <details id="inv-audit-old" style="display:none;border:1px solid var(--border);border-radius:12px;padding:8px 10px;background:var(--bg2)">
   <summary style="cursor:pointer;font-size:13px;font-weight:700;color:var(--text2)">🔧 Other audit tools (search a part # / a location)</summary>
@@ -6479,6 +6486,8 @@ window.invCredLogin = async function() {
     }, 300);
   };
   setTimeout(function() { if (typeof invSoldOutQueueLoad === 'function') invSoldOutQueueLoad(); }, 2000);
+  setTimeout(function() { if (typeof bdQueueLoad === 'function') bdQueueLoad(); }, 2500);
+  setInterval(function() { if (!document.hidden && typeof bdQueueLoad === 'function') bdQueueLoad(); }, 60000);
   setInterval(function() { if (!document.hidden) invSoldOutQueueLoad(); }, 60000);
 
   window.invSoldOutPrint = function() {
@@ -13210,22 +13219,167 @@ window.invCredLogin = async function() {
   function bdDraw(target, sku) {
     JsBarcode(target, sku, { format: 'CODE128', displayValue: false, margin: 0, height: 60, width: 2 });
   }
-  window.bdOpen = function() {
+  // Tabs (owner): ✏️ Design → 💾 Save (the office PC prints it) ·
+  // 🖨 To print (the office PC) · 📍 Where does it go? (scan a printed sticker).
+  // BD.spots = [{ loc, boxes }] — each column the stickers go to, how many boxes.
+  BD.spots = []; BD.tab = 'design'; BD.sku = '';
+  function bdTabs() {
+    var t = function(k, txt) { var on = BD.tab === k; return '<button type="button" onclick="bdOpen(true, \'' + k + '\')" style="flex:1;padding:9px 4px;border-radius:9px;border:1.5px solid ' + (on ? 'var(--accent)' : 'var(--border)') + ';background:' + (on ? 'var(--accent)' : 'var(--bg3)') + ';color:' + (on ? '#fff' : 'var(--text)') + ';font-size:13px;font-weight:800;cursor:pointer">' + txt + '</button>'; };
+    return '<div style="display:flex;gap:6px;margin-bottom:10px">' + t('design', '✏️ Design') + t('print', '🖨 To print' + (_bdQueue.length ? ' (' + _bdQueue.length + ')' : '')) + t('where', '📍 Where does it go?') + '</div>';
+  }
+  function bdSpotsHtml() {
+    var sum = BD.spots.reduce(function(n, x) { return n + x.boxes; }, 0);
+    return '<div style="font-size:13px;font-weight:800;margin:4px 0 6px">📍 Where do these stickers go? <span style="font-weight:600;color:var(--text2)">Scan each column</span></div>'
+      + '<input id="bd-col" type="text" inputmode="none" autocomplete="off" placeholder="📷 Scan the column label…" onkeydown="if(event.key===\'Enter\')bdColScan()" onblur="xfrKbOff(this)" style="width:100%;box-sizing:border-box;padding:11px;border:2px dashed var(--accent);border-radius:10px;font-size:16px;font-weight:700;font-family:var(--mono);text-transform:uppercase">'
+      + (BD.spots.length ? '<div style="margin-top:6px">' + BD.spots.map(function(x, i) {
+          return '<div style="display:flex;align-items:center;gap:8px;padding:7px 9px;border:1.5px solid var(--border);border-radius:9px;margin-bottom:5px">'
+            + '<b style="font-family:var(--mono);font-size:15px;flex:1">📍 ' + xfrEsc(x.loc) + '</b><b style="font-size:15px">' + x.boxes + ' box' + (x.boxes === 1 ? '' : 'es') + '</b>'
+            + '<button type="button" onclick="bdSpotDel(' + i + ')" style="border:none;background:none;color:var(--red);font-size:18px;cursor:pointer">✕</button></div>';
+        }).join('') + '</div>' : '')
+      + '<div style="font-size:12px;margin:4px 0 10px;color:' + (BD.spots.length && sum !== BD.copies ? 'var(--orange)' : 'var(--text2)') + '">'
+      + (BD.spots.length ? 'Boxes on the list: <b>' + sum + '</b> · labels: <b>' + BD.copies + '</b>' + (sum !== BD.copies ? ' — not the same' : ' ✓') : 'No column yet.') + '</div>';
+  }
+  window.bdOpen = function(restore, tab, loaded) {
     bdLoadLib(function() {});
-    BD.copies = 1;
-    xfrPopup('<div style="font-weight:800;font-size:16px;margin-bottom:6px">🏷 Barcode designer</div>'
+    if (restore) { var cur = g('bd-sku'); if (cur) BD.sku = bdClean(cur.value); }
+    else { BD.copies = 1; BD.spots = []; BD.sku = ''; }
+    BD.tab = tab || (restore ? BD.tab : 'design');
+    if (BD.tab === 'print' && !loaded) bdQueueLoad(true); // loaded = drawn from that load (no loop)
+    if (BD.tab !== 'design') { xfrPopup('<div style="font-weight:800;font-size:16px;margin-bottom:6px">🏷 Barcode designer</div>' + bdTabs() + (BD.tab === 'print' ? bdQueueHtml() : bdWhereHtml())
+      + '<button type="button" onclick="xfrPopupClose()" style="width:100%;padding:12px;border-radius:12px;border:1.5px solid var(--border);background:var(--bg);color:var(--text2);font-size:15px;font-weight:700;cursor:pointer;margin-top:10px">Close</button>');
+      if (BD.tab === 'where') setTimeout(function() { var x = g('bd-find'); if (x) x.focus(); }, 50);
+      return; }
+    xfrPopup('<div style="font-weight:800;font-size:16px;margin-bottom:6px">🏷 Barcode designer</div>' + bdTabs()
       + '<div style="font-size:12px;color:var(--text2);margin-bottom:8px">Type or scan the part # — prints a 2" × 1" label on the thermal printer.</div>'
       + '<input id="bd-sku" type="text" inputmode="none" autocomplete="off" placeholder="e.g. 8-8-8=8" oninput="bdPreview()" onblur="xfrKbOff(this)" onkeydown="if(event.key===\'Enter\')bdPrint()" style="width:100%;box-sizing:border-box;padding:12px;border:2px solid var(--accent);border-radius:10px;font-size:20px;font-weight:800;font-family:var(--mono);text-transform:uppercase">'
       + bdPad()
       + '<div id="bd-match" style="font-size:13px;margin-top:6px;min-height:18px"></div>'
       + '<div id="bd-prev" style="margin:10px auto;width:2in;height:1in;border:1px dashed var(--border);border-radius:6px;background:#fff;display:flex;flex-direction:column;align-items:center;justify-content:center;overflow:hidden"><span style="color:#999;font-size:12px">preview</span></div>'
-      + '<div style="font-size:13px;font-weight:800;margin-bottom:6px">How many labels? <span id="bd-n" style="color:var(--accent)">1</span></div>'
+      + '<div style="font-size:13px;font-weight:800;margin-bottom:6px">How many labels? <span id="bd-n" style="color:var(--accent)">' + BD.copies + '</span></div>'
       + '<div style="display:grid;grid-template-columns:repeat(5,1fr);gap:6px;margin-bottom:10px">'
       + [1, 2, 5, 10].map(function(n) { return '<button type="button" onclick="bdCopies(' + n + ')" style="padding:11px 0;border-radius:10px;border:1.5px solid var(--border);background:var(--bg3);font-size:17px;font-weight:800;cursor:pointer">' + n + '</button>'; }).join('')
       + '<button type="button" onclick="bdCopies(\'more\')" style="padding:11px 0;border-radius:10px;border:1.5px solid var(--border);background:var(--bg3);font-size:13px;font-weight:800;cursor:pointer">More…</button></div>'
-      + '<button type="button" onclick="bdPrint()" style="width:100%;padding:15px;border-radius:12px;border:none;background:var(--accent);color:#fff;font-size:17px;font-weight:800;cursor:pointer;margin-bottom:8px">🖨 Print label</button>'
+      + '<div id="bd-spots">' + bdSpotsHtml() + '</div>'
+      + '<button type="button" onclick="bdSave()" style="width:100%;padding:15px;border-radius:12px;border:none;background:var(--green,#16a34a);color:#fff;font-size:17px;font-weight:800;cursor:pointer;margin-bottom:8px">💾 Save — print it on the computer</button>'
+      + '<button type="button" onclick="bdPrint()" style="width:100%;padding:12px;border-radius:12px;border:1.5px solid var(--accent);background:var(--bg);color:var(--accent);font-size:15px;font-weight:800;cursor:pointer;margin-bottom:8px">🖨 Print label here</button>'
       + '<button type="button" onclick="xfrPopupClose()" style="width:100%;padding:12px;border-radius:12px;border:1.5px solid var(--border);background:var(--bg);color:var(--text2);font-size:15px;font-weight:700;cursor:pointer">Close</button>');
-    setTimeout(function() { var x = g('bd-sku'); if (x) x.focus(); }, 50);
+    setTimeout(function() { var x = g('bd-sku'); if (x) { if (BD.sku) { x.value = BD.sku; bdPreview(); } x.focus(); } }, 50);
+  };
+  // A column scanned → how many boxes there need this sticker (number pad) → on the list.
+  window.bdColScan = function() {
+    var c = g('bd-col'), loc = bdClean(c && c.value); if (c) c.value = '';
+    if (!loc) return;
+    if (!xfrIsLoc(loc)) { invFlash('"' + loc + '" is not a column label — scan the column', 'error'); return; }
+    var sku = bdClean((g('bd-sku') || {}).value); BD.sku = sku;
+    if (!sku) { invFlash('Type the part # first', 'error'); return; }
+    var sum = BD.spots.reduce(function(n, x) { return n + x.boxes; }, 0), left = BD.copies - sum;
+    xfrKeypad('How many boxes at ' + loc + ' need the ' + sku + ' sticker?', left > 0 ? left : '', function(n) {
+      n = Math.round(n); var had = BD.spots.filter(function(x) { return x.loc === loc; })[0];
+      if (had) had.boxes = n; else BD.spots.push({ loc: loc, boxes: n });
+      bdOpen(true, 'design');
+      setTimeout(function() { var x = g('bd-col'); if (x) x.focus(); }, 120);
+    });
+  };
+  window.bdSpotDel = function(i) { BD.spots.splice(i, 1); var e = g('bd-spots'); if (e) e.innerHTML = bdSpotsHtml(); };
+  // 💾 Save: on record right away (WiFi-safe: no WiFi → kept on the phone, sent when WiFi is back).
+  window.bdSave = function() {
+    var sku = bdClean((g('bd-sku') || {}).value);
+    if (!sku) { invFlash('Type the part # first', 'error'); return; }
+    if (!BD.spots.length) { invFlash('Scan the column where the stickers go (📍 below)', 'error'); var c = g('bd-col'); if (c) c.focus(); return; }
+    var sum = BD.spots.reduce(function(n, x) { return n + x.boxes; }, 0);
+    if (sum !== BD.copies && !confirm('Labels: ' + BD.copies + ' · boxes on the list: ' + sum + '.\n\nSave it like this anyway?')) return;
+    var nm = BD.nameFor === sku ? BD.name : '', spots = BD.spots.slice(), copies = BD.copies;
+    invPost(W + '/inventory/barcode-job', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ sku: sku, name: nm, copies: copies, spots: spots }) })
+      .then(function(r) { return r.json(); }).then(function(d) {
+        if (!d || d.ok === false) { invFlash('✗ Not saved: ' + ((d && d.error) || 'error'), 'error'); return; }
+        invFlash(d.queued ? '📶 Saved on this phone — it sends by itself when WiFi is back, then print it on the computer' : '💾 Saved: ' + copies + ' × ' + sku + ' → print it on the computer (Audit → 🏷 Barcode designer → 🖨 To print)', 'success');
+        BD.spots = []; BD.copies = 1; BD.sku = ''; xfrPopupClose(); bdQueueLoad();
+      }).catch(function() { invFlash('✗ Not saved — try again', 'error'); });
+  };
+  // ── 🖨 To print (the office PC) ──
+  var _bdQueue = [];
+  window.bdQueueLoad = function(redraw) {
+    return wFetch(W + '/inventory/barcode-job/queue').then(function(r) { return r.json(); }).then(function(d) {
+      _bdQueue = (d && d.jobs) || [];
+      var c = g('bd-queue-card'), n = _bdQueue.length;
+      if (c) { c.style.display = n ? '' : 'none'; var t = g('bd-queue-txt'); if (t) t.textContent = n + ' label job' + (n === 1 ? '' : 's') + ' (' + _bdQueue.reduce(function(k, j) { return k + (j.copies || 0); }, 0) + ' stickers) waiting: ' + _bdQueue.slice(0, 4).map(function(j) { return j.sku; }).join(', ') + (n > 4 ? '…' : ''); }
+      if (redraw && BD.tab === 'print' && g('bd-q-list')) bdOpen(true, 'print', true);
+    }).catch(function() {});
+  };
+  function bdWhen(iso) { try { return new Date(iso).toLocaleString('en-US', { timeZone: 'America/New_York', month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' }); } catch (e) { return ''; } }
+  function bdQueueHtml() {
+    if (!_bdQueue.length) return '<div id="bd-q-list" style="font-size:13px;color:var(--text3);padding:10px 0">Nothing waiting to print.</div>';
+    return '<div id="bd-q-list">' + _bdQueue.map(function(j) {
+        return '<div style="border:1.5px solid var(--border);border-radius:10px;padding:8px 10px;margin-bottom:6px">'
+          + '<div style="display:flex;justify-content:space-between;gap:8px"><b style="font-family:var(--mono);font-size:16px">' + xfrEsc(j.sku) + '</b><b>× ' + j.copies + '</b></div>'
+          + (j.name ? '<div style="font-size:12px;color:var(--text2)">' + xfrEsc(j.name) + '</div>' : '')
+          + '<div style="font-size:12px;margin-top:3px">' + j.spots.map(function(x) { return '📍 <b style="font-family:var(--mono)">' + xfrEsc(x.loc) + '</b> ' + x.boxes + ' box' + (x.boxes === 1 ? '' : 'es'); }).join(' · ') + '</div>'
+          + '<div style="font-size:11px;color:var(--text3)">Saved by ' + xfrEsc(j.by_user || '?') + ' · ' + xfrEsc(bdWhen(j.ts)) + '</div></div>';
+      }).join('') + '</div><button type="button" onclick="bdPrintQueue()" style="width:100%;padding:15px;border-radius:12px;border:none;background:var(--accent);color:#fff;font-size:17px;font-weight:800;cursor:pointer">🖨 Print all (' + _bdQueue.reduce(function(k, j) { return k + j.copies; }, 0) + ' stickers)</button>';
+  }
+  // All waiting jobs → one print (each label 2" × 1"), then "did they print OK?" → marked printed (who / when).
+  window.bdPrintQueue = function() {
+    var list = _bdQueue.slice(); if (!list.length) return;
+    bdLoadLib(function() {
+      var who = (INV_CRED_USER && INV_CRED_USER.displayName) || '';
+      var foot = 'Printed' + (who ? ' by ' + who : '') + ' · ' + new Date().toLocaleDateString('en-US', { timeZone: 'America/New_York', month: 'short', day: 'numeric', year: 'numeric' });
+      var bodies = list.map(function(j) { var h = bdLabelHtml(j.sku, j.copies, j.name || '', foot); return { css: h.slice(h.indexOf('<style>') + 7, h.indexOf('</style>')), body: h.slice(h.indexOf('<body>') + 6, h.lastIndexOf('</body>')) }; });
+      var html = '<!doctype html><html><head><meta charset="utf-8"><title>Barcode labels</title><style>' + bodies[0].css
+        + '.l{page-break-after:always;break-after:page}.l:last-child{page-break-after:auto;break-after:auto}</style></head><body>'
+        + bodies.map(function(b, i) { return b.body.replace(/<svg class="b">/g, '<svg class="b" data-j="' + i + '" style="height:' + (list[i].name ? '.42in' : '.52in') + '">'); }).join('') + '</body></html>';
+      var f = document.createElement('iframe');
+      f.style.cssText = 'position:fixed;right:0;bottom:0;width:0;height:0;border:0';
+      document.body.appendChild(f);
+      var d = f.contentDocument; d.open(); d.write(html); d.close();
+      try { d.querySelectorAll('svg.b').forEach(function(el) { bdDraw(el, list[+el.getAttribute('data-j')].sku); }); }
+      catch (e) { f.remove(); invFlash('Can\'t make one of the barcodes', 'error'); return; }
+      setTimeout(function() {
+        try { f.contentWindow.focus(); f.contentWindow.print(); } catch (e) {}
+        setTimeout(function() {
+          f.remove();
+          if (!confirm('Did the ' + list.reduce(function(k, j) { return k + j.copies; }, 0) + ' barcode stickers print OK?\n\nOK = take them off the list · Cancel = keep them to print again')) return;
+          wFetch(W + '/inventory/barcode-job/printed', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ ids: list.map(function(j) { return j.id; }) }) })
+            .then(function() { invFlash('✓ Printed — scan a sticker in 📍 Where does it go? to see its columns', 'success'); bdQueueLoad(true); }).catch(function() {});
+        }, 800);
+      }, 200);
+    });
+  };
+  // ── 📍 Where does it go? — scan a printed sticker → its columns + how many boxes each ──
+  BD.find = null;
+  function bdWhereHtml() {
+    var h = '<div style="font-size:12px;color:var(--text2);margin-bottom:6px">Scan the sticker you printed — it shows which column it goes to and how many boxes there.</div>'
+      + '<input id="bd-find" type="text" inputmode="none" autocomplete="off" placeholder="📷 Scan the sticker…" onkeydown="if(event.key===\'Enter\')bdFind()" onblur="xfrKbOff(this)" style="width:100%;box-sizing:border-box;padding:12px;border:2px solid var(--accent);border-radius:10px;font-size:18px;font-weight:800;font-family:var(--mono);text-transform:uppercase">'
+      + '<button type="button" onclick="xfrKbOn(\'bd-find\')" style="margin-top:6px;padding:8px 12px;border-radius:9px;border:1.5px solid var(--border);background:var(--bg3);font-size:13px;cursor:pointer">⌨ Type it</button>';
+    var F = BD.find; if (!F) return h;
+    if (!F.jobs.length) return h + '<div style="margin-top:10px;font-size:14px;color:var(--orange);font-weight:700">No saved sticker for ' + xfrEsc(F.sku) + ' (last 4 months).</div>';
+    return h + '<div style="margin-top:10px;font-family:var(--mono);font-size:18px;font-weight:800">' + xfrEsc(F.sku) + '</div>' + F.jobs.map(function(j) {
+      return '<div style="border:1.5px solid var(--border);border-radius:10px;padding:8px 10px;margin-top:6px">'
+        + '<div style="font-size:11px;color:var(--text3)">' + j.copies + ' sticker' + (j.copies === 1 ? '' : 's') + ' · saved by ' + xfrEsc(j.by_user || '?') + ' ' + xfrEsc(bdWhen(j.ts)) + ' · '
+        + (j.printed_at ? 'printed by ' + xfrEsc(j.printed_by || '?') + ' ' + xfrEsc(bdWhen(j.printed_at)) : '<b style="color:var(--orange)">not printed yet</b>') + '</div>'
+        + j.spots.map(function(x) {
+          return '<div style="display:flex;align-items:center;gap:8px;padding:8px 0;border-top:1px solid var(--border)">'
+            + '<div style="flex:1"><div style="font-family:var(--mono);font-size:20px;font-weight:800">📍 ' + xfrEsc(x.loc) + '</div><div style="font-size:15px;font-weight:800">' + x.boxes + ' box' + (x.boxes === 1 ? '' : 'es') + ' need this sticker</div></div>'
+            + (x.doneAt ? '<div style="font-size:12px;color:var(--green);font-weight:700;text-align:right">✓ Done<br>' + xfrEsc(x.doneBy || '') + ' ' + xfrEsc(bdWhen(x.doneAt)) + '</div>'
+              : '<button type="button" onclick="bdStuck(' + j.id + ', \'' + xfrEsc(x.loc).replace(/'/g, '') + '\')" style="padding:10px 12px;border-radius:10px;border:none;background:var(--green,#16a34a);color:#fff;font-size:14px;font-weight:800;cursor:pointer">✓ Done</button>') + '</div>';
+        }).join('') + '</div>';
+    }).join('');
+  }
+  window.bdFind = function() {
+    var x = g('bd-find'), sku = bdClean(x && x.value); if (x) x.value = ''; if (!sku) return;
+    wFetch(W + '/inventory/barcode-job/find?sku=' + encodeURIComponent(sku)).then(function(r) { return r.json(); }).then(function(d) {
+      if (!d || d.ok === false) { invFlash((d && d.error) || 'Not found', 'error'); return; }
+      BD.find = { sku: d.sku, jobs: d.jobs || [] }; bdOpen(true, 'where');
+    }).catch(function() { invFlash('📶 No WiFi — try again', 'error'); });
+  };
+  // ✓ Done at a column: on record (who / when); WiFi-safe.
+  window.bdStuck = function(id, loc) {
+    invPost(W + '/inventory/barcode-job/stuck', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ id: id, loc: loc }) })
+      .then(function(r) { return r.json(); }).then(function(d) {
+        if (!d || d.ok === false) { invFlash('✗ ' + ((d && d.error) || 'Not saved'), 'error'); return; }
+        var j = BD.find && BD.find.jobs.filter(function(k) { return k.id === id; })[0], sp = j && j.spots.filter(function(k) { return k.loc === loc; })[0];
+        if (sp) { sp.doneAt = (d.spot && d.spot.doneAt) || new Date().toISOString(); sp.doneBy = (d.spot && d.spot.doneBy) || ((INV_CRED_USER && INV_CRED_USER.displayName) || ''); }
+        invFlash(d.queued ? '📶 Saved on this phone — sends when WiFi is back' : '✓ ' + loc + ' done', 'success'); bdOpen(true, 'where');
+      }).catch(function() { invFlash('✗ Not saved — try again', 'error'); });
   };
   // Our own keypad for part #s (owner): 1–9, 0, "-", "=", "X", "=OLD", ⌫, Clear, and
   // the other characters our part #s use (vendor list: & C K W W.1C W.2C J N) —
@@ -13249,8 +13403,9 @@ window.invCredLogin = async function() {
     x.value = v; bdPreview();
   };
   window.bdCopies = function(n) {
-    if (n === 'more') { var keep = (g('bd-sku') || {}).value || ''; xfrKeypad('How many labels?', '', function(v) { BD.copies = Math.max(1, Math.min(200, Math.round(v))); bdOpen(); setTimeout(function() { var x = g('bd-sku'); if (x) { x.value = keep; bdPreview(); } var c = g('bd-n'); if (c) c.textContent = BD.copies; }, 80); }); return; }
+    if (n === 'more') { BD.sku = bdClean((g('bd-sku') || {}).value); xfrKeypad('How many labels?', '', function(v) { BD.copies = Math.max(1, Math.min(200, Math.round(v))); bdOpen(true, 'design'); }); return; }
     BD.copies = n; var c = g('bd-n'); if (c) c.textContent = n;
+    var sp = g('bd-spots'); if (sp) sp.innerHTML = bdSpotsHtml();
   };
   // Match the part # to its product name (SKU Mgr) — shown here and printed on the label.
   var _bdTimer = null;
