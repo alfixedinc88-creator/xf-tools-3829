@@ -2235,6 +2235,28 @@ console.log('\nLabel Printer: barcode in the center of the label; pick how many 
     /id="lp-single-copies"/.test(lp) && /id="lp-print-copies"/.test(lp) && /var n = lpCopies\('lp-single-copies'\);\s*var zpl = lpGenZPL\(loc, n\);/.test(lp) && /var n = lpCopies\('lp-print-copies'\);/.test(lp), null);
 }
 
+// Owner: "Last run — as soon as we purchase it shows purchased, but after a refresh it goes back to Would buy / Low value and
+// looks like I can buy it again, until Run preview now. Once purchased it should stay purchased, except one that wasn't purchased".
+console.log('\nAuto Label → Last run: a purchased label stays "Purchased" after a refresh; a failed one stays to buy');
+{
+  const t0 = new Date(Date.now() - 3600e3).toISOString();
+  sq.prepare("INSERT INTO app_config (key, value) VALUES ('autolabel_last_run', ?) ON CONFLICT(key) DO UPDATE SET value=excluded.value")
+    .run(JSON.stringify({ startedAt: t0, counts: { would_buy: 2, low_value: 1 }, orders: [
+      { number: 'P-1', decision: 'would_buy', price: 5.1, reason: 'USPS preferred' },
+      { number: 'P-2', decision: 'low_value', price: 4.8, reason: 'Label $4.80 vs order $5.00' },
+      { number: 'P-3', decision: 'would_buy', price: 6.2, reason: 'USPS preferred' }] }));
+  const lg = (num, action, tracking, ts) => sq.prepare("INSERT INTO autolabel_log (ts, date, order_number, action, carrier, service, price, tracking) VALUES (?,?,?,?,?,?,?,?)")
+    .run(ts || new Date().toISOString(), nyToday, num, action, 'USPS', 'Ground Advantage', action === 'bought' ? 5.1 : null, tracking || '');
+  lg('P-1', 'bought', '9400P1'); lg('P-2', 'bought', '9400P2'); lg('P-3', 'buy_failed');
+  lg('P-3', 'bought', 'OLD', new Date(Date.now() - 2 * 3600e3).toISOString()); // bought before this run → not counted for it
+  const c = await get('/veeqo/autolabel/config');
+  const R = n => c.lastRun.orders.find(o => o.number === n);
+  check('bought by hand (Would buy and Low value) → still ✅ Bought with its tracking after a refresh, no tick box to buy again',
+    R('P-1').decision === 'bought' && R('P-1').tracking === '9400P1' && R('P-2').decision === 'bought' && R('P-2').tracking === '9400P2' && /Purchased/.test(R('P-1').reason), [R('P-1'), R('P-2')]);
+  check('…a buy that failed stays as it was (Would buy), and the chips count right (Bought 2, Would buy 1, Low value 0)',
+    R('P-3').decision === 'would_buy' && c.lastRun.counts.bought === 2 && c.lastRun.counts.would_buy === 1 && !c.lastRun.counts.low_value, c.lastRun.counts);
+}
+
 // Owner: "Audit — after scanning the column or a box, scroll down to the scan bar (see more info below); on the phone the
 // Inventory / Refresh / Sign out / Apps bar stays at the top but small — tap to show all".
 console.log('\nInventory: Audit scrolls to the scan bar after a scan; slim top bar on the phone');
