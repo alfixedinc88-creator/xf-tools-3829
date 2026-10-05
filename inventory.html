@@ -897,6 +897,7 @@ window.invCredLogin = async function() {
         <button type="button" class="inv-x-btn" title="Label won't scan? Type it" onclick="xfrTypeOn()" style="font-size:15px">&#x2328;</button>
         <button type="button" class="inv-x-btn" title="Clear" onclick="var x=document.getElementById('xfr-cont-box');x.value='';xfrGoBox()">&#x2715;</button>
       </div>
+      <div id="xfr-cont-last" style="font-size:12px;color:var(--text3);margin:-4px 0 6px;min-height:15px"></div>
       <div id="xfr-cont-go"></div>
       <!-- Folded so the front page stays short (owner): box UPCs, photos, search. -->
       <details id="xfr-cont-more" style="margin-bottom:6px;border:1px solid var(--border);border-radius:9px;padding:6px 9px">
@@ -8983,8 +8984,13 @@ window.invCredLogin = async function() {
       invFlash('Not found: ' + code, 'error'); xfrGoBox();
     }).catch(function(e) { invFlash('Lookup failed: ' + ((e && e.message) || 'network') + ' — scan again', 'error'); xfrGoBox(); });
   }
+  // Owner: "scan the box in the new pallet — nothing happens, nothing changes".
+  // Every scan shows right under the scan box that it arrived (and what came of it).
+  function xfrScanNote(txt, col) { var e = g('xfr-cont-last'); if (e) { e.style.color = col || 'var(--text3)'; e.textContent = txt; } }
+  window.xfrScanNote = xfrScanNote;
   window.xfrBoxScan = function(code) {
     code = String(code || '').trim(); if (!code) return;
+    xfrScanNote('📷 Last scan: ' + code + ' · ' + new Date().toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit', second: '2-digit' }) + ' — looking…', 'var(--accent)');
     var box = g('xfr-cont-box'); if (box) box.value = '';
     if (xfrGo.focus && xfrGo.extra) { xfrExtraScan(code); return; } // ➕ extra box found: box, then the shelf label
     // Owner: "scan the box → it should bring you to the pallet". The "✅ Pallet
@@ -9173,12 +9179,14 @@ window.invCredLogin = async function() {
   // only one). Not known there (e.g. a box UPC not saved yet) → the full
   // lookup as before, which also asks for the part # and saves the UPC.
   function xfrFastScan(code, cb) {
+    var slow = setTimeout(function() { xfrScanNote('📷 ' + code + ' — still looking… (slow WiFi?) — wait, or scan again', 'var(--orange)'); invFlash('Still looking for ' + code + '… (slow WiFi?)', 'error'); }, 6000);
+    var cb0 = cb; cb = function(part, d) { clearTimeout(slow); xfrScanNote('📷 Last scan: ' + code + ' → ' + part, 'var(--text3)'); cb0(part, d); };
     wFetch(W + '/inventory/containers/scan?code=' + encodeURIComponent(code)).then(function(r) { return r.json(); })
       .catch(function(e) { if (/Unauthorized/.test(e && e.message)) throw e; console.warn('[Container here] fast scan failed:', e && e.message); return null; })
       .then(function(d) {
         if (d && d.ok && d.part) { cb(String(d.part).toUpperCase(), d.view && !d.view.ok ? { ok: true, part: d.part, lines: d.lines } : d); return; }
         xfrResolve(code, function(part) { cb(part, null); });
-      }).catch(function(e) { console.error(e); invFlash('Scan did not work: ' + ((e && e.message) || 'error') + ' — scan again', 'error'); xfrGoBox(); });
+      }).catch(function(e) { clearTimeout(slow); console.error(e); xfrScanNote('📷 ' + code + ' — scan did not work: ' + ((e && e.message) || 'error'), 'var(--red)'); invFlash('Scan did not work: ' + ((e && e.message) || 'error') + ' — scan again', 'error'); xfrGoBox(); });
   }
   // Pallets (of received containers) that still have boxes of `part`.
   function xfrFindPallets(part, fromPallet) {
@@ -9278,6 +9286,23 @@ window.invCredLogin = async function() {
       if (el && !silent) el.innerHTML = "<div class='iempty' style='color:var(--red)'>Pallet did not load: " + xfrE((e && e.message) || 'network') + (why && why !== (e && e.message) ? ' (' + xfrE(why) + ')' : '') + " — tap ↻ or scan again</div>";
     });
   };
+  // The scanner types like a keyboard into whatever has the cursor. After a
+  // tap on a button (✏️, ±, Not this one…) the cursor is on that button and a
+  // scan used to vanish. In 🚢 Container here a scan is now caught anywhere
+  // (when no text box has the cursor) and goes to the box scan.
+  (function() {
+    var buf = '', t = null;
+    document.addEventListener('keydown', function(e) {
+      if (typeof xfrSearchMode === 'undefined' || xfrSearchMode !== 'cont') return;
+      var pnl = g('inv-panel-transfer'); if (!pnl || !/iactive/.test(pnl.className)) return;
+      var a = document.activeElement, tag = a && a.tagName;
+      if (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT' || (a && a.isContentEditable)) return;
+      var m = g('xfr-modal'); if (m && !m.getAttribute('data-scan-closes') && !/Not on this pallet|Already moved/.test(m.textContent)) return; // a number pad / question is open
+      if (g('xfr-put-modal')) return;
+      if (e.key === 'Enter') { if (buf) { e.preventDefault(); var c = buf; buf = ''; clearTimeout(t); if (m) m.remove(); xfrBoxScan(c); } return; }
+      if (e.key && e.key.length === 1 && !e.ctrlKey && !e.metaKey && !e.altKey) { buf += e.key; e.preventDefault(); clearTimeout(t); t = setTimeout(function() { buf = ''; }, 400); }
+    }, true);
+  })();
   window.xfrGoBack = function() { xfrGoReset(); xfrContLoad(); xfrGoBox(); };
   window.xfrGoReload = function() { if (xfrGo.focus) xfrGoOpen(xfrGo.focus.title, xfrGo.focus.vendor, xfrGo.focus.pallet); };
   // Moves / extras still waiting on this phone (no WiFi) count on the
