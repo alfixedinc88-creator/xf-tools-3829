@@ -2186,5 +2186,23 @@ console.log('\nAuto Label → Last run: sorted by Veeqo bin; 👀 Would buy grou
     && /\(!grpK \|\| _psAlGroupOf\(o\)\.key === grpK\)/.test(ph7) && /'🔀 mix'/.test(ph7), null);
 }
 
+// Owner: "how come I don't see any package ship with UPS?" — the screen must say what UPS offered and why it lost.
+console.log('\nAuto Label: when USPS is picked, Why says what UPS offered and why it lost');
+{
+  const { readFileSync } = await import('node:fs');
+  const ws = readFileSync(workerPath, 'utf8'), ph8 = readFileSync(fileURLToPath(new URL('../packship.html', import.meta.url)), 'utf8');
+  const fn = (ws.match(/function autolabelChooseRate\(order, quotes, cfg\) \{[\s\S]*?\n\}/) || [''])[0];
+  const choose = new Function('autolabelChannelMatches', 'autolabelLowValue', fn + '; return autolabelChooseRate;')((o, l) => (l || []).some(x => /walmart/i.test(o.ch) && /walmart/i.test(x)), () => null);
+  const cfg = { upsMinSavings: 0.8, upsMaxDays: 3, uspsOnlyChannels: ['walmart'] };
+  const U = (price, days) => ({ carrier: 'USPS', price, days, service: 'GA' }), P = (price, days) => ({ carrier: 'UPS', price, days, service: 'Ground' });
+  const r = (q, ch) => choose({ ch: ch || 'ebay' }, q, cfg);
+  const a = r([U(6), P(4, 2)]), b = r([U(6)]), c = r([U(6), P(4, 5)]), d = r([U(6), P(4, null)]), e = r([U(6), P(5.5, 2)]), f = r([U(6), P(4, 2)], 'Walmart');
+  check('UPS picked when ≥ $0.80 cheaper and ≤ 3 days; otherwise Why says: no UPS rate / too slow / no delivery days / only $x cheaper / USPS-only channel',
+    a.pick.carrier === 'UPS' && /no UPS rate from Veeqo/.test(b.reason) && /UPS \$4\.00 but 5 days \(needs 3 or less\)/.test(c.reason)
+    && /UPS \$4\.00 but Veeqo gave no delivery days/.test(d.reason) && /UPS only \$0\.50 cheaper — needs \$0\.80/.test(e.reason) && /USPS only for this channel/.test(f.reason),
+    [a.reason, b.reason, c.reason, d.reason, e.reason, f.reason]);
+  check('…Last run shows one line: UPS picked N · not picked — no UPS rate / too slow / no delivery days / not cheap enough / USPS-only channel (+ the rule)', /id = 'ps-al-ups-why'/.test(ph8) && /not picked — no UPS rate/.test(ph8), null);
+}
+
 console.log('\n' + (failed ? '❌ ' + failed + ' check(s) FAILED' : '✅ all ' + passed + ' checks passed') + '\n');
 process.exit(failed ? 1 : 0);
