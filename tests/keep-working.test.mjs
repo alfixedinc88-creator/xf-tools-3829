@@ -2121,6 +2121,7 @@ console.log('\nAuto Label → 🧩 same name + address: ≤ 20 lb together → o
 
 // Owner: "low value on Auto Label — let me still select all and print like would buy, but keep the record;
 // later we go back to each listing to check and change the price".
+const { readFileSync: readFileSync0 } = await import('node:fs');
 console.log('\nAuto Label → 💸 Low value: can be ticked and printed like Would buy, kept on the Low value list');
 {
   const realFetch = globalThis.fetch; const bought = [];
@@ -2146,6 +2147,10 @@ console.log('\nAuto Label → 💸 Low value: can be ticked and printed like Wou
   check('…on record: the Low value list says printed (who / when / tracking), and the log says "low value, bought anyway"',
     !!lvRow()?.bought_at && lvRow()?.tracking === '9400LV1' && lvRow()?.status === 'open'
     && /low value, bought anyway/.test(sq.prepare("SELECT reason FROM autolabel_log WHERE order_number = 'LV-1' AND action = 'bought'").get()?.reason || ''), lvRow());
+  const cf = await get('/veeqo/autolabel/config');
+  const needs = +((ph0 => (ph0.match(/var _PS_AL_SERVER_NEEDS = (\d+);/) || [])[1])(readFileSync0(fileURLToPath(new URL('../packship.html', import.meta.url)), 'utf8')));
+  check('…the page warns in red when the server is older than it (Cloudflare build failed): server version ≥ what the page needs, and the warning is there',
+    cf.serverVersion >= needs && needs >= 3 && /id = 'ps-al-server-old'/.test(readFileSync0(fileURLToPath(new URL('../packship.html', import.meta.url)), 'utf8')), { server: cf.serverVersion, needs });
   const l1 = await get('/veeqo/autolabel/low-value?status=open');
   const c1 = await post('/veeqo/autolabel/low-value-checked', { orderId: '990', note: 'raised to $7.99' });
   const l2 = await get('/veeqo/autolabel/low-value?status=open'), l3 = await get('/veeqo/autolabel/low-value?status=checked');

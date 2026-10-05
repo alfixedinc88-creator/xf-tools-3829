@@ -24145,7 +24145,12 @@ async function handleVeeqoRoute(url, method, request, env, session) {
 const AUTOLABEL_CONFIG_KEY   = 'autolabel_config';
 const AUTOLABEL_LASTRUN_KEY  = 'autolabel_last_run';
 const AUTOLABEL_VERIFIED_KEY = 'autolabel_buy_verified';
-const AUTOLABEL_MERGE_VERIFIED_KEY = 'autolabel_merge_verified'; // auto runs merge only after one merge by hand worked
+const AUTOLABEL_MERGE_VERIFIED_KEY = 'autolabel_merge_verified';
+// Bumped with every Auto Label server change. Pack & Ship compares it with the
+// version it expects and shows a red warning when the server is older (owner:
+// "low value still won't print, merge gone" — Cloudflare's build had failed, so
+// the old server was still running behind the new page).
+const AUTOLABEL_SERVER_VERSION = 3; // 1 = merge one box, 2 = low value printable, 3 = this check // auto runs merge only after one merge by hand worked
 
 const AUTOLABEL_DEFAULTS = {
   mode: 'off',                 // 'off' | 'preview' | 'auto'
@@ -25868,7 +25873,7 @@ async function handleAutolabelRoute(path, method, url, request, env, session) {
     try { lastRun = JSON.parse(await autolabelGetKey(env, AUTOLABEL_LASTRUN_KEY) || 'null'); } catch (_) {}
     return veeqoResp({ ok: true, config: await autolabelLoadConfig(env), defaults: AUTOLABEL_DEFAULTS,
       buyVerified: (await autolabelGetKey(env, AUTOLABEL_VERIFIED_KEY)) === 'yes',
-      mergeVerified: (await autolabelGetKey(env, AUTOLABEL_MERGE_VERIFIED_KEY)) === 'yes', lastRun });
+      mergeVerified: (await autolabelGetKey(env, AUTOLABEL_MERGE_VERIFIED_KEY)) === 'yes', serverVersion: AUTOLABEL_SERVER_VERSION, lastRun });
   }
 
   if (path === '/veeqo/autolabel/config' && method === 'POST') {
