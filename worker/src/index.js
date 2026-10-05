@@ -24206,6 +24206,7 @@ const AUTOLABEL_DEFAULTS = {
   mode: 'off',                 // 'off' | 'preview' | 'auto'
   cancelWatch: false,          // add cancelled-but-already-printed orders to the Cancellation list
   waitMinutes: 30,             // wait this long after the NEWEST order for a person before buying
+  noWaitTimes: 'Mon-Fri 15:50-17:00; Sat 13:00-14:15', // ...except in these New York times: print as soon as an order comes in (owner)
   upsMinSavings: 0.70,         // switch USPS -> UPS only if UPS is at least this much cheaper ($)... (owner: $0.70)
   upsMaxDays: 2,               // ...AND UPS arrives in this many days or less (owner: 2 days)
   uspsOnlyChannels: ['walmart'], // channels that must always ship USPS (name contains)
@@ -24269,6 +24270,11 @@ async function autolabelEnsureTables(env) {
       status TEXT NOT NULL DEFAULT 'open', checked_by TEXT, checked_at TEXT, note TEXT
     )
   `).run().catch(()=>{});
+  // 📦 Confirmed boxes: real weight + size for exact contents (SKU × qty), and every change.
+  await env.DB.prepare(`CREATE TABLE IF NOT EXISTS box_weight_confirmed (box_key TEXT PRIMARY KEY, lines TEXT, weight_lb REAL NOT NULL,
+    length_in REAL, width_in REAL, height_in REAL, by_user TEXT, updated_at TEXT)`).run().catch(()=>{});
+  await env.DB.prepare(`CREATE TABLE IF NOT EXISTS box_weight_log (id INTEGER PRIMARY KEY AUTOINCREMENT, box_key TEXT, before_val TEXT, after_val TEXT,
+    order_number TEXT, by_user TEXT, at TEXT)`).run().catch(()=>{});
   // ✂️ Orders split into boxes in Veeqo (over the box limit): the plan, who, when, what Veeqo said.
   await env.DB.prepare(`
     CREATE TABLE IF NOT EXISTS autolabel_split (
@@ -24348,6 +24354,7 @@ function autolabelCleanConfig(c) {
     mode: ['off', 'preview', 'auto'].includes(c.mode) ? c.mode : 'off',
     cancelWatch: c.cancelWatch === true || c.cancelWatch === 'true',
     waitMinutes:       num(c.waitMinutes, D.waitMinutes, 0, 1440),
+    noWaitTimes:       autolabelNoWaitClean(c.noWaitTimes == null ? D.noWaitTimes : c.noWaitTimes),
     upsMinSavings:     num(c.upsMinSavings, D.upsMinSavings, 0, 100),
     upsMaxDays:        num(c.upsMaxDays, D.upsMaxDays, 1, 30),
     uspsOnlyChannels:  list(c.uspsOnlyChannels),
@@ -24364,6 +24371,45 @@ function autolabelCleanConfig(c) {
     cancelLookbackDays: Math.round(num(c.cancelLookbackDays, D.cancelLookbackDays, 1, 14)),
     minRunGapMinutes:  num(c.minRunGapMinutes, D.minRunGapMinutes, 1, 1440),
   };
+}
+
+// Owner: "Monday–Friday after 3:50 pm no more half-hour waiting — print as
+// soon as an order comes in, until 5 pm; Saturday 1 pm to 2:15 pm; after that
+// back to the half-hour wait". Written like "Mon-Fri 15:50-17:00; Sat 13:00-14:15"
+// (New York time); days Mon Tue Wed Thu Fri Sat Sun, a range or a list.
+const AUTOLABEL_DAYS = ['sun', 'mon', 'tue', 'wed', 'thu', 'fri', 'sat'];
+function autolabelNoWaitParse(text) {
+  const out = [];
+  for (const part of String(text || '').split(/[;\n]+/)) {
+    const m = part.trim().toLowerCase().match(/^([a-z ,\-]+?)\s+(\d{1,2}):(\d{2})\s*-\s*(\d{1,2}):(\d{2})$/);
+    if (!m) continue;
+    const days = new Set();
+    for (const d of m[1].split(/\s*,\s*/)) {
+      const r = d.split(/\s*-\s*/).map(x => AUTOLABEL_DAYS.indexOf(x.trim().slice(0, 3)));
+      if (r.some(x => x < 0)) { days.clear(); break; }
+      if (r.length === 1) days.add(r[0]); else for (let i = r[0]; ; i = (i + 1) % 7) { days.add(i); if (i === r[1]) break; }
+    }
+    const from = +m[2] * 60 + +m[3], to = +m[4] * 60 + +m[5];
+    if (days.size && from < to && to <= 24 * 60) out.push({ days: [...days], from, to });
+  }
+  return out;
+}
+function autolabelNoWaitText(w) {
+  const hm = n => `${Math.floor(n / 60)}:${String(n % 60).padStart(2, '0')}`;
+  const nm = d => AUTOLABEL_DAYS[d][0].toUpperCase() + AUTOLABEL_DAYS[d].slice(1);
+  const ds = w.days.slice().sort((a, b) => ((a + 6) % 7) - ((b + 6) % 7));
+  const run = ds.length > 2 && ds.every((d, i) => i === 0 || (ds[i - 1] + 1) % 7 === d);
+  return `${run ? nm(ds[0]) + '-' + nm(ds[ds.length - 1]) : ds.map(nm).join(',')} ${hm(w.from)}-${hm(w.to)}`;
+}
+// Keeps only the parts that make sense, written the same way every time.
+function autolabelNoWaitClean(text) { return autolabelNoWaitParse(text).map(autolabelNoWaitText).join('; '); }
+// Is it a no-wait time right now (New York)? → that time as text, else ''.
+function autolabelNoWaitNow(cfg, when) {
+  const p = new Intl.DateTimeFormat('en-US', { timeZone: 'America/New_York', weekday: 'short', hour: '2-digit', minute: '2-digit', hourCycle: 'h23' }).formatToParts(when || new Date());
+  const get = t => (p.find(x => x.type === t) || {}).value || '';
+  const day = AUTOLABEL_DAYS.indexOf(get('weekday').toLowerCase().slice(0, 3)), mins = +get('hour') * 60 + +get('minute');
+  const w = autolabelNoWaitParse(cfg.noWaitTimes).find(x => x.days.includes(day) && mins >= x.from && mins < x.to);
+  return w ? autolabelNoWaitText(w) : '';
 }
 
 async function autolabelLog(env, entry) {
@@ -24751,8 +24797,58 @@ async function autolabelLowValueNote(env, o, cost, pick, reason, bought) {
 // qty (_psFetchWeightByKey / _psComputeOrderWeight). If any line has no
 // catalog weight, falls back to Veeqo's own product weights (weight_grams),
 // then to the allocation's weight; null when nothing is known.
+// Owner: "click each box and fix its size and weight — Veeqo's weight is
+// sometimes wrong (100 pcs 3/8 pex angle: system 20 lb, we weighed 19.98 lb).
+// Once confirmed, the next time the same SKU with the same quantity comes,
+// always use that weight, whatever Veeqo says, until we edit it again".
+// One confirmed box per exact contents (SKU × qty, every line), in
+// box_weight_confirmed; every change in box_weight_log.
+function autolabelBoxKey(lines) {
+  const by = {};
+  for (const l of (lines || [])) { const k = String(l.sku || '').trim().toUpperCase(); const q = parseInt(l.qty) || 0; if (k && q > 0) by[k] = (by[k] || 0) + q; }
+  return Object.keys(by).sort().map(k => `${k}×${by[k]}`).join('|');
+}
+async function autolabelBoxConfirmed(env, key) {
+  if (!key) return null;
+  const r = await d1First(env, 'SELECT * FROM box_weight_confirmed WHERE box_key = ?', [key]);
+  return r ? { lb: r.weight_lb, l: r.length_in, w: r.width_in, h: r.height_in, by: r.by_user || '', at: r.updated_at || '' } : null;
+}
 async function autolabelWeighAllocation(env, order, alloc) {
+  const w = await autolabelWeighAllocationRaw(env, order, alloc);
+  const c = await autolabelBoxConfirmed(env, w.boxKey);
+  return c ? { ...w, lb: c.lb, source: 'confirmed', anyReal: true, confirmed: c, systemLb: w.lb } : w;
+}
+// A confirmed box goes into Veeqo (weight + size) before its rates are asked
+// for, so the rate and the label are for the real box. Only when different.
+async function autolabelPushConfirmed(env, o, alloc, w) {
+  const c = w && w.confirmed; if (!c || !alloc) return false;
+  const pk = veeqoLivePackage(alloc);
+  const want = { allocId: alloc.id, weightLb: c.lb, lengthIn: c.l || pk.lengthIn, widthIn: c.w || pk.widthIn, heightIn: c.h || pk.heightIn };
+  const same = (a, b) => a != null && b != null && Math.abs(a - b) < 0.01;
+  if (same(pk.weightLb, want.weightLb) && (!c.l || (same(pk.lengthIn, want.lengthIn) && same(pk.widthIn, want.widthIn) && same(pk.heightIn, want.heightIn)))) return false;
+  let ok = false, said = [];
+  for (const [m, pth, body] of veeqoEditTries('package', want, o)) { const r = await veeqoWrite(env, m, pth, body); said.push(`${pth} → ${r.status}`); if (r.ok) { ok = true; break; } }
+  await veeqoEditTable(env);
+  await d1Run(env, 'INSERT INTO veeqo_edit_log (ts, by_user, order_number, order_id, alloc_id, sellable_id, sku, kind, before_val, after_val, ok, detail) VALUES (?,?,?,?,?,?,?,?,?,?,?,?)',
+    [new Date().toISOString(), 'auto (confirmed box)', o.number || '', String(o.id), String(alloc.id), '', '', 'package',
+     `${pk.lengthIn ?? '?'}×${pk.widthIn ?? '?'}×${pk.heightIn ?? '?'} in · ${pk.weightLb ?? '?'} lb`, `${want.lengthIn ?? '?'}×${want.widthIn ?? '?'}×${want.heightIn ?? '?'} in · ${want.weightLb} lb (confirmed by ${c.by || '?'})`, ok ? 1 : 0, ok ? '' : said.join(' | ')]);
+  return ok;
+}
+// A split plan's boxes with confirmed weights (and sizes) where known.
+async function autolabelSplitApplyConfirmed(env, plan, maxLb) {
+  if (!plan || !plan.ok) return plan;
+  for (const b of plan.boxes) {
+    const c = await autolabelBoxConfirmed(env, autolabelBoxKey(b.lines));
+    if (c) { b.systemLb = b.lb; b.lb = c.lb; b.confirmed = c; }
+  }
+  const over = plan.boxes.findIndex(b => b.lb > maxLb);
+  if (over >= 0) return { ok: false, reason: `box ${over + 1} was weighed at ${plan.boxes[over].lb} lb — over ${maxLb} lb; split it by hand` };
+  return plan;
+}
+
+async function autolabelWeighAllocationRaw(env, order, alloc) {
   const items = await veeqoExtractLineItems(env, order, alloc);
+  const boxKey = autolabelBoxKey(items.map(i => ({ sku: i.s, qty: i.q })));
   const bins = Array.from(new Set(items.map(li => String(li.b || '').trim().toUpperCase()).filter(Boolean)));
   const [weightByKey, overrides] = await Promise.all([
     _psFetchWeightByKey(env, bins).catch(() => ({})),
@@ -24785,16 +24881,16 @@ async function autolabelWeighAllocation(env, order, alloc) {
   const veeqoLb = vOk ? Math.round(grams / 453.59237 * 100) / 100 : null;
   const anyReal = lines.some(l => l.real);
 
-  if (w.weightLb != null) return { lb: w.weightLb, source: anyReal ? 'real' : 'catalog', units, lines, veeqoLb, anyReal };
-  if (veeqoLb != null) return { lb: veeqoLb, source: 'veeqo_products', units: vUnits, lines, veeqoLb, anyReal };
+  if (w.weightLb != null) return { boxKey, lb: w.weightLb, source: anyReal ? 'real' : 'catalog', units, lines, veeqoLb, anyReal };
+  if (veeqoLb != null) return { boxKey, lb: veeqoLb, source: 'veeqo_products', units: vUnits, lines, veeqoLb, anyReal };
 
   const aw = parseFloat(alloc && alloc.weight);
   if (isFinite(aw) && aw > 0) {
     const u = String((alloc && alloc.weight_unit) || 'g').toLowerCase();
     const lb = u.startsWith('oz') ? aw / 16 : u.startsWith('lb') ? aw : u.startsWith('kg') ? aw / 0.45359237 : aw / 453.59237;
-    return { lb: Math.round(lb * 100) / 100, source: 'veeqo_allocation', units, lines, veeqoLb, anyReal };
+    return { boxKey, lb: Math.round(lb * 100) / 100, source: 'veeqo_allocation', units, lines, veeqoLb, anyReal };
   }
-  return { lb: null, source: null, units, lines, veeqoLb, anyReal };
+  return { boxKey, lb: null, source: null, units, lines, veeqoLb, anyReal };
 }
 
 async function autolabelQueueReweigh(env, o, weight, reason) {
@@ -25313,6 +25409,9 @@ function autolabelSplitBoxes(units, maxLb) {
   }
   return { ok: false, reason: 'no way to split it under the limit' };
 }
+function autolabelSplitRowBoxes(plan) {
+  return plan.boxes.map(b => ({ lb: b.lb, systemLb: b.systemLb, confirmed: b.confirmed || null, lines: b.lines.map(l => ({ sku: l.sku, qty: l.qty, pieces: l.pieces })) }));
+}
 function autolabelBoxesText(plan) {
   return plan.boxes.map((b, i) => `Box ${i + 1} (${b.lb} lb): ` + b.lines.map(l => `${l.qty} × ${l.sku} = ${l.pieces} pcs`).join(', ')).join(' | ');
 }
@@ -25387,7 +25486,8 @@ async function autolabelSplitDo(env, o, plan, by) {
   for (const a of after) {
     const bi = plan.boxes.findIndex((b, i) => !boxesOut.some(x => x.i === i) && sameBox(a, b));
     const b = plan.boxes[bi];
-    for (const [m, pth, body] of veeqoEditTries('package', { allocId: a.id, weightLb: b.lb, lengthIn: pk.lengthIn, widthIn: pk.widthIn, heightIn: pk.heightIn }, order2 || o)) {
+    const cb = b.confirmed || {};
+    for (const [m, pth, body] of veeqoEditTries('package', { allocId: a.id, weightLb: b.lb, lengthIn: cb.l || pk.lengthIn, widthIn: cb.w || pk.widthIn, heightIn: cb.h || pk.heightIn }, order2 || o)) {
       const r = await veeqoWrite(env, m, pth, body); if (r.ok) break;
     }
     boxesOut.push({ i: bi, allocId: a.id, lb: b.lb, lines: b.lines });
@@ -25406,7 +25506,7 @@ async function autolabelSplitByHand(env, number, by) {
   if (_psAllocTrackingNumber(allocs[0])) return { ok: false, error: 'This order already has a label' };
   const { weight, units } = await autolabelSplitUnits(env, o, allocs[0]);
   if (weight.lb == null || weight.lb <= cfg.maxBoxLb) return { ok: false, error: `${weight.lb ?? '?'} lb — not over ${cfg.maxBoxLb} lb, no split needed` };
-  const plan = autolabelSplitBoxes(units, cfg.maxBoxLb);
+  const plan = await autolabelSplitApplyConfirmed(env, autolabelSplitBoxes(units, cfg.maxBoxLb), cfg.maxBoxLb);
   if (!plan.ok) return { ok: false, error: plan.reason };
   const res = await autolabelSplitDo(env, o, plan, by);
   if (res.ok) await autolabelSetKey(env, AUTOLABEL_SPLIT_VERIFIED_KEY, 'yes');
@@ -25417,12 +25517,16 @@ async function autolabelSplitByHand(env, number, by) {
 // opts.buy: actually buy (cron in 'auto' mode only).
 // opts.trigger: 'cron' | 'manual' (just for the saved summary).
 async function autolabelRun(env, opts = {}) {
-  const cfg = await autolabelLoadConfig(env);
+  const cfgSaved = await autolabelLoadConfig(env);
+  // No-wait time (owner): orders print as soon as they come in — no wait for a second order.
+  const noWait = autolabelNoWaitNow(cfgSaved, opts.now || new Date());
+  const cfg = noWait ? { ...cfgSaved, waitMinutes: 0 } : cfgSaved;
   const startedAt = new Date().toISOString();
   const buyVerified = (await autolabelGetKey(env, AUTOLABEL_VERIFIED_KEY)) === 'yes';
   const buy = !!opts.buy && cfg.mode === 'auto' && buyVerified;
   const result = { ok: true, trigger: opts.trigger || 'manual', startedAt, mode: cfg.mode, buying: buy, buyVerified,
                    counts: {}, orders: [], channels: {}, cancelWatch: null, quoteSource: null, notes: [] };
+  if (noWait) { result.noWait = noWait; result.notes.push(`⏩ No-wait time (${noWait}, New York): orders print as soon as they come in — no ${cfgSaved.waitMinutes}-min wait.`); }
   if (opts.buy && cfg.mode === 'auto' && !buyVerified) result.notes.push('Auto mode is on but no label has been test-bought yet — nothing was bought. Use "Test buy ONE label" first.');
 
   // 1) Cancellations from every channel (and Veeqo itself).
@@ -25526,14 +25630,15 @@ async function autolabelRun(env, opts = {}) {
         (!w.anyReal && w.veeqoLb != null && w.veeqoLb > max && Math.abs(w.veeqoLb - w.lb) > 1))) : -1;
       // Our weight was measured for real, but Veeqo still has a different
       // product weight -> its rate would be for the wrong weight.
-      const mismatchIdx = weights.findIndex(w => w.anyReal && w.lb != null && w.veeqoLb != null && Math.abs(w.veeqoLb - w.lb) > 0.5);
+      const mismatchIdx = weights.findIndex(w => w.anyReal && !w.confirmed && w.lb != null && w.veeqoLb != null && Math.abs(w.veeqoLb - w.lb) > 0.5);
+      if (weights.length === 1 && weights[0].confirmed) row.confirmed = weights[0].confirmed;
       const boxes = open.length > 1 ? `${open.length} boxes: ` : '';
 
       // ✂️ One box over the limit by our weight → split it into boxes (owner).
       const sp = heavyIdx >= 0 && open.length === 1 && allocs.length === 1 && weights[0].lb > max
-        ? autolabelSplitBoxes((await autolabelSplitUnits(env, o, open[0])).units, max) : null;
+        ? await autolabelSplitApplyConfirmed(env, autolabelSplitBoxes((await autolabelSplitUnits(env, o, open[0])).units, max), max) : null;
       if (sp && sp.ok) {
-        row.splitBoxes = sp.boxes.map(b => ({ lb: b.lb, lines: b.lines.map(l => ({ sku: l.sku, qty: l.qty, pieces: l.pieces })) }));
+        row.splitBoxes = autolabelSplitRowBoxes(sp);
         if (buy && splitVerified) {
           const r = await autolabelSplitDo(env, o, sp, '');
           row.decision = r.ok ? 'split_done' : 'split';
@@ -25584,6 +25689,7 @@ async function autolabelRun(env, opts = {}) {
             const picks = [];
             let hold = null;
             for (const a of todo) {
+              await autolabelPushConfirmed(env, o, a, weights[open.indexOf(a)]);
               const { quotes, source } = await autolabelGetQuotes(env, a.id);
               if (source) result.quoteSource = source;
               const choice = autolabelChooseRate(o, quotes, { ...cfg, lowValueRatio: 0 });
@@ -25872,10 +25978,9 @@ async function autolabelBuyByHand(env, number, by, allowLow) {
   }
   const picks = [];
   for (const a of todo) {
-    if (cfg.maxBoxLb > 0) {
-      const wt = await autolabelWeighAllocation(env, o, a);
-      if (wt.lb != null && wt.lb > cfg.maxBoxLb) return { ok: false, error: `${wt.lb} lb — over ${cfg.maxBoxLb} lb: print by hand in Veeqo, or re-weigh it first` };
-    }
+    const wt = await autolabelWeighAllocation(env, o, a);
+    if (cfg.maxBoxLb > 0 && wt.lb != null && wt.lb > cfg.maxBoxLb) return { ok: false, error: `${wt.lb} lb — over ${cfg.maxBoxLb} lb: print by hand in Veeqo, or re-weigh it first` };
+    await autolabelPushConfirmed(env, o, a, wt);
     const q = await autolabelGetQuotes(env, a.id);
     const choice = autolabelChooseRate(o, q.quotes, { ...cfg, lowValueRatio: 0 });
     if (!choice.pick) return { ok: false, error: choice.reason };
@@ -25946,12 +26051,21 @@ async function autolabelPreviewOne(env, number) {
   if (row.weightLb != null) row.weightLb = Math.round(row.weightLb * 100) / 100;
   const max = cfg.maxBoxLb;
   const heavy = max > 0 ? weights.find(w => w.lb != null && (w.lb > max || (!w.anyReal && w.veeqoLb != null && w.veeqoLb > max && Math.abs(w.veeqoLb - w.lb) > 1))) : null;
-  if (heavy) return { ...row, decision: 'weigh', reason: (heavy.lb > max ? `${heavy.lb} lb (${heavy.source})` : `System ${heavy.lb} lb but Veeqo ${heavy.veeqoLb} lb`) + ` — over ${max} lb: print by hand in Veeqo, or re-weigh the items` };
-  const mm = weights.find(w => w.anyReal && w.lb != null && w.veeqoLb != null && Math.abs(w.veeqoLb - w.lb) > 0.5);
+  if (weights.length === 1 && weights[0].confirmed) row.confirmed = weights[0].confirmed;
+  // ✂️ One box over the limit → its split plan (same as the run).
+  let spNote = '';
+  if (heavy && max > 0 && open.length === 1 && allocs.length === 1 && weights[0].lb != null && weights[0].lb > max) {
+    const sp = await autolabelSplitApplyConfirmed(env, autolabelSplitBoxes((await autolabelSplitUnits(env, o, open[0])).units, max), max);
+    if (sp.ok) return { ...row, decision: 'split', splitBoxes: autolabelSplitRowBoxes(sp), reason: `✂️ ${weights[0].lb} lb — over ${max} lb: split into ${sp.boxes.length} boxes — ${autolabelBoxesText(sp)}` };
+    spNote = ` (can't split: ${sp.reason})`;
+  }
+  if (heavy) return { ...row, decision: 'weigh', reason: (heavy.lb > max ? `${heavy.lb} lb (${heavy.source})` : `System ${heavy.lb} lb but Veeqo ${heavy.veeqoLb} lb`) + ` — over ${max} lb: print by hand in Veeqo, or re-weigh the items` + spNote };
+  const mm = weights.find(w => w.anyReal && !w.confirmed && w.lb != null && w.veeqoLb != null && Math.abs(w.veeqoLb - w.lb) > 0.5);
   if (mm) return { ...row, decision: 'fix_veeqo_weight', reason: `Real weight ${mm.lb} lb, but Veeqo has ${mm.veeqoLb} lb — fix the product weight in Veeqo (see Re-weigh list), then it prints by itself` };
   const boxes = open.length > 1 ? `${open.length} boxes: ` : '';
   const picks = [];
   for (const a of open) {
+    await autolabelPushConfirmed(env, o, a, weights[open.indexOf(a)]);
     const { quotes } = await autolabelGetQuotes(env, a.id);
     const choice = autolabelChooseRate(o, quotes, { ...cfg, lowValueRatio: 0 });
     if (!choice.pick) return { ...row, decision: choice.hold, reason: boxes + choice.reason };
@@ -26216,6 +26330,38 @@ async function handleAutolabelRoute(path, method, url, request, env, session) {
       if (lr) await autolabelSaveLastRun(env, lr);
     } catch (_) {}
     return veeqoResp(res);
+  }
+  // POST { lines:[{sku,qty}], weightLb, lengthIn, widthIn, heightIn, order } → 📦 confirm a box (exact contents).
+  if (path === '/veeqo/autolabel/box-confirm' && method === 'POST') {
+    const b = await request.json().catch(() => ({}));
+    const key = autolabelBoxKey(Array.isArray(b.lines) ? b.lines : []);
+    if (!key) return veeqoResp({ ok: false, error: 'lines (SKU and quantity) are required' }, 400);
+    const by = String((session && (session.displayName || session.username)) || b.by || '').slice(0, 40);
+    if (b.remove) {
+      const old = await autolabelBoxConfirmed(env, key);
+      await d1Run(env, 'DELETE FROM box_weight_confirmed WHERE box_key = ?', [key]);
+      await d1Run(env, 'INSERT INTO box_weight_log (box_key, before_val, after_val, order_number, by_user, at) VALUES (?,?,?,?,?,?)', [key, old ? JSON.stringify(old) : '', 'removed', String(b.order || ''), by, new Date().toISOString()]);
+      return veeqoResp({ ok: true, removed: true, key });
+    }
+    const n = (v, lo, hi) => { const x = parseFloat(v); return isFinite(x) && x >= lo && x <= hi ? Math.round(x * 100) / 100 : null; };
+    const lb = n(b.weightLb, 0.01, 150);
+    if (lb == null) return veeqoResp({ ok: false, error: 'Weight must be a number of lb above 0' }, 400);
+    const dims = [n(b.lengthIn, 0.1, 120), n(b.widthIn, 0.1, 120), n(b.heightIn, 0.1, 120)];
+    if (dims.some(x => x == null) && dims.some(x => x != null)) return veeqoResp({ ok: false, error: 'Size needs all three: length, width and height (or leave all three empty)' }, 400);
+    const old = await autolabelBoxConfirmed(env, key);
+    const now = new Date().toISOString();
+    await d1Run(env, `INSERT INTO box_weight_confirmed (box_key, lines, weight_lb, length_in, width_in, height_in, by_user, updated_at) VALUES (?,?,?,?,?,?,?,?)
+      ON CONFLICT(box_key) DO UPDATE SET weight_lb=excluded.weight_lb, length_in=excluded.length_in, width_in=excluded.width_in, height_in=excluded.height_in, by_user=excluded.by_user, updated_at=excluded.updated_at`,
+      [key, JSON.stringify(b.lines), lb, dims[0], dims[1], dims[2], by, now]);
+    await d1Run(env, 'INSERT INTO box_weight_log (box_key, before_val, after_val, order_number, by_user, at) VALUES (?,?,?,?,?,?)',
+      [key, old ? `${old.lb} lb${old.l ? ` · ${old.l}×${old.w}×${old.h} in` : ''}` : (b.systemLb != null ? `system ${b.systemLb} lb` : ''), `${lb} lb${dims[0] ? ` · ${dims.join('×')} in` : ''}`, String(b.order || ''), by, now]);
+    return veeqoResp({ ok: true, key, weightLb: lb, dims: dims[0] ? dims : null, before: old });
+  }
+  // GET → every confirmed box and its last changes.
+  if (path === '/veeqo/autolabel/box-confirmed' && method === 'GET') {
+    const rows = await d1All(env, 'SELECT * FROM box_weight_confirmed ORDER BY updated_at DESC LIMIT 500');
+    const log = await d1All(env, 'SELECT * FROM box_weight_log ORDER BY id DESC LIMIT 100');
+    return veeqoResp({ ok: true, boxes: rows, log });
   }
   // POST { order } → Last run → ✂️ Split into N boxes (over the box limit): splits it in Veeqo, checked.
   if (path === '/veeqo/autolabel/split' && method === 'POST') {
