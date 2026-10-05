@@ -8966,15 +8966,25 @@ async function _psAlLabelCanvas(f) {
 // The LOWEST run of all-white rows (inside a small side margin) in the
 // bottom 30% of the label that is at least minH tall — the strip under the
 // barcode, like USPS. → { y0, y1 } or null.
+// The bottom strip is often shared with a small 2D code on the RIGHT (owner's
+// Amazon / USPS label: thick line, then a square code bottom-right) — so a
+// row only has to be blank on its left part (6%–55% of the width), and the
+// free width is then measured: from the left margin up to the first print
+// in any row of the strip. → { y0, y1, x0, x1 } or null.
 function _psAlBlankBand(cv, minH) {
-  var ctx = cv.getContext('2d'), W = cv.width, H = cv.height, x0 = Math.round(W * 0.06), x1 = Math.round(W * 0.94);
+  var ctx = cv.getContext('2d'), W = cv.width, H = cv.height, x0 = Math.round(W * 0.06), xm = Math.round(W * 0.55), xMax = Math.round(W * 0.94);
   var top = Math.round(H * 0.7), data = ctx.getImageData(0, top, W, H - top).data, best = null, run0 = -1;
-  var blank = function(r) { for (var x = x0; x < x1; x += 2) { var i = (r * W + x) * 4; if (data[i] < 200 || data[i + 1] < 200 || data[i + 2] < 200) return false; } return true; };
+  var dark = function(r, x) { var i = (r * W + x) * 4; return data[i] < 200 || data[i + 1] < 200 || data[i + 2] < 200; };
+  var blank = function(r) { for (var x = x0; x < xm; x += 2) if (dark(r, x)) return false; return true; };
   for (var r = 0; r <= H - top; r++) {
     var b = r < H - top && blank(r);
     if (b && run0 < 0) run0 = r;
     if (!b && run0 >= 0) { if (r - run0 >= (minH || 1)) best = { y0: top + run0, y1: top + r }; run0 = -1; }
   }
+  if (!best) return null;
+  var xr = xMax;
+  for (var rr = best.y0 - top; rr < best.y1 - top; rr++) for (var x = xm; x < xr; x += 2) if (dark(rr, x)) { xr = x; break; }
+  best.x0 = x0; best.x1 = xr;
   return best;
 }
 // Writes the box contents into the blank strip → true when every line fits.
@@ -8985,18 +8995,25 @@ function _psAlStampLabel(cv, items) {
   if (!items.length) return no('no item list for this box');
   if (Math.abs(W / H - 4 / 6) > 0.04) return no('not a 4×6 label'); // only a 4×6 label
   var pad = Math.round(W * 0.012), minFs = Math.round(W * 0.03);
-  var band = _psAlBlankBand(cv, Math.ceil(items.length * minFs * 1.25) + 2 * pad); if (!band) return no('no blank strip at the bottom big enough for ' + items.length + ' line(s)');
-  var y0 = band.y0 + pad, y1 = band.y1 - pad, h = y1 - y0;
-  var fs = Math.min(Math.round(W * 0.055), Math.floor(h / (items.length * 1.25)));
-  if (fs < minFs) return no('text would be too small'); // too small to read → the sticker instead
+  // Like the USPS label in the owner's photo: the bin on one line, the SKU
+  // (× qty) under it — two lines per item; a box with many items gets one
+  // line each ("bin  SKU ×qty") when two don't fit.
+  var two = [], one = [];
+  items.forEach(function(it) { var q = ' ×' + (it.qty || 0); two.push(it.bin || '—', (it.sku || '') + q); one.push((it.bin || '—') + '  ' + (it.sku || '') + q); });
+  var band = _psAlBlankBand(cv, Math.ceil(items.length * minFs * 1.25) + 2 * pad);
+  if (!band) return no('no blank strip at the bottom big enough for ' + items.length + ' line(s)');
+  var y0 = band.y0 + pad, h = band.y1 - pad - y0, x = band.x0, maxW = Math.max(0, band.x1 - band.x0 - pad); // left of any code in the strip
   var ctx = cv.getContext('2d'); ctx.fillStyle = '#000'; ctx.textBaseline = 'top';
-  var maxW = W * 0.88, x = W * 0.06;
-  for (var i = 0; i < items.length; i++) {
-    var it = items[i], line = (it.bin || '—') + '   ' + (it.sku || '') + '   ×' + (it.qty || 0), size = fs;
-    do { ctx.font = 'bold ' + size + 'px monospace'; size--; } while (ctx.measureText(line).width > maxW && size > 8);
-    if (ctx.measureText(line).width > maxW) return no('a line is too long: ' + line);
-    ctx.fillText(line, x, y0 + i * fs * 1.25);
-  }
+  var fit = function(lines) { // the biggest font (up to 0.055 W) that fits every line → size or 0
+    var fs = Math.min(Math.round(W * 0.055), Math.floor(h / (lines.length * 1.25)));
+    for (; fs >= minFs; fs--) { ctx.font = 'bold ' + fs + 'px monospace'; if (lines.every(function(t) { return ctx.measureText(t).width <= maxW; })) return fs; }
+    return 0;
+  };
+  var lines = two, fs = fit(two);
+  if (!fs) { lines = one; fs = fit(one); }
+  if (!fs) return no('the text does not fit next to the codes at the bottom (' + Math.round(maxW) + '×' + Math.round(h) + ' px free)');
+  ctx.font = 'bold ' + fs + 'px monospace';
+  lines.forEach(function(t, i) { ctx.fillText(t, x, y0 + i * fs * 1.25); });
   window._psAlStampWhy = '';
   return true;
 }
