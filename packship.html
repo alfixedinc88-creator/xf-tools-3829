@@ -95,6 +95,8 @@ body {
    and let it run wider than the other tabs (not capped at 960px) so the
    product-card row has room for full-size photos without squeezing. */
 .ps-content:has(#ps-panel-scan.active), .ps-content:has(#ps-panel-picking.active) { margin-left:0; margin-right:auto; max-width:1300px; }
+/* Owner: Auto Label (Last run) is used on the PC — use the whole screen width. */
+.ps-content:has(#ps-panel-autolabel.active) { max-width:none; }
 .ps-panel { display:none; }
 .ps-panel.active { display:block; }
 
@@ -488,6 +490,11 @@ body {
    and let it run wider than the other tabs (not capped at 960px) so the
    product-card row has room for full-size photos without squeezing. */
 #packship-app .ps-content:has(#ps-panel-scan.active), #packship-app .ps-content:has(#ps-panel-picking.active) { margin-left:0; margin-right:auto; max-width:1300px; }
+#packship-app .ps-content:has(#ps-panel-autolabel.active) { max-width:none; }
+#ps-al-tbl th { position:relative; overflow:hidden; text-overflow:ellipsis; }
+#ps-al-tbl td { overflow:hidden; overflow-wrap:anywhere; }
+.ps-al-rz { position:absolute; top:0; right:0; width:8px; height:100%; cursor:col-resize; border-right:2px solid var(--border); }
+.ps-al-rz:hover { border-right-color:var(--accent); }
 #packship-app .ps-panel { display:none; }
 #packship-app .ps-panel.active { display:block; }
 
@@ -8658,8 +8665,7 @@ function _psAlRenderRun(r) {
       + '<label style="font-size:12px;font-weight:700;display:flex;align-items:center;gap:4px;cursor:pointer"><input type="checkbox" id="ps-al-sel-all" onchange="psAlSelAll(this.checked)"> Select all (' + canBuy + ')</label>'
       + '<button class="ps-btn-sm" id="ps-al-buyprint" style="background:var(--accent);color:#fff;border-color:var(--accent);font-weight:700" onclick="psAlBuyPrint()">🖨 Buy &amp; print selected (0)</button>'
       + '<span id="ps-al-buyprint-msg" style="font-size:12px;white-space:pre-wrap"></span></div>' : '')
-    + '<table style="width:100%;border-collapse:collapse;font-size:12px"><tr><th ' + th + '></th>'
-    + '<th ' + th + '>Result</th><th ' + th + '>Order</th><th ' + th + '>Channel</th><th ' + th + '>Customer</th><th ' + th + '>Items (photo · name · SKU · bin · qty)</th><th ' + th + '>Total</th><th ' + th + '>Package</th><th ' + th + '>Label</th><th ' + th + '>Why</th></tr>'
+    + _psAlTableOpen(th, ['', 'Result', 'Order', 'Channel', 'Customer', 'Items (photo · name · SKU · bin · qty)', 'Total', 'Package', 'Label', 'Why'])
     + rows.map(function(o){
       var L = _PS_AL_LABELS[o.decision] || [o.decision, 'var(--text2)'];
       var label = o.carrier ? (o.carrier + ' ' + (o.service || '') + (o.price != null ? ' $' + Number(o.price).toFixed(2) : '') + (o.days != null ? ' · ' + o.days + 'd' : '')) : '';
@@ -8680,6 +8686,36 @@ function _psAlRenderRun(r) {
   if (typeof psAlSelCount === 'function' && document.getElementById('ps-al-buyprint')) psAlSelCount();
   _psAlCheckReady();
 }
+// Owner: "make Last run wider (we use it on the PC, no scrolling) and let me
+// make each column smaller or wider" — drag a column's right edge; the widths
+// are kept on this computer.
+var _PS_AL_COLW_DEF = [34, 110, 150, 70, 130, 360, 70, 130, 170, 230];
+function _psAlColW() {
+  var w = null; try { w = JSON.parse(localStorage.getItem('ps_al_colw') || 'null'); } catch (e) {}
+  if (Array.isArray(w) && w.length === _PS_AL_COLW_DEF.length) return w;
+  // not set on this computer yet: the normal widths, fitted to the screen (no side-scrolling)
+  var box = document.getElementById('ps-al-orders'), avail = box ? box.clientWidth : 0, sum = _PS_AL_COLW_DEF.reduce(function(a, b) { return a + b; }, 0);
+  return _PS_AL_COLW_DEF.map(function(x) { return avail > 600 && avail < sum ? Math.max(30, Math.floor(x * avail / sum)) : x; });
+}
+function _psAlTableOpen(th, names) {
+  var w = _psAlColW(), sum = w.reduce(function(a, b) { return a + b; }, 0);
+  return '<table id="ps-al-tbl" style="table-layout:fixed;width:' + sum + 'px;min-width:100%;border-collapse:collapse;font-size:12px"><colgroup>'
+    + w.map(function(x, i) { return '<col data-ci="' + i + '" style="width:' + x + 'px">'; }).join('') + '</colgroup><tr>'
+    + names.map(function(n, i) { return '<th ' + th + '>' + n + (i ? '<span class="ps-al-rz" title="Drag to make this column wider or smaller (double-click: back to normal)" onmousedown="psAlColDrag(event, ' + i + ')" ondblclick="psAlColReset()"></span>' : '') + '</th>'; }).join('') + '</tr>';
+}
+window.psAlColDrag = function(ev, i) {
+  ev.preventDefault(); ev.stopPropagation();
+  var tbl = document.getElementById('ps-al-tbl'), col = tbl && tbl.querySelector('col[data-ci="' + i + '"]');
+  // start from the widths on the screen (the table may be stretched to the full width)
+  var w = tbl ? Array.prototype.map.call(tbl.rows[0].cells, function(c) { return Math.round(c.getBoundingClientRect().width); }) : _psAlColW();
+  if (w.length !== _PS_AL_COLW_DEF.length) w = _psAlColW();
+  var x0 = ev.clientX, w0 = w[i];
+  if (tbl) { Array.prototype.forEach.call(tbl.querySelectorAll('col'), function(c, k) { c.style.width = w[k] + 'px'; }); tbl.style.width = w.reduce(function(a, b) { return a + b; }, 0) + 'px'; }
+  var move = function(e) { w[i] = Math.max(30, Math.round(w0 + e.clientX - x0)); if (col) col.style.width = w[i] + 'px'; if (tbl) tbl.style.width = w.reduce(function(a, b) { return a + b; }, 0) + 'px'; };
+  var up = function() { document.removeEventListener('mousemove', move); document.removeEventListener('mouseup', up); try { localStorage.setItem('ps_al_colw', JSON.stringify(w)); } catch (e) {} };
+  document.addEventListener('mousemove', move); document.addEventListener('mouseup', up);
+};
+window.psAlColReset = function() { try { localStorage.removeItem('ps_al_colw'); } catch (e) {} if (window._psAlRunShown) _psAlRenderRun(window._psAlRunShown); };
 // Owner: "look over everything fast" — each order's items right on the row
 // (photo, name, SKU, bin, qty) and its box as Veeqo has it (size, weight).
 function _psAlItemsHtml(o) {
@@ -9227,13 +9263,22 @@ function _psAlStampLabel(cv, items) {
     list.forEach(function(r) { wb = Math.max(wb, ctx.measureText(r.bin).width); wq = Math.max(wq, ctx.measureText(r.qty).width); ws = Math.max(ws, ctx.measureText(r.sku).width); });
     return { wb: wb, ws: ws, wq: wq + 2 * o.bp, w: wb + o.g + ws + o.g + wq + 2 * o.bp };
   };
+  // Owner: "add the product photo to the shipping label" — the items' photos
+  // in a square at the left of the strip (lines to its right). The lines
+  // come first: if they don't fit next to the photo, no photo.
+  var pics = items.map(function(it) { return it._pic || null; }), nPics = pics.filter(Boolean).length, picW = nPics ? Math.round(h) : 0, picGap = picW ? Math.round(W * 0.015) : 0;
   var plan = null; // the biggest font (up to 4.5% of the width) that fits every line
-  for (var fs = Math.min(Math.round(W * 0.045), Math.floor(h / (rows.length * LH))); fs >= minFs && !plan; fs--) {
-    ctx.font = 'bold ' + fs + 'px monospace';
-    var m = colW(rows, fs);
-    if (m.w <= maxW) plan = { fs: fs, parts: [{ list: rows, m: m }], gap: 0 };
+  for (var tryPic = picW ? 1 : 0; tryPic >= 0 && !plan; tryPic--) {
+    var room = maxW - (tryPic ? picW + picGap : 0);
+    for (var fs = Math.min(Math.round(W * 0.045), Math.floor(h / (rows.length * LH))); fs >= minFs && !plan; fs--) {
+      ctx.font = 'bold ' + fs + 'px monospace';
+      var m = colW(rows, fs);
+      if (m.w <= room) plan = { fs: fs, parts: [{ list: rows, m: m }], gap: 0, pic: !!tryPic };
+    }
   }
   if (!plan) return no(items.length + ' item(s) do not fit in the strip at the bottom (' + Math.round(maxW) + '×' + Math.round(h) + ' px free)');
+  if (plan.pic) { _psAlDrawPics(ctx, pics, x0, y0, picW); x0 += picW + picGap; }
+  window._psAlStampPics = plan.pic ? nPics : 0;
   var fs = plan.fs, o = geo(fs), lh = Math.round(fs * LH), x = x0;
   ctx.font = 'bold ' + fs + 'px monospace';
   plan.parts.forEach(function(part) {
@@ -9248,6 +9293,49 @@ function _psAlStampLabel(cv, items) {
   window._psAlStampWhy = '';
   return true;
 }
+// The photos in an S×S square (1 → whole square; 2–4 → a 2×2 grid, same order
+// as the lines — an item with no photo leaves its spot blank), black-and-white dots so they print sharp on the thermal printer.
+function _psAlDrawPics(ctx, pics, x, y, S) {
+  var n = Math.min(4, pics.length), cols = n > 1 ? 2 : 1, cell = Math.floor(S / cols), rowsN = Math.ceil(n / cols), top = y + Math.floor((S - rowsN * cell) / 2);
+  ctx.fillStyle = '#fff'; ctx.fillRect(x, y, S, S);
+  for (var i = 0; i < n; i++) {
+    var p = pics[i]; if (!p) continue;
+    var cx = x + (i % cols) * cell, cy = top + Math.floor(i / cols) * cell, k = Math.min((cell - 4) / p.width, (cell - 4) / p.height);
+    var dw = Math.max(1, Math.round(p.width * k)), dh = Math.max(1, Math.round(p.height * k));
+    ctx.drawImage(p, cx + Math.floor((cell - dw) / 2), cy + Math.floor((cell - dh) / 2), dw, dh);
+  }
+  // grey → black / white (Floyd–Steinberg), so the thermal printer doesn't smear it
+  var img = ctx.getImageData(x, y, S, S), d = img.data, gr = new Float32Array(S * S);
+  for (var j = 0; j < S * S; j++) gr[j] = d[j * 4] * 0.3 + d[j * 4 + 1] * 0.59 + d[j * 4 + 2] * 0.11;
+  for (var yy = 0; yy < S; yy++) for (var xx = 0; xx < S; xx++) {
+    var q = yy * S + xx, old = gr[q], nw = old < 128 ? 0 : 255, err = old - nw; gr[q] = nw;
+    if (xx + 1 < S) gr[q + 1] += err * 7 / 16;
+    if (yy + 1 < S) { if (xx > 0) gr[q + S - 1] += err * 3 / 16; gr[q + S] += err * 5 / 16; if (xx + 1 < S) gr[q + S + 1] += err / 16; }
+  }
+  for (var z = 0; z < S * S; z++) { d[z * 4] = d[z * 4 + 1] = d[z * 4 + 2] = gr[z]; d[z * 4 + 3] = 255; }
+  ctx.putImageData(img, x, y);
+  ctx.strokeStyle = '#000'; ctx.lineWidth = 2; ctx.strokeRect(x + 1, y + 1, S - 2, S - 2);
+}
+// Each item's photo (ours, by part #) through our Worker, so it can be drawn
+// on the label. No photo / no WiFi → the label prints without it.
+window._psAlPicCache = {};
+async function _psAlLoadPics(items) {
+  await Promise.all((items || []).slice(0, _PS_AL_LABEL_MAX_LINES).map(async function(it) {
+    var base = String(it.sku || '').split('=')[0].trim().toUpperCase(); if (!base) return;
+    if (!(base in _psAlPicCache)) {
+      _psAlPicCache[base] = (async function() {
+        try {
+          var ctl = typeof AbortController !== 'undefined' ? new AbortController() : null, t = setTimeout(function() { if (ctl) ctl.abort(); }, 5000);
+          var r = await fetch(PS_WORKER + '/inventory/photo-file?base=' + encodeURIComponent(base), { headers: { 'X-Cred-Token': psCredToken }, signal: ctl ? ctl.signal : undefined });
+          clearTimeout(t);
+          if (!r.ok || !/^image\//.test(r.headers.get('content-type') || '')) return null;
+          return await createImageBitmap(await r.blob());
+        } catch (e) { return null; }
+      })();
+    }
+    it._pic = await _psAlPicCache[base];
+  }));
+}
 function _psAlPrintCanvas(cv) {
   return _psAlPrintHtml('<!doctype html><html><head><style>@page{size:4in 6in;margin:0}html,body{margin:0}img{width:4in;height:6in;display:block}</style></head><body><img src="' + cv.toDataURL('image/png') + '"></body></html>');
 }
@@ -9256,6 +9344,7 @@ async function _psAlPrintOneLabel(l) {
   var items = (l.items || []).length ? l.items : (((await _psAlFetch('/veeqo/autolabel/label-items?id=' + encodeURIComponent(l.id))) || {}).items || []);
   var stamped = false;
   window._psAlStampWhy = '';
+  if (items.length && items.length <= _PS_AL_LABEL_MAX_LINES) await _psAlLoadPics(items);
   try { var cv = await _psAlLabelCanvas(f); if (_psAlStampLabel(cv, items)) { await _psAlPrintCanvas(cv); stamped = true; } }
   catch (e) { window._psAlStampWhy = 'could not open the label file (' + f.type + '): ' + ((e && e.message) || e); console.warn('[label] could not write on the label, printing the sticker instead:', e && e.message); }
   // What happened, on the screen (owner: "still not showing any sku, bin location, quantities").

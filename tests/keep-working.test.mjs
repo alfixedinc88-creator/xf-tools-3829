@@ -1652,7 +1652,7 @@ console.log('\nTest mode bar at the bottom · 🏷 Barcode designer');
   const labN = new Function('xfrEsc', src + '; return bdLabelHtml;')(v => String(v).replace(/</g, '&lt;'))('30-3-4=10X', 1, 'Tee 3/4" (10 pcs)');
   check('…the part # is matched to its product name (SKU Mgr) as you type ("⚠ not in SKU Mgr" if not), and the name prints small under the part #',
     /<div class="t">30-3-4=10X<\/div><div class="n">Tee 3\/4(?:"|&quot;) \(10 pcs\)<\/div>/.test(labN) && /wFetch\(W \+ '\/inventory\/lookup\?code=' \+ encodeURIComponent\(sku\)\)/.test(ih)
-      && /is not in SKU Mgr — check the part #/.test(ih) && /var nm = BD\.nameFor === sku \? BD\.name : '';/.test(ih) && /bdLabelHtml\(sku, BD\.copies, nm, foot\)/.test(ih), labN.slice(-200));
+      && /is not in SKU Mgr — check the part #/.test(ih) && /var nm = BD\.nameFor === sku \? BD\.name : '';/.test(ih) && /bdLabelHtml\(sku, BD\.copies, nm, foot, bdPicFor\(sku\)\)/.test(ih), labN.slice(-200));
 }
 
 // Owner: "Warehouse Lookup → Item Locator / Item Search: searching a part # shows the exact match first, then the rest;
@@ -2101,6 +2101,31 @@ console.log('\n🏷 Barcode designer: 💾 save on the phone → 🖨 print on t
   check('…the designer: tabs ✏️ Design / 🖨 To print / 📍 Where does it go?; scan each column → how many boxes (number pad); 💾 Save (WiFi-safe); 🖨 Print here still there; the office PC sees "🏷 Barcode labels to print"',
     /t\('design', '✏️ Design'\)/.test(ih2) && /t\('where', '📍 Where does it go\?'\)/.test(ih2) && /onkeydown="if\(event\.key===\\'Enter\\'\)bdColScan\(\)"/.test(ih2)
     && /xfrKeypad\('How many boxes at ' \+ loc/.test(ih2) && /invPost\(W \+ '\/inventory\/barcode-job'/.test(ih2) && /onclick="bdPrint\(\)"[^>]*>🖨 Print label here/.test(ih2) && /id="bd-queue-card"/.test(ih2), null);
+}
+
+// Owner: "Last run wider on the PC, each column smaller / wider" + "product photo on the shipping label" + "photo on the barcode label".
+console.log('\nLast run full width with resizable columns · product photo on the shipping label and the barcode sticker');
+{
+  const realFetch = globalThis.fetch;
+  await get('/inventory/photos?bases=77-7-7');
+  sq.prepare("INSERT OR REPLACE INTO product_photo (base_sku, url, source, updated_at) VALUES ('77-7-7', 'https://photos.example/77.jpg', 'test', '')").run();
+  globalThis.fetch = async (u, o) => { u = String(u); if (u === 'https://photos.example/77.jpg') return new Response(new Uint8Array([0xff, 0xd8, 0xff, 1, 2, 3]), { headers: { 'Content-Type': 'image/jpeg' } }); return realFetch(u, o); };
+  const pf = await call('/inventory/photo-file?base=77-7-7%3D10X', { headers: H });
+  const pf2 = await call('/inventory/photo-file?base=99-9-9', { headers: H });
+  check('photo route: a part # (any pack size) → our saved product photo itself (the image), signed-in only; none saved → 404', pf.status === 200 && /image\/jpeg/.test(pf.headers.get('content-type')) && (await pf.arrayBuffer()).byteLength === 6 && pf2.status === 404
+    && (await call('/inventory/photo-file?base=77-7-7')).status === 401, { s: pf.status, s2: pf2.status });
+  globalThis.fetch = realFetch;
+  const { readFileSync } = await import('node:fs');
+  const ph5 = readFileSync(fileURLToPath(new URL('../packship.html', import.meta.url)), 'utf8'), ih3 = readFileSync(fileURLToPath(new URL('../inventory.html', import.meta.url)), 'utf8');
+  check('shipping label: the items\' photos (black-and-white dots) in a square left of the lines; lines first — no room → no photo', /await _psAlLoadPics\(items\);\s*try \{ var cv = await _psAlLabelCanvas\(f\);/.test(ph5)
+    && /if \(plan\.pic\) \{ _psAlDrawPics\(ctx, pics, x0, y0, picW\); x0 \+= picW \+ picGap; \}/.test(ph5) && /for \(var tryPic = picW \? 1 : 0; tryPic >= 0 && !plan; tryPic--\)/.test(ph5) && /\/inventory\/photo-file\?base=/.test(ph5), null);
+  check('Last run: the whole screen width on the PC; drag a column edge to make it wider / smaller (kept on this PC, double-click = normal)', /\.ps-content:has\(#ps-panel-autolabel\.active\) \{ max-width:none; \}/.test(ph5)
+    && /onmousedown="psAlColDrag\(event, ' \+ i \+ '\)"/.test(ph5) && /localStorage\.setItem\('ps_al_colw'/.test(ph5) && /table-layout:fixed/.test(ph5), null);
+  const src = (ih3.match(/  function bdLabelHtml\(sku, copies, name, foot, pic\) \{[\s\S]*?\n  \}/) || [''])[0];
+  const mk = new Function('xfrEsc', src + '; return bdLabelHtml;')(v => String(v));
+  const withPic = mk('8-8-8=8', 2, 'Plug', 'Printed by Ana', 'https://photos.example/88.jpg'), noPic = mk('8-8-8=8', 1, 'Plug', 'Printed by Ana');
+  check('barcode sticker: 📷 product photo on the left (black-and-white), barcode + part # on the right; photo off → the label as before', (withPic.match(/<div class="l lp"><img class="ph" src="https:\/\/photos\.example\/88\.jpg"/g) || []).length === 2
+    && /filter:grayscale\(1\)/.test(withPic) && !/class="ph"/.test(noPic) && /<div class="l"><svg class="b"><\/svg><div class="t">8-8-8=8<\/div>/.test(noPic) && /id="bd-pic"[^>]*onchange="bdPicToggle\(this\.checked\)"/.test(ih3) && /bdImgsReady\(d\)\.then/.test(ih3), withPic.slice(-400));
 }
 
 console.log('\n' + (failed ? '❌ ' + failed + ' check(s) FAILED' : '✅ all ' + passed + ' checks passed') + '\n');
