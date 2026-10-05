@@ -131,7 +131,18 @@ exceptions, no matter what else the change does.
 - Validate Worker changes with
   `cd worker && npx -y wrangler@4 deploy --dry-run --outdir <tmp>`.
 - The "Workers Builds: …" checks (xfitting-lookup, xfitting-profit) are
-  always red on PR branches. That is expected: Cloudflare only builds `main`.
+  always red on PR branches (`npx wrangler preview`). That is expected. On a
+  `main` commit the same name can show both: the branch preview (red, no
+  Version ID) and the real deploy (has a "Version ID"). Judge the real one.
+- After every merge, check BOTH deploys went live before telling the owner:
+  1. "Deploy to GitHub Pages" for the merge commit = success. If it is
+     cancelled, an older Pages run is stuck "queued" and blocks every newer
+     one (concurrency group "pages"): cancel the stuck run
+     (`gh api -X POST repos/<owner>/<repo>/actions/runs/<id>/cancel`) and
+     wait for the newest run to succeed. (2026-10-05: one stuck run kept
+     every page change after 10 am off the site for hours.)
+  2. The Workers Builds check for the merge commit that has a Version ID =
+     success.
 - Merge it yourself (owner's standing OK): when a change is done, open the PR
   and merge it as soon as the "keep-working" check is green on GitHub — don't
   wait for the owner to ask. Never merge with keep-working red or pending;

@@ -24150,7 +24150,11 @@ const AUTOLABEL_MERGE_VERIFIED_KEY = 'autolabel_merge_verified';
 // version it expects and shows a red warning when the server is older (owner:
 // "low value still won't print, merge gone" — Cloudflare's build had failed, so
 // the old server was still running behind the new page).
-const AUTOLABEL_SERVER_VERSION = 3; // 1 = merge one box, 2 = low value printable, 3 = this check // auto runs merge only after one merge by hand worked
+const AUTOLABEL_SERVER_VERSION = 3; // 1 = merge one box, 2 = low value printable, 3 = this check
+// ...and the other way round: the page must be at least this new. A stuck
+// GitHub Pages deploy left the OLD page live behind the new server (owner: "low
+// value still won't print, merge gone"); the page then says "refresh / not updated".
+const AUTOLABEL_PAGE_NEEDS = 4; // auto runs merge only after one merge by hand worked
 
 const AUTOLABEL_DEFAULTS = {
   mode: 'off',                 // 'off' | 'preview' | 'auto'
@@ -25873,7 +25877,7 @@ async function handleAutolabelRoute(path, method, url, request, env, session) {
     try { lastRun = JSON.parse(await autolabelGetKey(env, AUTOLABEL_LASTRUN_KEY) || 'null'); } catch (_) {}
     return veeqoResp({ ok: true, config: await autolabelLoadConfig(env), defaults: AUTOLABEL_DEFAULTS,
       buyVerified: (await autolabelGetKey(env, AUTOLABEL_VERIFIED_KEY)) === 'yes',
-      mergeVerified: (await autolabelGetKey(env, AUTOLABEL_MERGE_VERIFIED_KEY)) === 'yes', serverVersion: AUTOLABEL_SERVER_VERSION, lastRun });
+      mergeVerified: (await autolabelGetKey(env, AUTOLABEL_MERGE_VERIFIED_KEY)) === 'yes', serverVersion: AUTOLABEL_SERVER_VERSION, pageNeeds: AUTOLABEL_PAGE_NEEDS, lastRun });
   }
 
   if (path === '/veeqo/autolabel/config' && method === 'POST') {
