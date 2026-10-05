@@ -8608,7 +8608,8 @@ window.psAlBuyPrint = async function() {
       var d = await _psAlFetch('/veeqo/autolabel/buy-one', { method: 'POST', body: { order: num, by: psInitials || '' } });
       c.checked = false; c.disabled = true;
       if (d.ok === false) { bad.push(num + ': ' + (d.error || 'failed')); res.textContent = '❌ Not bought'; res.style.color = 'var(--red)'; res.title = d.error || ''; continue; }
-      ok++; res.textContent = '✅ Bought' + (d.labels && d.labels[0] && d.labels[0].tracking ? ' · ' + d.labels[0].tracking : ''); res.style.color = 'var(--green)';
+      ok++; (function(n) { var ro = ((window._psAlRunShown || {}).orders || []).find(function(x) { return x.number === n; }); if (ro) { var rc = window._psAlRunShown.counts; rc[ro.decision] = Math.max(0, (rc[ro.decision] || 0) - 1); ro.decision = 'bought'; rc.bought = (rc.bought || 0) + 1; ro.tracking = d.labels && d.labels[0] && d.labels[0].tracking || ''; } })(num);
+      res.textContent = '✅ Bought' + (d.labels && d.labels[0] && d.labels[0].tracking ? ' · ' + d.labels[0].tracking : ''); res.style.color = 'var(--green)';
     }
     psAlSelCount();
     msg.textContent = '✓ Bought ' + ok + ' of ' + sel.length + '. Printing…' + (bad.length ? '\n✗ ' + bad.join('\n✗ ') : '');
@@ -8647,17 +8648,18 @@ function _psAlRenderRun(r) {
     return chip(k, L[0], L[1], counts[k]);
   }).join('');
 
-  var rows = (r.orders || []).filter(function(o){ return o.decision !== 'has_label' && (!flt || o.decision === flt); });
+  var rows = _psAlSortRows((r.orders || []).filter(function(o){ return o.decision !== 'has_label' && (!flt || o.decision === flt); }));
   if (!rows.length) { document.getElementById('ps-al-orders').innerHTML = '<div style="font-size:12px;color:var(--text3)">' + (r.mode === 'off' ? 'Auto Label is off — only the cancellation check ran.' : 'No orders waiting for a label.') + '</div>'; return; }
   var th = 'style="text-align:left;padding:6px 8px;font-size:11px;color:var(--text3);border-bottom:1px solid var(--border)"';
   var td = 'style="padding:6px 8px;border-bottom:1px solid var(--border);vertical-align:top"';
   var canBuy = rows.filter(function(o) { return _PS_AL_BUYABLE[o.decision]; }).length;
+  var keep = {}; document.querySelectorAll('#ps-al-orders .ps-al-sel').forEach(function(c) { if (c.checked) keep[c.value] = 1; }); // ticks stay after a redraw
   document.getElementById('ps-al-orders').innerHTML = (canBuy ? '<div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap;margin:0 0 8px">'
       + '<label style="font-size:12px;font-weight:700;display:flex;align-items:center;gap:4px;cursor:pointer"><input type="checkbox" id="ps-al-sel-all" onchange="psAlSelAll(this.checked)"> Select all (' + canBuy + ')</label>'
       + '<button class="ps-btn-sm" id="ps-al-buyprint" style="background:var(--accent);color:#fff;border-color:var(--accent);font-weight:700" onclick="psAlBuyPrint()">🖨 Buy &amp; print selected (0)</button>'
       + '<span id="ps-al-buyprint-msg" style="font-size:12px;white-space:pre-wrap"></span></div>' : '')
     + '<table style="width:100%;border-collapse:collapse;font-size:12px"><tr><th ' + th + '></th>'
-    + '<th ' + th + '>Result</th><th ' + th + '>Order</th><th ' + th + '>Channel</th><th ' + th + '>Customer</th><th ' + th + '>Total</th><th ' + th + '>Weight</th><th ' + th + '>Label</th><th ' + th + '>Why</th></tr>'
+    + '<th ' + th + '>Result</th><th ' + th + '>Order</th><th ' + th + '>Channel</th><th ' + th + '>Customer</th><th ' + th + '>Items (photo · name · SKU · bin · qty)</th><th ' + th + '>Total</th><th ' + th + '>Package</th><th ' + th + '>Label</th><th ' + th + '>Why</th></tr>'
     + rows.map(function(o){
       var L = _PS_AL_LABELS[o.decision] || [o.decision, 'var(--text2)'];
       var label = o.carrier ? (o.carrier + ' ' + (o.service || '') + (o.price != null ? ' $' + Number(o.price).toFixed(2) : '') + (o.days != null ? ' · ' + o.days + 'd' : '')) : '';
@@ -8668,11 +8670,77 @@ function _psAlRenderRun(r) {
         + '<td style="padding:6px 8px;border-bottom:1px solid var(--border);vertical-align:top;font-family:var(--mono)"><button class="ps-btn-sm" style="font-family:var(--mono);white-space:nowrap" title="Live Veeqo info: items, photos, bin, SKU, package — and change them" onclick="psAlLive(this, \'' + _psAlEsc(String(o.number || '').replace(/[\\']/g, '')) + '\')">🔎 ' + _psAlEsc(o.number) + '</button></td>'
         + '<td ' + td + '>' + _psAlEsc(o.channel) + '</td>'
         + '<td ' + td + '>' + _psAlEsc(o.customer) + '</td>'
+        + '<td style="padding:4px 8px;border-bottom:1px solid var(--border);vertical-align:top;min-width:260px">' + _psAlItemsHtml(o) + '</td>'
         + '<td ' + td + '>' + (o.total != null ? '$' + Number(o.total).toFixed(2) : '') + '</td>'
-        + '<td ' + td + '>' + (o.weightLb != null ? Number(o.weightLb).toFixed(1) + '&nbsp;lb' : '') + '</td>'
+        + '<td style="padding:6px 8px;border-bottom:1px solid var(--border);vertical-align:top;white-space:nowrap">' + _psAlPkgHtml(o) + '</td>'
         + '<td ' + td + '>' + _psAlEsc(label) + '</td>'
         + '<td ' + td + '>' + _psAlEsc(o.reason) + '</td></tr>';
     }).join('') + '</table>';
+  document.querySelectorAll('#ps-al-orders .ps-al-sel').forEach(function(c) { if (keep[c.value]) c.checked = true; });
+  if (typeof psAlSelCount === 'function' && document.getElementById('ps-al-buyprint')) psAlSelCount();
+  _psAlCheckReady();
+}
+// Owner: "look over everything fast" — each order's items right on the row
+// (photo, name, SKU, bin, qty) and its box as Veeqo has it (size, weight).
+function _psAlItemsHtml(o) {
+  var e = _psAlEsc;
+  return (o.items || []).map(function(it) {
+    return '<div style="display:flex;gap:6px;align-items:center;padding:2px 0">'
+      + (it.img ? '<img src="' + e(it.img) + '" loading="lazy" style="width:40px;height:40px;object-fit:contain;background:#fff;border:1px solid var(--border);border-radius:5px;flex-shrink:0" alt="">' : '<div style="width:40px;height:40px;border:1px dashed var(--border);border-radius:5px;flex-shrink:0"></div>')
+      + '<div style="min-width:0;line-height:1.25"><div style="font-family:var(--mono);font-weight:800;color:var(--text)">' + e(it.sku) + ' <span style="background:var(--text);color:var(--bg);padding:0 5px;border-radius:4px">x' + e(it.qty) + '</span></div>'
+      + '<div style="font-size:11px;color:var(--text2)">📍 <b style="font-family:var(--mono)">' + e(it.bin || '—') + '</b> · ' + e(it.title || '') + '</div></div></div>';
+  }).join('') || '<span style="color:var(--text3)">—</span>';
+}
+function _psAlPkgHtml(o) {
+  var p = o.pkg, e = _psAlEsc, h = '';
+  if (p && (p.l || p.w || p.h)) h += '<div>📦 ' + e(p.l || '?') + '×' + e(p.w || '?') + '×' + e(p.h || '?') + ' in</div>';
+  if (p && p.lb != null) h += '<div>⚖️ ' + e(Number(p.lb).toFixed(2)) + ' lb <span style="color:var(--text3)">Veeqo</span></div>';
+  if (o.weightLb != null) h += '<div style="color:var(--text3)">our ' + e(Number(o.weightLb).toFixed(2)) + ' lb</div>';
+  if (o.boxes > 1) h += '<div style="color:var(--orange)">' + e(o.boxes) + ' boxes</div>';
+  return h || '<span style="color:var(--text3)">—</span>';
+}
+// Within each result, in part # order by the first item (owner: "would buy arranged by SKU").
+function _psAlSkuKey(o) { return String(((o.items || [])[0] || {}).sku || '~').toUpperCase(); }
+function _psAlSkuCmp(a, b) {
+  var x = a.match(/\d+|\D+/g) || [], y = b.match(/\d+|\D+/g) || [];
+  for (var i = 0; i < Math.min(x.length, y.length); i++) {
+    var nx = /^\d/.test(x[i]), ny = /^\d/.test(y[i]);
+    if (nx && ny) { var d = parseInt(x[i], 10) - parseInt(y[i], 10); if (d) return d; }
+    else if (x[i] !== y[i]) return x[i] < y[i] ? -1 : 1;
+  }
+  return x.length - y.length;
+}
+function _psAlSortRows(rows) {
+  var grp = {}; rows.forEach(function(o, i) { if (!(o.decision in grp)) grp[o.decision] = i; });
+  return rows.map(function(o, i) { return { o: o, i: i }; }).sort(function(a, b) {
+    return (grp[a.o.decision] - grp[b.o.decision]) || _psAlSkuCmp(_psAlSkuKey(a.o), _psAlSkuKey(b.o)) || (a.i - b.i);
+  }).map(function(x) { return x.o; });
+}
+// Owner: "why do I still see ⏭ Ready (next run)? It should move to Would buy" —
+// the run only rate-checks so many orders; the rest are checked here, one by
+// one, right away (nothing is bought), then shown as 👀 Would buy (or why not).
+var _psAlReadyBusy = false;
+async function _psAlCheckReady() {
+  var r = window._psAlRunShown; if (_psAlReadyBusy || !r) return;
+  var todo = (r.orders || []).filter(function(o) { return o.decision === 'ready' && !o._checked; });
+  if (!todo.length) return;
+  _psAlReadyBusy = true;
+  var note = document.getElementById('ps-al-ready-msg');
+  if (!note) { note = document.createElement('div'); note.id = 'ps-al-ready-msg'; note.style.cssText = 'font-size:12px;font-weight:700;color:var(--accent);margin:0 0 6px'; var c = document.getElementById('ps-al-counts'); c.parentNode.insertBefore(note, c.nextSibling); }
+  try {
+    for (var i = 0; i < todo.length; i++) {
+      if (window._psAlRunShown !== r) return; // a newer run came in
+      note.textContent = '⏳ Checking rates for the ⏭ Ready orders: ' + (i + 1) + ' of ' + todo.length + '…';
+      var o = todo[i]; o._checked = true;
+      var d = await _psAlFetch('/veeqo/autolabel/rate-one', { method: 'POST', body: { order: o.number } });
+      if (d.ok === false) continue;
+      r.counts[o.decision] = Math.max(0, (r.counts[o.decision] || 0) - 1); if (!r.counts[o.decision]) delete r.counts[o.decision];
+      ['decision', 'reason', 'carrier', 'service', 'price', 'days', 'slip', 'items', 'pkg', 'boxes', 'weightLb'].forEach(function(k) { if (d[k] !== undefined) o[k] = d[k]; });
+      r.counts[o.decision] = (r.counts[o.decision] || 0) + 1;
+    }
+    note.textContent = '';
+  } finally { _psAlReadyBusy = false; }
+  if (window._psAlRunShown === r) _psAlRenderRun(r);
 }
 
 // 🔎 Last run → an order's live Veeqo info (owner: product name, photo,
@@ -8685,7 +8753,7 @@ window.psAlLive = async function(btn, num) {
   var tr = btn.closest('tr'), nx = tr && tr.nextElementSibling;
   if (nx && nx.classList.contains('ps-al-live')) { nx.remove(); return; }
   var row = document.createElement('tr'); row.className = 'ps-al-live';
-  row.innerHTML = '<td colspan="9" style="padding:8px;border-bottom:2px solid var(--accent);background:var(--bg2)"><div class="ps-al-live-body" style="font-size:12px;color:var(--text3)">Reading ' + _psAlEsc(num) + ' from Veeqo…</div></td>';
+  row.innerHTML = '<td colspan="10" style="padding:8px;border-bottom:2px solid var(--accent);background:var(--bg2)"><div class="ps-al-live-body" style="font-size:12px;color:var(--text3)">Reading ' + _psAlEsc(num) + ' from Veeqo…</div></td>';
   tr.parentNode.insertBefore(row, tr.nextSibling);
   await _psAlLiveLoad(row, num);
 };
