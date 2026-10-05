@@ -2042,5 +2042,36 @@ console.log('\nInventory: Audit scrolls to the scan bar after a scan; slim top b
     && /id="inv-refresh-btn"/.test(ih) && /id="inv-signout-btn"/.test(ih), null);
 }
 
+// Owner: "why do I still see ⏭ Ready (next run)? it should move to Would buy" + "show product names, photo, SKU, bin,
+// weight and package size right on Last run, would buy arranged by SKU".
+console.log('\nAuto Label → Last run: ⏭ Ready orders checked right away → 👀 Would buy; items + package on each row');
+{
+  const realFetch = globalThis.fetch;
+  const items = [{ quantity: 2, sellable: { id: 701, sku_code: '24-5-5=2', product_title: 'Brass elbow', image_url: 'https://photos.example/e.jpg', weight_grams: 60, stock_entries: [{ warehouse_id: 55, location: '24-5-5' }] } }];
+  const ord = { id: 970, number: 'R-1', channel: { name: 'eBay' }, total_price: 40, deliver_to: { first_name: 'Di', last_name: 'Wu' }, line_items: items,
+    allocations: [{ id: 8101, line_items: items, allocation_package: { weight: 12, weight_unit: 'oz', depth: 8, width: 6, height: 4, dimensions_unit: 'inches' } }] };
+  globalThis.fetch = async (u, o) => { u = String(u); const J = x => new Response(JSON.stringify(x), { headers: { 'Content-Type': 'application/json' } });
+    if (u.includes('api.veeqo.com/orders?')) return J(/status=cancelled/.test(u) ? [] : [ord]);
+    if (u.includes('/shipping/quotes/amazon_shipping_v2')) return J([{ title: 'USPS Ground Advantage', name: 'usps-ga', carrier: 'usps', total_net_charge: 4.4, transit_days: 3 }]);
+    if (u.includes('api.veeqo.com/')) return J([]);
+    return new Response('{}', { status: 401 }); };
+  env.VEEQO_API_KEY = 'k';
+  sq.prepare("INSERT INTO app_config (key, value) VALUES ('autolabel_last_run', ?) ON CONFLICT(key) DO UPDATE SET value=excluded.value")
+    .run(JSON.stringify({ counts: { ready: 1 }, orders: [{ number: 'R-1', decision: 'ready', reason: 'Ready — rates checked on a later run' }] }));
+  const r = await post('/veeqo/autolabel/rate-one', { order: 'R-1' });
+  check('⏭ Ready order checked now → 👀 Would buy with its rate (nothing bought)', r.ok && r.decision === 'would_buy' && r.price === 4.4 && r.carrier === 'USPS', r);
+  check('…with its items (photo, name, SKU, bin, qty) and its box from Veeqo (8×6×4 in, 0.75 lb)', r.items.length === 1 && r.items[0].sku === '24-5-5=2' && r.items[0].bin === '24-5-5' && r.items[0].qty === 2 && r.items[0].title === 'Brass elbow' && /e\.jpg/.test(r.items[0].img)
+    && r.pkg.l === 8 && r.pkg.w === 6 && r.pkg.h === 4 && r.pkg.lb === 0.75, r);
+  const lr = JSON.parse(sq.prepare("SELECT value FROM app_config WHERE key = 'autolabel_last_run'").get().value);
+  check('…the saved Last run moves it too (Would buy 1, Ready 0), so it stays after a reload', lr.orders[0].decision === 'would_buy' && lr.counts.would_buy === 1 && !lr.counts.ready, lr.counts);
+  check('…and the next preview run reuses that rate (no "Ready" for it)', !!sq.prepare("SELECT 1 x FROM autolabel_rate_cache WHERE order_id = '970'").get(), null);
+  const { readFileSync } = await import('node:fs');
+  const ws = readFileSync(workerPath, 'utf8'), ph4 = readFileSync(fileURLToPath(new URL('../packship.html', import.meta.url)), 'utf8');
+  check('…every run row carries its items + package (from the order Veeqo already sent)', /mergeWith: \[\],\s*\.\.\.autolabelRowDetail\(o\),/.test(ws), null);
+  check('…Last run checks the ⏭ Ready ones by itself, and shows items + package on each row, sorted by SKU inside each result',
+    /_psAlCheckReady\(\);\s*\}/.test(ph4) && /'\/veeqo\/autolabel\/rate-one'/.test(ph4) && /_psAlItemsHtml\(o\)/.test(ph4) && /_psAlPkgHtml\(o\)/.test(ph4) && /var rows = _psAlSortRows\(/.test(ph4), null);
+  globalThis.fetch = realFetch; delete env.VEEQO_API_KEY;
+}
+
 console.log('\n' + (failed ? '❌ ' + failed + ' check(s) FAILED' : '✅ all ' + passed + ' checks passed') + '\n');
 process.exit(failed ? 1 : 0);

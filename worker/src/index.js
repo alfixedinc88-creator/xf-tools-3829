@@ -24875,6 +24875,7 @@ async function autolabelRun(env, opts = {}) {
       id: o.id, number: o.number, channel: veeqoExtractChannel(o), customer: veeqoExtractCustomerName(o),
       total: autolabelOrderTotal(o), createdAt: o.created_at, decision: '', reason: '',
       carrier: '', service: '', price: null, days: null, mergeWith: [],
+      ...autolabelRowDetail(o),
     };
     const cancel = cancels.byNum.get(num);
     const allocs = o.allocations || [];
@@ -25258,6 +25259,68 @@ async function autolabelBuyByHand(env, number, by) {
   }
   return { ok: true, order: o.number, labels: out, price: Math.round(cost * 100) / 100 };
 }
+// What is in the order (photo, name, SKU, bin, qty) and its box as Veeqo has
+// it (size + weight) — shown right on each Last run row (owner: "look over
+// everything fast"). From the order Veeqo already sent: no extra calls.
+function autolabelRowDetail(o) {
+  const allocs = (o.allocations || []).filter(a => !_psAllocTrackingNumber(a));
+  const src = allocs.length ? allocs : ((o.allocations || []).length ? o.allocations : [{ line_items: o.line_items }]);
+  const items = [];
+  for (const a of src) {
+    for (const li of ((a.line_items && a.line_items.length) ? a.line_items : (o.line_items || []))) {
+      const sell = li.sellable || li.product || {}, prod = sell.product || {};
+      const sku = sell.sku_code || sell.sku || ''; if (!sku) continue;
+      const se = (sell.stock_entries || [])[0] || {}, sub = li.warehouse_sublocation || {};
+      items.push({ sku, qty: parseInt(li.quantity) || 1, bin: String(sub.location || se.location || '').trim(),
+        title: String(sell.product_title || sell.full_title || prod.title || sell.title || '').slice(0, 120),
+        img: sell.image_url || sell.main_image_src || prod.main_image_src || '' });
+    }
+    if (items.length >= 30) break;
+  }
+  const pk = src[0] && src[0].id ? veeqoLivePackage(src[0]) : null;
+  return { items, pkg: pk ? { l: pk.lengthIn, w: pk.widthIn, h: pk.heightIn, lb: pk.weightLb, name: pk.name || '' } : null, boxes: src.length };
+}
+// Last run → a ⏭ Ready order (rates not checked yet in that run) checked now,
+// the same way a preview run would → 👀 Would buy, or why not. Kept in the
+// rate memory and in the saved Last run, so it stays checked.
+async function autolabelPreviewOne(env, number) {
+  const cfg = await autolabelLoadConfig(env);
+  const o = await autolabelFindAwaiting(env, number);
+  if (!o) return { decision: 'has_label', reason: 'No longer waiting for a label in Veeqo' };
+  const allocs = o.allocations || [];
+  const open = allocs.filter(a => !_psAllocTrackingNumber(a));
+  const row = { decision: '', reason: '', carrier: '', service: '', price: null, days: null, slip: false, ...autolabelRowDetail(o) };
+  if (!allocs.length) return { ...row, decision: 'hold', reason: 'Not allocated in Veeqo (stock?)' };
+  if (!open.length) return { ...row, decision: 'has_label', reason: 'Already has a label' };
+  const weights = [];
+  for (const a of open) weights.push(await autolabelWeighAllocation(env, o, a));
+  row.weightLb = weights.reduce((n, w) => (n == null || w.lb == null) ? null : n + w.lb, 0);
+  if (row.weightLb != null) row.weightLb = Math.round(row.weightLb * 100) / 100;
+  const max = cfg.maxBoxLb;
+  const heavy = max > 0 ? weights.find(w => w.lb != null && (w.lb > max || (!w.anyReal && w.veeqoLb != null && w.veeqoLb > max && Math.abs(w.veeqoLb - w.lb) > 1))) : null;
+  if (heavy) return { ...row, decision: 'weigh', reason: (heavy.lb > max ? `${heavy.lb} lb (${heavy.source})` : `System ${heavy.lb} lb but Veeqo ${heavy.veeqoLb} lb`) + ` — over ${max} lb: print by hand in Veeqo, or re-weigh the items` };
+  const mm = weights.find(w => w.anyReal && w.lb != null && w.veeqoLb != null && Math.abs(w.veeqoLb - w.lb) > 0.5);
+  if (mm) return { ...row, decision: 'fix_veeqo_weight', reason: `Real weight ${mm.lb} lb, but Veeqo has ${mm.veeqoLb} lb — fix the product weight in Veeqo (see Re-weigh list), then it prints by itself` };
+  const boxes = open.length > 1 ? `${open.length} boxes: ` : '';
+  const picks = [];
+  for (const a of open) {
+    const { quotes } = await autolabelGetQuotes(env, a.id);
+    const choice = autolabelChooseRate(o, quotes, { ...cfg, lowValueRatio: 0 });
+    if (!choice.pick) return { ...row, decision: choice.hold, reason: boxes + choice.reason };
+    picks.push(choice);
+  }
+  const cost = picks.reduce((n, c) => n + c.pick.price, 0);
+  row.carrier = Array.from(new Set(picks.map(c => c.pick.carrier))).join('+');
+  row.service = picks.length > 1 ? `${picks.length} labels` : picks[0].pick.service;
+  row.price = Math.round(cost * 100) / 100;
+  row.days = Math.max(...picks.map(c => c.pick.days ?? 0));
+  const low = autolabelLowValue(o, cost, cfg);
+  if (low) return { ...row, decision: 'low_value', reason: boxes + low };
+  row.decision = 'would_buy'; row.reason = boxes + picks[0].reason;
+  if (cfg.slipRule !== 'off' && autolabelSlipWanted(await veeqoExtractLineItems(env, o, open[0]), cfg.slipRule)) row.slip = true;
+  await autolabelRateCachePut(env, o, open, row);
+  return row;
+}
 async function autolabelFindAwaiting(env, number) {
   const want = autolabelOrderNum(number);
   const res = await veeqoFetch(env, `/orders?query=${encodeURIComponent(number)}&status=awaiting_fulfillment&page_size=10&page=1`).catch(() => []);
@@ -25415,6 +25478,27 @@ async function handleAutolabelRoute(path, method, url, request, env, session) {
 
   // POST /veeqo/autolabel/test-buy { order } — buys ONE real label by hand,
   // using the same rules. The first success unlocks auto mode.
+  // POST { order } → Last run: check a ⏭ Ready order's rates now (read-only, buys nothing).
+  if (path === '/veeqo/autolabel/rate-one' && method === 'POST') {
+    const b = await request.json().catch(() => ({}));
+    const number = String(b.order || '').trim();
+    if (!number) return veeqoResp({ ok: false, error: 'order is required' }, 400);
+    const row = await autolabelPreviewOne(env, number);
+    // Keep it in the saved Last run (so it stays checked after a reload).
+    try {
+      const lr = JSON.parse(await autolabelGetKey(env, AUTOLABEL_LASTRUN_KEY) || 'null');
+      const r0 = lr && (lr.orders || []).find(x => autolabelOrderNum(x.number) === autolabelOrderNum(number));
+      if (r0) {
+        lr.counts = lr.counts || {};
+        if (r0.decision) lr.counts[r0.decision] = Math.max(0, (lr.counts[r0.decision] || 0) - 1);
+        if (!lr.counts[r0.decision]) delete lr.counts[r0.decision];
+        Object.assign(r0, row);
+        lr.counts[row.decision] = (lr.counts[row.decision] || 0) + 1;
+        await autolabelSaveLastRun(env, lr);
+      }
+    } catch (_) {}
+    return veeqoResp({ ok: true, order: number, ...row });
+  }
   // POST { order } → Last run → 🖨 Buy & print selected: buys that order's label(s) now (all checks again).
   if (path === '/veeqo/autolabel/buy-one' && method === 'POST') {
     const b = await request.json().catch(() => ({}));
