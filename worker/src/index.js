@@ -24204,6 +24204,16 @@ async function autolabelEnsureTables(env) {
       status TEXT NOT NULL DEFAULT 'open', done_by TEXT, done_at TEXT
     )
   `).run().catch(()=>{});
+  // 💸 Low value orders (label cost high vs the order), kept so each
+  // listing's price can be checked later — even when it was printed anyway.
+  await env.DB.prepare(`
+    CREATE TABLE IF NOT EXISTS low_value_log (
+      order_id TEXT PRIMARY KEY, order_number TEXT, channel TEXT, customer TEXT, items TEXT,
+      order_total REAL, label_cost REAL, pct REAL, carrier TEXT, service TEXT, reason TEXT,
+      first_seen TEXT NOT NULL, last_seen TEXT NOT NULL, bought_at TEXT, bought_by TEXT, tracking TEXT,
+      status TEXT NOT NULL DEFAULT 'open', checked_by TEXT, checked_at TEXT, note TEXT
+    )
+  `).run().catch(()=>{});
   // 🧩 Same name + address merged into one box: who / when / which orders /
   // the one tracking #, and whether each other order got marked shipped.
   await env.DB.prepare(`
@@ -24652,6 +24662,23 @@ function autolabelLowValue(order, cost, cfg) {
     return `Label $${cost.toFixed(2)} vs order $${total.toFixed(2)} — check before shipping`;
   }
   return null;
+}
+
+// Owner: "low value — let me still select all and print, but keep the record:
+// later we go back to each listing to check and change the price". One row
+// per order (seen again → updated); bought → who / when / tracking added.
+async function autolabelLowValueNote(env, o, cost, pick, reason, bought) {
+  try {
+    const now = new Date().toISOString(), total = autolabelOrderTotal(o);
+    const items = autolabelRowDetail(o).items.map(i => ({ sku: i.sku, qty: i.qty, title: i.title }));
+    await d1Run(env, `INSERT INTO low_value_log (order_id, order_number, channel, customer, items, order_total, label_cost, pct, carrier, service, reason, first_seen, last_seen)
+      VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)
+      ON CONFLICT(order_id) DO UPDATE SET items=excluded.items, order_total=excluded.order_total, label_cost=excluded.label_cost, pct=excluded.pct,
+        carrier=excluded.carrier, service=excluded.service, reason=excluded.reason, last_seen=excluded.last_seen`,
+      [String(o.id), o.number || '', veeqoExtractChannel(o), veeqoExtractCustomerName(o), JSON.stringify(items), total, Math.round(cost * 100) / 100,
+       total > 0 ? Math.round(cost / total * 1000) / 10 : null, (pick && pick.carrier) || '', (pick && pick.service) || '', String(reason || '').slice(0, 300), now, now]);
+    if (bought) await d1Run(env, 'UPDATE low_value_log SET bought_at = ?, bought_by = ?, tracking = ? WHERE order_id = ?', [now, bought.by || '', bought.tracking || '', String(o.id)]);
+  } catch (e) { console.error('[autolabel] low value note', e.message); }
 }
 
 // ── Box weight + split plan ──────────────────────────────────────────────
@@ -25360,7 +25387,7 @@ async function autolabelRun(env, opts = {}) {
             const why = boxes + (picks.length ? picks[0].choice.reason : '');
             const low = !hold ? autolabelLowValue(o, cost, cfg) : null;
             if (hold) { row.decision = hold.hold; row.reason = boxes + hold.reason; }
-            else if (low) { row.decision = 'low_value'; row.reason = boxes + low; }
+            else if (low) { row.decision = 'low_value'; row.reason = boxes + low; await autolabelLowValueNote(env, o, cost, picks[0] && picks[0].choice.pick, low); }
             else if (!buy) {
               row.decision = 'would_buy'; row.reason = why;
               if (cfg.slipRule !== 'off' && autolabelSlipWanted(await veeqoExtractLineItems(env, o, todo[0]), cfg.slipRule)) row.slip = true;
@@ -25609,7 +25636,8 @@ async function autolabelRateCachePut(env, o, open, row) {
 // Last run → 🖨 Buy & print selected: buys ONE order's label(s) now, by hand —
 // every check the auto run does is done again (cancelled, Cancellation list,
 // already has a label, over the weight limit, the carrier rules, low value).
-async function autolabelBuyByHand(env, number, by) {
+// allowLow: the owner ticked a 💸 Low value order → bought anyway, kept on the Low value list.
+async function autolabelBuyByHand(env, number, by, allowLow) {
   const cfg = await autolabelLoadConfig(env);
   const o = await autolabelFindAwaiting(env, number);
   if (!o) return { ok: false, error: `No order ${number} waiting for a label in Veeqo` };
@@ -25642,12 +25670,14 @@ async function autolabelBuyByHand(env, number, by) {
   }
   const cost = picks.reduce((n, p) => n + p.choice.pick.price, 0);
   const low = autolabelLowValue(o, cost, cfg);
-  if (low) return { ok: false, error: low };
+  if (low) await autolabelLowValueNote(env, o, cost, picks[0].choice.pick, low);
+  if (low && !allowLow) return { ok: false, lowValue: true, error: low };
   const out = [];
   for (const p of picks) {
     const pk = p.choice.pick;
     const logBase = { orderId: o.id, allocId: p.alloc.id, orderNumber: o.number, channel: veeqoExtractChannel(o), customer: veeqoExtractCustomerName(o),
-      carrier: pk.carrier, service: pk.service, price: pk.price, orderTotal: autolabelOrderTotal(o), reason: `Bought by hand from Last run (${by || '?'}): ${p.choice.reason}` };
+      carrier: pk.carrier, service: pk.service, price: pk.price, orderTotal: autolabelOrderTotal(o),
+      reason: `Bought by hand from Last run (${by || '?'}): ${low ? '💸 low value, bought anyway (' + low + ') — on the Low value list · ' : ''}${p.choice.reason}` };
     try {
       const r = await autolabelBuy(env, o, p.alloc.id, pk);
       await autolabelLog(env, { ...logBase, action: 'bought', tracking: r.tracking });
@@ -25656,10 +25686,12 @@ async function autolabelBuyByHand(env, number, by) {
       out.push({ carrier: pk.carrier, service: pk.service, price: pk.price, tracking: r.tracking });
     } catch (e) {
       await autolabelLog(env, { ...logBase, action: 'buy_failed', detail: e.message });
+      if (low && out.length) await autolabelLowValueNote(env, o, cost, picks[0].choice.pick, low, { by, tracking: out.map(x => x.tracking).join(', ') });
       return { ok: false, error: (out.length ? `${out.length} of ${picks.length} boxes bought, then: ` : '') + String(e.message || e).slice(0, 300), labels: out };
     }
   }
-  return { ok: true, order: o.number, labels: out, price: Math.round(cost * 100) / 100 };
+  if (low) await autolabelLowValueNote(env, o, cost, picks[0].choice.pick, low, { by, tracking: out.map(x => x.tracking).join(', ') });
+  return { ok: true, order: o.number, labels: out, price: Math.round(cost * 100) / 100, lowValue: !!low };
 }
 // What is in the order (photo, name, SKU, bin, qty) and its box as Veeqo has
 // it (size + weight) — shown right on each Last run row (owner: "look over
@@ -25717,7 +25749,7 @@ async function autolabelPreviewOne(env, number) {
   row.price = Math.round(cost * 100) / 100;
   row.days = Math.max(...picks.map(c => c.pick.days ?? 0));
   const low = autolabelLowValue(o, cost, cfg);
-  if (low) return { ...row, decision: 'low_value', reason: boxes + low };
+  if (low) { await autolabelLowValueNote(env, o, cost, picks[0].pick, low); return { ...row, decision: 'low_value', reason: boxes + low }; }
   row.decision = 'would_buy'; row.reason = boxes + picks[0].reason;
   if (cfg.slipRule !== 'off' && autolabelSlipWanted(await veeqoExtractLineItems(env, o, open[0]), cfg.slipRule)) row.slip = true;
   await autolabelRateCachePut(env, o, open, row);
@@ -25908,7 +25940,7 @@ async function handleAutolabelRoute(path, method, url, request, env, session) {
     const number = String(b.order || '').trim();
     if (!number) return veeqoResp({ ok: false, error: 'order is required' }, 400);
     const by = String((session && (session.displayName || session.username)) || b.by || '').slice(0, 40);
-    return veeqoResp(await autolabelBuyByHand(env, number, by));
+    return veeqoResp(await autolabelBuyByHand(env, number, by, b.allowLow === true));
   }
   // POST { orders:[numbers] } → Last run → 🧩 Merge & buy: same name + address, one box, one label.
   if (path === '/veeqo/autolabel/merge-buy' && method === 'POST') {
@@ -25975,6 +26007,23 @@ async function handleAutolabelRoute(path, method, url, request, env, session) {
   }
 
   // ── Re-weigh list + saved real weights ──
+  // 💸 Low value list: GET ?status=open|checked|all → the orders, newest first.
+  if (path === '/veeqo/autolabel/low-value' && method === 'GET') {
+    const st = url.searchParams.get('status') || 'open';
+    const rows = await d1All(env, `SELECT * FROM low_value_log ${st === 'all' ? '' : 'WHERE status = ?'} ORDER BY last_seen DESC LIMIT 300`, st === 'all' ? [] : [st === 'checked' ? 'checked' : 'open']);
+    return veeqoResp({ ok: true, rows: rows.map(r => { let items = []; try { items = JSON.parse(r.items || '[]') || []; } catch (_) {} return { ...r, items }; }) });
+  }
+  // POST { orderId, note, undo } → price checked (who / when / what was done), or back to open.
+  if (path === '/veeqo/autolabel/low-value-checked' && method === 'POST') {
+    const b = await request.json().catch(() => ({}));
+    const id = String(b.orderId || '').trim();
+    if (!id) return veeqoResp({ ok: false, error: 'orderId is required' }, 400);
+    const by = String((session && (session.displayName || session.username)) || b.by || '').slice(0, 40);
+    const r = b.undo
+      ? await d1Run(env, `UPDATE low_value_log SET status = 'open' WHERE order_id = ?`, [id])
+      : await d1Run(env, `UPDATE low_value_log SET status = 'checked', checked_by = ?, checked_at = ?, note = ? WHERE order_id = ?`, [by, new Date().toISOString(), String(b.note || '').slice(0, 500), id]);
+    return veeqoResp({ ok: !!(r && r.meta && r.meta.changes), error: r && r.meta && r.meta.changes ? undefined : 'Not on the Low value list' });
+  }
   if (path === '/veeqo/autolabel/reweigh' && method === 'GET') {
     const [queue, weights] = await Promise.all([
       d1All(env, `SELECT * FROM reweigh_queue WHERE status='open' ORDER BY flagged_at DESC LIMIT 200`),

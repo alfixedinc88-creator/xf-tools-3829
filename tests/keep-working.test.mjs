@@ -2119,6 +2119,46 @@ console.log('\nAuto Label → 🧩 same name + address: ≤ 20 lb together → o
   globalThis.fetch = realFetch; delete env.VEEQO_API_KEY;
 }
 
+// Owner: "low value on Auto Label — let me still select all and print like would buy, but keep the record;
+// later we go back to each listing to check and change the price".
+console.log('\nAuto Label → 💸 Low value: can be ticked and printed like Would buy, kept on the Low value list');
+{
+  const realFetch = globalThis.fetch; const bought = [];
+  const items = [{ quantity: 1, sellable: { id: 801, sku_code: '9-9-9=1', product_title: 'Cheap cap', weight_grams: 40, stock_entries: [{ warehouse_id: 55, location: '9-9-9' }] } }];
+  let hasLabel = false;
+  const ord = () => ({ id: 990, number: 'LV-1', channel: { name: 'eBay', type_code: 'ebay' }, total_price: 5, created_at: new Date(Date.now() - 864e5).toISOString(),
+    deliver_to: { first_name: 'Lo', last_name: 'Va', address1: '7 Low St', zip: '10001' }, line_items: items,
+    allocations: [{ id: 8901, line_items: items, shipment: hasLabel ? { id: 1, tracking_number: { tracking_number: '9400LV1' } } : null }] });
+  globalThis.fetch = async (u, o) => { u = String(u); const m = (o && o.method) || 'GET'; const J = x => new Response(JSON.stringify(x), { headers: { 'Content-Type': 'application/json' } });
+    if (u.includes('api.veeqo.com/orders?')) return J(/status=cancelled/.test(u) ? [] : (/query=LV-1|status=awaiting/.test(u) ? [ord()] : []));
+    if (u.includes('api.veeqo.com/shipping/quotes/amazon_shipping_v2')) return J([{ title: 'USPS Ground Advantage', name: 'usps-ga', carrier: 'usps', total_net_charge: 4.8, transit_days: 3 }]);
+    if (u.includes('api.veeqo.com/shipping/shipments') && m === 'POST') { bought.push(1); hasLabel = true; return J({ id: 1, tracking_number: { tracking_number: '9400LV1' } }); }
+    if (u.includes('api.veeqo.com/')) return J([]);
+    return new Response('{}', { status: 401 }); };
+  env.VEEQO_API_KEY = 'k';
+  const lvRow = () => sq.prepare("SELECT * FROM low_value_log WHERE order_number = 'LV-1'").get();
+  const r0 = await post('/veeqo/autolabel/buy-one', { order: 'LV-1' });
+  check('💸 $4.80 label on a $5 order, not ticked as low value → not bought (as before), but kept on the Low value list',
+    r0.ok === false && r0.lowValue && bought.length === 0 && lvRow()?.label_cost === 4.8 && lvRow()?.order_total === 5 && lvRow()?.pct === 96 && /9-9-9=1/.test(lvRow()?.items) && !lvRow()?.bought_at, { r0, row: lvRow() });
+  const r1 = await post('/veeqo/autolabel/buy-one', { order: 'LV-1', allowLow: true });
+  check('…ticked in Last run (💸 Low value) → bought and printed like Would buy', r1.ok && r1.lowValue && bought.length === 1 && r1.labels[0].tracking === '9400LV1'
+    && sq.prepare("SELECT COUNT(*) n FROM label_print_queue WHERE order_number = 'LV-1'").get().n === 1, r1);
+  check('…on record: the Low value list says printed (who / when / tracking), and the log says "low value, bought anyway"',
+    !!lvRow()?.bought_at && lvRow()?.tracking === '9400LV1' && lvRow()?.status === 'open'
+    && /low value, bought anyway/.test(sq.prepare("SELECT reason FROM autolabel_log WHERE order_number = 'LV-1' AND action = 'bought'").get()?.reason || ''), lvRow());
+  const l1 = await get('/veeqo/autolabel/low-value?status=open');
+  const c1 = await post('/veeqo/autolabel/low-value-checked', { orderId: '990', note: 'raised to $7.99' });
+  const l2 = await get('/veeqo/autolabel/low-value?status=open'), l3 = await get('/veeqo/autolabel/low-value?status=checked');
+  check('…💸 Low value list: shows it to check; ✓ Price checked → who / when / what was done, moves to Checked',
+    l1.rows.some(x => x.order_number === 'LV-1' && x.items[0].sku === '9-9-9=1') && c1.ok && !l2.rows.some(x => x.order_number === 'LV-1')
+    && l3.rows.some(x => x.order_number === 'LV-1' && x.note === 'raised to $7.99' && x.checked_by && x.checked_at), { c1, l3: l3.rows });
+  const { readFileSync } = await import('node:fs');
+  const ph = readFileSync(fileURLToPath(new URL('../packship.html', import.meta.url)), 'utf8');
+  check('…Last run: 💸 Low value rows have a ☐ (Select all includes them) and are sent as "low value, OK to buy"',
+    /var _PS_AL_BUYABLE = \{ would_buy: 1, ready: 1, low_value: 1 \};/.test(ph) && /allowLow: !!c\.dataset\.low/.test(ph) && /id="ps-al-lowvalue"/.test(ph), null);
+  globalThis.fetch = realFetch; delete env.VEEQO_API_KEY;
+}
+
 // Owner: "Audit — after scanning the column or a box, scroll down to the scan bar (see more info below); on the phone the
 // Inventory / Refresh / Sign out / Apps bar stays at the top but small — tap to show all".
 console.log('\nInventory: Audit scrolls to the scan bar after a scan; slim top bar on the phone');
