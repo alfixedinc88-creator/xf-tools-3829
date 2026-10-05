@@ -1943,5 +1943,56 @@ console.log('\nAuto Label: every bought label goes on the 🖨 Printer station l
   globalThis.fetch = realFetch; delete env.VEEQO_API_KEY;
 }
 
+// Owner: "Last run — see the product name, photo, customer, bin, SKU, items, package size + weight (live in Veeqo), and change the photo, bin, SKU, package — it changes in Veeqo too".
+console.log('\nAuto Label → Last run → 🔎 an order: live Veeqo info, changes saved in Veeqo and kept on record');
+{
+  const realFetch = globalThis.fetch; const writes = []; let refuse = false;
+  const V = { sku: '24-5-5=2', loc: '24-5-5', img: 'https://photos.example/old.jpg', pkg: { weight: 8, weight_unit: 'oz', depth: 6, width: 4, height: 2, dimensions_unit: 'inches' } };
+  const ord = () => ({ id: 901, number: '114-1111111-2222222', channel: { name: 'Amazon' }, deliver_to: { first_name: 'Ana', last_name: 'Lopez', city: 'Naples', state: 'FL', zip: '34117' },
+    allocations: [{ id: 7001, allocation_package: { ...V.pkg }, warehouse: { id: 55 },
+      line_items: [{ quantity: 2, sellable: { id: 3001, product_id: 4001, sku_code: V.sku, product_title: 'Brass elbow 1/2"', image_url: V.img, weight_grams: 113.4, stock_entries: [{ warehouse_id: 55, location: V.loc }] } }] }] });
+  globalThis.fetch = async (u, o) => { u = String(u); const m = (o && o.method) || 'GET';
+    if (u.includes('api.veeqo.com/orders?')) return new Response(JSON.stringify([ord()]), { headers: { 'Content-Type': 'application/json' } });
+    if (u.startsWith('https://api.veeqo.com/') && m === 'PUT') { const b = JSON.parse(o.body || '{}'); writes.push({ u, b });
+      if (refuse) return new Response('{"error":"nope"}', { status: 422 });
+      if (/\/sellables\/3001\/warehouses\/55\/stock_entry$/.test(u)) { V.loc = b.stock_entry.location; return new Response('{}'); }
+      if (/\/products\/4001$/.test(u) && b.product.product_variants_attributes) { V.sku = b.product.product_variants_attributes[0].sku_code; return new Response('{}'); }
+      if (/\/products\/4001$/.test(u) && b.product.images_attributes) { V.img = 'https://veeqo-cdn.example/' + encodeURIComponent(b.product.images_attributes[0].src); return new Response('{}'); }
+      if (/\/allocations\/7001\/allocation_package$/.test(u)) return new Response('not found', { status: 404 }); // first shape refused → the next is tried
+      if (/\/orders\/901\/allocations\/7001$/.test(u)) { V.pkg = { ...b.allocation.allocation_package_attributes }; return new Response('{}'); }
+      return new Response('not found', { status: 404 }); }
+    return realFetch(u, o); };
+  env.VEEQO_API_KEY = 'k';
+  const lv = await get('/veeqo/autolabel/order-live?order=114-1111111-2222222');
+  const it = (lv.boxes || [])[0] && lv.boxes[0].items[0] || {};
+  check('🔎 shows the live order: customer, the item (name, photo, SKU, bin, qty) and the box\'s package size + weight from Veeqo',
+    lv.ok && /Ana/.test(lv.customer) && it.title === 'Brass elbow 1/2"' && it.sku === '24-5-5=2' && it.bin === '24-5-5' && it.qty === 2 && it.img === 'https://photos.example/old.jpg'
+    && lv.boxes[0].package.lengthIn === 6 && lv.boxes[0].package.weightLb === 0.5, lv);
+  const ids = { order: '114-1111111-2222222', sellableId: it.sellableId, productId: it.productId, warehouseId: it.warehouseId, allocId: 7001 };
+  const eb = await post('/veeqo/autolabel/order-edit', { ...ids, kind: 'bin', value: '24-5-6' });
+  check('…change the bin → saved in Veeqo (its stock entry), checked by reading the order again', eb.ok && V.loc === '24-5-6' && eb.before === '24-5-5' && eb.after === '24-5-6', eb);
+  const es = await post('/veeqo/autolabel/order-edit', { ...ids, kind: 'sku', value: '24-5-5=2X' });
+  check('…change the SKU → saved in Veeqo', es.ok && V.sku === '24-5-5=2X' && es.after === '24-5-5=2X', es);
+  const ep = await post('/veeqo/autolabel/order-edit', { ...ids, kind: 'photo', value: 'https://photos.example/new.jpg' });
+  check('…change the photo → saved in Veeqo (a photo link must be https://)', ep.ok && /new\.jpg/.test(V.img) && !(await post('/veeqo/autolabel/order-edit', { ...ids, kind: 'photo', value: 'javascript:alert(1)' })).ok, ep);
+  const ek = await post('/veeqo/autolabel/order-edit', { ...ids, kind: 'package', lengthIn: 10, widthIn: 8, heightIn: 4, weightLb: 1.25 });
+  check('…change the package size + weight → saved in Veeqo (20 oz = 1.25 lb, 10×8×4 in); a refused way is skipped for the next', ek.ok && V.pkg.weight === 20 && V.pkg.depth === 10 && ek.tries.length === 2 && ek.tries[0].status === 404, ek);
+  refuse = true;
+  const ef = await post('/veeqo/autolabel/order-edit', { ...ids, kind: 'bin', value: '99-9-9' });
+  check('…Veeqo refuses → "not saved" with what Veeqo said, nothing changed there', ef.ok === false && /did not take/.test(ef.error) && V.loc === '24-5-6', ef);
+  const log = sq.prepare("SELECT kind, before_val, after_val, ok, by_user, detail FROM veeqo_edit_log WHERE order_id = '901' ORDER BY id").all();
+  check('…every change on record: who / when / before → after, and the refused one marked not saved with why', log.length === 5 && log[0].kind === 'bin' && log[0].before_val === '24-5-5' && log[0].after_val === '24-5-6' && log[0].ok === 1 && log[0].by_user
+    && log[4].ok === 0 && /NOT saved/.test(log[4].detail), log);
+  const lv2 = await get('/veeqo/autolabel/order-live?order=114-1111111-2222222');
+  check('…🔎 shows those changes in its history', (lv2.history || []).length === 5, lv2.history);
+  check('…bad input is refused before anything goes to Veeqo', !(await post('/veeqo/autolabel/order-edit', { ...ids, kind: 'package', lengthIn: 0, widthIn: 8, heightIn: 4, weightLb: 1 })).ok
+    && !(await post('/veeqo/autolabel/order-edit', { ...ids, kind: 'sku', value: '' })).ok && !(await post('/veeqo/autolabel/order-edit', { ...ids, kind: 'title', value: 'x' })).ok, null);
+  const { readFileSync } = await import('node:fs');
+  const ws = readFileSync(workerPath, 'utf8'), ph2 = readFileSync(fileURLToPath(new URL('../packship.html', import.meta.url)), 'utf8');
+  check('…changing things in Veeqo is blocked while the test switch is on, like buying a label', /'\/veeqo\/autolabel\/test-buy', '\/veeqo\/autolabel\/order-edit'/.test(ws), null);
+  check('…Last run: each order has 🔎 that opens it; a SKU change warns it renames it for every order and listing', /onclick="psAlLive\(this, /.test(ph2) && /renames the SKU in Veeqo for EVERY order and listing/.test(ph2), null);
+  globalThis.fetch = realFetch; delete env.VEEQO_API_KEY;
+}
+
 console.log('\n' + (failed ? '❌ ' + failed + ' check(s) FAILED' : '✅ all ' + passed + ' checks passed') + '\n');
 process.exit(failed ? 1 : 0);

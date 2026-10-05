@@ -6541,7 +6541,7 @@ const TM_BLOCK = new Set([
   '/ebay-msg/send', '/msg/send', '/msg/reply', '/shopify/listing-create',
   '/repricer/price-change', '/repricer/auto-reprice', '/repricer/queue-action',
   '/ship/cancel-label', '/ship/cancel-order', '/ship/cancel-order-confirm',
-  '/veeqo/autolabel/run', '/veeqo/autolabel/test-buy',
+  '/veeqo/autolabel/run', '/veeqo/autolabel/test-buy', '/veeqo/autolabel/order-edit',
   '/inventory/soldout/set-qty', '/inventory/soldout/add-listing',
 ]);
 function tmJ(o, status) { return cors(new Response(JSON.stringify(o), { status: status || 200, headers: { 'Content-Type': 'application/json' } })); }
@@ -25172,6 +25172,105 @@ async function autolabelFindAwaiting(env, number) {
   return (Array.isArray(res) ? res : []).find(o => autolabelOrderNum(o.number) === want) || null;
 }
 
+// ── Last run → 🔎 an order's live Veeqo info (owner: "see the product name,
+// photo, customer, bin, SKU, items, package size and weight we have in live
+// package info, and change the photo, bin, SKU, package size and weight — it
+// changes it in Veeqo too"). Every change: who / when / before → after in
+// veeqo_edit_log, and only called saved once Veeqo shows the new value.
+async function veeqoEditTable(env) {
+  await env.DB.prepare(`CREATE TABLE IF NOT EXISTS veeqo_edit_log (id INTEGER PRIMARY KEY AUTOINCREMENT, ts TEXT, by_user TEXT,
+    order_number TEXT, order_id TEXT, alloc_id TEXT, sellable_id TEXT, sku TEXT, kind TEXT, before_val TEXT, after_val TEXT, ok INTEGER, detail TEXT)`).run();
+}
+async function veeqoLiveOrder(env, number) {
+  const res = await veeqoFetch(env, `/orders?query=${encodeURIComponent(number)}&page_size=10&page=1`).catch(() => []);
+  return (Array.isArray(res) ? res : []).find(x => autolabelOrderNum(x.number) === autolabelOrderNum(number)) || null;
+}
+// A box's package as Veeqo has it (allocation_package), in lb and inches.
+function veeqoLivePackage(a) {
+  const p = (a && (a.allocation_package || a.package)) || {};
+  const num = v => { const n = parseFloat(v); return isFinite(n) && n > 0 ? n : null; };
+  const toLb = (w, u) => { if (w == null) return null; u = String(u || 'g').toLowerCase();
+    const lb = u.startsWith('oz') ? w / 16 : u.startsWith('lb') || u.startsWith('pound') ? w : u.startsWith('kg') ? w / 0.45359237 : w / 453.59237; return Math.round(lb * 1000) / 1000; };
+  const toIn = (d, u) => { if (d == null) return null; u = String(u || 'in').toLowerCase(); return Math.round((u.startsWith('cm') ? d / 2.54 : u.startsWith('mm') ? d / 25.4 : d) * 100) / 100; };
+  const du = p.dimensions_unit || p.dimension_unit || 'inches';
+  const w = num(p.weight) != null ? toLb(num(p.weight), p.weight_unit) : toLb(num(a && a.weight), a && a.weight_unit);
+  return { id: p.id || null, name: p.package_name || p.name || '', lengthIn: toIn(num(p.depth != null ? p.depth : p.length), du), widthIn: toIn(num(p.width), du), heightIn: toIn(num(p.height), du), weightLb: w,
+    raw: { weight: p.weight, weight_unit: p.weight_unit, depth: p.depth, width: p.width, height: p.height, dimensions_unit: p.dimensions_unit } };
+}
+async function veeqoLiveView(env, o) {
+  const allocs = (o.allocations || []).length ? o.allocations : [{ id: null, line_items: o.line_items }];
+  const d = o.deliver_to || {};
+  const boxes = [];
+  for (const a of allocs) {
+    const lines = (a.line_items && a.line_items.length) ? a.line_items : (o.line_items || []);
+    const items = [];
+    for (const li of lines) {
+      const sell = li.sellable || li.product || {};
+      const sku = sell.sku_code || sell.sku || ''; if (!sku) continue;
+      const se = (sell.stock_entries || [])[0] || {};
+      const sub = li.warehouse_sublocation || {};
+      const prod = sell.product || {};
+      items.push({ sellableId: sell.id || null, productId: sell.product_id || prod.id || null, sku, qty: parseInt(li.quantity) || 1,
+        title: sell.product_title || sell.full_title || prod.title || sell.title || '',
+        img: sell.image_url || sell.main_image_src || prod.main_image_src || '',
+        bin: String(sub.location || se.location || '').trim(), stockBin: String(se.location || '').trim(), warehouseId: se.warehouse_id || (se.warehouse && se.warehouse.id) || (a.warehouse && a.warehouse.id) || null,
+        weightLb: parseFloat(sell.weight_grams) > 0 ? Math.round(parseFloat(sell.weight_grams) / 453.59237 * 1000) / 1000 : null });
+    }
+    let est = null; try { est = a.id ? (await autolabelWeighAllocation(env, o, a)).lb : null; } catch (_) {}
+    boxes.push({ allocId: a.id, tracking: a.id ? (_psAllocTrackingNumber(a) || '') : '', package: a.id ? veeqoLivePackage(a) : null, estimateLb: est, items });
+  }
+  // Photos we already know for these part #s, to pick from.
+  const bases = Array.from(new Set(boxes.flatMap(b => b.items.map(i => String(i.sku).split('=')[0].trim().toUpperCase())).filter(Boolean)));
+  const photos = {};
+  if (bases.length) {
+    try {
+      const rows = await d1All(env, `SELECT UPPER(base_sku) b, image_url_1, image_url_2, image_url_3, image_url_4, image_url_5 FROM product_catalog WHERE UPPER(base_sku) IN (${bases.map(() => '?').join(',')})`, bases);
+      for (const r of rows) { const l = photos[r.b] = photos[r.b] || []; [r.image_url_1, r.image_url_2, r.image_url_3, r.image_url_4, r.image_url_5].forEach(u => { u = String(u || '').trim(); if (u && !l.includes(u) && l.length < 8) l.push(u); }); }
+    } catch (_) {}
+  }
+  return { orderId: o.id, number: o.number, channel: veeqoExtractChannel(o), customer: veeqoExtractCustomerName(o),
+    shipTo: [d.city, d.state, d.zip || d.postcode].filter(Boolean).join(', '), boxes, photos };
+}
+// One write to Veeqo → { ok, status, said }.
+async function veeqoWrite(env, method, path, body) {
+  const res = await fetch(VEEQO_BASE + path, { method, body: JSON.stringify(body), headers: {
+    'x-api-key': (env.VEEQO_API_KEY || '').trim(), 'Accept': 'application/json', 'Content-Type': 'application/json' } });
+  const txt = await res.text().catch(() => '');
+  return { ok: res.ok, status: res.status, said: txt.replace(/\s+/g, ' ').slice(0, 300) };
+}
+// Each change has a few known shapes in Veeqo's API; try them in order until
+// one is taken AND the new value shows up when the order is read again.
+function veeqoEditTries(kind, b, o) {
+  const sid = b.sellableId, pid = b.productId, wid = b.warehouseId, aid = b.allocId;
+  if (kind === 'bin') return [['PUT', `/sellables/${sid}/warehouses/${wid}/stock_entry`, { stock_entry: { location: b.value } }]];
+  if (kind === 'sku') return [
+    ['PUT', `/products/${pid}`, { product: { product_variants_attributes: [{ id: sid, sku_code: b.value }] } }],
+    ['PUT', `/product_variants/${sid}`, { product_variant: { sku_code: b.value } }],
+    ['PUT', `/sellables/${sid}`, { sellable: { sku_code: b.value } }],
+  ];
+  if (kind === 'photo') return [
+    ['PUT', `/products/${pid}`, { product: { images_attributes: [{ src: b.value, display_position: 1 }] } }],
+    ['PUT', `/product_variants/${sid}`, { product_variant: { image_url: b.value } }],
+  ];
+  if (kind === 'package') {
+    const pk = { weight: b.weightLb != null ? Math.round(b.weightLb * 16 * 100) / 100 : undefined, weight_unit: 'oz',
+      depth: b.lengthIn, width: b.widthIn, height: b.heightIn, dimensions_unit: 'inches' };
+    return [
+      ['PUT', `/allocations/${aid}/allocation_package`, { allocation_package: pk }],
+      ['PUT', `/orders/${o.id}/allocations/${aid}`, { allocation: { allocation_package_attributes: pk } }],
+      ['PUT', `/allocations/${aid}`, { allocation: { allocation_package_attributes: pk } }],
+    ];
+  }
+  return [];
+}
+// What the field reads now (from a fresh look at the order) — to check the save.
+function veeqoEditRead(kind, view, b) {
+  const box = view.boxes.find(x => String(x.allocId) === String(b.allocId)) || view.boxes[0];
+  if (kind === 'package') { const p = (box && box.package) || {}; return [p.lengthIn, p.widthIn, p.heightIn].map(v => v == null ? '?' : v).join('×') + ' in · ' + (p.weightLb == null ? '?' : p.weightLb) + ' lb'; }
+  const it = view.boxes.flatMap(x => x.items).find(i => String(i.sellableId) === String(b.sellableId)) || {};
+  return kind === 'bin' ? it.stockBin || '' : kind === 'sku' ? it.sku || '' : kind === 'photo' ? it.img || '' : '';
+}
+
 async function handleAutolabelRoute(path, method, url, request, env, session) {
   await autolabelEnsureTables(env);
 
@@ -25376,6 +25475,57 @@ async function handleAutolabelRoute(path, method, url, request, env, session) {
     const rows = await d1All(env, `SELECT id, order_number, channel, tracking, carrier, service, created_at, printed_at, printed_by, print_count, last_error, items
       FROM label_print_queue WHERE printed_at IS ${printed ? 'NOT ' : ''}NULL ORDER BY id ${printed ? 'DESC' : 'ASC'} LIMIT ?`, [limit]);
     return veeqoResp({ ok: true, labels: rows.map(r => { let items = []; try { items = JSON.parse(r.items || '[]') || []; } catch (_) {} return { ...r, items }; }) });
+  }
+  // GET ?order= → that order's live Veeqo info for 🔎 in Last run, plus its change history.
+  if (path === '/veeqo/autolabel/order-live' && method === 'GET') {
+    const number = String(url.searchParams.get('order') || '').trim();
+    if (!number) return veeqoResp({ ok: false, error: 'order is required' }, 400);
+    const o = await veeqoLiveOrder(env, number);
+    if (!o) return veeqoResp({ ok: false, error: `Order ${number} not found in Veeqo` });
+    await veeqoEditTable(env);
+    const history = await d1All(env, 'SELECT ts, by_user, sku, kind, before_val, after_val, ok, detail FROM veeqo_edit_log WHERE order_id = ? ORDER BY id DESC LIMIT 50', [String(o.id)]);
+    return veeqoResp({ ok: true, ...(await veeqoLiveView(env, o)), history });
+  }
+  // POST { order, kind: photo|bin|sku|package, sellableId, productId, warehouseId, allocId, value | lengthIn widthIn heightIn weightLb }
+  // → changes it in Veeqo, reads the order again to check, keeps it on record.
+  if (path === '/veeqo/autolabel/order-edit' && method === 'POST') {
+    const b = await request.json().catch(() => ({}));
+    const kind = String(b.kind || ''), number = String(b.order || '').trim();
+    if (!['photo', 'bin', 'sku', 'package'].includes(kind)) return veeqoResp({ ok: false, error: 'kind must be photo, bin, sku or package' }, 400);
+    if (kind === 'package') {
+      for (const k of ['lengthIn', 'widthIn', 'heightIn', 'weightLb']) { const n = parseFloat(b[k]); if (!(n > 0 && n < 1000)) return veeqoResp({ ok: false, error: `${k} must be a number above 0` }, 400); b[k] = Math.round(n * 100) / 100; }
+      if (!b.allocId) return veeqoResp({ ok: false, error: 'allocId is required' }, 400);
+    } else {
+      b.value = String(b.value || '').trim();
+      if (!b.value) return veeqoResp({ ok: false, error: 'value is required' }, 400);
+      if (kind === 'photo' && !/^https:\/\/\S+$/i.test(b.value)) return veeqoResp({ ok: false, error: 'The photo must be an https:// link' }, 400);
+      if (!b.sellableId) return veeqoResp({ ok: false, error: 'sellableId is required' }, 400);
+      if (kind === 'bin' && !b.warehouseId) return veeqoResp({ ok: false, error: 'Veeqo has no warehouse for this item' }, 400);
+      if ((kind === 'sku' || kind === 'photo') && !b.productId) return veeqoResp({ ok: false, error: 'Veeqo has no product id for this item' }, 400);
+    }
+    const o = await veeqoLiveOrder(env, number);
+    if (!o) return veeqoResp({ ok: false, error: `Order ${number} not found in Veeqo` });
+    const before = veeqoEditRead(kind, await veeqoLiveView(env, o), b);
+    const want = kind === 'package' ? `${b.lengthIn}×${b.widthIn}×${b.heightIn} in · ${b.weightLb} lb` : b.value;
+    const tries = [];
+    let after = before, saved = false;
+    for (const [m, pth, body] of veeqoEditTries(kind, b, o)) {
+      const r = await veeqoWrite(env, m, pth, body);
+      tries.push({ path: pth, status: r.status, said: r.said });
+      if (!r.ok) continue;
+      const o2 = await veeqoLiveOrder(env, number);
+      after = o2 ? veeqoEditRead(kind, await veeqoLiveView(env, o2), b) : after;
+      // Saved = Veeqo now shows the new value (a photo is re-hosted by Veeqo, so a changed photo counts).
+      saved = kind === 'photo' ? after !== before : kind === 'package' ? after === veeqoEditRead('package', { boxes: [{ allocId: b.allocId, package: { lengthIn: b.lengthIn, widthIn: b.widthIn, heightIn: b.heightIn, weightLb: b.weightLb } }] }, b) : String(after).toUpperCase() === String(b.value).toUpperCase();
+      if (saved) break;
+    }
+    const by = String((session && (session.displayName || session.username)) || b.by || '').slice(0, 40);
+    const item = (await veeqoLiveView(env, o)).boxes.flatMap(x => x.items).find(i => String(i.sellableId) === String(b.sellableId)) || {};
+    await veeqoEditTable(env);
+    await d1Run(env, 'INSERT INTO veeqo_edit_log (ts, by_user, order_number, order_id, alloc_id, sellable_id, sku, kind, before_val, after_val, ok, detail) VALUES (?,?,?,?,?,?,?,?,?,?,?,?)',
+      [new Date().toISOString(), by, o.number || number, String(o.id), String(b.allocId || ''), String(b.sellableId || ''), item.sku || '', kind, String(before).slice(0, 500), String(saved ? after : want).slice(0, 500), saved ? 1 : 0,
+       saved ? '' : ('NOT saved — Veeqo: ' + tries.map(t => `${t.path} → ${t.status} ${t.said}`).join(' | ')).slice(0, 1500)]);
+    return veeqoResp({ ok: saved, kind, before, after, tries, error: saved ? undefined : 'Veeqo did not take the change (nothing changed there) — what it said: ' + tries.map(t => `${t.status} ${t.said.slice(0, 120)}`).join(' | ') });
   }
   // GET ?id= -> what is in that box (SKU, qty, bin); a label queued before
   // this was kept gets it from Veeqo once, then it is saved.

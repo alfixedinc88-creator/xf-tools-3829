@@ -8608,7 +8608,7 @@ function _psAlRenderRun(r) {
       if (o.tracking) label += ' · ' + o.tracking;
       if (o.slip) label += ' · 🧾 slip';
       return '<tr><td ' + td + '><span style="color:' + L[1] + ';font-weight:700;white-space:nowrap">' + L[0] + '</span></td>'
-        + '<td style="padding:6px 8px;border-bottom:1px solid var(--border);vertical-align:top;font-family:var(--mono)">' + _psAlEsc(o.number) + '</td>'
+        + '<td style="padding:6px 8px;border-bottom:1px solid var(--border);vertical-align:top;font-family:var(--mono)"><button class="ps-btn-sm" style="font-family:var(--mono);white-space:nowrap" title="Live Veeqo info: items, photos, bin, SKU, package — and change them" onclick="psAlLive(this, \'' + _psAlEsc(String(o.number || '').replace(/[\\']/g, '')) + '\')">🔎 ' + _psAlEsc(o.number) + '</button></td>'
         + '<td ' + td + '>' + _psAlEsc(o.channel) + '</td>'
         + '<td ' + td + '>' + _psAlEsc(o.customer) + '</td>'
         + '<td ' + td + '>' + (o.total != null ? '$' + Number(o.total).toFixed(2) : '') + '</td>'
@@ -8616,6 +8616,93 @@ function _psAlRenderRun(r) {
         + '<td ' + td + '>' + _psAlEsc(label) + '</td>'
         + '<td ' + td + '>' + _psAlEsc(o.reason) + '</td></tr>';
     }).join('') + '</table>';
+}
+
+// 🔎 Last run → an order's live Veeqo info (owner: product name, photo,
+// customer, bin, SKU, items, package size + weight) — and change the photo,
+// bin, SKU, package size and weight; it changes in Veeqo too (checked by
+// reading the order again) and every change is on record (who / when /
+// before → after).
+window._psAlLive = {};
+window.psAlLive = async function(btn, num) {
+  var tr = btn.closest('tr'), nx = tr && tr.nextElementSibling;
+  if (nx && nx.classList.contains('ps-al-live')) { nx.remove(); return; }
+  var row = document.createElement('tr'); row.className = 'ps-al-live';
+  row.innerHTML = '<td colspan="8" style="padding:8px;border-bottom:2px solid var(--accent);background:var(--bg2)"><div class="ps-al-live-body" style="font-size:12px;color:var(--text3)">Reading ' + _psAlEsc(num) + ' from Veeqo…</div></td>';
+  tr.parentNode.insertBefore(row, tr.nextSibling);
+  await _psAlLiveLoad(row, num);
+};
+async function _psAlLiveLoad(row, num) {
+  var box = row.querySelector('.ps-al-live-body');
+  var d = await _psAlFetch('/veeqo/autolabel/order-live?order=' + encodeURIComponent(num));
+  if (d.ok === false) { box.innerHTML = '<span style="color:var(--red)">✗ ' + _psAlEsc(d.error || 'Failed') + '</span>'; return; }
+  window._psAlLive[num] = d;
+  var e = _psAlEsc, q = function(v) { return e(String(v == null ? '' : v)); }, js = function(v) { return String(v).replace(/[\\']/g, ''); };
+  var inp = function(w, more) { return 'class="ps-field-input" style="display:inline-block;width:' + w + 'px;max-width:100%;margin:0;padding:4px 6px;font-size:12px;font-family:var(--mono)' + (more || '') + '"'; };
+  var h = '<div style="display:flex;gap:14px;flex-wrap:wrap;align-items:baseline;margin-bottom:8px"><b style="font-size:13px;color:var(--text)">👤 ' + e(d.customer || '—') + '</b>'
+    + '<span style="color:var(--text2)">' + e(d.shipTo || '') + '</span><span style="color:var(--text3)">' + e(d.channel || '') + ' · #' + e(d.number) + '</span>'
+    + '<button class="ps-btn-sm" onclick="_psAlLiveLoad(this.closest(\'tr\'), \'' + js(num) + '\')">↻ Read again</button></div>';
+  (d.boxes || []).forEach(function(bx, bi) {
+    var p = bx.package || {}, k = 'psal-' + String(num).replace(/\W/g, '') + '-' + bi;
+    h += '<div style="border:1px solid var(--border);border-radius:8px;padding:8px;margin-bottom:8px;background:var(--bg)">'
+      + '<div style="font-weight:700;color:var(--text);margin-bottom:6px">📦 Box ' + (bi + 1) + ' of ' + d.boxes.length + (bx.tracking ? ' · <span style="font-family:var(--mono)">' + e(bx.tracking) + '</span>' : '') + (p.name ? ' · ' + e(p.name) : '') + '</div>';
+    if (bx.allocId) {
+      h += '<div style="display:flex;gap:6px;align-items:center;flex-wrap:wrap;margin-bottom:8px">Package (Veeqo): '
+        + ['lengthIn', 'widthIn', 'heightIn'].map(function(f, fi) { return '<input id="' + k + '-' + f + '" ' + inp(64) + ' type="number" step="0.1" min="0" value="' + q(p[f]) + '" placeholder="' + ['L', 'W', 'H'][fi] + '">' + (fi < 2 ? '×' : ' in'); }).join('')
+        + ' · <input id="' + k + '-weightLb" ' + inp(76) + ' type="number" step="0.01" min="0" value="' + q(p.weightLb) + '"> lb'
+        + ' <button class="ps-btn-sm" style="font-weight:700" onclick="psAlLiveSave(this, \'' + js(num) + '\', \'package\', ' + bi + ', -1)">💾 Save package to Veeqo</button>'
+        + (bx.estimateLb != null ? ' <span style="color:var(--text3)">our estimate ' + e(bx.estimateLb) + ' lb</span>' : '')
+        + (p.weightLb == null && p.lengthIn == null ? ' <span style="color:var(--orange)">Veeqo has no package size / weight yet</span>' : '') + '</div>';
+    }
+    h += '<table style="width:100%;border-collapse:collapse"><tr style="color:var(--text3);font-size:11px;text-align:left"><th style="padding:4px">Photo</th><th style="padding:4px">Product</th><th style="padding:4px">SKU</th><th style="padding:4px">Bin</th><th style="padding:4px;text-align:right">Qty</th></tr>';
+    (bx.items || []).forEach(function(it, ii) {
+      var kk = k + '-' + ii, base = String(it.sku).split('=')[0].trim().toUpperCase(), choices = (d.photos || {})[base] || [];
+      h += '<tr style="border-top:1px solid var(--border);vertical-align:top">'
+        + '<td style="padding:4px;width:150px">' + (it.img ? '<img src="' + q(it.img) + '" style="width:72px;height:72px;object-fit:contain;background:#fff;border:1px solid var(--border);border-radius:6px;display:block" alt="">' : '<div style="width:72px;height:72px;border:1px dashed var(--border);border-radius:6px;display:flex;align-items:center;justify-content:center;color:var(--text3)">no photo</div>')
+        + (choices.length ? '<div style="display:flex;gap:3px;flex-wrap:wrap;margin-top:4px">' + choices.map(function(u) { return '<img src="' + q(u) + '" title="Use this photo" style="width:32px;height:32px;object-fit:contain;background:#fff;border:1px solid var(--border);border-radius:4px;cursor:pointer" onclick="document.getElementById(\'' + kk + '-photo\').value=this.src">'; }).join('') + '</div>' : '')
+        + '<input id="' + kk + '-photo" ' + inp(140, ';margin-top:4px') + ' placeholder="https:// photo link"><button class="ps-btn-sm" style="margin-top:3px" onclick="psAlLiveSave(this, \'' + js(num) + '\', \'photo\', ' + bi + ', ' + ii + ')">💾 Photo</button></td>'
+        + '<td style="padding:4px;color:var(--text)">' + e(it.title || '—') + (it.weightLb != null ? '<div style="color:var(--text3);font-size:11px">' + e(it.weightLb) + ' lb each (Veeqo)</div>' : '') + '</td>'
+        + '<td style="padding:4px;white-space:nowrap"><input id="' + kk + '-sku" ' + inp(150) + ' value="' + q(it.sku) + '"> <button class="ps-btn-sm" onclick="psAlLiveSave(this, \'' + js(num) + '\', \'sku\', ' + bi + ', ' + ii + ')">💾</button></td>'
+        + '<td style="padding:4px;white-space:nowrap"><input id="' + kk + '-bin" ' + inp(90) + ' value="' + q(it.bin) + '"> <button class="ps-btn-sm" onclick="psAlLiveSave(this, \'' + js(num) + '\', \'bin\', ' + bi + ', ' + ii + ')">💾</button></td>'
+        + '<td style="padding:4px;text-align:right;font-size:16px;font-weight:800;color:var(--text)">x' + e(it.qty) + '</td></tr>';
+    });
+    h += '</table></div>';
+  });
+  h += '<div class="ps-al-live-msg" style="font-size:12px;margin:4px 0;white-space:pre-wrap"></div>';
+  var hist = d.history || [];
+  h += '<details' + (hist.length ? '' : ' style="display:none"') + '><summary style="cursor:pointer;color:var(--text2)">🕘 Changes made here (' + hist.length + ')</summary>'
+    + hist.map(function(x) { return '<div style="padding:3px 0;border-bottom:1px solid var(--border);font-size:11px">' + (x.ok ? '✅' : '❌') + ' ' + e(new Date(x.ts).toLocaleString()) + ' · ' + e(x.by_user || '?') + ' · <b>' + e(x.kind) + '</b> ' + e(x.sku || '') + ': ' + e(x.before_val || '—') + ' → ' + e(x.after_val || '—') + (x.detail ? '<div style="color:var(--red)">' + e(x.detail) + '</div>' : '') + '</div>'; }).join('') + '</details>';
+  box.innerHTML = h; box.style.color = 'var(--text2)';
+}
+window.psAlLiveSave = async function(btn, num, kind, bi, ii) {
+  var d = window._psAlLive[num]; if (!d) return;
+  var bx = d.boxes[bi], it = ii >= 0 ? bx.items[ii] : {}, k = 'psal-' + String(num).replace(/\W/g, '') + '-' + bi + (ii >= 0 ? '-' + ii : '');
+  var row = btn.closest('tr.ps-al-live'), msg = row.querySelector('.ps-al-live-msg');
+  var body = { order: num, kind: kind, allocId: bx.allocId, sellableId: it.sellableId, productId: it.productId, warehouseId: it.warehouseId, by: psInitials || '' };
+  if (kind === 'package') {
+    ['lengthIn', 'widthIn', 'heightIn', 'weightLb'].forEach(function(f) { body[f] = parseFloat(document.getElementById(k + '-' + f).value); });
+    if (!['lengthIn', 'widthIn', 'heightIn', 'weightLb'].every(function(f) { return body[f] > 0; })) { msg.innerHTML = '<span style="color:var(--red)">Fill in length, width, height and weight.</span>'; return; }
+  } else {
+    body.value = document.getElementById(k + '-' + kind).value.trim();
+    if (!body.value) { msg.innerHTML = '<span style="color:var(--red)">Type the new ' + kind + ' first.</span>'; return; }
+    if (kind !== 'photo' && body.value === String(it[kind] || '')) { msg.textContent = 'No change.'; return; }
+  }
+  var what = kind === 'package' ? 'package ' + body.lengthIn + '×' + body.widthIn + '×' + body.heightIn + ' in · ' + body.weightLb + ' lb (box ' + (bi + 1) + ')'
+    : kind + ' of ' + it.sku + ': ' + (kind === 'photo' ? 'new photo' : (it[kind] || '—') + ' → ' + body.value);
+  var warn = kind === 'sku' ? '\n\n⚠ This renames the SKU in Veeqo for EVERY order and listing linked to it, not only this order.' : kind === 'bin' ? '\n\nThe bin changes in Veeqo for this item (every order).' : kind === 'photo' ? '\n\nThe photo changes in Veeqo for this product.' : '';
+  if (!confirm('Change in Veeqo: ' + what + '?' + warn)) return;
+  btn.disabled = true; msg.textContent = 'Saving to Veeqo…';
+  var r = await _psAlFetch('/veeqo/autolabel/order-edit', { method: 'POST', body: body });
+  btn.disabled = false;
+  if (r.ok === false) { msg.innerHTML = '<span style="color:var(--red)">✗ ' + _psAlEsc(r.error || 'Failed') + '</span>'; _psAlLiveHist(row, num); return; }
+  _psToast('Saved in Veeqo: ' + what);
+  await _psAlLiveLoad(row, num);
+  var m2 = row.querySelector('.ps-al-live-msg'); if (m2) m2.innerHTML = '<span style="color:var(--green)">✓ Saved in Veeqo (checked): ' + _psAlEsc(r.before || '—') + ' → ' + _psAlEsc(r.after || '') + '</span>';
+};
+async function _psAlLiveHist(row, num) { // a failed try is on record too — show it without losing what was typed
+  var d = await _psAlFetch('/veeqo/autolabel/order-live?order=' + encodeURIComponent(num)); if (d.ok === false) return;
+  var det = row.querySelector('details'); if (!det) return;
+  det.style.display = ''; det.querySelector('summary').textContent = '🕘 Changes made here (' + (d.history || []).length + ')';
 }
 
 window.psAlRates = async function() {
