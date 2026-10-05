@@ -2182,8 +2182,11 @@ console.log('\nAuto Label → Last run: sorted by Veeqo bin; 👀 Would buy grou
     lib.g(A).key === 'USPS|28' && lib.g(B).key === 'USPS|28' && lib.g(C).key === 'USPS|mix' && lib.g(D).key === 'UPS|28' && lib.g(E).key === 'USPS|5', [A, B, C, D, E].map(x => lib.g(x).key));
   const sorted = lib.sort([D, C, A, H, B, E]).map(x => x.number).join('');
   check('…order on the screen: USPS aisle 5, USPS aisle 28 (by bin), USPS mix, then UPS; other results after, by bin', sorted === 'EABCDH', sorted);
-  check('…tap 👀 Would buy → one chip per group (USPS · aisle 28 (2) …); tap one → only that group (Select all → Buy & print just those)', /window\.psAlRunGroupPick = function\(k\)/.test(ph7)
-    && /\(!grpK \|\| _psAlGroupOf\(o\)\.key === grpK\)/.test(ph7) && /'🔀 mix'/.test(ph7), null);
+  // Owner, later: "tap Would buy → all USPS not in mix in one small group; tap it → the USPS aisles; USPS mix one group; UPS one group".
+  const lib2 = new Function(['_psAlSkuKey', '_psAlSkuCmp', '_psAlBinOf', '_psAlAisleOf', '_psAlBinKey', '_psAlGroupOf', '_psAlTopOf'].map(fn).join('\n') + '; return _psAlTopOf;')();
+  check('…tap 👀 Would buy → 3 groups: USPS · by aisle (A, B, E) · USPS · 🔀 mix (C) · UPS (D); tap "USPS · by aisle" → a chip per aisle (5, 28) → only that aisle',
+    [A, B, E].every(x => lib2(x) === 'USPS|aisles') && lib2(C) === 'USPS|mix' && lib2(D) === 'UPS'
+    && /window\.psAlRunAislePick = function\(k\)/.test(ph7) && /\(!grpK \|\| _psAlTopOf\(o\) === grpK\) && \(!aisleK \|\| _psAlGroupOf\(o\)\.aisle === aisleK\)/.test(ph7) && /'USPS · by aisle'/.test(ph7), [A, B, C, D, E].map(lib2));
 }
 
 // Owner: "how come I don't see any package ship with UPS?" — the screen must say what UPS offered and why it lost.

@@ -8604,7 +8604,8 @@ window.psAlRunPreview = async function() {
 // again (cancelled, has a label, weight, rates, low value) and logged.
 var _PS_AL_BUYABLE = { would_buy: 1, ready: 1 };
 window.psAlRunFilter = function(k) { window._psAlRunFilter = k; window._psAlRunGroup = ''; if (window._psAlRunShown) _psAlRenderRun(window._psAlRunShown); };
-window.psAlRunGroupPick = function(k) { window._psAlRunGroup = window._psAlRunGroup === k ? '' : k; if (window._psAlRunShown) _psAlRenderRun(window._psAlRunShown); };
+window.psAlRunGroupPick = function(k) { window._psAlRunGroup = window._psAlRunGroup === k ? '' : k; window._psAlRunAisle = ''; if (window._psAlRunShown) _psAlRenderRun(window._psAlRunShown); };
+window.psAlRunAislePick = function(k) { window._psAlRunAisle = window._psAlRunAisle === k ? '' : k; if (window._psAlRunShown) _psAlRenderRun(window._psAlRunShown); };
 window.psAlSelAll = function(on) { document.querySelectorAll('#ps-al-orders .ps-al-sel').forEach(function(c) { if (!c.disabled) c.checked = on; }); psAlSelCount(); };
 window.psAlSelCount = function() {
   var sel = Array.prototype.filter.call(document.querySelectorAll('#ps-al-orders .ps-al-sel'), function(c) { return c.checked && !c.disabled; });
@@ -8669,20 +8670,24 @@ function _psAlRenderRun(r) {
   // Owner: "👀 Would buy separated by bin location — everything in the same
   // aisle stays together (28-1-1 with 28-3-3); mixed aisles → 'mix'; and USPS
   // apart from UPS (test UPS first)". Tap 👀 Would buy → one chip per group.
-  var grpK = window._psAlRunGroup || '';
+  var grpK = window._psAlRunGroup || '', aisleK = window._psAlRunAisle || '';
   if (flt === 'would_buy') {
-    var groups = {};
-    (r.orders || []).forEach(function(o) { if (o.decision !== 'would_buy') return; var g = _psAlGroupOf(o); groups[g.key] = groups[g.key] || { g: g, n: 0 }; groups[g.key].n++; });
-    var keys = Object.keys(groups).sort(function(a, b) { return _psAlGroupCmp(groups[a].g, groups[b].g); });
+    // Owner, later: tap 👀 Would buy → 3 groups: USPS by aisle (every USPS order
+    // not mixed) · USPS mix · UPS. Tap "USPS by aisle" → one chip per aisle.
+    var groups = {}, aisles = {};
+    (r.orders || []).forEach(function(o) { if (o.decision !== 'would_buy') return; var t = _psAlTopOf(o); groups[t] = (groups[t] || 0) + 1;
+      if (t === 'USPS|aisles') { var a = _psAlGroupOf(o).aisle; aisles[a] = (aisles[a] || 0) + 1; } });
     if (grpK && !groups[grpK]) grpK = window._psAlRunGroup = '';
-    document.getElementById('ps-al-counts').innerHTML += '<div style="flex-basis:100%;display:flex;gap:6px;flex-wrap:wrap;margin-top:6px">' + keys.map(function(k) {
-      var g = groups[k].g, on = grpK === k, col = g.carrier === 'UPS' ? '#7c3aed' : g.carrier === 'USPS' ? 'var(--accent)' : 'var(--text2)';
-      return '<span onclick="psAlRunGroupPick(\'' + _psAlEsc(k).replace(/'/g, '') + '\')" style="cursor:pointer;font-size:12px;font-weight:800;padding:5px 12px;border-radius:8px;border:2px solid ' + col + ';' + (on ? 'background:' + col + ';color:#fff' : 'color:' + col) + '">'
-        + _psAlEsc(g.carrier) + ' · ' + (g.aisle === 'mix' ? '🔀 mix' : g.aisle === '' ? 'no bin' : 'aisle ' + _psAlEsc(g.aisle)) + ' (' + groups[k].n + ')</span>';
-    }).join('') + '</div>';
-  } else grpK = '';
+    if (grpK !== 'USPS|aisles' || (aisleK && !aisles[aisleK])) aisleK = window._psAlRunAisle = '';
+    var TOPS = [['USPS|aisles', 'USPS · by aisle', 'var(--accent)'], ['USPS|mix', 'USPS · 🔀 mix', 'var(--accent)'], ['UPS', 'UPS', '#7c3aed'], ['OTHER', 'Other / 2 carriers', 'var(--text2)']];
+    var big = function(k, txt, col, n, on, fn) { return '<span onclick="' + fn + '(\'' + _psAlEsc(k).replace(/'/g, '') + '\')" style="cursor:pointer;font-size:13px;font-weight:800;padding:6px 14px;border-radius:9px;border:2px solid ' + col + ';' + (on ? 'background:' + col + ';color:#fff' : 'color:' + col) + '">' + txt + ' (' + n + ')</span>'; };
+    var h = '<div style="flex-basis:100%;display:flex;gap:6px;flex-wrap:wrap;margin-top:6px">' + TOPS.filter(function(t) { return groups[t[0]]; }).map(function(t) { return big(t[0], t[1], t[2], groups[t[0]], grpK === t[0], 'psAlRunGroupPick'); }).join('') + '</div>';
+    if (grpK === 'USPS|aisles') h += '<div style="flex-basis:100%;display:flex;gap:6px;flex-wrap:wrap;margin-top:6px;padding-left:14px">' + Object.keys(aisles).sort(_psAlSkuCmp).map(function(a) {
+      return big(a, a ? 'aisle ' + _psAlEsc(a) : 'no bin', 'var(--accent)', aisles[a], aisleK === a, 'psAlRunAislePick').replace('font-size:13px', 'font-size:12px'); }).join('') + '</div>';
+    document.getElementById('ps-al-counts').innerHTML += h;
+  } else { grpK = ''; aisleK = ''; }
 
-  var rows = _psAlSortRows((r.orders || []).filter(function(o){ return o.decision !== 'has_label' && (!flt || o.decision === flt) && (!grpK || _psAlGroupOf(o).key === grpK); }));
+  var rows = _psAlSortRows((r.orders || []).filter(function(o){ return o.decision !== 'has_label' && (!flt || o.decision === flt) && (!grpK || _psAlTopOf(o) === grpK) && (!aisleK || _psAlGroupOf(o).aisle === aisleK); }));
   // Owner: "how come I don't see any package ship with UPS?" — why UPS lost, counted over this run's rate-checked orders.
   var ups = { won: 0, none: 0, slow: 0, nodays: 0, small: 0, only: 0 };
   (r.orders || []).forEach(function(o) { var w = String(o.reason || ''); if (!o.carrier) return;
@@ -8786,6 +8791,8 @@ function _psAlGroupOf(o) {
   var aisle = aisles.length > 1 ? 'mix' : (aisles[0] || '');
   return { carrier: car, aisle: aisle, key: car + '|' + aisle };
 }
+// The 3 big groups: USPS by aisle (not mixed) · USPS mix · UPS (· other).
+function _psAlTopOf(o) { var g = _psAlGroupOf(o); return g.carrier === 'USPS' ? (g.aisle === 'mix' ? 'USPS|mix' : 'USPS|aisles') : g.carrier === 'UPS' ? 'UPS' : 'OTHER'; }
 function _psAlGroupCmp(a, b) {
   var cr = function(c) { return c === 'USPS' ? 0 : c === 'UPS' ? 1 : 2; };
   var ar = function(x) { return x === 'mix' ? 2 : x === '' ? 3 : 1; };
