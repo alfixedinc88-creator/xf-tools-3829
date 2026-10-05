@@ -8990,30 +8990,53 @@ function _psAlBlankBand(cv, minH) {
 // Writes the box contents into the blank strip → true when every line fits.
 // Why it couldn't write on the label (shown on the screen), '' = written.
 window._psAlStampWhy = '';
-var _PS_AL_LABEL_MAX_LINES = 3;
+// Owner: "the more lines the better — saves printing the packing slip".
+// As many items as fit in the strip at a font a picker can still read: one
+// column first, then two columns side by side (left of any code).
+var _PS_AL_LABEL_SMALL_ITEMS = 3; // a box this small gets the sticker when nothing fits on the label
 function _psAlStampLabel(cv, items) {
   var W = cv.width, H = cv.height, no = function(why) { window._psAlStampWhy = why + ' (label ' + W + '×' + H + ')'; return false; };
+  window._psAlStampTooMany = false;
   if (!items.length) return no('no item list for this box');
   if (Math.abs(W / H - 4 / 6) > 0.04) return no('not a 4×6 label'); // only a 4×6 label
-  // Up to 3 items fit at the bottom; more → the packing slip lists them (owner).
-  if (items.length > _PS_AL_LABEL_MAX_LINES) return no('more than ' + _PS_AL_LABEL_MAX_LINES + ' items — the packing slip lists them');
-  var pad = Math.round(W * 0.012), minFs = Math.round(W * 0.022);
-  // Owner: one line per item, like "24-5-5, 2,5=3/4x1/2X PO C ×1" — smaller
-  // words so 3 lines fit in the USPS bottom strip.
-  var lines = items.map(function(it) { return (it.bin || '—') + ', ' + (it.sku || '') + ' ×' + (it.qty || 0); });
-  var band = _psAlBlankBand(cv, Math.ceil(items.length * minFs * 1.2) + 2 * pad);
-  if (!band) return no('no blank strip at the bottom big enough for ' + items.length + ' line(s)');
-  var y0 = band.y0 + pad, h = band.y1 - pad - y0, x = band.x0, maxW = Math.max(0, band.x1 - band.x0 - pad); // left of any code in the strip
-  var ctx = cv.getContext('2d'); ctx.fillStyle = '#000'; ctx.textBaseline = 'top';
-  var fit = function(lines) { // the biggest font (up to 0.045 W) that fits every line → size or 0
-    var fs = Math.min(Math.round(W * 0.045), Math.floor(h / (lines.length * 1.2)));
-    for (; fs >= minFs; fs--) { ctx.font = 'bold ' + fs + 'px monospace'; if (lines.every(function(t) { return ctx.measureText(t).width <= maxW; })) return fs; }
-    return 0;
+  var pad = Math.round(W * 0.012), minFs = Math.round(W * 0.02), LH = 1.18;
+  var band = _psAlBlankBand(cv, Math.ceil(minFs * LH) + 2 * pad);
+  if (!band) return no('no blank strip at the bottom big enough for one line');
+  var y0 = band.y0 + pad, h = band.y1 - pad - y0, x0 = band.x0, maxW = Math.max(0, band.x1 - band.x0 - pad); // left of any code in the strip
+  var ctx = cv.getContext('2d'); ctx.textBaseline = 'middle';
+  // Owner: "24-5-5, 2,5=3/4x1/2X PO C, x2" — bin, SKU, then the quantity at
+  // the back (they find the item first, then see how many), white on a black
+  // box so the picker sees it at a glance; the boxes line up in one column.
+  var rows = items.map(function(it) { return { bin: (it.bin || '—') + ',', sku: String(it.sku || '') + ',', qty: 'x' + (it.qty || 0) }; });
+  var geo = function(fs) { var g = Math.round(fs * 0.35), bp = Math.round(fs * 0.25); return { g: g, bp: bp }; };
+  var colW = function(list, fs) { // width a column needs: bins / SKUs / qty boxes lined up
+    var o = geo(fs), wb = 0, wq = 0, ws = 0;
+    list.forEach(function(r) { wb = Math.max(wb, ctx.measureText(r.bin).width); wq = Math.max(wq, ctx.measureText(r.qty).width); ws = Math.max(ws, ctx.measureText(r.sku).width); });
+    return { wb: wb, ws: ws, wq: wq + 2 * o.bp, w: wb + o.g + ws + o.g + wq + 2 * o.bp };
   };
-  var fs = fit(lines);
-  if (!fs) return no('the text does not fit next to the codes at the bottom (' + Math.round(maxW) + '×' + Math.round(h) + ' px free)');
+  var plan = null;
+  for (var cols = 1; cols <= 2 && !plan; cols++) {
+    var per = Math.ceil(rows.length / cols), gap = Math.round(W * 0.03);
+    for (var fs = Math.min(Math.round(W * 0.045), Math.floor(h / (per * LH))); fs >= minFs; fs--) {
+      ctx.font = 'bold ' + fs + 'px monospace';
+      var parts = [], ok = true, used = 0;
+      for (var c = 0; c < cols; c++) { var list = rows.slice(c * per, (c + 1) * per); if (!list.length) continue; var m = colW(list, fs); parts.push({ list: list, m: m }); used += m.w; }
+      used += gap * (parts.length - 1);
+      if (used <= maxW) { plan = { fs: fs, parts: parts, gap: gap, per: per }; break; }
+    }
+  }
+  if (!plan) { window._psAlStampTooMany = true; return no(items.length + ' item(s) do not fit in the strip at the bottom (' + Math.round(maxW) + '×' + Math.round(h) + ' px free)'); }
+  var fs = plan.fs, o = geo(fs), lh = Math.round(fs * LH), x = x0;
   ctx.font = 'bold ' + fs + 'px monospace';
-  lines.forEach(function(t, i) { ctx.fillText(t, x, y0 + i * fs * 1.2); });
+  plan.parts.forEach(function(part) {
+    part.list.forEach(function(r, i) {
+      var yc = y0 + i * lh + lh / 2, xs = x + part.m.wb + o.g, xq = xs + part.m.ws + o.g;
+      ctx.fillStyle = '#000'; ctx.fillText(r.bin, x, yc); ctx.fillText(r.sku, xs, yc);
+      ctx.fillRect(xq, yc - lh / 2 + 1, part.m.wq, lh - 2); // black box, white quantity
+      ctx.fillStyle = '#fff'; ctx.fillText(r.qty, xq + o.bp, yc);
+    });
+    x += part.m.w + plan.gap;
+  });
   window._psAlStampWhy = '';
   return true;
 }
@@ -9029,12 +9052,13 @@ async function _psAlPrintOneLabel(l) {
   catch (e) { window._psAlStampWhy = 'could not open the label file (' + f.type + '): ' + ((e && e.message) || e); console.warn('[label] could not write on the label, printing the sticker instead:', e && e.message); }
   // What happened, on the screen (owner: "still not showing any sku, bin location, quantities").
   window._psAlLastNote = l.order_number + ': ' + (stamped ? 'bin · SKU · qty written at the bottom of the label (' + items.length + ' line' + (items.length === 1 ? '' : 's') + ')'
-    : 'label printed as it is' + (items.length > _PS_AL_LABEL_MAX_LINES ? '' : ' + a separate sticker') + ' — why: ' + (window._psAlStampWhy || 'unknown') + ' · file: ' + f.type);
-  // Owner: up to 3 items written on the label → no packing slip for that box;
-  // more than 3 → the packing slip prints with the order (it lists them, so no
-  // sticker). The server marks / queues the slip (recorded), and the station
+    : 'label printed as it is' + (items.length > _PS_AL_LABEL_SMALL_ITEMS ? '' : ' + a separate sticker') + ' — why: ' + (window._psAlStampWhy || 'unknown') + ' · file: ' + f.type);
+  // Owner: items written on the label → no packing slip for that box (the
+  // more lines fit, the more slips saved); when they don't all fit and there
+  // are more than 3 → the packing slip prints with the order (it lists them,
+  // so no sticker). The server marks / queues the slip (recorded), and the station
   // prints slips after labels.
-  var many = items.length > _PS_AL_LABEL_MAX_LINES;
+  var many = !stamped && items.length > _PS_AL_LABEL_SMALL_ITEMS;
   if (stamped) window._psAlLastNote += ' · no packing slip needed';
   if (many) window._psAlLastNote += ' · ' + items.length + ' items → packing slip prints with it';
   if (!stamped) {
