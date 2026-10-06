@@ -2810,5 +2810,18 @@ console.log('\nScanner sends a UPC without its first digit → the full UPC is p
   check('docs/SCANNERS.md keeps the N77, Zebra DS2278 and Farset R20H fixes', /N77/.test(sc) && /DS2278/.test(sc) && /R20H/.test(sc), null);
 }
 
+// Owner: "when we in that app, can we hide that address bar on the top". manifest.json existed but no page linked it, and its
+// start_url was a page that no longer exists — so the home-screen shortcut opened as a normal Chrome tab.
+console.log('\nInstalled app opens without the address bar (manifest linked on every page, start page exists)');
+{
+  const { readFileSync, existsSync, readdirSync } = await import('node:fs');
+  const root = fileURLToPath(new URL('../', import.meta.url));
+  let man = {}; try { man = JSON.parse(readFileSync(root + 'manifest.json', 'utf8')); } catch (e) {}
+  check('manifest.json: display standalone, start page index.html exists, 192 and 512 icons exist', man.display === 'standalone' && man.start_url === './index.html' && existsSync(root + 'index.html')
+    && ['192x192', '512x512'].every(sz => (man.icons || []).some(i => i.sizes === sz && existsSync(root + i.src))), man.start_url);
+  const pages = readdirSync(root).filter(f => f.endsWith('.html')), missing = pages.filter(f => !readFileSync(root + f, 'utf8').includes('<link rel="manifest" href="manifest.json">'));
+  check('…every page links the manifest', missing.length === 0, missing);
+}
+
 console.log('\n' + (failed ? '❌ ' + failed + ' check(s) FAILED' : '✅ all ' + passed + ' checks passed') + '\n');
 process.exit(failed ? 1 : 0);
