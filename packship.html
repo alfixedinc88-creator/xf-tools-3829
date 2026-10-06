@@ -2531,6 +2531,7 @@ function _psLaunchInner() {
   psLoadManifestFromSheet();  // load today's manifest so gap report is always ready
   psFocusPick();
   psPickStartRefocus();
+  if (typeof psAlStationAuto === 'function') psAlStationAuto(); // 🖨 this computer prints labels on any tab
 }
 
 // ── Auto-detect new day — runs every 60s ──────────────────────────────
@@ -9824,7 +9825,55 @@ window.psAlPrintNewSlips = async function(silent) {
 // when / how many times). A label Veeqo won't give stays on the list in red
 // with what Veeqo said, so nothing is lost.
 var _psAlLabelBusy = false, _psAlLabelRecent = [];
+// Owner: "the Print Log is open on that computer, that's good right?" — the
+// station starts by itself on ANY Pack & Ship tab once this computer has
+// 🖨 Printer station ticked (no need to open Auto Label after a restart).
+// Two Pack & Ship windows on the same computer (one per screen): only ONE
+// prints — the other sees the first one checked in under 90 s ago and waits,
+// so a label is never printed twice.
+var _psAlStationId = Math.random().toString(36).slice(2) + Date.now().toString(36);
+function _psAlStationLock() {
+  var now = Date.now(), cur = null;
+  try { cur = JSON.parse(localStorage.getItem('xf_station_lock') || 'null'); } catch (_) {}
+  if (cur && cur.id !== _psAlStationId && now - cur.at < 90000) return false;
+  try { localStorage.setItem('xf_station_lock', JSON.stringify({ id: _psAlStationId, at: now })); } catch (_) { return true; }
+  return true;
+}
+function _psAlStationLockMine() {
+  try { var cur = JSON.parse(localStorage.getItem('xf_station_lock') || 'null'); return !cur || cur.id === _psAlStationId; } catch (_) { return true; }
+}
+window.addEventListener('beforeunload', function() {
+  try { var cur = JSON.parse(localStorage.getItem('xf_station_lock') || 'null'); if (cur && cur.id === _psAlStationId) localStorage.removeItem('xf_station_lock'); } catch (_) {}
+});
+function _psAlStationBar(text, ok) {
+  var bar = document.getElementById('ps-al-station-bar');
+  if (!text) { if (bar) bar.remove(); return; }
+  if (!bar) {
+    bar = document.createElement('div'); bar.id = 'ps-al-station-bar';
+    bar.title = 'This computer prints the shipping labels and packing slips Auto Label buys, every minute, while Pack & Ship is open (any tab).';
+    bar.style.cssText = 'position:fixed;left:8px;bottom:8px;z-index:9000;padding:5px 10px;border-radius:8px;font:700 12px/1.3 var(--sans,Arial),sans-serif;color:#fff;box-shadow:0 2px 8px rgba(0,0,0,.25);pointer-events:none';
+    document.body.appendChild(bar);
+  }
+  bar.style.background = ok ? '#047857' : '#6B7280';
+  bar.textContent = text;
+}
+window.psAlStationAuto = function() {
+  var saved = false; try { saved = localStorage.getItem('xf_slip_station') === '1'; } catch (_) {}
+  if (!saved || _psAlSlipTimer) return;
+  var st = document.getElementById('ps-al-slip-station'); if (st) st.checked = true;
+  psAlSlipStation(true, true);
+};
 window.psAlStationTick = async function() {
+  var on = true; try { on = localStorage.getItem('xf_slip_station') === '1'; } catch (_) {}
+  if (!on) { // turned off in the other window of this computer
+    if (_psAlSlipTimer) { clearInterval(_psAlSlipTimer); _psAlSlipTimer = null; }
+    var st = document.getElementById('ps-al-slip-station'); if (st) st.checked = false;
+    _psAlStationBar(''); return;
+  }
+  if (!_psAlStationLock()) { _psAlStationBar('🖨 Printer station: printing in the other Pack & Ship window', false); return; }
+  await new Promise(function(r) { setTimeout(r, 150); });
+  if (!_psAlStationLockMine()) { _psAlStationBar('🖨 Printer station: printing in the other Pack & Ship window', false); return; }
+  _psAlStationBar('🖨 Printer station ON · checked ' + new Date().toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' }), true);
   _psAlFetch('/veeqo/autolabel/scanform-tick', { method: 'POST', body: {} }).catch(function() {}); // 📄 scan form on time even if the server timer is slow
   await psAlPrintNewLabels(true); await psAlPrintNewSlips(true);
 };
@@ -10196,13 +10245,16 @@ window.psAlLabelAdd = async function() {
   psAlLoadLabels();
 };
 
-window.psAlSlipStation = function(on) {
+window.psAlSlipStation = function(on, quiet) {
   try { localStorage.setItem('xf_slip_station', on ? '1' : ''); } catch (_) {}
   if (_psAlSlipTimer) { clearInterval(_psAlSlipTimer); _psAlSlipTimer = null; }
   if (on) {
     psAlStationTick();
     _psAlSlipTimer = setInterval(psAlStationTick, 60000);
-    _psToast('Printer station on — new shipping labels and packing slips print every minute while this page is open');
+    if (!quiet) _psToast('Printer station on — new shipping labels and packing slips print every minute while Pack & Ship is open (any tab, even Print Log)');
+  } else {
+    _psAlStationBar('');
+    try { var cur = JSON.parse(localStorage.getItem('xf_station_lock') || 'null'); if (cur && cur.id === _psAlStationId) localStorage.removeItem('xf_station_lock'); } catch (_) {}
   }
 };
 
