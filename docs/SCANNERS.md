@@ -65,6 +65,14 @@ Bar Setting → Enable/Disable (all the common ones are on from the factory).
 - Device fix too, if wanted: Bar Setting → Advanced Configuration → UPC-A →
   turn on "transmit system digit / preamble" (name varies).
 
+### How the R20H sends a scan (its 🔍 Scanner test, 2026-10-06)
+- The trigger sends **F10** (keyCode 121), repeated while held. F10 = Chrome's
+  menu, which is why the menu popped up.
+- Send Mode FOCUS puts the number **only into the box with the cursor**, then
+  an Enter. With no box selected the number is lost (only Enter arrives).
+- App fix (xf-access.js): F10 is blocked, and it puts the cursor in the scan
+  box (keyboard stays off) before the number arrives.
+
 ### Problem: Chrome menu pops up on a scan, then nothing types into the app
 - The scan landed while the box had no cursor. Close the menu, tap the scan
   box, scan again. If still nothing: restart the R20H.
