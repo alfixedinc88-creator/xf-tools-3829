@@ -26805,7 +26805,13 @@ async function handleAutolabelRoute(path, method, url, request, env, session) {
     const rows = q.length >= 3
       ? await d1All(env, `SELECT * FROM packing_slip_queue WHERE UPPER(order_number) LIKE ? OR UPPER(tracking) LIKE ? OR UPPER(ship_to) LIKE ? ORDER BY id DESC LIMIT 50`, ['%' + q + '%', '%' + q + '%', '%' + q + '%'])
       : await d1All(env,
-      `SELECT * FROM packing_slip_queue WHERE printed_at IS ${printed ? 'NOT ' : ''}NULL ORDER BY id ${printed ? 'DESC' : 'ASC'} LIMIT ?`, [limit]);
+      `SELECT * FROM packing_slip_queue WHERE printed_at IS ${printed ? 'NOT ' : ''}NULL`
+      // ?alone=1 (the printer station): leave out a slip whose shipping label is still waiting to print —
+      // it prints right under that label instead (owner: 81 bought, the slips of the labels not printed
+      // yet came out on their own, so the picker had to match them up).
+      + (!printed && url.searchParams.get('alone') === '1' ? ` AND NOT EXISTS (SELECT 1 FROM label_print_queue l WHERE l.printed_at IS NULL
+          AND ((l.tracking != '' AND l.tracking = packing_slip_queue.tracking) OR (l.order_id = packing_slip_queue.order_id AND l.alloc_id = packing_slip_queue.alloc_id)))` : '')
+      + ` ORDER BY id ${printed ? 'DESC' : 'ASC'} LIMIT ?`, [limit]);
     return veeqoResp({ ok: true, slips: await autolabelSlipPhotos(env, rows.map(autolabelSlipOut)) });
   }
 
@@ -26833,7 +26839,8 @@ async function handleAutolabelRoute(path, method, url, request, env, session) {
       ? await d1All(env, `SELECT id, order_number, channel, tracking, carrier, service, created_at, printed_at, printed_by, print_count, last_error, items
           FROM label_print_queue WHERE UPPER(order_number) LIKE ? OR UPPER(tracking) LIKE ? ORDER BY id DESC LIMIT 50`, ['%' + q + '%', '%' + q + '%'])
       : await d1All(env, `SELECT id, order_number, channel, tracking, carrier, service, created_at, printed_at, printed_by, print_count, last_error, items
-      FROM label_print_queue WHERE printed_at IS ${printed ? 'NOT ' : ''}NULL ORDER BY id ${printed ? 'DESC' : 'ASC'} LIMIT ?`, [limit]);
+      FROM label_print_queue WHERE printed_at IS ${printed ? 'NOT ' : ''}NULL AND id > ? ORDER BY id ${printed ? 'DESC' : 'ASC'} LIMIT ?`,
+      [printed ? 0 : (parseInt(url.searchParams.get('after')) || 0), limit]); // ?after= → the next round (the station prints every waiting label, 50 at a time)
     return veeqoResp({ ok: true, labels: rows.map(r => { let items = []; try { items = JSON.parse(r.items || '[]') || []; } catch (_) {} return { ...r, items }; }) });
   }
   // GET ?order= → that order's live Veeqo info for 🔎 in Last run, plus its change history.
