@@ -258,9 +258,11 @@ window.addEventListener('pageshow', function (e) { if (e.persisted) location.rel
   var SEL = 'input[autocomplete="username"], input[type="password"]';
   var PREF = 'xf_osk';
   var kb = null, target = null, shift = 0, sym = false, lastShift = 0, lifted = null;
+  var TOUCH = !!(window.matchMedia && window.matchMedia('(pointer: coarse)').matches); // phones / scanners: never the phone keyboard (owner, 2026-10-06)
   var ROWS = [['1','2','3','4','5','6','7','8','9','0'], ['q','w','e','r','t','y','u','i','o','p'], ['a','s','d','f','g','h','j','k','l'], ['⇧','z','x','c','v','b','n','m','⌫'], ['?123','@','.','space','⏎','✕']];
   var SYM = [['1','2','3','4','5','6','7','8','9','0'], ['!','@','#','$','%','^','&','*','(',')'], ['-','_','=','+','/','\\',':',';','\''], ['"',',','.','?','~','`','[',']','⌫'], ['ABC','{','}','space','⏎','✕']];
-  function pref(v) { try { if (v === undefined) return localStorage.getItem(PREF) === '1'; localStorage.setItem(PREF, v ? '1' : '0'); } catch (e) {} return false; }
+  function pref(v) { if (v === undefined && TOUCH) return true; try { if (v === undefined) return localStorage.getItem(PREF) === '1'; localStorage.setItem(PREF, v ? '1' : '0'); } catch (e) {} return false; }
+  function signIn(el) { return !!(el && el.matches && el.matches(SEL)); }
   function visible(el) { return !!(el && el.offsetParent !== null); }
   function css() {
     if (document.getElementById('xf-osk-css')) return;
@@ -278,6 +280,7 @@ window.addEventListener('pageshow', function (e) { if (e.persisted) location.rel
   }
   function label(el) {
     if (!el) return '';
+    if (!signIn(el)) return 'Typing: ' + (el.value || '…');
     var what = el.type === 'password' ? 'Password' : 'Username';
     var v = el.type === 'password' ? el.value.replace(/./g, '•') : el.value;
     return what + ': ' + (v || '…');
@@ -289,7 +292,7 @@ window.addEventListener('pageshow', function (e) { if (e.persisted) location.rel
       return '<div class="r">' + r.map(function (k) {
         var t = k, c = '';
         if (k === 'space') { t = 'space'; c = 'sp w'; }
-        else if (k === '⏎') { t = target && target.type === 'password' ? 'Sign In' : 'Next'; c = 'go'; }
+        else if (k === '⏎') { t = !signIn(target) ? 'Enter' : target.type === 'password' ? 'Sign In' : 'Next'; c = 'go'; }
         else if (k === '⇧') { c = 'w' + (shift ? ' on' : ''); t = shift === 2 ? '⇪' : '⇧'; }
         else if (k === '⌫' || k === '✕' || k === '?123' || k === 'ABC') c = 'w';
         else if (up && k.length === 1) t = k.toUpperCase();
@@ -323,6 +326,12 @@ window.addEventListener('pageshow', function (e) { if (e.persisted) location.rel
   }
   function enter() {
     if (!target) return;
+    if (!signIn(target)) { // any other box: ⏎ = the Enter key (search / save), like a scan
+      var el = target; hide(true);
+      el.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', code: 'Enter', keyCode: 13, which: 13, bubbles: true, cancelable: true }));
+      el.dispatchEvent(new KeyboardEvent('keyup', { key: 'Enter', code: 'Enter', keyCode: 13, which: 13, bubbles: true }));
+      return;
+    }
     var card = box(target);
     if (target.type !== 'password') {
       var pw = card && card.querySelector('input[type="password"]');
@@ -341,7 +350,7 @@ window.addEventListener('pageshow', function (e) { if (e.persisted) location.rel
     else if (k === 'ABC') sym = false;
     else if (k === 'space') type(' ');
     else if (k === '⏎') { enter(); return; }
-    else if (k === '✕') { pref(false); hide(); return; }
+    else if (k === '✕') { if (!TOUCH) pref(false); hide(); return; }
     else { type(shift && k.length === 1 ? k.toUpperCase() : k); if (shift === 1) shift = 0; }
     draw();
   }
@@ -384,7 +393,7 @@ window.addEventListener('pageshow', function (e) { if (e.persisted) location.rel
     target = null;
   }
   function focus(el) { try { el.focus({ preventScroll: true }); } catch (e) { el.focus(); } show(el); }
-  function isBox(el) { return el && el.matches && el.matches(SEL) && !el.readOnly && !el.disabled; }
+  function isBox(el) { return el && el.matches && el.matches(SEL) && (!el.readOnly || !!el.dataset.xfKbRo) && !el.disabled; } // xfKbRo = locked for a moment by the no-keyboard tap guard
   // "⌨️ Keyboard" link under each password box (and under a username box with no password box after it).
   function links() {
     [].slice.call(document.querySelectorAll(SEL)).forEach(function (el) {
@@ -405,14 +414,16 @@ window.addEventListener('pageshow', function (e) { if (e.persisted) location.rel
   document.addEventListener('focusin', function (e) {
     var el = e.target;
     if (isBox(el)) { if (kb && kb.style.display !== 'none') show(el); else if (pref()) show(el); }
+    else if (el === target) return;
     else if (kb && kb.style.display !== 'none' && !(kb.contains(el))) hide(true);
   });
   // Hide when the sign-in box goes away (signed in) or someone taps elsewhere.
   setInterval(function () { if (target && !visible(target)) hide(true); }, 700);
   document.addEventListener('pointerdown', function (e) {
-    if (e.xfOsk || !kb || kb.style.display === 'none' || kb.contains(e.target) || isBox(e.target) || (e.target.closest && e.target.closest('.xf-osk-link'))) return;
+    if (e.xfOsk || !kb || kb.style.display === 'none' || kb.contains(e.target) || isBox(e.target) || e.target === target || (e.target.closest && e.target.closest('.xf-osk-link'))) return;
     hide(true);
   });
+  window.xfOskOpen = function (el) { if (!el || (el === target && kb && kb.style.display !== 'none')) return; focus(el); }; // our keyboard on any box (⌨️ button, a page's ⌨ "type it")
   function start() { links(); setInterval(links, 2000); }
   if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', start); else start();
 })();
@@ -439,19 +450,18 @@ window.addEventListener('pageshow', function (e) { if (e.persisted) location.rel
 
 // ── 🔇 Scanner phone: no pop-up keyboard ─────────────────────────────────────
 // On a phone with a built-in scanner the phone keyboard covers half the screen
-// every time a scan box is focused. On by default on every touch screen
-// (owner, 2026-10-06); a phone can turn it off (⌨️ button, bottom left): typing boxes stop opening the keyboard
-// (inputmode="none") but scans still go in. Tap ⌨️ → "Show keyboard" to type
-// in the box you're on; it goes back to hidden when you leave that box.
-// Sign-in boxes are left alone (they have their own ⌨️ Keyboard).
+// every time a scan box is focused. Owner (2026-10-06): "get away of the
+// keyboard forever" — on every touch screen it never opens, sign-in included.
+// To type: ⌨️ (bottom left) opens OUR on-screen keyboard on the box: typing boxes stop opening the keyboard
+// (inputmode="none") but scans still go in.
 (function () {
   if (!(window.matchMedia && window.matchMedia('(pointer: coarse)').matches)) return;
   var PREF = 'xf_nokb', last = null, open = null;
   var TYPES = /^(text|search|number|tel|email|url)$/i;
-  function on(v) { try { if (v === undefined) return localStorage.getItem(PREF) !== '0'; localStorage.setItem(PREF, v ? '1' : '0'); } catch (e) {} return true; } // hidden unless this phone chose "Always show" (owner: hide it on every scanner and phone)
+  function on() { return true; } // always hidden on touch screens — no setting to turn it back on
   function isBox(el) {
     if (!el || !el.matches) return false;
-    if (el.matches('input[autocomplete="username"], input[type="password"], #xf-nokb-pop *, [data-kb-typing]')) return false; // ⌨ "type it" on purpose (Container here)
+    if (el.matches('#xf-nokb-pop *, #xf-scantest *')) return false;
     if (el.tagName === 'TEXTAREA') return true;
     return el.tagName === 'INPUT' && TYPES.test(el.getAttribute('type') || 'text');
   }
@@ -481,9 +491,8 @@ window.addEventListener('pageshow', function (e) { if (e.persisted) location.rel
       b.addEventListener('click', function (e) { e.preventDefault(); menu(); });
       document.body.appendChild(b);
     }
-    b.textContent = on() ? '⌨️' : '⌨';
-    b.title = on() ? 'Keyboard is hidden for scanning — tap to show it' : 'Keyboard settings for this phone';
-    b.style.opacity = on() ? '1' : '.55';
+    b.textContent = '⌨️';
+    b.title = 'Type in a box with our keyboard · test the scanner';
   }
   function close() { var p = document.getElementById('xf-nokb-pop'); if (p) p.remove(); }
   function menu() {
@@ -493,22 +502,111 @@ window.addEventListener('pageshow', function (e) { if (e.persisted) location.rel
     var B = function (txt, fn, main) { var x = document.createElement('button'); x.type = 'button'; x.textContent = txt;
       x.style.cssText = 'display:block;width:100%;text-align:left;margin:3px 0;padding:11px 10px;border-radius:8px;border:none;font-size:14px;font-weight:600;cursor:pointer;' + (main ? 'background:#1a56db;color:#fff' : 'background:#f3f4f6;color:#111');
       x.addEventListener('pointerdown', function (e) { e.preventDefault(); }); x.addEventListener('click', function (e) { e.preventDefault(); close(); fn(); }); p.appendChild(x); };
-    if (on()) {
-      B('⌨️ Show keyboard to type' + (last && document.contains(last) ? '' : ' (tap a box first)'), show, true);
-      B('Always show the keyboard on this phone', function () { on(false); apply(); });
-    } else {
-      B('🔇 Hide the keyboard on this phone (scanner phone — scans still work)', function () { on(true); apply(); if (document.activeElement && isBox(document.activeElement)) { document.activeElement.blur(); } }, true);
-    }
+    B('⌨️ Type in this box (our keyboard)' + (last && document.contains(last) ? '' : ' — tap a box first'), show, true);
+    B('🔍 Test the scanner', scanTest);
     B('Cancel', function () {});
     document.body.appendChild(p);
   }
-  // Show the keyboard for the box you're on (until you leave it).
+  // Type in the box you're on with OUR on-screen keyboard (never the phone's).
   function show() {
     var el = (document.activeElement && isBox(document.activeElement)) ? document.activeElement : last;
-    if (!el || !document.contains(el)) { alert('Tap the box you want to type in first, then ⌨️ → Show keyboard.'); return; }
-    open = el; unmute(el);
-    try { el.blur(); } catch (e) {}
-    setTimeout(function () { try { el.focus(); if (el.setSelectionRange && /^(text|search|tel|url)$/i.test(el.type)) el.setSelectionRange(el.value.length, el.value.length); } catch (e) {} }, 30);
+    if (!el || !document.contains(el)) { alert('Tap the box you want to type in first, then ⌨️ → Type in this box.'); return; }
+    if (window.xfOskOpen) window.xfOskOpen(el);
+  }
+  // A scan that arrives while no box has the cursor (after a tap on a button,
+  // or a scanner that types without a box) goes to the scan box you used last
+  // (or the page's 📷 scan box) — never lost, and no box needs the cursor.
+  // Not while a pop-up is open (it would land behind it), and not when the
+  // page already took the scan (Container here has its own).
+  var sBuf = '', sAt = 0, sT = null;
+  function shown(el) { if (!el || !document.contains(el) || el.disabled || el.readOnly) return false; var r = el.getBoundingClientRect(); return r.width > 0 && r.height > 0 && getComputedStyle(el).visibility !== 'hidden'; }
+  function scanOk(el) { return isBox(el) && el.tagName === 'INPUT' && !el.matches('input[autocomplete="username"], input[type="password"]') && shown(el); } // never into a sign-in box
+  function scanBox() {
+    if (last && scanOk(last)) return last;
+    return [].slice.call(document.querySelectorAll('input')).filter(function (el) { return scanOk(el) && /📷|scan/i.test(el.placeholder || ''); })[0] || null;
+  }
+  function popupOver(el) {
+    return [].slice.call(document.querySelectorAll('[id*="modal"], .modal, [role="dialog"]')).some(function (m) { return m !== el && !m.contains(el) && shown(m) && m.getBoundingClientRect().height > 60; });
+  }
+  function note(t) {
+    var n = document.getElementById('xf-scan-note'); if (!n) { n = document.createElement('div'); n.id = 'xf-scan-note'; n.style.cssText = 'position:fixed;left:60px;right:10px;bottom:12px;z-index:2147482002;background:#111;color:#fff;border-radius:10px;padding:10px 12px;font:600 14px system-ui,sans-serif;box-shadow:0 4px 14px rgba(0,0,0,.3)'; document.body.appendChild(n); }
+    n.textContent = t; clearTimeout(n._t); n._t = setTimeout(function () { n.remove(); }, 3500);
+  }
+  function deliver(code) {
+    code = String(window.xfFixUpc ? window.xfFixUpc(code) : code).trim(); if (!code) return;
+    var el = scanBox();
+    if (!el) { note('📷 Scanned ' + code + ' — tap the scan box, then scan again'); return; }
+    if (popupOver(el)) { note('📷 Scanned ' + code + ' — finish / close the pop-up first, then scan again'); return; }
+    el.value = code;
+    el.dispatchEvent(new Event('input', { bubbles: true }));
+    el.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', code: 'Enter', keyCode: 13, which: 13, bubbles: true, cancelable: true }));
+    el.dispatchEvent(new KeyboardEvent('keyup', { key: 'Enter', code: 'Enter', keyCode: 13, which: 13, bubbles: true }));
+  }
+  // The scan button itself: the Farset R20H sends F10 (keyCode 121), the
+  // Svantto MC002 code F21 (key "Unidentified", keyCode 0), while the
+  // trigger is held, then drops the number into the box that has the cursor —
+  // with no box selected the number is lost and Chrome opens its menu (F10).
+  // So the trigger puts the cursor in the scan box before the beep, and
+  // Chrome's menu stays shut.
+  // Svantto MC002: its scan button is key "Unidentified", code F21, keyCode 0 — same as F10 below.
+  window.addEventListener('keydown', function (e) {
+    if (!e.isTrusted || !/^F(1[3-9]|2[0-4])$/.test(e.code || '')) return;
+    e.preventDefault();
+    if (document.getElementById('xf-scantest')) return;
+    var a = document.activeElement, tag = a && a.tagName;
+    if (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT' || (a && a.isContentEditable)) return;
+    var el = scanBox(); if (el && !popupOver(el)) el.focus({ preventScroll: true });
+  }, true);
+  window.addEventListener('keydown', function (e) {
+    if (!e.isTrusted || !(e.keyCode === 121 || /^F(9|1[0-2])$/.test(e.key || ''))) return;
+    e.preventDefault();
+    if (document.getElementById('xf-scantest')) return;
+    var a = document.activeElement, tag = a && a.tagName;
+    if (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT' || (a && a.isContentEditable)) return; // a box already has it
+    var el = scanBox(); if (el && !popupOver(el)) el.focus({ preventScroll: true }); // muted first by the focus() hook → no keyboard
+  }, true);
+  window.addEventListener('keydown', function (e) {
+    if (!e.isTrusted || e.defaultPrevented || document.getElementById('xf-scantest')) { sBuf = ''; return; } // our own Enter (deliver) is not a scan
+    var a = document.activeElement, tag = a && a.tagName;
+    if (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT' || (a && a.isContentEditable)) { sBuf = ''; return; } // the box takes it
+    var now = Date.now();
+    if (e.key === 'Enter' || e.keyCode === 13) { clearTimeout(sT); var c = sBuf; sBuf = ''; if (c.length >= 3) { e.preventDefault(); deliver(c); } return; }
+    if (e.key && e.key.length === 1 && !e.ctrlKey && !e.metaKey && !e.altKey) {
+      if (now - sAt > 120) sBuf = ''; // a scanner types fast; a person typing slowly is not a scan
+      sBuf += e.key; sAt = now; clearTimeout(sT);
+      sT = setTimeout(function () { var c = sBuf; sBuf = ''; if (c.length >= 6) deliver(c); }, 300); // a scanner that sends no Enter
+    }
+  });
+  // 🔍 Scanner test: shows exactly what a scanner sends (keys, Enter, text) —
+  // a photo of it tells us which setting a new scanner needs.
+  function scanTest() {
+    if (document.getElementById('xf-scantest')) return;
+    var w = document.createElement('div'); w.id = 'xf-scantest';
+    w.style.cssText = 'position:fixed;inset:0;z-index:2147483100;background:#fff;color:#111;display:flex;flex-direction:column;font:14px system-ui,sans-serif;padding:12px';
+    w.innerHTML = '<div style="display:flex;align-items:center;gap:8px"><b style="flex:1;font-size:17px">🔍 Scanner test</b><button type="button" data-a="x" style="padding:10px 16px;border-radius:8px;border:none;background:#1a56db;color:#fff;font-weight:700">Close</button></div>'
+      + '<div style="margin:6px 0;color:#374151">Scan any label. Every key / text the scanner sends shows below. Then tap "Cursor in a box" and scan again. Send a photo of this screen.</div>'
+      + '<div style="display:flex;gap:6px;align-items:center"><button type="button" data-a="box" style="padding:10px;border-radius:8px;border:1.5px solid #9ca3af;background:#f3f4f6;font-weight:600">Cursor in a box</button><input id="xf-st-in" type="text" inputmode="none" autocomplete="off" placeholder="(test box)" style="flex:1;min-width:0;padding:10px;border:2px solid #1a56db;border-radius:8px;font:16px monospace"></div>'
+      + '<div id="xf-st-log" style="flex:1;overflow:auto;margin-top:8px;font:13px/1.45 monospace;white-space:pre-wrap;background:#f9fafb;border-radius:8px;padding:8px"></div>';
+    try { if (document.activeElement && document.activeElement.blur) document.activeElement.blur(); } catch (e) {} // start with nothing selected
+    document.body.appendChild(w);
+    var log = w.querySelector('#xf-st-log'), inp = w.querySelector('#xf-st-in'), t0 = 0, lines = [];
+    var where = function () { var a = document.activeElement; return a === inp ? 'box' : a && a !== document.body ? (a.tagName || '').toLowerCase() : 'nothing'; };
+    var add = function (t) { var now = Date.now(); lines.unshift('+' + (t0 ? now - t0 : 0) + 'ms ' + t + '  [cursor: ' + where() + ']'); t0 = now; lines = lines.slice(0, 40); log.textContent = lines.join('\n'); };
+    var q = function (v) { return JSON.stringify(String(v == null ? '' : v)); };
+    var H = {
+      keydown: function (e) { add('keydown key=' + q(e.key) + ' code=' + (e.code || '-') + ' keyCode=' + e.keyCode + (e.altKey ? ' ALT' : '') + (e.ctrlKey ? ' CTRL' : '')); },
+      beforeinput: function (e) { add('beforeinput ' + (e.inputType || '') + ' ' + q(e.data)); },
+      input: function (e) { add('input ' + (e.inputType || '') + ' ' + q(e.data) + ' → box=' + q(e.target && e.target.value)); },
+      compositionend: function (e) { add('compositionend ' + q(e.data)); },
+      paste: function (e) { add('paste ' + q(e.clipboardData && e.clipboardData.getData('text'))); }
+    };
+    Object.keys(H).forEach(function (k) { window.addEventListener(k, H[k], true); });
+    w.addEventListener('click', function (e) {
+      var b = e.target.closest('button'); if (!b) return;
+      if (b.getAttribute('data-a') === 'x') { Object.keys(H).forEach(function (k) { window.removeEventListener(k, H[k], true); }); w.remove(); }
+      else { inp.value = ''; mute(inp); inp.focus(); add('— cursor put in the test box —'); }
+    });
+    add('— ready, nothing selected: scan now —');
   }
   // Mute BEFORE the box gets focus — once the phone has opened its keyboard,
   // changing inputmode is too late. Three ways a box gets focus:
@@ -533,6 +631,7 @@ window.addEventListener('pageshow', function (e) { if (e.persisted) location.rel
   document.addEventListener('focusin', function (e) {
     var el = e.target; if (!isBox(el)) return;
     last = el; if (on() && el !== open) mute(el);
+    if (el.dataset.xfWant && window.xfOskOpen) setTimeout(function () { if (document.activeElement === el) window.xfOskOpen(el); }, 0); // the page asked to type here
   });
   document.addEventListener('focusout', function (e) {
     var el = e.target; if (el !== open) return;
@@ -551,11 +650,24 @@ window.addEventListener('pageshow', function (e) { if (e.persisted) location.rel
       }); });
       muts.forEach(function (m) { // page code changed a muted box's inputmode / type back: hide again
         var t = m.target; if (m.type !== 'attributes' || t === open || !isBox(t)) return;
+        // A page's ⌨ "type it" (data-kb-typing / data-typing, or inputmode switched on) used to open
+        // the phone keyboard: now it opens OUR keyboard on that box instead.
+        if (m.attributeName === 'inputmode') {
+          if (t.getAttribute('inputmode') !== 'none') t.dataset.xfWant = '1';
+          else if (m.oldValue === 'none' && !t.hasAttribute('data-kb-typing') && !t.hasAttribute('data-typing')) delete t.dataset.xfWant; // the page set it back to scan-only
+        }
         if (t.getAttribute('inputmode') !== 'none' || /^number$/i.test(t.getAttribute('type') || '')) mute(t);
       });
       if (queued) return; queued = true; // boxes made by innerHTML on an existing node
       setTimeout(function () { queued = false; all(function (el) { if (el.dataset.xfKbIm == null && el !== open) mute(el); }); }, 150);
-    }).observe(document.body, { childList: true, subtree: true, attributes: true, attributeFilter: ['inputmode', 'type'] });
+    }).observe(document.body, { childList: true, subtree: true, attributes: true, attributeFilter: ['inputmode', 'type'], attributeOldValue: true });
+    new MutationObserver(function (muts) { // a page's ⌨ "type it" button → OUR keyboard on that box
+      muts.forEach(function (m) {
+        var t = m.target; if (!isBox(t)) return;
+        if (t.hasAttribute(m.attributeName)) { t.dataset.xfWant = '1'; if (document.activeElement === t && window.xfOskOpen) window.xfOskOpen(t); }
+        else if (!t.hasAttribute('data-kb-typing') && !t.hasAttribute('data-typing')) delete t.dataset.xfWant;
+      });
+    }).observe(document.body, { subtree: true, attributes: true, attributeFilter: ['data-kb-typing', 'data-typing'] });
   }
   if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', start); else start();
 })();

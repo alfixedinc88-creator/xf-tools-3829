@@ -2846,9 +2846,42 @@ console.log('\nScanner sends a UPC without its first digit → the full UPC is p
     && /code = String\(window\.xfFixUpc \? xfFixUpc\(code \|\| ''\) : code \|\| ''\)\.trim\(\);/.test(ih), null);
   const wk = readFileSync(fileURLToPath(new URL('../worker/src/index.js', import.meta.url)), 'utf8');
   check('…the Worker UPC → part # lookup also tries the full UPC for 11 digits', /const full = upcAddFirstDigit\(z\);/.test(wk), null);
-  check('phone keyboard hidden by default on every touch screen (a phone can still pick "Always show")', /return localStorage\.getItem\(PREF\) !== '0';/.test(xa) && /Always show the keyboard on this phone/.test(xa), null);
+  // Owner, next day: "even I set it at always hiding keyboard, it still pops up — get away of the keyboard forever".
+  check('phone keyboard never opens on a touch screen (no setting to turn it back on, sign-in boxes too); ⌨️ opens OUR keyboard instead',
+    /function on\(\) \{ return true; \}/.test(xa) && !/Always show the keyboard on this phone/.test(xa) && !/'input\[autocomplete="username"\], input\[type="password"\], #xf-nokb-pop \*/.test(xa)
+      && /if \(v === undefined && TOUCH\) return true;/.test(xa) && /B\('⌨️ Type in this box \(our keyboard\)'/.test(xa) && /if \(window\.xfOskOpen\) window\.xfOskOpen\(el\);/.test(xa), null);
+  check('…a page\'s ⌨ "type it" button (data-kb-typing / data-typing) opens OUR keyboard on that box; ⏎ on it = Enter (search / save)',
+    /attributeFilter: \['data-kb-typing', 'data-typing'\]/.test(xa) && /if \(!signIn\(target\)\) \{ \/\/ any other box: ⏎ = the Enter key/.test(xa), null);
+  check('…a scan with no box selected goes to the last scan box (never a sign-in box, not behind a pop-up, not taken twice); slow typing is not a scan',
+    /if \(!e\.isTrusted \|\| e\.defaultPrevented/.test(xa) && /if \(now - sAt > 120\) sBuf = '';/.test(xa) && /function scanOk\(el\)[^\n]*input\[autocomplete="username"\], input\[type="password"\]/.test(xa)
+      && /if \(popupOver\(el\)\)/.test(xa) && /var c = sBuf; sBuf = ''; if \(c\.length >= 3\) \{ e\.preventDefault\(\); deliver\(c\); \}/.test(xa), null);
+  // Owner's 🔍 Scanner test photo (R20H, outside box): the trigger sends F10 (keyCode 121), then only an Enter — the number goes
+  // only into a box that has the cursor, and F10 opened Chrome's menu. The trigger must put the cursor in the scan box first.
+  check('R20H scan trigger (F10 / keyCode 121): Chrome menu blocked, cursor put in the scan box (keyboard stays off) when no box has it',
+    /if \(!e\.isTrusted \|\| !\(e\.keyCode === 121 \|\| \/\^F\(9\|1\[0-2\]\)\$\/\.test\(e\.key \|\| ''\)\)\) return;\s*e\.preventDefault\(\);/.test(xa)
+      && /var el = scanBox\(\); if \(el && !popupOver\(el\)\) el\.focus\(\{ preventScroll: true \}\);/.test(xa), null);
+  // Owner's Scanner test photo, Svantto MC002: its scan button sends key "Unidentified", code F21, keyCode 0.
+  check('…the Svantto MC002 scan button (code F21, keyCode 0) counts as a scan trigger too', /if \(!e\.isTrusted \|\| !\/\^F\(1\[3-9\]\|2\[0-4\]\)\$\/\.test\(e\.code \|\| ''\)\) return;\s*e\.preventDefault\(\);/.test(xa), null);
+  check('…⌨️ → 🔍 Test the scanner shows every key / text a scanner sends (starts with nothing selected)', /B\('🔍 Test the scanner', scanTest\);/.test(xa) && /keydown key=' \+ q\(e\.key\)/.test(xa) && /start with nothing selected/.test(xa), null);
   const sc = readFileSync(fileURLToPath(new URL('../docs/SCANNERS.md', import.meta.url)), 'utf8');
   check('docs/SCANNERS.md keeps the N77, Zebra DS2278 and Farset R20H fixes', /N77/.test(sc) && /DS2278/.test(sc) && /R20H/.test(sc), null);
+  check('…and the Svantto MC002 fix (iScanPlus → sending mode HID) and the R20H EMUKEY setting', /Svantto MC002/.test(sc) && /sending mode = HID/.test(sc) && /Send Mode = EMUKEY/.test(sc), null);
+}
+
+// Owner: "when we in that app, can we hide that address bar on the top". manifest.json existed but no page linked it, and its
+// start_url was a page that no longer exists — so the home-screen shortcut opened as a normal Chrome tab.
+console.log('\nInstalled app opens without the address bar (manifest linked on every page, start page exists)');
+{
+  const { readFileSync, existsSync, readdirSync } = await import('node:fs');
+  const root = fileURLToPath(new URL('../', import.meta.url));
+  let man = {}; try { man = JSON.parse(readFileSync(root + 'manifest.json', 'utf8')); } catch (e) {}
+  // Owner (Svantto MC002): "auto-rotate is off, but in our app it still rotates" — orientation "any" makes the installed app
+  // follow the sensor and ignore the phone's auto-rotate lock. The app stays upright.
+  check('installed app stays upright (orientation portrait — "any" ignored the phone\'s auto-rotate off)', man.orientation === 'portrait', man.orientation);
+  check('manifest.json: display standalone, start page index.html exists, 192 and 512 icons exist', man.display === 'standalone' && man.start_url === './index.html' && existsSync(root + 'index.html')
+    && ['192x192', '512x512'].every(sz => (man.icons || []).some(i => i.sizes === sz && existsSync(root + i.src))), man.start_url);
+  const pages = readdirSync(root).filter(f => f.endsWith('.html')), missing = pages.filter(f => !readFileSync(root + f, 'utf8').includes('<link rel="manifest" href="manifest.json">'));
+  check('…every page links the manifest', missing.length === 0, missing);
 }
 
 console.log('\n' + (failed ? '❌ ' + failed + ' check(s) FAILED' : '✅ all ' + passed + ' checks passed') + '\n');

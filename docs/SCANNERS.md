@@ -1,5 +1,17 @@
 # Scanners: known problems and fixes
 
+## Quick list: the setting that makes each scanner work in our app
+| Scanner | Settings app | Must be | Ends with Enter |
+|---|---|---|---|
+| N77 | "Setting" (Test Scan / Setting / about) | Output Mode = Keyboard Mode, Handle Key = Only Scan | post-scan action = **Carriage Return** |
+| Farset R20H | Scanner Settings | **Send Mode = EMUKEY** | End Char = ENTER |
+| Svantto MC002 | **iScanPlus** | **Scan result sending mode = HID** | (HID sends it) |
+| Zebra DS2278 (Bluetooth) | — | charged, paired to its cradle | — |
+
+New scanner that beeps but types nothing? It's almost always the send / output
+mode: pick the keyboard one (Keyboard / EMUKEY / HID / Simulate keystroke),
+never Focus / Broadcast / Clipboard. Then ⌨️ → 🔍 Test the scanner to check.
+
 Read this first when the owner says a scanner "stopped working". These are
 device settings, not app bugs. The owner asked that this be kept so nobody has
 to remember it.
@@ -52,8 +64,17 @@ Working settings (confirmed by the owner 2026-10-05):
 ## Farset R20H (Android, built-in scanner, "Scanner Settings" / "Scan Tool")
 
 Settings are in its **Scanner Settings** app (the Scan Tool app's SCAN SETTING
-opens the same). Working: Enable Scanner ON, End Char Setting **ENTER**,
-Send Mode **FOCUS + BROADCAST**, Prefix / Suffix empty. Barcode types:
+opens the same). **Working (confirmed by the owner 2026-10-06):** Enable
+Scanner ON, **Send Mode = EMUKEY**, End Char Setting **ENTER**, Prefix /
+Suffix empty.
+
+### Problem: scans don't show up in our app at all (Scan Tool shows them fine)
+- Cause: Send Mode was **FOCUS + BROADCAST**. FOCUS goes through the phone
+  keyboard and doesn't work with Chrome (Scanner test: only F10 + Enter, no
+  numbers; with a box selected nothing at all), and it forces the phone
+  keyboard open. BROADCAST only reaches apps, not websites.
+- Fix: Scanner Settings → OUTPUT SETTING → **Send Mode Setting → EMUKEY**
+  (emulates key presses). Then the app catches the scan with no box selected. Barcode types:
 Bar Setting → Enable/Disable (all the common ones are on from the factory).
 
 ### Problem: part # labels scan, outside box UPC "doesn't work"
@@ -65,6 +86,14 @@ Bar Setting → Enable/Disable (all the common ones are on from the factory).
 - Device fix too, if wanted: Bar Setting → Advanced Configuration → UPC-A →
   turn on "transmit system digit / preamble" (name varies).
 
+### How the R20H sends a scan (its 🔍 Scanner test, 2026-10-06)
+- The trigger sends **F10** (keyCode 121), repeated while held. F10 = Chrome's
+  menu, which is why the menu popped up.
+- Send Mode FOCUS puts the number **only into the box with the cursor**, then
+  an Enter. With no box selected the number is lost (only Enter arrives).
+- App fix (xf-access.js): F10 is blocked, and it puts the cursor in the scan
+  box (keyboard stays off) before the number arrives.
+
 ### Problem: Chrome menu pops up on a scan, then nothing types into the app
 - The scan landed while the box had no cursor. Close the menu, tap the scan
   box, scan again. If still nothing: restart the R20H.
@@ -72,6 +101,53 @@ Bar Setting → Enable/Disable (all the common ones are on from the factory).
   there, the scanner is fine.
 
 ## Phone keyboard
-Hidden by default on every touch screen (owner, 2026-10-06): scans still go
-in. To type, tap the box, then the ⌨️ button (bottom left) → "Show keyboard to
-type". A phone used for typing can pick "Always show the keyboard on this phone".
+Never opens on a touch screen (owner, 2026-10-06: "get away of the keyboard
+forever"), sign-in boxes included. Scans still go in. To type: tap the box,
+then ⌨️ (bottom left) → "Type in this box" opens OUR on-screen keyboard
+(sign-in boxes open it by themselves). A page's ⌨ "type it" button opens it too.
+
+A scan that arrives with no box selected (cursor on a button) goes to the scan
+box used last (or the page's 📷 box). Not into sign-in boxes, not behind a pop-up.
+
+## New scanner? ⌨️ → 🔍 Test the scanner
+Shows every key / text the scanner sends, with "cursor: nothing" / "box".
+- Nothing shows at all → the scanner isn't sending to Chrome (check its send /
+  output mode: pick keyboard / keystroke emulation if offered).
+- Shows only with "Cursor in a box" → fine (the app keeps a box selected).
+- Numbers show but a digit is missing → compare with the printed number.
+
+## R20H: no phone keyboard at all + no address bar (owner, 2026-10-06)
+- Phone keyboard: installed **Null Keyboard** (Play Store) and set it as the
+  default keyboard (Settings → System → Keyboard). Scans (EMUKEY) still work;
+  typing in our app uses our own ⌨️ keyboard. To undo: set the default back to
+  Android Keyboard (AOSP).
+- No address bar: open the app in Chrome → ⋮ → **Install app** (or Add to
+  home screen → Install). The installed app opens without the address bar
+  (manifest.json, display standalone). A plain Chrome shortcut keeps the bar.
+
+## Svantto MC002 / any phone: screen keeps rotating in our app
+- Phone: quick settings → Auto-rotate OFF (or Settings → Display → Auto-rotate).
+- Our installed app: manifest.json `"orientation": "portrait"` keeps it upright.
+  Never "any": on Android the installed app then follows the sensor and
+  ignores auto-rotate OFF (2026-10-06). After a change, reinstall the app icon
+  (or wait for Chrome to update it, up to a day).
+
+## Svantto MC002 (Android, built-in scanner, app "iScanPlus")
+**Working (confirmed by the owner 2026-10-06):** iScanPlus (not "iScanTest",
+that's only a test screen) → Setting tab → Output Method Configuration →
+**Scan result sending mode = HID** → CONFIRM. Character Editing Format stays
+**Auto** (it's the character set, not the Enter). With HID it sends the Enter
+by itself — nothing else to change.
+
+### Problem: beep + light, but nothing shows in our app
+- Cause: Scan result sending mode was **Focus** (like the R20H's FOCUS: goes
+  through the phone keyboard, doesn't reach Chrome). 🔍 Scanner test showed
+  only the scan button — key "Unidentified", **code F21**, keyCode 0 — and no numbers.
+- Fix: sending mode → **HID**. Don't pick Focus / Broadcast / Copy / IP /
+  BlueTooth.
+- App (2026-10-06): code F13–F24 counts as the scan button (cursor goes to
+  the scan box, keyboard stays off).
+
+### Problem: screen keeps rotating
+- Phone: quick settings → Auto-rotate OFF. Our installed app stays upright
+  (manifest "portrait") — reinstall the app icon if it still turns.
