@@ -2946,5 +2946,56 @@ console.log('\nScan form: a "not made / not printed" message stays on the page w
       && /id="ps-al-sf-err"/.test(ph) && /onclick="_psAlCopy\(this\.getAttribute\(\\'data-t\\'\), this\)">📋 Copy<\/button><\/details>/.test(ph), null);
 }
 
+// Owner: "some eBay orders never get the tracking number auto added — mostly the merged ones. If we bought the label we have
+// the tracking: wait 1–2 hours, and if eBay still doesn't have it, our system adds it."
+console.log('\n📮 eBay tracking our system adds: label bought / merged > 2 h ago, eBay still not shipped → tracking added (recorded)');
+{
+  const { readFileSync } = await import('node:fs');
+  const realFetch = globalThis.fetch, posted = [];
+  env.EBAY_CLIENT_ID = 'c'; env.EBAY_CLIENT_SECRET = 's'; env.EBAY_REFRESH_TOKEN = 'r';
+  const hrsAgo = h => new Date(Date.now() - h * 3600000).toISOString();
+  const ebayOrders = [
+    { orderId: '11-11111-11111', lineItems: [{ lineItemId: 'L1', quantity: 2, lineItemFulfillmentStatus: 'NOT_STARTED' }], cancelStatus: { cancelState: 'NONE_REQUESTED' } }, // merged 3 h ago → add
+    { orderId: '22-22222-22222', lineItems: [{ lineItemId: 'L2', quantity: 1, lineItemFulfillmentStatus: 'NOT_STARTED' }], cancelStatus: { cancelState: 'NONE_REQUESTED' } }, // bought 30 min ago → wait
+    { orderId: '33-33333-33333', lineItems: [{ lineItemId: 'L3', quantity: 1, lineItemFulfillmentStatus: 'NOT_STARTED' }], cancelStatus: { cancelState: 'NONE_REQUESTED' } }, // no label of ours → leave
+    { orderId: '44-44444-44444', lineItems: [{ lineItemId: 'L4', quantity: 1, lineItemFulfillmentStatus: 'NOT_STARTED' }], cancelStatus: { cancelState: 'CANCEL_REQUESTED' } }, // cancel asked → never
+    { orderId: '55-55555-55555', legacyOrderId: '55-55555-55555', lineItems: [{ lineItemId: 'L5a', quantity: 1, lineItemFulfillmentStatus: 'FULFILLED' }, { lineItemId: 'L5b', quantity: 3, lineItemFulfillmentStatus: 'NOT_STARTED' }], cancelStatus: { cancelState: 'NONE_REQUESTED' } }, // half shipped → only L5b
+    { orderId: '66-66666-66666', lineItems: [{ lineItemId: 'L6', quantity: 1, lineItemFulfillmentStatus: 'NOT_STARTED' }], cancelStatus: { cancelState: 'NONE_REQUESTED' } }, // label cancelled → never
+  ];
+  globalThis.fetch = async (u, o) => { u = String(u);
+    if (u.includes('identity/v1/oauth2/token')) return new Response(JSON.stringify({ access_token: 'T', expires_in: 7200 }));
+    if (u.includes('/sell/fulfillment/v1/order?')) return new Response(JSON.stringify({ orders: ebayOrders }));
+    if (/\/sell\/fulfillment\/v1\/order\/[^/]+\/shipping_fulfillment/.test(u)) { posted.push({ u, body: JSON.parse(o.body) }); return new Response('', { status: 201 }); }
+    return realFetch(u, o); };
+  await call('/veeqo/autolabel/config', { headers: H }); // tables
+  const ins = (num, action, tracking, carrier, ts) => sq.prepare("INSERT INTO autolabel_log (ts, date, order_number, channel, action, carrier, tracking) VALUES (?,?,?,?,?,?,?)").run(ts, ts.slice(0, 10), num, 'eBay', action, carrier, tracking);
+  ins('11-11111-11111', 'merged', '9400100000000000000011', 'USPS', hrsAgo(3));
+  ins('22-22222-22222', 'bought', '9400100000000000000022', 'USPS', hrsAgo(0.5));
+  ins('44-44444-44444', 'bought', '1Z4444', 'UPS', hrsAgo(5));
+  ins('55-55555-55555', 'bought', '1Z5555', 'UPS', hrsAgo(4));
+  ins('66-66666-66666', 'bought', '9400100000000000000066', 'USPS', hrsAgo(6));
+  sq.exec("CREATE TABLE IF NOT EXISTS ship_cancel_label_log (id INTEGER PRIMARY KEY AUTOINCREMENT, date TEXT, timestamp TEXT, tracking TEXT, order_num TEXT, carrier TEXT, picked_by TEXT, picked_at TEXT, canceled_by TEXT)");
+  sq.prepare("INSERT INTO ship_cancel_label_log (date, timestamp, tracking, canceled_by) VALUES (?,?,?,?)").run('2026-10-06', hrsAgo(5), '9400100000000000000066', 'Mgr');
+  const r = await post('/veeqo/autolabel/ebay-tracking-run', {});
+  const p11 = posted.find(x => x.u.includes('11-11111-11111')), p55 = posted.find(x => x.u.includes('55-55555-55555'));
+  check('merged box 3 h ago, eBay not shipped → tracking added on eBay (USPS, its tracking, all its items)', r.ok && p11 && p11.body.trackingNumber === '9400100000000000000011' && p11.body.shippingCarrierCode === 'USPS'
+    && JSON.stringify(p11.body.lineItems) === JSON.stringify([{ lineItemId: 'L1', quantity: 2 }]), { r, posted });
+  check('…half-shipped order → only the items not shipped yet (UPS)', p55 && p55.body.shippingCarrierCode === 'UPS' && JSON.stringify(p55.body.lineItems) === JSON.stringify([{ lineItemId: 'L5b', quantity: 3 }]), p55);
+  check('…label bought 30 min ago → waits (2 h); no label of ours → left alone; cancel asked on eBay or label cancelled → never',
+    posted.length === 2 && r.waiting.some(x => x.ebayOrderId === '22-22222-22222') && r.notOurs === 1
+      && r.skipped.some(x => x.ebayOrderId === '44-44444-44444') && r.skipped.some(x => x.ebayOrderId === '66-66666-66666'), { posted: posted.map(x => x.u), r });
+  const rows = sq.prepare('SELECT * FROM ebay_tracking_fix ORDER BY id').all();
+  check('…every one added is on record (order, tracking, carrier, merged / bought, who, what eBay said)', rows.length === 2 && rows.every(x => x.ok === 1) && rows.some(x => x.source === 'merged box' && x.ebay_order_id === '11-11111-11111'), rows);
+  const r2 = await post('/veeqo/autolabel/ebay-tracking-run', {});
+  check('…run again (eBay still shows them not shipped) → not added twice', posted.length === 2 && r2.skipped.some(x => x.ebayOrderId === '11-11111-11111' && /before/.test(x.why)), r2.skipped);
+  const g = await get('/veeqo/autolabel/ebay-tracking');
+  check('…the 📮 card lists them, and the check is on by default (2 h wait)', g.ok && g.rows.length === 2 && g.config.on === true && g.config.waitMinutes === 120, g.config);
+  const wk = readFileSync(fileURLToPath(new URL('../worker/src/index.js', import.meta.url)), 'utf8'), ph = readFileSync(fileURLToPath(new URL('../packship.html', import.meta.url)), 'utf8');
+  check('…runs by itself every 30 min (not in 🧪 test mode); "Check eBay now" is blocked in test mode; card on the Auto Label tab',
+    /if \(!testOn\) ctx\.waitUntil\(ebayTrackingFix\(env\)/.test(wk) && /'\/veeqo\/autolabel\/ebay-tracking-run',/.test(wk) && /'ebay_tracking_fix',\n\]\);/.test(wk) && /onclick="psAlEbayTrackRun\(this\)">📮 Check eBay now<\/button>/.test(ph), null);
+  globalThis.fetch = realFetch; delete env.EBAY_CLIENT_ID; delete env.EBAY_CLIENT_SECRET; delete env.EBAY_REFRESH_TOKEN;
+  sq.prepare("DELETE FROM autolabel_log WHERE channel = 'eBay' AND order_number LIKE '%-%-%'").run();
+}
+
 console.log('\n' + (failed ? '❌ ' + failed + ' check(s) FAILED' : '✅ all ' + passed + ' checks passed') + '\n');
 process.exit(failed ? 1 : 0);
