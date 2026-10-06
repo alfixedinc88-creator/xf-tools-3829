@@ -25997,7 +25997,7 @@ async function autolabelScanFormCreate(env, kind, slot, by, when) {
   tried.push({ carrier: 'waiting?', path: '/shipping/api/v1/scan_forms/unmanifested', status: um.status, said: um.said });
   if (um.ok && um.carriers && !um.carriers.length) {
     await d1Run(env, `INSERT INTO scan_form_log (day, slot, kind, created_at, by_user, ok, shipments, detail) VALUES (?,?,?,?,?,?,?,?)`,
-      [ny.date, slot || '', kind, now, by || 'auto', 0, 0, JSON.stringify(tried).slice(0, 4000)]);
+      [ny.date, slot || '', kind, now, by || 'auto', 0, 0, JSON.stringify(tried).slice(0, 20000)]);
     return { ok: false, nothing: true, tried, error: 'No labels waiting for a scan form — Veeqo says every shipment is already on one (or none were bought since the last form)' };
   }
   // Owner's test 2026-10-06 5:11 pm: every body → 400 "collection_address is required"; Veeqo's
@@ -26009,11 +26009,21 @@ async function autolabelScanFormCreate(env, kind, slot, by, when) {
     .forEach(l => { if (l && l.address) jobs.push({ cid: String(c.carrier_id || c.carrier_name || ''), addr: l.address }); }));
   if (!jobs.length) jobs.push({ cid: '', addr: null }); // no address from Veeqo → the old tries, Veeqo's answer kept
   const noNulls = a => Object.fromEntries(Object.entries(a || {}).filter(([, v]) => v != null && v !== ''));
+  // Owner's test 5:19 pm: collection_address accepted, then 400 "No valid address source provided for
+  // from_address" → Veeqo wants where the from address comes from: our Veeqo warehouse (the one at this
+  // address) or a from_address. Every likely form is tried; a refused one makes nothing.
+  let whs = []; try { const w = await veeqoFetch(env, '/warehouses?page_size=100'); whs = Array.isArray(w) ? w : []; } catch (_) {}
+  const whFor = addr => { const line = String((addr && addr.address_line1) || '').toLowerCase().slice(0, 12);
+    return whs.find(w => line && JSON.stringify(w).toLowerCase().includes(line)) || (whs.length === 1 ? whs[0] : null); };
   for (const job of jobs) {
     const subs = ['USPS', ...(job.cid && job.cid !== 'USPS' ? [job.cid] : [])]; // the docs' example first, then Veeqo's own carrier id
-    const bodies = job.addr
-      ? [() => ({ collection_address: job.addr }), () => ({ collection_address: noNulls(job.addr) }), () => ({ collection_address: job.addr, carrier_id: job.cid })]
-      : AUTOLABEL_SCANFORM_BODIES;
+    const wh = whFor(job.addr), W = wh ? wh.id : null, a = job.addr;
+    tried.push({ carrier: 'warehouse?', path: '/warehouses', status: whs.length ? 200 : 0, said: wh ? `warehouse ${W} (${wh.name || ''})` : `no warehouse matched (${whs.length} found)` });
+    const bodies = !a ? AUTOLABEL_SCANFORM_BODIES : [
+      ...(W ? [() => ({ collection_address: { warehouse_id: W } }), () => ({ collection_address: a, warehouse_id: W }), () => ({ collection_address: { ...a, warehouse_id: W } }),
+               () => ({ collection_address: { warehouse_id: W, address: a } }), () => ({ collection_address: a, from_address: a, warehouse_id: W })] : []),
+      () => ({ collection_address: a, from_address: a }), () => ({ collection_address: { address: a } }), () => ({ collection_address: { address: a }, from_address: { address: a } }),
+    ];
     let done = false;
     for (const carrier of subs) {
       const pth = AUTOLABEL_SCANFORM_PATH(carrier);
@@ -26034,11 +26044,11 @@ async function autolabelScanFormCreate(env, kind, slot, by, when) {
     const j = mk.json || {};
     const n = Array.isArray(j.shipments) ? j.shipments.length : (j.shipment_count || j.shipments_count || j.count || null);
     const ins = await d1Run(env, `INSERT INTO scan_form_log (day, slot, kind, created_at, by_user, ok, carrier, veeqo_id, shipments, source, detail) VALUES (?,?,?,?,?,?,?,?,?,?,?)`,
-      [ny.date, slot || '', kind, now, by || 'auto', 1, mk.carrier, String(j.id || j.scan_form_id || (j.scan_form && j.scan_form.id) || ''), n, JSON.stringify(j).slice(0, 20000), JSON.stringify(tried).slice(0, 4000)]);
+      [ny.date, slot || '', kind, now, by || 'auto', 1, mk.carrier, String(j.id || j.scan_form_id || (j.scan_form && j.scan_form.id) || ''), n, JSON.stringify(j).slice(0, 20000), JSON.stringify(tried).slice(0, 20000)]);
     ids.push({ id: ins && ins.meta && ins.meta.last_row_id, carrier: mk.carrier, shipments: n });
   }
   if (!made.length) await d1Run(env, `INSERT INTO scan_form_log (day, slot, kind, created_at, by_user, ok, detail) VALUES (?,?,?,?,?,?,?)`,
-    [ny.date, slot || '', kind, now, by || 'auto', 0, JSON.stringify(tried).slice(0, 4000)]);
+    [ny.date, slot || '', kind, now, by || 'auto', 0, JSON.stringify(tried).slice(0, 20000)]);
   const ok = made.length > 0;
   if (ok && kind === 'hand') await autolabelSetKey(env, AUTOLABEL_SCANFORM_VERIFIED_KEY, 'yes');
   return { ok, id: ids[0] && ids[0].id, forms: ids, carrier: ids.map(x => x.carrier).join(' + '), shipments: ids.reduce((t, x) => t + (x.shipments || 0), 0) || null, tried,
