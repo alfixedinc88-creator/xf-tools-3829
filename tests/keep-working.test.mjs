@@ -2457,11 +2457,15 @@ console.log('\nAuto Label → 📄 USPS scan form: Mon–Fri 4:30 pm, Sat 1:45 p
 {
   const realFetch = globalThis.fetch; let made = 0, refuse = false; env.TEST_CLOCK = true;
   globalThis.fetch = async (u, o) => { u = String(u); const m = (o && o.method) || 'GET'; const J = (x, st) => new Response(JSON.stringify(x), { status: st || 200, headers: { 'Content-Type': 'application/json' } });
-    if (u.endsWith('api.veeqo.com/shipping/api/v1/scan_forms') && m === 'POST') { if (refuse) return J({ error: 'nope' }, 404);
-      if (JSON.parse(o.body).carrier !== 'usps') return J({ error: 'No shipments to manifest for this carrier' }, 422); made++; return J({ id: 550 + made, shipments: [1, 2, 3], document_url: 'https://forms.example/sf' + made + '.pdf' }); }
+    // Veeqo's real address (owner's screenshot of its docs): POST /shipping/api/v1/scan_forms/{sub_carrier_id}, e.g. USPS.
+    if (u.endsWith('api.veeqo.com/shipping/api/v1/scan_forms/USPS') && m === 'POST') { if (refuse) return J({ error: 'No shipments to manifest' }, 400);
+      if (!JSON.parse(o.body).carrier) return J({ error: 'carrier is missing' }, 400); made++; return J({ id: 550 + made, shipments: [1, 2, 3], document_url: 'https://forms.example/sf' + made + '.pdf' }); }
+    // Which carriers have shipments not on a form yet (owner's 2nd screenshot): PUT /shipping/api/v1/scan_forms/unmanifested.
+    if (u.endsWith('api.veeqo.com/shipping/api/v1/scan_forms/unmanifested') && m === 'PUT') return J({ carriers: none ? [] : [{ carrier: 'amazon_shipping_v2', sub_carrier_id: 'USPS', count: 3 }], error_messages: [] });
     if (u.startsWith('https://forms.example/')) return new Response('%PDF-1.4 scan form', { headers: { 'Content-Type': 'application/pdf' } });
     if (u.includes('api.veeqo.com/')) return J({ error: 'not found' }, 404);
     return new Response('{}', { status: 401 }); };
+  let none = false;
   env.VEEQO_API_KEY = 'k';
   await post('/veeqo/autolabel/config', { config: { scanFormOn: true, scanFormTimes: 'Mon-Fri 16:30; Sat 13:45', scanFormCheckAt: '20:30' } });
   const tick = at => post('/veeqo/autolabel/scanform-tick', { at });
@@ -2494,6 +2498,14 @@ console.log('\nAuto Label → 📄 USPS scan form: Mon–Fri 4:30 pm, Sat 1:45 p
     && pr.ok && !!sq.prepare('SELECT printed_at FROM scan_form_log WHERE id = ?').get(id).printed_at, f.status);
   refuse = true; const bad = await post('/veeqo/autolabel/scanform-make', {});
   check('…Veeqo won\'t make it → said plainly (make it in Veeqo: Settings → USPS Scan Forms) with what each address answered, on record', bad.ok === false && /Settings → USPS Scan Forms/.test(bad.error) && bad.tried.length >= 2 && rows().slice(-1)[0].ok === 0, bad);
+  const ws0 = readFileSync0(workerPath, 'utf8');
+  check('…sent to Veeqo\'s real scan form address POST /shipping/api/v1/scan_forms/USPS (owner\'s screenshot); a refused body is tried with the next one, each answer kept (what was sent + what Veeqo said)',
+    /const AUTOLABEL_SCANFORM_PATH = sc => `\/shipping\/api\/v1\/scan_forms\/\$\{encodeURIComponent\(sc\)\}`;/.test(ws0) && bad.tried[0].path === '/shipping/api/v1/scan_forms/unmanifested'
+      && bad.tried.slice(1).every(t => t.path === '/shipping/api/v1/scan_forms/USPS' && t.status === 400 && 'sent' in t) && bad.tried.length === 5
+      && JSON.stringify(bad.tried[1].sent) === '{"carrier":"amazon_shipping_v2","sub_carrier_id":"USPS","count":3}', bad.tried);
+  none = true; refuse = false; const mk0 = made; const nw = await post('/veeqo/autolabel/scanform-make', {});
+  check('…Veeqo says no carrier has labels waiting (unmanifested = none) → "No labels waiting for a scan form", nothing sent to make one, on record', nw.ok === false && nw.nothing === true && /No labels waiting for a scan form/.test(nw.error) && made === mk0 && nw.tried.length === 1, nw);
+  none = false;
   const lst = await get('/veeqo/autolabel/scanforms');
   check('…the list says the times and night check, and how many USPS labels are not on a form yet', lst.ok && lst.times === 'Mon-Fri 16:30; Sat 13:45' && lst.checkAt === '20:30' && Array.isArray(lst.missing.labels), lst.times);
   globalThis.fetch = realFetch; delete env.VEEQO_API_KEY; delete env.TEST_CLOCK;
