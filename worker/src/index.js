@@ -24208,8 +24208,11 @@ const AUTOLABEL_DEFAULTS = {
   waitMinutes: 30,             // wait this long after the NEWEST order for a person before buying
   noWaitTimes: 'Mon-Fri 15:50-17:00; Sat 13:00-14:15', // ...except in these New York times: print as soon as an order comes in (owner)
   scanFormOn: true,            // 📄 USPS scan form made by itself at scanFormTimes (after one made by hand worked)
-  scanFormTimes: 'Mon-Fri 16:30; Sat 13:45', // New York time (owner)
-  scanFormCheckAt: '20:30',    // night check: any USPS label after the last form → one more (USPS: before 9 pm)
+  scanFormTimes: 'Mon-Fri 16:30, 20:50; Sat 13:45; Sun 20:50', // New York time (owner)
+  scanFormCheckAt: '20:55',    // night check: any USPS label after the last form → one more (USPS: before 9 pm)
+  // No auto buying at these times (New York) — around the scan forms (owner):
+  // Mon–Fri 4:30–5:30 pm and 8:30 pm–12:05 am, Sat from 1:30 pm, Sun 8:30 pm–12:05 am.
+  pauseTimes: 'Mon-Fri 16:30-17:30; Mon-Fri 20:30-24:00; Sat 13:30-24:00; Sun 20:30-24:00; Sun-Sat 0:00-0:05',
   upsMinSavings: 0.70,         // switch USPS -> UPS only if UPS is at least this much cheaper ($)... (owner: $0.70)
   upsMaxDays: 2,               // ...AND UPS arrives in this many days or less (owner: 2 days)
   uspsOnlyChannels: ['walmart'], // channels that must always ship USPS (name contains)
@@ -24346,6 +24349,14 @@ async function autolabelLoadConfig(env) {
     await autolabelSetKey(env, 'autolabel_rules_ups_2d_070', 'done');
     await autolabelLog(env, { action: 'rules_changed', detail: `UPS rule set by the owner's request: cheaper by $${before.upsMinSavings ?? 0.8} → $0.70, within ${before.upsMaxDays ?? 3} → 2 days` }).catch(() => {});
   }
+  // Owner: the day's schedule around the scan forms — once, on the saved rules too.
+  if ((await autolabelGetKey(env, 'autolabel_rules_scanform_pause_1006')) !== 'done') {
+    const before = { scanFormTimes: saved.scanFormTimes, scanFormCheckAt: saved.scanFormCheckAt, pauseTimes: saved.pauseTimes };
+    saved.scanFormTimes = AUTOLABEL_DEFAULTS.scanFormTimes; saved.scanFormCheckAt = AUTOLABEL_DEFAULTS.scanFormCheckAt; saved.pauseTimes = AUTOLABEL_DEFAULTS.pauseTimes;
+    await autolabelSetKey(env, AUTOLABEL_CONFIG_KEY, JSON.stringify(saved));
+    await autolabelSetKey(env, 'autolabel_rules_scanform_pause_1006', 'done');
+    await autolabelLog(env, { action: 'rules_changed', detail: `Scan form + no-auto-buying times set by the owner's request: ${JSON.stringify(before)} → scan forms ${saved.scanFormTimes}, night check ${saved.scanFormCheckAt}, no auto buying ${saved.pauseTimes}` }).catch(() => {});
+  }
   return autolabelCleanConfig({ ...AUTOLABEL_DEFAULTS, ...saved });
 }
 
@@ -24362,6 +24373,7 @@ function autolabelCleanConfig(c) {
     waitMinutes:       num(c.waitMinutes, D.waitMinutes, 0, 1440),
     noWaitTimes:       autolabelNoWaitClean(c.noWaitTimes == null ? D.noWaitTimes : c.noWaitTimes),
     scanFormOn:        c.scanFormOn === true || c.scanFormOn === 'true',
+    pauseTimes:        autolabelNoWaitClean(c.pauseTimes == null ? D.pauseTimes : c.pauseTimes),
     scanFormTimes:     autolabelTimesClean(c.scanFormTimes == null ? D.scanFormTimes : c.scanFormTimes),
     scanFormCheckAt:   /^\d{1,2}:\d{2}$/.test(String(c.scanFormCheckAt || '').trim()) && +String(c.scanFormCheckAt).split(':')[0] < 21 ? String(c.scanFormCheckAt).trim() : D.scanFormCheckAt,
     upsMinSavings:     num(c.upsMinSavings, D.upsMinSavings, 0, 100),
@@ -25583,7 +25595,6 @@ function autolabelFileResp(body, type) { // a file with the same CORS headers as
 async function autolabelScanFormCreate(env, kind, slot, by, when) {
   await autolabelEnsureTables(env);
   const now = (when || new Date()).toISOString(), ny = autolabelNyNow(when);
-  if (ny.day === 0) return { ok: false, error: 'USPS takes no scan form on Sunday' };
   // One form per carrier that has USPS labels today (Amazon Shipping's USPS and Veeqo's own USPS are separate).
   const tried = [], made = [];
   for (const carrier of AUTOLABEL_SCANFORM_CARRIERS) {
@@ -25624,11 +25635,11 @@ async function autolabelScanFormTick(env, when) {
   const cfg = await autolabelLoadConfig(env);
   if (!cfg.scanFormOn) return { skipped: 'off' };
   const ny = autolabelNyNow(when);
-  if (ny.day === 0) return { skipped: 'sunday' };
   const verified = (await autolabelGetKey(env, AUTOLABEL_SCANFORM_VERIFIED_KEY)) === 'yes';
   const did = [];
   for (const t of autolabelTimesParse(cfg.scanFormTimes)) {
     if (!t.days.includes(ny.day) || ny.mins < t.at || ny.mins > t.at + 120) continue;
+    if (t.at < 21 * 60 && ny.mins >= 21 * 60) continue; // USPS: not after 9 pm for that day's labels
     const slot = `${ny.date} ${Math.floor(t.at / 60)}:${String(t.at % 60).padStart(2, '0')}`;
     if (await d1First(env, 'SELECT 1 x FROM scan_form_log WHERE slot = ?', [slot])) continue;
     if (!verified) { await d1Run(env, `INSERT INTO scan_form_log (day, slot, kind, created_at, by_user, ok, detail) VALUES (?,?,?,?,?,?,?)`, [ny.date, slot, 'locked', (when || new Date()).toISOString(), 'auto', 0, 'Auto scan forms are locked until one is made by hand (📄 Make scan form now)']); did.push({ slot, locked: true }); continue; }
@@ -25658,9 +25669,12 @@ async function autolabelRun(env, opts = {}) {
   const cfg = noWait ? { ...cfgSaved, waitMinutes: 0 } : cfgSaved;
   const startedAt = new Date().toISOString();
   const buyVerified = (await autolabelGetKey(env, AUTOLABEL_VERIFIED_KEY)) === 'yes';
-  const buy = !!opts.buy && cfg.mode === 'auto' && buyVerified;
+  // ⏸ No auto buying at these times (owner: around the scan forms) — labels bought by hand still work.
+  const paused = autolabelNoWaitNow({ noWaitTimes: cfg.pauseTimes }, opts.now || new Date());
+  const buy = !!opts.buy && cfg.mode === 'auto' && buyVerified && !paused;
   const result = { ok: true, trigger: opts.trigger || 'manual', startedAt, mode: cfg.mode, buying: buy, buyVerified,
                    counts: {}, orders: [], channels: {}, cancelWatch: null, quoteSource: null, notes: [] };
+  if (paused) { result.paused = paused; result.notes.push(`⏸ No auto buying now (${paused}, New York) — around the USPS scan form; it buys again after that. Labels can still be bought by hand.`); }
   if (noWait) { result.noWait = noWait; result.notes.push(`⏩ No-wait time (${noWait}, New York): orders print as soon as they come in — no ${cfgSaved.waitMinutes}-min wait.`); }
   if (opts.buy && cfg.mode === 'auto' && !buyVerified) result.notes.push('Auto mode is on but no label has been test-bought yet — nothing was bought. Use "Test buy ONE label" first.');
 
