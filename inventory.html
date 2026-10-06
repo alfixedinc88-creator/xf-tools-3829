@@ -1427,6 +1427,8 @@ window.invCredLogin = async function() {
         onkeydown="if(event.key==='Enter')skumgrSearch()">
       <button onclick="skumgrSearch()"
         style="padding:10px 18px;background:var(--accent);color:#fff;border:none;border-radius:8px;font-size:13px;font-weight:700;cursor:pointer;font-family:var(--sans)">Search</button>
+      <button id="skumgr-pricehist-btn" onclick="skumgrPriceHistory(document.getElementById('skumgr-search-inp').value, true)" title="Every price this part # came in at, with the date"
+        style="padding:10px 12px;background:var(--bg2);color:var(--green);border:1.5px solid var(--green);border-radius:8px;font-size:13px;font-weight:700;cursor:pointer;font-family:var(--sans)">💲 Price history</button>
     </div>
 
     <!-- Add new row button -->
@@ -1436,6 +1438,8 @@ window.invCredLogin = async function() {
     <!-- Results -->
     <!-- Ordered / on the way / received-and-unpacking for the searched part (Reorder imports) -->
     <div id="skumgr-incoming" style="display:none;margin-bottom:10px"></div>
+    <!-- 💲 Every price the searched part # came in at (kept forever), newest first + the price batches on the shelves now -->
+    <div id="skumgr-pricehist" style="display:none;margin-bottom:10px"></div>
     <div id="skumgr-results"></div>
   </div>
 </div>
@@ -7393,6 +7397,49 @@ window.invCredLogin = async function() {
         + ' <span style="color:var(--text3)">· ' + (l.receivedAt === '0000-00-00' ? 'before tracking' : l.source === 'received' ? (l.title || 'received') : 'added ' + String(l.receivedAt || '').slice(5, 10)) + '</span></div>';
     }).join('') + '</div>';
   }
+  // 💲 Price history: every new price the part # came in at (📦 Received
+  // container, Receive PO, SKU Mgr price edit, vendor sheet / order), with
+  // the date — kept forever. A parent # (30-3-4) shows all its pack sizes;
+  // a whole part # (30-3-4=10X) only that one. Below: the batches on the
+  // shelves now (same spot, different price → the oldest is used up first).
+  window.skumgrPriceHistory = function(q, open) {
+    var box = g('skumgr-pricehist'); if (!box) return;
+    q = String(q || '').trim().toUpperCase();
+    if (!q) { box.style.display = 'block'; box.innerHTML = '<div style="padding:8px;color:var(--red);font-size:12px">Type a part # first (e.g. 30-3-4 or 30-3-4=10X).</div>'; return; }
+    box.style.display = 'block';
+    box.innerHTML = '<div style="padding:8px;color:var(--text3);font-size:12px">💲 Loading price history for ' + q.replace(/</g, '&lt;') + '…</div>';
+    wFetch(W + '/inventory/price-history?part=' + encodeURIComponent(q)).then(function(r) { return r.json(); }).then(function(d) {
+      var e = function(v) { return String(v == null ? '' : v).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;'); };
+      var $ = function(v) { return v != null && v !== '' ? '$' + (+v).toFixed(3) : '—'; };
+      if (!d || !d.ok) { box.innerHTML = '<div style="padding:8px;color:var(--red);font-size:12px">💲 Price history failed: ' + e(d && d.error || 'error') + '</div>'; return; }
+      if (!d.rows.length && !d.batches.length) {
+        if (!open) { box.style.display = 'none'; box.innerHTML = ''; return; }
+        box.innerHTML = '<div style="padding:8px;color:var(--text3);font-size:12px">💲 No price recorded yet for ' + e(d.q) + '. From now on every new price (container received, Receive PO, SKU Mgr price change) is written down here with the date.</div>';
+        return;
+      }
+      var th = 'style="text-align:left;padding:3px 6px;border-bottom:1px solid #A7F3D0;white-space:nowrap"', td = 'style="padding:3px 6px;border-bottom:1px solid #D1FAE5;white-space:nowrap"', tdm = 'style="padding:3px 6px;border-bottom:1px solid #D1FAE5;white-space:nowrap;font-family:var(--mono)"';
+      var hist = d.rows.map(function(r) {
+        var ch = '';
+        if (r.oldPrice > 0 && r.price > 0) { var pct = (r.price - r.oldPrice) / r.oldPrice * 100; ch = '<b style="color:' + (pct > 0 ? 'var(--red)' : 'var(--green)') + '">' + (pct > 0 ? '▲ +' : '▼ ') + pct.toFixed(1) + '%</b>'; }
+        return '<tr><td ' + td + '>' + e(String(r.at || '').slice(0, 10)) + '</td><td ' + tdm + '>' + e(r.part) + '</td>'
+          + '<td ' + td + '>' + (r.oldPrice > 0 ? '<span style="color:var(--text3)">' + $(r.oldPrice) + ' → </span>' : '') + '<b>' + $(r.price) + '</b>/pc</td>'
+          + '<td ' + td + '>' + ch + '</td><td ' + td + '>' + e(r.source) + (r.vendor ? ' · ' + e(r.vendor) : '') + (r.title ? ' · ' + e(r.title) : '') + '</td>'
+          + '<td ' + td + '>' + (r.location ? e(r.location) : '') + (r.cases ? ' · ' + (Math.round(r.cases * 100) / 100) + ' cs' : '') + '</td><td ' + td + '>' + e(r.by || '') + '</td></tr>';
+      }).join('');
+      var bt = d.batches.map(function(l) {
+        return '<tr><td ' + tdm + '>' + e(l.part) + '</td><td ' + td + '>' + e(l.location) + '</td><td ' + td + '>' + (Math.round(l.cases * 100) / 100) + ' cs</td>'
+          + '<td ' + td + '>' + (l.price != null ? '<b>' + $(l.price) + '</b>/pc' : '<b style="color:var(--red)">no price</b>') + '</td>'
+          + '<td ' + td + '>' + (l.receivedAt === '0000-00-00' ? 'before price tracking' : e(String(l.receivedAt || '').slice(0, 10)) + ' · ' + e(l.source === 'received' ? (l.title || 'received') : (l.source || ''))) + '</td></tr>';
+      }).join('');
+      box.innerHTML = '<details' + (open ? ' open' : '') + ' style="border:1.5px solid #6EE7B7;background:#ECFDF5;border-radius:10px;padding:8px 10px;font-size:12px;color:#064E3B">'
+        + '<summary style="cursor:pointer;font-weight:700;color:#047857">💲 Price history for ' + e(d.q) + ' — ' + d.rows.length + ' price record' + (d.rows.length === 1 ? '' : 's')
+        + (d.rows.length ? ' · newest ' + $(d.rows[0].price) + '/pc (' + e(String(d.rows[0].at || '').slice(0, 10)) + ')' : '') + '</summary>'
+        + (d.rows.length ? '<div style="overflow-x:auto;margin-top:6px"><table style="border-collapse:collapse;font-size:11.5px;width:100%"><tr><th ' + th + '>Date</th><th ' + th + '>Part #</th><th ' + th + '>Price per piece</th><th ' + th + '>Change</th><th ' + th + '>From</th><th ' + th + '>Where</th><th ' + th + '>Who</th></tr>' + hist + '</table></div>' : '')
+        + (d.batches.length ? '<div style="font-weight:700;margin:8px 0 2px">On the shelves now <span style="font-weight:400;color:var(--text3)">(same spot, different price: the oldest is used up first)</span></div>'
+          + '<div style="overflow-x:auto"><table style="border-collapse:collapse;font-size:11.5px;width:100%"><tr><th ' + th + '>Part #</th><th ' + th + '>Spot</th><th ' + th + '>Cases</th><th ' + th + '>Price</th><th ' + th + '>Came in</th></tr>' + bt + '</table></div>' : '')
+        + '</details>';
+    }).catch(function() { box.innerHTML = '<div style="padding:8px;color:var(--red);font-size:12px">💲 Price history failed to load.</div>'; });
+  };
   // 🏭 / 🚢 What's coming for the searched part # (imported on Reorder):
   // not stock yet — SKU Mgr cases change only at 📦 Received.
   window.skumgrLoadIncoming = function(q) {
@@ -7465,6 +7512,7 @@ window.invCredLogin = async function() {
       return;
     }
     skumgrLoadIncoming(q);
+    skumgrPriceHistory(q, false);
     wFetch(W + '/inventory/sku-search?q=' + encodeURIComponent(q) + '&sort=asc' + (_skumgrInStockOnly ? '&instock=1' : ''))
       .then(function(r) { return r.json(); })
       .then(function(d) {
