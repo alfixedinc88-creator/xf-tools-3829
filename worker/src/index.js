@@ -25956,16 +25956,25 @@ function autolabelNyNow(when) { // { day: 0-6, mins, date: 'YYYY-MM-DD' } in New
   const g = t => (p.find(x => x.type === t) || {}).value || '';
   return { day: AUTOLABEL_DAYS.indexOf(g('weekday').toLowerCase().slice(0, 3)), mins: +g('hour') * 60 + +g('minute'), date: `${g('year')}-${g('month')}-${g('day')}` };
 }
-// The Veeqo calls. Veeqo's shipping API has scan forms (create / reprint /
-// unmanifested shipments); the exact addresses are tried in turn and every
-// answer is kept, so a wrong one is plain to see.
-const AUTOLABEL_SCANFORM_CREATE = [
-  ['POST', '/shipping/api/v1/scan_forms', c => ({ carrier: c })],
-  ['POST', '/shipping/api/v1/scan_forms', c => ({ scan_form: { carrier: c } })],
-  ['POST', '/shipping/scan_forms', c => ({ carrier: c })],
-  ['POST', '/scan_forms', c => ({ scan_form: { carrier: c } })],
-];
-const AUTOLABEL_SCANFORM_CARRIERS = ['amazon_shipping_v2', 'usps'];
+// The Veeqo call (owner's screenshot of Veeqo's Rate Shopping API docs, 2026-10-07):
+// POST /shipping/api/v1/scan_forms/{sub_carrier_id} (e.g. USPS) — one form for all
+// shipments from the collection address. The body is required; until its fields
+// are known for sure, these are tried in turn (a refused one makes nothing) and
+// every answer is kept, so Veeqo's own words say what it wants.
+const AUTOLABEL_SCANFORM_PATH = sc => `/shipping/api/v1/scan_forms/${encodeURIComponent(sc)}`;
+const AUTOLABEL_SCANFORM_BODIES = [() => ({}), () => ({ carrier: 'amazon_shipping_v2' }), () => ({ sub_carrier_id: 'USPS', carrier: 'amazon_shipping_v2' })];
+const AUTOLABEL_SCANFORM_CARRIERS = ['USPS'];
+// PUT /shipping/api/v1/scan_forms/unmanifested → { carriers: [...], error_messages } — the carriers
+// with shipments not on a scan form yet (owner's 2nd screenshot). Asked first: its USPS entry is
+// sent as the first body (Veeqo's own words for it), and "none waiting" is said plainly.
+async function autolabelScanFormUnmanifested(env) {
+  const res = await fetch(VEEQO_BASE + '/shipping/api/v1/scan_forms/unmanifested', { method: 'PUT', body: '{}', headers: { 'x-api-key': (env.VEEQO_API_KEY || '').trim(), 'Accept': 'application/json', 'Content-Type': 'application/json' } }).catch(e => ({ ok: false, status: 0, text: async () => String(e.message || e) }));
+  const txt = await res.text().catch(() => '');
+  let j = null; try { j = JSON.parse(txt); } catch (_) {}
+  const carriers = j && Array.isArray(j.carriers) ? j.carriers : null;
+  return { ok: !!res.ok, status: res.status, said: txt.replace(/\s+/g, ' ').slice(0, 600), carriers,
+    usps: (carriers || []).filter(c => /usps/i.test(JSON.stringify(c || ''))) };
+}
 function autolabelFindFile(obj) { // a PDF link or base64 PDF anywhere in Veeqo's answer
   const urls = [], b64 = [];
   const walk = (v, d) => { if (d > 8 || v == null) return;
@@ -25984,14 +25993,25 @@ async function autolabelScanFormCreate(env, kind, slot, by, when) {
   const now = (when || new Date()).toISOString(), ny = autolabelNyNow(when);
   // One form per carrier that has USPS labels today (Amazon Shipping's USPS and Veeqo's own USPS are separate).
   const tried = [], made = [];
-  for (const carrier of AUTOLABEL_SCANFORM_CARRIERS) {
-    for (const [m, pth, body] of AUTOLABEL_SCANFORM_CREATE) {
-      const res = await fetch(VEEQO_BASE + pth, { method: m, body: JSON.stringify(body(carrier)), headers: { 'x-api-key': (env.VEEQO_API_KEY || '').trim(), 'Accept': 'application/json', 'Content-Type': 'application/json' } }).catch(e => ({ ok: false, status: 0, text: async () => String(e.message || e) }));
+  const um = await autolabelScanFormUnmanifested(env);
+  tried.push({ carrier: 'waiting?', path: '/shipping/api/v1/scan_forms/unmanifested', status: um.status, said: um.said });
+  if (um.ok && um.carriers && !um.carriers.length) {
+    await d1Run(env, `INSERT INTO scan_form_log (day, slot, kind, created_at, by_user, ok, shipments, detail) VALUES (?,?,?,?,?,?,?,?)`,
+      [ny.date, slot || '', kind, now, by || 'auto', 0, 0, JSON.stringify(tried).slice(0, 4000)]);
+    return { ok: false, nothing: true, tried, error: 'No labels waiting for a scan form — Veeqo says every shipment is already on one (or none were bought since the last form)' };
+  }
+  const subs = [...new Set(um.usps.map(c => c && (c.sub_carrier_id || c.sub_carrier || c.id)).filter(x => typeof x === 'string' && /usps/i.test(x)))];
+  for (const carrier of (subs.length ? subs : AUTOLABEL_SCANFORM_CARRIERS)) {
+    const pth = AUTOLABEL_SCANFORM_PATH(carrier);
+    const fromVeeqo = um.usps.filter(c => c && typeof c === 'object').map(c => () => c); // Veeqo's own entry for this carrier first
+    for (const body of [...fromVeeqo, ...AUTOLABEL_SCANFORM_BODIES]) {
+      const sent = body(carrier);
+      const res = await fetch(VEEQO_BASE + pth, { method: 'POST', body: JSON.stringify(sent), headers: { 'x-api-key': (env.VEEQO_API_KEY || '').trim(), 'Accept': 'application/json', 'Content-Type': 'application/json' } }).catch(e => ({ ok: false, status: 0, text: async () => String(e.message || e) }));
       const txt = await res.text().catch(() => '');
-      tried.push({ carrier, path: pth, status: res.status, said: txt.replace(/\s+/g, ' ').slice(0, 240) });
+      tried.push({ carrier, path: pth, sent, status: res.status, said: txt.replace(/\s+/g, ' ').slice(0, 400) });
       if (res.ok) { let j = null; try { j = JSON.parse(txt); } catch (_) {} made.push({ carrier, path: pth, json: j || { raw: txt.slice(0, 5000) } }); break; }
-      if (res.status === 404 || res.status === 405) continue; // not this address — try the next
-      break; // Veeqo answered but refused (e.g. nothing on a form for this carrier) → next carrier
+      if (res.status === 400 || res.status === 422) continue; // refused this body (nothing made) → try the next body
+      break; // wrong address / no access / Veeqo down → no point trying other bodies
     }
   }
   const ids = [];
@@ -26007,7 +26027,7 @@ async function autolabelScanFormCreate(env, kind, slot, by, when) {
   const ok = made.length > 0;
   if (ok && kind === 'hand') await autolabelSetKey(env, AUTOLABEL_SCANFORM_VERIFIED_KEY, 'yes');
   return { ok, id: ids[0] && ids[0].id, forms: ids, carrier: ids.map(x => x.carrier).join(' + '), shipments: ids.reduce((t, x) => t + (x.shipments || 0), 0) || null, tried,
-    error: ok ? undefined : 'Veeqo did not make a scan form — what each address said is kept below (send it to Claude); make it in Veeqo: Settings → USPS Scan Forms' };
+    error: ok ? undefined : 'Veeqo did not make a scan form — what Veeqo said to each try is kept below (send it to Claude); make it in Veeqo: Settings → USPS Scan Forms' };
 }
 // USPS labels bought today (ours) after the last scan form that worked.
 async function autolabelScanFormMissing(env, when) {
