@@ -173,6 +173,7 @@ window.addEventListener('pageshow', function (e) { if (e.persisted) location.rel
       .then(function (d) {
         blocked = d.blocked || []; lastToken = t;
         testBanner(d.test);
+        if (d.level === 'owner') signinWatch();
         try { sessionStorage.setItem('xf_access', JSON.stringify({ token: t, blocked: blocked, at: Date.now() })); } catch (e) {}
         apply();
       })
@@ -196,6 +197,42 @@ window.addEventListener('pageshow', function (e) { if (e.persisted) location.rel
     el.style.cssText = 'position:fixed;left:0;right:0;bottom:0;height:22px;z-index:2147483647;background:#f59e0b;color:#111;font:700 11px/22px system-ui,sans-serif;padding:0 10px;text-align:center;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;pointer-events:none';
     var when = ''; try { when = new Date(tm.at).toLocaleString('en-US', { timeZone: 'America/New_York', month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' }); } catch (e) {}
     el.textContent = '🧪 TEST MODE — erased when turned off' + (tm.by ? ' · ' + tm.by + (when ? ' ' + when : '') : '');
+  }
+  // 🔔 Owner: "notice me when someone signs in to start using our app" — on
+  // any app page the Owner has open: a pop-up (and a phone / computer
+  // notification if turned on in Admin → 🔔 Sign-ins) for each new sign-in
+  // and each sign-in refused because it was not that person's time.
+  var watching = false;
+  function signinWatch() {
+    if (watching) return; watching = true;
+    var me = null; try { me = (JSON.parse(localStorage.getItem('xf_cred_user') || 'null') || {}).userId; } catch (e) {}
+    var check = function () {
+      var t = token(); if (!t) return;
+      var seen = 0; try { seen = parseInt(localStorage.getItem('xf_signin_seen')) || 0; } catch (e) {}
+      fetch(WORKER + '/admin/signins?limit=20&after=' + seen, { headers: { 'X-Cred-Token': t } }).then(function (r) { return r.ok ? r.json() : null; }).then(function (d) {
+        var rows = ((d && d.rows) || []).slice().reverse(); if (!rows.length) return;
+        try { localStorage.setItem('xf_signin_seen', String(rows[rows.length - 1].id)); } catch (e) {}
+        if (!seen) return; // first time on this device: start from now
+        rows.forEach(function (x) {
+          if ((x.kind !== 'signin' && x.kind !== 'denied') || x.user_id === me) return;
+          var when = new Date(x.at).toLocaleTimeString('en-US', { timeZone: 'America/New_York', hour: 'numeric', minute: '2-digit' });
+          var msg = (x.kind === 'denied' ? '⛔ ' + (x.display_name || x.username) + ' tried to sign in — not their time' : '✅ ' + (x.display_name || x.username) + ' signed in') + ' · ' + when + (x.device ? ' · ' + x.device : '') + (x.place ? ' · ' + x.place : '');
+          signinToast(msg, x.kind === 'denied');
+          try { if (window.Notification && Notification.permission === 'granted') new Notification('XFitting — sign-in', { body: msg, tag: 'xf-signin-' + x.id }); } catch (e) {}
+        });
+      }).catch(function () {});
+    };
+    check(); setInterval(check, 60000);
+  }
+  function signinToast(msg, bad) {
+    if (!document.body) return;
+    var box = document.getElementById('xf-signin-toasts');
+    if (!box) { box = document.createElement('div'); box.id = 'xf-signin-toasts'; box.style.cssText = 'position:fixed;top:10px;right:10px;z-index:2147483646;display:flex;flex-direction:column;gap:6px;max-width:340px'; document.body.appendChild(box); }
+    var el = document.createElement('div');
+    el.style.cssText = 'background:' + (bad ? '#fee2e2' : '#ecfdf5') + ';color:#111;border:1px solid ' + (bad ? '#f87171' : '#34d399') + ';border-radius:10px;padding:9px 12px;font:600 13px/1.35 system-ui,sans-serif;box-shadow:0 6px 20px rgba(0,0,0,.15);cursor:pointer';
+    el.textContent = '🔔 ' + msg; el.title = 'Admin → 🔔 Sign-ins';
+    el.onclick = function () { location.href = 'xfitting-admin.html'; };
+    box.appendChild(el); setTimeout(function () { el.remove(); }, 12000);
   }
   try { var tm0 = sessionStorage.getItem('xf_test'); if (tm0) testBanner(JSON.parse(tm0)); } catch (e) {}
   setInterval(function () { if (token()) load(); }, 60000);
