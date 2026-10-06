@@ -505,11 +505,21 @@ window.addEventListener('pageshow', function (e) { if (e.persisted) location.rel
     el.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', code: 'Enter', keyCode: 13, which: 13, bubbles: true, cancelable: true }));
     el.dispatchEvent(new KeyboardEvent('keyup', { key: 'Enter', code: 'Enter', keyCode: 13, which: 13, bubbles: true }));
   }
-  // The scan button itself: the Farset R20H sends F10 (keyCode 121) while the
+  // The scan button itself: the Farset R20H sends F10 (keyCode 121), the
+  // Svantto MC002 code F21 (key "Unidentified", keyCode 0), while the
   // trigger is held, then drops the number into the box that has the cursor —
   // with no box selected the number is lost and Chrome opens its menu (F10).
   // So the trigger puts the cursor in the scan box before the beep, and
   // Chrome's menu stays shut.
+  // Svantto MC002: its scan button is key "Unidentified", code F21, keyCode 0 — same as F10 below.
+  window.addEventListener('keydown', function (e) {
+    if (!e.isTrusted || !/^F(1[3-9]|2[0-4])$/.test(e.code || '')) return;
+    e.preventDefault();
+    if (document.getElementById('xf-scantest')) return;
+    var a = document.activeElement, tag = a && a.tagName;
+    if (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT' || (a && a.isContentEditable)) return;
+    var el = scanBox(); if (el && !popupOver(el)) el.focus({ preventScroll: true });
+  }, true);
   window.addEventListener('keydown', function (e) {
     if (!e.isTrusted || !(e.keyCode === 121 || /^F(9|1[0-2])$/.test(e.key || ''))) return;
     e.preventDefault();

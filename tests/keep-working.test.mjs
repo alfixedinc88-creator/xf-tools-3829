@@ -2805,6 +2805,8 @@ console.log('\nScanner sends a UPC without its first digit → the full UPC is p
   check('R20H scan trigger (F10 / keyCode 121): Chrome menu blocked, cursor put in the scan box (keyboard stays off) when no box has it',
     /if \(!e\.isTrusted \|\| !\(e\.keyCode === 121 \|\| \/\^F\(9\|1\[0-2\]\)\$\/\.test\(e\.key \|\| ''\)\)\) return;\s*e\.preventDefault\(\);/.test(xa)
       && /var el = scanBox\(\); if \(el && !popupOver\(el\)\) el\.focus\(\{ preventScroll: true \}\);/.test(xa), null);
+  // Owner's Scanner test photo, Svantto MC002: its scan button sends key "Unidentified", code F21, keyCode 0.
+  check('…the Svantto MC002 scan button (code F21, keyCode 0) counts as a scan trigger too', /if \(!e\.isTrusted \|\| !\/\^F\(1\[3-9\]\|2\[0-4\]\)\$\/\.test\(e\.code \|\| ''\)\) return;\s*e\.preventDefault\(\);/.test(xa), null);
   check('…⌨️ → 🔍 Test the scanner shows every key / text a scanner sends (starts with nothing selected)', /B\('🔍 Test the scanner', scanTest\);/.test(xa) && /keydown key=' \+ q\(e\.key\)/.test(xa) && /start with nothing selected/.test(xa), null);
   const sc = readFileSync(fileURLToPath(new URL('../docs/SCANNERS.md', import.meta.url)), 'utf8');
   check('docs/SCANNERS.md keeps the N77, Zebra DS2278 and Farset R20H fixes', /N77/.test(sc) && /DS2278/.test(sc) && /R20H/.test(sc), null);
