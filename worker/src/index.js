@@ -2002,6 +2002,11 @@ async function reorderVendorOrder(env, url) {
         soldPcs: Math.round(demandPcs), monthlyPcs: Math.round(monthlyPcs * 10) / 10,
         stockUnits: Math.round(sm.units * 100) / 100, stockPcs: Math.round(ownPcs), otherPackPcs: Math.round(otherPcs),
         fbaPcs: Math.round(t.fbaAvailPieces), needUnits, caseQty, cases, orderUnits, note: notes.join(' · '),
+        // 🔥 Owner: "anything in the order we almost sold out, warn the vendor to ship it first — our order sometimes
+        // ships in 2 containers, the urgent one must be in the first". Days the stock counted above lasts at this
+        // part's sales; it runs out before this order can arrive (lead time) → URGENT.
+        daysLeft: monthlyPcs > 0 ? Math.floor(stockPcs / monthlyPcs * 30) : null,
+        urgent: orderUnits > 0 && monthlyPcs > 0 && stockPcs / monthlyPcs < lead,
         incoming: incoming[t.sku] || {}, incomingUnits: Math.round(incUnits),
         otherIncPcs: Math.round(otherIncPcs), otherIncUnits: Math.round(otherIncPcs / ps * 10) / 10, share: Math.round(share * 1000) / 1000,
       };

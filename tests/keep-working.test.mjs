@@ -3157,6 +3157,12 @@ console.log('\n🧾 Reorder planner: FBA rows carry every other pack / channel; 
   check('…a part # with NO FBA listing (88-2-2) keeps its own row (ordered too)', b.sku === '88-2-2=1' && b.fbaSku === false, b);
   check('…sold by JQ (#1) and EFF (#2) → JQ, with JQ\'s newest price per piece ($0.12, 2026-09-30); 88-2-2 priced from its last order ($0.50); no vendor names in the text (non-owner)', a.vendor === '#1' && a.price === 0.12 && a.priceSrc === 'vendor sheet' && /2026-09-30/.test(a.priceAt)
     && b.price === 0.5 && b.priceSrc === 'last order' && !/JQ|EFF|PO test/.test(a.priceSrc + b.priceSrc), { a: [a.vendor, a.price, a.priceSrc, a.priceAt], b: [b.price, b.priceSrc] });
+  // Owner: "anything in the order sheet we almost sold out, give the vendor a warning to ship it first — sometimes our order ships in 2 containers".
+  const dS = await get('/reorder/vendor-order?days=90&lead=0.5&cover=3'), aS = row(dS, '88-1-1=10X'), bS = row(dS, '88-2-2=1');
+  check('🔥 URGENT: 88-1-1=10X has 150 pcs (100 shelf + 50 FBA) and sells 153.3 a month → 29 days left, before a 3-month order can get here → URGENT; 88-2-2 (0 left) URGENT too',
+    a.daysLeft === 29 && a.urgent === true && b.daysLeft === 0 && b.urgent === true, { a: [a.daysLeft, a.urgent], b: [b.daysLeft, b.urgent] });
+  check('…with a ½-month lead time 88-1-1 lasts long enough (29 days > 15) → not urgent; 88-2-2 still urgent; quantities to order unchanged by the warning',
+    aS.urgent === false && aS.daysLeft === 29 && bS.urgent === true && aS.orderUnits > 0 && a.orderUnits === 80, { aS: [aS.daysLeft, aS.urgent, aS.orderUnits], bS: bS.urgent });
   check('…CSV line total = pieces × price per piece: 80 units × 10 pcs × $0.12 = $96.00', Math.round(a.orderUnits * a.packSize * a.price * 100) / 100 === 96, a.orderUnits * a.packSize * a.price);
   // 🏷 any part # + vendor lock
   const info = await get('/reorder/fix/part-info?part=88-1-1=10x');
@@ -3171,6 +3177,9 @@ console.log('\n🧾 Reorder planner: FBA rows carry every other pack / channel; 
   const hist = sq.prepare("SELECT * FROM reorder_history WHERE part = '88-1-1=10X' ORDER BY id DESC").all();
   check('…the change is in 🕘 History (vendor + outside UPC, who)', hist.length >= 1 && /vendor/.test(hist[0].detail) && /outside UPC/.test(hist[0].detail), hist[0]);
   const rh = readFileSync(fileURLToPath(new URL('../reorder.html', import.meta.url)), 'utf8');
+  check('page: 🔥 URGENT on the part # and in the summary; vendor CSV starts with a Priority column "URGENT - ship in the FIRST container", urgent lines first, the count on the TOTAL line and in 🕘 History',
+    /var head = \['Priority', 'Part #'/.test(rh) && /rows = rows\.filter\(function \(r\) \{ return r\.urgent; \}\)\.concat\(rows\.filter\(function \(r\) \{ return !r\.urgent; \}\)\);/.test(rh)
+      && /cell\(r\.urgent \? 'URGENT - ship in the FIRST container' : ''\), cell\(r\.sku\)/.test(rh) && /urgentN \+ ' URGENT - ship in the FIRST container'/.test(rh) && /🔥 URGENT · ' \+ r\.daysLeft/.test(rh) && /' URGENT, first container: '/.test(rh), null);
   // Owner (2026-10-07): "if anything with no FBA listing, we still need to order … don't have to separate to FBA listing" — no options, nothing hidden.
   check('page: CSV has Pieces · Price per Piece · Line Total · Price From · Price Date + a TOTAL line; no Listings options; part #s with NO FBA listing are ordered too (never hidden); 🏷 tool',
     /'Pieces', 'Price per Piece', 'Line Total', 'Price From', 'Price Date'/.test(rh) && /lines\.push\(\[cell\('TOTAL'\)/.test(rh) && /<input type="hidden" id="rvo-fbaf" value="all">/.test(rh) && !/<option value="nofba">/.test(rh)
