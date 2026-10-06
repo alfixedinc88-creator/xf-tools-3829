@@ -1,5 +1,17 @@
 # Scanners: known problems and fixes
 
+## Quick list: the setting that makes each scanner work in our app
+| Scanner | Settings app | Must be | Ends with Enter |
+|---|---|---|---|
+| N77 | "Setting" (Test Scan / Setting / about) | Output Mode = Keyboard Mode, Handle Key = Only Scan | post-scan action = **Carriage Return** |
+| Farset R20H | Scanner Settings | **Send Mode = EMUKEY** | End Char = ENTER |
+| Svantto MC002 | **iScanPlus** | **Scan result sending mode = HID** | (HID sends it) |
+| Zebra DS2278 (Bluetooth) | — | charged, paired to its cradle | — |
+
+New scanner that beeps but types nothing? It's almost always the send / output
+mode: pick the keyboard one (Keyboard / EMUKEY / HID / Simulate keystroke),
+never Focus / Broadcast / Clipboard. Then ⌨️ → 🔍 Test the scanner to check.
+
 Read this first when the owner says a scanner "stopped working". These are
 device settings, not app bugs. The owner asked that this be kept so nobody has
 to remember it.
@@ -120,10 +132,22 @@ Shows every key / text the scanner sends, with "cursor: nothing" / "box".
   ignores auto-rotate OFF (2026-10-06). After a change, reinstall the app icon
   (or wait for Chrome to update it, up to a day).
 
-## Svantto MC002
-- Beep + light but nothing in our app; 🔍 Scanner test (2026-10-06): the scan
-  button sends key "Unidentified", **code F21**, keyCode 0, and no numbers →
-  its output mode isn't keyboard yet (same as the R20H on FOCUS).
-- App: code F13–F24 counts as the scan button (cursor goes to the scan box).
-- Device: its scanner settings app → output mode = keyboard / key emulation,
-  end char = ENTER. (Fill in the exact names once confirmed.)
+## Svantto MC002 (Android, built-in scanner, app "iScanPlus")
+**Working (confirmed by the owner 2026-10-06):** iScanPlus (not "iScanTest",
+that's only a test screen) → Setting tab → Output Method Configuration →
+**Scan result sending mode = HID** → CONFIRM. Character Editing Format stays
+**Auto** (it's the character set, not the Enter). With HID it sends the Enter
+by itself — nothing else to change.
+
+### Problem: beep + light, but nothing shows in our app
+- Cause: Scan result sending mode was **Focus** (like the R20H's FOCUS: goes
+  through the phone keyboard, doesn't reach Chrome). 🔍 Scanner test showed
+  only the scan button — key "Unidentified", **code F21**, keyCode 0 — and no numbers.
+- Fix: sending mode → **HID**. Don't pick Focus / Broadcast / Copy / IP /
+  BlueTooth.
+- App (2026-10-06): code F13–F24 counts as the scan button (cursor goes to
+  the scan box, keyboard stays off).
+
+### Problem: screen keeps rotating
+- Phone: quick settings → Auto-rotate OFF. Our installed app stays upright
+  (manifest "portrait") — reinstall the app icon if it still turns.

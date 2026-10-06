@@ -120,7 +120,7 @@ exceptions, no matter what else the change does.
    of expected vs counted totals, each marked ✅ match.
 
 ## Other standing rules
-- Scanner "stopped working" (N77, Zebra DS2278)? Read `docs/SCANNERS.md`
+- Scanner "stopped working" (N77, Zebra DS2278, Farset R20H, Svantto MC002)? Read `docs/SCANNERS.md`
   first: the known causes and the exact working settings are there.
 - Never commit secrets (API keys, tokens, passwords).
 - Every data request must stay behind a real sign-in (server-checked

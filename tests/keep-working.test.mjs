@@ -2810,6 +2810,7 @@ console.log('\nScanner sends a UPC without its first digit → the full UPC is p
   check('…⌨️ → 🔍 Test the scanner shows every key / text a scanner sends (starts with nothing selected)', /B\('🔍 Test the scanner', scanTest\);/.test(xa) && /keydown key=' \+ q\(e\.key\)/.test(xa) && /start with nothing selected/.test(xa), null);
   const sc = readFileSync(fileURLToPath(new URL('../docs/SCANNERS.md', import.meta.url)), 'utf8');
   check('docs/SCANNERS.md keeps the N77, Zebra DS2278 and Farset R20H fixes', /N77/.test(sc) && /DS2278/.test(sc) && /R20H/.test(sc), null);
+  check('…and the Svantto MC002 fix (iScanPlus → sending mode HID) and the R20H EMUKEY setting', /Svantto MC002/.test(sc) && /sending mode = HID/.test(sc) && /Send Mode = EMUKEY/.test(sc), null);
 }
 
 // Owner: "when we in that app, can we hide that address bar on the top". manifest.json existed but no page linked it, and its
