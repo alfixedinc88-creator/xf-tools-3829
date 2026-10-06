@@ -103,3 +103,12 @@ Shows every key / text the scanner sends, with "cursor: nothing" / "box".
   output mode: pick keyboard / keystroke emulation if offered).
 - Shows only with "Cursor in a box" → fine (the app keeps a box selected).
 - Numbers show but a digit is missing → compare with the printed number.
+
+## R20H: no phone keyboard at all + no address bar (owner, 2026-10-06)
+- Phone keyboard: installed **Null Keyboard** (Play Store) and set it as the
+  default keyboard (Settings → System → Keyboard). Scans (EMUKEY) still work;
+  typing in our app uses our own ⌨️ keyboard. To undo: set the default back to
+  Android Keyboard (AOSP).
+- No address bar: open the app in Chrome → ⋮ → **Install app** (or Add to
+  home screen → Install). The installed app opens without the address bar
+  (manifest.json, display standalone). A plain Chrome shortcut keeps the bar.
