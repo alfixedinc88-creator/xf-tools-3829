@@ -2130,7 +2130,7 @@ body { display:flex; flex-direction:column; min-height:100vh; background:var(--b
         <label style="display:flex;align-items:center;gap:5px">Vendor:
           <select id="rvo-vendor" onchange="rvoRender()" style="font-size:12px;padding:4px 6px;border-radius:6px;border:1px solid var(--border);min-width:140px"><option value="">All vendors</option></select></label>
         <label style="display:flex;align-items:center;gap:5px" title="FBA = part #s we send to Amazon FBA · Not FBA = everything else (sold only on eBay / Walmart / Shopify / FBM)">Listings:
-          <select id="rvo-fbaf" onchange="rvoRender()" style="font-size:12px;padding:4px 6px;border-radius:6px;border:1px solid var(--border)">
+          <select id="rvo-fbaf" onchange="try{localStorage.setItem('rvo_fbaf',this.value)}catch(e){};rvoRender()" style="font-size:12px;padding:4px 6px;border-radius:6px;border:1px solid var(--border)">
             <option value="">All</option><option value="fba">FBA listings only</option><option value="nofba">Not in FBA only</option></select></label>
         <label style="display:flex;align-items:center;gap:5px">Search:
           <input type="text" id="rvo-q" placeholder="Part #, e.g. 27-3-1" oninput="rvoRender()" style="width:150px;font-size:12px;padding:4px 8px;border-radius:6px;border:1px solid var(--border);font-family:var(--mono)"></label>
@@ -2144,6 +2144,7 @@ body { display:flex; flex-direction:column; min-height:100vh; background:var(--b
         <button class="btn" style="font-size:12px" onclick="rvoWeirdCsv()" title="Same list as a CSV file">⬇ Weird list CSV</button>
         <span style="flex:1"></span>
         <button class="btn btn-primary" style="font-size:12px" onclick="rvoCsv()">⬇ Download CSV for vendor</button>
+        <button class="btn btn-secondary" style="font-size:12px" onclick="rvoPartOpen()" title="Any part #, even one not in this list: its outside box / inside bag UPC (both on one part #) and the vendor it is ordered from">🏷 Barcode / vendor for a part #</button>
       </div>
       <div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap;margin-bottom:10px;padding:8px 10px;background:var(--bg3);border-radius:8px;font-size:12px;color:var(--text3)">
         <b style="color:var(--text2)">Vendor sheets:</b> <span id="rvo-cat">—</span>
@@ -2195,6 +2196,18 @@ body { display:flex; flex-direction:column; min-height:100vh; background:var(--b
             <button class="btn btn-secondary" style="font-size:12px" onclick="rvoCheckCsv()">⬇ CSV</button>
             <button class="btn btn-secondary" style="font-size:12px" onclick="document.getElementById('rvo-check').style.display='none'">Close</button></div>
           <div id="rvo-ck-body"></div>
+        </div>
+      </div>
+      <div id="rvo-part" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,.45);z-index:9999;align-items:center;justify-content:center;padding:16px">
+        <div style="background:var(--bg2);border-radius:14px;padding:20px;width:520px;max-width:100%;max-height:92vh;overflow:auto;box-shadow:0 8px 32px rgba(0,0,0,.2)">
+          <div style="font-size:15px;font-weight:700;margin-bottom:6px">🏷 Barcode / vendor for a part #</div>
+          <div style="display:flex;gap:6px;margin-bottom:8px">
+            <input type="text" id="rvo-p-q" placeholder="Part #, e.g. 26-2-6=10XX" onkeydown="if(event.key==='Enter')rvoPartFind()" style="flex:1;font-family:var(--mono);font-size:13px;padding:6px 8px;border-radius:6px;border:1px solid var(--border)">
+            <button class="btn btn-primary" style="font-size:12px" onclick="rvoPartFind()">🔎 Find</button>
+            <button class="btn btn-secondary" style="font-size:12px" onclick="rvoPartMissing()" title="Part #s in the list now with no outside box UPC">No UPC list</button>
+          </div>
+          <div id="rvo-p-body" style="font-size:12px;color:var(--text3)">Type any part # — even one that isn't in the list above.</div>
+          <div style="display:flex;gap:8px;margin-top:12px"><button class="btn btn-primary" id="rvo-p-save" style="flex:1;display:none" onclick="rvoPartSave()">💾 Save</button><button class="btn btn-secondary" onclick="document.getElementById('rvo-part').style.display='none'">Close</button></div>
         </div>
       </div>
       <div id="rvo-edit" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,.45);z-index:9999;align-items:center;justify-content:center;padding:16px">
@@ -4070,8 +4083,25 @@ function rvoSortBy(k) {
   if (RVO_SORT.k === k) RVO_SORT.dir = -RVO_SORT.dir; else { RVO_SORT.k = k; RVO_SORT.dir = 1; }
   rvoRender();
 }
+// Owner: "from now on we buy only the FBA listing". FBA listings only = a screen filter: each FBA row already
+// carries the sales of every other pack / listing / channel of its part # (nothing is lost). Only a part # with
+// NO FBA listing at all has its own row — those are hidden by the filter, so say which ones need ordering.
+function rvoFbaNote() {
+  var box = document.getElementById('rvo-fba-note'), sel = document.getElementById('rvo-fbaf');
+  if (!box) { box = document.createElement('div'); box.id = 'rvo-fba-note'; var sm = document.getElementById('rvo-summary'); if (sm) sm.parentNode.insertBefore(box, sm); }
+  if (!RVO.loaded || sel.value !== 'fba') { box.innerHTML = ''; return; }
+  var v = document.getElementById('rvo-vendor').value;
+  var hid = RVO.rows.filter(function (r) { return !r.fbaSku && (r.orderUnits > 0 || RVO.edits[r.sku] > 0) && !(v === '__none' ? r.vendor : (v && r.vendor !== v)); });
+  box.innerHTML = '<div style="border:1.5px solid ' + (hid.length ? 'var(--orange)' : 'var(--green)') + ';border-radius:8px;padding:8px 10px;margin-bottom:8px;font-size:12px;line-height:1.5">'
+    + '<b>FBA listings only:</b> each FBA row already counts the sales of the other pack sizes, listings and channels of its part # — those sales are <b>not</b> lost.'
+    + (hid.length ? '<br><b style="color:var(--orange)">⚠ ' + hid.length + ' part # ' + (hid.length === 1 ? 'has' : 'have') + ' no FBA listing at all and need ordering — hidden now, so they will NOT be ordered:</b> '
+      + hid.slice(0, 15).map(function (r) { return '<span style="font-family:var(--mono)">' + escHtml(r.sku) + '</span> (' + fmt0(r.orderUnits) + ')'; }).join(', ') + (hid.length > 15 ? ' …' : '')
+      + '. Switch Listings to "All" to order them too.' : '<br>✅ Every part # that needs ordering has an FBA listing.') + '</div>';
+}
 function rvoRender() {
   if (!RVO.loaded) return;
+  if (!RVO._fbafSet) { RVO._fbafSet = true; try { var sv = localStorage.getItem('rvo_fbaf'); if (sv != null) document.getElementById('rvo-fbaf').value = sv; } catch (e) {} }
+  rvoFbaNote();
   var rows = rvoVisible(), m = RVO.meta, cols = rvoCols();
   var inOrder = rows.filter(function (r) { return !RVO.off[r.sku] && rvoQty(r) > 0; });
   var tot = inOrder.reduce(function (a, r) { return a + rvoQty(r); }, 0);
@@ -5031,6 +5061,76 @@ function rvoVendorCheck() {
   return { ok: !dup.length && Math.abs(sum - total) < 0.001, dup: dup, by: by, total: total, sum: sum, parts: all.length,
     text: Object.keys(by).sort().map(function (k) { return k + ' ' + fmtU(by[k].units) + ' (' + by[k].parts + ' part #s)'; }).join(' + ') + ' = ' + fmtU(sum) + ' units · whole order ' + fmtU(total) + ' units' };
 }
+// ─── 🏷 BARCODE / VENDOR FOR ANY PART # ──────────────────────────────────────
+// Owner: "some have no UPC — something I can search and add the barcode; 26-2-6=10XX: outside box 840428932787,
+// inside 840428932756 — put them together on one part #, the outside box one is what we use. And since we changed
+// the vendor for some items, set the vendor so that item only shows up under that vendor."
+// Saved through ✏️'s own save (/reorder/fix → used by the planner + the CSV), every change in 🕘 History; both
+// UPCs are also linked to the part # so a scan of either finds it in Inventory.
+var RVP = null;
+function rvoPartOpen(part) {
+  document.getElementById('rvo-part').style.display = 'flex';
+  var q = document.getElementById('rvo-p-q'); if (part) { q.value = part; rvoPartFind(); } else { q.focus(); }
+}
+function rvoPartFind() {
+  var q = (document.getElementById('rvo-p-q').value || '').trim().toUpperCase(), body = document.getElementById('rvo-p-body');
+  if (!q) return; body.textContent = 'Looking…'; document.getElementById('rvo-p-save').style.display = 'none';
+  wFetch(W + '/reorder/fix/part-info?part=' + encodeURIComponent(q)).then(function (r) { return r.json(); }).then(function (d) {
+    if (!d.ok) { body.textContent = '✗ ' + (d.error || 'Not found'); return; }
+    RVP = d; var e = escHtml, n = d.now || {};
+    var src = [];
+    if (d.fix) src.push('saved fix: out ' + (d.fix.outside_upc || '—') + ' · in ' + (d.fix.inside_upc || '—') + (d.fix.vendor ? ' · vendor ' + d.fix.vendor : ''));
+    (d.catalog || []).forEach(function (c) { src.push(c.vendor + ' sheet: out ' + (c.outside_upc || '—') + ' · in ' + (c.inside_upc || '—') + (c.price > 0 ? ' · $' + c.price + '/pc' : '')); });
+    if (d.upc) src.push('UPC list: out ' + (d.upc.outside_upc || '—') + ' · in ' + (d.upc.inside_upc || '—'));
+    if (d.builtIn) src.push('vendor box/bag list: out ' + (d.builtIn.outside_upc || '—') + ' · in ' + (d.builtIn.inside_upc || '—'));
+    (d.links || []).forEach(function (l) { src.push('scan link: ' + l.upc + (l.by_user ? ' (' + l.by_user + ')' : '')); });
+    var inp = function (id, v, ph) { return '<input type="text" id="' + id + '" value="' + e(v || '') + '" placeholder="' + ph + '" style="width:100%;box-sizing:border-box;font-family:var(--mono);font-size:13px;padding:6px 8px;border-radius:6px;border:1px solid var(--border);margin:2px 0 8px">'; };
+    body.innerHTML = '<div style="font-size:14px;font-weight:700;color:var(--text);margin-bottom:4px"><span style="font-family:var(--mono)">' + e(d.part) + '</span>'
+      + (d.skuMgr && d.skuMgr[0] && d.skuMgr[0].name ? ' · ' + e(d.skuMgr[0].name) : '') + (d.known ? '' : ' <span style="color:var(--orange)">(new to us — nothing saved for it yet)</span>') + '</div>'
+      + (src.length ? '<div style="margin-bottom:8px;line-height:1.5">' + src.map(e).join('<br>') + '</div>' : '<div style="margin-bottom:8px;color:var(--orange)">No UPC anywhere yet.</div>')
+      + '<div style="color:var(--text)">📦 Outside box UPC (used on the vendor CSV)</div>' + inp('rvo-p-out', n.outside_upc, 'e.g. 840428932787')
+      + '<div style="color:var(--text)">🛍 Inside bag UPC</div>' + inp('rvo-p-in', n.inside_upc, 'e.g. 840428932756')
+      + '<div style="color:var(--text)">🏭 Vendor — this part # shows up only under this vendor</div>'
+      + '<select id="rvo-p-vendor" style="width:100%;font-size:13px;padding:6px;border-radius:6px;border:1px solid var(--border);margin:2px 0 8px"><option value="">(not set — the planner decides)</option>'
+      + (d.vendors || []).map(function (v) { return '<option' + (v === n.vendor ? ' selected' : '') + '>' + e(v) + '</option>'; }).join('') + '</select>'
+      + ((d.siblings || []).length ? '<label style="display:flex;gap:6px;align-items:flex-start;color:var(--text)"><input type="checkbox" id="rvo-p-all"> Same vendor for every other pack size of ' + e(d.base) + ': <span style="font-family:var(--mono)">' + e(d.siblings.join(', ')) + '</span></label>' : '');
+    document.getElementById('rvo-p-save').style.display = '';
+  }).catch(function () { body.textContent = '✗ Could not load — try again'; });
+}
+function rvoPartSave() {
+  if (!RVP) return;
+  var clean = function (v) { return String(v || '').replace(/\D/g, ''); };
+  var out = clean(document.getElementById('rvo-p-out').value), inn = clean(document.getElementById('rvo-p-in').value), ven = document.getElementById('rvo-p-vendor').value;
+  if (out && inn && out === inn) { alert('Outside box and inside bag UPC are the same — check them.'); return; }
+  if ((out && (out.length < 11 || out.length > 14)) || (inn && (inn.length < 11 || inn.length > 14))) { alert('A UPC is 12 digits (11–14 with EAN / GTIN) — check the number.'); return; }
+  var n = RVP.now || {}, fields = {};
+  if (out !== clean(n.outside_upc)) fields.outside_upc = out;
+  if (inn !== clean(n.inside_upc)) fields.inside_upc = inn;
+  if (ven !== (n.vendor || '')) fields.vendor = ven;
+  var items = Object.keys(fields).length ? [{ part: RVP.part, fields: fields, was: n }] : [];
+  var allBox = document.getElementById('rvo-p-all');
+  if (ven && allBox && allBox.checked) RVP.siblings.forEach(function (sp) { items.push({ part: sp, fields: { vendor: ven } }); });
+  if (!items.length) { showToast('Nothing changed'); return; }
+  var btn = document.getElementById('rvo-p-save'); btn.disabled = true;
+  wFetch(W + '/reorder/fix/batch', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ items: items }) })
+    .then(function (r) { return r.json(); }).then(function (d) {
+      btn.disabled = false;
+      if (!d.ok) { alert('Not saved: ' + ((d.results || []).filter(function (x) { return !x.ok; }).map(function (x) { return x.error; }).join('; ') || d.error || 'failed')); return; }
+      // a scan of either barcode finds this part # (Stock In / Checking / Transfer) — best effort
+      [out, inn].filter(Boolean).forEach(function (u) { wFetch(W + '/inventory/upc-link', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ upc: u, part: RVP.part }) }).catch(function () {}); });
+      showToast('💾 Saved ' + RVP.part + (items.length > 1 ? ' + ' + (items.length - 1) + ' other pack size' + (items.length > 2 ? 's' : '') : '') + ' — press Calculate to see it');
+      rvoPartFind();
+    }).catch(function () { btn.disabled = false; alert('Not saved — check WiFi and try again'); });
+}
+function rvoPartMissing() {
+  var body = document.getElementById('rvo-p-body');
+  if (!RVO.loaded) { body.textContent = 'Press Calculate first — then this lists the part #s with no outside box UPC.'; return; }
+  var miss = rvoVisible().filter(function (r) { return !r.outsideUpc; });
+  body.innerHTML = miss.length ? '<b style="color:var(--text)">' + miss.length + ' part # in the list now with no outside box UPC — tap one:</b><div style="margin-top:6px;line-height:2">'
+    + miss.map(function (r) { return '<button class="btn btn-secondary" style="font-size:11px;padding:2px 8px;font-family:var(--mono)" onclick="rvoPartOpen(\'' + escHtml(r.sku).replace(/'/g, '') + '\')">' + escHtml(r.sku) + '</button>'; }).join(' ') + '</div>'
+    : '✅ Every part # in the list now has an outside box UPC.';
+  document.getElementById('rvo-p-save').style.display = 'none';
+}
 function rvoCsv() {
   if (!RVO.loaded) { alert('Press Calculate first.'); return; }
   var v = document.getElementById('rvo-vendor').value;
@@ -5043,18 +5143,27 @@ function rvoCsv() {
   if (!v && !confirm('No vendor picked — download every vendor in one file?')) return;
   var cell = function (x) { x = String(x == null ? '' : x); return /[",\n]/.test(x) ? '"' + x.replace(/"/g, '""') + '"' : x; };
   var upcCell = function (x) { return x ? '"=""' + String(x).replace(/"/g, '') + '"""' : ''; }; // keeps leading zeros / no 1.2E+11 in Excel
-  var head = ['Part #', 'Outside Box UPC Code', 'Inside Bag UPC Code', 'Description', 'Order Qty', 'Cases', 'Qty per Case', 'Note', 'FBA ASIN'];
-  var lines = [head.join(',')];
+  // Owner: "the CSV for the vendor needs the newest price of each item and what this order will cost in total".
+  // Cost = pieces (order qty × pack size) × newest price per single piece (vendor sheet, else the latest order).
+  var head = ['Part #', 'Outside Box UPC Code', 'Inside Bag UPC Code', 'Description', 'Order Qty', 'Cases', 'Qty per Case', 'Pieces', 'Price per Piece', 'Line Total', 'Price From', 'Price Date', 'Note', 'FBA ASIN'];
+  var lines = [head.join(',')], money = 0, pcsTot = 0, unpriced = [];
   rows.forEach(function (r) {
     var q = Math.round(rvoQty(r) * 1000) / 1000, cases = r.caseQty ? Math.ceil(q / r.caseQty - 1e-9) : '';
+    var pcs = Math.round(q * (r.packSize || 1) * 1000) / 1000, pr = r.price > 0 ? r.price : null, line = pr != null ? Math.round(pcs * pr * 100) / 100 : null;
+    pcsTot += pcs; if (line != null) money += line; else unpriced.push(r.sku);
     var note = (RVO.edits[r.sku] != null ? 'Qty changed by hand' : (/Rounded up/.test(r.note) ? r.note.split(' · ').filter(function (n) { return /Rounded up/.test(n); })[0] : ''));
-    lines.push([cell(r.sku), upcCell(r.outsideUpc), upcCell(r.insideUpc), cell(r.description), q, cases, r.caseQty ? Math.round(r.caseQty * 1000) / 1000 : '', cell(note), cell(r.asin || '')].join(','));
+    lines.push([cell(r.sku), upcCell(r.outsideUpc), upcCell(r.insideUpc), cell(r.description), q, cases, r.caseQty ? Math.round(r.caseQty * 1000) / 1000 : '', pcs,
+      pr != null ? pr : '', line != null ? line.toFixed(2) : '', cell(pr != null ? r.priceSrc : 'NO PRICE'), cell(r.priceAt ? String(r.priceAt).slice(0, 10) : ''), cell(note), cell(r.asin || '')].join(','));
   });
+  money = Math.round(money * 100) / 100;
+  lines.push('');
+  lines.push([cell('TOTAL'), '', '', cell(rows.length + ' part #s'), Math.round(rows.reduce(function (a, r) { return a + rvoQty(r); }, 0) * 1000) / 1000, '', '', Math.round(pcsTot * 1000) / 1000, '', money.toFixed(2),
+    cell(unpriced.length ? unpriced.length + ' part # without a price (not in the total): ' + unpriced.join(' ') : 'every part # priced'), '', '', ''].join(','));
   var name = (v && v !== '__none' ? v.replace(/[^A-Za-z0-9_-]+/g, '_') : 'ALL') + '_PO_' + new Date().toISOString().slice(0, 10) + '.csv';
   var blob = new Blob(['﻿' + lines.join('\r\n')], { type: 'text/csv;charset=utf-8' });
   var a = document.createElement('a'); a.href = URL.createObjectURL(blob); a.download = name; document.body.appendChild(a); a.click();
   setTimeout(function () { URL.revokeObjectURL(a.href); a.remove(); }, 500);
-  showToast('Downloaded ' + name + ' (' + rows.length + ' part numbers) · ✓ totals match: ' + ck.text);
+  showToast('Downloaded ' + name + ' (' + rows.length + ' part numbers) · 💲 $' + money.toFixed(2) + (unpriced.length ? ' (+' + unpriced.length + ' with no price)' : '') + ' · ✓ totals match: ' + ck.text);
   // Remember the vendor each part # was ordered from — next time a part #
   // several vendors sell defaults to this vendor.
   wFetch(W + '/reorder/fix/last-vendor', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ items: rows.filter(function (r) { return r.vendor; }).map(function (r) { return { part: r.sku, vendor: r.vendor }; }) }) }).catch(function () {});
@@ -5063,7 +5172,7 @@ function rvoCsv() {
   var hand = rows.filter(function (r) { return RVO.edits[r.sku] != null; }).map(function (r) { return r.sku + ' ' + r.orderUnits + '→' + rvoQty(r); });
   var skipped = rvoVisible().filter(function (r) { return RVO.off[r.sku] && r.orderUnits > 0; }).map(function (r) { return r.sku; });
   var m = RVO.meta || {};
-  var detail = 'Downloaded ' + name + ': ' + rows.length + ' part #s, ' + tot + ' units (window ' + m.days + ' d, lead ' + m.lead + ' mo, cover ' + m.cover + ' mo)'
+  var detail = 'Downloaded ' + name + ': ' + rows.length + ' part #s, ' + tot + ' units, 💲 $' + money.toFixed(2) + (unpriced.length ? ' (' + unpriced.length + ' with no price)' : '') + ' (window ' + m.days + ' d, lead ' + m.lead + ' mo, cover ' + m.cover + ' mo)'
     + (hand.length ? ' · changed by hand: ' + hand.join(', ') : '') + (skipped.length ? ' · left out: ' + skipped.join(', ') : '') + ' · vendor totals: ' + ck.text;
   wFetch(W + '/reorder/fix/log', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ action: 'download', part: v && v !== '__none' ? v : '', detail: detail }) })
     .then(function () { if (document.getElementById('rvo-hist-box').open) rvoLoadHistory(); }).catch(function () {});

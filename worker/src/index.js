@@ -1587,6 +1587,33 @@ async function reorderSaveFixBatch(request, env, session) {
   }
   return _roResp({ ok: results.every(r => r.ok), results });
 }
+// Everything we know about one part # (any part #, even one with no sales): its saved fix, every vendor sheet row,
+// the UPC table, the built-in vendor UPC list, scan links, SKU Mgr, and the other pack sizes of the same parent.
+async function reorderPartInfo(env, raw) {
+  await reorderFixTables(env);
+  const P = reorderCleanPart(String(raw || '').toUpperCase());
+  if (!P) return { ok: false, error: 'Type a part #, e.g. 26-2-6=10XX' };
+  const base = reorderGetBaseSku(P), all = async (sql, b) => { try { return (await env.DB.prepare(sql).bind(...b).all()).results || []; } catch (_) { return []; } };
+  const fix = (await all('SELECT * FROM reorder_fix WHERE part = ?', [P]))[0] || null;
+  const catalog = (await all('SELECT vendor, part, description, outside_upc, inside_upc, price, price_at FROM reorder_vendor_catalog WHERE UPPER(part) = ?', [P])).map(r => ({ ...r, vendor: reorderVendorName(r.vendor) }));
+  const upc = (await all('SELECT outside_upc, inside_upc FROM upc WHERE UPPER(TRIM(sku)) = ?', [P]))[0] || null;
+  const builtIn = VENDOR_UPC.filter(r => String(r[0]).toUpperCase() === P).map(r => ({ outside_upc: r[1] || '', inside_upc: r[2] || '' }))[0] || null;
+  const links = (await all('SELECT upc, by_user, at FROM upc_link WHERE UPPER(part) = ?', [P]));
+  const sm = await all('SELECT location, cases, vendor, name FROM master_list WHERE UPPER(TRIM(part_num)) = ?', [P]);
+  const like = [base, base + '=%'];
+  const sib = new Set();
+  (await all('SELECT DISTINCT UPPER(TRIM(part_num)) AS p FROM master_list WHERE UPPER(TRIM(part_num)) = ? OR UPPER(TRIM(part_num)) LIKE ?', like)).forEach(r => sib.add(r.p));
+  (await all('SELECT DISTINCT UPPER(part) AS p FROM reorder_vendor_catalog WHERE UPPER(part) = ? OR UPPER(part) LIKE ?', like)).forEach(r => sib.add(r.p));
+  (await all('SELECT DISTINCT UPPER(part) AS p FROM reorder_fix WHERE UPPER(part) = ? OR UPPER(part) LIKE ?', like)).forEach(r => sib.add(r.p));
+  const vendors = new Set(['JQ', 'EFF', 'YAO']);
+  (await all('SELECT DISTINCT vendor FROM reorder_vendor_catalog', [])).forEach(r => { const v = reorderVendorName(r.vendor); if (v) vendors.add(v); });
+  const pick = (...v) => { for (const x of v) if (x != null && String(x).trim() !== '') return String(x).trim(); return ''; };
+  return { ok: true, part: P, base, known: !!(fix || catalog.length || upc || builtIn || sm.length),
+    now: { outside_upc: pick(fix && fix.outside_upc, ...catalog.map(c => c.outside_upc), upc && upc.outside_upc, builtIn && builtIn.outside_upc),
+      inside_upc: pick(fix && fix.inside_upc, ...catalog.map(c => c.inside_upc), upc && upc.inside_upc, builtIn && builtIn.inside_upc),
+      vendor: pick(fix && reorderVendorName(fix.vendor), ...sm.map(r => reorderVendorName(r.vendor))) },
+    fix, catalog, upc, builtIn, links, skuMgr: sm, siblings: [...sib].filter(p => p !== P).sort(), vendors: [...vendors].sort() };
+}
 // One row's fix. Fields not sent keep what was saved before.
 async function reorderSaveFixOne(env, b, who) {
   const part = reorderCleanPart(b.part);
@@ -1773,6 +1800,8 @@ async function reorderVendorOrder(env, url) {
     return out;
   };
   const cat = {}, catAll = {}; (await all('SELECT * FROM reorder_vendor_catalog ORDER BY vendor')).forEach(r => { const k = U(r.part); if (!cat[k]) cat[k] = r; (catAll[k] = catAll[k] || []).push(r); });
+  // 💲 Newest price per piece paid on an order / shipment (on the way), when the vendor sheet has none.
+  const incPrice = {}; (await all('SELECT part, price, updated_at, title, vendor FROM reorder_incoming WHERE price > 0 ORDER BY updated_at').catch(() => [])).forEach(r => { incPrice[U(r.part)] = r; });
   const fixes = {}; (await all('SELECT * FROM reorder_fix')).forEach(r => { fixes[U(r.part)] = r; });
   // ASIN for any SKU Amazon knows — incl. Amazon's own auto seller SKUs like
   // "0H-9TMH-JBU7" (sales report + FBA inventory report), so those rows can
@@ -1931,6 +1960,9 @@ async function reorderVendorOrder(env, url) {
       [fx.vendor, lv && lv.v, ...(sm.vendors || []), ...(catAll[t.sku] || []).map(c => c.vendor)].forEach(v => { v = vn(v); if (v) vendors.add(v); });
       // Sold by both JQ and EFF → JQ (owner's rule), unless a vendor was saved with ✏️.
       if (vendorSrc !== 'picked' && vendors.has('JQ') && vendors.has('EFF')) { vendor = 'JQ'; vendorSrc = 'JQ over EFF'; }
+      // Owner: "we changed the vendor for some items — set the vendor so the item only shows up under that vendor".
+      // A vendor saved with ✏️ / 🏷 is the only one: no other vendor to pick for this order.
+      if (vendorSrc === 'picked') { vendors.clear(); vendors.add(vendor); }
       // Picked on the row for this order only — wins over everything.
       if (picks[t.sku] && vendors.has(picks[t.sku])) { vendor = picks[t.sku]; vendorSrc = 'this order'; }
       // Description / UPCs / carton from the chosen vendor's info sheet.
@@ -1963,6 +1995,10 @@ async function reorderVendorOrder(env, url) {
         vendor, vendorSrc, vendors: [...vendors].sort(), lastVendor: lv ? lv.v : '',
         outsideUpc: pick(fx.outside_upc, ct.outside_upc, u.outside_upc), insideUpc: pick(fx.inside_upc, ct.inside_upc, u.inside_upc),
         itemNo: pick(ct.item_no), caseSrc, fixed: !!fixes[t.sku],
+        // 💲 Newest price per single piece: the vendor's sheet (latest import), else the latest order / shipment.
+        // (No vendor names / file titles in the text — only owners see vendor names.)
+        ...(parseFloat(ct.price) > 0 ? { price: parseFloat(ct.price), priceAt: ct.price_at || ct.updated_at || '', priceSrc: 'vendor sheet' }
+          : incPrice[t.sku] ? { price: parseFloat(incPrice[t.sku].price), priceAt: incPrice[t.sku].updated_at || '', priceSrc: 'last order' } : { price: null, priceAt: '', priceSrc: '' }),
         soldPcs: Math.round(demandPcs), monthlyPcs: Math.round(monthlyPcs * 10) / 10,
         stockUnits: Math.round(sm.units * 100) / 100, stockPcs: Math.round(ownPcs), otherPackPcs: Math.round(otherPcs),
         fbaPcs: Math.round(t.fbaAvailPieces), needUnits, caseQty, cases, orderUnits, note: notes.join(' · '),
@@ -7238,6 +7274,9 @@ const _app = {
       if (url.pathname === '/reorder/fix' && method === 'POST') {
         return await reorderSaveFix(request, env, roCs || session);
       }
+      // 🏷 Barcode / vendor for any part # (owner: "search and add the barcode; merge the outside box and inside bag
+      // UPC on one part #; set the vendor so it only shows under that vendor").
+      if (url.pathname === '/reorder/fix/part-info' && method === 'GET') return _roResp(await reorderPartInfo(env, url.searchParams.get('part') || ''));
       return _roResp({ ok: false, error: 'Not found' }, 404);
     }
     if (url.pathname === '/reorder/vendor-order' && method === 'GET') {
