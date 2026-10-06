@@ -3174,5 +3174,26 @@ console.log('\n🧾 Reorder planner: FBA rows carry every other pack / channel; 
   sq.prepare("DELETE FROM reorder_incoming WHERE part LIKE '88-%'").run(); sq.prepare("DELETE FROM reorder_fix WHERE part LIKE '88-%'").run();
 }
 
+// Owner (Label Printer): "after we type our SKU in, also give the name of the SKU, and make it a little bigger — 26-3-6 was too small".
+console.log('\n🏷 Label Printer: a SKU label has a bigger part #, wider bars and the item name; location labels unchanged');
+{
+  const { readFileSync } = await import('node:fs');
+  sq.prepare("INSERT INTO master_list (base_sku, name, part_num, location, cases, units_per_case) VALUES ('26-3-6','3/4\" PEX Female Tee','26-3-6=10X','C2=1-1-1',1,100)").run();
+  const n1 = await get('/inventory/part-name?part=26-3-6'), n2 = await get('/inventory/part-name?part=26-3-6=10x'), n3 = await get('/inventory/part-name?part=99-9-9');
+  check('the name of a SKU: from SKU Mgr by its part # or its parent (26-3-6 → 3/4" PEX Female Tee); unknown → empty', n1.name === '3/4" PEX Female Tee' && n2.name === '3/4" PEX Female Tee' && n3.ok && n3.name === '', [n1, n2, n3]);
+  sq.prepare("DELETE FROM master_list WHERE part_num = '26-3-6=10X'").run();
+  const lp = readFileSync(fileURLToPath(new URL('../labelprint.html', import.meta.url)), 'utf8');
+  const src = (lp.match(/  function lpGenSkuZPL\(sku, name, copies\) \{[\s\S]*?\n  \}/) || [''])[0];
+  const gen = new Function('lpGetSettings', src + '; return lpGenSkuZPL;')(() => ({ width: 406, height: 203, darkness: 10, barShift: 0 }));
+  const z = gen('26-3-6', '3/4" PEX Female Tee', 2);
+  const ts = +((z.match(/\^A0N,(\d+),\d+\^FD26-3-6\^FS/) || [])[1] || 0), by = +((z.match(/\^BY(\d),3,/) || [])[1] || 0);
+  check('26-3-6 label: part # text bigger than the old 24 dots (' + ts + '), barcode bars 3 dots wide instead of 2 (still fits 2"), name printed under it, 2 copies',
+    ts > 24 && by === 3 && 101 * by <= 406 - 16 && /\^FD3\/4" PEX Female Tee\^FS/.test(z) && /\^PQ2/.test(z), z);
+  const z2 = gen('26-6-6=10XX', '', 1);
+  check('…a longer SKU still fits (2-dot bars), no name line when none found', /\^BY2,3,/.test(z2) && (11 * 11 + 35) * 2 <= 390 && !/\^FO8,/.test(z2), z2);
+  check('…only SKUs (start with a number) use it; locations (BARN=…, C1=…) print exactly as before', /var isSku = \/\^\\d\/\.test\(loc\.replace\(\/\^'\/, ''\)\)/.test(lp) && /isSku \? lpGenSkuZPL\(loc, name, n\) : zpl \}/.test(lp)
+    && /'\^FO0,' \+ s\.textY \+ '\^FB' \+ s\.width \+ ',1,0,C,0\^A0N,' \+ s\.textSize/.test(lp), null);
+}
+
 console.log('\n' + (failed ? '❌ ' + failed + ' check(s) FAILED' : '✅ all ' + passed + ' checks passed') + '\n');
 process.exit(failed ? 1 : 0);
