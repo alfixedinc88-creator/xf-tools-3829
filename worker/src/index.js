@@ -26683,7 +26683,12 @@ async function handleAutolabelRoute(path, method, url, request, env, session) {
     const number = String(b.order || '').trim();
     if (!number) return veeqoResp({ ok: false, error: 'order is required' }, 400);
     const by = String((session && (session.displayName || session.username)) || b.by || '').slice(0, 40);
-    return veeqoResp(await autolabelBuyByHand(env, number, by, b.allowLow === true));
+    const res = await autolabelBuyByHand(env, number, by, b.allowLow === true);
+    // Owner: "some said can't purchase — after refresh it's gone, did I print it?" → every "not bought" is kept
+    // (a buy that failed at Veeqo is already kept as buy_failed).
+    if (res && res.ok === false && !('labels' in res))
+      await autolabelLog(env, { orderNumber: number, action: 'not_bought', reason: by ? 'by hand · ' + by : 'by hand', detail: res.error || 'not bought' }).catch(() => {});
+    return veeqoResp(res);
   }
   // POST { orders:[numbers] } → Last run → 🧩 Merge & buy: same name + address, one box, one label.
   if (path === '/veeqo/autolabel/merge-buy' && method === 'POST') {
@@ -27197,6 +27202,32 @@ async function handleAutolabelRoute(path, method, url, request, env, session) {
     const alloc = (order.allocations || []).find(a => _psAllocTrackingNumber(a) === tracking) || (order.allocations || [])[0];
     return veeqoResp({ ok: true, tracking, order: order.number, found: labelCostFromShipment(alloc && alloc.shipment),
       shipment: alloc && alloc.shipment, orderLevel: { total_shipping: order.total_shipping, delivery_cost: order.delivery_cost, shipping_cost: order.shipping_cost } });
+  }
+
+  // 📜 Labels by day: every label bought that day (by Auto Label or by hand) and whether it printed
+  // (when / who / how many times), plus every order that could not be bought, with why.
+  if (path === '/veeqo/autolabel/day' && method === 'GET') {
+    const day = /^\d{4}-\d{2}-\d{2}$/.test(url.searchParams.get('date') || '') ? url.searchParams.get('date') : shipTodayKey();
+    const log = await d1All(env, `SELECT * FROM autolabel_log WHERE date = ? AND action IN ('bought','merged','merge_mark_failed','buy_failed','not_bought') ORDER BY id`, [day]);
+    const from = new Date(Date.parse(day + 'T00:00:00Z') - 86400000).toISOString(), to = new Date(Date.parse(day + 'T00:00:00Z') + 2 * 86400000).toISOString();
+    const q = await d1All(env, 'SELECT id, tracking, order_number, printed_at, printed_by, print_count FROM label_print_queue WHERE created_at >= ? AND created_at < ?', [from, to]);
+    const byTrack = new Map(q.filter(r => r.tracking).map(r => [String(r.tracking), r]));
+    const labels = [], tried = new Map(), got = new Set();
+    for (const r of log) {
+      const num = String(r.order_number || '');
+      if (r.action === 'bought' || r.action === 'merged' || r.action === 'merge_mark_failed') {
+        got.add(num.toUpperCase());
+        const pq = byTrack.get(String(r.tracking || ''));
+        labels.push({ ts: r.ts, order: num, channel: r.channel, customer: r.customer, carrier: r.carrier, service: r.service, price: r.price, tracking: r.tracking,
+          kind: r.action, how: /hand|·/.test(r.reason || '') ? r.reason : (r.reason || ''),
+          printedAt: pq ? pq.printed_at : null, printedBy: pq ? pq.printed_by : null, printCount: pq ? pq.print_count || 0 : 0, queued: !!pq });
+      } else tried.set(num.toUpperCase(), { ts: r.ts, order: num, channel: r.channel, why: r.detail || r.reason || '', kind: r.action, by: r.reason || '' });
+    }
+    const notBought = [...tried.entries()].map(([k, v]) => ({ ...v, boughtLater: got.has(k) }));
+    const own = labels.filter(l => l.kind !== 'merged');
+    return veeqoResp({ ok: true, day, labels, notBought,
+      counts: { bought: own.length, merged: labels.length - own.length, printed: own.filter(l => l.printedAt).length, notPrinted: own.filter(l => l.queued && !l.printedAt).length,
+        notBought: notBought.filter(x => !x.boughtLater).length } });
   }
 
   if (path === '/veeqo/autolabel/log' && method === 'GET') {

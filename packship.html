@@ -1972,6 +1972,23 @@ body {
         <div id="ps-al-sf-list" style="font-size:12px;overflow-x:auto"></div>
       </div>
 
+      <!-- 📜 Labels by day -->
+      <div class="ps-card" style="margin-bottom:16px">
+        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px;gap:8px;flex-wrap:wrap">
+          <div style="font-size:13px;font-weight:700;color:var(--text)">📜 Labels by day — bought, printed, and not bought</div>
+          <div style="display:flex;gap:6px;align-items:center">
+            <button class="ps-btn-sm" onclick="psAlDayShift(-1)">◀</button>
+            <input type="date" id="ps-al-day" onchange="psAlLoadDay()" style="padding:5px 6px;border:1.5px solid var(--border);border-radius:7px;background:var(--bg);color:var(--text)">
+            <button class="ps-btn-sm" onclick="psAlDayShift(1)">▶</button>
+            <button class="ps-btn-sm" onclick="psAlLoadDay()">↻</button>
+            <button class="ps-btn-sm" onclick="psAlDayCsv()">⬇ CSV</button>
+          </div>
+        </div>
+        <div style="font-size:12px;color:var(--text3);margin-bottom:8px;line-height:1.5">Every shipping label bought that day (by Auto Label or by hand) and whether it printed — when, who, how many times. Below: every order that could <b>not</b> be bought, and why (a "can't purchase" never printed anything).</div>
+        <div id="ps-al-day-sum" style="font-size:13px;font-weight:700;margin-bottom:8px"></div>
+        <div id="ps-al-day-list" style="font-size:12px;overflow-x:auto"></div>
+      </div>
+
       <!-- 📮 eBay tracking our system adds -->
       <div class="ps-card" style="margin-bottom:16px">
         <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px;gap:8px;flex-wrap:wrap">
@@ -8630,6 +8647,7 @@ function psAlOnUnlock() {
   psAlLoadBoxes();
   psAlLoadScanForms();
   if (typeof psAlLoadEbayTrack === 'function') psAlLoadEbayTrack();
+  if (typeof psAlLoadDay === 'function') psAlLoadDay();
   psAlLoadLowValue();
   psAlLoadCosts();
   psAlLoadSlips();
@@ -9149,6 +9167,46 @@ window._psAlCopy = function(text, btn) {
   var old = function() { var ta = document.createElement('textarea'); ta.value = text; ta.style.cssText = 'position:fixed;left:-9999px'; document.body.appendChild(ta); ta.select(); try { document.execCommand('copy'); ok(); } catch (e) { alert(text); } ta.remove(); };
   if (navigator.clipboard && navigator.clipboard.writeText) navigator.clipboard.writeText(text).then(ok, old); else old();
 };
+// 📜 Labels by day (owner: "some said can't purchase — after refresh it's gone; did I print it? save every label we print").
+var _psAlDay = null;
+function _psAlNyDay(d) { return new Date(d || Date.now()).toLocaleDateString('en-CA', { timeZone: 'America/New_York' }); }
+window.psAlDayShift = function(n) {
+  var el = document.getElementById('ps-al-day'); var d = new Date((el.value || _psAlNyDay()) + 'T12:00:00Z'); d.setUTCDate(d.getUTCDate() + n);
+  el.value = d.toISOString().slice(0, 10); psAlLoadDay();
+};
+window.psAlLoadDay = async function() {
+  var el = document.getElementById('ps-al-day'), sum = document.getElementById('ps-al-day-sum'), box = document.getElementById('ps-al-day-list'); if (!el || !box) return;
+  if (!el.value) el.value = _psAlNyDay();
+  var d = await _psAlFetch('/veeqo/autolabel/day?date=' + encodeURIComponent(el.value)); if (d.ok === false) { box.textContent = '✗ ' + (d.error || 'Failed'); return; }
+  _psAlDay = d; var e = _psAlEsc, c = d.counts || {}, t = function(x) { return x ? new Date(x).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' }) : ''; };
+  sum.innerHTML = '🏷 ' + c.bought + ' bought · <span style="color:var(--green)">🖨 ' + c.printed + ' printed</span>'
+    + (c.notPrinted ? ' · <span style="color:var(--orange)">⏳ ' + c.notPrinted + ' not printed yet</span>' : '') + (c.merged ? ' · 🧩 ' + c.merged + ' in merged boxes' : '')
+    + ' · <span style="color:' + (c.notBought ? 'var(--red)' : 'var(--text3)') + '">❌ ' + c.notBought + ' not bought</span>';
+  var td = '<td style="padding:4px 6px;border-bottom:1px solid var(--border)';
+  var rows = (d.labels || []).map(function(l) {
+    var pr = l.kind === 'merged' ? '<span style="color:var(--text3)">🧩 same box as another order</span>'
+      : l.printedAt ? '<span style="color:var(--green)">🖨 ' + t(l.printedAt) + (l.printedBy ? ' · ' + e(l.printedBy) : '') + (l.printCount > 1 ? ' · ×' + l.printCount : '') + '</span>'
+      : l.queued ? '<b style="color:var(--orange)">⏳ not printed</b>' : '<span style="color:var(--text3)">bought in Veeqo</span>';
+    return '<tr>' + td + ';white-space:nowrap">' + t(l.ts) + '</td>' + td + ';font-family:var(--mono)">' + e(l.order) + '</td>' + td + '">' + e(l.channel || '') + '</td>'
+      + td + '">' + e([l.carrier, l.service].filter(Boolean).join(' ')) + (l.price != null ? ' $' + Number(l.price).toFixed(2) : '') + '<div style="font-family:var(--mono);color:var(--text3)">' + e(l.tracking || '') + '</div></td>'
+      + td + '">' + pr + '</td>' + td + '">' + (l.kind !== 'merged' && l.queued ? '<button class="ps-btn-sm" onclick="psAlReprintFor(this, \'' + e(String(l.order).replace(/[\\']/g, '')) + '\', \'label\', true)">🖨 ' + (l.printedAt ? 'Reprint' : 'Print') + '</button>' : '') + '</td></tr>';
+  }).join('');
+  var nb = (d.notBought || []).map(function(x) {
+    return '<tr>' + td + ';white-space:nowrap">' + t(x.ts) + '</td>' + td + ';font-family:var(--mono)">' + e(x.order) + '</td>'
+      + td + ';color:' + (x.boughtLater ? 'var(--text3)' : 'var(--red)') + '" colspan="4">' + (x.boughtLater ? '✓ bought later — was: ' : '❌ not bought: ') + e(x.why) + (x.by ? ' <span style="color:var(--text3)">(' + e(x.by) + ')</span>' : '') + '</td></tr>';
+  }).join('');
+  box.innerHTML = (rows ? '<table style="width:100%;border-collapse:collapse">' + rows + '</table>' : '<div style="color:var(--text3)">No labels bought this day.</div>')
+    + '<div style="font-weight:700;margin:12px 0 4px">❌ Could not be bought (nothing printed for these)</div>'
+    + (nb ? '<table style="width:100%;border-collapse:collapse">' + nb + '</table>' : '<div style="color:var(--text3)">None.</div>');
+};
+window.psAlDayCsv = function() {
+  var d = _psAlDay; if (!d) return;
+  var q = function(v) { v = String(v == null ? '' : v); return /[",\n]/.test(v) ? '"' + v.replace(/"/g, '""') + '"' : v; };
+  var lines = [['bought at', 'order', 'channel', 'carrier', 'service', 'price', 'tracking', 'printed at', 'printed by', 'times printed', 'status'].join(',')];
+  (d.labels || []).forEach(function(l) { lines.push([l.ts, l.order, l.channel, l.carrier, l.service, l.price, l.tracking, l.printedAt || '', l.printedBy || '', l.printCount || 0, l.kind === 'merged' ? 'merged box' : l.printedAt ? 'printed' : 'not printed'].map(q).join(',')); });
+  (d.notBought || []).forEach(function(x) { lines.push([x.ts, x.order, x.channel, '', '', '', '', '', '', '', (x.boughtLater ? 'bought later; was not bought: ' : 'NOT BOUGHT: ') + x.why].map(q).join(',')); });
+  var a = document.createElement('a'); a.href = URL.createObjectURL(new Blob([lines.join('\r\n')], { type: 'text/csv' })); a.download = 'labels-' + d.day + '.csv'; document.body.appendChild(a); a.click(); a.remove();
+};
 // 📮 eBay tracking our system adds (owner: "merged eBay orders don't get the tracking — wait 1–2 h, then add it").
 window.psAlLoadEbayTrack = async function() {
   var st = document.getElementById('ps-al-et-status'), box = document.getElementById('ps-al-et-list'); if (!st || !box) return;
@@ -9443,14 +9501,14 @@ window.psAlLoadLog = async function() {
   var box = document.getElementById('ps-al-log');
   var d = await _psAlFetch('/veeqo/autolabel/log');
   if (d.ok === false) { box.textContent = '✗ ' + (d.error || 'Failed'); return; }
-  var names = { bought:'✅ Bought', buy_failed:'❌ Buy failed', cancel_listed:'🗑️ Added to Cancellation list', config:'⚙️ Settings changed', merged:'🧩 Merged (same box)', merge_mark_failed:'⚠️ Merged — Veeqo not marked shipped' };
+  var names = { bought:'✅ Bought', buy_failed:'❌ Buy failed', not_bought:'❌ Could not buy', cancel_listed:'🗑️ Added to Cancellation list', config:'⚙️ Settings changed', merged:'🧩 Merged (same box)', merge_mark_failed:'⚠️ Merged — Veeqo not marked shipped' };
   var log = (d.log || []).filter(function(x){ return x.action !== 'config'; }).slice(0, 40);
   var html = log.length ? log.map(function(x){
     return '<div style="padding:5px 0;border-bottom:1px solid var(--border)"><span style="font-family:var(--mono);color:var(--text3)">' + _psAlEsc(new Date(x.ts).toLocaleString()) + '</span> '
       + '<b>' + _psAlEsc(names[x.action] || x.action) + '</b> ' + _psAlEsc(x.order_number) + ' · ' + _psAlEsc(x.channel) + ' · ' + _psAlEsc(x.customer)
       + (x.carrier ? ' · ' + _psAlEsc(x.carrier + ' ' + x.service) + (x.price != null ? ' $' + Number(x.price).toFixed(2) : '') : '')
       + (x.tracking ? ' · <span style="font-family:var(--mono)">' + _psAlEsc(x.tracking) + '</span>' : '')
-      + (x.action === 'buy_failed' || x.action === 'merge_mark_failed' ? '<div style="color:var(--red)">' + _psAlEsc(x.detail) + '</div>' : '') + '</div>';
+      + (x.action === 'buy_failed' || x.action === 'merge_mark_failed' || x.action === 'not_bought' ? '<div style="color:var(--red)">' + _psAlEsc(x.detail) + '</div>' : '') + '</div>';
   }).join('') : '<div style="color:var(--text3)">Nothing yet.</div>';
   var canc = (d.cancels || []).slice(0, 40);
   var handled = { added_to_cancel_list:'on Cancellation list', not_printed:'not printed — blocked', not_in_veeqo:'not in Veeqo', already_shipped:'already shipped (older)' };

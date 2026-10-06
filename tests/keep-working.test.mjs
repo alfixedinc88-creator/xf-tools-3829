@@ -3030,5 +3030,36 @@ console.log('\n📮 eBay tracking our system adds: label bought / merged > 2 h a
   sq.prepare("DELETE FROM autolabel_log WHERE channel = 'eBay' AND order_number LIKE '%-%-%'").run();
 }
 
+// Owner: "I printed a whole stack; some said 'can't purchase' — after refresh it's gone, did I print it? And save every label we print, easier to go back and check."
+console.log('\n📜 Labels by day: every label bought + printed or not; every "can\'t purchase" kept with why');
+{
+  const { readFileSync } = await import('node:fs');
+  const realFetch = globalThis.fetch;
+  globalThis.fetch = async (u, o) => String(u).includes('api.veeqo.com') ? new Response('[]', { headers: { 'Content-Type': 'application/json' } }) : realFetch(u, o);
+  env.VEEQO_API_KEY = 'k';
+  const nb = await post('/veeqo/autolabel/buy-one', { order: '999-NOPE-1' });
+  globalThis.fetch = realFetch; delete env.VEEQO_API_KEY;
+  const kept = sq.prepare("SELECT * FROM autolabel_log WHERE action = 'not_bought' AND order_number = '999-NOPE-1'").all();
+  check('a "can\'t purchase" by hand is kept (order, why, who) — it doesn\'t disappear on refresh', nb.ok === false && kept.length === 1 && /No order 999-NOPE-1/.test(kept[0].detail), { nb, kept });
+  const day = kept[0].date, ts = new Date().toISOString();
+  sq.prepare("DELETE FROM autolabel_log WHERE date = ? AND order_number != '999-NOPE-1'").run(day); sq.prepare('DELETE FROM label_print_queue').run(); // this day only has the rows below
+  const ins = (num, action, tracking, extra) => sq.prepare("INSERT INTO autolabel_log (ts, date, order_number, channel, action, carrier, service, price, tracking, detail, reason) VALUES (?,?,?,?,?,?,?,?,?,?,?)")
+    .run(ts, day, num, 'Amazon', action, 'USPS', 'Ground', 4.5, tracking || '', (extra || {}).detail || '', (extra || {}).reason || '');
+  ins('A-1', 'bought', 'TRK1'); ins('A-2', 'bought', 'TRK2'); ins('A-3', 'merged', 'TRK2');
+  ins('A-4', 'not_bought', '', { detail: 'Not allocated in Veeqo (stock?)', reason: 'by hand · Mgr' }); ins('A-5', 'buy_failed', '', { detail: 'Veeqo 422' }); ins('A-5', 'bought', 'TRK5');
+  const qi = (num, tr, printed) => sq.prepare("INSERT INTO label_print_queue (order_id, alloc_id, order_number, channel, tracking, carrier, service, source, created_at, items, printed_at, printed_by, print_count) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)")
+    .run(num, num, num, 'Amazon', tr, 'USPS', 'Ground', '{}', ts, '[]', printed ? ts : null, printed ? 'Mgr' : null, printed ? 2 : 0);
+  qi('A-1', 'TRK1', true); qi('A-2', 'TRK2', false); qi('A-5', 'TRK5', true);
+  const d = await get('/veeqo/autolabel/day?date=' + day);
+  const L = n => (d.labels || []).find(x => x.order === n) || {};
+  check('…the day list: A-1 printed (who, ×2), A-2 ⏳ not printed, A-3 in A-2\'s merged box', d.ok && L('A-1').printedAt && L('A-1').printedBy === 'Mgr' && L('A-1').printCount === 2 && !L('A-2').printedAt && L('A-2').queued && L('A-3').kind === 'merged', d.labels);
+  const N = n => (d.notBought || []).find(x => x.order === n) || {};
+  check('…"could not be bought" lists A-4 (why) and 999-NOPE-1; A-5 failed once then bought → "bought later"', /Not allocated/.test(N('A-4').why) && !N('A-4').boughtLater && N('999-NOPE-1').order && N('A-5').boughtLater === true, d.notBought);
+  check('…totals: 3 bought (+1 in a merged box), 2 printed, 1 not printed, 2 not bought', d.counts.bought === 3 && d.counts.merged === 1 && d.counts.printed === 2 && d.counts.notPrinted === 1 && d.counts.notBought === 2, d.counts);
+  const ph = readFileSync(fileURLToPath(new URL('../packship.html', import.meta.url)), 'utf8');
+  check('…📜 Labels by day card on the Auto Label tab: ◀ day ▶, 🖨 Print / Reprint per label, ⬇ CSV', /id="ps-al-day" onchange="psAlLoadDay\(\)"/.test(ph) && /onclick="psAlDayCsv\(\)">⬇ CSV<\/button>/.test(ph) && /❌ Could not be bought \(nothing printed for these\)/.test(ph), null);
+  sq.prepare("DELETE FROM autolabel_log WHERE order_number IN ('A-1','A-2','A-3','A-4','A-5','999-NOPE-1')").run(); sq.prepare("DELETE FROM label_print_queue WHERE order_number IN ('A-1','A-2','A-5')").run();
+}
+
 console.log('\n' + (failed ? '❌ ' + failed + ' check(s) FAILED' : '✅ all ' + passed + ' checks passed') + '\n');
 process.exit(failed ? 1 : 0);
