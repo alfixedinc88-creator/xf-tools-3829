@@ -52,8 +52,17 @@ Working settings (confirmed by the owner 2026-10-05):
 ## Farset R20H (Android, built-in scanner, "Scanner Settings" / "Scan Tool")
 
 Settings are in its **Scanner Settings** app (the Scan Tool app's SCAN SETTING
-opens the same). Working: Enable Scanner ON, End Char Setting **ENTER**,
-Send Mode **FOCUS + BROADCAST**, Prefix / Suffix empty. Barcode types:
+opens the same). **Working (confirmed by the owner 2026-10-06):** Enable
+Scanner ON, **Send Mode = EMUKEY**, End Char Setting **ENTER**, Prefix /
+Suffix empty.
+
+### Problem: scans don't show up in our app at all (Scan Tool shows them fine)
+- Cause: Send Mode was **FOCUS + BROADCAST**. FOCUS goes through the phone
+  keyboard and doesn't work with Chrome (Scanner test: only F10 + Enter, no
+  numbers; with a box selected nothing at all), and it forces the phone
+  keyboard open. BROADCAST only reaches apps, not websites.
+- Fix: Scanner Settings → OUTPUT SETTING → **Send Mode Setting → EMUKEY**
+  (emulates key presses). Then the app catches the scan with no box selected. Barcode types:
 Bar Setting → Enable/Disable (all the common ones are on from the factory).
 
 ### Problem: part # labels scan, outside box UPC "doesn't work"
