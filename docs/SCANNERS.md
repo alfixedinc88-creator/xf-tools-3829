@@ -119,3 +119,11 @@ Shows every key / text the scanner sends, with "cursor: nothing" / "box".
   Never "any": on Android the installed app then follows the sensor and
   ignores auto-rotate OFF (2026-10-06). After a change, reinstall the app icon
   (or wait for Chrome to update it, up to a day).
+
+## Svantto MC002
+- Beep + light but nothing in our app; 🔍 Scanner test (2026-10-06): the scan
+  button sends key "Unidentified", **code F21**, keyCode 0, and no numbers →
+  its output mode isn't keyboard yet (same as the R20H on FOCUS).
+- App: code F13–F24 counts as the scan button (cursor goes to the scan box).
+- Device: its scanner settings app → output mode = keyboard / key emulation,
+  end char = ENTER. (Fill in the exact names once confirmed.)
