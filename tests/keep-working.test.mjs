@@ -3154,7 +3154,7 @@ console.log('\n🧾 Reorder planner: FBA rows carry every other pack / channel; 
   check('FBA row 88-1-1=10X counts every sale of the part: 300 (Amazon) + 60 (eBay, same SKU) + 100 (non-FBA =5) = 460 pcs ✅; need 920 − 150 = 770 pcs = 77 → 80 units (8 cases)', ok1,
     { soldPcs: a.soldPcs, stockPcs: a.stockPcs, fbaPcs: a.fbaPcs, needUnits: a.needUnits, caseQty: a.caseQty, orderUnits: a.orderUnits });
   check('…no separate row for the non-FBA pack =5 (its sales are on the FBA row, not counted twice)', !(d1.rows || []).some(r => r.sku === '88-1-1=5'), (d1.rows || []).filter(r => /^88-1-1/.test(r.sku)).map(r => r.sku));
-  check('…a part # with NO FBA listing (88-2-2) keeps its own row (the page warns it is hidden by "FBA listings only")', b.sku === '88-2-2=1' && b.fbaSku === false, b);
+  check('…a part # with NO FBA listing (88-2-2) keeps its own row (ordered too)', b.sku === '88-2-2=1' && b.fbaSku === false, b);
   check('…sold by JQ (#1) and EFF (#2) → JQ, with JQ\'s newest price per piece ($0.12, 2026-09-30); 88-2-2 priced from its last order ($0.50); no vendor names in the text (non-owner)', a.vendor === '#1' && a.price === 0.12 && a.priceSrc === 'vendor sheet' && /2026-09-30/.test(a.priceAt)
     && b.price === 0.5 && b.priceSrc === 'last order' && !/JQ|EFF|PO test/.test(a.priceSrc + b.priceSrc), { a: [a.vendor, a.price, a.priceSrc, a.priceAt], b: [b.price, b.priceSrc] });
   check('…CSV line total = pieces × price per piece: 80 units × 10 pcs × $0.12 = $96.00', Math.round(a.orderUnits * a.packSize * a.price * 100) / 100 === 96, a.orderUnits * a.packSize * a.price);
@@ -3171,9 +3171,17 @@ console.log('\n🧾 Reorder planner: FBA rows carry every other pack / channel; 
   const hist = sq.prepare("SELECT * FROM reorder_history WHERE part = '88-1-1=10X' ORDER BY id DESC").all();
   check('…the change is in 🕘 History (vendor + outside UPC, who)', hist.length >= 1 && /vendor/.test(hist[0].detail) && /outside UPC/.test(hist[0].detail), hist[0]);
   const rh = readFileSync(fileURLToPath(new URL('../reorder.html', import.meta.url)), 'utf8');
-  check('page: CSV has Pieces · Price per Piece · Line Total · Price From · Price Date + a TOTAL line; always FBA listings only (owner: "take out the options") + warns about parts with no FBA listing; 🏷 tool',
-    /'Pieces', 'Price per Piece', 'Line Total', 'Price From', 'Price Date'/.test(rh) && /lines\.push\(\[cell\('TOTAL'\)/.test(rh) && /<input type="hidden" id="rvo-fbaf" value="fba">/.test(rh) && !/<option value="nofba">/.test(rh)
-      && /no FBA listing at all and need ordering — hidden now, so they will NOT be ordered/.test(rh) && /onclick="rvoPartOpen\(\)"/.test(rh) && /'\/inventory\/upc-link'/.test(rh), null);
+  // Owner (2026-10-07): "if anything with no FBA listing, we still need to order … don't have to separate to FBA listing" — no options, nothing hidden.
+  check('page: CSV has Pieces · Price per Piece · Line Total · Price From · Price Date + a TOTAL line; no Listings options; part #s with NO FBA listing are ordered too (never hidden); 🏷 tool',
+    /'Pieces', 'Price per Piece', 'Line Total', 'Price From', 'Price Date'/.test(rh) && /lines\.push\(\[cell\('TOTAL'\)/.test(rh) && /<input type="hidden" id="rvo-fbaf" value="all">/.test(rh) && !/<option value="nofba">/.test(rh)
+      && !/hidden now, so they will NOT be ordered/.test(rh) && /Every part # that needs ordering is ordered — once/.test(rh) && /onclick="rvoPartOpen\(\)"/.test(rh) && /'\/inventory\/upc-link'/.test(rh), null);
+  const vis = (rh.match(/function rvoVisible\(\) \{[\s\S]*?\n\}/) || [''])[0];
+  const docStub = { getElementById: id => ({ 'rvo-vendor': { value: '' }, 'rvo-q': { value: '' }, 'rvo-fbaf': { value: (rh.match(/id="rvo-fbaf" value="(\w*)"/) || [])[1] }, 'rvo-all': { checked: false } }[id] || { checked: false, value: '' }) };
+  const RVOt = { rows: [a, b], edits: {} };
+  const shown = new Function('document', 'RVO', 'rvoTitlesOf', 'rvoWeird', vis + '; return rvoVisible();')(docStub, RVOt, () => [], () => false).map(r => r.sku);
+  const bases = {}; (d1.rows || []).forEach(r => { const k = r.baseSku || r.sku.split('=')[0]; (bases[k] = bases[k] || new Set()).add(!!r.fbaSku); });
+  check('…the order shows BOTH the FBA row 88-1-1=10X (80) and the no-FBA part 88-2-2=1 (' + b.orderUnits + '); each part # is on one kind of row only (never FBA + non-FBA rows for the same part → nothing ordered twice)',
+    shown.includes('88-1-1=10X') && shown.includes('88-2-2=1') && b.orderUnits > 0 && Object.values(bases).every(st => st.size === 1), { shown, b: b.orderUnits, bases: Object.fromEntries(Object.entries(bases).map(([k, v]) => [k, [...v]])) });
   for (const t of ['fba_catalog', 'amazon_sales_weekly', 'ebay_sales_weekly']) sq.prepare(`DELETE FROM ${t} WHERE sku LIKE '88-%'`).run();
   sq.prepare("DELETE FROM master_list WHERE part_num LIKE '88-%'").run(); sq.prepare("DELETE FROM reorder_vendor_catalog WHERE part LIKE '88-%'").run();
   sq.prepare("DELETE FROM reorder_incoming WHERE part LIKE '88-%'").run(); sq.prepare("DELETE FROM reorder_fix WHERE part LIKE '88-%'").run();
