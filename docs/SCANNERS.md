@@ -112,3 +112,10 @@ Shows every key / text the scanner sends, with "cursor: nothing" / "box".
 - No address bar: open the app in Chrome → ⋮ → **Install app** (or Add to
   home screen → Install). The installed app opens without the address bar
   (manifest.json, display standalone). A plain Chrome shortcut keeps the bar.
+
+## Svantto MC002 / any phone: screen keeps rotating in our app
+- Phone: quick settings → Auto-rotate OFF (or Settings → Display → Auto-rotate).
+- Our installed app: manifest.json `"orientation": "portrait"` keeps it upright.
+  Never "any": on Android the installed app then follows the sensor and
+  ignores auto-rotate OFF (2026-10-06). After a change, reinstall the app icon
+  (or wait for Chrome to update it, up to a day).
