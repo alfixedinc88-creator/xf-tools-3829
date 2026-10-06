@@ -122,6 +122,8 @@ exceptions, no matter what else the change does.
 ## Other standing rules
 - Scanner "stopped working" (N77, Zebra DS2278, Farset R20H, Svantto MC002)? Read `docs/SCANNERS.md`
   first: the known causes and the exact working settings are there.
+- Auto Label labels "not printing" / setting up the printer computer? Read
+  `docs/PRINTER-STATION.md` (setup steps and checks in order).
 - Never commit secrets (API keys, tokens, passwords).
 - Every data request must stay behind a real sign-in (server-checked
   `X-Cred-Token`). Nobody should be able to browse the site or its data
