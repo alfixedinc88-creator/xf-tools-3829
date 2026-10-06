@@ -3120,5 +3120,59 @@ console.log('\n🏷 Shipping labels: each label says where it came from (🤖 Au
   sq.prepare('DELETE FROM label_print_queue').run(); sq.prepare("DELETE FROM autolabel_log WHERE order_number IN ('O-AUTO','O-HAND','O-MRG')").run();
 }
 
+// Owner (Reorder Planner): "1) FBA listing only — what we sold on non-FBA listings still counts? 2) the vendor CSV needs the
+// newest price of each item and the order total 3) search a part # and add its barcode (outside box + inside bag on one part #)
+// 4) set the vendor so the item only shows up under that vendor".
+console.log('\n🧾 Reorder planner: FBA rows carry every other pack / channel; newest price + order total; vendor lock; 🏷 any part #');
+{
+  const { readFileSync } = await import('node:fs');
+  sq.exec(`CREATE TABLE IF NOT EXISTS fba_catalog (sku TEXT PRIMARY KEY, asin TEXT, fnsku TEXT, product_name TEXT, available INTEGER, updated_at TEXT);
+    CREATE TABLE IF NOT EXISTS amazon_sales_weekly (sku TEXT NOT NULL, period_start TEXT NOT NULL, period_end TEXT, units_ordered REAL, ordered_product_sales REAL, asin TEXT, fetched_at TEXT, PRIMARY KEY (sku, period_start));
+    CREATE TABLE IF NOT EXISTS ebay_sales_weekly (sku TEXT NOT NULL, period_start TEXT NOT NULL, period_end TEXT, units_ordered REAL, sales_amount REAL, fetched_at TEXT, PRIMARY KEY (sku, period_start));`);
+  const wk = new Date(Date.now() - 14 * 86400000).toISOString().slice(0, 10);
+  // Part 88-1-1: FBA listing =10X (Amazon 30 + eBay 6), non-FBA pack =5 (eBay 20). Shelf: 1 case of 100 pcs of =10X. FBA: 5 units at Amazon.
+  sq.prepare("INSERT INTO fba_catalog (sku, asin, product_name, available) VALUES ('88-1-1=10X','B0TEST881',' test tee',5)").run();
+  sq.prepare("INSERT INTO amazon_sales_weekly (sku, period_start, units_ordered, asin) VALUES ('88-1-1=10X',?,30,'B0TEST881')").run(wk);
+  sq.prepare("INSERT INTO ebay_sales_weekly (sku, period_start, units_ordered) VALUES ('88-1-1=10X',?,6), ('88-1-1=5',?,20)").run(wk, wk);
+  sq.prepare("INSERT INTO master_list (base_sku, name, part_num, location, cases, units_per_case, vendor) VALUES ('88-1-1','test tee','88-1-1=10X','C1=1-1-1',1,100,'EFF')").run();
+  // Part 88-2-2: no FBA listing, sold on eBay only; priced only on an order (on the way).
+  sq.prepare("INSERT INTO ebay_sales_weekly (sku, period_start, units_ordered) VALUES ('88-2-2=1',?,9)").run(wk);
+  await call('/reorder/fix/history', { headers: H }); // reorder tables
+  sq.prepare("INSERT INTO reorder_vendor_catalog (vendor, part, outside_upc, inside_upc, price, price_at, updated_at) VALUES ('JQ','88-1-1=10X','840000000011','840000000012',0.12,'2026-09-30',?), ('EFF','88-1-1=10X','','',0.10,'2026-08-01',?)").run(wk, wk);
+  sq.prepare("INSERT INTO reorder_incoming (title, part, qty, vendor, updated_at, price) VALUES ('PO test 88','88-2-2=1',0,'JQ','2026-10-01',0.5)").run();
+  const row = (d, k) => ((d.rows || []).find(r => r.sku === k) || {});
+  const d1 = await get('/reorder/vendor-order?days=90&lead=3&cover=3');
+  const a = row(d1, '88-1-1=10X'), b = row(d1, '88-2-2=1');
+  // Expected (pieces): sold 30×10 (Amazon FBA) + 6×10 (eBay, same SKU) + 20×5 (=5, not FBA) = 460 pcs → all on the FBA row.
+  // Need 460 / 3 months × 6 months = 920 − stock (100 shelf + 50 at FBA) = 770 pcs → 77 units → 8 cases of 10 = 80 units.
+  const ok1 = a.soldPcs === 460 && a.stockPcs === 100 && a.fbaPcs === 50 && a.needUnits === 77 && a.caseQty === 10 && a.orderUnits === 80;
+  check('FBA row 88-1-1=10X counts every sale of the part: 300 (Amazon) + 60 (eBay, same SKU) + 100 (non-FBA =5) = 460 pcs ✅; need 920 − 150 = 770 pcs = 77 → 80 units (8 cases)', ok1,
+    { soldPcs: a.soldPcs, stockPcs: a.stockPcs, fbaPcs: a.fbaPcs, needUnits: a.needUnits, caseQty: a.caseQty, orderUnits: a.orderUnits });
+  check('…no separate row for the non-FBA pack =5 (its sales are on the FBA row, not counted twice)', !(d1.rows || []).some(r => r.sku === '88-1-1=5'), (d1.rows || []).filter(r => /^88-1-1/.test(r.sku)).map(r => r.sku));
+  check('…a part # with NO FBA listing (88-2-2) keeps its own row (the page warns it is hidden by "FBA listings only")', b.sku === '88-2-2=1' && b.fbaSku === false, b);
+  check('…sold by JQ (#1) and EFF (#2) → JQ, with JQ\'s newest price per piece ($0.12, 2026-09-30); 88-2-2 priced from its last order ($0.50); no vendor names in the text (non-owner)', a.vendor === '#1' && a.price === 0.12 && a.priceSrc === 'vendor sheet' && /2026-09-30/.test(a.priceAt)
+    && b.price === 0.5 && b.priceSrc === 'last order' && !/JQ|EFF|PO test/.test(a.priceSrc + b.priceSrc), { a: [a.vendor, a.price, a.priceSrc, a.priceAt], b: [b.price, b.priceSrc] });
+  check('…CSV line total = pieces × price per piece: 80 units × 10 pcs × $0.12 = $96.00', Math.round(a.orderUnits * a.packSize * a.price * 100) / 100 === 96, a.orderUnits * a.packSize * a.price);
+  // 🏷 any part # + vendor lock
+  const info = await get('/reorder/fix/part-info?part=88-1-1=10x');
+  check('🏷 any part # (typed in lower case): its UPCs from every place, its vendor sheets with price, the other pack sizes of 88-1-1', info.ok && info.part === '88-1-1=10X' && info.now.outside_upc === '840000000011' && info.now.inside_upc === '840000000012'
+    && info.catalog.length === 2 && info.siblings.length === 0 && info.vendors.includes('#1') && info.vendors.includes('#2'), info);
+  const sv = await post('/reorder/fix/batch', { items: [{ part: '88-1-1=10X', fields: { vendor: '#2', outside_upc: '840000000099' } }] });
+  const d2 = await get('/reorder/vendor-order?days=90&lead=3&cover=3&picks=' + encodeURIComponent(JSON.stringify({ '88-1-1=10X': '#1' })));
+  const a2 = row(d2, '88-1-1=10X');
+  check('vendor set with 🏷 (#2 = EFF, saved as EFF) → the item shows ONLY under EFF (no other vendor to pick, a "this order" pick of JQ is ignored), with EFF\'s price and the new outside UPC',
+    sv.ok && a2.vendor === '#2' && JSON.stringify(a2.vendors) === '["#2"]' && sq.prepare("SELECT vendor FROM reorder_fix WHERE part = '88-1-1=10X'").get().vendor === 'EFF' && a2.price === 0.1 && a2.outsideUpc === '840000000099', { vendor: a2.vendor, vendors: a2.vendors, price: a2.price, out: a2.outsideUpc });
+  check('…quantities don\'t change with the vendor: still 460 pcs sold → 80 units', a2.soldPcs === 460 && a2.orderUnits === 80, [a2.soldPcs, a2.orderUnits]);
+  const hist = sq.prepare("SELECT * FROM reorder_history WHERE part = '88-1-1=10X' ORDER BY id DESC").all();
+  check('…the change is in 🕘 History (vendor + outside UPC, who)', hist.length >= 1 && /vendor/.test(hist[0].detail) && /outside UPC/.test(hist[0].detail), hist[0]);
+  const rh = readFileSync(fileURLToPath(new URL('../reorder.html', import.meta.url)), 'utf8');
+  check('page: CSV has Pieces · Price per Piece · Line Total · Price From · Price Date + a TOTAL line; "FBA listings only" remembered + warns about parts with no FBA listing; 🏷 tool',
+    /'Pieces', 'Price per Piece', 'Line Total', 'Price From', 'Price Date'/.test(rh) && /lines\.push\(\[cell\('TOTAL'\)/.test(rh) && /localStorage\.setItem\('rvo_fbaf',this\.value\)/.test(rh)
+      && /no FBA listing at all and need ordering — hidden now, so they will NOT be ordered/.test(rh) && /onclick="rvoPartOpen\(\)"/.test(rh) && /'\/inventory\/upc-link'/.test(rh), null);
+  for (const t of ['fba_catalog', 'amazon_sales_weekly', 'ebay_sales_weekly']) sq.prepare(`DELETE FROM ${t} WHERE sku LIKE '88-%'`).run();
+  sq.prepare("DELETE FROM master_list WHERE part_num LIKE '88-%'").run(); sq.prepare("DELETE FROM reorder_vendor_catalog WHERE part LIKE '88-%'").run();
+  sq.prepare("DELETE FROM reorder_incoming WHERE part LIKE '88-%'").run(); sq.prepare("DELETE FROM reorder_fix WHERE part LIKE '88-%'").run();
+}
+
 console.log('\n' + (failed ? '❌ ' + failed + ' check(s) FAILED' : '✅ all ' + passed + ' checks passed') + '\n');
 process.exit(failed ? 1 : 0);
