@@ -1972,6 +1972,24 @@ body {
         <div id="ps-al-sf-list" style="font-size:12px;overflow-x:auto"></div>
       </div>
 
+      <!-- 📮 eBay tracking our system adds -->
+      <div class="ps-card" style="margin-bottom:16px">
+        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px;gap:8px;flex-wrap:wrap">
+          <div style="font-size:13px;font-weight:700;color:var(--text)">📮 eBay tracking (added by us when eBay doesn't get it)</div>
+          <button class="ps-btn-sm" onclick="psAlLoadEbayTrack()">↻ Refresh</button>
+        </div>
+        <div style="font-size:12px;color:var(--text3);margin-bottom:10px;line-height:1.5">
+          Some eBay orders never get their tracking number (mostly merged ones). Every 30 minutes: an eBay order still not marked shipped whose label we bought or merged
+          more than <b id="ps-al-et-wait">2 hours</b> ago gets that tracking number added on eBay by our system. Never for a cancelled label or order. Every one is kept below.
+        </div>
+        <div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap;margin-bottom:8px">
+          <label style="display:flex;align-items:center;gap:6px;font-size:13px;color:var(--text2);cursor:pointer"><input type="checkbox" id="ps-al-et-on" onchange="psAlEbayTrackOn(this.checked)"> On</label>
+          <button class="ps-btn-primary" style="width:auto;padding:8px 18px" onclick="psAlEbayTrackRun(this)">📮 Check eBay now</button>
+        </div>
+        <div id="ps-al-et-status" style="font-size:12px;margin-bottom:8px;line-height:1.6;white-space:pre-wrap"></div>
+        <div id="ps-al-et-list" style="font-size:12px;overflow-x:auto"></div>
+      </div>
+
       <!-- 💸 Low value list -->
       <div class="ps-card" style="margin-bottom:16px">
         <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px;gap:8px;flex-wrap:wrap">
@@ -8611,6 +8629,7 @@ function psAlOnUnlock() {
   psAlLoadReweigh();
   psAlLoadBoxes();
   psAlLoadScanForms();
+  if (typeof psAlLoadEbayTrack === 'function') psAlLoadEbayTrack();
   psAlLoadLowValue();
   psAlLoadCosts();
   psAlLoadSlips();
@@ -9129,6 +9148,35 @@ window._psAlCopy = function(text, btn) {
   var ok = function() { if (btn) { var t = btn.textContent; btn.textContent = '✓ Copied'; setTimeout(function() { btn.textContent = t; }, 1500); } };
   var old = function() { var ta = document.createElement('textarea'); ta.value = text; ta.style.cssText = 'position:fixed;left:-9999px'; document.body.appendChild(ta); ta.select(); try { document.execCommand('copy'); ok(); } catch (e) { alert(text); } ta.remove(); };
   if (navigator.clipboard && navigator.clipboard.writeText) navigator.clipboard.writeText(text).then(ok, old); else old();
+};
+// 📮 eBay tracking our system adds (owner: "merged eBay orders don't get the tracking — wait 1–2 h, then add it").
+window.psAlLoadEbayTrack = async function() {
+  var st = document.getElementById('ps-al-et-status'), box = document.getElementById('ps-al-et-list'); if (!st || !box) return;
+  var d = await _psAlFetch('/veeqo/autolabel/ebay-tracking'); if (d.ok === false) { st.textContent = '✗ ' + (d.error || 'Failed'); return; }
+  var e = _psAlEsc, c = d.config || {}, L = d.last;
+  var on = document.getElementById('ps-al-et-on'); if (on) on.checked = !!c.on;
+  var w = document.getElementById('ps-al-et-wait'); if (w) w.textContent = (c.waitMinutes >= 60 && c.waitMinutes % 60 === 0) ? (c.waitMinutes / 60) + ' hour' + (c.waitMinutes === 60 ? '' : 's') : c.waitMinutes + ' min';
+  st.textContent = L ? 'Last check ' + new Date(L.at).toLocaleString() + ': ' + L.checked + ' eBay orders not shipped · ✅ ' + L.added + ' added · ❌ ' + L.failed + ' failed · ⏳ ' + L.waiting + ' waiting · ' + L.notOurs + ' not ours / no label yet' : 'Not checked yet.';
+  box.innerHTML = (d.rows || []).length ? '<table style="width:100%;border-collapse:collapse">' + d.rows.map(function(r) {
+    var td = '<td style="padding:4px 6px;border-bottom:1px solid var(--border)';
+    return '<tr>' + td + ';white-space:nowrap">' + e(new Date(r.ts).toLocaleString()) + '</td>' + td + ';font-family:var(--mono)">' + e(r.ebay_order_id) + '</td>'
+      + td + '">' + e(r.carrier) + ' <span style="font-family:var(--mono)">' + e(r.tracking) + '</span> · ' + e(r.source) + '</td>'
+      + td + ';color:' + (r.ok ? 'var(--green)' : 'var(--red)') + '">' + (r.ok ? '✅ added' : '❌ ' + e(r.detail) + ' <button class="ps-btn-sm" data-t="' + e(r.ebay_order_id + ' ' + r.tracking + ' — ' + r.detail) + '" onclick="_psAlCopy(this.getAttribute(\'data-t\'), this)">📋 Copy</button>') + (r.by_user && r.by_user !== 'auto' ? ' · ' + e(r.by_user) : '') + '</td></tr>';
+  }).join('') + '</table>' : '<div style="color:var(--text3)">Nothing added yet.</div>';
+};
+window.psAlEbayTrackOn = async function(on) {
+  var d = await _psAlFetch('/veeqo/autolabel/ebay-tracking-config', { method: 'POST', body: { config: { on: !!on } } });
+  _psToast(d.ok === false ? (d.error || 'Not saved') : on ? '📮 eBay tracking check on' : 'eBay tracking check off', d.ok === false ? 'err' : undefined);
+  psAlLoadEbayTrack();
+};
+window.psAlEbayTrackRun = async function(btn) {
+  btn.disabled = true; var t = btn.textContent; btn.textContent = '⏳ Checking eBay…';
+  try {
+    var d = await _psAlFetch('/veeqo/autolabel/ebay-tracking-run', { method: 'POST', body: {} });
+    var st = document.getElementById('ps-al-et-status');
+    if (d.ok === false) { if (st) st.textContent = '✗ ' + (d.error || 'failed'); return; }
+    _psToast('📮 ' + d.added.length + ' tracking added on eBay' + (d.failed.length ? ' · ' + d.failed.length + ' failed' : ''));
+  } finally { btn.disabled = false; btn.textContent = t; psAlLoadEbayTrack(); }
 };
 window.psAlScanFormMake = async function(btn) {
   if (!confirm('Make the USPS scan form now?\n\nIt holds every USPS label made today that is not on a scan form yet — give it to the driver with those packages.')) return;
