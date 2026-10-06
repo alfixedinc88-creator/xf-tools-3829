@@ -2800,6 +2800,11 @@ console.log('\nScanner sends a UPC without its first digit → the full UPC is p
   check('…a scan with no box selected goes to the last scan box (never a sign-in box, not behind a pop-up, not taken twice); slow typing is not a scan',
     /if \(!e\.isTrusted \|\| e\.defaultPrevented/.test(xa) && /if \(now - sAt > 120\) sBuf = '';/.test(xa) && /function scanOk\(el\)[^\n]*input\[autocomplete="username"\], input\[type="password"\]/.test(xa)
       && /if \(popupOver\(el\)\)/.test(xa) && /var c = sBuf; sBuf = ''; if \(c\.length >= 3\) \{ e\.preventDefault\(\); deliver\(c\); \}/.test(xa), null);
+  // Owner's 🔍 Scanner test photo (R20H, outside box): the trigger sends F10 (keyCode 121), then only an Enter — the number goes
+  // only into a box that has the cursor, and F10 opened Chrome's menu. The trigger must put the cursor in the scan box first.
+  check('R20H scan trigger (F10 / keyCode 121): Chrome menu blocked, cursor put in the scan box (keyboard stays off) when no box has it',
+    /if \(!e\.isTrusted \|\| !\(e\.keyCode === 121 \|\| \/\^F\(9\|1\[0-2\]\)\$\/\.test\(e\.key \|\| ''\)\)\) return;\s*e\.preventDefault\(\);/.test(xa)
+      && /var el = scanBox\(\); if \(el && !popupOver\(el\)\) el\.focus\(\{ preventScroll: true \}\);/.test(xa), null);
   check('…⌨️ → 🔍 Test the scanner shows every key / text a scanner sends (starts with nothing selected)', /B\('🔍 Test the scanner', scanTest\);/.test(xa) && /keydown key=' \+ q\(e\.key\)/.test(xa) && /start with nothing selected/.test(xa), null);
   const sc = readFileSync(fileURLToPath(new URL('../docs/SCANNERS.md', import.meta.url)), 'utf8');
   check('docs/SCANNERS.md keeps the N77, Zebra DS2278 and Farset R20H fixes', /N77/.test(sc) && /DS2278/.test(sc) && /R20H/.test(sc), null);
