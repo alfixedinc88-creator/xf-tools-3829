@@ -1831,6 +1831,9 @@ body {
         <div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(210px,1fr));gap:10px 14px;font-size:12px;color:var(--text2)" id="ps-al-rules">
           <label>Wait after newest order (min)<input class="ps-field-input" data-k="waitMinutes" type="number" min="0" step="1"></label>
           <label>No wait at these times (New York)<input class="ps-field-input" data-k="noWaitTimes" type="text" placeholder="Mon-Fri 15:50-17:00; Sat 13:00-14:15"></label>
+          <label>📄 USPS scan form by itself<select class="ps-field-input" data-k="scanFormOn"><option value="true">Yes</option><option value="false">No — by hand only</option></select></label>
+          <label>…at (New York)<input class="ps-field-input" data-k="scanFormTimes" type="text" placeholder="Mon-Fri 16:30; Sat 13:45"></label>
+          <label>…night check at (before 9 pm)<input class="ps-field-input" data-k="scanFormCheckAt" type="text" placeholder="20:30"></label>
           <label>UPS must be cheaper by ($)<input class="ps-field-input" data-k="upsMinSavings" type="number" min="0" step="0.05"></label>
           <label>…and arrive within (days)<input class="ps-field-input" data-k="upsMaxDays" type="number" min="1" step="1"></label>
           <label>USPS-only channels (comma list)<input class="ps-field-input" data-k="uspsOnlyChannels" type="text"></label>
@@ -1946,6 +1949,24 @@ body {
         <details><summary style="font-size:12px;cursor:pointer;color:var(--text2)">Show every label</summary>
           <div id="ps-al-cost-rows" style="overflow-x:auto;font-size:12px;margin-top:8px"></div>
         </details>
+      </div>
+
+      <!-- 📄 USPS scan forms -->
+      <div class="ps-card" style="margin-bottom:16px">
+        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px;gap:8px;flex-wrap:wrap">
+          <div style="font-size:13px;font-weight:700;color:var(--text)">📄 USPS scan form (end of day)</div>
+          <button class="ps-btn-sm" onclick="psAlLoadScanForms()">↻ Refresh</button>
+        </div>
+        <div style="font-size:12px;color:var(--text3);margin-bottom:10px;line-height:1.5">
+          One sheet with one barcode for all of today's USPS packages — the driver scans it once. USPS takes it only for labels made <b>the same day, before 9 pm</b>, never on Sunday.
+          Made by itself at the set times, plus a <b>night check</b> that makes one more if any USPS label came after the last one. It prints on the computer with <b>📄 Scan form station</b> on (a regular letter printer).
+        </div>
+        <div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap;margin-bottom:10px">
+          <button class="ps-btn-primary" style="width:auto;padding:8px 18px" onclick="psAlScanFormMake(this)">📄 Make scan form now</button>
+          <label style="display:flex;align-items:center;gap:6px;font-size:13px;color:var(--text2);cursor:pointer"><input type="checkbox" id="ps-al-sf-station" onchange="psAlScanFormStation(this.checked)"> 📄 Scan form station (this computer)</label>
+        </div>
+        <div id="ps-al-sf-status" style="font-size:12px;margin-bottom:8px;line-height:1.6"></div>
+        <div id="ps-al-sf-list" style="font-size:12px;overflow-x:auto"></div>
       </div>
 
       <!-- 💸 Low value list -->
@@ -8572,6 +8593,7 @@ function psAlOnUnlock() {
   psAlLoadLabels();
   psAlLoadReweigh();
   psAlLoadBoxes();
+  psAlLoadScanForms();
   psAlLoadLowValue();
   psAlLoadCosts();
   psAlLoadSlips();
@@ -8613,7 +8635,8 @@ function _psAlRenderConfig(d) {
     + '• <b>Packing slip (with product photos)</b> right after its label when: <b>5+ items</b>, no room on the label, or the label is <b>UPS</b><br>'
     + '• <b>Same name + address:</b> ' + (c.autoMerge ? 'together up to <b>' + c.mergeMaxLb + ' lb</b> → <b>one box, one label</b> (the other orders get the same tracking #); heavier → <b>put aside</b> (🔗 Merge by hand)' : '<b>put aside</b> (🔗 Merge by hand) — one box is off') + '<br>'
     + '• Waits <b>' + c.waitMinutes + ' min</b> after the newest order' + (c.noWaitTimes ? ' — <b>except ' + _psAlEsc(c.noWaitTimes) + '</b> (New York time): prints as soon as an order comes in' : '') + '<br>'
-    + '• Never buys for a cancelled order'
+    + '• Never buys for a cancelled order<br>'
+    + '• <b>📄 USPS scan form:</b> ' + (c.scanFormOn ? 'made by itself <b>' + _psAlEsc(c.scanFormTimes || '—') + '</b>, night check <b>' + _psAlEsc(c.scanFormCheckAt) + '</b> (one more if a USPS label came after the last form; USPS cut-off 9 pm, no Sunday)' : 'by hand only (📄 Make scan form now)')
     + (c.maxBoxLb ? ' · boxes over <b>' + c.maxBoxLb + ' lb</b> → weigh / print by hand' : '')
     + (c.lowValueRatio ? ' · hold if the label is <b>' + Math.round(c.lowValueRatio * 100) + '%</b>+ of the order' + (c.lowValueMaxOrder ? ' (orders up to $' + c.lowValueMaxOrder + ')' : '') : '');
   var lines = [];
@@ -9044,6 +9067,73 @@ window.psAlFind = function(v, now) {
         + '</div>';
     }).join('') : '<div style="color:var(--text3)">Nothing found for "' + e(q) + '" — only labels bought through Auto Label are here.</div>';
   }, now ? 0 : 400);
+};
+// 📄 USPS scan form (owner: "auto print the Veeqo scan form Mon–Fri 4:30 pm,
+// Sat 1:45 pm, and check every night it was printed before the cut-off").
+var _psAlSfTimer = null, _psAlSfBusy = false;
+window.psAlLoadScanForms = async function() {
+  var st = document.getElementById('ps-al-sf-status'), box = document.getElementById('ps-al-sf-list'); if (!st || !box) return;
+  var cb = document.getElementById('ps-al-sf-station'), saved = false; try { saved = localStorage.getItem('xf_sf_station') === '1'; } catch (e) {}
+  if (cb && saved && !cb.checked) { cb.checked = true; psAlScanFormStation(true, true); }
+  var d = await _psAlFetch('/veeqo/autolabel/scanforms'); if (d.ok === false) { st.textContent = '✗ ' + (d.error || 'Failed'); return; }
+  var e = _psAlEsc, today = (d.forms || []).filter(function(f) { return f.day === (d.forms[0] || {}).day; });
+  var miss = (d.missing && d.missing.labels) || [];
+  st.innerHTML = (d.on ? '⏰ By itself: <b>' + e(d.times || '—') + '</b> · night check <b>' + e(d.checkAt) + '</b>' : '⏰ By hand only (turn it on in Rules)')
+    + (d.verified ? '' : '<br><span style="color:var(--orange);font-weight:700">🔒 Not by itself yet — tap 📄 Make scan form now once; when that works, it is made by itself at the set times.</span>')
+    + '<br>' + (miss.length ? '<span style="color:var(--orange);font-weight:700">⚠ ' + miss.length + ' USPS label' + (miss.length === 1 ? '' : 's') + ' today not on a scan form yet' + (d.missing.since ? ' (since ' + e(new Date(d.missing.since).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })) + ')' : '') + '</span>' : '<span style="color:var(--green)">✅ Every USPS label bought today (by Auto Label) is on a scan form</span>');
+  var name = { hand: 'by hand', scheduled: 'on time', night: 'night check', night_ok: '🌙 night check', night_missing: '🌙 night check', locked: 'on time (locked)' };
+  box.innerHTML = (d.forms || []).length ? '<table style="width:100%;border-collapse:collapse">' + d.forms.map(function(f) {
+    var col = f.ok ? 'var(--green)' : 'var(--red)';
+    var what = f.kind === 'night_ok' ? '✅ all on a form' : f.kind === 'night_missing' ? '⚠ ' + e(f.detail) : f.kind === 'locked' ? '🔒 ' + e(f.detail) : f.ok ? '📄 made' + (f.shipments != null ? ' · ' + e(f.shipments) + ' packages' : '') + (f.carrier ? ' · ' + e(f.carrier) : '') : '❌ not made';
+    return '<tr><td style="padding:4px 6px;border-bottom:1px solid var(--border);white-space:nowrap">' + e(f.day) + ' ' + e(new Date(f.created_at).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })) + '</td>'
+      + '<td style="padding:4px 6px;border-bottom:1px solid var(--border)">' + e(name[f.kind] || f.kind) + (f.by_user && f.by_user !== 'auto' ? ' · ' + e(f.by_user) : '') + '</td>'
+      + '<td style="padding:4px 6px;border-bottom:1px solid var(--border);color:' + col + '">' + what
+      + (!f.ok && f.kind !== 'locked' && f.kind !== 'night_missing' && f.detail ? '<details><summary>What Veeqo said</summary><pre style="white-space:pre-wrap;font-size:11px">' + e(f.detail) + '</pre></details>' : '') + '</td>'
+      + '<td style="padding:4px 6px;border-bottom:1px solid var(--border);white-space:nowrap">' + (f.ok && f.kind !== 'night_ok' ? (f.printed_at ? '🖨 printed ' + e(new Date(f.printed_at).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })) + (f.print_count > 1 ? ' ×' + f.print_count : '') + ' ' : '<b style="color:var(--orange)">not printed</b> ')
+        + '<button class="ps-btn-sm" onclick="psAlScanFormPrint(' + f.id + ', this)">' + (f.printed_at ? 'Reprint' : 'Print') + '</button>' : '') + '</td></tr>';
+  }).join('') + '</table>' : '<div style="color:var(--text3)">No scan forms yet.</div>';
+};
+window.psAlScanFormMake = async function(btn) {
+  if (!confirm('Make the USPS scan form now?\n\nIt holds every USPS label made today that is not on a scan form yet — give it to the driver with those packages.')) return;
+  btn.disabled = true; var t = btn.textContent; btn.textContent = '⏳ Asking Veeqo…';
+  try {
+    var d = await _psAlFetch('/veeqo/autolabel/scanform-make', { method: 'POST', body: {} });
+    if (d.ok === false) { alert('Not made:\n' + (d.error || 'failed') + '\n\n' + JSON.stringify(d.tried || [], null, 1).slice(0, 1500)); }
+    else { _psToast('📄 Scan form made — printing'); await psAlScanFormPrint(d.id); }
+  } finally { btn.disabled = false; btn.textContent = t; psAlLoadScanForms(); }
+};
+window.psAlScanFormPrint = async function(id, btn) {
+  if (btn) { btn.disabled = true; btn.textContent = '⏳'; }
+  try {
+    var r = await fetch(PS_WORKER + '/veeqo/autolabel/scanform-file?id=' + encodeURIComponent(id), { headers: { 'X-Cred-Token': psCredToken } });
+    var ct = (r.headers.get('content-type') || '').toLowerCase();
+    if (!r.ok || !/pdf|image\//.test(ct)) { var j = await r.json().catch(function() { return {}; }); throw new Error((j.error || 'HTTP ' + r.status) + (j.tried ? '\n' + JSON.stringify(j.tried).slice(0, 800) : '')); }
+    var url = URL.createObjectURL(await r.blob());
+    var fr = document.createElement('iframe'); fr.style.cssText = 'position:fixed;right:0;bottom:0;width:1px;height:1px;border:0';
+    fr.src = url; document.body.appendChild(fr);
+    await new Promise(function(res) { fr.onload = function() { setTimeout(function() { try { fr.contentWindow.focus(); fr.contentWindow.print(); } catch (e) { window.open(url); } res(); }, 400); }; setTimeout(res, 8000); });
+    setTimeout(function() { fr.remove(); }, 60000);
+    await _psAlFetch('/veeqo/autolabel/scanform-printed', { method: 'POST', body: { id: id, by: psInitials || '' } });
+  } catch (e) { alert('Scan form not printed:\n' + e.message); }
+  finally { if (btn) { btn.disabled = false; btn.textContent = 'Reprint'; } psAlLoadScanForms(); }
+};
+// 📄 Scan form station: on the computer with the letter printer — every minute: make it on time, print a new one.
+window.psAlScanFormStation = function(on, quiet) {
+  try { localStorage.setItem('xf_sf_station', on ? '1' : ''); } catch (e) {}
+  if (_psAlSfTimer) { clearInterval(_psAlSfTimer); _psAlSfTimer = null; }
+  if (!on) return;
+  var tick = async function() {
+    if (_psAlSfBusy) return; _psAlSfBusy = true;
+    try {
+      await _psAlFetch('/veeqo/autolabel/scanform-tick', { method: 'POST', body: {} });
+      var d = await _psAlFetch('/veeqo/autolabel/scanforms');
+      var day = d && d.forms && d.forms[0] && d.forms[0].day;
+      var todo = ((d && d.forms) || []).filter(function(f) { return f.ok && f.kind !== 'night_ok' && !f.printed_at && f.day === day; });
+      for (var i = 0; i < todo.length; i++) await psAlScanFormPrint(todo[i].id);
+    } catch (e) {} finally { _psAlSfBusy = false; }
+  };
+  tick(); _psAlSfTimer = setInterval(tick, 60000);
+  if (!quiet) _psToast('📄 Scan form station on — the USPS scan form prints here by itself at the set times');
 };
 var _psAlMergeBusy = false;
 window.psAlMergeBuy = async function(btn, list) {
@@ -9521,7 +9611,10 @@ window.psAlPrintNewSlips = async function(silent) {
 // when / how many times). A label Veeqo won't give stays on the list in red
 // with what Veeqo said, so nothing is lost.
 var _psAlLabelBusy = false, _psAlLabelRecent = [];
-window.psAlStationTick = async function() { await psAlPrintNewLabels(true); await psAlPrintNewSlips(true); };
+window.psAlStationTick = async function() {
+  _psAlFetch('/veeqo/autolabel/scanform-tick', { method: 'POST', body: {} }).catch(function() {}); // 📄 scan form on time even if the server timer is slow
+  await psAlPrintNewLabels(true); await psAlPrintNewSlips(true);
+};
 async function _psAlLabelBlob(id) {
   var r = await fetch(PS_WORKER + '/veeqo/autolabel/label-file?id=' + encodeURIComponent(id), { headers: { 'X-Cred-Token': psCredToken } });
   var ct = (r.headers.get('content-type') || '').toLowerCase();

@@ -2446,6 +2446,57 @@ console.log('\nAuto Label → purchase time on bought rows; find an order (order
     && /id="ps-al-find"[^>]*oninput="psAlFind\(this\.value\)"/.test(ph) && /🧾 Reprint slip/.test(ph), null);
 }
 
+// Owner: "auto print the Veeqo scan form for USPS Monday–Friday at 4:30 pm and Saturday at 1:45 pm, and check every night
+// that we printed the scan form before the cut-off".
+console.log('\nAuto Label → 📄 USPS scan form: Mon–Fri 4:30 pm, Sat 1:45 pm, night check before 9 pm; printed + on record');
+{
+  const realFetch = globalThis.fetch; let made = 0, refuse = false; env.TEST_CLOCK = true;
+  globalThis.fetch = async (u, o) => { u = String(u); const m = (o && o.method) || 'GET'; const J = (x, st) => new Response(JSON.stringify(x), { status: st || 200, headers: { 'Content-Type': 'application/json' } });
+    if (u.endsWith('api.veeqo.com/shipping/api/v1/scan_forms') && m === 'POST') { if (refuse) return J({ error: 'nope' }, 404);
+      if (JSON.parse(o.body).carrier !== 'usps') return J({ error: 'No shipments to manifest for this carrier' }, 422); made++; return J({ id: 550 + made, shipments: [1, 2, 3], document_url: 'https://forms.example/sf' + made + '.pdf' }); }
+    if (u.startsWith('https://forms.example/')) return new Response('%PDF-1.4 scan form', { headers: { 'Content-Type': 'application/pdf' } });
+    if (u.includes('api.veeqo.com/')) return J({ error: 'not found' }, 404);
+    return new Response('{}', { status: 401 }); };
+  env.VEEQO_API_KEY = 'k';
+  await post('/veeqo/autolabel/config', { config: { scanFormOn: true, scanFormTimes: 'Mon-Fri 16:30; Sat 13:45', scanFormCheckAt: '20:30' } });
+  const tick = at => post('/veeqo/autolabel/scanform-tick', { at });
+  const rows = () => sq.prepare('SELECT * FROM scan_form_log ORDER BY id').all();
+  // Tue Oct 6 2026, 4:31 pm New York — not unlocked yet → nothing goes to Veeqo, on record why.
+  await tick('2026-10-06T20:31:00Z'); await tick('2026-10-06T20:40:00Z');
+  check('4:30 pm on a weekday, not unlocked yet → no form, a 🔒 line says to make one by hand first (once, not every minute)',
+    made === 0 && rows().filter(r => r.slot === '2026-10-06 16:30').length === 1 && rows().find(r => r.slot === '2026-10-06 16:30').kind === 'locked', rows());
+  const h = await post('/veeqo/autolabel/scanform-make', {});
+  check('📄 Make scan form now (by hand) → Veeqo makes it (3 packages), on record, and that unlocks the times', h.ok && made === 1 && h.shipments === 3
+    && sq.prepare("SELECT value FROM app_config WHERE key = 'autolabel_scanform_verified'").get()?.value === 'yes', h);
+  await tick('2026-10-07T20:15:00Z');
+  const before = made; await tick('2026-10-07T20:31:00Z'); await tick('2026-10-07T20:50:00Z');
+  check('…Wed 4:15 pm nothing; 4:31 pm → the scan form is made by itself, once (not again at 4:50)', made === before + 1 && rows().filter(r => r.slot === '2026-10-07 16:30' && r.ok === 1 && r.kind === 'scheduled').length === 1, rows().slice(-2));
+  const b2 = made; await tick('2026-10-10T17:46:00Z'); await tick('2026-10-11T20:31:00Z');
+  check('…Saturday 1:46 pm → made; Sunday never (USPS takes no scan form on Sunday)', made === b2 + 1 && rows().some(r => r.slot === '2026-10-10 13:45' && r.ok === 1) && !rows().some(r => r.day === '2026-10-11'), rows().slice(-2));
+  // Night check, Thu Oct 8: a USPS label bought at 5:10 pm (after the 4:30 form) → one more form before 9 pm.
+  await tick('2026-10-08T20:31:00Z');
+  sq.prepare("INSERT INTO autolabel_log (ts, date, order_number, action, carrier, service, price, tracking) VALUES (?,?,?,?,?,?,?,?)").run('2026-10-08T21:10:00.000Z', '2026-10-08', 'LATE-1', 'bought', 'USPS', 'GA', 5, '9400LATE');
+  const b3 = made; await tick('2026-10-09T00:20:00Z'); await tick('2026-10-09T00:35:00Z'); await tick('2026-10-09T00:50:00Z');
+  check('🌙 night check 8:30 pm: a USPS label came after the 4:30 form → one more form made (once), before the 9 pm cut-off',
+    made === b3 + 1 && rows().filter(r => r.slot === '2026-10-08 night' && r.kind === 'night' && r.ok === 1).length === 1, rows().slice(-2));
+  await tick('2026-10-07T00:35:00Z'); // Tue Oct 6, 8:35 pm: the only labels were before the hand-made form → nothing missing
+  check('…a night with every USPS label on a form → "✅ all on a form" on record, no extra form', rows().some(r => r.slot === '2026-10-06 night' && r.kind === 'night_ok'), rows().filter(r => /night/.test(r.slot)));
+  const id = rows().find(r => r.slot === '2026-10-07 16:30').id;
+  const f = await call('/veeqo/autolabel/scanform-file?id=' + id, { headers: H });
+  const pr = await post('/veeqo/autolabel/scanform-printed', { id });
+  check('…the 📄 Scan form station gets the PDF and prints it — printed (who / when) on record', f.status === 200 && /pdf/.test(f.headers.get('content-type')) && /%PDF/.test(await f.text())
+    && pr.ok && !!sq.prepare('SELECT printed_at FROM scan_form_log WHERE id = ?').get(id).printed_at, f.status);
+  refuse = true; const bad = await post('/veeqo/autolabel/scanform-make', {});
+  check('…Veeqo won\'t make it → said plainly (make it in Veeqo: Settings → USPS Scan Forms) with what each address answered, on record', bad.ok === false && /Settings → USPS Scan Forms/.test(bad.error) && bad.tried.length >= 2 && rows().slice(-1)[0].ok === 0, bad);
+  const lst = await get('/veeqo/autolabel/scanforms');
+  check('…the list says the times and night check, and how many USPS labels are not on a form yet', lst.ok && lst.times === 'Mon-Fri 16:30; Sat 13:45' && lst.checkAt === '20:30' && Array.isArray(lst.missing.labels), lst.times);
+  globalThis.fetch = realFetch; delete env.VEEQO_API_KEY; delete env.TEST_CLOCK;
+  const { readFileSync } = await import('node:fs');
+  const ph = readFileSync(fileURLToPath(new URL('../packship.html', import.meta.url)), 'utf8');
+  check('…Auto Label tab: 📄 Make scan form now, 📄 Scan form station, times in Rules; the label Printer station also keeps the times',
+    /onclick="psAlScanFormMake\(this\)"/.test(ph) && /id="ps-al-sf-station"/.test(ph) && /data-k="scanFormTimes"/.test(ph) && /data-k="scanFormCheckAt"/.test(ph) && /scanform-tick[\s\S]{0,200}psAlPrintNewLabels\(true\)/.test(ph), null);
+}
+
 // Owner: "Audit — after scanning the column or a box, scroll down to the scan bar (see more info below); on the phone the
 // Inventory / Refresh / Sign out / Apps bar stays at the top but small — tap to show all".
 console.log('\nInventory: Audit scrolls to the scan bar after a scan; slim top bar on the phone');
