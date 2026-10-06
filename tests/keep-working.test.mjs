@@ -3252,5 +3252,24 @@ console.log('\n💲 Price batches (FIFO) + price history');
   await post('/inventory/review-mode', { mode: 'manual' });
 }
 
+// Owner: "the Print Log is open on that computer — that's good right?" → the 🖨 Printer station starts by itself on any Pack & Ship
+// tab (no need to open Auto Label after a restart), and with 2 Pack & Ship windows on that computer only ONE prints (never twice).
+console.log('\n🖨 Printer station: starts on any tab, one window prints');
+{
+  const { readFileSync: rf2 } = await import('node:fs');
+  const ps = rf2(fileURLToPath(new URL('../packship.html', import.meta.url)), 'utf8');
+  check('Pack & Ship opening (any tab, e.g. Print Log) starts the station when this computer has it ticked',
+    /psPickStartRefocus\(\);\n  if \(typeof psAlStationAuto === 'function'\) psAlStationAuto\(\);/.test(ps) && /window\.psAlStationAuto = function\(\) \{[\s\S]{0,200}xf_slip_station[\s\S]{0,200}psAlSlipStation\(true, true\)/.test(ps), null);
+  check('…a green "🖨 Printer station ON · checked <time>" bar shows on every tab of that window', /🖨 Printer station ON · checked /.test(ps) && /id = 'ps-al-station-bar'/.test(ps), null);
+  const src = ps.match(/var _psAlStationId = [\s\S]*?\nfunction _psAlStationLockMine\(\) \{[\s\S]*?\n\}/)[0].replace(/window\.addEventListener[\s\S]*?\n\}\);/g, '');
+  const store = {}, ls = { getItem: k => (k in store ? store[k] : null), setItem: (k, v) => { store[k] = String(v); }, removeItem: k => { delete store[k]; } };
+  const win = () => new Function('localStorage', src + '\nreturn { lock: _psAlStationLock, mine: _psAlStationLockMine };')(ls);
+  const A = win(), B = win();
+  const a1 = A.lock(), b1 = B.lock();
+  check('2 windows on the station computer: the first one prints, the second waits (no double labels)', a1 === true && b1 === false && A.mine() && !B.mine(), { a1, b1 });
+  const cur = JSON.parse(store.xf_station_lock); cur.at -= 120000; store.xf_station_lock = JSON.stringify(cur);
+  check('…the first window closed / stuck over 90 s → the other one takes over printing', B.lock() === true && B.mine() && !A.mine(), store.xf_station_lock);
+}
+
 console.log('\n' + (failed ? '❌ ' + failed + ' check(s) FAILED' : '✅ all ' + passed + ' checks passed') + '\n');
 process.exit(failed ? 1 : 0);
