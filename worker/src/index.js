@@ -26000,18 +26000,33 @@ async function autolabelScanFormCreate(env, kind, slot, by, when) {
       [ny.date, slot || '', kind, now, by || 'auto', 0, 0, JSON.stringify(tried).slice(0, 4000)]);
     return { ok: false, nothing: true, tried, error: 'No labels waiting for a scan form — Veeqo says every shipment is already on one (or none were bought since the last form)' };
   }
-  const subs = [...new Set(um.usps.map(c => c && (c.sub_carrier_id || c.sub_carrier || c.id)).filter(x => typeof x === 'string' && /usps/i.test(x)))];
-  for (const carrier of (subs.length ? subs : AUTOLABEL_SCANFORM_CARRIERS)) {
-    const pth = AUTOLABEL_SCANFORM_PATH(carrier);
-    const fromVeeqo = um.usps.filter(c => c && typeof c === 'object').map(c => () => c); // Veeqo's own entry for this carrier first
-    for (const body of [...fromVeeqo, ...AUTOLABEL_SCANFORM_BODIES]) {
-      const sent = body(carrier);
-      const res = await fetch(VEEQO_BASE + pth, { method: 'POST', body: JSON.stringify(sent), headers: { 'x-api-key': (env.VEEQO_API_KEY || '').trim(), 'Accept': 'application/json', 'Content-Type': 'application/json' } }).catch(e => ({ ok: false, status: 0, text: async () => String(e.message || e) }));
-      const txt = await res.text().catch(() => '');
-      tried.push({ carrier, path: pth, sent, status: res.status, said: txt.replace(/\s+/g, ' ').slice(0, 400) });
-      if (res.ok) { let j = null; try { j = JSON.parse(txt); } catch (_) {} made.push({ carrier, path: pth, json: j || { raw: txt.slice(0, 5000) } }); break; }
-      if (res.status === 400 || res.status === 422) continue; // refused this body (nothing made) → try the next body
-      break; // wrong address / no access / Veeqo down → no point trying other bodies
+  // Owner's test 2026-10-06 5:11 pm: every body → 400 "collection_address is required"; Veeqo's
+  // unmanifested answer lists, per carrier, the pickup address(es) with shipments waiting
+  // (carrier_id "amazon_shipping_v2__USPS", unmanifested_shipment_location_list[].address).
+  // → one form per carrier × pickup address, that address sent as collection_address.
+  const jobs = [];
+  um.usps.filter(c => c && typeof c === 'object').forEach(c => (Array.isArray(c.unmanifested_shipment_location_list) ? c.unmanifested_shipment_location_list : [])
+    .forEach(l => { if (l && l.address) jobs.push({ cid: String(c.carrier_id || c.carrier_name || ''), addr: l.address }); }));
+  if (!jobs.length) jobs.push({ cid: '', addr: null }); // no address from Veeqo → the old tries, Veeqo's answer kept
+  const noNulls = a => Object.fromEntries(Object.entries(a || {}).filter(([, v]) => v != null && v !== ''));
+  for (const job of jobs) {
+    const subs = ['USPS', ...(job.cid && job.cid !== 'USPS' ? [job.cid] : [])]; // the docs' example first, then Veeqo's own carrier id
+    const bodies = job.addr
+      ? [() => ({ collection_address: job.addr }), () => ({ collection_address: noNulls(job.addr) }), () => ({ collection_address: job.addr, carrier_id: job.cid })]
+      : AUTOLABEL_SCANFORM_BODIES;
+    let done = false;
+    for (const carrier of subs) {
+      const pth = AUTOLABEL_SCANFORM_PATH(carrier);
+      for (const body of bodies) {
+        const sent = body(carrier);
+        const res = await fetch(VEEQO_BASE + pth, { method: 'POST', body: JSON.stringify(sent), headers: { 'x-api-key': (env.VEEQO_API_KEY || '').trim(), 'Accept': 'application/json', 'Content-Type': 'application/json' } }).catch(e => ({ ok: false, status: 0, text: async () => String(e.message || e) }));
+        const txt = await res.text().catch(() => '');
+        tried.push({ carrier, path: pth, sent, status: res.status, said: txt.replace(/\s+/g, ' ').slice(0, 400) });
+        if (res.ok) { let j = null; try { j = JSON.parse(txt); } catch (_) {} made.push({ carrier: job.cid || carrier, path: pth, json: j || { raw: txt.slice(0, 5000) } }); done = true; break; }
+        if (res.status === 400 || res.status === 422) continue; // refused this body (nothing made) → try the next body
+        break; // wrong address / no access / Veeqo down → try the next carrier id
+      }
+      if (done) break;
     }
   }
   const ids = [];
