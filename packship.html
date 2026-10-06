@@ -1831,6 +1831,7 @@ body {
         <div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(210px,1fr));gap:10px 14px;font-size:12px;color:var(--text2)" id="ps-al-rules">
           <label>Wait after newest order (min)<input class="ps-field-input" data-k="waitMinutes" type="number" min="0" step="1"></label>
           <label>No wait at these times (New York)<input class="ps-field-input" data-k="noWaitTimes" type="text" placeholder="Mon-Fri 15:50-17:00; Sat 13:00-14:15"></label>
+          <label>⏸ No auto buying at these times (New York)<input class="ps-field-input" data-k="pauseTimes" type="text" placeholder="Mon-Fri 16:30-17:30; Mon-Fri 20:30-24:00; Sat 13:30-24:00"></label>
           <label>📄 USPS scan form by itself<select class="ps-field-input" data-k="scanFormOn"><option value="true">Yes</option><option value="false">No — by hand only</option></select></label>
           <label>…at (New York)<input class="ps-field-input" data-k="scanFormTimes" type="text" placeholder="Mon-Fri 16:30; Sat 13:45"></label>
           <label>…night check at (before 9 pm)<input class="ps-field-input" data-k="scanFormCheckAt" type="text" placeholder="20:30"></label>
@@ -8636,6 +8637,7 @@ function _psAlRenderConfig(d) {
     + '• <b>Same name + address:</b> ' + (c.autoMerge ? 'together up to <b>' + c.mergeMaxLb + ' lb</b> → <b>one box, one label</b> (the other orders get the same tracking #); heavier → <b>put aside</b> (🔗 Merge by hand)' : '<b>put aside</b> (🔗 Merge by hand) — one box is off') + '<br>'
     + '• Waits <b>' + c.waitMinutes + ' min</b> after the newest order' + (c.noWaitTimes ? ' — <b>except ' + _psAlEsc(c.noWaitTimes) + '</b> (New York time): prints as soon as an order comes in' : '') + '<br>'
     + '• Never buys for a cancelled order<br>'
+    + (c.pauseTimes ? '• <b>⏸ No auto buying:</b> ' + _psAlEsc(c.pauseTimes) + ' (New York) — around the scan forms; labels can still be bought by hand<br>' : '')
     + '• <b>📄 USPS scan form:</b> ' + (c.scanFormOn ? 'made by itself <b>' + _psAlEsc(c.scanFormTimes || '—') + '</b>, night check <b>' + _psAlEsc(c.scanFormCheckAt) + '</b> (one more if a USPS label came after the last form; USPS cut-off 9 pm, no Sunday)' : 'by hand only (📄 Make scan form now)')
     + (c.maxBoxLb ? ' · boxes over <b>' + c.maxBoxLb + ' lb</b> → weigh / print by hand' : '')
     + (c.lowValueRatio ? ' · hold if the label is <b>' + Math.round(c.lowValueRatio * 100) + '%</b>+ of the order' + (c.lowValueMaxOrder ? ' (orders up to $' + c.lowValueMaxOrder + ')' : '') : '');
