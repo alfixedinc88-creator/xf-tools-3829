@@ -2231,6 +2231,11 @@ console.log('\nLabel Printer: barcode in the center of the label; pick how many 
   const z2 = gen.lpGenZPL(long, 1), fo2 = z2.match(/\^FO(\d+),\d+\^BY(\d)/), w2 = (11 * long.length + 35) * +fo2[2];
   check('…a long location still fits on the label, centered (thinner bars instead of running off the edge)', +fo2[1] + w2 <= 406 && Math.abs(+fo2[1] - (406 - (+fo2[1] + w2))) <= 1, { fo2, w2 });
   check('…"How many": 3 → the printer makes 3 of that label (^PQ3); default 1', /\^PQ3\n\^XZ/.test(z) && /\^PQ1\n\^XZ/.test(gen.lpGenZPL('A=1-1-1')), z);
+  // Owner: "for the location, I want the word to be big too".
+  const big = zz => { const t = +((zz.match(/\^A0N,(\d+),\d+\^FD/) || [])[1] || 0), b = zz.match(/\^FO\d+,(\d+)\^BY\d,3,(\d+)\^BCN/) || []; return { t, by: +b[1], bh: +b[2] }; };
+  const L1 = big(z), L2 = big(gen.lpGenZPL('C1=1-1-2')), L3 = big(z2);
+  check('…the location word prints big (was 24 dots): BARN=1-1-2-1 ≥ 48, C1=1-1-2 ≥ 60, a long one still fits (≥ 24); barcode under it, ≥ 40 dots tall, inside the 203-dot label',
+    L1.t >= 48 && L2.t >= 60 && L3.t >= 24 && L3.t * 0.62 * long.length <= 390 && [L1, L2, L3].every(q => q.by >= 6 + q.t + 6 && q.bh >= 40 && q.by + q.bh <= 203), [L1, L2, L3]);
   check('…a How many box (− / + / 1·2·5·10) on Print Single Label and on Print Selected Labels',
     /id="lp-single-copies"/.test(lp) && /id="lp-print-copies"/.test(lp) && /var n = lpCopies\('lp-single-copies'\);\s*var zpl = lpGenZPL\(loc, n\);/.test(lp) && /var n = lpCopies\('lp-print-copies'\);/.test(lp), null);
 }
@@ -3191,8 +3196,13 @@ console.log('\n🏷 Label Printer: a SKU label has a bigger part #, wider bars a
     ts > 24 && by === 3 && 101 * by <= 406 - 16 && /\^FD3\/4" PEX Female Tee\^FS/.test(z) && /\^PQ2/.test(z), z);
   const z2 = gen('26-6-6=10XX', '', 1);
   check('…a longer SKU still fits (2-dot bars), no name line when none found', /\^BY2,3,/.test(z2) && (11 * 11 + 35) * 2 <= 390 && !/\^FO8,/.test(z2), z2);
+  // Owner: "when we print the 'labelprint' I want the product name to be bigger too".
+  const nm = zz => { const m = zz.match(/\^FO8,(\d+)\^FB\d+,(\d),2,C,0\^A0N,(\d+),/) || []; const b = +((zz.match(/\^BCN,(\d+),/) || [])[1] || 0); return { y: +m[1], ln: +m[2], sz: +m[3], bar: b }; };
+  const q1 = nm(gen('26-3-6', '3/4" PEX Female Tee', 1)), q2 = nm(gen('30-3-4', '1/2" PEX Brass Ball Valve Full Port', 1)), q3 = nm(gen('26-6-6=10XX', '3/8" Compression x 1/2" FIP Angle Stop Valve Quarter Turn Lead Free', 1));
+  check('…the item name prints bigger (was 22 dots): short name ≥ 32 on 1 line, longer name ≥ 28 on 2 lines, very long never smaller than 22; barcode ≥ 60 dots tall; everything inside the 203-dot label',
+    q1.sz >= 32 && q1.ln === 1 && q2.sz >= 28 && q2.ln === 2 && q3.sz >= 22 && [q1, q2, q3].every(q => q.bar >= 60 && q.y + q.ln * (q.sz + 2) <= 203), [q1, q2, q3]);
   check('…only SKUs (start with a number) use it; locations (BARN=…, C1=…) print exactly as before', /var isSku = \/\^\\d\/\.test\(loc\.replace\(\/\^'\/, ''\)\)/.test(lp) && /isSku \? lpGenSkuZPL\(loc, name, n\) : zpl \}/.test(lp)
-    && /'\^FO0,' \+ s\.textY \+ '\^FB' \+ s\.width \+ ',1,0,C,0\^A0N,' \+ s\.textSize/.test(lp), null);
+    && /'\^FO0,' \+ s\.textY \+ '\^FB' \+ s\.width \+ ',1,0,C,0\^A0N,' \+ ts/.test(lp), null); // location labels: own layout (big word, owner 2026-10-07), checked above
 }
 
 // Owner: "new product come in with same part # but different price … new price come in with the new price, old one stay at old price,
