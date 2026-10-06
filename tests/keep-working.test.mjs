@@ -3191,6 +3191,11 @@ console.log('\n🏷 Label Printer: a SKU label has a bigger part #, wider bars a
     ts > 24 && by === 3 && 101 * by <= 406 - 16 && /\^FD3\/4" PEX Female Tee\^FS/.test(z) && /\^PQ2/.test(z), z);
   const z2 = gen('26-6-6=10XX', '', 1);
   check('…a longer SKU still fits (2-dot bars), no name line when none found', /\^BY2,3,/.test(z2) && (11 * 11 + 35) * 2 <= 390 && !/\^FO8,/.test(z2), z2);
+  // Owner: "when we print the 'labelprint' I want the product name to be bigger too".
+  const nm = zz => { const m = zz.match(/\^FO8,(\d+)\^FB\d+,(\d),2,C,0\^A0N,(\d+),/) || []; const b = +((zz.match(/\^BCN,(\d+),/) || [])[1] || 0); return { y: +m[1], ln: +m[2], sz: +m[3], bar: b }; };
+  const q1 = nm(gen('26-3-6', '3/4" PEX Female Tee', 1)), q2 = nm(gen('30-3-4', '1/2" PEX Brass Ball Valve Full Port', 1)), q3 = nm(gen('26-6-6=10XX', '3/8" Compression x 1/2" FIP Angle Stop Valve Quarter Turn Lead Free', 1));
+  check('…the item name prints bigger (was 22 dots): short name ≥ 32 on 1 line, longer name ≥ 28 on 2 lines, very long never smaller than 22; barcode ≥ 60 dots tall; everything inside the 203-dot label',
+    q1.sz >= 32 && q1.ln === 1 && q2.sz >= 28 && q2.ln === 2 && q3.sz >= 22 && [q1, q2, q3].every(q => q.bar >= 60 && q.y + q.ln * (q.sz + 2) <= 203), [q1, q2, q3]);
   check('…only SKUs (start with a number) use it; locations (BARN=…, C1=…) print exactly as before', /var isSku = \/\^\\d\/\.test\(loc\.replace\(\/\^'\/, ''\)\)/.test(lp) && /isSku \? lpGenSkuZPL\(loc, name, n\) : zpl \}/.test(lp)
     && /'\^FO0,' \+ s\.textY \+ '\^FB' \+ s\.width \+ ',1,0,C,0\^A0N,' \+ s\.textSize/.test(lp), null);
 }

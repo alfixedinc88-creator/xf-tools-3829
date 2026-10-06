@@ -613,8 +613,20 @@ window.lpCredLogin = async function() {
     var modules = 11 * val.length + 35, by = 1;
     [4, 3, 2].some(function(b) { if (modules * b <= W - 16) { by = b; return true; } return false; });
     var bw = modules * by, bx = Math.max(0, Math.round((W - bw) / 2) + (s.barShift || 0));
-    var nameSize = 22, nameLines = nm ? (nm.length > 30 ? 2 : 1) : 0;
-    var barY = 4 + ts + 6, barH = Math.max(40, H - barY - 6 - (nameLines ? nameLines * (nameSize + 2) + 4 : 0));
+    // Item name as big as fits (owner: "I want the product name to be bigger too"): the biggest size (40 → 22 dots)
+    // that holds the name in 1–2 lines and still leaves the barcode at least 60 dots tall.
+    var barY = 4 + ts + 6, nameSize = 22, nameLines = 0;
+    var room = function(sz, ln) { return H - barY - 6 - (ln ? ln * (sz + 2) + 4 : 0); };
+    if (nm) {
+      nameLines = nm.length > Math.floor((W - 16) / (0.55 * 22)) ? 2 : 1;
+      [40, 36, 32, 28, 24].some(function(sz) {
+        var cpl = Math.floor((W - 16) / (0.55 * sz)), ln = nm.length <= cpl ? 1 : 2;
+        if (ln === 2 && nm.length > cpl * 2 * 0.85) return false; // 2 lines with room for word wrap
+        if (room(sz, ln) < 60) return false;
+        nameSize = sz; nameLines = ln; return true;
+      });
+    }
+    var barH = Math.max(40, room(nameSize, nameLines));
     var out = ['^XA', '^MMT', '^PW' + W, '^LL' + H, '^MD' + s.darkness, '^LS0', '^CI28',
       '^FO0,4^FB' + W + ',1,0,C,0^A0N,' + ts + ',' + ts + '^FD' + clean(val) + '^FS',
       '^FO' + bx + ',' + barY + '^BY' + by + ',3,' + barH + '^BCN,' + barH + ',N,N,N^FD' + val + '^FS'];
