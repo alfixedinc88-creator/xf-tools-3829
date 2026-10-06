@@ -2817,6 +2817,9 @@ console.log('\nInstalled app opens without the address bar (manifest linked on e
   const { readFileSync, existsSync, readdirSync } = await import('node:fs');
   const root = fileURLToPath(new URL('../', import.meta.url));
   let man = {}; try { man = JSON.parse(readFileSync(root + 'manifest.json', 'utf8')); } catch (e) {}
+  // Owner (Svantto MC002): "auto-rotate is off, but in our app it still rotates" — orientation "any" makes the installed app
+  // follow the sensor and ignore the phone's auto-rotate lock. The app stays upright.
+  check('installed app stays upright (orientation portrait — "any" ignored the phone\'s auto-rotate off)', man.orientation === 'portrait', man.orientation);
   check('manifest.json: display standalone, start page index.html exists, 192 and 512 icons exist', man.display === 'standalone' && man.start_url === './index.html' && existsSync(root + 'index.html')
     && ['192x192', '512x512'].every(sz => (man.icons || []).some(i => i.sizes === sz && existsSync(root + i.src))), man.start_url);
   const pages = readdirSync(root).filter(f => f.endsWith('.html')), missing = pages.filter(f => !readFileSync(root + f, 'utf8').includes('<link rel="manifest" href="manifest.json">'));
