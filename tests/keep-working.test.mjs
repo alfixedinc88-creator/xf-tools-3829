@@ -2905,5 +2905,36 @@ console.log('\nStation mode: every app upside down + screen on; Pack & Ship igno
   check('…Packing and Picking both use it', /if \(_psStationRepeat\('pack', tracking\)\)/.test(ps) && /if \(_psStationRepeat\('pick', tracking\)\)/.test(ps), null);
 }
 
+// Owner: "I selected all 81 would buy — only 50 came out, and the packing slips printed separately; I want each slip under its label".
+console.log('\nAuto Label printing: every waiting label prints (not only 50); a slip waits for its label and prints right under it');
+{
+  const { readFileSync } = await import('node:fs');
+  sq.prepare("DELETE FROM label_print_queue").run(); sq.prepare("DELETE FROM packing_slip_queue").run();
+  const now = new Date().toISOString();
+  for (let i = 1; i <= 81; i++) sq.prepare("INSERT INTO label_print_queue (order_id, alloc_id, order_number, channel, tracking, carrier, service, source, created_at, items) VALUES (?,?,?,?,?,?,?,?,?,?)")
+    .run('O' + i, 'A' + i, 'N' + i, 'Amazon', 'T' + i, 'USPS', 'Ground', '{}', now, '[]');
+  for (const i of [3, 60, 77]) sq.prepare("INSERT INTO packing_slip_queue (order_id, alloc_id, order_number, channel, tracking, carrier, ship_to, items, box_no, box_count, created_at) VALUES (?,?,?,?,?,?,?,?,?,?,?)")
+    .run('O' + i, 'A' + i, 'N' + i, 'Amazon', 'T' + i, 'USPS', '{}', '[]', 1, 1, now);
+  sq.prepare("INSERT INTO packing_slip_queue (order_id, alloc_id, order_number, channel, tracking, carrier, ship_to, items, box_no, box_count, created_at) VALUES (?,?,?,?,?,?,?,?,?,?,?)")
+    .run('V9', 'B9', 'VEEQO-9', 'eBay', 'X9', 'UPS', '{}', '[]', 1, 1, now); // a slip with no label of ours (bought in Veeqo)
+  const r1 = (await get('/veeqo/autolabel/labels?status=new&limit=50')).labels || [];
+  const r2 = (await get('/veeqo/autolabel/labels?status=new&limit=50&after=' + Math.max(...r1.map(l => l.id)))).labels || [];
+  const r3 = (await get('/veeqo/autolabel/labels?status=new&limit=50&after=' + Math.max(...r2.map(l => l.id)))).labels || [];
+  check('81 labels waiting → round 1 = 50, round 2 = the other 31, round 3 = none (50 + 31 = 81, none twice)', r1.length === 50 && r2.length === 31 && r3.length === 0
+    && new Set(r1.concat(r2).map(l => l.id)).size === 81, [r1.length, r2.length, r3.length]);
+  const alone = (await get('/veeqo/autolabel/slips?status=new&alone=1')).slips || [];
+  check('…the station\'s "print slips" leaves out the 3 slips whose labels are still waiting (they print under their labels); the Veeqo-bought one still prints', alone.length === 1 && alone[0].orderNumber === 'VEEQO-9', alone.map(x => x.orderNumber));
+  const all = (await get('/veeqo/autolabel/slips?status=new')).slips || [];
+  check('…the slip list on screen still shows all 4 waiting', all.length === 4, all.length);
+  const L60 = r2.find(l => l.order_number === 'N60');
+  const pr = await post('/veeqo/autolabel/labels-printed', { ids: [L60.id], needSlip: true, withSlips: true });
+  check('…label N60 printed → its own slip comes back with it (printed right under it)', pr.ok && (pr.slips || []).length === 1 && pr.slips[0].orderNumber === 'N60', pr.slips);
+  const ph = readFileSync(fileURLToPath(new URL('../packship.html', import.meta.url)), 'utf8');
+  check('…the station prints round after round (50 at a time) until no label is waiting, and asks only for slips with no waiting label',
+    /while \(rounds\+\+ < 40\) \{\s*var d = await _psAlFetch\('\/veeqo\/autolabel\/labels\?status=new&limit=50&after=' \+ after\);/.test(ph)
+      && /_psAlFetch\('\/veeqo\/autolabel\/slips\?status=new&limit=50&alone=1'\)/.test(ph), null);
+  sq.prepare("DELETE FROM label_print_queue").run(); sq.prepare("DELETE FROM packing_slip_queue").run();
+}
+
 console.log('\n' + (failed ? '❌ ' + failed + ' check(s) FAILED' : '✅ all ' + passed + ' checks passed') + '\n');
 process.exit(failed ? 1 : 0);

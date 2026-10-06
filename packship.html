@@ -9609,7 +9609,7 @@ window.psAlPrintNewSlips = async function(silent) {
   _psAlSlipBusy = true;
   var msg = document.getElementById('ps-al-slip-msg');
   try {
-    var d = await _psAlFetch('/veeqo/autolabel/slips?status=new&limit=50');
+    var d = await _psAlFetch('/veeqo/autolabel/slips?status=new&limit=50&alone=1'); // a slip whose label is still waiting prints under that label, not on its own
     if (d.ok === false) { if (msg) msg.textContent = '✗ ' + (d.error || 'Failed'); return; }
     var slips = d.slips || [];
     if (!slips.length) { if (msg && !silent) msg.textContent = 'No new slips.'; return; }
@@ -9931,16 +9931,25 @@ window.psAlPrintNewLabels = async function(silent) {
   _psAlLabelBusy = true;
   var msg = document.getElementById('ps-al-label-msg'), done = 0, bad = [], notes = [];
   try {
-    var d = await _psAlFetch('/veeqo/autolabel/labels?status=new&limit=50');
-    if (d.ok === false) { if (msg) msg.textContent = '✗ ' + (d.error || 'Failed'); return; }
-    var list = d.labels || [];
-    if (!list.length) { if (msg && !silent) msg.textContent = 'No new labels.'; return; }
-    _psAlBatch = []; // every label (+ its sticker / packing slip) in ONE print, in order
-    for (var i = 0; i < list.length; i++) {
-      try { await _psAlPrintOneLabel(list[i]); done++; if (window._psAlLastNote) notes.push(window._psAlLastNote); }
-      catch (e) { bad.push(list[i].order_number + ': ' + e.message); window._psAlLabelLastTried = e.tried || null; }
+    // Owner: "I bought 81, only 50 came out" — one round was 50 labels. Now
+    // round after round (50 each) until every waiting label is printed.
+    var after = 0, rounds = 0, any = false;
+    while (rounds++ < 40) {
+      var d = await _psAlFetch('/veeqo/autolabel/labels?status=new&limit=50&after=' + after);
+      if (d.ok === false) { if (msg) msg.textContent = '✗ ' + (d.error || 'Failed'); return; }
+      var list = (d.labels || []).filter(function(l) { return l.id > after; }); // a label that failed stays waiting — not tried twice in one go
+      if (!list.length) break;
+      any = true;
+      if (msg) msg.textContent = 'Printing labels ' + (done + 1) + '–' + (done + list.length) + '…';
+      _psAlBatch = []; // every label (+ its packing slip right under it) in ONE print, in order
+      for (var i = 0; i < list.length; i++) {
+        after = Math.max(after, list[i].id);
+        try { await _psAlPrintOneLabel(list[i]); done++; if (window._psAlLastNote) notes.push(window._psAlLastNote); }
+        catch (e) { bad.push(list[i].order_number + ': ' + e.message); window._psAlLabelLastTried = e.tried || null; }
+      }
+      window._psAlLastBatchPages = await _psAlBatchFlush();
     }
-    window._psAlLastBatchPages = await _psAlBatchFlush();
+    if (!any) { if (msg && !silent) msg.textContent = 'No new labels.'; return; }
     if (msg) { msg.style.whiteSpace = 'pre-wrap'; msg.textContent = (done ? '✓ Printed ' + done + ' label' + (done === 1 ? '' : 's') + ' at ' + new Date().toLocaleTimeString() : '') + (bad.length ? (done ? ' · ' : '') + '✗ ' + bad.length + ' not printed — see the list' : '') + (notes.length ? '\n' + notes.join('\n') : ''); }
   } catch (e) { if (msg) msg.textContent = '✗ ' + e.message; }
   finally { if (_psAlBatch) { try { await _psAlBatchFlush(); } catch (e) {} } _psAlLabelBusy = false; psAlLoadLabels(); }
