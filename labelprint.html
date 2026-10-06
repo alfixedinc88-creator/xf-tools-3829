@@ -253,7 +253,7 @@ window.lpCredLogin = async function() {
     <div class="lp-card-title">Print Single Label</div>
     <div style="font-size:12px;color:var(--text2);margin-bottom:10px">Type or scan any location to print one label instantly.</div>
     <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
-      <input id="lp-single-input" type="text" placeholder="e.g. BARN=1-1-2-1" autocomplete="off" autocapitalize="characters"
+      <input id="lp-single-input" type="text" placeholder="e.g. BARN=1-1-2-1 or a SKU 26-3-6" autocomplete="off" autocapitalize="characters"
         style="flex:1;min-width:140px;padding:8px 12px;border:1.5px solid var(--border);border-radius:8px;background:var(--bg);color:var(--text);font-size:14px;font-family:var(--mono)"
         onkeydown="if(event.key==='Enter') lpPrintSingle()">
       <button class="lp-btn lp-btn-primary" onclick="lpPrintSingle()">🖨️ Print</button>
@@ -498,14 +498,23 @@ window.lpCredLogin = async function() {
     if (!printer) { if(status) status.textContent = 'No printer selected'; return; }
     var n = lpCopies('lp-single-copies');
     var zpl = lpGenZPL(loc, n);
+    // A SKU (starts with a number, e.g. 26-3-6=10X) → its own label: bigger part #, wider bars, the item name under
+    // the barcode (owner). A location (BARN=1-1-2, C1=…) prints as before.
+    var isSku = /^\d/.test(loc.replace(/^'/, '')), name = '';
     if(status) status.textContent = 'Printing ' + (n > 1 ? n + ' × ' : '') + loc + '…';
-    fetch(LP_ZBP_URL + '/write', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ device: printer, data: zpl })
+    (isSku ? Promise.race([
+        wFetch('https://xfitting-lookup.alfixedinc88.workers.dev/inventory/part-name?part=' + encodeURIComponent(loc.replace(/^'/, '')))
+          .then(function(r) { return r.json(); }).then(function(d) { name = (d && d.name) || ''; }).catch(function() {}),
+        new Promise(function(r) { setTimeout(r, 4000); })]) : Promise.resolve())
+    .then(function() {
+      return fetch(LP_ZBP_URL + '/write', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ device: printer, data: isSku ? lpGenSkuZPL(loc, name, n) : zpl })
+      });
     })
       .then(function() {
-        if(status) status.textContent = '✓ Printed: ' + (n > 1 ? n + ' × ' : '') + loc;
+        if(status) status.textContent = '✓ Printed: ' + (n > 1 ? n + ' × ' : '') + loc + (isSku ? (name ? ' · ' + name : ' · (no name found in SKU Mgr)') : '');
         if(inp) inp.value = '';
         setTimeout(function(){ if(inp) inp.focus(); }, 300);
       })
@@ -592,6 +601,28 @@ window.lpCredLogin = async function() {
       '^XZ'
     ].join('\n');
   }
+
+  // 🏷 SKU label (owner: "give the name of the SKU, and make it a little bigger — 26-3-6 was too small"): the part #
+  // as big as fits across the label, the barcode with the widest bars that still fit (2–4 dots), and the item name
+  // under it (up to 2 lines). Same label size / darkness / left-right setting as the location labels.
+  function lpGenSkuZPL(sku, name, copies) {
+    var s = lpGetSettings(), val = String(sku).replace(/^'/, ''), W = s.width, H = s.height;
+    var clean = function(t) { return String(t || '').replace(/[\^~\\]/g, ' ').replace(/\s+/g, ' ').trim(); };
+    var nm = clean(name).slice(0, 70);
+    var ts = Math.max(24, Math.min(48, Math.floor((W - 16) / (0.62 * Math.max(1, val.length)))));
+    var modules = 11 * val.length + 35, by = 1;
+    [4, 3, 2].some(function(b) { if (modules * b <= W - 16) { by = b; return true; } return false; });
+    var bw = modules * by, bx = Math.max(0, Math.round((W - bw) / 2) + (s.barShift || 0));
+    var nameSize = 22, nameLines = nm ? (nm.length > 30 ? 2 : 1) : 0;
+    var barY = 4 + ts + 6, barH = Math.max(40, H - barY - 6 - (nameLines ? nameLines * (nameSize + 2) + 4 : 0));
+    var out = ['^XA', '^MMT', '^PW' + W, '^LL' + H, '^MD' + s.darkness, '^LS0', '^CI28',
+      '^FO0,4^FB' + W + ',1,0,C,0^A0N,' + ts + ',' + ts + '^FD' + clean(val) + '^FS',
+      '^FO' + bx + ',' + barY + '^BY' + by + ',3,' + barH + '^BCN,' + barH + ',N,N,N^FD' + val + '^FS'];
+    if (nm) out.push('^FO8,' + (barY + barH + 4) + '^FB' + (W - 16) + ',' + nameLines + ',2,C,0^A0N,' + nameSize + ',' + nameSize + '^FD' + nm + '^FS');
+    out.push('^PQ' + Math.max(1, parseInt(copies) || 1), '^XZ');
+    return out.join('\n');
+  }
+  window.lpGenSkuZPL = lpGenSkuZPL;
 
   function lpGenAllZPL() {
     var selected = lpLocations.filter(function(l){ return lpSelected.has(l.location); });

@@ -7336,6 +7336,17 @@ const _app = {
       const path = url.pathname;
       // lookup + log: any valid session
       if (path === '/inventory/lookup' && method === 'GET')  return await inventoryLookup(url, env);
+      // 🏷 Label Printer (owner: "when we type our SKU, also give the name of the SKU"): the item name for a part #,
+      // from SKU Mgr (that part #, else its parent part #), else the product list.
+      if (path === '/inventory/part-name' && method === 'GET') {
+        const P = String(url.searchParams.get('part') || '').trim().toUpperCase(), base = P.split('=')[0];
+        if (!P) return cors(new Response(JSON.stringify({ ok: false, error: 'part required' }), { status: 400, headers: { 'Content-Type': 'application/json' } }));
+        const q = async (sql, b) => { try { const r = await d1First(env, sql, b); return r && r.name ? String(r.name).trim() : ''; } catch (_) { return ''; } };
+        const name = await q("SELECT name FROM master_list WHERE UPPER(TRIM(part_num)) = ? AND TRIM(COALESCE(name,'')) != '' LIMIT 1", [P])
+          || await q("SELECT name FROM master_list WHERE UPPER(TRIM(base_sku)) = ? AND TRIM(COALESCE(name,'')) != '' LIMIT 1", [base])
+          || await q("SELECT name FROM products WHERE UPPER(TRIM(base_sku)) = ? AND TRIM(COALESCE(name,'')) != '' LIMIT 1", [base]);
+        return cors(new Response(JSON.stringify({ ok: true, part: P, name }), { headers: { 'Content-Type': 'application/json' } }));
+      }
       if (path === '/inventory/upc-link' && method === 'POST') return await inventoryUpcLink(request, env, session);
       // 🖼 One photo per parent part # (see productPhotoMap): read by any
       // valid session; set / search / Veeqo sync by management.
