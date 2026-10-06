@@ -2737,5 +2737,31 @@ console.log('\nContainer here: a scan works without Enter (the scanner burst end
     && /if \(x\.hasAttribute\('data-kb-typing'\) \|\| v\.trim\(\)\.length < 4\) return;/.test(ih6) && /_xfrAutoT = setTimeout\(function\(\) \{ if \(x\.value === v\) xfrBoxScanNow\(x\); \}, 350\);/.test(ih6), null);
 }
 
+// Owner (Farset R20H scanner, photo of its Scan Tool): the outside box UPC 810097207059 came in as 10097207059 (first digit
+// dropped), so no box was found; and "hide all the keyboard on all scanner and phones".
+console.log('\nScanner sends a UPC without its first digit → the full UPC is put back; keyboard hidden by default on touch screens');
+{
+  const { readFileSync } = await import('node:fs');
+  const vm = await import('node:vm');
+  const xa = readFileSync(fileURLToPath(new URL('../xf-access.js', import.meta.url)), 'utf8');
+  const a = xa.indexOf('// ── 📷 UPC with its first digit dropped'), b = xa.indexOf('// ── 🔇 Scanner phone: no pop-up keyboard');
+  const win = { addEventListener() {} };
+  vm.runInNewContext(xa.slice(a, b), { window: win });
+  const f = win.xfFixUpc || (() => null);
+  check('R20H scans 10097207059 / 10097206892 / 10139932307 → 810097207059 / 810097206892 / 810139932307 (the real box UPCs)',
+    f('10097207059') === '810097207059' && f('10097206892') === '810097206892' && f('10139932307') === '810139932307', [f('10097207059'), f('10097206892'), f('10139932307')]);
+  check('…a UPC with only its leading 0 dropped (12345678905), full UPCs, part #s and short numbers are left as they are',
+    f('12345678905') === '12345678905' && f('810097207059') === '810097207059' && f('5-3-2') === '5-3-2' && f('1234') === '1234' && f('') === '', null);
+  check('…a trailing Enter / line break from the scanner is kept', f('10097207059\n') === '810097207059\n', f('10097207059\n'));
+  const ih = readFileSync(fileURLToPath(new URL('../inventory.html', import.meta.url)), 'utf8');
+  check('…fixed on Enter and when the scan lands in a box (all pages), and in the Container here box scan', /window\.addEventListener\('keydown', function \(e\) \{ if \(e\.key === 'Enter' \|\| e\.keyCode === 13\) mend\(e\.target\); \}, true\);/.test(xa)
+    && /code = String\(window\.xfFixUpc \? xfFixUpc\(code \|\| ''\) : code \|\| ''\)\.trim\(\);/.test(ih), null);
+  const wk = readFileSync(fileURLToPath(new URL('../worker/src/index.js', import.meta.url)), 'utf8');
+  check('…the Worker UPC → part # lookup also tries the full UPC for 11 digits', /const full = upcAddFirstDigit\(z\);/.test(wk), null);
+  check('phone keyboard hidden by default on every touch screen (a phone can still pick "Always show")', /return localStorage\.getItem\(PREF\) !== '0';/.test(xa) && /Always show the keyboard on this phone/.test(xa), null);
+  const sc = readFileSync(fileURLToPath(new URL('../docs/SCANNERS.md', import.meta.url)), 'utf8');
+  check('docs/SCANNERS.md keeps the N77, Zebra DS2278 and Farset R20H fixes', /N77/.test(sc) && /DS2278/.test(sc) && /R20H/.test(sc), null);
+}
+
 console.log('\n' + (failed ? '❌ ' + failed + ' check(s) FAILED' : '✅ all ' + passed + ' checks passed') + '\n');
 process.exit(failed ? 1 : 0);

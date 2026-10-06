@@ -9002,7 +9002,7 @@ window.invCredLogin = async function() {
     _xfrAutoT = setTimeout(function() { if (x.value === v) xfrBoxScanNow(x); }, 350);
   };
   window.xfrBoxScan = function(code) {
-    code = String(code || '').trim(); if (!code) return;
+    code = String(window.xfFixUpc ? xfFixUpc(code || '') : code || '').trim(); if (!code) return; // R20H: UPC without its first digit
     xfrScanNote('📷 Last scan: ' + code + ' · ' + new Date().toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit', second: '2-digit' }) + ' — looking…', 'var(--accent)');
     var box = g('xfr-cont-box'); if (box) box.value = '';
     if (xfrGo.focus && xfrGo.extra) { xfrExtraScan(code); return; } // ➕ extra box found: box, then the shelf label
@@ -13968,6 +13968,6 @@ window.invCredLogin = async function() {
   };
 })();
 </script>
-<script src="xf-access.js?v=20261004y"></script>
+<script src="xf-access.js?v=20261006a"></script>
 </body>
 </html>

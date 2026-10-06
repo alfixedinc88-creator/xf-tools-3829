@@ -48,3 +48,30 @@ Working settings (confirmed by the owner 2026-10-05):
 ### Problem: lights and beeps but nothing is typed into the app
 - It lost the link to its cradle. Scan the pairing barcode printed on the
   cradle.
+
+## Farset R20H (Android, built-in scanner, "Scanner Settings" / "Scan Tool")
+
+Settings are in its **Scanner Settings** app (the Scan Tool app's SCAN SETTING
+opens the same). Working: Enable Scanner ON, End Char Setting **ENTER**,
+Send Mode **FOCUS + BROADCAST**, Prefix / Suffix empty. Barcode types:
+Bar Setting → Enable/Disable (all the common ones are on from the factory).
+
+### Problem: part # labels scan, outside box UPC "doesn't work"
+- Cause: the R20H sends a UPC-A **without its first digit**: box
+  `810097207059` arrives as `10097207059` (seen in its Scan Tool, 2026-10-06).
+- Fixed in the app (2026-10-06): 11 digits whose check digit only works with
+  a first digit 1–9 get that digit put back (`xfFixUpc` in xf-access.js, and
+  `upcAddFirstDigit` in the Worker). Exactly one digit fits, so it's never a guess.
+- Device fix too, if wanted: Bar Setting → Advanced Configuration → UPC-A →
+  turn on "transmit system digit / preamble" (name varies).
+
+### Problem: Chrome menu pops up on a scan, then nothing types into the app
+- The scan landed while the box had no cursor. Close the menu, tap the scan
+  box, scan again. If still nothing: restart the R20H.
+- Test the scanner itself in **Scan Tool** (it lists every scan): if it shows
+  there, the scanner is fine.
+
+## Phone keyboard
+Hidden by default on every touch screen (owner, 2026-10-06): scans still go
+in. To type, tap the box, then the ⌨️ button (bottom left) → "Show keyboard to
+type". A phone used for typing can pick "Always show the keyboard on this phone".
