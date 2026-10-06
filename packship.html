@@ -1967,6 +1967,7 @@ body {
           <button class="ps-btn-primary" style="width:auto;padding:8px 18px" onclick="psAlScanFormMake(this)">📄 Make scan form now</button>
           <label style="display:flex;align-items:center;gap:6px;font-size:13px;color:var(--text2);cursor:pointer"><input type="checkbox" id="ps-al-sf-station" onchange="psAlScanFormStation(this.checked)"> 📄 Scan form station (this computer)</label>
         </div>
+        <div id="ps-al-sf-err" style="display:none;margin-bottom:10px"></div>
         <div id="ps-al-sf-status" style="font-size:12px;margin-bottom:8px;line-height:1.6"></div>
         <div id="ps-al-sf-list" style="font-size:12px;overflow-x:auto"></div>
       </div>
@@ -9105,18 +9106,37 @@ window.psAlLoadScanForms = async function() {
     return '<tr><td style="padding:4px 6px;border-bottom:1px solid var(--border);white-space:nowrap">' + e(f.day) + ' ' + e(new Date(f.created_at).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })) + '</td>'
       + '<td style="padding:4px 6px;border-bottom:1px solid var(--border)">' + e(name[f.kind] || f.kind) + (f.by_user && f.by_user !== 'auto' ? ' · ' + e(f.by_user) : '') + '</td>'
       + '<td style="padding:4px 6px;border-bottom:1px solid var(--border);color:' + col + '">' + what
-      + (!f.ok && f.kind !== 'locked' && f.kind !== 'night_missing' && f.detail ? '<details><summary>What Veeqo said</summary><pre style="white-space:pre-wrap;font-size:11px">' + e(f.detail) + '</pre></details>' : '') + '</td>'
+      + (!f.ok && f.kind !== 'locked' && f.kind !== 'night_missing' && f.detail ? '<details><summary>What Veeqo said</summary><pre style="white-space:pre-wrap;font-size:11px;user-select:text">' + e(f.detail) + '</pre><button class="ps-btn-sm" data-t="' + e(f.detail) + '" onclick="_psAlCopy(this.getAttribute(\'data-t\'), this)">📋 Copy</button></details>' : '') + '</td>'
       + '<td style="padding:4px 6px;border-bottom:1px solid var(--border);white-space:nowrap">' + (f.ok && f.kind !== 'night_ok' ? (f.printed_at ? '🖨 printed ' + e(new Date(f.printed_at).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })) + (f.print_count > 1 ? ' ×' + f.print_count : '') + ' ' : '<b style="color:var(--orange)">not printed</b> ')
         + '<button class="ps-btn-sm" onclick="psAlScanFormPrint(' + f.id + ', this)">' + (f.printed_at ? 'Reprint' : 'Print') + '</button>' : '') + '</td></tr>';
   }).join('') + '</table>' : '<div style="color:var(--text3)">No scan forms yet.</div>';
+};
+// Owner: "the scan form didn't work — it gave me a code but I can't copy it" (it was in a pop-up box).
+// Now the message stays on the page, in a box that can be selected, with 📋 Copy.
+window._psAlSfErr = function(title, text) {
+  var box = document.getElementById('ps-al-sf-err'); if (!box) { alert(title + '\n' + text); return; }
+  box.style.display = '';
+  box.innerHTML = '<div style="border:1.5px solid var(--red);border-radius:8px;padding:8px;background:var(--bg)">'
+    + '<div style="display:flex;gap:8px;align-items:center;margin-bottom:6px"><b style="color:var(--red);flex:1">❌ ' + _psAlEsc(title) + '</b>'
+    + '<button class="ps-btn-sm" onclick="_psAlCopy(document.getElementById(\'ps-al-sf-err-text\').value, this)">📋 Copy</button>'
+    + '<button class="ps-btn-sm" onclick="document.getElementById(\'ps-al-sf-err\').style.display=\'none\'">✕</button></div>'
+    + '<textarea id="ps-al-sf-err-text" readonly style="width:100%;box-sizing:border-box;min-height:90px;font:11px var(--mono);white-space:pre-wrap"></textarea>'
+    + '<div style="font-size:11px;color:var(--text3);margin-top:4px">Tap 📋 Copy and send it to Claude.</div></div>';
+  document.getElementById('ps-al-sf-err-text').value = title + ' (' + new Date().toLocaleString() + ')\n' + text;
+  try { box.scrollIntoView({ block: 'center' }); } catch (e) {}
+};
+window._psAlCopy = function(text, btn) {
+  var ok = function() { if (btn) { var t = btn.textContent; btn.textContent = '✓ Copied'; setTimeout(function() { btn.textContent = t; }, 1500); } };
+  var old = function() { var ta = document.createElement('textarea'); ta.value = text; ta.style.cssText = 'position:fixed;left:-9999px'; document.body.appendChild(ta); ta.select(); try { document.execCommand('copy'); ok(); } catch (e) { alert(text); } ta.remove(); };
+  if (navigator.clipboard && navigator.clipboard.writeText) navigator.clipboard.writeText(text).then(ok, old); else old();
 };
 window.psAlScanFormMake = async function(btn) {
   if (!confirm('Make the USPS scan form now?\n\nIt holds every USPS label made today that is not on a scan form yet — give it to the driver with those packages.')) return;
   btn.disabled = true; var t = btn.textContent; btn.textContent = '⏳ Asking Veeqo…';
   try {
     var d = await _psAlFetch('/veeqo/autolabel/scanform-make', { method: 'POST', body: {} });
-    if (d.ok === false) { alert('Not made:\n' + (d.error || 'failed') + '\n\n' + JSON.stringify(d.tried || [], null, 1).slice(0, 1500)); }
-    else { _psToast('📄 Scan form made — printing'); await psAlScanFormPrint(d.id); }
+    if (d.ok === false) { _psAlSfErr('Scan form not made', (d.error || 'failed') + '\n\n' + JSON.stringify(d.tried || [], null, 1).slice(0, 3000)); }
+    else { var eb = document.getElementById('ps-al-sf-err'); if (eb) eb.style.display = 'none'; _psToast('📄 Scan form made — printing'); await psAlScanFormPrint(d.id); }
   } finally { btn.disabled = false; btn.textContent = t; psAlLoadScanForms(); }
 };
 window.psAlScanFormPrint = async function(id, btn) {
@@ -9131,7 +9151,7 @@ window.psAlScanFormPrint = async function(id, btn) {
     await new Promise(function(res) { fr.onload = function() { setTimeout(function() { try { fr.contentWindow.focus(); fr.contentWindow.print(); } catch (e) { window.open(url); } res(); }, 400); }; setTimeout(res, 8000); });
     setTimeout(function() { fr.remove(); }, 60000);
     await _psAlFetch('/veeqo/autolabel/scanform-printed', { method: 'POST', body: { id: id, by: psInitials || '' } });
-  } catch (e) { alert('Scan form not printed:\n' + e.message); }
+  } catch (e) { _psAlSfErr('Scan form made, but not printed', e.message); }
   finally { if (btn) { btn.disabled = false; btn.textContent = 'Reprint'; } psAlLoadScanForms(); }
 };
 // 📄 Scan form station: on the computer with the letter printer — every minute: make it on time, print a new one.
