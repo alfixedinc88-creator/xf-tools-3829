@@ -6607,7 +6607,7 @@ const TM_BLOCK = new Set([
   '/ebay-msg/send', '/msg/send', '/msg/reply', '/shopify/listing-create',
   '/repricer/price-change', '/repricer/auto-reprice', '/repricer/queue-action',
   '/ship/cancel-label', '/ship/cancel-order', '/ship/cancel-order-confirm',
-  '/veeqo/autolabel/run', '/veeqo/autolabel/test-buy', '/veeqo/autolabel/order-edit', '/veeqo/autolabel/buy-one', '/veeqo/autolabel/merge-buy', '/veeqo/autolabel/split',
+  '/veeqo/autolabel/run', '/veeqo/autolabel/test-buy', '/veeqo/autolabel/order-edit', '/veeqo/autolabel/buy-one', '/veeqo/autolabel/merge-buy', '/veeqo/autolabel/split', '/veeqo/autolabel/scanform-make', '/veeqo/autolabel/scanform-tick',
   '/inventory/soldout/set-qty', '/inventory/soldout/add-listing',
 ]);
 function tmJ(o, status) { return cors(new Response(JSON.stringify(o), { status: status || 200, headers: { 'Content-Type': 'application/json' } })); }
@@ -24207,6 +24207,9 @@ const AUTOLABEL_DEFAULTS = {
   cancelWatch: false,          // add cancelled-but-already-printed orders to the Cancellation list
   waitMinutes: 30,             // wait this long after the NEWEST order for a person before buying
   noWaitTimes: 'Mon-Fri 15:50-17:00; Sat 13:00-14:15', // ...except in these New York times: print as soon as an order comes in (owner)
+  scanFormOn: true,            // 📄 USPS scan form made by itself at scanFormTimes (after one made by hand worked)
+  scanFormTimes: 'Mon-Fri 16:30; Sat 13:45', // New York time (owner)
+  scanFormCheckAt: '20:30',    // night check: any USPS label after the last form → one more (USPS: before 9 pm)
   upsMinSavings: 0.70,         // switch USPS -> UPS only if UPS is at least this much cheaper ($)... (owner: $0.70)
   upsMaxDays: 2,               // ...AND UPS arrives in this many days or less (owner: 2 days)
   uspsOnlyChannels: ['walmart'], // channels that must always ship USPS (name contains)
@@ -24270,6 +24273,9 @@ async function autolabelEnsureTables(env) {
       status TEXT NOT NULL DEFAULT 'open', checked_by TEXT, checked_at TEXT, note TEXT
     )
   `).run().catch(()=>{});
+  // 📄 USPS scan forms: each one made (or tried), the night check, and printing.
+  await env.DB.prepare(`CREATE TABLE IF NOT EXISTS scan_form_log (id INTEGER PRIMARY KEY AUTOINCREMENT, day TEXT, slot TEXT, kind TEXT, created_at TEXT,
+    by_user TEXT, ok INTEGER, carrier TEXT, veeqo_id TEXT, shipments INTEGER, source TEXT, detail TEXT, printed_at TEXT, printed_by TEXT, print_count INTEGER DEFAULT 0)`).run().catch(()=>{});
   // 📦 Confirmed boxes: real weight + size for exact contents (SKU × qty), and every change.
   await env.DB.prepare(`CREATE TABLE IF NOT EXISTS box_weight_confirmed (box_key TEXT PRIMARY KEY, lines TEXT, weight_lb REAL NOT NULL,
     length_in REAL, width_in REAL, height_in REAL, by_user TEXT, updated_at TEXT)`).run().catch(()=>{});
@@ -24355,6 +24361,9 @@ function autolabelCleanConfig(c) {
     cancelWatch: c.cancelWatch === true || c.cancelWatch === 'true',
     waitMinutes:       num(c.waitMinutes, D.waitMinutes, 0, 1440),
     noWaitTimes:       autolabelNoWaitClean(c.noWaitTimes == null ? D.noWaitTimes : c.noWaitTimes),
+    scanFormOn:        c.scanFormOn === true || c.scanFormOn === 'true',
+    scanFormTimes:     autolabelTimesClean(c.scanFormTimes == null ? D.scanFormTimes : c.scanFormTimes),
+    scanFormCheckAt:   /^\d{1,2}:\d{2}$/.test(String(c.scanFormCheckAt || '').trim()) && +String(c.scanFormCheckAt).split(':')[0] < 21 ? String(c.scanFormCheckAt).trim() : D.scanFormCheckAt,
     upsMinSavings:     num(c.upsMinSavings, D.upsMinSavings, 0, 100),
     upsMaxDays:        num(c.upsMaxDays, D.upsMaxDays, 1, 30),
     uspsOnlyChannels:  list(c.uspsOnlyChannels),
@@ -25513,6 +25522,132 @@ async function autolabelSplitByHand(env, number, by) {
   return res;
 }
 
+// ── 📄 USPS scan form (end of day) ───────────────────────────────────────
+// Owner: "auto print the Veeqo scan form for USPS Monday–Friday 4:30 pm and
+// Saturday 1:45 pm, and check every night that the scan form was printed
+// before the cut-off". USPS takes a scan form only for labels made the same
+// calendar day, before 9 pm local, never on Sunday; Veeqo allows more than
+// one a day (each covers what wasn't on a form yet). So: a form at each set
+// time (scanFormTimes), and a night check (scanFormCheckAt) that makes one
+// more if any USPS label was bought after the last form. Made on the server
+// (cron, and every minute the Printer station page is open), printed by the
+// 📄 Scan form station. Everything in scan_form_log.
+const AUTOLABEL_SCANFORM_VERIFIED_KEY = 'autolabel_scanform_verified'; // auto forms only after one made by hand worked
+function autolabelTimesParse(text) { // "Mon-Fri 16:30; Sat 13:45" → [{ days, at }]
+  const out = [];
+  for (const part of String(text || '').split(/[;\n]+/)) {
+    const m = part.trim().toLowerCase().match(/^([a-z ,\-]+?)\s+((?:\d{1,2}:\d{2}\s*,?\s*)+)$/);
+    if (!m) continue;
+    const days = new Set();
+    for (const d of m[1].split(/\s*,\s*/)) {
+      const r = d.split(/\s*-\s*/).map(x => AUTOLABEL_DAYS.indexOf(x.trim().slice(0, 3)));
+      if (r.some(x => x < 0)) { days.clear(); break; }
+      if (r.length === 1) days.add(r[0]); else for (let i = r[0]; ; i = (i + 1) % 7) { days.add(i); if (i === r[1]) break; }
+    }
+    for (const t of m[2].match(/\d{1,2}:\d{2}/g)) { const [h, mi] = t.split(':').map(Number); if (days.size && h < 24 && mi < 60) out.push({ days: [...days], at: h * 60 + mi }); }
+  }
+  return out;
+}
+function autolabelTimesClean(text) {
+  const hm = n => `${Math.floor(n / 60)}:${String(n % 60).padStart(2, '0')}`;
+  return autolabelTimesParse(text).map(w => autolabelNoWaitText({ days: w.days, from: 0, to: 1 }).replace(/ 0:00-0:01$/, '') + ' ' + hm(w.at)).join('; ');
+}
+function autolabelNyNow(when) { // { day: 0-6, mins, date: 'YYYY-MM-DD' } in New York
+  const p = new Intl.DateTimeFormat('en-US', { timeZone: 'America/New_York', weekday: 'short', year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', hourCycle: 'h23' }).formatToParts(when || new Date());
+  const g = t => (p.find(x => x.type === t) || {}).value || '';
+  return { day: AUTOLABEL_DAYS.indexOf(g('weekday').toLowerCase().slice(0, 3)), mins: +g('hour') * 60 + +g('minute'), date: `${g('year')}-${g('month')}-${g('day')}` };
+}
+// The Veeqo calls. Veeqo's shipping API has scan forms (create / reprint /
+// unmanifested shipments); the exact addresses are tried in turn and every
+// answer is kept, so a wrong one is plain to see.
+const AUTOLABEL_SCANFORM_CREATE = [
+  ['POST', '/shipping/api/v1/scan_forms', c => ({ carrier: c })],
+  ['POST', '/shipping/api/v1/scan_forms', c => ({ scan_form: { carrier: c } })],
+  ['POST', '/shipping/scan_forms', c => ({ carrier: c })],
+  ['POST', '/scan_forms', c => ({ scan_form: { carrier: c } })],
+];
+const AUTOLABEL_SCANFORM_CARRIERS = ['amazon_shipping_v2', 'usps'];
+function autolabelFindFile(obj) { // a PDF link or base64 PDF anywhere in Veeqo's answer
+  const urls = [], b64 = [];
+  const walk = (v, d) => { if (d > 8 || v == null) return;
+    if (typeof v === 'string') { if (/^https:\/\//i.test(v) && !/track/i.test(v)) urls.push(v); else if (/^JVBERi0/.test(v) && v.length > 200) b64.push(v); return; }
+    if (Array.isArray(v)) return v.forEach(x => walk(x, d + 1));
+    if (typeof v === 'object') Object.values(v).forEach(x => walk(x, d + 1)); };
+  walk(obj, 0);
+  return { urls, b64 };
+}
+function autolabelFileResp(body, type) { // a file with the same CORS headers as every Veeqo route
+  const h = new Headers(veeqoResp({}).headers); h.set('Content-Type', type);
+  return new Response(body, { headers: h });
+}
+async function autolabelScanFormCreate(env, kind, slot, by, when) {
+  await autolabelEnsureTables(env);
+  const now = (when || new Date()).toISOString(), ny = autolabelNyNow(when);
+  if (ny.day === 0) return { ok: false, error: 'USPS takes no scan form on Sunday' };
+  // One form per carrier that has USPS labels today (Amazon Shipping's USPS and Veeqo's own USPS are separate).
+  const tried = [], made = [];
+  for (const carrier of AUTOLABEL_SCANFORM_CARRIERS) {
+    for (const [m, pth, body] of AUTOLABEL_SCANFORM_CREATE) {
+      const res = await fetch(VEEQO_BASE + pth, { method: m, body: JSON.stringify(body(carrier)), headers: { 'x-api-key': (env.VEEQO_API_KEY || '').trim(), 'Accept': 'application/json', 'Content-Type': 'application/json' } }).catch(e => ({ ok: false, status: 0, text: async () => String(e.message || e) }));
+      const txt = await res.text().catch(() => '');
+      tried.push({ carrier, path: pth, status: res.status, said: txt.replace(/\s+/g, ' ').slice(0, 240) });
+      if (res.ok) { let j = null; try { j = JSON.parse(txt); } catch (_) {} made.push({ carrier, path: pth, json: j || { raw: txt.slice(0, 5000) } }); break; }
+      if (res.status === 404 || res.status === 405) continue; // not this address — try the next
+      break; // Veeqo answered but refused (e.g. nothing on a form for this carrier) → next carrier
+    }
+  }
+  const ids = [];
+  for (const mk of made) {
+    const j = mk.json || {};
+    const n = Array.isArray(j.shipments) ? j.shipments.length : (j.shipment_count || j.shipments_count || j.count || null);
+    const ins = await d1Run(env, `INSERT INTO scan_form_log (day, slot, kind, created_at, by_user, ok, carrier, veeqo_id, shipments, source, detail) VALUES (?,?,?,?,?,?,?,?,?,?,?)`,
+      [ny.date, slot || '', kind, now, by || 'auto', 1, mk.carrier, String(j.id || j.scan_form_id || (j.scan_form && j.scan_form.id) || ''), n, JSON.stringify(j).slice(0, 20000), JSON.stringify(tried).slice(0, 4000)]);
+    ids.push({ id: ins && ins.meta && ins.meta.last_row_id, carrier: mk.carrier, shipments: n });
+  }
+  if (!made.length) await d1Run(env, `INSERT INTO scan_form_log (day, slot, kind, created_at, by_user, ok, detail) VALUES (?,?,?,?,?,?,?)`,
+    [ny.date, slot || '', kind, now, by || 'auto', 0, JSON.stringify(tried).slice(0, 4000)]);
+  const ok = made.length > 0;
+  if (ok && kind === 'hand') await autolabelSetKey(env, AUTOLABEL_SCANFORM_VERIFIED_KEY, 'yes');
+  return { ok, id: ids[0] && ids[0].id, forms: ids, carrier: ids.map(x => x.carrier).join(' + '), shipments: ids.reduce((t, x) => t + (x.shipments || 0), 0) || null, tried,
+    error: ok ? undefined : 'Veeqo did not make a scan form — what each address said is kept below (send it to Claude); make it in Veeqo: Settings → USPS Scan Forms' };
+}
+// USPS labels bought today (ours) after the last scan form that worked.
+async function autolabelScanFormMissing(env, when) {
+  const ny = autolabelNyNow(when);
+  const last = await d1First(env, `SELECT created_at FROM scan_form_log WHERE day = ? AND ok = 1 ORDER BY id DESC LIMIT 1`, [ny.date]);
+  const rows = await d1All(env, `SELECT order_number, tracking, ts FROM autolabel_log WHERE date = ? AND action = 'bought' AND carrier LIKE '%USPS%' ${last ? 'AND ts > ?' : ''} ORDER BY id`, last ? [ny.date, last.created_at] : [ny.date]);
+  return { since: last ? last.created_at : null, labels: rows };
+}
+// Called by the cron and by the Printer station every minute: makes the
+// scan form at each set time, and the night check. Never twice for a slot.
+async function autolabelScanFormTick(env, when) {
+  const cfg = await autolabelLoadConfig(env);
+  if (!cfg.scanFormOn) return { skipped: 'off' };
+  const ny = autolabelNyNow(when);
+  if (ny.day === 0) return { skipped: 'sunday' };
+  const verified = (await autolabelGetKey(env, AUTOLABEL_SCANFORM_VERIFIED_KEY)) === 'yes';
+  const did = [];
+  for (const t of autolabelTimesParse(cfg.scanFormTimes)) {
+    if (!t.days.includes(ny.day) || ny.mins < t.at || ny.mins > t.at + 120) continue;
+    const slot = `${ny.date} ${Math.floor(t.at / 60)}:${String(t.at % 60).padStart(2, '0')}`;
+    if (await d1First(env, 'SELECT 1 x FROM scan_form_log WHERE slot = ?', [slot])) continue;
+    if (!verified) { await d1Run(env, `INSERT INTO scan_form_log (day, slot, kind, created_at, by_user, ok, detail) VALUES (?,?,?,?,?,?,?)`, [ny.date, slot, 'locked', (when || new Date()).toISOString(), 'auto', 0, 'Auto scan forms are locked until one is made by hand (📄 Make scan form now)']); did.push({ slot, locked: true }); continue; }
+    did.push({ slot, ...(await autolabelScanFormCreate(env, 'scheduled', slot, '', when)) });
+  }
+  // Night check: any USPS label after the last form → one more form before 9 pm.
+  const chk = autolabelTimesParse('Sun-Sat ' + (cfg.scanFormCheckAt || '20:30'))[0];
+  if (chk && ny.mins >= chk.at && ny.mins < 21 * 60) {
+    const slot = `${ny.date} night`;
+    if (!(await d1First(env, 'SELECT 1 x FROM scan_form_log WHERE slot = ?', [slot]))) {
+      const miss = await autolabelScanFormMissing(env, when);
+      if (!miss.labels.length) await d1Run(env, `INSERT INTO scan_form_log (day, slot, kind, created_at, by_user, ok, shipments, detail) VALUES (?,?,?,?,?,?,?,?)`, [ny.date, slot, 'night_ok', (when || new Date()).toISOString(), 'auto', 1, 0, 'Every USPS label of today is on a scan form']);
+      else if (!verified) await d1Run(env, `INSERT INTO scan_form_log (day, slot, kind, created_at, by_user, ok, shipments, detail) VALUES (?,?,?,?,?,?,?,?)`, [ny.date, slot, 'night_missing', (when || new Date()).toISOString(), 'auto', 0, miss.labels.length, `${miss.labels.length} USPS label(s) not on a scan form: ${miss.labels.map(l => l.order_number).join(', ').slice(0, 1500)} — make it in Veeqo before 9 pm`]);
+      else { const r = await autolabelScanFormCreate(env, 'night', slot, '', when); did.push({ slot, ...r, missing: miss.labels.length }); }
+    }
+  }
+  return { did };
+}
+
 // ── The run ──────────────────────────────────────────────────────────────
 // opts.buy: actually buy (cron in 'auto' mode only).
 // opts.trigger: 'cron' | 'manual' (just for the saved summary).
@@ -25904,6 +26039,7 @@ async function vstockItems(env, page) {
 
 async function autolabelCron(env) {
   const cfg = await autolabelLoadConfig(env);
+  try { await autolabelScanFormTick(env); } catch (e) { console.error('[autolabel] scan form tick', e.message); }
   if (cfg.mode === 'off' && !cfg.cancelWatch) return { skipped: 'off' };
   let last = null;
   try { last = JSON.parse(await autolabelGetKey(env, AUTOLABEL_LASTRUN_KEY) || 'null'); } catch (_) {}
@@ -26332,6 +26468,46 @@ async function handleAutolabelRoute(path, method, url, request, env, session) {
       if (lr) await autolabelSaveLastRun(env, lr);
     } catch (_) {}
     return veeqoResp(res);
+  }
+  // 📄 Scan forms: POST make-now (by hand) · POST tick (Printer station, every minute) · GET list · GET file · POST printed
+  if (path === '/veeqo/autolabel/scanform-make' && method === 'POST') {
+    const by = String((session && (session.displayName || session.username)) || '').slice(0, 40);
+    return veeqoResp(await autolabelScanFormCreate(env, 'hand', '', by));
+  }
+  if (path === '/veeqo/autolabel/scanform-tick' && method === 'POST') {
+    const b = await request.json().catch(() => ({}));
+    const when = env.TEST_CLOCK && b.at ? new Date(b.at) : undefined; // a set clock only in the keep-working tests
+    return veeqoResp({ ok: true, ...(await autolabelScanFormTick(env, when)) });
+  }
+  if (path === '/veeqo/autolabel/scanforms' && method === 'GET') {
+    const rows = await d1All(env, 'SELECT id, day, slot, kind, created_at, by_user, ok, carrier, veeqo_id, shipments, detail, printed_at, printed_by, print_count FROM scan_form_log ORDER BY id DESC LIMIT 60');
+    const cfg = await autolabelLoadConfig(env);
+    return veeqoResp({ ok: true, forms: rows, missing: await autolabelScanFormMissing(env), verified: (await autolabelGetKey(env, AUTOLABEL_SCANFORM_VERIFIED_KEY)) === 'yes',
+      times: cfg.scanFormTimes, checkAt: cfg.scanFormCheckAt, on: cfg.scanFormOn });
+  }
+  if (path === '/veeqo/autolabel/scanform-file' && method === 'GET') {
+    const row = await d1First(env, 'SELECT * FROM scan_form_log WHERE id = ? AND ok = 1', [parseInt(url.searchParams.get('id')) || 0]);
+    if (!row || !row.source) return veeqoResp({ ok: false, error: 'No scan form file' }, 404);
+    let j = {}; try { j = JSON.parse(row.source); } catch (_) {}
+    const f = autolabelFindFile(j), tried = [];
+    if (f.b64.length) { const bin = atob(f.b64[0].replace(/\s+/g, '')); const u8 = new Uint8Array(bin.length); for (let i = 0; i < bin.length; i++) u8[i] = bin.charCodeAt(i); return autolabelFileResp(u8, 'application/pdf'); }
+    const cands = f.urls.slice(0, 4);
+    if (row.veeqo_id) cands.push(`${VEEQO_BASE}/shipping/api/v1/scan_forms/${row.veeqo_id}/reprint`, `${VEEQO_BASE}/shipping/api/v1/scan_forms/${row.carrier}/${row.veeqo_id}/reprint`, `${VEEQO_BASE}/shipping/api/v1/scan_forms/${row.veeqo_id}`);
+    for (const u of cands) {
+      try {
+        const r = await fetch(u, { headers: /api\.veeqo\.com/.test(u) ? { 'x-api-key': (env.VEEQO_API_KEY || '').trim(), 'Accept': 'application/pdf, application/json' } : { 'Accept': 'application/pdf, */*' } });
+        const ct = (r.headers.get('content-type') || '').toLowerCase();
+        if (r.ok && /pdf|image\//.test(ct)) return autolabelFileResp(await r.arrayBuffer(), ct.split(';')[0]);
+        const t = await r.text().catch(() => ''); tried.push({ url: u.replace(/([?&](X-Amz-[^=]+|signature|token)=)[^&]+/gi, '$1…'), status: r.status, said: t.slice(0, 200) });
+        if (r.ok && /json/.test(ct)) { let jj = null; try { jj = JSON.parse(t); } catch (_) {} const f2 = jj ? autolabelFindFile(jj) : { urls: [], b64: [] }; f2.urls.slice(0, 2).forEach(x => cands.push(x)); }
+      } catch (e) { tried.push({ url: u, error: String(e.message || e).slice(0, 200) }); }
+    }
+    return veeqoResp({ ok: false, error: 'Veeqo did not give the scan form file — reprint it in Veeqo: Settings → USPS Scan Forms', tried }, 502);
+  }
+  if (path === '/veeqo/autolabel/scanform-printed' && method === 'POST') {
+    const b = await request.json().catch(() => ({}));
+    await d1Run(env, `UPDATE scan_form_log SET printed_at = ?, printed_by = ?, print_count = COALESCE(print_count,0) + 1 WHERE id = ?`, [new Date().toISOString(), String(b.by || (session && session.displayName) || '').slice(0, 40), parseInt(b.id) || 0]);
+    return veeqoResp({ ok: true });
   }
   // POST { lines:[{sku,qty}], weightLb, lengthIn, widthIn, heightIn, order } → 📦 confirm a box (exact contents).
   if (path === '/veeqo/autolabel/box-confirm' && method === 'POST') {
