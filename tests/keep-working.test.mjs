@@ -3195,5 +3195,52 @@ console.log('\n🏷 Label Printer: a SKU label has a bigger part #, wider bars a
     && /'\^FO0,' \+ s\.textY \+ '\^FB' \+ s\.width \+ ',1,0,C,0\^A0N,' \+ s\.textSize/.test(lp), null);
 }
 
+// Owner: "new product come in with same part # but different price … new price come in with the new price, old one stay at old price,
+// grabbing from same column → FIFO. Keep all the price changes with the date, search on the part # to see the price change over all".
+console.log('\n💲 Price batches (FIFO) + price history');
+{
+  await post('/inventory/review-mode', { mode: 'auto' });
+  sq.exec(`INSERT INTO master_list (id, base_sku, sku, name, part_num, location, cases, units_per_case, price, vendor, sheet_row) VALUES
+    (97001, '70-7-7', '70-7-7', 'Cap', '70-7-7=10', 'C1=7-7-7', 10, 10, 0.10, '', 0),
+    (97002, '70-7-7', '70-7-7', 'Cap', '70-7-7=5', 'C2=7-7-7', 4, 5, 0.20, '', 0)`);
+  const spot = () => sq.prepare("SELECT cases, price FROM cost_layer WHERE part='70-7-7=10' AND location='C1=7-7-7' ORDER BY received_at, id").all().map(l => l.cases + '@' + l.price).join(' + ');
+  const cs = () => sq.prepare('SELECT cases FROM master_list WHERE id=97001').get().cases;
+  const plog = () => sq.prepare("SELECT * FROM part_price_log WHERE parent='70-7-7' ORDER BY id").all();
+  const all0 = shelf();
+  const h0 = await get('/inventory/price-history?part=70-7-7');
+  check('price history for a part # with no price change yet → empty list, no error', h0.ok && h0.rows.length === 0, h0);
+  check('price history needs a sign-in', (await call('/inventory/price-history?part=70-7-7')).status === 401, null);
+  const ed = await post('/inventory/sku-row', { mode: 'update', d1Id: 97001, sheetRow: 0, partNum: '70-7-7=10', name: 'Cap', location: 'C1=7-7-7', cases: 10, unitsPerCase: 10, price: 0.12, vendor: '', prevNotes: '' });
+  const l1 = plog();
+  check('SKU Mgr price $0.10 → $0.12: the 10 cases already there KEEP $0.10; cases unchanged (10)', ed.ok && spot() === '10@0.1' && cs() === 10 && shelf() === all0, spot());
+  check('…the change is written down with the date: 70-7-7=10 $0.10 → $0.12, SKU Mgr price edit, by TS', l1.length === 1 && l1[0].old_price === 0.1 && l1[0].price === 0.12 && l1[0].source === 'SKU Mgr price edit' && l1[0].by_user === 'TS' && !!l1[0].at, l1);
+  await post('/inventory/sku-row', { mode: 'update', d1Id: 97001, sheetRow: 0, partNum: '70-7-7=10', name: 'Cap', location: 'C1=7-7-7', cases: 10, unitsPerCase: 10, price: 0.12, vendor: '', prevNotes: '' });
+  check('saving the same price again → no new price line', plog().length === 1, plog());
+  const si = await post('/inventory/log', { type: 'IN', partNum: '70-7-7=10', sku: '70-7-7=10', location: 'C1=7-7-7', cases: 5, initials: 'PK', notes: '', masterId: 97001 });
+  check('Stock In 5 at the same spot (same SKU Mgr line): 10 @ $0.10 + 5 @ $0.12 = 15 cases = SKU Mgr', si.ok && spot() === '10@0.1 + 5@0.12' && cs() === 15, spot());
+  const so = await post('/inventory/log', { type: 'OUT', partNum: '70-7-7=10', sku: '70-7-7=10', location: 'C1=7-7-7', cases: 12, initials: 'PK', notes: '[SHELVING]', masterId: 97001 });
+  check('Stock Out 12 from that line → FIFO: the 10 old ($0.10) go first, then 2 new → 3 @ $0.12 left = SKU Mgr 3', so.ok && spot() === '3@0.12' && cs() === 3, spot());
+  sq.prepare("INSERT INTO reorder_incoming (title, part, qty, vendor, cases, price, updated_at) VALUES ('PRICE-TEST 10/6', '70-7-7=10', 50, 'KW', 5, 0.15, ?)").run(new Date().toISOString());
+  const rv = await post('/reorder/fix/incoming-receive', { title: 'PRICE-TEST 10/6', location: 'C1=7-7-7', lines: [{ key: '70-7-7=10', part: '70-7-7=10', cases: 5, description: 'Cap' }] });
+  const l2 = plog();
+  check('📦 Received container at $0.15 into the same line: 3 @ $0.12 + 5 @ $0.15 = 8 = SKU Mgr 8', rv.ok && rv.results[0].ok && spot() === '3@0.12 + 5@0.15' && cs() === 8, { rv, spot: spot() });
+  check('…new price written down: $0.12 → $0.15, 📦 Received container, container name, 5 cases', l2.length === 2 && l2[1].old_price === 0.12 && l2[1].price === 0.15 && l2[1].source === '📦 Received container' && l2[1].title === 'PRICE-TEST 10/6' && l2[1].cases === 5, l2);
+  sq.prepare('INSERT INTO reorder_price_history (vendor, part, old_price, price, title, file, at) VALUES (?,?,?,?,?,?,?)').run('JQ', '70-7-7=5', 0.18, 0.20, 'sheet', 'jq.xlsx', '2026-01-02T00:00:00.000Z');
+  const h1 = await get('/inventory/price-history?part=70-7-7');
+  check('search 70-7-7 (parent) → every price of all its pack sizes, newest first: $0.15, $0.12, vendor sheet $0.20 (=5)',
+    h1.ok && h1.rows.map(r => r.part + ' ' + r.price).join(', ') === '70-7-7=10 0.15, 70-7-7=10 0.12, 70-7-7=5 0.2', h1.rows);
+  check('…vendor name hidden from non-owners (#1), never JQ', h1.rows[2].vendor === '#1' && !/JQ/.test(JSON.stringify(h1)), h1.rows[2]);
+  check('…with the batches on the shelf now (3 @ $0.12 oldest, 5 @ $0.15) adding up to SKU Mgr (8)',
+    h1.batches.filter(b => b.part === '70-7-7=10').map(b => b.cases + '@' + b.price).join(' + ') === '3@0.12 + 5@0.15' && h1.batches.filter(b => b.part === '70-7-7=10').reduce((a, b) => a + b.cases, 0) === cs(), h1.batches);
+  const h2 = await get('/inventory/price-history?part=70-7-7=5');
+  check('search the whole part # 70-7-7=5 → only that one', h2.ok && h2.rows.length === 1 && h2.rows[0].part === '70-7-7=5', h2.rows);
+  check('inventory adds up: whole shelf ' + all0 + ' + 5 in − 12 out + 5 received = ' + (all0 - 2), shelf() === all0 - 2, shelf());
+  const { readFileSync: rf } = await import('node:fs');
+  const ihp = rf(fileURLToPath(new URL('../inventory.html', import.meta.url)), 'utf8');
+  check('SKU Mgr: 💲 Price history button + panel, loaded with every search', /id="skumgr-pricehist-btn"/.test(ihp) && /id="skumgr-pricehist"/.test(ihp) && /skumgrPriceHistory\(q, false\);/.test(ihp) && /\/inventory\/price-history\?part=/.test(ihp), null);
+  sq.exec("DELETE FROM master_list WHERE id IN (97001, 97002); DELETE FROM cost_layer WHERE part LIKE '70-7-7%'");
+  await post('/inventory/review-mode', { mode: 'manual' });
+}
+
 console.log('\n' + (failed ? '❌ ' + failed + ' check(s) FAILED' : '✅ all ' + passed + ' checks passed') + '\n');
 process.exit(failed ? 1 : 0);

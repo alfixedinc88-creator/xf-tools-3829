@@ -4287,6 +4287,67 @@ async function inventoryCostValue(request, env) {
     byVendor: Object.entries(byVendor).map(([vendor, v]) => ({ vendor, value: Math.round(v * 100) / 100 })).sort((a, b) => b.value - a.value), noPrice, noEa, asOf: new Date().toISOString() }), { headers: { 'Content-Type': 'application/json' } }));
 }
 
+// ── 💲 Price change record (kept forever) ─────────────────────────────────
+// Every time a part # comes in at a NEW price (📦 Received container,
+// Receive PO, SKU Mgr price edit / new row) one line is written here with the
+// date, the old → new price per piece, where it came from and who. Nothing is
+// ever deleted, so SKU Mgr → 💲 Price history can show a part's whole price
+// story. (Vendor sheet / order imports keep their own record in
+// reorder_price_history and older Receive POs in cogs_history; the search
+// shows those too.) Only a change is written: the same price again is no new line.
+let _priceLogReady = false;
+async function priceLogTables(env) {
+  if (_priceLogReady) return;
+  await env.DB.prepare(`CREATE TABLE IF NOT EXISTS part_price_log (id INTEGER PRIMARY KEY AUTOINCREMENT, part TEXT NOT NULL, parent TEXT,
+    location TEXT, price REAL NOT NULL, old_price REAL, at TEXT NOT NULL, source TEXT, title TEXT, by_user TEXT, cases REAL)`).run();
+  await env.DB.prepare('CREATE INDEX IF NOT EXISTS idx_part_price_log_parent ON part_price_log(parent, at)').run();
+  _priceLogReady = true;
+}
+async function priceLogAdd(env, o) {
+  const part = _costKey(o.part), price = parseFloat(o.price);
+  if (!env.DB || !part || !(price > 0)) return false;
+  await priceLogTables(env);
+  const last = await env.DB.prepare('SELECT price FROM part_price_log WHERE part = ? ORDER BY at DESC, id DESC LIMIT 1').bind(part).first();
+  const was = last ? parseFloat(last.price) : (parseFloat(o.oldPrice) > 0 ? parseFloat(o.oldPrice) : null);
+  if (was != null && Math.abs(was - price) < 1e-6) return false;
+  await env.DB.prepare('INSERT INTO part_price_log (part, parent, location, price, old_price, at, source, title, by_user, cases) VALUES (?,?,?,?,?,?,?,?,?,?)')
+    .bind(part, mlParent(part), _costKey(o.location) || null, price, was, o.at || new Date().toISOString(), String(o.source || '').slice(0, 60),
+      o.title ? String(o.title).slice(0, 120) : null, o.by ? String(o.by).slice(0, 40) : null, parseFloat(o.cases) > 0 ? parseFloat(o.cases) : null).run();
+  return true;
+}
+// GET /inventory/price-history?part=30-3-4 — every recorded price of the
+// part # (a parent # also finds all its =pack part #s), newest first, plus
+// the price batches on the shelves right now (oldest is used up first).
+async function inventoryPriceHistory(url, env) {
+  const q = _costKey(url.searchParams.get('part'));
+  const json = (o, st) => cors(new Response(JSON.stringify(o), { status: st || 200, headers: { 'Content-Type': 'application/json' } }));
+  if (!q) return json({ ok: false, error: 'Part # required' }, 400);
+  await priceLogTables(env);
+  const whole = q.includes('='), parent = mlParent(q);
+  const match = p => { p = _costKey(p); return whole ? p === q : mlParent(p) === parent; };
+  const rows = [];
+  ((await env.DB.prepare('SELECT * FROM part_price_log WHERE parent = ? ORDER BY at DESC, id DESC').bind(parent).all()).results || [])
+    .filter(r => match(r.part)).forEach(r => rows.push({ at: r.at, part: r.part, price: r.price, oldPrice: r.old_price, source: r.source,
+      title: r.title, location: r.location, cases: r.cases, by: r.by_user }));
+  try {
+    ((await env.DB.prepare("SELECT * FROM reorder_price_history WHERE UPPER(part) = ? OR UPPER(part) LIKE ? ORDER BY at DESC").bind(parent, parent + '=%').all()).results || [])
+      .filter(r => match(r.part)).forEach(r => rows.push({ at: r.at, part: _costKey(r.part), price: r.price, oldPrice: r.old_price,
+        source: 'vendor sheet / order', title: r.title || r.file || null, vendor: r.vendor }));
+  } catch (_) {}
+  try {
+    if (!whole) ((await env.DB.prepare('SELECT * FROM cogs_history WHERE UPPER(base_sku) = ? ORDER BY created_at DESC').bind(parent).all()).results || [])
+      .forEach(r => rows.push({ at: r.created_at, part: parent, price: r.unit_price, oldPrice: null, source: 'Receive PO (older record)', title: r.note }));
+  } catch (_) {}
+  rows.sort((a, b) => String(b.at || '').localeCompare(String(a.at || '')));
+  const batches = [];
+  try {
+    await costTables(env);
+    ((await env.DB.prepare('SELECT * FROM cost_layer WHERE part = ? OR part LIKE ? ORDER BY part, location, received_at, id').bind(parent, parent + '=%').all()).results || [])
+      .filter(l => match(l.part)).forEach(l => batches.push({ part: l.part, location: l.location, cases: l.cases, price: l.price, receivedAt: l.received_at, source: l.source, title: l.title }));
+  } catch (_) {}
+  return json({ ok: true, q, rows, batches });
+}
+
 // GET /inventory/incoming?q=27-2-2 — SKU Mgr: everything imported on the
 // Reorder page for this part (or base part): ordered (vendor still making),
 // on the water (shipped container — with its pallets), or received and still
@@ -6543,6 +6604,7 @@ async function inventoryReceiveApply(request, env) {
         } catch(e) { console.error('[D1] cogs insert error:', e.message); }
       }
 
+      if (priceNum > 0) await costSafe(() => priceLogAdd(env, { part: partNum, location: palletWithDate, price: priceNum, source: 'Receive PO', by: initials || 'MGMT', cases: casesNum }));
       return cors(new Response(JSON.stringify({ ok: true, inserted: true, d1Id: newId }), { headers: { 'Content-Type': 'application/json' } }));
     }
 
@@ -6602,6 +6664,7 @@ async function inventoryReceiveApply(request, env) {
       }
     }
 
+    if (priceNum > 0) await costSafe(() => priceLogAdd(env, { part: partNum, location: palletWithDate, price: priceNum, oldPrice: parseFloat(d1Row.price) || null, source: 'Receive PO', by: initials || 'MGMT', cases: casesNum }));
     return cors(new Response(JSON.stringify({ ok: true, d1Id: d1Row.id }), { headers: { 'Content-Type': 'application/json' } }));
 
   } catch (err) {
@@ -7188,6 +7251,7 @@ const _app = {
             }
             // 💲 these cases carry the container's price (per piece); the rest of the spot keeps its own.
             await costSafe(async () => { await costReconcile(env, part, loc); await costMarkReceived(env, part, loc, addCases, have.price, title); });
+            await costSafe(() => priceLogAdd(env, { part, location: loc, price: have.price, source: '📦 Received container', title, by: who, cases: addCases }));
             await env.DB.prepare('DELETE FROM reorder_incoming WHERE title = ? AND part = ?').bind(title, key).run();
             await reorderLog(env, who, 'received', part, `Received "${title}": ${cases} box(es) of ${part} (${have.qty} units) → SKU Mgr @ ${loc}${conv ? ' as ' + addCases + ' case(s) of ' + exUpc + ' pcs' : ''}`);
             results.push({ key, ok: true, cases: addCases, boxes: cases, perCtn, converted: !!conv, location: loc, isNew: !ex });
@@ -7619,7 +7683,7 @@ const _app = {
         // these specific paths require mgmt — everything else falls through to 404
         const mgmtPaths = ['/inventory/pending','/inventory/verify','/inventory/transfer/verify',
           '/inventory/audit-mode','/inventory/review-mode','/inventory/prefixes','/inventory/rename-locations',
-          '/inventory/cancel-entry', '/inventory/cost/spots', '/inventory/cost/value', '/inventory/incoming', '/inventory/partnum-check'];
+          '/inventory/cancel-entry', '/inventory/cost/spots', '/inventory/cost/value', '/inventory/price-history', '/inventory/incoming', '/inventory/partnum-check'];
         if (mgmtPaths.some(p => path === p)) {
           return cors(new Response(JSON.stringify({ error: 'Management access required' }), {
             status: 403, headers: { 'Content-Type': 'application/json' }
@@ -7634,6 +7698,7 @@ const _app = {
       if (path === '/inventory/cost/spots' && method === 'GET') return await inventoryCostSpots(env);
       if (path === '/inventory/cost/value' && method === 'GET') return await inventoryCostValue(request, env);
       if (path === '/inventory/incoming' && method === 'GET') return await inventoryIncomingFor(url, env);
+      if (path === '/inventory/price-history' && method === 'GET') return await inventoryPriceHistory(url, env);
       // audit-mode POST + other mgmt routes
       if (path === '/inventory/audit-mode'      && method === 'POST') return await inventoryAuditModeSet(request, env);
       if (path === '/inventory/review-mode'     && method === 'POST') return await inventoryReviewModeSet(request, env);
@@ -12680,9 +12745,21 @@ async function inventorySkuRow(request, env, session) {
 
     if (isUpdate) {
       const tot = await skuMgrTotalsBefore(env, d1Id, sheetRow, partNum);
+      // 💲 A new price: the cases already at the spot keep the OLD price
+      // (their batch is settled first); only stock added from now on gets
+      // the new one, used up after the old (first in, first out).
+      const was = env.DB ? await (d1Id ? d1First(env, 'SELECT part_num, location, price FROM master_list WHERE id=?', [d1Id])
+        : d1First(env, 'SELECT part_num, location, price FROM master_list WHERE sheet_row=? AND sheet_row > 0', [sheetRow])).catch(() => null) : null;
+      const newPrice = parseFloat(price) || 0, oldPrice = was ? parseFloat(was.price) || 0 : 0;
+      const priceMoved = !!was && newPrice > 0 && Math.abs(newPrice - oldPrice) > 1e-6;
+      if (priceMoved) await costSafe(() => costReconcile(env, was.part_num, was.location));
       const result = await _invApplySkuRowUpdate(env, { sheetRow, d1Id, partNum, location, cases, name, sku, unitsPerCase, vendor: vendorUnmask(vendor), price, prevNotes });
       if (!result.ok) {
         return cors(new Response(JSON.stringify(result), { status: result.status || 500, headers: { 'Content-Type': 'application/json' } }));
+      }
+      if (priceMoved) {
+        await costSafe(() => costReconcile(env, partNum, location));
+        await costSafe(() => priceLogAdd(env, { part: partNum, location, price: newPrice, oldPrice, source: 'SKU Mgr price edit', by: who }));
       }
       await skuMgrLogEdit(env, who, result.before, d1Id, sheetRow, tot).catch(e => console.error('[skumgr history]', e.message));
       return cors(new Response(JSON.stringify({ ok: true, mode: 'update', sheetRow, d1Id, d1Changes: result.d1Changes }),
@@ -12695,6 +12772,7 @@ async function inventorySkuRow(request, env, session) {
         return cors(new Response(JSON.stringify(result), { status: result.status || 500, headers: { 'Content-Type': 'application/json' } }));
       }
       await skuMgrLogAdd(env, who, { partNum, location, cases, name }, tot).catch(e => console.error('[skumgr history]', e.message));
+      await costSafe(() => priceLogAdd(env, { part: partNum, location, price, source: 'SKU Mgr new row', by: who, cases }));
       return cors(new Response(JSON.stringify({ ok: true, mode: 'insert', sheetRow: result.sheetRow }),
         { headers: { 'Content-Type': 'application/json' } }));
     }
