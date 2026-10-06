@@ -249,6 +249,13 @@ async function ensureCredLevelTables(env) {
   // logs still show who did what; deleted_at hides it from the Users list.
   await env.DB.prepare(`ALTER TABLE cred_users ADD COLUMN deleted_at TEXT`).run().catch(()=>{});
   await env.DB.prepare(`ALTER TABLE cred_users ADD COLUMN deleted_by TEXT`).run().catch(()=>{});
+  // 🕘 Sign-in hours per person (owner: "they can sign in only from what
+  // time to what time; if they work late I change it for them") and every
+  // sign-in / refused sign-in / hours change, for the owner's 🔔 notice.
+  await env.DB.prepare(`ALTER TABLE cred_users ADD COLUMN login_hours TEXT`).run().catch(()=>{});
+  await env.DB.prepare(`ALTER TABLE cred_users ADD COLUMN late_until TEXT`).run().catch(()=>{});
+  await env.DB.prepare(`CREATE TABLE IF NOT EXISTS cred_login_log (id INTEGER PRIMARY KEY AUTOINCREMENT, at TEXT NOT NULL, kind TEXT NOT NULL,
+    user_id INTEGER, username TEXT, display_name TEXT, detail TEXT, ip TEXT, place TEXT, device TEXT)`).run().catch(()=>{});
   _credLevelTablesReady = true;
 }
 
@@ -344,6 +351,36 @@ function newSessionToken() {
   return [...crypto.getRandomValues(new Uint8Array(32))].map(b => b.toString(16).padStart(2, '0')).join('');
 }
 
+// 🕘 May this person use the app right now (New York time)? Owners always.
+// No hours set = any time. "Working late" (late_until) opens it until then.
+// graceMin: a person already signed in gets a few more minutes after their
+// end time to finish (and send what the phone saved offline).
+const CRED_HOURS_GRACE_MIN = 30;
+function credHoursOk(user, when, graceMin) {
+  if (!user || user.level === 'owner') return { ok: true };
+  const hours = String(user.login_hours || '').trim();
+  if (!hours) return { ok: true };
+  const now = when || new Date();
+  if (user.late_until && Date.parse(user.late_until) > now.getTime()) return { ok: true };
+  const wins = autolabelNoWaitParse(hours);
+  if (!wins.length) return { ok: true };
+  const ny = autolabelNyNow(now), g = graceMin || 0;
+  const inside = wins.some(w => w.days.includes(ny.day) && ny.mins >= w.from && ny.mins < w.to + g)
+    // grace past midnight for a window ending at 24:00 the day before
+    || (g && ny.mins < g && wins.some(w => w.days.includes((ny.day + 6) % 7) && w.to >= 24 * 60));
+  return inside ? { ok: true } : { ok: false, hours: autolabelNoWaitClean(hours) };
+}
+async function credLoginLog(env, kind, user, detail, request) {
+  try {
+    const cf = (request && request.cf) || {}, h = request && request.headers;
+    const ua = h ? String(h.get('User-Agent') || '') : '';
+    const device = /iPhone/.test(ua) ? 'iPhone' : /iPad/.test(ua) ? 'iPad' : /Android/.test(ua) ? 'Android phone' : /Windows/.test(ua) ? 'Windows PC' : /Macintosh/.test(ua) ? 'Mac' : ua ? 'other device' : '';
+    await env.DB.prepare(`INSERT INTO cred_login_log (at, kind, user_id, username, display_name, detail, ip, place, device) VALUES (?,?,?,?,?,?,?,?,?)`)
+      .bind(new Date().toISOString(), kind, user ? user.id : null, user ? user.username : '', user ? (user.display_name || '') : '', String(detail || '').slice(0, 500),
+        h ? String(h.get('CF-Connecting-IP') || '') : '', [cf.city, cf.region, cf.country].filter(Boolean).join(', '), device).run();
+  } catch (e) { console.error('[login log]', e.message); }
+}
+
 // POST /auth/login  { username, password } -> { token, displayName, roles }
 async function credLogin(request, env) {
   await ensureCredAuthTables(env);
@@ -383,6 +420,13 @@ async function credLogin(request, env) {
   }
 
   const roles = await credEffectiveRoles(env, user);
+  // 🕘 Outside this person's sign-in hours → no, even with the right password (on record).
+  const hrs = credHoursOk(user);
+  if (!hrs.ok) {
+    await credLoginLog(env, 'denied', user, `Outside sign-in hours (${hrs.hours})`, request);
+    return cors(new Response(JSON.stringify({ error: `Not your sign-in time — you can sign in ${hrs.hours} (New York time). Ask the owner if you need more time.`, outsideHours: true }), { status: 403, headers: { 'Content-Type': 'application/json' } }));
+  }
+  await credLoginLog(env, 'signin', user, '', request);
 
   const token = newSessionToken();
   const now = new Date().toISOString();
@@ -421,6 +465,7 @@ async function verifyCredSession(token, env) {
   }
   const user = await env.DB.prepare(`SELECT * FROM cred_users WHERE id = ? AND active = 1`).bind(session.user_id).first();
   if (!user) return null;
+  if (!credHoursOk(user, null, CRED_HOURS_GRACE_MIN).ok) return null; // 🕘 their time is over (30 min to finish)
   const roles = await credEffectiveRoles(env, user);
 
   await env.DB.prepare(`UPDATE cred_sessions SET last_active = ? WHERE token = ?`).bind(new Date().toISOString(), token).run(); // rolling extension
@@ -476,7 +521,7 @@ async function logUserActivity(env, userId, actionType, metadata) {
 async function adminListUsers(env, session) {
   await ensureCredAuthTables(env);
   const levels = await credGetLevels(env);
-  const users = await env.DB.prepare(`SELECT id, username, display_name, active, created_at, last_login, level, deleted_at, deleted_by FROM cred_users ORDER BY username ASC`).all();
+  const users = await env.DB.prepare(`SELECT id, username, display_name, active, created_at, last_login, level, deleted_at, deleted_by, login_hours, late_until FROM cred_users ORDER BY username ASC`).all();
   const rolesRes = await env.DB.prepare(`SELECT user_id, role FROM cred_user_roles`).all();
   const rolesByUser = {};
   for (const r of (rolesRes.results || [])) {
@@ -492,6 +537,7 @@ async function adminListUsers(env, session) {
       active: !!u.active, createdAt: u.created_at, lastLogin: u.last_login,
       level: u.level || null, extraRoles: extra, roles: [...eff],
       removedAt: u.deleted_at || null, removedBy: u.deleted_by || null,
+      loginHours: u.login_hours || '', lateUntil: u.late_until && Date.parse(u.late_until) > Date.now() ? u.late_until : null,
     };
   });
   const ownerCount = result.filter(u => u.level === 'owner' && u.active).length;
@@ -687,6 +733,45 @@ async function adminSaveAccess(request, env, session) {
 }
 
 // POST /admin/users/toggle-active  { userId, active: true|false }
+// POST /admin/users/hours { userId, hours, lateUntil: "HH:MM" today | "" (clear) }
+async function adminSetHours(request, env, session) {
+  await ensureCredLevelTables(env);
+  const b = await request.json().catch(() => ({}));
+  const J = (o, st) => cors(new Response(JSON.stringify(o), { status: st || 200, headers: { 'Content-Type': 'application/json' } }));
+  const t = await env.DB.prepare(`SELECT * FROM cred_users WHERE id = ?`).bind(b.userId).first();
+  if (!t) return J({ ok: false, error: 'User not found' }, 404);
+  if (t.level === 'owner') return J({ ok: false, error: 'The Owner can always sign in — no hours for an Owner' }, 400);
+  if (t.level === 'admin' && !(await credCanActAsOwner(env, session))) return J({ ok: false, error: 'Only an Owner can set an Admin\'s hours' }, 403);
+  const by = session.displayName || session.username || '';
+  const changes = [];
+  if (b.hours != null) {
+    const raw = String(b.hours).trim(), clean = autolabelNoWaitClean(raw);
+    if (raw && !clean) return J({ ok: false, error: 'Could not read the hours — write them like: Mon-Fri 7:00-18:00; Sat 8:00-14:00' }, 400);
+    if ((t.login_hours || '') !== clean) { changes.push(`hours ${t.login_hours || 'any time'} → ${clean || 'any time'}`); await env.DB.prepare(`UPDATE cred_users SET login_hours = ? WHERE id = ?`).bind(clean || null, t.id).run(); }
+  }
+  if (b.lateUntil != null) {
+    let until = null;
+    if (String(b.lateUntil).trim()) {
+      const m = String(b.lateUntil).trim().match(/^(\d{1,2}):(\d{2})$/);
+      if (!m || +m[1] > 23 || +m[2] > 59) return J({ ok: false, error: 'Working late until: a time like 21:30' }, 400);
+      const ny = autolabelNyNow(), mins = +m[1] * 60 + +m[2];
+      if (mins <= ny.mins) return J({ ok: false, error: 'That time today has already passed' }, 400);
+      until = new Date(Date.now() + (mins - ny.mins) * 60000).toISOString();
+    }
+    changes.push(until ? `working late today until ${b.lateUntil}` : 'working late cleared');
+    await env.DB.prepare(`UPDATE cred_users SET late_until = ? WHERE id = ?`).bind(until, t.id).run();
+  }
+  if (changes.length) await credLoginLog(env, 'hours', t, `${changes.join(' · ')} — by ${by}`, request);
+  return J({ ok: true });
+}
+// GET /admin/signins?after=<id>&limit= → sign-ins, refused sign-ins, hours changes (newest first).
+async function adminSignins(url, env) {
+  await ensureCredLevelTables(env);
+  const after = parseInt(url.searchParams.get('after')) || 0, limit = Math.min(200, parseInt(url.searchParams.get('limit')) || 50);
+  const rows = (await env.DB.prepare(`SELECT * FROM cred_login_log WHERE id > ? ORDER BY id DESC LIMIT ?`).bind(after, limit).all()).results || [];
+  return cors(new Response(JSON.stringify({ ok: true, rows }), { headers: { 'Content-Type': 'application/json' } }));
+}
+
 async function adminToggleActive(request, env, session) {
   await ensureCredAuthTables(env);
   const body = await request.json().catch(() => ({}));
@@ -6789,6 +6874,8 @@ const _app = {
       if (url.pathname === '/admin/users/reset-password' && method === 'POST') return await adminResetPassword(request, env, credSession);
       if (url.pathname === '/admin/users/update-roles' && method === 'POST')  return await adminUpdateRoles(request, env, credSession);
       if (url.pathname === '/admin/users/toggle-active' && method === 'POST') return await adminToggleActive(request, env, credSession);
+      if (url.pathname === '/admin/users/hours' && method === 'POST')         return await adminSetHours(request, env, credSession);
+      if (url.pathname === '/admin/signins' && method === 'GET')              return await adminSignins(url, env);
       if (url.pathname === '/admin/users/remove' && method === 'POST')        return await adminRemoveUser(request, env, credSession, false);
       if (url.pathname === '/admin/users/restore' && method === 'POST')       return await adminRemoveUser(request, env, credSession, true);
       if (url.pathname === '/admin/levels/update' && method === 'POST')       return await adminUpdateLevels(request, env, credSession);

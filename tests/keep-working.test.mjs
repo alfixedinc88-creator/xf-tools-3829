@@ -2530,6 +2530,61 @@ console.log('\nAuto Label → ⏸ no auto buying around the scan forms; scan for
   check('…Rules: "⏸ No auto buying at these times (New York)" box, said in plain words', /data-k="pauseTimes"/.test(ph) && /⏸ No auto buying:/.test(ph), null);
 }
 
+// Owner: "set from what time to what time each person can sign in (Admin, next to each person); if they work late I change
+// it for them; outside that time they can't sign in even with the right password — and notice me when someone signs in".
+console.log('\nAdmin → 🕘 sign-in hours per person; 🔔 every sign-in on record for the owner');
+{
+  const DAYS = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
+  const p = new Intl.DateTimeFormat('en-US', { timeZone: 'America/New_York', weekday: 'short', hour: '2-digit', minute: '2-digit', hourCycle: 'h23' }).formatToParts(new Date());
+  const g = t => (p.find(x => x.type === t) || {}).value; const today = DAYS.indexOf(g('weekday')), mins = +g('hour') * 60 + +g('minute');
+  const other = DAYS[(today + 3) % 7];
+  // a worker account
+  const salt2 = crypto.getRandomValues(new Uint8Array(16));
+  const km2 = await crypto.subtle.importKey('raw', new TextEncoder().encode('work1pass'), 'PBKDF2', false, ['deriveBits']);
+  const bits2 = await crypto.subtle.deriveBits({ name: 'PBKDF2', salt: salt2, iterations: 100000, hash: 'SHA-256' }, km2, 256);
+  const w = sq.prepare('INSERT INTO cred_users (username, password_hash, display_name, active, created_at) VALUES (?,?,?,1,?)').run('worker1', hex(salt2) + ':' + hex(new Uint8Array(bits2)), 'Wk One', new Date().toISOString());
+  const wid = Number(w.lastInsertRowid);
+  sq.prepare('INSERT INTO cred_user_roles (user_id, role) VALUES (?,?)').run(wid, 'mobile');
+  const login = async () => { const r = await call('/auth/login', { method: 'POST', body: JSON.stringify({ username: 'worker1', password: 'work1pass' }) }); return { status: r.status, body: await r.json() }; };
+  const h1 = await post('/admin/users/hours', { userId: wid, hours: other + ' 1:00-2:00' });
+  const l1 = await login();
+  check('🕘 hours set to another day → right password, still refused ("Not your sign-in time …"), on record as ⛔', h1.ok && l1.status === 403 && l1.body.outsideHours && /Not your sign-in time/.test(l1.body.error)
+    && !!sq.prepare("SELECT 1 x FROM cred_login_log WHERE kind = 'denied' AND user_id = ?").get(wid), { h1, l1 });
+  await post('/admin/users/hours', { userId: wid, hours: 'Sun-Sat 0:00-24:00' });
+  const l2 = await login();
+  const lg = sq.prepare("SELECT * FROM cred_login_log WHERE kind = 'signin' AND user_id = ? ORDER BY id DESC").get(wid);
+  check('…inside their hours → signs in, and the sign-in is on record (who, when, device) for the owner\'s 🔔', l2.status === 200 && !!l2.body.token && lg && lg.username === 'worker1' && !!lg.at, { l2: l2.status, lg });
+  // already signed in, then their time is over (another day only) → the next request is refused
+  await post('/admin/users/hours', { userId: wid, hours: other + ' 1:00-2:00' });
+  const r3 = await call('/auth/access', { headers: { 'X-Cred-Token': l2.body.token } });
+  check('…already signed in but their time is over (30 min to finish) → the app stops working for them', r3.status === 401, r3.status);
+  if (mins < 23 * 60 + 45) {
+    const until = `${String(Math.floor((mins + 10) / 60)).padStart(2, '0')}:${String((mins + 10) % 60).padStart(2, '0')}`;
+    const lt = await post('/admin/users/hours', { userId: wid, lateUntil: until });
+    const l4 = await login();
+    check('…🌙 "working late today until …" → they can sign in again until then, without changing their hours', lt.ok && l4.status === 200, { lt, l4: l4.status });
+    await post('/admin/users/hours', { userId: wid, lateUntil: '' });
+  } else check('…🌙 working late (skipped: too close to midnight to test)', true, null);
+  const l5 = await login();
+  check('…"Clear" working late → outside their hours again', l5.status === 403, l5.status);
+  const bad = await post('/admin/users/hours', { userId: wid, hours: 'whenever' });
+  check('…hours it can\'t read are refused (nothing changed)', bad.ok === false && /Could not read the hours/.test(bad.error), bad);
+  const ow = sq.prepare("INSERT INTO cred_users (username, password_hash, display_name, active, created_at, level) VALUES (?,?,?,1,?,'owner')").run('own1', 'x:y', 'Own', new Date().toISOString());
+  const oh = await post('/admin/users/hours', { userId: Number(ow.lastInsertRowid), hours: 'Mon 1:00-2:00' });
+  check('…an Owner never gets hours (can always sign in)', oh.ok === false && /Owner can always sign in/.test(oh.error), oh);
+  sq.prepare('DELETE FROM cred_users WHERE id = ?').run(Number(ow.lastInsertRowid));
+  const si = await get('/admin/signins?limit=50');
+  check('…🔔 Sign-ins list: sign-ins, refused sign-ins and every hours change (with who changed it)', si.ok && si.rows.some(x => x.kind === 'signin' && x.user_id === wid) && si.rows.some(x => x.kind === 'denied' && x.user_id === wid)
+    && si.rows.some(x => x.kind === 'hours' && /by TS/.test(x.detail)), si.rows.slice(0, 3));
+  await post('/admin/users/hours', { userId: wid, hours: '' });
+  const { readFileSync } = await import('node:fs');
+  const rd = f => readFileSync(fileURLToPath(new URL('../' + f, import.meta.url)), 'utf8');
+  const ad = rd('xfitting-admin.html'), xa = rd('xf-access.js');
+  check('…Admin → Users: "Sign-in hours" next to each person with 🕘 Hours (hours + working late today); 🔔 Sign-ins card; the Owner gets a pop-up / notification on any open app page',
+    /<th>Sign-in hours<\/th>/.test(ad) && /onclick="adOpenHours\(' \+ u\.id \+ '\)"/.test(ad) && /id="ad-h-late"/.test(ad) && /id="ad-signins"/.test(ad)
+    && /if \(d\.level === 'owner'\) signinWatch\(\);/.test(xa) && /new Notification\('XFitting — sign-in'/.test(xa), null);
+}
+
 // Owner: "Audit — after scanning the column or a box, scroll down to the scan bar (see more info below); on the phone the
 // Inventory / Refresh / Sign out / Apps bar stays at the top but small — tap to show all".
 console.log('\nInventory: Audit scrolls to the scan bar after a scan; slim top bar on the phone');
