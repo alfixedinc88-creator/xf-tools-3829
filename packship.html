@@ -1986,6 +1986,7 @@ body {
         </div>
         <div style="font-size:12px;color:var(--text3);margin-bottom:8px;line-height:1.5">Every shipping label bought that day (by Auto Label or by hand) and whether it printed — when, who, how many times. Below: every order that could <b>not</b> be bought, and why (a "can't purchase" never printed anything).</div>
         <div id="ps-al-day-sum" style="font-size:13px;font-weight:700;margin-bottom:8px"></div>
+        <div id="ps-al-day-stacks" style="font-size:12px;margin-bottom:10px"></div>
         <div id="ps-al-day-list" style="font-size:12px;overflow-x:auto"></div>
       </div>
 
@@ -9075,6 +9076,7 @@ window.psAlReprintFor = async function(btn, q, kind, exact) {
       _psAlBatch = [];
       for (var i = 0; i < ls.length; i++) await _psAlPrintOneLabel(ls[i], true);
       await _psAlBatchFlush();
+      _psAlSaveStack(ls.map(function(x) { return x.id; }), 'reprint');
       _psToast('🖨 Reprinted ' + ls.length + ' label' + (ls.length === 1 ? '' : 's') + ' for ' + q);
     } else {
       var s1 = await _psAlFetch('/veeqo/autolabel/slips?q=' + encodeURIComponent(q));
@@ -9178,7 +9180,8 @@ window.psAlLoadDay = async function() {
   var el = document.getElementById('ps-al-day'), sum = document.getElementById('ps-al-day-sum'), box = document.getElementById('ps-al-day-list'); if (!el || !box) return;
   if (!el.value) el.value = _psAlNyDay();
   var d = await _psAlFetch('/veeqo/autolabel/day?date=' + encodeURIComponent(el.value)); if (d.ok === false) { box.textContent = '✗ ' + (d.error || 'Failed'); return; }
-  _psAlDay = d; var e = _psAlEsc, c = d.counts || {}, t = function(x) { return x ? new Date(x).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' }) : ''; };
+  _psAlDay = d; var stEl = document.getElementById('ps-al-day-stacks'); if (stEl) stEl.innerHTML = _psAlStacksHtml(d.stacks);
+  var e = _psAlEsc, c = d.counts || {}, t = function(x) { return x ? new Date(x).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' }) : ''; };
   sum.innerHTML = '🏷 ' + c.bought + ' bought · <span style="color:var(--green)">🖨 ' + c.printed + ' printed</span>'
     + (c.notPrinted ? ' · <span style="color:var(--orange)">⏳ ' + c.notPrinted + ' not printed yet</span>' : '') + (c.merged ? ' · 🧩 ' + c.merged + ' in merged boxes' : '')
     + ' · <span style="color:' + (c.notBought ? 'var(--red)' : 'var(--text3)') + '">❌ ' + c.notBought + ' not bought</span>';
@@ -9198,6 +9201,63 @@ window.psAlLoadDay = async function() {
   box.innerHTML = (rows ? '<table style="width:100%;border-collapse:collapse">' + rows + '</table>' : '<div style="color:var(--text3)">No labels bought this day.</div>')
     + '<div style="font-weight:700;margin:12px 0 4px">❌ Could not be bought (nothing printed for these)</div>'
     + (nb ? '<table style="width:100%;border-collapse:collapse">' + nb + '</table>' : '<div style="color:var(--text3)">None.</div>');
+};
+// 🗂 Print stacks (owner: "when a stack of 10 prints, save it — when, who, how many; click it to open that
+// stack of labels, so I can print it over to us and check it order by order").
+window._psAlSaveStack = function(ids, source) {
+  ids = (ids || []).filter(Boolean); if (!ids.length) return;
+  _psAlFetch('/veeqo/autolabel/print-batch', { method: 'POST', body: { ids: ids, source: source || '', by: psInitials || '' } }).catch(function() {});
+};
+function _psAlStacksHtml(stacks) {
+  var e = _psAlEsc;
+  if (!(stacks || []).length) return '<div style="color:var(--text3)">🗂 No stacks printed this day.</div>';
+  return '<div style="font-weight:700;margin-bottom:4px">🗂 Stacks printed (' + stacks.length + ') — tap one to see its labels</div>' + stacks.map(function(b) {
+    return '<details style="border:1px solid var(--border);border-radius:8px;padding:6px 8px;margin-bottom:5px" ontoggle="if(this.open)psAlStackLoad(' + b.id + ', this)">'
+      + '<summary style="cursor:pointer"><b>' + e(new Date(b.ts).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit', second: '2-digit' })) + '</b> · ' + e(b.by_user || '?') + ' · <b>' + b.count + ' label' + (b.count === 1 ? '' : 's') + '</b> · ' + e(b.source || '') + '</summary>'
+      + '<div class="ps-al-stack-body" style="margin-top:6px;color:var(--text3)">⏳ Loading…</div></details>';
+  }).join('');
+}
+window.psAlStackLoad = async function(id, el) {
+  var body = el.querySelector('.ps-al-stack-body'); if (!body || body.getAttribute('data-done')) return;
+  var d = await _psAlFetch('/veeqo/autolabel/print-batch?id=' + id); if (d.ok === false) { body.textContent = '✗ ' + (d.error || 'Failed'); return; }
+  body.setAttribute('data-done', '1'); var e = _psAlEsc;
+  body.innerHTML = '<div style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:6px">'
+    + '<button class="ps-btn-sm" onclick="psAlStackOpen(' + id + ')">👁 Open these labels (to check / print anywhere)</button>'
+    + '<button class="ps-btn-sm" onclick="psAlStackReprint(' + id + ', this)">🖨 Print this stack again</button></div>'
+    + (d.labels || []).map(function(l, i) {
+      return '<div style="padding:3px 0;border-bottom:1px solid var(--border);color:var(--text)"><b>#' + (i + 1) + '</b> <span style="font-family:var(--mono)">' + e(l.order_number) + '</span> · ' + e(l.channel || '') + ' · ' + e([l.carrier, l.service].filter(Boolean).join(' '))
+        + ' · <span style="font-family:var(--mono);color:var(--text3)">' + e(l.tracking || '') + '</span>'
+        + ((l.items || []).length ? '<div style="font-size:11px;font-family:var(--mono);color:var(--text2)">📦 ' + l.items.map(function(it) { return e((it.bin || '—') + ' · ' + it.sku + ' ×' + it.qty); }).join('  |  ') + '</div>' : '') + '</div>';
+    }).join('');
+};
+// Every label of the stack as a picture, in print order, with #, order # and tracking — print it on any printer from there.
+window.psAlStackOpen = async function(id) {
+  var w = window.open('', '_blank'); if (!w) { _psToast('Allow pop-ups for this page to open the labels', 'err'); return; }
+  w.document.write('<title>Labels stack</title><p style="font:16px system-ui">⏳ Loading the labels…</p>');
+  var d = await _psAlFetch('/veeqo/autolabel/print-batch?id=' + id); if (d.ok === false) { w.document.body.textContent = '✗ ' + (d.error || 'Failed'); return; }
+  var e = _psAlEsc, pages = [];
+  for (var i = 0; i < (d.labels || []).length; i++) {
+    var l = d.labels[i], cap = '#' + (i + 1) + ' of ' + d.labels.length + ' · ' + e(l.order_number) + ' · ' + e([l.carrier, l.service].filter(Boolean).join(' ')) + ' · ' + e(l.tracking || '');
+    try { var cv = await _psAlLabelCanvas(await _psAlLabelBlob(l.id)); pages.push('<div class="pg"><div class="cap">' + cap + '</div><img src="' + cv.toDataURL('image/png') + '"></div>'); }
+    catch (er) { pages.push('<div class="pg"><div class="cap">' + cap + '</div><p style="color:#b91c1c">Label file not available: ' + e(er.message || er) + '</p></div>'); }
+  }
+  var b = d.batch || {};
+  w.document.open();
+  w.document.write('<!doctype html><html><head><title>Labels stack ' + e(new Date(b.ts).toLocaleString()) + '</title><style>body{font:13px system-ui;margin:12px}.pg{page-break-after:always;margin-bottom:18px}.cap{font-weight:700;margin-bottom:4px}img{width:4in;max-width:100%;border:1px solid #ccc}@media print{img{border:0}}</style></head><body>'
+    + '<h3 style="margin:0 0 10px">🗂 Stack printed ' + e(new Date(b.ts).toLocaleString()) + ' · ' + e(b.by_user || '?') + ' · ' + (d.labels || []).length + ' labels · ' + e(b.source || '') + '</h3>'
+    + '<button onclick="window.print()" style="padding:8px 14px;margin-bottom:12px">🖨 Print (choose the printer)</button>' + pages.join('') + '</body></html>');
+  w.document.close();
+};
+window.psAlStackReprint = async function(id, btn) {
+  if (!confirm('Print this whole stack again on the label printer (in the same order)?')) return;
+  btn.disabled = true; var t = btn.textContent; btn.textContent = '⏳';
+  try {
+    var d = await _psAlFetch('/veeqo/autolabel/print-batch?id=' + id); if (d.ok === false) throw new Error(d.error || 'Failed');
+    _psAlBatch = []; for (var i = 0; i < d.labels.length; i++) await _psAlPrintOneLabel(d.labels[i], true);
+    await _psAlBatchFlush(); _psAlSaveStack(d.labels.map(function(x) { return x.id; }), 'reprint of a stack');
+    _psToast('🖨 Printed the stack again (' + d.labels.length + ')');
+  } catch (er) { _psAlBatch = null; _psToast('Not printed: ' + (er.message || er), 'err'); }
+  finally { btn.disabled = false; btn.textContent = t; psAlLoadDay(); }
 };
 window.psAlDayCsv = function() {
   var d = _psAlDay; if (!d) return;
@@ -10068,12 +10128,14 @@ window.psAlPrintNewLabels = async function(silent) {
       any = true;
       if (msg) msg.textContent = 'Printing labels ' + (done + 1) + '–' + (done + list.length) + '…';
       _psAlBatch = []; // every label (+ its packing slip right under it) in ONE print, in order
+      var stack = [];
       for (var i = 0; i < list.length; i++) {
         after = Math.max(after, list[i].id);
-        try { await _psAlPrintOneLabel(list[i]); done++; if (window._psAlLastNote) notes.push(window._psAlLastNote); }
+        try { await _psAlPrintOneLabel(list[i]); done++; stack.push(list[i].id); if (window._psAlLastNote) notes.push(window._psAlLastNote); }
         catch (e) { bad.push(list[i].order_number + ': ' + e.message); window._psAlLabelLastTried = e.tried || null; }
       }
       window._psAlLastBatchPages = await _psAlBatchFlush();
+      _psAlSaveStack(stack, silent ? 'printer station' : 'by hand'); // 🗂 kept: when, who, which labels, in order
     }
     if (!any) { if (msg && !silent) msg.textContent = 'No new labels.'; return; }
     if (msg) { msg.style.whiteSpace = 'pre-wrap'; msg.textContent = (done ? '✓ Printed ' + done + ' label' + (done === 1 ? '' : 's') + ' at ' + new Date().toLocaleTimeString() : '') + (bad.length ? (done ? ' · ' : '') + '✗ ' + bad.length + ' not printed — see the list' : '') + (notes.length ? '\n' + notes.join('\n') : ''); }
@@ -10101,7 +10163,7 @@ window.psAlLoadLabels = async function() {
 window.psAlReprintLabel = async function(i) {
   var l = _psAlLabelRecent[i]; if (!l) return;
   var msg = document.getElementById('ps-al-label-msg');
-  try { _psAlBatch = []; await _psAlPrintOneLabel(l, true); await _psAlBatchFlush(); if (msg) { msg.style.whiteSpace = 'pre-wrap'; msg.textContent = '✓ Printed ' + (window._psAlLastNote || l.order_number); } }
+  try { _psAlBatch = []; await _psAlPrintOneLabel(l, true); await _psAlBatchFlush(); _psAlSaveStack([l.id], 'reprint'); if (msg) { msg.style.whiteSpace = 'pre-wrap'; msg.textContent = '✓ Printed ' + (window._psAlLastNote || l.order_number); } }
   catch (e) { _psAlBatch = null; if (msg) msg.textContent = '✗ ' + l.order_number + ': ' + e.message + (e.tried ? '\n' + JSON.stringify(e.tried).slice(0, 1500) : ''); if (msg) msg.style.whiteSpace = 'pre-wrap'; }
   psAlLoadLabels();
 };
