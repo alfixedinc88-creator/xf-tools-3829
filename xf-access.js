@@ -504,6 +504,7 @@ window.addEventListener('pageshow', function (e) { if (e.persisted) location.rel
       x.addEventListener('pointerdown', function (e) { e.preventDefault(); }); x.addEventListener('click', function (e) { e.preventDefault(); close(); fn(); }); p.appendChild(x); };
     B('⌨️ Type in this box (our keyboard)' + (last && document.contains(last) ? '' : ' — tap a box first'), show, true);
     B('🔍 Test the scanner', scanTest);
+    if (window.xfStationSet) B(window.xfStation() ? '🔄 Station mode: ON — tap to turn off' : '🔄 Use as a station (upside down, screen stays on)', function () { window.xfStationSet(!window.xfStation()); });
     B('Cancel', function () {});
     document.body.appendChild(p);
   }
@@ -670,4 +671,38 @@ window.addEventListener('pageshow', function (e) { if (e.persisted) location.rel
     }).observe(document.body, { subtree: true, attributes: true, attributeFilter: ['data-kb-typing', 'data-typing'] });
   }
   if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', start); else start();
+})();
+
+// ── 🔄 Station mode (owner, 2026-10-06) ──────────────────────────────────────
+// A scanner standing upside down in its cradle as a packing station: every
+// app turns upside down so the screen reads the right way, and the screen
+// stays on (Wake Lock). Per device (this phone only), switched in the ⌨️ menu
+// (bottom left). The scanner's own always-on / motion scan mode is set in
+// the scanner's settings app — see docs/SCANNERS.md. Pack & Ship ignores the
+// same label read again and again while it sits under the scanner.
+(function () {
+  var KEY = 'xf_station', lock = null;
+  function get() { try { return localStorage.getItem(KEY) === '1'; } catch (e) { return false; } }
+  function css() {
+    if (document.getElementById('xf-station-css')) return;
+    var st = document.createElement('style'); st.id = 'xf-station-css';
+    // html turned 180°; the page scrolls inside body so fixed buttons / pop-ups stay on screen.
+    st.textContent = 'html.xf-station{transform:rotate(180deg);transform-origin:50% 50%;height:100%;overflow:hidden}'
+      + 'html.xf-station body{height:100%;overflow:auto!important;overscroll-behavior:contain}';
+    (document.head || document.documentElement).appendChild(st);
+  }
+  function wake() {
+    if (!get() || document.visibilityState !== 'visible' || lock || !(navigator.wakeLock && navigator.wakeLock.request)) return;
+    navigator.wakeLock.request('screen').then(function (l) { lock = l; l.addEventListener('release', function () { lock = null; }); }).catch(function () {});
+  }
+  function apply() {
+    var on = get(); css();
+    document.documentElement.classList.toggle('xf-station', on);
+    if (on) wake(); else if (lock) { try { lock.release(); } catch (e) {} lock = null; }
+  }
+  window.xfStation = get;
+  window.xfStationSet = function (on) { try { localStorage.setItem(KEY, on ? '1' : '0'); } catch (e) {} apply(); };
+  document.addEventListener('visibilitychange', wake); // the screen lock drops when the app is hidden: take it again
+  window.addEventListener('storage', function (e) { if (e.key === KEY) apply(); }); // other tabs follow
+  apply();
 })();

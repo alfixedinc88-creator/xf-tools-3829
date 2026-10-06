@@ -2646,11 +2646,24 @@ function _psPostWithTimeout(url, body) {
 }
 
 // ── Scan processing ───────────────────────────────────
+// 🔄 Station mode (scanner in its cradle, always scanning): the label sitting
+// under it is read again and again — ignore the same label until it has been
+// out of sight for 30 s, so it doesn't sound "Duplicate" over and over.
+var _psStationLast = {};
+function _psStationRepeat(kind, tracking) {
+  if (!(window.xfStation && window.xfStation())) return false;
+  var l = _psStationLast[kind], now = Date.now();
+  var rep = !!(l && l.t === tracking && now - l.at < 30000);
+  _psStationLast[kind] = { t: tracking, at: now };
+  return rep;
+}
+
 function _psProcessScan(raw) {
   var inp      = document.getElementById('ps-scan-input');
   var tracking = psNormalizeTracking(raw);
   inp.value = '';
   if (!tracking) return; // rejected by format validation (DataMatrix garbage etc)
+  if (_psStationRepeat('pack', tracking)) { inp.focus(); return; } // same label still under the station scanner
 
   var cancelEntry = _psCancelOrderCache[tracking];
   if (cancelEntry) {
@@ -5811,6 +5824,7 @@ function _psProcessPick(raw) {
   var tracking = psNormalizeTracking(raw);
   inp.value = '';
   if (!tracking) return; // rejected by format validation (DataMatrix garbage etc)
+  if (_psStationRepeat('pick', tracking)) { inp.focus(); return; } // same label still under the station scanner
 
   var cancelEntry = _psCancelOrderCache[tracking];
   if (cancelEntry) {
@@ -10016,5 +10030,5 @@ window.psAlSlipAdd = async function() {
   psAlLoadSlips();
 };
 </script>
-<script src="xf-access.js?v=20261006e"></script>
+<script src="xf-access.js?v=20261006f"></script>
 </html>
