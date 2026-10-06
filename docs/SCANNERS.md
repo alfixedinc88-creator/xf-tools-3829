@@ -132,6 +132,21 @@ Shows every key / text the scanner sends, with "cursor: nothing" / "box".
   ignores auto-rotate OFF (2026-10-06). After a change, reinstall the app icon
   (or wait for Chrome to update it, up to a day).
 
+## Scanner as a packing station (upside down in its cradle) — owner, 2026-10-06
+- In our app: ⌨️ (bottom left) → **🔄 Use as a station**. On this phone only,
+  every app turns upside down and the screen stays on. Same menu → "Station
+  mode: ON — tap to turn off". Keep the phone's Auto-rotate OFF, or Android
+  may turn it a second time.
+- Pack & Ship Packing / Picking ignore the same label read again while it
+  sits under the scanner (until it has been away for 30 s), so no
+  "Duplicate" alarm loop.
+- Always-on / motion scanning is a setting in the scanner's own app — a web
+  page can't switch it. Look for scan mode **Continuous / Auto / Sense
+  (motion) / Presentation** and a **same-barcode delay / interval** (set
+  about 3–5 s). R20H: Scanner Settings; Svantto MC002: iScanPlus → Setting.
+  Names differ by model; 🔍 Test the scanner shows if it scans by itself.
+  Turn it back to trigger mode when the scanner is used by hand again.
+
 ## Svantto MC002 (Android, built-in scanner, app "iScanPlus")
 **Working (confirmed by the owner 2026-10-06):** iScanPlus (not "iScanTest",
 that's only a test screen) → Setting tab → Output Method Configuration →

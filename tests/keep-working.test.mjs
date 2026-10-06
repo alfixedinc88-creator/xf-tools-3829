@@ -2884,5 +2884,26 @@ console.log('\nInstalled app opens without the address bar (manifest linked on e
   check('…every page links the manifest', missing.length === 0, missing);
 }
 
+// Owner: "a button to click like 'using scanner as station' … turn all app upside down" and keep the scanner always scanning.
+console.log('\nStation mode: every app upside down + screen on; Pack & Ship ignores the same label read again and again');
+{
+  const { readFileSync } = await import('node:fs');
+  const xa = readFileSync(fileURLToPath(new URL('../xf-access.js', import.meta.url)), 'utf8');
+  check('⌨️ menu has 🔄 Use as a station (on / off, per phone)', /Use as a station \(upside down, screen stays on\)/.test(xa) && /Station mode: ON — tap to turn off/.test(xa) && /localStorage\.setItem\(KEY, on \? '1' : '0'\)/.test(xa), null);
+  check('…turns the whole app 180° (page scrolls inside it) and keeps the screen on (Wake Lock, taken again after the app is hidden)',
+    /html\.xf-station\{transform:rotate\(180deg\)/.test(xa) && /navigator\.wakeLock\.request\('screen'\)/.test(xa) && /addEventListener\('visibilitychange', wake\)/.test(xa), null);
+  const ps = readFileSync(fileURLToPath(new URL('../packship.html', import.meta.url)), 'utf8');
+  const src = ps.slice(ps.indexOf('var _psStationLast'), ps.indexOf('function _psProcessScan('));
+  let st = false, now = 1000000; const realNow = Date.now; Date.now = () => now;
+  const rep = new Function('window', src + '; return _psStationRepeat;')({ xfStation: () => st });
+  const off = rep('pack', 'T1') || rep('pack', 'T1');
+  st = true; const a = rep('pack', 'T1'), b = rep('pack', 'T1'); now += 25000; const c = rep('pack', 'T1'); now += 25000; const d = rep('pack', 'T1');
+  const e = rep('pack', 'T2'), f = rep('pick', 'T2'); now += 31000; const g = rep('pack', 'T2');
+  Date.now = realNow;
+  check('…station on: same label again ignored while it stays under (keeps sliding), new label / other tab / 30 s away counts; station off: nothing ignored',
+    !off && !a && b && c && d && !e && !f && !g, { off, a, b, c, d, e, f, g });
+  check('…Packing and Picking both use it', /if \(_psStationRepeat\('pack', tracking\)\)/.test(ps) && /if \(_psStationRepeat\('pick', tracking\)\)/.test(ps), null);
+}
+
 console.log('\n' + (failed ? '❌ ' + failed + ' check(s) FAILED' : '✅ all ' + passed + ' checks passed') + '\n');
 process.exit(failed ? 1 : 0);
