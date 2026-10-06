@@ -3166,8 +3166,8 @@ console.log('\n🧾 Reorder planner: FBA rows carry every other pack / channel; 
   const hist = sq.prepare("SELECT * FROM reorder_history WHERE part = '88-1-1=10X' ORDER BY id DESC").all();
   check('…the change is in 🕘 History (vendor + outside UPC, who)', hist.length >= 1 && /vendor/.test(hist[0].detail) && /outside UPC/.test(hist[0].detail), hist[0]);
   const rh = readFileSync(fileURLToPath(new URL('../reorder.html', import.meta.url)), 'utf8');
-  check('page: CSV has Pieces · Price per Piece · Line Total · Price From · Price Date + a TOTAL line; "FBA listings only" remembered + warns about parts with no FBA listing; 🏷 tool',
-    /'Pieces', 'Price per Piece', 'Line Total', 'Price From', 'Price Date'/.test(rh) && /lines\.push\(\[cell\('TOTAL'\)/.test(rh) && /localStorage\.setItem\('rvo_fbaf',this\.value\)/.test(rh)
+  check('page: CSV has Pieces · Price per Piece · Line Total · Price From · Price Date + a TOTAL line; always FBA listings only (owner: "take out the options") + warns about parts with no FBA listing; 🏷 tool',
+    /'Pieces', 'Price per Piece', 'Line Total', 'Price From', 'Price Date'/.test(rh) && /lines\.push\(\[cell\('TOTAL'\)/.test(rh) && /<input type="hidden" id="rvo-fbaf" value="fba">/.test(rh) && !/<option value="nofba">/.test(rh)
       && /no FBA listing at all and need ordering — hidden now, so they will NOT be ordered/.test(rh) && /onclick="rvoPartOpen\(\)"/.test(rh) && /'\/inventory\/upc-link'/.test(rh), null);
   for (const t of ['fba_catalog', 'amazon_sales_weekly', 'ebay_sales_weekly']) sq.prepare(`DELETE FROM ${t} WHERE sku LIKE '88-%'`).run();
   sq.prepare("DELETE FROM master_list WHERE part_num LIKE '88-%'").run(); sq.prepare("DELETE FROM reorder_vendor_catalog WHERE part LIKE '88-%'").run();

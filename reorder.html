@@ -2129,9 +2129,9 @@ body { display:flex; flex-direction:column; min-height:100vh; background:var(--b
       <div style="display:flex;gap:12px;align-items:center;flex-wrap:wrap;margin-bottom:10px;font-size:12px;color:var(--text3)">
         <label style="display:flex;align-items:center;gap:5px">Vendor:
           <select id="rvo-vendor" onchange="rvoRender()" style="font-size:12px;padding:4px 6px;border-radius:6px;border:1px solid var(--border);min-width:140px"><option value="">All vendors</option></select></label>
-        <label style="display:flex;align-items:center;gap:5px" title="FBA = part #s we send to Amazon FBA · Not FBA = everything else (sold only on eBay / Walmart / Shopify / FBM)">Listings:
-          <select id="rvo-fbaf" onchange="try{localStorage.setItem('rvo_fbaf',this.value)}catch(e){};rvoRender()" style="font-size:12px;padding:4px 6px;border-radius:6px;border:1px solid var(--border)">
-            <option value="">All</option><option value="fba">FBA listings only</option><option value="nofba">Not in FBA only</option></select></label>
+        <!-- Owner: "only order in the FBA listing, with all the inventory counted — take out the options". Always FBA listings:
+             each FBA row carries every sale of its part # (other packs, non-FBA listings, every channel). -->
+        <span style="display:flex;align-items:center;gap:5px;font-weight:700;color:var(--text2)" title="Each FBA listing carries every sale of its part # — other pack sizes, non-FBA listings, eBay / Walmart / Shopify">📦 Ordering FBA listings only<input type="hidden" id="rvo-fbaf" value="fba"></span>
         <label style="display:flex;align-items:center;gap:5px">Search:
           <input type="text" id="rvo-q" placeholder="Part #, e.g. 27-3-1" oninput="rvoRender()" style="width:150px;font-size:12px;padding:4px 8px;border-radius:6px;border:1px solid var(--border);font-family:var(--mono)"></label>
         <label style="display:flex;align-items:center;gap:5px" title="Change part #, description, vendor, UPCs, ASIN and case qty right in the table, then 💾 Save all"><input type="checkbox" id="rvo-inline" onchange="rvoInlToggle(this.checked)"> ✏️ Edit in table</label>
@@ -4096,11 +4096,10 @@ function rvoFbaNote() {
     + '<b>FBA listings only:</b> each FBA row already counts the sales of the other pack sizes, listings and channels of its part # — those sales are <b>not</b> lost.'
     + (hid.length ? '<br><b style="color:var(--orange)">⚠ ' + hid.length + ' part # ' + (hid.length === 1 ? 'has' : 'have') + ' no FBA listing at all and need ordering — hidden now, so they will NOT be ordered:</b> '
       + hid.slice(0, 15).map(function (r) { return '<span style="font-family:var(--mono)">' + escHtml(r.sku) + '</span> (' + fmt0(r.orderUnits) + ')'; }).join(', ') + (hid.length > 15 ? ' …' : '')
-      + '. Switch Listings to "All" to order them too.' : '<br>✅ Every part # that needs ordering has an FBA listing.') + '</div>';
+      + '. Make an FBA listing for them to have them ordered.' : '<br>✅ Every part # that needs ordering has an FBA listing.') + '</div>';
 }
 function rvoRender() {
   if (!RVO.loaded) return;
-  if (!RVO._fbafSet) { RVO._fbafSet = true; try { var sv = localStorage.getItem('rvo_fbaf'); if (sv != null) document.getElementById('rvo-fbaf').value = sv; } catch (e) {} }
   rvoFbaNote();
   var rows = rvoVisible(), m = RVO.meta, cols = rvoCols();
   var inOrder = rows.filter(function (r) { return !RVO.off[r.sku] && rvoQty(r) > 0; });
