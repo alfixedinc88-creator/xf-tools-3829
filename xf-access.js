@@ -380,10 +380,30 @@ window.addEventListener('pageshow', function (e) { if (e.persisted) location.rel
   if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', start); else start();
 })();
 
+// ── 📷 UPC with its first digit dropped ──────────────────────────────────────
+// Some scanners (Farset R20H) send a 12-digit UPC-A without its first digit:
+// box 810097207059 comes in as 10097207059. 11 digits whose UPC check digit
+// only works with a first digit of 1–9 put that digit back (exactly one
+// digit fits). 11 digits that work with a 0 in front are a UPC whose leading
+// 0 was dropped — left as they are (the lookups already ignore leading 0s).
+// Fixed the moment the scan lands (bulk insert / Enter), before any page reads it.
+(function () {
+  function okUpc(c) { var t = 0; for (var i = 0; i < 11; i++) t += (+c[i]) * (i % 2 ? 1 : 3); return (10 - t % 10) % 10 === +c[11]; }
+  function fix(v) {
+    var m = /^(\s*)(\d{11})([\r\n\t]*)$/.exec(String(v == null ? '' : v)); if (!m || okUpc('0' + m[2])) return v;
+    for (var d = 1; d <= 9; d++) if (okUpc(d + m[2])) return m[1] + d + m[2] + m[3];
+    return v;
+  }
+  window.xfFixUpc = fix;
+  function mend(el) { if (!el || el.tagName !== 'INPUT' || el.type === 'password') return; var f = fix(el.value); if (f !== el.value) el.value = f; }
+  window.addEventListener('keydown', function (e) { if (e.key === 'Enter' || e.keyCode === 13) mend(e.target); }, true);
+  window.addEventListener('input', function (e) { if (e.data && e.data.length >= 11) mend(e.target); }, true); // the scanner drops the whole number in at once
+})();
+
 // ── 🔇 Scanner phone: no pop-up keyboard ─────────────────────────────────────
 // On a phone with a built-in scanner the phone keyboard covers half the screen
-// every time a scan box is focused. Turned on per phone (⌨️ button, bottom
-// left, touch screens only): typing boxes stop opening the keyboard
+// every time a scan box is focused. On by default on every touch screen
+// (owner, 2026-10-06); a phone can turn it off (⌨️ button, bottom left): typing boxes stop opening the keyboard
 // (inputmode="none") but scans still go in. Tap ⌨️ → "Show keyboard" to type
 // in the box you're on; it goes back to hidden when you leave that box.
 // Sign-in boxes are left alone (they have their own ⌨️ Keyboard).
@@ -391,7 +411,7 @@ window.addEventListener('pageshow', function (e) { if (e.persisted) location.rel
   if (!(window.matchMedia && window.matchMedia('(pointer: coarse)').matches)) return;
   var PREF = 'xf_nokb', last = null, open = null;
   var TYPES = /^(text|search|number|tel|email|url)$/i;
-  function on(v) { try { if (v === undefined) return localStorage.getItem(PREF) === '1'; localStorage.setItem(PREF, v ? '1' : '0'); } catch (e) {} return false; }
+  function on(v) { try { if (v === undefined) return localStorage.getItem(PREF) !== '0'; localStorage.setItem(PREF, v ? '1' : '0'); } catch (e) {} return true; } // hidden unless this phone chose "Always show" (owner: hide it on every scanner and phone)
   function isBox(el) {
     if (!el || !el.matches) return false;
     if (el.matches('input[autocomplete="username"], input[type="password"], #xf-nokb-pop *, [data-kb-typing]')) return false; // ⌨ "type it" on purpose (Container here)

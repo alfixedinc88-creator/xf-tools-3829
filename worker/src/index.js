@@ -2731,6 +2731,20 @@ function vendorUpcMap() {
 async function upcToPart(env, code) {
   const z = String(code || '').replace(/\D/g, '').replace(/^0+/, '');
   if (!z) return null;
+  const hit = await upcToPartOne(env, z);
+  if (hit || z.length !== 11) return hit;
+  const full = upcAddFirstDigit(z); // R20H scanner: 810097207059 sent as 10097207059
+  return full ? upcToPartOne(env, full) : null;
+}
+// 11 digits whose UPC-A check digit only works with a first digit 1–9 → that
+// full 12-digit UPC (exactly one digit fits). null when a leading 0 fits.
+function upcAddFirstDigit(z) {
+  const ok = c => { let t = 0; for (let i = 0; i < 11; i++) t += (+c[i]) * (i % 2 ? 1 : 3); return (10 - t % 10) % 10 === +c[11]; };
+  if (!/^\d{11}$/.test(z) || ok('0' + z)) return null;
+  for (let d = 1; d <= 9; d++) if (ok(d + z)) return d + z;
+  return null;
+}
+async function upcToPartOne(env, z) {
   const q = async (sql) => { try { const r = await d1First(env, sql, [z, z]); return r && r.p ? String(r.p).trim().toUpperCase() : null; } catch (e) { return null; } };
   await env.DB.prepare('CREATE TABLE IF NOT EXISTS upc_link (upc TEXT PRIMARY KEY, part TEXT NOT NULL, by_user TEXT, at TEXT)').run().catch(() => {});
   return await q(`SELECT part AS p FROM upc_link WHERE LTRIM(upc, '0') = ? OR LTRIM(upc, '0') = ? LIMIT 1`)
