@@ -72,6 +72,17 @@ Bar Setting → Enable/Disable (all the common ones are on from the factory).
   there, the scanner is fine.
 
 ## Phone keyboard
-Hidden by default on every touch screen (owner, 2026-10-06): scans still go
-in. To type, tap the box, then the ⌨️ button (bottom left) → "Show keyboard to
-type". A phone used for typing can pick "Always show the keyboard on this phone".
+Never opens on a touch screen (owner, 2026-10-06: "get away of the keyboard
+forever"), sign-in boxes included. Scans still go in. To type: tap the box,
+then ⌨️ (bottom left) → "Type in this box" opens OUR on-screen keyboard
+(sign-in boxes open it by themselves). A page's ⌨ "type it" button opens it too.
+
+A scan that arrives with no box selected (cursor on a button) goes to the scan
+box used last (or the page's 📷 box). Not into sign-in boxes, not behind a pop-up.
+
+## New scanner? ⌨️ → 🔍 Test the scanner
+Shows every key / text the scanner sends, with "cursor: nothing" / "box".
+- Nothing shows at all → the scanner isn't sending to Chrome (check its send /
+  output mode: pick keyboard / keystroke emulation if offered).
+- Shows only with "Cursor in a box" → fine (the app keeps a box selected).
+- Numbers show but a digit is missing → compare with the printed number.

@@ -2758,7 +2758,16 @@ console.log('\nScanner sends a UPC without its first digit → the full UPC is p
     && /code = String\(window\.xfFixUpc \? xfFixUpc\(code \|\| ''\) : code \|\| ''\)\.trim\(\);/.test(ih), null);
   const wk = readFileSync(fileURLToPath(new URL('../worker/src/index.js', import.meta.url)), 'utf8');
   check('…the Worker UPC → part # lookup also tries the full UPC for 11 digits', /const full = upcAddFirstDigit\(z\);/.test(wk), null);
-  check('phone keyboard hidden by default on every touch screen (a phone can still pick "Always show")', /return localStorage\.getItem\(PREF\) !== '0';/.test(xa) && /Always show the keyboard on this phone/.test(xa), null);
+  // Owner, next day: "even I set it at always hiding keyboard, it still pops up — get away of the keyboard forever".
+  check('phone keyboard never opens on a touch screen (no setting to turn it back on, sign-in boxes too); ⌨️ opens OUR keyboard instead',
+    /function on\(\) \{ return true; \}/.test(xa) && !/Always show the keyboard on this phone/.test(xa) && !/'input\[autocomplete="username"\], input\[type="password"\], #xf-nokb-pop \*/.test(xa)
+      && /if \(v === undefined && TOUCH\) return true;/.test(xa) && /B\('⌨️ Type in this box \(our keyboard\)'/.test(xa) && /if \(window\.xfOskOpen\) window\.xfOskOpen\(el\);/.test(xa), null);
+  check('…a page\'s ⌨ "type it" button (data-kb-typing / data-typing) opens OUR keyboard on that box; ⏎ on it = Enter (search / save)',
+    /attributeFilter: \['data-kb-typing', 'data-typing'\]/.test(xa) && /if \(!signIn\(target\)\) \{ \/\/ any other box: ⏎ = the Enter key/.test(xa), null);
+  check('…a scan with no box selected goes to the last scan box (never a sign-in box, not behind a pop-up, not taken twice); slow typing is not a scan',
+    /if \(!e\.isTrusted \|\| e\.defaultPrevented/.test(xa) && /if \(now - sAt > 120\) sBuf = '';/.test(xa) && /function scanOk\(el\)[^\n]*input\[autocomplete="username"\], input\[type="password"\]/.test(xa)
+      && /if \(popupOver\(el\)\)/.test(xa) && /var c = sBuf; sBuf = ''; if \(c\.length >= 3\) \{ e\.preventDefault\(\); deliver\(c\); \}/.test(xa), null);
+  check('…⌨️ → 🔍 Test the scanner shows every key / text a scanner sends (starts with nothing selected)', /B\('🔍 Test the scanner', scanTest\);/.test(xa) && /keydown key=' \+ q\(e\.key\)/.test(xa) && /start with nothing selected/.test(xa), null);
   const sc = readFileSync(fileURLToPath(new URL('../docs/SCANNERS.md', import.meta.url)), 'utf8');
   check('docs/SCANNERS.md keeps the N77, Zebra DS2278 and Farset R20H fixes', /N77/.test(sc) && /DS2278/.test(sc) && /R20H/.test(sc), null);
 }
