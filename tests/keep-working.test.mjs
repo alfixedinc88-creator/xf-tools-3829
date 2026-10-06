@@ -3271,5 +3271,68 @@ console.log('\n🖨 Printer station: starts on any tab, one window prints');
   check('…the first window closed / stuck over 90 s → the other one takes over printing', B.lock() === true && B.mine() && !A.mine(), store.xf_station_lock);
 }
 
+// Owner: "auto buy labels is on, but why do I still see it under would buy? as soon as it's in would buy we start to buy the label;
+// and for the low value, if auto buy is on, auto buy it too, save it on record, so when we got a chance we will go there to check".
+console.log('\n⚡ Auto on: ▶ Run now buys the would-buy orders; 💸 low value bought too and kept on the Low value record; never bought twice');
+{
+  const realFetch = globalThis.fetch; const bought = [];
+  const items = sku => [{ quantity: 1, sellable: { id: 900 + sku.length, sku_code: sku, product_title: 'T ' + sku, weight_grams: 100, stock_entries: [{ warehouse_id: 55, location: '7-7-7' }] } }];
+  const day = new Date(Date.now() - 864e5).toISOString();
+  const mk = (id, number, total, sku, aid, last) => ({ id, number, channel: { name: 'eBay', type_code: 'ebay' }, total_price: total, created_at: day,
+    deliver_to: { first_name: 'Ab', last_name: last, address1: id + ' Auto St', zip: '10001' }, line_items: items(sku),
+    allocations: [{ id: aid, line_items: items(sku), shipment: null }] });
+  const orders = [mk(3101, 'AU-1', 40, '7-7-7=1', 7101, 'One'), mk(3102, 'AU-LV', 5, '7-7-8=1', 7102, 'Two')];
+  const allocOf = id => orders.flatMap(o => o.allocations).find(a => String(a.id) === String(id));
+  globalThis.fetch = async (u, o) => { u = String(u); const m = (o && o.method) || 'GET'; const J = x => new Response(JSON.stringify(x), { headers: { 'Content-Type': 'application/json' } });
+    const body = o && o.body ? JSON.parse(o.body) : null;
+    if (u.includes('api.veeqo.com/orders?')) { if (/status=cancelled/.test(u)) return J([]); const q = decodeURIComponent((u.match(/query=([^&]+)/) || [])[1] || '');
+      const open = x => !x.allocations.every(a => a.shipment); const list = q ? orders.filter(x => x.number === q) : orders; return J(/status=awaiting/.test(u) ? list.filter(open) : list); }
+    if (u.includes('api.veeqo.com/shipping/quotes/amazon_shipping_v2')) return J([{ title: 'USPS Ground Advantage', name: 'usps-ga', carrier: 'usps', total_net_charge: 4.8, transit_days: 3 }]);
+    if (u.includes('api.veeqo.com/shipping/shipments') && m === 'POST') { const a = allocOf(body.shipment.allocation_id); const tn = '9400AU' + a.id; a.shipment = { id: 1, tracking_number: { tracking_number: tn } }; bought.push(a.id); return J({ id: 1, tracking_number: { tracking_number: tn } }); }
+    if (u.includes('api.veeqo.com/')) return J([]);
+    return new Response('{}', { status: 401 }); };
+  env.VEEQO_API_KEY = 'k';
+  const verified0 = sq.prepare("SELECT value FROM app_config WHERE key = 'autolabel_buy_verified'").get();
+  sq.prepare("INSERT INTO app_config (key, value) VALUES ('autolabel_buy_verified', 'yes') ON CONFLICT(key) DO UPDATE SET value = 'yes'").run();
+  const base = { pauseTimes: '', autoMerge: true, maxBoxLb: 20, lowValueRatio: 0.9, lowValueMaxOrder: 0, skipChannels: '', maxLabelsPerRun: 10, maxLabelsPerDay: 150 };
+  await post('/veeqo/autolabel/config', { config: { ...base, mode: 'preview' } });
+  const p0 = await post('/veeqo/autolabel/run', {}), P = n => p0.orders.find(x => x.number === n) || {};
+  check('👀 Preview only: ▶ Run shows Would buy / 💸 Low value and buys nothing (as before)', P('AU-1').decision === 'would_buy' && P('AU-LV').decision === 'low_value' && bought.length === 0, [P('AU-1').decision, P('AU-LV').decision]);
+  const cf = await get('/veeqo/autolabel/config');
+  check('…new rule "💸 Low value in ⚡ Auto" is on by default (buy it too, on record)', cf.config.autoBuyLowValue === true, cf.config.autoBuyLowValue);
+  await post('/veeqo/autolabel/config', { config: { ...base, mode: 'auto' } });
+  sq.prepare("INSERT INTO autolabel_buying (alloc_id, at) VALUES ('run', ?) ON CONFLICT(alloc_id) DO UPDATE SET at = excluded.at").run(Date.now());
+  const l0 = await post('/veeqo/autolabel/run', {});
+  check('🔒 another run is buying right now → this one only checks, buys nothing, says so', bought.length === 0 && /Another run is buying labels right now/.test(l0.notes[0] || ''), l0.notes);
+  sq.prepare("DELETE FROM autolabel_buying WHERE alloc_id = 'run'").run();
+  sq.prepare("INSERT INTO autolabel_buying (alloc_id, at) VALUES ('7101', ?)").run(Date.now());
+  const l1 = await post('/veeqo/autolabel/run', {}), A1 = l1.orders.find(x => x.number === 'AU-1') || {};
+  check('🔒 a box someone else is buying right now (🖨 Buy & print) → not bought twice, shown as Ready (not "failed"), no failed buy on record',
+    !bought.includes(7101) && A1.decision === 'ready' && /another run is buying it right now/.test(A1.reason)
+    && !sq.prepare("SELECT 1 FROM autolabel_log WHERE order_number = 'AU-1' AND action = 'buy_failed'").get(), A1);
+  sq.prepare("DELETE FROM autolabel_buying WHERE alloc_id = '7101'").run();
+  const r = await post('/veeqo/autolabel/run', {}), R = n => r.orders.find(x => x.number === n) || {};
+  const lv = sq.prepare("SELECT * FROM low_value_log WHERE order_number = 'AU-LV'").get();
+  check('⚡ Auto on: ▶ Run now buys the would-buy order right away (no wait for the 30-min timer)', R('AU-1').decision === 'bought' && R('AU-1').tracking === '9400AU7101' && r.buying === true, R('AU-1'));
+  const LV = l1.orders.find(x => x.number === 'AU-LV') || {}; // bought on the run above (only AU-1's box was taken)
+  check('…💸 low value ($4.80 label, $5 order) bought too, says so, and is on the Low value record with tracking (to check the price later)',
+    LV.decision === 'bought' && LV.lowValue === true && /💸 Low value — bought/.test(LV.reason) && !r.orders.some(x => x.number === 'AU-LV')
+    && lv && lv.label_cost === 4.8 && lv.pct === 96 && lv.tracking === '9400AU7102' && lv.bought_by === 'Auto Label' && !!lv.bought_at && lv.status === 'open', { row: LV, lv });
+  check('…each box bought once (2 orders → 2 labels); a run right after buys nothing more', bought.length === 2 && (await post('/veeqo/autolabel/run', {}), bought.length === 2), bought);
+  orders.push(mk(3103, 'AU-LV2', 5, '7-7-9=1', 7103, 'Three'));
+  await post('/veeqo/autolabel/config', { config: { ...base, mode: 'auto', autoBuyLowValue: 'false' } });
+  const r2 = await post('/veeqo/autolabel/run', {}), L2 = r2.orders.find(x => x.number === 'AU-LV2') || {};
+  check('…"💸 Low value in ⚡ Auto" = Hold → low value waits to be bought by hand (on the list), as before', L2.decision === 'low_value' && bought.length === 2
+    && !!sq.prepare("SELECT 1 FROM low_value_log WHERE order_number = 'AU-LV2' AND bought_at IS NULL").get(), L2);
+  const ws = readFileSync0(workerPath, 'utf8'), ph = readFileSync0(fileURLToPath(new URL('../packship.html', import.meta.url)), 'utf8');
+  check('…every way of buying goes through the one-buyer lock (auto run, Buy & print, merge, test buy); the station nudge route is blocked in 🧪 test mode',
+    (ws.match(/await autolabelBuy\(env/g) || []).length === 1 && (ws.match(/await autolabelBuyLocked\(env/g) || []).length >= 4 && /'\/veeqo\/autolabel\/auto-tick'/.test(ws.match(/const TM_BLOCK = new Set\(\[[\s\S]*?\]\);/)[0]), null);
+  check('…page: ▶ Run now says it buys when ⚡ Auto is on; the 🖨 station nudges a run; the Low value rule is in Rules',
+    /'▶ Run now — ⚡ buys the labels'/.test(ph) && /\/veeqo\/autolabel\/auto-tick/.test(ph) && /data-k="autoBuyLowValue"/.test(ph), null);
+  await post('/veeqo/autolabel/config', { config: { mode: 'off' } });
+  if (verified0) sq.prepare("UPDATE app_config SET value = ? WHERE key = 'autolabel_buy_verified'").run(verified0.value); else sq.prepare("DELETE FROM app_config WHERE key = 'autolabel_buy_verified'").run();
+  globalThis.fetch = realFetch; delete env.VEEQO_API_KEY;
+}
+
 console.log('\n' + (failed ? '❌ ' + failed + ' check(s) FAILED' : '✅ all ' + passed + ' checks passed') + '\n');
 process.exit(failed ? 1 : 0);

@@ -1841,6 +1841,7 @@ body {
           <label>USPS-only channels (comma list)<input class="ps-field-input" data-k="uspsOnlyChannels" type="text"></label>
           <label>Hold if label ≥ this % of order<input class="ps-field-input" data-k="lowValuePct" type="number" min="0" step="5"></label>
           <label>…only for orders up to ($, 0 = all)<input class="ps-field-input" data-k="lowValueMaxOrder" type="number" min="0" step="1"></label>
+          <label>💸 Low value in ⚡ Auto<select class="ps-field-input" data-k="autoBuyLowValue"><option value="true">Buy it too — kept on the Low value record</option><option value="false">Hold — buy by hand</option></select></label>
           <label>Never auto-buy channels (comma list)<input class="ps-field-input" data-k="skipChannels" type="text"></label>
           <label>Max box weight (lb, 0 = off)<input class="ps-field-input" data-k="maxBoxLb" type="number" min="0" step="1"></label>
           <label>Same name + address: one box?<select class="ps-field-input" data-k="autoMerge"><option value="true">Yes — one box, one label</option><option value="false">No — put aside, merge by hand</option></select></label>
@@ -8603,7 +8604,7 @@ if (typeof psOnLaunch === 'function') psOnLaunch();
 // Worker: /veeqo/autolabel/* (mgmt only). All buying happens on the worker's
 // cron; nothing on this page buys a label except "Test buy ONE label".
 var _psAlConfig = null;
-var _PS_AL_SERVER_NEEDS = 3; // the worker's AUTOLABEL_SERVER_VERSION this page needs
+var _PS_AL_SERVER_NEEDS = 4; // the worker's AUTOLABEL_SERVER_VERSION this page needs
 var _PS_AL_PAGE_VERSION = 4;  // this page; the worker's AUTOLABEL_PAGE_NEEDS says how new it must be
 var _PS_AL_LABELS = {
   bought:     ['✅ Bought', 'var(--green)'],
@@ -8668,6 +8669,7 @@ async function psAlLoadConfig() {
 
 function _psAlRenderConfig(d) {
   var c = d.config;
+  setTimeout(_psAlRunBtnText, 0);
   document.querySelectorAll('#ps-al-mode-btns button').forEach(function(b){
     var on = b.getAttribute('data-mode') === c.mode;
     var col = c.mode === 'auto' ? 'var(--green)' : c.mode === 'preview' ? 'var(--accent)' : 'var(--text2)';
@@ -8695,7 +8697,8 @@ function _psAlRenderConfig(d) {
     + (c.pauseTimes ? '• <b>⏸ No auto buying:</b> ' + _psAlEsc(c.pauseTimes) + ' (New York) — around the scan forms; labels can still be bought by hand<br>' : '')
     + '• <b>📄 USPS scan form:</b> ' + (c.scanFormOn ? 'made by itself <b>' + _psAlEsc(c.scanFormTimes || '—') + '</b>, night check <b>' + _psAlEsc(c.scanFormCheckAt) + '</b> (one more if a USPS label came after the last form; USPS cut-off 9 pm, no Sunday)' : 'by hand only (📄 Make scan form now)')
     + (c.maxBoxLb ? ' · boxes over <b>' + c.maxBoxLb + ' lb</b> → weigh / print by hand' : '')
-    + (c.lowValueRatio ? ' · hold if the label is <b>' + Math.round(c.lowValueRatio * 100) + '%</b>+ of the order' + (c.lowValueMaxOrder ? ' (orders up to $' + c.lowValueMaxOrder + ')' : '') : '');
+    + (c.lowValueRatio ? ' · 💸 low value if the label is <b>' + Math.round(c.lowValueRatio * 100) + '%</b>+ of the order' + (c.lowValueMaxOrder ? ' (orders up to $' + c.lowValueMaxOrder + ')' : '')
+      + (c.autoBuyLowValue !== false ? ' → <b>⚡ Auto buys it too</b>, kept on the Low value record to check the price later' : ' → held, buy by hand') : '');
   var lines = [];
   // The server behind this page must be at least this new (see AUTOLABEL_SERVER_VERSION in the worker).
   var oldServer = !(d.serverVersion >= _PS_AL_SERVER_NEEDS);
@@ -8744,7 +8747,8 @@ window.psAlSetMode = function(mode) {
 
 window.psAlRunPreview = async function() {
   var btn = document.getElementById('ps-al-run-btn');
-  btn.disabled = true; btn.textContent = '⏳ Checking Veeqo + channels…';
+  var buying = _psAlConfig && _psAlConfig.mode === 'auto';
+  btn.disabled = true; btn.textContent = buying ? '⏳ Checking + buying labels…' : '⏳ Checking Veeqo + channels…';
   window._psAlBuyMsg = null;
   try {
     var d = await _psAlFetch('/veeqo/autolabel/run', { method:'POST', body:{} });
@@ -8753,8 +8757,14 @@ window.psAlRunPreview = async function() {
     psAlLoadConfig();
     psAlLoadReweigh();
   } catch (e) { _psToast(e.message, 'error'); }
-  finally { btn.disabled = false; btn.textContent = '▶ Run preview now'; }
+  finally { btn.disabled = false; _psAlRunBtnText(); }
 };
+// ⚡ Auto on → ▶ Run now buys like the automatic run (owner: "as soon as it's in would buy, buy the label").
+function _psAlRunBtnText() {
+  var btn = document.getElementById('ps-al-run-btn'); if (!btn || btn.disabled) return;
+  var auto = _psAlConfig && _psAlConfig.mode === 'auto';
+  btn.textContent = auto ? '▶ Run now — ⚡ buys the labels' : '▶ Run preview now';
+}
 
 // Last run → 🖨 Buy & print selected (owner: "select which ones to print, or
 // all; tap Would buy → all the would-buy show; Print → buys and prints them
@@ -9876,6 +9886,7 @@ window.psAlStationTick = async function() {
   _psAlStationBar('🖨 Printer station ON · checked ' + new Date().toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' }), true);
   _psAlFetch('/veeqo/autolabel/scanform-tick', { method: 'POST', body: {} }).catch(function() {}); // 📄 scan form on time even if the server timer is slow
   await psAlPrintNewLabels(true); await psAlPrintNewSlips(true);
+  _psAlFetch('/veeqo/autolabel/auto-tick', { method: 'POST', body: {} }).catch(function() {}); // ⚡ Auto: a run every 10 min while the station is on (server timer: 30)
 };
 async function _psAlLabelBlob(id) {
   var r = await fetch(PS_WORKER + '/veeqo/autolabel/label-file?id=' + encodeURIComponent(id), { headers: { 'X-Cred-Token': psCredToken } });

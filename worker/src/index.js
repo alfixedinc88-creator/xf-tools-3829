@@ -6805,7 +6805,7 @@ const TM_BLOCK = new Set([
   '/ebay-msg/send', '/msg/send', '/msg/reply', '/shopify/listing-create',
   '/repricer/price-change', '/repricer/auto-reprice', '/repricer/queue-action',
   '/ship/cancel-label', '/ship/cancel-order', '/ship/cancel-order-confirm',
-  '/veeqo/autolabel/run', '/veeqo/autolabel/test-buy', '/veeqo/autolabel/order-edit', '/veeqo/autolabel/buy-one', '/veeqo/autolabel/merge-buy', '/veeqo/autolabel/split', '/veeqo/autolabel/scanform-make', '/veeqo/autolabel/scanform-tick', '/veeqo/autolabel/ebay-tracking-run',
+  '/veeqo/autolabel/run', '/veeqo/autolabel/test-buy', '/veeqo/autolabel/order-edit', '/veeqo/autolabel/buy-one', '/veeqo/autolabel/merge-buy', '/veeqo/autolabel/split', '/veeqo/autolabel/scanform-make', '/veeqo/autolabel/scanform-tick', '/veeqo/autolabel/auto-tick', '/veeqo/autolabel/ebay-tracking-run',
   '/inventory/soldout/set-qty', '/inventory/soldout/add-listing',
 ]);
 function tmJ(o, status) { return cors(new Response(JSON.stringify(o), { status: status || 200, headers: { 'Content-Type': 'application/json' } })); }
@@ -24429,7 +24429,7 @@ const AUTOLABEL_SPLIT_VERIFIED_KEY = 'autolabel_split_verified'; // auto runs sp
 // version it expects and shows a red warning when the server is older (owner:
 // "low value still won't print, merge gone" — Cloudflare's build had failed, so
 // the old server was still running behind the new page).
-const AUTOLABEL_SERVER_VERSION = 3; // 1 = merge one box, 2 = low value printable, 3 = this check
+const AUTOLABEL_SERVER_VERSION = 4; // 1 = merge one box, 2 = low value printable, 3 = this check, 4 = Run now buys in auto + low value auto-bought
 // ...and the other way round: the page must be at least this new. A stuck
 // GitHub Pages deploy left the OLD page live behind the new server (owner: "low
 // value still won't print, merge gone"); the page then says "refresh / not updated".
@@ -24451,6 +24451,7 @@ const AUTOLABEL_DEFAULTS = {
   uspsOnlyChannels: ['walmart'], // channels that must always ship USPS (name contains)
   lowValueRatio: 0.9,          // hold if the label costs >= this share of the order total (0 = rule off)
   lowValueMaxOrder: 0,         // only apply the low-value rule to orders <= this $ total (0 = every order)
+  autoBuyLowValue: true,       // auto mode buys 💸 low-value orders too, kept on the Low value record (owner)
   skipChannels: [],            // never auto-buy for these channels (name contains)
   autoMerge: true,             // same name + address, together <= mergeMaxLb -> one box, one label (owner)
   mergeMaxLb: 20,              // ...over this together -> put aside to merge / split by hand (owner: 20 lb)
@@ -24614,6 +24615,7 @@ function autolabelCleanConfig(c) {
     uspsOnlyChannels:  list(c.uspsOnlyChannels),
     lowValueRatio:     num(c.lowValueRatio, D.lowValueRatio, 0, 10),
     lowValueMaxOrder:  num(c.lowValueMaxOrder, D.lowValueMaxOrder, 0, 100000),
+    autoBuyLowValue:   !(c.autoBuyLowValue === false || c.autoBuyLowValue === 'false'),
     skipChannels:      list(c.skipChannels),
     maxBoxLb:          num(c.maxBoxLb, D.maxBoxLb, 0, 150),
     autoMerge:         c.autoMerge === true || c.autoMerge === 'true',
@@ -25311,6 +25313,28 @@ function autolabelSplitText(weight, maxLb) {
     `Box ${i + 1} (${b.lb} lb): ` + Object.entries(b.items).map(([sku, q]) => `${q}× ${sku}`).join(', ')).join(' | ');
 }
 
+// 🔒 One buyer per box (owner: auto runs now also buy from ▶ Run now and the
+// low-value list): the automatic run, a run by hand and 🖨 Buy & print can
+// overlap — the first to claim a box buys it, the others are refused for 10
+// minutes (by then the box has its label, so every later check skips it).
+async function autolabelClaimAlloc(env, allocationId) {
+  if (!env.DB) return true;
+  await env.DB.prepare('CREATE TABLE IF NOT EXISTS autolabel_buying (alloc_id TEXT PRIMARY KEY, at INTEGER)').run().catch(() => {});
+  const now = Date.now();
+  const r = await d1Run(env, `INSERT INTO autolabel_buying (alloc_id, at) VALUES (?, ?)
+    ON CONFLICT(alloc_id) DO UPDATE SET at = excluded.at WHERE autolabel_buying.at < ?`, [String(allocationId), now, now - 10 * 60000]);
+  return !r || !r.meta || r.meta.changes > 0;
+}
+async function autolabelReleaseAlloc(env, allocationId) {
+  await d1Run(env, 'DELETE FROM autolabel_buying WHERE alloc_id = ?', [String(allocationId)]);
+}
+
+async function autolabelBuyLocked(env, order, allocationId, quote) {
+  if (!(await autolabelClaimAlloc(env, allocationId))) throw Object.assign(new Error('Another run is buying this label right now — not bought twice'), { locked: true });
+  try { return await autolabelBuy(env, order, allocationId, quote); }
+  catch (e) { await autolabelReleaseAlloc(env, allocationId); throw e; } // nothing bought → can be tried again
+}
+// The buy itself — only through autolabelBuyLocked.
 async function autolabelBuy(env, order, allocationId, quote) {
   const q = quote.raw || {};
   const shipment = { allocation_id: allocationId, notify_customer: false };
@@ -25652,7 +25676,7 @@ async function autolabelMergeBuy(env, cfg, plan, by, mergeMap) {
 
   // 3) Buy the one label.
   let b;
-  try { b = await autolabelBuy(env, lead, leadAlloc.id, p); }
+  try { b = await autolabelBuyLocked(env, lead, leadAlloc.id, p); }
   catch (e) {
     await autolabelLog(env, { ...logBase, action: 'buy_failed', carrier: p.carrier, service: p.service, price: p.price, orderTotal: total, reason: `🧩 Merged box ${nums}`, detail: e.message });
     return fail(String(e.message || e).slice(0, 300));
@@ -26020,7 +26044,19 @@ async function autolabelScanFormTick(env, when) {
 // ── The run ──────────────────────────────────────────────────────────────
 // opts.buy: actually buy (cron in 'auto' mode only).
 // opts.trigger: 'cron' | 'manual' (just for the saved summary).
+// One buying run at a time (the automatic run, ▶ Run now and the 🖨 station's
+// nudge can start together): a second one only checks, it buys / splits / merges nothing.
 async function autolabelRun(env, opts = {}) {
+  if (!opts.buy) return autolabelRunOnce(env, opts);
+  if (!(await autolabelClaimAlloc(env, 'run'))) {
+    const r = await autolabelRunOnce(env, { ...opts, buy: false });
+    r.notes.unshift('⏳ Another run is buying labels right now — this one only checked, nothing was bought.');
+    return r;
+  }
+  try { return await autolabelRunOnce(env, opts); }
+  finally { await autolabelReleaseAlloc(env, 'run'); }
+}
+async function autolabelRunOnce(env, opts = {}) {
   const cfgSaved = await autolabelLoadConfig(env);
   // No-wait time (owner): orders print as soon as they come in — no wait for a second order.
   const noWait = autolabelNoWaitNow(cfgSaved, opts.now || new Date());
@@ -26214,28 +26250,31 @@ async function autolabelRun(env, opts = {}) {
             const why = boxes + (picks.length ? picks[0].choice.reason : '');
             const low = !hold ? autolabelLowValue(o, cost, cfg) : null;
             if (hold) { row.decision = hold.hold; row.reason = boxes + hold.reason; }
-            else if (low) { row.decision = 'low_value'; row.reason = boxes + low; await autolabelLowValueNote(env, o, cost, picks[0] && picks[0].choice.pick, low); }
+            // Owner: "for the low value, if auto buy is on, auto buy it too, save it on record, so when we got a chance we will go there to check".
+            else if (low && !(buy && cfg.autoBuyLowValue)) { row.decision = 'low_value'; row.reason = boxes + low; await autolabelLowValueNote(env, o, cost, picks[0] && picks[0].choice.pick, low); }
             else if (!buy) {
               row.decision = 'would_buy'; row.reason = why;
               if (cfg.slipRule !== 'off' && autolabelSlipWanted(await veeqoExtractLineItems(env, o, todo[0]), cfg.slipRule)) row.slip = true;
               await autolabelRateCachePut(env, o, open, row);
             }
-            else if (buysLeft < picks.length) { row.decision = 'ready'; row.reason = `${why} — label limit reached for this run/day`; }
+            else if (buysLeft < picks.length) { row.decision = low ? 'low_value' : 'ready'; row.reason = `${low ? boxes + low + ' · ' : ''}${why} — label limit reached for this run/day`; if (low) await autolabelLowValueNote(env, o, cost, picks[0].choice.pick, low); }
             else {
               const tracks = [];
-              row.decision = 'bought'; row.reason = why; row.boughtAt = new Date().toISOString();
+              row.decision = 'bought'; row.reason = (low ? `💸 Low value — bought, on the Low value record to check: ${low} · ` : '') + why; row.boughtAt = new Date().toISOString();
+              if (low) row.lowValue = true;
               for (const p of picks) {
                 const pk = p.choice.pick;
                 const logBase = { orderId: o.id, allocId: p.alloc.id, orderNumber: o.number, channel: row.channel, customer: row.customer,
                   carrier: pk.carrier, service: pk.service, price: pk.price, orderTotal: row.total, reason: p.choice.reason };
                 try {
-                  const b = await autolabelBuy(env, o, p.alloc.id, pk);
+                  const b = await autolabelBuyLocked(env, o, p.alloc.id, pk);
                   buysLeft--;
                   tracks.push(b.tracking);
                   await autolabelLog(env, { ...logBase, action: 'bought', tracking: b.tracking });
                   await autolabelQueueLabel(env, o, p.alloc.id, b.tracking, pk.carrier, pk.service, b.response);
                   if (await autolabelQueueSlip(env, cfg, o, p.alloc, b.tracking, pk.carrier, allocs.indexOf(p.alloc) + 1, allocs.length)) row.slip = true;
                 } catch (e) {
+                  if (e.locked && !tracks.length) { row.decision = 'ready'; row.reason = `${why} — another run is buying it right now`; delete row.boughtAt; break; } // not a failed buy
                   row.decision = 'buy_failed';
                   row.reason = (tracks.length ? `${tracks.length} of ${picks.length} boxes bought, then: ` : '') + String(e.message || e).slice(0, 200);
                   await autolabelLog(env, { ...logBase, action: 'buy_failed', detail: e.message });
@@ -26243,6 +26282,7 @@ async function autolabelRun(env, opts = {}) {
                 }
               }
               row.tracking = tracks.filter(Boolean).join(', ');
+              if (low) await autolabelLowValueNote(env, o, cost, picks[0].choice.pick, low, tracks.length ? { by: 'Auto Label', tracking: row.tracking } : null);
             }
           }
         }
@@ -26506,7 +26546,7 @@ async function autolabelBuyByHand(env, number, by, allowLow) {
       carrier: pk.carrier, service: pk.service, price: pk.price, orderTotal: autolabelOrderTotal(o),
       reason: `Bought by hand from Last run (${by || '?'}): ${low ? '💸 low value, bought anyway (' + low + ') — on the Low value list · ' : ''}${p.choice.reason}` };
     try {
-      const r = await autolabelBuy(env, o, p.alloc.id, pk);
+      const r = await autolabelBuyLocked(env, o, p.alloc.id, pk);
       await autolabelLog(env, { ...logBase, action: 'bought', tracking: r.tracking });
       await autolabelQueueLabel(env, o, p.alloc.id, r.tracking, pk.carrier, pk.service, r.response);
       await autolabelQueueSlip(env, cfg, o, p.alloc, r.tracking, pk.carrier, allocs.indexOf(p.alloc) + 1, allocs.length);
@@ -26775,11 +26815,20 @@ async function handleAutolabelRoute(path, method, url, request, env, session) {
     catch (e) { return veeqoResp({ ok: false, error: String(e.message || e) }); }
   }
 
-  // Preview run on demand — never buys, even in auto mode.
+  // ▶ Run now. Owner: "auto buy labels is on, why do I still see would buy? as soon as it's in would buy, buy the
+  // label" → with ⚡ Auto on it buys like the automatic run (same checks, limits, pause times); otherwise a preview.
   if (path === '/veeqo/autolabel/run' && method === 'POST') {
-    const result = await autolabelRun(env, { trigger: 'manual', buy: false, force: true });
+    const cfgNow = await autolabelLoadConfig(env);
+    const result = await autolabelRun(env, { trigger: 'manual', buy: cfgNow.mode === 'auto', force: true });
     await autolabelSaveLastRun(env, result);
     return veeqoResp(result);
+  }
+
+  // 🖨 Printer station nudge (every minute while it's open): the same automatic run as the server timer
+  // (Cloudflare's is every 30 min) — still at most once per minRunGapMinutes — so ⚡ Auto buys soon after an order is ready.
+  if (path === '/veeqo/autolabel/auto-tick' && method === 'POST') {
+    try { return veeqoResp({ ok: true, ...(await autolabelCron(env)) }); }
+    catch (e) { return veeqoResp({ ok: false, error: String(e.message || e) }); }
   }
 
   // GET /veeqo/autolabel/rates?order=NUMBER — read-only: shows every rate
@@ -26973,7 +27022,7 @@ async function handleAutolabelRoute(path, method, url, request, env, session) {
     const logBase = { orderId: o.id, allocId: allocs[0].id, orderNumber: o.number, channel: veeqoExtractChannel(o), customer: veeqoExtractCustomerName(o),
       carrier: choice.pick.carrier, service: choice.pick.service, price: choice.pick.price, orderTotal: autolabelOrderTotal(o), reason: 'Test buy: ' + choice.reason };
     try {
-      const r = await autolabelBuy(env, o, allocs[0].id, choice.pick);
+      const r = await autolabelBuyLocked(env, o, allocs[0].id, choice.pick);
       await autolabelLog(env, { ...logBase, action: 'bought', tracking: r.tracking });
       await autolabelQueueLabel(env, o, allocs[0].id, r.tracking, choice.pick.carrier, choice.pick.service, r.response);
       await autolabelQueueSlip(env, cfg, o, allocs[0], r.tracking, choice.pick.carrier, 1, 1);
