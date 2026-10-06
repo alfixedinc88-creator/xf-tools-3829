@@ -3093,5 +3093,32 @@ console.log('\n🧩 Merge & buy by hand: also on a group still waiting its 30 mi
   check('…by hand it skips the 30-min wait and the auto-merge switch (the 20 lb / weight / cancelled checks stay)', /autolabelMergePlan\(env, \{ \.\.\.cfg, waitMinutes: 0, autoMerge: true \}, orders, Date\.now\(\)\)/.test(wk), null);
 }
 
+// Owner: "some labels say waiting print — is that our auto print? why still waiting? I need to see which came from auto print, which we printed".
+console.log('\n🏷 Shipping labels: each label says where it came from (🤖 Auto Label / 👤 by hand · who / 🧩 merged / ➕ added); warning when no printer station prints');
+{
+  const { readFileSync } = await import('node:fs');
+  const ts = new Date().toISOString(), today = ts.slice(0, 10);
+  sq.prepare('DELETE FROM label_print_queue').run();
+  const lg = (num, tr, reason) => sq.prepare("INSERT INTO autolabel_log (ts, date, order_number, channel, action, carrier, tracking, reason) VALUES (?,?,?,?,?,?,?,?)").run(ts, today, num, 'eBay', 'bought', 'USPS', tr, reason);
+  lg('O-AUTO', 'T-AUTO', 'USPS cheapest');
+  lg('O-HAND', 'T-HAND', 'Bought by hand from Last run (Mgr): USPS cheapest');
+  lg('O-MRG', 'T-MRG', '🧩 Merged box O-MRG + O-MRG2 (3 lb, 2 items) by Ana: USPS cheapest');
+  for (const [n, t] of [['O-AUTO', 'T-AUTO'], ['O-HAND', 'T-HAND'], ['O-MRG', 'T-MRG'], ['O-ADD', 'T-ADD']])
+    sq.prepare("INSERT INTO label_print_queue (order_id, alloc_id, order_number, channel, tracking, carrier, service, source, created_at, items) VALUES (?,?,?,?,?,?,?,?,?,?)").run(n, n, n, 'eBay', t, 'USPS', 'Ground', '{}', ts, '[]');
+  const r = await get('/veeqo/autolabel/labels?status=new&limit=200');
+  const O = n => ((r.labels || []).find(l => l.order_number === n) || {}).origin || {};
+  check('waiting labels say where they came from: 🤖 Auto Label · 👤 bought by hand · Mgr · 🧩 merged by hand · Ana · ➕ added by hand',
+    O('O-AUTO').kind === 'auto' && O('O-HAND').kind === 'hand' && O('O-HAND').by === 'Mgr' && O('O-MRG').kind === 'hand' && O('O-MRG').by === 'Ana' && O('O-ADD').kind === 'added', (r.labels || []).map(l => [l.order_number, l.origin]));
+  sq.prepare("DELETE FROM app_config WHERE key = 'label_station_seen'").run();
+  const r1 = await get('/veeqo/autolabel/labels?status=new&limit=200');
+  check('…just looking at the list doesn\'t count as a printer station (no station seen yet → the page warns)', !r1.stationSeen, r1.stationSeen);
+  await get('/veeqo/autolabel/labels?status=new&limit=50&after=0');
+  const r2 = await get('/veeqo/autolabel/labels?status=new&limit=200');
+  check('…a computer printing new labels (station / Print new labels now) is remembered → no "no printer station" warning', r2.stationSeen && Date.now() - Date.parse(r2.stationSeen.at) < 60000, r2.stationSeen);
+  const ph = readFileSync(fileURLToPath(new URL('../packship.html', import.meta.url)), 'utf8');
+  check('…the page shows the tag on each label, "N waiting · 🤖 auto · 👤 by hand", and the warning when no station printed in 3 min', /e\(l\.origin\.text\)/.test(ph) && /' waiting · 🤖 ' \+ nAuto \+ ' auto · 👤 '/.test(ph) && /no printer station is printing/.test(ph) && /\(ago == null \|\| ago > 3\)/.test(ph), null);
+  sq.prepare('DELETE FROM label_print_queue').run(); sq.prepare("DELETE FROM autolabel_log WHERE order_number IN ('O-AUTO','O-HAND','O-MRG')").run();
+}
+
 console.log('\n' + (failed ? '❌ ' + failed + ' check(s) FAILED' : '✅ all ' + passed + ' checks passed') + '\n');
 process.exit(failed ? 1 : 0);

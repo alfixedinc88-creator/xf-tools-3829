@@ -9193,7 +9193,8 @@ window.psAlLoadDay = async function() {
     var pr = l.kind === 'merged' ? '<span style="color:var(--text3)">🧩 same box as another order</span>'
       : l.printedAt ? '<span style="color:var(--green)">🖨 ' + t(l.printedAt) + (l.printedBy ? ' · ' + e(l.printedBy) : '') + (l.printCount > 1 ? ' · ×' + l.printCount : '') + '</span>'
       : l.queued ? '<b style="color:var(--orange)">⏳ not printed</b>' : '<span style="color:var(--text3)">bought in Veeqo</span>';
-    return '<tr>' + td + ';white-space:nowrap">' + t(l.ts) + '</td>' + td + ';font-family:var(--mono)">' + e(l.order) + '</td>' + td + '">' + e(l.channel || '') + '</td>'
+    return '<tr>' + td + ';white-space:nowrap">' + t(l.ts) + '</td>' + td + ';font-family:var(--mono)">' + e(l.order) + '</td>' + td + '">' + e(l.channel || '')
+      + (l.origin ? '<div style="font-size:11px;font-weight:700;color:' + (l.origin.kind === 'auto' ? 'var(--accent)' : 'var(--purple)') + '">' + e(l.origin.text) + '</div>' : '') + '</td>'
       + td + '">' + e([l.carrier, l.service].filter(Boolean).join(' ')) + (l.price != null ? ' $' + Number(l.price).toFixed(2) : '') + '<div style="font-family:var(--mono);color:var(--text3)">' + e(l.tracking || '') + '</div></td>'
       + td + '">' + pr + '</td>' + td + '">' + (l.kind !== 'merged' && l.queued ? '<button class="ps-btn-sm" onclick="psAlReprintFor(this, \'' + e(String(l.order).replace(/[\\']/g, '')) + '\', \'label\', true)">🖨 ' + (l.printedAt ? 'Reprint' : 'Print') + '</button>' : '') + '</td></tr>';
   }).join('');
@@ -9265,9 +9266,9 @@ window.psAlStackReprint = async function(id, btn) {
 window.psAlDayCsv = function() {
   var d = _psAlDay; if (!d) return;
   var q = function(v) { v = String(v == null ? '' : v); return /[",\n]/.test(v) ? '"' + v.replace(/"/g, '""') + '"' : v; };
-  var lines = [['bought at', 'order', 'channel', 'carrier', 'service', 'price', 'tracking', 'printed at', 'printed by', 'times printed', 'status'].join(',')];
-  (d.labels || []).forEach(function(l) { lines.push([l.ts, l.order, l.channel, l.carrier, l.service, l.price, l.tracking, l.printedAt || '', l.printedBy || '', l.printCount || 0, l.kind === 'merged' ? 'merged box' : l.printedAt ? 'printed' : 'not printed'].map(q).join(',')); });
-  (d.notBought || []).forEach(function(x) { lines.push([x.ts, x.order, x.channel, '', '', '', '', '', '', '', (x.boughtLater ? 'bought later; was not bought: ' : 'NOT BOUGHT: ') + x.why].map(q).join(',')); });
+  var lines = [['bought at', 'order', 'channel', 'carrier', 'service', 'price', 'tracking', 'printed at', 'printed by', 'times printed', 'status', 'bought by'].join(',')];
+  (d.labels || []).forEach(function(l) { lines.push([l.ts, l.order, l.channel, l.carrier, l.service, l.price, l.tracking, l.printedAt || '', l.printedBy || '', l.printCount || 0, l.kind === 'merged' ? 'merged box' : l.printedAt ? 'printed' : 'not printed', (l.origin && l.origin.text) || ''].map(q).join(',')); });
+  (d.notBought || []).forEach(function(x) { lines.push([x.ts, x.order, x.channel, '', '', '', '', '', '', '', (x.boughtLater ? 'bought later; was not bought: ' : 'NOT BOUGHT: ') + x.why, ''].map(q).join(',')); });
   var a = document.createElement('a'); a.href = URL.createObjectURL(new Blob([lines.join('\r\n')], { type: 'text/csv' })); a.download = 'labels-' + d.day + '.csv'; document.body.appendChild(a); a.click(); a.remove();
 };
 // 📮 eBay tracking our system adds (owner: "merged eBay orders don't get the tracking — wait 1–2 h, then add it").
@@ -10155,13 +10156,23 @@ window.psAlLoadLabels = async function() {
   var box = document.getElementById('ps-al-label-list'); if (!box) return;
   var all = await Promise.all([_psAlFetch('/veeqo/autolabel/labels?status=new&limit=200'), _psAlFetch('/veeqo/autolabel/labels?status=printed&limit=30')]);
   var fresh = (all[0] && all[0].labels) || [];
-  document.getElementById('ps-al-label-count').textContent = fresh.length ? '(' + fresh.length + ' waiting)' : '';
+  var nAuto = fresh.filter(function(l) { return l.origin && l.origin.kind === 'auto'; }).length;
+  document.getElementById('ps-al-label-count').textContent = fresh.length ? '(' + fresh.length + ' waiting · 🤖 ' + nAuto + ' auto · 👤 ' + (fresh.length - nAuto) + ' by hand)' : '';
+  // Owner: "why still waiting for us to print?" — waiting labels print only on a computer with Pack & Ship open and
+  // 🖨 Printer station ticked. Say so when none has asked for new labels lately.
+  var seen = all[0] && all[0].stationSeen, ago = seen && seen.at ? (Date.now() - Date.parse(seen.at)) / 60000 : null;
+  var warn = document.getElementById('ps-al-station-warn');
+  if (!warn) { warn = document.createElement('div'); warn.id = 'ps-al-station-warn'; box.parentNode.insertBefore(warn, box); }
+  warn.innerHTML = fresh.length && (ago == null || ago > 3)
+    ? '<div style="border:1.5px solid var(--orange);border-radius:8px;padding:8px;margin-bottom:8px;font-size:12px;color:var(--orange);font-weight:700">⚠ ' + fresh.length + ' label' + (fresh.length === 1 ? '' : 's') + ' waiting, and no printer station is printing'
+      + (seen && seen.at ? ' (last one checked ' + _psAlEsc(new Date(seen.at).toLocaleString()) + (seen.by ? ' · ' + _psAlEsc(seen.by) : '') + ')' : '') + '. Auto Label buys them by itself, but they only print on the computer with the label printer: Pack & Ship open there, 🖨 Printer station ticked. Or tap 🖨 Print new labels now.</div>' : '';
   _psAlLabelRecent = fresh.concat((all[1] && all[1].labels) || []);
   var e = _psAlEsc;
   box.innerHTML = _psAlLabelRecent.length ? _psAlLabelRecent.map(function(l, i) {
     return '<div style="padding:5px 0;border-bottom:1px solid var(--border)"><div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">'
       + '<span style="min-width:70px;font-weight:700;color:' + (l.printed_at ? 'var(--text3)' : l.last_error ? 'var(--red)' : 'var(--accent)') + '">' + (l.printed_at ? '✓ Printed' + (l.print_count > 1 ? ' ×' + l.print_count : '') : l.last_error ? '✗ Not printed' : '⏳ Waiting') + '</span>'
       + '<span style="font-family:var(--mono)">' + e(l.order_number) + '</span><span>' + e(l.channel) + '</span>'
+      + (l.origin ? '<span style="font-size:11px;font-weight:700;padding:1px 6px;border-radius:9px;background:' + (l.origin.kind === 'auto' ? 'var(--accent)' : 'var(--purple)') + ';color:#fff">' + e(l.origin.text) + '</span>' : '')
       + '<span>' + e([l.carrier, l.service].filter(Boolean).join(' ')) + '</span><span style="font-family:var(--mono);color:var(--text3)">' + e(l.tracking || '') + '</span>'
       + '<span style="color:var(--text3)">' + e(new Date(l.printed_at || l.created_at).toLocaleString()) + (l.printed_by ? ' · ' + e(l.printed_by) : '') + '</span>'
       + '<button class="ps-btn-sm" style="margin-left:auto" onclick="psAlReprintLabel(' + i + ')">' + (l.printed_at ? 'Reprint' : 'Print') + '</button></div>'

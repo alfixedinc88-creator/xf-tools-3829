@@ -24646,6 +24646,26 @@ async function autolabelEbayCancels(env, sinceIso) {
 // kept in ebay_tracking_fix (who / when / what eBay said).
 const EBAY_TRACK_CFG_KEY = 'ebay_tracking_fix', EBAY_TRACK_LAST_KEY = 'ebay_tracking_fix_last';
 const EBAY_TRACK_DEFAULTS = { on: true, waitMinutes: 120, days: 10, maxPerRun: 25 };
+// Where a label came from, from its autolabel_log reason (owner: "I need to see which came from auto print, which we printed").
+function labelOrigin(reason, hasLog) {
+  const r = String(reason || '');
+  let m;
+  if (!hasLog) return { kind: 'added', text: '➕ added by hand (label bought in Veeqo)' };
+  if ((m = r.match(/^Bought by hand from Last run \(([^)]*)\)/))) return { kind: 'hand', by: m[1], text: '👤 bought by hand · ' + m[1] };
+  if (/^Test buy/.test(r)) return { kind: 'hand', text: '👤 test buy' };
+  if ((m = r.match(/^🧩 Merged box .*? by ([^:]+):/))) return { kind: 'hand', by: m[1], text: '🧩 merged by hand · ' + m[1] };
+  if (/^🧩 Merged box/.test(r)) return { kind: 'auto', text: '🤖 Auto Label (merged box)' };
+  return { kind: 'auto', text: '🤖 Auto Label' };
+}
+async function labelOrigins(env, trackings) {
+  const t = [...new Set((trackings || []).filter(Boolean).map(String))], out = new Map();
+  for (let i = 0; i < t.length; i += 80) {
+    const part = t.slice(i, i + 80);
+    const rows = await d1All(env, `SELECT tracking, reason FROM autolabel_log WHERE action IN ('bought','merged','merge_mark_failed') AND tracking IN (${part.map(() => '?').join(',')}) ORDER BY id`, part).catch(() => []);
+    rows.forEach(r => { if (!out.has(String(r.tracking))) out.set(String(r.tracking), r.reason || ''); });
+  }
+  return out;
+}
 async function labelBatchEnsure(env) {
   await env.DB.prepare('CREATE TABLE IF NOT EXISTS label_print_batch (id INTEGER PRIMARY KEY AUTOINCREMENT, ts TEXT, day TEXT, by_user TEXT, source TEXT, count INTEGER, label_ids TEXT)').run();
   await env.DB.prepare('CREATE INDEX IF NOT EXISTS idx_label_print_batch_day ON label_print_batch(day)').run().catch(() => {});
@@ -26974,7 +26994,13 @@ async function handleAutolabelRoute(path, method, url, request, env, session) {
       : await d1All(env, `SELECT id, order_number, channel, tracking, carrier, service, created_at, printed_at, printed_by, print_count, last_error, items
       FROM label_print_queue WHERE printed_at IS ${printed ? 'NOT ' : ''}NULL AND id > ? ORDER BY id ${printed ? 'DESC' : 'ASC'} LIMIT ?`,
       [printed ? 0 : (parseInt(url.searchParams.get('after')) || 0), limit]); // ?after= → the next round (the station prints every waiting label, 50 at a time)
-    return veeqoResp({ ok: true, labels: rows.map(r => { let items = []; try { items = JSON.parse(r.items || '[]') || []; } catch (_) {} return { ...r, items }; }) });
+    // A computer printing new labels (printer station / Print new labels now) asks with ?after= → remember when, so
+    // the page can say "no printer station is on" when labels sit waiting.
+    if (!printed && url.searchParams.has('after')) await autolabelSetKey(env, 'label_station_seen', JSON.stringify({ at: new Date().toISOString(), by: String((session && (session.displayName || session.username)) || '').slice(0, 40) })).catch(() => {});
+    let stationSeen = null; try { stationSeen = JSON.parse(await autolabelGetKey(env, 'label_station_seen') || 'null'); } catch (_) {}
+    const orig = await labelOrigins(env, rows.map(r => r.tracking));
+    return veeqoResp({ ok: true, stationSeen, labels: rows.map(r => { let items = []; try { items = JSON.parse(r.items || '[]') || []; } catch (_) {}
+      const t = String(r.tracking || ''); return { ...r, items, origin: labelOrigin(orig.get(t), orig.has(t)) }; }) });
   }
   // GET ?order= → that order's live Veeqo info for 🔎 in Last run, plus its change history.
   if (path === '/veeqo/autolabel/order-live' && method === 'GET') {
@@ -27223,6 +27249,7 @@ async function handleAutolabelRoute(path, method, url, request, env, session) {
         got.add(num.toUpperCase());
         const pq = byTrack.get(String(r.tracking || ''));
         labels.push({ ts: r.ts, order: num, channel: r.channel, customer: r.customer, carrier: r.carrier, service: r.service, price: r.price, tracking: r.tracking,
+          origin: labelOrigin(r.reason, true),
           kind: r.action, how: /hand|·/.test(r.reason || '') ? r.reason : (r.reason || ''),
           printedAt: pq ? pq.printed_at : null, printedBy: pq ? pq.printed_by : null, printCount: pq ? pq.print_count || 0 : 0, queued: !!pq });
       } else tried.set(num.toUpperCase(), { ts: r.ts, order: num, channel: r.channel, why: r.detail || r.reason || '', kind: r.action, by: r.reason || '' });
