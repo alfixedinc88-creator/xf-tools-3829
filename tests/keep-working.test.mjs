@@ -2936,5 +2936,15 @@ console.log('\nAuto Label printing: every waiting label prints (not only 50); a 
   sq.prepare("DELETE FROM label_print_queue").run(); sq.prepare("DELETE FROM packing_slip_queue").run();
 }
 
+// Owner: "the scan form is not working — it gave me a code but I can't copy it" (the message was in a pop-up alert).
+console.log('\nScan form: a "not made / not printed" message stays on the page with 📋 Copy (no pop-up)');
+{
+  const { readFileSync } = await import('node:fs');
+  const ph = readFileSync(fileURLToPath(new URL('../packship.html', import.meta.url)), 'utf8');
+  check('scan form not made / not printed → shown on the page in a box with 📋 Copy, not in a pop-up alert; each failed row in the list has 📋 Copy too',
+    /_psAlSfErr\('Scan form not made',/.test(ph) && /_psAlSfErr\('Scan form made, but not printed', e\.message\)/.test(ph) && !/alert\('Not made:\\n'/.test(ph) && !/alert\('Scan form not printed:\\n'/.test(ph)
+      && /id="ps-al-sf-err"/.test(ph) && /onclick="_psAlCopy\(this\.getAttribute\(\\'data-t\\'\), this\)">📋 Copy<\/button><\/details>/.test(ph), null);
+}
+
 console.log('\n' + (failed ? '❌ ' + failed + ' check(s) FAILED' : '✅ all ' + passed + ' checks passed') + '\n');
 process.exit(failed ? 1 : 0);
