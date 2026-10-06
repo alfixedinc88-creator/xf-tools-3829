@@ -6697,7 +6697,7 @@ const TM_KEEP = new Set([
   'amazon_sales_weekly', 'amazon_sales_pending', 'ebay_sales_weekly', 'walmart_sales_weekly',
   'shopify_sales_weekly', 'amazon_fba_inventory', 'amazon_title_tracking', 'fba_catalog',
   'channel_cancel_seen', 'reorder_title_cache', 'listing_titles', 'lw_kv', 'lw_alerts',
-  'listing_qty_log', 'autolabel_log', 'ship_usps_run_log', 'ebay_tracking_fix',
+  'listing_qty_log', 'autolabel_log', 'ship_usps_run_log', 'label_print_batch', 'ebay_tracking_fix',
 ]);
 // Routes that change things outside the app (can't be erased afterwards).
 const TM_BLOCK = new Set([
@@ -24646,6 +24646,10 @@ async function autolabelEbayCancels(env, sinceIso) {
 // kept in ebay_tracking_fix (who / when / what eBay said).
 const EBAY_TRACK_CFG_KEY = 'ebay_tracking_fix', EBAY_TRACK_LAST_KEY = 'ebay_tracking_fix_last';
 const EBAY_TRACK_DEFAULTS = { on: true, waitMinutes: 120, days: 10, maxPerRun: 25 };
+async function labelBatchEnsure(env) {
+  await env.DB.prepare('CREATE TABLE IF NOT EXISTS label_print_batch (id INTEGER PRIMARY KEY AUTOINCREMENT, ts TEXT, day TEXT, by_user TEXT, source TEXT, count INTEGER, label_ids TEXT)').run();
+  await env.DB.prepare('CREATE INDEX IF NOT EXISTS idx_label_print_batch_day ON label_print_batch(day)').run().catch(() => {});
+}
 async function ebayTrackEnsure(env) {
   await env.DB.prepare(`CREATE TABLE IF NOT EXISTS ebay_tracking_fix (id INTEGER PRIMARY KEY AUTOINCREMENT, ts TEXT, ebay_order_id TEXT, order_number TEXT,
     tracking TEXT, carrier TEXT, source TEXT, ok INTEGER, detail TEXT, by_user TEXT)`).run();
@@ -27224,10 +27228,36 @@ async function handleAutolabelRoute(path, method, url, request, env, session) {
       } else tried.set(num.toUpperCase(), { ts: r.ts, order: num, channel: r.channel, why: r.detail || r.reason || '', kind: r.action, by: r.reason || '' });
     }
     const notBought = [...tried.entries()].map(([k, v]) => ({ ...v, boughtLater: got.has(k) }));
+    await labelBatchEnsure(env);
+    const stacks = await d1All(env, 'SELECT id, ts, by_user, source, count FROM label_print_batch WHERE day = ? ORDER BY id DESC', [day]);
     const own = labels.filter(l => l.kind !== 'merged');
-    return veeqoResp({ ok: true, day, labels, notBought,
+    return veeqoResp({ ok: true, day, labels, notBought, stacks,
       counts: { bought: own.length, merged: labels.length - own.length, printed: own.filter(l => l.printedAt).length, notPrinted: own.filter(l => l.queued && !l.printedAt).length,
         notBought: notBought.filter(x => !x.boughtLater).length } });
+  }
+
+  // 🗂 Print stacks: every time labels print together (printer station round, by hand, reprint) —
+  // when, who, how many, which labels in print order (owner: "click it, open that stack, print it over to us").
+  if (path === '/veeqo/autolabel/print-batch' && method === 'POST') {
+    await labelBatchEnsure(env);
+    const b = await request.json().catch(() => ({}));
+    const ids = (Array.isArray(b.ids) ? b.ids : []).map(n => parseInt(n)).filter(n => n > 0).slice(0, 500);
+    if (!ids.length) return veeqoResp({ ok: false, error: 'no labels' }, 400);
+    const by = String((session && (session.displayName || session.username)) || b.by || '').slice(0, 40);
+    const r = await d1Run(env, 'INSERT INTO label_print_batch (ts, day, by_user, source, count, label_ids) VALUES (?,?,?,?,?,?)',
+      [new Date().toISOString(), shipTodayKey(), by, String(b.source || '').slice(0, 40), ids.length, JSON.stringify(ids)]);
+    return veeqoResp({ ok: true, id: r && r.meta ? r.meta.last_row_id : null, count: ids.length });
+  }
+  if (path === '/veeqo/autolabel/print-batch' && method === 'GET') {
+    await labelBatchEnsure(env);
+    const batch = await d1First(env, 'SELECT * FROM label_print_batch WHERE id = ?', [parseInt(url.searchParams.get('id')) || 0]);
+    if (!batch) return veeqoResp({ ok: false, error: 'Stack not found' }, 404);
+    let ids = []; try { ids = JSON.parse(batch.label_ids || '[]'); } catch (_) {}
+    const rows = ids.length ? await d1All(env, `SELECT id, order_id, alloc_id, order_number, channel, tracking, carrier, service, created_at, printed_at, printed_by, print_count, items
+      FROM label_print_queue WHERE id IN (${ids.map(() => '?').join(',')})`, ids) : [];
+    const byId = new Map(rows.map(r => [r.id, r]));
+    const labels = ids.map(i => byId.get(i)).filter(Boolean).map(r => { let items = []; try { items = JSON.parse(r.items || '[]') || []; } catch (_) {} return { ...r, items }; });
+    return veeqoResp({ ok: true, batch: { id: batch.id, ts: batch.ts, by_user: batch.by_user, source: batch.source, count: batch.count }, labels });
   }
 
   if (path === '/veeqo/autolabel/log' && method === 'GET') {

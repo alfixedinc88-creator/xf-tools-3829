@@ -3061,5 +3061,27 @@ console.log('\n📜 Labels by day: every label bought + printed or not; every "c
   sq.prepare("DELETE FROM autolabel_log WHERE order_number IN ('A-1','A-2','A-3','A-4','A-5','999-NOPE-1')").run(); sq.prepare("DELETE FROM label_print_queue WHERE order_number IN ('A-1','A-2','A-5')").run();
 }
 
+// Owner: "when a stack of 10 labels prints, save it — when, by who, how many; click it to open that stack of labels,
+// so I can print it over to us and double check it order by order".
+console.log('\n🗂 Print stacks: every stack printed is kept (when, who, how many, which labels in order) and can be opened / printed again');
+{
+  const { readFileSync } = await import('node:fs');
+  const ts = new Date().toISOString(), ids = [];
+  for (const n of ['S-1', 'S-2', 'S-3']) ids.push(Number(sq.prepare("INSERT INTO label_print_queue (order_id, alloc_id, order_number, channel, tracking, carrier, service, source, created_at, items, printed_at) VALUES (?,?,?,?,?,?,?,?,?,?,?)")
+    .run(n, n, n, 'eBay', 'TR-' + n, 'USPS', 'Ground', '{}', ts, JSON.stringify([{ sku: '5-3-2=2', qty: 1, bin: 'C1-2' }]), ts).lastInsertRowid));
+  const order = [ids[2], ids[0], ids[1]]; // printed in this order
+  const sv = await post('/veeqo/autolabel/print-batch', { ids: order, source: 'by hand' });
+  const g = await get('/veeqo/autolabel/print-batch?id=' + sv.id);
+  check('a printed stack is kept: when, who, how many, source — and opens with its labels in print order (order #, tracking, items)',
+    sv.ok && g.ok && g.batch.count === 3 && g.batch.source === 'by hand' && !!g.batch.by_user && g.labels.map(l => l.order_number).join(',') === 'S-3,S-1,S-2' && g.labels[0].tracking === 'TR-S-3' && g.labels[0].items[0].sku === '5-3-2=2', g);
+  const day = await get('/veeqo/autolabel/day');
+  check('…📜 Labels by day lists the stacks printed that day', day.ok && (day.stacks || []).some(b => b.id === sv.id && b.count === 3), day.stacks);
+  const ph = readFileSync(fileURLToPath(new URL('../packship.html', import.meta.url)), 'utf8');
+  check('…every print round (station / by hand) and every reprint saves its stack; a stack opens as pictures (print on any printer) or prints again',
+    /_psAlSaveStack\(stack, silent \? 'printer station' : 'by hand'\);/.test(ph) && /_psAlSaveStack\(ls\.map\(function\(x\) \{ return x\.id; \}\), 'reprint'\);/.test(ph)
+      && /onclick="psAlStackOpen\(' \+ id \+ '\)">👁 Open these labels/.test(ph) && /onclick="psAlStackReprint\(' \+ id \+ ', this\)">🖨 Print this stack again/.test(ph), null);
+  sq.prepare("DELETE FROM label_print_queue WHERE order_number IN ('S-1','S-2','S-3')").run();
+}
+
 console.log('\n' + (failed ? '❌ ' + failed + ' check(s) FAILED' : '✅ all ' + passed + ' checks passed') + '\n');
 process.exit(failed ? 1 : 0);
