@@ -1,0 +1,1135 @@
+<!DOCTYPE html>
+<!-- XFITTING-BUILD-V2-FEAT-20261006 -->
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<link rel="manifest" href="manifest.json"><!-- installed app: opens without the address bar -->
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>XFitting — Image Maker</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700;800&family=DM+Mono:wght@400;500&display=swap" rel="stylesheet">
+<style>
+  :root{
+    --accent:#1A56DB; --accent-dark:#1442AD; --accent-bg:#EBF1FD;
+    --green:#0E7F3E; --green-bg:#E8F7EE; --red:#C52A1A; --red-bg:#FDF0EE; --orange:#B45309; --orange-bg:#FEF3E2; --purple:#6D28D9;
+    --bg:#F4F5F7; --bg2:#FFFFFF; --bg3:#EEF0F3;
+    --border:#DDE1E7; --text:#0F172A; --text2:#475569; --text3:#94A3B8;
+    --mono:'DM Mono',monospace; --sans:'DM Sans',sans-serif;
+    --shadow:0 1px 3px rgba(15,23,42,.08), 0 8px 24px rgba(15,23,42,.06);
+  }
+  *{box-sizing:border-box}
+  body{margin:0; font-family:var(--sans); background:var(--bg); color:var(--text); min-height:100vh}
+
+  .topbar{background:var(--bg2); border-bottom:1px solid var(--border); height:56px; display:flex; align-items:center; justify-content:space-between; padding:0 20px; position:sticky; top:0; z-index:200}
+  .topbar-left,.topbar-right{display:flex; align-items:center; gap:10px}
+  .tb-logo{font-family:var(--mono); font-size:11px; letter-spacing:3px; color:var(--accent); font-weight:500}
+  .tb-name{font-weight:700; font-size:15px}
+  .btn{font-family:inherit; font-size:13px; font-weight:600; padding:7px 12px; border-radius:8px; border:1px solid var(--border); background:var(--bg2); color:var(--text2); cursor:pointer}
+  .btn:hover{border-color:var(--accent)}
+  .btn:disabled{opacity:.5; cursor:default}
+  .btn.on{background:var(--accent); border-color:var(--accent); color:#fff}
+  .btn-red{color:var(--red)}
+  .btn-sm{font-size:12px; padding:5px 9px}
+
+  .imx-app{max-width:1240px; margin:0 auto; padding:22px 20px 60px}
+  .imx-head{margin-bottom:18px}
+  .imx-eyebrow{font-family:var(--mono); font-size:11px; font-weight:500; letter-spacing:.08em; text-transform:uppercase; color:var(--accent); margin-bottom:6px}
+  .imx-title{font-size:24px; font-weight:800; letter-spacing:-.02em; margin:0 0 4px}
+  .imx-sub{font-size:14px; color:var(--text2); margin:0}
+
+  .imx-grid{display:grid; grid-template-columns:340px 1fr; gap:20px; align-items:start}
+  @media (max-width:860px){ .imx-grid{grid-template-columns:1fr} .topbar{padding:0 10px} .imx-app{padding:14px 12px 60px} }
+
+  .imx-panel{background:var(--bg2); border:1px solid var(--border); border-radius:14px; padding:18px; box-shadow:var(--shadow)}
+  .imx-panel + .imx-panel{margin-top:14px}
+  .imx-label{font-size:11px; font-weight:700; letter-spacing:.04em; text-transform:uppercase; color:var(--text3); margin-bottom:8px; display:block}
+  .imx-hint{font-size:12px; color:var(--text3); margin-top:6px; line-height:1.45}
+
+  .imx-drop{border:2px dashed var(--border); border-radius:12px; padding:24px 16px; text-align:center; cursor:pointer; transition:.15s; background:var(--bg3); position:relative; overflow:hidden}
+  .imx-drop:hover, .imx-drop.drag{border-color:var(--accent); background:var(--accent-bg)}
+  .imx-drop-icon{font-size:28px; margin-bottom:8px; opacity:.5}
+  .imx-drop-text{font-size:13px; font-weight:600; color:var(--text2)}
+  .imx-drop-sub{font-size:12px; color:var(--text3); margin-top:2px}
+  .imx-drop input{display:none}
+  .imx-drop-preview{width:100%; max-height:140px; object-fit:contain; border-radius:8px; margin-bottom:10px;
+    background:repeating-conic-gradient(#e6e8ec 0% 25%, #fff 0% 50%) 50% / 16px 16px}
+  .imx-drop-filename{font-size:12px; font-family:var(--mono); color:var(--text2); word-break:break-all}
+  .imx-link{margin-top:8px; font-size:12px; color:var(--red); font-weight:600; background:none; border:none; cursor:pointer; text-decoration:underline; padding:0}
+
+  .imx-qty-row{display:flex; gap:6px; flex-wrap:wrap; margin-bottom:8px}
+  .imx-qty-pill{flex:1; min-width:40px; padding:9px 4px; border-radius:8px; border:1.5px solid var(--border); background:var(--bg2); color:var(--text2); font-family:var(--mono); font-size:14px; font-weight:600; cursor:pointer; text-align:center; transition:.12s}
+  .imx-qty-pill:hover{border-color:var(--accent)}
+  .imx-qty-pill.active{background:var(--accent); border-color:var(--accent); color:#fff}
+  .imx-input{width:100%; padding:9px 10px; border-radius:8px; border:1.5px solid var(--border); background:var(--bg2); color:var(--text); font-family:var(--mono); font-size:14px}
+  .imx-input:focus{outline:none; border-color:var(--accent)}
+
+  .imx-style-row{display:flex; gap:8px}
+  .imx-style-opt{flex:1; border:1.5px solid var(--border); border-radius:10px; padding:10px 8px; cursor:pointer; text-align:center; background:var(--bg2); transition:.12s}
+  .imx-style-opt:hover{border-color:var(--accent)}
+  .imx-style-opt.active{border-color:var(--accent); background:var(--accent-bg)}
+  .imx-style-swatch{width:100%; height:44px; border-radius:6px; margin-bottom:6px; background:var(--bg3)}
+  .imx-style-label{font-size:12px; font-weight:600; color:var(--text)}
+
+  .imx-slider-row{margin-bottom:14px}
+  .imx-slider-top{display:flex; justify-content:space-between; align-items:center; margin-bottom:6px; font-size:13px; color:var(--text2)}
+  .imx-slider-val{font-family:var(--mono); font-size:12px; color:var(--accent); font-weight:600}
+  input[type=range]{width:100%; accent-color:var(--accent); cursor:pointer}
+  select.imx-select{width:100%; padding:9px 10px; border-radius:8px; border:1.5px solid var(--border); background:var(--bg2); color:var(--text); font-family:var(--mono); font-size:13px; cursor:pointer}
+  .imx-row{display:flex; gap:6px; flex-wrap:wrap; align-items:center}
+  .imx-row > *{flex:1}
+
+  .imx-download-btn{width:100%; padding:13px; border-radius:10px; border:none; background:var(--accent); color:#fff; font-size:14px; font-weight:700; font-family:var(--sans); cursor:pointer; transition:.12s; margin-top:10px}
+  .imx-download-btn:hover{background:var(--accent-dark)}
+  .imx-download-btn:disabled{background:var(--text3); cursor:not-allowed}
+
+  .imx-preview-wrap{background:var(--bg2); border:1px solid var(--border); border-radius:14px; padding:18px; box-shadow:var(--shadow); display:flex; flex-direction:column; align-items:center; justify-content:center; min-height:520px}
+  .imx-canvas-frame{max-width:100%; width:640px; border-radius:8px; overflow:hidden; box-shadow:0 2px 16px rgba(15,23,42,.10); background:#fff}
+  .imx-canvas-frame.checker{background:repeating-conic-gradient(#e6e8ec 0% 25%, #fff 0% 50%) 50% / 20px 20px}
+  .imx-canvas-frame canvas{display:block; width:100%; height:auto; touch-action:none}
+  #imx-canvas{cursor:default}
+  #imx-touch{cursor:crosshair}
+  .imx-empty-state{text-align:center; color:var(--text3); padding:40px 20px}
+  .imx-empty-icon{font-size:40px; margin-bottom:12px; opacity:.4}
+  .imx-empty-text{font-size:14px; font-weight:500}
+  .imx-preview-meta{margin-top:12px; font-size:12px; font-family:var(--mono); color:var(--text3); text-align:center}
+  .imx-notes{margin-top:10px; width:100%; max-width:640px; display:flex; flex-direction:column; gap:6px}
+  .imx-note{font-size:12.5px; border-radius:8px; padding:8px 12px; line-height:1.45}
+  .imx-note.warn{background:var(--orange-bg); color:#7a3a05}
+  .imx-note.info{background:var(--accent-bg); color:#173d99}
+  .imx-toolbar{display:flex; gap:6px; flex-wrap:wrap; justify-content:center; margin-bottom:12px; width:100%; max-width:640px}
+
+  .imx-sel-empty{font-size:12.5px; color:var(--text3); line-height:1.5}
+  .imx-text-list{display:flex; flex-direction:column; gap:6px; margin-top:8px}
+
+  .imx-tabs{display:flex; gap:6px; margin:18px 0 10px}
+  .imx-list{display:grid; grid-template-columns:repeat(auto-fill, minmax(150px, 1fr)); gap:10px}
+  .imx-card{border:1px solid var(--border); border-radius:10px; padding:8px; background:var(--bg2); cursor:pointer; font-size:12px}
+  .imx-card:hover{border-color:var(--accent)}
+  .imx-card.cur{border-color:var(--accent); box-shadow:0 0 0 2px var(--accent-bg)}
+  .imx-card img{width:100%; aspect-ratio:1; object-fit:contain; background:#fff; border-radius:6px; display:block}
+  .imx-card b{display:block; margin-top:6px; font-size:12.5px; word-break:break-word}
+  .imx-card .m{color:var(--text3); font-family:var(--mono); font-size:11px; margin-top:2px}
+  table.imx-log{width:100%; border-collapse:collapse; font-size:12.5px}
+  table.imx-log td, table.imx-log th{padding:6px 8px; border-bottom:1px solid var(--bg3); text-align:left; vertical-align:top}
+  table.imx-log th{font-size:11px; color:var(--text3); text-transform:uppercase}
+  #imx-toast{position:fixed; bottom:24px; left:50%; transform:translateX(-50%); background:#1a1d23; color:#fff; font-size:12.5px; padding:10px 18px; border-radius:100px; opacity:0; transition:opacity .3s; z-index:9999; pointer-events:none; max-width:90vw; text-align:center}
+</style>
+<script src="xf-lang.js?v=20261005a"></script>
+</head>
+<body>
+<div id="imx-login" style="display:none;position:fixed;inset:0;background:var(--bg);z-index:8000;align-items:center;justify-content:center;flex-direction:column">
+  <div style="text-align:center;max-width:340px;width:100%;padding:0 20px">
+    <div style="font-family:var(--mono);font-size:10px;letter-spacing:4px;color:var(--text3);text-transform:uppercase;margin-bottom:28px"><span style="color:var(--accent)">XF</span>ITTING — Image Maker</div>
+    <div style="font-size:20px;font-weight:600;margin-bottom:6px">Sign In</div>
+    <div style="font-size:13px;color:var(--text2);margin-bottom:28px">Sign in with your XFitting credentials</div>
+    <input id="imx-user" type="text" placeholder="Username" autocomplete="username" style="width:100%;padding:11px 14px;border:1.5px solid var(--border);border-radius:9px;font-size:14px;margin-bottom:10px">
+    <input id="imx-pass" type="password" placeholder="Password" autocomplete="current-password" style="width:100%;padding:11px 14px;border:1.5px solid var(--border);border-radius:9px;font-family:inherit;font-size:14px;margin-bottom:14px" onkeydown="if(event.key==='Enter')imxLogin()">
+    <button id="imx-login-btn" onclick="imxLogin()" style="width:100%;padding:12px;border:none;border-radius:9px;background:var(--accent);color:#fff;font-family:inherit;font-weight:600;font-size:14px;cursor:pointer">Sign In</button>
+    <div id="imx-login-err" style="color:var(--red);font-size:12px;margin-top:16px;font-family:var(--mono);min-height:16px"></div>
+    <a href="index.html" style="display:inline-block;margin-top:14px;font-size:12.5px;color:var(--text3);text-decoration:none">← Back to Launcher</a>
+  </div>
+</div>
+
+<div id="imx-main" style="display:none">
+<div class="topbar">
+  <div class="topbar-left">
+    <div class="tb-logo">XFITTING</div>
+    <div class="tb-name">Image Maker</div>
+  </div>
+  <div class="topbar-right">
+    <button class="btn" data-xf-signout onclick="xfSignOut()">🚪 Sign Out</button>
+    <button class="btn" onclick="window.xfGoHome ? xfGoHome() : (location.href='index.html')">← Apps</button>
+  </div>
+</div>
+
+<div class="imx-app">
+  <div class="imx-head">
+    <div class="imx-eyebrow">Listing Tools</div>
+    <h1 class="imx-title">Main Image Multiplier</h1>
+    <p class="imx-sub">Upload one product photo, remove the background, pick a quantity, then move, turn or resize any piece and add text. Download a ready-to-use picture (Veeqo, eBay, printer), and save the design to open again later.</p>
+  </div>
+
+  <div class="imx-grid">
+    <!-- LEFT: controls -->
+    <div class="imx-controls">
+
+      <div class="imx-panel">
+        <span class="imx-label">Product Photo</span>
+        <div class="imx-drop" id="imx-drop" onclick="document.getElementById('imx-file').click()">
+          <input type="file" id="imx-file" accept="image/*">
+          <div id="imx-drop-empty">
+            <div class="imx-drop-icon">🖼</div>
+            <div class="imx-drop-text">Click, drop or paste (Ctrl+V) an image</div>
+            <div class="imx-drop-sub">A plain light background works best</div>
+          </div>
+          <div id="imx-drop-filled" style="display:none">
+            <img id="imx-drop-preview" class="imx-drop-preview" alt="">
+            <div class="imx-drop-filename" id="imx-drop-filename"></div>
+          </div>
+        </div>
+        <button class="imx-link" id="imx-reset-btn" style="display:none" onclick="event.stopPropagation(); imxReset()">Remove image / start over</button>
+
+        <div id="imx-bgremove-wrap" style="display:none;margin-top:14px;padding-top:14px;border-top:1px solid var(--border)">
+          <label style="display:flex;align-items:center;gap:8px;cursor:pointer;font-size:13px;font-weight:600;color:var(--text)">
+            <input type="checkbox" id="imx-bgremove-toggle" style="width:16px;height:16px;accent-color:var(--accent);cursor:pointer">
+            Remove background
+          </label>
+          <div id="imx-bgremove-opts" style="display:none;margin-top:10px">
+            <div class="imx-slider-top">
+              <span>Sensitivity</span>
+              <span class="imx-slider-val" id="imx-bgtol-val">30</span>
+            </div>
+            <input type="range" id="imx-bgtol-slider" min="5" max="80" value="30">
+            <div id="imx-bgremove-status" style="font-size:12px;color:var(--text3);margin-top:6px"></div>
+          </div>
+          <button class="btn btn-sm" id="imx-touch-btn" style="margin-top:10px;width:100%" onclick="imxTouchStart()">✏️ Touch up (erase / bring back by hand)</button>
+          <div class="imx-hint">Some background left, or part of the fitting gone? Use Sensitivity first, then ✏️ Touch up.</div>
+        </div>
+      </div>
+
+      <div class="imx-panel">
+        <span class="imx-label">Quantity</span>
+        <div class="imx-qty-row">
+          <div class="imx-qty-pill" data-qty="1">1</div>
+          <div class="imx-qty-pill" data-qty="2">2</div>
+          <div class="imx-qty-pill active" data-qty="5">5</div>
+          <div class="imx-qty-pill" data-qty="10">10</div>
+          <div class="imx-qty-pill" data-qty="25">25</div>
+        </div>
+        <input type="number" class="imx-input" id="imx-qty-custom" min="1" max="60" placeholder="Custom quantity (1–60)">
+      </div>
+
+      <div class="imx-panel">
+        <span class="imx-label">Arrangement</span>
+        <div class="imx-style-row">
+          <div class="imx-style-opt active" data-style="grid">
+            <div class="imx-style-swatch" id="imx-swatch-grid"></div>
+            <div class="imx-style-label">Clean Grid</div>
+          </div>
+          <div class="imx-style-opt" data-style="angled">
+            <div class="imx-style-swatch" id="imx-swatch-angled"></div>
+            <div class="imx-style-label">Angled Rows</div>
+          </div>
+        </div>
+      </div>
+
+      <div class="imx-panel">
+        <span class="imx-label">Adjustments</span>
+        <div class="imx-slider-row">
+          <div class="imx-slider-top"><span>Item size (all)</span><span class="imx-slider-val" id="imx-size-val">100%</span></div>
+          <input type="range" id="imx-size-slider" min="50" max="150" value="100">
+        </div>
+        <div class="imx-slider-row" id="imx-angle-row" style="display:none">
+          <div class="imx-slider-top"><span>Rotation angle (all)</span><span class="imx-slider-val" id="imx-angle-val">40°</span></div>
+          <input type="range" id="imx-angle-slider" min="0" max="60" value="40">
+        </div>
+        <div class="imx-slider-row" style="margin-bottom:0">
+          <div class="imx-slider-top"><span>Drop shadow</span><span class="imx-slider-val" id="imx-shadow-val">Medium</span></div>
+          <input type="range" id="imx-shadow-slider" min="0" max="2" value="1">
+        </div>
+      </div>
+
+      <div class="imx-panel">
+        <span class="imx-label">Design: selected piece</span>
+        <div id="imx-sel-none" class="imx-sel-empty">Click a piece or a text in the picture to pick it, then drag it to move. Arrow keys nudge it; Delete removes it.</div>
+        <div id="imx-sel-item" style="display:none">
+          <div class="imx-slider-row">
+            <div class="imx-slider-top"><span>This piece: size</span><span class="imx-slider-val" id="imx-sel-k-val">100%</span></div>
+            <input type="range" id="imx-sel-k" min="30" max="250" value="100">
+          </div>
+          <div class="imx-slider-row">
+            <div class="imx-slider-top"><span>This piece: turn</span><span class="imx-slider-val" id="imx-sel-rot-val">0°</span></div>
+            <input type="range" id="imx-sel-rot" min="-180" max="180" value="0">
+          </div>
+          <div class="imx-row">
+            <button class="btn btn-sm" onclick="imxSelAction('flip')">↔ Flip</button>
+            <button class="btn btn-sm" onclick="imxSelAction('front')">⬆ Front</button>
+            <button class="btn btn-sm" onclick="imxSelAction('dup')">⧉ Copy</button>
+            <button class="btn btn-sm btn-red" onclick="imxSelAction('del')">✕ Delete</button>
+          </div>
+        </div>
+        <div id="imx-sel-text" style="display:none">
+          <input type="text" class="imx-input" id="imx-txt-val" maxlength="60" placeholder="Text, e.g. 10 PCS">
+          <div class="imx-slider-row" style="margin-top:10px">
+            <div class="imx-slider-top"><span>Text size</span><span class="imx-slider-val" id="imx-txt-size-val">8%</span></div>
+            <input type="range" id="imx-txt-size" min="3" max="20" value="8">
+          </div>
+          <div class="imx-row" style="margin-bottom:8px">
+            <select class="imx-select" id="imx-txt-style">
+              <option value="plain">Plain text</option>
+              <option value="badge">Box badge</option>
+              <option value="circle">Round badge</option>
+            </select>
+            <select class="imx-select" id="imx-txt-color">
+              <option value="#0F172A">Black</option>
+              <option value="#C52A1A">Red</option>
+              <option value="#1A56DB">Blue</option>
+              <option value="#0E7F3E">Green</option>
+              <option value="#B45309">Orange</option>
+            </select>
+          </div>
+          <div class="imx-row">
+            <button class="btn btn-sm" onclick="imxSelAction('dup')">⧉ Copy</button>
+            <button class="btn btn-sm btn-red" onclick="imxSelAction('del')">✕ Delete</button>
+          </div>
+        </div>
+        <div style="margin-top:12px;padding-top:12px;border-top:1px solid var(--border)">
+          <div class="imx-row">
+            <button class="btn btn-sm" id="imx-add-text" onclick="imxAddText()" disabled>＋ Add text</button>
+            <button class="btn btn-sm" id="imx-add-piece" onclick="imxAddPiece()" disabled>＋ Add piece</button>
+            <button class="btn btn-sm" id="imx-relayout" onclick="imxRelayout(true)" disabled>↺ Re-arrange</button>
+          </div>
+          <div class="imx-hint">Amazon main image: white background and no text. Text is fine for eBay, Walmart and extra photos.</div>
+        </div>
+      </div>
+
+      <div class="imx-panel">
+        <span class="imx-label">Output</span>
+        <div class="imx-row">
+          <select class="imx-select" id="imx-canvas-size">
+            <option value="1500">1500 × 1500 (eBay standard)</option>
+            <option value="2000">2000 × 2000 (high-res)</option>
+            <option value="1000">1000 × 1000</option>
+          </select>
+          <select class="imx-select" id="imx-file-format" style="max-width:150px">
+            <option value="jpeg">JPG · white</option>
+            <option value="png">PNG · white</option>
+            <option value="png-clear">PNG · no background</option>
+          </select>
+        </div>
+        <div class="imx-hint">Veeqo and the printer: JPG · white.</div>
+        <button class="imx-download-btn" id="imx-download-btn" disabled onclick="imxDownload()">⬇ Download Image</button>
+      </div>
+
+      <div class="imx-panel">
+        <span class="imx-label">Save design</span>
+        <input type="text" class="imx-input" id="imx-name" maxlength="120" placeholder="Name, e.g. 1/2 hex nipple 10 pack" style="margin-bottom:8px">
+        <input type="text" class="imx-input" id="imx-part" maxlength="60" placeholder="Part # (optional), e.g. 30-3-4=10X">
+        <div class="imx-row" style="margin-top:10px">
+          <button class="btn" id="imx-save-btn" onclick="imxSave(false)" disabled>💾 Save</button>
+          <button class="btn" id="imx-saveas-btn" onclick="imxSave(true)" style="display:none">💾 Save as new</button>
+        </div>
+        <div class="imx-hint" id="imx-save-status"></div>
+      </div>
+    </div>
+
+    <!-- RIGHT: preview + saved designs -->
+    <div>
+      <div class="imx-preview-wrap">
+        <div class="imx-toolbar" id="imx-touch-bar" style="display:none">
+          <button class="btn btn-sm on" id="imx-brush-erase" onclick="imxBrush('erase')">🧽 Erase</button>
+          <button class="btn btn-sm" id="imx-brush-restore" onclick="imxBrush('restore')">🖌 Bring back</button>
+          <label style="display:flex;align-items:center;gap:6px;font-size:12px;color:var(--text2)">Brush <input type="range" id="imx-brush-size" min="2" max="80" value="20" style="width:110px"></label>
+          <button class="btn btn-sm" onclick="imxTouchClear()">↺ Undo all touch-ups</button>
+          <button class="btn btn-sm on" onclick="imxTouchDone()">✓ Done</button>
+        </div>
+        <div id="imx-empty-state" class="imx-empty-state">
+          <div class="imx-empty-icon">📦</div>
+          <div class="imx-empty-text">Upload a product photo to get started</div>
+        </div>
+        <div class="imx-canvas-frame" id="imx-canvas-frame" style="display:none">
+          <canvas id="imx-canvas" width="1500" height="1500"></canvas>
+        </div>
+        <div class="imx-canvas-frame checker" id="imx-touch-frame" style="display:none">
+          <canvas id="imx-touch"></canvas>
+        </div>
+        <div class="imx-preview-meta" id="imx-preview-meta"></div>
+        <div class="imx-notes" id="imx-notes"></div>
+      </div>
+
+      <div class="imx-tabs">
+        <button class="btn on" id="imx-tab-saved" onclick="imxTab('saved')">📁 Saved designs</button>
+        <button class="btn" id="imx-tab-log" onclick="imxTab('log')">📜 Record</button>
+      </div>
+      <div class="imx-panel" id="imx-pane-saved">
+        <input type="text" class="imx-input" id="imx-search" placeholder="Search name or part #" style="margin-bottom:12px">
+        <div id="imx-saved-list" class="imx-list"></div>
+        <div class="imx-hint" id="imx-saved-status"></div>
+      </div>
+      <div class="imx-panel" id="imx-pane-log" style="display:none">
+        <div id="imx-log-list"></div>
+      </div>
+    </div>
+  </div>
+</div>
+</div>
+<div id="imx-toast"></div>
+
+<script>
+var WORKER_URL = 'https://xfitting-lookup.alfixedinc88.workers.dev';   // sign-in (same login as every page)
+var IMAGES_URL = 'https://xfitting-images.alfixedinc88.workers.dev';   // this page's own worker (saved designs + record)
+var TOKEN = localStorage.getItem('xf_cred_token') || null;
+var USER = null; try { USER = JSON.parse(localStorage.getItem('xf_cred_user') || 'null'); } catch (e) {}
+
+function esc(s) { return String(s == null ? '' : s).replace(/[&<>"']/g, function (c) { return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]; }); }
+function toast(m) { var t = document.getElementById('imx-toast'); t.textContent = m; t.style.opacity = '1'; clearTimeout(t._h); t._h = setTimeout(function () { t.style.opacity = '0'; }, 3500); }
+function nyTime(iso) { try { return new Date(iso).toLocaleString('en-US', { timeZone: 'America/New_York', month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' }); } catch (e) { return iso || ''; } }
+
+function showLogin() { document.getElementById('imx-main').style.display = 'none'; document.getElementById('imx-login').style.display = 'flex'; }
+function signedOut() { TOKEN = null; USER = null; localStorage.removeItem('xf_cred_token'); localStorage.removeItem('xf_cred_user'); showLogin(); }
+
+// The main worker's /auth/access keeps the shared sign-in alive while this page is used (this page's own worker only reads it).
+var _lastPing = Date.now();
+function keepAlive() { if (Date.now() - _lastPing < 5 * 60000) return; _lastPing = Date.now(); fetch(WORKER_URL + '/auth/access', { headers: { 'X-Cred-Token': TOKEN || '' } }).catch(function () {}); }
+document.addEventListener('pointerdown', keepAlive);
+
+async function api(path, opts) {
+  opts = opts || {};
+  opts.headers = Object.assign({ 'Content-Type': 'application/json' }, opts.headers || {}, { 'X-Cred-Token': TOKEN || '' });
+  keepAlive();
+  var r;
+  try { r = await fetch(IMAGES_URL + path, opts); }
+  catch (e) { throw new Error('Cannot reach the image worker (xfitting-images). Has it been created in Cloudflare yet?'); }
+  if (r.status === 401) { signedOut(); throw new Error('Please sign in again'); }
+  var d = await r.json().catch(function () { return { ok: false, error: 'Bad reply (' + r.status + ')' }; });
+  if (!d.ok) throw new Error(d.error || 'Request failed');
+  return d;
+}
+
+window.imxLogin = async function () {
+  var u = document.getElementById('imx-user').value.trim(), p = document.getElementById('imx-pass').value;
+  var err = document.getElementById('imx-login-err'), btn = document.getElementById('imx-login-btn');
+  err.textContent = '';
+  if (!u || !p) { err.textContent = 'Enter your username and password.'; return; }
+  btn.disabled = true; btn.textContent = 'Signing in…';
+  try {
+    var res = await fetch(WORKER_URL + '/auth/login', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ username: u, password: p }) });
+    var d = await res.json();
+    if (!res.ok) { err.textContent = d.error || 'Login failed'; return; }
+    TOKEN = d.token; USER = { displayName: d.displayName, roles: d.roles, userId: d.userId };
+    localStorage.setItem('xf_cred_token', d.token); localStorage.setItem('xf_cred_user', JSON.stringify(USER));
+    _lastPing = Date.now();
+    openApp();
+  } catch (e) { err.textContent = 'Connection error — try again.'; }
+  finally { btn.disabled = false; btn.textContent = 'Sign In'; }
+};
+
+function openApp() {
+  document.getElementById('imx-login').style.display = 'none';
+  document.getElementById('imx-main').style.display = 'block';
+  imxLoadSaved();
+}
+
+(function(){
+  'use strict';
+
+  var MAX_SRC = 1600;           // longest side kept from an upload (keeps touch-up and saving fast)
+  var MAX_SAVE_PHOTO = 1450000; // the worker keeps photos up to 1.5 MB
+
+  var state = {
+    filename: '',
+    src: null,          // {w, h, data: ImageData} — the upload, untouched
+    autoA: null,        // Uint8Array alpha from Remove background (null = keep everything)
+    edits: null,        // Uint8Array per pixel: 0 = as is, 1 = erased by hand, 2 = brought back by hand
+    photo: null,        // canvas: the cut-out, cropped photo every piece is drawn from
+    photoDirty: true,   // photo changed since it was last saved
+    qty: 5, style: 'grid', sizePct: 100, angle: 40, shadowLevel: 1, canvasSize: 1500,
+    bgRemove: false, bgTolerance: 30,
+    items: [],          // pieces: {x, y, bw, bh, k, rot, flip} — x/y/bw/bh are fractions of the picture
+    texts: [],          // {text, x, y, size, color, style}
+    sel: null,          // {t: 'item'|'text', i}
+    edited: false,      // a piece was moved/turned/resized by hand since the last arrange
+    savedId: null
+  };
+
+  var canvas = document.getElementById('imx-canvas');
+  var ctx = canvas.getContext('2d');
+  var $ = function (id) { return document.getElementById(id); };
+
+  // ── File upload ──────────────────────────────────────────────────────────
+  var dropEl = $('imx-drop'), fileInput = $('imx-file');
+  fileInput.addEventListener('change', function(e){ if (e.target.files && e.target.files[0]) handleFile(e.target.files[0]); });
+  ['dragenter','dragover'].forEach(function(evt){ dropEl.addEventListener(evt, function(e){ e.preventDefault(); dropEl.classList.add('drag'); }); });
+  ['dragleave','drop'].forEach(function(evt){ dropEl.addEventListener(evt, function(e){ e.preventDefault(); dropEl.classList.remove('drag'); }); });
+  dropEl.addEventListener('drop', function(e){ if (e.dataTransfer.files && e.dataTransfer.files[0]) handleFile(e.dataTransfer.files[0]); });
+  document.addEventListener('paste', function(e){
+    var items = (e.clipboardData && e.clipboardData.items) || [];
+    for (var i = 0; i < items.length; i++) if (items[i].type.indexOf('image/') === 0) { handleFile(items[i].getAsFile()); e.preventDefault(); return; }
+  });
+
+  function handleFile(file){
+    if (!file || !file.type.startsWith('image/')) return;
+    var reader = new FileReader();
+    reader.onload = function(ev){
+      var img = new Image();
+      img.onload = function(){
+        state.savedId = null; $('imx-saveas-btn').style.display = 'none';
+        if (!$('imx-name').value) $('imx-name').value = (file.name || 'product').replace(/\.[^/.]+$/, '');
+        loadSource(img, file.name || 'pasted image', false);
+      };
+      img.src = ev.target.result;
+    };
+    reader.readAsDataURL(file);
+  }
+
+  // Takes a picture (upload or saved design) as the new source photo.
+  function loadSource(img, name, keepLayout){
+    var w = img.naturalWidth, h = img.naturalHeight, sc = Math.min(1, MAX_SRC / Math.max(w, h));
+    w = Math.max(1, Math.round(w * sc)); h = Math.max(1, Math.round(h * sc));
+    var c = document.createElement('canvas'); c.width = w; c.height = h;
+    var cx = c.getContext('2d'); cx.drawImage(img, 0, 0, w, h);
+    state.src = { w: w, h: h, data: cx.getImageData(0, 0, w, h) };
+    state.autoA = null; state.edits = null; state.photoDirty = true;
+    if (!keepLayout) { state.bgTolerance = autoTolerance(state.src); syncSliders(); }
+    state.filename = name;
+    $('imx-drop-filename').textContent = name;
+    $('imx-drop-empty').style.display = 'none';
+    $('imx-drop-filled').style.display = 'block';
+    $('imx-reset-btn').style.display = 'inline-block';
+    $('imx-bgremove-wrap').style.display = 'block';
+    ['imx-download-btn', 'imx-save-btn', 'imx-add-text', 'imx-add-piece', 'imx-relayout'].forEach(function (id) { $(id).disabled = false; });
+    if (!keepLayout) { state.texts = []; state.sel = null; }
+    applyBgRemovalIfNeeded(keepLayout);
+  }
+
+  // Sensitivity to start from: a plain, even background (studio / web photo) needs a low one,
+  // or shiny highlights on the brass get removed with it; a noisy phone-photo background needs more.
+  function autoTolerance(src){
+    var w = src.w, h = src.h, d = src.data.data, diffs = [];
+    // Pixel-to-pixel noise along the four edges (a smooth light falloff is fine: the fill follows it step by step).
+    function px(x, y, c){ return d[(y * w + x) * 4 + c]; }
+    function step(x0, y0, x1, y1){ var m = 0; for (var c = 0; c < 3; c++) m = Math.max(m, Math.abs(px(x0, y0, c) - px(x1, y1, c))); diffs.push(m); }
+    for (var x = 1; x < w; x++) { step(x-1, 0, x, 0); step(x-1, h-1, x, h-1); }
+    for (var y = 1; y < h; y++) { step(0, y-1, 0, y); step(w-1, y-1, w-1, y); }
+    // Median, so a few odd pixels (a dot or shadow in a corner) don't count.
+    diffs.sort(function (p, q) { return p - q; });
+    var noise = diffs.length ? diffs[Math.floor(diffs.length * 0.5)] : 0;
+    return Math.max(10, Math.min(40, Math.round(10 + noise * 2.5)));
+  }
+
+  window.imxReset = function(){
+    if (state.edited || state.texts.length) { if (!confirm('Start over? The pieces you moved and the texts will be cleared.')) return; }
+    state.src = state.photo = state.autoA = state.edits = null;
+    state.items = []; state.texts = []; state.sel = null; state.edited = false; state.savedId = null;
+    fileInput.value = '';
+    $('imx-drop-empty').style.display = 'block';
+    $('imx-drop-filled').style.display = 'none';
+    $('imx-reset-btn').style.display = 'none';
+    $('imx-bgremove-wrap').style.display = 'none';
+    $('imx-bgremove-toggle').checked = false;
+    $('imx-bgremove-opts').style.display = 'none';
+    state.bgRemove = false;
+    ['imx-download-btn', 'imx-save-btn', 'imx-add-text', 'imx-add-piece', 'imx-relayout'].forEach(function (id) { $(id).disabled = true; });
+    $('imx-saveas-btn').style.display = 'none';
+    $('imx-name').value = ''; $('imx-part').value = ''; $('imx-save-status').textContent = '';
+    $('imx-canvas-frame').style.display = 'none';
+    $('imx-empty-state').style.display = 'block';
+    $('imx-preview-meta').textContent = '';
+    $('imx-notes').innerHTML = '';
+    if (touching) imxTouchDone();
+    showSel(); markCurrent();
+  };
+
+  // ── Background removal ──────────────────────────────────────────────────
+  // Flood-fills in from the four image edges through connected pixels,
+  // comparing each candidate pixel to its NEIGHBOR that was just cleared
+  // (not to one fixed seed color) — so a background with slight gradient
+  // or lighting falloff still clears fully, while a sharp edge into the
+  // product (where the color jump is large) stops the fill there instead
+  // of bleeding into light-colored parts of the product itself (chrome
+  // highlights, white text, etc.).
+  //
+  // Each pixel must ALSO stay within tolerance of the sampled background
+  // reference color, not just its neighbor: comparing only to the neighbor
+  // lets the fill "drift" through a chain of small steps along a JPEG
+  // antialiased edge into a golden/brass product (in testing that consumed
+  // 99.75% of the image).
+  //
+  // Returns an alpha array (0 = background). Edge pixels of the product get
+  // a soft alpha so there is no gray rim around the fitting.
+  function removeBackground(src, tolerance){
+    var w = src.w, h = src.h, data = src.data.data;
+    var alpha = new Uint8Array(w * h); alpha.fill(255);
+    var visited = new Uint8Array(w * h);
+
+    var rSum = 0, gSum = 0, bSum = 0, sampleCount = 0;
+    function sampleAt(x, y){ var i = (y * w + x) * 4; rSum += data[i]; gSum += data[i+1]; bSum += data[i+2]; sampleCount++; }
+    var edgeSampleStep = Math.max(1, Math.floor(Math.min(w, h) / 200));
+    for (var x = 0; x < w; x += edgeSampleStep) { sampleAt(x, 0); sampleAt(x, h-1); }
+    for (var y = 0; y < h; y += edgeSampleStep) { sampleAt(0, y); sampleAt(w-1, y); }
+    var refR = rSum / sampleCount, refG = gSum / sampleCount, refB = bSum / sampleCount;
+
+    var tol2 = tolerance * tolerance * 3;                         // local step (neighbor-to-neighbor)
+    var refTol2 = (tolerance * 1.8) * (tolerance * 1.8) * 3;      // total drift allowed from reference
+    var queue = new Int32Array(w * h), qHead = 0, qTail = 0;
+    function refDist2(di){ var dr = data[di] - refR, dg = data[di+1] - refG, db = data[di+2] - refB; return dr*dr + dg*dg + db*db; }
+    function pushSeed(x, y){ var idx = y * w + x; if (!visited[idx] && refDist2(idx * 4) <= refTol2) { visited[idx] = 1; queue[qTail++] = idx; } }
+    for (var sx = 0; sx < w; sx++) { pushSeed(sx, 0); pushSeed(sx, h-1); }
+    for (var sy = 0; sy < h; sy++) { pushSeed(0, sy); pushSeed(w-1, sy); }
+
+    while (qHead < qTail) {
+      var idx = queue[qHead++];
+      var px = idx % w, py = (idx - px) / w, di = idx * 4;
+      var r = data[di], g = data[di+1], b = data[di+2];
+      alpha[idx] = 0;
+      for (var n = 0; n < 4; n++) {
+        var nx = px + (n === 0 ? -1 : n === 1 ? 1 : 0), ny = py + (n === 2 ? -1 : n === 3 ? 1 : 0);
+        if (nx < 0 || ny < 0 || nx >= w || ny >= h) continue;
+        var nidx = ny * w + nx;
+        if (visited[nidx]) continue;
+        var ndi = nidx * 4, dr = data[ndi] - r, dg = data[ndi+1] - g, db = data[ndi+2] - b;
+        if (dr*dr + dg*dg + db*db <= tol2 && refDist2(ndi) <= refTol2) { visited[nidx] = 1; queue[qTail++] = nidx; }
+      }
+    }
+    // Soft edge: a kept pixel touching the cleared background fades by how close it is to the background color.
+    var soft = Math.sqrt(refTol2) * 2.2;
+    for (var i = 0; i < w * h; i++) {
+      if (!alpha[i]) continue;
+      var ix = i % w, iy = (i - ix) / w;
+      if ((ix > 0 && !alpha[i-1]) || (ix < w-1 && !alpha[i+1]) || (iy > 0 && !alpha[i-w]) || (iy < h-1 && !alpha[i+w])) {
+        alpha[i] = Math.max(40, Math.min(255, Math.round(255 * Math.sqrt(refDist2(i * 4)) / soft)));
+      }
+    }
+    return alpha;
+  }
+
+  // Builds the photo every piece is drawn from: the upload, with the removed
+  // background + hand touch-ups, cropped tight to the product.
+  function buildPhoto(){
+    var s = state.src; if (!s) return;
+    var w = s.w, h = s.h, d = s.data.data;
+    var out = new ImageData(w, h), o = out.data;
+    var a = state.bgRemove ? state.autoA : null, ed = state.edits;
+    // Without Remove background, still trim plain margins (same color as the corners) so pieces fill their spot.
+    var c0 = 0, refR = (d[c0] + d[(w-1)*4] + d[((h-1)*w)*4] + d[(h*w-1)*4]) / 4,
+        refG = (d[c0+1] + d[(w-1)*4+1] + d[((h-1)*w)*4+1] + d[(h*w-1)*4+1]) / 4,
+        refB = (d[c0+2] + d[(w-1)*4+2] + d[((h-1)*w)*4+2] + d[(h*w-1)*4+2]) / 4;
+    var mask = new Uint8Array(w * h); // 1 = part of the product
+    for (var i = 0; i < w * h; i++) {
+      var di = i * 4, al = d[di+3];
+      if (a) al = Math.min(al, a[i]);
+      if (ed) { if (ed[i] === 1) al = 0; else if (ed[i] === 2) al = d[di+3]; }
+      o[di] = d[di]; o[di+1] = d[di+1]; o[di+2] = d[di+2]; o[di+3] = al;
+      var counts = al > 8;
+      if (counts && !a && !(ed && ed[i] === 2)) { var dr = d[di]-refR, dg = d[di+1]-refG, db = d[di+2]-refB; counts = dr*dr + dg*dg + db*db > 18*18*3; }
+      mask[i] = counts ? 1 : 0;
+    }
+    // Specks (a few stray pixels, e.g. a dot in a corner of the photo) are not the product:
+    // they are left out of the crop, and cleared when the background is removed.
+    var lab = new Int32Array(w * h), sizes = [0], q = new Int32Array(w * h), big = 0;
+    for (var s0 = 0; s0 < w * h; s0++) {
+      if (!mask[s0] || lab[s0]) continue;
+      var id = sizes.length, qh = 0, qt = 0; lab[s0] = id; q[qt++] = s0;
+      while (qh < qt) {
+        var p0 = q[qh++], x0 = p0 % w;
+        if (x0 > 0 && mask[p0-1] && !lab[p0-1]) { lab[p0-1] = id; q[qt++] = p0-1; }
+        if (x0 < w-1 && mask[p0+1] && !lab[p0+1]) { lab[p0+1] = id; q[qt++] = p0+1; }
+        if (p0 >= w && mask[p0-w] && !lab[p0-w]) { lab[p0-w] = id; q[qt++] = p0-w; }
+        if (p0 < w*(h-1) && mask[p0+w] && !lab[p0+w]) { lab[p0+w] = id; q[qt++] = p0+w; }
+      }
+      sizes.push(qt); if (qt > big) big = qt;
+    }
+    var minKeep = Math.max(4, big * 0.005);
+    var minX = w, minY = h, maxX = -1, maxY = -1;
+    for (var j = 0; j < w * h; j++) {
+      if (!mask[j]) continue;
+      if (sizes[lab[j]] < minKeep) { if (a && !(ed && ed[j] === 2)) o[j*4+3] = 0; continue; }
+      var x = j % w, y = (j - x) / w; if (x < minX) minX = x; if (x > maxX) maxX = x; if (y < minY) minY = y; if (y > maxY) maxY = y;
+    }
+    if (maxX < 0) { minX = 0; minY = 0; maxX = w - 1; maxY = h - 1; }
+    var pad = Math.round(Math.max(maxX - minX, maxY - minY) * 0.01);
+    minX = Math.max(0, minX - pad); minY = Math.max(0, minY - pad); maxX = Math.min(w - 1, maxX + pad); maxY = Math.min(h - 1, maxY + pad);
+    var full = document.createElement('canvas'); full.width = w; full.height = h; full.getContext('2d').putImageData(out, 0, 0);
+    var c = document.createElement('canvas'); c.width = maxX - minX + 1; c.height = maxY - minY + 1;
+    c.getContext('2d').drawImage(full, -minX, -minY);
+    var oldAspect = state.photo ? state.photo.width / state.photo.height : null;
+    state.photo = c; state.photoDirty = true;
+    $('imx-drop-preview').src = c.toDataURL('image/png');
+    return oldAspect;
+  }
+
+  function applyBgRemovalIfNeeded(keepLayout){
+    if (!state.src) return;
+    var statusEl = $('imx-bgremove-status');
+    if (state.bgRemove && !state.autoA) {
+      statusEl.textContent = 'Processing…';
+      // Slight timeout so the "Processing…" text actually paints before the (synchronous, potentially heavy) flood fill runs.
+      setTimeout(function(){
+        state.autoA = removeBackground(state.src, state.bgTolerance);
+        statusEl.textContent = 'Background removed ✓';
+        afterPhoto(keepLayout);
+      }, 30);
+      return;
+    }
+    if (!state.bgRemove) statusEl.textContent = '';
+    afterPhoto(keepLayout);
+  }
+  function afterPhoto(keepLayout){
+    buildPhoto();
+    if (keepLayout && state.items.length) render(); else imxRelayout(false);
+  }
+
+  $('imx-bgremove-toggle').addEventListener('change', function(e){
+    state.bgRemove = e.target.checked;
+    $('imx-bgremove-opts').style.display = state.bgRemove ? 'block' : 'none';
+    applyBgRemovalIfNeeded(true);
+  });
+  var bgTolSlider = $('imx-bgtol-slider');
+  bgTolSlider.addEventListener('change', function(){ // 'change' not 'input' — only re-run the flood fill once dragging stops
+    state.bgTolerance = parseInt(bgTolSlider.value); state.autoA = null;
+    if (state.bgRemove) applyBgRemovalIfNeeded(true);
+  });
+  bgTolSlider.addEventListener('input', function(){ $('imx-bgtol-val').textContent = bgTolSlider.value; });
+
+  // ── Touch up by hand (erase / bring back) ────────────────────────────────
+  var touching = false, brush = 'erase', tcanvas = $('imx-touch'), tctx = tcanvas.getContext('2d'), tDown = false, tPending = false;
+  window.imxTouchStart = function(){
+    if (!state.src) return;
+    touching = true;
+    if (!state.edits) state.edits = new Uint8Array(state.src.w * state.src.h);
+    tcanvas.width = state.src.w; tcanvas.height = state.src.h;
+    $('imx-canvas-frame').style.display = 'none';
+    $('imx-touch-frame').style.display = 'block';
+    $('imx-touch-bar').style.display = 'flex';
+    $('imx-preview-meta').textContent = 'Drag over the picture: 🧽 Erase takes background away, 🖌 Bring back puts the fitting back.';
+    drawTouch();
+  };
+  window.imxBrush = function(b){ brush = b; $('imx-brush-erase').classList.toggle('on', b === 'erase'); $('imx-brush-restore').classList.toggle('on', b === 'restore'); };
+  window.imxTouchClear = function(){ if (state.edits) state.edits.fill(0); drawTouch(); };
+  window.imxTouchDone = function(){
+    touching = false;
+    $('imx-touch-frame').style.display = 'none';
+    $('imx-touch-bar').style.display = 'none';
+    if (state.src) { buildPhoto(); render(); }
+  };
+  function drawTouch(){
+    var s = state.src, w = s.w, h = s.h, d = s.data.data, a = state.bgRemove ? state.autoA : null, ed = state.edits;
+    var out = tctx.createImageData(w, h), o = out.data;
+    for (var i = 0; i < w * h; i++) {
+      var di = i * 4, al = d[di+3];
+      if (a) al = Math.min(al, a[i]);
+      if (ed[i] === 1) al = 0; else if (ed[i] === 2) al = d[di+3];
+      o[di] = d[di]; o[di+1] = d[di+1]; o[di+2] = d[di+2]; o[di+3] = al;
+    }
+    tctx.putImageData(out, 0, 0);
+  }
+  function paintAt(e){
+    var r = tcanvas.getBoundingClientRect(), s = state.src;
+    var cx = (e.clientX - r.left) * s.w / r.width, cy = (e.clientY - r.top) * s.h / r.height;
+    var rad = parseInt($('imx-brush-size').value) * s.w / r.width / 2, v = brush === 'erase' ? 1 : 2;
+    var x0 = Math.max(0, Math.floor(cx - rad)), x1 = Math.min(s.w - 1, Math.ceil(cx + rad)), y0 = Math.max(0, Math.floor(cy - rad)), y1 = Math.min(s.h - 1, Math.ceil(cy + rad));
+    for (var y = y0; y <= y1; y++) for (var x = x0; x <= x1; x++) if ((x-cx)*(x-cx) + (y-cy)*(y-cy) <= rad*rad) state.edits[y * s.w + x] = v;
+    if (!tPending) { tPending = true; requestAnimationFrame(function(){ tPending = false; drawTouch(); }); }
+  }
+  tcanvas.addEventListener('pointerdown', function(e){ tDown = true; tcanvas.setPointerCapture(e.pointerId); paintAt(e); });
+  tcanvas.addEventListener('pointermove', function(e){ if (tDown) paintAt(e); });
+  tcanvas.addEventListener('pointerup', function(){ tDown = false; });
+  tcanvas.addEventListener('pointercancel', function(){ tDown = false; });
+
+  // ── Quantity pills ───────────────────────────────────────────────────────
+  var qtyPills = document.querySelectorAll('.imx-qty-pill');
+  var qtyCustom = $('imx-qty-custom');
+  function setQty(v, fromPill){
+    if (v === state.qty && state.items.length === v) return true;
+    if (state.edited && !confirm('Change to ' + v + ' pieces? This re-arranges the picture and undoes the pieces you moved by hand.')) return false;
+    state.qty = v; imxRelayout(false); return true;
+  }
+  qtyPills.forEach(function(pill){
+    pill.addEventListener('click', function(){
+      if (!setQty(parseInt(pill.getAttribute('data-qty')))) return;
+      qtyPills.forEach(function(p){ p.classList.remove('active'); });
+      pill.classList.add('active'); qtyCustom.value = '';
+    });
+  });
+  qtyCustom.addEventListener('change', function(){
+    var v = parseInt(qtyCustom.value);
+    if (v >= 1 && v <= 60 && setQty(v)) qtyPills.forEach(function(p){ p.classList.toggle('active', +p.getAttribute('data-qty') === v); });
+  });
+  function syncQtyUi(){
+    var pill = false;
+    qtyPills.forEach(function(p){ var on = +p.getAttribute('data-qty') === state.qty; p.classList.toggle('active', on); if (on) pill = true; });
+    qtyCustom.value = pill ? '' : state.qty;
+  }
+
+  // ── Style toggle ─────────────────────────────────────────────────────────
+  var styleOpts = document.querySelectorAll('.imx-style-opt');
+  styleOpts.forEach(function(opt){
+    opt.addEventListener('click', function(){
+      var st = opt.getAttribute('data-style');
+      if (st === state.style) return;
+      if (state.edited && !confirm('Switch arrangement? This undoes the pieces you moved by hand.')) return;
+      state.style = st; syncStyleUi(); imxRelayout(false);
+    });
+  });
+  function syncStyleUi(){
+    styleOpts.forEach(function(o){ o.classList.toggle('active', o.getAttribute('data-style') === state.style); });
+    $('imx-angle-row').style.display = state.style === 'angled' ? 'block' : 'none';
+  }
+
+  // Draw tiny swatch previews so the two style options are self-explanatory
+  function drawSwatch(id, angled){
+    var c = document.createElement('canvas'); c.width = 300; c.height = 88;
+    var sc = c.getContext('2d');
+    sc.fillStyle = '#EEF0F3'; sc.fillRect(0,0,300,88); sc.fillStyle = '#94A3B8';
+    var positions = angled ? [[40,30],[95,22],[150,30],[70,60],[125,60],[180,55]] : [[45,25],[100,25],[155,25],[210,25],[45,60],[100,60],[155,60],[210,60]];
+    positions.forEach(function(p, i){ sc.save(); sc.translate(p[0], p[1]); if (angled) sc.rotate((i % 2 === 0 ? -1 : 1) * 0.5); sc.fillRect(-8,-8,16,16); sc.restore(); });
+    var el = $(id); el.style.backgroundImage = 'url(' + c.toDataURL() + ')'; el.style.backgroundSize = 'cover';
+  }
+  drawSwatch('imx-swatch-grid', false);
+  drawSwatch('imx-swatch-angled', true);
+
+  // ── Sliders ──────────────────────────────────────────────────────────────
+  var sizeSlider = $('imx-size-slider');
+  sizeSlider.addEventListener('input', function(){ state.sizePct = parseInt(sizeSlider.value); $('imx-size-val').textContent = state.sizePct + '%'; render(); });
+  var angleSlider = $('imx-angle-slider');
+  angleSlider.addEventListener('input', function(){
+    state.angle = parseInt(angleSlider.value); $('imx-angle-val').textContent = state.angle + '°';
+    state.items.forEach(function (it) { it.rot = state.angle * Math.PI / 180; });
+    showSel(); render();
+  });
+  var shadowSlider = $('imx-shadow-slider'), shadowLabels = ['None','Medium','Strong'];
+  shadowSlider.addEventListener('input', function(){ state.shadowLevel = parseInt(shadowSlider.value); $('imx-shadow-val').textContent = shadowLabels[state.shadowLevel]; render(); });
+  $('imx-canvas-size').addEventListener('change', function(e){ state.canvasSize = parseInt(e.target.value); render(); });
+  function syncSliders(){
+    sizeSlider.value = state.sizePct; $('imx-size-val').textContent = state.sizePct + '%';
+    angleSlider.value = state.angle; $('imx-angle-val').textContent = state.angle + '°';
+    shadowSlider.value = state.shadowLevel; $('imx-shadow-val').textContent = shadowLabels[state.shadowLevel];
+    $('imx-canvas-size').value = String(state.canvasSize);
+    $('imx-bgtol-slider').value = state.bgTolerance; $('imx-bgtol-val').textContent = state.bgTolerance;
+  }
+
+  // ── Layout math ──────────────────────────────────────────────────────────
+  // Returns {x, y, w, h, rot} spots for N pieces in a 1 × 1 square (fractions), with a margin.
+  function computeLayout(n, style){
+    var margin = 0.08, usable = 1 - margin * 2, cells = [];
+    if (n <= 1) return [{ x: 0.5, y: 0.5, w: usable, h: usable, rot: style === 'angled' ? state.angle * Math.PI / 180 : 0 }];
+    if (style === 'grid') {
+      var cols = Math.ceil(Math.sqrt(n)), rows = Math.ceil(n / cols), cw = usable / cols, ch = usable / rows;
+      for (var r = 0; r < rows; r++) {
+        var itemsInRow = Math.min(cols, n - r * cols), rowOffset = (usable - itemsInRow * cw) / 2; // center last partial row
+        for (var c = 0; c < itemsInRow; c++) cells.push({ x: margin + rowOffset + c * cw + cw / 2, y: margin + r * ch + ch / 2, w: cw, h: ch, rot: 0 });
+      }
+    } else {
+      // Angled rows: fewer columns per row (items are rotated ~diagonally, so need more breathing room).
+      var cols2 = Math.max(2, Math.ceil(Math.sqrt(n * 0.8))), rows2 = Math.ceil(n / cols2), cw2 = usable / cols2, ch2 = usable / rows2, placed = 0;
+      for (var r2 = 0; r2 < rows2 && placed < n; r2++) {
+        var itemsInRow2 = Math.min(cols2, n - placed), rowOffset2 = (usable - itemsInRow2 * cw2) / 2;
+        for (var c2 = 0; c2 < itemsInRow2; c2++) {
+          cells.push({ x: margin + rowOffset2 + c2 * cw2 + cw2 / 2, y: margin + r2 * ch2 + ch2 / 2, w: cw2, h: ch2, rot: state.angle * Math.PI / 180 });
+          placed++;
+        }
+      }
+    }
+    return cells;
+  }
+
+  window.imxRelayout = function(ask){
+    if (!state.photo) return;
+    if (ask && state.edited && !confirm('Re-arrange all pieces? This undoes the pieces you moved by hand.')) return;
+    var f = state.style === 'angled' ? 0.72 : 0.86;
+    state.items = computeLayout(state.qty, state.style).map(function (c) { return { x: c.x, y: c.y, bw: c.w * f, bh: c.h * f, k: 1, rot: c.rot, flip: false }; });
+    state.edited = false;
+    if (state.sel && state.sel.t === 'item') state.sel = null;
+    showSel(); render();
+  };
+
+  // Where a piece is drawn, in picture pixels.
+  function itemBox(it, size){
+    var aspect = state.photo.width / state.photo.height, sc = (state.sizePct / 100) * (it.k || 1);
+    var boxW = it.bw * size * sc, boxH = it.bh * size * sc, dw, dh;
+    if (boxW / boxH > aspect) { dh = boxH; dw = boxH * aspect; } else { dw = boxW; dh = boxW / aspect; }
+    return { x: it.x * size, y: it.y * size, w: dw, h: dh, rot: it.rot || 0 };
+  }
+  function textBox(t, size, c){
+    var px = Math.round(t.size / 100 * size);
+    c.font = '800 ' + px + 'px "DM Sans", Arial, sans-serif';
+    var tw = c.measureText(t.text || ' ').width, w, h;
+    if (t.style === 'circle') { w = h = Math.max(tw, px) + px * 0.9; }
+    else if (t.style === 'badge') { w = tw + px * 0.9; h = px * 1.45; }
+    else { w = tw; h = px * 1.15; }
+    return { x: t.x * size, y: t.y * size, w: w, h: h, px: px };
+  }
+
+  // ── Render ───────────────────────────────────────────────────────────────
+  function draw(c, size, opts){
+    opts = opts || {};
+    c.clearRect(0, 0, size, size);
+    if (!opts.clear) { c.fillStyle = '#FFFFFF'; c.fillRect(0, 0, size, size); }
+    var sh = [{ blur: 0, offsetY: 0, alpha: 0 }, { blur: size * 0.012, offsetY: size * 0.006, alpha: 0.22 }, { blur: size * 0.020, offsetY: size * 0.010, alpha: 0.32 }][state.shadowLevel];
+    state.items.forEach(function(it){
+      var b = itemBox(it, size);
+      c.save(); c.translate(b.x, b.y); if (b.rot) c.rotate(b.rot); if (it.flip) c.scale(-1, 1);
+      if (sh.alpha > 0) { c.shadowColor = 'rgba(15,23,42,' + sh.alpha + ')'; c.shadowBlur = sh.blur; c.shadowOffsetY = sh.offsetY; }
+      c.drawImage(state.photo, -b.w/2, -b.h/2, b.w, b.h);
+      c.restore();
+    });
+    state.texts.forEach(function(t){
+      var b = textBox(t, size, c);
+      c.save(); c.translate(b.x, b.y); c.textAlign = 'center'; c.textBaseline = 'middle';
+      if (t.style === 'circle') { c.fillStyle = t.color; c.beginPath(); c.arc(0, 0, b.w / 2, 0, Math.PI * 2); c.fill(); c.fillStyle = '#fff'; }
+      else if (t.style === 'badge') { c.fillStyle = t.color; roundRect(c, -b.w/2, -b.h/2, b.w, b.h, b.h * 0.22); c.fill(); c.fillStyle = '#fff'; }
+      else c.fillStyle = t.color;
+      c.fillText(t.text, 0, b.px * 0.04);
+      c.restore();
+    });
+    if (opts.handles && state.sel) {
+      var s = state.sel, bb = s.t === 'item' ? (state.items[s.i] && itemBox(state.items[s.i], size)) : (state.texts[s.i] && textBox(state.texts[s.i], size, c));
+      if (bb) {
+        c.save(); c.translate(bb.x, bb.y); if (s.t === 'item' && bb.rot) c.rotate(bb.rot);
+        c.strokeStyle = '#1A56DB'; c.lineWidth = Math.max(2, size * 0.003); c.setLineDash([size * 0.01, size * 0.007]);
+        c.strokeRect(-bb.w/2 - 6, -bb.h/2 - 6, bb.w + 12, bb.h + 12);
+        c.restore();
+      }
+    }
+  }
+  function roundRect(c, x, y, w, h, r){ c.beginPath(); c.moveTo(x + r, y); c.arcTo(x + w, y, x + w, y + h, r); c.arcTo(x + w, y + h, x, y + h, r); c.arcTo(x, y + h, x, y, r); c.arcTo(x, y, x + w, y, r); c.closePath(); }
+
+  function render(){
+    if (!state.photo || touching) return;
+    var size = state.canvasSize;
+    if (canvas.width !== size) { canvas.width = size; canvas.height = size; }
+    draw(ctx, size, { handles: true });
+    $('imx-empty-state').style.display = 'none';
+    $('imx-canvas-frame').style.display = 'block';
+    $('imx-preview-meta').textContent = state.items.length + ' pieces · ' + size + '×' + size + 'px';
+    var notes = [];
+    if (state.items.length !== state.qty) notes.push(['warn', '⚠ The picture shows <b>' + state.items.length + '</b> pieces but the quantity is <b>' + state.qty + '</b>. Add or delete pieces, or ↺ Re-arrange.']);
+    if (state.texts.length) notes.push(['info', 'ℹ This picture has text. Amazon main images must have no text; it is fine for eBay, Walmart and extra photos.']);
+    $('imx-notes').innerHTML = notes.map(function (n) { return '<div class="imx-note ' + n[0] + '">' + n[1] + '</div>'; }).join('');
+  }
+
+  // ── Design: pick, drag, change one piece or text ─────────────────────────
+  function hit(px, py){
+    var size = state.canvasSize;
+    for (var i = state.texts.length - 1; i >= 0; i--) {
+      var b = textBox(state.texts[i], size, ctx);
+      if (Math.abs(px - b.x) <= b.w / 2 + 8 && Math.abs(py - b.y) <= b.h / 2 + 8) return { t: 'text', i: i };
+    }
+    for (var j = state.items.length - 1; j >= 0; j--) {
+      var ib = itemBox(state.items[j], size), dx = px - ib.x, dy = py - ib.y, cs = Math.cos(-ib.rot), sn = Math.sin(-ib.rot);
+      var lx = dx * cs - dy * sn, ly = dx * sn + dy * cs;
+      if (Math.abs(lx) <= ib.w / 2 && Math.abs(ly) <= ib.h / 2) return { t: 'item', i: j };
+    }
+    return null;
+  }
+  var drag = null;
+  function canvasPt(e){ var r = canvas.getBoundingClientRect(); return { x: (e.clientX - r.left) * canvas.width / r.width, y: (e.clientY - r.top) * canvas.height / r.height }; }
+  canvas.addEventListener('pointerdown', function(e){
+    if (!state.photo) return;
+    var p = canvasPt(e), h = hit(p.x, p.y);
+    state.sel = h; showSel();
+    if (h) {
+      var o = h.t === 'item' ? state.items[h.i] : state.texts[h.i];
+      drag = { o: o, dx: p.x / state.canvasSize - o.x, dy: p.y / state.canvasSize - o.y, moved: false };
+      canvas.setPointerCapture(e.pointerId);
+    }
+    render();
+  });
+  canvas.addEventListener('pointermove', function(e){
+    var p = canvasPt(e);
+    if (!drag) { canvas.style.cursor = hit(p.x, p.y) ? 'move' : 'default'; return; }
+    drag.o.x = Math.max(0, Math.min(1, p.x / state.canvasSize - drag.dx));
+    drag.o.y = Math.max(0, Math.min(1, p.y / state.canvasSize - drag.dy));
+    drag.moved = true; if (state.sel && state.sel.t === 'item') state.edited = true;
+    render();
+  });
+  function endDrag(){ drag = null; }
+  canvas.addEventListener('pointerup', endDrag);
+  canvas.addEventListener('pointercancel', endDrag);
+
+  document.addEventListener('keydown', function(e){
+    if (!state.sel || /input|select|textarea/i.test((e.target && e.target.tagName) || '')) return;
+    var o = state.sel.t === 'item' ? state.items[state.sel.i] : state.texts[state.sel.i]; if (!o) return;
+    var step = e.shiftKey ? 0.02 : 0.004;
+    if (e.key === 'Delete' || e.key === 'Backspace') { imxSelAction('del'); e.preventDefault(); return; }
+    if (e.key === 'Escape') { state.sel = null; showSel(); render(); return; }
+    var mv = { ArrowLeft: [-step, 0], ArrowRight: [step, 0], ArrowUp: [0, -step], ArrowDown: [0, step] }[e.key];
+    if (mv) { o.x = Math.max(0, Math.min(1, o.x + mv[0])); o.y = Math.max(0, Math.min(1, o.y + mv[1])); if (state.sel.t === 'item') state.edited = true; render(); e.preventDefault(); }
+  });
+
+  function showSel(){
+    var s = state.sel, it = s && s.t === 'item' ? state.items[s.i] : null, tx = s && s.t === 'text' ? state.texts[s.i] : null;
+    $('imx-sel-none').style.display = it || tx ? 'none' : 'block';
+    $('imx-sel-item').style.display = it ? 'block' : 'none';
+    $('imx-sel-text').style.display = tx ? 'block' : 'none';
+    if (it) {
+      var k = Math.round((it.k || 1) * 100), deg = Math.round((it.rot || 0) * 180 / Math.PI);
+      deg = ((deg + 180) % 360 + 360) % 360 - 180;
+      $('imx-sel-k').value = k; $('imx-sel-k-val').textContent = k + '%';
+      $('imx-sel-rot').value = deg; $('imx-sel-rot-val').textContent = deg + '°';
+    }
+    if (tx) {
+      $('imx-txt-val').value = tx.text; $('imx-txt-size').value = tx.size; $('imx-txt-size-val').textContent = tx.size + '%';
+      $('imx-txt-style').value = tx.style; $('imx-txt-color').value = tx.color;
+    }
+  }
+  function selObj(){ var s = state.sel; return s ? (s.t === 'item' ? state.items[s.i] : state.texts[s.i]) : null; }
+  $('imx-sel-k').addEventListener('input', function(){ var o = selObj(); if (!o) return; o.k = this.value / 100; $('imx-sel-k-val').textContent = this.value + '%'; state.edited = true; render(); });
+  $('imx-sel-rot').addEventListener('input', function(){ var o = selObj(); if (!o) return; o.rot = this.value * Math.PI / 180; $('imx-sel-rot-val').textContent = this.value + '°'; state.edited = true; render(); });
+  $('imx-txt-val').addEventListener('input', function(){ var o = selObj(); if (!o) return; o.text = this.value; render(); });
+  $('imx-txt-size').addEventListener('input', function(){ var o = selObj(); if (!o) return; o.size = +this.value; $('imx-txt-size-val').textContent = this.value + '%'; render(); });
+  $('imx-txt-style').addEventListener('change', function(){ var o = selObj(); if (!o) return; o.style = this.value; render(); });
+  $('imx-txt-color').addEventListener('change', function(){ var o = selObj(); if (!o) return; o.color = this.value; render(); });
+
+  window.imxSelAction = function(a){
+    var s = state.sel; if (!s) return;
+    var list = s.t === 'item' ? state.items : state.texts, o = list[s.i]; if (!o) return;
+    if (a === 'del') { list.splice(s.i, 1); state.sel = null; }
+    else if (a === 'dup') { var c = JSON.parse(JSON.stringify(o)); c.x = Math.min(1, c.x + 0.04); c.y = Math.min(1, c.y + 0.04); list.push(c); state.sel = { t: s.t, i: list.length - 1 }; }
+    else if (a === 'front') { list.splice(s.i, 1); list.push(o); state.sel = { t: s.t, i: list.length - 1 }; }
+    else if (a === 'flip') o.flip = !o.flip;
+    if (s.t === 'item') state.edited = true;
+    showSel(); render();
+  };
+  window.imxAddText = function(){
+    if (!state.photo) return;
+    state.texts.push({ text: state.qty + ' PCS', x: 0.82, y: 0.1, size: 8, color: '#C52A1A', style: 'badge' });
+    state.sel = { t: 'text', i: state.texts.length - 1 }; showSel(); render();
+    $('imx-txt-val').focus(); $('imx-txt-val').select();
+  };
+  window.imxAddPiece = function(){
+    if (!state.photo) return;
+    var base = state.items[state.items.length - 1] || { bw: 0.4, bh: 0.4, k: 1, rot: 0 };
+    state.items.push({ x: 0.5, y: 0.5, bw: base.bw, bh: base.bh, k: base.k || 1, rot: base.rot || 0, flip: false });
+    state.sel = { t: 'item', i: state.items.length - 1 }; state.edited = true; showSel(); render();
+  };
+
+  // ── Download ─────────────────────────────────────────────────────────────
+  window.imxDownload = function(){
+    if (!state.photo) return;
+    var fmt = $('imx-file-format').value, clear = fmt === 'png-clear';
+    var mime = fmt === 'jpeg' ? 'image/jpeg' : 'image/png', ext = fmt === 'jpeg' ? 'jpg' : 'png';
+    var size = state.canvasSize, off = document.createElement('canvas'); off.width = off.height = size;
+    draw(off.getContext('2d'), size, { clear: clear });
+    off.toBlob(function(blob){
+      var url = URL.createObjectURL(blob), a = document.createElement('a');
+      var base = ($('imx-name').value.trim() || state.filename || 'product').replace(/\.[^/.]+$/, '').replace(/[\\/:*?"<>|]+/g, '-');
+      a.href = url; a.download = base + '-x' + state.items.length + '.' + ext;
+      document.body.appendChild(a); a.click(); a.remove();
+      setTimeout(function(){ URL.revokeObjectURL(url); }, 2000);
+    }, mime, fmt === 'jpeg' ? 0.92 : undefined);
+    // Keep a record of who made which picture (the download works even if the record can't be saved).
+    api('/images/use', { method: 'POST', body: JSON.stringify({ action: 'downloaded', id: state.savedId, name: $('imx-name').value.trim() || state.filename, partNum: $('imx-part').value.trim(),
+      detail: state.items.length + ' pieces · ' + size + 'px ' + ext.toUpperCase() + (clear ? ' no background' : ' white') + (state.texts.length ? ' · text: ' + state.texts.map(function (t) { return t.text; }).join(' / ') : '') }) })
+      .then(function(){ if (logOpen) imxLoadLog(); }).catch(function(){});
+  };
+
+  // ── Save / open designs (xfitting-images worker) ─────────────────────────
+  function photoForSave(){
+    var p = state.photo, sc = Math.min(1, 1200 / Math.max(p.width, p.height)), url = '';
+    for (var tries = 0; tries < 6; tries++) {
+      var c = document.createElement('canvas'); c.width = Math.max(1, Math.round(p.width * sc)); c.height = Math.max(1, Math.round(p.height * sc));
+      c.getContext('2d').drawImage(p, 0, 0, c.width, c.height);
+      url = c.toDataURL('image/webp', 0.92);
+      if (url.indexOf('data:image/webp') !== 0) url = c.toDataURL('image/png'); // browsers without WebP
+      if (url.length <= MAX_SAVE_PHOTO) return url;
+      sc *= 0.75;
+    }
+    return url;
+  }
+  function thumbForSave(){
+    var c = document.createElement('canvas'); c.width = c.height = 240;
+    draw(c.getContext('2d'), 240, {});
+    return c.toDataURL('image/jpeg', 0.8);
+  }
+  function designData(){
+    return { v: 1, qty: state.qty, style: state.style, sizePct: state.sizePct, angle: state.angle, shadowLevel: state.shadowLevel,
+      canvasSize: state.canvasSize, format: $('imx-file-format').value, items: state.items, texts: state.texts, edited: state.edited };
+  }
+  window.imxSave = async function(asNew){
+    if (!state.photo) return;
+    var name = $('imx-name').value.trim(), st = $('imx-save-status');
+    if (!name) { st.textContent = 'Give the design a name first.'; $('imx-name').focus(); return; }
+    var body = { name: name, partNum: $('imx-part').value.trim(), qty: state.items.length, design: designData(), thumb: thumbForSave() };
+    if (!asNew && state.savedId) body.id = state.savedId;
+    if (!body.id || state.photoDirty) body.photo = photoForSave();
+    $('imx-save-btn').disabled = true; st.textContent = 'Saving…';
+    try {
+      var d = await api('/images/design', { method: 'POST', body: JSON.stringify(body) });
+      state.savedId = d.id; state.photoDirty = false;
+      $('imx-saveas-btn').style.display = 'inline-block';
+      st.textContent = '✅ Saved by ' + ((USER && USER.displayName) || 'you') + ' · ' + nyTime(new Date().toISOString());
+      imxLoadSaved(); if (logOpen) imxLoadLog();
+    } catch (e) { st.textContent = '⚠ ' + e.message; }
+    finally { $('imx-save-btn').disabled = false; }
+  };
+
+  var savedRows = [];
+  window.imxLoadSaved = async function(){
+    var st = $('imx-saved-status');
+    try {
+      var d = await api('/images/designs?q=' + encodeURIComponent($('imx-search').value.trim()));
+      savedRows = d.designs || [];
+      st.textContent = savedRows.length ? '' : 'No saved designs yet.';
+      $('imx-saved-list').innerHTML = savedRows.map(function (r) {
+        return '<div class="imx-card" data-id="' + r.id + '" onclick="imxOpen(' + r.id + ')">'
+          + (r.thumb ? '<img src="' + esc(r.thumb) + '" alt="">' : '')
+          + '<b>' + esc(r.name) + '</b>'
+          + (r.part_num ? '<div class="m">' + esc(r.part_num) + '</div>' : '')
+          + '<div class="m">' + (r.qty || 0) + ' pcs · ' + esc(r.updated_by || '') + '</div>'
+          + '<div class="m">' + esc(nyTime(r.updated_at)) + '</div>'
+          + '<button class="imx-link" onclick="event.stopPropagation(); imxDelete(' + r.id + ')">Delete</button></div>';
+      }).join('');
+      markCurrent();
+    } catch (e) { st.textContent = '⚠ ' + e.message + ' (you can still make and download pictures)'; }
+  };
+  function markCurrent(){ document.querySelectorAll('.imx-card').forEach(function (c) { c.classList.toggle('cur', +c.getAttribute('data-id') === state.savedId); }); }
+  var _sTimer = null;
+  $('imx-search').addEventListener('input', function(){ clearTimeout(_sTimer); _sTimer = setTimeout(imxLoadSaved, 300); });
+
+  window.imxOpen = async function(id){
+    if ((state.edited || state.texts.length) && state.savedId !== id && !confirm('Open this design? What is on the screen now (not saved) will be replaced.')) return;
+    try {
+      var d = (await api('/images/design?id=' + id)).design, g = d.design || {};
+      var img = new Image();
+      img.onload = function(){
+        state.qty = g.qty || d.qty || 1; state.style = g.style || 'grid'; state.sizePct = g.sizePct || 100; state.angle = g.angle == null ? 40 : g.angle;
+        state.shadowLevel = g.shadowLevel == null ? 1 : g.shadowLevel; state.canvasSize = g.canvasSize || 1500;
+        if (g.format) $('imx-file-format').value = g.format;
+        // The saved photo is already cut out: open it as it is.
+        state.bgRemove = false; $('imx-bgremove-toggle').checked = false; $('imx-bgremove-opts').style.display = 'none';
+        state.items = g.items || []; state.texts = g.texts || []; state.edited = !!g.edited; state.sel = null;
+        state.savedId = d.id;
+        $('imx-name').value = d.name || ''; $('imx-part').value = d.part_num || '';
+        $('imx-saveas-btn').style.display = 'inline-block';
+        $('imx-save-status').textContent = 'Opened · last saved by ' + (d.updated_by || '?') + ' · ' + nyTime(d.updated_at);
+        syncQtyUi(); syncStyleUi(); syncSliders();
+        loadSource(img, d.name, state.items.length > 0);
+        state.photoDirty = false;
+        showSel(); markCurrent();
+        window.scrollTo({ top: 0, behavior: 'smooth' });
+      };
+      img.src = d.photo;
+    } catch (e) { toast('⚠ ' + e.message); }
+  };
+  window.imxDelete = async function(id){
+    var r = savedRows.filter(function (x) { return x.id === id; })[0];
+    if (!confirm('Delete design "' + (r ? r.name : id) + '"? It stays in the 📜 Record.')) return;
+    try {
+      await api('/images/design/delete', { method: 'POST', body: JSON.stringify({ id: id }) });
+      if (state.savedId === id) { state.savedId = null; $('imx-saveas-btn').style.display = 'none'; state.photoDirty = true; }
+      imxLoadSaved(); if (logOpen) imxLoadLog();
+    } catch (e) { toast('⚠ ' + e.message); }
+  };
+
+  var logOpen = false;
+  window.imxTab = function(t){
+    logOpen = t === 'log';
+    $('imx-tab-saved').classList.toggle('on', !logOpen); $('imx-tab-log').classList.toggle('on', logOpen);
+    $('imx-pane-saved').style.display = logOpen ? 'none' : 'block'; $('imx-pane-log').style.display = logOpen ? 'block' : 'none';
+    if (logOpen) imxLoadLog();
+  };
+  window.imxLoadLog = async function(){
+    var el = $('imx-log-list');
+    try {
+      var rows = (await api('/images/log?limit=200')).rows || [];
+      var icon = { saved: '💾 Saved', changed: '✏️ Changed', deleted: '🗑 Deleted', downloaded: '⬇ Downloaded' };
+      el.innerHTML = rows.length ? '<table class="imx-log"><tr><th>When (NY)</th><th>Who</th><th>What</th><th>Design</th><th>Details</th></tr>'
+        + rows.map(function (r) {
+          return '<tr><td style="white-space:nowrap">' + esc(nyTime(r.ts)) + '</td><td>' + esc(r.by_user) + '</td><td style="white-space:nowrap">' + esc(icon[r.action] || r.action) + '</td>'
+            + '<td>' + esc(r.name || '') + (r.part_num ? ' <span style="color:var(--text3);font-family:var(--mono)">' + esc(r.part_num) + '</span>' : '') + '</td><td>' + esc(r.detail || '') + '</td></tr>';
+        }).join('') + '</table>' : '<div class="imx-hint">Nothing recorded yet.</div>';
+    } catch (e) { el.innerHTML = '<div class="imx-hint">⚠ ' + esc(e.message) + '</div>'; }
+  };
+})();
+
+(function () {
+  if (!TOKEN || !USER) { localStorage.removeItem('xf_cred_token'); localStorage.removeItem('xf_cred_user'); TOKEN = null; showLogin(); return; }
+  // Saved sign-in: open right away; every request is checked by the server, and xf-access.js re-checks the sign-in in the background.
+  openApp();
+})();
+</script>
+<script src="xf-signout.js?v=20260924"></script>
+<script src="xf-access.js?v=20261006f"></script>
+</body>
+</html>

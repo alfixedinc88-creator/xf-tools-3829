@@ -1,0 +1,21 @@
+# Cloudflare Worker: xfitting-images (Image Maker, imagemaker.html)
+# A SEPARATE worker from xfitting-lookup (the root wrangler.toml), so the big
+# main worker doesn't grow and editing images can never change anything else.
+# Deployed by its own Cloudflare Workers Build:
+#   root directory "/", deploy command:
+#   npx wrangler deploy -c images-worker/wrangler.toml
+# ("main" below is relative to this file.)
+
+name = "xfitting-images"
+main = "src/index.js"
+compatibility_date = "2024-01-01"
+
+# Plain-text variables set in the dashboard stay as they are on deploy.
+keep_vars = true
+
+# Same D1 database as the main worker. This worker only READS the sign-in
+# tables and only WRITES its own img_* tables.
+[[d1_databases]]
+binding = "DB"
+database_name = "xfitting-d1"
+database_id = "50823e63-c8ea-4f0c-b576-8289506b61fc"

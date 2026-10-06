@@ -2946,5 +2946,38 @@ console.log('\nScan form: a "not made / not printed" message stays on the page w
       && /id="ps-al-sf-err"/.test(ph) && /onclick="_psAlCopy\(this\.getAttribute\(\\'data-t\\'\), this\)">📋 Copy<\/button><\/details>/.test(ph), null);
 }
 
+// Owner: Image Maker (imagemaker.html) — its own worker (images-worker/, xfitting-images) so the main worker doesn't grow.
+console.log('\nImage Maker: own worker, sign-in, saved designs and the record');
+{
+  const { readFileSync } = await import('node:fs');
+  const img = (await import(fileURLToPath(new URL('../images-worker/src/index.js', import.meta.url)))).default;
+  const icall = (u, o = {}) => img.fetch(new Request('https://img' + u, o), env);
+  const iget = async p => (await (await icall(p, { headers: H })).json());
+  const ipost = async (p, b) => (await (await icall(p, { method: 'POST', headers: H, body: JSON.stringify(b) })).json());
+  check('no sign-in → 401 (nobody can see the designs without a password)', (await icall('/images/designs')).status === 401 && (await icall('/images/designs', { headers: { 'X-Cred-Token': 'nope' } })).status === 401, null);
+  const PH = 'data:image/png;base64,iVBORw0KGgo=';
+  const s1 = await ipost('/images/design', { name: 'Hex nipple', partNum: '30-3-4=10X', qty: 10, design: { items: [] }, photo: PH, thumb: PH });
+  check('save a design', s1.ok && s1.id > 0, s1);
+  const l1 = await iget('/images/designs');
+  check('…it is in the saved list, with who saved it, without the big photo', l1.ok && l1.designs.length === 1 && l1.designs[0].updated_by === 'TS' && !('photo' in l1.designs[0]), l1.designs);
+  const c1 = await ipost('/images/design', { id: s1.id, name: 'Hex nipple', partNum: '30-3-4=10X', qty: 9, design: { items: [] } });
+  const g1 = await iget('/images/design?id=' + s1.id);
+  check('…change it without a new photo → the saved photo stays', c1.ok && g1.design.photo === PH && g1.design.qty === 9, g1.design && g1.design.qty);
+  await ipost('/images/use', { action: 'downloaded', id: s1.id, name: 'Hex nipple', partNum: '30-3-4=10X', detail: '9 pieces' });
+  const d1 = await ipost('/images/design/delete', { id: s1.id });
+  const l2 = await iget('/images/designs');
+  check('…delete → gone from the list, but kept in the table (marked deleted, not erased)', d1.ok && l2.designs.length === 0 && sq.prepare('SELECT COUNT(*) n FROM img_designs WHERE deleted_at IS NOT NULL').get().n === 1, l2.designs);
+  const lg = (await iget('/images/log')).rows || [];
+  check('…the record shows saved → changed (qty 10 → 9) → downloaded → deleted, each with who', lg.map(r => r.action).reverse().join(',') === 'saved,changed,downloaded,deleted'
+    && lg.every(r => r.by_user === 'TS') && /qty 10 → 9/.test(lg.find(r => r.action === 'changed').detail), lg.map(r => r.action + ':' + r.detail));
+  const src = readFileSync(fileURLToPath(new URL('../images-worker/src/index.js', import.meta.url)), 'utf8');
+  check('…the image worker only writes its own img_* tables (never inventory, never the sign-in tables)',
+    !/(INSERT INTO|UPDATE|DELETE FROM)\s+(?!img_)\w+/i.test(src.replace(/ON CONFLICT[^`']*/g, '')), null);
+  const page = readFileSync(fileURLToPath(new URL('../imagemaker.html', import.meta.url)), 'utf8');
+  const home = readFileSync(fileURLToPath(new URL('../index.html', import.meta.url)), 'utf8');
+  check('…the page talks to its own worker with the sign-in token, and the Apps screen has its card',
+    /var IMAGES_URL = 'https:\/\/xfitting-images\.alfixedinc88\.workers\.dev'/.test(page) && /'X-Cred-Token': TOKEN/.test(page) && /onclick="window\.location\.href='imagemaker\.html'"/.test(home), null);
+}
+
 console.log('\n' + (failed ? '❌ ' + failed + ' check(s) FAILED' : '✅ all ' + passed + ' checks passed') + '\n');
 process.exit(failed ? 1 : 0);
