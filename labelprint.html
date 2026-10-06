@@ -587,6 +587,11 @@ window.lpCredLogin = async function() {
     var s          = lpGetSettings();
     var barcodeVal = loc.replace(/^'/, '');
     var bl         = lpBarcodeLayout(barcodeVal, s);
+    // Location name as big as fits across the label (owner: "for the location, I want the word to be big too"),
+    // never smaller than the Text size setting; the barcode moves down under it and keeps its height if there's room.
+    var ts   = Math.max(s.textSize, Math.min(64, Math.floor((s.width - 16) / (0.62 * Math.max(1, barcodeVal.length)))));
+    var barY = Math.max(s.barY, s.textY + ts + 6);
+    var barH = Math.max(40, Math.min(s.barHeight, s.height - barY - 6));
     return [
       '^XA',
       '^MMT',
@@ -595,8 +600,8 @@ window.lpCredLogin = async function() {
       '^MD' + s.darkness,
       '^LS0',
       '^CI28',
-      '^FO0,' + s.textY + '^FB' + s.width + ',1,0,C,0^A0N,' + s.textSize + ',' + s.textSize + '^FD' + barcodeVal + '^FS',
-      '^FO' + bl.x + ',' + s.barY + '^BY' + bl.by + ',3,' + s.barHeight + '^BCN,' + s.barHeight + ',N,N,N^FD' + barcodeVal + '^FS',
+      '^FO0,' + s.textY + '^FB' + s.width + ',1,0,C,0^A0N,' + ts + ',' + ts + '^FD' + barcodeVal + '^FS',
+      '^FO' + bl.x + ',' + barY + '^BY' + bl.by + ',3,' + barH + '^BCN,' + barH + ',N,N,N^FD' + barcodeVal + '^FS',
       '^PQ' + Math.max(1, parseInt(copies) || 1),
       '^XZ'
     ].join('\n');
