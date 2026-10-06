@@ -2458,10 +2458,11 @@ console.log('\nAuto Label → 📄 USPS scan form: Mon–Fri 4:30 pm, Sat 1:45 p
   const realFetch = globalThis.fetch; let made = 0, refuse = false; env.TEST_CLOCK = true;
   globalThis.fetch = async (u, o) => { u = String(u); const m = (o && o.method) || 'GET'; const J = (x, st) => new Response(JSON.stringify(x), { status: st || 200, headers: { 'Content-Type': 'application/json' } });
     // Veeqo's real address (owner's screenshot of its docs): POST /shipping/api/v1/scan_forms/{sub_carrier_id}, e.g. USPS.
-    if (u.endsWith('api.veeqo.com/shipping/api/v1/scan_forms/USPS') && m === 'POST') { if (refuse) return J({ error: 'No shipments to manifest' }, 400);
-      if (!JSON.parse(o.body).carrier) return J({ error: 'carrier is missing' }, 400); made++; return J({ id: 550 + made, shipments: [1, 2, 3], document_url: 'https://forms.example/sf' + made + '.pdf' }); }
+    // Owner's real test: Veeqo answers 400 "collection_address is required" until the pickup address is sent.
+    if (u.endsWith('api.veeqo.com/shipping/api/v1/scan_forms/USPS') && m === 'POST') { if (refuse) return J({ error_messages: ['No shipments to manifest'] }, 400);
+      const ca = JSON.parse(o.body).collection_address; if (!ca || ca.address_line1 !== '499 Bridgeton Pike') return J({ error_messages: ['collection_address is required'] }, 400); made++; return J({ id: 550 + made, shipments: [1, 2, 3], document_url: 'https://forms.example/sf' + made + '.pdf' }); }
     // Which carriers have shipments not on a form yet (owner's 2nd screenshot): PUT /shipping/api/v1/scan_forms/unmanifested.
-    if (u.endsWith('api.veeqo.com/shipping/api/v1/scan_forms/unmanifested') && m === 'PUT') return J({ carriers: none ? [] : [{ carrier: 'amazon_shipping_v2', sub_carrier_id: 'USPS', count: 3 }], error_messages: [] });
+    if (u.endsWith('api.veeqo.com/shipping/api/v1/scan_forms/unmanifested') && m === 'PUT') return J({ carriers: none ? [] : [{ carrier_id: 'amazon_shipping_v2__USPS', carrier_name: 'amazon_shipping_v2__USPS', unmanifested_shipment_location_list: [{ address: { address_line1: '499 Bridgeton Pike', address_line2: '', city: 'Mullica Hill', company_name: null, country_code: 'US', name: 'XFITTING', postal_code: '08062-3712', state_or_region: null }, last_manifest_date: null }] }], error_messages: [] });
     if (u.startsWith('https://forms.example/')) return new Response('%PDF-1.4 scan form', { headers: { 'Content-Type': 'application/pdf' } });
     if (u.includes('api.veeqo.com/')) return J({ error: 'not found' }, 404);
     return new Response('{}', { status: 401 }); };
@@ -2501,8 +2502,11 @@ console.log('\nAuto Label → 📄 USPS scan form: Mon–Fri 4:30 pm, Sat 1:45 p
   const ws0 = readFileSync0(workerPath, 'utf8');
   check('…sent to Veeqo\'s real scan form address POST /shipping/api/v1/scan_forms/USPS (owner\'s screenshot); a refused body is tried with the next one, each answer kept (what was sent + what Veeqo said)',
     /const AUTOLABEL_SCANFORM_PATH = sc => `\/shipping\/api\/v1\/scan_forms\/\$\{encodeURIComponent\(sc\)\}`;/.test(ws0) && bad.tried[0].path === '/shipping/api/v1/scan_forms/unmanifested'
-      && bad.tried.slice(1).every(t => t.path === '/shipping/api/v1/scan_forms/USPS' && t.status === 400 && 'sent' in t) && bad.tried.length === 5
-      && JSON.stringify(bad.tried[1].sent) === '{"carrier":"amazon_shipping_v2","sub_carrier_id":"USPS","count":3}', bad.tried);
+      && bad.tried.slice(1).every(t => /^\/shipping\/api\/v1\/scan_forms\/(USPS|amazon_shipping_v2__USPS)$/.test(t.path) && 'sent' in t) && bad.tried.length >= 4
+      && bad.tried[1].sent.collection_address.address_line1 === '499 Bridgeton Pike', bad.tried);
+  const okRow = sq.prepare("SELECT detail FROM scan_form_log WHERE ok = 1 AND kind = 'hand' ORDER BY id LIMIT 1").get();
+  check('…Veeqo said "collection_address is required" → the pickup address Veeqo lists as waiting (499 Bridgeton Pike) is sent as collection_address, first try, and the form is made',
+    h.ok && /"collection_address":\{"address_line1":"499 Bridgeton Pike"/.test(okRow?.detail || '') && JSON.parse(okRow.detail).filter(t => t.path !== '/shipping/api/v1/scan_forms/unmanifested').length === 1, okRow?.detail);
   none = true; refuse = false; const mk0 = made; const nw = await post('/veeqo/autolabel/scanform-make', {});
   check('…Veeqo says no carrier has labels waiting (unmanifested = none) → "No labels waiting for a scan form", nothing sent to make one, on record', nw.ok === false && nw.nothing === true && /No labels waiting for a scan form/.test(nw.error) && made === mk0 && nw.tried.length === 1, nw);
   none = false;
