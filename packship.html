@@ -8944,7 +8944,10 @@ function _psAlMergeTag(o) {
   if (!o.mergeKey) return '';
   var lead = o.number === o.mergeKey, all = o.mergeOrders || [], e = _psAlEsc;
   var h = '<div style="font-size:11px;font-weight:700;color:var(--purple);margin-top:2px">🧩 ' + (lead ? 'box of ' + (all.length || '?') + ' orders' : 'goes with ' + e(o.mergeKey)) + (o.mergeLb != null ? ' · ' + e(o.mergeLb) + ' lb together' : '') + '</div>';
-  if (lead && o.decision === 'would_merge' && all.length > 1) h += '<button class="ps-btn-sm" style="margin-top:4px;background:var(--accent);color:#fff;border-color:var(--accent);font-weight:700" onclick="psAlMergeBuy(this, \'' + e(all.join(',').replace(/[\\']/g, '')) + '\')">🧩 Merge &amp; buy (' + all.length + ')</button>';
+  // Owner: "merge will not allow to purchase in our app" — the button only showed on 👀 would-merge groups; a group
+  // still in its 30-min wait or put aside (🔗 merge) had no way to buy. By hand it skips the wait; the server still
+  // refuses (and says why, on the page) over 20 lb, no weight, not allocated, cancelled.
+  if (lead && /^(would_merge|waiting|merge)$/.test(o.decision) && all.length > 1) h += '<button class="ps-btn-sm" style="margin-top:4px;background:var(--accent);color:#fff;border-color:var(--accent);font-weight:700" onclick="psAlMergeBuy(this, \'' + e(all.join(',').replace(/[\\']/g, '')) + '\')">🧩 Merge &amp; buy (' + all.length + ')</button>';
   return h;
 }
 // ✂️ Over the box limit (owner: "over 20 lb we split it — 2 boxes of 50, or
@@ -9346,7 +9349,13 @@ window.psAlMergeBuy = async function(btn, list) {
   _psAlMergeBusy = true; btn.disabled = true; btn.textContent = '⏳ Merging…';
   try {
     var d = await _psAlFetch('/veeqo/autolabel/merge-buy', { method: 'POST', body: { orders: nums, by: psInitials || '' } });
-    if (d.ok === false) { btn.disabled = false; btn.textContent = '🧩 Merge & buy (' + nums.length + ')'; alert('Not merged — nothing bought:\n' + (d.error || 'failed')); return; }
+    if (d.ok === false) {
+      btn.disabled = false; btn.textContent = '🧩 Merge & buy (' + nums.length + ')';
+      var why = 'Not merged — nothing bought: ' + (d.error || 'failed'), old = btn.parentNode && btn.parentNode.querySelector('.ps-al-merge-why'); if (old) old.remove();
+      btn.insertAdjacentHTML('afterend', '<div class="ps-al-merge-why" style="color:var(--red);font-size:12px;margin-top:3px;white-space:pre-wrap">❌ ' + _psAlEsc(why)
+        + ' <button class="ps-btn-sm" data-t="' + _psAlEsc(nums.join(' + ') + ': ' + why) + '" onclick="_psAlCopy(this.getAttribute(\'data-t\'), this)">📋 Copy</button></div>');
+      return;
+    }
     var r = window._psAlRunShown;
     if (r) (r.orders || []).forEach(function(x) { if (nums.indexOf(x.number) < 0) return; var c = r.counts; c[x.decision] = Math.max(0, (c[x.decision] || 0) - 1);
       var m = (d.orders || []).find(function(y) { return y.number === x.number; }) || {};

@@ -3083,5 +3083,15 @@ console.log('\n🗂 Print stacks: every stack printed is kept (when, who, how ma
   sq.prepare("DELETE FROM label_print_queue WHERE order_number IN ('S-1','S-2','S-3')").run();
 }
 
+// Owner: "merge will not allow to purchase in our app" — 🧩 Merge & buy only showed on would-merge groups.
+console.log('\n🧩 Merge & buy by hand: also on a group still waiting its 30 min or put aside; the reason shows on the page');
+{
+  const { readFileSync } = await import('node:fs');
+  const ph = readFileSync(fileURLToPath(new URL('../packship.html', import.meta.url)), 'utf8'), wk = readFileSync(fileURLToPath(new URL('../worker/src/index.js', import.meta.url)), 'utf8');
+  check('🧩 Merge & buy shows on the group\'s first order when it would merge, is still waiting, or was put aside; not merged → the reason under the button with 📋 Copy (no pop-up)',
+    /if \(lead && \/\^\(would_merge\|waiting\|merge\)\$\/\.test\(o\.decision\) && all\.length > 1\)/.test(ph) && !/alert\('Not merged — nothing bought:\\n'/.test(ph) && /class="ps-al-merge-why"/.test(ph), null);
+  check('…by hand it skips the 30-min wait and the auto-merge switch (the 20 lb / weight / cancelled checks stay)', /autolabelMergePlan\(env, \{ \.\.\.cfg, waitMinutes: 0, autoMerge: true \}, orders, Date\.now\(\)\)/.test(wk), null);
+}
+
 console.log('\n' + (failed ? '❌ ' + failed + ' check(s) FAILED' : '✅ all ' + passed + ' checks passed') + '\n');
 process.exit(failed ? 1 : 0);
