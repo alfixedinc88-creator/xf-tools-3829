@@ -6697,7 +6697,7 @@ const TM_KEEP = new Set([
   'amazon_sales_weekly', 'amazon_sales_pending', 'ebay_sales_weekly', 'walmart_sales_weekly',
   'shopify_sales_weekly', 'amazon_fba_inventory', 'amazon_title_tracking', 'fba_catalog',
   'channel_cancel_seen', 'reorder_title_cache', 'listing_titles', 'lw_kv', 'lw_alerts',
-  'listing_qty_log', 'autolabel_log', 'ship_usps_run_log',
+  'listing_qty_log', 'autolabel_log', 'ship_usps_run_log', 'ebay_tracking_fix',
 ]);
 // Routes that change things outside the app (can't be erased afterwards).
 const TM_BLOCK = new Set([
@@ -6706,7 +6706,7 @@ const TM_BLOCK = new Set([
   '/ebay-msg/send', '/msg/send', '/msg/reply', '/shopify/listing-create',
   '/repricer/price-change', '/repricer/auto-reprice', '/repricer/queue-action',
   '/ship/cancel-label', '/ship/cancel-order', '/ship/cancel-order-confirm',
-  '/veeqo/autolabel/run', '/veeqo/autolabel/test-buy', '/veeqo/autolabel/order-edit', '/veeqo/autolabel/buy-one', '/veeqo/autolabel/merge-buy', '/veeqo/autolabel/split', '/veeqo/autolabel/scanform-make', '/veeqo/autolabel/scanform-tick',
+  '/veeqo/autolabel/run', '/veeqo/autolabel/test-buy', '/veeqo/autolabel/order-edit', '/veeqo/autolabel/buy-one', '/veeqo/autolabel/merge-buy', '/veeqo/autolabel/split', '/veeqo/autolabel/scanform-make', '/veeqo/autolabel/scanform-tick', '/veeqo/autolabel/ebay-tracking-run',
   '/inventory/soldout/set-qty', '/inventory/soldout/add-listing',
 ]);
 function tmJ(o, status) { return cors(new Response(JSON.stringify(o), { status: status || 200, headers: { 'Content-Type': 'application/json' } })); }
@@ -7803,6 +7803,10 @@ const _app = {
       r => { if (!r || !r.skipped) console.log('[cron] autolabel', JSON.stringify(r)); },
       e => console.error('[cron] autolabel FAILED', e && e.message)
     ));
+    // 📮 eBay orders whose tracking never reached eBay (mostly merged ones) — added by us after 2 h (every 30 min).
+    if (!testOn) ctx.waitUntil(ebayTrackingFix(env).then(
+      r => { if (r && !r.skipped && (r.added.length || r.failed.length)) console.log('[cron] ebay tracking fix', JSON.stringify({ added: r.added.length, failed: r.failed.length })); },
+      e => console.error('[cron] ebay tracking fix FAILED', e && e.message)));
     // Listing Watch — low / sold-out listings while SKU Mgr still has stock.
     // Runs every tick while its switch is on: a page per channel at a time,
     // a new full pass every `everyHours`. See lwCron().
@@ -24630,6 +24634,107 @@ async function autolabelEbayCancels(env, sinceIso) {
   return items;
 }
 
+// ── 📮 eBay tracking our system adds (owner) ─────────────────────────────
+// "Some eBay orders never get their tracking number — mostly the merged
+// ones. If we bought the label we have the tracking: wait 1–2 hours, and if
+// eBay still doesn't have it, our system adds it."
+// Every 30 min: eBay orders not marked shipped (last `days` days) whose label
+// Auto Label bought or merged (autolabel_log: bought / merged /
+// merge_mark_failed, with a tracking #) more than `waitMinutes` ago → the
+// tracking is added on eBay (Fulfillment API, the not-shipped items). Never
+// for a cancelled label / order, never more than 3 tries, and every try is
+// kept in ebay_tracking_fix (who / when / what eBay said).
+const EBAY_TRACK_CFG_KEY = 'ebay_tracking_fix', EBAY_TRACK_LAST_KEY = 'ebay_tracking_fix_last';
+const EBAY_TRACK_DEFAULTS = { on: true, waitMinutes: 120, days: 10, maxPerRun: 25 };
+async function ebayTrackEnsure(env) {
+  await env.DB.prepare(`CREATE TABLE IF NOT EXISTS ebay_tracking_fix (id INTEGER PRIMARY KEY AUTOINCREMENT, ts TEXT, ebay_order_id TEXT, order_number TEXT,
+    tracking TEXT, carrier TEXT, source TEXT, ok INTEGER, detail TEXT, by_user TEXT)`).run();
+  await env.DB.prepare('CREATE INDEX IF NOT EXISTS idx_ebay_tracking_fix_order ON ebay_tracking_fix(ebay_order_id)').run().catch(() => {});
+}
+async function ebayTrackConfig(env) {
+  let c = {}; try { c = JSON.parse(await autolabelGetKey(env, EBAY_TRACK_CFG_KEY) || '{}') || {}; } catch (_) {}
+  const n = (v, d, lo, hi) => { const x = parseInt(v); return Number.isFinite(x) ? Math.min(hi, Math.max(lo, x)) : d; };
+  return { on: c.on == null ? EBAY_TRACK_DEFAULTS.on : !!c.on, waitMinutes: n(c.waitMinutes, EBAY_TRACK_DEFAULTS.waitMinutes, 30, 24 * 60),
+    days: n(c.days, EBAY_TRACK_DEFAULTS.days, 1, 30), maxPerRun: n(c.maxPerRun, EBAY_TRACK_DEFAULTS.maxPerRun, 1, 100) };
+}
+function ebayCarrierCode(c) {
+  const s = String(c || '').toUpperCase();
+  if (/USPS|POSTAL/.test(s)) return 'USPS';
+  if (/UPS/.test(s)) return 'UPS';
+  if (/FEDEX|FEDERAL/.test(s)) return 'FedEx';
+  if (/DHL/.test(s)) return 'DHL';
+  return s ? s.replace(/[^A-Z0-9]/g, '') : '';
+}
+async function ebayTrackingFix(env, opts = {}) {
+  await autolabelEnsureTables(env); await ebayTrackEnsure(env);
+  const cfg = await ebayTrackConfig(env), now = opts.now ? new Date(opts.now) : new Date();
+  if (!cfg.on && !opts.force) return { skipped: 'off' };
+  if (!opts.force) {
+    const last = await autolabelGetKey(env, EBAY_TRACK_LAST_KEY);
+    if (last && now.getTime() - Date.parse(last) < 30 * 60000) return { skipped: 'too_soon' };
+  }
+  await autolabelSetKey(env, EBAY_TRACK_LAST_KEY, now.toISOString());
+  const by = String(opts.by || 'auto').slice(0, 40);
+  const res = { ok: true, at: now.toISOString(), checked: 0, added: [], failed: [], waiting: [], skipped: [], notOurs: 0 };
+  const since = new Date(now.getTime() - cfg.days * 86400000).toISOString();
+  // Our labels: bought / merged by Auto Label, with the tracking #.
+  const logRows = await d1All(env, `SELECT order_number, tracking, carrier, ts, action FROM autolabel_log
+    WHERE action IN ('bought','merged','merge_mark_failed') AND tracking != '' AND ts >= ? ORDER BY id`, [since]);
+  const ours = new Map();
+  for (const r of logRows) { const k = String(r.order_number || '').trim().toUpperCase(); if (!k) continue; if (!ours.has(k)) ours.set(k, []); ours.get(k).push(r); }
+  const cancelled = new Set();
+  for (const sql of ['SELECT tracking FROM ship_cancel_label_log', 'SELECT tracking FROM ship_order_cancel_log']) {
+    try { (await d1All(env, sql)).forEach(r => r.tracking && cancelled.add(String(r.tracking).trim().toUpperCase())); } catch (_) {}
+  }
+  const token = await getEbayToken(env);
+  const filter = `creationdate:[${since}..],orderfulfillmentstatus:{NOT_STARTED|IN_PROGRESS}`;
+  const orders = [];
+  for (let page = 0, offset = 0; page < 5; page++, offset += 200) {
+    const r = await fetch(`https://api.ebay.com/sell/fulfillment/v1/order?filter=${encodeURIComponent(filter)}&limit=200&offset=${offset}`, { headers: { Authorization: `Bearer ${token}` } });
+    const data = await r.json().catch(() => ({}));
+    if (!r.ok || (data.errors && data.errors.length)) throw new Error(`eBay ${r.status}: ${(data.errors && data.errors[0] && data.errors[0].message) || ''}`);
+    orders.push(...(data.orders || []));
+    if ((data.orders || []).length < 200) break;
+  }
+  for (const o of orders) {
+    res.checked++;
+    const keys = [o.orderId, o.legacyOrderId, o.salesRecordReference].filter(Boolean).map(k => String(k).trim().toUpperCase());
+    const rows = keys.map(k => ours.get(k)).find(Boolean);
+    if (!rows) { res.notOurs++; continue; }
+    const row = rows[0], extra = new Set(rows.map(r => r.tracking)).size - 1;
+    const label = { ebayOrderId: o.orderId, orderNumber: row.order_number, tracking: row.tracking, carrier: row.carrier, boughtAt: row.ts, merged: row.action !== 'bought' };
+    const cs = o.cancelStatus || {};
+    if ((cs.cancelState && cs.cancelState !== 'NONE_REQUESTED') || /FULLY_REFUNDED/i.test(o.orderPaymentStatus || '')) { res.skipped.push({ ...label, why: 'cancelled / refunded on eBay' }); continue; }
+    if (cancelled.has(String(row.tracking).trim().toUpperCase())) { res.skipped.push({ ...label, why: 'this label was cancelled' }); continue; }
+    const ageMin = (now.getTime() - Date.parse(row.ts)) / 60000;
+    if (ageMin < cfg.waitMinutes) { res.waiting.push({ ...label, minutesLeft: Math.ceil(cfg.waitMinutes - ageMin) }); continue; }
+    const tries = await d1First(env, 'SELECT SUM(ok = 0) AS bad, SUM(ok = 1) AS good FROM ebay_tracking_fix WHERE ebay_order_id = ?', [o.orderId]) || {};
+    if (tries.good) { res.skipped.push({ ...label, why: 'added by us before — eBay still shows it not shipped' }); continue; }
+    if ((tries.bad || 0) >= 3) { res.skipped.push({ ...label, why: 'eBay refused it 3 times — add it by hand' }); continue; }
+    if (res.added.length + res.failed.length >= cfg.maxPerRun) { res.waiting.push({ ...label, minutesLeft: 30, why: 'next run (limit per run)' }); continue; }
+    const items = (o.lineItems || []).filter(li => !/^FULFILLED$/i.test(li.lineItemFulfillmentStatus || '')).map(li => ({ lineItemId: li.lineItemId, quantity: li.quantity || 1 }));
+    const carrier = ebayCarrierCode(row.carrier);
+    let ok = false, detail = '';
+    if (!items.length) detail = 'no items left to mark shipped';
+    else if (!carrier) detail = 'no carrier on our record';
+    else {
+      try {
+        const r = await fetch(`https://api.ebay.com/sell/fulfillment/v1/order/${encodeURIComponent(o.orderId)}/shipping_fulfillment`, {
+          method: 'POST', headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
+          body: JSON.stringify({ lineItems: items, shippedDate: new Date(Date.parse(row.ts)).toISOString(), shippingCarrierCode: carrier, trackingNumber: row.tracking }) });
+        const txt = await r.text().catch(() => '');
+        ok = r.status === 201 || r.status === 200 || r.status === 204;
+        detail = ok ? `eBay ${r.status}${extra > 0 ? ` · ${extra + 1} boxes — added the first tracking` : ''}` : `eBay ${r.status}: ${txt.slice(0, 400)}`;
+      } catch (e) { detail = 'could not reach eBay: ' + String(e.message || e).slice(0, 200); }
+    }
+    await d1Run(env, 'INSERT INTO ebay_tracking_fix (ts, ebay_order_id, order_number, tracking, carrier, source, ok, detail, by_user) VALUES (?,?,?,?,?,?,?,?,?)',
+      [now.toISOString(), o.orderId, row.order_number, row.tracking, carrier, label.merged ? 'merged box' : 'label bought', ok ? 1 : 0, detail, by]);
+    (ok ? res.added : res.failed).push({ ...label, detail });
+  }
+  await autolabelSetKey(env, EBAY_TRACK_LAST_KEY + '_result', JSON.stringify({ ...res, added: res.added.length, failed: res.failed.length, waiting: res.waiting.length, skipped: res.skipped.length }));
+  return res;
+}
+
 async function autolabelAmazonCancels(env, sinceIso) {
   const token = await getAmazonToken(env);
   const mp = env.AMAZON_MARKETPLACE_ID || 'ATVPDKIKX0DER';
@@ -26497,6 +26602,25 @@ async function handleAutolabelRoute(path, method, url, request, env, session) {
     await autolabelLog(env, { action: 'config', reason: `mode=${cfg.mode} cancelWatch=${cfg.cancelWatch}`,
       customer: (session && (session.displayName || session.username)) || '', detail: JSON.stringify(cfg) });
     return veeqoResp({ ok: true, config: cfg });
+  }
+
+  // 📮 eBay tracking our system adds: list / switch / run now.
+  if (path === '/veeqo/autolabel/ebay-tracking' && method === 'GET') {
+    await ebayTrackEnsure(env);
+    let last = null; try { last = JSON.parse(await autolabelGetKey(env, EBAY_TRACK_LAST_KEY + '_result') || 'null'); } catch (_) {}
+    const rows = await d1All(env, 'SELECT * FROM ebay_tracking_fix ORDER BY id DESC LIMIT 60');
+    return veeqoResp({ ok: true, config: await ebayTrackConfig(env), last, rows });
+  }
+  if (path === '/veeqo/autolabel/ebay-tracking-config' && method === 'POST') {
+    const b = await request.json().catch(() => ({}));
+    const cfg = { ...(await ebayTrackConfig(env)), ...(b.config || {}) };
+    await autolabelSetKey(env, EBAY_TRACK_CFG_KEY, JSON.stringify(cfg));
+    await autolabelLog(env, { action: 'config', reason: `eBay tracking fix on=${!!cfg.on} wait=${cfg.waitMinutes}min`, customer: (session && (session.displayName || session.username)) || '', detail: JSON.stringify(cfg) });
+    return veeqoResp({ ok: true, config: await ebayTrackConfig(env) });
+  }
+  if (path === '/veeqo/autolabel/ebay-tracking-run' && method === 'POST') {
+    try { return veeqoResp(await ebayTrackingFix(env, { force: true, by: (session && (session.displayName || session.username)) || '' })); }
+    catch (e) { return veeqoResp({ ok: false, error: String(e.message || e) }); }
   }
 
   // Preview run on demand — never buys, even in auto mode.
