@@ -3688,5 +3688,16 @@ console.log('\n🔎 Print batches: any date, and a tracking # / order # finds th
   sq.prepare('DELETE FROM label_print_batch WHERE id IN (?,?)').run(bA, bB); sq.prepare('DELETE FROM label_print_queue WHERE id IN (?,?,?)').run(L1, L2, L3);
 }
 
+// Owner (screenshot): "🧩 Merge & buy → ❌ Not merged — Veeqo did not take the box weight (1.98 lb) for 01-15283-02479" and
+// "Veeqo for merge orders still have to wait". Veeqo's API has no merge (owner's search of its docs: only tags / bundles).
+console.log('\n🧩 Merge & buy: give Veeqo time to show the new box weight; what Veeqo said goes into 📋 Copy');
+{
+  const ws = readFileSync0(workerPath, 'utf8'), ph = readFileSync0(fileURLToPath(new URL('../packship.html', import.meta.url)), 'utf8');
+  check('the box weight Veeqo accepted is read back up to 4 times over ≈20 s (0 / 3 / 6 / 10 s) before "did not take"; each read is kept; nothing is bought until it shows',
+    /for \(const ms of \[0, 3000, 6000, 10000\]\) \{/.test(ws) && /said\.push\(`  read back after \$\{Math\.round\(ms \/ 1000\)\} s: /.test(ws) && /if \(!saved\) return fail\(`Veeqo did not take the box weight/.test(ws), null);
+  check('…a failed merge returns what Veeqo said at each step, and the red message\'s 📋 Copy includes it (it used to copy only the message)',
+    /return \{ ok: false, error, detail: String\(detail \|\| ''\)\.slice\(0, 2000\) \};/.test(ws) && /\(d\.detail \? '\\nVeeqo said: ' \+ d\.detail : ''\)/.test(ph), null);
+}
+
 console.log('\n' + (failed ? '❌ ' + failed + ' check(s) FAILED' : '✅ all ' + passed + ' checks passed') + '\n');
 process.exit(failed ? 1 : 0);

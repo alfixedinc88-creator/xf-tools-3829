@@ -9478,7 +9478,7 @@ window.psAlMergeBuy = async function(btn, list) {
       btn.disabled = false; btn.textContent = '🧩 Merge & buy (' + nums.length + ')';
       var why = 'Not merged — nothing bought: ' + (d.error || 'failed'), old = btn.parentNode && btn.parentNode.querySelector('.ps-al-merge-why'); if (old) old.remove();
       btn.insertAdjacentHTML('afterend', '<div class="ps-al-merge-why" style="color:var(--red);font-size:12px;margin-top:3px;white-space:pre-wrap">❌ ' + _psAlEsc(why)
-        + ' <button class="ps-btn-sm" data-t="' + _psAlEsc(nums.join(' + ') + ': ' + why) + '" onclick="_psAlCopy(this.getAttribute(\'data-t\'), this)">📋 Copy</button></div>');
+        + ' <button class="ps-btn-sm" data-t="' + _psAlEsc(nums.join(' + ') + ': ' + why + (d.detail ? '\nVeeqo said: ' + d.detail : '')) + '" onclick="_psAlCopy(this.getAttribute(\'data-t\'), this)">📋 Copy</button></div>'); // with what Veeqo answered (owner's copy had only the message)
       return;
     }
     var r = window._psAlRunShown;
