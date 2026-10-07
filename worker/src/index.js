@@ -1845,7 +1845,7 @@ async function reorderVendorOrder(env, url) {
   const setLast = (part, v, at) => { const k = P(part), vn = reorderVendorName(String(v || '').trim()); if (!k || !vn) return; at = String(at || ''); if (!lastV[k] || at > lastV[k].at) lastV[k] = { v: vn, at }; };
   (await all('SELECT part, vendor, updated_at FROM reorder_incoming')).forEach(r => setLast(r.part, r.vendor, r.updated_at));
   (await all('SELECT part, vendor, at FROM reorder_last_vendor')).forEach(r => setLast(r.part, r.vendor, r.at));
-  const incUnitsOf = k => Object.values(incoming[k] || {}).reduce((a, x) => a + x, 0);
+  const incUnitsOf = k => Math.max(0, Object.values(incoming[k] || {}).reduce((a, x) => a + x, 0)); // never "minus on the way"
   const stageOf = {}, dateOf = {}; (await all('SELECT title, stage, created_at, updated_at FROM reorder_title')).forEach(r => { stageOf[r.title] = r.stage; dateOf[r.title] = reorderOrderDate(r.title, r.created_at || r.updated_at); });
   const palletsOf = {}; (await all('SELECT title, COUNT(DISTINCT vendor || \'|\' || pallet) AS n FROM reorder_pallet GROUP BY title')).forEach(r => { palletsOf[r.title] = r.n; });
   const incomingTitles = (await all('SELECT title, COUNT(*) AS parts, SUM(qty) AS units, MAX(vendor) AS vendor, MAX(updated_at) AS at FROM reorder_incoming GROUP BY title ORDER BY MIN(updated_at)'))
@@ -1891,7 +1891,11 @@ async function reorderVendorOrder(env, url) {
     const s = P(r.part_num), b = U(reorderGetBaseSku(s));
     const o = bySku[s] = bySku[s] || { units: 0, caseQty: 0, vendor: '', name: '', vendors: new Set() };
     if (r.vendor) o.vendors.add(reorderVendorName(r.vendor));
-    o.units += (parseFloat(r.cases) || 0) * (parseFloat(r.units_per_case) || 0) / pack(s);
+    // Negative cases in SKU Mgr are a counting mistake: never "minus stock" (that made the planner order 100× too
+    // much); not counted, shown in red on the row.
+    const rc = parseFloat(r.cases) || 0;
+    if (rc > 0) o.units += rc * (parseFloat(r.units_per_case) || 0) / pack(s);
+    else if (rc < 0) o.negCases = (o.negCases || 0) + rc;
     // Cases with no Ea/Case in SKU Mgr have no known pieces → can't be counted; shown in red on the row, never silent.
     if ((parseFloat(r.cases) || 0) > 0 && !((parseFloat(r.units_per_case) || 0) > 0)) o.noEaCases = (o.noEaCases || 0) + parseFloat(r.cases);
     o.caseQty = Math.max(o.caseQty, (parseFloat(r.units_per_case) || 0) / pack(s));
@@ -1918,7 +1922,7 @@ async function reorderVendorOrder(env, url) {
     const sku = U(pick.sku);
     const amzUnits = [...new Set(g.map(r => U(r.sku)))].reduce((a, k) => a + ((sales[k] || {}).amz || 0), 0);
     g.forEach(r => { claimed.add(U(r.sku)); });
-    const fbaAvail = g.reduce((a, r) => a + (parseFloat(r.available) || 0), 0);
+    const fbaAvail = g.reduce((a, r) => a + Math.max(0, parseFloat(r.available) || 0), 0);
     (fbaByBase[U(reorderGetBaseSku(sku))] = fbaByBase[U(reorderGetBaseSku(sku))] || []).push({ sku, asin: pick.asin || '', amzUnits, amzPieces: amzUnits * pack(sku), fbaAvailPieces: fbaAvail * pack(sku), fbaName: pick.product_name || '' });
   }
   const fbaSkuSet = new Set(); Object.values(fbaByBase).forEach(l => l.forEach(v => fbaSkuSet.add(v.sku)));
@@ -1954,6 +1958,24 @@ async function reorderVendorOrder(env, url) {
     // FBA rows 23-5-4=100 / =50 / …) are shared out across this part's rows
     // by their sales, so each piece is counted once — not once per row.
     const dSum = targets.reduce((a, x) => a + (x.demand || 0), 0);
+    // 👪 Owner (2026-10-07): "check how many pieces we sell over the WHOLE family, order for the months we ask, and
+    // make sure it is enough for our FBA listings". Family need = family pieces sold ÷ months × (lead + cover) −
+    // EVERY piece of the family we have (each FBA listing's shelf + Amazon + on the way, and every other pack on
+    // the shelf / on the way). That need is split over the listings that are short, by how short each is — so
+    // the rows together never order more than the family needs (rounding up to whole cases aside).
+    const H = lead + cover, tset = new Set(targets.map(x => x.sku));
+    const famRows = targets.map(x => {
+      const xs = bySku[x.sku] || { units: 0 }, xps = pack(x.sku);
+      const target = (x.demand || 0) / months * H;
+      const have = xs.units * xps + incUnitsOf(x.sku) * xps + (countFba ? x.fbaAvailPieces : 0);
+      return { sku: x.sku, target, have, short: Math.max(0, target - have) };
+    });
+    let famOtherShelf = 0, famOtherInc = 0; const famOtherList = [];
+    [...bo.skus].forEach(s => { if (!tset.has(s) && bySku[s] && bySku[s].units > 0) { const p = bySku[s].units * pack(s); famOtherShelf += p; famOtherList.push(s + ' ' + Math.round(p)); } });
+    for (const k in incoming) if (!tset.has(k) && U(reorderGetBaseSku(k)) === b) famOtherInc += incUnitsOf(k) * pack(k);
+    const famTarget = famRows.reduce((a, x) => a + x.target, 0), famHave = famRows.reduce((a, x) => a + x.have, 0) + famOtherShelf + famOtherInc;
+    const famNeed = Math.max(0, famTarget - famHave), famShort = famRows.reduce((a, x) => a + x.short, 0);
+    const famSoldPcs = Math.round(dSum), negSkus = [...bo.skus].filter(s => bySku[s] && bySku[s].negCases < 0).map(s => s + ' ' + Math.round(bySku[s].negCases * 100) / 100 + ' cs');
     for (const t of targets) {
       const share = targets.length === 1 ? 1 : dSum > 0 ? (t.demand || 0) / dSum : 1 / targets.length;
       const ps = pack(t.sku), sm = bySku[t.sku] || { units: 0, caseQty: 0 };
@@ -1973,7 +1995,8 @@ async function reorderVendorOrder(env, url) {
       otherPcs *= share; otherIncPcs *= share;
       const incUnits = incUnitsOf(t.sku);
       const stockPcs = ownPcs + incUnits * ps + otherIncPcs + (countOtherPacks ? otherPcs : 0) + (countFba ? t.fbaAvailPieces : 0);
-      const needPcs = Math.max(0, monthlyPcs * (lead + cover) - stockPcs);
+      const fr = famRows.find(x => x.sku === t.sku) || { short: 0, target: 0, have: 0 };
+      const needPcs = famShort > 0 ? famNeed * fr.short / famShort : 0; // this row's part of the family need
       const needUnits = Math.ceil(needPcs / ps - 1e-9);
       const fx = fixes[t.sku] || {};
       // One vendor per part # (never on two vendors' orders). The row's
@@ -2021,6 +2044,7 @@ async function reorderVendorOrder(env, url) {
       if (!t.fbaSku) notes.push('No FBA listing — best-selling pack');
       if (!countOtherPacks && otherPcs > 0) notes.push(`${Math.round(otherPcs)} pcs in other packs of ${b} not counted`);
       if (countOtherPacks && otherPcs > 0) notes.push(`${Math.round(otherPcs)} pcs of other packs on the shelf subtracted (${otherList.map(o => o.sku + ' ' + Math.round(o.pcs)).join(', ')} pcs${share < 1 ? `; this row's ${Math.round(share * 100)}% share, by sales` : ''})`);
+      if (negSkus.length) notes.push(`⚠ NEGATIVE cases in SKU Mgr, not counted (fix them): ${negSkus.join(', ')}`);
       if (noEa.length) notes.push(`⚠ NOT counted (no Ea/Case in SKU Mgr): ${noEa.map(x => x.sku + ' ' + x.cases + ' case' + (x.cases === 1 ? '' : 's')).join(', ')} — set Ea/Case in SKU Mgr`);
       if (otherIncPcs > 0) notes.push(`${Math.round(otherIncPcs)} pcs on the way in other packs of ${b} subtracted` + (share < 1 ? ` (this row's ${Math.round(share * 100)}% share, by sales)` : ''));
       if (incUnits > 0) notes.push(`${Math.round(incUnits)} on the way subtracted`);
@@ -2055,6 +2079,11 @@ async function reorderVendorOrder(env, url) {
         urgent: orderUnits > 0 && monthlyPcs > 0 && stockPcs / monthlyPcs < lead,
         incoming: incoming[t.sku] || {}, incomingUnits: Math.round(incUnits),
         otherIncPcs: Math.round(otherIncPcs), otherIncUnits: Math.round(otherIncPcs / ps * 10) / 10, share: Math.round(share * 1000) / 1000,
+        // 🔍 How the number was made (whole family), shown with the row's 🔍 button.
+        calc: { months: Math.round(months * 10) / 10, horizon: H, famSoldPcs, famTarget: Math.round(famTarget), famHave: Math.round(famHave),
+          famListings: famRows.map(x => ({ sku: x.sku, target: Math.round(x.target), have: Math.round(x.have), short: Math.round(x.short) })),
+          famOtherShelf: Math.round(famOtherShelf), famOtherList, famOtherInc: Math.round(famOtherInc), famNeed: Math.round(famNeed),
+          rowNeedPcs: Math.round(needPcs), negative: negSkus },
       };
       row.issues = [];
       if (!reorderIsProperFormat(row.sku)) row.issues.push('Part # looks wrong');
