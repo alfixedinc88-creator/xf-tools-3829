@@ -241,9 +241,18 @@ window.addEventListener('pageshow', function (e) { if (e.persisted) location.rel
   }
   function dEsc(v) { return String(v == null ? '' : v).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;'); }
   function dWhen(iso) { try { return new Date(iso).toLocaleString('en-US', { timeZone: 'America/New_York', month: 'short', day: 'numeric', year: 'numeric', hour: 'numeric', minute: '2-digit' }); } catch (e) { return iso || ''; } }
-  function dOpenTab() { // the tab open right now
-    var t = (here.tabs || []).filter(function (t) { var el = document.querySelector(t.sel); return el && isActive(el) && el.style.display !== 'none'; })[0];
-    return t ? { key: t.key, label: t.label } : null;
+  // Parts inside a tab that can be saved on their own (owner: "if only one goes
+  // bad I only have to change that one back") — tab key → its mode buttons.
+  var DSUBS = { 'inventory.html': { transfer: [
+    { key: 'code', label: 'SKU / Part# / UPC / Name', sel: '#xfr-mode-code' },
+    { key: 'cont', label: '🚢 Container here', sel: '#xfr-mode-cont' }] } };
+  function dSubs(t) { return ((DSUBS[here.file] || {})[t.key]) || []; }
+  function dOn(sel) { var el = document.querySelector(sel); return !!(el && isActive(el) && el.style.display !== 'none'); }
+  function dOpenTab() { // the tab open right now (and the part of it that is open)
+    var t = (here.tabs || []).filter(function (t) { return dOn(t.sel); })[0];
+    if (!t) return null;
+    var sb = dSubs(t).filter(function (x) { return dOn(x.sel); })[0];
+    return sb ? { key: t.key + ':' + sb.key } : { key: t.key };
   }
   function dLabel(t) { // the name on the tab button, as the owner sees it
     var el = document.querySelector(t.sel), f = el && el.firstChild;
@@ -271,7 +280,10 @@ window.addEventListener('pageshow', function (e) { if (e.persisted) location.rel
     var w = document.createElement('div'); w.id = 'xf-design-pop';
     w.style.cssText = 'position:fixed;inset:0;z-index:2147483200;background:rgba(0,0,0,.4);display:flex;align-items:flex-end;justify-content:center;font:14px/1.4 system-ui,-apple-system,Segoe UI,Roboto,sans-serif;color:#111';
     var cur = dOpenTab(), tabs = here.tabs || [];
-    var opts = tabs.map(function (t) { return '<option value="' + dEsc(t.key) + '"' + (cur && cur.key === t.key ? ' selected' : '') + '>' + dEsc(dLabel(t)) + '</option>'; }).join('')
+    var opt = function (key, lab) { return '<option value="' + dEsc(key) + '"' + (cur && cur.key === key ? ' selected' : '') + '>' + dEsc(lab) + '</option>'; };
+    var opts = tabs.map(function (t) {
+      return opt(t.key, dLabel(t)) + dSubs(t).map(function (x) { return opt(t.key + ':' + x.key, dLabel(t) + ' → ' + (dLabel(x) || x.label)); }).join('');
+    }).join('')
       + '<option value="page"' + (!cur ? ' selected' : '') + '>Whole page (every tab)</option>';
     w.innerHTML = '<div style="background:#fff;width:100%;max-width:560px;max-height:88vh;overflow:auto;border-radius:16px 16px 0 0;padding:14px 14px calc(14px + env(safe-area-inset-bottom))">'
       + '<div style="display:flex;align-items:center;gap:8px"><b style="flex:1;font-size:17px">🔒 Save this design — ' + dEsc(here.name) + '</b><button type="button" data-a="x" style="border:none;background:none;font-size:22px;cursor:pointer">&times;</button></div>'
