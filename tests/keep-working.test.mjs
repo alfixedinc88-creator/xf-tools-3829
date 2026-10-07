@@ -3981,5 +3981,32 @@ console.log('\nPrint totals: before / after the 5:30 PM cut-off');
     /id="ps-pl-count-split"/.test(ps) && /_psPlRenderCountSplit\(\);/.test(ps) && /printed after ' \+ cutT \+ ' → ship '/.test(ps), null);
 }
 
+// Owner (2026-10-07): "check what we printed yesterday after 5:30 and give me that number in the Ship-day count".
+console.log('\nShip-day count: "N printed yesterday after 5:30 PM → shipping today"');
+{
+  const { readFileSync: rf14 } = await import('node:fs');
+  const ps = rf14(fileURLToPath(new URL('../packship.html', import.meta.url)), 'utf8');
+  const grab = re => (ps.match(re) || [''])[0];
+  const src = [grab(/var PS_SHIPDAY_CUTOFF = [^\n]*/), grab(/function _psNyParts\(iso\) \{[\s\S]*?\n\}/), grab(/function _psKeyAdd\(key, days\) \{[\s\S]*?\n\}/), grab(/function _psKeyWd\(key\) \{[^\n]*/),
+    grab(/window\.psShipDayOf = function\(iso\) \{[\s\S]*?\n\};/), 'var psShipDayOf = window.psShipDayOf;', grab(/function _psShipDaySourceDays\(key\) \{[\s\S]*?\n\}/), 'var _psPlShipDayKey = null, _psPlShipDayRun = 0;',
+    grab(/window\.psPlLoadShipDay = async function\(key\) \{[\s\S]*?\n\};/)].join('\n');
+  const run = async (key, byDate) => {
+    const el = { innerHTML: '', value: '' }, win = {};
+    const doc = { getElementById: id => id === 'ps-pl-shipday-body' ? el : { value: '' } };
+    const f = async u => ({ json: async () => ({ ok: true, scans: byDate[(String(u).match(/date=([\d-]+)/) || [])[1]] || [] }) });
+    await new Function('window', 'document', 'fetch', 'PS_WORKER', 'psCredToken', src + '\nreturn window.psPlLoadShipDay(' + JSON.stringify(key) + ');')(win, doc, f, '', '');
+    return el.innerHTML.replace(/<[^>]+>/g, '');
+  };
+  const sc = (ts, c) => ({ timestamp: ts, carrier: c || 'USPS', tracking: ts + Math.random(), operatorName: 'PK' });
+  // Wed Oct 7: Tue 10 AM (shipped Tue), Tue 6:00 / 6:30 / 9 PM (→ Wed), Wed 11 AM ×2, Wed 6 PM (→ Thu).
+  const wed = await run('2026-10-07', { '2026-10-06': [sc('2026-10-06T14:00:00Z'), sc('2026-10-06T22:00:00Z'), sc('2026-10-06T22:30:00Z', 'UPS'), sc('2026-10-07T01:00:00Z')],
+    '2026-10-07': [sc('2026-10-07T15:00:00Z'), sc('2026-10-07T15:10:00Z'), sc('2026-10-07T22:00:00Z')] });
+  check('Wed Oct 7: "3 printed yesterday Tue, Oct 6 after 5:30 PM → shipping Wed, Oct 7", "2 printed on Wed before 5:30", total 5; the Wed 6 PM one → Thursday',
+    /^5\s*labels to pack/.test(wed.trim()) && /• 3 printed yesterday Tue, Oct 6 after 5:30 PM → shipping Wed, Oct 7/.test(wed) && /• 2 printed on Wed, Oct 7 before 5:30 PM/.test(wed) && /• 1 printed on Wed, Oct 7 after 5:30 PM → counted for Thu, Oct 8/.test(wed), wed);
+  // Mon Oct 12: Sat 5 PM (after 4 PM) → Mon, Sunday ×2 → Mon.
+  const mon = await run('2026-10-12', { '2026-10-10': [sc('2026-10-10T21:00:00Z')], '2026-10-11': [sc('2026-10-11T15:00:00Z'), sc('2026-10-11T18:00:00Z')], '2026-10-12': [] });
+  check('Monday: "1 printed on Sat, Oct 10 after 4:00 PM" + "2 printed on Sun, Oct 11 (Sunday, all day)" → shipping Mon', /• 1 printed on Sat, Oct 10 after 4:00 PM → shipping Mon, Oct 12/.test(mon) && /• 2 printed on Sun, Oct 11 \(Sunday, all day\) → shipping Mon, Oct 12/.test(mon), mon);
+}
+
 console.log('\n' + (failed ? '❌ ' + failed + ' check(s) FAILED' : '✅ all ' + passed + ' checks passed') + '\n');
 process.exit(failed ? 1 : 0);
