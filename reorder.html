@@ -5148,27 +5148,38 @@ function rvoCsv() {
   var cell = function (x) { x = String(x == null ? '' : x); return /[",\n]/.test(x) ? '"' + x.replace(/"/g, '""') + '"' : x; };
   var upcCell = function (x) { return x ? '"=""' + String(x).replace(/"/g, '') + '"""' : ''; }; // keeps leading zeros / no 1.2E+11 in Excel
   // Owner: "the CSV for the vendor needs the newest price of each item and what this order will cost in total".
-  // Cost = pieces (order qty × pack size) × newest price per single piece (vendor sheet, else the latest order,
-  // else SKU Mgr's newest price). Owner: "add pieces per case of the original box" = Qty per Case × pack size
-  // (= SKU Mgr's Each/Case).
+  // Cost = pieces × newest price per single piece (vendor sheet, else the latest order, else SKU Mgr's newest
+  // price, else the same item's).
   // 🔥 Owner: "anything we almost sold out, warn the vendor to ship it first — sometimes our order ships in 2 containers,
   // the urgent one must be in the first container": a Priority column first, urgent lines at the top.
   rows = rows.filter(function (r) { return r.urgent; }).concat(rows.filter(function (r) { return !r.urgent; }));
   var urgentN = rows.filter(function (r) { return r.urgent; }).length;
-  var head = ['Priority', 'Part #', 'Outside Box UPC Code', 'Inside Bag UPC Code', 'Description', 'Order Qty', 'Cases', 'Qty per Case', 'Pieces per Case (original box)', 'Pieces', 'Price per Piece', 'Line Total', 'Price From', 'Price Date', 'Note', 'FBA ASIN'];
-  var lines = [head.join(',')], money = 0, pcsTot = 0, unpriced = [];
+  // Owner (2026-10-07): "Order Qty should be the pieces we order, per case = SKU Mgr's pieces per case (144, not 14.4
+  // bags), pieces = cases × pieces per case; no Price From". Everything for the vendor is in PIECES and CASES:
+  // pieces of this line = order qty × pack size, rounded up to whole cases of SKU Mgr's box, so
+  // Order Qty (pieces) = Cases × Pieces per Case on every line that has a box size.
+  var head = ['Priority', 'Part #', 'Outside Box UPC Code', 'Inside Bag UPC Code', 'Description', 'Order Qty (pieces)', 'Cases', 'Pieces per Case (original box)', 'Price per Piece', 'Line Total', 'Price Date', 'Note', 'FBA ASIN'];
+  var lines = [head.join(',')], money = 0, pcsTot = 0, casesTot = 0, unpriced = [];
   rows.forEach(function (r) {
-    var q = Math.round(rvoQty(r) * 1000) / 1000, cases = r.caseQty ? Math.ceil(q / r.caseQty - 1e-9) : '';
-    var pcs = Math.round(q * (r.packSize || 1) * 1000) / 1000, pr = r.price > 0 ? r.price : null, line = pr != null ? Math.round(pcs * pr * 100) / 100 : null;
-    pcsTot += pcs; if (line != null) money += line; else unpriced.push(r.sku);
-    var note = (RVO.edits[r.sku] != null ? 'Qty changed by hand' : (/Rounded up/.test(r.note) ? r.note.split(' · ').filter(function (n) { return /Rounded up/.test(n); })[0] : ''));
-    lines.push([cell(r.urgent ? 'URGENT - ship in the FIRST container' : ''), cell(r.sku), upcCell(r.outsideUpc), upcCell(r.insideUpc), cell(r.description), q, cases, r.caseQty ? Math.round(r.caseQty * 1000) / 1000 : '', r.casePcs > 0 ? r.casePcs : r.caseQty ? Math.round(r.caseQty * (r.packSize || 1) * 1000) / 1000 : '', pcs,
-      pr != null ? pr : '', line != null ? line.toFixed(2) : '', cell(pr != null ? r.priceSrc : 'NO PRICE'), cell(r.priceAt ? String(r.priceAt).slice(0, 10) : ''), cell(note), cell(r.asin || '')].join(','));
+    var ps = r.packSize || 1, q = rvoQty(r);
+    var box = r.casePcs > 0 ? r.casePcs : r.caseQty ? Math.round(r.caseQty * ps * 1000) / 1000 : 0;
+    var want = Math.round(q * ps * 1000) / 1000; // pieces asked for (planner or typed by hand)
+    var cases = box > 0 ? Math.ceil(want / box - 1e-9) : '';
+    var pcs = box > 0 ? Math.round(cases * box * 1000) / 1000 : want;
+    var pr = r.price > 0 ? r.price : null, line = pr != null ? Math.round(pcs * pr * 100) / 100 : null;
+    pcsTot += pcs; if (box > 0) casesTot += cases; if (line != null) money += line; else unpriced.push(r.sku);
+    var need = Math.round((r.needUnits || 0) * ps * 1000) / 1000, notes = [];
+    if (RVO.edits[r.sku] != null) notes.push('Qty changed by hand');
+    if (box > 0 && pcs > (RVO.edits[r.sku] != null ? want : need) + 1e-6) notes.push('Rounded up from ' + (RVO.edits[r.sku] != null ? want : need) + ' to ' + pcs + ' pcs (' + cases + ' case' + (cases === 1 ? '' : 's') + ' of ' + box + ')');
+    if (!box) notes.push('No pieces per case in SKU Mgr - not rounded');
+    if (pr == null) notes.push('NO PRICE');
+    lines.push([cell(r.urgent ? 'URGENT - ship in the FIRST container' : ''), cell(r.sku), upcCell(r.outsideUpc), upcCell(r.insideUpc), cell(r.description), pcs, cases, box || '',
+      pr != null ? pr : '', line != null ? line.toFixed(2) : '', cell(pr != null && r.priceAt ? String(r.priceAt).slice(0, 10) : ''), cell(notes.join(' · ')), cell(r.asin || '')].join(','));
   });
   money = Math.round(money * 100) / 100;
   lines.push('');
-  lines.push([cell('TOTAL'), cell(urgentN ? urgentN + ' URGENT - ship in the FIRST container' : ''), '', '', cell(rows.length + ' part #s'), Math.round(rows.reduce(function (a, r) { return a + rvoQty(r); }, 0) * 1000) / 1000, '', '', '', Math.round(pcsTot * 1000) / 1000, '', money.toFixed(2),
-    cell(unpriced.length ? unpriced.length + ' part # without a price (not in the total): ' + unpriced.join(' ') : 'every part # priced'), '', '', ''].join(','));
+  lines.push([cell('TOTAL'), cell(urgentN ? urgentN + ' URGENT - ship in the FIRST container' : ''), '', '', cell(rows.length + ' part #s'), Math.round(pcsTot * 1000) / 1000, casesTot, '', '', money.toFixed(2), '',
+    cell(unpriced.length ? unpriced.length + ' part # without a price (not in the total): ' + unpriced.join(' ') : 'every part # priced'), ''].join(','));
   var name = (v && v !== '__none' ? v.replace(/[^A-Za-z0-9_-]+/g, '_') : 'ALL') + '_PO_' + new Date().toISOString().slice(0, 10) + '.csv';
   var blob = new Blob(['﻿' + lines.join('\r\n')], { type: 'text/csv;charset=utf-8' });
   var a = document.createElement('a'); a.href = URL.createObjectURL(blob); a.download = name; document.body.appendChild(a); a.click();
@@ -5182,7 +5193,7 @@ function rvoCsv() {
   var hand = rows.filter(function (r) { return RVO.edits[r.sku] != null; }).map(function (r) { return r.sku + ' ' + r.orderUnits + '→' + rvoQty(r); });
   var skipped = rvoVisible().filter(function (r) { return RVO.off[r.sku] && r.orderUnits > 0; }).map(function (r) { return r.sku; });
   var m = RVO.meta || {};
-  var detail = 'Downloaded ' + name + ': ' + rows.length + ' part #s' + (urgentN ? ' (🔥 ' + urgentN + ' URGENT, first container: ' + rows.filter(function (r) { return r.urgent; }).map(function (r) { return r.sku; }).join(', ') + ')' : '') + ', ' + tot + ' units, 💲 $' + money.toFixed(2) + (unpriced.length ? ' (' + unpriced.length + ' with no price)' : '') + ' (window ' + m.days + ' d, lead ' + m.lead + ' mo, cover ' + m.cover + ' mo)'
+  var detail = 'Downloaded ' + name + ': ' + rows.length + ' part #s' + (urgentN ? ' (🔥 ' + urgentN + ' URGENT, first container: ' + rows.filter(function (r) { return r.urgent; }).map(function (r) { return r.sku; }).join(', ') + ')' : '') + ', ' + tot + ' units (' + (Math.round(pcsTot * 1000) / 1000) + ' pcs' + (casesTot ? ', ' + casesTot + ' cases' : '') + '), 💲 $' + money.toFixed(2) + (unpriced.length ? ' (' + unpriced.length + ' with no price)' : '') + ' (window ' + m.days + ' d, lead ' + m.lead + ' mo, cover ' + m.cover + ' mo)'
     + (hand.length ? ' · changed by hand: ' + hand.join(', ') : '') + (skipped.length ? ' · left out: ' + skipped.join(', ') : '') + ' · vendor totals: ' + ck.text;
   wFetch(W + '/reorder/fix/log', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ action: 'download', part: v && v !== '__none' ? v : '', detail: detail }) })
     .then(function () { if (document.getElementById('rvo-hist-box').open) rvoLoadHistory(); }).catch(function () {});
