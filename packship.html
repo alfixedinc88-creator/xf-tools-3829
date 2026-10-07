@@ -3365,6 +3365,7 @@ window.psUspsRunStart = async function() {
     // already no-ops safely (just re-syncs Veeqo) if it's already closed,
     // so this stays harmless on a second/third run of the same day.
     await psCloseBatch();
+    await psUspsScanFormsPrompt(); // 📄 today's scan forms → print to hand to USPS
   } catch(e) { _psToast('Failed to start run: ' + e.message, 'error'); } finally { btn.disabled = false; }
 };
 
@@ -8714,7 +8715,7 @@ function _psAlRenderConfig(d) {
     + '• Waits <b>' + c.waitMinutes + ' min</b> after the newest order' + (c.noWaitTimes ? ' — <b>except ' + _psAlEsc(c.noWaitTimes) + '</b> (New York time): prints as soon as an order comes in' : '') + '<br>'
     + '• Never buys for a cancelled order<br>'
     + (c.pauseTimes ? '• <b>⏸ No auto buying:</b> ' + _psAlEsc(c.pauseTimes) + ' (New York) — around the scan forms; labels can still be bought by hand<br>' : '')
-    + '• <b>📄 USPS scan form:</b> ' + (c.scanFormOn ? 'made by itself <b>' + _psAlEsc(c.scanFormTimes || '—') + '</b>, night check <b>' + _psAlEsc(c.scanFormCheckAt) + '</b> (one more if a USPS label came after the last form; USPS cut-off 9 pm, no Sunday)' : 'by hand only (📄 Make scan form now)')
+    + '• <b>📄 USPS scan form:</b> ' + (c.scanFormOn ? 'made by itself <b>' + _psAlEsc(_psAlTimesText(c.scanFormTimes) || '—') + '</b>, night check <b>' + _psAlEsc(_psAlClock(c.scanFormCheckAt)) + '</b> (one more if a USPS label came after the last form; USPS cut-off 9 pm, no Sunday)' : 'by hand only (📄 Make scan form now)')
     + (c.maxBoxLb ? ' · boxes over <b>' + c.maxBoxLb + ' lb</b> → weigh / print by hand' : '')
     + (c.lowValueRatio ? ' · 💸 low value if the label is <b>' + Math.round(c.lowValueRatio * 100) + '%</b>+ of the order' + (c.lowValueMaxOrder ? ' (orders up to $' + c.lowValueMaxOrder + ')' : '')
       + (c.autoBuyLowValue !== false ? ' → <b>⚡ Auto buys it too</b>, kept on the Low value record to check the price later' : ' → held, buy by hand') : '');
@@ -9168,7 +9169,12 @@ window.psAlLoadScanForms = async function() {
   var d = await _psAlFetch('/veeqo/autolabel/scanforms'); if (d.ok === false) { st.textContent = '✗ ' + (d.error || 'Failed'); return; }
   var e = _psAlEsc, today = (d.forms || []).filter(function(f) { return f.day === (d.forms[0] || {}).day; });
   var miss = (d.missing && d.missing.labels) || [];
-  st.innerHTML = (d.on ? '⏰ By itself: <b>' + e(d.times || '—') + '</b> · night check <b>' + e(d.checkAt) + '</b>' : '⏰ By hand only (turn it on in Rules)')
+  st.innerHTML = (d.on ? '⏰ By itself: <b>' + e(_psAlTimesText(d.times) || '—') + '</b> · night check <b>' + e(_psAlClock(d.checkAt)) + '</b>'
+      + ' <details style="display:inline-block;vertical-align:top"><summary style="cursor:pointer;color:var(--accent)">📅 Schedule</summary><div style="margin:4px 0 6px;line-height:1.6">'
+      + _psAlTimesLines(d.times).map(function(l) { return '• ' + e(l); }).join('<br>')
+      + '<br>• Every night at ' + e(_psAlClock(d.checkAt)) + ': any USPS label after the last form → one more form, before the USPS 9 pm cut-off'
+      + '<br>• Forms are saved here — print them any time (🚚 Leaving for USPS asks to print today\'s forms)</div></details>'
+    : '⏰ By hand only (turn it on in Rules)')
     + (d.verified ? '' : '<br><span style="color:var(--orange);font-weight:700">🔒 Not by itself yet — tap 📄 Make scan form now once; when that works, it is made by itself at the set times.</span>')
     + '<br>' + (miss.length ? '<span style="color:var(--orange);font-weight:700">⚠ ' + miss.length + ' USPS label' + (miss.length === 1 ? '' : 's') + ' today not on a scan form yet' + (d.missing.since ? ' (since ' + e(new Date(d.missing.since).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })) + ')' : '') + '</span>' : '<span style="color:var(--green)">✅ Every USPS label bought today (by Auto Label) is on a scan form</span>');
   var name = { hand: 'by hand', scheduled: 'on time', night: 'night check', night_ok: '🌙 night check', night_missing: '🌙 night check', locked: 'on time (locked)' };
@@ -9186,6 +9192,41 @@ window.psAlLoadScanForms = async function() {
 };
 // Owner: "the scan form didn't work — it gave me a code but I can't copy it" (it was in a pop-up box).
 // Now the message stays on the page, in a box that can be selected, with 📋 Copy.
+// Owner: "put the schedule in easy words, not 16:30". "Mon-Fri 16:30, 20:50; Sat 13:45" → "Mon–Fri: 4:30 pm and 8:50 pm".
+function _psAlClock(hm) {
+  var m = String(hm || '').match(/^(\d{1,2}):(\d{2})$/); if (!m) return String(hm || '');
+  var h = +m[1], ap = h >= 12 && h < 24 ? 'pm' : 'am', h12 = h % 12 || 12;
+  return h12 + ':' + m[2] + ' ' + ap;
+}
+function _psAlTimesLines(text) {
+  var full = { mon: 'Mon', tue: 'Tue', wed: 'Wed', thu: 'Thu', fri: 'Fri', sat: 'Saturday', sun: 'Sunday' };
+  return String(text || '').split(/[;\n]+/).map(function(seg) {
+    var m = seg.trim().match(/^([A-Za-z ,\-]+?)\s+(\d{1,2}:\d{2}(?:\s*,\s*\d{1,2}:\d{2})*)$/); if (!m) return seg.trim();
+    var days = m[1].trim().replace(/\b(mon|tue|wed|thu|fri|sat|sun)\w*/gi, function(x) { return full[x.slice(0, 3).toLowerCase()] || x; }).replace(/\s*-\s*/g, '–');
+    var ts = m[2].split(/\s*,\s*/).map(_psAlClock);
+    return days + ': ' + (ts.length > 1 ? ts.slice(0, -1).join(', ') + ' and ' + ts[ts.length - 1] : ts[0]);
+  }).filter(Boolean);
+}
+function _psAlTimesText(text) { return _psAlTimesLines(text).join(' · '); }
+// 🚚 Leaving for USPS (owner): "that two scan forms trigger also and ask them to print". Today's forms (saved on the
+// server, so no computer has to stay open); USPS labels not on a form yet → offer to make one first.
+window.psUspsScanFormsPrompt = async function() {
+  var d; try { d = await _psAlFetch('/veeqo/autolabel/scanforms'); } catch (e) { return; }
+  if (!d || d.ok === false) return;
+  var today = psTodayKey(), forms = (d.forms || []).filter(function(f) { return f.ok && f.day === today && f.kind !== 'night_ok' && (f.parts || 0) > 0; });
+  var miss = (d.missing && d.missing.labels) || [];
+  if (miss.length && confirm('📄 ' + miss.length + ' USPS label' + (miss.length === 1 ? ' is' : 's are') + ' not on a scan form yet.\n\nMake a scan form for ' + (miss.length === 1 ? 'it' : 'them') + ' now (to give the USPS driver)?')) {
+    var mk = await _psAlFetch('/veeqo/autolabel/scanform-make', { method: 'POST', body: {} }).catch(function(e) { return { ok: false, error: e.message }; });
+    if (mk.ok === false && !mk.nothing) _psToast('Scan form not made: ' + (mk.error || 'failed') + ' — make it in Veeqo', 'error');
+    d = await _psAlFetch('/veeqo/autolabel/scanforms').catch(function() { return d; });
+    forms = (d.forms || []).filter(function(f) { return f.ok && f.day === today && f.kind !== 'night_ok' && (f.parts || 0) > 0; });
+  }
+  if (!forms.length) { _psToast('📄 No USPS scan form made today yet'); return; }
+  var pages = forms.reduce(function(t, f) { return t + (f.parts || 1); }, 0);
+  var when = forms.map(function(f) { return new Date(f.created_at).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' }); }).join(', ');
+  if (confirm('📄 Today\'s USPS scan forms: ' + pages + ' form' + (pages === 1 ? '' : 's') + ' (made ' + when + ').\n\nPrint ' + (pages === 1 ? 'it' : 'them') + ' now and hand ' + (pages === 1 ? 'it' : 'them') + ' to USPS with the packages?'))
+    await psAlScanFormPrintList(forms.map(function(f) { return { id: f.id, parts: f.parts || 1 }; }));
+};
 // 🔎 Owner: "still only one scan form, but should have 2" — shows what Veeqo sent back (long files shortened), with 📋 Copy.
 window.psAlScanFormAnswer = async function(id) {
   var d = await _psAlFetch('/veeqo/autolabel/scanform-answer?id=' + encodeURIComponent(id));
