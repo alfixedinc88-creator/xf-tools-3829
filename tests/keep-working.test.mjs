@@ -3741,8 +3741,10 @@ console.log('\nReorder: 30 / 90 day sales per channel per part # (rows, 🔍, CS
   check('CSV: Amazon / eBay / Walmart / Shopify 30d + 90d (pcs) columns on each line (=10: Amazon 200 / 300)',
     ['Amazon 30d (pcs)', 'Amazon 90d (pcs)', 'eBay 30d (pcs)', 'eBay 90d (pcs)', 'Walmart 30d (pcs)', 'Walmart 90d (pcs)', 'Shopify 30d (pcs)', 'Shopify 90d (pcs)'].every(h => H.includes(h))
       && row[H.indexOf('Amazon 30d (pcs)')] === '200' && row[H.indexOf('Amazon 90d (pcs)')] === '300', [H.slice(-8), row.slice(-8)]);
-  check('…and a "SALES BY PART #" section at the bottom with every part # of the family that sold (incl. the eBay bulk =1000: 3 units = 3,000 pcs)',
-    L.some(l => /^"?SALES BY PART #/.test(l)) && L.includes(`${F},${F}=1000,eBay,0,3,0,3000`) && L.includes(`${F},${F}=10,Amazon,20,30,200,300`), L.slice(-4));
+  // Owner (2026-10-07, later): the whole sheet in PIECES only — the bottom list lost its Units columns (replaces the units + pieces check).
+  check('…and a "SALES BY PART #" section at the bottom, in PIECES only, with every part # of the family that sold (incl. the eBay bulk =1000: 3,000 pcs)',
+    L.some(l => /^"?SALES BY PART # - whole family, 30 \/ 90 days, in PIECES/.test(l)) && L.includes('Parent,Part #,Channel,Pieces 30d,Pieces 90d') && L.includes(`${F},${F}=1000,eBay,0,3000`) && L.includes(`${F},${F}=10,Amazon,200,300`), L.slice(-4));
+  check('…no column of the vendor CSV is in units / bags: every quantity header says pieces', H.filter(h => /qty|units|sold|30d|90d|per case/i.test(h)).every(h => /pieces|\(pcs\)/i.test(h)) && !L.some(l => /Units 30d|Units 90d/.test(l)), H);
   sq.exec(`DELETE FROM fba_catalog WHERE sku LIKE '${F}%'; DELETE FROM amazon_sales_weekly WHERE sku LIKE '${F}%'; DELETE FROM ebay_sales_weekly WHERE sku LIKE '${F}%'`);
 }
 

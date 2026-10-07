@@ -5251,11 +5251,12 @@ function rvoCsv() {
   // Every part # of each family on this order that sold (=OLD, bulk packs, eBay-only SKUs …), so a wrong sales number shows.
   var seenFam = {}, famLines = [];
   rows.forEach(function (r) { if (!r.calc || seenFam[r.baseSku]) return; seenFam[r.baseSku] = 1;
-    (r.calc.famSales || []).forEach(function (x) { famLines.push([cell(r.baseSku), cell(x.sku), cell(x.ch), x.u30, x.u90, x.p30, x.p90].join(',')); }); });
+    (r.calc.famSales || []).forEach(function (x) { famLines.push([cell(r.baseSku), cell(x.sku), cell(x.ch), x.p30, x.p90].join(',')); }); });
   if (famLines.length) {
     lines.push('');
-    lines.push(cell('SALES BY PART # - whole family, 30 / 90 days (pieces = units x pack size)'));
-    lines.push(['Parent', 'Part #', 'Channel', 'Units 30d', 'Units 90d', 'Pieces 30d', 'Pieces 90d'].join(','));
+    // Owner (2026-10-07): "the report in PIECES only — boxes hold different counts, I don't want to convert packs myself".
+    lines.push(cell('SALES BY PART # - whole family, 30 / 90 days, in PIECES'));
+    lines.push(['Parent', 'Part #', 'Channel', 'Pieces 30d', 'Pieces 90d'].join(','));
     lines = lines.concat(famLines);
   }
   var name = (v && v !== '__none' ? v.replace(/[^A-Za-z0-9_-]+/g, '_') : 'ALL') + '_PO_' + new Date().toISOString().slice(0, 10) + '.csv';
