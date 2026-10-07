@@ -3793,5 +3793,22 @@ console.log('\nReorder: a sales SKU with a broken pack number never inflates the
   sq.exec(`DELETE FROM fba_catalog WHERE sku LIKE '${F}%'; DELETE FROM ebay_sales_weekly WHERE sku LIKE '${F}%'; DELETE FROM walmart_sales_weekly WHERE sku LIKE '${F}%'; DELETE FROM master_list WHERE base_sku = '${F}'`);
 }
 
+
+// Owner (2026-10-07): "Stock Out Shelving works perfect — a button to save that code down, so if it ever changes
+// I give you the file and you change it back."
+console.log('\n🔒 Save this design (Stock Out Shelving)');
+{
+  const { readFileSync: rf11 } = await import('node:fs');
+  const R = f => rf11(fileURLToPath(new URL('../' + f, import.meta.url)), 'utf8');
+  const ih = R('inventory.html'), dy = R('.github/workflows/deploy.yml'), ld = R('docs/LOCKED-DESIGNS.md'), cm = R('CLAUDE.md');
+  check('Stock Out Shelving has the 🔒 Save this design button (admin / owner, only on that tab)',
+    /id="inv-design-save"/.test(ih) && /invSaveDesign\('Stock Out Shelving'\)/.test(ih) && /tab === "stockout" && \(rr\.indexOf\('admin'\) >= 0 \|\| rr\.indexOf\('owner'\) >= 0\)/.test(ih), null);
+  check('…the file names the exact commit (version.json) and holds the page source',
+    /get\('version\.json'\), get\('inventory\.html'\)/.test(ih) && /Website \+ Worker commit: /.test(ih) && /l\.download = /.test(ih), null);
+  check('…the Pages deploy writes version.json with the commit', /> version\.json/.test(dy) && /GITHUB_SHA/.test(dy), null);
+  check('…Stock Out Shelving is listed as locked (commit 347cb71) and CLAUDE.md points to it',
+    /Stock Out Shelving \| 2026-10-07 \| `347cb71`/.test(ld) && /docs\/LOCKED-DESIGNS\.md/.test(cm), null);
+}
+
 console.log('\n' + (failed ? '❌ ' + failed + ' check(s) FAILED' : '✅ all ' + passed + ' checks passed') + '\n');
 process.exit(failed ? 1 : 0);

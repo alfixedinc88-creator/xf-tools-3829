@@ -24,6 +24,10 @@ that change.
   works afterwards (re-run the earlier tests for them).
 - If a change has to touch something that works, say so plainly in the PR
   and in the report to the owner, before it is merged.
+- **Locked designs** (`docs/LOCKED-DESIGNS.md`, e.g. 🏬 Stock Out Shelving since
+  2026-10-07): never change them unless the owner asks for that exact change.
+  If the owner hands back a "🔒 Save this design" file, restore that tab from
+  the commit named in it, nothing else.
 - Run `node tests/keep-working.test.mjs` before every PR. It runs on every
   PR too ("Keep-working checks"); a ❌ means something that worked broke —
   fix it, never delete or loosen the check.
