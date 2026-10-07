@@ -3948,7 +3948,13 @@ window.psPlLoadShipDay = async function(key) {
     + '<span>labels to pack / ship on <b>' + fmtDay(key) + '</b></span>'
     + '<span class="ps-badge ps-badge-ups">' + cnt(mine, 'UPS') + ' UPS</span><span class="ps-badge ps-badge-usps">' + cnt(mine, 'USPS') + ' USPS</span></div>'
     + '<div style="margin-top:6px;line-height:1.6">'
-    + '• ' + carried.length + ' printed before, after the last cut-off' + (carried.length ? ' (' + days.slice(0, -1).map(function(k) { var n = carried.filter(function(s) { return _psNyParts(s.timestamp).key === k; }).length; return n ? fmtDay(k) + ': ' + n : ''; }).filter(Boolean).join(', ') + ')' : '') + '<br>'
+    // Owner (2026-10-07): "what we printed yesterday after 5:30 — give me that number in the ship-day count": one line per
+    // earlier day, with that day's cut-off (Saturday 4:00 PM, Sunday all day), in bold.
+    + days.slice(0, -1).map(function(k) {
+        var n = carried.filter(function(s) { return _psNyParts(s.timestamp).key === k; }).length, wdk = _psKeyWd(k);
+        var when = wdk === 0 ? 'on ' + fmtDay(k) + ' (Sunday, all day)' : (k === _psKeyAdd(key, -1) ? 'yesterday ' : 'on ') + fmtDay(k) + ' after ' + (wdk === 6 ? '4:00 PM' : '5:30 PM');
+        return '• <b style="color:var(--orange)">' + n + '</b> printed ' + when + ' → shipping ' + fmtDay(key) + '<br>';
+      }).join('')
     + '• ' + sameDay + ' printed on ' + fmtDay(key) + ' before ' + cut + '<br>'
     + '• ' + later.length + ' printed on ' + fmtDay(key) + ' after ' + cut + ' → counted for ' + fmtDay(psShipDayOf(later.length ? later[0].timestamp : key + 'T23:59:00-04:00')) + ', not this day'
     + '</div>'
