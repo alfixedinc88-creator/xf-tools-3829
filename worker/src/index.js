@@ -1809,6 +1809,23 @@ async function reorderVendorOrder(env, url) {
     .forEach(r => { mlPrice[P(r.part_num)] = { price: parseFloat(r.price), at: '' }; });
   (await all('SELECT part, price, at FROM part_price_log ORDER BY at, id').catch(() => []))
     .forEach(r => { const m = mlPrice[P(r.part)]; if (m && Math.abs(m.price - parseFloat(r.price)) < 1e-6) m.at = r.at; });
+  // 👪 Owner: "24-1-2=10 is the same item as 24-1-2=10X — no exact match → use the family's price and pieces per
+  // case". Every part # we know, by its parent (24-1-2); the same pack number (=10 for =10X) is tried first.
+  const famIdx = {};
+  [cat, incPrice, mlPrice].forEach(m => Object.keys(m).forEach(k => { const fb = U(reorderGetBaseSku(k)); (famIdx[fb] = famIdx[fb] || new Set()).add(k); }));
+  const famOf = (b, sku) => { const ps = reorderExtractPackSize(sku); return [...(famIdx[b] || [])].filter(k => k !== sku).map(k => ({ k, same: reorderExtractPackSize(k) === ps })); };
+  // Price per piece of the family: per part # its vendor sheet (the chosen vendor's first), else its last order,
+  // else SKU Mgr; same pack number first, then the newest. "Price From" names the part # it came from.
+  const famPrice = (b, sku, vendor) => {
+    const c = famOf(b, sku).map(f => {
+      const vs = (catAll[f.k] || []).filter(x => parseFloat(x.price) > 0), v = vs.find(x => reorderVendorName(x.vendor) === vendor) || vs[0];
+      if (v) return { ...f, price: parseFloat(v.price), at: v.price_at || v.updated_at || '', src: 'vendor sheet' };
+      if (incPrice[f.k]) return { ...f, price: parseFloat(incPrice[f.k].price), at: incPrice[f.k].updated_at || '', src: 'last order' };
+      if (mlPrice[f.k]) return { ...f, price: mlPrice[f.k].price, at: mlPrice[f.k].at || '', src: 'SKU Mgr' };
+      return null;
+    }).filter(Boolean).sort((x, y) => (y.same - x.same) || String(y.at).localeCompare(String(x.at)));
+    return c.length ? { price: c[0].price, priceAt: c[0].at, priceSrc: c[0].src + ' of ' + c[0].k + ' (same item)' } : { price: null, priceAt: '', priceSrc: '' };
+  };
   const fixes = {}; (await all('SELECT * FROM reorder_fix')).forEach(r => { fixes[U(r.part)] = r; });
   // ASIN for any SKU Amazon knows — incl. Amazon's own auto seller SKUs like
   // "0H-9TMH-JBU7" (sales report + FBA inventory report), so those rows can
@@ -1978,12 +1995,22 @@ async function reorderVendorOrder(env, url) {
       // vendor sheet's carton (EFF "Master carton (pcs)" is pieces → ÷ pack).
       let caseQty = parseFloat(fx.case_qty) || sm.caseQty || 0, caseSrc = fx.case_qty ? 'fix' : sm.caseQty ? 'SKU Mgr' : '';
       if (!caseQty && parseFloat(ct.case_pcs) > 0) { caseQty = Math.max(1, Math.round(parseFloat(ct.case_pcs) / ps)); caseSrc = 'vendor sheet'; }
+      // 👪 No case size for this exact part # → the family's (SKU Mgr Each/Case, then a vendor sheet carton):
+      // same pack number first (=10 for =10X), then the biggest box. Pieces per case stay the family's pieces.
+      let casePcs = caseQty > 0 ? caseQty * ps : 0;
+      if (!caseQty) {
+        const fam = [...bo.skus].filter(k => k !== t.sku && bySku[k] && bySku[k].caseQty > 0).map(k => ({ k, same: pack(k) === ps, pcs: bySku[k].caseQty * pack(k), src: 'SKU Mgr' }))
+          .concat(famOf(b, t.sku).filter(f => cat[f.k] && parseFloat(cat[f.k].case_pcs) > 0).map(f => ({ k: f.k, same: f.same, pcs: parseFloat(cat[f.k].case_pcs), src: 'vendor sheet', late: 1 })))
+          .sort((x, y) => (y.same - x.same) || ((x.late || 0) - (y.late || 0)) || (y.pcs - x.pcs));
+        if (fam.length) { casePcs = fam[0].pcs; caseQty = Math.max(1, Math.round(casePcs / ps)); caseSrc = 'family ' + fam[0].k + ' (' + fam[0].src + ')'; }
+      }
       let orderUnits = needUnits, cases = null, notes = [];
       if (needUnits > 0 && caseQty > 0) {
         cases = Math.ceil(needUnits / caseQty);
         orderUnits = cases * caseQty;
         if (orderUnits !== needUnits) notes.push(`Rounded up from ${needUnits} to ${orderUnits} (${cases} case${cases === 1 ? '' : 's'} of ${caseQty})`);
       } else if (needUnits > 0) notes.push('No case qty in SKU Mgr — not rounded');
+      if (/^family /.test(caseSrc)) notes.push(`Case size from the same item: ${caseSrc.slice(7)}, ${Math.round(casePcs * 1000) / 1000} pcs a box`);
       if (!t.fbaSku) notes.push('No FBA listing — best-selling pack');
       if (!countOtherPacks && otherPcs > 0) notes.push(`${Math.round(otherPcs)} pcs in other packs of ${b} not counted`);
       if (otherIncPcs > 0) notes.push(`${Math.round(otherIncPcs)} pcs on the way in other packs of ${b} subtracted` + (share < 1 ? ` (this row's ${Math.round(share * 100)}% share, by sales)` : ''));
@@ -2006,7 +2033,8 @@ async function reorderVendorOrder(env, url) {
         // (No vendor names / file titles in the text — only owners see vendor names.)
         ...(parseFloat(ct.price) > 0 ? { price: parseFloat(ct.price), priceAt: ct.price_at || ct.updated_at || '', priceSrc: 'vendor sheet' }
           : incPrice[t.sku] ? { price: parseFloat(incPrice[t.sku].price), priceAt: incPrice[t.sku].updated_at || '', priceSrc: 'last order' }
-          : mlPrice[t.sku] ? { price: mlPrice[t.sku].price, priceAt: mlPrice[t.sku].at, priceSrc: 'SKU Mgr' } : { price: null, priceAt: '', priceSrc: '' }),
+          : mlPrice[t.sku] ? { price: mlPrice[t.sku].price, priceAt: mlPrice[t.sku].at, priceSrc: 'SKU Mgr' } : famPrice(b, t.sku, vendor)),
+        casePcs: casePcs > 0 ? Math.round(casePcs * 1000) / 1000 : null,
         soldPcs: Math.round(demandPcs), monthlyPcs: Math.round(monthlyPcs * 10) / 10,
         stockUnits: Math.round(sm.units * 100) / 100, stockPcs: Math.round(ownPcs), otherPackPcs: Math.round(otherPcs),
         fbaPcs: Math.round(t.fbaAvailPieces), needUnits, caseQty, cases, orderUnits, note: notes.join(' · '),

@@ -5163,7 +5163,7 @@ function rvoCsv() {
     var pcs = Math.round(q * (r.packSize || 1) * 1000) / 1000, pr = r.price > 0 ? r.price : null, line = pr != null ? Math.round(pcs * pr * 100) / 100 : null;
     pcsTot += pcs; if (line != null) money += line; else unpriced.push(r.sku);
     var note = (RVO.edits[r.sku] != null ? 'Qty changed by hand' : (/Rounded up/.test(r.note) ? r.note.split(' · ').filter(function (n) { return /Rounded up/.test(n); })[0] : ''));
-    lines.push([cell(r.urgent ? 'URGENT - ship in the FIRST container' : ''), cell(r.sku), upcCell(r.outsideUpc), upcCell(r.insideUpc), cell(r.description), q, cases, r.caseQty ? Math.round(r.caseQty * 1000) / 1000 : '', r.caseQty ? Math.round(r.caseQty * (r.packSize || 1) * 1000) / 1000 : '', pcs,
+    lines.push([cell(r.urgent ? 'URGENT - ship in the FIRST container' : ''), cell(r.sku), upcCell(r.outsideUpc), upcCell(r.insideUpc), cell(r.description), q, cases, r.caseQty ? Math.round(r.caseQty * 1000) / 1000 : '', r.casePcs > 0 ? r.casePcs : r.caseQty ? Math.round(r.caseQty * (r.packSize || 1) * 1000) / 1000 : '', pcs,
       pr != null ? pr : '', line != null ? line.toFixed(2) : '', cell(pr != null ? r.priceSrc : 'NO PRICE'), cell(r.priceAt ? String(r.priceAt).slice(0, 10) : ''), cell(note), cell(r.asin || '')].join(','));
   });
   money = Math.round(money * 100) / 100;
