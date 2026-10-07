@@ -3463,5 +3463,42 @@ console.log('\nAuto Label: every history list closed, click to open');
     /var wAt = box\.closest\('details'\) \|\| box; wAt\.parentNode\.insertBefore\(warn, wAt\);/.test(ps) && /if \(cancBox\) \{ box\.innerHTML = html; cancBox\.innerHTML = ch; \}/.test(ps), null);
 }
 
+// Owner (2026-10-07): "some still show no price — 24-1-2=10 is the same item as 24-1-2=10X; no exact match → use the family's price
+// and pieces per case too".
+console.log('\nReorder vendor CSV: family price + pieces per case when the exact part # has none');
+{
+  const wk = new Date(Date.now() - 14 * 86400000).toISOString().slice(0, 10);
+  sq.prepare("INSERT INTO ebay_sales_weekly (sku, period_start, units_ordered) VALUES ('89-1-2=10X',?,60), ('89-5-5=10',?,30)").run(wk, wk);
+  // 89-1-2=10X: no SKU Mgr row, no vendor sheet, no order. Family: =10 (SKU Mgr $0.04, 200 pcs a box) and =50 (SKU Mgr $0.09, 500 pcs).
+  sq.prepare(`INSERT INTO master_list (base_sku, name, part_num, location, cases, units_per_case, price, updated_at) VALUES
+    ('89-1-2','nut','89-1-2=10','C1=8-1-1',0,200,0.04,'2026-05-01'), ('89-1-2','nut','89-1-2=50','C1=8-1-2',0,500,0.09,'2026-09-01')`).run();
+  const d = await get('/reorder/vendor-order?days=90&lead=3&cover=3');
+  const r = (d.rows || []).find(x => x.sku === '89-1-2=10X') || {}, o = (d.rows || []).find(x => x.sku === '89-5-5=10') || {};
+  check('89-1-2=10X (no price of its own) → the same item 89-1-2=10\'s price $0.04 (same pack number first, not =50\'s newer $0.09); Price From names it',
+    r.price === 0.04 && /89-1-2=10\b/.test(r.priceSrc) && /same item/.test(r.priceSrc), [r.price, r.priceSrc]);
+  check('…pieces per case from the same item too: 200 pcs a box → 20 bags of 10X a case, order rounded up to whole cases, noted',
+    r.casePcs === 200 && r.caseQty === 20 && r.orderUnits % 20 === 0 && /^family 89-1-2=10 /.test(r.caseSrc) && /Case size from the same item: 89-1-2=10/.test(r.note), [r.casePcs, r.caseQty, r.orderUnits, r.caseSrc]);
+  // Pieces check: need = sold 600 pcs / 3 months × 6 = 1200 pcs → 120 units → 6 cases of 20 = 120 units (no stock).
+  check('…order math: 600 pcs sold in 3 months → 1,200 pcs for 6 months = 120 units = 6 cases × 20 ✅', r.needUnits === 120 && r.orderUnits === 120, [r.needUnits, r.orderUnits]);
+  check('a part # with no family at all (89-5-5=10) stays NO PRICE and not rounded (shown, never guessed)', !(o.price > 0) && !o.caseQty && /not rounded/.test(o.note), [o.price, o.caseQty]);
+  sq.exec("DELETE FROM master_list WHERE base_sku = '89-1-2'; DELETE FROM ebay_sales_weekly WHERE sku IN ('89-1-2=10X', '89-5-5=10')");
+}
+
+// Owner (2026-10-07): "pieces per case (original box) from SKU Mgr's box info, not the vendor sheet (not right); order and round up
+// by SKU Mgr's pieces per case".
+console.log('\nReorder: case size only from SKU Mgr, never the vendor sheet');
+{
+  const wk = new Date(Date.now() - 14 * 86400000).toISOString().slice(0, 10);
+  sq.prepare("INSERT INTO ebay_sales_weekly (sku, period_start, units_ordered) VALUES ('89-7-7=10',?,60), ('89-8-8=10',?,60)").run(wk, wk);
+  // 89-7-7=10: SKU Mgr box 300 pcs, vendor sheet says 1000 → 300. 89-8-8=10: only a vendor sheet carton (500) → not used.
+  sq.prepare("INSERT INTO master_list (base_sku, name, part_num, location, cases, units_per_case) VALUES ('89-7-7','cap','89-7-7=10','C1=8-7-1',0,300)").run();
+  sq.prepare("INSERT INTO reorder_vendor_catalog (vendor, part, case_pcs, updated_at) VALUES ('JQ','89-7-7=10',1000,?), ('JQ','89-8-8=10',500,?)").run(wk, wk);
+  const d = await get('/reorder/vendor-order?days=90&lead=3&cover=3');
+  const a = (d.rows || []).find(x => x.sku === '89-7-7=10') || {}, b = (d.rows || []).find(x => x.sku === '89-8-8=10') || {};
+  check('SKU Mgr box 300 pcs (vendor sheet says 1000) → 30 bags a case, 300 pcs per case; 120 needed → 4 cases = 120', a.casePcs === 300 && a.caseQty === 30 && a.caseSrc === 'SKU Mgr' && a.orderUnits === 120, [a.casePcs, a.caseQty, a.caseSrc, a.orderUnits]);
+  check('…only a vendor sheet carton (89-8-8=10) → not used: no case size, not rounded (120 exactly)', !b.caseQty && !b.casePcs && b.orderUnits === 120 && /not rounded/.test(b.note), [b.caseQty, b.casePcs, b.orderUnits]);
+  sq.exec("DELETE FROM master_list WHERE base_sku = '89-7-7'; DELETE FROM ebay_sales_weekly WHERE sku IN ('89-7-7=10', '89-8-8=10'); DELETE FROM reorder_vendor_catalog WHERE part IN ('89-7-7=10', '89-8-8=10')");
+}
+
 console.log('\n' + (failed ? '❌ ' + failed + ' check(s) FAILED' : '✅ all ' + passed + ' checks passed') + '\n');
 process.exit(failed ? 1 : 0);
