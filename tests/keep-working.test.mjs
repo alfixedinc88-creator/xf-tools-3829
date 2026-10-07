@@ -3829,6 +3829,9 @@ console.log('\n🔒 Save this design (every tab, Owner only, kept with the date,
     /Stock Out Shelving \| 2026-10-07 \| `347cb71`/.test(ld) && /docs\/LOCKED-DESIGNS\.md/.test(cm), null);
   check('…Transfer\'s two parts can be saved on their own: Transfer → SKU / Part# / UPC / Name and Transfer → 🚢 Container here (the open one pre-picked)',
     /key: 'code', label: 'SKU \/ Part# \/ UPC \/ Name', sel: '#xfr-mode-code'/.test(xa) && /key: 'cont', label: '🚢 Container here', sel: '#xfr-mode-cont'/.test(xa) && /t\.key \+ ':' \+ sb\.key/.test(xa) && /dLabel\(t\) \+ ' → '/.test(xa), null);
+  // Owner: "why some of the tabs I don't see, like packship 'label check'" — the list must show every tab button on the page.
+  check('…every tab on the page is in the list, not only the ones in the access list (🏷️ Label Check, Reorder\'s JQ / EFF …); pages not in the access list get the 🔒 too',
+    /function dTabs\(\)/.test(xa) && /first\.parentNode\.children/.test(xa) && /tabs = dTabs\(\)/.test(xa) && /DH = here \|\| \(file && file !== 'index\.html'/.test(xa), null);
   sq.prepare('DELETE FROM cred_users WHERE id = ?').run(Number(ow.lastInsertRowid));
 }
 
