@@ -3502,6 +3502,37 @@ console.log('\nReorder: case size only from SKU Mgr, never the vendor sheet');
   sq.exec("DELETE FROM master_list WHERE base_sku = '89-7-7'; DELETE FROM ebay_sales_weekly WHERE sku IN ('89-7-7=10', '89-8-8=10'); DELETE FROM reorder_vendor_catalog WHERE part IN ('89-7-7=10', '89-8-8=10')");
 }
 
+// Owner: "everything ordered or shipped in Reorder shows in SKU Mgr; if 200 ordered but only 100 shipped, 100 shows shipped and
+// 100 stays ordered — don't just add up the inventory"; missing price → just leave it out; Warehouse Lookup shows only received.
+console.log('\n🏭 SKU Mgr → Coming in: ordered (still owed) vs shipped (on the way) per part #, never added to stock');
+{
+  await call('/reorder/fix/history', { headers: H }); // reorder tables
+  const now = new Date().toISOString();
+  sq.prepare("INSERT OR REPLACE INTO reorder_title (title, stage, updated_at, created_at) VALUES ('PO-SPLIT 10/1', 'production', ?, ?), ('CT-SPLIT 10/5', 'shipped', ?, ?), ('PO-NOPRICE 10/6', 'production', ?, ?)").run(now, now, now, now, now, now);
+  // Ordered 200 units of 77-1-1=10 (10 pcs each); the container took 100 off it → order keeps 100, container has 100. Another order: 50, no price yet.
+  sq.prepare("INSERT INTO reorder_incoming (title, part, qty, vendor, cases, price, updated_at) VALUES ('PO-SPLIT 10/1','77-1-1=10',100,'JQ',10,0.2,?), ('CT-SPLIT 10/5','77-1-1=10',100,'JQ',10,0.2,?), ('PO-NOPRICE 10/6','77-1-1=10',50,'JQ',5,NULL,?)").run(now, now, now);
+  sq.prepare("INSERT INTO reorder_take (from_title, to_title, part, units, cases) VALUES ('PO-SPLIT 10/1','CT-SPLIT 10/5','77-1-1=10',100,10)").run();
+  const casesBefore = sq.prepare("SELECT COALESCE(SUM(cases),0) c FROM master_list WHERE part_num LIKE '77-1-1%'").get().c;
+  const d = await get('/inventory/incoming?q=77-1-1');
+  const so = await get('/inventory/incoming?base=77-1-1');
+  check('SKU Mgr\'s Coming in box (asks with ?q=) gets its answer again — the Sold Out address (?base=) used to answer it with "base required", so the box never showed; Sold Out still gets its own answer',
+    d.ok === true && Array.isArray(d.items) && so.ok !== undefined && !('totals' in so), { q: d.ok, base: Object.keys(so) });
+  const tot = (d.totals || [])[0] || {}, it = t => (d.items || []).find(x => x.title === t) || {};
+  // Expected: ordered 200 = 100 shipped + 100 still owed; + 50 on the other order → still owed 150 (1,500 pcs), on the way 100 (1,000 pcs), coming 250.
+  check('77-1-1=10: ordered 200, shipped 100 → 🚢 on the way 100 + 🏭 still owed 100 (+ 50 on a 2nd order) = 250 coming — 1,500 + 1,000 pcs; nothing counted twice',
+    tot.onWayUnits === 100 && tot.orderedUnits === 150 && tot.comingUnits === 250 && tot.orderedPcs === 1500 && tot.onWayPcs === 1000 && tot.comingPcs === 2500, tot);
+  check('…the order line says "200 ordered: 100 shipped in CT-SPLIT 10/5 · 100 still owed"; the container line says "from order PO-SPLIT 10/1 (100)"',
+    it('PO-SPLIT 10/1').orderedUnits === 200 && it('PO-SPLIT 10/1').shippedUnits === 100 && it('PO-SPLIT 10/1').units === 100 && it('PO-SPLIT 10/1').shippedFrom[0].to === 'CT-SPLIT 10/5'
+    && it('CT-SPLIT 10/5').status === 'on the way' && it('CT-SPLIT 10/5').fromOrders[0].from === 'PO-SPLIT 10/1' && it('CT-SPLIT 10/5').fromOrders[0].units === 100, [it('PO-SPLIT 10/1'), it('CT-SPLIT 10/5')]);
+  const ih = readFileSync0(fileURLToPath(new URL('../inventory.html', import.meta.url)), 'utf8');
+  check('…SKU Mgr stock is NOT changed by orders / containers on the way (only 📦 Received adds cases); a line with no price just leaves the price out (no red "no price")',
+    sq.prepare("SELECT COALESCE(SUM(cases),0) c FROM master_list WHERE part_num LIKE '77-1-1%'").get().c === casesBefore && it('PO-NOPRICE 10/6').units === 50
+    && !/<span style="color:var\(--red\)">no price<\/span>/.test(ih) && /still owed<\/b> by the vendor/.test(ih) && /units coming<\/span>/.test(ih), casesBefore);
+  sq.prepare("DELETE FROM reorder_incoming WHERE title IN ('PO-SPLIT 10/1','CT-SPLIT 10/5','PO-NOPRICE 10/6')").run();
+  sq.prepare("DELETE FROM reorder_take WHERE from_title = 'PO-SPLIT 10/1'").run();
+  sq.prepare("DELETE FROM reorder_title WHERE title IN ('PO-SPLIT 10/1','CT-SPLIT 10/5','PO-NOPRICE 10/6')").run();
+}
+
 // Owner (2026-10-07): "I want ALL of our inventory counted, don't give us the option, so we never order too much".
 console.log('\nReorder: all our stock always counts (no options), each piece once');
 {
