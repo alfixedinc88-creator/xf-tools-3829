@@ -3414,5 +3414,21 @@ console.log('\nReorder vendor CSV: pieces per case + SKU Mgr price when there is
   sq.exec("DELETE FROM master_list WHERE part_num IN ('88-3-3=10', '88-4-4=10'); DELETE FROM ebay_sales_weekly WHERE sku IN ('88-3-3=10', '88-4-4=10'); DELETE FROM reorder_vendor_catalog WHERE part = '88-4-4=10'");
 }
 
+// Owner (2026-10-07): "minimize all the history for Shipping labels, Packing slips, Make scan form now, Labels by day, Low value list,
+// Re-weigh list, Labels bought & cancellations found, Cancelled orders found on channels — click it to open". Buttons stay out.
+console.log('\nAuto Label: every history list closed, click to open');
+{
+  const { readFileSync: rf4 } = await import('node:fs');
+  const ps = rf4(fileURLToPath(new URL('../packship.html', import.meta.url)), 'utf8');
+  const closed = id => new RegExp('<details class="ps-al-hist"[^>]*><summary[^>]*>📜[^<]*tap to open</summary>\\s*(<div[^>]*>[^<]*</div>\\s*)*<div id="' + id + '"').test(ps);
+  const ids = ['ps-al-label-list', 'ps-al-slip-list', 'ps-al-sf-list', 'ps-al-day-stacks', 'ps-al-lowvalue', 'ps-al-reweigh', 'ps-al-boxes', 'ps-al-log', 'ps-al-canc'];
+  const bad = ids.filter(id => !closed(id));
+  check('each history list sits in a closed "📜 … tap to open" section (labels, slips, scan forms, labels by day, low value, re-weigh, boxes/weights, labels bought, cancelled on channels)', !bad.length, bad);
+  check('…no section starts open; the buttons (Print new labels now, Make scan form now, Printer station, ↻) stay outside', !/<details class="ps-al-hist"[^>]* open/.test(ps)
+    && !/<details class="ps-al-hist"[\s\S]{0,400}(psAlPrintNewLabels\(\)|psAlScanFormMake|id="ps-al-slip-station")/.test(ps), null);
+  check('…"no printer station is printing" warning stays visible above the closed labels list; cancelled orders found on channels get their own list',
+    /var wAt = box\.closest\('details'\) \|\| box; wAt\.parentNode\.insertBefore\(warn, wAt\);/.test(ps) && /if \(cancBox\) \{ box\.innerHTML = html; cancBox\.innerHTML = ch; \}/.test(ps), null);
+}
+
 console.log('\n' + (failed ? '❌ ' + failed + ' check(s) FAILED' : '✅ all ' + passed + ' checks passed') + '\n');
 process.exit(failed ? 1 : 0);
