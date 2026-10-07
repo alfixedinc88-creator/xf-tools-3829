@@ -1909,7 +1909,9 @@ body {
           <input class="ps-field-input" id="ps-al-label-order" placeholder="Order number" style="max-width:220px;margin:0;font-family:var(--mono);font-size:13px;padding:7px 10px">
           <button class="ps-btn-sm" onclick="psAlLabelAdd()">+ Add label for an order (already bought)</button>
         </div>
-        <div id="ps-al-label-list" style="font-size:12px"></div>
+        <details class="ps-al-hist"><summary style="font-size:12px;font-weight:700;cursor:pointer;color:var(--accent);padding:4px 0">📜 Labels (waiting + last printed) — tap to open</summary>
+          <div id="ps-al-label-list" style="font-size:12px"></div>
+        </details>
       </div>
 
       <!-- Packing slips -->
@@ -1934,7 +1936,9 @@ body {
           <input class="ps-field-input" id="ps-al-slip-order" placeholder="Order number" style="max-width:220px;margin:0;font-family:var(--mono);font-size:13px;padding:7px 10px">
           <button class="ps-btn-sm" onclick="psAlSlipAdd()">+ Add slip for an order</button>
         </div>
-        <div id="ps-al-slip-list" style="font-size:12px"></div>
+        <details class="ps-al-hist"><summary style="font-size:12px;font-weight:700;cursor:pointer;color:var(--accent);padding:4px 0">📜 Packing slips (waiting + last printed) — tap to open</summary>
+          <div id="ps-al-slip-list" style="font-size:12px"></div>
+        </details>
       </div>
 
       <!-- Label costs -->
@@ -1970,7 +1974,9 @@ body {
         </div>
         <div id="ps-al-sf-err" style="display:none;margin-bottom:10px"></div>
         <div id="ps-al-sf-status" style="font-size:12px;margin-bottom:8px;line-height:1.6"></div>
-        <div id="ps-al-sf-list" style="font-size:12px;overflow-x:auto"></div>
+        <details class="ps-al-hist"><summary style="font-size:12px;font-weight:700;cursor:pointer;color:var(--accent);padding:4px 0">📜 Scan forms made — tap to open</summary>
+          <div id="ps-al-sf-list" style="font-size:12px;overflow-x:auto"></div>
+        </details>
       </div>
 
       <!-- 📜 Labels by day -->
@@ -1987,8 +1993,10 @@ body {
         </div>
         <div style="font-size:12px;color:var(--text3);margin-bottom:8px;line-height:1.5">Every shipping label bought that day (by Auto Label or by hand) and whether it printed — when, who, how many times. Below: every order that could <b>not</b> be bought, and why (a "can't purchase" never printed anything).</div>
         <div id="ps-al-day-sum" style="font-size:13px;font-weight:700;margin-bottom:8px"></div>
-        <div id="ps-al-day-stacks" style="font-size:12px;margin-bottom:10px"></div>
-        <div id="ps-al-day-list" style="font-size:12px;overflow-x:auto"></div>
+        <details class="ps-al-hist"><summary style="font-size:12px;font-weight:700;cursor:pointer;color:var(--accent);padding:4px 0">📜 Stacks printed + every label that day — tap to open</summary>
+          <div id="ps-al-day-stacks" style="font-size:12px;margin-bottom:10px"></div>
+          <div id="ps-al-day-list" style="font-size:12px;overflow-x:auto"></div>
+        </details>
       </div>
 
       <!-- 📮 eBay tracking our system adds -->
@@ -2021,7 +2029,9 @@ body {
         <div style="font-size:12px;color:var(--text3);margin-bottom:10px;line-height:1.5">
           Every order where the label cost too much compared to the order (printed anyway or not). Go back to each listing, check / change the price, then tap ✓ Price checked.
         </div>
-        <div id="ps-al-lowvalue" style="font-size:12px;overflow-x:auto"></div>
+        <details class="ps-al-hist"><summary style="font-size:12px;font-weight:700;cursor:pointer;color:var(--accent);padding:4px 0">📜 Low value orders — tap to open</summary>
+          <div id="ps-al-lowvalue" style="font-size:12px;overflow-x:auto"></div>
+        </details>
       </div>
 
       <!-- Re-weigh list -->
@@ -2034,7 +2044,9 @@ body {
           Orders over the box limit are never auto-printed — print them by hand in Veeqo, or weigh the items and type the real weight here.
           A saved weight is used for that bin on every future order (and in Pack &amp; Ship's weight estimate).
         </div>
-        <div id="ps-al-reweigh" style="font-size:12px"></div>
+        <details class="ps-al-hist"><summary style="font-size:12px;font-weight:700;cursor:pointer;color:var(--accent);padding:4px 0">📜 Orders to re-weigh — tap to open</summary>
+          <div id="ps-al-reweigh" style="font-size:12px"></div>
+        </details>
         <div style="font-weight:700;font-size:12px;margin:14px 0 6px">Weigh something without an order</div>
         <div style="display:flex;gap:6px;flex-wrap:wrap;align-items:center">
           <input class="ps-field-input" id="ps-al-w-bin" placeholder="Bin, e.g. 23-2-3" style="max-width:150px;margin:0;font-family:var(--mono);font-size:13px;padding:7px 10px">
@@ -2042,10 +2054,12 @@ body {
           <input class="ps-field-input" id="ps-al-w-lb" type="number" min="0" step="0.01" placeholder="Real lb" style="max-width:110px;margin:0;font-size:13px;padding:7px 10px">
           <button class="ps-btn-sm" onclick="psAlSaveWeightManual()">💾 Save weight</button>
         </div>
-        <div style="font-weight:700;font-size:12px;margin:14px 0 6px">📦 Confirmed boxes (exact SKU × quantity — used every time, whatever Veeqo says)</div>
-        <div id="ps-al-boxes" style="font-size:12px;overflow-x:auto"></div>
-        <div style="font-weight:700;font-size:12px;margin:14px 0 6px">Saved real weights</div>
-        <div id="ps-al-weights" style="font-size:12px;overflow-x:auto"></div>
+        <details class="ps-al-hist" style="margin-top:12px"><summary style="font-size:12px;font-weight:700;cursor:pointer;color:var(--accent);padding:4px 0">📜 Confirmed boxes + saved real weights — tap to open</summary>
+          <div style="font-weight:700;font-size:12px;margin:14px 0 6px">📦 Confirmed boxes (exact SKU × quantity — used every time, whatever Veeqo says)</div>
+          <div id="ps-al-boxes" style="font-size:12px;overflow-x:auto"></div>
+          <div style="font-weight:700;font-size:12px;margin:14px 0 6px">Saved real weights</div>
+          <div id="ps-al-weights" style="font-size:12px;overflow-x:auto"></div>
+        </details>
       </div>
 
       <!-- History -->
@@ -2054,7 +2068,12 @@ body {
           <div style="font-size:13px;font-weight:700;color:var(--text)">🕘 Labels bought &amp; cancellations found</div>
           <button class="ps-btn-sm" onclick="psAlLoadLog()">↻ Refresh</button>
         </div>
-        <div id="ps-al-log" style="overflow-x:auto;font-size:12px"></div>
+        <details class="ps-al-hist"><summary style="font-size:12px;font-weight:700;cursor:pointer;color:var(--accent);padding:4px 0">📜 Labels bought — tap to open</summary>
+          <div id="ps-al-log" style="overflow-x:auto;font-size:12px"></div>
+        </details>
+        <details class="ps-al-hist" style="margin-top:6px"><summary style="font-size:12px;font-weight:700;cursor:pointer;color:var(--accent);padding:4px 0">📜 Cancelled orders found on channels — tap to open</summary>
+          <div id="ps-al-canc" style="overflow-x:auto;font-size:12px"></div>
+        </details>
       </div>
     </div>
   </div>
@@ -9604,12 +9623,13 @@ window.psAlLoadLog = async function() {
   }).join('') : '<div style="color:var(--text3)">Nothing yet.</div>';
   var canc = (d.cancels || []).slice(0, 40);
   var handled = { added_to_cancel_list:'on Cancellation list', not_printed:'not printed — blocked', not_in_veeqo:'not in Veeqo', already_shipped:'already shipped (older)' };
-  html += '<div style="font-weight:700;margin:14px 0 6px">Cancelled orders found on channels</div>' + (canc.length ? canc.map(function(c){
+  var cancBox = document.getElementById('ps-al-canc'); // own click-to-open list (owner: "minimize all the history")
+  var ch = (cancBox ? '' : '<div style="font-weight:700;margin:14px 0 6px">Cancelled orders found on channels</div>') + (canc.length ? canc.map(function(c){
     return '<div style="padding:4px 0;border-bottom:1px solid var(--border)"><span style="font-family:var(--mono);color:var(--text3)">' + _psAlEsc(new Date(c.first_seen).toLocaleString()) + '</span> '
       + '<b>' + _psAlEsc(c.channel) + '</b> ' + _psAlEsc(c.order_num) + ' · ' + _psAlEsc(c.state) + ' · ' + _psAlEsc(handled[c.handled] || c.handled || '')
       + (c.tracking ? ' · <span style="font-family:var(--mono)">' + _psAlEsc(c.tracking) + '</span>' : '') + '</div>';
   }).join('') : '<div style="color:var(--text3)">None yet (turn on Cancellation watch).</div>');
-  box.innerHTML = html;
+  if (cancBox) { box.innerHTML = html; cancBox.innerHTML = ch; } else box.innerHTML = html + ch;
 };
 
 // ── Re-weigh list ────────────────────────────────────────────────────────
@@ -10233,7 +10253,7 @@ window.psAlLoadLabels = async function() {
   // 🖨 Printer station ticked. Say so when none has asked for new labels lately.
   var seen = all[0] && all[0].stationSeen, ago = seen && seen.at ? (Date.now() - Date.parse(seen.at)) / 60000 : null;
   var warn = document.getElementById('ps-al-station-warn');
-  if (!warn) { warn = document.createElement('div'); warn.id = 'ps-al-station-warn'; box.parentNode.insertBefore(warn, box); }
+  if (!warn) { warn = document.createElement('div'); warn.id = 'ps-al-station-warn'; var wAt = box.closest('details') || box; wAt.parentNode.insertBefore(warn, wAt); } // seen even with the list closed
   warn.innerHTML = fresh.length && (ago == null || ago > 3)
     ? '<div style="border:1.5px solid var(--orange);border-radius:8px;padding:8px;margin-bottom:8px;font-size:12px;color:var(--orange);font-weight:700">⚠ ' + fresh.length + ' label' + (fresh.length === 1 ? '' : 's') + ' waiting, and no printer station is printing'
       + (seen && seen.at ? ' (last one checked ' + _psAlEsc(new Date(seen.at).toLocaleString()) + (seen.by ? ' · ' + _psAlEsc(seen.by) : '') + ')' : '') + '. Auto Label buys them by itself, but they only print on the computer with the label printer: Pack & Ship open there, 🖨 Printer station ticked. Or tap 🖨 Print new labels now.</div>' : '';
