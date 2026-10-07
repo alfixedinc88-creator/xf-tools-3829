@@ -3247,8 +3247,9 @@ console.log('\n🧾 Reorder planner: FBA rows carry every other pack / channel; 
     /var head = \['Priority', 'Part #'/.test(rh) && /rows = rows\.filter\(function \(r\) \{ return r\.urgent; \}\)\.concat\(rows\.filter\(function \(r\) \{ return !r\.urgent; \}\)\);/.test(rh)
       && /cell\(r\.urgent \? 'URGENT - ship in the FIRST container' : ''\), cell\(r\.sku\)/.test(rh) && /urgentN \+ ' URGENT - ship in the FIRST container'/.test(rh) && /🔥 URGENT · ' \+ r\.daysLeft/.test(rh) && /' URGENT, first container: '/.test(rh), null);
   // Owner (2026-10-07): "if anything with no FBA listing, we still need to order … don't have to separate to FBA listing" — no options, nothing hidden.
-  check('page: CSV has Pieces · Price per Piece · Line Total · Price From · Price Date + a TOTAL line; no Listings options; part #s with NO FBA listing are ordered too (never hidden); 🏷 tool',
-    /'Pieces', 'Price per Piece', 'Line Total', 'Price From', 'Price Date'/.test(rh) && /lines\.push\(\[cell\('TOTAL'\)/.test(rh) && /<input type="hidden" id="rvo-fbaf" value="all">/.test(rh) && !/<option value="nofba">/.test(rh)
+  // Owner (2026-10-07, later): the CSV is in pieces + cases, no "Price From" (replaces the old Pieces / Price From layout check).
+  check('page: CSV has Order Qty (pieces) · Cases · Pieces per Case · Price per Piece · Line Total · Price Date + a TOTAL line; no Listings options; part #s with NO FBA listing are ordered too (never hidden); 🏷 tool',
+    /'Order Qty \(pieces\)', 'Cases', 'Pieces per Case \(original box\)', 'Price per Piece', 'Line Total', 'Price Date'/.test(rh) && !/'Price From'/.test(rh) && /lines\.push\(\[cell\('TOTAL'\)/.test(rh) && /<input type="hidden" id="rvo-fbaf" value="all">/.test(rh) && !/<option value="nofba">/.test(rh)
       && !/hidden now, so they will NOT be ordered/.test(rh) && /Every part # that needs ordering is ordered — once/.test(rh) && /onclick="rvoPartOpen\(\)"/.test(rh) && /'\/inventory\/upc-link'/.test(rh), null);
   const vis = (rh.match(/function rvoVisible\(\) \{[\s\S]*?\n\}/) || [''])[0];
   const docStub = { getElementById: id => ({ 'rvo-vendor': { value: '' }, 'rvo-q': { value: '' }, 'rvo-fbaf': { value: (rh.match(/id="rvo-fbaf" value="(\w*)"/) || [])[1] }, 'rvo-all': { checked: false } }[id] || { checked: false, value: '' }) };
@@ -3441,9 +3442,10 @@ console.log('\nReorder vendor CSV: pieces per case + SKU Mgr price when there is
   const H2 = head ? JSON.parse(head.replace(/'/g, '"')) : [];
   const total = (csv.match(/lines\.push\(\[cell\('TOTAL'\)[\s\S]*?\]\.join\(','\)\);/) || [''])[0];
   const totalCells = total ? (total.match(/\]\.join/) ? total.slice(total.indexOf('[') + 1, total.lastIndexOf(']')) : '') : '';
-  check('CSV: "Pieces per Case (original box)" right after Qty per Case = Qty per Case × pack size (20 × 10 = 200 = SKU Mgr Each/Case)',
-    H2[7] === 'Qty per Case' && H2[8] === 'Pieces per Case (original box)' && H2[9] === 'Pieces' && /Math\.round\(r\.caseQty \* \(r\.packSize \|\| 1\) \* 1000\) \/ 1000/.test(csv) && c.caseQty * c.packSize === 200, H2);
-  check('…the TOTAL line still lines up under the columns (Pieces total under Pieces, $ under Line Total)', H2.length === 16 && /\* 1000\) \/ 1000, '', '', '', Math\.round\(pcsTot/.test(totalCells), totalCells.slice(0, 200));
+  // Owner (2026-10-07, later): pieces + cases only (replaces the old "Qty per Case / Pieces" column checks).
+  check('CSV: Order Qty (pieces) · Cases · Pieces per Case (original box) — SKU Mgr box 200 pcs for 88-3-3=10 (20 × 10)',
+    H2[5] === 'Order Qty (pieces)' && H2[6] === 'Cases' && H2[7] === 'Pieces per Case (original box)' && H2[8] === 'Price per Piece' && c.caseQty * c.packSize === 200 && c.casePcs === 200, H2);
+  check('…the TOTAL line lines up under the columns (pieces under Order Qty, cases under Cases, $ under Line Total)', H2.length === 13 && /Math\.round\(pcsTot \* 1000\) \/ 1000, casesTot, '', '', money\.toFixed\(2\), ''/.test(totalCells), totalCells.slice(0, 200));
   sq.exec("DELETE FROM master_list WHERE part_num IN ('88-3-3=10', '88-4-4=10'); DELETE FROM ebay_sales_weekly WHERE sku IN ('88-3-3=10', '88-4-4=10'); DELETE FROM reorder_vendor_catalog WHERE part = '88-4-4=10'");
 }
 
@@ -3518,6 +3520,39 @@ console.log('\nReorder: all our stock always counts (no options), each piece onc
   const rh = rf5(fileURLToPath(new URL('../reorder.html', import.meta.url)), 'utf8');
   check('page: no "Count FBA stock" / "Count other pack sizes" checkboxes; says it counts ALL our stock', !/id="rvo-fba"/.test(rh) && !/id="rvo-other"/.test(rh) && /✅ Counts ALL our stock/.test(rh) && /'&fbaStock=1&otherPacks=1'/.test(rh), null);
   sq.exec("DELETE FROM fba_catalog WHERE sku LIKE '89-9-9%'; DELETE FROM amazon_sales_weekly WHERE sku LIKE '89-9-9%'; DELETE FROM master_list WHERE base_sku = '89-9-9'");
+}
+
+// Owner (2026-10-07): "24-1-2=10 — Order Qty 144 but Qty per Case 14.4, Pieces 1440 = 144 × 10 cases; that's not right. Price From not
+// needed". The vendor CSV is in PIECES and CASES: Order Qty (pieces) = Cases × Pieces per Case (SKU Mgr box), every line.
+console.log('\nReorder vendor CSV: pieces and cases add up on every line');
+{
+  const { readFileSync: rf6 } = await import('node:fs');
+  const rh = rf6(fileURLToPath(new URL('../reorder.html', import.meta.url)), 'utf8');
+  const fn = (rh.match(/function rvoCsv\(\) \{[\s\S]*?\n\}/) || [''])[0];
+  let out = '';
+  const RVOx = { loaded: true, off: {}, edits: { '24-9-9=10': 31 }, meta: {} };
+  const rowsX = [
+    // 24-1-2=10: SKU Mgr box 144 pcs = 14.4 bags of 10; planner needs 130 bags (1,300 pcs) → 10 cases = 144 bags = 1,440 pcs.
+    { sku: '24-1-2=10', packSize: 10, caseQty: 14.4, casePcs: 144, needUnits: 130, orderUnits: 144, price: 0.05, priceAt: '2026-09-01', vendor: 'JQ', description: 'tee' },
+    // typed by hand: 31 bags of 10 = 310 pcs, box 100 → 4 cases = 400 pcs.
+    { sku: '24-9-9=10', packSize: 10, caseQty: 10, casePcs: 100, needUnits: 20, orderUnits: 20, price: null, vendor: 'JQ' },
+    // no box size anywhere: 7 bags of 5 = 35 pcs, not rounded.
+    { sku: '24-8-8=5', packSize: 5, caseQty: 0, casePcs: null, needUnits: 7, orderUnits: 7, price: 0.1, vendor: 'JQ' } ];
+  const docX = { getElementById: () => ({ value: 'JQ' }), createElement: () => ({ click() {}, remove() {} }), body: { appendChild() {} } };
+  const BlobX = function (parts) { out = parts.join(''); };
+  new Function('document', 'RVO', 'rvoVisible', 'rvoVendorCheck', 'Blob', 'URL', 'setTimeout', 'showToast', 'wFetch', 'alert', 'confirm', 'W', (rh.match(/function rvoQty\(r\) \{[^\n]*\}/) || [''])[0] + '\n' + fn + '; rvoCsv();')(
+    docX, RVOx, () => rowsX, () => ({ ok: true, dup: [], text: '' }), BlobX, { createObjectURL: () => 'x', revokeObjectURL() {} }, () => {}, () => {}, () => Promise.resolve(), () => {}, () => true, '');
+  const parse = l => { const r = []; let cur = '', q = false; for (const ch of l) { if (ch === '"') q = !q; else if (ch === ',' && !q) { r.push(cur); cur = ''; } else cur += ch; } r.push(cur); return r; };
+  const L = out.replace(/^﻿/, '').split('\r\n').map(parse), H = L[0], col = n => H.indexOf(n);
+  const line = sku => L.find(r => r[1] === sku) || [];
+  const a = line('24-1-2=10'), b = line('24-9-9=10'), c = line('24-8-8=5'), tot = L.find(r => r[0] === 'TOTAL') || [];
+  const v = (r, n) => parseFloat(r[col(n)]);
+  check('24-1-2=10: Order Qty 1,440 pieces = 10 cases × 144 pcs (SKU Mgr box, not 14.4); Line Total 1,440 × $0.05 = $72.00; no Price From column',
+    v(a, 'Order Qty (pieces)') === 1440 && v(a, 'Cases') === 10 && v(a, 'Pieces per Case (original box)') === 144 && a[col('Line Total')] === '72.00' && col('Price From') < 0 && !H.includes('Qty per Case') && /Rounded up from 1300 to 1440 pcs \(10 cases of 144\)/.test(a[col('Note')]), a);
+  check('…typed by hand 31 bags = 310 pcs → rounded up to whole cases: 4 × 100 = 400 pcs; NO PRICE shown', v(b, 'Order Qty (pieces)') === 400 && v(b, 'Cases') === 4 && /Qty changed by hand/.test(b[col('Note')]) && /NO PRICE/.test(b[col('Note')]), b);
+  check('…no box size: 7 bags of 5 = 35 pcs, not rounded, Cases blank', v(c, 'Order Qty (pieces)') === 35 && c[col('Cases')] === '' && /not rounded/.test(c[col('Note')]), c);
+  check('…every line with a box: Order Qty = Cases × Pieces per Case; TOTAL = 1,440 + 400 + 35 = 1,875 pcs, 14 cases, $72.00 + $3.50 = $75.50',
+    [a, b].every(r => v(r, 'Order Qty (pieces)') === v(r, 'Cases') * v(r, 'Pieces per Case (original box)')) && v(tot, 'Order Qty (pieces)') === 1875 && v(tot, 'Cases') === 14 && tot[col('Line Total')] === '75.50', tot);
 }
 
 console.log('\n' + (failed ? '❌ ' + failed + ' check(s) FAILED' : '✅ all ' + passed + ' checks passed') + '\n');
