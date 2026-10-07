@@ -3579,5 +3579,41 @@ console.log('\nReorder: =OLD stock of the same parent counts (named on the row);
   sq.exec("DELETE FROM fba_catalog WHERE sku LIKE '209-5-4%'; DELETE FROM amazon_sales_weekly WHERE sku LIKE '209-5-4%'; DELETE FROM master_list WHERE base_sku = '209-5-4'");
 }
 
+// Owner (2026-10-07): "201-2-13: ~2,000 pcs sold in 90 days over the whole family, 23 cases of 1,000 in =OLD, and it says order
+// 417,000 + 190,000 + 97,000 + 1,000 pcs — way too much. Check the family's sales, order for the months we ask, enough for FBA."
+console.log('\nReorder: whole-family math (201-2-13 case), negative SKU Mgr cases never add to the order');
+{
+  const wk = new Date(Date.now() - 14 * 86400000).toISOString().slice(0, 10);
+  const F = '211-2-13';
+  sq.prepare(`INSERT INTO fba_catalog (sku, asin, product_name, available) VALUES ('${F}=10','B0F1',' r',0), ('${F}=100X','B0F2',' r',0), ('${F}=25','B0F3',' r',0), ('${F}=50','B0F4',' r',0)`).run();
+  // 90 days: =10 60 bags (600 pcs) + =100X 8 (800) + =25 16 (400) + =50 4 (200) = 2,000 pcs → 4,000 pcs for 6 months.
+  sq.prepare(`INSERT INTO amazon_sales_weekly (sku, period_start, units_ordered, asin) VALUES ('${F}=10',?,60,'B0F1'), ('${F}=100X',?,8,'B0F2'), ('${F}=25',?,16,'B0F3'), ('${F}=50',?,4,'B0F4')`).run(wk, wk, wk, wk);
+  const ord = async () => { const d = await get('/reorder/vendor-order?days=90&lead=3&cover=3'); return ['10', '100X', '25', '50'].map(k => (d.rows || []).find(r => r.sku === F + '=' + k) || {}); };
+  const pcsOf = rs => rs.reduce((a, r) => a + (r.calc ? r.calc.rowNeedPcs : 0), 0);
+  // 1) the owner's shelf: =OLD 23 cases × 1,000 = 23,000 pcs (Ea/Case 1,000 on the =10 row too).
+  sq.prepare(`INSERT INTO master_list (base_sku, name, part_num, location, cases, units_per_case) VALUES ('${F}','ring','${F}=OLD','C1=2-1-1',23,1000), ('${F}','ring','${F}=10','C1=2-1-2',0,1000)`).run();
+  let r = await ord();
+  check('2,000 pcs sold in 90 d → 4,000 pcs for 6 months; 23,000 pcs of =OLD on the shelf → order NOTHING on =10 / =100X / =25 / =50',
+    r.every(x => x.needUnits === 0 && x.orderUnits === 0) && r[0].calc.famSoldPcs === 2000 && r[0].calc.famTarget === 4000 && r[0].calc.famHave === 23000 && r[0].calc.famNeed === 0, r.map(x => [x.needUnits, x.orderUnits, x.calc && x.calc.famNeed]));
+  // 2) a bad SKU Mgr row: =10 at another spot with −416 cases → never "minus 416,000 pcs" (that is how 417 cases of =10 came out).
+  sq.prepare(`INSERT INTO master_list (base_sku, name, part_num, location, cases, units_per_case) VALUES ('${F}','ring','${F}=10','C2=2-1-3',-416,1000)`).run();
+  r = await ord();
+  check('…a SKU Mgr row with −416 cases is NOT counted as minus stock: still order nothing, and the row says "⚠ NEGATIVE cases in SKU Mgr … −416 cs"',
+    r.every(x => x.orderUnits === 0) && /⚠ NEGATIVE cases in SKU Mgr, not counted \(fix them\): 211-2-13=10 -416 cs/.test(r[0].note) && r[0].calc.negative.length === 1, [r.map(x => x.orderUnits), r[0].note]);
+  // 3) no =OLD, and =10 has 3,000 pcs of its own (more than its 1,200 need): family needs 4,000 − 3,000 = 1,000 pcs,
+  //    split over the short listings =100X 1,600 / =25 800 / =50 400 → 571 + 286 + 143 = 1,000 (never more than the family needs).
+  sq.exec(`DELETE FROM master_list WHERE base_sku = '${F}'`);
+  sq.prepare(`INSERT INTO master_list (base_sku, name, part_num, location, cases, units_per_case) VALUES ('${F}','ring','${F}=10','C1=2-1-2',3,1000)`).run();
+  r = await ord();
+  check('…=10 has 3,000 of its own: family needs 4,000 − 3,000 = 1,000 pcs, split by how short each listing is → =10 0, =100X 571, =25 286, =50 143 = 1,000 ✅',
+    r[0].calc.famNeed === 1000 && r[0].calc.rowNeedPcs === 0 && r[1].calc.rowNeedPcs === 571 && r[2].calc.rowNeedPcs === 286 && r[3].calc.rowNeedPcs === 143 && pcsOf(r) === 1000
+      && r[1].needUnits === 6 && r[2].needUnits === 12 && r[3].needUnits === 3, r.map(x => [x.calc.rowNeedPcs, x.needUnits]));
+  check('…each order = whole cases of SKU Mgr\'s 1,000-pc box (rounding only): =100X 10 bags, =25 40, =50 20 → 3,000 pcs', r[1].orderUnits === 10 && r[2].orderUnits === 40 && r[3].orderUnits === 20, r.map(x => x.orderUnits));
+  const { readFileSync: rf8 } = await import('node:fs');
+  const rh = rf8(fileURLToPath(new URL('../reorder.html', import.meta.url)), 'utf8');
+  check('page: column headers stay on top while scrolling; 🔍 on Need shows the whole-family math', /<th style="position:sticky;top:0;z-index:3;background:var\(--bg3\)/.test(rh) && /function rvoWhy\(sku\)/.test(rh) && /onclick="rvoWhy\(/.test(rh), null);
+  sq.exec(`DELETE FROM fba_catalog WHERE sku LIKE '${F}%'; DELETE FROM amazon_sales_weekly WHERE sku LIKE '${F}%'; DELETE FROM master_list WHERE base_sku = '${F}'`);
+}
+
 console.log('\n' + (failed ? '❌ ' + failed + ' check(s) FAILED' : '✅ all ' + passed + ' checks passed') + '\n');
 process.exit(failed ? 1 : 0);

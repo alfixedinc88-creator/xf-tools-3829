@@ -3999,6 +3999,22 @@ async function rvoLoad() {
     rvoLoadTitles();
   } catch (e) { g('rvo-wrap').innerHTML = '<div style="padding:20px;color:var(--red);font-size:13px">✗ ' + escHtml(e.message) + '</div>'; }
 }
+// 🔍 Owner: "201-2-13 sold ~2,000 pcs in 90 days, 23 cases of 1,000 =OLD on the shelf, and it says order 700,000" —
+// every number behind a row, for the whole family (pieces), so a wrong one is easy to find.
+function rvoWhy(sku) {
+  var r = (RVO.rows || []).find(function (x) { return x.sku === sku; }); if (!r || !r.calc) return;
+  var c = r.calc, n = function (v) { return (Math.round(v || 0)).toLocaleString('en-US'); };
+  alert('🔍 ' + r.baseSku + ' family (all its part #s) — in pieces\n\n'
+    + 'Sold in the window: ' + n(c.famSoldPcs) + ' pcs (' + c.months + ' months)\n'
+    + 'Needed for ' + c.horizon + ' months (lead + order): ' + n(c.famTarget) + ' pcs\n'
+    + 'We have: ' + n(c.famHave) + ' pcs\n'
+    + c.famListings.map(function (x) { return '   • ' + x.sku + ': needs ' + n(x.target) + ', has ' + n(x.have) + ' (shelf + Amazon + on the way)' + (x.short ? ' → short ' + n(x.short) : ''); }).join('\n') + '\n'
+    + '   • other packs on the shelf: ' + n(c.famOtherShelf) + (c.famOtherList.length ? ' (' + c.famOtherList.join(', ') + ')' : '') + '\n'
+    + '   • other packs on the way: ' + n(c.famOtherInc) + '\n'
+    + (c.negative.length ? '⚠ NEGATIVE cases in SKU Mgr, not counted: ' + c.negative.join(', ') + '\n' : '')
+    + '\nFamily needs to order: ' + n(c.famNeed) + ' pcs\n'
+    + r.sku + ' gets: ' + n(c.rowNeedPcs) + ' pcs = ' + n(r.needUnits) + ' × ' + r.packSize + (r.cases ? ' → ' + r.cases + ' case(s) of ' + n(r.casePcs || r.caseQty * r.packSize) + ' pcs' : ''));
+}
 function rvoQty(r) { return RVO.edits[r.sku] != null ? RVO.edits[r.sku] : r.orderUnits; }
 function rvoVisible() {
   var v = document.getElementById('rvo-vendor').value, q = (document.getElementById('rvo-q').value || '').trim().toUpperCase();
@@ -4075,7 +4091,7 @@ function rvoCols() {
   if (titles.length) cols.push({ k: 'incTot', label: 'On the way', tip: 'All titles together — subtracted from Need', w: 100, num: true, sort: function (r) { return (r.incomingUnits || 0) + (r.otherIncUnits || 0); }, cell: function (r) { return (r.incomingUnits ? '<b>' + fmt0(r.incomingUnits) + '</b>' : (r.otherIncUnits ? '' : '—'))
     + (r.otherIncUnits ? '<div style="font-size:10px;color:#1A56DB" title="Share of other pack sizes of ' + escHtml(r.baseSku) + ' on the way (' + fmt0(r.otherIncPcs) + ' pcs), split between this part\'s rows by sales">+' + fmt0(r.otherIncUnits) + ' other packs</div>' : ''); } });
   cols.push(
-    { k: 'need', label: 'Need', tip: 'Units of this part # (after stock, FBA and on the way)', w: 70, num: true, sort: function (r) { return r.needUnits; }, cell: function (r) { return fmt0(r.needUnits); } },
+    { k: 'need', label: 'Need', tip: 'Units of this part # (after stock, FBA and on the way) — 🔍 shows how the whole family was worked out', w: 90, num: true, sort: function (r) { return r.needUnits; }, cell: function (r) { return (r.calc ? '<span style="cursor:pointer" title="How was this worked out?" onclick="rvoWhy(\'' + escHtml(r.sku).replace(/'/g, '') + '\')">🔍</span> ' : '') + fmt0(r.needUnits); } },
     { k: 'case', label: 'Case qty', tip: 'Units of this part # per case', w: 90, num: true, sort: function (r) { return r.caseQty || 0; }, cell: function (r) { if (rvoInlOn()) return rvoInlBox(r, 'case_qty', '64px'); return r.caseQty ? fmt0(r.caseQty) + (r.caseSrc && r.caseSrc !== 'SKU Mgr' ? '<div style="font-size:10px;color:var(--text3)">' + escHtml(r.caseSrc) + '</div>' : '') : '—'; } },
     { k: 'order', label: 'Order', w: 95, sort: function (r) { return rvoQty(r); }, cell: function (r) { var ed = RVO.edits[r.sku] != null;
       return '<input type="number" min="0" value="' + rvoQty(r) + '" onchange="rvoEdit(\'' + escHtml(r.sku) + '\',this.value)" style="width:72px;font-size:12px;padding:3px 5px;border-radius:5px;border:1px solid ' + (ed ? '#b45309' : 'var(--border)') + ';font-weight:700">'; } },
@@ -4124,7 +4140,8 @@ function rvoRender() {
   var html = '<table style="table-layout:fixed;border-collapse:collapse"><colgroup>' + cols.map(function (c) { var w = RVO_W[c.k] || c.w; width += w; return '<col data-k="' + c.k + '" style="width:' + w + 'px">'; }).join('') + '</colgroup><thead><tr>'
     + cols.map(function (c) {
       var arrow = RVO_SORT.k === c.k ? (RVO_SORT.dir > 0 ? ' ▲' : ' ▼') : '';
-      return '<th style="position:relative;padding:8px 10px;text-align:' + (c.num ? 'right' : 'left') + ';font-size:11px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;' + (c.sort ? 'cursor:pointer' : '') + '"'
+      // Owner: "when we scroll down the list, keep the Part # / FBA ASIN / Description header line so we still see which column is what".
+      return '<th style="position:sticky;top:0;z-index:3;background:var(--bg3);box-shadow:0 1px 0 var(--border);padding:8px 10px;text-align:' + (c.num ? 'right' : 'left') + ';font-size:11px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;' + (c.sort ? 'cursor:pointer' : '') + '"'
         + (c.tip ? ' title="' + c.tip + '"' : '') + (c.sort ? ' onclick="rvoSortBy(\'' + c.k + '\')"' : '') + '>' + c.label + arrow
         + '<span class="rvo-rz" data-k="' + c.k + '" onclick="event.stopPropagation()" title="Drag to resize" style="position:absolute;top:0;right:0;width:7px;height:100%;cursor:col-resize;border-right:2px solid transparent"></span></th>';
     }).join('') + '</tr></thead><tbody>';
