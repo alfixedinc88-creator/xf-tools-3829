@@ -25315,8 +25315,8 @@ async function autolabelPushConfirmed(env, o, alloc, w) {
   const want = { allocId: alloc.id, weightLb: c.lb, lengthIn: c.l || pk.lengthIn, widthIn: c.w || pk.widthIn, heightIn: c.h || pk.heightIn };
   const same = (a, b) => a != null && b != null && Math.abs(a - b) < 0.01;
   if (same(pk.weightLb, want.weightLb) && (!c.l || (same(pk.lengthIn, want.lengthIn) && same(pk.widthIn, want.widthIn) && same(pk.heightIn, want.heightIn)))) return false;
-  let ok = false, said = [];
-  for (const [m, pth, body] of veeqoEditTries('package', want, o)) { const r = await veeqoWrite(env, m, pth, body); said.push(`${pth} → ${r.status}`); if (r.ok) { ok = true; break; } }
+  const sv = await veeqoSavePackage(env, o, want); // proven by a read-back (a 200 alone used to count as saved)
+  const ok = sv.ok, said = sv.said;
   await veeqoEditTable(env);
   await d1Run(env, 'INSERT INTO veeqo_edit_log (ts, by_user, order_number, order_id, alloc_id, sellable_id, sku, kind, before_val, after_val, ok, detail) VALUES (?,?,?,?,?,?,?,?,?,?,?,?)',
     [new Date().toISOString(), 'auto (confirmed box)', o.number || '', String(o.id), String(alloc.id), '', '', 'package',
@@ -25750,30 +25750,16 @@ async function autolabelMergeBuy(env, cfg, plan, by, mergeMap) {
   const setRow = (fields) => d1Run(env, `UPDATE autolabel_merge SET ${Object.keys(fields).map(k => k + ' = ?').join(', ')}, updated_at = ? WHERE id = ?`, [...Object.values(fields), new Date().toISOString(), mid]);
   const fail = async (error, detail) => { await setRow({ status: 'failed', detail: String(detail || error).slice(0, 2000) }); return { ok: false, error, detail: String(detail || '').slice(0, 2000) }; };
   const logBase = { orderId: lead.id, allocId: leadAlloc.id, orderNumber: lead.number, channel: veeqoExtractChannel(lead), customer: veeqoExtractCustomerName(lead) };
-  // Owner: "Veeqo still has to wait for merge orders" — a weight Veeqo accepted can take a moment to show on the
-  // order; read it back a few times (≈20 s) before calling it not taken.
-  const wait = ms => new Promise(r => setTimeout(r, ms));
+  // Owner: "Veeqo still has to wait for merge orders" — the box weight is read back a few more times (≈20 s)
+  // before calling it not taken (veeqoSavePackage waits 3 / 6 / 10 s).
 
   // 1) The box weight on the oldest order = everything together (size: the biggest box of the group).
   const pk = orders.map(g => veeqoLivePackage(g.allocations[0])).filter(p => p.lengthIn && p.widthIn && p.heightIn)
     .sort((a, b) => b.lengthIn * b.widthIn * b.heightIn - a.lengthIn * a.widthIn * a.heightIn)[0] || {};
   const want = { allocId: leadAlloc.id, weightLb: plan.lb, lengthIn: pk.lengthIn, widthIn: pk.widthIn, heightIn: pk.heightIn };
-  const before = veeqoLivePackage(leadAlloc), said = [];
-  let saved = false;
-  for (const [m, pth, body] of veeqoEditTries('package', want, lead)) {
-    const r = await veeqoWrite(env, m, pth, body);
-    said.push(`${pth} → ${r.status} ${String(r.said || '').slice(0, 120)}`);
-    if (!r.ok) continue;
-    for (const ms of [0, 3000, 6000, 10000]) {
-      if (ms) await wait(env.TEST_FAST ? 0 : ms);
-      const o2 = await veeqoLiveOrder(env, lead.number);
-      const a2 = o2 && (o2.allocations || []).find(a => String(a.id) === String(leadAlloc.id));
-      const p2 = a2 ? veeqoLivePackage(a2) : null;
-      if (p2 && p2.weightLb != null && Math.abs(p2.weightLb - plan.lb) < 0.05) { saved = true; break; }
-      said.push(`  read back after ${Math.round(ms / 1000)} s: ${p2 ? (p2.weightLb == null ? 'no weight' : p2.weightLb + ' lb') + ' ' + JSON.stringify(p2.raw) : 'box not found'}`);
-    }
-    if (saved) break;
-  }
+  const before = veeqoLivePackage(leadAlloc);
+  const sv = await veeqoSavePackage(env, lead, want, [3000, 6000, 10000]);
+  const saved = sv.ok, said = sv.said;
   await veeqoEditTable(env);
   await d1Run(env, 'INSERT INTO veeqo_edit_log (ts, by_user, order_number, order_id, alloc_id, sellable_id, sku, kind, before_val, after_val, ok, detail) VALUES (?,?,?,?,?,?,?,?,?,?,?,?)',
     [new Date().toISOString(), by || 'auto', lead.number || '', String(lead.id), String(leadAlloc.id), '', '', 'package',
@@ -26006,10 +25992,9 @@ async function autolabelSplitDo(env, o, plan, by) {
     const bi = plan.boxes.findIndex((b, i) => !boxesOut.some(x => x.i === i) && sameBox(a, b));
     const b = plan.boxes[bi];
     const cb = b.confirmed || {};
-    for (const [m, pth, body] of veeqoEditTries('package', { allocId: a.id, weightLb: b.lb, lengthIn: cb.l || pk.lengthIn, widthIn: cb.w || pk.widthIn, heightIn: cb.h || pk.heightIn }, order2 || o)) {
-      const r = await veeqoWrite(env, m, pth, body); if (r.ok) break;
-    }
-    boxesOut.push({ i: bi, allocId: a.id, lb: b.lb, lines: b.lines });
+    const sv = await veeqoSavePackage(env, order2 || o, { allocId: a.id, weightLb: b.lb, lengthIn: cb.l || pk.lengthIn, widthIn: cb.w || pk.widthIn, heightIn: cb.h || pk.heightIn });
+    if (!sv.ok) said.push(`box ${bi + 1} weight ${b.lb} lb NOT shown in Veeqo: ${sv.said.slice(-2).join(' / ')}`);
+    boxesOut.push({ i: bi, allocId: a.id, lb: b.lb, lines: b.lines, weightSaved: sv.ok });
   }
   await record('done', said.join(' | '));
   return { ok: true, boxes: boxesOut.sort((x, y) => x.i - y.i), text: autolabelBoxesText(plan) };
@@ -26929,6 +26914,38 @@ async function veeqoWrite(env, method, path, body) {
   const txt = await res.text().catch(() => '');
   return { ok: res.ok, status: res.status, said: txt.replace(/\s+/g, ' ').slice(0, 300) };
 }
+// 📦 Box weight / size into Veeqo, PROVEN: a save counts only when the order, read again, shows the new
+// weight (Veeqo answers 200 to shapes it ignores). The shape that worked is remembered and tried first.
+// waits: extra read-backs (ms) after every shape failed — for a merge, where Veeqo can be slow.
+const VEEQO_PKG_TRY_KEY = 'veeqo_pkg_try_ok';
+async function veeqoSavePackage(env, o, want, waits = []) {
+  const said = [], allocId = want.allocId;
+  const live = (o.allocations || []).find(a => String(a.id) === String(allocId));
+  const tries = veeqoEditTries('package', { ...want, packageId: live && veeqoLivePackage(live).id }, o).map((t, i) => ({ t, key: t[0] + ' ' + t[1].replace(/\d+/g, '#') + ' ' + Object.keys(t[2] || {}).join(',') + '#' + i }));
+  const best = await autolabelGetKey(env, VEEQO_PKG_TRY_KEY).catch(() => null);
+  tries.sort((a, b) => (b.key === best) - (a.key === best));
+  const readOk = async () => {
+    const o2 = await veeqoLiveOrder(env, o.number);
+    const a2 = o2 && (o2.allocations || []).find(a => String(a.id) === String(allocId));
+    const p2 = a2 ? veeqoLivePackage(a2) : null;
+    return { ok: !!(p2 && p2.weightLb != null && want.weightLb != null && Math.abs(p2.weightLb - want.weightLb) < 0.05), p2 };
+  };
+  for (const { t: [m, pth, body], key } of tries) {
+    const r = await veeqoWrite(env, m, pth, body);
+    said.push(`${m} ${pth} ${Object.keys(body || {}).join(',')} → ${r.status} ${String(r.said || '').slice(0, 300)}`);
+    if (!r.ok) continue;
+    const rb = await readOk();
+    if (rb.ok) { if (key !== best) await autolabelSetKey(env, VEEQO_PKG_TRY_KEY, key).catch(() => {}); return { ok: true, said, how: key }; }
+    said.push(`  read back: ${rb.p2 ? (rb.p2.weightLb == null ? 'no weight' : rb.p2.weightLb + ' lb') + ' ' + JSON.stringify(rb.p2.raw) : 'box not found'}`);
+  }
+  for (const ms of waits) {
+    await new Promise(r => setTimeout(r, env.TEST_FAST ? 0 : ms));
+    const rb = await readOk();
+    if (rb.ok) return { ok: true, said, how: 'shown after a wait' };
+    said.push(`  read back after ${Math.round(ms / 1000)} s more: ${rb.p2 ? (rb.p2.weightLb == null ? 'no weight' : rb.p2.weightLb + ' lb') : 'box not found'}`);
+  }
+  return { ok: false, said };
+}
 // Each change has a few known shapes in Veeqo's API; try them in order until
 // one is taken AND the new value shows up when the order is read again.
 function veeqoEditTries(kind, b, o) {
@@ -26946,10 +26963,18 @@ function veeqoEditTries(kind, b, o) {
   if (kind === 'package') {
     const pk = { weight: b.weightLb != null ? Math.round(b.weightLb * 16 * 100) / 100 : undefined, weight_unit: 'oz',
       depth: b.lengthIn, width: b.widthIn, height: b.heightIn, dimensions_unit: 'inches' };
+    // Owner's merge test 2026-10-07: all three shapes below answered 200 but the box stayed 4 oz — Veeqo
+    // ignores them. Its answer is JSON:API ({"data":{"type":"allocation_package","attributes":…}}), so that
+    // shape, a flat one and the package's own address are tried too; only a read-back proves a save.
+    const pid2 = b.packageId;
     return [
       ['PUT', `/allocations/${aid}/allocation_package`, { allocation_package: pk }],
       ['PUT', `/orders/${o.id}/allocations/${aid}`, { allocation: { allocation_package_attributes: pk } }],
       ['PUT', `/allocations/${aid}`, { allocation: { allocation_package_attributes: pk } }],
+      ['PUT', `/allocations/${aid}/allocation_package`, { data: { type: 'allocation_package', attributes: pk } }],
+      ['PATCH', `/allocations/${aid}/allocation_package`, { data: { type: 'allocation_package', ...(pid2 ? { id: String(pid2) } : {}), attributes: pk } }],
+      ['PUT', `/allocations/${aid}/allocation_package`, pk],
+      ...(pid2 ? [['PUT', `/allocation_packages/${pid2}`, { allocation_package: pk }], ['PATCH', `/allocation_packages/${pid2}`, { data: { type: 'allocation_package', id: String(pid2), attributes: pk } }]] : []),
     ];
   }
   return [];

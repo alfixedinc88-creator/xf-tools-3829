@@ -3693,8 +3693,22 @@ console.log('\n🔎 Print batches: any date, and a tracking # / order # finds th
 console.log('\n🧩 Merge & buy: give Veeqo time to show the new box weight; what Veeqo said goes into 📋 Copy');
 {
   const ws = readFileSync0(workerPath, 'utf8'), ph = readFileSync0(fileURLToPath(new URL('../packship.html', import.meta.url)), 'utf8');
-  check('the box weight Veeqo accepted is read back up to 4 times over ≈20 s (0 / 3 / 6 / 10 s) before "did not take"; each read is kept; nothing is bought until it shows',
-    /for \(const ms of \[0, 3000, 6000, 10000\]\) \{/.test(ws) && /said\.push\(`  read back after \$\{Math\.round\(ms \/ 1000\)\} s: /.test(ws) && /if \(!saved\) return fail\(`Veeqo did not take the box weight/.test(ws), null);
+  // Owner's 📋 Copy: every shape answered 200 but the box stayed "weight":4,"weight_unit":"oz" — Veeqo ignored them.
+  const grab = re => (ws.match(re) || [''])[0];
+  const src = [grab(/function veeqoLivePackage\(a\) \{[\s\S]*?\n\}/), grab(/function veeqoEditTries\(kind, b, o\) \{[\s\S]*?\n\}/), 'const VEEQO_PKG_TRY_KEY = "k";', grab(/async function veeqoSavePackage\(env, o, want, waits = \[\]\) \{[\s\S]*?\n\}/)].join('\n');
+  let box = { weight: 4, weight_unit: 'oz', depth: 5, width: 4, height: 2, dimensions_unit: 'inches' }, kept = null; const calls = [];
+  const order = { id: 2178570748, number: '01-15283-02479', allocations: [{ id: 1617999220, allocation_package: box }] };
+  const veeqoWrite = async (env, m, pth, body) => { calls.push(m + ' ' + pth + ' ' + Object.keys(body).join()); // only the JSON:API shape is really taken
+    if (body.data && body.data.attributes && m === 'PUT') box = { ...box, weight: body.data.attributes.weight, weight_unit: body.data.attributes.weight_unit }; return { ok: true, status: 200, said: '{"data":{}}' }; };
+  const veeqoLiveOrder = async () => ({ ...order, allocations: [{ id: 1617999220, allocation_package: box }] });
+  const save = new Function('veeqoWrite', 'veeqoLiveOrder', 'autolabelGetKey', 'autolabelSetKey', src + '; return veeqoSavePackage;')(veeqoWrite, veeqoLiveOrder, async () => kept, async (e, k, v) => { kept = v; });
+  const r1 = await save({ TEST_FAST: true }, order, { allocId: 1617999220, weightLb: 1.98, lengthIn: 5, widthIn: 4, heightIn: 2 });
+  const n1 = calls.length; calls.length = 0; box = { ...box, weight: 4 };
+  const r2 = await save({ TEST_FAST: true }, order, { allocId: 1617999220, weightLb: 1.98, lengthIn: 5, widthIn: 4, heightIn: 2 });
+  check('📦 box weight into Veeqo: a "200 OK" that leaves the box at 4 oz does NOT count; the next shape (JSON:API data/attributes) is tried until the read-back shows 1.98 lb (31.68 oz) — and that shape is tried FIRST next time',
+    r1.ok && Math.abs(box.weight - 31.68) < 0.01 && n1 === 4 && r1.said.filter(x => /read back: 0\.25 lb/.test(x)).length === 3 && r2.ok && calls.length === 1 && /^PUT \/allocations\/1617999220\/allocation_package data$/.test(calls[0]), { n1, calls, said: r1.said });
+  check('…merge, confirmed boxes (rates for the real box) and split boxes all use the proven save (a bare 200 used to count as saved for confirmed boxes and splits)',
+    (ws.match(/await veeqoSavePackage\(env, /g) || []).length === 3 && /veeqoSavePackage\(env, lead, want, \[3000, 6000, 10000\]\)/.test(ws) && !/if \(r\.ok\) \{ ok = true; break; \}/.test(ws), null);
   check('…a failed merge returns what Veeqo said at each step, and the red message\'s 📋 Copy includes it (it used to copy only the message)',
     /return \{ ok: false, error, detail: String\(detail \|\| ''\)\.slice\(0, 2000\) \};/.test(ws) && /\(d\.detail \? '\\nVeeqo said: ' \+ d\.detail : ''\)/.test(ph), null);
 }
