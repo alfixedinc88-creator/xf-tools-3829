@@ -3820,6 +3820,10 @@ async function ensureTotalTrackingColumns(env) {
   await env.DB.prepare('ALTER TABLE inventory_log ADD COLUMN pcs_each REAL').run().catch(()=>{});
   await env.DB.prepare('ALTER TABLE inventory_log ADD COLUMN wh_pcs_before REAL').run().catch(()=>{});
   await env.DB.prepare('ALTER TABLE inventory_log ADD COLUMN wh_pcs_after REAL').run().catch(()=>{});
+  // 💲 Value (Owner only): the part #'s and the whole inventory's value at
+  // vendor price before → after this entry (same count as SKU Mgr's total).
+  for (const c of ['val_before', 'val_after', 'wval_before', 'wval_after'])
+    await env.DB.prepare('ALTER TABLE inventory_log ADD COLUMN ' + c + ' REAL').run().catch(()=>{});
 }
 // History's "before → after" check, per PART # (every shelf of that part,
 // any number of cases). It used to be the whole warehouse, so anyone else's
@@ -3870,7 +3874,66 @@ function invEachFinder(rows) {
     return one(byPL[U(e.part_num) + '|' + U(e.location)]) || one(byP[U(e.part_num)]) || 0;
   };
 }
-async function invSaveTotals(env, ids, before, after, note) {
+// ── 💲 Inventory value before → after each entry (Owner, 2026-10-07) ─────
+// Read-only: the same count as SKU Mgr's owner total (pieces × price per
+// piece, batch by batch, oldest batch used up first) without writing the
+// batches. `part` = one part # (every spot), or null = the whole inventory.
+async function invValueOf(env, part) {
+  await costTables(env);
+  const P = part ? _costKey(part) : null;
+  const rows = await d1All(env, `SELECT UPPER(TRIM(part_num)) AS p, UPPER(TRIM(location)) AS l, SUM(cases) AS c, MAX(units_per_case) AS u, MAX(price) AS pr
+    FROM master_list WHERE part_num != '' AND cases > 0${P ? ' AND UPPER(TRIM(part_num)) = ?' : ''} GROUP BY 1, 2`, P ? [P] : []);
+  const ls = P ? ((await env.DB.prepare('SELECT * FROM cost_layer WHERE part = ? ORDER BY received_at, id').bind(P).all()).results || [])
+    : ((await env.DB.prepare('SELECT * FROM cost_layer ORDER BY received_at, id').all()).results || []);
+  const by = {}; ls.forEach(l => { (by[l.part + '|' + l.location] = by[l.part + '|' + l.location] || []).push({ cases: l.cases, price: l.price }); });
+  let value = 0;
+  for (const r of rows) {
+    const ea = parseFloat(r.u) || 0; if (!(ea > 0)) continue;
+    // the batches as they will be once settled to SKU Mgr's cases (costPlan)
+    let layers = (by[r.p + '|' + r.l] || []).map(x => ({ ...x }));
+    let sum = layers.reduce((a, x) => a + (x.cases || 0), 0);
+    if (sum > r.c + 1e-9) { let ex = sum - r.c; for (const x of layers) { if (ex <= 1e-9) break; const t = Math.min(x.cases, ex); x.cases -= t; ex -= t; } }
+    else if (sum < r.c - 1e-9) layers.push({ cases: r.c - sum, price: parseFloat(r.pr) || 0 });
+    for (const x of layers) if (x.price > 0 && x.cases > 0) value += x.cases * ea * x.price;
+  }
+  return Math.round(value * 100) / 100;
+}
+// Before an entry changes anything: the value of the part #(s) it touches.
+async function invValueBefore(env, parts) {
+  try {
+    const out = {};
+    for (const p of [...new Set((parts || []).map(_costKey).filter(Boolean))]) out[p] = await invValueOf(env, p);
+    return Object.keys(out).length ? out : null;
+  } catch (e) { console.error('[value] before:', e.message); return null; }
+}
+// After: the part #(s) now, the whole inventory now; whole before = now −
+// this entry's own change, so before → after differ by exactly this entry.
+async function invSaveValue(env, ids, vb) {
+  if (!vb || !env.DB) return;
+  try {
+    await ensureTotalTrackingColumns(env);
+    const parts = Object.keys(vb); let b = 0, a = 0;
+    for (const p of parts) { b += vb[p]; a += await invValueOf(env, p); }
+    const wA = await invValueOf(env, null), wB = Math.round((wA - (a - b)) * 100) / 100;
+    for (const id of (ids || []).filter(Boolean))
+      await env.DB.prepare('UPDATE inventory_log SET val_before=?, val_after=?, wval_before=?, wval_after=? WHERE id=?')
+        .bind(Math.round(b * 100) / 100, Math.round(a * 100) / 100, wB, wA, id).run();
+  } catch (e) { console.error('[value] save:', e.message); }
+}
+// The same entry changed value again after it was saved (a 📦 received
+// container's price is put on its batches right after the Stock In): the
+// "after" is read again, the "before" stays.
+async function invValueRefresh(env, id, part) {
+  if (!env.DB || !id) return;
+  try {
+    const r = await d1First(env, 'SELECT val_before, wval_before, val_after, wval_after FROM inventory_log WHERE id = ?', [id]);
+    if (!r || r.val_before == null) return;
+    const a = await invValueOf(env, part), wA = await invValueOf(env, null);
+    const wB = Math.round((wA - (a - r.val_before)) * 100) / 100;
+    await env.DB.prepare('UPDATE inventory_log SET val_after=?, wval_after=?, wval_before=? WHERE id=?').bind(a, wA, wB, id).run();
+  } catch (e) { console.error('[value] refresh:', e.message); }
+}
+async function invSaveTotals(env, ids, before, after, note, vb) {
   await ensureTotalTrackingColumns(env);
   // Whole-inventory before → after too: after = the total right now (this
   // change is already on the shelves), before = after − this entry's own
@@ -3894,6 +3957,7 @@ async function invSaveTotals(env, ids, before, after, note) {
     await env.DB.prepare('UPDATE inventory_log SET total_before=?, total_after=?, total_warning=?, total_scope=?, wh_before=?, wh_after=? WHERE id=?').bind(before, after, note || null, 'part', whB, whA, id).run();
     if (pA != null) await env.DB.prepare('UPDATE inventory_log SET pcs_each=?, wh_pcs_before=?, wh_pcs_after=? WHERE id=?').bind(each, pB, pB == null ? null : pA, id).run().catch(() => {});
   }
+  if (vb && before != null && after != null) await invSaveValue(env, ids, vb);
 }
 // The approve went through but its before → after couldn't be worked out:
 // say so on the History row (never a blank cell nobody can explain).
@@ -3976,6 +4040,7 @@ async function inventoryVerify(request, env) {
   if (tracksQuantity && partNum) {
     try { totalBefore = await invPartCases(env, partNum); rowBefore = await invRowCases(env, item.masterId, partNum, shelf); } catch(e) { totalBefore = null; }
   }
+  const valBefore = tracksQuantity && partNum ? await invValueBefore(env, [partNum]) : null;
   // 💲 price batches: settle the spot before and after (old price used up first).
   const costSpots = isApprove && env.DB && item.partNum ? [item.location, item.overwriteLocation].filter(Boolean) : [];
   for (const l of costSpots) await costSafe(() => costReconcile(env, item.partNum, l));
@@ -4004,7 +4069,7 @@ async function inventoryVerify(request, env) {
         const note = Math.abs(totalAfter - expectedAfter) > 0.001
           ? `\u26a0 ${partNum} total should be ${_n(totalBefore)} ${change < 0 ? '\u2212' : '+'} ${_n(Math.abs(change))} = ${_n(expectedAfter)}, but it is ${_n(totalAfter)}. Another change to ${partNum} landed at the same moment, or the entry hit a different shelf \u2014 check ${partNum}'s shelves.`
           : info;
-        await invSaveTotals(env, [item.d1Id], totalBefore, totalAfter, note);
+        await invSaveTotals(env, [item.d1Id], totalBefore, totalAfter, note, valBefore);
       }
     } catch(e) { console.error('[verify-totals] failed:', e.message); if (resultData.ok) await invSaveTotalsFailed(env, [item.d1Id], e.message); }
   }
@@ -5496,6 +5561,7 @@ async function inventoryTransferVerify(request, env) {
   if (tracksQuantity && xPart) {
     try { totalBefore = await invPartCases(env, xPart); fromBefore = await invRowCases(env, peek.outItem.masterId, xPart, peek.outItem.location); } catch(e) { totalBefore = null; }
   }
+  const valBefore = tracksQuantity && xPart ? await invValueBefore(env, [xPart]) : null;
   // 💲 price batches travel with the boxes (oldest first).
   const cPart = tracksQuantity && peek.inItem ? peek.outItem.partNum : null, cFrom = cPart && peek.outItem.location, cTo = cPart && peek.inItem.location;
   if (cPart && cFrom && cTo) { await costSafe(() => costReconcile(env, cPart, cFrom)); await costSafe(() => costReconcile(env, cPart, cTo)); }
@@ -5525,7 +5591,7 @@ async function inventoryTransferVerify(request, env) {
           ? `\u26a0 A transfer should leave ${xPart}'s total at ${_n(expectedAfter)}, but it is ${_n(totalAfter)} (was ${_n(totalBefore)}). Another change to ${xPart} landed at the same moment \u2014 check ${xPart}'s shelves.`
           : extra > 1e-9 ? `\u2139 Moved ${_n(xCases)} from ${from} to ${to}, but the system only had ${_n(fromBefore)} case(s) of ${xPart} at ${from} \u2014 ${from} went to 0 and ${to} got all ${_n(xCases)}, so ${xPart}'s total went up by ${_n(extra)} (the shelf had more than the system said; count corrected).`
           : null;
-        await invSaveTotals(env, [peek.outItem.d1Id, peek.inItem && peek.inItem.d1Id], totalBefore, totalAfter, note);
+        await invSaveTotals(env, [peek.outItem.d1Id, peek.inItem && peek.inItem.d1Id], totalBefore, totalAfter, note, valBefore);
       }
     } catch(e) { console.error('[transfer-verify-totals] failed:', e.message); if (resultData.ok) await invSaveTotalsFailed(env, xIds, e.message); }
   }
@@ -6808,6 +6874,7 @@ async function inventoryReceiveApply(request, env) {
     const partU = partNum.toUpperCase();
     let totalBefore = null;
     try { await ensureTotalTrackingColumns(env); totalBefore = await invPartCases(env, partU); } catch (e) { totalBefore = null; }
+    const valBefore = await invValueBefore(env, [partU]);
     const recordTotals = async (logRes, oldRowCases, oldLoc) => {
       const id = logRes && logRes.meta && logRes.meta.last_row_id;
       if (!id) return;
@@ -6818,7 +6885,7 @@ async function inventoryReceiveApply(request, env) {
           ? `\u26a0 ${partU} total should be ${_n(totalBefore)}${old ? ' \u2212 ' + _n(old) : ''} + ${_n(casesNum)} = ${_n(expected)}, but it is ${_n(after)}. Another change to ${partU} landed at the same moment \u2014 check ${partU}'s shelves.`
           : old > 0 ? `\u2139 Receive PO reused ${partU}'s row at ${oldLoc || '?'} that still showed ${_n(old)} case(s): it now shows ${_n(casesNum)} at ${palletWithDate}, so the ${_n(old)} old case(s) are no longer counted. Check ${oldLoc || 'that shelf'}.`
           : null;
-        await invSaveTotals(env, [id], totalBefore, after, note);
+        await invSaveTotals(env, [id], totalBefore, after, note, valBefore);
       } catch (e) { await invSaveTotalsFailed(env, [id], e.message); }
     };
 
@@ -7527,6 +7594,7 @@ const _app = {
             }
             // 💲 these cases carry the container's price (per piece); the rest of the spot keeps its own.
             await costSafe(async () => { await costReconcile(env, part, loc); await costMarkReceived(env, part, loc, addCases, have.price, title); });
+            await invValueRefresh(env, ld.d1Id, part); // 💲 History: the value after = at the container's price
             await costSafe(() => priceLogAdd(env, { part, location: loc, price: have.price, source: '📦 Received container', title, by: who, cases: addCases }));
             await env.DB.prepare('DELETE FROM reorder_incoming WHERE title = ? AND part = ?').bind(title, key).run();
             await reorderLog(env, who, 'received', part, `Received "${title}": ${cases} box(es) of ${part} (${have.qty} units) → SKU Mgr @ ${loc}${conv ? ' as ' + addCases + ' case(s) of ' + exUpc + ' pcs' : ''}`);
@@ -7876,7 +7944,7 @@ const _app = {
       }
       if (path === '/inventory/history' && method === 'GET') {
         if (session.pin_level !== 'mgmt') return cors(new Response(JSON.stringify({error:'Management access required'}),{status:403,headers:{'Content-Type':'application/json'}}));
-        return await inventoryHistory(url, env);
+        return await inventoryHistory(url, env, request);
       }
       if (path === '/inventory/recover-check' && (method === 'GET' || method === 'POST')) {
         if (session.pin_level !== 'mgmt') return cors(new Response(JSON.stringify({error:'Management access required'}),{status:403,headers:{'Content-Type':'application/json'}}));
@@ -7884,7 +7952,7 @@ const _app = {
       }
       if (path === '/inventory/history-summary' && method === 'GET') {
         if (session.pin_level !== 'mgmt') return cors(new Response(JSON.stringify({error:'Management access required'}),{status:403,headers:{'Content-Type':'application/json'}}));
-        return await inventoryHistorySummary(url, env);
+        return await inventoryHistorySummary(url, env, request);
       }
       if (path === '/inventory/sku-search' && method === 'GET') {
         if (session.pin_level !== 'mgmt') return cors(new Response(JSON.stringify({error:'Management access required'}),{status:403,headers:{'Content-Type':'application/json'}}));
@@ -13082,7 +13150,8 @@ async function skuMgrTotalsBefore(env, d1Id, sheetRow, newPart) {
       : sheetRow ? await d1First(env, 'SELECT part_num FROM master_list WHERE sheet_row=? AND sheet_row > 0', [sheetRow]) : null;
     const oldPart = String((row && row.part_num) || '').trim().toUpperCase();
     const np = String(newPart || '').trim().toUpperCase();
-    return { oldPart, newPart: np, oldBefore: oldPart ? await invPartCases(env, oldPart) : 0, newBefore: await invPartCases(env, np), wh: await invWarehouseCases(env) };
+    return { oldPart, newPart: np, oldBefore: oldPart ? await invPartCases(env, oldPart) : 0, newBefore: await invPartCases(env, np), wh: await invWarehouseCases(env),
+      vb: await invValueBefore(env, [oldPart, np]) };
   } catch (e) { return { err: e.message }; }
 }
 function _skuMgrVal(k, v) {
@@ -13101,7 +13170,7 @@ async function _skuMgrInsertLog(env, who, r, notes, tot, extraWarn) {
   } else {
     warn = '⚠ Total not recorded — ' + String((tot && tot.err) || 'no database').slice(0, 160);
   }
-  await env.DB.prepare(
+  const ins = await env.DB.prepare(
     `INSERT INTO inventory_log
        (sheet_row,timestamp,type,part_num,location,cases,initials,notes,status,
         verified_by,verified_at,overwrite_loc,is_new,is_placeholder,
@@ -13110,6 +13179,7 @@ async function _skuMgrInsertLog(env, who, r, notes, tot, extraWarn) {
   ).bind(0, ts, 'EDIT', String(r.part_num || '').toUpperCase(), r.location || '', parseFloat(r.cases) || 0, who,
     notes.slice(0, 1500), 'Verified', who, ts, '', 0, 0, r.id || 0, mlParent(r.part_num), '', '', r.name || '',
     before, after, warn, 'part', whB, whA).run();
+  if (tot && tot.vb) await invSaveValue(env, [ins.meta && ins.meta.last_row_id], tot.vb);
 }
 async function skuMgrLogEdit(env, who, old, d1Id, sheetRow, tot) {
   if (!env.DB) return;
@@ -13478,7 +13548,36 @@ async function histContainerReport(env, timeCond, timeParams) {
   total.palletList = palletList.slice(0, 200);
   return { total, byPerson };
 }
-async function inventoryHistorySummary(url, env) {
+// 💲 Value numbers are the Owner's only (server-checked, like SKU Mgr's total).
+async function invIsOwnerReq(request, env) {
+  if (!request) return false;
+  const cs = await verifyCredSession(request.headers.get('X-Cred-Token'), env).catch(() => null);
+  return !!(cs && ((cs.roles || []).includes('owner') || cs.level === 'owner'));
+}
+// History report → 💲 Inventory value: Started → Ended for the period, every
+// entry's change, and the big ones with why. Started + entries + changes not
+// from an entry = Ended, always (nothing hidden).
+async function histValueReport(env, timeCond, timeParams, cutoffEnd, big) {
+  await ensureTotalTrackingColumns(env);
+  const rows = await d1All(env, `SELECT id, timestamp, type, part_num, location, cases, initials, notes, wval_before, wval_after, val_before, val_after
+    FROM inventory_log WHERE ${timeCond} AND wval_before IS NOT NULL AND wval_after IS NOT NULL AND type != 'TRANSFER_IN' ORDER BY timestamp, id`, timeParams);
+  const now = cutoffEnd ? null : await invValueOf(env, null);
+  const r2 = v => Math.round(v * 100) / 100;
+  if (!rows.length) return { starting: now, ending: now, entries: 0, recorded: 0, other: 0, big: [], otherList: [], since: null };
+  let recorded = 0, other = 0; const bigs = [], others = [];
+  rows.forEach((r, i) => {
+    const d = r.wval_after - r.wval_before; recorded += d;
+    if (Math.abs(d) >= big) bigs.push({ id: r.id, at: r.timestamp, type: r.type, part: r.part_num, location: r.location, cases: r.cases, by: r.initials,
+      notes: String(r.notes || '').slice(0, 220), before: r.wval_before, after: r.wval_after, change: r2(d), partBefore: r.val_before, partAfter: r.val_after });
+    if (i > 0) { const gap = r.wval_before - rows[i - 1].wval_after; other += gap; if (Math.abs(gap) >= 0.01) others.push({ from: rows[i - 1].timestamp, to: r.timestamp, change: r2(gap) }); }
+  });
+  const last = rows[rows.length - 1];
+  if (now != null) { const gap = now - last.wval_after; other += gap; if (Math.abs(gap) >= 0.01) others.push({ from: last.timestamp, to: null, change: r2(gap) }); }
+  bigs.sort((a, b) => Math.abs(b.change) - Math.abs(a.change));
+  return { starting: rows[0].wval_before, ending: now != null ? now : last.wval_after, entries: rows.length, recorded: r2(recorded), other: r2(other),
+    big: bigs.slice(0, 40), bigCount: bigs.length, otherList: others.filter(o => Math.abs(o.change) >= big).slice(0, 20), since: rows[0].timestamp };
+}
+async function inventoryHistorySummary(url, env, request) {
   try {
     if (!env.DB) return cors(new Response(JSON.stringify({ ok: false, error: 'D1 unavailable' }), { status: 500, headers: { 'Content-Type': 'application/json' } }));
     const dateParam = url.searchParams.get('date'); // optional exact 'YYYY-MM-DD', overrides days
@@ -13615,6 +13714,9 @@ async function inventoryHistorySummary(url, env) {
     } catch (e) { pcs.error = String(e.message || e).slice(0, 120); }
     const wPcs = await invWarehousePcs(env).catch(() => ({ pcs: 0, noEach: 0 }));
     const endingPcs = _n(wPcs.pcs - pcs.afterNet), startingPcs = _n(endingPcs - (pcs.aIn - pcs.aOut));
+    const bigAt = Math.max(1, parseFloat(url.searchParams.get('big')) || 500);
+    const value = (await invIsOwnerReq(request, env)) ? await histValueReport(env, timeCond, timeParams, cutoffEnd, bigAt).catch(e => ({ error: String(e.message || e).slice(0, 160) })) : undefined;
+    if (value && !value.error) value.bigAt = bigAt;
 
     return cors(new Response(JSON.stringify({
       ok: true, days, date: dateParam || null, cutoff: cutoffStart,
@@ -13626,7 +13728,7 @@ async function inventoryHistorySummary(url, env) {
         casesIn: totals?.cases_in || 0,
         casesOut: totals?.cases_out || 0
       },
-      startingCases, endingCases,
+      startingCases, endingCases, value,
       pieces: pcs.error ? { error: pcs.error } : { starting: startingPcs, ending: endingPcs, in: _n(pcs.aIn), out: _n(pcs.aOut), pendingIn: _n(pcs.pIn), pendingOut: _n(pcs.pOut),
         stockIn: _n(pcs.inAll), stockOut: _n(pcs.outAll), transfers: _n(pcs.xfr), unknownEntries: pcs.unknown, unknownCases: _n(pcs.unknownCases), noEachCasesNow: wPcs.noEach },
       approved: { casesIn: parseFloat(during?.a_in) || 0, casesOut: parseFloat(during?.a_out) || 0 },
@@ -13760,6 +13862,7 @@ async function inventoryCancelEntry(request, env) {
 
   const cPart = String(entry.part_num || '').trim().toUpperCase();
   const totalBefore = await invPartCases(env, cPart);
+  const cancelVb = await invValueBefore(env, [cPart]);
   const oldCases = parseFloat(row.cases) || 0;
   const newCases = Math.max(0, oldCases + delta);
   const ts = new Date().toISOString();
@@ -13784,7 +13887,7 @@ async function inventoryCancelEntry(request, env) {
   const cancelNote = '[CANCELLED ENTRY #' + id + '] Reversing ' + (isNoneFound ? 'None Found — putting back the ' + casesNum + ' case(s) it set to 0' : origType + ' of ' + casesNum + ' cases') + ' at '
     + entry.location + ', originally logged by ' + (entry.initials || '?') + ' on ' + origWhen + (recreated ? ' (the spot\'s SKU Mgr row was gone — made again)' : '');
 
-  await env.DB.prepare(
+  const cancelIns = await env.DB.prepare(
     `INSERT INTO inventory_log
        (sheet_row,timestamp,type,part_num,location,cases,initials,notes,status,
         verified_by,verified_at,overwrite_loc,is_new,is_placeholder,
@@ -13795,6 +13898,7 @@ async function inventoryCancelEntry(request, env) {
     cancelNote, 'Verified', cancelledBy || 'OPS', ts, '', 0, 0, row.id, entry.sku || '', '', '', entry.name || '',
     totalBefore, totalAfter, totalNote, 'part', whCancelAfter == null ? null : _n(whCancelAfter - applied), whCancelAfter
   ).run();
+  await invSaveValue(env, [cancelIns.meta && cancelIns.meta.last_row_id], cancelVb);
 
   await env.DB.prepare('UPDATE inventory_log SET cancelled_at=?, cancelled_by=? WHERE id=?')
     .bind(ts, cancelledBy || 'OPS', id).run();
@@ -13910,7 +14014,7 @@ async function inventoryPullRoute(path, method, request, env) {
   return J({ ok: false, error: 'Not found' }, 404);
 }
 
-async function inventoryHistory(url, env) {
+async function inventoryHistory(url, env, request) {
   try {
     const days     = parseInt(url.searchParams.get('days') || '7');
     const typeF    = (url.searchParams.get('type') || '').toUpperCase();
@@ -13940,7 +14044,7 @@ async function inventoryHistory(url, env) {
         let sql = `SELECT l.id,l.sheet_row,l.timestamp,l.type,l.part_num,l.location,l.cases,l.initials,
                           l.notes,l.status,l.verified_by,l.verified_at,l.added_at,l.grabbed_at,
                           l.total_before,l.total_after,l.total_warning,l.total_scope,l.cancelled_at,l.cancelled_by,l.wh_before,l.wh_after,
-                          l.pcs_each,l.wh_pcs_before,l.wh_pcs_after,
+                          l.pcs_each,l.wh_pcs_before,l.wh_pcs_after,l.val_before,l.val_after,l.wval_before,l.wval_after,
                           COALESCE(l.name,'') as name
                    FROM inventory_log l
                    WHERE l.timestamp >= ?`;
@@ -13958,6 +14062,8 @@ async function inventoryHistory(url, env) {
         const rows = await d1Strict(env, sql, params);
         await invHistoryFillNames(env, rows);
         await invHistoryFillEach(env, rows).catch(e => console.error('[history] each:', e.message));
+        // 💲 value before → after: the Owner only
+        if (!(await invIsOwnerReq(request, env))) rows.forEach(r => { delete r.val_before; delete r.val_after; delete r.wval_before; delete r.wval_after; });
         // Total active cases in stock
         const totalRow = await d1First(env, 'SELECT SUM(cases) as total FROM master_list WHERE cases > 0');
         const totalCases = totalRow?.total || 0;
