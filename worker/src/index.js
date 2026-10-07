@@ -1778,8 +1778,11 @@ async function reorderVendorOrder(env, url) {
   const num = (k, d, lo, hi) => { const v = parseFloat(url.searchParams.get(k)); return Number.isFinite(v) ? Math.min(hi, Math.max(lo, v)) : d; };
   const days = Math.round(num('days', 90, 7, 730));
   const cover = num('cover', 3, 0.5, 24), lead = num('lead', 3, 0, 12);
-  const countFba = url.searchParams.get('fbaStock') !== '0';
-  const countOtherPacks = url.searchParams.get('otherPacks') === '1';
+  // Owner (2026-10-07): "I want ALL of our inventory counted — don't give us an option — so we never order too
+  // much": FBA stock at Amazon and every other pack size on our shelves always count (old ?fbaStock / ?otherPacks
+  // are ignored). Other packs are shared out over the part's rows by sales, so each piece still counts once.
+  const countFba = true;
+  const countOtherPacks = true;
   // Vendor picked on a row for this order only (not saved): { "PART#": "JQ" }.
   let picks = {}; try { const o = JSON.parse(url.searchParams.get('picks') || '{}'); if (o && typeof o === 'object') for (const k in o) picks[String(k).trim().toUpperCase()] = reorderVendorName(String(o[k] || '').trim()); } catch (_) { picks = {}; }
   const since = new Date(Date.now() - days * 86400000).toISOString().slice(0, 10);
