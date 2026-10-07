@@ -4423,7 +4423,30 @@ async function inventoryIncomingFor(url, env) {
     return it;
   }).filter(it => it.status !== 'received — unpacking' || it.movedToShelves < it.cases - 1e-9)
     .sort((a, b) => a.part.localeCompare(b.part) || String(a.title).localeCompare(String(b.title)));
-  return cors(new Response(JSON.stringify({ ok: true, q, items: list }), { headers: { 'Content-Type': 'application/json' } }));
+  // Owner: "if 200 ordered but only 100 shipped, 100 shows shipped and 100 stays ordered — don't just add up".
+  // A container that shipped part of an order took those units OFF the order (reorder_take), so the order line
+  // already holds only what the vendor still owes. Each line says where its units came from / went:
+  // order line → "200 ordered: 100 shipped in <container>, 100 still owed"; container line → "from <order>".
+  const takes = ((await env.DB.prepare('SELECT from_title, to_title, part, units FROM reorder_take').all()).results || []).filter(t => match(t.part));
+  list.forEach(it => {
+    if (it.status === 'ordered') {
+      it.shippedFrom = takes.filter(t => t.from_title === it.title && real(t.part) === it.part).map(t => ({ to: t.to_title, units: t.units || 0 }));
+      it.shippedUnits = it.shippedFrom.reduce((a, t) => a + t.units, 0);
+      it.orderedUnits = (it.units || 0) + it.shippedUnits; // what was ordered = still owed + shipped
+    } else if (it.status === 'on the way') {
+      it.fromOrders = takes.filter(t => t.to_title === it.title && real(t.part) === it.part).map(t => ({ from: t.from_title, units: t.units || 0 }));
+    }
+  });
+  // Totals per part # — not stock: SKU Mgr cases change only when a container is 📦 Received.
+  const totals = {};
+  list.forEach(it => {
+    const t = totals[it.part] = totals[it.part] || { part: it.part, orderedUnits: 0, orderedPcs: 0, onWayUnits: 0, onWayPcs: 0, unpackingCases: 0 };
+    if (it.status === 'ordered') { t.orderedUnits += it.units || 0; t.orderedPcs += it.pieces || 0; }
+    else if (it.status === 'on the way') { t.onWayUnits += it.units || 0; t.onWayPcs += it.pieces || 0; }
+    else t.unpackingCases += Math.max(0, (it.cases || 0) - (it.movedToShelves || 0));
+  });
+  Object.values(totals).forEach(t => { t.comingUnits = t.orderedUnits + t.onWayUnits; t.comingPcs = t.orderedPcs + t.onWayPcs; });
+  return cors(new Response(JSON.stringify({ ok: true, q, items: list, totals: Object.values(totals).sort((a, b) => a.part.localeCompare(b.part)) }), { headers: { 'Content-Type': 'application/json' } }));
 }
 
 // ── 🚢 Container here (Inventory → Transfer) ─────────────────────────────
@@ -7504,7 +7527,9 @@ const _app = {
       if (path === '/inventory/containers/upc-issues' && method === 'GET') { await reorderFixTables(env); return cors(new Response(JSON.stringify({ ok: true, issues: await upcIssueList(env, (url.searchParams.get('title') || '').trim(), url.searchParams.get('all') === '1') }), { headers: { 'Content-Type': 'application/json' } })); }
       if (path === '/inventory/pallets/received' && method === 'GET') return await inventoryPalletsReceived(env);
       if (path === '/inventory/containers/soldout' && method === 'GET') return await inventoryContainerSoldOut(url, env);
-      if (path === '/inventory/incoming' && method === 'GET') return await inventoryIncoming(url, env);
+      // Two callers share this address: Sold Out asks with ?base=, SKU Mgr's "Coming in" box with ?q= — this
+      // line used to answer both, so SKU Mgr's box always got "base required" and never showed (owner, 2026-10-07).
+      if (path === '/inventory/incoming' && method === 'GET') return url.searchParams.has('base') ? await inventoryIncoming(url, env) : await inventoryIncomingFor(url, env);
       if (path === '/inventory/soldout-label' && method === 'POST') return await inventorySoldOutLabelLog(request, env, session);
       if (path === '/inventory/soldout-label/queue' && method === 'GET') return await inventorySoldOutLabelQueue(env);
       if (path === '/inventory/soldout-label/printed' && method === 'POST') return await inventorySoldOutLabelPrinted(request, env, session);
