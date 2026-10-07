@@ -26928,7 +26928,7 @@ async function veeqoWrite(env, method, path, body) {
   const res = await fetch(VEEQO_BASE + path, { method, body: JSON.stringify(body), headers: {
     'x-api-key': (env.VEEQO_API_KEY || '').trim(), 'Accept': 'application/json', 'Content-Type': 'application/json' } });
   const txt = await res.text().catch(() => '');
-  return { ok: res.ok, status: res.status, said: txt.replace(/\s+/g, ' ').slice(0, 300) };
+  return { ok: res.ok, status: res.status, said: txt.replace(/\s+/g, ' ').slice(0, 300), text: txt };
 }
 // 📦 Box weight / size into Veeqo, PROVEN: a save counts only when the order, read again, shows the new
 // weight (Veeqo answers 200 to shapes it ignores). The shape that worked is remembered and tried first.
@@ -26950,8 +26950,13 @@ async function veeqoSavePackage(env, o, want, waits = []) {
     const r = await veeqoWrite(env, m, pth, body);
     said.push(`${m} ${pth} ${Object.keys(body || {}).join(',')} → ${r.status} ${String(r.said || '').slice(0, 300)}`);
     if (!r.ok) continue;
+    // Veeqo's answer is the package as saved ({"data":{"attributes":{"weight":…,"weight_unit":…}}} per its docs).
+    let ans = null; try { const j = JSON.parse(r.text || '{}'); ans = (j.data && j.data.attributes) || (j.attributes) || null; } catch (_) {}
+    const ansLb = ans ? veeqoLivePackage({ allocation_package: ans }).weightLb : null;
+    if (ans) said.push(`  Veeqo answered: ${ansLb == null ? 'no weight' : ansLb + ' lb'} (${ans.weight} ${ans.weight_unit || ''})`);
     const rb = await readOk();
-    if (rb.ok) { if (key !== best) await autolabelSetKey(env, VEEQO_PKG_TRY_KEY, key).catch(() => {}); return { ok: true, said, how: key }; }
+    const shown = rb.ok || (ansLb != null && want.weightLb != null && Math.abs(ansLb - want.weightLb) < 0.05);
+    if (shown) { if (key !== best) await autolabelSetKey(env, VEEQO_PKG_TRY_KEY, key).catch(() => {}); return { ok: true, said, how: key }; }
     said.push(`  read back: ${rb.p2 ? (rb.p2.weightLb == null ? 'no weight' : rb.p2.weightLb + ' lb') + ' ' + JSON.stringify(rb.p2.raw) : 'box not found'}`);
   }
   for (const ms of waits) {
@@ -26984,6 +26989,9 @@ function veeqoEditTries(kind, b, o) {
     // shape, a flat one and the package's own address are tried too; only a read-back proves a save.
     const pid2 = b.packageId;
     return [
+      // Veeqo's docs (owner's screenshot, "Update Allocation Package"): PUT /allocations/{id}/allocation_package
+      // with { allocation_package: {...}, save_for_similar_shipments: false } — the flag we never sent.
+      ['PUT', `/allocations/${aid}/allocation_package`, { allocation_package: pk, save_for_similar_shipments: false }],
       ['PUT', `/allocations/${aid}/allocation_package`, { allocation_package: pk }],
       ['PUT', `/orders/${o.id}/allocations/${aid}`, { allocation: { allocation_package_attributes: pk } }],
       ['PUT', `/allocations/${aid}`, { allocation: { allocation_package_attributes: pk } }],

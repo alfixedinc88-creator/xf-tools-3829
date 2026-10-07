@@ -1979,7 +1979,7 @@ console.log('\nAuto Label → Last run → 🔎 an order: live Veeqo info, chang
   const ep = await post('/veeqo/autolabel/order-edit', { ...ids, kind: 'photo', value: 'https://photos.example/new.jpg' });
   check('…change the photo → saved in Veeqo (a photo link must be https://)', ep.ok && /new\.jpg/.test(V.img) && !(await post('/veeqo/autolabel/order-edit', { ...ids, kind: 'photo', value: 'javascript:alert(1)' })).ok, ep);
   const ek = await post('/veeqo/autolabel/order-edit', { ...ids, kind: 'package', lengthIn: 10, widthIn: 8, heightIn: 4, weightLb: 1.25 });
-  check('…change the package size + weight → saved in Veeqo (20 oz = 1.25 lb, 10×8×4 in); a refused way is skipped for the next', ek.ok && V.pkg.weight === 20 && V.pkg.depth === 10 && ek.tries.length === 2 && ek.tries[0].status === 404, ek);
+  check('…change the package size + weight → saved in Veeqo (20 oz = 1.25 lb, 10×8×4 in); a refused way is skipped for the next', ek.ok && V.pkg.weight === 20 && V.pkg.depth === 10 && ek.tries.length === 3 && ek.tries[0].status === 404 && ek.tries[1].status === 404, ek); // 2 refused shapes on that address now (Veeqo docs' shape first)
   refuse = true;
   const ef = await post('/veeqo/autolabel/order-edit', { ...ids, kind: 'bin', value: '99-9-9' });
   check('…Veeqo refuses → "not saved" with what Veeqo said, nothing changed there', ef.ok === false && /did not take/.test(ef.error) && V.loc === '24-5-6', ef);
@@ -3706,7 +3706,7 @@ console.log('\n🧩 Merge & buy: give Veeqo time to show the new box weight; wha
   const n1 = calls.length; calls.length = 0; box = { ...box, weight: 4 };
   const r2 = await save({ TEST_FAST: true }, order, { allocId: 1617999220, weightLb: 1.98, lengthIn: 5, widthIn: 4, heightIn: 2 });
   check('📦 box weight into Veeqo: a "200 OK" that leaves the box at 4 oz does NOT count; the next shape (JSON:API data/attributes) is tried until the read-back shows 1.98 lb (31.68 oz) — and that shape is tried FIRST next time',
-    r1.ok && Math.abs(box.weight - 31.68) < 0.01 && n1 === 4 && r1.said.filter(x => /read back: 0\.25 lb/.test(x)).length === 3 && r2.ok && calls.length === 1 && /^PUT \/allocations\/1617999220\/allocation_package data$/.test(calls[0]), { n1, calls, said: r1.said });
+    r1.ok && Math.abs(box.weight - 31.68) < 0.01 && n1 === 5 && r1.said.filter(x => /read back: 0\.25 lb/.test(x)).length === 4 && r2.ok && calls.length === 1 && /^PUT \/allocations\/1617999220\/allocation_package data$/.test(calls[0]), { n1, calls, said: r1.said });
   check('…merge, confirmed boxes (rates for the real box) and split boxes all use the proven save (a bare 200 used to count as saved for confirmed boxes and splits)',
     (ws.match(/await veeqoSavePackage\(env, /g) || []).length === 3 && /veeqoSavePackage\(env, lead, want, \[3000, 6000, 10000\]\)/.test(ws) && !/if \(r\.ok\) \{ ok = true; break; \}/.test(ws), null);
   check('…a failed merge returns what Veeqo said at each step, and the red message\'s 📋 Copy includes it (it used to copy only the message)',
@@ -3743,6 +3743,26 @@ console.log('\nReorder: 30 / 90 day sales per channel per part # (rows, 🔍, CS
   check('…and a "SALES BY PART #" section at the bottom with every part # of the family that sold (incl. the eBay bulk =1000: 3 units = 3,000 pcs)',
     L.some(l => /^"?SALES BY PART #/.test(l)) && L.includes(`${F},${F}=1000,eBay,0,3,0,3000`) && L.includes(`${F},${F}=10,Amazon,20,30,200,300`), L.slice(-4));
   sq.exec(`DELETE FROM fba_catalog WHERE sku LIKE '${F}%'; DELETE FROM amazon_sales_weekly WHERE sku LIKE '${F}%'; DELETE FROM ebay_sales_weekly WHERE sku LIKE '${F}%'`);
+}
+
+// Owner's screenshot of Veeqo's docs, "Update Allocation Package": PUT /allocations/{id}/allocation_package
+// { allocation_package: {...}, save_for_similar_shipments: false }; its answer is the package as saved.
+console.log('\n📦 Veeqo box weight the documented way (save_for_similar_shipments: false); Veeqo\'s own answer counts');
+{
+  const ws = readFileSync0(workerPath, 'utf8');
+  const grab = re => (ws.match(re) || [''])[0];
+  const src = [grab(/function veeqoLivePackage\(a\) \{[\s\S]*?\n\}/), grab(/function veeqoEditTries\(kind, b, o\) \{[\s\S]*?\n\}/), 'const VEEQO_PKG_TRY_KEY = "k";', grab(/async function veeqoSavePackage\(env, o, want, waits = \[\]\) \{[\s\S]*?\n\}/)].join('\n');
+  let box = { weight: 22.999, weight_unit: 'oz', depth: 6, width: 5, height: 4, dimensions_unit: 'inches' }; const calls = [];
+  // Like the docs: only the documented body is taken; the answer is the package as saved; the order read-back lags behind.
+  const veeqoWrite = async (env, m, pth, body) => { calls.push(JSON.stringify(body)); let saved = box;
+    if (m === 'PUT' && body.allocation_package && body.save_for_similar_shipments === false) saved = { ...box, weight: body.allocation_package.weight, weight_unit: 'oz' };
+    return { ok: true, status: 200, said: '', text: JSON.stringify({ data: { id: '1421028866', type: 'allocation_package', attributes: saved } }) }; };
+  const veeqoLiveOrder = async () => ({ number: '09-15265-05652', allocations: [{ id: 1617298332, allocation_package: box }] }); // still the old box (lags)
+  const save = new Function('veeqoWrite', 'veeqoLiveOrder', 'autolabelGetKey', 'autolabelSetKey', src + '; return veeqoSavePackage;')(veeqoWrite, veeqoLiveOrder, async () => null, async () => {});
+  const r = await save({ TEST_FAST: true }, { number: '09-15265-05652', allocations: [{ id: 1617298332, allocation_package: box }] }, { allocId: 1617298332, weightLb: 3.22, lengthIn: 6, widthIn: 5, heightIn: 4 });
+  check('09-15265-05652 + 05653 (3.22 lb): the FIRST try is the documented body { allocation_package: {weight: 51.52, weight_unit: "oz", …}, save_for_similar_shipments: false }, and Veeqo\'s answer showing 3.22 lb counts as saved (no other shapes sent)',
+    r.ok && calls.length === 1 && JSON.parse(calls[0]).save_for_similar_shipments === false && JSON.parse(calls[0]).allocation_package.weight === 51.52 && JSON.parse(calls[0]).allocation_package.weight_unit === 'oz'
+      && r.said.some(x => /Veeqo answered: 3\.22 lb/.test(x)), { calls, said: r.said });
 }
 
 console.log('\n' + (failed ? '❌ ' + failed + ' check(s) FAILED' : '✅ all ' + passed + ' checks passed') + '\n');
