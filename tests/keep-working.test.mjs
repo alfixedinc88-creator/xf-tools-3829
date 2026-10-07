@@ -2473,6 +2473,9 @@ console.log('\nAuto Label → 📄 USPS scan form: Mon–Fri 4:30 pm, Sat 1:45 p
     return new Response('{}', { status: 401 }); };
   let none = false, linksExpired = false;
   env.VEEQO_API_KEY = 'k';
+  // Start clean: earlier blocks run the auto-label timer on the REAL clock, which (when the tests run on 2026-10-07
+  // between 4:30 and 6:30 pm New York) already wrote today's 4:30 pm slot — this block uses its own test clock.
+  try { sq.exec('DELETE FROM scan_form_log'); } catch (_) {}
   await post('/veeqo/autolabel/config', { config: { scanFormOn: true, scanFormTimes: 'Mon-Fri 16:30; Sat 13:45', scanFormCheckAt: '20:30' } });
   const tick = at => post('/veeqo/autolabel/scanform-tick', { at });
   const rows = () => sq.prepare('SELECT * FROM scan_form_log ORDER BY id').all();
@@ -3956,6 +3959,26 @@ console.log('\nSales Dashboard: mapped / cleaned SKUs count, unmatched shown, da
   const sh = rf12(fileURLToPath(new URL('../sales.html', import.meta.url)), 'utf8');
   check('page: Overview line "Sales are imported once a week per channel: … through …" + red "… NOT in these numbers"', /id="db-fresh"/.test(sh) && /function renderFreshness\(\)/.test(sh) && /NOT in these numbers/.test(sh), null);
   sq.exec("DELETE FROM master_list WHERE base_sku = '215-1-1'; DELETE FROM reorder_alias WHERE raw = 'WEIRD-SKU-215'; DELETE FROM ebay_sales_weekly WHERE sku IN ('215-1-1=10__','WEIRD-SKU-215','JUNK-SKU-215')");
+}
+
+// Owner (2026-10-07): "labels printed after 5:30 PM ship the next business day — show how many we print after 5:30 and how many on the
+// same business day" on the print totals (Print Log "Printed Today" and Auto Label "Labels by day"), same cut-off as the Ship-day count.
+console.log('\nPrint totals: before / after the 5:30 PM cut-off');
+{
+  const { readFileSync: rf13 } = await import('node:fs');
+  const ps = rf13(fileURLToPath(new URL('../packship.html', import.meta.url)), 'utf8');
+  const grab = re => (ps.match(re) || [''])[0];
+  const src = [grab(/var PS_SHIPDAY_CUTOFF = [^\n]*/), grab(/function _psNyParts\(iso\) \{[\s\S]*?\n\}/), grab(/function _psKeyAdd\(key, days\) \{[\s\S]*?\n\}/), grab(/function _psKeyWd\(key\) \{[^\n]*/),
+    grab(/window\.psShipDayOf = function\(iso\) \{[\s\S]*?\n\};/).replace('window.psShipDayOf =', 'var psShipDayOf ='), grab(/function _psShipSplit\(stamps, dayKey\) \{[\s\S]*?\n\}/)].join('\n');
+  const split = new Function(src + '\nreturn _psShipSplit;')();
+  // Wed 2026-10-07 (New York, EDT = UTC−4): 9:00 AM, 5:29 PM, 5:30 PM, 8:15 PM.
+  const wed = split(['2026-10-07T13:00:00Z', '2026-10-07T21:29:00Z', '2026-10-07T21:30:00Z', '2026-10-08T00:15:00Z'], '2026-10-07');
+  check('Wednesday: 9:00 AM + 5:29 PM ship that day (2); 5:30 PM + 8:15 PM ship Thursday (2)', wed.same === 2 && wed.next === 2 && wed.nextKey === '2026-10-08', wed);
+  // Sat 2026-10-10: 3:59 PM ships Saturday, 4:00 PM → Monday.
+  const sat = split(['2026-10-10T19:59:00Z', '2026-10-10T20:00:00Z'], '2026-10-10');
+  check('Saturday: 3:59 PM ships Saturday; 4:00 PM → Monday', sat.same === 1 && sat.next === 1 && sat.nextKey === '2026-10-12', sat);
+  check('page: Printed Today shows "N ship today (before 5:30 PM) / N after 5:30 PM → ship …"; Labels by day shows the same split',
+    /id="ps-pl-count-split"/.test(ps) && /_psPlRenderCountSplit\(\);/.test(ps) && /printed after ' \+ cutT \+ ' → ship '/.test(ps), null);
 }
 
 console.log('\n' + (failed ? '❌ ' + failed + ' check(s) FAILED' : '✅ all ' + passed + ' checks passed') + '\n');
