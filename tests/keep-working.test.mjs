@@ -3713,5 +3713,37 @@ console.log('\n🧩 Merge & buy: give Veeqo time to show the new box weight; wha
     /return \{ ok: false, error, detail: String\(detail \|\| ''\)\.slice\(0, 2000\) \};/.test(ws) && /\(d\.detail \? '\\nVeeqo said: ' \+ d\.detail : ''\)/.test(ph), null);
 }
 
+// Owner (2026-10-07): "201-2-12 / 201-2-13 still say order 458,000 pcs on each row — the sheet should also show 30 and 90 days sales on
+// each channel for each SKU". Every part # of the family that sold is listed (units and pieces), so a wrong sales number shows.
+console.log('\nReorder: 30 / 90 day sales per channel per part # (rows, 🔍, CSV)');
+{
+  const wk = new Date(Date.now() - 14 * 86400000).toISOString().slice(0, 10), old = new Date(Date.now() - 60 * 86400000).toISOString().slice(0, 10);
+  const F = '212-2-12';
+  sq.prepare(`INSERT INTO fba_catalog (sku, asin, product_name, available) VALUES ('${F}=10','B0G1',' r',0), ('${F}=25','B0G2',' r',0)`).run();
+  // Amazon: =10 20 bags 14 d ago + 10 bags 60 d ago. eBay: a bulk SKU =1000 sold 3 lots 60 d ago (3,000 pcs).
+  sq.prepare(`INSERT INTO amazon_sales_weekly (sku, period_start, units_ordered, asin) VALUES ('${F}=10',?,20,'B0G1'), ('${F}=10',?,10,'B0G1')`).run(wk, old);
+  sq.prepare(`INSERT INTO ebay_sales_weekly (sku, period_start, units_ordered) VALUES ('${F}=1000',?,3)`).run(old);
+  const d = await get('/reorder/vendor-order?days=90&lead=3&cover=3');
+  const a = (d.rows || []).find(r => r.sku === F + '=10') || {};
+  check('row: own sales per channel — Amazon 20 bags (200 pcs) in 30 d, 30 bags (300 pcs) in 90 d', a.sales && a.sales.Amazon.u30 === 20 && a.sales.Amazon.u90 === 30 && a.sales.Amazon.p30 === 200 && a.sales.Amazon.p90 === 300, a.sales);
+  const fs = (a.calc && a.calc.famSales) || [];
+  check('🔍 family sales list every part # that sold: =10 Amazon 200 / 300 pcs and the eBay bulk =1000: 0 / 3 units → 0 / 3,000 pcs',
+    fs.length === 2 && fs.some(x => x.sku === F + '=1000' && x.ch === 'eBay' && x.u90 === 3 && x.p90 === 3000 && x.p30 === 0) && fs.some(x => x.sku === F + '=10' && x.ch === 'Amazon' && x.p90 === 300), fs);
+  const { readFileSync: rf9 } = await import('node:fs');
+  const rh = rf9(fileURLToPath(new URL('../reorder.html', import.meta.url)), 'utf8');
+  const fn = (rh.match(/function rvoCsv\(\) \{[\s\S]*?\n\}/) || [''])[0];
+  let out = '';
+  new Function('document', 'RVO', 'rvoVisible', 'rvoVendorCheck', 'Blob', 'URL', 'setTimeout', 'showToast', 'wFetch', 'alert', 'confirm', 'W', (rh.match(/function rvoQty\(r\) \{[^\n]*\}/) || [''])[0] + '\n' + fn + '; rvoCsv();')(
+    { getElementById: () => ({ value: 'JQ' }), createElement: () => ({ click() {}, remove() {} }), body: { appendChild() {} } }, { loaded: true, off: {}, edits: {}, meta: {} },
+    () => [{ ...a, vendor: 'JQ', orderUnits: a.orderUnits || 10 }], () => ({ ok: true, dup: [], text: '' }), function (p) { out = p.join(''); }, { createObjectURL: () => 'x', revokeObjectURL() {} }, () => {}, () => {}, () => Promise.resolve(), () => {}, () => true, '');
+  const L = out.replace(/^\uFEFF/, '').split('\r\n'), H = L[0].split(','), row = (L.find(l => l.split(',')[1] === F + '=10') || '').split(',');
+  check('CSV: Amazon / eBay / Walmart / Shopify 30d + 90d (pcs) columns on each line (=10: Amazon 200 / 300)',
+    ['Amazon 30d (pcs)', 'Amazon 90d (pcs)', 'eBay 30d (pcs)', 'eBay 90d (pcs)', 'Walmart 30d (pcs)', 'Walmart 90d (pcs)', 'Shopify 30d (pcs)', 'Shopify 90d (pcs)'].every(h => H.includes(h))
+      && row[H.indexOf('Amazon 30d (pcs)')] === '200' && row[H.indexOf('Amazon 90d (pcs)')] === '300', [H.slice(-8), row.slice(-8)]);
+  check('…and a "SALES BY PART #" section at the bottom with every part # of the family that sold (incl. the eBay bulk =1000: 3 units = 3,000 pcs)',
+    L.some(l => /^"?SALES BY PART #/.test(l)) && L.includes(`${F},${F}=1000,eBay,0,3,0,3000`) && L.includes(`${F},${F}=10,Amazon,20,30,200,300`), L.slice(-4));
+  sq.exec(`DELETE FROM fba_catalog WHERE sku LIKE '${F}%'; DELETE FROM amazon_sales_weekly WHERE sku LIKE '${F}%'; DELETE FROM ebay_sales_weekly WHERE sku LIKE '${F}%'`);
+}
+
 console.log('\n' + (failed ? '❌ ' + failed + ' check(s) FAILED' : '✅ all ' + passed + ' checks passed') + '\n');
 process.exit(failed ? 1 : 0);
