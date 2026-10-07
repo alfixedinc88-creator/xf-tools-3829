@@ -4060,7 +4060,10 @@ function rvoCols() {
     { k: 'iupc', label: 'Inside bag UPC', w: 150, sort: function (r) { return r.insideUpc || '~'; }, cell: function (r) { return rvoInlOn() ? rvoInlBox(r, 'inside_upc') : '<span style="font-family:var(--mono)">' + miss(r.insideUpc) + '</span>'; } },
     { k: 'sold', label: 'Sold (pcs)', tip: 'Pieces sold in the window, all channels, this part number\'s share', w: 100, num: true, sort: function (r) { return r.soldPcs; }, cell: function (r) { return fmt0(r.soldPcs); } },
     { k: 'mo', label: 'Per month (pcs)', w: 145, num: true, sort: function (r) { return r.monthlyPcs; }, cell: function (r) { return r.monthlyPcs; } },
-    { k: 'stock', label: 'In stock', tip: 'SKU Mgr: units of this part number (pieces)', w: 110, num: true, sort: function (r) { return r.stockPcs; }, cell: function (r) { return fmt0(r.stockUnits) + (r.packSize > 1 ? ' <span style="color:var(--text3)">(' + fmt0(r.stockPcs) + ' pcs)</span>' : ''); } },
+    { k: 'stock', label: 'In stock', tip: 'SKU Mgr: units of this part number (pieces)', w: 110, num: true, sort: function (r) { return r.stockPcs; }, cell: function (r) { return fmt0(r.stockUnits) + (r.packSize > 1 ? ' <span style="color:var(--text3)">(' + fmt0(r.stockPcs) + ' pcs)</span>' : '')
+      // Owner: "a lot of 201-5-4=OLD on the shelf" — other packs of the part that are subtracted, and cases that can't be (no Ea/Case).
+      + (r.otherPackPcs > 0 ? '<div style="font-size:10px;color:#047857" title="' + escHtml((r.otherPacks || []).map(function (o) { return o.sku + ': ' + o.pcs + ' pcs'; }).join('\n')) + '">+ ' + fmt0(r.otherPackPcs) + ' pcs other packs</div>' : '')
+      + ((r.noEa || []).length ? '<div style="font-size:10px;color:var(--red);font-weight:700" title="No Ea/Case in SKU Mgr — pieces unknown, not subtracted. Set Ea/Case in SKU Mgr.">⚠ ' + r.noEa.map(function (x) { return escHtml(x.sku) + ' ' + x.cases + ' cs'; }).join(', ') + ' not counted</div>' : ''); } },
     { k: 'fba', label: 'FBA (pcs)', tip: 'At Amazon', w: 90, num: true, sort: function (r) { return r.fbaPcs; }, cell: function (r) { return fmt0(r.fbaPcs); } },
   ];
   // One column per "on the way" title, then their total.

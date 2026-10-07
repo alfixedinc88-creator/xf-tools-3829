@@ -3555,5 +3555,29 @@ console.log('\nReorder vendor CSV: pieces and cases add up on every line');
     [a, b].every(r => v(r, 'Order Qty (pieces)') === v(r, 'Cases') * v(r, 'Pieces per Case (original box)')) && v(tot, 'Order Qty (pieces)') === 1875 && v(tot, 'Cases') === 14 && tot[col('Line Total')] === '75.50', tot);
 }
 
+// Owner (2026-10-07): "we still have a lot of 201-5-4=OLD but it says order more 201-5-4=10XX / =25XX / =5XX — =OLD is the same parent".
+console.log('\nReorder: =OLD stock of the same parent counts (named on the row); no Ea/Case shown as NOT counted');
+{
+  const wk = new Date(Date.now() - 14 * 86400000).toISOString().slice(0, 10);
+  // 209-5-4: FBA =10XX (30 sold → 300 pcs), =25XX (8 → 200 pcs), =5XX (20 → 100 pcs) = 600 pcs in 90 days → 1,200 pcs for 6 months.
+  sq.prepare("INSERT INTO fba_catalog (sku, asin, product_name, available) VALUES ('209-5-4=10XX','B0T2091',' x',0), ('209-5-4=25XX','B0T2092',' x',0), ('209-5-4=5XX','B0T2093',' x',0)").run();
+  sq.prepare("INSERT INTO amazon_sales_weekly (sku, period_start, units_ordered, asin) VALUES ('209-5-4=10XX',?,30,'B0T2091'), ('209-5-4=25XX',?,8,'B0T2092'), ('209-5-4=5XX',?,20,'B0T2093')").run(wk, wk, wk);
+  const ord = async () => { const d = await get('/reorder/vendor-order?days=90&lead=3&cover=3'); return ['10XX', '25XX', '5XX'].map(k => (d.rows || []).find(r => r.sku === '209-5-4=' + k) || {}); };
+  const [a0, b0, c0] = await ord();
+  check('setup: nothing on the shelf → order 1,200 pcs: =10XX 60, =25XX 16, =5XX 40 units', a0.needUnits === 60 && b0.needUnits === 16 && c0.needUnits === 40, [a0.needUnits, b0.needUnits, c0.needUnits]);
+  // Shelf: =OLD 12 cases × 100 pcs = 1,200 pcs (enough), + 3 cases of =OLD at another spot with NO Ea/Case.
+  sq.prepare("INSERT INTO master_list (base_sku, name, part_num, location, cases, units_per_case) VALUES ('209-5-4','x','209-5-4=OLD','C1=2-5-1',12,100), ('209-5-4','x','209-5-4=OLD','C2=2-5-1',3,0)").run();
+  const [a, b, c] = await ord();
+  check('a lot of =OLD (1,200 pcs) → nothing to order on =10XX / =25XX / =5XX; shares 600 + 400 + 200 = 1,200 pcs (every piece once)',
+    a.needUnits === 0 && b.needUnits === 0 && c.needUnits === 0 && a.otherPackPcs + b.otherPackPcs + c.otherPackPcs === 1200 && a.otherPackPcs === 600, [a.needUnits, b.needUnits, c.needUnits, a.otherPackPcs, b.otherPackPcs, c.otherPackPcs]);
+  check('…the row says what was subtracted: "209-5-4=OLD 1200 pcs", 50% share; the 3 cases with no Ea/Case are shown as NOT counted',
+    /pcs of other packs on the shelf subtracted \(209-5-4=OLD 1200 pcs; this row's 50% share/.test(a.note) && a.otherPacks[0].sku === '209-5-4=OLD' && a.otherPacks[0].pcs === 600
+      && /⚠ NOT counted \(no Ea\/Case in SKU Mgr\): 209-5-4=OLD 3 cases/.test(a.note) && a.noEa[0].cases === 3, [a.note, a.otherPacks, a.noEa]);
+  const { readFileSync: rf7 } = await import('node:fs');
+  const rh = rf7(fileURLToPath(new URL('../reorder.html', import.meta.url)), 'utf8');
+  check('page: In stock shows "+ N pcs other packs" and the red "⚠ … not counted"', /pcs other packs<\/div>/.test(rh) && /' not counted<\/div>'/.test(rh), null);
+  sq.exec("DELETE FROM fba_catalog WHERE sku LIKE '209-5-4%'; DELETE FROM amazon_sales_weekly WHERE sku LIKE '209-5-4%'; DELETE FROM master_list WHERE base_sku = '209-5-4'");
+}
+
 console.log('\n' + (failed ? '❌ ' + failed + ' check(s) FAILED' : '✅ all ' + passed + ' checks passed') + '\n');
 process.exit(failed ? 1 : 0);
