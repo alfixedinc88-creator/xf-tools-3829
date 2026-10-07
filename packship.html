@@ -9161,7 +9161,7 @@ window.psAlLoadScanForms = async function() {
       + '<td style="padding:4px 6px;border-bottom:1px solid var(--border);color:' + col + '">' + what
       + (!f.ok && f.kind !== 'locked' && f.kind !== 'night_missing' && f.detail ? '<details><summary>What Veeqo said</summary><pre style="white-space:pre-wrap;font-size:11px;user-select:text">' + e(f.detail) + '</pre><button class="ps-btn-sm" data-t="' + e(f.detail) + '" onclick="_psAlCopy(this.getAttribute(\'data-t\'), this)">📋 Copy</button></details>' : '') + '</td>'
       + '<td style="padding:4px 6px;border-bottom:1px solid var(--border);white-space:nowrap">' + (f.ok && f.kind !== 'night_ok' ? (f.printed_at ? '🖨 printed ' + e(new Date(f.printed_at).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })) + (f.print_count > 1 ? ' ×' + f.print_count : '') + ' ' : '<b style="color:var(--orange)">not printed</b> ')
-        + '<button class="ps-btn-sm" onclick="psAlScanFormPrint(' + f.id + ', this)">' + (f.printed_at ? 'Reprint' : 'Print') + '</button>' : '') + '</td></tr>';
+        + '<button class="ps-btn-sm" onclick="psAlScanFormPrint(' + f.id + ', this, ' + (f.parts || 1) + ')">' + (f.printed_at ? 'Reprint' : 'Print') + ((f.parts || 1) > 1 ? ' (' + f.parts + ' forms)' : '') + '</button>' : '') + '</td></tr>';
   }).join('') + '</table>' : '<div style="color:var(--text3)">No scan forms yet.</div>';
 };
 // Owner: "the scan form didn't work — it gave me a code but I can't copy it" (it was in a pop-up box).
@@ -9317,20 +9317,25 @@ window.psAlScanFormMake = async function(btn) {
   try {
     var d = await _psAlFetch('/veeqo/autolabel/scanform-make', { method: 'POST', body: {} });
     if (d.ok === false) { _psAlSfErr('Scan form not made', (d.error || 'failed') + '\n\n' + JSON.stringify(d.tried || [], null, 1).slice(0, 3000)); }
-    else { var eb = document.getElementById('ps-al-sf-err'); if (eb) eb.style.display = 'none'; _psToast('📄 Scan form made — printing'); await psAlScanFormPrint(d.id); }
+    else { var eb = document.getElementById('ps-al-sf-err'); if (eb) eb.style.display = 'none'; _psToast('📄 Scan form made — printing ' + (d.parts || 1) + ' form' + ((d.parts || 1) > 1 ? 's' : ''));
+      var fl = (d.forms && d.forms.length) ? d.forms : [{ id: d.id, parts: d.parts }];
+      for (var k = 0; k < fl.length; k++) await psAlScanFormPrint(fl[k].id, null, fl[k].parts || 1); } // every form Veeqo gave (owner: "two scan forms, we only print one")
   } finally { btn.disabled = false; btn.textContent = t; psAlLoadScanForms(); }
 };
-window.psAlScanFormPrint = async function(id, btn) {
+// parts: how many forms Veeqo gave in this one answer (often 2) — every one is printed, one after the other.
+window.psAlScanFormPrint = async function(id, btn, parts) {
   if (btn) { btn.disabled = true; btn.textContent = '⏳'; }
   try {
-    var r = await fetch(PS_WORKER + '/veeqo/autolabel/scanform-file?id=' + encodeURIComponent(id), { headers: { 'X-Cred-Token': psCredToken } });
+    for (var n = 0; n < Math.max(1, parts || 1); n++) {
+    var r = await fetch(PS_WORKER + '/veeqo/autolabel/scanform-file?id=' + encodeURIComponent(id) + '&n=' + n, { headers: { 'X-Cred-Token': psCredToken } });
     var ct = (r.headers.get('content-type') || '').toLowerCase();
-    if (!r.ok || !/pdf|image\//.test(ct)) { var j = await r.json().catch(function() { return {}; }); throw new Error((j.error || 'HTTP ' + r.status) + (j.tried ? '\n' + JSON.stringify(j.tried).slice(0, 800) : '')); }
+    if (!r.ok || !/pdf|image\//.test(ct)) { var j = await r.json().catch(function() { return {}; }); throw new Error((parts > 1 ? 'Form ' + (n + 1) + ' of ' + parts + ': ' : '') + (j.error || 'HTTP ' + r.status) + (j.tried ? '\n' + JSON.stringify(j.tried).slice(0, 800) : '')); }
     var url = URL.createObjectURL(await r.blob());
     var fr = document.createElement('iframe'); fr.style.cssText = 'position:fixed;right:0;bottom:0;width:1px;height:1px;border:0';
     fr.src = url; document.body.appendChild(fr);
     await new Promise(function(res) { fr.onload = function() { setTimeout(function() { try { fr.contentWindow.focus(); fr.contentWindow.print(); } catch (e) { window.open(url); } res(); }, 400); }; setTimeout(res, 8000); });
-    setTimeout(function() { fr.remove(); }, 60000);
+    (function(f) { setTimeout(function() { f.remove(); }, 60000); })(fr);
+    }
     await _psAlFetch('/veeqo/autolabel/scanform-printed', { method: 'POST', body: { id: id, by: psInitials || '' } });
   } catch (e) { _psAlSfErr('Scan form made, but not printed', e.message); }
   finally { if (btn) { btn.disabled = false; btn.textContent = 'Reprint'; } psAlLoadScanForms(); }
@@ -9347,7 +9352,7 @@ window.psAlScanFormStation = function(on, quiet) {
       var d = await _psAlFetch('/veeqo/autolabel/scanforms');
       var day = d && d.forms && d.forms[0] && d.forms[0].day;
       var todo = ((d && d.forms) || []).filter(function(f) { return f.ok && f.kind !== 'night_ok' && !f.printed_at && f.day === day; });
-      for (var i = 0; i < todo.length; i++) await psAlScanFormPrint(todo[i].id);
+      for (var i = 0; i < todo.length; i++) await psAlScanFormPrint(todo[i].id, null, todo[i].parts || 1);
     } catch (e) {} finally { _psAlSfBusy = false; }
   };
   tick(); _psAlSfTimer = setInterval(tick, 60000);

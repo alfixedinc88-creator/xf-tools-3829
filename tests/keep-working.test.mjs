@@ -2462,11 +2462,13 @@ console.log('\nAuto Label → 📄 USPS scan form: Mon–Fri 4:30 pm, Sat 1:45 p
     if (u.endsWith('api.veeqo.com/shipping/api/v1/scan_forms/USPS') && m === 'POST') { if (refuse) return J({ error_messages: ['No shipments to manifest'] }, 400);
       const bd = JSON.parse(o.body), ca = bd.collection_address; if (!ca) return J({ error_messages: ['collection_address is required'] }, 400);
       // …then 400 "No valid address source provided for from_address" until the address is in Veeqo's own field names (its docs: line1, town, postcode, county …).
-      if (!(ca.line1 && ca.town && ca.postcode && ca.country_code)) return J({ error_messages: ['No valid address source provided for from_address'] }, 400); made++; return J({ id: 550 + made, shipments: [1, 2, 3], document_url: 'https://forms.example/sf' + made + '.pdf' }); }
+      if (!(ca.line1 && ca.town && ca.postcode && ca.country_code)) return J({ error_messages: ['No valid address source provided for from_address'] }, 400); made++;
+      // Owner: "Veeqo always gives us two scan forms every time" — the answer holds 2 manifests (the same link twice is one form).
+      return J({ id: 550 + made, shipments: [1, 2, 3], manifests: [{ document_url: 'https://forms.example/sf' + made + 'a.pdf' }, { document_url: 'https://forms.example/sf' + made + 'b.pdf' }, { label_url: 'https://forms.example/sf' + made + 'a.pdf' }] }); }
     // Which carriers have shipments not on a form yet (owner's 2nd screenshot): PUT /shipping/api/v1/scan_forms/unmanifested.
     if (u.endsWith('api.veeqo.com/shipping/api/v1/scan_forms/unmanifested') && m === 'PUT') return J({ carriers: none ? [] : [{ carrier_id: 'amazon_shipping_v2__USPS', carrier_name: 'amazon_shipping_v2__USPS', unmanifested_shipment_location_list: [{ address: { address_line1: '499 Bridgeton Pike', address_line2: '', city: 'Mullica Hill', company_name: null, country_code: 'US', name: 'XFITTING', postal_code: '08062-3712', state_or_region: null }, last_manifest_date: null }] }], error_messages: [] });
     if (/api\.veeqo\.com\/warehouses/.test(u)) return J([{ id: 54, name: 'Old', address_line_1: '1 Other Rd' }, { id: 55, name: 'Main', address_line_1: '499 Bridgeton Pike' }]);
-    if (u.startsWith('https://forms.example/')) return new Response('%PDF-1.4 scan form', { headers: { 'Content-Type': 'application/pdf' } });
+    if (u.startsWith('https://forms.example/')) return new Response('%PDF-1.4 scan form ' + u.split('/').pop(), { headers: { 'Content-Type': 'application/pdf' } });
     if (u.includes('api.veeqo.com/')) return J({ error: 'not found' }, 404);
     return new Response('{}', { status: 401 }); };
   let none = false;
@@ -2518,6 +2520,13 @@ console.log('\nAuto Label → 📄 USPS scan form: Mon–Fri 4:30 pm, Sat 1:45 p
   none = true; refuse = false; const mk0 = made; const nw = await post('/veeqo/autolabel/scanform-make', {});
   check('…Veeqo says no carrier has labels waiting (unmanifested = none) → "No labels waiting for a scan form", nothing sent to make one, on record', nw.ok === false && nw.nothing === true && /No labels waiting for a scan form/.test(nw.error) && made === mk0 && nw.tried.length === 1, nw);
   none = false;
+  const sfRow = rows().find(r => r.slot === '2026-10-07 16:30');
+  const p0 = await call('/veeqo/autolabel/scanform-file?id=' + sfRow.id + '&n=0', { headers: H }), p1 = await call('/veeqo/autolabel/scanform-file?id=' + sfRow.id + '&n=1', { headers: H }), p2 = await call('/veeqo/autolabel/scanform-file?id=' + sfRow.id + '&n=2', { headers: H });
+  const t0 = await p0.text(), t1 = await p1.text(), lst2 = await get('/veeqo/autolabel/scanforms');
+  const ph2 = readFileSync0(fileURLToPath(new URL('../packship.html', import.meta.url)), 'utf8');
+  check('📄 Veeqo gives TWO scan forms in one answer → both are kept and printed: form 1 and form 2 are different PDFs, there is no 3rd (the same link twice is one form), the list says 2, and the page prints every part',
+    h.parts === 2 && /sf\d+a\.pdf/.test(t0) && /sf\d+b\.pdf/.test(t1) && t0 !== t1 && p2.status === 404 && (lst2.forms.find(f => f.id === sfRow.id) || {}).parts === 2 && !('source' in lst2.forms[0])
+      && /for \(var n = 0; n < Math\.max\(1, parts \|\| 1\); n\+\+\)/.test(ph2) && /psAlScanFormPrint\(fl\[k\]\.id, null, fl\[k\]\.parts \|\| 1\)/.test(ph2) && /psAlScanFormPrint\(todo\[i\]\.id, null, todo\[i\]\.parts \|\| 1\)/.test(ph2), { parts: h.parts, t0, t1, p2: p2.status });
   const lst = await get('/veeqo/autolabel/scanforms');
   check('…the list says the times and night check, and how many USPS labels are not on a form yet', lst.ok && lst.times === 'Mon-Fri 16:30; Sat 13:45' && lst.checkAt === '20:30' && Array.isArray(lst.missing.labels), lst.times);
   globalThis.fetch = realFetch; delete env.VEEQO_API_KEY; delete env.TEST_CLOCK;

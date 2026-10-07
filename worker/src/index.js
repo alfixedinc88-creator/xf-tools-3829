@@ -25994,6 +25994,14 @@ function autolabelFindFile(obj) { // a PDF link or base64 PDF anywhere in Veeqo'
   walk(obj, 0);
   return { urls, b64 };
 }
+// Owner: "Veeqo always gives two scan forms each time, we only print one" — Veeqo's answer can hold
+// several manifests (its docs: "may include multiple manifests"). Each PDF in it is one part; the
+// same file given twice (link + copy) is printed once.
+function autolabelScanFormParts(j) {
+  const f = autolabelFindFile(j);
+  const b64 = [...new Set(f.b64.map(x => x.replace(/\s+/g, '')))], urls = [...new Set(f.urls)];
+  return b64.length >= urls.length ? b64.map(x => ({ b64: x })) : urls.map(u => ({ url: u }));
+}
 function autolabelFileResp(body, type) { // a file with the same CORS headers as every Veeqo route
   const h = new Headers(veeqoResp({}).headers); h.set('Content-Type', type);
   return new Response(body, { headers: h });
@@ -26057,14 +26065,14 @@ async function autolabelScanFormCreate(env, kind, slot, by, when) {
     const j = mk.json || {};
     const n = Array.isArray(j.shipments) ? j.shipments.length : (j.shipment_count || j.shipments_count || j.count || null);
     const ins = await d1Run(env, `INSERT INTO scan_form_log (day, slot, kind, created_at, by_user, ok, carrier, veeqo_id, shipments, source, detail) VALUES (?,?,?,?,?,?,?,?,?,?,?)`,
-      [ny.date, slot || '', kind, now, by || 'auto', 1, mk.carrier, String(j.id || j.scan_form_id || (j.scan_form && j.scan_form.id) || ''), n, JSON.stringify(j).slice(0, 20000), JSON.stringify(tried).slice(0, 20000)]);
-    ids.push({ id: ins && ins.meta && ins.meta.last_row_id, carrier: mk.carrier, shipments: n });
+      [ny.date, slot || '', kind, now, by || 'auto', 1, mk.carrier, String(j.id || j.scan_form_id || (j.scan_form && j.scan_form.id) || ''), n, JSON.stringify(j).slice(0, 1500000), JSON.stringify(tried).slice(0, 20000)]);
+    ids.push({ id: ins && ins.meta && ins.meta.last_row_id, carrier: mk.carrier, shipments: n, parts: autolabelScanFormParts(j).length || 1 });
   }
   if (!made.length) await d1Run(env, `INSERT INTO scan_form_log (day, slot, kind, created_at, by_user, ok, detail) VALUES (?,?,?,?,?,?,?)`,
     [ny.date, slot || '', kind, now, by || 'auto', 0, JSON.stringify(tried).slice(0, 20000)]);
   const ok = made.length > 0;
   if (ok && kind === 'hand') await autolabelSetKey(env, AUTOLABEL_SCANFORM_VERIFIED_KEY, 'yes');
-  return { ok, id: ids[0] && ids[0].id, forms: ids, carrier: ids.map(x => x.carrier).join(' + '), shipments: ids.reduce((t, x) => t + (x.shipments || 0), 0) || null, tried,
+  return { ok, id: ids[0] && ids[0].id, forms: ids, parts: ids.reduce((t, x) => t + x.parts, 0), carrier: ids.map(x => x.carrier).join(' + '), shipments: ids.reduce((t, x) => t + (x.shipments || 0), 0) || null, tried,
     error: ok ? undefined : 'Veeqo did not make a scan form — what Veeqo said to each try is kept below (send it to Claude); make it in Veeqo: Settings → USPS Scan Forms' };
 }
 // USPS labels bought today (ours) after the last scan form that worked.
@@ -26988,7 +26996,8 @@ async function handleAutolabelRoute(path, method, url, request, env, session) {
     return veeqoResp({ ok: true, ...(await autolabelScanFormTick(env, when)) });
   }
   if (path === '/veeqo/autolabel/scanforms' && method === 'GET') {
-    const rows = await d1All(env, 'SELECT id, day, slot, kind, created_at, by_user, ok, carrier, veeqo_id, shipments, detail, printed_at, printed_by, print_count FROM scan_form_log ORDER BY id DESC LIMIT 60');
+    const rows = (await d1All(env, 'SELECT id, day, slot, kind, created_at, by_user, ok, carrier, veeqo_id, shipments, detail, printed_at, printed_by, print_count, source FROM scan_form_log ORDER BY id DESC LIMIT 60'))
+      .map(r => { let j = null; try { j = r.source ? JSON.parse(r.source) : null; } catch (_) {} const { source, ...rest } = r; return { ...rest, parts: r.ok && j ? (autolabelScanFormParts(j).length || 1) : 0 }; });
     const cfg = await autolabelLoadConfig(env);
     return veeqoResp({ ok: true, forms: rows, missing: await autolabelScanFormMissing(env), verified: (await autolabelGetKey(env, AUTOLABEL_SCANFORM_VERIFIED_KEY)) === 'yes',
       times: cfg.scanFormTimes, checkAt: cfg.scanFormCheckAt, on: cfg.scanFormOn });
@@ -26997,10 +27006,12 @@ async function handleAutolabelRoute(path, method, url, request, env, session) {
     const row = await d1First(env, 'SELECT * FROM scan_form_log WHERE id = ? AND ok = 1', [parseInt(url.searchParams.get('id')) || 0]);
     if (!row || !row.source) return veeqoResp({ ok: false, error: 'No scan form file' }, 404);
     let j = {}; try { j = JSON.parse(row.source); } catch (_) {}
-    const f = autolabelFindFile(j), tried = [];
-    if (f.b64.length) { const bin = atob(f.b64[0].replace(/\s+/g, '')); const u8 = new Uint8Array(bin.length); for (let i = 0; i < bin.length; i++) u8[i] = bin.charCodeAt(i); return autolabelFileResp(u8, 'application/pdf'); }
-    const cands = f.urls.slice(0, 4);
-    if (row.veeqo_id) cands.push(`${VEEQO_BASE}/shipping/api/v1/scan_forms/${row.veeqo_id}/reprint`, `${VEEQO_BASE}/shipping/api/v1/scan_forms/${row.carrier}/${row.veeqo_id}/reprint`, `${VEEQO_BASE}/shipping/api/v1/scan_forms/${row.veeqo_id}`);
+    const parts = autolabelScanFormParts(j), n = Math.max(0, parseInt(url.searchParams.get('n')) || 0), tried = [];
+    if (parts.length && n >= parts.length) return veeqoResp({ ok: false, error: `This scan form has ${parts.length} part(s)` }, 404);
+    const part = parts[n];
+    if (part && part.b64) { const bin = atob(part.b64); const u8 = new Uint8Array(bin.length); for (let i = 0; i < bin.length; i++) u8[i] = bin.charCodeAt(i); return autolabelFileResp(u8, 'application/pdf'); }
+    const cands = part ? [part.url] : [];
+    if (row.veeqo_id && n === 0) cands.push(`${VEEQO_BASE}/shipping/api/v1/scan_forms/${row.veeqo_id}/reprint`, `${VEEQO_BASE}/shipping/api/v1/scan_forms/${row.carrier}/${row.veeqo_id}/reprint`, `${VEEQO_BASE}/shipping/api/v1/scan_forms/${row.veeqo_id}`);
     for (const u of cands) {
       try {
         const r = await fetch(u, { headers: /api\.veeqo\.com/.test(u) ? { 'x-api-key': (env.VEEQO_API_KEY || '').trim(), 'Accept': 'application/pdf, application/json' } : { 'Accept': 'application/pdf, */*' } });
