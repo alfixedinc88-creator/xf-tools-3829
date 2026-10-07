@@ -1892,6 +1892,8 @@ async function reorderVendorOrder(env, url) {
     const o = bySku[s] = bySku[s] || { units: 0, caseQty: 0, vendor: '', name: '', vendors: new Set() };
     if (r.vendor) o.vendors.add(reorderVendorName(r.vendor));
     o.units += (parseFloat(r.cases) || 0) * (parseFloat(r.units_per_case) || 0) / pack(s);
+    // Cases with no Ea/Case in SKU Mgr have no known pieces → can't be counted; shown in red on the row, never silent.
+    if ((parseFloat(r.cases) || 0) > 0 && !((parseFloat(r.units_per_case) || 0) > 0)) o.noEaCases = (o.noEaCases || 0) + parseFloat(r.cases);
     o.caseQty = Math.max(o.caseQty, (parseFloat(r.units_per_case) || 0) / pack(s));
     if (!o.vendor && r.vendor) o.vendor = reorderVendorName(r.vendor);
     if (!o.name && r.name) o.name = String(r.name).trim();
@@ -1958,7 +1960,11 @@ async function reorderVendorOrder(env, url) {
       const demandPcs = t.demand, monthlyPcs = demandPcs / months;
       const ownPcs = sm.units * ps;
       let otherPcs = 0, otherIncPcs = 0;
-      [...bo.skus].forEach(s => { if (s !== t.sku && !fbaSkuSet.has(s) && bySku[s]) otherPcs += bySku[s].units * pack(s); });
+      const otherList = [];
+      [...bo.skus].forEach(s => { if (s !== t.sku && !fbaSkuSet.has(s) && bySku[s]) { otherPcs += bySku[s].units * pack(s); if (bySku[s].units > 0) otherList.push({ sku: s, pcs: bySku[s].units * pack(s) }); } });
+      // Owner: "we still have a lot of 201-5-4=OLD but it says order more" — every other pack counted is named on the row,
+      // and any spot of this part (or its other packs) with cases but no Ea/Case is shown as NOT counted.
+      const noEa = [...bo.skus].filter(s => bySku[s] && bySku[s].noEaCases > 0 && (s === t.sku || !fbaSkuSet.has(s))).map(s => ({ sku: s, cases: Math.round(bySku[s].noEaCases * 100) / 100 }));
       // On the way (every imported title): this part # and its share of any
       // other pack of the part on the way always count (new stock ordered in
       // a pack size with no FBA listing is still stock of this part); other
@@ -2014,6 +2020,8 @@ async function reorderVendorOrder(env, url) {
       if (/^family /.test(caseSrc)) notes.push(`Case size from the same item: ${caseSrc.slice(7)}, ${Math.round(casePcs * 1000) / 1000} pcs a box`);
       if (!t.fbaSku) notes.push('No FBA listing — best-selling pack');
       if (!countOtherPacks && otherPcs > 0) notes.push(`${Math.round(otherPcs)} pcs in other packs of ${b} not counted`);
+      if (countOtherPacks && otherPcs > 0) notes.push(`${Math.round(otherPcs)} pcs of other packs on the shelf subtracted (${otherList.map(o => o.sku + ' ' + Math.round(o.pcs)).join(', ')} pcs${share < 1 ? `; this row's ${Math.round(share * 100)}% share, by sales` : ''})`);
+      if (noEa.length) notes.push(`⚠ NOT counted (no Ea/Case in SKU Mgr): ${noEa.map(x => x.sku + ' ' + x.cases + ' case' + (x.cases === 1 ? '' : 's')).join(', ')} — set Ea/Case in SKU Mgr`);
       if (otherIncPcs > 0) notes.push(`${Math.round(otherIncPcs)} pcs on the way in other packs of ${b} subtracted` + (share < 1 ? ` (this row's ${Math.round(share * 100)}% share, by sales)` : ''));
       if (incUnits > 0) notes.push(`${Math.round(incUnits)} on the way subtracted`);
       Object.entries(sameAsin[t.sku] || {}).forEach(([fs, x]) => notes.push(`Incl. ${Math.round(x.units)} sold FBM as ${fs} (same ASIN ${x.asin})`));
@@ -2038,6 +2046,7 @@ async function reorderVendorOrder(env, url) {
         casePcs: casePcs > 0 ? Math.round(casePcs * 1000) / 1000 : null,
         soldPcs: Math.round(demandPcs), monthlyPcs: Math.round(monthlyPcs * 10) / 10,
         stockUnits: Math.round(sm.units * 100) / 100, stockPcs: Math.round(ownPcs), otherPackPcs: Math.round(otherPcs),
+        otherPacks: otherList.map(o => ({ sku: o.sku, pcs: Math.round(o.pcs * share) })), noEa,
         fbaPcs: Math.round(t.fbaAvailPieces), needUnits, caseQty, cases, orderUnits, note: notes.join(' · '),
         // 🔥 Owner: "anything in the order we almost sold out, warn the vendor to ship it first — our order sometimes
         // ships in 2 containers, the urgent one must be in the first". Days the stock counted above lasts at this
