@@ -3835,5 +3835,48 @@ console.log('\n🔒 Save this design (every tab, Owner only, kept with the date,
   sq.prepare('DELETE FROM cred_users WHERE id = ?').run(Number(ow.lastInsertRowid));
 }
 
+// Owner (2026-10-07, EFF_PO CSV): "201-2-12 sold ~7,000 pcs, we have 1,000,000+, it still says buy 2,270,000". The older weeks of sales
+// (history import) were stored in PIECES, the weekly import in units: 201-2-12=500 eBay 3 in 30 d but "2,509" in the 60 d before.
+// The check finds those weeks, the Owner converts them to units (÷ pack) with Undo, and the order comes out right.
+console.log('\nReorder: sales history stored in pieces is found and fixed (201-2-12=500 case)');
+{
+  const day = n => new Date(Date.now() - n * 86400000).toISOString().slice(0, 10), end = n => new Date(Date.now() - n * 86400000 + 7 * 86400000).toISOString();
+  const S = ['214-2-12=500', '214-2-13=100', '214-5-4=50'], P = [500, 100, 50];
+  const ins = sq.prepare('INSERT OR REPLACE INTO ebay_sales_weekly (sku, period_start, period_end, units_ordered) VALUES (?,?,?,?)');
+  // newest 4 weeks (weekly import, units): 1 lot a week each; 3 older weeks stored in pieces (1 lot = 500 / 100 / 50); one older week in units.
+  for (const n of [7, 14, 21, 28]) S.forEach(k => ins.run(k, day(n), end(n), 1));
+  for (const n of [42, 49, 56]) S.forEach((k, i) => ins.run(k, day(n), end(n), P[i]));
+  S.forEach(k => ins.run(k, day(63), end(63), 1));
+  sq.prepare("INSERT INTO fba_catalog (sku, asin, product_name, available) VALUES ('214-2-12=500','B0J1',' ring',0)").run();
+  const fam = async () => (((await get('/reorder/vendor-order?days=90&lead=3&cover=3')).rows || []).find(r => r.sku === '214-2-12=500') || {}).calc || {};
+  const before = await fam();
+  check('before: 214-2-12 "sold" (4 + 3 × 500 + 1) lots × 500 = 752,500 pcs — the pieces weeks multiplied again', before.famSoldPcs === 752500, before.famSoldPcs);
+  const ck = await get('/reorder/fix/sales-check'), eb = (ck.tables || []).find(t => t.channel === 'eBay') || {};
+  check('📊 sales check flags exactly the 3 weeks stored in pieces (not the newest 4, not the older week in units)',
+    ck.ok && JSON.stringify(eb.flaggedWeeks) === JSON.stringify([day(56), day(49), day(42)]) && eb.flaggedRows >= 9 && !eb.weeks.find(w => w.start === day(63)).pieces, (eb.weeks || []).map(w => [w.start, w.score, w.pieces]));
+  const no = await post('/reorder/fix/sales-pieces-fix', { table: 'ebay_sales_weekly', weeks: eb.flaggedWeeks });
+  check('…only the Owner can change sales history', no.ok === false && /Only the Owner/.test(no.error), no);
+  const ol = await (await call('/auth/login', { method: 'POST', body: '{"username":"owner1","password":"password1"}' })).json();
+  const OH = { 'X-Cred-Token': ol.token, 'Content-Type': 'application/json' };
+  const opost = async (p, b) => (await (await call(p, { method: 'POST', headers: OH, body: JSON.stringify(b) })).json());
+  const fx = await opost('/reorder/fix/sales-pieces-fix', { table: 'ebay_sales_weekly', weeks: eb.flaggedWeeks });
+  const mine = sq.prepare(`SELECT units_ordered u FROM ebay_sales_weekly WHERE sku IN ('214-2-12=500','214-2-13=100','214-5-4=50') AND period_start IN (?,?,?)`).all(day(42), day(49), day(56));
+  check('Owner fix: 9 rows 1,950 → 9 units (500 ÷ 500, 100 ÷ 100, 50 ÷ 50 = 1 each), recorded in 🕘 History',
+    fx.ok && fx.changed >= 9 && mine.length === 9 && mine.every(r => r.u === 1) && !!sq.prepare("SELECT 1 FROM reorder_history WHERE action = 'sales_fix' AND detail LIKE '%changed to units%'").get(), [fx, mine.map(r => r.u)]);
+  const after = await fam();
+  check('…now 214-2-12 sold 4 + 3 + 1 = 8 lots × 500 = 4,000 pcs (was 752,500) → order for 6 months = 8,000 pcs, not 1.5 million',
+    after.famSoldPcs === 4000 && after.famTarget === 8000, [after.famSoldPcs, after.famTarget]);
+  const again = await opost('/reorder/fix/sales-pieces-fix', { table: 'ebay_sales_weekly', weeks: eb.flaggedWeeks });
+  const ck2 = await get('/reorder/fix/sales-check'), eb2 = (ck2.tables || []).find(t => t.channel === 'eBay') || {};
+  check('…never divided twice; the check shows nothing left to fix and how many rows were changed', again.changed === 0 && eb2.flaggedWeeks.length === 0 && eb2.fixedRows >= 9, [again.changed, eb2.flaggedWeeks, eb2.fixedRows]);
+  const un = await opost('/reorder/fix/sales-pieces-undo', { table: 'ebay_sales_weekly' });
+  const back = sq.prepare(`SELECT SUM(units_ordered) t FROM ebay_sales_weekly WHERE sku IN ('214-2-12=500','214-2-13=100','214-5-4=50') AND period_start IN (?,?,?)`).get(day(42), day(49), day(56)).t;
+  check('…Undo puts every old number back (1,950)', un.ok && un.undone >= 9 && back === 1950, [un, back]);
+  const { readFileSync: rf11 } = await import('node:fs');
+  const rh = rf11(fileURLToPath(new URL('../reorder.html', import.meta.url)), 'utf8');
+  check('page: red "sales history is stored in PIECES" box with Fix (owner) and Undo, checked on every ↻ Calculate', /rvoSalesCheck\(\);\n  \} catch/.test(rh) && /id="rvo-salescheck"/.test(rh) && /Fix: change them to units/.test(rh) && /function rvoSalesUndo\(table\)/.test(rh), null);
+  sq.exec("DELETE FROM ebay_sales_weekly WHERE sku IN ('214-2-12=500','214-2-13=100','214-5-4=50'); DELETE FROM fba_catalog WHERE sku = '214-2-12=500'; DELETE FROM sales_fix_backup");
+}
+
 console.log('\n' + (failed ? '❌ ' + failed + ' check(s) FAILED' : '✅ all ' + passed + ' checks passed') + '\n');
 process.exit(failed ? 1 : 0);

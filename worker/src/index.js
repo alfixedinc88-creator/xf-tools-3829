@@ -1031,6 +1031,98 @@ function reorderExtractPackSize(sku) {
   return m ? parseInt(m[1]) : 1;
 }
 
+// ── 📊 SALES HISTORY IN PIECES (owner 2026-10-07) ─────────────────────────
+// The weekly sales tables hold UNITS sold (bags / lots of the part #); the
+// planner turns them into pieces with the number after "=". Older weeks
+// (the one-time history import) were stored in PIECES — e.g. 201-2-12=500
+// on eBay: 3 sold in the last 30 days but "2,509" in the 60 days before,
+// which the planner read as 2,509 lots × 500 = 1,254,500 pcs. A week is
+// flagged when, for the part #s that sell, its units per day are about
+// "pack size" times their rate in the newest 4 weeks (the weekly import,
+// in units): median of ln(ratio) / ln(pack) ≥ 0.5 over ≥ 3 part #s with a
+// pack of 10 or more. The owner can convert flagged weeks to units
+// (÷ pack) — every row kept in sales_fix_backup, undo-able, in 🕘 History.
+const SALES_TABLES = [['amazon_sales_weekly', 'Amazon'], ['ebay_sales_weekly', 'eBay'], ['walmart_sales_weekly', 'Walmart'], ['shopify_sales_weekly', 'Shopify']];
+async function salesFixTables(env) {
+  await env.DB.prepare(`CREATE TABLE IF NOT EXISTS sales_fix_backup (id INTEGER PRIMARY KEY AUTOINCREMENT, tbl TEXT NOT NULL, sku TEXT NOT NULL, period_start TEXT NOT NULL,
+    units_before REAL, units_after REAL, fixed_at TEXT, by_user TEXT, undone_at TEXT)`).run();
+}
+const _salesDay = v => { const d = Date.parse(String(v || '').slice(0, 10)); return isNaN(d) ? null : d; };
+async function reorderSalesCheck(env) {
+  await salesFixTables(env);
+  const since = new Date(Date.now() - 400 * 86400000).toISOString().slice(0, 10), out = [];
+  for (const [tbl, channel] of SALES_TABLES) {
+    let rows; try { rows = (await env.DB.prepare(`SELECT sku, period_start, period_end, units_ordered FROM ${tbl} WHERE period_start >= ?`).bind(since).all()).results || []; } catch (_) { continue; }
+    if (!rows.length) continue;
+    const starts = [...new Set(rows.map(r => String(r.period_start).slice(0, 10)))].sort();
+    const newest = _salesDay(starts[starts.length - 1]), refFrom = newest - 27 * 86400000; // the newest 4 weekly imports
+    const refStarts = starts.filter(w => _salesDay(w) >= refFrom), refSpan = Math.max(7, (newest + 7 * 86400000 - _salesDay(refStarts[0])) / 86400000);
+    const refRate = {}; // sku → units per day in the newest weeks
+    rows.forEach(r => { if (_salesDay(r.period_start) >= refFrom) refRate[r.sku] = (refRate[r.sku] || 0) + (parseFloat(r.units_ordered) || 0) / refSpan; });
+    const fixed = new Set((await env.DB.prepare('SELECT sku, period_start FROM sales_fix_backup WHERE tbl = ? AND undone_at IS NULL').bind(tbl).all()).results.map(r => r.sku + '|' + r.period_start));
+    const byWeek = {}; rows.forEach(r => { const w = String(r.period_start).slice(0, 10); (byWeek[w] = byWeek[w] || []).push(r); });
+    const weeks = [];
+    for (const w of starts) {
+      if (_salesDay(w) >= refFrom) continue;
+      const vs = [], ex = [];
+      let units = 0, fixedRows = 0;
+      for (const r of byWeek[w]) {
+        const u = parseFloat(r.units_ordered) || 0; units += u;
+        if (fixed.has(r.sku + '|' + r.period_start)) fixedRows++;
+        const pk = reorderExtractPackSize(reorderCleanPart(r.sku)), ref = refRate[r.sku] || 0;
+        const days = r.period_end && _salesDay(r.period_end) ? Math.max(1, Math.round((_salesDay(r.period_end) - _salesDay(r.period_start)) / 86400000)) : 7;
+        if (pk >= 10 && ref > 0 && u > 0) { const x = (u / days) / ref; vs.push(Math.log(Math.max(x, 1e-6)) / Math.log(pk)); ex.push({ sku: r.sku, units: u, pack: pk, refPerWeek: Math.round(ref * 7 * 100) / 100 }); }
+      }
+      vs.sort((a, b) => a - b);
+      const score = vs.length ? vs[Math.floor(vs.length / 2)] : null;
+      ex.sort((a, b) => b.units * b.pack - a.units * a.pack);
+      weeks.push({ start: w, rows: byWeek[w].length, units: Math.round(units * 100) / 100, n: vs.length, score: score == null ? null : Math.round(score * 100) / 100,
+        pieces: vs.length >= 3 && score >= 0.5 && fixedRows < byWeek[w].length, fixedRows, examples: ex.slice(0, 3) });
+    }
+    const flagged = weeks.filter(w => w.pieces);
+    out.push({ table: tbl, channel, newestWeek: starts[starts.length - 1], refWeeks: refStarts.length, weeks, flaggedWeeks: flagged.map(w => w.start), flaggedRows: flagged.reduce((a, w) => a + w.rows, 0),
+      fixedRows: fixed.size });
+  }
+  return { ok: true, tables: out, flagged: out.reduce((a, t) => a + t.flaggedWeeks.length, 0) };
+}
+// POST { table, weeks:[period_start…] } — owner: those weeks' units ÷ pack (only part #s with a pack, "=N"); undo: put every kept row back.
+async function reorderSalesPiecesFix(env, b, who, undo) {
+  await salesFixTables(env);
+  const t = SALES_TABLES.find(x => x[0] === String(b.table || ''));
+  if (!t) return { ok: false, error: 'Unknown sales table' };
+  const now = new Date().toISOString();
+  if (undo) {
+    const kept = (await env.DB.prepare('SELECT * FROM sales_fix_backup WHERE tbl = ? AND undone_at IS NULL').bind(t[0]).all()).results || [];
+    const st = kept.map(k => env.DB.prepare(`UPDATE ${t[0]} SET units_ordered = ? WHERE sku = ? AND period_start = ?`).bind(k.units_before, k.sku, k.period_start));
+    for (let i = 0; i < st.length; i += 100) await env.DB.batch(st.slice(i, i + 100));
+    await env.DB.prepare('UPDATE sales_fix_backup SET undone_at = ? WHERE tbl = ? AND undone_at IS NULL').bind(now, t[0]).run();
+    await reorderLog(env, who, 'sales_fix_undo', t[1], `Undid the pieces → units fix of ${t[1]} sales: ${kept.length} rows back to what they were`);
+    return { ok: true, undone: kept.length };
+  }
+  const weeks = (Array.isArray(b.weeks) ? b.weeks : []).map(w => String(w).slice(0, 10)).filter(Boolean).slice(0, 200);
+  if (!weeks.length) return { ok: false, error: 'No weeks picked' };
+  const done = new Set((await env.DB.prepare('SELECT sku, period_start FROM sales_fix_backup WHERE tbl = ? AND undone_at IS NULL').bind(t[0]).all()).results.map(r => r.sku + '|' + r.period_start));
+  // Amazon rows saved under Amazon's own seller codes (no "=N") get the pack of the FBA part # with the same ASIN.
+  const isAmz = t[0] === 'amazon_sales_weekly', asinPack = {};
+  if (isAmz) ((await env.DB.prepare('SELECT sku, asin FROM fba_catalog').all().catch(() => ({ results: [] }))).results || [])
+    .forEach(f => { const pk = reorderExtractPackSize(reorderCleanPart(f.sku)); if (f.asin && pk > 1) asinPack[String(f.asin).trim()] = pk; });
+  let rows = [];
+  for (const w of weeks) rows = rows.concat((await env.DB.prepare(`SELECT sku, period_start, units_ordered${isAmz ? ', asin' : ''} FROM ${t[0]} WHERE substr(period_start, 1, 10) = ?`).bind(w).all()).results || []);
+  let changed = 0, skipped = 0, before = 0, after = 0; const st = [];
+  for (const r of rows) {
+    let pk = reorderExtractPackSize(reorderCleanPart(r.sku)); const u = parseFloat(r.units_ordered) || 0;
+    if (pk <= 1 && isAmz && r.asin && asinPack[String(r.asin).trim()]) pk = asinPack[String(r.asin).trim()];
+    if (done.has(r.sku + '|' + r.period_start) || pk <= 1 || !(u > 0)) { skipped++; continue; } // never twice; no pack in the SKU → left as is
+    const nu = Math.round(u / pk * 10000) / 10000;
+    st.push(env.DB.prepare('INSERT INTO sales_fix_backup (tbl, sku, period_start, units_before, units_after, fixed_at, by_user) VALUES (?,?,?,?,?,?,?)').bind(t[0], r.sku, r.period_start, u, nu, now, who));
+    st.push(env.DB.prepare(`UPDATE ${t[0]} SET units_ordered = ? WHERE sku = ? AND period_start = ?`).bind(nu, r.sku, r.period_start));
+    changed++; before += u; after += nu;
+  }
+  for (let i = 0; i < st.length; i += 100) await env.DB.batch(st.slice(i, i + 100));
+  await reorderLog(env, who, 'sales_fix', t[1], `${t[1]} sales of ${weeks.length} week(s) ${weeks[0]} … ${weeks[weeks.length - 1]} were in pieces: ${changed} rows changed to units (÷ pack): ${Math.round(before)} → ${Math.round(after * 100) / 100}; ${skipped} rows left as they were (no pack in the SKU, or already fixed). Undo keeps every old number.`);
+  return { ok: true, changed, skipped, before: Math.round(before * 100) / 100, after: Math.round(after * 100) / 100 };
+}
+
 async function reorderComputeRecommendations(env, days) {
   days = days || 90;
   const sinceDate = new Date(Date.now() - days * 86400000).toISOString().slice(0, 10);
@@ -7525,6 +7617,12 @@ const _app = {
       // 🏷 Barcode / vendor for any part # (owner: "search and add the barcode; merge the outside box and inside bag
       // UPC on one part #; set the vendor so it only shows under that vendor").
       if (url.pathname === '/reorder/fix/part-info' && method === 'GET') return _roResp(await reorderPartInfo(env, url.searchParams.get('part') || ''));
+      // 📊 Sales history stored in PIECES instead of units (owner 2026-10-07: "201-2-12 sold ~7,000 pcs, it says order 2,270,000").
+      if (url.pathname === '/reorder/fix/sales-check' && method === 'GET') return _roResp(await reorderSalesCheck(env));
+      if ((url.pathname === '/reorder/fix/sales-pieces-fix' || url.pathname === '/reorder/fix/sales-pieces-undo') && method === 'POST') {
+        if (!roCs || !(roCs.roles || []).includes('owner')) return _roResp({ ok: false, error: 'Only the Owner can change sales history' }, 403);
+        return _roResp(await reorderSalesPiecesFix(env, await request.json().catch(() => ({})), _roWho(roCs), url.pathname.endsWith('undo')));
+      }
       return _roResp({ ok: false, error: 'Not found' }, 404);
     }
     if (url.pathname === '/reorder/vendor-order' && method === 'GET') {
