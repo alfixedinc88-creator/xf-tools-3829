@@ -25964,6 +25964,16 @@ function autolabelNyNow(when) { // { day: 0-6, mins, date: 'YYYY-MM-DD' } in New
 const AUTOLABEL_SCANFORM_PATH = sc => `/shipping/api/v1/scan_forms/${encodeURIComponent(sc)}`;
 const AUTOLABEL_SCANFORM_BODIES = [() => ({}), () => ({ carrier: 'amazon_shipping_v2' }), () => ({ sub_carrier_id: 'USPS', carrier: 'amazon_shipping_v2' })];
 const AUTOLABEL_SCANFORM_CARRIERS = ['USPS'];
+// US state from a ZIP code's first 3 digits (Veeqo's pickup address came with state_or_region empty; 08062 → NJ).
+function autolabelZipState(zip) {
+  const z = parseInt(String(zip || '').replace(/\D/g, '').slice(0, 3), 10); if (!(z >= 5)) return '';
+  const R = [[5,5,'NY'],[6,9,'PR'],[10,27,'MA'],[28,29,'RI'],[30,38,'NH'],[39,49,'ME'],[50,54,'VT'],[55,55,'MA'],[56,59,'VT'],[60,69,'CT'],[70,89,'NJ'],[100,149,'NY'],
+    [150,196,'PA'],[197,199,'DE'],[200,205,'DC'],[206,219,'MD'],[220,246,'VA'],[247,268,'WV'],[270,289,'NC'],[290,299,'SC'],[300,319,'GA'],[320,349,'FL'],[350,369,'AL'],
+    [370,385,'TN'],[386,397,'MS'],[398,399,'GA'],[400,427,'KY'],[430,459,'OH'],[460,479,'IN'],[480,499,'MI'],[500,528,'IA'],[530,549,'WI'],[550,567,'MN'],[569,569,'DC'],
+    [570,577,'SD'],[580,588,'ND'],[590,599,'MT'],[600,629,'IL'],[630,658,'MO'],[660,679,'KS'],[680,693,'NE'],[700,714,'LA'],[716,729,'AR'],[730,749,'OK'],[750,799,'TX'],
+    [800,816,'CO'],[820,831,'WY'],[832,838,'ID'],[840,847,'UT'],[850,865,'AZ'],[870,884,'NM'],[889,898,'NV'],[900,961,'CA'],[967,968,'HI'],[970,979,'OR'],[980,994,'WA'],[995,999,'AK']];
+  const r = R.find(([lo, hi]) => z >= lo && z <= hi); return r ? r[2] : '';
+}
 // PUT /shipping/api/v1/scan_forms/unmanifested → { carriers: [...], error_messages } — the carriers
 // with shipments not on a scan form yet (owner's 2nd screenshot). Asked first: its USPS entry is
 // sent as the first body (Veeqo's own words for it), and "none waiting" is said plainly.
@@ -26009,20 +26019,23 @@ async function autolabelScanFormCreate(env, kind, slot, by, when) {
     .forEach(l => { if (l && l.address) jobs.push({ cid: String(c.carrier_id || c.carrier_name || ''), addr: l.address }); }));
   if (!jobs.length) jobs.push({ cid: '', addr: null }); // no address from Veeqo → the old tries, Veeqo's answer kept
   const noNulls = a => Object.fromEntries(Object.entries(a || {}).filter(([, v]) => v != null && v !== ''));
-  // Owner's test 5:19 pm: collection_address accepted, then 400 "No valid address source provided for
-  // from_address" → Veeqo wants where the from address comes from: our Veeqo warehouse (the one at this
-  // address) or a from_address. Every likely form is tried; a refused one makes nothing.
-  let whs = []; try { const w = await veeqoFetch(env, '/warehouses?page_size=100'); whs = Array.isArray(w) ? w : []; } catch (_) {}
-  const whFor = addr => { const line = String((addr && addr.address_line1) || '').toLowerCase().slice(0, 12);
-    return whs.find(w => line && JSON.stringify(w).toLowerCase().includes(line)) || (whs.length === 1 ? whs[0] : null); };
+  // Veeqo's docs (owner's screenshot of "Create a scan form" → Request Body, 2026-10-07):
+  // collection_address = { address_id } (a saved address) OR the full address in ITS field names —
+  // name, company, phone, email, line1, line2, town, postcode, country_code, county. The unmanifested
+  // answer uses other names (address_line1, city, postal_code, state_or_region …) — sending those as
+  // they were is why Veeqo said "No valid address source provided for from_address".
+  const scanFormAddr = (a, withCounty) => {
+    const o = { name: a.name, company: a.company_name || a.company || a.name, phone: a.phone_number || a.phone, email: a.email,
+      line1: a.address_line1 || a.line1, line2: a.address_line2 || a.line2, town: a.city || a.town, postcode: a.postal_code || a.postcode,
+      country_code: a.country_code || 'US', county: withCounty ? (a.state_or_region || a.county || autolabelZipState(a.postal_code || a.postcode)) : '' };
+    return Object.fromEntries(Object.entries(o).filter(([, v]) => v != null && String(v).trim() !== ''));
+  };
   for (const job of jobs) {
     const subs = ['USPS', ...(job.cid && job.cid !== 'USPS' ? [job.cid] : [])]; // the docs' example first, then Veeqo's own carrier id
-    const wh = whFor(job.addr), W = wh ? wh.id : null, a = job.addr;
-    tried.push({ carrier: 'warehouse?', path: '/warehouses', status: whs.length ? 200 : 0, said: wh ? `warehouse ${W} (${wh.name || ''})` : `no warehouse matched (${whs.length} found)` });
+    const a = job.addr;
     const bodies = !a ? AUTOLABEL_SCANFORM_BODIES : [
-      ...(W ? [() => ({ collection_address: { warehouse_id: W } }), () => ({ collection_address: a, warehouse_id: W }), () => ({ collection_address: { ...a, warehouse_id: W } }),
-               () => ({ collection_address: { warehouse_id: W, address: a } }), () => ({ collection_address: a, from_address: a, warehouse_id: W })] : []),
-      () => ({ collection_address: a, from_address: a }), () => ({ collection_address: { address: a } }), () => ({ collection_address: { address: a }, from_address: { address: a } }),
+      () => ({ collection_address: scanFormAddr(a, true) }),  // the docs' "withFullAddress" example, state from the ZIP when Veeqo has none
+      () => ({ collection_address: scanFormAddr(a, false) }), // …without the state, in case Veeqo looks it up itself
     ];
     let done = false;
     for (const carrier of subs) {
