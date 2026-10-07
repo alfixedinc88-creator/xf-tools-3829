@@ -9180,11 +9180,17 @@ window.psAlLoadScanForms = async function() {
       + '<td style="padding:4px 6px;border-bottom:1px solid var(--border);color:' + col + '">' + what
       + (!f.ok && f.kind !== 'locked' && f.kind !== 'night_missing' && f.detail ? '<details><summary>What Veeqo said</summary><pre style="white-space:pre-wrap;font-size:11px;user-select:text">' + e(f.detail) + '</pre><button class="ps-btn-sm" data-t="' + e(f.detail) + '" onclick="_psAlCopy(this.getAttribute(\'data-t\'), this)">📋 Copy</button></details>' : '') + '</td>'
       + '<td style="padding:4px 6px;border-bottom:1px solid var(--border);white-space:nowrap">' + (f.ok && f.kind !== 'night_ok' ? (f.printed_at ? '🖨 printed ' + e(new Date(f.printed_at).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })) + (f.print_count > 1 ? ' ×' + f.print_count : '') + ' ' : '<b style="color:var(--orange)">not printed</b> ')
-        + '<button class="ps-btn-sm" onclick="psAlScanFormPrint(' + f.id + ', this, ' + (f.parts || 1) + ')">' + (f.printed_at ? 'Reprint' : 'Print') + ((f.parts || 1) > 1 ? ' (' + f.parts + ' forms)' : '') + '</button>' : '') + '</td></tr>';
+        + '<button class="ps-btn-sm" onclick="psAlScanFormPrint(' + f.id + ', this, ' + (f.parts || 1) + ')">' + (f.printed_at ? 'Reprint' : 'Print') + ((f.parts || 1) > 1 ? ' (' + f.parts + ' forms)' : '') + '</button>'
+        + ' <button class="ps-btn-sm" title="What Veeqo sent back for this scan form — copy it to Claude" onclick="psAlScanFormAnswer(' + f.id + ')">🔎 Veeqo\'s answer</button>' : '') + '</td></tr>';
   }).join('') + '</table>' : '<div style="color:var(--text3)">No scan forms yet.</div>';
 };
 // Owner: "the scan form didn't work — it gave me a code but I can't copy it" (it was in a pop-up box).
 // Now the message stays on the page, in a box that can be selected, with 📋 Copy.
+// 🔎 Owner: "still only one scan form, but should have 2" — shows what Veeqo sent back (long files shortened), with 📋 Copy.
+window.psAlScanFormAnswer = async function(id) {
+  var d = await _psAlFetch('/veeqo/autolabel/scanform-answer?id=' + encodeURIComponent(id));
+  _psAlSfErr('🔎 Veeqo\'s answer for this scan form — ' + ((d.parts || []).length || 0) + ' form(s) found in it', d.ok === false ? (d.error || 'failed') : 'Forms found: ' + JSON.stringify(d.parts || []) + '\n\n' + JSON.stringify(d.answer, null, 1).slice(0, 12000));
+};
 window._psAlSfErr = function(title, text) {
   var box = document.getElementById('ps-al-sf-err'); if (!box) { alert(title + '\n' + text); return; }
   box.style.display = '';

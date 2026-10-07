@@ -26005,10 +26005,29 @@ function autolabelFindFile(obj) { // a PDF link or base64 PDF anywhere in Veeqo'
 // Owner: "Veeqo always gives two scan forms each time, we only print one" — Veeqo's answer can hold
 // several manifests (its docs: "may include multiple manifests"). Each PDF in it is one part; the
 // same file given twice (link + copy) is printed once.
+// Owner (2026-10-07): "still only one, should have 2 — Veeqo pops up two tabs". A form may also come as a
+// picture (PNG / JPEG) or a data: link, not only a PDF — every kind counts now.
 function autolabelScanFormParts(j) {
-  const f = autolabelFindFile(j);
-  const b64 = [...new Set(f.b64.map(x => x.replace(/\s+/g, '')))], urls = [...new Set(f.urls)];
-  return b64.length >= urls.length ? b64.map(x => ({ b64: x })) : urls.map(u => ({ url: u }));
+  const f = autolabelFindFile(j), b64 = [], seen = new Set();
+  const add = (x, type) => { x = x.replace(/\s+/g, ''); if (!seen.has(x)) { seen.add(x); b64.push({ b64: x, type }); } };
+  const walk = (v, d) => { if (d > 10 || v == null) return;
+    if (typeof v === 'string') {
+      const m = v.match(/^data:(application\/pdf|image\/png|image\/jpeg);base64,(.+)$/s); if (m) return add(m[2], m[1]);
+      if (v.length > 200) { if (/^JVBERi0/.test(v)) add(v, 'application/pdf'); else if (/^iVBORw0KGgo/.test(v)) add(v, 'image/png'); else if (/^\/9j\//.test(v)) add(v, 'image/jpeg'); }
+      return; }
+    if (Array.isArray(v)) return v.forEach(x => walk(x, d + 1));
+    if (typeof v === 'object') Object.values(v).forEach(x => walk(x, d + 1)); };
+  walk(j, 0);
+  const urls = [...new Set(f.urls)];
+  return b64.length >= urls.length ? b64 : urls.map(u => ({ url: u }));
+}
+// Veeqo's answer as kept, long files shortened — for 🔎 Veeqo's answer on the page.
+function autolabelShorten(v, d = 0) {
+  if (d > 12 || v == null) return v;
+  if (typeof v === 'string') return v.length > 300 ? `${v.slice(0, 40)}… (${v.length} characters)` : v;
+  if (Array.isArray(v)) return v.map(x => autolabelShorten(x, d + 1));
+  if (typeof v === 'object') return Object.fromEntries(Object.entries(v).map(([k, x]) => [k, autolabelShorten(x, d + 1)]));
+  return v;
 }
 function autolabelFileResp(body, type) { // a file with the same CORS headers as every Veeqo route
   const h = new Headers(veeqoResp({}).headers); h.set('Content-Type', type);
@@ -27017,7 +27036,7 @@ async function handleAutolabelRoute(path, method, url, request, env, session) {
     const parts = autolabelScanFormParts(j), n = Math.max(0, parseInt(url.searchParams.get('n')) || 0), tried = [];
     if (parts.length && n >= parts.length) return veeqoResp({ ok: false, error: `This scan form has ${parts.length} part(s)` }, 404);
     const part = parts[n];
-    if (part && part.b64) { const bin = atob(part.b64); const u8 = new Uint8Array(bin.length); for (let i = 0; i < bin.length; i++) u8[i] = bin.charCodeAt(i); return autolabelFileResp(u8, 'application/pdf'); }
+    if (part && part.b64) { const bin = atob(part.b64); const u8 = new Uint8Array(bin.length); for (let i = 0; i < bin.length; i++) u8[i] = bin.charCodeAt(i); return autolabelFileResp(u8, part.type || 'application/pdf'); }
     const cands = part ? [part.url] : [];
     if (row.veeqo_id && n === 0) cands.push(`${VEEQO_BASE}/shipping/api/v1/scan_forms/${row.veeqo_id}/reprint`, `${VEEQO_BASE}/shipping/api/v1/scan_forms/${row.carrier}/${row.veeqo_id}/reprint`, `${VEEQO_BASE}/shipping/api/v1/scan_forms/${row.veeqo_id}`);
     for (const u of cands) {
@@ -27030,6 +27049,13 @@ async function handleAutolabelRoute(path, method, url, request, env, session) {
       } catch (e) { tried.push({ url: u, error: String(e.message || e).slice(0, 200) }); }
     }
     return veeqoResp({ ok: false, error: 'Veeqo did not give the scan form file — reprint it in Veeqo: Settings → USPS Scan Forms', tried }, 502);
+  }
+  // 🔎 Veeqo's answer for one scan form (long files shortened) — to see how Veeqo sends its forms.
+  if (path === '/veeqo/autolabel/scanform-answer' && method === 'GET') {
+    const row = await d1First(env, 'SELECT id, source FROM scan_form_log WHERE id = ?', [parseInt(url.searchParams.get('id')) || 0]);
+    let j = null; try { j = row && row.source ? JSON.parse(row.source) : null; } catch (_) {}
+    if (!j) return veeqoResp({ ok: false, error: 'No answer kept for this scan form' }, 404);
+    return veeqoResp({ ok: true, id: row.id, parts: autolabelScanFormParts(j).map(p => p.url ? 'link ' + p.url.replace(/([?&](X-Amz-[^=]+|signature|token)=)[^&]+/gi, '$1…') : (p.type || 'file') + ' (' + p.b64.length + ' characters)'), answer: autolabelShorten(j) });
   }
   if (path === '/veeqo/autolabel/scanform-printed' && method === 'POST') {
     const b = await request.json().catch(() => ({}));

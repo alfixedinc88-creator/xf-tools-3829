@@ -2527,6 +2527,15 @@ console.log('\nAuto Label → 📄 USPS scan form: Mon–Fri 4:30 pm, Sat 1:45 p
   check('📄 Veeqo gives TWO scan forms in one answer → both are kept and printed: form 1 and form 2 are different PDFs, there is no 3rd (the same link twice is one form), the list says 2, and the page prints every part',
     h.parts === 2 && /sf\d+a\.pdf/.test(t0) && /sf\d+b\.pdf/.test(t1) && t0 !== t1 && p2.status === 404 && (lst2.forms.find(f => f.id === sfRow.id) || {}).parts === 2 && !('source' in lst2.forms[0])
       && /for \(var n = 0; n < Math\.max\(1, parts \|\| 1\); n\+\+\)/.test(ph2) && /psAlScanFormPrint\(fl\[k\]\.id, null, fl\[k\]\.parts \|\| 1\)/.test(ph2) && /psAlScanFormPrint\(todo\[i\]\.id, null, todo\[i\]\.parts \|\| 1\)/.test(ph2), { parts: h.parts, t0, t1, p2: p2.status });
+  // Owner: "still only one scan form, should have 2 (Veeqo pops up two tabs)" — a form can also come as a picture or a data: link.
+  const wsP = readFileSync0(workerPath, 'utf8');
+  const partsFn = new Function((wsP.match(/function autolabelFindFile[\s\S]*?\n\}/) || [''])[0] + '\n' + (wsP.match(/function autolabelScanFormParts[\s\S]*?\n\}/) || [''])[0] + '\n' + (wsP.match(/function autolabelShorten[\s\S]*?\n\}/) || [''])[0] + '; return [autolabelScanFormParts, autolabelShorten];')();
+  const pdf64 = 'JVBERi0xLjQK' + 'A'.repeat(400), png64 = 'iVBORw0KGgo' + 'B'.repeat(400);
+  const pp = partsFn[0]({ manifests: [{ document: pdf64 }, { image: 'data:image/png;base64,' + png64 }, { copy: pdf64 }], tracking_url: 'https://tools.usps.com/track?x' });
+  const sh = partsFn[1]({ a: pdf64, b: 'short' });
+  check('…a form sent as a PDF and one as a picture (PNG, data: link) → 2 forms (the same PDF twice is one), each printed as what it is; 🔎 Veeqo\'s answer shows the reply with long files shortened, with 📋 Copy',
+    pp.length === 2 && pp[0].type === 'application/pdf' && pp[1].type === 'image/png' && /^JVBERi0xLjQKA{28}… \(412 characters\)$/.test(sh.a) && sh.b === 'short'
+      && /path === '\/veeqo\/autolabel\/scanform-answer'/.test(wsP) && /onclick="psAlScanFormAnswer\(' \+ f\.id \+ '\)"/.test(ph2), { pp: pp.map(x => x.type), sh });
   const lst = await get('/veeqo/autolabel/scanforms');
   check('…the list says the times and night check, and how many USPS labels are not on a form yet', lst.ok && lst.times === 'Mon-Fri 16:30; Sat 13:45' && lst.checkAt === '20:30' && Array.isArray(lst.missing.labels), lst.times);
   globalThis.fetch = realFetch; delete env.VEEQO_API_KEY; delete env.TEST_CLOCK;
