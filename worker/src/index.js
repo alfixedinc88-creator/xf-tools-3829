@@ -1991,17 +1991,15 @@ async function reorderVendorOrder(env, url) {
       if (picks[t.sku] && vendors.has(picks[t.sku])) { vendor = picks[t.sku]; vendorSrc = 'this order'; }
       // Description / UPCs / carton from the chosen vendor's info sheet.
       const ct = (catAll[t.sku] || []).find(c => vn(c.vendor) === vendor) || cat[t.sku] || {};
-      // Case qty in units of this part #: a fix wins, then SKU Mgr, then the
-      // vendor sheet's carton (EFF "Master carton (pcs)" is pieces → ÷ pack).
+      // Case qty in units of this part #: a fix wins, then SKU Mgr. Owner (2026-10-07): "pieces per case from
+      // SKU Mgr's box info only — the vendor sheet isn't right; order and round up by SKU Mgr's pieces per case".
       let caseQty = parseFloat(fx.case_qty) || sm.caseQty || 0, caseSrc = fx.case_qty ? 'fix' : sm.caseQty ? 'SKU Mgr' : '';
-      if (!caseQty && parseFloat(ct.case_pcs) > 0) { caseQty = Math.max(1, Math.round(parseFloat(ct.case_pcs) / ps)); caseSrc = 'vendor sheet'; }
-      // 👪 No case size for this exact part # → the family's (SKU Mgr Each/Case, then a vendor sheet carton):
+      // 👪 No case size for this exact part # → the family's SKU Mgr Each/Case (never a vendor sheet):
       // same pack number first (=10 for =10X), then the biggest box. Pieces per case stay the family's pieces.
       let casePcs = caseQty > 0 ? caseQty * ps : 0;
       if (!caseQty) {
         const fam = [...bo.skus].filter(k => k !== t.sku && bySku[k] && bySku[k].caseQty > 0).map(k => ({ k, same: pack(k) === ps, pcs: bySku[k].caseQty * pack(k), src: 'SKU Mgr' }))
-          .concat(famOf(b, t.sku).filter(f => cat[f.k] && parseFloat(cat[f.k].case_pcs) > 0).map(f => ({ k: f.k, same: f.same, pcs: parseFloat(cat[f.k].case_pcs), src: 'vendor sheet', late: 1 })))
-          .sort((x, y) => (y.same - x.same) || ((x.late || 0) - (y.late || 0)) || (y.pcs - x.pcs));
+          .sort((x, y) => (y.same - x.same) || (y.pcs - x.pcs));
         if (fam.length) { casePcs = fam[0].pcs; caseQty = Math.max(1, Math.round(casePcs / ps)); caseSrc = 'family ' + fam[0].k + ' (' + fam[0].src + ')'; }
       }
       let orderUnits = needUnits, cases = null, notes = [];

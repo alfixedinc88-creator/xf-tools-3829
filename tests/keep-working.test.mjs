@@ -3464,5 +3464,21 @@ console.log('\nReorder vendor CSV: family price + pieces per case when the exact
   sq.exec("DELETE FROM master_list WHERE base_sku = '89-1-2'; DELETE FROM ebay_sales_weekly WHERE sku IN ('89-1-2=10X', '89-5-5=10')");
 }
 
+// Owner (2026-10-07): "pieces per case (original box) from SKU Mgr's box info, not the vendor sheet (not right); order and round up
+// by SKU Mgr's pieces per case".
+console.log('\nReorder: case size only from SKU Mgr, never the vendor sheet');
+{
+  const wk = new Date(Date.now() - 14 * 86400000).toISOString().slice(0, 10);
+  sq.prepare("INSERT INTO ebay_sales_weekly (sku, period_start, units_ordered) VALUES ('89-7-7=10',?,60), ('89-8-8=10',?,60)").run(wk, wk);
+  // 89-7-7=10: SKU Mgr box 300 pcs, vendor sheet says 1000 → 300. 89-8-8=10: only a vendor sheet carton (500) → not used.
+  sq.prepare("INSERT INTO master_list (base_sku, name, part_num, location, cases, units_per_case) VALUES ('89-7-7','cap','89-7-7=10','C1=8-7-1',0,300)").run();
+  sq.prepare("INSERT INTO reorder_vendor_catalog (vendor, part, case_pcs, updated_at) VALUES ('JQ','89-7-7=10',1000,?), ('JQ','89-8-8=10',500,?)").run(wk, wk);
+  const d = await get('/reorder/vendor-order?days=90&lead=3&cover=3');
+  const a = (d.rows || []).find(x => x.sku === '89-7-7=10') || {}, b = (d.rows || []).find(x => x.sku === '89-8-8=10') || {};
+  check('SKU Mgr box 300 pcs (vendor sheet says 1000) → 30 bags a case, 300 pcs per case; 120 needed → 4 cases = 120', a.casePcs === 300 && a.caseQty === 30 && a.caseSrc === 'SKU Mgr' && a.orderUnits === 120, [a.casePcs, a.caseQty, a.caseSrc, a.orderUnits]);
+  check('…only a vendor sheet carton (89-8-8=10) → not used: no case size, not rounded (120 exactly)', !b.caseQty && !b.casePcs && b.orderUnits === 120 && /not rounded/.test(b.note), [b.caseQty, b.casePcs, b.orderUnits]);
+  sq.exec("DELETE FROM master_list WHERE base_sku = '89-7-7'; DELETE FROM ebay_sales_weekly WHERE sku IN ('89-7-7=10', '89-8-8=10'); DELETE FROM reorder_vendor_catalog WHERE part IN ('89-7-7=10', '89-8-8=10')");
+}
+
 console.log('\n' + (failed ? '❌ ' + failed + ' check(s) FAILED' : '✅ all ' + passed + ' checks passed') + '\n');
 process.exit(failed ? 1 : 0);
