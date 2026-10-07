@@ -2172,6 +2172,8 @@ body { display:flex; flex-direction:column; min-height:100vh; background:var(--b
         <div id="rvo-hist" style="max-height:320px;overflow:auto"></div></details>
       <details id="rvo-fixes-box" style="margin-bottom:10px" ontoggle="if(this.open)rvoLoadFixes()"><summary style="font-size:12px;color:var(--text2);cursor:pointer;font-weight:700">📝 Saved fixes <span id="rvo-fixes-n"></span></summary><div id="rvo-fixes" style="margin-top:6px"></div></details>
       <div class="sales-section-sub" id="rvo-summary" style="margin-bottom:8px"></div>
+      <!-- 📊 Sales history stored in pieces instead of units (makes orders far too big) — found and fixed here -->
+      <div id="rvo-salescheck" style="display:none;margin-bottom:8px"></div>
       <div id="rvo-savebar" style="display:none;position:sticky;top:0;z-index:5;align-items:center;gap:10px;flex-wrap:wrap;background:#fffbeb;border:1px solid #fcd34d;border-radius:8px;padding:8px 12px;margin-bottom:8px;font-size:13px">
         <span id="rvo-savebar-txt"></span><span style="flex:1"></span>
         <button class="btn" style="font-size:12px" onclick="rvoInlDiscard()">✖ Discard</button>
@@ -3997,7 +3999,44 @@ async function rvoLoad() {
     g('rvo-cat').innerHTML = (d.catalog || []).length ? d.catalog.map(function (c) { return '<b>' + escHtml(c.vendor) + '</b> ' + fmt0(c.n) + ' part #s <span style="opacity:.7">(' + escHtml(String(c.at || '').slice(0, 10)) + ')</span>'; }).join(' · ') : 'none imported yet — import JQ / EFF info sheets for descriptions, UPCs and FBA ASINs';
     rvoRender();
     rvoLoadTitles();
+    rvoSalesCheck();
   } catch (e) { g('rvo-wrap').innerHTML = '<div style="padding:20px;color:var(--red);font-size:13px">✗ ' + escHtml(e.message) + '</div>'; }
+}
+// 📊 Owner (2026-10-07): "201-2-12 sold ~7,000 pcs, we have 1,000,000+, it still says buy a lot". The older weeks of sales
+// (the history import) were stored in PIECES, the weekly import in units → the planner multiplied pieces by the pack again.
+// The server finds those weeks; the Owner turns them into units with one tap (old numbers kept, Undo, 🕘 History).
+function rvoSalesCheck() {
+  var box = document.getElementById('rvo-salescheck'); if (!box) return;
+  wFetch(W + '/reorder/fix/sales-check').then(function (r) { return r.json(); }).then(function (d) {
+    if (!d || !d.ok) { box.style.display = 'none'; return; }
+    var bad = d.tables.filter(function (t) { return t.flaggedWeeks.length; }), fixed = d.tables.filter(function (t) { return t.fixedRows; });
+    if (!bad.length && !fixed.length) { box.style.display = 'none'; box.innerHTML = ''; return; }
+    var e = escHtml, n = function (v) { return (Math.round(v || 0)).toLocaleString('en-US'); };
+    box.style.display = 'block';
+    box.innerHTML = (bad.length ? '<div style="border:2px solid var(--red);background:#fef2f2;border-radius:10px;padding:10px 12px;font-size:13px">'
+      + '<div style="font-weight:800;color:var(--red);margin-bottom:4px">⚠ Some sales history is stored in PIECES, not units — that makes orders far too big</div>'
+      + bad.map(function (t) {
+        var ws = t.weeks.filter(function (w) { return w.pieces; }), ex = [].concat.apply([], ws.map(function (w) { return w.examples; })).sort(function (a, b) { return b.units * b.pack - a.units * a.pack; }).slice(0, 3);
+        return '<div style="margin:6px 0"><b>' + e(t.channel) + '</b>: ' + ws.length + ' week(s) ' + e(ws[0].start) + ' … ' + e(ws[ws.length - 1].start) + ' (' + n(t.flaggedRows) + ' rows). '
+          + 'E.g. ' + ex.map(function (x) { return '<span style="font-family:var(--mono)">' + e(x.sku) + '</span> ' + n(x.units) + ' that week (now ~' + x.refPerWeek + ' a week) = ' + n(x.units * x.pack) + ' pcs if read as units'; }).join('; ')
+          + ' <button class="btn btn-primary" style="font-size:12px;padding:4px 10px;margin-left:6px" onclick="rvoSalesFix(\'' + t.table + '\', ' + escHtml(JSON.stringify(t.flaggedWeeks)).replace(/"/g, '&quot;') + ')">Fix: change them to units (÷ pack)</button></div>';
+      }).join('') + '<div style="font-size:11px;color:var(--text3)">Owner only. Every old number is kept (Undo) and the change goes into 🕘 History. Then press ↻ Calculate.</div></div>' : '')
+      + fixed.map(function (t) { return '<div style="font-size:12px;color:#047857;margin-top:4px">✅ ' + e(t.channel) + ': ' + n(t.fixedRows) + ' sales rows were changed from pieces to units. <button class="btn btn-secondary" style="font-size:11px;padding:2px 8px" onclick="rvoSalesUndo(\'' + t.table + '\')">Undo</button></div>'; }).join('');
+  }).catch(function () { box.style.display = 'none'; });
+}
+function rvoSalesFix(table, weeks) {
+  if (!confirm('Change ' + weeks.length + ' week(s) of sales history from pieces to units (each SKU ÷ its pack size)?\n\nThe old numbers are kept — you can Undo.')) return;
+  wFetch(W + '/reorder/fix/sales-pieces-fix', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ table: table, weeks: weeks }) }).then(function (r) { return r.json(); }).then(function (d) {
+    if (!d.ok) { alert('✗ ' + (d.error || 'Not changed')); return; }
+    alert('✓ ' + d.changed + ' rows changed to units (' + Math.round(d.before) + ' → ' + d.after + ').' + (d.skipped ? ' ' + d.skipped + ' left as they were.' : '') + '\nPress ↻ Calculate.');
+    rvoSalesCheck();
+  });
+}
+function rvoSalesUndo(table) {
+  if (!confirm('Put the old sales numbers back (undo the pieces → units fix)?')) return;
+  wFetch(W + '/reorder/fix/sales-pieces-undo', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ table: table }) }).then(function (r) { return r.json(); }).then(function (d) {
+    alert(d.ok ? '✓ ' + d.undone + ' rows put back.' : '✗ ' + (d.error || 'Not undone')); rvoSalesCheck();
+  });
 }
 // 🔍 Owner: "201-2-13 sold ~2,000 pcs in 90 days, 23 cases of 1,000 =OLD on the shelf, and it says order 700,000" —
 // every number behind a row, for the whole family (pieces), so a wrong one is easy to find.
