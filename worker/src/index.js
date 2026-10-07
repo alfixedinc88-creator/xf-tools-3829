@@ -1880,6 +1880,19 @@ async function reorderVendorOrder(env, url) {
     const m = await all(`SELECT MIN(period_start) AS m FROM ${t}`);
     if (m[0] && m[0].m && (!dataFrom || m[0].m < dataFrom)) dataFrom = m[0].m;
   }
+  // 📊 Owner (2026-10-07): "the sheet should also show 30 days and 90 days sales on each channel for each SKU" —
+  // units as stored (per sales SKU, part # corrected), always 30 and 90 days whatever window is picked, so a
+  // wrong sales number (e.g. a bulk listing) is easy to spot.
+  const since30 = new Date(Date.now() - 30 * 86400000).toISOString().slice(0, 10), since90 = new Date(Date.now() - 90 * 86400000).toISOString().slice(0, 10);
+  const ch3090 = {}; // part # → { Amazon: { u30, u90 }, eBay: …, Walmart: …, Shopify: … }
+  for (const [t, , label] of chans) {
+    for (const r of await all(`SELECT sku, SUM(CASE WHEN period_start >= ? THEN units_ordered ELSE 0 END) AS u30, SUM(units_ordered) AS u90 FROM ${t} WHERE period_start >= ? GROUP BY sku`, since30, since90)) {
+      const k = P(r.sku); if (!k) continue;
+      const c = (ch3090[k] = ch3090[k] || {})[label] = (ch3090[k] || {})[label] || { u30: 0, u90: 0 };
+      c.u30 += r.u30 || 0; c.u90 += r.u90 || 0;
+    }
+  }
+  const sales3090 = sku => { const o = {}, ps = pack(sku); Object.entries(ch3090[sku] || {}).forEach(([ch, c]) => { o[ch] = { u30: Math.round(c.u30 * 100) / 100, u90: Math.round(c.u90 * 100) / 100, p30: Math.round(c.u30 * ps), p90: Math.round(c.u90 * ps) }; }); return o; };
 
   // SKU Mgr: stock, case qty, vendor, name. SKU Mgr's Ea/Case is the total
   // PIECES in a case, whatever the bag size (27-2-2=10 and 27-2-2=2XX both
@@ -2083,7 +2096,10 @@ async function reorderVendorOrder(env, url) {
         calc: { months: Math.round(months * 10) / 10, horizon: H, famSoldPcs, famTarget: Math.round(famTarget), famHave: Math.round(famHave),
           famListings: famRows.map(x => ({ sku: x.sku, target: Math.round(x.target), have: Math.round(x.have), short: Math.round(x.short) })),
           famOtherShelf: Math.round(famOtherShelf), famOtherList, famOtherInc: Math.round(famOtherInc), famNeed: Math.round(famNeed),
-          rowNeedPcs: Math.round(needPcs), negative: negSkus },
+          rowNeedPcs: Math.round(needPcs), negative: negSkus,
+          // every part # of the family that sold, per channel, 30 / 90 days (units and pieces)
+          famSales: Object.keys(ch3090).filter(k => U(reorderGetBaseSku(k)) === b).sort().flatMap(k => Object.entries(sales3090(k)).filter(([, c]) => c.u90 > 0).map(([ch, c]) => ({ sku: k, ch, ...c }))).sort((x, y) => y.p90 - x.p90) }, // biggest first
+        sales: sales3090(t.sku),
       };
       row.issues = [];
       if (!reorderIsProperFormat(row.sku)) row.issues.push('Part # looks wrong');

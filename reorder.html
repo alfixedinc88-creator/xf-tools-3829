@@ -4012,6 +4012,7 @@ function rvoWhy(sku) {
     + '   • other packs on the shelf: ' + n(c.famOtherShelf) + (c.famOtherList.length ? ' (' + c.famOtherList.join(', ') + ')' : '') + '\n'
     + '   • other packs on the way: ' + n(c.famOtherInc) + '\n'
     + (c.negative.length ? '⚠ NEGATIVE cases in SKU Mgr, not counted: ' + c.negative.join(', ') + '\n' : '')
+    + ((c.famSales || []).length ? '\nSales by part # (units → pieces), 30 d / 90 d:\n' + c.famSales.map(function (x) { return '   • ' + x.sku + ' ' + x.ch + ': ' + n(x.u30) + ' / ' + n(x.u90) + ' units → ' + n(x.p30) + ' / ' + n(x.p90) + ' pcs'; }).join('\n') + '\n' : '')
     + '\nFamily needs to order: ' + n(c.famNeed) + ' pcs\n'
     + r.sku + ' gets: ' + n(c.rowNeedPcs) + ' pcs = ' + n(r.needUnits) + ' × ' + r.packSize + (r.cases ? ' → ' + r.cases + ' case(s) of ' + n(r.casePcs || r.caseQty * r.packSize) + ' pcs' : ''));
 }
@@ -5179,6 +5180,10 @@ function rvoCsv() {
   // pieces of this line = order qty × pack size, rounded up to whole cases of SKU Mgr's box, so
   // Order Qty (pieces) = Cases × Pieces per Case on every line that has a box size.
   var head = ['Priority', 'Part #', 'Outside Box UPC Code', 'Inside Bag UPC Code', 'Description', 'Order Qty (pieces)', 'Cases', 'Pieces per Case (original box)', 'Price per Piece', 'Line Total', 'Price Date', 'Note', 'FBA ASIN'];
+  // 📊 Owner: "include 30 days and 90 days sales on each channel for each SKU" (pieces = units × pack).
+  var CH = ['Amazon', 'eBay', 'Walmart', 'Shopify'], chTot = {};
+  CH.forEach(function (c) { head.push(c + ' 30d (pcs)', c + ' 90d (pcs)'); chTot[c] = [0, 0]; });
+  var chCells = function (r) { return CH.reduce(function (a, c) { var x = (r.sales || {})[c] || {}; chTot[c][0] += x.p30 || 0; chTot[c][1] += x.p90 || 0; return a.concat([x.p30 || 0, x.p90 || 0]); }, []); };
   var lines = [head.join(',')], money = 0, pcsTot = 0, casesTot = 0, unpriced = [];
   rows.forEach(function (r) {
     var ps = r.packSize || 1, q = rvoQty(r);
@@ -5194,12 +5199,22 @@ function rvoCsv() {
     if (!box) notes.push('No pieces per case in SKU Mgr - not rounded');
     if (pr == null) notes.push('NO PRICE');
     lines.push([cell(r.urgent ? 'URGENT - ship in the FIRST container' : ''), cell(r.sku), upcCell(r.outsideUpc), upcCell(r.insideUpc), cell(r.description), pcs, cases, box || '',
-      pr != null ? pr : '', line != null ? line.toFixed(2) : '', cell(pr != null && r.priceAt ? String(r.priceAt).slice(0, 10) : ''), cell(notes.join(' · ')), cell(r.asin || '')].join(','));
+      pr != null ? pr : '', line != null ? line.toFixed(2) : '', cell(pr != null && r.priceAt ? String(r.priceAt).slice(0, 10) : ''), cell(notes.join(' · ')), cell(r.asin || '')].concat(chCells(r)).join(','));
   });
   money = Math.round(money * 100) / 100;
   lines.push('');
   lines.push([cell('TOTAL'), cell(urgentN ? urgentN + ' URGENT - ship in the FIRST container' : ''), '', '', cell(rows.length + ' part #s'), Math.round(pcsTot * 1000) / 1000, casesTot, '', '', money.toFixed(2), '',
-    cell(unpriced.length ? unpriced.length + ' part # without a price (not in the total): ' + unpriced.join(' ') : 'every part # priced'), ''].join(','));
+    cell(unpriced.length ? unpriced.length + ' part # without a price (not in the total): ' + unpriced.join(' ') : 'every part # priced'), ''].concat(CH.reduce(function (a, c) { return a.concat(chTot[c]); }, [])).join(','));
+  // Every part # of each family on this order that sold (=OLD, bulk packs, eBay-only SKUs …), so a wrong sales number shows.
+  var seenFam = {}, famLines = [];
+  rows.forEach(function (r) { if (!r.calc || seenFam[r.baseSku]) return; seenFam[r.baseSku] = 1;
+    (r.calc.famSales || []).forEach(function (x) { famLines.push([cell(r.baseSku), cell(x.sku), cell(x.ch), x.u30, x.u90, x.p30, x.p90].join(',')); }); });
+  if (famLines.length) {
+    lines.push('');
+    lines.push(cell('SALES BY PART # - whole family, 30 / 90 days (pieces = units x pack size)'));
+    lines.push(['Parent', 'Part #', 'Channel', 'Units 30d', 'Units 90d', 'Pieces 30d', 'Pieces 90d'].join(','));
+    lines = lines.concat(famLines);
+  }
   var name = (v && v !== '__none' ? v.replace(/[^A-Za-z0-9_-]+/g, '_') : 'ALL') + '_PO_' + new Date().toISOString().slice(0, 10) + '.csv';
   var blob = new Blob(['﻿' + lines.join('\r\n')], { type: 'text/csv;charset=utf-8' });
   var a = document.createElement('a'); a.href = URL.createObjectURL(blob); a.download = name; document.body.appendChild(a); a.click();
