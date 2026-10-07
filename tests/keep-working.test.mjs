@@ -2526,7 +2526,11 @@ console.log('\nAuto Label → 📄 USPS scan form: Mon–Fri 4:30 pm, Sat 1:45 p
   const ph2 = readFileSync0(fileURLToPath(new URL('../packship.html', import.meta.url)), 'utf8');
   check('📄 Veeqo gives TWO scan forms in one answer → both are kept and printed: form 1 and form 2 are different PDFs, there is no 3rd (the same link twice is one form), the list says 2, and the page prints every part',
     h.parts === 2 && /sf\d+a\.pdf/.test(t0) && /sf\d+b\.pdf/.test(t1) && t0 !== t1 && p2.status === 404 && (lst2.forms.find(f => f.id === sfRow.id) || {}).parts === 2 && !('source' in lst2.forms[0])
-      && /for \(var n = 0; n < Math\.max\(1, parts \|\| 1\); n\+\+\)/.test(ph2) && /psAlScanFormPrint\(fl\[k\]\.id, null, fl\[k\]\.parts \|\| 1\)/.test(ph2) && /psAlScanFormPrint\(todo\[i\]\.id, null, todo\[i\]\.parts \|\| 1\)/.test(ph2), { parts: h.parts, t0, t1, p2: p2.status });
+      && /for \(var n = 0; n < Math\.max\(1, parts \|\| 1\); n\+\+\)/.test(ph2) && /await psAlScanFormPrintList\(fl\.map\(/.test(ph2) && /if \(todo\.length\) await psAlScanFormPrintList\(todo\.map\(/.test(ph2), { parts: h.parts, t0, t1, p2: p2.status });
+  // Owner (🔎 Veeqo's answer: 2 manifests, 2 links found) "still only one printed" — two print() calls in a row, Chrome drops the 2nd.
+  check('…every page of every form goes in ONE print (Chrome drops a 2nd print right after the 1st): each PDF page drawn at its own size, one print call; by hand, the station and Reprint all print the whole list at once',
+    /var files = \[\], one = null;/.test(ph2) && /for \(var p = 1; p <= pdf\.numPages; p\+\+\)/.test(ph2) && /if \(one && one\.count\) \{ var keep = _psAlBatch; _psAlBatch = null; await _psAlPrintHtml\(one\.html\); _psAlBatch = keep; \}/.test(ph2)
+      && /window\.psAlScanFormPrint = function\(id, btn, parts\) \{ return psAlScanFormPrintList\(\[\{ id: id, parts: parts \}\], btn\); \};/.test(ph2), null);
   // Owner: "still only one scan form, should have 2 (Veeqo pops up two tabs)" — a form can also come as a picture or a data: link.
   const wsP = readFileSync0(workerPath, 'utf8');
   const partsFn = new Function((wsP.match(/function autolabelFindFile[\s\S]*?\n\}/) || [''])[0] + '\n' + (wsP.match(/function autolabelScanFormParts[\s\S]*?\n\}/) || [''])[0] + '\n' + (wsP.match(/function autolabelShorten[\s\S]*?\n\}/) || [''])[0] + '; return [autolabelScanFormParts, autolabelShorten];')();
