@@ -2331,7 +2331,9 @@ body {
       </div>
     </div>
     <div style="display:flex;gap:12px;margin-top:12px;flex-wrap:wrap">
-      <div class="ps-stat-card"><div class="ps-stat-num" id="ps-pl-count">0</div><div class="ps-stat-label">Printed Today</div></div>
+      <div class="ps-stat-card"><div class="ps-stat-num" id="ps-pl-count">0</div><div class="ps-stat-label">Printed Today</div>
+        <!-- Owner (2026-10-07): "labels printed after 5:30 PM ship the next business day — show how many before / after" -->
+        <div id="ps-pl-count-split" style="font-size:11px;line-height:1.4;margin-top:4px;color:var(--text2)"></div></div>
       <div class="ps-stat-card"><div class="ps-stat-num" id="ps-pl-ups-count">0</div><div class="ps-stat-label">UPS</div></div>
       <div class="ps-stat-card"><div class="ps-stat-num" id="ps-pl-usps-count">0</div><div class="ps-stat-label">USPS</div></div>
     </div>
@@ -3640,6 +3642,7 @@ function psPlRenderList() {
   var upc  = document.getElementById('ps-pl-ups-count');
   var uspc = document.getElementById('ps-pl-usps-count');
   if (cnt)  cnt.textContent  = psPlScans.length;
+  _psPlRenderCountSplit();
   if (upc)  upc.textContent  = ups;
   if (uspc) uspc.textContent = usps;
   _psPlRenderSummary();
@@ -3660,6 +3663,22 @@ function psPlRenderList() {
       + '<span style="font-size:11px;color:var(--text3)">' + psFmtTime(s.timestamp) + '</span>'
       + '</div></div></div>';
   }).join('');
+}
+
+// Printed Today split by the ship-day cut-off (psShipDayOf: Mon–Fri 5:30 PM, Sat 4 PM, Sunday → Monday):
+// how many of today's prints ship today and how many go out the next business day.
+function _psShipSplit(stamps, dayKey) {
+  var same = 0, next = 0, nextKey = '';
+  stamps.forEach(function(ts) { if (!ts) return; var sd = psShipDayOf(ts); if (sd === dayKey) same++; else if (sd > dayKey) { next++; nextKey = sd; } });
+  return { same: same, next: next, nextKey: nextKey };
+}
+function _psShipDayLabel(k) { var p = k.split('-'); return new Date(Date.UTC(+p[0], +p[1] - 1, +p[2])).toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric', timeZone: 'UTC' }); }
+function _psPlRenderCountSplit() {
+  var el = document.getElementById('ps-pl-count-split'); if (!el || typeof psShipDayOf !== 'function') return;
+  var today = _psNyParts(new Date().toISOString()).key, sp = _psShipSplit(psPlScans.map(function(s) { return s.timestamp; }), today);
+  var cut = _psKeyWd(today) === 6 ? '4:00 PM' : '5:30 PM';
+  el.innerHTML = (_psKeyWd(today) === 0 ? '<b>' + sp.next + '</b> ship Monday (Sunday prints)'
+    : '<b>' + sp.same + '</b> ship today (before ' + cut + ')' + (sp.next ? '<br><b style="color:var(--orange)">' + sp.next + '</b> after ' + cut + ' → ship ' + _psShipDayLabel(sp.nextKey) : ''));
 }
 
 // ── Print Log "Find person" / "Check a date" summary ────────────────────
@@ -9269,6 +9288,13 @@ window.psAlLoadDay = async function() {
   sum.innerHTML = '🏷 ' + c.bought + ' bought · <span style="color:var(--green)">🖨 ' + c.printed + ' printed</span>'
     + (c.notPrinted ? ' · <span style="color:var(--orange)">⏳ ' + c.notPrinted + ' not printed yet</span>' : '') + (c.merged ? ' · 🧩 ' + c.merged + ' in merged boxes' : '')
     + ' · <span style="color:' + (c.notBought ? 'var(--red)' : 'var(--text3)') + '">❌ ' + c.notBought + ' not bought</span>';
+  // Owner: "after 5:30 PM we print, it ships the next business day" — the printed labels split by the ship-day cut-off.
+  if (typeof psShipDayOf === 'function') {
+    var spl = _psShipSplit((d.labels || []).filter(function(l) { return l.kind !== 'merged' && l.printedAt && _psNyParts(l.printedAt).key === el.value; }).map(function(l) { return l.printedAt; }), el.value);
+    var cutT = _psKeyWd(el.value) === 6 ? '4:00 PM' : '5:30 PM';
+    sum.innerHTML += '<div style="font-weight:600;margin-top:3px">🗓 ' + (_psKeyWd(el.value) === 0 ? spl.next + ' printed on Sunday → ship Monday'
+      : spl.same + ' printed before ' + cutT + ' → ship this day' + ' · <span style="color:var(--orange)">' + spl.next + ' printed after ' + cutT + ' → ship ' + (spl.nextKey ? _psShipDayLabel(spl.nextKey) : 'the next business day') + '</span>') + '</div>';
+  }
   var td = '<td style="padding:4px 6px;border-bottom:1px solid var(--border)';
   var rows = (d.labels || []).map(function(l) {
     var pr = l.kind === 'merged' ? '<span style="color:var(--text3)">🧩 same box as another order</span>'
