@@ -26,8 +26,10 @@ that change.
   and in the report to the owner, before it is merged.
 - **Locked designs** (`docs/LOCKED-DESIGNS.md`, e.g. 🏬 Stock Out Shelving since
   2026-10-07): never change them unless the owner asks for that exact change.
-  If the owner hands back a "🔒 Save this design" file, restore that tab from
-  the commit named in it, nothing else.
+  The owner saves any tab with the 🔒 button (Owner only, kept with the date,
+  never changed). When the owner hands back a saved design (the ⬇ file or the
+  📋 "Bring back … saved design #N, commit …" line), restore that tab from the
+  commit named in it, nothing else.
 - Run `node tests/keep-working.test.mjs` before every PR. It runs on every
   PR too ("Keep-working checks"); a ❌ means something that worked broke —
   fix it, never delete or loosen the check.

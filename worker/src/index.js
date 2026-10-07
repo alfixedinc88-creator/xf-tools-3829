@@ -290,6 +290,49 @@ async function credOwnerCount(env) {
 
 // Owners can do everything. While NO owner exists yet (first setup), any
 // admin may act as one — that's how the first Owner gets assigned.
+// ── 🔒 Saved designs ─────────────────────────────────────────────────────
+// design_saves: one row per save (who, when, page, tab, the commit the site +
+// Worker ran, a note). design_save_parts: the page source as it was served
+// (gzip, base64), in chunks so a big page fits. Rows are only ever added.
+async function designTables(env) {
+  await env.DB.prepare('CREATE TABLE IF NOT EXISTS design_saves (id INTEGER PRIMARY KEY AUTOINCREMENT, page TEXT, page_name TEXT, tab TEXT, tab_label TEXT, commit_sha TEXT, built_at TEXT, note TEXT, saved_by TEXT, saved_at TEXT, src_gz INTEGER, src_bytes INTEGER, parts INTEGER)').run();
+  await env.DB.prepare('CREATE TABLE IF NOT EXISTS design_save_parts (save_id INTEGER, n INTEGER, data TEXT, PRIMARY KEY (save_id, n))').run();
+}
+async function designRoute(url, request, env, s) {
+  const J = (o, st) => new Response(JSON.stringify(o), { status: st || 200, headers: { 'Content-Type': 'application/json' } });
+  await designTables(env);
+  const path = url.pathname, method = request.method;
+  const COLS = 'id, page, page_name, tab, tab_label, commit_sha, built_at, note, saved_by, saved_at, src_gz, src_bytes, parts';
+  if (path === '/designs/save' && method === 'POST') {
+    let b; try { b = await request.json(); } catch (e) { return J({ ok: false, error: 'Bad request' }, 400); }
+    const t = v => String(v == null ? '' : v).slice(0, 300);
+    const page = t(b.page).toLowerCase(), src = String(b.src || '');
+    if (!/^[a-z0-9_-]+\.html$/.test(page)) return J({ ok: false, error: 'Which page?' }, 400);
+    if (src.length > 12000000) return J({ ok: false, error: 'Page too big to save' }, 400);
+    const CH = 900000, parts = Math.ceil(src.length / CH);
+    const now = new Date().toISOString(), by = String(s.displayName || s.username || '').slice(0, 40);
+    const r = await env.DB.prepare('INSERT INTO design_saves (page, page_name, tab, tab_label, commit_sha, built_at, note, saved_by, saved_at, src_gz, src_bytes, parts) VALUES (?,?,?,?,?,?,?,?,?,?,?,?)')
+      .bind(page, t(b.pageName), t(b.tab), t(b.tabLabel), t(b.commit).replace(/[^0-9a-f]/gi, '').slice(0, 40), t(b.builtAt), String(b.note || '').slice(0, 1000), by, now, b.gz ? 1 : 0, Number(b.bytes) || 0, parts).run();
+    const id = r.meta.last_row_id;
+    for (let n = 0; n < parts; n++) await env.DB.prepare('INSERT INTO design_save_parts (save_id, n, data) VALUES (?,?,?)').bind(id, n, src.slice(n * CH, (n + 1) * CH)).run();
+    return J({ ok: true, id, saved_at: now, saved_by: by });
+  }
+  if (path === '/designs/list' && method === 'GET') {
+    const page = String(url.searchParams.get('page') || '').toLowerCase();
+    const rows = page ? (await env.DB.prepare('SELECT ' + COLS + ' FROM design_saves WHERE page = ? ORDER BY id DESC LIMIT 300').bind(page).all()).results
+      : (await env.DB.prepare('SELECT ' + COLS + ' FROM design_saves ORDER BY id DESC LIMIT 300').all()).results;
+    return J({ ok: true, rows: rows || [] });
+  }
+  if (path === '/designs/file' && method === 'GET') {
+    const id = parseInt(url.searchParams.get('id'), 10);
+    const row = await env.DB.prepare('SELECT ' + COLS + ' FROM design_saves WHERE id = ?').bind(id).first();
+    if (!row) return J({ ok: false, error: 'Not found' }, 404);
+    const ps = (await env.DB.prepare('SELECT data FROM design_save_parts WHERE save_id = ? ORDER BY n').bind(id).all()).results || [];
+    return J({ ok: true, row, src: ps.map(x => x.data).join('') });
+  }
+  return J({ ok: false, error: 'Not found' }, 404);
+}
+
 async function credCanActAsOwner(env, session) {
   if (session && session.roles && session.roles.includes('owner')) return true;
   return (await credOwnerCount(env)) === 0;
@@ -7088,6 +7131,16 @@ const _app = {
       if (!s) return cors(new Response(JSON.stringify({ ok: false, error: 'Not signed in' }), { status: 401, headers: { 'Content-Type': 'application/json' } }));
       const tm = await tmState(env);
       return cors(new Response(JSON.stringify({ ok: true, level: s.level, blocked: await accessBlockedFor(env, s.userId, s.level), test: tm ? { on: true, by: tm.started_by, at: tm.started_at } : { on: false } }), { headers: { 'Content-Type': 'application/json' } }));
+    }
+
+    // 🔒 Saved designs (owner, 2026-10-07): "save this design" on every tab, kept
+    // with the date, never changed — so any version the owner liked can be
+    // brought back. Owner only (server-checked). No edit / delete route on purpose.
+    if (url.pathname.startsWith('/designs/')) {
+      const s = await verifyCredSession(request.headers.get('X-Cred-Token'), env);
+      if (!s) return cors(new Response(JSON.stringify({ ok: false, error: 'Not signed in' }), { status: 401, headers: { 'Content-Type': 'application/json' } }));
+      if (!(s.level === 'owner' || (s.roles || []).includes('owner'))) return cors(new Response(JSON.stringify({ ok: false, error: 'Only the Owner can save or open saved designs' }), { status: 403, headers: { 'Content-Type': 'application/json' } }));
+      return cors(await designRoute(url, request, env, s));
     }
 
     // ── Admin routes — all require a valid credential session with the

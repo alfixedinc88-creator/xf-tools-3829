@@ -174,6 +174,7 @@ window.addEventListener('pageshow', function (e) { if (e.persisted) location.rel
         blocked = d.blocked || []; lastToken = t;
         testBanner(d.test);
         if (d.level === 'owner') signinWatch();
+        if (d.level === 'owner') designSetup(); // 🔒 Save this design
         try { sessionStorage.setItem('xf_access', JSON.stringify({ token: t, blocked: blocked, at: Date.now() })); } catch (e) {}
         apply();
       })
@@ -223,6 +224,120 @@ window.addEventListener('pageshow', function (e) { if (e.persisted) location.rel
       }).catch(function () {});
     };
     check(); setInterval(check, 60000);
+  }
+  // 🔒 Save this design (owner, 2026-10-07): on every app page, Owner only. Saves
+  // the tab that is open (or the whole page) on the server with the date, who,
+  // the exact commit the site + Worker run (version.json) and the page code as
+  // served. Saved designs can't be changed or deleted; any one can be
+  // downloaded, or named to Claude ("bring back <tab> from <date>").
+  var designOn = false;
+  function designSetup() {
+    if (designOn || !here || !document.body) return; designOn = true;
+    var b = document.createElement('button'); b.type = 'button'; b.id = 'xf-design-btn'; b.textContent = '🔒';
+    b.title = 'Save this design (Owner) · saved versions';
+    b.style.cssText = 'position:fixed;right:10px;bottom:34px;z-index:2147482000;width:36px;height:36px;border-radius:50%;border:1px solid #d1d5db;background:#fff;box-shadow:0 2px 8px rgba(0,0,0,.18);font-size:16px;cursor:pointer;opacity:.75';
+    b.addEventListener('click', function (e) { e.preventDefault(); designPanel(); });
+    document.body.appendChild(b);
+  }
+  function dEsc(v) { return String(v == null ? '' : v).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;'); }
+  function dWhen(iso) { try { return new Date(iso).toLocaleString('en-US', { timeZone: 'America/New_York', month: 'short', day: 'numeric', year: 'numeric', hour: 'numeric', minute: '2-digit' }); } catch (e) { return iso || ''; } }
+  function dOpenTab() { // the tab open right now
+    var t = (here.tabs || []).filter(function (t) { var el = document.querySelector(t.sel); return el && isActive(el) && el.style.display !== 'none'; })[0];
+    return t ? { key: t.key, label: t.label } : null;
+  }
+  function dLabel(t) { // the name on the tab button, as the owner sees it
+    var el = document.querySelector(t.sel), f = el && el.firstChild;
+    var x = f && f.nodeType === 3 && f.textContent.trim() ? f.textContent : (el ? el.textContent : '');
+    return String(x || t.label).replace(/\s+/g, ' ').trim() || t.label;
+  }
+  function dApi(path, body) {
+    return fetch(WORKER + path, body ? { method: 'POST', headers: { 'X-Cred-Token': token(), 'Content-Type': 'application/json' }, body: JSON.stringify(body) } : { headers: { 'X-Cred-Token': token() } })
+      .then(function (r) { return r.json().then(function (d) { if (!r.ok || !d.ok) throw new Error(d.error || ('HTTP ' + r.status)); return d; }); });
+  }
+  function dGet(u) { return fetch(u + (u.indexOf('?') < 0 ? '?' : '&') + 'design=' + Date.now(), { cache: 'no-store' }).then(function (r) { return r.ok ? r.text() : ''; }).catch(function () { return ''; }); }
+  function b64(buf) { var s = '', a = new Uint8Array(buf); for (var i = 0; i < a.length; i += 32768) s += String.fromCharCode.apply(null, a.subarray(i, i + 32768)); return btoa(s); }
+  function unb64(t) { var s = atob(t), a = new Uint8Array(s.length); for (var i = 0; i < s.length; i++) a[i] = s.charCodeAt(i); return a; }
+  function gz(text) {
+    if (!window.CompressionStream) return Promise.resolve({ gz: false, data: text });
+    return new Response(new Blob([text]).stream().pipeThrough(new CompressionStream('gzip'))).arrayBuffer().then(function (buf) { return { gz: true, data: b64(buf) }; });
+  }
+  function ungz(row, data) {
+    if (!row.src_gz) return Promise.resolve(data);
+    return new Response(new Blob([unb64(data)]).stream().pipeThrough(new DecompressionStream('gzip'))).text();
+  }
+  function dPage() { return here.file; }
+  function designPanel() {
+    var old = document.getElementById('xf-design-pop'); if (old) { old.remove(); return; }
+    var w = document.createElement('div'); w.id = 'xf-design-pop';
+    w.style.cssText = 'position:fixed;inset:0;z-index:2147483200;background:rgba(0,0,0,.4);display:flex;align-items:flex-end;justify-content:center;font:14px/1.4 system-ui,-apple-system,Segoe UI,Roboto,sans-serif;color:#111';
+    var cur = dOpenTab(), tabs = here.tabs || [];
+    var opts = tabs.map(function (t) { return '<option value="' + dEsc(t.key) + '"' + (cur && cur.key === t.key ? ' selected' : '') + '>' + dEsc(dLabel(t)) + '</option>'; }).join('')
+      + '<option value="page"' + (!cur ? ' selected' : '') + '>Whole page (every tab)</option>';
+    w.innerHTML = '<div style="background:#fff;width:100%;max-width:560px;max-height:88vh;overflow:auto;border-radius:16px 16px 0 0;padding:14px 14px calc(14px + env(safe-area-inset-bottom))">'
+      + '<div style="display:flex;align-items:center;gap:8px"><b style="flex:1;font-size:17px">🔒 Save this design — ' + dEsc(here.name) + '</b><button type="button" data-a="x" style="border:none;background:none;font-size:22px;cursor:pointer">&times;</button></div>'
+      + '<div style="font-size:12px;color:#4b5563;margin:4px 0 10px">Saved on the server with today\'s date. Nobody can change or delete a saved design. Later: ⬇ download it, or tell Claude "bring back &lt;tab&gt; from &lt;date&gt;".</div>'
+      + '<div style="display:flex;gap:6px;flex-wrap:wrap;align-items:center"><select id="xf-ds-tab" style="flex:1;min-width:160px;padding:9px;border:1.5px solid #d1d5db;border-radius:8px;font-size:14px">' + opts + '</select>'
+      + '<input id="xf-ds-note" type="text" placeholder="Note (optional): what works well now" style="flex:2;min-width:180px;padding:9px;border:1.5px solid #d1d5db;border-radius:8px;font-size:14px"></div>'
+      + '<button type="button" data-a="save" style="width:100%;margin-top:8px;padding:11px;border-radius:9px;border:none;background:#1a56db;color:#fff;font-size:15px;font-weight:700;cursor:pointer">🔒 Save this design now</button>'
+      + '<div id="xf-ds-msg" style="font-size:13px;font-weight:600;margin-top:6px"></div>'
+      + '<div style="font-weight:800;margin:12px 0 6px">Saved designs of this page (newest first)</div><div id="xf-ds-list" style="font-size:13px;color:#6b7280">Loading…</div></div>';
+    document.body.appendChild(w);
+    var msg = function (t, c) { var m = w.querySelector('#xf-ds-msg'); m.style.color = c || '#065f46'; m.textContent = t; };
+    var rows = [];
+    var list = function () {
+      dApi('/designs/list?page=' + encodeURIComponent(dPage())).then(function (d) {
+        rows = d.rows || [];
+        w.querySelector('#xf-ds-list').innerHTML = rows.length ? rows.map(function (r) {
+          return '<div style="border:1px solid #e5e7eb;border-radius:9px;padding:8px 10px;margin-bottom:6px;color:#111">'
+            + '<div style="display:flex;gap:8px;align-items:center"><div style="flex:1"><b>' + dEsc(r.tab_label || r.tab) + '</b> · ' + dEsc(dWhen(r.saved_at)) + '</div>'
+            + '<button type="button" data-a="dl" data-id="' + r.id + '" style="padding:6px 10px;border-radius:7px;border:1.5px solid #1a56db;background:#fff;color:#1a56db;font-weight:700;cursor:pointer">⬇ Download</button>'
+            + '<button type="button" data-a="cp" data-id="' + r.id + '" style="padding:6px 10px;border-radius:7px;border:1.5px solid #d1d5db;background:#f9fafb;cursor:pointer">📋 For Claude</button></div>'
+            + '<div style="font-size:12px;color:#6b7280">#' + r.id + ' · by ' + dEsc(r.saved_by) + ' · commit ' + dEsc(String(r.commit_sha || 'unknown').slice(0, 7)) + (r.note ? ' · ' + dEsc(r.note) : '') + '</div></div>';
+        }).join('') : 'Nothing saved for this page yet.';
+      }).catch(function (e) { w.querySelector('#xf-ds-list').textContent = '⚠ ' + e.message; });
+    };
+    var forClaude = function (r) { return 'Bring back ' + (r.tab_label || r.tab) + ' (' + (r.page_name || r.page) + ') to the design saved ' + dWhen(r.saved_at) + ' — saved design #' + r.id + ', commit ' + (r.commit_sha || 'unknown') + '. Leave every other tab as it is now.'; };
+    w.addEventListener('click', function (e) {
+      if (e.target === w) { w.remove(); return; }
+      var bt = e.target.closest('button'); if (!bt) return; var a = bt.getAttribute('data-a');
+      if (a === 'x') { w.remove(); return; }
+      if (a === 'save') {
+        var sel = w.querySelector('#xf-ds-tab'), key = sel.value, lab = sel.options[sel.selectedIndex].text;
+        bt.disabled = true; msg('Saving…', '#1a56db');
+        Promise.all([dGet('version.json'), dGet(dPage()), dGet('xf-access.js')]).then(function (a) {
+          var v = {}; try { v = JSON.parse(a[0] || '{}'); } catch (x) {}
+          var text = '==================== ' + dPage() + ' ====================\n' + a[1] + '\n==================== xf-access.js ====================\n' + a[2] + '\n';
+          return gz(text).then(function (z) {
+            return dApi('/designs/save', { page: dPage(), pageName: here.name, tab: key, tabLabel: lab, commit: v.commit || '', builtAt: v.builtAt || '', note: w.querySelector('#xf-ds-note').value, src: z.data, gz: z.gz, bytes: text.length });
+          });
+        }).then(function (d) { msg('✅ Saved: ' + lab + ' · ' + dWhen(d.saved_at) + ' (#' + d.id + ')'); w.querySelector('#xf-ds-note').value = ''; list(); })
+          .catch(function (x) { msg('⚠ Not saved: ' + x.message, '#b91c1c'); })
+          .then(function () { bt.disabled = false; });
+        return;
+      }
+      var r = rows.filter(function (x) { return String(x.id) === bt.getAttribute('data-id'); })[0]; if (!r) return;
+      if (a === 'cp') {
+        var t = forClaude(r);
+        (navigator.clipboard ? navigator.clipboard.writeText(t) : Promise.reject()).then(function () { msg('📋 Copied — paste it to Claude'); }).catch(function () { window.prompt('Copy this and send it to Claude:', t); });
+        return;
+      }
+      if (a === 'dl') {
+        msg('Getting #' + r.id + '…', '#1a56db');
+        dApi('/designs/file?id=' + r.id).then(function (d) { return ungz(d.row, d.src || ''); }).then(function (src) {
+          var head = 'XFitting — saved design #' + r.id + ': ' + (r.tab_label || r.tab) + ' (' + (r.page_name || r.page) + ')\n'
+            + 'Saved: ' + dWhen(r.saved_at) + ' (New York) by ' + r.saved_by + '\n'
+            + 'Website + Worker commit: ' + (r.commit_sha || 'unknown') + (r.built_at ? ' (deployed ' + r.built_at + ')' : '') + '\n'
+            + (r.note ? 'Note: ' + r.note + '\n' : '') + 'Repo: alfixedinc88-creator/xf-tools-3829\n\n'
+            + 'TO PUT IT BACK — tell Claude: ' + forClaude(r) + '\n(See docs/LOCKED-DESIGNS.md.)\n\n';
+          var day = String(r.saved_at || '').slice(0, 10);
+          var name = (String(r.tab_label || r.tab).replace(/[^A-Za-z0-9]+/g, '-').replace(/^-|-$/g, '').toLowerCase() || 'page') + '-design-' + day + '-' + r.id + '.txt';
+          var url = URL.createObjectURL(new Blob([head + src], { type: 'text/plain' })), l = document.createElement('a');
+          l.href = url; l.download = name; document.body.appendChild(l); l.click(); l.remove(); setTimeout(function () { URL.revokeObjectURL(url); }, 5000);
+          msg('⬇ Downloaded ' + name);
+        }).catch(function (x) { msg('⚠ ' + x.message, '#b91c1c'); });
+      }
+    });
+    list();
   }
   function signinToast(msg, bad) {
     if (!document.body) return;
