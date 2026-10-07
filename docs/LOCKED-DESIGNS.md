@@ -19,6 +19,6 @@ elsewhere has to touch it, say so plainly in the PR and to the owner first.
 
 ## Locked
 
-| Design | Locked on | Commit (tag) | What it covers |
+| Design | Locked on | Commit | What it covers |
 |---|---|---|---|
-| 🏬 Stock Out Shelving | 2026-10-07 | `347cb71` (`design/stock-out-shelving-2026-10-07`) | Inventory → Stock Out Shelving: search by parent part #, pick rules (Rule #1 FBA bags, oldest first, one spot, pallets last), Pull List, Grabbed / None Found / 🔁 Replace, saved batches, and the Worker routes behind them. |
+| 🏬 Stock Out Shelving | 2026-10-07 | `347cb71` | Inventory → Stock Out Shelving: search by parent part #, pick rules (Rule #1 FBA bags, oldest first, one spot, pallets last), Pull List, Grabbed / None Found / 🔁 Replace, saved batches, and the Worker routes behind them. |
