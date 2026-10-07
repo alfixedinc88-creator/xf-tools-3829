@@ -3401,7 +3401,7 @@ console.log('\nReorder vendor CSV: pieces per case + SKU Mgr price when there is
   const c = (d.rows || []).find(r => r.sku === '88-3-3=10') || {}, a = (d.rows || []).find(r => r.sku === '88-4-4=10') || {};
   check('no vendor sheet / order price → SKU Mgr\'s newest price per piece ($0.07, not the older $0.05), "SKU Mgr"', c.price === 0.07 && c.priceSrc === 'SKU Mgr', [c.price, c.priceSrc]);
   check('…a part # with a vendor sheet price keeps it (88-4-4=10 $0.11, not SKU Mgr $0.99)', a.price === 0.11 && a.priceSrc === 'vendor sheet', [a.price, a.priceSrc]);
-  check('…order quantities don't depend on price: same sales (40 × 10 pcs) → same order for both (88-4-4=10 in cases of 10 = 100 pcs ÷ 10; 88-3-3=10 in cases of 20 = 200 pcs ÷ 10)', a.caseQty === 10 && a.orderUnits % 10 === 0 && a.orderUnits === c.orderUnits && c.caseQty === 20 && c.orderUnits % 20 === 0, [a.orderUnits, c.caseQty, c.orderUnits]);
+  check('…order quantities do not depend on price: same sales (40 × 10 pcs) → same order for both (88-4-4=10 in cases of 10 = 100 pcs ÷ 10; 88-3-3=10 in cases of 20 = 200 pcs ÷ 10)', a.caseQty === 10 && a.orderUnits % 10 === 0 && a.orderUnits === c.orderUnits && c.caseQty === 20 && c.orderUnits % 20 === 0, [a.orderUnits, c.caseQty, c.orderUnits]);
   const rh = rf3(fileURLToPath(new URL('../reorder.html', import.meta.url)), 'utf8');
   const csv = (rh.match(/function rvoCsv\(\) \{[\s\S]*?\n\}/) || [''])[0];
   const head = (csv.match(/var head = (\[[^\]]*\])/) || [])[1];
