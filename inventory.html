@@ -1616,6 +1616,18 @@ window.invCredLogin = async function() {
       </div>
     </div>
     <div id="hist-rp-check" style="font-size:11px;color:var(--text3);margin-bottom:14px"></div>
+    <!-- 💲 Inventory value (Owner only — the server sends it to the Owner only): Started → Ended
+         at vendor price (same count as SKU Mgr's total), and every big change with why. -->
+    <div id="hist-value" style="display:none;margin-bottom:14px">
+      <div style="font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.4px;color:var(--text3);margin-bottom:8px">💲 Inventory Value <span style="text-transform:none;font-weight:600">(Owner only)</span></div>
+      <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:8px;margin-bottom:6px">
+        <div style="background:var(--bg2);border-radius:8px;padding:10px;text-align:center"><div style="font-size:9px;font-weight:700;text-transform:uppercase;letter-spacing:.4px;color:var(--text3)">Started With</div><div id="hist-rv-start" style="font-size:17px;font-weight:800;font-family:var(--mono)">—</div></div>
+        <div style="background:var(--bg2);border-radius:8px;padding:10px;text-align:center"><div style="font-size:9px;font-weight:700;text-transform:uppercase;letter-spacing:.4px;color:var(--text3)">Change</div><div id="hist-rv-change" style="font-size:17px;font-weight:800;font-family:var(--mono)">—</div></div>
+        <div style="background:var(--bg2);border-radius:8px;padding:10px;text-align:center"><div style="font-size:9px;font-weight:700;text-transform:uppercase;letter-spacing:.4px;color:var(--text3)">= Ended With</div><div id="hist-rv-end" style="font-size:17px;font-weight:800;font-family:var(--mono)">—</div></div>
+      </div>
+      <div id="hist-rv-check" style="font-size:11px;color:var(--text3);margin-bottom:6px"></div>
+      <div id="hist-rv-big"></div>
+    </div>
 
     <!-- Overall totals -->
     <div style="font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.4px;color:var(--text3);margin-bottom:8px">Overall Totals</div>
@@ -6956,6 +6968,14 @@ window.invCredLogin = async function() {
     if (r.wh_pcs_before != null && r.wh_pcs_after != null)
       wh += '<div title="All pieces in the warehouse before → after this entry (cases × Each/Case of every box)' + (r.pcs_each ? ' · this box: ' + r.pcs_each + ' pcs' : '') + '" style="font-size:11px;color:var(--accent);white-space:nowrap">= ' + Number(r.wh_pcs_before).toLocaleString() + ' → ' + Number(r.wh_pcs_after).toLocaleString() + ' pcs'
         + (r.pcs_each && r.wh_pcs_after !== r.wh_pcs_before ? ' (' + (r.wh_pcs_after > r.wh_pcs_before ? '+' : '−') + Math.abs(Math.round((r.wh_pcs_after - r.wh_pcs_before) * 1000) / 1000).toLocaleString() + ')' : '') + '</div>';
+    // 💲 value before → after (only the Owner gets these numbers from the server)
+    if (r.wval_before != null && r.wval_after != null) {
+      var vd = r.wval_after - r.wval_before, vbig = Math.abs(vd) >= 500;
+      wh += '<div title="Inventory value at vendor price (same as SKU Mgr\'s total) before → after this entry — Owner only" style="font-size:11px;white-space:nowrap;color:' + (vbig ? (vd > 0 ? 'var(--green)' : 'var(--red)') : 'var(--text2)') + ';font-weight:' + (vbig ? '800' : '600') + '">💲 ' + histMoney(r.wval_before) + ' → ' + histMoney(r.wval_after)
+        + (Math.abs(vd) >= 0.01 ? ' (' + (vbig ? (vd > 0 ? '🔺 ' : '🔻 ') : '') + histSigned(vd) + ')' : '') + '</div>'
+        + (vbig ? '<div style="font-size:11px;color:var(--text2);white-space:nowrap">why: ' + invEsc(histValueWhy(r)) + '</div>' : '')
+        + (r.val_before != null ? '<div title="Value of this part # (every spot) before → after" style="font-size:10px;color:var(--text3);white-space:nowrap">' + invEsc(r.part_num || '') + ': ' + histMoney(r.val_before) + ' → ' + histMoney(r.val_after) + '</div>' : '');
+    }
     return '<span title="' + title + '">' + (prefix || '') + Number(r.total_before).toLocaleString() + ' → ' + Number(r.total_after).toLocaleString() + (part ? ' cs' : ' <span style="font-size:10px;color:var(--text3)">(whole wh.)</span>') + '</span>' + badge + pcs + wh;
   };
 
@@ -6998,6 +7018,62 @@ window.invCredLogin = async function() {
     });
     el.innerHTML = html + '</tbody></table></div></details>';
   }
+
+  // 💲 Inventory value (Owner only): Started + changes = Ended, and the big ones with why.
+  function histMoney(v) { var n = Number(v) || 0; return (n < 0 ? '−$' : '$') + Math.abs(n).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 }); }
+  function histSigned(v) { var n = Number(v) || 0; return (n > 0 ? '+' : n < 0 ? '−' : '') + '$' + Math.abs(n).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 }); }
+  function histValueWhy(r) {
+    var t = String(r.type || '').toUpperCase(), n = String(r.notes || '');
+    var m = /\[RECEIVED\]\s*([^—]+)/.exec(n);
+    if (m) return '📦 Container received: ' + m[1].trim();
+    if (/\[RECEIVE PO/.test(n)) return '🚚 Receive PO';
+    if (/\[CANCELLED ENTRY/.test(n)) return '↩ Cancelled entry';
+    if (/\[AUDIT\]/.test(n)) return '🔍 Audit count fix';
+    if (/\[SKU MGR (EDIT|ADD)\]/.test(n)) return '📋 SKU Mgr ' + (/ADD/.test(n) ? 'new row' : 'edit');
+    if (/\[NONE FOUND/.test(n)) return '❓ None found on the shelf';
+    if (/BIG COMPANY|Big Company/.test(n)) return '🏢 Stock Out Big Company';
+    return t === 'IN' ? '📦 Stock In' : t === 'OUT' ? '📤 Stock Out (shipped / picked)' : t === 'TRANSFER_OUT' ? '🔀 Transfer' : t === 'EDIT' ? '📋 SKU Mgr edit' : t;
+  }
+  window.histValueWhy = histValueWhy;
+  function histRenderValue(v) {
+    var box = g('hist-value'); if (!box) return;
+    if (!v) { box.style.display = 'none'; return; }
+    box.style.display = 'block';
+    if (v.error) { g('hist-rv-check').innerHTML = '<span style="color:var(--red)">Value could not be worked out: ' + invEsc(v.error) + '</span>'; return; }
+    var has = v.starting != null && v.ending != null;
+    g('hist-rv-start').textContent = has ? histMoney(v.starting) : '—';
+    g('hist-rv-end').textContent = has ? histMoney(v.ending) : '—';
+    var ch = has ? v.ending - v.starting : 0, ce = g('hist-rv-change');
+    ce.textContent = has ? histSigned(ch) : '—'; ce.style.color = ch > 0 ? 'var(--green)' : ch < 0 ? 'var(--red)' : 'var(--text)';
+    var adds = has && Math.abs(v.starting + v.recorded + v.other - v.ending) < 0.02;
+    g('hist-rv-check').innerHTML = !has ? 'No value recorded yet in this period (recorded from Oct 7 2026 on).'
+      : (adds ? '<span style="color:var(--green);font-weight:700">✓ ' : '<span style="color:var(--red);font-weight:700">⚠ ') + histMoney(v.starting) + ' ' + histSigned(v.recorded) + ' (' + v.entries + ' entr' + (v.entries === 1 ? 'y' : 'ies') + ')'
+        + (Math.abs(v.other) >= 0.01 ? ' ' + histSigned(v.other) + ' (not from an entry)' : '') + ' = ' + histMoney(v.ending) + (adds ? '' : ' does not add up') + '</span>'
+        + ' · at vendor price, the same count as SKU Mgr\'s total (each batch at the price it came in at, oldest used first).';
+    var h = '';
+    if ((v.big || []).length) {
+      h += '<div style="font-size:12px;font-weight:800;margin:8px 0 4px">Big changes (' + histMoney(v.bigAt || 500) + ' or more) — biggest first</div>';
+      h += v.big.map(function(b) {
+        var when = ''; try { when = new Date(b.at).toLocaleString('en-US', { timeZone: 'America/New_York', month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' }); } catch (e) {}
+        var up = b.change > 0;
+        return '<div style="border:1px solid var(--border);border-left:4px solid ' + (up ? 'var(--green)' : 'var(--red)') + ';border-radius:8px;padding:7px 9px;margin-bottom:5px;font-size:12px">'
+          + '<div style="display:flex;justify-content:space-between;gap:8px"><b>' + invEsc(histValueWhy(b)) + '</b><b style="font-family:var(--mono);color:' + (up ? 'var(--green)' : 'var(--red)') + '">' + (up ? '🔺 ' : '🔻 ') + histSigned(b.change) + '</b></div>'
+          + '<div style="color:var(--text2)">' + invEsc(when) + ' · ' + invEsc(b.by || '?') + ' · <span style="font-family:var(--mono)">' + invEsc(b.part || '') + '</span>' + (b.location ? ' @ ' + invEsc(b.location) : '') + ' · ' + invEsc(String(b.cases)) + ' case(s)'
+          + (b.partBefore != null ? ' · this part # ' + histMoney(b.partBefore) + ' → ' + histMoney(b.partAfter) : '') + '</div>'
+          + '<div style="color:var(--text3)">Whole inventory ' + histMoney(b.before) + ' → ' + histMoney(b.after) + (b.notes ? ' · ' + invEsc(b.notes) : '') + '</div></div>';
+      }).join('');
+      if (v.bigCount > v.big.length) h += '<div style="font-size:11px;color:var(--text3)">…and ' + (v.bigCount - v.big.length) + ' more (filter History below to see them).</div>';
+    } else if (has) h += '<div style="font-size:12px;color:var(--text3);margin-top:4px">No single change of ' + histMoney(v.bigAt || 500) + ' or more in this period.</div>';
+    if ((v.otherList || []).length) {
+      h += '<div style="font-size:12px;font-weight:800;margin:8px 0 4px;color:var(--orange)">Changed but not by a History entry</div>' + v.otherList.map(function(o) {
+        var f = function(t) { try { return new Date(t).toLocaleString('en-US', { timeZone: 'America/New_York', month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' }); } catch (e) { return t || ''; } };
+        return '<div style="font-size:12px;padding:5px 8px;border-radius:7px;background:var(--orange-bg,#fff7ed);margin-bottom:4px"><b style="font-family:var(--mono)">' + histSigned(o.change) + '</b> between ' + invEsc(f(o.from)) + ' and ' + (o.to ? invEsc(f(o.to)) : 'now')
+          + ' — a price or Each/Case changed in SKU Mgr / a sync, not a Stock In / Out. Check 💲 Price history in SKU Mgr.</div>';
+      }).join('');
+    }
+    g('hist-rv-big').innerHTML = h;
+  }
+  window.histRenderValue = histRenderValue;
 
   window.histLoadReport = function() {
     var sel = (g('hist-report-days') && g('hist-report-days').value) || '1';
@@ -7081,6 +7157,7 @@ window.invCredLogin = async function() {
           if (g('hist-rt-out-cases')) g('hist-rt-out-cases').textContent = (t.casesOut||0).toLocaleString() + ' cases · ' + fmt(P.stockOut) + ' pcs';
           if (g('hist-rt-xfr-cases')) g('hist-rt-xfr-cases').textContent = fmt(d.transferCases) + ' cases · ' + fmt(P.transfers) + ' pcs moved';
         }
+        histRenderValue(d.value);
         var ct = d.container;
         if (g('hist-rt-ctr')) g('hist-rt-ctr').textContent = ct && !ct.error ? fmt(ct.cases) + ' cases' : '—';
         if (g('hist-rt-ctr-sub')) g('hist-rt-ctr-sub').textContent = ct && !ct.error ? ct.pallets + ' pallet' + (ct.pallets === 1 ? '' : 's') + ' worked on · ' + ct.palletsFinished + ' emptied'

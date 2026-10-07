@@ -3878,6 +3878,61 @@ console.log('\nReorder: sales history stored in pieces is found and fixed (201-2
   sq.exec("DELETE FROM ebay_sales_weekly WHERE sku IN ('214-2-12=500','214-2-13=100','214-5-4=50'); DELETE FROM fba_catalog WHERE sku = '214-2-12=500'; DELETE FROM sales_fix_backup");
 }
 
+// Owner (2026-10-07): "SKU Mgr shows the total inventory cost to the owner only — I want it in History too: the
+// total inventory cost before and after every transaction; a big change must say why (a container just received,
+// just shipped…); only the owner can see the price change."
+console.log('\n💲 History: inventory value before → after every entry (Owner only), big changes with why');
+{
+  await post('/inventory/review-mode', { mode: 'auto' });
+  const VP = '91-1-1=10', CP = '91-2-2=100';
+  sq.prepare(`INSERT INTO master_list (base_sku, name, part_num, location, cases, units_per_case, price, sheet_row) VALUES
+    ('91-1-1','pipe','${VP}','C1=9-1-1',10,100,0.10,0), ('91-1-1','pipe','${VP}','C2=9-1-1',5,100,0.12,0), ('91-2-2','cap','${CP}','GARAGE',1,100,0.20,0)`).run();
+  const mid = (p, l) => sq.prepare('SELECT id FROM master_list WHERE part_num=? AND location=?').get(p, l).id;
+  const ow = sq.prepare("INSERT INTO cred_users (username, password_hash, display_name, active, created_at, level) VALUES (?,?,?,1,?,'owner')").run('ownval', hex(salt) + ':' + hex(new Uint8Array(bits)), 'BOSS', new Date().toISOString());
+  const ol = await (await call('/auth/login', { method: 'POST', body: '{"username":"ownval","password":"password1"}' })).json();
+  const OH = { 'X-Cred-Token': ol.token, 'Content-Type': 'application/json' };
+  const oget = async p => (await (await call(p, { headers: OH })).json());
+  const vrow = id => sq.prepare('SELECT val_before vb, val_after va, wval_before wb, wval_after wa FROM inventory_log WHERE id=?').get(id);
+  const r2 = v => Math.round(v * 100) / 100;
+  const so = await post('/inventory/log', { type: 'OUT', partNum: VP, sku: VP, location: 'C1=9-1-1', cases: 3, initials: 'TS', notes: '[SHELVING]', masterId: mid(VP, 'C1=9-1-1') });
+  const a = vrow(so.d1Id);
+  check('Stock Out 3 cases × 100 pcs × $0.10 → the part # $160 → $130 (C1 10×100×$0.10 + C2 5×100×$0.12) and the whole inventory down exactly $30',
+    so.autoApproved && a.vb === 160 && a.va === 130 && r2(a.wb - a.wa) === 30, a);
+  const si = await post('/inventory/log', { type: 'IN', partNum: VP, sku: VP, location: 'C2=9-1-1', cases: 2, initials: 'TS', notes: '', masterId: mid(VP, 'C2=9-1-1') });
+  const b = vrow(si.d1Id);
+  check('Stock In 2 cases × 100 × $0.12 → whole inventory up exactly $24, and its before = the Stock Out\'s after (nothing in between)',
+    r2(b.wa - b.wb) === 24 && r2(b.wb) === r2(a.wa), b);
+  const tr = await post('/inventory/transfer', { partNum: VP, sku: VP, fromLocation: 'C1=9-1-1', fromMasterId: mid(VP, 'C1=9-1-1'), toLocation: 'C2=9-1-1', cases: 1, initials: 'TS', notes: 'test' });
+  const tl = sq.prepare("SELECT id FROM inventory_log WHERE type='TRANSFER_OUT' AND part_num=? ORDER BY id DESC").get(VP);
+  const c = vrow(tl.id);
+  check('Transfer only moves boxes (they keep their price) → whole inventory value unchanged', tr.success !== false && c.wb != null && r2(c.wa - c.wb) === 0 && r2(c.wb) === r2(b.wa), c);
+  sq.prepare("INSERT INTO reorder_incoming (title, part, qty, vendor, updated_at, cases, price) VALUES ('VAL 1', ?, 500, 'JQ', ?, 5, 0.08)").run(CP, new Date().toISOString());
+  const rc = await post('/reorder/fix/incoming-receive', { title: 'VAL 1', location: 'GARAGE', lines: [{ key: CP, part: CP, cases: 5, description: 'cap' }] });
+  const rl = sq.prepare("SELECT id FROM inventory_log WHERE part_num=? AND notes LIKE '[RECEIVED] VAL 1%'").get(CP);
+  const d = vrow(rl.id);
+  check('📦 container received: 5 cases × 100 × the CONTAINER\'s price $0.08 = +$40 (not SKU Mgr\'s $0.20 = +$100); the cap\'s 1 old case keeps $0.20',
+    rc.ok && d && r2(d.wa - d.wb) === 40 && d.vb === 20 && d.va === 60, d);
+  const live = await oget('/inventory/cost/value');
+  check('…the last entry\'s "after" = SKU Mgr\'s owner total right now', live.ok && r2(live.value) === r2(d.wa), [live.value, d.wa]);
+  const hs = await oget('/inventory/history-summary?days=1&big=25');
+  const v = hs.value || {};
+  check('report (Owner): Started + every entry + changes not from an entry = Ended, exactly; ended = SKU Mgr\'s total now',
+    v.starting != null && Math.abs(v.starting + v.recorded + v.other - v.ending) < 0.01 && r2(v.ending) === r2(live.value), v);
+  check('…big changes (≥ $25 here) listed biggest first with why: the container (+$40) then the Stock Out (−$30); the $24 Stock In is not',
+    (v.big || []).length >= 2 && v.big[0].change === 40 && /\[RECEIVED\] VAL 1/.test(v.big[0].notes) && v.big.some(x => x.change === -30) && !v.big.some(x => x.change === 24), v.big);
+  const hw = await get('/inventory/history-summary?days=1'), hrw = await get('/inventory/history?days=1&status=all');
+  const hro = await oget('/inventory/history?days=1&status=all');
+  check('only the Owner gets the money: an Admin / manager gets no value in the report and no $ on any History row',
+    hw.ok && hw.value === undefined && hrw.rows.every(r => r.wval_before === undefined && r.val_before === undefined)
+    && hro.rows.some(r => r.id === so.d1Id && r.wval_before != null), { admin: hw.value, ownerRow: hro.rows.find(r => r.id === so.d1Id) });
+  const { readFileSync: rf12 } = await import('node:fs');
+  const ih = rf12(fileURLToPath(new URL('../inventory.html', import.meta.url)), 'utf8');
+  check('History screen: 💲 Inventory Value report (Started → Ended, big changes with why) and 💲 before → after on each row',
+    /id="hist-value"/.test(ih) && /histRenderValue\(d\.value\)/.test(ih) && /function histValueWhy/.test(ih) && /r\.wval_before != null && r\.wval_after != null/.test(ih), null);
+  sq.prepare('DELETE FROM cred_users WHERE id = ?').run(Number(ow.lastInsertRowid));
+  await post('/inventory/review-mode', { mode: 'manual' });
+}
+
 // Owner (2026-10-07): "the sales dashboard (Overview / Part# Detail / SKU Detail) — is it live, the right number for what we have now?"
 // Sales under a SKU mapped to a part # on Reorder, or written a bit differently, count on that part #; SKUs that aren't ours are shown
 // as NOT counted; the SKU Detail daily average no longer counts the last 30 days twice; each channel says up to which day it is in.
