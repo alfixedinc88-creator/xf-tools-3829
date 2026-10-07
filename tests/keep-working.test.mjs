@@ -3500,5 +3500,25 @@ console.log('\nReorder: case size only from SKU Mgr, never the vendor sheet');
   sq.exec("DELETE FROM master_list WHERE base_sku = '89-7-7'; DELETE FROM ebay_sales_weekly WHERE sku IN ('89-7-7=10', '89-8-8=10'); DELETE FROM reorder_vendor_catalog WHERE part IN ('89-7-7=10', '89-8-8=10')");
 }
 
+// Owner (2026-10-07): "I want ALL of our inventory counted, don't give us the option, so we never order too much".
+console.log('\nReorder: all our stock always counts (no options), each piece once');
+{
+  const { readFileSync: rf5 } = await import('node:fs');
+  const wk = new Date(Date.now() - 14 * 86400000).toISOString().slice(0, 10);
+  // 89-9-9: two FBA listings =10X (30 sold → 300 pcs) and =50 (10 sold → 500 pcs), 0 at Amazon. Shelf: only the non-FBA pack =25, 2 cases × 100 pcs = 200 pcs.
+  sq.prepare("INSERT INTO fba_catalog (sku, asin, product_name, available) VALUES ('89-9-9=10X','B0TEST991','bolt',0), ('89-9-9=50','B0TEST992','bolt',0)").run();
+  sq.prepare("INSERT INTO amazon_sales_weekly (sku, period_start, units_ordered, asin) VALUES ('89-9-9=10X',?,30,'B0TEST991'), ('89-9-9=50',?,10,'B0TEST992')").run(wk, wk);
+  sq.prepare("INSERT INTO master_list (base_sku, name, part_num, location, cases, units_per_case) VALUES ('89-9-9','bolt','89-9-9=25','C1=9-9-1',2,100)").run();
+  const d = await get('/reorder/vendor-order?days=90&lead=3&cover=3&otherPacks=0&fbaStock=0'); // an old link asking to leave stock out → ignored
+  const a = (d.rows || []).find(x => x.sku === '89-9-9=10X') || {}, b = (d.rows || []).find(x => x.sku === '89-9-9=50') || {};
+  check('the 200 pcs of =25 on the shelf count against the 2 FBA rows by their sales: 75 (=10X, 300/800) + 125 (=50, 500/800) = 200 — every piece once, none left out',
+    d.countOtherPacks === true && d.countFba === true && a.otherPackPcs === 75 && b.otherPackPcs === 125 && a.otherPackPcs + b.otherPackPcs === 200, [a.otherPackPcs, b.otherPackPcs]);
+  // =10X: need 300 / 3 × 6 = 600 − 75 = 525 pcs → 53 bags of 10. =50: 1000 − 125 = 875 pcs → 18 bags of 50.
+  check('…so we order less: =10X 600 − 75 = 525 pcs → 53 bags; =50 1,000 − 125 = 875 pcs → 18 bags; no "not counted" note', a.needUnits === 53 && b.needUnits === 18 && !/not counted/.test(a.note + b.note), [a.needUnits, b.needUnits, a.note]);
+  const rh = rf5(fileURLToPath(new URL('../reorder.html', import.meta.url)), 'utf8');
+  check('page: no "Count FBA stock" / "Count other pack sizes" checkboxes; says it counts ALL our stock', !/id="rvo-fba"/.test(rh) && !/id="rvo-other"/.test(rh) && /✅ Counts ALL our stock/.test(rh) && /'&fbaStock=1&otherPacks=1'/.test(rh), null);
+  sq.exec("DELETE FROM fba_catalog WHERE sku LIKE '89-9-9%'; DELETE FROM amazon_sales_weekly WHERE sku LIKE '89-9-9%'; DELETE FROM master_list WHERE base_sku = '89-9-9'");
+}
+
 console.log('\n' + (failed ? '❌ ' + failed + ' check(s) FAILED' : '✅ all ' + passed + ' checks passed') + '\n');
 process.exit(failed ? 1 : 0);
