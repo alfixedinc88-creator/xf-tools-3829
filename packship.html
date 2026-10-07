@@ -1898,8 +1898,12 @@ body {
         </div>
         <div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap;margin-bottom:10px">
           <button class="ps-btn-primary" style="width:auto;padding:8px 18px" onclick="psAlPrintNewLabels()">🖨 Print new labels now</button>
+          <button class="ps-btn-sm" id="ps-al-reprint-last" style="display:none;padding:8px 12px" onclick="psAlReprintLast(this)">🔁 Reprint last batch</button>
           <span id="ps-al-label-msg" style="font-size:12px;color:var(--text2);font-family:var(--mono)"></span>
         </div>
+        <!-- Owner: "I printed 17 labels, nothing came out of the printer, and Print new labels now won't print them again —
+             give me a history so I can reprint the previous batch at once, not one by one". -->
+        <div id="ps-al-recent-stacks" style="font-size:12px;margin-bottom:10px"></div>
         <div style="display:flex;gap:6px;align-items:center;flex-wrap:wrap;margin-bottom:6px">
           <input class="ps-field-input" id="ps-al-find" placeholder="🔎 Find to reprint: order #, tracking (scan the label) or customer" style="max-width:420px;flex:1;margin:0;font-size:13px;padding:8px 10px"
             oninput="psAlFind(this.value)" onkeydown="if(event.key==='Enter'){event.preventDefault();psAlFind(this.value,true)}">
@@ -9338,7 +9342,7 @@ window.psAlStackReprint = async function(id, btn) {
     await _psAlBatchFlush(); _psAlSaveStack(d.labels.map(function(x) { return x.id; }), 'reprint of a stack');
     _psToast('🖨 Printed the stack again (' + d.labels.length + ')');
   } catch (er) { _psAlBatch = null; _psToast('Not printed: ' + (er.message || er), 'err'); }
-  finally { btn.disabled = false; btn.textContent = t; psAlLoadDay(); }
+  finally { btn.disabled = false; btn.textContent = t; psAlLoadDay(); setTimeout(psAlLoadRecentStacks, 1500); }
 };
 window.psAlDayCsv = function() {
   var d = _psAlDay; if (!d) return;
@@ -10322,7 +10326,24 @@ window.psAlPrintNewLabels = async function(silent) {
   } catch (e) { if (msg) msg.textContent = '✗ ' + e.message; }
   finally { if (_psAlBatch) { try { await _psAlBatchFlush(); } catch (e) {} } _psAlLabelBusy = false; psAlLoadLabels(); }
 };
+// 🔁 Today's print batches next to 🖨 Print new labels now: reprint the last one (or any) in one tap, same order.
+window.psAlLoadRecentStacks = async function() {
+  var btn = document.getElementById('ps-al-reprint-last'), box = document.getElementById('ps-al-recent-stacks'); if (!btn || !box) return;
+  var d; try { d = await _psAlFetch('/veeqo/autolabel/day?date=' + encodeURIComponent(_psAlNyDay())); } catch (e) { return; }
+  var st = (d && d.stacks) || [], e = _psAlEsc, tm = function(x) { return new Date(x).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' }); };
+  if (!st.length) { btn.style.display = 'none'; box.innerHTML = ''; return; }
+  var last = st.slice().sort(function(a, b) { return String(b.ts).localeCompare(String(a.ts)); })[0];
+  btn.style.display = ''; btn.setAttribute('data-id', last.id);
+  btn.textContent = '🔁 Reprint last batch (' + last.count + ' label' + (last.count === 1 ? '' : 's') + ' · ' + tm(last.ts) + ')';
+  box.innerHTML = '<details><summary style="cursor:pointer;color:var(--accent)">🗂 Today\'s batches (' + st.length + ') — print any of them again</summary><div style="margin-top:4px">'
+    + st.slice().sort(function(a, b) { return String(b.ts).localeCompare(String(a.ts)); }).map(function(b) {
+      return '<div style="display:flex;gap:6px;align-items:center;flex-wrap:wrap;padding:3px 0;border-bottom:1px solid var(--border)"><b>' + e(tm(b.ts)) + '</b> · ' + b.count + ' label' + (b.count === 1 ? '' : 's') + ' · ' + e(b.by_user || '?') + ' · ' + e(b.source || '')
+        + ' <button class="ps-btn-sm" onclick="psAlStackReprint(' + b.id + ', this)">🖨 Print again</button><button class="ps-btn-sm" onclick="psAlStackOpen(' + b.id + ')">👁 Open</button></div>';
+    }).join('') + '</div></details>';
+};
+window.psAlReprintLast = function(btn) { var id = parseInt(btn.getAttribute('data-id')); if (id) psAlStackReprint(id, btn); };
 window.psAlLoadLabels = async function() {
+  setTimeout(psAlLoadRecentStacks, 1500); // after the batch just printed is saved
   var box = document.getElementById('ps-al-label-list'); if (!box) return;
   var all = await Promise.all([_psAlFetch('/veeqo/autolabel/labels?status=new&limit=200'), _psAlFetch('/veeqo/autolabel/labels?status=printed&limit=30')]);
   var fresh = (all[0] && all[0].labels) || [];

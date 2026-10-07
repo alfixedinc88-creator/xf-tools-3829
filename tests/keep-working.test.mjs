@@ -3646,5 +3646,22 @@ console.log('\nReorder: whole-family math (201-2-13 case), negative SKU Mgr case
   sq.exec(`DELETE FROM fba_catalog WHERE sku LIKE '${F}%'; DELETE FROM amazon_sales_weekly WHERE sku LIKE '${F}%'; DELETE FROM master_list WHERE base_sku = '${F}'`);
 }
 
+// Owner: "I printed 17 labels with Print new labels now, nothing came out of the printer, and it won't print them again —
+// I need a history so I can reprint the previous batch at once, not one by one".
+console.log('\n🔁 Auto Label: reprint the last batch (or any of today\'s) in one tap, next to Print new labels now');
+{
+  const ph = readFileSync0(fileURLToPath(new URL('../packship.html', import.meta.url)), 'utf8');
+  const ids = [11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27];
+  const sv = await post('/veeqo/autolabel/print-batch', { ids, source: 'by hand', by: 'OW' });
+  const day = await get('/veeqo/autolabel/day?date=' + new Date().toLocaleDateString('en-CA', { timeZone: 'America/New_York' }));
+  const st = (day.stacks || []).find(b => b.count === 17 && b.source === 'by hand');
+  const one = st ? await get('/veeqo/autolabel/print-batch?id=' + st.id) : {};
+  check('a print round of 17 labels is kept (when, who, how many, which labels in order) — today\'s list has it, and it opens with the same 17 in the same order',
+    sv.ok !== false && !!st && !!st.by_user && JSON.parse(sq.prepare('SELECT label_ids FROM label_print_batch WHERE id = ?').get(st.id).label_ids || '[]').join() === ids.join() && one.ok !== false, { st });
+  check('…🔁 Reprint last batch button right next to 🖨 Print new labels now (prints the whole last batch again, same order), and 🗂 Today\'s batches with Print again / Open for each',
+    /onclick="psAlPrintNewLabels\(\)">🖨 Print new labels now<\/button>\s*<button class="ps-btn-sm" id="ps-al-reprint-last"/.test(ph) && /window\.psAlReprintLast = function\(btn\) \{ var id = parseInt\(btn\.getAttribute\('data-id'\)\); if \(id\) psAlStackReprint\(id, btn\); \};/.test(ph)
+      && /🗂 Today\\'s batches \(/.test(ph) && /onclick="psAlStackReprint\(' \+ b\.id \+ ', this\)">🖨 Print again<\/button>/.test(ph), null);
+}
+
 console.log('\n' + (failed ? '❌ ' + failed + ' check(s) FAILED' : '✅ all ' + passed + ' checks passed') + '\n');
 process.exit(failed ? 1 : 0);
