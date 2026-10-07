@@ -3878,5 +3878,28 @@ console.log('\nReorder: sales history stored in pieces is found and fixed (201-2
   sq.exec("DELETE FROM ebay_sales_weekly WHERE sku IN ('214-2-12=500','214-2-13=100','214-5-4=50'); DELETE FROM fba_catalog WHERE sku = '214-2-12=500'; DELETE FROM sales_fix_backup");
 }
 
+// Owner (2026-10-07): "the sales dashboard (Overview / Part# Detail / SKU Detail) — is it live, the right number for what we have now?"
+// Sales under a SKU mapped to a part # on Reorder, or written a bit differently, count on that part #; SKUs that aren't ours are shown
+// as NOT counted; the SKU Detail daily average no longer counts the last 30 days twice; each channel says up to which day it is in.
+console.log('\nSales Dashboard: mapped / cleaned SKUs count, unmatched shown, daily average, sales-through dates');
+{
+  const day = n => new Date(Date.now() - n * 86400000).toISOString().slice(0, 10);
+  sq.prepare("INSERT INTO master_list (base_sku, name, part_num, location, cases, units_per_case) VALUES ('215-1-1','tee','215-1-1=10','C1=5-1-1',2,100)").run();
+  sq.prepare("INSERT OR REPLACE INTO reorder_alias (raw, part) VALUES ('WEIRD-SKU-215','215-1-1=10')").run();
+  sq.prepare("INSERT INTO ebay_sales_weekly (sku, period_start, period_end, units_ordered, sales_amount) VALUES ('215-1-1=10__',?,?,3,30), ('WEIRD-SKU-215',?,?,2,20), ('JUNK-SKU-215',?,?,5,50), ('215-1-1=10__',?,?,4,40)")
+    .run(day(10), day(3), day(10), day(3), day(10), day(3), day(60), day(53));
+  const d = await get('/sales/dashboard-data');
+  const p = (d.parts || []).find(x => x.partNum === '215-1-1=10') || {}, k = (d.skus || []).find(x => x.baseSku === '215-1-1') || {};
+  check('Part# Detail: 215-1-1=10 (in SKU Mgr) gets its eBay sales written "215-1-1=10__" AND the ones under "WEIRD-SKU-215" (mapped on Reorder): 30 d 3 + 2 = 5, 90 d 5 + 4 = 9',
+    p.ebayU30 === 5 && p.ebayU90 === 9, [p.ebayU30, p.ebayU90]);
+  check('…"JUNK-SKU-215" (not one of our part #s) is not hidden: shown as NOT counted with its 5 units', d.unmatched && d.unmatched.top.some(x => x.sku === 'JUNK-SKU-215' && x.u90 === 5) && d.unmatched.u90 >= 5, d.unmatched);
+  check('SKU Detail: 215-1-1 pieces 30 d 50, 90 d 90, daily average 90 ÷ 90 = 1 (was (50 + 90) ÷ 90 = 1.56, the last 30 days counted twice)', k.units30 === 50 && k.units90 === 90 && k.dailyAvg === 1, k);
+  check('…each channel says up to which day its weekly sales are in', d.dataThrough && /^\d{4}-\d\d-\d\d$/.test(d.dataThrough.eBay || ''), d.dataThrough);
+  const { readFileSync: rf12 } = await import('node:fs');
+  const sh = rf12(fileURLToPath(new URL('../sales.html', import.meta.url)), 'utf8');
+  check('page: Overview line "Sales are imported once a week per channel: … through …" + red "… NOT in these numbers"', /id="db-fresh"/.test(sh) && /function renderFreshness\(\)/.test(sh) && /NOT in these numbers/.test(sh), null);
+  sq.exec("DELETE FROM master_list WHERE base_sku = '215-1-1'; DELETE FROM reorder_alias WHERE raw = 'WEIRD-SKU-215'; DELETE FROM ebay_sales_weekly WHERE sku IN ('215-1-1=10__','WEIRD-SKU-215','JUNK-SKU-215')");
+}
+
 console.log('\n' + (failed ? '❌ ' + failed + ' check(s) FAILED' : '✅ all ' + passed + ' checks passed') + '\n');
 process.exit(failed ? 1 : 0);

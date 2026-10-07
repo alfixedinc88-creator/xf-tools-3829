@@ -1740,6 +1740,8 @@ body { display:flex; flex-direction:column; min-height:100vh; background:var(--b
 
     <!-- Overview -->
     <div class="sales-panel" id="db-panel-overview">
+      <!-- How fresh each channel's sales are + sales under SKUs that aren't one of our part #s (not in the numbers below) -->
+      <div id="db-fresh" style="font-size:12px;color:var(--text2);margin-bottom:10px;line-height:1.6"></div>
       <div class="sales-kpi-grid" id="db-kpis">
         <div class="sales-empty" style="grid-column:1/-1;padding:40px"><div class="sales-empty-icon">📊</div><div class="sales-empty-title">No data yet</div></div>
       </div>
@@ -1982,6 +1984,21 @@ async function readDashboardDataFromD1() {
   if (!data.ok) throw new Error(data.error || 'Failed to load dashboard data');
   CALC.rawParts = data.parts || [];
   CALC.rawSkus = data.skus || [];
+  CALC.dataThrough = data.dataThrough || {};
+  CALC.unmatched = data.unmatched || null;
+  renderFreshness();
+}
+// Owner: "is the sales dashboard live, the right number for what we have now?" — sales come in once a week per
+// channel, so say up to which day each channel is in; and how much sold under SKUs that aren't one of our part #s.
+function renderFreshness() {
+  var box = document.getElementById('db-fresh'); if (!box) return;
+  var e = function (v) { return String(v == null ? '' : v).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;'); };
+  var dt = CALC.dataThrough || {}, u = CALC.unmatched;
+  var fresh = ['Amazon', 'eBay', 'Walmart', 'Shopify'].filter(function (c) { return dt[c]; }).map(function (c) { return '<b>' + c + '</b> through ' + e(dt[c]); }).join(' · ');
+  box.innerHTML = (fresh ? '🗓 Sales are imported once a week per channel: ' + fresh + ' (the days after that are not in yet).' : '')
+    + (u && u.skus ? '<div style="color:var(--red);font-weight:600" title="' + e(u.top.map(function (x) { return x.sku + ': ' + x.u90 + ' units (90 d)'; }).join('\n')) + '">⚠ '
+      + Math.round(u.u90).toLocaleString('en-US') + ' units (90 d) sold under ' + u.skus + ' SKU' + (u.skus === 1 ? '' : 's') + ' that are not one of our part #s are NOT in these numbers — map them on Reorder (✏️ / SKU check). Biggest: '
+      + u.top.slice(0, 3).map(function (x) { return e(x.sku) + ' ' + Math.round(x.u90); }).join(', ') + '</div>' : '');
 }
 
 async function salesLoadWarehouseStock() {
