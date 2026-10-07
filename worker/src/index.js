@@ -2722,11 +2722,18 @@ async function salesDashboardDataHandler(env) {
       queryPlatform('walmart_sales_weekly', 'sales_amount',          since90),
     ]);
 
-    // ── Merge into one per-exact-SKU accumulator ──
-    const acc = {}; // SKU (upper) -> { amzU30, amzU90, amzS30, amzS90, ebayU30, ... }
+    // ── Merge into one per-part # accumulator ──
+    // Owner (2026-10-07): "is the sales dashboard live, right numbers?" — a channel SKU mapped to a part # on
+    // Reorder (✏️ / SKU check, reorder_alias) or only written differently ("4-2-3==2", "24-4-7=1__") counts on
+    // that part #, same as the Reorder planner; sales under a SKU that isn't one of our part #s are added up
+    // and shown as "not matched" instead of quietly left out.
+    const alias = {};
+    try { ((await env.DB.prepare('SELECT raw, part FROM reorder_alias').all()).results || []).forEach(r => { alias[String(r.raw || '').trim().toUpperCase()] = String(r.part || '').trim().toUpperCase(); }); } catch (_) {}
+    const partOf = raw => { const u = String(raw || '').trim().toUpperCase(), c = reorderCleanPart(u); return alias[u] || alias[c] || c; };
+    const acc = {}; // part # (upper) -> { amzU30, amzU90, amzS30, amzS90, ebayU30, ... }
     function merge(rows, prefix, unitsKey, salesKey) {
       rows.forEach(r => {
-        const pn = (r.sku || '').trim().toUpperCase();
+        const pn = partOf(r.sku);
         if (!pn) return;
         if (!acc[pn]) acc[pn] = {};
         acc[pn][unitsKey] = (acc[pn][unitsKey] || 0) + (r.units || 0);
@@ -2745,9 +2752,20 @@ async function salesDashboardDataHandler(env) {
     // ── Master part# list: every known UPC part (even 0-sales, to show
     // OOS parts) plus any sales-data part that matches a known UPC part
     // (skips unmapped/junk SKUs, same rule the old pipeline used) ──
+    const ourParts = new Set([...upcParts, ...Object.keys(stockByPart)]);
     const allParts = new Set([...upcParts]);
+    const unmatched = { skus: 0, u30: 0, u90: 0, top: [] };
     for (const pn of Object.keys(acc)) {
-      if (upcParts.has(pn)) allParts.add(pn);
+      if (ourParts.has(pn)) { allParts.add(pn); continue; }
+      const v = acc[pn], u30 = (v.amzU30 || 0) + (v.ebayU30 || 0) + (v.xfU30 || 0) + (v.walU30 || 0), u90 = (v.amzU90 || 0) + (v.ebayU90 || 0) + (v.xfU90 || 0) + (v.walU90 || 0);
+      if (!u90 && !u30) continue;
+      unmatched.skus++; unmatched.u30 += u30; unmatched.u90 += u90; unmatched.top.push({ sku: pn, u30, u90 });
+    }
+    unmatched.top = unmatched.top.sort((a, b) => b.u90 - a.u90).slice(0, 20);
+    // Sales are weekly imports (Amazon Mon, eBay Tue, Walmart Wed, Shopify Thu): the newest week each channel has.
+    const dataThrough = {};
+    for (const [t, ch] of [['amazon_sales_weekly', 'Amazon'], ['ebay_sales_weekly', 'eBay'], ['walmart_sales_weekly', 'Walmart'], ['shopify_sales_weekly', 'Shopify']]) {
+      try { const m = await env.DB.prepare(`SELECT MAX(period_start) AS s, MAX(period_end) AS e FROM ${t}`).first(); if (m && (m.e || m.s)) dataThrough[ch] = String(m.e || m.s).slice(0, 10); } catch (_) {}
     }
 
     const parts = [];
@@ -2784,11 +2802,11 @@ async function salesDashboardDataHandler(env) {
       units90: Math.round(v.pieces90 * 10) / 10,
       sales30: Math.round(v.s30 * 100) / 100,
       sales90: Math.round(v.s90 * 100) / 100,
-      dailyAvg: Math.round(((v.pieces30 + v.pieces90) / 90) * 100) / 100,
+      dailyAvg: Math.round((v.pieces90 / 90) * 100) / 100, // the 90 days already hold the last 30 — was (30 d + 90 d) ÷ 90, counting the last month twice
     })).sort((a, b) => a.baseSku.localeCompare(b.baseSku));
 
     return cors(new Response(JSON.stringify({
-      ok: true, parts, skus, generatedAt: new Date().toISOString(),
+      ok: true, parts, skus, generatedAt: new Date().toISOString(), unmatched, dataThrough,
     }), { headers: { 'Content-Type': 'application/json' } }));
   } catch (e) {
     return cors(new Response(JSON.stringify({ ok: false, error: e.message }), { status: 500, headers: { 'Content-Type': 'application/json' } }));
