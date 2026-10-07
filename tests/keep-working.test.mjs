@@ -3660,7 +3660,32 @@ console.log('\n🔁 Auto Label: reprint the last batch (or any of today\'s) in o
     sv.ok !== false && !!st && !!st.by_user && JSON.parse(sq.prepare('SELECT label_ids FROM label_print_batch WHERE id = ?').get(st.id).label_ids || '[]').join() === ids.join() && one.ok !== false, { st });
   check('…🔁 Reprint last batch button right next to 🖨 Print new labels now (prints the whole last batch again, same order), and 🗂 Today\'s batches with Print again / Open for each',
     /onclick="psAlPrintNewLabels\(\)">🖨 Print new labels now<\/button>\s*<button class="ps-btn-sm" id="ps-al-reprint-last"/.test(ph) && /window\.psAlReprintLast = function\(btn\) \{ var id = parseInt\(btn\.getAttribute\('data-id'\)\); if \(id\) psAlStackReprint\(id, btn\); \};/.test(ph)
-      && /🗂 Today\\'s batches \(/.test(ph) && /onclick="psAlStackReprint\(' \+ b\.id \+ ', this\)">🖨 Print again<\/button>/.test(ph), null);
+      && /🗂 Batches printed — /.test(ph) && /ontoggle="if\(this\.open\)psAlStackLoad\(' \+ b\.id \+ ', this\)"/.test(ph) && /onclick="psAlStackReprint\(' \+ id \+ ', this\)">🖨 Print this stack again<\/button>/.test(ph), null);
+}
+
+// Owner: "for Today's Batches I want to search on the date too, find out when and how; when I search the tracking number,
+// the whole stack it printed in pops up".
+console.log('\n🔎 Print batches: any date, and a tracking # / order # finds the whole stack it printed in');
+{
+  const now = new Date(), ago = new Date(now.getTime() - 26 * 3600e3).toISOString(), day0 = new Date(now.getTime() - 26 * 3600e3).toLocaleDateString('en-CA', { timeZone: 'America/New_York' });
+  const ins = (o, t) => sq.prepare("INSERT INTO label_print_queue (order_number, tracking, carrier, service, created_at) VALUES (?,?,?,?,?)").run(o, t, 'USPS', 'Ground Advantage', ago).lastInsertRowid;
+  const L1 = Number(ins('FIND-1', '9400111899223344556677')), L2 = Number(ins('FIND-2', '1ZFIND0000000000002')), L3 = Number(ins('FIND-3', '9400100000000000000333'));
+  const bA = sq.prepare("INSERT INTO label_print_batch (ts, day, by_user, source, count, label_ids) VALUES (?,?,?,?,?,?)").run(ago, day0, 'AM', 'printer station', 2, JSON.stringify([L1, L2])).lastInsertRowid;
+  const bB = sq.prepare("INSERT INTO label_print_batch (ts, day, by_user, source, count, label_ids) VALUES (?,?,?,?,?,?)").run(now.toISOString(), day0, 'OW', 'reprint of a stack', 1, JSON.stringify([L1])).lastInsertRowid;
+  const f1 = await get('/veeqo/autolabel/print-batch-find?q=9400111899223344556677');
+  const f1s = await get('/veeqo/autolabel/print-batch-find?q=' + encodeURIComponent('420080629400111899223344556677')); // the label barcode as scanned (420 + ZIP + tracking)
+  const f2 = await get('/veeqo/autolabel/print-batch-find?q=find-2'), f3 = await get('/veeqo/autolabel/print-batch-find?q=FIND-3');
+  const dy = await get('/veeqo/autolabel/day?date=' + day0);
+  check('a tracking # (typed or scanned with its 420+ZIP) → both batches it printed in, newest first (the reprint, then the first print); the order # works too; a label never printed → said plainly',
+    f1.batches.map(b => b.id).join() === [bB, bA].join() && f1s.batches.map(b => b.id).join() === [bB, bA].join() && f2.batches.map(b => b.id).join() === String(bA)
+      && f3.labels.length === 1 && f3.batches.length === 0, { f1: f1.batches, f1s: f1s.batches, f2: f2.batches, f3 });
+  const bo = await get('/veeqo/autolabel/print-batch?id=' + bA);
+  check('…the whole stack opens: the first print had 2 labels in order (FIND-1, FIND-2), who (AM), how (printer station); and a past date lists its batches',
+    bo.labels.map(l => l.order_number).join() === 'FIND-1,FIND-2' && bo.batch.by_user === 'AM' && bo.batch.source === 'printer station' && (dy.stacks || []).some(b => b.id === bA), bo.batch);
+  const ph = readFileSync0(fileURLToPath(new URL('../packship.html', import.meta.url)), 'utf8');
+  check('…page: 🗂 Batches has a date picker and a 🔎 tracking / order # box; found stacks open with the searched label highlighted; the every-minute refresh never wipes an open search',
+    /<input type="date" id="ps-al-stk-date"/.test(ph) && /id="ps-al-stk-find"/.test(ph) && /psAlStackFind\(this\.value\)/.test(ph) && /background:#FEF3C7;font-weight:700/.test(ph) && /if \(_psAlStkOpen && !force\) return;/.test(ph), null);
+  sq.prepare('DELETE FROM label_print_batch WHERE id IN (?,?)').run(bA, bB); sq.prepare('DELETE FROM label_print_queue WHERE id IN (?,?,?)').run(L1, L2, L3);
 }
 
 console.log('\n' + (failed ? '❌ ' + failed + ' check(s) FAILED' : '✅ all ' + passed + ' checks passed') + '\n');

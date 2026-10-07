@@ -10326,20 +10326,57 @@ window.psAlPrintNewLabels = async function(silent) {
   } catch (e) { if (msg) msg.textContent = '✗ ' + e.message; }
   finally { if (_psAlBatch) { try { await _psAlBatchFlush(); } catch (e) {} } _psAlLabelBusy = false; psAlLoadLabels(); }
 };
-// 🔁 Today's print batches next to 🖨 Print new labels now: reprint the last one (or any) in one tap, same order.
-window.psAlLoadRecentStacks = async function() {
+// 🔁 Print batches next to 🖨 Print new labels now: reprint the last one (or any) in one tap, same order.
+// Owner: "search on the date too, find out when and how; search the tracking number and the whole stack it printed in pops up".
+var _psAlStkOpen = false;
+function _psAlStkRow(b, open) {
+  var e = _psAlEsc, tm = new Date(b.ts).toLocaleString([], { month: 'numeric', day: 'numeric', hour: 'numeric', minute: '2-digit' });
+  return '<details class="ps-al-stk"' + (open ? ' open' : '') + ' style="border:1px solid var(--border);border-radius:8px;padding:4px 8px;margin-bottom:4px" ontoggle="if(this.open)psAlStackLoad(' + b.id + ', this)">'
+    + '<summary style="cursor:pointer"><b>' + e(tm) + '</b> · ' + b.count + ' label' + (b.count === 1 ? '' : 's') + ' · ' + e(b.by_user || '?') + ' · ' + e(b.source || '') + '</summary>'
+    + '<div class="ps-al-stack-body" style="margin-top:6px;color:var(--text3)">⏳ Loading…</div></details>';
+}
+// force: the list is redrawn even while open (date picked); the every-minute refresh only updates the 🔁 button
+// while the list is open, so a date or search being looked at is never wiped.
+window.psAlLoadRecentStacks = async function(force) {
   var btn = document.getElementById('ps-al-reprint-last'), box = document.getElementById('ps-al-recent-stacks'); if (!btn || !box) return;
-  var d; try { d = await _psAlFetch('/veeqo/autolabel/day?date=' + encodeURIComponent(_psAlNyDay())); } catch (e) { return; }
-  var st = (d && d.stacks) || [], e = _psAlEsc, tm = function(x) { return new Date(x).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' }); };
-  if (!st.length) { btn.style.display = 'none'; box.innerHTML = ''; return; }
-  var last = st.slice().sort(function(a, b) { return String(b.ts).localeCompare(String(a.ts)); })[0];
-  btn.style.display = ''; btn.setAttribute('data-id', last.id);
-  btn.textContent = '🔁 Reprint last batch (' + last.count + ' label' + (last.count === 1 ? '' : 's') + ' · ' + tm(last.ts) + ')';
-  box.innerHTML = '<details><summary style="cursor:pointer;color:var(--accent)">🗂 Today\'s batches (' + st.length + ') — print any of them again</summary><div style="margin-top:4px">'
-    + st.slice().sort(function(a, b) { return String(b.ts).localeCompare(String(a.ts)); }).map(function(b) {
-      return '<div style="display:flex;gap:6px;align-items:center;flex-wrap:wrap;padding:3px 0;border-bottom:1px solid var(--border)"><b>' + e(tm(b.ts)) + '</b> · ' + b.count + ' label' + (b.count === 1 ? '' : 's') + ' · ' + e(b.by_user || '?') + ' · ' + e(b.source || '')
-        + ' <button class="ps-btn-sm" onclick="psAlStackReprint(' + b.id + ', this)">🖨 Print again</button><button class="ps-btn-sm" onclick="psAlStackOpen(' + b.id + ')">👁 Open</button></div>';
-    }).join('') + '</div></details>';
+  var dEl = document.getElementById('ps-al-stk-date'), day = (dEl && dEl.value) || _psAlNyDay(), today = _psAlNyDay(), e = _psAlEsc;
+  var td; try { td = await _psAlFetch('/veeqo/autolabel/day?date=' + encodeURIComponent(today)); } catch (er) { return; }
+  var tst = ((td && td.stacks) || []).slice().sort(function(a, b) { return String(b.ts).localeCompare(String(a.ts)); });
+  if (tst.length) { var last = tst[0]; btn.style.display = ''; btn.setAttribute('data-id', last.id);
+    btn.textContent = '🔁 Reprint last batch (' + last.count + ' label' + (last.count === 1 ? '' : 's') + ' · ' + new Date(last.ts).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' }) + ')'; }
+  else btn.style.display = 'none';
+  if (_psAlStkOpen && !force) return;
+  var st = tst;
+  if (day !== today) { var d; try { d = await _psAlFetch('/veeqo/autolabel/day?date=' + encodeURIComponent(day)); } catch (er) { return; }
+    st = ((d && d.stacks) || []).slice().sort(function(a, b) { return String(b.ts).localeCompare(String(a.ts)); }); }
+  var q = (document.getElementById('ps-al-stk-find') || {}).value || '';
+  box.innerHTML = '<details' + (_psAlStkOpen ? ' open' : '') + ' ontoggle="_psAlStkOpen=this.open"><summary style="cursor:pointer;color:var(--accent)">🗂 Batches printed — ' + (day === today ? 'today' : e(day)) + ' (' + st.length + ') · find by date or tracking #</summary>'
+    + '<div style="display:flex;gap:6px;flex-wrap:wrap;align-items:center;margin:6px 0">'
+    + '<input type="date" id="ps-al-stk-date" class="ps-field-input" value="' + e(day) + '" style="width:auto;margin:0;padding:5px 8px;font-size:12px" onchange="psAlLoadRecentStacks(true)">'
+    + '<input id="ps-al-stk-find" class="ps-field-input" value="' + e(q) + '" placeholder="🔎 Tracking # or order # (scan the label)" style="flex:1;min-width:200px;margin:0;padding:5px 8px;font-size:12px" onkeydown="if(event.key===\'Enter\'){event.preventDefault();psAlStackFind(this.value)}">'
+    + '<button class="ps-btn-sm" onclick="psAlStackFind(document.getElementById(\'ps-al-stk-find\').value)">Find</button></div>'
+    + '<div id="ps-al-stk-found"></div>'
+    + (st.length ? st.map(function(b) { return _psAlStkRow(b, false); }).join('') : '<div style="color:var(--text3)">No batches printed ' + (day === today ? 'today' : 'on ' + e(day)) + '.</div>')
+    + '</div></details>';
+};
+// 🔎 A tracking # / order # → every batch it printed in, opened with the whole stack, the label highlighted.
+window.psAlStackFind = async function(q) {
+  var out = document.getElementById('ps-al-stk-found'); if (!out) return;
+  q = String(q || '').trim(); if (!q) { out.innerHTML = ''; return; }
+  out.innerHTML = '<div style="color:var(--text3)">⏳ Looking…</div>';
+  var d = await _psAlFetch('/veeqo/autolabel/print-batch-find?q=' + encodeURIComponent(q)).catch(function(e) { return { ok: false, error: e.message }; });
+  if (d.ok === false) { out.innerHTML = '<div style="color:var(--red)">✗ ' + _psAlEsc(d.error || 'failed') + '</div>'; return; }
+  if (!(d.batches || []).length) { out.innerHTML = '<div style="color:var(--orange)">' + ((d.labels || []).length ? 'Found the label (' + _psAlEsc(d.labels.map(function(l) { return l.order_number; }).join(', ')) + ') but it was never printed in a batch.' : 'No label with “' + _psAlEsc(q) + '”.') + '</div>'; return; }
+  out.innerHTML = '<div style="font-weight:700;margin-bottom:4px">🔎 “' + _psAlEsc(q) + '” printed in ' + d.batches.length + ' batch' + (d.batches.length === 1 ? '' : 'es') + ':</div>' + d.batches.map(function(b) { return _psAlStkRow(b, true); }).join('');
+  var marks = (d.labels || []).map(function(l) { return [String(l.tracking || ''), String(l.order_number || '')]; });
+  var els = out.querySelectorAll('details.ps-al-stk');
+  for (var i = 0; i < els.length; i++) {
+    await psAlStackLoad(d.batches[i].id, els[i]);
+    [].forEach.call(els[i].querySelectorAll('.ps-al-stack-body > div'), function(row) { // the searched label, highlighted
+      var t = row.textContent || '';
+      if (marks.some(function(m) { return (m[0] && t.indexOf(m[0]) >= 0) || (m[1] && t.indexOf(m[1]) >= 0); })) row.style.cssText += ';background:#FEF3C7;font-weight:700;border-radius:6px;padding-left:4px';
+    });
+  }
 };
 window.psAlReprintLast = function(btn) { var id = parseInt(btn.getAttribute('data-id')); if (id) psAlStackReprint(id, btn); };
 window.psAlLoadLabels = async function() {

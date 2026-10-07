@@ -27698,6 +27698,23 @@ async function handleAutolabelRoute(path, method, url, request, env, session) {
     return veeqoResp({ ok: true, batch: { id: batch.id, ts: batch.ts, by_user: batch.by_user, source: batch.source, count: batch.count }, labels });
   }
 
+  // 🔎 Owner: "search the tracking number and the whole stack it printed in pops up" — every batch that holds a
+  // label with this tracking # / order # (newest first), plus which label matched.
+  if (path === '/veeqo/autolabel/print-batch-find' && method === 'GET') {
+    await labelBatchEnsure(env);
+    const q = String(url.searchParams.get('q') || '').replace(/\s+/g, '').toUpperCase();
+    if (q.length < 4) return veeqoResp({ ok: false, error: 'Type at least 4 characters of the tracking # or order #' }, 400);
+    // A scanned USPS barcode carries "420" + ZIP in front of the tracking # → also match its last 22 digits.
+    const tail = /^420\d{5,9}(\d{20,22})$/.test(q) ? q.replace(/^420\d{5,9}(\d{20,22})$/, '$1') : q;
+    const hits = await d1All(env, `SELECT id, order_number, tracking FROM label_print_queue WHERE UPPER(REPLACE(tracking, ' ', '')) IN (?, ?)
+      OR UPPER(REPLACE(tracking, ' ', '')) LIKE ? OR UPPER(order_number) LIKE ? ORDER BY id DESC LIMIT 30`, [q, tail, '%' + tail + '%', '%' + q + '%']);
+    if (!hits.length) return veeqoResp({ ok: true, q, labels: [], batches: [] });
+    const ids = hits.map(h => h.id);
+    const batches = await d1All(env, `SELECT DISTINCT b.id, b.ts, b.day, b.by_user, b.source, b.count FROM label_print_batch b, json_each(b.label_ids) j
+      WHERE j.value IN (${ids.map(() => '?').join(',')}) ORDER BY b.id DESC LIMIT 20`, ids);
+    return veeqoResp({ ok: true, q, labels: hits, batches });
+  }
+
   if (path === '/veeqo/autolabel/log' && method === 'GET') {
     const [log, cancels] = await Promise.all([
       d1All(env, 'SELECT * FROM autolabel_log ORDER BY id DESC LIMIT 100'),
