@@ -230,9 +230,11 @@ window.addEventListener('pageshow', function (e) { if (e.persisted) location.rel
   // the exact commit the site + Worker run (version.json) and the page code as
   // served. Saved designs can't be changed or deleted; any one can be
   // downloaded, or named to Claude ("bring back <tab> from <date>").
-  var designOn = false;
+  var designOn = false, DH = null; // DH = this page, for 🔒 designs
   function designSetup() {
-    if (designOn || !here || !document.body) return; designOn = true;
+    if (designOn || !document.body) return;
+    if (!DH) DH = here || (file && file !== 'index.html' && /\.html$/.test(file) ? { file: file, name: document.title || file, tabs: [] } : null);
+    if (!DH) return; designOn = true;
     var b = document.createElement('button'); b.type = 'button'; b.id = 'xf-design-btn'; b.textContent = '🔒';
     b.title = 'Save this design (Owner) · saved versions';
     b.style.cssText = 'position:fixed;right:10px;bottom:34px;z-index:2147482000;width:36px;height:36px;border-radius:50%;border:1px solid #d1d5db;background:#fff;box-shadow:0 2px 8px rgba(0,0,0,.18);font-size:16px;cursor:pointer;opacity:.75';
@@ -246,16 +248,34 @@ window.addEventListener('pageshow', function (e) { if (e.persisted) location.rel
   var DSUBS = { 'inventory.html': { transfer: [
     { key: 'code', label: 'SKU / Part# / UPC / Name', sel: '#xfr-mode-code' },
     { key: 'cont', label: '🚢 Container here', sel: '#xfr-mode-cont' }] } };
-  function dSubs(t) { return ((DSUBS[here.file] || {})[t.key]) || []; }
-  function dOn(sel) { var el = document.querySelector(sel); return !!(el && isActive(el) && el.style.display !== 'none'); }
+  function dSubs(t) { return ((DSUBS[DH.file] || {})[t.key]) || []; }
+  // Every tab button on the page, in the order shown — the access list's tabs
+  // plus any tab added later that isn't in it yet (e.g. 🏷️ Label Check).
+  function dTabs() {
+    var cat = DH.tabs || [], first = null;
+    for (var i = 0; i < cat.length && !first; i++) first = document.querySelector(cat[i].sel);
+    if (!first || !first.parentNode) return cat;
+    var seen = {}, out = [];
+    [].forEach.call(first.parentNode.children, function (el) {
+      if (el.tagName !== first.tagName || !el.getAttribute('onclick')) return;
+      var c = cat.filter(function (t) { return document.querySelector(t.sel) === el; })[0];
+      var key = c ? c.key : (String(el.id || '').replace(/^.*-tab-/, '') || String(el.textContent || '').replace(/[^A-Za-z0-9]+/g, '-').replace(/^-|-$/g, '').toLowerCase());
+      if (!key || seen[key]) return; seen[key] = 1;
+      out.push(c || { key: key, label: String(el.textContent || key).replace(/\s+/g, ' ').trim(), sel: el.id ? '#' + el.id : null, el: el });
+    });
+    cat.forEach(function (t) { if (!seen[t.key]) out.push(t); });
+    return out;
+  }
+  function dEl(t) { return t.el || (t.sel ? document.querySelector(t.sel) : null); }
+  function dOn(t) { var el = dEl(t); return !!(el && isActive(el) && el.style.display !== 'none'); }
   function dOpenTab() { // the tab open right now (and the part of it that is open)
-    var t = (here.tabs || []).filter(function (t) { return dOn(t.sel); })[0];
+    var t = dTabs().filter(function (t) { return dOn(t); })[0];
     if (!t) return null;
-    var sb = dSubs(t).filter(function (x) { return dOn(x.sel); })[0];
+    var sb = dSubs(t).filter(function (x) { return dOn(x); })[0];
     return sb ? { key: t.key + ':' + sb.key } : { key: t.key };
   }
   function dLabel(t) { // the name on the tab button, as the owner sees it
-    var el = document.querySelector(t.sel), f = el && el.firstChild;
+    var el = dEl(t), f = el && el.firstChild;
     var x = f && f.nodeType === 3 && f.textContent.trim() ? f.textContent : (el ? el.textContent : '');
     return String(x || t.label).replace(/\s+/g, ' ').trim() || t.label;
   }
@@ -274,19 +294,19 @@ window.addEventListener('pageshow', function (e) { if (e.persisted) location.rel
     if (!row.src_gz) return Promise.resolve(data);
     return new Response(new Blob([unb64(data)]).stream().pipeThrough(new DecompressionStream('gzip'))).text();
   }
-  function dPage() { return here.file; }
+  function dPage() { return DH.file; }
   function designPanel() {
     var old = document.getElementById('xf-design-pop'); if (old) { old.remove(); return; }
     var w = document.createElement('div'); w.id = 'xf-design-pop';
     w.style.cssText = 'position:fixed;inset:0;z-index:2147483200;background:rgba(0,0,0,.4);display:flex;align-items:flex-end;justify-content:center;font:14px/1.4 system-ui,-apple-system,Segoe UI,Roboto,sans-serif;color:#111';
-    var cur = dOpenTab(), tabs = here.tabs || [];
+    var cur = dOpenTab(), tabs = dTabs();
     var opt = function (key, lab) { return '<option value="' + dEsc(key) + '"' + (cur && cur.key === key ? ' selected' : '') + '>' + dEsc(lab) + '</option>'; };
     var opts = tabs.map(function (t) {
       return opt(t.key, dLabel(t)) + dSubs(t).map(function (x) { return opt(t.key + ':' + x.key, dLabel(t) + ' → ' + (dLabel(x) || x.label)); }).join('');
     }).join('')
       + '<option value="page"' + (!cur ? ' selected' : '') + '>Whole page (every tab)</option>';
     w.innerHTML = '<div style="background:#fff;width:100%;max-width:560px;max-height:88vh;overflow:auto;border-radius:16px 16px 0 0;padding:14px 14px calc(14px + env(safe-area-inset-bottom))">'
-      + '<div style="display:flex;align-items:center;gap:8px"><b style="flex:1;font-size:17px">🔒 Save this design — ' + dEsc(here.name) + '</b><button type="button" data-a="x" style="border:none;background:none;font-size:22px;cursor:pointer">&times;</button></div>'
+      + '<div style="display:flex;align-items:center;gap:8px"><b style="flex:1;font-size:17px">🔒 Save this design — ' + dEsc(DH.name) + '</b><button type="button" data-a="x" style="border:none;background:none;font-size:22px;cursor:pointer">&times;</button></div>'
       + '<div style="font-size:12px;color:#4b5563;margin:4px 0 10px">Saved on the server with today\'s date. Nobody can change or delete a saved design. Later: ⬇ download it, or tell Claude "bring back &lt;tab&gt; from &lt;date&gt;".</div>'
       + '<div style="display:flex;gap:6px;flex-wrap:wrap;align-items:center"><select id="xf-ds-tab" style="flex:1;min-width:160px;padding:9px;border:1.5px solid #d1d5db;border-radius:8px;font-size:14px">' + opts + '</select>'
       + '<input id="xf-ds-note" type="text" placeholder="Note (optional): what works well now" style="flex:2;min-width:180px;padding:9px;border:1.5px solid #d1d5db;border-radius:8px;font-size:14px"></div>'
@@ -320,7 +340,7 @@ window.addEventListener('pageshow', function (e) { if (e.persisted) location.rel
           var v = {}; try { v = JSON.parse(a[0] || '{}'); } catch (x) {}
           var text = '==================== ' + dPage() + ' ====================\n' + a[1] + '\n==================== xf-access.js ====================\n' + a[2] + '\n';
           return gz(text).then(function (z) {
-            return dApi('/designs/save', { page: dPage(), pageName: here.name, tab: key, tabLabel: lab, commit: v.commit || '', builtAt: v.builtAt || '', note: w.querySelector('#xf-ds-note').value, src: z.data, gz: z.gz, bytes: text.length });
+            return dApi('/designs/save', { page: dPage(), pageName: DH.name, tab: key, tabLabel: lab, commit: v.commit || '', builtAt: v.builtAt || '', note: w.querySelector('#xf-ds-note').value, src: z.data, gz: z.gz, bytes: text.length });
           });
         }).then(function (d) { msg('✅ Saved: ' + lab + ' · ' + dWhen(d.saved_at) + ' (#' + d.id + ')'); w.querySelector('#xf-ds-note').value = ''; list(); })
           .catch(function (x) { msg('⚠ Not saved: ' + x.message, '#b91c1c'); })
