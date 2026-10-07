@@ -3247,8 +3247,9 @@ console.log('\n🧾 Reorder planner: FBA rows carry every other pack / channel; 
     /var head = \['Priority', 'Part #'/.test(rh) && /rows = rows\.filter\(function \(r\) \{ return r\.urgent; \}\)\.concat\(rows\.filter\(function \(r\) \{ return !r\.urgent; \}\)\);/.test(rh)
       && /cell\(r\.urgent \? 'URGENT - ship in the FIRST container' : ''\), cell\(r\.sku\)/.test(rh) && /urgentN \+ ' URGENT - ship in the FIRST container'/.test(rh) && /🔥 URGENT · ' \+ r\.daysLeft/.test(rh) && /' URGENT, first container: '/.test(rh), null);
   // Owner (2026-10-07): "if anything with no FBA listing, we still need to order … don't have to separate to FBA listing" — no options, nothing hidden.
-  check('page: CSV has Pieces · Price per Piece · Line Total · Price From · Price Date + a TOTAL line; no Listings options; part #s with NO FBA listing are ordered too (never hidden); 🏷 tool',
-    /'Pieces', 'Price per Piece', 'Line Total', 'Price From', 'Price Date'/.test(rh) && /lines\.push\(\[cell\('TOTAL'\)/.test(rh) && /<input type="hidden" id="rvo-fbaf" value="all">/.test(rh) && !/<option value="nofba">/.test(rh)
+  // Owner (2026-10-07, later): the CSV is in pieces + cases, no "Price From" (replaces the old Pieces / Price From layout check).
+  check('page: CSV has Order Qty (pieces) · Cases · Pieces per Case · Price per Piece · Line Total · Price Date + a TOTAL line; no Listings options; part #s with NO FBA listing are ordered too (never hidden); 🏷 tool',
+    /'Order Qty \(pieces\)', 'Cases', 'Pieces per Case \(original box\)', 'Price per Piece', 'Line Total', 'Price Date'/.test(rh) && !/'Price From'/.test(rh) && /lines\.push\(\[cell\('TOTAL'\)/.test(rh) && /<input type="hidden" id="rvo-fbaf" value="all">/.test(rh) && !/<option value="nofba">/.test(rh)
       && !/hidden now, so they will NOT be ordered/.test(rh) && /Every part # that needs ordering is ordered — once/.test(rh) && /onclick="rvoPartOpen\(\)"/.test(rh) && /'\/inventory\/upc-link'/.test(rh), null);
   const vis = (rh.match(/function rvoVisible\(\) \{[\s\S]*?\n\}/) || [''])[0];
   const docStub = { getElementById: id => ({ 'rvo-vendor': { value: '' }, 'rvo-q': { value: '' }, 'rvo-fbaf': { value: (rh.match(/id="rvo-fbaf" value="(\w*)"/) || [])[1] }, 'rvo-all': { checked: false } }[id] || { checked: false, value: '' }) };
@@ -3441,9 +3442,10 @@ console.log('\nReorder vendor CSV: pieces per case + SKU Mgr price when there is
   const H2 = head ? JSON.parse(head.replace(/'/g, '"')) : [];
   const total = (csv.match(/lines\.push\(\[cell\('TOTAL'\)[\s\S]*?\]\.join\(','\)\);/) || [''])[0];
   const totalCells = total ? (total.match(/\]\.join/) ? total.slice(total.indexOf('[') + 1, total.lastIndexOf(']')) : '') : '';
-  check('CSV: "Pieces per Case (original box)" right after Qty per Case = Qty per Case × pack size (20 × 10 = 200 = SKU Mgr Each/Case)',
-    H2[7] === 'Qty per Case' && H2[8] === 'Pieces per Case (original box)' && H2[9] === 'Pieces' && /Math\.round\(r\.caseQty \* \(r\.packSize \|\| 1\) \* 1000\) \/ 1000/.test(csv) && c.caseQty * c.packSize === 200, H2);
-  check('…the TOTAL line still lines up under the columns (Pieces total under Pieces, $ under Line Total)', H2.length === 16 && /\* 1000\) \/ 1000, '', '', '', Math\.round\(pcsTot/.test(totalCells), totalCells.slice(0, 200));
+  // Owner (2026-10-07, later): pieces + cases only (replaces the old "Qty per Case / Pieces" column checks).
+  check('CSV: Order Qty (pieces) · Cases · Pieces per Case (original box) — SKU Mgr box 200 pcs for 88-3-3=10 (20 × 10)',
+    H2[5] === 'Order Qty (pieces)' && H2[6] === 'Cases' && H2[7] === 'Pieces per Case (original box)' && H2[8] === 'Price per Piece' && c.caseQty * c.packSize === 200 && c.casePcs === 200, H2);
+  check('…the TOTAL line lines up under the columns (pieces under Order Qty, cases under Cases, $ under Line Total)', H2.length === 13 && /Math\.round\(pcsTot \* 1000\) \/ 1000, casesTot, '', '', money\.toFixed\(2\), ''/.test(totalCells), totalCells.slice(0, 200));
   sq.exec("DELETE FROM master_list WHERE part_num IN ('88-3-3=10', '88-4-4=10'); DELETE FROM ebay_sales_weekly WHERE sku IN ('88-3-3=10', '88-4-4=10'); DELETE FROM reorder_vendor_catalog WHERE part = '88-4-4=10'");
 }
 
@@ -3529,6 +3531,119 @@ console.log('\n🏭 SKU Mgr → Coming in: ordered (still owed) vs shipped (on t
   sq.prepare("DELETE FROM reorder_incoming WHERE title IN ('PO-SPLIT 10/1','CT-SPLIT 10/5','PO-NOPRICE 10/6')").run();
   sq.prepare("DELETE FROM reorder_take WHERE from_title = 'PO-SPLIT 10/1'").run();
   sq.prepare("DELETE FROM reorder_title WHERE title IN ('PO-SPLIT 10/1','CT-SPLIT 10/5','PO-NOPRICE 10/6')").run();
+}
+
+// Owner (2026-10-07): "I want ALL of our inventory counted, don't give us the option, so we never order too much".
+console.log('\nReorder: all our stock always counts (no options), each piece once');
+{
+  const { readFileSync: rf5 } = await import('node:fs');
+  const wk = new Date(Date.now() - 14 * 86400000).toISOString().slice(0, 10);
+  // 89-9-9: two FBA listings =10X (30 sold → 300 pcs) and =50 (10 sold → 500 pcs), 0 at Amazon. Shelf: only the non-FBA pack =25, 2 cases × 100 pcs = 200 pcs.
+  sq.prepare("INSERT INTO fba_catalog (sku, asin, product_name, available) VALUES ('89-9-9=10X','B0TEST991','bolt',0), ('89-9-9=50','B0TEST992','bolt',0)").run();
+  sq.prepare("INSERT INTO amazon_sales_weekly (sku, period_start, units_ordered, asin) VALUES ('89-9-9=10X',?,30,'B0TEST991'), ('89-9-9=50',?,10,'B0TEST992')").run(wk, wk);
+  sq.prepare("INSERT INTO master_list (base_sku, name, part_num, location, cases, units_per_case) VALUES ('89-9-9','bolt','89-9-9=25','C1=9-9-1',2,100)").run();
+  const d = await get('/reorder/vendor-order?days=90&lead=3&cover=3&otherPacks=0&fbaStock=0'); // an old link asking to leave stock out → ignored
+  const a = (d.rows || []).find(x => x.sku === '89-9-9=10X') || {}, b = (d.rows || []).find(x => x.sku === '89-9-9=50') || {};
+  check('the 200 pcs of =25 on the shelf count against the 2 FBA rows by their sales: 75 (=10X, 300/800) + 125 (=50, 500/800) = 200 — every piece once, none left out',
+    d.countOtherPacks === true && d.countFba === true && a.otherPackPcs === 75 && b.otherPackPcs === 125 && a.otherPackPcs + b.otherPackPcs === 200, [a.otherPackPcs, b.otherPackPcs]);
+  // =10X: need 300 / 3 × 6 = 600 − 75 = 525 pcs → 53 bags of 10. =50: 1000 − 125 = 875 pcs → 18 bags of 50.
+  check('…so we order less: =10X 600 − 75 = 525 pcs → 53 bags; =50 1,000 − 125 = 875 pcs → 18 bags; no "not counted" note', a.needUnits === 53 && b.needUnits === 18 && !/not counted/.test(a.note + b.note), [a.needUnits, b.needUnits, a.note]);
+  const rh = rf5(fileURLToPath(new URL('../reorder.html', import.meta.url)), 'utf8');
+  check('page: no "Count FBA stock" / "Count other pack sizes" checkboxes; says it counts ALL our stock', !/id="rvo-fba"/.test(rh) && !/id="rvo-other"/.test(rh) && /✅ Counts ALL our stock/.test(rh) && /'&fbaStock=1&otherPacks=1'/.test(rh), null);
+  sq.exec("DELETE FROM fba_catalog WHERE sku LIKE '89-9-9%'; DELETE FROM amazon_sales_weekly WHERE sku LIKE '89-9-9%'; DELETE FROM master_list WHERE base_sku = '89-9-9'");
+}
+
+// Owner (2026-10-07): "24-1-2=10 — Order Qty 144 but Qty per Case 14.4, Pieces 1440 = 144 × 10 cases; that's not right. Price From not
+// needed". The vendor CSV is in PIECES and CASES: Order Qty (pieces) = Cases × Pieces per Case (SKU Mgr box), every line.
+console.log('\nReorder vendor CSV: pieces and cases add up on every line');
+{
+  const { readFileSync: rf6 } = await import('node:fs');
+  const rh = rf6(fileURLToPath(new URL('../reorder.html', import.meta.url)), 'utf8');
+  const fn = (rh.match(/function rvoCsv\(\) \{[\s\S]*?\n\}/) || [''])[0];
+  let out = '';
+  const RVOx = { loaded: true, off: {}, edits: { '24-9-9=10': 31 }, meta: {} };
+  const rowsX = [
+    // 24-1-2=10: SKU Mgr box 144 pcs = 14.4 bags of 10; planner needs 130 bags (1,300 pcs) → 10 cases = 144 bags = 1,440 pcs.
+    { sku: '24-1-2=10', packSize: 10, caseQty: 14.4, casePcs: 144, needUnits: 130, orderUnits: 144, price: 0.05, priceAt: '2026-09-01', vendor: 'JQ', description: 'tee' },
+    // typed by hand: 31 bags of 10 = 310 pcs, box 100 → 4 cases = 400 pcs.
+    { sku: '24-9-9=10', packSize: 10, caseQty: 10, casePcs: 100, needUnits: 20, orderUnits: 20, price: null, vendor: 'JQ' },
+    // no box size anywhere: 7 bags of 5 = 35 pcs, not rounded.
+    { sku: '24-8-8=5', packSize: 5, caseQty: 0, casePcs: null, needUnits: 7, orderUnits: 7, price: 0.1, vendor: 'JQ' } ];
+  const docX = { getElementById: () => ({ value: 'JQ' }), createElement: () => ({ click() {}, remove() {} }), body: { appendChild() {} } };
+  const BlobX = function (parts) { out = parts.join(''); };
+  new Function('document', 'RVO', 'rvoVisible', 'rvoVendorCheck', 'Blob', 'URL', 'setTimeout', 'showToast', 'wFetch', 'alert', 'confirm', 'W', (rh.match(/function rvoQty\(r\) \{[^\n]*\}/) || [''])[0] + '\n' + fn + '; rvoCsv();')(
+    docX, RVOx, () => rowsX, () => ({ ok: true, dup: [], text: '' }), BlobX, { createObjectURL: () => 'x', revokeObjectURL() {} }, () => {}, () => {}, () => Promise.resolve(), () => {}, () => true, '');
+  const parse = l => { const r = []; let cur = '', q = false; for (const ch of l) { if (ch === '"') q = !q; else if (ch === ',' && !q) { r.push(cur); cur = ''; } else cur += ch; } r.push(cur); return r; };
+  const L = out.replace(/^﻿/, '').split('\r\n').map(parse), H = L[0], col = n => H.indexOf(n);
+  const line = sku => L.find(r => r[1] === sku) || [];
+  const a = line('24-1-2=10'), b = line('24-9-9=10'), c = line('24-8-8=5'), tot = L.find(r => r[0] === 'TOTAL') || [];
+  const v = (r, n) => parseFloat(r[col(n)]);
+  check('24-1-2=10: Order Qty 1,440 pieces = 10 cases × 144 pcs (SKU Mgr box, not 14.4); Line Total 1,440 × $0.05 = $72.00; no Price From column',
+    v(a, 'Order Qty (pieces)') === 1440 && v(a, 'Cases') === 10 && v(a, 'Pieces per Case (original box)') === 144 && a[col('Line Total')] === '72.00' && col('Price From') < 0 && !H.includes('Qty per Case') && /Rounded up from 1300 to 1440 pcs \(10 cases of 144\)/.test(a[col('Note')]), a);
+  check('…typed by hand 31 bags = 310 pcs → rounded up to whole cases: 4 × 100 = 400 pcs; NO PRICE shown', v(b, 'Order Qty (pieces)') === 400 && v(b, 'Cases') === 4 && /Qty changed by hand/.test(b[col('Note')]) && /NO PRICE/.test(b[col('Note')]), b);
+  check('…no box size: 7 bags of 5 = 35 pcs, not rounded, Cases blank', v(c, 'Order Qty (pieces)') === 35 && c[col('Cases')] === '' && /not rounded/.test(c[col('Note')]), c);
+  check('…every line with a box: Order Qty = Cases × Pieces per Case; TOTAL = 1,440 + 400 + 35 = 1,875 pcs, 14 cases, $72.00 + $3.50 = $75.50',
+    [a, b].every(r => v(r, 'Order Qty (pieces)') === v(r, 'Cases') * v(r, 'Pieces per Case (original box)')) && v(tot, 'Order Qty (pieces)') === 1875 && v(tot, 'Cases') === 14 && tot[col('Line Total')] === '75.50', tot);
+}
+
+// Owner (2026-10-07): "we still have a lot of 201-5-4=OLD but it says order more 201-5-4=10XX / =25XX / =5XX — =OLD is the same parent".
+console.log('\nReorder: =OLD stock of the same parent counts (named on the row); no Ea/Case shown as NOT counted');
+{
+  const wk = new Date(Date.now() - 14 * 86400000).toISOString().slice(0, 10);
+  // 209-5-4: FBA =10XX (30 sold → 300 pcs), =25XX (8 → 200 pcs), =5XX (20 → 100 pcs) = 600 pcs in 90 days → 1,200 pcs for 6 months.
+  sq.prepare("INSERT INTO fba_catalog (sku, asin, product_name, available) VALUES ('209-5-4=10XX','B0T2091',' x',0), ('209-5-4=25XX','B0T2092',' x',0), ('209-5-4=5XX','B0T2093',' x',0)").run();
+  sq.prepare("INSERT INTO amazon_sales_weekly (sku, period_start, units_ordered, asin) VALUES ('209-5-4=10XX',?,30,'B0T2091'), ('209-5-4=25XX',?,8,'B0T2092'), ('209-5-4=5XX',?,20,'B0T2093')").run(wk, wk, wk);
+  const ord = async () => { const d = await get('/reorder/vendor-order?days=90&lead=3&cover=3'); return ['10XX', '25XX', '5XX'].map(k => (d.rows || []).find(r => r.sku === '209-5-4=' + k) || {}); };
+  const [a0, b0, c0] = await ord();
+  check('setup: nothing on the shelf → order 1,200 pcs: =10XX 60, =25XX 16, =5XX 40 units', a0.needUnits === 60 && b0.needUnits === 16 && c0.needUnits === 40, [a0.needUnits, b0.needUnits, c0.needUnits]);
+  // Shelf: =OLD 12 cases × 100 pcs = 1,200 pcs (enough), + 3 cases of =OLD at another spot with NO Ea/Case.
+  sq.prepare("INSERT INTO master_list (base_sku, name, part_num, location, cases, units_per_case) VALUES ('209-5-4','x','209-5-4=OLD','C1=2-5-1',12,100), ('209-5-4','x','209-5-4=OLD','C2=2-5-1',3,0)").run();
+  const [a, b, c] = await ord();
+  check('a lot of =OLD (1,200 pcs) → nothing to order on =10XX / =25XX / =5XX; shares 600 + 400 + 200 = 1,200 pcs (every piece once)',
+    a.needUnits === 0 && b.needUnits === 0 && c.needUnits === 0 && a.otherPackPcs + b.otherPackPcs + c.otherPackPcs === 1200 && a.otherPackPcs === 600, [a.needUnits, b.needUnits, c.needUnits, a.otherPackPcs, b.otherPackPcs, c.otherPackPcs]);
+  check('…the row says what was subtracted: "209-5-4=OLD 1200 pcs", 50% share; the 3 cases with no Ea/Case are shown as NOT counted',
+    /pcs of other packs on the shelf subtracted \(209-5-4=OLD 1200 pcs; this row's 50% share/.test(a.note) && a.otherPacks[0].sku === '209-5-4=OLD' && a.otherPacks[0].pcs === 600
+      && /⚠ NOT counted \(no Ea\/Case in SKU Mgr\): 209-5-4=OLD 3 cases/.test(a.note) && a.noEa[0].cases === 3, [a.note, a.otherPacks, a.noEa]);
+  const { readFileSync: rf7 } = await import('node:fs');
+  const rh = rf7(fileURLToPath(new URL('../reorder.html', import.meta.url)), 'utf8');
+  check('page: In stock shows "+ N pcs other packs" and the red "⚠ … not counted"', /pcs other packs<\/div>/.test(rh) && /' not counted<\/div>'/.test(rh), null);
+  sq.exec("DELETE FROM fba_catalog WHERE sku LIKE '209-5-4%'; DELETE FROM amazon_sales_weekly WHERE sku LIKE '209-5-4%'; DELETE FROM master_list WHERE base_sku = '209-5-4'");
+}
+
+// Owner (2026-10-07): "201-2-13: ~2,000 pcs sold in 90 days over the whole family, 23 cases of 1,000 in =OLD, and it says order
+// 417,000 + 190,000 + 97,000 + 1,000 pcs — way too much. Check the family's sales, order for the months we ask, enough for FBA."
+console.log('\nReorder: whole-family math (201-2-13 case), negative SKU Mgr cases never add to the order');
+{
+  const wk = new Date(Date.now() - 14 * 86400000).toISOString().slice(0, 10);
+  const F = '211-2-13';
+  sq.prepare(`INSERT INTO fba_catalog (sku, asin, product_name, available) VALUES ('${F}=10','B0F1',' r',0), ('${F}=100X','B0F2',' r',0), ('${F}=25','B0F3',' r',0), ('${F}=50','B0F4',' r',0)`).run();
+  // 90 days: =10 60 bags (600 pcs) + =100X 8 (800) + =25 16 (400) + =50 4 (200) = 2,000 pcs → 4,000 pcs for 6 months.
+  sq.prepare(`INSERT INTO amazon_sales_weekly (sku, period_start, units_ordered, asin) VALUES ('${F}=10',?,60,'B0F1'), ('${F}=100X',?,8,'B0F2'), ('${F}=25',?,16,'B0F3'), ('${F}=50',?,4,'B0F4')`).run(wk, wk, wk, wk);
+  const ord = async () => { const d = await get('/reorder/vendor-order?days=90&lead=3&cover=3'); return ['10', '100X', '25', '50'].map(k => (d.rows || []).find(r => r.sku === F + '=' + k) || {}); };
+  const pcsOf = rs => rs.reduce((a, r) => a + (r.calc ? r.calc.rowNeedPcs : 0), 0);
+  // 1) the owner's shelf: =OLD 23 cases × 1,000 = 23,000 pcs (Ea/Case 1,000 on the =10 row too).
+  sq.prepare(`INSERT INTO master_list (base_sku, name, part_num, location, cases, units_per_case) VALUES ('${F}','ring','${F}=OLD','C1=2-1-1',23,1000), ('${F}','ring','${F}=10','C1=2-1-2',0,1000)`).run();
+  let r = await ord();
+  check('2,000 pcs sold in 90 d → 4,000 pcs for 6 months; 23,000 pcs of =OLD on the shelf → order NOTHING on =10 / =100X / =25 / =50',
+    r.every(x => x.needUnits === 0 && x.orderUnits === 0) && r[0].calc.famSoldPcs === 2000 && r[0].calc.famTarget === 4000 && r[0].calc.famHave === 23000 && r[0].calc.famNeed === 0, r.map(x => [x.needUnits, x.orderUnits, x.calc && x.calc.famNeed]));
+  // 2) a bad SKU Mgr row: =10 at another spot with −416 cases → never "minus 416,000 pcs" (that is how 417 cases of =10 came out).
+  sq.prepare(`INSERT INTO master_list (base_sku, name, part_num, location, cases, units_per_case) VALUES ('${F}','ring','${F}=10','C2=2-1-3',-416,1000)`).run();
+  r = await ord();
+  check('…a SKU Mgr row with −416 cases is NOT counted as minus stock: still order nothing, and the row says "⚠ NEGATIVE cases in SKU Mgr … −416 cs"',
+    r.every(x => x.orderUnits === 0) && /⚠ NEGATIVE cases in SKU Mgr, not counted \(fix them\): 211-2-13=10 -416 cs/.test(r[0].note) && r[0].calc.negative.length === 1, [r.map(x => x.orderUnits), r[0].note]);
+  // 3) no =OLD, and =10 has 3,000 pcs of its own (more than its 1,200 need): family needs 4,000 − 3,000 = 1,000 pcs,
+  //    split over the short listings =100X 1,600 / =25 800 / =50 400 → 571 + 286 + 143 = 1,000 (never more than the family needs).
+  sq.exec(`DELETE FROM master_list WHERE base_sku = '${F}'`);
+  sq.prepare(`INSERT INTO master_list (base_sku, name, part_num, location, cases, units_per_case) VALUES ('${F}','ring','${F}=10','C1=2-1-2',3,1000)`).run();
+  r = await ord();
+  check('…=10 has 3,000 of its own: family needs 4,000 − 3,000 = 1,000 pcs, split by how short each listing is → =10 0, =100X 571, =25 286, =50 143 = 1,000 ✅',
+    r[0].calc.famNeed === 1000 && r[0].calc.rowNeedPcs === 0 && r[1].calc.rowNeedPcs === 571 && r[2].calc.rowNeedPcs === 286 && r[3].calc.rowNeedPcs === 143 && pcsOf(r) === 1000
+      && r[1].needUnits === 6 && r[2].needUnits === 12 && r[3].needUnits === 3, r.map(x => [x.calc.rowNeedPcs, x.needUnits]));
+  check('…each order = whole cases of SKU Mgr\'s 1,000-pc box (rounding only): =100X 10 bags, =25 40, =50 20 → 3,000 pcs', r[1].orderUnits === 10 && r[2].orderUnits === 40 && r[3].orderUnits === 20, r.map(x => x.orderUnits));
+  const { readFileSync: rf8 } = await import('node:fs');
+  const rh = rf8(fileURLToPath(new URL('../reorder.html', import.meta.url)), 'utf8');
+  check('page: column headers stay on top while scrolling; 🔍 on Need shows the whole-family math', /<th style="position:sticky;top:0;z-index:3;background:var\(--bg3\)/.test(rh) && /function rvoWhy\(sku\)/.test(rh) && /onclick="rvoWhy\(/.test(rh), null);
+  sq.exec(`DELETE FROM fba_catalog WHERE sku LIKE '${F}%'; DELETE FROM amazon_sales_weekly WHERE sku LIKE '${F}%'; DELETE FROM master_list WHERE base_sku = '${F}'`);
 }
 
 console.log('\n' + (failed ? '❌ ' + failed + ' check(s) FAILED' : '✅ all ' + passed + ' checks passed') + '\n');
