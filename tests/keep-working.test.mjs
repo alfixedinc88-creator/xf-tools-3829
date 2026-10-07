@@ -3827,6 +3827,8 @@ console.log('\n🔒 Save this design (every tab, Owner only, kept with the date,
   check('…it saves the commit (version.json, written by the Pages deploy) and the page code as served', /dGet\('version\.json'\), dGet\(dPage\(\)\), dGet\('xf-access\.js'\)/.test(xa) && /> version\.json/.test(dy) && /GITHUB_SHA/.test(dy), null);
   check('…Stock Out Shelving is listed as locked (commit 347cb71) and CLAUDE.md points to docs/LOCKED-DESIGNS.md',
     /Stock Out Shelving \| 2026-10-07 \| `347cb71`/.test(ld) && /docs\/LOCKED-DESIGNS\.md/.test(cm), null);
+  check('…Transfer\'s two parts can be saved on their own: Transfer → SKU / Part# / UPC / Name and Transfer → 🚢 Container here (the open one pre-picked)',
+    /key: 'code', label: 'SKU \/ Part# \/ UPC \/ Name', sel: '#xfr-mode-code'/.test(xa) && /key: 'cont', label: '🚢 Container here', sel: '#xfr-mode-cont'/.test(xa) && /t\.key \+ ':' \+ sb\.key/.test(xa) && /dLabel\(t\) \+ ' → '/.test(xa), null);
   sq.prepare('DELETE FROM cred_users WHERE id = ?').run(Number(ow.lastInsertRowid));
 }
 

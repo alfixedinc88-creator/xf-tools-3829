@@ -9,7 +9,12 @@ elsewhere has to touch it, say so plainly in the PR and to the owner first.
 - Every app page has a small **🔒** button (bottom right) — **Owner only**
   (the server checks the account is an Owner). It opens **Save this design**:
   pick the tab (the open one is already picked, or "Whole page"), an optional
-  note, **🔒 Save this design now**.
+  note, **🔒 Save this design now**. A tab with parts that work on their own
+  can be saved part by part (owner: "if only one goes bad I only change that
+  one back"): Transfer → SKU / Part# / UPC / Name and Transfer → 🚢 Container
+  here (list `DSUBS` in xf-access.js; add more there). Restoring a part puts
+  back only that part's code (e.g. the `xfr…` code mode='code' path, not
+  Container here's `xfrGo…` / `xfrCont…`), nothing else.
 - Each save is kept on the server (D1 `design_saves` + `design_save_parts`)
   with the date, who, the exact commit the website + Worker ran (from
   `version.json`, written by the Pages deploy) and the page code as served.
