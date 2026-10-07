@@ -23976,7 +23976,10 @@ async function handleVeeqoRoute(url, method, request, env, session) {
   if (!session) {
     return veeqoResp({ error: 'Session required' }, 401);
   }
-  if (path !== '/veeqo/sync-manifest' && session.pin_level !== 'mgmt') {
+  // Owner: "when our driver clicks 'Leaving for USPS', the scan forms come up to print" — drivers sign in
+  // with their own (ops) account, so today's scan forms (list / files / printed / make one) are open to them.
+  const SCANFORM_OPS = ['/veeqo/autolabel/scanforms', '/veeqo/autolabel/scanform-file', '/veeqo/autolabel/scanform-printed', '/veeqo/autolabel/scanform-make'];
+  if (path !== '/veeqo/sync-manifest' && !SCANFORM_OPS.includes(path) && session.pin_level !== 'mgmt') {
     return veeqoResp({ error: 'Management session required' }, 401);
   }
 
@@ -26021,6 +26024,29 @@ function autolabelScanFormParts(j) {
   const urls = [...new Set(f.urls)];
   return b64.length >= urls.length ? b64 : urls.map(u => ({ url: u }));
 }
+// Owner: "do I have to keep my computer open? after we auto created the scan form can we save it somewhere" —
+// each form's PDF is saved on our server the moment it is made (Veeqo's links stop working after a while),
+// so it prints any time later from any computer (Leaving for USPS, Reprint).
+async function autolabelScanFormFilesTable(env) {
+  await env.DB.prepare('CREATE TABLE IF NOT EXISTS scan_form_file (log_id INTEGER NOT NULL, n INTEGER NOT NULL, type TEXT, data TEXT, saved_at TEXT, PRIMARY KEY (log_id, n))').run().catch(() => {});
+}
+function autolabelB64(buf) { const u8 = new Uint8Array(buf); let s = ''; for (let i = 0; i < u8.length; i += 0x8000) s += String.fromCharCode.apply(null, u8.subarray(i, i + 0x8000)); return btoa(s); }
+async function autolabelScanFormSaveFile(env, logId, n, type, b64) {
+  await autolabelScanFormFilesTable(env);
+  await d1Run(env, 'INSERT OR REPLACE INTO scan_form_file (log_id, n, type, data, saved_at) VALUES (?,?,?,?,?)', [logId, n, type, b64, new Date().toISOString()]);
+}
+async function autolabelScanFormSaveAll(env, logId, j) {
+  const parts = autolabelScanFormParts(j); let saved = 0;
+  for (let n = 0; n < parts.length; n++) {
+    try {
+      if (parts[n].b64) { await autolabelScanFormSaveFile(env, logId, n, parts[n].type || 'application/pdf', parts[n].b64); saved++; continue; }
+      const r = await fetch(parts[n].url, { headers: { 'Accept': 'application/pdf, */*' } });
+      const ct = (r.headers.get('content-type') || '').toLowerCase().split(';')[0];
+      if (r.ok && /pdf|image\//.test(ct)) { await autolabelScanFormSaveFile(env, logId, n, ct, autolabelB64(await r.arrayBuffer())); saved++; }
+    } catch (e) { console.error('[scan form] save', e.message); }
+  }
+  return saved;
+}
 // Veeqo's answer as kept, long files shortened — for 🔎 Veeqo's answer on the page.
 function autolabelShorten(v, d = 0) {
   if (d > 12 || v == null) return v;
@@ -26093,7 +26119,9 @@ async function autolabelScanFormCreate(env, kind, slot, by, when) {
     const n = Array.isArray(j.shipments) ? j.shipments.length : (j.shipment_count || j.shipments_count || j.count || null);
     const ins = await d1Run(env, `INSERT INTO scan_form_log (day, slot, kind, created_at, by_user, ok, carrier, veeqo_id, shipments, source, detail) VALUES (?,?,?,?,?,?,?,?,?,?,?)`,
       [ny.date, slot || '', kind, now, by || 'auto', 1, mk.carrier, String(j.id || j.scan_form_id || (j.scan_form && j.scan_form.id) || ''), n, JSON.stringify(j).slice(0, 1500000), JSON.stringify(tried).slice(0, 20000)]);
-    ids.push({ id: ins && ins.meta && ins.meta.last_row_id, carrier: mk.carrier, shipments: n, parts: autolabelScanFormParts(j).length || 1 });
+    const logId = ins && ins.meta && ins.meta.last_row_id;
+    const saved = logId ? await autolabelScanFormSaveAll(env, logId, j) : 0;
+    ids.push({ id: logId, carrier: mk.carrier, shipments: n, parts: autolabelScanFormParts(j).length || 1, saved });
   }
   if (!made.length) await d1Run(env, `INSERT INTO scan_form_log (day, slot, kind, created_at, by_user, ok, detail) VALUES (?,?,?,?,?,?,?)`,
     [ny.date, slot || '', kind, now, by || 'auto', 0, JSON.stringify(tried).slice(0, 20000)]);
@@ -27025,6 +27053,9 @@ async function handleAutolabelRoute(path, method, url, request, env, session) {
   if (path === '/veeqo/autolabel/scanforms' && method === 'GET') {
     const rows = (await d1All(env, 'SELECT id, day, slot, kind, created_at, by_user, ok, carrier, veeqo_id, shipments, detail, printed_at, printed_by, print_count, source FROM scan_form_log ORDER BY id DESC LIMIT 60'))
       .map(r => { let j = null; try { j = r.source ? JSON.parse(r.source) : null; } catch (_) {} const { source, ...rest } = r; return { ...rest, parts: r.ok && j ? (autolabelScanFormParts(j).length || 1) : 0 }; });
+    await autolabelScanFormFilesTable(env);
+    const sv = {}; (await d1All(env, 'SELECT log_id, COUNT(*) n FROM scan_form_file GROUP BY log_id')).forEach(x => { sv[x.log_id] = x.n; });
+    rows.forEach(r => { r.saved = sv[r.id] || 0; });
     const cfg = await autolabelLoadConfig(env);
     return veeqoResp({ ok: true, forms: rows, missing: await autolabelScanFormMissing(env), verified: (await autolabelGetKey(env, AUTOLABEL_SCANFORM_VERIFIED_KEY)) === 'yes',
       times: cfg.scanFormTimes, checkAt: cfg.scanFormCheckAt, on: cfg.scanFormOn });
@@ -27035,6 +27066,9 @@ async function handleAutolabelRoute(path, method, url, request, env, session) {
     let j = {}; try { j = JSON.parse(row.source); } catch (_) {}
     const parts = autolabelScanFormParts(j), n = Math.max(0, parseInt(url.searchParams.get('n')) || 0), tried = [];
     if (parts.length && n >= parts.length) return veeqoResp({ ok: false, error: `This scan form has ${parts.length} part(s)` }, 404);
+    await autolabelScanFormFilesTable(env);
+    const kept = await d1First(env, 'SELECT type, data FROM scan_form_file WHERE log_id = ? AND n = ?', [row.id, n]);
+    if (kept && kept.data) { const bin = atob(kept.data); const u8 = new Uint8Array(bin.length); for (let i = 0; i < bin.length; i++) u8[i] = bin.charCodeAt(i); return autolabelFileResp(u8, kept.type || 'application/pdf'); }
     const part = parts[n];
     if (part && part.b64) { const bin = atob(part.b64); const u8 = new Uint8Array(bin.length); for (let i = 0; i < bin.length; i++) u8[i] = bin.charCodeAt(i); return autolabelFileResp(u8, part.type || 'application/pdf'); }
     const cands = part ? [part.url] : [];
@@ -27043,7 +27077,7 @@ async function handleAutolabelRoute(path, method, url, request, env, session) {
       try {
         const r = await fetch(u, { headers: /api\.veeqo\.com/.test(u) ? { 'x-api-key': (env.VEEQO_API_KEY || '').trim(), 'Accept': 'application/pdf, application/json' } : { 'Accept': 'application/pdf, */*' } });
         const ct = (r.headers.get('content-type') || '').toLowerCase();
-        if (r.ok && /pdf|image\//.test(ct)) return autolabelFileResp(await r.arrayBuffer(), ct.split(';')[0]);
+        if (r.ok && /pdf|image\//.test(ct)) { const buf = await r.arrayBuffer(); if (u === part?.url) await autolabelScanFormSaveFile(env, row.id, n, ct.split(';')[0], autolabelB64(buf)).catch(() => {}); return autolabelFileResp(buf, ct.split(';')[0]); }
         const t = await r.text().catch(() => ''); tried.push({ url: u.replace(/([?&](X-Amz-[^=]+|signature|token)=)[^&]+/gi, '$1…'), status: r.status, said: t.slice(0, 200) });
         if (r.ok && /json/.test(ct)) { let jj = null; try { jj = JSON.parse(t); } catch (_) {} const f2 = jj ? autolabelFindFile(jj) : { urls: [], b64: [] }; f2.urls.slice(0, 2).forEach(x => cands.push(x)); }
       } catch (e) { tried.push({ url: u, error: String(e.message || e).slice(0, 200) }); }

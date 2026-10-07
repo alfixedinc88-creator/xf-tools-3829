@@ -2468,10 +2468,10 @@ console.log('\nAuto Label → 📄 USPS scan form: Mon–Fri 4:30 pm, Sat 1:45 p
     // Which carriers have shipments not on a form yet (owner's 2nd screenshot): PUT /shipping/api/v1/scan_forms/unmanifested.
     if (u.endsWith('api.veeqo.com/shipping/api/v1/scan_forms/unmanifested') && m === 'PUT') return J({ carriers: none ? [] : [{ carrier_id: 'amazon_shipping_v2__USPS', carrier_name: 'amazon_shipping_v2__USPS', unmanifested_shipment_location_list: [{ address: { address_line1: '499 Bridgeton Pike', address_line2: '', city: 'Mullica Hill', company_name: null, country_code: 'US', name: 'XFITTING', postal_code: '08062-3712', state_or_region: null }, last_manifest_date: null }] }], error_messages: [] });
     if (/api\.veeqo\.com\/warehouses/.test(u)) return J([{ id: 54, name: 'Old', address_line_1: '1 Other Rd' }, { id: 55, name: 'Main', address_line_1: '499 Bridgeton Pike' }]);
-    if (u.startsWith('https://forms.example/')) return new Response('%PDF-1.4 scan form ' + u.split('/').pop(), { headers: { 'Content-Type': 'application/pdf' } });
+    if (u.startsWith('https://forms.example/')) return linksExpired ? new Response('<Error>AccessDenied: Request has expired</Error>', { status: 403, headers: { 'Content-Type': 'application/xml' } }) : new Response('%PDF-1.4 scan form ' + u.split('/').pop(), { headers: { 'Content-Type': 'application/pdf' } });
     if (u.includes('api.veeqo.com/')) return J({ error: 'not found' }, 404);
     return new Response('{}', { status: 401 }); };
-  let none = false;
+  let none = false, linksExpired = false;
   env.VEEQO_API_KEY = 'k';
   await post('/veeqo/autolabel/config', { config: { scanFormOn: true, scanFormTimes: 'Mon-Fri 16:30; Sat 13:45', scanFormCheckAt: '20:30' } });
   const tick = at => post('/veeqo/autolabel/scanform-tick', { at });
@@ -2540,6 +2540,26 @@ console.log('\nAuto Label → 📄 USPS scan form: Mon–Fri 4:30 pm, Sat 1:45 p
   check('…a form sent as a PDF and one as a picture (PNG, data: link) → 2 forms (the same PDF twice is one), each printed as what it is; 🔎 Veeqo\'s answer shows the reply with long files shortened, with 📋 Copy',
     pp.length === 2 && pp[0].type === 'application/pdf' && pp[1].type === 'image/png' && /^JVBERi0xLjQKA{28}… \(412 characters\)$/.test(sh.a) && sh.b === 'short'
       && /path === '\/veeqo\/autolabel\/scanform-answer'/.test(wsP) && /onclick="psAlScanFormAnswer\(' \+ f\.id \+ '\)"/.test(ph2), { pp: pp.map(x => x.type), sh });
+  // Owner: "do I have to keep my computer open? after we auto created the scan form can we save it somewhere" — saved on the server when made.
+  linksExpired = true;
+  const e0 = await call('/veeqo/autolabel/scanform-file?id=' + sfRow.id + '&n=0', { headers: H }), e1 = await call('/veeqo/autolabel/scanform-file?id=' + sfRow.id + '&n=1', { headers: H });
+  const et0 = await e0.text(), et1 = await e1.text(); linksExpired = false;
+  check('…both forms are saved on our server the moment they are made: hours later (Veeqo\'s links expired) they still print — form 1 and form 2, no computer had to stay open',
+    sq.prepare('SELECT COUNT(*) n FROM scan_form_file WHERE log_id = ?').get(sfRow.id).n === 2 && e0.status === 200 && e1.status === 200 && /sf\d+a\.pdf/.test(et0) && /sf\d+b\.pdf/.test(et1), { st: [e0.status, e1.status], et0, et1 });
+  // Owner: "when our driver clicks 'Leaving for USPS', the two scan forms come up and ask them to print".
+  const OPS = { 'X-Cred-Token': pk.token };
+  const dl = await (await call('/veeqo/autolabel/scanforms', { headers: OPS })).json(), df = await call('/veeqo/autolabel/scanform-file?id=' + sfRow.id + '&n=1', { headers: OPS });
+  const dcfg = await call('/veeqo/autolabel/config', { headers: OPS });
+  check('🚚 a driver (own sign-in, not management) can see today\'s scan forms and print them; the rest of Auto Label (rules, buying) stays management-only',
+    dl.ok && (dl.forms.find(f => f.id === sfRow.id) || {}).saved === 2 && df.status === 200 && dcfg.status === 401, { list: dl.ok, file: df.status, cfg: dcfg.status });
+  const phU = readFileSync0(fileURLToPath(new URL('../packship.html', import.meta.url)), 'utf8');
+  check('…🚚 Leaving for USPS → today\'s scan forms come up to print (USPS labels not on a form yet → offers to make one first)',
+    /await psCloseBatch\(\);\s*await psUspsScanFormsPrompt\(\);/.test(phU) && /Today\\'s USPS scan forms: /.test(phU) && /not on a scan form yet\.\\n\\nMake a scan form/.test(phU), null);
+  const tl = new Function((phU.match(/function _psAlClock[\s\S]*?\n\}/) || [''])[0] + '\n' + (phU.match(/function _psAlTimesLines[\s\S]*?\n\}/) || [''])[0] + '; return [_psAlTimesLines, _psAlClock];')();
+  const lines = tl[0]('Mon-Fri 16:30, 20:50; Sat 13:45; Sun 20:50');
+  check('📅 the schedule in plain words (not 16:30): "Mon–Fri: 4:30 pm and 8:50 pm · Saturday: 1:45 pm · Sunday: 8:50 pm", night check 8:55 pm; in a small 📅 Schedule box',
+    JSON.stringify(lines) === '["Mon–Fri: 4:30 pm and 8:50 pm","Saturday: 1:45 pm","Sunday: 8:50 pm"]' && tl[1]('20:55') === '8:55 pm' && tl[1]('0:05') === '12:05 am' && tl[1]('12:00') === '12:00 pm'
+      && /<summary style="cursor:pointer;color:var\(--accent\)">📅 Schedule<\/summary>/.test(phU), lines);
   const lst = await get('/veeqo/autolabel/scanforms');
   check('…the list says the times and night check, and how many USPS labels are not on a form yet', lst.ok && lst.times === 'Mon-Fri 16:30; Sat 13:45' && lst.checkAt === '20:30' && Array.isArray(lst.missing.labels), lst.times);
   globalThis.fetch = realFetch; delete env.VEEQO_API_KEY; delete env.TEST_CLOCK;
