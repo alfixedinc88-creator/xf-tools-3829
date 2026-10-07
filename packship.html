@@ -9344,24 +9344,62 @@ window.psAlScanFormMake = async function(btn) {
     if (d.ok === false) { _psAlSfErr('Scan form not made', (d.error || 'failed') + '\n\n' + JSON.stringify(d.tried || [], null, 1).slice(0, 3000)); }
     else { var eb = document.getElementById('ps-al-sf-err'); if (eb) eb.style.display = 'none'; _psToast('📄 Scan form made — printing ' + (d.parts || 1) + ' form' + ((d.parts || 1) > 1 ? 's' : ''));
       var fl = (d.forms && d.forms.length) ? d.forms : [{ id: d.id, parts: d.parts }];
-      for (var k = 0; k < fl.length; k++) await psAlScanFormPrint(fl[k].id, null, fl[k].parts || 1); } // every form Veeqo gave (owner: "two scan forms, we only print one")
+      await psAlScanFormPrintList(fl.map(function(x) { return { id: x.id, parts: x.parts || 1 }; })); } // every form Veeqo gave, one print (owner: "two scan forms, we only print one")
   } finally { btn.disabled = false; btn.textContent = t; psAlLoadScanForms(); }
 };
-// parts: how many forms Veeqo gave in this one answer (often 2) — every one is printed, one after the other.
-window.psAlScanFormPrint = async function(id, btn, parts) {
-  if (btn) { btn.disabled = true; btn.textContent = '⏳'; }
-  try {
-    for (var n = 0; n < Math.max(1, parts || 1); n++) {
+// parts: how many forms Veeqo gave in this one answer (often 2). Owner: "still only one scan form, should have 2"
+// — two print() calls in a row and Chrome drops the second, so every page of every form goes in ONE print.
+async function _psAlScanFormBlobs(id, parts) {
+  var out = [];
+  for (var n = 0; n < Math.max(1, parts || 1); n++) {
     var r = await fetch(PS_WORKER + '/veeqo/autolabel/scanform-file?id=' + encodeURIComponent(id) + '&n=' + n, { headers: { 'X-Cred-Token': psCredToken } });
     var ct = (r.headers.get('content-type') || '').toLowerCase();
     if (!r.ok || !/pdf|image\//.test(ct)) { var j = await r.json().catch(function() { return {}; }); throw new Error((parts > 1 ? 'Form ' + (n + 1) + ' of ' + parts + ': ' : '') + (j.error || 'HTTP ' + r.status) + (j.tried ? '\n' + JSON.stringify(j.tried).slice(0, 800) : '')); }
-    var url = URL.createObjectURL(await r.blob());
+    out.push({ blob: await r.blob(), type: ct });
+  }
+  return out;
+}
+// Every page of every form as a picture, each on its own sheet at its own size (letter for USPS forms).
+async function _psAlScanFormPagesHtml(files) {
+  var pages = [];
+  for (var i = 0; i < files.length; i++) {
+    var f = files[i];
+    if (/pdf/.test(f.type)) {
+      var lib = await _psLoadPdfjs(), pdf = await lib.getDocument({ data: await f.blob.arrayBuffer() }).promise;
+      for (var p = 1; p <= pdf.numPages; p++) {
+        var pg = await pdf.getPage(p), vp1 = pg.getViewport({ scale: 1 }), vp = pg.getViewport({ scale: 2.5 });
+        var cv = document.createElement('canvas'); cv.width = Math.round(vp.width); cv.height = Math.round(vp.height);
+        var ctx = cv.getContext('2d'); ctx.fillStyle = '#fff'; ctx.fillRect(0, 0, cv.width, cv.height);
+        await pg.render({ canvasContext: ctx, viewport: vp }).promise;
+        pages.push({ src: cv.toDataURL('image/png'), w: vp1.width / 72, h: vp1.height / 72 });
+      }
+    } else {
+      var src = await new Promise(function(res) { var fr = new FileReader(); fr.onload = function() { res(fr.result); }; fr.readAsDataURL(f.blob); });
+      pages.push({ src: src, w: 8.5, h: 11 });
+    }
+  }
+  var w = pages.length ? pages[0].w : 8.5, h = pages.length ? pages[0].h : 11;
+  return { count: pages.length, html: '<!doctype html><html><head><meta charset="utf-8"><title>USPS scan forms</title><style>@page{size:' + w.toFixed(2) + 'in ' + h.toFixed(2) + 'in;margin:0}html,body{margin:0;padding:0}'
+    + '.sf{display:block;width:' + w.toFixed(2) + 'in;height:' + h.toFixed(2) + 'in;object-fit:contain;page-break-after:always;break-after:page}.sf:last-child{page-break-after:auto;break-after:auto}</style></head><body>'
+    + pages.map(function(pg) { return '<img class="sf" src="' + pg.src + '">'; }).join('') + '</body></html>' };
+}
+window.psAlScanFormPrint = function(id, btn, parts) { return psAlScanFormPrintList([{ id: id, parts: parts }], btn); };
+// Several scan form records (one per pickup address / carrier) → still ONE print with every page.
+window.psAlScanFormPrintList = async function(list, btn) {
+  if (btn) { btn.disabled = true; btn.textContent = '⏳'; }
+  try {
+    var files = [], one = null;
+    for (var q = 0; q < list.length; q++) files = files.concat(await _psAlScanFormBlobs(list[q].id, list[q].parts || 1));
+    try { one = await _psAlScanFormPagesHtml(files); } catch (e) { console.warn('[scan form] one print failed, printing each file:', e && e.message); }
+    if (one && one.count) { var keep = _psAlBatch; _psAlBatch = null; await _psAlPrintHtml(one.html); _psAlBatch = keep; }
+    else for (var n = 0; n < files.length; n++) {
+    var url = URL.createObjectURL(files[n].blob);
     var fr = document.createElement('iframe'); fr.style.cssText = 'position:fixed;right:0;bottom:0;width:1px;height:1px;border:0';
     fr.src = url; document.body.appendChild(fr);
     await new Promise(function(res) { fr.onload = function() { setTimeout(function() { try { fr.contentWindow.focus(); fr.contentWindow.print(); } catch (e) { window.open(url); } res(); }, 400); }; setTimeout(res, 8000); });
     (function(f) { setTimeout(function() { f.remove(); }, 60000); })(fr);
     }
-    await _psAlFetch('/veeqo/autolabel/scanform-printed', { method: 'POST', body: { id: id, by: psInitials || '' } });
+    for (var q2 = 0; q2 < list.length; q2++) await _psAlFetch('/veeqo/autolabel/scanform-printed', { method: 'POST', body: { id: list[q2].id, by: psInitials || '' } });
   } catch (e) { _psAlSfErr('Scan form made, but not printed', e.message); }
   finally { if (btn) { btn.disabled = false; btn.textContent = 'Reprint'; } psAlLoadScanForms(); }
 };
@@ -9377,7 +9415,7 @@ window.psAlScanFormStation = function(on, quiet) {
       var d = await _psAlFetch('/veeqo/autolabel/scanforms');
       var day = d && d.forms && d.forms[0] && d.forms[0].day;
       var todo = ((d && d.forms) || []).filter(function(f) { return f.ok && f.kind !== 'night_ok' && !f.printed_at && f.day === day; });
-      for (var i = 0; i < todo.length; i++) await psAlScanFormPrint(todo[i].id, null, todo[i].parts || 1);
+      if (todo.length) await psAlScanFormPrintList(todo.map(function(x) { return { id: x.id, parts: x.parts || 1 }; }));
     } catch (e) {} finally { _psAlSfBusy = false; }
   };
   tick(); _psAlSfTimer = setInterval(tick, 60000);
