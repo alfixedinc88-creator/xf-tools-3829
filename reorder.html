@@ -5198,6 +5198,10 @@ function rvoCsv() {
     if (box > 0 && pcs > (RVO.edits[r.sku] != null ? want : need) + 1e-6) notes.push('Rounded up from ' + (RVO.edits[r.sku] != null ? want : need) + ' to ' + pcs + ' pcs (' + cases + ' case' + (cases === 1 ? '' : 's') + ' of ' + box + ')');
     if (!box) notes.push('No pieces per case in SKU Mgr - not rounded');
     if (pr == null) notes.push('NO PRICE');
+    // Owner: "we sold ~7,000, have 1,000,000+, still says buy a lot" — the whole family's math on every line, and the server's ⚠ warnings.
+    if (r.calc) notes.push('Family ' + r.baseSku + ': sold ' + r.calc.famSoldPcs + ' pcs in ' + Math.round(r.calc.months * 30) + ' d, needs ' + r.calc.famTarget + ' for ' + r.calc.horizon + ' mo, has ' + r.calc.famHave + ' -> family order ' + r.calc.famNeed + ' pcs'
+      + ((r.calc.famSales || [])[0] ? ' (biggest seller: ' + r.calc.famSales[0].sku + ' ' + r.calc.famSales[0].ch + ' ' + r.calc.famSales[0].u90 + ' units = ' + r.calc.famSales[0].p90 + ' pcs in 90 d)' : ''));
+    String(r.note || '').split(' · ').filter(function (x) { return /^⚠/.test(x); }).forEach(function (x) { notes.push(x); });
     lines.push([cell(r.urgent ? 'URGENT - ship in the FIRST container' : ''), cell(r.sku), upcCell(r.outsideUpc), upcCell(r.insideUpc), cell(r.description), pcs, cases, box || '',
       pr != null ? pr : '', line != null ? line.toFixed(2) : '', cell(pr != null && r.priceAt ? String(r.priceAt).slice(0, 10) : ''), cell(notes.join(' · ')), cell(r.asin || '')].concat(chCells(r)).join(','));
   });

@@ -1943,6 +1943,17 @@ async function reorderVendorOrder(env, url) {
   // Sales in pieces per base part: `pool` = everything except the FBA
   // SKUs' own Amazon sales (those stay with their FBA SKU); `total` = all.
   const piecesByBase = {}, poolByBase = {}, piecesBySku = {};
+  // 🚫 Owner (2026-10-07): "201-2-12: we sold ~7,000 pcs, have 1,000,000+, and it says order 458,000 on every row".
+  // Pieces = units × the number after "=", so a sales SKU with a broken number there (a date, a UPC, "=20240115")
+  // turns 1 sale into millions of pieces. A pack far bigger than any real pack of the part (SKU Mgr / FBA) is
+  // NOT counted — shown in red on the part's rows so the SKU can be fixed or mapped with ✏️.
+  const knownMax = {};
+  [...Object.keys(bySku), ...fba.map(r => P(r.sku))].forEach(k => { const kb = U(reorderGetBaseSku(k)), pk = pack(k); if (pk <= 10000) knownMax[kb] = Math.max(knownMax[kb] || 0, pk); });
+  const badPack = {}; // base → [{ sku, units, pack }]
+  for (const s in sales) {
+    const sb = U(reorderGetBaseSku(s)), lim = Math.max(1000, 10 * (knownMax[sb] || 0));
+    if (pack(s) > lim) { (badPack[sb] = badPack[sb] || []).push({ sku: s, units: Math.round((sales[s].amz + sales[s].other) * 100) / 100, pack: pack(s) }); delete sales[s]; }
+  }
   for (const s in sales) {
     const pcs = (sales[s].amz + sales[s].other) * pack(s);
     const own = claimed.has(s) ? sales[s].amz * pack(s) : 0;
@@ -2057,6 +2068,7 @@ async function reorderVendorOrder(env, url) {
       if (!t.fbaSku) notes.push('No FBA listing — best-selling pack');
       if (!countOtherPacks && otherPcs > 0) notes.push(`${Math.round(otherPcs)} pcs in other packs of ${b} not counted`);
       if (countOtherPacks && otherPcs > 0) notes.push(`${Math.round(otherPcs)} pcs of other packs on the shelf subtracted (${otherList.map(o => o.sku + ' ' + Math.round(o.pcs)).join(', ')} pcs${share < 1 ? `; this row's ${Math.round(share * 100)}% share, by sales` : ''})`);
+      if ((badPack[b] || []).length) notes.push(`⚠ Sales NOT counted — pack size after "=" looks wrong (fix the SKU or map it with ✏️): ${badPack[b].map(x => x.sku + ' ' + x.units + ' sold × ' + x.pack.toLocaleString('en-US') + ' pcs').join(', ')}`);
       if (negSkus.length) notes.push(`⚠ NEGATIVE cases in SKU Mgr, not counted (fix them): ${negSkus.join(', ')}`);
       if (noEa.length) notes.push(`⚠ NOT counted (no Ea/Case in SKU Mgr): ${noEa.map(x => x.sku + ' ' + x.cases + ' case' + (x.cases === 1 ? '' : 's')).join(', ')} — set Ea/Case in SKU Mgr`);
       if (otherIncPcs > 0) notes.push(`${Math.round(otherIncPcs)} pcs on the way in other packs of ${b} subtracted` + (share < 1 ? ` (this row's ${Math.round(share * 100)}% share, by sales)` : ''));
@@ -2096,7 +2108,7 @@ async function reorderVendorOrder(env, url) {
         calc: { months: Math.round(months * 10) / 10, horizon: H, famSoldPcs, famTarget: Math.round(famTarget), famHave: Math.round(famHave),
           famListings: famRows.map(x => ({ sku: x.sku, target: Math.round(x.target), have: Math.round(x.have), short: Math.round(x.short) })),
           famOtherShelf: Math.round(famOtherShelf), famOtherList, famOtherInc: Math.round(famOtherInc), famNeed: Math.round(famNeed),
-          rowNeedPcs: Math.round(needPcs), negative: negSkus,
+          rowNeedPcs: Math.round(needPcs), negative: negSkus, badPack: badPack[b] || [],
           // every part # of the family that sold, per channel, 30 / 90 days (units and pieces)
           famSales: Object.keys(ch3090).filter(k => U(reorderGetBaseSku(k)) === b).sort().flatMap(k => Object.entries(sales3090(k)).filter(([, c]) => c.u90 > 0).map(([ch, c]) => ({ sku: k, ch, ...c }))).sort((x, y) => y.p90 - x.p90) }, // biggest first
         sales: sales3090(t.sku),

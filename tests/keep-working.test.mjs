@@ -3736,7 +3736,8 @@ console.log('\nReorder: 30 / 90 day sales per channel per part # (rows, 🔍, CS
   new Function('document', 'RVO', 'rvoVisible', 'rvoVendorCheck', 'Blob', 'URL', 'setTimeout', 'showToast', 'wFetch', 'alert', 'confirm', 'W', (rh.match(/function rvoQty\(r\) \{[^\n]*\}/) || [''])[0] + '\n' + fn + '; rvoCsv();')(
     { getElementById: () => ({ value: 'JQ' }), createElement: () => ({ click() {}, remove() {} }), body: { appendChild() {} } }, { loaded: true, off: {}, edits: {}, meta: {} },
     () => [{ ...a, vendor: 'JQ', orderUnits: a.orderUnits || 10 }], () => ({ ok: true, dup: [], text: '' }), function (p) { out = p.join(''); }, { createObjectURL: () => 'x', revokeObjectURL() {} }, () => {}, () => {}, () => Promise.resolve(), () => {}, () => true, '');
-  const L = out.replace(/^\uFEFF/, '').split('\r\n'), H = L[0].split(','), row = (L.find(l => l.split(',')[1] === F + '=10') || '').split(',');
+  const pc = l => { const r = []; let cur = '', q = false; for (const ch of l) { if (ch === '"') q = !q; else if (ch === ',' && !q) { r.push(cur); cur = ''; } else cur += ch; } r.push(cur); return r; };
+  const L = out.replace(/^\uFEFF/, '').split('\r\n'), H = pc(L[0]), row = pc(L.find(l => pc(l)[1] === F + '=10') || '');
   check('CSV: Amazon / eBay / Walmart / Shopify 30d + 90d (pcs) columns on each line (=10: Amazon 200 / 300)',
     ['Amazon 30d (pcs)', 'Amazon 90d (pcs)', 'eBay 30d (pcs)', 'eBay 90d (pcs)', 'Walmart 30d (pcs)', 'Walmart 90d (pcs)', 'Shopify 30d (pcs)', 'Shopify 90d (pcs)'].every(h => H.includes(h))
       && row[H.indexOf('Amazon 30d (pcs)')] === '200' && row[H.indexOf('Amazon 90d (pcs)')] === '300', [H.slice(-8), row.slice(-8)]);
@@ -3763,6 +3764,33 @@ console.log('\n📦 Veeqo box weight the documented way (save_for_similar_shipme
   check('09-15265-05652 + 05653 (3.22 lb): the FIRST try is the documented body { allocation_package: {weight: 51.52, weight_unit: "oz", …}, save_for_similar_shipments: false }, and Veeqo\'s answer showing 3.22 lb counts as saved (no other shapes sent)',
     r.ok && calls.length === 1 && JSON.parse(calls[0]).save_for_similar_shipments === false && JSON.parse(calls[0]).allocation_package.weight === 51.52 && JSON.parse(calls[0]).allocation_package.weight_unit === 'oz'
       && r.said.some(x => /Veeqo answered: 3\.22 lb/.test(x)), { calls, said: r.said });
+}
+
+// Owner (2026-10-07, 201-2-12.xlsx): "we only sold ~7,000 pcs over all, have more than 1,000,000 pcs in stock, and it still says buy
+// 458,000 on =10 / =1000 / =25 / =50". The rows' own sales were tiny → a family sales SKU with a broken number after "=" (a date / UPC)
+// made 1 sale = millions of pieces. Such sales are NOT counted and are shown in red; the CSV note shows the family math.
+console.log('\nReorder: a sales SKU with a broken pack number never inflates the order (201-2-12)');
+{
+  const wk = new Date(Date.now() - 14 * 86400000).toISOString().slice(0, 10);
+  const F = '213-2-12';
+  sq.prepare(`INSERT INTO fba_catalog (sku, asin, product_name, available) VALUES ('${F}=10','B0H1',' r',0), ('${F}=100','B0H2',' r',0), ('${F}=1000','B0H3',' r',0), ('${F}=25','B0H4',' r',0), ('${F}=50','B0H5',' r',0)`).run();
+  // Real sales: eBay =50 101 bags (5,050 pcs) + =100 2 (200) + =25 1 (25) + Walmart =50 4 (200) = 5,475 pcs; + a bad SKU "=20240115" 1 sale.
+  sq.prepare(`INSERT INTO ebay_sales_weekly (sku, period_start, units_ordered) VALUES ('${F}=50',?,101), ('${F}=100',?,2), ('${F}=25',?,1), ('${F}=20240115',?,1)`).run(wk, wk, wk, wk);
+  sq.exec('CREATE TABLE IF NOT EXISTS walmart_sales_weekly (sku TEXT NOT NULL, period_start TEXT NOT NULL, period_end TEXT, units_ordered REAL, sales_amount REAL, fetched_at TEXT, PRIMARY KEY (sku, period_start))');
+  sq.prepare(`INSERT INTO walmart_sales_weekly (sku, period_start, units_ordered) VALUES ('${F}=50',?,4)`).run(wk);
+  // Shelf: =OLD 1,050 cases × 1,000 = 1,050,000 pcs.
+  sq.prepare(`INSERT INTO master_list (base_sku, name, part_num, location, cases, units_per_case) VALUES ('${F}','ring','${F}=OLD','C1=2-1-9',1050,1000)`).run();
+  const d = await get('/reorder/vendor-order?days=90&lead=3&cover=3');
+  const r = ['10', '100', '1000', '25', '50'].map(k => (d.rows || []).find(x => x.sku === F + '=' + k) || {});
+  const c = r[0].calc || {};
+  check('family sold 5,475 pcs in 90 d (the "=20240115" sale NOT counted) → needs 10,950 for 6 mo; has 1,050,000 → order 0 on all 5 rows',
+    c.famSoldPcs === 5475 && c.famTarget === 10950 && c.famHave === 1050000 && c.famNeed === 0 && r.every(x => x.orderUnits === 0), [c.famSoldPcs, c.famTarget, c.famHave, c.famNeed, r.map(x => x.orderUnits)]);
+  check('…the broken SKU is shown in red on the rows: "⚠ Sales NOT counted — pack size after "=" looks wrong … 213-2-12=20240115 1 sold × 20,240,115 pcs"',
+    /⚠ Sales NOT counted — pack size after "=" looks wrong \(fix the SKU or map it with ✏️\): 213-2-12=20240115 1 sold × 20,240,115 pcs/.test(r[0].note) && c.badPack.length === 1, r[0].note);
+  const { readFileSync: rf10 } = await import('node:fs');
+  const rh = rf10(fileURLToPath(new URL('../reorder.html', import.meta.url)), 'utf8');
+  check('…the vendor CSV Note carries the family math and the ⚠ warnings', /notes\.push\('Family ' \+ r\.baseSku \+ ': sold '/.test(rh) && /filter\(function \(x\) \{ return \/\^⚠\/\.test\(x\); \}\)/.test(rh), null);
+  sq.exec(`DELETE FROM fba_catalog WHERE sku LIKE '${F}%'; DELETE FROM ebay_sales_weekly WHERE sku LIKE '${F}%'; DELETE FROM walmart_sales_weekly WHERE sku LIKE '${F}%'; DELETE FROM master_list WHERE base_sku = '${F}'`);
 }
 
 console.log('\n' + (failed ? '❌ ' + failed + ' check(s) FAILED' : '✅ all ' + passed + ' checks passed') + '\n');
