@@ -3384,5 +3384,35 @@ console.log('\n⚡ Auto on: ▶ Run now buys the would-buy orders; 💸 low valu
   globalThis.fetch = realFetch; delete env.VEEQO_API_KEY;
 }
 
+// Owner (2026-10-07): "download CSV for vendor — add pieces per case of the original box, and a lot of them have no price:
+// get it from SKU Mgr, the newest one".
+console.log('\nReorder vendor CSV: pieces per case + SKU Mgr price when there is no other');
+{
+  const { readFileSync: rf3 } = await import('node:fs');
+  const wk = new Date(Date.now() - 14 * 86400000).toISOString().slice(0, 10);
+  sq.prepare("INSERT INTO ebay_sales_weekly (sku, period_start, units_ordered) VALUES ('88-3-3=10',?,40)").run(wk);
+  // Two SKU Mgr rows of 88-3-3=10 (200 pcs a box): the older one $0.05, the newest $0.07 → $0.07. No vendor sheet, no order.
+  sq.prepare("INSERT INTO master_list (base_sku, name, part_num, location, cases, units_per_case, price, updated_at) VALUES ('88-3-3','cap','88-3-3=10','C1=3-3-1',0,200,0.05,'2026-01-01'), ('88-3-3','cap','88-3-3=10','C2=3-3-1',0,200,0.07,'2026-09-01')").run();
+  // 88-4-4=10 has a vendor sheet price ($0.11) and a SKU Mgr price ($0.99) → the vendor sheet one stays.
+  sq.prepare("INSERT INTO ebay_sales_weekly (sku, period_start, units_ordered) VALUES ('88-4-4=10',?,40)").run(wk);
+  sq.prepare("INSERT INTO master_list (base_sku, name, part_num, location, cases, units_per_case, price, updated_at) VALUES ('88-4-4','cap','88-4-4=10','C1=4-4-1',0,100,0.99,'2026-09-01')").run();
+  sq.prepare("INSERT INTO reorder_vendor_catalog (vendor, part, price, price_at, updated_at) VALUES ('JQ','88-4-4=10',0.11,'2026-09-30',?)").run(wk);
+  const d = await get('/reorder/vendor-order?days=90&lead=3&cover=3');
+  const c = (d.rows || []).find(r => r.sku === '88-3-3=10') || {}, a = (d.rows || []).find(r => r.sku === '88-4-4=10') || {};
+  check('no vendor sheet / order price → SKU Mgr\'s newest price per piece ($0.07, not the older $0.05), "SKU Mgr"', c.price === 0.07 && c.priceSrc === 'SKU Mgr', [c.price, c.priceSrc]);
+  check('…a part # with a vendor sheet price keeps it (88-4-4=10 $0.11, not SKU Mgr $0.99)', a.price === 0.11 && a.priceSrc === 'vendor sheet', [a.price, a.priceSrc]);
+  check('…order quantities don't depend on price: same sales (40 × 10 pcs) → same order for both (88-4-4=10 in cases of 10 = 100 pcs ÷ 10; 88-3-3=10 in cases of 20 = 200 pcs ÷ 10)', a.caseQty === 10 && a.orderUnits % 10 === 0 && a.orderUnits === c.orderUnits && c.caseQty === 20 && c.orderUnits % 20 === 0, [a.orderUnits, c.caseQty, c.orderUnits]);
+  const rh = rf3(fileURLToPath(new URL('../reorder.html', import.meta.url)), 'utf8');
+  const csv = (rh.match(/function rvoCsv\(\) \{[\s\S]*?\n\}/) || [''])[0];
+  const head = (csv.match(/var head = (\[[^\]]*\])/) || [])[1];
+  const H2 = head ? JSON.parse(head.replace(/'/g, '"')) : [];
+  const total = (csv.match(/lines\.push\(\[cell\('TOTAL'\)[\s\S]*?\]\.join\(','\)\);/) || [''])[0];
+  const totalCells = total ? (total.match(/\]\.join/) ? total.slice(total.indexOf('[') + 1, total.lastIndexOf(']')) : '') : '';
+  check('CSV: "Pieces per Case (original box)" right after Qty per Case = Qty per Case × pack size (20 × 10 = 200 = SKU Mgr Each/Case)',
+    H2[7] === 'Qty per Case' && H2[8] === 'Pieces per Case (original box)' && H2[9] === 'Pieces' && /Math\.round\(r\.caseQty \* \(r\.packSize \|\| 1\) \* 1000\) \/ 1000/.test(csv) && c.caseQty * c.packSize === 200, H2);
+  check('…the TOTAL line still lines up under the columns (Pieces total under Pieces, $ under Line Total)', H2.length === 16 && /\* 1000\) \/ 1000, '', '', '', Math\.round\(pcsTot/.test(totalCells), totalCells.slice(0, 200));
+  sq.exec("DELETE FROM master_list WHERE part_num IN ('88-3-3=10', '88-4-4=10'); DELETE FROM ebay_sales_weekly WHERE sku IN ('88-3-3=10', '88-4-4=10'); DELETE FROM reorder_vendor_catalog WHERE part = '88-4-4=10'");
+}
+
 console.log('\n' + (failed ? '❌ ' + failed + ' check(s) FAILED' : '✅ all ' + passed + ' checks passed') + '\n');
 process.exit(failed ? 1 : 0);

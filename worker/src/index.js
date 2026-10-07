@@ -1802,6 +1802,13 @@ async function reorderVendorOrder(env, url) {
   const cat = {}, catAll = {}; (await all('SELECT * FROM reorder_vendor_catalog ORDER BY vendor')).forEach(r => { const k = U(r.part); if (!cat[k]) cat[k] = r; (catAll[k] = catAll[k] || []).push(r); });
   // 💲 Newest price per piece paid on an order / shipment (on the way), when the vendor sheet has none.
   const incPrice = {}; (await all('SELECT part, price, updated_at, title, vendor FROM reorder_incoming WHERE price > 0 ORDER BY updated_at').catch(() => [])).forEach(r => { incPrice[U(r.part)] = r; });
+  // 💲 Owner: "a lot of them have no price — get it from SKU Mgr, the newest one": the price per piece on the
+  // part #'s most recently updated SKU Mgr row (dated by the 💲 price history when that price is in it), used
+  // only when neither the vendor sheet nor an order / shipment has one.
+  const mlPrice = {}; (await all("SELECT part_num, price, updated_at FROM master_list WHERE price > 0 AND part_num != '' ORDER BY updated_at, id").catch(() => []))
+    .forEach(r => { mlPrice[P(r.part_num)] = { price: parseFloat(r.price), at: '' }; });
+  (await all('SELECT part, price, at FROM part_price_log ORDER BY at, id').catch(() => []))
+    .forEach(r => { const m = mlPrice[P(r.part)]; if (m && Math.abs(m.price - parseFloat(r.price)) < 1e-6) m.at = r.at; });
   const fixes = {}; (await all('SELECT * FROM reorder_fix')).forEach(r => { fixes[U(r.part)] = r; });
   // ASIN for any SKU Amazon knows — incl. Amazon's own auto seller SKUs like
   // "0H-9TMH-JBU7" (sales report + FBA inventory report), so those rows can
@@ -1998,7 +2005,8 @@ async function reorderVendorOrder(env, url) {
         // 💲 Newest price per single piece: the vendor's sheet (latest import), else the latest order / shipment.
         // (No vendor names / file titles in the text — only owners see vendor names.)
         ...(parseFloat(ct.price) > 0 ? { price: parseFloat(ct.price), priceAt: ct.price_at || ct.updated_at || '', priceSrc: 'vendor sheet' }
-          : incPrice[t.sku] ? { price: parseFloat(incPrice[t.sku].price), priceAt: incPrice[t.sku].updated_at || '', priceSrc: 'last order' } : { price: null, priceAt: '', priceSrc: '' }),
+          : incPrice[t.sku] ? { price: parseFloat(incPrice[t.sku].price), priceAt: incPrice[t.sku].updated_at || '', priceSrc: 'last order' }
+          : mlPrice[t.sku] ? { price: mlPrice[t.sku].price, priceAt: mlPrice[t.sku].at, priceSrc: 'SKU Mgr' } : { price: null, priceAt: '', priceSrc: '' }),
         soldPcs: Math.round(demandPcs), monthlyPcs: Math.round(monthlyPcs * 10) / 10,
         stockUnits: Math.round(sm.units * 100) / 100, stockPcs: Math.round(ownPcs), otherPackPcs: Math.round(otherPcs),
         fbaPcs: Math.round(t.fbaAvailPieces), needUnits, caseQty, cases, orderUnits, note: notes.join(' · '),
