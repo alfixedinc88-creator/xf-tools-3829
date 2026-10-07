@@ -842,13 +842,6 @@ window.invCredLogin = async function() {
          up if something actually failed to submit and needs retrying. -->
     <button class="isubmit sout" id="inv-pull-retry-btn" style="margin-top:10px;display:none" onclick="invRetryAllFailedPullItems()">⚠ Retry Failed Submissions</button>
   </div>
-  <!-- 🔒 Owner (2026-10-07): "Stock Out Shelving works perfect now — a button to save that code down, so if it
-       ever changes I give you the file and you change it back." Downloads a snapshot: the exact website /
-       Worker commit (the full code is kept in GitHub under that commit) + the page as it is now. -->
-  <div id="inv-design-save" style="display:none;text-align:center;margin:22px 0 6px">
-    <button type="button" onclick="invSaveDesign('Stock Out Shelving')" style="padding:9px 14px;border-radius:9px;border:1.5px solid var(--border);background:var(--bg2);color:var(--text2);font-size:13px;font-weight:700;cursor:pointer;font-family:var(--sans)">🔒 Save this design (Stock Out Shelving)</button>
-    <div style="font-size:11px;color:var(--text3);margin-top:4px">Downloads a file. If Stock Out Shelving ever changes, give the file to Claude to put it back exactly like this.</div>
-  </div>
 </div>
 <!-- Already in Pull List — shown instead of silently refusing when the
      same part+location gets added twice. -->
@@ -1844,31 +1837,6 @@ window.invCredLogin = async function() {
   }
   // ─────────────────────────────────────────────────────────────────
 
-  // 🔒 Save this design: a file with the exact commit the site + Worker run now
-  // (version.json, written by the Pages deploy) and the page source as served.
-  window.invSaveDesign = function(what) {
-    var t = Date.now(), who = (INV_CRED_USER && INV_CRED_USER.displayName) || '?';
-    var get = function(u) { return fetch(u + (u.indexOf('?') < 0 ? '?' : '&') + 'design=' + t, { cache: 'no-store' }).then(function(r) { return r.ok ? r.text() : ''; }).catch(function() { return ''; }); };
-    invFlash('🔒 Saving the ' + what + ' design…', 'success');
-    Promise.all([get('version.json'), get('inventory.html'), get('xf-access.js')]).then(function(a) {
-      var v = {}; try { v = JSON.parse(a[0] || '{}'); } catch (e) {}
-      var when = new Date().toLocaleString('en-US', { timeZone: 'America/New_York' });
-      var day = new Date().toLocaleDateString('en-CA', { timeZone: 'America/New_York' });
-      var txt = 'XFitting — saved design: ' + what + '\n'
-        + 'Saved: ' + when + ' (New York) by ' + who + '\n'
-        + 'Website + Worker commit: ' + (v.commit || 'unknown') + (v.builtAt ? ' (deployed ' + v.builtAt + ')' : '') + '\n'
-        + 'Repo: alfixedinc88-creator/xf-tools-3829\n\n'
-        + 'TO PUT IT BACK: give this file to Claude and say "change ' + what + ' back to this design".\n'
-        + 'Claude: restore the ' + what + ' code (inventory.html + its Worker routes) from the commit above;\n'
-        + 'leave every other tab as it is now. See docs/LOCKED-DESIGNS.md.\n\n'
-        + '==================== inventory.html (as on the site) ====================\n' + (a[1] || '(could not read)') + '\n'
-        + '==================== xf-access.js (as on the site) ====================\n' + (a[2] || '(could not read)') + '\n';
-      var url = URL.createObjectURL(new Blob([txt], { type: 'text/plain' })), l = document.createElement('a');
-      l.href = url; l.download = what.toLowerCase().replace(/[^a-z0-9]+/g, '-') + '-design-' + day + '.txt';
-      document.body.appendChild(l); l.click(); l.remove(); setTimeout(function() { URL.revokeObjectURL(url); }, 5000);
-      invFlash('🔒 Saved: ' + l.download + (v.commit ? ' (commit ' + String(v.commit).slice(0, 7) + ')' : ''), 'success');
-    });
-  };
   window.invSwitchTab = function(tab) {
     // "scan" (Stock In) and "stockout" (Stock Out) share the same
     // underlying panel and logic — only the forced invMode differs. See
@@ -1918,7 +1886,6 @@ window.invCredLogin = async function() {
       }
     }
     if (tab === "transfer" && window.xfrStepsRender) window.xfrStepsRender();
-    var dsv = g("inv-design-save"); if (dsv) { var rr = (INV_CRED_USER && INV_CRED_USER.roles) || []; dsv.style.display = tab === "stockout" && (rr.indexOf('admin') >= 0 || rr.indexOf('owner') >= 0) ? 'block' : 'none'; }
     if (tab === "check") { invAuditLoadMode(); ckLoadSizes(); setTimeout(function() { var x = g('ck-inp'); if (x) x.focus(); }, 60); }
     if (tab === "audit") { ckLoadSizes(); rcStatus(); rcRestore(); invAuditLoadMode(); invPopulateAllPrefixDropdowns(); if(typeof invLoadPrefixes==='function') invLoadPrefixes(); }
     if ((tab === "skumgr" || tab === "history" || tab === "soldout" || tab === "location") && !invUnlocked) {
@@ -14060,6 +14027,6 @@ window.invCredLogin = async function() {
   };
 })();
 </script>
-<script src="xf-access.js?v=20261006f"></script>
+<script src="xf-access.js?v=20261007a"></script>
 </body>
 </html>

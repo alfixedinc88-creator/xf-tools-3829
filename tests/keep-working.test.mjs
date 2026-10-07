@@ -3794,20 +3794,40 @@ console.log('\nReorder: a sales SKU with a broken pack number never inflates the
 }
 
 
-// Owner (2026-10-07): "Stock Out Shelving works perfect — a button to save that code down, so if it ever changes
-// I give you the file and you change it back."
-console.log('\n🔒 Save this design (Stock Out Shelving)');
+// Owner (2026-10-07): "Stock Out Shelving works perfect — a button to save that code down … save it somewhere,
+// no one allowed to change it, only the owner can save, each one kept with the date, every tab, so I can bring
+// back the version I like at any time."
+console.log('\n🔒 Save this design (every tab, Owner only, kept with the date, never changed)');
 {
   const { readFileSync: rf11 } = await import('node:fs');
   const R = f => rf11(fileURLToPath(new URL('../' + f, import.meta.url)), 'utf8');
-  const ih = R('inventory.html'), dy = R('.github/workflows/deploy.yml'), ld = R('docs/LOCKED-DESIGNS.md'), cm = R('CLAUDE.md');
-  check('Stock Out Shelving has the 🔒 Save this design button (admin / owner, only on that tab)',
-    /id="inv-design-save"/.test(ih) && /invSaveDesign\('Stock Out Shelving'\)/.test(ih) && /tab === "stockout" && \(rr\.indexOf\('admin'\) >= 0 \|\| rr\.indexOf\('owner'\) >= 0\)/.test(ih), null);
-  check('…the file names the exact commit (version.json) and holds the page source',
-    /get\('version\.json'\), get\('inventory\.html'\)/.test(ih) && /Website \+ Worker commit: /.test(ih) && /l\.download = /.test(ih), null);
-  check('…the Pages deploy writes version.json with the commit', /> version\.json/.test(dy) && /GITHUB_SHA/.test(dy), null);
-  check('…Stock Out Shelving is listed as locked (commit 347cb71) and CLAUDE.md points to it',
+  const xa = R('xf-access.js'), dy = R('.github/workflows/deploy.yml'), ld = R('docs/LOCKED-DESIGNS.md'), cm = R('CLAUDE.md'), wk = R('worker/src/index.js');
+  const ow = sq.prepare("INSERT INTO cred_users (username, password_hash, display_name, active, created_at, level) VALUES (?,?,?,1,?,'owner')").run('ownds', hex(salt) + ':' + hex(new Uint8Array(bits)), 'OWNER', new Date().toISOString());
+  const ol = await (await call('/auth/login', { method: 'POST', body: '{"username":"ownds","password":"password1"}' })).json();
+  const OH = { 'X-Cred-Token': ol.token, 'Content-Type': 'application/json' };
+  const oget = async p => (await (await call(p, { headers: OH })).json());
+  const opost = async (p, b) => (await (await call(p, { method: 'POST', headers: OH, body: JSON.stringify(b) })).json());
+  const big = 'x'.repeat(2000000); // bigger than one chunk → saved in parts, comes back whole
+  const s1 = await opost('/designs/save', { page: 'inventory.html', pageName: '📋 Inventory', tab: 'stockout', tabLabel: '🏬 Stock Out Shelving', commit: 'c34addb5e4a50251937640911e88fb40b2ba035d', builtAt: '2026-10-07T17:00:00Z', note: 'works perfect', src: big, gz: false, bytes: big.length });
+  const s2 = await opost('/designs/save', { page: 'inventory.html', pageName: '📋 Inventory', tab: 'transfer', tabLabel: 'Transfer', commit: 'abc1234', src: 'page', gz: false });
+  const l1 = await oget('/designs/list?page=inventory.html');
+  check('the Owner saves Stock Out Shelving and Transfer → both kept with date, who, commit, note; newest first',
+    s1.ok && s2.ok && l1.rows.length === 2 && l1.rows[0].tab === 'transfer' && l1.rows[1].tab_label === '🏬 Stock Out Shelving' && l1.rows[1].saved_by === 'OWNER' && l1.rows[1].commit_sha === 'c34addb5e4a50251937640911e88fb40b2ba035d' && l1.rows[1].note === 'works perfect' && /^\d{4}-\d\d-\d\dT/.test(l1.rows[1].saved_at), l1);
+  const f1 = await oget('/designs/file?id=' + s1.id);
+  check('…⬇ download gives the saved page code back whole (2 MB, saved in parts)', f1.ok && f1.src === big && f1.row.parts === 3, { ok: f1.ok, len: (f1.src || '').length });
+  const wl = await get('/designs/list?page=inventory.html'), ws = await post('/designs/save', { page: 'inventory.html', tab: 'x', src: 'y' }), wf = await get('/designs/file?id=' + s1.id);
+  check('…anyone who is not the Owner (an Admin too) can\'t save, list or download them', wl.ok === false && ws.ok === false && wf.ok === false && /Only the Owner/.test(wl.error), [wl, ws]);
+  const ed = await (await call('/designs/edit', { method: 'POST', headers: OH, body: JSON.stringify({ id: s1.id, note: 'x' }) })).json();
+  const dl = await (await call('/designs/delete', { method: 'POST', headers: OH, body: JSON.stringify({ id: s1.id }) })).json();
+  check('…a saved design can\'t be changed or deleted (no such routes; still there as saved)', ed.ok === false && dl.ok === false && (await oget('/designs/list?page=inventory.html')).rows.length === 2
+    && !/UPDATE design_saves|DELETE FROM design_saves|DELETE FROM design_save_parts/.test(wk), [ed, dl]);
+  check('…not signed in → refused', (await (await call('/designs/list')).json()).ok === false, null);
+  check('every app page: the 🔒 button for the Owner only (server says level owner), the open tab picked, Whole page too, download + 📋 For Claude',
+    /if \(d\.level === 'owner'\) designSetup\(\);/.test(xa) && /function dOpenTab\(\)/.test(xa) && /Whole page \(every tab\)/.test(xa) && /\/designs\/save/.test(xa) && /\/designs\/file\?id=/.test(xa) && /data-a="cp"/.test(xa), null);
+  check('…it saves the commit (version.json, written by the Pages deploy) and the page code as served', /dGet\('version\.json'\), dGet\(dPage\(\)\), dGet\('xf-access\.js'\)/.test(xa) && /> version\.json/.test(dy) && /GITHUB_SHA/.test(dy), null);
+  check('…Stock Out Shelving is listed as locked (commit 347cb71) and CLAUDE.md points to docs/LOCKED-DESIGNS.md',
     /Stock Out Shelving \| 2026-10-07 \| `347cb71`/.test(ld) && /docs\/LOCKED-DESIGNS\.md/.test(cm), null);
+  sq.prepare('DELETE FROM cred_users WHERE id = ?').run(Number(ow.lastInsertRowid));
 }
 
 console.log('\n' + (failed ? '❌ ' + failed + ' check(s) FAILED' : '✅ all ' + passed + ' checks passed') + '\n');

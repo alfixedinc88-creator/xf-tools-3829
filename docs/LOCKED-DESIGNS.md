@@ -6,16 +6,25 @@ elsewhere has to touch it, say so plainly in the PR and to the owner first.
 
 ## How the owner saves / restores one
 
-- Inventory → 🏬 Stock Out Shelving → **🔒 Save this design** (admin / owner
-  only, bottom of the tab) downloads `stock-out-shelving-design-<date>.txt`.
-  The file names the exact commit the website + Worker ran at that moment
-  (from `version.json`, written by the Pages deploy) and holds the page source.
-- Owner gives that file back and says "change it back": check out that commit
+- Every app page has a small **🔒** button (bottom right) — **Owner only**
+  (the server checks the account is an Owner). It opens **Save this design**:
+  pick the tab (the open one is already picked, or "Whole page"), an optional
+  note, **🔒 Save this design now**.
+- Each save is kept on the server (D1 `design_saves` + `design_save_parts`)
+  with the date, who, the exact commit the website + Worker ran (from
+  `version.json`, written by the Pages deploy) and the page code as served.
+  Saves are only ever added: there is no route to change or delete one.
+- The same panel lists every saved design of that page, newest first:
+  **⬇ Download** (a .txt with the info + the page code) or **📋 For Claude**
+  (one line: "Bring back <tab> (<page>) to the design saved <date> — saved
+  design #N, commit <sha> …").
+- When the owner gives that line or file: check out that commit
   (`git show <commit>:inventory.html`, `git show <commit>:worker/src/index.js`),
-  diff the Stock Out Shelving code against now, and put back only that tab's
-  code (screens, pick rules, pull list, its Worker routes). Every other tab
-  stays as it is now. Re-run `node tests/keep-working.test.mjs`, show the
-  inventory check, and say in the PR what was put back.
+  diff that tab's code against now, and put back only that tab's code (its
+  screens, rules and the Worker routes behind it). Every other tab stays as it
+  is now. Re-run `node tests/keep-working.test.mjs`, show the inventory check,
+  and say in the PR what was put back. If only the tab's look / steps changed
+  and later fixes elsewhere depend on new code, say so plainly before merging.
 
 ## Locked
 
