@@ -4409,5 +4409,30 @@ console.log('\n🚚 Order Lookup: carrier tracking (delivered / in transit / las
     && /id="ps-tab-lookup"      onclick="psSwitchTab\('lookup'\)" style="display:none"/.test(ph) && /if \(name === 'lookup'\) name = 'orderlookup';/.test(ph), null);
 }
 
+// Owner (2026-10-08): "put the auto print schedule somewhere in Auto Label, so later I can check and remember, and set
+// it to a different time if I want".
+console.log('\n🗓 Auto Label: auto print schedule in plain words by day, ✏️ Change times');
+{
+  const { readFileSync: rf16 } = await import('node:fs');
+  const ph = rf16(fileURLToPath(new URL('../packship.html', import.meta.url)), 'utf8');
+  const grab = re => (ph.match(re) || [''])[0];
+  const src = [grab(/function _psAlClock\(hm\) \{[\s\S]*?\n\}/), grab(/var _PS_DAYN = [\s\S]*?\nfunction _psAlSchedRender/).replace(/\nfunction _psAlSchedRender$/, '')].join('\n');
+  const html = new Function('var _psAlEsc = function(v){return String(v);};' + src + '; return _psAlSchedHtml;')()({ waitMinutes: 30, noWaitMinutes: 2,
+    noWaitTimes: 'Mon-Fri 15:45-17:00; Sat 12:45-13:45', pauseTimes: 'Mon-Fri 16:30-17:30; Sat 13:45-15:00; Mon-Sun 20:30-24:00; Mon-Sun 0:00-0:05',
+    scanFormOn: true, scanFormTimes: 'Mon-Fri 16:30, 20:45; Sat 13:45, 20:45; Sun 20:45' });
+  const txt = html.replace(/<\/tr>/g, '\n').replace(/<div style="font-weight:800">/g, '\n== ').replace(/<[^>]+>/g, ' ').replace(/[ ]+/g, ' ');
+  const part = name => (txt.split('== ' + name)[1] || '').split('==')[0];
+  const mf = part('Mon–Fri'), sa = part('Saturday'), su = part('Sunday');
+  check('Mon–Fri: 12:05 am starts · 3:45 pm no 30-min wait, 2 min · 4:30 pm STOPS + scan form · 5:30 pm starts again · 8:30 pm STOPS · 8:45 pm scan form',
+    /12:05 am ▶ Auto print STARTS again/.test(mf) && /3:45 pm ⏩ No 30-min wait — new orders wait 2 min/.test(mf) && /4:30 pm ⏸ Auto print STOPS · 📄 Scan form made/.test(mf)
+    && /5:30 pm ▶ Auto print STARTS again/.test(mf) && /8:30 pm ⏸ Auto print STOPS/.test(mf) && /8:45 pm 📄 Scan form made/.test(mf) && !/Back to the/.test(mf), mf);
+  check('…Saturday: 12:45 pm no wait · 1:45 pm STOPS + scan form · 3:00 pm starts again · 8:30 pm STOPS · 8:45 pm scan form; Sunday: 8:30 pm STOPS · 8:45 pm scan form',
+    /12:45 pm ⏩/.test(sa) && /1:45 pm ⏸ Auto print STOPS · 📄 Scan form made/.test(sa) && /3:00 pm ▶ Auto print STARTS again/.test(sa) && /8:45 pm 📄 Scan form made/.test(sa)
+    && /8:30 pm ⏸ Auto print STOPS/.test(su) && /8:45 pm 📄 Scan form made/.test(su) && !/3:45 pm/.test(su), [sa, su]);
+  check('…✏️ Change times: the 5 times (normal wait, no-wait times + minutes, stops, scan forms), live preview, 💾 Save writes the same rules',
+    /id="ps-al-sched-card"/.test(ph) && /data-sk="pauseTimes"/.test(ph) && /data-sk="scanFormTimes"/.test(ph) && /data-sk="noWaitTimes"/.test(ph) && /oninput="psAlSchedPreview\(\)"/.test(ph)
+    && /#ps-al-rules \[data-k="' \+ k \+ '"\]/.test(ph) && /await psAlSaveConfig\(\);/.test(ph), null);
+}
+
 console.log('\n' + (failed ? '❌ ' + failed + ' check(s) FAILED' : '✅ all ' + passed + ' checks passed') + '\n');
 process.exit(failed ? 1 : 0);

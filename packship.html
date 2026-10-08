@@ -1827,6 +1827,31 @@ body {
         <div id="ps-al-status" style="font-size:12px;color:var(--text3);margin-top:10px;font-family:var(--mono);line-height:1.6"></div>
       </div>
 
+      <!-- 🗓 Owner (2026-10-08): "put the auto print schedule somewhere in auto print, so later I can check and remember,
+           and set it to a different time if I want". The same rules as 📐 Rules below, in plain words, by day. -->
+      <div class="ps-card" id="ps-al-sched-card" style="margin-bottom:16px">
+        <div style="display:flex;justify-content:space-between;align-items:center;gap:8px;flex-wrap:wrap;margin-bottom:6px">
+          <div style="font-size:13px;font-weight:700;color:var(--text)">🗓 Auto print schedule <span style="font-weight:400;color:var(--text3)">(New York time)</span></div>
+          <button class="ps-btn-sm" id="ps-al-sched-edit-btn" onclick="psAlSchedEdit()">✏️ Change times</button>
+        </div>
+        <div id="ps-al-sched" style="font-size:13px;line-height:1.55"></div>
+        <div id="ps-al-sched-editor" style="display:none;margin-top:10px;padding-top:10px;border-top:1px dashed var(--border)">
+          <div style="font-size:12px;color:var(--text3);margin-bottom:8px;line-height:1.5">Times are 24-hour (16:30 = 4:30 pm). Days: Mon-Fri, Sat, Sun, Sun-Sat (every day). Separate with ";". The preview above changes as you type — nothing changes until you tap 💾 Save.</div>
+          <div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(230px,1fr));gap:10px 14px;font-size:12px;color:var(--text2)">
+            <label>Normal wait after the newest order (min)<input class="ps-field-input" data-sk="waitMinutes" type="number" min="0" step="1" oninput="psAlSchedPreview()"></label>
+            <label>⏩ No 30-min wait at<input class="ps-field-input" data-sk="noWaitTimes" type="text" placeholder="Mon-Fri 15:45-17:00; Sat 12:45-13:45" oninput="psAlSchedPreview()"></label>
+            <label>…then new orders wait only (min)<input class="ps-field-input" data-sk="noWaitMinutes" type="number" min="0" max="30" step="1" oninput="psAlSchedPreview()"></label>
+            <label>⏸ Auto print stops at<input class="ps-field-input" data-sk="pauseTimes" type="text" placeholder="Mon-Fri 16:30-17:30; Sat 13:45-15:00; Sun-Sat 20:30-24:00; Sun-Sat 0:00-0:05" oninput="psAlSchedPreview()"></label>
+            <label>📄 Scan form made at<input class="ps-field-input" data-sk="scanFormTimes" type="text" placeholder="Mon-Fri 16:30, 20:45; Sat 13:45, 20:45; Sun 20:45" oninput="psAlSchedPreview()"></label>
+          </div>
+          <div style="display:flex;gap:8px;margin-top:10px;flex-wrap:wrap">
+            <button class="ps-btn-primary" style="width:auto;padding:8px 18px" onclick="psAlSchedSave(this)">💾 Save schedule</button>
+            <button class="ps-btn-sm" onclick="psAlSchedCancel()">Cancel</button>
+            <span id="ps-al-sched-msg" style="font-size:12px;align-self:center"></span>
+          </div>
+        </div>
+      </div>
+
       <!-- Rules -->
       <div class="ps-card" style="margin-bottom:16px">
         <div style="font-size:13px;font-weight:700;color:var(--text);margin-bottom:10px">📐 Rules</div>
@@ -8869,6 +8894,77 @@ function psAlOnUnlock() {
   psAlLoadWatch();
 }
 
+// 🗓 Auto print schedule, in plain words, from the saved rules (or from the editor while typing).
+var _PS_DAYN = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
+function _psAlDays(tok) { // "Mon-Fri" / "Sat" / "Sun-Sat" / "Mon,Wed" → [day numbers]
+  var ix = { sun: 0, mon: 1, tue: 2, wed: 3, thu: 4, fri: 5, sat: 6 }, out = [];
+  String(tok || '').toLowerCase().split(/\s*,\s*/).forEach(function(t) {
+    var m = t.match(/^(sun|mon|tue|wed|thu|fri|sat)\w*(?:\s*-\s*(sun|mon|tue|wed|thu|fri|sat)\w*)?$/); if (!m) return;
+    var a = ix[m[1]], b = m[2] != null ? ix[m[2]] : a;
+    for (var k = 0; k < 7; k++) { var d = (a + k) % 7; if (out.indexOf(d) < 0) out.push(d); if (d === b) break; }
+  });
+  return out;
+}
+function _psAlMin(hm) { var m = String(hm || '').match(/^(\d{1,2}):(\d{2})$/); return m ? (+m[1]) * 60 + (+m[2]) : null; }
+function _psAlSegs(text, ranges) { // → [{ days, from, to }] (ranges) or [{ days, at }] (times)
+  var out = [];
+  String(text || '').split(/[;\n]+/).forEach(function(seg) {
+    var m = seg.trim().match(/^([A-Za-z ,\-]+?)\s+([\d:,\s\-]+)$/); if (!m) return;
+    var days = _psAlDays(m[1].trim());
+    m[2].split(/\s*,\s*/).forEach(function(x) {
+      if (ranges) { var r = x.split(/\s*-\s*/); var f = _psAlMin(r[0]), t = _psAlMin(r[1]); if (f != null && t != null) out.push({ days: days, from: f, to: t }); }
+      else { var a = _psAlMin(x.trim()); if (a != null) out.push({ days: days, at: a }); }
+    });
+  });
+  return out;
+}
+function _psAlHm(mins) { var h = Math.floor(mins / 60) % 24, mm = mins % 60; return _psAlClock(h + ':' + (mm < 10 ? '0' : '') + mm); }
+function _psAlSchedHtml(c) {
+  var e = _psAlEsc, wait = +c.waitMinutes || 0, nw = +c.noWaitMinutes || 0;
+  var nwS = _psAlSegs(c.noWaitTimes, true), pS = _psAlSegs(c.pauseTimes, true), sfS = c.scanFormOn === false || c.scanFormOn === 'false' ? [] : _psAlSegs(c.scanFormTimes, false);
+  var perDay = [];
+  for (var d = 0; d < 7; d++) {
+    var ev = {};
+    var add = function(at, txt) { (ev[at] = ev[at] || []).push(txt); };
+    var stopped = function(t) { return pS.some(function(x) { return x.days.indexOf(d) >= 0 && t >= x.from && t < x.to; }); };
+    pS.forEach(function(x) { if (x.days.indexOf(d) < 0) return; if (x.from > 0) add(x.from, '⏸ Auto print STOPS'); if (x.to < 1440) add(x.to, '▶ Auto print STARTS again'); });
+    sfS.forEach(function(x) { if (x.days.indexOf(d) >= 0) add(x.at, '📄 Scan form made'); });
+    nwS.forEach(function(x) { if (x.days.indexOf(d) < 0) return; add(x.from, '⏩ No ' + wait + '-min wait — new orders wait ' + (nw ? nw + ' min (to catch a merge)' : 'no time') + ', then print');
+      if (x.to < 1440 && !stopped(x.to)) add(x.to, 'Back to the ' + wait + '-min wait'); }); // printing stopped then anyway → not said
+    var keys = Object.keys(ev).map(Number).sort(function(a, b) { return a - b; });
+    perDay.push(keys.map(function(k) { return '<tr><td style="padding:2px 10px 2px 0;white-space:nowrap;font-weight:700;font-family:var(--mono);vertical-align:top">' + e(_psAlHm(k)) + '</td><td style="padding:2px 0">' + ev[k].map(e).join(' · ') + '</td></tr>'; }).join(''));
+  }
+  // days with the same day in a row → one group (Mon–Fri, …)
+  var order = [1, 2, 3, 4, 5, 6, 0], groups = [];
+  order.forEach(function(d) { var g = groups[groups.length - 1]; if (g && g.html === perDay[d]) g.days.push(d); else groups.push({ days: [d], html: perDay[d] }); });
+  var name = function(ds) { return ds.length === 1 ? _PS_DAYN[ds[0]] : _PS_DAYN[ds[0]].slice(0, 3) + '–' + _PS_DAYN[ds[ds.length - 1]].slice(0, 3); };
+  return '<div style="font-size:12px;color:var(--text3);margin-bottom:6px">Any other time: an order waits <b>' + wait + ' min</b> after the newest order for that person (so orders to merge come together), then prints.</div>'
+    + groups.map(function(g) { return '<div style="margin-top:6px"><div style="font-weight:800">' + e(name(g.days)) + '</div>' + (g.html ? '<table style="border-collapse:collapse;font-size:13px">' + g.html + '</table>' : '<div style="color:var(--text3)">Prints all day (normal wait).</div>') + '</div>'; }).join('')
+    + '<div style="font-size:11px;color:var(--text3);margin-top:8px">Print Log: labels printed after 5:30 pm (Mon–Fri) count for the next business day in 📦 Ship-day count.</div>';
+}
+function _psAlSchedRender(c) { var el = document.getElementById('ps-al-sched'); if (el && c) el.innerHTML = _psAlSchedHtml(c); }
+function _psAlSchedVals() { var c = {}; document.querySelectorAll('#ps-al-sched-editor [data-sk]').forEach(function(x) { c[x.getAttribute('data-sk')] = x.value; }); return c; }
+window.psAlSchedEdit = function() {
+  var ed = document.getElementById('ps-al-sched-editor'), c = _psAlConfig || {}; if (!ed) return;
+  document.querySelectorAll('#ps-al-sched-editor [data-sk]').forEach(function(x) { var k = x.getAttribute('data-sk'); x.value = c[k] == null ? '' : c[k]; });
+  ed.style.display = 'block'; var b = document.getElementById('ps-al-sched-edit-btn'); if (b) b.style.display = 'none';
+  document.getElementById('ps-al-sched-msg').textContent = '';
+};
+window.psAlSchedPreview = function() { _psAlSchedRender(Object.assign({}, _psAlConfig || {}, _psAlSchedVals())); };
+window.psAlSchedCancel = function() {
+  var ed = document.getElementById('ps-al-sched-editor'); if (ed) ed.style.display = 'none';
+  var b = document.getElementById('ps-al-sched-edit-btn'); if (b) b.style.display = '';
+  _psAlSchedRender(_psAlConfig);
+};
+window.psAlSchedSave = async function(btn) {
+  var v = _psAlSchedVals(), msg = document.getElementById('ps-al-sched-msg');
+  if (!confirm('Save this auto print schedule?\n\n' + document.getElementById('ps-al-sched').innerText.slice(0, 1500))) return;
+  // the same fields as 📐 Rules → saved with every other rule as it is now
+  Object.keys(v).forEach(function(k) { var inp = document.querySelector('#ps-al-rules [data-k="' + k + '"]'); if (inp) inp.value = v[k]; });
+  btn.disabled = true; msg.textContent = 'Saving…';
+  try { await psAlSaveConfig(); msg.textContent = '✓ Saved'; psAlSchedCancel(); }
+  finally { btn.disabled = false; }
+};
 async function psAlLoadConfig() {
   var st = document.getElementById('ps-al-status');
   try {
@@ -8876,6 +8972,7 @@ async function psAlLoadConfig() {
     if (d.ok === false) { st.textContent = '✗ ' + (d.error || 'Could not load'); return; }
     _psAlConfig = d.config;
     _psAlRenderConfig(d);
+    var ed0 = document.getElementById('ps-al-sched-editor'); if (!ed0 || ed0.style.display === 'none') _psAlSchedRender(d.config); // 🗓 plain-words schedule
     if (d.lastRun) _psAlRenderRun(d.lastRun);
   } catch (e) { st.textContent = '✗ ' + e.message; }
 }
