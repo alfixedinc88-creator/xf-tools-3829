@@ -2087,7 +2087,7 @@ console.log('\nAuto Label → 🧩 same name + address: ≤ 20 lb together → o
     R('M-1').decision === 'would_merge' && R('M-2').decision === 'would_merge' && R('M-1').mergeKey === 'M-1' && R('M-2').mergeKey === 'M-1' && R('M-1').mergeLb === 6.18
     && /One box, one label: M-1 \+ M-2/.test(R('M-1').reason) && bought.length === 0, [R('M-1'), R('M-2')]);
   check('…over 20 lb together → 🔗 Merge by hand, put aside for the owner (never bought)', R('H-1').decision === 'merge' && R('H-2').decision === 'merge'
-    && /over 20 lb: put aside for you to merge \/ split by hand/.test(R('H-1').reason), [R('H-1').reason, R('H-1').mergeLb]);
+    && /20 lb or more: put aside for you to merge \/ split by hand/.test(R('H-1').reason), [R('H-1').reason, R('H-1').mergeLb]);
   const r0m = await post('/veeqo/autolabel/merge-buy', { orders: ['M-1', 'M-2'] });
   check('🧩 Merge (step 1) → only the merge: box weight in Veeqo set to everything together (6.18 lb = 98.88 oz) on the oldest order, NO label bought yet',
     r0m.ok && r0m.merged && allocOf(9001).allocation_package.weight === 98.88 && bought.length === 0 && sq.prepare("SELECT status FROM autolabel_merge WHERE lead_number = 'M-1'").get()?.status === 'merged'
@@ -2113,7 +2113,7 @@ console.log('\nAuto Label → 🧩 same name + address: ≤ 20 lb together → o
   const r2 = await post('/veeqo/autolabel/merge-buy', { orders: ['M-1', 'M-2'] });
   check('…never bought twice (merging the same orders again is refused)', r2.ok === false && bought.length === 1, r2);
   const r3 = await post('/veeqo/autolabel/merge-buy', { orders: ['H-1', 'H-2'] });
-  check('…over 20 lb can\'t be merged by the button either (put aside, merge / split by hand)', r3.ok === false && /over 20 lb/.test(r3.error) && bought.length === 1, r3);
+  check('…over 20 lb can\'t be merged by the button either (put aside, merge / split by hand)', r3.ok === false && /20 lb or more/.test(r3.error) && bought.length === 1, r3);
   await post('/veeqo/autolabel/merge-buy', { orders: ['F-1', 'F-2'] }); ageMerge('F-1');
   const r4 = await post('/veeqo/autolabel/merge-buy', { orders: ['F-1', 'F-2'] });
   check('…Veeqo won\'t mark the other order shipped → said plainly (mark it by hand with the tracking #), kept on record', r4.ok && r4.allMarked === false && /did not mark F-2 shipped/.test(r4.error)
@@ -2125,6 +2125,8 @@ console.log('\nAuto Label → 🧩 same name + address: ≤ 20 lb together → o
   check('…the next run shows it as ⚠️ mark shipped in Veeqo with that tracking (tries Veeqo again, never buys)', F2.decision === 'merge_fix' && /mark it shipped by hand in Veeqo with tracking MRG9005/.test(F2.reason) && bought.length === 2, F2);
   const hadBuyKey = sq.prepare("SELECT value FROM app_config WHERE key = 'autolabel_buy_verified'").get();
   sq.prepare("INSERT OR REPLACE INTO app_config (key, value) VALUES ('autolabel_buy_verified', 'yes')").run();
+  // Owner (2026-10-08): auto merging must not wait for a first merge done by hand in the app (the owner merges in Veeqo itself).
+  sq.prepare("DELETE FROM app_config WHERE key = 'autolabel_merge_verified'").run();
   const cfg0 = await get('/veeqo/autolabel/config');
   await post('/veeqo/autolabel/config', { config: { mode: 'auto', pauseTimes: '' } });
   const a1 = await post('/veeqo/autolabel/run', {});
@@ -2139,6 +2141,8 @@ console.log('\nAuto Label → 🧩 same name + address: ≤ 20 lb together → o
   check('…the run after 5 min buys ONE label on A-1 and marks A-2 shipped with the same tracking',
     A(a3, 'A-1').decision === 'bought' && A(a3, 'A-2').decision === 'merged' && bought.filter(b => b.alloc === 9007).length === 1 && !bought.some(b => b.alloc === 9008)
     && String(allocOf(9008).shipment?.tracking_number?.tracking_number) === 'MRG9007', [A(a3, 'A-1'), A(a3, 'A-2')]);
+  check('…auto merging is on without a first merge by hand in the app, and only UNDER 20 lb merges (19.99 lb yes, 20.00 lb put aside)',
+    ((w) => /const mergeVerified = true;/.test(w) && /if \(plan\.lb >= cfg\.mergeMaxLb\)/.test(w))((await import('node:fs')).readFileSync(workerPath, 'utf8')), null);
   if (!hadBuyKey) sq.prepare("DELETE FROM app_config WHERE key = 'autolabel_buy_verified'").run();
   await post('/veeqo/autolabel/config', { config: { pauseTimes: ((cfg0 && cfg0.config) || {}).pauseTimes } });
   await post('/veeqo/autolabel/config', { config: { mode: 'preview' } });

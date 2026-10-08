@@ -26147,7 +26147,8 @@ async function autolabelMergePlan(env, cfg, group, now) {
     lb += w.lb;
   }
   plan.lb = Math.round(lb * 100) / 100;
-  if (plan.lb > cfg.mergeMaxLb) { plan.reason = `Together ${plan.lb} lb — over ${cfg.mergeMaxLb} lb: put aside for you to merge / split by hand (${nums})`; return plan; }
+  // Owner (2026-10-08): merge only UNDER the limit (19.99 lb and less); 20 lb or more → put aside.
+  if (plan.lb >= cfg.mergeMaxLb) { plan.reason = `Together ${plan.lb} lb — ${cfg.mergeMaxLb} lb or more: put aside for you to merge / split by hand (${nums})`; return plan; }
   const newest = Math.max(...orders.map(g => Date.parse(g.created_at || '') || 0));
   const ageMin = newest ? Math.floor((now - newest) / 60000) : null;
   if (ageMin != null && ageMin < cfg.waitMinutes) { plan.kind = 'wait'; plan.reason = `Waiting — ${cfg.waitMinutes - ageMin} min left, then one box: ${nums} (${plan.lb} lb)`; return plan; }
@@ -26873,7 +26874,10 @@ async function autolabelRunOnce(env, opts = {}) {
   const now = Date.now();
   // 🧩 Same name + address: merged boxes on record, and one plan per group.
   const mergeMap = await autolabelMergeMap(env);
-  const mergeVerified = (await autolabelGetKey(env, AUTOLABEL_MERGE_VERIFIED_KEY)) === 'yes';
+  // Owner (2026-10-08): "auto merge it first if under 19.99 lb, wait 5 min, then the label" — auto
+  // merging no longer waits for a first merge done by hand in the app (the owner merges in Veeqo itself);
+  // the two steps (merge now, buy 5+ min later after checking Veeqo has the box) are the safety.
+  const mergeVerified = true;
   const splitVerified = (await autolabelGetKey(env, AUTOLABEL_SPLIT_VERIFIED_KEY)) === 'yes';
   const plans = new Map();
   const isOpen = g => !cancels.byNum.has(autolabelOrderNum(g.number)) && !listed.has(autolabelOrderNum(g.number)) && !autolabelHasLabel(g) && !mergeMap.has(String(g.id));
@@ -27088,7 +27092,6 @@ async function autolabelRunOnce(env, opts = {}) {
     result.orders.push(row);
   }
 
-  if (buy && !mergeVerified && result.orders.some(r => r.decision === 'would_merge')) result.notes.push('🧩 Merging is locked until one group is merged by hand: tap 🧩 Merge & buy on a 🧩 Would merge row in Last run.');
   const order = ['bought', 'merged', 'buy_failed', 'merge_fix', 'would_buy', 'would_merge', 'split_done', 'split', 'cancelled', 'merge', 'weigh', 'fix_veeqo_weight', 'low_value', 'no_rate', 'hold', 'ready', 'waiting', 'skipped', 'has_label'];
   result.orders.sort((a, b) => order.indexOf(a.decision) - order.indexOf(b.decision));
   result.finishedAt = new Date().toISOString();
