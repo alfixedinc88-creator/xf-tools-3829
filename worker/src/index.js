@@ -25040,11 +25040,11 @@ const AUTOLABEL_DEFAULTS = {
   noWaitTimes: 'Mon-Fri 15:45-17:00; Sat 12:45-13:45', // ...except in these New York times: no 30-min wait (owner 2026-10-08: Mon-Fri from 3:45 pm, Sat 12:45–1:45 pm)
   noWaitMinutes: 2,            // ...in those times an order waits only this long (owner: "wait 2 minutes to see if a merge order comes in")
   scanFormOn: true,            // 📄 USPS scan form made by itself at scanFormTimes (after one made by hand worked)
-  scanFormTimes: 'Mon-Fri 16:30, 20:50; Sat 13:45, 20:50; Sun 20:50', // New York time (owner; 8:50 pm EVERY day since 2026-10-08)
+  scanFormTimes: 'Mon-Fri 16:30, 20:45; Sat 13:45, 20:45; Sun 20:45', // New York time (owner 2026-10-08: 8:45 pm EVERY day; Mon-Fri 4:30 pm, Sat 1:45 pm)
   scanFormCheckAt: '20:55',    // night check: any USPS label after the last form → one more (USPS: before 9 pm)
   // No auto buying at these times (New York) — around the scan forms (owner):
   // Mon–Fri 4:30–5:30 pm and 8:30 pm–12:05 am, Sat from 1:30 pm, Sun 8:30 pm–12:05 am.
-  pauseTimes: 'Mon-Fri 16:30-17:30; Mon-Fri 20:30-24:00; Sat 13:45-24:00; Sun 20:30-24:00; Sun-Sat 0:00-0:10', // owner 2026-10-08: no auto print 8:30 pm – 12:10 am; Saturday stops at 1:45 pm (scan form)
+  pauseTimes: 'Mon-Fri 16:30-17:30; Sat 13:45-15:00; Sun-Sat 20:30-24:00; Sun-Sat 0:00-0:05', // owner 2026-10-08: no auto print Mon-Fri 4:30–5:30 pm, Sat 1:45–3 pm, every day 8:30 pm – 12:05 am
   upsMinSavings: 0.70,         // switch USPS -> UPS only if UPS is at least this much cheaper ($)... (owner: $0.70)
   upsMaxDays: 2,               // ...AND UPS arrives in this many days or less (owner: 2 days)
   uspsOnlyChannels: ['walmart'], // channels that must always ship USPS (name contains)
@@ -25216,6 +25216,15 @@ async function autolabelLoadConfig(env) {
     await autolabelSetKey(env, AUTOLABEL_CONFIG_KEY, JSON.stringify(saved));
     await autolabelSetKey(env, 'autolabel_rules_sat_1245_1008', 'done');
     await autolabelLog(env, { action: 'rules_changed', detail: `Saturday no 30-min wait 12:45 pm, stop printing + scan form 1:45 pm; Mon-Fri stop 4:30 pm + scan form (owner's request): ${JSON.stringify(before)} → no wait ${saved.noWaitTimes}; no auto print ${saved.pauseTimes}; scan forms ${saved.scanFormTimes}` }).catch(() => {});
+  }
+  // Owner 2026-10-08 (later): "Mon–Fri stop 4:30, start again 5:30 pm; Saturday stop 1:45, start again 3 pm; every day stop
+  // 8:30 pm, scan form 8:45 pm, start again 12:05 am".
+  if ((await autolabelGetKey(env, 'autolabel_rules_sched_845_1008')) !== 'done') {
+    const before = { pauseTimes: saved.pauseTimes, scanFormTimes: saved.scanFormTimes };
+    saved.pauseTimes = AUTOLABEL_DEFAULTS.pauseTimes; saved.scanFormTimes = AUTOLABEL_DEFAULTS.scanFormTimes;
+    await autolabelSetKey(env, AUTOLABEL_CONFIG_KEY, JSON.stringify(saved));
+    await autolabelSetKey(env, 'autolabel_rules_sched_845_1008', 'done');
+    await autolabelLog(env, { action: 'rules_changed', detail: `Sat restart 3 pm, scan form 8:45 pm every day, restart 12:05 am (owner's request): ${JSON.stringify(before)} → no auto print ${saved.pauseTimes}; scan forms ${saved.scanFormTimes}` }).catch(() => {});
   }
   return autolabelCleanConfig({ ...AUTOLABEL_DEFAULTS, ...saved });
 }
