@@ -2593,11 +2593,11 @@ console.log('\nAuto Label → 📄 USPS scan form: Mon–Fri 4:30 pm, Sat 1:45 p
   const ph2 = readFileSync0(fileURLToPath(new URL('../packship.html', import.meta.url)), 'utf8');
   check('📄 Veeqo gives TWO scan forms in one answer → both are kept and printed: form 1 and form 2 are different PDFs, there is no 3rd (the same link twice is one form), the list says 2, and the page prints every part',
     h.parts === 2 && /sf\d+a\.pdf/.test(t0) && /sf\d+b\.pdf/.test(t1) && t0 !== t1 && p2.status === 404 && (lst2.forms.find(f => f.id === sfRow.id) || {}).parts === 2 && !('source' in lst2.forms[0])
-      && /for \(var n = 0; n < Math\.max\(1, parts \|\| 1\); n\+\+\)/.test(ph2) && /await psAlScanFormPrintList\(fl\.map\(/.test(ph2) && /if \(todo\.length\) await psAlScanFormPrintList\(todo\.map\(/.test(ph2), { parts: h.parts, t0, t1, p2: p2.status });
+      && /for \(var n = 0; n < Math\.max\(1, parts \|\| 1\); n\+\+\)/.test(ph2) && /await _psSfPrintSomewhere\(fl\.map\(/.test(ph2) && /return psAlScanFormPrintList\(list, btn\);/.test(ph2) && /if \(todo\.length\) await psAlScanFormPrintList\(todo\.map\(/.test(ph2), { parts: h.parts, t0, t1, p2: p2.status });
   // Owner (🔎 Veeqo's answer: 2 manifests, 2 links found) "still only one printed" — two print() calls in a row, Chrome drops the 2nd.
   check('…every page of every form goes in ONE print (Chrome drops a 2nd print right after the 1st): each PDF page drawn at its own size, one print call; by hand, the station and Reprint all print the whole list at once',
     /var files = \[\], one = null;/.test(ph2) && /for \(var p = 1; p <= pdf\.numPages; p\+\+\)/.test(ph2) && /if \(one && one\.count\) \{ var keep = _psAlBatch; _psAlBatch = null; await _psAlPrintHtml\(one\.html\); _psAlBatch = keep; \}/.test(ph2)
-      && /window\.psAlScanFormPrint = function\(id, btn, parts\) \{ return psAlScanFormPrintList\(\[\{ id: id, parts: parts \}\], btn\); \};/.test(ph2), null);
+      && /window\.psAlScanFormPrint = function\(id, btn, parts\) \{ return _psSfPrintSomewhere\(\[\{ id: id, parts: parts \}\], btn\); \};/.test(ph2), null);
   // Owner: "still only one scan form, should have 2 (Veeqo pops up two tabs)" — a form can also come as a picture or a data: link.
   const wsP = readFileSync0(workerPath, 'utf8');
   const partsFn = new Function((wsP.match(/function autolabelFindFile[\s\S]*?\n\}/) || [''])[0] + '\n' + (wsP.match(/function autolabelScanFormParts[\s\S]*?\n\}/) || [''])[0] + '\n' + (wsP.match(/function autolabelShorten[\s\S]*?\n\}/) || [''])[0] + '; return [autolabelScanFormParts, autolabelShorten];')();
@@ -4462,6 +4462,25 @@ console.log('\n🛑 Print watch: missed by the Print Log scanner but picked / pa
     /📜 History — ' \+ lat\.length/.test(ph) && /picked by <b>' \+ e\(l\.pickBy/.test(ph) && /id="ps-tab-status"      onclick="psSwitchTab\('status'\)" style="display:none"/.test(ph) && /if \(name === 'status'\) name = 'orderlookup';/.test(ph), null);
   sq.prepare('DELETE FROM label_print_queue').run(); sq.prepare('DELETE FROM label_print_batch').run();
   sq.prepare("DELETE FROM app_config WHERE key IN ('label_print_watch','label_print_hold','label_print_watch_start')").run();
+}
+
+// Owner (2026-10-08): "Leaving for USPS — the scan form came out, but I want it printed on our INK printer, not the label printer".
+console.log('\n📄 Scan forms go to the ink printer (Scan Form Station), not the label printer');
+{
+  await get('/veeqo/autolabel/scanforms');
+  const id = Number(sq.prepare("INSERT INTO scan_form_log (day, slot, kind, created_at, by_user, ok, printed_at, printed_by, print_count) VALUES (?, 'x', 'manual', ?, 'TS', 1, ?, 'KL', 1)").run(new Date().toISOString().slice(0, 10), new Date().toISOString(), new Date().toISOString()).lastInsertRowid);
+  await post('/veeqo/autolabel/scanform-tick', { station: true });
+  const l1 = await get('/veeqo/autolabel/scanforms');
+  const sent = await post('/veeqo/autolabel/scanform-send', { ids: [id] });
+  const row = sq.prepare('SELECT printed_at FROM scan_form_log WHERE id = ?').get(id);
+  check('the Scan Form Station checks in every minute (seen time on the list); 🚚 Leaving for USPS / Reprint SENDS the form to it: marked not printed, so the ink printer prints it within a minute; who sent it is logged',
+    !!l1.stationSeenAt && Date.now() - Date.parse(l1.stationSeenAt) < 60000 && sent.ok && sent.sent === 1 && row.printed_at === null
+    && sq.prepare("SELECT COUNT(*) n FROM autolabel_log WHERE action = 'scanform_sent' AND reason LIKE ?").get('%#' + id + '%').n === 1, { l1: l1.stationSeenAt, sent, row });
+  const { readFileSync: rf18 } = await import('node:fs');
+  const ph = rf18(fileURLToPath(new URL('../packship.html', import.meta.url)), 'utf8');
+  check('…page: Leaving for USPS, Reprint and Make scan form now go through _psSfPrintSomewhere (send to the Scan Form Station if it is open; the label window never prints it without asking); the station prints them itself',
+    /await _psSfPrintSomewhere\(forms\.map\(/.test(ph) && /if \(_psSfIsHere\(\)\) return psAlScanFormPrintList\(list, btn\);/.test(ph) && /This window prints to the LABEL printer/.test(ph)
+    && /body: \{ station: true \}/.test(ph) && /if \(todo\.length\) await psAlScanFormPrintList\(todo\.map\(/.test(ph), null);
 }
 
 console.log('\n' + (failed ? '❌ ' + failed + ' check(s) FAILED' : '✅ all ' + passed + ' checks passed') + '\n');

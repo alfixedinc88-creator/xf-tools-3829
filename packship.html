@@ -9508,6 +9508,28 @@ function _psAlTimesLines(text) {
 function _psAlTimesText(text) { return _psAlTimesLines(text).join(' · '); }
 // 🚚 Leaving for USPS (owner): "that two scan forms trigger also and ask them to print". Today's forms (saved on the
 // server, so no computer has to stay open); USPS labels not on a form yet → offer to make one first.
+// 📄 Owner (2026-10-08): "Leaving for USPS — the scan form came out, but print it on our INK printer, not the label printer".
+// A window opened for labels (🖨 Printer station, kiosk printing) always prints to the label printer, so from any window that
+// isn't the 📄 Scan Form Station the forms are SENT to it (prints on the ink printer within a minute). Not open → say so first.
+function _psSfIsHere() { try { return localStorage.getItem('xf_sf_station') === '1'; } catch (e) { return false; } }
+function _psLabelStationHere() { try { return localStorage.getItem('xf_slip_station') === '1'; } catch (e) { return false; } }
+async function _psSfPrintSomewhere(list, btn) {
+  if (_psSfIsHere()) return psAlScanFormPrintList(list, btn); // this IS the ink printer window
+  var d = await _psAlFetch('/veeqo/autolabel/scanforms').catch(function() { return {}; });
+  var seen = d && d.stationSeenAt ? Date.parse(d.stationSeenAt) : 0, alive = seen && Date.now() - seen < 3 * 60000;
+  if (alive) {
+    var r = await _psAlFetch('/veeqo/autolabel/scanform-send', { method: 'POST', body: { ids: list.map(function(x) { return x.id; }), by: psInitials || '' } }).catch(function(e) { return { ok: false, error: e.message }; });
+    if (r.ok === false) { alert('📄 Could not send the scan form to the ink printer: ' + (r.error || 'failed') + '\n\nPrint it from Auto Label → 📄 USPS scan form on the Scan Form Station window.'); return; }
+    _psToast('📄 Sent to the ink printer (Scan Form Station) — it prints within a minute');
+    if (typeof psAlLoadScanForms === 'function') setTimeout(psAlLoadScanForms, 1500);
+    return;
+  }
+  var msg = '📄 The Scan Form Station (ink printer window on xfitting3) is not open' + (seen ? ' — last seen ' + new Date(seen).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' }) : '') + '.\n\n';
+  if (_psLabelStationHere()) {
+    if (!confirm(msg + 'This window prints to the LABEL printer. Open the "Scan Form Station" shortcut on xfitting3 and tap 🚚 Leaving for USPS again.\n\nOK = print here anyway (it comes out on the label printer) · Cancel = don\'t print now')) return;
+  } else if (!confirm(msg + 'OK = print it here — pick the INK printer and Letter paper in the print window · Cancel = don\'t print now')) return;
+  return psAlScanFormPrintList(list, btn);
+}
 window.psUspsScanFormsPrompt = async function() {
   var d; try { d = await _psAlFetch('/veeqo/autolabel/scanforms'); } catch (e) { d = { ok: false, error: e.message }; }
   if (!d || d.ok === false) { alert('📄 Could not load today\'s USPS scan forms (' + ((d && d.error) || 'no answer') + ').\nOpen Auto Label → 📄 USPS scan form to print them.'); return; }
@@ -9524,7 +9546,7 @@ window.psUspsScanFormsPrompt = async function() {
   var pages = forms.reduce(function(t, f) { return t + (f.parts || 1); }, 0);
   var when = forms.map(function(f) { return new Date(f.created_at).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' }); }).join(', ');
   if (confirm('📄 Today\'s USPS scan forms: ' + pages + ' form' + (pages === 1 ? '' : 's') + ' (made ' + when + ').\n\nPrint ' + (pages === 1 ? 'it' : 'them') + ' now and hand ' + (pages === 1 ? 'it' : 'them') + ' to USPS with the packages?'))
-    await psAlScanFormPrintList(forms.map(function(f) { return { id: f.id, parts: f.parts || 1 }; }));
+    await _psSfPrintSomewhere(forms.map(function(f) { return { id: f.id, parts: f.parts || 1 }; }));
 };
 // 🔎 Owner: "still only one scan form, but should have 2" — shows what Veeqo sent back (long files shortened), with 📋 Copy.
 window.psAlScanFormAnswer = async function(id) {
@@ -9736,7 +9758,7 @@ window.psAlScanFormMake = async function(btn) {
     if (d.ok === false) { _psAlSfErr('Scan form not made', (d.error || 'failed') + '\n\n' + JSON.stringify(d.tried || [], null, 1).slice(0, 3000)); }
     else { var eb = document.getElementById('ps-al-sf-err'); if (eb) eb.style.display = 'none'; _psToast('📄 Scan form made — printing ' + (d.parts || 1) + ' form' + ((d.parts || 1) > 1 ? 's' : ''));
       var fl = (d.forms && d.forms.length) ? d.forms : [{ id: d.id, parts: d.parts }];
-      await psAlScanFormPrintList(fl.map(function(x) { return { id: x.id, parts: x.parts || 1 }; })); } // every form Veeqo gave, one print (owner: "two scan forms, we only print one")
+      await _psSfPrintSomewhere(fl.map(function(x) { return { id: x.id, parts: x.parts || 1 }; })); } // every form Veeqo gave, one print (owner: "two scan forms, we only print one")
   } finally { btn.disabled = false; btn.textContent = t; psAlLoadScanForms(); }
 };
 // parts: how many forms Veeqo gave in this one answer (often 2). Owner: "still only one scan form, should have 2"
@@ -9775,7 +9797,7 @@ async function _psAlScanFormPagesHtml(files) {
     + '.sf{display:block;width:' + w.toFixed(2) + 'in;height:' + h.toFixed(2) + 'in;object-fit:contain;page-break-after:always;break-after:page}.sf:last-child{page-break-after:auto;break-after:auto}</style></head><body>'
     + pages.map(function(pg) { return '<img class="sf" src="' + pg.src + '">'; }).join('') + '</body></html>' };
 }
-window.psAlScanFormPrint = function(id, btn, parts) { return psAlScanFormPrintList([{ id: id, parts: parts }], btn); };
+window.psAlScanFormPrint = function(id, btn, parts) { return _psSfPrintSomewhere([{ id: id, parts: parts }], btn); }; // Reprint → the ink printer too
 // Several scan form records (one per pickup address / carrier) → still ONE print with every page.
 window.psAlScanFormPrintList = async function(list, btn) {
   if (btn) { btn.disabled = true; btn.textContent = '⏳'; }
@@ -9803,7 +9825,7 @@ window.psAlScanFormStation = function(on, quiet) {
   var tick = async function() {
     if (_psAlSfBusy) return; _psAlSfBusy = true;
     try {
-      await _psAlFetch('/veeqo/autolabel/scanform-tick', { method: 'POST', body: {} });
+      await _psAlFetch('/veeqo/autolabel/scanform-tick', { method: 'POST', body: { station: true } }); // also says "the Scan Form Station is open"
       var d = await _psAlFetch('/veeqo/autolabel/scanforms');
       var day = d && d.forms && d.forms[0] && d.forms[0].day;
       var todo = ((d && d.forms) || []).filter(function(f) { return f.ok && f.kind !== 'night_ok' && !f.printed_at && f.day === day; });
