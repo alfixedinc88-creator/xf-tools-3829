@@ -341,8 +341,9 @@ async function credCanActAsOwner(env, session) {
 // ── Pages & tabs a person may NOT see ────────────────────────────────────
 // access_rules rows: scope 'level:<key>' (allow=0 → that level can't see
 // the item) or 'user:<id>' (allow=0 hide / allow=1 show, overriding the
-// level for that one person). Items are page keys ("packship") or
-// page:tab keys ("packship:status") from the catalog in xf-access.js.
+// level for that one person). Items are page keys ("packship"), page:tab keys
+// ("packship:status") or page:tab:part keys ("packship:autolabel:scanform",
+// owner 2026-10-08: a box for every part inside a tab too) from the catalog in xf-access.js.
 // Owners always see everything. This hides things in the apps; what the
 // server allows is still decided by the permission roles above.
 let _accessTableReady = false;
@@ -749,12 +750,11 @@ async function adminSaveAccess(request, env, session) {
     if (!t) return deny('User not found', 404);
     if ((t.level === 'admin' || t.level === 'owner') && !ownerPowers) return deny('Only an Owner can change what an Admin or Owner can see');
   } else return deny('Bad scope', 400);
-  const entries = Object.entries(b.rules || {}).filter(([k, v]) => /^[a-z0-9_-]{1,40}(:[a-z0-9_-]{1,40})?$/.test(k) && (v === 0 || v === 1)).slice(0, 500);
+  const entries = Object.entries(b.rules || {}).filter(([k, v]) => /^[a-z0-9_-]{1,40}(:[a-z0-9_-]{1,40}){0,2}$/.test(k) && (v === 0 || v === 1)).slice(0, 2000);
   if (scope.startsWith('level:') && entries.some(([, v]) => v === 1)) return deny('Level rules can only hide things', 400);
   await env.DB.prepare(`DELETE FROM access_rules WHERE scope = ?`).bind(scope).run();
-  for (const [item, allow] of entries) {
-    await env.DB.prepare(`INSERT INTO access_rules (scope, item, allow) VALUES (?, ?, ?)`).bind(scope, item, allow).run();
-  }
+  const ins = entries.map(([item, allow]) => env.DB.prepare(`INSERT INTO access_rules (scope, item, allow) VALUES (?, ?, ?)`).bind(scope, item, allow));
+  for (let i = 0; i < ins.length; i += 100) await env.DB.batch(ins.slice(i, i + 100)); // many parts per level → in batches
   // `grant`: behind-the-scenes permissions the ticked pages/tabs need (the
   // Admin page picks them), added so a ticked tab actually works. Never admin.
   const grant = [...new Set((Array.isArray(b.grant) ? b.grant : []).filter(r => ['mobile', 'ops', 'mgmt', 'price'].includes(r)))];

@@ -144,6 +144,18 @@ window.addEventListener('pageshow', function (e) { if (e.persisted) location.rel
         } else { show(el); }
       });
     });
+    // Parts inside a page or a tab (a box, a button, a list): hidden by a
+    // style rule, so anything the page draws later is hidden straight away.
+    var css = '';
+    (here.parts || []).forEach(function (x) { if (x.sel && set[here.key + ':' + x.key]) css += x.sel + '{display:none!important}\n'; });
+    here.tabs.forEach(function (t) {
+      (t.parts || []).forEach(function (x) { if (x.sel && set[here.key + ':' + t.key + ':' + x.key]) css += x.sel + '{display:none!important}\n'; });
+    });
+    var st = document.getElementById('xf-access-parts');
+    if (css) {
+      if (!st && document.head) { st = document.createElement('style'); st.id = 'xf-access-parts'; document.head.appendChild(st); }
+      if (st && st.textContent !== css) st.textContent = css;
+    } else if (st) st.remove();
     // If the tab that's open is now hidden, open the first one still allowed.
     if (fallback) {
       for (var i = 0; i < here.tabs.length; i++) {
