@@ -1832,7 +1832,8 @@ body {
         <div style="font-size:13px;font-weight:700;color:var(--text);margin-bottom:10px">📐 Rules</div>
         <div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(210px,1fr));gap:10px 14px;font-size:12px;color:var(--text2)" id="ps-al-rules">
           <label>Wait after newest order (min)<input class="ps-field-input" data-k="waitMinutes" type="number" min="0" step="1"></label>
-          <label>No wait at these times (New York)<input class="ps-field-input" data-k="noWaitTimes" type="text" placeholder="Mon-Fri 15:50-17:00; Sat 13:00-14:15"></label>
+          <label>No 30-min wait at these times (New York)<input class="ps-field-input" data-k="noWaitTimes" type="text" placeholder="Mon-Fri 15:45-17:00; Sat 13:00-14:15"></label>
+          <label>…in those times wait only (min, to catch a merge)<input class="ps-field-input" data-k="noWaitMinutes" type="number" min="0" max="30" step="1" placeholder="2"></label>
           <label>⏸ No auto buying at these times (New York)<input class="ps-field-input" data-k="pauseTimes" type="text" placeholder="Mon-Fri 16:30-17:30; Mon-Fri 20:30-24:00; Sat 13:30-24:00"></label>
           <label>📄 USPS scan form by itself<select class="ps-field-input" data-k="scanFormOn"><option value="true">Yes</option><option value="false">No — by hand only</option></select></label>
           <label>…at (New York)<input class="ps-field-input" data-k="scanFormTimes" type="text" placeholder="Mon-Fri 16:30; Sat 13:45"></label>
@@ -8904,7 +8905,7 @@ function _psAlRenderConfig(d) {
     + '• <b>Bin · SKU · qty</b> written at the bottom of the label for <b>1–4 items</b> (with the product photos) → <b>no packing slip</b><br>'
     + '• <b>Packing slip (with product photos)</b> right after its label when: <b>5+ items</b>, no room on the label, or the label is <b>UPS</b><br>'
     + '• <b>Same name + address:</b> ' + (c.autoMerge ? 'together up to <b>' + c.mergeMaxLb + ' lb</b> → <b>one box, one label</b> (the other orders get the same tracking #); heavier → <b>put aside</b> (🔗 Merge by hand)' : '<b>put aside</b> (🔗 Merge by hand) — one box is off') + '<br>'
-    + '• Waits <b>' + c.waitMinutes + ' min</b> after the newest order' + (c.noWaitTimes ? ' — <b>except ' + _psAlEsc(c.noWaitTimes) + '</b> (New York time): prints as soon as an order comes in' : '') + '<br>'
+    + '• Waits <b>' + c.waitMinutes + ' min</b> after the newest order' + (c.noWaitTimes ? ' — <b>except ' + _psAlEsc(c.noWaitTimes) + '</b> (New York time): prints ' + (c.noWaitMinutes ? c.noWaitMinutes + ' min after an order comes in (time for a merge order to come in)' : 'as soon as an order comes in') + '' : '') + '<br>'
     + '• Never buys for a cancelled order<br>'
     + (c.pauseTimes ? '• <b>⏸ No auto buying:</b> ' + _psAlEsc(c.pauseTimes) + ' (New York) — around the scan forms; labels can still be bought by hand<br>' : '')
     + '• <b>📄 USPS scan form:</b> ' + (c.scanFormOn ? 'made by itself <b>' + _psAlEsc(_psAlTimesText(c.scanFormTimes) || '—') + '</b>, night check <b>' + _psAlEsc(_psAlClock(c.scanFormCheckAt)) + '</b> (one more if a USPS label came after the last form; USPS cut-off 9 pm, no Sunday)' : 'by hand only (📄 Make scan form now)')

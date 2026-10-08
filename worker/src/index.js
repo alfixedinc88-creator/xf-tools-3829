@@ -25037,7 +25037,8 @@ const AUTOLABEL_DEFAULTS = {
   mode: 'off',                 // 'off' | 'preview' | 'auto'
   cancelWatch: false,          // add cancelled-but-already-printed orders to the Cancellation list
   waitMinutes: 30,             // wait this long after the NEWEST order for a person before buying
-  noWaitTimes: 'Mon-Fri 15:50-17:00; Sat 13:00-14:15', // ...except in these New York times: print as soon as an order comes in (owner)
+  noWaitTimes: 'Mon-Fri 15:45-17:00; Sat 13:00-14:15', // ...except in these New York times: no 30-min wait (owner; Mon-Fri from 3:45 pm since 2026-10-08)
+  noWaitMinutes: 2,            // ...in those times an order waits only this long (owner: "wait 2 minutes to see if a merge order comes in")
   scanFormOn: true,            // 📄 USPS scan form made by itself at scanFormTimes (after one made by hand worked)
   scanFormTimes: 'Mon-Fri 16:30, 20:50; Sat 13:45, 20:50; Sun 20:50', // New York time (owner; 8:50 pm EVERY day since 2026-10-08)
   scanFormCheckAt: '20:55',    // night check: any USPS label after the last form → one more (USPS: before 9 pm)
@@ -25198,6 +25199,15 @@ async function autolabelLoadConfig(env) {
     await autolabelSetKey(env, 'autolabel_rules_scanform_850_1008', 'done');
     await autolabelLog(env, { action: 'rules_changed', detail: `Scan form every day 8:50 pm + no auto print 8:30 pm – 12:10 am (owner's request): ${JSON.stringify(before)} → scan forms ${saved.scanFormTimes}, no auto buying ${saved.pauseTimes}` }).catch(() => {});
   }
+  // Owner 2026-10-08: "Mon–Fri at 3:45 pm stop the 30-min wait; new orders wait 2 min (a merge may come in), then print".
+  if ((await autolabelGetKey(env, 'autolabel_rules_nowait_345_1008')) !== 'done') {
+    const before = { noWaitTimes: saved.noWaitTimes, noWaitMinutes: saved.noWaitMinutes };
+    if (saved.noWaitTimes == null || String(saved.noWaitTimes).replace(/\s+/g, ' ').trim() === 'Mon-Fri 15:50-17:00; Sat 13:00-14:15') saved.noWaitTimes = AUTOLABEL_DEFAULTS.noWaitTimes;
+    saved.noWaitMinutes = AUTOLABEL_DEFAULTS.noWaitMinutes;
+    await autolabelSetKey(env, AUTOLABEL_CONFIG_KEY, JSON.stringify(saved));
+    await autolabelSetKey(env, 'autolabel_rules_nowait_345_1008', 'done');
+    await autolabelLog(env, { action: 'rules_changed', detail: `No-wait time from 3:45 pm Mon-Fri, orders wait 2 min there (owner's request): ${JSON.stringify(before)} → ${saved.noWaitTimes}, ${saved.noWaitMinutes} min` }).catch(() => {});
+  }
   return autolabelCleanConfig({ ...AUTOLABEL_DEFAULTS, ...saved });
 }
 
@@ -25213,6 +25223,7 @@ function autolabelCleanConfig(c) {
     cancelWatch: c.cancelWatch === true || c.cancelWatch === 'true',
     waitMinutes:       num(c.waitMinutes, D.waitMinutes, 0, 1440),
     noWaitTimes:       autolabelNoWaitClean(c.noWaitTimes == null ? D.noWaitTimes : c.noWaitTimes),
+    noWaitMinutes:     num(c.noWaitMinutes, D.noWaitMinutes, 0, 30),
     scanFormOn:        c.scanFormOn === true || c.scanFormOn === 'true',
     pauseTimes:        autolabelNoWaitClean(c.pauseTimes == null ? D.pauseTimes : c.pauseTimes),
     scanFormTimes:     autolabelTimesClean(c.scanFormTimes == null ? D.scanFormTimes : c.scanFormTimes),
@@ -27088,7 +27099,7 @@ async function autolabelRunOnce(env, opts = {}) {
   const cfgSaved = await autolabelLoadConfig(env);
   // No-wait time (owner): orders print as soon as they come in — no wait for a second order.
   const noWait = autolabelNoWaitNow(cfgSaved, opts.now || new Date());
-  const cfg = noWait ? { ...cfgSaved, waitMinutes: 0 } : cfgSaved;
+  const cfg = noWait ? { ...cfgSaved, waitMinutes: cfgSaved.noWaitMinutes || 0 } : cfgSaved; // owner: in no-wait times, 2 min (catch a merge)
   const startedAt = new Date().toISOString();
   const buyVerified = (await autolabelGetKey(env, AUTOLABEL_VERIFIED_KEY)) === 'yes';
   // ⏸ No auto buying at these times (owner: around the scan forms) — labels bought by hand still work.
@@ -27097,7 +27108,7 @@ async function autolabelRunOnce(env, opts = {}) {
   const result = { ok: true, trigger: opts.trigger || 'manual', startedAt, mode: cfg.mode, buying: buy, buyVerified,
                    counts: {}, orders: [], channels: {}, cancelWatch: null, quoteSource: null, notes: [] };
   if (paused) { result.paused = paused; result.notes.push(`⏸ No auto buying now (${paused}, New York) — around the USPS scan form; it buys again after that. Labels can still be bought by hand.`); }
-  if (noWait) { result.noWait = noWait; result.notes.push(`⏩ No-wait time (${noWait}, New York): orders print as soon as they come in — no ${cfgSaved.waitMinutes}-min wait.`); }
+  if (noWait) { result.noWait = noWait; result.notes.push(`⏩ No-wait time (${noWait}, New York): no ${cfgSaved.waitMinutes}-min wait — an order prints ${cfgSaved.noWaitMinutes ? cfgSaved.noWaitMinutes + ' min after it comes in (time for a merge order to come in)' : 'as soon as it comes in'}.`); }
   if (opts.buy && cfg.mode === 'auto' && !buyVerified) result.notes.push('Auto mode is on but no label has been test-bought yet — nothing was bought. Use "Test buy ONE label" first.');
 
   // 1) Cancellations from every channel (and Veeqo itself).
