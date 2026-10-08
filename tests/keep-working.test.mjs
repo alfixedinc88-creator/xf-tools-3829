@@ -4167,5 +4167,51 @@ console.log('\nTransfer scan lookup: faster, same answer (rows, order, row numbe
   sq.exec("DELETE FROM master_list WHERE base_sku IN ('216-1-1','216-1-11','216-1-1C','999-9-9')");
 }
 
+// Owner: "every html, every tab I can let which level see, and right next to the check box I can put only who can
+// see — just add their user name — even if they are Worker level they can still see it; and under a tab, the
+// separate parts need a check box too".
+console.log('\nAdmin → Pages & Tabs: every page, tab and part per level + "👤 Also these people" by user name');
+{
+  const { readFileSync } = await import('node:fs');
+  const xa = readFileSync(fileURLToPath(new URL('../xf-access.js', import.meta.url)), 'utf8');
+  const ad = readFileSync(fileURLToPath(new URL('../xfitting-admin.html', import.meta.url)), 'utf8');
+  // catalog: load it the way a page does (a fake window), check every key
+  const catSrc = xa.slice(xa.indexOf('  var card = function'), xa.indexOf('  window.XF_ACCESS_CATALOG = CATALOG;'));
+  const win = {}; new Function('window', catSrc + 'window.XF_ACCESS_CATALOG = CATALOG;')(win);
+  const cat = win.XF_ACCESS_CATALOG || [];
+  const keys = []; const KEY = /^[a-z0-9_-]{1,40}(:[a-z0-9_-]{1,40}){0,2}$/;
+  for (const p of cat) {
+    keys.push(p.key);
+    for (const x of p.parts || []) keys.push(p.key + ':' + x.key);
+    for (const t of p.tabs || []) { keys.push(p.key + ':' + t.key); for (const x of t.parts || []) keys.push(p.key + ':' + t.key + ':' + x.key); }
+  }
+  const partN = keys.filter(k => k.split(':').length === 3).length + cat.reduce((n, p) => n + (p.parts || []).length, 0);
+  check('the list has every page (' + cat.length + '), every tab, and parts under tabs (' + partN + ' parts); every key unique and one the server accepts', cat.length >= 15 && partN >= 20 && new Set(keys).size === keys.length && keys.every(k => KEY.test(k)) && keys.length <= 2000,
+    { pages: cat.length, partN, dup: keys.filter((k, i) => keys.indexOf(k) !== i), bad: keys.filter(k => !KEY.test(k)) });
+  check('every part has a selector so it can be hidden; pages and tabs are hidden by a style rule the moment they draw', cat.every(p => (p.parts || []).concat(...(p.tabs || []).map(t => t.parts || [])).every(x => x.sel && x.label)) && /xf-access-parts/.test(xa) && /display:none!important/.test(xa), null);
+  check('Admin page: a part row under each tab, and the "👤 Also these people" name box next to the check boxes', /ad-pg-xrow/.test(ad) && /ad-pg-names/.test(ad) && /function adPgNamesPlan/.test(ad) && /ad-pg-userlist/.test(ad), null);
+
+  // a Worker-level person named on a part (and its tab + page), while the Worker level has them hidden
+  const salt = crypto.getRandomValues(new Uint8Array(16));
+  const km = await crypto.subtle.importKey('raw', new TextEncoder().encode('named1pass'), 'PBKDF2', false, ['deriveBits']);
+  const bits = await crypto.subtle.deriveBits({ name: 'PBKDF2', salt, iterations: 100000, hash: 'SHA-256' }, km, 256);
+  const nu = sq.prepare("INSERT INTO cred_users (username, password_hash, display_name, active, created_at, level) VALUES (?,?,?,1,?,'worker')").run('named1', hex(salt) + ':' + hex(new Uint8Array(bits)), 'Named One', new Date().toISOString());
+  const nid = Number(nu.lastInsertRowid);
+  const lg = await (await call('/auth/login', { method: 'POST', body: JSON.stringify({ username: 'named1', password: 'named1pass' }) })).json();
+  const blockedFor = async () => ((await (await call('/auth/access', { headers: { 'X-Cred-Token': lg.token } })).json()).blocked) || [];
+  const lv0 = sq.prepare("SELECT item, allow FROM access_rules WHERE scope = 'level:worker'").all();
+  const sv = await post('/admin/access/save', { scope: 'level:worker', rules: { reorder: 0, 'reorder:reorder': 0, 'reorder:reorder:csv': 0, 'inventory:history:report': 0 } });
+  const b1 = await blockedFor();
+  check('Worker level: a page, a tab and a part (3-level key page:tab:part) can be hidden — saved and hidden for a Worker', sv.ok && sv.saved === 4 && ['reorder', 'reorder:reorder', 'reorder:reorder:csv', 'inventory:history:report'].every(k => b1.includes(k)), { sv, b1 });
+  const sn = await post('/admin/access/save', { scope: 'user:' + nid, rules: { reorder: 1, 'reorder:reorder': 1, 'reorder:reorder:csv': 1 } });
+  const b2 = await blockedFor();
+  check('…name "named1" typed next to Reorder → CSV: they see it (and the tab + page it is on) though Worker level is hidden; everything else stays hidden', sn.ok && !b2.includes('reorder') && !b2.includes('reorder:reorder') && !b2.includes('reorder:reorder:csv') && b2.includes('inventory:history:report'), { sn, b2 });
+  const other = await post('/admin/access/save', { scope: 'user:' + nid, rules: { 'reorder:reorder:bogus key': 1, 'a:b:c:d': 1 } });
+  check('…keys the server can\'t read are not saved', other.ok && other.saved === 0, other);
+  // put it back
+  await post('/admin/access/save', { scope: 'user:' + nid, rules: {} });
+  await post('/admin/access/save', { scope: 'level:worker', rules: Object.fromEntries(lv0.map(r => [r.item, r.allow])) });
+}
+
 console.log('\n' + (failed ? '❌ ' + failed + ' check(s) FAILED' : '✅ all ' + passed + ' checks passed') + '\n');
 process.exit(failed ? 1 : 0);

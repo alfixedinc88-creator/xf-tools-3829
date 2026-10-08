@@ -114,6 +114,12 @@
   tr.ad-pg-prow td { background:var(--bg3); border-top:2px solid var(--border); }
   tr.ad-pg-trow td:first-child { padding-left:30px; font-size:12.5px; color:var(--text2); }
   .ad-pg-custom { outline:2px dashed var(--orange); outline-offset:2px; border-radius:4px; }
+  tr.ad-pg-xrow td:first-child { padding-left:52px; font-size:12px; color:var(--text3); }
+  .ad-pg-names { margin:0; padding:5px 8px; font-size:12px; min-width:160px; }
+  .ad-pg-tabbox { display:flex; flex-direction:column; gap:4px; }
+  .ad-pg-parts { display:flex; flex-wrap:wrap; gap:4px 12px; margin-left:22px; font-size:12px; }
+  .ad-pg-parts label { display:flex; align-items:center; gap:5px; cursor:pointer; color:var(--text2); }
+  .ad-pg-parts label.dis { opacity:.45; cursor:default; }
   .ad-empty { text-align:center; padding:40px 20px; color:var(--text3); font-size:13px; }
 </style>
 <script src="xf-lang.js?v=20261005a"></script>
@@ -709,21 +715,33 @@ window.adSaveLevels = async function() {
 // differences from their level (0 = hide, 1 = show anyway). Ticking something
 // also quietly adds the behind-the-scenes permission that page/tab needs
 // (the old Mobile/Ops/Mgmt boxes), so it actually works for them.
+// Owner (2026-10-08): "every html, every tab, and the parts under a tab — each with a box per level, and right next to
+// it a box for names: whoever's user name is there can see it even on Worker level". Items: page, page:tab,
+// page:tab:part (and page:part for a page without tabs). The names box = the people with "show anyway" on that item.
 var AD_PG_LEVELS = ['worker','pro','admin','owner'];
 function adPgCatalog() { return window.XF_ACCESS_CATALOG || []; }
 function adPgEsc(x) { return String(x == null ? '' : x).replace(/[&<>"]/g, function(c){ return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]; }); }
 function adPgNeedsRoles(needs) { return String(needs || '').toLowerCase().split(/[^a-z]+/).filter(function(w){ return ['mobile','ops','mgmt','price'].indexOf(w) !== -1; }); }
-// Every item with the permissions it needs: [{k, page, tab, needs:[...]}]
+// Every item, in screen order: [{k, page, tab, part, depth, parent, label, needs:[...]}]
 function adPgItems() {
   var out = [];
   adPgCatalog().forEach(function(p){
-    out.push({ k: p.key, page: p, needs: adPgNeedsRoles(p.needs) });
-    p.tabs.forEach(function(t){ out.push({ k: p.key + ':' + t.key, page: p, tab: t, needs: adPgNeedsRoles(t.needs || p.needs) }); });
+    out.push({ k: p.key, page: p, depth: 0, parent: '', label: p.name, needs: adPgNeedsRoles(p.needs) });
+    (p.parts || []).forEach(function(x){ out.push({ k: p.key + ':' + x.key, page: p, part: x, depth: 1, parent: p.key, label: x.label, needs: adPgNeedsRoles(x.needs || p.needs) }); });
+    (p.tabs || []).forEach(function(t){
+      var tk = p.key + ':' + t.key;
+      out.push({ k: tk, page: p, tab: t, depth: 1, parent: p.key, label: t.label, needs: adPgNeedsRoles(t.needs || p.needs) });
+      (t.parts || []).forEach(function(x){ out.push({ k: tk + ':' + x.key, page: p, tab: t, part: x, depth: 2, parent: tk, label: x.label, needs: adPgNeedsRoles(x.needs || t.needs || p.needs) }); });
+    });
   });
   return out;
 }
+function adPgAncestors(k) { var a = k.split(':'), out = []; for (var i = 1; i < a.length; i++) out.push(a.slice(0, i).join(':')); return out; }
 function adPgHas(roles, needs) { return !needs.length || needs.some(function(r){ return roles.indexOf(r) !== -1; }); }
 function adPgHidden(scope) { var r = (AD.access || {})[scope] || {}, h = {}; Object.keys(r).forEach(function(k){ if (r[k] === 0) h[k] = true; }); return h; }
+function adPgNamed(k) { // usernames with "show anyway" on this item
+  return AD.users.filter(function(u){ var r = AD.access['user:' + u.id]; return r && r[k] === 1; }).map(function(u){ return u.username; });
+}
 
 window.adLoadPages = async function() {
   if (!AD.levels || !AD.levels.length) await adLoadUsers();
@@ -731,7 +749,7 @@ window.adLoadPages = async function() {
   if (r.status !== 200) { ge('ad-pg-wrap').innerHTML = '<div class="ad-empty">Could not load page access.</div>'; return; }
   AD.access = r.data.rules || {};
   var sel = ge('ad-pg-who'), cur = sel.value;
-  sel.innerHTML = '<option value="levels">🎚️ By level — Worker / Pro / Admin / Owner</option>'
+  sel.innerHTML = '<option value="levels">🎚️ By level — Worker / Pro / Admin / Owner (+ names)</option>'
     + '<optgroup label="One person (on top of their level)">' + AD.users.map(function(u){ var l = adLevel(u.level); return '<option value="user:' + u.id + '">' + adPgEsc(u.username) + ' (' + (l ? adPgEsc(l.name) : 'no level') + ')</option>'; }).join('') + '</optgroup>';
   if (cur && sel.querySelector('option[value="' + cur + '"]')) sel.value = cur;
   adRenderPages();
@@ -746,34 +764,40 @@ window.adRenderPages = function() {
 function adRenderPagesGrid() {
   var can = AD.canManageLevels;
   var lv = AD_PG_LEVELS.map(function(k){ return adLevel(k); }).filter(Boolean);
-  ge('ad-pg-note').innerHTML = can
-    ? 'Tick what each level can see, then <b>Save</b>. Unticked pages disappear from the front page; unticked tabs disappear from their page. 👑 Owner always sees everything; this Admin page is for Admin &amp; Owner only.'
-    : 'Only an Owner can change what a level sees. You can still change one person — pick a name above.';
-  ge('ad-pg-save').style.display = can ? '' : 'none';
+  ge('ad-pg-note').innerHTML = (can
+    ? 'Tick what each level can see, then <b>Save</b>. Unticked pages disappear from the front page; unticked tabs and parts disappear from their page. 👑 Owner always sees everything; this Admin page is for Admin &amp; Owner only.'
+    : 'Only an Owner can change what a level sees. You can still fill in the <b>👤 Also these people</b> boxes, or change one person — pick a name above.')
+    + '<br><b>👤 Also these people</b>: type user names (comma between them) — they can see that page / tab / part even if their level can\'t (a tab or part also opens its page for them).';
+  ge('ad-pg-save').style.display = '';
   ge('ad-pg-reset').style.display = 'none';
   var hid = {}; lv.forEach(function(l){ hid[l.key] = adPgHidden('level:' + l.key); });
-  var cell = function(l, it, pageOn) {
+  var items = adPgItems(), onOf = {};
+  lv.forEach(function(l){ onOf[l.key] = {}; items.forEach(function(it){ onOf[l.key][it.k] = l.key === 'owner' || (!hid[l.key][it.k] && adPgHas(l.roles, it.needs) && (!it.parent || onOf[l.key][it.parent])); }); });
+  var cell = function(l, it) {
     if (l.key === 'owner') return '<td class="ad-pg-c"><input type="checkbox" checked disabled title="Owner always sees everything"></td>';
     var on = !hid[l.key][it.k] && adPgHas(l.roles, it.needs);
-    var dis = !can || (it.tab && !pageOn[l.key]);
-    return '<td class="ad-pg-c"><input type="checkbox" class="ad-pg-g" data-l="' + l.key + '" data-k="' + it.k + '" data-p="' + it.page.key + '"' + (it.tab ? '' : ' data-page="1"') + (on ? ' checked' : '') + (dis ? ' disabled' : '') + ' onchange="adPgGridToggle(this)"></td>';
+    var dis = !can || (it.parent && !onOf[l.key][it.parent]);
+    return '<td class="ad-pg-c"><input type="checkbox" class="ad-pg-g" data-l="' + l.key + '" data-k="' + it.k + '" data-p="' + it.page.key + '"' + (it.depth ? '' : ' data-page="1"') + (on ? ' checked' : '') + (dis ? ' disabled' : '') + ' onchange="adPgGridToggle(this)"></td>';
   };
-  var rows = adPgCatalog().map(function(p) {
-    var pit = { k: p.key, page: p, needs: adPgNeedsRoles(p.needs) }, pageOn = {};
-    lv.forEach(function(l){ pageOn[l.key] = l.key === 'owner' || (!hid[l.key][p.key] && adPgHas(l.roles, pit.needs)); });
-    var h = '<tr class="ad-pg-prow"><td><b>' + adPgEsc(p.name) + '</b> <span class="ad-pg-file">' + adPgEsc(p.file === 'index.html' ? 'front page app' : p.file) + '</span></td>' + lv.map(function(l){ return cell(l, pit, pageOn); }).join('') + '</tr>';
-    p.tabs.forEach(function(t) {
-      var it = { k: p.key + ':' + t.key, page: p, tab: t, needs: adPgNeedsRoles(t.needs || p.needs) };
-      h += '<tr class="ad-pg-trow"><td>' + adPgEsc(t.label) + '</td>' + lv.map(function(l){ return cell(l, it, pageOn); }).join('') + '</tr>';
-    });
-    return h;
+  var rows = items.map(function(it) {
+    var cls = it.depth === 0 ? 'ad-pg-prow' : it.depth === 1 ? 'ad-pg-trow' : 'ad-pg-xrow';
+    var lab = it.depth === 0 ? '<b>' + adPgEsc(it.label) + '</b> <span class="ad-pg-file">' + adPgEsc(it.page.file === 'index.html' ? 'front page app' : it.page.file) + '</span>' : (it.depth === 2 ? '└ ' : '') + adPgEsc(it.label);
+    return '<tr class="' + cls + '"><td>' + lab + '</td>' + lv.map(function(l){ return cell(l, it); }).join('')
+      + '<td><input class="ad-input ad-pg-names" data-k="' + it.k + '" list="ad-pg-userlist" placeholder="names…" value="' + adPgEsc(adPgNamed(it.k).join(', ')) + '"></td></tr>';
   }).join('');
-  ge('ad-pg-wrap').innerHTML = '<table class="ad-table ad-pg-grid"><thead><tr><th>Page / tab</th>' + lv.map(function(l){ return '<th class="ad-pg-c">' + adLevelBadge(l.key) + '</th>'; }).join('') + '</tr></thead><tbody>' + rows + '</tbody></table>';
+  ge('ad-pg-wrap').innerHTML = '<datalist id="ad-pg-userlist">' + AD.users.map(function(u){ return '<option value="' + adPgEsc(u.username) + '">'; }).join('') + '</datalist>'
+    + '<table class="ad-table ad-pg-grid"><thead><tr><th>Page / tab / part</th>' + lv.map(function(l){ return '<th class="ad-pg-c">' + adLevelBadge(l.key) + '</th>'; }).join('') + '<th>👤 Also these people</th></tr></thead><tbody>' + rows + '</tbody></table>';
 }
 
+// A box with things under it (page → tabs → parts): unticked → everything under it greys out for that level.
 window.adPgGridToggle = function(cb) {
-  if (!cb.dataset.page) return;
-  document.querySelectorAll('.ad-pg-g[data-l="' + cb.dataset.l + '"][data-p="' + cb.dataset.p + '"]:not([data-page])').forEach(function(t){ t.disabled = !cb.checked; });
+  var l = cb.dataset.l;
+  var boxes = [].slice.call(document.querySelectorAll('.ad-pg-g[data-l="' + l + '"]')), byK = {};
+  boxes.forEach(function(b){ byK[b.dataset.k] = b; });
+  boxes.forEach(function(b){
+    if (b.dataset.k.indexOf(cb.dataset.k + ':') !== 0) return;
+    b.disabled = !AD.canManageLevels || adPgAncestors(b.dataset.k).some(function(a){ return byK[a] && !byK[a].checked; });
+  });
 };
 
 function adRenderPagesPerson(scope) {
@@ -794,23 +818,34 @@ function adRenderPagesPerson(scope) {
     return base && adPgHas(roles, it.needs);
   };
   var dis = readOnly ? ' disabled' : '';
+  var box = function(it, on, parentOn) {
+    return '<label class="' + (parentOn ? '' : 'dis ') + (ur.hasOwnProperty(it.k) ? 'ad-pg-custom' : '') + '"><input type="checkbox" class="ad-pg-cb" data-k="' + it.k + '"' + (on ? ' checked' : '') + (readOnly || !parentOn ? ' disabled' : '') + ' onchange="adPgToggle(this)"> ' + adPgEsc(it.label) + '</label>';
+  };
+  var items = adPgItems();
   ge('ad-pg-wrap').innerHTML = adPgCatalog().map(function(p) {
-    var pit = { k: p.key, needs: adPgNeedsRoles(p.needs) }, on = vis(pit);
+    var pit = items.filter(function(it){ return it.k === p.key; })[0], on = vis(pit);
+    var kids = items.filter(function(it){ return it.depth === 1 && it.parent === p.key; });
     return '<div class="ad-pg' + (on ? '' : ' off') + '">'
       + '<div class="ad-pg-head"><label class="' + (ur.hasOwnProperty(p.key) ? 'ad-pg-custom' : '') + '"><input type="checkbox" class="ad-pg-cb" data-k="' + p.key + '"' + (on ? ' checked' : '') + dis + ' onchange="adPgToggle(this)"> ' + adPgEsc(p.name) + '</label>'
       + '<span class="ad-pg-file">' + adPgEsc(p.file === 'index.html' ? 'front page app' : p.file) + '</span></div>'
-      + (p.tabs.length ? '<div class="ad-pg-tabs">' + p.tabs.map(function(t) {
-          var k = p.key + ':' + t.key, ton = vis({ k: k, needs: adPgNeedsRoles(t.needs || p.needs) });
-          return '<label class="' + (on ? '' : 'dis ') + (ur.hasOwnProperty(k) ? 'ad-pg-custom' : '') + '"><input type="checkbox" class="ad-pg-cb" data-k="' + k + '"' + (ton ? ' checked' : '') + (readOnly || !on ? ' disabled' : '') + '> ' + adPgEsc(t.label) + '</label>';
+      + (kids.length ? '<div class="ad-pg-tabs">' + kids.map(function(t) {
+          var ton = vis(t), parts = items.filter(function(it){ return it.depth === 2 && it.parent === t.k; });
+          return '<div class="ad-pg-tabbox">' + box(t, ton, on)
+            + (parts.length ? '<div class="ad-pg-parts">' + parts.map(function(x){ return box(x, vis(x), on && ton); }).join('') + '</div>' : '') + '</div>';
         }).join('') + '</div>' : '')
       + '</div>';
   }).join('');
 }
 
 window.adPgToggle = function(cb) {
-  var box = cb.closest('.ad-pg');
-  box.classList.toggle('off', !cb.checked);
-  box.querySelectorAll('.ad-pg-tabs label').forEach(function(l){ l.classList.toggle('dis', !cb.checked); l.querySelector('input').disabled = !cb.checked; });
+  var k = cb.dataset.k, all = [].slice.call(document.querySelectorAll('#ad-pg-wrap .ad-pg-cb')), byK = {};
+  all.forEach(function(b){ byK[b.dataset.k] = b; });
+  if (k.indexOf(':') === -1) cb.closest('.ad-pg').classList.toggle('off', !cb.checked);
+  all.forEach(function(b){
+    if (b.dataset.k.indexOf(k + ':') !== 0) return;
+    var off = adPgAncestors(b.dataset.k).some(function(a){ return byK[a] && !byK[a].checked; });
+    b.disabled = off; b.closest('label').classList.toggle('dis', off);
+  });
 };
 
 // Permissions needed so the ticked items work: for each ticked item the
@@ -821,32 +856,65 @@ function adPgGrant(roles, ticked) {
   return Object.keys(need);
 }
 
+// 👤 names boxes → each named person gets "show anyway" on that item (and the page / tab it sits in).
+// Returns [{u, rules, ticked}] for the people whose list changed; unknown names → error.
+function adPgNamesPlan() {
+  var want = {}, unknown = [], byName = {};
+  AD.users.forEach(function(u){ byName[String(u.username).toLowerCase()] = u; want[u.id] = {}; });
+  document.querySelectorAll('#ad-pg-wrap .ad-pg-names').forEach(function(inp){
+    String(inp.value || '').split(/[,;\n]+/).map(function(x){ return x.trim(); }).filter(Boolean).forEach(function(n){
+      var u = byName[n.toLowerCase()]; if (!u) { if (unknown.indexOf(n) === -1) unknown.push(n); return; }
+      if (u.level === 'owner') return; // sees everything anyway
+      want[u.id][inp.dataset.k] = 1; adPgAncestors(inp.dataset.k).forEach(function(a){ want[u.id][a] = 1; });
+    });
+  });
+  if (unknown.length) return { error: 'No user named: ' + unknown.join(', ') };
+  var plan = [];
+  AD.users.forEach(function(u){
+    if (u.level === 'owner') return;
+    var cur = AD.access['user:' + u.id] || {}, curOn = Object.keys(cur).filter(function(k){ return cur[k] === 1; }).sort().join('|');
+    var w = want[u.id], wOn = Object.keys(w).sort().join('|');
+    if (curOn === wOn) return;
+    var rules = {}; Object.keys(cur).forEach(function(k){ if (cur[k] === 0 && !w[k]) rules[k] = 0; });
+    Object.keys(w).forEach(function(k){ rules[k] = 1; });
+    plan.push({ u: u, rules: rules, ticked: Object.keys(w) });
+  });
+  return { plan: plan };
+}
+
 window.adSavePages = async function() {
   var scope = ge('ad-pg-who').value || 'levels';
   var btn = ge('ad-pg-save'); btn.disabled = true;
   try {
     if (scope === 'levels') {
-      if (!confirm('Save? This changes what everyone on these levels can see.')) return;
-      for (var i = 0; i < AD_PG_LEVELS.length; i++) {
+      var np = adPgNamesPlan();
+      if (np.error) { adToast(np.error, 'err'); return; }
+      if (!confirm('Save? This changes what everyone on these levels can see' + (np.plan.length ? ', and what ' + np.plan.map(function(x){ return x.u.username; }).join(', ') + ' can see' : '') + '.')) return;
+      if (AD.canManageLevels) for (var i = 0; i < AD_PG_LEVELS.length; i++) {
         var key = AD_PG_LEVELS[i]; if (key === 'owner') continue;
         var l = adLevel(key); if (!l) continue;
-        var rules = {}, ticked = [];
-        document.querySelectorAll('.ad-pg-g[data-l="' + key + '"]').forEach(function(cb){
-          // A tab under an unticked page stays hidden with it.
-          var pageCb = document.querySelector('.ad-pg-g[data-l="' + key + '"][data-k="' + cb.dataset.p + '"]');
-          var on = cb.checked && (!pageCb || pageCb.checked);
-          if (on) ticked.push(cb.dataset.k); else rules[cb.dataset.k] = 0;
+        var rules = {}, ticked = [], boxes = {};
+        document.querySelectorAll('.ad-pg-g[data-l="' + key + '"]').forEach(function(cb){ boxes[cb.dataset.k] = cb; });
+        Object.keys(boxes).forEach(function(k){
+          // Anything under an unticked page / tab stays hidden with it.
+          var on = boxes[k].checked && adPgAncestors(k).every(function(a){ return !boxes[a] || boxes[a].checked; });
+          if (on) ticked.push(k); else rules[k] = 0;
         });
         var r = await adFetch('/admin/access/save', { method:'POST', body: JSON.stringify({ scope: 'level:' + key, rules: rules, grant: adPgGrant(l.roles, ticked) }) });
         if (r.status !== 200) { adToast(r.data.error || 'Failed', 'err'); return; }
       }
+      for (var j = 0; j < np.plan.length; j++) {
+        var x = np.plan[j];
+        var rn = await adFetch('/admin/access/save', { method:'POST', body: JSON.stringify({ scope: 'user:' + x.u.id, rules: x.rules, grant: adPgGrant(x.u.roles || [], x.ticked) }) });
+        if (rn.status !== 200) { adToast(x.u.username + ': ' + (rn.data.error || 'Failed'), 'err'); return; }
+      }
     } else {
       var u = AD.users.find(function(x){ return 'user:' + x.id === scope; });
       var lh = u && u.level ? adPgHidden('level:' + u.level) : {};
-      var rules2 = {}, ticked2 = [];
-      document.querySelectorAll('#ad-pg-wrap .ad-pg-cb').forEach(function(cb) {
-        var k = cb.dataset.k, pageCb = k.indexOf(':') !== -1 ? document.querySelector('#ad-pg-wrap .ad-pg-cb[data-k="' + k.split(':')[0] + '"]') : null;
-        var on = cb.checked && (!pageCb || pageCb.checked);
+      var rules2 = {}, ticked2 = [], boxes2 = {};
+      document.querySelectorAll('#ad-pg-wrap .ad-pg-cb').forEach(function(cb){ boxes2[cb.dataset.k] = cb; });
+      Object.keys(boxes2).forEach(function(k) {
+        var on = boxes2[k].checked && adPgAncestors(k).every(function(a){ return !boxes2[a] || boxes2[a].checked; });
         if (on) ticked2.push(k);
         if (on !== !lh[k]) rules2[k] = on ? 1 : 0;
       });
@@ -953,6 +1021,6 @@ window.adTestToggle = async function() {
   }
 })();
 </script>
-<script src="xf-access.js?v=20261007c"></script>
+<script src="xf-access.js?v=20261008a"></script>
 </body>
 </html>
