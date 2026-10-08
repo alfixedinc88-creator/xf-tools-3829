@@ -48,3 +48,21 @@ open** (the "🖨 Printer station"). It checks for new ones every minute.
 4. Auto Label shows "⚠ labels waiting, and no printer station is printing":
    the station computer is asleep, closed, or signed out.
 5. A label shows "✗ Not printed": tap Print on it to see what Veeqo said.
+
+## 🛑 Print watch: labels not picked up (since 2026-10-08)
+Every label that prints should be read by the fixed **Print Log** scanner
+within a few minutes. Auto Label → **🛑 Print watch** checks this:
+- A label printed but not read within ~3 minutes is **"not picked up"**. It
+  stays on the list (last 48 h) until it is reprinted and read, or someone taps
+  **✓ Checked** (with a note: found it / reprinted in Veeqo / cancelled …).
+- **3 in a row** not picked up (set 2–5 on the card) → **printing ON HOLD**:
+  the printer station prints nothing more. Auto Label keeps buying, and the
+  labels wait in 🏷️ Shipping labels. The station bar turns red and says
+  "Label printer needs checking" every 5 minutes. Every manager's Pack & Ship
+  shows a red bar at the top (orange when only some labels are not picked up).
+- Fix the printer (paper jam, out of labels, printer off, or the Print Log box
+  not open / focused on that computer). Then tap **✅ Printer fixed — print
+  again**. Waiting labels print within a minute, and **🔁 Reprint** (or
+  **Reprint all**) the ones not picked up.
+- Hold, "printer fixed" and every ✓ Checked are saved in the Auto Label log
+  (who / when).

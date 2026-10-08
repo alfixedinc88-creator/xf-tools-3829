@@ -1885,6 +1885,23 @@ body {
         <div id="ps-al-orders" style="overflow-x:auto"></div>
       </div>
 
+      <!-- 🛑 Print watch (owner: "if 2 or 3 labels are not picked up in the Print Log, something is wrong with the
+           printer — hold the printing for us to come back to the office, and let us know whatever was not picked up") -->
+      <div class="ps-card" style="margin-bottom:16px" id="ps-al-watch-card">
+        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px">
+          <div style="font-size:13px;font-weight:700;color:var(--text)">🛑 Print watch — labels not picked up by the Print Log scanner</div>
+          <button class="ps-btn-sm" onclick="psAlLoadWatch()">↻ Refresh</button>
+        </div>
+        <div style="font-size:12px;color:var(--text3);margin-bottom:8px;line-height:1.5">
+          Every label that prints should be read by the fixed Print Log scanner within a few minutes. When
+          <select id="ps-al-watch-n" class="ps-field-input" style="width:auto;margin:0;padding:2px 6px;font-size:12px" onchange="psAlWatchSettings()"><option value="2">2</option><option value="3">3</option><option value="4">4</option><option value="5">5</option></select>
+          labels in a row are not read (paper jam, out of labels, printer off — or the Print Log box is not open on that computer), the
+          <b>🖨 Printer station stops printing</b>: new labels keep being bought and wait here until someone taps <b>✅ Printer fixed — print again</b>.
+          <label style="display:inline-flex;align-items:center;gap:4px;cursor:pointer;margin-left:6px"><input type="checkbox" id="ps-al-watch-on" onchange="psAlWatchSettings()"> On</label>
+        </div>
+        <div id="ps-al-watch-box" style="font-size:12px"></div>
+      </div>
+
       <!-- Shipping labels (owner: bought labels must print — DirectPrint doesn't print labels bought through the app) -->
       <div class="ps-card" style="margin-bottom:16px" id="ps-al-label-card">
         <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px">
@@ -2558,6 +2575,7 @@ function _psLaunchInner() {
   psFocusPick();
   psPickStartRefocus();
   if (typeof psAlStationAuto === 'function') psAlStationAuto(); // 🖨 this computer prints labels on any tab
+  if (psRole === 'mgmt' && typeof psAlWatchPollStart === 'function') psAlWatchPollStart(); // 🛑 labels not picked up → red bar on every manager's screen
 }
 
 // ── Auto-detect new day — runs every 60s ──────────────────────────────
@@ -8703,6 +8721,7 @@ function psAlOnUnlock() {
   psAlLoadLowValue();
   psAlLoadCosts();
   psAlLoadSlips();
+  psAlLoadWatch();
 }
 
 async function psAlLoadConfig() {
@@ -10010,7 +10029,7 @@ function _psAlStationBar(text, ok) {
     bar.style.cssText = 'position:fixed;left:8px;bottom:8px;z-index:9000;padding:5px 10px;border-radius:8px;font:700 12px/1.3 var(--sans,Arial),sans-serif;color:#fff;box-shadow:0 2px 8px rgba(0,0,0,.25);pointer-events:none';
     document.body.appendChild(bar);
   }
-  bar.style.background = ok ? '#047857' : '#6B7280';
+  bar.style.background = ok === 'hold' ? '#B91C1C' : ok ? '#047857' : '#6B7280';
   bar.textContent = text;
 }
 window.psAlStationAuto = function() {
@@ -10030,8 +10049,11 @@ window.psAlStationTick = async function() {
   await new Promise(function(r) { setTimeout(r, 150); });
   if (!_psAlStationLockMine()) { _psAlStationBar('🖨 Printer station: printing in the other Pack & Ship window', false); return; }
   _psAlStationBar('🖨 Printer station ON · checked ' + new Date().toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' }), true);
+  // 🛑 Print watch: labels printed but not read by the Print Log scanner → on hold, nothing more prints (labels wait)
   _psAlFetch('/veeqo/autolabel/scanform-tick', { method: 'POST', body: {} }).catch(function() {}); // 📄 scan form on time even if the server timer is slow
-  await psAlPrintNewLabels(true); await psAlPrintNewSlips(true);
+  var held = await _psAlWatchHeld(true);
+  if (!held) { await psAlPrintNewLabels(true); await psAlPrintNewSlips(true); }
+  else _psAlStationBar('🛑 Printer station ON HOLD — labels not picked up by the Print Log scanner. Check the printer, then Auto Label → ✅ Printer fixed', 'hold');
   _psAlFetch('/veeqo/autolabel/auto-tick', { method: 'POST', body: {} }).catch(function() {}); // ⚡ Auto: a run every 10 min while the station is on (server timer: 30)
 };
 async function _psAlLabelBlob(id) {
@@ -10330,6 +10352,11 @@ async function _psAlPrintOneLabel(l, reprint) {
 }
 window.psAlPrintNewLabels = async function(silent) {
   if (_psAlLabelBusy) return;
+  // 🛑 on hold (labels not picked up by the Print Log scanner): printing by hand = the printer was checked → ask, then the hold ends (recorded)
+  if (!silent && await _psAlWatchHeld(false)) {
+    if (!confirm('🛑 Printing is ON HOLD — labels printed but the Print Log scanner did not read them (paper jam / out of labels / printer off?).\n\nPrinter checked and fixed, and Print Log open on that computer?\nOK = print again (the hold ends, saved with your name).')) return;
+    await psAlWatchRelease(true);
+  }
   _psAlLabelBusy = true;
   var msg = document.getElementById('ps-al-label-msg'), done = 0, bad = [], notes = [];
   try {
@@ -10423,7 +10450,10 @@ window.psAlLoadLabels = async function() {
   var seen = all[0] && all[0].stationSeen, ago = seen && seen.at ? (Date.now() - Date.parse(seen.at)) / 60000 : null;
   var warn = document.getElementById('ps-al-station-warn');
   if (!warn) { warn = document.createElement('div'); warn.id = 'ps-al-station-warn'; var wAt = box.closest('details') || box; wAt.parentNode.insertBefore(warn, wAt); } // seen even with the list closed
-  warn.innerHTML = fresh.length && (ago == null || ago > 3)
+  var onHold = !!(window._psAlWatch && window._psAlWatch.hold && window._psAlWatch.hold.on);
+  warn.innerHTML = fresh.length && onHold
+    ? '<div style="border:1.5px solid var(--red);border-radius:8px;padding:8px;margin-bottom:8px;font-size:12px;color:var(--red);font-weight:700">🛑 ' + fresh.length + ' label' + (fresh.length === 1 ? '' : 's') + ' waiting — printing is ON HOLD (see 🛑 Print watch above). They print once someone taps ✅ Printer fixed.</div>'
+    : fresh.length && (ago == null || ago > 3)
     ? '<div style="border:1.5px solid var(--orange);border-radius:8px;padding:8px;margin-bottom:8px;font-size:12px;color:var(--orange);font-weight:700">⚠ ' + fresh.length + ' label' + (fresh.length === 1 ? '' : 's') + ' waiting, and no printer station is printing'
       + (seen && seen.at ? ' (last one checked ' + _psAlEsc(new Date(seen.at).toLocaleString()) + (seen.by ? ' · ' + _psAlEsc(seen.by) : '') + ')' : '') + '. Auto Label buys them by itself, but they only print on the computer with the label printer: Pack & Ship open there, 🖨 Printer station ticked. Or tap 🖨 Print new labels now.</div>' : '';
   _psAlLabelRecent = fresh.concat((all[1] && all[1].labels) || []);
@@ -10467,6 +10497,132 @@ window.psAlSlipStation = function(on, quiet) {
     _psAlStationBar('');
     try { var cur = JSON.parse(localStorage.getItem('xf_station_lock') || 'null'); if (cur && cur.id === _psAlStationId) localStorage.removeItem('xf_station_lock'); } catch (_) {}
   }
+};
+
+// ── 🛑 Print watch ──────────────────────────────────────────────────────
+// Owner: "check on Print Log — if 2 or 3 labels are not picked up, high chance something is wrong with the
+// printer (paper jam, no paper): hold it for us to come back to the office to print, and whatever is not
+// picked up, let us know so we can check". Worker: labelWatchRun (/veeqo/autolabel/print-watch). The printer
+// station asks every minute before printing; on hold it prints nothing (labels keep waiting) and says so out
+// loud every 5 min; every manager's Pack & Ship shows the red / orange bar at the top (checked every 2 min).
+window._psAlWatch = null;
+var _psAlWatchSpokeAt = 0, _psAlWatchPoll = null;
+async function _psAlWatchHeld(fromStation) {
+  var d; try { d = await _psAlFetch('/veeqo/autolabel/print-watch'); } catch (e) { return false; } // no WiFi → keep printing as before
+  if (!d || d.ok === false) return false;
+  _psAlWatchApply(d);
+  var held = !!(d.hold && d.hold.on);
+  if (held && fromStation && Date.now() - _psAlWatchSpokeAt > 5 * 60000) { _psAlWatchSpokeAt = Date.now(); _psSpeakAlert('Label printer needs checking. Printing is on hold.'); }
+  return held;
+}
+window.psAlWatchPollStart = function() {
+  if (_psAlWatchPoll) return;
+  _psAlWatchHeld(false);
+  _psAlWatchPoll = setInterval(function() { _psAlWatchHeld(false); }, 120000);
+};
+function _psAlWatchApply(d) {
+  window._psAlWatch = d;
+  _psAlWatchBanner(d);
+  if (document.getElementById('ps-al-watch-box')) _psAlWatchRender(d);
+}
+// Red bar (on hold) / orange bar (some labels not picked up) at the top of every manager's Pack & Ship — tap → Auto Label.
+function _psAlWatchBanner(d) {
+  var held = !!(d.hold && d.hold.on), n = (d.missing || []).length, bar = document.getElementById('ps-al-watch-bar');
+  if (!held && !n) { if (bar) bar.remove(); return; }
+  if (!bar) {
+    bar = document.createElement('div'); bar.id = 'ps-al-watch-bar';
+    bar.style.cssText = 'position:sticky;top:0;z-index:9500;padding:8px 14px;font:700 13px/1.35 var(--sans,Arial),sans-serif;color:#fff;text-align:center;cursor:pointer;box-shadow:0 2px 8px rgba(0,0,0,.3)';
+    bar.onclick = function() { if (typeof psSwitchTab === 'function') psSwitchTab('autolabel'); setTimeout(function() { var c = document.getElementById('ps-al-watch-card'); if (c) c.scrollIntoView({ behavior: 'smooth', block: 'start' }); }, 400); };
+    document.body.insertBefore(bar, document.body.firstChild); // pushes the page down, never covers the tabs
+  }
+  bar.style.background = held ? '#B91C1C' : '#C2410C';
+  bar.textContent = held
+    ? '🛑 Label printing ON HOLD since ' + new Date(d.hold.at).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' }) + ' — ' + n + ' label' + (n === 1 ? '' : 's') + ' printed but not picked up by the Print Log scanner. Check the printer (paper jam / no labels). Tap to see them.'
+    : '⚠ ' + n + ' label' + (n === 1 ? '' : 's') + ' printed but not picked up by the Print Log scanner — tap to check and reprint.';
+}
+window.psAlLoadWatch = async function() {
+  var box = document.getElementById('ps-al-watch-box'); if (!box) return;
+  var d = await _psAlFetch('/veeqo/autolabel/print-watch').catch(function(e) { return { ok: false, error: e.message }; });
+  if (d.ok === false) { box.innerHTML = '<span style="color:var(--red)">✗ ' + _psAlEsc(d.error || 'failed') + '</span>'; return; }
+  _psAlWatchApply(d);
+};
+function _psAlWatchRender(d) {
+  var box = document.getElementById('ps-al-watch-box'), e = _psAlEsc; if (!box) return;
+  var s = d.settings || {}, nSel = document.getElementById('ps-al-watch-n'), on = document.getElementById('ps-al-watch-on');
+  if (nSel && document.activeElement !== nSel) nSel.value = String(s.n || 3);
+  if (on) on.checked = s.on !== false;
+  var held = !!(d.hold && d.hold.on), miss = d.missing || [], t = function(x) { return x ? new Date(x).toLocaleString([], { month: 'numeric', day: 'numeric', hour: 'numeric', minute: '2-digit' }) : ''; };
+  var h = '';
+  if (held) h += '<div style="border:2px solid var(--red);background:#FEE2E2;color:#7F1D1D;border-radius:8px;padding:10px;margin-bottom:8px;font-weight:700">'
+    + '🛑 PRINTING ON HOLD since ' + e(t(d.hold.at)) + ' — ' + e(d.hold.why || '') + '.<br>New labels are still bought; they wait in 🏷️ Shipping labels until printing starts again.'
+    + '<div style="margin-top:8px"><button class="ps-btn-primary" style="width:auto;padding:8px 18px;background:var(--green);border-color:var(--green)" onclick="psAlWatchRelease()">✅ Printer fixed — print again</button></div></div>';
+  else h += '<div style="color:var(--green);font-weight:700;margin-bottom:6px">' + (s.on === false ? '⏸ Print watch is off' : '✅ Printing normally') + ' · ' + (d.picked || 0) + ' picked up · ' + (d.waiting || 0) + ' just printed (being checked)'
+    + (d.hold && d.hold.releasedAt ? ' · last "printer fixed" ' + e(t(d.hold.releasedAt)) + (d.hold.releasedBy ? ' by ' + e(d.hold.releasedBy) : '') : '') + '</div>';
+  if (miss.length) {
+    h += '<div style="font-weight:700;color:var(--orange);margin:6px 0 4px">⚠ ' + miss.length + ' label' + (miss.length === 1 ? '' : 's') + ' printed but NOT picked up by the Print Log scanner (last 48 h) — find it at the printer, or reprint it; ✓ Checked takes it off the list (saved with your name)</div>'
+      + '<div style="margin-bottom:6px"><button class="ps-btn-sm" onclick="psAlWatchReprintAll(this)">🔁 Reprint all ' + miss.length + '</button></div>';
+    h += miss.map(function(l) {
+      return '<div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;padding:5px 0;border-bottom:1px solid var(--border)">'
+        + '<span style="font-family:var(--mono);font-weight:700">' + e(l.order_number) + '</span><span>' + e(l.channel || '') + '</span><span>' + e([l.carrier, l.service].filter(Boolean).join(' ')) + '</span>'
+        + '<span style="font-family:var(--mono);color:var(--text3)">' + e(l.tracking || '') + '</span>'
+        + '<span style="color:var(--text3)">printed ' + e(t(l.printedAt)) + ' · ' + e(l.source || '') + (l.printedBy ? ' · ' + e(l.printedBy) : '') + '</span>'
+        + '<span style="margin-left:auto;display:flex;gap:6px"><button class="ps-btn-sm" onclick="psAlWatchReprint(' + l.id + ', this)">🔁 Reprint</button>'
+        + '<button class="ps-btn-sm" onclick="psAlWatchChecked(' + l.id + ', this)">✓ Checked</button></span></div>';
+    }).join('');
+  } else h += '<div style="color:var(--text3)">No label waiting to be picked up. 👍</div>';
+  box.innerHTML = h;
+}
+window.psAlWatchRelease = async function(quiet) {
+  var d = await _psAlFetch('/veeqo/autolabel/print-watch', { method: 'POST', body: { action: 'release', by: psInitials || '' } });
+  if (d.ok === false) { _psToast(d.error || 'Failed', 'err'); return; }
+  _psAlWatchApply(d);
+  if (!quiet) { _psToast('✅ Printing again — waiting labels print on the 🖨 Printer station within a minute'); psAlLoadLabels(); }
+};
+window.psAlWatchSettings = async function() {
+  var n = parseInt((document.getElementById('ps-al-watch-n') || {}).value) || 3, on = !!(document.getElementById('ps-al-watch-on') || {}).checked;
+  var d = await _psAlFetch('/veeqo/autolabel/print-watch', { method: 'POST', body: { action: 'settings', n: n, on: on } });
+  if (d.ok === false) { _psToast(d.error || 'Not saved', 'err'); return; }
+  _psAlWatchApply(d); _psToast('Print watch: ' + (on ? 'on — hold after ' + n + ' in a row' : 'off'));
+};
+window.psAlWatchChecked = async function(id, btn) {
+  var note = prompt('✓ Checked — what happened to this label? (found it / reprinted in Veeqo / cancelled …)', '');
+  if (note === null) return;
+  if (btn) btn.disabled = true;
+  var d = await _psAlFetch('/veeqo/autolabel/print-watch', { method: 'POST', body: { action: 'checked', ids: [id], note: note, by: psInitials || '' } });
+  if (d.ok === false) { _psToast(d.error || 'Failed', 'err'); if (btn) btn.disabled = false; return; }
+  _psAlWatchApply(d);
+};
+// Reprint from the list: the same print as 🏷️ Shipping labels → Reprint (its own stack, so the scanner check starts again for it).
+async function _psAlWatchReprintIds(ids) {
+  var all = (window._psAlWatch && window._psAlWatch.missing) || [], done = 0, bad = [], okIds = [];
+  _psAlBatch = [];
+  for (var i = 0; i < ids.length; i++) {
+    var m = all.find(function(x) { return x.id === ids[i]; }); if (!m) continue;
+    try {
+      var r = await _psAlFetch('/veeqo/autolabel/labels?q=' + encodeURIComponent(m.tracking || m.order_number));
+      var l = ((r && r.labels) || []).find(function(x) { return x.id === ids[i]; });
+      if (!l) throw new Error('label not found');
+      await _psAlPrintOneLabel(l, true); done++; okIds.push(ids[i]);
+    } catch (e) { bad.push(m.order_number + ': ' + e.message); }
+  }
+  await _psAlBatchFlush();
+  _psAlSaveStack(okIds, 'reprint');
+  return { done: done, bad: bad };
+}
+window.psAlWatchReprint = async function(id, btn) {
+  if (await _psAlWatchHeld(false) && !confirm('🛑 Printing is on hold. Printer fixed? OK = reprint this label (the hold stays until you tap ✅ Printer fixed).')) return;
+  if (btn) btn.disabled = true;
+  var r = await _psAlWatchReprintIds([id]);
+  _psToast(r.done ? '🔁 Reprinted — it comes off the list once the Print Log scanner reads it' : '✗ ' + r.bad.join('; '), r.done ? '' : 'err');
+  setTimeout(psAlLoadWatch, 1500);
+};
+window.psAlWatchReprintAll = async function(btn) {
+  var ids = ((window._psAlWatch && window._psAlWatch.missing) || []).map(function(x) { return x.id; });
+  if (!ids.length || !confirm('🔁 Reprint all ' + ids.length + ' labels not picked up, in one print?')) return;
+  if (btn) btn.disabled = true;
+  var r = await _psAlWatchReprintIds(ids);
+  _psToast('🔁 Reprinted ' + r.done + (r.bad.length ? ' · ✗ ' + r.bad.length + ' failed: ' + r.bad.join('; ') : ''), r.bad.length ? 'err' : '');
+  setTimeout(psAlLoadWatch, 1500);
 };
 
 window.psAlLoadSlips = async function() {
