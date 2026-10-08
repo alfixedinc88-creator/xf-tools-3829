@@ -4028,7 +4028,8 @@ function rvoSalesFix(table, weeks) {
   if (!confirm('Change ' + weeks.length + ' week(s) of sales history from pieces to units (each SKU ÷ its pack size)?\n\nThe old numbers are kept — you can Undo.')) return;
   wFetch(W + '/reorder/fix/sales-pieces-fix', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ table: table, weeks: weeks }) }).then(function (r) { return r.json(); }).then(function (d) {
     if (!d.ok) { alert('✗ ' + (d.error || 'Not changed')); return; }
-    alert('✓ ' + d.changed + ' rows changed to units (' + Math.round(d.before) + ' → ' + d.after + ').' + (d.skipped ? ' ' + d.skipped + ' left as they were.' : '') + '\nPress ↻ Calculate.');
+    alert(d.changed ? '✓ ' + d.changed + ' rows changed to units (' + Math.round(d.before) + ' → ' + d.after + ').' + (d.already ? ' ' + d.already + ' were already fixed before.' : '') + (d.noPack ? ' ' + d.noPack + ' have no pack size (left as they were).' : '') + '\nPress ↻ Calculate.'
+      : (d.already ? '✓ Already fixed — nothing to do. These ' + d.already + ' rows were changed to units before (see 🕘 History).' + (d.noPack ? ' ' + d.noPack + ' have no pack size (left as they were).' : '') : '✓ Nothing to change.' + (d.skipped ? ' ' + d.skipped + ' left as they were.' : '')));
     rvoSalesCheck();
   });
 }

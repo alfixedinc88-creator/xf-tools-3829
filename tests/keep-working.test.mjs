@@ -3917,6 +3917,36 @@ console.log('\nReorder: sales history stored in pieces is found and fixed (201-2
   sq.exec("DELETE FROM ebay_sales_weekly WHERE sku IN ('214-2-12=500','214-2-13=100','214-5-4=50'); DELETE FROM fba_catalog WHERE sku = '214-2-12=500'; DELETE FROM sales_fix_backup");
 }
 
+// Owner (2026-10-08): tapped Fix and got "0 rows changed to units (0 → 0). 814 left as they were" — the first tap had already
+// fixed them, but the box still asked (weeks that still look big after ÷ pack, plus rows with no pack, kept it red).
+// A fixed row is never asked about again, and a second tap says "Already fixed" instead of 0 → 0.
+console.log('\nReorder: after Fix the sales-history box goes away and a second tap says "Already fixed"');
+{
+  const day = n => new Date(Date.now() - n * 86400000).toISOString().slice(0, 10), end = n => new Date(Date.now() - n * 86400000 + 7 * 86400000).toISOString();
+  const S = ['215-2-12=500', '215-2-13=100', '215-5-4=50'], P = [500, 100, 50];
+  const ins = sq.prepare('INSERT OR REPLACE INTO ebay_sales_weekly (sku, period_start, period_end, units_ordered) VALUES (?,?,?,?)');
+  for (const n of [7, 14, 21, 28]) { S.forEach(k => ins.run(k, day(n), end(n), 1)); ins.run('215-NOPACK', day(n), end(n), 2); }
+  // a busy old stretch: 30 lots a week stored in pieces (still 30× the newest weeks after ÷ pack), plus a SKU with no pack
+  for (const n of [42, 49]) { S.forEach((k, i) => ins.run(k, day(n), end(n), 30 * P[i])); ins.run('215-NOPACK', day(n), end(n), 40); }
+  const ol = await (await call('/auth/login', { method: 'POST', body: '{"username":"owner1","password":"password1"}' })).json();
+  const OH = { 'X-Cred-Token': ol.token, 'Content-Type': 'application/json' };
+  const opost = async (p, b) => (await (await call(p, { method: 'POST', headers: OH, body: JSON.stringify(b) })).json());
+  const eb = async () => ((await get('/reorder/fix/sales-check')).tables || []).find(t => t.channel === 'eBay') || {};
+  const c1 = await eb();
+  const fx = await opost('/reorder/fix/sales-pieces-fix', { table: 'ebay_sales_weekly', weeks: c1.flaggedWeeks });
+  const tot = () => sq.prepare(`SELECT SUM(units_ordered) t FROM ebay_sales_weekly WHERE sku LIKE '215-%' AND period_start IN (?,?)`).get(day(42), day(49)).t;
+  check('Fix: 6 rows 2 × 30 × (500 + 100 + 50) = 39,000 → 180 units (30 lots each); the no-pack SKU stays 2 × 40 = 80',
+    JSON.stringify(c1.flaggedWeeks) === JSON.stringify([day(49), day(42)]) && fx.changed === 6 && fx.noPack === 2 && fx.before === 39000 && fx.after === 180 && tot() === 260, [c1.flaggedWeeks, fx, tot()]);
+  const c2 = await eb();
+  check('…then the box asks no more (rows already changed to units are never flagged again)', c2.flaggedWeeks.length === 0 && c2.fixedRows === 6, [c2.flaggedWeeks, c2.fixedRows]);
+  const again = await opost('/reorder/fix/sales-pieces-fix', { table: 'ebay_sales_weekly', weeks: c1.flaggedWeeks });
+  check('…a second tap changes nothing and says how many were already fixed (not "0 → 0")', again.ok && again.changed === 0 && again.already === 6 && tot() === 260, again);
+  const { readFileSync: rf12 } = await import('node:fs');
+  const rh = rf12(fileURLToPath(new URL('../reorder.html', import.meta.url)), 'utf8');
+  check('page: "Already fixed — nothing to do" message', /Already fixed — nothing to do/.test(rh), null);
+  sq.exec("DELETE FROM ebay_sales_weekly WHERE sku LIKE '215-%'; DELETE FROM sales_fix_backup");
+}
+
 // Owner (2026-10-07): "SKU Mgr shows the total inventory cost to the owner only — I want it in History too: the
 // total inventory cost before and after every transaction; a big change must say why (a container just received,
 // just shipped…); only the owner can see the price change."
