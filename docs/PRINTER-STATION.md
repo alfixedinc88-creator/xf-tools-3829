@@ -66,3 +66,27 @@ within a few minutes. Auto Label → **🛑 Print watch** checks this:
   **Reprint all**) the ones not picked up.
 - Hold, "printer fixed" and every ✓ Checked are saved in the Auto Label log
   (who / when).
+
+## 📄 USPS scan forms on the regular (ink) printer, 8.5 × 11 (owner, 2026-10-08)
+Scan forms are letter-size paper on the ink printer, labels are 4×6 on the label
+printer. A Chrome window opened with `--kiosk-printing` always prints to the
+printer it printed to last, so one window can't do both. Use a **second Chrome
+window with its own profile** on the same computer (xfitting3):
+1. Desktop → New → Shortcut:
+   `"C:\Program Files\Google\Chrome\Application\chrome.exe" --user-data-dir="C:\ScanFormStation" --kiosk-printing https://<app address>/packship.html`
+   Name it **Scan Form Station**. (`--user-data-dir` = a separate Chrome, so it
+   remembers its own printer; the Label Station keeps the label printer.)
+2. Open it, sign in, Pack & Ship → 🤖 Auto Label → 📄 USPS scan form.
+   Tick **📄 Scan form station** here. Do **not** tick 🖨 Printer station in
+   this window (that stays only in the Label Station window).
+3. **One print by hand** so it remembers the ink printer: Reprint any scan form
+   (or Ctrl+P on any page) and choose: Destination = the ink printer, Paper =
+   Letter (8.5 × 11), Margins = Default, Scale = Fit to page / 100%. The first
+   time the print window still shows: close this window completely and open it
+   again with the shortcut, then it prints with no pop-up.
+4. Copy this shortcut into `shell:startup` too, so both windows open when the
+   computer starts.
+- In the **Label Station** window, leave 📄 Scan form station **unticked** (a
+  scan form there would come out on the label printer).
+- Scan forms print by themselves at the set times (Auto Label → 📄 Schedule).
+  🚚 Leaving for USPS still asks to print them on whatever computer taps it.
