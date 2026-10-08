@@ -4008,5 +4008,24 @@ console.log('\nShip-day count: "N printed yesterday after 5:30 PM → shipping t
   check('Monday: "1 printed on Sat, Oct 10 after 4:00 PM" + "2 printed on Sun, Oct 11 (Sunday, all day)" → shipping Mon', /• 1 printed on Sat, Oct 10 after 4:00 PM → shipping Mon, Oct 12/.test(mon) && /• 2 printed on Sun, Oct 11 \(Sunday, all day\) → shipping Mon, Oct 12/.test(mon), mon);
 }
 
+// Owner (2026-10-08): "Close batch → 🚚 Leaving for USPS is supposed to pop up the scan form to print — nothing popped up today".
+console.log('\n🚚 Leaving for USPS: the scan form always comes up');
+{
+  const today = new Date().toLocaleDateString('en-CA', { timeZone: 'America/New_York' });
+  // A form whose kept Veeqo answer was cut at 1.5 MB (PDFs inside) → unreadable → it counted 0 forms; its 2 PDFs ARE saved.
+  const ins = sq.prepare("INSERT INTO scan_form_log (day, slot, kind, created_at, by_user, ok, carrier, shipments, source, detail) VALUES (?,?,?,?,?,?,?,?,?,?)")
+    .run(today, '', 'scheduled', new Date().toISOString(), 'auto', 1, 'USPS', 40, '{"id":9,"manifests":[{"pdf":"JVBERi0xLjQK', '');
+  sq.exec('CREATE TABLE IF NOT EXISTS scan_form_file (log_id INTEGER NOT NULL, n INTEGER NOT NULL, type TEXT, data TEXT, saved_at TEXT, PRIMARY KEY (log_id, n))');
+  sq.prepare("INSERT INTO scan_form_file (log_id, n, type, data, saved_at) VALUES (?,1,'application/pdf','JVBERi0x',?), (?,2,'application/pdf','JVBERi0y',?)").run(ins.lastInsertRowid, today, ins.lastInsertRowid, today);
+  const d = await get('/veeqo/autolabel/scanforms');
+  const f = (d.forms || []).find(x => x.id === Number(ins.lastInsertRowid)) || {};
+  check('a form whose kept Veeqo answer was cut short still counts its 2 saved PDFs (parts 2, not 0 → it is offered to print)', f.parts === 2 && f.saved === 2, [f.parts, f.saved]);
+  const { readFileSync: rf15 } = await import('node:fs');
+  const ph = rf15(fileURLToPath(new URL('../packship.html', import.meta.url)), 'utf8');
+  check('…a failed Veeqo sync at batch close no longer stops the scan form step; "no form today" / "couldn\'t load" is an alert, not a small toast',
+    /if \(psCredToken\) \{ try \{ await psAutoVeeqoSync\(\); \} catch \(e\)/.test(ph) && /alert\('📄 No USPS scan form for today was found/.test(ph) && /alert\('📄 Could not load today\\'s USPS scan forms/.test(ph), null);
+  sq.prepare('DELETE FROM scan_form_file WHERE log_id = ?').run(ins.lastInsertRowid); sq.prepare('DELETE FROM scan_form_log WHERE id = ?').run(ins.lastInsertRowid);
+}
+
 console.log('\n' + (failed ? '❌ ' + failed + ' check(s) FAILED' : '✅ all ' + passed + ' checks passed') + '\n');
 process.exit(failed ? 1 : 0);

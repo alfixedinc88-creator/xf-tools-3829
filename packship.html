@@ -3294,8 +3294,9 @@ window.psCloseBatch = async function() {
   localStorage.setItem('ps_batch_' + psTodayKey(), JSON.stringify(psBatchClosed));
   _psUpdateBatchBar();
   _psToast('Batch closed at ' + psFmtTime(ts));
-  // Veeqo sync first — capture all shipped orders before marking batch closed
-  if (psCredToken) await psAutoVeeqoSync();
+  // Veeqo sync first — capture all shipped orders before marking batch closed. A failed sync must not stop
+  // 🚚 Leaving for USPS from asking to print the scan forms (owner 2026-10-08: no form popped up).
+  if (psCredToken) { try { await psAutoVeeqoSync(); } catch (e) { console.error('[PS] Veeqo sync at batch close:', e); _psToast('Veeqo sync failed: ' + e.message, 'error'); } }
   // Reset print log display — it stays open 24/7 so clear it at batch close
   // The sheet data persists; this just clears the in-memory list so the new
   // day starts fresh visually. psPlLoadToday() will auto-reload for the new day.
@@ -3370,6 +3371,7 @@ window.psUspsRunStart = async function() {
     // so there's no separate Close Batch button anymore. psCloseBatch()
     // already no-ops safely (just re-syncs Veeqo) if it's already closed,
     // so this stays harmless on a second/third run of the same day.
+    // psCloseBatch never throws (its Veeqo sync is caught) — so the scan form step below always runs.
     await psCloseBatch();
     await psUspsScanFormsPrompt(); // 📄 today's scan forms → print to hand to USPS
   } catch(e) { _psToast('Failed to start run: ' + e.message, 'error'); } finally { btn.disabled = false; }
@@ -9240,8 +9242,8 @@ function _psAlTimesText(text) { return _psAlTimesLines(text).join(' · '); }
 // 🚚 Leaving for USPS (owner): "that two scan forms trigger also and ask them to print". Today's forms (saved on the
 // server, so no computer has to stay open); USPS labels not on a form yet → offer to make one first.
 window.psUspsScanFormsPrompt = async function() {
-  var d; try { d = await _psAlFetch('/veeqo/autolabel/scanforms'); } catch (e) { return; }
-  if (!d || d.ok === false) return;
+  var d; try { d = await _psAlFetch('/veeqo/autolabel/scanforms'); } catch (e) { d = { ok: false, error: e.message }; }
+  if (!d || d.ok === false) { alert('📄 Could not load today\'s USPS scan forms (' + ((d && d.error) || 'no answer') + ').\nOpen Auto Label → 📄 USPS scan form to print them.'); return; }
   var today = psTodayKey(), forms = (d.forms || []).filter(function(f) { return f.ok && f.day === today && f.kind !== 'night_ok' && (f.parts || 0) > 0; });
   var miss = (d.missing && d.missing.labels) || [];
   if (miss.length && confirm('📄 ' + miss.length + ' USPS label' + (miss.length === 1 ? ' is' : 's are') + ' not on a scan form yet.\n\nMake a scan form for ' + (miss.length === 1 ? 'it' : 'them') + ' now (to give the USPS driver)?')) {
@@ -9250,7 +9252,8 @@ window.psUspsScanFormsPrompt = async function() {
     d = await _psAlFetch('/veeqo/autolabel/scanforms').catch(function() { return d; });
     forms = (d.forms || []).filter(function(f) { return f.ok && f.day === today && f.kind !== 'night_ok' && (f.parts || 0) > 0; });
   }
-  if (!forms.length) { _psToast('📄 No USPS scan form made today yet'); return; }
+  // Never only a small toast here: the driver must know there is nothing to hand over (or make it in Veeqo).
+  if (!forms.length) { alert('📄 No USPS scan form for today was found.\n\nMake it with 📄 Make scan form now (Auto Label → USPS scan form) or in Veeqo, and print it for the driver.'); return; }
   var pages = forms.reduce(function(t, f) { return t + (f.parts || 1); }, 0);
   var when = forms.map(function(f) { return new Date(f.created_at).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' }); }).join(', ');
   if (confirm('📄 Today\'s USPS scan forms: ' + pages + ' form' + (pages === 1 ? '' : 's') + ' (made ' + when + ').\n\nPrint ' + (pages === 1 ? 'it' : 'them') + ' now and hand ' + (pages === 1 ? 'it' : 'them') + ' to USPS with the packages?'))
