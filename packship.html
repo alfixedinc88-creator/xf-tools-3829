@@ -1133,7 +1133,8 @@ body {
   <!-- Owner (2026-10-08): "take off Lookup — Order Lookup has everything" (hidden; the tab's code stays) -->
   <div class="ps-tabitem"        id="ps-tab-lookup"      onclick="psSwitchTab('lookup')" style="display:none">🔍 Lookup</div>
   <div class="ps-tabitem"        id="ps-tab-orderlookup" onclick="psSwitchTab('orderlookup')">📋 Order Lookup</div>
-  <div class="ps-tabitem"        id="ps-tab-status"      onclick="psSwitchTab('status')">📡 Status Check</div>
+  <!-- Owner (2026-10-08): "take off Status Check" (hidden; the tab's code stays) -->
+  <div class="ps-tabitem"        id="ps-tab-status"      onclick="psSwitchTab('status')" style="display:none">📡 Status Check</div>
   <div class="ps-tabitem"        id="ps-tab-gaps"     onclick="psSwitchTab('gaps')">⚠️ Gap Report <span class="ps-tab-badge" id="ps-gap-badge" style="display:none">0</span></div>
   <div class="ps-tabitem"        id="ps-tab-undelivered" onclick="psSwitchTab('undelivered')">📦 Undelivered Report</div>
   <div class="ps-tabitem"        id="ps-tab-vsync"    onclick="psSwitchTab('vsync')">🔄 Veeqo Sync</div>
@@ -5896,6 +5897,7 @@ window.psUnlockTab = async function(tab) {
 // Override psSwitchTab to re-show gate if tab not yet unlocked
 window.psSwitchTab = function(name) {
   if (name === 'lookup') name = 'orderlookup'; // 🔍 Lookup is taken off (owner) — Order Lookup has everything
+  if (name === 'status') name = 'orderlookup'; // 📡 Status Check is taken off (owner)
   document.querySelectorAll('.ps-tabitem').forEach(function(t){ t.classList.remove('active'); });
   document.querySelectorAll('.ps-panel').forEach(function(p){ p.classList.remove('active'); });
   document.getElementById('ps-tab-' + name).classList.add('active');
@@ -10874,6 +10876,16 @@ function _psAlWatchRender(d) {
         + '<button class="ps-btn-sm" onclick="psAlWatchChecked(' + l.id + ', this)">✓ Checked</button></span></div>';
     }).join('');
   } else h += '<div style="color:var(--text3)">No label waiting to be picked up. 👍</div>';
+  // 📜 Owner: missed by the Print Log scanner but scanned at Picking / Packing → the label printed fine; no reminder, history only.
+  var lat = d.later || [];
+  if (lat.length) h += '<details style="margin-top:8px"><summary style="cursor:pointer;font-weight:700;color:var(--text2)">📜 History — ' + lat.length + ' label' + (lat.length === 1 ? '' : 's') + ' the Print Log scanner missed, but Picking / Packing scanned (no need to reprint)</summary>'
+    + lat.map(function(l) {
+      return '<div style="display:flex;gap:8px;flex-wrap:wrap;padding:5px 0;border-bottom:1px solid var(--border);font-size:12px">'
+        + '<span style="font-family:var(--mono);font-weight:700">' + e(l.order_number) + '</span><span style="font-family:var(--mono);color:var(--text3)">' + e(l.tracking || '') + '</span>'
+        + '<span style="color:var(--text3)">printed ' + e(t(l.printedAt)) + '</span>'
+        + (l.pickAt ? '<span style="color:var(--green)">🧺 picked by <b>' + e(l.pickBy || '?') + '</b> ' + e(t(l.pickAt)) + '</span>' : '')
+        + (l.packAt ? '<span style="color:var(--green)">📦 packed by <b>' + e(l.packBy || '?') + '</b> ' + e(t(l.packAt)) + '</span>' : '') + '</div>';
+    }).join('') + '</details>';
   box.innerHTML = h;
 }
 window.psAlWatchRelease = async function(quiet) {
