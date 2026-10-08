@@ -9206,6 +9206,9 @@ window.psAlLoadScanForms = async function() {
       + '<br>• Every night at ' + e(_psAlClock(d.checkAt)) + ': any USPS label after the last form → one more form, before the USPS 9 pm cut-off'
       + '<br>• Forms are saved here — print them any time (🚚 Leaving for USPS asks to print today\'s forms)</div></details>'
     : '⏰ By hand only (turn it on in Rules)')
+    // Owner 2026-10-08: "make sure the 8:50 pm scan form is made" — when the next one is due, and whether the server's own alarm is set.
+    + (d.on && d.nextForm ? '<br>⏭ Next: <b>' + e(new Date(d.nextForm).toLocaleString('en-US', { weekday: 'short', hour: 'numeric', minute: '2-digit', timeZone: 'America/New_York' })) + '</b> (New York)'
+      + (d.clockNext ? ' · <span style="color:var(--green)">server alarm set ✓ — no computer has to be open</span>' : ' · <span style="color:var(--orange)">server alarm not on yet — a Pack &amp; Ship page open at that time makes it</span>') : '')
     + (d.verified ? '' : '<br><span style="color:var(--orange);font-weight:700">🔒 Not by itself yet — tap 📄 Make scan form now once; when that works, it is made by itself at the set times.</span>')
     + '<br>' + (miss.length ? '<span style="color:var(--orange);font-weight:700">⚠ ' + miss.length + ' USPS label' + (miss.length === 1 ? '' : 's') + ' today not on a scan form yet' + (d.missing.since ? ' (since ' + e(new Date(d.missing.since).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })) + ')' : '') + '</span>' : '<span style="color:var(--green)">✅ Every USPS label bought today (by Auto Label) is on a scan form</span>');
   var name = { hand: 'by hand', scheduled: 'on time', night: 'night check', night_ok: '🌙 night check', night_missing: '🌙 night check', locked: 'on time (locked)' };

@@ -2578,20 +2578,22 @@ console.log('\nAuto Label → ⏸ no auto buying around the scan forms; scan for
 {
   const c = (await get('/veeqo/autolabel/config')).config;
   const { readFileSync: rf0 } = await import('node:fs'); const ws0 = rf0(workerPath, 'utf8');
-  check('the owner\'s schedule is the rule now (saved rules too, once): scan forms Mon-Fri 16:30 + 20:50, Sat 13:45, Sun 20:50; no auto buying Mon-Fri 16:30-17:30 + 20:30-24:00, Sat 13:30-24:00, Sun 20:30-24:00, every day 0:00-0:05',
-    /scanFormTimes: 'Mon-Fri 16:30, 20:50; Sat 13:45; Sun 20:50'/.test(ws0) && /scanFormCheckAt: '20:55'/.test(ws0) && c.pauseTimes === 'Mon-Fri 16:30-17:30; Mon-Fri 20:30-24:00; Sat 13:30-24:00; Sun 20:30-24:00; Mon-Sun 0:00-0:05'
-    && sq.prepare("SELECT value FROM app_config WHERE key = 'autolabel_rules_scanform_pause_1006'").get()?.value === 'done', c);
+  // Owner (2026-10-08) changed the rule: 8:50 pm scan form EVERY day (Saturday too); no auto print 8:30 pm – 12:10 am (was 12:05).
+  check('the owner\'s schedule is the rule now (saved rules too, once): scan forms Mon-Fri 16:30 + 20:50, Sat 13:45 + 20:50, Sun 20:50; no auto buying Mon-Fri 16:30-17:30 + 20:30-24:00, Sat 13:30-24:00, Sun 20:30-24:00, every day 0:00-0:10',
+    /scanFormTimes: 'Mon-Fri 16:30, 20:50; Sat 13:45, 20:50; Sun 20:50'/.test(ws0) && /scanFormCheckAt: '20:55'/.test(ws0)
+    && c.pauseTimes === 'Mon-Fri 16:30-17:30; Mon-Fri 20:30-24:00; Sat 13:30-24:00; Sun 20:30-24:00; Mon-Sun 0:00-0:10'
+    && sq.prepare("SELECT value FROM app_config WHERE key = 'autolabel_rules_scanform_850_1008'").get()?.value === 'done', c);
   const { readFileSync } = await import('node:fs');
   const ws = readFileSync(workerPath, 'utf8');
   const grab = n => (ws.match(new RegExp('function ' + n + '\\([\\s\\S]*?\\n}')) || [''])[0];
   const f = new Function("const AUTOLABEL_DAYS = ['sun', 'mon', 'tue', 'wed', 'thu', 'fri', 'sat'];" + ['autolabelNoWaitParse', 'autolabelNoWaitText', 'autolabelNoWaitClean', 'autolabelNoWaitNow'].map(grab).join('\n') + '; return { autolabelNoWaitNow };')();
   const P = t => !!f.autolabelNoWaitNow({ noWaitTimes: c.pauseTimes }, new Date(t));
   // New York summer time = UTC − 4. Tue Oct 6 2026.
-  check('Tue 4:29 pm buys · 4:30 pm stops · 5:29 pm stopped · 5:30 pm buys again · 8:29 pm buys · 8:30 pm stops · 11:59 pm stopped · 12:04 am stopped · 12:05 am buys',
+  check('Tue 4:29 pm buys · 4:30 pm stops · 5:29 pm stopped · 5:30 pm buys again · 8:29 pm buys · 8:30 pm stops · 11:59 pm stopped · 12:09 am stopped · 12:10 am buys',
     !P('2026-10-06T20:29:00Z') && P('2026-10-06T20:30:00Z') && P('2026-10-06T21:29:00Z') && !P('2026-10-06T21:30:00Z') && !P('2026-10-07T00:29:00Z') && P('2026-10-07T00:30:00Z')
-    && P('2026-10-07T03:59:00Z') && P('2026-10-07T04:04:00Z') && !P('2026-10-07T04:05:00Z'), null);
-  check('…Sat 1:29 pm buys · 1:30 pm stops for the rest of Saturday · Sun 10 am buys · Sun 8:30 pm stops · Mon 12:05 am buys',
-    !P('2026-10-10T17:29:00Z') && P('2026-10-10T17:30:00Z') && P('2026-10-11T03:00:00Z') && !P('2026-10-11T14:00:00Z') && P('2026-10-12T00:30:00Z') && !P('2026-10-12T04:05:00Z'), null);
+    && P('2026-10-07T03:59:00Z') && P('2026-10-07T04:09:00Z') && !P('2026-10-07T04:10:00Z'), null);
+  check('…Sat 1:29 pm buys · 1:30 pm stops for the rest of Saturday · Sun 10 am buys · Sun 8:30 pm stops · Mon 12:09 am stopped · 12:10 am buys',
+    !P('2026-10-10T17:29:00Z') && P('2026-10-10T17:30:00Z') && P('2026-10-11T03:00:00Z') && !P('2026-10-11T14:00:00Z') && P('2026-10-12T00:30:00Z') && P('2026-10-12T04:09:00Z') && !P('2026-10-12T04:10:00Z'), null);
   await post('/veeqo/autolabel/config', { config: { pauseTimes: 'Sun-Sat 0:00-24:00' } });
   const realFetch = globalThis.fetch; env.VEEQO_API_KEY = 'k';
   globalThis.fetch = async (u) => { u = String(u); return u.includes('api.veeqo.com/') ? new Response('[]', { headers: { 'Content-Type': 'application/json' } }) : new Response('{}', { status: 401 }); };
@@ -4025,6 +4027,31 @@ console.log('\n🚚 Leaving for USPS: the scan form always comes up');
   check('…a failed Veeqo sync at batch close no longer stops the scan form step; "no form today" / "couldn\'t load" is an alert, not a small toast',
     /if \(psCredToken\) \{ try \{ await psAutoVeeqoSync\(\); \} catch \(e\)/.test(ph) && /alert\('📄 No USPS scan form for today was found/.test(ph) && /alert\('📄 Could not load today\\'s USPS scan forms/.test(ph), null);
   sq.prepare('DELETE FROM scan_form_file WHERE log_id = ?').run(ins.lastInsertRowid); sq.prepare('DELETE FROM scan_form_log WHERE id = ?').run(ins.lastInsertRowid);
+}
+
+// Owner (2026-10-08): "every day at 8:50 pm we need a scan form — today none was made (what we printed 5:30–8:50 pm is on no form)".
+// The 30-min server timer can't hit 8:50 (no form after 9 pm) → an exact alarm (Durable Object) wakes the server at each time.
+console.log('\n⏰ Scan form clock: exact alarm at 8:50 pm every day (+ night check), set again after each one');
+{
+  const { readFileSync: rf16 } = await import('node:fs');
+  const ws = rf16(workerPath, 'utf8'), wt = rf16(fileURLToPath(new URL('../wrangler.toml', import.meta.url)), 'utf8');
+  const mod = await import(workerPath);
+  const cfg = { scanFormOn: true, scanFormTimes: 'Mon-Fri 16:30, 20:50; Sat 13:45, 20:50; Sun 20:50', scanFormCheckAt: '20:55' };
+  const grab = n => (ws.match(new RegExp('function ' + n + '\\([\\s\\S]*?\\n}')) || [''])[0];
+  const f = new Function("const AUTOLABEL_DAYS = ['sun', 'mon', 'tue', 'wed', 'thu', 'fri', 'sat'];" + ['autolabelNyNow', 'autolabelTimesParse', 'sfNyToUtc', 'autolabelNextScanFormAt'].map(grab).join('\n') + '; return autolabelNextScanFormAt;')();
+  const nx = t => new Date(f(cfg, new Date(t))).toISOString();
+  // New York = UTC − 4 (October). Wed Oct 7 6:00 pm → 8:50 pm (00:50Z) +20 s; 8:51 pm → night check 8:55 pm; 8:56 pm → Thu 4:30 pm.
+  check('Wed 6:00 pm → next alarm 8:50 pm; 8:51 pm → night check 8:55 pm; 8:56 pm → Thu 4:30 pm (all + 20 s)',
+    nx('2026-10-07T22:00:00Z') === '2026-10-08T00:50:20.000Z' && nx('2026-10-08T00:51:00Z') === '2026-10-08T00:55:20.000Z' && nx('2026-10-08T00:56:00Z') === '2026-10-08T20:30:20.000Z', [nx('2026-10-07T22:00:00Z'), nx('2026-10-08T00:51:00Z'), nx('2026-10-08T00:56:00Z')]);
+  check('…Saturday after 1:45 pm → Saturday 8:50 pm too; winter time (EST, UTC − 5): Mon Dec 7 8:50 pm = 01:50Z',
+    nx('2026-10-10T18:00:00Z') === '2026-10-11T00:50:20.000Z' && nx('2026-12-07T23:00:00Z') === '2026-12-08T01:50:20.000Z', [nx('2026-10-10T18:00:00Z'), nx('2026-12-07T23:00:00Z')]);
+  // The alarm itself: makes the slot's form through the normal tick, then sets the next alarm.
+  let alarmAt = null; const store = { getAlarm: async () => alarmAt, setAlarm: async t => { alarmAt = t; }, deleteAlarm: async () => { alarmAt = null; } };
+  const clock = new mod.ScanFormClock({ storage: store }, env);
+  const r = await (await clock.fetch(new Request('https://sf-clock/ensure'))).json();
+  check('ScanFormClock sets its alarm to the next scan form time (exported for Cloudflare, bound as SF_CLOCK in wrangler.toml)',
+    r.ok && typeof alarmAt === 'number' && alarmAt > Date.now() && /\[\[durable_objects\.bindings\]\]\s*name = "SF_CLOCK"\s*class_name = "ScanFormClock"/.test(wt) && /new_sqlite_classes = \["ScanFormClock"\]/.test(wt), [r, alarmAt]);
+  check('…the 30-min timer and every settings save make sure the alarm is set; the scan form list shows the next time', /async function autolabelCron\(env\) \{\n  const cfg = await autolabelLoadConfig\(env\);\n  await scanFormClockEnsure\(env\);/.test(ws) && /nextForm: \(\(\) =>/.test(ws), null);
 }
 
 console.log('\n' + (failed ? '❌ ' + failed + ' check(s) FAILED' : '✅ all ' + passed + ' checks passed') + '\n');
