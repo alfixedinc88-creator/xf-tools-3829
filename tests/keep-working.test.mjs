@@ -2388,20 +2388,21 @@ console.log('\nAuto Label → ✂️ over 20 lb: split into boxes in Veeqo (piec
 
 // Owner: "Monday–Friday after 3:50 pm, no more half-hour waiting — print as soon as an order comes in, until 5 pm;
 // Saturday 1 pm to 2:15 pm; after that back to the half-hour wait".
-console.log('\nAuto Label → no-wait times: Mon–Fri 3:50–5 pm, Sat 1–2:15 pm (New York) print right away');
+// Owner (2026-10-08): "Mon–Fri at 3:45 pm stop the 30-minute wait, print what is waiting; new orders wait 2 minutes (a merge may come in)".
+console.log('\nAuto Label → no-wait times: Mon–Fri 3:45–5 pm, Sat 1–2:15 pm (New York): no 30-min wait, 2 min for a merge');
 {
   const { readFileSync } = await import('node:fs');
   const ws = readFileSync(workerPath, 'utf8');
   const grab = n => (ws.match(new RegExp('function ' + n + '\\([\\s\\S]*?\\n}')) || [''])[0];
   const f = new Function("const AUTOLABEL_DAYS = ['sun', 'mon', 'tue', 'wed', 'thu', 'fri', 'sat'];" + ['autolabelNoWaitParse', 'autolabelNoWaitText', 'autolabelNoWaitClean', 'autolabelNoWaitNow'].map(grab).join('\n') + '; return { autolabelNoWaitNow, autolabelNoWaitClean };')();
-  const cfg = { noWaitTimes: 'Mon-Fri 15:50-17:00; Sat 13:00-14:15' };
+  const cfg = { noWaitTimes: 'Mon-Fri 15:45-17:00; Sat 13:00-14:15' };
   const at = t => !!f.autolabelNoWaitNow(cfg, new Date(t));
-  check('Mon 3:50 pm → no wait; 3:49 pm → wait; 4:59 pm → no wait; 5:00 pm → wait (New York, summer time)',
-    at('2026-10-05T19:50:00Z') && !at('2026-10-05T19:49:00Z') && at('2026-10-05T20:59:00Z') && !at('2026-10-05T21:00:00Z'), null);
+  check('Mon 3:45 pm → no wait; 3:44 pm → wait; 4:59 pm → no wait; 5:00 pm → wait (New York, summer time)',
+    at('2026-10-05T19:45:00Z') && !at('2026-10-05T19:44:00Z') && at('2026-10-05T20:59:00Z') && !at('2026-10-05T21:00:00Z'), null);
   check('…Fri 4 pm no wait; Sat 1:00–2:14 pm no wait, 2:15 pm and 12:59 pm wait; Sunday always waits; winter time too (Dec Mon 3:55 pm)',
     at('2026-10-09T20:00:00Z') && at('2026-10-10T17:00:00Z') && at('2026-10-10T18:14:00Z') && !at('2026-10-10T18:15:00Z') && !at('2026-10-10T16:59:00Z')
     && !at('2026-10-11T20:00:00Z') && at('2026-12-07T20:55:00Z'), null);
-  check('…the default is the owner\'s times, written the same way after a save', /noWaitTimes: 'Mon-Fri 15:50-17:00; Sat 13:00-14:15'/.test(ws) && f.autolabelNoWaitClean(' mon-fri 15:50-17:00 ;sat 13:00-14:15') === 'Mon-Fri 15:50-17:00; Sat 13:00-14:15', null);
+  check('…the default is the owner\'s times, written the same way after a save', /noWaitTimes: 'Mon-Fri 15:45-17:00; Sat 13:00-14:15'/.test(ws) && f.autolabelNoWaitClean(' mon-fri 15:45-17:00 ;sat 13:00-14:15') === 'Mon-Fri 15:45-17:00; Sat 13:00-14:15', null);
   // A run inside a no-wait time: a 5-minute-old order is not held back; outside it, it waits.
   const realFetch = globalThis.fetch;
   const items = [{ quantity: 1, sellable: { id: 1201, sku_code: '1=NW', weight_grams: 100, stock_entries: [{ warehouse_id: 55, location: '1-1-1' }] } }];
@@ -2420,10 +2421,20 @@ console.log('\nAuto Label → no-wait times: Mon–Fri 3:50–5 pm, Sat 1–2:15
   const d = r => (r.orders.find(o => o.number === 'NW-1') || {}).decision;
   check('…a run in a no-wait time: a 5-min-old order is rate-checked right away (not ⏳ Waiting) and the run says so; outside it: ⏳ Waiting',
     d(r1) === 'would_buy' && (r1.notes || []).some(n => /No-wait time/.test(n)) && d(r2) === 'waiting', { r1: d(r1), r2: d(r2), notes: r1.notes });
-  await post('/veeqo/autolabel/config', { config: { mode: 'off', noWaitTimes: 'Mon-Fri 15:50-17:00; Sat 13:00-14:15' } });
+  ord.created_at = new Date(Date.now() - 60e3).toISOString(); // 1 min old
+  await post('/veeqo/autolabel/config', { config: { noWaitTimes: 'Sun-Sat 0:00-24:00' } });
+  const r3 = await post('/veeqo/autolabel/run', {});
+  ord.created_at = new Date(Date.now() - 3 * 60e3).toISOString(); // 3 min old
+  const r4 = await post('/veeqo/autolabel/run', {});
+  check('…in a no-wait time an order waits 2 min (a merge order may come in): 1 min old → ⏳ Waiting "1 min left", 3 min old → would buy; the run says "2 min after it comes in"',
+    d(r3) === 'waiting' && /1 min left/.test((r3.orders.find(o => o.number === 'NW-1') || {}).reason) && d(r4) === 'would_buy' && (r3.notes || []).some(n => /2 min after it comes in/.test(n)), { r3: d(r3), r4: d(r4), notes: r3.notes });
+  check('…saved rules moved once to the owner\'s new times (3:45 pm, 2 min) and that is on record',
+    /autolabel_rules_nowait_345_1008/.test(ws) && /noWaitMinutes: 2,/.test(ws) && /waitMinutes: cfgSaved\.noWaitMinutes \|\| 0/.test(ws), null);
+  await post('/veeqo/autolabel/config', { config: { mode: 'off', noWaitTimes: 'Mon-Fri 15:45-17:00; Sat 13:00-14:15' } });
   globalThis.fetch = realFetch; delete env.VEEQO_API_KEY;
   const ph = readFileSync(fileURLToPath(new URL('../packship.html', import.meta.url)), 'utf8');
-  check('…Rules: "No wait at these times (New York)" box, and the rules line says it in plain words', /data-k="noWaitTimes"/.test(ph) && /prints as soon as an order comes in/.test(ph), null);
+  check('…Rules: "No 30-min wait at these times (New York)" box + "wait only (min, to catch a merge)" box, and the rules line says it in plain words',
+    /data-k="noWaitTimes"/.test(ph) && /data-k="noWaitMinutes"/.test(ph) && /prints ' \+ \(c\.noWaitMinutes \? c\.noWaitMinutes \+ ' min after an order comes in \(time for a merge order to come in\)'/.test(ph), null);
 }
 
 // Owner: "click each box to fix its size and weight — Veeqo's weight is sometimes wrong. 100 pcs 3/8 pex angle: system 20 lb,
@@ -2474,7 +2485,7 @@ console.log('\nAuto Label → 📦 confirmed box weight + size: same SKU × quan
     && sq.prepare("SELECT after_val FROM box_weight_log WHERE box_key = '100=3/8 ANGLE×1' ORDER BY id DESC").get()?.after_val === 'removed', r3);
   check('…bad input refused: no weight, or only part of the size', !(await post('/veeqo/autolabel/box-confirm', { lines: [{ sku: 'X', qty: 1 }], weightLb: 0 })).ok
     && !(await post('/veeqo/autolabel/box-confirm', { lines: [{ sku: 'X', qty: 1 }], weightLb: 3, lengthIn: 5 })).ok, null);
-  await post('/veeqo/autolabel/config', { config: { mode: 'off', noWaitTimes: 'Mon-Fri 15:50-17:00; Sat 13:00-14:15' } });
+  await post('/veeqo/autolabel/config', { config: { mode: 'off', noWaitTimes: 'Mon-Fri 15:45-17:00; Sat 13:00-14:15' } });
   globalThis.fetch = realFetch; delete env.VEEQO_API_KEY;
   const { readFileSync } = await import('node:fs');
   const ph = readFileSync(fileURLToPath(new URL('../packship.html', import.meta.url)), 'utf8');
