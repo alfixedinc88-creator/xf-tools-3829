@@ -4320,5 +4320,47 @@ console.log('\n🤖 Print Log: AUTO PRINT tag; report of auto prints not read by
     /s\.autoPrint \? '<span class="ps-badge"/.test(ph) && /id="ps-ap-card"/.test(ph) && /\/ship\/auto-print-report\?days=/.test(ph) && /window\.psApCsv = function/.test(ph), null);
 }
 
+// Owner (2026-10-08): "merged 113-9827248-1897842 has the tracking on Amazon, 113-9717731-0734658 still not — Veeqo has
+// both with our same tracking. I don't want it to show up later asking us to ship it again (no double ship)".
+console.log('\n📦 Amazon tracking: a merged order still Unshipped on Amazon gets OUR tracking sent (no new label)');
+{
+  const realFetch = globalThis.fetch;
+  const A1 = '113-9827248-1897842', A2 = '113-9717731-0734658', A3 = '113-0000000-0000003';
+  const status = { [A1]: 'Shipped', [A2]: 'Unshipped', [A3]: 'Canceled' }, sent = [];
+  globalThis.fetch = async (u, o) => { u = String(u); const m = (o && o.method) || 'GET'; const J = (x, st) => new Response(JSON.stringify(x), { status: st || 200, headers: { 'Content-Type': 'application/json' } });
+    if (u.includes('api.amazon.com/auth/o2/token')) return J({ access_token: 'amz', expires_in: 3600 });
+    let mm;
+    if ((mm = u.match(/orders\/v0\/orders\/([\d-]+)\/orderItems$/))) return J({ payload: { OrderItems: [{ OrderItemId: 'IT-' + mm[1], QuantityOrdered: 2, QuantityShipped: 0 }] } });
+    if ((mm = u.match(/orders\/v0\/orders\/([\d-]+)\/shipmentConfirmation$/)) && m === 'POST') { sent.push({ id: mm[1], body: JSON.parse(o.body) }); status[mm[1]] = 'Shipped'; return new Response(null, { status: 204 }); }
+    if ((mm = u.match(/orders\/v0\/orders\/([\d-]+)$/))) return J({ payload: { AmazonOrderId: mm[1], OrderStatus: status[mm[1]] || 'Unshipped' } });
+    return realFetch(u, o); };
+  env.AMAZON_REFRESH_TOKEN = 'r'; env.AMAZON_CLIENT_ID = 'c'; env.AMAZON_CLIENT_SECRET = 's';
+  await get('/veeqo/autolabel/config');
+  const lg = (num, action, mins) => sq.prepare("INSERT INTO autolabel_log (ts, date, order_number, channel, action, tracking, carrier, service) VALUES (?, ?, ?, 'Amazon', ?, '9400111899223197428490', 'USPS', 'Ground Advantage')")
+    .run(new Date(Date.now() - mins * 60000).toISOString(), new Date().toISOString().slice(0, 10), num, action);
+  lg(A1, 'bought', 30); lg(A2, 'merged', 30); lg(A3, 'merged', 30);
+  const one1 = await post('/veeqo/autolabel/amazon-tracking-run', { order: A1 });
+  check('🔎 check one order: 113-9827248-1897842 already Shipped on Amazon → "nothing to do", nothing sent', one1.ok && one1.fine.length === 1 && sent.length === 0, one1);
+  const one2 = await post('/veeqo/autolabel/amazon-tracking-run', { order: A2 });
+  const b = (sent[0] || {}).body || {}, pd = b.packageDetail || {};
+  check('…113-9717731-0734658 still Unshipped → OUR same tracking sent to Amazon right away (USPS, 2 of 2 items), no label bought, kept on record',
+    one2.ok && one2.added.length === 1 && sent.length === 1 && sent[0].id === A2 && pd.trackingNumber === '9400111899223197428490' && pd.carrierCode === 'USPS' && pd.orderItems[0].quantity === 2
+    && sq.prepare("SELECT ok, source, amazon_status FROM amazon_tracking_fix WHERE order_number = ?").get(A2)?.ok === 1, { one2, sent });
+  const again = await post('/veeqo/autolabel/amazon-tracking-run', { order: A2 });
+  check('…checked again → Amazon now says Shipped, nothing sent twice', again.ok && again.fine.length === 1 && sent.length === 1, again);
+  const one3 = await post('/veeqo/autolabel/amazon-tracking-run', { order: A3 });
+  check('…an order cancelled on Amazon → never sent', one3.ok && one3.skipped.length === 1 && sent.length === 1, one3);
+  const bad = await post('/veeqo/autolabel/amazon-tracking-run', { order: '113-1111111-1111111' });
+  check('…an order with no label from our Auto Label → refused (nothing to send)', bad.ok === false && /no label bought or merged/.test(bad.error) && sent.length === 1, bad);
+  lg('114-2222222-2222222', 'merged', 30); status['114-2222222-2222222'] = 'Unshipped';
+  const auto = await post('/veeqo/autolabel/amazon-tracking-run', {});
+  check('…the 30-min check waits 2 h after the label (a 30-min-old one is ⏳ waiting, not sent)', auto.ok && auto.waiting.some(x => x.orderNumber === '114-2222222-2222222') && sent.length === 1, auto);
+  const { readFileSync: rf14 } = await import('node:fs');
+  const ph = rf14(fileURLToPath(new URL('../packship.html', import.meta.url)), 'utf8'), ws = rf14(workerPath, 'utf8');
+  check('…Auto Label card: 📦 Amazon tracking (On, Check Amazon now, 🔎 check one order); runs every 30 min; blocked while 🧪 test mode is on',
+    /id="ps-al-at-on"/.test(ph) && /psAlAmzTrackOne\(this\)/.test(ph) && /ctx\.waitUntil\(amazonTrackingFix\(env\)/.test(ws) && /'\/veeqo\/autolabel\/amazon-tracking-run',/.test(ws), null);
+  globalThis.fetch = realFetch; delete env.AMAZON_REFRESH_TOKEN; delete env.AMAZON_CLIENT_ID; delete env.AMAZON_CLIENT_SECRET;
+}
+
 console.log('\n' + (failed ? '❌ ' + failed + ' check(s) FAILED' : '✅ all ' + passed + ' checks passed') + '\n');
 process.exit(failed ? 1 : 0);
