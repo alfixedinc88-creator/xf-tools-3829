@@ -27491,7 +27491,9 @@ async function handleAutolabelRoute(path, method, url, request, env, session) {
       .map(r => { let j = null; try { j = r.source ? JSON.parse(r.source) : null; } catch (_) {} const { source, ...rest } = r; return { ...rest, parts: r.ok && j ? (autolabelScanFormParts(j).length || 1) : 0 }; });
     await autolabelScanFormFilesTable(env);
     const sv = {}; (await d1All(env, 'SELECT log_id, COUNT(*) n FROM scan_form_file GROUP BY log_id')).forEach(x => { sv[x.log_id] = x.n; });
-    rows.forEach(r => { r.saved = sv[r.id] || 0; });
+    // Owner (2026-10-08): "Leaving for USPS — no scan form popped up to print". Veeqo's answer is kept cut at 1.5 MB, so
+    // when it holds the PDFs themselves it can't be read back → 0 forms, and the prompt skipped it. The saved PDFs count.
+    rows.forEach(r => { r.saved = sv[r.id] || 0; if (r.ok && r.saved > (r.parts || 0)) r.parts = r.saved; });
     const cfg = await autolabelLoadConfig(env);
     return veeqoResp({ ok: true, forms: rows, missing: await autolabelScanFormMissing(env), verified: (await autolabelGetKey(env, AUTOLABEL_SCANFORM_VERIFIED_KEY)) === 'yes',
       times: cfg.scanFormTimes, checkAt: cfg.scanFormCheckAt, on: cfg.scanFormOn });
