@@ -4434,5 +4434,35 @@ console.log('\n🗓 Auto Label: auto print schedule in plain words by day, ✏�
     && /#ps-al-rules \[data-k="' \+ k \+ '"\]/.test(ph) && /await psAlSaveConfig\(\);/.test(ph), null);
 }
 
+// Owner (2026-10-08): "Print watch — a label the printer station scanner didn't pick up but that WAS scanned at Picking or
+// Packing: don't remind us to print, it's only the Print Log scanner. (If a system error stopped it printing, Picking and
+// Packing would have no label to scan.) Move it to the history: picked / packed by who, when." + take off Status Check.
+console.log('\n🛑 Print watch: missed by the Print Log scanner but picked / packed → history, no reminder; Status Check taken off');
+{
+  await get('/veeqo/autolabel/labels?status=new&limit=1');
+  sq.prepare('DELETE FROM label_print_queue').run(); sq.prepare('DELETE FROM label_print_batch').run();
+  sq.prepare("DELETE FROM app_config WHERE key IN ('label_print_watch','label_print_hold')").run();
+  sq.prepare("INSERT OR REPLACE INTO app_config (key, value) VALUES ('label_print_watch_start', ?)").run(new Date(Date.now() - 3600000).toISOString());
+  const ago = m => new Date(Date.now() - m * 60000).toISOString();
+  const T = k => '94001118992231000007' + String(k).padStart(2, '0');
+  const lab = (n, tr) => Number(sq.prepare("INSERT INTO label_print_queue (order_id, alloc_id, order_number, channel, tracking, carrier, service, source, created_at, printed_at, printed_by, print_count, items) VALUES (?,?,?,?,?,?,?,?,?,?,?,1,'[]')")
+    .run(n, n, n, 'eBay', tr, 'USPS', 'Ground', '{}', ago(30), ago(20), 'ST').lastInsertRowid);
+  const ids = [lab('PW-2', T(2)), lab('PW-3', T(3)), lab('PW-1', T(1))]; // PW-1 printed last (newest)
+  sq.prepare('INSERT INTO label_print_batch (ts, day, by_user, source, count, label_ids) VALUES (?,?,?,?,?,?)').run(ago(15), ago(15).slice(0, 10), 'ST', 'printer station', 3, JSON.stringify(ids));
+  await post('/ship/pick', { tracking: T(2), initials: 'PK' });   // PW-2 picked (the Print Log scanner never read it)
+  await post('/ship/scan', { tracking: T(3), initials: 'PA' });   // PW-3 packed
+  const w = await get('/veeqo/autolabel/print-watch');
+  const L = n => (w.later || []).find(l => l.order_number === n) || {};
+  check('only PW-1 (scanned nowhere) is "not picked up"; PW-2 picked by PK and PW-3 packed by PA go to the 📜 history with who / when, no reminder',
+    w.ok && w.missing.length === 1 && w.missing[0].order_number === 'PW-1' && L('PW-2').pickBy === 'PK' && !!L('PW-2').pickAt && L('PW-3').packBy === 'PA' && !!L('PW-3').packAt, { missing: w.missing.map(l => l.order_number), later: w.later });
+  check('…and they do not count toward the "N in a row" hold (1 in a row, printing goes on)', !w.hold.on && w.inRow === 1, { inRow: w.inRow, hold: w.hold });
+  const { readFileSync: rf17 } = await import('node:fs');
+  const ph = rf17(fileURLToPath(new URL('../packship.html', import.meta.url)), 'utf8');
+  check('…Print watch card shows "📜 History — … the Print Log scanner missed, but Picking / Packing scanned (no need to reprint)"; 📡 Status Check tab hidden (opens Order Lookup)',
+    /📜 History — ' \+ lat\.length/.test(ph) && /picked by <b>' \+ e\(l\.pickBy/.test(ph) && /id="ps-tab-status"      onclick="psSwitchTab\('status'\)" style="display:none"/.test(ph) && /if \(name === 'status'\) name = 'orderlookup';/.test(ph), null);
+  sq.prepare('DELETE FROM label_print_queue').run(); sq.prepare('DELETE FROM label_print_batch').run();
+  sq.prepare("DELETE FROM app_config WHERE key IN ('label_print_watch','label_print_hold','label_print_watch_start')").run();
+}
+
 console.log('\n' + (failed ? '❌ ' + failed + ' check(s) FAILED' : '✅ all ' + passed + ' checks passed') + '\n');
 process.exit(failed ? 1 : 0);

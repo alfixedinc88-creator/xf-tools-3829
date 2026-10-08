@@ -25492,6 +25492,17 @@ async function labelWatchCheck(env, nowMs) {
     (await d1All(env, `SELECT UPPER(tracking) t, MAX(timestamp) ts FROM ship_print_log WHERE UPPER(tracking) IN (${part.map(() => '?').join(',')}) AND timestamp >= ? GROUP BY UPPER(tracking)`,
       [...part, new Date(Date.parse(since) - 3600000).toISOString()])).forEach(s => scans.set(s.t, Date.parse(s.ts)));
   }
+  // Owner (2026-10-08): "if the Print Log scanner didn't pick it up but it WAS scanned at Picking or Packing, don't remind us —
+  // the label printed, only the Print Log scanner missed it (a label that never printed can't be picked or packed). Move it to
+  // the history: picked / packed by who, when."
+  const later = (table) => (async () => { const m = new Map();
+    for (let i = 0; i < tracks.length; i += 90) {
+      const part = tracks.slice(i, i + 90);
+      (await d1All(env, `SELECT UPPER(tracking) t, timestamp ts, initials who FROM ${table} WHERE UPPER(tracking) IN (${part.map(() => '?').join(',')}) AND timestamp >= ? ORDER BY timestamp`,
+        [...part, new Date(Date.parse(since) - 3600000).toISOString()]).catch(() => [])).forEach(s => { if (!m.has(s.t)) m.set(s.t, []); m.get(s.t).push(s); });
+    }
+    return m; })();
+  const pickScans = await later('ship_pick_log'), packScans = await later('ship_scan_log');
   const checkedRows = ids.length ? await d1All(env, 'SELECT label_id, by_user, at FROM label_watch_checked WHERE label_id IN (SELECT value FROM json_each(?))', [JSON.stringify(ids)]) : [];
   const checked = new Map(checkedRows.map(c => [c.label_id, c]));
   const list = [];
@@ -25501,9 +25512,12 @@ async function labelWatchCheck(env, nowMs) {
     const at = Date.parse(batch.ts), due = at + labelWatchGraceMs(batch.count);
     const seen = scans.get(t);
     const picked = seen != null && seen >= at - 5 * 60000; // read while / after this print went out
+    const after = arr => (arr || []).find(x => Date.parse(x.ts) >= at - 5 * 60000) || null;
+    const pk = after(pickScans.get(t)), pa = after(packScans.get(t));
     list.push({ id, order_number: r.order_number, channel: r.channel, tracking: r.tracking, carrier: r.carrier, service: r.service,
       printedAt: batch.ts, batchId: batch.id, source: batch.source || '', printedBy: batch.by_user || r.printed_by || '', pos,
-      state: picked ? 'picked' : now < due ? 'waiting' : checked.has(id) ? 'checked' : 'missing',
+      pickAt: pk ? pk.ts : null, pickBy: pk ? pk.who || '' : '', packAt: pa ? pa.ts : null, packBy: pa ? pa.who || '' : '',
+      state: picked ? 'picked' : (pk || pa) ? 'later' : now < due ? 'waiting' : checked.has(id) ? 'checked' : 'missing',
       scannedAt: picked ? new Date(seen).toISOString() : null, checkedBy: checked.has(id) ? checked.get(id).by_user : null, checkedAt: checked.has(id) ? checked.get(id).at : null });
   }
   list.sort((a, b) => (a.printedAt < b.printedAt ? 1 : a.printedAt > b.printedAt ? -1 : b.pos - a.pos)); // newest first
@@ -25517,7 +25531,8 @@ async function labelWatchCheck(env, nowMs) {
     if (l.state === 'missing') inRow++; else break;
   }
   const missing = list.filter(l => l.state === 'missing');
-  return { settings, hold, inRow, missing, waiting: list.filter(l => l.state === 'waiting').length, picked: list.filter(l => l.state === 'picked').length, watched: list.length };
+  return { settings, hold, inRow, missing, waiting: list.filter(l => l.state === 'waiting').length, picked: list.filter(l => l.state === 'picked').length, watched: list.length,
+    later: list.filter(l => l.state === 'later') }; // 📜 Print Log missed it, but Picking / Packing scanned it — history only, no reminder
 }
 // Runs the check and turns the hold ON when N in a row were not picked up (once — logged with which labels).
 async function labelWatchRun(env, nowMs) {
