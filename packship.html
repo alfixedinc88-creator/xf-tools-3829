@@ -2390,6 +2390,28 @@ body {
       <div id="ps-print-dupe-list" style="display:none;margin-top:10px"></div>
     </div>
 
+    <!-- 🤖 Owner (2026-10-08): "labels from auto print not picked up by the scanner — give us the report so we can
+         check later, and keep track of Picking and Packing too (maybe it gets scanned later, our scanner just never
+         picked it up)". Nothing here takes focus — the print-station scanner box stays focused. -->
+    <div class="ps-card" id="ps-ap-card" style="margin-top:12px;border-color:#c4b5fd">
+      <div style="display:flex;justify-content:space-between;align-items:center;cursor:pointer" onclick="psApToggle()">
+        <div style="font-size:13px;font-weight:700;color:#6d28d9">🤖 Auto print report — not read by the Print Log scanner <span id="ps-ap-badge" style="display:none;margin-left:6px;padding:2px 8px;border-radius:100px;background:var(--red);color:#fff;font-size:11px"></span></div>
+        <div style="font-size:11px;color:var(--text3)" id="ps-ap-toggle-txt">Show</div>
+      </div>
+      <div id="ps-ap-body" style="display:none;margin-top:10px">
+        <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin-bottom:8px">
+          <select id="ps-ap-days" onchange="psApLoad()" style="padding:6px 8px;border:1.5px solid var(--border);border-radius:7px;background:var(--bg);color:var(--text);font-size:12px">
+            <option value="1">Today</option><option value="3">Last 3 days</option><option value="7">Last 7 days</option><option value="30">Last 30 days</option></select>
+          <select id="ps-ap-show" onchange="psApRender()" style="padding:6px 8px;border:1.5px solid var(--border);border-radius:7px;background:var(--bg);color:var(--text);font-size:12px">
+            <option value="notread">Not read by Print Log</option><option value="missing">Not scanned anywhere yet</option><option value="all">All auto prints</option></select>
+          <button class="ps-btn-sm" onclick="psApLoad()">↻ Refresh</button>
+          <button class="ps-btn-sm" onclick="psApCsv()">⬇ Excel (CSV)</button>
+        </div>
+        <div id="ps-ap-sum" style="font-size:12px;color:var(--text2);margin-bottom:6px"></div>
+        <div id="ps-ap-list" style="font-size:12px;overflow-x:auto"></div>
+      </div>
+    </div>
+
     <!-- Who printed how many, UPS/USPS split, for whatever date is picked —
          same "Find person" + "Check a date" pattern as the Scan tab's
          summary bar (reuses the same CSS classes). The 3 stat cards above
@@ -3680,6 +3702,7 @@ function psPlRenderList() {
       + '<div class="ps-card-tracking">' + s.tracking + '</div>'
       + '<div class="ps-card-meta"><span class="ps-badge ' + cls + '">' + s.carrier + '</span>'
       + (s.operatorName ? '<span class="ps-badge ps-badge-gray">' + s.operatorName + '</span>' : '')
+      + (s.autoPrint ? '<span class="ps-badge" title="Printed by itself by the 🖨 Printer station' + (s.order ? ' · order ' + s.order : '') + '" style="background:#ede9fe;color:#6d28d9;font-weight:800">🤖 AUTO PRINT</span>' : '')
       + '<span style="font-size:11px;color:var(--text3)">' + psFmtTime(s.timestamp) + '</span>'
       + '</div></div></div>';
   }).join('');
@@ -3982,6 +4005,50 @@ window.psPlLoadShipDay = async function(key) {
 };
 
 // Load today's print log from sheet on tab open
+// 🤖 Auto print report: every label the 🖨 Printer station printed by itself — read by the Print Log scanner?
+// scanned at Picking / Packing later? (a label the Print Log missed may still have gone out).
+var _psAp = null, _psApTimer = null;
+window.psApToggle = function() {
+  var b = document.getElementById('ps-ap-body'), t = document.getElementById('ps-ap-toggle-txt'); if (!b) return;
+  var open = b.style.display === 'none'; b.style.display = open ? 'block' : 'none'; if (t) t.textContent = open ? 'Hide' : 'Show';
+  if (open) psApLoad();
+};
+window.psApLoad = async function() {
+  var days = (document.getElementById('ps-ap-days') || {}).value || '1';
+  try {
+    var r = await fetch(PS_WORKER + '/ship/auto-print-report?days=' + encodeURIComponent(days), { headers: { 'X-Cred-Token': psCredToken } });
+    var d = await r.json();
+    if (!d.ok) throw new Error(d.error || 'HTTP ' + r.status);
+    _psAp = d; psApRender();
+  } catch (e) { var l = document.getElementById('ps-ap-list'); if (l) l.innerHTML = '<div style="color:var(--red)">Could not load: ' + _psAlEsc(e.message) + '</div>'; }
+};
+function _psApT(ts) { return ts ? new Date(ts).toLocaleString('en-US', { timeZone: 'America/New_York', month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' }) : ''; }
+var _PS_AP_STATE = { read: ['✓ Read by Print Log', 'var(--green)'], later: ['⚠ Print Log missed it — scanned later', 'var(--orange)'], missing: ['❌ Not scanned anywhere yet', 'var(--red)'], waiting: ['⏳ Just printed', 'var(--text3)'] };
+window.psApRender = function() {
+  var d = _psAp, list = document.getElementById('ps-ap-list'), sum = document.getElementById('ps-ap-sum'), badge = document.getElementById('ps-ap-badge'); if (!d || !list) return;
+  var c = d.counts || {}, e = _psAlEsc, show = (document.getElementById('ps-ap-show') || {}).value || 'notread';
+  if (sum) sum.innerHTML = '<b>' + c.total + '</b> auto printed · <span style="color:var(--green)">✓ ' + c.read + ' read by Print Log</span> · <span style="color:var(--orange)">⚠ ' + c.later + ' missed by Print Log, scanned at Picking / Packing</span> · <span style="color:var(--red)">❌ ' + c.missing + ' not scanned anywhere</span>' + (c.waiting ? ' · ⏳ ' + c.waiting + ' just printed' : '');
+  if (badge) { var n = (c.missing || 0) + (c.later || 0); badge.style.display = n ? 'inline' : 'none'; badge.textContent = n; }
+  var rows = (d.rows || []).filter(function(r) { return show === 'all' ? true : show === 'missing' ? r.state === 'missing' : (r.state === 'missing' || r.state === 'later'); });
+  if (!rows.length) { list.innerHTML = '<div style="color:var(--text3);padding:6px 0">' + (show === 'all' ? 'No auto prints in this period.' : '✓ Nothing to check — every auto-printed label was read by the Print Log scanner.') + '</div>'; return; }
+  var th = 'text-align:left;padding:5px 6px;font-size:10px;text-transform:uppercase;color:var(--text3);border-bottom:2px solid var(--border);white-space:nowrap', td = 'padding:5px 6px;border-bottom:1px solid var(--border);white-space:nowrap';
+  list.innerHTML = '<table style="width:100%;border-collapse:collapse"><thead><tr><th style="' + th + '">Printed</th><th style="' + th + '">Order</th><th style="' + th + '">Tracking</th><th style="' + th + '">Print Log</th><th style="' + th + '">Picking</th><th style="' + th + '">Packing</th><th style="' + th + '">Status</th></tr></thead><tbody>'
+    + rows.map(function(r) { var st = _PS_AP_STATE[r.state] || [r.state, 'var(--text)'];
+      return '<tr><td style="' + td + '">' + e(_psApT(r.printedAt)) + '</td><td style="' + td + '">' + e(r.order) + (r.channel ? ' <span style="color:var(--text3)">' + e(r.channel) + '</span>' : '') + '</td>'
+        + '<td style="' + td + ';font-family:var(--mono)">' + e(r.tracking) + ' <span style="color:var(--text3)">' + e(r.carrier) + '</span></td>'
+        + '<td style="' + td + '">' + (r.printLogAt ? '✓ ' + e(_psApT(r.printLogAt)) : '<span style="color:var(--red)">—</span>') + '</td>'
+        + '<td style="' + td + '">' + (r.pickAt ? '✓ ' + e(_psApT(r.pickAt)) + (r.pickBy ? ' ' + e(r.pickBy) : '') : '—') + '</td>'
+        + '<td style="' + td + '">' + (r.packAt ? '✓ ' + e(_psApT(r.packAt)) + (r.packBy ? ' ' + e(r.packBy) : '') : '—') + '</td>'
+        + '<td style="' + td + ';color:' + st[1] + ';font-weight:700">' + e(st[0]) + (r.checkedBy ? '<div style="font-weight:400;color:var(--text3)">✓ checked by ' + e(r.checkedBy) + (r.checkedNote ? ': ' + e(r.checkedNote) : '') + '</div>' : '') + '</td></tr>';
+    }).join('') + '</tbody></table>';
+};
+window.psApCsv = function() {
+  var d = _psAp; if (!d) return;
+  var q = function(v) { v = String(v == null ? '' : v); return /[",\n]/.test(v) ? '"' + v.replace(/"/g, '""') + '"' : v; };
+  var lines = [['Printed', 'Order', 'Channel', 'Tracking', 'Carrier', 'Print Log scan', 'Picking scan', 'Picked by', 'Packing scan', 'Packed by', 'Status', 'Checked by', 'Note'].join(',')];
+  (d.rows || []).forEach(function(r) { lines.push([_psApT(r.printedAt), r.order, r.channel, r.tracking, r.carrier, _psApT(r.printLogAt), _psApT(r.pickAt), r.pickBy, _psApT(r.packAt), r.packBy, (_PS_AP_STATE[r.state] || [r.state])[0], r.checkedBy || '', r.checkedNote || ''].map(q).join(',')); });
+  var a = document.createElement('a'); a.href = URL.createObjectURL(new Blob([lines.join('\n')], { type: 'text/csv' })); a.download = 'auto-print-report-' + psTodayKey() + '.csv'; document.body.appendChild(a); a.click(); a.remove();
+};
 window.psPlLoadToday = async function() {
   try {
     var res  = await fetch(PS_WORKER + '/ship/print-log?date=' + psTodayKey(), {
@@ -3998,6 +4065,7 @@ window.psPlLoadToday = async function() {
   } catch(e) { console.log('[PL] load error:', e.message); }
   psPlLoadShipDay(_psPlShipDayKey); // keeps whatever ship day is picked
   psFetchPrintDupeCount();
+  if (!_psAp || (document.getElementById('ps-ap-body') || {}).style.display !== 'none') psApLoad(); // 🤖 report count on the card
   psPlStartRefocus();
 };
 

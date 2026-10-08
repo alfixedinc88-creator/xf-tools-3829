@@ -4273,5 +4273,36 @@ console.log('\nAdmin → Pages & Tabs: every page, tab and part per level + "�
   await post('/admin/access/save', { scope: 'level:worker', rules: Object.fromEntries(lv0.map(r => [r.item, r.allow])) });
 }
 
+// Owner (2026-10-08): "Print Log — show it was from AUTO PRINT; any auto-printed label the scanner did not pick up,
+// give us the report to check later, and keep track of Picking and Packing too (maybe scanned later, our scanner just
+// never picked it up)".
+console.log('\n🤖 Print Log: AUTO PRINT tag; report of auto prints not read by the Print Log scanner (+ Picking / Packing)');
+{
+  await get('/veeqo/autolabel/config'); // label tables
+  const ins = (n, t) => sq.prepare("INSERT INTO label_print_queue (order_number, channel, tracking, carrier, service, created_at) VALUES (?, 'eBay', ?, 'USPS', 'GA', ?)").run(n, t, new Date().toISOString()).lastInsertRowid;
+  const T = ['9400100000000000000901', '9400100000000000000902', '9400100000000000000903', '9400100000000000000904'];
+  const ids = T.map((t, i) => Number(ins('AP-' + (i + 1), t)));
+  const ago = m => new Date(Date.now() - m * 60000).toISOString();
+  sq.prepare("INSERT INTO label_print_batch (ts, day, by_user, source, count, label_ids) VALUES (?, ?, 'station', 'printer station', 3, ?)").run(ago(30), new Date().toISOString().slice(0, 10), JSON.stringify(ids.slice(0, 3)));
+  sq.prepare("INSERT INTO label_print_batch (ts, day, by_user, source, count, label_ids) VALUES (?, ?, 'KL', 'by hand', 1, ?)").run(ago(30), new Date().toISOString().slice(0, 10), JSON.stringify([ids[3]]));
+  await post('/ship/print-log', { tracking: T[0] });               // AP-1 read by the Print Log scanner
+  await post('/ship/print-log', { tracking: T[3] });               // AP-4 printed by hand (not auto)
+  await post('/ship/pick', { tracking: T[1], initials: 'PK' });    // AP-2 missed by Print Log, picked later
+  await post('/ship/scan', { tracking: T[1], initials: 'PA' });    // …and packed
+  const pl = await get('/ship/print-log');
+  const S = t => (pl.scans || []).find(x => String(x.tracking).toUpperCase() === t) || {};
+  check('Print Log: the station\'s own print shows 🤖 AUTO PRINT (with its order #); a label printed by hand does not',
+    S(T[0]).autoPrint === true && S(T[0]).order === 'AP-1' && !S(T[3]).autoPrint, [S(T[0]), S(T[3])]);
+  const rp = await get('/ship/auto-print-report?days=1');
+  const R = n => (rp.rows || []).find(x => x.order === n) || {};
+  check('report: AP-1 ✓ read by Print Log · AP-2 ⚠ missed by Print Log but picked (PK) + packed (PA) · AP-3 ❌ not scanned anywhere · AP-4 (by hand) not in it',
+    rp.ok && R('AP-1').state === 'read' && R('AP-2').state === 'later' && R('AP-2').pickBy === 'PK' && R('AP-2').packBy === 'PA' && !!R('AP-2').pickAt && !!R('AP-2').packAt
+    && R('AP-3').state === 'missing' && !R('AP-4').order && rp.counts.total === 3 && rp.counts.later === 1 && rp.counts.missing === 1 && rp.counts.read === 1, rp);
+  const { readFileSync: rf13 } = await import('node:fs');
+  const ph = rf13(fileURLToPath(new URL('../packship.html', import.meta.url)), 'utf8');
+  check('Print Log tab: 🤖 AUTO PRINT badge, the 🤖 Auto print report card (Today / 3 / 7 / 30 days, not read / not scanned / all, Excel)',
+    /s\.autoPrint \? '<span class="ps-badge"/.test(ph) && /id="ps-ap-card"/.test(ph) && /\/ship\/auto-print-report\?days=/.test(ph) && /window\.psApCsv = function/.test(ph), null);
+}
+
 console.log('\n' + (failed ? '❌ ' + failed + ' check(s) FAILED' : '✅ all ' + passed + ' checks passed') + '\n');
 process.exit(failed ? 1 : 0);
