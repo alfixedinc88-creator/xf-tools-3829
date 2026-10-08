@@ -4040,6 +4040,67 @@ console.log('\nShip-day count: "N printed yesterday after 5:30 PM → shipping t
   check('Monday: "1 printed on Sat, Oct 10 after 4:00 PM" + "2 printed on Sun, Oct 11 (Sunday, all day)" → shipping Mon', /• 1 printed on Sat, Oct 10 after 4:00 PM → shipping Mon, Oct 12/.test(mon) && /• 2 printed on Sun, Oct 11 \(Sunday, all day\) → shipping Mon, Oct 12/.test(mon), mon);
 }
 
+// Owner: "check on Print Log — if 2 or 3 labels are not picked up, something is wrong with the printer (paper jam,
+// no paper): hold it for us to come back to the office to print, and whatever is not picked up, let us know".
+console.log('\n🛑 Print watch: labels printed but not read by the Print Log scanner → printing on hold + listed');
+{
+  const { readFileSync } = await import('node:fs');
+  await get('/veeqo/autolabel/labels?status=new&limit=1'); // tables
+  sq.prepare('DELETE FROM label_print_queue').run();
+  sq.prepare("DELETE FROM app_config WHERE key IN ('label_print_watch','label_print_hold')").run();
+  sq.prepare("DELETE FROM app_config WHERE key = 'label_print_watch_start'").run();
+  sq.prepare('DELETE FROM label_print_batch').run();
+  const old0 = Number(sq.prepare("INSERT INTO label_print_queue (order_id, alloc_id, order_number, channel, tracking, carrier, service, source, created_at, items) VALUES ('W-0','W-0','W-0','eBay','9400111899223100000099','USPS','Ground','{}',?,'[]')").run(new Date().toISOString()).lastInsertRowid);
+  sq.prepare("INSERT INTO label_print_batch (ts, day, by_user, source, count, label_ids) VALUES (?,?,?,?,?,?)").run(new Date(Date.now() - 20 * 60000).toISOString(), 'x', 'ST', 'printer station', 1, JSON.stringify([old0]));
+  const w0 = await get('/veeqo/autolabel/print-watch');
+  check('the day it goes live, labels printed before are not judged (no surprise hold)', w0.ok && !w0.hold.on && w0.watched === 0 && !w0.missing.length, w0);
+  sq.prepare('DELETE FROM label_print_queue').run(); sq.prepare('DELETE FROM label_print_batch').run();
+  sq.prepare("UPDATE app_config SET value = ? WHERE key = 'label_print_watch_start'").run(new Date(Date.now() - 3600000).toISOString()); sq.prepare('DELETE FROM ship_print_log').run(); sq.prepare('DELETE FROM label_watch_checked').run();
+  const ago = m => new Date(Date.now() - m * 60000).toISOString();
+  const lab = (n, tr) => Number(sq.prepare("INSERT INTO label_print_queue (order_id, alloc_id, order_number, channel, tracking, carrier, service, source, created_at, printed_at, printed_by, print_count, items) VALUES (?,?,?,?,?,?,?,?,?,?,?,1,'[]')")
+    .run(n, n, n, 'eBay', tr, 'USPS', 'Ground', '{}', ago(30), ago(20), 'ST').lastInsertRowid);
+  const batch = (ids, m, src) => sq.prepare('INSERT INTO label_print_batch (ts, day, by_user, source, count, label_ids) VALUES (?,?,?,?,?,?)').run(ago(m), ago(m).slice(0, 10), 'ST', src || 'printer station', ids.length, JSON.stringify(ids));
+  const T = k => '94001118992231000000' + String(k).padStart(2, '0'); // a real-looking 22-digit USPS tracking #
+  const a = lab('W-1', T(1)), b = lab('W-2', T(2)), c = lab('W-3', T(3)), d = lab('W-4', T(4));
+  batch([a, b], 15); batch([c, d], 12);
+  await post('/ship/print-log', { tracking: '42008080' + T(1) }); // W-1 read by the scanner (USPS barcode with 420 + ZIP in front)
+  let w = await get('/veeqo/autolabel/print-watch');
+  const st = n => ((w.missing || []).find(l => l.order_number === n) ? 'missing' : '?');
+  check('a label the Print Log scanner read (420+ZIP barcode) is picked up; 3 others printed 12–15 min ago and never read are "not picked up"',
+    w.ok && w.picked === 1 && w.missing.length === 3 && st('W-2') === 'missing' && st('W-4') === 'missing' && !w.missing.some(l => l.order_number === 'W-1'), w);
+  check('3 in a row not picked up (default hold after 3) → printing ON HOLD, saved in the Auto Label log with which labels',
+    w.hold.on && w.inRow === 3 && sq.prepare("SELECT COUNT(*) n FROM autolabel_log WHERE action='print_hold' AND detail LIKE '%W-4%'").get().n === 1, { hold: w.hold, inRow: w.inRow });
+  w = await get('/veeqo/autolabel/print-watch');
+  check('…asking again does not log the hold twice', sq.prepare("SELECT COUNT(*) n FROM autolabel_log WHERE action='print_hold'").get().n === 1, null);
+  w = await post('/veeqo/autolabel/print-watch', { action: 'release' });
+  check('✅ Printer fixed → hold off (who / when saved); the 3 not picked up stay on the list, and they do not put it back on hold',
+    w.ok && !w.hold.on && w.hold.releasedBy === 'TS' && w.missing.length === 3 && w.inRow === 0 && sq.prepare("SELECT COUNT(*) n FROM autolabel_log WHERE action='print_hold_released'").get().n === 1, w.hold);
+  // after the fix: a label just printed (inside the grace time) is not counted yet; 2 in a row not read < 3 → no hold
+  const e1 = lab('W-5', T(5)), e2 = lab('W-6', T(6)), e3 = lab('W-7', T(7));
+  sq.prepare("UPDATE app_config SET value = ? WHERE key = 'label_print_hold'").run(JSON.stringify({ on: false, releasedAt: ago(11), releasedBy: 'TS' }));
+  batch([e1], 9); batch([e2], 8); batch([e3], 1);
+  w = await get('/veeqo/autolabel/print-watch');
+  check('…a label printed 1 min ago is still being checked (not "not picked up"); 2 in a row < 3 → still printing', !w.hold.on && w.waiting === 1 && w.inRow === 2 && !w.missing.some(l => l.order_number === 'W-7'), { inRow: w.inRow, waiting: w.waiting });
+  w = await post('/veeqo/autolabel/print-watch', { action: 'settings', n: 2 });
+  check('hold after 2 in a row (setting saved) → ON HOLD now', w.settings.n === 2 && w.hold.on, { s: w.settings, hold: w.hold });
+  await post('/veeqo/autolabel/print-watch', { action: 'release' });
+  w = await post('/veeqo/autolabel/print-watch', { action: 'checked', ids: [b], note: 'found it under the printer' });
+  check('✓ Checked takes a label off the list (who / note in the Auto Label log)', !w.missing.some(l => l.order_number === 'W-2')
+    && sq.prepare("SELECT COUNT(*) n FROM autolabel_log WHERE action='print_watch_checked' AND order_number='W-2' AND reason LIKE '%TS%found it under the printer%'").get().n === 1, w.missing.map(l => l.order_number));
+  batch([c], 6); await post('/ship/print-log', { tracking: T(3) });
+  w = await get('/veeqo/autolabel/print-watch');
+  check('a reprinted label read by the scanner comes off the list', !w.missing.some(l => l.order_number === 'W-3'), w.missing.map(l => l.order_number));
+  const ph = readFileSync(fileURLToPath(new URL('../packship.html', import.meta.url)), 'utf8');
+  check('…the 🖨 Printer station asks before it prints: on hold → prints nothing (labels wait), red bar + says it out loud',
+    /var held = await _psAlWatchHeld\(true\);\s*if \(!held\) \{ await psAlPrintNewLabels\(true\); await psAlPrintNewSlips\(true\); \}\s*else _psAlStationBar\([^)]*ON HOLD[^)]*'hold'\);/.test(ph)
+    && /_psSpeakAlert\('Label printer needs checking\. Printing is on hold\.'\)/.test(ph), null);
+  check('…🖨 Print new labels now by hand while on hold asks "printer fixed?" first; every manager sees the red / orange bar (checked every 2 min)',
+    /if \(!silent && await _psAlWatchHeld\(false\)\) \{\s*if \(!confirm\(/.test(ph) && /psRole === 'mgmt' && typeof psAlWatchPollStart === 'function'\) psAlWatchPollStart\(\)/.test(ph)
+    && /id="ps-al-watch-card"/.test(ph) && /onclick="psAlWatchRelease\(\)">✅ Printer fixed — print again/.test(ph), null);
+  sq.prepare('DELETE FROM label_print_queue').run(); sq.prepare('DELETE FROM label_print_batch').run(); sq.prepare('DELETE FROM ship_print_log').run();
+  sq.prepare("DELETE FROM app_config WHERE key IN ('label_print_watch','label_print_hold','label_print_watch_start')").run();
+}
+
 // Owner (2026-10-08): "Close batch → 🚚 Leaving for USPS is supposed to pop up the scan form to print — nothing popped up today".
 console.log('\n🚚 Leaving for USPS: the scan form always comes up');
 {

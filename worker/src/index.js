@@ -25213,6 +25213,102 @@ async function labelBatchEnsure(env) {
   await env.DB.prepare('CREATE TABLE IF NOT EXISTS label_print_batch (id INTEGER PRIMARY KEY AUTOINCREMENT, ts TEXT, day TEXT, by_user TEXT, source TEXT, count INTEGER, label_ids TEXT)').run();
   await env.DB.prepare('CREATE INDEX IF NOT EXISTS idx_label_print_batch_day ON label_print_batch(day)').run().catch(() => {});
 }
+// 🛑 Owner: "check the Print Log — if 2 or 3 labels are not picked up, something is wrong with the printer
+// (paper jam, no paper): hold the printing for us to come back to the office, and whatever was not picked up,
+// let us know". Every label in a print batch (station / by hand / reprint) should be read by the fixed Print Log
+// scanner soon after it prints. A label not read within the grace time is "not picked up" — it stays on the
+// list until it is printed again and read, or someone marks it checked (who / when kept). N in a row not
+// picked up (newest first) → the 🖨 Printer station stops printing (labels wait) until someone taps
+// "Printer fixed — print again". Hold / release / checked are all in autolabel_log.
+const LABEL_WATCH_KEY = 'label_print_watch';          // { on, n } — settings
+const LABEL_WATCH_HOLD_KEY = 'label_print_hold';      // { on, at, why, by, releasedAt, releasedBy }
+const LABEL_WATCH_START_KEY = 'label_print_watch_start'; // when the watch first ran
+const LABEL_WATCH_DEFAULTS = { on: true, n: 3 };
+const LABEL_WATCH_LOOKBACK_H = 48;                    // labels printed in the last 48 h are watched
+async function labelWatchEnsure(env) {
+  await labelBatchEnsure(env);
+  await env.DB.prepare('CREATE TABLE IF NOT EXISTS label_watch_checked (label_id INTEGER PRIMARY KEY, by_user TEXT, at TEXT, note TEXT)').run();
+}
+async function labelWatchSettings(env) {
+  let s = {}; try { s = JSON.parse(await autolabelGetKey(env, LABEL_WATCH_KEY) || '{}') || {}; } catch (_) {}
+  const n = parseInt(s.n);
+  return { on: s.on !== false, n: n >= 1 && n <= 10 ? n : LABEL_WATCH_DEFAULTS.n };
+}
+async function labelWatchHold(env) {
+  let h = null; try { h = JSON.parse(await autolabelGetKey(env, LABEL_WATCH_HOLD_KEY) || 'null'); } catch (_) {}
+  return h || { on: false };
+}
+// A label is "picked up" when the Print Log scanner read its tracking # after its (latest) print batch went out.
+// Grace: 3 min after the batch + 6 s per label in it (a long batch takes a while to come out).
+function labelWatchGraceMs(count) { return 3 * 60000 + 6000 * Math.max(1, count || 1); }
+async function labelWatchCheck(env, nowMs) {
+  await labelWatchEnsure(env); await ensureShipD1Tables(env);
+  const now = nowMs || Date.now();
+  // only labels printed after the watch first ran (the day it went live, older prints are not judged)
+  let start = await autolabelGetKey(env, LABEL_WATCH_START_KEY);
+  if (!start) { start = new Date(now).toISOString(); await autolabelSetKey(env, LABEL_WATCH_START_KEY, start); }
+  const since = [new Date(now - LABEL_WATCH_LOOKBACK_H * 3600000).toISOString(), start].sort()[1];
+  const settings = await labelWatchSettings(env), hold = await labelWatchHold(env);
+  const batches = await d1All(env, 'SELECT id, ts, by_user, source, count, label_ids FROM label_print_batch WHERE ts >= ? ORDER BY ts ASC, id ASC', [since]);
+  // each label once, at its LATEST batch (a reprint replaces the earlier print); pos keeps the print order
+  const last = new Map();
+  batches.forEach(b => { let ids = []; try { ids = JSON.parse(b.label_ids || '[]') || []; } catch (_) {}
+    ids.forEach((id, pos) => { id = parseInt(id); if (id > 0) last.set(id, { id, batch: b, pos }); }); });
+  const ids = [...last.keys()];
+  const rows = [];
+  for (let i = 0; i < ids.length; i += 90) {
+    const part = ids.slice(i, i + 90);
+    rows.push(...await d1All(env, `SELECT id, order_number, channel, tracking, carrier, service, printed_by FROM label_print_queue WHERE id IN (${part.map(() => '?').join(',')})`, part));
+  }
+  const byId = new Map(rows.map(r => [r.id, r]));
+  const tracks = [...new Set(rows.map(r => normalizeShipTracking(String(r.tracking || ''))).filter(Boolean))];
+  const scans = new Map(); // tracking → newest scan time (ms)
+  for (let i = 0; i < tracks.length; i += 90) {
+    const part = tracks.slice(i, i + 90);
+    (await d1All(env, `SELECT UPPER(tracking) t, MAX(timestamp) ts FROM ship_print_log WHERE UPPER(tracking) IN (${part.map(() => '?').join(',')}) AND timestamp >= ? GROUP BY UPPER(tracking)`,
+      [...part, new Date(Date.parse(since) - 3600000).toISOString()])).forEach(s => scans.set(s.t, Date.parse(s.ts)));
+  }
+  const checkedRows = ids.length ? await d1All(env, 'SELECT label_id, by_user, at FROM label_watch_checked WHERE label_id IN (SELECT value FROM json_each(?))', [JSON.stringify(ids)]) : [];
+  const checked = new Map(checkedRows.map(c => [c.label_id, c]));
+  const list = [];
+  for (const { id, batch, pos } of last.values()) {
+    const r = byId.get(id); if (!r) continue;
+    const t = normalizeShipTracking(String(r.tracking || '')); if (!t) continue; // no tracking # → nothing the scanner could read
+    const at = Date.parse(batch.ts), due = at + labelWatchGraceMs(batch.count);
+    const seen = scans.get(t);
+    const picked = seen != null && seen >= at - 5 * 60000; // read while / after this print went out
+    list.push({ id, order_number: r.order_number, channel: r.channel, tracking: r.tracking, carrier: r.carrier, service: r.service,
+      printedAt: batch.ts, batchId: batch.id, source: batch.source || '', printedBy: batch.by_user || r.printed_by || '', pos,
+      state: picked ? 'picked' : now < due ? 'waiting' : checked.has(id) ? 'checked' : 'missing',
+      scannedAt: picked ? new Date(seen).toISOString() : null, checkedBy: checked.has(id) ? checked.get(id).by_user : null, checkedAt: checked.has(id) ? checked.get(id).at : null });
+  }
+  list.sort((a, b) => (a.printedAt < b.printedAt ? 1 : a.printedAt > b.printedAt ? -1 : b.pos - a.pos)); // newest first
+  // N in a row not picked up, counting from the newest label past its grace time, only labels printed after the
+  // last "printer fixed" (those before it are already known — they stay on the list until checked / reprinted)
+  const relAt = hold.releasedAt || '';
+  let inRow = 0;
+  for (const l of list) {
+    if (l.state === 'waiting') continue;
+    if (l.printedAt <= relAt) break;
+    if (l.state === 'missing') inRow++; else break;
+  }
+  const missing = list.filter(l => l.state === 'missing');
+  return { settings, hold, inRow, missing, waiting: list.filter(l => l.state === 'waiting').length, picked: list.filter(l => l.state === 'picked').length, watched: list.length };
+}
+// Runs the check and turns the hold ON when N in a row were not picked up (once — logged with which labels).
+async function labelWatchRun(env, nowMs) {
+  const w = await labelWatchCheck(env, nowMs);
+  if (w.settings.on && !w.hold.on && w.inRow >= w.settings.n) {
+    const top = w.missing.slice(0, w.inRow);
+    const why = `${w.inRow} labels in a row printed but not read by the Print Log scanner (paper jam / out of labels / printer off, or the Print Log box is not open on that computer)`;
+    const hold = { on: true, at: new Date(nowMs || Date.now()).toISOString(), why, labels: top.map(l => ({ id: l.id, order: l.order_number, tracking: l.tracking })),
+      releasedAt: w.hold.releasedAt || '', releasedBy: w.hold.releasedBy || '' };
+    await autolabelSetKey(env, LABEL_WATCH_HOLD_KEY, JSON.stringify(hold));
+    await autolabelLog(env, { action: 'print_hold', reason: '🛑 Printing on hold: ' + why, detail: top.map(l => l.order_number + ' ' + l.tracking).join(', ') });
+    w.hold = hold;
+  }
+  return w;
+}
 async function ebayTrackEnsure(env) {
   await env.DB.prepare(`CREATE TABLE IF NOT EXISTS ebay_tracking_fix (id INTEGER PRIMARY KEY AUTOINCREMENT, ts TEXT, ebay_order_id TEXT, order_number TEXT,
     tracking TEXT, carrier TEXT, source TEXT, ok INTEGER, detail TEXT, by_user TEXT)`).run();
@@ -28160,6 +28256,38 @@ async function handleAutolabelRoute(path, method, url, request, env, session) {
     const batches = await d1All(env, `SELECT DISTINCT b.id, b.ts, b.day, b.by_user, b.source, b.count FROM label_print_batch b, json_each(b.label_ids) j
       WHERE j.value IN (${ids.map(() => '?').join(',')}) ORDER BY b.id DESC LIMIT 20`, ids);
     return veeqoResp({ ok: true, q, labels: hits, batches });
+  }
+
+  // 🛑 Print watch: labels printed but not read by the Print Log scanner; N in a row → printing on hold.
+  // GET → { hold, missing[], inRow, settings }. The printer station asks every minute before it prints.
+  if (path === '/veeqo/autolabel/print-watch' && method === 'GET') {
+    return veeqoResp({ ok: true, ...(await labelWatchRun(env)) });
+  }
+  // POST { action: 'release' | 'checked' | 'settings', ids, note, on, n }
+  if (path === '/veeqo/autolabel/print-watch' && method === 'POST') {
+    await labelWatchEnsure(env);
+    const b = await request.json().catch(() => ({}));
+    const who = String((session && (session.displayName || session.username)) || b.by || '').slice(0, 40), now = new Date().toISOString();
+    if (b.action === 'release') {
+      const h = await labelWatchHold(env);
+      await autolabelSetKey(env, LABEL_WATCH_HOLD_KEY, JSON.stringify({ on: false, releasedAt: now, releasedBy: who, lastHold: h.on ? { at: h.at, why: h.why } : (h.lastHold || null) }));
+      await autolabelLog(env, { action: 'print_hold_released', customer: who, reason: `✅ Printer fixed — printing again (${who || '?'})` + (h.on ? ` · on hold since ${h.at}` : '') });
+    } else if (b.action === 'checked') {
+      const ids = (Array.isArray(b.ids) ? b.ids : []).map(n => parseInt(n)).filter(n => n > 0).slice(0, 200);
+      const note = String(b.note || '').slice(0, 200);
+      for (const id of ids) {
+        await d1Run(env, 'INSERT INTO label_watch_checked (label_id, by_user, at, note) VALUES (?,?,?,?) ON CONFLICT(label_id) DO UPDATE SET by_user=excluded.by_user, at=excluded.at, note=excluded.note', [id, who, now, note]);
+        const r = await d1First(env, 'SELECT order_number, tracking FROM label_print_queue WHERE id = ?', [id]);
+        await autolabelLog(env, { action: 'print_watch_checked', customer: who, orderNumber: r ? r.order_number : '', tracking: r ? r.tracking : '',
+          reason: `✓ Not-picked-up label checked by ${who || '?'}` + (note ? ': ' + note : '') });
+      }
+    } else if (b.action === 'settings') {
+      const s = await labelWatchSettings(env), n = parseInt(b.n);
+      const next = { on: b.on != null ? !!b.on : s.on, n: n >= 1 && n <= 10 ? n : s.n };
+      await autolabelSetKey(env, LABEL_WATCH_KEY, JSON.stringify(next));
+      await autolabelLog(env, { action: 'config', customer: who, reason: `Print watch ${next.on ? 'ON' : 'OFF'} · hold after ${next.n} in a row (${who || '?'})` });
+    } else return veeqoResp({ ok: false, error: 'unknown action' }, 400);
+    return veeqoResp({ ok: true, ...(await labelWatchRun(env)) });
   }
 
   if (path === '/veeqo/autolabel/log' && method === 'GET') {
