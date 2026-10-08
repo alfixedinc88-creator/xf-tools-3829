@@ -7862,6 +7862,7 @@ const _app = {
       if (path === '/inventory/containers/pallets' && method === 'GET') return await inventoryContainerPallets(url, env);
       if (path === '/inventory/containers/pallet-view' && method === 'GET') return await inventoryPalletView(url, env);
       if (path === '/inventory/containers/line-history' && method === 'GET') return await palletLineHistory(url, env);
+      if (path === '/inventory/containers/pallet-detail' && method === 'GET') return await palletDetail(url, env);
       if (path === '/inventory/containers/scan' && method === 'GET') return await inventoryContainerScan(url, env);
       if (path === '/inventory/containers/extra' && method === 'POST') return await inventoryPalletExtra(request, env, session);
       if (path === '/inventory/containers/upc-issue' && method === 'POST') return await inventoryUpcIssue(request, env, session);
@@ -13541,6 +13542,57 @@ async function palletLineHistory(url, env) {
   const moves = await d1All(env, `SELECT m.cases, m.to_location AS toLoc, COALESCE(NULLIF(l.initials, ''), m.by_user, '') AS by, COALESCE(l.timestamp, m.at) AS at, COALESCE(m.kind, '') AS kind,
       l.status, l.cancelled_at AS cancelledAt FROM pallet_move m LEFT JOIN inventory_log l ON l.id = m.out_log_id WHERE m.pallet_id = ? ORDER BY COALESCE(l.timestamp, m.at), m.id`, [id]);
   return cors(new Response(JSON.stringify({ ok: true, line, moves }), { headers: { 'Content-Type': 'application/json' } }));
+}
+// GET /inventory/containers/pallet-detail?title=&vendor=&pallet= — History → 🚢 click a pallet: everything about it.
+// Owner: "click each pallet: when, who, transferred what to where, how long it took them". Every box taken off
+// it (Container here moves, Stock Out / Transfer from it), oldest first, with the minutes since the box before;
+// who opened it; per person (boxes, moves, first → last, time); per part # (on the pallet → moved → left). Read only.
+async function palletDetail(url, env) {
+  await reorderFixTables(env);
+  const J = (o, st) => cors(new Response(JSON.stringify(o), { status: st || 200, headers: { 'Content-Type': 'application/json' } }));
+  const title = String(url.searchParams.get('title') || ''), pallet = String(url.searchParams.get('pallet') || '');
+  const vendor = String(vendorUnmask(url.searchParams.get('vendor') || '') || '');
+  if (!title || !pallet) return J({ ok: false, error: 'title and pallet required' }, 400);
+  const lines = await d1All(env, 'SELECT id, part, description, cases FROM reorder_pallet WHERE title = ? AND vendor = ? AND pallet = ? ORDER BY part', [title, vendor, pallet]);
+  if (!lines.length) return J({ ok: false, error: 'Pallet not found' }, 404);
+  const ids = lines.map(l => l.id);
+  const raw = await d1All(env, `SELECT m.id, m.pallet_id, m.cases, m.to_location AS toLoc, COALESCE(m.kind, '') AS kind, m.transfer_id AS transferId,
+      UPPER(TRIM(COALESCE(NULLIF(l.initials, ''), m.by_user, ''))) AS who, COALESCE(l.timestamp, m.at) AS at,
+      l.location AS fromLoc, l.status, l.cancelled_at AS cancelledAt
+    FROM pallet_move m LEFT JOIN inventory_log l ON l.id = m.out_log_id WHERE m.pallet_id IN (${ids.map(() => '?').join(',')})
+    ORDER BY COALESCE(l.timestamp, m.at), m.id`, ids);
+  const partOf = {}; lines.forEach(l => { partOf[l.id] = l.part; });
+  const vc = String(vendorCode(vendor) || '').toUpperCase();
+  const opens = ((await d1All(env, 'SELECT at, by_user, vendor FROM pallet_open WHERE title = ? AND pallet = ? ORDER BY at', [title, pallet]).catch(() => [])) || [])
+    .filter(o => String(o.vendor || '') === vendor || String(vendorCode(o.vendor) || '').toUpperCase() === vc)
+    .map(o => ({ at: o.at, by: String(o.by_user || '').toUpperCase() }));
+  const counts = m => String(m.status || '') !== 'Rejected' && !m.cancelledAt; // a rejected / cancelled move gave the boxes back
+  let prevAt = null;
+  const moves = raw.map(m => {
+    const ok = counts(m), gap = ok && prevAt && m.at ? Math.max(0, Math.round((Date.parse(m.at) - Date.parse(prevAt)) / 600) / 100) : null;
+    if (ok && m.at) prevAt = m.at;
+    return { at: m.at, who: m.who || '?', part: partOf[m.pallet_id] || '', cases: Math.round((parseFloat(m.cases) || 0) * 1000) / 1000,
+      to: m.toLoc || '', kind: m.kind || 'container', status: m.status || '', cancelled: !!m.cancelledAt, counted: ok, gapMin: gap };
+  });
+  const good = moves.filter(m => m.counted);
+  const boxes = lines.reduce((a, l) => a + (parseFloat(l.cases) || 0), 0), moved = good.reduce((a, m) => a + m.cases, 0);
+  let sum = 0, doneAt = null; for (const m of good) { sum += m.cases; if (!doneAt && boxes > 0 && sum >= boxes - 1e-9) doneAt = m.at; }
+  const first = good[0], last = good[good.length - 1];
+  const op = first ? [...opens].reverse().find(o => o.at <= first.at) || null : (opens[opens.length - 1] || null);
+  const startAt = (op && op.at) || (first && first.at) || null, endAt = doneAt || (last && last.at) || null;
+  const mins = (a, b) => a && b ? Math.max(0, Math.round((Date.parse(b) - Date.parse(a)) / 600) / 100) : null;
+  const people = {};
+  for (const m of good) {
+    const p = people[m.who] = people[m.who] || { who: m.who, moves: 0, cases: 0, first: m.at, last: m.at, parts: new Set(), to: new Set() };
+    p.moves++; p.cases += m.cases; p.last = m.at; p.parts.add(m.part); if (m.to) p.to.add(m.to);
+  }
+  const byPerson = Object.values(people).map(p => ({ who: p.who, moves: p.moves, cases: Math.round(p.cases * 1000) / 1000, first: p.first, last: p.last,
+    minutes: mins(p.first, p.last), parts: [...p.parts], to: [...p.to] })).sort((a, b) => b.cases - a.cases);
+  const byPart = lines.map(l => { const mv = good.filter(m => m.part === l.part).reduce((a, m) => a + m.cases, 0);
+    const c = parseFloat(l.cases) || 0; return { part: l.part, description: l.description || '', cases: c, moved: Math.round(mv * 1000) / 1000, left: Math.round((c - mv) * 1000) / 1000 }; });
+  return J({ ok: true, title, vendor, pallet, boxes, moved: Math.round(moved * 1000) / 1000, left: Math.round((boxes - moved) * 1000) / 1000,
+    finished: !!doneAt, openedAt: startAt, openedBy: op ? op.by : '', fromOpen: !!op, opens, closedAt: doneAt, lastMoveAt: last ? last.at : null,
+    minutes: mins(startAt, endAt), byPerson, byPart, moves });
 }
 async function palletOpenLog(request, env, session) {
   const b = await request.json().catch(() => ({}));

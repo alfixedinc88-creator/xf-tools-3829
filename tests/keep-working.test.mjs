@@ -539,6 +539,22 @@ console.log('\nHistory report: Total In / Total Out add up; Transfers show cases
   check('average per emptied pallet: 25 min (overall and for HS)', s2.container.avgMinutes === 25 && ((s2.byPerson || []).find(p => p.initials === 'HS') || {}).container.avgMinutes === 25, { all: s2.container.avgMinutes });
   check('transfers do not change the warehouse total, and the report still adds up', shelf() === all0 && Math.abs(s1.startingCases + s1.approved.casesIn - s1.approved.casesOut - s1.endingCases) < 1e-9,
     { shelf: shelf(), all0, s1: [s1.startingCases, s1.approved, s1.endingCases] });
+  // Owner (2026-10-08): "History → click each pallet: all the info — when, who, transferred what to where, how long it took".
+  const pd = await get('/inventory/containers/pallet-detail?title=' + encodeURIComponent('HIST CT') + '&vendor=KW&pallet=1');
+  const mvs = pd.moves || [];
+  check('🚢 click pallet 1: opened by TS, 2 moves by HS — HC-1=5 ×2 GARAGE → C1=7-1-1 at +10 min, HC-2=5 ×1 → C1=7-1-2 at +25 min (15 min after the box before); 25 min open → emptied',
+    pd.ok && pd.openedBy === 'TS' && pd.fromOpen && pd.finished && pd.minutes === 25 && pd.boxes === 3 && pd.moved === 3 && pd.left === 0 && mvs.length === 2
+      && mvs[0].who === 'HS' && mvs[0].part === 'HC-1=5' && mvs[0].cases === 2 && mvs[0].to === 'C1=7-1-1' && mvs[0].kind === 'container'
+      && mvs[1].part === 'HC-2=5' && mvs[1].to === 'C1=7-1-2' && mvs[1].gapMin === 15, pd);
+  const hp = (pd.byPerson || [])[0] || {}, bp = pd.byPart || [];
+  check('…per person (HS: 2 moves, 3 boxes, first → last 15 min) and per part # (on the pallet → moved → left: 2 → 2 → 0, 1 → 1 → 0) add up to the pallet (3 boxes)',
+    pd.byPerson.length === 1 && hp.who === 'HS' && hp.moves === 2 && hp.cases === 3 && hp.minutes === 15
+      && bp.length === 2 && bp.every(x => x.left === 0) && bp.reduce((a, x) => a + x.moved, 0) === pd.moved, { byPerson: pd.byPerson, byPart: bp });
+  const pdNo = await call('/inventory/containers/pallet-detail?title=HIST%20CT&vendor=KW&pallet=1');
+  check('…behind sign-in (no token → 401)', pdNo.status === 401, pdNo.status);
+  const { readFileSync: rfPd } = await import('node:fs');
+  const ivh = rfPd(fileURLToPath(new URL('../inventory.html', import.meta.url)), 'utf8');
+  check('…History: each pallet row opens its detail (histPalletDetail)', /window\.histPalletDetail = function/.test(ivh) && /onclick="histPalletDetail\(/.test(ivh), null);
   sq.exec("DELETE FROM master_list WHERE part_num IN ('HC-1=5','HC-2=5'); DELETE FROM reorder_pallet WHERE title='HIST CT'; DELETE FROM pallet_open WHERE title='HIST CT'");
 }
 

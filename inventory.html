@@ -1537,6 +1537,17 @@ window.invCredLogin = async function() {
     </div>
   </div>
 
+  <!-- 🚢 One pallet, everything about it — opened by clicking a pallet row in the report. -->
+  <div id="hist-pallet-modal" onclick="if(event.target===this) this.style.display='none'" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,.45);z-index:998;align-items:center;justify-content:center;padding:16px">
+    <div style="background:var(--bg2);border-radius:14px;padding:18px;width:100%;max-width:760px;max-height:85vh;overflow-y:auto;box-shadow:0 8px 32px rgba(0,0,0,.18)">
+      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px">
+        <div style="font-size:14px;font-weight:700;color:var(--text)" id="hist-pallet-title">🚢 Pallet</div>
+        <button onclick="document.getElementById('hist-pallet-modal').style.display='none'" style="background:none;border:none;color:var(--text3);font-size:22px;cursor:pointer;line-height:1">&times;</button>
+      </div>
+      <div id="hist-pallet-body" style="font-size:13px;color:var(--text2)"></div>
+    </div>
+  </div>
+
   <!-- Activity Report — totals + per-person breakdown, aggregated
        server-side over EVERY matching row (not capped at 500 like the
        list below), so counts are always accurate even on busy days. -->
@@ -7001,12 +7012,14 @@ window.invCredLogin = async function() {
     var thS = 'padding:6px 8px;text-align:left;font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.4px;color:var(--text3);white-space:nowrap;border-bottom:2px solid var(--border);background:var(--bg2)';
     var tdS = 'padding:6px 8px;border-bottom:1px solid var(--border);white-space:nowrap;font-size:12px';
     var html = '<details' + (list.length <= 8 ? ' open' : '') + '><summary style="cursor:pointer;font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.4px;color:var(--text3);margin-bottom:8px">🚢 Each pallet — how long, open → close (' + list.length + ')</summary>'
+      + '<div style="font-size:11px;color:var(--text3);margin:-4px 0 6px">Tap a pallet for everything about it.</div>'
       + '<div style="overflow-x:auto;border:1.5px solid var(--border);border-radius:10px"><table style="width:100%;border-collapse:collapse">'
       + '<thead><tr><th style="' + thS + '">Container</th><th style="' + thS + '">Pallet</th><th style="' + thS + ';text-align:right">Time</th><th style="' + thS + '">Who</th><th style="' + thS + ';text-align:right">Boxes</th>'
       + '<th style="' + thS + '">Opened</th><th style="' + thS + '">Closed</th></tr></thead><tbody>';
+    histPalletRows = list;
     list.forEach(function(p, i) {
       var bg = i % 2 === 0 ? 'var(--bg)' : 'var(--bg2)';
-      html += '<tr style="background:' + bg + '">'
+      html += '<tr style="background:' + bg + ';cursor:pointer" title="Tap for everything about this pallet: who, when, what went where, how long" onclick="histPalletDetail(' + i + ')">'
         + '<td style="' + tdS + '">' + invEsc(p.title) + '</td>'
         + '<td style="' + tdS + ';font-family:var(--mono);font-weight:700">' + invEsc(p.pallet) + '</td>'
         + '<td style="' + tdS + ';text-align:right;font-family:var(--mono);font-weight:800;color:' + (p.finished ? 'var(--purple)' : 'var(--orange)') + '" title="' + (p.finished ? 'Opened → last box moved' : 'Opened → latest box moved so far') + '">' + histMins(p.minutes) + (p.finished ? '' : ' so far') + '</td>'
@@ -7018,6 +7031,43 @@ window.invCredLogin = async function() {
     });
     el.innerHTML = html + '</tbody></table></div></details>';
   }
+
+  // 🚢 Owner: "click each pallet: when, who, transferred what to where, how long it took them".
+  var histPalletRows = [];
+  window.histPalletDetail = function(i) {
+    var p = histPalletRows[i]; if (!p) return;
+    var modal = g('hist-pallet-modal'), body = g('hist-pallet-body');
+    g('hist-pallet-title').textContent = '🚢 ' + (p.title || '') + ' · Pallet ' + (p.pallet || '');
+    body.innerHTML = '<div style="padding:14px;color:var(--text3)">Loading…</div>'; modal.style.display = 'flex';
+    var t = function(iso) { return iso ? new Date(iso).toLocaleString('en-US', { timeZone: 'America/New_York', month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit', hour12: true }) : '—'; };
+    var n = function(v) { return (Math.round((Number(v) || 0) * 1000) / 1000).toLocaleString('en-US'); };
+    var thS = 'padding:5px 7px;text-align:left;font-size:10px;font-weight:700;text-transform:uppercase;color:var(--text3);white-space:nowrap;border-bottom:2px solid var(--border)';
+    var tdS = 'padding:5px 7px;border-bottom:1px solid var(--border);white-space:nowrap;font-size:12px';
+    var table = function(head, rows) { return '<div style="overflow-x:auto;border:1.5px solid var(--border);border-radius:10px;margin-bottom:12px"><table style="width:100%;border-collapse:collapse"><thead><tr>' + head.map(function(h) { return '<th style="' + thS + (h.r ? ';text-align:right' : '') + '">' + h.t + '</th>'; }).join('') + '</tr></thead><tbody>' + rows + '</tbody></table></div>'; };
+    var kindLab = { container: '🚢 Container here', stockout: '📤 Stock Out', transfer: '🔀 Transfer' };
+    wFetch(W + '/inventory/containers/pallet-detail?title=' + encodeURIComponent(p.title || '') + '&vendor=' + encodeURIComponent(p.vendor || '') + '&pallet=' + encodeURIComponent(p.pallet || ''))
+      .then(function(r) { return r.json(); }).then(function(d) {
+        if (!d || !d.ok) { body.innerHTML = '<div style="color:var(--red)">⚠ ' + invEsc((d && d.error) || 'Could not load') + '</div>'; return; }
+        var h = '<div style="display:flex;flex-wrap:wrap;gap:8px;margin-bottom:12px">'
+          + [['Time', (d.minutes == null ? '—' : histMins(d.minutes)) + (d.finished ? '' : ' so far'), d.finished ? 'var(--purple)' : 'var(--orange)'],
+             ['Boxes moved', n(d.moved) + ' / ' + n(d.boxes) + (d.left > 0 ? ' (' + n(d.left) + ' left)' : ''), 'var(--text)'],
+             ['Opened', t(d.openedAt) + (d.fromOpen ? (d.openedBy ? ' by ' + invEsc(d.openedBy) : '') : ' (1st box, no open on record)'), 'var(--text)'],
+             ['Closed', d.finished ? t(d.closedAt) : 'not finished', d.finished ? 'var(--text)' : 'var(--orange)']].map(function(x) {
+            return '<div style="flex:1 1 150px;border:1.5px solid var(--border);border-radius:10px;padding:8px 10px"><div style="font-size:10px;font-weight:700;text-transform:uppercase;color:var(--text3)">' + x[0] + '</div><div style="font-size:13px;font-weight:800;color:' + x[2] + '">' + x[1] + '</div></div>';
+          }).join('') + '</div>';
+        h += '<div style="font-size:12px;font-weight:800;margin:4px 0 6px">👤 Who worked on it</div>' + table([{ t: 'Who' }, { t: 'Moves', r: 1 }, { t: 'Boxes', r: 1 }, { t: 'First → last' }, { t: 'Time', r: 1 }, { t: 'To' }],
+          (d.byPerson || []).map(function(x) { return '<tr><td style="' + tdS + ';font-family:var(--mono);font-weight:700">' + invEsc(x.who) + '</td><td style="' + tdS + ';text-align:right">' + x.moves + '</td><td style="' + tdS + ';text-align:right;font-weight:700">' + n(x.cases) + '</td><td style="' + tdS + '">' + t(x.first) + ' → ' + t(x.last) + '</td><td style="' + tdS + ';text-align:right">' + histMins(x.minutes) + '</td><td style="' + tdS + ';white-space:normal;font-family:var(--mono)">' + invEsc((x.to || []).join(', ')) + '</td></tr>'; }).join('') || '<tr><td style="' + tdS + '" colspan="6">No boxes moved yet</td></tr>');
+        h += '<div style="font-size:12px;font-weight:800;margin:4px 0 6px">📦 What was on it</div>' + table([{ t: 'Part #' }, { t: 'Item' }, { t: 'On pallet', r: 1 }, { t: 'Moved', r: 1 }, { t: 'Left', r: 1 }],
+          (d.byPart || []).map(function(x) { return '<tr><td style="' + tdS + ';font-family:var(--mono);font-weight:700">' + invEsc(x.part) + '</td><td style="' + tdS + ';white-space:normal">' + invEsc(x.description) + '</td><td style="' + tdS + ';text-align:right">' + n(x.cases) + '</td><td style="' + tdS + ';text-align:right">' + n(x.moved) + '</td><td style="' + tdS + ';text-align:right;font-weight:700;color:' + (x.left > 0 ? 'var(--orange)' : 'var(--green)') + '">' + n(x.left) + '</td></tr>'; }).join(''));
+        h += '<div style="font-size:12px;font-weight:800;margin:4px 0 6px">🕘 Every move, oldest first</div>' + table([{ t: 'When' }, { t: 'Who' }, { t: 'Part #' }, { t: 'Boxes', r: 1 }, { t: 'To' }, { t: 'How' }, { t: 'After the one before', r: 1 }],
+          (d.moves || []).map(function(m) {
+            var off = !m.counted;
+            return '<tr style="' + (off ? 'opacity:.55;text-decoration:line-through' : '') + '"><td style="' + tdS + '">' + t(m.at) + '</td><td style="' + tdS + ';font-family:var(--mono);font-weight:700">' + invEsc(m.who) + '</td><td style="' + tdS + ';font-family:var(--mono)">' + invEsc(m.part) + '</td><td style="' + tdS + ';text-align:right;font-weight:700">' + n(m.cases) + '</td><td style="' + tdS + ';font-family:var(--mono)">' + invEsc(m.to) + '</td><td style="' + tdS + '">' + (kindLab[m.kind] || invEsc(m.kind)) + (off ? ' <span style="color:var(--red);text-decoration:none">(' + (m.cancelled ? 'cancelled' : 'rejected') + ' — boxes back)</span>' : '') + '</td><td style="' + tdS + ';text-align:right">' + (m.gapMin == null ? '—' : histMins(m.gapMin)) + '</td></tr>';
+          }).join('') || '<tr><td style="' + tdS + '" colspan="7">No boxes moved yet</td></tr>');
+        if ((d.opens || []).length > 1) h += '<div style="font-size:11px;color:var(--text3)">Opened ' + d.opens.length + ' times: ' + d.opens.map(function(o) { return t(o.at) + (o.by ? ' (' + invEsc(o.by) + ')' : ''); }).join(', ') + '</div>';
+        body.innerHTML = h;
+      }).catch(function(e) { body.innerHTML = '<div style="color:var(--red)">⚠ ' + invEsc(e.message || 'Could not load') + '</div>'; });
+  };
 
   // 💲 Inventory value (Owner only): Started + changes = Ended, and the big ones with why.
   function histMoney(v) { var n = Number(v) || 0; return (n < 0 ? '−$' : '$') + Math.abs(n).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 }); }
