@@ -18574,6 +18574,60 @@ async function shipAckPrintDupe(request, env) {
   }));
 }
 
+// ── 🤖 Auto print (owner, 2026-10-08) ────────────────────────────────────
+// Labels the 🖨 Printer station printed by itself (label_print_batch source
+// 'printer station'), by tracking # → { id, printedAt (latest), order, … }.
+async function shipAutoPrinted(env, sinceIso) {
+  await labelBatchEnsure(env);
+  const batches = await d1All(env, "SELECT ts, label_ids FROM label_print_batch WHERE source = 'printer station' AND ts >= ? ORDER BY ts", [sinceIso]);
+  const at = new Map();
+  batches.forEach(b => { let ids = []; try { ids = JSON.parse(b.label_ids || '[]') || []; } catch (_) {} ids.forEach(id => { id = parseInt(id); if (id > 0) at.set(id, b.ts); }); });
+  const out = new Map(), ids = [...at.keys()];
+  for (let i = 0; i < ids.length; i += 90) {
+    const part = ids.slice(i, i + 90);
+    (await d1All(env, `SELECT id, order_number, channel, tracking, carrier, service FROM label_print_queue WHERE id IN (${part.map(() => '?').join(',')})`, part)).forEach(r => {
+      const t = normalizeShipTracking(String(r.tracking || '')); if (!t) return;
+      const prev = out.get(t), ts = at.get(r.id);
+      if (!prev || ts > prev.printedAt) out.set(t, { id: r.id, printedAt: ts, order: r.order_number || '', channel: r.channel || '', carrier: r.carrier || '', service: r.service || '', tracking: t });
+    });
+  }
+  return out;
+}
+// GET /ship/auto-print-report?days=N — every label the printer station printed by itself, and whether the
+// Print Log scanner read it, and when it was scanned at Picking and Packing (a label the Print Log missed
+// may still have gone out — it shows up here so it can be checked).
+async function shipAutoPrintReport(url, env) {
+  await ensureShipD1Tables(env); await labelWatchEnsure(env);
+  const days = Math.min(31, Math.max(1, parseInt(url.searchParams.get('days')) || 1));
+  const since = nyDaysStartUTC(days), now = Date.now();
+  const ap = await shipAutoPrinted(env, since);
+  const tracks = [...ap.keys()];
+  const first = async (table) => {
+    const m = new Map();
+    for (let i = 0; i < tracks.length; i += 90) {
+      const part = tracks.slice(i, i + 90);
+      (await d1All(env, `SELECT UPPER(tracking) t, timestamp ts, ${table === 'ship_print_log' ? "'' AS who" : 'initials AS who'} FROM ${table} WHERE UPPER(tracking) IN (${part.map(() => '?').join(',')}) AND timestamp >= ? ORDER BY timestamp`,
+        [...part, new Date(Date.parse(since) - 864e5).toISOString()])).forEach(r => { const k = normalizeShipTracking(r.t); (m.get(k) || m.set(k, []).get(k)).push(r); });
+    }
+    return m;
+  };
+  const pl = await first('ship_print_log'), pk = await first('ship_pick_log'), sc = await first('ship_scan_log');
+  const ids = [...ap.values()].map(a => a.id);
+  const checked = new Map((ids.length ? await d1All(env, 'SELECT label_id, by_user, at, note FROM label_watch_checked WHERE label_id IN (SELECT value FROM json_each(?))', [JSON.stringify(ids)]) : []).map(c => [c.label_id, c]));
+  const rows = [...ap.values()].map(a => {
+    const p0 = Date.parse(a.printedAt) - 5 * 60000;
+    const after = l => (l || []).find(x => Date.parse(x.ts) >= p0) || null;
+    const read = after(pl.get(a.tracking)), pick = after(pk.get(a.tracking)), pack = after(sc.get(a.tracking));
+    const state = read ? 'read' : now < Date.parse(a.printedAt) + 3 * 60000 ? 'waiting' : (pick || pack) ? 'later' : 'missing';
+    const c = checked.get(a.id);
+    return { ...a, state, printLogAt: read ? read.ts : null, pickAt: pick ? pick.ts : null, pickBy: pick ? pick.who : '', packAt: pack ? pack.ts : null, packBy: pack ? pack.who : '',
+      checkedBy: c ? c.by_user : null, checkedAt: c ? c.at : null, checkedNote: c ? c.note : null };
+  }).sort((x, y) => (x.printedAt < y.printedAt ? 1 : -1));
+  const count = k => rows.filter(r => r.state === k).length;
+  return cors(new Response(JSON.stringify({ ok: true, days, since, rows, counts: { total: rows.length, read: count('read'), later: count('later'), missing: count('missing'), waiting: count('waiting') } }),
+    { headers: { 'Content-Type': 'application/json' } }));
+}
+
 // ── GET /ship/print-log?date=YYYY-MM-DD ──────────────────────────────────────
 async function shipGetPrintLog(url, env) {
   try {
@@ -18583,6 +18637,9 @@ async function shipGetPrintLog(url, env) {
       `SELECT * FROM ship_print_log WHERE date = ? ORDER BY id ASC`
     ).bind(date).all();
     const scans = (result.results || []).map(r => ({ date: r.date||'', timestamp: r.timestamp||'', tracking: r.tracking||'', carrier: r.carrier||'', source: r.source||'auto', operatorName: r.operator_name||'' }));
+    // 🤖 Owner (2026-10-08): "show it was from AUTO PRINT" — a label the 🖨 Printer station printed by itself.
+    const ap = await shipAutoPrinted(env, new Date(Date.parse(date + 'T00:00:00Z') - 3 * 864e5).toISOString()).catch(() => new Map());
+    scans.forEach(sc => { const a = ap.get(normalizeShipTracking(sc.tracking)); if (a) { sc.autoPrint = true; sc.autoPrintedAt = a.printedAt; sc.order = a.order; } });
     const cur = await _shipCurrentPrintOperator(env);
     return cors(new Response(JSON.stringify({ ok: true, scans, count: scans.length, date, operatorName: cur.name, operatorUpdatedAt: cur.updatedAt }), { headers: { 'Content-Type': 'application/json' } }));
   } catch(e) {
@@ -18998,6 +19055,7 @@ async function handleShipRoute(url, method, request, env, session, ctx) {
     if (path === '/ship/status-upload'&& method === 'POST') return await shipStatusUpload(request, env);
     if (path === '/ship/print-log'    && method === 'POST') return await shipPrintLog(request, env);
     if (path === '/ship/print-log'    && method === 'GET')  return await shipGetPrintLog(url, env);
+    if (path === '/ship/auto-print-report' && method === 'GET') return await shipAutoPrintReport(url, env);
     if (path === '/ship/print-log/double-print'     && method === 'GET')  return await shipGetPrintDupes(url, env);
     if (path === '/ship/print-log/double-print-ack' && method === 'POST') return await shipAckPrintDupe(request, env);
     if (path === '/ship/print-station' && method === 'GET')  return await shipGetPrintStation(env);
