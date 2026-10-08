@@ -28093,6 +28093,7 @@ async function handleAutolabelRoute(path, method, url, request, env, session) {
   }
   if (path === '/veeqo/autolabel/scanform-tick' && method === 'POST') {
     const b = await request.json().catch(() => ({}));
+    if (b.station) await autolabelSetKey(env, 'scanform_station_seen', new Date().toISOString()); // 📄 the Scan Form Station (ink printer) is open
     const when = env.TEST_CLOCK && b.at ? new Date(b.at) : undefined; // a set clock only in the keep-working tests
     return veeqoResp({ ok: true, ...(await autolabelScanFormTick(env, when)) });
   }
@@ -28107,7 +28108,7 @@ async function handleAutolabelRoute(path, method, url, request, env, session) {
     const cfg = await autolabelLoadConfig(env);
     const clock = await scanFormClockEnsure(env);
     return veeqoResp({ ok: true, forms: rows, clockNext: clock && clock.next, nextForm: (() => { const at = autolabelNextScanFormAt(cfg, new Date()); return at ? new Date(at).toISOString() : null; })(), missing: await autolabelScanFormMissing(env), verified: (await autolabelGetKey(env, AUTOLABEL_SCANFORM_VERIFIED_KEY)) === 'yes',
-      times: cfg.scanFormTimes, checkAt: cfg.scanFormCheckAt, on: cfg.scanFormOn });
+      times: cfg.scanFormTimes, checkAt: cfg.scanFormCheckAt, on: cfg.scanFormOn, stationSeenAt: await autolabelGetKey(env, 'scanform_station_seen') });
   }
   if (path === '/veeqo/autolabel/scanform-file' && method === 'GET') {
     const row = await d1First(env, 'SELECT * FROM scan_form_log WHERE id = ? AND ok = 1', [parseInt(url.searchParams.get('id')) || 0]);
@@ -28139,6 +28140,17 @@ async function handleAutolabelRoute(path, method, url, request, env, session) {
     let j = null; try { j = row && row.source ? JSON.parse(row.source) : null; } catch (_) {}
     if (!j) return veeqoResp({ ok: false, error: 'No answer kept for this scan form' }, 404);
     return veeqoResp({ ok: true, id: row.id, parts: autolabelScanFormParts(j).map(p => p.url ? 'link ' + p.url.replace(/([?&](X-Amz-[^=]+|signature|token)=)[^&]+/gi, '$1…') : (p.type || 'file') + ' (' + p.b64.length + ' characters)'), answer: autolabelShorten(j) });
+  }
+  // 📄 Owner (2026-10-08): "Leaving for USPS — print the scan form on our INK printer, not the label printer". The forms are
+  // handed to the Scan Form Station (ink printer window): marked not printed, it prints them within a minute. Who asked is logged.
+  if (path === '/veeqo/autolabel/scanform-send' && method === 'POST') {
+    const b = await request.json().catch(() => ({}));
+    const ids = (Array.isArray(b.ids) ? b.ids : []).map(x => parseInt(x)).filter(x => x > 0).slice(0, 20);
+    if (!ids.length) return veeqoResp({ ok: false, error: 'ids required' }, 400);
+    const by = String((session && (session.displayName || session.username)) || b.by || '').slice(0, 40);
+    for (const id of ids) await d1Run(env, 'UPDATE scan_form_log SET printed_at = NULL WHERE id = ? AND ok = 1', [id]);
+    await autolabelLog(env, { action: 'scanform_sent', customer: by, reason: `📄 Scan form${ids.length > 1 ? 's' : ''} #${ids.join(', #')} sent to the Scan Form Station (ink printer)${by ? ' by ' + by : ''}` }).catch(() => {});
+    return veeqoResp({ ok: true, sent: ids.length, stationSeenAt: await autolabelGetKey(env, 'scanform_station_seen') });
   }
   if (path === '/veeqo/autolabel/scanform-printed' && method === 'POST') {
     const b = await request.json().catch(() => ({}));
