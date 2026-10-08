@@ -1830,9 +1830,10 @@ body {
 
       <!-- 🗓 Owner (2026-10-08): "put the auto print schedule somewhere in auto print, so later I can check and remember,
            and set it to a different time if I want". The same rules as 📐 Rules below, in plain words, by day. -->
-      <div class="ps-card" id="ps-al-sched-card" style="margin-bottom:16px">
-        <div style="display:flex;justify-content:space-between;align-items:center;gap:8px;flex-wrap:wrap;margin-bottom:6px">
-          <div style="font-size:13px;font-weight:700;color:var(--text)">🗓 Auto print schedule <span style="font-weight:400;color:var(--text3)">(New York time)</span></div>
+      <!-- Owner (2026-10-08): "minimize it — when I want I can open it up and check myself" → folded, tap the title. -->
+      <details class="ps-card" id="ps-al-sched-card" style="margin-bottom:16px">
+        <summary style="cursor:pointer;font-size:13px;font-weight:700;color:var(--text)">🗓 Auto print schedule <span style="font-weight:400;color:var(--text3)">(New York time) — tap to open</span></summary>
+        <div style="display:flex;justify-content:flex-end;margin:8px 0 6px">
           <button class="ps-btn-sm" id="ps-al-sched-edit-btn" onclick="psAlSchedEdit()">✏️ Change times</button>
         </div>
         <div id="ps-al-sched" style="font-size:13px;line-height:1.55"></div>
@@ -1851,7 +1852,7 @@ body {
             <span id="ps-al-sched-msg" style="font-size:12px;align-self:center"></span>
           </div>
         </div>
-      </div>
+      </details>
 
       <!-- Rules -->
       <div class="ps-card" style="margin-bottom:16px">

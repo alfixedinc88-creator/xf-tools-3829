@@ -4432,6 +4432,8 @@ console.log('\n🗓 Auto Label: auto print schedule in plain words by day, ✏�
   check('…✏️ Change times: the 5 times (normal wait, no-wait times + minutes, stops, scan forms), live preview, 💾 Save writes the same rules',
     /id="ps-al-sched-card"/.test(ph) && /data-sk="pauseTimes"/.test(ph) && /data-sk="scanFormTimes"/.test(ph) && /data-sk="noWaitTimes"/.test(ph) && /oninput="psAlSchedPreview\(\)"/.test(ph)
     && /#ps-al-rules \[data-k="' \+ k \+ '"\]/.test(ph) && /await psAlSaveConfig\(\);/.test(ph), null);
+  // Owner (2026-10-08): "minimize it — when I want I can open it up and check myself".
+  check('…the schedule card starts folded (tap the title to open it)', /<details class="ps-card" id="ps-al-sched-card"[^>]*>\s*<summary[^>]*>🗓 Auto print schedule/.test(ph) && !/id="ps-al-sched-card"[^>]* open/.test(ph), null);
 }
 
 // Owner (2026-10-08): "Print watch — a label the printer station scanner didn't pick up but that WAS scanned at Picking or
