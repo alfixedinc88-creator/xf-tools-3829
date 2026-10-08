@@ -4362,5 +4362,36 @@ console.log('\n📦 Amazon tracking: a merged order still Unshipped on Amazon ge
   globalThis.fetch = realFetch; delete env.AMAZON_REFRESH_TOKEN; delete env.AMAZON_CLIENT_ID; delete env.AMAZON_CLIENT_SECRET;
 }
 
+// Owner (2026-10-08): "take off Lookup (Order Lookup has everything); Order Lookup: don't hide the activity history,
+// show everything; and can we see how the tracking # is doing on USPS / UPS — where is it, delivered, when, what it last showed".
+console.log('\n🚚 Order Lookup: carrier tracking (delivered / in transit / last scan), Activity History open, 🔍 Lookup taken off');
+{
+  const realFetch = globalThis.fetch;
+  const TD = '9400100000000000000777', TT = '1Z999AA10123456784', TN = '9400100000000000000888';
+  const ord = (t, sid) => ({ id: 1, number: 'X', allocations: [{ id: 2, shipment: { id: sid, tracking_number: { tracking_number: t } } }] });
+  globalThis.fetch = async (u, o) => { u = String(u); const J = x => new Response(JSON.stringify(x), { headers: { 'Content-Type': 'application/json' } });
+    let mm;
+    if (u.includes('api.veeqo.com/orders?')) { const q = decodeURIComponent((u.match(/query=([^&]+)/) || [])[1] || ''); return J(q === TD ? [ord(TD, 501)] : q === TT ? [ord(TT, 502)] : q === TN ? [ord(TN, 503)] : []); }
+    if ((mm = u.match(/shipping\/tracking_events\/(\d+)/))) {
+      if (mm[1] === '501') return J([{ timestamp: '2026-10-07T14:00:00Z', description: 'Out for Delivery', location: { city: 'AUSTIN', state: 'TX' } },
+        { timestamp: '2026-10-07T19:31:00Z', status: 'delivered', description: 'Delivered, In/At Mailbox', location: { city: 'AUSTIN', state: 'TX', zip: '78701' } }]);
+      if (mm[1] === '502') return J([{ timestamp: '2026-10-08T03:00:00Z', description: 'Departed from Facility', location: 'Louisville, KY' }]);
+      return J([]);
+    }
+    return realFetch(u, o); };
+  env.VEEQO_API_KEY = 'k';
+  const d = await get('/ship/carrier-tracking?tracking=' + TD), t = await get('/ship/carrier-tracking?tracking=' + TT), n = await get('/ship/carrier-tracking?tracking=' + TN);
+  check('USPS delivered → "delivered", when (Oct 7 7:31 PM UTC) and where (AUSTIN, TX, 78701), the last scan, link to the USPS site',
+    d.ok && d.state === 'delivered' && d.deliveredAt === '2026-10-07T19:31:00Z' && d.deliveredWhere === 'AUSTIN, TX, 78701' && /Delivered/.test(d.last.text) && /tools\.usps\.com/.test(d.link) && d.events.length === 2, d);
+  check('…UPS in transit → "in_transit", last: Departed from Facility · Louisville, KY, link to the UPS site; no carrier scan yet → "no_scan"',
+    t.ok && t.state === 'in_transit' && t.last.text === 'Departed from Facility' && t.last.where === 'Louisville, KY' && /ups\.com/.test(t.link) && n.ok && n.state === 'no_scan', [t, n]);
+  globalThis.fetch = realFetch; delete env.VEEQO_API_KEY;
+  const { readFileSync: rf15 } = await import('node:fs');
+  const ph = rf15(fileURLToPath(new URL('../packship.html', import.meta.url)), 'utf8');
+  check('Order Lookup cards: 🚚 Carrier tracking and 📜 Activity History open and loaded by themselves (3 at a time); 🔍 Lookup tab hidden, its link goes to Order Lookup',
+    /class="ps-ct-auto"/.test(ph) && /class="ps-hist-auto" data-tracking="' \+ o\.tracking \+ '" style="display:block;/.test(ph) && /setTimeout\(_psAutoLoadCards, 0\)/.test(ph)
+    && /id="ps-tab-lookup"      onclick="psSwitchTab\('lookup'\)" style="display:none"/.test(ph) && /if \(name === 'lookup'\) name = 'orderlookup';/.test(ph), null);
+}
+
 console.log('\n' + (failed ? '❌ ' + failed + ' check(s) FAILED' : '✅ all ' + passed + ' checks passed') + '\n');
 process.exit(failed ? 1 : 0);
