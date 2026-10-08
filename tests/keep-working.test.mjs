@@ -2053,7 +2053,12 @@ console.log('\nAuto Label → 🧩 same name + address: ≤ 20 lb together → o
     // Light pair where Veeqo won't mark the 2nd shipped (Cy Do)
     mk(1005, 'F-1', older, to('Cy', 'Do', '5 Elm St'), [it(6, '60-1-1=1', 1, 200, '60-1-1')], 9005),
     mk(1006, 'F-2', old, to('Cy', 'Do', '5 Elm St'), [it(7, '60-1-2=1', 1, 200, '60-1-2')], 9006),
+    // Light pair for the auto run (Ann Lee): merged on one run, bought on a run 5+ min later
+    mk(1007, 'A-1', older, to('Ann', 'Lee', '3 Pine St'), [it(8, '61-1-1=1', 1, 300, '61-1-1')], 9007),
+    mk(1008, 'A-2', old, to('Ann', 'Lee', '3 Pine St'), [it(9, '61-1-2=1', 2, 300, '61-1-2')], 9008),
   ];
+  // Owner (2026-10-08): "under 20 lb merge it first — don't merge and buy at the same time": a merge is bought on a later step.
+  const ageMerge = lead => sq.prepare("UPDATE autolabel_merge SET created_at = ? WHERE lead_number = ? AND status IN ('merged','merging')").run(new Date(Date.now() - 10 * 60000).toISOString(), lead);
   const allocOf = id => orders.flatMap(o => o.allocations).find(a => String(a.id) === String(id));
   const bought = [], marks = [];
   globalThis.fetch = async (u, o) => { u = String(u); const m = (o && o.method) || 'GET'; const J = (x, st) => new Response(JSON.stringify(x), { status: st || 200, headers: { 'Content-Type': 'application/json' } });
@@ -2083,10 +2088,17 @@ console.log('\nAuto Label → 🧩 same name + address: ≤ 20 lb together → o
     && /One box, one label: M-1 \+ M-2/.test(R('M-1').reason) && bought.length === 0, [R('M-1'), R('M-2')]);
   check('…over 20 lb together → 🔗 Merge by hand, put aside for the owner (never bought)', R('H-1').decision === 'merge' && R('H-2').decision === 'merge'
     && /over 20 lb: put aside for you to merge \/ split by hand/.test(R('H-1').reason), [R('H-1').reason, R('H-1').mergeLb]);
+  const r0m = await post('/veeqo/autolabel/merge-buy', { orders: ['M-1', 'M-2'] });
+  check('🧩 Merge (step 1) → only the merge: box weight in Veeqo set to everything together (6.18 lb = 98.88 oz) on the oldest order, NO label bought yet',
+    r0m.ok && r0m.merged && allocOf(9001).allocation_package.weight === 98.88 && bought.length === 0 && sq.prepare("SELECT status FROM autolabel_merge WHERE lead_number = 'M-1'").get()?.status === 'merged'
+    && /M-1:merge_started/.test(sq.prepare("SELECT order_number || ':' || action AS a FROM autolabel_log WHERE action = 'merge_started'").all().map(x => x.a).join(',')), { r0m, bought });
+  const r0w = await post('/veeqo/autolabel/merge-buy', { orders: ['M-1', 'M-2'] });
+  check('…tapping again right away buys nothing: "Veeqo needs 5 min before the label is bought"', r0w.ok === false && r0w.waiting && /needs 5 min/.test(r0w.error) && bought.length === 0, r0w);
+  ageMerge('M-1');
   const r1 = await post('/veeqo/autolabel/merge-buy', { orders: ['M-1', 'M-2'] });
   const lq = sq.prepare("SELECT order_number, tracking, items FROM label_print_queue WHERE tracking = 'MRG9001'").get();
   const li = JSON.parse(lq?.items || '[]'), qty = sku => (li.find(x => x.sku === sku) || {}).qty || 0;
-  check('🧩 Merge & buy → box weight in Veeqo set to everything together (6.18 lb = 98.88 oz), ONE label bought on the oldest order',
+  check('🧩 …5 min after the merge (step 2) → ONE label bought on the oldest order, for the merged box weight (6.18 lb = 98.88 oz)',
     r1.ok && r1.allMarked && bought.length === 1 && bought[0].alloc === 9001 && bought[0].w === 98.88 && r1.tracking === 'MRG9001', { r1, bought });
   check('…the other order is marked shipped in Veeqo with the SAME tracking #', String(allocOf(9002).shipment?.tracking_number?.tracking_number) === 'MRG9001', allocOf(9002).shipment);
   // Inventory check: M-1 (2 + 1 = 3) + M-2 (3 + 1 = 4) = 7 in the box; 30-3-4=10: 2 + 3 = 5, nothing twice, nothing dropped.
@@ -2102,6 +2114,7 @@ console.log('\nAuto Label → 🧩 same name + address: ≤ 20 lb together → o
   check('…never bought twice (merging the same orders again is refused)', r2.ok === false && bought.length === 1, r2);
   const r3 = await post('/veeqo/autolabel/merge-buy', { orders: ['H-1', 'H-2'] });
   check('…over 20 lb can\'t be merged by the button either (put aside, merge / split by hand)', r3.ok === false && /over 20 lb/.test(r3.error) && bought.length === 1, r3);
+  await post('/veeqo/autolabel/merge-buy', { orders: ['F-1', 'F-2'] }); ageMerge('F-1');
   const r4 = await post('/veeqo/autolabel/merge-buy', { orders: ['F-1', 'F-2'] });
   check('…Veeqo won\'t mark the other order shipped → said plainly (mark it by hand with the tracking #), kept on record', r4.ok && r4.allMarked === false && /did not mark F-2 shipped/.test(r4.error)
     && sq.prepare("SELECT status FROM autolabel_merge WHERE tracking = 'MRG9005'").get()?.status === 'mark_failed', r4);
@@ -2110,6 +2123,25 @@ console.log('\nAuto Label → 🧩 same name + address: ≤ 20 lb together → o
   const run2 = await post('/veeqo/autolabel/run', {});
   const F2 = run2.orders.find(x => x.number === 'F-2') || {};
   check('…the next run shows it as ⚠️ mark shipped in Veeqo with that tracking (tries Veeqo again, never buys)', F2.decision === 'merge_fix' && /mark it shipped by hand in Veeqo with tracking MRG9005/.test(F2.reason) && bought.length === 2, F2);
+  const hadBuyKey = sq.prepare("SELECT value FROM app_config WHERE key = 'autolabel_buy_verified'").get();
+  sq.prepare("INSERT OR REPLACE INTO app_config (key, value) VALUES ('autolabel_buy_verified', 'yes')").run();
+  const cfg0 = await get('/veeqo/autolabel/config');
+  await post('/veeqo/autolabel/config', { config: { mode: 'auto', pauseTimes: '' } });
+  const a1 = await post('/veeqo/autolabel/run', {});
+  const A = (r, n) => (r.orders || []).find(x => x.number === n) || {};
+  check('auto run (merging switched on): under 20 lb → merged on this run only (🧩 Merged — label in a few min), nothing bought',
+    A(a1, 'A-1').decision === 'merge_wait' && A(a1, 'A-2').decision === 'merge_wait' && !bought.some(b => b.alloc === 9007) && allocOf(9007).allocation_package.weight === 31.68
+    && /label is bought|label in 5 min/.test(A(a1, 'A-1').reason), [A(a1, 'A-1'), A(a1, 'A-2')]);
+  const a2 = await post('/veeqo/autolabel/run', {});
+  check('…a run before the 5 min are up still buys nothing ("the label is bought in N min")', A(a2, 'A-1').decision === 'merge_wait' && /in \d+ min/.test(A(a2, 'A-1').reason) && !bought.some(b => b.alloc === 9007), A(a2, 'A-1'));
+  ageMerge('A-1');
+  const a3 = await post('/veeqo/autolabel/run', {});
+  check('…the run after 5 min buys ONE label on A-1 and marks A-2 shipped with the same tracking',
+    A(a3, 'A-1').decision === 'bought' && A(a3, 'A-2').decision === 'merged' && bought.filter(b => b.alloc === 9007).length === 1 && !bought.some(b => b.alloc === 9008)
+    && String(allocOf(9008).shipment?.tracking_number?.tracking_number) === 'MRG9007', [A(a3, 'A-1'), A(a3, 'A-2')]);
+  if (!hadBuyKey) sq.prepare("DELETE FROM app_config WHERE key = 'autolabel_buy_verified'").run();
+  await post('/veeqo/autolabel/config', { config: { pauseTimes: ((cfg0 && cfg0.config) || {}).pauseTimes } });
+  await post('/veeqo/autolabel/config', { config: { mode: 'preview' } });
   const { readFileSync } = await import('node:fs');
   const ws = readFileSync(workerPath, 'utf8'), ph = readFileSync(fileURLToPath(new URL('../packship.html', import.meta.url)), 'utf8');
   check('…a scan of a merged label looks up every order\'s items (not just the first order)', /const mergedBox = await autolabelMergedBox\(env, clean\);/.test(ws) && /'\/veeqo\/autolabel\/buy-one', '\/veeqo\/autolabel\/merge-buy'/.test(ws), null);
@@ -3711,7 +3743,7 @@ console.log('\n🧩 Merge & buy: give Veeqo time to show the new box weight; wha
   check('📦 box weight into Veeqo: a "200 OK" that leaves the box at 4 oz does NOT count; the next shape (JSON:API data/attributes) is tried until the read-back shows 1.98 lb (31.68 oz) — and that shape is tried FIRST next time',
     r1.ok && Math.abs(box.weight - 31.68) < 0.01 && n1 === 5 && r1.said.filter(x => /read back: 0\.25 lb/.test(x)).length === 4 && r2.ok && calls.length === 1 && /^PUT \/allocations\/1617999220\/allocation_package data$/.test(calls[0]), { n1, calls, said: r1.said });
   check('…merge, confirmed boxes (rates for the real box) and split boxes all use the proven save (a bare 200 used to count as saved for confirmed boxes and splits)',
-    (ws.match(/await veeqoSavePackage\(env, /g) || []).length === 3 && /veeqoSavePackage\(env, lead, want, \[3000, 6000, 10000\]\)/.test(ws) && !/if \(r\.ok\) \{ ok = true; break; \}/.test(ws), null);
+    (ws.match(/await veeqoSavePackage\(env, /g) || []).length === 3 && /veeqoSavePackage\(env, lead, want, resume \? \[3000, 6000, 10000\] : \[3000\]\)/.test(ws) && !/if \(r\.ok\) \{ ok = true; break; \}/.test(ws), null);
   check('…a failed merge returns what Veeqo said at each step, and the red message\'s 📋 Copy includes it (it used to copy only the message)',
     /return \{ ok: false, error, detail: String\(detail \|\| ''\)\.slice\(0, 2000\) \};/.test(ws) && /\(d\.detail \? '\\nVeeqo said: ' \+ d\.detail : ''\)/.test(ph), null);
 }
@@ -4067,6 +4099,25 @@ console.log('\n🛑 Print watch: labels printed but not read by the Print Log sc
     && /id="ps-al-watch-card"/.test(ph) && /onclick="psAlWatchRelease\(\)">✅ Printer fixed — print again/.test(ph), null);
   sq.prepare('DELETE FROM label_print_queue').run(); sq.prepare('DELETE FROM label_print_batch').run(); sq.prepare('DELETE FROM ship_print_log').run();
   sq.prepare("DELETE FROM app_config WHERE key IN ('label_print_watch','label_print_hold','label_print_watch_start')").run();
+}
+
+// Owner (2026-10-08): "Close batch → 🚚 Leaving for USPS is supposed to pop up the scan form to print — nothing popped up today".
+console.log('\n🚚 Leaving for USPS: the scan form always comes up');
+{
+  const today = new Date().toLocaleDateString('en-CA', { timeZone: 'America/New_York' });
+  // A form whose kept Veeqo answer was cut at 1.5 MB (PDFs inside) → unreadable → it counted 0 forms; its 2 PDFs ARE saved.
+  const ins = sq.prepare("INSERT INTO scan_form_log (day, slot, kind, created_at, by_user, ok, carrier, shipments, source, detail) VALUES (?,?,?,?,?,?,?,?,?,?)")
+    .run(today, '', 'scheduled', new Date().toISOString(), 'auto', 1, 'USPS', 40, '{"id":9,"manifests":[{"pdf":"JVBERi0xLjQK', '');
+  sq.exec('CREATE TABLE IF NOT EXISTS scan_form_file (log_id INTEGER NOT NULL, n INTEGER NOT NULL, type TEXT, data TEXT, saved_at TEXT, PRIMARY KEY (log_id, n))');
+  sq.prepare("INSERT INTO scan_form_file (log_id, n, type, data, saved_at) VALUES (?,1,'application/pdf','JVBERi0x',?), (?,2,'application/pdf','JVBERi0y',?)").run(ins.lastInsertRowid, today, ins.lastInsertRowid, today);
+  const d = await get('/veeqo/autolabel/scanforms');
+  const f = (d.forms || []).find(x => x.id === Number(ins.lastInsertRowid)) || {};
+  check('a form whose kept Veeqo answer was cut short still counts its 2 saved PDFs (parts 2, not 0 → it is offered to print)', f.parts === 2 && f.saved === 2, [f.parts, f.saved]);
+  const { readFileSync: rf15 } = await import('node:fs');
+  const ph = rf15(fileURLToPath(new URL('../packship.html', import.meta.url)), 'utf8');
+  check('…a failed Veeqo sync at batch close no longer stops the scan form step; "no form today" / "couldn\'t load" is an alert, not a small toast',
+    /if \(psCredToken\) \{ try \{ await psAutoVeeqoSync\(\); \} catch \(e\)/.test(ph) && /alert\('📄 No USPS scan form for today was found/.test(ph) && /alert\('📄 Could not load today\\'s USPS scan forms/.test(ph), null);
+  sq.prepare('DELETE FROM scan_form_file WHERE log_id = ?').run(ins.lastInsertRowid); sq.prepare('DELETE FROM scan_form_log WHERE id = ?').run(ins.lastInsertRowid);
 }
 
 console.log('\n' + (failed ? '❌ ' + failed + ' check(s) FAILED' : '✅ all ' + passed + ' checks passed') + '\n');
