@@ -2395,14 +2395,15 @@ console.log('\nAuto Label → no-wait times: Mon–Fri 3:45–5 pm, Sat 1–2:15
   const ws = readFileSync(workerPath, 'utf8');
   const grab = n => (ws.match(new RegExp('function ' + n + '\\([\\s\\S]*?\\n}')) || [''])[0];
   const f = new Function("const AUTOLABEL_DAYS = ['sun', 'mon', 'tue', 'wed', 'thu', 'fri', 'sat'];" + ['autolabelNoWaitParse', 'autolabelNoWaitText', 'autolabelNoWaitClean', 'autolabelNoWaitNow'].map(grab).join('\n') + '; return { autolabelNoWaitNow, autolabelNoWaitClean };')();
-  const cfg = { noWaitTimes: 'Mon-Fri 15:45-17:00; Sat 13:00-14:15' };
+  const cfg = { noWaitTimes: 'Mon-Fri 15:45-17:00; Sat 12:45-13:45' };
   const at = t => !!f.autolabelNoWaitNow(cfg, new Date(t));
   check('Mon 3:45 pm → no wait; 3:44 pm → wait; 4:59 pm → no wait; 5:00 pm → wait (New York, summer time)',
     at('2026-10-05T19:45:00Z') && !at('2026-10-05T19:44:00Z') && at('2026-10-05T20:59:00Z') && !at('2026-10-05T21:00:00Z'), null);
-  check('…Fri 4 pm no wait; Sat 1:00–2:14 pm no wait, 2:15 pm and 12:59 pm wait; Sunday always waits; winter time too (Dec Mon 3:55 pm)',
-    at('2026-10-09T20:00:00Z') && at('2026-10-10T17:00:00Z') && at('2026-10-10T18:14:00Z') && !at('2026-10-10T18:15:00Z') && !at('2026-10-10T16:59:00Z')
+  check('…Fri 4 pm no wait; Sat 12:45–1:44 pm no wait, 1:45 pm and 12:44 pm wait; Sunday always waits; winter time too (Dec Mon 3:55 pm)',
+    at('2026-10-09T20:00:00Z') && at('2026-10-10T16:45:00Z') && at('2026-10-10T17:44:00Z') && !at('2026-10-10T17:45:00Z') && !at('2026-10-10T16:44:00Z')
     && !at('2026-10-11T20:00:00Z') && at('2026-12-07T20:55:00Z'), null);
-  check('…the default is the owner\'s times, written the same way after a save', /noWaitTimes: 'Mon-Fri 15:45-17:00; Sat 13:00-14:15'/.test(ws) && f.autolabelNoWaitClean(' mon-fri 15:45-17:00 ;sat 13:00-14:15') === 'Mon-Fri 15:45-17:00; Sat 13:00-14:15', null);
+  // Owner (2026-10-08): Saturday no 30-min wait from 12:45 pm until printing stops at 1:45 pm.
+  check('…the default is the owner\'s times, written the same way after a save', /noWaitTimes: 'Mon-Fri 15:45-17:00; Sat 12:45-13:45'/.test(ws) && f.autolabelNoWaitClean(' mon-fri 15:45-17:00 ;sat 12:45-13:45') === 'Mon-Fri 15:45-17:00; Sat 12:45-13:45', null);
   // A run inside a no-wait time: a 5-minute-old order is not held back; outside it, it waits.
   const realFetch = globalThis.fetch;
   const items = [{ quantity: 1, sellable: { id: 1201, sku_code: '1=NW', weight_grams: 100, stock_entries: [{ warehouse_id: 55, location: '1-1-1' }] } }];
@@ -2430,7 +2431,7 @@ console.log('\nAuto Label → no-wait times: Mon–Fri 3:45–5 pm, Sat 1–2:15
     d(r3) === 'waiting' && /1 min left/.test((r3.orders.find(o => o.number === 'NW-1') || {}).reason) && d(r4) === 'would_buy' && (r3.notes || []).some(n => /2 min after it comes in/.test(n)), { r3: d(r3), r4: d(r4), notes: r3.notes });
   check('…saved rules moved once to the owner\'s new times (3:45 pm, 2 min) and that is on record',
     /autolabel_rules_nowait_345_1008/.test(ws) && /noWaitMinutes: 2,/.test(ws) && /waitMinutes: cfgSaved\.noWaitMinutes \|\| 0/.test(ws), null);
-  await post('/veeqo/autolabel/config', { config: { mode: 'off', noWaitTimes: 'Mon-Fri 15:45-17:00; Sat 13:00-14:15' } });
+  await post('/veeqo/autolabel/config', { config: { mode: 'off', noWaitTimes: 'Mon-Fri 15:45-17:00; Sat 12:45-13:45' } });
   globalThis.fetch = realFetch; delete env.VEEQO_API_KEY;
   const ph = readFileSync(fileURLToPath(new URL('../packship.html', import.meta.url)), 'utf8');
   check('…Rules: "No 30-min wait at these times (New York)" box + "wait only (min, to catch a merge)" box, and the rules line says it in plain words',
@@ -2485,7 +2486,7 @@ console.log('\nAuto Label → 📦 confirmed box weight + size: same SKU × quan
     && sq.prepare("SELECT after_val FROM box_weight_log WHERE box_key = '100=3/8 ANGLE×1' ORDER BY id DESC").get()?.after_val === 'removed', r3);
   check('…bad input refused: no weight, or only part of the size', !(await post('/veeqo/autolabel/box-confirm', { lines: [{ sku: 'X', qty: 1 }], weightLb: 0 })).ok
     && !(await post('/veeqo/autolabel/box-confirm', { lines: [{ sku: 'X', qty: 1 }], weightLb: 3, lengthIn: 5 })).ok, null);
-  await post('/veeqo/autolabel/config', { config: { mode: 'off', noWaitTimes: 'Mon-Fri 15:45-17:00; Sat 13:00-14:15' } });
+  await post('/veeqo/autolabel/config', { config: { mode: 'off', noWaitTimes: 'Mon-Fri 15:45-17:00; Sat 12:45-13:45' } });
   globalThis.fetch = realFetch; delete env.VEEQO_API_KEY;
   const { readFileSync } = await import('node:fs');
   const ph = readFileSync(fileURLToPath(new URL('../packship.html', import.meta.url)), 'utf8');
@@ -2642,10 +2643,13 @@ console.log('\nAuto Label → ⏸ no auto buying around the scan forms; scan for
   const c = (await get('/veeqo/autolabel/config')).config;
   const { readFileSync: rf0 } = await import('node:fs'); const ws0 = rf0(workerPath, 'utf8');
   // Owner (2026-10-08) changed the rule: 8:50 pm scan form EVERY day (Saturday too); no auto print 8:30 pm – 12:10 am (was 12:05).
-  check('the owner\'s schedule is the rule now (saved rules too, once): scan forms Mon-Fri 16:30 + 20:50, Sat 13:45 + 20:50, Sun 20:50; no auto buying Mon-Fri 16:30-17:30 + 20:30-24:00, Sat 13:30-24:00, Sun 20:30-24:00, every day 0:00-0:10',
+  // Owner (2026-10-08, later): Saturday printing stops at 1:45 pm (scan form at 1:45), not 1:30.
+  check('the owner\'s schedule is the rule now (saved rules too, once): scan forms Mon-Fri 16:30 + 20:50, Sat 13:45 + 20:50, Sun 20:50; no auto buying Mon-Fri 16:30-17:30 + 20:30-24:00, Sat 13:45-24:00, Sun 20:30-24:00, every day 0:00-0:10',
     /scanFormTimes: 'Mon-Fri 16:30, 20:50; Sat 13:45, 20:50; Sun 20:50'/.test(ws0) && /scanFormCheckAt: '20:55'/.test(ws0)
-    && c.pauseTimes === 'Mon-Fri 16:30-17:30; Mon-Fri 20:30-24:00; Sat 13:30-24:00; Sun 20:30-24:00; Mon-Sun 0:00-0:10'
-    && sq.prepare("SELECT value FROM app_config WHERE key = 'autolabel_rules_scanform_850_1008'").get()?.value === 'done', c);
+    && /pauseTimes: 'Mon-Fri 16:30-17:30; Mon-Fri 20:30-24:00; Sat 13:45-24:00; Sun 20:30-24:00; Sun-Sat 0:00-0:10'/.test(ws0)
+    && c.pauseTimes === 'Mon-Fri 16:30-17:30; Mon-Fri 20:30-24:00; Sat 13:45-24:00; Sun 20:30-24:00; Mon-Sun 0:00-0:10'
+    && sq.prepare("SELECT value FROM app_config WHERE key = 'autolabel_rules_scanform_850_1008'").get()?.value === 'done'
+    && sq.prepare("SELECT value FROM app_config WHERE key = 'autolabel_rules_sat_1245_1008'").get()?.value === 'done', c);
   const { readFileSync } = await import('node:fs');
   const ws = readFileSync(workerPath, 'utf8');
   const grab = n => (ws.match(new RegExp('function ' + n + '\\([\\s\\S]*?\\n}')) || [''])[0];
@@ -2655,15 +2659,15 @@ console.log('\nAuto Label → ⏸ no auto buying around the scan forms; scan for
   check('Tue 4:29 pm buys · 4:30 pm stops · 5:29 pm stopped · 5:30 pm buys again · 8:29 pm buys · 8:30 pm stops · 11:59 pm stopped · 12:09 am stopped · 12:10 am buys',
     !P('2026-10-06T20:29:00Z') && P('2026-10-06T20:30:00Z') && P('2026-10-06T21:29:00Z') && !P('2026-10-06T21:30:00Z') && !P('2026-10-07T00:29:00Z') && P('2026-10-07T00:30:00Z')
     && P('2026-10-07T03:59:00Z') && P('2026-10-07T04:09:00Z') && !P('2026-10-07T04:10:00Z'), null);
-  check('…Sat 1:29 pm buys · 1:30 pm stops for the rest of Saturday · Sun 10 am buys · Sun 8:30 pm stops · Mon 12:09 am stopped · 12:10 am buys',
-    !P('2026-10-10T17:29:00Z') && P('2026-10-10T17:30:00Z') && P('2026-10-11T03:00:00Z') && !P('2026-10-11T14:00:00Z') && P('2026-10-12T00:30:00Z') && P('2026-10-12T04:09:00Z') && !P('2026-10-12T04:10:00Z'), null);
+  check('…Sat 1:44 pm buys · 1:45 pm stops for the rest of Saturday · Sun 10 am buys · Sun 8:30 pm stops · Mon 12:09 am stopped · 12:10 am buys',
+    !P('2026-10-10T17:44:00Z') && P('2026-10-10T17:45:00Z') && P('2026-10-11T03:00:00Z') && !P('2026-10-11T14:00:00Z') && P('2026-10-12T00:30:00Z') && P('2026-10-12T04:09:00Z') && !P('2026-10-12T04:10:00Z'), null);
   await post('/veeqo/autolabel/config', { config: { pauseTimes: 'Sun-Sat 0:00-24:00' } });
   const realFetch = globalThis.fetch; env.VEEQO_API_KEY = 'k';
   globalThis.fetch = async (u) => { u = String(u); return u.includes('api.veeqo.com/') ? new Response('[]', { headers: { 'Content-Type': 'application/json' } }) : new Response('{}', { status: 401 }); };
   const r = await post('/veeqo/autolabel/run', {});
   globalThis.fetch = realFetch; delete env.VEEQO_API_KEY;
   check('…a run in a no-auto-buying time says so ("labels can still be bought by hand")', (r.notes || []).some(n => /No auto buying now/.test(n)), r.notes);
-  await post('/veeqo/autolabel/config', { config: { pauseTimes: 'Mon-Fri 16:30-17:30; Mon-Fri 20:30-24:00; Sat 13:30-24:00; Sun 20:30-24:00; Sun-Sat 0:00-0:05' } });
+  await post('/veeqo/autolabel/config', { config: { pauseTimes: 'Mon-Fri 16:30-17:30; Mon-Fri 20:30-24:00; Sat 13:45-24:00; Sun 20:30-24:00; Sun-Sat 0:00-0:05' } });
   check('…the auto run never buys in a no-auto-buying time (by-hand buying is not blocked)', /const buy = !!opts\.buy && cfg\.mode === 'auto' && buyVerified && !paused;/.test(ws) && !/paused/.test(grab('autolabelBuyByHand')), null);
   const ph = readFileSync(fileURLToPath(new URL('../packship.html', import.meta.url)), 'utf8');
   check('…Rules: "⏸ No auto buying at these times (New York)" box, said in plain words', /data-k="pauseTimes"/.test(ph) && /⏸ No auto buying:/.test(ph), null);
