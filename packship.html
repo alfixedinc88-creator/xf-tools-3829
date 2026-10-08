@@ -2038,6 +2038,30 @@ body {
         <div id="ps-al-et-list" style="font-size:12px;overflow-x:auto"></div>
       </div>
 
+      <!-- 📦 Amazon tracking our system sends (owner, 2026-10-08) -->
+      <div class="ps-card" style="margin-bottom:16px">
+        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px;gap:8px;flex-wrap:wrap">
+          <div style="font-size:13px;font-weight:700;color:var(--text)">📦 Amazon tracking (sent by us when Amazon doesn't get it)</div>
+          <button class="ps-btn-sm" onclick="psAlLoadAmzTrack()">↻ Refresh</button>
+        </div>
+        <div style="font-size:12px;color:var(--text3);margin-bottom:10px;line-height:1.5">
+          Mostly the 2nd order of a merged box: Veeqo has the tracking, Amazon doesn't. Every 30 minutes: an Amazon order whose label we bought or merged
+          more than <b id="ps-al-at-wait">2 hours</b> ago and that Amazon still shows <b>Unshipped</b> gets that same tracking number sent to Amazon by our system — so Amazon never asks us to ship it again.
+          No new label is bought. Never for a cancelled label or order. Every one is kept below.
+        </div>
+        <div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap;margin-bottom:8px">
+          <label style="display:flex;align-items:center;gap:6px;font-size:13px;color:var(--text2);cursor:pointer"><input type="checkbox" id="ps-al-at-on" onchange="psAlAmzTrackOn(this.checked)"> On</label>
+          <button class="ps-btn-primary" style="width:auto;padding:8px 18px" onclick="psAlAmzTrackRun(this)">📦 Check Amazon now</button>
+        </div>
+        <div style="display:flex;gap:6px;align-items:center;flex-wrap:wrap;margin-bottom:8px">
+          <input class="ps-field-input" id="ps-al-at-one" placeholder="One Amazon order # (113-1234567-1234567)" style="margin:0;max-width:300px;font-family:var(--mono)">
+          <button class="ps-btn-sm" onclick="psAlAmzTrackOne(this)">🔎 Check this order now</button>
+        </div>
+        <div id="ps-al-at-one-res" style="font-size:12px;margin-bottom:8px;white-space:pre-wrap"></div>
+        <div id="ps-al-at-status" style="font-size:12px;margin-bottom:8px;line-height:1.6;white-space:pre-wrap"></div>
+        <div id="ps-al-at-list" style="font-size:12px;overflow-x:auto"></div>
+      </div>
+
       <!-- 💸 Low value list -->
       <div class="ps-card" style="margin-bottom:16px">
         <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px;gap:8px;flex-wrap:wrap">
@@ -9483,6 +9507,7 @@ window.psAlDayCsv = function() {
 };
 // 📮 eBay tracking our system adds (owner: "merged eBay orders don't get the tracking — wait 1–2 h, then add it").
 window.psAlLoadEbayTrack = async function() {
+  if (typeof psAlLoadAmzTrack === 'function') psAlLoadAmzTrack();
   var st = document.getElementById('ps-al-et-status'), box = document.getElementById('ps-al-et-list'); if (!st || !box) return;
   var d = await _psAlFetch('/veeqo/autolabel/ebay-tracking'); if (d.ok === false) { st.textContent = '✗ ' + (d.error || 'Failed'); return; }
   var e = _psAlEsc, c = d.config || {}, L = d.last;
@@ -9495,6 +9520,50 @@ window.psAlLoadEbayTrack = async function() {
       + td + '">' + e(r.carrier) + ' <span style="font-family:var(--mono)">' + e(r.tracking) + '</span> · ' + e(r.source) + '</td>'
       + td + ';color:' + (r.ok ? 'var(--green)' : 'var(--red)') + '">' + (r.ok ? '✅ added' : '❌ ' + e(r.detail) + ' <button class="ps-btn-sm" data-t="' + e(r.ebay_order_id + ' ' + r.tracking + ' — ' + r.detail) + '" onclick="_psAlCopy(this.getAttribute(\'data-t\'), this)">📋 Copy</button>') + (r.by_user && r.by_user !== 'auto' ? ' · ' + e(r.by_user) : '') + '</td></tr>';
   }).join('') + '</table>' : '<div style="color:var(--text3)">Nothing added yet.</div>';
+};
+// 📦 Amazon tracking our system sends (owner: "the 2nd merged order still has no tracking on Amazon — don't let Amazon ask us to ship it again").
+window.psAlLoadAmzTrack = async function() {
+  var st = document.getElementById('ps-al-at-status'), box = document.getElementById('ps-al-at-list'); if (!st || !box) return;
+  var d = await _psAlFetch('/veeqo/autolabel/amazon-tracking'); if (d.ok === false) { st.textContent = '✗ ' + (d.error || 'Failed'); return; }
+  var e = _psAlEsc, c = d.config || {}, L = d.last;
+  var on = document.getElementById('ps-al-at-on'); if (on) on.checked = !!c.on;
+  var w = document.getElementById('ps-al-at-wait'); if (w) w.textContent = (c.waitMinutes >= 60 && c.waitMinutes % 60 === 0) ? (c.waitMinutes / 60) + ' hour' + (c.waitMinutes === 60 ? '' : 's') : c.waitMinutes + ' min';
+  st.textContent = L ? 'Last check ' + new Date(L.at).toLocaleString() + ': ' + L.checked + ' Amazon orders checked · ✓ ' + (L.fine || 0) + ' already shipped on Amazon · ✅ ' + L.added + ' sent · ❌ ' + L.failed + ' failed · ⏳ ' + L.waiting + ' waiting' : 'Not checked yet.';
+  box.innerHTML = (d.rows || []).length ? '<table style="width:100%;border-collapse:collapse">' + d.rows.map(function(r) {
+    var td = '<td style="padding:4px 6px;border-bottom:1px solid var(--border)';
+    return '<tr>' + td + ';white-space:nowrap">' + e(new Date(r.ts).toLocaleString()) + '</td>' + td + ';font-family:var(--mono)">' + e(r.order_number) + '</td>'
+      + td + '">' + e(r.carrier) + ' <span style="font-family:var(--mono)">' + e(r.tracking) + '</span> · ' + e(r.source) + (r.amazon_status ? ' · was ' + e(r.amazon_status) : '') + '</td>'
+      + td + ';color:' + (r.ok ? 'var(--green)' : 'var(--red)') + '">' + (r.ok ? '✅ sent to Amazon' : '❌ ' + e(r.detail) + ' <button class="ps-btn-sm" data-t="' + e(r.order_number + ' ' + r.tracking + ' — ' + r.detail) + '" onclick="_psAlCopy(this.getAttribute(\'data-t\'), this)">📋 Copy</button>') + (r.by_user && r.by_user !== 'auto' ? ' · ' + e(r.by_user) : '') + '</td></tr>';
+  }).join('') + '</table>' : '<div style="color:var(--text3)">Nothing sent yet.</div>';
+};
+window.psAlAmzTrackOn = async function(on) {
+  var d = await _psAlFetch('/veeqo/autolabel/amazon-tracking-config', { method: 'POST', body: { config: { on: !!on } } });
+  _psToast(d.ok === false ? (d.error || 'Not saved') : on ? '📦 Amazon tracking check on' : 'Amazon tracking check off', d.ok === false ? 'err' : undefined);
+  psAlLoadAmzTrack();
+};
+window.psAlAmzTrackRun = async function(btn) {
+  btn.disabled = true; var t = btn.textContent; btn.textContent = '⏳ Checking Amazon…';
+  try {
+    var d = await _psAlFetch('/veeqo/autolabel/amazon-tracking-run', { method: 'POST', body: {} });
+    var st = document.getElementById('ps-al-at-status');
+    if (d.ok === false) { if (st) st.textContent = '✗ ' + (d.error || 'failed'); return; }
+    _psToast('📦 ' + d.added.length + ' tracking sent to Amazon' + (d.failed.length ? ' · ' + d.failed.length + ' failed' : '') + ' · ' + (d.fine || []).length + ' already shipped');
+  } finally { btn.disabled = false; btn.textContent = t; psAlLoadAmzTrack(); }
+};
+window.psAlAmzTrackOne = async function(btn) {
+  var inp = document.getElementById('ps-al-at-one'), out = document.getElementById('ps-al-at-one-res'), n = String((inp && inp.value) || '').trim();
+  if (!n) { if (out) out.textContent = 'Type an Amazon order #'; return; }
+  btn.disabled = true; var t = btn.textContent; btn.textContent = '⏳ Asking Amazon…';
+  try {
+    var d = await _psAlFetch('/veeqo/autolabel/amazon-tracking-run', { method: 'POST', body: { order: n } });
+    var e = _psAlEsc, r = d.fine && d.fine[0] || d.added && d.added[0] || d.failed && d.failed[0] || d.skipped && d.skipped[0];
+    out.innerHTML = d.ok === false ? '<span style="color:var(--red)">✗ ' + e(d.error || 'failed') + '</span>'
+      : !r ? '<span style="color:var(--text3)">Nothing to check for ' + e(n) + '.</span>'
+      : (d.fine && d.fine[0] ? '<span style="color:var(--green);font-weight:700">✓ ' + e(n) + ': Amazon already shows it SHIPPED</span> (tracking ' + e(r.tracking) + ') — nothing to do, Amazon won\'t ask for it again.'
+        : d.added && d.added[0] ? '<span style="color:var(--green);font-weight:700">✅ ' + e(n) + ' was ' + e(r.amazonStatus || 'unshipped') + ' on Amazon — our tracking ' + e(r.tracking) + ' (' + e(r.carrier || '') + ') was just sent.</span> No new label bought.'
+        : d.failed && d.failed[0] ? '<span style="color:var(--red);font-weight:700">❌ ' + e(n) + ': not sent — ' + e(r.detail) + '</span> Add tracking ' + e(r.tracking) + ' by hand in Seller Central.'
+        : '<span style="color:var(--orange)">' + e(n) + ': ' + e(r.why || r.detail || '') + '</span>');
+  } finally { btn.disabled = false; btn.textContent = t; psAlLoadAmzTrack(); }
 };
 window.psAlEbayTrackOn = async function(on) {
   var d = await _psAlFetch('/veeqo/autolabel/ebay-tracking-config', { method: 'POST', body: { config: { on: !!on } } });

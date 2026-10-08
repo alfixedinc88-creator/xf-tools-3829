@@ -7193,7 +7193,7 @@ const TM_BLOCK = new Set([
   '/ebay-msg/send', '/msg/send', '/msg/reply', '/shopify/listing-create',
   '/repricer/price-change', '/repricer/auto-reprice', '/repricer/queue-action',
   '/ship/cancel-label', '/ship/cancel-order', '/ship/cancel-order-confirm',
-  '/veeqo/autolabel/run', '/veeqo/autolabel/test-buy', '/veeqo/autolabel/order-edit', '/veeqo/autolabel/buy-one', '/veeqo/autolabel/merge-buy', '/veeqo/autolabel/split', '/veeqo/autolabel/scanform-make', '/veeqo/autolabel/scanform-tick', '/veeqo/autolabel/auto-tick', '/veeqo/autolabel/ebay-tracking-run',
+  '/veeqo/autolabel/run', '/veeqo/autolabel/test-buy', '/veeqo/autolabel/order-edit', '/veeqo/autolabel/buy-one', '/veeqo/autolabel/merge-buy', '/veeqo/autolabel/split', '/veeqo/autolabel/scanform-make', '/veeqo/autolabel/scanform-tick', '/veeqo/autolabel/auto-tick', '/veeqo/autolabel/ebay-tracking-run', '/veeqo/autolabel/amazon-tracking-run',
   '/inventory/soldout/set-qty', '/inventory/soldout/add-listing',
 ]);
 function tmJ(o, status) { return cors(new Response(JSON.stringify(o), { status: status || 200, headers: { 'Content-Type': 'application/json' } })); }
@@ -8330,6 +8330,10 @@ const _app = {
     if (!testOn) ctx.waitUntil(ebayTrackingFix(env).then(
       r => { if (r && !r.skipped && (r.added.length || r.failed.length)) console.log('[cron] ebay tracking fix', JSON.stringify({ added: r.added.length, failed: r.failed.length })); },
       e => console.error('[cron] ebay tracking fix FAILED', e && e.message)));
+    // 📦 Amazon orders whose tracking never reached Amazon (mostly the 2nd order of a merged box) — sent by us after 2 h.
+    if (!testOn) ctx.waitUntil(amazonTrackingFix(env).then(
+      r => { if (r && !r.skipped && (r.added.length || r.failed.length)) console.log('[cron] amazon tracking fix', JSON.stringify({ added: r.added.length, failed: r.failed.length })); },
+      e => console.error('[cron] amazon tracking fix FAILED', e && e.message)));
     // Listing Watch — low / sold-out listings while SKU Mgr still has stock.
     // Runs every tick while its switch is on: a page per channel at a time,
     // a new full pass every `everyHours`. See lwCron().
@@ -25553,6 +25557,112 @@ async function ebayTrackingFix(env, opts = {}) {
   return res;
 }
 
+// ── 📦 Amazon tracking check (owner, 2026-10-08) ─────────────────────────
+// "113-9827248-1897842 got the tracking on Amazon, 113-9717731-0734658 (same
+// merged box) still not — I don't want Amazon to ask us to ship it again."
+// Same idea as the eBay tracking fix: an Amazon order whose label we bought or
+// merged, still Unshipped on Amazon after waitMinutes, gets OUR tracking # sent
+// to Amazon (Orders API shipment confirmation). Never for a cancelled label /
+// order, never a second label. Every try is kept in amazon_tracking_fix.
+const AMZ_TRACK_CFG_KEY = 'amazon_tracking_fix', AMZ_TRACK_LAST_KEY = 'amazon_tracking_fix_last';
+const AMZ_TRACK_DEFAULTS = { on: true, waitMinutes: 120, days: 10, maxPerRun: 15 };
+const AMZ_ORDER_RE = /^\d{3}-\d{7}-\d{7}$/;
+async function amzTrackEnsure(env) {
+  await env.DB.prepare(`CREATE TABLE IF NOT EXISTS amazon_tracking_fix (id INTEGER PRIMARY KEY AUTOINCREMENT, ts TEXT, order_number TEXT,
+    tracking TEXT, carrier TEXT, source TEXT, amazon_status TEXT, ok INTEGER, detail TEXT, by_user TEXT)`).run();
+  await env.DB.prepare('CREATE INDEX IF NOT EXISTS idx_amazon_tracking_fix_order ON amazon_tracking_fix(order_number)').run().catch(() => {});
+}
+async function amzTrackConfig(env) {
+  let c = {}; try { c = JSON.parse(await autolabelGetKey(env, AMZ_TRACK_CFG_KEY) || '{}') || {}; } catch (_) {}
+  const n = (v, d, lo, hi) => { const x = parseInt(v); return Number.isFinite(x) ? Math.min(hi, Math.max(lo, x)) : d; };
+  return { on: c.on == null ? AMZ_TRACK_DEFAULTS.on : !!c.on, waitMinutes: n(c.waitMinutes, AMZ_TRACK_DEFAULTS.waitMinutes, 30, 24 * 60),
+    days: n(c.days, AMZ_TRACK_DEFAULTS.days, 1, 30), maxPerRun: n(c.maxPerRun, AMZ_TRACK_DEFAULTS.maxPerRun, 1, 50) };
+}
+function amzCarrierCode(c) {
+  const s = String(c || '').toUpperCase();
+  if (/USPS|POSTAL/.test(s)) return 'USPS';
+  if (/UPS/.test(s)) return 'UPS';
+  if (/FEDEX|FEDERAL/.test(s)) return 'FedEx';
+  if (/DHL/.test(s)) return 'DHL';
+  return 'Other';
+}
+async function amzSp(env, method, path, body) {
+  const token = await getAmazonToken(env);
+  const r = await fetch('https://sellingpartnerapi-na.amazon.com' + path, { method, headers: { 'x-amz-access-token': token, 'Content-Type': 'application/json' }, body: body ? JSON.stringify(body) : undefined });
+  const txt = await r.text().catch(() => '');
+  let j = null; try { j = txt ? JSON.parse(txt) : null; } catch (_) {}
+  return { ok: r.ok, status: r.status, json: j, text: txt };
+}
+// One order: Amazon's status, and (when `send`) our tracking sent if Amazon still shows it unshipped.
+async function amzTrackOne(env, label, opts) {
+  const id = label.orderNumber;
+  const g = await amzSp(env, 'GET', `/orders/v0/orders/${encodeURIComponent(id)}`);
+  if (!g.ok) return { ...label, state: 'error', detail: `Amazon ${g.status}: ${g.text.slice(0, 300)}` };
+  const st = (g.json && g.json.payload && g.json.payload.OrderStatus) || '';
+  if (/^Shipped$/i.test(st)) return { ...label, amazonStatus: st, state: 'ok', detail: 'Amazon already shows it shipped' };
+  if (/Cancel/i.test(st)) return { ...label, amazonStatus: st, state: 'skipped', detail: 'cancelled on Amazon' };
+  if (!opts.send) return { ...label, amazonStatus: st, state: 'needs', detail: `Amazon still shows ${st || '?'}` };
+  const it = await amzSp(env, 'GET', `/orders/v0/orders/${encodeURIComponent(id)}/orderItems`);
+  const items = ((it.json && it.json.payload && it.json.payload.OrderItems) || [])
+    .map(x => ({ orderItemId: x.OrderItemId, quantity: Math.max(0, (parseInt(x.QuantityOrdered) || 0) - (parseInt(x.QuantityShipped) || 0)) })).filter(x => x.orderItemId && x.quantity > 0);
+  if (!items.length) return { ...label, amazonStatus: st, state: 'error', detail: `Amazon ${it.status}: no items left to ship ${it.text.slice(0, 200)}` };
+  const body = { marketplaceId: env.AMAZON_MARKETPLACE_ID || 'ATVPDKIKX0DER', packageDetail: { packageReferenceId: '1', carrierCode: amzCarrierCode(label.carrier),
+    carrierName: label.carrier || undefined, shippingMethod: label.service || undefined, trackingNumber: label.tracking,
+    shipDate: new Date(Date.parse(label.boughtAt) || Date.now()).toISOString(), orderItems: items } };
+  const c = await amzSp(env, 'POST', `/orders/v0/orders/${encodeURIComponent(id)}/shipmentConfirmation`, body);
+  const ok = c.status === 204 || c.status === 200;
+  return { ...label, amazonStatus: st, state: ok ? 'added' : 'failed', detail: ok ? `Amazon ${c.status} — tracking sent` : `Amazon ${c.status}: ${c.text.slice(0, 400)}` };
+}
+// Our Amazon labels (bought / merged by Auto Label) with their tracking #, newest last per order.
+async function amzOurLabels(env, since, only) {
+  const rows = await d1All(env, `SELECT order_number, tracking, carrier, service, ts, action FROM autolabel_log
+    WHERE action IN ('bought','merged','merge_mark_failed') AND tracking != '' AND ts >= ?${only ? ' AND UPPER(order_number) = ?' : ''} ORDER BY id`,
+    only ? [since, String(only).trim().toUpperCase()] : [since]);
+  const ours = new Map();
+  for (const r of rows) { const k = String(r.order_number || '').trim(); if (AMZ_ORDER_RE.test(k)) ours.set(k, r); }
+  return ours;
+}
+async function amazonTrackingFix(env, opts = {}) {
+  await autolabelEnsureTables(env); await amzTrackEnsure(env);
+  const cfg = await amzTrackConfig(env), now = opts.now ? new Date(opts.now) : new Date();
+  const one = opts.order ? String(opts.order).trim() : '';
+  if (!one && !cfg.on && !opts.force) return { skipped: 'off' };
+  if (!one && !opts.force) {
+    const last = await autolabelGetKey(env, AMZ_TRACK_LAST_KEY);
+    if (last && now.getTime() - Date.parse(last) < 30 * 60000) return { skipped: 'too_soon' };
+  }
+  if (!one) await autolabelSetKey(env, AMZ_TRACK_LAST_KEY, now.toISOString());
+  const by = String(opts.by || 'auto').slice(0, 40);
+  const res = { ok: true, at: now.toISOString(), checked: 0, added: [], failed: [], waiting: [], skipped: [], fine: [], order: one || undefined };
+  if (one && !AMZ_ORDER_RE.test(one)) return { ok: false, error: 'Not an Amazon order # (like 113-1234567-1234567)' };
+  const ours = await amzOurLabels(env, new Date(now.getTime() - (one ? 30 : cfg.days) * 86400000).toISOString(), one || null);
+  if (one && !ours.size) return { ...res, ok: false, error: `${one}: no label bought or merged by our Auto Label for it (last 30 days) — nothing to send` };
+  const cancelled = new Set();
+  for (const sql of ['SELECT tracking FROM ship_cancel_label_log', 'SELECT tracking FROM ship_order_cancel_log']) {
+    try { (await d1All(env, sql)).forEach(r => r.tracking && cancelled.add(String(r.tracking).trim().toUpperCase())); } catch (_) {}
+  }
+  let budget = one ? 1 : cfg.maxPerRun;
+  for (const [num, row] of ours) {
+    const label = { orderNumber: num, tracking: row.tracking, carrier: row.carrier, service: row.service, boughtAt: row.ts, merged: row.action !== 'bought' };
+    if (cancelled.has(String(row.tracking).trim().toUpperCase())) { res.skipped.push({ ...label, why: 'this label was cancelled' }); continue; }
+    const ageMin = (now.getTime() - Date.parse(row.ts)) / 60000;
+    if (!one && ageMin < cfg.waitMinutes) { res.waiting.push({ ...label, minutesLeft: Math.ceil(cfg.waitMinutes - ageMin) }); continue; }
+    const done = await d1First(env, 'SELECT 1 x FROM amazon_tracking_fix WHERE order_number = ? AND ok = 1', [num]);
+    if (done && !one) { res.skipped.push({ ...label, why: 'sent by us before' }); continue; }
+    if (budget-- <= 0) break;
+    res.checked++;
+    let r;
+    try { r = await amzTrackOne(env, label, { send: true }); } catch (e) { r = { ...label, state: 'error', detail: 'could not reach Amazon: ' + String(e.message || e).slice(0, 200) }; }
+    if (r.state === 'ok') { res.fine.push(r); continue; }
+    if (r.state === 'skipped') { res.skipped.push({ ...r, why: r.detail }); continue; }
+    await d1Run(env, 'INSERT INTO amazon_tracking_fix (ts, order_number, tracking, carrier, source, amazon_status, ok, detail, by_user) VALUES (?,?,?,?,?,?,?,?,?)',
+      [now.toISOString(), num, row.tracking, row.carrier || '', label.merged ? 'merged box' : 'label bought', r.amazonStatus || '', r.state === 'added' ? 1 : 0, String(r.detail || '').slice(0, 1000), by]);
+    (r.state === 'added' ? res.added : res.failed).push(r);
+  }
+  if (!one) await autolabelSetKey(env, AMZ_TRACK_LAST_KEY + '_result', JSON.stringify({ ...res, added: res.added.length, failed: res.failed.length, waiting: res.waiting.length, skipped: res.skipped.length, fine: res.fine.length }));
+  return res;
+}
+
 async function autolabelAmazonCancels(env, sinceIso) {
   const token = await getAmazonToken(env);
   const mp = env.AMAZON_MARKETPLACE_ID || 'ATVPDKIKX0DER';
@@ -27771,6 +27881,26 @@ async function handleAutolabelRoute(path, method, url, request, env, session) {
   }
   if (path === '/veeqo/autolabel/ebay-tracking-run' && method === 'POST') {
     try { return veeqoResp(await ebayTrackingFix(env, { force: true, by: (session && (session.displayName || session.username)) || '' })); }
+    catch (e) { return veeqoResp({ ok: false, error: String(e.message || e) }); }
+  }
+
+  // 📦 Amazon tracking our system sends: list / switch / run now / one order now.
+  if (path === '/veeqo/autolabel/amazon-tracking' && method === 'GET') {
+    await amzTrackEnsure(env);
+    let last = null; try { last = JSON.parse(await autolabelGetKey(env, AMZ_TRACK_LAST_KEY + '_result') || 'null'); } catch (_) {}
+    const rows = await d1All(env, 'SELECT * FROM amazon_tracking_fix ORDER BY id DESC LIMIT 60');
+    return veeqoResp({ ok: true, config: await amzTrackConfig(env), last, rows });
+  }
+  if (path === '/veeqo/autolabel/amazon-tracking-config' && method === 'POST') {
+    const b = await request.json().catch(() => ({}));
+    const cfg = { ...(await amzTrackConfig(env)), ...(b.config || {}) };
+    await autolabelSetKey(env, AMZ_TRACK_CFG_KEY, JSON.stringify(cfg));
+    await autolabelLog(env, { action: 'config', reason: `Amazon tracking fix on=${!!cfg.on} wait=${cfg.waitMinutes}min`, customer: (session && (session.displayName || session.username)) || '', detail: JSON.stringify(cfg) });
+    return veeqoResp({ ok: true, config: await amzTrackConfig(env) });
+  }
+  if (path === '/veeqo/autolabel/amazon-tracking-run' && method === 'POST') {
+    const b = await request.json().catch(() => ({}));
+    try { return veeqoResp(await amazonTrackingFix(env, { force: true, order: b.order || '', by: (session && (session.displayName || session.username)) || '' })); }
     catch (e) { return veeqoResp({ ok: false, error: String(e.message || e) }); }
   }
 
