@@ -24852,11 +24852,11 @@ const AUTOLABEL_DEFAULTS = {
   waitMinutes: 30,             // wait this long after the NEWEST order for a person before buying
   noWaitTimes: 'Mon-Fri 15:50-17:00; Sat 13:00-14:15', // ...except in these New York times: print as soon as an order comes in (owner)
   scanFormOn: true,            // 📄 USPS scan form made by itself at scanFormTimes (after one made by hand worked)
-  scanFormTimes: 'Mon-Fri 16:30, 20:50; Sat 13:45; Sun 20:50', // New York time (owner)
+  scanFormTimes: 'Mon-Fri 16:30, 20:50; Sat 13:45, 20:50; Sun 20:50', // New York time (owner; 8:50 pm EVERY day since 2026-10-08)
   scanFormCheckAt: '20:55',    // night check: any USPS label after the last form → one more (USPS: before 9 pm)
   // No auto buying at these times (New York) — around the scan forms (owner):
   // Mon–Fri 4:30–5:30 pm and 8:30 pm–12:05 am, Sat from 1:30 pm, Sun 8:30 pm–12:05 am.
-  pauseTimes: 'Mon-Fri 16:30-17:30; Mon-Fri 20:30-24:00; Sat 13:30-24:00; Sun 20:30-24:00; Sun-Sat 0:00-0:05',
+  pauseTimes: 'Mon-Fri 16:30-17:30; Mon-Fri 20:30-24:00; Sat 13:30-24:00; Sun 20:30-24:00; Sun-Sat 0:00-0:10', // owner 2026-10-08: no auto print 8:30 pm – 12:10 am
   upsMinSavings: 0.70,         // switch USPS -> UPS only if UPS is at least this much cheaper ($)... (owner: $0.70)
   upsMaxDays: 2,               // ...AND UPS arrives in this many days or less (owner: 2 days)
   uspsOnlyChannels: ['walmart'], // channels that must always ship USPS (name contains)
@@ -25002,6 +25002,14 @@ async function autolabelLoadConfig(env) {
     await autolabelSetKey(env, AUTOLABEL_CONFIG_KEY, JSON.stringify(saved));
     await autolabelSetKey(env, 'autolabel_rules_scanform_pause_1006', 'done');
     await autolabelLog(env, { action: 'rules_changed', detail: `Scan form + no-auto-buying times set by the owner's request: ${JSON.stringify(before)} → scan forms ${saved.scanFormTimes}, night check ${saved.scanFormCheckAt}, no auto buying ${saved.pauseTimes}` }).catch(() => {});
+  }
+  // Owner 2026-10-08: "every day at 8:50 pm make a scan form; stop auto print 8:30 pm – 12:10 am, start again 12:10 am".
+  if ((await autolabelGetKey(env, 'autolabel_rules_scanform_850_1008')) !== 'done') {
+    const before = { scanFormTimes: saved.scanFormTimes, pauseTimes: saved.pauseTimes };
+    saved.scanFormTimes = AUTOLABEL_DEFAULTS.scanFormTimes; saved.pauseTimes = AUTOLABEL_DEFAULTS.pauseTimes;
+    await autolabelSetKey(env, AUTOLABEL_CONFIG_KEY, JSON.stringify(saved));
+    await autolabelSetKey(env, 'autolabel_rules_scanform_850_1008', 'done');
+    await autolabelLog(env, { action: 'rules_changed', detail: `Scan form every day 8:50 pm + no auto print 8:30 pm – 12:10 am (owner's request): ${JSON.stringify(before)} → scan forms ${saved.scanFormTimes}, no auto buying ${saved.pauseTimes}` }).catch(() => {});
   }
   return autolabelCleanConfig({ ...AUTOLABEL_DEFAULTS, ...saved });
 }
@@ -26696,6 +26704,49 @@ async function autolabelScanFormMissing(env, when) {
 }
 // Called by the cron and by the Printer station every minute: makes the
 // scan form at each set time, and the night check. Never twice for a slot.
+// ⏰ Owner (2026-10-08): "every day at 8:50 pm we need a scan form — today none was made". The server timer runs at
+// :00 / :30 only and a form is never made after 9 pm, so 8:50 was only ever made when a Pack & Ship page happened to be
+// open. An exact alarm (Durable Object ScanFormClock) now wakes the server at each scan form time + the night check,
+// sets the next one, and every 30-min timer run / settings save makes sure it is set.
+function sfNyToUtc(dateKey, mins) { // New York date + minutes → UTC ms (DST-safe)
+  const [y, m, d] = dateKey.split('-').map(Number), target = Date.UTC(y, m - 1, d) / 60000 + mins;
+  let guess = target * 60000 + 5 * 3600000;
+  for (let i = 0; i < 3; i++) { const p = autolabelNyNow(new Date(guess)), [py, pm, pd] = p.date.split('-').map(Number);
+    guess -= ((Date.UTC(py, pm - 1, pd) / 60000 + p.mins) - target) * 60000; }
+  return guess;
+}
+function autolabelNextScanFormAt(cfg, now) {
+  const times = autolabelTimesParse(cfg.scanFormTimes).concat(autolabelTimesParse('Sun-Sat ' + (cfg.scanFormCheckAt || '20:55')));
+  const today = autolabelNyNow(now).date, [y, m, d] = today.split('-').map(Number);
+  let best = null;
+  for (let k = 0; k < 9; k++) {
+    const dt = new Date(Date.UTC(y, m - 1, d + k)), key = dt.toISOString().slice(0, 10), wd = dt.getUTCDay();
+    for (const t of times) if (t.days.includes(wd)) { const at = sfNyToUtc(key, t.at) + 20000; if (at > now.getTime() + 5000 && (best == null || at < best)) best = at; }
+    if (best != null) break;
+  }
+  return best;
+}
+async function scanFormClockSet(state, env, now) {
+  const cfg = await autolabelLoadConfig(env);
+  if (!cfg.scanFormOn) { await state.storage.deleteAlarm(); return null; }
+  const at = autolabelNextScanFormAt(cfg, now || new Date());
+  if (at && (await state.storage.getAlarm()) !== at) await state.storage.setAlarm(at);
+  return at;
+}
+export class ScanFormClock {
+  constructor(state, env) { this.state = state; this.env = env; }
+  async fetch() { const at = await scanFormClockSet(this.state, this.env); return new Response(JSON.stringify({ ok: true, next: at ? new Date(at).toISOString() : null }), { headers: { 'Content-Type': 'application/json' } }); }
+  async alarm() {
+    try { if (!(await testModeOn(this.env).catch(() => false))) console.log('[scan form clock]', JSON.stringify(await autolabelScanFormTick(this.env, new Date()))); }
+    catch (e) { console.error('[scan form clock] tick', e && e.message); }
+    await scanFormClockSet(this.state, this.env);
+  }
+}
+async function scanFormClockEnsure(env) { // → { next } or null (no clock bound, e.g. tests)
+  if (!env.SF_CLOCK) return null;
+  try { const r = await env.SF_CLOCK.get(env.SF_CLOCK.idFromName('scan-forms')).fetch('https://sf-clock/ensure'); return await r.json(); }
+  catch (e) { console.error('[scan form clock] ensure', e && e.message); return null; }
+}
 async function autolabelScanFormTick(env, when) {
   const cfg = await autolabelLoadConfig(env);
   if (!cfg.scanFormOn) return { skipped: 'off' };
@@ -27159,6 +27210,7 @@ async function vstockItems(env, page) {
 
 async function autolabelCron(env) {
   const cfg = await autolabelLoadConfig(env);
+  await scanFormClockEnsure(env); // ⏰ the exact 8:50 pm alarm stays set
   try { await autolabelScanFormTick(env); } catch (e) { console.error('[autolabel] scan form tick', e.message); }
   if (cfg.mode === 'off' && !cfg.cancelWatch) return { skipped: 'off' };
   let last = null;
@@ -27547,6 +27599,7 @@ async function handleAutolabelRoute(path, method, url, request, env, session) {
     const b = await request.json().catch(() => ({}));
     const cfg = autolabelCleanConfig({ ...(await autolabelLoadConfig(env)), ...(b.config || {}) });
     await autolabelSetKey(env, AUTOLABEL_CONFIG_KEY, JSON.stringify(cfg));
+    await scanFormClockEnsure(env); // new scan form times → the alarm moves with them
     await autolabelLog(env, { action: 'config', reason: `mode=${cfg.mode} cancelWatch=${cfg.cancelWatch}`,
       customer: (session && (session.displayName || session.username)) || '', detail: JSON.stringify(cfg) });
     return veeqoResp({ ok: true, config: cfg });
@@ -27692,7 +27745,8 @@ async function handleAutolabelRoute(path, method, url, request, env, session) {
     // when it holds the PDFs themselves it can't be read back → 0 forms, and the prompt skipped it. The saved PDFs count.
     rows.forEach(r => { r.saved = sv[r.id] || 0; if (r.ok && r.saved > (r.parts || 0)) r.parts = r.saved; });
     const cfg = await autolabelLoadConfig(env);
-    return veeqoResp({ ok: true, forms: rows, missing: await autolabelScanFormMissing(env), verified: (await autolabelGetKey(env, AUTOLABEL_SCANFORM_VERIFIED_KEY)) === 'yes',
+    const clock = await scanFormClockEnsure(env);
+    return veeqoResp({ ok: true, forms: rows, clockNext: clock && clock.next, nextForm: (() => { const at = autolabelNextScanFormAt(cfg, new Date()); return at ? new Date(at).toISOString() : null; })(), missing: await autolabelScanFormMissing(env), verified: (await autolabelGetKey(env, AUTOLABEL_SCANFORM_VERIFIED_KEY)) === 'yes',
       times: cfg.scanFormTimes, checkAt: cfg.scanFormCheckAt, on: cfg.scanFormOn });
   }
   if (path === '/veeqo/autolabel/scanform-file' && method === 'GET') {

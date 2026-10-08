@@ -24,3 +24,13 @@ database_id = "50823e63-c8ea-4f0c-b576-8289506b61fc"
 # Cron triggers: left out on purpose, so the schedules already set in the
 # dashboard (Settings → Triggers) stay unchanged. Adding a [triggers] block
 # here would replace the dashboard schedules completely.
+
+# ⏰ Scan form clock (owner 2026-10-08: "make the scan form at 8:50 pm every day"). The 30-min server timer can't hit
+# 8:50 (and USPS takes no form after 9 pm), so a Durable Object alarm wakes the worker at each scan form time.
+[[durable_objects.bindings]]
+name = "SF_CLOCK"
+class_name = "ScanFormClock"
+
+[[migrations]]
+tag = "sf-clock-v1"
+new_sqlite_classes = ["ScanFormClock"]
