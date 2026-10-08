@@ -3153,6 +3153,13 @@ async function inventoryUpcLink(request, env, session) {
     .bind(upc, part, who, new Date().toISOString()).run();
   return J({ ok: true, upc, part });
 }
+let _invUpcSheet = { at: 0, data: null };
+async function invUpcSheetCached(env) {
+  if (_invUpcSheet.data && Date.now() - _invUpcSheet.at < 60000) return _invUpcSheet.data;
+  const d = await invSheetGet(env, 'UPC!A2:D5000').catch(() => null);
+  if (d && Array.isArray(d.values)) { _invUpcSheet = { at: Date.now(), data: d }; return d; }
+  return d || { values: [] };
+}
 async function inventoryLookup(url, env) {
   const rawCode = (url.searchParams.get('code') || '').trim().toUpperCase();
   let code = stripParentC(rawCode);
@@ -3161,7 +3168,9 @@ async function inventoryLookup(url, env) {
   if (!code) return cors(new Response(JSON.stringify({ error: 'No code provided' }), { status: 400, headers: { 'Content-Type': 'application/json' } }));
 
   // 1. Look up in UPC sheet: col A=SKU, col B=PartNum/variant, col C=inside UPC, col D=outside UPC
-  const upcData = await invSheetGet(env, 'UPC!A2:D5000').catch(() => ({ values: [] }));
+  // Owner (2026-10-08): "Transfer — every scan is a little slow, we wait for the next thing to show up". The 5,000-row
+  // Google Sheet was downloaded on EVERY scan; it is kept for 60 s now (UPCs linked in the app are in D1, read live below).
+  const upcData = await invUpcSheetCached(env);
   const upcRows = upcData.values || [];
 
   let partNum = null;
@@ -3229,12 +3238,17 @@ async function inventoryLookup(url, env) {
   let mlRows = [], pendingMapLookup = {};
   if (env.DB) {
     try {
+      // Only this item's rows come back (was: every SKU Mgr row on every scan) — the same order and the same row
+      // number (rn) each would have had in the full list, then the same match rules below.
+      const B0 = parentOf(sku || partNum || ''), likeB = B0.replace(/[\\%_]/g, '\\$&') + '%';
       const [d1Rows, pMap] = await Promise.all([
-        d1All(env, 'SELECT id,sku,name,part_num,location,cases,units_per_case FROM master_list'),
+        d1All(env, `SELECT * FROM (SELECT id,sku,name,part_num,location,cases,units_per_case, ROW_NUMBER() OVER () AS rn FROM master_list)
+          WHERE UPPER(TRIM(part_num)) = ? OR UPPER(TRIM(part_num)) LIKE ? ESCAPE '\\' OR UPPER(TRIM(sku)) LIKE ? ESCAPE '\\'`, [String(partNum).toUpperCase(), likeB, likeB]),
         buildPendingMap(env)
       ]);
       mlRows = [['hdr']];
       for (const r of d1Rows) {
+        while (mlRows.length < r.rn) mlRows.push(['']); // keep each row at its place in the full list (rowIndex)
         const row = new Array(17).fill('');
         row[3]=r.sku||''; row[4]=r.name||''; row[6]=r.part_num||'';
         row[7]=r.location||''; row[8]=String(r.cases??0); row[9]=String(r.units_per_case??0);
@@ -3316,9 +3330,15 @@ async function inventoryLookup(url, env) {
       const B = String(baseSku).toUpperCase();
       const alias = {}; ((await env.DB.prepare('SELECT raw, part FROM reorder_alias').all().catch(() => ({ results: [] }))).results || [])
         .forEach(a => { alias[String(a.raw).toUpperCase()] = String(a.part).toUpperCase(); });
-      const rows = [
+      // Only this item's listings: SKUs starting with the parent, plus any SKU corrected to one of its part #s (was: every listing).
+      const likeF = B.replace(/[\\%_]/g, '\\$&') + '%', rawsAll = Object.keys(alias).filter(k => reorderGetBaseSku(alias[k]) === B);
+      const raws0 = rawsAll.length > 90 ? [] : rawsAll, inRaw = raws0.length ? ` OR UPPER(TRIM(sku)) IN (${raws0.map(() => '?').join(',')})` : '';
+      const rows = rawsAll.length > 90 ? [ // very many corrected SKUs → the full read, as before
         ...(((await env.DB.prepare('SELECT sku, available FROM fba_catalog').all().catch(() => ({ results: [] }))).results) || []),
         ...(((await env.DB.prepare(`SELECT sku, NULL AS available FROM amazon_fba_inventory WHERE afn_listing_exists = 'Yes'`).all().catch(() => ({ results: [] }))).results) || []),
+      ] : [
+        ...(((await env.DB.prepare(`SELECT sku, available FROM fba_catalog WHERE UPPER(TRIM(sku)) LIKE ? ESCAPE '\\'${inRaw}`).bind(likeF, ...raws0).all().catch(() => ({ results: [] }))).results) || []),
+        ...(((await env.DB.prepare(`SELECT sku, NULL AS available FROM amazon_fba_inventory WHERE afn_listing_exists = 'Yes' AND (UPPER(TRIM(sku)) LIKE ? ESCAPE '\\'${inRaw})`).bind(likeF, ...raws0).all().catch(() => ({ results: [] }))).results) || []),
       ];
       const seen = {};
       for (const r of rows) {

@@ -4147,5 +4147,25 @@ console.log('\n⏰ Scan form clock: exact alarm at 8:50 pm every day (+ night ch
   check('…the 30-min timer and every settings save make sure the alarm is set; the scan form list shows the next time', /async function autolabelCron\(env\) \{\n  const cfg = await autolabelLoadConfig\(env\);\n  await scanFormClockEnsure\(env\);/.test(ws) && /nextForm: \(\(\) =>/.test(ws), null);
 }
 
+// Owner (2026-10-08): "Inventory → Transfer: every scan is a little slow, we wait for the next thing to show up". The lookup now
+// reads only the item's SKU Mgr rows (not all of them) and keeps the UPC sheet 60 s — the answer must be exactly the same.
+console.log('\nTransfer scan lookup: faster, same answer (rows, order, row numbers)');
+{
+  sq.exec(`INSERT INTO master_list (base_sku, sku, name, part_num, location, cases, units_per_case) VALUES
+    ('216-1-1','216-1-1','Tee 216','216-1-1=10','C1=6-1-1',3,100), ('216-1-11','216-1-11','Other','216-1-11=10','C1=6-1-2',2,100),
+    ('216-1-1C','216-1-1C','Tee 216 C','216-1-1C=5','C2=6-1-1',4,50), ('999-9-9','999-9-9','Far','999-9-9=1','C1=6-1-3',1,1),
+    ('216-1-1','216-1-1','Tee 216','216-1-1=25','C3=6-1-1',6,250)`);
+  const all = sq.prepare('SELECT id, part_num, location FROM master_list').all(); // the full list, in its own order (old way)
+  const idx = id => all.findIndex(r => r.id === id) + 2; // old rowIndex = position in the full list + 1 (row 1 = header)
+  const d = await get('/inventory/lookup?code=216-1-1');
+  const want = all.filter(r => /^216-1-1(C)?=/.test(r.part_num)).map(r => r.part_num + '@' + r.location + '#' + idx(r.id));
+  const got = (d.locations || []).map(l => l.partNum + '@' + l.location + '#' + l.rowIndex);
+  check('216-1-1: its =10, =25 and the C part # =5 (same parent), not 216-1-11 or others; same order and row numbers as reading every row',
+    JSON.stringify(got) === JSON.stringify(want) && d.isMultiVariant === true && d.name === 'Tee 216' && got.length === 3, { got, want });
+  const one = await get('/inventory/lookup?code=216-1-25'.replace('216-1-25', '216-1-1=25'));
+  check('…an exact part # scan (216-1-1=25) still lists the whole family the same way', (one.locations || []).length === 3 && one.partNum === '216-1-1=25', one.locations);
+  sq.exec("DELETE FROM master_list WHERE base_sku IN ('216-1-1','216-1-11','216-1-1C','999-9-9')");
+}
+
 console.log('\n' + (failed ? '❌ ' + failed + ' check(s) FAILED' : '✅ all ' + passed + ' checks passed') + '\n');
 process.exit(failed ? 1 : 0);
