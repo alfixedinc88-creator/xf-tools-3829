@@ -19106,6 +19106,7 @@ async function handleShipRoute(url, method, request, env, session, ctx) {
     if (path === '/ship/lookup'       && method === 'GET')  return await shipLookup(url, env);
     if (path === '/ship/order-lookup' && method === 'GET')  return await shipOrderLookup(url, env);
     if (path === '/ship/tracking-history' && method === 'GET') return await shipTrackingHistory(url, env);
+    if (path === '/ship/carrier-tracking' && method === 'GET') return await shipCarrierTracking(url, env);
     if (path === '/ship/package' && method === 'GET') return await shipPackageCheck(url, env);
     if (path === '/ship/manifest'     && method === 'GET')  return await shipGetManifest(url, env);
     if (path === '/ship/status-upload'&& method === 'POST') return await shipStatusUpload(request, env);
@@ -21589,6 +21590,41 @@ async function veeqoDebugTracking(url, env) {
   }
 
   return cors(new Response(JSON.stringify(result), { headers: { 'Content-Type': 'application/json' } }));
+}
+
+// ── GET /ship/carrier-tracking?tracking= (owner, 2026-10-08) ─────────────
+// "Order Lookup — can we also see how the tracking # is doing on USPS / UPS:
+// where is it now, did it get delivered, when, what it last showed". Read from
+// Veeqo's tracking events for the shipment (Veeqo gets them from the carrier).
+function _carrierEvtLoc(l) {
+  if (!l) return '';
+  if (typeof l === 'string') return l;
+  return [l.city, l.state || l.state_province || l.region, l.zip || l.postal_code, l.country && l.country !== 'US' ? l.country : ''].filter(Boolean).join(', ');
+}
+async function shipCarrierTracking(url, env) {
+  const J = (o, st) => cors(new Response(JSON.stringify(o), { status: st || 200, headers: { 'Content-Type': 'application/json' } }));
+  await ensureShipD1Tables(env);
+  const tracking = normalizeShipTracking((url.searchParams.get('tracking') || '').trim());
+  if (!tracking) return J({ ok: false, error: 'tracking required' }, 400);
+  const carrier = detectShipCarrier(tracking);
+  const link = veeqoTrackingUrl(carrier, tracking);
+  if (!env.VEEQO_API_KEY) return J({ ok: false, tracking, carrier, link, error: 'Veeqo not connected' });
+  let shipmentId = null;
+  const row = await env.DB.prepare(`SELECT shipment_id FROM ship_scan_log WHERE UPPER(tracking) = ? AND shipment_id != '' LIMIT 1`).bind(tracking).first().catch(() => null);
+  if (row && row.shipment_id) shipmentId = row.shipment_id;
+  if (!shipmentId) {
+    const lk = await veeqoLookupByTrackingSafe(env, tracking);
+    if (lk.order) shipmentId = veeqoExtractShipmentId(lk.order);
+    if (!shipmentId) return J({ ok: true, tracking, carrier, link, state: 'unknown', note: lk.error ? 'Veeqo lookup failed: ' + lk.error : 'Veeqo has no shipment for this tracking # yet', events: [] });
+  }
+  const ev = await veeqoGetTrackingEventsSafe(env, shipmentId);
+  if (ev.error) return J({ ok: false, tracking, carrier, link, error: 'Veeqo tracking failed: ' + ev.error });
+  const events = (ev.events || []).map(e => ({ at: e.timestamp || e.occurred_at || e.created_at || '', status: e.status || '', text: e.description || e.message || e.status || '', where: _carrierEvtLoc(e.location || e.address) }));
+  const del = events.find(e => /deliver/i.test(e.status + ' ' + e.text) && !/out for delivery|attempt|undeliver|not delivered|delivery exception|to be delivered|expected/i.test(e.status + ' ' + e.text));
+  const last = events[0] || null;
+  const state = del ? 'delivered' : !events.length ? 'no_scan' : /exception|return|undeliver|attempt|alert|held|refused/i.test((last.status || '') + ' ' + (last.text || '')) ? 'problem'
+    : /out for delivery/i.test((last.status || '') + ' ' + (last.text || '')) ? 'out_for_delivery' : 'in_transit';
+  return J({ ok: true, tracking, carrier, link, state, deliveredAt: del ? del.at : null, deliveredWhere: del ? del.where : '', last, events });
 }
 
 // ── GET /ship/lookup?tracking= ────────────────────────────────────────────────

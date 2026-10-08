@@ -1130,7 +1130,8 @@ body {
   <div class="ps-tabitem"        id="ps-tab-closebatch" onclick="psSwitchTab('closebatch')">🚐 Close Batch</div>
   <div class="ps-tabitem"        id="ps-tab-cancellation" onclick="psSwitchTab('cancellation')">🗑️ Cancellation <span class="ps-tab-badge" id="ps-cancelorder-badge" style="display:none">0</span></div>
   <div class="ps-tabitem"        id="ps-tab-progress" onclick="psSwitchTab('progress')">📊 Progress</div>
-  <div class="ps-tabitem"        id="ps-tab-lookup"      onclick="psSwitchTab('lookup')">🔍 Lookup</div>
+  <!-- Owner (2026-10-08): "take off Lookup — Order Lookup has everything" (hidden; the tab's code stays) -->
+  <div class="ps-tabitem"        id="ps-tab-lookup"      onclick="psSwitchTab('lookup')" style="display:none">🔍 Lookup</div>
   <div class="ps-tabitem"        id="ps-tab-orderlookup" onclick="psSwitchTab('orderlookup')">📋 Order Lookup</div>
   <div class="ps-tabitem"        id="ps-tab-status"      onclick="psSwitchTab('status')">📡 Status Check</div>
   <div class="ps-tabitem"        id="ps-tab-gaps"     onclick="psSwitchTab('gaps')">⚠️ Gap Report <span class="ps-tab-badge" id="ps-gap-badge" style="display:none">0</span></div>
@@ -4631,21 +4632,24 @@ function _psRenderOrderLookupCard(o, opts) {
   var addrLine = [o.address1, o.address2].filter(Boolean).join(', ');
   var cityLine  = [o.city, o.shipToState, o.zip].filter(Boolean).join(', ');
 
-  // NEW — "Activity History": every pick/pack/print/stockout/no-stock/
-  // cancellation event ever logged against this tracking, in one place.
-  // Collapsed by default and fetched lazily on first expand (see
-  // psToggleTrackingHistory + GET /ship/tracking-history) — not loaded
-  // eagerly for every card, since Order Lookup can show up to 50 of these
-  // at once and most searches never open it.
+  // "Activity History": every pick/pack/print/stockout/no-stock/cancellation event logged against this
+  // tracking. Owner (2026-10-08): "don't hide the activity history anymore — show everything" → open and
+  // loaded by itself (a few at a time — Order Lookup can show many cards). Same for 🚚 Carrier tracking:
+  // where the package is now / delivered when (from Veeqo's tracking events). Tap the header to hide.
   var histId = 'ps-ol-hist-' + (_psOrderLookupCardSeq++);
   var histHtml = (o.tracking ? (
     '<div style="margin-top:10px;padding-top:8px;border-top:1px dashed var(--border);">'
+      + '<div style="cursor:pointer;font-size:12px;font-weight:700;color:var(--accent);user-select:none;" onclick="psToggleCarrierTracking(\'' + histId + '-ct\')">🚚 Carrier tracking (' + (o.carrier || 'USPS / UPS') + ') — where is it now</div>'
+      + '<div id="' + histId + '-ct" class="ps-ct-auto" data-tracking="' + o.tracking + '" style="display:block;margin-top:6px;"><div style="font-size:12px;color:var(--text3);">Asking the carrier…</div></div>'
+    + '</div>'
+    + '<div style="margin-top:10px;padding-top:8px;border-top:1px dashed var(--border);">'
       + '<div style="cursor:pointer;font-size:12px;font-weight:700;color:var(--accent);user-select:none;" onclick="psToggleTrackingHistory(\'' + o.tracking + '\',\'' + histId + '\')">'
-      +   '📜 Show Activity History — picks, packs, prints, stock issues, cancellations'
+      +   '📜 Hide Activity History'
       + '</div>'
-      + '<div id="' + histId + '" style="display:none;margin-top:8px;"></div>'
+      + '<div id="' + histId + '" class="ps-hist-auto" data-tracking="' + o.tracking + '" style="display:block;margin-top:8px;"><div style="font-size:12px;color:var(--text3);">Loading activity history…</div></div>'
     + '</div>'
   ) : '');
+  if (o.tracking) setTimeout(_psAutoLoadCards, 0); // after the card is on the page
 
   return '<div class="ps-card" style="margin-bottom:12px;">'
     + '<div style="display:flex;align-items:flex-start;justify-content:space-between;gap:12px;flex-wrap:wrap;margin-bottom:8px;">'
@@ -4664,6 +4668,50 @@ function _psRenderOrderLookupCard(o, opts) {
     + histHtml
     + '</div>';
 }
+
+// Opens and loads every Activity History / Carrier tracking block on the page that isn't loaded yet, 3 at a time.
+var _psAutoBusy = 0;
+function _psAutoLoadCards() {
+  var todo = [].slice.call(document.querySelectorAll('.ps-hist-auto:not([data-loaded]):not([data-loading]), .ps-ct-auto:not([data-loaded]):not([data-loading])'));
+  while (_psAutoBusy < 3 && todo.length) {
+    var el = todo.shift(); el.setAttribute('data-loading', '1'); _psAutoBusy++;
+    var p = el.classList.contains('ps-ct-auto') ? _psLoadCarrierTracking(el) : _psLoadHistoryInto(el, el.getAttribute('data-tracking'));
+    p.then(function() {}, function() {}).then(function() { _psAutoBusy--; _psAutoLoadCards(); });
+  }
+}
+async function _psLoadHistoryInto(el, tracking) {
+  try {
+    var r = await fetch(PS_WORKER + '/ship/tracking-history?tracking=' + encodeURIComponent(tracking), { headers: { 'X-Cred-Token': psCredToken } });
+    var d = await r.json();
+    el.innerHTML = d.ok ? _psRenderTrackingHistory(d.events) : '<div style="font-size:12px;color:var(--err,#c0392b);">Could not load history — ' + (d.error || 'unknown error') + '</div>';
+    if (d.ok) el.dataset.loaded = '1';
+  } catch (e) { el.innerHTML = '<div style="font-size:12px;color:var(--err,#c0392b);">Request failed — ' + e.message + '</div>'; }
+  el.removeAttribute('data-loading'); if (!el.dataset.loaded) el.dataset.loaded = 'err';
+}
+// 🚚 Carrier tracking: delivered (when / where) · out for delivery · in transit · problem · no carrier scan yet, and every scan.
+var _PS_CT_STATE = { delivered: ['✅ Delivered', '#15803d'], out_for_delivery: ['🚚 Out for delivery', '#1d4ed8'], in_transit: ['🚚 In transit', '#1d4ed8'],
+  problem: ['⚠️ Problem — check it', '#b91c1c'], no_scan: ['⏳ No carrier scan yet', '#b45309'], unknown: ['❓ Not found in Veeqo yet', '#6b7280'] };
+async function _psLoadCarrierTracking(el) {
+  var t = el.getAttribute('data-tracking'), E = function(v) { return String(v == null ? '' : v).replace(/[&<>"']/g, function(c) { return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]; }); };
+  try {
+    var r = await fetch(PS_WORKER + '/ship/carrier-tracking?tracking=' + encodeURIComponent(t), { headers: { 'X-Cred-Token': psCredToken } });
+    var d = await r.json();
+    var link = d.link ? ' <a href="' + E(d.link) + '" target="_blank" rel="noopener" style="font-size:11px">Open on ' + E(d.carrier || 'carrier') + ' site ↗</a>' : '';
+    if (!d.ok) { el.innerHTML = '<div style="font-size:12px;color:var(--err,#c0392b);">Could not check — ' + E(d.error || 'unknown error') + link + '</div>'; }
+    else {
+      var st = _PS_CT_STATE[d.state] || [d.state, 'var(--text)'], L = d.last;
+      var head = '<div style="font-size:13px;font-weight:800;color:' + st[1] + '">' + st[0]
+        + (d.state === 'delivered' && d.deliveredAt ? ' — ' + E(psFmtDateTime(d.deliveredAt)) + (d.deliveredWhere ? ' · ' + E(d.deliveredWhere) : '') : '') + '</div>'
+        + (L ? '<div style="font-size:12px;color:var(--text2);margin-top:2px">Last: ' + E(L.text) + (L.where ? ' · ' + E(L.where) : '') + (L.at ? ' · <span style="font-family:var(--mono)">' + E(psFmtDateTime(L.at)) + '</span>' : '') + '</div>' : (d.note ? '<div style="font-size:12px;color:var(--text3)">' + E(d.note) + '</div>' : ''))
+        + '<div style="margin-top:2px">' + link + '</div>';
+      var evs = (d.events || []).map(function(e) { return '<div style="font-size:11px;padding:3px 0;border-bottom:1px solid var(--border)"><span style="font-family:var(--mono);color:var(--text3)">' + E(e.at ? psFmtDateTime(e.at) : '') + '</span> · ' + E(e.text) + (e.where ? ' <span style="color:var(--text3)">· ' + E(e.where) + '</span>' : '') + '</div>'; }).join('');
+      el.innerHTML = head + (evs ? '<details style="margin-top:4px"><summary style="font-size:11px;cursor:pointer;color:var(--text2)">All ' + d.events.length + ' carrier scans</summary>' + evs + '</details>' : '');
+      el.dataset.loaded = '1';
+    }
+  } catch (e) { el.innerHTML = '<div style="font-size:12px;color:var(--err,#c0392b);">Request failed — ' + E(e.message) + '</div>'; }
+  el.removeAttribute('data-loading'); if (!el.dataset.loaded) el.dataset.loaded = 'err';
+}
+window.psToggleCarrierTracking = function(id) { var el = document.getElementById(id); if (el) el.style.display = el.style.display === 'none' ? 'block' : 'none'; };
 
 // Ever-incrementing suffix for the Activity History container id above —
 // _psRenderOrderLookupCard can render many cards on one page (Order Lookup
@@ -4710,7 +4758,7 @@ window.psToggleTrackingHistory = async function(tracking, containerId) {
   el.style.display = 'block';
   if (toggle) toggle.innerHTML = '📜 Hide Activity History';
 
-  if (el.dataset.loaded === '1') return; // already fetched once, just re-showing
+  if (el.dataset.loaded === '1' || el.hasAttribute('data-loading')) return; // already fetched (or being fetched), just re-showing
 
   el.innerHTML = '<div style="font-size:12px;color:var(--text3);">Loading activity history…</div>';
   try {
@@ -5821,6 +5869,7 @@ window.psUnlockTab = async function(tab) {
 
 // Override psSwitchTab to re-show gate if tab not yet unlocked
 window.psSwitchTab = function(name) {
+  if (name === 'lookup') name = 'orderlookup'; // 🔍 Lookup is taken off (owner) — Order Lookup has everything
   document.querySelectorAll('.ps-tabitem').forEach(function(t){ t.classList.remove('active'); });
   document.querySelectorAll('.ps-panel').forEach(function(p){ p.classList.remove('active'); });
   document.getElementById('ps-tab-' + name).classList.add('active');
