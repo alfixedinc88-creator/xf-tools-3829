@@ -1068,7 +1068,7 @@ async function reorderSalesCheck(env) {
       let units = 0, fixedRows = 0;
       for (const r of byWeek[w]) {
         const u = parseFloat(r.units_ordered) || 0; units += u;
-        if (fixed.has(r.sku + '|' + r.period_start)) fixedRows++;
+        if (fixed.has(r.sku + '|' + r.period_start)) { fixedRows++; continue; } // already changed to units: never asked again
         const pk = reorderExtractPackSize(reorderCleanPart(r.sku)), ref = refRate[r.sku] || 0;
         const days = r.period_end && _salesDay(r.period_end) ? Math.max(1, Math.round((_salesDay(r.period_end) - _salesDay(r.period_start)) / 86400000)) : 7;
         if (pk >= 10 && ref > 0 && u > 0) { const x = (u / days) / ref; vs.push(Math.log(Math.max(x, 1e-6)) / Math.log(pk)); ex.push({ sku: r.sku, units: u, pack: pk, refPerWeek: Math.round(ref * 7 * 100) / 100 }); }
@@ -1077,7 +1077,7 @@ async function reorderSalesCheck(env) {
       const score = vs.length ? vs[Math.floor(vs.length / 2)] : null;
       ex.sort((a, b) => b.units * b.pack - a.units * a.pack);
       weeks.push({ start: w, rows: byWeek[w].length, units: Math.round(units * 100) / 100, n: vs.length, score: score == null ? null : Math.round(score * 100) / 100,
-        pieces: vs.length >= 3 && score >= 0.5 && fixedRows < byWeek[w].length, fixedRows, examples: ex.slice(0, 3) });
+        pieces: vs.length >= 3 && score >= 0.5, fixedRows, examples: ex.slice(0, 3) });
     }
     const flagged = weeks.filter(w => w.pieces);
     out.push({ table: tbl, channel, newestWeek: starts[starts.length - 1], refWeeks: refStarts.length, weeks, flaggedWeeks: flagged.map(w => w.start), flaggedRows: flagged.reduce((a, w) => a + w.rows, 0),
@@ -1108,11 +1108,14 @@ async function reorderSalesPiecesFix(env, b, who, undo) {
     .forEach(f => { const pk = reorderExtractPackSize(reorderCleanPart(f.sku)); if (f.asin && pk > 1) asinPack[String(f.asin).trim()] = pk; });
   let rows = [];
   for (const w of weeks) rows = rows.concat((await env.DB.prepare(`SELECT sku, period_start, units_ordered${isAmz ? ', asin' : ''} FROM ${t[0]} WHERE substr(period_start, 1, 10) = ?`).bind(w).all()).results || []);
-  let changed = 0, skipped = 0, before = 0, after = 0; const st = [];
+  let changed = 0, skipped = 0, already = 0, noPack = 0, before = 0, after = 0; const st = [];
   for (const r of rows) {
     let pk = reorderExtractPackSize(reorderCleanPart(r.sku)); const u = parseFloat(r.units_ordered) || 0;
     if (pk <= 1 && isAmz && r.asin && asinPack[String(r.asin).trim()]) pk = asinPack[String(r.asin).trim()];
-    if (done.has(r.sku + '|' + r.period_start) || pk <= 1 || !(u > 0)) { skipped++; continue; } // never twice; no pack in the SKU → left as is
+    const key = r.sku + '|' + r.period_start;
+    if (done.has(key)) { skipped++; already++; continue; } // never twice
+    if (pk <= 1 || !(u > 0)) { skipped++; noPack++; continue; } // no pack in the SKU (or nothing sold) → left as is
+    done.add(key); // the same SKU + week twice in the table → changed once
     const nu = Math.round(u / pk * 10000) / 10000;
     st.push(env.DB.prepare('INSERT INTO sales_fix_backup (tbl, sku, period_start, units_before, units_after, fixed_at, by_user) VALUES (?,?,?,?,?,?,?)').bind(t[0], r.sku, r.period_start, u, nu, now, who));
     st.push(env.DB.prepare(`UPDATE ${t[0]} SET units_ordered = ? WHERE sku = ? AND period_start = ?`).bind(nu, r.sku, r.period_start));
@@ -1120,7 +1123,7 @@ async function reorderSalesPiecesFix(env, b, who, undo) {
   }
   for (let i = 0; i < st.length; i += 100) await env.DB.batch(st.slice(i, i + 100));
   await reorderLog(env, who, 'sales_fix', t[1], `${t[1]} sales of ${weeks.length} week(s) ${weeks[0]} … ${weeks[weeks.length - 1]} were in pieces: ${changed} rows changed to units (÷ pack): ${Math.round(before)} → ${Math.round(after * 100) / 100}; ${skipped} rows left as they were (no pack in the SKU, or already fixed). Undo keeps every old number.`);
-  return { ok: true, changed, skipped, before: Math.round(before * 100) / 100, after: Math.round(after * 100) / 100 };
+  return { ok: true, changed, skipped, already, noPack, before: Math.round(before * 100) / 100, after: Math.round(after * 100) / 100 };
 }
 
 async function reorderComputeRecommendations(env, days) {
