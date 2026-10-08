@@ -8665,6 +8665,7 @@ var _PS_AL_LABELS = {
   merged:     ['🧩 Merged — same box', 'var(--green)'],
   merge_fix:  ['⚠️ Merged — mark shipped in Veeqo', 'var(--red)'],
   would_merge: ['🧩 Would merge (one box)', 'var(--accent)'],
+  merge_wait: ['🧩 Merged — label in a few min', 'var(--accent)'],
   merge:      ['🔗 Merge by hand (put aside)', 'var(--purple)'],
   weigh:      ['⚖️ Over limit — weigh / print by hand', 'var(--purple)'],
   fix_veeqo_weight: ['⚖️ Fix weight in Veeqo', 'var(--orange)'],
@@ -9009,7 +9010,10 @@ function _psAlMergeTag(o) {
   // Owner: "merge will not allow to purchase in our app" — the button only showed on 👀 would-merge groups; a group
   // still in its 30-min wait or put aside (🔗 merge) had no way to buy. By hand it skips the wait; the server still
   // refuses (and says why, on the page) over 20 lb, no weight, not allocated, cancelled.
-  if (lead && /^(would_merge|waiting|merge)$/.test(o.decision) && all.length > 1) h += '<button class="ps-btn-sm" style="margin-top:4px;background:var(--accent);color:#fff;border-color:var(--accent);font-weight:700" onclick="psAlMergeBuy(this, \'' + e(all.join(',').replace(/[\\']/g, '')) + '\')">🧩 Merge &amp; buy (' + all.length + ')</button>';
+  // Owner (2026-10-08): "merge it first, don't merge and buy at the same time" — 🧩 Merge only merges;
+  // once merged, 🏷 Buy the merged label (the server waits until Veeqo has had its minutes).
+  if (lead && /^(would_merge|waiting|merge)$/.test(o.decision) && all.length > 1) h += '<button class="ps-btn-sm" style="margin-top:4px;background:var(--accent);color:#fff;border-color:var(--accent);font-weight:700" onclick="psAlMergeBuy(this, \'' + e(all.join(',').replace(/[\\']/g, '')) + '\')">🧩 Merge (' + all.length + ')</button>';
+  if (lead && o.decision === 'merge_wait' && all.length > 1) h += '<button class="ps-btn-sm" style="margin-top:4px;font-weight:700" onclick="psAlMergeBuy(this, \'' + e(all.join(',').replace(/[\\']/g, '')) + '\', true)">🏷 Buy the merged label (' + all.length + ')</button>';
   return h;
 }
 // ✂️ Over the box limit (owner: "over 20 lb we split it — 2 boxes of 50, or
@@ -9502,16 +9506,26 @@ window.psAlScanFormStation = function(on, quiet) {
   if (!quiet) _psToast('📄 Scan form station on — the USPS scan form prints here by itself at the set times');
 };
 var _psAlMergeBusy = false;
-window.psAlMergeBuy = async function(btn, list) {
+window.psAlMergeBuy = async function(btn, list, buyNow) {
   if (_psAlMergeBusy) return;
-  var nums = String(list || '').split(',').filter(Boolean);
-  if (!confirm('Merge ' + nums.join(' + ') + ' into ONE box and buy ONE real label now?\n\nThe box weight in Veeqo is set to everything together, the label is bought on ' + nums[0] + ', and the other order' + (nums.length > 2 ? 's get' : ' gets') + ' marked shipped with the same tracking #. Then it prints (with the packing slip if it has 5+ items).')) return;
-  _psAlMergeBusy = true; btn.disabled = true; btn.textContent = '⏳ Merging…';
+  var nums = String(list || '').split(',').filter(Boolean), label0 = btn.textContent;
+  if (!confirm(buyNow
+    ? 'Buy ONE real label now for the merged box ' + nums.join(' + ') + '?\n\nIt is bought on ' + nums[0] + ' (Veeqo must show the merged box weight first), the other order' + (nums.length > 2 ? 's get' : ' gets') + ' marked shipped with the same tracking #, then it prints.'
+    : 'Merge ' + nums.join(' + ') + ' into ONE box now?\n\nOnly the merge: the box weight in Veeqo is set to everything together on ' + nums[0] + '. No label is bought now — Veeqo needs a few minutes; the label is bought on a later run (or tap 🏷 Buy the merged label then).')) return;
+  _psAlMergeBusy = true; btn.disabled = true; btn.textContent = buyNow ? '⏳ Buying…' : '⏳ Merging…';
   try {
     var d = await _psAlFetch('/veeqo/autolabel/merge-buy', { method: 'POST', body: { orders: nums, by: psInitials || '' } });
+    if (d.ok !== false && d.merged) {
+      var rr = window._psAlRunShown;
+      if (rr) (rr.orders || []).forEach(function(x) { if (nums.indexOf(x.number) < 0) return; var c = rr.counts; c[x.decision] = Math.max(0, (c[x.decision] || 0) - 1); x.decision = 'merge_wait'; x.reason = d.reason; c.merge_wait = (c.merge_wait || 0) + 1; });
+      if (rr) _psAlRenderRun(rr);
+      btn.textContent = '✅ Merged'; _psToast('🧩 Merged — the label is bought in ' + (d.buyAfterMin || 5) + ' min');
+      if (typeof psAlLoadLog === 'function') psAlLoadLog();
+      return;
+    }
     if (d.ok === false) {
-      btn.disabled = false; btn.textContent = '🧩 Merge & buy (' + nums.length + ')';
-      var why = 'Not merged — nothing bought: ' + (d.error || 'failed'), old = btn.parentNode && btn.parentNode.querySelector('.ps-al-merge-why'); if (old) old.remove();
+      btn.disabled = false; btn.textContent = label0;
+      var why = (d.waiting ? 'Not yet — ' : buyNow ? 'Nothing bought: ' : 'Not merged — nothing bought: ') + (d.error || 'failed'), old = btn.parentNode && btn.parentNode.querySelector('.ps-al-merge-why'); if (old) old.remove();
       btn.insertAdjacentHTML('afterend', '<div class="ps-al-merge-why" style="color:var(--red);font-size:12px;margin-top:3px;white-space:pre-wrap">❌ ' + _psAlEsc(why)
         + ' <button class="ps-btn-sm" data-t="' + _psAlEsc(nums.join(' + ') + ': ' + why + (d.detail ? '\nVeeqo said: ' + d.detail : '')) + '" onclick="_psAlCopy(this.getAttribute(\'data-t\'), this)">📋 Copy</button></div>'); // with what Veeqo answered (owner's copy had only the message)
       return;

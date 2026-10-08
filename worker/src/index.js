@@ -24866,6 +24866,7 @@ const AUTOLABEL_DEFAULTS = {
   skipChannels: [],            // never auto-buy for these channels (name contains)
   autoMerge: true,             // same name + address, together <= mergeMaxLb -> one box, one label (owner)
   mergeMaxLb: 20,              // ...over this together -> put aside to merge / split by hand (owner: 20 lb)
+  mergeBuyAfterMin: 5,         // merge first; the label is bought on a run at least this long after (owner 2026-10-08)
   maxBoxLb: 20,                // hold orders whose box would weigh more than this and show how to split them (0 = rule off)
   slipRule: 'multi_sku',       // packing slip with the label: 'multi_sku' (2+ different items) | 'multi_qty' (2+ pieces in total) | 'all' | 'off'
   maxLabelsPerRun: 10,         // most labels one run can buy
@@ -25031,6 +25032,7 @@ function autolabelCleanConfig(c) {
     maxBoxLb:          num(c.maxBoxLb, D.maxBoxLb, 0, 150),
     autoMerge:         c.autoMerge === true || c.autoMerge === 'true',
     mergeMaxLb:        num(c.mergeMaxLb, D.mergeMaxLb, 1, 150),
+    mergeBuyAfterMin:  num(c.mergeBuyAfterMin, D.mergeBuyAfterMin, 1, 240),
     slipRule:          ['multi_sku', 'multi_qty', 'all', 'off'].includes(c.slipRule) ? c.slipRule : D.slipRule,
     maxLabelsPerRun:   Math.round(num(c.maxLabelsPerRun, D.maxLabelsPerRun, 0, 100)),
     maxLabelsPerDay:   Math.round(num(c.maxLabelsPerDay, D.maxLabelsPerDay, 0, 2000)),
@@ -26035,10 +26037,17 @@ async function autolabelMarkShipped(env, o, allocId, tracking, carrierId) {
 }
 // Buys the ONE label for a merged box and marks the other orders shipped
 // with it. Every step is kept in autolabel_merge + autolabel_log.
-async function autolabelMergeBuy(env, cfg, plan, by, mergeMap) {
+// Owner (2026-10-08): "under 20 lb, just merge it first — don't merge and buy
+// at the same time". So this runs in two steps: without `opts.resume` it only
+// MERGES (the box weight of everything together on the oldest order, kept as
+// status 'merged') and stops; a run at least cfg.mergeBuyAfterMin later calls it
+// again with `opts.resume` = that merge row, which checks Veeqo has the weight
+// (saves it again if not) and only then buys the one label.
+async function autolabelMergeBuy(env, cfg, plan, by, mergeMap, opts) {
   const { lead, orders, nums } = plan;
   const leadAlloc = lead.allocations[0];
-  for (const g of orders) if (mergeMap && mergeMap.has(String(g.id))) return { ok: false, error: `${g.number} is already in a merged box` };
+  const resume = (opts && opts.resume) || null;
+  if (!resume) for (const g of orders) if (mergeMap && mergeMap.has(String(g.id))) return { ok: false, error: `${g.number} is already in a merged box` };
   for (const g of orders) {
     if (autolabelChannelType(g) !== 'amazon') continue;
     const amz = await autolabelAmazonBuyerCancel(env, g.number);
@@ -26047,9 +26056,15 @@ async function autolabelMergeBuy(env, cfg, plan, by, mergeMap) {
   const items = await autolabelMergeItems(env, orders);
   const now = new Date().toISOString();
   const list = orders.map(g => ({ id: String(g.id), number: g.number, allocId: String(g.allocations[0].id), channel: veeqoExtractChannel(g), marked: g === lead }));
-  const ins = await d1Run(env, `INSERT INTO autolabel_merge (created_at, updated_at, lead_id, lead_number, lead_alloc, orders, items, weight_lb, status, by_user) VALUES (?,?,?,?,?,?,?,?,?,?)`,
-    [now, now, String(lead.id), lead.number || '', String(leadAlloc.id), JSON.stringify(list), JSON.stringify(items), plan.lb, 'buying', by || 'auto']);
-  const mid = ins && ins.meta && ins.meta.last_row_id;
+  let mid;
+  if (resume) {
+    mid = resume.id;
+    await d1Run(env, 'UPDATE autolabel_merge SET status = ?, items = ?, updated_at = ? WHERE id = ?', ['buying', JSON.stringify(items), now, mid]);
+  } else {
+    const ins = await d1Run(env, `INSERT INTO autolabel_merge (created_at, updated_at, lead_id, lead_number, lead_alloc, orders, items, weight_lb, status, by_user) VALUES (?,?,?,?,?,?,?,?,?,?)`,
+      [now, now, String(lead.id), lead.number || '', String(leadAlloc.id), JSON.stringify(list), JSON.stringify(items), plan.lb, 'merging', by || 'auto']);
+    mid = ins && ins.meta && ins.meta.last_row_id;
+  }
   const setRow = (fields) => d1Run(env, `UPDATE autolabel_merge SET ${Object.keys(fields).map(k => k + ' = ?').join(', ')}, updated_at = ? WHERE id = ?`, [...Object.values(fields), new Date().toISOString(), mid]);
   const fail = async (error, detail) => { await setRow({ status: 'failed', detail: String(detail || error).slice(0, 2000) }); return { ok: false, error, detail: String(detail || '').slice(0, 2000) }; };
   const logBase = { orderId: lead.id, allocId: leadAlloc.id, orderNumber: lead.number, channel: veeqoExtractChannel(lead), customer: veeqoExtractCustomerName(lead) };
@@ -26061,13 +26076,27 @@ async function autolabelMergeBuy(env, cfg, plan, by, mergeMap) {
     .sort((a, b) => b.lengthIn * b.widthIn * b.heightIn - a.lengthIn * a.widthIn * a.heightIn)[0] || {};
   const want = { allocId: leadAlloc.id, weightLb: plan.lb, lengthIn: pk.lengthIn, widthIn: pk.widthIn, heightIn: pk.heightIn };
   const before = veeqoLivePackage(leadAlloc);
-  const sv = await veeqoSavePackage(env, lead, want, [3000, 6000, 10000]);
-  const saved = sv.ok, said = sv.said;
-  await veeqoEditTable(env);
-  await d1Run(env, 'INSERT INTO veeqo_edit_log (ts, by_user, order_number, order_id, alloc_id, sellable_id, sku, kind, before_val, after_val, ok, detail) VALUES (?,?,?,?,?,?,?,?,?,?,?,?)',
-    [new Date().toISOString(), by || 'auto', lead.number || '', String(lead.id), String(leadAlloc.id), '', '', 'package',
-     `${before.weightLb == null ? '?' : before.weightLb} lb`, `${plan.lb} lb (🧩 merged box ${nums})`, saved ? 1 : 0, saved ? '' : ('NOT saved — Veeqo: ' + said.join(' | ')).slice(0, 1500)]);
-  if (!saved) return fail(`Veeqo did not take the box weight (${plan.lb} lb) for ${lead.number} — nothing bought, merge by hand`, said.join(' | '));
+  // Buying step: Veeqo already shows the weight → nothing to save again.
+  const hasIt = !!resume && before.weightLb != null && Math.abs(before.weightLb - plan.lb) < 0.05;
+  let saved = hasIt, said = [];
+  if (!hasIt) {
+    const sv = await veeqoSavePackage(env, lead, want, resume ? [3000, 6000, 10000] : [3000]);
+    saved = sv.ok; said = sv.said;
+    await veeqoEditTable(env);
+    await d1Run(env, 'INSERT INTO veeqo_edit_log (ts, by_user, order_number, order_id, alloc_id, sellable_id, sku, kind, before_val, after_val, ok, detail) VALUES (?,?,?,?,?,?,?,?,?,?,?,?)',
+      [new Date().toISOString(), by || 'auto', lead.number || '', String(lead.id), String(leadAlloc.id), '', '', 'package',
+       `${before.weightLb == null ? '?' : before.weightLb} lb`, `${plan.lb} lb (🧩 merged box ${nums})`, saved ? 1 : 0, saved ? '' : ('NOT saved — Veeqo: ' + said.join(' | ')).slice(0, 1500)]);
+  }
+  if (!resume) {
+    // Step 1 done: merged. No label now — a later run buys it.
+    await setRow({ status: 'merged', detail: saved ? '' : ('Box weight not seen in Veeqo yet — checked again before the label is bought. Veeqo: ' + said.join(' | ')).slice(0, 2000) });
+    await autolabelLog(env, { ...logBase, action: 'merge_started', orderTotal: orders.reduce((n, g) => n + (autolabelOrderTotal(g) || 0), 0),
+      reason: `🧩 Merged ${nums} — one box, ${plan.lb} lb on ${lead.number}${by ? ' by ' + by : ''}. The label is bought on a run after ${cfg.mergeBuyAfterMin} min (Veeqo needs the time).`,
+      detail: saved ? '' : said.join(' | ').slice(0, 1500) });
+    return { ok: true, merged: true, lb: plan.lb, orders: list, buyAfterMin: cfg.mergeBuyAfterMin, weightSeen: saved,
+      reason: `🧩 Merged ${nums} (${plan.lb} lb) — label in ${cfg.mergeBuyAfterMin} min` };
+  }
+  if (!saved) return fail(`Veeqo still does not show the box weight (${plan.lb} lb) on ${lead.number} after the merge — nothing bought, merge by hand`, said.join(' | '));
 
   // 2) Rates for that box, same carrier rules (a USPS-only channel in the box keeps it USPS).
   const { quotes } = await autolabelGetQuotes(env, leadAlloc.id);
@@ -26116,6 +26145,40 @@ async function autolabelMergeBuy(env, cfg, plan, by, mergeMap) {
   return { ok: true, allMarked, tracking, carrier: p.carrier, service: p.service, price: p.price, days: p.days, lb: plan.lb, orders: list, slip,
     reason: `${plan.reason}: ${choice.reason}`,
     error: allMarked ? undefined : `Label bought (${tracking}), but Veeqo did not mark ${list.filter(x => !x.marked).map(x => x.number).join(', ')} shipped — do it by hand in Veeqo with that tracking #` };
+}
+// Step 2 of a merge: the run at least cfg.mergeBuyAfterMin after it was
+// merged buys the one label — only if every order is still waiting for a
+// label in Veeqo, not cancelled, and the oldest order is still the box.
+async function autolabelMergeFinish(env, cfg, m, by) {
+  const failRow = async (error) => {
+    await d1Run(env, 'UPDATE autolabel_merge SET status = ?, detail = ?, updated_at = ? WHERE id = ?', ['failed', String(error).slice(0, 2000), new Date().toISOString(), m.id]);
+    await autolabelLog(env, { orderId: m.lead_id, allocId: m.lead_alloc, orderNumber: m.lead_number, action: 'buy_failed', reason: `🧩 Merged box ${(m.orderList || []).map(x => x.number).join(' + ')}: ${error}` });
+    return { ok: false, error };
+  };
+  const orders = [];
+  for (const x of (m.orderList || [])) {
+    const o = await autolabelFindAwaiting(env, x.number);
+    if (!o) return failRow(`${x.number} is no longer waiting for a label in Veeqo (bought / shipped / cancelled?) — nothing bought, check by hand`);
+    if (autolabelHasLabel(o)) return failRow(`${x.number} already has a label — nothing bought`);
+    orders.push(o);
+  }
+  const cancels = await autolabelCancelsCached(env, cfg);
+  for (const g of orders) {
+    const n = autolabelOrderNum(g.number), c = cancels.byNum.get(n);
+    if (c) return failRow(`${g.number} was cancelled on ${c.channel} (${c.state}) — nothing bought`);
+    if (await d1First(env, `SELECT 1 x FROM ship_order_cancel_log WHERE status!='done' AND UPPER(REPLACE(order_num,'#',''))=?`, [n])) return failRow(`${g.number} is on the Cancellation list — nothing bought`);
+  }
+  const lead = orders.find(g => String(g.id) === String(m.lead_id));
+  if (!lead || (lead.allocations || []).length !== 1 || String(lead.allocations[0].id) !== String(m.lead_alloc)) return failRow(`${m.lead_number}'s box changed in Veeqo since the merge — nothing bought, merge by hand`);
+  const nums = orders.map(g => g.number).join(' + ');
+  const plan = { kind: 'auto', lead, orders: [lead, ...orders.filter(g => g !== lead)], nums, lb: m.weight_lb, reason: `🧩 One box, one label: ${nums} — together ${m.weight_lb} lb (merged first)` };
+  return autolabelMergeBuy(env, cfg, plan, by, null, { resume: m });
+}
+// A merge of this oldest order failed in the last day → don't try it again by itself (no loop of Veeqo writes).
+async function autolabelMergeFailedRecently(env, leadId) {
+  const r = await d1First(env, `SELECT detail FROM autolabel_merge WHERE lead_id = ? AND status = 'failed' AND updated_at >= ? ORDER BY id DESC LIMIT 1`,
+    [String(leadId), new Date(Date.now() - 864e5).toISOString()]).catch(() => null);
+  return r ? (r.detail || 'failed') : null;
 }
 // The merged box on today's manifest with every order's items, so Picking /
 // Packing see the whole box when they scan the label.
@@ -26175,11 +26238,21 @@ async function autolabelMergeByHand(env, nums, by) {
     const c = cancels.byNum.get(n);
     if (c) return { ok: false, error: `${g.number} was cancelled on ${c.channel} (${c.state}) — not merging` };
   }
+  // Already merged (step 1 done) → this tap buys the label, once Veeqo has had its time.
+  const mm = await autolabelMergeMap(env);
+  const ex = orders.map(g => mm.get(String(g.id))).find(Boolean);
+  if (ex && /^(merged|merging)$/.test(ex.status)) {
+    const left = Math.ceil(cfg.mergeBuyAfterMin - (Date.now() - (Date.parse(ex.created_at) || Date.now())) / 60000);
+    if (left > 0) return { ok: false, waiting: true, error: `Merged at ${new Date(ex.created_at).toLocaleTimeString('en-US', { timeZone: 'America/New_York', hour: 'numeric', minute: '2-digit' })} — Veeqo needs ${cfg.mergeBuyAfterMin} min before the label is bought: ${left} min left (the next run buys it, or tap again then)` };
+    const res = await autolabelMergeFinish(env, cfg, ex, by);
+    if (res.ok && res.allMarked) await autolabelSetKey(env, AUTOLABEL_MERGE_VERIFIED_KEY, 'yes');
+    return res;
+  }
+  if (ex) return { ok: false, error: `${ex.lead_number}'s group is already in a merged box (${ex.status})` };
   const plan = await autolabelMergePlan(env, { ...cfg, waitMinutes: 0, autoMerge: true }, orders, Date.now());
   if (plan.kind !== 'auto') return { ok: false, error: plan.reason };
-  const res = await autolabelMergeBuy(env, cfg, plan, by, await autolabelMergeMap(env));
-  if (res.ok && res.allMarked) await autolabelSetKey(env, AUTOLABEL_MERGE_VERIFIED_KEY, 'yes');
-  return res;
+  // Step 1 only (owner: merge first, don't buy at the same time).
+  return autolabelMergeBuy(env, cfg, plan, by, mm);
 }
 
 // ── ✂️ Over the box limit → split into boxes ─────────────────────────────
@@ -26640,6 +26713,26 @@ async function autolabelRunOnce(env, opts = {}) {
     else if (autolabelChannelMatches(o, cfg.skipChannels)) { row.decision = 'skipped'; row.reason = 'Channel is on the skip list'; }
     else if (allocs.length && allocs.every(a => _psAllocTrackingNumber(a))) { row.decision = 'has_label'; row.reason = 'Already has a label'; }
     else if (!allocs.length && veeqoExtractTracking(o)) { row.decision = 'has_label'; row.reason = 'Already has a label'; }
+    else if (mergeMap.has(String(o.id)) && /^(merged|merging)$/.test(mergeMap.get(String(o.id)).status)) {
+      // 🧩 Merged first (owner): the label is bought on a run ≥ mergeBuyAfterMin later.
+      const m = mergeMap.get(String(o.id));
+      row.mergeKey = m.lead_number; row.mergeOrders = (m.orderList || []).map(x => x.number); row.mergeLb = m.weight_lb;
+      row.mergeWith = (m.orderList || []).filter(x => x.id !== String(o.id)).map(x => `${x.number} (${x.channel})`);
+      if (!m._fin) {
+        const ageM = (now - (Date.parse(m.created_at) || now)) / 60000;
+        if (buy && buysLeft >= 1 && ageM >= cfg.mergeBuyAfterMin) { m._fin = await autolabelMergeFinish(env, cfg, m, ''); if (m._fin.ok) buysLeft--; }
+        else m._fin = { wait: true, left: Math.max(0, Math.ceil(cfg.mergeBuyAfterMin - ageM)) };
+      }
+      const d = m._fin, x = ((d.orders || []).find(y => y.id === String(o.id))) || {};
+      if (d.wait) { row.decision = 'merge_wait'; row.reason = `🧩 Merged ${row.mergeOrders.join(' + ')} (${m.weight_lb} lb on ${m.lead_number}) — the label is bought ${d.left > 0 ? 'in ' + d.left + ' min' : 'on the next run'}${m.detail ? ' · ' + String(m.detail).slice(0, 160) : ''}`; }
+      else if (!d.ok) { row.decision = 'buy_failed'; row.reason = `🧩 ${row.mergeOrders.join(' + ')}: ${d.error}`; }
+      else {
+        row.carrier = d.carrier; row.service = d.service; row.tracking = d.tracking;
+        if (String(o.id) === String(m.lead_id)) { row.decision = 'bought'; row.price = d.price; row.days = d.days; row.reason = d.reason; row.slip = !!d.slip; row.boughtAt = new Date().toISOString(); }
+        else if (x.marked) { row.decision = 'merged'; row.reason = `🧩 In one box with ${m.lead_number} · tracking ${d.tracking}`; }
+        else { row.decision = 'merge_fix'; row.reason = `🧩 Label ${d.tracking} was bought on ${m.lead_number} for this box too, but Veeqo did not mark ${o.number} shipped — mark it shipped by hand in Veeqo with tracking ${d.tracking} (never buy it again)`; }
+      }
+    }
     else if (mergeMap.has(String(o.id))) await autolabelMergeRowState(env, o, mergeMap.get(String(o.id)), row);
     else if (group.filter(isOpen).length > 1) {
       // Owner: under mergeMaxLb together → one box, one label; heavier → put aside to merge by hand.
@@ -26652,13 +26745,18 @@ async function autolabelRunOnce(env, opts = {}) {
       else if (plan.kind === 'hand') { row.decision = 'merge'; row.reason = plan.reason; }
       else {
         if (!plan.done) {
-          if (buy && mergeVerified && buysLeft >= 1) { plan.done = await autolabelMergeBuy(env, cfg, plan, '', mergeMap); if (plan.done.ok) buysLeft--; }
+          const failedBefore = buy && mergeVerified ? await autolabelMergeFailedRecently(env, plan.lead.id) : null;
+          if (failedBefore) plan.done = { ok: false, hand: true, error: `an earlier merge of this box failed — merge by hand (${String(failedBefore).slice(0, 200)})` };
+          // Step 1 only: merge now (no label, nothing counted against the label limit); a later run buys.
+          else if (buy && mergeVerified) plan.done = await autolabelMergeBuy(env, cfg, plan, '', mergeMap);
           else plan.done = { preview: true };
         }
         const d = plan.done, x = ((d.orders || []).find(y => y.id === String(o.id))) || {};
-        if (d.preview) {
+        if (d.merged) { row.decision = 'merge_wait'; row.reason = `${d.reason}${d.weightSeen ? '' : ' (box weight checked again before buying)'}`; }
+        else if (d.hand) { row.decision = 'merge'; row.reason = `🧩 ${plan.nums}: ${d.error}`; }
+        else if (d.preview) {
           row.decision = 'would_merge';
-          row.reason = plan.reason + (!buy ? '' : !mergeVerified ? ' — tap 🧩 Merge & buy once by hand (Last run) to switch on auto merging' : ' — label limit reached for this run/day');
+          row.reason = plan.reason + (!buy ? '' : !mergeVerified ? ' — tap 🧩 Merge once by hand (Last run), then buy its label, to switch on auto merging' : ' — label limit reached for this run/day');
         }
         else if (!d.ok) { row.decision = d.cancelled ? 'merge' : 'buy_failed'; row.reason = `🧩 ${plan.nums}: ${d.error}`; }
         else {
@@ -27468,8 +27566,11 @@ async function handleAutolabelRoute(path, method, url, request, env, session) {
         if (!x) continue;
         lr.counts = lr.counts || {};
         lr.counts[r0.decision] = Math.max(0, (lr.counts[r0.decision] || 0) - 1); if (!lr.counts[r0.decision]) delete lr.counts[r0.decision];
-        r0.decision = x.number === res.orders[0].number ? 'bought' : x.marked ? 'merged' : 'merge_fix';
-        Object.assign(r0, { tracking: res.tracking, carrier: res.carrier, service: res.service }, r0.decision === 'bought' ? { price: res.price, days: res.days, reason: res.reason } : {});
+        if (res.merged) { r0.decision = 'merge_wait'; r0.reason = res.reason; } // step 1 only — the label comes on a later run
+        else {
+          r0.decision = x.number === res.orders[0].number ? 'bought' : x.marked ? 'merged' : 'merge_fix';
+          Object.assign(r0, { tracking: res.tracking, carrier: res.carrier, service: res.service }, r0.decision === 'bought' ? { price: res.price, days: res.days, reason: res.reason } : {});
+        }
         lr.counts[r0.decision] = (lr.counts[r0.decision] || 0) + 1;
       }
       if (lr) await autolabelSaveLastRun(env, lr);
