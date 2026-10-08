@@ -3947,6 +3947,32 @@ console.log('\nReorder: after Fix the sales-history box goes away and a second t
   sq.exec("DELETE FROM ebay_sales_weekly WHERE sku LIKE '215-%'; DELETE FROM sales_fix_backup");
 }
 
+// Owner (2026-10-08): "for the ones without an FBA listing, check the order history: if most orders are 5 or 10 pieces,
+// order it in 5 or 10, else all in 25 — fix it to only ONE pack, no FBA listing; the others we cut down and repack. It
+// saves a lot of time and space." The order is one row in the pack most orders are in, carrying every piece sold.
+console.log('\nReorder: a part # with no FBA listing is ordered in ONE pack — the size most orders are in');
+{
+  const day = n => new Date(Date.now() - n * 86400000).toISOString().slice(0, 10), end = n => new Date(Date.now() - n * 86400000 + 7 * 86400000).toISOString();
+  const ins = sq.prepare('INSERT OR REPLACE INTO ebay_sales_weekly (sku, period_start, period_end, units_ordered) VALUES (?,?,?,?)');
+  // 216-1-1 (no FBA listing): =5 sold 30, =10 sold 10, =25 sold 4, =100 sold 3 → most orders are =5 (by pieces =100 is biggest: 300)
+  [['216-1-1=5', 30], ['216-1-1=10', 10], ['216-1-1=25', 4], ['216-1-1=100', 3]].forEach(([k, u]) => ins.run(k, day(14), end(14), u));
+  // 217-1-1 (no FBA listing): =25 sold 12, =5 sold 4, =10 sold 4 → =25
+  [['217-1-1=25', 12], ['217-1-1=5', 4], ['217-1-1=10', 4]].forEach(([k, u]) => ins.run(k, day(14), end(14), u));
+  // shelf: 2 cases of 216-1-1=25 (100 pcs a case) = 200 pcs; 216-1-1=5 has a 500-pc box (100 bags a case), 0 on the shelf
+  sq.prepare("INSERT INTO master_list (base_sku, name, part_num, location, cases, units_per_case) VALUES ('216-1-1','tee','216-1-1=25','C3=1-1-1',2,100), ('216-1-1','tee','216-1-1=5','C3=1-1-2',0,500)").run();
+  const d = await get('/reorder/vendor-order?days=90&lead=3&cover=3');
+  const fam = b => (d.rows || []).filter(r => r.baseSku === b);
+  const a = fam('216-1-1'), c = fam('217-1-1');
+  const r = a[0] || {}, sold = 30 * 5 + 10 * 10 + 4 * 25 + 3 * 100; // 650 pcs
+  const target = sold / 3 * 6, need = target - 200; // 1,300 − 200 = 1,100 pcs → 220 bags of =5 → 3 cases of 100 = 300 bags
+  check('216-1-1 (no FBA): ONE row, =5 — the size most orders are in (30 of 47 sold), not =100 (most pieces)', a.length === 1 && r.sku === '216-1-1=5' && r.onePack && r.onePack.pack === 5, a.map(x => [x.sku, x.onePack]));
+  check('…it carries every piece of the part # sold: 150 + 100 + 100 + 300 = 650 pcs (nothing dropped, nothing twice)', r.soldPcs === sold && r.calc.famSoldPcs === sold, [r.soldPcs, r.calc && r.calc.famSoldPcs]);
+  check('…the 200 pcs of =25 on the shelf are counted: need 1,300 − 200 = 1,100 pcs = 220 bags of =5 → 3 cases of 100 bags (1,500 pcs)',
+    Math.round(r.calc.famHave) === 200 && r.needUnits === need / 5 && r.cases === 3 && r.orderUnits === 300 && /ONE pack for the whole part #: =5/.test(r.note), [r.calc.famHave, r.needUnits, r.cases, r.orderUnits, r.note]);
+  check('217-1-1 (no FBA): =25 sold most (12 of 20) → one row of =25 with all 12×25 + 4×5 + 4×10 = 360 pcs', c.length === 1 && c[0].sku === '217-1-1=25' && c[0].soldPcs === 360, c.map(x => [x.sku, x.soldPcs]));
+  sq.exec("DELETE FROM ebay_sales_weekly WHERE sku LIKE '216-1-1%' OR sku LIKE '217-1-1%'; DELETE FROM master_list WHERE base_sku = '216-1-1'");
+}
+
 // Owner (2026-10-07): "SKU Mgr shows the total inventory cost to the owner only — I want it in History too: the
 // total inventory cost before and after every transaction; a big change must say why (a container just received,
 // just shipped…); only the owner can see the price change."

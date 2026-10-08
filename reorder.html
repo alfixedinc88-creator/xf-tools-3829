@@ -2131,8 +2131,8 @@ body { display:flex; flex-direction:column; min-height:100vh; background:var(--b
         <!-- Owner: "only order in the FBA listing, with all the inventory counted — take out the options", then (2026-10-07):
              "if anything with no FBA listing, we still need to order … don't have to separate to FBA listing". Every part # that
              needs ordering is ordered once: on its FBA listing(s) (each carries every sale of the part #), or — no FBA listing at
-             all — on its best-selling pack (carries every sale of the part #). -->
-        <span style="display:flex;align-items:center;gap:5px;font-weight:700;color:var(--text2)" title="A part # with an FBA listing is ordered on its FBA listing (it carries every sale of the part # — other pack sizes, non-FBA listings, eBay / Walmart / Shopify). A part # with no FBA listing is ordered on its best-selling pack.">📦 Ordering every part # that needs it<input type="hidden" id="rvo-fbaf" value="all"></span>
+             all — on ONE pack: the size most orders are in (carries every sale of the part #). -->
+        <span style="display:flex;align-items:center;gap:5px;font-weight:700;color:var(--text2)" title="A part # with an FBA listing is ordered on its FBA listing (it carries every sale of the part # — other pack sizes, non-FBA listings, eBay / Walmart / Shopify). A part # with no FBA listing is ordered in ONE pack size: the size most orders are in (it carries every piece sold; other sizes are cut / repacked from it).">📦 Ordering every part # that needs it<input type="hidden" id="rvo-fbaf" value="all"></span>
         <label style="display:flex;align-items:center;gap:5px">Search:
           <input type="text" id="rvo-q" placeholder="Part #, e.g. 27-3-1" oninput="rvoRender()" style="width:150px;font-size:12px;padding:4px 8px;border-radius:6px;border:1px solid var(--border);font-family:var(--mono)"></label>
         <label style="display:flex;align-items:center;gap:5px" title="Change part #, description, vendor, UPCs, ASIN and case qty right in the table, then 💾 Save all"><input type="checkbox" id="rvo-inline" onchange="rvoInlToggle(this.checked)"> ✏️ Edit in table</label>
@@ -4156,7 +4156,7 @@ function rvoFbaNote() {
   var nofba = RVO.rows.filter(function (r) { return !r.fbaSku && (r.orderUnits > 0 || RVO.edits[r.sku] > 0) && !(v === '__none' ? r.vendor : (v && r.vendor !== v)); });
   box.innerHTML = '<div style="border:1.5px solid var(--green);border-radius:8px;padding:8px 10px;margin-bottom:8px;font-size:12px;line-height:1.5">'
     + '<b>Every part # that needs ordering is ordered — once.</b> With an FBA listing: on its FBA row, which counts the sales of the other pack sizes, listings and channels of its part #. '
-    + 'With no FBA listing: on its best-selling pack, which counts every sale of the part #.'
+    + 'With no FBA listing: ONE pack size, the size most orders are in; it counts every piece sold of the part # (other sizes are cut / repacked from it).'
     + (nofba.length ? '<br>' + nofba.length + ' part # with no FBA listing ' + (nofba.length === 1 ? 'is' : 'are') + ' in this order: '
       + nofba.slice(0, 15).map(function (r) { return '<span style="font-family:var(--mono)">' + escHtml(r.sku) + '</span> (' + fmt0(rvoQty(r)) + ')'; }).join(', ') + (nofba.length > 15 ? ' …' : '') : '') + '</div>';
 }
