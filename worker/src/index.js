@@ -1801,7 +1801,7 @@ async function reorderSaveFixOne(env, b, who) {
 //   2. Each FBA SKU (fba_catalog) keeps its own Amazon sales; every other
 //      sale of the part (other channels, other packs) is split over the
 //      part's FBA SKUs by how many each sold on Amazon (even if none).
-//      A base part with no FBA SKU gets its best-selling pack instead.
+//      A base part with no FBA SKU gets ONE pack: the size most orders are in.
 //   3. Need = monthly pieces × (leadMonths + coverMonths) − stock, where
 //      stock = SKU Mgr (master_list) for that SKU [+ other packs of the
 //      same part] [+ FBA stock at Amazon], all in pieces.
@@ -2111,9 +2111,22 @@ async function reorderVendorOrder(env, url) {
       targets = v.map(x => ({ ...x, demand: x.amzPieces + pool * (w > 0 ? x.amzUnits / w : 1 / v.length), fbaSku: true }));
     } else {
       if (!total) continue;
-      // No FBA SKU: order the best-selling pack of this part.
-      let best = null; for (const s in piecesBySku) if (U(reorderGetBaseSku(s)) === b && (!best || piecesBySku[s] > piecesBySku[best])) best = s;
-      targets = [{ sku: best, asin: '', demand: total, fbaAvailPieces: 0, fbaSku: false }];
+      // 📦 Owner (2026-10-08): "for the ones without an FBA listing, check the order history: if most orders are 5 or
+      // 10 pieces order it in 5 or 10, else all in 25 — ONE pack for the part #, not many different SKUs; the others
+      // we cut down / repack". The pack most orders (units sold, every channel) are in carries the whole family's
+      // pieces; a tie goes to the bigger bag (easier to cut down). The part # of that pack that sold most is ordered.
+      const byPack = {};
+      for (const s in piecesBySku) {
+        if (U(reorderGetBaseSku(s)) !== b) continue;
+        const pk = pack(s), o = byPack[pk] = byPack[pk] || { pack: pk, units: 0, pcs: 0, sku: s, skuUnits: -1 };
+        const su = (sales[s] || { amz: 0, other: 0 }).amz + (sales[s] || { amz: 0, other: 0 }).other;
+        o.units += su; o.pcs += piecesBySku[s];
+        if (su > o.skuUnits || (su === o.skuUnits && s < o.sku)) { o.sku = s; o.skuUnits = su; }
+      }
+      const packs = Object.values(byPack).sort((x, y) => (y.units - x.units) || (y.pack - x.pack));
+      if (!packs.length) continue;
+      targets = [{ sku: packs[0].sku, asin: '', demand: total, fbaAvailPieces: 0, fbaSku: false,
+        onePack: { pack: packs[0].pack, byPack: packs.map(x => ({ pack: x.pack, units: Math.round(x.units * 100) / 100, pcs: Math.round(x.pcs) })) } }];
     }
     const bo = byBase[b] || { skus: new Set() };
     // Other packs of the part (not FBA part #s, e.g. 23-5-4=25 next to the
@@ -2203,7 +2216,7 @@ async function reorderVendorOrder(env, url) {
         if (orderUnits !== needUnits) notes.push(`Rounded up from ${needUnits} to ${orderUnits} (${cases} case${cases === 1 ? '' : 's'} of ${caseQty})`);
       } else if (needUnits > 0) notes.push('No case qty in SKU Mgr — not rounded');
       if (/^family /.test(caseSrc)) notes.push(`Case size from the same item: ${caseSrc.slice(7)}, ${Math.round(casePcs * 1000) / 1000} pcs a box`);
-      if (!t.fbaSku) notes.push('No FBA listing — best-selling pack');
+      if (!t.fbaSku && t.onePack) notes.push(`No FBA listing — ONE pack for the whole part #: =${t.onePack.pack}, the size most orders are in (${t.onePack.byPack.map(x => '=' + x.pack + ' ' + x.units + ' sold').join(', ')}); it carries every piece sold (${Math.round(demandPcs)} pcs) — other sizes are cut / repacked from it`);
       if (!countOtherPacks && otherPcs > 0) notes.push(`${Math.round(otherPcs)} pcs in other packs of ${b} not counted`);
       if (countOtherPacks && otherPcs > 0) notes.push(`${Math.round(otherPcs)} pcs of other packs on the shelf subtracted (${otherList.map(o => o.sku + ' ' + Math.round(o.pcs)).join(', ')} pcs${share < 1 ? `; this row's ${Math.round(share * 100)}% share, by sales` : ''})`);
       if ((badPack[b] || []).length) notes.push(`⚠ Sales NOT counted — pack size after "=" looks wrong (fix the SKU or map it with ✏️): ${badPack[b].map(x => x.sku + ' ' + x.units + ' sold × ' + x.pack.toLocaleString('en-US') + ' pcs').join(', ')}`);
@@ -2250,6 +2263,7 @@ async function reorderVendorOrder(env, url) {
           // every part # of the family that sold, per channel, 30 / 90 days (units and pieces)
           famSales: Object.keys(ch3090).filter(k => U(reorderGetBaseSku(k)) === b).sort().flatMap(k => Object.entries(sales3090(k)).filter(([, c]) => c.u90 > 0).map(([ch, c]) => ({ sku: k, ch, ...c }))).sort((x, y) => y.p90 - x.p90) }, // biggest first
         sales: sales3090(t.sku),
+        onePack: t.onePack || null,
       };
       row.issues = [];
       if (!reorderIsProperFormat(row.sku)) row.issues.push('Part # looks wrong');
