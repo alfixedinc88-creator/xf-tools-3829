@@ -28624,6 +28624,49 @@ async function handleAutolabelRoute(path, method, url, request, env, session) {
       const t = String(r.tracking || ''); return { ...r, items, origin: labelOrigin(orig.get(t), orig.has(t)) }; }) });
   }
   // GET ?order= → that order's live Veeqo info for 🔎 in Last run, plus its change history.
+  // GET /veeqo/autolabel/why-not-merged?orders=A,B — Owner (2026-10-09): "Walmart PO# 129128324199952 and
+  // 129128322175078, same name, same address, but 2 labels — why weren't they combined?". Reads both orders live from
+  // Veeqo and our label record and says why: name / address / zip not the same as Veeqo has them (and which part),
+  // one label already bought before the other order came in, put aside to merge by hand, etc. Read only.
+  if (path === '/veeqo/autolabel/why-not-merged' && method === 'GET') {
+    const nums = String(url.searchParams.get('orders') || '').split(/[\s,;+]+/).map(x => x.trim()).filter(Boolean).slice(0, 6);
+    if (nums.length < 2) return veeqoResp({ ok: false, error: 'Type 2 or more order #s' }, 400);
+    const out = [];
+    for (const n of nums) {
+      const o = await veeqoLiveOrder(env, n);
+      if (!o) { out.push({ number: n, found: false }); continue; }
+      const a = veeqoExtractAddress(o), name = veeqoExtractCustomerName(o);
+      const log = await d1All(env, `SELECT ts, action, tracking, reason FROM autolabel_log WHERE order_id = ? OR UPPER(order_number) = ? ORDER BY id`, [String(o.id), autolabelOrderNum(o.number)]).catch(() => []);
+      const merge = await d1All(env, `SELECT status, lead_number, orders, tracking, created_at FROM autolabel_merge WHERE orders LIKE ? ORDER BY id`, ['%' + String(o.id) + '%']).catch(() => []);
+      out.push({ number: o.number, found: true, id: String(o.id), channel: veeqoExtractChannel(o), status: o.status || '', createdAt: o.created_at || '',
+        name, address1: a.address1, address2: a.address2, zip: a.zip, key: autolabelPersonKey(o),
+        boxes: (o.allocations || []).length, tracking: (o.allocations || []).map(x => _psAllocTrackingNumber(x)).filter(Boolean),
+        bought: log.filter(r => r.action === 'bought').map(r => ({ at: r.ts, tracking: r.tracking })), log: log.slice(-15), merges: merge });
+    }
+    const f = out.filter(x => x.found), why = [];
+    if (f.length < 2) why.push('Not found in Veeqo: ' + out.filter(x => !x.found).map(x => x.number).join(', ') + ' — check the order # (Veeqo\'s order number)');
+    else {
+      const k0 = f[0].key, diff = [];
+      for (const x of f.slice(1)) if (x.key !== k0) {
+        const parts = [['name', 'name'], ['street', 'address1'], ['apt / line 2', 'address2'], ['zip', 'zip']].filter(([, k]) => autolabelNorm(k === 'zip' ? String(f[0][k]).slice(0, 5) : f[0][k]) !== autolabelNorm(k === 'zip' ? String(x[k]).slice(0, 5) : x[k]));
+        diff.push(`${f[0].number} vs ${x.number}: ${parts.map(([l, k]) => `${l} "${f[0][k] || ''}" ≠ "${x[k] || ''}"`).join(', ')}`);
+      }
+      if (diff.length) why.push('Not the same person as Veeqo has them (name + street + apt + zip must match letter for letter, spaces / dots ignored): ' + diff.join(' · '));
+      else {
+        const byCreated = f.slice().sort((x, y) => String(x.createdAt).localeCompare(String(y.createdAt)));
+        const firstBuy = f.flatMap(x => x.bought.map(b => ({ ...b, number: x.number }))).sort((x, y) => String(x.at).localeCompare(String(y.at)))[0];
+        const lastIn = byCreated[byCreated.length - 1];
+        if (firstBuy && lastIn && String(firstBuy.at) < String(lastIn.createdAt) && firstBuy.number !== lastIn.number)
+          why.push(`Same person — but ${firstBuy.number}'s label was bought ${firstBuy.at} (New York ${new Date(firstBuy.at).toLocaleString('en-US', { timeZone: 'America/New_York' })}), BEFORE ${lastIn.number} came in ${lastIn.createdAt} (${new Date(lastIn.createdAt).toLocaleString('en-US', { timeZone: 'America/New_York' })}) — too late to put them in one box`);
+        const multi = f.filter(x => x.boxes !== 1);
+        if (multi.length) why.push('In more than one box / not allocated in Veeqo: ' + multi.map(x => `${x.number} (${x.boxes} boxes)`).join(', ') + ' — merge by hand');
+        const notes = f.flatMap(x => x.log.filter(r => /merge/i.test(r.reason || '') || /merge/.test(r.action)).map(r => `${x.number} ${r.ts}: ${r.action} — ${r.reason || ''}`));
+        if (notes.length) why.push('What the label record says: ' + notes.slice(-6).join(' · '));
+        if (!why.length) why.push('Same person and both came in before a label was bought — nothing on record says why. The 2 labels may have been bought by hand (not by Auto Label), or the orders came in at different times than Veeqo shows — check 🕘 Labels bought for who bought them.');
+      }
+    }
+    return veeqoResp({ ok: true, orders: out, why });
+  }
   if (path === '/veeqo/autolabel/order-live' && method === 'GET') {
     const number = String(url.searchParams.get('order') || '').trim();
     if (!number) return veeqoResp({ ok: false, error: 'order is required' }, 400);
