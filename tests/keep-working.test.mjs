@@ -4587,6 +4587,13 @@ console.log('\n🚢 Container here: boxes come off the spot the container was re
   const f2 = from({ ...ln, recvLoc: '', stock: [{ location: 'BSMT=9-9-1', cases: 5, pcs: 20 }, { location: 'C1=1-1-1', cases: 30, pcs: 20 }] });
   check('…the move takes the boxes off the received spot (BSMT=9-9-2) even when another spot has more; no received spot on record → as before (biggest of the same size)',
     f1 && f1.location === 'BSMT=9-9-2' && f2 && f2.location === 'C1=1-1-1', { f1, f2 });
+  // Owner (2026-10-09, 3 items "SKU Mgr has none of it left at GARAGE" — they were there): the received spot's row has
+  // another Each/Case than the packing list. Take the boxes from that row anyway (never another shelf), and say so.
+  const f3 = from({ ...ln, stock: [{ location: 'BSMT=9-9-1', cases: 5, pcs: 20 }, { location: 'BSMT=9-9-2', cases: 9, pcs: 10 }] });
+  const warn3 = new Function('xfrGoFrom', 'xfrN', 'xfrE', 'xfrGoneWhy', ih.slice(ih.indexOf('  function xfrGoLineWarn(l) {'), ih.indexOf('  window.xfrGoRender = function()')) + '; return xfrGoLineWarn;')(
+    from, v => String(Math.round(v * 1000) / 1000), v => String(v), () => '')({ ...ln, left: 9, stock: [{ location: 'BSMT=9-9-1', cases: 5, pcs: 20 }, { location: 'BSMT=9-9-2', cases: 9, pcs: 10 }] });
+  check('…received spot\'s row has another Each/Case (10 vs the packing list\'s 20): boxes still come off BSMT=9-9-2 (not BSMT=9-9-1), with "Each/Case differs … tell the office to fix"',
+    f3 && f3.location === 'BSMT=9-9-2' && f3.sizeDiff === true && /^ℹ Each\/Case differs: SKU Mgr's BSMT=9-9-2 row says 10 pcs a box, the packing list 20/.test(warn3), { f3, warn3 });
   check('…too many for the spot → "Can\'t move N: SKU Mgr shows only X … Move X now and tell the office about the other Y" (approval only named when something is waiting)',
     /Can\\'t move ' \+ xfrN\(n\) \+ ': SKU Mgr shows only '/.test(ih) && /pend0 > 0 \?/.test(ih) && !/at ' \+ from\.location \+ ' \(some may be waiting for approval\)'/.test(ih), null);
   sq.exec("DELETE FROM reorder_pallet WHERE title='RCV CT'; DELETE FROM master_list WHERE part_num='RC-1=20X'; DELETE FROM inventory_log WHERE part_num='RC-1=20X'");
