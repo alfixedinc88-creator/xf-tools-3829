@@ -4625,6 +4625,33 @@ console.log('\n🚢 Container here: boxes come off the spot the container was re
     /function xfrGoneWhy\(l\)/.test(ih) && /if \(toLoc === String\(from\.location\)\.toUpperCase\(\) && from\.viaRecords\) return xfrGoMarkMoved\(l, n, toLoc\);/.test(ih)
       && /\/inventory\/containers\/mark-moved/.test(ih) && /'ℹ SKU Mgr already moved these off '/.test(ih), null);
   sq.exec("DELETE FROM pallet_move WHERE pallet_id IN (SELECT id FROM reorder_pallet WHERE title='RCV2 CT'); DELETE FROM reorder_pallet WHERE title='RCV2 CT'; DELETE FROM master_list WHERE part_num LIKE 'RC-%'; DELETE FROM inventory_log WHERE part_num LIKE 'RC-%'");
+
+  // Owner (2026-10-09, after that fix): "the container went in at GARAGE, but SKU Mgr has none of it left there — tell the
+  // office", with nothing listed. A SKU Mgr location edit (GARAGE → BSMT=…) is logged at the NEW spot, so it was missed.
+  // Now: such an edit is found (the row moved there → move from there); a gap no record explains is shown in numbers; an
+  // Admin can count the boxes off the pallet at a spot SKU Mgr already has them (a worker can't — ask an Admin).
+  sq.prepare("INSERT INTO reorder_pallet (title, vendor, pallet, part, description, cases, pcs, pcs_per_ctn, updated_at) VALUES ('RCV3 CT','KW','1','RC-4=20X','valve',9,180,20,?), ('RCV3 CT','KW','1','RC-5=20X','valve',6,120,20,?)").run(ts, ts);
+  logIn.run(ts, 'IN', 'RC-4=20X', 'RC-4=20X', 'GARAGE', 70, 'RCV', '[RECEIVED] RCV3 CT \u2014 1400 units · 70 box(es) × 20 pcs', 'Verified', null);
+  logIn.run(ts, 'IN', 'RC-5=20X', 'RC-5=20X', 'GARAGE', 6, 'RCV', '[RECEIVED] RCV3 CT \u2014 120 units · 6 box(es) × 20 pcs', 'Verified', null);
+  logIn.run(ts, 'EDIT', 'RC-4=20X', 'RC-4=20X', 'BSMT=9-9-6', 70, 'EF', '[SKU MGR EDIT] Location: GARAGE → BSMT=9-9-6', 'Verified', null);   // the whole row moved
+  sq.prepare("INSERT INTO master_list (base_sku, name, part_num, location, cases, units_per_case) VALUES ('RC-4','valve','RC-4=20X','BSMT=9-9-6',70,20), ('RC-4','valve','RC-4=20X','BSMT=9-9-7',5,20), ('RC-5','valve','RC-5=20X','BSMT=9-9-8',30,20)").run();
+  const pv4 = await get('/inventory/containers/pallet-view?title=' + encodeURIComponent('RCV3 CT') + '&vendor=KW&pallet=1');
+  const c4 = (pv4.lines || []).find(x => x.part === 'RC-4=20X') || {}, c5 = (pv4.lines || []).find(x => x.part === 'RC-5=20X') || {};
+  const g4 = from(c4), g5 = from(c5);
+  check('a SKU Mgr location edit GARAGE → BSMT=9-9-6 (logged at the new spot) is found: the move comes from BSMT=9-9-6, not BSMT=9-9-7',
+    c4.recvGone.length === 1 && c4.recvGone[0].type === 'MOVED_ROW' && c4.recvGone[0].to === 'BSMT=9-9-6' && c4.recvGone[0].who === 'EF' && g4 && g4.location === 'BSMT=9-9-6' && g4.viaRecords === true, { gone: c4.recvGone, g4 });
+  check('…no record at all: "6 received there, 0 counted off pallets, 0 taken off on record, 0 there now: 6 gone with NO record"; no move from BSMT=9-9-8',
+    c5.recvGone.length === 0 && c5.recvMath && c5.recvMath.received === 6 && c5.recvMath.unexplained === 6 && g5 === null, { math: c5.recvMath, g5 });
+  const pkH = { 'X-Cred-Token': pk.token, 'Content-Type': 'application/json' };
+  const wk = await (await call('/inventory/containers/mark-moved', { method: 'POST', headers: pkH, body: JSON.stringify({ palletLineId: c5.id, cases: 6, toLocation: 'BSMT=9-9-8' }) })).json();
+  const ad = await post('/inventory/containers/mark-moved', { palletLineId: c5.id, cases: 6, toLocation: 'BSMT=9-9-8' });
+  const wk2 = await (await call('/inventory/containers/mark-moved', { method: 'POST', headers: pkH, body: JSON.stringify({ palletLineId: c4.id, cases: 2, toLocation: 'BSMT=9-9-6' }) })).json();
+  const ml4 = sq.prepare("SELECT location, cases FROM master_list WHERE part_num IN ('RC-4=20X','RC-5=20X') ORDER BY id").all();
+  check('…a worker can\'t count boxes off at an unrelated spot (ask an Admin); an Admin can (SKU Mgr unchanged); anyone can at the spot the row was moved to',
+    wk.ok === false && /Only an Admin/.test(wk.error) && ad.ok === true && wk2.ok === true && JSON.stringify(ml4.map(r => r.cases)) === '[70,5,30]', { wk, ad, wk2, ml4 });
+  check('…page: Admin confirm "count them off the pallet only (SKU Mgr does not change)", worker "Ask an Admin."; the numbers line',
+    /if \(xfrIsAdmin\(\) && atTo \+ 1e-9 >= n && confirm\(/.test(ih) && /'Ask an Admin\.'/.test(ih) && /gone with NO record \(a SKU Mgr change\?\)/.test(ih), null);
+  sq.exec("DELETE FROM pallet_move WHERE pallet_id IN (SELECT id FROM reorder_pallet WHERE title='RCV3 CT'); DELETE FROM reorder_pallet WHERE title='RCV3 CT'; DELETE FROM master_list WHERE part_num LIKE 'RC-%'; DELETE FROM inventory_log WHERE part_num LIKE 'RC-%'");
 }
 
 // Owner (2026-10-09): "under SKU Mgr I still see (no vendor) $106,572.81 — I want to click on it, see what's there and edit

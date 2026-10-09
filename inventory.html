@@ -9644,7 +9644,7 @@ window.invCredLogin = async function() {
       var rh = rv.filter(same)[0] || (rv.length && (!per || !rv.some(function(s) { return parseFloat(s.pcs) > 0; })) ? rv[0] : null); if (rh) return rh;
       // None left there on record: a Transfer took them off it (not off the pallet) → SKU Mgr has them where it sent them;
       // move from THERE (newest first). Never from an unrelated shelf. Nothing there either → null (the office has to look).
-      var dests = (l.recvGone || []).filter(function(x) { return x.type === 'TRANSFER_OUT' && x.to; }).map(function(x) { return String(x.to).toUpperCase(); }).reverse();
+      var dests = (l.recvGone || []).filter(function(x) { return (x.type === 'TRANSFER_OUT' || x.type === 'MOVED_ROW') && x.to; }).map(function(x) { return String(x.to).toUpperCase(); }).reverse();
       for (var di = 0; di < dests.length; di++) {
         var dv = st.filter(function(s) { return String(s.location).toUpperCase() === dests[di]; });
         var dh = dv.filter(same)[0] || (dv.length && (!per || !dv.some(function(s) { return parseFloat(s.pcs) > 0; })) ? dv[0] : null);
@@ -9667,10 +9667,12 @@ window.invCredLogin = async function() {
   }
   // What took this part # off its received spot on record (not off the pallet): "Stock Out 4 (AB, Oct 6) · Transfer 5 → X (CD, Oct 7)".
   function xfrGoneWhy(l) {
-    var g0 = l.recvGone || []; if (!g0.length) return '';
-    var lab = { OUT: 'Stock Out', TRANSFER_OUT: 'Transfer', EDIT: 'SKU Mgr edit', AUDIT: 'Audit' };
+    var g0 = l.recvGone || [], m = l.recvMath;
+    var un = m && m.unexplained > 0 ? ' — ' + xfrN(m.received) + ' received there, ' + xfrN(m.offPallets) + ' counted off pallets, ' + xfrN(m.onRecord) + ' taken off on record, ' + xfrN(m.now) + ' there now: ' + xfrN(m.unexplained) + ' gone with NO record (a SKU Mgr change?)' : '';
+    if (!g0.length) return un;
+    var lab = { OUT: 'Stock Out', TRANSFER_OUT: 'Transfer', EDIT: 'SKU Mgr edit', AUDIT: 'Audit', MOVED_ROW: 'SKU Mgr row moved' };
     var d = function(iso) { try { return new Date(iso).toLocaleDateString('en-US', { timeZone: 'America/New_York', month: 'short', day: 'numeric' }); } catch (e) { return ''; } };
-    return ' (taken off it on record: ' + g0.slice(-4).map(function(x) { return (lab[x.type] || x.type) + ' ' + xfrN(x.cases) + (x.to ? ' → ' + xfrE(x.to) : '') + ' (' + xfrE(x.who) + ', ' + d(x.at) + ')'; }).join(' · ') + (g0.length > 4 ? ' · …' : '') + ')';
+    return un + ' (taken off it on record: ' + g0.slice(-4).map(function(x) { return (lab[x.type] || x.type) + ' ' + xfrN(x.cases) + (x.to ? ' → ' + xfrE(x.to) : '') + ' (' + xfrE(x.who) + ', ' + d(x.at) + ')'; }).join(' · ') + (g0.length > 4 ? ' · …' : '') + ')';
   }
   function xfrGoRecs(l) { return (xfrGo.recs && xfrGo.recs[l.part]) || { plan: '', recs: [] }; }
   function xfrNat(a, b) { return String(a).localeCompare(String(b), undefined, { numeric: true }); }
@@ -9881,7 +9883,7 @@ window.invCredLogin = async function() {
   // The boxes go to the spot SKU Mgr already has them at (an earlier Transfer moved them there on record): only the pallet
   // counts them off — SKU Mgr doesn't change (nothing twice). Kept with who / when / where on the pallet.
   function xfrGoMarkMoved(l, n, toLoc) {
-    var have = Math.max(0, (parseFloat((xfrGoFrom(l) || {}).cases) || 0));
+    var have = (l.stock || []).filter(function(s) { return String(s.location).toUpperCase() === String(toLoc).toUpperCase(); }).reduce(function(a, s) { return a + (parseFloat(s.cases) || 0); }, 0);
     if (n > have + 1e-9) { invFlash('Can\'t count ' + xfrN(n) + ' off: SKU Mgr shows only ' + xfrN(have) + ' of ' + l.part + ' at ' + toLoc + '. Count ' + xfrN(have) + ' now and tell the office about the rest.', 'error'); return; }
     invPost(W + '/inventory/containers/mark-moved', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ palletLineId: l.id, cases: n, toLocation: toLoc,
       initials: (INV_CRED_USER && INV_CRED_USER.displayName) || '' }) }).then(function(r) { return r.json(); }).then(function(x) {
@@ -9900,7 +9902,12 @@ window.invCredLogin = async function() {
     if (!(n > 0)) { invFlash('How many boxes?', 'error'); return; }
     if (n > l.left + 1e-9) { invFlash('Pallet ' + l.pallet + ' only has ' + xfrN(l.left) + ' box(es) of ' + l.part, 'error'); return; }
     var from = xfrGoFrom(l);
-    if (!from && l.recvLoc) { invFlash('Not moved: the container went in at ' + l.recvLoc + ', but SKU Mgr has none of ' + l.part + ' left there' + xfrGoneWhy(l).replace(/<[^>]*>/g, '') + '. Tell the office.', 'error'); return; }
+    if (!from && l.recvLoc) {
+      // Admin / Owner only: SKU Mgr already counts these boxes at the scanned spot → count them off the pallet only.
+      var atTo = (l.stock || []).filter(function(s) { return String(s.location).toUpperCase() === toLoc; }).reduce(function(a, s) { return a + (parseFloat(s.cases) || 0); }, 0);
+      if (xfrIsAdmin() && atTo + 1e-9 >= n && confirm('SKU Mgr has ' + xfrN(atTo) + ' of ' + l.part + ' at ' + toLoc + ' already.\n\nPut the ' + xfrN(n) + ' box(es) there and count them off the pallet only (SKU Mgr does not change)?\n\nOnly if those ' + xfrN(n) + ' are really part of the ' + xfrN(atTo) + ' on record there.'))
+        return xfrGoMarkMoved(l, n, toLoc);
+      invFlash('Not moved: the container went in at ' + l.recvLoc + ', but SKU Mgr has none of ' + l.part + ' left there' + xfrGoneWhy(l).replace(/<[^>]*>/g, '') + '. ' + (xfrIsAdmin() ? 'Scan a spot where SKU Mgr already has them to count them off the pallet.' : 'Ask an Admin.'), 'error'); return; }
     if (!from) { invFlash(l.part + ' is not in stock anywhere yet — stock the container in first (Reorder → 📦 Received)', 'error'); return; }
     if (toLoc === String(from.location).toUpperCase() && from.viaRecords) return xfrGoMarkMoved(l, n, toLoc);
     if (toLoc === String(from.location).toUpperCase()) { invFlash('That is where it already is (' + toLoc + ')', 'error'); return; }
