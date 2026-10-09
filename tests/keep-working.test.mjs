@@ -4505,7 +4505,7 @@ console.log('\nUndelivered Report: replaced / cancelled labels are never a claim
   const d30 = new Date(Date.now() - 30 * 86400000).toISOString().slice(0, 10);
   const order = (id, tracks) => ({ id, channel: { name: 'ebay' }, allocations: tracks.map((t, i) => ({ shipment: { id: id * 10 + i, tracking_number: { tracking_number: t, status: 'created' } } })) });
   const ORD = { '94001111222233334444555': order(1, ['94001111222233334444555']), '9334000000000000000001': order(2, ['9334000000000000000002']),
-    '9334000000000000000004': order(4, ['9334000000000000000004']), '9334000000000000000006': order(6, ['9334000000000000000006']) };
+    '9334000000000000000004': order(4, ['9334000000000000000004']), '9334000000000000000006': { ...order(6, ['9334000000000000000006']), deliver_to: { first_name: 'Ann', last_name: 'Lee', address1: '5 Oak St', address2: 'Apt 2', city: 'Dover', state: 'DE', zip: '19901' } } };
   const EV = { 10: [{ timestamp: d30 + 'T15:00:00Z', description: 'Delivered' }], 40: [{ timestamp: d30 + 'T15:00:00Z', description: 'In transit' }],
     60: [{ timestamp: d30 + 'T16:00:00Z', description: 'Undelivered - returned to sender' }, { timestamp: d30 + 'T10:00:00Z', description: 'In transit' }] };
   globalThis.fetch = async (u, o) => {
@@ -4525,6 +4525,7 @@ console.log('\nUndelivered Report: replaced / cancelled labels are never a claim
   ins.run(d30, '9334000000000000000001', 'O-2', 'ebay', 'USPS');        // order now on ...0002 → replaced label
   ins.run(d30, '9334000000000000000003', 'O-3', 'ebay', 'USPS');        // we cancelled it
   ins.run(d30, '9334000000000000000004', 'O-4', 'ebay', 'USPS');        // in transit → undelivered (a claim)
+  sq.prepare("UPDATE ship_manifest_log SET customer_name='Bob Ray', address1='1 Main St', address2='', city='Camden', ship_to_state='NJ', zip='08101' WHERE tracking='9334000000000000000004'").run();
   ins.run(d30, '1ZTEST0000000005', 'O-5', 'ebay', '');                  // UPS by its shape, not in Veeqo
   ins.run(d30, '9334000000000000000006', 'O-6', 'ebay', 'USPS');        // "Undelivered - returned" → NOT delivered
   sq.prepare("INSERT INTO ship_cancel_label_log (date, timestamp, tracking, order_num, carrier, canceled_by) VALUES (?,?,?,?,?,?)").run(d30, d30 + 'T12:00:00Z', '9334000000000000000003', 'O-3', 'USPS', 'TS');
@@ -4540,10 +4541,14 @@ console.log('\nUndelivered Report: replaced / cancelled labels are never a claim
   check('…every label is accounted for: checked = delivered + not delivered + replaced + cancelled + not found in Veeqo + failed (nothing silently dropped)',
     sum('checked') === sum('delivered') + sum('undelivered') + sum('replaced') + sum('cancelled') + sum('noOrder') + sum('failedLookupCount'),
     { checked: sum('checked'), delivered: sum('delivered'), und: sum('undelivered'), rep: sum('replaced'), can: sum('cancelled'), noOrder: sum('noOrder'), failed: sum('failedLookupCount') });
+  const u4 = und.find(r => r.tracking === '9334000000000000000004') || {}, u6 = und.find(r => r.tracking === '9334000000000000000006') || {};
+  check('…each claim row has the customer name and shipping address (ours: Bob Ray, 1 Main St, Camden NJ 08101; none saved → from the Veeqo order: Ann Lee, 5 Oak St Apt 2, Dover DE 19901)',
+    u4.customerName === 'Bob Ray' && u4.address1 === '1 Main St' && u4.city === 'Camden' && u4.state === 'NJ' && u4.zip === '08101'
+      && u6.customerName === 'Ann Lee' && u6.address1 === '5 Oak St' && u6.address2 === 'Apt 2' && u6.city === 'Dover' && u6.state === 'DE' && u6.zip === '19901', { u4, u6 });
   const { readFileSync: rfU } = await import('node:fs');
   const psh = rfU(fileURLToPath(new URL('../packship.html', import.meta.url)), 'utf8');
   check('…page and spreadsheet: "Checked N labels: … delivered … not delivered … replaced / cancelled", a "Not a claim" sheet, Last Status columns',
-    /Checked ' \+ tot\.checked \+ ' labels: /.test(psh) && /book_append_sheet\(wb, wsn, 'Not a claim'\)/.test(psh) && /'Last Status \(Veeqo\)'/.test(psh), null);
+    /Checked ' \+ tot\.checked \+ ' labels: /.test(psh) && /book_append_sheet\(wb, wsn, 'Not a claim'\)/.test(psh) && /'Last Status \(Veeqo\)'/.test(psh) && /'Customer Name', 'Address 1', 'Address 2', 'City', 'State', 'ZIP'\]\);/.test(psh), null);
   sq.exec("DELETE FROM ship_manifest_log WHERE tracking LIKE '9334000000%' OR tracking LIKE '9400 1111%' OR tracking LIKE '1ZTEST%'; DELETE FROM ship_cancel_label_log WHERE order_num = 'O-3'");
 }
 

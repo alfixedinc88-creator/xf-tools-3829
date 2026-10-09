@@ -23744,7 +23744,7 @@ async function veeqoUndeliveredReport(url, env) {
   const endDate   = new Date(Date.now() - excludeRecentDays * 86400000).toISOString().slice(0, 10);
 
   const manifestRes = await env.DB.prepare(
-    `SELECT tracking, order_num, channel, carrier, date FROM ship_manifest_log
+    `SELECT tracking, order_num, channel, carrier, date, customer_name, address1, address2, city, ship_to_state, zip FROM ship_manifest_log
      WHERE date >= ? AND date <= ? ORDER BY date ASC LIMIT ? OFFSET ?`
   ).bind(startDate, endDate, PAGE_SIZE, (page - 1) * PAGE_SIZE).all();
   const manifestRows = manifestRes.results || [];
@@ -23800,7 +23800,14 @@ async function veeqoUndeliveredReport(url, env) {
       const tracking = m.tracking;
       let shipmentId = shipmentIdCache.get(tracking);
       let channel = m.channel || '';
-      const base = { tracking, carrier: m.carrier || '', orderNum: m.order_num || '', channel, shippedAt: m.date || '' };
+      // Owner (2026-10-09): "add the customer name and shipping address to the download sheet" (for the claim form) —
+      // from our manifest, else from the Veeqo order when it's looked up.
+      const who = { customerName: m.customer_name || '', address1: m.address1 || '', address2: m.address2 || '', city: m.city || '', state: m.ship_to_state || '', zip: m.zip || '' };
+      const fillWho = o => { if (!o) return; const d = o.deliver_to || {}, a = veeqoExtractAddress(o);
+        if (!who.customerName) who.customerName = veeqoExtractCustomerName(o);
+        if (!who.address1 && !who.city) { who.address1 = a.address1; who.address2 = a.address2; who.city = a.city; who.zip = who.zip || a.zip; }
+        if (!who.state) who.state = String(d.state || d.region || '').trim(); };
+      const base = { tracking, carrier: m.carrier || '', orderNum: m.order_num || '', channel, shippedAt: m.date || '', ...who };
       if (cancelledSet.has(tracking)) { cancelled.push(base); return null; }
 
       if (!shipmentId) {
@@ -23813,6 +23820,7 @@ async function veeqoUndeliveredReport(url, env) {
         const theirs = [];
         for (const a of (lookup.order.allocations || [])) { const sh = a.shipment, tn = sh && sh.tracking_number;
           const t = String((tn && typeof tn === 'object' ? tn.tracking_number : tn) || '').replace(/\s+/g, '').toUpperCase(); if (t) theirs.push({ t, id: sh.id }); }
+        fillWho(lookup.order); Object.assign(base, who);
         const mine = theirs.find(x => x.t === tracking);
         if (!mine) { replaced.push({ ...base, channel: channel || veeqoExtractChannel(lookup.order) || '', currentTracking: theirs.map(x => x.t).join(', ') }); return null; }
         shipmentId = mine.id;
@@ -23842,6 +23850,7 @@ async function veeqoUndeliveredReport(url, env) {
         lastEventDate: latest ? (latest.timestamp || '').split('T')[0] : '',
         lastLocation: latest ? (latest.location || '') : '',
         trackingUrl: veeqoTrackingUrl(m.carrier, tracking),
+        ...who,
       };
     }));
     for (const r of results) if (r) undelivered.push(r);
