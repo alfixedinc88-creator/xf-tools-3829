@@ -5096,10 +5096,13 @@ async function containerPalletLines(env, o) {
   // each part # in (its "[RECEIVED] <title> — …" Stock In), so a move takes the boxes off THAT spot first, not another shelf.
   const recvAt = {};
   if (o.detail && rows.length) {
-    const ts = [...new Set(rows.map(r => r.title))];
-    (await d1All(env, `SELECT id, UPPER(TRIM(part_num)) AS p, UPPER(TRIM(location)) AS l, notes FROM inventory_log
-      WHERE type = 'IN' AND notes LIKE '[RECEIVED] %' AND COALESCE(status, '') != 'Rejected' ORDER BY id`).catch(() => [])).forEach(x => {
-      const t = ts.find(t => String(x.notes || '').startsWith('[RECEIVED] ' + t + ' \u2014 ')); if (t && !recvAt[t + '|' + x.p]) recvAt[t + '|' + x.p] = { l: x.l, id: x.id }; });
+    // Only this view's titles and part #s (one pallet is opened on every box scan — it must stay fast).
+    const ts = [...new Set(rows.map(r => r.title))], want = new Set(rows.map(r => r.title + '|' + real(r.part)));
+    for (const t of ts.slice(0, 10)) {
+      (await d1All(env, `SELECT id, UPPER(TRIM(part_num)) AS p, UPPER(TRIM(location)) AS l, notes FROM inventory_log
+        WHERE type = 'IN' AND notes LIKE ? AND COALESCE(status, '') != 'Rejected' ORDER BY id`, ['[RECEIVED] ' + t + ' \u2014 %']).catch(() => [])).forEach(x => {
+        const k = t + '|' + x.p; if (want.has(k) && !recvAt[k]) recvAt[k] = { l: x.l, id: x.id }; });
+    }
   }
   // Owner (2026-10-09, still "Only 5 at BSMT=47-5-12" — "the container went in at GARAGE, which has none of it left"):
   // what took this part # off its received spot since 📦 Received WITHOUT counting it off a pallet (a Stock Out, a Transfer
@@ -5109,6 +5112,8 @@ async function containerPalletLines(env, o) {
   for (const k of Object.keys(recvAt)) {
     const [t, part] = [k.slice(0, k.lastIndexOf('|')), k.slice(k.lastIndexOf('|') + 1)], r = recvAt[k];
     if (!r.id) continue;
+    // Only when the received spot has none of it left on record (the problem case) — otherwise nothing to explain, no lookups.
+    if ((stock[part] || []).some(x => String(x.location || '').trim().toUpperCase() === r.l && (parseFloat(x.cases) || 0) > 0)) continue;
     // A SKU Mgr edit is logged at the row's NEW spot ("Location: GARAGE → BSMT=…" in its notes) — matched by its notes.
     const gone = await d1All(env, `SELECT l.id, l.type, l.cases, l.location AS loc, l.paired_location AS toLoc, l.initials AS who, l.timestamp AS at, l.notes FROM inventory_log l
       WHERE UPPER(TRIM(l.part_num)) = ? AND l.id > ? AND l.type IN ('OUT', 'TRANSFER_OUT', 'EDIT', 'AUDIT')
