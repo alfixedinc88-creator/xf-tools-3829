@@ -4890,5 +4890,20 @@ console.log('\n🚢 Container here: a shelf label without its area ("4-1-2-6") a
   check('…it is checked before the item lookup (so it never says "Not on this pallet" for a shelf)', ih.indexOf('xfrNoAreaSpot(code.trim().toUpperCase()); return; }') < ih.indexOf('var hit = xfrGoLocalMatch(code); if (hit) { xfrGoSelect(hit.id); return; }'), null);
 }
 
+// Owner (2026-10-09): "our FRONT spot labels only have 4-1-2-6, not FRONT=4-1-2-6 — until they're relabelled, take anything
+// with no area as FRONT= in Transfer".
+console.log('\n🔀 Transfer: a shelf label with no area (4-1-2-6) is taken as FRONT=4-1-2-6');
+{
+  const { readFileSync } = await import('node:fs');
+  const ih = readFileSync(fileURLToPath(new URL('../inventory.html', import.meta.url)), 'utf8');
+  const a = ih.indexOf('  function xfrFrontFix(code) {'), fix = new Function(ih.slice(a, ih.indexOf('\n', a)) + '; return xfrFrontFix;')();
+  check('4-1-2-6 → FRONT=4-1-2-6, 40-1-1-4 → FRONT=40-1-1-4; full labels (BSMT=40-1-1, FRONT=4-1-2-6), part #s (4-1-2=10, 4-1-2) and UPCs stay as they are',
+    fix('4-1-2-6') === 'FRONT=4-1-2-6' && fix(' 40-1-1-4 ') === 'FRONT=40-1-1-4' && fix('BSMT=40-1-1') === 'BSMT=40-1-1' && fix('FRONT=4-1-2-6') === 'FRONT=4-1-2-6'
+      && fix('4-1-2=10') === '4-1-2=10' && fix('4-1-2') === '4-1-2' && fix('810139930815') === '810139930815', null);
+  const uses = ['code = xfrFrontFix(code); // a FRONT label', "var val = xfrFrontFix((g('xfr-search-inp').value || '').trim());", 'var up = xfrFrontFix(code).toUpperCase(), si = g(', 'var up = xfrFrontFix(code).toUpperCase(); if (!up) return;',
+    'var up = xfrFrontFix(code).toUpperCase();\n    if (xfrIsLoc(up)) {', 'toLoc = xfrFrontFix(code).toUpperCase(), n = P.n;', 'code = xfrFrontFix(code); if (!E || !code) return;'];
+  check('…used everywhere Transfer reads a scan: Container here, search box, grab spot, cart scan, put-away box + spot, extra box', uses.every(u => ih.includes(u)), uses.filter(u => !ih.includes(u)));
+}
+
 console.log('\n' + (failed ? '❌ ' + failed + ' check(s) FAILED' : '✅ all ' + passed + ' checks passed') + '\n');
 process.exit(failed ? 1 : 0);

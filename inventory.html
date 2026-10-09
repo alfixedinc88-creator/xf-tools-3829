@@ -9315,6 +9315,7 @@ window.invCredLogin = async function() {
   }
   window.xfrBoxScan = function(code) {
     code = String(window.xfFixUpc ? xfFixUpc(code || '') : code || '').trim(); if (!code) return; // R20H: UPC without its first digit
+    code = xfrFrontFix(code); // a FRONT label printed without "FRONT=" (4-1-2-6)
     xfrScanNote('📷 Last scan: ' + code + ' · ' + new Date().toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit', second: '2-digit' }) + ' — looking…', 'var(--accent)');
     var box = g('xfr-cont-box'); if (box) box.value = '';
     if (xfrGo.focus && xfrGo.extra) { xfrExtraScan(code); return; } // ➕ extra box found: box, then the shelf label
@@ -9697,6 +9698,10 @@ window.invCredLogin = async function() {
   }
   function xfrLinePcs(l) { return +l.pcsPerCtn > 0 ? +l.pcsPerCtn : (+l.cases > 0 && +l.pcs > 0 ? Math.round(l.pcs / l.cases * 1000) / 1000 : 0); }
   // A scanned shelf label (not a box): C1=1-2-3, BARN=…, GARAGE.
+  // Owner (2026-10-09): "our FRONT spot labels only have 4-1-2-6, not FRONT=4-1-2-6 — until they're relabelled, take any
+  // label with no area as FRONT=" (Transfer). Numbers only, 4 or more (a part # never looks like that) → FRONT=…
+  function xfrFrontFix(code) { var c = String(code || '').trim().toUpperCase(); return /^\d+(-\d+){3,}$/.test(c) ? 'FRONT=' + c : String(code || '').trim(); }
+  window.xfrFrontFix = xfrFrontFix;
   function xfrIsLoc(code) {
     var up = String(code || '').trim().toUpperCase(); if (!up) return false;
     if (/^GARAGE$/.test(up)) return true;
@@ -9846,7 +9851,7 @@ window.invCredLogin = async function() {
     if (n === 'other') { xfrKeypad('How many pieces in each box?', '', function(v) { E.pcs = v; E.step = 'loc'; xfrGoRender(); xfrGoBox(); }); return; }
     E.pcs = n; E.step = 'loc'; xfrGoRender(); xfrGoBox(); };
   window.xfrExtraScan = function(code) {
-    var E = xfrGo.extra; code = String(code || '').trim(); if (!E || !code) return;
+    var E = xfrGo.extra; code = xfrFrontFix(code); if (!E || !code) return;
     if (xfrIsLoc(code)) {
       if (!E.part) { invFlash('Scan the extra box first, then the shelf label', 'error'); xfrGoBox(); return; }
       if (!(E.boxes > 0)) { invFlash('Tap how many boxes first', 'error'); E.step = 'boxes'; xfrGoRender(); xfrGoBox(); return; }
@@ -10301,7 +10306,7 @@ window.invCredLogin = async function() {
   };
 
   window.xfrSearch = function() {
-    var val = (g('xfr-search-inp').value || '').trim();
+    var val = xfrFrontFix((g('xfr-search-inp').value || '').trim());
     if (!val) return;
     if (xfrSearchMode === 'name') { xfrNameSearch(val); }
     else if (xfrSearchMode === 'loc') { xfrLocScanSearch(); }
@@ -10948,7 +10953,7 @@ window.invCredLogin = async function() {
   }
   window.xfrGrabSet = function(code) {
     if (!xfrPart) return;
-    var up = String(code || '').trim().toUpperCase(), si = g('xfr-search-inp'); if (si) si.value = '';
+    var up = xfrFrontFix(code).toUpperCase(), si = g('xfr-search-inp'); if (si) si.value = '';
     if (!xfrIsLoc(up)) { invFlash('That is not a spot label: ' + up, 'error'); return; }
     var rows = (xfrPart.locations || []).filter(function(l) { return String(l.location || '').trim().toUpperCase() === up && parseFloat(l.cases) > 0; });
     var exact = rows.filter(function(l) { return String(l.partNum || '').toUpperCase() === String(xfrPart.partNum || '').toUpperCase(); });
@@ -11201,7 +11206,7 @@ window.invCredLogin = async function() {
   // already checked — main spot + 1 more, how many, scan the spot.
   window.xfrCartScan = function(code) {
     var x = g('xfr-cart-scan'); if (x) x.value = '';
-    var up = String(code || '').trim().toUpperCase(); if (!up) return;
+    var up = xfrFrontFix(code).toUpperCase(); if (!up) return;
     var open = xfrCart.filter(function(c) { return !c.toLocation; });
     var pick = function(part) { return open.filter(function(c) { return part ? String(c.partNum).toUpperCase() === part : (String(c.partNum).toUpperCase() === up || (c.codes || []).indexOf(up) >= 0); })[0]; };
     var go = function(it) { if (!it) return false; xfrPutOpen(xfrCart.indexOf(it), true); return true; };
@@ -11255,7 +11260,7 @@ window.invCredLogin = async function() {
   window.xfrPutBack = function() { if (xfrPut) { xfrPut.step = 'n'; xfrPut.msg = ''; xfrPutDraw(); } };
   window.xfrPutScan = function(code) {
     var P = xfrPut; if (!P) return;
-    var up = String(code || '').trim().toUpperCase();
+    var up = xfrFrontFix(code).toUpperCase();
     if (xfrIsLoc(up)) {
       if (P.step === 'box') { P.msg = 'Scan the box first, then the spot label'; xfrPutDraw(); return; }
       if (P.step === 'n') { P.msg = 'Tap how many boxes first'; xfrPutDraw(); return; }
@@ -11291,7 +11296,7 @@ window.invCredLogin = async function() {
   // through the phone outbox (no WiFi → saved on the phone, sent later, once).
   window.xfrPutLoc = function(code) {
     var P = xfrPut; if (!P) return;
-    var item = P.item, toLoc = String(code || '').trim().toUpperCase(), n = P.n;
+    var item = P.item, toLoc = xfrFrontFix(code).toUpperCase(), n = P.n;
     if (P.step !== 'loc') { invFlash('Scan the box first', 'error'); return; }
     if (!xfrIsLoc(toLoc)) { P.msg = 'That is not a spot label: ' + xfrE(toLoc); xfrPutDraw(); return; }
     if (toLoc === String(item.fromLocation).toUpperCase() && !item.found) { P.msg = 'That is where you grabbed it (' + xfrE(toLoc) + ')'; xfrPutDraw(); return; }
