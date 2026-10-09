@@ -4892,17 +4892,21 @@ console.log('\n🚢 Container here: a shelf label without its area ("4-1-2-6") a
 
 // Owner (2026-10-09): "our FRONT spot labels only have 4-1-2-6, not FRONT=4-1-2-6 — until they're relabelled, take anything
 // with no area as FRONT= in Transfer".
-console.log('\n🔀 Transfer: a shelf label with no area (4-1-2-6) is taken as FRONT=4-1-2-6');
+console.log('\n🔀 FRONT labels printed without "FRONT=" (4-#-#-#) are taken as FRONT= on every scan screen');
 {
   const { readFileSync } = await import('node:fs');
   const ih = readFileSync(fileURLToPath(new URL('../inventory.html', import.meta.url)), 'utf8');
   const a = ih.indexOf('  function xfrFrontFix(code) {'), fix = new Function(ih.slice(a, ih.indexOf('\n', a)) + '; return xfrFrontFix;')();
-  check('4-1-2-6 → FRONT=4-1-2-6, 40-1-1-4 → FRONT=40-1-1-4; full labels (BSMT=40-1-1, FRONT=4-1-2-6), part #s (4-1-2=10, 4-1-2) and UPCs stay as they are',
-    fix('4-1-2-6') === 'FRONT=4-1-2-6' && fix(' 40-1-1-4 ') === 'FRONT=40-1-1-4' && fix('BSMT=40-1-1') === 'BSMT=40-1-1' && fix('FRONT=4-1-2-6') === 'FRONT=4-1-2-6'
+  // Owner (2026-10-09, narrowed): "only the FRONT=4-#-#-# were printed without FRONT=" — a 4-number code starting with 4.
+  check('4-1-2-6 → FRONT=4-1-2-6 (only 4-#-#-#); 40-1-1-4 (could be a BSMT label) is NOT guessed; full labels (BSMT=40-1-1, FRONT=3-1-2-6), part #s (4-1-2=10, 4-1-2) and UPCs stay as they are',
+    fix('4-1-2-6') === 'FRONT=4-1-2-6' && fix(' 4-10-2-16 ') === 'FRONT=4-10-2-16' && fix('40-1-1-4') === '40-1-1-4' && fix('3-1-2-6') === '3-1-2-6' && fix('BSMT=40-1-1') === 'BSMT=40-1-1' && fix('FRONT=3-1-2-6') === 'FRONT=3-1-2-6'
       && fix('4-1-2=10') === '4-1-2=10' && fix('4-1-2') === '4-1-2' && fix('810139930815') === '810139930815', null);
   const uses = ['code = xfrFrontFix(code); // a FRONT label', "var val = xfrFrontFix((g('xfr-search-inp').value || '').trim());", 'var up = xfrFrontFix(code).toUpperCase(), si = g(', 'var up = xfrFrontFix(code).toUpperCase(); if (!up) return;',
     'var up = xfrFrontFix(code).toUpperCase();\n    if (xfrIsLoc(up)) {', 'toLoc = xfrFrontFix(code).toUpperCase(), n = P.n;', 'code = xfrFrontFix(code); if (!E || !code) return;'];
   check('…used everywhere Transfer reads a scan: Container here, search box, grab spot, cart scan, put-away box + spot, extra box', uses.every(u => ih.includes(u)), uses.filter(u => !ih.includes(u)));
+  const more = ["if (/^4-\\d+-\\d+-\\d+$/.test(loc)) loc = 'FRONT=' + loc;", "loc = bdClean(/^4-\\d+-\\d+-\\d+$/.test(String(cv)"];
+  check('…and on the other Inventory screens that scan a shelf: Stock In / Found on Shelf / new spot, Checking (+ its box/spot scan), Audit recount, barcode column (Stock Out, a locked design, unchanged)',
+    more.every(u => ih.includes(u)) && (ih.match(/v = \/\^4-\\d\+-\\d\+-\\d\+\$\/\.test\(String\(v\)/g) || []).length === 3, more.filter(u => !ih.includes(u)));
 }
 
 console.log('\n' + (failed ? '❌ ' + failed + ' check(s) FAILED' : '✅ all ' + passed + ' checks passed') + '\n');
