@@ -7626,10 +7626,76 @@ window.invCredLogin = async function() {
         + '<span style="color:var(--text3);font-size:11px">Only stock in SKU Mgr — orders and containers count once 📦 Received.</span>'
         + '<span style="flex:1"></span><button onclick="skumgrShowValue()" title="Refresh" style="background:none;border:1px solid var(--border);border-radius:6px;padding:3px 8px;font-size:11px;cursor:pointer">↻</button>'
         + '<button onclick="skumgrLoadValue()" style="background:none;border:1px solid var(--border);border-radius:6px;padding:3px 8px;font-size:11px;cursor:pointer">🙈 Hide</button></div>'
-        + (d.byVendor.length ? '<div style="font-size:12px;margin-top:4px">' + d.byVendor.map(function(v) { return '<b>' + String(v.vendor).replace(/</g, '&lt;') + '</b> ' + money(v.value); }).join(' · ') + '</div>' : '')
-        + (d.noPrice.spots ? '<div style="font-size:12px;color:var(--red);margin-top:4px">Not in the total — no price: ' + d.noPrice.spots + ' spots (' + d.noPrice.cases + ' cases)<span title="' + d.noPrice.parts.join(', ').replace(/"/g, '&quot;') + '" style="text-decoration:underline dotted;cursor:help"> which?</span></div>' : '')
-        + (d.noEa.spots ? '<div style="font-size:12px;color:var(--red);margin-top:2px">Not in the total — no Ea/Case: ' + d.noEa.spots + ' spots (' + d.noEa.cases + ' cases)<span title="' + d.noEa.parts.join(', ').replace(/"/g, '&quot;') + '" style="text-decoration:underline dotted;cursor:help"> which?</span></div>' : '');
+        // Owner (2026-10-09): "tap the no vendor $106,572.81 / the not in the total — no Ea/Case line, see what's there and edit them".
+        + (d.byVendor.length ? '<div style="font-size:12px;margin-top:4px">' + d.byVendor.map(function(v) { return '<button class="skumgr-val-pick" data-which="vendor" data-vendor="' + String(v.vendor).replace(/&/g, '&amp;').replace(/"/g, '&quot;') + '" onclick="skumgrValueList(this)" title="Tap: see these rows and edit them" style="background:none;border:none;padding:0;font-size:12px;cursor:pointer;color:var(--text);text-decoration:underline dotted"><b>' + String(v.vendor).replace(/</g, '&lt;') + '</b> ' + money(v.value) + '</button>'; }).join(' · ') + '</div>' : '')
+        + (d.noPrice.spots ? '<div style="font-size:12px;margin-top:4px"><button class="skumgr-val-pick" data-which="noPrice" onclick="skumgrValueList(this)" style="background:none;border:none;padding:0;font-size:12px;cursor:pointer;color:var(--red);text-align:left">Not in the total — no price: ' + d.noPrice.spots + ' spots (' + d.noPrice.cases + ' cases) <u>— tap to see &amp; edit</u></button></div>' : '')
+        + (d.noEa.spots ? '<div style="font-size:12px;margin-top:2px"><button class="skumgr-val-pick" data-which="noEa" onclick="skumgrValueList(this)" style="background:none;border:none;padding:0;font-size:12px;cursor:pointer;color:var(--red);text-align:left">Not in the total — no Ea/Case: ' + d.noEa.spots + ' spots (' + d.noEa.cases + ' cases) <u>— tap to see &amp; edit</u></button></div>' : '')
+        + '<datalist id="skumgr-val-vendors">' + d.byVendor.filter(function(v) { return v.vendor !== '(no vendor)'; }).map(function(v) { return '<option value="' + String(v.vendor).replace(/"/g, '&quot;') + '">'; }).join('') + '</datalist>'
+        + '<div id="skumgr-val-list" style="display:none;margin-top:8px"></div>';
     }).catch(function() { box.innerHTML = '💰 Inventory value — failed'; });
+  };
+
+  // The SKU Mgr rows behind a vendor's $ or a "not in the total" line, each
+  // editable here (Ea/Case, price, vendor, name). Cases / Part # / location
+  // are never changed from this list — the server saves through the normal
+  // SKU Mgr save, so every change has its History EDIT line.
+  var _skuValRows = {};
+  window.skumgrValueList = function(btn) {
+    var out = g('skumgr-val-list'); if (!out) return;
+    var which = btn.getAttribute('data-which'), vendor = btn.getAttribute('data-vendor') || '';
+    if (out.style.display !== 'none' && out.getAttribute('data-key') === which + '|' + vendor) { out.style.display = 'none'; out.setAttribute('data-key', ''); return; }
+    out.style.display = 'block'; out.setAttribute('data-key', which + '|' + vendor);
+    out.innerHTML = '<div style="font-size:12px;color:var(--text3)">Loading…</div>';
+    var esc = function(v) { return String(v == null ? '' : v).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/"/g, '&quot;'); };
+    var money = function(v) { return '$' + (+v).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 }); };
+    wFetch(W + '/inventory/cost/value-rows?which=' + encodeURIComponent(which) + (which === 'vendor' ? '&vendor=' + encodeURIComponent(vendor) : '')).then(function(r) { return r.json(); }).then(function(d) {
+      if (!d || !d.ok) { out.innerHTML = '<div style="color:var(--red);font-size:12px">' + esc((d && d.error) || 'failed') + '</div>'; return; }
+      _skuValRows = {};
+      var title = which === 'vendor' ? '<b>' + esc(vendor) + '</b> — ' + money(d.value) : which === 'noEa' ? '<b style="color:var(--red)">No Ea/Case</b> — fill in Ea/Case so they count' : '<b style="color:var(--red)">No price</b> — fill in the price per piece so they count';
+      var inp = function(id, f, v, w, list) { return '<input id="skv-' + f + '-' + id + '" value="' + esc(v) + '"' + (list ? ' list="' + list + '"' : '') + ' style="width:' + w + ';padding:4px 6px;border:1.5px solid var(--border);border-radius:6px;font-size:12px;background:var(--bg);color:var(--text)">'; };
+      var rows = '';
+      d.spots.forEach(function(sp) {
+        sp.rows.forEach(function(r, i) {
+          _skuValRows[r.id] = r;
+          rows += '<tr class="skv-row" data-q="' + esc((r.partNum + ' ' + r.location + ' ' + r.name + ' ' + r.vendor).toUpperCase()) + '">'
+            + '<td style="font-family:var(--mono);white-space:nowrap">' + esc(r.partNum) + '</td><td style="font-family:var(--mono)">' + esc(r.location) + '</td>'
+            + '<td style="text-align:right">' + r.cases + '</td>'
+            + '<td>' + inp(r.id, 'ea', r.unitsPerCase || '', '64px') + '</td>'
+            + '<td>' + inp(r.id, 'price', r.price || '', '74px') + '</td>'
+            + '<td>' + inp(r.id, 'vendor', r.vendor, '90px', 'skumgr-val-vendors') + '</td>'
+            + '<td>' + inp(r.id, 'name', r.name, '170px') + '</td>'
+            + '<td style="text-align:right;white-space:nowrap">' + (i === 0 ? (sp.value > 0 ? money(sp.value) : '—') + (sp.noPriceCases > 0 && which === 'noPrice' ? ' <span style="color:var(--red)">' + sp.noPriceCases + ' cs no price</span>' : '') : '') + '</td>'
+            + '<td><button onclick="skumgrValueSave(' + r.id + ', this)" style="padding:3px 8px;font-size:12px;border:1px solid var(--green);border-radius:6px;background:var(--bg2);color:var(--green);cursor:pointer">💾</button> <span id="skv-msg-' + r.id + '" style="font-size:11px"></span></td></tr>';
+        });
+      });
+      out.innerHTML = '<div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-bottom:6px;font-size:13px">' + title
+        + '<span style="color:var(--text3);font-size:12px">' + d.spots.length + ' spots · ' + (+d.cases).toLocaleString() + ' cases · biggest $ first</span><span style="flex:1"></span>'
+        + '<input oninput="skumgrValueFilter(this.value)" placeholder="Find part # / spot / name" style="padding:4px 8px;border:1.5px solid var(--border);border-radius:6px;font-size:12px;background:var(--bg);color:var(--text)">'
+        + '<button onclick="g(\'skumgr-val-list\').style.display=\'none\'" style="background:none;border:1px solid var(--border);border-radius:6px;padding:3px 8px;font-size:11px;cursor:pointer">✕ Close</button></div>'
+        + '<div style="font-size:11px;color:var(--text3);margin-bottom:6px">Change Ea/Case, price per piece, vendor or name, then 💾. Cases, part # and spot don\'t change here (use the normal SKU Mgr search for that). Every save goes into History. Tap ↻ above to see the new total.</div>'
+        + (rows ? '<div style="max-height:520px;overflow:auto;border:1px solid var(--border);border-radius:8px"><table style="width:100%;border-collapse:collapse;font-size:12px"><thead><tr style="position:sticky;top:0;background:var(--bg2);text-align:left">'
+          + '<th style="padding:4px 6px">Part #</th><th>Spot</th><th style="text-align:right">Cases</th><th>Ea/Case</th><th>$/piece</th><th>Vendor</th><th>Name</th><th style="text-align:right">Value</th><th></th></tr></thead><tbody>' + rows + '</tbody></table></div>'
+          : '<div style="font-size:12px;color:var(--text3)">Nothing here now.</div>');
+    }).catch(function() { out.innerHTML = '<div style="color:var(--red);font-size:12px">Load failed</div>'; });
+  };
+  window.skumgrValueFilter = function(q) {
+    q = String(q || '').trim().toUpperCase();
+    document.querySelectorAll('#skumgr-val-list .skv-row').forEach(function(tr) { tr.style.display = !q || tr.getAttribute('data-q').indexOf(q) >= 0 ? '' : 'none'; });
+  };
+  window.skumgrValueSave = function(id, btn) {
+    var r = _skuValRows[id]; if (!r) return;
+    var v = function(f) { var el = g('skv-' + f + '-' + id); return el ? el.value.trim() : ''; };
+    var ea = v('ea'), price = v('price'), msg = g('skv-msg-' + id);
+    if ((ea !== '' && !(parseFloat(ea) >= 0)) || (price !== '' && !(parseFloat(price) >= 0))) { if (msg) { msg.style.color = 'var(--red)'; msg.textContent = 'numbers only'; } return; }
+    btn.disabled = true; if (msg) { msg.style.color = 'var(--text3)'; msg.textContent = 'Saving…'; }
+    wFetch(W + '/inventory/cost/value-fix', { method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ id: id, unitsPerCase: ea === '' ? 0 : parseFloat(ea), price: price === '' ? 0 : parseFloat(price), vendor: v('vendor'), name: v('name') }) })
+      .then(function(x) { return x.json(); }).then(function(d) {
+        btn.disabled = false;
+        if (!d || !d.ok) { if (msg) { msg.style.color = 'var(--red)'; msg.textContent = '✗ ' + ((d && d.error) || 'failed'); } return; }
+        _skuValRows[id] = d.row;
+        if (msg) { msg.style.color = 'var(--green)'; msg.textContent = '✓ saved'; }
+      }).catch(function() { btn.disabled = false; if (msg) { msg.style.color = 'var(--red)'; msg.textContent = '✗ failed'; } });
   };
 
   window.skumgrSearch = function() {
