@@ -10928,6 +10928,8 @@ window.invCredLogin = async function() {
     a = String(a || '').toUpperCase(); b = String(b || '').toUpperCase();
     var ia = a.indexOf('='), ib = b.indexOf('='); if (ia < 0 || ib < 0 || a.slice(0, ia) !== b.slice(0, ib)) return false;
     var pa = a.slice(ia + 1).split('-'), pb = b.slice(ib + 1).split('-'), diff = 0;
+    // A spot one level deeper is right next to its parent (BSMT=40-1-1-4 next to BSMT=40-1-1).
+    if (Math.abs(pa.length - pb.length) === 1) { var sh = pa.length < pb.length ? pa : pb, lo = pa.length < pb.length ? pb : pa; return sh.every(function(x, i) { return x === lo[i]; }); }
     if (pa.length !== pb.length) return false;
     for (var i = 0; i < pa.length; i++) { if (pa[i] === pb[i]) continue; var x = parseInt(pa[i], 10), y = parseInt(pb[i], 10);
       if (isNaN(x) || isNaN(y) || Math.abs(x - y) !== 1 || String(x) !== pa[i] || String(y) !== pb[i]) return false; diff++; }

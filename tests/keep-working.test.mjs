@@ -4771,5 +4771,30 @@ console.log('\n💲 History: prices hidden every time it opens; only the Owner c
     got[0] === '[RECEIVE PO] Pallet: X · Vendor: #1 · Price: $•••' && got[1] === '[SKU MGR EDIT] Price: ••• → ••• · Cases: 3 → 4' && got[2] === 'moved 5 cases to C1=1-1-1', got);
 }
 
+// Owner (2026-10-09): "when we see a new spot, just auto-add it to our system — more new spots are coming, and everything
+// should work like each location does: BSMT=40-1-1-4 goes right with BSMT=40-1-1".
+console.log('\n📍 New spots (one level deeper, e.g. BSMT=40-1-1-4) are added on first use and work like their parent');
+{
+  sq.prepare("INSERT OR IGNORE INTO locations (location, prefix, active) VALUES ('BSMT=40-1-1-4','BSMT',1)").run();
+  sq.prepare("INSERT INTO master_list (base_sku, name, part_num, location, cases, units_per_case) VALUES ('NS-1','x','NS-1=5','BSMT=40-1-1-5',1,5)").run();
+  const ll = await get('/inventory/location-list');
+  const L = (ll.locations || []).map(x => x.location);
+  check('Label Printer list has every spot used anywhere (locations list + SKU Mgr), not only the LocationID sheet: BSMT=40-1-1-4 and BSMT=40-1-1-5 are in it',
+    ll.ok && L.includes('BSMT=40-1-1-4') && L.includes('BSMT=40-1-1-5') && new Set(L).size === L.length, L.filter(x => /^BSMT=40/.test(x)));
+  const { readFileSync } = await import('node:fs');
+  const ih = readFileSync(fileURLToPath(new URL('../inventory.html', import.meta.url)), 'utf8'), wk = readFileSync(workerPath, 'utf8');
+  const near = new Function(ih.slice(ih.indexOf('  function xfrNear(a, b) {'), ih.indexOf('  function xfrGrabNotHere(loc)')) + '; return xfrNear;')();
+  check('…"right next to it": BSMT=40-1-1-4 ↔ BSMT=40-1-1 yes, ↔ BSMT=40-1-1-5 yes, ↔ BSMT=40-1-2 no, ↔ C1=40-1-1 no; 3-level spots as before (40-1-1 ↔ 40-1-2 yes)',
+    near('BSMT=40-1-1-4', 'BSMT=40-1-1') && near('BSMT=40-1-1', 'BSMT=40-1-1-4') && near('BSMT=40-1-1-4', 'BSMT=40-1-1-5') && !near('BSMT=40-1-1-4', 'BSMT=40-1-2')
+      && !near('BSMT=40-1-1-4', 'C1=40-1-1') && near('BSMT=40-1-1', 'BSMT=40-1-2') && !near('BSMT=40-1-1', 'BSMT=40-1-1'), null);
+  check('…a plan of BSMT=40-1-1 also covers BSMT=40-1-1-4 (suggested spots); walking order already puts it right after BSMT=40-1-1',
+    /l === plan \|\| l\.startsWith\(plan \+ '-'\)/.test(wk), null);
+  const a0 = ih.indexOf('  var INV_PULL_AREA_ORDER = '), a1 = ih.indexOf('  function invPullWalkCompare(a, b) {'), a2 = ih.indexOf('\n  }\n', a1) + 4;
+  const cmp = new Function(ih.slice(a0, a2) + '; return invPullWalkCompare;')();
+  const order = ['C1=1-1-1', 'BSMT=40-1-2', 'BSMT=40-1-1-4', 'BSMT=40-1-1'].sort(cmp);
+  check('…walking order: BSMT=40-1-1 → BSMT=40-1-1-4 → BSMT=40-1-2 (then the back, C1)', order.join() === 'BSMT=40-1-1,BSMT=40-1-1-4,BSMT=40-1-2,C1=1-1-1', order);
+  sq.exec("DELETE FROM locations WHERE location = 'BSMT=40-1-1-4'; DELETE FROM master_list WHERE part_num = 'NS-1=5'");
+}
+
 console.log('\n' + (failed ? '❌ ' + failed + ' check(s) FAILED' : '✅ all ' + passed + ' checks passed') + '\n');
 process.exit(failed ? 1 : 0);
