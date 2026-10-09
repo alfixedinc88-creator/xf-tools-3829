@@ -23759,7 +23759,13 @@ async function veeqoUndeliveredReport(url, env) {
   // shipAttachItemsAndWeight — PAGE_SIZE is 100 here, right at the edge of
   // where that limit has bitten us before, so this batches defensively
   // rather than waiting for a future page to trip it).
-  const trackings = manifestRows.map(r => (r.tracking || '').trim().toUpperCase());
+  // Owner (2026-10-09, compared with Veeqo's own USPS export): tracking numbers were saved with spaces
+  // ("9400 1502 0624 …", carrier blank → an UNKNOWN sheet) — the same number without spaces, USPS / UPS by its shape.
+  manifestRows.forEach(r => {
+    r.tracking = String(r.tracking || '').replace(/\s+/g, '').toUpperCase();
+    if (!String(r.carrier || '').trim()) r.carrier = /^1Z/.test(r.tracking) ? 'UPS' : /^9[1-5]\d{19,}$/.test(r.tracking) ? 'USPS' : '';
+  });
+  const trackings = manifestRows.map(r => r.tracking);
   const scanCacheResults = [];
   for (let i = 0; i < trackings.length; i += 50) {
     const chunk = trackings.slice(i, i + 50);
@@ -23768,6 +23774,15 @@ async function veeqoUndeliveredReport(url, env) {
     scanCacheResults.push(...(res.results || []));
   }
   const shipmentIdCache = new Map(scanCacheResults.map(r => [r.t, r.shipment_id]));
+  // Labels we cancelled ourselves (Picking → 🏷️ Canceled Labels) never shipped — never a claim.
+  const cancelledSet = new Set();
+  for (let i = 0; i < trackings.length; i += 50) {
+    const chunk = trackings.slice(i, i + 50);
+    const res = await env.DB.prepare(`SELECT UPPER(REPLACE(tracking, ' ', '')) AS t FROM ship_cancel_label_log WHERE UPPER(REPLACE(tracking, ' ', '')) IN (${chunk.map(() => '?').join(',')})`).bind(...chunk).all().catch(() => ({ results: [] }));
+    (res.results || []).forEach(r => cancelledSet.add(r.t));
+  }
+  const cancelled = [], replaced = [];
+  let delivered = 0, noOrder = 0;
 
   // BUGFIX: previously any API failure (rate limit, timeout, bad ID) was
   // silently swallowed and treated identically to "confirmed not
@@ -23782,17 +23797,27 @@ async function veeqoUndeliveredReport(url, env) {
   for (let i = 0; i < manifestRows.length; i += 5) {
     const chunk = manifestRows.slice(i, i + 5);
     const results = await Promise.all(chunk.map(async (m) => {
-      const tracking = (m.tracking || '').trim().toUpperCase();
+      const tracking = m.tracking;
       let shipmentId = shipmentIdCache.get(tracking);
       let channel = m.channel || '';
+      const base = { tracking, carrier: m.carrier || '', orderNum: m.order_num || '', channel, shippedAt: m.date || '' };
+      if (cancelledSet.has(tracking)) { cancelled.push(base); return null; }
 
       if (!shipmentId) {
         const lookup = await veeqoLookupByTrackingSafe(env, tracking);
         if (lookup.error) { failedLookups.push({ tracking, stage: 'order-lookup', error: lookup.error }); return null; }
-        if (!lookup.order) return null; // genuinely no matching order, not an error - skip silently
-        shipmentId = veeqoExtractShipmentId(lookup.order);
+        if (!lookup.order) { noOrder++; return null; } // no matching order in Veeqo - counted, shown on the page
+        // Owner (2026-10-09): Veeqo's export had 23 of our "undelivered" numbers under the same order with a DIFFERENT
+        // tracking number — the label was bought again (old one voided), so the old number never moves. Only check the
+        // order's shipment when it still carries OUR tracking number; otherwise it's a replaced label, never a claim.
+        const theirs = [];
+        for (const a of (lookup.order.allocations || [])) { const sh = a.shipment, tn = sh && sh.tracking_number;
+          const t = String((tn && typeof tn === 'object' ? tn.tracking_number : tn) || '').replace(/\s+/g, '').toUpperCase(); if (t) theirs.push({ t, id: sh.id }); }
+        const mine = theirs.find(x => x.t === tracking);
+        if (!mine) { replaced.push({ ...base, channel: channel || veeqoExtractChannel(lookup.order) || '', currentTracking: theirs.map(x => x.t).join(', ') }); return null; }
+        shipmentId = mine.id;
         channel = channel || veeqoExtractChannel(lookup.order);
-        if (!shipmentId) return null;
+        if (!shipmentId) { noOrder++; return null; }
       }
 
       const { events, error } = await veeqoGetTrackingEventsSafe(env, shipmentId);
@@ -23808,7 +23833,7 @@ async function veeqoUndeliveredReport(url, env) {
       // defensively in case some responses do include it.
       const latest = events[0] || null;
       const status = latest ? (latest.description || latest.status || '').toLowerCase() : '';
-      if (/delivered/.test(status)) return null; // confirmed delivered - exclude
+      if (/delivered/.test(status) && !/undeliver|not delivered/.test(status)) { delivered++; return null; } // confirmed delivered - exclude
 
       return {
         tracking, carrier: m.carrier || '', orderNum: m.order_num || '', channel,
@@ -23828,7 +23853,7 @@ async function veeqoUndeliveredReport(url, env) {
 
   return cors(new Response(JSON.stringify({
     ok: true, page, hasMore: manifestRows.length === PAGE_SIZE,
-    checked: manifestRows.length, undelivered,
+    checked: manifestRows.length, undelivered, delivered, noOrder, cancelled, replaced,
     failedLookups: failedLookups.slice(0, 20), // sample - full count still accurate below
     failedLookupCount: failedLookups.length,
     windowStart: startDate, windowEnd: endDate,

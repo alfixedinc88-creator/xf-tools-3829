@@ -4496,5 +4496,56 @@ console.log('\n📄 Scan forms go to the ink printer (Scan Form Station), not th
     && /body: \{ station: true \}/.test(ph) && /if \(todo\.length\) await psAlScanFormPrintList\(todo\.map\(/.test(ph), null);
 }
 
+// Owner (2026-10-09): "check — is everything on our undelivered report in Veeqo's own USPS undelivered export? why is it
+// different?" Found: 23 of ours were OLD tracking numbers of labels bought again (Veeqo's export has the same order with
+// a new number — the old label was voided, so it never moves: not a claim); 16 were saved with spaces (an UNKNOWN sheet).
+console.log('\nUndelivered Report: replaced / cancelled labels are never a claim; numbers with spaces are USPS; every label accounted for');
+{
+  const realFetch = globalThis.fetch;
+  const d30 = new Date(Date.now() - 30 * 86400000).toISOString().slice(0, 10);
+  const order = (id, tracks) => ({ id, channel: { name: 'ebay' }, allocations: tracks.map((t, i) => ({ shipment: { id: id * 10 + i, tracking_number: { tracking_number: t, status: 'created' } } })) });
+  const ORD = { '94001111222233334444555': order(1, ['94001111222233334444555']), '9334000000000000000001': order(2, ['9334000000000000000002']),
+    '9334000000000000000004': order(4, ['9334000000000000000004']), '9334000000000000000006': order(6, ['9334000000000000000006']) };
+  const EV = { 10: [{ timestamp: d30 + 'T15:00:00Z', description: 'Delivered' }], 40: [{ timestamp: d30 + 'T15:00:00Z', description: 'In transit' }],
+    60: [{ timestamp: d30 + 'T16:00:00Z', description: 'Undelivered - returned to sender' }, { timestamp: d30 + 'T10:00:00Z', description: 'In transit' }] };
+  globalThis.fetch = async (u, o) => {
+    const x = String(u);
+    if (x.includes('api.veeqo.com')) {
+      const q = /query=([^&]+)/.exec(x), te = /tracking_events\/(\d+)/.exec(x);
+      const body = te ? (EV[te[1]] || []) : q ? (ORD[decodeURIComponent(q[1])] ? [ORD[decodeURIComponent(q[1])]] : []) : [];
+      return new Response(JSON.stringify(body), { headers: { 'Content-Type': 'application/json' } });
+    }
+    return realFetch(u, o);
+  };
+  env.VEEQO_API_KEY = 'test';
+  await get('/veeqo/undelivered-report?page=1&days=60&excludeRecentDays=15'); // tables ready
+  sq.exec("DELETE FROM ship_manifest_log WHERE tracking LIKE '9334000000%' OR tracking LIKE '9400 1111%' OR tracking LIKE '1ZTEST%'");
+  const ins = sq.prepare('INSERT INTO ship_manifest_log (date, tracking, order_num, channel, carrier) VALUES (?,?,?,?,?)');
+  ins.run(d30, '9400 1111 2222 3333 4444 555', 'O-1', 'ebay', '');      // spaces, no carrier → USPS, delivered
+  ins.run(d30, '9334000000000000000001', 'O-2', 'ebay', 'USPS');        // order now on ...0002 → replaced label
+  ins.run(d30, '9334000000000000000003', 'O-3', 'ebay', 'USPS');        // we cancelled it
+  ins.run(d30, '9334000000000000000004', 'O-4', 'ebay', 'USPS');        // in transit → undelivered (a claim)
+  ins.run(d30, '1ZTEST0000000005', 'O-5', 'ebay', '');                  // UPS by its shape, not in Veeqo
+  ins.run(d30, '9334000000000000000006', 'O-6', 'ebay', 'USPS');        // "Undelivered - returned" → NOT delivered
+  sq.prepare("INSERT INTO ship_cancel_label_log (date, timestamp, tracking, order_num, carrier, canceled_by) VALUES (?,?,?,?,?,?)").run(d30, d30 + 'T12:00:00Z', '9334000000000000000003', 'O-3', 'USPS', 'TS');
+  const pages = []; let pg = 1, more = true;
+  while (more && pg < 50) { const d = await get('/veeqo/undelivered-report?page=' + pg + '&days=60&excludeRecentDays=15'); pages.push(d); more = d.hasMore; pg++; }
+  globalThis.fetch = realFetch; delete env.VEEQO_API_KEY;
+  const sum = k => pages.reduce((a, d) => a + (Array.isArray(d[k]) ? d[k].length : (d[k] || 0)), 0), all = k => pages.flatMap(d => d[k] || []);
+  const und = all('undelivered').filter(r => /^(9334000000|94001111|1ZTEST)/.test(r.tracking)), rep = all('replaced').filter(r => /^9334000000/.test(r.tracking)), can = all('cancelled').filter(r => /^9334000000/.test(r.tracking));
+  check('in transit (…0004) and "Undelivered - returned to sender" (…0006) are on the claim list; the delivered one (typed with spaces) is not',
+    und.map(r => r.tracking).sort().join() === '9334000000000000000004,9334000000000000000006' && pages.every(d => d.ok), und);
+  check('…the label bought again (…0001, order now ships on …0002) and the label we cancelled (…0003) are NOT claims — listed apart, with why',
+    rep.length === 1 && rep[0].tracking === '9334000000000000000001' && rep[0].currentTracking === '9334000000000000000002' && can.length === 1 && can[0].tracking === '9334000000000000000003', { rep, can });
+  check('…every label is accounted for: checked = delivered + not delivered + replaced + cancelled + not found in Veeqo + failed (nothing silently dropped)',
+    sum('checked') === sum('delivered') + sum('undelivered') + sum('replaced') + sum('cancelled') + sum('noOrder') + sum('failedLookupCount'),
+    { checked: sum('checked'), delivered: sum('delivered'), und: sum('undelivered'), rep: sum('replaced'), can: sum('cancelled'), noOrder: sum('noOrder'), failed: sum('failedLookupCount') });
+  const { readFileSync: rfU } = await import('node:fs');
+  const psh = rfU(fileURLToPath(new URL('../packship.html', import.meta.url)), 'utf8');
+  check('…page and spreadsheet: "Checked N labels: … delivered … not delivered … replaced / cancelled", a "Not a claim" sheet, Last Status columns',
+    /Checked ' \+ tot\.checked \+ ' labels: /.test(psh) && /book_append_sheet\(wb, wsn, 'Not a claim'\)/.test(psh) && /'Last Status \(Veeqo\)'/.test(psh), null);
+  sq.exec("DELETE FROM ship_manifest_log WHERE tracking LIKE '9334000000%' OR tracking LIKE '9400 1111%' OR tracking LIKE '1ZTEST%'; DELETE FROM ship_cancel_label_log WHERE order_num = 'O-3'");
+}
+
 console.log('\n' + (failed ? '❌ ' + failed + ' check(s) FAILED' : '✅ all ' + passed + ' checks passed') + '\n');
 process.exit(failed ? 1 : 0);

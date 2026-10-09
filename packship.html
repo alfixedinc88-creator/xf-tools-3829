@@ -5256,6 +5256,7 @@ window.psExportGaps = function() {
 
 // ── Undelivered Report ───────────────────────────────
 var psUndeliveredRows = null; // holds the built (deduped) result until downloaded
+var psUndeliveredNotClaims = []; // replaced (voided) / cancelled labels — never shipped, never a claim
 
 window.psRunUndeliveredReport = async function() {
   var btn = document.getElementById('ps-und-run-btn');
@@ -5273,6 +5274,7 @@ window.psRunUndeliveredReport = async function() {
 
   var allRaw = [];
   var totalFailedLookups = 0;
+  var tot = { checked: 0, delivered: 0, noOrder: 0 }, notClaims = [];
   var page = 1;
   var hasMore = true;
   var MAX_PAGES = 200; // safety ceiling - matches the worker's own cap
@@ -5287,6 +5289,9 @@ window.psRunUndeliveredReport = async function() {
       if (!data.ok) throw new Error(data.error || 'Report failed on page ' + page);
       allRaw = allRaw.concat(data.undelivered || []);
       totalFailedLookups += data.failedLookupCount || 0;
+      tot.checked += data.checked || 0; tot.delivered += data.delivered || 0; tot.noOrder += data.noOrder || 0;
+      (data.replaced || []).forEach(function(r) { notClaims.push(Object.assign({ why: 'Label replaced — the order now ships on ' + (r.currentTracking || 'another label') + ' (this one was voided, never moves)' }, r)); });
+      (data.cancelled || []).forEach(function(r) { notClaims.push(Object.assign({ why: 'We cancelled this label (Picking → Canceled Labels)' }, r)); });
       hasMore = data.hasMore;
       page++;
     }
@@ -5305,6 +5310,7 @@ window.psRunUndeliveredReport = async function() {
     var deduped = Object.values(byTracking);
 
     psUndeliveredRows = deduped;
+    psUndeliveredNotClaims = notClaims;
 
     var uspsCount = deduped.filter(function(r){ return (r.carrier||'').toUpperCase() === 'USPS'; }).length;
     var upsCount  = deduped.filter(function(r){ return (r.carrier||'').toUpperCase() === 'UPS'; }).length;
@@ -5312,7 +5318,10 @@ window.psRunUndeliveredReport = async function() {
     document.getElementById('ps-und-usps').textContent  = uspsCount;
     document.getElementById('ps-und-ups').textContent   = upsCount;
     summaryEl.style.display = 'block';
-    var doneMsg = 'Done — ' + deduped.length + ' unique undelivered shipments across ' + (page - 1) + ' page(s).';
+    var doneMsg = 'Done — ' + deduped.length + ' unique undelivered shipments across ' + (page - 1) + ' page(s).'
+      + ' Checked ' + tot.checked + ' labels: ' + tot.delivered + ' delivered, ' + deduped.length + ' not delivered'
+      + (notClaims.length ? ', ' + notClaims.length + ' replaced / cancelled labels (never shipped — NOT a claim, on their own sheet)' : '')
+      + (tot.noOrder ? ', ' + tot.noOrder + ' not found in Veeqo (not counted either way)' : '') + '.';
     // Surfaced explicitly: these are real API failures (e.g. rate
     // limiting), NOT confirmed undelivered - they're excluded from the
     // count above entirely rather than silently counted as undelivered.
@@ -5398,17 +5407,27 @@ function _psBuildUndeliveredWorkbook() {
       rows.push(['Copy-paste block (one per line):']);
       rows.push([batch.map(function(r){ return r.tracking; }).join('\n')]);
       rows.push([]);
-      rows.push(['Tracking Number', 'Order Num(s)', 'Channel', 'Ship Date', 'Tracking Link', 'Updated Status (fill in after checking carrier site)']);
+      rows.push(['Tracking Number', 'Order Num(s)', 'Channel', 'Ship Date', 'Tracking Link', 'Updated Status (fill in after checking carrier site)', 'Last Status (Veeqo)', 'Last Event', 'Last Location']);
       batch.forEach(function(r) {
-        rows.push([r.tracking, r.allOrderNums.join(', '), r.channel||'', r.shippedAt||'', r.trackingUrl||'', '']);
+        rows.push([r.tracking, r.allOrderNums.join(', '), r.channel||'', r.shippedAt||'', r.trackingUrl||'', '', r.lastStatus||'', r.lastEventDate||'', r.lastLocation||'']);
       });
       rows.push([]); rows.push([]);
     });
 
     var ws = XLSX.utils.aoa_to_sheet(rows);
-    ws['!cols'] = [{ wch: 24 }, { wch: 20 }, { wch: 16 }, { wch: 12 }, { wch: 45 }, { wch: 40 }];
+    ws['!cols'] = [{ wch: 24 }, { wch: 20 }, { wch: 16 }, { wch: 12 }, { wch: 45 }, { wch: 40 }, { wch: 24 }, { wch: 12 }, { wch: 24 }];
     XLSX.utils.book_append_sheet(wb, ws, carrier.slice(0, 31));
   });
+
+  // Replaced (voided) and cancelled labels: never shipped, so never a claim — listed so nothing is silently dropped.
+  if (psUndeliveredNotClaims.length) {
+    var nr = [['NOT a claim — ' + psUndeliveredNotClaims.length + ' labels that never shipped (replaced by a new label, or cancelled)'], [],
+      ['Tracking Number', 'Carrier', 'Order Num', 'Channel', 'Ship Date', 'Why']];
+    psUndeliveredNotClaims.forEach(function(r) { nr.push([r.tracking, r.carrier || '', r.orderNum || '', r.channel || '', r.shippedAt || '', r.why]); });
+    var wsn = XLSX.utils.aoa_to_sheet(nr);
+    wsn['!cols'] = [{ wch: 24 }, { wch: 8 }, { wch: 22 }, { wch: 16 }, { wch: 12 }, { wch: 80 }];
+    XLSX.utils.book_append_sheet(wb, wsn, 'Not a claim');
+  }
 
   XLSX.writeFile(wb, 'undelivered_report_' + psTodayKey() + '.xlsx');
   _psToast('Report downloaded');
