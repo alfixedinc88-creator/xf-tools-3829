@@ -1523,7 +1523,17 @@ window.invCredLogin = async function() {
   </div>
 </div>
 
-<div class="ipanel" id="inv-panel-history">
+<div class="ipanel hist-prices-hidden" id="inv-panel-history">
+  <!-- 💲 Owner (2026-10-09): "History — hide all the inventory prices; I click and they all come back. Sometimes I show
+       everyone the history, but our guys must not see the prices." Hidden every time History opens; the 💲 button
+       (Owner only) shows / hides them. Everyone else never sees them (notes' $ amounts too). -->
+  <style>
+    #inv-panel-history.hist-prices-hidden .hist-price { display: none !important; }
+    #inv-panel-history:not(.hist-prices-hidden) .hist-price-mask { display: none !important; }
+  </style>
+  <div id="hist-price-toggle-wrap" style="display:none;justify-content:flex-end;margin-bottom:6px">
+    <button type="button" id="hist-price-toggle" onclick="histTogglePrices()" style="padding:6px 12px;border-radius:8px;border:1.5px solid var(--border);background:var(--bg2);color:var(--text2);font-size:12px;font-weight:700;cursor:pointer">💲 Show prices</button>
+  </div>
 
   <!-- Full note popup — opened by clicking a row's Notes cell below, since
        the cell itself is truncated and hover tooltips don't work on touch. -->
@@ -1629,7 +1639,7 @@ window.invCredLogin = async function() {
     <div id="hist-rp-check" style="font-size:11px;color:var(--text3);margin-bottom:14px"></div>
     <!-- 💲 Inventory value (Owner only — the server sends it to the Owner only): Started → Ended
          at vendor price (same count as SKU Mgr's total), and every big change with why. -->
-    <div id="hist-value" style="display:none;margin-bottom:14px">
+    <div id="hist-value" class="hist-price" style="display:none;margin-bottom:14px">
       <div style="font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.4px;color:var(--text3);margin-bottom:8px">💲 Inventory Value <span style="text-transform:none;font-weight:600">(Owner only)</span></div>
       <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:8px;margin-bottom:6px">
         <div style="background:var(--bg2);border-radius:8px;padding:10px;text-align:center"><div style="font-size:9px;font-weight:700;text-transform:uppercase;letter-spacing:.4px;color:var(--text3)">Started With</div><div id="hist-rv-start" style="font-size:17px;font-weight:800;font-family:var(--mono)">—</div></div>
@@ -1876,7 +1886,7 @@ window.invCredLogin = async function() {
     g("inv-panel-skumgr").className    = "ipanel" + (tab === "skumgr"   ? " iactive" : "");
     g("inv-panel-location").className  = "ipanel" + (tab === "location" ? " iactive" : "");
     g("inv-tab-location").className    = "itab"   + (tab === "location" ? " iactive" : "");
-    g("inv-panel-history").className   = "ipanel" + (tab === "history"  ? " iactive" : "");
+    g("inv-panel-history").className   = "ipanel hist-prices-hidden" + (tab === "history"  ? " iactive" : ""); // 💲 prices hidden each time
     g("inv-panel-soldout").className   = "ipanel" + (tab === "soldout"  ? " iactive" : "");
     g("inv-tab-soldout").className     = "itab"   + (tab === "soldout"  ? " iactive" : "");
     g("inv-tab-scan").className        = "itab"   + (tab === "scan"     ? " iactive" : "");
@@ -1916,7 +1926,7 @@ window.invCredLogin = async function() {
       invSwitchTab('review');
       return;
     }
-    if (tab === "history") { histLoad(); histLoadReport(); }
+    if (tab === "history") { histPricesSetup(); histLoad(); histLoadReport(); }
     if (tab === "skumgr") { skumgrAutoLoad(); skumgrLoadCost(); skumgrLoadValue(); }
     if (tab === "location") lpLoad();
     if (tab === "soldout" && typeof soLoadLog === 'function') { soLoadLog(); if (typeof lwLoad === 'function') lwLoad(); setTimeout(function(){ var q = g('so-q'); if (q) q.focus(); }, 50); }
@@ -6982,19 +6992,39 @@ window.invCredLogin = async function() {
     // 💲 value before → after (only the Owner gets these numbers from the server)
     if (r.wval_before != null && r.wval_after != null) {
       var vd = r.wval_after - r.wval_before, vbig = Math.abs(vd) >= 500;
-      wh += '<div title="Inventory value at vendor price (same as SKU Mgr\'s total) before → after this entry — Owner only" style="font-size:11px;white-space:nowrap;color:' + (vbig ? (vd > 0 ? 'var(--green)' : 'var(--red)') : 'var(--text2)') + ';font-weight:' + (vbig ? '800' : '600') + '">💲 ' + histMoney(r.wval_before) + ' → ' + histMoney(r.wval_after)
+      wh += '<div class="hist-price"><div title="Inventory value at vendor price (same as SKU Mgr\'s total) before → after this entry — Owner only" style="font-size:11px;white-space:nowrap;color:' + (vbig ? (vd > 0 ? 'var(--green)' : 'var(--red)') : 'var(--text2)') + ';font-weight:' + (vbig ? '800' : '600') + '">💲 ' + histMoney(r.wval_before) + ' → ' + histMoney(r.wval_after)
         + (Math.abs(vd) >= 0.01 ? ' (' + (vbig ? (vd > 0 ? '🔺 ' : '🔻 ') : '') + histSigned(vd) + ')' : '') + '</div>'
         + (vbig ? '<div style="font-size:11px;color:var(--text2);white-space:nowrap">why: ' + invEsc(histValueWhy(r)) + '</div>' : '')
-        + (r.val_before != null ? '<div title="Value of this part # (every spot) before → after" style="font-size:10px;color:var(--text3);white-space:nowrap">' + invEsc(r.part_num || '') + ': ' + histMoney(r.val_before) + ' → ' + histMoney(r.val_after) + '</div>' : '');
+        + (r.val_before != null ? '<div title="Value of this part # (every spot) before → after" style="font-size:10px;color:var(--text3);white-space:nowrap">' + invEsc(r.part_num || '') + ': ' + histMoney(r.val_before) + ' → ' + histMoney(r.val_after) + '</div>' : '') + '</div>';
     }
     return '<span title="' + title + '">' + (prefix || '') + Number(r.total_before).toLocaleString() + ' → ' + Number(r.total_after).toLocaleString() + (part ? ' cs' : ' <span style="font-size:10px;color:var(--text3)">(whole wh.)</span>') + '</span>' + badge + pcs + wh;
+  };
+
+  // 💲 Prices in History: hidden each time it opens; only the Owner can show them (💲 button).
+  function histIsOwner() { return !!(INV_CRED_USER && INV_CRED_USER.roles && INV_CRED_USER.roles.indexOf('owner') >= 0); }
+  function histPricesShown() { var p = g('inv-panel-history'); return !!(p && !p.classList.contains('hist-prices-hidden') && histIsOwner()); }
+  function histHasPrice(t) { return /\$\s?\d|price/i.test(String(t || '')); }
+  function histMaskPrice(t) { // every number in a "Price …" part (up to the next ·), and any $ amount anywhere
+    return String(t || '').replace(/price[^·\n]*/gi, function(seg) { return seg.replace(/(\$\s?)?\d[\d,]*(\.\d+)?/g, function(m, d) { return (d ? '$' : '') + '•••'; }); })
+      .replace(/\$\s?\d[\d,]*(\.\d+)?/g, '$•••'); }
+  window.histPricesSetup = function() {
+    var p = g('inv-panel-history'), w = g('hist-price-toggle-wrap'), b = g('hist-price-toggle'); if (!p) return;
+    p.classList.add('hist-prices-hidden');
+    if (w) w.style.display = histIsOwner() ? 'flex' : 'none';
+    if (b) b.textContent = '💲 Show prices';
+  };
+  window.histTogglePrices = function() {
+    var p = g('inv-panel-history'), b = g('hist-price-toggle'); if (!p || !histIsOwner()) return;
+    var hide = !p.classList.contains('hist-prices-hidden');
+    p.classList.toggle('hist-prices-hidden', hide);
+    if (b) b.textContent = hide ? '💲 Show prices' : '🙈 Hide prices';
   };
 
   window.histShowFullNote = function(text, title) {
     var titleEl = g('hist-note-title');
     if (titleEl) titleEl.textContent = title || 'Full Note';
     var body = g('hist-note-body');
-    if (body) body.textContent = text || '(no notes)';
+    if (body) body.textContent = histPricesShown() ? (text || '(no notes)') : histMaskPrice(text || '(no notes)');
     var modal = g('hist-note-modal');
     if (modal) modal.style.display = 'flex';
   };
@@ -7412,6 +7442,7 @@ window.invCredLogin = async function() {
       var typCol  = typeColor[typ] || 'var(--text2)';
       var stCol   = statusColor[(r.status||'').toLowerCase()] || 'var(--text2)';
       var notes   = (r.notes||'').replace(/\[AUDIT\]\s*/,'').slice(0,60);
+      if (histHasPrice(notes)) notes = '<span class="hist-price">' + notes + '</span><span class="hist-price-mask">' + histMaskPrice(notes) + '</span>';
       // Total Before → After — only present on rows recorded after this
       // feature shipped (older rows show "—", there's nothing to backfill
       // them with). A red ⚠ means the after-total didn't match what this

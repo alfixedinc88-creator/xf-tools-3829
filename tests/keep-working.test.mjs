@@ -4644,5 +4644,27 @@ console.log('\n💰 SKU Mgr value: tap a vendor $ / a "not in the total" line �
   sq.prepare('DELETE FROM cred_users WHERE id = ?').run(Number(ow.lastInsertRowid));
 }
 
+// Owner (2026-10-09): "Inventory → History: hide all the inventory prices; I click on something and they all come back.
+// Sometimes I show everyone the history, but our guys must not see the prices."
+console.log('\n💲 History: prices hidden every time it opens; only the Owner can show them');
+{
+  const { readFileSync } = await import('node:fs');
+  const ih = readFileSync(fileURLToPath(new URL('../inventory.html', import.meta.url)), 'utf8');
+  check('History opens with prices hidden (panel class + CSS), every tab switch hides them again; 💲 Show / 🙈 Hide button for the Owner only',
+    /<div class="ipanel hist-prices-hidden" id="inv-panel-history">/.test(ih) && /#inv-panel-history\.hist-prices-hidden \.hist-price \{ display: none !important; \}/.test(ih)
+    && /g\("inv-panel-history"\)\.className\s+= "ipanel hist-prices-hidden"/.test(ih) && /histPricesSetup\(\); histLoad\(\); histLoadReport\(\);/.test(ih)
+    && /window\.histTogglePrices = function\(\) \{\s*var p = g\('inv-panel-history'\), b = g\('hist-price-toggle'\); if \(!p \|\| !histIsOwner\(\)\) return;/.test(ih)
+    && /w\.style\.display = histIsOwner\(\) \? 'flex' : 'none'/.test(ih), null);
+  check('…what is hidden: the 💲 Inventory Value box, each row\'s value before → after, and $ / Price amounts in notes (table and the full-note popup)',
+    /<div id="hist-value" class="hist-price"/.test(ih) && /wh \+= '<div class="hist-price"><div title="Inventory value/.test(ih)
+    && /notes = '<span class="hist-price">' \+ notes \+ '<\/span><span class="hist-price-mask">' \+ histMaskPrice\(notes\)/.test(ih)
+    && /body\.textContent = histPricesShown\(\) \? \(text \|\| '\(no notes\)'\) : histMaskPrice/.test(ih), null);
+  const fn = ih.slice(ih.indexOf('  function histHasPrice(t)'), ih.indexOf('  window.histPricesSetup'));
+  const mask = new Function(fn + '; return histMaskPrice;')();
+  const got = ['[RECEIVE PO] Pallet: X · Vendor: #1 · Price: $1.250', '[SKU MGR EDIT] Price: 0.5 → 0.6 · Cases: 3 → 4', 'moved 5 cases to C1=1-1-1'].map(mask);
+  check('…notes masked: "Price: $•••", "Price: ••• → ••• · Cases: 3 → 4" (cases still shown), notes with no price unchanged',
+    got[0] === '[RECEIVE PO] Pallet: X · Vendor: #1 · Price: $•••' && got[1] === '[SKU MGR EDIT] Price: ••• → ••• · Cases: 3 → 4' && got[2] === 'moved 5 cases to C1=1-1-1', got);
+}
+
 console.log('\n' + (failed ? '❌ ' + failed + ' check(s) FAILED' : '✅ all ' + passed + ' checks passed') + '\n');
 process.exit(failed ? 1 : 0);
