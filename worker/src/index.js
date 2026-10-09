@@ -7972,6 +7972,8 @@ const _app = {
       if (path === '/inventory/outbox/check' && method === 'POST') return await inventoryOutboxCheck(request, env);
       if (path.startsWith('/inventory/pull/')) return await inventoryPullRoute(path, method, request, env);
       if (path === '/inventory/product/save' && method === 'POST') return await warehouseProductSave(request, env, session);
+      if (path === '/inventory/veeqo-box' && method === 'GET') return await veeqoBoxList(env);
+      if (path === '/inventory/veeqo-box/save' && method === 'POST') return await veeqoBoxSave(request, env, session);
       if (path === '/inventory/transfer' && method === 'POST') return await inventoryTransferLog(request, env);
       if (path === '/inventory/containers' && method === 'GET') return await inventoryContainers(env);
       if (path === '/inventory/containers/pallets' && method === 'GET') return await inventoryContainerPallets(url, env);
@@ -14715,6 +14717,41 @@ async function updateCogsFromMaster(request, env) {
 // Products live in the "Products" sheet (A product id · B SKU · C name ·
 // D warehouse short name · E unit weight · F (left as is) · G keywords);
 // the D1 `products` table is a copy of it. { origSku } empty = new product.
+// 📦 Owner (2026-10-09): "Warehouse Lookup → Item Search: a spot for the recommended Veeqo 19.99 lb full box, in pieces
+// (e.g. 4-2-3 → 45 pcs) — I'll fill it in later, give me a column to edit them all". One number per part # (the parent,
+// e.g. 4-2-3), every change kept (who, when, before → after).
+async function veeqoBoxTables(env) {
+  await env.DB.prepare('CREATE TABLE IF NOT EXISTS veeqo_box (part TEXT PRIMARY KEY, pcs REAL, updated_by TEXT, updated_at TEXT)').run();
+  await env.DB.prepare('CREATE TABLE IF NOT EXISTS veeqo_box_log (id INTEGER PRIMARY KEY AUTOINCREMENT, part TEXT, before_pcs REAL, after_pcs REAL, by_user TEXT, at TEXT)').run();
+}
+// GET /inventory/veeqo-box → { boxes: { "4-2-3": 45, … } }
+async function veeqoBoxList(env) {
+  await veeqoBoxTables(env);
+  const rows = await d1All(env, 'SELECT part, pcs, updated_by, updated_at FROM veeqo_box WHERE pcs IS NOT NULL');
+  const boxes = {}, info = {}; rows.forEach(r => { boxes[r.part] = r.pcs; info[r.part] = { by: r.updated_by || '', at: r.updated_at || '' }; });
+  return cors(new Response(JSON.stringify({ ok: true, boxes, info }), { headers: { 'Content-Type': 'application/json' } }));
+}
+// POST /inventory/veeqo-box/save { part, pcs } (pcs '' = clear) — Ops / management.
+async function veeqoBoxSave(request, env, session) {
+  const J = (o, st) => cors(new Response(JSON.stringify(o), { status: st || 200, headers: { 'Content-Type': 'application/json' } }));
+  const roles = (session && session.roles) || [];
+  if (!(roles.includes('mgmt') || roles.includes('ops') || roles.includes('admin') || roles.includes('owner'))) return J({ ok: false, error: 'Ops or management access required' }, 403);
+  await veeqoBoxTables(env);
+  const b = await request.json().catch(() => ({}));
+  const part = String(b.part || '').trim().toUpperCase().split('=')[0].trim();
+  if (!/^[A-Z0-9][A-Z0-9.\-\/]{0,40}$/.test(part)) return J({ ok: false, error: 'Part # (e.g. 4-2-3) is required' }, 400);
+  const raw = String(b.pcs == null ? '' : b.pcs).trim(), pcs = raw === '' ? null : parseFloat(raw);
+  if (pcs != null && !(pcs > 0 && pcs < 1e7)) return J({ ok: false, error: 'Pieces must be a number above 0 (or empty to clear)' }, 400);
+  const cs = await verifyCredSession(request.headers.get('X-Cred-Token'), env).catch(() => null);
+  const who = String((cs && (cs.displayName || cs.username)) || '').slice(0, 40), now = new Date().toISOString();
+  const old = await d1First(env, 'SELECT pcs FROM veeqo_box WHERE part = ?', [part]);
+  const before = old && old.pcs != null ? old.pcs : null;
+  if (before === pcs) return J({ ok: true, part, pcs, unchanged: true });
+  await env.DB.prepare('INSERT INTO veeqo_box (part, pcs, updated_by, updated_at) VALUES (?,?,?,?) ON CONFLICT(part) DO UPDATE SET pcs = excluded.pcs, updated_by = excluded.updated_by, updated_at = excluded.updated_at')
+    .bind(part, pcs, who, now).run();
+  await env.DB.prepare('INSERT INTO veeqo_box_log (part, before_pcs, after_pcs, by_user, at) VALUES (?,?,?,?,?)').bind(part, before, pcs, who, now).run();
+  return J({ ok: true, part, pcs, before, by: who, at: now });
+}
 async function warehouseProductSave(request, env, session) {
   const J = (o, st) => cors(new Response(JSON.stringify(o), { status: st || 200, headers: { 'Content-Type': 'application/json' } }));
   const roles = (session && session.roles) || [];

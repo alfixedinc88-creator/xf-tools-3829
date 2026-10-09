@@ -25,7 +25,8 @@ window.addEventListener('pageshow', function (e) { if (e.persisted) location.rel
     { key: 'warehouse', file: 'warehouse.html', name: '📍 Warehouse Lookup', needs: 'Ops / Mobile / Mgmt', card: card('warehouse.html'), tabs: [
       { key: 'locator', label: '📍 Item Locator', sel: '.tabitem[onclick="switchTab(\'locator\')"]' },
       { key: 'search', label: '🔍 Item Search', sel: '.tabitem[onclick="switchTab(\'search\')"]', parts: [
-        { key: 'newproduct', label: '➕ New product', sel: '#pane-search .wp-can' } ] },
+        { key: 'newproduct', label: '➕ New product', sel: '#pane-search .wp-can[onclick="wpOpen()"]' },
+        { key: 'veeqobox', label: '📦 Veeqo full box (19.99 lb) pieces', sel: '#pane-search [data-vb], #pane-search .wp-can[onclick="vbAll()"]' } ] },
       { key: 'awd', label: '🚛 AWD Lookup', sel: '.tabitem[onclick="switchTab(\'awd\')"]' },
       { key: 'oos', label: '📊 Stock Levels', sel: '.tabitem[onclick="switchTab(\'oos\')"]', parts: [
         { key: 'logpo', label: '📋 Log PO Placed', sel: '#pane-oos .oos-header > div > button[onclick*="po-log-form"], #po-log-form' } ] } ] },

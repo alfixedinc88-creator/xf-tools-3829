@@ -1653,6 +1653,7 @@ body {
         <button class="btn-go" onclick="doSearch('search')">Search</button>
         <button class="btn-x" onclick="clearPane('search')">&times;</button>
         <button class="btn-go wp-can" onclick="wpOpen()" style="display:none;background:#0e7f3e" title="Add a product to the Products list">&#10133; New product</button>
+        <button class="btn-go wp-can" onclick="vbAll()" style="display:none;background:#5b21b6" title="Pieces in a Veeqo full box (19.99 lb) for every part # — edit them all">&#128230; Veeqo full boxes</button>
       </div>
       <div class="result-meta" id="meta-search"></div>
       <div id="res-search"><div class="placeholder"><span class="placeholder-icon">&#128269;</span><h3>Item Search</h3><p>Searches base SKUs. Set <b style="color:var(--accent)">Count</b> to calculate total weight.</p></div></div>
@@ -1713,7 +1714,7 @@ body {
 <!-- ═══ AWD PLANNER APP ═══ -->
 
 <script src="xf-signout.js?v=20260924"></script>
-<script src="xf-access.js?v=20261008a"></script>
+<script src="xf-access.js?v=20261009a"></script>
 </body>
 <script>
 // ── Constants ────────────────────────────────────────────────────────────
@@ -2432,8 +2433,82 @@ function cardSearch(r) {
     <div class="fields">
       ${r.weight ? `<div class="field"><div class="field-lbl">Unit Weight (lbs)</div><div class="field-val">${r.weight}</div></div>` : ''}
       ${r.countWeight ? `<div class="field"><div class="field-lbl">Count Weight (lbs)</div><div class="field-val green">${r.countWeight}</div></div>` : ''}
+      ${vbField(r.sku)}
     </div>
   </div>`;
+}
+
+// ─── 📦 VEEQO FULL BOX (19.99 lb), in pieces (Item Search) ─────────
+// Owner (2026-10-09): "a spot for the recommended Veeqo 19.99 lb full box, in pieces — e.g. 4-2-3 → 45 pieces; I'll fill
+// them in later — give me a column so I can edit them all". One number per part # (the parent). Every change is kept.
+var VB = null; // { part: pcs }
+function vbLoad(cb) {
+  if (VB) { if (cb) cb(); return; }
+  wFetch(WORKER_URL + '/inventory/veeqo-box').then(function (r) { return r.json(); }).then(function (d) { VB = (d && d.ok && d.boxes) || {}; if (cb) cb(); })
+    .catch(function () { VB = VB || {}; if (cb) cb(); });
+}
+function vbPart(sku) { return String(sku || '').toUpperCase().split('=')[0].trim(); }
+function vbField(sku) {
+  var p = vbPart(sku); if (!p) return '';
+  if (!VB) { vbLoad(function () { var el = document.querySelectorAll('[data-vb="' + wpAttr(p) + '"]'); el.forEach(function (x) { x.outerHTML = vbField(p); }); }); }
+  var v = VB && VB[p] != null ? VB[p] : null;
+  return '<div class="field" data-vb="' + wpAttr(p) + '"><div class="field-lbl">📦 Veeqo full box (19.99 lb)</div><div class="field-val">'
+    + (v != null ? '<b>' + v + '</b> pcs' : '<span style="color:var(--text3,#888)">not set</span>')
+    + (wpCan() ? ' <button onclick="vbEdit(this.dataset.p)" data-p="' + wpAttr(p) + '" title="Set the pieces in a Veeqo full box" style="border:1px solid var(--border);background:var(--bg2);border-radius:6px;padding:1px 6px;cursor:pointer;font-size:11px">✏️</button>' : '')
+    + '</div></div>';
+}
+function vbSave(part, val, cb) {
+  wFetch(WORKER_URL + '/inventory/veeqo-box/save', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ part: part, pcs: val }) })
+    .then(function (r) { return r.json(); }).then(function (d) {
+      if (!d || !d.ok) { alert('Not saved: ' + ((d && d.error) || 'error')); if (cb) cb(false); return; }
+      VB = VB || {}; if (d.pcs == null) delete VB[d.part]; else VB[d.part] = d.pcs; if (cb) cb(true, d);
+    }).catch(function (e) { alert('Not saved: ' + (e.message || 'network error')); if (cb) cb(false); });
+}
+function vbEdit(part) {
+  var cur = VB && VB[part] != null ? String(VB[part]) : '';
+  var v = prompt('📦 ' + part + ' — pieces in a Veeqo full box (19.99 lb)?\n(empty = clear)', cur);
+  if (v === null) return;
+  vbSave(part, v.trim(), function (ok) { if (!ok) return; document.querySelectorAll('[data-vb="' + wpAttr(part) + '"]').forEach(function (x) { x.outerHTML = vbField(part); }); });
+}
+// Every part # in one list: type a number, it saves when you leave the box (or press Enter).
+function vbAll() {
+  vbLoad(function () {
+    var m = document.getElementById('vb-modal');
+    if (!m) {
+      m = document.createElement('div'); m.id = 'vb-modal';
+      m.style.cssText = 'display:none;position:fixed;inset:0;background:rgba(0,0,0,.45);z-index:9998;align-items:center;justify-content:center;padding:12px';
+      m.innerHTML = '<div style="background:var(--bg2,#fff);color:var(--text,#111);border-radius:12px;padding:14px;width:100%;max-width:640px;max-height:90vh;display:flex;flex-direction:column;box-shadow:0 12px 40px rgba(0,0,0,.25)">'
+        + '<div style="display:flex;justify-content:space-between;align-items:center;gap:8px;margin-bottom:8px"><b style="font-size:15px">📦 Veeqo full box (19.99 lb) — pieces</b><button class="btn-x" onclick="document.getElementById(\'vb-modal\').style.display=\'none\'">&times;</button></div>'
+        + '<div style="display:flex;gap:8px;margin-bottom:8px"><input id="vb-q" placeholder="Filter: part # or name" oninput="vbAllRender()" style="flex:1;padding:8px;border:1.5px solid var(--border,#ddd);border-radius:7px;font-size:14px">'
+        + '<select id="vb-show" onchange="vbAllRender()" style="padding:8px;border:1.5px solid var(--border,#ddd);border-radius:7px"><option value="all">All</option><option value="empty">Not set yet</option><option value="set">Set</option></select></div>'
+        + '<div id="vb-count" style="font-size:12px;color:var(--text3,#666);margin-bottom:6px"></div>'
+        + '<div id="vb-list" style="overflow:auto;flex:1"></div></div>';
+      m.addEventListener('click', function (e) { if (e.target === m) m.style.display = 'none'; });
+      document.body.appendChild(m);
+    }
+    m.style.display = 'flex'; vbAllRender();
+  });
+}
+function vbAllRender() {
+  var q = (document.getElementById('vb-q').value || '').trim().toLowerCase(), show = document.getElementById('vb-show').value;
+  var seen = {}, rows = [];
+  (DB.products || []).forEach(function (r) { var p = vbPart(r.sku); if (!p || seen[p]) return; seen[p] = 1; rows.push({ part: p, name: r.name || '' }); });
+  Object.keys(VB || {}).forEach(function (p) { if (!seen[p]) { seen[p] = 1; rows.push({ part: p, name: '' }); } });
+  rows = rows.filter(function (r) { var has = VB && VB[r.part] != null; return (!q || (r.part + ' ' + r.name).toLowerCase().indexOf(q) >= 0) && (show === 'all' || (show === 'set') === has); });
+  rows.sort(function (a, b) { return a.part.localeCompare(b.part, undefined, { numeric: true }); });
+  var setN = Object.keys(VB || {}).length;
+  document.getElementById('vb-count').textContent = rows.length + ' shown · ' + setN + ' set so far' + (rows.length > 400 ? ' · showing the first 400 — type to filter' : '');
+  document.getElementById('vb-list').innerHTML = '<table style="width:100%;border-collapse:collapse;font-size:13px"><tr style="text-align:left;color:var(--text3,#666);font-size:11px;text-transform:uppercase"><th style="padding:4px">Part #</th><th style="padding:4px">Name</th><th style="padding:4px;text-align:right">Pcs / full box</th></tr>'
+    + rows.slice(0, 400).map(function (r) {
+      var v = VB && VB[r.part] != null ? VB[r.part] : '';
+      return '<tr style="border-top:1px solid var(--border,#eee)"><td style="padding:4px;font-family:var(--mono);font-weight:700">' + wpAttr(r.part) + '</td><td style="padding:4px;color:var(--text2,#444)">' + wpAttr(r.name) + '</td>'
+        + '<td style="padding:4px;text-align:right"><input type="number" min="0" step="any" value="' + v + '" data-p="' + wpAttr(r.part) + '" data-was="' + v + '" onchange="vbAllSave(this)" onkeydown="if(event.key===\'Enter\')this.blur()" style="width:90px;padding:6px;border:1.5px solid var(--border,#ddd);border-radius:6px;text-align:right;font-family:var(--mono)"></td></tr>';
+    }).join('') + '</table>';
+}
+function vbAllSave(inp) {
+  var p = inp.dataset.p, v = inp.value.trim(); if (v === inp.dataset.was) return;
+  inp.style.borderColor = '#d97706';
+  vbSave(p, v, function (ok) { inp.style.borderColor = ok ? '#0e7f3e' : '#c52a1a'; if (ok) inp.dataset.was = v; document.querySelectorAll('[data-vb="' + p + '"]').forEach(function (x) { x.outerHTML = vbField(p); }); });
 }
 
 // ─── ADD / EDIT PRODUCT (Item Search) ────────────────
