@@ -7074,7 +7074,7 @@ window.invCredLogin = async function() {
     var thS = 'padding:5px 7px;text-align:left;font-size:10px;font-weight:700;text-transform:uppercase;color:var(--text3);white-space:nowrap;border-bottom:2px solid var(--border)';
     var tdS = 'padding:5px 7px;border-bottom:1px solid var(--border);white-space:nowrap;font-size:12px';
     var table = function(head, rows) { return '<div style="overflow-x:auto;border:1.5px solid var(--border);border-radius:10px;margin-bottom:12px"><table style="width:100%;border-collapse:collapse"><thead><tr>' + head.map(function(h) { return '<th style="' + thS + (h.r ? ';text-align:right' : '') + '">' + h.t + '</th>'; }).join('') + '</tr></thead><tbody>' + rows + '</tbody></table></div>'; };
-    var kindLab = { container: '🚢 Container here', stockout: '📤 Stock Out', transfer: '🔀 Transfer', records: '📋 Already there on record (pallet count only)' };
+    var kindLab = { container: '🚢 Container here', stockout: '📤 Stock Out', transfer: '🔀 Transfer', records: '📋 Already there on record (pallet count only)', found: '➕ Never received — added (Stock In)' };
     wFetch(W + '/inventory/containers/pallet-detail?title=' + encodeURIComponent(p.title || '') + '&vendor=' + encodeURIComponent(p.vendor || '') + '&pallet=' + encodeURIComponent(p.pallet || ''))
       .then(function(r) { return r.json(); }).then(function(d) {
         if (!d || !d.ok) { body.innerHTML = '<div style="color:var(--red)">⚠ ' + invEsc((d && d.error) || 'Could not load') + '</div>'; return; }
@@ -9681,6 +9681,8 @@ window.invCredLogin = async function() {
     if (l.over > 0) return '⚠ ' + xfrN(l.over) + ' more box(es) moved than the pallet had';
     if (!(l.left > 0)) return '';
     var f = xfrGoFrom(l), have = f ? parseFloat(f.cases) || 0 : 0;
+    if (!f && l.recvLoc && l.recvMath && l.recvMath.notReceived > 0) return '⚠ never in SKU Mgr: the pallets list ' + xfrN(l.recvMath.listed) + ' box(es) of it, but 📦 Received stocked only ' + xfrN(l.recvMath.received)
+      + ' (all moved already) — scan the shelf you put them on to ADD up to ' + xfrN(Math.min(l.recvMath.notReceived, l.left)) + ' (Stock In, noted)';
     if (!f && l.recvLoc) return '⚠ the container went in at ' + xfrE(l.recvLoc) + ', but SKU Mgr has none of it left there' + xfrGoneWhy(l) + ' — tell the office before moving these';
     if (!f) return '⚠ not in stock anywhere — stock the container in first (Reorder → 📦 Received)';
     if (f.viaRecords && have + 1e-9 >= l.left) return 'ℹ SKU Mgr already moved these off ' + xfrE(l.recvLoc) + ' to ' + xfrE(f.location) + xfrGoneWhy(l) + ' — put them there (it only counts them off the pallet), or anywhere else (moved from ' + xfrE(f.location) + ' on record)';
@@ -9894,6 +9896,18 @@ window.invCredLogin = async function() {
       xfrGoRefresh();
     }).catch(function(e) { invFlash('✗ Not counted — ' + ((e && e.message) || 'error'), 'error'); });
   }
+  // Boxes the pallets list but 📦 Received never stocked in: Stock In at the shelf + counted off the pallet (one step).
+  function xfrGoFoundIn(l, n, toLoc) {
+    invFlash('Adding ' + xfrN(n) + ' × ' + l.part + ' at ' + toLoc + '…', 'success');
+    invPost(W + '/inventory/containers/found-in', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ palletLineId: l.id, cases: n, toLocation: toLoc,
+      initials: (INV_CRED_USER && INV_CRED_USER.displayName) || '' }) }).then(function(r) { return r.json(); }).then(function(x) {
+      if (x && x.queued) { invFlash(INV_OFFLINE_MSG, 'warn'); return; }
+      if (!x || !x.ok) { invFlash('✗ Not added: ' + ((x && x.error) || 'error'), 'error'); return; }
+      invFlash('✓ ' + xfrN(n) + ' × ' + l.part + ' added at ' + toLoc + ' and counted off the pallet' + (x.autoApproved ? '' : ' — waiting approval') + (x.warn ? ' · ' + x.warn : ''), x.warn ? 'warn' : 'success');
+      xfrGo.moved.push(n + ' × ' + l.part + ' → ' + toLoc); if (xfrGo.sel && xfrGo.sel.id === l.id) xfrGo.sel = null;
+      invFetchPendingCount(); xfrGoRefresh();
+    }).catch(function(e) { invFlash('✗ Not added — ' + ((e && e.message) || 'error'), 'error'); });
+  }
   window.xfrGoMove = function(toLoc) {
     var sel = xfrGo.sel; if (!sel) return;
     var l = xfrGo.lines.filter(function(x) { return x.id === sel.id; })[0]; if (!l) return;
@@ -9902,6 +9916,12 @@ window.invCredLogin = async function() {
     if (!(n > 0)) { invFlash('How many boxes?', 'error'); return; }
     if (n > l.left + 1e-9) { invFlash('Pallet ' + l.pallet + ' only has ' + xfrN(l.left) + ' box(es) of ' + l.part, 'error'); return; }
     var from = xfrGoFrom(l);
+    if (!from && l.recvLoc && l.recvMath && l.recvMath.notReceived > 0) {
+      var room = Math.min(l.recvMath.notReceived, l.left);
+      if (n > room + 1e-9) { invFlash('Only ' + xfrN(room) + ' of these were never in SKU Mgr (pallets list ' + xfrN(l.recvMath.listed) + ', received ' + xfrN(l.recvMath.received) + '). Set Moving to ' + xfrN(room) + ' and tell the office about the rest.', 'error'); return; }
+      if (!confirm('These ' + xfrN(n) + ' box(es) of ' + l.part + ' were never added to SKU Mgr: the pallets list ' + xfrN(l.recvMath.listed) + ', 📦 Received stocked ' + xfrN(l.recvMath.received) + '.\n\nAdd ' + xfrN(n) + ' at ' + toLoc + ' now (Stock In, noted in History) and count them off the pallet?')) return;
+      return xfrGoFoundIn(l, n, toLoc);
+    }
     if (!from && l.recvLoc) {
       // Admin / Owner only: SKU Mgr already counts these boxes at the scanned spot → count them off the pallet only.
       var atTo = (l.stock || []).filter(function(s) { return String(s.location).toUpperCase() === toLoc; }).reduce(function(a, s) { return a + (parseFloat(s.cases) || 0); }, 0);
