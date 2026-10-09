@@ -4924,5 +4924,30 @@ console.log('\n🏷️ Label Printer: every label stops at the gap between label
   check('…📏 Calibrate button sends ~JC to the printer', /onclick="lpCalibrate\(\)"/.test(lp) && /data: '~JC'/.test(lp), null);
 }
 
+// Owner (2026-10-09): Pack & Ship Picking / Packing — the scanner reads both the QR code and the barcode on one label, so
+// the same order came in twice and the "Duplicate" popup went off. The same tracking again within 5 s is ignored quietly;
+// after 5 s the normal duplicate check (popup) still runs.
+console.log('\n📦 Pack & Ship: same label read twice within 5 s (QR + barcode) is ignored, no Duplicate popup');
+{
+  const { readFileSync } = await import('node:fs');
+  const ph = readFileSync(fileURLToPath(new URL('../packship.html', import.meta.url)), 'utf8');
+  const src = (ph.match(/var PS_SAME_SCAN_IGNORE_MS = 5000;[\s\S]*?function _psQuickRepeat\(kind, tracking\) \{[\s\S]*?\n\}/) || [''])[0];
+  let now = 1000000; const realNow = Date.now; Date.now = () => now;
+  let r = [];
+  try {
+    const q = new Function(src + '; return _psQuickRepeat;')();
+    r.push(q('pick', '1ZABC'));           // first read → handled
+    now += 300;  r.push(q('pick', '1ZABC'));  // QR read 0.3 s later → ignored
+    r.push(q('pack', '1ZABC'));           // Packing tab keeps its own record → handled
+    now += 2000; r.push(q('pick', '9400111'));  // a different label → handled
+    now += 6000; r.push(q('pick', '9400111'));  // same label 6 s later → normal duplicate check
+  } finally { Date.now = realNow; }
+  check('first read handled, QR re-read 0.3 s later ignored, other tab / other label handled, same label after 5 s goes to the duplicate check',
+    JSON.stringify(r) === JSON.stringify([false, true, false, false, false]), r);
+  const pk1 = ph.indexOf("if (_psQuickRepeat('pack', tracking)) { inp.focus(); return; }"), pkDup = ph.indexOf('psDupeShowAlert(tracking, dupe.timestamp');
+  const pi1 = ph.indexOf("if (_psQuickRepeat('pick', tracking)) { inp.focus(); return; }"), piDup = ph.indexOf('psPickDupeShowAlert(tracking, dupe.timestamp');
+  check('…checked in Packing and Picking before the Duplicate / Already Picked popup', pk1 > 0 && pk1 < pkDup && pi1 > 0 && pi1 < piDup, { pk1, pkDup, pi1, piDup });
+}
+
 console.log('\n' + (failed ? '❌ ' + failed + ' check(s) FAILED' : '✅ all ' + passed + ' checks passed') + '\n');
 process.exit(failed ? 1 : 0);
