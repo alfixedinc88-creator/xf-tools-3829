@@ -5109,16 +5109,29 @@ async function containerPalletLines(env, o) {
   for (const k of Object.keys(recvAt)) {
     const [t, part] = [k.slice(0, k.lastIndexOf('|')), k.slice(k.lastIndexOf('|') + 1)], r = recvAt[k];
     if (!r.id) continue;
-    const gone = await d1All(env, `SELECT l.id, l.type, l.cases, l.paired_location AS toLoc, l.initials AS who, l.timestamp AS at, l.notes FROM inventory_log l
-      WHERE UPPER(TRIM(l.part_num)) = ? AND UPPER(TRIM(l.location)) = ? AND l.id > ? AND l.type IN ('OUT', 'TRANSFER_OUT', 'EDIT', 'AUDIT')
+    // A SKU Mgr edit is logged at the row's NEW spot ("Location: GARAGE → BSMT=…" in its notes) — matched by its notes.
+    const gone = await d1All(env, `SELECT l.id, l.type, l.cases, l.location AS loc, l.paired_location AS toLoc, l.initials AS who, l.timestamp AS at, l.notes FROM inventory_log l
+      WHERE UPPER(TRIM(l.part_num)) = ? AND l.id > ? AND l.type IN ('OUT', 'TRANSFER_OUT', 'EDIT', 'AUDIT')
+        AND (UPPER(TRIM(l.location)) = ? OR (l.type = 'EDIT' AND UPPER(COALESCE(l.notes, '')) LIKE ?))
         AND COALESCE(l.status, '') != 'Rejected' AND l.cancelled_at IS NULL
-        AND NOT EXISTS (SELECT 1 FROM pallet_move m WHERE m.out_log_id = l.id) ORDER BY l.id LIMIT 30`, [part, r.l, r.id]).catch(() => []);
-    if (gone.length) recvGone[k] = gone.map(g => ({ type: g.type, cases: parseFloat(g.cases) || 0, to: g.toLoc || '', who: g.who || '', at: g.at || '', notes: String(g.notes || '').slice(0, 120) }));
+        AND NOT EXISTS (SELECT 1 FROM pallet_move m WHERE m.out_log_id = l.id) ORDER BY l.id LIMIT 30`, [part, r.id, r.l, '%LOCATION: ' + r.l + ' →%']).catch(() => []);
+    if (gone.length) recvGone[k] = gone.map(g => { const ed = g.type === 'EDIT' && String(g.loc || '').toUpperCase() !== r.l;
+      return { type: ed ? 'MOVED_ROW' : g.type, cases: parseFloat(g.cases) || 0, to: ed ? String(g.loc || '').toUpperCase() : (g.toLoc || ''), who: g.who || '', at: g.at || '', notes: String(g.notes || '').slice(0, 160) }; });
+    // The numbers: received there − counted off pallets (Container here / Stock Out / Transfer of pallet boxes) − taken off on record
+    // − still there = not explained by any record (e.g. a SKU Mgr row changed without a History entry).
+    const rc = await d1First(env, 'SELECT cases FROM inventory_log WHERE id = ?', [r.id]).catch(() => null);
+    const pm = await d1First(env, `SELECT SUM(m.cases) AS c FROM pallet_move m JOIN reorder_pallet p ON p.id = m.pallet_id LEFT JOIN inventory_log l ON l.id = m.out_log_id
+      WHERE p.title = ? AND UPPER(p.part) = ? AND COALESCE(l.status, '') != 'Rejected' AND l.cancelled_at IS NULL AND COALESCE(m.kind, '') != 'records'`, [t, part]).catch(() => null);
+    const there = await d1First(env, 'SELECT SUM(cases) AS c FROM master_list WHERE UPPER(TRIM(part_num)) = ? AND UPPER(TRIM(location)) = ?', [part, r.l]).catch(() => null);
+    const received = parseFloat(rc && rc.cases) || 0, offPal = parseFloat(pm && pm.c) || 0, logged = (recvGone[k] || []).filter(x => x.type !== 'MOVED_ROW').reduce((a, x) => a + x.cases, 0);
+    const now = parseFloat(there && there.c) || 0, rowMoved = (recvGone[k] || []).some(x => x.type === 'MOVED_ROW');
+    recvAt[k].math = { received, offPallets: Math.round(offPal * 1000) / 1000, onRecord: Math.round(logged * 1000) / 1000, now,
+      unexplained: rowMoved ? 0 : Math.max(0, Math.round((received - offPal - logged - now) * 1000) / 1000) };
   }
   const lines = rows.map(r => { const mv = moved[r.id] || 0, pn = real(r.part);
     return { id: r.id, title: r.title, vendor: r.vendor, pallet: r.pallet, po: r.po || '', part: pn, filePart: r.part !== pn ? r.part : '', description: r.description || '',
       cases: r.cases, pcs: r.pcs, units: r.units, pcsPerCtn: r.pcs_per_ctn, moved: mv, left: Math.max(0, (r.cases || 0) - mv), over: Math.max(0, mv - (r.cases || 0)), stock: stock[pn] || [], moves: moves[r.id] || [],
-      recvLoc: (recvAt[r.title + '|' + pn] || {}).l || '', recvGone: recvGone[r.title + '|' + pn] || [] }; });
+      recvLoc: (recvAt[r.title + '|' + pn] || {}).l || '', recvGone: recvGone[r.title + '|' + pn] || [], recvMath: (recvAt[r.title + '|' + pn] || {}).math || null }; });
   return { lines, truncated: rows.length >= 2000 };
 }
 // Outside box UPCs (digits, no leading 0s) of each part # — so a box scanned
@@ -13706,6 +13719,14 @@ async function palletMarkMoved(request, env, session) {
   const part = String((al && al.part) || pl.part).toUpperCase();
   const at = await d1First(env, 'SELECT SUM(cases) AS c FROM master_list WHERE UPPER(TRIM(part_num)) = ? AND UPPER(TRIM(location)) = ?', [part, loc]);
   if (!((parseFloat(at && at.c) || 0) + 1e-9 >= n)) return J({ ok: false, error: `SKU Mgr does not have ${n} of ${part} at ${loc} — use a normal move` }, 400);
+  // Anyone: the spot a Transfer / SKU Mgr row move sent this part # to. Any other spot: Admin / Owner only (they decide
+  // those boxes are part of what SKU Mgr already counts there).
+  const roles = (session && session.roles) || [], admin = roles.includes('admin') || roles.includes('owner');
+  if (!admin) {
+    const sent = await d1First(env, `SELECT 1 AS x FROM inventory_log WHERE UPPER(TRIM(part_num)) = ? AND COALESCE(status, '') != 'Rejected' AND cancelled_at IS NULL
+      AND ((type = 'TRANSFER_OUT' AND UPPER(TRIM(COALESCE(paired_location, ''))) = ?) OR (type = 'EDIT' AND UPPER(TRIM(location)) = ? AND UPPER(COALESCE(notes, '')) LIKE '%LOCATION: %')) LIMIT 1`, [part, loc, loc]).catch(() => null);
+    if (!sent) return J({ ok: false, error: 'Only an Admin can count boxes off the pallet at ' + loc + ' — ask an Admin' }, 403);
+  }
   const who = String((session && (session.displayName || session.username)) || b.initials || '').slice(0, 40);
   await env.DB.prepare('INSERT INTO pallet_move (pallet_id, cases, to_location, out_log_id, transfer_id, by_user, at, kind) VALUES (?,?,?,?,?,?,?,?)')
     .bind(id, Math.round(n * 1000) / 1000, loc, null, null, who, new Date().toISOString(), 'records').run();
