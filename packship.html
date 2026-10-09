@@ -5407,23 +5407,25 @@ function _psBuildUndeliveredWorkbook() {
       rows.push(['Copy-paste block (one per line):']);
       rows.push([batch.map(function(r){ return r.tracking; }).join('\n')]);
       rows.push([]);
-      rows.push(['Tracking Number', 'Order Num(s)', 'Channel', 'Ship Date', 'Tracking Link', 'Updated Status (fill in after checking carrier site)', 'Last Status (Veeqo)', 'Last Event', 'Last Location']);
+      rows.push(['Tracking Number', 'Order Num(s)', 'Channel', 'Ship Date', 'Tracking Link', 'Updated Status (fill in after checking carrier site)', 'Last Status (Veeqo)', 'Last Event', 'Last Location',
+        'Customer Name', 'Address 1', 'Address 2', 'City', 'State', 'ZIP']);
       batch.forEach(function(r) {
-        rows.push([r.tracking, r.allOrderNums.join(', '), r.channel||'', r.shippedAt||'', r.trackingUrl||'', '', r.lastStatus||'', r.lastEventDate||'', r.lastLocation||'']);
+        rows.push([r.tracking, r.allOrderNums.join(', '), r.channel||'', r.shippedAt||'', r.trackingUrl||'', '', r.lastStatus||'', r.lastEventDate||'', r.lastLocation||'',
+          r.customerName||'', r.address1||'', r.address2||'', r.city||'', r.state||'', r.zip||'']);
       });
       rows.push([]); rows.push([]);
     });
 
     var ws = XLSX.utils.aoa_to_sheet(rows);
-    ws['!cols'] = [{ wch: 24 }, { wch: 20 }, { wch: 16 }, { wch: 12 }, { wch: 45 }, { wch: 40 }, { wch: 24 }, { wch: 12 }, { wch: 24 }];
+    ws['!cols'] = [{ wch: 24 }, { wch: 20 }, { wch: 16 }, { wch: 12 }, { wch: 45 }, { wch: 40 }, { wch: 24 }, { wch: 12 }, { wch: 24 }, { wch: 24 }, { wch: 30 }, { wch: 16 }, { wch: 18 }, { wch: 7 }, { wch: 11 }];
     XLSX.utils.book_append_sheet(wb, ws, carrier.slice(0, 31));
   });
 
   // Replaced (voided) and cancelled labels: never shipped, so never a claim — listed so nothing is silently dropped.
   if (psUndeliveredNotClaims.length) {
     var nr = [['NOT a claim — ' + psUndeliveredNotClaims.length + ' labels that never shipped (replaced by a new label, or cancelled)'], [],
-      ['Tracking Number', 'Carrier', 'Order Num', 'Channel', 'Ship Date', 'Why']];
-    psUndeliveredNotClaims.forEach(function(r) { nr.push([r.tracking, r.carrier || '', r.orderNum || '', r.channel || '', r.shippedAt || '', r.why]); });
+      ['Tracking Number', 'Carrier', 'Order Num', 'Channel', 'Ship Date', 'Why', 'Customer Name', 'Address 1', 'Address 2', 'City', 'State', 'ZIP']];
+    psUndeliveredNotClaims.forEach(function(r) { nr.push([r.tracking, r.carrier || '', r.orderNum || '', r.channel || '', r.shippedAt || '', r.why, r.customerName || '', r.address1 || '', r.address2 || '', r.city || '', r.state || '', r.zip || '']); });
     var wsn = XLSX.utils.aoa_to_sheet(nr);
     wsn['!cols'] = [{ wch: 24 }, { wch: 8 }, { wch: 22 }, { wch: 16 }, { wch: 12 }, { wch: 80 }];
     XLSX.utils.book_append_sheet(wb, wsn, 'Not a claim');
