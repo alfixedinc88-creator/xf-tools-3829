@@ -9608,6 +9608,9 @@ window.invCredLogin = async function() {
     // Box sizes are never mixed (owner): take the pallet's boxes from the row
     // of the same pieces per box when that spot has more than one size.
     var per = xfrLinePcs(l), same = function(s) { return per > 0 && Math.abs((parseFloat(s.pcs) || 0) - per) < 1e-6; };
+    // The spot 📦 Received stocked this container's part # into comes first (same box size, else any row there).
+    if (l.recvLoc) { var rv = st.filter(function(s) { return String(s.location).toUpperCase() === String(l.recvLoc).toUpperCase(); });
+      var rh = rv.filter(same)[0] || (rv.length && (!per || !rv.some(function(s) { return parseFloat(s.pcs) > 0; })) ? rv[0] : null); if (rh) return rh; }
     var gar = st.filter(function(s) { return /^GARAGE$/i.test(s.location); });
     var hit = gar.filter(same)[0]; if (hit) return hit;
     if (gar.length && (!per || !gar.some(function(s) { return parseFloat(s.pcs) > 0; }))) return gar[0]; // sizes not on file: as before
@@ -9630,7 +9633,9 @@ window.invCredLogin = async function() {
     if (!(l.left > 0)) return '';
     var f = xfrGoFrom(l), have = f ? parseFloat(f.cases) || 0 : 0;
     if (!f) return '⚠ not in stock anywhere — stock the container in first (Reorder → 📦 Received)';
-    if (have + 1e-9 < l.left) return '⚠ pallet says ' + xfrN(l.left) + ' left but ' + xfrE(f.location) + ' only has ' + xfrN(have) + ' — tell the office';
+    if (have + 1e-9 < l.left) return '⚠ pallet says ' + xfrN(l.left) + ' left but ' + xfrE(f.location) + ' only has ' + xfrN(have) + ' on record (SKU Mgr)'
+      + (l.recvLoc && String(l.recvLoc).toUpperCase() !== String(f.location).toUpperCase() ? ' — the container went in at ' + xfrE(l.recvLoc) + ', which has none of it left on record' : '')
+      + ' — you can move up to ' + xfrN(have) + '; tell the office about the rest';
     return '';
   }
   window.xfrGoRender = function() {
@@ -9839,7 +9844,9 @@ window.invCredLogin = async function() {
     // waiting for approval there — one trip (the Worker checks it again).
     if (from.masterId) {
       var have0 = Math.max(0, (parseFloat(from.cases) || 0) - (parseFloat(from.pending) || 0));
-      if (n > have0 + 1e-9) { invFlash('Only ' + xfrN(have0) + ' case(s) of ' + l.part + ' at ' + from.location + ' (some may be waiting for approval)', 'error'); return; }
+      if (n > have0 + 1e-9) { var pend0 = parseFloat(from.pending) || 0;
+        invFlash('Can\'t move ' + xfrN(n) + ': SKU Mgr shows only ' + xfrN(have0) + ' case(s) of ' + l.part + ' at ' + from.location + (pend0 > 0 ? ' (' + xfrN(pend0) + ' more already on their way out, waiting for approval)' : '')
+          + '. Move ' + xfrN(have0) + ' now and tell the office about the other ' + xfrN(n - have0) + '.', 'error'); return; }
       var now0 = new Date().toISOString(), who0 = (INV_CRED_USER && INV_CRED_USER.displayName) || 'OPS';
       // No waiting (owner): the screen moves on right away; the move is saved
       // in the background through the phone's outbox (WiFi down → it waits
@@ -9878,7 +9885,7 @@ window.invCredLogin = async function() {
       var row = (from.masterId && rows.filter(function(x) { return String(x.masterId) === String(from.masterId); })[0]) || rows[0];
       if (!row) { invFlash('Could not find ' + l.part + ' at ' + from.location, 'error'); return; }
       var have = parseFloat(row.adjustedCases != null ? row.adjustedCases : row.cases) || 0;
-      if (n > have + 1e-9) { invFlash('Only ' + xfrN(have) + ' case(s) of ' + l.part + ' at ' + row.location + ' (some may be waiting for approval)', 'error'); return; }
+      if (n > have + 1e-9) { invFlash('Can\'t move ' + xfrN(n) + ': SKU Mgr shows only ' + xfrN(have) + ' case(s) of ' + l.part + ' at ' + row.location + ' that can leave. Move ' + xfrN(have) + ' now and tell the office about the other ' + xfrN(n - have) + '.', 'error'); return; }
       var now = new Date().toISOString();
       return invPost(W + '/inventory/transfer', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({
         partNum: l.part, sku: d.sku || l.part, name: d.name || l.description || '',

@@ -4564,6 +4564,34 @@ console.log('\nUndelivered Report: replaced / cancelled labels are never a claim
   sq.exec("DELETE FROM ship_manifest_log WHERE tracking LIKE '9334000000%' OR tracking LIKE '9400 1111%' OR tracking LIKE '1ZTEST%'; DELETE FROM ship_cancel_label_log WHERE order_num = 'O-3'");
 }
 
+// Owner (2026-10-09): Container here, 23-1-1=20X — "pallet shows 9, we only have 8, changed it to 8, scanned the spot:
+// 'Only 5 case(s) of 23-1-1=20X at BSMT=47-5-12 (some may be waiting for approval)' — why? (Review is on auto)". The move
+// took the boxes from the biggest spot of that size, not from where the container was received; and the message blamed
+// approval. Now the received spot comes first, and the message says what SKU Mgr shows and what to do.
+console.log('\n🚢 Container here: boxes come off the spot the container was received into; a clear message when it has fewer');
+{
+  const ts = new Date().toISOString();
+  sq.prepare("INSERT INTO reorder_pallet (title, vendor, pallet, part, description, cases, pcs, pcs_per_ctn, updated_at) VALUES ('RCV CT','KW','1','RC-1=20X','valve',9,180,20,?)").run(ts);
+  sq.prepare("INSERT INTO master_list (base_sku, name, part_num, location, cases, units_per_case) VALUES ('RC-1','valve','RC-1=20X','BSMT=9-9-1',5,20), ('RC-1','valve','RC-1=20X','BSMT=9-9-2',9,20)").run();
+  sq.prepare("INSERT INTO inventory_log (timestamp, type, part_num, sku, location, cases, initials, notes, status) VALUES (?,?,?,?,?,?,?,?,?)")
+    .run(ts, 'IN', 'RC-1=20X', 'RC-1=20X', 'BSMT=9-9-2', 9, 'RCV', '[RECEIVED] RCV CT — 180 units · 9 box(es) × 20 pcs', 'Verified');
+  const pv = await get('/inventory/containers/pallet-view?title=' + encodeURIComponent('RCV CT') + '&vendor=KW&pallet=1');
+  const ln = (pv.lines || [])[0] || {};
+  check('pallet view says where the container was received (BSMT=9-9-2) for each line', pv.ok && ln.recvLoc === 'BSMT=9-9-2', ln);
+  const { readFileSync } = await import('node:fs');
+  const ih = readFileSync(fileURLToPath(new URL('../inventory.html', import.meta.url)), 'utf8');
+  // run the page's own xfrGoFrom on this line: the received spot wins over the bigger / other spots
+  const fnSrc = ih.slice(ih.indexOf('  function xfrGoFrom(l) {'), ih.indexOf('  // A scanned shelf label (not a box)'));
+  const from = new Function(fnSrc + '; return xfrGoFrom;')();
+  const f1 = from({ ...ln, stock: [{ location: 'BSMT=9-9-1', cases: 5, pcs: 20 }, { location: 'BSMT=9-9-2', cases: 9, pcs: 20 }, { location: 'C1=1-1-1', cases: 30, pcs: 20 }] });
+  const f2 = from({ ...ln, recvLoc: '', stock: [{ location: 'BSMT=9-9-1', cases: 5, pcs: 20 }, { location: 'C1=1-1-1', cases: 30, pcs: 20 }] });
+  check('…the move takes the boxes off the received spot (BSMT=9-9-2) even when another spot has more; no received spot on record → as before (biggest of the same size)',
+    f1 && f1.location === 'BSMT=9-9-2' && f2 && f2.location === 'C1=1-1-1', { f1, f2 });
+  check('…too many for the spot → "Can\'t move N: SKU Mgr shows only X … Move X now and tell the office about the other Y" (approval only named when something is waiting)',
+    /Can\\'t move ' \+ xfrN\(n\) \+ ': SKU Mgr shows only '/.test(ih) && /pend0 > 0 \?/.test(ih) && !/at ' \+ from\.location \+ ' \(some may be waiting for approval\)'/.test(ih), null);
+  sq.exec("DELETE FROM reorder_pallet WHERE title='RCV CT'; DELETE FROM master_list WHERE part_num='RC-1=20X'; DELETE FROM inventory_log WHERE part_num='RC-1=20X'");
+}
+
 // Owner (2026-10-09): "under SKU Mgr I still see (no vendor) $106,572.81 — I want to click on it, see what's there and edit
 // them; and the 'not in the total — no Ea/Case: 53 spots 257 cases' — click on it and edit them too".
 console.log('\n💰 SKU Mgr value: tap a vendor $ / a "not in the total" line → its rows, editable (Owner only)');
