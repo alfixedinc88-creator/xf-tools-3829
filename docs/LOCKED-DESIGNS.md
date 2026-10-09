@@ -36,3 +36,9 @@ elsewhere has to touch it, say so plainly in the PR and to the owner first.
 | Design | Locked on | Commit | What it covers |
 |---|---|---|---|
 | 🏬 Stock Out Shelving | 2026-10-07 | `347cb71` | Inventory → Stock Out Shelving: search by parent part #, pick rules (Rule #1 FBA bags, oldest first, one spot, pallets last), Pull List, Grabbed / None Found / 🔁 Replace, saved batches, and the Worker routes behind them. |
+
+## Changes the owner asked for on a locked design
+
+| Design | Date | Owner's words | What changed |
+|---|---|---|---|
+| 🏬 Stock Out Shelving | 2026-10-09 | "if there's different quantities in the box, make sure we go FIFO … when there's different quantities in the box in the same spot, let the person double check the quantities of the box" | Same part #, different box size (Each/Case): the older SKU Mgr row first (`invFifoBoxSize`), before "one spot" (shelving) and in Big Company's order. The 2-box-size check on Grabbed also covers "Found on Shelf + Pull" rows. Everything else unchanged. |
