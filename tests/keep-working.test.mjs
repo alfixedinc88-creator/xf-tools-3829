@@ -4854,5 +4854,28 @@ console.log('\n🔍 Auto Label: why weren\'t these orders one label?');
   sq.exec("DELETE FROM autolabel_log WHERE order_number LIKE 'WM-%'");
 }
 
+// Owner (2026-10-09): "Warehouse Lookup → Item Search: a spot for the recommended Veeqo 19.99 lb full box, in pieces —
+// e.g. 4-2-3 → 45 pieces. I'll fill it in later; give me a column to edit them all."
+console.log('\n📦 Item Search: Veeqo full box (19.99 lb) pieces per part #, edit one or all, every change kept');
+{
+  const s1 = await post('/inventory/veeqo-box/save', { part: '4-2-3', pcs: 45 });
+  const s2 = await post('/inventory/veeqo-box/save', { part: '4-2-3=10X', pcs: '48' });   // a pack size → saved on the parent 4-2-3
+  const bad = await post('/inventory/veeqo-box/save', { part: '4-2-3', pcs: 'abc' });
+  const pkS = await (await call('/inventory/veeqo-box/save', { method: 'POST', headers: { 'X-Cred-Token': pk.token, 'Content-Type': 'application/json' }, body: JSON.stringify({ part: '9-9-9', pcs: 5 }) })).json();
+  const l1 = await get('/inventory/veeqo-box');
+  const lg = sq.prepare("SELECT before_pcs b, after_pcs a FROM veeqo_box_log WHERE part = '4-2-3' ORDER BY id").all();
+  check('save 45 for 4-2-3, then 48 (typed on 4-2-3=10X → the parent 4-2-3): list shows 48; History keeps none → 45 → 48 with who / when; "abc" refused',
+    s1.ok && s2.ok && s2.part === '4-2-3' && l1.ok && l1.boxes['4-2-3'] === 48 && lg.length === 2 && lg[0].b === null && lg[0].a === 45 && lg[1].b === 45 && lg[1].a === 48 && bad.ok === false, { s1, s2, l1: l1.boxes, lg, bad });
+  check('…Ops can set it too (Pack & Ship / warehouse people)', pkS.ok === true || /Ops or management/.test(pkS.error || ''), pkS);
+  const clr = await post('/inventory/veeqo-box/save', { part: '4-2-3', pcs: '' });
+  const l2 = await get('/inventory/veeqo-box');
+  check('…empty clears it (kept on record as 48 → empty)', clr.ok && l2.boxes['4-2-3'] === undefined && sq.prepare("SELECT COUNT(*) n FROM veeqo_box_log WHERE part='4-2-3' AND before_pcs = 48 AND after_pcs IS NULL").get().n === 1, l2.boxes);
+  const { readFileSync } = await import('node:fs');
+  const wh = readFileSync(fileURLToPath(new URL('../warehouse.html', import.meta.url)), 'utf8');
+  check('…Item Search card: "📦 Veeqo full box (19.99 lb)" field with ✏️; a "📦 Veeqo full boxes" button lists every part # to edit them all (filter, not set yet / set)',
+    /\$\{vbField\(r\.sku\)\}/.test(wh) && /📦 Veeqo full box \(19\.99 lb\)/.test(wh) && /onclick="vbAll\(\)"/.test(wh) && /<option value="empty">Not set yet<\/option>/.test(wh) && /\/inventory\/veeqo-box\/save/.test(wh), null);
+  sq.exec("DELETE FROM veeqo_box; DELETE FROM veeqo_box_log");
+}
+
 console.log('\n' + (failed ? '❌ ' + failed + ' check(s) FAILED' : '✅ all ' + passed + ' checks passed') + '\n');
 process.exit(failed ? 1 : 0);
