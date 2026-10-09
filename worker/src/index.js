@@ -5032,9 +5032,19 @@ async function containerPalletLines(env, o) {
         .forEach(m => { (moves[m.pallet_id] = moves[m.pallet_id] || []).push({ cases: m.cases, to: m.to_location || '', by: m.by_user || '', at: m.at || '', pending: m.status === 'Pending', kind: m.kind || '' }); });
     }
   }
+  // Owner (2026-10-09): "pallet says 9 left, we moved 8 — 'Only 5 case(s) at BSMT=47-5-12'". Where 📦 Received stocked
+  // each part # in (its "[RECEIVED] <title> — …" Stock In), so a move takes the boxes off THAT spot first, not another shelf.
+  const recvAt = {};
+  if (o.detail && rows.length) {
+    const ts = [...new Set(rows.map(r => r.title))];
+    (await d1All(env, `SELECT UPPER(TRIM(part_num)) AS p, UPPER(TRIM(location)) AS l, notes FROM inventory_log
+      WHERE type = 'IN' AND notes LIKE '[RECEIVED] %' AND COALESCE(status, '') != 'Rejected' ORDER BY id`).catch(() => [])).forEach(x => {
+      const t = ts.find(t => String(x.notes || '').startsWith('[RECEIVED] ' + t + ' \u2014 ')); if (t && !recvAt[t + '|' + x.p]) recvAt[t + '|' + x.p] = x.l; });
+  }
   const lines = rows.map(r => { const mv = moved[r.id] || 0, pn = real(r.part);
     return { id: r.id, title: r.title, vendor: r.vendor, pallet: r.pallet, po: r.po || '', part: pn, filePart: r.part !== pn ? r.part : '', description: r.description || '',
-      cases: r.cases, pcs: r.pcs, units: r.units, pcsPerCtn: r.pcs_per_ctn, moved: mv, left: Math.max(0, (r.cases || 0) - mv), over: Math.max(0, mv - (r.cases || 0)), stock: stock[pn] || [], moves: moves[r.id] || [] }; });
+      cases: r.cases, pcs: r.pcs, units: r.units, pcsPerCtn: r.pcs_per_ctn, moved: mv, left: Math.max(0, (r.cases || 0) - mv), over: Math.max(0, mv - (r.cases || 0)), stock: stock[pn] || [], moves: moves[r.id] || [],
+      recvLoc: recvAt[r.title + '|' + pn] || '' }; });
   return { lines, truncated: rows.length >= 2000 };
 }
 // Outside box UPCs (digits, no leading 0s) of each part # — so a box scanned
