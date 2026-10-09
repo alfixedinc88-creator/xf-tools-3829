@@ -4445,6 +4445,18 @@ console.log('\n🗓 Auto Label: auto print schedule in plain words by day, ✏�
     && /#ps-al-rules \[data-k="' \+ k \+ '"\]/.test(ph) && /await psAlSaveConfig\(\);/.test(ph), null);
   // Owner (2026-10-08): "minimize it — when I want I can open it up and check myself".
   check('…the schedule card starts folded (tap the title to open it)', /<details class="ps-card" id="ps-al-sched-card"[^>]*>\s*<summary[^>]*>🗓 Auto print schedule/.test(ph) && !/id="ps-al-sched-card"[^>]* open/.test(ph), null);
+  // Owner (2026-10-09): "under Auto Label move the rules to the bottom and minimize, Auto Print Schedule and Test to the bottom too".
+  {
+    const al = ph.slice(ph.indexOf('id="ps-autolabel-content"'), ph.indexOf('<!-- ══ VEEQO SYNC panel ══ -->'));
+    const at = (re) => al.search(re);
+    const hist = at(/🕘 Labels bought &amp; cancellations found/), sched = at(/id="ps-al-sched-card"/), rules = at(/id="ps-al-rules-card"/), test = at(/🧪 Test<\/div>/);
+    check('…Auto Label: 🗓 schedule, 📐 Rules and 🧪 Test are the last cards (after Last run, Print watch, labels … History), in that order',
+      hist > 0 && at(/📋 Last run/) < sched && at(/id="ps-al-watch-card"/) < sched && hist < sched && sched < rules && rules < test && al.indexOf('class="ps-card"', test + 1) === -1, { hist, sched, rules, test });
+    check('…📐 Rules starts folded (tap the title) and keeps every rule box + 💾 Save rules',
+      /<details class="ps-card" id="ps-al-rules-card"[^>]*>\s*<summary[^>]*>📐 Rules/.test(al) && !/id="ps-al-rules-card"[^>]* open/.test(al)
+      && /id="ps-al-rules-card"[\s\S]*id="ps-al-rules"[\s\S]*data-k="pauseTimes"[\s\S]*data-k="mergeMaxLb"[\s\S]*onclick="psAlSaveConfig\(\)">💾 Save rules[\s\S]*id="ps-al-save-result"[\s\S]*<\/details>/.test(al)
+      && (al.match(/data-k="/g) || []).length === 23, (al.match(/data-k="/g) || []).length);
+  }
 }
 
 // Owner (2026-10-08): "Print watch — a label the printer station scanner didn't pick up but that WAS scanned at Picking or
@@ -4578,6 +4590,58 @@ console.log('\n🚢 Container here: boxes come off the spot the container was re
   check('…too many for the spot → "Can\'t move N: SKU Mgr shows only X … Move X now and tell the office about the other Y" (approval only named when something is waiting)',
     /Can\\'t move ' \+ xfrN\(n\) \+ ': SKU Mgr shows only '/.test(ih) && /pend0 > 0 \?/.test(ih) && !/at ' \+ from\.location \+ ' \(some may be waiting for approval\)'/.test(ih), null);
   sq.exec("DELETE FROM reorder_pallet WHERE title='RCV CT'; DELETE FROM master_list WHERE part_num='RC-1=20X'; DELETE FROM inventory_log WHERE part_num='RC-1=20X'");
+}
+
+// Owner (2026-10-09): "under SKU Mgr I still see (no vendor) $106,572.81 — I want to click on it, see what's there and edit
+// them; and the 'not in the total — no Ea/Case: 53 spots 257 cases' — click on it and edit them too".
+console.log('\n💰 SKU Mgr value: tap a vendor $ / a "not in the total" line → its rows, editable (Owner only)');
+{
+  sq.prepare(`INSERT INTO master_list (base_sku, name, part_num, location, cases, units_per_case, price, vendor, sheet_row) VALUES
+    ('92-1-1','elbow','92-1-1=10','C1=9-2-1',4,100,0.05,'',0), ('92-2-2','tee','92-2-2=5','GARAGE',3,0,0.10,'',0), ('92-3-3','cap','92-3-3=5','C3=9-2-1',2,50,0,'',0)`).run();
+  const id = p => sq.prepare('SELECT id FROM master_list WHERE part_num=?').get(p).id;
+  const ow = sq.prepare("INSERT INTO cred_users (username, password_hash, display_name, active, created_at, level) VALUES (?,?,?,1,?,'owner')").run('ownvl', hex(salt) + ':' + hex(new Uint8Array(bits)), 'BOSS', new Date().toISOString());
+  const ol = await (await call('/auth/login', { method: 'POST', body: '{"username":"ownvl","password":"password1"}' })).json();
+  const OH = { 'X-Cred-Token': ol.token, 'Content-Type': 'application/json' };
+  const oget = async p => (await (await call(p, { headers: OH })).json());
+  const opost = async (p, b) => (await (await call(p, { method: 'POST', headers: OH, body: JSON.stringify(b) })).json());
+  const r2 = x => Math.round(x * 100) / 100, has = (l, p) => (l.spots || []).some(s => s.part === p);
+  const sumV = l => r2((l.spots || []).reduce((t, s) => t + s.value, 0)), vOf = (v, n) => ((v.byVendor || []).find(x => x.vendor === n) || { value: 0 }).value;
+  const v0 = await oget('/inventory/cost/value');
+  const nv = await oget('/inventory/cost/value-rows?which=vendor&vendor=' + encodeURIComponent('(no vendor)'));
+  const ne = await oget('/inventory/cost/value-rows?which=noEa'), np = await oget('/inventory/cost/value-rows?which=noPrice');
+  check('tap "(no vendor) $…" → every spot behind it (92-1-1=10 @ C1=9-2-1, 4 × 100 × $0.05 = $20) and the list adds up to that $ exactly',
+    nv.ok && has(nv, '92-1-1=10') && nv.spots.find(s => s.part === '92-1-1=10').value === 20 && sumV(nv) === r2(vOf(v0, '(no vendor)')) && nv.value === sumV(nv), [sumV(nv), vOf(v0, '(no vendor)')]);
+  check('tap "no Ea/Case: N spots (M cases)" → the same N spots and M cases (92-2-2=5 in it); "no price" → its spots (92-3-3=5 in it)',
+    ne.ok && has(ne, '92-2-2=5') && ne.spots.length === v0.noEa.spots && ne.cases === v0.noEa.cases && np.ok && has(np, '92-3-3=5') && np.spots.length === v0.noPrice.spots,
+    { ne: [ne.spots.length, ne.cases], v0: v0.noEa, np: np.spots.length, v0p: v0.noPrice.spots });
+  const ln = await get('/inventory/cost/value-rows?which=noEa'), lf = await post('/inventory/cost/value-fix', { id: id('92-2-2=5'), unitsPerCase: 5 });
+  check('…an Admin / manager (not the Owner) can\'t open the lists or save from them', ln.ok === false && lf.ok === false && sq.prepare('SELECT units_per_case u FROM master_list WHERE id=?').get(id('92-2-2=5')).u === 0, [ln, lf]);
+  const totB = sq.prepare("SELECT SUM(cases) c FROM master_list WHERE part_num LIKE '92-%'").get().c;
+  const f1 = await opost('/inventory/cost/value-fix', { id: id('92-2-2=5'), unitsPerCase: 5, price: 0.10, vendor: '', name: 'tee' });
+  const v1 = await oget('/inventory/cost/value'), ne1 = await oget('/inventory/cost/value-rows?which=noEa');
+  check('Ea/Case 0 → 5 on 92-2-2=5 → off the "no Ea/Case" list (one spot, 3 cases less) and the total up exactly 3 × 5 × $0.10 = $1.50',
+    f1.ok && f1.row.unitsPerCase === 5 && !has(ne1, '92-2-2=5') && v1.noEa.spots === v0.noEa.spots - 1 && v1.noEa.cases === v0.noEa.cases - 3 && r2(v1.value - v0.value) === 1.5, [f1, v1.value, v0.value]);
+  const f2 = await opost('/inventory/cost/value-fix', { id: id('92-1-1=10'), unitsPerCase: 100, price: 0.05, vendor: 'EFF', name: 'elbow' });
+  const v2 = await oget('/inventory/cost/value'), ef = await oget('/inventory/cost/value-rows?which=vendor&vendor=EFF');
+  check('vendor (blank) → EFF on 92-1-1=10 → (no vendor) $20 less, EFF $20 more, the total the same; it is now on EFF\'s list',
+    f2.ok && r2(vOf(v1, '(no vendor)') - vOf(v2, '(no vendor)')) === 20 && r2(vOf(v2, 'EFF') - vOf(v1, 'EFF')) === 20 && r2(v2.value) === r2(v1.value) && has(ef, '92-1-1=10'), [vOf(v1, '(no vendor)'), vOf(v2, '(no vendor)'), v1.value, v2.value]);
+  const f3 = await opost('/inventory/cost/value-fix', { id: id('92-3-3=5'), unitsPerCase: 50, price: 0.20, vendor: '', name: 'cap' });
+  const v3 = await oget('/inventory/cost/value'), np3 = await oget('/inventory/cost/value-rows?which=noPrice');
+  check('price 0 → $0.20 on 92-3-3=5 → off the "no price" list and the total up exactly 2 × 50 × $0.20 = $20',
+    f3.ok && !has(np3, '92-3-3=5') && r2(v3.value - v2.value) === 20 && v3.noPrice.spots === v2.noPrice.spots - 1, [v2.value, v3.value, np3.spots.filter(s => s.part.startsWith('92-'))]);
+  const e3 = sq.prepare("SELECT wval_before wb, wval_after wa FROM inventory_log WHERE type='EDIT' AND part_num='92-3-3=5' ORDER BY id DESC").get();
+  check('…and its History EDIT line shows the whole inventory value going up that same $20 (before → after)', e3 && r2(e3.wa - e3.wb) === 20 && r2(e3.wa) === r2(v3.value), e3);
+  const totA = sq.prepare("SELECT SUM(cases) c FROM master_list WHERE part_num LIKE '92-%'").get().c;
+  const ed = sq.prepare("SELECT notes FROM inventory_log WHERE type='EDIT' AND part_num='92-2-2=5' ORDER BY id DESC").get();
+  check('…cases never change from these lists (92-x: 9 cases before = 9 after), and every save has its History EDIT line (Ea/Case: 0 → 5)',
+    totB === 9 && totA === 9 && v3.cases === v0.cases && ed && /\[SKU MGR EDIT\] Ea\/Case: 0 → 5/.test(ed.notes), [totB, totA, ed]);
+  const { readFileSync: rfV } = await import('node:fs');
+  const ivh = rfV(fileURLToPath(new URL('../inventory.html', import.meta.url)), 'utf8');
+  check('SKU Mgr: each vendor $ and both "Not in the total" lines are buttons → skumgrValueList (Ea/Case, $/piece, vendor, name + 💾, find box)',
+    /data-which="vendor" data-vendor="/.test(ivh) && /data-which="noPrice" onclick="skumgrValueList\(this\)"/.test(ivh) && /data-which="noEa" onclick="skumgrValueList\(this\)"/.test(ivh)
+    && /\/inventory\/cost\/value-rows\?which=/.test(ivh) && /\/inventory\/cost\/value-fix/.test(ivh) && /skumgrValueFilter/.test(ivh), null);
+  sq.exec("DELETE FROM master_list WHERE part_num LIKE '92-%'; DELETE FROM cost_layer WHERE part LIKE '92-%'");
+  sq.prepare('DELETE FROM cred_users WHERE id = ?').run(Number(ow.lastInsertRowid));
 }
 
 console.log('\n' + (failed ? '❌ ' + failed + ' check(s) FAILED' : '✅ all ' + passed + ' checks passed') + '\n');

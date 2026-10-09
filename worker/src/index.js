@@ -4626,28 +4626,88 @@ async function inventoryCostSpots(env) {
 }
 // GET /inventory/cost/value — OWNER ONLY: total inventory value at vendor
 // price = pieces (cases × Ea/Case) × price per piece, batch by batch.
-async function inventoryCostValue(request, env) {
-  const cs = await verifyCredSession(request.headers.get('X-Cred-Token'), env).catch(() => null);
-  if (!cs || !(cs.roles || []).includes('owner')) return cors(new Response(JSON.stringify({ ok: false, error: 'Owner only' }), { status: 403, headers: { 'Content-Type': 'application/json' } }));
+// Every spot (part # @ location) worked out once — the total, the vendor
+// split and the "not in the total" lists all come from this same list, so
+// a list opened from a number always adds up to that number.
+async function costValueSpots(env) {
   const bySpot = await costReconcileAll(env);
   const rows = await d1All(env, `SELECT UPPER(TRIM(part_num)) AS p, UPPER(TRIM(location)) AS l, SUM(cases) AS c, MAX(units_per_case) AS u, MAX(price) AS pr, MAX(vendor) AS v
     FROM master_list WHERE part_num != '' AND cases > 0 GROUP BY 1, 2`);
+  return rows.map(r => {
+    const ea = parseFloat(r.u) || 0, sp = { p: r.p, l: r.l, cases: r.c, ea, vendor: reorderVendorName(r.v) || '(no vendor)', value: 0, pieces: 0, noPriceCases: 0, noEa: !(ea > 0) };
+    if (sp.noEa) return sp;
+    for (const bt of (bySpot[r.p + '|' + r.l] || [{ cases: r.c, price: parseFloat(r.pr) || 0 }])) {
+      if (bt.price > 0) { sp.value += bt.cases * ea * bt.price; sp.pieces += bt.cases * ea; }
+      else sp.noPriceCases += bt.cases;
+    }
+    return sp;
+  });
+}
+function _costOwner(request, env) {
+  return verifyCredSession(request.headers.get('X-Cred-Token'), env).catch(() => null).then(cs => !!(cs && (cs.roles || []).includes('owner')));
+}
+async function inventoryCostValue(request, env) {
+  if (!(await _costOwner(request, env))) return cors(new Response(JSON.stringify({ ok: false, error: 'Owner only' }), { status: 403, headers: { 'Content-Type': 'application/json' } }));
+  const spots = await costValueSpots(env);
   let value = 0, pieces = 0, cases = 0;
   const byVendor = {}, noPrice = { spots: 0, cases: 0, parts: [] }, noEa = { spots: 0, cases: 0, parts: [] };
-  for (const r of rows) {
-    cases += r.c;
-    const ea = parseFloat(r.u) || 0;
-    if (!(ea > 0)) { noEa.spots++; noEa.cases += r.c; if (noEa.parts.length < 100) noEa.parts.push(r.p + ' @ ' + r.l); continue; }
-    const batches = bySpot[r.p + '|' + r.l] || [{ cases: r.c, price: parseFloat(r.pr) || 0 }];
-    let spotNoPrice = 0;
-    for (const bt of batches) {
-      if (bt.price > 0) { const v = bt.cases * ea * bt.price; value += v; pieces += bt.cases * ea; const vn = reorderVendorName(r.v) || '(no vendor)'; byVendor[vn] = (byVendor[vn] || 0) + v; }
-      else spotNoPrice += bt.cases;
-    }
-    if (spotNoPrice > 0) { noPrice.spots++; noPrice.cases += spotNoPrice; if (noPrice.parts.length < 100) noPrice.parts.push(r.p + ' @ ' + r.l); }
+  for (const sp of spots) {
+    cases += sp.cases;
+    if (sp.noEa) { noEa.spots++; noEa.cases += sp.cases; if (noEa.parts.length < 100) noEa.parts.push(sp.p + ' @ ' + sp.l); continue; }
+    value += sp.value; pieces += sp.pieces;
+    if (sp.pieces > 0) byVendor[sp.vendor] = (byVendor[sp.vendor] || 0) + sp.value;
+    if (sp.noPriceCases > 0) { noPrice.spots++; noPrice.cases += sp.noPriceCases; if (noPrice.parts.length < 100) noPrice.parts.push(sp.p + ' @ ' + sp.l); }
   }
-  return cors(new Response(JSON.stringify({ ok: true, value: Math.round(value * 100) / 100, pieces, cases, spots: rows.length,
+  return cors(new Response(JSON.stringify({ ok: true, value: Math.round(value * 100) / 100, pieces, cases, spots: spots.length,
     byVendor: Object.entries(byVendor).map(([vendor, v]) => ({ vendor, value: Math.round(v * 100) / 100 })).sort((a, b) => b.value - a.value), noPrice, noEa, asOf: new Date().toISOString() }), { headers: { 'Content-Type': 'application/json' } }));
+}
+// GET /inventory/cost/value-rows?which=vendor&vendor=X | which=noEa | which=noPrice
+// — OWNER ONLY (owner: "tap the vendor's $ / the not-in-the-total line, see
+// what's there and edit them"). The SKU Mgr rows behind that number, every
+// one (no 100 cap), biggest value first; the spots' values add up to it.
+async function inventoryCostValueRows(request, url, env) {
+  const J = (o, st) => cors(new Response(JSON.stringify(o), { status: st || 200, headers: { 'Content-Type': 'application/json' } }));
+  if (!(await _costOwner(request, env))) return J({ ok: false, error: 'Owner only' }, 403);
+  const which = url.searchParams.get('which'), vendor = String(url.searchParams.get('vendor') || '');
+  if (!['vendor', 'noEa', 'noPrice'].includes(which)) return J({ ok: false, error: 'which = vendor, noEa or noPrice' }, 400);
+  const pick = (await costValueSpots(env)).filter(sp => which === 'noEa' ? sp.noEa
+    : which === 'noPrice' ? !sp.noEa && sp.noPriceCases > 0 : !sp.noEa && sp.pieces > 0 && sp.vendor === vendor);
+  const want = {}; pick.forEach(sp => { want[sp.p + '|' + sp.l] = sp; });
+  const ml = await d1All(env, `SELECT id, sheet_row, part_num, name, location, cases, units_per_case, price, vendor FROM master_list WHERE part_num != '' AND cases > 0 ORDER BY id`);
+  const out = {};
+  ml.forEach(r => {
+    const k = String(r.part_num).trim().toUpperCase() + '|' + String(r.location || '').trim().toUpperCase(), sp = want[k]; if (!sp) return;
+    (out[k] = out[k] || { part: sp.p, location: sp.l, cases: sp.cases, value: Math.round(sp.value * 100) / 100, noPriceCases: sp.noPriceCases, rows: [] }).rows.push({
+      id: r.id, sheetRow: r.sheet_row || 0, partNum: r.part_num, name: r.name || '', location: r.location, cases: parseFloat(r.cases) || 0,
+      unitsPerCase: parseFloat(r.units_per_case) || 0, price: parseFloat(r.price) || 0, vendor: r.vendor || '' });
+  });
+  const spots = Object.values(out).sort((a, b) => b.value - a.value || b.cases - a.cases || a.part.localeCompare(b.part));
+  return J({ ok: true, which, vendor, spots, value: Math.round(spots.reduce((t, s) => t + s.value, 0) * 100) / 100, cases: spots.reduce((t, s) => t + s.cases, 0) });
+}
+// POST /inventory/cost/value-fix {id, unitsPerCase?, price?, vendor?, name?} — OWNER ONLY.
+// Changes only those fields of one SKU Mgr row through the normal SKU Mgr
+// save (History EDIT line, price batches, price record). Cases, Part # and
+// location are read fresh from the row and never changed here. A price filled
+// in where the cases had none gives those cases that price (they count now).
+async function inventoryCostValueFix(request, env, session) {
+  const J = (o, st) => cors(new Response(JSON.stringify(o), { status: st || 200, headers: { 'Content-Type': 'application/json' } }));
+  if (!(await _costOwner(request, env))) return J({ ok: false, error: 'Owner only' }, 403);
+  const b = await request.json().catch(() => ({}));
+  const r = await d1First(env, 'SELECT * FROM master_list WHERE id=?', [parseInt(b.id) || 0]).catch(() => null);
+  if (!r) return J({ ok: false, error: 'Row not found — refresh the list' }, 404);
+  const has = k => b[k] !== undefined && b[k] !== null && b[k] !== '';
+  const body = { mode: 'update', d1Id: r.id, sheetRow: r.sheet_row || 0, partNum: r.part_num, location: r.location, cases: parseFloat(r.cases) || 0,
+    name: has('name') ? String(b.name).trim() : (r.name || ''), sku: mlParent(r.part_num),
+    unitsPerCase: has('unitsPerCase') ? parseFloat(b.unitsPerCase) || 0 : parseFloat(r.units_per_case) || 0,
+    price: has('price') ? parseFloat(b.price) || 0 : parseFloat(r.price) || 0,
+    vendor: b.vendor !== undefined && b.vendor !== null ? String(b.vendor).trim() : (r.vendor || ''), prevNotes: r.prev_notes || '' };
+  if (body.unitsPerCase < 0 || body.price < 0) return J({ ok: false, error: 'Ea/Case and price can\'t be below 0' }, 400);
+  const res = await inventorySkuRow(new Request('https://x/inventory/sku-row', { method: 'POST', body: JSON.stringify(body) }), env, session, { fillUnpriced: true });
+  const d = await res.json().catch(() => ({}));
+  if (!d.ok) return J({ ok: false, error: d.error || 'Save failed' }, res.status || 500);
+  const now = await d1First(env, 'SELECT id, part_num, name, location, cases, units_per_case, price, vendor FROM master_list WHERE id=?', [r.id]);
+  return J({ ok: true, row: { id: now.id, partNum: now.part_num, name: now.name || '', location: now.location, cases: parseFloat(now.cases) || 0,
+    unitsPerCase: parseFloat(now.units_per_case) || 0, price: parseFloat(now.price) || 0, vendor: now.vendor || '' } });
 }
 
 // ── 💲 Price change record (kept forever) ─────────────────────────────────
@@ -8101,7 +8161,7 @@ const _app = {
         // these specific paths require mgmt — everything else falls through to 404
         const mgmtPaths = ['/inventory/pending','/inventory/verify','/inventory/transfer/verify',
           '/inventory/audit-mode','/inventory/review-mode','/inventory/prefixes','/inventory/rename-locations',
-          '/inventory/cancel-entry', '/inventory/cost/spots', '/inventory/cost/value', '/inventory/price-history', '/inventory/incoming', '/inventory/partnum-check'];
+          '/inventory/cancel-entry', '/inventory/cost/spots', '/inventory/cost/value', '/inventory/cost/value-rows', '/inventory/cost/value-fix', '/inventory/price-history', '/inventory/incoming', '/inventory/partnum-check'];
         if (mgmtPaths.some(p => path === p)) {
           return cors(new Response(JSON.stringify({ error: 'Management access required' }), {
             status: 403, headers: { 'Content-Type': 'application/json' }
@@ -8115,6 +8175,8 @@ const _app = {
       // 💲 price batches (mgmt, gated above); the total value is owner only (checked inside).
       if (path === '/inventory/cost/spots' && method === 'GET') return await inventoryCostSpots(env);
       if (path === '/inventory/cost/value' && method === 'GET') return await inventoryCostValue(request, env);
+      if (path === '/inventory/cost/value-rows' && method === 'GET') return await inventoryCostValueRows(request, url, env);
+      if (path === '/inventory/cost/value-fix' && method === 'POST') return await inventoryCostValueFix(request, env, session);
       if (path === '/inventory/incoming' && method === 'GET') return await inventoryIncomingFor(url, env);
       if (path === '/inventory/price-history' && method === 'GET') return await inventoryPriceHistory(url, env);
       // audit-mode POST + other mgmt routes
@@ -13143,7 +13205,7 @@ async function _invApplySkuRowInsert(env, fields) {
 // POST /inventory/sku-row — update existing row OR insert new row
 // Body: { mode: 'update'|'insert', sheetRow, partNum, location, cases,
 //         name, sku, unitsPerCase, vendor, price, prevNotes }
-async function inventorySkuRow(request, env, session) {
+async function inventorySkuRow(request, env, session, opts) {
   try {
     const body = await request.json().catch(() => ({}));
     const { mode, sheetRow, d1Id, partNum, location, cases,
@@ -13182,6 +13244,11 @@ async function inventorySkuRow(request, env, session) {
       if (priceMoved) {
         await costSafe(() => costReconcile(env, partNum, location));
         await costSafe(() => priceLogAdd(env, { part: partNum, location, price: newPrice, oldPrice, source: 'SKU Mgr price edit', by: who }));
+        // 💰 Owner filling in a missing price from the "not in the total — no price" list: the cases
+        // there had NO price at all (not an old one), so they take this one. Done before the History
+        // line is written, so its value before → after shows the change.
+        if (opts && opts.fillUnpriced) await costSafe(() => env.DB.prepare('UPDATE cost_layer SET price = ? WHERE part = ? AND location = ? AND (price IS NULL OR price <= 0)')
+          .bind(newPrice, _costKey(partNum), _costKey(location)).run());
       }
       await skuMgrLogEdit(env, who, result.before, d1Id, sheetRow, tot).catch(e => console.error('[skumgr history]', e.message));
       return cors(new Response(JSON.stringify({ ok: true, mode: 'update', sheetRow, d1Id, d1Changes: result.d1Changes }),
