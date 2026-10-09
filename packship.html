@@ -1838,6 +1838,16 @@ body {
 
       <!-- 🛑 Print watch (owner: "if 2 or 3 labels are not picked up in the Print Log, something is wrong with the
            printer — hold the printing for us to come back to the office, and let us know whatever was not picked up") -->
+      <!-- 🔍 Owner (2026-10-09): "2 Walmart orders, same name, same address — why 2 labels?" Type the order #s: it reads them
+           live from Veeqo + the label record and says why they weren't one box. Read only. -->
+      <div class="ps-card" style="margin-bottom:16px" id="ps-al-whymerge-card">
+        <div style="font-weight:800;font-size:14px;margin-bottom:6px">🔍 Why not one label? <span style="font-weight:400;font-size:12px;color:var(--text3)">same person, 2 labels — type the order #s</span></div>
+        <div style="display:flex;gap:6px;flex-wrap:wrap">
+          <input id="ps-al-whymerge-in" type="text" placeholder="e.g. 129128324199952, 129128322175078" style="flex:1;min-width:220px;padding:8px;border:1.5px solid var(--border);border-radius:8px;font-family:var(--mono);font-size:13px">
+          <button class="ps-btn-primary" style="width:auto;padding:8px 16px" onclick="psAlWhyMerge()">Check</button>
+        </div>
+        <div id="ps-al-whymerge-out" style="margin-top:8px;font-size:12.5px"></div>
+      </div>
       <div class="ps-card" style="margin-bottom:16px" id="ps-al-watch-card">
         <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px">
           <div style="font-size:13px;font-weight:700;color:var(--text)">🛑 Print watch — labels not picked up by the Print Log scanner</div>
@@ -5256,6 +5266,22 @@ window.psExportGaps = function() {
   a.href = url; a.download = 'gap-report-' + psTodayKey() + '.csv'; a.click();
   URL.revokeObjectURL(url);
   _psToast('Gap report exported');
+};
+
+// 🔍 Why weren't these orders one box / one label? (Auto Label tab)
+window.psAlWhyMerge = function() {
+  var inp = document.getElementById('ps-al-whymerge-in'), out = document.getElementById('ps-al-whymerge-out');
+  var v = (inp && inp.value || '').trim(); if (!v) { out.textContent = 'Type 2 order #s'; return; }
+  out.innerHTML = '<span style="color:var(--text3)">Checking Veeqo…</span>';
+  var e = function(x) { return String(x == null ? '' : x).replace(/&/g, '&amp;').replace(/</g, '&lt;'); };
+  var ny = function(t) { try { return t ? new Date(t).toLocaleString('en-US', { timeZone: 'America/New_York', month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' }) : ''; } catch (x) { return t; } };
+  fetch(PS_WORKER + '/veeqo/autolabel/why-not-merged?orders=' + encodeURIComponent(v), { headers: { 'X-Cred-Token': psCredToken } }).then(function(r) { return r.json(); }).then(function(d) {
+    if (!d || !d.ok) { out.innerHTML = '<span style="color:var(--red)">⚠ ' + e((d && d.error) || 'Could not check') + '</span>'; return; }
+    out.innerHTML = (d.why || []).map(function(w) { return '<div style="padding:7px 9px;border-radius:8px;background:#fef3c7;color:#92400e;font-weight:700;margin-bottom:6px">' + e(w) + '</div>'; }).join('')
+      + '<div style="overflow-x:auto"><table style="width:100%;border-collapse:collapse;font-size:12px"><tr style="text-align:left;color:var(--text3)"><th>Order</th><th>Came in</th><th>Name</th><th>Address</th><th>Label bought</th><th>Tracking</th></tr>'
+      + (d.orders || []).map(function(o) { return o.found ? '<tr style="border-top:1px solid var(--border)"><td style="font-family:var(--mono)">' + e(o.number) + '<br><span style="color:var(--text3)">' + e(o.channel) + '</span></td><td>' + e(ny(o.createdAt)) + '</td><td>' + e(o.name) + '</td><td>' + e([o.address1, o.address2, o.zip].filter(Boolean).join(', ')) + '</td><td>' + e((o.bought || []).map(function(b) { return ny(b.at); }).join(', ') || '—') + '</td><td style="font-family:var(--mono)">' + e((o.tracking || []).join(', ')) + '</td></tr>'
+        : '<tr><td colspan="6" style="color:var(--red)">' + e(o.number) + ' — not found in Veeqo</td></tr>'; }).join('') + '</table></div>';
+  }).catch(function(x) { out.innerHTML = '<span style="color:var(--red)">⚠ ' + e(x.message) + '</span>'; });
 };
 
 // ── Undelivered Report ───────────────────────────────

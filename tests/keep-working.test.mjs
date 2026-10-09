@@ -4826,5 +4826,33 @@ console.log('\n📤 Stock Out: two box sizes of one part # → oldest first (FIF
       && /masterId: loc\.masterId \|\| null, foundOnShelf: true\s*\}\);\s*invTagBoxSize\(invPullList\[invPullList\.length - 1\], loc\);/.test(ih), null);
 }
 
+// Owner (2026-10-09): "Auto Label: Walmart PO# 129128324199952 and 129128322175078 — same name, same address, but they
+// were not combined into one label". Auto Label → 🔍 Why not one label?: reads both orders live + the label record, says why.
+console.log('\n🔍 Auto Label: why weren\'t these orders one label?');
+{
+  const realFetch = globalThis.fetch;
+  const addr = (a1) => ({ first_name: 'Ann', last_name: 'Lee', address1: a1, address2: '', city: 'Dover', state: 'DE', zip: '19901' });
+  const O = {
+    'WM-1': { id: 501, number: 'WM-1', status: 'shipped', created_at: '2026-10-09T13:00:00Z', channel: { name: 'Walmart' }, deliver_to: addr('5 Oak St'), allocations: [{ id: 1, shipment: { tracking_number: { tracking_number: '9400TRACKA' } } }] },
+    'WM-2': { id: 502, number: 'WM-2', status: 'shipped', created_at: '2026-10-09T14:10:00Z', channel: { name: 'Walmart' }, deliver_to: addr('5 Oak St'), allocations: [{ id: 2, shipment: { tracking_number: { tracking_number: '9400TRACKB' } } }] },
+    'WM-3': { id: 503, number: 'WM-3', status: 'awaiting_fulfillment', created_at: '2026-10-09T13:01:00Z', channel: { name: 'Walmart' }, deliver_to: addr('5 Oak Street'), allocations: [{ id: 3 }] },
+  };
+  globalThis.fetch = async (u, o) => { const x = String(u);
+    if (x.includes('api.veeqo.com')) { const q = /query=([^&]+)/.exec(x), k = q && decodeURIComponent(q[1]); return new Response(JSON.stringify(k && O[k] ? [O[k]] : []), { headers: { 'Content-Type': 'application/json' } }); }
+    return realFetch(u, o); };
+  env.VEEQO_API_KEY = 'test';
+  await get('/veeqo/autolabel/log');
+  sq.prepare("INSERT INTO autolabel_log (ts, date, order_id, order_number, channel, action, tracking, reason) VALUES (?,?,?,?,?,?,?,?)").run('2026-10-09T13:35:00Z', '2026-10-09', '501', 'WM-1', 'Walmart', 'bought', '9400TRACKA', 'single');
+  const w1 = await get('/veeqo/autolabel/why-not-merged?orders=' + encodeURIComponent('WM-1, WM-2'));
+  const w2 = await get('/veeqo/autolabel/why-not-merged?orders=WM-1,WM-3');
+  globalThis.fetch = realFetch; delete env.VEEQO_API_KEY;
+  check('same person, WM-1\'s label bought 13:35 BEFORE WM-2 came in 14:10 → "too late to put them in one box"', w1.ok && w1.orders.length === 2 && w1.why.some(x => /WM-1's label was bought .* BEFORE WM-2 came in/.test(x) && /too late/.test(x)), w1.why);
+  check('…"5 Oak St" vs "5 Oak Street" → not the same person as Veeqo has them (names the street)', w2.ok && w2.why.some(x => /Not the same person/.test(x) && /street "5 Oak St" ≠ "5 Oak Street"/.test(x)), w2.why);
+  const { readFileSync } = await import('node:fs');
+  const ph = readFileSync(fileURLToPath(new URL('../packship.html', import.meta.url)), 'utf8');
+  check('…Auto Label tab: 🔍 Why not one label? box (type the order #s → why + both orders)', /id="ps-al-whymerge-card"/.test(ph) && /\/veeqo\/autolabel\/why-not-merged\?orders=/.test(ph), null);
+  sq.exec("DELETE FROM autolabel_log WHERE order_number LIKE 'WM-%'");
+}
+
 console.log('\n' + (failed ? '❌ ' + failed + ' check(s) FAILED' : '✅ all ' + passed + ' checks passed') + '\n');
 process.exit(failed ? 1 : 0);
