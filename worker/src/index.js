@@ -6210,7 +6210,8 @@ async function palletRecsFor(env, partsIn, fromLocIn) {
   for (const part of parts) {
     const b = parentOf(part), at = planAt(part), plan = at.plan;
     const area = plan ? (plan.includes('=') ? plan.split('=')[0] + '=' : plan + '=') : '';
-    const inPlan = l => !plan || (plan.includes('=') ? l === plan : l.startsWith(area));
+    // Owner (2026-10-09): a new spot one level deeper (BSMT=40-1-1-4) belongs with its parent (BSMT=40-1-1) — same plan.
+    const inPlan = l => !plan || (plan.includes('=') ? (l === plan || l.startsWith(plan + '-')) : l.startsWith(area));
     const recs = [], add = (location, why) => { if (recs.length < 2 && !recs.some(r => r.location === location)) recs.push({ location, why }); };
     // With a plan area (📍 Plan: goes to BARN): BARN shelves already holding
     // this item, then empty BARN shelves — 2 real shelves. An exact plan spot
@@ -6637,7 +6638,15 @@ async function inventorySuggestLocation(url, env) {
 async function inventoryLocationList(env) {
   try {
     const data = await invSheetGet(env, 'LocationID!A2:A5000').catch(() => ({ values: [] }));
-    const locations = (data.values || []).map(r => String(r[0]||'').trim()).filter(Boolean).map(loc => ({ location: loc, barcodeId: loc }));
+    const fromSheet = (data.values || []).map(r => String(r[0]||'').trim()).filter(Boolean);
+    // Owner (2026-10-09): "when we see a new spot, just add it to our system" — every spot used anywhere (the locations
+    // list D1 keeps on first use, and every SKU Mgr spot) is in the Label Printer list too, not only the LocationID sheet.
+    const seen = new Set(fromSheet.map(l => l.toUpperCase())), extra = [];
+    const more = [...(await d1All(env, "SELECT location FROM locations WHERE COALESCE(active, 1) = 1").catch(() => [])),
+      ...(await d1All(env, "SELECT DISTINCT location FROM master_list WHERE location LIKE '%=%' OR UPPER(location) = 'GARAGE'").catch(() => []))];
+    for (const r of more) { const l = String(r.location || '').trim().toUpperCase(); if (l && /^([A-Z0-9]+=\S+|GARAGE)$/.test(l) && !seen.has(l)) { seen.add(l); extra.push(l); } }
+    extra.sort((a, b) => a.localeCompare(b, undefined, { numeric: true }));
+    const locations = fromSheet.concat(extra).map(loc => ({ location: loc, barcodeId: loc }));
     return cors(new Response(JSON.stringify({ ok: true, locations, count: locations.length }), { headers: { 'Content-Type': 'application/json' } }));
   } catch(e) {
     return cors(new Response(JSON.stringify({ ok: false, error: e.message }), { status: 500, headers: { 'Content-Type': 'application/json' } }));
