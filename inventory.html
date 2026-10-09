@@ -2602,6 +2602,9 @@ window.invCredLogin = async function() {
     [0, 1].forEach(function(tier) {
       if (left <= 0) return;
       var c = ranked.filter(function(l) { return l._pick.tier === tier; });
+      // FIFO (owner): a part # here in more than one box size → older box size first, in ranked order, before "one spot".
+      var mixed = c.some(function(a) { return c.some(function(b) { return pnOf(a) === pnOf(b) && invFifoBoxSize(a, b) !== 0; }); });
+      if (mixed) { c.forEach(function(l) { if (left > 0) take(l, Math.min(l._left, left)); }); return; }
       var one = c.filter(function(l) { return l._left >= left; })[0]; // one spot has them all
       if (one) { take(one, left); return; }
       // Must split: fewest spots — biggest first (still oldest first on ties).
@@ -2681,7 +2684,7 @@ window.invCredLogin = async function() {
       if (qa !== qb) return qa > P && qb > P ? qb - qa : qb - qa; // bigger bag first (fewer bags to cut / combine)
       if (ageOf(pa) !== ageOf(pb)) return ageOf(pa) - ageOf(pb);
       if (pa !== pb) return stockOf[pb] !== stockOf[pa] ? stockOf[pb] - stockOf[pa] : (pa < pb ? -1 : 1);
-      return availOf(b) - availOf(a);
+      return invFifoBoxSize(a, b) || availOf(b) - availOf(a);
     });
   }
 
@@ -3041,6 +3044,14 @@ window.invCredLogin = async function() {
     var avail = l.adjustedCases !== undefined ? l.adjustedCases : (parseFloat(l.cases) || 0);
     return (parseFloat(l.palletBoxes) || 0) > 0 && avail <= (parseFloat(l.palletBoxes) || 0) + 1e-9;
   }
+  // Owner (2026-10-09): "when the boxes hold different quantities, go FIFO". Same part #, different box size (Each/Case):
+  // the older row first — SKU Mgr row id (lower = put in earlier), else the sheet row. Same box size: unchanged.
+  function invFifoBoxSize(a, b) {
+    var ea = parseFloat(a.eachQty) || 0, eb = parseFloat(b.eachQty) || 0;
+    if (!(ea > 0 && eb > 0) || Math.abs(ea - eb) < 1e-9) return 0;
+    var ia = +a.masterId || +a.rowIndex || 0, ib = +b.masterId || +b.rowIndex || 0;
+    return ia && ib && ia !== ib ? ia - ib : 0;
+  }
   function invPickForShelving(locs) {
     function availOf(l) { return l.adjustedCases !== undefined ? l.adjustedCases : (parseFloat(l.cases) || 0); }
     function pnOf(l) { return String(l.partNum || invPart.partNum || '').toUpperCase(); }
@@ -3069,7 +3080,7 @@ window.invCredLogin = async function() {
         if (stockOf[pb] !== stockOf[pa]) return stockOf[pb] - stockOf[pa];
         return pa < pb ? -1 : 1;
       }
-      return availOf(a) - availOf(b);
+      return invFifoBoxSize(a, b) || availOf(a) - availOf(b);
     });
   }
 
@@ -3357,6 +3368,7 @@ window.invCredLogin = async function() {
             masterRowIndex: loc.rowIndex,
       masterId: loc.masterId || null, foundOnShelf: true
           });
+          invTagBoxSize(invPullList[invPullList.length - 1], loc); // 2 box sizes here → check the box when grabbed
           invPullList.sort(function(a,b){
             return invLocSort(a.location)-invLocSort(b.location)||a.location.localeCompare(b.location);
           });

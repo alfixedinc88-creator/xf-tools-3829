@@ -4803,5 +4803,28 @@ console.log('\n📍 New spots (one level deeper, e.g. BSMT=40-1-1-4) are added o
   sq.exec("DELETE FROM locations WHERE location = 'BSMT=40-1-1-4'; DELETE FROM master_list WHERE part_num = 'NS-1=5'");
 }
 
+// Owner (2026-10-09): "if the boxes hold different quantities, go FIFO; and when one spot has different box quantities,
+// make the person double check the box at Stock Out so they grab the right one".
+console.log('\n📤 Stock Out: two box sizes of one part # → oldest first (FIFO); same spot → confirm the box size');
+{
+  const { readFileSync } = await import('node:fs');
+  const ih = readFileSync(fileURLToPath(new URL('../inventory.html', import.meta.url)), 'utf8');
+  const fn = name => { const a = ih.indexOf('  function ' + name + '('); return ih.slice(a, ih.indexOf('\n  }\n', a) + 4); };
+  const mk = new Function('invPart', 'invPullList', fn('invFifoBoxSize') + fn('invOnPallet') + 'var INV_FBA_LOW_CASES = 2, invSearchedExactVariant = null;' + fn('invPickForShelving') + fn('invPlanShelvingPull') + 'return { pick: invPickForShelving, plan: invPlanShelvingPull };');
+  // 30-3-4=10: an OLD row (id 100, 20 pcs a box, 2 cases) and a NEW row (id 900, 40 pcs a box, 10 cases) — not FBA.
+  const locs = [{ partNum: '30-3-4=10', location: 'C1=1-1-2', cases: '10', eachQty: '40', masterId: 900 }, { partNum: '30-3-4=10', location: 'C1=1-1-1', cases: '2', eachQty: '20', masterId: 100 }];
+  const F = mk({ partNum: '30-3-4=10', locations: locs, fbaParts: [] }, []);
+  const p3 = F.plan(3);
+  check('need 3: the OLD box size first — 2 of the 20-pc boxes (C1=1-1-1), then 1 of the 40-pc ones; not all 3 from the newer, bigger spot',
+    p3.takes.length === 2 && p3.takes[0].loc.location === 'C1=1-1-1' && p3.takes[0].cases === 2 && p3.takes[1].loc.location === 'C1=1-1-2' && p3.takes[1].cases === 1 && p3.short === 0, p3.takes.map(t => [t.loc.location, t.cases]));
+  const same = [{ partNum: '30-3-4=10', location: 'C1=1-1-2', cases: '10', eachQty: '40', masterId: 900 }, { partNum: '30-3-4=10', location: 'C1=1-1-1', cases: '2', eachQty: '40', masterId: 100 }];
+  const p4 = mk({ partNum: '30-3-4=10', locations: same, fbaParts: [] }, []).plan(3);
+  check('…same box size everywhere: unchanged — one spot that has them all (all 3 from C1=1-1-2)', p4.takes.length === 1 && p4.takes[0].loc.location === 'C1=1-1-2' && p4.takes[0].cases === 3, p4.takes.map(t => [t.loc.location, t.cases]));
+  check('…Big Company too: same part #, different box size → older row first (invFifoBoxSize in its sort)', /return invFifoBoxSize\(a, b\) \|\| availOf\(b\) - availOf\(a\);/.test(ih) && /return invFifoBoxSize\(a, b\) \|\| availOf\(a\) - availOf\(b\);/.test(ih), null);
+  check('…a spot with 2 box sizes: the Pull List says "📦 Grab the box of X pcs … Check the box label", Grabbed asks "Is the box you grabbed X pcs?", kept as [BOX SIZE CHECKED] — Found on Shelf + Pull rows too',
+    /📦 Grab the box of " \+ item\.boxPcs \+ " pcs/.test(ih) && /Is the box you grabbed ' \+ bx\.boxPcs \+ ' pcs\?/.test(ih) && /\[BOX SIZE CHECKED: ' \+ bx\.boxPcs \+ ' pcs\]/.test(ih)
+      && /masterId: loc\.masterId \|\| null, foundOnShelf: true\s*\}\);\s*invTagBoxSize\(invPullList\[invPullList\.length - 1\], loc\);/.test(ih), null);
+}
+
 console.log('\n' + (failed ? '❌ ' + failed + ' check(s) FAILED' : '✅ all ' + passed + ' checks passed') + '\n');
 process.exit(failed ? 1 : 0);
