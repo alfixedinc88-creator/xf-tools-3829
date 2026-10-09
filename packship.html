@@ -2829,12 +2829,26 @@ function _psStationRepeat(kind, tracking) {
   return rep;
 }
 
+// Scanner read both the QR code and the barcode on the same label (or the
+// trigger was held): the same tracking again within 5 s is that same label,
+// not a real double scan — ignore it quietly, no "Duplicate" popup / alarm.
+// A repeat after 5 s still gets the normal duplicate check.
+var PS_SAME_SCAN_IGNORE_MS = 5000;
+var _psQuickLast = {};
+function _psQuickRepeat(kind, tracking) {
+  var l = _psQuickLast[kind], now = Date.now();
+  var rep = !!(l && l.t === tracking && now - l.at < PS_SAME_SCAN_IGNORE_MS);
+  if (!rep) _psQuickLast[kind] = { t: tracking, at: now };
+  return rep;
+}
+
 function _psProcessScan(raw) {
   var inp      = document.getElementById('ps-scan-input');
   var tracking = psNormalizeTracking(raw);
   inp.value = '';
   if (!tracking) return; // rejected by format validation (DataMatrix garbage etc)
   if (_psStationRepeat('pack', tracking)) { inp.focus(); return; } // same label still under the station scanner
+  if (_psQuickRepeat('pack', tracking)) { inp.focus(); return; } // QR + barcode of the same label read within 5 s
 
   var cancelEntry = _psCancelOrderCache[tracking];
   if (cancelEntry) {
@@ -6154,6 +6168,7 @@ function _psProcessPick(raw) {
   inp.value = '';
   if (!tracking) return; // rejected by format validation (DataMatrix garbage etc)
   if (_psStationRepeat('pick', tracking)) { inp.focus(); return; } // same label still under the station scanner
+  if (_psQuickRepeat('pick', tracking)) { inp.focus(); return; } // QR + barcode of the same label read within 5 s
 
   var cancelEntry = _psCancelOrderCache[tracking];
   if (cancelEntry) {
