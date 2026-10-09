@@ -1130,9 +1130,11 @@ body {
   <div class="ps-tabitem"        id="ps-tab-closebatch" onclick="psSwitchTab('closebatch')">🚐 Close Batch</div>
   <div class="ps-tabitem"        id="ps-tab-cancellation" onclick="psSwitchTab('cancellation')">🗑️ Cancellation <span class="ps-tab-badge" id="ps-cancelorder-badge" style="display:none">0</span></div>
   <div class="ps-tabitem"        id="ps-tab-progress" onclick="psSwitchTab('progress')">📊 Progress</div>
-  <div class="ps-tabitem"        id="ps-tab-lookup"      onclick="psSwitchTab('lookup')">🔍 Lookup</div>
+  <!-- Owner (2026-10-08): "take off Lookup — Order Lookup has everything" (hidden; the tab's code stays) -->
+  <div class="ps-tabitem"        id="ps-tab-lookup"      onclick="psSwitchTab('lookup')" style="display:none">🔍 Lookup</div>
   <div class="ps-tabitem"        id="ps-tab-orderlookup" onclick="psSwitchTab('orderlookup')">📋 Order Lookup</div>
-  <div class="ps-tabitem"        id="ps-tab-status"      onclick="psSwitchTab('status')">📡 Status Check</div>
+  <!-- Owner (2026-10-08): "take off Status Check" (hidden; the tab's code stays) -->
+  <div class="ps-tabitem"        id="ps-tab-status"      onclick="psSwitchTab('status')" style="display:none">📡 Status Check</div>
   <div class="ps-tabitem"        id="ps-tab-gaps"     onclick="psSwitchTab('gaps')">⚠️ Gap Report <span class="ps-tab-badge" id="ps-gap-badge" style="display:none">0</span></div>
   <div class="ps-tabitem"        id="ps-tab-undelivered" onclick="psSwitchTab('undelivered')">📦 Undelivered Report</div>
   <div class="ps-tabitem"        id="ps-tab-vsync"    onclick="psSwitchTab('vsync')">🔄 Veeqo Sync</div>
@@ -1826,12 +1828,39 @@ body {
         <div id="ps-al-status" style="font-size:12px;color:var(--text3);margin-top:10px;font-family:var(--mono);line-height:1.6"></div>
       </div>
 
+      <!-- 🗓 Owner (2026-10-08): "put the auto print schedule somewhere in auto print, so later I can check and remember,
+           and set it to a different time if I want". The same rules as 📐 Rules below, in plain words, by day. -->
+      <!-- Owner (2026-10-08): "minimize it — when I want I can open it up and check myself" → folded, tap the title. -->
+      <details class="ps-card" id="ps-al-sched-card" style="margin-bottom:16px">
+        <summary style="cursor:pointer;font-size:13px;font-weight:700;color:var(--text)">🗓 Auto print schedule <span style="font-weight:400;color:var(--text3)">(New York time) — tap to open</span></summary>
+        <div style="display:flex;justify-content:flex-end;margin:8px 0 6px">
+          <button class="ps-btn-sm" id="ps-al-sched-edit-btn" onclick="psAlSchedEdit()">✏️ Change times</button>
+        </div>
+        <div id="ps-al-sched" style="font-size:13px;line-height:1.55"></div>
+        <div id="ps-al-sched-editor" style="display:none;margin-top:10px;padding-top:10px;border-top:1px dashed var(--border)">
+          <div style="font-size:12px;color:var(--text3);margin-bottom:8px;line-height:1.5">Times are 24-hour (16:30 = 4:30 pm). Days: Mon-Fri, Sat, Sun, Sun-Sat (every day). Separate with ";". The preview above changes as you type — nothing changes until you tap 💾 Save.</div>
+          <div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(230px,1fr));gap:10px 14px;font-size:12px;color:var(--text2)">
+            <label>Normal wait after the newest order (min)<input class="ps-field-input" data-sk="waitMinutes" type="number" min="0" step="1" oninput="psAlSchedPreview()"></label>
+            <label>⏩ No 30-min wait at<input class="ps-field-input" data-sk="noWaitTimes" type="text" placeholder="Mon-Fri 15:45-17:00; Sat 12:45-13:45" oninput="psAlSchedPreview()"></label>
+            <label>…then new orders wait only (min)<input class="ps-field-input" data-sk="noWaitMinutes" type="number" min="0" max="30" step="1" oninput="psAlSchedPreview()"></label>
+            <label>⏸ Auto print stops at<input class="ps-field-input" data-sk="pauseTimes" type="text" placeholder="Mon-Fri 16:30-17:30; Sat 13:45-15:00; Sun-Sat 20:30-24:00; Sun-Sat 0:00-0:05" oninput="psAlSchedPreview()"></label>
+            <label>📄 Scan form made at<input class="ps-field-input" data-sk="scanFormTimes" type="text" placeholder="Mon-Fri 16:30, 20:45; Sat 13:45, 20:45; Sun 20:45" oninput="psAlSchedPreview()"></label>
+          </div>
+          <div style="display:flex;gap:8px;margin-top:10px;flex-wrap:wrap">
+            <button class="ps-btn-primary" style="width:auto;padding:8px 18px" onclick="psAlSchedSave(this)">💾 Save schedule</button>
+            <button class="ps-btn-sm" onclick="psAlSchedCancel()">Cancel</button>
+            <span id="ps-al-sched-msg" style="font-size:12px;align-self:center"></span>
+          </div>
+        </div>
+      </details>
+
       <!-- Rules -->
       <div class="ps-card" style="margin-bottom:16px">
         <div style="font-size:13px;font-weight:700;color:var(--text);margin-bottom:10px">📐 Rules</div>
         <div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(210px,1fr));gap:10px 14px;font-size:12px;color:var(--text2)" id="ps-al-rules">
           <label>Wait after newest order (min)<input class="ps-field-input" data-k="waitMinutes" type="number" min="0" step="1"></label>
-          <label>No wait at these times (New York)<input class="ps-field-input" data-k="noWaitTimes" type="text" placeholder="Mon-Fri 15:50-17:00; Sat 13:00-14:15"></label>
+          <label>No 30-min wait at these times (New York)<input class="ps-field-input" data-k="noWaitTimes" type="text" placeholder="Mon-Fri 15:45-17:00; Sat 12:45-13:45"></label>
+          <label>…in those times wait only (min, to catch a merge)<input class="ps-field-input" data-k="noWaitMinutes" type="number" min="0" max="30" step="1" placeholder="2"></label>
           <label>⏸ No auto buying at these times (New York)<input class="ps-field-input" data-k="pauseTimes" type="text" placeholder="Mon-Fri 16:30-17:30; Mon-Fri 20:30-24:00; Sat 13:30-24:00"></label>
           <label>📄 USPS scan form by itself<select class="ps-field-input" data-k="scanFormOn"><option value="true">Yes</option><option value="false">No — by hand only</option></select></label>
           <label>…at (New York)<input class="ps-field-input" data-k="scanFormTimes" type="text" placeholder="Mon-Fri 16:30; Sat 13:45"></label>
@@ -2036,6 +2065,30 @@ body {
         </div>
         <div id="ps-al-et-status" style="font-size:12px;margin-bottom:8px;line-height:1.6;white-space:pre-wrap"></div>
         <div id="ps-al-et-list" style="font-size:12px;overflow-x:auto"></div>
+      </div>
+
+      <!-- 📦 Amazon tracking our system sends (owner, 2026-10-08) -->
+      <div class="ps-card" style="margin-bottom:16px">
+        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px;gap:8px;flex-wrap:wrap">
+          <div style="font-size:13px;font-weight:700;color:var(--text)">📦 Amazon tracking (sent by us when Amazon doesn't get it)</div>
+          <button class="ps-btn-sm" onclick="psAlLoadAmzTrack()">↻ Refresh</button>
+        </div>
+        <div style="font-size:12px;color:var(--text3);margin-bottom:10px;line-height:1.5">
+          Mostly the 2nd order of a merged box: Veeqo has the tracking, Amazon doesn't. Every 30 minutes: an Amazon order whose label we bought or merged
+          more than <b id="ps-al-at-wait">2 hours</b> ago and that Amazon still shows <b>Unshipped</b> gets that same tracking number sent to Amazon by our system — so Amazon never asks us to ship it again.
+          No new label is bought. Never for a cancelled label or order. Every one is kept below.
+        </div>
+        <div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap;margin-bottom:8px">
+          <label style="display:flex;align-items:center;gap:6px;font-size:13px;color:var(--text2);cursor:pointer"><input type="checkbox" id="ps-al-at-on" onchange="psAlAmzTrackOn(this.checked)"> On</label>
+          <button class="ps-btn-primary" style="width:auto;padding:8px 18px" onclick="psAlAmzTrackRun(this)">📦 Check Amazon now</button>
+        </div>
+        <div style="display:flex;gap:6px;align-items:center;flex-wrap:wrap;margin-bottom:8px">
+          <input class="ps-field-input" id="ps-al-at-one" placeholder="One Amazon order # (113-1234567-1234567)" style="margin:0;max-width:300px;font-family:var(--mono)">
+          <button class="ps-btn-sm" onclick="psAlAmzTrackOne(this)">🔎 Check this order now</button>
+        </div>
+        <div id="ps-al-at-one-res" style="font-size:12px;margin-bottom:8px;white-space:pre-wrap"></div>
+        <div id="ps-al-at-status" style="font-size:12px;margin-bottom:8px;line-height:1.6;white-space:pre-wrap"></div>
+        <div id="ps-al-at-list" style="font-size:12px;overflow-x:auto"></div>
       </div>
 
       <!-- 💸 Low value list -->
@@ -4607,21 +4660,24 @@ function _psRenderOrderLookupCard(o, opts) {
   var addrLine = [o.address1, o.address2].filter(Boolean).join(', ');
   var cityLine  = [o.city, o.shipToState, o.zip].filter(Boolean).join(', ');
 
-  // NEW — "Activity History": every pick/pack/print/stockout/no-stock/
-  // cancellation event ever logged against this tracking, in one place.
-  // Collapsed by default and fetched lazily on first expand (see
-  // psToggleTrackingHistory + GET /ship/tracking-history) — not loaded
-  // eagerly for every card, since Order Lookup can show up to 50 of these
-  // at once and most searches never open it.
+  // "Activity History": every pick/pack/print/stockout/no-stock/cancellation event logged against this
+  // tracking. Owner (2026-10-08): "don't hide the activity history anymore — show everything" → open and
+  // loaded by itself (a few at a time — Order Lookup can show many cards). Same for 🚚 Carrier tracking:
+  // where the package is now / delivered when (from Veeqo's tracking events). Tap the header to hide.
   var histId = 'ps-ol-hist-' + (_psOrderLookupCardSeq++);
   var histHtml = (o.tracking ? (
     '<div style="margin-top:10px;padding-top:8px;border-top:1px dashed var(--border);">'
+      + '<div style="cursor:pointer;font-size:12px;font-weight:700;color:var(--accent);user-select:none;" onclick="psToggleCarrierTracking(\'' + histId + '-ct\')">🚚 Carrier tracking (' + (o.carrier || 'USPS / UPS') + ') — where is it now</div>'
+      + '<div id="' + histId + '-ct" class="ps-ct-auto" data-tracking="' + o.tracking + '" style="display:block;margin-top:6px;"><div style="font-size:12px;color:var(--text3);">Asking the carrier…</div></div>'
+    + '</div>'
+    + '<div style="margin-top:10px;padding-top:8px;border-top:1px dashed var(--border);">'
       + '<div style="cursor:pointer;font-size:12px;font-weight:700;color:var(--accent);user-select:none;" onclick="psToggleTrackingHistory(\'' + o.tracking + '\',\'' + histId + '\')">'
-      +   '📜 Show Activity History — picks, packs, prints, stock issues, cancellations'
+      +   '📜 Hide Activity History'
       + '</div>'
-      + '<div id="' + histId + '" style="display:none;margin-top:8px;"></div>'
+      + '<div id="' + histId + '" class="ps-hist-auto" data-tracking="' + o.tracking + '" style="display:block;margin-top:8px;"><div style="font-size:12px;color:var(--text3);">Loading activity history…</div></div>'
     + '</div>'
   ) : '');
+  if (o.tracking) setTimeout(_psAutoLoadCards, 0); // after the card is on the page
 
   return '<div class="ps-card" style="margin-bottom:12px;">'
     + '<div style="display:flex;align-items:flex-start;justify-content:space-between;gap:12px;flex-wrap:wrap;margin-bottom:8px;">'
@@ -4640,6 +4696,50 @@ function _psRenderOrderLookupCard(o, opts) {
     + histHtml
     + '</div>';
 }
+
+// Opens and loads every Activity History / Carrier tracking block on the page that isn't loaded yet, 3 at a time.
+var _psAutoBusy = 0;
+function _psAutoLoadCards() {
+  var todo = [].slice.call(document.querySelectorAll('.ps-hist-auto:not([data-loaded]):not([data-loading]), .ps-ct-auto:not([data-loaded]):not([data-loading])'));
+  while (_psAutoBusy < 3 && todo.length) {
+    var el = todo.shift(); el.setAttribute('data-loading', '1'); _psAutoBusy++;
+    var p = el.classList.contains('ps-ct-auto') ? _psLoadCarrierTracking(el) : _psLoadHistoryInto(el, el.getAttribute('data-tracking'));
+    p.then(function() {}, function() {}).then(function() { _psAutoBusy--; _psAutoLoadCards(); });
+  }
+}
+async function _psLoadHistoryInto(el, tracking) {
+  try {
+    var r = await fetch(PS_WORKER + '/ship/tracking-history?tracking=' + encodeURIComponent(tracking), { headers: { 'X-Cred-Token': psCredToken } });
+    var d = await r.json();
+    el.innerHTML = d.ok ? _psRenderTrackingHistory(d.events) : '<div style="font-size:12px;color:var(--err,#c0392b);">Could not load history — ' + (d.error || 'unknown error') + '</div>';
+    if (d.ok) el.dataset.loaded = '1';
+  } catch (e) { el.innerHTML = '<div style="font-size:12px;color:var(--err,#c0392b);">Request failed — ' + e.message + '</div>'; }
+  el.removeAttribute('data-loading'); if (!el.dataset.loaded) el.dataset.loaded = 'err';
+}
+// 🚚 Carrier tracking: delivered (when / where) · out for delivery · in transit · problem · no carrier scan yet, and every scan.
+var _PS_CT_STATE = { delivered: ['✅ Delivered', '#15803d'], out_for_delivery: ['🚚 Out for delivery', '#1d4ed8'], in_transit: ['🚚 In transit', '#1d4ed8'],
+  problem: ['⚠️ Problem — check it', '#b91c1c'], no_scan: ['⏳ No carrier scan yet', '#b45309'], unknown: ['❓ Not found in Veeqo yet', '#6b7280'] };
+async function _psLoadCarrierTracking(el) {
+  var t = el.getAttribute('data-tracking'), E = function(v) { return String(v == null ? '' : v).replace(/[&<>"']/g, function(c) { return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]; }); };
+  try {
+    var r = await fetch(PS_WORKER + '/ship/carrier-tracking?tracking=' + encodeURIComponent(t), { headers: { 'X-Cred-Token': psCredToken } });
+    var d = await r.json();
+    var link = d.link ? ' <a href="' + E(d.link) + '" target="_blank" rel="noopener" style="font-size:11px">Open on ' + E(d.carrier || 'carrier') + ' site ↗</a>' : '';
+    if (!d.ok) { el.innerHTML = '<div style="font-size:12px;color:var(--err,#c0392b);">Could not check — ' + E(d.error || 'unknown error') + link + '</div>'; }
+    else {
+      var st = _PS_CT_STATE[d.state] || [d.state, 'var(--text)'], L = d.last;
+      var head = '<div style="font-size:13px;font-weight:800;color:' + st[1] + '">' + st[0]
+        + (d.state === 'delivered' && d.deliveredAt ? ' — ' + E(psFmtDateTime(d.deliveredAt)) + (d.deliveredWhere ? ' · ' + E(d.deliveredWhere) : '') : '') + '</div>'
+        + (L ? '<div style="font-size:12px;color:var(--text2);margin-top:2px">Last: ' + E(L.text) + (L.where ? ' · ' + E(L.where) : '') + (L.at ? ' · <span style="font-family:var(--mono)">' + E(psFmtDateTime(L.at)) + '</span>' : '') + '</div>' : (d.note ? '<div style="font-size:12px;color:var(--text3)">' + E(d.note) + '</div>' : ''))
+        + '<div style="margin-top:2px">' + link + '</div>';
+      var evs = (d.events || []).map(function(e) { return '<div style="font-size:11px;padding:3px 0;border-bottom:1px solid var(--border)"><span style="font-family:var(--mono);color:var(--text3)">' + E(e.at ? psFmtDateTime(e.at) : '') + '</span> · ' + E(e.text) + (e.where ? ' <span style="color:var(--text3)">· ' + E(e.where) + '</span>' : '') + '</div>'; }).join('');
+      el.innerHTML = head + (evs ? '<details style="margin-top:4px"><summary style="font-size:11px;cursor:pointer;color:var(--text2)">All ' + d.events.length + ' carrier scans</summary>' + evs + '</details>' : '');
+      el.dataset.loaded = '1';
+    }
+  } catch (e) { el.innerHTML = '<div style="font-size:12px;color:var(--err,#c0392b);">Request failed — ' + E(e.message) + '</div>'; }
+  el.removeAttribute('data-loading'); if (!el.dataset.loaded) el.dataset.loaded = 'err';
+}
+window.psToggleCarrierTracking = function(id) { var el = document.getElementById(id); if (el) el.style.display = el.style.display === 'none' ? 'block' : 'none'; };
 
 // Ever-incrementing suffix for the Activity History container id above —
 // _psRenderOrderLookupCard can render many cards on one page (Order Lookup
@@ -4686,7 +4786,7 @@ window.psToggleTrackingHistory = async function(tracking, containerId) {
   el.style.display = 'block';
   if (toggle) toggle.innerHTML = '📜 Hide Activity History';
 
-  if (el.dataset.loaded === '1') return; // already fetched once, just re-showing
+  if (el.dataset.loaded === '1' || el.hasAttribute('data-loading')) return; // already fetched (or being fetched), just re-showing
 
   el.innerHTML = '<div style="font-size:12px;color:var(--text3);">Loading activity history…</div>';
   try {
@@ -5797,6 +5897,8 @@ window.psUnlockTab = async function(tab) {
 
 // Override psSwitchTab to re-show gate if tab not yet unlocked
 window.psSwitchTab = function(name) {
+  if (name === 'lookup') name = 'orderlookup'; // 🔍 Lookup is taken off (owner) — Order Lookup has everything
+  if (name === 'status') name = 'orderlookup'; // 📡 Status Check is taken off (owner)
   document.querySelectorAll('.ps-tabitem').forEach(function(t){ t.classList.remove('active'); });
   document.querySelectorAll('.ps-panel').forEach(function(p){ p.classList.remove('active'); });
   document.getElementById('ps-tab-' + name).classList.add('active');
@@ -8795,6 +8897,77 @@ function psAlOnUnlock() {
   psAlLoadWatch();
 }
 
+// 🗓 Auto print schedule, in plain words, from the saved rules (or from the editor while typing).
+var _PS_DAYN = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
+function _psAlDays(tok) { // "Mon-Fri" / "Sat" / "Sun-Sat" / "Mon,Wed" → [day numbers]
+  var ix = { sun: 0, mon: 1, tue: 2, wed: 3, thu: 4, fri: 5, sat: 6 }, out = [];
+  String(tok || '').toLowerCase().split(/\s*,\s*/).forEach(function(t) {
+    var m = t.match(/^(sun|mon|tue|wed|thu|fri|sat)\w*(?:\s*-\s*(sun|mon|tue|wed|thu|fri|sat)\w*)?$/); if (!m) return;
+    var a = ix[m[1]], b = m[2] != null ? ix[m[2]] : a;
+    for (var k = 0; k < 7; k++) { var d = (a + k) % 7; if (out.indexOf(d) < 0) out.push(d); if (d === b) break; }
+  });
+  return out;
+}
+function _psAlMin(hm) { var m = String(hm || '').match(/^(\d{1,2}):(\d{2})$/); return m ? (+m[1]) * 60 + (+m[2]) : null; }
+function _psAlSegs(text, ranges) { // → [{ days, from, to }] (ranges) or [{ days, at }] (times)
+  var out = [];
+  String(text || '').split(/[;\n]+/).forEach(function(seg) {
+    var m = seg.trim().match(/^([A-Za-z ,\-]+?)\s+([\d:,\s\-]+)$/); if (!m) return;
+    var days = _psAlDays(m[1].trim());
+    m[2].split(/\s*,\s*/).forEach(function(x) {
+      if (ranges) { var r = x.split(/\s*-\s*/); var f = _psAlMin(r[0]), t = _psAlMin(r[1]); if (f != null && t != null) out.push({ days: days, from: f, to: t }); }
+      else { var a = _psAlMin(x.trim()); if (a != null) out.push({ days: days, at: a }); }
+    });
+  });
+  return out;
+}
+function _psAlHm(mins) { var h = Math.floor(mins / 60) % 24, mm = mins % 60; return _psAlClock(h + ':' + (mm < 10 ? '0' : '') + mm); }
+function _psAlSchedHtml(c) {
+  var e = _psAlEsc, wait = +c.waitMinutes || 0, nw = +c.noWaitMinutes || 0;
+  var nwS = _psAlSegs(c.noWaitTimes, true), pS = _psAlSegs(c.pauseTimes, true), sfS = c.scanFormOn === false || c.scanFormOn === 'false' ? [] : _psAlSegs(c.scanFormTimes, false);
+  var perDay = [];
+  for (var d = 0; d < 7; d++) {
+    var ev = {};
+    var add = function(at, txt) { (ev[at] = ev[at] || []).push(txt); };
+    var stopped = function(t) { return pS.some(function(x) { return x.days.indexOf(d) >= 0 && t >= x.from && t < x.to; }); };
+    pS.forEach(function(x) { if (x.days.indexOf(d) < 0) return; if (x.from > 0) add(x.from, '⏸ Auto print STOPS'); if (x.to < 1440) add(x.to, '▶ Auto print STARTS again'); });
+    sfS.forEach(function(x) { if (x.days.indexOf(d) >= 0) add(x.at, '📄 Scan form made'); });
+    nwS.forEach(function(x) { if (x.days.indexOf(d) < 0) return; add(x.from, '⏩ No ' + wait + '-min wait — new orders wait ' + (nw ? nw + ' min (to catch a merge)' : 'no time') + ', then print');
+      if (x.to < 1440 && !stopped(x.to)) add(x.to, 'Back to the ' + wait + '-min wait'); }); // printing stopped then anyway → not said
+    var keys = Object.keys(ev).map(Number).sort(function(a, b) { return a - b; });
+    perDay.push(keys.map(function(k) { return '<tr><td style="padding:2px 10px 2px 0;white-space:nowrap;font-weight:700;font-family:var(--mono);vertical-align:top">' + e(_psAlHm(k)) + '</td><td style="padding:2px 0">' + ev[k].map(e).join(' · ') + '</td></tr>'; }).join(''));
+  }
+  // days with the same day in a row → one group (Mon–Fri, …)
+  var order = [1, 2, 3, 4, 5, 6, 0], groups = [];
+  order.forEach(function(d) { var g = groups[groups.length - 1]; if (g && g.html === perDay[d]) g.days.push(d); else groups.push({ days: [d], html: perDay[d] }); });
+  var name = function(ds) { return ds.length === 1 ? _PS_DAYN[ds[0]] : _PS_DAYN[ds[0]].slice(0, 3) + '–' + _PS_DAYN[ds[ds.length - 1]].slice(0, 3); };
+  return '<div style="font-size:12px;color:var(--text3);margin-bottom:6px">Any other time: an order waits <b>' + wait + ' min</b> after the newest order for that person (so orders to merge come together), then prints.</div>'
+    + groups.map(function(g) { return '<div style="margin-top:6px"><div style="font-weight:800">' + e(name(g.days)) + '</div>' + (g.html ? '<table style="border-collapse:collapse;font-size:13px">' + g.html + '</table>' : '<div style="color:var(--text3)">Prints all day (normal wait).</div>') + '</div>'; }).join('')
+    + '<div style="font-size:11px;color:var(--text3);margin-top:8px">Print Log: labels printed after 5:30 pm (Mon–Fri) count for the next business day in 📦 Ship-day count.</div>';
+}
+function _psAlSchedRender(c) { var el = document.getElementById('ps-al-sched'); if (el && c) el.innerHTML = _psAlSchedHtml(c); }
+function _psAlSchedVals() { var c = {}; document.querySelectorAll('#ps-al-sched-editor [data-sk]').forEach(function(x) { c[x.getAttribute('data-sk')] = x.value; }); return c; }
+window.psAlSchedEdit = function() {
+  var ed = document.getElementById('ps-al-sched-editor'), c = _psAlConfig || {}; if (!ed) return;
+  document.querySelectorAll('#ps-al-sched-editor [data-sk]').forEach(function(x) { var k = x.getAttribute('data-sk'); x.value = c[k] == null ? '' : c[k]; });
+  ed.style.display = 'block'; var b = document.getElementById('ps-al-sched-edit-btn'); if (b) b.style.display = 'none';
+  document.getElementById('ps-al-sched-msg').textContent = '';
+};
+window.psAlSchedPreview = function() { _psAlSchedRender(Object.assign({}, _psAlConfig || {}, _psAlSchedVals())); };
+window.psAlSchedCancel = function() {
+  var ed = document.getElementById('ps-al-sched-editor'); if (ed) ed.style.display = 'none';
+  var b = document.getElementById('ps-al-sched-edit-btn'); if (b) b.style.display = '';
+  _psAlSchedRender(_psAlConfig);
+};
+window.psAlSchedSave = async function(btn) {
+  var v = _psAlSchedVals(), msg = document.getElementById('ps-al-sched-msg');
+  if (!confirm('Save this auto print schedule?\n\n' + document.getElementById('ps-al-sched').innerText.slice(0, 1500))) return;
+  // the same fields as 📐 Rules → saved with every other rule as it is now
+  Object.keys(v).forEach(function(k) { var inp = document.querySelector('#ps-al-rules [data-k="' + k + '"]'); if (inp) inp.value = v[k]; });
+  btn.disabled = true; msg.textContent = 'Saving…';
+  try { await psAlSaveConfig(); msg.textContent = '✓ Saved'; psAlSchedCancel(); }
+  finally { btn.disabled = false; }
+};
 async function psAlLoadConfig() {
   var st = document.getElementById('ps-al-status');
   try {
@@ -8802,6 +8975,7 @@ async function psAlLoadConfig() {
     if (d.ok === false) { st.textContent = '✗ ' + (d.error || 'Could not load'); return; }
     _psAlConfig = d.config;
     _psAlRenderConfig(d);
+    var ed0 = document.getElementById('ps-al-sched-editor'); if (!ed0 || ed0.style.display === 'none') _psAlSchedRender(d.config); // 🗓 plain-words schedule
     if (d.lastRun) _psAlRenderRun(d.lastRun);
   } catch (e) { st.textContent = '✗ ' + e.message; }
 }
@@ -8831,7 +9005,7 @@ function _psAlRenderConfig(d) {
     + '• <b>Bin · SKU · qty</b> written at the bottom of the label for <b>1–4 items</b> (with the product photos) → <b>no packing slip</b><br>'
     + '• <b>Packing slip (with product photos)</b> right after its label when: <b>5+ items</b>, no room on the label, or the label is <b>UPS</b><br>'
     + '• <b>Same name + address:</b> ' + (c.autoMerge ? 'together up to <b>' + c.mergeMaxLb + ' lb</b> → <b>one box, one label</b> (the other orders get the same tracking #); heavier → <b>put aside</b> (🔗 Merge by hand)' : '<b>put aside</b> (🔗 Merge by hand) — one box is off') + '<br>'
-    + '• Waits <b>' + c.waitMinutes + ' min</b> after the newest order' + (c.noWaitTimes ? ' — <b>except ' + _psAlEsc(c.noWaitTimes) + '</b> (New York time): prints as soon as an order comes in' : '') + '<br>'
+    + '• Waits <b>' + c.waitMinutes + ' min</b> after the newest order' + (c.noWaitTimes ? ' — <b>except ' + _psAlEsc(c.noWaitTimes) + '</b> (New York time): prints ' + (c.noWaitMinutes ? c.noWaitMinutes + ' min after an order comes in (time for a merge order to come in)' : 'as soon as an order comes in') + '' : '') + '<br>'
     + '• Never buys for a cancelled order<br>'
     + (c.pauseTimes ? '• <b>⏸ No auto buying:</b> ' + _psAlEsc(c.pauseTimes) + ' (New York) — around the scan forms; labels can still be bought by hand<br>' : '')
     + '• <b>📄 USPS scan form:</b> ' + (c.scanFormOn ? 'made by itself <b>' + _psAlEsc(_psAlTimesText(c.scanFormTimes) || '—') + '</b>, night check <b>' + _psAlEsc(_psAlClock(c.scanFormCheckAt)) + '</b> (one more if a USPS label came after the last form; USPS cut-off 9 pm, no Sunday)' : 'by hand only (📄 Make scan form now)')
@@ -9335,6 +9509,28 @@ function _psAlTimesLines(text) {
 function _psAlTimesText(text) { return _psAlTimesLines(text).join(' · '); }
 // 🚚 Leaving for USPS (owner): "that two scan forms trigger also and ask them to print". Today's forms (saved on the
 // server, so no computer has to stay open); USPS labels not on a form yet → offer to make one first.
+// 📄 Owner (2026-10-08): "Leaving for USPS — the scan form came out, but print it on our INK printer, not the label printer".
+// A window opened for labels (🖨 Printer station, kiosk printing) always prints to the label printer, so from any window that
+// isn't the 📄 Scan Form Station the forms are SENT to it (prints on the ink printer within a minute). Not open → say so first.
+function _psSfIsHere() { try { return localStorage.getItem('xf_sf_station') === '1'; } catch (e) { return false; } }
+function _psLabelStationHere() { try { return localStorage.getItem('xf_slip_station') === '1'; } catch (e) { return false; } }
+async function _psSfPrintSomewhere(list, btn) {
+  if (_psSfIsHere()) return psAlScanFormPrintList(list, btn); // this IS the ink printer window
+  var d = await _psAlFetch('/veeqo/autolabel/scanforms').catch(function() { return {}; });
+  var seen = d && d.stationSeenAt ? Date.parse(d.stationSeenAt) : 0, alive = seen && Date.now() - seen < 3 * 60000;
+  if (alive) {
+    var r = await _psAlFetch('/veeqo/autolabel/scanform-send', { method: 'POST', body: { ids: list.map(function(x) { return x.id; }), by: psInitials || '' } }).catch(function(e) { return { ok: false, error: e.message }; });
+    if (r.ok === false) { alert('📄 Could not send the scan form to the ink printer: ' + (r.error || 'failed') + '\n\nPrint it from Auto Label → 📄 USPS scan form on the Scan Form Station window.'); return; }
+    _psToast('📄 Sent to the ink printer (Scan Form Station) — it prints within a minute');
+    if (typeof psAlLoadScanForms === 'function') setTimeout(psAlLoadScanForms, 1500);
+    return;
+  }
+  var msg = '📄 The Scan Form Station (ink printer window on xfitting3) is not open' + (seen ? ' — last seen ' + new Date(seen).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' }) : '') + '.\n\n';
+  if (_psLabelStationHere()) {
+    if (!confirm(msg + 'This window prints to the LABEL printer. Open the "Scan Form Station" shortcut on xfitting3 and tap 🚚 Leaving for USPS again.\n\nOK = print here anyway (it comes out on the label printer) · Cancel = don\'t print now')) return;
+  } else if (!confirm(msg + 'OK = print it here — pick the INK printer and Letter paper in the print window · Cancel = don\'t print now')) return;
+  return psAlScanFormPrintList(list, btn);
+}
 window.psUspsScanFormsPrompt = async function() {
   var d; try { d = await _psAlFetch('/veeqo/autolabel/scanforms'); } catch (e) { d = { ok: false, error: e.message }; }
   if (!d || d.ok === false) { alert('📄 Could not load today\'s USPS scan forms (' + ((d && d.error) || 'no answer') + ').\nOpen Auto Label → 📄 USPS scan form to print them.'); return; }
@@ -9351,7 +9547,7 @@ window.psUspsScanFormsPrompt = async function() {
   var pages = forms.reduce(function(t, f) { return t + (f.parts || 1); }, 0);
   var when = forms.map(function(f) { return new Date(f.created_at).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' }); }).join(', ');
   if (confirm('📄 Today\'s USPS scan forms: ' + pages + ' form' + (pages === 1 ? '' : 's') + ' (made ' + when + ').\n\nPrint ' + (pages === 1 ? 'it' : 'them') + ' now and hand ' + (pages === 1 ? 'it' : 'them') + ' to USPS with the packages?'))
-    await psAlScanFormPrintList(forms.map(function(f) { return { id: f.id, parts: f.parts || 1 }; }));
+    await _psSfPrintSomewhere(forms.map(function(f) { return { id: f.id, parts: f.parts || 1 }; }));
 };
 // 🔎 Owner: "still only one scan form, but should have 2" — shows what Veeqo sent back (long files shortened), with 📋 Copy.
 window.psAlScanFormAnswer = async function(id) {
@@ -9483,6 +9679,7 @@ window.psAlDayCsv = function() {
 };
 // 📮 eBay tracking our system adds (owner: "merged eBay orders don't get the tracking — wait 1–2 h, then add it").
 window.psAlLoadEbayTrack = async function() {
+  if (typeof psAlLoadAmzTrack === 'function') psAlLoadAmzTrack();
   var st = document.getElementById('ps-al-et-status'), box = document.getElementById('ps-al-et-list'); if (!st || !box) return;
   var d = await _psAlFetch('/veeqo/autolabel/ebay-tracking'); if (d.ok === false) { st.textContent = '✗ ' + (d.error || 'Failed'); return; }
   var e = _psAlEsc, c = d.config || {}, L = d.last;
@@ -9495,6 +9692,50 @@ window.psAlLoadEbayTrack = async function() {
       + td + '">' + e(r.carrier) + ' <span style="font-family:var(--mono)">' + e(r.tracking) + '</span> · ' + e(r.source) + '</td>'
       + td + ';color:' + (r.ok ? 'var(--green)' : 'var(--red)') + '">' + (r.ok ? '✅ added' : '❌ ' + e(r.detail) + ' <button class="ps-btn-sm" data-t="' + e(r.ebay_order_id + ' ' + r.tracking + ' — ' + r.detail) + '" onclick="_psAlCopy(this.getAttribute(\'data-t\'), this)">📋 Copy</button>') + (r.by_user && r.by_user !== 'auto' ? ' · ' + e(r.by_user) : '') + '</td></tr>';
   }).join('') + '</table>' : '<div style="color:var(--text3)">Nothing added yet.</div>';
+};
+// 📦 Amazon tracking our system sends (owner: "the 2nd merged order still has no tracking on Amazon — don't let Amazon ask us to ship it again").
+window.psAlLoadAmzTrack = async function() {
+  var st = document.getElementById('ps-al-at-status'), box = document.getElementById('ps-al-at-list'); if (!st || !box) return;
+  var d = await _psAlFetch('/veeqo/autolabel/amazon-tracking'); if (d.ok === false) { st.textContent = '✗ ' + (d.error || 'Failed'); return; }
+  var e = _psAlEsc, c = d.config || {}, L = d.last;
+  var on = document.getElementById('ps-al-at-on'); if (on) on.checked = !!c.on;
+  var w = document.getElementById('ps-al-at-wait'); if (w) w.textContent = (c.waitMinutes >= 60 && c.waitMinutes % 60 === 0) ? (c.waitMinutes / 60) + ' hour' + (c.waitMinutes === 60 ? '' : 's') : c.waitMinutes + ' min';
+  st.textContent = L ? 'Last check ' + new Date(L.at).toLocaleString() + ': ' + L.checked + ' Amazon orders checked · ✓ ' + (L.fine || 0) + ' already shipped on Amazon · ✅ ' + L.added + ' sent · ❌ ' + L.failed + ' failed · ⏳ ' + L.waiting + ' waiting' : 'Not checked yet.';
+  box.innerHTML = (d.rows || []).length ? '<table style="width:100%;border-collapse:collapse">' + d.rows.map(function(r) {
+    var td = '<td style="padding:4px 6px;border-bottom:1px solid var(--border)';
+    return '<tr>' + td + ';white-space:nowrap">' + e(new Date(r.ts).toLocaleString()) + '</td>' + td + ';font-family:var(--mono)">' + e(r.order_number) + '</td>'
+      + td + '">' + e(r.carrier) + ' <span style="font-family:var(--mono)">' + e(r.tracking) + '</span> · ' + e(r.source) + (r.amazon_status ? ' · was ' + e(r.amazon_status) : '') + '</td>'
+      + td + ';color:' + (r.ok ? 'var(--green)' : 'var(--red)') + '">' + (r.ok ? '✅ sent to Amazon' : '❌ ' + e(r.detail) + ' <button class="ps-btn-sm" data-t="' + e(r.order_number + ' ' + r.tracking + ' — ' + r.detail) + '" onclick="_psAlCopy(this.getAttribute(\'data-t\'), this)">📋 Copy</button>') + (r.by_user && r.by_user !== 'auto' ? ' · ' + e(r.by_user) : '') + '</td></tr>';
+  }).join('') + '</table>' : '<div style="color:var(--text3)">Nothing sent yet.</div>';
+};
+window.psAlAmzTrackOn = async function(on) {
+  var d = await _psAlFetch('/veeqo/autolabel/amazon-tracking-config', { method: 'POST', body: { config: { on: !!on } } });
+  _psToast(d.ok === false ? (d.error || 'Not saved') : on ? '📦 Amazon tracking check on' : 'Amazon tracking check off', d.ok === false ? 'err' : undefined);
+  psAlLoadAmzTrack();
+};
+window.psAlAmzTrackRun = async function(btn) {
+  btn.disabled = true; var t = btn.textContent; btn.textContent = '⏳ Checking Amazon…';
+  try {
+    var d = await _psAlFetch('/veeqo/autolabel/amazon-tracking-run', { method: 'POST', body: {} });
+    var st = document.getElementById('ps-al-at-status');
+    if (d.ok === false) { if (st) st.textContent = '✗ ' + (d.error || 'failed'); return; }
+    _psToast('📦 ' + d.added.length + ' tracking sent to Amazon' + (d.failed.length ? ' · ' + d.failed.length + ' failed' : '') + ' · ' + (d.fine || []).length + ' already shipped');
+  } finally { btn.disabled = false; btn.textContent = t; psAlLoadAmzTrack(); }
+};
+window.psAlAmzTrackOne = async function(btn) {
+  var inp = document.getElementById('ps-al-at-one'), out = document.getElementById('ps-al-at-one-res'), n = String((inp && inp.value) || '').trim();
+  if (!n) { if (out) out.textContent = 'Type an Amazon order #'; return; }
+  btn.disabled = true; var t = btn.textContent; btn.textContent = '⏳ Asking Amazon…';
+  try {
+    var d = await _psAlFetch('/veeqo/autolabel/amazon-tracking-run', { method: 'POST', body: { order: n } });
+    var e = _psAlEsc, r = d.fine && d.fine[0] || d.added && d.added[0] || d.failed && d.failed[0] || d.skipped && d.skipped[0];
+    out.innerHTML = d.ok === false ? '<span style="color:var(--red)">✗ ' + e(d.error || 'failed') + '</span>'
+      : !r ? '<span style="color:var(--text3)">Nothing to check for ' + e(n) + '.</span>'
+      : (d.fine && d.fine[0] ? '<span style="color:var(--green);font-weight:700">✓ ' + e(n) + ': Amazon already shows it SHIPPED</span> (tracking ' + e(r.tracking) + ') — nothing to do, Amazon won\'t ask for it again.'
+        : d.added && d.added[0] ? '<span style="color:var(--green);font-weight:700">✅ ' + e(n) + ' was ' + e(r.amazonStatus || 'unshipped') + ' on Amazon — our tracking ' + e(r.tracking) + ' (' + e(r.carrier || '') + ') was just sent.</span> No new label bought.'
+        : d.failed && d.failed[0] ? '<span style="color:var(--red);font-weight:700">❌ ' + e(n) + ': not sent — ' + e(r.detail) + '</span> Add tracking ' + e(r.tracking) + ' by hand in Seller Central.'
+        : '<span style="color:var(--orange)">' + e(n) + ': ' + e(r.why || r.detail || '') + '</span>');
+  } finally { btn.disabled = false; btn.textContent = t; psAlLoadAmzTrack(); }
 };
 window.psAlEbayTrackOn = async function(on) {
   var d = await _psAlFetch('/veeqo/autolabel/ebay-tracking-config', { method: 'POST', body: { config: { on: !!on } } });
@@ -9518,7 +9759,7 @@ window.psAlScanFormMake = async function(btn) {
     if (d.ok === false) { _psAlSfErr('Scan form not made', (d.error || 'failed') + '\n\n' + JSON.stringify(d.tried || [], null, 1).slice(0, 3000)); }
     else { var eb = document.getElementById('ps-al-sf-err'); if (eb) eb.style.display = 'none'; _psToast('📄 Scan form made — printing ' + (d.parts || 1) + ' form' + ((d.parts || 1) > 1 ? 's' : ''));
       var fl = (d.forms && d.forms.length) ? d.forms : [{ id: d.id, parts: d.parts }];
-      await psAlScanFormPrintList(fl.map(function(x) { return { id: x.id, parts: x.parts || 1 }; })); } // every form Veeqo gave, one print (owner: "two scan forms, we only print one")
+      await _psSfPrintSomewhere(fl.map(function(x) { return { id: x.id, parts: x.parts || 1 }; })); } // every form Veeqo gave, one print (owner: "two scan forms, we only print one")
   } finally { btn.disabled = false; btn.textContent = t; psAlLoadScanForms(); }
 };
 // parts: how many forms Veeqo gave in this one answer (often 2). Owner: "still only one scan form, should have 2"
@@ -9557,7 +9798,7 @@ async function _psAlScanFormPagesHtml(files) {
     + '.sf{display:block;width:' + w.toFixed(2) + 'in;height:' + h.toFixed(2) + 'in;object-fit:contain;page-break-after:always;break-after:page}.sf:last-child{page-break-after:auto;break-after:auto}</style></head><body>'
     + pages.map(function(pg) { return '<img class="sf" src="' + pg.src + '">'; }).join('') + '</body></html>' };
 }
-window.psAlScanFormPrint = function(id, btn, parts) { return psAlScanFormPrintList([{ id: id, parts: parts }], btn); };
+window.psAlScanFormPrint = function(id, btn, parts) { return _psSfPrintSomewhere([{ id: id, parts: parts }], btn); }; // Reprint → the ink printer too
 // Several scan form records (one per pickup address / carrier) → still ONE print with every page.
 window.psAlScanFormPrintList = async function(list, btn) {
   if (btn) { btn.disabled = true; btn.textContent = '⏳'; }
@@ -9585,7 +9826,7 @@ window.psAlScanFormStation = function(on, quiet) {
   var tick = async function() {
     if (_psAlSfBusy) return; _psAlSfBusy = true;
     try {
-      await _psAlFetch('/veeqo/autolabel/scanform-tick', { method: 'POST', body: {} });
+      await _psAlFetch('/veeqo/autolabel/scanform-tick', { method: 'POST', body: { station: true } }); // also says "the Scan Form Station is open"
       var d = await _psAlFetch('/veeqo/autolabel/scanforms');
       var day = d && d.forms && d.forms[0] && d.forms[0].day;
       var todo = ((d && d.forms) || []).filter(function(f) { return f.ok && f.kind !== 'night_ok' && !f.printed_at && f.day === day; });
@@ -10658,6 +10899,16 @@ function _psAlWatchRender(d) {
         + '<button class="ps-btn-sm" onclick="psAlWatchChecked(' + l.id + ', this)">✓ Checked</button></span></div>';
     }).join('');
   } else h += '<div style="color:var(--text3)">No label waiting to be picked up. 👍</div>';
+  // 📜 Owner: missed by the Print Log scanner but scanned at Picking / Packing → the label printed fine; no reminder, history only.
+  var lat = d.later || [];
+  if (lat.length) h += '<details style="margin-top:8px"><summary style="cursor:pointer;font-weight:700;color:var(--text2)">📜 History — ' + lat.length + ' label' + (lat.length === 1 ? '' : 's') + ' the Print Log scanner missed, but Picking / Packing scanned (no need to reprint)</summary>'
+    + lat.map(function(l) {
+      return '<div style="display:flex;gap:8px;flex-wrap:wrap;padding:5px 0;border-bottom:1px solid var(--border);font-size:12px">'
+        + '<span style="font-family:var(--mono);font-weight:700">' + e(l.order_number) + '</span><span style="font-family:var(--mono);color:var(--text3)">' + e(l.tracking || '') + '</span>'
+        + '<span style="color:var(--text3)">printed ' + e(t(l.printedAt)) + '</span>'
+        + (l.pickAt ? '<span style="color:var(--green)">🧺 picked by <b>' + e(l.pickBy || '?') + '</b> ' + e(t(l.pickAt)) + '</span>' : '')
+        + (l.packAt ? '<span style="color:var(--green)">📦 packed by <b>' + e(l.packBy || '?') + '</b> ' + e(t(l.packAt)) + '</span>' : '') + '</div>';
+    }).join('') + '</details>';
   box.innerHTML = h;
 }
 window.psAlWatchRelease = async function(quiet) {

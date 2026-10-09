@@ -2388,20 +2388,22 @@ console.log('\nAuto Label → ✂️ over 20 lb: split into boxes in Veeqo (piec
 
 // Owner: "Monday–Friday after 3:50 pm, no more half-hour waiting — print as soon as an order comes in, until 5 pm;
 // Saturday 1 pm to 2:15 pm; after that back to the half-hour wait".
-console.log('\nAuto Label → no-wait times: Mon–Fri 3:50–5 pm, Sat 1–2:15 pm (New York) print right away');
+// Owner (2026-10-08): "Mon–Fri at 3:45 pm stop the 30-minute wait, print what is waiting; new orders wait 2 minutes (a merge may come in)".
+console.log('\nAuto Label → no-wait times: Mon–Fri 3:45–5 pm, Sat 1–2:15 pm (New York): no 30-min wait, 2 min for a merge');
 {
   const { readFileSync } = await import('node:fs');
   const ws = readFileSync(workerPath, 'utf8');
   const grab = n => (ws.match(new RegExp('function ' + n + '\\([\\s\\S]*?\\n}')) || [''])[0];
   const f = new Function("const AUTOLABEL_DAYS = ['sun', 'mon', 'tue', 'wed', 'thu', 'fri', 'sat'];" + ['autolabelNoWaitParse', 'autolabelNoWaitText', 'autolabelNoWaitClean', 'autolabelNoWaitNow'].map(grab).join('\n') + '; return { autolabelNoWaitNow, autolabelNoWaitClean };')();
-  const cfg = { noWaitTimes: 'Mon-Fri 15:50-17:00; Sat 13:00-14:15' };
+  const cfg = { noWaitTimes: 'Mon-Fri 15:45-17:00; Sat 12:45-13:45' };
   const at = t => !!f.autolabelNoWaitNow(cfg, new Date(t));
-  check('Mon 3:50 pm → no wait; 3:49 pm → wait; 4:59 pm → no wait; 5:00 pm → wait (New York, summer time)',
-    at('2026-10-05T19:50:00Z') && !at('2026-10-05T19:49:00Z') && at('2026-10-05T20:59:00Z') && !at('2026-10-05T21:00:00Z'), null);
-  check('…Fri 4 pm no wait; Sat 1:00–2:14 pm no wait, 2:15 pm and 12:59 pm wait; Sunday always waits; winter time too (Dec Mon 3:55 pm)',
-    at('2026-10-09T20:00:00Z') && at('2026-10-10T17:00:00Z') && at('2026-10-10T18:14:00Z') && !at('2026-10-10T18:15:00Z') && !at('2026-10-10T16:59:00Z')
+  check('Mon 3:45 pm → no wait; 3:44 pm → wait; 4:59 pm → no wait; 5:00 pm → wait (New York, summer time)',
+    at('2026-10-05T19:45:00Z') && !at('2026-10-05T19:44:00Z') && at('2026-10-05T20:59:00Z') && !at('2026-10-05T21:00:00Z'), null);
+  check('…Fri 4 pm no wait; Sat 12:45–1:44 pm no wait, 1:45 pm and 12:44 pm wait; Sunday always waits; winter time too (Dec Mon 3:55 pm)',
+    at('2026-10-09T20:00:00Z') && at('2026-10-10T16:45:00Z') && at('2026-10-10T17:44:00Z') && !at('2026-10-10T17:45:00Z') && !at('2026-10-10T16:44:00Z')
     && !at('2026-10-11T20:00:00Z') && at('2026-12-07T20:55:00Z'), null);
-  check('…the default is the owner\'s times, written the same way after a save', /noWaitTimes: 'Mon-Fri 15:50-17:00; Sat 13:00-14:15'/.test(ws) && f.autolabelNoWaitClean(' mon-fri 15:50-17:00 ;sat 13:00-14:15') === 'Mon-Fri 15:50-17:00; Sat 13:00-14:15', null);
+  // Owner (2026-10-08): Saturday no 30-min wait from 12:45 pm until printing stops at 1:45 pm.
+  check('…the default is the owner\'s times, written the same way after a save', /noWaitTimes: 'Mon-Fri 15:45-17:00; Sat 12:45-13:45'/.test(ws) && f.autolabelNoWaitClean(' mon-fri 15:45-17:00 ;sat 12:45-13:45') === 'Mon-Fri 15:45-17:00; Sat 12:45-13:45', null);
   // A run inside a no-wait time: a 5-minute-old order is not held back; outside it, it waits.
   const realFetch = globalThis.fetch;
   const items = [{ quantity: 1, sellable: { id: 1201, sku_code: '1=NW', weight_grams: 100, stock_entries: [{ warehouse_id: 55, location: '1-1-1' }] } }];
@@ -2420,10 +2422,20 @@ console.log('\nAuto Label → no-wait times: Mon–Fri 3:50–5 pm, Sat 1–2:15
   const d = r => (r.orders.find(o => o.number === 'NW-1') || {}).decision;
   check('…a run in a no-wait time: a 5-min-old order is rate-checked right away (not ⏳ Waiting) and the run says so; outside it: ⏳ Waiting',
     d(r1) === 'would_buy' && (r1.notes || []).some(n => /No-wait time/.test(n)) && d(r2) === 'waiting', { r1: d(r1), r2: d(r2), notes: r1.notes });
-  await post('/veeqo/autolabel/config', { config: { mode: 'off', noWaitTimes: 'Mon-Fri 15:50-17:00; Sat 13:00-14:15' } });
+  ord.created_at = new Date(Date.now() - 60e3).toISOString(); // 1 min old
+  await post('/veeqo/autolabel/config', { config: { noWaitTimes: 'Sun-Sat 0:00-24:00' } });
+  const r3 = await post('/veeqo/autolabel/run', {});
+  ord.created_at = new Date(Date.now() - 3 * 60e3).toISOString(); // 3 min old
+  const r4 = await post('/veeqo/autolabel/run', {});
+  check('…in a no-wait time an order waits 2 min (a merge order may come in): 1 min old → ⏳ Waiting "1 min left", 3 min old → would buy; the run says "2 min after it comes in"',
+    d(r3) === 'waiting' && /1 min left/.test((r3.orders.find(o => o.number === 'NW-1') || {}).reason) && d(r4) === 'would_buy' && (r3.notes || []).some(n => /2 min after it comes in/.test(n)), { r3: d(r3), r4: d(r4), notes: r3.notes });
+  check('…saved rules moved once to the owner\'s new times (3:45 pm, 2 min) and that is on record',
+    /autolabel_rules_nowait_345_1008/.test(ws) && /noWaitMinutes: 2,/.test(ws) && /waitMinutes: cfgSaved\.noWaitMinutes \|\| 0/.test(ws), null);
+  await post('/veeqo/autolabel/config', { config: { mode: 'off', noWaitTimes: 'Mon-Fri 15:45-17:00; Sat 12:45-13:45' } });
   globalThis.fetch = realFetch; delete env.VEEQO_API_KEY;
   const ph = readFileSync(fileURLToPath(new URL('../packship.html', import.meta.url)), 'utf8');
-  check('…Rules: "No wait at these times (New York)" box, and the rules line says it in plain words', /data-k="noWaitTimes"/.test(ph) && /prints as soon as an order comes in/.test(ph), null);
+  check('…Rules: "No 30-min wait at these times (New York)" box + "wait only (min, to catch a merge)" box, and the rules line says it in plain words',
+    /data-k="noWaitTimes"/.test(ph) && /data-k="noWaitMinutes"/.test(ph) && /prints ' \+ \(c\.noWaitMinutes \? c\.noWaitMinutes \+ ' min after an order comes in \(time for a merge order to come in\)'/.test(ph), null);
 }
 
 // Owner: "click each box to fix its size and weight — Veeqo's weight is sometimes wrong. 100 pcs 3/8 pex angle: system 20 lb,
@@ -2474,7 +2486,7 @@ console.log('\nAuto Label → 📦 confirmed box weight + size: same SKU × quan
     && sq.prepare("SELECT after_val FROM box_weight_log WHERE box_key = '100=3/8 ANGLE×1' ORDER BY id DESC").get()?.after_val === 'removed', r3);
   check('…bad input refused: no weight, or only part of the size', !(await post('/veeqo/autolabel/box-confirm', { lines: [{ sku: 'X', qty: 1 }], weightLb: 0 })).ok
     && !(await post('/veeqo/autolabel/box-confirm', { lines: [{ sku: 'X', qty: 1 }], weightLb: 3, lengthIn: 5 })).ok, null);
-  await post('/veeqo/autolabel/config', { config: { mode: 'off', noWaitTimes: 'Mon-Fri 15:50-17:00; Sat 13:00-14:15' } });
+  await post('/veeqo/autolabel/config', { config: { mode: 'off', noWaitTimes: 'Mon-Fri 15:45-17:00; Sat 12:45-13:45' } });
   globalThis.fetch = realFetch; delete env.VEEQO_API_KEY;
   const { readFileSync } = await import('node:fs');
   const ph = readFileSync(fileURLToPath(new URL('../packship.html', import.meta.url)), 'utf8');
@@ -2581,11 +2593,11 @@ console.log('\nAuto Label → 📄 USPS scan form: Mon–Fri 4:30 pm, Sat 1:45 p
   const ph2 = readFileSync0(fileURLToPath(new URL('../packship.html', import.meta.url)), 'utf8');
   check('📄 Veeqo gives TWO scan forms in one answer → both are kept and printed: form 1 and form 2 are different PDFs, there is no 3rd (the same link twice is one form), the list says 2, and the page prints every part',
     h.parts === 2 && /sf\d+a\.pdf/.test(t0) && /sf\d+b\.pdf/.test(t1) && t0 !== t1 && p2.status === 404 && (lst2.forms.find(f => f.id === sfRow.id) || {}).parts === 2 && !('source' in lst2.forms[0])
-      && /for \(var n = 0; n < Math\.max\(1, parts \|\| 1\); n\+\+\)/.test(ph2) && /await psAlScanFormPrintList\(fl\.map\(/.test(ph2) && /if \(todo\.length\) await psAlScanFormPrintList\(todo\.map\(/.test(ph2), { parts: h.parts, t0, t1, p2: p2.status });
+      && /for \(var n = 0; n < Math\.max\(1, parts \|\| 1\); n\+\+\)/.test(ph2) && /await _psSfPrintSomewhere\(fl\.map\(/.test(ph2) && /return psAlScanFormPrintList\(list, btn\);/.test(ph2) && /if \(todo\.length\) await psAlScanFormPrintList\(todo\.map\(/.test(ph2), { parts: h.parts, t0, t1, p2: p2.status });
   // Owner (🔎 Veeqo's answer: 2 manifests, 2 links found) "still only one printed" — two print() calls in a row, Chrome drops the 2nd.
   check('…every page of every form goes in ONE print (Chrome drops a 2nd print right after the 1st): each PDF page drawn at its own size, one print call; by hand, the station and Reprint all print the whole list at once',
     /var files = \[\], one = null;/.test(ph2) && /for \(var p = 1; p <= pdf\.numPages; p\+\+\)/.test(ph2) && /if \(one && one\.count\) \{ var keep = _psAlBatch; _psAlBatch = null; await _psAlPrintHtml\(one\.html\); _psAlBatch = keep; \}/.test(ph2)
-      && /window\.psAlScanFormPrint = function\(id, btn, parts\) \{ return psAlScanFormPrintList\(\[\{ id: id, parts: parts \}\], btn\); \};/.test(ph2), null);
+      && /window\.psAlScanFormPrint = function\(id, btn, parts\) \{ return _psSfPrintSomewhere\(\[\{ id: id, parts: parts \}\], btn\); \};/.test(ph2), null);
   // Owner: "still only one scan form, should have 2 (Veeqo pops up two tabs)" — a form can also come as a picture or a data: link.
   const wsP = readFileSync0(workerPath, 'utf8');
   const partsFn = new Function((wsP.match(/function autolabelFindFile[\s\S]*?\n\}/) || [''])[0] + '\n' + (wsP.match(/function autolabelScanFormParts[\s\S]*?\n\}/) || [''])[0] + '\n' + (wsP.match(/function autolabelShorten[\s\S]*?\n\}/) || [''])[0] + '; return [autolabelScanFormParts, autolabelShorten];')();
@@ -2631,28 +2643,32 @@ console.log('\nAuto Label → ⏸ no auto buying around the scan forms; scan for
   const c = (await get('/veeqo/autolabel/config')).config;
   const { readFileSync: rf0 } = await import('node:fs'); const ws0 = rf0(workerPath, 'utf8');
   // Owner (2026-10-08) changed the rule: 8:50 pm scan form EVERY day (Saturday too); no auto print 8:30 pm – 12:10 am (was 12:05).
-  check('the owner\'s schedule is the rule now (saved rules too, once): scan forms Mon-Fri 16:30 + 20:50, Sat 13:45 + 20:50, Sun 20:50; no auto buying Mon-Fri 16:30-17:30 + 20:30-24:00, Sat 13:30-24:00, Sun 20:30-24:00, every day 0:00-0:10',
-    /scanFormTimes: 'Mon-Fri 16:30, 20:50; Sat 13:45, 20:50; Sun 20:50'/.test(ws0) && /scanFormCheckAt: '20:55'/.test(ws0)
-    && c.pauseTimes === 'Mon-Fri 16:30-17:30; Mon-Fri 20:30-24:00; Sat 13:30-24:00; Sun 20:30-24:00; Mon-Sun 0:00-0:10'
-    && sq.prepare("SELECT value FROM app_config WHERE key = 'autolabel_rules_scanform_850_1008'").get()?.value === 'done', c);
+  // Owner (2026-10-08, latest): "Mon–Fri stop 4:30, start again 5:30 pm; Saturday stop 1:45, start again 3 pm; every day stop
+  // 8:30 pm, scan form 8:45 pm, start again 12:05 am".
+  check('the owner\'s schedule is the rule now (saved rules too, once): scan forms Mon-Fri 16:30 + 20:45, Sat 13:45 + 20:45, Sun 20:45; no auto buying Mon-Fri 16:30-17:30, Sat 13:45-15:00, every day 20:30-24:00 and 0:00-0:05',
+    /scanFormTimes: 'Mon-Fri 16:30, 20:45; Sat 13:45, 20:45; Sun 20:45'/.test(ws0) && /scanFormCheckAt: '20:55'/.test(ws0)
+    && /pauseTimes: 'Mon-Fri 16:30-17:30; Sat 13:45-15:00; Sun-Sat 20:30-24:00; Sun-Sat 0:00-0:05'/.test(ws0)
+    && c.pauseTimes === 'Mon-Fri 16:30-17:30; Sat 13:45-15:00; Mon-Sun 20:30-24:00; Mon-Sun 0:00-0:05'
+    && sq.prepare("SELECT value FROM app_config WHERE key = 'autolabel_rules_sched_845_1008'").get()?.value === 'done', c);
   const { readFileSync } = await import('node:fs');
   const ws = readFileSync(workerPath, 'utf8');
   const grab = n => (ws.match(new RegExp('function ' + n + '\\([\\s\\S]*?\\n}')) || [''])[0];
   const f = new Function("const AUTOLABEL_DAYS = ['sun', 'mon', 'tue', 'wed', 'thu', 'fri', 'sat'];" + ['autolabelNoWaitParse', 'autolabelNoWaitText', 'autolabelNoWaitClean', 'autolabelNoWaitNow'].map(grab).join('\n') + '; return { autolabelNoWaitNow };')();
   const P = t => !!f.autolabelNoWaitNow({ noWaitTimes: c.pauseTimes }, new Date(t));
   // New York summer time = UTC − 4. Tue Oct 6 2026.
-  check('Tue 4:29 pm buys · 4:30 pm stops · 5:29 pm stopped · 5:30 pm buys again · 8:29 pm buys · 8:30 pm stops · 11:59 pm stopped · 12:09 am stopped · 12:10 am buys',
+  check('Tue 4:29 pm buys · 4:30 pm stops · 5:29 pm stopped · 5:30 pm buys again · 8:29 pm buys · 8:30 pm stops · 11:59 pm stopped · 12:04 am stopped · 12:05 am buys',
     !P('2026-10-06T20:29:00Z') && P('2026-10-06T20:30:00Z') && P('2026-10-06T21:29:00Z') && !P('2026-10-06T21:30:00Z') && !P('2026-10-07T00:29:00Z') && P('2026-10-07T00:30:00Z')
-    && P('2026-10-07T03:59:00Z') && P('2026-10-07T04:09:00Z') && !P('2026-10-07T04:10:00Z'), null);
-  check('…Sat 1:29 pm buys · 1:30 pm stops for the rest of Saturday · Sun 10 am buys · Sun 8:30 pm stops · Mon 12:09 am stopped · 12:10 am buys',
-    !P('2026-10-10T17:29:00Z') && P('2026-10-10T17:30:00Z') && P('2026-10-11T03:00:00Z') && !P('2026-10-11T14:00:00Z') && P('2026-10-12T00:30:00Z') && P('2026-10-12T04:09:00Z') && !P('2026-10-12T04:10:00Z'), null);
+    && P('2026-10-07T03:59:00Z') && P('2026-10-07T04:04:00Z') && !P('2026-10-07T04:05:00Z'), null);
+  check('…Sat 1:44 pm buys · 1:45 pm stops · 2:59 pm stopped · 3:00 pm buys again · Sat 8:30 pm stops · Sun 10 am buys · Sun 8:30 pm stops · Mon 12:04 am stopped · 12:05 am buys',
+    !P('2026-10-10T17:44:00Z') && P('2026-10-10T17:45:00Z') && P('2026-10-10T18:59:00Z') && !P('2026-10-10T19:00:00Z') && P('2026-10-11T00:30:00Z')
+    && !P('2026-10-11T14:00:00Z') && P('2026-10-12T00:30:00Z') && P('2026-10-12T04:04:00Z') && !P('2026-10-12T04:05:00Z'), null);
   await post('/veeqo/autolabel/config', { config: { pauseTimes: 'Sun-Sat 0:00-24:00' } });
   const realFetch = globalThis.fetch; env.VEEQO_API_KEY = 'k';
   globalThis.fetch = async (u) => { u = String(u); return u.includes('api.veeqo.com/') ? new Response('[]', { headers: { 'Content-Type': 'application/json' } }) : new Response('{}', { status: 401 }); };
   const r = await post('/veeqo/autolabel/run', {});
   globalThis.fetch = realFetch; delete env.VEEQO_API_KEY;
   check('…a run in a no-auto-buying time says so ("labels can still be bought by hand")', (r.notes || []).some(n => /No auto buying now/.test(n)), r.notes);
-  await post('/veeqo/autolabel/config', { config: { pauseTimes: 'Mon-Fri 16:30-17:30; Mon-Fri 20:30-24:00; Sat 13:30-24:00; Sun 20:30-24:00; Sun-Sat 0:00-0:05' } });
+  await post('/veeqo/autolabel/config', { config: { pauseTimes: 'Mon-Fri 16:30-17:30; Sat 13:45-15:00; Sun-Sat 20:30-24:00; Sun-Sat 0:00-0:05' } });
   check('…the auto run never buys in a no-auto-buying time (by-hand buying is not blocked)', /const buy = !!opts\.buy && cfg\.mode === 'auto' && buyVerified && !paused;/.test(ws) && !/paused/.test(grab('autolabelBuyByHand')), null);
   const ph = readFileSync(fileURLToPath(new URL('../packship.html', import.meta.url)), 'utf8');
   check('…Rules: "⏸ No auto buying at these times (New York)" box, said in plain words', /data-k="pauseTimes"/.test(ph) && /⏸ No auto buying:/.test(ph), null);
@@ -4329,6 +4345,155 @@ console.log('\nPack & Ship → Undelivered Report: opens on the claims window, 1
   const wk = readFileSync(workerPath, 'utf8');
   check('Days back 60 and Exclude most recent 15 by default (page and server)', /id="ps-und-days" value="60"/.test(ps) && /id="ps-und-exclude" value="15"/.test(ps)
     && /ps-und-days'\)\.value\) \|\| 60;/.test(ps) && /searchParams\.get\('days'\)\) \|\| 60;/.test(wk), null);
+}
+
+// Owner (2026-10-08): "merged 113-9827248-1897842 has the tracking on Amazon, 113-9717731-0734658 still not — Veeqo has
+// both with our same tracking. I don't want it to show up later asking us to ship it again (no double ship)".
+console.log('\n📦 Amazon tracking: a merged order still Unshipped on Amazon gets OUR tracking sent (no new label)');
+{
+  const realFetch = globalThis.fetch;
+  const A1 = '113-9827248-1897842', A2 = '113-9717731-0734658', A3 = '113-0000000-0000003';
+  const status = { [A1]: 'Shipped', [A2]: 'Unshipped', [A3]: 'Canceled' }, sent = [];
+  globalThis.fetch = async (u, o) => { u = String(u); const m = (o && o.method) || 'GET'; const J = (x, st) => new Response(JSON.stringify(x), { status: st || 200, headers: { 'Content-Type': 'application/json' } });
+    if (u.includes('api.amazon.com/auth/o2/token')) return J({ access_token: 'amz', expires_in: 3600 });
+    let mm;
+    if ((mm = u.match(/orders\/v0\/orders\/([\d-]+)\/orderItems$/))) return J({ payload: { OrderItems: [{ OrderItemId: 'IT-' + mm[1], QuantityOrdered: 2, QuantityShipped: 0 }] } });
+    if ((mm = u.match(/orders\/v0\/orders\/([\d-]+)\/shipmentConfirmation$/)) && m === 'POST') { sent.push({ id: mm[1], body: JSON.parse(o.body) }); status[mm[1]] = 'Shipped'; return new Response(null, { status: 204 }); }
+    if ((mm = u.match(/orders\/v0\/orders\/([\d-]+)$/))) return J({ payload: { AmazonOrderId: mm[1], OrderStatus: status[mm[1]] || 'Unshipped' } });
+    return realFetch(u, o); };
+  env.AMAZON_REFRESH_TOKEN = 'r'; env.AMAZON_CLIENT_ID = 'c'; env.AMAZON_CLIENT_SECRET = 's';
+  await get('/veeqo/autolabel/config');
+  const lg = (num, action, mins) => sq.prepare("INSERT INTO autolabel_log (ts, date, order_number, channel, action, tracking, carrier, service) VALUES (?, ?, ?, 'Amazon', ?, '9400111899223197428490', 'USPS', 'Ground Advantage')")
+    .run(new Date(Date.now() - mins * 60000).toISOString(), new Date().toISOString().slice(0, 10), num, action);
+  lg(A1, 'bought', 30); lg(A2, 'merged', 30); lg(A3, 'merged', 30);
+  const one1 = await post('/veeqo/autolabel/amazon-tracking-run', { order: A1 });
+  check('🔎 check one order: 113-9827248-1897842 already Shipped on Amazon → "nothing to do", nothing sent', one1.ok && one1.fine.length === 1 && sent.length === 0, one1);
+  const one2 = await post('/veeqo/autolabel/amazon-tracking-run', { order: A2 });
+  const b = (sent[0] || {}).body || {}, pd = b.packageDetail || {};
+  check('…113-9717731-0734658 still Unshipped → OUR same tracking sent to Amazon right away (USPS, 2 of 2 items), no label bought, kept on record',
+    one2.ok && one2.added.length === 1 && sent.length === 1 && sent[0].id === A2 && pd.trackingNumber === '9400111899223197428490' && pd.carrierCode === 'USPS' && pd.orderItems[0].quantity === 2
+    && sq.prepare("SELECT ok, source, amazon_status FROM amazon_tracking_fix WHERE order_number = ?").get(A2)?.ok === 1, { one2, sent });
+  const again = await post('/veeqo/autolabel/amazon-tracking-run', { order: A2 });
+  check('…checked again → Amazon now says Shipped, nothing sent twice', again.ok && again.fine.length === 1 && sent.length === 1, again);
+  const one3 = await post('/veeqo/autolabel/amazon-tracking-run', { order: A3 });
+  check('…an order cancelled on Amazon → never sent', one3.ok && one3.skipped.length === 1 && sent.length === 1, one3);
+  const bad = await post('/veeqo/autolabel/amazon-tracking-run', { order: '113-1111111-1111111' });
+  check('…an order with no label from our Auto Label → refused (nothing to send)', bad.ok === false && /no label bought or merged/.test(bad.error) && sent.length === 1, bad);
+  lg('114-2222222-2222222', 'merged', 30); status['114-2222222-2222222'] = 'Unshipped';
+  const auto = await post('/veeqo/autolabel/amazon-tracking-run', {});
+  check('…the 30-min check waits 2 h after the label (a 30-min-old one is ⏳ waiting, not sent)', auto.ok && auto.waiting.some(x => x.orderNumber === '114-2222222-2222222') && sent.length === 1, auto);
+  const { readFileSync: rf14 } = await import('node:fs');
+  const ph = rf14(fileURLToPath(new URL('../packship.html', import.meta.url)), 'utf8'), ws = rf14(workerPath, 'utf8');
+  check('…Auto Label card: 📦 Amazon tracking (On, Check Amazon now, 🔎 check one order); runs every 30 min; blocked while 🧪 test mode is on',
+    /id="ps-al-at-on"/.test(ph) && /psAlAmzTrackOne\(this\)/.test(ph) && /ctx\.waitUntil\(amazonTrackingFix\(env\)/.test(ws) && /'\/veeqo\/autolabel\/amazon-tracking-run',/.test(ws), null);
+  globalThis.fetch = realFetch; delete env.AMAZON_REFRESH_TOKEN; delete env.AMAZON_CLIENT_ID; delete env.AMAZON_CLIENT_SECRET;
+}
+
+// Owner (2026-10-08): "take off Lookup (Order Lookup has everything); Order Lookup: don't hide the activity history,
+// show everything; and can we see how the tracking # is doing on USPS / UPS — where is it, delivered, when, what it last showed".
+console.log('\n🚚 Order Lookup: carrier tracking (delivered / in transit / last scan), Activity History open, 🔍 Lookup taken off');
+{
+  const realFetch = globalThis.fetch;
+  const TD = '9400100000000000000777', TT = '1Z999AA10123456784', TN = '9400100000000000000888';
+  const ord = (t, sid) => ({ id: 1, number: 'X', allocations: [{ id: 2, shipment: { id: sid, tracking_number: { tracking_number: t } } }] });
+  globalThis.fetch = async (u, o) => { u = String(u); const J = x => new Response(JSON.stringify(x), { headers: { 'Content-Type': 'application/json' } });
+    let mm;
+    if (u.includes('api.veeqo.com/orders?')) { const q = decodeURIComponent((u.match(/query=([^&]+)/) || [])[1] || ''); return J(q === TD ? [ord(TD, 501)] : q === TT ? [ord(TT, 502)] : q === TN ? [ord(TN, 503)] : []); }
+    if ((mm = u.match(/shipping\/tracking_events\/(\d+)/))) {
+      if (mm[1] === '501') return J([{ timestamp: '2026-10-07T14:00:00Z', description: 'Out for Delivery', location: { city: 'AUSTIN', state: 'TX' } },
+        { timestamp: '2026-10-07T19:31:00Z', status: 'delivered', description: 'Delivered, In/At Mailbox', location: { city: 'AUSTIN', state: 'TX', zip: '78701' } }]);
+      if (mm[1] === '502') return J([{ timestamp: '2026-10-08T03:00:00Z', description: 'Departed from Facility', location: 'Louisville, KY' }]);
+      return J([]);
+    }
+    return realFetch(u, o); };
+  env.VEEQO_API_KEY = 'k';
+  const d = await get('/ship/carrier-tracking?tracking=' + TD), t = await get('/ship/carrier-tracking?tracking=' + TT), n = await get('/ship/carrier-tracking?tracking=' + TN);
+  check('USPS delivered → "delivered", when (Oct 7 7:31 PM UTC) and where (AUSTIN, TX, 78701), the last scan, link to the USPS site',
+    d.ok && d.state === 'delivered' && d.deliveredAt === '2026-10-07T19:31:00Z' && d.deliveredWhere === 'AUSTIN, TX, 78701' && /Delivered/.test(d.last.text) && /tools\.usps\.com/.test(d.link) && d.events.length === 2, d);
+  check('…UPS in transit → "in_transit", last: Departed from Facility · Louisville, KY, link to the UPS site; no carrier scan yet → "no_scan"',
+    t.ok && t.state === 'in_transit' && t.last.text === 'Departed from Facility' && t.last.where === 'Louisville, KY' && /ups\.com/.test(t.link) && n.ok && n.state === 'no_scan', [t, n]);
+  globalThis.fetch = realFetch; delete env.VEEQO_API_KEY;
+  const { readFileSync: rf15 } = await import('node:fs');
+  const ph = rf15(fileURLToPath(new URL('../packship.html', import.meta.url)), 'utf8');
+  check('Order Lookup cards: 🚚 Carrier tracking and 📜 Activity History open and loaded by themselves (3 at a time); 🔍 Lookup tab hidden, its link goes to Order Lookup',
+    /class="ps-ct-auto"/.test(ph) && /class="ps-hist-auto" data-tracking="' \+ o\.tracking \+ '" style="display:block;/.test(ph) && /setTimeout\(_psAutoLoadCards, 0\)/.test(ph)
+    && /id="ps-tab-lookup"      onclick="psSwitchTab\('lookup'\)" style="display:none"/.test(ph) && /if \(name === 'lookup'\) name = 'orderlookup';/.test(ph), null);
+}
+
+// Owner (2026-10-08): "put the auto print schedule somewhere in Auto Label, so later I can check and remember, and set
+// it to a different time if I want".
+console.log('\n🗓 Auto Label: auto print schedule in plain words by day, ✏️ Change times');
+{
+  const { readFileSync: rf16 } = await import('node:fs');
+  const ph = rf16(fileURLToPath(new URL('../packship.html', import.meta.url)), 'utf8');
+  const grab = re => (ph.match(re) || [''])[0];
+  const src = [grab(/function _psAlClock\(hm\) \{[\s\S]*?\n\}/), grab(/var _PS_DAYN = [\s\S]*?\nfunction _psAlSchedRender/).replace(/\nfunction _psAlSchedRender$/, '')].join('\n');
+  const html = new Function('var _psAlEsc = function(v){return String(v);};' + src + '; return _psAlSchedHtml;')()({ waitMinutes: 30, noWaitMinutes: 2,
+    noWaitTimes: 'Mon-Fri 15:45-17:00; Sat 12:45-13:45', pauseTimes: 'Mon-Fri 16:30-17:30; Sat 13:45-15:00; Mon-Sun 20:30-24:00; Mon-Sun 0:00-0:05',
+    scanFormOn: true, scanFormTimes: 'Mon-Fri 16:30, 20:45; Sat 13:45, 20:45; Sun 20:45' });
+  const txt = html.replace(/<\/tr>/g, '\n').replace(/<div style="font-weight:800">/g, '\n== ').replace(/<[^>]+>/g, ' ').replace(/[ ]+/g, ' ');
+  const part = name => (txt.split('== ' + name)[1] || '').split('==')[0];
+  const mf = part('Mon–Fri'), sa = part('Saturday'), su = part('Sunday');
+  check('Mon–Fri: 12:05 am starts · 3:45 pm no 30-min wait, 2 min · 4:30 pm STOPS + scan form · 5:30 pm starts again · 8:30 pm STOPS · 8:45 pm scan form',
+    /12:05 am ▶ Auto print STARTS again/.test(mf) && /3:45 pm ⏩ No 30-min wait — new orders wait 2 min/.test(mf) && /4:30 pm ⏸ Auto print STOPS · 📄 Scan form made/.test(mf)
+    && /5:30 pm ▶ Auto print STARTS again/.test(mf) && /8:30 pm ⏸ Auto print STOPS/.test(mf) && /8:45 pm 📄 Scan form made/.test(mf) && !/Back to the/.test(mf), mf);
+  check('…Saturday: 12:45 pm no wait · 1:45 pm STOPS + scan form · 3:00 pm starts again · 8:30 pm STOPS · 8:45 pm scan form; Sunday: 8:30 pm STOPS · 8:45 pm scan form',
+    /12:45 pm ⏩/.test(sa) && /1:45 pm ⏸ Auto print STOPS · 📄 Scan form made/.test(sa) && /3:00 pm ▶ Auto print STARTS again/.test(sa) && /8:45 pm 📄 Scan form made/.test(sa)
+    && /8:30 pm ⏸ Auto print STOPS/.test(su) && /8:45 pm 📄 Scan form made/.test(su) && !/3:45 pm/.test(su), [sa, su]);
+  check('…✏️ Change times: the 5 times (normal wait, no-wait times + minutes, stops, scan forms), live preview, 💾 Save writes the same rules',
+    /id="ps-al-sched-card"/.test(ph) && /data-sk="pauseTimes"/.test(ph) && /data-sk="scanFormTimes"/.test(ph) && /data-sk="noWaitTimes"/.test(ph) && /oninput="psAlSchedPreview\(\)"/.test(ph)
+    && /#ps-al-rules \[data-k="' \+ k \+ '"\]/.test(ph) && /await psAlSaveConfig\(\);/.test(ph), null);
+  // Owner (2026-10-08): "minimize it — when I want I can open it up and check myself".
+  check('…the schedule card starts folded (tap the title to open it)', /<details class="ps-card" id="ps-al-sched-card"[^>]*>\s*<summary[^>]*>🗓 Auto print schedule/.test(ph) && !/id="ps-al-sched-card"[^>]* open/.test(ph), null);
+}
+
+// Owner (2026-10-08): "Print watch — a label the printer station scanner didn't pick up but that WAS scanned at Picking or
+// Packing: don't remind us to print, it's only the Print Log scanner. (If a system error stopped it printing, Picking and
+// Packing would have no label to scan.) Move it to the history: picked / packed by who, when." + take off Status Check.
+console.log('\n🛑 Print watch: missed by the Print Log scanner but picked / packed → history, no reminder; Status Check taken off');
+{
+  await get('/veeqo/autolabel/labels?status=new&limit=1');
+  sq.prepare('DELETE FROM label_print_queue').run(); sq.prepare('DELETE FROM label_print_batch').run();
+  sq.prepare("DELETE FROM app_config WHERE key IN ('label_print_watch','label_print_hold')").run();
+  sq.prepare("INSERT OR REPLACE INTO app_config (key, value) VALUES ('label_print_watch_start', ?)").run(new Date(Date.now() - 3600000).toISOString());
+  const ago = m => new Date(Date.now() - m * 60000).toISOString();
+  const T = k => '94001118992231000007' + String(k).padStart(2, '0');
+  const lab = (n, tr) => Number(sq.prepare("INSERT INTO label_print_queue (order_id, alloc_id, order_number, channel, tracking, carrier, service, source, created_at, printed_at, printed_by, print_count, items) VALUES (?,?,?,?,?,?,?,?,?,?,?,1,'[]')")
+    .run(n, n, n, 'eBay', tr, 'USPS', 'Ground', '{}', ago(30), ago(20), 'ST').lastInsertRowid);
+  const ids = [lab('PW-2', T(2)), lab('PW-3', T(3)), lab('PW-1', T(1))]; // PW-1 printed last (newest)
+  sq.prepare('INSERT INTO label_print_batch (ts, day, by_user, source, count, label_ids) VALUES (?,?,?,?,?,?)').run(ago(15), ago(15).slice(0, 10), 'ST', 'printer station', 3, JSON.stringify(ids));
+  await post('/ship/pick', { tracking: T(2), initials: 'PK' });   // PW-2 picked (the Print Log scanner never read it)
+  await post('/ship/scan', { tracking: T(3), initials: 'PA' });   // PW-3 packed
+  const w = await get('/veeqo/autolabel/print-watch');
+  const L = n => (w.later || []).find(l => l.order_number === n) || {};
+  check('only PW-1 (scanned nowhere) is "not picked up"; PW-2 picked by PK and PW-3 packed by PA go to the 📜 history with who / when, no reminder',
+    w.ok && w.missing.length === 1 && w.missing[0].order_number === 'PW-1' && L('PW-2').pickBy === 'PK' && !!L('PW-2').pickAt && L('PW-3').packBy === 'PA' && !!L('PW-3').packAt, { missing: w.missing.map(l => l.order_number), later: w.later });
+  check('…and they do not count toward the "N in a row" hold (1 in a row, printing goes on)', !w.hold.on && w.inRow === 1, { inRow: w.inRow, hold: w.hold });
+  const { readFileSync: rf17 } = await import('node:fs');
+  const ph = rf17(fileURLToPath(new URL('../packship.html', import.meta.url)), 'utf8');
+  check('…Print watch card shows "📜 History — … the Print Log scanner missed, but Picking / Packing scanned (no need to reprint)"; 📡 Status Check tab hidden (opens Order Lookup)',
+    /📜 History — ' \+ lat\.length/.test(ph) && /picked by <b>' \+ e\(l\.pickBy/.test(ph) && /id="ps-tab-status"      onclick="psSwitchTab\('status'\)" style="display:none"/.test(ph) && /if \(name === 'status'\) name = 'orderlookup';/.test(ph), null);
+  sq.prepare('DELETE FROM label_print_queue').run(); sq.prepare('DELETE FROM label_print_batch').run();
+  sq.prepare("DELETE FROM app_config WHERE key IN ('label_print_watch','label_print_hold','label_print_watch_start')").run();
+}
+
+// Owner (2026-10-08): "Leaving for USPS — the scan form came out, but I want it printed on our INK printer, not the label printer".
+console.log('\n📄 Scan forms go to the ink printer (Scan Form Station), not the label printer');
+{
+  await get('/veeqo/autolabel/scanforms');
+  const id = Number(sq.prepare("INSERT INTO scan_form_log (day, slot, kind, created_at, by_user, ok, printed_at, printed_by, print_count) VALUES (?, 'x', 'manual', ?, 'TS', 1, ?, 'KL', 1)").run(new Date().toISOString().slice(0, 10), new Date().toISOString(), new Date().toISOString()).lastInsertRowid);
+  await post('/veeqo/autolabel/scanform-tick', { station: true });
+  const l1 = await get('/veeqo/autolabel/scanforms');
+  const sent = await post('/veeqo/autolabel/scanform-send', { ids: [id] });
+  const row = sq.prepare('SELECT printed_at FROM scan_form_log WHERE id = ?').get(id);
+  check('the Scan Form Station checks in every minute (seen time on the list); 🚚 Leaving for USPS / Reprint SENDS the form to it: marked not printed, so the ink printer prints it within a minute; who sent it is logged',
+    !!l1.stationSeenAt && Date.now() - Date.parse(l1.stationSeenAt) < 60000 && sent.ok && sent.sent === 1 && row.printed_at === null
+    && sq.prepare("SELECT COUNT(*) n FROM autolabel_log WHERE action = 'scanform_sent' AND reason LIKE ?").get('%#' + id + '%').n === 1, { l1: l1.stationSeenAt, sent, row });
+  const { readFileSync: rf18 } = await import('node:fs');
+  const ph = rf18(fileURLToPath(new URL('../packship.html', import.meta.url)), 'utf8');
+  check('…page: Leaving for USPS, Reprint and Make scan form now go through _psSfPrintSomewhere (send to the Scan Form Station if it is open; the label window never prints it without asking); the station prints them itself',
+    /await _psSfPrintSomewhere\(forms\.map\(/.test(ph) && /if \(_psSfIsHere\(\)\) return psAlScanFormPrintList\(list, btn\);/.test(ph) && /This window prints to the LABEL printer/.test(ph)
+    && /body: \{ station: true \}/.test(ph) && /if \(todo\.length\) await psAlScanFormPrintList\(todo\.map\(/.test(ph), null);
 }
 
 console.log('\n' + (failed ? '❌ ' + failed + ' check(s) FAILED' : '✅ all ' + passed + ' checks passed') + '\n');

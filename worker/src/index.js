@@ -7193,7 +7193,7 @@ const TM_BLOCK = new Set([
   '/ebay-msg/send', '/msg/send', '/msg/reply', '/shopify/listing-create',
   '/repricer/price-change', '/repricer/auto-reprice', '/repricer/queue-action',
   '/ship/cancel-label', '/ship/cancel-order', '/ship/cancel-order-confirm',
-  '/veeqo/autolabel/run', '/veeqo/autolabel/test-buy', '/veeqo/autolabel/order-edit', '/veeqo/autolabel/buy-one', '/veeqo/autolabel/merge-buy', '/veeqo/autolabel/split', '/veeqo/autolabel/scanform-make', '/veeqo/autolabel/scanform-tick', '/veeqo/autolabel/auto-tick', '/veeqo/autolabel/ebay-tracking-run',
+  '/veeqo/autolabel/run', '/veeqo/autolabel/test-buy', '/veeqo/autolabel/order-edit', '/veeqo/autolabel/buy-one', '/veeqo/autolabel/merge-buy', '/veeqo/autolabel/split', '/veeqo/autolabel/scanform-make', '/veeqo/autolabel/scanform-tick', '/veeqo/autolabel/auto-tick', '/veeqo/autolabel/ebay-tracking-run', '/veeqo/autolabel/amazon-tracking-run',
   '/inventory/soldout/set-qty', '/inventory/soldout/add-listing',
 ]);
 function tmJ(o, status) { return cors(new Response(JSON.stringify(o), { status: status || 200, headers: { 'Content-Type': 'application/json' } })); }
@@ -8330,6 +8330,10 @@ const _app = {
     if (!testOn) ctx.waitUntil(ebayTrackingFix(env).then(
       r => { if (r && !r.skipped && (r.added.length || r.failed.length)) console.log('[cron] ebay tracking fix', JSON.stringify({ added: r.added.length, failed: r.failed.length })); },
       e => console.error('[cron] ebay tracking fix FAILED', e && e.message)));
+    // 📦 Amazon orders whose tracking never reached Amazon (mostly the 2nd order of a merged box) — sent by us after 2 h.
+    if (!testOn) ctx.waitUntil(amazonTrackingFix(env).then(
+      r => { if (r && !r.skipped && (r.added.length || r.failed.length)) console.log('[cron] amazon tracking fix', JSON.stringify({ added: r.added.length, failed: r.failed.length })); },
+      e => console.error('[cron] amazon tracking fix FAILED', e && e.message)));
     // Listing Watch — low / sold-out listings while SKU Mgr still has stock.
     // Runs every tick while its switch is on: a page per channel at a time,
     // a new full pass every `everyHours`. See lwCron().
@@ -19102,6 +19106,7 @@ async function handleShipRoute(url, method, request, env, session, ctx) {
     if (path === '/ship/lookup'       && method === 'GET')  return await shipLookup(url, env);
     if (path === '/ship/order-lookup' && method === 'GET')  return await shipOrderLookup(url, env);
     if (path === '/ship/tracking-history' && method === 'GET') return await shipTrackingHistory(url, env);
+    if (path === '/ship/carrier-tracking' && method === 'GET') return await shipCarrierTracking(url, env);
     if (path === '/ship/package' && method === 'GET') return await shipPackageCheck(url, env);
     if (path === '/ship/manifest'     && method === 'GET')  return await shipGetManifest(url, env);
     if (path === '/ship/status-upload'&& method === 'POST') return await shipStatusUpload(request, env);
@@ -21585,6 +21590,41 @@ async function veeqoDebugTracking(url, env) {
   }
 
   return cors(new Response(JSON.stringify(result), { headers: { 'Content-Type': 'application/json' } }));
+}
+
+// ── GET /ship/carrier-tracking?tracking= (owner, 2026-10-08) ─────────────
+// "Order Lookup — can we also see how the tracking # is doing on USPS / UPS:
+// where is it now, did it get delivered, when, what it last showed". Read from
+// Veeqo's tracking events for the shipment (Veeqo gets them from the carrier).
+function _carrierEvtLoc(l) {
+  if (!l) return '';
+  if (typeof l === 'string') return l;
+  return [l.city, l.state || l.state_province || l.region, l.zip || l.postal_code, l.country && l.country !== 'US' ? l.country : ''].filter(Boolean).join(', ');
+}
+async function shipCarrierTracking(url, env) {
+  const J = (o, st) => cors(new Response(JSON.stringify(o), { status: st || 200, headers: { 'Content-Type': 'application/json' } }));
+  await ensureShipD1Tables(env);
+  const tracking = normalizeShipTracking((url.searchParams.get('tracking') || '').trim());
+  if (!tracking) return J({ ok: false, error: 'tracking required' }, 400);
+  const carrier = detectShipCarrier(tracking);
+  const link = veeqoTrackingUrl(carrier, tracking);
+  if (!env.VEEQO_API_KEY) return J({ ok: false, tracking, carrier, link, error: 'Veeqo not connected' });
+  let shipmentId = null;
+  const row = await env.DB.prepare(`SELECT shipment_id FROM ship_scan_log WHERE UPPER(tracking) = ? AND shipment_id != '' LIMIT 1`).bind(tracking).first().catch(() => null);
+  if (row && row.shipment_id) shipmentId = row.shipment_id;
+  if (!shipmentId) {
+    const lk = await veeqoLookupByTrackingSafe(env, tracking);
+    if (lk.order) shipmentId = veeqoExtractShipmentId(lk.order);
+    if (!shipmentId) return J({ ok: true, tracking, carrier, link, state: 'unknown', note: lk.error ? 'Veeqo lookup failed: ' + lk.error : 'Veeqo has no shipment for this tracking # yet', events: [] });
+  }
+  const ev = await veeqoGetTrackingEventsSafe(env, shipmentId);
+  if (ev.error) return J({ ok: false, tracking, carrier, link, error: 'Veeqo tracking failed: ' + ev.error });
+  const events = (ev.events || []).map(e => ({ at: e.timestamp || e.occurred_at || e.created_at || '', status: e.status || '', text: e.description || e.message || e.status || '', where: _carrierEvtLoc(e.location || e.address) }));
+  const del = events.find(e => /deliver/i.test(e.status + ' ' + e.text) && !/out for delivery|attempt|undeliver|not delivered|delivery exception|to be delivered|expected/i.test(e.status + ' ' + e.text));
+  const last = events[0] || null;
+  const state = del ? 'delivered' : !events.length ? 'no_scan' : /exception|return|undeliver|attempt|alert|held|refused/i.test((last.status || '') + ' ' + (last.text || '')) ? 'problem'
+    : /out for delivery/i.test((last.status || '') + ' ' + (last.text || '')) ? 'out_for_delivery' : 'in_transit';
+  return J({ ok: true, tracking, carrier, link, state, deliveredAt: del ? del.at : null, deliveredWhere: del ? del.where : '', last, events });
 }
 
 // ── GET /ship/lookup?tracking= ────────────────────────────────────────────────
@@ -24997,13 +25037,14 @@ const AUTOLABEL_DEFAULTS = {
   mode: 'off',                 // 'off' | 'preview' | 'auto'
   cancelWatch: false,          // add cancelled-but-already-printed orders to the Cancellation list
   waitMinutes: 30,             // wait this long after the NEWEST order for a person before buying
-  noWaitTimes: 'Mon-Fri 15:50-17:00; Sat 13:00-14:15', // ...except in these New York times: print as soon as an order comes in (owner)
+  noWaitTimes: 'Mon-Fri 15:45-17:00; Sat 12:45-13:45', // ...except in these New York times: no 30-min wait (owner 2026-10-08: Mon-Fri from 3:45 pm, Sat 12:45–1:45 pm)
+  noWaitMinutes: 2,            // ...in those times an order waits only this long (owner: "wait 2 minutes to see if a merge order comes in")
   scanFormOn: true,            // 📄 USPS scan form made by itself at scanFormTimes (after one made by hand worked)
-  scanFormTimes: 'Mon-Fri 16:30, 20:50; Sat 13:45, 20:50; Sun 20:50', // New York time (owner; 8:50 pm EVERY day since 2026-10-08)
+  scanFormTimes: 'Mon-Fri 16:30, 20:45; Sat 13:45, 20:45; Sun 20:45', // New York time (owner 2026-10-08: 8:45 pm EVERY day; Mon-Fri 4:30 pm, Sat 1:45 pm)
   scanFormCheckAt: '20:55',    // night check: any USPS label after the last form → one more (USPS: before 9 pm)
   // No auto buying at these times (New York) — around the scan forms (owner):
   // Mon–Fri 4:30–5:30 pm and 8:30 pm–12:05 am, Sat from 1:30 pm, Sun 8:30 pm–12:05 am.
-  pauseTimes: 'Mon-Fri 16:30-17:30; Mon-Fri 20:30-24:00; Sat 13:30-24:00; Sun 20:30-24:00; Sun-Sat 0:00-0:10', // owner 2026-10-08: no auto print 8:30 pm – 12:10 am
+  pauseTimes: 'Mon-Fri 16:30-17:30; Sat 13:45-15:00; Sun-Sat 20:30-24:00; Sun-Sat 0:00-0:05', // owner 2026-10-08: no auto print Mon-Fri 4:30–5:30 pm, Sat 1:45–3 pm, every day 8:30 pm – 12:05 am
   upsMinSavings: 0.70,         // switch USPS -> UPS only if UPS is at least this much cheaper ($)... (owner: $0.70)
   upsMaxDays: 2,               // ...AND UPS arrives in this many days or less (owner: 2 days)
   uspsOnlyChannels: ['walmart'], // channels that must always ship USPS (name contains)
@@ -25158,6 +25199,33 @@ async function autolabelLoadConfig(env) {
     await autolabelSetKey(env, 'autolabel_rules_scanform_850_1008', 'done');
     await autolabelLog(env, { action: 'rules_changed', detail: `Scan form every day 8:50 pm + no auto print 8:30 pm – 12:10 am (owner's request): ${JSON.stringify(before)} → scan forms ${saved.scanFormTimes}, no auto buying ${saved.pauseTimes}` }).catch(() => {});
   }
+  // Owner 2026-10-08: "Mon–Fri at 3:45 pm stop the 30-min wait; new orders wait 2 min (a merge may come in), then print".
+  if ((await autolabelGetKey(env, 'autolabel_rules_nowait_345_1008')) !== 'done') {
+    const before = { noWaitTimes: saved.noWaitTimes, noWaitMinutes: saved.noWaitMinutes };
+    if (saved.noWaitTimes == null || String(saved.noWaitTimes).replace(/\s+/g, ' ').trim() === 'Mon-Fri 15:50-17:00; Sat 13:00-14:15') saved.noWaitTimes = AUTOLABEL_DEFAULTS.noWaitTimes;
+    saved.noWaitMinutes = AUTOLABEL_DEFAULTS.noWaitMinutes;
+    await autolabelSetKey(env, AUTOLABEL_CONFIG_KEY, JSON.stringify(saved));
+    await autolabelSetKey(env, 'autolabel_rules_nowait_345_1008', 'done');
+    await autolabelLog(env, { action: 'rules_changed', detail: `No-wait time from 3:45 pm Mon-Fri, orders wait 2 min there (owner's request): ${JSON.stringify(before)} → ${saved.noWaitTimes}, ${saved.noWaitMinutes} min` }).catch(() => {});
+  }
+  // Owner 2026-10-08: "Saturday at 12:45 pm stop the 30-min wait (new orders 2 min), stop printing at 1:45 pm and make
+  // the scan form; Mon–Fri stop printing at 4:30 pm, then the scan form" (Mon–Fri 4:30 pm and Sat 1:45 pm forms were already set).
+  if ((await autolabelGetKey(env, 'autolabel_rules_sat_1245_1008')) !== 'done') {
+    const before = { noWaitTimes: saved.noWaitTimes, pauseTimes: saved.pauseTimes, scanFormTimes: saved.scanFormTimes };
+    saved.noWaitTimes = AUTOLABEL_DEFAULTS.noWaitTimes; saved.pauseTimes = AUTOLABEL_DEFAULTS.pauseTimes; saved.scanFormTimes = AUTOLABEL_DEFAULTS.scanFormTimes;
+    await autolabelSetKey(env, AUTOLABEL_CONFIG_KEY, JSON.stringify(saved));
+    await autolabelSetKey(env, 'autolabel_rules_sat_1245_1008', 'done');
+    await autolabelLog(env, { action: 'rules_changed', detail: `Saturday no 30-min wait 12:45 pm, stop printing + scan form 1:45 pm; Mon-Fri stop 4:30 pm + scan form (owner's request): ${JSON.stringify(before)} → no wait ${saved.noWaitTimes}; no auto print ${saved.pauseTimes}; scan forms ${saved.scanFormTimes}` }).catch(() => {});
+  }
+  // Owner 2026-10-08 (later): "Mon–Fri stop 4:30, start again 5:30 pm; Saturday stop 1:45, start again 3 pm; every day stop
+  // 8:30 pm, scan form 8:45 pm, start again 12:05 am".
+  if ((await autolabelGetKey(env, 'autolabel_rules_sched_845_1008')) !== 'done') {
+    const before = { pauseTimes: saved.pauseTimes, scanFormTimes: saved.scanFormTimes };
+    saved.pauseTimes = AUTOLABEL_DEFAULTS.pauseTimes; saved.scanFormTimes = AUTOLABEL_DEFAULTS.scanFormTimes;
+    await autolabelSetKey(env, AUTOLABEL_CONFIG_KEY, JSON.stringify(saved));
+    await autolabelSetKey(env, 'autolabel_rules_sched_845_1008', 'done');
+    await autolabelLog(env, { action: 'rules_changed', detail: `Sat restart 3 pm, scan form 8:45 pm every day, restart 12:05 am (owner's request): ${JSON.stringify(before)} → no auto print ${saved.pauseTimes}; scan forms ${saved.scanFormTimes}` }).catch(() => {});
+  }
   return autolabelCleanConfig({ ...AUTOLABEL_DEFAULTS, ...saved });
 }
 
@@ -25173,6 +25241,7 @@ function autolabelCleanConfig(c) {
     cancelWatch: c.cancelWatch === true || c.cancelWatch === 'true',
     waitMinutes:       num(c.waitMinutes, D.waitMinutes, 0, 1440),
     noWaitTimes:       autolabelNoWaitClean(c.noWaitTimes == null ? D.noWaitTimes : c.noWaitTimes),
+    noWaitMinutes:     num(c.noWaitMinutes, D.noWaitMinutes, 0, 30),
     scanFormOn:        c.scanFormOn === true || c.scanFormOn === 'true',
     pauseTimes:        autolabelNoWaitClean(c.pauseTimes == null ? D.pauseTimes : c.pauseTimes),
     scanFormTimes:     autolabelTimesClean(c.scanFormTimes == null ? D.scanFormTimes : c.scanFormTimes),
@@ -25423,6 +25492,17 @@ async function labelWatchCheck(env, nowMs) {
     (await d1All(env, `SELECT UPPER(tracking) t, MAX(timestamp) ts FROM ship_print_log WHERE UPPER(tracking) IN (${part.map(() => '?').join(',')}) AND timestamp >= ? GROUP BY UPPER(tracking)`,
       [...part, new Date(Date.parse(since) - 3600000).toISOString()])).forEach(s => scans.set(s.t, Date.parse(s.ts)));
   }
+  // Owner (2026-10-08): "if the Print Log scanner didn't pick it up but it WAS scanned at Picking or Packing, don't remind us —
+  // the label printed, only the Print Log scanner missed it (a label that never printed can't be picked or packed). Move it to
+  // the history: picked / packed by who, when."
+  const later = (table) => (async () => { const m = new Map();
+    for (let i = 0; i < tracks.length; i += 90) {
+      const part = tracks.slice(i, i + 90);
+      (await d1All(env, `SELECT UPPER(tracking) t, timestamp ts, initials who FROM ${table} WHERE UPPER(tracking) IN (${part.map(() => '?').join(',')}) AND timestamp >= ? ORDER BY timestamp`,
+        [...part, new Date(Date.parse(since) - 3600000).toISOString()]).catch(() => [])).forEach(s => { if (!m.has(s.t)) m.set(s.t, []); m.get(s.t).push(s); });
+    }
+    return m; })();
+  const pickScans = await later('ship_pick_log'), packScans = await later('ship_scan_log');
   const checkedRows = ids.length ? await d1All(env, 'SELECT label_id, by_user, at FROM label_watch_checked WHERE label_id IN (SELECT value FROM json_each(?))', [JSON.stringify(ids)]) : [];
   const checked = new Map(checkedRows.map(c => [c.label_id, c]));
   const list = [];
@@ -25432,9 +25512,12 @@ async function labelWatchCheck(env, nowMs) {
     const at = Date.parse(batch.ts), due = at + labelWatchGraceMs(batch.count);
     const seen = scans.get(t);
     const picked = seen != null && seen >= at - 5 * 60000; // read while / after this print went out
+    const after = arr => (arr || []).find(x => Date.parse(x.ts) >= at - 5 * 60000) || null;
+    const pk = after(pickScans.get(t)), pa = after(packScans.get(t));
     list.push({ id, order_number: r.order_number, channel: r.channel, tracking: r.tracking, carrier: r.carrier, service: r.service,
       printedAt: batch.ts, batchId: batch.id, source: batch.source || '', printedBy: batch.by_user || r.printed_by || '', pos,
-      state: picked ? 'picked' : now < due ? 'waiting' : checked.has(id) ? 'checked' : 'missing',
+      pickAt: pk ? pk.ts : null, pickBy: pk ? pk.who || '' : '', packAt: pa ? pa.ts : null, packBy: pa ? pa.who || '' : '',
+      state: picked ? 'picked' : (pk || pa) ? 'later' : now < due ? 'waiting' : checked.has(id) ? 'checked' : 'missing',
       scannedAt: picked ? new Date(seen).toISOString() : null, checkedBy: checked.has(id) ? checked.get(id).by_user : null, checkedAt: checked.has(id) ? checked.get(id).at : null });
   }
   list.sort((a, b) => (a.printedAt < b.printedAt ? 1 : a.printedAt > b.printedAt ? -1 : b.pos - a.pos)); // newest first
@@ -25448,7 +25531,8 @@ async function labelWatchCheck(env, nowMs) {
     if (l.state === 'missing') inRow++; else break;
   }
   const missing = list.filter(l => l.state === 'missing');
-  return { settings, hold, inRow, missing, waiting: list.filter(l => l.state === 'waiting').length, picked: list.filter(l => l.state === 'picked').length, watched: list.length };
+  return { settings, hold, inRow, missing, waiting: list.filter(l => l.state === 'waiting').length, picked: list.filter(l => l.state === 'picked').length, watched: list.length,
+    later: list.filter(l => l.state === 'later') }; // 📜 Print Log missed it, but Picking / Packing scanned it — history only, no reminder
 }
 // Runs the check and turns the hold ON when N in a row were not picked up (once — logged with which labels).
 async function labelWatchRun(env, nowMs) {
@@ -25550,6 +25634,112 @@ async function ebayTrackingFix(env, opts = {}) {
     (ok ? res.added : res.failed).push({ ...label, detail });
   }
   await autolabelSetKey(env, EBAY_TRACK_LAST_KEY + '_result', JSON.stringify({ ...res, added: res.added.length, failed: res.failed.length, waiting: res.waiting.length, skipped: res.skipped.length }));
+  return res;
+}
+
+// ── 📦 Amazon tracking check (owner, 2026-10-08) ─────────────────────────
+// "113-9827248-1897842 got the tracking on Amazon, 113-9717731-0734658 (same
+// merged box) still not — I don't want Amazon to ask us to ship it again."
+// Same idea as the eBay tracking fix: an Amazon order whose label we bought or
+// merged, still Unshipped on Amazon after waitMinutes, gets OUR tracking # sent
+// to Amazon (Orders API shipment confirmation). Never for a cancelled label /
+// order, never a second label. Every try is kept in amazon_tracking_fix.
+const AMZ_TRACK_CFG_KEY = 'amazon_tracking_fix', AMZ_TRACK_LAST_KEY = 'amazon_tracking_fix_last';
+const AMZ_TRACK_DEFAULTS = { on: true, waitMinutes: 120, days: 10, maxPerRun: 15 };
+const AMZ_ORDER_RE = /^\d{3}-\d{7}-\d{7}$/;
+async function amzTrackEnsure(env) {
+  await env.DB.prepare(`CREATE TABLE IF NOT EXISTS amazon_tracking_fix (id INTEGER PRIMARY KEY AUTOINCREMENT, ts TEXT, order_number TEXT,
+    tracking TEXT, carrier TEXT, source TEXT, amazon_status TEXT, ok INTEGER, detail TEXT, by_user TEXT)`).run();
+  await env.DB.prepare('CREATE INDEX IF NOT EXISTS idx_amazon_tracking_fix_order ON amazon_tracking_fix(order_number)').run().catch(() => {});
+}
+async function amzTrackConfig(env) {
+  let c = {}; try { c = JSON.parse(await autolabelGetKey(env, AMZ_TRACK_CFG_KEY) || '{}') || {}; } catch (_) {}
+  const n = (v, d, lo, hi) => { const x = parseInt(v); return Number.isFinite(x) ? Math.min(hi, Math.max(lo, x)) : d; };
+  return { on: c.on == null ? AMZ_TRACK_DEFAULTS.on : !!c.on, waitMinutes: n(c.waitMinutes, AMZ_TRACK_DEFAULTS.waitMinutes, 30, 24 * 60),
+    days: n(c.days, AMZ_TRACK_DEFAULTS.days, 1, 30), maxPerRun: n(c.maxPerRun, AMZ_TRACK_DEFAULTS.maxPerRun, 1, 50) };
+}
+function amzCarrierCode(c) {
+  const s = String(c || '').toUpperCase();
+  if (/USPS|POSTAL/.test(s)) return 'USPS';
+  if (/UPS/.test(s)) return 'UPS';
+  if (/FEDEX|FEDERAL/.test(s)) return 'FedEx';
+  if (/DHL/.test(s)) return 'DHL';
+  return 'Other';
+}
+async function amzSp(env, method, path, body) {
+  const token = await getAmazonToken(env);
+  const r = await fetch('https://sellingpartnerapi-na.amazon.com' + path, { method, headers: { 'x-amz-access-token': token, 'Content-Type': 'application/json' }, body: body ? JSON.stringify(body) : undefined });
+  const txt = await r.text().catch(() => '');
+  let j = null; try { j = txt ? JSON.parse(txt) : null; } catch (_) {}
+  return { ok: r.ok, status: r.status, json: j, text: txt };
+}
+// One order: Amazon's status, and (when `send`) our tracking sent if Amazon still shows it unshipped.
+async function amzTrackOne(env, label, opts) {
+  const id = label.orderNumber;
+  const g = await amzSp(env, 'GET', `/orders/v0/orders/${encodeURIComponent(id)}`);
+  if (!g.ok) return { ...label, state: 'error', detail: `Amazon ${g.status}: ${g.text.slice(0, 300)}` };
+  const st = (g.json && g.json.payload && g.json.payload.OrderStatus) || '';
+  if (/^Shipped$/i.test(st)) return { ...label, amazonStatus: st, state: 'ok', detail: 'Amazon already shows it shipped' };
+  if (/Cancel/i.test(st)) return { ...label, amazonStatus: st, state: 'skipped', detail: 'cancelled on Amazon' };
+  if (!opts.send) return { ...label, amazonStatus: st, state: 'needs', detail: `Amazon still shows ${st || '?'}` };
+  const it = await amzSp(env, 'GET', `/orders/v0/orders/${encodeURIComponent(id)}/orderItems`);
+  const items = ((it.json && it.json.payload && it.json.payload.OrderItems) || [])
+    .map(x => ({ orderItemId: x.OrderItemId, quantity: Math.max(0, (parseInt(x.QuantityOrdered) || 0) - (parseInt(x.QuantityShipped) || 0)) })).filter(x => x.orderItemId && x.quantity > 0);
+  if (!items.length) return { ...label, amazonStatus: st, state: 'error', detail: `Amazon ${it.status}: no items left to ship ${it.text.slice(0, 200)}` };
+  const body = { marketplaceId: env.AMAZON_MARKETPLACE_ID || 'ATVPDKIKX0DER', packageDetail: { packageReferenceId: '1', carrierCode: amzCarrierCode(label.carrier),
+    carrierName: label.carrier || undefined, shippingMethod: label.service || undefined, trackingNumber: label.tracking,
+    shipDate: new Date(Date.parse(label.boughtAt) || Date.now()).toISOString(), orderItems: items } };
+  const c = await amzSp(env, 'POST', `/orders/v0/orders/${encodeURIComponent(id)}/shipmentConfirmation`, body);
+  const ok = c.status === 204 || c.status === 200;
+  return { ...label, amazonStatus: st, state: ok ? 'added' : 'failed', detail: ok ? `Amazon ${c.status} — tracking sent` : `Amazon ${c.status}: ${c.text.slice(0, 400)}` };
+}
+// Our Amazon labels (bought / merged by Auto Label) with their tracking #, newest last per order.
+async function amzOurLabels(env, since, only) {
+  const rows = await d1All(env, `SELECT order_number, tracking, carrier, service, ts, action FROM autolabel_log
+    WHERE action IN ('bought','merged','merge_mark_failed') AND tracking != '' AND ts >= ?${only ? ' AND UPPER(order_number) = ?' : ''} ORDER BY id`,
+    only ? [since, String(only).trim().toUpperCase()] : [since]);
+  const ours = new Map();
+  for (const r of rows) { const k = String(r.order_number || '').trim(); if (AMZ_ORDER_RE.test(k)) ours.set(k, r); }
+  return ours;
+}
+async function amazonTrackingFix(env, opts = {}) {
+  await autolabelEnsureTables(env); await amzTrackEnsure(env);
+  const cfg = await amzTrackConfig(env), now = opts.now ? new Date(opts.now) : new Date();
+  const one = opts.order ? String(opts.order).trim() : '';
+  if (!one && !cfg.on && !opts.force) return { skipped: 'off' };
+  if (!one && !opts.force) {
+    const last = await autolabelGetKey(env, AMZ_TRACK_LAST_KEY);
+    if (last && now.getTime() - Date.parse(last) < 30 * 60000) return { skipped: 'too_soon' };
+  }
+  if (!one) await autolabelSetKey(env, AMZ_TRACK_LAST_KEY, now.toISOString());
+  const by = String(opts.by || 'auto').slice(0, 40);
+  const res = { ok: true, at: now.toISOString(), checked: 0, added: [], failed: [], waiting: [], skipped: [], fine: [], order: one || undefined };
+  if (one && !AMZ_ORDER_RE.test(one)) return { ok: false, error: 'Not an Amazon order # (like 113-1234567-1234567)' };
+  const ours = await amzOurLabels(env, new Date(now.getTime() - (one ? 30 : cfg.days) * 86400000).toISOString(), one || null);
+  if (one && !ours.size) return { ...res, ok: false, error: `${one}: no label bought or merged by our Auto Label for it (last 30 days) — nothing to send` };
+  const cancelled = new Set();
+  for (const sql of ['SELECT tracking FROM ship_cancel_label_log', 'SELECT tracking FROM ship_order_cancel_log']) {
+    try { (await d1All(env, sql)).forEach(r => r.tracking && cancelled.add(String(r.tracking).trim().toUpperCase())); } catch (_) {}
+  }
+  let budget = one ? 1 : cfg.maxPerRun;
+  for (const [num, row] of ours) {
+    const label = { orderNumber: num, tracking: row.tracking, carrier: row.carrier, service: row.service, boughtAt: row.ts, merged: row.action !== 'bought' };
+    if (cancelled.has(String(row.tracking).trim().toUpperCase())) { res.skipped.push({ ...label, why: 'this label was cancelled' }); continue; }
+    const ageMin = (now.getTime() - Date.parse(row.ts)) / 60000;
+    if (!one && ageMin < cfg.waitMinutes) { res.waiting.push({ ...label, minutesLeft: Math.ceil(cfg.waitMinutes - ageMin) }); continue; }
+    const done = await d1First(env, 'SELECT 1 x FROM amazon_tracking_fix WHERE order_number = ? AND ok = 1', [num]);
+    if (done && !one) { res.skipped.push({ ...label, why: 'sent by us before' }); continue; }
+    if (budget-- <= 0) break;
+    res.checked++;
+    let r;
+    try { r = await amzTrackOne(env, label, { send: true }); } catch (e) { r = { ...label, state: 'error', detail: 'could not reach Amazon: ' + String(e.message || e).slice(0, 200) }; }
+    if (r.state === 'ok') { res.fine.push(r); continue; }
+    if (r.state === 'skipped') { res.skipped.push({ ...r, why: r.detail }); continue; }
+    await d1Run(env, 'INSERT INTO amazon_tracking_fix (ts, order_number, tracking, carrier, source, amazon_status, ok, detail, by_user) VALUES (?,?,?,?,?,?,?,?,?)',
+      [now.toISOString(), num, row.tracking, row.carrier || '', label.merged ? 'merged box' : 'label bought', r.amazonStatus || '', r.state === 'added' ? 1 : 0, String(r.detail || '').slice(0, 1000), by]);
+    (r.state === 'added' ? res.added : res.failed).push(r);
+  }
+  if (!one) await autolabelSetKey(env, AMZ_TRACK_LAST_KEY + '_result', JSON.stringify({ ...res, added: res.added.length, failed: res.failed.length, waiting: res.waiting.length, skipped: res.skipped.length, fine: res.fine.length }));
   return res;
 }
 
@@ -26942,7 +27132,7 @@ async function autolabelRunOnce(env, opts = {}) {
   const cfgSaved = await autolabelLoadConfig(env);
   // No-wait time (owner): orders print as soon as they come in — no wait for a second order.
   const noWait = autolabelNoWaitNow(cfgSaved, opts.now || new Date());
-  const cfg = noWait ? { ...cfgSaved, waitMinutes: 0 } : cfgSaved;
+  const cfg = noWait ? { ...cfgSaved, waitMinutes: cfgSaved.noWaitMinutes || 0 } : cfgSaved; // owner: in no-wait times, 2 min (catch a merge)
   const startedAt = new Date().toISOString();
   const buyVerified = (await autolabelGetKey(env, AUTOLABEL_VERIFIED_KEY)) === 'yes';
   // ⏸ No auto buying at these times (owner: around the scan forms) — labels bought by hand still work.
@@ -26951,7 +27141,7 @@ async function autolabelRunOnce(env, opts = {}) {
   const result = { ok: true, trigger: opts.trigger || 'manual', startedAt, mode: cfg.mode, buying: buy, buyVerified,
                    counts: {}, orders: [], channels: {}, cancelWatch: null, quoteSource: null, notes: [] };
   if (paused) { result.paused = paused; result.notes.push(`⏸ No auto buying now (${paused}, New York) — around the USPS scan form; it buys again after that. Labels can still be bought by hand.`); }
-  if (noWait) { result.noWait = noWait; result.notes.push(`⏩ No-wait time (${noWait}, New York): orders print as soon as they come in — no ${cfgSaved.waitMinutes}-min wait.`); }
+  if (noWait) { result.noWait = noWait; result.notes.push(`⏩ No-wait time (${noWait}, New York): no ${cfgSaved.waitMinutes}-min wait — an order prints ${cfgSaved.noWaitMinutes ? cfgSaved.noWaitMinutes + ' min after it comes in (time for a merge order to come in)' : 'as soon as it comes in'}.`); }
   if (opts.buy && cfg.mode === 'auto' && !buyVerified) result.notes.push('Auto mode is on but no label has been test-bought yet — nothing was bought. Use "Test buy ONE label" first.');
 
   // 1) Cancellations from every channel (and Veeqo itself).
@@ -27774,6 +27964,26 @@ async function handleAutolabelRoute(path, method, url, request, env, session) {
     catch (e) { return veeqoResp({ ok: false, error: String(e.message || e) }); }
   }
 
+  // 📦 Amazon tracking our system sends: list / switch / run now / one order now.
+  if (path === '/veeqo/autolabel/amazon-tracking' && method === 'GET') {
+    await amzTrackEnsure(env);
+    let last = null; try { last = JSON.parse(await autolabelGetKey(env, AMZ_TRACK_LAST_KEY + '_result') || 'null'); } catch (_) {}
+    const rows = await d1All(env, 'SELECT * FROM amazon_tracking_fix ORDER BY id DESC LIMIT 60');
+    return veeqoResp({ ok: true, config: await amzTrackConfig(env), last, rows });
+  }
+  if (path === '/veeqo/autolabel/amazon-tracking-config' && method === 'POST') {
+    const b = await request.json().catch(() => ({}));
+    const cfg = { ...(await amzTrackConfig(env)), ...(b.config || {}) };
+    await autolabelSetKey(env, AMZ_TRACK_CFG_KEY, JSON.stringify(cfg));
+    await autolabelLog(env, { action: 'config', reason: `Amazon tracking fix on=${!!cfg.on} wait=${cfg.waitMinutes}min`, customer: (session && (session.displayName || session.username)) || '', detail: JSON.stringify(cfg) });
+    return veeqoResp({ ok: true, config: await amzTrackConfig(env) });
+  }
+  if (path === '/veeqo/autolabel/amazon-tracking-run' && method === 'POST') {
+    const b = await request.json().catch(() => ({}));
+    try { return veeqoResp(await amazonTrackingFix(env, { force: true, order: b.order || '', by: (session && (session.displayName || session.username)) || '' })); }
+    catch (e) { return veeqoResp({ ok: false, error: String(e.message || e) }); }
+  }
+
   // ▶ Run now. Owner: "auto buy labels is on, why do I still see would buy? as soon as it's in would buy, buy the
   // label" → with ⚡ Auto on it buys like the automatic run (same checks, limits, pause times); otherwise a preview.
   if (path === '/veeqo/autolabel/run' && method === 'POST') {
@@ -27883,6 +28093,7 @@ async function handleAutolabelRoute(path, method, url, request, env, session) {
   }
   if (path === '/veeqo/autolabel/scanform-tick' && method === 'POST') {
     const b = await request.json().catch(() => ({}));
+    if (b.station) await autolabelSetKey(env, 'scanform_station_seen', new Date().toISOString()); // 📄 the Scan Form Station (ink printer) is open
     const when = env.TEST_CLOCK && b.at ? new Date(b.at) : undefined; // a set clock only in the keep-working tests
     return veeqoResp({ ok: true, ...(await autolabelScanFormTick(env, when)) });
   }
@@ -27897,7 +28108,7 @@ async function handleAutolabelRoute(path, method, url, request, env, session) {
     const cfg = await autolabelLoadConfig(env);
     const clock = await scanFormClockEnsure(env);
     return veeqoResp({ ok: true, forms: rows, clockNext: clock && clock.next, nextForm: (() => { const at = autolabelNextScanFormAt(cfg, new Date()); return at ? new Date(at).toISOString() : null; })(), missing: await autolabelScanFormMissing(env), verified: (await autolabelGetKey(env, AUTOLABEL_SCANFORM_VERIFIED_KEY)) === 'yes',
-      times: cfg.scanFormTimes, checkAt: cfg.scanFormCheckAt, on: cfg.scanFormOn });
+      times: cfg.scanFormTimes, checkAt: cfg.scanFormCheckAt, on: cfg.scanFormOn, stationSeenAt: await autolabelGetKey(env, 'scanform_station_seen') });
   }
   if (path === '/veeqo/autolabel/scanform-file' && method === 'GET') {
     const row = await d1First(env, 'SELECT * FROM scan_form_log WHERE id = ? AND ok = 1', [parseInt(url.searchParams.get('id')) || 0]);
@@ -27929,6 +28140,17 @@ async function handleAutolabelRoute(path, method, url, request, env, session) {
     let j = null; try { j = row && row.source ? JSON.parse(row.source) : null; } catch (_) {}
     if (!j) return veeqoResp({ ok: false, error: 'No answer kept for this scan form' }, 404);
     return veeqoResp({ ok: true, id: row.id, parts: autolabelScanFormParts(j).map(p => p.url ? 'link ' + p.url.replace(/([?&](X-Amz-[^=]+|signature|token)=)[^&]+/gi, '$1…') : (p.type || 'file') + ' (' + p.b64.length + ' characters)'), answer: autolabelShorten(j) });
+  }
+  // 📄 Owner (2026-10-08): "Leaving for USPS — print the scan form on our INK printer, not the label printer". The forms are
+  // handed to the Scan Form Station (ink printer window): marked not printed, it prints them within a minute. Who asked is logged.
+  if (path === '/veeqo/autolabel/scanform-send' && method === 'POST') {
+    const b = await request.json().catch(() => ({}));
+    const ids = (Array.isArray(b.ids) ? b.ids : []).map(x => parseInt(x)).filter(x => x > 0).slice(0, 20);
+    if (!ids.length) return veeqoResp({ ok: false, error: 'ids required' }, 400);
+    const by = String((session && (session.displayName || session.username)) || b.by || '').slice(0, 40);
+    for (const id of ids) await d1Run(env, 'UPDATE scan_form_log SET printed_at = NULL WHERE id = ? AND ok = 1', [id]);
+    await autolabelLog(env, { action: 'scanform_sent', customer: by, reason: `📄 Scan form${ids.length > 1 ? 's' : ''} #${ids.join(', #')} sent to the Scan Form Station (ink printer)${by ? ' by ' + by : ''}` }).catch(() => {});
+    return veeqoResp({ ok: true, sent: ids.length, stationSeenAt: await autolabelGetKey(env, 'scanform_station_seen') });
   }
   if (path === '/veeqo/autolabel/scanform-printed' && method === 'POST') {
     const b = await request.json().catch(() => ({}));
