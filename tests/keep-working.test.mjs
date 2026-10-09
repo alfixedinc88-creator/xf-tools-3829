@@ -4336,6 +4336,17 @@ console.log('\n🤖 Print Log: AUTO PRINT tag; report of auto prints not read by
     /s\.autoPrint \? '<span class="ps-badge"/.test(ph) && /id="ps-ap-card"/.test(ph) && /\/ship\/auto-print-report\?days=/.test(ph) && /window\.psApCsv = function/.test(ph), null);
 }
 
+// Owner (2026-10-09): "which tracking numbers from 15 to 60 days ago still don't show delivered, so I can open claims
+// with USPS and UPS" — Pack & Ship → 📦 Undelivered Report opens set to that window (60 days back, skip the newest 15).
+console.log('\nPack & Ship → Undelivered Report: opens on the claims window, 15 to 60 days ago');
+{
+  const { readFileSync } = await import('node:fs');
+  const ps = readFileSync(fileURLToPath(new URL('../packship.html', import.meta.url)), 'utf8');
+  const wk = readFileSync(workerPath, 'utf8');
+  check('Days back 60 and Exclude most recent 15 by default (page and server)', /id="ps-und-days" value="60"/.test(ps) && /id="ps-und-exclude" value="15"/.test(ps)
+    && /ps-und-days'\)\.value\) \|\| 60;/.test(ps) && /searchParams\.get\('days'\)\) \|\| 60;/.test(wk), null);
+}
+
 // Owner (2026-10-08): "merged 113-9827248-1897842 has the tracking on Amazon, 113-9717731-0734658 still not — Veeqo has
 // both with our same tracking. I don't want it to show up later asking us to ship it again (no double ship)".
 console.log('\n📦 Amazon tracking: a merged order still Unshipped on Amazon gets OUR tracking sent (no new label)');

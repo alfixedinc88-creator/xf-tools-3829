@@ -23707,7 +23707,7 @@ async function veeqoGetOrdersSince(env, sinceDate) {
 // ═══════════════════════════════════════════════════════════════════════════════
 // ── 50-DAY UNDELIVERED REPORT ─────────────────────────────════════════════════
 // ═══════════════════════════════════════════════════════════════════════════════
-// GET /veeqo/undelivered-report?page=1&days=50&excludeRecentDays=15
+// GET /veeqo/undelivered-report?page=1&days=60&excludeRecentDays=15
 // Confirmed with the user: sources tracking numbers from D1's own
 // Manifest_Log instead of a fresh, paginated Veeqo /orders API call -
 // that data is already sitting in D1 (populated by the hourly manifest
@@ -23736,7 +23736,7 @@ async function veeqoUndeliveredReport(url, env) {
   await ensureShipD1Tables(env);
 
   const page   = parseInt(url.searchParams.get('page')) || 1;
-  const days   = parseInt(url.searchParams.get('days')) || 50;
+  const days   = parseInt(url.searchParams.get('days')) || 60; // owner (2026-10-09): claims window = 15 to 60 days after shipping
   const excludeRecentDays = parseInt(url.searchParams.get('excludeRecentDays')) || 15;
   const PAGE_SIZE = 100;
 
