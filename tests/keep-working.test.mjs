@@ -4877,5 +4877,18 @@ console.log('\n📦 Item Search: Veeqo full box (19.99 lb) pieces per part #, ed
   sq.exec("DELETE FROM veeqo_box; DELETE FROM veeqo_box_log");
 }
 
+// Owner (2026-10-09): Container here, 5-2-1=10 — moving 6 boxes, scanned the shelf label and got "⚠ Not on this pallet
+// 4-1-2-6": the label has no area on it (should read like FRONT=4-1-2-6), so it was taken for an item.
+console.log('\n🚢 Container here: a shelf label without its area ("4-1-2-6") asks which shelf, not "Not on this pallet"');
+{
+  const { readFileSync } = await import('node:fs');
+  const ih = readFileSync(fileURLToPath(new URL('../inventory.html', import.meta.url)), 'utf8');
+  check('boxes picked + a numbers-only code (no "=") not on this pallet → xfrNoAreaSpot: the plan\'s area first ("FRONT=4-1-2-6"), spots we know ending with it, any area, then the move',
+    /if \(xfrGo\.focus && xfrGo\.sel && \/\^\\d\+\(-\\d\+\)\{2,\}\$\/\.test\(code\.trim\(\)\) && !xfrGoLocalMatch\(code\)\) \{ xfrNoAreaSpot\(code\.trim\(\)\.toUpperCase\(\)\); return; \}/.test(ih)
+      && /function xfrNoAreaSpot\(code\)/.test(ih) && /if \(loc\) xfrGoMove\(String\(loc\)\.toUpperCase\(\)\)/.test(ih) && /This shelf label has no area on it/.test(ih), null);
+  // the check runs before the item lookup that said "Not on this pallet"
+  check('…it is checked before the item lookup (so it never says "Not on this pallet" for a shelf)', ih.indexOf('xfrNoAreaSpot(code.trim().toUpperCase()); return; }') < ih.indexOf('var hit = xfrGoLocalMatch(code); if (hit) { xfrGoSelect(hit.id); return; }'), null);
+}
+
 console.log('\n' + (failed ? '❌ ' + failed + ' check(s) FAILED' : '✅ all ' + passed + ' checks passed') + '\n');
 process.exit(failed ? 1 : 0);

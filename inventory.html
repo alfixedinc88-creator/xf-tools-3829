@@ -9296,6 +9296,23 @@ window.invCredLogin = async function() {
     if (x.hasAttribute('data-kb-typing') || v.trim().length < 4) return;
     _xfrAutoT = setTimeout(function() { if (x.value === v) xfrBoxScanNow(x); }, 350);
   };
+  // A shelf label with no area on it: pick the area — the plan's first, then every spot we know ending with these numbers,
+  // then every area. Fix the label later (Label Printer): the full spot is "AREA=numbers".
+  function xfrNoAreaSpot(code) {
+    var sel = xfrGo.sel, l = sel && xfrGo.lines.filter(function(x) { return x.id === sel.id; })[0]; if (!l) return;
+    var plan = String((xfrGoRecs(l) || {}).plan || '').toUpperCase(), cands = [], add = function(c) { c = String(c || '').toUpperCase(); if (c && cands.indexOf(c) < 0) cands.push(c); };
+    if (plan) add((plan.indexOf('=') >= 0 ? plan.split('=')[0] : plan) + '=' + code);
+    xfrGo.lines.forEach(function(x) { (x.stock || []).forEach(function(st) { var L = String(st.location || '').toUpperCase(); if (L.split('=').slice(1).join('=') === code) add(L); }); });
+    ((xfrGoRecs(l) || {}).recs || []).forEach(function(r) { var L = String(r.location || r.loc || '').toUpperCase(); if (L.split('=').slice(1).join('=') === code) add(L); });
+    var areas = (typeof INV_PREFIXES !== 'undefined' ? INV_PREFIXES : []).map(function(p) { return String(p).replace(/=$/, ''); }).filter(Boolean);
+    window._xfrNoArea = function(loc) { xfrPopupClose(); if (loc) xfrGoMove(String(loc).toUpperCase()); };
+    xfrPopup('<div style="font-weight:800;color:var(--orange);font-size:16px;margin-bottom:4px">📍 ' + xfrE(code) + ' — which shelf?</div>'
+      + '<div style="font-size:13px;color:var(--text2);margin-bottom:10px">This shelf label has no area on it (it should read like <b>FRONT=' + xfrE(code) + '</b>). Moving <b>' + xfrN(sel.n) + ' × ' + xfrE(l.part) + '</b> — tap the right shelf. Tell the office to reprint this label with its area.</div>'
+      + cands.map(function(c, i) { return '<button type="button" onclick="_xfrNoArea(this.dataset.l)" data-l="' + xfrE(c) + '" style="width:100%;margin-bottom:8px;padding:12px;border-radius:10px;border:2px solid ' + (i ? 'var(--border)' : 'var(--accent)') + ';background:' + (i ? 'var(--bg2)' : 'var(--accent-bg,#eef2ff)') + ';font-family:var(--mono);font-size:17px;font-weight:800;color:var(--text);cursor:pointer">' + xfrE(c) + (i === 0 && plan ? ' <span style="font-size:11px;font-weight:600;color:var(--text3)">(plan)</span>' : '') + '</button>'; }).join('')
+      + '<div style="display:flex;gap:6px;align-items:center;margin:4px 0 10px"><select id="xfr-noarea-pfx" style="flex:1;padding:10px;border-radius:8px;border:1.5px solid var(--border);font-size:15px">' + areas.map(function(a) { return '<option>' + xfrE(a) + '</option>'; }).join('') + '</select><span style="font-family:var(--mono);font-weight:800">=' + xfrE(code) + '</span>'
+      + '<button type="button" onclick="_xfrNoArea(g(\'xfr-noarea-pfx\').value + \'=' + xfrE(code) + '\')" style="padding:10px 14px;border-radius:8px;border:none;background:var(--accent);color:#fff;font-weight:800;cursor:pointer">Use</button></div>'
+      + '<button type="button" onclick="_xfrNoArea(\'\')" style="width:100%;padding:10px;border-radius:10px;border:1.5px solid var(--border);background:var(--bg);cursor:pointer">Cancel</button>');
+  }
   window.xfrBoxScan = function(code) {
     code = String(window.xfFixUpc ? xfFixUpc(code || '') : code || '').trim(); if (!code) return; // R20H: UPC without its first digit
     xfrScanNote('📷 Last scan: ' + code + ' · ' + new Date().toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit', second: '2-digit' }) + ' — looking…', 'var(--accent)');
@@ -9311,6 +9328,10 @@ window.invCredLogin = async function() {
       if (!xfrGo.sel) { invFlash('Scan a box first, then the shelf label', 'error'); xfrGoBox(); return; }
       xfrGoMove(code.toUpperCase()); return;
     }
+    // Owner (2026-10-09): a shelf label printed WITHOUT its area ("4-1-2-6", not "FRONT=4-1-2-6") was taken for an item
+    // ("⚠ Not on this pallet 4-1-2-6"). Boxes picked + a code of numbers only (no "=") that isn't on this pallet →
+    // ask which shelf it is (the plan's area first, spots we know that end with it), then move there.
+    if (xfrGo.focus && xfrGo.sel && /^\d+(-\d+){2,}$/.test(code.trim()) && !xfrGoLocalMatch(code)) { xfrNoAreaSpot(code.trim().toUpperCase()); return; }
     // On an open pallet: its own boxes are matched on the phone (part # or
     // outside box UPC) — no wait at all.
     if (xfrGo.focus && !finished) { var hit = xfrGoLocalMatch(code); if (hit) { xfrGoSelect(hit.id); return; }
