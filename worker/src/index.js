@@ -5126,11 +5126,15 @@ async function containerPalletLines(env, o) {
     // − still there = not explained by any record (e.g. a SKU Mgr row changed without a History entry).
     const rc = await d1First(env, 'SELECT cases FROM inventory_log WHERE id = ?', [r.id]).catch(() => null);
     const pm = await d1First(env, `SELECT SUM(m.cases) AS c FROM pallet_move m JOIN reorder_pallet p ON p.id = m.pallet_id LEFT JOIN inventory_log l ON l.id = m.out_log_id
-      WHERE p.title = ? AND UPPER(p.part) = ? AND COALESCE(l.status, '') != 'Rejected' AND l.cancelled_at IS NULL AND COALESCE(m.kind, '') != 'records'`, [t, part]).catch(() => null);
+      WHERE p.title = ? AND UPPER(p.part) = ? AND COALESCE(l.status, '') != 'Rejected' AND l.cancelled_at IS NULL AND COALESCE(m.kind, '') NOT IN ('records', 'found')`, [t, part]).catch(() => null);
     const there = await d1First(env, 'SELECT SUM(cases) AS c FROM master_list WHERE UPPER(TRIM(part_num)) = ? AND UPPER(TRIM(location)) = ?', [part, r.l]).catch(() => null);
     const received = parseFloat(rc && rc.cases) || 0, offPal = parseFloat(pm && pm.c) || 0, logged = (recvGone[k] || []).filter(x => x.type !== 'MOVED_ROW').reduce((a, x) => a + x.cases, 0);
     const now = parseFloat(there && there.c) || 0, rowMoved = (recvGone[k] || []).some(x => x.type === 'MOVED_ROW');
-    recvAt[k].math = { received, offPallets: Math.round(offPal * 1000) / 1000, onRecord: Math.round(logged * 1000) / 1000, now,
+    const ls = await d1First(env, 'SELECT SUM(cases) AS c FROM reorder_pallet WHERE title = ? AND UPPER(part) = ?', [t, part]).catch(() => null);
+    const fdd = await d1First(env, `SELECT SUM(m.cases) AS c FROM pallet_move m JOIN reorder_pallet p ON p.id = m.pallet_id LEFT JOIN inventory_log l ON l.id = m.out_log_id
+      WHERE p.title = ? AND UPPER(p.part) = ? AND m.kind = 'found' AND COALESCE(l.status, '') != 'Rejected' AND l.cancelled_at IS NULL`, [t, part]).catch(() => null);
+    const listed = parseFloat(ls && ls.c) || 0, foundIn = parseFloat(fdd && fdd.c) || 0;
+    recvAt[k].math = { received, listed, notReceived: Math.max(0, Math.round((listed - received - foundIn) * 1000) / 1000), offPallets: Math.round(offPal * 1000) / 1000, onRecord: Math.round(logged * 1000) / 1000, now,
       unexplained: rowMoved ? 0 : Math.max(0, Math.round((received - offPal - logged - now) * 1000) / 1000) };
   }
   const lines = rows.map(r => { const mv = moved[r.id] || 0, pn = real(r.part);
@@ -7966,6 +7970,7 @@ const _app = {
       if (path === '/inventory/containers/line-history' && method === 'GET') return await palletLineHistory(url, env);
       if (path === '/inventory/containers/pallet-detail' && method === 'GET') return await palletDetail(url, env);
       if (path === '/inventory/containers/mark-moved' && method === 'POST') return await palletMarkMoved(request, env, session);
+      if (path === '/inventory/containers/found-in' && method === 'POST') return await palletFoundIn(request, env, session);
       if (path === '/inventory/containers/scan' && method === 'GET') return await inventoryContainerScan(url, env);
       if (path === '/inventory/containers/extra' && method === 'POST') return await inventoryPalletExtra(request, env, session);
       if (path === '/inventory/containers/upc-issue' && method === 'POST') return await inventoryUpcIssue(request, env, session);
@@ -13736,6 +13741,60 @@ async function palletMarkMoved(request, env, session) {
   await env.DB.prepare('INSERT INTO pallet_move (pallet_id, cases, to_location, out_log_id, transfer_id, by_user, at, kind) VALUES (?,?,?,?,?,?,?,?)')
     .bind(id, Math.round(n * 1000) / 1000, loc, null, null, who, new Date().toISOString(), 'records').run();
   return J({ ok: true, part, cases: n, location: loc });
+}
+// POST /inventory/containers/found-in { palletLineId, cases, toLocation } — Owner (2026-10-09, 23-1-1=20X): the pallets list
+// more boxes of a part # than 📦 Received stocked in, other pallets already moved all that was received, and these boxes are
+// still on this pallet — never in SKU Mgr. Add them (Stock In at the shelf, noted, approved like 📦 Received) and count them
+// off the pallet. Never more than the pallets list minus what was received (minus what was already added this way).
+async function palletFoundIn(request, env, session) {
+  await reorderFixTables(env);
+  const J = (o, st) => cors(new Response(JSON.stringify(o), { status: st || 200, headers: { 'Content-Type': 'application/json' } }));
+  const b = await request.json().catch(() => ({}));
+  const rid = b._requestId ? String(b._requestId).slice(0, 80) : '';
+  if (rid) { const claim = await claimRequestId(env, rid, 'inventory/containers/found-in'); if (claim.isDuplicate) return J(claim.cachedResponse || { ok: true, duplicate: true }); }
+  const fail = async (o, st) => { if (rid) await env.DB.prepare('DELETE FROM processed_requests WHERE request_id=?').bind(rid).run().catch(() => {}); return J(o, st); };
+  const id = parseInt(b.palletLineId, 10) || 0, n = parseFloat(b.cases) || 0, loc = String(b.toLocation || '').trim().toUpperCase().replace(/\s+/g, '');
+  if (!id || !(n > 0)) return fail({ ok: false, error: 'palletLineId and cases needed' }, 400);
+  if (!/^[A-Z0-9]+=\S+$/.test(loc) && loc !== 'GARAGE') return fail({ ok: false, error: 'Scan the shelf label they went to (e.g. C1=1-2-3)' }, 400);
+  const pl = await palletLineLeft(env, id);
+  if (!pl) return fail({ ok: false, error: 'Pallet line not found' }, 404);
+  if (n > (pl.left || 0) + 1e-9) return fail({ ok: false, error: `Pallet ${pl.pallet} only has ${pl.left} box(es) of ${pl.part} left` }, 400);
+  const al = await d1First(env, 'SELECT part FROM reorder_alias WHERE UPPER(raw) = ?', [String(pl.part).toUpperCase()]).catch(() => null);
+  const part = String((al && al.part) || pl.part).toUpperCase();
+  const rec = await d1All(env, `SELECT cases, UPPER(TRIM(location)) AS l FROM inventory_log WHERE type = 'IN' AND UPPER(TRIM(part_num)) = ? AND notes LIKE ? AND COALESCE(status, '') != 'Rejected' AND cancelled_at IS NULL`,
+    [part, '[RECEIVED] ' + pl.title + ' — %']).catch(() => []);
+  if (!rec.length) return fail({ ok: false, error: `${part} of ${pl.title} was not 📦 Received — receive the container first` }, 400);
+  const received = rec.reduce((a, r) => a + (parseFloat(r.cases) || 0), 0), recvLoc = rec[0].l;
+  const lst = await d1First(env, 'SELECT SUM(cases) AS c, SUM(pcs) AS p FROM reorder_pallet WHERE title = ? AND UPPER(part) IN (?, ?)', [pl.title, part, String(pl.part).toUpperCase()]);
+  const listed = parseFloat(lst && lst.c) || 0, pcs = listed > 0 && parseFloat(lst.p) > 0 ? Math.round(parseFloat(lst.p) / listed * 1000) / 1000 : 0;
+  const fd = await d1First(env, `SELECT SUM(m.cases) AS c FROM pallet_move m JOIN reorder_pallet p ON p.id = m.pallet_id LEFT JOIN inventory_log l ON l.id = m.out_log_id
+    WHERE p.title = ? AND UPPER(p.part) IN (?, ?) AND m.kind = 'found' AND COALESCE(l.status, '') != 'Rejected' AND l.cancelled_at IS NULL`, [pl.title, part, String(pl.part).toUpperCase()]).catch(() => null);
+  const already = parseFloat(fd && fd.c) || 0, room = Math.round((listed - received - already) * 1000) / 1000;
+  const there = await d1First(env, 'SELECT SUM(cases) AS c FROM master_list WHERE UPPER(TRIM(part_num)) = ? AND UPPER(TRIM(location)) = ?', [part, recvLoc]);
+  if ((parseFloat(there && there.c) || 0) > 1e-9) return fail({ ok: false, error: `${recvLoc} still has ${part} on record — move those first` }, 400);
+  if (n > room + 1e-9) return fail({ ok: false, error: `The pallets list ${listed} box(es) of ${part}, 📦 Received stocked ${received}` + (already ? `, ${already} already added this way` : '') + ` — only ${Math.max(0, room)} can be added` }, 400);
+  if (!(pcs > 0)) return fail({ ok: false, error: `No pieces per box on the packing list for ${part} — tell the office` }, 400);
+  const who = String((session && (session.displayName || session.username)) || b.initials || '').slice(0, 40);
+  const ex = await d1First(env, 'SELECT id, name FROM master_list WHERE UPPER(TRIM(part_num)) = ? AND UPPER(TRIM(location)) = ? AND ABS(COALESCE(units_per_case, 0) - ?) < 0.0001 ORDER BY cases DESC LIMIT 1', [part, loc, pcs]);
+  const note = `[NOT RECEIVED ON FILE] ${pl.title} · Pallet ${pl.pallet} — the pallets list ${listed} box(es), 📦 Received stocked ${received}; ${n} box(es) × ${pcs} pcs still on the pallet added`;
+  const lr = await inventoryLog(new Request('https://internal/inventory/log', { method: 'POST', body: JSON.stringify({ type: 'IN', partNum: part, sku: part,
+    name: String((ex && ex.name) || '').slice(0, 200), location: loc, cases: n, initials: who || 'OPS', notes: note, isNew: !ex, masterId: ex ? ex.id : null, _boxPcs: ex ? 0 : pcs }) }), env);
+  const ld = await lr.json().catch(() => ({}));
+  if (!ld.ok) return fail({ ok: false, error: ld.error || 'Stock In failed' }, 500);
+  let approved = !!ld.autoApproved, approveError = '';
+  if (!approved && ld.d1Id) {
+    const vr = await inventoryVerify(new Request('https://internal/inventory/verify', { method: 'POST', body: JSON.stringify({ rowIndex: ld.d1Id, action: 'Approved',
+      item: { type: 'IN', partNum: part, location: loc, overwriteLocation: '', isPlaceholder: false, isNew: !ex, cases: n, sku: part, notes: note, masterId: ex ? ex.id : null, d1Id: ld.d1Id, unitsPerCase: ex ? undefined : pcs } }) }), env);
+    const vd = await vr.json().catch(() => ({}));
+    approved = !!vd.ok; if (!approved) approveError = vd.error || 'approve failed';
+  }
+  // Counted off the pallet, tied to the Stock In: rejected / cancelled → the boxes are back on the pallet too.
+  await env.DB.prepare('INSERT INTO pallet_move (pallet_id, cases, to_location, out_log_id, transfer_id, by_user, at, kind) VALUES (?,?,?,?,?,?,?,?)')
+    .bind(id, Math.round(n * 1000) / 1000, loc, ld.d1Id || null, null, who, new Date().toISOString(), 'found').run();
+  const res = { ok: true, part, cases: n, location: loc, d1Id: ld.d1Id, autoApproved: approved, listed, received,
+    warn: approveError ? 'Logged, but not added to SKU Mgr yet (' + approveError + ') — approve it in Inventory → Review' : '' };
+  if (rid) await recordRequestResult(env, rid, res);
+  return J(res);
 }
 async function palletOpenLog(request, env, session) {
   const b = await request.json().catch(() => ({}));

@@ -4653,6 +4653,34 @@ console.log('\n🚢 Container here: boxes come off the spot the container was re
     /if \(xfrIsAdmin\(\) && atTo \+ 1e-9 >= n && confirm\(/.test(ih) && /'Ask an Admin\.'/.test(ih) && /gone with NO record \(a SKU Mgr change\?\)/.test(ih), null);
   sq.exec("DELETE FROM pallet_move WHERE pallet_id IN (SELECT id FROM reorder_pallet WHERE title='RCV3 CT'); DELETE FROM reorder_pallet WHERE title='RCV3 CT'; DELETE FROM master_list WHERE part_num LIKE 'RC-%'; DELETE FROM inventory_log WHERE part_num LIKE 'RC-%'");
 
+  // Owner (2026-10-09, 12:41): admin scanned BSMT=40-1-1-4 — "Not moved … Scan a spot where SKU Mgr already has them",
+  // with nothing listed and no gap. The pallets list MORE boxes than 📦 Received stocked in (e.g. 70 listed, 61 received);
+  // the other pallets moved all 61; these last boxes were never in SKU Mgr. Now: the line says so, and scanning the shelf
+  // ADDS them (Stock In, noted) and counts them off the pallet — never more than listed − received.
+  sq.prepare("INSERT INTO reorder_pallet (title, vendor, pallet, part, description, cases, pcs, pcs_per_ctn, updated_at) VALUES ('RCV4 CT','KW','1','RC-6=20X','valve',9,180,20,?), ('RCV4 CT','KW','2','RC-6=20X','valve',61,1220,20,?)").run(ts, ts);
+  logIn.run(ts, 'IN', 'RC-6=20X', 'RC-6=20X', 'GARAGE', 61, 'RCV', '[RECEIVED] RCV4 CT \u2014 1220 units · 61 box(es) × 20 pcs', 'Verified', null);
+  const tOut = logIn.run(ts, 'TRANSFER_OUT', 'RC-6=20X', 'RC-6=20X', 'GARAGE', 61, 'HS', '[CONTAINER SCAN] RCV4 CT · Pallet 2', 'Verified', 'BSMT=9-9-9');
+  const p2 = sq.prepare("SELECT id FROM reorder_pallet WHERE title='RCV4 CT' AND pallet='2'").get().id;
+  sq.prepare("INSERT INTO pallet_move (pallet_id, cases, to_location, out_log_id, by_user, at, kind) VALUES (?,?,?,?,?,?,?)").run(p2, 61, 'BSMT=9-9-9', Number(tOut.lastInsertRowid), 'HS', ts, null);
+  sq.prepare("INSERT INTO master_list (base_sku, name, part_num, location, cases, units_per_case) VALUES ('RC-6','valve','RC-6=20X','BSMT=9-9-9',61,20)").run();
+  const tot6 = () => sq.prepare("SELECT SUM(cases) c FROM master_list WHERE part_num='RC-6=20X'").get().c;
+  const pv6 = await get('/inventory/containers/pallet-view?title=' + encodeURIComponent('RCV4 CT') + '&vendor=KW&pallet=1');
+  const l6 = (pv6.lines || [])[0] || {}, m6 = l6.recvMath || {};
+  check('pallet 1: the pallets list 70 of RC-6=20X, 📦 Received stocked 61, all 61 moved off other pallets → 9 never in SKU Mgr; no move from another shelf',
+    m6.listed === 70 && m6.received === 61 && m6.offPallets === 61 && m6.now === 0 && m6.notReceived === 9 && from(l6) === null, m6);
+  const before6 = tot6();
+  const fi = await post('/inventory/containers/found-in', { palletLineId: l6.id, cases: 8, toLocation: 'BSMT=40-1-1-4' });
+  const fi2 = await post('/inventory/containers/found-in', { palletLineId: l6.id, cases: 2, toLocation: 'BSMT=40-1-1-4' });
+  const pv7 = await get('/inventory/containers/pallet-view?title=' + encodeURIComponent('RCV4 CT') + '&vendor=KW&pallet=1');
+  const l7 = (pv7.lines || [])[0] || {};
+  const lg6 = sq.prepare("SELECT status, notes, cases, location FROM inventory_log WHERE part_num='RC-6=20X' AND type='IN' AND notes LIKE '[NOT RECEIVED ON FILE]%'").get() || {};
+  check('…scan BSMT=40-1-1-4 with 8: Stock In of 8 there (61 → 69 = 61 + 8, nothing twice), noted "[NOT RECEIVED ON FILE] … pallets list 70, 📦 Received stocked 61", pallet 9 → 1 left; adding 2 more → refused (only 1 never received)',
+    fi.ok && before6 === 61 && tot6() === 69 && l7.left === 1 && lg6.cases === 8 && lg6.location === 'BSMT=40-1-1-4' && /pallets list 70 box\(es\), 📦 Received stocked 61/.test(lg6.notes || '')
+      && fi2.ok === false && /only 1 can be added|only has 1 box/.test(fi2.error) && tot6() === 69, { fi, fi2, tot: tot6(), left: l7.left, lg6 });
+  check('…page: the line says "never in SKU Mgr: the pallets list … 📦 Received stocked only …", and the shelf scan asks to ADD them (xfrGoFoundIn)',
+    /'⚠ never in SKU Mgr: the pallets list '/.test(ih) && /return xfrGoFoundIn\(l, n, toLoc\);/.test(ih) && /\/inventory\/containers\/found-in/.test(ih), null);
+  sq.exec("DELETE FROM pallet_move WHERE pallet_id IN (SELECT id FROM reorder_pallet WHERE title='RCV4 CT'); DELETE FROM reorder_pallet WHERE title='RCV4 CT'; DELETE FROM master_list WHERE part_num LIKE 'RC-%'; DELETE FROM inventory_log WHERE part_num LIKE 'RC-%'");
+
   // Owner (2026-10-09): "Still looking for 810139930815… (slow WiFi?) — our WiFi is fine, anything to do with the update?"
   // Yes: every box scan opened the pallet and looked up what left the received spot for EVERY part # of the whole
   // container (4 lookups each). Now only the opened pallet's part #s, and only when their received spot is empty.
