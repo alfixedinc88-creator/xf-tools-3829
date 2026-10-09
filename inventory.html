@@ -7074,7 +7074,7 @@ window.invCredLogin = async function() {
     var thS = 'padding:5px 7px;text-align:left;font-size:10px;font-weight:700;text-transform:uppercase;color:var(--text3);white-space:nowrap;border-bottom:2px solid var(--border)';
     var tdS = 'padding:5px 7px;border-bottom:1px solid var(--border);white-space:nowrap;font-size:12px';
     var table = function(head, rows) { return '<div style="overflow-x:auto;border:1.5px solid var(--border);border-radius:10px;margin-bottom:12px"><table style="width:100%;border-collapse:collapse"><thead><tr>' + head.map(function(h) { return '<th style="' + thS + (h.r ? ';text-align:right' : '') + '">' + h.t + '</th>'; }).join('') + '</tr></thead><tbody>' + rows + '</tbody></table></div>'; };
-    var kindLab = { container: '🚢 Container here', stockout: '📤 Stock Out', transfer: '🔀 Transfer' };
+    var kindLab = { container: '🚢 Container here', stockout: '📤 Stock Out', transfer: '🔀 Transfer', records: '📋 Already there on record (pallet count only)' };
     wFetch(W + '/inventory/containers/pallet-detail?title=' + encodeURIComponent(p.title || '') + '&vendor=' + encodeURIComponent(p.vendor || '') + '&pallet=' + encodeURIComponent(p.pallet || ''))
       .then(function(r) { return r.json(); }).then(function(d) {
         if (!d || !d.ok) { body.innerHTML = '<div style="color:var(--red)">⚠ ' + invEsc((d && d.error) || 'Could not load') + '</div>'; return; }
@@ -9641,7 +9641,16 @@ window.invCredLogin = async function() {
     var per = xfrLinePcs(l), same = function(s) { return per > 0 && Math.abs((parseFloat(s.pcs) || 0) - per) < 1e-6; };
     // The spot 📦 Received stocked this container's part # into comes first (same box size, else any row there).
     if (l.recvLoc) { var rv = st.filter(function(s) { return String(s.location).toUpperCase() === String(l.recvLoc).toUpperCase(); });
-      var rh = rv.filter(same)[0] || (rv.length && (!per || !rv.some(function(s) { return parseFloat(s.pcs) > 0; })) ? rv[0] : null); if (rh) return rh; }
+      var rh = rv.filter(same)[0] || (rv.length && (!per || !rv.some(function(s) { return parseFloat(s.pcs) > 0; })) ? rv[0] : null); if (rh) return rh;
+      // None left there on record: a Transfer took them off it (not off the pallet) → SKU Mgr has them where it sent them;
+      // move from THERE (newest first). Never from an unrelated shelf. Nothing there either → null (the office has to look).
+      var dests = (l.recvGone || []).filter(function(x) { return x.type === 'TRANSFER_OUT' && x.to; }).map(function(x) { return String(x.to).toUpperCase(); }).reverse();
+      for (var di = 0; di < dests.length; di++) {
+        var dv = st.filter(function(s) { return String(s.location).toUpperCase() === dests[di]; });
+        var dh = dv.filter(same)[0] || (dv.length && (!per || !dv.some(function(s) { return parseFloat(s.pcs) > 0; })) ? dv[0] : null);
+        if (dh) { dh.viaRecords = true; return dh; }
+      }
+      return null; }
     var gar = st.filter(function(s) { return /^GARAGE$/i.test(s.location); });
     var hit = gar.filter(same)[0]; if (hit) return hit;
     if (gar.length && (!per || !gar.some(function(s) { return parseFloat(s.pcs) > 0; }))) return gar[0]; // sizes not on file: as before
@@ -9656,6 +9665,13 @@ window.invCredLogin = async function() {
     // A bare area prefix ("BARN=") is not a spot — the full label has the spot after the "=".
     return (typeof INV_PREFIXES !== 'undefined' ? INV_PREFIXES : []).some(function(p) { return up.indexOf(p) === 0 && (up.length > p.length || !/=$/.test(p)); }) || /^[A-Z][A-Z0-9]*=\d/.test(up);
   }
+  // What took this part # off its received spot on record (not off the pallet): "Stock Out 4 (AB, Oct 6) · Transfer 5 → X (CD, Oct 7)".
+  function xfrGoneWhy(l) {
+    var g0 = l.recvGone || []; if (!g0.length) return '';
+    var lab = { OUT: 'Stock Out', TRANSFER_OUT: 'Transfer', EDIT: 'SKU Mgr edit', AUDIT: 'Audit' };
+    var d = function(iso) { try { return new Date(iso).toLocaleDateString('en-US', { timeZone: 'America/New_York', month: 'short', day: 'numeric' }); } catch (e) { return ''; } };
+    return ' (taken off it on record: ' + g0.slice(-4).map(function(x) { return (lab[x.type] || x.type) + ' ' + xfrN(x.cases) + (x.to ? ' → ' + xfrE(x.to) : '') + ' (' + xfrE(x.who) + ', ' + d(x.at) + ')'; }).join(' · ') + (g0.length > 4 ? ' · …' : '') + ')';
+  }
   function xfrGoRecs(l) { return (xfrGo.recs && xfrGo.recs[l.part]) || { plan: '', recs: [] }; }
   function xfrNat(a, b) { return String(a).localeCompare(String(b), undefined, { numeric: true }); }
   // Boxes on this line vs. what's still in the stock-in spot (GARAGE).
@@ -9663,9 +9679,11 @@ window.invCredLogin = async function() {
     if (l.over > 0) return '⚠ ' + xfrN(l.over) + ' more box(es) moved than the pallet had';
     if (!(l.left > 0)) return '';
     var f = xfrGoFrom(l), have = f ? parseFloat(f.cases) || 0 : 0;
+    if (!f && l.recvLoc) return '⚠ the container went in at ' + xfrE(l.recvLoc) + ', but SKU Mgr has none of it left there' + xfrGoneWhy(l) + ' — tell the office before moving these';
     if (!f) return '⚠ not in stock anywhere — stock the container in first (Reorder → 📦 Received)';
+    if (f.viaRecords && have + 1e-9 >= l.left) return 'ℹ SKU Mgr already moved these off ' + xfrE(l.recvLoc) + ' to ' + xfrE(f.location) + xfrGoneWhy(l) + ' — put them there (it only counts them off the pallet), or anywhere else (moved from ' + xfrE(f.location) + ' on record)';
     if (have + 1e-9 < l.left) return '⚠ pallet says ' + xfrN(l.left) + ' left but ' + xfrE(f.location) + ' only has ' + xfrN(have) + ' on record (SKU Mgr)'
-      + (l.recvLoc && String(l.recvLoc).toUpperCase() !== String(f.location).toUpperCase() ? ' — the container went in at ' + xfrE(l.recvLoc) + ', which has none of it left on record' : '')
+      + (f.viaRecords ? ' — the container went in at ' + xfrE(l.recvLoc) + xfrGoneWhy(l) : '')
       + ' — you can move up to ' + xfrN(have) + '; tell the office about the rest';
     return '';
   }
@@ -9673,7 +9691,7 @@ window.invCredLogin = async function() {
     var el = g('xfr-cont-go'); if (!el || !xfrGo.focus) return;
     var f = xfrGo.focus, sel = xfrGo.sel, L = xfrGo.lines;
     var tot = 0, mv = 0, left = 0, warns = 0;
-    L.forEach(function(l) { tot += +l.cases || 0; mv += +l.moved || 0; left += +l.left || 0; if (xfrGoLineWarn(l)) warns++; });
+    L.forEach(function(l) { tot += +l.cases || 0; mv += +l.moved || 0; left += +l.left || 0; if (/^⚠/.test(xfrGoLineWarn(l))) warns++; });
     var match = Math.abs(tot - mv - left) < 1e-6 && !L.some(function(l) { return l.over > 0; });
     var h = '<div style="margin-bottom:6px;display:flex;justify-content:space-between"><a href="#" onclick="xfrGoBack();return false" style="font-size:12px">← All containers</a><a href="#" onclick="xfrGoReload();return false" style="font-size:12px">↻ Refresh</a></div>'
       + '<div style="font-size:15px;font-weight:800;margin-bottom:2px">🧱 Pallet ' + xfrE(f.pallet) + ' <span style="font-size:12px;font-weight:400;color:var(--text3)">' + xfrE(f.title) + '</span></div>'
@@ -9699,7 +9717,7 @@ window.invCredLogin = async function() {
           + '<button type="button" id="xfr-go-n" onclick="xfrGoKeypadN()" title="Tap for the number pad" style="min-width:56px;height:40px;border-radius:10px;border:2px solid var(--accent);background:var(--bg);font-size:20px;font-weight:800;cursor:pointer;color:var(--text);font-family:var(--mono)">' + xfrN(sel.n) + '</button>'
           + '<button type="button" onclick="xfrGoStep(1)" style="width:40px;height:40px;border-radius:10px;border:1.5px solid var(--border);background:var(--bg3);font-size:22px;font-weight:800;cursor:pointer;color:var(--text)">+</button>'
           + '<span style="font-size:12px">box(es)</span></div></div></div>'
-          + (w ? '<div style="margin-top:8px;font-size:12px;font-weight:700;color:#b91c1c">' + w + '</div>' : '')
+          + (w ? '<div style="margin-top:8px;font-size:12px;font-weight:700;color:' + (/^ℹ/.test(w) ? 'var(--accent)' : '#b91c1c') + '">' + w + '</div>' : '')
           + (R.plan ? '<div style="margin-top:8px;padding:8px 10px;border-radius:10px;background:#fef3c7;color:#92400e;font-weight:800;font-size:15px">📍 Plan: ' + (R.planLevel === 'part' ? xfrE(l.part) + ' ' : '') + 'goes to ' + xfrE(R.plan) + (R.planLevel === 'part' ? '<div style="font-size:11px;font-weight:600">This pack size has its own plan</div>' : '') + '</div>' : '')
           + (R.recs.length || !R.plan ? '<div style="font-size:12px;font-weight:700;margin:10px 0 4px">Suggested spot:</div>' : '')
           + (R.recs.length ? R.recs.slice(0, 1).map(function(r, i) { return '<div style="padding:8px 10px;margin-bottom:5px;border-radius:9px;border:1.5px solid ' + (i ? 'var(--border)' : 'var(--green)') + ';background:' + (i ? 'var(--bg3)' : 'var(--green-bg,#dcfce7)') + '"><span style="font-family:var(--mono);font-weight:800;font-size:' + (i ? '14' : '17') + 'px">' + (i ? '2. ' : '1. ') + xfrE(r.location) + '</span> <span style="font-size:11px;color:var(--text3)">' + xfrE(r.why) + '</span></div>'; }).join('')
@@ -9860,6 +9878,20 @@ window.invCredLogin = async function() {
       }).catch(function(e) { ex.status = 'Failed'; invFlash('Extra ' + part + ' NOT saved — ' + ((e && e.message) || 'error'), 'error'); })
       .then(function() { xfrGo.inflight = Math.max(0, (xfrGo.inflight || 1) - 1); xfrGoRender(); if (!xfrGo.inflight) xfrGoRefresh(); });
   };
+  // The boxes go to the spot SKU Mgr already has them at (an earlier Transfer moved them there on record): only the pallet
+  // counts them off — SKU Mgr doesn't change (nothing twice). Kept with who / when / where on the pallet.
+  function xfrGoMarkMoved(l, n, toLoc) {
+    var have = Math.max(0, (parseFloat((xfrGoFrom(l) || {}).cases) || 0));
+    if (n > have + 1e-9) { invFlash('Can\'t count ' + xfrN(n) + ' off: SKU Mgr shows only ' + xfrN(have) + ' of ' + l.part + ' at ' + toLoc + '. Count ' + xfrN(have) + ' now and tell the office about the rest.', 'error'); return; }
+    invPost(W + '/inventory/containers/mark-moved', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ palletLineId: l.id, cases: n, toLocation: toLoc,
+      initials: (INV_CRED_USER && INV_CRED_USER.displayName) || '' }) }).then(function(r) { return r.json(); }).then(function(x) {
+      if (x && x.queued) { invFlash(INV_OFFLINE_MSG, 'warn'); return; }
+      if (!x || !x.ok) { invFlash('✗ Not counted: ' + ((x && x.error) || 'error'), 'error'); return; }
+      invFlash('✓ ' + xfrN(n) + ' × ' + l.part + ' at ' + toLoc + ' — counted off the pallet (SKU Mgr already had them there)', 'success');
+      xfrGo.moved.push(n + ' × ' + l.part + ' → ' + toLoc); if (xfrGo.sel && xfrGo.sel.id === l.id) xfrGo.sel = null;
+      xfrGoRefresh();
+    }).catch(function(e) { invFlash('✗ Not counted — ' + ((e && e.message) || 'error'), 'error'); });
+  }
   window.xfrGoMove = function(toLoc) {
     var sel = xfrGo.sel; if (!sel) return;
     var l = xfrGo.lines.filter(function(x) { return x.id === sel.id; })[0]; if (!l) return;
@@ -9868,7 +9900,9 @@ window.invCredLogin = async function() {
     if (!(n > 0)) { invFlash('How many boxes?', 'error'); return; }
     if (n > l.left + 1e-9) { invFlash('Pallet ' + l.pallet + ' only has ' + xfrN(l.left) + ' box(es) of ' + l.part, 'error'); return; }
     var from = xfrGoFrom(l);
+    if (!from && l.recvLoc) { invFlash('Not moved: the container went in at ' + l.recvLoc + ', but SKU Mgr has none of ' + l.part + ' left there' + xfrGoneWhy(l).replace(/<[^>]*>/g, '') + '. Tell the office.', 'error'); return; }
     if (!from) { invFlash(l.part + ' is not in stock anywhere yet — stock the container in first (Reorder → 📦 Received)', 'error'); return; }
+    if (toLoc === String(from.location).toUpperCase() && from.viaRecords) return xfrGoMarkMoved(l, n, toLoc);
     if (toLoc === String(from.location).toUpperCase()) { invFlash('That is where it already is (' + toLoc + ')', 'error'); return; }
     invFlash('Moving ' + n + ' × ' + l.part + ' → ' + toLoc + '…', 'success');
     // Fast: the pallet view already has the spot's SKU Mgr row and what is

@@ -4590,6 +4590,41 @@ console.log('\n🚢 Container here: boxes come off the spot the container was re
   check('…too many for the spot → "Can\'t move N: SKU Mgr shows only X … Move X now and tell the office about the other Y" (approval only named when something is waiting)',
     /Can\\'t move ' \+ xfrN\(n\) \+ ': SKU Mgr shows only '/.test(ih) && /pend0 > 0 \?/.test(ih) && !/at ' \+ from\.location \+ ' \(some may be waiting for approval\)'/.test(ih), null);
   sq.exec("DELETE FROM reorder_pallet WHERE title='RCV CT'; DELETE FROM master_list WHERE part_num='RC-1=20X'; DELETE FROM inventory_log WHERE part_num='RC-1=20X'");
+
+  // Owner (2026-10-09, after refresh): "the container went in at GARAGE, which has none of it left" — still "Only 5 at
+  // BSMT=47-5-12". GARAGE's boxes were taken off on record (a normal Transfer, not off the pallet), so SKU Mgr has them
+  // where that Transfer sent them. Container here moves them from THERE, never from an unrelated shelf; putting them
+  // exactly there only counts them off the pallet (SKU Mgr unchanged — nothing twice).
+  sq.prepare("INSERT INTO reorder_pallet (title, vendor, pallet, part, description, cases, pcs, pcs_per_ctn, updated_at) VALUES ('RCV2 CT','KW','1','RC-2=20X','valve',5,100,20,?), ('RCV2 CT','KW','1','RC-3=20X','valve',4,80,20,?)").run(ts, ts);
+  const logIn = sq.prepare("INSERT INTO inventory_log (timestamp, type, part_num, sku, location, cases, initials, notes, status, paired_location) VALUES (?,?,?,?,?,?,?,?,?,?)");
+  logIn.run(ts, 'IN', 'RC-2=20X', 'RC-2=20X', 'GARAGE', 5, 'RCV', '[RECEIVED] RCV2 CT \u2014 100 units · 5 box(es) × 20 pcs', 'Verified', null);
+  logIn.run(ts, 'IN', 'RC-3=20X', 'RC-3=20X', 'GARAGE', 4, 'RCV', '[RECEIVED] RCV2 CT \u2014 80 units · 4 box(es) × 20 pcs', 'Verified', null);
+  logIn.run(ts, 'TRANSFER_OUT', 'RC-2=20X', 'RC-2=20X', 'GARAGE', 5, 'AB', 'plain transfer', 'Verified', 'BSMT=9-9-3');   // all 5 moved on record
+  logIn.run(ts, 'OUT', 'RC-3=20X', 'RC-3=20X', 'GARAGE', 4, 'CD', 'stock out', 'Verified', null);                      // all 4 stocked out
+  sq.prepare("INSERT INTO master_list (base_sku, name, part_num, location, cases, units_per_case) VALUES ('RC-2','valve','RC-2=20X','BSMT=9-9-3',5,20), ('RC-2','valve','RC-2=20X','BSMT=9-9-4',5,20), ('RC-3','valve','RC-3=20X','BSMT=9-9-5',9,20)").run();
+  const pv2 = await get('/inventory/containers/pallet-view?title=' + encodeURIComponent('RCV2 CT') + '&vendor=KW&pallet=1');
+  const L2 = p => (pv2.lines || []).find(x => x.part === p) || {};
+  const a2 = L2('RC-2=20X'), a3 = L2('RC-3=20X');
+  check('pallet view: received at GARAGE, and what took it off GARAGE on record (Transfer 5 → BSMT=9-9-3 by AB; Stock Out 4 by CD)',
+    a2.recvLoc === 'GARAGE' && a2.recvGone.length === 1 && a2.recvGone[0].type === 'TRANSFER_OUT' && a2.recvGone[0].to === 'BSMT=9-9-3' && a2.recvGone[0].who === 'AB'
+      && a3.recvGone.length === 1 && a3.recvGone[0].type === 'OUT', { a2: a2.recvGone, a3: a3.recvGone });
+  const g2 = from(a2), g3 = from(a3);
+  check('…the move comes from BSMT=9-9-3 (where SKU Mgr has them now), not the unrelated BSMT=9-9-4; stocked out → nowhere to take them from (tell the office), not BSMT=9-9-5',
+    g2 && g2.location === 'BSMT=9-9-3' && g2.viaRecords === true && g3 === null, { g2, g3 });
+  const id2 = a2.id, ml0 = sq.prepare("SELECT location, cases FROM master_list WHERE part_num LIKE 'RC-%' ORDER BY id").all();
+  const mk = await post('/inventory/containers/mark-moved', { palletLineId: id2, cases: 3, toLocation: 'BSMT=9-9-3' });
+  const tooMany = await post('/inventory/containers/mark-moved', { palletLineId: id2, cases: 9, toLocation: 'BSMT=9-9-3' });
+  const notThere = await post('/inventory/containers/mark-moved', { palletLineId: id2, cases: 1, toLocation: 'BSMT=9-9-9' });
+  const pv3 = await get('/inventory/containers/pallet-view?title=' + encodeURIComponent('RCV2 CT') + '&vendor=KW&pallet=1');
+  const b2 = (pv3.lines || []).find(x => x.part === 'RC-2=20X') || {};
+  const ml1 = sq.prepare("SELECT location, cases FROM master_list WHERE part_num LIKE 'RC-%' ORDER BY id").all();
+  check('…putting 3 exactly there counts them off the pallet (5 → 2 left), SKU Mgr unchanged (nothing twice), kept as who / when / where; more than left or a spot without them → refused',
+    mk.ok && b2.left === 2 && JSON.stringify(ml0) === JSON.stringify(ml1) && tooMany.ok === false && notThere.ok === false
+      && sq.prepare("SELECT COUNT(*) n FROM pallet_move WHERE pallet_id = ? AND kind = 'records' AND to_location = 'BSMT=9-9-3' AND cases = 3").get(id2).n === 1, { mk, left: b2.left, tooMany, notThere });
+  check('…the screen: "ℹ SKU Mgr already moved these off GARAGE to …" / "⚠ … none of it left there (taken off it on record: …) — tell the office"; same spot → xfrGoMarkMoved',
+    /function xfrGoneWhy\(l\)/.test(ih) && /if \(toLoc === String\(from\.location\)\.toUpperCase\(\) && from\.viaRecords\) return xfrGoMarkMoved\(l, n, toLoc\);/.test(ih)
+      && /\/inventory\/containers\/mark-moved/.test(ih) && /'ℹ SKU Mgr already moved these off '/.test(ih), null);
+  sq.exec("DELETE FROM pallet_move WHERE pallet_id IN (SELECT id FROM reorder_pallet WHERE title='RCV2 CT'); DELETE FROM reorder_pallet WHERE title='RCV2 CT'; DELETE FROM master_list WHERE part_num LIKE 'RC-%'; DELETE FROM inventory_log WHERE part_num LIKE 'RC-%'");
 }
 
 // Owner (2026-10-09): "under SKU Mgr I still see (no vendor) $106,572.81 — I want to click on it, see what's there and edit
