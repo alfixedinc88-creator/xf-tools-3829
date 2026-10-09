@@ -9641,14 +9641,19 @@ window.invCredLogin = async function() {
     var per = xfrLinePcs(l), same = function(s) { return per > 0 && Math.abs((parseFloat(s.pcs) || 0) - per) < 1e-6; };
     // The spot 📦 Received stocked this container's part # into comes first (same box size, else any row there).
     if (l.recvLoc) { var rv = st.filter(function(s) { return String(s.location).toUpperCase() === String(l.recvLoc).toUpperCase(); });
-      var rh = rv.filter(same)[0] || (rv.length && (!per || !rv.some(function(s) { return parseFloat(s.pcs) > 0; })) ? rv[0] : null); if (rh) return rh;
+      // Owner (2026-10-09, 3 items "none of it left at GARAGE" — they WERE there): the GARAGE row's Each/Case is not the
+      // packing list's pieces per box. The container's boxes are still on that row — take them from it (the biggest row
+      // there when it has more than one) and say the sizes differ, so the office fixes the Each/Case. Never another shelf.
+      var biggest = function(a) { return a.slice().sort(function(x, y) { return (parseFloat(y.cases) || 0) - (parseFloat(x.cases) || 0); })[0]; };
+      var rh = rv.filter(same)[0]; if (rh) return rh;
+      if (rv.length) { rh = biggest(rv); if (per > 0 && parseFloat(rh.pcs) > 0) { rh.sizeDiff = true; rh.linePcs = per; } return rh; }
       // None left there on record: a Transfer took them off it (not off the pallet) → SKU Mgr has them where it sent them;
       // move from THERE (newest first). Never from an unrelated shelf. Nothing there either → null (the office has to look).
       var dests = (l.recvGone || []).filter(function(x) { return (x.type === 'TRANSFER_OUT' || x.type === 'MOVED_ROW') && x.to; }).map(function(x) { return String(x.to).toUpperCase(); }).reverse();
       for (var di = 0; di < dests.length; di++) {
         var dv = st.filter(function(s) { return String(s.location).toUpperCase() === dests[di]; });
-        var dh = dv.filter(same)[0] || (dv.length && (!per || !dv.some(function(s) { return parseFloat(s.pcs) > 0; })) ? dv[0] : null);
-        if (dh) { dh.viaRecords = true; return dh; }
+        var dh = dv.filter(same)[0] || (dv.length ? biggest(dv) : null);
+        if (dh) { dh.viaRecords = true; if (!same(dh) && per > 0 && parseFloat(dh.pcs) > 0) { dh.sizeDiff = true; dh.linePcs = per; } return dh; }
       }
       return null; }
     var gar = st.filter(function(s) { return /^GARAGE$/i.test(s.location); });
@@ -9685,10 +9690,12 @@ window.invCredLogin = async function() {
       + ' (all moved already) — scan the shelf you put them on to ADD up to ' + xfrN(Math.min(l.recvMath.notReceived, l.left)) + ' (Stock In, noted)';
     if (!f && l.recvLoc) return '⚠ the container went in at ' + xfrE(l.recvLoc) + ', but SKU Mgr has none of it left there' + xfrGoneWhy(l) + ' — tell the office before moving these';
     if (!f) return '⚠ not in stock anywhere — stock the container in first (Reorder → 📦 Received)';
+    var sz = f.sizeDiff ? ' · Each/Case differs: SKU Mgr\'s ' + xfrE(f.location) + ' row says ' + xfrN(f.pcs) + ' pcs a box, the packing list ' + xfrN(f.linePcs) + ' — boxes are taken from that row; tell the office to fix the Each/Case' : '';
+    if (sz && have + 1e-9 >= l.left && !f.viaRecords) return 'ℹ' + sz.slice(2);
     if (f.viaRecords && have + 1e-9 >= l.left) return 'ℹ SKU Mgr already moved these off ' + xfrE(l.recvLoc) + ' to ' + xfrE(f.location) + xfrGoneWhy(l) + ' — put them there (it only counts them off the pallet), or anywhere else (moved from ' + xfrE(f.location) + ' on record)';
     if (have + 1e-9 < l.left) return '⚠ pallet says ' + xfrN(l.left) + ' left but ' + xfrE(f.location) + ' only has ' + xfrN(have) + ' on record (SKU Mgr)'
       + (f.viaRecords ? ' — the container went in at ' + xfrE(l.recvLoc) + xfrGoneWhy(l) : '')
-      + ' — you can move up to ' + xfrN(have) + '; tell the office about the rest';
+      + ' — you can move up to ' + xfrN(have) + '; tell the office about the rest' + sz;
     return '';
   }
   window.xfrGoRender = function() {
