@@ -1768,7 +1768,7 @@ body {
         <div style="display:flex;gap:14px;flex-wrap:wrap;align-items:flex-end;margin-bottom:10px">
           <div>
             <label style="display:block;font-size:11px;font-weight:700;color:var(--text3);text-transform:uppercase;letter-spacing:.5px;margin-bottom:5px">Days back</label>
-            <input type="number" id="ps-und-days" value="50" min="1" max="180" style="width:80px;padding:8px;border:1.5px solid var(--border);border-radius:8px;font-family:var(--mono);font-size:13px">
+            <input type="number" id="ps-und-days" value="60" min="1" max="180" style="width:80px;padding:8px;border:1.5px solid var(--border);border-radius:8px;font-family:var(--mono);font-size:13px">
           </div>
           <div>
             <label style="display:block;font-size:11px;font-weight:700;color:var(--text3);text-transform:uppercase;letter-spacing:.5px;margin-bottom:5px">Exclude most recent</label>
@@ -5163,7 +5163,7 @@ window.psRunUndeliveredReport = async function() {
   var summaryEl = document.getElementById('ps-und-summary');
   if (btn.disabled) return;
 
-  var days = parseInt(document.getElementById('ps-und-days').value) || 50;
+  var days = parseInt(document.getElementById('ps-und-days').value) || 60;
   var excludeRecentDays = parseInt(document.getElementById('ps-und-exclude').value) || 15;
 
   btn.disabled = true;
