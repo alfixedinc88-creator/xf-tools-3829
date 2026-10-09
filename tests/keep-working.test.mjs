@@ -4909,5 +4909,20 @@ console.log('\n🔀 FRONT labels printed without "FRONT=" (4-#-#-#) are taken as
     more.every(u => ih.includes(u)) && (ih.match(/v = \/\^4-\\d\+-\\d\+-\\d\+\$\/\.test\(String\(v\)/g) || []).length === 3, more.filter(u => !ih.includes(u)));
 }
 
+// Owner (2026-10-09, photo): Label Printer, 201-2-14=OLD — the part # came out at the bottom of one label and the barcode
+// + name on the next: the printer didn't stop at the gap between labels. Every label now says "stop at the gap" (^MNY),
+// and 📏 Calibrate makes the printer measure the labels again (~JC).
+console.log('\n🏷️ Label Printer: every label stops at the gap between labels; 📏 Calibrate');
+{
+  const { readFileSync } = await import('node:fs');
+  const lp = readFileSync(fileURLToPath(new URL('../labelprint.html', import.meta.url)), 'utf8');
+  const src = (lp.match(/  function lpGenSkuZPL\(sku, name, copies\) \{[\s\S]*?\n  \}/) || [''])[0];
+  const z = new Function('lpGetSettings', src + '; return lpGenSkuZPL;')(() => ({ width: 406, height: 203, darkness: 10, barShift: 0 }))('201-2-14=OLD', '1 ff960 ring', 1);
+  const y = (z.match(/\^FO\d+,(\d+)/g) || []).map(m => +m.split(',')[1]), bh = +((z.match(/\^BCN,(\d+)/) || [])[1] || 0);
+  check('201-2-14=OLD + "1 ff960 ring": part #, barcode and name all inside one 203-dot label; gap sensing (^MNY) on SKU and location labels',
+    /\^MNY/.test(z) && /'\^MNY', \/\/ stop at the gap/.test(lp) && y.every(v => v >= 0 && v < 203) && y[1] + bh < 203, { y, bh });
+  check('…📏 Calibrate button sends ~JC to the printer', /onclick="lpCalibrate\(\)"/.test(lp) && /data: '~JC'/.test(lp), null);
+}
+
 console.log('\n' + (failed ? '❌ ' + failed + ' check(s) FAILED' : '✅ all ' + passed + ' checks passed') + '\n');
 process.exit(failed ? 1 : 0);

@@ -287,6 +287,7 @@ window.lpCredLogin = async function() {
     </div>
     <div style="display:flex;gap:8px;flex-wrap:wrap">
       <button class="lp-btn lp-btn-primary" onclick="lpTestPrint()">&#x1F5A8; Print Test Label</button>
+      <button class="lp-btn lp-btn-secondary" onclick="lpCalibrate()" title="Label printed across 2 labels? The printer measures the labels again (feeds a few blank ones)">&#x1F4CF; Calibrate</button>
       <button class="lp-btn lp-btn-secondary" onclick="lpResetSettings()">&#x21BA; Reset Defaults</button>
     </div>
     <div id="lp-test-status" style="font-size:12px;color:var(--text2);margin-top:8px"></div>
@@ -550,6 +551,19 @@ window.lpCredLogin = async function() {
     localStorage.removeItem(LP_SETTINGS_KEY);
   };
 
+  // 📏 Owner (2026-10-09): a label came out across 2 labels (part # at the bottom of one, barcode on the next) — the
+  // printer lost where each label starts (new roll / never calibrated). ~JC makes it measure the labels (it feeds a few
+  // blank ones), so every label prints from its own top again.
+  window.lpCalibrate = function() {
+    if (!lpConnected) { alert('Connect to printer first'); return; }
+    var dd = g('lp-printer-dropdown'), printer = lpPrinters[parseInt(dd ? dd.value : '0') || 0];
+    if (!printer) { alert('No printer selected'); return; }
+    var status = g('lp-test-status');
+    if (status) status.textContent = 'Calibrating — the printer feeds a few blank labels…';
+    fetch(LP_ZBP_URL + '/write', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ device: printer, data: '~JC' }) })
+      .then(function() { if (status) status.textContent = '✓ Calibrated — print a test label to check'; })
+      .catch(function(e) { if (status) status.textContent = '⚠ ' + e.message; });
+  };
   window.lpTestPrint = function() {
     if (!lpConnected) { alert('Connect to printer first'); return; }
     var dd  = g('lp-printer-dropdown');
@@ -595,6 +609,7 @@ window.lpCredLogin = async function() {
     return [
       '^XA',
       '^MMT',
+      '^MNY', // stop at the gap between labels (owner: a 201-2-14=OLD label came out across 2 labels)
       '^PW' + s.width,
       '^LL' + s.height,
       '^MD' + s.darkness,
@@ -632,7 +647,7 @@ window.lpCredLogin = async function() {
       });
     }
     var barH = Math.max(40, room(nameSize, nameLines));
-    var out = ['^XA', '^MMT', '^PW' + W, '^LL' + H, '^MD' + s.darkness, '^LS0', '^CI28',
+    var out = ['^XA', '^MMT', '^MNY', '^PW' + W, '^LL' + H, '^MD' + s.darkness, '^LS0', '^CI28',
       '^FO0,4^FB' + W + ',1,0,C,0^A0N,' + ts + ',' + ts + '^FD' + clean(val) + '^FS',
       '^FO' + bx + ',' + barY + '^BY' + by + ',3,' + barH + '^BCN,' + barH + ',N,N,N^FD' + val + '^FS'];
     if (nm) out.push('^FO8,' + (barY + barH + 4) + '^FB' + (W - 16) + ',' + nameLines + ',2,C,0^A0N,' + nameSize + ',' + nameSize + '^FD' + nm + '^FS');
