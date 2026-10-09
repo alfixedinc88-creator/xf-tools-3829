@@ -4445,6 +4445,18 @@ console.log('\n🗓 Auto Label: auto print schedule in plain words by day, ✏�
     && /#ps-al-rules \[data-k="' \+ k \+ '"\]/.test(ph) && /await psAlSaveConfig\(\);/.test(ph), null);
   // Owner (2026-10-08): "minimize it — when I want I can open it up and check myself".
   check('…the schedule card starts folded (tap the title to open it)', /<details class="ps-card" id="ps-al-sched-card"[^>]*>\s*<summary[^>]*>🗓 Auto print schedule/.test(ph) && !/id="ps-al-sched-card"[^>]* open/.test(ph), null);
+  // Owner (2026-10-09): "under Auto Label move the rules to the bottom and minimize, Auto Print Schedule and Test to the bottom too".
+  {
+    const al = ph.slice(ph.indexOf('id="ps-autolabel-content"'), ph.indexOf('<!-- ══ VEEQO SYNC panel ══ -->'));
+    const at = (re) => al.search(re);
+    const hist = at(/🕘 Labels bought &amp; cancellations found/), sched = at(/id="ps-al-sched-card"/), rules = at(/id="ps-al-rules-card"/), test = at(/🧪 Test<\/div>/);
+    check('…Auto Label: 🗓 schedule, 📐 Rules and 🧪 Test are the last cards (after Last run, Print watch, labels … History), in that order',
+      hist > 0 && at(/📋 Last run/) < sched && at(/id="ps-al-watch-card"/) < sched && hist < sched && sched < rules && rules < test && al.indexOf('class="ps-card"', test + 1) === -1, { hist, sched, rules, test });
+    check('…📐 Rules starts folded (tap the title) and keeps every rule box + 💾 Save rules',
+      /<details class="ps-card" id="ps-al-rules-card"[^>]*>\s*<summary[^>]*>📐 Rules/.test(al) && !/id="ps-al-rules-card"[^>]* open/.test(al)
+      && /id="ps-al-rules-card"[\s\S]*id="ps-al-rules"[\s\S]*data-k="pauseTimes"[\s\S]*data-k="mergeMaxLb"[\s\S]*onclick="psAlSaveConfig\(\)">💾 Save rules[\s\S]*id="ps-al-save-result"[\s\S]*<\/details>/.test(al)
+      && (al.match(/data-k="/g) || []).length === 23, (al.match(/data-k="/g) || []).length);
+  }
 }
 
 // Owner (2026-10-08): "Print watch — a label the printer station scanner didn't pick up but that WAS scanned at Picking or
