@@ -4652,6 +4652,21 @@ console.log('\n🚢 Container here: boxes come off the spot the container was re
   check('…page: Admin confirm "count them off the pallet only (SKU Mgr does not change)", worker "Ask an Admin."; the numbers line',
     /if \(xfrIsAdmin\(\) && atTo \+ 1e-9 >= n && confirm\(/.test(ih) && /'Ask an Admin\.'/.test(ih) && /gone with NO record \(a SKU Mgr change\?\)/.test(ih), null);
   sq.exec("DELETE FROM pallet_move WHERE pallet_id IN (SELECT id FROM reorder_pallet WHERE title='RCV3 CT'); DELETE FROM reorder_pallet WHERE title='RCV3 CT'; DELETE FROM master_list WHERE part_num LIKE 'RC-%'; DELETE FROM inventory_log WHERE part_num LIKE 'RC-%'");
+
+  // Owner (2026-10-09): "Still looking for 810139930815… (slow WiFi?) — our WiFi is fine, anything to do with the update?"
+  // Yes: every box scan opened the pallet and looked up what left the received spot for EVERY part # of the whole
+  // container (4 lookups each). Now only the opened pallet's part #s, and only when their received spot is empty.
+  const many = [];
+  for (let i = 0; i < 60; i++) many.push(['RCM-' + i + '=10', i === 0 ? '1' : '2']);
+  const insP = sq.prepare("INSERT INTO reorder_pallet (title, vendor, pallet, part, description, cases, pcs, pcs_per_ctn, updated_at) VALUES ('RCM CT','KW',?,?,'x',5,50,10,?)");
+  many.forEach(([pn, pal]) => { insP.run(pal, pn, ts); logIn.run(ts, 'IN', pn, pn, 'GARAGE', 5, 'RCV', '[RECEIVED] RCM CT \u2014 50 units · 5 box(es) × 10 pcs', 'Verified', null); });
+  sq.prepare("INSERT INTO master_list (base_sku, name, part_num, location, cases, units_per_case) VALUES ('RCM-0','x','RCM-0=10','GARAGE',5,10)").run();
+  const realPrep = env.DB.prepare.bind(env.DB); let nq = 0;
+  env.DB.prepare = (...a) => { nq++; return realPrep(...a); };
+  const t0 = Date.now(), pvM = await get('/inventory/containers/pallet-view?title=' + encodeURIComponent('RCM CT') + '&vendor=KW&pallet=1');
+  env.DB.prepare = realPrep;
+  check('opening a pallet (every box scan) stays fast: a container of 60 part #s → few lookups (' + nq + '; the version before this fix made 285), not 4 per part # of the container', pvM.ok && (pvM.lines || []).length === 1 && pvM.lines[0].recvLoc === 'GARAGE' && nq < 60, { nq, ms: Date.now() - t0 });
+  sq.exec("DELETE FROM reorder_pallet WHERE title='RCM CT'; DELETE FROM master_list WHERE part_num LIKE 'RCM-%'; DELETE FROM inventory_log WHERE part_num LIKE 'RCM-%'");
 }
 
 // Owner (2026-10-09): "under SKU Mgr I still see (no vendor) $106,572.81 — I want to click on it, see what's there and edit
