@@ -29878,7 +29878,7 @@ function lwClean(c) {
 async function lwConfig(env) { let c = {}; try { c = JSON.parse(await lwGet(env, 'config') || '{}'); } catch (_) {} return lwClean({ ...LW_DEFAULTS, ...c }); }
 async function lwState(env) { try { return JSON.parse(await lwGet(env, 'state') || 'null'); } catch (_) { return null; } }
 function lwNewPass() {
-  const p = {}; LW_PLATFORMS.forEach(k => { p[k] = { cursor: null, done: false, scanned: 0, low: 0, alerts: 0, error: null }; });
+  const p = {}; LW_PLATFORMS.forEach(k => { p[k] = { cursor: null, done: false, scanned: 0, low: 0, alerts: 0, error: null, unmatched: 0, unmatchedList: [], fbaSkipped: 0 }; });
   return { passId: new Date().toISOString(), startedAt: new Date().toISOString(), finishedAt: null, platforms: p };
 }
 const lwBase = sku => String(sku || '').split('=')[0].trim().toUpperCase().replace(/^-+|-+$/g, '');
@@ -29937,13 +29937,13 @@ async function lwPageAmazon(env, cursor) {
   const items = [];
   for (const i of (d.items || [])) {
     const fa = i.fulfillmentAvailability || [];
-    if (fa.some(f => /AMAZON/i.test(f.fulfillmentChannelCode || ''))) continue; // FBA — Amazon's stock
+    if (fa.some(f => /AMAZON/i.test(f.fulfillmentChannelCode || ''))) { items.fba = (items.fba || 0) + 1; continue; } // FBA — Amazon's stock (counted, shown on the page)
     const s = (i.summaries || []).find(x => x.marketplaceId === mid) || (i.summaries || [])[0] || {};
     const q = (fa.find(f => f.fulfillmentChannelCode === 'DEFAULT') || {}).quantity;
     items.push({ listingId: s.asin || i.sku, sku: i.sku, title: s.itemName || '', qty: q == null ? 0 : q });
   }
   const next = d.pagination && d.pagination.nextToken;
-  return { items, next: next || null, done: !next };
+  return { items, next: next || null, done: !next, fba: items.fba || 0 };
 }
 
 async function lwPageWalmart(env, cursor) {
@@ -29978,6 +29978,24 @@ async function lwPageShopify(env, cursor) {
 const LW_PAGERS = { eBay: lwPageEbay, Amazon: lwPageAmazon, Walmart: lwPageWalmart, Shopify: lwPageShopify };
 
 // SKU Mgr stock for a set of base parts → { BASE: { cases, detail } }
+// Listing SKU → our part # where it was ✏️ mapped in Reorder (reorder_alias), e.g. Amazon's "0H-9TMH-JBU7" → "27-3-2=2".
+async function lwMapped(env, skus) {
+  const out = {}, list = [...new Set(skus.map(x => String(x || '').trim().toUpperCase()).filter(Boolean))];
+  for (let i = 0; i < list.length; i += 80) {
+    const ch = list.slice(i, i + 80);
+    (await d1All(env, `SELECT UPPER(raw) AS r, UPPER(part) AS p FROM reorder_alias WHERE UPPER(raw) IN (${ch.map(() => '?').join(',')})`, ch).catch(() => [])).forEach(r => { out[r.r] = r.p; });
+  }
+  return out;
+}
+// Parents SKU Mgr knows at all (any row, stock or not): a low listing whose parent isn't here can't be checked.
+async function lwKnownBases(env, bases) {
+  const out = new Set(), list = [...new Set(bases.filter(Boolean))];
+  for (let i = 0; i < list.length; i += 80) {
+    const ch = list.slice(i, i + 80);
+    (await d1All(env, `SELECT DISTINCT UPPER(base_sku) AS b FROM master_list WHERE UPPER(base_sku) IN (${ch.map(() => '?').join(',')})`, ch).catch(() => [])).forEach(r => out.add(r.b));
+  }
+  return out;
+}
 async function lwStock(env, bases) {
   const out = {};
   const list = [...new Set(bases.filter(Boolean))];
@@ -30051,15 +30069,24 @@ async function lwStep(env, { pages, trigger }) {
         }
         ps.error = msg.slice(0, 300); ps.done = true; break;
       }
-      ps.cursor = pg.next; ps.done = pg.done; ps.scanned += pg.items.length;
+      ps.cursor = pg.next; ps.done = pg.done; ps.scanned += pg.items.length; if (pg.fba) ps.fbaSkipped = (ps.fbaSkipped || 0) + pg.fba;
       await lwSaveTitles(env, plat, pg.items);
       const low = pg.items.filter(i => i.qty < cfg.threshold);
       ps.low += low.length;
       if (!low.length) continue;
-      const stock = await lwStock(env, low.map(i => lwBase(i.sku)));
+      // Owner (2026-10-10): "Amazon shows sold out but we have it here — Listing Watch found nothing". An Amazon seller
+      // SKU (0H-9TMH-JBU7) was cut at "=" and never matched SKU Mgr, so it was read as "really out". Now the ✏️ "map to
+      // part #" from Reorder is used, and a low listing that still matches no part # is shown, never skipped silently.
+      const mapped = await lwMapped(env, low.map(i => i.sku));
+      const baseOf = i => lwBase(mapped[String(i.sku || '').trim().toUpperCase()] || i.sku);
+      const stock = await lwStock(env, low.map(baseOf));
+      const known = await lwKnownBases(env, low.map(baseOf));
       const now = new Date().toISOString();
       for (const i of low) {
-        const base = lwBase(i.sku), s = stock[base];
+        const base = baseOf(i), s = stock[base];
+        if (!known.has(base)) { ps.unmatched = (ps.unmatched || 0) + 1;
+          if ((ps.unmatchedList = ps.unmatchedList || []).length < 40) ps.unmatchedList.push({ sku: i.sku || '', listingId: String(i.listingId || ''), title: String(i.title || '').slice(0, 80), qty: i.qty });
+          continue; }
         if (!s || !(s.cases > 0)) continue; // really out — nothing to warn about
         const prev = await env.DB.prepare(`SELECT id, status, set_qty FROM lw_alerts WHERE platform = ? AND listing_id = ? AND sku = ?`).bind(plat, String(i.listingId), i.sku || '').first();
         if (prev) {
