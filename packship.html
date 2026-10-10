@@ -1995,6 +1995,13 @@ body {
           <label style="display:flex;align-items:center;gap:6px;font-size:13px;color:var(--text2);cursor:pointer"><input type="checkbox" id="ps-al-et-on" onchange="psAlEbayTrackOn(this.checked)"> On</label>
           <button class="ps-btn-primary" style="width:auto;padding:8px 18px" onclick="psAlEbayTrackRun(this)">📮 Check eBay now</button>
         </div>
+        <!-- Owner (2026-10-10): "eBay order 08-15273-41215 shows overdue but we shipped it with 9300120787713626064697 — why?" -->
+        <div style="display:flex;gap:6px;align-items:center;flex-wrap:wrap;margin-bottom:8px">
+          <input class="ps-field-input" id="ps-al-et-one" placeholder="One eBay order # (08-12345-67890)" style="margin:0;max-width:260px;font-family:var(--mono)">
+          <input class="ps-field-input" id="ps-al-et-one-trk" placeholder="Tracking # (optional)" style="margin:0;max-width:260px;font-family:var(--mono)">
+          <button class="ps-btn-sm" onclick="psAlEbayTrackOne(this)">🔎 Check this eBay order</button>
+        </div>
+        <div id="ps-al-et-one-res" style="font-size:12px;margin-bottom:8px;line-height:1.6"></div>
         <div id="ps-al-et-status" style="font-size:12px;margin-bottom:8px;line-height:1.6;white-space:pre-wrap"></div>
         <div id="ps-al-et-list" style="font-size:12px;overflow-x:auto"></div>
       </div>
@@ -9802,6 +9809,28 @@ window.psAlAmzTrackOne = async function(btn) {
         : d.failed && d.failed[0] ? '<span style="color:var(--red);font-weight:700">❌ ' + e(n) + ': not sent — ' + e(r.detail) + '</span> Add tracking ' + e(r.tracking) + ' by hand in Seller Central.'
         : '<span style="color:var(--orange)">' + e(n) + ': ' + e(r.why || r.detail || '') + '</span>');
   } finally { btn.disabled = false; btn.textContent = t; psAlLoadAmzTrack(); }
+};
+// 🔎 One eBay order: what eBay has, our labels, why it's overdue / why our check didn't add it — and add it now.
+window.psAlEbayTrackOne = async function(btn, send) {
+  var n = String((document.getElementById('ps-al-et-one') || {}).value || '').trim(), t = String((document.getElementById('ps-al-et-one-trk') || {}).value || '').trim();
+  var out = document.getElementById('ps-al-et-one-res'); if (!out) return;
+  if (!n) { out.textContent = 'Type the eBay order #'; return; }
+  if (send && !confirm('Add tracking ' + (t || 'from our label') + ' to eBay order ' + n + ' now?\n\nNo new label is bought — only the tracking number is given to eBay.')) return;
+  btn.disabled = true; var lab = btn.textContent; btn.textContent = '⏳ Asking eBay…';
+  try {
+    var d = await _psAlFetch('/veeqo/autolabel/ebay-tracking-run', { method: 'POST', body: { order: n, tracking: t, send: !!send } });
+    var e = _psAlEsc;
+    if (d.ok === false) { out.innerHTML = '<span style="color:var(--red)">✗ ' + e(d.error || 'failed') + '</span>'; return; }
+    var E = d.ebay || {}, dt = function(x) { return x ? new Date(x).toLocaleString() : '?'; };
+    out.innerHTML = '<div style="border:1px solid var(--border);border-radius:8px;padding:8px 10px">'
+      + '<b>eBay ' + e(d.order) + '</b>: ' + e(E.status || '?') + (E.shipBy ? ' · ship by <b>' + e(dt(E.shipBy)) + '</b>' : '') + (E.created ? ' · ordered ' + e(dt(E.created)) : '')
+      + '<div>On eBay: ' + ((E.fulfillments || []).length ? E.fulfillments.map(function(f) { return '✅ ' + e(f.carrier) + ' <span style="font-family:var(--mono)">' + e(f.tracking) + '</span> (shipped ' + e(dt(f.shippedDate)) + ')'; }).join(' · ') : '<b style="color:var(--red)">no tracking</b>') + '</div>'
+      + '<div>Our labels: ' + ((d.labels || []).length ? d.labels.map(function(l) { return (l.cancelled ? '<s>' : '') + e(l.carrier) + ' <span style="font-family:var(--mono)">' + e(l.tracking) + '</span> · ' + e(l.source) + ' · ' + e(dt(l.at)) + (l.cancelled ? '</s> (cancelled)' : ''); }).join(' · ') : 'none on record') + '</div>'
+      + '<div style="margin-top:4px"><b>Why:</b><br>' + (d.why || []).map(e).join('<br>') + '</div>'
+      + (send ? '<div style="margin-top:4px;font-weight:700;color:' + (d.sent ? 'var(--green)' : 'var(--red)') + '">' + (d.sent ? '✅ ' : '✗ ') + e(d.detail || '') + '</div>'
+        : (!d.eBayHasIt && d.use && !(E.fulfillments || []).length ? '<button class="ps-btn-primary" style="width:auto;padding:6px 14px;margin-top:6px" onclick="psAlEbayTrackOne(this, true)">📮 Add ' + e(d.use.tracking) + ' on eBay now</button>' : ''))
+      + '</div>';
+  } finally { btn.disabled = false; btn.textContent = lab; if (send) psAlLoadEbayTrack(); }
 };
 window.psAlEbayTrackOn = async function(on) {
   var d = await _psAlFetch('/veeqo/autolabel/ebay-tracking-config', { method: 'POST', body: { config: { on: !!on } } });

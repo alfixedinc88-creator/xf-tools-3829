@@ -5279,5 +5279,54 @@ console.log('\n🛑 Auto Label: never buys / prints a cancelled order (channel c
   globalThis.fetch = realFetch; delete env.VEEQO_API_KEY;
 }
 
+// Owner (2026-10-10): "eBay order 08-15273-41215 shows overdue, but we already shipped it with tracking 9300120787713626064697".
+// The 📮 check only knew labels Auto Label bought itself; a label bought by hand in Veeqo, or the 2nd order of a box printed
+// on the station ("A + B"), was "not ours" and never added. Now those count too, and 🔎 one order says exactly why.
+console.log('\n📮 eBay order overdue though shipped: hand-bought Veeqo labels + 2nd order of a box get the tracking; 🔎 one order says why');
+{
+  const realFetch = globalThis.fetch, posted = [];
+  env.EBAY_CLIENT_ID = 'c'; env.EBAY_CLIENT_SECRET = 's'; env.EBAY_REFRESH_TOKEN = 'r';
+  const hrsAgo = h => new Date(Date.now() - h * 3600000).toISOString();
+  const T = '9300120787713626064697';
+  const mk = (id, extra) => ({ orderId: id, creationDate: hrsAgo(60), orderFulfillmentStatus: 'NOT_STARTED', cancelStatus: { cancelState: 'NONE_REQUESTED' },
+    lineItems: [{ lineItemId: 'L-' + id, quantity: 1, lineItemFulfillmentStatus: 'NOT_STARTED', lineItemFulfillmentInstructions: { shipByDate: hrsAgo(20) } }], ...(extra || {}) });
+  const orders = { '08-15273-41215': mk('08-15273-41215'), '77-00000-00002': mk('77-00000-00002'),
+    '77-00000-00009': mk('77-00000-00009', { orderFulfillmentStatus: 'FULFILLED', lineItems: [{ lineItemId: 'L9', quantity: 1, lineItemFulfillmentStatus: 'FULFILLED', lineItemFulfillmentInstructions: { shipByDate: hrsAgo(30) } }] }) };
+  const fulfil = { '77-00000-00009': [{ shipmentTrackingNumber: '9400100000000000000999', shippingCarrierCode: 'USPS', shippedDate: hrsAgo(2) }] };
+  globalThis.fetch = async (u, o) => { u = String(u); const m = u.match(/\/sell\/fulfillment\/v1\/order\/([^/?]+)(\/shipping_fulfillment)?/);
+    if (u.includes('identity/v1/oauth2/token')) return new Response(JSON.stringify({ access_token: 'T', expires_in: 7200 }));
+    if (u.includes('/sell/fulfillment/v1/order?')) return new Response(JSON.stringify({ orders: Object.values(orders).filter(x => x.orderFulfillmentStatus !== 'FULFILLED') }));
+    if (m && m[2] && o && o.method === 'POST') { posted.push({ id: decodeURIComponent(m[1]), body: JSON.parse(o.body) }); return new Response('', { status: 201 }); }
+    if (m && m[2]) return new Response(JSON.stringify({ fulfillments: fulfil[decodeURIComponent(m[1])] || [] }));
+    if (m) { const x = orders[decodeURIComponent(m[1])]; return x ? new Response(JSON.stringify(x)) : new Response(JSON.stringify({ errors: [{ message: 'not found' }] }), { status: 404 }); }
+    return realFetch(u, o); };
+  await call('/veeqo/autolabel/config', { headers: H });
+  // Bought by hand in Veeqo yesterday → only in the Veeqo shipments (Ship Manifest), not in Auto Label's log.
+  sq.prepare("INSERT INTO ship_manifest_log (date, tracking, order_num, channel, carrier) VALUES (?,?,?,?,?)").run(hrsAgo(30).slice(0, 10), T, '08-15273-41215', 'eBay', 'USPS');
+  // A box of two eBay orders printed on the station: the 2nd order (…0002) never got the tracking.
+  sq.prepare("INSERT INTO label_print_queue (order_number, channel, tracking, carrier, created_at) VALUES (?,?,?,?,?)").run('77-00000-00001 + 77-00000-00002', 'eBay', '9400100000000000000777', 'USPS', hrsAgo(3));
+  const one = await post('/veeqo/autolabel/ebay-tracking-run', { order: '08-15273-41215' });
+  check('🔎 08-15273-41215: eBay has NO tracking and is past ship-by → overdue; our label ' + T + ' (Veeqo shipment) is found; it says why the check skipped it',
+    one.ok && one.ebay.fulfillments.length === 0 && one.labels.some(l => l.tracking === T && l.source === 'Veeqo shipment') && one.why.some(w => /overdue/.test(w)) && one.why.some(w => /Veeqo shipment/.test(w)) && !posted.length, one);
+  const r = await post('/veeqo/autolabel/ebay-tracking-run', {});
+  const p1 = posted.find(x => x.id === '08-15273-41215'), p2 = posted.find(x => x.id === '77-00000-00002');
+  check('…the 30-min check now adds it: 08-15273-41215 gets ' + T + ' (USPS), and the 2nd order of the "A + B" box gets the box tracking',
+    r.ok && p1 && p1.body.trackingNumber === T && p1.body.shippingCarrierCode === 'USPS' && p2 && p2.body.trackingNumber === '9400100000000000000777', { posted, r });
+  const late = await post('/veeqo/autolabel/ebay-tracking-run', { order: '77-00000-00009' });
+  check('🔎 an order eBay already has, but the tracking went on AFTER the ship-by date → says that is why eBay counts it late',
+    late.ok && late.why.some(w => /AFTER the ship-by date/.test(w)) && posted.length === 2, late.why);
+  delete orders['08-15273-41215'].x; posted.length = 0;
+  orders['55-12345-00003'] = mk('55-12345-00003');
+  const sent = await post('/veeqo/autolabel/ebay-tracking-run', { order: '55-12345-00003', tracking: '9300 1207 8771 3626 0646 98', send: true });
+  check('…"📮 Add on eBay now" with a typed tracking # (spaces OK) → added as USPS, recorded with who', sent.sent === true && posted[0] && posted[0].body.trackingNumber === '9300120787713626064698' && posted[0].body.shippingCarrierCode === 'USPS'
+    && sq.prepare("SELECT COUNT(*) n FROM ebay_tracking_fix WHERE ebay_order_id = '55-12345-00003' AND ok = 1 AND source LIKE '🔎 one order%'").get().n === 1, { sent, posted });
+  const { readFileSync: rfE } = await import('node:fs');
+  const ph = rfE(fileURLToPath(new URL('../packship.html', import.meta.url)), 'utf8');
+  check('📮 card: one eBay order # + tracking → 🔎 Check this eBay order (what eBay has, our labels, why) → 📮 Add on eBay now',
+    /onclick="psAlEbayTrackOne\(this\)">🔎 Check this eBay order<\/button>/.test(ph) && /psAlEbayTrackOne\(this, true\)/.test(ph) && /id="ps-al-et-one-trk"/.test(ph), null);
+  globalThis.fetch = realFetch; delete env.EBAY_CLIENT_ID; delete env.EBAY_CLIENT_SECRET; delete env.EBAY_REFRESH_TOKEN;
+  sq.exec(`DELETE FROM ship_manifest_log WHERE tracking = '${T}'; DELETE FROM label_print_queue WHERE tracking = '9400100000000000000777'; DELETE FROM ebay_tracking_fix WHERE ebay_order_id IN ('08-15273-41215','77-00000-00002','55-12345-00003')`);
+}
+
 console.log('\n' + (failed ? '❌ ' + failed + ' check(s) FAILED' : '✅ all ' + passed + ' checks passed') + '\n');
 process.exit(failed ? 1 : 0);
