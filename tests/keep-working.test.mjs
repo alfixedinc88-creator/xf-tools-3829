@@ -5422,5 +5422,44 @@ console.log('\n🔍 Warehouse Lookup: Item Locator merged into Item Search (🏬
   check('…Item Locator tab hidden (kept), Item Search opens first', /onclick="switchTab\('locator'\)" style="display:none"/.test(wh) && /<div class="tabitem active" onclick="switchTab\('search'\)">/.test(wh) && /let activeTab = 'search';/.test(wh), null);
 }
 
+// Owner (2026-10-10): "Listing Watch — a listing NOT checked, the SKU matches no part #: I want to click on it and fix it,
+// link it to the right part #". Same ✏️ mapping as Reorder (reorder_alias, in Reorder → History); checked right away.
+console.log('\n🔗 Listing Watch: link a "not checked" listing to our part # right there');
+{
+  const { readFileSync } = await import('node:fs');
+  const realFetch = globalThis.fetch;
+  sq.prepare("INSERT INTO master_list (base_sku, name, part_num, location, cases, units_per_case) VALUES ('LM-1','Brass Elbow 1/2 inch NPT female','LM-1=10','C3=1-1-1',3,10), ('LM-9','Galvanized steel nipple 3 inch','LM-9=5','C3=1-1-2',2,5)").run();
+  const ml0 = JSON.stringify(sq.prepare('SELECT SUM(cases) c FROM master_list').get());
+  globalThis.fetch = async (u, o) => { u = String(u); const J = x => new Response(JSON.stringify(x), { headers: { 'Content-Type': 'application/json' } });
+    if (u.includes('api.amazon.com/auth/o2/token')) return J({ access_token: 'amz', expires_in: 3600 });
+    if (u.includes('/listings/2021-08-01/items/')) return J({ items: [{ sku: 'ZZ-NOMAP-2', summaries: [{ asin: 'B0LM1', itemName: 'Brass Elbow 1/2 inch NPT female 10 pcs', marketplaceId: 'ATVPDKIKX0DER' }], fulfillmentAvailability: [{ fulfillmentChannelCode: 'DEFAULT', quantity: 0 }] }], pagination: {} });
+    return new Response('{}', { status: 401 }); };
+  const s0 = env.AMAZON_SELLER_ID; env.AMAZON_SELLER_ID = 'SELLER1';
+  await post('/inventory/soldout/watch/scan', {});
+  for (let i = 0; i < 6; i++) { const st = await post('/inventory/soldout/watch/step', {}); if (st.state && st.state.finishedAt) break; }
+  const st0 = (await get('/inventory/soldout/watch/status')).state.platforms.Amazon;
+  const u = (st0.unmatchedList || []).find(x => x.sku === 'ZZ-NOMAP-2') || {};
+  const hlp = await get('/inventory/soldout/watch/map-help?sku=ZZ-NOMAP-2&title=' + encodeURIComponent(u.title || ''));
+  const srch = await get('/inventory/soldout/watch/map-help?q=LM-1');
+  const sugParts = (hlp.suggestions || []).flatMap(x => x.parts.map(p => p.part));
+  check('a "not checked" Amazon listing (ZZ-NOMAP-2, "Brass Elbow 1/2 inch NPT female 10 pcs") → suggests LM-1=10 from SKU Mgr\'s names (not the steel nipple); typing "LM-1" finds it too',
+    u.title && sugParts[0] === 'LM-1=10' && !sugParts.includes('LM-9=5') && hlp.pack === 10 && (srch.parts || []).some(p => p.part === 'LM-1=10' && p.cases === 3), { u, hlp, srch });
+  const bad = await post('/inventory/soldout/watch/map', { platform: 'Amazon', listingId: 'B0LM1', sku: 'ZZ-NOMAP-2', part: 'NOPE-1=1', qty: 0 });
+  const ok = await post('/inventory/soldout/watch/map', { platform: 'Amazon', listingId: 'B0LM1', sku: 'ZZ-NOMAP-2', title: u.title, part: 'LM-1=10', qty: 0 });
+  const al = sq.prepare("SELECT * FROM lw_alerts WHERE platform = 'Amazon' AND sku = 'ZZ-NOMAP-2'").get() || {};
+  const hist = sq.prepare("SELECT detail, by_user FROM reorder_history WHERE part = 'LM-1=10' ORDER BY id DESC").get() || {};
+  const st1 = (await get('/inventory/soldout/watch/status')).state.platforms.Amazon;
+  check('…🔗 Link to LM-1=10: saved as the ✏️ mapping (Reorder → History says who, and that it came from Listing Watch), off the "not checked" list, and warned right away (0 on Amazon, 3 cases here); a part # not in SKU Mgr is refused',
+    bad.ok === false && /not in SKU Mgr/.test(bad.error) && ok.ok && ok.warned && ok.ourCases === 3
+      && sq.prepare("SELECT part FROM reorder_alias WHERE raw = 'ZZ-NOMAP-2'").get()?.part === 'LM-1=10'
+      && /ZZ-NOMAP-2 → LM-1=10 — from Listing Watch \(Amazon B0LM1\)/.test(hist.detail) && hist.by_user === 'TS'
+      && al.status === 'open' && al.base_sku === 'LM-1' && !(st1.unmatchedList || []).some(x => x.sku === 'ZZ-NOMAP-2') && st1.unmatched === st0.unmatched - 1, { bad, ok, al, hist, st1 });
+  check('…SKU Mgr is not changed by a link; the page lists each "not checked" listing as 🔗 to tap',
+    JSON.stringify(sq.prepare('SELECT SUM(cases) c FROM master_list').get()) === ml0 && /onclick="lwMapOpen\(' \+ i \+ '\);return false"/.test(readFileSync(fileURLToPath(new URL('../inventory.html', import.meta.url)), 'utf8')), null);
+  sq.exec("DELETE FROM lw_alerts WHERE sku = 'ZZ-NOMAP-2'; DELETE FROM reorder_alias WHERE raw = 'ZZ-NOMAP-2'; DELETE FROM master_list WHERE part_num IN ('LM-1=10','LM-9=5')");
+  if (s0 === undefined) delete env.AMAZON_SELLER_ID; else env.AMAZON_SELLER_ID = s0;
+  globalThis.fetch = realFetch;
+}
+
 console.log('\n' + (failed ? '❌ ' + failed + ' check(s) FAILED' : '✅ all ' + passed + ' checks passed') + '\n');
 process.exit(failed ? 1 : 0);
