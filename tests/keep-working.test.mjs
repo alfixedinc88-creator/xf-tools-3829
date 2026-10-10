@@ -5360,5 +5360,38 @@ console.log('\n⚠️ Listing Watch: Amazon SKUs mapped with ✏️ find our sto
   globalThis.fetch = realFetch;
 }
 
+// Owner (2026-10-10): "the variations listing on eBay not getting updated too, like eBay ID 132887329098 — we already have
+// those". A variation is now set with ItemID + its SKU straight away (ItemID alone never names the variation), a failed set
+// is kept on the warning, and 🔍 Check one listing shows every variation and why it was / wasn't updated.
+console.log('\n⚠️ Listing Watch: eBay variations — set with their SKU; 🔍 Check one listing says why');
+{
+  const { readFileSync } = await import('node:fs');
+  const realFetch = globalThis.fetch, revise = [];
+  sq.prepare("INSERT INTO master_list (base_sku, name, part_num, location, cases, units_per_case) VALUES ('EV-1','valve','EV-1=10','C2=1-1-1',4,10)").run();
+  const vars = '<Variations><Variation><SKU>EV-1=10</SKU><Quantity>10</Quantity><SellingStatus><QuantitySold>10</QuantitySold></SellingStatus><VariationSpecifics><NameValueList><Name>Pack</Name><Value>10 pcs</Value></NameValueList></VariationSpecifics></Variation>'
+    + '<Variation><SKU></SKU><Quantity>3</Quantity><SellingStatus><QuantitySold>3</QuantitySold></SellingStatus></Variation></Variations>';
+  globalThis.fetch = async (u, o) => { u = String(u); const call = o && o.headers && o.headers['X-EBAY-API-CALL-NAME'];
+    const X = b => new Response(b, { headers: { 'Content-Type': 'text/xml' } });
+    if (u.includes('api.ebay.com/identity/v1/oauth2/token')) return new Response(JSON.stringify({ access_token: 'tok', expires_in: 7200 }), { headers: { 'Content-Type': 'application/json' } });
+    if (call === 'GetMyeBaySelling') return X('<GetMyeBaySellingResponse><Ack>Success</Ack><ActiveList><ItemArray><Item><ItemID>132887329098</ItemID><Title>Brass valve</Title>' + vars + '</Item></ItemArray><PaginationResult><TotalNumberOfPages>1</TotalNumberOfPages></PaginationResult></ActiveList></GetMyeBaySellingResponse>');
+    if (call === 'GetItem') return X('<GetItemResponse><Ack>Success</Ack><Item><ItemID>132887329098</ItemID><Title>Brass valve</Title><ListingStatus>Active</ListingStatus>' + vars + '</Item></GetItemResponse>');
+    if (call === 'ReviseInventoryStatus') { const b = String(o.body); revise.push(b);
+      return X(/<SKU>/.test(b) ? '<R><Ack>Success</Ack></R>' : '<R><Ack>Failure</Ack><Errors><LongMessage>Variation SKU is required.</LongMessage></Errors></R>'); }
+    return new Response('{}', { status: 401 }); };
+  await post('/inventory/soldout/watch/scan', {});
+  for (let i = 0; i < 6; i++) { const st = await post('/inventory/soldout/watch/step', {}); if (st.state && st.state.finishedAt) break; }
+  const al = sq.prepare("SELECT * FROM lw_alerts WHERE platform = 'eBay' AND listing_id = '132887329098' AND sku = 'EV-1=10'").get() || {};
+  const fx = await post('/inventory/soldout/watch/fix', { id: al.id, quantity: 10 });
+  check('eBay 132887329098 variation EV-1=10 at 0 (4 cases here) → warned as a variation; set to 10 with ItemID + its SKU on the FIRST try (no ItemID-only call eBay refuses)',
+    al.status === 'open' && al.is_var === 1 && fx.ok && revise.length === 1 && /<ItemID>132887329098<\/ItemID>\s*<SKU>EV-1=10<\/SKU>\s*<Quantity>10<\/Quantity>/.test(revise[0]), { al, fx, revise });
+  const ck = await get('/inventory/soldout/watch/check?id=132887329098');
+  const r1 = (ck.rows || []).find(r => r.sku === 'EV-1=10') || {}, r2 = (ck.rows || []).find(r => !r.sku) || {};
+  check('…🔍 Check one listing: every variation with its option, eBay qty, our cases, the last set (✓ by who) — and the variation with no SKU says "add the part # as its SKU on eBay"',
+    ck.ok && ck.variations === true && ck.rows.length === 2 && r1.option === '10 pcs' && r1.ourCases === 4 && r1.lastFix && r1.lastFix.ok === 1 && /Warning: fixed/.test(r1.why)
+      && /No SKU on this variation on eBay/.test(r2.why) && /🔍 Check one eBay listing/.test(readFileSync(fileURLToPath(new URL('../inventory.html', import.meta.url)), 'utf8')), ck);
+  sq.exec("DELETE FROM lw_alerts WHERE listing_id = '132887329098'; DELETE FROM master_list WHERE part_num = 'EV-1=10'; DELETE FROM listing_qty_log WHERE listing_id = '132887329098'");
+  globalThis.fetch = realFetch;
+}
+
 console.log('\n' + (failed ? '❌ ' + failed + ' check(s) FAILED' : '✅ all ' + passed + ' checks passed') + '\n');
 process.exit(failed ? 1 : 0);

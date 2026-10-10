@@ -1470,6 +1470,10 @@ window.invCredLogin = async function() {
       <button type="button" id="lw-scan-btn" onclick="lwScanNow()" style="padding:6px 12px;border:none;border-radius:8px;background:var(--accent);color:#fff;font-size:12px;font-weight:700;cursor:pointer">🔎 Scan now</button>
     </div>
     <div id="lw-state" style="font-size:11.5px;color:var(--text3);margin-bottom:8px"></div>
+    <details id="lw-check-box" style="margin-bottom:8px"><summary style="font-size:12px;font-weight:700;cursor:pointer">🔍 Check one eBay listing (why isn't it updated?)</summary>
+      <div style="display:flex;gap:6px;margin-top:6px;flex-wrap:wrap"><input id="lw-check-id" type="text" inputmode="numeric" placeholder="eBay item ID, e.g. 132887329098" onkeydown="if(event.key==='Enter')lwCheckOne()" style="flex:1;min-width:200px;padding:6px 8px;border:1.5px solid var(--border);border-radius:6px;background:var(--bg);color:var(--text);font-family:var(--mono)">
+        <button type="button" onclick="lwCheckOne()" style="padding:6px 12px;border:none;border-radius:6px;background:var(--accent);color:#fff;font-size:12px;font-weight:700;cursor:pointer">Check</button></div>
+      <div id="lw-check-out" style="margin-top:6px;font-size:12px"></div></details>
     <div id="lw-alerts"><div style="font-size:12px;color:var(--text3)">Loading…</div></div>
     <details style="margin-top:8px"><summary style="font-size:12px;color:var(--text3);cursor:pointer">Recently fixed / dismissed</summary><div id="lw-recent" style="margin-top:6px"></div></details>
   </div>
@@ -14325,6 +14329,34 @@ window.invCredLogin = async function() {
             + (x.unmatched > (x.unmatchedList || []).length ? '<div style="margin-left:12px;font-size:11px">…and ' + (x.unmatched - x.unmatchedList.length) + ' more</div>' : '') + '</details>'; }).join('')
       + (p.Amazon && p.Amazon.fbaSkipped ? '<div style="margin-top:4px">ℹ ' + p.Amazon.fbaSkipped + ' Amazon FBA listing' + (p.Amazon.fbaSkipped === 1 ? '' : 's') + ' not checked here: FBA sells from Amazon\'s warehouse, so a sold-out FBA listing needs boxes sent to Amazon (🏢 Stock Out Big Company), not a quantity change.</div>' : '');
   }
+  // 🔍 Check one eBay listing (owner 2026-10-10, 132887329098: "variations not updated"): every variation, the part #
+  // it matches, our stock, the warning and the last set (with what eBay said); Set to N right there.
+  var lwChk = null;
+  window.lwCheckOne = async function () {
+    var id = String(el('lw-check-id').value || '').replace(/\D/g, ''), out = el('lw-check-out');
+    if (!id) { out.innerHTML = '<span style="color:var(--red)">Type the eBay item ID</span>'; return; }
+    out.textContent = 'Checking…';
+    try {
+      var d = await call('/inventory/soldout/watch/check?id=' + id);
+      if (!d.ok) { out.innerHTML = '<span style="color:var(--red)">' + esc(d.error || 'Failed') + '</span>'; return; }
+      lwChk = d; var rq = (lw.cfg && lw.cfg.restockQty) || 10;
+      out.innerHTML = '<div style="font-weight:700;margin-bottom:4px">' + esc(d.title || '') + ' <span style="color:var(--text3);font-weight:400">· ' + esc(d.status || '') + (d.variations ? ' · ' + d.rows.length + ' variations' : '') + '</span></div>'
+        + d.rows.map(function (r, i) {
+          var can = r.known && r.ourCases > 0 && r.sku;
+          return '<div style="padding:5px 0;border-top:1px solid var(--border)"><span style="font-family:var(--mono);font-weight:700">' + esc(r.sku || '(no SKU)') + '</span>' + (r.option ? ' · ' + esc(r.option) : '')
+            + (r.mappedTo ? ' <span style="color:var(--green)">→ ' + esc(r.mappedTo) + '</span>' : '') + ' · eBay <b>' + esc(r.qty) + '</b> · ours <b>' + esc(r.ourCases) + '</b> case(s)'
+            + '<div style="color:' + (can && r.qty < d.threshold ? 'var(--red)' : 'var(--text3)') + '">' + esc(r.why) + '</div>'
+            + (r.lastFix ? '<div style="font-size:11px;color:' + (r.lastFix.ok ? 'var(--green)' : 'var(--red)') + '">Last set: ' + esc(r.lastFix.quantity) + ' by ' + esc(r.lastFix.by_user || '') + ' ' + esc(lwAgo(r.lastFix.ts)) + ' — ' + (r.lastFix.ok ? '✓ ' : '✗ ') + esc(r.lastFix.detail || '') + '</div>' : '')
+            + (can && r.qty < d.threshold ? '<button type="button" onclick="lwCheckSet(' + i + ',' + rq + ')" style="margin-top:3px;padding:4px 10px;border:none;border-radius:6px;background:var(--green);color:#fff;font-size:12px;font-weight:700;cursor:pointer">Set to ' + rq + '</button>' : '') + '</div>';
+        }).join('');
+    } catch (e) { out.innerHTML = '<span style="color:var(--red)">' + esc(e.message || 'Failed') + '</span>'; }
+  };
+  window.lwCheckSet = async function (i, qty) {
+    var r = lwChk && lwChk.rows[i]; if (!r) return;
+    var d = await call('/inventory/soldout/watch/set-one', { method: 'POST', body: { listingId: lwChk.id, sku: r.sku, isVar: !!r.isVar, quantity: qty, title: lwChk.title } });
+    if (typeof showToast === 'function') showToast(d.ok ? '✓ ' + r.sku + ' set to ' + qty + ' on eBay' : '✗ ' + (d.error || 'eBay said no'));
+    lwCheckOne();
+  };
   function lwRenderAlerts() {
     var a = lw.alerts, c = el('lw-count');
     c.style.display = a.length ? '' : 'none'; c.textContent = a.length;
