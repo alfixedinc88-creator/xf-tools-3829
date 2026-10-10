@@ -4314,7 +4314,10 @@ console.log('\n🤖 Print Log: AUTO PRINT tag; report of auto prints not read by
   const ins = (n, t) => sq.prepare("INSERT INTO label_print_queue (order_number, channel, tracking, carrier, service, created_at) VALUES (?, 'eBay', ?, 'USPS', 'GA', ?)").run(n, t, new Date().toISOString()).lastInsertRowid;
   const T = ['9400100000000000000901', '9400100000000000000902', '9400100000000000000903', '9400100000000000000904'];
   const ids = T.map((t, i) => Number(ins('AP-' + (i + 1), t)));
-  const ago = m => new Date(Date.now() - m * 60000).toISOString();
+  // "Today" starts at midnight New York time: never stamp the prints before it (right after midnight "30 min ago" was
+  // yesterday and the report — correctly — left them out; 2026-10-10 00:29).
+  const nyN = new Date(new Date().toLocaleString('en-US', { timeZone: 'America/New_York' })), sinceMid = nyN.getHours() * 60 + nyN.getMinutes();
+  const ago = m => new Date(Date.now() - Math.min(m, Math.max(0, sinceMid - 1)) * 60000).toISOString();
   sq.prepare("INSERT INTO label_print_batch (ts, day, by_user, source, count, label_ids) VALUES (?, ?, 'station', 'printer station', 3, ?)").run(ago(30), new Date().toISOString().slice(0, 10), JSON.stringify(ids.slice(0, 3)));
   sq.prepare("INSERT INTO label_print_batch (ts, day, by_user, source, count, label_ids) VALUES (?, ?, 'KL', 'by hand', 1, ?)").run(ago(30), new Date().toISOString().slice(0, 10), JSON.stringify([ids[3]]));
   await post('/ship/print-log', { tracking: T[0] });               // AP-1 read by the Print Log scanner
@@ -5176,6 +5179,46 @@ console.log('\n📦 Container here: pieces in the box checked when the Each/Case
     /if \(xfrPcsNeeded\(l\)\) \{ invFlash\('⬆ First tap how many pieces are in each box/.test(ih) && (ih.match(/' · box checked: ' \+ xfrN\(xfrPcsOf\(l\)\.pcs\) \+ ' pcs a box \(SKU Mgr '/g) || []).length === 2
       && /\+ \(xfrPcsNeeded\(l\) \? xfrPcsPanel\(l\) : xfrPcsDone\(l\)\)/.test(ih), null);
   sq.exec("DELETE FROM reorder_pallet WHERE title='PCS CT'; DELETE FROM pallet_pcs_check WHERE title='PCS CT'");
+}
+
+// Owner (2026-10-10): "I believe I see the wifi thing popping up again". The orange "entry saved on this phone, waiting
+// for WiFi" banner sticks when the server can't find a sent entry in History: the phone keeps "sending again". Found two
+// more: "already there on record" (mark-moved — no duplicate guard, so each re-send took the boxes off the pallet again)
+// and the 🏷️ barcode label jobs. Every kind of entry the phone sends must be found after it is saved, and never saved twice.
+console.log('\n📶 Phone outbox: every kind of entry is found once saved (no stuck "waiting for WiFi"), never saved twice');
+{
+  const { readFileSync } = await import('node:fs');
+  const ih = readFileSync(fileURLToPath(new URL('../inventory.html', import.meta.url)), 'utf8'), ws = readFileSync(workerPath, 'utf8');
+  const ts = new Date().toISOString();
+  sq.prepare("INSERT INTO reorder_pallet (title, vendor, pallet, part, description, cases, pcs, pcs_per_ctn, updated_at) VALUES ('OB CT','KW','1','OB-1=10','tee',6,60,10,?)").run(ts);
+  const lid = sq.prepare("SELECT id FROM reorder_pallet WHERE title='OB CT'").get().id;
+  sq.prepare("INSERT INTO master_list (base_sku, name, part_num, location, cases, units_per_case) VALUES ('OB-1','tee','OB-1=10','BSMT=9-8-1',6,10)").run();
+  const ml0 = JSON.stringify(sq.prepare("SELECT SUM(cases) c FROM master_list").get());
+  const mb = { palletLineId: lid, cases: 2, toLocation: 'BSMT=9-8-1', _requestId: 'ob-mm-1' };
+  const m1 = await post('/inventory/containers/mark-moved', mb), m2 = await post('/inventory/containers/mark-moved', mb), m3 = await post('/inventory/containers/mark-moved', mb);
+  const nMv = sq.prepare("SELECT COUNT(*) n, SUM(cases) c FROM pallet_move WHERE pallet_id = ?").get(lid);
+  const ml1 = JSON.stringify(sq.prepare("SELECT SUM(cases) c FROM master_list").get());
+  const oc1 = await post('/inventory/outbox/check', { ids: ['ob-mm-1'] });
+  check('"already there on record" sent 3 times (phone re-sends) → counted off the pallet ONCE (2 boxes, not 6); SKU Mgr unchanged; found as saved',
+    m1.ok && m1.moveId > 0 && nMv.n === 1 && nMv.c === 2 && ml0 === ml1 && oc1.results['ob-mm-1'].state === 'saved', { m1, m2, m3, nMv, oc1 });
+  const bj = await post('/inventory/barcode-job', { sku: 'OB-1=10', name: 'tee', copies: 2, spots: [{ loc: 'BSMT=9-8-1', boxes: 2 }], _requestId: 'ob-bj-1' });
+  const st = await post('/inventory/barcode-job/stuck', { id: bj.id, loc: 'BSMT=9-8-1', _requestId: 'ob-bs-1' });
+  const oc2 = await post('/inventory/outbox/check', { ids: ['ob-bj-1', 'ob-bs-1'] });
+  check('…🏷️ barcode label job and "stuck on" mark: found as saved (were "Not in History — sending again" forever)',
+    bj.ok && st.ok && oc2.results['ob-bj-1'].state === 'saved' && oc2.results['ob-bs-1'].state === 'saved', oc2);
+  // Every endpoint the page sends through the outbox (invPost) is guarded against saving twice and known to the check.
+  const paths = [...new Set([...ih.matchAll(/invPost\(W \+ ['"]([^'"]+)['"]/g)].map(m => m[1].replace(/^\//, '')))];
+  const guarded = p => new RegExp("claimRequestId\\(env, [A-Za-z_]+, '" + p.replace(/[/-]/g, c => '\\' + c) + "'\\)").test(ws) || (p === 'inventory/barcode-job' && /SELECT id FROM barcode_label_job WHERE request_id = \?/.test(ws));
+  const miss = paths.filter(p => !guarded(p));
+  check('…every kind of entry the phone sends (' + paths.length + ': ' + paths.join(', ') + ') has a never-twice guard the History check can find', paths.length >= 13 && !miss.length, miss);
+  // A double that may have happened before this fix shows in History → the pallet.
+  const ins = sq.prepare("INSERT INTO pallet_move (pallet_id, cases, to_location, by_user, at, kind) VALUES (?,?,?,?,?,?)");
+  const t0 = Date.now() - 3600000; ins.run(lid, 1, 'BSMT=9-8-1', 'AB', new Date(t0).toISOString(), 'records'); ins.run(lid, 1, 'BSMT=9-8-1', 'AB', new Date(t0 + 20000).toISOString(), 'records');
+  const det = await get('/inventory/containers/pallet-detail?title=' + encodeURIComponent('OB CT') + '&vendor=KW&pallet=1');
+  const rec = (det.moves || []).filter(m => m.kind === 'records' && m.who === 'AB');
+  check('…History → the pallet: the same "already there" move again 20 s later is flagged "⚠ maybe the same move sent twice by the phone"',
+    rec.length === 2 && !rec[0].maybeResent && rec[1].maybeResent === true && /maybe the same move sent twice by the phone/.test(ih), rec);
+  sq.exec("DELETE FROM pallet_move WHERE pallet_id IN (SELECT id FROM reorder_pallet WHERE title='OB CT'); DELETE FROM reorder_pallet WHERE title='OB CT'; DELETE FROM master_list WHERE part_num='OB-1=10'; DELETE FROM barcode_label_job WHERE sku='OB-1=10'");
 }
 
 console.log('\n' + (failed ? '❌ ' + failed + ' check(s) FAILED' : '✅ all ' + passed + ' checks passed') + '\n');
