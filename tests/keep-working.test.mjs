@@ -5328,5 +5328,37 @@ console.log('\n📮 eBay order overdue though shipped: hand-bought Veeqo labels 
   sq.exec(`DELETE FROM ship_manifest_log WHERE tracking = '${T}'; DELETE FROM label_print_queue WHERE tracking = '9400100000000000000777'; DELETE FROM ebay_tracking_fix WHERE ebay_order_id IN ('08-15273-41215','77-00000-00002','55-12345-00003')`);
 }
 
+// Owner (2026-10-10): "I use Listing Watch to update the inventory we received — nothing found, but a lot is sold out on
+// Amazon and we already have it here". An Amazon seller SKU (0H-9TMH-JBU7) was cut at "=" and matched no part #, so it
+// was read as "really out" and skipped silently — even when it was ✏️ mapped to our part # in Reorder.
+console.log('\n⚠️ Listing Watch: Amazon SKUs mapped with ✏️ find our stock; unmatched low listings are shown, never skipped');
+{
+  const { readFileSync } = await import('node:fs');
+  const realFetch = globalThis.fetch;
+  sq.prepare("INSERT OR REPLACE INTO reorder_alias (raw, part, by_user, updated_at) VALUES ('0H-9TMH-JBU7', 'LW-1=2', 'TS', ?)").run(new Date().toISOString());
+  sq.prepare("INSERT INTO master_list (base_sku, name, part_num, location, cases, units_per_case) VALUES ('LW-1','elbow','LW-1=2','C1=1-1-1',5,2)").run();
+  const ml0 = JSON.stringify(sq.prepare('SELECT SUM(cases) c FROM master_list').get());
+  const it = (sku, ch, q, name) => ({ sku, summaries: [{ asin: 'B-' + sku, itemName: name, marketplaceId: 'ATVPDKIKX0DER' }], fulfillmentAvailability: [{ fulfillmentChannelCode: ch, quantity: q }] });
+  globalThis.fetch = async (u, o) => { u = String(u); const J = (x, st) => new Response(JSON.stringify(x), { status: st || 200, headers: { 'Content-Type': 'application/json' } });
+    if (u.includes('api.amazon.com/auth/o2/token')) return J({ access_token: 'amz', expires_in: 3600 });
+    if (u.includes('/listings/2021-08-01/items/')) return J({ items: [it('0H-9TMH-JBU7', 'DEFAULT', 0, 'Brass elbow 2 pcs'), it('ZZ-NOMAP-1', 'DEFAULT', 0, 'Unknown tee'), it('LW-1=2X', 'AMAZON_NA', 0, 'FBA elbow')], pagination: {} });
+    return new Response('{}', { status: 401 }); };
+  const env0 = { s: env.AMAZON_SELLER_ID }; env.AMAZON_SELLER_ID = 'SELLER1';
+  await post('/inventory/soldout/watch/scan', {});
+  let st; for (let i = 0; i < 6; i++) { st = await post('/inventory/soldout/watch/step', {}); if (st.state && st.state.finishedAt) break; }
+  const s1 = await get('/inventory/soldout/watch/status');
+  const a = (s1.alerts || []).find(x => x.platform === 'Amazon' && x.sku === '0H-9TMH-JBU7') || {};
+  const am = (s1.state && s1.state.platforms && s1.state.platforms.Amazon) || {};
+  check('Amazon "0H-9TMH-JBU7" at 0, ✏️ mapped to LW-1=2 (5 cases in SKU Mgr) → warned: sold out on Amazon but we have it (was skipped as "really out")',
+    a.status === 'open' && a.base_sku === 'LW-1' && a.our_cases === 5 && a.qty === 0, { a, am });
+  check('…a low listing whose SKU matches no part # ("ZZ-NOMAP-1") is listed as NOT checked (map it with ✏️), and the FBA listing is counted as not checked here',
+    am.unmatched === 1 && (am.unmatchedList || [])[0] && am.unmatchedList[0].sku === 'ZZ-NOMAP-1' && am.fbaSkipped === 1
+      && /low ' \+ k \+ ' listing' \+ \(x\.unmatched === 1 \? '' : 's'\) \+ ' NOT checked — the SKU matches no part # in SKU Mgr/.test(readFileSync(fileURLToPath(new URL('../inventory.html', import.meta.url)), 'utf8')), am);
+  check('…a scan changes nothing in SKU Mgr', JSON.stringify(sq.prepare('SELECT SUM(cases) c FROM master_list').get()) === ml0, null);
+  sq.exec("DELETE FROM lw_alerts WHERE sku IN ('0H-9TMH-JBU7','ZZ-NOMAP-1'); DELETE FROM reorder_alias WHERE raw = '0H-9TMH-JBU7'; DELETE FROM master_list WHERE part_num = 'LW-1=2'");
+  if (env0.s === undefined) delete env.AMAZON_SELLER_ID; else env.AMAZON_SELLER_ID = env0.s;
+  globalThis.fetch = realFetch;
+}
+
 console.log('\n' + (failed ? '❌ ' + failed + ' check(s) FAILED' : '✅ all ' + passed + ' checks passed') + '\n');
 process.exit(failed ? 1 : 0);

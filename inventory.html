@@ -14317,7 +14317,13 @@ window.invCredLogin = async function() {
     var parts = ['eBay', 'Amazon', 'Walmart', 'Shopify'].map(function (k) { var x = p[k] || {};
       return '<b style="color:' + COLOR[k] + '">' + k + '</b> ' + (x.error ? '<span style="color:var(--red)" title="' + esc(x.error) + '">⚠ error</span>' : (x.scanned || 0) + (x.done ? '' : '…')); });
     el('lw-state').innerHTML = (st.finishedAt ? 'Last scan ' + lwAgo(st.finishedAt) : 'Scanning… started ' + lwAgo(st.startedAt)) + ' · checked ' + parts.join(' · ')
-      + ['eBay', 'Amazon', 'Walmart', 'Shopify'].filter(function (k) { return p[k] && p[k].error; }).map(function (k) { return '<div style="color:var(--red);margin-top:2px">' + esc(p[k].error) + '</div>'; }).join('');
+      + ['eBay', 'Amazon', 'Walmart', 'Shopify'].filter(function (k) { return p[k] && p[k].error; }).map(function (k) { return '<div style="color:var(--red);margin-top:2px">' + esc(p[k].error) + '</div>'; }).join('')
+      // Low listings whose SKU matches no part # in SKU Mgr: can't be checked — shown, never skipped silently (owner 2026-10-10).
+      + ['eBay', 'Amazon', 'Walmart', 'Shopify'].filter(function (k) { return p[k] && p[k].unmatched; }).map(function (k) { var x = p[k];
+          return '<details style="margin-top:4px;color:#b45309"><summary style="cursor:pointer;font-weight:700">⚠ ' + x.unmatched + ' low ' + k + ' listing' + (x.unmatched === 1 ? '' : 's') + ' NOT checked — the SKU matches no part # in SKU Mgr. Map ' + (x.unmatched === 1 ? 'it' : 'them') + ' with ✏️ in Reorder, then 🔎 Scan now</summary>'
+            + (x.unmatchedList || []).map(function (u) { return '<div style="font-family:var(--mono);font-size:11px;margin:2px 0 0 12px">' + esc(u.sku || u.listingId) + ' · qty ' + esc(u.qty) + (u.title ? ' · <span style="font-family:var(--sans)">' + esc(u.title) + '</span>' : '') + '</div>'; }).join('')
+            + (x.unmatched > (x.unmatchedList || []).length ? '<div style="margin-left:12px;font-size:11px">…and ' + (x.unmatched - x.unmatchedList.length) + ' more</div>' : '') + '</details>'; }).join('')
+      + (p.Amazon && p.Amazon.fbaSkipped ? '<div style="margin-top:4px">ℹ ' + p.Amazon.fbaSkipped + ' Amazon FBA listing' + (p.Amazon.fbaSkipped === 1 ? '' : 's') + ' not checked here: FBA sells from Amazon\'s warehouse, so a sold-out FBA listing needs boxes sent to Amazon (🏢 Stock Out Big Company), not a quantity change.</div>' : '');
   }
   function lwRenderAlerts() {
     var a = lw.alerts, c = el('lw-count');
