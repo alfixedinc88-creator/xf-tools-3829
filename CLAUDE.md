@@ -125,6 +125,16 @@ exceptions, no matter what else the change does.
 4. In the PR description and the report to the user, show the check: a table
    of expected vs counted totals, each marked ✅ match.
 
+## Orders → containers → SKU Mgr: every piece counted once
+
+Read `docs/ORDERS-AND-CONTAINERS.md` before touching Reorder orders / containers / 📦 Received. In short:
+- A piece is in ONE place: 🏭 still owed on an order → 🚢 on the water → 🏬 SKU Mgr after 📦 Received.
+- A shipped container takes its units off the order(s) it was made for, oldest order first, and part #s are matched
+  after ✏️ mapping.
+- Re-importing an order keeps ordered − already shipped. Re-importing a container puts back what it took, then takes
+  again.
+- The "Orders and containers" checks in `tests/keep-working.test.mjs` must stay green.
+
 ## Other standing rules
 - Scanner "stopped working" (N77, Zebra DS2278, Farset R20H, Svantto MC002)? Read `docs/SCANNERS.md`
   first: the known causes and the exact working settings are there.

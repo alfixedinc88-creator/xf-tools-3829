@@ -5071,5 +5071,64 @@ console.log('\n📊 Warehouse Lookup → Stock Levels: SKU Mgr + on the water + 
   sq.exec("DELETE FROM master_list WHERE part_num LIKE '93-%'; DELETE FROM reorder_incoming WHERE part LIKE '93-%'; DELETE FROM reorder_title WHERE title IN ('PO-93 10/1','CT-93 10/2'); DELETE FROM ebay_sales_weekly WHERE sku LIKE '93-%'");
 }
 
+// Owner (2026-10-10): "8-18-26 order left behind" + "9-14-26 orders" (FIFO with the vendor), then "Container start to ship
+// 9/30/26 JQ" made for all open orders oldest first: if 8-18-26 ordered 8-8-8 200 pcs and the container ships 200, the
+// order must have 0 left — never think the vendor still owes 200. Re-importing a sheet must never count anything twice.
+console.log('\n🏭→🚢 Orders and containers: shipped comes off the oldest order first, counted once (re-imports too)');
+{
+  const O1 = '8-18-26 order left behind', O2 = '9-14-26 orders', CT = 'Container start to ship 9/30/26 JQ';
+  const row = (part, qty) => ({ part, raw: part, qty, cases: '', src_rows: '5', description: 'x' });
+  const imp = (title, stage, rows, file) => post('/reorder/vendor-catalog/import', { vendor: 'JQ', title, stage, last: true, file: file || 'f.xlsx', rows });
+  const lines = t => { const m = {}; sq.prepare('SELECT part, qty FROM reorder_incoming WHERE title = ?').all(t).forEach(r => { m[r.part] = r.qty; }); return m; };
+  const owed = () => sq.prepare("SELECT SUM(i.qty) u FROM reorder_incoming i JOIN reorder_title t ON t.title = i.title WHERE t.stage = 'production' AND i.part LIKE '94-%'").get().u || 0;
+  const water = () => sq.prepare("SELECT SUM(i.qty) u FROM reorder_incoming i JOIN reorder_title t ON t.title = i.title WHERE t.stage = 'shipped' AND (i.part LIKE '94-%' OR i.part = 'JQ-94777')").get().u || 0;
+  sq.prepare("INSERT OR REPLACE INTO reorder_alias (raw, part) VALUES ('JQ-94777', '94-7-7=2')").run();
+  await imp(O1, 'production', [row('94-8-8=10', 20), row('94-9-9=5', 30)]);
+  await imp(O2, 'production', [row('94-8-8=10', 10), row('94-9-9=5', 40), row('94-7-7=2', 15)]);
+  const owed0 = owed();
+  await imp(CT, 'shipped', [row('94-8-8=10', 20), row('94-9-9=5', 50), row('JQ-94777', 15)]);
+  const tk = await post('/reorder/fix/incoming-take', { from: '*', to: CT });
+  const l1 = lines(O1), l2 = lines(O2);
+  check('8-18-26 ordered 94-8-8=10 200 pcs, the container ships 200 → 8-18-26 has 0 left (line gone); 9-14-26 keeps its 100 pcs',
+    tk.ok && !('94-8-8=10' in l1) && l2['94-8-8=10'] === 10, { l1, l2, tk: tk.lines });
+  check('…94-9-9=5: 50 shipped = 8-18-26\'s 30 first (oldest), then 20 of 9-14-26 → 9-14-26 keeps 20', !('94-9-9=5' in l1) && l2['94-9-9=5'] === 20, { l1, l2 });
+  check('…a vendor code mapped with ✏️ (JQ-94777 = 94-7-7=2) comes off the order\'s 94-7-7=2 line too (was counted twice before)', !('94-7-7=2' in l2), l2);
+  check('…still owed before 115 − shipped 85 = 30 after, on the water 85 — every unit in ONE place', owed0 === 115 && owed() === 30 && water() === 85, { owed0, owed: owed(), water: water() });
+  // Re-import both order sheets with what was ORDERED → they keep ordered − shipped.
+  const r1 = await imp(O1, 'production', [row('94-8-8=10', 20), row('94-9-9=5', 30)], 'again.xlsx');
+  const r2 = await imp(O2, 'production', [row('94-8-8=10', 10), row('94-9-9=5', 40), row('94-7-7=2', 15)], 'again.xlsx');
+  check('order sheet imported AGAIN: 8-18-26 stays 0 left, 9-14-26 stays 94-8-8=10 10 · 94-9-9=5 20 · 94-7-7=2 0; still owed stays 30 (not back to 115)',
+    !('94-8-8=10' in lines(O1)) && !('94-9-9=5' in lines(O1)) && lines(O2)['94-9-9=5'] === 20 && !('94-7-7=2' in lines(O2)) && owed() === 30
+    && r1.alreadyShipped.length === 2 && r2.alreadyShipped.find(a => a.part === '94-9-9=5').left === 20, { o1: lines(O1), o2: lines(O2), owed: owed(), a: r2.alreadyShipped });
+  // The container again with a new packing list (94-8-8=10 now 28) and no "Made for order" picked → same orders again, never twice.
+  await imp(CT, 'shipped', [row('94-8-8=10', 28), row('94-9-9=5', 50), row('JQ-94777', 15)], 'new-packing.xlsx');
+  const tk2 = await post('/reorder/fix/incoming-take', { from: 'same', to: CT });
+  check('container imported AGAIN (94-8-8=10 20 → 28), "same" orders: 8-18-26 0, 9-14-26 10 − 8 = 2; owed 22 + water 93 = 115 ordered (nothing twice)',
+    tk2.ok && !('94-8-8=10' in lines(O1)) && lines(O2)['94-8-8=10'] === 2 && owed() === 22 && water() === 93 && owed() + water() === 115, { o1: lines(O1), o2: lines(O2), owed: owed(), water: water() });
+  const os = await get('/reorder/fix/orders-status');
+  const o1 = (os.orders || []).find(o => o.title === O1) || {}, o2 = (os.orders || []).find(o => o.title === O2) || {};
+  const ln = (o, p) => (o.lines || []).find(l => l.part === p) || {};
+  check('📋 report data: 8-18-26 ordered on 2026-08-18, 94-8-8=10 ordered 20 = shipped 20 + owed 0, shipped in the container dated 2026-09-30; 9-14-26 94-8-8=10 ordered 10 = 8 shipped + 2 owed',
+    o1.orderDate === '2026-08-18' && ln(o1, '94-8-8=10').ordered === 20 && ln(o1, '94-8-8=10').shipped === 20 && ln(o1, '94-8-8=10').left === 0 && o1.fullyShipped === true
+    && (o1.containers || []).some(c => /^Container start to ship 9\/30\/26/.test(c.title) && c.date === '2026-09-30') && ln(o2, '94-8-8=10').ordered === 10 && ln(o2, '94-8-8=10').shipped === 8 && ln(o2, '94-8-8=10').left === 2,
+    { o1: [o1.orderDate, ln(o1, '94-8-8=10'), o1.containers], o2: ln(o2, '94-8-8=10') });
+  const so = await get('/inventory/stock-overview');
+  const sr = p => (so.rows || []).find(r => r.part === p) || {};
+  check('📊 Stock Levels: 94-8-8=10 on the water 28 units, still owed 2 (not 30); 94-9-9=5 on the water 50, owed 20; adds up ✅',
+    sr('94-8-8=10').onWay.units === 28 && sr('94-8-8=10').owed.units === 2 && sr('94-9-9=5').onWay.units === 50 && sr('94-9-9=5').owed.units === 20 && so.check.ok, [sr('94-8-8=10').onWay, sr('94-8-8=10').owed, so.check]);
+  // 📦 Received: off the water and into SKU Mgr at the same moment.
+  const before = sq.prepare("SELECT COALESCE(SUM(cases),0) c FROM master_list WHERE part_num = '94-9-9=5'").get().c;
+  const rc = await post('/reorder/fix/incoming-receive', { title: CT, location: 'GARAGE', lines: [{ key: '94-9-9=5', part: '94-9-9=5', cases: 5, description: 'x' }] });
+  const so2 = await get('/inventory/stock-overview'), r9 = (so2.rows || []).find(r => r.part === '94-9-9=5') || {};
+  check('📦 Received 94-9-9=5 (5 cases): on the water 50 → 0, SKU Mgr +5 cases, still owed 20 unchanged — counted once', rc.ok !== false && r9.onWay.units === 0 && r9.stock.cases === before + 5 && r9.owed.units === 20 && so2.check.ok, [r9.onWay, r9.stock, r9.owed]);
+  const { readFileSync: rfO } = await import('node:fs');
+  const rh = rfO(fileURLToPath(new URL('../reorder.html', import.meta.url)), 'utf8'), doc = rfO(fileURLToPath(new URL('../docs/ORDERS-AND-CONTAINERS.md', import.meta.url)), 'utf8');
+  check('Reorder: 📋 Still with the vendor report (search, vendor, only still owed, ordered on / shipped + ship date / still owed, CSV) and 📜 Rules; rules written in docs/ORDERS-AND-CONTAINERS.md',
+    /function rvoOrdersReport\(\)/.test(rh) && /RVO_REP\.vendor=this\.value/.test(rh) && /Only what is still owed/.test(rh) && /'Ordered on', 'Part #', 'Description', 'Ordered', 'Shipped \(container · ship date\)', 'Still owed'/.test(rh)
+    && /function rvoOrderRules\(\)/.test(rh) && /takeFrom = from \|\| \(exists \? 'same' : ''\)/.test(rh) && /ordered − already shipped/.test(doc), null);
+  sq.exec(`DELETE FROM reorder_incoming WHERE part LIKE '94-%' OR part = 'JQ-94777'; DELETE FROM reorder_take WHERE to_title = '${CT}'; DELETE FROM reorder_title WHERE title IN ('${O1}','${O2}','${CT}');
+    DELETE FROM reorder_alias WHERE raw = 'JQ-94777'; DELETE FROM master_list WHERE part_num LIKE '94-%'`);
+}
+
 console.log('\n' + (failed ? '❌ ' + failed + ' check(s) FAILED' : '✅ all ' + passed + ' checks passed') + '\n');
 process.exit(failed ? 1 : 0);
