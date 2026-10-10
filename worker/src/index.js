@@ -4837,6 +4837,73 @@ async function inventoryIncomingFor(url, env) {
   return cors(new Response(JSON.stringify({ ok: true, q, items: list, totals: Object.values(totals).sort((a, b) => a.part.localeCompare(b.part)) }), { headers: { 'Content-Type': 'application/json' } }));
 }
 
+// GET /inventory/stock-overview — Warehouse Lookup → 📊 Stock Levels.
+// Owner (2026-10-10): "is it accurate right now? Match SKU Mgr (what we have now), Reorder (the container on the
+// way) and what is left on the order the vendor is still making; a column each; by vendor; out of stock / low
+// stock — make it easy to check our stock levels". One row per part # (part #s cleaned / mapped the same way as
+// the Reorder Planner), from the same tables those screens use:
+//   In stock     = SKU Mgr cases (> 0) at every spot; pieces = cases × Ea/Case (Ea/Case is pieces in a case)
+//   On the water = Reorder lines of a title that SHIPPED (not 📦 Received yet — a received line leaves Reorder
+//                  and its cases are in SKU Mgr, so nothing is counted twice)
+//   Still owed   = Reorder lines of an order in production (what the vendor still has to ship)
+// check.* reads each column's total straight from its table with plain SQL, so the rows are proven to add up.
+async function inventoryStockOverview(env, url) {
+  const J = (o, st) => cors(new Response(JSON.stringify(o), { status: st || 200, headers: { 'Content-Type': 'application/json' } }));
+  if (!env.DB) return J({ ok: false, error: 'No database' }, 500);
+  await reorderFixTables(env);
+  const all = async (sql, ...b) => { try { return (await env.DB.prepare(sql).bind(...b).all()).results || []; } catch (_) { return []; } };
+  const U = x => String(x || '').trim().toUpperCase();
+  const alias = {}; (await all('SELECT raw, part FROM reorder_alias')).forEach(r => { alias[U(r.raw)] = U(r.part); });
+  const P = raw => { const r = U(raw), c = reorderCleanPart(r); return alias[r] || alias[c] || c; };
+  const pack = x => reorderExtractPackSize(x) || 1;
+  const rows = {};
+  const row = part => rows[part] = rows[part] || { part, parent: U(reorderGetBaseSku(part)), pack: pack(part), name: '', vendor: '',
+    stock: { cases: 0, pieces: 0, spots: 0, noEaCases: 0, negCases: 0 }, onWay: { units: 0, pieces: 0, cases: 0, titles: [] },
+    owed: { units: 0, pieces: 0, cases: 0, titles: [] }, sold90Pcs: 0, sold30Pcs: 0 };
+  const T = { stockCases: 0, stockPieces: 0, noEaCases: 0, onWayUnits: 0, onWayPieces: 0, owedUnits: 0, owedPieces: 0 };
+  for (const r of await all(`SELECT part_num, name, vendor, cases, units_per_case FROM master_list WHERE TRIM(COALESCE(part_num,'')) != ''`)) {
+    const o = row(P(r.part_num)), c = parseFloat(r.cases) || 0, ea = parseFloat(r.units_per_case) || 0;
+    if (!o.name && r.name) o.name = String(r.name).trim();
+    if (!o.vendor && r.vendor) o.vendor = reorderVendorName(r.vendor);
+    if (c < 0) { o.stock.negCases += c; continue; } // a counting mistake — never "minus stock"; shown in red
+    if (!(c > 0)) continue;
+    o.stock.cases += c; o.stock.spots++; T.stockCases += c;
+    if (ea > 0) { o.stock.pieces += c * ea; T.stockPieces += c * ea; } else { o.stock.noEaCases += c; T.noEaCases += c; }
+  }
+  const stage = {}; (await all('SELECT title, stage FROM reorder_title')).forEach(r => { stage[r.title] = r.stage; });
+  for (const r of await all('SELECT title, part, qty, cases, vendor FROM reorder_incoming')) {
+    const part = P(r.part); if (!part) continue;
+    const o = row(part), u = parseFloat(r.qty) || 0, pcs = u * pack(part), c = parseFloat(r.cases) || 0;
+    const col = stage[r.title] === 'production' ? 'owed' : 'onWay';
+    o[col].units += u; o[col].pieces += pcs; o[col].cases += c; o[col].titles.push({ title: r.title, units: u, cases: c });
+    if (col === 'owed') { T.owedUnits += u; T.owedPieces += pcs; } else { T.onWayUnits += u; T.onWayPieces += pcs; }
+    if (!o.vendor && r.vendor) o.vendor = reorderVendorName(r.vendor);
+  }
+  // Sales (all 4 channels, units × pack = pieces) to tell how long the stock lasts → low stock.
+  const d90 = new Date(Date.now() - 90 * 86400000).toISOString().slice(0, 10), d30 = new Date(Date.now() - 30 * 86400000).toISOString().slice(0, 10);
+  for (const t of ['amazon_sales_weekly', 'ebay_sales_weekly', 'walmart_sales_weekly', 'shopify_sales_weekly']) {
+    for (const r of await all(`SELECT sku, SUM(units_ordered) AS u90, SUM(CASE WHEN period_start >= ? THEN units_ordered ELSE 0 END) AS u30 FROM ${t} WHERE period_start >= ? GROUP BY sku`, d30, d90)) {
+      const part = P(r.sku); if (!part || !rows[part]) continue; // sales of a part # we never stocked or ordered are not a stock row
+      rows[part].sold90Pcs += (r.u90 || 0) * pack(part); rows[part].sold30Pcs += (r.u30 || 0) * pack(part);
+    }
+  }
+  // Products with nothing in SKU Mgr and nothing coming still show (out of stock), by their parent #.
+  const prod = {}; (await all('SELECT base_sku, name FROM products')).forEach(r => { const b = U(reorderGetBaseSku(U(r.base_sku))); if (b && r.name && !prod[b]) prod[b] = String(r.name).trim(); });
+  const parents = new Set(Object.values(rows).map(o => o.parent));
+  Object.keys(prod).forEach(b => { if (!parents.has(b)) row(b).name = prod[b]; });
+  const list = Object.values(rows).map(o => { if (!o.name) o.name = prod[o.parent] || ''; return o; })
+    .sort((a, b) => a.parent.localeCompare(b.parent, undefined, { numeric: true }) || a.pack - b.pack || a.part.localeCompare(b.part));
+  const vendors = [...new Set(list.map(o => o.vendor).filter(Boolean))].sort();
+  // ✅ Check: the same totals read straight from SKU Mgr / Reorder with plain SQL — the screen shows ✅ when the rows add up to them.
+  const one = async sql => ((await all(sql))[0] || {});
+  const sm = await one(`SELECT SUM(cases) c, SUM(CASE WHEN units_per_case > 0 THEN cases * units_per_case ELSE 0 END) p FROM master_list WHERE TRIM(COALESCE(part_num,'')) != '' AND cases > 0`);
+  const ow = await one(`SELECT SUM(CASE WHEN t.stage = 'production' THEN 0 ELSE i.qty END) w, SUM(CASE WHEN t.stage = 'production' THEN i.qty ELSE 0 END) o FROM reorder_incoming i LEFT JOIN reorder_title t ON t.title = i.title`);
+  const r2 = x => Math.round((x || 0) * 1000) / 1000;
+  const check = { skuMgrCases: r2(sm.c), skuMgrPieces: r2(sm.p), reorderOnWayUnits: r2(ow.w), reorderOwedUnits: r2(ow.o) };
+  check.ok = check.skuMgrCases === r2(T.stockCases) && check.skuMgrPieces === r2(T.stockPieces) && check.reorderOnWayUnits === r2(T.onWayUnits) && check.reorderOwedUnits === r2(T.owedUnits);
+  return J({ ok: true, rows: list, vendors, totals: T, check, asOf: new Date().toISOString() });
+}
+
 // ── 🚢 Container here (Inventory → Transfer) ─────────────────────────────
 // Boxes moved off a pallet line = its pallet_move rows whose transfer wasn't
 // rejected in Review (the OUT log row's status), so counts follow the real
@@ -8039,6 +8106,7 @@ const _app = {
       if (path === '/inventory/stock-levels' && method === 'GET') {
         return await inventoryStockLevels(env);
       }
+      if (path === '/inventory/stock-overview' && method === 'GET') return await inventoryStockOverview(env, url);
       if (path === '/inventory/out-of-stock' && method === 'GET') {
         return await inventoryOutOfStock(env);
       }

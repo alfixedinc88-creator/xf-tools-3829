@@ -5025,5 +5025,44 @@ console.log('\n🧮 Container here: box count confirmed before starting a pallet
   sq.exec("DELETE FROM reorder_pallet WHERE title='CNT CT'; DELETE FROM pallet_count WHERE title='CNT CT'");
 }
 
+// Owner (2026-10-10): "Warehouse Lookup → Stock Levels: is it accurate right now? Match SKU Mgr (what we have now), the
+// Reorder container on the way and what's left on the order the vendor is still making — a column each; by vendor;
+// out of stock / low stock". It used to add cases of every pack size together and call anything above 0 "Low Stock".
+console.log('\n📊 Warehouse Lookup → Stock Levels: SKU Mgr + on the water + still owed, per part #, adds up');
+{
+  const now = new Date().toISOString(), day = n => new Date(Date.now() - n * 86400000).toISOString().slice(0, 10);
+  sq.prepare(`INSERT INTO master_list (base_sku, name, part_num, location, cases, units_per_case, vendor, sheet_row) VALUES
+    ('93-1-1','elbow','93-1-1=10','C1=9-3-1',3,100,'JQ',0), ('93-1-1','elbow','93-1-1=10','C2=9-3-1',2,100,'JQ',0),
+    ('93-1-1','elbow','93-1-1=25','C3=9-3-1',1,0,'JQ',0), ('93-3-3','cap','93-3-3=2','C4=9-3-1',1,20,'',0)`).run();
+  sq.prepare("INSERT OR REPLACE INTO reorder_title (title, stage, updated_at, created_at) VALUES ('PO-93 10/1', 'production', ?, ?), ('CT-93 10/2', 'shipped', ?, ?)").run(now, now, now, now);
+  sq.prepare("INSERT INTO reorder_incoming (title, part, qty, vendor, cases, updated_at) VALUES ('PO-93 10/1','93-2-2=5',60,'EFF',3,?), ('CT-93 10/2','93-2-2=5',40,'EFF',2,?), ('CT-93 10/2','93-1-1=10',50,'JQ',5,?)").run(now, now, now);
+  sq.prepare("INSERT INTO ebay_sales_weekly (sku, period_start, period_end, units_ordered, sales_amount) VALUES ('93-1-1=10', ?, ?, 30, 30), ('93-3-3=2', ?, ?, 45, 45)").run(day(10), day(4), day(40), day(34));
+  const d = await get('/inventory/stock-overview');
+  const R = p => (d.rows || []).find(r => r.part === p) || {};
+  const a = R('93-1-1=10'), b = R('93-1-1=25'), c = R('93-2-2=5'), e = R('93-3-3=2');
+  check('93-1-1=10: 2 spots, 3 + 2 = 5 cases × 100 = 500 pcs in stock; 50 units on the water (container CT-93); pack sizes NOT added together (=25 is its own row)',
+    a.stock && a.stock.cases === 5 && a.stock.pieces === 500 && a.stock.spots === 2 && a.onWay.units === 50 && a.onWay.pieces === 500 && a.owed.units === 0 && b.stock.cases === 1 && b.parent === '93-1-1', [a, b]);
+  check('…93-1-1=25 has no Ea/Case → its 1 case shows as "pcs not counted" (never silently dropped)', b.stock.noEaCases === 1 && b.stock.pieces === 0, b.stock);
+  check('93-2-2=5: 0 in SKU Mgr (out of stock), 40 units = 200 pcs on the water (shipped), 60 units = 300 pcs still owed (order in production), each with its title',
+    c.stock && c.stock.cases === 0 && c.onWay.units === 40 && c.onWay.pieces === 200 && c.owed.units === 60 && c.owed.pieces === 300 && c.owed.titles.length === 1 && c.onWay.titles.length === 1, c);
+  check('…sales in pieces for "lasts": 93-1-1=10 sold 30 × 10 = 300 pcs (30 d and 90 d); 93-3-3=2 sold 45 × 2 = 90 pcs in 90 d (20 pcs left ≈ 20 days → low)',
+    a.sold30Pcs === 300 && a.sold90Pcs === 300 && e.sold90Pcs === 90 && e.sold30Pcs === 0 && e.stock.pieces === 20, [a.sold30Pcs, a.sold90Pcs, e.sold90Pcs]);
+  const sm = sq.prepare("SELECT SUM(cases) c FROM master_list WHERE TRIM(COALESCE(part_num,'')) != '' AND cases > 0").get().c;
+  const iw = sq.prepare("SELECT SUM(CASE WHEN t.stage = 'production' THEN 0 ELSE i.qty END) w, SUM(CASE WHEN t.stage = 'production' THEN i.qty ELSE 0 END) o FROM reorder_incoming i LEFT JOIN reorder_title t ON t.title = i.title").get();
+  const sum = f => Math.round((d.rows || []).reduce((t, r) => t + f(r), 0) * 1000) / 1000;
+  check('every row added up = SKU Mgr cases, Reorder on the water, Reorder still owed — exactly (nothing twice, nothing dropped); the page shows ✅',
+    d.check && d.check.ok === true && sum(r => r.stock.cases) === Math.round(sm * 1000) / 1000 && sum(r => r.onWay.units) === Math.round(iw.w * 1000) / 1000 && sum(r => r.owed.units) === Math.round(iw.o * 1000) / 1000,
+    { check: d.check, rows: [sum(r => r.stock.cases), sum(r => r.onWay.units), sum(r => r.owed.units)], sql: [sm, iw] });
+  check('…vendor on each row (names hidden from non-owners: JQ → #1) and the vendor list for the filter', a.vendor === '#1' && c.vendor === '#2' && (d.vendors || []).includes('#1'), [a.vendor, c.vendor, d.vendors]);
+  check('…not signed in → refused', (await call('/inventory/stock-overview')).status >= 400, null);
+  const { readFileSync: rfS } = await import('node:fs');
+  const wh = rfS(fileURLToPath(new URL('../warehouse.html', import.meta.url)), 'utf8');
+  check('Stock Levels screen: columns In stock now (SKU Mgr) / Shipped — on the water / Ordered — not shipped yet; Out / Low (days of sales) / In; vendor filter; part # or parent; ✅ adds up; CSV',
+    /\/inventory\/stock-overview/.test(wh) && /🏬 In stock now/.test(wh) && /🚢 Shipped — on the water/.test(wh) && /🏭 Ordered — not shipped yet/.test(wh)
+    && /soSetVendor\(this\.value\)/.test(wh) && /soSetView\('parent'\)/.test(wh) && /soSetLowDays/.test(wh) && /✅ adds up to SKU Mgr \+ Reorder/.test(wh) && /window\.soCsv/.test(wh)
+    && /r\.status = 'low'/.test(wh) && !/return parseFloat\(r\.cases\) > 0 && r\.status !== 'Out of Stock'/.test(wh), null);
+  sq.exec("DELETE FROM master_list WHERE part_num LIKE '93-%'; DELETE FROM reorder_incoming WHERE part LIKE '93-%'; DELETE FROM reorder_title WHERE title IN ('PO-93 10/1','CT-93 10/2'); DELETE FROM ebay_sales_weekly WHERE sku LIKE '93-%'");
+}
+
 console.log('\n' + (failed ? '❌ ' + failed + ' check(s) FAILED' : '✅ all ' + passed + ' checks passed') + '\n');
 process.exit(failed ? 1 : 0);
