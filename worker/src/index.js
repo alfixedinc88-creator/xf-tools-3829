@@ -29562,6 +29562,15 @@ async function _soEbayInventoryApi(env, sku, qty) {
 async function _soEbay(env, it, qty) {
   // ItemID alone first (single listing); with the SKU if eBay says the
   // listing has variations / needs the SKU; then the Inventory API route.
+  // A known variation (Listing Watch read it inside <Variations>) goes with ItemID + SKU straight away (owner
+  // 2026-10-10, eBay 132887329098: variations not updated) — ItemID alone never names which variation.
+  if (it.isVar && it.sku) {
+    const rv = await _soEbayTrading(env, it.listingId, it.sku, qty);
+    if (rv.ok) return { ...rv, via: 'ReviseInventoryStatus+SKU (variation)' };
+    const inv = await _soEbayInventoryApi(env, it.sku, qty);
+    if (inv.ok) return { ...inv, via: 'Inventory API' };
+    return { ok: false, error: `variation ${it.sku}: ${rv.error} / Inventory API: ${inv.error}` };
+  }
   let r = await _soEbayTrading(env, it.listingId, null, qty);
   if (r.ok) return { ...r, via: 'ReviseInventoryStatus' };
   const first = r.error;
@@ -29865,6 +29874,7 @@ async function lwEnsureTables(env) {
   // Quantity someone (or Auto) last set it to — it only warns again if the
   // listing drops below that, not for a low number that was set on purpose.
   await env.DB.prepare(`ALTER TABLE lw_alerts ADD COLUMN set_qty INTEGER`).run().catch(() => {});
+  await env.DB.prepare(`ALTER TABLE lw_alerts ADD COLUMN is_var INTEGER`).run().catch(() => {}); // an eBay variation (set with ItemID + SKU)
   _lwReady = true;
 }
 async function lwGet(env, key) { const r = await env.DB.prepare(`SELECT value FROM lw_kv WHERE key = ?`).bind(key).first(); return r ? r.value : null; }
@@ -29913,7 +29923,7 @@ async function lwPageEbay(env, cursor) {
     if (vb) {
       for (const v of vb.matchAll(/<Variation>([\s\S]*?)<\/Variation>/g)) {
         const q = parseInt(tag(v[1], 'Quantity') || '0', 10), sold = parseInt(tag(v[1], 'QuantitySold') || '0', 10);
-        items.push({ listingId: id, sku: unesc(tag(v[1], 'SKU')), title, qty: Math.max(0, q - sold) });
+        items.push({ listingId: id, sku: unesc(tag(v[1], 'SKU')), title, qty: Math.max(0, q - sold), isVar: true });
       }
     } else {
       const top = it.replace(/<Variations>[\s\S]*?<\/Variations>/, '');
@@ -29924,6 +29934,31 @@ async function lwPageEbay(env, cursor) {
   }
   const pages = parseInt(tag(active, 'TotalNumberOfPages') || '1', 10) || 1;
   return { items, next: page + 1, done: page >= pages };
+}
+
+// One eBay listing as eBay has it now (Trading GetItem): every variation with its SKU, what is left, and its options.
+async function lwEbayItem(env, itemId) {
+  const token = await getEbayToken(env);
+  const r = await fetch('https://api.ebay.com/ws/api.dll', {
+    method: 'POST',
+    headers: { 'X-EBAY-API-CALL-NAME': 'GetItem', 'X-EBAY-API-SITEID': '0', 'X-EBAY-API-COMPATIBILITY-LEVEL': '967', 'X-EBAY-API-IAF-TOKEN': token, 'Content-Type': 'text/xml' },
+    body: `<?xml version="1.0" encoding="utf-8"?>
+<GetItemRequest xmlns="urn:ebay:apis:eBLBaseComponents"><ItemID>${_xmlEsc(itemId)}</ItemID><DetailLevel>ReturnAll</DetailLevel></GetItemRequest>`,
+  });
+  const xml = await r.text();
+  if (!/<Ack>(Success|Warning)<\/Ack>/.test(xml)) throw new Error('eBay: ' + ([...xml.matchAll(/<LongMessage>([^<]+)<\/LongMessage>/g)].map(m => m[1]).join(' | ') || 'GetItem failed'));
+  const tag = (s, t) => { const m = s.match(new RegExp('<' + t + '>([^<]*)</' + t + '>')); return m ? m[1] : ''; };
+  const unesc = s => String(s).replace(/&amp;/g, '&').replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&quot;/g, '"').replace(/&apos;/g, "'");
+  const vb = (xml.match(/<Variations>([\s\S]*?)<\/Variations>/) || [])[1];
+  const top = xml.replace(/<Variations>[\s\S]*?<\/Variations>/, '');
+  const rows = [];
+  if (vb) for (const v of vb.matchAll(/<Variation>([\s\S]*?)<\/Variation>/g)) {
+    const q = parseInt(tag(v[1], 'Quantity') || '0', 10), sold = parseInt(tag(v[1], 'QuantitySold') || '0', 10);
+    const opts = [...v[1].matchAll(/<NameValueList>[\s\S]*?<Value>([^<]*)<\/Value>[\s\S]*?<\/NameValueList>/g)].map(m => unesc(m[1])).join(' / ');
+    rows.push({ sku: unesc(tag(v[1], 'SKU')), option: opts, qty: Math.max(0, q - sold), isVar: true });
+  }
+  else { const q = parseInt(tag(top, 'Quantity') || '0', 10), sold = parseInt(tag(top, 'QuantitySold') || '0', 10); rows.push({ sku: unesc(tag(top, 'SKU')), option: '', qty: Math.max(0, q - sold), isVar: false }); }
+  return { title: unesc(tag(top, 'Title')), status: tag(top, 'ListingStatus'), isVar: !!vb, rows };
 }
 
 async function lwPageAmazon(env, cursor) {
@@ -30016,7 +30051,7 @@ async function lwStock(env, bases) {
 async function lwAutoFix(env, cfg, a) {
   const fns = { eBay: _soEbay, Amazon: _soAmazon, Walmart: _soWalmart, Shopify: _soShopify };
   let r;
-  try { r = await fns[a.platform](env, { listingId: a.listing_id, sku: a.sku, title: a.title }, cfg.restockQty); }
+  try { r = await fns[a.platform](env, { listingId: a.listing_id, sku: a.sku, title: a.title, isVar: !!a.is_var }, cfg.restockQty); }
   catch (e) { r = { ok: false, error: String(e.message || e).slice(0, 300) }; }
   await soEnsureLog(env);
   await d1Run(env, `INSERT INTO listing_qty_log (ts, by_user, platform, listing_id, sku, title, quantity, ok, detail) VALUES (?,?,?,?,?,?,?,?,?)`,
@@ -30094,12 +30129,12 @@ async function lwStep(env, { pages, trigger }) {
           // a dismissed one stays dismissed while it stays low.
           const keptFix = (prev.status === 'fixed' || prev.status === 'auto-fixed') && prev.set_qty != null && i.qty >= prev.set_qty;
           const status = (prev.status === 'dismissed' || prev.status === 'open' || keptFix) ? prev.status : 'open';
-          await env.DB.prepare(`UPDATE lw_alerts SET qty = ?, our_cases = ?, our_detail = ?, title = COALESCE(NULLIF(?, ''), title), status = ?, last_seen = ?, last_pass = ? WHERE id = ?`)
-            .bind(i.qty, s.cases, s.detail, i.title || '', status, now, st.passId, prev.id).run();
+          await env.DB.prepare(`UPDATE lw_alerts SET qty = ?, our_cases = ?, our_detail = ?, title = COALESCE(NULLIF(?, ''), title), status = ?, last_seen = ?, last_pass = ?, is_var = ? WHERE id = ?`)
+            .bind(i.qty, s.cases, s.detail, i.title || '', status, now, st.passId, i.isVar ? 1 : 0, prev.id).run();
           if (status === 'open' && prev.status !== 'open') ps.alerts++;
         } else {
-          await env.DB.prepare(`INSERT INTO lw_alerts (platform, listing_id, sku, base_sku, title, qty, our_cases, our_detail, status, first_seen, last_seen, last_pass) VALUES (?,?,?,?,?,?,?,?,'open',?,?,?)`)
-            .bind(plat, String(i.listingId), i.sku || '', base, i.title || '', i.qty, s.cases, s.detail, now, now, st.passId).run();
+          await env.DB.prepare(`INSERT INTO lw_alerts (platform, listing_id, sku, base_sku, title, qty, our_cases, our_detail, status, first_seen, last_seen, last_pass, is_var) VALUES (?,?,?,?,?,?,?,?,'open',?,?,?,?)`)
+            .bind(plat, String(i.listingId), i.sku || '', base, i.title || '', i.qty, s.cases, s.detail, now, now, st.passId, i.isVar ? 1 : 0).run();
           ps.alerts++;
         }
       }
@@ -30175,13 +30210,51 @@ async function handleListingWatch(path, method, request, env, session) {
     if (!a) return _soResp({ ok: false, error: 'Warning not found' }, 404);
     const fns = { eBay: _soEbay, Amazon: _soAmazon, Walmart: _soWalmart, Shopify: _soShopify };
     let r;
-    try { r = await fns[a.platform](env, { listingId: a.listing_id, sku: a.sku, title: a.title }, qty); }
+    try { r = await fns[a.platform](env, { listingId: a.listing_id, sku: a.sku, title: a.title, isVar: !!a.is_var }, qty); }
     catch (e) { r = { ok: false, error: String(e.message || e).slice(0, 300) }; }
     await soEnsureLog(env);
     await d1Run(env, `INSERT INTO listing_qty_log (ts, by_user, platform, listing_id, sku, title, quantity, ok, detail) VALUES (?,?,?,?,?,?,?,?,?)`,
       [new Date().toISOString(), who + ' (Listing Watch)', a.platform, a.listing_id, a.sku, String(a.title || '').slice(0, 200), qty, r.ok ? 1 : 0, String(r.error || r.detail || r.via || '').slice(0, 500)]);
     if (r.ok) await env.DB.prepare(`UPDATE lw_alerts SET status = 'fixed', fixed_at = ?, note = ?, set_qty = ? WHERE id = ?`).bind(new Date().toISOString(), `Set to ${qty} by ${who}`, qty, a.id).run();
+    else await env.DB.prepare(`UPDATE lw_alerts SET note = ? WHERE id = ?`).bind(('Set to ' + qty + ' FAILED (' + who + '): ' + (r.error || '')).slice(0, 400), a.id).run(); // kept, so 🔍 Check one listing shows why
     return _soResp({ ok: !!r.ok, error: r.error || null, detail: r.detail || r.via || '' });
+  }
+  // GET ?id=<eBay item ID> — 🔍 Check one listing: every variation as eBay has it now, the part # it matches, our stock,
+  // the warning and the last time someone / Auto set its quantity (and what eBay said). Read only.
+  if (path === '/inventory/soldout/watch/check' && method === 'GET') {
+    const id = String(new URL(request.url).searchParams.get('id') || '').replace(/\D/g, '');
+    if (!id) return _soResp({ ok: false, error: 'Type the eBay item ID (numbers)' }, 400);
+    const got = await lwEbayItem(env, id).catch(e => ({ error: String(e.message || e).slice(0, 300) }));
+    if (got.error) return _soResp({ ok: false, error: got.error });
+    const mapped = await lwMapped(env, got.rows.map(r => r.sku));
+    got.rows.forEach(r => { r.mappedTo = mapped[String(r.sku || '').trim().toUpperCase()] || ''; r.base = lwBase(r.mappedTo || r.sku); });
+    const known = await lwKnownBases(env, got.rows.map(r => r.base)), stock = await lwStock(env, got.rows.map(r => r.base));
+    const cfg = await lwConfig(env);
+    await soEnsureLog(env);
+    for (const r of got.rows) {
+      r.known = known.has(r.base); r.ourCases = (stock[r.base] && stock[r.base].cases) || 0; r.ourDetail = (stock[r.base] && stock[r.base].detail) || '';
+      r.alert = await d1First(env, `SELECT status, qty, note, last_seen, fixed_at, set_qty FROM lw_alerts WHERE platform = 'eBay' AND listing_id = ? AND sku = ?`, [id, r.sku || '']).catch(() => null);
+      r.lastFix = await d1First(env, `SELECT ts, by_user, quantity, ok, detail FROM listing_qty_log WHERE platform = 'eBay' AND listing_id = ? AND sku = ? ORDER BY id DESC LIMIT 1`, [id, r.sku || '']).catch(() => null);
+      r.why = !r.sku ? 'No SKU on this variation on eBay — add the part # as its SKU on eBay'
+        : !r.known ? 'SKU matches no part # in SKU Mgr — map it with ✏️ in Reorder'
+        : !(r.ourCases > 0) ? 'SKU Mgr has none of it — really out'
+        : r.qty >= cfg.threshold ? `eBay shows ${r.qty} (not under ${cfg.threshold}) — nothing to do`
+        : r.alert && r.alert.status === 'dismissed' ? 'Warning was DISMISSED — it stays hidden while low; set it here'
+        : r.alert ? `Warning: ${r.alert.status}${r.alert.note ? ' — ' + r.alert.note : ''}` : 'Not warned yet — 🔎 Scan now';
+    }
+    return _soResp({ ok: true, id, title: got.title, status: got.status, variations: got.isVar, rows: got.rows, threshold: cfg.threshold });
+  }
+  // POST { listingId, sku, quantity } — set one eBay listing / variation from 🔍 Check one listing (kept in listing_qty_log).
+  if (path === '/inventory/soldout/watch/set-one' && method === 'POST') {
+    const b = await request.json().catch(() => ({}));
+    const qty = parseInt(b.quantity, 10), id = String(b.listingId || '').replace(/\D/g, ''), sku = String(b.sku || '').trim();
+    if (!(qty >= 0 && qty <= 9999) || !id) return _soResp({ ok: false, error: 'listingId and quantity 0–9999 needed' }, 400);
+    let r; try { r = await _soEbay(env, { listingId: id, sku, isVar: !!b.isVar }, qty); } catch (e) { r = { ok: false, error: String(e.message || e).slice(0, 300) }; }
+    await soEnsureLog(env);
+    await d1Run(env, `INSERT INTO listing_qty_log (ts, by_user, platform, listing_id, sku, title, quantity, ok, detail) VALUES (?,?,?,?,?,?,?,?,?)`,
+      [new Date().toISOString(), who + ' (Check one listing)', 'eBay', id, sku, String(b.title || '').slice(0, 200), qty, r.ok ? 1 : 0, String(r.error || r.detail || r.via || '').slice(0, 500)]);
+    if (r.ok) await env.DB.prepare(`UPDATE lw_alerts SET status = 'fixed', fixed_at = ?, note = ?, set_qty = ? WHERE platform = 'eBay' AND listing_id = ? AND sku = ?`).bind(new Date().toISOString(), `Set to ${qty} by ${who}`, qty, id, sku).run();
+    return _soResp({ ok: !!r.ok, error: r.error || null, via: r.via || '' });
   }
   if (path === '/inventory/soldout/watch/dismiss' && method === 'POST') {
     const b = await request.json().catch(() => ({}));
