@@ -7100,7 +7100,7 @@ window.invCredLogin = async function() {
             return '<div style="flex:1 1 150px;border:1.5px solid var(--border);border-radius:10px;padding:8px 10px"><div style="font-size:10px;font-weight:700;text-transform:uppercase;color:var(--text3)">' + x[0] + '</div><div style="font-size:13px;font-weight:800;color:' + x[2] + '">' + x[1] + '</div></div>';
           }).join('') + '</div>';
         if ((d.counts || []).length) h += '<div style="font-size:12px;font-weight:800;margin:4px 0 6px">🧮 Box count before starting</div>' + table([{ t: 'When' }, { t: 'Who' }, { t: 'Pallet' }, { t: 'Our record', r: 1 }, { t: 'Counted', r: 1 }, { t: 'Diff', r: 1 }],
-          d.counts.map(function(c) { var bad = Math.abs(c.diff) > 1e-9; return '<tr><td style="' + tdS + '">' + t(c.at) + '</td><td style="' + tdS + ';font-family:var(--mono);font-weight:700">' + invEsc(c.by) + '</td><td style="' + tdS + '">' + (c.opened ? '📦 opened' : '🧱 not opened') + '</td><td style="' + tdS + ';text-align:right">' + n(c.expected) + '</td><td style="' + tdS + ';text-align:right;font-weight:700">' + n(c.counted) + '</td><td style="' + tdS + ';text-align:right;font-weight:800;color:' + (bad ? 'var(--red)' : 'var(--green)') + '">' + (bad ? (c.diff > 0 ? '+' : '') + n(c.diff) : '✓') + '</td></tr>'; }).join(''));
+          d.counts.map(function(c) { var bad = Math.abs(c.diff) > 1e-9; return '<tr><td style="' + tdS + '">' + t(c.at) + '</td><td style="' + tdS + ';font-family:var(--mono);font-weight:700">' + invEsc(c.by) + '</td><td style="' + tdS + '">' + (c.opened ? '📦 opened' : '🧱 not opened') + '</td><td style="' + tdS + ';text-align:right">' + n(c.expected) + '</td><td style="' + tdS + ';text-align:right;font-weight:700">' + n(c.counted) + (c.how ? ' <span style="font-weight:400;color:var(--text3)">(' + invEsc(c.how) + ')</span>' : '') + '</td><td style="' + tdS + ';text-align:right;font-weight:800;color:' + (bad ? 'var(--red)' : 'var(--green)') + '">' + (bad ? (c.diff > 0 ? '+' : '') + n(c.diff) : '✓') + '</td></tr>'; }).join(''));
         h += '<div style="font-size:12px;font-weight:800;margin:4px 0 6px">👤 Who worked on it</div>' + table([{ t: 'Who' }, { t: 'Moves', r: 1 }, { t: 'Boxes', r: 1 }, { t: 'First → last' }, { t: 'Time', r: 1 }, { t: 'To' }],
           (d.byPerson || []).map(function(x) { return '<tr><td style="' + tdS + ';font-family:var(--mono);font-weight:700">' + invEsc(x.who) + '</td><td style="' + tdS + ';text-align:right">' + x.moves + '</td><td style="' + tdS + ';text-align:right;font-weight:700">' + n(x.cases) + '</td><td style="' + tdS + '">' + t(x.first) + ' → ' + t(x.last) + '</td><td style="' + tdS + ';text-align:right">' + histMins(x.minutes) + '</td><td style="' + tdS + ';white-space:normal;font-family:var(--mono)">' + invEsc((x.to || []).join(', ')) + '</td></tr>'; }).join('') || '<tr><td style="' + tdS + '" colspan="6">No boxes moved yet</td></tr>');
         h += '<div style="font-size:12px;font-weight:800;margin:4px 0 6px">📦 What was on it</div>' + table([{ t: 'Part #' }, { t: 'Item' }, { t: 'On pallet', r: 1 }, { t: 'Moved', r: 1 }, { t: 'Left', r: 1 }],
@@ -9208,6 +9208,49 @@ window.invCredLogin = async function() {
       + '<button type="button" onclick="xfrKpOk()" style="flex:2;padding:14px;border-radius:12px;border:none;background:var(--accent);color:#fff;font-size:18px;font-weight:800;cursor:pointer">OK</button></div>');
   }
   window.xfrKeypad = function(title, start, cb, zeroOk) { xfrKp = { title: title, v: start ? String(start) : '', cb: cb, zeroOk: !!zeroOk }; xfrKpDraw(); };
+  // 🧮 Number pad with a calculator (owner 2026-10-10): "how many boxes are on the pallet now" — count it in parts,
+  // e.g. 4 layers × 6 boxes + 3 on top = 27. × goes before + and −. OK saves the total. Only the start count uses it;
+  // every other number pad stays the same.
+  function xfrCalcTotal(expr) { // '4×6+3' → 27; null if it isn't a full sum yet
+    var t = String(expr || '').match(/\d+(?:\.\d+)?|[+−×]/g); if (!t || t.join('') !== String(expr || '')) return null;
+    var sum = 0, sign = 1, term = null, op = null;
+    for (var i = 0; i < t.length; i++) {
+      var x = t[i];
+      if (x === '×') { if (term == null || op) return null; op = '×'; }
+      else if (x === '+' || x === '−') { if (term == null || op) return null; sum += sign * term; sign = x === '+' ? 1 : -1; term = null; }
+      else { var n = parseFloat(x); if (op === '×') { term = term * n; op = null; } else if (term == null) term = n; else return null; }
+    }
+    if (term == null || op) return null;
+    return Math.round((sum + sign * term) * 1000) / 1000;
+  }
+  window.xfrCalcTotal = xfrCalcTotal;
+  function xfrKpCalcDraw() {
+    var big = 'padding:14px 0;border-radius:12px;border:1.5px solid var(--border);background:var(--bg3);color:var(--text);font-size:22px;font-weight:800;cursor:pointer;touch-action:manipulation';
+    var opS = big.replace('background:var(--bg3);color:var(--text)', 'background:var(--bg);color:var(--accent);border-color:var(--accent)');
+    var tot = xfrCalcTotal(xfrKp.v);
+    xfrPopup('<div style="font-weight:800;font-size:15px;margin-bottom:4px">' + xfrE(xfrKp.title) + '</div>'
+      + '<div style="font-size:12px;color:var(--text3);margin-bottom:8px">🧮 Count it in parts: e.g. 4 layers × 6 boxes + 3 on top</div>'
+      + '<div id="xfr-kp-v" style="font-family:var(--mono);font-size:26px;font-weight:800;text-align:center;padding:8px;border:2px solid var(--accent);border-radius:12px;min-height:44px;word-break:break-all">' + xfrE((xfrKp.v || '').replace(/([+−×])/g, ' $1 ')) + '</div>'
+      + '<div id="xfr-kp-tot" style="text-align:right;font-size:18px;font-weight:800;margin:4px 2px 10px;color:' + (tot == null ? 'var(--text3)' : tot < 0 ? 'var(--red)' : 'var(--green)') + '">= ' + (tot == null ? '…' : xfrN(tot)) + ' box(es)</div>'
+      + '<div style="display:grid;grid-template-columns:repeat(4,1fr);gap:8px">'
+      + ['1','2','3','×','4','5','6','+','7','8','9','−','C','0','⌫'].map(function(k) { return '<button type="button" style="' + (/[+−×C]/.test(k) ? opS : big) + '" onclick="xfrKpCalcKey(\'' + k + '\')">' + k + '</button>'; }).join('')
+      + '<button type="button" style="' + opS + '" onclick="xfrKpCalcKey(\'=\')">=</button>'
+      + '</div><div style="display:flex;gap:8px;margin-top:10px">'
+      + '<button type="button" onclick="xfrPopupClose()" style="flex:1;padding:14px;border-radius:12px;border:1.5px solid var(--border);background:var(--bg);color:var(--text2);font-size:16px;font-weight:700;cursor:pointer">Cancel</button>'
+      + '<button type="button" onclick="xfrKpCalcOk()" style="flex:2;padding:14px;border-radius:12px;border:none;background:var(--accent);color:#fff;font-size:18px;font-weight:800;cursor:pointer">OK' + (tot != null && tot >= 0 ? ' — ' + xfrN(tot) : '') + '</button></div>');
+  }
+  window.xfrKeypadCalc = function(title, cb) { xfrKp = { title: title, v: '', cb: cb, calc: true }; xfrKpCalcDraw(); };
+  window.xfrKpCalcKey = function(k) { if (!xfrKp) return; var v = xfrKp.v || '';
+    if (k === '⌫') v = v.slice(0, -1);
+    else if (k === 'C') v = '';
+    else if (k === '=') { var t = xfrCalcTotal(v); if (t != null) v = String(t); }
+    else if (/[+−×]/.test(k)) { if (!v) return; v = /[+−×]$/.test(v) ? v.slice(0, -1) + k : v + k; }
+    else if (v.length < 40) v = v.replace(/(^|[+−×])0$/, '$1') + k;
+    xfrKp.v = v; xfrKpCalcDraw(); };
+  window.xfrKpCalcOk = function() { if (!xfrKp) return; var n = xfrCalcTotal(xfrKp.v);
+    if (n == null) { invFlash(xfrKp.v ? 'Finish the sum (a number after + − ×)' : 'Tap a number first', 'error'); return; }
+    if (n < 0) { invFlash('The total can\'t be below 0', 'error'); return; }
+    var how = /[+−×]/.test(xfrKp.v) ? xfrKp.v : '', cb = xfrKp.cb; xfrKp = null; xfrPopupClose(); cb(n, how); };
   window.xfrKpKey = function(k) { if (!xfrKp) return; var v = xfrKp.v || '';
     if (k === '⌫') v = v.slice(0, -1); else if (k === '.') { if (v.indexOf('.') < 0) v = (v || '0') + '.'; } else if (v.length < 7) v = (v === '0' ? '' : v) + k;
     xfrKp.v = v; var d = g('xfr-kp-v'); if (d) d.textContent = v; };
@@ -9756,15 +9799,15 @@ window.invCredLogin = async function() {
   window.xfrStartOpened = function(yes) { if (xfrGo.startCk) xfrGo.startCk.opened = !!yes; window.xfrStartStep('count'); };
   // ✏️ Not correct: the number pad (same as "Moving how many") — type how many boxes are on the pallet now (0 is allowed).
   window.xfrStartTyped = function() {
-    xfrKeypad('How many boxes are on the pallet now? (our record: ' + xfrN(xfrStartLeft()) + ')', '', function(n) { window.xfrStartSave(n); }, true);
+    xfrKeypadCalc('How many boxes are on the pallet now? (our record: ' + xfrN(xfrStartLeft()) + ')', function(n, how) { window.xfrStartSave(n, how); });
   };
-  window.xfrStartSave = function(counted) {
+  window.xfrStartSave = function(counted, how) {
     var f = xfrGo.focus, k = xfrStartKey(), ck = xfrGo.startCk || {}; if (!f) return;
     var expected = xfrStartLeft(), at = new Date().toISOString(), me = String((INV_CRED_USER && INV_CRED_USER.displayName) || '').toUpperCase();
     xfrGo.startDone[k] = true; xfrGo.startCk = null;
-    xfrGo.counts = (xfrGo.counts || []).concat([{ at: at, by: me, opened: !!ck.opened, expected: expected, counted: counted, diff: Math.round((counted - expected) * 1000) / 1000 }]);
+    xfrGo.counts = (xfrGo.counts || []).concat([{ at: at, by: me, opened: !!ck.opened, expected: expected, counted: counted, how: how || '', diff: Math.round((counted - expected) * 1000) / 1000 }]);
     invPost(W + '/inventory/containers/pallet-count', { method: 'POST', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ title: f.title, vendor: f.vendor, pallet: f.pallet, opened: !!ck.opened, expected: expected, counted: counted, at: at, by: me }) })
+      body: JSON.stringify({ title: f.title, vendor: f.vendor, pallet: f.pallet, opened: !!ck.opened, expected: expected, counted: counted, how: how || '', at: at, by: me }) })
       .then(function(r) { return r.json(); }).then(function(d) { if (d && d.ok === false) invFlash('Box count not saved: ' + (d.error || 'error') + ' — tell the office', 'error'); })
       .catch(function() {});
     invFlash(counted === expected ? '✅ ' + xfrN(counted) + ' box(es) — correct. Scan a box to start.' : '🧮 Saved: ' + xfrN(counted) + ' box(es) counted, record ' + xfrN(expected) + ' — the office sees it in History. Scan a box to start.', counted === expected ? 'success' : 'warn');
@@ -9773,7 +9816,7 @@ window.invCredLogin = async function() {
   function xfrStartLine() { // the last start count on this pallet, under the totals
     var c = (xfrGo.counts || [])[(xfrGo.counts || []).length - 1]; if (!c) return '';
     var ok = Math.abs(c.diff) < 1e-9, t = ''; try { t = new Date(c.at).toLocaleString('en-US', { timeZone: 'America/New_York', month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' }); } catch (e) {}
-    return '<div style="font-size:11px;margin-bottom:6px;color:' + (ok ? 'var(--text3)' : '#b91c1c') + ';font-weight:' + (ok ? '400' : '700') + '">🧮 Start count ' + xfrE(t) + (c.by ? ' by ' + xfrE(c.by) : '') + ': ' + xfrN(c.counted) + ' box(es)'
+    return '<div style="font-size:11px;margin-bottom:6px;color:' + (ok ? 'var(--text3)' : '#b91c1c') + ';font-weight:' + (ok ? '400' : '700') + '">🧮 Start count ' + xfrE(t) + (c.by ? ' by ' + xfrE(c.by) : '') + ': ' + xfrN(c.counted) + ' box(es)' + (c.how ? ' (' + xfrE(c.how) + ')' : '')
       + (ok ? ' ✓ matched our record' : ' — our record ' + xfrN(c.expected) + ' (' + (c.diff > 0 ? '+' : '') + xfrN(c.diff) + ')') + ' · ' + (c.opened ? 'opened' : 'not opened') + '</div>';
   }
   function xfrGoLineWarn(l) {
