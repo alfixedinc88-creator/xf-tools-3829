@@ -137,6 +137,7 @@ function invObLabel(path, b) {
   if (path.indexOf('containers/short') >= 0) return '📉 Short on pallet ' + (b.pallet || '') + ': ' + (b.part || '') + ' × ' + (b.short || '?') + ' box(es) not on the pallet';
   if (path.indexOf('containers/recheck') >= 0) return 'Box put at ' + (b.location || '') + ' (already counted): ' + (b.part || '') + ' · Pallet ' + (b.pallet || '');
   if (path.indexOf('containers/upc-issue') >= 0) return '⚠ UPC doesn\'t match: ' + (b.part || '') + ' (scanned ' + (b.code || '?') + ') · Pallet ' + (b.pallet || '');
+  if (path.indexOf('containers/pallet-count') >= 0) return '🧮 Start count, pallet ' + (b.pallet || '') + ': ' + (b.counted != null ? b.counted : '?') + ' box(es) (record ' + (b.expected != null ? b.expected : '?') + ')';
   if (path.indexOf('containers/extra') >= 0) return 'Extra on pallet ' + (b.pallet || '') + ': ' + (b.part || '') + ' × ' + (b.boxes || '?') + ' box(es) of ' + (b.pcsPerBox || '?') + ' pcs @ ' + (b.toLocation || '');
   var what = path.indexOf('transfer') >= 0 ? 'Transfer' : /\[AUDIT\]/.test(b.notes || '') ? 'Audit' : b.type === 'IN' ? 'Stock In' : b.type === 'OUT' ? (b.noneFound ? 'None found' : 'Stock Out') : (b.type || 'Entry');
   var where = path.indexOf('transfer') >= 0 ? (b.fromLocation || '') + ' → ' + (b.toLocation || '') : (b.location || '');
@@ -7098,6 +7099,8 @@ window.invCredLogin = async function() {
              ['Closed', d.finished ? t(d.closedAt) : 'not finished', d.finished ? 'var(--text)' : 'var(--orange)']].map(function(x) {
             return '<div style="flex:1 1 150px;border:1.5px solid var(--border);border-radius:10px;padding:8px 10px"><div style="font-size:10px;font-weight:700;text-transform:uppercase;color:var(--text3)">' + x[0] + '</div><div style="font-size:13px;font-weight:800;color:' + x[2] + '">' + x[1] + '</div></div>';
           }).join('') + '</div>';
+        if ((d.counts || []).length) h += '<div style="font-size:12px;font-weight:800;margin:4px 0 6px">🧮 Box count before starting</div>' + table([{ t: 'When' }, { t: 'Who' }, { t: 'Pallet' }, { t: 'Our record', r: 1 }, { t: 'Counted', r: 1 }, { t: 'Diff', r: 1 }],
+          d.counts.map(function(c) { var bad = Math.abs(c.diff) > 1e-9; return '<tr><td style="' + tdS + '">' + t(c.at) + '</td><td style="' + tdS + ';font-family:var(--mono);font-weight:700">' + invEsc(c.by) + '</td><td style="' + tdS + '">' + (c.opened ? '📦 opened' : '🧱 not opened') + '</td><td style="' + tdS + ';text-align:right">' + n(c.expected) + '</td><td style="' + tdS + ';text-align:right;font-weight:700">' + n(c.counted) + '</td><td style="' + tdS + ';text-align:right;font-weight:800;color:' + (bad ? 'var(--red)' : 'var(--green)') + '">' + (bad ? (c.diff > 0 ? '+' : '') + n(c.diff) : '✓') + '</td></tr>'; }).join(''));
         h += '<div style="font-size:12px;font-weight:800;margin:4px 0 6px">👤 Who worked on it</div>' + table([{ t: 'Who' }, { t: 'Moves', r: 1 }, { t: 'Boxes', r: 1 }, { t: 'First → last' }, { t: 'Time', r: 1 }, { t: 'To' }],
           (d.byPerson || []).map(function(x) { return '<tr><td style="' + tdS + ';font-family:var(--mono);font-weight:700">' + invEsc(x.who) + '</td><td style="' + tdS + ';text-align:right">' + x.moves + '</td><td style="' + tdS + ';text-align:right;font-weight:700">' + n(x.cases) + '</td><td style="' + tdS + '">' + t(x.first) + ' → ' + t(x.last) + '</td><td style="' + tdS + ';text-align:right">' + histMins(x.minutes) + '</td><td style="' + tdS + ';white-space:normal;font-family:var(--mono)">' + invEsc((x.to || []).join(', ')) + '</td></tr>'; }).join('') || '<tr><td style="' + tdS + '" colspan="6">No boxes moved yet</td></tr>');
         h += '<div style="font-size:12px;font-weight:800;margin:4px 0 6px">📦 What was on it</div>' + table([{ t: 'Part #' }, { t: 'Item' }, { t: 'On pallet', r: 1 }, { t: 'Moved', r: 1 }, { t: 'Left', r: 1 }],
@@ -9590,7 +9593,7 @@ window.invCredLogin = async function() {
       var f = xfrGo.focus; if (!f || f.title !== title || f.pallet !== pallet) return; // another pallet opened meanwhile
       xfrGo.lines = (d.lines || []).filter(function(l) { return l.pallet === pallet && l.vendor === vendor; });
       if (!xfrGo.lines.length) xfrGo.lines = d.lines || [];
-      xfrGo.recs = d.recs || {}; xfrGo.upcs = d.upcs || {}; xfrGo.extras = d.extras || [];
+      xfrGo.recs = d.recs || {}; xfrGo.upcs = d.upcs || {}; xfrGo.extras = d.extras || []; xfrGo.counts = d.counts || [];
       var keepRc = (xfrGo.rechecks || []).filter(function(r) { return r.status === 'Saving' || r.status === 'Failed'; })
         .filter(function(r) { return xfrGo.lines.some(function(l) { return l.id === r.lineId; }); });
       xfrGo.rechecks = (d.rechecks || []).concat(keepRc);
@@ -9722,6 +9725,57 @@ window.invCredLogin = async function() {
   function xfrGoRecs(l) { return (xfrGo.recs && xfrGo.recs[l.part]) || { plan: '', recs: [] }; }
   function xfrNat(a, b) { return String(a).localeCompare(String(b), undefined, { numeric: true }); }
   // Boxes on this line vs. what's still in the stock-in spot (GARAGE).
+  // 🧮 Before starting a pallet (owner 2026-10-10): confirm starting, is it opened, and the number of boxes on it
+  // (our record → correct, or type what is there). Kept in History → the pallet, so an extra / short box shows whether
+  // it was already that way at the start. The normal steps after it don't change.
+  // Asked once per person per pallet (again after 12 h); a pallet with nothing left isn't asked.
+  xfrGo.startDone = {}; xfrGo.startCk = null;
+  function xfrStartKey() { var f = xfrGo.focus; return f ? f.title + '|' + f.vendor + '|' + f.pallet : ''; }
+  function xfrStartLeft() { return Math.round(xfrGo.lines.reduce(function(a, l) { return a + (+l.left || 0); }, 0) * 1000) / 1000; }
+  function xfrStartNeeded() {
+    var k = xfrStartKey(); if (!k || xfrGo.startDone[k] || !(xfrStartLeft() > 0)) return false;
+    var me = String((INV_CRED_USER && INV_CRED_USER.displayName) || '').toUpperCase();
+    return !(xfrGo.counts || []).some(function(c) { return me && c.by === me && Date.now() - Date.parse(c.at) < 12 * 3600000; });
+  }
+  function xfrStartPanel() {
+    var k = xfrStartKey(), ck = xfrGo.startCk && xfrGo.startCk.key === k ? xfrGo.startCk : (xfrGo.startCk = { key: k, step: 'start' });
+    var n = xfrStartLeft(), mv = xfrGo.lines.reduce(function(a, l) { return a + (+l.moved || 0); }, 0);
+    var btn = function(on, txt, col) { return '<button type="button" onclick="' + on + '" style="flex:1;padding:12px 8px;border-radius:10px;border:2px solid ' + col + ';background:var(--bg);color:' + col + ';font-size:15px;font-weight:800;cursor:pointer">' + txt + '</button>'; };
+    var h = '<div id="xfr-start-ck" style="border:2.5px solid var(--orange);border-radius:12px;padding:12px;margin-bottom:10px;background:var(--orange-bg,#fff7ed)">';
+    if (ck.step === 'start') h += '<div style="font-size:15px;font-weight:800;margin-bottom:8px">▶ Start working on Pallet ' + xfrE(xfrGo.focus.pallet) + '?</div>'
+      + '<div style="font-size:12px;color:var(--text2);margin-bottom:8px">Before moving any box: confirm the boxes on this pallet.</div>'
+      + '<div style="display:flex;gap:8px">' + btn("xfrStartStep('open')", '✅ Confirm — start', 'var(--green)') + '</div>';
+    else if (ck.step === 'open') h += '<div style="font-size:15px;font-weight:800;margin-bottom:8px">Is this pallet opened?</div>'
+      + '<div style="display:flex;gap:8px">' + btn("xfrStartOpened(true)", '📦 Yes, opened', 'var(--accent)') + btn("xfrStartOpened(false)", '🧱 No, not opened yet', 'var(--accent)') + '</div>';
+    else if (ck.step === 'count') h += '<div style="font-size:13px;font-weight:700;color:var(--text2)">' + (ck.opened ? '📦 Opened' : '🧱 Not opened yet') + ' · count the boxes on the pallet</div>'
+      + '<div style="font-size:15px;font-weight:800;margin:6px 0 8px">Our record: <b style="font-size:26px;color:var(--accent);font-family:var(--mono)">' + xfrN(n) + '</b> box(es) on this pallet' + (mv > 0 ? '<div style="font-size:11px;font-weight:600;color:var(--text3)">(' + xfrN(mv) + ' already moved off before)</div>' : '') + '</div>'
+      + '<div style="display:flex;gap:8px">' + btn("xfrStartSave(" + n + ")", '✅ Correct', 'var(--green)') + btn("xfrStartTyped()", '✏️ Not correct', 'var(--red)') + '</div>';
+    return h + '</div>';
+  }
+  window.xfrStartStep = function(step) { if (xfrGo.startCk) xfrGo.startCk.step = step; xfrGoRender(); };
+  window.xfrStartOpened = function(yes) { if (xfrGo.startCk) xfrGo.startCk.opened = !!yes; window.xfrStartStep('count'); };
+  // ✏️ Not correct: the number pad (same as "Moving how many") — type how many boxes are on the pallet now (0 is allowed).
+  window.xfrStartTyped = function() {
+    xfrKeypad('How many boxes are on the pallet now? (our record: ' + xfrN(xfrStartLeft()) + ')', '', function(n) { window.xfrStartSave(n); }, true);
+  };
+  window.xfrStartSave = function(counted) {
+    var f = xfrGo.focus, k = xfrStartKey(), ck = xfrGo.startCk || {}; if (!f) return;
+    var expected = xfrStartLeft(), at = new Date().toISOString(), me = String((INV_CRED_USER && INV_CRED_USER.displayName) || '').toUpperCase();
+    xfrGo.startDone[k] = true; xfrGo.startCk = null;
+    xfrGo.counts = (xfrGo.counts || []).concat([{ at: at, by: me, opened: !!ck.opened, expected: expected, counted: counted, diff: Math.round((counted - expected) * 1000) / 1000 }]);
+    invPost(W + '/inventory/containers/pallet-count', { method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ title: f.title, vendor: f.vendor, pallet: f.pallet, opened: !!ck.opened, expected: expected, counted: counted, at: at, by: me }) })
+      .then(function(r) { return r.json(); }).then(function(d) { if (d && d.ok === false) invFlash('Box count not saved: ' + (d.error || 'error') + ' — tell the office', 'error'); })
+      .catch(function() {});
+    invFlash(counted === expected ? '✅ ' + xfrN(counted) + ' box(es) — correct. Scan a box to start.' : '🧮 Saved: ' + xfrN(counted) + ' box(es) counted, record ' + xfrN(expected) + ' — the office sees it in History. Scan a box to start.', counted === expected ? 'success' : 'warn');
+    xfrGoRender(); xfrGoBox();
+  };
+  function xfrStartLine() { // the last start count on this pallet, under the totals
+    var c = (xfrGo.counts || [])[(xfrGo.counts || []).length - 1]; if (!c) return '';
+    var ok = Math.abs(c.diff) < 1e-9, t = ''; try { t = new Date(c.at).toLocaleString('en-US', { timeZone: 'America/New_York', month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' }); } catch (e) {}
+    return '<div style="font-size:11px;margin-bottom:6px;color:' + (ok ? 'var(--text3)' : '#b91c1c') + ';font-weight:' + (ok ? '400' : '700') + '">🧮 Start count ' + xfrE(t) + (c.by ? ' by ' + xfrE(c.by) : '') + ': ' + xfrN(c.counted) + ' box(es)'
+      + (ok ? ' ✓ matched our record' : ' — our record ' + xfrN(c.expected) + ' (' + (c.diff > 0 ? '+' : '') + xfrN(c.diff) + ')') + ' · ' + (c.opened ? 'opened' : 'not opened') + '</div>';
+  }
   function xfrGoLineWarn(l) {
     if (l.over > 0) return '⚠ ' + xfrN(l.over) + ' more box(es) moved than the pallet had';
     if (!(l.left > 0)) return '';
@@ -9746,9 +9800,11 @@ window.invCredLogin = async function() {
     var match = Math.abs(tot - mv - left) < 1e-6 && !L.some(function(l) { return l.over > 0; });
     var h = '<div style="margin-bottom:6px;display:flex;justify-content:space-between"><a href="#" onclick="xfrGoBack();return false" style="font-size:12px">← All containers</a><a href="#" onclick="xfrGoReload();return false" style="font-size:12px">↻ Refresh</a></div>'
       + '<div style="font-size:15px;font-weight:800;margin-bottom:2px">🧱 Pallet ' + xfrE(f.pallet) + ' <span style="font-size:12px;font-weight:400;color:var(--text3)">' + xfrE(f.title) + '</span></div>'
+      + (xfrStartNeeded() ? xfrStartPanel() : '')
       + '<div style="font-size:12px;margin-bottom:4px;padding:6px 8px;border-radius:8px;background:' + (match && !warns ? 'var(--bg3)' : '#fee2e2') + ';color:' + (match && !warns ? 'var(--text2)' : '#991b1b') + ';font-weight:700">'
       + (match ? '✓' : '⚠') + ' On the pallet ' + xfrN(tot) + ' = moved ' + xfrN(mv) + ' + left ' + xfrN(left)
       + (match ? '' : ' — DOES NOT MATCH, tell the office') + (warns ? ' · ⚠ ' + warns + ' item(s) need a look' : '') + '</div>'
+      + xfrStartLine()
       + '<div style="font-size:12px;color:var(--accent);font-weight:700;margin-bottom:8px">' + (xfrGo.extra ? (!xfrGo.extra.part ? '➕ Extra package: scan the box ↑' : xfrGo.extra.step === 'loc' ? '➕ Extra package: put them away, then scan the shelf label ↑' : '➕ Extra package: tap below') : sel ? 'Put the boxes away, then scan the shelf label ↑' : 'Scan a box on this pallet ↑') + '</div>';
     var doneBtn = function(mt) { return '<button type="button" onclick="xfrPalDone()" style="width:100%;margin:' + mt + ' 0 8px;padding:10px;border-radius:9px;border:2px solid var(--green);background:var(--green-bg,#dcfce7);color:var(--green);font-size:14px;font-weight:800;cursor:pointer">✅ This pallet is done — check it</button>'; };
     if (!xfrGo.extra && !sel) h += doneBtn('0');
@@ -9957,6 +10013,7 @@ window.invCredLogin = async function() {
   }
   window.xfrGoMove = function(toLoc) {
     var sel = xfrGo.sel; if (!sel) return;
+    if (xfrStartNeeded()) { invFlash('⬆ First confirm the boxes on this pallet (at the top), then scan the shelf label again', 'warn'); var sc = g('xfr-start-ck'); if (sc && sc.scrollIntoView) sc.scrollIntoView({ block: 'center' }); return; }
     var l = xfrGo.lines.filter(function(x) { return x.id === sel.id; })[0]; if (!l) return;
     var n = parseFloat(sel.n) || 0;
     toLoc = String(toLoc || '').trim().toUpperCase();

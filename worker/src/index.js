@@ -1311,6 +1311,9 @@ async function reorderFixTables(env) {
   // that pallet took" (open → its last box moved) in History's report.
   await env.DB.prepare(`CREATE TABLE IF NOT EXISTS pallet_open (id INTEGER PRIMARY KEY AUTOINCREMENT, title TEXT, vendor TEXT, pallet TEXT, by_user TEXT, at TEXT)`).run();
   await env.DB.prepare('CREATE INDEX IF NOT EXISTS idx_pallet_open_k ON pallet_open(title, vendor, pallet)').run();
+  // 🚢 Container here: box count confirmed before starting a pallet (owner 2026-10-10) — is it opened, our record vs counted.
+  await env.DB.prepare(`CREATE TABLE IF NOT EXISTS pallet_count (id INTEGER PRIMARY KEY AUTOINCREMENT, title TEXT, vendor TEXT, pallet TEXT, opened INTEGER, expected REAL, counted REAL, by_user TEXT, at TEXT)`).run();
+  await env.DB.prepare('CREATE INDEX IF NOT EXISTS idx_pallet_count_k ON pallet_count(title, vendor, pallet)').run();
   // Extra boxes found on a pallet (not on its packing list): a Stock In at
   // the spot they went to (log_id), kept with the pallet they came off.
   await env.DB.prepare(`CREATE TABLE IF NOT EXISTS pallet_extra (id INTEGER PRIMARY KEY AUTOINCREMENT, title TEXT, vendor TEXT, pallet TEXT, part TEXT,
@@ -5185,7 +5188,8 @@ async function palletViewData(env, title, vendor, pallet) {
   const upcIssueLines = (await d1All(env, 'SELECT DISTINCT line_id FROM pallet_upc_issue WHERE title = ? AND vendor = ? AND pallet = ? AND fixed_at IS NULL', [title, v, String(pallet)]).catch(() => [])).map(r => r.line_id).filter(Boolean);
   const rechecks = await d1All(env, 'SELECT line_id AS lineId, part, location, by_user AS by, at FROM pallet_recheck WHERE title = ? AND vendor = ? AND pallet = ? ORDER BY id', [title, v, String(pallet)]).catch(() => []);
   const shorts = (await palletShortList(env, title)).filter(x => x.vendor === v && String(x.pallet) === String(pallet));
-  return { ok: true, lines, recs, photos, upcs, extras, upcIssueLines, rechecks, shorts, warn };
+  const counts = await palletCountsFor(env, title, v, pallet).catch(() => []);
+  return { ok: true, lines, recs, photos, upcs, extras, upcIssueLines, rechecks, shorts, counts, warn };
 }
 // GET /inventory/containers/pallet-view?title=&vendor=&pallet=
 async function inventoryPalletView(url, env) {
@@ -8189,6 +8193,7 @@ const _app = {
       }
       if (path === '/inventory/containers/pallet-recs' && method === 'POST') return await palletRecs(request, env);
       if (path === '/inventory/containers/pallet-open' && method === 'POST') return await palletOpenLog(request, env, session);
+      if (path === '/inventory/containers/pallet-count' && method === 'POST') return await palletCountLog(request, env, session);
       if (path === '/inventory/containers/where' && method === 'POST') return await palletWhere(request, env);
       if (path === '/inventory/spot-check' && method === 'GET') return await inventorySpotCheck(url, env);
       if (path === '/inventory/check-spots' && method === 'POST') return await inventoryCheckSpots(request, env);
@@ -13722,7 +13727,7 @@ async function palletDetail(url, env) {
     const c = parseFloat(l.cases) || 0; return { part: l.part, description: l.description || '', cases: c, moved: Math.round(mv * 1000) / 1000, left: Math.round((c - mv) * 1000) / 1000 }; });
   return J({ ok: true, title, vendor, pallet, boxes, moved: Math.round(moved * 1000) / 1000, left: Math.round((boxes - moved) * 1000) / 1000,
     finished: !!doneAt, openedAt: startAt, openedBy: op ? op.by : '', fromOpen: !!op, opens, closedAt: doneAt, lastMoveAt: last ? last.at : null,
-    minutes: mins(startAt, endAt), byPerson, byPart, moves });
+    minutes: mins(startAt, endAt), byPerson, byPart, moves, counts: await palletCountsFor(env, title, vendor, pallet) });
 }
 // POST /inventory/containers/mark-moved { palletLineId, cases, toLocation } — 🚢 Container here when SKU Mgr ALREADY has
 // these boxes at that spot (an earlier Transfer moved them there on record, not off the pallet): the pallet's boxes left
@@ -13806,6 +13811,35 @@ async function palletFoundIn(request, env, session) {
     warn: approveError ? 'Logged, but not added to SKU Mgr yet (' + approveError + ') — approve it in Inventory → Review' : '' };
   if (rid) await recordRequestResult(env, rid, res);
   return J(res);
+}
+// POST /inventory/containers/pallet-count {title, vendor, pallet, opened, expected, counted} — 🚢 Container here, before
+// starting a pallet: is it opened, and how many boxes are on it (our record → what they counted). Kept for History so
+// an extra / short box can be traced to before or after the pallet was started. Inventory does not change.
+async function palletCountLog(request, env, session) {
+  const J = (o, st) => cors(new Response(JSON.stringify(o), { status: st || 200, headers: { 'Content-Type': 'application/json' } }));
+  const b = await request.json().catch(() => ({}));
+  await reorderFixTables(env);
+  const rid = b._requestId ? String(b._requestId).slice(0, 80) : '';
+  if (rid) { const claim = await claimRequestId(env, rid, 'inventory/containers/pallet-count'); if (claim.isDuplicate) return J(claim.cachedResponse || { ok: true, duplicate: true }); }
+  const fail = async (o, st) => { if (rid) await env.DB.prepare('DELETE FROM processed_requests WHERE request_id=?').bind(rid).run().catch(() => {}); return J(o, st); };
+  const title = String(b.title || '').trim().slice(0, 200), pallet = String(b.pallet || '').trim().slice(0, 40);
+  const expected = parseFloat(b.expected), counted = parseFloat(b.counted);
+  if (!title || !pallet) return fail({ ok: false, error: 'title and pallet required' }, 400);
+  if (!(counted >= 0) || !(expected >= 0)) return fail({ ok: false, error: 'How many boxes are on the pallet?' }, 400);
+  const who = String((session && (session.displayName || session.username)) || b.by || '').trim().slice(0, 40);
+  const at = b.at && !isNaN(Date.parse(b.at)) && Date.parse(b.at) <= Date.now() + 60000 ? new Date(b.at).toISOString() : new Date().toISOString(); // when it was answered (sent later with no WiFi)
+  await env.DB.prepare('INSERT INTO pallet_count (title, vendor, pallet, opened, expected, counted, by_user, at) VALUES (?,?,?,?,?,?,?,?)')
+    .bind(title, String(vendorUnmask(b.vendor || '') || '').slice(0, 80), pallet, b.opened ? 1 : 0, Math.round(expected * 1000) / 1000, Math.round(counted * 1000) / 1000, who, at).run();
+  const res = { ok: true, expected, counted, diff: Math.round((counted - expected) * 1000) / 1000 };
+  if (rid) await recordRequestResult(env, rid, res);
+  return J(res);
+}
+async function palletCountsFor(env, title, vendor, pallet) {
+  const vc = String(vendorCode(vendor) || '').toUpperCase();
+  return ((await d1All(env, 'SELECT opened, expected, counted, by_user, at, vendor FROM pallet_count WHERE title = ? AND pallet = ? ORDER BY at', [title, String(pallet)]).catch(() => [])) || [])
+    .filter(o => String(o.vendor || '') === vendor || String(vendorCode(o.vendor) || '').toUpperCase() === vc)
+    .map(o => ({ at: o.at, by: String(o.by_user || '').toUpperCase(), opened: !!o.opened, expected: parseFloat(o.expected) || 0, counted: parseFloat(o.counted) || 0,
+      diff: Math.round(((parseFloat(o.counted) || 0) - (parseFloat(o.expected) || 0)) * 1000) / 1000 }));
 }
 async function palletOpenLog(request, env, session) {
   const b = await request.json().catch(() => ({}));

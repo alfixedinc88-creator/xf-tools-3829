@@ -4949,5 +4949,56 @@ console.log('\n📦 Pack & Ship: same label read twice within 5 s (QR + barcode)
   check('…checked in Packing and Picking before the Duplicate / Already Picked popup', pk1 > 0 && pk1 < pkDup && pi1 > 0 && pi1 < piDup, { pk1, pkDup, pi1, piDup });
 }
 
+// Owner (2026-10-10): 🚢 Container here — before starting a pallet, confirm starting, say if it's opened, and confirm
+// the boxes on it (our record → ✅ Correct, or ✏️ type what is there). Kept for History, so an extra / short box shows
+// whether it was already that way at the start. The normal steps after it don't change; inventory never changes.
+console.log('\n🧮 Container here: box count confirmed before starting a pallet');
+{
+  const { readFileSync } = await import('node:fs');
+  const ih = readFileSync(fileURLToPath(new URL('../inventory.html', import.meta.url)), 'utf8');
+  const ts = new Date().toISOString();
+  sq.prepare("INSERT INTO reorder_pallet (title, vendor, pallet, part, description, cases, pcs, pcs_per_ctn, updated_at) VALUES ('CNT CT','KW','3','CN-1=10X','valve',6,60,10,?), ('CNT CT','KW','3','CN-2=5','tee',3,15,5,?)").run(ts, ts);
+  const ml0 = JSON.stringify(sq.prepare('SELECT SUM(cases) c FROM master_list').get()), lg0 = sq.prepare('SELECT COUNT(*) n FROM inventory_log').get().n;
+  const pv0 = await get('/inventory/containers/pallet-view?title=' + encodeURIComponent('CNT CT') + '&vendor=KW&pallet=3');
+  const body = { title: 'CNT CT', vendor: 'KW', pallet: '3', opened: true, expected: 9, counted: 8, _requestId: 'cnt-test-1' };
+  const c1 = await post('/inventory/containers/pallet-count', body), c2 = await post('/inventory/containers/pallet-count', body); // sent twice (phone outbox)
+  const bad = await post('/inventory/containers/pallet-count', { title: 'CNT CT', vendor: 'KW', pallet: '3', expected: 9 });
+  const pv1 = await get('/inventory/containers/pallet-view?title=' + encodeURIComponent('CNT CT') + '&vendor=KW&pallet=3');
+  const det = await get('/inventory/containers/pallet-detail?title=' + encodeURIComponent('CNT CT') + '&vendor=KW&pallet=3');
+  const cc = (pv1.counts || [])[0] || {};
+  check('saved once (sent twice): opened, our record 9 → counted 8 (−1), by who; no count → refused',
+    c1.ok && c1.diff === -1 && (pv0.counts || []).length === 0 && (pv1.counts || []).length === 1 && cc.opened === true && cc.expected === 9 && cc.counted === 8 && cc.diff === -1 && cc.by === 'TS' && bad.ok === false,
+    { c1, c2, bad, counts: pv1.counts });
+  check('…History → the pallet shows it ("🧮 Box count before starting")', det.ok && (det.counts || []).length === 1 && det.counts[0].counted === 8 && /🧮 Box count before starting/.test(ih), det.counts);
+  const ml1 = JSON.stringify(sq.prepare('SELECT SUM(cases) c FROM master_list').get()), lg1 = sq.prepare('SELECT COUNT(*) n FROM inventory_log').get().n;
+  check('…inventory does not change (SKU Mgr total ' + ml0 + ' → ' + ml1 + ', entries ' + lg0 + ' → ' + lg1 + ')', ml0 === ml1 && lg0 === lg1, { ml0, ml1, lg0, lg1 });
+
+  // The screen: asked at the top until answered, a move (shelf scan) waits for it; asked once per person per pallet.
+  const src = ih.slice(ih.indexOf('  xfrGo.startDone = {}; xfrGo.startCk = null;'), ih.indexOf('  function xfrGoLineWarn(l) {'));
+  const W0 = {}, posts = [], flashes = [];
+  const xfrGo = { focus: { title: 'CNT CT', vendor: 'KW', pallet: '3' }, lines: [{ left: 6, moved: 0 }, { left: 3, moved: 0 }], counts: [] };
+  let kp = null;
+  const fn = new Function('window', 'xfrGo', 'INV_CRED_USER', 'g', 'xfrE', 'xfrN', 'invPost', 'invFlash', 'W', 'xfrGoRender', 'xfrGoBox', 'xfrKeypad',
+    src + '; return { needed: xfrStartNeeded, panel: xfrStartPanel, line: xfrStartLine };');
+  const H = fn(W0, xfrGo, { displayName: 'TS' }, () => null, String, v => String(v), (u, o) => { posts.push([u, JSON.parse(o.body)]); return Promise.resolve({ json: () => ({ ok: true }) }); },
+    (m, t) => flashes.push(t), 'W', () => {}, () => {}, (t, v, cb, zeroOk) => { kp = { t, cb, zeroOk }; });
+  const need0 = H.needed(), p0 = H.panel();
+  W0.xfrStartStep('open'); W0.xfrStartOpened(false); const p1 = H.panel();
+  W0.xfrStartSave(9);
+  const need1 = H.needed(), ln = H.line();
+  xfrGo.startDone = {}; const need2 = H.needed(); // same person, same pallet, page reloaded → not asked again within 12 h
+  xfrGo.counts = [{ at: new Date(Date.now() - 13 * 3600000).toISOString(), by: 'TS', counted: 9, expected: 9, diff: 0 }]; // next day → asked again
+  const posts1 = posts.slice(), need3 = H.needed(); H.panel(); W0.xfrStartStep('open'); W0.xfrStartOpened(true); W0.xfrStartTyped(); kp.cb(8);
+  check('asked at the top: ▶ Start → opened? → "Our record: 9 box(es)" ✅ Correct / ✏️ Not correct; saved (not opened, 9 = 9), not asked again',
+    need0 && /▶ Start working on Pallet 3/.test(p0) && /Our record: <b[^>]*>9<\/b>/.test(p1) && /✅ Correct/.test(p1) && /✏️ Not correct/.test(p1)
+      && posts1.length === 1 && posts[0][1].expected === 9 && posts[0][1].counted === 9 && posts[0][1].opened === false && !need1 && !need2 && /✓ matched our record/.test(ln), { need0, need1, need2, posts1 });
+  check('…✏️ Not correct → number pad ("How many boxes are on the pallet now? (our record: 9)", 0 allowed) → saved 8 vs 9, shown in red under the totals; asked again after 12 h',
+    need3 && /our record: 9/.test(kp.t) && kp.zeroOk === true && posts.length === 2 && posts[1][1].counted === 8 && posts[1][1].expected === 9 && posts[1][1].opened === true && /our record 9 \(-1\)/.test(H.line()), { posts, line: H.line() });
+  check('…a move waits for it (shelf scan → "First confirm the boxes on this pallet"); the panel sits right under the pallet title',
+    /window\.xfrGoMove = function\(toLoc\) \{\n    var sel = xfrGo\.sel; if \(!sel\) return;\n    if \(xfrStartNeeded\(\)\) \{ invFlash\('⬆ First confirm the boxes on this pallet/.test(ih)
+      && /\+ xfrE\(f\.title\) \+ '<\/span><\/div>'\n      \+ \(xfrStartNeeded\(\) \? xfrStartPanel\(\) : ''\)/.test(ih), null);
+  sq.exec("DELETE FROM reorder_pallet WHERE title='CNT CT'; DELETE FROM pallet_count WHERE title='CNT CT'");
+}
+
 console.log('\n' + (failed ? '❌ ' + failed + ' check(s) FAILED' : '✅ all ' + passed + ' checks passed') + '\n');
 process.exit(failed ? 1 : 0);
