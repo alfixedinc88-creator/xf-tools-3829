@@ -5589,5 +5589,50 @@ console.log('\n🔍 Warehouse Lookup → Item Search: the search box stays wide 
     && /<div id="pane-search">\s*<div class="search-row">\s*<div class="search-wrap">/.test(wh), null);
 }
 
+// Owner (2026-10-10): "so many Amazon listings still at 0 — when I check the part #, every other channel is already
+// 888. If all other channels have it and only Amazon shows 0, change the Amazon listing to 888, must be a mistake".
+console.log('\n🅰 Listing Watch: Amazon at 0 but other channels have it → set to 888 (list + button; Auto off until turned on)');
+{
+  const { readFileSync } = await import('node:fs');
+  const realFetch = globalThis.fetch, patched = [];
+  globalThis.fetch = async (u, o) => { u = String(u); const J = x => new Response(JSON.stringify(x), { headers: { 'Content-Type': 'application/json' } });
+    if (u.includes('api.amazon.com/auth/o2/token')) return J({ access_token: 'amz', expires_in: 3600 });
+    if (u.includes('/listings/2021-08-01/items/') && o && o.method === 'PATCH') { patched.push({ sku: decodeURIComponent(u.split('/').pop().split('?')[0]), body: JSON.parse(o.body) }); return J({ status: 'ACCEPTED', issues: [] }); }
+    if (u.includes('/listings/2021-08-01/items/')) { const asin = new URL(u).searchParams.get('identifiers');
+      const sku = { B0AM1: '25-1-1=10', B0AM2: 'XX-MAP-9' }[asin] || 'NONE';
+      return J({ items: [{ sku, summaries: [{ asin, productType: 'PIPE_FITTING', marketplaceId: 'ATVPDKIKX0DER' }], fulfillmentAvailability: [{ fulfillmentChannelCode: 'DEFAULT', quantity: 0 }] }] }); }
+    return new Response('{}', { status: 401 }); };
+  const s0 = env.AMAZON_SELLER_ID; env.AMAZON_SELLER_ID = 'SELLER1';
+  const first = await get('/inventory/soldout/watch/amazon-match'); // tables
+  const now = new Date().toISOString(), old = new Date(Date.now() - 5 * 86400000).toISOString();
+  const lt = (pl, id, sku, qty, at) => sq.prepare('INSERT OR REPLACE INTO listing_titles (platform, listing_id, sku, title, updated_at, qty) VALUES (?,?,?,?,?,?)').run(pl, id, sku, 'T ' + sku, at || now, qty);
+  lt('Amazon', 'B0AM1', '25-1-1=10', 0); lt('eBay', '111', '25-1-1=10', 888);          // ✓ same part # at 888 on eBay
+  lt('Amazon', 'B0AM2', 'XX-MAP-9', 0); lt('Walmart', '26-2-2=5', '26-2-2=5', 888);     // ✓ Amazon SKU ✏️ mapped to 26-2-2=5
+  sq.prepare("INSERT OR REPLACE INTO reorder_alias (raw, part) VALUES ('XX-MAP-9', '26-2-2=5')").run();
+  lt('Amazon', 'B0AM3', '27-3-3=2', 0); lt('eBay', '333', '27-3-3=2', 0);              // ✗ other channels are 0 too
+  lt('Amazon', 'B0AM4', '28-4-4=1', 5); lt('eBay', '444', '28-4-4=1', 888);            // ✗ Amazon not at 0
+  lt('Amazon', 'B0AM5', '29-5-5=1', 0); lt('Shopify', '555', '29-5-5=1', 888, old);    // ✗ the other channel was read 5 days ago (stale)
+  lt('Amazon', 'B0AM6', '25-1-1=100', 0);                                              // ✗ only =10 is on eBay, not =100
+  const ml0 = JSON.stringify(sq.prepare('SELECT SUM(cases) c FROM master_list').get());
+  const l1 = await get('/inventory/soldout/watch/amazon-match');
+  check('lists only the Amazon listings at 0 whose part # (own SKU or ✏️ mapping) is 100+ on another channel, read in the last 2 days',
+    first.ok && l1.ok && JSON.stringify(l1.list.map(a => a.sku).sort()) === JSON.stringify(['25-1-1=10', 'XX-MAP-9']) && l1.list.find(a => a.sku === 'XX-MAP-9').part === '26-2-2=5', l1.list);
+  check('…Auto is OFF until the owner turns it on (nothing changes by itself)', l1.config.amazonMatch === false && l1.config.amazonMatchQty === 888 && patched.length === 0, l1.config);
+  const r = await post('/inventory/soldout/watch/amazon-match', { limit: 25 });
+  check('✓ Set them → both Amazon listings set to 888 (FBM channel DEFAULT, their own product type), none of the others',
+    r.ok && r.set === 2 && r.failed === 0 && patched.length === 2 && patched.every(p => p.body.productType === 'PIPE_FITTING' && p.body.patches[0].value[0].fulfillment_channel_code === 'DEFAULT' && p.body.patches[0].value[0].quantity === 888)
+      && JSON.stringify(patched.map(p => p.sku).sort()) === JSON.stringify(['25-1-1=10', 'XX-MAP-9']), { r, patched });
+  const lg = sq.prepare("SELECT * FROM listing_qty_log WHERE by_user = 'Auto (Amazon = other channels)' ORDER BY id").all();
+  check('…each change saved: who tapped it, was 0, what the other channels had', lg.length === 2 && lg.every(x => x.ok === 1 && x.quantity === 888 && /was 0, other channels have it/.test(x.detail) && /\(by TS\)/.test(x.detail)) && /26-2-2=5: Walmart 888/.test(lg.map(x => x.detail).join('|')), lg);
+  const l2 = await get('/inventory/soldout/watch/amazon-match');
+  check('…then the list is empty (no double setting); SKU Mgr not touched', l2.list.length === 0 && JSON.stringify(sq.prepare('SELECT SUM(cases) c FROM master_list').get()) === ml0, l2.list);
+  const ih = readFileSync(fileURLToPath(new URL('../inventory.html', import.meta.url)), 'utf8');
+  check('…Inventory → Sold Out → Listing Watch shows 🅰 Amazon at 0 but other channels have it, ✓ Set them all to 888, ⚡ Auto switch',
+    /id="lw-amz-box"/.test(ih) && /onclick="lwAmzSetAll\(\)"/.test(ih) && /id="lw-amz-auto" onchange="lwAmzAuto\(this\.checked\)"/.test(ih) && /lwAmzLoad\(\);\s*return d;/.test(ih), null);
+  sq.exec("DELETE FROM listing_titles WHERE listing_id IN ('B0AM1','B0AM2','B0AM3','B0AM4','B0AM5','B0AM6','111','26-2-2=5','333','444','555'); DELETE FROM reorder_alias WHERE raw = 'XX-MAP-9'; DELETE FROM listing_qty_log WHERE by_user = 'Auto (Amazon = other channels)'");
+  if (s0 === undefined) delete env.AMAZON_SELLER_ID; else env.AMAZON_SELLER_ID = s0;
+  globalThis.fetch = realFetch;
+}
+
 console.log('\n' + (failed ? '❌ ' + failed + ' check(s) FAILED' : '✅ all ' + passed + ' checks passed') + '\n');
 process.exit(failed ? 1 : 0);
