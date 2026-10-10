@@ -5461,5 +5461,35 @@ console.log('\n🔗 Listing Watch: link a "not checked" listing to our part # ri
   globalThis.fetch = realFetch;
 }
 
+// Owner (2026-10-10): "under Close Batch add one more button to print the scan form — every scan form not printed yet
+// starts to print; before today don't worry, I already printed everything".
+console.log('\n📄 Close Batch → Print scan forms: every form not printed yet (made after the cut-off) prints, oldest first');
+{
+  const { readFileSync } = await import('node:fs');
+  const ph = readFileSync(fileURLToPath(new URL('../packship.html', import.meta.url)), 'utf8');
+  const panel = (ph.match(/<div class="ps-panel" id="ps-panel-closebatch">([\s\S]*?)<div id="ps-closed-banners">/) || [])[1] || '';
+  check('Close Batch has 📄 Print scan forms next to 🚚 Leaving for USPS', /onclick="psCbPrintScanForms\(this\)">📄 Print scan forms</.test(panel) && /psUspsRunStart\(\)/.test(panel), null);
+  const from = (ph.match(/var PS_SF_PRINT_FROM = '([^']+)';/) || [])[1];
+  const fnSrc = (ph.match(/window\.psCbPrintScanForms = async function\(btn\) \{[\s\S]*?\n\};/) || [])[0];
+  let printed = null, alerted = '';
+  const sandbox = new Function('PS_SF_PRINT_FROM', '_psAlFetch', '_psSfPrintSomewhere', '_psToast', 'alert', 'window', fnSrc + '; return window.psCbPrintScanForms;');
+  const after = m => new Date(Date.parse(from) + m * 60000).toISOString();
+  const forms = [
+    { id: 1, ok: 1, kind: 'scheduled', parts: 1, printed_at: null, created_at: new Date(Date.parse(from) - 3600000).toISOString() }, // before the cut-off → left alone
+    { id: 2, ok: 1, kind: 'scheduled', parts: 2, printed_at: null, created_at: after(120) },
+    { id: 3, ok: 1, kind: 'hand', parts: 1, printed_at: after(70), created_at: after(60) },                                          // printed already
+    { id: 4, ok: 1, kind: 'scheduled', parts: 1, printed_at: null, created_at: after(30) },
+    { id: 5, ok: 0, kind: 'scheduled', parts: 0, printed_at: null, created_at: after(40) },                                          // not made
+    { id: 6, ok: 1, kind: 'night_ok', parts: 0, printed_at: null, created_at: after(50) },                                           // night check, nothing to print
+  ];
+  const run = sandbox(from, async () => ({ ok: true, forms, missing: { labels: [] } }), async list => { printed = list; }, () => {}, t => { alerted = t; }, {});
+  await run(null);
+  check('…prints only the forms not printed yet, made after the cut-off, oldest first (both pages of a 2-form one)', from && JSON.stringify(printed) === JSON.stringify([{ id: 4, parts: 1 }, { id: 2, parts: 2 }]), printed);
+  printed = null;
+  const run2 = sandbox(from, async () => ({ ok: true, forms: forms.filter(f => f.id === 1 || f.id === 3), missing: { labels: [{}, {}] } }), async list => { printed = list; }, () => {}, t => { alerted = t; }, {});
+  await run2(null);
+  check('…nothing new → says "every scan form is printed" (and how many USPS labels are not on a form yet), prints nothing', printed === null && /Every scan form is printed/.test(alerted) && /2 USPS labels are not on a scan form yet/.test(alerted), { printed, alerted });
+}
+
 console.log('\n' + (failed ? '❌ ' + failed + ' check(s) FAILED' : '✅ all ' + passed + ' checks passed') + '\n');
 process.exit(failed ? 1 : 0);
