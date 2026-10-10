@@ -4047,6 +4047,13 @@ async function inventoryOutboxCheck(request, env) {
     if (!r.response_json) { out[id] = { state: 'processing' }; continue; }
     let res = {}; try { res = JSON.parse(r.response_json); } catch (_) {}
     // a ⚠ UPC report is kept in its own table (it changes no stock)
+    // 🧮 a pallet start count is kept in pallet_count (it changes no stock). Saved before the countId was returned
+    // (2026-10-10, phones kept "Not in History — sending again"): the stored result itself says it was saved.
+    if (r.endpoint === 'inventory/containers/pallet-count') {
+      const cid = parseInt(res.countId) || 0;
+      const ok = cid ? !!(await d1First(env, 'SELECT id FROM pallet_count WHERE id=?', [cid]).catch(() => null)) : res.ok === true;
+      out[id] = ok ? { state: 'saved', result: res } : { state: 'missing', lost: cid ? [cid] : [] }; continue;
+    }
     const tbl = r.endpoint === 'inventory/containers/upc-issue' ? 'pallet_upc_issue' : r.endpoint === 'inventory/containers/recheck' ? 'pallet_recheck' : r.endpoint === 'inventory/containers/short' ? 'pallet_short' : r.endpoint === 'inventory/recount/column-done' ? 'recount_columns' : 'inventory_log';
     const logIds = (tbl === 'inventory_log' ? [res.d1Id, res.outD1Id, res.inD1Id] : tbl === 'pallet_recheck' ? [res.checkId] : tbl === 'pallet_short' ? [res.shortId] : tbl === 'recount_columns' ? [res.columnId] : [res.issueId]).map(x => parseInt(x) || 0).filter(Boolean);
     let found = 0;
@@ -13898,9 +13905,10 @@ async function palletCountLog(request, env, session) {
   const who = String((session && (session.displayName || session.username)) || b.by || '').trim().slice(0, 40);
   const at = b.at && !isNaN(Date.parse(b.at)) && Date.parse(b.at) <= Date.now() + 60000 ? new Date(b.at).toISOString() : new Date().toISOString(); // when it was answered (sent later with no WiFi)
   const how = /[+−×]/.test(String(b.how || '')) ? String(b.how).replace(/[^0-9.+−×]/g, '').slice(0, 60) : ''; // only a sum, e.g. 4×6+3
-  await env.DB.prepare('INSERT INTO pallet_count (title, vendor, pallet, opened, expected, counted, by_user, at, how) VALUES (?,?,?,?,?,?,?,?,?)')
+  const ins = await env.DB.prepare('INSERT INTO pallet_count (title, vendor, pallet, opened, expected, counted, by_user, at, how) VALUES (?,?,?,?,?,?,?,?,?)')
     .bind(title, String(vendorUnmask(b.vendor || '') || '').slice(0, 80), pallet, b.opened ? 1 : 0, Math.round(expected * 1000) / 1000, Math.round(counted * 1000) / 1000, who, at, how).run();
-  const res = { ok: true, expected, counted, diff: Math.round((counted - expected) * 1000) / 1000 };
+  // countId: the phone's outbox asks /inventory/outbox/check whether it's on record (pallet_count), not in inventory_log.
+  const res = { ok: true, countId: (ins && ins.meta && ins.meta.last_row_id) || null, expected, counted, diff: Math.round((counted - expected) * 1000) / 1000 };
   if (rid) await recordRequestResult(env, rid, res);
   return J(res);
 }
