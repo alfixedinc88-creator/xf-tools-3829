@@ -4245,8 +4245,84 @@ async function rvoLoadOrders() {
   };
   box.style.display = 'block';
   box.innerHTML = '<b style="color:#92400E">🏭 Orders — shipped and still owed by the vendor</b>'
+    + ' <button onclick="rvoOrdersReport()" title="Search what the vendor still owes: when ordered, how many, how many shipped and when — by vendor" style="border:none;background:#FDE68A;border-radius:10px;padding:2px 10px;font-size:11px;font-weight:700;cursor:pointer">📋 Still with the vendor — report / search</button>'
+    + ' <button onclick="rvoOrderRules()" style="border:none;background:#FEF3C7;border-radius:10px;padding:2px 8px;font-size:11px;cursor:pointer">📜 Rules (no double count)</button>'
     + (open.length ? open.map(chip).join('') : '<div style="padding:4px 0;color:var(--text3)">No open orders.</div>')
     + (done.length ? '<details style="margin-top:4px"><summary style="cursor:pointer;color:var(--green);font-weight:700">✅ Fully shipped orders (' + done.length + ')</summary>' + done.map(chip).join('') + '</details>' : '');
+}
+// 📋 Owner (2026-10-10): "a report to see or search what we still have with the vendor not shipped yet: when we ordered,
+// how many we ordered that time, how many they shipped and when — break it down by vendor". One line per order × part #.
+var RVO_REP = { q: '', vendor: '', owed: true };
+function rvoOrdersReport() {
+  RVO_CK = null;
+  var vendors = []; RVO_ORD.forEach(function (o) { var v = o.vendor || '(no vendor)'; if (vendors.indexOf(v) < 0) vendors.push(v); }); vendors.sort();
+  document.getElementById('rvo-ck-title').textContent = '📋 Still with the vendor — ordered, shipped, still owed';
+  document.getElementById('rvo-ck-body').innerHTML = '<div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin-bottom:8px;font-size:13px">'
+    + '<input id="rvo-rep-q" placeholder="Search part # / description / order" value="' + escHtml(RVO_REP.q) + '" oninput="RVO_REP.q=this.value;rvoRepRender()" style="padding:6px 10px;border:1.5px solid var(--border);border-radius:7px;font-size:13px;min-width:230px">'
+    + '<select onchange="RVO_REP.vendor=this.value;rvoRepRender()" style="padding:6px 8px;border:1.5px solid var(--border);border-radius:7px;font-size:13px"><option value="">All vendors</option>'
+    + vendors.map(function (v) { return '<option' + (v === RVO_REP.vendor ? ' selected' : '') + '>' + escHtml(v) + '</option>'; }).join('') + '</select>'
+    + '<label style="display:flex;gap:5px;align-items:center;cursor:pointer"><input type="checkbox"' + (RVO_REP.owed ? ' checked' : '') + ' onchange="RVO_REP.owed=this.checked;rvoRepRender()"> Only what is still owed</label>'
+    + '<span style="flex:1"></span><button class="btn btn-secondary" style="font-size:12px;padding:4px 10px" onclick="rvoRepCsv()">⬇ CSV</button></div><div id="rvo-rep-body"></div>';
+  document.getElementById('rvo-check').style.display = 'flex';
+  rvoRepRender();
+}
+function rvoRepLines() {
+  var q = RVO_REP.q.trim().toUpperCase(), out = [];
+  RVO_ORD.forEach(function (o) {
+    var v = o.vendor || '(no vendor)';
+    if (RVO_REP.vendor && v !== RVO_REP.vendor) return;
+    o.lines.forEach(function (l) {
+      if (RVO_REP.owed && !(l.left > 1e-9)) return;
+      if (q && (l.part + ' ' + (l.description || '') + ' ' + o.title).toUpperCase().indexOf(q) < 0) return;
+      var ships = Object.keys(l.by).map(function (k) { var c = o.containers.filter(function (x) { return x.title === k; })[0] || {}; return { title: k, date: c.date || '', status: c.status || '', pcs: l.by[k] * l.pack, units: l.by[k] }; })
+        .sort(function (a, b) { return String(a.date).localeCompare(String(b.date)); });
+      out.push({ vendor: v, order: o.title, orderDate: o.orderDate, part: l.part, description: l.description || '', pack: l.pack, ordered: l.ordered, orderedPcs: l.orderedPcs, shippedPcs: l.shippedPcs, left: l.left, leftPcs: l.leftPcs, ships: ships });
+    });
+  });
+  return out.sort(function (a, b) { return a.vendor.localeCompare(b.vendor) || String(a.orderDate).localeCompare(String(b.orderDate)) || a.part.localeCompare(b.part); });
+}
+function rvoRepRender() {
+  var L = rvoRepLines(), box = document.getElementById('rvo-rep-body'); if (!box) return;
+  var td = function (x, st) { return '<td style="padding:5px 8px;' + (st || '') + '">' + x + '</td>'; };
+  var tot = { o: 0, s: 0, l: 0 }; L.forEach(function (r) { tot.o += r.orderedPcs; tot.s += r.shippedPcs; tot.l += r.leftPcs; });
+  var byV = {}; L.forEach(function (r) { byV[r.vendor] = (byV[r.vendor] || 0) + r.leftPcs; });
+  box.innerHTML = '<div style="font-size:13px;margin-bottom:8px">' + fmt0(L.length) + ' lines · ordered <b>' + fmt0(tot.o) + '</b> pcs − shipped <b>' + fmt0(tot.s) + '</b> = still owed <b style="color:#B45309">' + fmt0(tot.l) + '</b> pcs'
+    + (Math.abs(tot.o - tot.s - tot.l) < 0.001 ? ' <b style="color:var(--green)">✓ adds up</b>' : ' <b style="color:var(--red)">⚠ does not add up</b>')
+    + '<div style="color:var(--text3);margin-top:2px">Still owed by vendor: ' + Object.keys(byV).sort().map(function (v) { return '<b>' + escHtml(v) + '</b> ' + fmt0(byV[v]) + ' pcs'; }).join(' · ') + '</div></div>'
+    + (L.length ? '<div style="max-height:60vh;overflow:auto;border:1px solid var(--border);border-radius:8px"><table style="font-size:12px;border-collapse:collapse;width:100%"><thead style="position:sticky;top:0;background:var(--bg3)"><tr>'
+      + ['Vendor', 'Order', 'Ordered on', 'Part #', 'Description', 'Ordered', 'Shipped (container · ship date)', 'Still owed'].map(function (x) { return '<th style="text-align:left;padding:6px 8px">' + x + '</th>'; }).join('') + '</tr></thead><tbody>'
+      + L.map(function (r) {
+        return '<tr style="border-top:1px solid var(--border)">' + td(escHtml(r.vendor)) + td(escHtml(r.order)) + td(escHtml(r.orderDate || ''), 'white-space:nowrap')
+          + td('<b style="font-family:var(--mono)">' + escHtml(r.part) + '</b>', 'white-space:nowrap') + td(escHtml(r.description), 'min-width:140px;max-width:280px')
+          + td(fmt0(r.orderedPcs) + ' pcs<div style="color:var(--text3)">' + fmt0(r.ordered) + ' units</div>', 'text-align:right;white-space:nowrap')
+          + td(r.ships.length ? r.ships.map(function (x) { return (x.status === 'received' ? '📦 ' : '🚢 ') + escHtml(x.title) + (x.date ? ' · ' + escHtml(x.date) : '') + ': <b>' + fmt0(x.pcs) + '</b> pcs'; }).join('<br>') : '<span style="color:var(--text3)">nothing shipped yet</span>')
+          + td(r.left > 1e-9 ? '<b style="color:#B45309">' + fmt0(r.leftPcs) + '</b> pcs<div style="color:var(--text3)">' + fmt0(r.left) + ' units</div>' : '<span style="color:var(--green)">✓ 0</span>', 'text-align:right;white-space:nowrap') + '</tr>';
+      }).join('') + '</tbody></table></div>' : '<div style="color:var(--text3)">Nothing matches.</div>');
+}
+function rvoRepCsv() {
+  var q = function (v) { v = String(v == null ? '' : v); return /[",\n]/.test(v) ? '"' + v.replace(/"/g, '""') + '"' : v; };
+  var lines = [['Vendor', 'Order', 'Ordered on', 'Part #', 'Description', 'Ordered units', 'Ordered pcs', 'Shipped pcs', 'Shipped in (container date pcs)', 'Still owed units', 'Still owed pcs'].join(',')];
+  rvoRepLines().forEach(function (r) { lines.push([r.vendor, r.order, r.orderDate, r.part, r.description, r.ordered, r.orderedPcs, r.shippedPcs, r.ships.map(function (x) { return x.title + ' ' + x.date + ' ' + x.pcs; }).join('; '), r.left, r.leftPcs].map(q).join(',')); });
+  var a = document.createElement('a'); a.href = URL.createObjectURL(new Blob([lines.join('\n')], { type: 'text/csv' })); a.download = 'still-with-vendor-' + new Date().toISOString().slice(0, 10) + '.csv'; document.body.appendChild(a); a.click(); a.remove();
+}
+// 📜 The rules that keep orders / containers / SKU Mgr from counting anything twice (same text as docs/ORDERS-AND-CONTAINERS.md).
+function rvoOrderRules() {
+  RVO_CK = null;
+  document.getElementById('rvo-ck-title').textContent = '📜 Orders → containers → SKU Mgr: every piece counted once';
+  document.getElementById('rvo-ck-body').innerHTML = '<div style="font-size:13px;line-height:1.6;max-width:760px">'
+    + '<p><b>Each piece is in ONE place only:</b> 🏭 still owed on an order → 🚢 on the water in a container → 🏬 in SKU Mgr after 📦 Received.</p>'
+    + '<ol style="padding-left:20px">'
+    + '<li><b>🏭 Order sheet</b> (Stage = Ordered): its quantities count as <i>still owed by the vendor</i>.</li>'
+    + '<li><b>🚢 Start-ship / container sheet</b> (Stage = Shipped): ALWAYS pick <b>Made for order</b> — the order it was made for, or <b>All open orders — oldest first</b>. Each part # comes off the OLDEST order first (8-18-26 before 9-14-26), then the next. Example: 8-18-26 ordered 8-8-8 200 pcs, the container ships 200 → 8-18-26 has <b>0</b> left; it is counted only on the water.</li>'
+    + '<li>Part #s fixed with ✏️ (mapped to our part #) are matched as our part #, so a vendor\'s own code still comes off the right order line.</li>'
+    + '<li>Shipped MORE than ordered / not on any order: the extra is only on the water (shown in the container\'s 🔍 Check as "not on an order").</li>'
+    + '<li><b>Import the SAME container again</b> (new packing list) with the SAME title: what it took before goes back on the order and is taken again with the new quantities — never twice. If "Made for order" is left empty it takes from the same order(s) as last time.</li>'
+    + '<li><b>Import the SAME order sheet again</b>: the order keeps <i>ordered − already shipped</i> (shown after the import). It never puts the shipped pieces back on the order.</li>'
+    + '<li><b>📦 Received</b>: the container\'s lines go into SKU Mgr (Stock In, in History) and come OFF on the water at the same moment. Never type the same container into SKU Mgr by hand too — Receive PO / a hand Stock In do NOT take anything off on the water, so a Reorder container must come in with its 📦 Received button.</li>'
+    + '<li><b>🗑 Remove</b> (cancelled / wrong import): what the container took off orders goes back on those orders. SKU Mgr is not touched.</li>'
+    + '<li>Reorder Planner, 📊 Stock Levels and SKU Mgr all read these same lines: what to order = sales need − SKU Mgr − FBA − on the water − still owed.</li>'
+    + '</ol><p style="color:var(--text3)">Check any time: 📋 Still with the vendor (ordered − shipped = still owed ✓), each order\'s 📋 What\'s left, each container\'s 🔍 Check, and 📊 Stock Levels (✅ adds up to SKU Mgr + Reorder). Every import, take and receive is in 📜 History.</p></div>';
+  document.getElementById('rvo-check').style.display = 'flex';
 }
 function rvoOrderDetail(title) {
   var o = RVO_ORD.filter(function (x) { return x.title === title; })[0]; if (!o) return;
@@ -5029,8 +5105,10 @@ async function rvoImportShipped(f, wb, vendor, title) {
     if (!weights.ok) alert('⚠ Weights were not saved: ' + (weights.error || 'error') + ' (everything else was imported)');
   }
   var take = null;
-  if (from) { take = await (await wFetch(W + '/reorder/fix/incoming-take', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ from: from, to: title }) })).json();
-    if (!take.ok) alert('⚠ Taking the shipped units off "' + from + '" failed: ' + (take.error || 'error')); }
+  // Owner (2026-10-10): the same container again with no "Made for order" picked → take again from the same order(s) as last time.
+  var takeFrom = from || (exists ? 'same' : '');
+  if (takeFrom) { take = await (await wFetch(W + '/reorder/fix/incoming-take', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ from: takeFrom, to: title }) })).json();
+    if (!take.ok) alert('⚠ Taking the shipped units off "' + (from || 'the same orders as before') + '" failed: ' + (take.error || 'error')); }
   showToast('🚢 "' + title + '" saved — ' + fmt0(pd.pallets) + ' pallets, ' + fmt0(pd.cases) + ' boxes');
   document.getElementById('rvo-imp-title').value = '';
   await rvoLoad(); if (document.getElementById('rvo-hist-box').open) rvoLoadHistory();
@@ -5067,13 +5145,16 @@ async function rvoImport(input) {
         + withQty.length + ' part #s with a quantity will count as on the way and be subtracted from what to order.'
         + (exists ? '\nSame part #s get the new quantity; others in "' + title + '" stay.' : ''))) return;
     } else if (!confirm('Import ' + rows.length + ' rows from ' + f.name + ' as vendor "' + vendor + '"?\n\nThis replaces what was imported before for ' + vendor + '. Your ✏️ fixes are kept.\n\n(To record a shipment / order on the way, type a Title first.)')) return;
-    var saved = 0, noCase = [], caseLines = [], priceChanges = [];
+    var saved = 0, noCase = [], caseLines = [], priceChanges = [], alreadyShipped = [];
     for (var i = 0; i < rows.length; i += 400) {
       var res = await wFetch(W + '/reorder/vendor-catalog/import', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ vendor: vendor, title: title, stage: stage, replace: i === 0, last: i + 400 >= rows.length, file: f.name, rows: rows.slice(i, i + 400) }) });
       var d = await res.json(); if (!d.ok) throw new Error(d.error || 'Import failed');
       saved = d.total; (d.noCaseQty || []).forEach(function (k) { noCase.push(k); }); (d.fromCases || []).forEach(function (k) { caseLines.push(k); });
       (d.priceChanges || []).forEach(function (k) { priceChanges.push(k); });
+      (d.alreadyShipped || []).forEach(function (k) { alreadyShipped.push(k); });
     }
+    if (alreadyShipped.length) alert('🏭 "' + title + '": ' + alreadyShipped.length + ' part # already shipped (in part or all) in a container — the order keeps only what is still owed (ordered − shipped), never counted twice:\n\n'
+      + alreadyShipped.slice(0, 25).map(function (k) { return k.part + ': ordered ' + fmt0(k.ordered) + ' − shipped ' + fmt0(k.shipped) + ' = still owed ' + fmt0(k.left); }).join('\n') + (alreadyShipped.length > 25 ? '\n…' : ''));
     var weights = await rvoSaveWeights(title || ('vendor sheet ' + vendor), f.name, rvoWeightsByBase(rows.filter(function (r) { return r.weight_lb > 0; }).map(function (r) { return { clean: rvoClean(r.part), lb: r.weight_lb, pcs: 1, from: r.weight_from }; })));
     if (weights && !weights.ok) alert('⚠ Weights were not saved: ' + (weights.error || 'error') + ' (everything else was imported)');
     showToast(title ? 'On the way "' + title + '" saved' : 'Imported ' + vendor + ': ' + saved + ' part #s');
