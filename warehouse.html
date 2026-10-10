@@ -2146,6 +2146,67 @@ function buildRe(term) {
   return new RegExp(esc.split(/\s+/).join('.*'), 'i');
 }
 
+// 🧠 Smart name search (Item Search). Owner (2026-10-10): "search 1/2 pex female → 1/2 PEX Female (same as 1/2 PEX
+// Female NPT) first; the words don't have to be in order; 1/2 PEX x 3/4 Female NPT / Sweat is not it — for that we'd
+// type the 3/4 female sweat; ball valve → the ball valves". A name is read as sizes (1/2, 3/4, 1-1/4 …) and words
+// (female / fem / FNPT / FIP → female + npt, valves → valve …). It matches when every size and word typed is in it,
+// in any order. Lower score = better: a size we didn't type (3/4) costs the most, then another kind of fitting (tee,
+// elbow …), then another end (sweat, barb …; npt is what female / male mean, so it costs little), then other words.
+const WH_SYN = { fem: ['female'], f: ['female'], fnpt: ['female', 'npt'], fip: ['female', 'npt'], fpt: ['female', 'npt'], mnpt: ['male', 'npt'], mip: ['male', 'npt'], mpt: ['male', 'npt'],
+  swt: ['sweat'], sw: ['sweat'], solder: ['sweat'], ell: ['elbow'], el: ['elbow'], cplg: ['coupling'], coupler: ['coupling'], couplers: ['coupling'], bv: ['ball', 'valve'],
+  adaptor: ['adapter'], thread: ['npt'], threaded: ['npt'], nptf: ['npt'] };
+const WH_TYPES = new Set(['tee', 'elbow', 'coupling', 'union', 'cap', 'plug', 'valve', 'cross', 'reducer', 'bushing', 'nipple', 'manifold', 'clamp', 'ring', 'sleeve', 'stub', 'wye', 'bend', 'drop', 'ear', 'spigot', 'hose', 'bibb', 'stop', 'gauge', 'tool', 'cutter', 'crimper', 'pipe']);
+const WH_ENDS = new Set(['female', 'male', 'npt', 'sweat', 'pex', 'barb', 'compression', 'flare', 'crimp', 'push', 'swivel', 'cpvc', 'pvc', 'copper', 'galvanized', 'gas', 'garden', 'mht', 'fht']);
+const WH_FILL = new Set(['adapter', 'fitting', 'fittings', 'brass', 'lead', 'free', 'lf', 'for', 'with', 'and', 'the', 'of', 'to', 'x', 'by', 'in', 'inch', 'pack', 'pk', 'pcs', 'pc', 'piece', 'pieces', 'connector', 'connection', 'type', 'a', 'b', 'f1807', 'f1960', 'astm', 'nsf', 'certified', 'pcs.', 'lot']);
+function whTok(text) {
+  let t = String(text || '').toLowerCase().replace(/[”″“"]/g, ' ').replace(/(\d)\s*(?:in\.?|inch(?:es)?)\b/g, '$1 ')
+    .replace(/(\d+)\s+(\d+\/\d+)/g, '$1-$2').replace(/×/g, ' x ').replace(/(\d)x(\d)/g, '$1 x $2').replace(/(\d)\s*x\s*/g, '$1 x ').replace(/\s*x\s*(\d)/g, ' x $1');
+  const raw = t.split(/[^a-z0-9\/\-.°]+/).filter(Boolean), sizes = [], words = [];
+  raw.forEach((w, i) => {
+    w = w.replace(/°/g, '').replace(/^\.+|\.+$/g, ''); if (!w) return;
+    const nxt = raw[i + 1] || '';
+    if (/^\d+(?:-\d+\/\d+|\/\d+|\.\d+)?$/.test(w) && !/^(pack|pk|pcs|pc|pieces|piece|ft|feet|lot|count|ct|deg|degree)/.test(nxt)) {
+      if (w === '90' || w === '45') { words.push(w === '90' ? 'elbow' : '45'); return; }
+      sizes.push(w); return;
+    }
+    if (WH_SYN[w]) { WH_SYN[w].forEach(x => words.push(x)); return; }
+    if (w.length > 4 && /s$/.test(w) && !/(ss|us|is)$/.test(w)) w = w.slice(0, -1); // valves → valve, tees stay "tee"
+    if (w === 'tees') w = 'tee';
+    words.push(w);
+  });
+  return { sizes, words };
+}
+function whSmart(raw) {
+  const Q = whTok(raw), qs = new Set(Q.sizes), qw = new Set(Q.words.filter(w => w !== 'x' && w !== 'by'));
+  const has = (N, w) => N.words.indexOf(w) >= 0 || (w.length >= 3 && N.words.some(x => x.indexOf(w) === 0));
+  return {
+    empty: !qs.size && !qw.size,
+    match(text) {
+      if (!qs.size && !qw.size) return false;
+      const N = whTok(text);
+      for (const z of qs) if (N.sizes.indexOf(z) < 0) return false;
+      for (const w of qw) if (!has(N, w)) return false;
+      return true;
+    },
+    score(name) {
+      const N = whTok(name);
+      let sc = 0;
+      if (qs.size) new Set(N.sizes).forEach(z => { if (!qs.has(z)) sc += 100; }); // a size we didn't type (1/2 x 3/4); 1/2 x 1/2 = the same size
+      new Set(N.words).forEach(w => {
+        if (qw.has(w) || [...qw].some(q => q.length >= 3 && w.indexOf(q) === 0)) return;
+        if (WH_TYPES.has(w)) sc += 20;                                           // another kind of fitting
+        else if (w === 'npt') sc += 1;                                           // female / male already mean NPT
+        else if (WH_ENDS.has(w)) sc += 8;                                        // another end (sweat, barb …)
+        else if (!WH_FILL.has(w) && !/^\d/.test(w)) sc += 2;                     // any other word
+      });
+      // the words in the order typed → a little better
+      const order = Q.words.filter(w => qw.has(w)).map(w => N.words.findIndex(x => x === w || x.indexOf(w) === 0));
+      if (order.length > 1 && order.every((v, i) => v >= 0 && (i === 0 || v > order[i - 1]))) sc -= 1;
+      return sc;
+    }
+  };
+}
+
 // Exact part # first (owner): 0 = exactly what was typed · 1 = its family (the
 // part #s under that parent, e.g. 8-8-8 → 8-8-8=…) · 2 = starts with it ·
 // 3 = has it inside · 4 = matched by name only. Inside each: pack order
@@ -2244,8 +2305,13 @@ function doSearch(tab) {
   // Source: Products ONLY. Base SKUs only. No variants (Products has no = rows).
   // Shows: SKU, name, warehouse short code (badge), weight, count weight.
   else if (tab === 'search') {
+    // 🧠 Owner (2026-10-10): "1/2 pex female = 1/2 pex female NPT — show it first; any word order is fine; 1/2 pex x 3/4
+    // female NPT / sweat is NOT what we look for (we'd type the 3/4 female sweat); ball valve → ball valves".
+    // whSmart: sizes and fitting words, any order, synonyms; results the old search found always stay too.
+    const sm = whSmart(raw);
+    const hit = t => sm.match(t) || re.test(t);
     results = DB.products
-      .filter(r => re.test(r.name + ' ' + r.sku + ' ' + r.warehouseName))
+      .filter(r => hit(r.name + ' ' + r.sku + ' ' + r.warehouseName))
       .map(r => {
         const wt = parseFloat(r.weight) || 0;
         return { ...r, countWeight: (wt && countAmt) ? (wt * countAmt).toFixed(3) : '' };
@@ -2257,8 +2323,15 @@ function doSearch(tab) {
       const pr = DB.products.find(x => String(x.sku).toUpperCase() === b);
       have.add(b); results.push(pr ? { ...pr, countWeight: (parseFloat(pr.weight) && countAmt) ? (parseFloat(pr.weight) * countAmt).toFixed(3) : '' } : { sku: b, name: name || '', warehouseName: '', weight: '', countWeight: '', notOnProducts: true }); };
     if (raw.includes('=')) addBase(baseSKU(raw), '');
-    DB.master.forEach(r => { if ((r.casesNum || 0) > 0 && re.test(r.name + ' ' + r.partNum + ' ' + r.sku)) addBase(baseSKU(r.partNum) || r.sku, r.name); });
-    results.sort(whCompare(raw, r => r.sku, () => ''));
+    DB.master.forEach(r => { if ((r.casesNum || 0) > 0 && hit(r.name + ' ' + r.partNum + ' ' + r.sku)) addBase(baseSKU(r.partNum) || r.sku, r.name); });
+    results.forEach(r => { const t = r.name + ' ' + r.sku + ' ' + (r.warehouseName || ''); r._sm = sm.match(t) ? sm.score(r.name || t) : 1e6; });
+    const byPart = whCompare(raw, r => r.sku, () => ''), q = String(raw).trim().toUpperCase().replace(/\s+/g, '');
+    results.sort((a, b) => {
+      const ra = whRank(q, a.sku), rb = whRank(q, b.sku);
+      if (ra < 4 || rb < 4) return byPart(a, b);           // a part # typed: exact part # first (as before)
+      if (a._sm !== b._sm) return a._sm - b._sm;           // best name match first
+      return byPart(a, b);
+    });
   }
 
   // ── AWD LOOKUP ────────────────────────────────────────

@@ -1689,7 +1689,8 @@ console.log('\nWarehouse Lookup: exact part # first · product photos');
   check('search 30-3-4 → the 30-3-4 family first, in pack order (=OLD, =1, =2, =10, =10X, =10XX), not 30-3-45 / 130-3-4',
     o2.slice(0, 6).join() === '30-3-4=OLD,30-3-4=1,30-3-4=2,30-3-4=10,30-3-4=10X,30-3-4=10XX' && o2.indexOf('30-3-45=10X') > 5 && o2.indexOf('130-3-4=10X') > 5, o2);
   check('Item Locator and Item Search are sorted that way, and every card has the product photo (same /inventory/photos as Inventory; tap = big)',
-    /results\.sort\(whCompare\(raw, r => r\.partNum, r => r\.location\)\)/.test(wh) && /results\.sort\(whCompare\(raw, r => r\.sku, \(\) => ''\)\)/.test(wh)
+    // Item Search (owner 2026-10-10, 🧠 smart name search): a typed part # still sorts by whCompare first (byPart), names by best match.
+    /results\.sort\(whCompare\(raw, r => r\.partNum, r => r\.location\)\)/.test(wh) && /const byPart = whCompare\(raw, r => r\.sku, \(\) => ''\)/.test(wh) && /if \(ra < 4 \|\| rb < 4\) return byPart\(a, b\);/.test(wh)
       && /\$\{whPhotoHtml\(r\.partNum\)\}/.test(wh) && /\$\{whPhotoHtml\(r\.sku\)\}/.test(wh) && /wFetch\(W \+ '\/inventory\/photos\?bases='/.test(wh), null);
 }
 
@@ -5400,7 +5401,8 @@ console.log('\n🔍 Warehouse Lookup: Item Locator merged into Item Search (🏬
   const { readFileSync: rfW } = await import('node:fs');
   const wh = rfW(fileURLToPath(new URL('../warehouse.html', import.meta.url)), 'utf8');
   const pick = n => (wh.match(new RegExp('function ' + n + '\\([^)]*\\) \\{[\\s\\S]*?\\n\\}')) || [''])[0];
-  const code = ['buildRe', 'baseSKU', 'whParent', 'whRank', 'whPackKey', 'whCompare', 'doSearch', 'renderCards', 'cardLocator', 'cardSearch', 'whInvRows', 'whInvField', 'whInvFill', 'whInvToggle'].map(pick).join('\n');
+  const code = wh.slice(wh.indexOf('const WH_SYN'), wh.indexOf('// Exact part # first (owner)')) // 🧠 smart search (2026-10-10) used by doSearch
+    + ['buildRe', 'baseSKU', 'whParent', 'whRank', 'whPackKey', 'whCompare', 'doSearch', 'renderCards', 'cardLocator', 'cardSearch', 'whInvRows', 'whInvField', 'whInvFill', 'whInvToggle'].map(pick).join('\n');
   const els = {}, el = id => els[id] = els[id] || { innerHTML: '', value: '', textContent: '' };
   const g = { document: { getElementById: el, querySelectorAll: () => [] }, wpShowButtons() {}, clearPane() {}, whPhotoLoad() {}, whPhotoHtml: () => '', whPalletHtml: r => r.partNum === '30-3-4=2' ? '<PALLET>' : '',
     lookupUPC: () => '', vbField: () => '<VB>', wpCan: () => false, wpAttr: v => String(v), getWarehouseName: () => '', setTimeout: f => f(), countAmt: 1, pages: { search: 1 }, PER_PAGE: 30,
@@ -5549,6 +5551,32 @@ console.log('\n📍 Stock In → Quick Add: after the barcode scan, where we hav
     /Not on any shelf yet/.test(none) && box.innerHTML === '', null);
   check('…shown right after the barcode lookup (Quick Add) and cleared on ✕ / after Submit; the rest of Quick Add unchanged',
     /invQaWhere\(d && d\.partNum \? d : null, partNum\);/.test(ih) && (ih.match(/invQaWhere\(null\);/g) || []).length >= 4 && /<div id="inv-qa-where"/.test(ih) && /onclick="invQuickAddSubmit\(\)">Submit Stock In<\/button>/.test(ih), null);
+}
+
+// Owner (2026-10-10): "Item Search — exact match first: 1/2 pex female = 1/2 pex female NPT, show it first; the words don't
+// have to be in order; 1/2 pex x 3/4 female NPT / sweat is not what we look for (we'd type the 3/4 female sweat); ball valve → ball valves".
+console.log('\n🧠 Item Search: sizes + fitting words, any order, best match first');
+{
+  const { readFileSync: rfS2 } = await import('node:fs');
+  const wh = rfS2(fileURLToPath(new URL('../warehouse.html', import.meta.url)), 'utf8');
+  const pick = n => (wh.match(new RegExp('function ' + n + '\\([^)]*\\) \\{[\\s\\S]*?\\n\\}')) || [''])[0];
+  const code = wh.slice(wh.indexOf('const WH_SYN'), wh.indexOf('// Exact part # first (owner)')) + ['buildRe', 'baseSKU', 'whParent', 'whRank', 'whPackKey', 'whCompare', 'doSearch'].map(pick).join('\n');
+  const names = ['1/2" PEX x 3/4" Female NPT Adapter', '1/2" PEX Female Adapter', '1/2" PEX x 1/2" Female NPT Adapter', '1/2" PEX x 3/4" Female Sweat Adapter', '3/4" PEX Female Tee',
+    '1/2" PEX Female Swivel Elbow', '1/2" PEX x 1/2" Male NPT Adapter', '1-1/2" PEX Female Adapter', '1/2" PEX Brass Ball Valve Full Port', '3/4" PEX Ball Valve'];
+  const els = {}, el = id => els[id] = els[id] || { innerHTML: '', value: '' };
+  let out = [];
+  const g = { document: { getElementById: el }, DB: { products: names.map((n, i) => ({ sku: '50-' + i + '-1', name: n, warehouseName: '', weight: '' })), master: [] }, countAmt: 1, pages: { search: 1 },
+    wpShowButtons() {}, clearPane() {}, renderCards: (t, r) => { out = r.map(x => x.name); } };
+  const run = new Function(...Object.keys(g), code + '; return doSearch;')(...Object.values(g));
+  const S = q => { el('inp-search').value = q; run('search'); return out; };
+  const a = S('1/2 pex female'), b = S('female 1/2 pex'), c = S('1/2 pex x 3/4 female sweat'), d = S('ball valve'), e = S('1/2" PEX FNPT');
+  check('"1/2 pex female" → 1/2" PEX Female Adapter, then 1/2" PEX x 1/2" Female NPT first; the 1/2 x 3/4 Female NPT / Sweat after them; male / tee / 3/4 not in it',
+    a[0] === '1/2" PEX Female Adapter' && a[1] === '1/2" PEX x 1/2" Female NPT Adapter' && a.indexOf('1/2" PEX x 3/4" Female NPT Adapter') > 1 && a.indexOf('1/2" PEX x 3/4" Female Sweat Adapter') > 1
+    && !a.includes('1/2" PEX x 1/2" Male NPT Adapter') && !a.includes('3/4" PEX Female Tee'), a);
+  check('…words in any order ("female 1/2 pex") give the same first two', b[0] === a[0] && b[1] === a[1], b);
+  check('"1/2 pex x 3/4 female sweat" → only 1/2" PEX x 3/4" Female Sweat (not the Female NPT one)', c.length === 1 && c[0] === '1/2" PEX x 3/4" Female Sweat Adapter', c);
+  check('"ball valve" → the 2 ball valves; "1/2\\" PEX FNPT" (FNPT = female NPT) → 1/2" PEX x 1/2" Female NPT first', d.length === 2 && d.every(x => /Ball Valve/.test(x)) && e[0] === '1/2" PEX x 1/2" Female NPT Adapter', [d, e]);
+  check('…1-1/2" is a different size from 1/2": only at the very end (the old search still finds it, so nothing is lost)', a[a.length - 1] === '1-1/2" PEX Female Adapter', a);
 }
 
 console.log('\n' + (failed ? '❌ ' + failed + ' check(s) FAILED' : '✅ all ' + passed + ' checks passed') + '\n');
