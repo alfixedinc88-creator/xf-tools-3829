@@ -2636,104 +2636,160 @@ var _oosStockFilter = 'all';
 // PO filter: 'all' | 'ordered' | 'not-ordered'
 var _oosOrderFilter = 'all';
 
+// Owner (2026-10-10): "check the Stock Levels — is it accurate right now? Match SKU Mgr (what we have now), Reorder
+// (the container on the way) and what's left on the order the vendor is still making — a column each; by vendor;
+// out of stock / low stock — make it easy to check our stock". One row per part # from /inventory/stock-overview
+// (SKU Mgr + Reorder, the same tables those screens use; ✅ shows the rows add up to them). Before, it added cases
+// of every pack size together and "Low Stock" was anything above 0.
+var _SO = null, _soLoading = false, _soView = 'part', _soVendor = '', _soLowDays = 30;
+function loadStockOverview() {
+  if (_soLoading) return; _soLoading = true;
+  wFetch('https://xfitting-lookup.alfixedinc88.workers.dev/inventory/stock-overview').then(function(r) { return r.json(); }).then(function(d) {
+    _soLoading = false;
+    if (!d || !d.ok) { document.getElementById('res-oos').innerHTML = '<div class="placeholder"><h3>Could not load stock levels</h3><p>' + soEsc((d && d.error) || 'failed') + '</p></div>'; return; }
+    _SO = d; renderOOS();
+  }).catch(function() { _soLoading = false; document.getElementById('res-oos').innerHTML = '<div class="placeholder"><h3>Could not load stock levels</h3><p>Check the connection and tap ↻.</p></div>'; });
+}
+window.soRefresh = function() { _SO = null; renderOOS(); };
+function soEsc(v) { return String(v == null ? '' : v).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/"/g, '&quot;'); }
+function soN(v) { return (Math.round((+v || 0) * 100) / 100).toLocaleString(); }
+// One row → what the table shows. Out of stock = nothing in SKU Mgr; Low = what we have lasts less than N days of sales.
+function soStatus(r) {
+  var daily = (r.sold90Pcs || 0) / 90;
+  r.daysLeft = daily > 0 && !(r.stock.noEaCases > 0) ? r.stock.pieces / daily : null;
+  r.comingPcs = r.onWay.pieces + r.owed.pieces;
+  if (!(r.stock.cases > 0)) r.status = 'out';
+  else if (r.daysLeft != null && r.daysLeft < _soLowDays) r.status = 'low';
+  else r.status = 'in';
+  return r;
+}
+function soParents(rows) {
+  var by = {};
+  rows.forEach(function(r) {
+    var p = by[r.parent] = by[r.parent] || { part: r.parent, parent: r.parent, pack: 0, name: r.name, vendor: r.vendor, packs: [],
+      stock: { cases: 0, pieces: 0, spots: 0, noEaCases: 0, negCases: 0 }, onWay: { units: 0, pieces: 0, cases: 0, titles: [] }, owed: { units: 0, pieces: 0, cases: 0, titles: [] }, sold90Pcs: 0, sold30Pcs: 0 };
+    if (!p.name && r.name) p.name = r.name; if (!p.vendor && r.vendor) p.vendor = r.vendor;
+    if (r.part !== r.parent) p.packs.push(r.part);
+    ['cases', 'pieces', 'spots', 'noEaCases', 'negCases'].forEach(function(k) { p.stock[k] += r.stock[k] || 0; });
+    ['onWay', 'owed'].forEach(function(c) { ['units', 'pieces', 'cases'].forEach(function(k) { p[c][k] += r[c][k] || 0; });
+      r[c].titles.forEach(function(t) { p[c].titles.push({ title: t.title + ' (' + r.part + ')', units: t.units, cases: t.cases }); }); });
+    p.sold90Pcs += r.sold90Pcs; p.sold30Pcs += r.sold30Pcs;
+  });
+  return Object.keys(by).map(function(k) { return by[k]; });
+}
+function soCell(c, byPart) {
+  if (!(c.units > 0) && !c.titles.length) return '<span style="color:var(--text3)">—</span>';
+  var list = c.titles.map(function(t) { return soEsc(t.title) + ': ' + soN(t.units) + ' units' + (t.cases ? ' (' + soN(t.cases) + ' cs)' : ''); }).join('<br>');
+  // Parent view: pieces only (units of different pack sizes can't be added together).
+  return (byPart ? '<b>' + soN(c.units) + '</b> units · ' + soN(c.pieces) + ' pcs' : '<b>' + soN(c.pieces) + '</b> pcs')
+    + '<details style="font-size:11px;color:var(--text3)"><summary style="cursor:pointer">' + c.titles.length + ' ' + (c.titles.length === 1 ? 'title' : 'titles') + '</summary>' + list + '</details>';
+}
+
 function renderOOS() {
   var textFilter = (document.getElementById('inp-oos').value || '').toLowerCase();
+  if (!_SO) { document.getElementById('res-oos').innerHTML = '<div class="placeholder"><h3>Loading stock levels…</h3><p>SKU Mgr + Reorder (containers on the water, orders still owed)</p></div>'; loadStockOverview(); return; }
 
-  // Build stock levels from DB.master grouped by base SKU
-  // This replaces the old DB.oos (Out_of_Stock sheet) — driven from live D1 data
-  var skuMap = {};
-
-  // First seed from DB.products so all 737 base SKUs appear even with 0 cases
-  (DB.products || []).forEach(function(prod) {
-    var base = (prod.sku || '').trim().toUpperCase();
-    if (!base) return;
-    if (!skuMap[base]) skuMap[base] = { sku: base, name: prod.name || prod.warehouseName || '', totalCases: 0, isOrdered: false, poDate: '' };
-  });
-
-  // Accumulate cases and PO info from DB.master
+  // PO logged with 📋 Log PO Placed (kept as before) — by parent #.
+  var po = {};
   (DB.master || []).forEach(function(r) {
     var base = (r.sku || r.partNum || '').split('=')[0].trim().toUpperCase();
-    if (!base) return;
-    if (!skuMap[base]) skuMap[base] = { sku: base, name: r.name || '', totalCases: 0, isOrdered: false, poDate: '' };
-    if ((r.casesNum || 0) > 0) skuMap[base].totalCases += (r.casesNum || 0);
-    if (!skuMap[base].name && r.name) skuMap[base].name = r.name;
-    if (r.isOrdered) {
-      skuMap[base].isOrdered = true;
-      if (r.poNotes) {
-        var d = (r.poNotes.trim().split(' ')[0] || '');
-        if (d && d.indexOf('/') > 0 && (!skuMap[base].poDate || d > skuMap[base].poDate))
-          skuMap[base].poDate = d;
-      }
-    }
+    if (!base || !r.isOrdered) return;
+    var d = r.poNotes ? (r.poNotes.trim().split(' ')[0] || '') : '';
+    if (!po[base] || (d && d.indexOf('/') > 0 && d > po[base])) po[base] = d && d.indexOf('/') > 0 ? d : (po[base] || 'Placed');
   });
 
-  var items = Object.values(skuMap).map(function(s) {
-    return { sku: s.sku, name: s.name, cases: String(s.totalCases),
-             status: s.totalCases > 0 ? 'In Stock' : 'Out of Stock',
-             baseSku: s.sku, isOrdered: s.isOrdered, poDate: s.poDate };
+  var all = (_soView === 'parent' ? soParents(_SO.rows) : _SO.rows.slice()).map(soStatus);
+  var counts = { out: 0, low: 0, in: 0 };
+  var items = all.filter(function(r) {
+    if (_soVendor && (r.vendor || '(no vendor)') !== _soVendor) return false;
+    if (textFilter && (r.part + ' ' + r.name).toLowerCase().indexOf(textFilter) < 0) return false;
+    if (_oosOrderFilter === 'ordered' && !po[r.parent]) return false;
+    if (_oosOrderFilter === 'not-ordered' && po[r.parent]) return false;
+    counts[r.status]++;
+    return _oosStockFilter === 'all' || r.status === _oosStockFilter;
   });
+  var order = { out: 0, low: 1, in: 2 };
+  items.sort(function(a, b) { return order[a.status] - order[b.status] || (a.status === 'low' ? a.daysLeft - b.daysLeft : 0) || a.parent.localeCompare(b.parent, undefined, { numeric: true }) || a.pack - b.pack; });
+  document.querySelectorAll('#oos-num').forEach(function(el) { el.textContent = items.length.toLocaleString(); });
 
-  // Text filter
-  if (textFilter) items = items.filter(function(r) {
-    return r.sku.toLowerCase().includes(textFilter) || r.name.toLowerCase().includes(textFilter);
-  });
-
-  // Stock level filter
-  if (_oosStockFilter === 'out') items = items.filter(function(r) {
-    return parseFloat(r.cases) === 0 || r.cases === '' || r.status === 'Out of Stock';
-  });
-  if (_oosStockFilter === 'low') items = items.filter(function(r) {
-    return parseFloat(r.cases) > 0 && r.status !== 'Out of Stock';
-  });
-
-  // PO filter
-  if (_oosOrderFilter === 'ordered')     items = items.filter(function(r){ return r.isOrdered; });
-  if (_oosOrderFilter === 'not-ordered') items = items.filter(function(r){ return !r.isOrdered; });
-
-  document.getElementById('oos-num').textContent = items.length.toLocaleString();
-
-  if (!items.length) {
-    document.getElementById('res-oos').innerHTML = '<div class="placeholder"><span class="placeholder-icon">\u2705</span><h3>No items found.</h3><p>No stock level items match your filter.</p></div>';
-    return;
-  }
-
-  // Two filter rows: Stock Level + PO Status
-  var html = '<div style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:6px;align-items:center">'
+  var T = _SO.totals, C = _SO.check || {};
+  var btn = function(on, label, js) { return '<button class="ps-filter-btn' + (on ? ' active' : '') + '" onclick="' + js + '">' + label + '</button>'; };
+  var html = '<div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:8px;font-size:12px">'
+    + '<span class="badge badge-green">🏬 In stock (SKU Mgr): ' + soN(T.stockCases) + ' cases · ' + soN(T.stockPieces) + ' pcs</span>'
+    + '<span class="badge badge-blue">🚢 On the water: ' + soN(T.onWayUnits) + ' units · ' + soN(T.onWayPieces) + ' pcs</span>'
+    + '<span class="badge badge-purple">🏭 Ordered, not shipped yet: ' + soN(T.owedUnits) + ' units · ' + soN(T.owedPieces) + ' pcs</span>'
+    + (T.noEaCases ? '<span class="badge badge-red">' + soN(T.noEaCases) + ' cases have no Ea/Case in SKU Mgr — pieces not counted</span>' : '')
+    + '<span class="badge ' + (C.ok ? 'badge-green' : 'badge-red') + '" title="SKU Mgr ' + soN(C.skuMgrCases) + ' cases · Reorder ' + soN(C.reorderOnWayUnits) + ' on the water + ' + soN(C.reorderOwedUnits) + ' owed">'
+    + (C.ok ? '✅ adds up to SKU Mgr + Reorder' : '⚠ does not add up to SKU Mgr / Reorder — tell Claude') + '</span>'
+    + '<span style="color:var(--text3);align-self:center">as of ' + new Date(_SO.asOf).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) + '</span>'
+    + '<button class="ps-filter-btn" onclick="soRefresh()">↻ Refresh</button><button class="ps-filter-btn" onclick="soCsv()">⬇ CSV</button></div>';
+  html += '<div style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:6px;align-items:center">'
+    + '<span style="font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.5px;color:var(--text3)">Show:</span>'
+    + btn(_soView === 'part', 'Each part #', "soSetView('part')") + btn(_soView === 'parent', 'Parent # (all pack sizes)', "soSetView('parent')")
+    + '<span style="font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.5px;color:var(--text3);margin-left:8px">Vendor:</span>'
+    + '<select onchange="soSetVendor(this.value)" style="padding:5px 8px;border:1.5px solid var(--border);border-radius:7px;background:var(--bg);color:var(--text);font-size:12px"><option value="">All vendors</option>'
+    + _SO.vendors.concat(['(no vendor)']).map(function(v) { return '<option value="' + soEsc(v) + '"' + (v === _soVendor ? ' selected' : '') + '>' + soEsc(v) + '</option>'; }).join('') + '</select></div>';
+  html += '<div style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:6px;align-items:center">'
     + '<span style="font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.5px;color:var(--text3)">Stock:</span>'
-    + '<button class="ps-filter-btn' + (_oosStockFilter==='all'?' active':'') + '" onclick="oosSetStockFilter(&quot;all&quot;,this)">All</button>'
-    + '<button class="ps-filter-btn' + (_oosStockFilter==='out'?' active':'') + '" onclick="oosSetStockFilter(&quot;out&quot;,this)">Out of Stock</button>'
-    + '<button class="ps-filter-btn' + (_oosStockFilter==='low'?' active':'') + '" onclick="oosSetStockFilter(&quot;low&quot;,this)">Low Stock</button>'
-    + '</div>'
+    + btn(_oosStockFilter === 'all', 'All', "oosSetStockFilter('all',this)")
+    + btn(_oosStockFilter === 'out', '🔴 Out of Stock (' + counts.out + ')', "oosSetStockFilter('out',this)")
+    + btn(_oosStockFilter === 'low', '🟠 Low Stock (' + counts.low + ')', "oosSetStockFilter('low',this)")
+    + btn(_oosStockFilter === 'in', '🟢 In Stock (' + counts.in + ')', "oosSetStockFilter('in',this)")
+    + '<span style="font-size:12px;color:var(--text3)">Low = lasts less than <input type="number" min="1" max="365" value="' + _soLowDays + '" onchange="soSetLowDays(this.value)" style="width:52px;padding:3px 5px;border:1.5px solid var(--border);border-radius:6px;background:var(--bg);color:var(--text);font-size:12px"> days at the last 90 days\' sales</span></div>'
     + '<div style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:10px;align-items:center">'
     + '<span style="font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.5px;color:var(--text3)">PO:</span>'
-    + '<button class="ps-filter-btn' + (_oosOrderFilter==='all'?' active':'') + '" onclick="oosSetFilter(&quot;all&quot;,this)">All</button>'
-    + '<button class="ps-filter-btn' + (_oosOrderFilter==='ordered'?' active':'') + '" onclick="oosSetFilter(&quot;ordered&quot;,this)">\u2713 PO Placed</button>'
-    + '<button class="ps-filter-btn' + (_oosOrderFilter==='not-ordered'?' active':'') + '" onclick="oosSetFilter(&quot;not-ordered&quot;,this)">\u26a0 Not Ordered</button>'
+    + btn(_oosOrderFilter === 'all', 'All', "oosSetFilter('all',this)") + btn(_oosOrderFilter === 'ordered', '✓ PO Placed', "oosSetFilter('ordered',this)") + btn(_oosOrderFilter === 'not-ordered', '⚠ Not Ordered', "oosSetFilter('not-ordered',this)")
     + '</div>';
 
+  if (!items.length) {
+    document.getElementById('res-oos').innerHTML = html + '<div class="placeholder"><span class="placeholder-icon">✅</span><h3>No items found.</h3><p>No stock level items match your filter.</p></div>';
+    return;
+  }
   html += '<div class="table-wrap"><table class="data-table">'
-    + '<thead><tr><th>SKU</th><th>Product Name</th><th>Cases</th><th>Status</th><th>PO</th></tr></thead><tbody>';
-
+    + '<thead><tr><th>' + (_soView === 'parent' ? 'Parent #' : 'Part #') + '</th><th>Product Name</th><th>Vendor</th><th>🏬 In stock now<br><span style="font-weight:400">SKU Mgr</span></th>'
+    + '<th>🚢 Shipped — on the water<br><span style="font-weight:400">container, not received yet</span></th><th>🏭 Ordered — not shipped yet<br><span style="font-weight:400">vendor still owes</span></th>'
+    + '<th>Sold<br><span style="font-weight:400">30 d / 90 d pcs</span></th><th>Lasts</th><th>Status</th><th>PO</th></tr></thead><tbody>';
   items.forEach(function(r) {
-    var statusBadge = r.status === 'Out of Stock'
-      ? '<span class="badge badge-red">Out of Stock</span>'
-      : '<span class="badge badge-orange">' + r.status + '</span>';
-
-    var poCell = r.isOrdered
-      ? '<span style="background:var(--green-bg);color:var(--green);font-size:11px;font-weight:700;padding:2px 7px;border-radius:4px;border:1px solid var(--green);white-space:nowrap">\u2713 ' + (r.poDate || 'Placed') + '</span>'
-      : '<span style="color:var(--text3);font-size:12px">\u2014</span>';
-
+    var st = r.status === 'out' ? '<span class="badge badge-red">Out of Stock</span>' + (r.comingPcs > 0 ? '<div style="font-size:11px;color:var(--accent)">' + soN(r.comingPcs) + ' pcs coming</div>' : '<div style="font-size:11px;color:var(--red)">nothing coming</div>')
+      : r.status === 'low' ? '<span class="badge badge-orange">Low Stock</span>' + (r.comingPcs > 0 ? '<div style="font-size:11px;color:var(--accent)">' + soN(r.comingPcs) + ' pcs coming</div>' : '')
+      : '<span class="badge badge-green">In Stock</span>';
+    var stock = r.stock.cases > 0
+      ? '<b>' + soN(r.stock.cases) + '</b> cases · ' + soN(r.stock.pieces) + ' pcs<div style="font-size:11px;color:var(--text3)">' + r.stock.spots + ' spot' + (r.stock.spots === 1 ? '' : 's') + '</div>'
+      : '<span style="color:var(--red);font-weight:700">0</span>';
+    if (r.stock.noEaCases > 0) stock += '<div style="font-size:11px;color:var(--red)">' + soN(r.stock.noEaCases) + ' cs: no Ea/Case in SKU Mgr — pcs not counted</div>';
+    if (r.stock.negCases < 0) stock += '<div style="font-size:11px;color:var(--red)">' + soN(r.stock.negCases) + ' cases (minus) in SKU Mgr — not counted, check it</div>';
+    var lasts = r.daysLeft == null ? '<span style="color:var(--text3)">' + (r.sold90Pcs > 0 ? '—' : 'no sales') + '</span>'
+      : r.daysLeft >= 365 ? '1 yr +' : Math.floor(r.daysLeft) + ' days';
     html += '<tr>'
-      + '<td class="sku-col">' + r.sku + '</td>'
-      + '<td>' + r.name + '</td>'
-      + '<td style="font-family:var(--mono);font-size:12px;color:var(--text2)">' + r.cases + '</td>'
-      + '<td>' + statusBadge + '</td>'
-      + '<td>' + poCell + '</td>'
+      + '<td class="sku-col">' + soEsc(r.part) + (r.packs && r.packs.length ? '<div style="font-size:10px;color:var(--text3)">' + soEsc(r.packs.join(', ')) + '</div>' : '') + '</td>'
+      + '<td>' + soEsc(r.name) + '</td><td style="font-size:12px">' + soEsc(r.vendor || '—') + '</td>'
+      + '<td style="font-size:12px;white-space:nowrap">' + stock + '</td>'
+      + '<td style="font-size:12px">' + soCell(r.onWay, _soView === 'part') + '</td>'
+      + '<td style="font-size:12px">' + soCell(r.owed, _soView === 'part') + '</td>'
+      + '<td style="font-family:var(--mono);font-size:12px;white-space:nowrap">' + soN(r.sold30Pcs) + ' / ' + soN(r.sold90Pcs) + '</td>'
+      + '<td style="font-size:12px;white-space:nowrap">' + lasts + '</td>'
+      + '<td>' + st + '</td>'
+      + '<td>' + (po[r.parent] ? '<span style="background:var(--green-bg);color:var(--green);font-size:11px;font-weight:700;padding:2px 7px;border-radius:4px;border:1px solid var(--green);white-space:nowrap">✓ ' + soEsc(po[r.parent]) + '</span>' : '<span style="color:var(--text3);font-size:12px">—</span>') + '</td>'
       + '</tr>';
   });
   html += '</tbody></table></div>';
   document.getElementById('res-oos').innerHTML = html;
+  window._soShown = items;
 }
+window.soSetView = function(v) { _soView = v; renderOOS(); };
+window.soSetVendor = function(v) { _soVendor = v; renderOOS(); };
+window.soSetLowDays = function(v) { var n = parseInt(v, 10); if (n > 0) { _soLowDays = n; renderOOS(); } };
+window.soCsv = function() {
+  var q = function(v) { v = String(v == null ? '' : v); return /[",\n]/.test(v) ? '"' + v.replace(/"/g, '""') + '"' : v; };
+  var lines = [['Part #', 'Name', 'Vendor', 'Status', 'In stock cases', 'In stock pcs', 'Spots', 'No Ea/Case cases', 'On the water units', 'On the water pcs', 'On the water titles', 'Ordered not shipped units', 'Ordered not shipped pcs', 'Order titles', 'Sold 30d pcs', 'Sold 90d pcs', 'Lasts (days)'].join(',')];
+  (window._soShown || []).forEach(function(r) {
+    lines.push([r.part, r.name, r.vendor, r.status === 'out' ? 'Out of Stock' : r.status === 'low' ? 'Low Stock' : 'In Stock', r.stock.cases, r.stock.pieces, r.stock.spots, r.stock.noEaCases,
+      r.onWay.units, r.onWay.pieces, r.onWay.titles.map(function(t) { return t.title + ' ' + t.units; }).join('; '), r.owed.units, r.owed.pieces, r.owed.titles.map(function(t) { return t.title + ' ' + t.units; }).join('; '),
+      r.sold30Pcs, r.sold90Pcs, r.daysLeft == null ? '' : Math.floor(r.daysLeft)].map(q).join(','));
+  });
+  var a = document.createElement('a'); a.href = URL.createObjectURL(new Blob([lines.join('\n')], { type: 'text/csv' }));
+  a.download = 'stock-levels-' + new Date().toISOString().slice(0, 10) + '.csv'; document.body.appendChild(a); a.click(); a.remove();
+};
 
 window.oosSetStockFilter = function(f, btn) {
   _oosStockFilter = f;
