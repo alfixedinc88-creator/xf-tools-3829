@@ -4072,7 +4072,11 @@ async function inventoryOutboxCheck(request, env) {
   const out = {};
   for (const id of ids) {
     const r = await d1First(env, 'SELECT endpoint, response_json FROM processed_requests WHERE request_id=?', [id]).catch(() => null);
-    if (!r) { out[id] = { state: 'missing' }; continue; }
+    if (!r) {
+      // 🏷️ a barcode label job keeps the phone's id in its own table
+      const bj = await d1First(env, 'SELECT id FROM barcode_label_job WHERE request_id = ?', [id]).catch(() => null);
+      out[id] = bj ? { state: 'saved', result: { ok: true, id: bj.id } } : { state: 'missing' }; continue;
+    }
     if (!r.response_json) { out[id] = { state: 'processing' }; continue; }
     let res = {}; try { res = JSON.parse(r.response_json); } catch (_) {}
     // a ⚠ UPC report is kept in its own table (it changes no stock)
@@ -4082,6 +4086,16 @@ async function inventoryOutboxCheck(request, env) {
       const cid = parseInt(res.countId) || 0;
       const ok = cid ? !!(await d1First(env, 'SELECT id FROM pallet_count WHERE id=?', [cid]).catch(() => null)) : res.ok === true;
       out[id] = ok ? { state: 'saved', result: res } : { state: 'missing', lost: cid ? [cid] : [] }; continue;
+    }
+    if (r.endpoint === 'inventory/containers/mark-moved') { // counted off the pallet: kept in pallet_move
+      const mid = parseInt(res.moveId) || 0, ok = mid && await d1First(env, 'SELECT id FROM pallet_move WHERE id=?', [mid]).catch(() => null);
+      out[id] = ok ? { state: 'saved', result: res } : { state: 'missing', lost: mid ? [mid] : [] }; continue;
+    }
+    // Anything else the server finished without its own table (changes nothing to count, e.g. a label marked done):
+    // its stored result is the record — never "Not in History — sending again" forever.
+    if (!['inventory/log', 'inventory/transfer', 'inventory/containers/extra', 'inventory/containers/found-in', 'inventory/containers/upc-issue',
+      'inventory/containers/recheck', 'inventory/containers/short', 'inventory/recount/column-done', 'inventory/containers/pcs-check'].includes(r.endpoint)) {
+      out[id] = res && res.ok !== false && !res.error ? { state: 'saved', result: res } : { state: 'missing' }; continue;
     }
     if (r.endpoint === 'inventory/containers/pcs-check') { // 📦 pieces in the box: kept in pallet_pcs_check
       const pid = parseInt(res.pcsId) || 0, ok = pid && await d1First(env, 'SELECT id FROM pallet_pcs_check WHERE id=?', [pid]).catch(() => null);
@@ -6465,6 +6479,10 @@ async function inventoryBarcodeJob(path, request, url, env, session) {
   }
   if (path === '/inventory/barcode-job/stuck' && request.method === 'POST') {
     const b = await request.json().catch(() => ({}));
+    // the phone's outbox asks /inventory/outbox/check for it: mark the request done (marking a spot twice changes nothing)
+    const sRid = String(b._requestId || '').slice(0, 80);
+    if (sRid) { const cl = await claimRequestId(env, sRid, 'inventory/barcode-job/stuck'); if (cl.isDuplicate) return J(cl.cachedResponse || { ok: true, duplicate: true });
+      await recordRequestResult(env, sRid, { ok: true }); }
     const r = await env.DB.prepare('SELECT * FROM barcode_label_job WHERE id = ?').bind(parseInt(b.id, 10) || 0).first();
     if (!r) return J({ ok: true, missing: true }); // nothing to mark (an old phone entry) — never block the outbox
     const loc = String(b.loc || '').trim().toUpperCase(), job = barcodeJobOut(r), sp = job.spots.find(x => x.loc === loc);
@@ -13820,6 +13838,13 @@ async function palletDetail(url, env) {
     return { at: m.at, who: m.who || '?', part: partOf[m.pallet_id] || '', cases: Math.round((parseFloat(m.cases) || 0) * 1000) / 1000,
       to: m.toLoc || '', kind: m.kind || 'container', status: m.status || '', cancelled: !!m.cancelledAt, counted: ok, gapMin: gap };
   });
+  // ⚠ Before 2026-10-10 a phone could send "already there on record" again and again (outbox "Not in History — sending
+  // again"), counting the same boxes off the pallet once more each time: the same item, boxes, spot and person within
+  // 3 minutes is shown as a likely double for the office to check (nothing is changed here).
+  moves.forEach((m, i) => { if (m.kind !== 'records') return;
+    const r0 = raw[i];
+    m.maybeResent = moves.some((p, j) => j < i && p.kind === 'records' && raw[j].pallet_id === r0.pallet_id && p.cases === m.cases && p.to === m.to && p.who === m.who
+      && Math.abs(Date.parse(m.at) - Date.parse(p.at)) <= 180000); });
   const good = moves.filter(m => m.counted);
   const boxes = lines.reduce((a, l) => a + (parseFloat(l.cases) || 0), 0), moved = good.reduce((a, m) => a + m.cases, 0);
   let sum = 0, doneAt = null; for (const m of good) { sum += m.cases; if (!doneAt && boxes > 0 && sum >= boxes - 1e-9) doneAt = m.at; }
@@ -13846,7 +13871,12 @@ async function palletDetail(url, env) {
 async function palletMarkMoved(request, env, session) {
   await reorderFixTables(env);
   const b = await request.json().catch(() => ({}));
-  const J = (o, st) => cors(new Response(JSON.stringify(o), { status: st || 200, headers: { 'Content-Type': 'application/json' } }));
+  const J0 = (o, st) => cors(new Response(JSON.stringify(o), { status: st || 200, headers: { 'Content-Type': 'application/json' } }));
+  // Sent from the phone's outbox, which sends again until it finds it in History: never counted off the pallet twice
+  // (2026-10-10: this one had no _requestId check, so every "sending again" took the boxes off once more).
+  const rid = b._requestId ? String(b._requestId).slice(0, 80) : '';
+  if (rid) { const claim = await claimRequestId(env, rid, 'inventory/containers/mark-moved'); if (claim.isDuplicate) return J0(claim.cachedResponse || { ok: true, duplicate: true }); }
+  const J = async (o, st) => { if (rid && !(o && o.ok)) await env.DB.prepare('DELETE FROM processed_requests WHERE request_id=?').bind(rid).run().catch(() => {}); return J0(o, st); };
   const id = parseInt(b.palletLineId, 10) || 0, n = parseFloat(b.cases) || 0, loc = String(b.toLocation || '').trim().toUpperCase().slice(0, 40);
   if (!id || !(n > 0) || !loc) return J({ ok: false, error: 'palletLineId, cases and toLocation needed' }, 400);
   const pl = await palletLineLeft(env, id);
@@ -13865,9 +13895,11 @@ async function palletMarkMoved(request, env, session) {
     if (!sent) return J({ ok: false, error: 'Only an Admin can count boxes off the pallet at ' + loc + ' — ask an Admin' }, 403);
   }
   const who = String((session && (session.displayName || session.username)) || b.initials || '').slice(0, 40);
-  await env.DB.prepare('INSERT INTO pallet_move (pallet_id, cases, to_location, out_log_id, transfer_id, by_user, at, kind) VALUES (?,?,?,?,?,?,?,?)')
+  const mv = await env.DB.prepare('INSERT INTO pallet_move (pallet_id, cases, to_location, out_log_id, transfer_id, by_user, at, kind) VALUES (?,?,?,?,?,?,?,?)')
     .bind(id, Math.round(n * 1000) / 1000, loc, null, null, who, new Date().toISOString(), 'records').run();
-  return J({ ok: true, part, cases: n, location: loc });
+  const res = { ok: true, part, cases: n, location: loc, moveId: (mv && mv.meta && mv.meta.last_row_id) || null };
+  if (rid) await recordRequestResult(env, rid, res);
+  return J(res);
 }
 // POST /inventory/containers/found-in { palletLineId, cases, toLocation } — Owner (2026-10-09, 23-1-1=20X): the pallets list
 // more boxes of a part # than 📦 Received stocked in, other pallets already moved all that was received, and these boxes are
