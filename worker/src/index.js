@@ -1314,6 +1314,7 @@ async function reorderFixTables(env) {
   // 🚢 Container here: box count confirmed before starting a pallet (owner 2026-10-10) — is it opened, our record vs counted.
   await env.DB.prepare(`CREATE TABLE IF NOT EXISTS pallet_count (id INTEGER PRIMARY KEY AUTOINCREMENT, title TEXT, vendor TEXT, pallet TEXT, opened INTEGER, expected REAL, counted REAL, by_user TEXT, at TEXT)`).run();
   await env.DB.prepare('CREATE INDEX IF NOT EXISTS idx_pallet_count_k ON pallet_count(title, vendor, pallet)').run();
+  await env.DB.prepare('ALTER TABLE pallet_count ADD COLUMN how TEXT').run().catch(() => {}); // the sum they typed (🧮 4×6+3)
   // Extra boxes found on a pallet (not on its packing list): a Stock In at
   // the spot they went to (log_id), kept with the pallet they came off.
   await env.DB.prepare(`CREATE TABLE IF NOT EXISTS pallet_extra (id INTEGER PRIMARY KEY AUTOINCREMENT, title TEXT, vendor TEXT, pallet TEXT, part TEXT,
@@ -13828,17 +13829,18 @@ async function palletCountLog(request, env, session) {
   if (!(counted >= 0) || !(expected >= 0)) return fail({ ok: false, error: 'How many boxes are on the pallet?' }, 400);
   const who = String((session && (session.displayName || session.username)) || b.by || '').trim().slice(0, 40);
   const at = b.at && !isNaN(Date.parse(b.at)) && Date.parse(b.at) <= Date.now() + 60000 ? new Date(b.at).toISOString() : new Date().toISOString(); // when it was answered (sent later with no WiFi)
-  await env.DB.prepare('INSERT INTO pallet_count (title, vendor, pallet, opened, expected, counted, by_user, at) VALUES (?,?,?,?,?,?,?,?)')
-    .bind(title, String(vendorUnmask(b.vendor || '') || '').slice(0, 80), pallet, b.opened ? 1 : 0, Math.round(expected * 1000) / 1000, Math.round(counted * 1000) / 1000, who, at).run();
+  const how = /[+−×]/.test(String(b.how || '')) ? String(b.how).replace(/[^0-9.+−×]/g, '').slice(0, 60) : ''; // only a sum, e.g. 4×6+3
+  await env.DB.prepare('INSERT INTO pallet_count (title, vendor, pallet, opened, expected, counted, by_user, at, how) VALUES (?,?,?,?,?,?,?,?,?)')
+    .bind(title, String(vendorUnmask(b.vendor || '') || '').slice(0, 80), pallet, b.opened ? 1 : 0, Math.round(expected * 1000) / 1000, Math.round(counted * 1000) / 1000, who, at, how).run();
   const res = { ok: true, expected, counted, diff: Math.round((counted - expected) * 1000) / 1000 };
   if (rid) await recordRequestResult(env, rid, res);
   return J(res);
 }
 async function palletCountsFor(env, title, vendor, pallet) {
   const vc = String(vendorCode(vendor) || '').toUpperCase();
-  return ((await d1All(env, 'SELECT opened, expected, counted, by_user, at, vendor FROM pallet_count WHERE title = ? AND pallet = ? ORDER BY at', [title, String(pallet)]).catch(() => [])) || [])
+  return ((await d1All(env, 'SELECT opened, expected, counted, by_user, at, vendor, how FROM pallet_count WHERE title = ? AND pallet = ? ORDER BY at', [title, String(pallet)]).catch(() => [])) || [])
     .filter(o => String(o.vendor || '') === vendor || String(vendorCode(o.vendor) || '').toUpperCase() === vc)
-    .map(o => ({ at: o.at, by: String(o.by_user || '').toUpperCase(), opened: !!o.opened, expected: parseFloat(o.expected) || 0, counted: parseFloat(o.counted) || 0,
+    .map(o => ({ at: o.at, by: String(o.by_user || '').toUpperCase(), opened: !!o.opened, expected: parseFloat(o.expected) || 0, counted: parseFloat(o.counted) || 0, how: o.how || '',
       diff: Math.round(((parseFloat(o.counted) || 0) - (parseFloat(o.expected) || 0)) * 1000) / 1000 }));
 }
 async function palletOpenLog(request, env, session) {

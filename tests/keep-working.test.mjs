@@ -4960,14 +4960,14 @@ console.log('\n🧮 Container here: box count confirmed before starting a pallet
   sq.prepare("INSERT INTO reorder_pallet (title, vendor, pallet, part, description, cases, pcs, pcs_per_ctn, updated_at) VALUES ('CNT CT','KW','3','CN-1=10X','valve',6,60,10,?), ('CNT CT','KW','3','CN-2=5','tee',3,15,5,?)").run(ts, ts);
   const ml0 = JSON.stringify(sq.prepare('SELECT SUM(cases) c FROM master_list').get()), lg0 = sq.prepare('SELECT COUNT(*) n FROM inventory_log').get().n;
   const pv0 = await get('/inventory/containers/pallet-view?title=' + encodeURIComponent('CNT CT') + '&vendor=KW&pallet=3');
-  const body = { title: 'CNT CT', vendor: 'KW', pallet: '3', opened: true, expected: 9, counted: 8, _requestId: 'cnt-test-1' };
+  const body = { title: 'CNT CT', vendor: 'KW', pallet: '3', opened: true, expected: 9, counted: 8, how: '2×3+2', _requestId: 'cnt-test-1' };
   const c1 = await post('/inventory/containers/pallet-count', body), c2 = await post('/inventory/containers/pallet-count', body); // sent twice (phone outbox)
   const bad = await post('/inventory/containers/pallet-count', { title: 'CNT CT', vendor: 'KW', pallet: '3', expected: 9 });
   const pv1 = await get('/inventory/containers/pallet-view?title=' + encodeURIComponent('CNT CT') + '&vendor=KW&pallet=3');
   const det = await get('/inventory/containers/pallet-detail?title=' + encodeURIComponent('CNT CT') + '&vendor=KW&pallet=3');
   const cc = (pv1.counts || [])[0] || {};
-  check('saved once (sent twice): opened, our record 9 → counted 8 (−1), by who; no count → refused',
-    c1.ok && c1.diff === -1 && (pv0.counts || []).length === 0 && (pv1.counts || []).length === 1 && cc.opened === true && cc.expected === 9 && cc.counted === 8 && cc.diff === -1 && cc.by === 'TS' && bad.ok === false,
+  check('saved once (sent twice): opened, our record 9 → counted 8 (−1) with the sum typed (2×3+2), by who; no count → refused',
+    c1.ok && c1.diff === -1 && (pv0.counts || []).length === 0 && (pv1.counts || []).length === 1 && cc.opened === true && cc.expected === 9 && cc.counted === 8 && cc.diff === -1 && cc.by === 'TS' && cc.how === '2×3+2' && bad.ok === false,
     { c1, c2, bad, counts: pv1.counts });
   check('…History → the pallet shows it ("🧮 Box count before starting")', det.ok && (det.counts || []).length === 1 && det.counts[0].counted === 8 && /🧮 Box count before starting/.test(ih), det.counts);
   const ml1 = JSON.stringify(sq.prepare('SELECT SUM(cases) c FROM master_list').get()), lg1 = sq.prepare('SELECT COUNT(*) n FROM inventory_log').get().n;
@@ -4978,25 +4978,45 @@ console.log('\n🧮 Container here: box count confirmed before starting a pallet
   const W0 = {}, posts = [], flashes = [];
   const xfrGo = { focus: { title: 'CNT CT', vendor: 'KW', pallet: '3' }, lines: [{ left: 6, moved: 0 }, { left: 3, moved: 0 }], counts: [] };
   let kp = null;
-  const fn = new Function('window', 'xfrGo', 'INV_CRED_USER', 'g', 'xfrE', 'xfrN', 'invPost', 'invFlash', 'W', 'xfrGoRender', 'xfrGoBox', 'xfrKeypad',
+  const fn = new Function('window', 'xfrGo', 'INV_CRED_USER', 'g', 'xfrE', 'xfrN', 'invPost', 'invFlash', 'W', 'xfrGoRender', 'xfrGoBox', 'xfrKeypadCalc',
     src + '; return { needed: xfrStartNeeded, panel: xfrStartPanel, line: xfrStartLine };');
   const H = fn(W0, xfrGo, { displayName: 'TS' }, () => null, String, v => String(v), (u, o) => { posts.push([u, JSON.parse(o.body)]); return Promise.resolve({ json: () => ({ ok: true }) }); },
-    (m, t) => flashes.push(t), 'W', () => {}, () => {}, (t, v, cb, zeroOk) => { kp = { t, cb, zeroOk }; });
+    (m, t) => flashes.push(t), 'W', () => {}, () => {}, (t, cb) => { kp = { t, cb }; });
   const need0 = H.needed(), p0 = H.panel();
   W0.xfrStartStep('open'); W0.xfrStartOpened(false); const p1 = H.panel();
   W0.xfrStartSave(9);
   const need1 = H.needed(), ln = H.line();
   xfrGo.startDone = {}; const need2 = H.needed(); // same person, same pallet, page reloaded → not asked again within 12 h
   xfrGo.counts = [{ at: new Date(Date.now() - 13 * 3600000).toISOString(), by: 'TS', counted: 9, expected: 9, diff: 0 }]; // next day → asked again
-  const posts1 = posts.slice(), need3 = H.needed(); H.panel(); W0.xfrStartStep('open'); W0.xfrStartOpened(true); W0.xfrStartTyped(); kp.cb(8);
+  const posts1 = posts.slice(), need3 = H.needed(); H.panel(); W0.xfrStartStep('open'); W0.xfrStartOpened(true); W0.xfrStartTyped(); kp.cb(8, '2×3+2');
   check('asked at the top: ▶ Start → opened? → "Our record: 9 box(es)" ✅ Correct / ✏️ Not correct; saved (not opened, 9 = 9), not asked again',
     need0 && /▶ Start working on Pallet 3/.test(p0) && /Our record: <b[^>]*>9<\/b>/.test(p1) && /✅ Correct/.test(p1) && /✏️ Not correct/.test(p1)
       && posts1.length === 1 && posts[0][1].expected === 9 && posts[0][1].counted === 9 && posts[0][1].opened === false && !need1 && !need2 && /✓ matched our record/.test(ln), { need0, need1, need2, posts1 });
-  check('…✏️ Not correct → number pad ("How many boxes are on the pallet now? (our record: 9)", 0 allowed) → saved 8 vs 9, shown in red under the totals; asked again after 12 h',
-    need3 && /our record: 9/.test(kp.t) && kp.zeroOk === true && posts.length === 2 && posts[1][1].counted === 8 && posts[1][1].expected === 9 && posts[1][1].opened === true && /our record 9 \(-1\)/.test(H.line()), { posts, line: H.line() });
+  check('…✏️ Not correct → number pad with calculator ("How many boxes are on the pallet now? (our record: 9)") → saved 8 vs 9, shown in red under the totals; asked again after 12 h',
+    need3 && /our record: 9/.test(kp.t) && posts.length === 2 && posts[1][1].counted === 8 && posts[1][1].expected === 9 && posts[1][1].opened === true && /our record 9 \(-1\)/.test(H.line()) && posts[1][1].how === '2×3+2' && /8 box\(es\) \(2×3\+2\)/.test(H.line()), { posts, line: H.line() });
   check('…a move waits for it (shelf scan → "First confirm the boxes on this pallet"); the panel sits right under the pallet title',
     /window\.xfrGoMove = function\(toLoc\) \{\n    var sel = xfrGo\.sel; if \(!sel\) return;\n    if \(xfrStartNeeded\(\)\) \{ invFlash\('⬆ First confirm the boxes on this pallet/.test(ih)
       && /\+ xfrE\(f\.title\) \+ '<\/span><\/div>'\n      \+ \(xfrStartNeeded\(\) \? xfrStartPanel\(\) : ''\)/.test(ih), null);
+  // Owner (2026-10-10): a calculator on that number pad — count the pallet in parts (layers × boxes + extra on top).
+  const cs = ih.slice(ih.indexOf('  function xfrCalcTotal(expr) {'), ih.indexOf('  window.xfrCalcTotal = xfrCalcTotal;'));
+  const calc = new Function(cs + '; return xfrCalcTotal;')();
+  const cases = [['4×6+3', 27], ['27', 27], ['0', 0], ['5×4×2', 40], ['30−2', 28], ['2+3×4', 14], ['10−3−2', 5], ['4×6+', null], ['×3', null], ['', null], ['4××6', null], ['2.5×2', 5]];
+  const got = cases.map(([e]) => calc(e));
+  check('calculator: 4×6+3 = 27, 5×4×2 = 40, 30−2 = 28, 2+3×4 = 14 (× first), 10−3−2 = 5; an unfinished sum (4×6+, ×3, empty) is not a total',
+    cases.every(([e, v], i) => got[i] === v), cases.map(([e, v], i) => e + ' → ' + got[i] + (got[i] === v ? '' : ' ✗ want ' + v)));
+  // Keys → screen: 4 × 6 + 3, OK saves 27; below 0 / unfinished is refused; other number pads stay as they were.
+  const ks = ih.slice(ih.indexOf('  function xfrCalcTotal(expr) {'), ih.indexOf('  // ⚠ The box\'s UPC is not for this part #'));
+  let saved = null, msg = '', drawn = '';
+  const K = {}; new Function('window', 'xfrPopup', 'xfrPopupClose', 'xfrE', 'xfrN', 'invFlash', 'g', 'xfrKpDraw', 'var xfrKp = null;' + ks)(K, h => { drawn = h; }, () => {}, String, String, m => { msg = m; }, () => null, () => {});
+  K.xfrKeypadCalc('How many boxes?', n => { saved = n; });
+  ['4', '×', '6', '+', '+', '3'].forEach(k => K.xfrKpCalcKey(k));
+  const shown = drawn; K.xfrKpCalcOk();
+  K.xfrKeypadCalc('x', n => { saved = 'bad'; }); ['5', '−', '9'].forEach(k => K.xfrKpCalcKey(k)); K.xfrKpCalcOk(); const neg = msg;
+  check('…keys 4 × 6 + 3 (a 2nd + replaces the 1st) show "= 27 box(es)", OK saves 27; 5 − 9 is refused ("can\'t be below 0")',
+    saved === 27 && /4 × 6 \+ 3/.test(shown) && /= 27 box\(es\)/.test(shown) && /OK — 27/.test(shown) && /below 0/.test(neg), { saved, neg });
+  check('…only the start count uses it; the normal number pad (Moving how many …) is unchanged',
+    /xfrKeypadCalc\('How many boxes are on the pallet now\? \(our record: '/.test(ih) && /\['1','2','3','4','5','6','7','8','9','\.','0','⌫'\]/.test(ih)
+      && /window\.xfrKeypad = function\(title, start, cb, zeroOk\) \{ xfrKp = \{ title: title, v: start \? String\(start\) : '', cb: cb, zeroOk: !!zeroOk \}; xfrKpDraw\(\); \};/.test(ih), null);
   sq.exec("DELETE FROM reorder_pallet WHERE title='CNT CT'; DELETE FROM pallet_count WHERE title='CNT CT'");
 }
 
