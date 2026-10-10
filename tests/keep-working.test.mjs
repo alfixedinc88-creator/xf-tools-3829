@@ -5525,5 +5525,31 @@ console.log('\n🔍 Listing Watch → Check one listing: Amazon ASIN / SKU, why 
   globalThis.fetch = realFetch;
 }
 
+// Owner (2026-10-10): "Stock In / Found on Shelf — when we scan the barcode, give them the location where we have them,
+// then the rest is the same". Quick Add shows every spot with stock of the item, in walking order; the steps stay the same.
+console.log('\n📍 Stock In → Quick Add: after the barcode scan, where we have it');
+{
+  const { readFileSync } = await import('node:fs');
+  const ih = readFileSync(fileURLToPath(new URL('../inventory.html', import.meta.url)), 'utf8');
+  const fn = s => ih.slice(ih.indexOf(s), ih.indexOf('\n  }\n', ih.indexOf(s)) + 4);
+  const src = ["var INV_PULL_AREA_ORDER = ", "  var INV_PULL_ZONE = "].map(s => ih.slice(ih.indexOf(s), ih.indexOf(';\n', ih.indexOf(s)) + 2)).join('')
+    + fn('  function invPullLocationRank(location) {') + fn('  function invPullWalkCompare(a, b) {') + fn('  function invQaWhere(d, partNum) {');
+  const box = { innerHTML: '' };
+  const W = new Function('g', 'invEsc', src + '; return invQaWhere;')(id => id === 'inv-qa-where' ? box : null, s => String(s));
+  W({ partNum: '30-3-4=10X', locations: [
+    { partNum: '30-3-4=10X', location: 'BARN=3-2-1', cases: '2', eachQty: '10' }, { partNum: '30-3-4=2', location: 'C2=1-1-1', cases: '4', eachQty: '2' },
+    { partNum: '30-3-4=10X', location: 'C2=1-1-1', cases: '5', eachQty: '10' }, { partNum: '30-3-4=10X', location: 'GARAGE', cases: '0' },
+    { partNum: '30-3-4=10X', location: 'BO=1-1-1', cases: '3', isPlaceholder: true }] }, '30-3-4=10X');
+  const order = [...box.innerHTML.matchAll(/<b style="font-family:var\(--mono\)">([^<]+)<\/b>/g)].map(m => m[1]);
+  check('scan 30-3-4=10X → "📍 We have it at" C2=1-1-1 (5 cs × 10 pcs), C2=1-1-1 (the =2 pack, marked), BARN=3-2-1 — walking order, no empty or placeholder spots',
+    /📍 We have it at/.test(box.innerHTML) && JSON.stringify(order) === '["C2=1-1-1","C2=1-1-1","BARN=3-2-1"]' && /5 cs × 10 pcs/.test(box.innerHTML) && /30-3-4=2/.test(box.innerHTML) && !/GARAGE|BO=1-1-1/.test(box.innerHTML), { order, html: box.innerHTML });
+  W({ partNum: 'NEW-1', locations: [] }, 'NEW-1');
+  const none = box.innerHTML; W(null);
+  check('…an item on no shelf says "Not on any shelf yet — scan the new spot"; cleared with the form',
+    /Not on any shelf yet/.test(none) && box.innerHTML === '', null);
+  check('…shown right after the barcode lookup (Quick Add) and cleared on ✕ / after Submit; the rest of Quick Add unchanged',
+    /invQaWhere\(d && d\.partNum \? d : null, partNum\);/.test(ih) && (ih.match(/invQaWhere\(null\);/g) || []).length >= 4 && /<div id="inv-qa-where"/.test(ih) && /onclick="invQuickAddSubmit\(\)">Submit Stock In<\/button>/.test(ih), null);
+}
+
 console.log('\n' + (failed ? '❌ ' + failed + ' check(s) FAILED' : '✅ all ' + passed + ' checks passed') + '\n');
 process.exit(failed ? 1 : 0);

@@ -638,6 +638,8 @@ window.invCredLogin = async function() {
          invQuickAddPrefillUpc) — stays hidden for a genuinely new item,
          since there's no name to show yet. -->
     <div id="inv-qa-name-display" style="display:none;font-size:13px;color:var(--text2);margin-top:6px;padding:7px 10px;background:var(--bg3);border-radius:7px;align-items:center;gap:8px"><img id="inv-qa-photo" src="" alt="" style="display:none;width:36px;height:36px;object-fit:cover;border-radius:6px;border:1px solid var(--border);flex-shrink:0" onerror="this.style.display='none'"><span id="inv-qa-name-text" style="flex:1"></span><button type="button" onclick="invQuickAddClearSearch()" title="Close and search a new item" style="background:none;border:none;color:var(--text3);font-size:18px;cursor:pointer;line-height:1;padding:0 2px;flex-shrink:0">&times;</button></div>
+    <!-- 📍 Where we have it now (owner 2026-10-10): every spot with stock of this item, in walking order. -->
+    <div id="inv-qa-where" style="margin-top:6px"></div>
 
     <div class="ifield" style="margin-top:10px">
       <label>Spot where you put it</label>
@@ -3836,7 +3838,7 @@ window.invCredLogin = async function() {
     var casesInp = g("inv-qa-cases"); if (casesInp) casesInp.value = "";
     var upcInp = g("inv-qa-upc"); if (upcInp) upcInp.value = "";
     invQaRec = 0; invQaPadsRender();
-    var nameDisplay = g("inv-qa-name-display"); if (nameDisplay) nameDisplay.style.display = "none";
+    var nameDisplay = g("inv-qa-name-display"); if (nameDisplay) nameDisplay.style.display = "none"; invQaWhere(null);
     var photoEl = g("inv-qa-photo"); if (photoEl) { photoEl.style.display = "none"; photoEl.src = ""; }
     if (partnumInp) partnumInp.focus();
   };
@@ -3869,12 +3871,33 @@ window.invCredLogin = async function() {
   // ✕ on a scan box: empty it and get it ready for the next scan — the phone
   // keyboard stays hidden (inputmode none). ✕ on the part # also clears its
   // name / photo / pieces, since those belonged to the old box.
+  // 📍 Stock In / Found on Shelf → Quick Add (owner 2026-10-10): "when we scan the barcode, give them the location where we
+  // have them, then the rest is the same". Every spot with stock of this item (other pack sizes too, marked), walking order.
+  function invQaWhere(d, partNum) {
+    var box = g('inv-qa-where'); if (!box) return;
+    if (!d) { box.innerHTML = ''; return; }
+    var P = String(partNum || d.partNum || '').toUpperCase();
+    var locs = (d.locations || []).filter(function(l) { return !l.isPlaceholder && (parseFloat(l.cases) || 0) > 0; })
+      .sort(function(a, b) { return invPullWalkCompare(a.location, b.location); });
+    if (!locs.length) { box.innerHTML = '<div style="font-size:12px;padding:7px 10px;border-radius:7px;background:var(--orange-bg,#fff7ed);color:var(--orange);font-weight:700">📍 Not on any shelf yet — scan the new spot where you put it</div>'; return; }
+    var same = function(l) { return String(l.partNum || '').toUpperCase() === P; };
+    box.innerHTML = '<div style="font-size:12px;padding:7px 10px;border-radius:7px;background:var(--green-bg,#dcfce7);border:1px solid var(--green)">'
+      + '<div style="font-weight:800;color:var(--green);margin-bottom:3px">📍 We have it at</div>'
+      + locs.slice(0, 8).map(function(l) {
+          var other = !same(l);
+          return '<div style="display:flex;gap:6px;align-items:baseline;' + (other ? 'color:var(--text3)' : 'color:var(--text)') + '"><b style="font-family:var(--mono)">' + invEsc(l.location) + '</b>'
+            + '<span>' + invEsc(String(parseFloat(l.cases) || 0)) + ' cs' + (parseFloat(l.eachQty) > 0 ? ' × ' + invEsc(String(parseFloat(l.eachQty))) + ' pcs' : '') + '</span>'
+            + (other ? '<span style="font-family:var(--mono);font-size:11px">' + invEsc(l.partNum || '') + '</span>' : '') + '</div>';
+        }).join('')
+      + (locs.length > 8 ? '<div style="color:var(--text3)">…and ' + (locs.length - 8) + ' more</div>' : '') + '</div>';
+  }
+  window.invQaWhere = invQaWhere;
   window.invQaClear = function(which) {
     var x = g(which === 'spot' ? 'inv-qa-shelf' : 'inv-qa-partnum'); if (!x) return;
     x.value = ''; x.removeAttribute('data-kb-typing'); x.setAttribute('inputmode', 'none');
     if (which !== 'spot') {
       invQaRec = 0; var u = g('inv-qa-upc'); if (u) u.value = '';
-      var nd = g('inv-qa-name-display'); if (nd) nd.style.display = 'none';
+      var nd = g('inv-qa-name-display'); if (nd) nd.style.display = 'none'; invQaWhere(null);
       var ph = g('inv-qa-photo'); if (ph) { ph.style.display = 'none'; ph.src = ''; }
       invQaPadsRender();
     }
@@ -3901,6 +3924,7 @@ window.invCredLogin = async function() {
     if (!partNum) {
       if (nameDisplay) nameDisplay.style.display = "none";
       if (photoEl) { photoEl.style.display = "none"; photoEl.src = ""; }
+      invQaWhere(null);
       return;
     }
     wFetch(W + "/inventory/lookup?code=" + encodeURIComponent(partNum))
@@ -3934,6 +3958,7 @@ window.invCredLogin = async function() {
           }
           if (knownUpc > 0) upcField.value = knownUpc;
         }
+        invQaWhere(d && d.partNum ? d : null, partNum);
         invQaRec = 0;
         (d && d.locations || []).some(function(l) { var v = parseFloat(l.eachQty); if (v > 0 && String(l.partNum || '').toUpperCase() === partNum) { invQaRec = v; return true; } return false; });
         if (!invQaRec) (d && d.locations || []).some(function(l) { var v = parseFloat(l.eachQty); if (v > 0) { invQaRec = v; return true; } return false; });
@@ -4094,7 +4119,7 @@ window.invCredLogin = async function() {
             invFlash(d.queued ? INV_OFFLINE_MSG : (d.autoApproved ? "✓ Saved: " : "✓ Saved — pending approval: ") + partNum + " × " + cases + " → " + location, d.queued ? "warn" : "success");
             g("inv-qa-partnum").value = ""; g("inv-qa-shelf").value = "";
             g("inv-qa-cases").value = ""; g("inv-qa-upc").value = ""; invQaRec = 0; invQaPadsRender();
-            var nameDisplay = g("inv-qa-name-display"); if (nameDisplay) nameDisplay.style.display = "none";
+            var nameDisplay = g("inv-qa-name-display"); if (nameDisplay) nameDisplay.style.display = "none"; invQaWhere(null);
             var qaPhotoEl = g("inv-qa-photo"); if (qaPhotoEl) { qaPhotoEl.style.display = "none"; qaPhotoEl.src = ""; }
             invFetchPendingCount();
           } else {
