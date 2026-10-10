@@ -5393,5 +5393,34 @@ console.log('\n⚠️ Listing Watch: eBay variations — set with their SKU; �
   globalThis.fetch = realFetch;
 }
 
+// Owner (2026-10-10): "merge Item Locator into Item Search; one more box next to Veeqo full box — have inventory or not;
+// if we have, click it and it shows all the info like Item Locator".
+console.log('\n🔍 Warehouse Lookup: Item Locator merged into Item Search (🏬 Inventory box → the Item Locator cards)');
+{
+  const { readFileSync: rfW } = await import('node:fs');
+  const wh = rfW(fileURLToPath(new URL('../warehouse.html', import.meta.url)), 'utf8');
+  const pick = n => (wh.match(new RegExp('function ' + n + '\\([^)]*\\) \\{[\\s\\S]*?\\n\\}')) || [''])[0];
+  const code = ['buildRe', 'baseSKU', 'whParent', 'whRank', 'whPackKey', 'whCompare', 'doSearch', 'renderCards', 'cardLocator', 'cardSearch', 'whInvRows', 'whInvField', 'whInvFill', 'whInvToggle'].map(pick).join('\n');
+  const els = {}, el = id => els[id] = els[id] || { innerHTML: '', value: '', textContent: '' };
+  const g = { document: { getElementById: el, querySelectorAll: () => [] }, wpShowButtons() {}, clearPane() {}, whPhotoLoad() {}, whPhotoHtml: () => '', whPalletHtml: r => r.partNum === '30-3-4=2' ? '<PALLET>' : '',
+    lookupUPC: () => '', vbField: () => '<VB>', wpCan: () => false, wpAttr: v => String(v), getWarehouseName: () => '', setTimeout: f => f(), countAmt: 1, pages: { search: 1 }, PER_PAGE: 30,
+    DB: { products: [{ sku: '30-3-4', name: 'Hex nipple', warehouseName: 'HN', weight: '0.1' }, { sku: '8-8-8', name: 'Cap', warehouseName: '', weight: '' }],
+      master: [{ partNum: '30-3-4=10X', sku: '30-3-4', name: 'Hex nipple', location: 'C1=1-1-1', cases: '3', casesNum: 3 }, { partNum: '30-3-4=2', sku: '30-3-4', name: 'Hex nipple', location: 'GARAGE', cases: '2', casesNum: 2 },
+        { partNum: '8-8-8=1', sku: '8-8-8', name: 'Cap', location: 'C3', cases: '0', casesNum: 0 }, { partNum: '99-1-1=5', sku: '99-1-1', name: 'Odd tee', location: 'C2', cases: '1', casesNum: 1 }] } };
+  const run = new Function(...Object.keys(g), code + '; return { doSearch, whInvToggle };')(...Object.values(g));
+  el('inp-search').value = '30-3-4=10X'; run.doSearch('search');
+  const h1 = els['res-search'].innerHTML;
+  el('inp-search').value = 'cap'; run.doSearch('search'); const h2 = els['res-search'].innerHTML;
+  el('inp-search').value = 'odd'; run.doSearch('search'); const h3 = els['res-search'].innerHTML;
+  check('Item Search: a whole part # (30-3-4=10X) finds its parent; 🏬 Inventory box next to 📦 Veeqo full box: "✓ 5 cases · 2 spots" (3 + 2, nothing twice)',
+    /30-3-4/.test(h1) && /<VB>\s*<div class="field" style="cursor:pointer" onclick="whInvToggle\(this\)"/.test(h1) && /✓ 5 cases · 2 spots/.test(h1), h1.slice(0, 400));
+  check('…no stock (8-8-8 has 0 cases) → "✗ No inventory"; stock whose parent is not on Products still shows (like Item Locator did)', /✗ No inventory/.test(h2) && /99-1-1/.test(h3) && /not on Products/.test(h3), null);
+  const list = { a: { 'data-sku': '30-3-4', 'data-open': '0' }, style: {}, innerHTML: '', getAttribute(k) { return this.a[k]; }, setAttribute(k, v) { this.a[k] = v; } }, lab = { textContent: '' };
+  run.whInvToggle({ closest: () => ({ querySelector: () => list }), querySelector: () => lab });
+  check('…tap it → the Item Locator cards for every spot (C1=1-1-1 3 cases, GARAGE 2 cases with its 🧱 pallet), tap again → hidden',
+    list.style.display === 'block' && /C1=1-1-1/.test(list.innerHTML) && /GARAGE/.test(list.innerHTML) && /<PALLET>/.test(list.innerHTML) && (list.innerHTML.match(/class="card"/g) || []).length === 2 && lab.textContent === '▾ hide', null);
+  check('…Item Locator tab hidden (kept), Item Search opens first', /onclick="switchTab\('locator'\)" style="display:none"/.test(wh) && /<div class="tabitem active" onclick="switchTab\('search'\)">/.test(wh) && /let activeTab = 'search';/.test(wh), null);
+}
+
 console.log('\n' + (failed ? '❌ ' + failed + ' check(s) FAILED' : '✅ all ' + passed + ' checks passed') + '\n');
 process.exit(failed ? 1 : 0);
