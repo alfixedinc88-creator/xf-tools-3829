@@ -29961,6 +29961,29 @@ async function lwEbayItem(env, itemId) {
   return { title: unesc(tag(top, 'Title')), status: tag(top, 'ListingStatus'), isVar: !!vb, rows };
 }
 
+// One Amazon listing as Amazon has it now: an ASIN → every SKU of ours under it; a seller SKU → that one.
+async function lwAmazonItem(env, id) {
+  if (!env.AMAZON_SELLER_ID) throw new Error('AMAZON_SELLER_ID not set');
+  const token = await getAmazonToken(env), mid = env.AMAZON_MARKETPLACE_ID || 'ATVPDKIKX0DER';
+  const base = `https://sellingpartnerapi-na.amazon.com/listings/2021-08-01/items/${encodeURIComponent(env.AMAZON_SELLER_ID)}`;
+  const isAsin = /^B0[A-Z0-9]{8}$/.test(id);
+  const r = await fetch(isAsin ? `${base}?marketplaceIds=${mid}&identifiers=${encodeURIComponent(id)}&identifiersType=ASIN&includedData=summaries,fulfillmentAvailability`
+    : `${base}/${encodeURIComponent(id)}?marketplaceIds=${mid}&includedData=summaries,fulfillmentAvailability`, { headers: { 'x-amz-access-token': token } });
+  const d = await r.json().catch(() => ({}));
+  if (!r.ok) throw new Error('Amazon: ' + JSON.stringify(d.errors || d).slice(0, 200));
+  const items = isAsin ? (d.items || []) : [d];
+  if (!items.length) throw new Error(`No listing of ours on Amazon for ${id}`);
+  let title = '';
+  const rows = items.map(i => {
+    const fa = i.fulfillmentAvailability || [], s = (i.summaries || []).find(x => x.marketplaceId === mid) || (i.summaries || [])[0] || {};
+    title = title || s.itemName || '';
+    const fba = fa.some(f => /AMAZON/i.test(f.fulfillmentChannelCode || ''));
+    const q = (fa.find(f => f.fulfillmentChannelCode === 'DEFAULT') || fa[0] || {}).quantity;
+    return { sku: i.sku || '', option: (s.status || []).join(', '), qty: q == null ? 0 : q, fba, listingId: s.asin || (isAsin ? id : ''), isVar: false };
+  });
+  return { title, status: '', isVar: false, rows };
+}
+
 async function lwPageAmazon(env, cursor) {
   if (!env.AMAZON_SELLER_ID) throw new Error('AMAZON_SELLER_ID not set');
   const token = await getAmazonToken(env);
@@ -30222,9 +30245,13 @@ async function handleListingWatch(path, method, request, env, session) {
   // GET ?id=<eBay item ID> — 🔍 Check one listing: every variation as eBay has it now, the part # it matches, our stock,
   // the warning and the last time someone / Auto set its quantity (and what eBay said). Read only.
   if (path === '/inventory/soldout/watch/check' && method === 'GET') {
-    const id = String(new URL(request.url).searchParams.get('id') || '').replace(/\D/g, '');
-    if (!id) return _soResp({ ok: false, error: 'Type the eBay item ID (numbers)' }, 400);
-    const got = await lwEbayItem(env, id).catch(e => ({ error: String(e.message || e).slice(0, 300) }));
+    // Owner (2026-10-10, B0B4X2PWSM · 29-2-1 at 0 on Amazon, not in Listing Watch): Amazon too — an ASIN (every SKU
+    // under it) or a seller SKU. Same answers as eBay, plus FBA and whether the last scan read the listing at all.
+    const q0 = String(new URL(request.url).searchParams.get('id') || '').trim();
+    const plat = /^\d{9,15}$/.test(q0) ? 'eBay' : 'Amazon';
+    const id = plat === 'eBay' ? q0 : q0.toUpperCase();
+    if (!id) return _soResp({ ok: false, error: 'Type the eBay item ID, or an Amazon ASIN / SKU' }, 400);
+    const got = await (plat === 'eBay' ? lwEbayItem(env, id) : lwAmazonItem(env, id)).catch(e => ({ error: String(e.message || e).slice(0, 300) }));
     if (got.error) return _soResp({ ok: false, error: got.error });
     const mapped = await lwMapped(env, got.rows.map(r => r.sku));
     got.rows.forEach(r => { r.mappedTo = mapped[String(r.sku || '').trim().toUpperCase()] || ''; r.base = lwBase(r.mappedTo || r.sku); });
@@ -30233,27 +30260,34 @@ async function handleListingWatch(path, method, request, env, session) {
     await soEnsureLog(env);
     for (const r of got.rows) {
       r.known = known.has(r.base); r.ourCases = (stock[r.base] && stock[r.base].cases) || 0; r.ourDetail = (stock[r.base] && stock[r.base].detail) || '';
-      r.alert = await d1First(env, `SELECT status, qty, note, last_seen, fixed_at, set_qty FROM lw_alerts WHERE platform = 'eBay' AND listing_id = ? AND sku = ?`, [id, r.sku || '']).catch(() => null);
-      r.lastFix = await d1First(env, `SELECT ts, by_user, quantity, ok, detail FROM listing_qty_log WHERE platform = 'eBay' AND listing_id = ? AND sku = ? ORDER BY id DESC LIMIT 1`, [id, r.sku || '']).catch(() => null);
-      r.why = !r.sku ? 'No SKU on this variation on eBay — add the part # as its SKU on eBay'
+      const lid = r.listingId || id;
+      r.alert = await d1First(env, `SELECT status, qty, note, last_seen, fixed_at, set_qty FROM lw_alerts WHERE platform = ? AND listing_id = ? AND sku = ?`, [plat, lid, r.sku || '']).catch(() => null);
+      r.lastFix = await d1First(env, `SELECT ts, by_user, quantity, ok, detail FROM listing_qty_log WHERE platform = ? AND listing_id = ? AND sku = ? ORDER BY id DESC LIMIT 1`, [plat, lid, r.sku || '']).catch(() => null);
+      const seen = await d1First(env, `SELECT updated_at FROM listing_titles WHERE platform = ? AND listing_id = ? AND sku = ?`, [plat, lid, String(r.sku || '').trim().toUpperCase()]).catch(() => null);
+      r.seenAt = seen ? seen.updated_at : null;
+      r.why = r.fba ? 'FBA — sells from Amazon\'s warehouse; Listing Watch does not set it. Send boxes to Amazon (🏢 Stock Out Big Company)'
+        : !r.sku ? `No SKU on this ${plat === 'eBay' ? 'variation on eBay' : 'listing'} — add the part # as its SKU on ${plat}`
         : !r.known ? 'SKU matches no part # in SKU Mgr — map it with ✏️ in Reorder'
         : !(r.ourCases > 0) ? 'SKU Mgr has none of it — really out'
         : r.qty >= cfg.threshold ? `eBay shows ${r.qty} (not under ${cfg.threshold}) — nothing to do`
         : r.alert && r.alert.status === 'dismissed' ? 'Warning was DISMISSED — it stays hidden while low; set it here'
-        : r.alert ? `Warning: ${r.alert.status}${r.alert.note ? ' — ' + r.alert.note : ''}` : 'Not warned yet — 🔎 Scan now';
+        : r.alert ? `Warning: ${r.alert.status}${r.alert.note ? ' — ' + r.alert.note : ''}`
+        : !r.seenAt ? 'The scan has NOT read this listing yet — tap Set below, and 🔎 Scan now to the end (it can take a while)'
+        : 'Not warned yet — 🔎 Scan now';
     }
-    return _soResp({ ok: true, id, title: got.title, status: got.status, variations: got.isVar, rows: got.rows, threshold: cfg.threshold });
+    return _soResp({ ok: true, platform: plat, id, title: got.title, status: got.status, variations: got.isVar, rows: got.rows, threshold: cfg.threshold });
   }
   // POST { listingId, sku, quantity } — set one eBay listing / variation from 🔍 Check one listing (kept in listing_qty_log).
   if (path === '/inventory/soldout/watch/set-one' && method === 'POST') {
     const b = await request.json().catch(() => ({}));
-    const qty = parseInt(b.quantity, 10), id = String(b.listingId || '').replace(/\D/g, ''), sku = String(b.sku || '').trim();
+    const plat = b.platform === 'Amazon' ? 'Amazon' : 'eBay';
+    const qty = parseInt(b.quantity, 10), id = plat === 'eBay' ? String(b.listingId || '').replace(/\D/g, '') : String(b.listingId || '').trim().toUpperCase(), sku = String(b.sku || '').trim();
     if (!(qty >= 0 && qty <= 9999) || !id) return _soResp({ ok: false, error: 'listingId and quantity 0–9999 needed' }, 400);
-    let r; try { r = await _soEbay(env, { listingId: id, sku, isVar: !!b.isVar }, qty); } catch (e) { r = { ok: false, error: String(e.message || e).slice(0, 300) }; }
+    let r; try { r = plat === 'eBay' ? await _soEbay(env, { listingId: id, sku, isVar: !!b.isVar }, qty) : await _soAmazon(env, { listingId: id, sku }, qty); } catch (e) { r = { ok: false, error: String(e.message || e).slice(0, 300) }; }
     await soEnsureLog(env);
     await d1Run(env, `INSERT INTO listing_qty_log (ts, by_user, platform, listing_id, sku, title, quantity, ok, detail) VALUES (?,?,?,?,?,?,?,?,?)`,
-      [new Date().toISOString(), who + ' (Check one listing)', 'eBay', id, sku, String(b.title || '').slice(0, 200), qty, r.ok ? 1 : 0, String(r.error || r.detail || r.via || '').slice(0, 500)]);
-    if (r.ok) await env.DB.prepare(`UPDATE lw_alerts SET status = 'fixed', fixed_at = ?, note = ?, set_qty = ? WHERE platform = 'eBay' AND listing_id = ? AND sku = ?`).bind(new Date().toISOString(), `Set to ${qty} by ${who}`, qty, id, sku).run();
+      [new Date().toISOString(), who + ' (Check one listing)', plat, id, sku, String(b.title || '').slice(0, 200), qty, r.ok ? 1 : 0, String(r.error || r.detail || r.via || '').slice(0, 500)]);
+    if (r.ok) await env.DB.prepare(`UPDATE lw_alerts SET status = 'fixed', fixed_at = ?, note = ?, set_qty = ? WHERE platform = ? AND listing_id = ? AND sku = ?`).bind(new Date().toISOString(), `Set to ${qty} by ${who}`, qty, plat, id, sku).run();
     return _soResp({ ok: !!r.ok, error: r.error || null, via: r.via || '' });
   }
   // GET ?sku=&title=&q= — 🔗 Link to a part # (owner 2026-10-10: "a listing not checked — click it and fix it to the right

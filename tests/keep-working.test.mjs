@@ -5388,7 +5388,7 @@ console.log('\n⚠️ Listing Watch: eBay variations — set with their SKU; �
   const r1 = (ck.rows || []).find(r => r.sku === 'EV-1=10') || {}, r2 = (ck.rows || []).find(r => !r.sku) || {};
   check('…🔍 Check one listing: every variation with its option, eBay qty, our cases, the last set (✓ by who) — and the variation with no SKU says "add the part # as its SKU on eBay"',
     ck.ok && ck.variations === true && ck.rows.length === 2 && r1.option === '10 pcs' && r1.ourCases === 4 && r1.lastFix && r1.lastFix.ok === 1 && /Warning: fixed/.test(r1.why)
-      && /No SKU on this variation on eBay/.test(r2.why) && /🔍 Check one eBay listing/.test(readFileSync(fileURLToPath(new URL('../inventory.html', import.meta.url)), 'utf8')), ck);
+      && /No SKU on this variation on eBay/.test(r2.why) && /🔍 Check one listing — eBay item ID or Amazon ASIN \/ SKU/.test(readFileSync(fileURLToPath(new URL('../inventory.html', import.meta.url)), 'utf8')), ck);
   sq.exec("DELETE FROM lw_alerts WHERE listing_id = '132887329098'; DELETE FROM master_list WHERE part_num = 'EV-1=10'; DELETE FROM listing_qty_log WHERE listing_id = '132887329098'");
   globalThis.fetch = realFetch;
 }
@@ -5489,6 +5489,40 @@ console.log('\n📄 Close Batch → Print scan forms: every form not printed yet
   const run2 = sandbox(from, async () => ({ ok: true, forms: forms.filter(f => f.id === 1 || f.id === 3), missing: { labels: [{}, {}] } }), async list => { printed = list; }, () => {}, t => { alerted = t; }, {});
   await run2(null);
   check('…nothing new → says "every scan form is printed" (and how many USPS labels are not on a form yet), prints nothing', printed === null && /Every scan form is printed/.test(alerted) && /2 USPS labels are not on a scan form yet/.test(alerted), { printed, alerted });
+}
+
+// Owner (2026-10-10): "Scan now — some listings still don't show up; Sold Out search finds 29-2-1: B0B4X2PWSM · 29-2-1
+// at 0, the rest at 888". 🔍 Check one listing takes an Amazon ASIN / SKU too: every SKU of ours under the ASIN, FBA or
+// not, Amazon's quantity, the part # and our stock, whether the last scan read it, and why; Set it right there.
+console.log('\n🔍 Listing Watch → Check one listing: Amazon ASIN / SKU, why it is not warned, set it there');
+{
+  const realFetch = globalThis.fetch, patches = [];
+  sq.prepare("INSERT INTO master_list (base_sku, name, part_num, location, cases, units_per_case) VALUES ('AZ-2-1','tee','AZ-2-1=10','C4=1-1-1',6,10)").run();
+  const ml0 = JSON.stringify(sq.prepare('SELECT SUM(cases) c FROM master_list').get());
+  const items = [{ sku: 'AZ-2-1', summaries: [{ asin: 'B0AZTEST01', itemName: 'Brass tee', marketplaceId: 'ATVPDKIKX0DER', productType: 'PIPE_FITTING' }], fulfillmentAvailability: [{ fulfillmentChannelCode: 'DEFAULT', quantity: 0 }] },
+    { sku: 'AZ-2-1=10X', summaries: [{ asin: 'B0AZTEST01', itemName: 'Brass tee', marketplaceId: 'ATVPDKIKX0DER' }], fulfillmentAvailability: [{ fulfillmentChannelCode: 'AMAZON_NA', quantity: 40 }] }];
+  globalThis.fetch = async (u, o) => { u = String(u); const J = x => new Response(JSON.stringify(x), { headers: { 'Content-Type': 'application/json' } });
+    if (u.includes('api.amazon.com/auth/o2/token')) return J({ access_token: 'amz', expires_in: 3600 });
+    if (u.includes('/listings/2021-08-01/items/') && o && o.method === 'PATCH') { patches.push({ u, body: JSON.parse(o.body) }); return J({ status: 'ACCEPTED', issues: [] }); }
+    if (u.includes('/listings/2021-08-01/items/') && /identifiers=B0AZTEST01/.test(u)) return J({ items });
+    if (/\/listings\/2021-08-01\/items\/SELLER1\/AZ-2-1\?/.test(u)) return J(items[0]);
+    return new Response('{}', { status: 401 }); };
+  const s0 = env.AMAZON_SELLER_ID; env.AMAZON_SELLER_ID = 'SELLER1';
+  const ck = await get('/inventory/soldout/watch/check?id=B0AZTEST01');
+  const fbm = (ck.rows || []).find(r => r.sku === 'AZ-2-1') || {}, fba = (ck.rows || []).find(r => r.sku === 'AZ-2-1=10X') || {};
+  check('ASIN B0AZTEST01: FBM "AZ-2-1" at 0 with 6 cases here → "the scan has NOT read this listing yet" (never), FBA "AZ-2-1=10X" → "FBA … send boxes to Amazon"',
+    ck.ok && ck.platform === 'Amazon' && fbm.qty === 0 && fbm.ourCases === 6 && !fbm.fba && fbm.seenAt === null && /scan has NOT read this listing yet/.test(fbm.why)
+      && fba.fba === true && /^FBA — sells from Amazon's warehouse/.test(fba.why), ck);
+  const bySku = await get('/inventory/soldout/watch/check?id=AZ-2-1');
+  const set = await post('/inventory/soldout/watch/set-one', { platform: 'Amazon', listingId: 'B0AZTEST01', sku: 'AZ-2-1', quantity: 10 });
+  const log = sq.prepare("SELECT platform, listing_id, sku, quantity, ok FROM listing_qty_log WHERE listing_id = 'B0AZTEST01' ORDER BY id DESC").get() || {};
+  check('…a seller SKU works too; Set to 10 changes only the FBM SKU on Amazon (never the FBA one), kept in the log; SKU Mgr unchanged',
+    bySku.ok && (bySku.rows || [])[0] && bySku.rows[0].sku === 'AZ-2-1' && set.ok && patches.length === 1 && /\/AZ-2-1\?/.test(patches[0].u)
+      && patches[0].body.patches[0].value[0].quantity === 10 && log.platform === 'Amazon' && log.sku === 'AZ-2-1' && log.ok === 1
+      && JSON.stringify(sq.prepare('SELECT SUM(cases) c FROM master_list').get()) === ml0, { bySku, set, patches, log });
+  sq.exec("DELETE FROM master_list WHERE part_num = 'AZ-2-1=10'; DELETE FROM listing_qty_log WHERE listing_id = 'B0AZTEST01'");
+  if (s0 === undefined) delete env.AMAZON_SELLER_ID; else env.AMAZON_SELLER_ID = s0;
+  globalThis.fetch = realFetch;
 }
 
 console.log('\n' + (failed ? '❌ ' + failed + ' check(s) FAILED' : '✅ all ' + passed + ' checks passed') + '\n');
