@@ -1476,6 +1476,18 @@ window.invCredLogin = async function() {
       <div style="display:flex;gap:6px;margin-top:6px;flex-wrap:wrap"><input id="lw-check-id" type="text" inputmode="numeric" placeholder="eBay 132887329098 · Amazon B0B4X2PWSM or SKU" onkeydown="if(event.key==='Enter')lwCheckOne()" style="flex:1;min-width:200px;padding:6px 8px;border:1.5px solid var(--border);border-radius:6px;background:var(--bg);color:var(--text);font-family:var(--mono)">
         <button type="button" onclick="lwCheckOne()" style="padding:6px 12px;border:none;border-radius:6px;background:var(--accent);color:#fff;font-size:12px;font-weight:700;cursor:pointer">Check</button></div>
       <div id="lw-check-out" style="margin-top:6px;font-size:12px"></div></details>
+    <!-- Owner (2026-10-10): "so many Amazon listings still at 0 — every other channel is already 888 for that part #.
+         If all other channels have it and only Amazon shows 0, change the Amazon listing to 888". -->
+    <details id="lw-amz-box" style="margin-bottom:8px;border:1.5px solid #FF9900;border-radius:8px;padding:6px 8px"><summary style="font-size:12px;font-weight:700;cursor:pointer">🅰 Amazon at 0 but other channels have it <span id="lw-amz-n" style="color:var(--red)"></span></summary>
+      <div style="font-size:11.5px;color:var(--text3);margin:6px 0;line-height:1.5">Amazon (FBM, our stock) listings at <b>0</b> whose part # is at <b>100 or more</b> on eBay / Walmart / Shopify (Veeqo's 888 top-up didn't reach them). From the last Listing Watch scan (🔎 Scan now to refresh). FBA listings are never touched. Every change is saved (who / when / what the other channels had).</div>
+      <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-bottom:6px">
+        <button type="button" id="lw-amz-set" onclick="lwAmzSetAll()" style="padding:6px 12px;border:none;border-radius:8px;background:#FF9900;color:#111;font-size:12px;font-weight:700;cursor:pointer">✓ Set them all to 888 on Amazon</button>
+        <label style="display:flex;align-items:center;gap:6px;font-size:12px;cursor:pointer"><input type="checkbox" id="lw-amz-auto" onchange="lwAmzAuto(this.checked)"> ⚡ Auto — fix new ones by itself after each scan</label>
+        <span id="lw-amz-msg" style="font-size:12px;color:var(--text2)"></span>
+      </div>
+      <div id="lw-amz-list" style="font-size:12px"></div>
+      <details style="margin-top:6px"><summary style="font-size:12px;color:var(--text3);cursor:pointer">Last changes</summary><div id="lw-amz-log" style="font-size:11.5px;margin-top:4px"></div></details>
+    </details>
     <div id="lw-alerts"><div style="font-size:12px;color:var(--text3)">Loading…</div></div>
     <details style="margin-top:8px"><summary style="font-size:12px;color:var(--text3);cursor:pointer">Recently fixed / dismissed</summary><div id="lw-recent" style="margin-top:6px"></div></details>
   </div>
@@ -14456,7 +14468,51 @@ window.invCredLogin = async function() {
     lw.cfg = d.config; lw.alerts = d.alerts || [];
     el('lw-watch').checked = !!lw.cfg.watch; el('lw-threshold').value = lw.cfg.threshold; el('lw-restock').value = lw.cfg.restockQty; el('lw-every').value = lw.cfg.everyHours;
     lwModeUi(); lwRenderState(d.state); lwRenderAlerts(); lwRenderRecent(d.recent || []);
+    lwAmzLoad();
     return d;
+  };
+  // 🅰 Amazon at 0 but other channels have it → set to 888 (worker: lwAmazonMatchList / lwAmazonMatchRun).
+  window.lwAmzLoad = async function () {
+    var box = el('lw-amz-list'); if (!box) return;
+    var d = await call('/inventory/soldout/watch/amazon-match');
+    if (d.ok === false) { box.innerHTML = '<span style="color:var(--red)">✗ ' + esc(d.error || 'Could not load') + '</span>'; return; }
+    var l = d.list || [], q = (d.config && d.config.amazonMatchQty) || 888;
+    el('lw-amz-n').textContent = l.length ? '(' + l.length + ')' : '';
+    el('lw-amz-auto').checked = !!(d.config && d.config.amazonMatch);
+    el('lw-amz-set').textContent = '✓ Set ' + (l.length ? 'all ' + l.length : 'them') + ' to ' + q + ' on Amazon';
+    el('lw-amz-set').disabled = !l.length;
+    box.innerHTML = l.length ? l.map(function (a) {
+      return '<div style="padding:4px 0;border-bottom:1px solid var(--border)"><b style="font-family:var(--mono)">' + esc(a.sku) + '</b>'
+        + (a.part && a.part !== String(a.sku).toUpperCase() ? ' → <span style="font-family:var(--mono)">' + esc(a.part) + '</span>' : '')
+        + ' · <span style="font-family:var(--mono)">' + esc(a.listingId) + '</span> · Amazon <b style="color:var(--red)">0</b> · '
+        + a.others.map(function (o) { return esc(o.platform) + ' <b style="color:var(--green)">' + esc(o.qty) + '</b>'; }).join(', ')
+        + (a.failedToday ? ' · <span style="color:var(--orange)">Amazon refused it today — tried again tomorrow</span>' : '')
+        + (a.title ? '<div style="color:var(--text3);font-size:11px">' + esc(a.title) + '</div>' : '') + '</div>';
+    }).join('') : '<div style="color:var(--green)">✅ No Amazon listing at 0 that another channel has (last scan).</div>';
+    el('lw-amz-log').innerHTML = (d.log || []).length ? d.log.map(function (r) {
+      return '<div>' + esc(new Date(r.ts).toLocaleString()) + ' · ' + (r.ok ? '✅' : '❌') + ' <span style="font-family:var(--mono)">' + esc(r.sku) + '</span> → ' + esc(r.quantity) + ' · ' + esc(r.detail || '') + '</div>';
+    }).join('') : '<div style="color:var(--text3)">Nothing changed yet.</div>';
+  };
+  window.lwAmzSetAll = async function () {
+    var n = (el('lw-amz-n').textContent || '').replace(/\D/g, '');
+    if (!confirm('Set ' + (n || 'these') + ' Amazon listing' + (n === '1' ? '' : 's') + ' (now 0) to 888? Other channels already have them at 100+.')) return;
+    var btn = el('lw-amz-set'), msg = el('lw-amz-msg'), set = 0, failed = 0; btn.disabled = true;
+    try {
+      for (var round = 0; round < 40; round++) {
+        msg.textContent = '⏳ Setting… ' + set + ' done' + (failed ? ', ' + failed + ' refused' : '');
+        var d = await call('/inventory/soldout/watch/amazon-match', { method: 'POST', body: { limit: 25 } });
+        if (d.ok === false) { msg.textContent = '✗ ' + (d.error || 'Failed'); break; }
+        set += d.set || 0; failed += d.failed || 0;
+        if (!d.waiting || !(d.done || []).length) break;
+      }
+      if (msg.textContent.charAt(0) !== '✗') msg.textContent = '✅ ' + set + ' set to 888' + (failed ? ' · ❌ ' + failed + ' refused by Amazon (see Last changes)' : '');
+    } finally { btn.disabled = false; lwAmzLoad(); }
+  };
+  window.lwAmzAuto = async function (on) {
+    if (on && !confirm('Turn on AUTO?\n\nAfter each Listing Watch scan, an Amazon listing at 0 whose part # is at 100+ on another channel is set to 888 by itself (every change saved).')) { el('lw-amz-auto').checked = false; return; }
+    var d = await call('/inventory/soldout/watch/config', { method: 'POST', body: { config: { amazonMatch: !!on } } });
+    if (d.ok === false) { alert(d.error || 'Save failed'); el('lw-amz-auto').checked = !on; return; }
+    lw.cfg = d.config; if (typeof showToast === 'function') showToast('Amazon = other channels: Auto ' + (on ? 'ON' : 'off'));
   };
   window.lwSetMode = function (m) {
     if (m === 'auto' && !confirm('Turn on AUTO?\n\nWhen a listing is under ' + el('lw-threshold').value + ' and SKU Mgr still has stock, the listing will be set to ' + el('lw-restock').value + ' by itself — no one checks first.\n\nTip: use Manual until the warnings look right.')) return;

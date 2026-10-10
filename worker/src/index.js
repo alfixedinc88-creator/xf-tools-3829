@@ -29859,7 +29859,7 @@ async function soldoutGetQty(request, env) {
 // button, which keeps asking for the next step until the pass is done.
 // ═══════════════════════════════════════════════════════════════════════
 
-const LW_DEFAULTS = { watch: true, mode: 'manual', threshold: 10, restockQty: 10, everyHours: 6, pagesPerTick: 2 };
+const LW_DEFAULTS = { watch: true, mode: 'manual', threshold: 10, restockQty: 10, everyHours: 6, pagesPerTick: 2, amazonMatch: false, amazonMatchQty: 888, amazonMatchMin: 100 };
 const LW_PLATFORMS = ['eBay', 'Amazon', 'Walmart', 'Shopify'];
 
 let _lwReady = false;
@@ -29883,7 +29883,8 @@ function lwClean(c) {
   const n = (v, d, lo, hi) => { v = parseInt(v, 10); return Number.isFinite(v) ? Math.min(hi, Math.max(lo, v)) : d; };
   return { watch: c.watch !== false, mode: c.mode === 'auto' ? 'auto' : 'manual',
     threshold: n(c.threshold, 10, 1, 1000), restockQty: n(c.restockQty, 10, 1, 9999),
-    everyHours: n(c.everyHours, 6, 1, 168), pagesPerTick: n(c.pagesPerTick, 2, 1, 10) };
+    everyHours: n(c.everyHours, 6, 1, 168), pagesPerTick: n(c.pagesPerTick, 2, 1, 10),
+    amazonMatch: c.amazonMatch === true, amazonMatchQty: n(c.amazonMatchQty, 888, 1, 9999), amazonMatchMin: n(c.amazonMatchMin, 100, 1, 9999) };
 }
 async function lwConfig(env) { let c = {}; try { c = JSON.parse(await lwGet(env, 'config') || '{}'); } catch (_) {} return lwClean({ ...LW_DEFAULTS, ...c }); }
 async function lwState(env) { try { return JSON.parse(await lwGet(env, 'state') || 'null'); } catch (_) { return null; } }
@@ -30091,14 +30092,64 @@ async function lwAutoFix(env, cfg, a) {
 // hours) — the Reorder tab uses these to name weird SKUs.
 async function lwSaveTitles(env, plat, items) {
   try {
-    await env.DB.prepare(`CREATE TABLE IF NOT EXISTS listing_titles (platform TEXT NOT NULL, listing_id TEXT NOT NULL, sku TEXT NOT NULL, title TEXT, updated_at TEXT, PRIMARY KEY (platform, listing_id, sku))`).run();
+    await lwTitlesTable(env);
     const now = new Date().toISOString();
     // Every live listing with a SKU — also without a title (Walmart's report
-    // has none), so Sold Out / the Listings tab see every listing.
-    const st = items.filter(i => i.sku).map(i => env.DB.prepare(`INSERT OR REPLACE INTO listing_titles (platform, listing_id, sku, title, updated_at) VALUES (?,?,?,?,?)`)
-      .bind(plat, String(i.listingId || ''), String(i.sku).trim().toUpperCase(), String(i.title || '').slice(0, 300), now));
+    // has none), so Sold Out / the Listings tab see every listing. Its quantity too (Amazon = other channels, below).
+    const st = items.filter(i => i.sku).map(i => env.DB.prepare(`INSERT OR REPLACE INTO listing_titles (platform, listing_id, sku, title, updated_at, qty) VALUES (?,?,?,?,?,?)`)
+      .bind(plat, String(i.listingId || ''), String(i.sku).trim().toUpperCase(), String(i.title || '').slice(0, 300), now, Number.isFinite(+i.qty) ? +i.qty : null));
     for (let k = 0; k < st.length; k += 50) await env.DB.batch(st.slice(k, k + 50));
   } catch (_) {}
+}
+
+async function lwTitlesTable(env) {
+  await env.DB.prepare(`CREATE TABLE IF NOT EXISTS listing_titles (platform TEXT NOT NULL, listing_id TEXT NOT NULL, sku TEXT NOT NULL, title TEXT, updated_at TEXT, PRIMARY KEY (platform, listing_id, sku))`).run();
+  await env.DB.prepare('ALTER TABLE listing_titles ADD COLUMN qty INTEGER').run().catch(() => {});
+}
+
+// ── 🅰 Amazon = other channels (owner 2026-10-10) ──
+// "So many Amazon listings still at 0 but we received it — the part # on every other channel is already 888. If all
+// other channels have it and only Amazon shows 0, change the Amazon listing to 888, it must be a mistake." Veeqo's
+// 888 top-up reaches eBay / Walmart / Shopify but not an Amazon (FBM) listing Veeqo doesn't feed. From the quantities
+// Listing Watch read (last 2 days): an Amazon FBM listing at 0 whose part # (the ✏️ mapping, else its own SKU) is at
+// amazonMatchMin (100) or more on another channel. The list shows them; "Set them to 888" (or the Auto switch, off
+// until turned on) sets them through the Sold Out code, logged in listing_qty_log as "Auto (Amazon = other channels)"
+// with who. FBA listings are never read here (Amazon's own stock). A listing Amazon refused waits 24 h before a retry.
+const LW_AMZ_BY = 'Auto (Amazon = other channels)';
+async function lwAmazonMatchList(env, cfg) {
+  await lwTitlesTable(env); await soEnsureLog(env);
+  cfg = cfg || await lwConfig(env);
+  const since = new Date(Date.now() - 2 * 86400000).toISOString();
+  const amz = await d1All(env, `SELECT listing_id, sku, title, qty FROM listing_titles WHERE platform = 'Amazon' AND qty IS NOT NULL AND qty <= 0 AND updated_at >= ?`, [since]);
+  if (!amz.length) return [];
+  const others = await d1All(env, `SELECT platform, sku, qty FROM listing_titles WHERE platform != 'Amazon' AND qty >= ? AND updated_at >= ?`, [cfg.amazonMatchMin, since]);
+  const mapped = await lwMapped(env, amz.map(r => r.sku).concat(others.map(r => r.sku)));
+  const key = sku => String(mapped[String(sku || '').trim().toUpperCase()] || sku || '').trim().toUpperCase();
+  const byKey = new Map();
+  others.forEach(o => { const k = key(o.sku); if (!k) return; const l = byKey.get(k) || []; l.push({ platform: o.platform, sku: o.sku, qty: o.qty }); byKey.set(k, l); });
+  const failedToday = new Set((await d1All(env, `SELECT UPPER(sku) s FROM listing_qty_log WHERE by_user = ? AND ok = 0 AND ts >= ?`, [LW_AMZ_BY, new Date(Date.now() - 86400000).toISOString()])).map(r => r.s));
+  return amz.map(a => ({ listingId: a.listing_id, sku: a.sku, title: a.title || '', qty: a.qty, part: key(a.sku), others: byKey.get(key(a.sku)) || [], failedToday: failedToday.has(String(a.sku).toUpperCase()) }))
+    .filter(a => a.others.length);
+}
+async function lwAmazonMatchRun(env, o) {
+  o = o || {};
+  const cfg = await lwConfig(env);
+  if (!o.manual && !(cfg.watch && cfg.amazonMatch)) return { skipped: 'off' };
+  const list = (await lwAmazonMatchList(env, cfg)).filter(a => !a.failedToday);
+  let set = 0, failed = 0; const done = [];
+  for (const a of list.slice(0, o.limit || 10)) {
+    let r;
+    try { r = await _soAmazon(env, { listingId: a.listingId, sku: a.sku, title: a.title }, cfg.amazonMatchQty); }
+    catch (e) { r = { ok: false, error: String(e.message || e).slice(0, 300) }; }
+    const why = `${a.part}: ` + a.others.map(x => `${x.platform} ${x.qty}`).join(', ');
+    await d1Run(env, `INSERT INTO listing_qty_log (ts, by_user, platform, listing_id, sku, title, quantity, ok, detail) VALUES (?,?,?,?,?,?,?,?,?)`,
+      [new Date().toISOString(), LW_AMZ_BY, 'Amazon', a.listingId, a.sku, String(a.title || '').slice(0, 200), cfg.amazonMatchQty, r.ok ? 1 : 0,
+       ((r.ok ? 'was 0, other channels have it — ' : 'FAILED: ' + (r.error || '') + ' — ') + why + (o.by ? ` (by ${o.by})` : ' (auto)')).slice(0, 500)]);
+    if (r.ok) { set++; await d1Run(env, `UPDATE listing_titles SET qty = ? WHERE platform = 'Amazon' AND listing_id = ? AND sku = ?`, [cfg.amazonMatchQty, a.listingId, String(a.sku).toUpperCase()]); }
+    else failed++;
+    done.push({ sku: a.sku, listingId: a.listingId, ok: !!r.ok, error: r.ok ? '' : String(r.error || '').slice(0, 200) });
+  }
+  return { ok: true, waiting: Math.max(0, list.length - done.length), set, failed, done };
 }
 
 async function lwStep(env, { pages, trigger }) {
@@ -30185,6 +30236,7 @@ async function lwCron(env) {
   await lwEnsureTables(env);
   const cfg = await lwConfig(env);
   if (!cfg.watch) return { skipped: 'off' };
+  if (cfg.amazonMatch) await lwAmazonMatchRun(env, { limit: 10 }).catch(e => console.error('[cron] amazon = other channels', e && e.message)); // only when the owner turned Auto on
   let st = await lwState(env);
   if (!st || (st.finishedAt && Date.now() - Date.parse(st.startedAt) >= cfg.everyHours * 3600000)) {
     st = lwNewPass(); await lwSet(env, 'state', JSON.stringify(st));
@@ -30214,6 +30266,18 @@ async function handleListingWatch(path, method, request, env, session) {
     const cfg = lwClean({ ...(await lwConfig(env)), ...(b.config || {}) });
     await lwSet(env, 'config', JSON.stringify(cfg));
     return _soResp({ ok: true, config: cfg });
+  }
+  // 🅰 Amazon = other channels: GET → the Amazon listings at 0 that another channel has (+ the last changes);
+  // POST { limit } → set them now (who is saved in the log).
+  if (path === '/inventory/soldout/watch/amazon-match' && method === 'GET') {
+    const cfg = await lwConfig(env);
+    const list = await lwAmazonMatchList(env, cfg);
+    const log = await d1All(env, `SELECT ts, listing_id, sku, title, quantity, ok, detail FROM listing_qty_log WHERE by_user = ? ORDER BY id DESC LIMIT 60`, [LW_AMZ_BY]);
+    return _soResp({ ok: true, config: cfg, list, log });
+  }
+  if (path === '/inventory/soldout/watch/amazon-match' && method === 'POST') {
+    const b = await request.json().catch(() => ({}));
+    return _soResp(await lwAmazonMatchRun(env, { manual: true, by: who || '?', limit: Math.min(40, Math.max(1, parseInt(b.limit, 10) || 25)) }));
   }
   if (path === '/inventory/soldout/watch/scan' && method === 'POST') {
     // Start a fresh pass; the page then calls /step until it's done.
