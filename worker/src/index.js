@@ -25643,6 +25643,7 @@ async function autolabelEnsureTables(env) {
   await env.DB.prepare('CREATE INDEX IF NOT EXISTS idx_label_printed ON label_print_queue(printed_at)').run().catch(()=>{});
   // What is in the box (SKU, qty, bin) — printed on a 4×6 sticker right after the label (owner).
   await env.DB.prepare('ALTER TABLE label_print_queue ADD COLUMN items TEXT').run().catch(()=>{});
+  await env.DB.prepare('ALTER TABLE label_print_queue ADD COLUMN cancel_hold TEXT').run().catch(()=>{}); // 🛑 cancelled before it printed — not printed
   await ensureShipD1Tables(env); // ship_order_cancel_log
   _autolabelTablesReady = true;
 }
@@ -25869,6 +25870,7 @@ async function autolabelEbayCancels(env, sinceIso) {
       { headers: { Authorization: `Bearer ${token}` } });
     const data = await r.json().catch(() => ({}));
     if (!r.ok || (data.errors && data.errors.length)) throw new Error(`eBay ${r.status}: ${(data.errors && data.errors[0] && data.errors[0].message) || ''}`);
+    if (!Array.isArray(data.orders) && !(data.total === 0)) throw new Error('eBay: unexpected answer (no order list)'); // never read as "nothing cancelled"
     for (const o of (data.orders || [])) {
       const cs = o.cancelStatus || {};
       const state = String(cs.cancelState || '').toUpperCase();
@@ -26243,6 +26245,7 @@ async function autolabelAmazonCancels(env, sinceIso) {
       if (!r.ok) throw new Error(`Amazon ${r.status}: ${JSON.stringify(d.errors || d).slice(0, 200)}`);
       return d;
     }, 2, 2000);
+    if (!data || !data.payload || !Array.isArray(data.payload.Orders)) throw new Error('Amazon: unexpected answer (no order list)');
     const p = data.payload || {};
     for (const o of (p.Orders || [])) items.push({ num: o.AmazonOrderId, alt: [], state: 'CANCELED' });
     next = p.NextToken;
@@ -26278,6 +26281,7 @@ async function autolabelWalmartCancels(env, sinceIso) {
     const data = await r.json().catch(() => ({}));
     if (r.status === 404) break; // Walmart answers "no orders found" with a 404
     if (!r.ok) throw new Error(`Walmart ${r.status}: ${JSON.stringify(data).slice(0, 200)}`);
+    if (!data || !data.list) throw new Error('Walmart: unexpected answer (no order list)');
     const raw = (data.list && data.list.elements && data.list.elements.order) || [];
     for (const o of (Array.isArray(raw) ? raw : [raw])) {
       const lines = (o.orderLines && o.orderLines.orderLine) || [];
@@ -26308,6 +26312,7 @@ async function autolabelShopifyCancels(env, sinceIso) {
   let cursor = null;
   for (let page = 0; page < 5; page++) {
     const d = await shopifyGraphQL(env, query, { cursor, q: `updated_at:>='${sinceIso}' AND (status:cancelled OR financial_status:refunded)` });
+    if (!d || !d.orders || !Array.isArray(d.orders.edges)) throw new Error('Shopify: unexpected answer (no order list)');
     const conn = d.orders || {};
     for (const e of (conn.edges || [])) {
       const n = e.node || {};
@@ -26319,6 +26324,19 @@ async function autolabelShopifyCancels(env, sinceIso) {
   return items;
 }
 
+// Owner (2026-10-10): "make sure we never print cancelled orders — even if we ship it, they return it, wasting money".
+// A channel whose cancellations could not be read this run (token, Amazon / Walmart busy…) is NOT treated as "nothing
+// cancelled": its orders wait for the next run. → the reason, or '' when the check worked.
+// Only a channel whose check worked in the last 24 h is held this way (a short outage); one not set up / broken for longer
+// would hold its orders forever — that shows as a red note on every run instead (autolabelCancelNotes).
+function autolabelCancelCheckFailed(cancels, o) {
+  const t = autolabelChannelType(o), ch = cancels && cancels.channels && cancels.channels[t];
+  return ch && ch.ok === false && ch.recentOk ? `couldn't check ${t} cancellations right now (${String(ch.error || 'error').slice(0, 120)})` : '';
+}
+function autolabelCancelNotes(cancels) {
+  return Object.entries((cancels && cancels.channels) || {}).filter(([, c]) => c.ok === false && !c.recentOk)
+    .map(([ch, c]) => `🛑 ${ch} cancellations have not been checked for over 24 h (${String(c.error || 'error').slice(0, 120)}) — a cancelled ${ch} order could be printed: fix the ${ch} connection`);
+}
 async function autolabelCollectCancels(env, cfg) {
   const sinceIso = new Date(Date.now() - cfg.cancelLookbackDays * 86400000).toISOString();
   const sources = {
@@ -26328,7 +26346,7 @@ async function autolabelCollectCancels(env, cfg) {
     shopify: () => autolabelShopifyCancels(env, sinceIso),
     veeqo:   async () => (await autolabelFetchVeeqoPages(env,
                `&status=cancelled&updated_at_min=${encodeURIComponent(sinceIso.slice(0, 10))}`, 3))
-               .filter(o => !veeqoIsFBA(o))
+               .filter(o => !veeqoIsFBA(o) && String(o.status || '').toLowerCase() === 'cancelled') // only what Veeqo itself says is cancelled
                .map(o => ({ num: o.number, alt: [], state: 'CANCELLED_IN_VEEQO', order: o })),
   };
   const channels = {};
@@ -26347,6 +26365,14 @@ async function autolabelCollectCancels(env, cfg) {
       channels[ch] = { ok: false, error: String(e && e.message || e).slice(0, 300) };
     }
   }));
+  // When each channel's check last worked (one key; written at most every 10 min per channel).
+  let okAt = {}; try { okAt = JSON.parse(await autolabelGetKey(env, 'autolabel_cancel_ok') || '{}') || {}; } catch (_) { okAt = {}; }
+  let dirty = false; const nowMs = Date.now();
+  for (const [ch, c] of Object.entries(channels)) {
+    if (c.ok) { if (!(nowMs - (Date.parse(okAt[ch] || '') || 0) < 600000)) { okAt[ch] = new Date(nowMs).toISOString(); dirty = true; } c.recentOk = true; }
+    else c.recentOk = nowMs - (Date.parse(okAt[ch] || '') || 0) < 86400000;
+  }
+  if (dirty) await autolabelSetKey(env, 'autolabel_cancel_ok', JSON.stringify(okAt)).catch(() => {});
   return { channels, byNum, all };
 }
 
@@ -26962,6 +26988,42 @@ async function autolabelMarkShipped(env, o, allocId, tracking, carrierId) {
   }
   return { ok: false, said };
 }
+// 🛑 Right before the printer station prints (owner 2026-10-10: "never print cancelled orders — they come back to us,
+// wasting money"): a waiting label whose order (any order of a merged box) is on the Cancellation list or is now
+// cancelled / refunded on its channel is held back — never handed to the printer — and put on the Cancellation list
+// (void the label in Veeqo for the refund; Picking / Packing stop it). Kept on the label (cancel_hold) and in the log.
+// → { rows: still to print, held: held now }
+async function autolabelHoldCancelled(env, cfg, rows, session) {
+  if (!rows.length) return { rows, held: [] };
+  let cancels = null;
+  try { cancels = await autolabelCancelsCached(env, cfg); } catch (_) { cancels = null; }
+  const open = await d1All(env, `SELECT UPPER(REPLACE(order_num,'#','')) AS n, UPPER(REPLACE(tracking,' ','')) AS t FROM ship_order_cancel_log WHERE status != 'done'`).catch(() => []);
+  const onList = new Set(), onListT = new Set();
+  (open || []).forEach(r => { if (r.n) onList.add(autolabelOrderNum(r.n)); if (r.t) onListT.add(r.t); });
+  const keep = [], held = [], now = new Date().toISOString();
+  for (const r of rows) {
+    const nums = String(r.order_number || '').split(/\s*\+\s*/).map(autolabelOrderNum).filter(Boolean);
+    const t = normalizeShipTracking(r.tracking || '');
+    let why = '';
+    for (const n of nums) {
+      const c = cancels && cancels.byNum.get(n);
+      if (c) { why = `${n} cancelled on ${c.channel} (${c.state})`; break; }
+      if (onList.has(n)) { why = `${n} is on the Cancellation list`; break; }
+    }
+    if (!why && t && onListT.has(t)) why = `tracking ${t} is on the Cancellation list`;
+    if (!why) { keep.push(r); continue; }
+    const reason = `🛑 Not printed: ${why} — void this label in Veeqo`;
+    await d1Run(env, 'UPDATE label_print_queue SET cancel_hold = ? WHERE id = ? AND printed_at IS NULL', [reason.slice(0, 300), r.id]);
+    if (t && !onListT.has(t)) {
+      await d1Run(env, `INSERT INTO ship_order_cancel_log (date, timestamp, tracking, order_num, reason, requested_by, requested_at, status) VALUES (?, ?, ?, ?, ?, 'AUTO', ?, 'pending')`,
+        [shipTodayKey(), now, t, r.order_number || '', `Auto: ${why} after the label was bought — NOT printed; void the label in Veeqo`, now]).catch(() => {});
+      onListT.add(t);
+    }
+    await autolabelLog(env, { orderNumber: r.order_number, channel: r.channel, action: 'cancel_held', tracking: t, reason: why }).catch(() => {});
+    held.push({ ...r, cancel_hold: reason });
+  }
+  return { rows: keep, held };
+}
 // Buys the ONE label for a merged box and marks the other orders shipped
 // with it. Every step is kept in autolabel_merge + autolabel_log.
 // Owner (2026-10-08): "under 20 lb, just merge it first — don't merge and buy
@@ -27093,6 +27155,8 @@ async function autolabelMergeFinish(env, cfg, m, by) {
   for (const g of orders) {
     const n = autolabelOrderNum(g.number), c = cancels.byNum.get(n);
     if (c) return failRow(`${g.number} was cancelled on ${c.channel} (${c.state}) — nothing bought`);
+    const cf = autolabelCancelCheckFailed(cancels, g);
+    if (cf) return { ok: false, wait: true, left: 0, error: `${g.number}: ${cf}` }; // not bought yet — the next run checks again
     if (await d1First(env, `SELECT 1 x FROM ship_order_cancel_log WHERE status!='done' AND UPPER(REPLACE(order_num,'#',''))=?`, [n])) return failRow(`${g.number} is on the Cancellation list — nothing bought`);
   }
   const lead = orders.find(g => String(g.id) === String(m.lead_id));
@@ -27632,6 +27696,7 @@ async function autolabelRunOnce(env, opts = {}) {
   // 1) Cancellations from every channel (and Veeqo itself).
   const cancels = await autolabelCollectCancels(env, cfg);
   result.channels = cancels.channels;
+  result.notes.push(...autolabelCancelNotes(cancels));
   if (cfg.cancelWatch) {
     try { result.cancelWatch = await autolabelHandleNewCancels(env, cancels, cfg); }
     catch (e) { result.cancelWatch = { error: e.message }; }
@@ -27683,6 +27748,8 @@ async function autolabelRunOnce(env, opts = {}) {
 
     if (cancel) { row.decision = 'cancelled'; row.reason = `Cancelled on ${cancel.channel} (${cancel.state}) — do not print`; }
     else if (listed.has(num)) { row.decision = 'cancelled'; row.reason = 'On the Cancellation list — do not print'; }
+    else if (autolabelCancelCheckFailed(cancels, o) && !(allocs.length && allocs.every(a => _psAllocTrackingNumber(a)))) {
+      row.decision = 'hold'; row.reason = `⚠ Not bought: ${autolabelCancelCheckFailed(cancels, o)} — tries again on the next run`; }
     else if (autolabelChannelMatches(o, cfg.skipChannels)) { row.decision = 'skipped'; row.reason = 'Channel is on the skip list'; }
     else if (allocs.length && allocs.every(a => _psAllocTrackingNumber(a))) { row.decision = 'has_label'; row.reason = 'Already has a label'; }
     else if (!allocs.length && veeqoExtractTracking(o)) { row.decision = 'has_label'; row.reason = 'Already has a label'; }
@@ -28103,8 +28170,9 @@ async function autolabelBuyByHand(env, number, by, allowLow) {
   if (!todo.length) return { ok: false, error: 'This order already has a label' };
   const listed = await d1First(env, `SELECT 1 x FROM ship_order_cancel_log WHERE status!='done' AND UPPER(REPLACE(order_num,'#',''))=?`, [autolabelOrderNum(o.number)]);
   if (listed) return { ok: false, error: 'On the Cancellation list — not buying' };
-  const c = (await autolabelCancelsCached(env, cfg)).byNum.get(autolabelOrderNum(o.number));
+  const cc = await autolabelCancelsCached(env, cfg), c = cc.byNum.get(autolabelOrderNum(o.number));
   if (c) return { ok: false, error: `Cancelled on ${c.channel} (${c.state}) — not buying` };
+  if (autolabelCancelCheckFailed(cc, o)) return { ok: false, error: `Not buying: ${autolabelCancelCheckFailed(cc, o)} — try again in a minute` };
   if (autolabelChannelType(o) === 'amazon') {
     const amz = await autolabelAmazonBuyerCancel(env, o.number);
     if (amz.requested) return { ok: false, error: 'Amazon buyer asked to cancel — not buying' };
@@ -28699,6 +28767,7 @@ async function handleAutolabelRoute(path, method, url, request, env, session) {
     const cancels = await autolabelCollectCancels(env, cfg);
     const c = cancels.byNum.get(autolabelOrderNum(o.number));
     if (c) return veeqoResp({ ok: false, error: `Order is cancelled on ${c.channel} (${c.state}) — not buying` });
+    if (autolabelCancelCheckFailed(cancels, o)) return veeqoResp({ ok: false, error: `Not buying: ${autolabelCancelCheckFailed(cancels, o)} — try again in a minute` });
     if (autolabelChannelType(o) === 'amazon') {
       const amz = await autolabelAmazonBuyerCancel(env, o.number);
       if (amz.requested) return veeqoResp({ ok: false, error: 'Amazon buyer asked to cancel — not buying' });
@@ -28857,14 +28926,22 @@ async function handleAutolabelRoute(path, method, url, request, env, session) {
       ? await d1All(env, `SELECT id, order_number, channel, tracking, carrier, service, created_at, printed_at, printed_by, print_count, last_error, items
           FROM label_print_queue WHERE UPPER(order_number) LIKE ? OR UPPER(tracking) LIKE ? ORDER BY id DESC LIMIT 50`, ['%' + q + '%', '%' + q + '%'])
       : await d1All(env, `SELECT id, order_number, channel, tracking, carrier, service, created_at, printed_at, printed_by, print_count, last_error, items
-      FROM label_print_queue WHERE printed_at IS ${printed ? 'NOT ' : ''}NULL AND id > ? ORDER BY id ${printed ? 'DESC' : 'ASC'} LIMIT ?`,
+      FROM label_print_queue WHERE printed_at IS ${printed ? 'NOT ' : ''}NULL${printed ? '' : ' AND cancel_hold IS NULL'} AND id > ? ORDER BY id ${printed ? 'DESC' : 'ASC'} LIMIT ?`,
       [printed ? 0 : (parseInt(url.searchParams.get('after')) || 0), limit]); // ?after= → the next round (the station prints every waiting label, 50 at a time)
+    // 🛑 Last check right before printing: an order cancelled after its label was bought is held back, never printed.
+    let held = [];
+    if (!printed && q.length < 3) {
+      const keep = await autolabelHoldCancelled(env, await autolabelLoadConfig(env), rows, session);
+      held = keep.held; rows.splice(0, rows.length, ...keep.rows);
+      held = (await d1All(env, `SELECT id, order_number, channel, tracking, carrier, service, created_at, cancel_hold FROM label_print_queue
+        WHERE printed_at IS NULL AND cancel_hold IS NOT NULL AND created_at >= ? ORDER BY id DESC LIMIT 50`, [new Date(Date.now() - 7 * 86400000).toISOString()]).catch(() => [])) || [];
+    }
     // A computer printing new labels (printer station / Print new labels now) asks with ?after= → remember when, so
     // the page can say "no printer station is on" when labels sit waiting.
     if (!printed && url.searchParams.has('after')) await autolabelSetKey(env, 'label_station_seen', JSON.stringify({ at: new Date().toISOString(), by: String((session && (session.displayName || session.username)) || '').slice(0, 40) })).catch(() => {});
     let stationSeen = null; try { stationSeen = JSON.parse(await autolabelGetKey(env, 'label_station_seen') || 'null'); } catch (_) {}
     const orig = await labelOrigins(env, rows.map(r => r.tracking));
-    return veeqoResp({ ok: true, stationSeen, labels: rows.map(r => { let items = []; try { items = JSON.parse(r.items || '[]') || []; } catch (_) {}
+    return veeqoResp({ ok: true, stationSeen, held, labels: rows.map(r => { let items = []; try { items = JSON.parse(r.items || '[]') || []; } catch (_) {}
       const t = String(r.tracking || ''); return { ...r, items, origin: labelOrigin(orig.get(t), orig.has(t)) }; }) });
   }
   // GET ?order= → that order's live Veeqo info for 🔎 in Last run, plus its change history.
