@@ -5130,5 +5130,53 @@ console.log('\n🏭→🚢 Orders and containers: shipped comes off the oldest o
     DELETE FROM reorder_alias WHERE raw = 'JQ-94777'; DELETE FROM master_list WHERE part_num LIKE '94-%'`);
 }
 
+// Owner (2026-10-10, photo 201-1-9=10X: "Each/Case differs: SKU Mgr's GARAGE row says 166.67 pcs a box, the packing list
+// 200"): one more step — how many pieces are in the box right now. Good numbers to tap, More… opens our own number pad (the
+// phone keyboard never pops up). Kept for the office and History; SKU Mgr and the counts don't change.
+console.log('\n📦 Container here: pieces in the box checked when the Each/Case doesn\'t match');
+{
+  const { readFileSync } = await import('node:fs');
+  const ih = readFileSync(fileURLToPath(new URL('../inventory.html', import.meta.url)), 'utf8');
+  const ts = new Date().toISOString();
+  sq.prepare("INSERT INTO reorder_pallet (title, vendor, pallet, part, description, cases, pcs, pcs_per_ctn, updated_at) VALUES ('PCS CT','KW','2','PC-1=10X','elbow',3,600,200,?)").run(ts);
+  const lid = sq.prepare("SELECT id FROM reorder_pallet WHERE title='PCS CT'").get().id;
+  const ml0 = JSON.stringify(sq.prepare('SELECT SUM(cases) c, SUM(cases * COALESCE(units_per_case, 0)) p FROM master_list').get()), lg0 = sq.prepare('SELECT COUNT(*) n FROM inventory_log').get().n;
+  const body = { palletLineId: lid, pcs: 200, listPcs: 200, skuPcs: 166.67, skuLoc: 'GARAGE', _requestId: 'pcs-test-1' };
+  const r1 = await post('/inventory/containers/pcs-check', body), r2 = await post('/inventory/containers/pcs-check', body);
+  const bad = await post('/inventory/containers/pcs-check', { palletLineId: lid });
+  const pv = await get('/inventory/containers/pallet-view?title=' + encodeURIComponent('PCS CT') + '&vendor=KW&pallet=2');
+  const det = await get('/inventory/containers/pallet-detail?title=' + encodeURIComponent('PCS CT') + '&vendor=KW&pallet=2');
+  const oc = await post('/inventory/outbox/check', { ids: ['pcs-test-1'] });
+  const c = (pv.pcsChecks || [])[0] || {};
+  check('saved once (sent twice): PC-1=10X has 200 pcs a box (SKU Mgr GARAGE 166.67, packing list 200), by who; on the pallet and in History; the phone\'s outbox finds it; no number → refused',
+    r1.ok && r1.pcsId > 0 && (pv.pcsChecks || []).length === 1 && c.lineId === lid && c.pcs === 200 && c.skuPcs === 166.67 && c.listPcs === 200 && c.skuLoc === 'GARAGE' && c.by === 'TS'
+      && (det.pcsChecks || []).length === 1 && oc.results['pcs-test-1'].state === 'saved' && bad.ok === false && /📦 Pieces in the box checked/.test(ih), { r1, r2, bad, pcs: pv.pcsChecks, oc });
+  const ml1 = JSON.stringify(sq.prepare('SELECT SUM(cases) c, SUM(cases * COALESCE(units_per_case, 0)) p FROM master_list').get()), lg1 = sq.prepare('SELECT COUNT(*) n FROM inventory_log').get().n;
+  check('…SKU Mgr and inventory don\'t change (cases + pieces ' + ml0 + ' → ' + ml1 + ', entries ' + lg0 + ' → ' + lg1 + ')', ml0 === ml1 && lg0 === lg1, { ml0, ml1, lg0, lg1 });
+
+  // The screen
+  const src = ih.slice(ih.indexOf('  // 📦 Pieces in the box (owner 2026-10-10'), ih.indexOf('  // 🧮 Before starting a pallet (owner 2026-10-10)'));
+  const W0 = {}, posts = []; let kp = null;
+  const L = { id: 7, part: 'PC-1=10X', pallet: '2', left: 3 }, L2 = { id: 8, part: 'PC-2=5', pallet: '2', left: 2 }, L3 = { id: 9, part: 'PC-3', pallet: '2', left: 1 };
+  const F = { 7: { location: 'GARAGE', pcs: 166.67, linePcs: 200, sizeDiff: true }, 8: { location: 'GARAGE', pcs: 100, linePcs: 200, sizeDiff: true }, 9: { location: 'GARAGE', pcs: 50, linePcs: 50 } };
+  const xfrGo = { focus: { title: 'PCS CT', vendor: 'KW', pallet: '2' }, lines: [L, L2, L3], sel: { id: 7 }, pcsChecks: [] };
+  const H = new Function('window', 'xfrGo', 'xfrGoFrom', 'xfrN', 'xfrE', 'xfrKeypad', 'invPost', 'invFlash', 'W', 'INV_CRED_USER', 'xfrGoRender', 'xfrGoBox',
+    src + '; return { needed: xfrPcsNeeded, panel: xfrPcsPanel, done: xfrPcsDone };')(W0, xfrGo, l => F[l.id], v => String(v), String, (t, v, cb) => { kp = { t, cb }; },
+    (u, o) => { posts.push(JSON.parse(o.body)); return Promise.resolve({ json: () => ({ ok: true }) }); }, () => {}, 'W', { displayName: 'TS' }, () => {}, () => {});
+  const p7 = H.panel(L), p8 = H.panel(L2), n7 = H.needed(L), n9 = H.needed(L3);
+  check('asked only when the Each/Case doesn\'t match: "How many pieces in each box?", 200 (packing list) first, 166.67 not offered (not a whole number), common sizes, More…; no text box (no phone keyboard)',
+    n7 && !n9 && /📦 How many pieces in each box\?/.test(p7) && /xfrPcsPick\(200\)">200 <span[^>]*>\(packing list\)/.test(p7) && !/xfrPcsPick\(166\.67\)/.test(p7)
+      && (p7.match(/xfrPcsPick\(200\)/g) || []).length === 1 && /xfrPcsPick\(25\)/.test(p7) && /xfrPcsPick\('more'\)">More…/.test(p7) && !/<input/i.test(p7 + p8)
+      && /xfrPcsPick\(100\)">100 <span[^>]*>\(SKU Mgr GARAGE\)/.test(p8) && (p8.match(/xfrPcsPick\(100\)/g) || []).length === 1, { p7: p7.length });
+  W0.xfrPcsPick('more'); kp.cb(180);
+  check('…More… → our own number pad ("How many pieces in each box of PC-1=10X?") → 180 saved (with SKU Mgr 166.67 / packing list 200), not asked again, the card says what they found',
+    /How many pieces in each box of PC-1=10X\?/.test(kp.t) && posts.length === 1 && posts[0].palletLineId === 7 && posts[0].pcs === 180 && posts[0].skuPcs === 166.67 && posts[0].listPcs === 200
+      && !H.needed(L) && /✓ Box checked: 180 pcs a box — not the packing list \(200\) or SKU Mgr \(166\.67\)/.test(H.done(L)), { posts, done: H.done(L) });
+  check('…a move waits for it (shelf scan → "First tap how many pieces are in each box"); the answer goes into the Transfer\'s notes (both ways of moving); shown in the item card',
+    /if \(xfrPcsNeeded\(l\)\) \{ invFlash\('⬆ First tap how many pieces are in each box/.test(ih) && (ih.match(/' · box checked: ' \+ xfrN\(xfrPcsOf\(l\)\.pcs\) \+ ' pcs a box \(SKU Mgr '/g) || []).length === 2
+      && /\+ \(xfrPcsNeeded\(l\) \? xfrPcsPanel\(l\) : xfrPcsDone\(l\)\)/.test(ih), null);
+  sq.exec("DELETE FROM reorder_pallet WHERE title='PCS CT'; DELETE FROM pallet_pcs_check WHERE title='PCS CT'");
+}
+
 console.log('\n' + (failed ? '❌ ' + failed + ' check(s) FAILED' : '✅ all ' + passed + ' checks passed') + '\n');
 process.exit(failed ? 1 : 0);
