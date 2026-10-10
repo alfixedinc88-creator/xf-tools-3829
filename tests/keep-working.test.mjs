@@ -5221,5 +5221,63 @@ console.log('\n📶 Phone outbox: every kind of entry is found once saved (no st
   sq.exec("DELETE FROM pallet_move WHERE pallet_id IN (SELECT id FROM reorder_pallet WHERE title='OB CT'); DELETE FROM reorder_pallet WHERE title='OB CT'; DELETE FROM master_list WHERE part_num='OB-1=10'; DELETE FROM barcode_label_job WHERE sku='OB-1=10'");
 }
 
+// Owner (2026-10-10): "make sure for the cancellation on each channel we check it before we auto print — never print
+// cancelled orders: even if we ship it, they return it, wasting money". The auto run already skipped orders cancelled
+// on Amazon / eBay / Walmart / Shopify / Veeqo and the Cancellation list. Two holes closed: a channel whose check failed
+// this run was read as "nothing cancelled", and a label waiting to print was never checked again.
+console.log('\n🛑 Auto Label: never buys / prints a cancelled order (channel check down → wait; last check right before printing)');
+{
+  const { readFileSync } = await import('node:fs');
+  const realFetch = globalThis.fetch, realNow = Date.now;
+  sq.prepare("DELETE FROM app_config WHERE key = 'autolabel_cancel_ok'").run();
+  const items = [{ quantity: 1, sellable: { id: 811, sku_code: '8-8-8=1', product_title: 'Tee', weight_grams: 40, stock_entries: [{ warehouse_id: 55, location: '8-8-8' }] } }];
+  const ord = (id, num, ch) => ({ id, number: num, status: 'awaiting_fulfillment', channel: { name: ch, type_code: ch.toLowerCase() }, total_price: 30, created_at: new Date(Date.now() - 864e5).toISOString(),
+    deliver_to: { first_name: 'C' + id, last_name: 'X', address1: id + ' Main St', zip: '10001' }, line_items: items, allocations: [{ id: id * 10, line_items: items, shipment: null }] });
+  let ebay = 'ok', vCancelled = [];
+  globalThis.fetch = async (u, o) => { u = String(u); const J = (x, st) => new Response(JSON.stringify(x), { status: st || 200, headers: { 'Content-Type': 'application/json' } });
+    if (u.includes('api.ebay.com/identity/v1/oauth2/token')) return J({ access_token: 'tok', expires_in: 7200 });
+    if (u.includes('api.ebay.com/sell/fulfillment/v1/order?')) return ebay === 'ok' ? J({ total: 0, orders: [] }) : J({ errors: [{ message: 'Service Unavailable' }] }, 503);
+    if (u.includes('api.veeqo.com/orders?')) return J(/status=cancelled/.test(u) ? vCancelled : (/status=awaiting/.test(u) ? [ord(951, 'EB-1', 'eBay'), ord(952, 'WM-1', 'Walmart')] : []));
+    if (u.includes('api.veeqo.com/shipping/quotes/amazon_shipping_v2')) return J([{ title: 'USPS Ground Advantage', name: 'usps-ga', carrier: 'usps', total_net_charge: 4.8, transit_days: 3 }]);
+    if (u.includes('api.veeqo.com/')) return J([]);
+    return new Response('{}', { status: 401 }); };   // Amazon / Walmart / Shopify: never set up in this test
+  env.VEEQO_API_KEY = 'k'; env.EBAY_CLIENT_ID = env.EBAY_CLIENT_ID || 'id'; env.EBAY_CLIENT_SECRET = env.EBAY_CLIENT_SECRET || 's'; env.EBAY_REFRESH_TOKEN = env.EBAY_REFRESH_TOKEN || 'r';
+  await post('/veeqo/autolabel/config', { config: { mode: 'preview' } });
+  const R = (run, n) => (run.orders || []).find(r => r.number === n) || {};
+  const run1 = await post('/veeqo/autolabel/run', {});
+  ebay = 'down';
+  const run2 = await post('/veeqo/autolabel/run', {});
+  check('eBay\'s cancel check worked, then is down → the eBay order is NOT bought this run ("couldn\'t check ebay cancellations right now … tries again on the next run")',
+    run1.ok && R(run1, 'EB-1').decision !== 'hold' && R(run2, 'EB-1').decision === 'hold' && /couldn't check ebay cancellations right now/.test(R(run2, 'EB-1').reason), { r1: R(run1, 'EB-1'), r2: R(run2, 'EB-1') });
+  check('…a channel never set up (Walmart here) does not stop its orders forever: a red note on every run says it is not being checked',
+    R(run2, 'WM-1').decision !== 'hold' && (run2.notes || []).some(n => /🛑 walmart cancellations have not been checked for over 24 h/.test(n)), { wm: R(run2, 'WM-1'), notes: run2.notes });
+  check('…an odd answer from a channel (no order list) never counts as "nothing cancelled"',
+    /eBay: unexpected answer \(no order list\)/.test(readFileSync(workerPath, 'utf8')) && /Amazon: unexpected answer/.test(readFileSync(workerPath, 'utf8')) && /Walmart: unexpected answer/.test(readFileSync(workerPath, 'utf8')) && /Shopify: unexpected answer/.test(readFileSync(workerPath, 'utf8')), null);
+
+  // Right before printing
+  ebay = 'ok';
+  await get('/veeqo/autolabel/labels?status=new&after=0'); // label tables
+  sq.exec("CREATE TABLE IF NOT EXISTS ship_order_cancel_log (id INTEGER PRIMARY KEY AUTOINCREMENT, date TEXT, timestamp TEXT, tracking TEXT, order_num TEXT, reason TEXT, requested_by TEXT, requested_at TEXT, status TEXT)");
+  const q = sq.prepare("INSERT INTO label_print_queue (order_id, alloc_id, order_number, channel, tracking, carrier, service, source, created_at, items) VALUES (?,?,?,?,?,?,?,?,?,?)");
+  const now = new Date().toISOString();
+  [['PH-1', '9400PH1'], ['PH-2', '9400PH2'], ['PH-3 + PH-4', '9400PH3'], ['PH-5', '9400PH5']].forEach(([n, t], i) => q.run(String(900 + i), String(9000 + i), n, 'eBay', t, 'USPS', 'GA', '{}', now, '[]'));
+  sq.prepare("INSERT INTO ship_order_cancel_log (date, timestamp, tracking, order_num, reason, requested_by, requested_at, status) VALUES (?,?,?,?,?,?,?,?)").run(now.slice(0, 10), now, '', 'PH-1', 'buyer called', 'KL', now, 'pending');
+  vCancelled = [{ id: 961, number: 'PH-2', status: 'cancelled', channel: { name: 'eBay' } }, { id: 962, number: 'PH-4', status: 'cancelled', channel: { name: 'eBay' } }];
+  const base = realNow(); Date.now = () => base + 5 * 60000; // past the 2-min cancel cache
+  let st;
+  try { st = await get('/veeqo/autolabel/labels?status=new&limit=50&after=0'); } finally { Date.now = realNow; }
+  const got = (st.labels || []).map(l => l.order_number).filter(n => /^PH-/.test(n)), held = (st.held || []).map(l => l.order_number).filter(n => /^PH-/.test(n)).sort();
+  const rows = sq.prepare("SELECT order_number, cancel_hold, printed_at FROM label_print_queue WHERE order_number LIKE 'PH-%' ORDER BY id").all();
+  const listed = sq.prepare("SELECT tracking FROM ship_order_cancel_log WHERE requested_by = 'AUTO' AND tracking IN ('9400PH2', '9400PH3')").all().map(r => r.tracking).sort();
+  check('right before printing: only PH-5 goes to the printer; PH-1 (on the Cancellation list), PH-2 (cancelled in Veeqo) and the merged box PH-3 + PH-4 (PH-4 cancelled) are held, not printed',
+    JSON.stringify(got) === '["PH-5"]' && JSON.stringify(held) === '["PH-1","PH-2","PH-3 + PH-4"]' && rows.filter(r => r.cancel_hold).length === 3 && rows.every(r => !r.printed_at)
+      && /🛑 Not printed: PH-2 cancelled on veeqo/.test(rows[1].cancel_hold), { got, held, rows });
+  check('…the held labels go on the Cancellation list (void them in Veeqo for the refund; Picking / Packing stop them), and Pack & Ship shows them in red',
+    JSON.stringify(listed) === '["9400PH2","9400PH3"]' && /🛑 ' \+ heldL\.length \+ ' label' \+ \(heldL\.length === 1 \? '' : 's'\) \+ ' NOT printed — the order was cancelled after the label was bought\./.test(readFileSync(fileURLToPath(new URL('../packship.html', import.meta.url)), 'utf8')), listed);
+  sq.exec("DELETE FROM label_print_queue WHERE order_number LIKE 'PH-%'; DELETE FROM ship_order_cancel_log WHERE order_num LIKE 'PH-%' OR tracking LIKE '9400PH%'");
+  await post('/veeqo/autolabel/config', { config: { mode: 'off' } });
+  globalThis.fetch = realFetch; delete env.VEEQO_API_KEY;
+}
+
 console.log('\n' + (failed ? '❌ ' + failed + ' check(s) FAILED' : '✅ all ' + passed + ' checks passed') + '\n');
 process.exit(failed ? 1 : 0);

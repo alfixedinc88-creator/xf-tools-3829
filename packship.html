@@ -10851,6 +10851,12 @@ window.psAlLoadLabels = async function() {
     : fresh.length && (ago == null || ago > 3)
     ? '<div style="border:1.5px solid var(--orange);border-radius:8px;padding:8px;margin-bottom:8px;font-size:12px;color:var(--orange);font-weight:700">⚠ ' + fresh.length + ' label' + (fresh.length === 1 ? '' : 's') + ' waiting, and no printer station is printing'
       + (seen && seen.at ? ' (last one checked ' + _psAlEsc(new Date(seen.at).toLocaleString()) + (seen.by ? ' · ' + _psAlEsc(seen.by) : '') + ')' : '') + '. Auto Label buys them by itself, but they only print on the computer with the label printer: Pack & Ship open there, 🖨 Printer station ticked. Or tap 🖨 Print new labels now.</div>' : '';
+  // 🛑 Cancelled after the label was bought → held back, never printed (void it in Veeqo for the refund).
+  var heldL = (all[0] && all[0].held) || [];
+  var hb = document.getElementById('ps-al-held');
+  if (!hb) { hb = document.createElement('div'); hb.id = 'ps-al-held'; warn.parentNode.insertBefore(hb, warn.nextSibling); }
+  hb.innerHTML = heldL.length ? '<div style="border:1.5px solid var(--red);border-radius:8px;padding:8px;margin-bottom:8px;font-size:12px;color:var(--red)"><b>🛑 ' + heldL.length + ' label' + (heldL.length === 1 ? '' : 's') + ' NOT printed — the order was cancelled after the label was bought.</b> Void ' + (heldL.length === 1 ? 'it' : 'them') + ' in Veeqo (refund); ' + (heldL.length === 1 ? 'it is' : 'they are') + ' on the Cancellation list.'
+    + heldL.map(function(l) { return '<div style="margin-top:4px;font-family:var(--mono)">' + _psAlEsc(l.order_number) + ' · ' + _psAlEsc(l.channel || '') + ' · ' + _psAlEsc(l.tracking || '') + ' — <span style="font-family:var(--sans)">' + _psAlEsc(String(l.cancel_hold || '').replace(/^🛑 Not printed: /, '')) + '</span></div>'; }).join('') + '</div>' : '';
   _psAlLabelRecent = fresh.concat((all[1] && all[1].labels) || []);
   var e = _psAlEsc;
   box.innerHTML = _psAlLabelRecent.length ? _psAlLabelRecent.map(function(l, i) {
