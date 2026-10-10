@@ -4969,6 +4969,13 @@ console.log('\n🧮 Container here: box count confirmed before starting a pallet
   check('saved once (sent twice): opened, our record 9 → counted 8 (−1) with the sum typed (2×3+2), by who; no count → refused',
     c1.ok && c1.diff === -1 && (pv0.counts || []).length === 0 && (pv1.counts || []).length === 1 && cc.opened === true && cc.expected === 9 && cc.counted === 8 && cc.diff === -1 && cc.by === 'TS' && cc.how === '2×3+2' && bad.ok === false,
     { c1, c2, bad, counts: pv1.counts });
+  // Owner (2026-10-10, photo): "1 entry saved on this phone … Start count … Not in History — sending again · tries: 34".
+  // It was saved the first time; the outbox check only looked in inventory_log, so the phone kept sending it.
+  const oc = await post('/inventory/outbox/check', { ids: ['cnt-test-1'] });
+  sq.prepare("INSERT INTO processed_requests (request_id, endpoint, created_at, response_json) VALUES (?,?,?,?)").run('cnt-old-1', 'inventory/containers/pallet-count', new Date().toISOString(), JSON.stringify({ ok: true, expected: 17, counted: 17, diff: 0 }));
+  const oc2 = await post('/inventory/outbox/check', { ids: ['cnt-old-1'] });
+  check('outbox check: a start count is found on record ("saved", not "Not in History — sending again"), also one saved before the fix (stuck on a phone)',
+    c1.countId > 0 && oc.results && oc.results['cnt-test-1'].state === 'saved' && oc2.results && oc2.results['cnt-old-1'].state === 'saved', { c1, oc, oc2 });
   check('…History → the pallet shows it ("🧮 Box count before starting")', det.ok && (det.counts || []).length === 1 && det.counts[0].counted === 8 && /🧮 Box count before starting/.test(ih), det.counts);
   const ml1 = JSON.stringify(sq.prepare('SELECT SUM(cases) c FROM master_list').get()), lg1 = sq.prepare('SELECT COUNT(*) n FROM inventory_log').get().n;
   check('…inventory does not change (SKU Mgr total ' + ml0 + ' → ' + ml1 + ', entries ' + lg0 + ' → ' + lg1 + ')', ml0 === ml1 && lg0 === lg1, { ml0, ml1, lg0, lg1 });
