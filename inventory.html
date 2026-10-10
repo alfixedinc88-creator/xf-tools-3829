@@ -14315,7 +14315,43 @@ window.invCredLogin = async function() {
     el('lw-mode-manual').style.background = auto ? 'var(--bg)' : 'var(--accent)'; el('lw-mode-manual').style.color = auto ? 'var(--text2)' : '#fff';
     el('lw-mode-auto').style.background = auto ? '#B45309' : 'var(--bg)'; el('lw-mode-auto').style.color = auto ? '#fff' : 'var(--text2)';
   }
+  // 🔗 Link a "not checked" listing to our part # (owner 2026-10-10) — same ✏️ mapping as Reorder, kept in its History.
+  lw.unm = []; lw.unmOpen = '';
+  window.lwMapOpen = async function (i) {
+    var m = lw.unm[i], box = el('lw-map-' + i); if (!m || !box) return;
+    if (box.innerHTML) { box.innerHTML = ''; return; }
+    var u = m.u, inp = 'lw-map-in-' + i;
+    if (!u.sku) { box.innerHTML = '<div style="font-size:12px;color:var(--red);margin:4px 0">This listing has no SKU on ' + esc(m.plat) + ' — put our part # as its SKU there, then 🔎 Scan now.</div>'; return; }
+    box.innerHTML = '<div style="border:1.5px solid #f59e0b;border-radius:8px;padding:8px;margin:4px 0;color:var(--text);background:var(--bg)">'
+      + '<div style="font-size:12px;margin-bottom:6px"><b>' + esc(m.plat) + '</b> SKU <span style="font-family:var(--mono)">' + esc(u.sku) + '</span> is our part #:</div>'
+      + '<div id="lw-map-sug-' + i + '" style="font-size:12px;color:var(--text3);margin-bottom:6px">Looking for matches…</div>'
+      + '<div style="display:flex;gap:6px;flex-wrap:wrap"><input id="' + inp + '" placeholder="Part #, e.g. 27-3-2=2" oninput="lwMapSearch(' + i + ')" onkeydown="if(event.key===\'Enter\')lwMapSave(' + i + ')" style="flex:1;min-width:160px;padding:6px 8px;border:1.5px solid var(--border);border-radius:6px;background:var(--bg);color:var(--text);font-family:var(--mono)">'
+      + '<button type="button" onclick="lwMapSave(' + i + ')" style="padding:6px 12px;border:none;border-radius:6px;background:var(--green);color:#fff;font-size:12px;font-weight:700;cursor:pointer">🔗 Link</button></div>'
+      + '<div id="lw-map-hits-' + i + '" style="margin-top:4px"></div></div>';
+    var d = await call('/inventory/soldout/watch/map-help?sku=' + encodeURIComponent(u.sku) + '&title=' + encodeURIComponent(u.title || ''));
+    var sg = el('lw-map-sug-' + i); if (!sg) return;
+    var chips = (d.suggestions || []).flatMap(function (x) { return x.parts; });
+    sg.innerHTML = chips.length ? 'Looks like (from the title' + (d.pack ? ', ' + d.pack + ' pcs' : '') + '): ' + chips.map(function (c) { return lwMapChip(i, c); }).join(' ') : 'No match from the title — type the part #.';
+  };
+  function lwMapChip(i, c) { return '<button type="button" onclick="document.getElementById(\'lw-map-in-' + i + '\').value=\'' + esc(c.part) + '\';lwMapSave(' + i + ')" title="' + esc(c.name) + '" style="margin:2px;padding:3px 8px;border:1.5px solid var(--accent);border-radius:12px;background:var(--bg);color:var(--accent);font-family:var(--mono);font-size:11px;font-weight:700;cursor:pointer">' + esc(c.part) + ' <span style="font-weight:400;color:var(--text3)">(' + esc(c.cases) + ' cs)</span></button>'; }
+  var lwMapT = null;
+  window.lwMapSearch = function (i) {
+    clearTimeout(lwMapT); lwMapT = setTimeout(async function () {
+      var v = String(el('lw-map-in-' + i).value || '').trim(), h = el('lw-map-hits-' + i); if (!h) return;
+      if (v.length < 2) { h.innerHTML = ''; return; }
+      var d = await call('/inventory/soldout/watch/map-help?q=' + encodeURIComponent(v));
+      h.innerHTML = (d.parts || []).map(function (c) { return lwMapChip(i, c); }).join(' ') || '<span style="font-size:11px;color:var(--red)">No part # starts with that in SKU Mgr</span>';
+    }, 250);
+  };
+  window.lwMapSave = async function (i) {
+    var m = lw.unm[i], part = String((el('lw-map-in-' + i) || {}).value || '').trim(); if (!m || !part) return;
+    var d = await call('/inventory/soldout/watch/map', { method: 'POST', body: { platform: m.plat, listingId: m.u.listingId, sku: m.u.sku, title: m.u.title, qty: m.u.qty, isVar: !!m.u.isVar, part: part } });
+    if (!d.ok) { if (typeof showToast === 'function') showToast('✗ ' + (d.error || 'Not linked')); return; }
+    if (typeof showToast === 'function') showToast('🔗 ' + d.sku + ' → ' + d.part + (d.warned ? ' — we have ' + d.ourCases + ' case(s): warning added below, set it' : d.ourCases > 0 ? '' : ' — SKU Mgr has none of it'));
+    lwLoad();
+  };
   function lwRenderState(st) {
+    lw.unm = [];
     if (!st) { el('lw-state').textContent = 'Not scanned yet — press 🔎 Scan now.'; return; }
     var p = st.platforms || {};
     var parts = ['eBay', 'Amazon', 'Walmart', 'Shopify'].map(function (k) { var x = p[k] || {};
@@ -14324,8 +14360,10 @@ window.invCredLogin = async function() {
       + ['eBay', 'Amazon', 'Walmart', 'Shopify'].filter(function (k) { return p[k] && p[k].error; }).map(function (k) { return '<div style="color:var(--red);margin-top:2px">' + esc(p[k].error) + '</div>'; }).join('')
       // Low listings whose SKU matches no part # in SKU Mgr: can't be checked — shown, never skipped silently (owner 2026-10-10).
       + ['eBay', 'Amazon', 'Walmart', 'Shopify'].filter(function (k) { return p[k] && p[k].unmatched; }).map(function (k) { var x = p[k];
-          return '<details style="margin-top:4px;color:#b45309"><summary style="cursor:pointer;font-weight:700">⚠ ' + x.unmatched + ' low ' + k + ' listing' + (x.unmatched === 1 ? '' : 's') + ' NOT checked — the SKU matches no part # in SKU Mgr. Map ' + (x.unmatched === 1 ? 'it' : 'them') + ' with ✏️ in Reorder, then 🔎 Scan now</summary>'
-            + (x.unmatchedList || []).map(function (u) { return '<div style="font-family:var(--mono);font-size:11px;margin:2px 0 0 12px">' + esc(u.sku || u.listingId) + ' · qty ' + esc(u.qty) + (u.title ? ' · <span style="font-family:var(--sans)">' + esc(u.title) + '</span>' : '') + '</div>'; }).join('')
+          return '<details style="margin-top:4px;color:#b45309"' + (lw.unmOpen === k ? ' open' : '') + ' ontoggle="lw.unmOpen=this.open?\'' + k + '\':lw.unmOpen"><summary style="cursor:pointer;font-weight:700">⚠ ' + x.unmatched + ' low ' + k + ' listing' + (x.unmatched === 1 ? '' : 's') + ' NOT checked — the SKU matches no part # in SKU Mgr. Tap one to 🔗 link it to the right part #</summary>'
+            + (x.unmatchedList || []).map(function (u) { var i = lw.unm.push({ plat: k, u: u }) - 1;
+                return '<div style="margin:3px 0 0 12px"><a href="#" onclick="lwMapOpen(' + i + ');return false" style="font-family:var(--mono);font-size:11px;color:#b45309;text-decoration:underline">🔗 ' + esc(u.sku || '(no SKU) ' + u.listingId) + '</a>'
+                  + '<span style="font-size:11px"> · qty ' + esc(u.qty) + (u.title ? ' · ' + esc(u.title) : '') + '</span><div id="lw-map-' + i + '"></div></div>'; }).join('')
             + (x.unmatched > (x.unmatchedList || []).length ? '<div style="margin-left:12px;font-size:11px">…and ' + (x.unmatched - x.unmatchedList.length) + ' more</div>' : '') + '</details>'; }).join('')
       + (p.Amazon && p.Amazon.fbaSkipped ? '<div style="margin-top:4px">ℹ ' + p.Amazon.fbaSkipped + ' Amazon FBA listing' + (p.Amazon.fbaSkipped === 1 ? '' : 's') + ' not checked here: FBA sells from Amazon\'s warehouse, so a sold-out FBA listing needs boxes sent to Amazon (🏢 Stock Out Big Company), not a quantity change.</div>' : '');
   }

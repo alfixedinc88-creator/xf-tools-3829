@@ -30120,7 +30120,7 @@ async function lwStep(env, { pages, trigger }) {
       for (const i of low) {
         const base = baseOf(i), s = stock[base];
         if (!known.has(base)) { ps.unmatched = (ps.unmatched || 0) + 1;
-          if ((ps.unmatchedList = ps.unmatchedList || []).length < 40) ps.unmatchedList.push({ sku: i.sku || '', listingId: String(i.listingId || ''), title: String(i.title || '').slice(0, 80), qty: i.qty });
+          if ((ps.unmatchedList = ps.unmatchedList || []).length < 40) ps.unmatchedList.push({ sku: i.sku || '', listingId: String(i.listingId || ''), title: String(i.title || '').slice(0, 120), qty: i.qty, isVar: !!i.isVar });
           continue; }
         if (!s || !(s.cases > 0)) continue; // really out — nothing to warn about
         const prev = await env.DB.prepare(`SELECT id, status, set_qty FROM lw_alerts WHERE platform = ? AND listing_id = ? AND sku = ?`).bind(plat, String(i.listingId), i.sku || '').first();
@@ -30255,6 +30255,51 @@ async function handleListingWatch(path, method, request, env, session) {
       [new Date().toISOString(), who + ' (Check one listing)', 'eBay', id, sku, String(b.title || '').slice(0, 200), qty, r.ok ? 1 : 0, String(r.error || r.detail || r.via || '').slice(0, 500)]);
     if (r.ok) await env.DB.prepare(`UPDATE lw_alerts SET status = 'fixed', fixed_at = ?, note = ?, set_qty = ? WHERE platform = 'eBay' AND listing_id = ? AND sku = ?`).bind(new Date().toISOString(), `Set to ${qty} by ${who}`, qty, id, sku).run();
     return _soResp({ ok: !!r.ok, error: r.error || null, via: r.via || '' });
+  }
+  // GET ?sku=&title=&q= — 🔗 Link to a part # (owner 2026-10-10: "a listing not checked — click it and fix it to the right
+  // part #"): part #s whose SKU Mgr name looks like the listing title (best first), or the part #s starting with what is typed.
+  if (path === '/inventory/soldout/watch/map-help' && method === 'GET') {
+    const sp = new URL(request.url).searchParams, title = String(sp.get('title') || ''), q = reorderCleanPart(sp.get('q') || '');
+    const rows = await d1All(env, `SELECT UPPER(TRIM(part_num)) AS part, UPPER(base_sku) AS base, MAX(name) AS name, SUM(cases) AS cases FROM master_list WHERE TRIM(COALESCE(part_num, '')) != '' GROUP BY UPPER(TRIM(part_num))`).catch(() => []);
+    if (q) return _soResp({ ok: true, parts: rows.filter(r => r.part.startsWith(q)).sort((a, b) => (b.cases || 0) - (a.cases || 0) || a.part.localeCompare(b.part)).slice(0, 15)
+      .map(r => ({ part: r.part, name: r.name || '', cases: Math.round((r.cases || 0) * 100) / 100 })) });
+    let sug = [];
+    if (title) {
+      const docs = rows.filter(r => r.name).map(r => ({ text: r.name, base: reorderGetBaseSku(r.part), sku: r.part, src: 'SKU Mgr' }));
+      try { sug = (reorderSuggestParts({ X: [title] }, docs).X || []); } catch (_) { sug = []; }
+    }
+    const pack = reorderPackFromTitle(title);
+    return _soResp({ ok: true, pack, suggestions: sug.map(x => ({ base: x.base, score: x.score,
+      parts: rows.filter(r => reorderGetBaseSku(r.part) === x.base).sort((a, b) => (b.cases || 0) - (a.cases || 0)).slice(0, 8)
+        .map(r => ({ part: r.part, name: r.name || '', cases: Math.round((r.cases || 0) * 100) / 100 })) })) });
+  }
+  // POST { platform, listingId, sku, title, qty, isVar, part } — link the listing's SKU to our part # (the same ✏️ "map to
+  // part #" as Reorder: reorder_alias, kept in Reorder → 📜 History). Then checked right away: low + we have stock → a warning.
+  if (path === '/inventory/soldout/watch/map' && method === 'POST') {
+    const b = await request.json().catch(() => ({}));
+    const raw = String(b.sku || '').trim().toUpperCase(), part = reorderCleanPart(b.part), plat = String(b.platform || '');
+    if (!raw) return _soResp({ ok: false, error: 'This listing has no SKU — put the part # as its SKU on ' + (plat || 'the channel') + ' first' }, 400);
+    if (!part) return _soResp({ ok: false, error: 'Which part #?' }, 400);
+    if (!(await d1First(env, 'SELECT 1 AS x FROM master_list WHERE UPPER(TRIM(part_num)) = ? LIMIT 1', [part]).catch(() => null))) return _soResp({ ok: false, error: `${part} is not in SKU Mgr — check the part #` }, 400);
+    await reorderFixTables(env);
+    const had = await d1First(env, 'SELECT part FROM reorder_alias WHERE raw = ?', [raw]).catch(() => null);
+    const now = new Date().toISOString();
+    await env.DB.prepare(`INSERT INTO reorder_alias (raw, part, by_user, updated_at) VALUES (?,?,?,?) ON CONFLICT(raw) DO UPDATE SET part = excluded.part, by_user = excluded.by_user, updated_at = excluded.updated_at`).bind(raw, part, who, now).run();
+    await reorderLog(env, who, 'part', part, `Part # corrected: ${raw} → ${part}${had ? ' (was → ' + had.part + ')' : ''} — from Listing Watch (${plat} ${String(b.listingId || '')})`);
+    // Off the "not checked" list; checked now.
+    const st = await lwState(env);
+    if (st && st.platforms && st.platforms[plat]) { const ps = st.platforms[plat], before = (ps.unmatchedList || []).length;
+      ps.unmatchedList = (ps.unmatchedList || []).filter(u => String(u.sku || '').trim().toUpperCase() !== raw);
+      ps.unmatched = Math.max(0, (ps.unmatched || 0) - (before - ps.unmatchedList.length)); await lwSet(env, 'state', JSON.stringify(st)); }
+    const cfg = await lwConfig(env), base = lwBase(part), stock = (await lwStock(env, [base]))[base], qty = parseInt(b.qty, 10) || 0;
+    let warned = false;
+    if (stock && stock.cases > 0 && qty < cfg.threshold && b.listingId) {
+      await env.DB.prepare(`INSERT INTO lw_alerts (platform, listing_id, sku, base_sku, title, qty, our_cases, our_detail, status, first_seen, last_seen, is_var) VALUES (?,?,?,?,?,?,?,?,'open',?,?,?)
+        ON CONFLICT(platform, listing_id, sku) DO UPDATE SET base_sku = excluded.base_sku, qty = excluded.qty, our_cases = excluded.our_cases, our_detail = excluded.our_detail, status = 'open', last_seen = excluded.last_seen`)
+        .bind(plat, String(b.listingId), String(b.sku || '').trim(), base, String(b.title || '').slice(0, 300), qty, stock.cases, stock.detail, now, now, b.isVar ? 1 : 0).run();
+      warned = true;
+    }
+    return _soResp({ ok: true, sku: raw, part, ourCases: stock ? stock.cases : 0, warned });
   }
   if (path === '/inventory/soldout/watch/dismiss' && method === 'POST') {
     const b = await request.json().catch(() => ({}));
