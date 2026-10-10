@@ -5579,5 +5579,15 @@ console.log('\n🧠 Item Search: sizes + fitting words, any order, best match fi
   check('…1-1/2" is a different size from 1/2": only at the very end (the old search still finds it, so nothing is lost)', a[a.length - 1] === '1-1/2" PEX Female Adapter', a);
 }
 
+// Owner (2026-10-10, Warehouse Lookup → Item Search in a half-width Chrome window): "make the typing longer, I need
+// to see what I type" — the search box was squeezed to nothing by the buttons next to it.
+console.log('\n🔍 Warehouse Lookup → Item Search: the search box stays wide in a narrow window (buttons wrap below)');
+{
+  const { readFileSync } = await import('node:fs');
+  const wh = readFileSync(fileURLToPath(new URL('../warehouse.html', import.meta.url)), 'utf8');
+  check('Item Search row wraps and the box keeps at least 320 px', /#pane-search \.search-row \{ flex-wrap: wrap; \}/.test(wh) && /#pane-search \.search-wrap \{ flex: 1 1 320px; min-width: min\(320px, 100%\); \}/.test(wh)
+    && /<div id="pane-search">\s*<div class="search-row">\s*<div class="search-wrap">/.test(wh), null);
+}
+
 console.log('\n' + (failed ? '❌ ' + failed + ' check(s) FAILED' : '✅ all ' + passed + ' checks passed') + '\n');
 process.exit(failed ? 1 : 0);

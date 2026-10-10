@@ -523,6 +523,11 @@ body {
 
 .btn-x:hover { border-color: var(--red); color: var(--red); background: var(--red-bg); }
 
+/* Owner (2026-10-10): Item Search in a half-width Chrome window squeezed the search box to nothing — "make the
+   typing longer, I need to see what I type". The box keeps at least 320 px; the buttons wrap to the next line. */
+#pane-search .search-row { flex-wrap: wrap; }
+#pane-search .search-wrap { flex: 1 1 320px; min-width: min(320px, 100%); }
+
 /* COUNT QTY PILL */
 .count-pill {
   display: flex;
