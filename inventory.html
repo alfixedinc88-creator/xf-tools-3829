@@ -137,6 +137,7 @@ function invObLabel(path, b) {
   if (path.indexOf('containers/short') >= 0) return '📉 Short on pallet ' + (b.pallet || '') + ': ' + (b.part || '') + ' × ' + (b.short || '?') + ' box(es) not on the pallet';
   if (path.indexOf('containers/recheck') >= 0) return 'Box put at ' + (b.location || '') + ' (already counted): ' + (b.part || '') + ' · Pallet ' + (b.pallet || '');
   if (path.indexOf('containers/upc-issue') >= 0) return '⚠ UPC doesn\'t match: ' + (b.part || '') + ' (scanned ' + (b.code || '?') + ') · Pallet ' + (b.pallet || '');
+  if (path.indexOf('containers/pcs-check') >= 0) return '📦 Box checked: ' + (b.part || '') + ' — ' + (b.pcs || '?') + ' pcs a box (SKU Mgr ' + (b.skuPcs || '?') + ', packing list ' + (b.listPcs || '?') + ') · Pallet ' + (b.pallet || '');
   if (path.indexOf('containers/pallet-count') >= 0) return '🧮 Start count, pallet ' + (b.pallet || '') + ': ' + (b.counted != null ? b.counted : '?') + ' box(es) (record ' + (b.expected != null ? b.expected : '?') + ')';
   if (path.indexOf('containers/extra') >= 0) return 'Extra on pallet ' + (b.pallet || '') + ': ' + (b.part || '') + ' × ' + (b.boxes || '?') + ' box(es) of ' + (b.pcsPerBox || '?') + ' pcs @ ' + (b.toLocation || '');
   var what = path.indexOf('transfer') >= 0 ? 'Transfer' : /\[AUDIT\]/.test(b.notes || '') ? 'Audit' : b.type === 'IN' ? 'Stock In' : b.type === 'OUT' ? (b.noneFound ? 'None found' : 'Stock Out') : (b.type || 'Entry');
@@ -7101,6 +7102,8 @@ window.invCredLogin = async function() {
           }).join('') + '</div>';
         if ((d.counts || []).length) h += '<div style="font-size:12px;font-weight:800;margin:4px 0 6px">🧮 Box count before starting</div>' + table([{ t: 'When' }, { t: 'Who' }, { t: 'Pallet' }, { t: 'Our record', r: 1 }, { t: 'Counted', r: 1 }, { t: 'Diff', r: 1 }],
           d.counts.map(function(c) { var bad = Math.abs(c.diff) > 1e-9; return '<tr><td style="' + tdS + '">' + t(c.at) + '</td><td style="' + tdS + ';font-family:var(--mono);font-weight:700">' + invEsc(c.by) + '</td><td style="' + tdS + '">' + (c.opened ? '📦 opened' : '🧱 not opened') + '</td><td style="' + tdS + ';text-align:right">' + n(c.expected) + '</td><td style="' + tdS + ';text-align:right;font-weight:700">' + n(c.counted) + (c.how ? ' <span style="font-weight:400;color:var(--text3)">(' + invEsc(c.how) + ')</span>' : '') + '</td><td style="' + tdS + ';text-align:right;font-weight:800;color:' + (bad ? 'var(--red)' : 'var(--green)') + '">' + (bad ? (c.diff > 0 ? '+' : '') + n(c.diff) : '✓') + '</td></tr>'; }).join(''));
+        if ((d.pcsChecks || []).length) h += '<div style="font-size:12px;font-weight:800;margin:4px 0 6px">📦 Pieces in the box checked (Each/Case didn\'t match)</div>' + table([{ t: 'When' }, { t: 'Who' }, { t: 'Part #' }, { t: 'In the box', r: 1 }, { t: 'SKU Mgr', r: 1 }, { t: 'Packing list', r: 1 }],
+          d.pcsChecks.map(function(c) { return '<tr><td style="' + tdS + '">' + t(c.at) + '</td><td style="' + tdS + ';font-family:var(--mono);font-weight:700">' + invEsc(c.by) + '</td><td style="' + tdS + ';font-family:var(--mono)">' + invEsc(c.part) + '</td><td style="' + tdS + ';text-align:right;font-weight:800">' + n(c.pcs) + '</td><td style="' + tdS + ';text-align:right">' + n(c.skuPcs) + (c.skuLoc ? ' <span style="color:var(--text3)">(' + invEsc(c.skuLoc) + ')</span>' : '') + '</td><td style="' + tdS + ';text-align:right">' + n(c.listPcs) + '</td></tr>'; }).join(''));
         h += '<div style="font-size:12px;font-weight:800;margin:4px 0 6px">👤 Who worked on it</div>' + table([{ t: 'Who' }, { t: 'Moves', r: 1 }, { t: 'Boxes', r: 1 }, { t: 'First → last' }, { t: 'Time', r: 1 }, { t: 'To' }],
           (d.byPerson || []).map(function(x) { return '<tr><td style="' + tdS + ';font-family:var(--mono);font-weight:700">' + invEsc(x.who) + '</td><td style="' + tdS + ';text-align:right">' + x.moves + '</td><td style="' + tdS + ';text-align:right;font-weight:700">' + n(x.cases) + '</td><td style="' + tdS + '">' + t(x.first) + ' → ' + t(x.last) + '</td><td style="' + tdS + ';text-align:right">' + histMins(x.minutes) + '</td><td style="' + tdS + ';white-space:normal;font-family:var(--mono)">' + invEsc((x.to || []).join(', ')) + '</td></tr>'; }).join('') || '<tr><td style="' + tdS + '" colspan="6">No boxes moved yet</td></tr>');
         h += '<div style="font-size:12px;font-weight:800;margin:4px 0 6px">📦 What was on it</div>' + table([{ t: 'Part #' }, { t: 'Item' }, { t: 'On pallet', r: 1 }, { t: 'Moved', r: 1 }, { t: 'Left', r: 1 }],
@@ -9615,6 +9618,8 @@ window.invCredLogin = async function() {
       xfrGo.lines = (d.lines || []).filter(function(l) { return l.pallet === pallet && l.vendor === vendor; });
       if (!xfrGo.lines.length) xfrGo.lines = d.lines || [];
       xfrGo.recs = d.recs || {}; xfrGo.upcs = d.upcs || {}; xfrGo.extras = d.extras || []; xfrGo.counts = d.counts || [];
+      var srvPc = d.pcsChecks || []; // one still on the phone (no WiFi) stays until the server has it
+      xfrGo.pcsChecks = srvPc.concat((xfrGo.pcsChecks || []).filter(function(x) { return x._local && !srvPc.some(function(y) { return y.lineId === x.lineId; }); }));
       var keepRc = (xfrGo.rechecks || []).filter(function(r) { return r.status === 'Saving' || r.status === 'Failed'; })
         .filter(function(r) { return xfrGo.lines.some(function(l) { return l.id === r.lineId; }); });
       xfrGo.rechecks = (d.rechecks || []).concat(keepRc);
@@ -9746,6 +9751,49 @@ window.invCredLogin = async function() {
   function xfrGoRecs(l) { return (xfrGo.recs && xfrGo.recs[l.part]) || { plan: '', recs: [] }; }
   function xfrNat(a, b) { return String(a).localeCompare(String(b), undefined, { numeric: true }); }
   // Boxes on this line vs. what's still in the stock-in spot (GARAGE).
+  // 📦 Pieces in the box (owner 2026-10-10, 201-1-9=10X: SKU Mgr's GARAGE row 166.67 pcs a box, packing list 200): when
+  // they don't match, one more step before the boxes go: how many pieces are in the box right now? Tap a number (packing
+  // list, SKU Mgr, common sizes) or More… (our own number pad — the phone keyboard never pops up). Kept for the office
+  // (fix the Each/Case) and History. SKU Mgr and the counts don't change. Asked once per item on the pallet.
+  function xfrPcsOf(l) { var a = (xfrGo.pcsChecks || []).filter(function(x) { return x.lineId === l.id; }); return a[a.length - 1] || null; }
+  function xfrPcsNeeded(l) { var f = l && l.left > 0 ? xfrGoFrom(l) : null; return !!(f && f.sizeDiff && !xfrPcsOf(l)); }
+  function xfrPcsOpts(f) { // the numbers to tap: packing list, SKU Mgr (a whole number), then common box sizes
+    var top = [{ n: +f.linePcs || 0, why: 'packing list' }, { n: +f.pcs || 0, why: 'SKU Mgr ' + f.location }]
+      .filter(function(o) { return o.n > 0 && Math.abs(o.n - Math.round(o.n)) < 1e-9; })
+      .filter(function(o, i, a) { return a.findIndex(function(x) { return x.n === o.n; }) === i; });
+    var common = [10, 20, 25, 50, 100, 150, 200, 250, 300, 500, 1000].filter(function(n) { return !top.some(function(o) { return o.n === n; }); });
+    return { top: top, common: common };
+  }
+  function xfrPcsPanel(l) {
+    var f = xfrGoFrom(l); if (!f) return '';
+    var o = xfrPcsOpts(f), big = 'padding:12px 0;border-radius:10px;border:1.5px solid var(--border);background:var(--bg3);color:var(--text);font-size:17px;font-weight:800;cursor:pointer;touch-action:manipulation';
+    return '<div id="xfr-pcs-ck" style="margin-top:8px;padding:10px;border-radius:10px;border:2.5px solid var(--orange);background:var(--orange-bg,#fff7ed)">'
+      + '<div style="font-size:15px;font-weight:800;margin-bottom:2px">📦 How many pieces in each box?</div>'
+      + '<div style="font-size:12px;color:var(--text2);margin-bottom:8px">Our record doesn\'t match: SKU Mgr says ' + xfrN(f.pcs) + ', the packing list ' + xfrN(f.linePcs) + '. Check the box label (or count one box), then tap.</div>'
+      + o.top.map(function(t, i) { return '<button type="button" style="' + big + ';width:100%;margin-bottom:6px;border-color:' + (i ? 'var(--accent)' : 'var(--green)') + ';background:' + (i ? 'var(--bg)' : 'var(--green-bg,#dcfce7)') + '" onclick="xfrPcsPick(' + t.n + ')">' + xfrN(t.n) + ' <span style="font-size:12px;font-weight:600">(' + xfrE(t.why) + ')</span></button>'; }).join('')
+      + '<div style="display:grid;grid-template-columns:repeat(4,1fr);gap:6px">'
+      + o.common.map(function(n) { return '<button type="button" style="' + big + '" onclick="xfrPcsPick(' + n + ')">' + n + '</button>'; }).join('')
+      + '<button type="button" style="' + big + ';color:var(--accent);border-color:var(--accent);background:var(--bg);font-size:15px" onclick="xfrPcsPick(\'more\')">More…</button></div></div>';
+  }
+  function xfrPcsDone(l) { // after the answer: what they said, in the item card
+    var c = xfrPcsOf(l), f = xfrGoFrom(l); if (!c || !f || !f.sizeDiff) return '';
+    var m = Math.abs(c.pcs - (+f.linePcs || 0)) < 1e-9 ? ' = the packing list' : Math.abs(c.pcs - (+f.pcs || 0)) < 1e-9 ? ' = SKU Mgr' : ' — not the packing list (' + xfrN(f.linePcs) + ') or SKU Mgr (' + xfrN(f.pcs) + ')';
+    return '<div style="margin-top:6px;padding:7px 9px;border-radius:8px;background:var(--green-bg,#dcfce7);color:var(--green);font-size:12px;font-weight:700">✓ Box checked: ' + xfrN(c.pcs) + ' pcs a box' + m + (c.by ? ' · ' + xfrE(c.by) : '') + (c._local ? ' (saving…)' : '') + ' — the office fixes the Each/Case</div>';
+  }
+  window.xfrPcsPick = function(n) {
+    var s = xfrGo.sel, l = s && xfrGo.lines.filter(function(x) { return x.id === s.id; })[0]; if (!l) return;
+    if (n === 'more') { xfrKeypad('How many pieces in each box of ' + l.part + '?', '', function(v) { window.xfrPcsPick(v); }); return; }
+    n = parseFloat(n); if (!(n > 0)) { invFlash('How many pieces in the box?', 'error'); return; }
+    var f = xfrGoFrom(l) || {}, fo = xfrGo.focus || {}, me = String((INV_CRED_USER && INV_CRED_USER.displayName) || '').toUpperCase();
+    var c = { lineId: l.id, part: l.part, pcs: n, listPcs: +f.linePcs || 0, skuPcs: +f.pcs || 0, skuLoc: f.location || '', by: me, at: new Date().toISOString(), _local: true };
+    xfrGo.pcsChecks = (xfrGo.pcsChecks || []).concat([c]);
+    invPost(W + '/inventory/containers/pcs-check', { method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ palletLineId: l.id, part: l.part, pallet: fo.pallet || l.pallet, pcs: n, listPcs: c.listPcs, skuPcs: c.skuPcs, skuLoc: c.skuLoc, by: me }) })
+      .then(function(r) { return r.json(); }).then(function(d) { if (d && d.ok && !d.queued) { c._local = false; xfrGoRender(); } else if (d && d.ok === false) invFlash('Box check not saved: ' + (d.error || 'error') + ' — tell the office', 'error'); })
+      .catch(function() {});
+    invFlash('✓ ' + xfrN(n) + ' pcs a box — now move the boxes and scan the shelf label', 'success');
+    xfrGoRender(); xfrGoBox();
+  };
   // 🧮 Before starting a pallet (owner 2026-10-10): confirm starting, is it opened, and the number of boxes on it
   // (our record → correct, or type what is there). Kept in History → the pallet, so an extra / short box shows whether
   // it was already that way at the start. The normal steps after it don't change.
@@ -9867,6 +9915,7 @@ window.invCredLogin = async function() {
           + '<button type="button" onclick="xfrGoStep(1)" style="width:40px;height:40px;border-radius:10px;border:1.5px solid var(--border);background:var(--bg3);font-size:22px;font-weight:800;cursor:pointer;color:var(--text)">+</button>'
           + '<span style="font-size:12px">box(es)</span></div></div></div>'
           + (w ? '<div style="margin-top:8px;font-size:12px;font-weight:700;color:' + (/^ℹ/.test(w) ? 'var(--accent)' : '#b91c1c') + '">' + w + '</div>' : '')
+          + (xfrPcsNeeded(l) ? xfrPcsPanel(l) : xfrPcsDone(l))
           + (R.plan ? '<div style="margin-top:8px;padding:8px 10px;border-radius:10px;background:#fef3c7;color:#92400e;font-weight:800;font-size:15px">📍 Plan: ' + (R.planLevel === 'part' ? xfrE(l.part) + ' ' : '') + 'goes to ' + xfrE(R.plan) + (R.planLevel === 'part' ? '<div style="font-size:11px;font-weight:600">This pack size has its own plan</div>' : '') + '</div>' : '')
           + (R.recs.length || !R.plan ? '<div style="font-size:12px;font-weight:700;margin:10px 0 4px">Suggested spot:</div>' : '')
           + (R.recs.length ? R.recs.slice(0, 1).map(function(r, i) { return '<div style="padding:8px 10px;margin-bottom:5px;border-radius:9px;border:1.5px solid ' + (i ? 'var(--border)' : 'var(--green)') + ';background:' + (i ? 'var(--bg3)' : 'var(--green-bg,#dcfce7)') + '"><span style="font-family:var(--mono);font-weight:800;font-size:' + (i ? '14' : '17') + 'px">' + (i ? '2. ' : '1. ') + xfrE(r.location) + '</span> <span style="font-size:11px;color:var(--text3)">' + xfrE(r.why) + '</span></div>'; }).join('')
@@ -10061,6 +10110,7 @@ window.invCredLogin = async function() {
     toLoc = String(toLoc || '').trim().toUpperCase();
     if (!(n > 0)) { invFlash('How many boxes?', 'error'); return; }
     if (n > l.left + 1e-9) { invFlash('Pallet ' + l.pallet + ' only has ' + xfrN(l.left) + ' box(es) of ' + l.part, 'error'); return; }
+    if (xfrPcsNeeded(l)) { invFlash('⬆ First tap how many pieces are in each box, then scan the shelf label again', 'warn'); var pc = g('xfr-pcs-ck'); if (pc && pc.scrollIntoView) pc.scrollIntoView({ block: 'center' }); return; }
     var from = xfrGoFrom(l);
     if (!from && l.recvLoc && l.recvMath && l.recvMath.notReceived > 0) {
       var room = Math.min(l.recvMath.notReceived, l.left);
@@ -10106,7 +10156,7 @@ window.invCredLogin = async function() {
         fromLocation: from.location, fromRowIndex: from.rowIndex || 0, fromMasterId: from.masterId,
         toLocation: toLoc, toRowIndex: null, isNewLocation: false,
         cases: n, initials: who0, checkHave: true,
-        notes: '[CONTAINER SCAN] ' + l.title + ' · Pallet ' + l.pallet, palletLineId: l.id, addedAt: now0, grabbedAt: now0 }) })
+        notes: '[CONTAINER SCAN] ' + l.title + ' · Pallet ' + l.pallet + (xfrPcsOf(l) && from.sizeDiff ? ' · box checked: ' + xfrN(xfrPcsOf(l).pcs) + ' pcs a box (SKU Mgr ' + xfrN(from.pcs) + ', packing list ' + xfrN(from.linePcs) + ')' : ''), palletLineId: l.id, addedAt: now0, grabbedAt: now0 }) })
         .then(function(r) { return r.json(); }).then(function(x) {
           mv.saving = false;
           if (x && x.queued) { mv.phone = true; invFlash(INV_OFFLINE_MSG, 'warn'); return; }
@@ -10130,7 +10180,7 @@ window.invCredLogin = async function() {
         fromLocation: row.location, fromRowIndex: row.rowIndex, fromMasterId: row.masterId || null,
         toLocation: toLoc, toRowIndex: null, isNewLocation: false,
         cases: n, initials: (INV_CRED_USER && INV_CRED_USER.displayName) || 'OPS',
-        notes: '[CONTAINER SCAN] ' + l.title + ' · Pallet ' + l.pallet, palletLineId: l.id, addedAt: now, grabbedAt: now }) })
+        notes: '[CONTAINER SCAN] ' + l.title + ' · Pallet ' + l.pallet + (xfrPcsOf(l) && from.sizeDiff ? ' · box checked: ' + xfrN(xfrPcsOf(l).pcs) + ' pcs a box (SKU Mgr ' + xfrN(from.pcs) + ', packing list ' + xfrN(from.linePcs) + ')' : ''), palletLineId: l.id, addedAt: now, grabbedAt: now }) })
         .then(function(r) { return r.json(); }).then(function(x) {
           if (!x || !x.ok) { invFlash('Not moved: ' + ((x && x.error) || 'error'), 'error'); return; }
           if (x.palletRecorded === false) invFlash('⚠ ' + l.part + ' moved, but not counted on its pallet — tell the office', 'error');
