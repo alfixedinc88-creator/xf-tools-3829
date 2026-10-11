@@ -5801,5 +5801,31 @@ console.log('\n📖 Part # book: why a part # has "+" (and since when), every ch
   sq.exec("DELETE FROM master_list WHERE part_num LIKE '95-1-1%'; DELETE FROM inventory_log WHERE part_num LIKE '95-1-1%'; DELETE FROM part_marker; DELETE FROM part_marker_log; DELETE FROM part_note");
 }
 
+// Owner (2026-10-11): "Listings → our SKU — is it arranged by sales? can I see the 30 days sale for each one? fix the
+// ones with sales first, the ones without any sales later".
+console.log('\n🔗 Listings → our SKU: 30 / 90 / 365-day sales on each, most sold in 30 days first, no sales last');
+{
+  const day = n => new Date(Date.now() - n * 86400000).toISOString().slice(0, 10);
+  const ins = sq.prepare("INSERT INTO ebay_sales_weekly (sku, period_start, period_end, units_ordered, sales_amount) VALUES (?,?,?,?,?)");
+  ins.run('ZZLS-OLD', day(200), day(194), 50, 50);                               // sold a lot, but not lately
+  ins.run('ZZLS-NEW', day(10), day(4), 4, 4); ins.run('ZZLS-NEW', day(60), day(54), 3, 3); // 4 in 30 d, 7 in 90 d
+  ins.run('ZZLS-MID', day(50), day(44), 9, 9);                                   // 0 in 30 d, 9 in 90 d
+  const d = await get('/reorder/fix/listings?days=365');
+  const G = k => (d.groups || []).find(x => x.sku === k) || {};
+  check('each listing has its sales: ZZLS-NEW 4 (30 d) · 7 (90 d) · 7 (365 d); ZZLS-MID 0 · 9 · 9; ZZLS-OLD 0 · 0 · 50',
+    G('ZZLS-NEW').sold30 === 4 && G('ZZLS-NEW').sold90 === 7 && G('ZZLS-NEW').soldTotal === 7 && G('ZZLS-MID').sold30 === 0 && G('ZZLS-MID').sold90 === 9
+    && G('ZZLS-OLD').sold30 === 0 && G('ZZLS-OLD').sold90 === 0 && G('ZZLS-OLD').soldTotal === 50, ['ZZLS-NEW', 'ZZLS-MID', 'ZZLS-OLD'].map(G));
+  const { readFileSync: rfL } = await import('node:fs');
+  const rh = rfL(fileURLToPath(new URL('../reorder.html', import.meta.url)), 'utf8');
+  const sel = { value: '30' };
+  const mk = new Function('document', (rh.match(/function rlsSortFn\(\) \{[\s\S]*?\n\}/) || [''])[0] + '; return rlsSortFn;')({ getElementById: () => sel });
+  const rows = ['ZZLS-OLD', 'ZZLS-MID', 'ZZLS-NEW'].map(G).concat([{ sku: 'ZZLS-NONE', sold30: 0, sold90: 0, soldTotal: 0 }]);
+  const o30 = rows.slice().sort(mk()).map(g => g.sku); sel.value = '90'; const o90 = rows.slice().sort(mk()).map(g => g.sku); sel.value = '365'; const o365 = rows.slice().sort(mk()).map(g => g.sku);
+  check('…"Most sold in 30 days first" → NEW, MID, OLD, no sales last; 90 days → MID, NEW, OLD; 365 days → OLD, MID, NEW; a sort picker on the page; CSV has 30 / 90 days',
+    o30.join() === 'ZZLS-NEW,ZZLS-MID,ZZLS-OLD,ZZLS-NONE' && o90.join() === 'ZZLS-MID,ZZLS-NEW,ZZLS-OLD,ZZLS-NONE' && o365.join() === 'ZZLS-OLD,ZZLS-MID,ZZLS-NEW,ZZLS-NONE'
+    && /id="rls-sort" onchange="rlsRender\(\)"/.test(rh) && /'Sold 30 days', 'Sold 90 days'/.test(rh) && /\}\)\.sort\(rlsSortFn\(\)\);/.test(rh), [o30, o90, o365]);
+  sq.prepare("DELETE FROM ebay_sales_weekly WHERE sku LIKE 'ZZLS-%'").run();
+}
+
 console.log('\n' + (failed ? '❌ ' + failed + ' check(s) FAILED' : '✅ all ' + passed + ' checks passed') + '\n');
 process.exit(failed ? 1 : 0);
