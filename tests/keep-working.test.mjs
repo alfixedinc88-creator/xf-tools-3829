@@ -5727,5 +5727,40 @@ console.log('\n🅰 The same check on eBay / Walmart / Shopify: a listing at 0 w
   globalThis.fetch = realFetch;
 }
 
+// Owner (2026-10-11): "since yesterday 3 pm no auto print — it bought the labels but nothing printed, and I didn't see any
+// 'not picked up' reason". One print step that never finished left the station "busy" for good (bar still green, nothing
+// printed, nobody told). Now: the station starts again by itself (on record), slow steps time out, the cancel check can't
+// stall printing, and every manager's bar says labels are waiting and why.
+console.log('\n🖨 Labels bought but not printed: station unsticks itself, the bar says why');
+{
+  await call('/veeqo/autolabel/config', { headers: H });
+  const ago = m => new Date(Date.now() - m * 60000).toISOString();
+  sq.prepare("DELETE FROM label_print_queue").run();
+  sq.prepare("INSERT INTO label_print_queue (order_number, channel, tracking, carrier, created_at) VALUES ('W-1','eBay','9400100000000000000101','USPS',?)").run(ago(40));
+  sq.prepare("INSERT INTO label_print_queue (order_number, channel, tracking, carrier, created_at) VALUES ('W-2','eBay','9400100000000000000102','USPS',?)").run(ago(25));
+  sq.prepare("INSERT INTO label_print_queue (order_number, channel, tracking, carrier, created_at, printed_at) VALUES ('W-3','eBay','9400100000000000000103','USPS',?,?)").run(ago(300), ago(290));
+  sq.prepare("INSERT INTO label_print_queue (order_number, channel, tracking, carrier, created_at, cancel_hold) VALUES ('W-4','eBay','9400100000000000000104','USPS',?,?)").run(ago(50), '🛑 Not printed: cancelled');
+  const w0 = await get('/veeqo/autolabel/print-watch');
+  check('print watch tells how many labels wait (2 — a printed one and a cancelled-held one not counted), since when, the last one printed',
+    w0.ok && w0.printWait.count === 2 && Math.abs(Date.parse(w0.printWait.oldest) - Date.parse(ago(40))) < 5000 && Math.abs(Date.parse(w0.printWait.lastPrintedAt) - Date.parse(ago(290))) < 5000, w0.printWait);
+  const w1 = await get('/veeqo/autolabel/print-watch?station=1');
+  check('…the printer station\'s minute check is remembered (when / who)', w1.printWait.stationTick && Date.now() - Date.parse(w1.printWait.stationTick.at) < 10000, w1.printWait.stationTick);
+  await post('/veeqo/autolabel/print-watch', { action: 'stuck', why: 'printing was busy for 7 min (label W-1)' });
+  check('…the station starting again by itself is kept on record', sq.prepare("SELECT COUNT(*) n FROM autolabel_log WHERE action = 'print_stuck' AND reason LIKE '%busy for 7 min%'").get().n === 1, null);
+  const { readFileSync: rfP } = await import('node:fs');
+  const ph = rfP(fileURLToPath(new URL('../packship.html', import.meta.url)), 'utf8'), wk = rfP(fileURLToPath(new URL('../worker/src/index.js', import.meta.url)), 'utf8');
+  const fn = new Function((ph.match(/function _psAlPrintWaitText\(w\) \{[\s\S]*?\n\}/) || [''])[0] + '; return _psAlPrintWaitText;')();
+  const noStation = fn({ count: 2, oldest: ago(40), lastPrintedAt: ago(290), stationTick: { at: ago(30) } });
+  const stuck = fn({ count: 2, oldest: ago(40), lastPrintedAt: ago(290), stationTick: { at: ago(0.5) } });
+  check('bar: labels waiting > 10 min + no station checking in → "bought but NOT printed … No printer station is on"; station on → "on but not printing: close any print window, reload"; < 10 min → nothing',
+    /2 labels bought but NOT printed/.test(noStation) && /No printer station is on/.test(noStation) && /printer station is on \(checked [^)]*\) but not printing/.test(stuck) && /reload Pack & Ship/.test(stuck)
+    && fn({ count: 1, oldest: ago(5), stationTick: { at: ago(0.5) } }) === '' && fn({ count: 0 }) === '', [noStation, stuck]);
+  check('station: busy > 6 min → starts again by itself (the stuck round stops, never prints twice); every step has a time limit; the cancel check waits at most 20 s',
+    /_psAlLabelBusy && _psAlLabelBusyAt && Date\.now\(\) - _psAlLabelBusyAt > 6 \* 60000/.test(ph) && /_psAlLabelGen\+\+/.test(ph) && /if \(gen !== _psAlLabelGen\) return;/.test(ph)
+    && /_psAlTimeout\(_psAlPrintOneLabel\(list\[i\]\), 120000/.test(ph) && /_psAlTimeout\(_psAlPrintHtml\(list\.length === 1 \? list\[0\] : _psAlCombineHtml\(list\)\), 180000/.test(ph) && /labels\\\?status=new\|label-items\|labels-printed\)\/\.test\(path\)\) opts\.timeout = 90000/.test(ph)
+    && /print-watch' \+ \(fromStation \? '\?station=1' : ''\)/.test(ph) && /new Promise\(r => setTimeout\(\(\) => r\(null\), 20000\)\)/.test(wk), null);
+  sq.prepare("DELETE FROM label_print_queue WHERE order_number IN ('W-1','W-2','W-3','W-4')").run();
+}
+
 console.log('\n' + (failed ? '❌ ' + failed + ' check(s) FAILED' : '✅ all ' + passed + ' checks passed') + '\n');
 process.exit(failed ? 1 : 0);

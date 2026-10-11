@@ -26021,6 +26021,16 @@ async function labelWatchCheck(env, nowMs) {
   return { settings, hold, inRow, missing, waiting: list.filter(l => l.state === 'waiting').length, picked: list.filter(l => l.state === 'picked').length, watched: list.length,
     later: list.filter(l => l.state === 'later') }; // 📜 Print Log missed it, but Picking / Packing scanned it — history only, no reminder
 }
+// 🖨 Labels bought but not printed: how many wait, since when, when the last one printed, and when the printer
+// station last checked in (label_station_tick, every minute) / last asked for labels to print (label_station_seen).
+async function labelPrintWait(env) {
+  await autolabelEnsureTables(env);
+  const w = await d1First(env, `SELECT COUNT(*) AS n, MIN(created_at) AS oldest FROM label_print_queue
+    WHERE printed_at IS NULL AND cancel_hold IS NULL AND created_at >= ?`, [new Date(Date.now() - 2 * 86400000).toISOString()]) || {};
+  const lp = await d1First(env, 'SELECT MAX(printed_at) AS t FROM label_print_queue') || {};
+  const j = async k => { try { return JSON.parse(await autolabelGetKey(env, k) || 'null'); } catch (_) { return null; } };
+  return { count: w.n || 0, oldest: w.oldest || null, lastPrintedAt: lp.t || null, stationTick: await j('label_station_tick'), stationSeen: await j('label_station_seen') };
+}
 // Runs the check and turns the hold ON when N in a row were not picked up (once — logged with which labels).
 async function labelWatchRun(env, nowMs) {
   const w = await labelWatchCheck(env, nowMs);
@@ -27089,7 +27099,10 @@ async function autolabelMarkShipped(env, o, allocId, tracking, carrierId) {
 async function autolabelHoldCancelled(env, cfg, rows, session) {
   if (!rows.length) return { rows, held: [] };
   let cancels = null;
-  try { cancels = await autolabelCancelsCached(env, cfg); } catch (_) { cancels = null; }
+  // At most 20 s: a channel that hangs must never stop the printer (owner 2026-10-11). Then the last channel check this
+  // worker got (if any) is used; the Cancellation list is always checked below.
+  try { cancels = await Promise.race([autolabelCancelsCached(env, cfg), new Promise(r => setTimeout(() => r(null), 20000))]); } catch (_) { cancels = null; }
+  if (!cancels && _autolabelCancelCache.val) cancels = _autolabelCancelCache.val;
   const open = await d1All(env, `SELECT UPPER(REPLACE(order_num,'#','')) AS n, UPPER(REPLACE(tracking,' ','')) AS t FROM ship_order_cancel_log WHERE status != 'done'`).catch(() => []);
   const onList = new Set(), onListT = new Set();
   (open || []).forEach(r => { if (r.n) onList.add(autolabelOrderNum(r.n)); if (r.t) onListT.add(r.t); });
@@ -29386,7 +29399,10 @@ async function handleAutolabelRoute(path, method, url, request, env, session) {
   // 🛑 Print watch: labels printed but not read by the Print Log scanner; N in a row → printing on hold.
   // GET → { hold, missing[], inRow, settings }. The printer station asks every minute before it prints.
   if (path === '/veeqo/autolabel/print-watch' && method === 'GET') {
-    return veeqoResp({ ok: true, ...(await labelWatchRun(env)) });
+    // ?station=1 → the 🖨 Printer station's minute check: remember it (owner 2026-10-11: "since 3 pm labels bought but
+    // nothing printed, and nothing told us why") so every manager's bar can say what is wrong.
+    if (url.searchParams.get('station') === '1') await autolabelSetKey(env, 'label_station_tick', JSON.stringify({ at: new Date().toISOString(), by: String((session && (session.displayName || session.username)) || '').slice(0, 40) })).catch(() => {});
+    return veeqoResp({ ok: true, ...(await labelWatchRun(env)), printWait: await labelPrintWait(env) });
   }
   // POST { action: 'release' | 'checked' | 'settings', ids, note, on, n }
   if (path === '/veeqo/autolabel/print-watch' && method === 'POST') {
@@ -29397,6 +29413,9 @@ async function handleAutolabelRoute(path, method, url, request, env, session) {
       const h = await labelWatchHold(env);
       await autolabelSetKey(env, LABEL_WATCH_HOLD_KEY, JSON.stringify({ on: false, releasedAt: now, releasedBy: who, lastHold: h.on ? { at: h.at, why: h.why } : (h.lastHold || null) }));
       await autolabelLog(env, { action: 'print_hold_released', customer: who, reason: `✅ Printer fixed — printing again (${who || '?'})` + (h.on ? ` · on hold since ${h.at}` : '') });
+    } else if (b.action === 'stuck') {
+      // The station found its own printing stuck (a print that never finished) and started again — kept on record.
+      await autolabelLog(env, { action: 'print_stuck', customer: who, reason: '⚠ Printer station was stuck — started again by itself: ' + String(b.why || '').slice(0, 300) });
     } else if (b.action === 'checked') {
       const ids = (Array.isArray(b.ids) ? b.ids : []).map(n => parseInt(n)).filter(n => n > 0).slice(0, 200);
       const note = String(b.note || '').slice(0, 200);
