@@ -14481,14 +14481,25 @@ window.invCredLogin = async function() {
     el('lw-amz-auto').checked = !!(d.config && d.config.amazonMatch);
     el('lw-amz-set').textContent = '✓ Set ' + (l.length ? 'all ' + l.length : 'them') + ' to ' + q + ' on Amazon';
     el('lw-amz-set').disabled = !l.length;
-    box.innerHTML = l.length ? l.map(function (a) {
+    // Owner (2026-10-11): "still 0 found?" — say what the last scan read and why a listing at 0 wasn't matched.
+    var st = d.stats || {};
+    var head = !st.amazonRead ? '<div style="color:var(--orange);font-weight:700;margin-bottom:6px">⚠ No Amazon quantities saved yet — tap 🔎 Scan now and wait until the scan says finished (every channel), then open this again.</div>'
+      : '<div style="color:var(--text2);margin-bottom:6px">Last scan read <b>' + esc(st.amazonRead) + '</b> Amazon (FBM) listings — <b>' + esc(st.amazonZero) + '</b> at 0 — and <b>' + esc(st.othersRead) + '</b> eBay / Walmart / Shopify listings (' + esc(st.othersHigh) + ' at 100+). '
+        + '<b style="color:var(--green)">' + l.length + ' to fix</b>' + (st.unmatched ? ' · ' + esc(st.unmatched) + ' at 0 not matched (below)' : '') + '.</div>';
+    var why = '';
+    if ((st.notOnOthers || []).length) why += '<details style="margin-top:6px"><summary style="cursor:pointer;color:var(--text3)">At 0 on Amazon, part # found, but no other channel has it at 100+ (' + st.notOnOthers.length + ')</summary>'
+      + st.notOnOthers.map(function (x) { return '<div style="font-family:var(--mono);font-size:11px">' + esc(x.sku) + ' → ' + esc(x.part) + ' · ' + esc(x.listingId) + '</div>'; }).join('') + '</details>';
+    if ((st.noPart || []).length) why += '<details style="margin-top:6px"><summary style="cursor:pointer;color:var(--orange)">At 0 on Amazon, but its SKU matches no part # (' + st.noPart.length + ') — add the ASIN to the AmazonSKU sheet or 🔗 link it in "not checked"</summary>'
+      + st.noPart.map(function (x) { return '<div style="font-size:11px"><span style="font-family:var(--mono)">' + esc(x.sku) + ' · ' + esc(x.listingId) + '</span> ' + esc(x.title || '') + '</div>'; }).join('') + '</details>';
+    box.innerHTML = head + (l.length ? l.map(function (a) {
       return '<div style="padding:4px 0;border-bottom:1px solid var(--border)"><b style="font-family:var(--mono)">' + esc(a.sku) + '</b>'
-        + (a.part && a.part !== String(a.sku).toUpperCase() ? ' → <span style="font-family:var(--mono)">' + esc(a.part) + '</span>' : '')
+        + (a.part && a.part !== String(a.sku).toUpperCase() ? ' → <span style="font-family:var(--mono)">' + esc(a.part) + '</span> <span style="font-size:10.5px;color:var(--text3)">(' + esc(a.via || '') + ')</span>' : '')
+        + (a.match === 'parent' ? ' <span style="font-size:10.5px;font-weight:700;color:var(--orange)">same parent, other pack</span>' : '')
         + ' · <span style="font-family:var(--mono)">' + esc(a.listingId) + '</span> · Amazon <b style="color:var(--red)">0</b> · '
         + a.others.map(function (o) { return esc(o.platform) + ' <b style="color:var(--green)">' + esc(o.qty) + '</b>'; }).join(', ')
         + (a.failedToday ? ' · <span style="color:var(--orange)">Amazon refused it today — tried again tomorrow</span>' : '')
         + (a.title ? '<div style="color:var(--text3);font-size:11px">' + esc(a.title) + '</div>' : '') + '</div>';
-    }).join('') : '<div style="color:var(--green)">✅ No Amazon listing at 0 that another channel has (last scan).</div>';
+    }).join('') : (st.amazonRead ? '<div style="color:var(--green)">✅ No Amazon listing at 0 that another channel has (last scan).</div>' : '')) + why;
     el('lw-amz-log').innerHTML = (d.log || []).length ? d.log.map(function (r) {
       return '<div>' + esc(new Date(r.ts).toLocaleString()) + ' · ' + (r.ok ? '✅' : '❌') + ' <span style="font-family:var(--mono)">' + esc(r.sku) + '</span> → ' + esc(r.quantity) + ' · ' + esc(r.detail || '') + '</div>';
     }).join('') : '<div style="color:var(--text3)">Nothing changed yet.</div>';
