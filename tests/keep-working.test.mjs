@@ -5690,5 +5690,42 @@ console.log('\n🅰 Listing Watch reads EVERY Amazon listing (full listings repo
   globalThis.fetch = realFetch;
 }
 
+// Owner (2026-10-11): "now check our other channels, did they have the same issue?" — the same 🅰 check per channel.
+console.log('\n🅰 The same check on eBay / Walmart / Shopify: a listing at 0 whose part # is 100+ on another channel');
+{
+  const realFetch = globalThis.fetch, calls = [];
+  globalThis.fetch = async (u, o) => { u = String(u); const J = x => new Response(JSON.stringify(x), { headers: { 'Content-Type': 'application/json' } });
+    if (u.includes('oauth2/token')) return J({ access_token: 'eb', expires_in: 7200 });
+    if (u.includes('oauth2')) return J({ access_token: 't', expires_in: 3600 });
+    if (u.includes('SKU!')) return J({ values: [] });
+    if (u.includes('marketplace.walmartapis.com/v3/token')) return J({ access_token: 'wm', expires_in: 900 });
+    if (u.includes('api.ebay.com/ws/api.dll')) { calls.push({ ch: 'eBay', body: o.body }); return new Response('<Ack>Success</Ack>'); }
+    if (u.includes('marketplace.walmartapis.com/v3/inventory?sku=')) { calls.push({ ch: 'Walmart', sku: decodeURIComponent(u.split('sku=')[1]), body: JSON.parse(o.body) }); return J({ sku: 'x' }); }
+    return new Response('{}', { status: 401 }); };
+  const now = new Date().toISOString();
+  const lt = (pl, id, sku, qty) => sq.prepare('INSERT OR REPLACE INTO listing_titles (platform, listing_id, sku, title, updated_at, qty) VALUES (?,?,?,?,?,?)').run(pl, id, sku, 'T ' + sku, now, qty);
+  lt('eBay', '9001', '40-1-1=10', 0); lt('Amazon', 'B0X1', '40-1-1=10', 888);                       // eBay 0, Amazon 888 → eBay list
+  lt('eBay', '9002', '42-2-2=1', 0); lt('eBay', '9002', '42-2-2=5', 888); lt('Walmart', '42-2-2=1', '42-2-2=1', 888); // eBay variation =1 at 0
+  lt('Walmart', '41-1-1=5', '41-1-1=5', 0); lt('Shopify', '7001', '41-1-1=5', 888);                // Walmart 0, Shopify 888 → Walmart list
+  lt('eBay', '9003', '43-3-3=1', 0);                                                               // nowhere else → not listed
+  const e = await get('/inventory/soldout/watch/amazon-match?platform=eBay');
+  const w = await get('/inventory/soldout/watch/amazon-match?platform=Walmart');
+  const E = k => e.list.find(a => a.sku === k) || {};
+  check('eBay: 40-1-1=10 (Amazon 888) and the variation 42-2-2=1 (Walmart 888, marked a variation) are listed; 43-3-3=1 (nowhere else) is not; the card gets each channel\'s count',
+    e.ok && e.platform === 'eBay' && E('40-1-1=10').match === 'same' && E('42-2-2=1').isVar === true && !e.list.some(a => a.sku === '43-3-3=1') && e.counts.eBay === e.list.length && e.counts.Walmart >= 1, { list: e.list, counts: e.counts });
+  check('Walmart: 41-1-1=5 (Shopify 888) is listed', w.list.some(a => a.sku === '41-1-1=5' && a.others.some(x => x.platform === 'Shopify')), w.list);
+  const re = await post('/inventory/soldout/watch/amazon-match', { platform: 'eBay', limit: 25 });
+  const rw = await post('/inventory/soldout/watch/amazon-match', { platform: 'Walmart', limit: 25 });
+  const ebVar = calls.find(c => c.ch === 'eBay' && /<ItemID>9002<\/ItemID>/.test(c.body));
+  check('✓ Set on eBay / Walmart → 888 through the Sold Out code (the eBay variation with ItemID + SKU), saved as "Auto (eBay = other channels)"',
+    re.ok && re.set >= 2 && rw.ok && rw.set >= 1 && ebVar && /<SKU>42-2-2=1<\/SKU>/.test(ebVar.body) && /<Quantity>888<\/Quantity>/.test(ebVar.body)
+      && calls.some(c => c.ch === 'Walmart' && c.sku === '41-1-1=5' && c.body.quantity.amount === 888)
+      && sq.prepare("SELECT COUNT(*) n FROM listing_qty_log WHERE by_user = 'Auto (eBay = other channels)' AND ok = 1").get().n >= 2, { re, rw, calls });
+  const ih = (await import('node:fs')).readFileSync(fileURLToPath(new URL('../inventory.html', import.meta.url)), 'utf8');
+  check('…the card has a button per channel ("eBay at 0: N"); ⚡ Auto stays for Amazon only', /lwAmzPick\(/.test(ih) && /' at 0: '/.test(ih) && /el\('lw-amz-auto-l'\)\.style\.display = P === 'Amazon'/.test(ih), null);
+  sq.exec("DELETE FROM listing_titles WHERE listing_id IN ('9001','9002','9003','B0X1','42-2-2=1','41-1-1=5','7001'); DELETE FROM listing_qty_log WHERE by_user LIKE 'Auto (% = other channels)'");
+  globalThis.fetch = realFetch;
+}
+
 console.log('\n' + (failed ? '❌ ' + failed + ' check(s) FAILED' : '✅ all ' + passed + ' checks passed') + '\n');
 process.exit(failed ? 1 : 0);
