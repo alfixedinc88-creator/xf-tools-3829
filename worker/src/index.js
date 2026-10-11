@@ -29985,7 +29985,63 @@ async function lwAmazonItem(env, id) {
   return { title, status: '', isVar: false, rows };
 }
 
+// Owner (2026-10-11, 23-6-9=10XX at 0 on Amazon, 888 on Walmart, never on any list): the Listings search below stops at
+// 1,000 listings (the scan read 655 FBM + 345 FBA = 1,000), so every Amazon listing after that was never checked.
+// Amazon's full listings report (GET_MERCHANT_LISTINGS_ALL_DATA, the one the repricer already uses) has every
+// listing with its quantity and fulfillment channel. Cursor: 'R:<reportId>' (waiting for Amazon to build it) →
+// 'D:<documentId>:<row>' (500 rows a page). If the report can't be had, the old search is used ('S:<token>').
+const LW_AMZ_REPORT_ROWS = 500;
+async function lwAmazonReportRows(env, docId) {
+  const token = await getAmazonToken(env), amzDate = new Date().toISOString().replace(/[:\-.]/g, '').slice(0, 15) + 'Z';
+  const dr = await fetch(`https://sellingpartnerapi-na.amazon.com/reports/2021-06-30/documents/${docId}`, { headers: { 'x-amz-access-token': token, 'x-amz-date': amzDate } });
+  const dd = await dr.json().catch(() => ({}));
+  if (!dr.ok || !dd.url) throw new Error('Amazon report document: ' + JSON.stringify(dd.errors || dd).slice(0, 200));
+  const raw = await (await fetch(dd.url)).arrayBuffer();
+  let text;
+  if (dd.compressionAlgorithm === 'GZIP' || (new Uint8Array(raw.slice(0, 2))[0] === 0x1f && new Uint8Array(raw.slice(0, 2))[1] === 0x8b)) {
+    text = await new Response(new Blob([raw]).stream().pipeThrough(new DecompressionStream('gzip'))).text();
+  } else text = new TextDecoder().decode(raw);
+  const lines = text.split(/\r?\n/).filter(l => l.trim());
+  const h = (lines[0] || '').split('\t').map(x => x.trim().toLowerCase());
+  const ix = n => h.findIndex(x => n.includes(x));
+  const c = { sku: ix(['seller-sku', 'sku']), asin: ix(['asin1', 'asin']), qty: ix(['quantity']), title: ix(['item-name']), ch: ix(['fulfillment-channel']) };
+  if (c.sku < 0) throw new Error('Amazon report: no seller-sku column (' + h.join(', ').slice(0, 200) + ')');
+  return lines.slice(1).map(l => { const v = l.split('\t'); return { sku: (v[c.sku] || '').trim(), asin: c.asin >= 0 ? (v[c.asin] || '').trim() : '', qty: c.qty >= 0 ? parseInt(v[c.qty], 10) || 0 : 0,
+    title: c.title >= 0 ? (v[c.title] || '').trim() : '', ch: c.ch >= 0 ? (v[c.ch] || '').trim() : '' }; }).filter(r => r.sku);
+}
 async function lwPageAmazon(env, cursor) {
+  if (!env.AMAZON_SELLER_ID) throw new Error('AMAZON_SELLER_ID not set');
+  const cur = String(cursor || '');
+  if (cur.startsWith('S:')) return lwPageAmazonSearch(env, cur.slice(2) || null);
+  const token = await getAmazonToken(env), mid = env.AMAZON_MARKETPLACE_ID || 'ATVPDKIKX0DER', amzDate = new Date().toISOString().replace(/[:\-.]/g, '').slice(0, 15) + 'Z';
+  const hd = { 'x-amz-access-token': token, 'x-amz-date': amzDate, 'Content-Type': 'application/json' };
+  if (!cur) {
+    const r = await fetch('https://sellingpartnerapi-na.amazon.com/reports/2021-06-30/reports', { method: 'POST', headers: hd, body: JSON.stringify({ reportType: 'GET_MERCHANT_LISTINGS_ALL_DATA', marketplaceIds: [mid] }) });
+    const d = await r.json().catch(() => ({}));
+    if (!r.ok || !d.reportId) return lwPageAmazonSearch(env, null); // no report → the old way (first 1,000)
+    return { items: [], next: 'R:' + d.reportId, done: false };
+  }
+  if (cur.startsWith('R:')) {
+    const r = await fetch(`https://sellingpartnerapi-na.amazon.com/reports/2021-06-30/reports/${cur.slice(2)}`, { headers: hd });
+    const d = await r.json().catch(() => ({}));
+    if (r.ok && d.processingStatus === 'DONE' && d.reportDocumentId) return { items: [], next: 'D:' + d.reportDocumentId + ':0', done: false };
+    if (!r.ok || /CANCELLED|FATAL/.test(d.processingStatus || '')) return lwPageAmazonSearch(env, null);
+    await new Promise(res => setTimeout(res, 5000)); // Amazon is still building it (1–5 min) — don't ask too often
+    return { items: [], next: cur, done: false };
+  }
+  const [, docId, fromS] = cur.match(/^D:(.+):(\d+)$/) || [];
+  if (!docId) return lwPageAmazonSearch(env, null);
+  const rows = await lwAmazonReportRows(env, docId), from = parseInt(fromS, 10) || 0, part = rows.slice(from, from + LW_AMZ_REPORT_ROWS);
+  const items = []; let fba = 0;
+  for (const r of part) {
+    if (/AMAZON/i.test(r.ch)) { fba++; continue; } // FBA — Amazon's stock
+    items.push({ listingId: r.asin || r.sku, sku: r.sku, title: r.title, qty: r.qty });
+  }
+  const end = from + LW_AMZ_REPORT_ROWS >= rows.length;
+  return { items, next: end ? null : `D:${docId}:${from + LW_AMZ_REPORT_ROWS}`, done: end, fba };
+}
+
+async function lwPageAmazonSearch(env, cursor) {
   if (!env.AMAZON_SELLER_ID) throw new Error('AMAZON_SELLER_ID not set');
   const token = await getAmazonToken(env);
   const mid = env.AMAZON_MARKETPLACE_ID || 'ATVPDKIKX0DER';
@@ -30002,7 +30058,7 @@ async function lwPageAmazon(env, cursor) {
     items.push({ listingId: s.asin || i.sku, sku: i.sku, title: s.itemName || '', qty: q == null ? 0 : q });
   }
   const next = d.pagination && d.pagination.nextToken;
-  return { items, next: next || null, done: !next, fba: items.fba || 0 };
+  return { items, next: next ? 'S:' + next : null, done: !next, fba: items.fba || 0 };
 }
 
 async function lwPageWalmart(env, cursor) {

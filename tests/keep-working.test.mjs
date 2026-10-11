@@ -5655,5 +5655,40 @@ console.log('\n🅰 Listing Watch: Amazon at 0 but other channels have it → se
   globalThis.fetch = realFetch;
 }
 
+// Owner (2026-10-11): 23-6-9=10XX at 0 on Amazon and 888 on Walmart, on no list — the Amazon Listings search stops at
+// 1,000 (scan read 655 FBM + 345 FBA = 1,000). Listing Watch now reads Amazon's full listings report.
+console.log('\n🅰 Listing Watch reads EVERY Amazon listing (full listings report, not the 1,000-listing search)');
+{
+  const realFetch = globalThis.fetch;
+  const rows = ['seller-sku\tasin1\tquantity\titem-name\tfulfillment-channel\tstatus'];
+  for (let i = 0; i < 1300; i++) rows.push(`FILL-${i}=1\tB0F${String(i).padStart(7, '0')}\t888\tFiller ${i}\tDEFAULT\tActive`);
+  for (let i = 0; i < 400; i++) rows.push(`FBA-${i}=1-\tB0G${String(i).padStart(7, '0')}\t\tFBA ${i}\tAMAZON_NA\tActive`);
+  rows.push('23-6-9=10XX\tB0DK3ZWTZL\t0\tXFITTING Poly Pex B 1 Inch x 3/4 Inch Coupling, 10 Pcs\tDEFAULT\tInactive'); // row 1,701 — past the 1,000 the search reads
+  let searchCalls = 0;
+  globalThis.fetch = async (u, o) => { u = String(u); const J = x => new Response(JSON.stringify(x), { headers: { 'Content-Type': 'application/json' } });
+    if (u.includes('oauth2')) return J({ access_token: 't', expires_in: 3600 });
+    if (u.includes('AmazonSKU')) return J({ values: [] });
+    if (u.includes('api.amazon.com/auth/o2/token')) return J({ access_token: 'amz', expires_in: 3600 });
+    if (u.endsWith('/reports/2021-06-30/reports') && o && o.method === 'POST') return J({ reportId: 'REP1' });
+    if (u.includes('/reports/2021-06-30/reports/REP1')) return J({ processingStatus: 'DONE', reportDocumentId: 'DOC1' });
+    if (u.includes('/reports/2021-06-30/documents/DOC1')) return J({ url: 'https://report.example/doc1' });
+    if (u === 'https://report.example/doc1') return new Response(rows.join('\n'));
+    if (u.includes('/listings/2021-08-01/items/')) { searchCalls++; return J({ items: [], pagination: {} }); }
+    return new Response('{}', { status: 401 }); };
+  const s0 = env.AMAZON_SELLER_ID; env.AMAZON_SELLER_ID = 'SELLER1';
+  sq.prepare("INSERT OR REPLACE INTO listing_titles (platform, listing_id, sku, title, updated_at, qty) VALUES ('Walmart', '23-6-9=10XX', '23-6-9=10XX', '10 Pcs', ?, 888)").run(new Date().toISOString());
+  await post('/inventory/soldout/watch/scan', {});
+  let st;
+  for (let i = 0; i < 20; i++) { st = await post('/inventory/soldout/watch/step', {}); if (st.state && st.state.finishedAt) break; }
+  const am = st.state.platforms.Amazon;
+  check('Amazon: all 1,301 FBM listings read from the report (past 1,000), 400 FBA counted and skipped, the Listings search not used',
+    st.state.finishedAt && !am.error && am.scanned === 1301 && am.fbaSkipped === 400 && searchCalls === 0, am);
+  const m = await get('/inventory/soldout/watch/amazon-match');
+  check('…the owner\'s 23-6-9=10XX (row 1,701, 0 on Amazon, 888 on Walmart) is now on the 🅰 list', m.list.some(a => a.sku === '23-6-9=10XX' && a.match === 'same' && a.others.some(x => x.platform === 'Walmart' && x.qty === 888)), m.list.map(a => a.sku));
+  sq.exec("DELETE FROM listing_titles WHERE sku LIKE 'FILL-%' OR sku = '23-6-9=10XX'; DELETE FROM lw_alerts WHERE sku LIKE 'FILL-%' OR sku = '23-6-9=10XX'");
+  if (s0 === undefined) delete env.AMAZON_SELLER_ID; else env.AMAZON_SELLER_ID = s0;
+  globalThis.fetch = realFetch;
+}
+
 console.log('\n' + (failed ? '❌ ' + failed + ' check(s) FAILED' : '✅ all ' + passed + ' checks passed') + '\n');
 process.exit(failed ? 1 : 0);
