@@ -1337,6 +1337,22 @@ window.invCredLogin = async function() {
         style="padding:6px 14px;border-radius:6px;border:1.5px solid var(--red);background:var(--bg3);color:var(--red);font-size:12px;font-weight:700;cursor:pointer">🧬 Parent ≠ Part #</button>
       <button id="skumgr-pncheck-btn" onclick="skumgrPartnumCheck()" title="Part #s that look wrong — read-only list to clean up with Edit"
         style="padding:6px 14px;border-radius:6px;border:1.5px solid var(--orange);background:var(--bg3);color:var(--orange);font-size:12px;font-weight:700;cursor:pointer">🧹 Check part #s</button>
+      <button id="skumgr-pbook-btn" onclick="skumgrPartBook()" title="Why a part # has a sign like + (and since when) — search any part # to see its whole story"
+        style="padding:6px 14px;border-radius:6px;border:1.5px solid var(--purple);background:var(--bg3);color:var(--purple);font-size:12px;font-weight:700;cursor:pointer">📖 Part # book</button>
+    </div>
+    <!-- 📖 Part # book (owner 2026-10-11): why some part #s have "+" (or any other sign / number added later) and since when;
+         search a part # or a sign to see everything about it. Nothing is ever erased — every change is kept with who / when. -->
+    <div id="skumgr-pbook-panel" style="display:none;border:1.5px solid var(--purple);border-radius:10px;padding:12px;margin-bottom:12px;background:var(--bg2)">
+      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px">
+        <div style="font-size:13px;font-weight:800;color:var(--purple)">📖 Part # book — what the signs on our part #s mean, and each part #'s story</div>
+        <button onclick="document.getElementById('skumgr-pbook-panel').style.display='none'" style="border:none;background:none;font-size:18px;cursor:pointer;color:var(--text3)">&times;</button>
+      </div>
+      <div style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:8px">
+        <input id="skumgr-pbook-q" placeholder="🔎 A part # (30-3-4=10X+) or a sign (+)" onkeydown="if(event.key==='Enter')skumgrPartBookSearch()" style="flex:1;min-width:220px;padding:8px 10px;border:1.5px solid var(--border);border-radius:7px;font-family:var(--mono);font-size:13px;background:var(--bg);color:var(--text)">
+        <button onclick="skumgrPartBookSearch()" style="padding:8px 14px;border-radius:7px;border:none;background:var(--purple);color:#fff;font-weight:700;cursor:pointer">Search</button>
+      </div>
+      <div id="skumgr-pbook-res" style="font-size:12.5px;margin-bottom:10px"></div>
+      <div id="skumgr-pbook-signs" style="font-size:12.5px"></div>
     </div>
     <!-- 🧹 Check part #s (owner): READ-ONLY list of odd part #s, grouped by why — tap one to open it in SKU Mgr and fix it with Edit. -->
     <div id="skumgr-pncheck-panel" style="display:none;border:1.5px solid var(--orange);border-radius:10px;padding:12px;margin-bottom:12px;background:var(--bg2)">
@@ -8274,6 +8290,94 @@ window.invCredLogin = async function() {
   // up when searching 30-1-8). Lists them first; only ticked rows are fixed,
   // and every fix is written to History. Cases are never changed.
 
+  // 📖 Part # book (owner 2026-10-11): "why some part # have '+' and when — and any other sign we add later; search it and
+  // know everything going on with our part #s". Signs: what each means, since when, who; every change kept.
+  var PB = { markers: [] };
+  function pbT(x) { return x ? new Date(x).toLocaleString([], { year: 'numeric', month: 'numeric', day: 'numeric', hour: 'numeric', minute: '2-digit' }) : '—'; }
+  window.skumgrPartBook = function() {
+    var panel = g('skumgr-pbook-panel'); if (!panel) return;
+    panel.style.display = 'block'; skumgrPartBookLoad();
+  };
+  window.skumgrPartBookLoad = function() {
+    var box = g('skumgr-pbook-signs'); if (!box) return;
+    box.innerHTML = 'Loading…';
+    wFetch(W + '/inventory/part-book').then(function(r) { return r.json(); }).then(function(d) {
+      if (!d || !d.ok) { box.textContent = 'Error: ' + ((d && d.error) || 'failed'); return; }
+      PB.markers = d.markers || [];
+      var e = invEsc, td = 'padding:6px 8px;border-bottom:1px solid var(--border);vertical-align:top';
+      box.innerHTML = '<div style="font-weight:800;margin-bottom:6px">Signs on our part #s</div>'
+        + (PB.markers.length ? '<table style="width:100%;border-collapse:collapse"><tr style="text-align:left;color:var(--text3);font-size:11px;text-transform:uppercase"><th style="padding:4px 8px">Sign</th><th>Where</th><th>What it means / why</th><th>Since</th><th>Written by</th><th>Part #s now</th><th></th></tr>'
+          + PB.markers.map(function(m, i) {
+            return '<tr style="' + (m.retired_at ? 'opacity:.55' : '') + '"><td style="' + td + ';font-family:var(--mono);font-size:16px;font-weight:800">' + e(m.marker) + '</td>'
+              + '<td style="' + td + '">' + (m.position === 'anywhere' ? 'anywhere in it' : 'at the end') + '</td>'
+              + '<td style="' + td + ';white-space:pre-wrap">' + e(m.meaning) + (m.retired_at ? '<div style="color:var(--red)">No longer used since ' + e(pbT(m.retired_at)) + ' (' + e(m.retired_by || '') + ')</div>' : '') + '</td>'
+              + '<td style="' + td + ';white-space:nowrap">' + e(m.started || '') + '</td>'
+              + '<td style="' + td + '">' + e(m.created_by || '') + '<div style="color:var(--text3)">' + e(pbT(m.created_at)) + '</div>' + (m.updated_at ? '<div style="color:var(--text3)">changed ' + e(pbT(m.updated_at)) + ' · ' + e(m.updated_by || '') + '</div>' : '') + '</td>'
+              + '<td style="' + td + '"><a href="#" onclick="skumgrPartBookShow(' + i + ');return false">' + m.parts.length + ' part #' + (m.parts.length === 1 ? '' : 's') + ' ▸</a></td>'
+              + '<td style="' + td + ';white-space:nowrap">' + (m.retired_at ? '' : '<button onclick="skumgrPartBookEdit(' + i + ')" style="border:1px solid var(--border);background:var(--bg);border-radius:6px;padding:2px 7px;cursor:pointer">✏️</button> <button onclick="skumgrPartBookRetire(' + i + ')" title="No longer used (kept in the book)" style="border:1px solid var(--border);background:var(--bg);border-radius:6px;padding:2px 7px;cursor:pointer">🗄</button>') + '</td></tr>'
+              + '<tr id="pb-parts-' + i + '" style="display:none"><td colspan="7" style="' + td + ';background:var(--bg3)">'
+              + (m.parts.length ? m.parts.map(function(p) { return '<a href="#" onclick="skumgrPartBookFind(this.dataset.p);return false" data-p="' + e(p.part) + '" style="font-family:var(--mono);font-weight:700">' + e(p.part) + '</a> <span style="color:var(--text3)">' + xfrN(p.cases) + ' cs · first in History ' + e(pbT(p.firstSeen)) + '</span>'; }).join('<br>') : 'No part # has it now.')
+              + ((m.log || []).length ? '<div style="margin-top:6px;color:var(--text3)">Changes: ' + m.log.map(function(l) { return e(pbT(l.ts)) + ' ' + e(l.by_user || '') + ' — ' + e(l.action); }).join(' · ') + '</div>' : '') + '</td></tr>';
+          }).join('') + '</table>' : '<div style="color:var(--text3)">Nothing written down yet.</div>')
+        + '<div style="margin-top:10px;padding:10px;border:1px dashed var(--border);border-radius:8px"><div style="font-weight:700;margin-bottom:6px" id="pb-form-title">➕ Write down a sign</div><input type="hidden" id="pb-id">'
+        + '<div style="display:flex;gap:6px;flex-wrap:wrap"><input id="pb-marker" placeholder="Sign, e.g. +" style="width:90px;padding:6px 8px;border:1.5px solid var(--border);border-radius:6px;font-family:var(--mono);background:var(--bg);color:var(--text)">'
+        + '<select id="pb-pos" style="padding:6px 8px;border:1.5px solid var(--border);border-radius:6px;background:var(--bg);color:var(--text)"><option value="end">at the end of the part #</option><option value="anywhere">anywhere in the part #</option></select>'
+        + '<input id="pb-started" type="date" title="Since when" style="padding:6px 8px;border:1.5px solid var(--border);border-radius:6px;background:var(--bg);color:var(--text)"></div>'
+        + '<textarea id="pb-meaning" rows="2" placeholder="What it means / why we add it (e.g. + = new box size from the 10/11 container, 50 pcs per bag instead of 25)" style="width:100%;margin-top:6px;padding:6px 8px;border:1.5px solid var(--border);border-radius:6px;box-sizing:border-box;background:var(--bg);color:var(--text)"></textarea>'
+        + '<div style="display:flex;gap:6px;margin-top:6px"><button onclick="skumgrPartBookSave()" style="padding:7px 14px;border-radius:7px;border:none;background:var(--purple);color:#fff;font-weight:700;cursor:pointer">💾 Save</button><span id="pb-msg" style="align-self:center"></span></div></div>';
+      var st = g('pb-started'); if (st && !st.value) st.value = new Date().toISOString().slice(0, 10);
+    }).catch(function() { box.textContent = 'Network error'; });
+  };
+  window.skumgrPartBookShow = function(i) { var r = g('pb-parts-' + i); if (r) r.style.display = r.style.display === 'none' ? 'table-row' : 'none'; };
+  window.skumgrPartBookEdit = function(i) {
+    var m = PB.markers[i]; if (!m) return;
+    g('pb-id').value = m.id; g('pb-marker').value = m.marker; g('pb-pos').value = m.position; g('pb-started').value = m.started || ''; g('pb-meaning').value = m.meaning;
+    g('pb-form-title').textContent = '✏️ Change the sign "' + m.marker + '" (the old text is kept in its changes)'; g('pb-meaning').focus();
+  };
+  window.skumgrPartBookSave = function() {
+    var body = { id: g('pb-id').value || undefined, marker: g('pb-marker').value, position: g('pb-pos').value, started: g('pb-started').value, meaning: g('pb-meaning').value }, msg = g('pb-msg');
+    wFetch(W + '/inventory/part-book', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) }).then(function(r) { return r.json(); }).then(function(d) {
+      if (!d || !d.ok) { msg.style.color = 'var(--red)'; msg.textContent = '✗ ' + ((d && d.error) || 'failed'); return; }
+      invFlash('📖 Saved in the Part # book', 'success'); skumgrPartBookLoad();
+    }).catch(function() { msg.style.color = 'var(--red)'; msg.textContent = '✗ network error'; });
+  };
+  window.skumgrPartBookRetire = function(i) {
+    var m = PB.markers[i]; if (!m) return;
+    var why = prompt('Sign "' + m.marker + '" no longer used? It stays in the book (greyed) with your name and the date.\n\nWhy (optional):', ''); if (why === null) return;
+    wFetch(W + '/inventory/part-book/retire', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ id: m.id, why: why }) }).then(function(r) { return r.json(); }).then(function() { skumgrPartBookLoad(); });
+  };
+  window.skumgrPartBookFind = function(p) { var q = g('skumgr-pbook-q'); if (q) q.value = p; skumgrPartBookSearch(); };
+  window.skumgrPartBookSearch = function() {
+    var q = (g('skumgr-pbook-q').value || '').trim(), out = g('skumgr-pbook-res'); if (!q) { out.innerHTML = ''; return; }
+    out.innerHTML = 'Looking…';
+    wFetch(W + '/inventory/part-book/search?q=' + encodeURIComponent(q)).then(function(r) { return r.json(); }).then(function(d) {
+      if (!d || !d.ok) { out.textContent = 'Error: ' + ((d && d.error) || 'failed'); return; }
+      var e = invEsc, h = '';
+      (d.signs || []).forEach(function(m) { h += '<div style="padding:8px;border-radius:8px;background:var(--bg3);margin-bottom:6px"><b style="font-family:var(--mono);font-size:15px">' + e(m.marker) + '</b> (' + (m.position === 'anywhere' ? 'anywhere' : 'at the end') + ') = ' + e(m.meaning) + ' <span style="color:var(--text3)">· since ' + e(m.started || '') + ' · ' + e(m.created_by || '') + (m.retired_at ? ' · no longer used' : '') + '</span></div>'; });
+      var o = d.one;
+      if (o) {
+        h += '<div style="padding:10px;border:1.5px solid var(--purple);border-radius:8px;margin-bottom:6px"><div style="font-family:var(--mono);font-size:15px;font-weight:800">' + e(o.part) + '</div>'
+          + (o.signs.length ? o.signs.map(function(m) { return '<div>🔖 <b style="font-family:var(--mono)">' + e(m.marker) + '</b> = ' + e(m.meaning) + ' <span style="color:var(--text3)">(since ' + e(m.started || '') + ', ' + e(m.by || '') + ')</span></div>'; }).join('') : '<div style="color:var(--text3)">No sign from the book on this part #.</div>')
+          + '<div>🕐 First in History: ' + (o.firstSeen ? e(pbT(o.firstSeen.timestamp)) + ' — ' + e(o.firstSeen.type) + ' ' + xfrN(o.firstSeen.cases) + ' cs @ ' + e(o.firstSeen.location || '') + ' by ' + e(o.firstSeen.initials || '') : 'not in History') + '</div>'
+          + (o.renames.length ? '<div>✏️ Renamed / edited in SKU Mgr: ' + o.renames.map(function(r) { return e(pbT(r.at)) + ' ' + e(r.by || '') + ' — ' + e(r.notes); }).join('<br>') + '</div>' : '')
+          + '<div>📍 Now: ' + (o.spots.length ? o.spots.map(function(s) { return e(s.location) + ' ' + xfrN(s.cases) + ' cs' + (s.each ? ' × ' + xfrN(s.each) : ''); }).join(' · ') : 'not in SKU Mgr') + '</div>'
+          + '<div style="margin-top:6px"><b>📝 Notes</b> ' + (o.notes.length ? o.notes.map(function(n) { return '<div>' + e(pbT(n.ts)) + ' · ' + e(n.by_user || '') + ': ' + e(n.note) + '</div>'; }).join('') : '<span style="color:var(--text3)">none yet</span>')
+          + '<div style="display:flex;gap:6px;margin-top:4px"><input id="pb-note" placeholder="Why is this part # like this? (kept with your name and the date)" style="flex:1;padding:6px 8px;border:1.5px solid var(--border);border-radius:6px;background:var(--bg);color:var(--text)"><button onclick="skumgrPartBookNote(this.dataset.p)" data-p="' + e(o.part) + '" style="padding:6px 12px;border-radius:6px;border:none;background:var(--purple);color:#fff;font-weight:700;cursor:pointer">📝 Add note</button></div></div>'
+          + (o.recent.length ? '<details style="margin-top:6px"><summary style="cursor:pointer">📜 Last ' + o.recent.length + ' History lines</summary>' + o.recent.map(function(r) { return '<div style="font-size:12px">' + e(pbT(r.timestamp)) + ' · ' + e(r.type) + ' ' + xfrN(r.cases) + ' cs @ ' + e(r.location || '') + ' · ' + e(r.initials || '') + (r.notes ? ' — ' + e(r.notes) : '') + '</div>'; }).join('') + '</details>' : '')
+          + '</div>';
+      }
+      if ((d.parts || []).length > 1 || (!o && (d.parts || []).length)) h += '<div style="margin-top:4px"><b>Part #s with "' + e(d.q) + '" in them (' + d.parts.length + ')</b><br>' + d.parts.map(function(p) {
+        return '<a href="#" onclick="skumgrPartBookFind(this.dataset.p);return false" data-p="' + e(p.part) + '" style="font-family:var(--mono);font-weight:700">' + e(p.part) + '</a> <span style="color:var(--text3)">' + xfrN(p.cases) + ' cs · first in History ' + e(pbT(p.firstSeen)) + (p.signs.length ? ' · 🔖 ' + e(p.signs.join(' ')) : '') + '</span>'; }).join('<br>') + '</div>';
+      out.innerHTML = h || '<div style="color:var(--text3)">Nothing found for "' + e(d.q) + '".</div>';
+    }).catch(function() { out.textContent = 'Network error'; });
+  };
+  window.skumgrPartBookNote = function(part) {
+    var inp = g('pb-note'), note = inp ? inp.value.trim() : ''; if (!note) return;
+    wFetch(W + '/inventory/part-book/note', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ part: part, note: note }) }).then(function(r) { return r.json(); }).then(function(d) {
+      if (d && d.ok) { invFlash('📝 Note saved', 'success'); skumgrPartBookSearch(); } else invFlash('Error: ' + ((d && d.error) || 'failed'), 'error');
+    });
+  };
+
   // 🧹 Check part #s (SKU Mgr, read-only): odd part #s grouped by why.
   var SKU_PN_WHY = {
     upc: ['📟 A barcode (UPC) saved as a part #', 'Stock Out this row and Stock In the real part #.'],
@@ -8303,7 +8407,7 @@ window.invCredLogin = async function() {
     }).catch(function() { out.textContent = 'Check failed — network error'; });
   };
   function skumgrPnRows() { return SKU_PN.list.filter(function(r) { return SKU_PN.filter === 'all' || r.why.indexOf(SKU_PN.filter) >= 0; }); }
-  function skumgrPnWhyText(r) { return r.why.map(function(w) { return (SKU_PN_WHY[w] || [w])[0]; }).join(' · '); }
+  function skumgrPnWhyText(r) { return r.why.map(function(w) { return (SKU_PN_WHY[w] || [w])[0]; }).join(' · ') + ((r.signs || []).length ? ' (📖 ' + r.signs.join('; ') + ')' : ''); }
   window.skumgrPnFilter = function(f) { SKU_PN.filter = f; skumgrPnRender(); };
   window.skumgrPnRender = function() {
     var out = g('skumgr-pncheck-out'); if (!out) return;

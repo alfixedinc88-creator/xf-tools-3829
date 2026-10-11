@@ -5762,5 +5762,44 @@ console.log('\n🖨 Labels bought but not printed: station unsticks itself, the 
   sq.prepare("DELETE FROM label_print_queue WHERE order_number IN ('W-1','W-2','W-3','W-4')").run();
 }
 
+// Owner (2026-10-11): "I'm starting to add '+' after part #s — I want something to see later WHY some part # has '+' and
+// WHEN; if one day we add another number or sign after the part #, I can search and know everything about our part #s".
+console.log('\n📖 Part # book: why a part # has "+" (and since when), every change kept, search any part # for its story');
+{
+  sq.prepare(`INSERT INTO master_list (base_sku, name, part_num, location, cases, units_per_case, sheet_row) VALUES
+    ('95-1-1','tee','95-1-1=10X+','C1=9-5-1',2,100,0), ('95-1-1','tee','95-1-1=10X','C2=9-5-1',3,100,0)`).run();
+  sq.prepare("INSERT INTO inventory_log (sheet_row, timestamp, type, part_num, location, cases, initials, notes, status) VALUES (0,'2026-10-11T14:00:00.000Z','IN','95-1-1=10X+','C1=9-5-1',2,'TS','new bag size','Verified')").run();
+  const ck0 = await get('/inventory/partnum-check');
+  const flagged0 = (ck0.list || []).some(r => r.partNum === '95-1-1=10X+');
+  const a1 = await post('/inventory/part-book', { marker: '+', position: 'end', started: '2026-10-11', meaning: 'New bag: 50 pcs instead of 25 (10/11 container)' });
+  const b1 = await get('/inventory/part-book'), m1 = (b1.markers || []).find(m => m.marker === '+') || {};
+  check('write down "+" (at the end) = what it means, since 2026-10-11, who → the book lists it with the part #s that have it now and when each first showed up in History',
+    a1.ok && m1.meaning === 'New bag: 50 pcs instead of 25 (10/11 container)' && m1.started === '2026-10-11' && m1.created_by === 'TS'
+    && m1.parts.length === 1 && m1.parts[0].part === '95-1-1=10X+' && m1.parts[0].firstSeen === '2026-10-11T14:00:00.000Z', m1);
+  const ck1 = await get('/inventory/partnum-check');
+  check('🧹 Check part #s: "95-1-1=10X+" was flagged as odd before; with "+" in the book it is a known sign (not "wrong")', flagged0 && !(ck1.list || []).some(r => r.partNum === '95-1-1=10X+'), [flagged0, (ck1.list || []).filter(r => /^95-/.test(r.partNum))]);
+  const dup = await post('/inventory/part-book', { marker: '+', position: 'end', meaning: 'again' });
+  await post('/inventory/part-book', { id: m1.id, marker: '+', position: 'end', started: '2026-10-11', meaning: 'New bag: 50 pcs (was 25) — from the 10/11 container' });
+  const m2 = ((await get('/inventory/part-book')).markers || []).find(m => m.id === m1.id) || {};
+  check('…the same sign twice is refused; a change keeps the old text (who / when / before → after)', dup.ok === false && m2.meaning === 'New bag: 50 pcs (was 25) — from the 10/11 container'
+    && m2.log.length === 2 && m2.log.some(l => l.action === 'changed' && /50 pcs instead of 25/.test(l.before)), m2.log);
+  await post('/inventory/part-book/note', { part: '95-1-1=10x+', note: 'First box came 10/11 — kept apart from =10X' });
+  const s1 = await get('/inventory/part-book/search?q=' + encodeURIComponent('95-1-1=10X+')), s2 = await get('/inventory/part-book/search?q=' + encodeURIComponent('+')), s3 = await get('/inventory/part-book/search?q=95-1-1');
+  check('🔎 search the part # → its sign ("+" = …), its note (who / when), first in History (10/11 Stock In 2 cs), where it is now (C1=9-5-1 2 cs)',
+    s1.ok && s1.one.part === '95-1-1=10X+' && s1.one.signs[0].marker === '+' && s1.one.notes[0].note === 'First box came 10/11 — kept apart from =10X' && s1.one.notes[0].by_user === 'TS'
+    && s1.one.firstSeen.timestamp === '2026-10-11T14:00:00.000Z' && s1.one.spots.length === 1 && s1.one.spots[0].location === 'C1=9-5-1', s1.one);
+  check('…search "+" → what the sign means and every part # with it; search "95-1-1" → both part #s, the "+" one marked 🔖',
+    (s2.signs || []).some(m => m.marker === '+') && s2.parts.some(p => p.part === '95-1-1=10X+') && s3.parts.length === 2 && s3.parts.find(p => p.part === '95-1-1=10X+').signs[0] === '+'
+    && s3.parts.find(p => p.part === '95-1-1=10X').signs.length === 0, [s2.signs, s3.parts]);
+  await post('/inventory/part-book/retire', { id: m1.id, why: 'all repacked' });
+  const m3 = ((await get('/inventory/part-book')).markers || []).find(m => m.id === m1.id) || {};
+  check('…a sign no longer used stays in the book (who / when / why), never erased', m3.retired_at && m3.retired_by === 'TS' && m3.log.some(l => l.action === 'no longer used' && l.after === 'all repacked'), m3);
+  const { readFileSync: rfB } = await import('node:fs');
+  const ih = rfB(fileURLToPath(new URL('../inventory.html', import.meta.url)), 'utf8');
+  check('SKU Mgr: 📖 Part # book next to 🧹 Check part #s — search box, the signs table (✏️ change / 🗄 no longer used), write a sign, 📝 notes on a part #',
+    /onclick="skumgrPartBook\(\)"[^>]*>📖 Part # book<\/button>/.test(ih) && /id="skumgr-pbook-q"/.test(ih) && /function\(\) \{\s*var body = \{ id: g\('pb-id'\)\.value/.test(ih.replace(/window\.skumgrPartBookSave = /, '')) && /skumgrPartBookNote/.test(ih) && /skumgrPartBookRetire/.test(ih), null);
+  sq.exec("DELETE FROM master_list WHERE part_num LIKE '95-1-1%'; DELETE FROM inventory_log WHERE part_num LIKE '95-1-1%'; DELETE FROM part_marker; DELETE FROM part_marker_log; DELETE FROM part_note");
+}
+
 console.log('\n' + (failed ? '❌ ' + failed + ' check(s) FAILED' : '✅ all ' + passed + ' checks passed') + '\n');
 process.exit(failed ? 1 : 0);
