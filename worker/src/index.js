@@ -30141,18 +30141,26 @@ async function lwAmazonMatchList(env, cfg) {
   const add = (mp, k, o) => { if (!k) return; const l = mp.get(k) || []; l.push(o); mp.set(k, l); };
   others.forEach(o => { const p = partOf(o.sku); add(byPart, p, { platform: o.platform, sku: o.sku, qty: o.qty }); add(byBase, base(p), { platform: o.platform, sku: o.sku, qty: o.qty }); });
   const failedToday = new Set((await d1All(env, `SELECT UPPER(sku) s FROM listing_qty_log WHERE by_user = ? AND ok = 0 AND ts >= ?`, [LW_AMZ_BY, new Date(Date.now() - 86400000).toISOString()])).map(r => r.s));
-  const known = await lwKnownBases(env, amz.map((a, i) => base(partOf(a.sku, amzSheet[i]))));
+  // Owner (2026-10-11, the "matches no part #" list): SKUs like 5-3-2W, 25-6-6X, 28-4-3XXX, 27-5-8W.1C, 201-1-3-9XXX,
+  // VMP_30-5-8=1-_6_PK carry the part # with letters around it → read it out (the longest piece SKU Mgr or another
+  // channel knows: 201-1-3-9 → 201-1-3). Variation parents (S2X-VMP-PARENT-…, …-VARPARENT) hold no stock → skipped.
+  const cands = sku => { const out = []; (up(sku).match(/\d+(?:-\d+)+/g) || []).forEach(m => { const seg = m.split('-'); for (let n = seg.length; n >= 3; n--) out.push(seg.slice(0, n).join('-')); }); return out; };
+  const known = await lwKnownBases(env, amz.map((a, i) => base(partOf(a.sku, amzSheet[i]))).concat(...amz.map(a => cands(a.sku))));
   (await d1All(env, `SELECT sku FROM listing_titles WHERE platform != 'Amazon' AND updated_at >= ?`, [since])).forEach(o => known.add(base(partOf(o.sku)))); // sold on another channel (any qty)
   const list = [];
+  stats.parents = 0;
   amz.forEach((a, i) => {
-    const part = partOf(a.sku, amzSheet[i]), same = byPart.get(part) || [], par = same.length ? [] : (byBase.get(base(part)) || []);
-    const row = { listingId: a.listing_id, sku: a.sku, title: a.title || '', qty: a.qty, part, via: mapped[up(a.sku)] ? '✏️ mapping' : amzSheet[i] ? 'AmazonSKU sheet' : 'its own SKU',
+    if (/PARENT/i.test(a.sku || '')) { stats.parents++; return; } // a variation parent — no stock of its own, nothing to set
+    let part = partOf(a.sku, amzSheet[i]), readOut = false;
+    if (!known.has(base(part)) && !mapped[up(a.sku)] && !amzSheet[i]) { const c = cands(a.sku).find(x => known.has(x)); if (c) { part = c; readOut = true; } }
+    const same = byPart.get(part) || [], par = same.length ? [] : (byBase.get(base(part)) || []);
+    const row = { listingId: a.listing_id, sku: a.sku, title: a.title || '', qty: a.qty, part, via: mapped[up(a.sku)] ? '✏️ mapping' : amzSheet[i] ? 'AmazonSKU sheet' : readOut ? 'part # read from the SKU' : 'its own SKU',
       match: same.length ? 'same' : par.length ? 'parent' : '', others: same.length ? same : par, failedToday: failedToday.has(up(a.sku)) };
     if (row.others.length) list.push(row);
-    else if (!known.has(base(part)) && !mapped[up(a.sku)] && !amzSheet[i]) { if (stats.noPart.length < 40) stats.noPart.push({ sku: a.sku, listingId: a.listing_id, title: String(a.title || '').slice(0, 100), part }); }
+    else if (!known.has(base(part)) && !mapped[up(a.sku)] && !amzSheet[i] && !readOut) { if (stats.noPart.length < 40) stats.noPart.push({ sku: a.sku, listingId: a.listing_id, title: String(a.title || '').slice(0, 100), part }); }
     else if (stats.notOnOthers.length < 40) stats.notOnOthers.push({ sku: a.sku, listingId: a.listing_id, part });
   });
-  stats.unmatched = amz.length - list.length;
+  stats.unmatched = amz.length - list.length - stats.parents;
   return { list, stats };
 }
 async function lwAmazonMatchRun(env, o) {

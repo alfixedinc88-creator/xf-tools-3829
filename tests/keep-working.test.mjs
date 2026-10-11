@@ -5601,7 +5601,7 @@ console.log('\n🅰 Listing Watch: Amazon at 0 but other channels have it → se
     if (u.includes('api.amazon.com/auth/o2/token')) return J({ access_token: 'amz', expires_in: 3600 });
     if (u.includes('/listings/2021-08-01/items/') && o && o.method === 'PATCH') { patched.push({ sku: decodeURIComponent(u.split('/').pop().split('?')[0]), body: JSON.parse(o.body) }); return J({ status: 'ACCEPTED', issues: [] }); }
     if (u.includes('/listings/2021-08-01/items/')) { const asin = new URL(u).searchParams.get('identifiers');
-      const sku = { B0AM1: '25-1-1=10', B0AM2: 'XX-MAP-9', B0AM6: '25-1-1=100', B0AM7: 'N3-EV1G-C79U', B0AM9: 'YC-GMED-FBQ4' }[asin] || 'NONE';
+      const sku = { B0AM1: '25-1-1=10', B0AM2: 'XX-MAP-9', B0AM6: '25-1-1=100', B0AM7: 'N3-EV1G-C79U', B0AM9: 'YC-GMED-FBQ4', B0AMA: '5-3-2W', B0AMB: '201-1-3-9XXX', B0AMC: 'VMP_30-5-8=1-_6_PK', B0AMD: '27-5-8W.1C' }[asin] || 'NONE';
       return J({ items: [{ sku, summaries: [{ asin, productType: 'PIPE_FITTING', marketplaceId: 'ATVPDKIKX0DER' }], fulfillmentAvailability: [{ fulfillmentChannelCode: 'DEFAULT', quantity: 0 }] }] }); }
     return new Response('{}', { status: 401 }); };
   const s0 = env.AMAZON_SELLER_ID; env.AMAZON_SELLER_ID = 'SELLER1';
@@ -5618,32 +5618,39 @@ console.log('\n🅰 Listing Watch: Amazon at 0 but other channels have it → se
   // Owner's 23-6-2 (2026-10-11): Amazon FBM SKUs are codes (N3-EV1G-C79U); the AmazonSKU sheet says ASIN B08L9QP1RR = 23-6-2=10.
   lt('Amazon', 'B0AM7', 'N3-EV1G-C79U', 0); lt('eBay', '777', '23-6-2=10', 888);        // ✓ via the AmazonSKU sheet, same pack as eBay
   lt('Amazon', 'B0AM9', 'YC-GMED-FBQ4', 0);                                            // ✓ sheet → 23-6-2=10XX; eBay has 23-6-2=10 → same parent
+  // Owner's "matches no part #" list (2026-10-11): the part # is in the SKU with letters around it; variation parents skipped.
+  lt('Amazon', 'B0AMA', '5-3-2W', 0); lt('Amazon', 'B0AMB', '201-1-3-9XXX', 0); lt('Amazon', 'B0AMC', 'VMP_30-5-8=1-_6_PK', 0); lt('Amazon', 'B0AMD', '27-5-8W.1C', 0);
+  lt('eBay', '881', '5-3-2=2', 888); lt('Walmart', '201-1-3=9', '201-1-3=9', 888); lt('Shopify', '883', '30-5-8=6', 888); lt('eBay', '884', '27-5-8=1', 333);
+  lt('Amazon', 'B0AME', 'S2X-VMP-PARENT-AGXZWW.LQOO_9UC3X50WGG', 0); lt('Amazon', 'B0AMF', '3-4-4-VARPARENT', 0);
   lt('Amazon', 'B0AM8', 'QQ-RAND-77', 0);                                              // ✗ no part # anywhere → listed as "matches no part #"
   const ml0 = JSON.stringify(sq.prepare('SELECT SUM(cases) c FROM master_list').get());
   const l1 = await get('/inventory/soldout/watch/amazon-match');
   const A = k => l1.list.find(a => a.sku === k) || {};
   check('lists only the Amazon listings at 0 whose part # (own SKU, ✏️ mapping or the AmazonSKU sheet by ASIN) is 100+ on another channel, read in the last 2 days',
-    first.ok && l1.ok && JSON.stringify(l1.list.map(a => a.sku).sort()) === JSON.stringify(['25-1-1=10', '25-1-1=100', 'N3-EV1G-C79U', 'XX-MAP-9', 'YC-GMED-FBQ4'])
+    first.ok && l1.ok && JSON.stringify(l1.list.map(a => a.sku).sort()) === JSON.stringify(['201-1-3-9XXX', '25-1-1=10', '25-1-1=100', '27-5-8W.1C', '5-3-2W', 'N3-EV1G-C79U', 'VMP_30-5-8=1-_6_PK', 'XX-MAP-9', 'YC-GMED-FBQ4'])
       && A('XX-MAP-9').part === '26-2-2=5' && A('XX-MAP-9').via === '✏️ mapping' && A('25-1-1=10').match === 'same', l1.list);
   check('…owner\'s 23-6-2: Amazon code SKU N3-EV1G-C79U found through the AmazonSKU sheet (23-6-2=10, same pack as eBay 888); 23-6-2=10XX and 25-1-1=100 marked "same parent, other pack"',
     A('N3-EV1G-C79U').part === '23-6-2=10' && A('N3-EV1G-C79U').via === 'AmazonSKU sheet' && A('N3-EV1G-C79U').match === 'same'
       && A('YC-GMED-FBQ4').part === '23-6-2=10XX' && A('YC-GMED-FBQ4').match === 'parent' && A('25-1-1=100').match === 'parent', l1.list);
+  check('…owner\'s list: 5-3-2W → 5-3-2, 201-1-3-9XXX → 201-1-3, VMP_30-5-8=1-_6_PK → 30-5-8, 27-5-8W.1C → 27-5-8 (part # read from the SKU); S2X-VMP-PARENT-… and 3-4-4-VARPARENT skipped as variation parents',
+    A('5-3-2W').part === '5-3-2' && A('5-3-2W').via === 'part # read from the SKU' && A('201-1-3-9XXX').part === '201-1-3' && A('VMP_30-5-8=1-_6_PK').part === '30-5-8' && A('27-5-8W.1C').part === '27-5-8'
+      && l1.stats.parents === 2 && !l1.list.some(a => /PARENT/.test(a.sku)) && !l1.stats.noPart.some(x => /PARENT/.test(x.sku)), { list: l1.list.map(a => [a.sku, a.part, a.via]), stats: l1.stats });
   check('…the card says what the scan read and why the rest at 0 were not matched (QQ-RAND-77: no part #; 27-3-3=2: no other channel at 100+)',
-    l1.stats.amazonZero >= 8 && l1.stats.unmatched === l1.stats.amazonZero - 5 && l1.stats.noPart.some(x => x.sku === 'QQ-RAND-77') && !l1.stats.noPart.some(x => x.sku === '27-3-3=2')
+    l1.stats.amazonZero >= 14 && l1.stats.unmatched === l1.stats.amazonZero - 9 - 2 && l1.stats.noPart.some(x => x.sku === 'QQ-RAND-77') && !l1.stats.noPart.some(x => x.sku === '27-3-3=2')
       && l1.stats.notOnOthers.some(x => x.sku === '27-3-3=2'), l1.stats);
   check('…Auto is OFF until the owner turns it on (nothing changes by itself)', l1.config.amazonMatch === false && l1.config.amazonMatchQty === 888 && patched.length === 0, l1.config);
   const r = await post('/inventory/soldout/watch/amazon-match', { limit: 25 });
-  check('✓ Set them → the 5 Amazon listings set to 888 (FBM channel DEFAULT, their own product type), none of the others',
-    r.ok && r.set === 5 && r.failed === 0 && patched.length === 5 && patched.every(p => p.body.productType === 'PIPE_FITTING' && p.body.patches[0].value[0].fulfillment_channel_code === 'DEFAULT' && p.body.patches[0].value[0].quantity === 888)
-      && JSON.stringify(patched.map(p => p.sku).sort()) === JSON.stringify(['25-1-1=10', '25-1-1=100', 'N3-EV1G-C79U', 'XX-MAP-9', 'YC-GMED-FBQ4']), { r, patched });
+  check('✓ Set them → the 9 Amazon listings set to 888 (FBM channel DEFAULT, their own product type), none of the others',
+    r.ok && r.set === 9 && r.failed === 0 && patched.length === 9 && patched.every(p => p.body.productType === 'PIPE_FITTING' && p.body.patches[0].value[0].fulfillment_channel_code === 'DEFAULT' && p.body.patches[0].value[0].quantity === 888)
+      && JSON.stringify(patched.map(p => p.sku).sort()) === JSON.stringify(['201-1-3-9XXX', '25-1-1=10', '25-1-1=100', '27-5-8W.1C', '5-3-2W', 'N3-EV1G-C79U', 'VMP_30-5-8=1-_6_PK', 'XX-MAP-9', 'YC-GMED-FBQ4']), { r, patched });
   const lg = sq.prepare("SELECT * FROM listing_qty_log WHERE by_user = 'Auto (Amazon = other channels)' ORDER BY id").all();
-  check('…each change saved: who tapped it, was 0, what the other channels had (and "same parent, other pack")', lg.length === 5 && /23-6-2=10XX \(same parent, other pack\): eBay 888/.test(lg.map(x => x.detail).join('|')) && lg.every(x => x.ok === 1 && x.quantity === 888 && /was 0, other channels have it/.test(x.detail) && /\(by TS\)/.test(x.detail)) && /26-2-2=5: Walmart 888/.test(lg.map(x => x.detail).join('|')), lg);
+  check('…each change saved: who tapped it, was 0, what the other channels had (and "same parent, other pack")', lg.length === 9 && /23-6-2=10XX \(same parent, other pack\): eBay 888/.test(lg.map(x => x.detail).join('|')) && lg.every(x => x.ok === 1 && x.quantity === 888 && /was 0, other channels have it/.test(x.detail) && /\(by TS\)/.test(x.detail)) && /26-2-2=5: Walmart 888/.test(lg.map(x => x.detail).join('|')), lg);
   const l2 = await get('/inventory/soldout/watch/amazon-match');
   check('…then the list is empty (no double setting); SKU Mgr not touched', l2.list.length === 0 && JSON.stringify(sq.prepare('SELECT SUM(cases) c FROM master_list').get()) === ml0, l2.list);
   const ih = readFileSync(fileURLToPath(new URL('../inventory.html', import.meta.url)), 'utf8');
   check('…Inventory → Sold Out → Listing Watch shows 🅰 Amazon at 0 but other channels have it, ✓ Set them all to 888, ⚡ Auto switch',
     /id="lw-amz-box"/.test(ih) && /onclick="lwAmzSetAll\(\)"/.test(ih) && /id="lw-amz-auto" onchange="lwAmzAuto\(this\.checked\)"/.test(ih) && /lwAmzLoad\(\);\s*return d;/.test(ih), null);
-  sq.exec("DELETE FROM listing_titles WHERE listing_id IN ('B0AM1','B0AM2','B0AM3','B0AM4','B0AM5','B0AM6','B0AM7','B0AM8','B0AM9','111','26-2-2=5','333','444','555','777'); DELETE FROM reorder_alias WHERE raw = 'XX-MAP-9'; DELETE FROM listing_qty_log WHERE by_user = 'Auto (Amazon = other channels)'");
+  sq.exec("DELETE FROM listing_titles WHERE listing_id IN ('B0AM1','B0AM2','B0AM3','B0AM4','B0AM5','B0AM6','B0AM7','B0AM8','B0AM9','B0AMA','B0AMB','B0AMC','B0AMD','B0AME','B0AMF','881','201-1-3=9','883','884','111','26-2-2=5','333','444','555','777'); DELETE FROM reorder_alias WHERE raw = 'XX-MAP-9'; DELETE FROM listing_qty_log WHERE by_user = 'Auto (Amazon = other channels)'");
   if (s0 === undefined) delete env.AMAZON_SELLER_ID; else env.AMAZON_SELLER_ID = s0;
   globalThis.fetch = realFetch;
 }
