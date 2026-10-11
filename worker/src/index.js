@@ -2631,13 +2631,16 @@ async function reorderListingsCheck(env, url) {
   fba.forEach(r => { addL('Amazon', r.asin, r.sku, r.product_name, 'FBA', r.asin); addDoc(r.sku, r.product_name, 'FBA'); });
   (await q('SELECT sku, asin, product_name FROM amazon_fba_inventory')).forEach(r => addL('Amazon', r.asin, r.sku, r.product_name, 'FBA inventory', r.asin));
   // Units sold per channel + SKU in the window (listing orders, not pieces).
-  const sold = {}, soldTot = {}, have = new Set(Object.values(L).map(l => l.platform + '|' + l.sku));
+  // Owner (2026-10-11): "can I see the 30 days sale for each one, to fix the ones with sales first" → 30 / 90 days too.
+  const sold = {}, sold30 = {}, sold90 = {}, soldTot = {}, have = new Set(Object.values(L).map(l => l.platform + '|' + l.sku));
+  const d30 = new Date(Date.now() - 30 * 86400000).toISOString().slice(0, 10), d90 = new Date(Date.now() - 90 * 86400000).toISOString().slice(0, 10);
   for (const [t, p] of [['amazon_sales_weekly', 'Amazon'], ['ebay_sales_weekly', 'eBay'], ['walmart_sales_weekly', 'Walmart'], ['shopify_sales_weekly', 'Shopify']]) {
     const rows = p === 'Amazon'
-      ? await q(`SELECT sku, SUM(units_ordered) AS u, MAX(asin) AS asin FROM ${t} WHERE period_start >= ? GROUP BY sku`, since)
-      : await q(`SELECT sku, SUM(units_ordered) AS u FROM ${t} WHERE period_start >= ? GROUP BY sku`, since);
+      ? await q(`SELECT sku, SUM(units_ordered) AS u, SUM(CASE WHEN period_start >= ? THEN units_ordered ELSE 0 END) AS u30, SUM(CASE WHEN period_start >= ? THEN units_ordered ELSE 0 END) AS u90, MAX(asin) AS asin FROM ${t} WHERE period_start >= ? GROUP BY sku`, d30, d90, since)
+      : await q(`SELECT sku, SUM(units_ordered) AS u, SUM(CASE WHEN period_start >= ? THEN units_ordered ELSE 0 END) AS u30, SUM(CASE WHEN period_start >= ? THEN units_ordered ELSE 0 END) AS u90 FROM ${t} WHERE period_start >= ? GROUP BY sku`, d30, d90, since);
     rows.forEach(r => { const k = U(r.sku); if (!k) return; const u = +r.u || 0;
       sold[p + '|' + k] = (sold[p + '|' + k] || 0) + u; soldTot[p] = (soldTot[p] || 0) + u;
+      sold30[p + '|' + k] = (sold30[p + '|' + k] || 0) + (+r.u30 || 0); sold90[p + '|' + k] = (sold90[p + '|' + k] || 0) + (+r.u90 || 0);
       if (!have.has(p + '|' + k)) { have.add(p + '|' + k); addL(p, r.asin || '', k, '', 'sales', r.asin || ''); } });
   }
   // Suggestion names from SKU Mgr / Products / vendor sheets.
@@ -2673,12 +2676,13 @@ async function reorderListingsCheck(env, url) {
     c.listings++; c[status]++;
     if (status === 'ok') continue;
     const gk = raw || ('(no SKU) ' + l.platform + ' ' + l.listingId);
-    const g = groups[gk] = groups[gk] || { sku: raw, status, readAs: part, mappedTo: mapped, mappedBy: (aliasInfo[raw] || aliasInfo[clean] || {}).by || '', mappedAt: (aliasInfo[raw] || aliasInfo[clean] || {}).at || '', listings: [], sold: {}, soldTotal: 0, suggestions: [] };
+    const g = groups[gk] = groups[gk] || { sku: raw, status, readAs: part, mappedTo: mapped, mappedBy: (aliasInfo[raw] || aliasInfo[clean] || {}).by || '', mappedAt: (aliasInfo[raw] || aliasInfo[clean] || {}).at || '', listings: [], sold: {}, soldTotal: 0, sold30: 0, sold90: 0, suggestions: [] };
     g.listings.push({ platform: l.platform, listingId: l.listingId, title: l.title, asin: l.asin, src: l.src });
   }
   Object.values(groups).forEach(g => {
     if (!g.sku) return;
-    [...new Set(g.listings.map(x => x.platform))].forEach(p => { const u = sold[p + '|' + g.sku] || 0; if (u) { g.sold[p] = u; g.soldTotal += u; } });
+    [...new Set(g.listings.map(x => x.platform))].forEach(p => { const u = sold[p + '|' + g.sku] || 0; if (u) { g.sold[p] = u; g.soldTotal += u; }
+      g.sold30 += sold30[p + '|' + g.sku] || 0; g.sold90 += sold90[p + '|' + g.sku] || 0; });
   });
   // ── Suggestions: old SKU Map, same ASIN as our FBA listing, then titles ──
   const partFor = (base, pack) => { const ps = [...(partsOfBase[base] || [])].filter(x => reorderExtractPackSize(x) === (pack || 1)).sort((a, b) => a.length - b.length || a.localeCompare(b)); return ps[0] || ''; };
