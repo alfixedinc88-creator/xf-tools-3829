@@ -14485,7 +14485,7 @@ window.invCredLogin = async function() {
     var st = d.stats || {};
     var head = !st.amazonRead ? '<div style="color:var(--orange);font-weight:700;margin-bottom:6px">⚠ No Amazon quantities saved yet — tap 🔎 Scan now and wait until the scan says finished (every channel), then open this again.</div>'
       : '<div style="color:var(--text2);margin-bottom:6px">Last scan read <b>' + esc(st.amazonRead) + '</b> Amazon (FBM) listings — <b>' + esc(st.amazonZero) + '</b> at 0 — and <b>' + esc(st.othersRead) + '</b> eBay / Walmart / Shopify listings (' + esc(st.othersHigh) + ' at 100+). '
-        + '<b style="color:var(--green)">' + l.length + ' to fix</b>' + (st.unmatched ? ' · ' + esc(st.unmatched) + ' at 0 not matched (below)' : '') + '.</div>';
+        + '<b style="color:var(--green)">' + l.length + ' to fix</b>' + (st.unmatched ? ' · ' + esc(st.unmatched) + ' at 0 not matched (below)' : '') + (st.parents ? ' · ' + esc(st.parents) + ' variation parents skipped (PARENT SKUs hold no stock of their own)' : '') + '.</div>';
     var why = '';
     if ((st.notOnOthers || []).length) why += '<details style="margin-top:6px"><summary style="cursor:pointer;color:var(--text3)">At 0 on Amazon, part # found, but no other channel has it at 100+ (' + st.notOnOthers.length + ')</summary>'
       + st.notOnOthers.map(function (x) { return '<div style="font-family:var(--mono);font-size:11px">' + esc(x.sku) + ' → ' + esc(x.part) + ' · ' + esc(x.listingId) + '</div>'; }).join('') + '</details>';
