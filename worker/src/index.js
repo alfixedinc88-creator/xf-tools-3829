@@ -30172,22 +30172,29 @@ async function lwTitlesTable(env) {
 // until turned on) sets them through the Sold Out code, logged in listing_qty_log as "Auto (Amazon = other channels)"
 // with who. FBA listings are never read here (Amazon's own stock). A listing Amazon refused waits 24 h before a retry.
 const LW_AMZ_BY = 'Auto (Amazon = other channels)';
-async function lwAmazonMatchList(env, cfg) {
+// Owner (2026-10-11): "now check our other channels, did they have the same issue?" — the same check for every channel:
+// a listing at 0 on eBay / Walmart / Shopify whose part # is at 100+ on another channel. Amazon keeps its own name
+// in the log (and its ⚡ Auto); the others are set by hand from the card.
+const LW_MATCH_PLATS = ['Amazon', 'eBay', 'Walmart', 'Shopify'];
+const lwMatchBy = plat => plat === 'Amazon' ? LW_AMZ_BY : `Auto (${plat} = other channels)`;
+async function lwAmazonMatchList(env, cfg, plat) {
+  plat = LW_MATCH_PLATS.includes(plat) ? plat : 'Amazon';
   await lwTitlesTable(env); await soEnsureLog(env);
   cfg = cfg || await lwConfig(env);
   const since = new Date(Date.now() - 2 * 86400000).toISOString();
-  const stats = { amazonRead: 0, amazonZero: 0, othersRead: 0, othersHigh: 0, noPart: [], notOnOthers: [] };
-  stats.amazonRead = ((await d1First(env, `SELECT COUNT(*) n FROM listing_titles WHERE platform = 'Amazon' AND qty IS NOT NULL AND updated_at >= ?`, [since])) || {}).n || 0;
-  stats.othersRead = ((await d1First(env, `SELECT COUNT(*) n FROM listing_titles WHERE platform != 'Amazon' AND qty IS NOT NULL AND updated_at >= ?`, [since])) || {}).n || 0;
-  const amz = await d1All(env, `SELECT listing_id, sku, title, qty FROM listing_titles WHERE platform = 'Amazon' AND qty IS NOT NULL AND qty <= 0 AND updated_at >= ?`, [since]);
+  const stats = { platform: plat, amazonRead: 0, amazonZero: 0, othersRead: 0, othersHigh: 0, noPart: [], notOnOthers: [] };
+  stats.amazonRead = ((await d1First(env, `SELECT COUNT(*) n FROM listing_titles WHERE platform = ? AND qty IS NOT NULL AND updated_at >= ?`, [plat, since])) || {}).n || 0;
+  stats.othersRead = ((await d1First(env, `SELECT COUNT(*) n FROM listing_titles WHERE platform != ? AND qty IS NOT NULL AND updated_at >= ?`, [plat, since])) || {}).n || 0;
+  const amz = await d1All(env, `SELECT listing_id, sku, title, qty FROM listing_titles WHERE platform = ? AND qty IS NOT NULL AND qty <= 0 AND updated_at >= ?`, [plat, since]);
   stats.amazonZero = amz.length;
   if (!amz.length) return { list: [], stats };
-  const others = await d1All(env, `SELECT platform, sku, qty FROM listing_titles WHERE platform != 'Amazon' AND qty >= ? AND updated_at >= ?`, [cfg.amazonMatchMin, since]);
+  const others = await d1All(env, `SELECT platform, sku, qty FROM listing_titles WHERE platform != ? AND qty >= ? AND updated_at >= ?`, [plat, cfg.amazonMatchMin, since]);
   stats.othersHigh = others.length;
   // Owner (2026-10-11): "still 0 found". Amazon seller SKUs are often codes (0H-9TMH-JBU7) — Sold Out search finds the
-  // part # through the AmazonSKU sheet (ASIN → our SKU) and the ✏️ mapping, and by its parent part #. Same here.
+  // part # through the AmazonSKU sheet (ASIN → our SKU) and the ✏️ mapping, and by its parent part #. Same here
+  // (each channel's own SKU sheet by listing ID: EbaySKU by item ID, …).
   const sheetSku = {};
-  try { ((await invSheetGet(env, 'AmazonSKU!A2:C20000')).values || []).forEach(r => { const asin = String(r[0] || '').trim().toUpperCase(), s = String(r[2] || '').trim().toUpperCase(); if (asin && s && !sheetSku[asin]) sheetSku[asin] = s; }); } catch (_) {}
+  try { ((await invSheetGet(env, `${plat}SKU!A2:C20000`)).values || []).forEach(r => { const id = String(r[0] || '').trim().toUpperCase(), s = String(r[2] || '').trim().toUpperCase(); if (id && s && !sheetSku[id]) sheetSku[id] = s; }); } catch (_) {}
   const amzSheet = amz.map(a => sheetSku[String(a.listing_id || '').trim().toUpperCase()] || '');
   const mapped = await lwMapped(env, amz.map(r => r.sku).concat(amzSheet, others.map(r => r.sku)));
   const up = s => String(s || '').trim().toUpperCase().replace(/^-+|-+$/g, '');
@@ -30196,13 +30203,18 @@ async function lwAmazonMatchList(env, cfg) {
   const byPart = new Map(), byBase = new Map();
   const add = (mp, k, o) => { if (!k) return; const l = mp.get(k) || []; l.push(o); mp.set(k, l); };
   others.forEach(o => { const p = partOf(o.sku); add(byPart, p, { platform: o.platform, sku: o.sku, qty: o.qty }); add(byBase, base(p), { platform: o.platform, sku: o.sku, qty: o.qty }); });
-  const failedToday = new Set((await d1All(env, `SELECT UPPER(sku) s FROM listing_qty_log WHERE by_user = ? AND ok = 0 AND ts >= ?`, [LW_AMZ_BY, new Date(Date.now() - 86400000).toISOString()])).map(r => r.s));
+  const failedToday = new Set((await d1All(env, `SELECT UPPER(sku) s FROM listing_qty_log WHERE by_user = ? AND ok = 0 AND ts >= ?`, [lwMatchBy(plat), new Date(Date.now() - 86400000).toISOString()])).map(r => r.s));
   // Owner (2026-10-11, the "matches no part #" list): SKUs like 5-3-2W, 25-6-6X, 28-4-3XXX, 27-5-8W.1C, 201-1-3-9XXX,
   // VMP_30-5-8=1-_6_PK carry the part # with letters around it → read it out (the longest piece SKU Mgr or another
   // channel knows: 201-1-3-9 → 201-1-3). Variation parents (S2X-VMP-PARENT-…, …-VARPARENT) hold no stock → skipped.
   const cands = sku => { const out = []; (up(sku).match(/\d+(?:-\d+)+/g) || []).forEach(m => { const seg = m.split('-'); for (let n = seg.length; n >= 3; n--) out.push(seg.slice(0, n).join('-')); }); return out; };
-  const known = await lwKnownBases(env, amz.map((a, i) => base(partOf(a.sku, amzSheet[i]))).concat(...amz.map(a => cands(a.sku))));
-  (await d1All(env, `SELECT sku FROM listing_titles WHERE platform != 'Amazon' AND updated_at >= ?`, [since])).forEach(o => known.add(base(partOf(o.sku)))); // sold on another channel (any qty)
+  const known = await lwKnownBases(env, amz.map((a, i) => base(partOf(a.sku, amzSheet[i]))).concat(amz.map(a => base(partOf(a.sku))), ...amz.map(a => cands(a.sku))));
+  (await d1All(env, `SELECT sku FROM listing_titles WHERE platform != ? AND updated_at >= ?`, [plat, since])).forEach(o => known.add(base(partOf(o.sku)))); // sold on another channel (any qty)
+  // eBay: a listing with more than one SKU under one item ID is a variation listing (set with ItemID + SKU).
+  const multi = new Set(plat === 'eBay' ? (await d1All(env, `SELECT listing_id FROM listing_titles WHERE platform = 'eBay' AND updated_at >= ? GROUP BY listing_id HAVING COUNT(*) > 1`, [since])).map(r => String(r.listing_id)) : []);
+  // Not Amazon: the listing's own SKU is our part # most of the time → the channel's sheet only when the SKU names
+  // nothing we know, and never for a variation (one item ID, many SKUs: the sheet row can't tell which).
+  if (plat !== 'Amazon') amz.forEach((a, i) => { if (multi.has(String(a.listing_id)) || known.has(base(partOf(a.sku)))) amzSheet[i] = ''; });
   const list = [];
   stats.parents = 0;
   amz.forEach((a, i) => {
@@ -30210,7 +30222,8 @@ async function lwAmazonMatchList(env, cfg) {
     let part = partOf(a.sku, amzSheet[i]), readOut = false;
     if (!known.has(base(part)) && !mapped[up(a.sku)] && !amzSheet[i]) { const c = cands(a.sku).find(x => known.has(x)); if (c) { part = c; readOut = true; } }
     const same = byPart.get(part) || [], par = same.length ? [] : (byBase.get(base(part)) || []);
-    const row = { listingId: a.listing_id, sku: a.sku, title: a.title || '', qty: a.qty, part, via: mapped[up(a.sku)] ? '✏️ mapping' : amzSheet[i] ? 'AmazonSKU sheet' : readOut ? 'part # read from the SKU' : 'its own SKU',
+    const row = { platform: plat, listingId: a.listing_id, sku: a.sku, title: a.title || '', qty: a.qty, part, isVar: multi.has(String(a.listing_id)),
+      via: mapped[up(a.sku)] ? '✏️ mapping' : amzSheet[i] ? `${plat}SKU sheet` : readOut ? 'part # read from the SKU' : 'its own SKU',
       match: same.length ? 'same' : par.length ? 'parent' : '', others: same.length ? same : par, failedToday: failedToday.has(up(a.sku)) };
     if (row.others.length) list.push(row);
     else if (!known.has(base(part)) && !mapped[up(a.sku)] && !amzSheet[i] && !readOut) { if (stats.noPart.length < 40) stats.noPart.push({ sku: a.sku, listingId: a.listing_id, title: String(a.title || '').slice(0, 100), part }); }
@@ -30221,23 +30234,25 @@ async function lwAmazonMatchList(env, cfg) {
 }
 async function lwAmazonMatchRun(env, o) {
   o = o || {};
+  const plat = LW_MATCH_PLATS.includes(o.platform) ? o.platform : 'Amazon';
   const cfg = await lwConfig(env);
-  if (!o.manual && !(cfg.watch && cfg.amazonMatch)) return { skipped: 'off' };
-  const list = (await lwAmazonMatchList(env, cfg)).list.filter(a => !a.failedToday);
+  if (!o.manual && !(plat === 'Amazon' && cfg.watch && cfg.amazonMatch)) return { skipped: 'off' }; // ⚡ Auto is Amazon only
+  const list = (await lwAmazonMatchList(env, cfg, plat)).list.filter(a => !a.failedToday);
+  const fns = { eBay: _soEbay, Amazon: _soAmazon, Walmart: _soWalmart, Shopify: _soShopify };
   let set = 0, failed = 0; const done = [];
   for (const a of list.slice(0, o.limit || 10)) {
     let r;
-    try { r = await _soAmazon(env, { listingId: a.listingId, sku: a.sku, title: a.title }, cfg.amazonMatchQty); }
+    try { r = await fns[plat](env, { listingId: a.listingId, sku: a.sku, title: a.title, isVar: !!a.isVar }, cfg.amazonMatchQty); }
     catch (e) { r = { ok: false, error: String(e.message || e).slice(0, 300) }; }
     const why = `${a.part}${a.match === 'parent' ? ' (same parent, other pack)' : ''}: ` + a.others.map(x => `${x.platform} ${x.qty}`).join(', ');
     await d1Run(env, `INSERT INTO listing_qty_log (ts, by_user, platform, listing_id, sku, title, quantity, ok, detail) VALUES (?,?,?,?,?,?,?,?,?)`,
-      [new Date().toISOString(), LW_AMZ_BY, 'Amazon', a.listingId, a.sku, String(a.title || '').slice(0, 200), cfg.amazonMatchQty, r.ok ? 1 : 0,
+      [new Date().toISOString(), lwMatchBy(plat), plat, a.listingId, a.sku, String(a.title || '').slice(0, 200), cfg.amazonMatchQty, r.ok ? 1 : 0,
        ((r.ok ? 'was 0, other channels have it — ' : 'FAILED: ' + (r.error || '') + ' — ') + why + (o.by ? ` (by ${o.by})` : ' (auto)')).slice(0, 500)]);
-    if (r.ok) { set++; await d1Run(env, `UPDATE listing_titles SET qty = ? WHERE platform = 'Amazon' AND listing_id = ? AND sku = ?`, [cfg.amazonMatchQty, a.listingId, String(a.sku).toUpperCase()]); }
+    if (r.ok) { set++; await d1Run(env, `UPDATE listing_titles SET qty = ? WHERE platform = ? AND listing_id = ? AND sku = ?`, [cfg.amazonMatchQty, plat, a.listingId, String(a.sku).toUpperCase()]); }
     else failed++;
     done.push({ sku: a.sku, listingId: a.listingId, ok: !!r.ok, error: r.ok ? '' : String(r.error || '').slice(0, 200) });
   }
-  return { ok: true, waiting: Math.max(0, list.length - done.length), set, failed, done };
+  return { ok: true, platform: plat, waiting: Math.max(0, list.length - done.length), set, failed, done };
 }
 
 async function lwStep(env, { pages, trigger }) {
@@ -30359,13 +30374,17 @@ async function handleListingWatch(path, method, request, env, session) {
   // POST { limit } → set them now (who is saved in the log).
   if (path === '/inventory/soldout/watch/amazon-match' && method === 'GET') {
     const cfg = await lwConfig(env);
-    const { list, stats } = await lwAmazonMatchList(env, cfg);
-    const log = await d1All(env, `SELECT ts, listing_id, sku, title, quantity, ok, detail FROM listing_qty_log WHERE by_user = ? ORDER BY id DESC LIMIT 60`, [LW_AMZ_BY]);
-    return _soResp({ ok: true, config: cfg, list, stats, log });
+    const plat = new URL(request.url).searchParams.get('platform') || 'Amazon';
+    const { list, stats } = await lwAmazonMatchList(env, cfg, plat);
+    const log = await d1All(env, `SELECT ts, platform, listing_id, sku, title, quantity, ok, detail FROM listing_qty_log WHERE by_user = ? ORDER BY id DESC LIMIT 60`, [lwMatchBy(stats.platform)]);
+    // how many to fix on each channel, for the channel buttons on the card
+    const counts = {};
+    for (const p of LW_MATCH_PLATS) counts[p] = p === stats.platform ? list.length : (await lwAmazonMatchList(env, cfg, p)).list.length;
+    return _soResp({ ok: true, config: cfg, platform: stats.platform, list, stats, log, counts });
   }
   if (path === '/inventory/soldout/watch/amazon-match' && method === 'POST') {
     const b = await request.json().catch(() => ({}));
-    return _soResp(await lwAmazonMatchRun(env, { manual: true, by: who || '?', limit: Math.min(40, Math.max(1, parseInt(b.limit, 10) || 25)) }));
+    return _soResp(await lwAmazonMatchRun(env, { manual: true, platform: b.platform, by: who || '?', limit: Math.min(40, Math.max(1, parseInt(b.limit, 10) || 25)) }));
   }
   if (path === '/inventory/soldout/watch/scan' && method === 'POST') {
     // Start a fresh pass; the page then calls /step until it's done.
