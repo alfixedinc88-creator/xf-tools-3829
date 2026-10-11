@@ -6400,14 +6400,16 @@ function partnumWhy(raw) {
   return why;
 }
 async function inventoryPartnumCheck(env) {
+  const marks = await partMarkersActive(env);
   const rows = await d1All(env, `SELECT id, part_num, name, location, cases, units_per_case FROM master_list WHERE TRIM(COALESCE(part_num,'')) != ''`);
   const cats = { upc: [], numonly: [], letters: [], chars: [], noeq: [], twoeq: [], suffix: [], base: [], dupes: [] };
   const spell = {}, byId = {};
   for (const r of rows) {
     const row = { id: r.id, partNum: r.part_num, location: r.location || '', cases: Number(r.cases) || 0 };
-    const why = partnumWhy(r.part_num);
+    // A sign written down in 📖 Part # book (e.g. "+" at the end) is known, not "wrong": checked without it, and its meaning shown.
+    const mk = partMarkersOf(r.part_num, marks), why = partnumWhy(mk.length ? partStripMarkers(r.part_num, mk) : r.part_num);
     for (const w of why) cats[w].push(row);
-    if (why.length) byId[r.id] = { ...row, name: String(r.name || '').slice(0, 80), each: Number(r.units_per_case) || 0, why: why.slice() };
+    if (why.length) byId[r.id] = { ...row, name: String(r.name || '').slice(0, 80), each: Number(r.units_per_case) || 0, why: why.slice(), signs: mk.map(m => m.marker + ' = ' + m.meaning) };
     const key = String(r.part_num).toUpperCase().replace(/\s+/g, '');
     (spell[key] = spell[key] || {})[r.part_num] = (spell[key][r.part_num] || []).concat(row);
   }
@@ -6421,6 +6423,118 @@ async function inventoryPartnumCheck(env) {
   // One flat list (every odd row once, with all its reasons) for the table view.
   const list = Object.values(byId).slice(0, 5000);
   return cors(new Response(JSON.stringify({ ok: true, total: rows.length, cats: out, list }), { headers: { 'Content-Type': 'application/json' } }));
+}
+
+// 📖 Part # book (owner 2026-10-11): "I'm starting to add '+' after some part #s — I want a place to see, later, WHY a
+// part # has '+' and since WHEN; and if one day we add another sign or number after the part #, I can search it and
+// know everything going on with our part #s". Two things are written down, nothing is ever erased:
+//  • signs (part_marker): what a sign on a part # means — "+" at the end = …, since <date>, who wrote it; every change
+//    (and a sign no longer used) kept in part_marker_log;
+//  • notes on one part # (part_note): why this part # is the way it is, who / when.
+// 🔎 Search a part # or a sign → the signs it has, its notes, when it first showed up in History, its renames (SKU Mgr
+// edits), the spots it is in now, and its last History lines. 🧹 Check part #s no longer calls a known sign "wrong".
+async function partBookTables(env) {
+  await env.DB.prepare(`CREATE TABLE IF NOT EXISTS part_marker (id INTEGER PRIMARY KEY AUTOINCREMENT, marker TEXT NOT NULL, position TEXT NOT NULL DEFAULT 'end',
+    meaning TEXT NOT NULL, started TEXT, created_at TEXT, created_by TEXT, updated_at TEXT, updated_by TEXT, retired_at TEXT, retired_by TEXT)`).run();
+  await env.DB.prepare(`CREATE TABLE IF NOT EXISTS part_marker_log (id INTEGER PRIMARY KEY AUTOINCREMENT, marker_id INTEGER, ts TEXT, by_user TEXT, action TEXT, before TEXT, after TEXT)`).run();
+  await env.DB.prepare(`CREATE TABLE IF NOT EXISTS part_note (id INTEGER PRIMARY KEY AUTOINCREMENT, part TEXT NOT NULL, note TEXT NOT NULL, ts TEXT, by_user TEXT)`).run();
+  await env.DB.prepare('CREATE INDEX IF NOT EXISTS idx_part_note_part ON part_note(part)').run().catch(() => {});
+}
+async function partMarkersActive(env) {
+  try { await partBookTables(env); return (await d1All(env, 'SELECT * FROM part_marker WHERE retired_at IS NULL ORDER BY LENGTH(marker) DESC, id')) || []; } catch (_) { return []; }
+}
+// The signs a part # has: "end" = the part # ends with it (30-3-4=10X+), "anywhere" = it is somewhere in it.
+function partMarkersOf(part, marks) {
+  const P = String(part || '').trim().toUpperCase();
+  return (marks || []).filter(m => { const k = String(m.marker || '').toUpperCase(); return k && (m.position === 'anywhere' ? P.includes(k) : P.endsWith(k)); });
+}
+function partStripMarkers(part, mk) {
+  let P = String(part || '').trim();
+  for (const m of mk) { const k = String(m.marker); if (m.position === 'anywhere') P = P.split(k).join(''); else if (P.toUpperCase().endsWith(k.toUpperCase())) P = P.slice(0, P.length - k.length); }
+  return P;
+}
+async function inventoryPartBook(path, request, url, env, session) {
+  const J = (o, st) => cors(new Response(JSON.stringify(o), { status: st || 200, headers: { 'Content-Type': 'application/json' } }));
+  await partBookTables(env);
+  const who = String((session && (session.displayName || session.username)) || '?').slice(0, 40), now = new Date().toISOString(), U = v => String(v || '').trim().toUpperCase();
+  const parts = await d1All(env, `SELECT part_num, SUM(CASE WHEN cases > 0 THEN cases ELSE 0 END) AS c, COUNT(*) AS n FROM master_list WHERE TRIM(COALESCE(part_num,'')) != '' GROUP BY UPPER(TRIM(part_num))`);
+  const firstSeen = async list => { const out = {}; for (let i = 0; i < list.length; i += 80) { const ch = list.slice(i, i + 80);
+    (await d1All(env, `SELECT UPPER(part_num) p, MIN(timestamp) t FROM inventory_log WHERE UPPER(part_num) IN (${ch.map(() => '?').join(',')}) GROUP BY UPPER(part_num)`, ch)).forEach(r => { out[r.p] = r.t; }); } return out; };
+  // GET — every sign (with how many part #s have it now, which, and since when each first showed up) + its change log.
+  if (path === '/inventory/part-book' && request.method === 'GET') {
+    const all = await d1All(env, 'SELECT * FROM part_marker ORDER BY retired_at IS NOT NULL, id');
+    const log = await d1All(env, 'SELECT * FROM part_marker_log ORDER BY id DESC LIMIT 300');
+    const markers = [];
+    for (const m of all) {
+      const has = parts.filter(p => partMarkersOf(p.part_num, [m]).length);
+      const fs = await firstSeen(has.map(p => U(p.part_num)));
+      markers.push({ ...m, parts: has.map(p => ({ part: p.part_num, cases: p.c || 0, spots: p.n, firstSeen: fs[U(p.part_num)] || null })).sort((a, b) => String(a.firstSeen || '').localeCompare(String(b.firstSeen || ''))),
+        log: log.filter(l => l.marker_id === m.id) });
+    }
+    return J({ ok: true, markers });
+  }
+  // POST — add / change a sign (every change kept: who, when, before → after).
+  if (path === '/inventory/part-book' && request.method === 'POST') {
+    const b = await request.json().catch(() => ({}));
+    const marker = String(b.marker || '').trim().slice(0, 20), meaning = String(b.meaning || '').trim().slice(0, 1000);
+    const position = b.position === 'anywhere' ? 'anywhere' : 'end', started = String(b.started || '').trim().slice(0, 10) || now.slice(0, 10);
+    if (!marker) return J({ ok: false, error: 'Type the sign (e.g. +)' }, 400);
+    if (!meaning) return J({ ok: false, error: 'Write what it means / why' }, 400);
+    if (/^\d+$/.test(marker) && position === 'anywhere') return J({ ok: false, error: 'A number "anywhere" would match almost every part # — use "at the end"' }, 400);
+    if (b.id) {
+      const was = await d1First(env, 'SELECT * FROM part_marker WHERE id = ?', [parseInt(b.id)]);
+      if (!was) return J({ ok: false, error: 'Not found' }, 404);
+      await d1Run(env, 'UPDATE part_marker SET marker = ?, position = ?, meaning = ?, started = ?, updated_at = ?, updated_by = ? WHERE id = ?', [marker, position, meaning, started, now, who, was.id]);
+      await d1Run(env, 'INSERT INTO part_marker_log (marker_id, ts, by_user, action, before, after) VALUES (?,?,?,?,?,?)', [was.id, now, who, 'changed',
+        JSON.stringify({ marker: was.marker, position: was.position, meaning: was.meaning, started: was.started }), JSON.stringify({ marker, position, meaning, started })]);
+      return J({ ok: true, id: was.id });
+    }
+    const dup = await d1First(env, 'SELECT id FROM part_marker WHERE UPPER(marker) = ? AND position = ? AND retired_at IS NULL', [marker.toUpperCase(), position]);
+    if (dup) return J({ ok: false, error: `"${marker}" is already in the book — change it there (✏️)` }, 400);
+    const ins = await env.DB.prepare('INSERT INTO part_marker (marker, position, meaning, started, created_at, created_by) VALUES (?,?,?,?,?,?)').bind(marker, position, meaning, started, now, who).run();
+    await d1Run(env, 'INSERT INTO part_marker_log (marker_id, ts, by_user, action, before, after) VALUES (?,?,?,?,?,?)', [ins.meta.last_row_id, now, who, 'added', null, JSON.stringify({ marker, position, meaning, started })]);
+    return J({ ok: true, id: ins.meta.last_row_id });
+  }
+  // POST /retire — a sign no longer used: kept in the book (greyed), with who / when.
+  if (path === '/inventory/part-book/retire' && request.method === 'POST') {
+    const b = await request.json().catch(() => ({})), id = parseInt(b.id);
+    const was = await d1First(env, 'SELECT * FROM part_marker WHERE id = ?', [id]); if (!was) return J({ ok: false, error: 'Not found' }, 404);
+    await d1Run(env, 'UPDATE part_marker SET retired_at = ?, retired_by = ? WHERE id = ?', [now, who, id]);
+    await d1Run(env, 'INSERT INTO part_marker_log (marker_id, ts, by_user, action, before, after) VALUES (?,?,?,?,?,?)', [id, now, who, 'no longer used', null, String(b.why || '').slice(0, 300)]);
+    return J({ ok: true });
+  }
+  // POST /note — a note on one part # (why it is the way it is). Notes are only added, never changed.
+  if (path === '/inventory/part-book/note' && request.method === 'POST') {
+    const b = await request.json().catch(() => ({}));
+    const part = U(b.part).replace(/\s+/g, '').slice(0, 60), note = String(b.note || '').trim().slice(0, 1000);
+    if (!part || !note) return J({ ok: false, error: 'Part # and note needed' }, 400);
+    await d1Run(env, 'INSERT INTO part_note (part, note, ts, by_user) VALUES (?,?,?,?)', [part, note, now, who]);
+    return J({ ok: true });
+  }
+  // GET /search?q= — a part # or a sign: everything we know.
+  if (path === '/inventory/part-book/search' && request.method === 'GET') {
+    const q = U(url.searchParams.get('q')).replace(/\s+/g, '');
+    if (!q) return J({ ok: false, error: 'Type a part # or a sign' }, 400);
+    const marks = await d1All(env, 'SELECT * FROM part_marker ORDER BY id');
+    const signHits = marks.filter(m => U(m.marker) === q);                 // q is a sign itself ("+")
+    const hits = parts.filter(p => U(p.part_num).includes(q)).slice(0, 60); // part #s with q in them
+    const exact = parts.find(p => U(p.part_num) === q);
+    const fs = await firstSeen(hits.map(p => U(p.part_num)));
+    let one = null;
+    const P = exact ? U(exact.part_num) : (hits.length === 1 ? U(hits[0].part_num) : (q.includes('=') ? q : ''));
+    if (P) {
+      const spots = await d1All(env, 'SELECT location, cases, units_per_case, name FROM master_list WHERE UPPER(TRIM(part_num)) = ? ORDER BY location', [P]);
+      const first = await d1First(env, 'SELECT timestamp, type, location, cases, initials, notes FROM inventory_log WHERE UPPER(part_num) = ? ORDER BY timestamp, id LIMIT 1', [P]);
+      const renames = await d1All(env, `SELECT timestamp, initials, notes FROM inventory_log WHERE type = 'EDIT' AND notes LIKE ? ORDER BY timestamp DESC LIMIT 20`, ['%Part #:%' + P + '%']);
+      const recent = await d1All(env, 'SELECT timestamp, type, location, cases, initials, status, notes FROM inventory_log WHERE UPPER(part_num) = ? ORDER BY timestamp DESC, id DESC LIMIT 30', [P]);
+      const notes = await d1All(env, 'SELECT * FROM part_note WHERE part = ? ORDER BY id DESC', [P]);
+      one = { part: P, signs: partMarkersOf(P, marks).map(m => ({ marker: m.marker, position: m.position, meaning: m.meaning, started: m.started, by: m.created_by, retired: !!m.retired_at })),
+        notes, firstSeen: first || null, renames: renames.map(r => ({ at: r.timestamp, by: r.initials, notes: String(r.notes || '').slice(0, 300) })),
+        spots: spots.map(s => ({ location: s.location, cases: s.cases, each: s.units_per_case, name: s.name })), recent: recent.map(r => ({ ...r, notes: String(r.notes || '').slice(0, 200) })) };
+    }
+    return J({ ok: true, q, signs: signHits, one, parts: hits.map(p => ({ part: p.part_num, cases: p.c || 0, spots: p.n, firstSeen: fs[U(p.part_num)] || null, signs: partMarkersOf(p.part_num, marks).map(m => m.marker) })) });
+  }
+  return J({ ok: false, error: 'Unknown part-book route' }, 404);
 }
 
 // 🏷 Barcode designer → 💾 Save (owner): the phone saves the label (part #,
@@ -8327,6 +8441,7 @@ const _app = {
       if (path === '/inventory/spot-check' && method === 'GET') return await inventorySpotCheck(url, env);
       if (path === '/inventory/check-spots' && method === 'POST') return await inventoryCheckSpots(request, env);
       if (path === '/inventory/partnum-check' && method === 'GET' && session.pin_level === 'mgmt') return await inventoryPartnumCheck(env);
+      if ((path === '/inventory/part-book' || path.startsWith('/inventory/part-book/')) && session.pin_level === 'mgmt') return await inventoryPartBook(path, request, url, env, session);
       if (path === '/inventory/barcode-label' && method === 'POST') return await inventoryBarcodeLabelLog(request, env, session);
       if (path === '/inventory/barcode-job' || path.startsWith('/inventory/barcode-job/')) return await inventoryBarcodeJob(path, request, url, env, session);
       if (path === '/inventory/pack-sizes' && method === 'GET') return await inventoryPackSizes(env);
