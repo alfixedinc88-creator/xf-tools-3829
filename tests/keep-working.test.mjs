@@ -5749,7 +5749,7 @@ console.log('\n🖨 Labels bought but not printed: station unsticks itself, the 
   check('…the station starting again by itself is kept on record', sq.prepare("SELECT COUNT(*) n FROM autolabel_log WHERE action = 'print_stuck' AND reason LIKE '%busy for 7 min%'").get().n === 1, null);
   const { readFileSync: rfP } = await import('node:fs');
   const ph = rfP(fileURLToPath(new URL('../packship.html', import.meta.url)), 'utf8'), wk = rfP(fileURLToPath(new URL('../worker/src/index.js', import.meta.url)), 'utf8');
-  const fn = new Function((ph.match(/function _psAlPrintWaitText\(w\) \{[\s\S]*?\n\}/) || [''])[0] + '; return _psAlPrintWaitText;')();
+  const fn = new Function((ph.match(/function _psAlStationLast\(w\) \{[\s\S]*?\n\}/) || [''])[0] + (ph.match(/function _psAlPrintWaitText\(w\) \{[\s\S]*?\n\}/) || [''])[0] + '; return _psAlPrintWaitText;')();
   const noStation = fn({ count: 2, oldest: ago(40), lastPrintedAt: ago(290), stationTick: { at: ago(30) } });
   const stuck = fn({ count: 2, oldest: ago(40), lastPrintedAt: ago(290), stationTick: { at: ago(0.5) } });
   check('bar: labels waiting > 10 min + no station checking in → "bought but NOT printed … No printer station is on"; station on → "on but not printing: close any print window, reload"; < 10 min → nothing',
@@ -5825,6 +5825,44 @@ console.log('\n🔗 Listings → our SKU: 30 / 90 / 365-day sales on each, most 
     o30.join() === 'ZZLS-NEW,ZZLS-MID,ZZLS-OLD,ZZLS-NONE' && o90.join() === 'ZZLS-MID,ZZLS-NEW,ZZLS-OLD,ZZLS-NONE' && o365.join() === 'ZZLS-OLD,ZZLS-MID,ZZLS-NEW,ZZLS-NONE'
     && /id="rls-sort" onchange="rlsRender\(\)"/.test(rh) && /'Sold 30 days', 'Sold 90 days'/.test(rh) && /\}\)\.sort\(rlsSortFn\(\)\);/.test(rh), [o30, o90, o365]);
   sq.prepare("DELETE FROM ebay_sales_weekly WHERE sku LIKE 'ZZLS-%'").run();
+}
+
+// Owner (2026-10-12): bar "207 labels bought but NOT printed (oldest 26 h) … No printer station is on (last check never) ·
+// 2 printed but not picked up" — "I already fixed it; I need something to check what stops the auto print and start it again".
+console.log('\n🩺 Printing check: every reason printing stops, each with its fix (clear not-picked-up, skip old labels, be the station)');
+{
+  await call('/veeqo/autolabel/config', { headers: H });
+  const ago = m => new Date(Date.now() - m * 60000).toISOString();
+  sq.prepare("DELETE FROM label_print_queue").run(); sq.prepare("DELETE FROM label_print_batch").run(); sq.prepare('DELETE FROM label_watch_checked').run(); sq.prepare('DELETE FROM ship_print_log').run();
+  sq.prepare("INSERT OR REPLACE INTO app_config (key, value) VALUES ('label_print_watch_start', ?)").run(ago(5 * 60)); // the watch was on before these printed
+  // 2 labels printed 2 h ago, never read by the Print Log scanner → "not picked up"
+  const p1 = sq.prepare("INSERT INTO label_print_queue (order_number, channel, tracking, carrier, created_at, printed_at) VALUES ('PC-1','eBay','9400100000000000000201','USPS',?,?)").run(ago(130), ago(120)).lastInsertRowid;
+  const p2 = sq.prepare("INSERT INTO label_print_queue (order_number, channel, tracking, carrier, created_at, printed_at) VALUES ('PC-2','eBay','9400100000000000000202','USPS',?,?)").run(ago(130), ago(120)).lastInsertRowid;
+  sq.prepare("INSERT INTO label_print_batch (ts, day, by_user, source, count, label_ids) VALUES (?,?,?,?,?,?)").run(ago(120), ago(120).slice(0, 10), 'TS', 'printer station', 2, JSON.stringify([Number(p1), Number(p2)]));
+  // waiting: 2 bought yesterday (already printed from Veeqo by hand), 1 bought 20 min ago
+  sq.prepare("INSERT INTO label_print_queue (order_number, channel, tracking, carrier, created_at) VALUES ('PC-OLD1','eBay','9400100000000000000211','USPS',?), ('PC-OLD2','eBay','9400100000000000000212','USPS',?), ('PC-NEW','eBay','9400100000000000000213','USPS',?)").run(ago(26 * 60), ago(25 * 60), ago(20));
+  const w0 = await get('/veeqo/autolabel/print-watch');
+  check('before: 2 printed but not picked up, 3 labels waiting (oldest 26 h)', w0.missing.length >= 2 && w0.printWait.count === 3, [w0.missing.map(m => m.order_number), w0.printWait.count]);
+  const c = await post('/veeqo/autolabel/print-watch', { action: 'checked_all', note: 'printer fixed' });
+  check('✓ "I fixed it — clear these" → none left on the not-picked-up list, each kept with who / when / note', c.ok && !c.missing.some(m => /^PC-/.test(m.order_number))
+    && sq.prepare("SELECT COUNT(*) n FROM label_watch_checked WHERE note = 'printer fixed' AND by_user = 'TS'").get().n >= 2, c.missing);
+  const bad = await post('/veeqo/autolabel/labels-skip', { before: ago(60), note: '' });
+  const sk = await post('/veeqo/autolabel/labels-skip', { before: ago(60), note: 'printed from Veeqo by hand 10/11' });
+  const rows = sq.prepare("SELECT order_number, printed_at, printed_by FROM label_print_queue WHERE order_number LIKE 'PC-%' ORDER BY id").all();
+  check('⏭ "Don\'t print the old ones" (bought before 1 h ago, why) → the 2 from yesterday are not printed (who / why on each, one log line); the new one still prints; no why → refused',
+    bad.ok === false && sk.ok && sk.skipped === 2 && sk.printWait.count === 1
+    && rows.filter(r => /^⏭ skipped by TS: printed from Veeqo by hand/.test(r.printed_by || '')).length === 2 && !rows.find(r => r.order_number === 'PC-NEW').printed_at
+    && sq.prepare("SELECT COUNT(*) n FROM autolabel_log WHERE action = 'print_skipped' AND detail LIKE '%PC-OLD1%'").get().n === 1, rows);
+  const lst = await get('/veeqo/autolabel/labels?status=new&limit=50&after=0');
+  check('…the printer station now gets only the new label', (lst.labels || []).map(l => l.order_number).join() === 'PC-NEW', (lst.labels || []).map(l => l.order_number));
+  const { readFileSync: rfC } = await import('node:fs');
+  const ph = rfC(fileURLToPath(new URL('../packship.html', import.meta.url)), 'utf8');
+  const html = new Function('_psAlEsc', 'localStorage', (ph.match(/function _psAlStationLast\(w\) \{[\s\S]*?\n\}/) || [''])[0] + (ph.match(/function _psAlPrintCheckHtml\(d\) \{[\s\S]*?\n\}/) || [''])[0] + '; return _psAlPrintCheckHtml;')(v => String(v), { getItem: () => '' })(
+    { hold: { on: false }, missing: [{}, {}], settings: { n: 3 }, printWait: { count: 207, oldest: ago(26 * 60), lastPrintedAt: ago(20 * 60), stationTick: null, stationSeen: null } });
+  check('🩺 Printing check (top of 🛑 Print watch, tap the red bar): not on hold ✅ · 2 not picked up ❌ + "I fixed it — clear these 2" · no station ❌ + "Make THIS computer the printer station" · 207 waiting ❌ + "Don\'t print the old ones"',
+    /✅<\/span><span[^>]*>Not on hold/.test(html) && /I fixed it — clear these 2/.test(html) && /No printer station is on<\/b> — last check never/.test(html) && /Make THIS computer the printer station/.test(html)
+    && /<b>207<\/b> labels bought and waiting to print/.test(html) && /Don.t print the old ones/.test(html) && /var h = _psAlPrintCheckHtml\(d\);/.test(ph), html.slice(0, 300));
+  sq.prepare("DELETE FROM label_print_queue WHERE order_number LIKE 'PC-%'").run(); sq.prepare("DELETE FROM label_print_batch").run();
 }
 
 console.log('\n' + (failed ? '❌ ' + failed + ' check(s) FAILED' : '✅ all ' + passed + ' checks passed') + '\n');
