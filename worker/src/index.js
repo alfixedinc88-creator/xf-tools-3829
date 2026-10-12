@@ -29325,6 +29325,25 @@ async function handleAutolabelRoute(path, method, url, request, env, session) {
     return new Response(f.bytes, { headers: { 'Content-Type': f.type, 'Access-Control-Allow-Origin': _currentOrigin || '*', 'Cache-Control': 'no-store' } });
   }
   // POST { ids:[...], by } -> printed (who / when / how many times).
+  // ⏭ POST { before, note } — 🩺 Printing check (owner 2026-10-12: 207 labels waiting since yesterday): labels bought before
+  // `before` that were already printed another way (from Veeqo by hand…) are marked so the printer station doesn't print them
+  // again. Each keeps who / when / why (printed_by "⏭ skipped by …"), and one line in the Auto Label log lists them.
+  if (path === '/veeqo/autolabel/labels-skip' && method === 'POST') {
+    await autolabelEnsureTables(env);
+    const b = await request.json().catch(() => ({}));
+    const before = Date.parse(b.before || ''), note = String(b.note || '').trim().slice(0, 120);
+    if (!(before > 0)) return veeqoResp({ ok: false, error: 'Pick the time: labels bought before it are skipped' }, 400);
+    if (!note) return veeqoResp({ ok: false, error: 'Say why (e.g. printed from Veeqo by hand)' }, 400);
+    const by = String((session && (session.displayName || session.username)) || b.by || '').slice(0, 40), now = new Date().toISOString();
+    const rows = await d1All(env, 'SELECT id, order_number, tracking FROM label_print_queue WHERE printed_at IS NULL AND cancel_hold IS NULL AND created_at < ? ORDER BY id', [new Date(before).toISOString()]);
+    for (let i = 0; i < rows.length; i += 80) {
+      const ch = rows.slice(i, i + 80).map(r => r.id);
+      await d1Run(env, `UPDATE label_print_queue SET printed_at = ?, printed_by = ? WHERE printed_at IS NULL AND id IN (${ch.map(() => '?').join(',')})`, [now, ('⏭ skipped by ' + (by || '?') + ': ' + note).slice(0, 160), ...ch]);
+    }
+    if (rows.length) await autolabelLog(env, { action: 'print_skipped', customer: by, reason: `⏭ ${rows.length} waiting label(s) bought before ${new Date(before).toISOString()} NOT printed by the station (${note}) — by ${by || '?'}`,
+      detail: rows.map(r => r.order_number + ' ' + (r.tracking || '')).join(', ').slice(0, 4000) });
+    return veeqoResp({ ok: true, skipped: rows.length, printWait: await labelPrintWait(env) });
+  }
   if (path === '/veeqo/autolabel/labels-printed' && method === 'POST') {
     const b = await request.json().catch(() => ({}));
     const ids = (Array.isArray(b.ids) ? b.ids : []).map(n => parseInt(n)).filter(n => n > 0).slice(0, 200);
@@ -29543,6 +29562,14 @@ async function handleAutolabelRoute(path, method, url, request, env, session) {
         const r = await d1First(env, 'SELECT order_number, tracking FROM label_print_queue WHERE id = ?', [id]);
         await autolabelLog(env, { action: 'print_watch_checked', customer: who, orderNumber: r ? r.order_number : '', tracking: r ? r.tracking : '',
           reason: `✓ Not-picked-up label checked by ${who || '?'}` + (note ? ': ' + note : '') });
+      }
+    } else if (b.action === 'checked_all') {
+      // 🩺 Owner (2026-10-12): "I already fixed it — clear that error so it can't stop the auto print". Every label on the
+      // not-picked-up list right now → checked (who / when / note), one line each in the log.
+      const w = await labelWatchCheck(env), note = String(b.note || 'fixed — cleared in 🩺 Printing check').slice(0, 200);
+      for (const l of w.missing) {
+        await d1Run(env, 'INSERT INTO label_watch_checked (label_id, by_user, at, note) VALUES (?,?,?,?) ON CONFLICT(label_id) DO UPDATE SET by_user=excluded.by_user, at=excluded.at, note=excluded.note', [l.id, who, now, note]);
+        await autolabelLog(env, { action: 'print_watch_checked', customer: who, orderNumber: l.order_number || '', tracking: l.tracking || '', reason: `✓ Not-picked-up label checked by ${who || '?'}: ${note}` });
       }
     } else if (b.action === 'settings') {
       const s = await labelWatchSettings(env), n = parseInt(b.n);

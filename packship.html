@@ -11014,14 +11014,19 @@ function _psAlWatchApply(d) {
 // Red bar (on hold) / orange bar (some labels not picked up) at the top of every manager's Pack & Ship — tap → Auto Label.
 // 🖨 Owner (2026-10-11): "since 3 pm it bought the labels but nothing printed — and nothing told us why". Labels waiting
 // more than 10 min → why, in plain words: no printer station checking in, or the station is on but not printing.
+// The printer station's last sign of life: its minute check (new) or its last "give me new labels" (older pages too).
+function _psAlStationLast(w) {
+  var a = w && w.stationTick && w.stationTick.at ? Date.parse(w.stationTick.at) : 0, b = w && w.stationSeen && w.stationSeen.at ? Date.parse(w.stationSeen.at) : 0;
+  return Math.max(a || 0, b || 0);
+}
 function _psAlPrintWaitText(w) {
   if (!w || !(w.count > 0) || !w.oldest) return '';
   var waitMin = Math.round((Date.now() - Date.parse(w.oldest)) / 60000); if (waitMin < 10) return '';
   var t = function(x) { return x ? new Date(x).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' }) : 'never'; };
-  var tick = w.stationTick && w.stationTick.at ? Date.parse(w.stationTick.at) : 0;
+  var tick = _psAlStationLast(w);
   var head = '🖨 ' + w.count + ' label' + (w.count === 1 ? '' : 's') + ' bought but NOT printed (oldest waiting ' + (waitMin >= 90 ? Math.round(waitMin / 60) + ' h' : waitMin + ' min') + ', last label printed ' + t(w.lastPrintedAt) + '). ';
-  if (!tick || Date.now() - tick > 3 * 60000) return head + 'No printer station is on (last check ' + t(tick ? w.stationTick.at : null) + '): on the label printer computer open Pack & Ship with 🖨 Printer station ticked.';
-  return head + 'The printer station is on (checked ' + t(w.stationTick.at) + ') but not printing: on that computer close any print / message window and reload Pack & Ship (F5). Tap for the list.';
+  if (!tick || Date.now() - tick > 3 * 60000) return head + 'No printer station is on (last check ' + t(tick || null) + '): on the label printer computer open Pack & Ship with 🖨 Printer station ticked. Tap → 🩺 Printing check.';
+  return head + 'The printer station is on (checked ' + t(tick) + ') but not printing: on that computer close any print / message window and reload Pack & Ship (F5). Tap → 🩺 Printing check.';
 }
 function _psAlWatchBanner(d) {
   var held = !!(d.hold && d.hold.on), n = (d.missing || []).length, bar = document.getElementById('ps-al-watch-bar');
@@ -11051,7 +11056,7 @@ function _psAlWatchRender(d) {
   if (nSel && document.activeElement !== nSel) nSel.value = String(s.n || 3);
   if (on) on.checked = s.on !== false;
   var held = !!(d.hold && d.hold.on), miss = d.missing || [], t = function(x) { return x ? new Date(x).toLocaleString([], { month: 'numeric', day: 'numeric', hour: 'numeric', minute: '2-digit' }) : ''; };
-  var h = '';
+  var h = _psAlPrintCheckHtml(d);
   if (held) h += '<div style="border:2px solid var(--red);background:#FEE2E2;color:#7F1D1D;border-radius:8px;padding:10px;margin-bottom:8px;font-weight:700">'
     + '🛑 PRINTING ON HOLD since ' + e(t(d.hold.at)) + ' — ' + e(d.hold.why || '') + '.<br>New labels are still bought; they wait in 🏷️ Shipping labels until printing starts again.'
     + '<div style="margin-top:8px"><button class="ps-btn-primary" style="width:auto;padding:8px 18px;background:var(--green);border-color:var(--green)" onclick="psAlWatchRelease()">✅ Printer fixed — print again</button></div></div>';
@@ -11081,6 +11086,63 @@ function _psAlWatchRender(d) {
     }).join('') + '</details>';
   box.innerHTML = h;
 }
+// 🩺 Printing check (owner 2026-10-12: "207 labels bought but NOT printed … 2 printed but not picked up — I already fixed it;
+// I need something to check what stops the auto print, and start it again"). Every reason printing can stop, each with its fix.
+function _psAlPrintCheckHtml(d) {
+  var e = _psAlEsc, w = d.printWait || {}, held = !!(d.hold && d.hold.on), miss = d.missing || [], last = _psAlStationLast(w);
+  var t = function(x) { return x ? new Date(x).toLocaleString([], { month: 'numeric', day: 'numeric', hour: 'numeric', minute: '2-digit' }) : 'never'; };
+  var here = false; try { here = localStorage.getItem('xf_slip_station') === '1'; } catch (_) {}
+  var alive = last && Date.now() - last < 3 * 60000;
+  var row = function(ok, text, btn) { return '<div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;padding:6px 0;border-bottom:1px solid var(--border)"><span style="font-size:15px">' + (ok ? '✅' : '❌') + '</span><span style="flex:1;min-width:220px">' + text + '</span>' + (btn || '') + '</div>'; };
+  var waitMin = w.oldest ? Math.round((Date.now() - Date.parse(w.oldest)) / 60000) : 0;
+  return '<div style="border:2px solid ' + ((held || !alive) && w.count ? 'var(--red)' : 'var(--border)') + ';border-radius:10px;padding:8px 12px;margin-bottom:10px;background:var(--bg2)">'
+    + '<div style="font-weight:800;margin-bottom:4px">🩺 Printing check — what can stop the auto print</div>'
+    + row(!held, held ? '<b>Printing is ON HOLD</b> since ' + e(t(d.hold.at)) + ' (labels not picked up by the Print Log scanner)' : 'Not on hold',
+        held ? '<button class="ps-btn-sm" style="background:var(--green);color:#fff;border-color:var(--green)" onclick="psAlWatchRelease()">✅ Printer fixed — print again</button>' : '')
+    + row(!miss.length, miss.length ? '<b>' + miss.length + '</b> label' + (miss.length === 1 ? '' : 's') + ' printed but not picked up by the Print Log scanner (only a warning — it stops printing only after ' + ((d.settings || {}).n || 3) + ' in a row)' : 'No label waiting to be picked up',
+        miss.length ? '<button class="ps-btn-sm" onclick="psAlWatchCheckAll(this)">✓ I fixed it — clear these ' + miss.length + '</button>' : '')
+    + row(alive, alive ? 'A printer station is on — last check ' + e(t(last)) + (here ? ' (this computer)' : '')
+        : '<b>No printer station is on</b> — last check ' + e(t(last || null)) + '. On the computer with the label printer: open Pack & Ship and tap the button →',
+        alive && here ? '' : '<button class="ps-btn-sm" style="background:var(--accent);color:#fff;border-color:var(--accent)" onclick="psAlMakeStation(this)">🖨 Make THIS computer the printer station</button>')
+    + row(!(w.count > 0), w.count > 0 ? '<b>' + w.count + '</b> label' + (w.count === 1 ? '' : 's') + ' bought and waiting to print · oldest ' + e(t(w.oldest)) + (waitMin >= 60 ? ' (' + Math.round(waitMin / 60) + ' h)' : '') + ' · last label printed ' + e(t(w.lastPrintedAt))
+        + (waitMin >= 120 ? '<div style="color:var(--orange);margin-top:2px">Old ones may already be printed another way (from Veeqo by hand) — skip those first so they don\'t print twice.</div>' : '') : 'No label waiting to print',
+        w.count > 0 ? '<button class="ps-btn-sm" onclick="psAlSkipOld(this)">⏭ Don\'t print the old ones…</button>' : '')
+    + '</div>';
+}
+window.psAlWatchCheckAll = async function(btn) {
+  var n = ((window._psAlWatch && window._psAlWatch.missing) || []).length; if (!n) return;
+  var note = prompt('✓ ' + n + ' label(s) not picked up — what was fixed? (kept with your name and the time)', 'printer fixed / labels found');
+  if (note === null) return;
+  if (btn) btn.disabled = true;
+  var d = await _psAlFetch('/veeqo/autolabel/print-watch', { method: 'POST', body: { action: 'checked_all', note: note || 'fixed', by: psInitials || '' } });
+  if (d.ok === false) { _psToast(d.error || 'Failed', 'err'); if (btn) btn.disabled = false; return; }
+  _psAlWatchApply(d); _psToast('✓ Cleared — they are off the not-picked-up list (on record)');
+};
+// This window becomes the 🖨 Printer station (same as ticking it in 🏷️ Shipping labels) and prints what is waiting now.
+window.psAlMakeStation = function(btn) {
+  if (!confirm('Make THIS computer the 🖨 Printer station?\n\nDo it only on the computer with the LABEL printer (kiosk printing).\nEvery label bought prints here every minute while Pack & Ship is open; what is waiting now prints right away.')) return;
+  var st = document.getElementById('ps-al-slip-station'); if (st) st.checked = true;
+  psAlSlipStation(true);
+  setTimeout(psAlLoadWatch, 4000);
+};
+// ⏭ Labels bought before a time, already printed another way → not printed by the station (each one kept with who / why).
+window.psAlSkipOld = async function(btn) {
+  var w = (window._psAlWatch && window._psAlWatch.printWait) || {};
+  var def = new Date(Date.now() - 60 * 60000), pad = function(n) { return String(n).padStart(2, '0'); };
+  var ans = prompt('⏭ Don\'t print waiting labels bought BEFORE (your time, YYYY-MM-DD HH:MM).\nOnly for labels already printed another way — the rest still print.\n\n' + (w.count || 0) + ' waiting, oldest ' + (w.oldest ? new Date(w.oldest).toLocaleString() : '?') + '.',
+    def.getFullYear() + '-' + pad(def.getMonth() + 1) + '-' + pad(def.getDate()) + ' ' + pad(def.getHours()) + ':' + pad(def.getMinutes()));
+  if (ans === null) return;
+  var m = String(ans).trim().match(/^(\d{4})-(\d{1,2})-(\d{1,2})\s+(\d{1,2}):(\d{2})$/); if (!m) { alert('Type it like 2026-10-12 09:30'); return; }
+  var before = new Date(+m[1], +m[2] - 1, +m[3], +m[4], +m[5]);
+  var why = prompt('Why are they not printed by the station? (e.g. printed from Veeqo by hand on 10/11)', 'printed another way'); if (why === null || !why.trim()) return;
+  if (!confirm('Mark every waiting label bought before ' + before.toLocaleString() + ' as already printed (' + why + ')?\nThey will NOT print. Recorded with your name.')) return;
+  if (btn) btn.disabled = true;
+  var d = await _psAlFetch('/veeqo/autolabel/labels-skip', { method: 'POST', body: { before: before.toISOString(), note: why, by: psInitials || '' } });
+  if (btn) btn.disabled = false;
+  if (d.ok === false) { alert(d.error || 'Failed'); return; }
+  _psToast('⏭ ' + d.skipped + ' old label(s) will not print (on record) · ' + ((d.printWait && d.printWait.count) || 0) + ' still waiting');
+  psAlLoadWatch(); if (typeof psAlLoadLabels === 'function') psAlLoadLabels();
+};
 window.psAlWatchRelease = async function(quiet) {
   var d = await _psAlFetch('/veeqo/autolabel/print-watch', { method: 'POST', body: { action: 'release', by: psInitials || '' } });
   if (d.ok === false) { _psToast(d.error || 'Failed', 'err'); return; }
