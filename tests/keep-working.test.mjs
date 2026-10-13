@@ -5985,5 +5985,32 @@ console.log('\n📊 Part# Detail: Amazon split into FBA / FBM / ? — the three 
   sq.exec("DELETE FROM master_list WHERE base_sku = '924-5-4'; DELETE FROM amazon_sales_weekly WHERE sku LIKE '924-5-4%'; DELETE FROM fba_catalog WHERE sku LIKE '924-5-4%'; DELETE FROM listing_titles WHERE sku LIKE '924-5-4%'; DELETE FROM reorder_alias WHERE raw LIKE '924-5-4%'");
 }
 
+// Owner (2026-10-13, Stock Levels screenshot): "a lot of part #s say sold out, but our parent SKU still has a lot — if the parent
+// still has a lot it should not show here; make the screen bigger; and each one I can click to link to the right parent SKU".
+console.log('\n📊 Stock Levels: Out / Low judged on the whole parent; codes that are not our part # → 🔗 tap to link; full width');
+{
+  const { readFileSync: rfY } = await import('node:fs');
+  const wh = rfY(fileURLToPath(new URL('../warehouse.html', import.meta.url)), 'utf8');
+  const start = wh.indexOf('var _SO = null'), stop = wh.indexOf('window.oosSetStockFilter');
+  const els = {}, el = id => els[id] = els[id] || { innerHTML: '', value: '', textContent: '' };
+  const g = { document: { getElementById: el, querySelectorAll: () => [] }, window: {}, DB: { master: [] }, _oosStockFilter: 'all', _oosOrderFilter: 'all', wFetch: () => new Promise(() => {}) };
+  const R = (part, parent, cases, pcs, sold90) => ({ part, parent, pack: 1, name: '', vendor: 'EFF', stock: { cases, pieces: pcs, spots: cases ? 1 : 0, noEaCases: 0, negCases: 0 },
+    onWay: { units: 0, pieces: 0, cases: 0, titles: [] }, owed: { units: 0, pieces: 0, cases: 0, titles: [] }, sold90Pcs: sold90, sold30Pcs: 0 });
+  const api = new Function(...Object.keys(g), wh.slice(start, stop) + '; return { renderOOS, soStatus, setSO: function (d) { _SO = d; }, items: function () { return window._soShown; } };')(...Object.values(g));
+  api.setSO({ ok: true, vendors: ['EFF'], totals: { stockCases: 20, stockPieces: 2000 }, check: { ok: true }, asOf: new Date().toISOString(),
+    rows: [R('4-1-2=1', '4-1-2', 0, 0, 162), R('4-1-2=10XX', '4-1-2', 20, 2000, 10), R('4-2-1=10X', '4-2-1', 0, 0, 1440), R('1-1/2FBIBB', '1-1/2FBIBB', 0, 0, 0)] });
+  api.renderOOS();
+  const by = Object.fromEntries((api.items() || []).map(r => [r.part, r]));
+  check('4-1-2=1 at 0, but parent 4-1-2 has 2,000 pcs (=10XX) → NOT out of stock (parent lasts ~1,000 days); says "parent 4-1-2: 2,000 pcs"',
+    by['4-1-2=1'] && by['4-1-2=1'].status === 'in' && by['4-1-2=1'].own === 'out' && /parent 4-1-2: 2,000 pcs \(all packs\)/.test(els['res-oos'].innerHTML), by['4-1-2=1'] && [by['4-1-2=1'].status, by['4-1-2=1'].own]);
+  check('…4-2-1=10X: nothing in any pack of 4-2-1 → still Out of Stock; "1-1/2FBIBB" (not our part #) → 🔗 Not linked, tap to link',
+    by['4-2-1=10X'].status === 'out' && by['1-1/2FBIBB'].status === 'link' && /🔗 Not our part # — tap to link \(1\)/.test(els['res-oos'].innerHTML) && /onclick="soLinkOpen\(this\.dataset\.p\);return false" data-p="1-1\/2FBIBB"/.test(els['res-oos'].innerHTML), Object.values(by).map(r => r.part + ':' + r.status));
+  check('…tap a part # → its parent with every pack size + "🔗 This is really part #" saved as the ✏️ mapping (Reorder → History); Stock Levels uses the whole screen width',
+    /window\.soLinkOpen = function\(part\)/.test(wh) && /reorder\/fix\/batch', \{ method: 'POST'/.test(wh) && /items: \[\{ key: part, raws: \[part\], part: to, fields: \{\} \}\]/.test(wh) && /ct\.style\.maxWidth = tab === 'oos' \? 'none' : ''/.test(wh), null);
+  const lk = await post('/reorder/fix/batch', { items: [{ key: 'ZZ-1-1/2FBIBB', raws: ['ZZ-1-1/2FBIBB'], part: '4-1-2=1', fields: {} }] });
+  check('…the link is the same ✏️ mapping Reorder uses (saved, in Reorder History)', lk.results && lk.results[0] && lk.results[0].ok && sq.prepare("SELECT part FROM reorder_alias WHERE raw = 'ZZ-1-1/2FBIBB'").get().part === '4-1-2=1', lk);
+  sq.prepare("DELETE FROM reorder_alias WHERE raw = 'ZZ-1-1/2FBIBB'").run();
+}
+
 console.log('\n' + (failed ? '❌ ' + failed + ' check(s) FAILED' : '✅ all ' + passed + ' checks passed') + '\n');
 process.exit(failed ? 1 : 0);
