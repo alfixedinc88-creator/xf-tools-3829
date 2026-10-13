@@ -6159,5 +6159,32 @@ console.log('\n🗑 Stock Levels: tick weird part #s → deleted in SKU Mgr too 
   sq.exec("DELETE FROM master_list WHERE part_num LIKE '%ZQ%'; DELETE FROM reorder_incoming WHERE title = 'PO-ZQ 10/13'");
 }
 
+// Owner (2026-10-13): "some part #s should show under another vendor — 202-3-4 shows under EFF, let me change it to JQ, and in
+// the future it only shows under JQ".
+console.log('\n🏭 Stock Levels: change a parent\'s vendor (EFF → JQ) — every pack size, SKU Mgr too, History kept, stays for new rows');
+{
+  sq.prepare(`INSERT INTO master_list (base_sku, name, part_num, location, cases, units_per_case, vendor) VALUES
+    ('929-3-4','elbow','929-3-4=10','C1=9-1-1',4,10,'EFF'), ('929-3-4','elbow','929-3-4=5XX','C1=9-1-2',2,5,'EFF')`).run();
+  const whB = shelf();
+  const V = async p => (((await get('/inventory/stock-overview')).rows || []).find(r => r.part === p) || {}).vendor;
+  const v0 = await V('929-3-4=10');
+  const noMgmt = await call('/inventory/stock-levels/vendor', { method: 'POST', body: JSON.stringify({ parent: '929-3-4', vendor: 'JQ' }) });
+  const d = await post('/inventory/stock-levels/vendor', { parent: '929-3-4=10', vendor: '#1' }); // the page sends the masked name (#1 = JQ)
+  const ml = sq.prepare("SELECT vendor FROM master_list WHERE base_sku = '929-3-4'").all().map(r => r.vendor);
+  const v1 = [await V('929-3-4=10'), await V('929-3-4=5XX')];
+  check('929-3-4 under EFF → change to JQ (tapped on =10 → the parent 929-3-4): both pack sizes now JQ (#1) on Stock Levels and in SKU Mgr; not signed in → refused',
+    v0 === '#2' && noMgmt.status >= 400 && d.ok && d.parent === '929-3-4' && d.rows === 2 && ml.every(v => v === 'JQ') && v1.every(v => v === '#1'), { v0, d, ml, v1 });
+  const h = sq.prepare("SELECT initials, notes, total_before b, total_after a FROM inventory_log WHERE type = 'EDIT' AND notes LIKE '[SKU MGR VENDOR] 929-3-4%'").all();
+  check('…one History line: who, vendor EFF → JQ, the 2 rows; cases untouched (warehouse ' + whB + ' → ' + shelf() + ')',
+    h.length === 1 && h[0].initials === 'TS' && /vendor EFF → JQ/.test(h[0].notes) && /2 SKU Mgr rows changed/.test(h[0].notes) && shelf() === whB, h);
+  sq.prepare("INSERT INTO master_list (base_sku, name, part_num, location, cases, units_per_case, vendor) VALUES ('929-3-4','elbow','929-3-4=2','C1=9-1-3',1,2,'EFF')").run();
+  check('…a new SKU Mgr row later with EFF (929-3-4=2) still shows only under JQ', await V('929-3-4=2') === '#1', await V('929-3-4=2'));
+  const { readFileSync: rfV } = await import('node:fs');
+  const wh = rfV(fileURLToPath(new URL('../warehouse.html', import.meta.url)), 'utf8');
+  check('page: tap a part # → "🏭 Vendor of <parent>" with the vendor list + 💾 Change vendor (→ /inventory/stock-levels/vendor)',
+    /🏭 Vendor of ' \+ soEsc\(row\.parent\)/.test(wh) && /id="so-vendor-to"/.test(wh) && /window\.soVendorSave = function\(parent\)/.test(wh) && /\/inventory\/stock-levels\/vendor', \{ method: 'POST'/.test(wh), null);
+  sq.exec("DELETE FROM master_list WHERE base_sku = '929-3-4'; DELETE FROM stock_vendor_override WHERE parent = '929-3-4'");
+}
+
 console.log('\n' + (failed ? '❌ ' + failed + ' check(s) FAILED' : '✅ all ' + passed + ' checks passed') + '\n');
 process.exit(failed ? 1 : 0);
