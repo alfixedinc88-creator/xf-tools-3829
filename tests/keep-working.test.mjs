@@ -6109,5 +6109,55 @@ console.log('\n📊 Stock Levels first page: one row per parent # (tap for each 
   check('…tap the parent → every pack size of it (same popup as before), the parent\'s name shown', /if \(!row\.name && fam\[0\]\)/.test(wh) && /var fam = _SO\.rows\.filter\(function\(r\) \{ return r\.parent === row\.parent; \}\);/.test(wh), null);
 }
 
+// Owner (2026-10-13, Stock Levels screenshot: "5/20/2022 DOUBLE CHECK HOW MANY TOTAL ROLL WE HAVE", "10-1/2X F TEE", …): "a lot of
+// weird part #s — a check box so I can delete them, and deleting here deletes them in SKU Mgr too".
+console.log('\n🗑 Stock Levels: tick weird part #s → deleted in SKU Mgr too (History kept); never one with stock or on an order');
+{
+  const now = new Date().toISOString();
+  sq.prepare(`INSERT INTO master_list (base_sku, name, part_num, location, cases, units_per_case, vendor) VALUES
+    ('ZQ-1/2X F TEE','','ZQ-1/2X F TEE','C1=1-1-1',0,0,'EFF'), ('ZQ-1/2X F TEE','','ZQ-1/2X F TEE','C2=1-1-1',0,0,'EFF'),
+    ('5/20/2022 ZQ DOUBLE CHECK','','5/20/2022 ZQ DOUBLE CHECK','C1=1-1-2',0,0,'EFF'),
+    ('ZQ-ROLL','','ZQ-ROLL','C1=1-1-3',3,10,'EFF'), ('ZQ-ORDER','','ZQ-ORDER','C1=1-1-4',0,0,'EFF')`).run();
+  sq.prepare("INSERT INTO reorder_incoming (title, part, qty, vendor, cases, updated_at) VALUES ('PO-ZQ 10/13','ZQ-ORDER',5,'EFF',1,?)").run(now);
+  const whB = shelf(), logB = sq.prepare("SELECT COUNT(*) n FROM inventory_log").get().n;
+  const so = await get('/inventory/stock-overview');
+  const shown = new Set((so.rows || []).map(r => r.part));
+  check('before: the weird part #s show on Stock Levels (ZQ-1/2X F TEE, 5/20/2022 ZQ DOUBLE CHECK)', shown.has('ZQ-1/2X F TEE') && shown.has('5/20/2022 ZQ DOUBLE CHECK'), [...shown].filter(p => /ZQ/.test(p)));
+  const noMgmt = await call('/inventory/stock-levels/delete', { method: 'POST', body: JSON.stringify({ parts: ['ZQ-1/2X F TEE'] }) });
+  check('…not signed in → refused, nothing deleted', noMgmt.status >= 400 && sq.prepare("SELECT COUNT(*) n FROM master_list WHERE part_num = 'ZQ-1/2X F TEE'").get().n === 2, noMgmt.status);
+  const d = await post('/inventory/stock-levels/delete', { parts: ['ZQ-1/2X F TEE', '5/20/2022 ZQ DOUBLE CHECK', 'ZQ-ROLL', 'ZQ-ORDER'] });
+  const left = p => sq.prepare('SELECT COUNT(*) n FROM master_list WHERE part_num = ?').get(p).n;
+  const why = p => ((d.skipped || []).find(x => x.part === p) || {}).why || '';
+  check('delete: ZQ-1/2X F TEE (both 0-case spots) and 5/20/2022 ZQ DOUBLE CHECK gone from SKU Mgr; ZQ-ROLL (3 cases) and ZQ-ORDER (on PO-ZQ 10/13) skipped with the reason',
+    d.ok && left('ZQ-1/2X F TEE') === 0 && left('5/20/2022 ZQ DOUBLE CHECK') === 0 && left('ZQ-ROLL') === 1 && left('ZQ-ORDER') === 1
+    && /has 3 cases in SKU Mgr/.test(why('ZQ-ROLL')) && /on a Reorder order \(PO-ZQ 10\/13\)/.test(why('ZQ-ORDER')) && d.deleted.length === 2, d);
+  const hist = sq.prepare("SELECT part_num, location, initials, notes, total_before b, total_after a FROM inventory_log WHERE type = 'EDIT' AND notes LIKE '[SKU MGR DELETE]%' AND part_num LIKE '%ZQ%'").all();
+  check('…every deleted row is in History (who, spot, all its fields to put it back), 3 lines; warehouse cases the same before → after (' + whB + ' → ' + shelf() + ')',
+    hist.length === 3 && hist.every(h => h.initials === 'TS' && /was: part_num=/.test(h.notes) && h.b === 0 && h.a === 0) && shelf() === whB
+    && sq.prepare("SELECT COUNT(*) n FROM inventory_log").get().n === logB + 3, hist);
+  const so2 = await get('/inventory/stock-overview');
+  check('…Stock Levels no longer shows them; still adds up to SKU Mgr + Reorder ✅', !(so2.rows || []).some(r => r.part === 'ZQ-1/2X F TEE' || r.part === '5/20/2022 ZQ DOUBLE CHECK') && so2.check.ok, so2.check);
+  // The page: a box only on 🔗 Not linked rows; the 🗑 button sends every part # under a ticked parent.
+  const { readFileSync: rfD } = await import('node:fs');
+  const wh = rfD(fileURLToPath(new URL('../warehouse.html', import.meta.url)), 'utf8');
+  const start = wh.indexOf('var _SO = null'), stop = wh.indexOf('window.oosSetStockFilter');
+  const els = {}, el = id => els[id] = els[id] || { innerHTML: '', value: '', textContent: '', style: {} };
+  let sent = null;
+  const g = { document: { getElementById: el, querySelectorAll: () => [] }, window: {}, DB: { master: [] }, _oosStockFilter: 'all', _oosOrderFilter: 'all', confirm: () => true, alert: () => {},
+    wFetch: (u, o) => { sent = { u, b: JSON.parse(o.body) }; return new Promise(() => {}); } };
+  const R = (part, cases) => ({ part, parent: part.split('=')[0], pack: 1, name: '', vendor: 'EFF', stock: { cases, pieces: cases * 10, spots: cases ? 1 : 0, noEaCases: 0, negCases: 0 },
+    onWay: { units: 0, pieces: 0, cases: 0, titles: [] }, owed: { units: 0, pieces: 0, cases: 0, titles: [] }, sold90Pcs: 0, sold30Pcs: 0 });
+  const api = new Function(...Object.keys(g), wh.slice(start, stop) + '; return { renderOOS, setSO: function (x) { _SO = x; } };')(...Object.values(g));
+  api.setSO({ ok: true, vendors: ['EFF'], totals: {}, check: { ok: true }, asOf: now, rows: [R('10-1/2X F TEE', 0), R('10-1/2X F TEE=2', 0), R('4-3-1=2', 0)] });
+  api.renderOOS();
+  const h = els['res-oos'].innerHTML;
+  check('page: 🗑 bar + a box on "10-1/2X F TEE" (🔗 Not linked) only, none on 4-3-1 (our part #)',
+    /🗑 Delete <span id="so-del-n">0<\/span> from SKU Mgr too/.test(h) && /class="so-pick" data-p="10-1\/2X F TEE"/.test(h) && !/class="so-pick" data-p="4-3-1"/.test(h), h.slice(0, 1500));
+  g.window.soPick('10-1/2X F TEE', true); g.window.soDelete();
+  check('…tick it + 🗑 → asks first, then sends every part # under it (10-1/2X F TEE, 10-1/2X F TEE=2) to /inventory/stock-levels/delete',
+    sent && /\/inventory\/stock-levels\/delete$/.test(sent.u) && sent.b.parts.slice().sort().join('|') === '10-1/2X F TEE|10-1/2X F TEE=2', sent);
+  sq.exec("DELETE FROM master_list WHERE part_num LIKE '%ZQ%'; DELETE FROM reorder_incoming WHERE title = 'PO-ZQ 10/13'");
+}
+
 console.log('\n' + (failed ? '❌ ' + failed + ' check(s) FAILED' : '✅ all ' + passed + ' checks passed') + '\n');
 process.exit(failed ? 1 : 0);

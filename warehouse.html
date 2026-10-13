@@ -2894,8 +2894,17 @@ function renderOOS() {
     document.getElementById('res-oos').innerHTML = html + '<div class="placeholder"><span class="placeholder-icon">✅</span><h3>No items found.</h3><p>No stock level items match your filter.</p></div>';
     return;
   }
+  // Owner (2026-10-13): "a lot of weird part #s — a check box so I can delete them, and it deletes them in SKU Mgr too".
+  // Only 🔗 Not linked rows (not our part # shape) get a box; the server never deletes stock (see soDelete).
+  var linkShown = items.filter(function(r) { return r.status === 'link'; });
+  _soPick = _soPick.filter(function(p) { return linkShown.some(function(r) { return r.part === p; }); });
+  if (linkShown.length) html += '<div id="so-del-bar" style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-bottom:8px;padding:8px 10px;border:1.5px dashed var(--red);border-radius:8px;font-size:12px">'
+    + '<b style="color:var(--red)">🗑 Weird part #s:</b> tick the 🔗 Not linked ones that got in by mistake →'
+    + '<button class="ps-filter-btn" onclick="soDelete()" style="border-color:var(--red);color:var(--red);font-weight:700">🗑 Delete <span id="so-del-n">' + _soPick.length + '</span> from SKU Mgr too</button>'
+    + '<span style="color:var(--text3)">Managers only · kept in Inventory → History · a part # with cases in SKU Mgr or on a Reorder order is never deleted (it says why)</span>'
+    + '<span id="so-del-msg"></span></div>';
   html += '<div class="table-wrap"><table class="data-table">'
-    + '<thead><tr><th>' + (_soView === 'parent' ? 'Parent #' : 'Part #') + '</th><th>Product Name</th><th>Vendor</th><th>🏬 In stock now<br><span style="font-weight:400">SKU Mgr</span></th>'
+    + '<thead><tr>' + (linkShown.length ? '<th style="width:28px"><input type="checkbox" title="Tick every 🔗 Not linked row shown" onclick="soPickAll(this.checked)"' + (_soPick.length && _soPick.length === linkShown.length ? ' checked' : '') + '></th>' : '') + '<th>' + (_soView === 'parent' ? 'Parent #' : 'Part #') + '</th><th>Product Name</th><th>Vendor</th><th>🏬 In stock now<br><span style="font-weight:400">SKU Mgr</span></th>'
     + '<th>🚢 Shipped — on the water<br><span style="font-weight:400">container, not received yet</span></th><th>🏭 Ordered — not shipped yet<br><span style="font-weight:400">vendor still owes</span></th>'
     + '<th>Sold<br><span style="font-weight:400">30 d / 90 d pcs</span></th><th>Lasts</th><th>Status</th><th>PO</th></tr></thead><tbody>';
   items.forEach(function(r) {
@@ -2913,6 +2922,7 @@ function renderOOS() {
     var lasts = r.daysLeft == null ? '<span style="color:var(--text3)">' + (r.sold90Pcs > 0 ? '—' : 'no sales') + '</span>'
       : r.daysLeft >= 365 ? '1 yr +' : Math.floor(r.daysLeft) + ' days';
     html += '<tr>'
+      + (linkShown.length ? '<td>' + (r.status === 'link' ? '<input type="checkbox" class="so-pick" data-p="' + soEsc(r.part) + '" onclick="soPick(this.dataset.p, this.checked)"' + (_soPick.indexOf(r.part) >= 0 ? ' checked' : '') + '>' : '') + '</td>' : '')
       + '<td class="sku-col"><a href="#" onclick="soLinkOpen(this.dataset.p);return false" data-p="' + soEsc(r.part) + '" title="See its parent (every pack size) · link it to the right part #" style="color:inherit;text-decoration:underline dotted">' + soEsc(r.part) + '</a>' + (r.packs && r.packs.length ? '<div style="font-size:10px;color:var(--text3)">' + soEsc(r.packs.join(', ')) + (_soView === 'parent' ? ' — tap for each' : '') + '</div>' : '') + '</td>'
       + '<td>' + soEsc(r.name) + '</td><td style="font-size:12px">' + soEsc(r.vendor || '—') + '</td>'
       + '<td style="font-size:12px;white-space:nowrap">' + stock + '</td>'
@@ -2970,6 +2980,27 @@ window.soLinkSave = function(part) {
     }).catch(function() { msg.style.color = 'var(--red)'; msg.textContent = '✗ network error'; });
 };
 window.soSetView = function(v) { _soView = v; renderOOS(); };
+var _soPick = [];
+window.soPick = function(p, on) { _soPick = _soPick.filter(function(x) { return x !== p; }); if (on) _soPick.push(p); var n = document.getElementById('so-del-n'); if (n) n.textContent = _soPick.length; };
+window.soPickAll = function(on) { _soPick = on ? (window._soShown || []).filter(function(r) { return r.status === 'link'; }).map(function(r) { return r.part; }) : []; renderOOS(); };
+// The part #s to delete: in the parent view a row is the parent → every part # under it.
+window.soDelete = function() {
+  var msg = document.getElementById('so-del-msg');
+  if (!_soPick.length) { if (msg) { msg.style.color = 'var(--red)'; msg.textContent = 'Tick at least one 🔗 Not linked row first'; } return; }
+  var parts = []; _soPick.forEach(function(p) { (_SO.rows || []).forEach(function(r) { if ((r.part === p || (_soView === 'parent' && r.parent === p)) && parts.indexOf(r.part) < 0) parts.push(r.part); }); if (parts.indexOf(p) < 0) parts.push(p); });
+  if (!confirm('Delete ' + parts.length + ' weird part #' + (parts.length === 1 ? '' : 's') + ' from Stock Levels AND SKU Mgr?\n\n' + parts.slice(0, 15).join('\n') + (parts.length > 15 ? '\n… +' + (parts.length - 15) + ' more' : '') + '\n\nEach one is kept in Inventory → History. Any with cases or on an order is skipped.')) return;
+  if (msg) { msg.style.color = 'var(--text3)'; msg.textContent = 'Deleting…'; }
+  wFetch('https://xfitting-lookup.alfixedinc88.workers.dev/inventory/stock-levels/delete', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ parts: parts }) })
+    .then(function(r) { return r.json(); }).then(function(d) {
+      if (!d || !d.ok) { if (msg) { msg.style.color = 'var(--red)'; msg.textContent = '✗ ' + ((d && d.error) || 'not deleted (managers only)'); } return; }
+      _soPick = [];
+      var text = '✓ Deleted ' + d.deleted.length + ' part #' + (d.deleted.length === 1 ? '' : 's') + ' (SKU Mgr rows: ' + d.deleted.reduce(function(t, x) { return t + x.rows; }, 0) + ')'
+        + (d.skipped.length ? ' · skipped ' + d.skipped.length + ':\n' + d.skipped.map(function(x) { return x.part + ' — ' + x.why; }).join('\n') : '');
+      _SO = null; renderOOS();
+      setTimeout(function() { var m2 = document.getElementById('so-del-msg'); if (m2) { m2.style.color = d.skipped.length ? 'var(--orange, #c2410c)' : 'var(--green)'; m2.style.whiteSpace = 'pre-line'; m2.textContent = text; } }, 1500);
+      alert(text);
+    }).catch(function() { if (msg) { msg.style.color = 'var(--red)'; msg.textContent = '✗ network error'; } });
+};
 window.soSetVendor = function(v) { _soVendor = v; renderOOS(); };
 window.soSetLowDays = function(v) { var n = parseInt(v, 10); if (n > 0) { _soLowDays = n; renderOOS(); } };
 window.soCsv = function() {
