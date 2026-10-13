@@ -2829,6 +2829,20 @@ async function salesDashboardDataHandler(env) {
     }
     merge(amz30, 'amz',  'amzU30',  'amzS30');
     merge(amz90, 'amz',  'amzU90',  'amzS90');
+    // Owner (2026-10-13): "for Amazon, is that from our FBA listing or FBM listing?" — each Amazon seller SKU is FBA when
+    // Amazon's FBA lists have it (FBA catalog, FBA inventory report), FBM when it is one of our own-stock listings (Listing
+    // Watch reads FBM only, or the FBA report marks it MFN). Neither → '?' (not known), never guessed.
+    const amzCh = {};
+    const chSet = async (sql, ch) => { try { ((await env.DB.prepare(sql).all()).results || []).forEach(r => { const k = String(r.sku || '').trim().toUpperCase(); if (k && !amzCh[k]) amzCh[k] = ch; }); } catch (_) {} };
+    await chSet("SELECT sku FROM fba_catalog", 'Fba');
+    await chSet("SELECT sku FROM amazon_fba_inventory WHERE afn_listing_exists = 'Yes'", 'Fba');
+    await chSet("SELECT sku FROM listing_titles WHERE platform = 'Amazon'", 'Fbm');
+    await chSet("SELECT sku FROM amazon_fba_inventory WHERE mfn_listing_exists = 'Yes'", 'Fbm');
+    const chOf = sku => amzCh[String(sku || '').trim().toUpperCase()] || 'Unk';
+    for (const [rows, win] of [[amz30, '30'], [amz90, '90']]) rows.forEach(r => {
+      const pn = partOf(r.sku); if (!pn) return;
+      const k = 'amz' + chOf(r.sku) + 'U' + win; acc[pn][k] = (acc[pn][k] || 0) + (r.units || 0);
+    });
     merge(eb30,  'ebay', 'ebayU30', 'ebayS30');
     merge(eb90,  'ebay', 'ebayU90', 'ebayS90');
     merge(xf30,  'xf',   'xfU30',   'xfS30');
@@ -2869,6 +2883,7 @@ async function salesDashboardDataHandler(env) {
         ebayU30: v.ebayU30||0, ebayU90: v.ebayU90||0, ebayS30: v.ebayS30||0, ebayS90: v.ebayS90||0,
         xfU30: v.xfU30||0, xfU90: v.xfU90||0, xfS30: v.xfS30||0, xfS90: v.xfS90||0,
         walU30: v.walU30||0, walU90: v.walU90||0, walS30: v.walS30||0, walS90: v.walS90||0,
+        amzFbaU30: v.amzFbaU30||0, amzFbaU90: v.amzFbaU90||0, amzFbmU30: v.amzFbmU30||0, amzFbmU90: v.amzFbmU90||0, amzUnkU30: v.amzUnkU30||0, amzUnkU90: v.amzUnkU90||0,
         oos, pack: packSize, // pieces in one bag (the number after "=") — Part# Detail shows bags and pieces
       });
 
