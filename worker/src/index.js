@@ -1930,6 +1930,28 @@ async function vendorUnmaskTitle(env, t, cache) {
   if (cache.titles.includes(t)) return t;
   return cache.titles.find(x => vendorCodeTextSafe(x) === t) || t;
 }
+// 📍 Owner (2026-10-13): "our BO= location barcodes still say BH= — if someone scans BH=#-#-#-#, that is our BO=". Any
+// location sent to the worker (a ?location= / ?loc= …, or a JSON field whose name has "loc" / spot / shelf / column / from /
+// to) that starts with "BH=" is read as "BO=" — whatever screen it came from. Nothing else in the request changes.
+const LOC_BH_RE = /^\s*B\s*H\s*=/i;
+async function locAliasRequest(request) {
+  try {
+    const url = new URL(request.url);
+    let changedUrl = false;
+    for (const [k, v] of [...url.searchParams.entries()]) if (/loc|spot|shelf|column|^q$/i.test(k) && LOC_BH_RE.test(v)) { url.searchParams.set(k, v.replace(LOC_BH_RE, 'BO=')); changedUrl = true; }
+    let body = null;
+    if (request.method === 'POST' && /json/i.test(request.headers.get('Content-Type') || '')) {
+      const text = await request.clone().text();
+      if (/"\s*B\s*H\s*=/i.test(text)) {
+        const fixed = text.replace(/("(?:[A-Za-z_]*[Ll]oc[A-Za-z_]*|spot|shelf|column|from|to|fromSpot|toSpot)"\s*:\s*")\s*B\s*H\s*=/g, '$1BO=')
+          .replace(/("(?:locations|locs|spots)"\s*:\s*\[[^\]]*)/g, m => m.replace(/"\s*B\s*H\s*=/gi, '"BO='));
+        if (fixed !== text) body = fixed;
+      }
+    }
+    if (!changedUrl && body == null) return request;
+    return new Request(url.toString(), { method: request.method, headers: request.headers, body: body != null ? body : (request.method === 'GET' || request.method === 'HEAD' ? undefined : await request.clone().arrayBuffer()) });
+  } catch (_) { return request; }
+}
 async function vendorUnmaskRequest(request, env) {
   try {
     const url = new URL(request.url), cache = {};
@@ -30766,6 +30788,6 @@ async function soldoutAddListing(request, env) {
 
 // Every reply goes through the vendor-code mask (owner sees real names).
 export default {
-  async fetch(request, env, ctx) { request = await vendorUnmaskRequest(request, env); return await vendorMaskResponse(request, env, await _app.fetch(request, env, ctx)); },
+  async fetch(request, env, ctx) { request = await locAliasRequest(request); request = await vendorUnmaskRequest(request, env); return await vendorMaskResponse(request, env, await _app.fetch(request, env, ctx)); },
   async scheduled(event, env, ctx) { return await _app.scheduled(event, env, ctx); },
 };

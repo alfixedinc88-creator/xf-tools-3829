@@ -5894,5 +5894,28 @@ console.log('\n➕ "+" at the end of a part # means nothing in Reorder: 96-3-1=5
   sq.exec("DELETE FROM master_list WHERE part_num LIKE '96-3-1%'; DELETE FROM ebay_sales_weekly WHERE sku LIKE '96-3-1%' OR sku = 'WEIRD-9631'; DELETE FROM reorder_alias WHERE raw = 'WEIRD-9631'; DELETE FROM reorder_incoming WHERE title = 'PO-96 10/1'; DELETE FROM reorder_title WHERE title = 'PO-96 10/1'");
 }
 
+// Owner (2026-10-13): "our BO= location barcodes still say BH= — if someone scans BH=#-#-#-#, that is our BO=".
+console.log('\n📍 A location scanned as "BH=…" is "BO=…" (every page, and anything sent to the worker)');
+{
+  sq.prepare("INSERT INTO master_list (base_sku, name, part_num, location, cases, units_per_case, sheet_row) VALUES ('97-1-1','tee','97-1-1=10','BO=1-2-3-4',2,100,0)").run();
+  const mid = sq.prepare("SELECT id FROM master_list WHERE part_num = '97-1-1=10'").get().id;
+  const r = await post('/inventory/log', { type: 'IN', partNum: '97-1-1=10', sku: '97-1-1=10', location: 'BH=1-2-3-4', cases: 3, initials: 'TS', notes: 'scanned old label', masterId: mid });
+  const lg = sq.prepare("SELECT location FROM inventory_log WHERE part_num = '97-1-1=10' ORDER BY id DESC").get() || {};
+  const rows = sq.prepare("SELECT location, cases FROM master_list WHERE part_num = '97-1-1=10'").all();
+  check('Stock In scanned at "BH=1-2-3-4" → recorded at BO=1-2-3-4 (History), no BH= spot made', r && r.ok !== false && lg.location === 'BO=1-2-3-4' && rows.every(x => x.location === 'BO=1-2-3-4'), { r, lg, rows });
+  const ss = await get('/inventory/sku-search?location=' + encodeURIComponent('bh=1-2-3-4'));
+  check('…a location search for "bh=1-2-3-4" finds the BO=1-2-3-4 spot', (ss.results || []).some(x => String(x.location).toUpperCase() === 'BO=1-2-3-4'), (ss.results || []).map(x => x.location));
+  const tr = await post('/inventory/transfer', { partNum: '97-1-1=10', sku: '97-1-1=10', fromLocation: 'BH=1-2-3-4', fromMasterId: mid, toLocation: 'C1=9-7-1', cases: 1, initials: 'TS', notes: 'test' });
+  const t1 = sq.prepare("SELECT location FROM inventory_log WHERE part_num = '97-1-1=10' AND type = 'TRANSFER_OUT' ORDER BY id DESC").get() || {};
+  check('…a Transfer from "BH=1-2-3-4" comes off BO=1-2-3-4', tr.success !== false && t1.location === 'BO=1-2-3-4', { tr, t1 });
+  const { readFileSync: rfA } = await import('node:fs');
+  const xa = rfA(fileURLToPath(new URL('../xf-access.js', import.meta.url)), 'utf8');
+  const fix = new Function((xa.match(/window\.xfLocFix = function \(v\) \{[^\n]*\};/) || [''])[0].replace('window.xfLocFix =', 'var f =') + '; return f;')();
+  check('every page: a box starting "BH=" becomes "BO=" before the page reads it (BH=1-2-3-4 → BO=1-2-3-4, "bh =5-1" → BO=5-1; C1=… / BO=… / a part # untouched)',
+    fix('BH=1-2-3-4') === 'BO=1-2-3-4' && fix('bh =5-1') === 'BO=5-1' && fix('C1=1-1-1') === 'C1=1-1-1' && fix('BO=2-2') === 'BO=2-2' && fix('30-3-4=10X') === '30-3-4=10X'
+    && /document\.addEventListener\('input', function \(e\) \{[\s\S]*?xfLocFix[\s\S]*?\}, true\);/.test(xa), null);
+  sq.exec("DELETE FROM master_list WHERE part_num = '97-1-1=10'; DELETE FROM inventory_log WHERE part_num = '97-1-1=10'");
+}
+
 console.log('\n' + (failed ? '❌ ' + failed + ' check(s) FAILED' : '✅ all ' + passed + ' checks passed') + '\n');
 process.exit(failed ? 1 : 0);

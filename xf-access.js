@@ -17,6 +17,16 @@ window.xfGoHome = function () {
   if (home) location.reload(); else location.href = 'index.html';
 };
 window.addEventListener('pageshow', function (e) { if (e.persisted) location.reload(); });
+// 📍 Owner (2026-10-13): "our BO= location barcodes still say BH= — if someone scans BH=#-#-#-#, that is our BO=".
+// On every page, a box that starts with "BH=" (a scan or typing) becomes "BO=" before the page reads it (this runs first,
+// in the capture phase, so the page's own oninput / Enter sees BO=). The worker does the same for anything sent to it.
+window.xfLocFix = function (v) { return String(v == null ? '' : v).replace(/^(\s*)B\s*H\s*=/i, '$1BO='); };
+document.addEventListener('input', function (e) {
+  var el = e.target; if (!el || (el.tagName !== 'INPUT' && el.tagName !== 'TEXTAREA') || /^(password|number|date|checkbox|radio|file)$/i.test(el.type || '')) return;
+  var v = el.value; if (!/^\s*B\s*H\s*=/i.test(v)) return;
+  var at = el.selectionEnd, nv = window.xfLocFix(v);
+  el.value = nv; try { if (at != null) el.setSelectionRange(at + nv.length - v.length, at + nv.length - v.length); } catch (_) {}
+}, true);
 
 (function () {
   var WORKER = 'https://xfitting-lookup.alfixedinc88.workers.dev';
