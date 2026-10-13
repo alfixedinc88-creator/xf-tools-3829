@@ -5024,6 +5024,47 @@ async function inventoryStockOverview(env, url) {
   return J({ ok: true, rows: list, vendors, totals: T, check, asOf: new Date().toISOString() });
 }
 
+// POST /inventory/stock-levels/delete {parts:[…]} — managers only.
+// Owner (2026-10-13, Stock Levels screenshot of "5/20/2022 DOUBLE CHECK HOW MANY TOTAL ROLL WE HAVE", "10-1/2X F TEE", …):
+// "a lot of weird part #s — a check box so I can delete them, and deleting here deletes them in SKU Mgr too; they got in
+// by mistake". Each part # (as Stock Levels shows it: cleaned / ✏️ mapped the same way) loses its SKU Mgr rows, every
+// one written to History (with all its fields, so it can be put back). Never touches stock: a part # with cases in SKU
+// Mgr (or minus cases) or on a Reorder order is skipped and says why — the totals stay exactly the same.
+async function inventoryStockLevelsDelete(request, env, session) {
+  const J = (o, st) => cors(new Response(JSON.stringify(o), { status: st || 200, headers: { 'Content-Type': 'application/json' } }));
+  if (!env.DB) return J({ ok: false, error: 'No database' }, 500);
+  const body = await request.json().catch(() => ({}));
+  const U = x => String(x || '').trim().toUpperCase();
+  const want = [...new Set((Array.isArray(body.parts) ? body.parts : []).map(U).filter(Boolean))].slice(0, 500);
+  if (!want.length) return J({ ok: false, error: 'No part # picked' }, 400);
+  const who = String((session && (session.displayName || session.username)) || 'MGMT').trim().slice(0, 40);
+  await reorderFixTables(env);
+  const all = async (sql, ...b) => { try { return (await env.DB.prepare(sql).bind(...b).all()).results || []; } catch (_) { return []; } };
+  const alias = {}; (await all('SELECT raw, part FROM reorder_alias')).forEach(r => { alias[U(r.raw)] = reorderCleanPart(r.part); });
+  const P = raw => { const r = U(raw), c = reorderCleanPart(r); return alias[r] || alias[c] || c; };
+  const rowsBy = {}; (await all(`SELECT * FROM master_list WHERE TRIM(COALESCE(part_num,'')) != ''`)).forEach(r => { const k = P(r.part_num); (rowsBy[k] = rowsBy[k] || []).push(r); });
+  const orders = {}; (await all('SELECT title, part FROM reorder_incoming')).forEach(r => { const k = P(r.part); (orders[k] = orders[k] || new Set()).add(r.title); });
+  const whBefore = await invWarehouseCases(env).catch(() => null);
+  const deleted = [], skipped = [];
+  for (const part of want) {
+    const rows = rowsBy[part] || [];
+    const cases = rows.reduce((t, r) => t + (parseFloat(r.cases) || 0), 0), neg = rows.some(r => (parseFloat(r.cases) || 0) < 0);
+    if (rows.some(r => (parseFloat(r.cases) || 0) > 0)) { skipped.push({ part, why: `has ${cases} cases in SKU Mgr — stock it out / move it first (or 🔗 link it to the right part #)` }); continue; }
+    if (neg) { skipped.push({ part, why: 'has minus cases in SKU Mgr — check it there first' }); continue; }
+    if (orders[part]) { skipped.push({ part, why: 'on a Reorder order (' + [...orders[part]].slice(0, 3).join(', ') + ') — fix it on Reorder (✏️)' }); continue; }
+    if (!rows.length) { skipped.push({ part, why: 'not in SKU Mgr (it comes from the Products list) — nothing to delete' }); continue; }
+    for (const r of rows) {
+      await env.DB.prepare('DELETE FROM master_list WHERE id = ?').bind(r.id).run();
+      const keep = ['part_num', 'location', 'cases', 'name', 'sku', 'base_sku', 'units_per_case', 'vendor', 'price', 'prev_notes'].map(k => k + '=' + (r[k] == null ? '' : r[k])).join(' | ');
+      await _skuMgrInsertLog(env, who, r, `[SKU MGR DELETE] Removed row (Stock Levels 🗑, weird part #): ${U(r.part_num)} @ ${r.location || ''}, 0 cases — was: ${keep}`,
+        { newPart: U(r.part_num), newBefore: 0, wh: whBefore }, null).catch(e => console.error('[stock-levels delete history]', e.message));
+    }
+    deleted.push({ part, rows: rows.length });
+  }
+  const whAfter = await invWarehouseCases(env).catch(() => null);
+  return J({ ok: true, deleted, skipped, warehouseCases: { before: whBefore, after: whAfter } });
+}
+
 // ── 🚢 Container here (Inventory → Transfer) ─────────────────────────────
 // Boxes moved off a pallet line = its pallet_move rows whose transfer wasn't
 // rejected in Review (the OUT log row's status), so counts follow the real
@@ -8346,6 +8387,10 @@ const _app = {
         return await inventoryStockLevels(env);
       }
       if (path === '/inventory/stock-overview' && method === 'GET') return await inventoryStockOverview(env, url);
+      if (path === '/inventory/stock-levels/delete' && method === 'POST') {
+        if (session.pin_level !== 'mgmt') return cors(new Response(JSON.stringify({ error: 'Management access required' }), { status: 403, headers: { 'Content-Type': 'application/json' } }));
+        return await inventoryStockLevelsDelete(request, env, session);
+      }
       if (path === '/inventory/out-of-stock' && method === 'GET') {
         return await inventoryOutOfStock(env);
       }
