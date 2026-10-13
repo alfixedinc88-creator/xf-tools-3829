@@ -6186,5 +6186,35 @@ console.log('\n🏭 Stock Levels: change a parent\'s vendor (EFF → JQ) — eve
   sq.exec("DELETE FROM master_list WHERE base_sku = '929-3-4'; DELETE FROM stock_vendor_override WHERE parent = '929-3-4'");
 }
 
+// Owner 2026-10-13: order 112-3527146-9405012 went UPS Next Day Air Saver — "please don't using next day air, or anything
+// like over night, second day, like something cost a lot, if there's only option for us to print, you don't print, leave it to us to print".
+console.log('\nAuto Label: never buys express (Next Day / 2nd Day / Overnight / Express); only express → held, buy & print by hand');
+{
+  const { readFileSync } = await import('node:fs');
+  const ws = readFileSync(workerPath, 'utf8'), ph = readFileSync(fileURLToPath(new URL('../packship.html', import.meta.url)), 'utf8');
+  const fn = (ws.match(/function autolabelChooseRate\(order, quotes, cfg\) \{[\s\S]*?\n\}/) || [''])[0];
+  const choose = new Function('autolabelChannelMatches', 'autolabelLowValue', fn + '; return autolabelChooseRate;')((o, l) => (l || []).some(x => /walmart/i.test(o.ch) && /walmart/i.test(x)), () => null);
+  const cfg = { upsMinSavings: 0.7, upsMaxDays: 2, uspsOnlyChannels: ['walmart'] };
+  const Q = (carrier, service, price, days) => ({ carrier, service, price, days, raw: { title: service } });
+  const r = (q, ch) => choose({ ch: ch || 'amazon' }, q, cfg);
+  const a = r([Q('USPS', 'USPS Ground Advantage', 9.5, 4), Q('UPS', 'UPS® Next Day Air Saver®', 7.1, 1)]);
+  const b = r([Q('USPS', 'USPS Ground Advantage', 9.5, 4), Q('UPS', 'UPS® Ground', 7.9, 2), Q('UPS', 'UPS 2nd Day Air', 6.0, 2)]);
+  const c = r([Q('UPS', 'UPS® Next Day Air Saver®', 30, 1), Q('UPS', 'UPS 2nd Day Air A.M.', 25, 2), Q('USPS', 'Priority Mail Express', 28, 1)]);
+  const d = r([Q('USPS', 'USPS Ground Advantage', 9.5, 4), Q('USPS', 'Priority Mail Express', 8, 1), Q('UPS', 'UPS 3 Day Select', 5, 2)]);
+  const e = r([Q('USPS', 'USPS Ground Advantage', 9.5, 4), Q('UPS', 'UPS Next Day Air Early', 3, 1), Q('UPS', 'UPS® Ground Saver', 8, 2)]);
+  const f = r([Q('USPS', 'USPS Priority Mail', 9, 2), Q('UPS', 'ups_next_day_air', 5, 1)]);
+  check('UPS Next Day Air Saver cheaper than USPS → still USPS Ground Advantage (express never picked)', a.pick && a.pick.service === 'USPS Ground Advantage' && !a.hold, a);
+  check('…UPS 2nd Day Air cheaper → UPS Ground picked instead (ground still wins on price)', b.pick && b.pick.service === 'UPS® Ground', b.pick);
+  check('…only express rates (Next Day Air Saver / 2nd Day Air A.M. / Priority Mail Express) → nothing picked, held "express_only", buy & print by hand',
+    !c.pick && c.hold === 'express_only' && /buy & print by hand/.test(c.reason), c);
+  check('…Priority Mail Express and UPS 3 Day Select skipped, USPS Ground Advantage picked', d.pick && d.pick.service === 'USPS Ground Advantage', d.pick);
+  check('…UPS Ground Saver and USPS Priority Mail stay allowed', e.pick && e.pick.service === 'UPS® Ground Saver' && f.pick && f.pick.service === 'USPS Priority Mail', [e.pick, f.pick]);
+  check('…Walmart (USPS only) with only express USPS + UPS ground → held express_only, not bought',
+    (() => { const w = r([Q('USPS', 'Priority Mail Express', 30, 1), Q('UPS', 'UPS Ground', 8, 2)], 'Walmart'); return !w.pick && w.hold === 'express_only'; })(), null);
+  check('…the run shows the held order as "🚀 Express only — buy & print by hand" (with 💲 Why?); every buy path goes through the same rate rules',
+    /express_only: \['🚀 Express only — buy & print by hand'/.test(ph) && /o\.decision === 'express_only'\) \? '<button/.test(ph)
+    && (ws.match(/autolabelChooseRate\(/g) || []).length >= 7 && /'low_value', 'express_only', 'no_rate'/.test(ws), null);
+}
+
 console.log('\n' + (failed ? '❌ ' + failed + ' check(s) FAILED' : '✅ all ' + passed + ' checks passed') + '\n');
 process.exit(failed ? 1 : 0);

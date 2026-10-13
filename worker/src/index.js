@@ -26855,9 +26855,26 @@ async function autolabelGetQuotes(env, allocationId) {
   return { quotes: [], source: null, attempts };
 }
 
+// Owner 2026-10-13 (order 112-3527146-9405012 went UPS Next Day Air Saver): "please don't using next day air,
+// or anything like over night, second day, like something cost a lot, if there's only option for us to print,
+// you don't print, leave it to us to print". Express / premium services are never auto-bought.
+// (UPS Ground Saver, USPS Ground Advantage, Priority Mail stay allowed — Priority Mail EXPRESS does not.)
 // The carrier rules. Returns { pick, hold, reason, usps, ups }.
 function autolabelChooseRate(order, quotes, cfg) {
   const cheapest = list => list.slice().sort((a, b) => (a.price - b.price) || ((a.days ?? 99) - (b.days ?? 99)))[0] || null;
+  const AUTOLABEL_EXPRESS_RE = /NEXT[\s_-]*DAY|OVERNIGHT|SAME[\s_-]*DAY|ONE[\s_-]*DAY|\b(2ND|SECOND|3RD|THIRD)[\s_-]*DAY|(?<![\d.-])[123][\s_-]*DAYS?\b|DAY[\s_-]*SELECT|EXPRESS|EXPEDITED|EARLY|\bAIR\b|_AIR\b|\bA\.?M\.?\b/i;
+  function autolabelIsExpress(q) {
+    const r = (q && q.raw) || {};
+    const txt = [q && q.service, r.title, r.service_name, r.short_service_name, r.name, r.service_type]
+      .map(x => (x && typeof x === 'object') ? `${x.name || ''} ${x.slug || ''}` : String(x || '')).join(' | ');
+    return AUTOLABEL_EXPRESS_RE.test(txt);
+  }
+  const expressQuotes = (quotes || []).filter(autolabelIsExpress);
+  quotes = (quotes || []).filter(q => !autolabelIsExpress(q));
+  if (!quotes.length && expressQuotes.length) {
+    const ex = cheapest(expressQuotes);
+    return { pick: null, hold: 'express_only', reason: `Only express services from Veeqo (e.g. ${ex.service || ex.carrier} $${Number(ex.price).toFixed(2)}) — not bought, buy & print by hand`, usps: null, ups: null };
+  }
   const usps = cheapest(quotes.filter(q => q.carrier === 'USPS'));
   const ups  = cheapest(quotes.filter(q => q.carrier === 'UPS' && q.days != null && q.days <= cfg.upsMaxDays));
   const uspsOnly = autolabelChannelMatches(order, cfg.uspsOnlyChannels);
@@ -26876,7 +26893,11 @@ function autolabelChooseRate(order, quotes, cfg) {
     pick = usps; reason = `USPS preferred (${why})`;
   }
   const upsBest = cheapest(quotes.filter(q => q.carrier === 'UPS'));
-  if (!pick) return { pick: null, hold: 'no_rate', reason: usps || !quotes.length ? 'No rates from Veeqo' : 'No USPS rate — pick a service by hand', usps, ups };
+  if (!pick) {
+    // Only express left for a USPS-only channel → same: leave it to the team.
+    if (expressQuotes.length && uspsOnly) return { pick: null, hold: 'express_only', reason: 'No USPS ground rate — only express / UPS — not bought, buy & print by hand', usps, ups };
+    return { pick: null, hold: 'no_rate', reason: usps || !quotes.length ? 'No rates from Veeqo' : 'No USPS rate — pick a service by hand', usps, ups };
+  }
 
   const low = autolabelLowValue(order, pick.price, cfg);
   if (low) return { pick, hold: 'low_value', reason: low, usps, ups, upsBest };
@@ -28320,7 +28341,7 @@ async function autolabelRunOnce(env, opts = {}) {
     result.orders.push(row);
   }
 
-  const order = ['bought', 'merged', 'buy_failed', 'merge_fix', 'would_buy', 'would_merge', 'split_done', 'split', 'cancelled', 'merge', 'weigh', 'fix_veeqo_weight', 'low_value', 'no_rate', 'hold', 'ready', 'waiting', 'skipped', 'has_label'];
+  const order = ['bought', 'merged', 'buy_failed', 'merge_fix', 'would_buy', 'would_merge', 'split_done', 'split', 'cancelled', 'merge', 'weigh', 'fix_veeqo_weight', 'low_value', 'express_only', 'no_rate', 'hold', 'ready', 'waiting', 'skipped', 'has_label'];
   result.orders.sort((a, b) => order.indexOf(a.decision) - order.indexOf(b.decision));
   result.finishedAt = new Date().toISOString();
   return result;
