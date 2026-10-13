@@ -2960,11 +2960,28 @@ window.soLinkOpen = function(part) {
       + '<table class="data-table" style="font-size:12px"><thead><tr><th>Part #</th><th>In stock</th><th>On the water</th><th>Still owed</th><th>Sold 90 d</th></tr></thead><tbody>'
       + fam.map(function(r) { return '<tr' + (r.part === part ? ' style="background:var(--accent-bg)"' : '') + '><td class="sku-col">' + soEsc(r.part) + '</td><td>' + soN(r.stock.cases) + ' cs · ' + soN(r.stock.pieces) + ' pcs</td><td>' + soN(r.onWay.pieces) + ' pcs</td><td>' + soN(r.owed.pieces) + ' pcs</td><td>' + soN(r.sold90Pcs) + ' pcs</td></tr>'; }).join('') + '</tbody></table>'
       : '<div style="font-size:13px;color:var(--purple);font-weight:700;margin-bottom:6px">🔗 "' + soEsc(part) + '" is not one of our part #s (a vendor code or a name) — its stock / orders / sales are not under any parent.</div>')
+    // Owner (2026-10-13): "202-3-4 shows under EFF — let me change it to JQ, and from then on it only shows under JQ".
+    + (soLinked(part) ? '<div style="margin-top:12px;padding:10px;border:1px dashed var(--border);border-radius:8px"><b>🏭 Vendor of ' + soEsc(row.parent) + '</b> <span style="font-size:12px;color:var(--text3)">(every pack size · now: ' + soEsc(row.vendor || '—') + ' · from now on it shows only under the vendor you pick; SKU Mgr rows too; kept in History)</span>'
+      + '<div style="display:flex;gap:6px;margin-top:6px;flex-wrap:wrap"><select id="so-vendor-to" style="flex:1;min-width:140px;padding:7px 10px;border:1.5px solid var(--border);border-radius:7px;background:var(--bg);color:var(--text)">'
+      + (_SO.vendors || []).map(function(v) { return '<option value="' + soEsc(v) + '"' + (v === row.vendor ? ' selected' : '') + '>' + soEsc(v) + '</option>'; }).join('') + '</select>'
+      + '<button onclick="soVendorSave(this.dataset.p)" data-p="' + soEsc(row.parent) + '" style="padding:7px 14px;border:none;border-radius:7px;background:var(--accent);color:#fff;font-weight:700;cursor:pointer">💾 Change vendor</button></div>'
+      + '<div id="so-vendor-msg" style="font-size:12px;margin-top:6px"></div></div>' : '')
     + '<div style="margin-top:12px;padding:10px;border:1px dashed var(--border);border-radius:8px"><b>🔗 This is really part #</b> <span style="font-size:12px;color:var(--text3)">(counts under that part # from now on — same ✏️ fix as Reorder, kept in its 📜 History)</span>'
     + '<div style="display:flex;gap:6px;margin-top:6px;flex-wrap:wrap"><input id="so-link-to" list="so-link-list" placeholder="e.g. 4-1-2=1" style="flex:1;min-width:180px;padding:7px 10px;border:1.5px solid var(--border);border-radius:7px;font-family:var(--mono);background:var(--bg);color:var(--text)">'
     + '<button onclick="soLinkSave(this.dataset.p)" data-p="' + soEsc(part) + '" style="padding:7px 14px;border:none;border-radius:7px;background:var(--accent);color:#fff;font-weight:700;cursor:pointer">💾 Link</button></div>'
     + '<datalist id="so-link-list">' + ours.map(function(p) { return '<option value="' + soEsc(p) + '">'; }).join('') + '</datalist><div id="so-link-msg" style="font-size:12px;margin-top:6px"></div></div></div>';
   document.body.appendChild(m);
+};
+window.soVendorSave = function(parent) {
+  var v = String((document.getElementById('so-vendor-to') || {}).value || '').trim(), msg = document.getElementById('so-vendor-msg');
+  if (!v) { msg.style.color = 'var(--red)'; msg.textContent = 'Pick a vendor'; return; }
+  msg.style.color = 'var(--text3)'; msg.textContent = 'Saving…';
+  wFetch('https://xfitting-lookup.alfixedinc88.workers.dev/inventory/stock-levels/vendor', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ parent: parent, vendor: v }) })
+    .then(function(r) { return r.json(); }).then(function(d) {
+      if (!d || !d.ok) { msg.style.color = 'var(--red)'; msg.textContent = '✗ ' + ((d && d.error) || 'not saved (managers only)'); return; }
+      msg.style.color = 'var(--green)'; msg.textContent = '✓ ' + parent + ' now under ' + v + ' (' + d.rows + ' SKU Mgr row' + (d.rows === 1 ? '' : 's') + ')';
+      setTimeout(function() { var mm = document.getElementById('so-link-modal'); if (mm) mm.remove(); soRefresh(); }, 900);
+    }).catch(function() { msg.style.color = 'var(--red)'; msg.textContent = '✗ network error'; });
 };
 window.soLinkSave = function(part) {
   var to = String((document.getElementById('so-link-to') || {}).value || '').trim().toUpperCase(), msg = document.getElementById('so-link-msg');

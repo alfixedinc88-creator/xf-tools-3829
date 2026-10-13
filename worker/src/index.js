@@ -5011,6 +5011,10 @@ async function inventoryStockOverview(env, url) {
   const prod = {}; (await all('SELECT base_sku, name FROM products')).forEach(r => { const b = U(reorderGetBaseSku(U(r.base_sku))); if (b && r.name && !prod[b]) prod[b] = String(r.name).trim(); });
   const parents = new Set(Object.values(rows).map(o => o.parent));
   Object.keys(prod).forEach(b => { if (!parents.has(b)) row(b).name = prod[b]; });
+  // 🏭 Vendor picked on Stock Levels for a parent # (owner 2026-10-13: "202-3-4 shows under EFF — let me change it to JQ,
+  // and from then on it only shows under JQ") — wins over whatever SKU Mgr / Reorder rows say, now and later.
+  const vOver = await stockVendorOverrides(env);
+  Object.values(rows).forEach(o => { if (vOver[o.parent]) { o.vendor = vOver[o.parent]; o.vendorSet = true; } });
   const list = Object.values(rows).map(o => { if (!o.name) o.name = prod[o.parent] || ''; return o; })
     .sort((a, b) => a.parent.localeCompare(b.parent, undefined, { numeric: true }) || a.pack - b.pack || a.part.localeCompare(b.part));
   const vendors = [...new Set(list.map(o => o.vendor).filter(Boolean))].sort();
@@ -5063,6 +5067,42 @@ async function inventoryStockLevelsDelete(request, env, session) {
   }
   const whAfter = await invWarehouseCases(env).catch(() => null);
   return J({ ok: true, deleted, skipped, warehouseCases: { before: whBefore, after: whAfter } });
+}
+
+// 🏭 Vendor of a parent # set on Stock Levels (kept here so it stays, even when a new SKU Mgr row / order comes in with another).
+async function stockVendorOverrides(env) {
+  try {
+    await env.DB.prepare('CREATE TABLE IF NOT EXISTS stock_vendor_override (parent TEXT PRIMARY KEY, vendor TEXT, by_user TEXT, at TEXT)').run();
+    const o = {}; ((await env.DB.prepare('SELECT parent, vendor FROM stock_vendor_override').all()).results || []).forEach(r => { if (r.vendor) o[String(r.parent).toUpperCase()] = r.vendor; });
+    return o;
+  } catch (_) { return {}; }
+}
+// POST /inventory/stock-levels/vendor {parent, vendor} — managers only. The parent # (every pack size) shows under that
+// vendor from now on; its SKU Mgr rows get the vendor too; one line in Inventory → History (who, old → new). Cases untouched.
+async function inventoryStockLevelsVendor(request, env, session) {
+  const J = (o, st) => cors(new Response(JSON.stringify(o), { status: st || 200, headers: { 'Content-Type': 'application/json' } }));
+  if (!env.DB) return J({ ok: false, error: 'No database' }, 500);
+  const body = await request.json().catch(() => ({}));
+  const U = x => String(x || '').trim().toUpperCase();
+  const parent = U(reorderGetBaseSku(reorderCleanPart(U(body.parent))));
+  const vendor = String(reorderVendorName(vendorUnmask(String(body.vendor || '').trim())) || '').trim().slice(0, 40);
+  if (!parent) return J({ ok: false, error: 'No parent #' }, 400);
+  if (!vendor) return J({ ok: false, error: 'Pick a vendor' }, 400);
+  const who = String((session && (session.displayName || session.username)) || 'MGMT').trim().slice(0, 40);
+  await reorderFixTables(env);
+  const old = (await stockVendorOverrides(env))[parent];
+  const alias = {}; ((await env.DB.prepare('SELECT raw, part FROM reorder_alias').all()).results || []).forEach(r => { alias[U(r.raw)] = reorderCleanPart(r.part); });
+  const P = raw => { const r = U(raw), c = reorderCleanPart(r); return alias[r] || alias[c] || c; };
+  const rows = (((await env.DB.prepare(`SELECT id, part_num, vendor, name FROM master_list WHERE TRIM(COALESCE(part_num,'')) != ''`).all()).results) || [])
+    .filter(r => U(reorderGetBaseSku(P(r.part_num))) === parent);
+  const was = old || [...new Set(rows.map(r => reorderVendorName(r.vendor)).filter(Boolean))].join(', ') || '(none)';
+  const before = await invPartCases(env, parent).catch(() => null), wh = await invWarehouseCases(env).catch(() => null);
+  await env.DB.prepare('INSERT OR REPLACE INTO stock_vendor_override (parent, vendor, by_user, at) VALUES (?,?,?,?)').bind(parent, vendor, who, new Date().toISOString()).run();
+  for (const r of rows) await env.DB.prepare('UPDATE master_list SET vendor = ? WHERE id = ?').bind(vendor, r.id).run();
+  await _skuMgrInsertLog(env, who, { part_num: parent, location: '', cases: 0, name: (rows.find(r => r.name) || {}).name || '' },
+    `[SKU MGR VENDOR] ${parent} (every pack size): vendor ${was} → ${vendor} — set on Stock Levels; ${rows.length} SKU Mgr row${rows.length === 1 ? '' : 's'} changed (${[...new Set(rows.map(r => U(r.part_num)))].slice(0, 20).join(', ')})`,
+    before == null ? null : { newPart: parent, newBefore: before, wh }, null).catch(e => console.error('[stock vendor history]', e.message));
+  return J({ ok: true, parent, vendor, rows: rows.length });
 }
 
 // ── 🚢 Container here (Inventory → Transfer) ─────────────────────────────
@@ -8387,6 +8427,10 @@ const _app = {
         return await inventoryStockLevels(env);
       }
       if (path === '/inventory/stock-overview' && method === 'GET') return await inventoryStockOverview(env, url);
+      if (path === '/inventory/stock-levels/vendor' && method === 'POST') {
+        if (session.pin_level !== 'mgmt') return cors(new Response(JSON.stringify({ error: 'Management access required' }), { status: 403, headers: { 'Content-Type': 'application/json' } }));
+        return await inventoryStockLevelsVendor(request, env, session);
+      }
       if (path === '/inventory/stock-levels/delete' && method === 'POST') {
         if (session.pin_level !== 'mgmt') return cors(new Response(JSON.stringify({ error: 'Management access required' }), { status: 403, headers: { 'Content-Type': 'application/json' } }));
         return await inventoryStockLevelsDelete(request, env, session);
