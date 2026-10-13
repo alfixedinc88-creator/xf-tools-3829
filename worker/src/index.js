@@ -2167,7 +2167,21 @@ async function reorderVendorOrder(env, url) {
     piecesBySku[s] = (piecesBySku[s] || 0) + pcs;
   }
 
-  const months = days / 30, rows = [];
+  // 📅 Owner (2026-10-13): "check the sales number is right". Sales are kept by WEEK, so "the last 90 days" really starts at the
+  // first week that begins inside the window — up to 6 days later. Dividing by the full 90 days made the monthly sales up to
+  // ~7% too low (a small under-order). The months used = the days the sales really cover: today − the first week's start
+  // (only that 0–6 day gap; never stretched more). Each channel's newest week is reported so a channel behind shows.
+  let firstWeek = null; const chanThrough = {};
+  for (const [t, , label] of chans) {
+    const m2 = (await all(`SELECT MIN(period_start) AS a, MAX(period_end) AS z, MAX(period_start) AS ls FROM ${t} WHERE period_start >= ?`, since))[0] || {};
+    if (m2.a && (!firstWeek || m2.a < firstWeek)) firstWeek = m2.a;
+    chanThrough[label] = m2.z || m2.ls || null;
+  }
+  // Only the week-boundary gap is taken off (the first week starts 0–6 days after the window start). A later first week means
+  // nothing sold / recorded before it — never stretched.
+  const gapDays = firstWeek ? (Date.parse(firstWeek.slice(0, 10) + 'T00:00:00Z') - Date.parse(since + 'T00:00:00Z')) / 86400000 : 0;
+  const coveredDays = gapDays > 0 && gapDays < 7 ? days - gapDays : days;
+  const months = coveredDays / 30, rows = [];
   const bases = new Set([...Object.keys(piecesByBase), ...Object.keys(fbaByBase)]);
   for (const b of bases) {
     const total = piecesByBase[b] || 0;
@@ -2359,7 +2373,7 @@ async function reorderVendorOrder(env, url) {
     c.n += r.n || 0; if (String(r.at || '') > c.at) c.at = r.at;
   });
   const catCounts = Object.values(catMerged);
-  return cors(new Response(JSON.stringify({ ok: true, days, cover, lead, countFba, countOtherPacks, dataFrom,
+  return cors(new Response(JSON.stringify({ ok: true, days, cover, lead, countFba, countOtherPacks, dataFrom, salesWindow: { since, firstWeek, coveredDays: Math.round(coveredDays * 10) / 10, chanThrough },
     vendors: [...vendors].sort(), catalog: catCounts, incomingTitles, rows }), { headers: { 'Content-Type': 'application/json' } }));
 }
 

@@ -4174,6 +4174,14 @@ function rvoRender() {
   document.getElementById('rvo-summary').innerHTML = '<b>' + inOrder.length + '</b> part numbers to order · <b>' + fmt0(tot) + '</b> units total · sales from the last ' + m.days + ' days'
     + (m.dataFrom ? ' (sales data starts ' + escHtml(m.dataFrom) + ')' : '') + ' · covering ' + m.lead + ' mo lead time + ' + m.cover + ' mo'
     + (incTot ? ' · <b style="color:#1A56DB">' + fmt0(incTot) + '</b> units on the way already subtracted' : '')
+    // 📅 Owner (2026-10-13): "are the sales numbers right?" — the days of sales really used, and how up to date each channel is.
+    + (function () { var w = m.salesWindow; if (!w) return '';
+      var late = Object.keys(w.chanThrough || {}).filter(function (c) { var z = w.chanThrough[c]; return !z || (Date.now() - Date.parse(String(z).slice(0, 10))) / 86400000 > 10; });
+      return '<br>📅 Sales used: <b>' + w.coveredDays + '</b> days (from ' + escHtml(w.firstWeek || w.since) + ')'
+        + ' · newest sales week: ' + Object.keys(w.chanThrough || {}).map(function (c) { return escHtml(c) + ' ' + escHtml(String(w.chanThrough[c] || 'none').slice(0, 10)); }).join(', ')
+        + (late.length ? ' · <b style="color:var(--red)">⚠ ' + late.map(escHtml).join(', ') + ' sales are more than 10 days behind — those sales are missing, so it would order too little: sync them first</b>' : ''); })()
+    + (function () { var nv = inOrder.filter(function (r) { return !r.vendor; }); return nv.length ? '<br><b style="color:var(--red)">⚠ ' + nv.length + ' part # need ordering but have NO vendor</b> — they are in no vendor\'s file until you set the vendor (✏️): '
+      + nv.slice(0, 15).map(function (r) { return '<span style="font-family:var(--mono)">' + escHtml(r.sku) + '</span>'; }).join(', ') + (nv.length > 15 ? ' …' : '') : ''; })()
     + (function () { var u = inOrder.filter(function (r) { return r.urgent; }); return u.length ? '<br><b style="color:var(--red)">🔥 ' + u.length + ' URGENT</b> — runs out before this order can get here (' + m.lead + ' mo): '
       + u.slice(0, 12).map(function (r) { return '<span style="font-family:var(--mono)">' + escHtml(r.sku) + '</span> (' + r.daysLeft + ' days left)'; }).join(', ') + (u.length > 12 ? ' …' : '')
       + '. The vendor CSV puts them at the top marked <b>"URGENT — ship in the FIRST container"</b>.' : ''; })();
@@ -5291,6 +5299,14 @@ function rvoCsv() {
   var unpicked = rows.filter(function (r) { return (r.vendors || []).length > 1 && !r.vendor; });
   if (unpicked.length) { alert('Pick a vendor first for: ' + unpicked.map(function (r) { return r.sku; }).join(', ')); return; }
   if (!v && !confirm('No vendor picked — download every vendor in one file?')) return;
+  // 🧾 Owner (2026-10-13): "make sure no part # is missed". Downloading ONE vendor: part #s that need ordering but have NO
+  // vendor are in nobody's file — say which, before downloading (set their vendor with ✏️, or pick "(no vendor …)").
+  if (v && v !== '__none') {
+    var noV = (RVO.rows || []).filter(function (r) { return !r.vendor && !(RVO.off || {})[r.sku] && rvoQty(r) > 0; });
+    if (noV.length && !confirm('⚠ ' + noV.length + ' part # need ordering but have NO vendor — they are NOT in ' + v + '\'s file (or any vendor\'s):\n\n'
+      + noV.slice(0, 30).map(function (r) { return r.sku + ' — ' + rvoQty(r) + ' units'; }).join('\n') + (noV.length > 30 ? '\n…' : '')
+      + '\n\nSet their vendor with ✏️ (or pick "(no vendor in SKU Mgr)" to see them).\nOK = download ' + v + '\'s file anyway.')) return;
+  }
   var cell = function (x) { x = String(x == null ? '' : x); return /[",\n]/.test(x) ? '"' + x.replace(/"/g, '""') + '"' : x; };
   var upcCell = function (x) { return x ? '"=""' + String(x).replace(/"/g, '') + '"""' : ''; }; // keeps leading zeros / no 1.2E+11 in Excel
   // Owner: "the CSV for the vendor needs the newest price of each item and what this order will cost in total".
