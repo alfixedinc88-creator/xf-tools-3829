@@ -5999,7 +5999,7 @@ console.log('\n📊 Stock Levels: Out / Low judged on the whole parent; codes th
   const api = new Function(...Object.keys(g), wh.slice(start, stop) + '; return { renderOOS, soStatus, setSO: function (d) { _SO = d; }, items: function () { return window._soShown; } };')(...Object.values(g));
   api.setSO({ ok: true, vendors: ['EFF'], totals: { stockCases: 20, stockPieces: 2000 }, check: { ok: true }, asOf: new Date().toISOString(),
     rows: [R('4-1-2=1', '4-1-2', 0, 0, 162), R('4-1-2=10XX', '4-1-2', 20, 2000, 10), R('4-2-1=10X', '4-2-1', 0, 0, 1440), R('1-1/2FBIBB', '1-1/2FBIBB', 0, 0, 0)] });
-  api.renderOOS();
+  g.window.soSetView('part'); // judged on "Each part #" (the first page is one row per parent since 2026-10-13)
   const by = Object.fromEntries((api.items() || []).map(r => [r.part, r]));
   check('4-1-2=1 at 0, but parent 4-1-2 has 2,000 pcs (=10XX) → NOT out of stock (parent lasts ~1,000 days); says "parent 4-1-2: 2,000 pcs"',
     by['4-1-2=1'] && by['4-1-2=1'].status === 'in' && by['4-1-2=1'].own === 'out' && /parent 4-1-2: 2,000 pcs \(all packs\)/.test(els['res-oos'].innerHTML), by['4-1-2=1'] && [by['4-1-2=1'].status, by['4-1-2=1'].own]);
@@ -6061,7 +6061,7 @@ console.log('\n📊 Stock Levels: Out / Low each split into nothing coming · al
   api.setSO({ ok: true, vendors: ['EFF'], totals: { stockCases: 3, stockPieces: 30 }, check: { ok: true }, asOf: new Date().toISOString(),
     rows: [R('1-1-1=1', 0, 0, 90, 0, 0), R('2-2-2=1', 0, 0, 90, 0, 50), R('3-3-3=1', 0, 0, 90, 40, 50), R('7-7-7=1', 0, 0, 90, 0, 0),
            R('4-4-4=1', 1, 10, 900, 0, 0), R('5-5-5=1', 1, 10, 900, 0, 30), R('6-6-6=1', 1, 10, 900, 20, 0), R('8-8-8=1', 100, 1000, 90, 0, 0)] });
-  api.renderOOS();
+  g.window.soSetView('part'); // judged on "Each part #" (the first page is one row per parent since 2026-10-13)
   const h = els['res-oos'].innerHTML, by = Object.fromEntries((api.items() || []).map(r => [r.part, r.status + ':' + r.sub]));
   check('out: 1-1-1 nothing coming · 2-2-2 owed → already ordered · 3-3-3 on the water → already shipped · 7-7-7 📋 PO placed → already ordered; low: 4-4-4 / 5-5-5 ordered / 6-6-6 shipped',
     by['1-1-1=1'] === 'out:none' && by['2-2-2=1'] === 'out:ordered' && by['3-3-3=1'] === 'out:shipped' && by['7-7-7=1'] === 'out:ordered'
@@ -6076,6 +6076,37 @@ console.log('\n📊 Stock Levels: Out / Low each split into nothing coming · al
   const outAll = (api.items() || []).map(r => r.part);
   check('…tap "Out of stock — already ordered" → only 2-2-2 and 7-7-7; "Out of Stock" still shows all 4, nothing coming first',
     shown === '2-2-2=1,7-7-7=1' && outAll.length === 4 && outAll[0] === '1-1-1=1' && outAll[3] === '3-3-3=1', [shown, outAll]);
+}
+
+// Owner (2026-10-13): "4-3-1=OLD — we already have 4-3-1=2, 4-3-1=5 ordered, not shipped yet → it belongs in 'Out of stock -
+// already ordered'; 23-6-1=10, =5XX, =10XX → merge under the same parent 23-6-1, click on it; the first page: one parent = one item".
+console.log('\n📊 Stock Levels first page: one row per parent # (tap for each pack); a pack at 0 goes with its parent\'s order');
+{
+  const { readFileSync: rfQ } = await import('node:fs');
+  const wh = rfQ(fileURLToPath(new URL('../warehouse.html', import.meta.url)), 'utf8');
+  const start = wh.indexOf('var _SO = null'), stop = wh.indexOf('window.oosSetStockFilter');
+  const els = {}, el = id => els[id] = els[id] || { innerHTML: '', value: '', textContent: '' };
+  const g = { document: { getElementById: el, querySelectorAll: () => [] }, window: {}, DB: { master: [] }, _oosStockFilter: 'all', _oosOrderFilter: 'all', wFetch: () => new Promise(() => {}) };
+  const R = (part, pack, cases, pcs, sold90, owe) => ({ part, parent: part.split('=')[0], pack, name: part.startsWith('23') ? 'elbow' : 'tee', vendor: 'EFF', stock: { cases, pieces: pcs, spots: cases ? 1 : 0, noEaCases: 0, negCases: 0 },
+    onWay: { units: 0, pieces: 0, cases: 0, titles: [] }, owed: { units: owe, pieces: owe * pack, cases: 0, titles: owe ? [{ title: 'PO 10/1', units: owe }] : [] }, sold90Pcs: sold90, sold30Pcs: 0 });
+  const api = new Function(...Object.keys(g), wh.slice(start, stop) + '; return { renderOOS, setSO: function (d) { _SO = d; }, items: function () { return window._soShown; } };')(...Object.values(g));
+  api.setSO({ ok: true, vendors: ['EFF'], totals: { stockCases: 3, stockPieces: 30 }, check: { ok: true }, asOf: new Date().toISOString(),
+    rows: [R('4-3-1=OLD', 1, 0, 0, 0, 0), R('4-3-1=2', 2, 0, 0, 90, 100), R('4-3-1=5', 5, 0, 0, 90, 40),
+           R('23-6-1=5XX', 5, 0, 0, 900, 0), R('23-6-1=10', 10, 1, 10, 900, 0), R('23-6-1=10XX', 10, 0, 0, 900, 0)] });
+  api.renderOOS();
+  let items = api.items() || [], h = els['res-oos'].innerHTML;
+  const by = Object.fromEntries(items.map(r => [r.part, r]));
+  check('first page = one row per parent: 4-3-1 and 23-6-1 (2 rows, not 6); 23-6-1 lists =5XX, =10, =10XX under it',
+    items.length === 2 && by['4-3-1'] && by['23-6-1'] && /23-6-1=5XX, 23-6-1=10, 23-6-1=10XX — tap for each/.test(h) && /Parent #<\/th>/.test(h), items.map(r => r.part));
+  check('…4-3-1 (=OLD, =2, =5 all at 0; =2 / =5 ordered, not shipped) → "Out of Stock — already ordered", 200 + 200 pcs coming; 23-6-1 low (10 pcs, 2,700 pcs / 90 d) → "Low Stock"',
+    by['4-3-1'].status === 'out' && by['4-3-1'].sub === 'ordered' && by['4-3-1'].owed.pieces === 400 && by['23-6-1'].status === 'low' && by['23-6-1'].sub === 'none'
+    && /Out of Stock — already ordered<\/span>/.test(h) && /onclick="soLinkOpen\(this\.dataset\.p\);return false" data-p="23-6-1"/.test(h), [by['4-3-1'].status, by['4-3-1'].sub, by['23-6-1'].status]);
+  g.window.soSetView('part');
+  items = api.items() || [];
+  const old = items.find(r => r.part === '4-3-1=OLD') || {};
+  check('…"Each part #" still there (6 rows); 4-3-1=OLD (nothing ordered under =OLD itself) → Out of Stock — already ordered, with its parent',
+    items.length === 6 && old.status === 'out' && old.sub === 'ordered' && /4-3-1=OLD[\s\S]*?Out of Stock — already ordered/.test(els['res-oos'].innerHTML), [items.length, old.status, old.sub]);
+  check('…tap the parent → every pack size of it (same popup as before), the parent\'s name shown', /if \(!row\.name && fam\[0\]\)/.test(wh) && /var fam = _SO\.rows\.filter\(function\(r\) \{ return r\.parent === row\.parent; \}\);/.test(wh), null);
 }
 
 console.log('\n' + (failed ? '❌ ' + failed + ' check(s) FAILED' : '✅ all ' + passed + ' checks passed') + '\n');
