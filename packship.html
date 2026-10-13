@@ -8938,6 +8938,7 @@ var _PS_AL_LABELS = {
   fix_veeqo_weight: ['⚖️ Fix weight in Veeqo', 'var(--orange)'],
   low_value:  ['💸 Low value — check', 'var(--orange)'],
   no_rate:    ['❓ No rate', 'var(--orange)'],
+  express_only: ['🚀 Express only — buy & print by hand', 'var(--orange)'],
   split:      ['✂️ Over limit — split into boxes', 'var(--purple)'],
   split_done: ['✂️ Split — labels next run', 'var(--accent)'],
   hold:       ['✋ Hold', 'var(--orange)'],
@@ -9292,7 +9293,7 @@ function _psAlRenderRun(r) {
         + '<td ' + td + '><span class="ps-al-res" style="color:' + L[1] + ';font-weight:700;white-space:nowrap">' + L[0] + '</span>'
         + (o.decision === 'would_buy' ? (function(g) { return '<div style="font-size:11px;font-weight:700;color:' + (g.carrier === 'UPS' ? '#7c3aed' : 'var(--text2)') + '">' + _psAlEsc(g.carrier) + ' · ' + (g.aisle === 'mix' ? '🔀 mix' : g.aisle ? 'aisle ' + _psAlEsc(g.aisle) : 'no bin') + '</div>'; })(_psAlGroupOf(o)) : '')
         + _psAlMergeTag(o) + _psAlSplitTag(o)
-        + (o.decision === 'no_rate' ? '<button class="ps-btn-sm" style="margin-top:4px;white-space:nowrap" onclick="psAlRateWhy(this, \'' + _psAlEsc(String(o.number || '').replace(/[\\']/g, '')) + '\')">💲 Why?</button>' : '') + '</td>'
+        + ((o.decision === 'no_rate' || o.decision === 'express_only') ? '<button class="ps-btn-sm" style="margin-top:4px;white-space:nowrap" onclick="psAlRateWhy(this, \'' + _psAlEsc(String(o.number || '').replace(/[\\']/g, '')) + '\')">💲 Why?</button>' : '') + '</td>'
         + '<td style="padding:6px 8px;border-bottom:1px solid var(--border);vertical-align:top;font-family:var(--mono)"><button class="ps-btn-sm" style="font-family:var(--mono);white-space:nowrap" title="Live Veeqo info: items, photos, bin, SKU, package — and change them" onclick="psAlLive(this, \'' + _psAlEsc(String(o.number || '').replace(/[\\']/g, '')) + '\')">🔎 ' + _psAlEsc(o.number) + '</button></td>'
         + '<td ' + td + '>' + _psAlEsc(o.channel) + '</td>'
         + '<td ' + td + '>' + _psAlEsc(o.customer) + '</td>'
