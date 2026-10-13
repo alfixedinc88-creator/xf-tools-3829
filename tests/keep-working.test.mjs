@@ -5949,5 +5949,41 @@ console.log('\n📊 Part# Detail: bags + pieces in every cell, totals row (bags 
   sq.exec("DELETE FROM master_list WHERE base_sku = '923-5-4'; DELETE FROM amazon_sales_weekly WHERE sku LIKE '923-5-4%'");
 }
 
+// Owner (2026-10-13): "can you also add for Amazon, is that from our FBA listing or FBM listing" — Part# Detail splits
+// Amazon bags into FBA / FBM / ? (not known), and the three always add up to the Amazon number.
+console.log('\n📊 Part# Detail: Amazon split into FBA / FBM / ? — the three add up to the Amazon total');
+{
+  const day = n => new Date(Date.now() - n * 86400000).toISOString().slice(0, 10);
+  sq.exec(`CREATE TABLE IF NOT EXISTS fba_catalog (sku TEXT PRIMARY KEY, asin TEXT, fnsku TEXT, product_name TEXT, available INTEGER, updated_at TEXT);
+    CREATE TABLE IF NOT EXISTS listing_titles (platform TEXT NOT NULL, listing_id TEXT NOT NULL, sku TEXT NOT NULL, title TEXT, updated_at TEXT, PRIMARY KEY (platform, listing_id, sku))`);
+  try { sq.exec('ALTER TABLE listing_titles ADD COLUMN qty INTEGER'); } catch (_) {}
+  sq.prepare("INSERT INTO master_list (base_sku, name, part_num, location, cases, units_per_case) VALUES ('924-5-4','valve','924-5-4=10','C1=5-1-4',2,10)").run();
+  sq.prepare("INSERT INTO fba_catalog (sku, asin) VALUES ('924-5-4=10-FBA','B0TEST924')").run();
+  sq.prepare("INSERT INTO listing_titles (platform, listing_id, sku, title, updated_at) VALUES ('Amazon','B0TEST924M','924-5-4=10','valve',?)").run(new Date().toISOString());
+  sq.prepare("INSERT OR REPLACE INTO reorder_alias (raw, part) VALUES ('924-5-4=10-FBA','924-5-4=10'), ('924-5-4=10-OLD','924-5-4=10')").run();
+  sq.prepare("INSERT INTO amazon_sales_weekly (sku, period_start, period_end, units_ordered, ordered_product_sales) VALUES ('924-5-4=10-FBA',?,?,7,70), ('924-5-4=10',?,?,5,50), ('924-5-4=10-OLD',?,?,2,20), ('924-5-4=10-FBA',?,?,30,300)")
+    .run(day(10), day(3), day(10), day(3), day(10), day(3), day(60), day(53));
+  const d = await get('/sales/dashboard-data');
+  const p = (d.parts || []).find(x => x.partNum === '924-5-4=10') || {};
+  check('the server splits Amazon 30 d 14 bags into FBA 7 · FBM 5 · ? 2, and 90 d 44 into FBA 37 · FBM 5 · ? 2 (adds up exactly)',
+    p.amzU30 === 14 && p.amzFbaU30 === 7 && p.amzFbmU30 === 5 && p.amzUnkU30 === 2 && p.amzU90 === 44 && p.amzFbaU90 === 37 && p.amzFbmU90 === 5 && p.amzUnkU90 === 2
+    && p.amzFbaU30 + p.amzFbmU30 + p.amzUnkU30 === p.amzU30 && p.amzFbaU90 + p.amzFbmU90 + p.amzUnkU90 === p.amzU90, p);
+  const { readFileSync } = await import('node:fs');
+  const sh = readFileSync(fileURLToPath(new URL('../sales.html', import.meta.url)), 'utf8');
+  const grab = re => (sh.match(re) || [])[0];
+  const fns = [grab(/function buildDashboardData\(\) \{[\s\S]*?\n\}/), grab(/function renderParts\(\) \{[\s\S]*?\n\}/), grab(/function fmt0\(v\)\{[^\n]*\}/)].join('\n');
+  const html = { v: '' }, els = { 'parts-search': { value: '924-5-4' }, 'parts-plat': { value: 'all' }, 'parts-wrap': { set innerHTML(x) { html.v = x; } } };
+  const run = new Function('CALC', 'document', 'sortRows', 'sortArrow', 'partsTableSort', 'renderKPIs', 'renderLeaderboards', 'renderSkus', 'dbTab',
+    'var DB_PARTS = [], DB_SKUS = [];\n' + fns + `; buildDashboardData(); renderParts(); return DB_PARTS;`);
+  try {
+    const nop = () => {};
+    run({ rawParts: d.parts.filter(x => /^924-5-4/.test(x.partNum)), rawSkus: [] }, { getElementById: id => els[id] || { value: '', style: {}, dataset: {} } }, r => r, () => '', { col: 'u30', dir: -1 }, nop, nop, nop, nop);
+  } catch (e) { html.v = 'ERROR ' + e.message; }
+  const txt = html.v.replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ');
+  check('…the page shows "FBA 7 · FBM 5 · ? 2" under Amazon 30 d and "FBA 37 · FBM 5 · ? 2" under 90 d, also on the Total row',
+    (txt.match(/FBA 7 · FBM 5 · \? 2/g) || []).length === 2 && (txt.match(/FBA 37 · FBM 5 · \? 2/g) || []).length === 2, txt.slice(0, 900));
+  sq.exec("DELETE FROM master_list WHERE base_sku = '924-5-4'; DELETE FROM amazon_sales_weekly WHERE sku LIKE '924-5-4%'; DELETE FROM fba_catalog WHERE sku LIKE '924-5-4%'; DELETE FROM listing_titles WHERE sku LIKE '924-5-4%'; DELETE FROM reorder_alias WHERE raw LIKE '924-5-4%'");
+}
+
 console.log('\n' + (failed ? '❌ ' + failed + ' check(s) FAILED' : '✅ all ' + passed + ' checks passed') + '\n');
 process.exit(failed ? 1 : 0);

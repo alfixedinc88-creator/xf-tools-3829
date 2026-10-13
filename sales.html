@@ -2553,7 +2553,9 @@ function buildDashboardData() {
     // Owner (2026-10-13): "30 / 90 days — per bag or per piece? 23-5-4=100 Amazon 13 … I want the pieces too, and the
     // total bags and pieces at the end". The numbers are bags (listing units); pieces = bags × the pack after "=".
     var pack = r.pack || (function(){ var m = String(pn).match(/=(\d+)/g); return m ? (parseInt(m[m.length-1].slice(1),10) || 1) : 1; })();
-    return {pn,amzU30,amzU90,ebayU30,ebayU90,xfU30,xfU90,walU30,walU90,amzS30,ebayS30,xfS30,walS30,amzS90,ebayS90,xfS90,walS90,u30,u90,s30,s90,dom,trend,oos:!!r.oos,pack:pack};
+    // Owner (2026-10-13): "for Amazon, is that from our FBA listing or FBM listing?" — split sent by the server ('?' = not known).
+    var amzCh = { FbaU30: r.amzFbaU30||0, FbaU90: r.amzFbaU90||0, FbmU30: r.amzFbmU30||0, FbmU90: r.amzFbmU90||0, UnkU30: r.amzUnkU30||0, UnkU90: r.amzUnkU90||0 };
+    return {pn,amzU30,amzU90,ebayU30,ebayU90,xfU30,xfU90,walU30,walU90,amzS30,ebayS30,xfS30,walS30,amzS90,ebayS90,xfS90,walS90,u30,u90,s30,s90,dom,trend,oos:!!r.oos,pack:pack,amzCh:amzCh};
   }).filter(Boolean);
 
   DB_SKUS = CALC.rawSkus.map(function(r){
@@ -2754,23 +2756,27 @@ function renderParts() {
   var TL={'up':'<span style="font-size:11px;color:var(--green);font-family:var(--mono)">▲ Growing</span>','down':'<span style="font-size:11px;color:var(--red);font-family:var(--mono)">▼ Slowing</span>','flat':'<span style="font-size:11px;color:var(--text3);font-family:var(--mono)">● Stable</span>'};
   // bags, and the pieces under it (bags × pack)
   var COLS = ['amzU30','amzU90','ebayU30','ebayU90','xfU30','xfU90','walU30','walU90','u30'];
-  function bp(bags, pcs, dim, bold) { return '<td class="s-num num mono" style="'+(dim?'color:var(--text3);':'')+(bold?'font-weight:600;':'')+'">'+fmt0(bags)
-    +(bags ? '<div style="font-size:10.5px;color:var(--text3);font-weight:400">'+fmt0(pcs)+' pcs</div>' : '')+'</td>'; }
-  var T = { s30: 0 }; COLS.forEach(function(c){ T[c] = 0; T[c+'p'] = 0; });
+  // Amazon cells: FBA / FBM (and '?' not known) bags under the pieces
+  function fbaLine(ch, w) { if (!ch) return ''; var f = ch['FbaU'+w] || 0, m = ch['FbmU'+w] || 0, u = ch['UnkU'+w] || 0; if (!f && !m && !u) return '';
+    return '<div style="font-size:10px;font-weight:400;white-space:nowrap"><span style="color:#b45309">FBA '+fmt0(f)+'</span> · <span style="color:#0369a1">FBM '+fmt0(m)+'</span>'+(u ? ' · <span style="color:var(--text3)" title="Not on our FBA or FBM lists — not known">? '+fmt0(u)+'</span>' : '')+'</div>'; }
+  function bp(bags, pcs, dim, bold, extra) { return '<td class="s-num num mono" style="'+(dim?'color:var(--text3);':'')+(bold?'font-weight:600;':'')+'">'+fmt0(bags)
+    +(bags ? '<div style="font-size:10.5px;color:var(--text3);font-weight:400">'+fmt0(pcs)+' pcs</div>' : '')+(extra||'')+'</td>'; }
+  var T = { s30: 0, ch: {} }; COLS.forEach(function(c){ T[c] = 0; T[c+'p'] = 0; });
   rows.forEach(function(r){
     COLS.forEach(function(c){ T[c] += r[c] || 0; T[c+'p'] += (r[c] || 0) * (r.pack || 1); }); T.s30 += r.s30 || 0;
+    Object.keys(r.amzCh || {}).forEach(function(k){ T.ch[k] = (T.ch[k] || 0) + (r.amzCh[k] || 0); });
     h+='<tr>'
       +'<td class="s-mono" style="font-weight:600;max-width:160px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">'+r.pn+(r.oos?' <span style="color:var(--red);font-size:10px;font-weight:700">OOS</span>':'')+'</td>'
       +'<td style="text-align:left">'+(DL[r.dom]||'')+'</td>'
       +'<td style="text-align:left">'+(TL[r.trend]||'')+'</td>'
-      +COLS.map(function(c, i){ return bp(r[c], r[c] * (r.pack || 1), c !== 'u30' && i % 2 === 1, c === 'u30'); }).join('')
+      +COLS.map(function(c, i){ return bp(r[c], r[c] * (r.pack || 1), c !== 'u30' && i % 2 === 1, c === 'u30', c === 'amzU30' ? fbaLine(r.amzCh, 30) : c === 'amzU90' ? fbaLine(r.amzCh, 90) : ''); }).join('')
       +'<td class="s-num num mono" style="color:var(--green)">$'+fmt0(r.s30)+'</td>'
       +'</tr>';
   });
   h += '<tr style="border-top:2px solid var(--border);background:var(--bg3);font-weight:700"><td>Total ('+fmt0(rows.length)+' part #s)</td><td></td><td style="font-size:10.5px;color:var(--text3);font-weight:400">bags · pieces</td>'
-    + COLS.map(function(c){ return '<td class="s-num num mono" style="font-weight:700">'+fmt0(T[c])+' bags<div style="font-size:10.5px;color:var(--text2)">'+fmt0(T[c+'p'])+' pcs</div></td>'; }).join('')
+    + COLS.map(function(c){ return '<td class="s-num num mono" style="font-weight:700">'+fmt0(T[c])+' bags<div style="font-size:10.5px;color:var(--text2)">'+fmt0(T[c+'p'])+' pcs</div>'+(c === 'amzU30' ? fbaLine(T.ch, 30) : c === 'amzU90' ? fbaLine(T.ch, 90) : '')+'</td>'; }).join('')
     + '<td class="s-num num mono" style="color:var(--green)">$'+fmt0(T.s30)+'</td></tr>';
-  wrap.innerHTML='<div style="font-size:11.5px;color:var(--text3);margin-bottom:6px">Numbers are <b>bags</b> (what the listing sold); the small number under each is <b>pieces</b> (bags × the pack size after "="). Total at the bottom.</div>'+h+'</tbody></table>';
+  wrap.innerHTML='<div style="font-size:11.5px;color:var(--text3);margin-bottom:6px">Numbers are <b>bags</b> (what the listing sold); the small number under each is <b>pieces</b> (bags × the pack size after "="). Amazon also shows <b>FBA</b> (Amazon ships from its warehouse) and <b>FBM</b> (we ship) bags; "?" = a SKU not on our FBA or FBM lists. Total at the bottom.</div>'+h+'</tbody></table>';
 }
 
 function partsTableSortBy(col) {
