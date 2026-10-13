@@ -6012,5 +6012,39 @@ console.log('\n📊 Stock Levels: Out / Low judged on the whole parent; codes th
   sq.prepare("DELETE FROM reorder_alias WHERE raw = 'ZZ-1-1/2FBIBB'").run();
 }
 
+// Owner (2026-10-13): "check Reorder — the right numbers? where the sales come from, are they right, how it gets how many
+// pieces to order; it won't miss any part # and won't order too much?" One whole family, end to end, every piece once.
+console.log('\n🧾 Reorder end to end: sales from every channel → minus every piece we have / have coming → order, every piece once');
+{
+  const day = n => new Date(Date.now() - n * 86400000).toISOString().slice(0, 10), now = new Date().toISOString();
+  sq.prepare(`INSERT INTO master_list (base_sku, name, part_num, location, cases, units_per_case, vendor, sheet_row) VALUES
+    ('98-1-1','tee','98-1-1=10','C1=9-8-1',2,100,'JQ',0), ('98-1-1','tee','98-1-1=25','C2=9-8-1',1,100,'JQ',0)`).run();
+  const ins = sq.prepare("INSERT INTO ebay_sales_weekly (sku, period_start, period_end, units_ordered, sales_amount) VALUES (?,?,?,?,?)");
+  ins.run('98-1-1=10', day(20), day(14), 30, 30);                       // eBay 30 × 10 = 300 pcs
+  sq.prepare("INSERT INTO walmart_sales_weekly (sku, period_start, period_end, units_ordered, sales_amount) VALUES ('98-1-1=10', ?, ?, 10, 10)").run(day(30), day(24)); // Walmart 100 pcs
+  ins.run('98-1-1=10+', day(10), day(4), 5, 5);                         // a "+" SKU = 98-1-1=10 → 50 pcs
+  sq.prepare("INSERT OR REPLACE INTO reorder_alias (raw, part, by_user, updated_at) VALUES ('ZZ-TEE-98', '98-1-1=25', 'TS', ?)").run(now);
+  ins.run('ZZ-TEE-98', day(10), day(4), 2, 2);                          // a vendor code mapped with ✏️ to =25 → 50 pcs
+  sq.prepare("INSERT OR REPLACE INTO reorder_title (title, stage, updated_at, created_at) VALUES ('PO-98 9/1', 'production', ?, ?), ('CT-98 10/1', 'shipped', ?, ?)").run(now, now, now, now);
+  sq.prepare("INSERT INTO reorder_incoming (title, part, qty, vendor, cases, updated_at) VALUES ('PO-98 9/1', '98-1-1=10', 20, 'JQ', 2, ?), ('CT-98 10/1', '98-1-1=10', 10, 'JQ', 1, ?)").run(now, now);
+  const d = await get('/reorder/vendor-order?days=90&lead=3&cover=3');
+  const fam = (d.rows || []).filter(r => r.baseSku === '98-1-1'), r = fam[0] || {}, mo = d.salesWindow.coveredDays / 30;
+  const target = 500 / mo * 6, have = 200 + 100 + 200 + 100, needPcs = Math.max(0, target - have), needU = Math.ceil(needPcs / 10 - 1e-9), cases = Math.ceil(needU / 10);
+  check('sales: eBay 300 + Walmart 100 + "98-1-1=10+" 50 + mapped vendor code 50 = 500 pcs, all on ONE row (98-1-1=10, the pack most orders are in)',
+    fam.length === 1 && r.sku === '98-1-1=10' && r.soldPcs === 500 && r.calc.famSoldPcs === 500, fam.map(x => [x.sku, x.soldPcs]));
+  check('have = shelf 200 (=10) + 100 (=25, other pack) + still owed 200 + on the water 100 = 600 pcs (every piece once)',
+    r.calc.famHave === 600 && r.calc.famOtherShelf === 100, r.calc);
+  check('need = 500 pcs ÷ ' + (Math.round(mo * 100) / 100) + ' months × 6 months − 600 = ' + Math.round(needPcs) + ' pcs → ' + needU + ' bags → ' + cases + ' cases of 10 (100 pcs a box) = ' + cases * 10 + ' bags; never more than 1 case over',
+    r.needUnits === needU && r.orderUnits === cases * 10 && r.caseQty === 10 && (r.orderUnits - r.needUnits) < 10, { needUnits: r.needUnits, orderUnits: r.orderUnits, caseQty: r.caseQty, calc: r.calc });
+  check('the sales window is reported: days really used (a week cut short at the start is taken off) and each channel\'s newest week',
+    d.salesWindow && d.salesWindow.coveredDays > 83 && d.salesWindow.coveredDays <= 90 && 'eBay' in d.salesWindow.chanThrough && 'Walmart' in d.salesWindow.chanThrough, d.salesWindow);
+  const { readFileSync: rfR } = await import('node:fs');
+  const rh = rfR(fileURLToPath(new URL('../reorder.html', import.meta.url)), 'utf8');
+  check('Reorder page: shows the days of sales used + each channel\'s newest week (red when > 10 days behind = would order too little); part #s needing an order with NO vendor listed in red, and a vendor\'s CSV warns they are in nobody\'s file',
+    /📅 Sales used: <b>' \+ w\.coveredDays/.test(rh) && /sales are more than 10 days behind/.test(rh) && /part # need ordering but have NO vendor<\/b>/.test(rh) && /they are NOT in ' \+ v \+ '\\'s file/.test(rh), null);
+  sq.exec(`DELETE FROM master_list WHERE part_num LIKE '98-1-1%'; DELETE FROM ebay_sales_weekly WHERE sku LIKE '98-1-1%' OR sku = 'ZZ-TEE-98'; DELETE FROM walmart_sales_weekly WHERE sku LIKE '98-1-1%';
+    DELETE FROM reorder_alias WHERE raw = 'ZZ-TEE-98'; DELETE FROM reorder_incoming WHERE title IN ('PO-98 9/1','CT-98 10/1'); DELETE FROM reorder_title WHERE title IN ('PO-98 9/1','CT-98 10/1')`);
+}
+
 console.log('\n' + (failed ? '❌ ' + failed + ' check(s) FAILED' : '✅ all ' + passed + ' checks passed') + '\n');
 process.exit(failed ? 1 : 0);
