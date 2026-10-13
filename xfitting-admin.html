@@ -162,6 +162,7 @@
       <div class="ad-tab active" id="ad-tab-users" onclick="adSwitchTab('users')">👤 Users</div>
       <div class="ad-tab" id="ad-tab-levels" style="display:none" onclick="adSwitchTab('levels')">🎚️ Levels</div>
       <div class="ad-tab" id="ad-tab-pages" onclick="adSwitchTab('pages')">🧩 Pages &amp; Tabs</div>
+      <div class="ad-tab" id="ad-tab-logins" onclick="adSwitchTab('logins')">🔑 Log in</div>
       <div class="ad-tab" id="ad-tab-activity" onclick="adSwitchTab('activity')">📊 Activity</div>
       <div class="ad-tab" id="ad-tab-test" onclick="adSwitchTab('test')">🧪 Test</div>
     </div>
@@ -175,16 +176,34 @@
         </div>
         <div id="ad-users-table-wrap"><div class="ad-empty">Loading…</div></div>
       </div>
-      <!-- 🔔 Sign-ins (owner: "notice me when someone signs in to start using our app") -->
+    </div>
+
+    <!-- 🔑 Log in (owner 2026-10-13: "stop the green message every time someone logs in — save it here, one more tab:
+         who, when and what they do every time they log in") -->
+    <div id="ad-panel-logins" style="display:none">
+      <div class="ad-card">
+        <div class="ad-card-header">
+          <h2>🔑 Log in — who, when, and what they did</h2>
+          <div style="display:flex;gap:6px;flex-wrap:wrap">
+            <select id="ad-li-user" class="ad-input" style="width:auto;margin:0;padding:7px 10px;font-size:12.5px" onchange="adLoadLogins()"><option value="">Everyone</option></select>
+            <select id="ad-li-days" class="ad-input" style="width:auto;margin:0;padding:7px 10px;font-size:12.5px" onchange="adLoadLogins()">
+              <option value="1">Today + yesterday</option><option value="7" selected>Last 7 days</option><option value="30">Last 30 days</option><option value="90">Last 90 days</option>
+            </select>
+            <button class="ad-btn ad-btn-outline ad-btn-sm" style="width:auto" onclick="adLoadLogins()">↻ Refresh</button>
+          </div>
+        </div>
+        <div style="font-size:12px;color:var(--text3);margin-bottom:8px">Every sign-in (who, when, where, which device) and, under it, what that person did until their next sign-in: each page they opened and everything they saved (scans, Stock In / Out, transfers, labels, edits …). Tap a sign-in to see the list. No pop-ups — it is all kept here.</div>
+        <div id="ad-logins"><div class="ad-empty">Loading…</div></div>
+      </div>
+      <!-- 🔔 Sign-ins list (moved here from 👤 Users; no pop-up any more — owner 2026-10-13) -->
       <div class="ad-card" style="margin-top:14px">
         <div class="ad-card-header">
           <h2>🔔 Sign-ins</h2>
           <div style="display:flex;gap:6px;flex-wrap:wrap">
-            <button class="ad-btn ad-btn-outline ad-btn-sm" style="width:auto" id="ad-notify-btn" onclick="adNotifyOn()">🔔 Notify me on this device</button>
             <button class="ad-btn ad-btn-outline ad-btn-sm" style="width:auto" onclick="adLoadSignins()">↻ Refresh</button>
           </div>
         </div>
-        <div style="font-size:12px;color:var(--text3);margin-bottom:8px">Every sign-in (who, when, where, which device), every sign-in refused because it was not their time, and every change of hours. The Owner gets a pop-up on any app page that is open.</div>
+        <div style="font-size:12px;color:var(--text3);margin-bottom:8px">Every sign-in (who, when, where, which device), every sign-in refused because it was not their time, and every change of hours.</div>
         <div id="ad-signins"><div class="ad-empty">Loading…</div></div>
       </div>
     </div>
@@ -421,11 +440,12 @@ function adShowDenied() {
 }
 
 window.adSwitchTab = function(name) {
-  ['users','levels','pages','activity','test'].forEach(function(n) {
+  ['users','levels','pages','logins','activity','test'].forEach(function(n) {
     ge('ad-tab-' + n).classList.toggle('active', n === name);
     ge('ad-panel-' + n).style.display = (n === name) ? 'block' : 'none';
   });
   if (name === 'activity') adLoadActivity();
+  if (name === 'logins') { adLoadLogins(); adLoadSignins(); }
   if (name === 'levels') adRenderLevels();
   if (name === 'pages') adLoadPages();
   if (name === 'test') adLoadTest();
@@ -505,7 +525,6 @@ window.adLoadUsers = async function() {
     }
   }
   ge('ad-users-table-wrap').innerHTML = html;
-  adLoadSignins();
 };
 // 🕘 Sign-in hours (owner: "set from what time to what time each person can sign in; if they work late I change it").
 window.adOpenHours = function(userId) {
@@ -535,11 +554,51 @@ window.adLoadSignins = async function() {
       + '<td style="font-size:12px">' + esc([x.place, x.device].filter(Boolean).join(' · ')) + '</td><td style="font-size:12px;color:var(--text2)">' + esc(x.detail) + '</td></tr>';
   }).join('') + '</tbody></table>' : '<div class="ad-empty">No sign-ins yet.</div>';
 };
-window.adNotifyOn = async function() {
-  if (!window.Notification) { adToast('This browser has no notifications — you still get a pop-up on open app pages', 'err'); return; }
-  var p = await Notification.requestPermission();
-  adToast(p === 'granted' ? '🔔 This device will notify you when someone signs in (while an app page is open)' : 'Notifications not allowed on this device', p === 'granted' ? 'ok' : 'err');
-  adLoadSignins();
+// 🔑 Log in tab — each sign-in with what that person did until their next sign-in.
+var AD_LI_PAGES = { 'index.html': '🏠 Home', 'inventory.html': '📦 Inventory', 'packship.html': '🚚 Pack & Ship', 'warehouse.html': '🏬 Warehouse lookup', 'reorder.html': '🔁 Reorder',
+  'receivepo.html': '📥 Receive PO', 'labelprint.html': '🏷 Label print', 'xfitting-admin.html': '🔐 Admin', 'sales.html': '📈 Sales', 'profit.html': '💲 Profit', 'repricer.html': '💲 Repricer',
+  'awd.html': '🏭 AWD', 'upc.html': '🔢 UPC', 'imagemaker.html': '🖼 Image maker', 'training.html': '🎓 Training', 'lights.html': '💡 Lights', 'ldash.html': '📊 Dashboard' };
+var AD_LI_ACTS = [
+  [/^\/ship\/scan$/, '📦 Packing scan'], [/^\/ship\/pick$/, '🧺 Picking scan'], [/^\/ship\/print-log$/, '🖨 Print Log scan'], [/^\/ship\/stockout$/, '⚠ No stock reported'],
+  [/^\/ship\/batch-close$/, '🚐 Batch closed'], [/^\/ship\/cancel-/, '🗑 Cancellation'], [/^\/ship\/nostock-/, '🚫 No-stock report fixed'], [/^\/ship\/usps-run/, '📮 USPS run'],
+  [/^\/inventory\/log$/, '📝 Stock In / Out / Transfer entry'], [/^\/inventory\/transfer/, '🔀 Transfer'], [/^\/inventory\/verify$/, '✅ Review / approve'], [/^\/inventory\/cancel-/, '↩ Cancel entry'],
+  [/^\/inventory\/containers\//, '🚢 Container here'], [/^\/inventory\/pull/, '📋 Pull list'], [/^\/inventory\/recount/, '🔢 Recount'], [/^\/inventory\/(sku-row|edit-row|product\/save|master-list)/, '✏️ SKU Mgr edit'],
+  [/^\/inventory\/soldout/, '🔴 Sold out'], [/^\/inventory\/(photo|product-photo)/, '📷 Photo'], [/^\/inventory\/(upc-link|import-upc|set-fnsku)/, '🔢 UPC / FNSKU'], [/^\/inventory\/stockout-resolve$/, '✅ Stock-out report resolved'],
+  [/^\/inventory\/barcode-/, '🏷 Barcode label'], [/^\/inventory\/po-log$/, '📥 Receive PO'], [/^\/inventory\/location/, '📍 Locations'], [/^\/inventory\/stock-levels/, '📊 Stock Levels edit'],
+  [/^\/veeqo\/autolabel\/(buy-one|merge-buy|test-buy|print-batch)$/, '🏷 Auto Label — bought / printed'], [/^\/veeqo\/autolabel\/run$/, '🤖 Auto Label run'], [/^\/veeqo\/autolabel\/config$/, '⚙️ Auto Label rules changed'],
+  [/^\/veeqo\/autolabel\/scanform/, '📄 SCAN form'], [/^\/veeqo\/autolabel\/(weight|reweigh)/, '⚖️ Weight'], [/^\/veeqo\/autolabel\//, '🤖 Auto Label'], [/^\/veeqo\//, '🔄 Veeqo'],
+  [/^\/reorder\//, '🔁 Reorder'], [/^\/(amazon|ebay|walmart|shopify)\/.*(price)/, '💲 Price change'], [/^\/(amazon|ebay|walmart|shopify)\//, '🛒 Listing'], [/^\/repricer\//, '💲 Repricer'],
+  [/^\/(msg|ebay-msg)\//, '💬 Message'], [/^\/sales\//, '📈 Sales'], [/^\/designs\//, '🔒 Design saved']
+];
+function adLiWhat(a) {
+  if (a.kind === 'page') { var f = String(a.path || '').split('#'); return '📄 Opened ' + (AD_LI_PAGES[f[0]] || f[0]) + (f[1] ? ' → ' + f[1] : ''); }
+  for (var i = 0; i < AD_LI_ACTS.length; i++) if (AD_LI_ACTS[i][0].test(a.path || '')) return AD_LI_ACTS[i][1];
+  return '💾 ' + (a.path || 'saved');
+}
+window.adLoadLogins = async function() {
+  var box = ge('ad-logins'); if (!box) return;
+  var sel = ge('ad-li-user');
+  if (sel && sel.options.length <= 1 && (AD.users || []).length) AD.users.forEach(function(u) { var o = document.createElement('option'); o.value = u.id; o.textContent = u.displayName + ' (' + u.username + ')'; sel.appendChild(o); });
+  box.innerHTML = '<div class="ad-empty">Loading…</div>';
+  var r = await adFetch('/admin/logins?days=' + ge('ad-li-days').value + (sel && sel.value ? '&userId=' + sel.value : ''));
+  if (r.status !== 200 || !r.data.ok) { box.innerHTML = '<div class="ad-empty">Could not load.</div>'; return; }
+  var rows = r.data.rows || [];
+  if (!rows.length) { box.innerHTML = '<div class="ad-empty">No sign-ins in these days.</div>'; return; }
+  var t = function(iso) { return new Date(iso).toLocaleTimeString('en-US', { timeZone:'America/New_York', hour:'numeric', minute:'2-digit' }); };
+  box.innerHTML = rows.map(function(x) {
+    var head = '<span class="ad-mono" style="font-size:11.5px;white-space:nowrap">' + adNY(x.at) + '</span> · <b>' + adEsc(x.display_name || x.username) + '</b> · '
+      + (x.kind === 'denied' ? '<span style="color:var(--red,#c0392b);font-weight:700">⛔ Refused — not their time</span>' : x.kind === 'earlier' ? '<span style="color:var(--text3)">(signed in before these days)</span>' : '<span style="color:var(--green,#16a34a);font-weight:700">✅ Signed in</span>')
+      + (x.place || x.device ? ' · <span style="font-size:12px;color:var(--text2)">' + adEsc([x.place, x.device].filter(Boolean).join(' · ')) + '</span>' : '')
+      + (x.kind === 'denied' ? '' : ' · <span style="font-size:12px;color:var(--accent)">' + (x.actionCount ? x.actionCount + ' thing' + (x.actionCount === 1 ? '' : 's') + ' done' : 'nothing done yet') + '</span>');
+    var list = (x.actions || []).map(function(a) {
+      return '<tr><td class="ad-mono" style="font-size:11px;white-space:nowrap;color:var(--text3)">' + t(a.at) + (a.count > 1 && a.lastAt !== a.at ? '–' + t(a.lastAt) : '') + '</td>'
+        + '<td style="font-size:12.5px;white-space:nowrap">' + adEsc(adLiWhat(a)) + (a.count > 1 ? ' <b>×' + a.count + '</b>' : '') + '</td>'
+        + '<td style="font-size:11.5px;color:var(--text2)">' + a.details.map(adEsc).join('<br>') + '</td></tr>';
+    }).join('');
+    return '<details class="ad-li" style="border:1px solid var(--border);border-radius:9px;padding:8px 10px;margin-bottom:6px;background:var(--bg2)"><summary style="cursor:pointer;line-height:1.6">' + head + '</summary>'
+      + (list ? '<table class="ad-table" style="margin-top:6px"><thead><tr><th>Time</th><th>What</th><th>Details</th></tr></thead><tbody>' + list + '</tbody></table>' + (x.more ? '<div class="ad-empty">+ ' + x.more + ' earlier lines not shown</div>' : '')
+        : '<div style="font-size:12px;color:var(--text3);margin-top:4px">Nothing opened or saved after this sign-in.</div>') + '</details>';
+  }).join('');
 };
 
 window.adRemoveUser = async function(userId) {
