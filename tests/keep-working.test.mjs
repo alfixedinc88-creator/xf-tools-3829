@@ -6216,5 +6216,32 @@ console.log('\nAuto Label: never buys express (Next Day / 2nd Day / Overnight / 
     && (ws.match(/autolabelChooseRate\(/g) || []).length >= 7 && /'low_value', 'express_only', 'no_rate'/.test(ws), null);
 }
 
+// Owner 2026-10-13: "when we scan the packing it was super slow for the order items to pop up — I need them to show up fast".
+console.log('\nPacking / Picking: order items show up fast after a scan');
+{
+  const { readFileSync } = await import('node:fs');
+  const ws = readFileSync(workerPath, 'utf8'), ph = readFileSync(fileURLToPath(new URL('../packship.html', import.meta.url)), 'utf8');
+  sq.prepare('INSERT INTO ship_manifest_log (date, tracking, order_num, line_items) VALUES (?,?,?,?)').run(nyToday, '1ZFASTITEMS0000001', '112-FAST-1',
+    JSON.stringify([{ s: '10=TEE 1/2', q: 2, b: '23-2-3' }, { s: '1=ELBOW', q: 1, b: '40-1-1' }]));
+  const a = await get('/ship/items?tracking=1zfastitems0000001'), b = await get('/ship/items?tracking=1ZNOTSAVED0000099');
+  check('GET /ship/items gives the saved items of a label at once (any letter case); unknown label → found: false, nothing written',
+    a.ok && a.found && a.orderNum === '112-FAST-1' && a.lineItems.length === 2 && a.lineItems[0].q === 2 && b.ok && b.found === false && b.lineItems === null
+    && !sq.prepare("SELECT 1 x FROM ship_scan_log WHERE UPPER(tracking) IN ('1ZFASTITEMS0000001', '1ZNOTSAVED0000099')").get(), [a, b]);
+  const noTok = await call('/ship/items?tracking=1ZFASTITEMS0000001');
+  check('…still needs a sign-in (no token → 401)', noTok.status === 401, noTok.status);
+  const sc = await post('/ship/scan', { tracking: '1ZFASTITEMS0000001', initials: 'TS' });
+  const keyRow = sq.prepare("SELECT value FROM app_config WHERE key = 'ship_d1_schema'").get();
+  check('the scan itself still saves and answers with the items; the Pack & Ship table set-up is remembered (runs again only when it changes)',
+    sc.ok && (sc.lineItems || []).length === 2 && !!sq.prepare("SELECT 1 x FROM ship_scan_log WHERE tracking = '1ZFASTITEMS0000001'").get()
+    && !!(keyRow && keyRow.value) && /String\(_ensureShipD1TablesRun\)/.test(ws) && /if \(r && r\.value === key\) \{ _shipD1Ready = true; return; \}/.test(ws), [sc, keyRow]);
+  check('sign-in: table set-up once per server start, "last active" written at most once a minute (60-min window unchanged)',
+    /async function ensureCredAuthTables\(env\) \{\n  if \(_credAuthTablesReady\) return;/.test(ws) && /if \(!\(Date\.now\(\) - lastActive < 60000\)\) await env\.DB\.prepare\(`UPDATE cred_sessions SET last_active/.test(ws)
+    && /const CRED_SESSION_ROLLING_MINUTES = 60;/.test(ws), null);
+  check('Packing and Picking ask for the saved items at the same moment as the scan is saved; the scan answer only redraws when it has MORE items (ticked No Stock boxes kept)',
+    /_psShowScanProductLoading\(tracking\);\n  _psFastItems\(tracking, 'pack'\);/.test(ph) && /_psShowPickProductLoading\(tracking\);\n  _psFastItems\(tracking, 'pick'\);/.test(ph)
+    && /if \(packNew\) _psRenderScanProduct\(tracking, data\.lineItems\);/.test(ph) && /if \(pickNew\) _psRenderPickProduct\(tracking, data\.lineItems, data\.orderNum\);/.test(ph)
+    && /return q > f\.q \|\| \(q === f\.q && n > f\.n\);/.test(ph), null);
+}
+
 console.log('\n' + (failed ? '❌ ' + failed + ' check(s) FAILED' : '✅ all ' + passed + ' checks passed') + '\n');
 process.exit(failed ? 1 : 0);

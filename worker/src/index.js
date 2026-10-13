@@ -177,7 +177,11 @@ const CRED_SESSION_ROLLING_MINUTES = 60;
 const LOGIN_MAX_FAILED_ATTEMPTS = 10;
 const LOGIN_LOCKOUT_WINDOW_MINUTES = 15;
 
+// Owner 2026-10-13 "packing super slow for the order items to pop up": every request
+// signs in through here, so the 5 CREATE TABLE steps run once per server start, not on every scan.
+let _credAuthTablesReady = false;
 async function ensureCredAuthTables(env) {
+  if (_credAuthTablesReady) return;
   await env.DB.prepare(`
     CREATE TABLE IF NOT EXISTS cred_users (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -216,6 +220,7 @@ async function ensureCredAuthTables(env) {
       first_fail_at TEXT NOT NULL
     )
   `).run().catch(()=>{});
+  _credAuthTablesReady = true;
 }
 
 // ── Levels (Worker / Pro / Admin / Owner) ─────────────────────────────────
@@ -512,7 +517,8 @@ async function verifyCredSession(token, env) {
   if (!credHoursOk(user, null, CRED_HOURS_GRACE_MIN).ok) return null; // 🕘 their time is over (30 min to finish)
   const roles = await credEffectiveRoles(env, user);
 
-  await env.DB.prepare(`UPDATE cred_sessions SET last_active = ? WHERE token = ?`).bind(new Date().toISOString(), token).run(); // rolling extension
+  // rolling extension — at most once a minute (the window is 60 min), so a scan doesn't wait on a write every time
+  if (!(Date.now() - lastActive < 60000)) await env.DB.prepare(`UPDATE cred_sessions SET last_active = ? WHERE token = ?`).bind(new Date().toISOString(), token).run();
 
   return { userId: user.id, username: user.username, displayName: user.display_name, roles, level: user.level || null };
 }
@@ -19807,6 +19813,9 @@ async function handleShipRoute(url, method, request, env, session, ctx) {
   const path = url.pathname;
   try {
     if (path === '/ship/scan'         && method === 'POST') return await shipScan(request, env, ctx);
+    // Packing / Picking show the items from our saved copy right away, while the scan is still being saved.
+    if (path === '/ship/items'        && method === 'GET')  { const o = await shipLocalOrder(env, normalizeShipTracking(url.searchParams.get('tracking') || ''));
+      return cors(new Response(JSON.stringify({ ok: true, found: !!o, orderNum: o ? o.orderNum : '', lineItems: o ? o.items : null }), { headers: { 'Content-Type': 'application/json' } })); }
     if (path === '/ship/scans'        && method === 'GET')  return await shipGetScans(url, env);
     if (path === '/ship/pick'         && method === 'POST') return await shipPick(request, env, ctx);
     if (path === '/ship/picks'        && method === 'GET')  return await shipGetPicks(url, env);
@@ -19880,8 +19889,26 @@ async function handleShipRoute(url, method, request, env, session, ctx) {
 // Runs its ~27 CREATE/ALTER/INDEX statements once per worker instance, not
 // on every request — every Pack & Ship scan/pick used to wait on all of them.
 let _shipD1Ready = false;
+// The ~60 CREATE / ALTER steps below ran one after another on every fresh server start, before a
+// Packing / Picking scan could answer (owner 2026-10-13: "super slow for the order items to pop up").
+// They now run once per version of this function: the key is made from the function's own text, so any
+// change to it runs them again by itself.
+function _shipD1SchemaKey() {
+  const t = String(_ensureShipD1TablesRun); let h = 0;
+  for (let i = 0; i < t.length; i++) h = (h * 31 + t.charCodeAt(i)) | 0;
+  return t.length + '-' + (h >>> 0).toString(36);
+}
 async function ensureShipD1Tables(env) {
   if (_shipD1Ready) return;
+  const key = _shipD1SchemaKey();
+  try {
+    const r = await env.DB.prepare(`SELECT value FROM app_config WHERE key = 'ship_d1_schema'`).first();
+    if (r && r.value === key) { _shipD1Ready = true; return; }
+  } catch (_) {}
+  await _ensureShipD1TablesRun(env);
+  await env.DB.prepare(`INSERT INTO app_config (key, value) VALUES ('ship_d1_schema', ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value`).bind(key).run().catch(() => {});
+}
+async function _ensureShipD1TablesRun(env) {
   await env.DB.prepare(`
     CREATE TABLE IF NOT EXISTS ship_scan_log (
       id INTEGER PRIMARY KEY AUTOINCREMENT,

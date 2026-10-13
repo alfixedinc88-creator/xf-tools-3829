@@ -2897,6 +2897,7 @@ function _psProcessScan(raw) {
   // Just shows the "Loading product info…" placeholder — does NOT fire the
   // order-lookup fetch here anymore. See the big comment below on why.
   _psShowScanProductLoading(tracking);
+  _psFastItems(tracking, 'pack'); // items from our saved copy right away (see _psFastItems)
   inp.focus();
 
   _psPostWithTimeout(PS_WORKER + '/ship/scan', { tracking: tracking, initials: psInitials }).then(function(data) {
@@ -2943,9 +2944,11 @@ function _psProcessScan(raw) {
     // (order not marked shipped there yet, or VEEQO_API_KEY unset) — a real
     // "not synced yet" case, not this timing bug.
     if (data.lineItems) {
-      _psRenderScanProduct(tracking, data.lineItems);
+      var packNew = _psItemsBetter('pack', tracking, data.lineItems); // already showing the same items → leave the screen as is
+      if (packNew) _psItemsMark('pack', tracking, data.lineItems);
+      if (packNew) _psRenderScanProduct(tracking, data.lineItems);
       _psRecheckItems(tracking, data.lineItems, 'pack');
-    } else {
+    } else if (!(_psItemsShown.pack && _psItemsShown.pack.T === tracking.toUpperCase() && _psItemsShown.pack.n > 0)) {
       _psLoadScanProduct(tracking);
     }
   }).catch(function(e) {
@@ -3070,6 +3073,35 @@ function _psRenderScanProduct(tracking, items) {
     moreEl.style.display = 'none';
     moreEl.innerHTML = '';
   }
+}
+
+// Owner 2026-10-13: "when we scan the packing it was super slow for the order items to pop up — I need them to show up fast".
+// Right after a scan, ask for our saved copy of the order (GET /ship/items: one quick read, nothing
+// written) at the same time as the scan is being saved. Whichever answers first shows the items; the
+// other only replaces them when it has MORE (never fewer), so nothing ticked on the screen is lost.
+var _psItemsShown = {}; // mode ('pack' | 'pick') -> { T, q, n }
+function _psItemsBetter(mode, tracking, items) {
+  var f = _psItemsShown[mode], T = String(tracking || '').toUpperCase();
+  if (!items || !items.length) return false;
+  if (!f || f.T !== T) return true;
+  var q = _psItemsQty(items), n = items.length;
+  return q > f.q || (q === f.q && n > f.n);
+}
+function _psItemsMark(mode, tracking, items) {
+  _psItemsShown[mode] = { T: String(tracking || '').toUpperCase(), q: _psItemsQty(items), n: (items || []).length };
+}
+function _psFastItems(tracking, mode) {
+  _psItemsShown[mode] = { T: String(tracking || '').toUpperCase(), q: -1, n: -1 };
+  var ac = window.AbortController ? new AbortController() : null;
+  var t = ac ? setTimeout(function() { ac.abort(); }, 8000) : null;
+  fetch(PS_WORKER + '/ship/items?tracking=' + encodeURIComponent(tracking), { headers: { 'X-Cred-Token': psCredToken }, signal: ac ? ac.signal : undefined })
+    .then(function(r) { return r.json(); }).then(function(d) {
+      var elId = mode === 'pick' ? 'ps-pick-product-tracking' : 'ps-scan-product-tracking', el = document.getElementById(elId);
+      if (!d || !d.lineItems || !el || String(el.textContent || '').toUpperCase() !== String(tracking).toUpperCase()) return;
+      if (!_psItemsBetter(mode, tracking, d.lineItems)) return;
+      _psItemsMark(mode, tracking, d.lineItems);
+      if (mode === 'pick') _psRenderPickProduct(tracking, d.lineItems, d.orderNum); else _psRenderScanProduct(tracking, d.lineItems);
+    }).catch(function() {}).finally(function() { if (t) clearTimeout(t); });
 }
 
 // Owner: "Picking / Packing don't show the whole order — with more than 1
@@ -6217,6 +6249,7 @@ function _psProcessPick(raw) {
   _psShowPickLastScan({ icon:'✅', cls:'ok', tracking: tracking, meta: carrier + ' · Saving…' });
   psRenderPickList();
   _psShowPickProductLoading(tracking);
+  _psFastItems(tracking, 'pick'); // items from our saved copy right away (see _psFastItems)
   inp.focus();
 
   _psPostWithTimeout(PS_WORKER + '/ship/pick', { tracking: tracking, initials: psInitials }).then(function(data) {
@@ -6243,9 +6276,11 @@ function _psProcessPick(raw) {
     // already carries the line items it just fetched from Veeqo, so use
     // those directly instead of firing a second, separately-racing lookup.
     if (data.lineItems) {
-      _psRenderPickProduct(tracking, data.lineItems, data.orderNum);
+      var pickNew = _psItemsBetter('pick', tracking, data.lineItems); // already showing the same items → leave the screen (and anything ticked) as is
+      if (pickNew) _psItemsMark('pick', tracking, data.lineItems);
+      if (pickNew) _psRenderPickProduct(tracking, data.lineItems, data.orderNum);
       _psRecheckItems(tracking, data.lineItems, 'pick', data.orderNum);
-    } else {
+    } else if (!(_psItemsShown.pick && _psItemsShown.pick.T === tracking.toUpperCase() && _psItemsShown.pick.n > 0)) {
       _psLoadPickProduct(tracking);
     }
   }).catch(function(e) {
