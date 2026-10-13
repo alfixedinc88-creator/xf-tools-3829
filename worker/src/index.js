@@ -430,6 +430,75 @@ async function credLoginLog(env, kind, user, detail, request) {
   } catch (e) { console.error('[login log]', e.message); }
 }
 
+// 🔑 Owner 2026-10-13: "stop the green message every time someone logs in — save it to XFitting Admin, one more
+// tab, Log in: who, when and what they do every time they log in". Every page a signed-in person opens and
+// everything they save (each POST) goes here — written after the answer is sent, so nobody waits for it.
+let _credActionReady = false;
+async function ensureCredActionLog(env) {
+  if (_credActionReady) return;
+  await env.DB.prepare(`CREATE TABLE IF NOT EXISTS cred_action_log (id INTEGER PRIMARY KEY AUTOINCREMENT, at TEXT NOT NULL,
+    user_id INTEGER, username TEXT, kind TEXT NOT NULL, path TEXT, detail TEXT)`).run().catch(() => {});
+  await env.DB.prepare(`CREATE INDEX IF NOT EXISTS idx_cred_action_at ON cred_action_log(at)`).run().catch(() => {});
+  await env.DB.prepare(`CREATE INDEX IF NOT EXISTS idx_cred_action_user_at ON cred_action_log(user_id, at)`).run().catch(() => {});
+  _credActionReady = true;
+}
+// Things the computers do by themselves (printer station, timers) — not something a person did.
+const CRED_ACTION_SKIP = /^\/(cron\/|auth\/|veeqo\/autolabel\/(auto-tick|print-watch|labels-printed|slips-printed|scanform-tick)$|inventory\/outbox\/check$|ship\/print-station$)/;
+const CRED_ACTION_KEYS = ['tracking', 'orderNumber', 'order', 'partNum', 'part_num', 'part', 'sku', 'parent', 'location', 'loc', 'from', 'to', 'fromLoc', 'toLoc',
+  'cases', 'qty', 'quantity', 'type', 'title', 'name', 'mode', 'status', 'action'];
+function credActionDetail(text) {
+  if (!text || text.length > 20000) return '';
+  let b; try { b = JSON.parse(text); } catch (_) { return ''; }
+  if (!b || typeof b !== 'object' || Array.isArray(b)) return Array.isArray(b) ? `${b.length} rows` : '';
+  const out = [];
+  for (const k of CRED_ACTION_KEYS) {
+    const v = b[k];
+    if (v == null || v === '' || typeof v === 'object') continue;
+    out.push(`${k} ${String(v).slice(0, 40)}`);
+    if (out.length >= 6) break;
+  }
+  if (Array.isArray(b.items)) out.push(`${b.items.length} item(s)`);
+  return out.join(' · ').slice(0, 300);
+}
+async function credActionLog(env, s, kind, path, detail, at) {
+  at = at || new Date().toISOString(); // the moment it happened, not when the record is written
+  try {
+    await ensureCredActionLog(env);
+    await env.DB.prepare(`INSERT INTO cred_action_log (at, user_id, username, kind, path, detail) VALUES (?,?,?,?,?,?)`)
+      .bind(at, s.userId, s.displayName || s.username || '', kind, String(path || '').slice(0, 120), String(detail || '').slice(0, 300)).run();
+    if (Math.random() < 0.01) await env.DB.prepare(`DELETE FROM cred_action_log WHERE at < ?`).bind(new Date(Date.now() - 180 * 86400000).toISOString()).run();
+  } catch (e) { console.error('[action log]', e.message); }
+}
+// GET /admin/logins?days=7&userId= → each sign-in (who, when, where, device) with what that person did
+// from that sign-in until their next one: pages opened + everything saved, in order.
+async function adminLogins(url, env) {
+  await ensureCredLevelTables(env); await ensureCredActionLog(env);
+  const days = Math.min(90, Math.max(1, parseInt(url.searchParams.get('days')) || 7));
+  const uid = parseInt(url.searchParams.get('userId')) || 0;
+  const since = new Date(Date.now() - days * 86400000).toISOString();
+  const uq = uid ? ' AND user_id = ?' : '', ub = uid ? [uid] : [];
+  const logins = ((await env.DB.prepare(`SELECT id, at, kind, user_id, username, display_name, detail, place, device FROM cred_login_log
+    WHERE at >= ? AND kind IN ('signin', 'denied')${uq} ORDER BY at DESC LIMIT 400`).bind(since, ...ub).all()).results || []).map(r => ({ ...r, actions: [] }));
+  const acts = (await env.DB.prepare(`SELECT at, user_id, username, kind, path, detail FROM cred_action_log WHERE at >= ?${uq} ORDER BY at ASC LIMIT 20000`).bind(since, ...ub).all()).results || [];
+  const byUser = {};
+  logins.filter(l => l.kind === 'signin').forEach(l => (byUser[l.user_id] = byUser[l.user_id] || []).push(l)); // newest first
+  const earlier = {}; // done before the first sign-in in these days (still signed in from before)
+  for (const a of acts) {
+    const l = (byUser[a.user_id] || []).find(x => x.at <= a.at);
+    let tgt = l;
+    if (!tgt) {
+      tgt = earlier[a.user_id];
+      if (!tgt) tgt = earlier[a.user_id] = { id: 0, at: a.at, kind: 'earlier', user_id: a.user_id, username: a.username, display_name: a.username, detail: 'Signed in before these days', place: '', device: '', actions: [] };
+    }
+    const last = tgt.actions[tgt.actions.length - 1];
+    if (last && last.kind === a.kind && last.path === a.path) { last.count++; last.lastAt = a.at; if (a.detail) { last.details.push(a.detail); if (last.details.length > 5) last.details.shift(); } }
+    else tgt.actions.push({ at: a.at, lastAt: a.at, kind: a.kind, path: a.path, count: 1, details: a.detail ? [a.detail] : [] });
+  }
+  const rows = logins.concat(Object.values(earlier)).sort((a, b) => String(b.at).localeCompare(String(a.at)));
+  rows.forEach(r => { r.actionCount = r.actions.reduce((n, x) => n + x.count, 0); if (r.actions.length > 300) { r.more = r.actions.length - 300; r.actions = r.actions.slice(-300); } });
+  return cors(new Response(JSON.stringify({ ok: true, days, rows }), { headers: { 'Content-Type': 'application/json' } }));
+}
+
 // POST /auth/login  { username, password } -> { token, displayName, roles }
 async function credLogin(request, env) {
   await ensureCredAuthTables(env);
@@ -7856,6 +7925,8 @@ const _app = {
     if (url.pathname === '/auth/access' && method === 'GET') {
       const s = await verifyCredSession(request.headers.get('X-Cred-Token'), env);
       if (!s) return cors(new Response(JSON.stringify({ ok: false, error: 'Not signed in' }), { status: 401, headers: { 'Content-Type': 'application/json' } }));
+      const pg = url.searchParams.get('page'); // 🔑 Log in tab: which page they opened
+      if (pg && ctx && ctx.waitUntil) ctx.waitUntil(credActionLog(env, s, 'page', pg, ''));
       const tm = await tmState(env);
       return cors(new Response(JSON.stringify({ ok: true, level: s.level, blocked: await accessBlockedFor(env, s.userId, s.level), test: tm ? { on: true, by: tm.started_by, at: tm.started_at } : { on: false } }), { headers: { 'Content-Type': 'application/json' } }));
     }
@@ -7886,6 +7957,7 @@ const _app = {
       if (url.pathname === '/admin/users/toggle-active' && method === 'POST') return await adminToggleActive(request, env, credSession);
       if (url.pathname === '/admin/users/hours' && method === 'POST')         return await adminSetHours(request, env, credSession);
       if (url.pathname === '/admin/signins' && method === 'GET')              return await adminSignins(url, env);
+      if (url.pathname === '/admin/logins' && method === 'GET')               return await adminLogins(url, env);
       if (url.pathname === '/admin/users/remove' && method === 'POST')        return await adminRemoveUser(request, env, credSession, false);
       if (url.pathname === '/admin/users/restore' && method === 'POST')       return await adminRemoveUser(request, env, credSession, true);
       if (url.pathname === '/admin/levels/update' && method === 'POST')       return await adminUpdateLevels(request, env, credSession);
@@ -8030,6 +8102,11 @@ const _app = {
         const pinLevel = credSession.roles.includes('mgmt') ? 'mgmt' : 'ops';
         session = { pin_level: pinLevel, userId: credSession.userId, roles: credSession.roles,
           displayName: credSession.displayName || '', username: credSession.username || '' }; // who did it, for the records
+        // 🔑 Log in tab: everything a person saves, on record (after the answer is sent — nobody waits for it)
+        if (method === 'POST' && !CRED_ACTION_SKIP.test(url.pathname) && ctx && ctx.waitUntil) {
+          const copy = request.clone(), at = new Date().toISOString();
+          ctx.waitUntil(copy.text().then(t => credActionLog(env, credSession, 'action', url.pathname, credActionDetail(t), at)).catch(() => {}));
+        }
       }
     }
     if (!session) {

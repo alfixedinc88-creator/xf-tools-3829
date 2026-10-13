@@ -2725,9 +2725,10 @@ console.log('\nAdmin → 🕘 sign-in hours per person; 🔔 every sign-in on re
   const { readFileSync } = await import('node:fs');
   const rd = f => readFileSync(fileURLToPath(new URL('../' + f, import.meta.url)), 'utf8');
   const ad = rd('xfitting-admin.html'), xa = rd('xf-access.js');
-  check('…Admin → Users: "Sign-in hours" next to each person with 🕘 Hours (hours + working late today); 🔔 Sign-ins card; the Owner gets a pop-up / notification on any open app page',
+  // Owner 2026-10-13 changed this on purpose: "stop the green message every time owner logs in — save it to XFitting Admin, one more tab, Log in".
+  check('…Admin → Users: "Sign-in hours" next to each person with 🕘 Hours (hours + working late today); 🔔 Sign-ins card now under 🔑 Log in; NO pop-up / notification on app pages any more',
     /<th>Sign-in hours<\/th>/.test(ad) && /onclick="adOpenHours\(' \+ u\.id \+ '\)"/.test(ad) && /id="ad-h-late"/.test(ad) && /id="ad-signins"/.test(ad)
-    && /if \(d\.level === 'owner'\) signinWatch\(\);/.test(xa) && /new Notification\('XFitting — sign-in'/.test(xa), null);
+    && ad.indexOf('id="ad-signins"') > ad.indexOf('id="ad-panel-logins"') && !/signinWatch|signinToast|new Notification\(/.test(xa), null);
 }
 
 // Owner: "Audit — after scanning the column or a box, scroll down to the scan bar (see more info below); on the phone the
@@ -6241,6 +6242,35 @@ console.log('\nPacking / Picking: order items show up fast after a scan');
     /_psShowScanProductLoading\(tracking\);\n  _psFastItems\(tracking, 'pack'\);/.test(ph) && /_psShowPickProductLoading\(tracking\);\n  _psFastItems\(tracking, 'pick'\);/.test(ph)
     && /if \(packNew\) _psRenderScanProduct\(tracking, data\.lineItems\);/.test(ph) && /if \(pickNew\) _psRenderPickProduct\(tracking, data\.lineItems, data\.orderNum\);/.test(ph)
     && /return q > f\.q \|\| \(q === f\.q && n > f\.n\);/.test(ph), null);
+}
+
+// Owner 2026-10-13: "stop the green message every time owner logs in … save it to XFitting Admin, one more tab with
+// log in tab, showing who, when and what they do every time they log in".
+console.log('\nAdmin → 🔑 Log in: who, when, and what they did after each sign-in (no pop-ups)');
+{
+  const { readFileSync } = await import('node:fs');
+  const ws = readFileSync(workerPath, 'utf8'), ad = readFileSync(fileURLToPath(new URL('../xfitting-admin.html', import.meta.url)), 'utf8'), xa = readFileSync(fileURLToPath(new URL('../xf-access.js', import.meta.url)), 'utf8');
+  const me = sq.prepare("SELECT id FROM cred_users WHERE username = 'tester'").get().id;
+  if (!sq.prepare("SELECT 1 x FROM cred_login_log WHERE kind = 'signin' AND user_id = ?").get(me))
+    sq.prepare("INSERT INTO cred_login_log (at, kind, user_id, username, display_name, detail, place, device) VALUES (?,?,?,?,?,?,?,?)").run(new Date(Date.now() - 60000).toISOString(), 'signin', me, 'tester', 'TS', '', 'Brooklyn', 'Windows PC');
+  await call('/auth/access?page=packship.html', { headers: H });
+  await post('/ship/scan', { tracking: '1ZLOGINTAB00000001', initials: 'TS' });
+  await post('/ship/scan', { tracking: '1ZLOGINTAB00000002', initials: 'TS' });
+  await post('/veeqo/autolabel/print-watch', { stationId: 'x' });
+  await new Promise(r => setTimeout(r, 80)); // the record is written after the answer
+  const li = await get('/admin/logins?days=1&userId=' + me);
+  const mine = (li.rows || []).find(x => x.user_id === me && x.actions && x.actions.length);
+  const pg = mine && mine.actions.find(a => a.kind === 'page' && a.path === 'packship.html');
+  const sc = mine && mine.actions.find(a => a.kind === 'action' && a.path === '/ship/scan' && a.details.some(d => /1ZLOGINTAB/.test(d)));
+  check('each sign-in lists what that person did after it: the page opened, and 2 Packing scans as one line ×2 with the tracking #s',
+    li.ok && !!pg && !!sc && sc.count === 2 && sc.details.some(d => /tracking 1ZLOGINTAB00000002/.test(d)) && mine.actionCount >= 3, mine);
+  check('…things the computers do by themselves (printer station print-watch, timers) are not listed as a person\'s work',
+    !mine.actions.some(a => /print-watch/.test(a.path)) && !sq.prepare("SELECT 1 x FROM cred_action_log WHERE path LIKE '%print-watch%'").get(), null);
+  const nob = await call('/admin/logins?days=1');
+  check('…Owner / Admin only (no sign-in → refused)', nob.status === 403 || nob.status === 401, nob.status);
+  check('…Admin has the 🔑 Log in tab (person + days filter, tap a sign-in to see the list); every page tells which page was opened once',
+    /id="ad-tab-logins" onclick="adSwitchTab\('logins'\)">🔑 Log in</.test(ad) && /id="ad-li-user"/.test(ad) && /id="ad-li-days"/.test(ad) && /window\.adLoadLogins = async function/.test(ad)
+    && /var pg = pageSent \? '' : '\?page=' \+ encodeURIComponent\(file/.test(xa) && /ctx\.waitUntil\(credActionLog\(env, s, 'page', pg, ''\)\)/.test(ws), null);
 }
 
 console.log('\n' + (failed ? '❌ ' + failed + ' check(s) FAILED' : '✅ all ' + passed + ' checks passed') + '\n');
