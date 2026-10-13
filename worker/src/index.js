@@ -1357,11 +1357,22 @@ async function reorderFixTables(env) {
     old_price REAL, price REAL, title TEXT, file TEXT, at TEXT)`).run();
   await env.DB.prepare(`CREATE TABLE IF NOT EXISTS reorder_history (id INTEGER PRIMARY KEY AUTOINCREMENT, ts TEXT NOT NULL,
     by_user TEXT, action TEXT, part TEXT, detail TEXT)`).run();
+  // "+" at the end means nothing (owner 2026-10-13): saved ✏️ mappings / fixes / vendor sheet lines written with it are put
+  // under the part # without it (a row already there for that part # is kept — the "+" one stays as it was, not lost).
+  for (const [tb, col] of [['reorder_alias', 'part'], ['reorder_fix', 'part'], ['reorder_vendor_catalog', 'part'], ['reorder_last_vendor', 'part']]) {
+    const r = await env.DB.prepare(`UPDATE OR IGNORE ${tb} SET ${col} = RTRIM(${col}, '+') WHERE ${col} LIKE '%+'`).run().catch(() => null);
+    const n = r && r.meta ? r.meta.changes || 0 : 0;
+    if (n) await env.DB.prepare('INSERT INTO reorder_history (ts, by_user, action, part, detail) VALUES (?,?,?,?,?)')
+      .bind(new Date().toISOString(), 'system', 'part', '+', `"+" at the end means nothing: ${n} ${tb} line(s) now under the part # without "+"`).run().catch(() => {});
+  }
   _reorderFixReady = true;
 }
 // "4-2-3==2" → "4-2-3=2", "24-4-7=1__" → "24-4-7=1", "201-2-9=10-" → "201-2-9=10".
+// Owner (2026-10-13): "4-3-1=5+ still shows as 4-3-1=5+ on the vendor CSV — the '+' means nothing, it is the same part #
+// as 4-3-1=5". A "+" at the end is dropped like a stray "-" / "_" / "." (4-3-1=5+ → 4-3-1=5), so Reorder counts its stock,
+// sales, orders and containers under 4-3-1=5 — once (each SKU Mgr row is still counted once, just under the one part #).
 function reorderCleanPart(s) {
-  return String(s || '').trim().toUpperCase().replace(/\s*=\s*/g, '=').replace(/=+/g, '=').replace(/[_\-.\s]+$/, '');
+  return String(s || '').trim().toUpperCase().replace(/\s*=\s*/g, '=').replace(/=+/g, '=').replace(/[_\-.\s+]+$/, '');
 }
 async function reorderLog(env, who, action, part, detail) {
   await env.DB.prepare('INSERT INTO reorder_history (ts, by_user, action, part, detail) VALUES (?,?,?,?,?)')
@@ -1396,7 +1407,7 @@ async function reorderCatalogImport(request, env, session) {
   if (title) {
     const need = [...new Set(rows.filter(r => !(num(r.qty) > 0) && num(r.cases) > 0).map(r => reorderCleanPart(r.part)).filter(Boolean))];
     if (need.length) {
-      const alias = {}; ((await env.DB.prepare('SELECT raw, part FROM reorder_alias').all()).results || []).forEach(a => { alias[String(a.raw).toUpperCase()] = String(a.part).toUpperCase(); });
+      const alias = {}; ((await env.DB.prepare('SELECT raw, part FROM reorder_alias').all()).results || []).forEach(a => { alias[String(a.raw).toUpperCase()] = reorderCleanPart(a.part); });
       for (const k of need) {
         const real = alias[k] || k;
         const fx = await env.DB.prepare('SELECT case_qty FROM reorder_fix WHERE part = ?').bind(real).first();
@@ -1614,7 +1625,7 @@ async function reorderOrdersStatus(env) {
   // a container's packing list, then the item name in SKU Mgr.
   try {
     const U = v => String(v || '').trim().toUpperCase();
-    const alias = {}; ((await env.DB.prepare('SELECT raw, part FROM reorder_alias').all()).results || []).forEach(r => { alias[U(r.raw)] = U(r.part); });
+    const alias = {}; ((await env.DB.prepare('SELECT raw, part FROM reorder_alias').all()).results || []).forEach(r => { alias[U(r.raw)] = reorderCleanPart(r.part); });
     const parts = [...new Set(out.flatMap(o => o.lines.flatMap(l => [U(l.part), alias[U(l.part)]])).filter(Boolean))];
     const fix = {}, cat = {}, catAny = {}, pal = {}, ml = {};
     for (let i = 0; i < parts.length; i += 90) {
@@ -1702,8 +1713,8 @@ async function reorderIncomingTake(request, env, session) {
   }
   // Part #s are matched as read after ✏️ corrections (reorder_alias), so a container line "ABC 1/2 TEE" mapped to
   // 8-8-8=10 comes off the order's 8-8-8=10 line — never counted on the water AND still owed.
-  const alias = {}; ((await env.DB.prepare('SELECT raw, part FROM reorder_alias').all()).results || []).forEach(r => { alias[String(r.raw).trim().toUpperCase()] = String(r.part).trim().toUpperCase(); });
-  const A = p => { const u = String(p || '').trim().toUpperCase(); return alias[u] || u; };
+  const alias = {}; ((await env.DB.prepare('SELECT raw, part FROM reorder_alias').all()).results || []).forEach(r => { alias[String(r.raw).trim().toUpperCase()] = reorderCleanPart(r.part); });
+  const A = p => { const u = String(p || '').trim().toUpperCase(), c = reorderCleanPart(u); return reorderCleanPart(alias[u] || alias[c] || c); }; // "+" at the end means nothing
   for (const o of orders) { o.rows = await rowsOf(o.title); o.before = Object.values(o.rows).reduce((a, r) => a + (r.qty || 0), 0); o.taken = 0;
     o.byReal = {}; Object.keys(o.rows).forEach(k => { o.rows[k].part = k; (o.byReal[A(k)] = o.byReal[A(k)] || []).push(o.rows[k]); }); }
   const lines = [], notOnOrder = [], writes = [];
@@ -1965,7 +1976,7 @@ async function reorderVendorOrder(env, url) {
   // part # on this tab ("10-1/2F19 TEE" → "…") — kept in `fromMap` so the
   // row can still show where it came from.
   await reorderFixTables(env);
-  const alias = {}; (await all('SELECT raw, part FROM reorder_alias')).forEach(r => { alias[U(r.raw)] = U(r.part); });
+  const alias = {}; (await all('SELECT raw, part FROM reorder_alias')).forEach(r => { alias[U(r.raw)] = reorderCleanPart(r.part); });
   const fromMap = {};
   const P = raw => {
     const r = U(raw), c = reorderCleanPart(r);
@@ -2384,7 +2395,7 @@ function reorderSuggestParts(queries, docs) {
     }
     const pack = titles.map(reorderPackFromTitle).find(n => n > 0) || 0;
     out[sku] = Object.entries(best).sort((a, b) => b[1].score - a[1].score).slice(0, 3).filter(([, v]) => v.score >= 0.25)
-      .map(([base, v]) => ({ base, part: base + '=' + (pack || 1) + '+', pack, packGuessed: !pack, score: Math.round(v.score * 100),
+      .map(([base, v]) => ({ base, part: base + '=' + (pack || 1), pack, packGuessed: !pack, score: Math.round(v.score * 100),
         matchedText: v.doc.text.slice(0, 200), matchedSku: v.doc.sku, matchedSrc: v.doc.src }));
   }
   return out;
@@ -2533,7 +2544,7 @@ async function reorderAutoSameAsin(env) {
   await reorderFixTables(env);
   const U = s => String(s || '').trim().toUpperCase().replace(/^-+|-+$/g, '');
   const q = async sql => { try { return (await env.DB.prepare(sql).all()).results || []; } catch (_) { return []; } };
-  const alias = {}; (await q('SELECT raw, part FROM reorder_alias')).forEach(r => { alias[U(r.raw)] = U(r.part); });
+  const alias = {}; (await q('SELECT raw, part FROM reorder_alias')).forEach(r => { alias[U(r.raw)] = reorderCleanPart(r.part); });
   const ourParts = new Set(), ourBases = new Set();
   (await q('SELECT part_num, base_sku FROM master_list')).forEach(r => { const p = reorderCleanPart(U(r.part_num)); if (!p) return; ourParts.add(p); ourBases.add(reorderGetBaseSku(p)); if (r.base_sku) ourBases.add(U(r.base_sku)); });
   (await q('SELECT base_sku FROM products')).forEach(r => { if (r.base_sku) ourBases.add(U(r.base_sku)); });
@@ -2588,7 +2599,7 @@ async function reorderListingsCheck(env, url) {
   const plat = p => PLAT[String(p || '').toLowerCase()] || String(p || '');
   const errors = [];
   const alias = {}, aliasInfo = {};
-  (await q('SELECT raw, part, by_user, updated_at FROM reorder_alias')).forEach(r => { alias[U(r.raw)] = U(r.part); aliasInfo[U(r.raw)] = { by: r.by_user || '', at: r.updated_at || '' }; });
+  (await q('SELECT raw, part, by_user, updated_at FROM reorder_alias')).forEach(r => { alias[U(r.raw)] = reorderCleanPart(r.part); aliasInfo[U(r.raw)] = { by: r.by_user || '', at: r.updated_at || '' }; });
   // Ours: SKU Mgr part #s and their bases (+ Products base SKUs).
   const ourParts = new Set(), ourBases = new Set(), partsOfBase = {};
   (await q('SELECT part_num, base_sku, name FROM master_list')).forEach(r => {
@@ -2782,7 +2793,7 @@ async function salesDashboardDataHandler(env) {
     // that part #, same as the Reorder planner; sales under a SKU that isn't one of our part #s are added up
     // and shown as "not matched" instead of quietly left out.
     const alias = {};
-    try { ((await env.DB.prepare('SELECT raw, part FROM reorder_alias').all()).results || []).forEach(r => { alias[String(r.raw || '').trim().toUpperCase()] = String(r.part || '').trim().toUpperCase(); }); } catch (_) {}
+    try { ((await env.DB.prepare('SELECT raw, part FROM reorder_alias').all()).results || []).forEach(r => { alias[String(r.raw || '').trim().toUpperCase()] = reorderCleanPart(r.part); }); } catch (_) {}
     const partOf = raw => { const u = String(raw || '').trim().toUpperCase(), c = reorderCleanPart(u); return alias[u] || alias[c] || c; };
     const acc = {}; // part # (upper) -> { amzU30, amzU90, amzS30, amzS90, ebayU30, ... }
     function merge(rows, prefix, unitsKey, salesKey) {
@@ -3383,7 +3394,7 @@ async function inventoryLookup(url, env) {
     try {
       const B = String(baseSku).toUpperCase();
       const alias = {}; ((await env.DB.prepare('SELECT raw, part FROM reorder_alias').all().catch(() => ({ results: [] }))).results || [])
-        .forEach(a => { alias[String(a.raw).toUpperCase()] = String(a.part).toUpperCase(); });
+        .forEach(a => { alias[String(a.raw).toUpperCase()] = reorderCleanPart(a.part); });
       // Only this item's listings: SKUs starting with the parent, plus any SKU corrected to one of its part #s (was: every listing).
       const likeF = B.replace(/[\\%_]/g, '\\$&') + '%', rawsAll = Object.keys(alias).filter(k => reorderGetBaseSku(alias[k]) === B);
       const raws0 = rawsAll.length > 90 ? [] : rawsAll, inRaw = raws0.length ? ` OR UPPER(TRIM(sku)) IN (${raws0.map(() => '?').join(',')})` : '';
@@ -4842,7 +4853,7 @@ async function inventoryIncomingFor(url, env) {
   await reorderFixTables(env);
   const q = reorderCleanPart(url.searchParams.get('q') || '');
   if (!q) return cors(new Response(JSON.stringify({ ok: false, error: 'Part # required' }), { status: 400, headers: { 'Content-Type': 'application/json' } }));
-  const alias = {}; ((await env.DB.prepare('SELECT raw, part FROM reorder_alias').all()).results || []).forEach(a => { alias[String(a.raw).toUpperCase()] = String(a.part).toUpperCase(); });
+  const alias = {}; ((await env.DB.prepare('SELECT raw, part FROM reorder_alias').all()).results || []).forEach(a => { alias[String(a.raw).toUpperCase()] = reorderCleanPart(a.part); });
   const real = p => alias[p] || p;
   const match = p => { const r = real(p); return r === q || r.split('=')[0] === q || p === q || p.split('=')[0] === q; };
   const like = q.split('=')[0] + '%';
@@ -4911,7 +4922,7 @@ async function inventoryStockOverview(env, url) {
   await reorderFixTables(env);
   const all = async (sql, ...b) => { try { return (await env.DB.prepare(sql).bind(...b).all()).results || []; } catch (_) { return []; } };
   const U = x => String(x || '').trim().toUpperCase();
-  const alias = {}; (await all('SELECT raw, part FROM reorder_alias')).forEach(r => { alias[U(r.raw)] = U(r.part); });
+  const alias = {}; (await all('SELECT raw, part FROM reorder_alias')).forEach(r => { alias[U(r.raw)] = reorderCleanPart(r.part); });
   const P = raw => { const r = U(raw), c = reorderCleanPart(r); return alias[r] || alias[c] || c; };
   const pack = x => reorderExtractPackSize(x) || 1;
   const rows = {};
@@ -5010,7 +5021,7 @@ async function inventoryPalletsReceived(env) {
   if (!rows.length) return cors(new Response(JSON.stringify({ ok: true, lines: [] }), { headers: { 'Content-Type': 'application/json' } }));
   const moved = {};
   ((await env.DB.prepare(_PALLET_MOVED_SQL + ' GROUP BY m.pallet_id').all()).results || []).forEach(m => { moved[m.pallet_id] = m.moved || 0; });
-  const alias = {}; ((await env.DB.prepare('SELECT raw, part FROM reorder_alias').all()).results || []).forEach(a => { alias[String(a.raw).toUpperCase()] = String(a.part).toUpperCase(); });
+  const alias = {}; ((await env.DB.prepare('SELECT raw, part FROM reorder_alias').all()).results || []).forEach(a => { alias[String(a.raw).toUpperCase()] = reorderCleanPart(a.part); });
   const real = p => alias[String(p).toUpperCase()] || String(p).toUpperCase();
   // Where each received part # was stocked in: its approved "[RECEIVED] <title> — …" Stock In.
   const at = {};
@@ -5197,7 +5208,7 @@ async function containerPalletLines(env, o) {
     }
   }
   // Part # as SKU Mgr knows it (part # corrections on the Reorder page), and where it's in stock.
-  const alias = {}; ((await env.DB.prepare('SELECT raw, part FROM reorder_alias').all()).results || []).forEach(a => { alias[String(a.raw).toUpperCase()] = String(a.part).toUpperCase(); });
+  const alias = {}; ((await env.DB.prepare('SELECT raw, part FROM reorder_alias').all()).results || []).forEach(a => { alias[String(a.raw).toUpperCase()] = reorderCleanPart(a.part); });
   const real = p => alias[p] || p;
   const parts = [...new Set(rows.map(r => real(r.part)))], stock = {};
   for (let i = 0; i < parts.length; i += 90) {
@@ -5422,7 +5433,7 @@ async function inventoryContainerSoldOut(url, env) {
   const rows = (await env.DB.prepare('SELECT * FROM reorder_pallet WHERE title = ? ORDER BY vendor, id LIMIT 5000').bind(title).all()).results || [];
   const moved = {};
   ((await env.DB.prepare(_PALLET_MOVED_SQL + ' GROUP BY m.pallet_id').all()).results || []).forEach(m => { moved[m.pallet_id] = m.moved || 0; });
-  const alias = {}; ((await env.DB.prepare('SELECT raw, part FROM reorder_alias').all()).results || []).forEach(a => { alias[String(a.raw).toUpperCase()] = String(a.part).toUpperCase(); });
+  const alias = {}; ((await env.DB.prepare('SELECT raw, part FROM reorder_alias').all()).results || []).forEach(a => { alias[String(a.raw).toUpperCase()] = reorderCleanPart(a.part); });
   const real = p => alias[String(p).toUpperCase()] || String(p).toUpperCase();
   const onWay = new Set(((await env.DB.prepare('SELECT part FROM reorder_incoming WHERE title = ?').bind(title).all()).results || []).map(r => String(r.part).toUpperCase()));
   // Its 📦 Received Stock In per part #: Part Total Before (cases of that part #, every shelf).
@@ -5521,7 +5532,7 @@ async function inventoryIncoming(url, env) {
   const J = o => cors(new Response(JSON.stringify(o), { headers: { 'Content-Type': 'application/json' } }));
   const base = stripParentC(String(url.searchParams.get('base') || '').trim().toUpperCase()).split('=')[0];
   if (!base) return J({ ok: false, error: 'base required' });
-  const alias = {}; ((await env.DB.prepare('SELECT raw, part FROM reorder_alias').all()).results || []).forEach(a => { alias[String(a.raw).toUpperCase()] = String(a.part).toUpperCase(); });
+  const alias = {}; ((await env.DB.prepare('SELECT raw, part FROM reorder_alias').all()).results || []).forEach(a => { alias[String(a.raw).toUpperCase()] = reorderCleanPart(a.part); });
   const stage = {}; ((await env.DB.prepare('SELECT title, stage FROM reorder_title').all()).results || []).forEach(t => { stage[t.title] = t.stage || ''; });
   const rows = ((await env.DB.prepare('SELECT title, part, qty, cases, updated_at FROM reorder_incoming WHERE UPPER(part) LIKE ?').bind(base + '%').all()).results || [])
     .concat(((await env.DB.prepare(`SELECT i.title, i.part, i.qty, i.cases, i.updated_at FROM reorder_incoming i JOIN reorder_alias a ON UPPER(a.raw) = UPPER(i.part) WHERE UPPER(a.part) LIKE ?`).bind(base + '%').all()).results || []));
@@ -5575,7 +5586,7 @@ async function receivedPalletParts(env) {
   const got = await receivedContainerTitles(env);
   const rows = ((await env.DB.prepare('SELECT id, title, pallet, part, cases FROM reorder_pallet').all()).results || []).filter(r => got.has(r.title));
   const moved = {}; ((await env.DB.prepare(_PALLET_MOVED_SQL + ' GROUP BY m.pallet_id').all()).results || []).forEach(m => { moved[m.pallet_id] = m.moved || 0; });
-  const alias = {}; ((await env.DB.prepare('SELECT raw, part FROM reorder_alias').all()).results || []).forEach(a => { alias[String(a.raw).toUpperCase()] = String(a.part).toUpperCase(); });
+  const alias = {}; ((await env.DB.prepare('SELECT raw, part FROM reorder_alias').all()).results || []).forEach(a => { alias[String(a.raw).toUpperCase()] = reorderCleanPart(a.part); });
   const by = {};
   rows.forEach(r => {
     const left = Math.max(0, (r.cases || 0) - (moved[r.id] || 0)); if (!(left > 0)) return;
@@ -6232,7 +6243,7 @@ async function locationPlanList(env) {
     if (part.includes('=')) vget(p, part).cases += c > 0 ? c : 0;
     if (c > 0 && r.location) { p.cases += c; const L = String(r.location).trim().toUpperCase(); p.spots[L] = (p.spots[L] || 0) + c; }
   });
-  const alias = {}; (await d1All(env, 'SELECT raw, part FROM reorder_alias')).forEach(a => { alias[String(a.raw).toUpperCase()] = String(a.part).toUpperCase(); });
+  const alias = {}; (await d1All(env, 'SELECT raw, part FROM reorder_alias')).forEach(a => { alias[String(a.raw).toUpperCase()] = reorderCleanPart(a.part); });
   const moved = {}; (await d1All(env, _PALLET_MOVED_SQL + ' GROUP BY m.pallet_id')).forEach(m => { moved[m.pallet_id] = m.moved || 0; });
   const got = await receivedContainerTitles(env);
   const conts = {};
@@ -7939,7 +7950,7 @@ const _app = {
         // One title's lines, with the part # each is read as after corrections.
         await reorderFixTables(env);
         const title = (url.searchParams.get('title') || '').trim();
-        const alias = {}; ((await env.DB.prepare('SELECT raw, part FROM reorder_alias').all()).results || []).forEach(r => { alias[String(r.raw).toUpperCase()] = String(r.part).toUpperCase(); });
+        const alias = {}; ((await env.DB.prepare('SELECT raw, part FROM reorder_alias').all()).results || []).forEach(r => { alias[String(r.raw).toUpperCase()] = reorderCleanPart(r.part); });
         const lines = ((await env.DB.prepare('SELECT part, qty, vendor, raw_part, src_rows, cases, price, price_src, updated_at FROM reorder_incoming WHERE title = ? ORDER BY rowid').bind(title).all()).results || [])
           .map(r => ({ ...r, readAs: alias[String(r.part).toUpperCase()] || String(r.part).toUpperCase() }));
         // Description of each line, read-only: a fix typed on the tab first,
@@ -9119,7 +9130,7 @@ async function repricerSkuLookup(url, env, opts) {
     // Listings whose SKU was corrected to one of our part #s (Reorder ✏️ /
     // 🔗 Listings tab) are found under that part # too.
     const alias = {};
-    try { ((await env.DB.prepare('SELECT raw, part FROM reorder_alias').all()).results || []).forEach(a => { alias[String(a.raw).trim().toUpperCase()] = String(a.part).trim().toUpperCase(); }); } catch (_) {}
+    try { ((await env.DB.prepare('SELECT raw, part FROM reorder_alias').all()).results || []).forEach(a => { alias[String(a.raw).trim().toUpperCase()] = reorderCleanPart(a.part); }); } catch (_) {}
     for (const plat of platformDefs) {
       for (const row of plat.rows) {
         const rawSku  = String(row[plat.skuCol] || '').trim().toUpperCase().replace(/^-+|-+$/g, '');
@@ -30650,7 +30661,7 @@ async function handleListingWatch(path, method, request, env, session) {
     const raw = String(b.sku || '').trim().toUpperCase(), part = reorderCleanPart(b.part), plat = String(b.platform || '');
     if (!raw) return _soResp({ ok: false, error: 'This listing has no SKU — put the part # as its SKU on ' + (plat || 'the channel') + ' first' }, 400);
     if (!part) return _soResp({ ok: false, error: 'Which part #?' }, 400);
-    if (!(await d1First(env, 'SELECT 1 AS x FROM master_list WHERE UPPER(TRIM(part_num)) = ? LIMIT 1', [part]).catch(() => null))) return _soResp({ ok: false, error: `${part} is not in SKU Mgr — check the part #` }, 400);
+    if (!(await d1First(env, 'SELECT 1 AS x FROM master_list WHERE UPPER(TRIM(part_num)) IN (?, ?) LIMIT 1', [part, part + '+']).catch(() => null))) return _soResp({ ok: false, error: `${part} is not in SKU Mgr — check the part #` }, 400);
     await reorderFixTables(env);
     const had = await d1First(env, 'SELECT part FROM reorder_alias WHERE raw = ?', [raw]).catch(() => null);
     const now = new Date().toISOString();

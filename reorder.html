@@ -4838,7 +4838,7 @@ function rvoLoadXlsx() {
   });
 }
 // Same clean-up as the worker's reorderCleanPart ("4-2-3==2" → "4-2-3=2", "24-4-7=1__" → "24-4-7=1").
-function rvoClean(x) { return String(x || '').trim().toUpperCase().replace(/\s*=\s*/g, '=').replace(/=+/g, '=').replace(/[_\-.\s]+$/, ''); }
+function rvoClean(x) { return String(x || '').trim().toUpperCase().replace(/\s*=\s*/g, '=').replace(/=+/g, '=').replace(/[_\-.\s+]+$/, ''); } // "+" at the end means nothing (owner 2026-10-13)
 function rvoPack(x) { var m = String(x).split('=').pop().match(/^(\d+)/); return String(x).indexOf('=') >= 0 && m ? parseInt(m[1], 10) || 1 : 1; }
 // Parent of a part #: before "=", and a C right after the parent's numbers
 // is the same parent (27-3-4C=2X → 27-3-4) — same rule as the Worker.
