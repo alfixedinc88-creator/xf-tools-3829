@@ -5865,5 +5865,34 @@ console.log('\n🩺 Printing check: every reason printing stops, each with its f
   sq.prepare("DELETE FROM label_print_queue WHERE order_number LIKE 'PC-%'").run(); sq.prepare("DELETE FROM label_print_batch").run();
 }
 
+// Owner (2026-10-13): "Reorder → download CSV for vendor: 4-3-1=5+ still shows as 4-3-1=5+ — the '+' means nothing, it is the
+// same part # as 4-3-1=5". A "+" at the end is dropped like a stray "-" / "_": stock, sales, ✏️ mappings and orders all
+// count under the part # without it — each SKU Mgr row once.
+console.log('\n➕ "+" at the end of a part # means nothing in Reorder: 96-3-1=5+ is 96-3-1=5 (stock, sales, mappings, orders), counted once');
+{
+  const day = n => new Date(Date.now() - n * 86400000).toISOString().slice(0, 10), now = new Date().toISOString();
+  sq.prepare(`INSERT INTO master_list (base_sku, name, part_num, location, cases, units_per_case, sheet_row) VALUES
+    ('96-3-1','cap','96-3-1=5+','C1=9-6-1',2,50,0), ('96-3-1','cap','96-3-1=5','C2=9-6-1',1,50,0)`).run();
+  sq.prepare("INSERT INTO ebay_sales_weekly (sku, period_start, period_end, units_ordered, sales_amount) VALUES ('96-3-1=5+', ?, ?, 30, 30), ('96-3-1=5', ?, ?, 10, 10)").run(day(10), day(4), day(20), day(14));
+  sq.prepare("INSERT OR REPLACE INTO reorder_alias (raw, part, by_user, updated_at) VALUES ('WEIRD-9631', '96-3-1=5+', 'TS', ?)").run(now); // a ✏️ mapping saved with "+"
+  sq.prepare("INSERT INTO ebay_sales_weekly (sku, period_start, period_end, units_ordered, sales_amount) VALUES ('WEIRD-9631', ?, ?, 5, 5)").run(day(10), day(4));
+  sq.prepare("INSERT OR REPLACE INTO reorder_title (title, stage, updated_at, created_at) VALUES ('PO-96 10/1', 'production', ?, ?)").run(now, now);
+  sq.prepare("INSERT INTO reorder_incoming (title, part, qty, vendor, cases, updated_at) VALUES ('PO-96 10/1', '96-3-1=5+', 40, 'JQ', 4, ?)").run(now); // an order line written with "+"
+  const { readFileSync: rfX } = await import('node:fs');
+  const d = await get('/reorder/vendor-order?days=90&lead=3&cover=3');
+  const fam = (d.rows || []).filter(r => /^96-3-1/.test(r.sku)), r = fam.find(x => x.sku === '96-3-1=5') || {};
+  check('Reorder / vendor CSV: ONE row 96-3-1=5 (no "96-3-1=5+" row); its stock = 2 + 1 cases × 50 = 150 pcs (both SKU Mgr rows, once); sold 30 + 10 + 5 (mapped) = 45 units = 225 pcs',
+    fam.length === 1 && !fam.some(x => /\+/.test(x.sku)) && r.stockPcs === 150 && r.soldPcs === 225, fam.map(x => ({ sku: x.sku, stockPcs: x.stockPcs, soldPcs: x.soldPcs })));
+  check('…the order line written "96-3-1=5+" is on the way for 96-3-1=5 (40 units, counted once); a ✏️ mapping saved as "96-3-1=5+" is read as 96-3-1=5 (its 5 sold are in the 45), and saved mappings are rewritten without "+" when the worker starts',
+    r.incomingUnits === 40 && /UPDATE OR IGNORE \$\{tb\} SET \$\{col\} = RTRIM\(\$\{col\}, '\+'\)/.test(rfX(fileURLToPath(new URL('../worker/src/index.js', import.meta.url)), 'utf8')), { inc: r.incomingUnits });
+  const so = await get('/inventory/stock-overview'), sr = (so.rows || []).filter(x => /^96-3-1/.test(x.part));
+  check('…📊 Stock Levels too: one row 96-3-1=5 with 3 cases (150 pcs), 40 units still owed; still adds up ✅',
+    sr.length === 1 && sr[0].part === '96-3-1=5' && sr[0].stock.cases === 3 && sr[0].stock.pieces === 150 && sr[0].owed.units === 40 && so.check.ok, sr);
+  const rh = rfX(fileURLToPath(new URL('../reorder.html', import.meta.url)), 'utf8'), wk = rfX(fileURLToPath(new URL('../worker/src/index.js', import.meta.url)), 'utf8');
+  check('…the page reads it the same way (rvoClean drops a "+" at the end) and title suggestions no longer add "+"',
+    new Function((rh.match(/function rvoClean\(x\) \{[^\n]*\}/) || [''])[0] + '; return rvoClean;')()('4-3-1=5+') === '4-3-1=5' && !/\(pack \|\| 1\) \+ '\+'/.test(wk), null);
+  sq.exec("DELETE FROM master_list WHERE part_num LIKE '96-3-1%'; DELETE FROM ebay_sales_weekly WHERE sku LIKE '96-3-1%' OR sku = 'WEIRD-9631'; DELETE FROM reorder_alias WHERE raw = 'WEIRD-9631'; DELETE FROM reorder_incoming WHERE title = 'PO-96 10/1'; DELETE FROM reorder_title WHERE title = 'PO-96 10/1'");
+}
+
 console.log('\n' + (failed ? '❌ ' + failed + ' check(s) FAILED' : '✅ all ' + passed + ' checks passed') + '\n');
 process.exit(failed ? 1 : 0);
