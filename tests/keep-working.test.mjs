@@ -5917,5 +5917,37 @@ console.log('\n📍 A location scanned as "BH=…" is "BO=…" (every page, and 
   sq.exec("DELETE FROM master_list WHERE part_num = '97-1-1=10'; DELETE FROM inventory_log WHERE part_num = '97-1-1=10'");
 }
 
+// Owner (2026-10-13): "Part# Detail 30 / 90 days — per bag or per piece? 23-5-4=100 Amazon 30 days 13, 90 days 539 — I want
+// the pieces too, and the total bags and pieces at the end".
+console.log('\n📊 Part# Detail: bags + pieces in every cell, totals row (bags and pieces) at the bottom');
+{
+  const day = n => new Date(Date.now() - n * 86400000).toISOString().slice(0, 10);
+  sq.prepare("INSERT INTO master_list (base_sku, name, part_num, location, cases, units_per_case) VALUES ('923-5-4','valve','923-5-4=100','C1=5-1-2',2,10), ('923-5-4','valve','923-5-4=10X','C1=5-1-3',2,10)").run();
+  sq.prepare("INSERT INTO amazon_sales_weekly (sku, period_start, period_end, units_ordered, ordered_product_sales) VALUES ('923-5-4=100',?,?,13,130), ('923-5-4=100',?,?,526,5260), ('923-5-4=10X',?,?,4,40)")
+    .run(day(10), day(3), day(60), day(53), day(10), day(3));
+  const d = await get('/sales/dashboard-data');
+  const P = k => (d.parts || []).find(x => x.partNum === k) || {};
+  check('the server sends each part #\'s pack (923-5-4=100 → 100, =10X → 10) next to its bag counts (Amazon 30 d 13, 90 d 539)',
+    P('923-5-4=100').pack === 100 && P('923-5-4=100').amzU30 === 13 && P('923-5-4=100').amzU90 === 539 && P('923-5-4=10X').pack === 10, [P('923-5-4=100'), P('923-5-4=10X')]);
+  // Run the page's own Part# Detail code on those two rows.
+  const { readFileSync } = await import('node:fs');
+  const sh = readFileSync(fileURLToPath(new URL('../sales.html', import.meta.url)), 'utf8');
+  const grab = re => (sh.match(re) || [])[0];
+  const fns = [grab(/function buildDashboardData\(\) \{[\s\S]*?\n\}/), grab(/function renderParts\(\) \{[\s\S]*?\n\}/), grab(/function fmt0\(v\)\{[^\n]*\}/)].join('\n');
+  const html = { v: '' }, els = { 'parts-search': { value: '923-5-4' }, 'parts-plat': { value: 'all' }, 'parts-wrap': { set innerHTML(x) { html.v = x; } } };
+  const run = new Function('CALC', 'document', 'sortRows', 'sortArrow', 'partsTableSort', 'renderKPIs', 'renderLeaderboards', 'renderSkus', 'dbTab',
+    'var DB_PARTS = [], DB_SKUS = [];\n' + fns + `; buildDashboardData(); renderParts(); return DB_PARTS;`);
+  try {
+    const nop = () => {};
+    run({ rawParts: d.parts.filter(x => /^923-5-4/.test(x.partNum)), rawSkus: [] }, { getElementById: id => els[id] || { value: '', style: {}, dataset: {} } }, r => r, () => '', { col: 'u30', dir: -1 }, nop, nop, nop, nop);
+  } catch (e) { html.v = 'ERROR ' + e.message; }
+  const txt = html.v.replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ');
+  check('…the page shows 13 bags with 1,300 pcs and 539 with 53,900 pcs for 923-5-4=100, 4 bags = 40 pcs for =10X',
+    /13 1,300 pcs/.test(txt) && /539 53,900 pcs/.test(txt) && /4 40 pcs/.test(txt), txt.slice(0, 600));
+  check('…and a Total row: Amazon 30 d 17 bags = 1,340 pcs, 90 d 543 bags = 53,940 pcs (pieces = bags × pack, each part # once)',
+    /Total \( 2 part #s\)|Total \(2 part #s\)/.test(txt) && /17 bags 1,340 pcs/.test(txt) && /543 bags 53,940 pcs/.test(txt), txt.slice(-700));
+  sq.exec("DELETE FROM master_list WHERE base_sku = '923-5-4'; DELETE FROM amazon_sales_weekly WHERE sku LIKE '923-5-4%'");
+}
+
 console.log('\n' + (failed ? '❌ ' + failed + ' check(s) FAILED' : '✅ all ' + passed + ' checks passed') + '\n');
 process.exit(failed ? 1 : 0);
