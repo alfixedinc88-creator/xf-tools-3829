@@ -2818,8 +2818,17 @@ function renderOOS() {
     if (!po[base] || (d && d.indexOf('/') > 0 && d > po[base])) po[base] = d && d.indexOf('/') > 0 ? d : (po[base] || 'Placed');
   });
 
-  var all = (_soView === 'parent' ? soParents(_SO.rows) : _SO.rows.slice()).map(soStatus);
-  var counts = { out: 0, low: 0, in: 0 };
+  // Owner (2026-10-13): "many part #s say sold out, but our parent SKU still has a lot — if the parent has a lot it should
+  // not show here". Out / Low / In is judged on the PARENT (every pack size together, in pieces); each row still shows its
+  // own numbers. A code that isn't one of our part #s (1-1/2FBIBB…) is "🔗 Not linked" — tap it to link it.
+  var parMap = {}; soParents(_SO.rows).map(soStatus).forEach(function(p) { parMap[p.parent] = p; });
+  var all = _soView === 'parent' ? Object.keys(parMap).map(function(k) { var p = parMap[k]; if (!soLinked(p.part)) p.status = 'link'; return p; })
+    : _SO.rows.map(function(r0) { var r = soStatus(JSON.parse(JSON.stringify(r0))), p = parMap[r.parent];
+        r.own = r.status; r.ownDays = r.daysLeft;
+        if (!soLinked(r.part)) r.status = 'link';
+        else if (p) { r.status = p.status; r.daysLeft = p.daysLeft; r.par = p; r.comingPcs = p.comingPcs; }
+        return r; });
+  var counts = { out: 0, low: 0, in: 0, link: 0 };
   var items = all.filter(function(r) {
     if (_soVendor && (r.vendor || '(no vendor)') !== _soVendor) return false;
     if (textFilter && (r.part + ' ' + r.name).toLowerCase().indexOf(textFilter) < 0) return false;
@@ -2828,7 +2837,7 @@ function renderOOS() {
     counts[r.status]++;
     return _oosStockFilter === 'all' || r.status === _oosStockFilter;
   });
-  var order = { out: 0, low: 1, in: 2 };
+  var order = { out: 0, link: 1, low: 2, in: 3 };
   items.sort(function(a, b) { return order[a.status] - order[b.status] || (a.status === 'low' ? a.daysLeft - b.daysLeft : 0) || a.parent.localeCompare(b.parent, undefined, { numeric: true }) || a.pack - b.pack; });
   document.querySelectorAll('#oos-num').forEach(function(el) { el.textContent = items.length.toLocaleString(); });
 
@@ -2855,6 +2864,8 @@ function renderOOS() {
     + btn(_oosStockFilter === 'out', '🔴 Out of Stock (' + counts.out + ')', "oosSetStockFilter('out',this)")
     + btn(_oosStockFilter === 'low', '🟠 Low Stock (' + counts.low + ')', "oosSetStockFilter('low',this)")
     + btn(_oosStockFilter === 'in', '🟢 In Stock (' + counts.in + ')', "oosSetStockFilter('in',this)")
+    + btn(_oosStockFilter === 'link', '🔗 Not our part # — tap to link (' + counts.link + ')', "oosSetStockFilter('link',this)")
+    + '<span style="font-size:12px;color:var(--text3)">Out / Low = the whole parent (every pack size). Tap a part # to see its parent or link it.</span>'
     + '<span style="font-size:12px;color:var(--text3)">Low = lasts less than <input type="number" min="1" max="365" value="' + _soLowDays + '" onchange="soSetLowDays(this.value)" style="width:52px;padding:3px 5px;border:1.5px solid var(--border);border-radius:6px;background:var(--bg);color:var(--text);font-size:12px"> days at the last 90 days\' sales</span></div>'
     + '<div style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:10px;align-items:center">'
     + '<span style="font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.5px;color:var(--text3)">PO:</span>'
@@ -2872,7 +2883,10 @@ function renderOOS() {
   items.forEach(function(r) {
     var st = r.status === 'out' ? '<span class="badge badge-red">Out of Stock</span>' + (r.comingPcs > 0 ? '<div style="font-size:11px;color:var(--accent)">' + soN(r.comingPcs) + ' pcs coming</div>' : '<div style="font-size:11px;color:var(--red)">nothing coming</div>')
       : r.status === 'low' ? '<span class="badge badge-orange">Low Stock</span>' + (r.comingPcs > 0 ? '<div style="font-size:11px;color:var(--accent)">' + soN(r.comingPcs) + ' pcs coming</div>' : '')
+      : r.status === 'link' ? '<span class="badge badge-purple">🔗 Not linked</span><div style="font-size:11px;color:var(--text3)">tap the part # to link it</div>'
       : '<span class="badge badge-green">In Stock</span>';
+    // A part # at 0 whose parent still has stock: say so (owner: "our parent SKU still has a lot").
+    if (r.par && _soView === 'part' && r.par.part !== r.part && r.par.stock.pieces > r.stock.pieces) st += '<div style="font-size:11px;color:var(--green)">parent ' + soEsc(r.parent) + ': ' + soN(r.par.stock.pieces) + ' pcs (all packs)</div>';
     var stock = r.stock.cases > 0
       ? '<b>' + soN(r.stock.cases) + '</b> cases · ' + soN(r.stock.pieces) + ' pcs<div style="font-size:11px;color:var(--text3)">' + r.stock.spots + ' spot' + (r.stock.spots === 1 ? '' : 's') + '</div>'
       : '<span style="color:var(--red);font-weight:700">0</span>';
@@ -2881,7 +2895,7 @@ function renderOOS() {
     var lasts = r.daysLeft == null ? '<span style="color:var(--text3)">' + (r.sold90Pcs > 0 ? '—' : 'no sales') + '</span>'
       : r.daysLeft >= 365 ? '1 yr +' : Math.floor(r.daysLeft) + ' days';
     html += '<tr>'
-      + '<td class="sku-col">' + soEsc(r.part) + (r.packs && r.packs.length ? '<div style="font-size:10px;color:var(--text3)">' + soEsc(r.packs.join(', ')) + '</div>' : '') + '</td>'
+      + '<td class="sku-col"><a href="#" onclick="soLinkOpen(this.dataset.p);return false" data-p="' + soEsc(r.part) + '" title="See its parent (every pack size) · link it to the right part #" style="color:inherit;text-decoration:underline dotted">' + soEsc(r.part) + '</a>' + (r.packs && r.packs.length ? '<div style="font-size:10px;color:var(--text3)">' + soEsc(r.packs.join(', ')) + '</div>' : '') + '</td>'
       + '<td>' + soEsc(r.name) + '</td><td style="font-size:12px">' + soEsc(r.vendor || '—') + '</td>'
       + '<td style="font-size:12px;white-space:nowrap">' + stock + '</td>'
       + '<td style="font-size:12px">' + soCell(r.onWay, _soView === 'part') + '</td>'
@@ -2896,6 +2910,46 @@ function renderOOS() {
   document.getElementById('res-oos').innerHTML = html;
   window._soShown = items;
 }
+// Our part # shape (#-#-# with an optional pack after "="): anything else is a vendor code / name to link.
+function soLinked(p) { return /^\d+(-\d+){1,3}(&\d+)?C?(=.*)?$/i.test(String(p || '').trim()); }
+// Tap a part # → its parent with every pack size (stock / on the water / owed / sold), and "🔗 This is really part # …" —
+// the same ✏️ mapping as Reorder (kept in Reorder → 📜 History); from then on it counts under that part #.
+window.soLinkOpen = function(part) {
+  if (!_SO) return;
+  var row = _SO.rows.filter(function(r) { return r.part === part; })[0] || { part: part, parent: part };
+  var fam = _SO.rows.filter(function(r) { return r.parent === row.parent; });
+  var ours = _SO.rows.filter(function(r) { return soLinked(r.part) && /=/.test(r.part); }).map(function(r) { return r.part; });
+  var tot = fam.reduce(function(a, r) { a.p += r.stock.pieces; a.c += r.stock.cases; a.w += r.onWay.pieces; a.o += r.owed.pieces; a.s += r.sold90Pcs; return a; }, { p: 0, c: 0, w: 0, o: 0, s: 0 });
+  var old = document.getElementById('so-link-modal'); if (old) old.remove();
+  var m = document.createElement('div'); m.id = 'so-link-modal';
+  m.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,.45);z-index:9999;display:flex;align-items:center;justify-content:center;padding:16px';
+  m.onclick = function(e) { if (e.target === m) m.remove(); };
+  m.innerHTML = '<div style="background:var(--bg2,#fff);color:var(--text,#111);border-radius:12px;padding:16px;width:100%;max-width:760px;max-height:90vh;overflow:auto;box-shadow:0 12px 40px rgba(0,0,0,.25)">'
+    + '<div style="display:flex;justify-content:space-between;align-items:center;gap:8px"><b style="font-size:15px;font-family:var(--mono)">' + soEsc(part) + '</b><button onclick="document.getElementById(\'so-link-modal\').remove()" style="border:none;background:none;font-size:20px;cursor:pointer">&times;</button></div>'
+    + '<div style="font-size:13px;margin:6px 0">' + soEsc(row.name || '') + (row.vendor ? ' · ' + soEsc(row.vendor) : '') + '</div>'
+    + (soLinked(part) ? '<div style="font-size:13px;margin-bottom:6px"><b>Parent ' + soEsc(row.parent) + '</b> — every pack size: <b>' + soN(tot.p) + '</b> pcs in stock (' + soN(tot.c) + ' cases) · ' + soN(tot.w) + ' pcs on the water · ' + soN(tot.o) + ' pcs still owed · sold ' + soN(tot.s) + ' pcs in 90 d</div>'
+      + '<table class="data-table" style="font-size:12px"><thead><tr><th>Part #</th><th>In stock</th><th>On the water</th><th>Still owed</th><th>Sold 90 d</th></tr></thead><tbody>'
+      + fam.map(function(r) { return '<tr' + (r.part === part ? ' style="background:var(--accent-bg)"' : '') + '><td class="sku-col">' + soEsc(r.part) + '</td><td>' + soN(r.stock.cases) + ' cs · ' + soN(r.stock.pieces) + ' pcs</td><td>' + soN(r.onWay.pieces) + ' pcs</td><td>' + soN(r.owed.pieces) + ' pcs</td><td>' + soN(r.sold90Pcs) + ' pcs</td></tr>'; }).join('') + '</tbody></table>'
+      : '<div style="font-size:13px;color:var(--purple);font-weight:700;margin-bottom:6px">🔗 "' + soEsc(part) + '" is not one of our part #s (a vendor code or a name) — its stock / orders / sales are not under any parent.</div>')
+    + '<div style="margin-top:12px;padding:10px;border:1px dashed var(--border);border-radius:8px"><b>🔗 This is really part #</b> <span style="font-size:12px;color:var(--text3)">(counts under that part # from now on — same ✏️ fix as Reorder, kept in its 📜 History)</span>'
+    + '<div style="display:flex;gap:6px;margin-top:6px;flex-wrap:wrap"><input id="so-link-to" list="so-link-list" placeholder="e.g. 4-1-2=1" style="flex:1;min-width:180px;padding:7px 10px;border:1.5px solid var(--border);border-radius:7px;font-family:var(--mono);background:var(--bg);color:var(--text)">'
+    + '<button onclick="soLinkSave(this.dataset.p)" data-p="' + soEsc(part) + '" style="padding:7px 14px;border:none;border-radius:7px;background:var(--accent);color:#fff;font-weight:700;cursor:pointer">💾 Link</button></div>'
+    + '<datalist id="so-link-list">' + ours.map(function(p) { return '<option value="' + soEsc(p) + '">'; }).join('') + '</datalist><div id="so-link-msg" style="font-size:12px;margin-top:6px"></div></div></div>';
+  document.body.appendChild(m);
+};
+window.soLinkSave = function(part) {
+  var to = String((document.getElementById('so-link-to') || {}).value || '').trim().toUpperCase(), msg = document.getElementById('so-link-msg');
+  if (!soLinked(to) || !/=/.test(to)) { msg.style.color = 'var(--red)'; msg.textContent = 'Type our part # with its pack, e.g. 4-1-2=1'; return; }
+  if (to === String(part).toUpperCase()) { msg.style.color = 'var(--red)'; msg.textContent = 'That is the same part #'; return; }
+  msg.style.color = 'var(--text3)'; msg.textContent = 'Saving…';
+  wFetch('https://xfitting-lookup.alfixedinc88.workers.dev/reorder/fix/batch', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ items: [{ key: part, raws: [part], part: to, fields: {} }] }) })
+    .then(function(r) { return r.json(); }).then(function(d) {
+      var r0 = d && d.results && d.results[0];
+      if (!r0 || !r0.ok) { msg.style.color = 'var(--red)'; msg.textContent = '✗ ' + ((r0 && r0.error) || (d && d.error) || 'not saved (managers only)'); return; }
+      msg.style.color = 'var(--green)'; msg.textContent = '✓ Linked: ' + part + ' → ' + to;
+      setTimeout(function() { var mm = document.getElementById('so-link-modal'); if (mm) mm.remove(); soRefresh(); }, 900);
+    }).catch(function() { msg.style.color = 'var(--red)'; msg.textContent = '✗ network error'; });
+};
 window.soSetView = function(v) { _soView = v; renderOOS(); };
 window.soSetVendor = function(v) { _soVendor = v; renderOOS(); };
 window.soSetLowDays = function(v) { var n = parseInt(v, 10); if (n > 0) { _soLowDays = n; renderOOS(); } };
@@ -2903,7 +2957,7 @@ window.soCsv = function() {
   var q = function(v) { v = String(v == null ? '' : v); return /[",\n]/.test(v) ? '"' + v.replace(/"/g, '""') + '"' : v; };
   var lines = [['Part #', 'Name', 'Vendor', 'Status', 'In stock cases', 'In stock pcs', 'Spots', 'No Ea/Case cases', 'On the water units', 'On the water pcs', 'On the water titles', 'Ordered not shipped units', 'Ordered not shipped pcs', 'Order titles', 'Sold 30d pcs', 'Sold 90d pcs', 'Lasts (days)'].join(',')];
   (window._soShown || []).forEach(function(r) {
-    lines.push([r.part, r.name, r.vendor, r.status === 'out' ? 'Out of Stock' : r.status === 'low' ? 'Low Stock' : 'In Stock', r.stock.cases, r.stock.pieces, r.stock.spots, r.stock.noEaCases,
+    lines.push([r.part, r.name, r.vendor, r.status === 'out' ? 'Out of Stock' : r.status === 'low' ? 'Low Stock' : r.status === 'link' ? 'Not linked (not our part #)' : 'In Stock', r.stock.cases, r.stock.pieces, r.stock.spots, r.stock.noEaCases,
       r.onWay.units, r.onWay.pieces, r.onWay.titles.map(function(t) { return t.title + ' ' + t.units; }).join('; '), r.owed.units, r.owed.pieces, r.owed.titles.map(function(t) { return t.title + ' ' + t.units; }).join('; '),
       r.sold30Pcs, r.sold90Pcs, r.daysLeft == null ? '' : Math.floor(r.daysLeft)].map(q).join(','));
   });
@@ -2927,6 +2981,8 @@ window.oosSetFilter = function(f, btn) {
 function switchTab(tab) {
   try { wpShowButtons(); } catch (e) {}
   activeTab = tab;
+  // 📊 Stock Levels uses the whole screen width (owner 2026-10-13: "make this screen bigger so I can see everything").
+  var ct = document.querySelector('.content'); if (ct) ct.style.maxWidth = tab === 'oos' ? 'none' : '';
   ['locator','search','awd','oos'].forEach(t => {
     document.getElementById('pane-' + t).style.display = t === tab ? 'block' : 'none';
   });
