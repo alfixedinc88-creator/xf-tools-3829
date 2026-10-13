@@ -2869,7 +2869,7 @@ async function salesDashboardDataHandler(env) {
         ebayU30: v.ebayU30||0, ebayU90: v.ebayU90||0, ebayS30: v.ebayS30||0, ebayS90: v.ebayS90||0,
         xfU30: v.xfU30||0, xfU90: v.xfU90||0, xfS30: v.xfS30||0, xfS90: v.xfS90||0,
         walU30: v.walU30||0, walU90: v.walU90||0, walS30: v.walS30||0, walS90: v.walS90||0,
-        oos,
+        oos, pack: packSize, // pieces in one bag (the number after "=") — Part# Detail shows bags and pieces
       });
 
       // Roll up into base-SKU pieces (order counts x pack size = physical pieces)
