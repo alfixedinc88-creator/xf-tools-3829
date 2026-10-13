@@ -2761,7 +2761,10 @@ var _oosOrderFilter = 'all';
 // out of stock / low stock — make it easy to check our stock". One row per part # from /inventory/stock-overview
 // (SKU Mgr + Reorder, the same tables those screens use; ✅ shows the rows add up to them). Before, it added cases
 // of every pack size together and "Low Stock" was anything above 0.
-var _SO = null, _soLoading = false, _soView = 'part', _soVendor = '', _soLowDays = 30;
+// Owner (2026-10-13): "23-6-1=10, 23-6-1=5XX, 23-6-1=10XX — merge under the same parent 23-6-1, then we can click on it;
+// the first page doesn't need so many items, one parent = one item" → the first page is one row per parent # (tap it for
+// every pack size); "Each part #" is still one tap away.
+var _SO = null, _soLoading = false, _soView = 'parent', _soVendor = '', _soLowDays = 30;
 function loadStockOverview() {
   if (_soLoading) return; _soLoading = true;
   wFetch('https://xfitting-lookup.alfixedinc88.workers.dev/inventory/stock-overview').then(function(r) { return r.json(); }).then(function(d) {
@@ -2910,7 +2913,7 @@ function renderOOS() {
     var lasts = r.daysLeft == null ? '<span style="color:var(--text3)">' + (r.sold90Pcs > 0 ? '—' : 'no sales') + '</span>'
       : r.daysLeft >= 365 ? '1 yr +' : Math.floor(r.daysLeft) + ' days';
     html += '<tr>'
-      + '<td class="sku-col"><a href="#" onclick="soLinkOpen(this.dataset.p);return false" data-p="' + soEsc(r.part) + '" title="See its parent (every pack size) · link it to the right part #" style="color:inherit;text-decoration:underline dotted">' + soEsc(r.part) + '</a>' + (r.packs && r.packs.length ? '<div style="font-size:10px;color:var(--text3)">' + soEsc(r.packs.join(', ')) + '</div>' : '') + '</td>'
+      + '<td class="sku-col"><a href="#" onclick="soLinkOpen(this.dataset.p);return false" data-p="' + soEsc(r.part) + '" title="See its parent (every pack size) · link it to the right part #" style="color:inherit;text-decoration:underline dotted">' + soEsc(r.part) + '</a>' + (r.packs && r.packs.length ? '<div style="font-size:10px;color:var(--text3)">' + soEsc(r.packs.join(', ')) + (_soView === 'parent' ? ' — tap for each' : '') + '</div>' : '') + '</td>'
       + '<td>' + soEsc(r.name) + '</td><td style="font-size:12px">' + soEsc(r.vendor || '—') + '</td>'
       + '<td style="font-size:12px;white-space:nowrap">' + stock + '</td>'
       + '<td style="font-size:12px">' + soCell(r.onWay, _soView === 'part') + '</td>'
@@ -2933,6 +2936,7 @@ window.soLinkOpen = function(part) {
   if (!_SO) return;
   var row = _SO.rows.filter(function(r) { return r.part === part; })[0] || { part: part, parent: part };
   var fam = _SO.rows.filter(function(r) { return r.parent === row.parent; });
+  if (!row.name && fam[0]) { row.name = fam[0].name; row.vendor = row.vendor || fam[0].vendor; } // a parent # row (first page)
   var ours = _SO.rows.filter(function(r) { return soLinked(r.part) && /=/.test(r.part); }).map(function(r) { return r.part; });
   var tot = fam.reduce(function(a, r) { a.p += r.stock.pieces; a.c += r.stock.cases; a.w += r.onWay.pieces; a.o += r.owed.pieces; a.s += r.sold90Pcs; return a; }, { p: 0, c: 0, w: 0, o: 0, s: 0 });
   var old = document.getElementById('so-link-modal'); if (old) old.remove();
