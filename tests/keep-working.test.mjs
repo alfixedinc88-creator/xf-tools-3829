@@ -6344,5 +6344,28 @@ console.log('\nPicking / Packing: a label scanned on an earlier day counts TODAY
   check('…the screen says "first packed / picked … → counted TODAY"', /if \(data\.carried\) \{\n      _psShowLastScan\(/.test(ph) && /if \(data\.carried\) \{\n      _psShowPickLastScan\(/.test(ph) && /→ counted TODAY/.test(ph), null);
 }
 
+// Owner 2026-10-14 (photo of 3 Stamps.com USPS Ground Advantage labels): "labels we print with stamps.com — Picking and
+// Packing can't read those tracking numbers". The barcode is 420 + ZIP+4 (9 digits) + tracking #; only a 5-digit ZIP was stripped.
+console.log('\nPicking / Packing read Stamps.com USPS labels (420 + ZIP+4 in front of the tracking #)');
+{
+  const { readFileSync } = await import('node:fs');
+  const ph = readFileSync(fileURLToPath(new URL('../packship.html', import.meta.url)), 'utf8');
+  const a = ph.indexOf('function _psUspsRouting'), b = ph.indexOf('window.psDetectCarrier');
+  const win = {}; new Function('window', ph.slice(a, b))(win);
+  const N = win.psNormalizeTracking;
+  const cases = [
+    ['420877108205' + '9400150105498051010546', '9400150105498051010546'],   // Angel Fire NM 87710-8205 (Stamps.com)
+    [']C1420028077786' + '9400150105498051010539', '9400150105498051010539'], // Block Island RI 02807-7786, scanner GS1 tag
+    ['420460324555\x1d' + '9400150105498050881277', '9400150105498050881277'], // Carmel IN 46032-4555, FNC1 separator
+    ['42008062' + '9400150105498051010546', '9400150105498051010546'],       // 5-digit ZIP (as before)
+    ['9400150105498051010546', '9400150105498051010546'],                    // typed / plain
+    ['1Z999AA10123456784', '1Z999AA10123456784'],                            // UPS unchanged
+  ];
+  check('Packing / Picking: 420 + ZIP+4 (or 5-digit ZIP, GS1 tag, FNC1) + tracking # → the tracking #; UPS and plain numbers as before',
+    cases.every(([raw, want]) => N(raw) === want), cases.map(([raw]) => N(raw)));
+  const sc = await post('/ship/scan', { tracking: '420877108205' + '9400150105498051010546', initials: 'TS' });
+  check('…the server saves the clean tracking # (USPS) when the long barcode is sent', sc.ok && sc.tracking === '9400150105498051010546' && sc.carrier === 'USPS', sc);
+}
+
 console.log('\n' + (failed ? '❌ ' + failed + ' check(s) FAILED' : '✅ all ' + passed + ' checks passed') + '\n');
 process.exit(failed ? 1 : 0);

@@ -3157,8 +3157,16 @@ async function _psLoadScanProduct(tracking) {
 }
 
 // ── Normalize / detect carrier ────────────────────────
+// "420" + ZIP (5 digits, or ZIP+4 = 9 digits) + the USPS tracking # (22, 20 or 26 digits, starts with 9) → the tracking #.
+function _psUspsRouting(t) {
+  var m = /^420(\d+)$/.exec(t); if (!m) return null;
+  var d = m[1], tries = [[9, 22], [5, 22], [9, 20], [5, 20], [5, 26], [9, 26]];
+  for (var i = 0; i < tries.length; i++) { var z = tries[i][0], n = tries[i][1]; if (d.length === z + n && /^9/.test(d.slice(z))) return d.slice(z); }
+  return null;
+}
 window.psNormalizeTracking = function(raw) {
-  var t = raw.trim().toUpperCase().replace(/\s+/g,'');
+  // ]C1 = the scanner's "this is a GS1-128 barcode" tag; \x1D (FNC1 / GS) and other control characters some scanners send
+  var t = String(raw || '').trim().toUpperCase().replace(/^\]C1/, '').replace(/[\s\x00-\x1F\x7F]+/g,'');
 
   // Strip DataMatrix garbage prefixes from UPS Ground Saver 2D barcodes
   // e.g. "AAA1Z..." -> "1Z...", "ZZ420..." -> "420..."
@@ -3166,9 +3174,9 @@ window.psNormalizeTracking = function(raw) {
   t = t.replace(/^ZZ/, '');         // strip ZZ prefix
   t = t.replace(/^A(?=420)/, '');   // strip single A before 420 routing code
 
-  // Strip USPS routing prefix 420XXXXX (5-digit zip)
-  if (/^420\d{5}\d{22}$/.test(t)) return t.slice(8);
-  if (/^420\d{5}\d{21}$/.test(t)) return t.slice(8);
+  // Strip USPS routing prefix "420" + ZIP. Owner 2026-10-14: Stamps.com labels (ship-to ZIP+4, e.g. 87710-8205) put
+  // 420 + the 9-digit ZIP in front → 4 digits were left on the tracking # and Picking / Packing refused it.
+  var u = _psUspsRouting(t); if (u) return u;
   if (/^420\d{5}/.test(t)) t = t.slice(8); // strip even if length varies
 
   // After normalization validate it's a known tracking format
