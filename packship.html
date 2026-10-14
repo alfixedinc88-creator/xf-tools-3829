@@ -2928,6 +2928,11 @@ function _psProcessScan(raw) {
       }
       return;
     }
+    // ↪ Owner 2026-10-14: scanned on an earlier day (too busy to ship it then) → counts today, says where it came from.
+    if (data.carried) {
+      _psShowLastScan({ icon:'↪', cls:'ok', tracking: tracking, meta: carrier + ' · first packed ' + psFmtWhen(data.carried.date, data.carried.at) + (data.carried.initials ? ' by ' + data.carried.initials : '') + ' → counted TODAY' });
+      _psToast('↪ Packed on ' + data.carried.date + ' — now counted for today');
+    }
     // FIX for "scan a label, order info doesn't show, have to rescan and
     // then it shows": this used to fire _psLoadScanProduct(tracking) (a
     // separate GET /ship/order-lookup) at the same moment as this POST,
@@ -6271,6 +6276,11 @@ function _psProcessPick(raw) {
         if (typeof psPickDupeShowAlert === 'function') psPickDupeShowAlert(tracking, data.scannedAt, data.initials || '', data.carrier || '', data.orderNum || '', data.scannedDate || '');
       }
       return;
+    }
+    // ↪ Picked on an earlier day → counts today (owner 2026-10-14), says where it came from.
+    if (data.carried) {
+      _psShowPickLastScan({ icon:'↪', cls:'ok', tracking: tracking, meta: carrier + ' · first picked ' + psFmtWhen(data.carried.date, data.carried.at) + (data.carried.initials ? ' by ' + data.carried.initials : '') + ' → counted TODAY' });
+      _psToast('↪ Picked on ' + data.carried.date + ' — now counted for today');
     }
     // Same race-condition fix as Packing's _psProcessScan: the response
     // already carries the line items it just fetched from Veeqo, so use
