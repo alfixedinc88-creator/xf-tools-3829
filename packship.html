@@ -11093,6 +11093,7 @@ function _psAlWatchRender(d) {
   if (on) on.checked = s.on !== false;
   var held = !!(d.hold && d.hold.on), miss = d.missing || [], t = function(x) { return x ? new Date(x).toLocaleString([], { month: 'numeric', day: 'numeric', hour: 'numeric', minute: '2-digit' }) : ''; };
   var h = _psAlPrintCheckHtml(d);
+  h += '<div id="ps-al-skipped-box">' + (window._psAlSkippedHtml || '') + '</div>';
   if (held) h += '<div style="border:2px solid var(--red);background:#FEE2E2;color:#7F1D1D;border-radius:8px;padding:10px;margin-bottom:8px;font-weight:700">'
     + '🛑 PRINTING ON HOLD since ' + e(t(d.hold.at)) + ' — ' + e(d.hold.why || '') + '.<br>New labels are still bought; they wait in 🏷️ Shipping labels until printing starts again.'
     + '<div style="margin-top:8px"><button class="ps-btn-primary" style="width:auto;padding:8px 18px;background:var(--green);border-color:var(--green)" onclick="psAlWatchRelease()">✅ Printer fixed — print again</button></div></div>';
@@ -11121,6 +11122,7 @@ function _psAlWatchRender(d) {
         + (l.packAt ? '<span style="color:var(--green)">📦 packed by <b>' + e(l.packBy || '?') + '</b> ' + e(t(l.packAt)) + '</span>' : '') + '</div>';
     }).join('') + '</details>';
   box.innerHTML = h;
+  if (!window._psAlSkippedAt || Date.now() - window._psAlSkippedAt > 60000) psAlLoadSkipped();
 }
 // 🩺 Printing check (owner 2026-10-12: "207 labels bought but NOT printed … 2 printed but not picked up — I already fixed it;
 // I need something to check what stops the auto print, and start it again"). Every reason printing can stop, each with its fix.
@@ -11145,6 +11147,51 @@ function _psAlPrintCheckHtml(d) {
         w.count > 0 ? '<button class="ps-btn-sm" onclick="psAlSkipOld(this)">⏭ Don\'t print the old ones…</button>' : '')
     + '</div>';
 }
+// ⏭ Owner 2026-10-14: "the ones showing '⏭ skipped by Chen: printed another way' all did not get printed — check how many
+// are there, I need to print them". Every skip (when / who / why) with how many labels, how many were scanned anyway
+// (Print Log / Picking / Packing = they did print), and 🖨 Print them → back to waiting, the printer station prints them.
+window.psAlLoadSkipped = async function() {
+  window._psAlSkippedAt = Date.now();
+  var d = await _psAlFetch('/veeqo/autolabel/labels-skipped').catch(function(e) { return { ok: false, error: e.message }; });
+  var e = _psAlEsc, html = '';
+  var t = function(x) { return x ? new Date(x).toLocaleString([], { month: 'numeric', day: 'numeric', year: 'numeric', hour: 'numeric', minute: '2-digit', second: '2-digit' }) : ''; };
+  if (d.ok === false) html = '<div style="color:var(--red);font-size:12px">⏭ Skipped labels: ✗ ' + e(d.error || 'could not load') + '</div>';
+  else if ((d.groups || []).length) {
+    window._psAlSkipped = d.groups;
+    html = '<div style="border:2px solid var(--orange);border-radius:10px;padding:8px 12px;margin-bottom:10px;background:var(--bg2)">'
+      + '<div style="font-weight:800;margin-bottom:4px">⏭ Skipped labels — marked "printed another way", so the station did NOT print them (last 30 days)</div>'
+      + d.groups.map(function(g, i) {
+          var todo = g.count - g.scanned - g.cancelled;
+          return '<div style="padding:6px 0;border-bottom:1px solid var(--border)">'
+            + '<div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap"><span style="flex:1;min-width:240px"><b>' + g.count + '</b> label' + (g.count === 1 ? '' : 's') + ' · ' + e(t(g.at)) + ' · ' + e(g.mark)
+            + (g.scanned ? ' · <span style="color:var(--green)">' + g.scanned + ' scanned at Print Log / Picking / Packing (did print)</span>' : '')
+            + (g.cancelled ? ' · <span style="color:var(--red)">' + g.cancelled + ' cancelled</span>' : '')
+            + ' · <b style="color:var(--orange)">' + todo + ' never scanned anywhere</b></span>'
+            + (todo > 0 ? '<button class="ps-btn-sm" style="background:var(--accent);color:#fff;border-color:var(--accent)" onclick="psAlUnskip(' + i + ', this)">🖨 Print the ' + todo + ' now</button>' : '')
+            + '</div><details style="margin-top:4px"><summary style="cursor:pointer;font-size:12px;color:var(--text2)">See the ' + g.count + ' label' + (g.count === 1 ? '' : 's') + '</summary>'
+            + g.labels.map(function(l) {
+                var st = l.cancelled ? '<span style="color:var(--red)">🚫 cancelled</span>' : (l.printLog || l.picked || l.packed)
+                  ? '<span style="color:var(--green)">' + [l.printLog ? '🖨 Print Log' : '', l.picked ? '🧺 picked' : '', l.packed ? '📦 packed' : ''].filter(Boolean).join(' · ') + '</span>'
+                  : '<span style="color:var(--orange);font-weight:700">not scanned anywhere</span>';
+                return '<div style="display:flex;gap:8px;flex-wrap:wrap;font-size:12px;padding:2px 0"><span style="font-family:var(--mono);font-weight:700">' + e(l.order) + '</span><span>' + e(l.channel || '') + '</span><span style="font-family:var(--mono);color:var(--text3)">' + e(l.tracking || '') + '</span><span style="color:var(--text3)">bought ' + e(t(l.boughtAt)) + '</span>' + st + '</div>';
+              }).join('') + '</details></div>';
+        }).join('') + '</div>';
+  } else window._psAlSkipped = [];
+  window._psAlSkippedHtml = html;
+  var box = document.getElementById('ps-al-skipped-box'); if (box) box.innerHTML = html;
+};
+window.psAlUnskip = async function(i, btn) {
+  var g = (window._psAlSkipped || [])[i]; if (!g) return;
+  var todo = g.count - g.scanned - g.cancelled;
+  if (!confirm('🖨 Print the ' + todo + ' skipped label(s) that were never scanned anywhere?\n\n(' + g.mark + ')\n\nThey go back to waiting and print on the 🖨 Printer station within a minute, in one stack. '
+    + (g.scanned ? g.scanned + ' already scanned at Print Log / Picking / Packing stay as they are (they did print). ' : '') + 'Kept on record with your name.')) return;
+  if (btn) { btn.disabled = true; btn.textContent = 'Sending…'; }
+  var d = await _psAlFetch('/veeqo/autolabel/labels-unskip', { method: 'POST', body: { at: g.at, mark: g.mark, by: psInitials || '' } });
+  if (d.ok === false) { _psToast(d.error || 'Failed', 'err'); if (btn) btn.disabled = false; return; }
+  var held = window._psAlWatch && window._psAlWatch.hold && window._psAlWatch.hold.on;
+  _psToast('🖨 ' + d.queued + ' label(s) back to print' + (held ? ' — printing is ON HOLD: tap ✅ Printer fixed first' : ' — they print on the 🖨 Printer station within a minute') + (d.left ? ' · ' + d.left + ' already scanned, left as they are' : ''));
+  psAlLoadSkipped(); psAlLoadWatch(); if (typeof psAlLoadLabels === 'function') psAlLoadLabels();
+};
 window.psAlWatchCheckAll = async function(btn) {
   var n = ((window._psAlWatch && window._psAlWatch.missing) || []).length; if (!n) return;
   var note = prompt('✓ ' + n + ' label(s) not picked up — what was fixed? (kept with your name and the time)', 'printer fixed / labels found');
