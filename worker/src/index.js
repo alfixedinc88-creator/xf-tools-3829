@@ -26397,6 +26397,18 @@ async function labelWatchCheck(env, nowMs) {
 }
 // 🖨 Labels bought but not printed: how many wait, since when, when the last one printed, and when the printer
 // station last checked in (label_station_tick, every minute) / last asked for labels to print (label_station_seen).
+// For ⏭ skipped labels: was each tracking # scanned anywhere (= that label did get printed)? tracking (upper) → { printLog, picked, packed }.
+async function labelSkippedScans(env, trackings) {
+  const out = new Map(), list = [...new Set((trackings || []).map(t => String(t || '').trim().toUpperCase()).filter(Boolean))];
+  for (const [table, key] of [['ship_print_log', 'printLog'], ['ship_pick_log', 'picked'], ['ship_scan_log', 'packed']]) {
+    for (let i = 0; i < list.length; i += 80) {
+      const ch = list.slice(i, i + 80);
+      const rows = await d1All(env, `SELECT UPPER(tracking) AS t, MIN(timestamp) AS at FROM ${table} WHERE UPPER(tracking) IN (${ch.map(() => '?').join(',')}) GROUP BY UPPER(tracking)`, ch).catch(() => []);
+      for (const r of rows || []) { const o = out.get(r.t) || {}; o[key] = r.at || true; out.set(r.t, o); }
+    }
+  }
+  return out;
+}
 async function labelPrintWait(env) {
   await autolabelEnsureTables(env);
   const w = await d1First(env, `SELECT COUNT(*) AS n, MIN(created_at) AS oldest FROM label_print_queue
@@ -29619,6 +29631,42 @@ async function handleAutolabelRoute(path, method, url, request, env, session) {
     if (rows.length) await autolabelLog(env, { action: 'print_skipped', customer: by, reason: `⏭ ${rows.length} waiting label(s) bought before ${new Date(before).toISOString()} NOT printed by the station (${note}) — by ${by || '?'}`,
       detail: rows.map(r => r.order_number + ' ' + (r.tracking || '')).join(', ').slice(0, 4000) });
     return veeqoResp({ ok: true, skipped: rows.length, printWait: await labelPrintWait(env) });
+  }
+  // ⏭ Owner 2026-10-14: "the ones showing '⏭ skipped by Chen: printed another way' all did not get printed — how many,
+  // I need to print them". GET → every skip (when / who / why) with its labels and whether each was scanned anywhere
+  // (Print Log / Picking / Packing = it did get printed). POST { at, mark } → those labels go back to waiting, so the
+  // 🖨 Printer station prints them (labels already scanned somewhere stay as they are unless includeScanned).
+  if (path === '/veeqo/autolabel/labels-skipped' && method === 'GET') {
+    await autolabelEnsureTables(env);
+    const rows = await d1All(env, `SELECT id, order_number, channel, tracking, carrier, created_at, printed_at, printed_by, cancel_hold FROM label_print_queue
+      WHERE printed_by LIKE '⏭ skipped%' AND printed_at >= ? ORDER BY printed_at DESC, id ASC LIMIT 2000`, [new Date(Date.now() - 30 * 86400000).toISOString()]);
+    const seen = await labelSkippedScans(env, rows.map(r => r.tracking));
+    const groups = new Map();
+    for (const r of rows) {
+      const k = r.printed_at + '|' + r.printed_by;
+      if (!groups.has(k)) groups.set(k, { at: r.printed_at, mark: r.printed_by, labels: [] });
+      const t = String(r.tracking || '').toUpperCase(), sc = seen.get(t) || {};
+      groups.get(k).labels.push({ id: r.id, order: r.order_number, channel: r.channel, tracking: r.tracking, carrier: r.carrier, boughtAt: r.created_at, cancelled: !!r.cancel_hold, ...sc });
+    }
+    const out = [...groups.values()].map(g => ({ ...g, count: g.labels.length, scanned: g.labels.filter(l => l.printLog || l.picked || l.packed).length, cancelled: g.labels.filter(l => l.cancelled).length }));
+    return veeqoResp({ ok: true, groups: out });
+  }
+  if (path === '/veeqo/autolabel/labels-unskip' && method === 'POST') {
+    await autolabelEnsureTables(env);
+    const b = await request.json().catch(() => ({}));
+    const at = String(b.at || ''), mark = String(b.mark || '');
+    if (!at || !/^⏭ skipped/.test(mark)) return veeqoResp({ ok: false, error: 'Pick which skip to print' }, 400);
+    const by = String((session && (session.displayName || session.username)) || b.by || '').slice(0, 40);
+    const rows = await d1All(env, `SELECT id, order_number, tracking FROM label_print_queue WHERE printed_at = ? AND printed_by = ? AND cancel_hold IS NULL ORDER BY id`, [at, mark]);
+    const seen = b.includeScanned ? new Map() : await labelSkippedScans(env, rows.map(r => r.tracking));
+    const todo = rows.filter(r => { const sc = seen.get(String(r.tracking || '').toUpperCase()); return !(sc && (sc.printLog || sc.picked || sc.packed)); });
+    for (let i = 0; i < todo.length; i += 80) {
+      const ch = todo.slice(i, i + 80).map(r => r.id);
+      await d1Run(env, `UPDATE label_print_queue SET printed_at = NULL, printed_by = NULL, last_error = NULL WHERE printed_by LIKE '⏭ skipped%' AND id IN (${ch.map(() => '?').join(',')})`, ch);
+    }
+    if (todo.length) await autolabelLog(env, { action: 'print_unskipped', customer: by, reason: `🖨 ${todo.length} skipped label(s) (${mark}, ${at}) sent back to print — by ${by || '?'}` + (rows.length > todo.length ? ` · ${rows.length - todo.length} left as they are (already scanned at Print Log / Picking / Packing)` : ''),
+      detail: todo.map(r => r.order_number + ' ' + (r.tracking || '')).join(', ').slice(0, 4000) });
+    return veeqoResp({ ok: true, queued: todo.length, left: rows.length - todo.length, printWait: await labelPrintWait(env) });
   }
   if (path === '/veeqo/autolabel/labels-printed' && method === 'POST') {
     const b = await request.json().catch(() => ({}));

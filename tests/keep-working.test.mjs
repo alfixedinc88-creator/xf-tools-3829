@@ -6273,5 +6273,37 @@ console.log('\nAdmin → 🔑 Log in: who, when, and what they did after each si
     && /var pg = pageSent \? '' : '\?page=' \+ encodeURIComponent\(file/.test(xa) && /ctx\.waitUntil\(credActionLog\(env, s, 'page', pg, ''\)\)/.test(ws), null);
 }
 
+// Owner 2026-10-14: "the ones showing '⏭ skipped by Chen: printed another way' all did not get printed — check how many, I need to print them".
+console.log('\nAuto Label → ⏭ Skipped labels: how many, which were scanned anyway, and 🖨 print the rest');
+{
+  const { readFileSync } = await import('node:fs');
+  const ph = readFileSync(fileURLToPath(new URL('../packship.html', import.meta.url)), 'utf8');
+  sq.exec("UPDATE label_print_queue SET printed_at = COALESCE(printed_at, '2026-01-01T00:00:00.000Z'), printed_by = COALESCE(printed_by, 'test-old') WHERE printed_at IS NULL"); // only this test's labels wait
+  const old = new Date(Date.now() - 3 * 3600000).toISOString();
+  const ins = (n, tr) => sq.prepare("INSERT INTO label_print_queue (order_id, alloc_id, order_number, channel, tracking, carrier, service, source, created_at, items) VALUES (?,?,?,?,?,?,?,?,?,?)")
+    .run('SK' + n, 'SKA' + n, 'SK-' + n, 'Amazon', tr, 'USPS', 'Ground Advantage', 'auto', old, '[]').lastInsertRowid;
+  const ids = [1, 2, 3, 4, 5].map(n => ins(n, '9400SKIPTEST00000' + n));
+  sq.prepare("INSERT INTO ship_scan_log (date, timestamp, tracking, carrier, initials, batch_closed_at, status, shipment_id, order_num) VALUES (?,?,?,?,?,'','Scanned','','')").run(nyToday, new Date().toISOString(), '9400SKIPTEST000002', 'USPS', 'PK');
+  const sk = await post('/veeqo/autolabel/labels-skip', { before: new Date(Date.now() - 3600000).toISOString(), note: 'printed another way', by: 'Chen' });
+  const waitingAfterSkip = sq.prepare("SELECT COUNT(*) n FROM label_print_queue WHERE printed_at IS NULL AND order_number LIKE 'SK-%'").get().n;
+  const g = await get('/veeqo/autolabel/labels-skipped');
+  const grp = (g.groups || []).find(x => x.labels.some(l => l.order === 'SK-1'));
+  check('⏭ every skip is listed with how many labels (5), who / why, and which were scanned anyway (1 packed = it did print)',
+    sk.skipped === 5 && waitingAfterSkip === 0 && grp && grp.count === 5 && grp.scanned === 1 && /⏭ skipped by .*printed another way/.test(grp.mark)
+    && grp.labels.find(l => l.order === 'SK-2').packed && !grp.labels.find(l => l.order === 'SK-1').packed, grp);
+  const un = await post('/veeqo/autolabel/labels-unskip', { at: grp.at, mark: grp.mark, by: 'Chen' });
+  const back = sq.prepare("SELECT order_number FROM label_print_queue WHERE printed_at IS NULL AND order_number LIKE 'SK-%' ORDER BY id").all().map(r => r.order_number);
+  const nl = await get('/veeqo/autolabel/labels?status=new&after=0&limit=50');
+  check('…🖨 Print the 4 → the 4 never scanned go back to waiting (the printer station prints them); the scanned one stays; on record',
+    un.ok && un.queued === 4 && un.left === 1 && back.join() === 'SK-1,SK-3,SK-4,SK-5' && (nl.labels || []).filter(l => /^SK-/.test(l.order_number)).length === 4
+    && !!sq.prepare("SELECT 1 x FROM autolabel_log WHERE action = 'print_unskipped' AND reason LIKE '%4 skipped label(s)%sent back to print%'").get(), { un, back });
+  const again = await get('/veeqo/autolabel/labels-skipped');
+  const g2 = (again.groups || []).find(x => x.labels.some(l => l.order === 'SK-2'));
+  check('…afterwards only the scanned one is still listed as skipped (nothing prints twice)', g2 && g2.count === 1 && !(again.groups || []).some(x => x.labels.some(l => l.order === 'SK-1')), g2);
+  check('…the 🩺 Printing check shows the ⏭ Skipped labels box with 🖨 Print the N now',
+    /<div id="ps-al-skipped-box">/.test(ph) && /onclick="psAlUnskip\(' \+ i \+ ', this\)">🖨 Print the ' \+ todo \+ ' now/.test(ph) && /'\/veeqo\/autolabel\/labels-unskip'/.test(ph), null);
+  sq.exec("UPDATE label_print_queue SET printed_at = '2026-01-01T00:00:00.000Z', printed_by = 'test' WHERE order_number LIKE 'SK-%' AND printed_at IS NULL");
+}
+
 console.log('\n' + (failed ? '❌ ' + failed + ' check(s) FAILED' : '✅ all ' + passed + ' checks passed') + '\n');
 process.exit(failed ? 1 : 0);
