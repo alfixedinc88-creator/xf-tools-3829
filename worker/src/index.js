@@ -29805,7 +29805,8 @@ async function handleAutolabelRoute(path, method, url, request, env, session) {
         labels.push({ ts: r.ts, order: num, channel: r.channel, customer: r.customer, carrier: r.carrier, service: r.service, price: r.price, tracking: r.tracking,
           origin: labelOrigin(r.reason, true),
           kind: r.action, how: /hand|·/.test(r.reason || '') ? r.reason : (r.reason || ''),
-          printedAt: pq ? pq.printed_at : null, printedBy: pq ? pq.printed_by : null, printCount: pq ? pq.print_count || 0 : 0, queued: !!pq });
+          printedAt: pq ? pq.printed_at : null, printedBy: pq ? pq.printed_by : null, printCount: pq ? pq.print_count || 0 : 0, queued: !!pq,
+          skipped: !!(pq && /^⏭ skipped/.test(pq.printed_by || '')) });
       } else tried.set(num.toUpperCase(), { ts: r.ts, order: num, channel: r.channel, why: r.detail || r.reason || '', kind: r.action, by: r.reason || '' });
     }
     const notBought = [...tried.entries()].map(([k, v]) => ({ ...v, boughtLater: got.has(k) }));
@@ -29813,7 +29814,9 @@ async function handleAutolabelRoute(path, method, url, request, env, session) {
     const stacks = await d1All(env, 'SELECT id, ts, by_user, source, count FROM label_print_batch WHERE day = ? ORDER BY id DESC', [day]);
     const own = labels.filter(l => l.kind !== 'merged');
     return veeqoResp({ ok: true, day, labels, notBought, stacks,
-      counts: { bought: own.length, merged: labels.length - own.length, printed: own.filter(l => l.printedAt).length, notPrinted: own.filter(l => l.queued && !l.printedAt).length,
+      // ⏭ skipped ("printed another way") is NOT printed by us — counted on its own (owner 2026-10-14: "says 97 printed, but the stacks are far fewer")
+      counts: { bought: own.length, merged: labels.length - own.length, printed: own.filter(l => l.printedAt && !l.skipped).length, skipped: own.filter(l => l.skipped).length,
+        notPrinted: own.filter(l => l.queued && !l.printedAt).length,
         notBought: notBought.filter(x => !x.boughtLater).length } });
   }
 

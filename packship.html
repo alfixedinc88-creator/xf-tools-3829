@@ -9725,11 +9725,12 @@ window.psAlLoadDay = async function() {
   _psAlDay = d; var stEl = document.getElementById('ps-al-day-stacks'); if (stEl) stEl.innerHTML = _psAlStacksHtml(d.stacks);
   var e = _psAlEsc, c = d.counts || {}, t = function(x) { return x ? new Date(x).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' }) : ''; };
   sum.innerHTML = '🏷 ' + c.bought + ' bought · <span style="color:var(--green)">🖨 ' + c.printed + ' printed</span>'
+    + (c.skipped ? ' · <b style="color:var(--orange)">⏭ ' + c.skipped + ' skipped — NOT printed by us (marked "printed another way"; 🖨 Print them in 🛑 Print watch → ⏭ Skipped labels)</b>' : '')
     + (c.notPrinted ? ' · <span style="color:var(--orange)">⏳ ' + c.notPrinted + ' not printed yet</span>' : '') + (c.merged ? ' · 🧩 ' + c.merged + ' in merged boxes' : '')
     + ' · <span style="color:' + (c.notBought ? 'var(--red)' : 'var(--text3)') + '">❌ ' + c.notBought + ' not bought</span>';
   // Owner: "after 5:30 PM we print, it ships the next business day" — the printed labels split by the ship-day cut-off.
   if (typeof psShipDayOf === 'function') {
-    var spl = _psShipSplit((d.labels || []).filter(function(l) { return l.kind !== 'merged' && l.printedAt && _psNyParts(l.printedAt).key === el.value; }).map(function(l) { return l.printedAt; }), el.value);
+    var spl = _psShipSplit((d.labels || []).filter(function(l) { return l.kind !== 'merged' && l.printedAt && !l.skipped && _psNyParts(l.printedAt).key === el.value; }).map(function(l) { return l.printedAt; }), el.value);
     var cutT = _psKeyWd(el.value) === 6 ? '4:00 PM' : '5:30 PM';
     sum.innerHTML += '<div style="font-weight:600;margin-top:3px">🗓 ' + (_psKeyWd(el.value) === 0 ? spl.next + ' printed on Sunday → ship Monday'
       : spl.same + ' printed before ' + cutT + ' → ship this day' + ' · <span style="color:var(--orange)">' + spl.next + ' printed after ' + cutT + ' → ship ' + (spl.nextKey ? _psShipDayLabel(spl.nextKey) : 'the next business day') + '</span>') + '</div>';
@@ -9737,12 +9738,13 @@ window.psAlLoadDay = async function() {
   var td = '<td style="padding:4px 6px;border-bottom:1px solid var(--border)';
   var rows = (d.labels || []).map(function(l) {
     var pr = l.kind === 'merged' ? '<span style="color:var(--text3)">🧩 same box as another order</span>'
+      : l.skipped ? '<b style="color:var(--orange)">⏭ skipped ' + t(l.printedAt) + ' — NOT printed by us</b><div style="font-size:11px;color:var(--text3)">' + e(l.printedBy || '') + '</div>'
       : l.printedAt ? '<span style="color:var(--green)">🖨 ' + t(l.printedAt) + (l.printedBy ? ' · ' + e(l.printedBy) : '') + (l.printCount > 1 ? ' · ×' + l.printCount : '') + '</span>'
       : l.queued ? '<b style="color:var(--orange)">⏳ not printed</b>' : '<span style="color:var(--text3)">bought in Veeqo</span>';
     return '<tr>' + td + ';white-space:nowrap">' + t(l.ts) + '</td>' + td + ';font-family:var(--mono)">' + e(l.order) + '</td>' + td + '">' + e(l.channel || '')
       + (l.origin ? '<div style="font-size:11px;font-weight:700;color:' + (l.origin.kind === 'auto' ? 'var(--accent)' : 'var(--purple)') + '">' + e(l.origin.text) + '</div>' : '') + '</td>'
       + td + '">' + e([l.carrier, l.service].filter(Boolean).join(' ')) + (l.price != null ? ' $' + Number(l.price).toFixed(2) : '') + '<div style="font-family:var(--mono);color:var(--text3)">' + e(l.tracking || '') + '</div></td>'
-      + td + '">' + pr + '</td>' + td + '">' + (l.kind !== 'merged' && l.queued ? '<button class="ps-btn-sm" onclick="psAlReprintFor(this, \'' + e(String(l.order).replace(/[\\']/g, '')) + '\', \'label\', true)">🖨 ' + (l.printedAt ? 'Reprint' : 'Print') + '</button>' : '') + '</td></tr>';
+      + td + '">' + pr + '</td>' + td + '">' + (l.kind !== 'merged' && l.queued ? '<button class="ps-btn-sm" onclick="psAlReprintFor(this, \'' + e(String(l.order).replace(/[\\']/g, '')) + '\', \'label\', true)">🖨 ' + (l.printedAt && !l.skipped ? 'Reprint' : 'Print') + '</button>' : '') + '</td></tr>';
   }).join('');
   var nb = (d.notBought || []).map(function(x) {
     return '<tr>' + td + ';white-space:nowrap">' + t(x.ts) + '</td>' + td + ';font-family:var(--mono)">' + e(x.order) + '</td>'

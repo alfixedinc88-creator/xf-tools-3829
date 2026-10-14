@@ -6302,6 +6302,18 @@ console.log('\nAuto Label → ⏭ Skipped labels: how many, which were scanned a
   check('…afterwards only the scanned one is still listed as skipped (nothing prints twice)', g2 && g2.count === 1 && !(again.groups || []).some(x => x.labels.some(l => l.order === 'SK-1')), g2);
   check('…the 🩺 Printing check shows the ⏭ Skipped labels box with 🖨 Print the N now',
     /<div id="ps-al-skipped-box">/.test(ph) && /onclick="psAlUnskip\(' \+ i \+ ', this\)">🖨 Print the ' \+ todo \+ ' now/.test(ph) && /'\/veeqo\/autolabel\/labels-unskip'/.test(ph), null);
+  // Owner: "says 97 bought / 97 printed, but the stacks are only 29 + 7 …" — skipped labels were counted as printed.
+  const dayKey = new Date().toLocaleDateString('en-CA', { timeZone: 'America/New_York' });
+  sq.prepare("INSERT INTO autolabel_log (ts, date, action, order_number, tracking, carrier, reason) VALUES (?,?,?,?,?,?,?)").run(new Date().toISOString(), dayKey, 'bought', 'SK-2', '9400SKIPTEST000002', 'USPS', 'test');
+  sq.prepare("INSERT INTO autolabel_log (ts, date, action, order_number, tracking, carrier, reason) VALUES (?,?,?,?,?,?,?)").run(new Date().toISOString(), dayKey, 'bought', 'SK-1', '9400SKIPTEST000001', 'USPS', 'test');
+  sq.prepare("UPDATE label_print_queue SET printed_at = ?, printed_by = 'Chen', created_at = ? WHERE order_number = 'SK-1'").run(new Date().toISOString(), new Date().toISOString());
+  sq.prepare("UPDATE label_print_queue SET created_at = ? WHERE order_number = 'SK-2'").run(new Date().toISOString());
+  const dy = await get('/veeqo/autolabel/day?date=' + dayKey);
+  const s2 = (dy.labels || []).find(l => l.order === 'SK-2'), s1 = (dy.labels || []).find(l => l.order === 'SK-1');
+  check('📜 Labels by day: a ⏭ skipped label is NOT counted as printed — its own "⏭ N skipped — NOT printed by us" count, and its row says so with 🖨 Print',
+    s2 && s2.skipped && s1 && !s1.skipped && dy.counts.skipped >= 1 && dy.counts.printed === (dy.labels || []).filter(l => l.kind !== 'merged' && l.printedAt && !l.skipped).length
+    && /c\.skipped \? ' · <b style="color:var\(--orange\)">⏭ ' \+ c\.skipped \+ ' skipped — NOT printed by us/.test(ph) && /l\.skipped \? '<b style="color:var\(--orange\)">⏭ skipped/.test(ph)
+    && /\(l\.printedAt && !l\.skipped \? 'Reprint' : 'Print'\)/.test(ph), { counts: dy.counts, s1, s2 });
   sq.exec("UPDATE label_print_queue SET printed_at = '2026-01-01T00:00:00.000Z', printed_by = 'test' WHERE order_number LIKE 'SK-%' AND printed_at IS NULL");
 }
 
