@@ -19184,10 +19184,16 @@ async function shipSheetBatchUpdate(env, updates) {
 // USPS labels include a ZIP prefix: 420 + 5-digit ZIP + 22-digit tracking = 30 digits
 // Strip the prefix so only the real tracking number is stored.
 
+// "420" + ZIP (5 digits, or ZIP+4 = 9) in front of a USPS tracking # (22 / 20 / 26 digits, starts with 9) is stripped.
+// Owner 2026-10-14: Stamps.com labels to a ZIP+4 address (e.g. 87710-8205) left 4 ZIP digits on the tracking # → not read.
 function normalizeShipTracking(raw) {
   if (!raw) return '';
-  const t = raw.trim().toUpperCase().replace(/\s+/g, '');
-  if (/^420\d{5}\d{22}$/.test(t)) return t.slice(8);
+  const t = String(raw).trim().toUpperCase().replace(/^\]C1/, '').replace(/[\s\x00-\x1F\x7F]+/g, '');
+  const m = /^420(\d+)$/.exec(t);
+  if (m) {
+    const d = m[1];
+    for (const [z, n] of [[9, 22], [5, 22], [9, 20], [5, 20], [5, 26], [9, 26]]) if (d.length === z + n && /^9/.test(d.slice(z))) return d.slice(z);
+  }
   if (/^420\d{5}\d{21}$/.test(t)) return t.slice(8);
   return t;
 }
