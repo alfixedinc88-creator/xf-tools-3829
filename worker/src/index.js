@@ -20317,6 +20317,10 @@ async function _ensureShipD1TablesRun(env) {
   await env.DB.prepare(`CREATE INDEX IF NOT EXISTS idx_manifest_log_tracking_upper ON ship_manifest_log(UPPER(tracking))`).run().catch(()=>{});
   await env.DB.prepare(`CREATE INDEX IF NOT EXISTS idx_scan_log_tracking_upper ON ship_scan_log(UPPER(tracking))`).run().catch(()=>{});
   await env.DB.prepare(`CREATE INDEX IF NOT EXISTS idx_pick_log_tracking_upper ON ship_pick_log(UPPER(tracking))`).run().catch(()=>{});
+  // ↪ A label picked / packed on an earlier day and scanned again today counts today (owner 2026-10-14); this keeps
+  // where it came from (that day, time, who).
+  await env.DB.prepare('ALTER TABLE ship_scan_log ADD COLUMN carried_from TEXT').run().catch(()=>{});
+  await env.DB.prepare('ALTER TABLE ship_pick_log ADD COLUMN carried_from TEXT').run().catch(()=>{});
   _shipD1Ready = true;
 }
 
@@ -20501,7 +20505,10 @@ async function shipScan(request, env, ctx) {
     `SELECT * FROM ship_scan_log WHERE tracking = ? AND date >= ? ORDER BY date DESC, id DESC LIMIT 1`
   ).bind(clean, scanLookbackDate).first();
 
-  if (dupe) {
+  // Owner 2026-10-14: "a label scanned yesterday (too busy to ship it) must count as today when we scan it today — we ship
+  // everything out the same business day". Only a scan from TODAY is a double-scan; one from an earlier day moves to
+  // today (one row per label, never counted twice) and keeps where it came from (carried_from).
+  if (dupe && dupe.date === date) {
     return cors(new Response(JSON.stringify({
       ok: false, duplicate: true,
       message:   'Already scanned ' + (dupe.date || '') + ' at ' + (dupe.timestamp || 'unknown time'),
@@ -20513,11 +20520,20 @@ async function shipScan(request, env, ctx) {
   }
 
   // Write the scan row immediately — shipmentId/orderNum filled in async below
-  const inserted = await env.DB.prepare(
-    `INSERT INTO ship_scan_log (date, timestamp, tracking, carrier, initials, batch_closed_at, status, shipment_id, order_num)
-     VALUES (?, ?, ?, ?, ?, '', 'Scanned', '', '')`
-  ).bind(date, ts, clean, carrier, initials.toUpperCase()).run();
-  const insertedId = inserted.meta.last_row_id;
+  let insertedId, carried = null;
+  if (dupe) {
+    carried = { date: dupe.date || '', at: dupe.timestamp || '', initials: dupe.initials || '', batchClosedAt: dupe.batch_closed_at || '' };
+    const from = `${carried.date} ${carried.at} by ${carried.initials || '?'}` + (carried.batchClosedAt ? ` (that day's batch closed ${carried.batchClosedAt})` : '');
+    await env.DB.prepare(`UPDATE ship_scan_log SET date = ?, timestamp = ?, initials = ?, batch_closed_at = '', status = 'Scanned', carried_from = ? WHERE id = ?`)
+      .bind(date, ts, initials.toUpperCase(), from.slice(0, 200), dupe.id).run();
+    insertedId = dupe.id;
+  } else {
+    const inserted = await env.DB.prepare(
+      `INSERT INTO ship_scan_log (date, timestamp, tracking, carrier, initials, batch_closed_at, status, shipment_id, order_num)
+       VALUES (?, ?, ?, ?, ?, '', 'Scanned', '', '')`
+    ).bind(date, ts, clean, carrier, initials.toUpperCase()).run();
+    insertedId = inserted.meta.last_row_id;
+  }
 
   // Order items for the page: our saved copy right away when we have it
   // (Veeqo refresh then finishes in the background), else the Veeqo
@@ -20552,7 +20568,7 @@ async function shipScan(request, env, ctx) {
   // this timing bug, and the existing "run Veeqo Sync" message still covers it.
   return cors(new Response(JSON.stringify({
     ok: true, date, tracking: clean, carrier, initials: initials.toUpperCase(), timestamp: ts,
-    lineItems: scanResponseLineItems,
+    lineItems: scanResponseLineItems, carried,
   }), { headers: { 'Content-Type': 'application/json' } }));
 }
 
@@ -20567,7 +20583,7 @@ async function shipGetScans(url, env) {
   const rows = (result.results || []).map(r => ({
     date: r.date||'', timestamp: r.timestamp||'', tracking: r.tracking||'',
     carrier: r.carrier||'', initials: r.initials||'', batchClosedAt: r.batch_closed_at||'', status: r.status||'',
-    shipmentId: r.shipment_id||'', orderNum: r.order_num||'',
+    shipmentId: r.shipment_id||'', orderNum: r.order_num||'', carriedFrom: r.carried_from||'',
   }));
   const attachError = await shipAttachItemsAndWeight(rows, env);
   return cors(new Response(JSON.stringify({ date, scans: rows, count: rows.length, debugError: attachError }), {
@@ -21004,7 +21020,8 @@ async function shipPick(request, env, ctx) {
     `SELECT * FROM ship_pick_log WHERE tracking = ? AND date >= ? ORDER BY date DESC, id DESC LIMIT 1`
   ).bind(clean, pickLookbackDate).first();
 
-  if (dupe) {
+  // Same as Packing: only a pick from TODAY is a double-pick; an earlier day's pick moves to today (counted today).
+  if (dupe && dupe.date === date) {
     return cors(new Response(JSON.stringify({
       ok: false, duplicate: true,
       message:   'Already picked ' + (dupe.date || '') + ' at ' + (dupe.timestamp || 'unknown time'),
@@ -21016,11 +21033,19 @@ async function shipPick(request, env, ctx) {
     }), { headers: { 'Content-Type': 'application/json' } }));
   }
 
-  const inserted = await env.DB.prepare(
-    `INSERT INTO ship_pick_log (date, timestamp, tracking, carrier, initials, order_num)
-     VALUES (?, ?, ?, ?, ?, '')`
-  ).bind(date, ts, clean, carrier, initials.toUpperCase()).run();
-  const insertedId = inserted.meta.last_row_id;
+  let insertedId, carried = null;
+  if (dupe) {
+    carried = { date: dupe.date || '', at: dupe.timestamp || '', initials: dupe.initials || '' };
+    await env.DB.prepare(`UPDATE ship_pick_log SET date = ?, timestamp = ?, initials = ?, carried_from = ? WHERE id = ?`)
+      .bind(date, ts, initials.toUpperCase(), `${carried.date} ${carried.at} by ${carried.initials || '?'}`.slice(0, 200), dupe.id).run();
+    insertedId = dupe.id;
+  } else {
+    const inserted = await env.DB.prepare(
+      `INSERT INTO ship_pick_log (date, timestamp, tracking, carrier, initials, order_num)
+       VALUES (?, ?, ?, ?, ?, '')`
+    ).bind(date, ts, clean, carrier, initials.toUpperCase()).run();
+    insertedId = inserted.meta.last_row_id;
+  }
 
   // Same as shipScan: our saved copy right away, else Veeqo (populates
   // ship_manifest_log), items handed straight back in this response.
@@ -21038,7 +21063,7 @@ async function shipPick(request, env, ctx) {
 
   return cors(new Response(JSON.stringify({
     ok: true, date, tracking: clean, carrier, initials: initials.toUpperCase(), timestamp: ts,
-    lineItems: pickResponseLineItems, orderNum: pickResponseOrderNum,
+    lineItems: pickResponseLineItems, orderNum: pickResponseOrderNum, carried,
   }), { headers: { 'Content-Type': 'application/json' } }));
 }
 
@@ -22072,7 +22097,7 @@ async function shipGetPicks(url, env) {
   ).bind(date).all();
   const rows = (result.results || []).map(r => ({
     date: r.date||'', timestamp: r.timestamp||'', tracking: r.tracking||'',
-    carrier: r.carrier||'', initials: r.initials||'', orderNum: r.order_num||'',
+    carrier: r.carrier||'', initials: r.initials||'', orderNum: r.order_num||'', carriedFrom: r.carried_from||'',
   }));
   const attachError = await shipAttachItemsAndWeight(rows, env);
   return cors(new Response(JSON.stringify({ date, picks: rows, count: rows.length, debugError: attachError }), {

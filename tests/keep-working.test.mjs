@@ -6317,5 +6317,32 @@ console.log('\nAuto Label → ⏭ Skipped labels: how many, which were scanned a
   sq.exec("UPDATE label_print_queue SET printed_at = '2026-01-01T00:00:00.000Z', printed_by = 'test' WHERE order_number LIKE 'SK-%' AND printed_at IS NULL");
 }
 
+// Owner 2026-10-14: "the shipping labels we scan at Picking and Packing from yesterday were not added to today — make sure a
+// yesterday label scanned today counts as today; sometimes it's too busy, we ship everything out the same business day".
+console.log('\nPicking / Packing: a label scanned on an earlier day counts TODAY when scanned again today');
+{
+  const { readFileSync } = await import('node:fs');
+  const ph = readFileSync(fileURLToPath(new URL('../packship.html', import.meta.url)), 'utf8');
+  const today = new Date().toLocaleDateString('en-CA', { timeZone: 'America/New_York' });
+  const yd = new Date(Date.parse(today + 'T12:00:00Z') - 86400000).toISOString().slice(0, 10);
+  await call('/ship/scans?date=' + today, { headers: H }); // tables ready
+  sq.prepare("INSERT INTO ship_scan_log (date, timestamp, tracking, carrier, initials, batch_closed_at, status, shipment_id, order_num) VALUES (?,?,?,?,?,'','Scanned','','O-YD')").run(yd, yd + 'T21:00:00.000Z', '1ZYESTERDAY0000001', 'UPS', 'AB');
+  sq.prepare("INSERT INTO ship_pick_log (date, timestamp, tracking, carrier, initials, order_num) VALUES (?,?,?,?,?,'O-YD')").run(yd, yd + 'T20:00:00.000Z', '1ZYESTERDAY0000001', 'UPS', 'CD');
+  const pk = await post('/ship/scan', { tracking: '1ZYESTERDAY0000001', initials: 'EF' });
+  const pi = await post('/ship/pick', { tracking: '1ZYESTERDAY0000001', initials: 'GH' });
+  const packRows = sq.prepare("SELECT date, initials, carried_from FROM ship_scan_log WHERE tracking = '1ZYESTERDAY0000001'").all();
+  const pickRows = sq.prepare("SELECT date, initials, carried_from FROM ship_pick_log WHERE tracking = '1ZYESTERDAY0000001'").all();
+  const ts = await get('/ship/scans?date=' + today), tp = await get('/ship/picks?date=' + today), ys = await get('/ship/scans?date=' + yd);
+  check('packed yesterday, scanned at Packing today → not a duplicate: counted TODAY (one row, moved), says "first packed yesterday by AB"',
+    pk.ok && !pk.duplicate && pk.carried && pk.carried.date === yd && packRows.length === 1 && packRows[0].date === today && packRows[0].initials === 'EF' && /by AB/.test(packRows[0].carried_from)
+    && ts.scans.some(x => x.tracking === '1ZYESTERDAY0000001' && /by AB/.test(x.carriedFrom)) && !ys.scans.some(x => x.tracking === '1ZYESTERDAY0000001'), { pk, packRows });
+  check('…same at Picking: picked yesterday → today\'s pick, counted today (one row, never twice)',
+    pi.ok && !pi.duplicate && pi.carried && pi.carried.date === yd && pickRows.length === 1 && pickRows[0].date === today && /by CD/.test(pickRows[0].carried_from)
+    && tp.picks.some(x => x.tracking === '1ZYESTERDAY0000001'), { pi, pickRows });
+  const again = await post('/ship/scan', { tracking: '1ZYESTERDAY0000001', initials: 'EF' }), again2 = await post('/ship/pick', { tracking: '1ZYESTERDAY0000001', initials: 'GH' });
+  check('…scanned a second time TODAY → still a duplicate (blocked, as before)', again.duplicate === true && again2.duplicate === true, { again, again2 });
+  check('…the screen says "first packed / picked … → counted TODAY"', /if \(data\.carried\) \{\n      _psShowLastScan\(/.test(ph) && /if \(data\.carried\) \{\n      _psShowPickLastScan\(/.test(ph) && /→ counted TODAY/.test(ph), null);
+}
+
 console.log('\n' + (failed ? '❌ ' + failed + ' check(s) FAILED' : '✅ all ' + passed + ' checks passed') + '\n');
 process.exit(failed ? 1 : 0);
