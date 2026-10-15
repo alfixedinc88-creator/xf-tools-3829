@@ -9322,6 +9322,17 @@ window.invCredLogin = async function() {
   window.xfrKbOff = function(x) { if (!x || (x.id === 'xfr-search-inp' && xfrSearchMode === 'name')) return; setTimeout(function() { if (document.activeElement === x) return; x.removeAttribute('data-kb-typing'); x.setAttribute('inputmode', 'none'); }, 60); };
   // Focus the scan box of whatever is on screen (after a pop-up closes).
   window.xfrRefocus = function() {
+    // Only on 🔀 Transfer does the cursor go back to a Transfer scan box. The number pad is used on other tabs too
+    // (📋 Audit recount, ✅ Checking): there it goes back to THAT tab's scan box — before (owner 2026-10-15, audit day)
+    // it went into the hidden Transfer box, so the next box scanned in the recount did nothing.
+    var tp = g('inv-panel-transfer');
+    if (tp && !/iactive/.test(tp.className)) {
+      var own = ['inv-panel-audit:rc-inp', 'inv-panel-check:ck-inp'].map(function(x) { return x.split(':'); })
+        .filter(function(x) { var p = g(x[0]); return p && /iactive/.test(p.className); })[0];
+      var bx = own && g(own[1]);
+      if (bx && document.activeElement !== bx) { if (!bx.hasAttribute('data-kb-typing')) bx.setAttribute('inputmode', 'none'); bx.focus(); }
+      return;
+    }
     if (g('xfr-put-modal')) { var p = g('xfr-put-scan'); if (p && document.activeElement !== p) { if (!p.hasAttribute('data-kb-typing')) p.setAttribute('inputmode', 'none'); p.focus(); } return; }
     if (xfrSearchMode === 'cont') { xfrGoBox(); return; }
     // putting boxes away and more are waiting in the cart → the cart's scan bar
@@ -9358,6 +9369,12 @@ window.invCredLogin = async function() {
       + '<button type="button" onclick="xfrKpOk()" style="flex:2;padding:14px;border-radius:12px;border:none;background:var(--accent);color:#fff;font-size:18px;font-weight:800;cursor:pointer">OK</button></div>');
   }
   window.xfrKeypad = function(title, start, cb, zeroOk) { xfrKp = { title: title, v: start ? String(start) : '', cb: cb, zeroOk: !!zeroOk }; xfrKpDraw(); };
+  // The number pad's keys and OK (restored 2026-10-15 — they were lost on 2026-10-10 with the old calculator pad, so every
+  // "More…" pad showed but typed nothing: owner, Audit → Full recount with more than 9 boxes).
+  window.xfrKpKey = function(k) { if (!xfrKp) return; var v = xfrKp.v || '';
+    if (k === '⌫') v = v.slice(0, -1); else if (k === '.') { if (v.indexOf('.') < 0) v = (v || '0') + '.'; } else if (v.length < 7) v = (v === '0' ? '' : v) + k;
+    xfrKp.v = v; var d = g('xfr-kp-v'); if (d) d.textContent = v; };
+  window.xfrKpOk = function() { if (!xfrKp) return; var n = parseFloat(xfrKp.v); if (!(n > 0) && !(xfrKp.zeroOk && n === 0)) { invFlash('Tap a number first', 'error'); return; } var cb = xfrKp.cb; xfrKp = null; xfrPopupClose(); cb(n); };
   // 🧮 Calculator for the start count (owner 2026-10-10): count the pallet in parts, e.g. 4 layers × 6 boxes + 3 on
   // top = 27. × goes before + and −. It sits right in the "Our record" step (correct or not); every number pad stays the same.
   function xfrCalcTotal(expr) { // '4×6+3' → 27; null if it isn't a full sum yet
