@@ -1861,9 +1861,11 @@ body {
         </div>
         <div style="font-size:12px;color:var(--text3);margin-bottom:8px;line-height:1.5">
           Every label that prints should be read by the fixed Print Log scanner within a few minutes. When
-          <select id="ps-al-watch-n" class="ps-field-input" style="width:auto;margin:0;padding:2px 6px;font-size:12px" onchange="psAlWatchSettings()"><option value="2">2</option><option value="3">3</option><option value="4">4</option><option value="5">5</option></select>
+          <select id="ps-al-watch-n" class="ps-field-input" style="width:auto;margin:0;padding:2px 6px;font-size:12px" onchange="psAlWatchSettings()"><option value="3">3</option><option value="5">5</option><option value="8">8</option><option value="10">10</option><option value="15">15</option><option value="20">20</option></select>
           labels in a row are not read (paper jam, out of labels, printer off — or the Print Log box is not open on that computer), the
           <b>🖨 Printer station stops printing</b>: new labels keep being bought and wait here until someone taps <b>✅ Printer fixed — print again</b>.
+          A label the Print Log scanner missed is fine once it is scanned at <b>Picking or Packing on its ship day</b> (printed before the cut-off — 5:30 PM, Saturday 1:40 PM — ships that day; after it, the next business day).
+          Ship day over and never picked or packed → <b style="color:var(--red)">❗ Problem</b>: find out what happened to that label.
           <label style="display:inline-flex;align-items:center;gap:4px;cursor:pointer;margin-left:6px"><input type="checkbox" id="ps-al-watch-on" onchange="psAlWatchSettings()"> On</label>
         </div>
         <div id="ps-al-watch-box" style="font-size:12px"></div>
@@ -2437,13 +2439,13 @@ body {
 
     <!-- 📦 Ship-day count: labels are counted for the day they get picked /
          packed / shipped, not the day they were printed. Cut-off: Mon–Fri
-         5:30 PM, Saturday 4:00 PM; anything later (and all of Sunday) goes
+         5:30 PM, Saturday 1:40 PM; anything later (and all of Sunday) goes
          to the next work day (Saturday evening + Sunday → Monday). "Printed
          Today" above stays the plain calendar count. See psShipDayOf. -->
     <div class="ps-card" id="ps-pl-shipday" style="margin-top:12px">
       <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap">
         <div style="font-size:13px;font-weight:700">📦 Ship-day count</div>
-        <div style="font-size:11px;color:var(--text3)">cut-off Mon–Fri 5:30 PM · Sat 4:00 PM · Sat evening + Sunday → Monday</div>
+        <div style="font-size:11px;color:var(--text3)">cut-off Mon–Fri 5:30 PM · Sat 1:40 PM · Sat evening + Sunday → Monday</div>
         <div style="flex:1"></div>
         <input type="date" class="ps-scan-summary-date-input" id="ps-pl-shipday-date" onchange="psPlLoadShipDay(this.value)" title="Pick a ship day">
       </div>
@@ -3858,7 +3860,7 @@ function _psShipDayLabel(k) { var p = k.split('-'); return new Date(Date.UTC(+p[
 function _psPlRenderCountSplit() {
   var el = document.getElementById('ps-pl-count-split'); if (!el || typeof psShipDayOf !== 'function') return;
   var today = _psNyParts(new Date().toISOString()).key, sp = _psShipSplit(psPlScans.map(function(s) { return s.timestamp; }), today);
-  var cut = _psKeyWd(today) === 6 ? '4:00 PM' : '5:30 PM';
+  var cut = _psKeyWd(today) === 6 ? '1:40 PM' : '5:30 PM';
   el.innerHTML = (_psKeyWd(today) === 0 ? '<b>' + sp.next + '</b> ship Monday (Sunday prints)'
     : '<b>' + sp.same + '</b> ship today (before ' + cut + ')' + (sp.next ? '<br><b style="color:var(--orange)">' + sp.next + '</b> after ' + cut + ' → ship ' + _psShipDayLabel(sp.nextKey) : ''));
 }
@@ -4070,9 +4072,9 @@ window.psPlSetOperator = async function() {
 // ── 📦 Ship-day count ─────────────────────────────────────────────────────
 // Which day a label printed at `iso` gets picked / packed / shipped
 // (warehouse time, America/New_York): Mon–Fri after 5:30 PM → next day
-// (Friday → Saturday); Saturday after 4:00 PM → Monday; Sunday → Monday.
+// (Friday → Saturday); Saturday after 1:40 PM → Monday; Sunday → Monday.
 // Every print belongs to exactly one ship day.
-var PS_SHIPDAY_CUTOFF = { weekday: 17 * 60 + 30, saturday: 16 * 60 };
+var PS_SHIPDAY_CUTOFF = { weekday: 17 * 60 + 30, saturday: 13 * 60 + 40 }; // Saturday cut-off 1:40 PM (owner 2026-10-15; was 4:00 PM)
 function _psNyParts(iso) {
   var d = new Date(iso), o = {};
   new Intl.DateTimeFormat('en-US', { timeZone: 'America/New_York', year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', hour12: false, weekday: 'short' })
@@ -4087,7 +4089,7 @@ function _psKeyWd(key) { var p = key.split('-'); return new Date(Date.UTC(+p[0],
 window.psShipDayOf = function(iso) {
   var t = _psNyParts(iso), wd = _psKeyWd(t.key);
   if (wd === 0) return _psKeyAdd(t.key, 1);                                        // Sunday → Monday
-  if (wd === 6) return t.mins >= PS_SHIPDAY_CUTOFF.saturday ? _psKeyAdd(t.key, 2) : t.key; // Sat after 4 PM → Monday
+  if (wd === 6) return t.mins >= PS_SHIPDAY_CUTOFF.saturday ? _psKeyAdd(t.key, 2) : t.key; // Sat after 1:40 PM → Monday
   return t.mins >= PS_SHIPDAY_CUTOFF.weekday ? _psKeyAdd(t.key, 1) : t.key;        // Mon–Fri after 5:30 PM → next day
 };
 // Calendar days whose prints can land on ship day `key` (the day before it,
@@ -4124,17 +4126,17 @@ window.psPlLoadShipDay = async function(key) {
   var cnt = function(list, c) { return list.filter(function(s) { return s.carrier === c; }).length; };
   var fmtDay = function(k) { var p = k.split('-'); return new Date(Date.UTC(+p[0], +p[1] - 1, +p[2])).toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric', timeZone: 'UTC' }); };
   var byWho = {}; mine.forEach(function(s) { var w = s.operatorName || 'Unassigned'; byWho[w] = (byWho[w] || 0) + 1; });
-  var wd = _psKeyWd(key), cut = wd === 6 ? '4:00 PM' : '5:30 PM';
+  var wd = _psKeyWd(key), cut = wd === 6 ? '1:40 PM' : '5:30 PM';
   body.innerHTML = '<div style="display:flex;align-items:baseline;gap:10px;flex-wrap:wrap;color:var(--text)">'
     + '<span style="font-size:26px;font-weight:800">' + mine.length + '</span>'
     + '<span>labels to pack / ship on <b>' + fmtDay(key) + '</b></span>'
     + '<span class="ps-badge ps-badge-ups">' + cnt(mine, 'UPS') + ' UPS</span><span class="ps-badge ps-badge-usps">' + cnt(mine, 'USPS') + ' USPS</span></div>'
     + '<div style="margin-top:6px;line-height:1.6">'
     // Owner (2026-10-07): "what we printed yesterday after 5:30 — give me that number in the ship-day count": one line per
-    // earlier day, with that day's cut-off (Saturday 4:00 PM, Sunday all day), in bold.
+    // earlier day, with that day's cut-off (Saturday 1:40 PM, Sunday all day), in bold.
     + days.slice(0, -1).map(function(k) {
         var n = carried.filter(function(s) { return _psNyParts(s.timestamp).key === k; }).length, wdk = _psKeyWd(k);
-        var when = wdk === 0 ? 'on ' + fmtDay(k) + ' (Sunday, all day)' : (k === _psKeyAdd(key, -1) ? 'yesterday ' : 'on ') + fmtDay(k) + ' after ' + (wdk === 6 ? '4:00 PM' : '5:30 PM');
+        var when = wdk === 0 ? 'on ' + fmtDay(k) + ' (Sunday, all day)' : (k === _psKeyAdd(key, -1) ? 'yesterday ' : 'on ') + fmtDay(k) + ' after ' + (wdk === 6 ? '1:40 PM' : '5:30 PM');
         return '• <b style="color:var(--orange)">' + n + '</b> printed ' + when + ' → shipping ' + fmtDay(key) + '<br>';
       }).join('')
     + '• ' + sameDay + ' printed on ' + fmtDay(key) + ' before ' + cut + '<br>'
@@ -9750,7 +9752,7 @@ window.psAlLoadDay = async function() {
   // Owner: "after 5:30 PM we print, it ships the next business day" — the printed labels split by the ship-day cut-off.
   if (typeof psShipDayOf === 'function') {
     var spl = _psShipSplit((d.labels || []).filter(function(l) { return l.kind !== 'merged' && l.printedAt && !l.skipped && _psNyParts(l.printedAt).key === el.value; }).map(function(l) { return l.printedAt; }), el.value);
-    var cutT = _psKeyWd(el.value) === 6 ? '4:00 PM' : '5:30 PM';
+    var cutT = _psKeyWd(el.value) === 6 ? '1:40 PM' : '5:30 PM';
     sum.innerHTML += '<div style="font-weight:600;margin-top:3px">🗓 ' + (_psKeyWd(el.value) === 0 ? spl.next + ' printed on Sunday → ship Monday'
       : spl.same + ' printed before ' + cutT + ' → ship this day' + ' · <span style="color:var(--orange)">' + spl.next + ' printed after ' + cutT + ' → ship ' + (spl.nextKey ? _psShipDayLabel(spl.nextKey) : 'the next business day') + '</span>') + '</div>';
   }
@@ -11092,7 +11094,9 @@ function _psAlWatchBarTabOk() {
   return PS_AL_WATCH_BAR_TABS.some(function(k) { var t = document.getElementById('ps-tab-' + k); return t && t.classList.contains('active'); });
 }
 function _psAlWatchBanner(d) {
-  var held = !!(d.hold && d.hold.on), n = (d.missing || []).length, bar = document.getElementById('ps-al-watch-bar');
+  // Owner 2026-10-15: a label the Print Log scanner missed is not a problem until its ship day is over without a Picking /
+  // Packing scan — the orange bar only for those (❗ problems); on hold → every label not picked up, as before.
+  var held = !!(d.hold && d.hold.on), n = held ? (d.missing || []).length : (d.problems || []).length, bar = document.getElementById('ps-al-watch-bar');
   var waitTxt = held ? '' : _psAlPrintWaitText(d.printWait);
   if (!held && !n && !waitTxt) { if (bar) bar.remove(); return; }
   if (!_psAlWatchBarTabOk()) { if (bar) bar.remove(); return; }
@@ -11103,10 +11107,10 @@ function _psAlWatchBanner(d) {
     document.body.insertBefore(bar, document.body.firstChild); // pushes the page down, never covers the tabs
   }
   bar.style.background = held || waitTxt ? '#B91C1C' : '#C2410C';
-  if (waitTxt) { bar.textContent = waitTxt + (n ? ' · ⚠ ' + n + ' printed but not picked up by the Print Log scanner.' : ''); return; }
+  if (waitTxt) { bar.textContent = waitTxt + (n ? ' · ❗ ' + n + ' never scanned at Picking / Packing on its ship day.' : ''); return; }
   bar.textContent = held
     ? '🛑 Label printing ON HOLD since ' + new Date(d.hold.at).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' }) + ' — ' + n + ' label' + (n === 1 ? '' : 's') + ' printed but not picked up by the Print Log scanner. Check the printer (paper jam / no labels). Tap to see them.'
-    : '⚠ ' + n + ' label' + (n === 1 ? '' : 's') + ' printed but not picked up by the Print Log scanner — tap to check and reprint.';
+    : '❗ ' + n + ' label' + (n === 1 ? '' : 's') + ' never scanned at Picking or Packing on its ship day — find out what happened. Tap to see them.';
 }
 window.psAlLoadWatch = async function() {
   var box = document.getElementById('ps-al-watch-box'); if (!box) return;
@@ -11117,7 +11121,7 @@ window.psAlLoadWatch = async function() {
 function _psAlWatchRender(d) {
   var box = document.getElementById('ps-al-watch-box'), e = _psAlEsc; if (!box) return;
   var s = d.settings || {}, nSel = document.getElementById('ps-al-watch-n'), on = document.getElementById('ps-al-watch-on');
-  if (nSel && document.activeElement !== nSel) nSel.value = String(s.n || 3);
+  if (nSel && document.activeElement !== nSel) nSel.value = String(s.n || 10);
   if (on) on.checked = s.on !== false;
   var held = !!(d.hold && d.hold.on), miss = d.missing || [], t = function(x) { return x ? new Date(x).toLocaleString([], { month: 'numeric', day: 'numeric', hour: 'numeric', minute: '2-digit' }) : ''; };
   var h = _psAlPrintCheckHtml(d);
@@ -11127,18 +11131,26 @@ function _psAlWatchRender(d) {
     + '<div style="margin-top:8px"><button class="ps-btn-primary" style="width:auto;padding:8px 18px;background:var(--green);border-color:var(--green)" onclick="psAlWatchRelease()">✅ Printer fixed — print again</button></div></div>';
   else h += '<div style="color:var(--green);font-weight:700;margin-bottom:6px">' + (s.on === false ? '⏸ Print watch is off' : '✅ Printing normally') + ' · ' + (d.picked || 0) + ' picked up · ' + (d.waiting || 0) + ' just printed (being checked)'
     + (d.hold && d.hold.releasedAt ? ' · last "printer fixed" ' + e(t(d.hold.releasedAt)) + (d.hold.releasedBy ? ' by ' + e(d.hold.releasedBy) : '') : '') + '</div>';
-  if (miss.length) {
-    h += '<div style="font-weight:700;color:var(--orange);margin:6px 0 4px">⚠ ' + miss.length + ' label' + (miss.length === 1 ? '' : 's') + ' printed but NOT picked up by the Print Log scanner (last 48 h) — find it at the printer, or reprint it; ✓ Checked takes it off the list (saved with your name)</div>'
-      + '<div style="margin-bottom:6px"><button class="ps-btn-sm" onclick="psAlWatchReprintAll(this)">🔁 Reprint all ' + miss.length + '</button></div>';
-    h += miss.map(function(l) {
-      return '<div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;padding:5px 0;border-bottom:1px solid var(--border)">'
-        + '<span style="font-family:var(--mono);font-weight:700">' + e(l.order_number) + '</span><span>' + e(l.channel || '') + '</span><span>' + e([l.carrier, l.service].filter(Boolean).join(' ')) + '</span>'
-        + '<span style="font-family:var(--mono);color:var(--text3)">' + e(l.tracking || '') + '</span>'
-        + '<span style="color:var(--text3)">printed ' + e(t(l.printedAt)) + ' · ' + e(l.source || '') + (l.printedBy ? ' · ' + e(l.printedBy) : '') + '</span>'
-        + '<span style="margin-left:auto;display:flex;gap:6px"><button class="ps-btn-sm" onclick="psAlWatchReprint(' + l.id + ', this)">🔁 Reprint</button>'
-        + '<button class="ps-btn-sm" onclick="psAlWatchChecked(' + l.id + ', this)">✓ Checked</button></span></div>';
-    }).join('');
-  } else h += '<div style="color:var(--text3)">No label waiting to be picked up. 👍</div>';
+  // 🗓 Owner 2026-10-15: split by ship day — ❗ problems (ship day over, never picked / packed: find out what happened) first;
+  // labels whose ship day is still on are only "Print Log missed it — should be scanned at Picking / Packing by …".
+  var sd = function(k) { if (!k) return ''; var p = String(k).split('-'); return new Date(Date.UTC(+p[0], +p[1] - 1, +p[2])).toLocaleDateString('en-US', { weekday: 'short', month: 'numeric', day: 'numeric', timeZone: 'UTC' }); };
+  var row = function(l) {
+    return '<div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;padding:5px 0;border-bottom:1px solid var(--border)">'
+      + '<span style="font-family:var(--mono);font-weight:700">' + e(l.order_number) + '</span><span>' + e(l.channel || '') + '</span><span>' + e([l.carrier, l.service].filter(Boolean).join(' ')) + '</span>'
+      + '<span style="font-family:var(--mono);color:var(--text3)">' + e(l.tracking || '') + '</span>'
+      + '<span style="color:var(--text3)">printed ' + e(t(l.printedAt)) + ' · ' + e(l.source || '') + (l.printedBy ? ' · ' + e(l.printedBy) : '') + '</span>'
+      + (l.shipDay ? '<span style="font-weight:700;color:' + (l.problem ? 'var(--red)' : 'var(--text2)') + '">🗓 ship day ' + e(sd(l.shipDay)) + (l.problem ? ' — over, never picked / packed' : '') + '</span>' : '')
+      + '<span style="margin-left:auto;display:flex;gap:6px"><button class="ps-btn-sm" onclick="psAlWatchReprint(' + l.id + ', this)">🔁 Reprint</button>'
+      + '<button class="ps-btn-sm" onclick="psAlWatchChecked(' + l.id + ', this)">✓ Checked</button></span></div>';
+  };
+  var probs = miss.filter(function(l) { return l.problem; }), waits = miss.filter(function(l) { return !l.problem; });
+  if (probs.length) h += '<div style="border:2px solid var(--red);border-radius:8px;padding:6px 10px;margin:6px 0 8px">'
+    + '<div style="font-weight:800;color:var(--red);margin-bottom:4px">❗ ' + probs.length + ' label' + (probs.length === 1 ? '' : 's') + ' never scanned at Picking or Packing on its ship day — find out what happened (not printed? lost? not shipped?). Reprint it, or ✓ Checked with what you found (saved with your name)</div>'
+    + probs.map(row).join('') + '</div>';
+  if (waits.length) h += '<details' + (held ? ' open' : '') + ' style="margin:6px 0"><summary style="cursor:pointer;font-weight:700;color:var(--text2)">📭 ' + waits.length + ' label' + (waits.length === 1 ? '' : 's') + ' the Print Log scanner missed — fine once scanned at Picking / Packing on its ship day (usually just the scanner)</summary>'
+    + '<div style="margin:6px 0"><button class="ps-btn-sm" onclick="psAlWatchReprintAll(this)">🔁 Reprint all ' + miss.length + '</button></div>'
+    + waits.map(row).join('') + '</details>';
+  if (!miss.length) h += '<div style="color:var(--text3)">No label waiting to be picked up. 👍</div>';
   // 📜 Owner: missed by the Print Log scanner but scanned at Picking / Packing → the label printed fine; no reminder, history only.
   var lat = d.later || [];
   if (lat.length) h += '<details style="margin-top:8px"><summary style="cursor:pointer;font-weight:700;color:var(--text2)">📜 History — ' + lat.length + ' label' + (lat.length === 1 ? '' : 's') + ' the Print Log scanner missed, but Picking / Packing scanned (no need to reprint)</summary>'
@@ -11165,7 +11177,8 @@ function _psAlPrintCheckHtml(d) {
     + '<div style="font-weight:800;margin-bottom:4px">🩺 Printing check — what can stop the auto print</div>'
     + row(!held, held ? '<b>Printing is ON HOLD</b> since ' + e(t(d.hold.at)) + ' (labels not picked up by the Print Log scanner)' : 'Not on hold',
         held ? '<button class="ps-btn-sm" style="background:var(--green);color:#fff;border-color:var(--green)" onclick="psAlWatchRelease()">✅ Printer fixed — print again</button>' : '')
-    + row(!miss.length, miss.length ? '<b>' + miss.length + '</b> label' + (miss.length === 1 ? '' : 's') + ' printed but not picked up by the Print Log scanner (only a warning — it stops printing only after ' + ((d.settings || {}).n || 3) + ' in a row)' : 'No label waiting to be picked up',
+    + row(!miss.length, miss.length ? '<b>' + miss.length + '</b> label' + (miss.length === 1 ? '' : 's') + ' printed but not picked up by the Print Log scanner (only a warning — it stops printing only after ' + ((d.settings || {}).n || 10) + ' in a row)'
+        + ((d.problems || []).length ? ' · <b style="color:var(--red)">❗ ' + d.problems.length + ' never scanned at Picking / Packing on its ship day</b>' : '') : 'No label waiting to be picked up',
         miss.length ? '<button class="ps-btn-sm" onclick="psAlWatchCheckAll(this)">✓ I fixed it — clear these ' + miss.length + '</button>' : '')
     + row(alive, alive ? 'A printer station is on — last check ' + e(t(last)) + (here ? ' (this computer)' : '')
         : '<b>No printer station is on</b> — last check ' + e(t(last || null)) + '. On the computer with the label printer: open Pack & Ship and tap the button →',
@@ -11261,7 +11274,7 @@ window.psAlWatchRelease = async function(quiet) {
   if (!quiet) { _psToast('✅ Printing again — waiting labels print on the 🖨 Printer station within a minute'); psAlLoadLabels(); }
 };
 window.psAlWatchSettings = async function() {
-  var n = parseInt((document.getElementById('ps-al-watch-n') || {}).value) || 3, on = !!(document.getElementById('ps-al-watch-on') || {}).checked;
+  var n = parseInt((document.getElementById('ps-al-watch-n') || {}).value) || 10, on = !!(document.getElementById('ps-al-watch-on') || {}).checked;
   var d = await _psAlFetch('/veeqo/autolabel/print-watch', { method: 'POST', body: { action: 'settings', n: n, on: on } });
   if (d.ok === false) { _psToast(d.error || 'Not saved', 'err'); return; }
   _psAlWatchApply(d); _psToast('Print watch: ' + (on ? 'on — hold after ' + n + ' in a row' : 'off'));

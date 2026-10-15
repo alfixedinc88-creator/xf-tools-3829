@@ -26339,16 +26339,41 @@ async function labelBatchEnsure(env) {
 const LABEL_WATCH_KEY = 'label_print_watch';          // { on, n } — settings
 const LABEL_WATCH_HOLD_KEY = 'label_print_hold';      // { on, at, why, by, releasedAt, releasedBy }
 const LABEL_WATCH_START_KEY = 'label_print_watch_start'; // when the watch first ran
-const LABEL_WATCH_DEFAULTS = { on: true, n: 3 };
-const LABEL_WATCH_LOOKBACK_H = 48;                    // labels printed in the last 48 h are watched
+// Owner 2026-10-15: "only if 10 labels straight are not picked up, stop the auto print — most of the time it is the
+// scanner that didn't read the label, not the label that didn't print". Saved settings move to 10 once (on record).
+const LABEL_WATCH_DEFAULTS = { on: true, n: 10 };
+const LABEL_WATCH_MAX_N = 20;
+const LABEL_WATCH_N10_KEY = 'label_watch_n10_20261015';
+const LABEL_WATCH_LOOKBACK_H = 168;                   // labels printed in the last 7 days are watched (a Friday-night label ships Monday)
+// 🗓 Ship day of a label, same rule as Pack & Ship's ship-day count (psShipDayOf): printed Mon–Fri before 5:30 PM → that day,
+// after → the next day; Saturday before 1:40 PM → Saturday, after → Monday (owner 2026-10-15); Sunday → Monday. New York time. Returns 'YYYY-MM-DD'.
+function nyKey(ms) { return new Date(ms).toLocaleDateString('en-CA', { timeZone: 'America/New_York' }); }
+function shipDayOfIso(iso) {
+  const o = {};
+  new Intl.DateTimeFormat('en-US', { timeZone: 'America/New_York', year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', hour12: false })
+    .formatToParts(new Date(iso)).forEach(p => { o[p.type] = p.value; });
+  const key = `${o.year}-${o.month}-${o.day}`, mins = (parseInt(o.hour, 10) % 24) * 60 + parseInt(o.minute, 10);
+  const add = (k, d) => { const [y, m, dd] = k.split('-').map(Number); return new Date(Date.UTC(y, m - 1, dd + d)).toISOString().slice(0, 10); };
+  const wd = new Date(key + 'T12:00:00Z').getUTCDay();
+  if (wd === 0) return add(key, 1);
+  if (wd === 6) return mins >= 13 * 60 + 40 ? add(key, 2) : key;
+  return mins >= 17 * 60 + 30 ? add(key, 1) : key;
+}
 async function labelWatchEnsure(env) {
   await labelBatchEnsure(env);
   await env.DB.prepare('CREATE TABLE IF NOT EXISTS label_watch_checked (label_id INTEGER PRIMARY KEY, by_user TEXT, at TEXT, note TEXT)').run();
 }
 async function labelWatchSettings(env) {
   let s = {}; try { s = JSON.parse(await autolabelGetKey(env, LABEL_WATCH_KEY) || '{}') || {}; } catch (_) {}
+  // once: a saved "hold after 2–9 in a row" moves to 10 (owner 2026-10-15); changed on the page afterwards → kept
+  if (s.n != null && parseInt(s.n) < 10 && !(await autolabelGetKey(env, LABEL_WATCH_N10_KEY))) {
+    const was = parseInt(s.n); s.n = 10;
+    await autolabelSetKey(env, LABEL_WATCH_KEY, JSON.stringify({ on: s.on !== false, n: 10 }));
+    await autolabelLog(env, { action: 'rules_changed', reason: `Print watch: hold after ${was} → 10 labels in a row not picked up (owner 2026-10-15: most misses are the Print Log scanner, not the printer)` });
+  }
+  if (!(await autolabelGetKey(env, LABEL_WATCH_N10_KEY))) await autolabelSetKey(env, LABEL_WATCH_N10_KEY, new Date().toISOString());
   const n = parseInt(s.n);
-  return { on: s.on !== false, n: n >= 1 && n <= 10 ? n : LABEL_WATCH_DEFAULTS.n };
+  return { on: s.on !== false, n: n >= 1 && n <= LABEL_WATCH_MAX_N ? n : LABEL_WATCH_DEFAULTS.n };
 }
 async function labelWatchHold(env) {
   let h = null; try { h = JSON.parse(await autolabelGetKey(env, LABEL_WATCH_HOLD_KEY) || 'null'); } catch (_) {}
@@ -26409,7 +26434,11 @@ async function labelWatchCheck(env, nowMs) {
     list.push({ id, order_number: r.order_number, channel: r.channel, tracking: r.tracking, carrier: r.carrier, service: r.service,
       printedAt: batch.ts, batchId: batch.id, source: batch.source || '', printedBy: batch.by_user || r.printed_by || '', pos,
       pickAt: pk ? pk.ts : null, pickBy: pk ? pk.who || '' : '', packAt: pa ? pa.ts : null, packBy: pa ? pa.who || '' : '',
-      state: picked ? 'picked' : (pk || pa) ? 'later' : now < due ? 'waiting' : checked.has(id) ? 'checked' : 'missing',
+      // 🗓 Owner 2026-10-15: a label the Print Log scanner missed must be scanned at Picking / Packing on its ship day; after
+      // its ship day, never picked / packed → ❗ problem (find out what happened). Before that it is only "Print Log missed it".
+      shipDay: shipDayOfIso(batch.ts),
+      state: picked ? 'picked' : (pk || pa) ? 'later' : now < due ? 'waiting' : checked.has(id) ? 'checked'
+        : nyKey(now) > shipDayOfIso(batch.ts) ? 'problem' : 'missing', // its ship day has fully passed (New York calendar day)
       scannedAt: picked ? new Date(seen).toISOString() : null, checkedBy: checked.has(id) ? checked.get(id).by_user : null, checkedAt: checked.has(id) ? checked.get(id).at : null });
   }
   list.sort((a, b) => (a.printedAt < b.printedAt ? 1 : a.printedAt > b.printedAt ? -1 : b.pos - a.pos)); // newest first
@@ -26420,10 +26449,11 @@ async function labelWatchCheck(env, nowMs) {
   for (const l of list) {
     if (l.state === 'waiting') continue;
     if (l.printedAt <= relAt) break;
-    if (l.state === 'missing') inRow++; else break;
+    if (l.state === 'missing' || l.state === 'problem') inRow++; else break;
   }
-  const missing = list.filter(l => l.state === 'missing');
-  return { settings, hold, inRow, missing, waiting: list.filter(l => l.state === 'waiting').length, picked: list.filter(l => l.state === 'picked').length, watched: list.length,
+  // missing = every label not picked up (as before); problems = its ship day is over and it was never picked / packed
+  const missing = list.filter(l => l.state === 'missing' || l.state === 'problem').map(l => ({ ...l, problem: l.state === 'problem' }));
+  return { settings, hold, inRow, missing, problems: missing.filter(l => l.problem), awaiting: missing.filter(l => !l.problem), waiting: list.filter(l => l.state === 'waiting').length, picked: list.filter(l => l.state === 'picked').length, watched: list.length,
     later: list.filter(l => l.state === 'later') }; // 📜 Print Log missed it, but Picking / Packing scanned it — history only, no reminder
 }
 // 🖨 Labels bought but not printed: how many wait, since when, when the last one printed, and when the printer
@@ -29931,7 +29961,7 @@ async function handleAutolabelRoute(path, method, url, request, env, session) {
       }
     } else if (b.action === 'settings') {
       const s = await labelWatchSettings(env), n = parseInt(b.n);
-      const next = { on: b.on != null ? !!b.on : s.on, n: n >= 1 && n <= 10 ? n : s.n };
+      const next = { on: b.on != null ? !!b.on : s.on, n: n >= 1 && n <= LABEL_WATCH_MAX_N ? n : s.n };
       await autolabelSetKey(env, LABEL_WATCH_KEY, JSON.stringify(next));
       await autolabelLog(env, { action: 'config', customer: who, reason: `Print watch ${next.on ? 'ON' : 'OFF'} · hold after ${next.n} in a row (${who || '?'})` });
     } else return veeqoResp({ ok: false, error: 'unknown action' }, 400);
