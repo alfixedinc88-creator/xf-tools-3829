@@ -6367,5 +6367,27 @@ console.log('\nPicking / Packing read Stamps.com USPS labels (420 + ZIP+4 in fro
   check('…the server saves the clean tracking # (USPS) when the long barcode is sent', sc.ok && sc.tracking === '9400150105498051010546' && sc.carrier === 'USPS', sc);
 }
 
+// Owner 2026-10-15: "the 'Label printing ON HOLD since …' message pops up everywhere — only in Auto Label and the Print Log tab".
+console.log('\nPack & Ship: the ON HOLD / not-picked-up bar shows only on 🤖 Auto Label and 🖨️ Print Log');
+{
+  const { readFileSync } = await import('node:fs');
+  const ph = readFileSync(fileURLToPath(new URL('../packship.html', import.meta.url)), 'utf8');
+  const a = ph.indexOf('var PS_AL_WATCH_BAR_TABS'), b = ph.indexOf('window.psAlLoadWatch = async function');
+  const run = active => {
+    const els = {}, made = [];
+    const tab = k => ({ classList: { contains: c => c === 'active' && k === active } });
+    const doc = { getElementById: id => id.startsWith('ps-tab-') ? tab(id.slice(7)) : (els[id] || null),
+      createElement: () => { const el = { style: {}, remove() { delete els[this.id]; } }; made.push(el); return el; },
+      body: { firstChild: null, insertBefore(el) { els[el.id] = el; } } };
+    const fn = new Function('document', 'psSwitchTab', '_psAlPrintWaitText', ph.slice(a, b) + '; return _psAlWatchBanner;')(doc, () => {}, () => '');
+    fn({ hold: { on: true, at: new Date().toISOString() }, missing: [{ id: 1 }, { id: 2 }] });
+    return !!els['ps-al-watch-bar'];
+  };
+  const shown = { autolabel: run('autolabel'), printlog: run('printlog'), scan: run('scan'), picking: run('picking'), orderlookup: run('orderlookup') };
+  check('ON HOLD → the red bar is on 🤖 Auto Label and 🖨️ Print Log, not on Packing / Picking / other tabs; switching tabs shows / hides it',
+    shown.autolabel && shown.printlog && !shown.scan && !shown.picking && !shown.orderlookup
+    && /if \(window\._psAlWatch && typeof _psAlWatchBanner === 'function'\) _psAlWatchBanner\(window\._psAlWatch\);/.test(ph), shown);
+}
+
 console.log('\n' + (failed ? '❌ ' + failed + ' check(s) FAILED' : '✅ all ' + passed + ' checks passed') + '\n');
 process.exit(failed ? 1 : 0);
