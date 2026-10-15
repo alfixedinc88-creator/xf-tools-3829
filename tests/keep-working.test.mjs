@@ -4102,9 +4102,9 @@ console.log('\nPrint totals: before / after the 5:30 PM cut-off');
   // Wed 2026-10-07 (New York, EDT = UTC−4): 9:00 AM, 5:29 PM, 5:30 PM, 8:15 PM.
   const wed = split(['2026-10-07T13:00:00Z', '2026-10-07T21:29:00Z', '2026-10-07T21:30:00Z', '2026-10-08T00:15:00Z'], '2026-10-07');
   check('Wednesday: 9:00 AM + 5:29 PM ship that day (2); 5:30 PM + 8:15 PM ship Thursday (2)', wed.same === 2 && wed.next === 2 && wed.nextKey === '2026-10-08', wed);
-  // Sat 2026-10-10: 3:59 PM ships Saturday, 4:00 PM → Monday.
-  const sat = split(['2026-10-10T19:59:00Z', '2026-10-10T20:00:00Z'], '2026-10-10');
-  check('Saturday: 3:59 PM ships Saturday; 4:00 PM → Monday', sat.same === 1 && sat.next === 1 && sat.nextKey === '2026-10-12', sat);
+  // Sat 2026-10-10: 1:39 PM ships Saturday, 1:40 PM → Monday (owner 2026-10-15: Saturday cut-off is 1:40 PM, not 4:00 PM).
+  const sat = split(['2026-10-10T17:39:00Z', '2026-10-10T17:40:00Z'], '2026-10-10');
+  check('Saturday: 1:39 PM ships Saturday; 1:40 PM → Monday', sat.same === 1 && sat.next === 1 && sat.nextKey === '2026-10-12', sat);
   check('page: Printed Today shows "N ship today (before 5:30 PM) / N after 5:30 PM → ship …"; Labels by day shows the same split',
     /id="ps-pl-count-split"/.test(ps) && /_psPlRenderCountSplit\(\);/.test(ps) && /printed after ' \+ cutT \+ ' → ship '/.test(ps), null);
 }
@@ -4131,9 +4131,9 @@ console.log('\nShip-day count: "N printed yesterday after 5:30 PM → shipping t
     '2026-10-07': [sc('2026-10-07T15:00:00Z'), sc('2026-10-07T15:10:00Z'), sc('2026-10-07T22:00:00Z')] });
   check('Wed Oct 7: "3 printed yesterday Tue, Oct 6 after 5:30 PM → shipping Wed, Oct 7", "2 printed on Wed before 5:30", total 5; the Wed 6 PM one → Thursday',
     /^5\s*labels to pack/.test(wed.trim()) && /• 3 printed yesterday Tue, Oct 6 after 5:30 PM → shipping Wed, Oct 7/.test(wed) && /• 2 printed on Wed, Oct 7 before 5:30 PM/.test(wed) && /• 1 printed on Wed, Oct 7 after 5:30 PM → counted for Thu, Oct 8/.test(wed), wed);
-  // Mon Oct 12: Sat 5 PM (after 4 PM) → Mon, Sunday ×2 → Mon.
+  // Mon Oct 12: Sat 5 PM (after the 1:40 PM cut-off) → Mon, Sunday ×2 → Mon.
   const mon = await run('2026-10-12', { '2026-10-10': [sc('2026-10-10T21:00:00Z')], '2026-10-11': [sc('2026-10-11T15:00:00Z'), sc('2026-10-11T18:00:00Z')], '2026-10-12': [] });
-  check('Monday: "1 printed on Sat, Oct 10 after 4:00 PM" + "2 printed on Sun, Oct 11 (Sunday, all day)" → shipping Mon', /• 1 printed on Sat, Oct 10 after 4:00 PM → shipping Mon, Oct 12/.test(mon) && /• 2 printed on Sun, Oct 11 \(Sunday, all day\) → shipping Mon, Oct 12/.test(mon), mon);
+  check('Monday: "1 printed on Sat, Oct 10 after 1:40 PM" + "2 printed on Sun, Oct 11 (Sunday, all day)" → shipping Mon', /• 1 printed on Sat, Oct 10 after 1:40 PM → shipping Mon, Oct 12/.test(mon) && /• 2 printed on Sun, Oct 11 \(Sunday, all day\) → shipping Mon, Oct 12/.test(mon), mon);
 }
 
 // Owner: "check on Print Log — if 2 or 3 labels are not picked up, something is wrong with the printer (paper jam,
@@ -4161,10 +4161,14 @@ console.log('\n🛑 Print watch: labels printed but not read by the Print Log sc
   batch([a, b], 15); batch([c, d], 12);
   await post('/ship/print-log', { tracking: '42008080' + T(1) }); // W-1 read by the scanner (USPS barcode with 420 + ZIP in front)
   let w = await get('/veeqo/autolabel/print-watch');
+  // Owner 2026-10-15 changed the default on purpose: hold only after 10 in a row (most misses are the scanner, not the printer)
+  check('default: hold only after 10 in a row → 3 not picked up keep printing', w.settings.n === 10 && !w.hold.on && w.inRow === 3, { s: w.settings, hold: w.hold });
+  await post('/veeqo/autolabel/print-watch', { action: 'settings', n: 3, on: true }); // this test checks the hold with the setting at 3
+  w = await get('/veeqo/autolabel/print-watch');
   const st = n => ((w.missing || []).find(l => l.order_number === n) ? 'missing' : '?');
   check('a label the Print Log scanner read (420+ZIP barcode) is picked up; 3 others printed 12–15 min ago and never read are "not picked up"',
     w.ok && w.picked === 1 && w.missing.length === 3 && st('W-2') === 'missing' && st('W-4') === 'missing' && !w.missing.some(l => l.order_number === 'W-1'), w);
-  check('3 in a row not picked up (default hold after 3) → printing ON HOLD, saved in the Auto Label log with which labels',
+  check('3 in a row not picked up (setting: hold after 3) → printing ON HOLD, saved in the Auto Label log with which labels',
     w.hold.on && w.inRow === 3 && sq.prepare("SELECT COUNT(*) n FROM autolabel_log WHERE action='print_hold' AND detail LIKE '%W-4%'").get().n === 1, { hold: w.hold, inRow: w.inRow });
   w = await get('/veeqo/autolabel/print-watch');
   check('…asking again does not log the hold twice', sq.prepare("SELECT COUNT(*) n FROM autolabel_log WHERE action='print_hold'").get().n === 1, null);
@@ -6387,6 +6391,49 @@ console.log('\nPack & Ship: the ON HOLD / not-picked-up bar shows only on 🤖 A
   check('ON HOLD → the red bar is on 🤖 Auto Label and 🖨️ Print Log, not on Packing / Picking / other tabs; switching tabs shows / hides it',
     shown.autolabel && shown.printlog && !shown.scan && !shown.picking && !shown.orderlookup
     && /if \(window\._psAlWatch && typeof _psAlWatchBanner === 'function'\) _psAlWatchBanner\(window\._psAlWatch\);/.test(ph), shown);
+}
+
+// Owner 2026-10-15: "only if 10 labels straight are not picked up, stop the auto print … if a label is not picked up, make sure it is
+// scanned on the same business day or the next (ship hours / cut-off); never scanned at Picking or Packing → find out what happened".
+// Also: "Saturday cut-off is 1:40 PM, not 4 PM".
+console.log('\n🛑 Print watch: hold after 10 in a row; a missed label is a ❗ problem only after its ship day without a Picking / Packing scan');
+{
+  const { readFileSync } = await import('node:fs');
+  const ws = readFileSync(workerPath, 'utf8'), ph = readFileSync(fileURLToPath(new URL('../packship.html', import.meta.url)), 'utf8');
+  const sd = new Function((ws.match(/function shipDayOfIso\(iso\) \{[\s\S]*?\n\}/) || [''])[0] + '; return shipDayOfIso;')();
+  const cases = { wedAm: sd('2026-10-14T13:00:00Z'), wed529: sd('2026-10-14T21:29:00Z'), wed530: sd('2026-10-14T21:30:00Z'), fri6pm: sd('2026-10-16T22:00:00Z'),
+    sat139: sd('2026-10-17T17:39:00Z'), sat140: sd('2026-10-17T17:40:00Z'), sun: sd('2026-10-18T15:00:00Z') };
+  check('ship day: Wed 9 AM / 5:29 PM → Wed; 5:30 PM → Thu; Fri 6 PM → Sat; Sat 1:39 PM → Sat, 1:40 PM → Mon; Sunday → Mon',
+    cases.wedAm === '2026-10-14' && cases.wed529 === '2026-10-14' && cases.wed530 === '2026-10-15' && cases.fri6pm === '2026-10-17'
+    && cases.sat139 === '2026-10-17' && cases.sat140 === '2026-10-19' && cases.sun === '2026-10-19', cases);
+  // labels: P-OLD printed 3 days ago, never scanned anywhere → ❗ problem; P-PACK printed 3 days ago, packed later → fine (history);
+  // P-NEW printed 20 min ago, Print Log missed it → only "missed", ship day still on
+  sq.prepare('DELETE FROM label_print_queue').run(); sq.prepare('DELETE FROM label_print_batch').run(); sq.prepare('DELETE FROM label_watch_checked').run();
+  sq.prepare("DELETE FROM app_config WHERE key IN ('label_print_watch','label_print_hold','label_watch_n10_20261015')").run();
+  sq.prepare("INSERT INTO app_config (key, value) VALUES ('label_print_watch', ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value").run(JSON.stringify({ on: true, n: 3 }));
+  sq.prepare("INSERT INTO app_config (key, value) VALUES ('label_print_watch_start', ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value").run(new Date(Date.now() - 6 * 86400000).toISOString());
+  const ago = m => new Date(Date.now() - m * 60000).toISOString();
+  const lab = (n, tr, m) => Number(sq.prepare("INSERT INTO label_print_queue (order_id, alloc_id, order_number, channel, tracking, carrier, service, source, created_at, printed_at, printed_by, print_count, items) VALUES (?,?,?,?,?,?,?,?,?,?,?,1,'[]')")
+    .run(n, n, n, 'eBay', tr, 'USPS', 'Ground', '{}', ago(m + 5), ago(m), 'ST').lastInsertRowid);
+  const batch = (ids, m) => sq.prepare('INSERT INTO label_print_batch (ts, day, by_user, source, count, label_ids) VALUES (?,?,?,?,?,?)').run(ago(m), ago(m).slice(0, 10), 'ST', 'printer station', ids.length, JSON.stringify(ids));
+  const T = k => '94001118992231000077' + String(k).padStart(2, '0');
+  const old = lab('P-OLD', T(1), 3 * 1440), pack = lab('P-PACK', T(2), 3 * 1440 - 1), nw = lab('P-NEW', T(3), 20);
+  batch([old, pack], 3 * 1440); batch([nw], 20);
+  sq.prepare("INSERT INTO ship_scan_log (date, timestamp, tracking, carrier, initials, batch_closed_at, status, shipment_id, order_num) VALUES (?,?,?,?,?,'','Scanned','','')").run(ago(2 * 1440).slice(0, 10), ago(2 * 1440), T(2), 'USPS', 'PA');
+  const w = await get('/veeqo/autolabel/print-watch');
+  const M = n => (w.missing || []).find(l => l.order_number === n);
+  check('saved "hold after 3" moves to 10 once (on record); 3 missed in a row keep printing',
+    w.settings.n === 10 && !w.hold.on && !!sq.prepare("SELECT 1 x FROM autolabel_log WHERE action = 'rules_changed' AND reason LIKE '%hold after 3 → 10%'").get(), w.settings);
+  check('❗ printed 3 days ago, never picked or packed → problem (ship day over); packed later → not listed (history); missed 20 min ago → only "missed", its ship day is still on',
+    M('P-OLD') && M('P-OLD').problem === true && !!M('P-OLD').shipDay && !M('P-PACK') && (w.later || []).some(l => l.order_number === 'P-PACK')
+    && M('P-NEW') && M('P-NEW').problem === false && (w.problems || []).length === 1 && (w.awaiting || []).length === 1, { missing: w.missing, later: (w.later || []).map(l => l.order_number) });
+  await post('/veeqo/autolabel/print-watch', { action: 'settings', n: 15, on: true });
+  const w2 = await get('/veeqo/autolabel/print-watch');
+  check('…changed on the page afterwards (15) → kept; up to 20 allowed', w2.settings.n === 15, w2.settings);
+  check('page: setting 3–20 (10 default), ❗ problems box + "Print Log missed it" list, orange bar only for problems, Saturday cut-off 1:40 PM everywhere',
+    /<option value="10">10<\/option>/.test(ph) && /<option value="20">20<\/option>/.test(ph) && /never scanned at Picking or Packing on its ship day — find out what happened/.test(ph)
+    && /n = held \? \(d\.missing \|\| \[\]\)\.length : \(d\.problems \|\| \[\]\)\.length/.test(ph) && /saturday: 13 \* 60 \+ 40/.test(ph) && !/4:00 PM/.test(ph.replace('was 4:00 PM', '')), null);
+  sq.prepare('DELETE FROM label_print_queue').run(); sq.prepare('DELETE FROM label_print_batch').run();
 }
 
 console.log('\n' + (failed ? '❌ ' + failed + ' check(s) FAILED' : '✅ all ' + passed + ' checks passed') + '\n');
