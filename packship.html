@@ -6026,6 +6026,7 @@ window.psSwitchTab = function(name) {
   document.querySelectorAll('.ps-panel').forEach(function(p){ p.classList.remove('active'); });
   document.getElementById('ps-tab-' + name).classList.add('active');
   document.getElementById('ps-panel-' + name).classList.add('active');
+  if (window._psAlWatch && typeof _psAlWatchBanner === 'function') _psAlWatchBanner(window._psAlWatch); // ON HOLD bar: Auto Label / Print Log only
   // Show gate if protected tab not yet unlocked this session, otherwise
   // make sure the gate is actually hidden and content shown - this else
   // branch was missing entirely, so an already-unlocked tab (e.g. a
@@ -11067,7 +11068,8 @@ function _psAlWatchApply(d) {
   _psAlWatchBanner(d);
   if (document.getElementById('ps-al-watch-box')) _psAlWatchRender(d);
 }
-// Red bar (on hold) / orange bar (some labels not picked up) at the top of every manager's Pack & Ship — tap → Auto Label.
+// Red bar (on hold) / orange bar (some labels not picked up) at the top of a manager's Pack & Ship on the 🤖 Auto Label
+// and 🖨️ Print Log tabs only (owner 2026-10-15) — tap → Auto Label.
 // 🖨 Owner (2026-10-11): "since 3 pm it bought the labels but nothing printed — and nothing told us why". Labels waiting
 // more than 10 min → why, in plain words: no printer station checking in, or the station is on but not printing.
 // The printer station's last sign of life: its minute check (new) or its last "give me new labels" (older pages too).
@@ -11084,10 +11086,16 @@ function _psAlPrintWaitText(w) {
   if (!tick || Date.now() - tick > 3 * 60000) return head + 'No printer station is on (last check ' + t(tick || null) + '): on the label printer computer open Pack & Ship with 🖨 Printer station ticked. Tap → 🩺 Printing check.';
   return head + 'The printer station is on (checked ' + t(tick) + ') but not printing: on that computer close any print / message window and reload Pack & Ship (F5). Tap → 🩺 Printing check.';
 }
+// Owner 2026-10-15: the "Label printing ON HOLD …" bar shows only on 🤖 Auto Label and 🖨️ Print Log, not on every tab.
+var PS_AL_WATCH_BAR_TABS = ['autolabel', 'printlog'];
+function _psAlWatchBarTabOk() {
+  return PS_AL_WATCH_BAR_TABS.some(function(k) { var t = document.getElementById('ps-tab-' + k); return t && t.classList.contains('active'); });
+}
 function _psAlWatchBanner(d) {
   var held = !!(d.hold && d.hold.on), n = (d.missing || []).length, bar = document.getElementById('ps-al-watch-bar');
   var waitTxt = held ? '' : _psAlPrintWaitText(d.printWait);
   if (!held && !n && !waitTxt) { if (bar) bar.remove(); return; }
+  if (!_psAlWatchBarTabOk()) { if (bar) bar.remove(); return; }
   if (!bar) {
     bar = document.createElement('div'); bar.id = 'ps-al-watch-bar';
     bar.style.cssText = 'position:sticky;top:0;z-index:9500;padding:8px 14px;font:700 13px/1.35 var(--sans,Arial),sans-serif;color:#fff;text-align:center;cursor:pointer;box-shadow:0 2px 8px rgba(0,0,0,.3)';
