@@ -6436,5 +6436,45 @@ console.log('\n🛑 Print watch: hold after 10 in a row; a missed label is a ❗
   sq.prepare('DELETE FROM label_print_queue').run(); sq.prepare('DELETE FROM label_print_batch').run();
 }
 
+// Owner 2026-10-15 (audit day): "Audit — more than 9 boxes, tap More, the number pad pops up, but we type and nothing shows up".
+// The pad's keys (xfrKpKey) and OK (xfrKpOk) were lost on 2026-10-10 — every "More…" pad in Inventory typed nothing.
+console.log('\nInventory: the "More…" number pad types and saves; every button calls something that exists');
+{
+  const { readFileSync } = await import('node:fs');
+  const rd = f => readFileSync(fileURLToPath(new URL('../' + f, import.meta.url)), 'utf8');
+  const ih = rd('inventory.html'), xa = rd('xf-access.js');
+  // 1) the real pad code, with a tiny page around it
+  const a = ih.indexOf('  // ── Pop-ups with big buttons (no keyboard): a number pad and choices ──'), b = ih.indexOf('  // 🧮 Calculator for the start count');
+  const els = {}, win = {}, flashes = [];
+  const doc = { body: { appendChild(el) { els[el.id] = el; } }, activeElement: null,
+    createElement: () => ({ style: {}, remove() { delete els[this.id]; } }) };
+  const gEl = id => els[id] || (id === 'xfr-kp-v' && els['xfr-modal'] ? (els['xfr-kp-v'] = els['xfr-kp-v'] || { textContent: '' }) : null);
+  new Function('window', 'document', 'g', 'xfrE', 'invFlash', 'xfrRefocus', 'var xfrPopupClose = function() { window.xfrPopupClose(); };\n' + ih.slice(a, b))(win, doc, gEl, x => String(x), m => flashes.push(m), () => {}); // in the page these are globals
+  let got = null;
+  win.xfrKeypad('How many cases of 23-2-3=2?', '', v => { got = v; }, true);
+  const html = (els['xfr-modal'] || {}).innerHTML || '';
+  ['1', '2'].forEach(k => win.xfrKpKey(k));
+  const shown = (els['xfr-kp-v'] || {}).textContent;
+  win.xfrKpOk();
+  check('More… → the pad shows; tapping 1 then 2 shows "12"; OK hands 12 back (e.g. 12 cases) and closes the pad',
+    /onclick="xfrKpKey\('1'\)"/.test(html) && typeof win.xfrKpKey === 'function' && typeof win.xfrKpOk === 'function' && shown === '12' && got === 12 && !els['xfr-modal'], { shown, got, flashes });
+  let got2 = null; win.xfrKeypad('x', '', v => { got2 = v; }); win.xfrKpOk();
+  check('…OK with nothing typed → "Tap a number first", pad stays open; ⌫ removes the last digit', got2 === null && flashes.includes('Tap a number first') && !!els['xfr-modal']
+    && (win.xfrKpKey('5'), win.xfrKpKey('7'), win.xfrKpKey('⌫'), els['xfr-kp-v'].textContent === '5'), flashes);
+  // 2) after the pad closes, the cursor goes back to the scan box of the tab in use (Audit → the recount box), not to hidden Transfer
+  check('…after the pad on 🔍 Audit the cursor goes back to the recount scan box (not the hidden Transfer box)',
+    /'inv-panel-audit:rc-inp', 'inv-panel-check:ck-inp'/.test(ih) && /var tp = g\('inv-panel-transfer'\);\n    if \(tp && !\/iactive\/\.test\(tp\.className\)\)/.test(ih), null);
+  // 3) every onclick / onchange … in these pages calls a function that is defined (this is what caught the lost pad keys)
+  const undefinedCalls = page => {
+    const src = rd(page), js = src + xa + rd('xf-signout.js');
+    const calls = new Set();
+    for (const m of src.matchAll(/on(?:click|change|input|keydown|keyup|blur|focus|mousedown|toggle)=\\?["']\s*(?:return\s+)?(?:if\s*\([^)]*\)\s*)?([A-Za-z_$][\w$]*)\s*\(/g)) calls.add(m[1]);
+    const skip = new Set(['event', 'this', 'alert', 'confirm', 'prompt', 'setTimeout', 'print', 'parseInt', 'parseFloat', 'String', 'Number', 'g', 'if', 'return', 'location', 'history', 'window', 'document']);
+    return [...calls].filter(c => !skip.has(c) && ![`window\\.${c}\\s*=`, `function\\s+${c}\\s*\\(`, `(?:var|let|const)\\s+${c}\\s*=`].some(p => new RegExp(p).test(js)));
+  };
+  const miss = { inventory: undefinedCalls('inventory.html'), packship: undefinedCalls('packship.html'), admin: undefinedCalls('xfitting-admin.html') };
+  check('every button on Inventory, Pack & Ship and Admin calls a function that exists (none lost)', !miss.inventory.length && !miss.packship.length && !miss.admin.length, miss);
+}
+
 console.log('\n' + (failed ? '❌ ' + failed + ' check(s) FAILED' : '✅ all ' + passed + ' checks passed') + '\n');
 process.exit(failed ? 1 : 0);
