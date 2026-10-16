@@ -6800,5 +6800,46 @@ console.log('\n🗓 Auto Label schedule: Mon–Fri 3:30 pm 3 min → 4 pm no wai
     && /12:30 pm ⏩ No 30-min wait — new orders wait 3 min/.test(sa) && /1:00 pm ⚡ No wait/.test(sa) && !/⏩|⚡/.test(su), { mf, sa, su });
 }
 
+// Owner (2026-10-16): "Print Log — nothing got picked up after 2:13 pm today, I see the scanner works, but no record and
+// the number stayed the same". A Print Log scan was sent once and dropped silently when that failed (WiFi, signed out).
+// Now it is saved on the station computer first and sent again until the server has it (never twice, at its real time),
+// and the screen says in red when scans are not sent or the scanner is not typing into the page.
+console.log('\n🖨 Print Log: scans saved on the station until recorded, never twice, real scan time; red warning');
+{
+  const { readFileSync } = await import('node:fs');
+  const ph = readFileSync(fileURLToPath(new URL('../packship.html', import.meta.url)), 'utf8');
+  const T = '9400100000000000000777';
+  const at = new Date(Date.now() - 30 * 60000).toISOString();
+  const a1 = await post('/ship/print-log', { tracking: T, _requestId: 'pl-t-1', at });
+  const a2 = await post('/ship/print-log', { tracking: T, _requestId: 'pl-t-1', at });   // sent again (reply lost)
+  const rows = sq.prepare('SELECT date, timestamp FROM ship_print_log WHERE tracking = ?').all(T);
+  const nyDate = new Date(at).toLocaleDateString('en-CA', { timeZone: 'America/New_York' });
+  const fut = await post('/ship/print-log', { tracking: '9400100000000000000778', _requestId: 'pl-t-2', at: new Date(Date.now() + 3 * 3600e3).toISOString() });
+  const futRow = sq.prepare('SELECT timestamp FROM ship_print_log WHERE tracking = ?').get('9400100000000000000778') || {};
+  check('a scan sent twice (same id) is recorded ONCE, at the time it was really scanned (30 min ago, its New York day); a time in the future is never used',
+    a1.ok && a2.ok && rows.length === 1 && rows[0].timestamp === at && rows[0].date === nyDate && fut.ok && Math.abs(Date.parse(futRow.timestamp) - Date.now()) < 60000, { a1, a2, rows, futRow });
+  sq.exec("DELETE FROM ship_print_log WHERE tracking IN ('9400100000000000000777','9400100000000000000778')");
+  // The station page
+  const grab = (s, e) => { const i = ph.indexOf(s); return ph.slice(i, ph.indexOf(e, i)); };
+  const src = grab('var PS_PL_QUEUE_KEY', "setInterval(function() { if (psPlQueueRead().length) psPlFlush(); }, 15000);");
+  const store = {}, el = { innerHTML: '', style: {} }; let mode = 'down'; const sent = [];
+  const fakeFetch = async (u, o) => { sent.push(JSON.parse(o.body)); if (mode === 'down') throw new Error('net');
+    if (mode === '401') return { status: 401, json: async () => ({ error: 'Unauthorized' }) };
+    return { status: 200, json: async () => ({ ok: true }) }; };
+  const P = new Function('window', 'localStorage', 'document', 'fetch', 'PS_WORKER', 'psCredToken', 'psPlScans', 'psPlRenderList', 'psFetchPrintDupeCount', 'psFmtTime',
+    src + '; return { add: psPlQueueAdd, read: psPlQueueRead, flush: () => window.psPlFlush(), warn: psPlWarnRender };')(
+    {}, { getItem: k => store[k] || null, setItem: (k, v) => { store[k] = String(v); } }, { getElementById: () => el }, fakeFetch, 'W', 't', [], () => {}, () => {}, String);
+  P.add({ id: 'q1', tracking: T, at }); await new Promise(r => setTimeout(r, 5));
+  const w1 = el.innerHTML, n1 = P.read().length;
+  mode = '401'; await P.flush(); const w2 = el.innerHTML, n2 = P.read().length;
+  mode = 'ok'; await P.flush(); const n3 = P.read().length, w3 = el.style.display;
+  check('station: no WiFi → kept on the computer, red "1 scan saved on this computer, NOT in the Print Log yet — no WiFi"; signed out → kept, "SIGNED OUT — sign in again"; back → sent (same id + scan time) and gone',
+    n1 === 1 && /1 scan saved on this computer, NOT in the Print Log yet — no WiFi/.test(w1) && n2 === 1 && /SIGNED OUT — sign in again/.test(w2) && n3 === 0 && w3 === 'none'
+      && sent.every(b => b._requestId === 'q1' && b.at === at), { w1, w2, n1, n2, n3, sent: sent.length });
+  check('…every Print Log scan goes through that list (never a single send that can be lost); the window-not-in-front warning; unsent scans stay on the list after a reload',
+    /psPlQueueAdd\(\{ id: _psPlNewId\(\), tracking: clean, at: ts \}, entry\);/.test(ph) && !/fetch\(PS_WORKER \+ '\/ship\/print-log', \{\n    method: 'POST'/.test(ph)
+      && /The scanner is NOT typing into the Print Log/.test(ph) && /var nf = !document\.hasFocus\(\);/.test(ph) && /psPlQueueRead\(\)\.forEach\(function\(q\) \{ if \(!psPlScans\.some/.test(ph), null);
+}
+
 console.log('\n' + (failed ? '❌ ' + failed + ' check(s) FAILED' : '✅ all ' + passed + ' checks passed') + '\n');
 process.exit(failed ? 1 : 0);

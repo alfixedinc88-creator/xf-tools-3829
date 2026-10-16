@@ -2423,6 +2423,8 @@ body {
       <input class="ps-scan-input" id="ps-printlog-input" type="text" placeholder="Waiting for print scanner…"
         autocomplete="off" autocorrect="off" autocapitalize="off" spellcheck="false"
         onkeydown="psPrintLogHandleKey(event)">
+      <!-- ⚠ Scans saved on this computer but not sent yet / the scanner is not typing into this page (owner 2026-10-16). -->
+      <div id="ps-pl-warn" style="display:none;margin-top:8px;padding:9px 12px;border-radius:9px;background:#FDF0EE;border:2px solid #dc2626;color:#b91c1c;font-size:13px;font-weight:800;cursor:pointer" onclick="psFocusPrintLog();psPlFlush()"></div>
       <div class="ps-last-scan" id="ps-printlog-last-scan">
         <div class="ps-ls-icon" id="ps-pl-ls-icon">⌖</div>
         <div>
@@ -3725,6 +3727,7 @@ function psPlStartRefocus() {
       var active = document.activeElement;
       var typingElsewhere = active && PS_PRINTLOG_TYPING_FIELDS.indexOf(active.id) !== -1;
       if (inp && active !== inp && !typingElsewhere) inp.focus();
+      var nf = !document.hasFocus(); if (nf !== _psPlNoFocus) { _psPlNoFocus = nf; psPlWarnRender(); }
     } else {
       clearInterval(psPlRefocusInterval);
       psPlRefocusInterval = null;
@@ -3770,33 +3773,67 @@ function psPlProcessScan(raw) {
   // response comes back, so the fixed print-station scanner keeps typing
   // into that field uninterrupted the whole time (no blocking alert/confirm
   // here, ever).
-  fetch(PS_WORKER + '/ship/print-log', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json', 'X-Cred-Token': psCredToken },
-    body: JSON.stringify({ tracking: clean })
-  }).then(function(r) { return r.json(); }).then(function(d) {
-    if (!d || !d.ok) return;
-    if (d.collapsed) {
-      // Server agrees this was the same physical label read again within
-      // SHIP_PRINT_COLLAPSE_SECONDS — back out the optimistic entry so
-      // "Printed Today" doesn't double-count it.
-      var idx = psPlScans.indexOf(entry);
-      if (idx !== -1) psPlScans.splice(idx, 1);
-      psPlRenderList();
-      if (badge) { badge.textContent = psPlScans.length; badge.style.display = psPlScans.length ? 'inline' : 'none'; }
-      return;
-    }
-    if (d.doublePrintWarning) {
-      // Genuinely apart (>3 min) — refresh the Double Print Warning badge
-      // and give a non-blocking heads-up on the last-scan line. Never a
-      // popup/confirm/alarm here — that could steal focus from the fixed
-      // scanner input, which must keep receiving scans uninterrupted.
-      psFetchPrintDupeCount();
-      var meta = document.getElementById('ps-pl-ls-meta');
-      if (meta) meta.textContent = entry.carrier + ' · ' + psFmtTime(entry.timestamp) + ' · ⚠️ printed again (was ' + (d.priorPrintedBy || '?') + ')';
-    }
-  }).catch(function(e) { console.error('[PL] log error:', e); });
+  // Saved on this computer FIRST, then sent; never dropped (owner 2026-10-16: "nothing in Print Log after 2:13 pm, the
+  // scanner works"). A send that fails (no WiFi, signed out, server busy) stays here and is sent again every 15 s.
+  psPlQueueAdd({ id: _psPlNewId(), tracking: clean, at: ts }, entry);
 }
+
+// ── 📶 Print Log scans saved on this computer until the server has them ──
+var PS_PL_QUEUE_KEY = 'ps_pl_queue', _psPlLive = {}, _psPlFlushing = false, _psPlSendErr = '', _psPlNoFocus = false;
+function _psPlNewId() { try { if (crypto.randomUUID) return 'pl-' + crypto.randomUUID(); } catch (e) {} return 'pl-' + Date.now() + '-' + Math.random().toString(36).slice(2, 10); }
+function psPlQueueRead() { try { var a = JSON.parse(localStorage.getItem(PS_PL_QUEUE_KEY) || '[]'); return Array.isArray(a) ? a : []; } catch (e) { return []; } }
+function psPlQueueWrite(a) { try { localStorage.setItem(PS_PL_QUEUE_KEY, JSON.stringify(a)); } catch (e) {} psPlWarnRender(); }
+function psPlQueueAdd(q, entry) { var a = psPlQueueRead(); a.push(q); psPlQueueWrite(a); if (entry) _psPlLive[q.id] = entry; window.psPlFlush(); }
+window.psPlFlush = async function() {
+  if (_psPlFlushing) return; _psPlFlushing = true;
+  try {
+    var list = psPlQueueRead();
+    for (var i = 0; i < list.length; i++) {
+      var q = list[i], r, d = null;
+      try {
+        r = await fetch(PS_WORKER + '/ship/print-log', { method: 'POST', headers: { 'Content-Type': 'application/json', 'X-Cred-Token': psCredToken },
+          body: JSON.stringify({ tracking: q.tracking, _requestId: q.id, at: q.at }) });
+      } catch (e) { _psPlSendErr = 'no WiFi / internet'; break; }
+      if (r.status === 401) { _psPlSendErr = 'this computer is SIGNED OUT — sign in again'; break; }
+      try { d = await r.json(); } catch (e) { d = null; }
+      if (r.status >= 500 || r.status === 429 || !d) { _psPlSendErr = 'server busy (' + r.status + ')'; break; }
+      // Saved (or a code that is not a tracking # — nothing to send): off this computer's list.
+      psPlQueueWrite(psPlQueueRead().filter(function(x) { return x.id !== q.id; }));
+      _psPlSendErr = '';
+      var entry = _psPlLive[q.id]; delete _psPlLive[q.id];
+      if (entry && d && d.ok) _psPlAfterSaved(entry, d);
+    }
+  } finally { _psPlFlushing = false; psPlWarnRender(); }
+};
+function _psPlAfterSaved(entry, d) {
+  var badge = document.getElementById('ps-printlog-badge');
+  if (d.collapsed) {
+    // Server agrees this was the same physical label read again within SHIP_PRINT_COLLAPSE_SECONDS — back out the
+    // optimistic entry so "Printed Today" doesn't double-count it.
+    var idx = psPlScans.indexOf(entry);
+    if (idx !== -1) psPlScans.splice(idx, 1);
+    psPlRenderList();
+    if (badge) { badge.textContent = psPlScans.length; badge.style.display = psPlScans.length ? 'inline' : 'none'; }
+    return;
+  }
+  if (d.doublePrintWarning) {
+    // Genuinely apart (>3 min) — refresh the Double Print Warning badge and a non-blocking note on the last-scan line.
+    // Never a popup here: it could steal focus from the fixed scanner input.
+    psFetchPrintDupeCount();
+    var meta = document.getElementById('ps-pl-ls-meta');
+    if (meta) meta.textContent = entry.carrier + ' · ' + psFmtTime(entry.timestamp) + ' · ⚠️ printed again (was ' + (d.priorPrintedBy || '?') + ')';
+  }
+}
+// The red line under the scan box: scans not sent yet, or the scanner is not typing into this page.
+function psPlWarnRender() {
+  var el = document.getElementById('ps-pl-warn'); if (!el) return;
+  var n = psPlQueueRead().length, msgs = [];
+  if (n) msgs.push('📶 ' + n + ' scan' + (n === 1 ? '' : 's') + ' saved on this computer, NOT in the Print Log yet' + (_psPlSendErr ? ' — ' + _psPlSendErr : '') + '. They send by themselves (tap to send now).');
+  if (_psPlNoFocus) msgs.push('⚠ The scanner is NOT typing into the Print Log — this window is not in front. Click on this page.');
+  el.innerHTML = msgs.join('<br>'); el.style.display = msgs.length ? 'block' : 'none';
+}
+setInterval(function() { if (psPlQueueRead().length) psPlFlush(); }, 15000);
+window.addEventListener('online', function() { setTimeout(psPlFlush, 1000); });
 
 function psPlGetCarrier(t) {
   if (/^1Z[A-Z0-9]{16}$/.test(t)) return 'UPS';
@@ -4200,6 +4237,9 @@ window.psPlLoadToday = async function() {
     var data = await res.json();
     if (data.ok && data.scans) {
       psPlScans = data.scans.slice().reverse(); // newest first
+      // Scans still saved on this computer (not in the Print Log yet) stay on the list too.
+      psPlQueueRead().forEach(function(q) { if (!psPlScans.some(function(x) { return x.tracking === q.tracking && x.timestamp === q.at; }))
+        psPlScans.unshift({ timestamp: q.at, tracking: q.tracking, carrier: psPlGetCarrier(q.tracking) || '', operatorName: _psPlOperatorName || '', unsent: true }); });
       psPlRenderList();
       var badge = document.getElementById('ps-printlog-badge');
       if (badge && psPlScans.length) { badge.textContent = psPlScans.length; badge.style.display = 'inline'; }
@@ -4210,6 +4250,7 @@ window.psPlLoadToday = async function() {
   psFetchPrintDupeCount();
   if (!_psAp || (document.getElementById('ps-ap-body') || {}).style.display !== 'none') psApLoad(); // 🤖 report count on the card
   psPlStartRefocus();
+  psPlFlush(); // anything saved on this computer before (WiFi / sign-in) goes now
 };
 
 window.psFilterScans = function(f, btn) {

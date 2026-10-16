@@ -19650,6 +19650,7 @@ async function shipSetPrintStation(request, env) {
 // ── POST /ship/print-log ──────────────────────────────────────────────────────
 const PRINT_LOG_TAB = 'Print_Log';
 async function shipPrintLog(request, env) {
+  let rid = '';
   try {
     await ensureShipD1Tables(env);
     const b = await request.json().catch(() => ({}));
@@ -19660,8 +19661,14 @@ async function shipPrintLog(request, env) {
     const isUSPS = /^(94|93|92|95|9[0-9])\d{18,}$/.test(clean) || /^\d{22}$/.test(clean) || /^[A-Z]{2}\d{9}[A-Z]{2}$/.test(clean);
     if (!isUPS && !isUSPS) return cors(new Response(JSON.stringify({ ok: false, rejected: true, reason: 'not a tracking number' }), { headers: { 'Content-Type': 'application/json' } }));
     const carrier = detectShipCarrier(clean);
-    const date = shipTodayKey();
-    const ts   = new Date().toISOString();
+    // Owner (2026-10-16, "nothing in Print Log after 2:13 pm, the scanner works"): a scan the station could not send right
+    // away is saved there and sent again — with its _requestId (never counted twice) and `at`, the time it was really
+    // scanned (not in the future, at most 7 days back), so it lands on the right day and time.
+    rid = b._requestId ? String(b._requestId).slice(0, 80) : '';
+    if (rid) { const claim = await claimRequestId(env, rid, 'ship/print-log'); if (claim.isDuplicate) return cors(new Response(JSON.stringify(claim.cachedResponse || { ok: true, duplicate: true }), { headers: { 'Content-Type': 'application/json' } })); }
+    const atMs = Date.parse(b.at || '');
+    const ts   = atMs && atMs <= Date.now() + 60000 && atMs > Date.now() - 7 * 864e5 ? new Date(atMs).toISOString() : new Date().toISOString();
+    const date = new Date(ts).toLocaleDateString('en-CA', { timeZone: 'America/New_York' });
     const operator = await _shipCurrentPrintOperator(env);
 
     // Look back up to SHIP_DUPE_LOOKBACK_DAYS (7) days for the most recent
@@ -19683,11 +19690,11 @@ async function shipPrintLog(request, env) {
     // collapse silently: no new row, so "Printed Today" doesn't double-
     // count one label being read twice in the same pass.
     if (priorPrint && gapSeconds !== null && gapSeconds <= SHIP_PRINT_COLLAPSE_SECONDS) {
-      return cors(new Response(JSON.stringify({
-        ok: true, tracking: clean, carrier, date, operatorName: operator.name,
+      const res0 = { ok: true, tracking: clean, carrier, date, operatorName: operator.name,
         collapsed: true, gapSeconds,
-        priorPrintedBy: priorPrint.operator_name || '', priorPrintedAt: priorPrint.timestamp || '',
-      }), { headers: { 'Content-Type': 'application/json' } }));
+        priorPrintedBy: priorPrint.operator_name || '', priorPrintedAt: priorPrint.timestamp || '' };
+      if (rid) await recordRequestResult(env, rid, res0);
+      return cors(new Response(JSON.stringify(res0), { headers: { 'Content-Type': 'application/json' } }));
     }
 
     await env.DB.prepare(
@@ -19706,13 +19713,14 @@ async function shipPrintLog(request, env) {
       ).bind(date, ts, clean, carrier, priorPrint.operator_name || '', priorPrint.timestamp || '', operator.name || '', ts, gapSeconds).run();
     }
 
-    return cors(new Response(JSON.stringify({
-      ok: true, tracking: clean, carrier, date, operatorName: operator.name,
+    const res1 = { ok: true, tracking: clean, carrier, date, operatorName: operator.name,
       doublePrintWarning, gapSeconds,
       priorPrintedBy: priorPrint ? (priorPrint.operator_name || '') : '',
-      priorPrintedAt: priorPrint ? (priorPrint.timestamp || '') : '',
-    }), { headers: { 'Content-Type': 'application/json' } }));
+      priorPrintedAt: priorPrint ? (priorPrint.timestamp || '') : '' };
+    if (rid) await recordRequestResult(env, rid, res1);
+    return cors(new Response(JSON.stringify(res1), { headers: { 'Content-Type': 'application/json' } }));
   } catch(e) {
+    if (rid) await env.DB.prepare('DELETE FROM processed_requests WHERE request_id=?').bind(rid).run().catch(() => {}); // it can be sent again
     return cors(new Response(JSON.stringify({ ok: false, error: e.message }), { status: 500, headers: { 'Content-Type': 'application/json' } }));
   }
 }
