@@ -1376,6 +1376,31 @@ window.invCredLogin = async function() {
         style="padding:6px 14px;border-radius:6px;border:1.5px solid var(--orange);background:var(--bg3);color:var(--orange);font-size:12px;font-weight:700;cursor:pointer">🧹 Check part #s</button>
       <button id="skumgr-pbook-btn" onclick="skumgrPartBook()" title="Why a part # has a sign like + (and since when) — search any part # to see its whole story"
         style="padding:6px 14px;border-radius:6px;border:1.5px solid var(--purple);background:var(--bg3);color:var(--purple);font-size:12px;font-weight:700;cursor:pointer">📖 Part # book</button>
+      <button id="skumgr-upc-btn" onclick="skumgrUpc()" title="Outside box / inside bag UPC of each part #: upload a list or fix a wrong one — saved in our database, every scan uses the newest"
+        style="padding:6px 14px;border-radius:6px;border:1.5px solid var(--green);background:var(--bg3);color:var(--green);font-size:12px;font-weight:700;cursor:pointer">🔢 UPC codes</button>
+    </div>
+    <!-- 🔢 UPC codes (owner 2026-10-16): upload new outside box / inside bag UPCs with the part #, or fix a wrong one; saved in
+         our database (not the Google Sheet) and used first by every scan, Stock In and Item Search; every change in History. -->
+    <div id="skumgr-upc-panel" style="display:none;border:1.5px solid var(--green);border-radius:10px;padding:12px;margin-bottom:12px;background:var(--bg2)">
+      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px">
+        <b style="font-size:14px">🔢 UPC codes — outside box / inside bag</b>
+        <button onclick="document.getElementById('skumgr-upc-panel').style.display='none'" style="border:none;background:none;font-size:18px;cursor:pointer;color:var(--text3)">&times;</button>
+      </div>
+      <div id="skumgr-upc-stats" style="font-size:12px;color:var(--text3);margin-bottom:8px">Loading…</div>
+      <div style="font-weight:700;font-size:13px;margin:6px 0 4px">✏️ Look up / fix one</div>
+      <div style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:6px">
+        <input id="skumgr-upc-q" placeholder="Part # (30-3-4=10X), parent (30-3-4 = every pack size) or a UPC" onkeydown="if(event.key==='Enter')skumgrUpcFind()" style="flex:1;min-width:220px;padding:8px 10px;border:1.5px solid var(--border);border-radius:7px;font-family:var(--mono);font-size:13px;background:var(--bg);color:var(--text)">
+        <button onclick="skumgrUpcFind()" style="padding:8px 14px;border-radius:7px;border:none;background:var(--green);color:#fff;font-weight:700;cursor:pointer">Search</button>
+      </div>
+      <div id="skumgr-upc-res" style="font-size:12.5px;margin-bottom:12px"></div>
+      <div style="font-weight:700;font-size:13px;margin:6px 0 4px">📋 Upload many</div>
+      <div style="font-size:12px;color:var(--text3);margin-bottom:4px">One part # per line: <b>part #, inside bag UPC, outside box UPC</b> — copy the 3 columns from Excel and paste, or pick a .csv file. Leave a UPC empty to keep the one it has; type NONE to take it off. You see a check first; nothing is saved until you tap 💾.</div>
+      <textarea id="skumgr-upc-paste" rows="5" placeholder="30-3-4=10X	850012345678	10850012345675" style="width:100%;box-sizing:border-box;padding:8px 10px;border:1.5px solid var(--border);border-radius:7px;font-family:var(--mono);font-size:12.5px;background:var(--bg);color:var(--text)"></textarea>
+      <div style="display:flex;gap:6px;flex-wrap:wrap;align-items:center;margin:6px 0">
+        <input type="file" id="skumgr-upc-file" accept=".csv,.txt,text/csv,text/plain" onchange="skumgrUpcFile(this)" style="font-size:12px">
+        <button onclick="skumgrUpcCheck()" style="padding:7px 14px;border-radius:7px;border:1.5px solid var(--green);background:var(--bg3);color:var(--green);font-weight:700;cursor:pointer">🔎 Check the list</button>
+      </div>
+      <div id="skumgr-upc-preview" style="font-size:12.5px"></div>
     </div>
     <!-- 📖 Part # book (owner 2026-10-11): why some part #s have "+" (or any other sign / number added later) and since when;
          search a part # or a sign to see everything about it. Nothing is ever erased — every change is kept with who / when. -->
@@ -8332,6 +8357,108 @@ window.invCredLogin = async function() {
   // know everything going on with our part #s". Signs: what each means, since when, who; every change kept.
   var PB = { markers: [] };
   function pbT(x) { return x ? new Date(x).toLocaleString([], { year: 'numeric', month: 'numeric', day: 'numeric', hour: 'numeric', minute: '2-digit' }) : '—'; }
+  // ── 🔢 UPC codes (owner 2026-10-16) ─────────────────────────────────────
+  var UPCM = { rows: null };
+  function upcStats(d) {
+    var e = invEsc, box = g('skumgr-upc-stats'); if (!box || !d) return;
+    box.innerHTML = '🗄 In our database: <b>' + (d.dbRows || 0).toLocaleString() + '</b> part #s with UPCs'
+      + ' · old Google UPC sheet: ' + (d.sheetRows || 0).toLocaleString() + ' rows (read up to ' + (d.sheetLimit || 0).toLocaleString() + (d.sheetFull ? ' — ⚠ FULL' : ', all read ✅') + ')'
+      + (d.notInDb ? ' · <b style="color:var(--orange)">' + d.notInDb.toLocaleString() + ' part #s only in the old sheet</b> <button onclick="skumgrUpcCopy()" style="padding:3px 10px;border-radius:6px;border:1.5px solid var(--green);background:var(--bg3);color:var(--green);font-weight:700;cursor:pointer;font-size:11.5px">📥 Copy them into the database</button>' : ' · nothing left only in the sheet ✅')
+      + '<div style="margin-top:2px">Saved here = the newest: every scan, Stock In, Transfer and Item Search use it first. Every change is in Inventory → History.</div>';
+  }
+  window.skumgrUpc = function() {
+    var panel = g('skumgr-upc-panel'); if (!panel) return;
+    panel.style.display = 'block';
+    wFetch(W + '/inventory/upc-manager').then(function(r) { return r.json(); }).then(upcStats).catch(function() { var b = g('skumgr-upc-stats'); if (b) b.textContent = 'Could not load — check the connection'; });
+  };
+  window.skumgrUpcCopy = function() {
+    if (!confirm('Copy the part #s that are only in the old Google UPC sheet into our database? Rows the database already has are not changed.')) return;
+    wFetch(W + '/inventory/upc-manager/copy-sheet', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}' }).then(function(r) { return r.json(); }).then(function(d) {
+      if (!d || !d.ok) { alert('✗ ' + ((d && d.error) || 'not copied (managers only)')); return; }
+      alert('✓ Copied ' + d.added + ' part #s into the database (' + d.already + ' were already there, not changed).'); skumgrUpc();
+    }).catch(function() { alert('✗ network error'); });
+  };
+  var upcSrcName = { edit: '🔢 Saved here', sheet: 'old UPC sheet', table: 'database', vendor: 'vendor UPC list', link: 'Stock In link', fix: 'Reorder ✏️', catalog: 'vendor sheet' };
+  window.skumgrUpcFind = function() {
+    var q = String((g('skumgr-upc-q') || {}).value || '').trim(), box = g('skumgr-upc-res'), e = invEsc;
+    if (!q) return; box.innerHTML = 'Looking…';
+    wFetch(W + '/inventory/upc-manager?q=' + encodeURIComponent(q)).then(function(r) { return r.json(); }).then(function(d) {
+      if (!d || !d.ok) { box.textContent = 'Error: ' + ((d && d.error) || 'failed'); return; }
+      upcStats(d);
+      if (!d.parts.length) { box.innerHTML = '<span style="color:var(--red)">Nothing found for ' + e(q) + (/^\d+$/.test(q) ? ' — this UPC is not on any part # yet' : '') + '</span>'; return; }
+      var td = 'padding:6px 8px;border-bottom:1px solid var(--border);vertical-align:top', inp = 'width:150px;padding:5px 7px;border:1.5px solid var(--border);border-radius:6px;font-family:var(--mono);font-size:12.5px;background:var(--bg);color:var(--text)';
+      box.innerHTML = (d.upcOf ? '<div style="margin-bottom:4px">UPC ' + e(q) + ' is on <b>' + e(d.upcOf) + '</b></div>' : '')
+        + '<table style="width:100%;border-collapse:collapse"><tr style="text-align:left;color:var(--text3);font-size:11px;text-transform:uppercase"><th style="padding:4px 8px">Part #</th><th>Inside bag UPC</th><th>Outside box UPC</th><th></th><th>Kept in</th></tr>'
+        + d.parts.map(function(p, i) {
+          return '<tr><td style="' + td + ';font-family:var(--mono);font-weight:700">' + e(p.part) + (p.edited ? '<div style="font-size:10.5px;color:var(--green);font-weight:400">🔢 saved by ' + e(p.edited.by) + ' ' + e(String(p.edited.at).slice(0, 10)) + '</div>' : '') + '</td>'
+            + '<td style="' + td + '"><input id="upcm-i-' + i + '" value="' + e(p.inside) + '" style="' + inp + '"></td>'
+            + '<td style="' + td + '"><input id="upcm-o-' + i + '" value="' + e(p.outside) + '" style="' + inp + '"></td>'
+            + '<td style="' + td + '"><button onclick="skumgrUpcSaveOne(' + i + ', this.dataset.p)" data-p="' + e(p.part) + '" style="padding:5px 12px;border-radius:6px;border:none;background:var(--green);color:#fff;font-weight:700;cursor:pointer">💾 Save</button><div id="upcm-m-' + i + '" style="font-size:11px;margin-top:3px"></div></td>'
+            + '<td style="' + td + ';font-size:11px;color:var(--text3)">' + (p.sources.length ? p.sources.map(function(x) { return e(upcSrcName[x.from] || x.from) + ': ' + (x.inside ? 'bag ' + e(x.inside) : '') + (x.inside && x.outside ? ' · ' : '') + (x.outside ? (x.from === 'link' ? '' : 'box ') + e(x.outside) : ''); }).join('<br>') : 'no UPC anywhere yet') + '</td></tr>';
+        }).join('') + '</table><div style="font-size:11px;color:var(--text3);margin-top:4px">Empty box = no UPC. "Kept in" shows every place a UPC of it is written; after 💾 the one here is used everywhere and an old wrong UPC no longer finds this part #.</div>';
+    }).catch(function() { box.textContent = 'Network error'; });
+  };
+  function upcPost(rows, dryRun, confirmList) {
+    return wFetch(W + '/inventory/upc-manager/save', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ rows: rows, dryRun: !!dryRun, confirm: confirmList || [] }) }).then(function(r) { return r.json(); });
+  }
+  window.skumgrUpcSaveOne = function(i, part) {
+    var m = g('upcm-m-' + i), iv = String(g('upcm-i-' + i).value || '').trim(), ov = String(g('upcm-o-' + i).value || '').trim();
+    var row = { part: part, inside: iv || 'NONE', outside: ov || 'NONE' };
+    m.style.color = 'var(--text3)'; m.textContent = 'Checking…';
+    upcPost([row], true).then(function(d) {
+      var r = d && d.rows && d.rows[0];
+      if (!d || !d.ok || !r) { m.style.color = 'var(--red)'; m.textContent = '✗ ' + ((d && d.error) || 'failed'); return; }
+      if (r.problems.length) { m.style.color = 'var(--red)'; m.textContent = '✗ ' + r.problems.join('; '); return; }
+      if (r.status === 'same') { m.style.color = 'var(--text3)'; m.textContent = 'no change'; return; }
+      if (r.needsConfirm && !confirm(r.warn.join('\n') + '\n\nMove it to ' + part + '?')) { m.textContent = 'not saved'; return; }
+      upcPost([row], false, r.needsConfirm ? [part] : []).then(function(s2) {
+        if (!s2 || !s2.ok || !s2.saved.length) { m.style.color = 'var(--red)'; m.textContent = '✗ ' + ((s2 && (s2.error || (s2.skipped[0] && s2.skipped[0].problems.join('; ')))) || 'not saved (managers only)'); return; }
+        m.style.color = 'var(--green)'; m.textContent = '✓ saved — every scan uses it now';
+      });
+    }).catch(function() { m.style.color = 'var(--red)'; m.textContent = '✗ network error'; });
+  };
+  // Lines → rows: tab (Excel paste), comma or ; between columns; a header line (Part # …) is skipped.
+  function upcParse(text) {
+    return String(text || '').split(/\r?\n/).map(function(l) { return l.trim(); }).filter(Boolean)
+      .map(function(l) { var c = l.split(/\t|,|;/).map(function(x) { return x.trim().replace(/^"|"$/g, ''); }); return { part: c[0] || '', inside: c[1] || '', outside: c[2] || '' }; })
+      .filter(function(r, i) { return !(i === 0 && /part|sku/i.test(r.part) && !/\d-\d/.test(r.part)); });
+  }
+  window.skumgrUpcFile = function(inp) {
+    var f = inp.files && inp.files[0]; if (!f) return;
+    if (/\.xlsx?$/i.test(f.name)) { alert('Excel file: open it, select the 3 columns (part #, inside bag UPC, outside box UPC), copy and paste them into the box.'); inp.value = ''; return; }
+    var rd = new FileReader(); rd.onload = function() { g('skumgr-upc-paste').value = String(rd.result || ''); skumgrUpcCheck(); }; rd.readAsText(f);
+  };
+  window.skumgrUpcCheck = function() {
+    var rows = upcParse(g('skumgr-upc-paste').value), box = g('skumgr-upc-preview'), e = invEsc;
+    if (!rows.length) { box.innerHTML = '<span style="color:var(--red)">Paste the list first</span>'; return; }
+    box.innerHTML = 'Checking ' + rows.length + ' lines…';
+    upcPost(rows, true).then(function(d) {
+      if (!d || !d.ok) { box.innerHTML = '<span style="color:var(--red)">✗ ' + e((d && d.error) || 'failed') + '</span>'; return; }
+      UPCM.rows = rows;
+      var n = { new: 0, change: 0, same: 0, error: 0, warn: 0 };
+      d.rows.forEach(function(r) { n[r.status]++; if (r.needsConfirm) n.warn++; });
+      var td = 'padding:5px 8px;border-bottom:1px solid var(--border);vertical-align:top', lab = { new: '🆕 new', change: '✏️ change', same: '= same', error: '❌ not saved' };
+      box.innerHTML = '<div style="margin-bottom:6px"><b>' + n.new + '</b> new · <b>' + n.change + '</b> changed · ' + n.same + ' same · <b style="color:var(--red)">' + n.error + '</b> with a problem' + (n.warn ? ' · <b style="color:var(--orange)">' + n.warn + '</b> UPC already on another part # (tick to move)' : '') + '</div>'
+        + '<table style="width:100%;border-collapse:collapse"><tr style="text-align:left;color:var(--text3);font-size:11px;text-transform:uppercase"><th style="padding:4px 8px"></th><th>Part #</th><th>Inside bag UPC</th><th>Outside box UPC</th><th>Check</th></tr>'
+        + d.rows.map(function(r) {
+          var ch = function(k) { var o = r.old ? r.old[k] : ''; return o && o !== r[k] ? '<span style="color:var(--text3);text-decoration:line-through">' + e(o) + '</span> → <b>' + e(r[k] || '—') + '</b>' : e(r[k] || '—'); };
+          return '<tr style="' + (r.status === 'error' ? 'background:var(--red-bg,#fee2e2)' : '') + '"><td style="' + td + '">' + (r.needsConfirm ? '<input type="checkbox" class="upcm-move" data-p="' + e(r.part) + '">' : '') + '</td>'
+            + '<td style="' + td + ';font-family:var(--mono);font-weight:700">' + e(r.part || '—') + '</td><td style="' + td + ';font-family:var(--mono)">' + ch('inside') + '</td><td style="' + td + ';font-family:var(--mono)">' + ch('outside') + '</td>'
+            + '<td style="' + td + '">' + lab[r.status] + (r.problems.length ? '<div style="color:var(--red)">' + e(r.problems.join('; ')) + '</div>' : '') + (r.warn.length ? '<div style="color:var(--orange)">⚠ ' + e(r.warn.join('; ')) + '</div>' : '') + '</td></tr>';
+        }).join('') + '</table>'
+        + '<button onclick="skumgrUpcSaveAll()" style="margin-top:8px;padding:8px 16px;border-radius:7px;border:none;background:var(--green);color:#fff;font-weight:700;cursor:pointer">💾 Save ' + (n.new + n.change) + ' (new + changed)</button> <span id="skumgr-upc-savemsg" style="font-size:12px"></span>';
+    }).catch(function() { box.innerHTML = '<span style="color:var(--red)">✗ network error</span>'; });
+  };
+  window.skumgrUpcSaveAll = function() {
+    if (!UPCM.rows) return;
+    var moves = Array.prototype.slice.call(document.querySelectorAll('.upcm-move')).filter(function(c) { return c.checked; }).map(function(c) { return c.getAttribute('data-p'); });
+    var m = g('skumgr-upc-savemsg'); m.style.color = 'var(--text3)'; m.textContent = 'Saving…';
+    upcPost(UPCM.rows, false, moves).then(function(d) {
+      if (!d || !d.ok) { m.style.color = 'var(--red)'; m.textContent = '✗ ' + ((d && d.error) || 'not saved (managers only)'); return; }
+      m.style.color = 'var(--green)'; m.textContent = '✓ Saved ' + d.saved.length + ' · not saved ' + d.skipped.length + (d.skipped.length ? ' (see the list)' : '') + ' — every scan uses the new UPCs now';
+      UPCM.rows = null; skumgrUpc();
+    }).catch(function() { m.style.color = 'var(--red)'; m.textContent = '✗ network error'; });
+  };
   window.skumgrPartBook = function() {
     var panel = g('skumgr-pbook-panel'); if (!panel) return;
     panel.style.display = 'block'; skumgrPartBookLoad();

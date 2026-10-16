@@ -3399,11 +3399,208 @@ function upcAddFirstDigit(z) {
 async function upcToPartOne(env, z) {
   const q = async (sql) => { try { const r = await d1First(env, sql, [z, z]); return r && r.p ? String(r.p).trim().toUpperCase() : null; } catch (e) { return null; } };
   await env.DB.prepare('CREATE TABLE IF NOT EXISTS upc_link (upc TEXT PRIMARY KEY, part TEXT NOT NULL, by_user TEXT, at TEXT)').run().catch(() => {});
-  return await q(`SELECT part AS p FROM upc_link WHERE LTRIM(upc, '0') = ? OR LTRIM(upc, '0') = ? LIMIT 1`)
-    || vendorUpcMap().byUpc.get(z) || null
-    || await q(`SELECT sku AS p FROM upc WHERE LTRIM(REPLACE(outside_upc, ' ', ''), '0') = ? OR LTRIM(REPLACE(inside_upc, ' ', ''), '0') = ? LIMIT 1`)
-    || await q(`SELECT part AS p FROM reorder_fix WHERE LTRIM(REPLACE(outside_upc, ' ', ''), '0') = ? OR LTRIM(REPLACE(inside_upc, ' ', ''), '0') = ? LIMIT 1`)
-    || await q(`SELECT part AS p FROM reorder_vendor_catalog WHERE LTRIM(REPLACE(outside_upc, ' ', ''), '0') = ? OR LTRIM(REPLACE(inside_upc, ' ', ''), '0') = ? ORDER BY updated_at DESC LIMIT 1`);
+  // 🔢 SKU Mgr → UPC codes (owner 2026-10-16): what was saved there is the newest — it wins, and a UPC taken off a
+  // part # there (a wrong one) no longer finds that part # from any older list.
+  const ed = await upcEditMap(env);
+  if (ed.byUpc.has(z)) return ed.byUpc.get(z);
+  const live = p => p && !(ed.byPart.has(p) && !ed.byPart.get(p).z.includes(z)) ? p : null;
+  const srcs = [
+    () => q(`SELECT part AS p FROM upc_link WHERE LTRIM(upc, '0') = ? OR LTRIM(upc, '0') = ? LIMIT 1`),
+    () => vendorUpcMap().byUpc.get(z) || null,
+    () => q(`SELECT sku AS p FROM upc WHERE LTRIM(REPLACE(outside_upc, ' ', ''), '0') = ? OR LTRIM(REPLACE(inside_upc, ' ', ''), '0') = ? LIMIT 1`),
+    () => q(`SELECT part AS p FROM reorder_fix WHERE LTRIM(REPLACE(outside_upc, ' ', ''), '0') = ? OR LTRIM(REPLACE(inside_upc, ' ', ''), '0') = ? LIMIT 1`),
+    () => q(`SELECT part AS p FROM reorder_vendor_catalog WHERE LTRIM(REPLACE(outside_upc, ' ', ''), '0') = ? OR LTRIM(REPLACE(inside_upc, ' ', ''), '0') = ? ORDER BY updated_at DESC LIMIT 1`)];
+  for (const f of srcs) { const p = live(String((await f()) || '').toUpperCase()); if (p) return p; }
+  return null;
+}
+// 🔢 UPCs saved in SKU Mgr → UPC codes, by part # and by UPC (leading zeros dropped).
+const upcZ = v => String(v == null ? '' : v).replace(/\D/g, '').replace(/^0+/, '');
+async function upcEditMap(env) {
+  const byPart = new Map(), byUpc = new Map();
+  try {
+    await env.DB.prepare('CREATE TABLE IF NOT EXISTS upc_edit (part TEXT PRIMARY KEY, inside_upc TEXT, outside_upc TEXT, by_user TEXT, at TEXT)').run();
+    ((await env.DB.prepare('SELECT part, inside_upc, outside_upc, by_user, at FROM upc_edit').all()).results || []).forEach(r => {
+      const P = String(r.part).toUpperCase(), z = [upcZ(r.inside_upc), upcZ(r.outside_upc)].filter(Boolean);
+      byPart.set(P, { inside: r.inside_upc || '', outside: r.outside_upc || '', by: r.by_user || '', at: r.at || '', z });
+      z.forEach(u => { if (!byUpc.has(u)) byUpc.set(u, P); });
+    });
+  } catch (_) {}
+  return { byPart, byUpc };
+}
+// ── 🔢 SKU Mgr → UPC codes ─────────────────────────────────────────────────
+// Owner (2026-10-16): "On SKU Mgr build something I can click to upload the new UPC codes with the part #, or edit them
+// if something is wrong (a part # with the wrong UPC) — after adding or editing, our database too, so all of our items
+// use the newest info". Saved in upc_edit (read FIRST by every scan / lookup / Item Search), and copied to the UPC sheet
+// Owner: "I thought we don't use the Google Sheet anymore — all saved in our database?" → saved ONLY in the database
+// (upc_edit + the D1 upc table, never the sheet); the old UPC sheet is only read for rows not in the database yet
+// (📥 copies them in). Stock In links follow; every change is an EDIT line in Inventory → History.
+const UPC_SRC_NAMES = { edit: '🔢 Saved here', sheet: 'UPC sheet', table: 'UPC table (D1)', vendor: 'Vendor UPC list', link: 'Stock In link', fix: 'Reorder ✏️', catalog: 'Vendor sheet' };
+async function upcSources(env, parts) {
+  const U = x => String(x || '').trim().toUpperCase(), out = {};
+  parts.forEach(p => { out[p] = []; });
+  const want = new Set(parts), add = (p, from, inside, outside, extra) => { p = U(p); if (want.has(p) && (inside || outside)) out[p].push({ from, inside: String(inside || '').trim(), outside: String(outside || '').trim(), ...(extra || {}) }); };
+  const ed = await upcEditMap(env);
+  ed.byPart.forEach((e, p) => add(p, 'edit', e.inside, e.outside, { by: e.by, at: e.at }));
+  const sh = await invUpcSheetCached(env); (sh.values || []).forEach((r, i) => add(r[1], 'sheet', r[2], r[3], { row: i + 2 }));
+  const all = async sql => { try { return (await env.DB.prepare(sql).all()).results || []; } catch (_) { return []; } };
+  (await all('SELECT sku, inside_upc, outside_upc FROM upc')).forEach(r => add(r.sku, 'table', r.inside_upc, r.outside_upc));
+  for (const [part, o, i] of VENDOR_UPC) add(part, 'vendor', i, o);
+  (await all('SELECT upc, part FROM upc_link')).forEach(r => add(r.part, 'link', '', r.upc));
+  (await all('SELECT part, inside_upc, outside_upc FROM reorder_fix')).forEach(r => add(r.part, 'fix', r.inside_upc, r.outside_upc));
+  (await all('SELECT part, inside_upc, outside_upc, vendor FROM reorder_vendor_catalog')).forEach(r => add(r.part, 'catalog', r.inside_upc, r.outside_upc, { vendor: r.vendor }));
+  return out;
+}
+// What a part # uses now: saved here → UPC sheet → UPC table → vendor list → Reorder ✏️ → vendor sheet (first that has it).
+function upcInUse(src) {
+  const pick = k => { for (const f of ['edit', 'sheet', 'table', 'vendor', 'fix', 'catalog']) { const s = src.find(x => x.from === f && (f === 'edit' || x[k])); if (s) return { v: s[k] || '', from: f }; } return { v: '', from: '' }; };
+  const i = pick('inside'), o = pick('outside');
+  return { inside: i.v, outside: o.v, insideFrom: i.from, outsideFrom: o.from };
+}
+async function upcKnownPart(env, p) {
+  const one = async (sql) => !!(await d1First(env, sql, [p]).catch(() => null));
+  return await one('SELECT 1 AS x FROM master_list WHERE UPPER(TRIM(part_num)) = ? LIMIT 1') || await one('SELECT 1 AS x FROM upc WHERE UPPER(TRIM(sku)) = ? LIMIT 1')
+    || await one('SELECT 1 AS x FROM products WHERE UPPER(TRIM(sku)) = ? LIMIT 1') || await one('SELECT 1 AS x FROM upc_edit WHERE part = ? LIMIT 1')
+    || vendorUpcMap().allParts.has(p) || ((await invUpcSheetCached(env)).values || []).some(r => String(r[1] || '').trim().toUpperCase() === p);
+}
+// GET /inventory/upc-manager?q=  — a part #, a parent # (every pack size) or a UPC → each part # with the UPCs it uses
+// now and where every one of its UPCs is kept. Also how many rows the UPC sheet has.
+async function inventoryUpcManager(url, env) {
+  const J = o => cors(new Response(JSON.stringify(o), { headers: { 'Content-Type': 'application/json' } }));
+  const U = x => String(x || '').trim().toUpperCase();
+  const sheet = (await invUpcSheetCached(env)).values || [];
+  const sheetRows = sheet.filter(r => String(r[1] || '').trim()).length;
+  const q = U(url.searchParams.get('q')).replace(/\s+/g, '');
+  let dbRows = 0, notInDb = 0;
+  try { const have = new Set(((await env.DB.prepare('SELECT UPPER(TRIM(sku)) p FROM upc').all()).results || []).map(r => r.p)); (await upcEditMap(env)).byPart.forEach((e, p) => have.add(p)); dbRows = have.size;
+    notInDb = new Set(sheet.filter(r => (String(r[2] || '').trim() || String(r[3] || '').trim()) && !have.has(U(r[1]))).map(r => U(r[1]))).size; } catch (_) {}
+  const res = { ok: true, sheetRows, sheetLimit: UPC_SHEET_MAX, sheetFull: sheet.length >= UPC_SHEET_MAX - 1, dbRows, notInDb, parts: [] };
+  if (!q) return J(res);
+  let parts = new Set();
+  if (/^\d{8,14}$/.test(q)) { const p = await upcToPart(env, q); if (p) parts.add(p); res.upcOf = p || null; }
+  else {
+    const par = q.split('=')[0], like = par.replace(/[\\%_]/g, '\\$&') + '=%';
+    const one = q.includes('=');
+    const all = async (sql, b) => { try { return (await env.DB.prepare(sql).bind(...b).all()).results || []; } catch (_) { return []; } };
+    const hit = p => { p = U(p); if (p && (one ? p === q : (p === par || p.startsWith(par + '=')))) parts.add(p); };
+    (await all(`SELECT DISTINCT UPPER(TRIM(part_num)) p FROM master_list WHERE UPPER(TRIM(part_num)) = ? OR UPPER(TRIM(part_num)) LIKE ? ESCAPE '\\'`, [par, like])).forEach(r => hit(r.p));
+    (await all(`SELECT DISTINCT UPPER(TRIM(sku)) p FROM upc WHERE UPPER(TRIM(sku)) = ? OR UPPER(TRIM(sku)) LIKE ? ESCAPE '\\'`, [par, like])).forEach(r => hit(r.p));
+    (await all(`SELECT part p FROM upc_edit WHERE part = ? OR part LIKE ? ESCAPE '\\'`, [par, like])).forEach(r => hit(r.p));
+    sheet.forEach(r => hit(r[1])); vendorUpcMap().allParts.forEach(hit);
+    if (one) parts.add(q);
+  }
+  parts = [...parts].sort((a, b) => a.localeCompare(b, undefined, { numeric: true })).slice(0, 200);
+  const src = await upcSources(env, parts);
+  res.parts = parts.map(p => ({ part: p, ...upcInUse(src[p]), sources: src[p].map(x => ({ ...x, name: UPC_SRC_NAMES[x.from] })), edited: (src[p].find(x => x.from === 'edit') || null) }));
+  return J(res);
+}
+// POST /inventory/upc-manager/save { rows: [{ part, inside, outside }], dryRun, confirm: [part #s] } — managers only.
+// A blank box keeps what the part # uses now; NONE takes it off. dryRun → the preview (nothing saved). A UPC already
+// on another part # is saved only when that part # is ticked in confirm (it then moves: taken off the other one too).
+async function inventoryUpcManagerSave(request, env, session) {
+  const J = (o, st) => cors(new Response(JSON.stringify(o), { status: st || 200, headers: { 'Content-Type': 'application/json' } }));
+  const body = await request.json().catch(() => ({}));
+  const U = x => String(x || '').trim().toUpperCase();
+  const who = String((session && (session.displayName || session.username)) || 'MGMT').trim().slice(0, 40);
+  const confirm = new Set((body.confirm || []).map(U));
+  const inRows = (Array.isArray(body.rows) ? body.rows : []).slice(0, 2000);
+  if (!inRows.length) return J({ ok: false, error: 'No rows' }, 400);
+  const clean = v => { const t = String(v == null ? '' : v).trim(); if (!t) return { keep: true }; if (/^(none|clear|-)$/i.test(t)) return { v: '' };
+    const d = t.replace(/\.0+$/, '').replace(/[\s-]/g, ''); return /^\d{8,14}$/.test(d) ? { v: d } : { bad: t }; };
+  const seen = new Set(), rows = [];
+  for (const r of inRows) {
+    const part = U(r.part).replace(/-+$/, ''), i = clean(r.inside), o = clean(r.outside);
+    const row = { part, problems: [], warn: [] };
+    if (!part) { row.problems.push('no part #'); rows.push(row); continue; }
+    if (/^\d{8,14}$/.test(part)) row.problems.push('the part # is a UPC barcode — put the part # first');
+    if (seen.has(part)) row.problems.push('this part # is twice in the list — only the first is used');
+    seen.add(part);
+    if (i.bad) row.problems.push(`inside bag UPC "${i.bad}" is not a UPC (8–14 digits)`);
+    if (o.bad) row.problems.push(`outside box UPC "${o.bad}" is not a UPC (8–14 digits)`);
+    if (i.keep && o.keep) row.problems.push('no UPC given');
+    if (!row.problems.length && !(await upcKnownPart(env, part))) row.problems.push(`part # ${part} is not in SKU Mgr, the UPC list or Products — check the spelling`);
+    row.i = i; row.o = o; rows.push(row);
+  }
+  const ok = rows.filter(r => !r.problems.length);
+  const src = await upcSources(env, ok.map(r => r.part));
+  for (const r of ok) {
+    const cur = upcInUse(src[r.part]);
+    r.old = { inside: cur.inside, outside: cur.outside };
+    r.inside = r.i.keep ? cur.inside : r.i.v; r.outside = r.o.keep ? cur.outside : r.o.v;
+    r.status = upcZ(r.inside) === upcZ(cur.inside) && upcZ(r.outside) === upcZ(cur.outside) ? 'same' : (cur.inside || cur.outside) ? 'change' : 'new';
+    if (r.inside && upcZ(r.inside) === upcZ(r.outside)) r.warn.push('inside bag and outside box UPC are the same');
+    r.moves = [];
+    for (const [k, v] of [['inside', r.inside], ['outside', r.outside]]) {
+      if (!v || (k === 'inside' ? r.i.keep : r.o.keep)) continue;
+      const other = await upcToPart(env, v);
+      if (other && other !== r.part) { r.moves.push({ upc: v, from: other }); r.warn.push(`${k === 'inside' ? 'inside bag' : 'outside box'} UPC ${v} is on ${other} now — tick to move it to ${r.part}`); }
+    }
+    r.needsConfirm = r.moves.length > 0 && !confirm.has(r.part);
+  }
+  const view = r => ({ part: r.part, status: r.problems.length ? 'error' : r.status, problems: r.problems, warn: r.warn, needsConfirm: !!r.needsConfirm,
+    old: r.old || null, inside: r.inside || '', outside: r.outside || '', moves: r.moves || [] });
+  const sheet = (await invUpcSheetCached(env)).values || [];
+  if (body.dryRun) return J({ ok: true, dryRun: true, rows: rows.map(view), sheetRows: sheet.filter(x => String(x[1] || '').trim()).length, sheetLimit: UPC_SHEET_MAX });
+  // ── save ──
+  await upcEditMap(env); // table
+  await env.DB.prepare(`CREATE TABLE IF NOT EXISTS upc (id INTEGER PRIMARY KEY AUTOINCREMENT, variant_id TEXT, sku TEXT NOT NULL, base_sku TEXT NOT NULL, inside_upc TEXT, outside_upc TEXT, updated_at TEXT)`).run();
+  await env.DB.prepare('CREATE TABLE IF NOT EXISTS upc_link (upc TEXT PRIMARY KEY, part TEXT NOT NULL, by_user TEXT, at TEXT)').run();
+  const now = new Date().toISOString(), wh = await invWarehouseCases(env).catch(() => null);
+  const writeOne = async (part, inside, outside, old, note) => {
+    await env.DB.prepare('INSERT INTO upc_edit (part, inside_upc, outside_upc, by_user, at) VALUES (?,?,?,?,?) ON CONFLICT(part) DO UPDATE SET inside_upc = excluded.inside_upc, outside_upc = excluded.outside_upc, by_user = excluded.by_user, at = excluded.at')
+      .bind(part, inside, outside, who, now).run();
+    const up = await env.DB.prepare('UPDATE upc SET inside_upc = ?, outside_upc = ?, updated_at = ? WHERE UPPER(TRIM(sku)) = ?').bind(inside, outside, now, part).run();
+    if (!(up.meta && up.meta.changes)) await env.DB.prepare('INSERT INTO upc (variant_id, sku, base_sku, inside_upc, outside_upc, updated_at) VALUES (?,?,?,?,?,?)').bind('', part, part.split('=')[0].trim(), inside, outside, now).run();
+    const keep = [upcZ(inside), upcZ(outside)].filter(Boolean);
+    const links = ((await env.DB.prepare('SELECT upc, part FROM upc_link').all()).results || []);
+    for (const l of links) {
+      const z = upcZ(l.upc), mine = U(l.part) === part;
+      if (mine && !keep.includes(z)) await env.DB.prepare('DELETE FROM upc_link WHERE upc = ?').bind(l.upc).run();      // a wrong UPC linked to it at Stock In
+      else if (!mine && keep.includes(z)) await env.DB.prepare('UPDATE upc_link SET part = ?, by_user = ?, at = ? WHERE upc = ?').bind(part, who, now, l.upc).run(); // moved here
+    }
+    const before = await invPartCases(env, part).catch(() => null);
+    await _skuMgrInsertLog(env, who, { part_num: part, location: '', cases: 0, name: '' },
+      `[SKU MGR UPC] ${part}: inside bag ${old.inside || '—'} → ${inside || '—'} · outside box ${old.outside || '—'} → ${outside || '—'}${note ? ' — ' + note : ''} (SKU Mgr → 🔢 UPC codes)`,
+      before == null ? null : { newPart: part, newBefore: before, wh }, null).catch(e => console.error('[upc history]', e.message));
+  };
+  const saved = [], skipped = [];
+  for (const r of rows) {
+    if (r.problems.length) { skipped.push(view(r)); continue; }
+    if (r.needsConfirm) { skipped.push({ ...view(r), problems: ['not saved — its UPC is on another part #; tick it to move it'] }); continue; }
+    if (r.status === 'same') { skipped.push({ ...view(r), problems: ['no change'] }); continue; }
+    for (const m of r.moves) { // take the UPC off the other part # (it is this one's now)
+      const os = (await upcSources(env, [m.from]))[m.from], oc = upcInUse(os), z = upcZ(m.upc);
+      await writeOne(m.from, upcZ(oc.inside) === z ? '' : oc.inside, upcZ(oc.outside) === z ? '' : oc.outside, oc, `UPC ${m.upc} moved to ${r.part}`);
+    }
+    await writeOne(r.part, r.inside, r.outside, r.old, r.moves.length ? 'moved from ' + r.moves.map(m => m.from).join(', ') : '');
+    saved.push(view(r));
+  }
+  return J({ ok: true, saved, skipped });
+}
+// GET /inventory/upc-list — the whole UPC list for Item Search, from the database: 🔢 saved here first, then the D1 upc
+// table, then (only for part #s not in the database yet) the old UPC sheet. One row per part #.
+async function inventoryUpcList(env) {
+  const U = x => String(x || '').trim().toUpperCase(), by = new Map();
+  ((await invUpcSheetCached(env)).values || []).forEach(r => { const p = U(r[1]); if (p) by.set(p, { part: String(r[1]).trim(), inside: String(r[2] || '').trim(), outside: String(r[3] || '').trim(), from: 'sheet' }); });
+  try { ((await env.DB.prepare('SELECT sku, inside_upc, outside_upc FROM upc').all()).results || []).forEach(r => { const p = U(r.sku); if (p && (r.inside_upc || r.outside_upc)) by.set(p, { part: String(r.sku).trim(), inside: r.inside_upc || '', outside: r.outside_upc || '', from: 'table' }); }); } catch (_) {}
+  (await upcEditMap(env)).byPart.forEach((e, p) => by.set(p, { part: p, inside: e.inside, outside: e.outside, from: 'edit' }));
+  return cors(new Response(JSON.stringify({ ok: true, rows: [...by.values()] }), { headers: { 'Content-Type': 'application/json' } }));
+}
+// POST /inventory/upc-manager/copy-sheet — managers only. Copies the old UPC sheet's rows that are NOT in the database yet
+// into the D1 upc table (never changes a row the database already has); says how many were added / already there.
+async function inventoryUpcCopySheet(env, session) {
+  const U = x => String(x || '').trim().toUpperCase();
+  await env.DB.prepare(`CREATE TABLE IF NOT EXISTS upc (id INTEGER PRIMARY KEY AUTOINCREMENT, variant_id TEXT, sku TEXT NOT NULL, base_sku TEXT NOT NULL, inside_upc TEXT, outside_upc TEXT, updated_at TEXT)`).run();
+  const have = new Set(((await env.DB.prepare('SELECT UPPER(TRIM(sku)) p FROM upc').all()).results || []).map(r => r.p));
+  (await upcEditMap(env)).byPart.forEach((e, p) => have.add(p));
+  const fresh = await invSheetGet(env, 'UPC!A2:D' + UPC_SHEET_MAX).catch(() => ({ values: [] })); // read now, not the 60 s copy
+  const sheet = ((fresh && fresh.values) || []).filter(r => U(r[1]) && (String(r[2] || '').trim() || String(r[3] || '').trim()));
+  const now = new Date().toISOString(), add = [];
+  sheet.forEach(r => { const p = U(r[1]); if (!have.has(p)) { have.add(p); add.push(r); } });
+  for (let i = 0; i < add.length; i += 50) await env.DB.batch(add.slice(i, i + 50).map(r => env.DB.prepare('INSERT INTO upc (variant_id, sku, base_sku, inside_upc, outside_upc, updated_at) VALUES (?,?,?,?,?,?)')
+    .bind(String(r[0] || '').trim(), String(r[1]).trim(), U(r[1]).split('=')[0].trim(), String(r[2] || '').trim(), String(r[3] || '').trim(), now)));
+  const who = String((session && (session.displayName || session.username)) || 'MGMT').trim().slice(0, 40);
+  if (add.length) await _skuMgrInsertLog(env, who, { part_num: '', location: '', cases: 0, name: '' }, `[SKU MGR UPC] 📥 copied ${add.length} part #s from the old UPC sheet into the database (${sheet.length - add.length} were already there, not changed)`, null, null).catch(() => {});
+  return cors(new Response(JSON.stringify({ ok: true, added: add.length, already: sheet.length - add.length, sheetRows: sheet.length }), { headers: { 'Content-Type': 'application/json' } }));
 }
 // POST /inventory/upc-link { upc, part } — Stock In: "this UPC is part #…".
 // The part # must already be real (in SKU Mgr, the UPC list or products);
@@ -3424,9 +3621,11 @@ async function inventoryUpcLink(request, env, session) {
   return J({ ok: true, upc, part });
 }
 let _invUpcSheet = { at: 0, data: null };
+// Rows of the UPC sheet read (owner 2026-10-16: "how many rows do we have?" — was 5,000; 🔢 UPC codes shows the count).
+const UPC_SHEET_MAX = 20000;
 async function invUpcSheetCached(env) {
   if (_invUpcSheet.data && Date.now() - _invUpcSheet.at < 60000) return _invUpcSheet.data;
-  const d = await invSheetGet(env, 'UPC!A2:D5000').catch(() => null);
+  const d = await invSheetGet(env, 'UPC!A2:D' + UPC_SHEET_MAX).catch(() => null);
   if (d && Array.isArray(d.values)) { _invUpcSheet = { at: Date.now(), data: d }; return d; }
   return d || { values: [] };
 }
@@ -3452,10 +3651,22 @@ async function inventoryLookup(url, env) {
   let insideUpc  = null;
   let outsideUpc = null;
 
-  for (const row of upcRows) {
+  // 🔢 Saved in SKU Mgr → UPC codes: newest, wins over the sheet; a UPC taken off a part # there is skipped below.
+  const upcEd = env.DB && codeNorm ? await upcEditMap(env) : { byPart: new Map(), byUpc: new Map() };
+  const edPart = upcEd.byUpc.get(codeNorm) || (codeNorm.length === 11 && upcAddFirstDigit(codeNorm) ? upcEd.byUpc.get(upcAddFirstDigit(codeNorm)) : null);
+  if (edPart) { const e = upcEd.byPart.get(edPart); partNum = sku = edPart; insideUpc = e.inside || null; outsideUpc = e.outside || null; }
+  // Then the database's UPC table (owner: "all saved under our database now") — the old sheet only after it.
+  if (!partNum && codeNorm && env.DB && /^\d{8,14}$/.test(code)) {
+    const t = await d1First(env, `SELECT sku, inside_upc, outside_upc FROM upc WHERE LTRIM(REPLACE(outside_upc, ' ', ''), '0') = ? OR LTRIM(REPLACE(inside_upc, ' ', ''), '0') = ? LIMIT 1`, [codeNorm, codeNorm]).catch(() => null);
+    const tp = t && String(t.sku || '').trim().toUpperCase();
+    if (tp && !(upcEd.byPart.has(tp) && !upcEd.byPart.get(tp).z.includes(codeNorm))) { partNum = sku = String(t.sku).trim(); insideUpc = t.inside_upc || null; outsideUpc = t.outside_upc || null; }
+  }
+  for (const row of (partNum ? [] : upcRows)) {
     const outside = String(row[3] || '').trim();
     const inside  = String(row[2] || '').trim();
     const variant = String(row[1] || '').trim();  // col B = the real SKU/part number string
+    const vE = upcEd.byPart.get(variant.toUpperCase());
+    if (vE && codeNorm && !vE.z.includes(codeNorm) && variant.toUpperCase() !== code) continue; // its UPC was changed in SKU Mgr
     const skuCol  = String(row[0] || '').trim();  // col A = variant_id — a numeric ID, NOT a SKU
     // (importUPC's own comment confirms this: "A=variant_id B=variant(sku)")
     const outsideNorm = normalize(outside);
@@ -8496,6 +8707,16 @@ const _app = {
         return cors(new Response(JSON.stringify({ ok: true, part: P, name }), { headers: { 'Content-Type': 'application/json' } }));
       }
       if (path === '/inventory/upc-link' && method === 'POST') return await inventoryUpcLink(request, env, session);
+      if (path === '/inventory/upc-list' && method === 'GET') return await inventoryUpcList(env);
+      if (path === '/inventory/upc-manager/copy-sheet' && method === 'POST') {
+        if (session.pin_level !== 'mgmt') return cors(new Response(JSON.stringify({ error: 'Management access required' }), { status: 403, headers: { 'Content-Type': 'application/json' } }));
+        return await inventoryUpcCopySheet(env, session);
+      }
+      if (path === '/inventory/upc-manager' && method === 'GET') return await inventoryUpcManager(url, env);
+      if (path === '/inventory/upc-manager/save' && method === 'POST') {
+        if (session.pin_level !== 'mgmt') return cors(new Response(JSON.stringify({ error: 'Management access required' }), { status: 403, headers: { 'Content-Type': 'application/json' } }));
+        return await inventoryUpcManagerSave(request, env, session);
+      }
       // 🖼 One photo per parent part # (see productPhotoMap): read by any
       // valid session; set / search / Veeqo sync by management.
       if (path === '/inventory/photos' && method === 'GET') {
@@ -15516,7 +15737,7 @@ async function importUPC(request, env) {
     const dryRun = body.dryRun === true;
 
     // Read UPC sheet — A=variant_id B=variant(sku) C=inside_upc D=outside_upc
-    const data = await invSheetGet(env, 'UPC!A1:D5000').catch(()=>({ values:[] }));
+    const data = await invSheetGet(env, 'UPC!A1:D' + UPC_SHEET_MAX).catch(()=>({ values:[] }));
     const rows = (data.values||[]).slice(1).filter(r => String(r[1]||'').trim());
 
     if (dryRun) return cors(new Response(JSON.stringify({
